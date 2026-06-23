@@ -49,3 +49,6 @@ next-env.d.ts
 
 # OpenNext / Cloudflare Workers 빌드 산출물
 .open-next/
+
+# local agent cache
+/cache/
