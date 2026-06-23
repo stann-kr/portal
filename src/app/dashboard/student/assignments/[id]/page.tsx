@@ -10,6 +10,10 @@ import { getFeedbacksByAssignment } from "@/lib/actions/feedbacks";
 import { auth } from "@/auth";
 import { AssignmentDetailClient } from "./AssignmentDetailClient";
 
+export type AssignmentFeedback = Awaited<
+  ReturnType<typeof getFeedbacksByAssignment>
+>[number];
+
 export default async function AssignmentDetailPage({
   params,
 }: {
@@ -37,7 +41,7 @@ export default async function AssignmentDetailPage({
     );
   }
 
-  const feedbackList = fb.map((f: any) => ({
+  const feedbackList = fb.map((f: AssignmentFeedback) => ({
     id: f.id,
     timeMarker: f.timeMarker,
     content: f.content,

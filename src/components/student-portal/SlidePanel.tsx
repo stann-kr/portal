@@ -12,8 +12,8 @@ interface SlidePanelProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   title?: string;
-  /** 기본 480px, 넓은 콘텐츠(VideoPlayer 등)는 "lg"(640px) 사용 */
-  size?: "md" | "lg";
+  /** 기본 480px, 넓은 콘텐츠는 "lg"(640px), 에디터 폼은 "xl"(768px) 사용 */
+  size?: "md" | "lg" | "xl";
   children: React.ReactNode;
 }
 
@@ -24,7 +24,7 @@ export function SlidePanel({
   size = "md",
   children,
 }: SlidePanelProps) {
-  const widthClass = size === "lg" ? "w-full max-w-2xl" : "w-full max-w-lg";
+  const widthClass = size === "xl" ? "w-full max-w-3xl" : size === "lg" ? "w-full max-w-2xl" : "w-full max-w-lg";
 
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>

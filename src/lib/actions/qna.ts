@@ -13,6 +13,31 @@ import { qnaThreads, qnaReplies, profiles } from "@/db/schema";
 import type { QnaStatus } from "@/db/schema";
 import { and, eq, desc, count } from "drizzle-orm";
 import { requireAuth } from "@/lib/auth-guard";
+import { sanitizeHtml } from "@/lib/sanitize-html";
+
+/**
+ * 첨부 URL 파싱/검증.
+ * FileUploader가 발급한 R2 publicUrl(http/https)만 허용. 그 외에는 null.
+ * @returns 유효한 첨부 URL 또는 null
+ */
+function parseAttachmentUrl(formData: FormData): string | null {
+  const raw = (formData.get("attachmentUrl") as string | null)?.trim();
+  if (!raw) return null;
+  if (raw.length > 2048) return null;
+  if (!/^https?:\/\//i.test(raw)) return null;
+  return raw;
+}
+
+async function getQnaThreadOwner(threadId: string) {
+  const db = createDb();
+  const [thread] = await db
+    .select({ id: qnaThreads.id, studentId: qnaThreads.studentId })
+    .from(qnaThreads)
+    .where(eq(qnaThreads.id, threadId))
+    .limit(1);
+
+  return thread ?? null;
+}
 
 // ─── 스레드 조회 ──────────────────────────────────
 
@@ -155,13 +180,18 @@ export async function createQnaThread(
   formData: FormData,
 ): Promise<CreateThreadState> {
   const session = await requireAuth();
+  if (session.user.role === "admin") {
+    return { error: "학생만 새 Q&A 스레드를 생성할 수 있습니다." };
+  }
 
   const title = (formData.get("title") as string)?.trim();
-  const contentHtml = formData.get("contentHtml") as string;
+  const rawHtml = formData.get("contentHtml") as string;
 
   if (!title) return { error: "제목을 입력해주세요." };
-  if (!contentHtml || contentHtml === "<p></p>")
+  if (!rawHtml || rawHtml === "<p></p>")
     return { error: "내용을 입력해주세요." };
+
+  const contentHtml = sanitizeHtml(rawHtml);
 
   const db = createDb();
   const threadId = crypto.randomUUID();
@@ -188,9 +218,67 @@ export async function createQnaThread(
   redirect(`/dashboard/qna/${threadId}`);
 }
 
+export type CreateThreadInlineState = {
+  error?: string;
+  success?: boolean;
+  thread?: { id: string; title: string; createdAt: Date };
+};
+
+/**
+ * 새 Q&A 스레드 생성 — 인라인 폼용 (redirect 없이 결과 반환).
+ * UnifiedCreateDialog 등 원페이지 폼에서 사용.
+ */
+export async function createQnaThreadInline(
+  _prev: CreateThreadInlineState,
+  formData: FormData,
+): Promise<CreateThreadInlineState> {
+  const session = await requireAuth();
+  if (session.user.role === "admin") {
+    return { error: "학생만 새 Q&A 스레드를 생성할 수 있습니다." };
+  }
+
+  const title = (formData.get("title") as string)?.trim();
+  const rawHtml = formData.get("contentHtml") as string;
+
+  if (!title) return { error: "제목을 입력해주세요." };
+  if (!rawHtml || rawHtml === "<p></p>")
+    return { error: "내용을 입력해주세요." };
+
+  const contentHtml = sanitizeHtml(rawHtml);
+  const attachmentUrl = parseAttachmentUrl(formData);
+
+  const db = createDb();
+  const threadId = crypto.randomUUID();
+  const replyId = crypto.randomUUID();
+
+  try {
+    await db.insert(qnaThreads).values({
+      id: threadId,
+      studentId: session.user.id!,
+      title,
+      status: "OPEN",
+    });
+
+    await db.insert(qnaReplies).values({
+      id: replyId,
+      threadId,
+      authorId: session.user.id!,
+      contentHtml,
+      attachmentUrl,
+    });
+
+    revalidatePath("/dashboard/qna");
+    revalidatePath("/dashboard/student");
+
+    return { success: true, thread: { id: threadId, title, createdAt: new Date() } };
+  } catch {
+    return { error: "질문 작성 중 오류가 발생했습니다." };
+  }
+}
+
 // ─── 답변 추가 ────────────────────────────────────
 
-export type CreateReplyState = { error?: string };
+export type CreateReplyState = { error?: string; success?: boolean };
 
 /**
  * 답변/추가 질문 작성 (학생 + 어드민).
@@ -204,9 +292,21 @@ export async function createQnaReply(
   const session = await requireAuth();
   const isAdmin = session.user.role === "admin";
 
-  const contentHtml = formData.get("contentHtml") as string;
-  if (!contentHtml || contentHtml === "<p></p>")
+  const rawHtml = formData.get("contentHtml") as string;
+  if (!rawHtml || rawHtml === "<p></p>")
     return { error: "내용을 입력해주세요." };
+
+  const contentHtml = sanitizeHtml(rawHtml);
+  const attachmentUrl = parseAttachmentUrl(formData);
+
+  const thread = await getQnaThreadOwner(threadId);
+  if (!thread) {
+    return { error: "존재하지 않는 스레드입니다." };
+  }
+
+  if (!isAdmin && thread.studentId !== session.user.id) {
+    return { error: "권한이 없습니다." };
+  }
 
   const db = createDb();
 
@@ -215,6 +315,7 @@ export async function createQnaReply(
     threadId,
     authorId: session.user.id!,
     contentHtml,
+    attachmentUrl,
   });
 
   // 어드민 답변 시 → ANSWERED로 자동 전환
@@ -234,7 +335,7 @@ export async function createQnaReply(
   revalidatePath(`/dashboard/qna/${threadId}`);
   revalidatePath("/dashboard/qna");
   revalidatePath("/dashboard/student");
-  return {};
+  return { success: true };
 }
 
 // ─── 상태 변경 ────────────────────────────────────

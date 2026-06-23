@@ -5,7 +5,7 @@
  */
 "use client";
 
-import { useState, useEffect, useActionState } from "react";
+import { useState, useEffect, useActionState, useCallback } from "react";
 import { Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -74,7 +74,7 @@ export function PostDetailPanel({ postId, contentHtml }: PostDetailPanelProps) {
   const [comments, setComments] = useState<Comment[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const loadComments = async () => {
+  const loadComments = useCallback(async () => {
     const data = await getCommentsByPost(postId);
     setComments(
       (data as RawComment[]).map((c) => ({
@@ -86,11 +86,11 @@ export function PostDetailPanel({ postId, contentHtml }: PostDetailPanelProps) {
       })),
     );
     setLoading(false);
-  };
+  }, [postId]);
 
   useEffect(() => {
     loadComments();
-  }, [postId]);
+  }, [loadComments]);
 
   return (
     <div className="space-y-6">
@@ -137,7 +137,10 @@ export function PostDetailPanel({ postId, contentHtml }: PostDetailPanelProps) {
                       <span className="text-xs font-medium text-foreground">{author}</span>
                       <span className="text-xs text-muted-foreground">{date}</span>
                     </div>
-                    <p className="text-sm text-foreground">{c.contentHtml}</p>
+                    <div
+                      className="text-sm text-foreground"
+                      dangerouslySetInnerHTML={{ __html: c.contentHtml }}
+                    />
                   </div>
                 </li>
               );

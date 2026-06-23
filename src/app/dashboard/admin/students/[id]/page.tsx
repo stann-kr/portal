@@ -13,6 +13,7 @@ import { getLessonsByStudent } from "@/lib/actions/lessons";
 import { getOrSeedColumns, getDiggingTracks } from "@/lib/actions/digging";
 import { getPrivateNotes } from "@/lib/actions/privateNotes";
 import { getQnaThreadsByStudent } from "@/lib/actions/qna";
+import { createCalendarFeedToken } from "@/lib/calendar-feed";
 import { StudentDetailTabs } from "@/components/admin/StudentDetailTabs";
 import { OverviewTab } from "@/components/admin/OverviewTab";
 import { DiggingBoard } from "@/components/digging/DiggingBoard";
@@ -189,6 +190,7 @@ export default async function StudentDetailPage({
         {activeTab === "overview" && (
           <OverviewTab
             studentId={studentId}
+            icsUrl={`/api/calendar/${studentId}?token=${encodeURIComponent(createCalendarFeedToken(studentId))}`}
             student={student}
             modules={modules}
             lessons={lessons}

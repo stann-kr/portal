@@ -32,7 +32,7 @@ export function PostDetailClient({
   currentUserId,
   isAdmin,
 }: PostDetailClientProps) {
-  const [commentList, setCommentList] = useState<Comment[]>(initialCommentList);
+  const [commentList] = useState<Comment[]>(initialCommentList);
   const [isPending, startTransition] = useTransition();
 
   // ─── 댓글 폼 ──────────────────────────────────

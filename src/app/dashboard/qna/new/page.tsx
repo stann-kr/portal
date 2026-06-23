@@ -5,12 +5,17 @@
 "use client";
 
 import { useActionState, useState, Suspense } from "react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { ArrowLeft, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import TiptapEditor from "@/components/community/TiptapEditor";
 import { createQnaThread, type CreateThreadState } from "@/lib/actions/qna";
+
+const FullEditor = dynamic(
+  () => import("@/components/editor/FullEditor").then((m) => ({ default: m.FullEditor })),
+  { ssr: false }
+);
 
 function NewThreadForm() {
   const [contentHtml, setContentHtml] = useState("");
@@ -20,14 +25,14 @@ function NewThreadForm() {
   );
 
   return (
-    <div className="max-w-3xl mx-auto space-y-6 py-6 px-4">
+    <div className="max-w-4xl mx-auto space-y-6 py-6 px-4">
       <div className="space-y-1">
         <Link
           href="/dashboard/qna"
           className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
         >
           <ArrowLeft className="w-4 h-4" />
-          Q&A
+          Q&amp;A
         </Link>
         <h1 className="text-2xl font-semibold mt-2">새 질문 작성</h1>
       </div>
@@ -58,13 +63,19 @@ function NewThreadForm() {
           <label className="text-sm font-medium">
             내용 <span className="text-destructive">*</span>
           </label>
-          <div className="rounded-xl border border-border overflow-hidden">
-            <TiptapEditor onSubmit={(html) => setContentHtml(html)} />
-          </div>
+          <FullEditor
+            onChange={setContentHtml}
+            placeholder="질문 내용을 자세히 작성하세요. 악보, 코드, 이미지 등을 첨부할 수 있습니다."
+            disabled={isPending}
+          />
         </div>
 
         <div className="flex gap-3">
-          <Button type="submit" disabled={isPending} className="flex-1 gap-2">
+          <Button
+            type="submit"
+            disabled={isPending || !contentHtml}
+            className="flex-1 gap-2"
+          >
             <Send className="w-4 h-4" />
             {isPending ? "등록 중..." : "질문 등록"}
           </Button>

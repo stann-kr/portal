@@ -70,27 +70,6 @@ export default async function QnaPage() {
         )}
       </div>
 
-      {/* 필터 탭 (어드민 전용) */}
-      {isAdmin && (
-        <div className="flex gap-2 text-sm">
-          {(["전체", "미답변", "답변완료", "종료"] as const).map((label) => (
-            <span
-              key={label}
-              className="px-3 py-1 rounded-full border border-border text-muted-foreground bg-muted/30 text-xs"
-            >
-              {label}{" "}
-              {label === "전체"
-                ? threads.length
-                : label === "미답변"
-                ? threads.filter((t) => t.status === "OPEN").length
-                : label === "답변완료"
-                ? threads.filter((t) => t.status === "ANSWERED").length
-                : threads.filter((t) => t.status === "CLOSED").length}
-            </span>
-          ))}
-        </div>
-      )}
-
       <ThreadList threads={threads} isAdmin={isAdmin} />
     </div>
   );

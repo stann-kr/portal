@@ -8,6 +8,8 @@ import { getCategories } from "@/lib/actions/categories";
 import { CategoryForm } from "./CategoryForm";
 import { DeleteCategoryButton } from "./DeleteCategoryButton";
 
+type Category = Awaited<ReturnType<typeof getCategories>>[number];
+
 export default async function AdminCategoriesPage() {
   const session = await auth();
   if (session?.user?.role !== "admin") {
@@ -44,7 +46,7 @@ export default async function AdminCategoriesPage() {
             </div>
           ) : (
             <ul className="space-y-3">
-              {categoriesList.map((cat: any) => (
+              {categoriesList.map((cat: Category) => (
                 <li key={cat.id} className="p-4 rounded-lg border border-border bg-card shadow-sm flex items-start justify-between">
                   <div className="space-y-1">
                     <p className="font-semibold text-foreground flex items-center gap-2">

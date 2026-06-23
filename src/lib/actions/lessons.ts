@@ -11,7 +11,7 @@ import { revalidatePath } from "next/cache";
 import { createDb } from "@/db/client";
 import { lessons } from "@/db/schema";
 import { and, eq, gte, asc, desc } from "drizzle-orm";
-import { requireAuth, requireAdmin } from "@/lib/auth-guard";
+import { requireAdmin } from "@/lib/auth-guard";
 
 // ───────────────────────────────────────────────
 // 조회

@@ -5,8 +5,12 @@
  */
 import { NextRequest } from "next/server";
 import { createEvent, type EventAttributes } from "ics";
+import { auth } from "@/auth";
+import { createDb } from "@/db/client";
+import { profiles } from "@/db/schema";
 import { getLessonsForCalendar } from "@/lib/actions/lessons";
-import { getStudentById } from "@/lib/actions/students";
+import { verifyCalendarFeedToken } from "@/lib/calendar-feed";
+import { eq } from "drizzle-orm";
 
 type Lesson = Awaited<ReturnType<typeof getLessonsForCalendar>>[number];
 
@@ -14,14 +18,38 @@ type Lesson = Awaited<ReturnType<typeof getLessonsForCalendar>>[number];
 
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ studentId: string }> },
 ) {
   const { studentId } = await params;
+  const token = req.nextUrl.searchParams.get("token");
+  const session = await auth();
+  const canAccessViaSession =
+    !!session?.user?.id &&
+    (session.user.role === "admin" || session.user.id === studentId);
+  const canAccessViaToken = verifyCalendarFeedToken(studentId, token);
 
-  // 학생 존재 확인
-  const student = await getStudentById(studentId);
+  if (!canAccessViaSession && !canAccessViaToken) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+
+  const db = createDb();
+  const studentRows = await db
+    .select({
+      id: profiles.id,
+      email: profiles.email,
+      displayName: profiles.displayName,
+      role: profiles.role,
+    })
+    .from(profiles)
+    .where(eq(profiles.id, studentId))
+    .limit(1);
+
+  const student = studentRows[0];
   if (!student) {
+    return new Response("Student not found", { status: 404 });
+  }
+  if (student.role !== "student") {
     return new Response("Student not found", { status: 404 });
   }
 

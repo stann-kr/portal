@@ -25,10 +25,11 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
        * @returns 유저 객체 (성공 시) 또는 null
        */
       async authorize(credentials) {
-        if (!credentials?.email || !credentials?.password) return null;
+        if (!credentials?.email || !credentials?.password) {
+          return null;
+        }
 
         try {
-          // createDb()가 프로덕션/로컬 환경을 자동 판별하여 올바른 드라이버 반환
           const db = createDb();
 
           const userList = await db
@@ -47,9 +48,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
             user.passwordHash,
           );
 
-          if (!isValid) {
-            return null;
-          }
+          if (!isValid) return null;
 
           return {
             id: user.id,
@@ -58,7 +57,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
             role: (user.role as "admin" | "student") ?? "student",
           };
         } catch {
-          // null 반환 시 NextAuth가 CredentialsSignin 에러로 사용자에게 전달
+          console.error("[auth] authorize error");
           return null;
         }
       },

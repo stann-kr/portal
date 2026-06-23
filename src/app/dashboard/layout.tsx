@@ -1,23 +1,13 @@
 /**
  * @file src/app/dashboard/layout.tsx
  * @description 대시보드 공통 레이아웃.
- * - admin: 240px 풀 사이드바 (기존 유지)
+ * - admin: 56px 아이콘 레일 (AdminSideRail) + 풀-너비 main (p-0)
  * - student: 56px 아이콘 레일 (StudentSideRail) + 풀-너비 main (p-0)
  */
-import Link from "next/link";
-import {
-  LayoutDashboard,
-  MessageSquare,
-  LogOut,
-  Tag,
-  CalendarDays,
-  HelpCircle,
-} from "lucide-react";
-import { getOpenThreadCount } from "@/lib/actions/qna";
-import { auth, signOut } from "@/auth";
+import { auth } from "@/auth";
 import { redirect } from "next/navigation";
-import { Button } from "@/components/ui/button";
 import { StudentSideRail } from "@/components/student-portal/StudentSideRail";
+import { AdminSideRail } from "@/components/admin-portal/AdminSideRail";
 
 export default async function DashboardLayout({
   children,
@@ -32,103 +22,10 @@ export default async function DashboardLayout({
 
   const role = session.user.role ?? "student";
 
-  // 학생은 56px 레일 사용 — 어드민 전용 사이드바만 구성
-  if (role === "student") {
-    return (
-      <div className="flex min-h-screen bg-background text-foreground">
-        <StudentSideRail />
-        <main className="flex-1 overflow-auto">{children}</main>
-      </div>
-    );
-  }
-
-  // ── 어드민 사이드바 ─────────────────────────────────────
-  const openQnaCount = await getOpenThreadCount().catch(() => 0);
-
-  const adminNavItems = [
-    { name: "Dashboard", href: "/dashboard/admin", icon: LayoutDashboard },
-    { name: "Categories", href: "/dashboard/admin/categories", icon: Tag },
-    { name: "Calendar", href: "/dashboard/calendar", icon: CalendarDays },
-    { name: "Community", href: "/community", icon: MessageSquare },
-    {
-      name: "Q&A",
-      href: "/dashboard/qna",
-      icon: HelpCircle,
-      badge: openQnaCount,
-    },
-  ];
-
   return (
     <div className="flex min-h-screen bg-background text-foreground">
-      {/* Admin Sidebar */}
-      <aside className="w-60 shrink-0 border-r border-border bg-muted/30 flex flex-col">
-        {/* Brand */}
-        <div className="h-14 px-5 border-b border-border flex items-center">
-          <Link
-            href="/"
-            className="text-sm font-semibold text-foreground tracking-tight hover:text-muted-foreground transition-colors"
-          >
-            Stann Lumo Portal
-          </Link>
-        </div>
-
-        {/* Navigation */}
-        <nav className="flex-1 px-3 py-4 space-y-1">
-          {adminNavItems.map((item) => {
-            const Icon = item.icon;
-            const badge = ("badge" in item ? item.badge : 0) ?? 0;
-            return (
-              <Link
-                key={item.name}
-                href={item.href}
-                className="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-              >
-                <Icon className="w-4 h-4 shrink-0" />
-                <span className="flex-1">{item.name}</span>
-                {badge > 0 && (
-                  <span className="min-w-[18px] h-[18px] rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center px-1">
-                    {badge}
-                  </span>
-                )}
-              </Link>
-            );
-          })}
-        </nav>
-
-        {/* User Info + Logout */}
-        <div className="px-3 py-4 border-t border-border space-y-3">
-          <div className="px-3 py-2 rounded-md bg-background border border-border">
-            <p className="text-xs text-muted-foreground truncate">
-              {session.user.email}
-            </p>
-            <p className="text-xs font-medium capitalize text-foreground mt-0.5">
-              {role}
-            </p>
-          </div>
-
-          <form
-            action={async () => {
-              "use server";
-              await signOut({ redirectTo: "/" });
-            }}
-          >
-            <Button
-              variant="ghost"
-              type="submit"
-              size="sm"
-              className="w-full justify-start text-muted-foreground hover:text-foreground"
-            >
-              <LogOut className="w-4 h-4 mr-2" />
-              Sign out
-            </Button>
-          </form>
-        </div>
-      </aside>
-
-      {/* Main Content */}
-      <main className="flex-1 overflow-auto">
-        <div className="p-8">{children}</div>
-      </main>
+      {role === "admin" ? <AdminSideRail /> : <StudentSideRail />}
+      <main className="flex-1 overflow-auto">{children}</main>
     </div>
   );
 }

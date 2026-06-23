@@ -1,0 +1,137 @@
+/**
+ * @file src/components/notes/NoteSlideForm.tsx
+ * @description SlidePanel 내 노트 인라인 작성 폼.
+ * 저장 성공 시 `onSuccess(newItem)` 콜백으로 낙관적 업데이트 트리거.
+ */
+"use client";
+
+import { useActionState, useState, useEffect } from "react";
+import dynamic from "next/dynamic";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { useFormDraft } from "@/lib/hooks/useFormDraft";
+import { createPrivateNote, type CreateNoteState } from "@/lib/actions/privateNotes";
+import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
+
+const FullEditor = dynamic(
+  () => import("@/components/editor/FullEditor").then((m) => ({ default: m.FullEditor })),
+  { ssr: false },
+);
+
+interface NoteSlideFormProps {
+  studentId: string;
+  /** 캘린더 날짜 클릭 시 기본값 (YYYY-MM-DD) */
+  defaultDate?: string;
+  onSuccess: (item: UnifiedItem) => void;
+  onClose: () => void;
+}
+
+export function NoteSlideForm({ studentId, defaultDate, onSuccess, onClose }: NoteSlideFormProps) {
+  const boundAction = createPrivateNote.bind(null, studentId);
+  const today = new Date().toISOString().slice(0, 10);
+  const [title, setTitle] = useState("");
+  const [noteDate, setNoteDate] = useState(defaultDate ?? today);
+  const [contentHtml, setContentHtml] = useState("");
+  const [state, formAction, isPending] = useActionState<CreateNoteState, FormData>(boundAction, {});
+
+  // 임시저장 복원/저장 (학생별 키)
+  const { loaded, save, clear } = useFormDraft<{ title: string; noteDate: string; contentHtml: string }>(
+    `draft:note:slide:${studentId}`,
+    (d) => {
+      setTitle(d.title ?? "");
+      if (d.noteDate) setNoteDate(d.noteDate);
+      setContentHtml(d.contentHtml ?? "");
+    },
+  );
+
+  useEffect(() => {
+    if (!loaded) return;
+    const isEmpty = !title && (!contentHtml || contentHtml === "<p></p>");
+    if (isEmpty) {
+      clear();
+      return;
+    }
+    save({ title, noteDate, contentHtml });
+  }, [loaded, title, noteDate, contentHtml, save, clear]);
+
+  // 저장 성공 시 draft 삭제 + 낙관적 업데이트 + 패널 닫기
+  useEffect(() => {
+    if (state.success && state.note) {
+      clear();
+      const { id, title: savedTitle, noteDate: savedDate, createdAt } = state.note;
+      const newItem: UnifiedItem = {
+        id,
+        type: "NOTE",
+        title: savedTitle,
+        date: new Date(savedDate ?? createdAt ?? Date.now()),
+        metadata: { contentHtml: "", authorId: studentId },
+      };
+      onSuccess(newItem);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.success]);
+
+  return (
+    <form action={formAction} className="space-y-4">
+      <input type="hidden" name="contentHtml" value={contentHtml} />
+
+      {state.error && (
+        <p className="text-sm text-destructive">{state.error}</p>
+      )}
+
+      {/* 제목 + 날짜 */}
+      <div className="flex flex-col sm:flex-row gap-3">
+        <div className="flex-1 space-y-1.5">
+          <label htmlFor="slide-note-title" className="text-sm font-medium">
+            제목 <span className="text-destructive">*</span>
+          </label>
+          <Input
+            id="slide-note-title"
+            name="title"
+            placeholder="오늘의 수업 요약"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            required
+            disabled={isPending}
+          />
+        </div>
+        <div className="space-y-1.5 sm:w-44">
+          <label htmlFor="slide-note-date" className="text-sm font-medium">날짜</label>
+          <Input
+            id="slide-note-date"
+            name="noteDate"
+            type="date"
+            value={noteDate}
+            onChange={(e) => setNoteDate(e.target.value)}
+            disabled={isPending}
+          />
+        </div>
+      </div>
+
+      {/* 에디터 */}
+      <div className="space-y-1.5">
+        <label className="text-sm font-medium">
+          내용 <span className="text-destructive">*</span>
+        </label>
+        {loaded && (
+          <FullEditor
+            initialContent={contentHtml}
+            onChange={setContentHtml}
+            placeholder="수업 내용, 연습 기록, 메모 등을 자유롭게 작성하세요..."
+            disabled={isPending}
+            minHeight="300px"
+          />
+        )}
+      </div>
+
+      <div className="flex gap-3 pt-2">
+        <Button type="submit" disabled={isPending || !contentHtml} className="flex-1">
+          {isPending ? "저장 중..." : "노트 저장"}
+        </Button>
+        <Button type="button" variant="outline" onClick={onClose} disabled={isPending}>
+          취소
+        </Button>
+      </div>
+    </form>
+  );
+}

@@ -9,7 +9,16 @@ import { createDb } from "@/db/client";
 import { diggingColumns, diggingTracks } from "@/db/schema";
 import type { DiggingColumnType } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
-import { requireAuth } from "@/lib/auth-guard";
+import { requireAuth, assertOwnerOrAdmin } from "@/lib/auth-guard";
+
+const ALLOWED_LINK_META_HOSTS = [
+  "youtube.com",
+  "youtu.be",
+  "soundcloud.com",
+  "spotify.com",
+  "music.apple.com",
+  "bandcamp.com",
+];
 
 // ─── 기본 컬럼 정의 ───────────────────────────────
 const DEFAULT_COLUMNS: {
@@ -32,6 +41,8 @@ const DEFAULT_COLUMNS: {
  * 유저의 컬럼 목록 조회. 없으면 기본 컬럼 시드.
  */
 export async function getOrSeedColumns(userId: string) {
+  await assertCanAccessDiggingUser(userId);
+
   const db = createDb();
   const existing = await db
     .select()
@@ -118,6 +129,8 @@ export async function deleteDiggingColumn(columnId: string) {
  * 유저의 모든 트랙 조회 (최신순).
  */
 export async function getDiggingTracks(userId: string) {
+  await assertCanAccessDiggingUser(userId);
+
   const db = createDb();
   const rows = await db
     .select()
@@ -136,16 +149,20 @@ export async function getDiggingTracks(userId: string) {
 
 /**
  * 트랙 추가.
+ * @returns 생성된 트랙의 id, createdAt (낙관적 업데이트용)
  */
 export async function createDiggingTrack(data: {
   linkUrl?: string;
   values: Record<string, unknown>;
-}) {
+}): Promise<{ id: string; createdAt: Date }> {
   const session = await requireAuth();
   const db = createDb();
 
+  const id = crypto.randomUUID();
+  const createdAt = new Date();
+
   await db.insert(diggingTracks).values({
-    id: crypto.randomUUID(),
+    id,
     userId: session.user.id!,
     linkUrl: data.linkUrl ?? null,
     values: JSON.stringify(data.values),
@@ -153,6 +170,8 @@ export async function createDiggingTrack(data: {
 
   revalidatePath("/dashboard/student/digging");
   revalidatePath("/dashboard/student");
+
+  return { id, createdAt };
 }
 
 /**
@@ -225,7 +244,15 @@ type LinkMeta = {
  * 기타 → Open Graph 태그 파싱.
  */
 export async function fetchLinkMeta(url: string): Promise<LinkMeta> {
+  await requireAuth();
+
   try {
+    const parsedUrl = new URL(url);
+    if (!["http:", "https:"].includes(parsedUrl.protocol)) return {};
+
+    const hostname = parsedUrl.hostname.toLowerCase();
+    if (!isAllowedLinkMetaHost(hostname)) return {};
+
     // YouTube oEmbed
     if (/youtube\.com|youtu\.be/.test(url)) {
       const res = await fetch(
@@ -275,4 +302,16 @@ export async function fetchLinkMeta(url: string): Promise<LinkMeta> {
   } catch {
     return {};
   }
+}
+
+async function assertCanAccessDiggingUser(userId: string) {
+  const session = await requireAuth();
+  assertOwnerOrAdmin(session, userId);
+}
+
+function isAllowedLinkMetaHost(hostname: string) {
+  return ALLOWED_LINK_META_HOSTS.some(
+    (allowedHost) =>
+      hostname === allowedHost || hostname.endsWith(`.${allowedHost}`),
+  );
 }

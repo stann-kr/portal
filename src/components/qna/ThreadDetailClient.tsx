@@ -5,11 +5,19 @@
  */
 "use client";
 
-import { useActionState, useState, useTransition } from "react";
+import { useActionState, useState, useEffect, useTransition } from "react";
 import { Button } from "@/components/ui/button";
-import TiptapEditor from "@/components/community/TiptapEditor";
+import dynamic from "next/dynamic";
+
+const FullEditor = dynamic(
+  () => import("@/components/editor/FullEditor").then((m) => ({ default: m.FullEditor })),
+  { ssr: false }
+);
 import { ReplyCard } from "./ReplyCard";
+import { AttachmentField } from "./AttachmentField";
+import { useFormDraft } from "@/lib/hooks/useFormDraft";
 import { createQnaReply, updateThreadStatus, type CreateReplyState } from "@/lib/actions/qna";
+import { QNA_STATUS_LABELS } from "@/lib/qna-status";
 import type { QnaStatus } from "@/db/schema";
 
 type Reply = {
@@ -30,12 +38,6 @@ interface ThreadDetailClientProps {
   isClosed: boolean;
 }
 
-const STATUS_LABELS: Record<QnaStatus, string> = {
-  OPEN: "미답변",
-  ANSWERED: "답변완료",
-  CLOSED: "종료",
-};
-
 export function ThreadDetailClient({
   threadId,
   status,
@@ -44,6 +46,8 @@ export function ThreadDetailClient({
   isClosed,
 }: ThreadDetailClientProps) {
   const [contentHtml, setContentHtml] = useState("");
+  const [attachmentUrl, setAttachmentUrl] = useState("");
+  const [editorKey, setEditorKey] = useState(0);
   const [isPending, startTransition] = useTransition();
 
   const boundAction = createQnaReply.bind(null, threadId);
@@ -51,6 +55,36 @@ export function ThreadDetailClient({
     CreateReplyState,
     FormData
   >(boundAction, {});
+
+  // 스레드별 임시저장 복원/저장
+  const { loaded, save, clear } = useFormDraft<{ contentHtml: string; attachmentUrl: string }>(
+    `draft:qna:reply:${threadId}`,
+    (d) => {
+      setContentHtml(d.contentHtml ?? "");
+      setAttachmentUrl(d.attachmentUrl ?? "");
+    },
+  );
+
+  useEffect(() => {
+    if (!loaded) return;
+    const isEmpty = (!contentHtml || contentHtml === "<p></p>") && !attachmentUrl;
+    if (isEmpty) {
+      clear();
+      return;
+    }
+    save({ contentHtml, attachmentUrl });
+  }, [loaded, contentHtml, attachmentUrl, save, clear]);
+
+  // 답변 등록 성공 시 draft 삭제 + 폼 초기화 (에디터 remount)
+  useEffect(() => {
+    if (replyState.success) {
+      clear();
+      setContentHtml("");
+      setAttachmentUrl("");
+      setEditorKey((k) => k + 1);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [replyState.success]);
 
   const handleStatusChange = (newStatus: QnaStatus) => {
     startTransition(() => updateThreadStatus(threadId, newStatus));
@@ -88,7 +122,7 @@ export function ThreadDetailClient({
                   : "border border-border text-muted-foreground hover:bg-accent"
               } disabled:cursor-default`}
             >
-              {STATUS_LABELS[s]}
+              {QNA_STATUS_LABELS[s]}
             </button>
           ))}
         </div>
@@ -104,9 +138,17 @@ export function ThreadDetailClient({
           {replyState.error && (
             <p className="text-sm text-destructive">{replyState.error}</p>
           )}
-          <div className="rounded-xl border border-border overflow-hidden">
-            <TiptapEditor onSubmit={(html) => setContentHtml(html)} />
-          </div>
+          {loaded && (
+            <FullEditor
+              key={editorKey}
+              initialContent={contentHtml}
+              onChange={setContentHtml}
+              placeholder={isAdmin ? "답변을 작성하세요..." : "추가 질문을 입력하세요..."}
+              disabled={isReplying}
+              minHeight="200px"
+            />
+          )}
+          <AttachmentField value={attachmentUrl} onChange={setAttachmentUrl} disabled={isReplying} />
           <Button type="submit" disabled={isReplying} className="gap-2">
             {isReplying ? "등록 중..." : isAdmin ? "답변 등록" : "질문 추가"}
           </Button>

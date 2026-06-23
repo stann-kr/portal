@@ -3,6 +3,142 @@
 프로젝트 기획부터 개발, 배포 및 유지보수 전 단계를 아우르는 주요 변경 사항을 기록함.
 각 변경 사항은 [버전명] - 날짜 형식으로 작성하며, 추가(Added), 수정(Changed), 제거(Removed), 수정/해결(Fixed) 등으로 분류함.
 
+## [Unreleased] - 2026-06-23
+
+### Fixed — note_date migration + calendar feed access + student portal community create flow
+
+- `drizzle/0007_private_notes_note_date.sql` — `private_notes.note_date` 누락 migration 추가
+- `src/lib/calendar-feed.ts` — 학생별 signed `.ics` feed token 생성/검증 유틸 신규
+- `src/app/dashboard/admin/students/[id]/page.tsx` — 어드민 학생 상세에서 학생별 signed calendar feed URL 생성 후 OverviewTab에 전달
+- `src/components/admin/OverviewTab.tsx` — 하드코딩 `/api/calendar/{studentId}` 대신 signed URL prop 사용
+- `src/app/api/calendar/[studentId]/route.ts` — admin/session 또는 signed token으로만 접근 허용하도록 수정. 더 이상 admin-only `getStudentById()`에 의존하지 않음
+- `src/lib/actions/posts.ts` — `returnTo=student-portal`일 때 redirect 대신 `{ success, postId }` 반환하도록 분기 추가
+- `src/components/student-portal/CommunitySection.tsx` — 포털 내부 글 작성 성공 판정을 `state.success` 기반으로 수정하고 `returnTo=student-portal` hidden field 추가
+- 검증:
+  - `npm run lint` 통과
+  - `npx tsc --noEmit` 통과
+  - `npm run build` 통과
+  - `npm run build:worker` 통과
+  - fresh SQLite 시뮬레이션으로 `0000`~`0007` 순차 적용 성공 확인
+- 주의:
+  - 현재 로컬 Wrangler D1에는 이미 `note_date` 컬럼이 선반영되어 있어 `npm run db:migrate`는 `duplicate column name: note_date`로 실패. 즉 migration 파일 자체 문제라기보다 로컬 DB 상태와 migration 기록 사이에 차이가 있는 상태
+
+### Added — Q&A 첨부 업로드 + 노트/Q&A 작성 폼 임시저장
+
+- `src/lib/hooks/useFormDraft.ts` — 작성 폼 임시저장(draft) 영속화 훅 신규. localStorage 기반, 마운트 시 1회 복원·변경 시 디바운스(500ms) 저장·제출 성공 시 삭제. 복원을 `useEffect` 내에서만 수행하여 하이드레이션 안전 보장
+- `src/components/qna/AttachmentField.tsx` — Q&A 첨부 파일 필드 신규. `FileUploader`(R2 presigned 업로드)로 publicUrl 획득 → `name="attachmentUrl"` hidden input 전송, 업로드 후 파일 칩 + 제거 버튼 노출
+- `src/lib/actions/qna.ts` — `parseAttachmentUrl` 헬퍼 추가(http/https + 길이 2048 제한 검증). `createQnaThreadInline`(첫 질문 reply)·`createQnaReply`에 `attachmentUrl` 저장 반영. `CreateReplyState`에 `success` 플래그 추가(답변 등록 성공 시 draft 삭제 신호)
+- `src/components/qna/QnaSlideForm.tsx` — 제목/내용 제어형 전환, 첨부 필드 추가, 제목·내용·첨부 URL draft 자동 저장/복원
+- `src/components/qna/ThreadDetailClient.tsx` — 답변 폼에 첨부 필드 추가, 내용·첨부 URL 스레드별(`draft:qna:reply:{threadId}`) 자동 저장/복원, 등록 성공 시 폼 초기화(에디터 remount)
+- `src/components/notes/NoteSlideForm.tsx` — 제목/날짜 제어형 전환, 제목·날짜·내용 학생별(`draft:note:slide:{studentId}`) draft 자동 저장/복원
+- `src/components/notes/PrivateNoteForm.tsx` — 제목/날짜 제어형 전환, 학생별(`draft:note:full:{studentId}`) draft 자동 저장/복원, 저장 성공 시 폼 초기화
+
+### Added — 학생 포털 탭 상태 영속화 + 리스트 검색
+
+- `src/components/student-portal/StudentPortalClient.tsx` — 상단 섹션 탭(공지/캘린더/커뮤니티) localStorage 영속화. 마운트 후 복원 방식으로 하이드레이션 불일치 방지
+- `src/components/student-portal/CalendarSection.tsx` — 내부 뷰 탭(캘린더/일별/전체/커리큘럼/과제) 제어형 전환 + localStorage 영속화
+- `src/components/student-portal/CommunitySection.tsx` — 제목·작성자 클라이언트 검색 입력 추가 (보드 타입 필터와 결합). 검색 결과 없음/게시물 없음 빈 상태 구분
+- `src/components/student-portal/AllItemsView.tsx` — 제목 클라이언트 검색 입력 추가 (타입 토글과 결합). 검색 결과 없음/항목 없음 빈 상태 구분
+
+## [Unreleased] - 2026-06-20
+
+### Fixed — 커뮤니티 댓글 저장형 XSS 차단
+- `src/lib/actions/comments.ts` — plain-text 댓글 입력을 HTML entity escape 후 `<p>...</p>`로 저장하도록 변경
+- 영향: `dangerouslySetInnerHTML`로 렌더링되는 댓글 경로에서 `<script>`, `onerror` 등 사용자 입력 HTML이 실행되지 않고 문자 그대로 표시됨
+
+## [v2.3.0] - 2026-03-30
+
+### Added — 동적 원페이지 포털 + 디깅 인라인 추가 + 노트 날짜 선택
+
+#### Phase 1: 노트 날짜 선택
+- `src/db/schema.ts` — `privateNotes` 테이블에 `noteDate` 컬럼 추가 (nullable, 미입력 시 `createdAt` fallback)
+- `src/lib/actions/privateNotes.ts` — `createPrivateNote`: `noteDate` FormData 파싱 + INSERT + 반환값 확장 (`note: { id, title, noteDate, createdAt }`)
+- `src/lib/actions/unifiedItems.ts` — NOTE 날짜 기준 `noteDate ?? createdAt ?? Date.now()` fallback 적용
+- `src/components/notes/NoteFullForm.tsx` — 날짜 선택 input 추가 (제목 옆 레이아웃)
+- `src/components/notes/PrivateNoteForm.tsx` — 날짜 선택 input 추가
+
+#### Phase 2: SlidePanel 인라인 작성 + 낙관적 업데이트
+- `src/components/notes/NoteSlideForm.tsx` — 신규. SlidePanel 내 노트 인라인 작성 폼 (성공 시 `onSuccess(UnifiedItem)` 콜백)
+- `src/components/qna/QnaSlideForm.tsx` — 신규. SlidePanel 내 Q&A 인라인 작성 폼 (성공 시 `onSuccess(UnifiedItem)` 콜백)
+- `src/lib/actions/qna.ts` — `CreateThreadInlineState` 반환값 확장 (`thread: { id, title, createdAt }`)
+- `src/components/student-portal/SlidePanel.tsx` — `"xl"` 사이즈 추가 (`max-w-3xl`)
+- `src/components/student-portal/StudentPortalClient.tsx` — `unifiedItems` → `useState` 승격, `addItem` 콜백 정의, 캘린더 섹션 `display:none` 방식 상시 마운트
+- `src/components/student-portal/CalendarSection.tsx` — `onAddItem` prop 수신, 노트/Q&A SlidePanel + NoteSlideForm/QnaSlideForm 통합
+- `src/components/student-portal/CreateEntryDropdown.tsx` — `onOpenNotePanel`/`onOpenQnaPanel` prop 추가 (router.push 대체 콜백)
+
+#### Phase 3: 디깅 인라인 추가 행
+- `src/components/digging/InlineAddRow.tsx` — 신규. 테이블 하단 트랙 즉시 추가 행 (Enter/+ 버튼, 링크 메타 자동 추출)
+- `src/lib/actions/digging.ts` — `createDiggingTrack` 반환값 확장 (`{ id, createdAt }`, 낙관적 업데이트용)
+- `src/components/digging/DiggingBoard.tsx` — InlineAddRow 통합, `handleTrackCreated` state 업데이트로 즉시 반영
+
+---
+
+## [v2.2.0] - 2026-03-29
+
+### Added — 풀 페이지 리치텍스트 에디터 + 마크다운 지원
+
+#### 에디터 (FullEditor)
+- `src/components/editor/FullEditor.tsx` — 신규. Tiptap v3 기반 풀 사양 에디터
+  - 풀 툴바: 실행취소/다시실행, 헤딩(H1-H3), Bold/Italic/Underline/Strikethrough/Highlight, 정렬(Left/Center/Right), 리스트(Bullet/Ordered/Task), 인용구, 코드블록(lowlight 구문강조), 링크, 이미지, 유튜브, 테이블
+  - 마크다운 모드 토글: WYSIWYG ↔ 마크다운 textarea 전환 (tiptap-markdown)
+- `src/app/globals.css` — ProseMirror 에디터 스타일 추가 (테이블, 코드블록, task-list, 헤딩, 형광펜, 링크 등)
+
+#### 풀 페이지 라우트
+- `src/components/notes/NoteFullForm.tsx` — 신규. 노트 작성 클라이언트 폼 (FullEditor 사용)
+- `src/app/dashboard/student/notes/new/page.tsx` — 신규. 학생 노트 작성 풀 페이지
+
+#### 진입점 개선
+- `src/components/student-portal/CreateEntryDropdown.tsx` — 신규. '+' 버튼 드롭다운 메뉴
+  - 노트/Q&A → 풀 페이지 라우팅, 일정/디깅 → 기존 다이얼로그 유지
+
+### Changed — 에디터 마이그레이션 및 팝업 제거
+
+- `src/app/dashboard/qna/new/page.tsx` — TiptapEditor → FullEditor 교체, 에디터 높이 풀 페이지 수준으로 확장
+- `src/app/community/new/page.tsx` — TiptapEditor → FullEditor 교체
+- `src/components/qna/ThreadDetailClient.tsx` — TiptapEditor → FullEditor 교체
+- `src/components/notes/PrivateNoteForm.tsx` — TiptapEditor → FullEditor 교체
+- `src/components/student-portal/CalendarSection.tsx` — UnifiedCreateDialog → CreateEntryDropdown 교체
+
+### Removed — 구 팝업/인라인 폼 제거
+
+- `src/components/student-portal/UnifiedCreateDialog.tsx` — 삭제 (CreateEntryDropdown으로 대체)
+- `src/components/notes/NoteInlineForm.tsx` — 삭제 (NoteFullForm 풀 페이지로 대체)
+- `src/components/qna/QnaInlineForm.tsx` — 삭제 (/qna/new 풀 페이지로 대체)
+- `src/components/community/TiptapEditor.tsx` — 삭제 (FullEditor로 전면 교체)
+
+### Dependencies
+- 추가: `@tiptap/extension-link`, `@tiptap/extension-table` (+ row/cell/header), `@tiptap/extension-code-block-lowlight`, `@tiptap/extension-placeholder`, `@tiptap/extension-underline`, `@tiptap/extension-text-align`, `@tiptap/extension-highlight`, `@tiptap/extension-typography`, `@tiptap/extension-bubble-menu`, `@tiptap/extension-floating-menu`, `@tiptap/extension-task-list`, `@tiptap/extension-task-item`, `tiptap-markdown`, `lowlight`, `turndown`, `@radix-ui/react-dropdown-menu`
+
+---
+
+## [v2.1.0] - 2026-03-28
+
+### Fixed — 캘린더 디깅/노트/Q&A 추가 불가 버그
+- `src/components/student-portal/UnifiedCreateDialog.tsx` — 안내 텍스트 → 실제 인라인 폼으로 교체. 뒤로가기 버튼, 타입별 폼 렌더링
+- `src/components/student-portal/CalendarSection.tsx` — `studentId`, `diggingColumns` prop을 UnifiedCreateDialog에 전달. `headerSlot` prop 추가
+- `src/components/digging/AddTrackInlineForm.tsx` — 신규. Dialog 없는 순수 디깅 폼 (fetchLinkMeta, StarRating, CamelotPicker 재사용)
+- `src/components/digging/AddTrackDialog.tsx` — AddTrackInlineForm 래퍼로 리팩토링
+- `src/components/notes/NoteInlineForm.tsx` — 신규. Dialog 없는 순수 노트 폼 (학생 본인/어드민 작성 가능)
+- `src/components/qna/QnaInlineForm.tsx` — 신규. Dialog 없는 순수 Q&A 폼
+- `src/lib/actions/qna.ts` — `createQnaThreadInline` 추가 (redirect 없이 결과만 반환)
+
+### Added — 어드민 원페이지 전환
+- `src/components/admin-portal/AdminPortalClient.tsx` — 신규. 4탭 원페이지 오케스트레이터 (공지/캘린더/커뮤니티/학생관리)
+- `src/components/admin-portal/AdminSideRail.tsx` — 신규. 56px 어드민 아이콘 레일
+- `src/components/admin-portal/StudentManagementSection.tsx` — 신규. 통계 카드 + 학생 로스터 + 인라인 확장 상세
+- `src/components/admin-portal/StudentFilterDropdown.tsx` — 신규. 캘린더 학생 필터 드롭다운
+- `src/lib/actions/unifiedItems.ts` — `getUnifiedItemsForStudent(studentId)` 추가 (어드민 전용)
+- `src/app/dashboard/admin/page.tsx` — RSC 셸 재구성. AdminPortalClient로 전환
+- `src/app/dashboard/layout.tsx` — 어드민 240px 사이드바 → AdminSideRail 레일로 교체
+
+### Changed — 개념 분리 및 UI 현대화
+- `src/components/student-portal/CommunitySection.tsx` — "전체 학생 소통 공간" 서브헤딩 추가
+- `src/app/globals.css` — Notion 스타일 디자인 토큰 조정 (border, muted, accent 색상)
+- `src/components/ui/button.tsx` — 호버 효과 정제, 크기 미세 조정
+- `src/components/ui/dialog.tsx` — backdrop blur 적용, shadow 축소
+- `src/components/student-portal/StudentPortalClient.tsx` — 탭 바 스타일 Notion화
+- `src/components/admin-portal/AdminPortalClient.tsx` — 탭 바 스타일 Notion화
+
 ## [v2.0.0] - 2026-03-27
 
 ### Added — 학생 원페이지 포털 (Notion 스타일 리디자인)

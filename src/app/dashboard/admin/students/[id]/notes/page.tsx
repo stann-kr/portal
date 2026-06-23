@@ -11,6 +11,8 @@ import { getPrivateNotes } from "@/lib/actions/privateNotes";
 import { PrivateNoteForm } from "@/components/notes/PrivateNoteForm";
 import { DeleteNoteButton } from "@/components/notes/DeleteNoteButton";
 
+type PrivateNote = Awaited<ReturnType<typeof getPrivateNotes>>[number];
+
 export default async function AdminStudentNotesPage({
   params,
 }: {
@@ -68,7 +70,7 @@ export default async function AdminStudentNotesPage({
             </div>
           ) : (
             <div className="space-y-4">
-              {notes.map((note: any) => (
+              {notes.map((note: PrivateNote) => (
                 <div key={note.id} className="p-5 rounded-xl border border-border bg-card shadow-sm space-y-3">
                   <div className="flex items-start justify-between">
                     <div>

@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { AddTrackDialog } from "./AddTrackDialog";
 import { ColumnManager } from "./ColumnManager";
+import { InlineAddRow } from "./InlineAddRow";
 import { StarRating } from "./StarRating";
 import { CamelotPicker } from "./CamelotPicker";
 import {
@@ -216,7 +217,7 @@ export function DiggingBoard({
   initialTracks,
   readonly = false,
 }: DiggingBoardProps) {
-  const [columns, setColumns] = useState<Column[]>(initialColumns);
+  const [columns] = useState<Column[]>(initialColumns);
   const [tracks, setTracks] = useState<Track[]>(initialTracks);
   const [addOpen, setAddOpen] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
@@ -261,7 +262,11 @@ export function DiggingBoard({
   const toggleDate = (date: string) => {
     setCollapsedDates((prev) => {
       const next = new Set(prev);
-      next.has(date) ? next.delete(date) : next.add(date);
+      if (next.has(date)) {
+        next.delete(date);
+      } else {
+        next.add(date);
+      }
       return next;
     });
   };
@@ -317,7 +322,15 @@ export function DiggingBoard({
     getCoreRowModel: getCoreRowModel(),
   });
 
-  const handleRefresh = useCallback(() => window.location.reload(), []);
+  const handleTrackCreated = useCallback(
+    (newTrack: Track) => {
+      setTracks((prev) => [newTrack, ...prev]);
+    },
+    [],
+  );
+
+  // ColumnManager 성공 시 서버에서 최신 컬럼 목록 재조회
+  const handleColumnsRefresh = useCallback(() => window.location.reload(), []);
 
   return (
     <div className="space-y-4">
@@ -404,7 +417,7 @@ export function DiggingBoard({
                 </td>
               </tr>
             ) : (
-              groupedTracks.map(([date, dateRows]) => {
+              groupedTracks.map(([date, dateRows]: [string, Track[]]) => {
                 const collapsed = collapsedDates.has(date);
                 // 각 날짜 그룹마다 TanStack 인스턴스 없이 직접 렌더
                 return (
@@ -463,24 +476,36 @@ export function DiggingBoard({
                 );
               })
             )}
+
+            {/* 인라인 추가 행 (readonly 모드 제외) */}
+            {!readonly && (
+              <InlineAddRow
+                columns={columns}
+                onTrackCreated={handleTrackCreated}
+              />
+            )}
           </tbody>
         </table>
       </div>
 
-      {/* 트랙 추가 다이얼로그 */}
+      {/* 트랙 추가 다이얼로그 (AddTrackDialog는 대안 경로 유지) */}
       {!readonly && (
         <>
           <AddTrackDialog
             open={addOpen}
             onOpenChange={setAddOpen}
             columns={columns}
-            onSuccess={handleRefresh}
+            onSuccess={() => {
+              setAddOpen(false);
+              // AddTrackDialog는 서버 재검증으로 처리
+              window.location.reload();
+            }}
           />
           <ColumnManager
             open={manageOpen}
             onOpenChange={setManageOpen}
             columns={columns}
-            onSuccess={handleRefresh}
+            onSuccess={handleColumnsRefresh}
           />
         </>
       )}

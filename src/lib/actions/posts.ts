@@ -13,7 +13,8 @@ import { createDb } from "@/db/client";
 import { posts, profiles } from "@/db/schema";
 import type { BoardType } from "@/db/schema";
 import { and, eq, desc } from "drizzle-orm";
-import { requireAuth } from "@/lib/auth-guard";
+import { requireAuth, assertOwnerOrAdmin } from "@/lib/auth-guard";
+import { sanitizeHtml } from "@/lib/sanitize-html";
 
 const VALID_CATEGORIES = [
   "gear-and-setup",
@@ -21,7 +22,11 @@ const VALID_CATEGORIES = [
   "terminal-info",
   "general",
 ] as const;
-type Category = (typeof VALID_CATEGORIES)[number];
+type Category =
+  | "gear-and-setup"
+  | "track-id"
+  | "terminal-info"
+  | "general";
 
 // ─── 공통 select 필드 ──────────────────────────
 
@@ -83,7 +88,11 @@ export async function getPostById(postId: string) {
 
 // ─── 생성 ────────────────────────────────────────
 
-export type CreatePostState = { error?: string };
+export type CreatePostState = {
+  error?: string;
+  success?: boolean;
+  postId?: string;
+};
 
 /**
  * 게시물 작성.
@@ -97,16 +106,22 @@ export async function createPost(
   const session = await requireAuth();
 
   const title = (formData.get("title") as string)?.trim();
-  const category = (formData.get("category") as string) || "general";
+  const categoryInput = (formData.get("category") as string) || "general";
+  const category = VALID_CATEGORIES.includes(categoryInput as Category)
+    ? categoryInput
+    : "general";
   const contentHtml = formData.get("contentHtml") as string;
   const boardType = (formData.get("boardType") as BoardType) || "GENERAL";
   const mediaUrl = (formData.get("mediaUrl") as string) || null;
   const isPinnedRaw = formData.get("isPinned");
   const isPinned = isPinnedRaw === "on" || isPinnedRaw === "true";
+  const returnTo = (formData.get("returnTo") as string) || null;
 
   if (!title) return { error: "제목을 입력해주세요." };
   if (!contentHtml || contentHtml === "<p></p>")
     return { error: "내용을 입력해주세요." };
+
+  const sanitizedContentHtml = sanitizeHtml(contentHtml);
 
   // ANNOUNCEMENT 권한 체크
   if (boardType === "ANNOUNCEMENT" && session.user.role !== "admin") {
@@ -124,10 +139,14 @@ export async function createPost(
     isPinned: boardType === "ANNOUNCEMENT" ? isPinned : false,
     mediaUrl: boardType === "FEEDBACK" ? mediaUrl : null,
     title,
-    contentHtml,
+    contentHtml: sanitizedContentHtml,
   });
 
   revalidatePath("/community");
+  if (returnTo === "student-portal") {
+    revalidatePath("/dashboard/student");
+    return { success: true, postId: id };
+  }
   redirect(`/community/${id}`);
 }
 
@@ -140,12 +159,20 @@ export async function deletePost(postId: string) {
   const session = await requireAuth();
   const db = createDb();
 
-  const condition =
-    session.user.role === "admin"
-      ? eq(posts.id, postId)
-      : and(eq(posts.id, postId), eq(posts.authorId, session.user.id!));
+  const rows = await db
+    .select({ authorId: posts.authorId })
+    .from(posts)
+    .where(eq(posts.id, postId))
+    .limit(1);
 
-  await db.delete(posts).where(condition);
+  const post = rows[0];
+  if (!post) {
+    throw new Error("Not found");
+  }
+
+  assertOwnerOrAdmin(session, post.authorId);
+
+  await db.delete(posts).where(eq(posts.id, postId));
   revalidatePath("/community");
   redirect("/community");
 }

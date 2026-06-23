@@ -52,6 +52,7 @@ interface Student {
 
 interface OverviewTabProps {
   studentId: string;
+  icsUrl: string;
   student: Student;
   modules: Module[];
   lessons: Lesson[];
@@ -149,6 +150,7 @@ function AddLessonForm({
 
 export function OverviewTab({
   studentId,
+  icsUrl,
   student,
   modules,
   lessons,
@@ -169,8 +171,6 @@ export function OverviewTab({
     });
   };
 
-  const icsUrl = `/api/calendar/${studentId}`;
-
   return (
     <div className="space-y-10">
       {/* 헤더 */}
@@ -179,7 +179,7 @@ export function OverviewTab({
           href="/dashboard/admin"
           className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
         >
-          <ArrowLeft className="w-4 h-4" /> Admin Dashboard
+          <ArrowLeft className="w-4 h-4" /> 어드민 포털
         </Link>
         <div>
           <h1 className="text-2xl font-semibold tracking-tight mt-2">

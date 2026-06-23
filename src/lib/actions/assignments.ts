@@ -9,8 +9,8 @@
 import { revalidatePath } from "next/cache";
 import { createDb } from "@/db/client";
 import { assignments } from "@/db/schema";
-import { and, eq, desc, count } from "drizzle-orm";
-import { requireAuth, requireAdmin } from "@/lib/auth-guard";
+import { eq, desc } from "drizzle-orm";
+import { requireAuth, requireAdmin, assertOwnerOrAdmin } from "@/lib/auth-guard";
 
 /** 지원하는 미디어 플랫폼 URL 패턴 */
 const MEDIA_URL_PATTERNS = [
@@ -47,7 +47,6 @@ export async function submitAssignment(
     return { error: "학생만 과제를 제출할 수 있습니다." };
 
   const mediaUrl = (formData.get("mediaUrl") as string)?.trim();
-  const title = (formData.get("title") as string)?.trim();
 
   if (!mediaUrl) return { error: "미디어 URL을 입력해주세요." };
   if (!isValidMediaUrl(mediaUrl)) {
@@ -102,13 +101,20 @@ export async function getAssignmentsByStudent(studentId: string) {
  * 과제 단건 조회 (ID로).
  */
 export async function getAssignmentById(assignmentId: string) {
+  const session = await requireAuth();
   const db = createDb();
   const rows = await db
     .select()
     .from(assignments)
     .where(eq(assignments.id, assignmentId))
     .limit(1);
-  return rows[0] ?? null;
+
+  const assignment = rows[0] ?? null;
+  if (!assignment) return null;
+
+  assertOwnerOrAdmin(session, assignment.studentId);
+
+  return assignment;
 }
 
 /**

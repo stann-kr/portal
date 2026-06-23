@@ -17,20 +17,14 @@ import {
   feedbacks,
 } from "@/db/schema";
 import type { CalendarEventType, QnaStatus } from "@/db/schema";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, inArray } from "drizzle-orm";
 import type { InferSelectModel } from "drizzle-orm";
 import { requireAuth } from "@/lib/auth-guard";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 
-// ─── 집계 서버 액션 ───────────────────────────────
+// ─── 공통 조회 헬퍼 ──────────────────────────────
 
-/**
- * 학생 본인의 모든 날짜 기반 엔트리를 단일 UnifiedItem[] 로 반환.
- * 5개 테이블을 병렬 조회 후 date desc 정렬.
- */
-export async function getUnifiedItems(): Promise<UnifiedItem[]> {
-  const session = await requireAuth();
-  const userId = session.user.id!;
+async function fetchUnifiedItemsForUser(userId: string): Promise<UnifiedItem[]> {
   const db = createDb();
 
   // 5개 테이블 + 디깅 컬럼 병렬 조회
@@ -41,7 +35,6 @@ export async function getUnifiedItems(): Promise<UnifiedItem[]> {
     columns,
     threads,
     myAssignments,
-    allFeedbacks,
   ] = await Promise.all([
     db.select().from(calendarEvents).where(eq(calendarEvents.userId, userId)).orderBy(desc(calendarEvents.startTime)) as Promise<InferSelectModel<typeof calendarEvents>[]>,
     db.select().from(privateNotes).where(eq(privateNotes.studentId, userId)).orderBy(desc(privateNotes.createdAt)) as Promise<InferSelectModel<typeof privateNotes>[]>,
@@ -49,8 +42,15 @@ export async function getUnifiedItems(): Promise<UnifiedItem[]> {
     db.select().from(diggingColumns).where(eq(diggingColumns.userId, userId)) as Promise<InferSelectModel<typeof diggingColumns>[]>,
     db.select().from(qnaThreads).where(eq(qnaThreads.studentId, userId)).orderBy(desc(qnaThreads.createdAt)) as Promise<InferSelectModel<typeof qnaThreads>[]>,
     db.select().from(assignments).where(eq(assignments.studentId, userId)).orderBy(desc(assignments.submittedAt)) as Promise<InferSelectModel<typeof assignments>[]>,
-    db.select({ assignmentId: feedbacks.assignmentId }).from(feedbacks) as Promise<{ assignmentId: string }[]>,
   ]);
+
+  const assignmentIds = myAssignments.map((assignment) => assignment.id);
+  const scopedFeedbacks = assignmentIds.length
+    ? await db
+        .select({ assignmentId: feedbacks.assignmentId })
+        .from(feedbacks)
+        .where(inArray(feedbacks.assignmentId, assignmentIds))
+    : [];
 
   // 디깅 track name 컬럼 ID 탐색
   const trackNameColId = columns.find(
@@ -62,7 +62,7 @@ export async function getUnifiedItems(): Promise<UnifiedItem[]> {
 
   // 과제별 피드백 카운트 맵
   const feedbackCountMap: Record<string, number> = {};
-  for (const f of allFeedbacks) {
+  for (const f of scopedFeedbacks) {
     feedbackCountMap[f.assignmentId] = (feedbackCountMap[f.assignmentId] ?? 0) + 1;
   }
 
@@ -88,8 +88,8 @@ export async function getUnifiedItems(): Promise<UnifiedItem[]> {
       id: n.id,
       type: "NOTE",
       title: n.title,
-      date: new Date(n.createdAt ?? Date.now()),
-      metadata: { contentHtml: n.contentHtml, authorId: n.authorId },
+      date: new Date(n.noteDate ?? n.createdAt ?? Date.now()),
+      metadata: { contentHtml: n.contentHtml, authorId: n.authorId, noteDate: n.noteDate },
     });
   }
 
@@ -150,4 +150,24 @@ export async function getUnifiedItems(): Promise<UnifiedItem[]> {
   items.sort((a, b) => b.date.getTime() - a.date.getTime());
 
   return items;
+}
+
+// ─── 집계 서버 액션 ───────────────────────────────
+
+/**
+ * 학생 본인의 모든 날짜 기반 엔트리를 단일 UnifiedItem[] 로 반환.
+ */
+export async function getUnifiedItems(): Promise<UnifiedItem[]> {
+  const session = await requireAuth();
+  return fetchUnifiedItemsForUser(session.user.id!);
+}
+
+/**
+ * 특정 학생의 모든 날짜 기반 엔트리를 단일 UnifiedItem[] 로 반환 (어드민 전용).
+ * @param studentId 조회 대상 학생 ID
+ */
+export async function getUnifiedItemsForStudent(studentId: string): Promise<UnifiedItem[]> {
+  const session = await requireAuth();
+  if (session.user.role !== "admin") throw new Error("Admin only");
+  return fetchUnifiedItemsForUser(studentId);
 }

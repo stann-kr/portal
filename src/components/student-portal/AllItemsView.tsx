@@ -5,8 +5,10 @@
 "use client";
 
 import { useState } from "react";
+import { Search } from "lucide-react";
 import type { UnifiedItem, UnifiedItemType } from "@/lib/utils/unifiedItemUtils";
 import { getUnifiedItemColor } from "@/lib/utils/unifiedItemUtils";
+import { Input } from "@/components/ui/input";
 import { SlidePanel } from "./SlidePanel";
 import { UnifiedItemDetail } from "./UnifiedItemDetail";
 
@@ -43,6 +45,7 @@ export function AllItemsView({ items }: AllItemsViewProps) {
   );
   const [selectedItem, setSelectedItem] = useState<UnifiedItem | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
+  const [query, setQuery] = useState("");
 
   const toggleType = (type: UnifiedItemType) => {
     setActiveTypes((prev) => {
@@ -57,7 +60,13 @@ export function AllItemsView({ items }: AllItemsViewProps) {
     });
   };
 
-  const filtered = items.filter((i) => activeTypes.has(i.type));
+  // 타입 토글 + 제목 검색 결합
+  const normalizedQuery = query.trim().toLowerCase();
+  const filtered = items.filter((i) => {
+    if (!activeTypes.has(i.type)) return false;
+    if (!normalizedQuery) return true;
+    return i.title.toLowerCase().includes(normalizedQuery);
+  });
 
   // 타입별 색상 샘플 맵
   const colorSamples = Object.fromEntries(
@@ -96,10 +105,25 @@ export function AllItemsView({ items }: AllItemsViewProps) {
         })}
       </div>
 
+      {/* 검색 바 */}
+      <div className="relative w-full sm:w-64 mb-4">
+        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+        <Input
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="제목 검색"
+          className="h-8 pl-8 text-xs"
+          aria-label="항목 검색"
+        />
+      </div>
+
       {/* 아이템 리스트 */}
       {filtered.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-16 text-muted-foreground gap-2">
-          <p className="text-sm">항목이 없습니다.</p>
+          <p className="text-sm">
+            {normalizedQuery ? "검색 결과가 없습니다." : "항목이 없습니다."}
+          </p>
         </div>
       ) : (
         <div className="space-y-2">

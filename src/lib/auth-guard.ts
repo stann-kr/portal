@@ -7,8 +7,7 @@
 import { auth } from "@/auth";
 import type { Session } from "next-auth";
 
-/** 인증된 세션에서 user.id 및 role이 보장된 타입 */
-type AuthSession = Session & {
+export type AuthSession = Session & {
   user: NonNullable<Session["user"]> & { id: string };
 };
 
@@ -30,4 +29,10 @@ export async function requireAdmin(): Promise<AuthSession> {
   const session = await requireAuth();
   if (session.user.role !== "admin") throw new Error("Admin only");
   return session;
+}
+
+export function assertOwnerOrAdmin(session: AuthSession, ownerUserId: string) {
+  if (session.user.role !== "admin" && session.user.id !== ownerUserId) {
+    throw new Error("Unauthorized");
+  }
 }

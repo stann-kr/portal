@@ -15,7 +15,12 @@ import { ArrowLeft, Send, Megaphone, MessageSquare, Music2 } from "lucide-react"
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { createPost, type CreatePostState } from "@/lib/actions/posts";
-import TiptapEditor from "@/components/community/TiptapEditor";
+import dynamic from "next/dynamic";
+
+const FullEditor = dynamic(
+  () => import("@/components/editor/FullEditor").then((m) => ({ default: m.FullEditor })),
+  { ssr: false }
+);
 import { getCategories } from "@/lib/actions/categories";
 import { FileUploader } from "@/components/upload/FileUploader";
 
@@ -192,14 +197,16 @@ function NewPostForm() {
           />
         </div>
 
-        {/* 내용 (TiptapEditor) */}
+        {/* 내용 */}
         <div className="space-y-1.5">
           <label className="text-sm font-medium">
             내용 <span className="text-destructive">*</span>
           </label>
-          <div className="rounded-xl border border-border overflow-hidden">
-            <TiptapEditor onSubmit={(html) => setContentHtml(html)} />
-          </div>
+          <FullEditor
+            onChange={setContentHtml}
+            placeholder="게시물 내용을 작성하세요..."
+            disabled={isPending}
+          />
         </div>
 
         {/* 버튼 */}

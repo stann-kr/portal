@@ -83,6 +83,8 @@ export const privateNotes = sqliteTable("private_notes", {
     .notNull(),
   title: text("title").notNull(),
   contentHtml: text("content_html").notNull(),
+  /** 사용자가 지정한 노트 날짜. 없으면 createdAt fallback. */
+  noteDate: integer("note_date", { mode: "timestamp" }),
   createdAt: integer("created_at", { mode: "timestamp" }).default(
     sql`(strftime('%s', 'now'))`,
   ),

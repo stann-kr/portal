@@ -12,6 +12,15 @@ import { comments, profiles } from "@/db/schema";
 import { and, eq, asc } from "drizzle-orm";
 import { requireAuth } from "@/lib/auth-guard";
 
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 // ───────────────────────────────────────────────
 // 조회
 // ───────────────────────────────────────────────
@@ -64,7 +73,7 @@ export async function createComment(
     id: crypto.randomUUID(),
     postId,
     authorId: session.user.id!,
-    contentHtml: `<p>${content}</p>`,
+    contentHtml: `<p>${escapeHtml(content)}</p>`,
   });
 
   revalidatePath(`/community/${postId}`);

@@ -6,12 +6,11 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
-import DOMPurify from "isomorphic-dompurify";
 import { createDb } from "@/db/client";
 import { privateNotes, profiles } from "@/db/schema";
-import { eq, and, desc } from "drizzle-orm";
-import { requireAuth } from "@/lib/auth-guard";
+import { eq, desc } from "drizzle-orm";
+import { requireAuth, assertOwnerOrAdmin } from "@/lib/auth-guard";
+import { sanitizeHtml } from "@/lib/sanitize-html";
 
 /**
  * 특정 학생의 프라이빗 노트 목록 조회.
@@ -19,13 +18,8 @@ import { requireAuth } from "@/lib/auth-guard";
  */
 export async function getPrivateNotes(targetStudentId: string) {
   const session = await requireAuth();
-  const userId = session.user.id!;
-  const role = session.user.role;
 
-  // 권한 체크: Admin이 아니면서, 대상 학생이 본인이 아니라면 거부
-  if (role !== "admin" && userId !== targetStudentId) {
-    throw new Error("Forbidden: Cannot access other student notes");
-  }
+  assertOwnerOrAdmin(session, targetStudentId);
 
   const db = createDb();
   
@@ -47,7 +41,11 @@ export async function getPrivateNotes(targetStudentId: string) {
   return notes;
 }
 
-export type CreateNoteState = { error?: string; success?: boolean };
+export type CreateNoteState = {
+  error?: string;
+  success?: boolean;
+  note?: { id: string; title: string; noteDate: Date | null; createdAt: Date | null };
+};
 
 /**
  * 1:1 노트 작성.
@@ -56,22 +54,23 @@ export type CreateNoteState = { error?: string; success?: boolean };
 export async function createPrivateNote(targetStudentId: string, _prev: CreateNoteState, formData: FormData): Promise<CreateNoteState> {
   const session = await requireAuth();
   const userId = session.user.id!;
-  const role = session.user.role;
 
-  if (role !== "admin" && userId !== targetStudentId) {
-    return { error: "권한이 없습니다." };
-  }
+  assertOwnerOrAdmin(session, targetStudentId);
 
   const title = formData.get("title") as string;
   const rawHtml = formData.get("contentHtml") as string;
 
   if (!title || !rawHtml) return { error: "제목과 내용은 필수입니다." };
 
-  // 서버사이드 XSS 방어: 클라이언트 DOMPurify와 이중 새니타이징
-  const contentHtml = DOMPurify.sanitize(rawHtml);
+  const contentHtml = sanitizeHtml(rawHtml);
+
+  // 사용자 지정 날짜 파싱 (YYYY-MM-DD → Date, 없으면 null)
+  const noteDateStr = formData.get("noteDate") as string | null;
+  const noteDate = noteDateStr ? new Date(noteDateStr) : null;
 
   const db = createDb();
   const id = crypto.randomUUID();
+  const now = new Date();
 
   try {
     await db.insert(privateNotes).values({
@@ -80,24 +79,23 @@ export async function createPrivateNote(targetStudentId: string, _prev: CreateNo
       authorId: userId,
       title,
       contentHtml,
+      ...(noteDate ? { noteDate } : {}),
     });
-    
+
     // Admin 뷰(탭 통합 포함)와 Student 뷰 양쪽 모두 갱신
     revalidatePath(`/dashboard/admin/students/${targetStudentId}`);
     revalidatePath(`/dashboard/admin/students/${targetStudentId}/notes`);
     revalidatePath(`/dashboard/student/notes`);
     revalidatePath("/dashboard/student");
-    
-    return { success: true };
-  } catch (err) {
+
+    return { success: true, note: { id, title, noteDate, createdAt: now } };
+  } catch {
     return { error: "노트 작성 중 오류가 발생했습니다." };
   }
 }
 
 export async function deletePrivateNote(noteId: string) {
   const session = await requireAuth();
-  const userId = session.user.id!;
-  const role = session.user.role;
 
   const db = createDb();
   
@@ -107,14 +105,11 @@ export async function deletePrivateNote(noteId: string) {
   
   const targetNote = note[0];
 
-  // 작성자 본인 또는 관리자만 삭제 가능
-  if (role !== "admin" && targetNote.authorId !== userId) {
-    throw new Error("Forbidden");
-  }
+  assertOwnerOrAdmin(session, targetNote.authorId);
 
   await db.delete(privateNotes).where(eq(privateNotes.id, noteId));
   revalidatePath(`/dashboard/admin/students/${targetNote.studentId}`);
   revalidatePath(`/dashboard/admin/students/${targetNote.studentId}/notes`);
   revalidatePath(`/dashboard/student/notes`);
-    revalidatePath("/dashboard/student");
+  revalidatePath("/dashboard/student");
 }

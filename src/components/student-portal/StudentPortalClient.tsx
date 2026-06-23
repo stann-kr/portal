@@ -73,11 +73,19 @@ const TABS: { id: Section; label: string; Icon: React.ElementType }[] = [
   { id: "community",     label: "커뮤니티", Icon: Users },
 ];
 
+/** 상단 섹션 탭 영속화 localStorage 키 */
+const SECTION_STORAGE_KEY = "studentPortal:section";
+
+/** 저장값이 유효한 Section 인지 검증 */
+function isValidSection(value: string | null): value is Section {
+  return value != null && TABS.some((t) => t.id === value);
+}
+
 // ── 컴포넌트 ─────────────────────────────────────────
 
 export function StudentPortalClient({
   announcements,
-  unifiedItems,
+  unifiedItems: initialUnifiedItems,
   curriculumModules,
   assignments,
   communityPosts,
@@ -85,6 +93,32 @@ export function StudentPortalClient({
   displayName,
 }: StudentPortalClientProps) {
   const [activeSection, setActiveSection] = useState<Section>("announcements");
+  const [items, setItems] = useState<UnifiedItem[]>(initialUnifiedItems);
+
+  // 마운트 후 localStorage 에서 직전 섹션 복원 (SSR 기본값과 동일 초기값 사용 → 하이드레이션 불일치 방지)
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(SECTION_STORAGE_KEY);
+      if (isValidSection(saved)) setActiveSection(saved);
+    } catch {
+      /* localStorage 접근 불가 환경 무시 */
+    }
+  }, []);
+
+  // 섹션 변경 시 영속화
+  useEffect(() => {
+    try {
+      localStorage.setItem(SECTION_STORAGE_KEY, activeSection);
+    } catch {
+      /* localStorage 접근 불가 환경 무시 */
+    }
+  }, [activeSection]);
+
+  const addItem = useCallback((item: UnifiedItem) => {
+    setItems((prev) =>
+      [item, ...prev].sort((a, b) => b.date.getTime() - a.date.getTime()),
+    );
+  }, []);
   const [animKey, setAnimKey] = useState(0);
   const [fading, setFading] = useState(false);
   const nextSection = useRef<Section | null>(null);
@@ -110,20 +144,20 @@ export function StudentPortalClient({
   return (
     <div className="flex flex-col h-full min-h-screen">
       {/* 상단 탭 바 */}
-      <header className="flex items-center gap-1 px-6 pt-5 pb-0 border-b border-border bg-background sticky top-0 z-10">
+      <header className="flex items-center gap-0.5 px-4 pt-4 pb-0 border-b border-border bg-background sticky top-0 z-10">
         {TABS.map(({ id, label, Icon }) => {
           const isActive = activeSection === id;
           return (
             <button
               key={id}
               onClick={() => changeSection(id)}
-              className={`inline-flex items-center gap-2 px-4 py-2.5 text-sm font-medium rounded-t-md border-b-2 transition-colors ${
+              className={`inline-flex items-center gap-1.5 px-3 py-2 text-sm rounded-t-md border-b-2 transition-colors ${
                 isActive
-                  ? "border-primary text-primary bg-primary/5"
-                  : "border-transparent text-muted-foreground hover:text-foreground hover:bg-accent"
+                  ? "border-foreground text-foreground font-semibold"
+                  : "border-transparent text-muted-foreground font-medium hover:text-foreground hover:bg-accent/60"
               }`}
             >
-              <Icon className="w-4 h-4" />
+              <Icon className="w-3.5 h-3.5" />
               {label}
             </button>
           );
@@ -151,14 +185,16 @@ export function StudentPortalClient({
             </div>
           )}
 
-          {activeSection === "calendar" && (
+          {/* 캘린더 섹션: display:none으로 항상 마운트 유지 → 내부 상태(스크롤, 뷰탭) 보존 */}
+          <div style={{ display: activeSection === "calendar" ? undefined : "none" }} className="h-full">
             <CalendarSection
-              unifiedItems={unifiedItems}
+              unifiedItems={items}
               curriculumModules={curriculumModules}
               assignments={assignments}
               studentId={studentId}
+              onAddItem={addItem}
             />
-          )}
+          </div>
 
           {activeSection === "community" && (
             <div className="p-6 max-w-4xl mx-auto">
