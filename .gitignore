@@ -52,3 +52,10 @@ next-env.d.ts
 
 # local agent cache
 /cache/
+
+# --- 프로젝트 문서 정책 ---
+# docs/ = GitHub에 올릴 공개 프로젝트 문서
+# .docs/ = Obsidian 동기화/개인 작업/AI handoff 문서 (GitHub 업로드 금지)
+/.docs/
+!/docs/
+!/docs/**/*.md
