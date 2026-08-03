@@ -2,57 +2,63 @@
 
 ## 목적
 
-`portal`은 DJ lesson 운영자가 학생별 학습 흐름, 과제, 피드백, 커뮤니케이션, 캘린더, 자료를 한 곳에서 관리할 수 있게 하는 lesson portal이다.
+`portal`은 DJ 레슨 운영자가 학생별 학습 흐름과 피드백을 관리하고, 학생이 레슨 준비·과제·연습 기록·질문을 한 공간에서 이어갈 수 있게 하는 운영 포털이다.
 
 ## 범위
 
 포함 범위:
 
-- credentials login과 role 기반 dashboard redirect
-- student dashboard와 admin dashboard
-- 학생 관리, 과제, 커리큘럼, private notes, digging board
-- Q&A board와 community board
-- calendar feed와 personal calendar event
-- media upload를 위한 R2/presigned URL 구조
+- credentials 로그인과 student/admin 역할 기반 접근 제어
+- 학생·관리자 대시보드
+- 학생 관리, 커리큘럼, 과제 제출, 타임라인 피드백
+- 개인 일정, 노트, 디깅 기록을 묶는 통합 캘린더
+- 공지사항, 커뮤니티, 1:1 Q&A
+- 캘린더 구독 피드
+- R2 presigned URL 기반 미디어 업로드
 - Cloudflare D1/R2/OpenNext 배포 구조
 
 제외 범위:
 
-- 결제/정산 시스템
-- 영상 스트리밍 플랫폼 자체 구현
-- public marketing site 기능
-- private audit/phase log의 public docs 노출
+- 결제·정산
+- 영상·오디오 스트리밍 플랫폼 자체 구현
+- 공개 마케팅 사이트
+- 다중 조직·강사 tenant 운영
 
 ## 사용자와 역할
 
 | 역할 | 설명 | 주요 행동 |
 |---|---|---|
-| student | 수강생 | 과제, 커리큘럼, 노트, Q&A, 커뮤니티 확인 |
-| admin | 레슨 운영자 | 학생/콘텐츠/과제/피드백/캘린더 관리 |
-| developer | 앱 유지보수자 | schema, action, auth, Cloudflare deployment 관리 |
+| student | DJ 레슨 수강생 | 일정·커리큘럼 확인, 과제 제출, 노트·디깅 기록, 질문·커뮤니티 참여 |
+| admin | 레슨 운영자 | 학생·콘텐츠·일정·과제·피드백·공지 관리 |
 
 ## 기능 요구사항
 
-| ID | 요구사항 | 검증 기준 |
-|---|---|---|
-| FR-001 | 로그인한 사용자는 role에 따라 admin 또는 student dashboard로 이동해야 한다. | root route가 `session.user.role` 기준으로 redirect한다. |
-| FR-002 | admin은 학생 목록과 개별 학생 상세를 관리할 수 있어야 한다. | `/dashboard/admin`, `/dashboard/admin/students/[id]` route가 존재한다. |
-| FR-003 | student는 과제, 커리큘럼, 노트, digging 자료를 확인할 수 있어야 한다. | `/dashboard/student/**` route가 존재한다. |
-| FR-004 | Q&A와 community board는 작성/상세/목록 flow를 제공해야 한다. | `/dashboard/qna/**`, `/community/**` route가 존재한다. |
-| FR-005 | calendar feed는 학생별 calendar route로 제공되어야 한다. | `src/app/api/calendar/[studentId]/route.ts`가 존재한다. |
-| FR-006 | rich text와 media workflow는 sanitizer와 upload action을 통해 보호되어야 한다. | `sanitize-html`, upload/r2 action이 존재한다. |
+| ID | 요구사항 | 검증 기준 | 현재 상태 |
+|---|---|---|---|
+| FR-001 | 사용자는 credentials로 로그인하고 역할에 맞는 포털로 이동해야 한다. | 비로그인 사용자는 로그인으로 이동하고 student/admin은 서로의 시작 화면에 진입하지 못한다. | 구현 |
+| FR-002 | 학생은 공지, 학습 캘린더, 커뮤니티를 하나의 포털 셸에서 전환해야 한다. | 세 섹션의 선택 상태가 유지되고 각 섹션의 데이터가 올바르게 표시된다. | 구현 |
+| FR-003 | 학생의 일정·노트·디깅·Q&A·과제는 통합된 학습 기록으로 탐색할 수 있어야 한다. | 캘린더, 일별 목록, 전체 목록에서 유형 필터와 상세 진입을 제공한다. | 구현 |
+| FR-004 | 학생은 커리큘럼 진도를 확인하고 믹스셋 과제를 제출하며 피드백을 재생 위치와 함께 확인해야 한다. | 완료 토글, 과제 URL 제출, 미디어 재생, 피드백 목록이 동작한다. | 구현 |
+| FR-005 | 관리자는 학생별 일정·학습 상태·노트·Q&A를 조회하고 학생 계정을 관리해야 한다. | 학생 목록, 요약 지표, 인라인 상세, 학생 상세·추가 경로를 제공한다. | 구현 |
+| FR-006 | 공지·커뮤니티·1:1 Q&A는 작성, 목록, 상세, 답변 또는 댓글 흐름을 제공해야 한다. | 역할별 작성 권한과 소유권 검사를 서버에서 수행하고 성공·실패 상태를 반환한다. | 구현 |
+| FR-007 | 캘린더 피드는 본인·관리자 세션 또는 유효한 서명 token으로만 접근할 수 있어야 한다. | 허용 요청은 `.ics`를 반환하고 그 외 요청은 거부한다. | 구현 |
+| FR-008 | 미디어 업로드는 서버가 발급한 제한 시간 presigned URL을 사용해야 한다. | 인증된 요청만 URL을 발급하고 허용하지 않은 파일 정책은 서버에서 거부한다. | 부분 구현 |
 
 ## 비기능 요구사항
 
-| ID | 요구사항 | 검증 기준 |
-|---|---|---|
-| NFR-001 | D1 migration을 local/remote에 적용할 수 있어야 한다. | `npm run db:migrate`, `npm run db:migrate:remote`가 존재한다. |
-| NFR-002 | Cloudflare worker build가 가능해야 한다. | `npm run build:worker`가 존재한다. |
-| NFR-003 | lint는 src와 eslint config를 대상으로 실행되어야 한다. | `npm run lint`가 존재한다. |
-| NFR-004 | public docs에는 private audit/phase log와 작업 도구 흔적이 없어야 한다. | residue scan이 0건이다. |
+| ID | 요구사항 | 검증 기준 | 현재 상태 |
+|---|---|---|---|
+| NFR-001 | 모든 server action은 인증·역할·소유권 경계를 자체적으로 검증해야 한다. | 허용·거부 경로를 자동 테스트하고 타 학생 데이터 접근을 차단한다. | 부분 충족 |
+| NFR-002 | 사용자 입력과 rich text는 저장·렌더 경계에서 안전하게 처리해야 한다. | sanitize, protocol·host allowlist, 파일 크기·MIME 정책을 자동 테스트한다. | 부분 충족 |
+| NFR-003 | 핵심 흐름은 키보드만으로 조작 가능하고 명확한 focus·상태 정보를 제공해야 한다. | semantic control, focus indicator, label, reduced-motion 대응이 정적·컴포넌트 테스트를 통과한다. | 미충족 |
+| NFR-004 | 360px 이상의 화면에서 주요 탐색과 작성 흐름이 가로 잘림 없이 동작해야 한다. | 탭·테이블·캘린더에 좁은 화면용 layout 또는 overflow 전략이 있다. | 부분 충족 |
+| NFR-005 | 변경은 lint, typecheck, build와 핵심 회귀 테스트를 통과해야 한다. | `npm run lint`, `npx tsc --noEmit`, `npm run build`, unit/integration test가 성공한다. | 부분 충족 |
+| NFR-006 | D1 migration과 Cloudflare Worker build는 재현 가능해야 한다. | `npm run db:check`가 SQL·journal·snapshot·현재 schema 일치를 확인하고 local/remote 적용 이력이 정합하며 `npm run build:worker`가 성공한다. | 부분 충족 |
+| NFR-007 | 로딩·빈 상태·오류·성공 피드백은 사용자가 다음 행동을 알 수 있게 해야 한다. | route와 주요 mutation마다 상태 UI와 복구 행동을 제공한다. | 부분 충족 |
 
 ## 미해결 질문
 
-- production 배포 전 필수 smoke test 계정과 test data set.
-- admin 권한 정책과 student data isolation의 최종 운영 문서화 범위.
-- R2 media retention/cleanup 정책.
+- 학생의 첫 화면을 공지 중심으로 유지할지, 다음 레슨·대기 과제·새 피드백 중심의 `오늘` 화면으로 전환할지.
+- 디깅 보드와 과제 피드백을 장기적으로 오디오 파형 기반 작업 공간까지 확장할지.
+- 알림 채널을 앱 내부, 이메일, 캘린더 중 어디까지 지원할지.
+- production smoke test 계정·fixture와 R2 media retention 정책을 어떻게 운영할지.

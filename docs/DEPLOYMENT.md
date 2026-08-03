@@ -28,10 +28,13 @@
 ## 로컬 검증
 
 ```bash
+npm run db:check
 npm run lint
 npm run build
 npm run build:worker
 ```
+
+`db:check`는 메모리 SQLite에서 SQL·Drizzle metadata·현재 schema를 비교하며 local·remote D1을 변경하지 않는다.
 
 ## D1 migration
 

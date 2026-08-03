@@ -2,127 +2,159 @@
 
 ## 아키텍처 개요
 
-`portal`은 Next.js App Router 기반 lesson portal이다. NextAuth credentials provider가 로그인과 session을 담당하고, Drizzle ORM이 Cloudflare D1 또는 local SQLite fallback에 접근한다. Media upload는 R2/S3-compatible presigned URL 구조를 사용한다.
+`portal`은 Next.js App Router 기반의 인증형 웹 애플리케이션이다. React Server Component가 초기 데이터를 조회하고 client component가 탭·필터·작성 상태를 관리한다. 데이터 mutation은 server action, 인증은 NextAuth credentials provider, 저장소 접근은 Drizzle ORM이 담당한다.
 
 ```text
-Next.js app
-├─ auth route group
-├─ student dashboard
-├─ admin dashboard
-├─ community / qna boards
-├─ server actions
-└─ Drizzle DB client
+Browser
+  └─ Next.js App Router
+      ├─ auth·role redirect
+      ├─ student/admin portal shell
+      ├─ shared community·Q&A routes
+      ├─ server actions
+      └─ calendar feed API
+          ├─ Drizzle ORM → Cloudflare D1 / local SQLite
+          └─ presigned upload → Cloudflare R2
 
-Cloudflare
-├─ Worker via OpenNext
-├─ D1 binding: DB
-└─ R2 binding: BUCKET
+OpenNext → Cloudflare Worker
 ```
 
 ## 실제 소스 기준
 
 | 영역 | 파일/경로 | 확인 내용 |
 |---|---|---|
-| Root redirect | `src/app/page.tsx` | role별 dashboard redirect |
-| Auth | `src/auth.ts`, `src/auth.config.ts` | NextAuth credentials provider |
-| Auth API | `src/app/api/auth/[...nextauth]/route.ts` | NextAuth route handler |
-| Student routes | `src/app/dashboard/student/**` | assignments, curriculum, notes, digging |
-| Admin routes | `src/app/dashboard/admin/**` | students, categories, admin home |
-| Boards | `src/app/dashboard/qna/**`, `src/app/community/**` | Q&A/community |
-| DB schema | `src/db/schema.ts` | profiles/content schema |
-| DB client | `src/db/client.ts` | D1/local DB selection |
-| Actions | `src/lib/actions/**` | server mutations/queries |
-| Storage | `src/lib/r2.ts`, `src/lib/actions/upload.ts` | R2/presigned upload |
-| Deploy | `wrangler.toml` | D1/R2/route binding |
+| Root·dashboard redirect | `src/app/page.tsx`, `src/app/dashboard/page.tsx` | session role별 시작 경로 |
+| Auth | `src/auth.ts`, `src/auth.config.ts`, `src/middleware.ts` | credentials, session, route access |
+| Student portal | `src/app/dashboard/student/page.tsx`, `src/components/student-portal/` | 공지·통합 캘린더·커뮤니티 |
+| Admin portal | `src/app/dashboard/admin/page.tsx`, `src/components/admin-portal/` | 학생 필터·상태·관리 |
+| Shared flows | `src/app/community/`, `src/app/dashboard/qna/` | 게시판·Q&A |
+| Data aggregation | `src/lib/actions/unifiedItems.ts`, `src/lib/utils/unifiedItemUtils.ts` | 일정·노트·디깅·Q&A·과제 통합 |
+| DB schema·client | `src/db/schema.ts`, `src/db/client.ts` | table, D1/local SQLite 선택 |
+| Server actions | `src/lib/actions/` | query, mutation, revalidation |
+| Security helpers | `src/lib/auth-guard.ts`, `src/lib/sanitize-html.ts` | role·ownership, rich text sanitize |
+| Storage | `src/lib/r2.ts`, `src/lib/actions/upload.ts` | R2 presigned upload |
+| Calendar feed | `src/app/api/calendar/[studentId]/route.ts`, `src/lib/calendar-feed.ts` | session·서명 token 접근 |
+| Deploy | `open-next.config.ts`, `wrangler.toml` | Worker, D1, R2, asset binding |
 
 ## 런타임과 프레임워크
 
 | 영역 | 값 |
 |---|---|
-| Framework | Next.js 15.5 |
-| React | 19 |
+| Runtime | Node.js 20 이상, Cloudflare Workers |
+| Framework | Next.js 15.5 App Router, React 19 |
+| Language | TypeScript |
+| Styling | Tailwind CSS 4 |
+| UI | Radix UI, FullCalendar, Recharts, Lucide |
 | Auth | NextAuth v5 Credentials |
-| DB | Drizzle ORM, Cloudflare D1, local SQLite fallback |
+| Data | Drizzle ORM, Cloudflare D1, local SQLite fallback |
 | Storage | Cloudflare R2, S3-compatible SDK |
-| Editor | Tiptap, turndown, markdown conversion |
-| Calendar | FullCalendar, ics |
+| Editor | Tiptap |
 | Deploy | OpenNext for Cloudflare, Wrangler |
 
-## route map
+## 주요 route
 
 | Route | 역할 |
 |---|---|
+| `/` | session role에 따라 portal 또는 login으로 이동 |
 | `/login` | credentials login |
-| `/dashboard` | dashboard entry |
-| `/dashboard/admin` | admin home |
-| `/dashboard/admin/students/new` | student creation |
-| `/dashboard/admin/students/[id]` | student detail |
-| `/dashboard/admin/categories` | category management |
-| `/dashboard/student` | student home |
-| `/dashboard/student/assignments` | assignment list |
-| `/dashboard/student/curriculum` | curriculum |
-| `/dashboard/student/notes` | private notes |
-| `/dashboard/qna` | Q&A list |
-| `/community` | community board |
-| `/api/calendar/[studentId]` | calendar feed |
+| `/dashboard/student` | 학생 원페이지 포털 |
+| `/dashboard/admin` | 관리자 원페이지 포털 |
+| `/dashboard/student/assignments/[id]` | 과제 상세 직접 접근 |
+| `/dashboard/student/notes/new` | 개인 노트 작성 직접 접근 |
+| `/dashboard/admin/students/new` | 학생 추가 |
+| `/dashboard/admin/students/[id]` | 학생 상세 |
+| `/dashboard/admin/categories` | 카테고리 관리 |
+| `/dashboard/qna/**` | Q&A 목록·작성·상세 |
+| `/community/**` | 커뮤니티 목록·작성·상세 |
+| `/dashboard/calendar` | 공유 캘린더 |
+| `/api/calendar/[studentId]` | 인증·서명 token 기반 `.ics` feed |
+
+`/dashboard/student/assignments`, `curriculum`, `digging`, `notes` 목록 경로는 원페이지 포털로 redirect한다.
 
 ## 데이터 모델과 저장소
+
+`src/db/schema.ts`의 주요 table:
+
+- 사용자·수업: `profiles`, `curriculums`, `lessons`
+- 과제·피드백: `assignments`, `feedbacks`
+- 콘텐츠: `categories`, `posts`, `comments`
+- 개인 학습 기록: `private_notes`, `calendar_events`
+- 디깅: `digging_columns`, `digging_tracks`
+- Q&A: `qna_threads`, `qna_replies`
 
 Cloudflare binding:
 
 | Binding | Resource | 용도 |
 |---|---|---|
-| `DB` | D1 database `portal-db` | lesson portal data |
-| `BUCKET` | R2 bucket `portal-storage` | media upload/storage |
-| `ASSETS` | OpenNext assets | static assets |
+| `DB` | D1 database | 포털 데이터 |
+| `BUCKET` | R2 bucket | 미디어 저장 |
+| `ASSETS` | OpenNext assets | 정적 asset |
 
-Migration files are under `drizzle/`.
+Migration SQL은 `drizzle/`, Drizzle metadata는 `drizzle/meta/`에 둔다. Wrangler는 SQL 파일명과 D1의 적용 이력을 기준으로 migration을 실행하고, Drizzle metadata는 다음 schema diff 생성 기준으로 사용한다. SQL·journal·snapshot은 `0000~0007`까지 대응하며 `npm run db:check`가 empty replay, current schema, latest snapshot의 구조 일치를 검사한다.
 
 ## 인증과 권한
 
-- Credentials provider는 email/password와 bcrypt hash 비교를 사용한다.
-- user role은 admin/student dashboard routing에 사용된다.
-- server actions는 role/data boundary를 확인해야 한다.
-- middleware와 auth guard 변경 시 route 접근 정책을 함께 검증한다.
+- credentials provider는 email/password와 bcrypt hash를 비교한다.
+- session의 `user.id`와 `user.role`을 route redirect와 server action guard에 사용한다.
+- 데이터 조회·변경 함수는 호출 화면에 의존하지 않고 role과 ownership을 자체 검증해야 한다.
+- 캘린더 feed는 본인·관리자 session 또는 `AUTH_SECRET`으로 서명한 학생별 token을 검증한다.
+- rich text는 서버 저장 경계에서 sanitize한다.
 
-## 배포와 운영
+## 환경 변수와 설정
 
-Cloudflare worker deployment는 OpenNext build와 Wrangler deploy를 기준으로 한다. 상세 절차는 [배포 가이드](./DEPLOYMENT.md)를 따른다.
+| 항목 | 용도 | 값 관리 |
+|---|---|---|
+| `AUTH_SECRET` | auth와 calendar feed 서명 | secret |
+| `AUTH_URL` | 배포·프록시 환경의 canonical URL | 환경별 설정 |
+| `R2_ENDPOINT` | R2 S3-compatible endpoint | 환경별 설정 |
+| `R2_ACCESS_KEY_ID` | R2 access key | secret |
+| `R2_SECRET_ACCESS_KEY` | R2 secret key | secret |
+| `R2_BUCKET_NAME` | upload bucket 이름 | 환경별 설정 |
+| `R2_PUBLIC_URL` | 공개 media base URL | 환경별 설정 |
+
+샘플 계약은 `.env.example`에 두고 실제 값은 commit하지 않는다.
 
 ## 테스트와 검증
 
 ```bash
+npm run db:check
 npm run lint
+npx tsc --noEmit
 npm run build
 npm run build:worker
-npm run db:migrate
+npm audit --omit=dev --audit-level=moderate
 ```
 
-production migration/deploy는 별도 승인 후 수행한다.
+현재 migration consistency smoke는 자동화되어 있다. unit/integration/E2E test suite는 아직 없으며 DB migration과 production deploy는 별도 승인 후 실행한다.
 
 ## 변경 시 같이 볼 파일
 
 | 변경 영역 | 함께 확인할 파일 |
 |---|---|
-| auth/role 변경 | `src/auth.ts`, `src/auth.config.ts`, `src/middleware.ts`, `REQUIREMENTS.md` |
-| schema 변경 | `src/db/schema.ts`, `drizzle/*`, `TECH_SPEC.md`, `CHANGE_LOG.md` |
-| student dashboard 변경 | `src/app/dashboard/student/**`, relevant actions |
-| admin dashboard 변경 | `src/app/dashboard/admin/**`, `src/lib/actions/students.ts` |
-| upload/media 변경 | `src/lib/r2.ts`, `src/lib/actions/upload.ts`, `DEPLOYMENT.md` |
-| Cloudflare binding 변경 | `wrangler.toml`, `DEPLOYMENT.md`, `TROUBLESHOOTING.md` |
+| auth·role | `src/auth.ts`, `src/auth.config.ts`, `src/middleware.ts`, `docs/REQUIREMENTS.md` |
+| schema·migration | `src/db/schema.ts`, `drizzle/**`, 관련 action, `docs/TECH_SPEC.md` |
+| student portal | `src/app/dashboard/student/page.tsx`, `src/components/student-portal/**` |
+| admin portal | `src/app/dashboard/admin/page.tsx`, `src/components/admin-portal/**`, `src/lib/actions/students.ts` |
+| rich text·input | 관련 form, `src/lib/sanitize-html.ts`, server action |
+| upload·media | `src/lib/r2.ts`, `src/lib/actions/upload.ts`, `.env.example`, `docs/DEPLOYMENT.md` |
+| Cloudflare binding | `wrangler.toml`, `open-next.config.ts`, `docs/DEPLOYMENT.md` |
 
 ## 문서 최신성 기준
 
-다음 변경 시 이 문서를 갱신한다.
+다음 변경이 생기면 이 문서를 갱신한다.
 
-- route group 추가/삭제
-- D1 schema/migration 변경
-- R2 upload 방식 변경
-- auth provider/session/role policy 변경
-- Cloudflare binding 또는 deploy command 변경
+- route, API, schema 또는 migration 변경
+- 인증·권한·session 경계 변경
+- 주요 모듈이나 데이터 흐름 변경
+- 환경 변수, Cloudflare binding 또는 배포 방식 변경
+- 검증 명령과 지원 runtime 변경
 
 ## 알려진 기술 부채
 
-- `package.json`의 project name이 generic하므로 repo 식별자와 맞추는 작업은 별도 판단이 필요하다.
-- 기존 audit/phase progress는 `.docs/원본/2026-07-28/`에 보존되어 있고 public docs에는 최신 기준만 유지한다.
-- production smoke test 계정과 seed data 기준은 별도 runbook으로 보강 가능하다.
+- runtime dependency audit은 현재 0건이다. 프레임워크가 보안 패치 전 하위 의존성을 고정하는 구간은 `package.json` override로 제한하며, upstream stable이 해당 버전을 채택하면 override를 제거해야 한다.
+- 개발 도구 전체 audit에는 Drizzle Kit의 구형 esbuild loader 체인에서 발생하는 moderate 권고가 남아 있다. 현재 npm 제안은 호환되지 않는 구버전 downgrade이므로 upstream 패치를 추적한다.
+- migration SQL과 `drizzle/meta` 생성 이력은 `0007`까지 복구됐고 local D1도 빈 상태에서 전체 migration 재적용과 구조 검증을 통과했다. remote 이력은 별도 승인 전 추정하지 않는다.
+- authz, migration, server action, 핵심 사용자 흐름을 보호할 자동화 테스트가 없다.
+- `package.json`의 package name이 임시값이다.
+- route 단위 `loading.tsx`와 `error.tsx`가 없어 대기·복구 상태가 부족하다.
+- 개발용 관리자 seed 경로를 명시적 환경 변수와 dev-only guard로 격리해야 한다.
+- 일부 대형 client component와 status color가 공통 token·variant 없이 중복되어 있다.
