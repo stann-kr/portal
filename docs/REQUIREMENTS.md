@@ -52,7 +52,7 @@
 | ID | 요구사항 | 검증 기준 | 현재 상태 |
 |---|---|---|---|
 | NFR-001 | 모든 server action은 인증·역할·소유권 경계를 자체적으로 검증해야 한다. | 허용·거부 경로를 자동 테스트하고 타 학생 데이터 접근을 차단한다. | 부분 충족 |
-| NFR-002 | 사용자 입력과 rich text는 저장·렌더 경계에서 안전하게 처리해야 한다. | sanitize, protocol·host allowlist, 파일 크기·MIME 정책을 자동 테스트한다. | 부분 충족 |
+| NFR-002 | 사용자 입력과 rich text는 저장·렌더 경계에서 안전하게 처리해야 한다. | sanitize, protocol·host allowlist, 파일 크기·MIME 정책을 자동 테스트한다. | 부분 충족 — HTML sanitize 자동화 |
 | NFR-003 | 핵심 흐름은 키보드만으로 조작 가능하고 명확한 focus·상태 정보를 제공해야 한다. | semantic control, focus indicator, label, reduced-motion 대응이 정적·컴포넌트 테스트를 통과한다. | 미충족 |
 | NFR-004 | 360px 이상의 화면에서 주요 탐색과 작성 흐름이 가로 잘림 없이 동작해야 한다. | 탭·테이블·캘린더에 좁은 화면용 layout 또는 overflow 전략이 있다. | 부분 충족 |
 | NFR-005 | 변경은 lint, typecheck, build와 핵심 회귀 테스트를 통과해야 한다. | `npm run lint`, `npx tsc --noEmit`, `npm run build`, unit/integration test가 성공한다. | 부분 충족 |

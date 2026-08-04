@@ -4,6 +4,13 @@
 
 ## 2026-08-05
 
+### 캘린더 token·HTML 입력 보안 회귀 테스트
+
+#### Security
+
+- 캘린더 구독 token의 secret 누락, 학생 불일치, 형식·서명 변조 거부 경로를 자동화했다.
+- rich text에서 script, inline event handler, 위험 URL protocol이 제거되는지 회귀 테스트로 고정했다.
+
 ### 인증·권한 가드 회귀 테스트
 
 #### Security

@@ -129,14 +129,14 @@ npm run build:worker
 npm audit --omit=dev --audit-level=moderate
 ```
 
-현재 migration consistency smoke, 개발용 관리자 seed의 환경·입력 경계, auth guard의 session·role·ownership 회귀 테스트가 자동화되어 있다. 대표 server action과 핵심 사용자 흐름의 integration/E2E test는 아직 없으며 DB migration과 production deploy는 별도 승인 후 실행한다.
+현재 migration consistency smoke, 개발용 관리자 seed의 환경·입력 경계, auth guard의 session·role·ownership, calendar token 변조·대상 불일치, HTML sanitize payload 회귀 테스트가 자동화되어 있다. 대표 server action과 핵심 사용자 흐름의 integration/E2E test는 아직 없으며 DB migration과 production deploy는 별도 승인 후 실행한다.
 
 | 품질 경계 | 현재 자동화 | 다음 보강 |
 |---|---|---|
 | Migration | SQL·journal·snapshot·current schema empty replay | remote 적용 이력은 배포 준비 시 별도 점검 |
 | 개발 credential | development/opt-in/env/input binding 단위 테스트 | 실제 local seed는 데이터 변경 작업으로 분리 |
 | 인증·권한 | 미인증·role·ownership 허용/거부 단위 테스트 | 대표 server action의 실제 query·mutation 경계 테스트 |
-| 입력·콘텐츠 | server sanitize 구현 | XSS payload와 upload MIME·size 정책 테스트 |
+| 입력·콘텐츠 | script·event handler·위험 protocol XSS payload 테스트 | upload MIME·size 정책 테스트 |
 | UI 상태 | build와 정적 코드 검토 | keyboard·focus·loading/error/empty component 테스트 |
 
 ## 변경 시 같이 볼 파일
