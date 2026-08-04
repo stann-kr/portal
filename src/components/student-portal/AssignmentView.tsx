@@ -22,6 +22,8 @@ import { getMyFeedbacksMap } from "@/lib/actions/feedbacks";
 type RawAssignment = InferSelectModel<typeof assignments>;
 import { SlidePanel } from "./SlidePanel";
 import { AssignmentDetailPanel } from "./AssignmentDetailPanel";
+import { EmptyState } from "@/components/ui/empty-state";
+import { StatusBadge } from "@/components/ui/status-badge";
 
 // ── 타입 ──────────────────────────────────────────
 
@@ -40,12 +42,18 @@ interface AssignmentViewProps {
 
 function mediaIcon(url: string) {
   if (url.includes("youtube") || url.includes("youtu.be"))
-    return <Youtube className="w-4 h-4 text-red-500" />;
-  return <Music className="w-4 h-4 text-orange-500" />;
+    return <Youtube className="w-4 h-4 text-primary" aria-hidden="true" />;
+  return <Music className="w-4 h-4 text-primary" aria-hidden="true" />;
+}
+
+function mediaPlatform(url: string) {
+  return url.includes("youtube") || url.includes("youtu.be")
+    ? "YouTube 믹스셋"
+    : "SoundCloud 믹스셋";
 }
 
 function formatDate(date: Date | null): string {
-  if (!date) return "—";
+  if (!date) return "제출일 미정";
   return new Date(date).toLocaleString("ko-KR", {
     month: "short",
     day: "numeric",
@@ -71,9 +79,12 @@ function SubmitForm({ onSuccess }: { onSuccess: () => void }) {
       action={action}
       className="space-y-3 p-4 rounded-xl border border-dashed border-border bg-muted/20"
     >
-      <p className="text-sm font-semibold">새 믹스셋 제출</p>
-      <div className="flex gap-2">
+      <label htmlFor="assignment-media-url" className="text-sm font-semibold">
+        새 믹스셋 URL
+      </label>
+      <div className="flex flex-col gap-2 sm:flex-row">
         <Input
+          id="assignment-media-url"
           name="mediaUrl"
           type="url"
           placeholder="YouTube 또는 SoundCloud URL"
@@ -86,7 +97,9 @@ function SubmitForm({ onSuccess }: { onSuccess: () => void }) {
           {isPending ? "제출 중..." : "제출"}
         </Button>
       </div>
-      {state.error && <p className="text-sm text-destructive">{state.error}</p>}
+      <p className="text-xs text-muted-foreground">YouTube와 SoundCloud 링크를 지원합니다.</p>
+      {state.error && <p role="alert" className="text-sm text-destructive">{state.error}</p>}
+      {state.success && <p role="status" className="text-sm text-success">믹스셋을 제출했습니다.</p>}
     </form>
   );
 }
@@ -123,9 +136,11 @@ export function AssignmentView({ initialAssignments }: AssignmentViewProps) {
 
       {/* 제출 목록 */}
       {assignments.length === 0 ? (
-        <div className="flex flex-col items-center justify-center p-10 border border-dashed rounded-xl bg-muted/10 text-muted-foreground gap-2">
-          <p className="text-sm">제출된 과제가 없습니다.</p>
-        </div>
+        <EmptyState
+          title="제출한 믹스셋이 없습니다"
+          description="위 입력란에 YouTube 또는 SoundCloud 링크를 붙여넣어 첫 믹스셋을 제출하세요."
+          icon={<Upload className="size-4" aria-hidden="true" />}
+        />
       ) : (
         <ul className="space-y-2">
           {assignments.map((a) => (
@@ -142,18 +157,16 @@ export function AssignmentView({ initialAssignments }: AssignmentViewProps) {
 
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-foreground truncate">
-                    {a.mediaUrl}
+                    {mediaPlatform(a.mediaUrl)}
                   </p>
                   <p className="text-xs text-muted-foreground mt-0.5">
                     {formatDate(a.submittedAt)}
                   </p>
                 </div>
 
-                {a.feedbackCount > 0 && (
-                  <span className="flex-shrink-0 min-w-[20px] h-5 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center px-1.5">
-                    {a.feedbackCount}
-                  </span>
-                )}
+                <StatusBadge
+                  status={a.feedbackCount > 0 ? "feedbackReady" : "feedbackWaiting"}
+                />
               </button>
             </li>
           ))}

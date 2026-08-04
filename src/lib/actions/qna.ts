@@ -346,6 +346,9 @@ export async function createQnaReply(
 export async function updateThreadStatus(threadId: string, status: QnaStatus) {
   const session = await requireAuth();
   if (session.user.role !== "admin") throw new Error("Unauthorized");
+  if (!["OPEN", "ANSWERED", "CLOSED"].includes(status)) {
+    throw new Error("Invalid Q&A status");
+  }
 
   const db = createDb();
   await db

@@ -57,7 +57,7 @@
 | NFR-004 | 360px 이상의 화면에서 주요 탐색과 작성 흐름이 가로 잘림 없이 동작해야 한다. | 탭·테이블·캘린더에 좁은 화면용 layout 또는 overflow 전략이 있다. | 부분 충족 |
 | NFR-005 | 변경은 lint, typecheck, build와 핵심 회귀 테스트를 통과해야 한다. | `npm run lint`, `npx tsc --noEmit`, `npm run build`, unit/integration test가 성공한다. | 부분 충족 |
 | NFR-006 | D1 migration과 Cloudflare Worker build는 재현 가능해야 한다. | `npm run db:check`가 SQL·journal·snapshot·현재 schema 일치를 확인하고 local/remote 적용 이력이 정합하며 `npm run build:worker`가 성공한다. | 부분 충족 |
-| NFR-007 | 로딩·빈 상태·오류·성공 피드백은 사용자가 다음 행동을 알 수 있게 해야 한다. | route와 주요 mutation마다 상태 UI와 복구 행동을 제공한다. | 부분 충족 |
+| NFR-007 | 로딩·빈 상태·오류·성공 피드백은 사용자가 다음 행동을 알 수 있게 해야 한다. | route와 주요 mutation마다 상태 UI와 복구 행동을 제공한다. | 부분 충족 — 대시보드·과제·Q&A 보강 |
 
 ## 향후 결정 사항
 

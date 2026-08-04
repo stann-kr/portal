@@ -42,7 +42,7 @@ export default async function QnaPage() {
   const openCount = threads.filter((t) => t.status === "OPEN").length;
 
   return (
-    <div className="max-w-3xl mx-auto space-y-6">
+    <div className="mx-auto max-w-3xl space-y-6 px-4 py-6 sm:px-6">
       {/* 헤더 */}
       <div className="flex items-center justify-between">
         <div className="space-y-1">
@@ -50,7 +50,7 @@ export default async function QnaPage() {
             <MessageCircle className="w-6 h-6 text-primary" />
             Q&A
             {openCount > 0 && (
-              <span className="w-6 h-6 rounded-full bg-red-500 text-white text-xs font-bold flex items-center justify-center">
+              <span className="inline-flex min-w-6 items-center justify-center rounded-md bg-warning-muted px-1.5 py-1 text-xs font-bold text-warning" aria-label={`답변 대기 ${openCount}건`}>
                 {openCount}
               </span>
             )}

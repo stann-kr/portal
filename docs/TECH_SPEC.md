@@ -104,6 +104,7 @@ Migration SQL은 `drizzle/`, Drizzle metadata는 `drizzle/meta/`에 둔다. Wran
 - 데이터 조회·변경 함수는 호출 화면에 의존하지 않고 role과 ownership을 자체 검증해야 한다.
 - 캘린더 feed는 본인·관리자 session 또는 `AUTH_SECRET`으로 서명한 학생별 token을 검증한다.
 - rich text는 서버 저장 경계에서 sanitize한다.
+- Q&A 상태 변경은 관리자 역할과 허용된 `OPEN`, `ANSWERED`, `CLOSED` 값인지 함께 검증한다.
 
 ## 환경 변수와 설정
 

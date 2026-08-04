@@ -1,24 +1,19 @@
 /**
  * @file src/app/dashboard/qna/[threadId]/page.tsx
- * @description Q&A 스레드 상세 페이지 — 답변 목록 + 작성 폼.
+ * @description Q&A 스레드 상세 페이지. 답변 목록 + 작성 폼.
  */
 export const dynamic = "force-dynamic";
 
 import { auth } from "@/auth";
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, Clock, CheckCircle2, XCircle } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import { getQnaThread } from "@/lib/actions/qna";
 import { ThreadDetailClient } from "@/components/qna/ThreadDetailClient";
 import type { QnaStatus } from "@/db/schema";
+import { StatusBadge } from "@/components/ui/status-badge";
 
 type QnaReply = NonNullable<Awaited<ReturnType<typeof getQnaThread>>>["replies"][number];
-
-const STATUS_CONFIG: Record<QnaStatus, { label: string; color: string; Icon: React.ElementType }> = {
-  OPEN: { label: "미답변", color: "bg-red-500/10 text-red-500", Icon: Clock },
-  ANSWERED: { label: "답변완료", color: "bg-green-500/10 text-green-500", Icon: CheckCircle2 },
-  CLOSED: { label: "종료", color: "bg-muted text-muted-foreground", Icon: XCircle },
-};
 
 export default async function QnaThreadPage({
   params,
@@ -34,7 +29,6 @@ export default async function QnaThreadPage({
 
   const isAdmin = session.user.role === "admin";
   const status = thread.status as QnaStatus;
-  const { label, color, Icon } = STATUS_CONFIG[status];
 
   const studentName =
     thread.studentName ?? thread.studentEmail?.split("@")[0] ?? "학생";
@@ -55,7 +49,7 @@ export default async function QnaThreadPage({
           <div className="flex-1 min-w-0">
             <h1 className="text-xl font-semibold text-foreground">{thread.title}</h1>
             <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground">
-              {isAdmin && <span>{studentName} ·</span>}
+              {isAdmin && <span>{studentName} /</span>}
               <span>
                 {thread.createdAt
                   ? new Date(thread.createdAt).toLocaleDateString("ko-KR", {
@@ -63,14 +57,19 @@ export default async function QnaThreadPage({
                       month: "long",
                       day: "numeric",
                     })
-                  : "—"}
+                  : "작성일 미정"}
               </span>
             </div>
           </div>
-          <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold shrink-0 ${color}`}>
-            <Icon className="w-3 h-3" />
-            {label}
-          </span>
+          <StatusBadge
+            status={
+              status === "OPEN"
+                ? "qnaOpen"
+                : status === "ANSWERED"
+                  ? "qnaAnswered"
+                  : "qnaClosed"
+            }
+          />
         </div>
       </div>
 
@@ -86,7 +85,6 @@ export default async function QnaThreadPage({
           authorRole: r.authorRole ?? null,
         }))}
         isAdmin={isAdmin}
-        isClosed={status === "CLOSED"}
       />
     </div>
   );

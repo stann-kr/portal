@@ -58,34 +58,46 @@ function FeedbackForm({
       action={action}
       className="space-y-2 p-4 rounded-xl border border-dashed border-border bg-muted/20"
     >
-      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+      <p className="text-sm font-semibold text-foreground">
         새 피드백 추가
       </p>
-      <div className="flex gap-2">
-        <Input
-          name="timeMarker"
-          type="text"
-          placeholder="MM:SS"
-          className="w-24 font-mono"
-          pattern="[0-9]{1,2}:[0-9]{2}"
-          title="예: 01:30 (분:초)"
-          required
-          disabled={isPending}
-        />
-        <Input
-          name="content"
-          type="text"
-          placeholder="피드백 내용 입력"
-          className="flex-1"
-          required
-          disabled={isPending}
-        />
-        <Button type="submit" size="sm" disabled={isPending} className="gap-1">
+      <div className="grid gap-3 sm:grid-cols-[7rem_minmax(0,1fr)_auto] sm:items-end">
+        <div className="space-y-1.5">
+          <label htmlFor="feedback-time-marker" className="text-xs font-medium text-muted-foreground">
+            재생 시점
+          </label>
+          <Input
+            id="feedback-time-marker"
+            name="timeMarker"
+            type="text"
+            placeholder="MM:SS"
+            className="font-mono"
+            pattern="[0-9]{1,2}:[0-9]{2}"
+            title="예: 01:30 (분:초)"
+            required
+            disabled={isPending}
+          />
+        </div>
+        <div className="space-y-1.5">
+          <label htmlFor="feedback-content" className="text-xs font-medium text-muted-foreground">
+            피드백 내용
+          </label>
+          <Input
+            id="feedback-content"
+            name="content"
+            type="text"
+            placeholder="구체적인 수정 지점을 입력하세요"
+            required
+            disabled={isPending}
+          />
+        </div>
+        <Button type="submit" size="sm" disabled={isPending} className="gap-1 sm:mb-0.5">
           <MessageSquare className="w-4 h-4" />
-          추가
+          {isPending ? "추가 중..." : "추가"}
         </Button>
       </div>
-      {state.error && <p className="text-xs text-destructive">{state.error}</p>}
+      {state.error && <p role="alert" className="text-xs text-destructive">{state.error}</p>}
+      {state.success && <p role="status" className="text-xs text-success">피드백을 추가했습니다.</p>}
     </form>
   );
 }
@@ -136,6 +148,7 @@ export function TimelineFeedback({
             >
               {/* 타임스탬프 버튼 */}
               <button
+                type="button"
                 onClick={() => onSeek?.(fb.timeMarker)}
                 className="flex-shrink-0 px-2 py-1 rounded-md bg-primary/10 hover:bg-primary/20 text-primary font-mono text-xs font-bold transition-colors"
                 title="이 시점으로 이동"
@@ -153,9 +166,10 @@ export function TimelineFeedback({
                   size="sm"
                   onClick={() => handleDelete(fb.id)}
                   disabled={isPending}
-                  className="text-destructive opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 -mt-1"
+                  aria-label="피드백 삭제"
+                  className="-mt-1 flex-shrink-0 text-destructive opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100"
                 >
-                  <Trash2 className="w-3.5 h-3.5" />
+                  <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
                 </Button>
               )}
             </li>

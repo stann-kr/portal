@@ -4,6 +4,20 @@
 
 ## 2026-08-05
 
+### 과제·Q&A 상태와 입력 흐름 정리
+
+#### Changed
+
+- 믹스셋 제출 입력에 명시적인 label, 지원 플랫폼 안내, pending·success·error 상태를 추가했다.
+- 과제 목록이 플랫폼, 제출 시각, 피드백 대기·도착 상태를 공통 pattern으로 표시한다.
+- Q&A 목록·상세·상태 변경에서 중복 색과 영문 code를 제거하고 공통 semantic 상태를 사용한다.
+- 관리자 학생 상세 navigation의 label과 현재 위치를 한국어·접근성 기준에 맞췄다.
+- 타임라인 피드백 입력을 mobile 1열과 desktop grid로 나누고 모든 입력에 label을 추가했다.
+
+#### Security
+
+- Q&A 상태 변경 action이 허용된 상태 값만 저장하도록 입력 경계를 추가했다.
+
 ### 포털 shell과 접근성 정리
 
 #### Changed

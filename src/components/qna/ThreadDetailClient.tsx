@@ -6,6 +6,7 @@
 "use client";
 
 import { useActionState, useState, useEffect, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import dynamic from "next/dynamic";
 
@@ -18,6 +19,7 @@ import { AttachmentField } from "./AttachmentField";
 import { useFormDraft } from "@/lib/hooks/useFormDraft";
 import { createQnaReply, updateThreadStatus, type CreateReplyState } from "@/lib/actions/qna";
 import { QNA_STATUS_LABELS } from "@/lib/qna-status";
+import { STATUS_TONE_CLASS_NAMES } from "@/lib/portal-status";
 import type { QnaStatus } from "@/db/schema";
 
 type Reply = {
@@ -35,7 +37,6 @@ interface ThreadDetailClientProps {
   status: QnaStatus;
   replies: Reply[];
   isAdmin: boolean;
-  isClosed: boolean;
 }
 
 export function ThreadDetailClient({
@@ -43,12 +44,16 @@ export function ThreadDetailClient({
   status,
   replies: initialReplies,
   isAdmin,
-  isClosed,
 }: ThreadDetailClientProps) {
   const [contentHtml, setContentHtml] = useState("");
   const [attachmentUrl, setAttachmentUrl] = useState("");
   const [editorKey, setEditorKey] = useState(0);
   const [isPending, startTransition] = useTransition();
+  const [currentStatus, setCurrentStatus] = useState(status);
+  const [statusError, setStatusError] = useState<string | null>(null);
+  const router = useRouter();
+
+  useEffect(() => setCurrentStatus(status), [status]);
 
   const boundAction = createQnaReply.bind(null, threadId);
   const [replyState, replyAction, isReplying] = useActionState<
@@ -87,7 +92,16 @@ export function ThreadDetailClient({
   }, [replyState.success]);
 
   const handleStatusChange = (newStatus: QnaStatus) => {
-    startTransition(() => updateThreadStatus(threadId, newStatus));
+    setStatusError(null);
+    startTransition(async () => {
+      try {
+        await updateThreadStatus(threadId, newStatus);
+        setCurrentStatus(newStatus);
+        router.refresh();
+      } catch {
+        setStatusError("상태를 변경하지 못했습니다. 다시 시도해 주세요.");
+      }
+    });
   };
 
   return (
@@ -110,34 +124,40 @@ export function ThreadDetailClient({
             <button
               key={s}
               onClick={() => handleStatusChange(s)}
-              disabled={status === s || isPending}
-              aria-current={status === s ? "true" : undefined}
-              className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors ${
-                status === s
+              type="button"
+              disabled={currentStatus === s || isPending}
+              aria-pressed={currentStatus === s}
+              className={`rounded-md border px-3 py-1 text-xs font-semibold transition-colors ${
+                currentStatus === s
                   ? s === "OPEN"
-                    ? "bg-red-500/20 text-red-500"
+                    ? STATUS_TONE_CLASS_NAMES.warning
                     : s === "ANSWERED"
-                    ? "bg-green-500/20 text-green-500"
-                    : "bg-muted text-muted-foreground"
+                      ? STATUS_TONE_CLASS_NAMES.success
+                      : STATUS_TONE_CLASS_NAMES.neutral
                   : "border border-border text-muted-foreground hover:bg-accent"
               } disabled:cursor-default`}
             >
               {QNA_STATUS_LABELS[s]}
             </button>
           ))}
+          {isPending ? <span className="text-xs text-muted-foreground">변경 중...</span> : null}
         </div>
       )}
+      {statusError ? <p role="alert" className="text-sm text-destructive">{statusError}</p> : null}
 
       {/* 답변 작성 폼 */}
-      {!isClosed && (
+      {currentStatus !== "CLOSED" && (
         <form action={replyAction} className="space-y-3">
           <input type="hidden" name="contentHtml" value={contentHtml} />
           <p className="text-sm font-medium text-foreground">
             {isAdmin ? "답변 작성" : "추가 질문"}
           </p>
           {replyState.error && (
-            <p className="text-sm text-destructive">{replyState.error}</p>
+            <p role="alert" className="text-sm text-destructive">{replyState.error}</p>
           )}
+          {replyState.success ? (
+            <p role="status" className="text-sm text-success">등록했습니다.</p>
+          ) : null}
           {loaded && (
             <FullEditor
               key={editorKey}
@@ -155,7 +175,7 @@ export function ThreadDetailClient({
         </form>
       )}
 
-      {isClosed && (
+      {currentStatus === "CLOSED" && (
         <p className="text-sm text-muted-foreground text-center py-4">
           종료된 스레드입니다.
         </p>
