@@ -131,13 +131,15 @@ npm audit --omit=dev --audit-level=moderate
 
 현재 migration consistency smoke, 개발용 관리자 seed의 환경·입력 경계, auth guard의 session·role·ownership, calendar token 변조·대상 불일치, HTML sanitize payload 회귀 테스트가 자동화되어 있다. 대표 server action과 핵심 사용자 흐름의 integration/E2E test는 아직 없으며 DB migration과 production deploy는 별도 승인 후 실행한다.
 
+UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 시스템](./DESIGN_SYSTEM.md)을 기준으로 한다. 상태 registry는 label, semantic tone, icon key가 서로 어긋나지 않도록 단위 테스트로 보호한다.
+
 | 품질 경계 | 현재 자동화 | 다음 보강 |
 |---|---|---|
 | Migration | SQL·journal·snapshot·current schema empty replay | remote 적용 이력은 배포 준비 시 별도 점검 |
 | 개발 credential | development/opt-in/env/input binding 단위 테스트 | 실제 local seed는 데이터 변경 작업으로 분리 |
 | 인증·권한 | 미인증·role·ownership 허용/거부 단위 테스트 | 대표 server action의 실제 query·mutation 경계 테스트 |
 | 입력·콘텐츠 | script·event handler·위험 protocol XSS payload 테스트 | upload MIME·size 정책 테스트 |
-| UI 상태 | build와 정적 코드 검토 | keyboard·focus·loading/error/empty component 테스트 |
+| UI 상태 | status registry 단위 테스트, build와 정적 코드 검토 | keyboard interaction과 loading/error/empty component 테스트 |
 
 ## 변경 시 같이 볼 파일
 

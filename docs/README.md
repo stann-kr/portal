@@ -58,6 +58,7 @@ docs/                       # 프로젝트 문서
 
 - [요구사항](./REQUIREMENTS.md)
 - [기술 명세](./TECH_SPEC.md)
+- [디자인 시스템](./DESIGN_SYSTEM.md)
 - [배포 가이드](./DEPLOYMENT.md)
 - [변경 이력](./CHANGE_LOG.md)
 - [트러블슈팅](./TROUBLESHOOTING.md)
@@ -68,6 +69,7 @@ docs/                       # 프로젝트 문서
 |---|---|---|
 | 제품 이해 | [요구사항](./REQUIREMENTS.md) | 사용자, 기능 범위, 검증 기준, 현재 충족 상태 |
 | 구현 이해 | [기술 명세](./TECH_SPEC.md) | 아키텍처, route, data model, auth·storage 경계 |
+| UI 구현 | [디자인 시스템](./DESIGN_SYSTEM.md) | token, 상태 registry, 공통 component, 접근성·반응형 규칙 |
 | 실행·운영 | [배포 가이드](./DEPLOYMENT.md) | local 검증, D1 migration, Worker build·deploy 경계 |
 | 변화 추적 | [변경 이력](./CHANGE_LOG.md) | 날짜·버전별 사용자-visible 변경 |
 | 문제 해결 | [트러블슈팅](./TROUBLESHOOTING.md) | 재발 가능한 문제의 증상·원인·해결·검증 |

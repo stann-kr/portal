@@ -4,6 +4,19 @@
 
 ## 2026-08-05
 
+### 포털 디자인 기반 정리
+
+#### Changed
+
+- 포털의 중립색, 주요 행동, 의미 상태, focus, radius, elevation, motion token을 공통 theme으로 정리했다.
+- Q&A와 학습 상태의 label·색·icon 기준을 공통 registry로 통합하고 단위 테스트를 추가했다.
+- portal navigation, status badge, section header, empty state 공통 component를 추가했다.
+- 운영체제 설정을 따르는 dark theme과 reduced motion fallback을 추가했다.
+
+#### Docs
+
+- 실제 token과 component 사용 규칙을 설명하는 디자인 시스템 문서를 추가했다.
+
 ### 캘린더 token·HTML 입력 보안 회귀 테스트
 
 #### Security
