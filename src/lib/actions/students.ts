@@ -148,7 +148,9 @@ export async function getStudentRosterStats(): Promise<StudentRosterStat[]> {
     // 1. Current Module (완료되지 않은 가장 빠른 주차)
     const stMods = allMods.filter((m) => m.studentId === st.id && !m.isCompleted);
     stMods.sort((a, b) => (a.weekNum ?? 0) - (b.weekNum ?? 0));
-    const currentModule = stMods.length > 0 ? `Week 0${stMods[0].weekNum}: ${stMods[0].title}` : "All Completed";
+    const currentModule = stMods.length > 0
+      ? `${stMods[0].weekNum}주차: ${stMods[0].title}`
+      : "모든 과정 완료";
 
     // 2. Next Lesson
     const upcomingLess = allLess.filter((l) => l.studentId === st.id && l.scheduledAt !== null && new Date(l.scheduledAt) >= now);
@@ -174,4 +176,3 @@ export async function getStudentRosterStats(): Promise<StudentRosterStat[]> {
     };
   });
 }
-

@@ -77,10 +77,10 @@ docs/                       # 프로젝트 문서
 
 ## 현재 개발 우선순위
 
-1. 학생·관리자 shell의 loading/error 상태와 mobile 세부 동작을 완성한다.
-2. 대표 server action의 허용·거부와 핵심 mutation 실패 경로를 자동화한다.
-3. 학생 상세와 콘텐츠 관리 화면의 중복 상태·색·영문 label을 공통 pattern으로 정리한다.
-4. 기능, 접근성, 반응형 동작과 관련 테스트를 같은 세로 단위에서 완료한다.
+1. 과제 제출·피드백의 pending, success, failure와 media 요약을 정리한다.
+2. Q&A 상태·행동과 캘린더 type filter를 공통 semantic pattern으로 전환한다.
+3. 디깅 보드의 desktop grid와 mobile record list를 분리한다.
+4. 대표 server action의 허용·거부와 핵심 mutation 실패 경로를 자동화한다.
 
 ## 문서 최신성 기준
 

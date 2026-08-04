@@ -74,6 +74,8 @@ OpenNext → Cloudflare Worker
 
 관리자 포털의 기본 section은 `업무함`이다. 전체 Q&A 중 미답변 항목, feedback이 없는 assignment, 앞으로 7일 이내의 학생별 다음 레슨을 조회한다. 질문과 과제는 오래 기다린 항목부터 보여주고 실제 Q&A·과제 상세로 연결한다. 학생, 일정, 공지, 커뮤니티 section은 기존 관리 기능을 유지한다.
 
+학생과 관리자 포털은 공통 `PortalShell`과 `PortalNavigation`을 사용한다. section 선택은 역할별 local storage key에 편의 상태로 저장한다. root skip link와 main landmark, 이름이 있는 side rail control, dashboard loading/error boundary를 공통 shell 경계로 둔다. 학생 roster는 mobile label-value list와 desktop table을 분리하고 desktop 확장은 실제 button으로 조작한다.
+
 ## 데이터 모델과 저장소
 
 `src/db/schema.ts`의 주요 table:
@@ -143,7 +145,7 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 | 개발 credential | development/opt-in/env/input binding 단위 테스트 | 실제 local seed는 데이터 변경 작업으로 분리 |
 | 인증·권한 | 미인증·role·ownership 허용/거부 단위 테스트 | 대표 server action의 실제 query·mutation 경계 테스트 |
 | 입력·콘텐츠 | script·event handler·위험 protocol XSS payload 테스트 | upload MIME·size 정책 테스트 |
-| UI 상태 | status registry 단위 테스트, build와 정적 코드 검토 | keyboard interaction과 loading/error/empty component 테스트 |
+| UI 상태 | status registry 단위 테스트, loading/error route, semantic landmark·control 정적 검토 | keyboard interaction component 테스트 |
 
 ## 변경 시 같이 볼 파일
 

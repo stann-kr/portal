@@ -49,34 +49,6 @@ export default async function AdminPortalPage() {
     getPendingFeedbackAssignments(),
   ]);
 
-  // 통계 카드 데이터
-  const weekLater = new Date(referenceTime.getTime() + 7 * 24 * 60 * 60 * 1000);
-  const upcomingThisWeek = students.filter(
-    (s) => s.nextLessonDate && s.nextLessonDate >= referenceTime && s.nextLessonDate <= weekLater
-  ).length;
-  const totalPending = pendingAssignments.length;
-
-  const stats = [
-    {
-      label: "전체 학생",
-      value: students.length,
-      sub: "등록된 수강생",
-      color: "text-info bg-info-muted",
-    },
-    {
-      label: "7일 이내 레슨",
-      value: upcomingThisWeek,
-      sub: "7일 이내 예정",
-      color: "text-success bg-success-muted",
-    },
-    {
-      label: "피드백 대기",
-      value: totalPending,
-      sub: totalPending > 0 ? "처리 대기 중" : "모두 처리됨",
-      color: totalPending > 0 ? "text-warning bg-warning-muted" : "text-muted-foreground bg-muted",
-    },
-  ];
-
   // 학생 상세 데이터 패치 함수 (클라이언트에서 호출)
   async function fetchStudentDetail(studentId: string) {
     "use server";
@@ -116,7 +88,6 @@ export default async function AdminPortalPage() {
       initialUnifiedItems={firstStudentItems}
       students={students}
       communityPosts={communityPostsRaw}
-      stats={stats}
       adminId={adminId}
       qnaThreads={qnaThreads}
       pendingAssignments={pendingAssignments}

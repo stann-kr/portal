@@ -79,6 +79,7 @@ pill 형태는 filter와 count처럼 모양 자체가 의미를 가질 때만 �
 | `Button` | variant, size, focus, disabled, active feedback |
 | `Input` | label과 조합되는 입력 surface, focus, disabled |
 | `PortalNavigation` | 역할별 section 이동, 현재 위치, horizontal mobile fallback |
+| `PortalShell` | 역할별 navigation, section 상태 복원, 공통 content frame |
 | `StatusBadge` | registry 기반 label·icon·tone 표시 |
 | `SectionHeader` | section 제목·설명·단일 보조 action |
 | `EmptyState` | 비어 있는 이유와 가능한 다음 행동 |
@@ -112,6 +113,8 @@ pill 형태는 filter와 count처럼 모양 자체가 의미를 가질 때만 �
 3. 맥락 안의 error와 재시도 경로
 4. pending control의 disabled와 진행 문구
 5. 성공 결과의 즉시 반영과 필요한 상태 안내
+
+대시보드 route는 최종 화면 구조를 닮은 `loading.tsx` skeleton과 맥락 안에서 재시도하는 `error.tsx`를 공통 fallback으로 사용한다.
 
 ## 변경 점검
 

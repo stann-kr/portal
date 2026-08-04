@@ -4,6 +4,20 @@
 
 ## 2026-08-05
 
+### 포털 shell과 접근성 정리
+
+#### Changed
+
+- 학생과 관리자 포털의 중복 section 상태·navigation 구현을 공통 shell로 통합했다.
+- 본문 skip link, main·nav·aside landmark, 현재 section, icon control 이름과 focus 상태를 정리했다.
+- 학생 roster를 mobile list와 desktop table로 분리하고 확장 행을 실제 button으로 조작하게 변경했다.
+- 캘린더 navigation에 좁은 화면 overflow 전략을 추가하고 고정 높이를 viewport 기반 범위로 교체했다.
+
+#### Added
+
+- 대시보드 데이터 대기 시 최종 구조를 반영한 skeleton을 표시한다.
+- 대시보드 조회 실패 시 맥락 안에서 다시 시도할 수 있는 오류 화면을 추가했다.
+
 ### 관리자 업무함 도입
 
 #### Added

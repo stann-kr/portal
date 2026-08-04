@@ -26,8 +26,17 @@ export default function RootLayout({
       <body
         className={`${inter.variable} font-sans antialiased bg-background text-foreground`}
       >
+        <a
+          href="#main-content"
+          style={{ zIndex: "var(--z-toast)" }}
+          className="sr-only fixed left-3 top-3 rounded-md bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground focus:not-sr-only"
+        >
+          본문으로 건너뛰기
+        </a>
         <div className="flex min-h-[100dvh] bg-background text-foreground">
-          <main className="flex-1 overflow-x-hidden">{children}</main>
+          <main id="main-content" tabIndex={-1} className="flex-1 overflow-x-hidden">
+            {children}
+          </main>
         </div>
       </body>
     </html>

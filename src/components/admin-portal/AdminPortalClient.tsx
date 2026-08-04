@@ -5,7 +5,7 @@
  */
 "use client";
 
-import { useState, useEffect, useRef, useCallback, useTransition } from "react";
+import { useState, useTransition } from "react";
 import { CalendarDays, Inbox, Megaphone, MessagesSquare, Users } from "lucide-react";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 import type { StudentRosterStat } from "@/lib/actions/students";
@@ -14,7 +14,7 @@ import type {
   PendingFeedbackAssignment,
 } from "@/lib/admin-work-queue";
 import { getUnifiedItemsForStudent } from "@/lib/actions/unifiedItems";
-import { PortalNavigation } from "@/components/ui/portal-navigation";
+import { PortalShell } from "@/components/ui/portal-shell";
 
 // ── 섹션 컴포넌트
 import { AnnouncementSection } from "@/components/student-portal/AnnouncementSection";
@@ -78,19 +78,11 @@ type StudentDetailData = {
   modules: AdminModule[];
 };
 
-type StatCard = {
-  label: string;
-  value: number;
-  sub: string;
-  color: string;
-};
-
 export interface AdminPortalClientProps {
   announcements: Post[];
   initialUnifiedItems: UnifiedItem[];
   students: StudentRosterStat[];
   communityPosts: CommunityPost[];
-  stats: StatCard[];
   adminId: string;
   qnaThreads: AdminQueueThread[];
   pendingAssignments: PendingFeedbackAssignment[];
@@ -115,45 +107,18 @@ export function AdminPortalClient({
   initialUnifiedItems,
   students,
   communityPosts,
-  stats,
   adminId,
   qnaThreads,
   pendingAssignments,
   referenceTime,
   fetchStudentDetail,
 }: AdminPortalClientProps) {
-  const [activeSection, setActiveSection] = useState<Section>("work");
-  const [animKey, setAnimKey] = useState(0);
-  const [fading, setFading] = useState(false);
-  const nextSection = useRef<Section | null>(null);
-
   // 캘린더 학생 필터 상태
   const [selectedStudentId, setSelectedStudentId] = useState<string>(
     students[0]?.id ?? ""
   );
   const [calendarItems, setCalendarItems] = useState<UnifiedItem[]>(initialUnifiedItems);
   const [isLoadingCalendar, startCalendarTransition] = useTransition();
-
-  // 페이드 아웃(150ms) → 섹션 교체 → slide-in 애니메이션
-  const changeSection = useCallback(
-    (next: Section) => {
-      if (next === activeSection || fading) return;
-      nextSection.current = next;
-      setFading(true);
-    },
-    [activeSection, fading]
-  );
-
-  useEffect(() => {
-    if (!fading || !nextSection.current) return;
-    const timer = setTimeout(() => {
-      setActiveSection(nextSection.current!);
-      setAnimKey((k) => k + 1);
-      nextSection.current = null;
-      setFading(false);
-    }, 150);
-    return () => clearTimeout(timer);
-  }, [fading]);
 
   // 학생 필터 변경 시 캘린더 데이터 리패치
   const handleStudentChange = (studentId: string) => {
@@ -165,23 +130,15 @@ export function AdminPortalClient({
   };
 
   return (
-    <div className="flex h-full min-h-[100dvh] flex-col">
-      <PortalNavigation
-        items={TABS}
-        activeItem={activeSection}
-        onChange={changeSection}
-        disabled={fading}
-        ariaLabel="관리자 포털"
-        endSlot={<p className="hidden text-xs font-medium text-foreground sm:block">관리자</p>}
-      />
-
-      {/* 섹션 콘텐츠: fade out 후 slide-in 전환 */}
-      <div
-        className={`flex-1 overflow-hidden transition-opacity duration-150 ${
-          fading ? "opacity-0" : "opacity-100"
-        }`}
-      >
-        <div key={animKey} className="animate-section-in h-full">
+    <PortalShell
+      items={TABS}
+      initialItem="work"
+      storageKey="adminPortal:section"
+      ariaLabel="관리자 포털"
+      endSlot={<p className="hidden text-xs font-medium text-foreground sm:block">관리자</p>}
+    >
+      {(activeSection, changeSection) => (
+        <>
           {activeSection === "work" && (
             <AdminWorkQueueSection
               students={students}
@@ -233,12 +190,11 @@ export function AdminPortalClient({
           {activeSection === "students" && (
             <StudentManagementSection
               students={students}
-              stats={stats}
               fetchStudentDetail={fetchStudentDetail}
             />
           )}
-        </div>
-      </div>
-    </div>
+        </>
+      )}
+    </PortalShell>
   );
 }

@@ -1,6 +1,6 @@
 /**
  * @file src/components/student-portal/CalendarSection.tsx
- * @description 캘린더 섹션 — 5개 뷰 탭 (캘린더 / 일별 목록 / 전체 항목 / 커리큘럼 / 과제).
+ * @description 캘린더 섹션의 5개 뷰 (캘린더 / 일별 목록 / 전체 항목 / 커리큘럼 / 과제).
  * 우측 상단 "+" 버튼으로 UnifiedCreateDialog 열기.
  */
 "use client";
@@ -125,9 +125,9 @@ export function CalendarSection({
     <div className="flex flex-col h-full">
       <Tabs value={activeTab} onValueChange={handleTabChange} className="flex flex-col h-full">
         {/* 탭 헤더 */}
-        <div className="flex items-center justify-between px-6 pt-4 pb-0 border-b border-border flex-shrink-0">
-          <div className="flex items-center gap-2 flex-1 min-w-0">
-            <TabsList className="h-9 bg-transparent p-0 gap-0 border-b-0">
+        <div className="flex flex-shrink-0 flex-col gap-2 border-b border-border px-3 pt-3 sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:pt-4">
+          <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto">
+            <TabsList className="h-9 shrink-0 gap-0 border-b-0 bg-transparent p-0">
               <TabsTrigger
                 value="calendar"
                 className="inline-flex items-center gap-1.5 px-3 py-2 text-sm rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none"
@@ -172,19 +172,21 @@ export function CalendarSection({
           </div>
 
           {/* 생성 드롭다운 */}
-          <CreateEntryDropdown
-            studentId={studentId}
-            diggingColumns={diggingColumns}
-            defaultDate={createDefaultDate}
-            onOpenNotePanel={() => setNoteSlideOpen(true)}
-            onOpenQnaPanel={() => setQnaSlideOpen(true)}
-          />
+          <div className="flex justify-end pb-2 sm:pb-0">
+            <CreateEntryDropdown
+              studentId={studentId}
+              diggingColumns={diggingColumns}
+              defaultDate={createDefaultDate}
+              onOpenNotePanel={() => setNoteSlideOpen(true)}
+              onOpenQnaPanel={() => setQnaSlideOpen(true)}
+            />
+          </div>
         </div>
 
         {/* 탭 콘텐츠 */}
         <div className="flex-1 overflow-auto">
-          <TabsContent value="calendar" className="h-full m-0 p-4">
-            <div className="h-[600px]">
+          <TabsContent value="calendar" className="m-0 h-full p-3 sm:p-4">
+            <div className="h-[calc(100dvh-12rem)] min-h-[32rem] max-h-[52rem]">
               <UnifiedCalendar
                 items={unifiedItems}
                 onCreateRequest={handleCreateRequest}
