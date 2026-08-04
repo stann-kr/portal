@@ -76,6 +76,8 @@ OpenNext → Cloudflare Worker
 
 학생과 관리자 포털은 공통 `PortalShell`과 `PortalNavigation`을 사용한다. section 선택은 역할별 local storage key에 편의 상태로 저장한다. root skip link와 main landmark, 이름이 있는 side rail control, dashboard loading/error boundary를 공통 shell 경계로 둔다. 학생 roster는 mobile label-value list와 desktop table을 분리하고 desktop 확장은 실제 button으로 조작한다.
 
+디깅 보드는 같은 column·track 데이터를 768px 미만에서 label-value record list로, 그 이상에서 TanStack Table 기반 data grid로 표시한다. 두 표현은 같은 edit cell과 server action을 사용한다.
+
 ## 데이터 모델과 저장소
 
 `src/db/schema.ts`의 주요 table:

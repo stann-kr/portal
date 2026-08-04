@@ -4,6 +4,15 @@
 
 ## 2026-08-05
 
+### 디깅 보드 mobile record view 추가
+
+#### Changed
+
+- 디깅 보드를 mobile label-value record list와 desktop data table로 분리했다.
+- 날짜 범위 입력을 360px에서 두 열로 배치하고 각 입력에 명시적인 label을 추가했다.
+- mobile에서도 트랙 값 편집·조회와 삭제, 날짜별 접기·펼치기를 사용할 수 있게 했다.
+- 삭제 icon control에 accessible name과 pending 비활성 상태를 추가했다.
+
 ### 통합 기록 type 표현 정리
 
 #### Changed
