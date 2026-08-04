@@ -14,7 +14,7 @@ Stann Lumo의 DJ 레슨 운영을 위한 웹 포털이다. 학생과 관리자�
 
 요구 사항:
 
-- Node.js 20 이상
+- Node.js 20.18.1 이상
 - npm
 - `.env.example`을 참고해 작성한 `.env.local`
 
@@ -25,10 +25,20 @@ npm run dev
 
 개발 서버는 기본적으로 [http://localhost:3004](http://localhost:3004)에서 실행된다.
 
+로컬 관리자 계정이 필요하면 먼저 local D1 migration을 적용하고 `.env.local`에
+`.env.example`의 `DEV_ADMIN_*` 값을 설정한다. 명시적 opt-in을 활성화한 뒤 아래
+명령을 실행하며, 관리자 비밀번호를 명령행 인자로 전달하지 않는다.
+
+```bash
+npm run db:migrate
+npm run dev:seed-admin
+```
+
 ## 주요 검증
 
 ```bash
 npm run db:check
+npm test
 npm run lint
 npx tsc --noEmit
 npm run build

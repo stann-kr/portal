@@ -39,7 +39,7 @@ OpenNext → Cloudflare Worker
 
 | 영역 | 값 |
 |---|---|
-| Runtime | Node.js 20 이상, Cloudflare Workers |
+| Runtime | Node.js 20.18.1 이상, Cloudflare Workers |
 | Framework | Next.js 15.5 App Router, React 19 |
 | Language | TypeScript |
 | Styling | Tailwind CSS 4 |
@@ -105,6 +105,10 @@ Migration SQL은 `drizzle/`, Drizzle metadata는 `drizzle/meta/`에 둔다. Wran
 |---|---|---|
 | `AUTH_SECRET` | auth와 calendar feed 서명 | secret |
 | `AUTH_URL` | 배포·프록시 환경의 canonical URL | 환경별 설정 |
+| `DEV_ADMIN_SEED_ENABLED` | 로컬 관리자 seed 명시적 opt-in | 개발 환경 전용 |
+| `DEV_ADMIN_EMAIL` | 로컬 관리자 계정 식별자 | 개발 환경 전용 |
+| `DEV_ADMIN_PASSWORD` | 로컬 관리자 비밀번호 | 로컬 secret |
+| `DEV_ADMIN_DISPLAY_NAME` | 로컬 관리자 표시 이름 | 개발 환경 전용 |
 | `R2_ENDPOINT` | R2 S3-compatible endpoint | 환경별 설정 |
 | `R2_ACCESS_KEY_ID` | R2 access key | secret |
 | `R2_SECRET_ACCESS_KEY` | R2 secret key | secret |
@@ -117,6 +121,7 @@ Migration SQL은 `drizzle/`, Drizzle metadata는 `drizzle/meta/`에 둔다. Wran
 
 ```bash
 npm run db:check
+npm test
 npm run lint
 npx tsc --noEmit
 npm run build
@@ -124,7 +129,7 @@ npm run build:worker
 npm audit --omit=dev --audit-level=moderate
 ```
 
-현재 migration consistency smoke는 자동화되어 있다. unit/integration/E2E test suite는 아직 없으며 DB migration과 production deploy는 별도 승인 후 실행한다.
+현재 migration consistency smoke와 개발용 관리자 seed의 환경·입력 경계 회귀 테스트가 자동화되어 있다. auth guard와 핵심 사용자 흐름의 integration/E2E test는 아직 없으며 DB migration과 production deploy는 별도 승인 후 실행한다.
 
 ## 변경 시 같이 볼 파일
 
@@ -150,11 +155,10 @@ npm audit --omit=dev --audit-level=moderate
 
 ## 알려진 기술 부채
 
-- runtime dependency audit은 현재 0건이다. 프레임워크가 보안 패치 전 하위 의존성을 고정하는 구간은 `package.json` override로 제한하며, upstream stable이 해당 버전을 채택하면 override를 제거해야 한다.
+- runtime dependency audit은 현재 0건이다. 상위 의존성이 보안 패치 전 하위 의존성을 고정하는 구간은 `package.json` override로 제한하며, upstream stable이 해당 버전을 채택하면 override를 제거해야 한다.
 - 개발 도구 전체 audit에는 Drizzle Kit의 구형 esbuild loader 체인에서 발생하는 moderate 권고가 남아 있다. 현재 npm 제안은 호환되지 않는 구버전 downgrade이므로 upstream 패치를 추적한다.
 - migration SQL과 `drizzle/meta` 생성 이력은 `0007`까지 복구됐고 local D1도 빈 상태에서 전체 migration 재적용과 구조 검증을 통과했다. remote 이력은 별도 승인 전 추정하지 않는다.
-- authz, migration, server action, 핵심 사용자 흐름을 보호할 자동화 테스트가 없다.
+- authz, server action, 핵심 사용자 흐름을 보호할 integration/E2E 테스트가 없다.
 - `package.json`의 package name이 임시값이다.
 - route 단위 `loading.tsx`와 `error.tsx`가 없어 대기·복구 상태가 부족하다.
-- 개발용 관리자 seed 경로를 명시적 환경 변수와 dev-only guard로 격리해야 한다.
 - 일부 대형 client component와 status color가 공통 token·variant 없이 중복되어 있다.

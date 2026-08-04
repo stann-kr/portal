@@ -2,8 +2,12 @@
   "name": "temp_app",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=20.18.1"
+  },
   "scripts": {
     "dev": "next dev -p 3004",
+    "dev:seed-admin": "NODE_ENV=development tsx src/scripts/setup-admin.ts",
     "db:check": "node --no-warnings scripts/check-migrations.mjs",
     "db:migrate": "npx wrangler d1 migrations apply portal-db --local",
     "db:migrate:remote": "npx wrangler d1 migrations apply portal-db --remote",
@@ -12,6 +16,7 @@
     "build": "next build",
     "build:worker": "node_modules/.bin/opennextjs-cloudflare build",
     "start": "next start",
+    "test": "tsx --test src/**/*.test.ts",
     "lint": "eslint src scripts eslint.config.mjs"
   },
   "dependencies": {
@@ -96,6 +101,7 @@
   },
   "overrides": {
     "postcss": "8.5.25",
-    "sharp": "0.35.3"
+    "sharp": "0.35.3",
+    "undici": "7.29.0"
   }
 }

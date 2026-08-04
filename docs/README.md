@@ -17,7 +17,7 @@
 
 요구 사항:
 
-- Node.js 20 이상
+- Node.js 20.18.1 이상
 - npm
 - `.env.example`을 기준으로 작성한 `.env.local`
 
