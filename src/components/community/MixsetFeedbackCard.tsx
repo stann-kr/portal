@@ -27,14 +27,14 @@ export function MixsetFeedbackCard({ post }: MixsetFeedbackCardProps) {
   const [isPlaying, setIsPlaying] = useState(false);
 
   const author =
-    post.authorName ?? post.authorEmail?.split("@")[0] ?? "Unknown";
+    post.authorName ?? post.authorEmail?.split("@")[0] ?? "작성자 미상";
   const initials = author.slice(0, 2).toUpperCase();
   const date = post.createdAt
     ? new Date(post.createdAt).toLocaleDateString("ko-KR", {
         month: "short",
         day: "numeric",
       })
-    : "—";
+    : "날짜 정보 없음";
 
   const preview = post.contentHtml
     .replace(/<[^>]+>/g, " ")
@@ -84,6 +84,7 @@ export function MixsetFeedbackCard({ post }: MixsetFeedbackCardProps) {
           <button
             onClick={handleAudioToggle}
             className="w-9 h-9 rounded-full bg-primary text-primary-foreground flex items-center justify-center flex-shrink-0 hover:bg-primary/90 transition-colors"
+            aria-label={isPlaying ? "오디오 일시 정지" : "오디오 재생"}
           >
             {isPlaying ? (
               <Pause className="w-4 h-4" />

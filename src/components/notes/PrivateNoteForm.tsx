@@ -57,8 +57,12 @@ export function PrivateNoteForm({ studentId }: { studentId: string }) {
 
   return (
     <form action={formAction} className="space-y-4">
-      {state.error && <p className="text-sm text-red-500">{state.error}</p>}
-      {state.success && <p className="text-sm text-green-500">생성되었습니다.</p>}
+      {state.error && (
+        <p role="alert" className="text-sm text-destructive">{state.error}</p>
+      )}
+      {state.success && (
+        <p role="status" className="text-sm text-success">노트가 저장되었습니다.</p>
+      )}
 
       <div className="flex flex-col sm:flex-row gap-4">
         <div className="flex-1 space-y-2">

@@ -78,8 +78,8 @@ docs/                       # 프로젝트 문서
 ## 현재 개발 우선순위
 
 1. 대표 server action의 허용·거부와 핵심 mutation 실패 경로를 자동화한다.
-2. login·학생 상세·콘텐츠 관리 화면의 남은 영문 label과 중복 status color를 정리한다.
-3. metadata, favicon과 공개 포트폴리오 설명을 실제 제품 방향에 맞춘다.
+2. 큰 client component를 상태 hook, domain view, presentation 경계로 점진적으로 나눈다.
+3. 승인된 브랜드 asset이 준비되면 소셜 공유 이미지를 제품 metadata에 연결한다.
 4. 브라우저 시각 검증은 별도 요청이 있을 때 light·dark·360px·desktop 기준으로 수행한다.
 
 ## 문서 최신성 기준

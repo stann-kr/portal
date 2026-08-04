@@ -178,6 +178,5 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 - 개발 도구 전체 audit에는 Drizzle Kit의 구형 esbuild loader 체인에서 발생하는 moderate 권고가 남아 있다. 현재 npm 제안은 호환되지 않는 구버전 downgrade이므로 upstream 패치를 추적한다.
 - migration SQL과 `drizzle/meta` 생성 이력은 `0007`까지 복구됐고 local D1도 빈 상태에서 전체 migration 재적용과 구조 검증을 통과했다. remote 이력은 별도 승인 전 추정하지 않는다.
 - 대표 server action과 핵심 사용자 흐름을 보호할 integration/E2E 테스트가 없다.
-- `package.json`의 package name이 임시값이다.
-- route 단위 `loading.tsx`와 `error.tsx`가 없어 대기·복구 상태가 부족하다.
-- 일부 대형 client component와 status color가 공통 token·variant 없이 중복되어 있다.
+- 일부 대형 client component는 상태 hook, domain view와 presentation 경계가 한 파일에 남아 있다.
+- 소셜 공유 이미지는 승인된 브랜드 asset이 준비된 뒤 metadata에 연결해야 한다.

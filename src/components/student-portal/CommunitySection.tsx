@@ -218,7 +218,7 @@ export function CommunitySection({ initialPosts }: CommunitySectionProps) {
                   month: "short",
                   day: "numeric",
                 })
-              : "—";
+              : "날짜 정보 없음";
 
             return (
               <button
@@ -234,7 +234,7 @@ export function CommunitySection({ initialPosts }: CommunitySectionProps) {
                     <span
                       className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${
                         post.boardType === "FEEDBACK"
-                          ? "bg-orange-500/10 text-orange-600"
+                          ? "bg-warning-muted text-warning"
                           : "bg-primary/10 text-primary"
                       }`}
                     >

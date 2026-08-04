@@ -43,10 +43,10 @@ function PostCard({ post }: { post: Post }) {
         month: "short",
         day: "numeric",
       })
-    : "—";
+    : "날짜 정보 없음";
 
   const author =
-    post.authorName ?? post.authorEmail?.split("@")[0] ?? "Unknown";
+    post.authorName ?? post.authorEmail?.split("@")[0] ?? "작성자 미상";
   const initials = author.slice(0, 2).toUpperCase();
 
   const preview = post.contentHtml

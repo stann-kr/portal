@@ -52,14 +52,14 @@ export function AnnouncementList({ posts, isAdmin }: AnnouncementListProps) {
     <Accordion type="multiple" className="space-y-2">
       {posts.map((post) => {
         const author =
-          post.authorName ?? post.authorEmail?.split("@")[0] ?? "Admin";
+          post.authorName ?? post.authorEmail?.split("@")[0] ?? "관리자";
         const date = post.createdAt
           ? new Date(post.createdAt).toLocaleDateString("ko-KR", {
               year: "numeric",
               month: "short",
               day: "numeric",
             })
-          : "—";
+          : "날짜 정보 없음";
 
         return (
           <AccordionItem

@@ -54,7 +54,10 @@ export function NoteFullForm({ action }: NoteFullFormProps) {
         )}
 
         {state?.success && (
-          <div className="p-3 rounded-lg bg-green-50 border border-green-200 text-sm text-green-700">
+          <div
+            role="status"
+            className="rounded-lg border border-success/20 bg-success/10 p-3 text-sm text-success"
+          >
             노트가 저장되었습니다.
           </div>
         )}

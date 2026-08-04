@@ -4,6 +4,20 @@
 
 ## 2026-08-05
 
+### 제품 문구와 metadata 정리
+
+#### Changed
+
+- package identity와 페이지 metadata를 Stann Lumo DJ 레슨 포털 제품명에 맞췄다.
+- 로그인, 캘린더, 학생 추가, 커뮤니티의 사용자 문구와 작성자·날짜 fallback을 한국어로 통일했다.
+- 노트와 카테고리 form의 성공·오류 상태를 공통 semantic token과 live region으로 정리했다.
+- 일정 유형, 커리큘럼 완료, 생성 메뉴의 직접 색상 표현을 제품 token으로 교체했다.
+- 찾을 수 없는 페이지를 포털의 시각 언어와 실제 복귀 행동에 맞게 다시 구성했다.
+
+#### Accessibility
+
+- 게시물·카테고리 삭제와 오디오 재생 icon control에 맥락이 드러나는 이름을 추가했다.
+
 ### 디깅 보드 mobile record view 추가
 
 #### Changed

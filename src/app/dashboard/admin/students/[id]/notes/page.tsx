@@ -76,7 +76,7 @@ export default async function AdminStudentNotesPage({
                     <div>
                       <h3 className="font-semibold text-foreground">{note.title}</h3>
                       <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground">
-                        <span>{note.authorName || "Unknown"}</span>
+                        <span>{note.authorName || "작성자 미상"}</span>
                         <span>·</span>
                         <span>
                           {new Date(note.createdAt!).toLocaleDateString("ko-KR", {

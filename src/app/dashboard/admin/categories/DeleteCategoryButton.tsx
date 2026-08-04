@@ -19,7 +19,8 @@ export function DeleteCategoryButton({ categoryId }: { categoryId: string }) {
     <button
       onClick={handleDelete}
       disabled={isPending}
-      className="p-2 text-muted-foreground hover:text-red-500 transition-colors disabled:opacity-50"
+      className="p-2 text-muted-foreground transition-colors hover:text-destructive disabled:opacity-50"
+      aria-label="카테고리 삭제"
       title="삭제"
     >
       <Trash2 className="w-4 h-4" />

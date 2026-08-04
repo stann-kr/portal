@@ -69,9 +69,9 @@ export function PostDetailClient({
         month: "long",
         day: "numeric",
       })
-    : "—";
+    : "날짜 정보 없음";
   const author =
-    post.authorName ?? post.authorEmail?.split("@")[0] ?? "Unknown";
+    post.authorName ?? post.authorEmail?.split("@")[0] ?? "작성자 미상";
   const canDeletePost = isAdmin || currentUserId === post.authorId;
 
   return (
@@ -82,7 +82,7 @@ export function PostDetailClient({
           href="/community"
           className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
         >
-          <ArrowLeft className="w-4 h-4" /> Community
+          <ArrowLeft className="w-4 h-4" /> 커뮤니티
         </Link>
         <div className="flex items-start justify-between gap-4 mt-2">
           <h1 className="text-2xl font-semibold">{post.title}</h1>
@@ -93,6 +93,7 @@ export function PostDetailClient({
               onClick={handleDeletePost}
               disabled={isPending}
               className="text-destructive hover:bg-destructive/10 flex-shrink-0"
+              aria-label="게시물 삭제"
             >
               <Trash2 className="w-4 h-4" />
             </Button>
@@ -129,13 +130,13 @@ export function PostDetailClient({
           <ul className="space-y-3">
             {commentList.map((c) => {
               const cAuthor =
-                c.authorName ?? c.authorEmail?.split("@")[0] ?? "Unknown";
+                c.authorName ?? c.authorEmail?.split("@")[0] ?? "작성자 미상";
               const cDate = c.createdAt
                 ? new Date(c.createdAt).toLocaleDateString("ko-KR", {
                     month: "short",
                     day: "numeric",
                   })
-                : "—";
+                : "날짜 정보 없음";
               const cInitials = cAuthor.slice(0, 2).toUpperCase();
               const canDelete = isAdmin || currentUserId === c.authorId;
 

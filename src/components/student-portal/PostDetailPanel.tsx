@@ -126,7 +126,7 @@ export function PostDetailPanel({ postId, contentHtml }: PostDetailPanelProps) {
                     month: "short",
                     day: "numeric",
                   })
-                : "—";
+                : "날짜 정보 없음";
               return (
                 <li
                   key={c.id}

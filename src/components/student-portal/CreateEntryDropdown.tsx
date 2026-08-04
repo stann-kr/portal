@@ -41,28 +41,24 @@ const MENU_ITEMS = [
     label: "일정 추가",
     description: "레슨, 연습, 공연 등",
     Icon: CalendarPlus,
-    color: "text-blue-500",
   },
   {
     id: "note" as const,
     label: "노트 작성",
     description: "1:1 개인 메모",
     Icon: FileText,
-    color: "text-violet-500",
   },
   {
     id: "digging" as const,
     label: "디깅 트랙",
     description: "참고 트랙 추가",
     Icon: Music,
-    color: "text-pink-500",
   },
   {
     id: "qna" as const,
     label: "Q&A 질문",
     description: "강사에게 질문",
     Icon: HelpCircle,
-    color: "text-orange-500",
   },
 ] as const;
 
@@ -127,13 +123,13 @@ export function CreateEntryDropdown({
             sideOffset={6}
             className="z-50 min-w-[200px] bg-background border border-border rounded-xl shadow-lg p-1.5 animate-in fade-in-0 zoom-in-95"
           >
-            {MENU_ITEMS.map(({ id, label, description, Icon, color }) => (
+            {MENU_ITEMS.map(({ id, label, description, Icon }) => (
               <DropdownMenu.Item
                 key={id}
                 onSelect={() => handleSelect(id)}
                 className="flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer hover:bg-accent outline-none transition-colors"
               >
-                <Icon className={`w-4 h-4 flex-shrink-0 ${color}`} />
+                <Icon className="h-4 w-4 flex-shrink-0 text-primary" aria-hidden="true" />
                 <div className="min-w-0">
                   <p className="text-sm font-medium text-foreground">{label}</p>
                   <p className="text-xs text-muted-foreground">{description}</p>
