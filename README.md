@@ -8,7 +8,8 @@ Stann Lumo의 DJ 레슨 운영을 위한 웹 포털이다. 학생과 관리자�
 - NextAuth credentials 인증과 student/admin 역할 분리
 - Drizzle ORM, Cloudflare D1/R2, OpenNext 배포 구조
 - 학생·관리자 원페이지 포털과 기존 상세 라우트 병행
-- 개발 재개를 위한 안정화·테스트·UI/UX 개선 작업 진행 중
+- 문서·migration·runtime dependency·로컬 개발 seed 기반 복구 완료
+- 인증·권한 회귀 테스트를 보강한 뒤 역할별 핵심 UI/UX를 세로 단위로 개선 예정
 
 ## 로컬 실행
 
@@ -55,6 +56,10 @@ npm run build:worker
 - [배포 가이드](./docs/DEPLOYMENT.md)
 - [변경 이력](./docs/CHANGE_LOG.md)
 - [트러블슈팅](./docs/TROUBLESHOOTING.md)
+
+제품 범위와 검증 기준은 요구사항에서, 실제 route·data·auth 구조와 기술 부채는
+기술 명세에서 확인할 수 있다. 설계와 구현의 차이는 두 문서의 현재 상태를 기준으로
+관리한다.
 
 ## 보안
 

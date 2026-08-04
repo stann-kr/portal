@@ -11,7 +11,8 @@
 - Drizzle ORM을 통해 Cloudflare D1 또는 로컬 SQLite에 접근한다.
 - 미디어 업로드는 Cloudflare R2 presigned URL 흐름을 사용한다.
 - 학생·관리자 포털은 원페이지 탭 구조이며 일부 상세·작성 라우트를 병행한다.
-- migration metadata·empty replay 자동 검사와 lint, TypeScript typecheck, Next.js build를 기본 검증으로 사용한다. unit/integration/E2E 회귀 테스트는 아직 보강이 필요하다.
+- migration metadata·empty replay 자동 검사와 lint, TypeScript typecheck, Next.js·Worker build를 기본 검증으로 사용한다.
+- 개발용 관리자 seed의 환경·입력 경계 단위 테스트를 시작점으로 두고, auth guard와 대표 server action의 허용·거부 회귀 테스트를 보강하고 있다.
 
 ## 빠른 시작
 
@@ -60,6 +61,23 @@ docs/                       # 프로젝트 문서
 - [배포 가이드](./DEPLOYMENT.md)
 - [변경 이력](./CHANGE_LOG.md)
 - [트러블슈팅](./TROUBLESHOOTING.md)
+
+## 추천 읽기 순서
+
+| 목적 | 문서 | 확인할 내용 |
+|---|---|---|
+| 제품 이해 | [요구사항](./REQUIREMENTS.md) | 사용자, 기능 범위, 검증 기준, 현재 충족 상태 |
+| 구현 이해 | [기술 명세](./TECH_SPEC.md) | 아키텍처, route, data model, auth·storage 경계 |
+| 실행·운영 | [배포 가이드](./DEPLOYMENT.md) | local 검증, D1 migration, Worker build·deploy 경계 |
+| 변화 추적 | [변경 이력](./CHANGE_LOG.md) | 날짜·버전별 사용자-visible 변경 |
+| 문제 해결 | [트러블슈팅](./TROUBLESHOOTING.md) | 재발 가능한 문제의 증상·원인·해결·검증 |
+
+## 현재 개발 우선순위
+
+1. auth guard, calendar token, HTML sanitize의 허용·거부 경로를 자동화한다.
+2. 학생 `오늘`과 관리자 `업무함`의 핵심 행동·상태 계약을 확정한다.
+3. token·primitive·loading/error/empty 규칙을 만든 뒤 역할별 화면을 세로 단위로 개선한다.
+4. 각 화면의 기능, 접근성, 반응형 동작과 관련 server action 테스트를 같은 단위에서 완료한다.
 
 ## 문서 최신성 기준
 
