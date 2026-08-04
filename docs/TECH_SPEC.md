@@ -129,13 +129,13 @@ npm run build:worker
 npm audit --omit=dev --audit-level=moderate
 ```
 
-현재 migration consistency smoke와 개발용 관리자 seed의 환경·입력 경계 회귀 테스트가 자동화되어 있다. auth guard와 핵심 사용자 흐름의 integration/E2E test는 아직 없으며 DB migration과 production deploy는 별도 승인 후 실행한다.
+현재 migration consistency smoke, 개발용 관리자 seed의 환경·입력 경계, auth guard의 session·role·ownership 회귀 테스트가 자동화되어 있다. 대표 server action과 핵심 사용자 흐름의 integration/E2E test는 아직 없으며 DB migration과 production deploy는 별도 승인 후 실행한다.
 
 | 품질 경계 | 현재 자동화 | 다음 보강 |
 |---|---|---|
 | Migration | SQL·journal·snapshot·current schema empty replay | remote 적용 이력은 배포 준비 시 별도 점검 |
 | 개발 credential | development/opt-in/env/input binding 단위 테스트 | 실제 local seed는 데이터 변경 작업으로 분리 |
-| 인증·권한 | lint·typecheck·build와 기존 guard 구현 | 미인증·role·ownership 허용/거부 회귀 테스트 |
+| 인증·권한 | 미인증·role·ownership 허용/거부 단위 테스트 | 대표 server action의 실제 query·mutation 경계 테스트 |
 | 입력·콘텐츠 | server sanitize 구현 | XSS payload와 upload MIME·size 정책 테스트 |
 | UI 상태 | build와 정적 코드 검토 | keyboard·focus·loading/error/empty component 테스트 |
 
@@ -166,7 +166,7 @@ npm audit --omit=dev --audit-level=moderate
 - runtime dependency audit은 현재 0건이다. 상위 의존성이 보안 패치 전 하위 의존성을 고정하는 구간은 `package.json` override로 제한하며, upstream stable이 해당 버전을 채택하면 override를 제거해야 한다.
 - 개발 도구 전체 audit에는 Drizzle Kit의 구형 esbuild loader 체인에서 발생하는 moderate 권고가 남아 있다. 현재 npm 제안은 호환되지 않는 구버전 downgrade이므로 upstream 패치를 추적한다.
 - migration SQL과 `drizzle/meta` 생성 이력은 `0007`까지 복구됐고 local D1도 빈 상태에서 전체 migration 재적용과 구조 검증을 통과했다. remote 이력은 별도 승인 전 추정하지 않는다.
-- authz, server action, 핵심 사용자 흐름을 보호할 integration/E2E 테스트가 없다.
+- 대표 server action과 핵심 사용자 흐름을 보호할 integration/E2E 테스트가 없다.
 - `package.json`의 package name이 임시값이다.
 - route 단위 `loading.tsx`와 `error.tsx`가 없어 대기·복구 상태가 부족하다.
 - 일부 대형 client component와 status color가 공통 token·variant 없이 중복되어 있다.

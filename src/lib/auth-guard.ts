@@ -12,13 +12,29 @@ export type AuthSession = Session & {
 };
 
 /**
+ * 외부 auth provider 결과를 애플리케이션이 요구하는 인증 세션으로 좁힌다.
+ */
+export function assertAuthenticatedSession(
+  session: Session | null | undefined,
+): AuthSession {
+  if (!session?.user?.id) throw new Error("Unauthorized");
+  return session as AuthSession;
+}
+
+/**
+ * 인증 세션의 관리자 role을 검증한다.
+ */
+export function assertAdminSession(session: AuthSession): AuthSession {
+  if (session.user.role !== "admin") throw new Error("Admin only");
+  return session;
+}
+
+/**
  * 로그인 여부 확인. 미인증 시 에러 throw.
  * @returns 인증된 세션 객체
  */
 export async function requireAuth(): Promise<AuthSession> {
-  const session = await auth();
-  if (!session?.user?.id) throw new Error("Unauthorized");
-  return session as AuthSession;
+  return assertAuthenticatedSession(await auth());
 }
 
 /**
@@ -26,12 +42,13 @@ export async function requireAuth(): Promise<AuthSession> {
  * @returns 인증된 세션 객체
  */
 export async function requireAdmin(): Promise<AuthSession> {
-  const session = await requireAuth();
-  if (session.user.role !== "admin") throw new Error("Admin only");
-  return session;
+  return assertAdminSession(await requireAuth());
 }
 
-export function assertOwnerOrAdmin(session: AuthSession, ownerUserId: string) {
+export function assertOwnerOrAdmin(
+  session: AuthSession,
+  ownerUserId: string,
+): void {
   if (session.user.role !== "admin" && session.user.id !== ownerUserId) {
     throw new Error("Unauthorized");
   }
