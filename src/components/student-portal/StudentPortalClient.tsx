@@ -153,7 +153,7 @@ export function StudentPortalClient({
   }, [fading]);
 
   return (
-    <div className="flex flex-col h-full min-h-screen">
+    <div className="flex h-full min-h-[100dvh] flex-col">
       <PortalNavigation
         items={TABS}
         activeItem={activeSection}

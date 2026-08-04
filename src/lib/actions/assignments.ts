@@ -8,8 +8,8 @@
 
 import { revalidatePath } from "next/cache";
 import { createDb } from "@/db/client";
-import { assignments } from "@/db/schema";
-import { eq, desc } from "drizzle-orm";
+import { assignments, feedbacks, profiles } from "@/db/schema";
+import { asc, desc, eq, notExists } from "drizzle-orm";
 import { requireAuth, requireAdmin, assertOwnerOrAdmin } from "@/lib/auth-guard";
 
 /** 지원하는 미디어 플랫폼 URL 패턴 */
@@ -123,8 +123,6 @@ export async function getAssignmentById(assignmentId: string) {
 export async function getPendingFeedbackCount(): Promise<number> {
   await requireAdmin();
   const db = createDb();
-  const { feedbacks } = await import("@/db/schema");
-  const { notExists } = await import("drizzle-orm");
 
   const rows = await db
     .select({ id: assignments.id })
@@ -138,4 +136,33 @@ export async function getPendingFeedbackCount(): Promise<number> {
       ),
     );
   return rows.length;
+}
+
+/**
+ * Admin 업무함: 피드백이 아직 없는 과제를 오래된 제출 순으로 조회합니다.
+ */
+export async function getPendingFeedbackAssignments() {
+  await requireAdmin();
+  const db = createDb();
+
+  return db
+    .select({
+      id: assignments.id,
+      mediaUrl: assignments.mediaUrl,
+      submittedAt: assignments.submittedAt,
+      studentId: assignments.studentId,
+      studentName: profiles.displayName,
+      studentEmail: profiles.email,
+    })
+    .from(assignments)
+    .innerJoin(profiles, eq(assignments.studentId, profiles.id))
+    .where(
+      notExists(
+        db
+          .select({ id: feedbacks.id })
+          .from(feedbacks)
+          .where(eq(feedbacks.assignmentId, assignments.id)),
+      ),
+    )
+    .orderBy(asc(assignments.submittedAt));
 }

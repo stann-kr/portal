@@ -1,6 +1,6 @@
 /**
  * @file src/app/dashboard/admin/page.tsx
- * @description 관리자 원페이지 포털 — RSC 데이터 프리패치 셸.
+ * @description 관리자 원페이지 포털. RSC 데이터 프리패치 셸.
  * AdminPortalClient에 병렬 패치한 데이터를 props로 전달.
  */
 import { redirect } from "next/navigation";
@@ -10,7 +10,9 @@ import { getStudentRosterStats } from "@/lib/actions/students";
 import { getUnifiedItemsForStudent } from "@/lib/actions/unifiedItems";
 import { getPrivateNotes } from "@/lib/actions/privateNotes";
 import { getQnaThreadsByStudent } from "@/lib/actions/qna";
+import { getQnaThreads } from "@/lib/actions/qna";
 import { getCurriculumByStudent } from "@/lib/actions/curriculum";
+import { getPendingFeedbackAssignments } from "@/lib/actions/assignments";
 import { AdminPortalClient } from "@/components/admin-portal/AdminPortalClient";
 type RawNote = Awaited<ReturnType<typeof getPrivateNotes>>[number];
 type RawQnaThread = Awaited<ReturnType<typeof getQnaThreadsByStudent>>[number];
@@ -27,7 +29,8 @@ export default async function AdminPortalPage() {
   const firstStudentId = students[0]?.id ?? "";
 
   // 병렬 데이터 패치
-  const [announcements, communityPostsRaw, firstStudentItems] = await Promise.all([
+  const referenceTime = new Date();
+  const [announcements, communityPostsRaw, firstStudentItems, qnaThreads, pendingAssignments] = await Promise.all([
     getPostsByBoardType("ANNOUNCEMENT"),
     Promise.all([
       getPostsByBoardType("GENERAL"),
@@ -42,34 +45,35 @@ export default async function AdminPortalPage() {
         .slice(0, 20)
     ),
     firstStudentId ? getUnifiedItemsForStudent(firstStudentId) : Promise.resolve([]),
+    getQnaThreads(),
+    getPendingFeedbackAssignments(),
   ]);
 
   // 통계 카드 데이터
-  const now = new Date();
-  const weekLater = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+  const weekLater = new Date(referenceTime.getTime() + 7 * 24 * 60 * 60 * 1000);
   const upcomingThisWeek = students.filter(
-    (s) => s.nextLessonDate && s.nextLessonDate >= now && s.nextLessonDate <= weekLater
+    (s) => s.nextLessonDate && s.nextLessonDate >= referenceTime && s.nextLessonDate <= weekLater
   ).length;
-  const totalPending = students.reduce((sum, s) => sum + s.pendingFeedbackCount, 0);
+  const totalPending = pendingAssignments.length;
 
   const stats = [
     {
-      label: "Active Students",
+      label: "전체 학생",
       value: students.length,
       sub: "등록된 수강생",
-      color: "text-blue-500 bg-blue-500/10",
+      color: "text-info bg-info-muted",
     },
     {
-      label: "Lessons This Week",
+      label: "7일 이내 레슨",
       value: upcomingThisWeek,
       sub: "7일 이내 예정",
-      color: "text-green-500 bg-green-500/10",
+      color: "text-success bg-success-muted",
     },
     {
-      label: "Pending Feedbacks",
+      label: "피드백 대기",
       value: totalPending,
       sub: totalPending > 0 ? "처리 대기 중" : "모두 처리됨",
-      color: totalPending > 0 ? "text-red-500 bg-red-500/10" : "text-muted-foreground bg-muted",
+      color: totalPending > 0 ? "text-warning bg-warning-muted" : "text-muted-foreground bg-muted",
     },
   ];
 
@@ -114,6 +118,9 @@ export default async function AdminPortalPage() {
       communityPosts={communityPostsRaw}
       stats={stats}
       adminId={adminId}
+      qnaThreads={qnaThreads}
+      pendingAssignments={pendingAssignments}
+      referenceTime={referenceTime}
       fetchStudentDetail={fetchStudentDetail}
     />
   );

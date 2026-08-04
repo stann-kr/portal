@@ -25,7 +25,7 @@ OpenNext → Cloudflare Worker
 | Root·dashboard redirect | `src/app/page.tsx`, `src/app/dashboard/page.tsx` | session role별 시작 경로 |
 | Auth | `src/auth.ts`, `src/auth.config.ts`, `src/middleware.ts` | credentials, session, route access |
 | Student portal | `src/app/dashboard/student/page.tsx`, `src/components/student-portal/` | 오늘 요약·통합 워크스페이스·커뮤니티 |
-| Admin portal | `src/app/dashboard/admin/page.tsx`, `src/components/admin-portal/` | 학생 필터·상태·관리 |
+| Admin portal | `src/app/dashboard/admin/page.tsx`, `src/components/admin-portal/` | 업무함·학생·일정·공지·커뮤니티 |
 | Shared flows | `src/app/community/`, `src/app/dashboard/qna/` | 게시판·Q&A |
 | Data aggregation | `src/lib/actions/unifiedItems.ts`, `src/lib/utils/unifiedItemUtils.ts` | 일정·노트·디깅·Q&A·과제 통합 |
 | DB schema·client | `src/db/schema.ts`, `src/db/client.ts` | table, D1/local SQLite 선택 |
@@ -71,6 +71,8 @@ OpenNext → Cloudflare Worker
 `/dashboard/student/assignments`, `curriculum`, `digging`, `notes` 목록 경로는 원페이지 포털로 redirect한다.
 
 학생 포털의 기본 section은 `오늘`이다. 통합 item에서 다음 일정, 피드백이 있는 제출, Q&A 상태를 순수 selector로 분류하고 최근 공지와 실제 작성 경로를 함께 제공한다. 현재 schema에 없는 과제 배정·마감·읽음 상태는 추정하지 않는다. 캘린더, 일별 기록, 전체 항목, 커리큘럼, 과제는 `워크스페이스` section에서 기존 기능을 유지한다.
+
+관리자 포털의 기본 section은 `업무함`이다. 전체 Q&A 중 미답변 항목, feedback이 없는 assignment, 앞으로 7일 이내의 학생별 다음 레슨을 조회한다. 질문과 과제는 오래 기다린 항목부터 보여주고 실제 Q&A·과제 상세로 연결한다. 학생, 일정, 공지, 커뮤니티 section은 기존 관리 기능을 유지한다.
 
 ## 데이터 모델과 저장소
 
@@ -131,7 +133,7 @@ npm run build:worker
 npm audit --omit=dev --audit-level=moderate
 ```
 
-현재 migration consistency smoke, 개발용 관리자 seed의 환경·입력 경계, auth guard의 session·role·ownership, calendar token 변조·대상 불일치, HTML sanitize payload, portal 상태 registry와 학생 오늘 selector 회귀 테스트가 자동화되어 있다. 대표 server action과 핵심 사용자 흐름의 integration/E2E test는 아직 없으며 DB migration과 production deploy는 별도 승인 후 실행한다.
+현재 migration consistency smoke, 개발용 관리자 seed의 환경·입력 경계, auth guard의 session·role·ownership, calendar token 변조·대상 불일치, HTML sanitize payload, portal 상태 registry, 학생 오늘과 관리자 업무함 selector 회귀 테스트가 자동화되어 있다. 대표 server action의 query·mutation integration/E2E test는 아직 없으며 DB migration과 production deploy는 별도 승인 후 실행한다.
 
 UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 시스템](./DESIGN_SYSTEM.md)을 기준으로 한다. 상태 registry는 label, semantic tone, icon key가 서로 어긋나지 않도록 단위 테스트로 보호한다.
 

@@ -11,7 +11,11 @@ import { createDb } from "@/db/client";
 import { feedbacks, assignments } from "@/db/schema";
 import { eq, asc, inArray } from "drizzle-orm";
 import type { InferSelectModel } from "drizzle-orm";
-import { requireAdmin, requireAuth } from "@/lib/auth-guard";
+import {
+  assertOwnerOrAdmin,
+  requireAdmin,
+  requireAuth,
+} from "@/lib/auth-guard";
 
 // ───────────────────────────────────────────────
 // 조회
@@ -21,7 +25,18 @@ import { requireAdmin, requireAuth } from "@/lib/auth-guard";
  * 과제별 피드백 목록 조회 (타임스탬프 오름차순).
  */
 export async function getFeedbacksByAssignment(assignmentId: string) {
+  const session = await requireAuth();
   const db = createDb();
+
+  const [assignment] = await db
+    .select({ studentId: assignments.studentId })
+    .from(assignments)
+    .where(eq(assignments.id, assignmentId))
+    .limit(1);
+
+  if (!assignment) return [];
+  assertOwnerOrAdmin(session, assignment.studentId);
+
   return db
     .select()
     .from(feedbacks)
