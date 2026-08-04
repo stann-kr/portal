@@ -81,6 +81,7 @@ pill 형태는 filter와 count처럼 모양 자체가 의미를 가질 때만 �
 | `PortalNavigation` | 역할별 section 이동, 현재 위치, horizontal mobile fallback |
 | `PortalShell` | 역할별 navigation, section 상태 복원, 공통 content frame |
 | `StatusBadge` | registry 기반 label·icon·tone 표시 |
+| `UnifiedItemTypeBadge` | 통합 기록의 일정·노트·디깅·Q&A·과제 type icon·label |
 | `SectionHeader` | section 제목·설명·단일 보조 action |
 | `EmptyState` | 비어 있는 이유와 가능한 다음 행동 |
 

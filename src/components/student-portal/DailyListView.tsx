@@ -7,7 +7,10 @@
 
 import { useState } from "react";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
-import { getUnifiedItemColor } from "@/lib/utils/unifiedItemUtils";
+import {
+  UnifiedItemTypeBadge,
+  UnifiedItemTypeIcon,
+} from "@/components/ui/unified-item-type";
 import { SlidePanel } from "./SlidePanel";
 import { UnifiedItemDetail } from "./UnifiedItemDetail";
 
@@ -40,16 +43,6 @@ function groupByDate(items: UnifiedItem[]): Map<string, UnifiedItem[]> {
   }
   return map;
 }
-
-// ── 타입 라벨 ────────────────────────────────────
-
-const TYPE_LABELS: Record<string, string> = {
-  EVENT: "일정",
-  NOTE: "노트",
-  DIGGING: "디깅",
-  QNA: "Q&A",
-  ASSIGNMENT: "과제",
-};
 
 // ── 컴포넌트 ─────────────────────────────────────
 
@@ -92,7 +85,6 @@ export function DailyListView({ items }: DailyListViewProps) {
               {/* 아이템 카드 리스트 */}
               <div className="space-y-2 pl-1">
                 {dayItems.map((item) => {
-                  const color = getUnifiedItemColor(item);
                   return (
                     <button
                       key={item.id}
@@ -102,11 +94,7 @@ export function DailyListView({ items }: DailyListViewProps) {
                       }}
                       className="w-full text-left flex items-center gap-3 px-4 py-3 rounded-lg border border-border bg-card hover:bg-accent transition-colors"
                     >
-                      {/* 색상 도트 */}
-                      <span
-                        className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                        style={{ backgroundColor: color }}
-                      />
+                      <UnifiedItemTypeIcon type={item.type} className="shrink-0 text-primary" />
 
                       {/* 제목 + 타입 */}
                       <div className="flex-1 min-w-0">
@@ -117,12 +105,7 @@ export function DailyListView({ items }: DailyListViewProps) {
 
                       {/* 타입 라벨 + 시간 */}
                       <div className="flex items-center gap-2 flex-shrink-0">
-                        <span
-                          className="text-[10px] font-medium px-1.5 py-0.5 rounded text-white"
-                          style={{ backgroundColor: color }}
-                        >
-                          {TYPE_LABELS[item.type] ?? item.type}
-                        </span>
+                        <UnifiedItemTypeBadge item={item} />
                         <span className="text-xs text-muted-foreground hidden sm:block">
                           {formatTime(item.date)}
                         </span>

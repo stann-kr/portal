@@ -10,17 +10,9 @@
 "use client";
 
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
-import { getUnifiedItemColor } from "@/lib/utils/unifiedItemUtils";
+import { UnifiedItemTypeBadge } from "@/components/ui/unified-item-type";
 
 // ── 타입 라벨 ────────────────────────────────────
-
-const TYPE_LABELS: Record<string, string> = {
-  EVENT: "일정",
-  NOTE: "노트",
-  DIGGING: "디깅",
-  QNA: "Q&A",
-  ASSIGNMENT: "과제",
-};
 
 const QNA_STATUS_LABELS: Record<string, string> = {
   OPEN: "답변 대기",
@@ -61,9 +53,6 @@ interface UnifiedItemDetailProps {
 }
 
 export function UnifiedItemDetail({ item }: UnifiedItemDetailProps) {
-  const color = getUnifiedItemColor(item);
-  const typeLabel = TYPE_LABELS[item.type] ?? item.type;
-
   // metadata 값을 미리 문자열로 추출 (unknown → string | null 명확화)
   const metaDescription = metaStr(item.metadata, "description");
   const metaContentHtml = metaStr(item.metadata, "contentHtml");
@@ -75,12 +64,7 @@ export function UnifiedItemDetail({ item }: UnifiedItemDetailProps) {
     <div className="space-y-5">
       {/* 타입 배지 + 날짜 */}
       <div className="flex items-center justify-between">
-        <span
-          className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium text-white"
-          style={{ backgroundColor: color }}
-        >
-          {typeLabel}
-        </span>
+        <UnifiedItemTypeBadge item={item} />
         <span className="text-xs text-muted-foreground">
           {formatDate(item.date)}
         </span>

@@ -4,6 +4,14 @@
 
 ## 2026-08-05
 
+### 통합 기록 type 표현 정리
+
+#### Changed
+
+- 캘린더 전체·일별 기록의 type filter와 행 표시를 색 점 대신 icon, label, semantic 선택 상태로 변경했다.
+- 일정·노트·디깅·Q&A·과제의 type label과 icon 표현을 공통 component로 통합했다.
+- 통합 기록 상세의 type badge도 같은 pattern을 사용하도록 정리했다.
+
 ### 과제·Q&A 상태와 입력 흐름 정리
 
 #### Changed
