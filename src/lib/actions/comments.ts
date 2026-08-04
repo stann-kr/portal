@@ -29,6 +29,7 @@ function escapeHtml(text: string): string {
  * 게시물별 댓글 목록 조회 (작성 순서 오름차순, 작성자 정보 포함).
  */
 export async function getCommentsByPost(postId: string) {
+  await requireAuth();
   const db = createDb();
   return db
     .select({
@@ -50,7 +51,11 @@ export async function getCommentsByPost(postId: string) {
 // 생성
 // ───────────────────────────────────────────────
 
-export type CreateCommentState = { error?: string; success?: boolean };
+export type CreateCommentState = {
+  error?: string;
+  success?: boolean;
+  commentId?: string;
+};
 
 /**
  * 댓글 작성.
@@ -69,15 +74,20 @@ export async function createComment(
   if (!content) return { error: "댓글 내용을 입력해주세요." };
 
   const db = createDb();
-  await db.insert(comments).values({
-    id: crypto.randomUUID(),
-    postId,
-    authorId: session.user.id!,
-    contentHtml: `<p>${escapeHtml(content)}</p>`,
-  });
+  const commentId = crypto.randomUUID();
+  try {
+    await db.insert(comments).values({
+      id: commentId,
+      postId,
+      authorId: session.user.id!,
+      contentHtml: `<p>${escapeHtml(content)}</p>`,
+    });
+  } catch {
+    return { error: "댓글을 저장하지 못했습니다. 다시 시도해 주세요." };
+  }
 
   revalidatePath(`/community/${postId}`);
-  return { success: true };
+  return { success: true, commentId };
 }
 
 // ───────────────────────────────────────────────

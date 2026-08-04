@@ -21,6 +21,7 @@ import {
   MessageSquare,
   Music2,
   ArrowLeft,
+  RotateCcw,
 } from "lucide-react";
 import { getCategories } from "@/lib/actions/categories";
 import { getPostsByCategory, getPostsByBoardType } from "@/lib/actions/posts";
@@ -37,7 +38,7 @@ interface CommunityClientProps {
 
 // ─── GENERAL 탭 게시물 카드 ───────────────────────
 
-function PostCard({ post }: { post: Post }) {
+function PostCard({ post, returnTo }: { post: Post; returnTo: string }) {
   const date = post.createdAt
     ? new Date(post.createdAt).toLocaleDateString("ko-KR", {
         month: "short",
@@ -57,7 +58,7 @@ function PostCard({ post }: { post: Post }) {
 
   return (
     <Link
-      href={`/community/${post.id}`}
+      href={`/community/${post.id}?returnTo=${encodeURIComponent(returnTo)}`}
       className="flex gap-4 p-4 rounded-xl border border-border bg-card hover:bg-accent/5 transition-colors group"
     >
       <div className="w-9 h-9 rounded-full bg-muted border border-border flex items-center justify-center flex-shrink-0 text-xs font-semibold">
@@ -117,39 +118,112 @@ export default function CommunityClient({ isAdmin }: CommunityClientProps) {
   );
   const [feedbackPosts, setFeedbackPosts] = useState<FeedbackPost[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reloadToken, setReloadToken] = useState(0);
 
   // 카테고리 초기 로드
   useEffect(() => {
-    getCategories().then((data) => {
-      setCategories(data);
-      if (data.length > 0) setActiveCategory(data[0].slug);
-    });
-  }, []);
+    let cancelled = false;
+    setLoadError(null);
+    getCategories()
+      .then((data) => {
+        if (!cancelled) setCategories(data);
+      })
+      .catch(() => {
+        if (!cancelled) setLoadError("커뮤니티 채널을 불러오지 못했습니다.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [reloadToken]);
+
+  // tab·category를 URL에서 복원해 상세·작성 화면을 다녀와도 같은 목록 문맥을 유지한다.
+  useEffect(() => {
+    const restore = () => {
+      const params = new URLSearchParams(window.location.search);
+      const tab = params.get("boardType");
+      if (tab === "ANNOUNCEMENT" || tab === "GENERAL" || tab === "FEEDBACK") {
+        setActiveTab(tab);
+      } else {
+        setActiveTab("GENERAL");
+      }
+
+      const requestedCategory = params.get("category");
+      const restoredCategory = categories.find((item) => item.slug === requestedCategory)?.slug
+        ?? categories[0]?.slug;
+      if (restoredCategory) setActiveCategory(restoredCategory);
+    };
+
+    restore();
+    window.addEventListener("popstate", restore);
+    return () => window.removeEventListener("popstate", restore);
+  }, [categories]);
 
   // GENERAL 탭: 카테고리별 게시물 로드
   useEffect(() => {
     if (activeTab !== "GENERAL" || !activeCategory) return;
+    let cancelled = false;
     setLoading(true);
+    setLoadError(null);
     getPostsByCategory(
-      activeCategory as Parameters<typeof getPostsByCategory>[0],
-    ).then((data) => {
-      setGeneralPosts(data);
-      setLoading(false);
-    });
-  }, [activeTab, activeCategory]);
+      activeCategory,
+    )
+      .then((data) => {
+        if (!cancelled) {
+          setGeneralPosts(data);
+          setLoading(false);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setLoadError("게시물을 불러오지 못했습니다.");
+          setLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, activeCategory, reloadToken]);
 
   // ANNOUNCEMENT/FEEDBACK 탭: boardType별 로드
   useEffect(() => {
     if (activeTab === "GENERAL") return;
+    let cancelled = false;
     setLoading(true);
-    getPostsByBoardType(activeTab).then((data) => {
-      if (activeTab === "ANNOUNCEMENT") setAnnouncementPosts(data);
-      else setFeedbackPosts(data);
-      setLoading(false);
-    });
-  }, [activeTab]);
+    setLoadError(null);
+    getPostsByBoardType(activeTab)
+      .then((data) => {
+        if (!cancelled) {
+          if (activeTab === "ANNOUNCEMENT") setAnnouncementPosts(data);
+          else setFeedbackPosts(data);
+          setLoading(false);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setLoadError("게시물을 불러오지 못했습니다.");
+          setLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, reloadToken]);
 
   const currentCat = categories.find((c) => c.slug === activeCategory);
+  const returnTo = `/community?boardType=${activeTab}&category=${encodeURIComponent(activeCategory)}`;
+
+  const changeLocation = (
+    nextTab: "ANNOUNCEMENT" | "GENERAL" | "FEEDBACK",
+    nextCategory = activeCategory,
+  ) => {
+    setActiveTab(nextTab);
+    setActiveCategory(nextCategory);
+    const url = new URL(window.location.href);
+    url.searchParams.set("boardType", nextTab);
+    if (nextCategory) url.searchParams.set("category", nextCategory);
+    window.history.pushState({}, "", `${url.pathname}${url.search}${url.hash}`);
+  };
 
   return (
     <div className="flex h-[calc(100vh-57px)] overflow-hidden bg-background">
@@ -180,7 +254,7 @@ export default function CommunityClient({ isAdmin }: CommunityClientProps) {
               return (
                 <button
                   key={cat.id}
-                  onClick={() => setActiveCategory(cat.slug)}
+                  onClick={() => changeLocation("GENERAL", cat.slug)}
                   className={`w-full text-left flex items-center gap-2 px-2 py-2 rounded-lg text-sm transition-colors ${
                     isActive
                       ? "bg-accent text-foreground font-medium"
@@ -215,8 +289,8 @@ export default function CommunityClient({ isAdmin }: CommunityClientProps) {
             {/* 탭 전환 */}
             <Tabs
               value={activeTab}
-              onValueChange={(v) =>
-                setActiveTab(v as "ANNOUNCEMENT" | "GENERAL" | "FEEDBACK")
+              onValueChange={(value) =>
+                changeLocation(value as "ANNOUNCEMENT" | "GENERAL" | "FEEDBACK")
               }
             >
               <TabsList className="h-8">
@@ -251,7 +325,7 @@ export default function CommunityClient({ isAdmin }: CommunityClientProps) {
                 className="gap-1.5"
               >
                 <Link
-                  href={`/community/new?boardType=${activeTab}&category=${activeCategory}`}
+                  href={`/community/new?boardType=${activeTab}&category=${activeCategory}&returnTo=${encodeURIComponent(returnTo)}`}
                 >
                   <Plus className="w-3.5 h-3.5" />새 글
                 </Link>
@@ -271,6 +345,20 @@ export default function CommunityClient({ isAdmin }: CommunityClientProps) {
                 />
               ))}
             </div>
+          ) : loadError ? (
+            <div className="flex h-64 flex-col items-center justify-center gap-3 text-center">
+              <p role="alert" className="text-sm text-destructive">{loadError}</p>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="gap-1.5"
+                onClick={() => setReloadToken((token) => token + 1)}
+              >
+                <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+                다시 시도
+              </Button>
+            </div>
           ) : (
             <>
               {/* ANNOUNCEMENT 탭 */}
@@ -283,6 +371,7 @@ export default function CommunityClient({ isAdmin }: CommunityClientProps) {
                       createdAt: p.createdAt ?? null,
                     }))}
                     isAdmin={isAdmin}
+                    returnTo={returnTo}
                   />
                   {isAdmin && (
                     <div className="mt-4">
@@ -292,7 +381,7 @@ export default function CommunityClient({ isAdmin }: CommunityClientProps) {
                         size="sm"
                         className="gap-1.5"
                       >
-                        <Link href="/community/new?boardType=ANNOUNCEMENT">
+                        <Link href={`/community/new?boardType=ANNOUNCEMENT&returnTo=${encodeURIComponent(returnTo)}`}>
                           <Plus className="w-3.5 h-3.5" />
                           공지 작성
                         </Link>
@@ -309,12 +398,12 @@ export default function CommunityClient({ isAdmin }: CommunityClientProps) {
                     <EmptyState
                       icon={MessageSquare}
                       message="아직 게시물이 없습니다."
-                      href={`/community/new?boardType=GENERAL&category=${activeCategory}`}
+                      href={`/community/new?boardType=GENERAL&category=${activeCategory}&returnTo=${encodeURIComponent(returnTo)}`}
                       label="첫 게시물 작성하기"
                     />
                   ) : (
                     generalPosts.map((post) => (
-                      <PostCard key={post.id} post={post} />
+                      <PostCard key={post.id} post={post} returnTo={returnTo} />
                     ))
                   )}
                 </div>
@@ -328,7 +417,7 @@ export default function CommunityClient({ isAdmin }: CommunityClientProps) {
                       <EmptyState
                         icon={Music2}
                         message="공유된 믹스셋이 없습니다."
-                        href="/community/new?boardType=FEEDBACK"
+                        href={`/community/new?boardType=FEEDBACK&returnTo=${encodeURIComponent(returnTo)}`}
                         label="첫 믹스셋 공유하기"
                       />
                     </div>
@@ -341,6 +430,7 @@ export default function CommunityClient({ isAdmin }: CommunityClientProps) {
                           isPinned: post.isPinned ?? false,
                           createdAt: post.createdAt ?? null,
                         }}
+                        returnTo={returnTo}
                       />
                     ))
                   )}
@@ -361,7 +451,7 @@ export default function CommunityClient({ isAdmin }: CommunityClientProps) {
           ).map(({ value, icon: Icon, label }) => (
             <button
               key={value}
-              onClick={() => setActiveTab(value)}
+              onClick={() => changeLocation(value)}
               className={`flex-1 flex flex-col items-center py-2.5 text-[10px] gap-1 transition-colors ${
                 activeTab === value
                   ? "text-foreground"

@@ -4,6 +4,18 @@
 
 ## 2026-08-05
 
+### 변경 요약
+
+- 노트와 커뮤니티 게시물을 안정 URL에서 다시 편집하고, 다른 화면의 선행 저장을 감지해 서버 최신본과 현재 초안 중 선택할 수 있게 했다.
+- 노트·게시물·Q&A에 사용자·문서별 로컬 초안, 저장 상태, 복원 안내와 `Cmd/Ctrl+S` 저장을 추가했다.
+- `/` block command, selection format menu와 링크·이미지·YouTube 삽입 panel을 추가했다.
+- 포털 section, workspace view, 관리자 학생 선택과 문서 복귀 경로를 URL에 보존한다.
+- 저장된 rich text의 hierarchy와 허용된 embed를 공통 renderer로 표시하고, 명시적 태그·속성 허용 목록으로 위험 HTML·UI 위장과 비어 있는 본문을 차단한다.
+- 커뮤니티 작성 흐름을 전체 화면 composer로 통합하고 Q&A·노트 작성 후 안정 상세 URL로 이동한다.
+- 커뮤니티 채널을 실제 등록 목록으로 검증하고 게시물이 연결된 채널의 삭제를 막아 문서가 목록에서 고립되지 않게 했다.
+- owner 정보가 없는 과거 local draft는 계정 간 노출을 막기 위해 자동 이관하지 않는다.
+- D1 export, checksum 확인과 격리 restore rehearsal 절차를 배포 가이드에 추가했다.
+
 ### 제품 문구와 metadata 정리
 
 #### Changed

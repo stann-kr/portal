@@ -7,6 +7,7 @@
 "use client";
 
 import { useEditor, EditorContent } from "@tiptap/react";
+import { BubbleMenu } from "@tiptap/react/menus";
 import StarterKit from "@tiptap/starter-kit";
 import LinkExtension from "@tiptap/extension-link";
 import ImageExtension from "@tiptap/extension-image";
@@ -22,17 +23,24 @@ import TextAlign from "@tiptap/extension-text-align";
 import Highlight from "@tiptap/extension-highlight";
 import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
+import Typography from "@tiptap/extension-typography";
 import { Markdown, type MarkdownStorage } from "tiptap-markdown";
 import { common, createLowlight } from "lowlight";
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef, type ReactNode } from "react";
 import {
   Bold, Italic, Underline as UnderlineIcon, Strikethrough, Highlighter,
   Heading1, Heading2, Heading3, List, ListOrdered, ListTodo,
   Quote, Code2, Link as LinkIcon, Image as ImageIcon, Video,
   Table as TableIcon, AlignLeft, AlignCenter, AlignRight,
-  Minus, Undo2, Redo2, FileText, Eye,
+  Minus, Undo2, Redo2, FileText, Eye, Unlink,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { BlockCommandMenu } from "./BlockCommandMenu";
+import {
+  EditorInsertPanel,
+  type EditorInsertKind,
+  type EditorSelection,
+} from "./EditorInsertPanel";
 
 // ── 타입 ──────────────────────────────────────────
 
@@ -45,11 +53,45 @@ interface FullEditorProps {
   /** 에디터 최소 높이 (CSS 값) */
   minHeight?: string;
   disabled?: boolean;
+  /** contenteditable의 접근 가능한 이름 */
+  ariaLabel?: string;
+  /** draft 저장 상태·단축키 안내 등을 표시하는 하단 슬롯 */
+  footer?: ReactNode;
+  /** Cmd/Ctrl+S 입력 시 호출할 저장 동작 */
+  onSave?: () => void;
 }
 
 // ── lowlight 인스턴스 ─────────────────────────────
 
 const lowlight = createLowlight(common);
+
+// 저장 HTML에 임의 style을 남기지 않고 allowlist 가능한 semantic attribute만 사용한다.
+const SafeTextAlign = TextAlign.extend({
+  addGlobalAttributes() {
+    return [
+      {
+        types: this.options.types,
+        attributes: {
+          textAlign: {
+            default: this.options.defaultAlignment,
+            parseHTML: (element: HTMLElement) => {
+              const alignment = element.getAttribute("data-text-align") ?? element.style.textAlign;
+              return this.options.alignments.includes(alignment)
+                ? alignment
+                : this.options.defaultAlignment;
+            },
+            renderHTML: (attributes: Record<string, unknown>) => {
+              const alignment = attributes.textAlign;
+              return typeof alignment === "string" && this.options.alignments.includes(alignment)
+                ? { "data-text-align": alignment }
+                : {};
+            },
+          },
+        },
+      },
+    ];
+  },
+});
 
 // ── 툴바 버튼 헬퍼 ───────────────────────────────
 
@@ -99,9 +141,17 @@ export function FullEditor({
   placeholder = "내용을 입력하세요... (/ 로 블록 삽입)",
   minHeight = "calc(100vh - 320px)",
   disabled = false,
+  ariaLabel = "문서 내용",
+  footer,
+  onSave,
 }: FullEditorProps) {
   const [isMarkdownMode, setIsMarkdownMode] = useState(false);
   const [markdownText, setMarkdownText] = useState("");
+  const [insertPanel, setInsertPanel] = useState<{
+    kind: EditorInsertKind;
+    selection: EditorSelection;
+  } | null>(null);
+  const lastLocalHtmlRef = useRef<string | null>(null);
 
   const editor = useEditor({
     immediatelyRender: false,
@@ -113,7 +163,7 @@ export function FullEditor({
       }),
       Underline,
       Highlight.configure({ multicolor: false }),
-      TextAlign.configure({ types: ["heading", "paragraph"] }),
+      SafeTextAlign.configure({ types: ["heading", "paragraph"] }),
       LinkExtension.configure({
         openOnClick: false,
         autolink: true,
@@ -123,6 +173,8 @@ export function FullEditor({
       }),
       ImageExtension.configure({
         inline: false,
+        // 기존 문서에 저장된 data URL 이미지를 편집 시 삭제하지 않는다.
+        // 새 이미지 삽입 UI는 http(s) URL만 허용해 신규 base64 생성을 막는다.
         allowBase64: true,
         HTMLAttributes: {
           class: "rounded-lg max-w-full my-2",
@@ -148,6 +200,7 @@ export function FullEditor({
       Placeholder.configure({ placeholder }),
       TaskList,
       TaskItem.configure({ nested: true }),
+      Typography,
       Markdown.configure({
         html: true,
         tightLists: true,
@@ -160,20 +213,35 @@ export function FullEditor({
     content: initialContent,
     editorProps: {
       attributes: {
-        class: "prose prose-sm max-w-none focus:outline-none p-6 text-foreground",
+        class: "max-w-none p-5 text-foreground focus:outline-none sm:p-6",
+        role: "textbox",
+        "aria-label": ariaLabel,
+        "aria-multiline": "true",
       },
     },
     onUpdate({ editor }) {
-      onChange?.(editor.getHTML());
+      const html = editor.getHTML();
+      lastLocalHtmlRef.current = html;
+      onChange?.(html);
     },
   });
 
-  // initialContent 변경 시 에디터 콘텐츠 갱신 (편집 모드 진입)
+  // draft 복원·다른 문서 전환·저장 후 초기화를 모두 동기화한다.
   useEffect(() => {
-    if (editor && initialContent && editor.isEmpty) {
-      editor.commands.setContent(initialContent);
+    if (!editor) return;
+    const nextContent = initialContent || "";
+    if (nextContent === lastLocalHtmlRef.current) return;
+    if (editor.getHTML() !== nextContent) editor.commands.setContent(nextContent);
+    if (isMarkdownMode) {
+      const editorStorage = editor.storage as unknown as Record<string, unknown>;
+      const markdownStorage = editorStorage.markdown as MarkdownStorage | undefined;
+      setMarkdownText(markdownStorage?.getMarkdown?.() ?? editor.getHTML());
     }
-  }, [editor, initialContent]);
+  }, [editor, initialContent, isMarkdownMode]);
+
+  useEffect(() => {
+    editor?.setEditable(!disabled);
+  }, [disabled, editor]);
 
   // ── 마크다운 모드 토글 ────────────────────────────
 
@@ -196,38 +264,20 @@ export function FullEditor({
   }, [editor, isMarkdownMode, markdownText, onChange]);
 
   const handleMarkdownChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setMarkdownText(e.target.value);
+    const nextMarkdown = e.target.value;
+    setMarkdownText(nextMarkdown);
+    // 숨겨진 HTML 필드와 draft가 Markdown 모드에서도 매 입력마다 최신 상태를 받는다.
+    editor?.commands.setContent(nextMarkdown);
   };
 
-  // ── 링크 삽입 ─────────────────────────────────────
-
-  const addLink = useCallback(() => {
-    if (!editor) return;
-    const url = window.prompt("링크 URL 입력:");
-    if (!url) return;
-    if (editor.state.selection.empty) {
-      const text = window.prompt("링크 텍스트 입력:", url) ?? url;
-      editor.chain().focus().insertContent(`<a href="${url}">${text}</a>`).run();
-    } else {
-      editor.chain().focus().setLink({ href: url }).run();
-    }
-  }, [editor]);
-
-  // ── 이미지 삽입 ───────────────────────────────────
-
-  const addImage = useCallback(() => {
-    if (!editor) return;
-    const url = window.prompt("이미지 URL 입력:");
-    if (url) editor.chain().focus().setImage({ src: url }).run();
-  }, [editor]);
-
-  // ── 유튜브 삽입 ───────────────────────────────────
-
-  const addYoutube = useCallback(() => {
-    if (!editor) return;
-    const url = window.prompt("YouTube URL 입력:");
-    if (url) editor.commands.setYoutubeVideo({ src: url });
-  }, [editor]);
+  const openInsertPanel = useCallback(
+    (kind: EditorInsertKind) => {
+      if (!editor) return;
+      const { from, to } = editor.state.selection;
+      setInsertPanel({ kind, selection: { from, to } });
+    },
+    [editor],
+  );
 
   // ── 테이블 삽입 ───────────────────────────────────
 
@@ -239,13 +289,71 @@ export function FullEditor({
   if (!editor) return null;
 
   return (
-    <div className="border border-border rounded-xl bg-background overflow-hidden flex flex-col focus-within:ring-1 focus-within:ring-foreground/20 transition-all">
+    <div
+      className="relative flex flex-col overflow-hidden rounded-xl border border-border bg-background transition-[border-color,box-shadow] focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/15"
+      onKeyDownCapture={(event) => {
+        if (!onSave || event.key.toLocaleLowerCase() !== "s" || (!event.metaKey && !event.ctrlKey)) return;
+        event.preventDefault();
+        onSave();
+      }}
+    >
+
+      {!isMarkdownMode ? (
+        <>
+          <BubbleMenu
+            editor={editor}
+            pluginKey="editor-inline-format-menu"
+            updateDelay={80}
+            options={{ placement: "top", offset: 8 }}
+            className="flex items-center gap-0.5 rounded-lg border border-border bg-surface-elevated p-1 shadow-floating"
+          >
+            <ToolbarButton
+              onClick={() => editor.chain().focus().toggleBold().run()}
+              active={editor.isActive("bold")}
+              title="굵게"
+            >
+              <Bold className="h-4 w-4" />
+            </ToolbarButton>
+            <ToolbarButton
+              onClick={() => editor.chain().focus().toggleItalic().run()}
+              active={editor.isActive("italic")}
+              title="기울임"
+            >
+              <Italic className="h-4 w-4" />
+            </ToolbarButton>
+            <ToolbarButton
+              onClick={() => editor.chain().focus().toggleUnderline().run()}
+              active={editor.isActive("underline")}
+              title="밑줄"
+            >
+              <UnderlineIcon className="h-4 w-4" />
+            </ToolbarButton>
+            <ToolbarButton
+              onClick={() => openInsertPanel("link")}
+              active={editor.isActive("link")}
+              title="링크"
+            >
+              <LinkIcon className="h-4 w-4" />
+            </ToolbarButton>
+            {editor.isActive("link") ? (
+              <ToolbarButton
+                onClick={() => editor.chain().focus().unsetLink().run()}
+                title="링크 제거"
+              >
+                <Unlink className="h-4 w-4" />
+              </ToolbarButton>
+            ) : null}
+          </BubbleMenu>
+          <BlockCommandMenu editor={editor} />
+        </>
+      ) : null}
 
       {/* ── 툴바 ──────────────────────────────────── */}
-      <div
+      <fieldset
+        disabled={disabled}
         role="toolbar"
         aria-label="편집 도구"
-        className="flex flex-wrap items-center gap-0.5 px-3 py-2 border-b border-border bg-muted/40 flex-shrink-0"
+        className="flex min-w-0 flex-nowrap items-center gap-0.5 overflow-x-auto border-b border-border bg-muted/40 px-2 py-2 disabled:opacity-60 sm:px-3"
       >
         {/* 실행 취소 / 다시 실행 */}
         <ToolbarButton
@@ -412,20 +520,20 @@ export function FullEditor({
 
         {/* 미디어 / 링크 */}
         <ToolbarButton
-          onClick={addLink}
+          onClick={() => openInsertPanel("link")}
           active={editor.isActive("link")}
           title="링크 삽입"
         >
           <LinkIcon className="w-4 h-4" />
         </ToolbarButton>
         <ToolbarButton
-          onClick={addImage}
+          onClick={() => openInsertPanel("image")}
           title="이미지 삽입"
         >
           <ImageIcon className="w-4 h-4" />
         </ToolbarButton>
         <ToolbarButton
-          onClick={addYoutube}
+          onClick={() => openInsertPanel("youtube")}
           title="유튜브 동영상 삽입"
         >
           <Video className="w-4 h-4" />
@@ -464,13 +572,25 @@ export function FullEditor({
             )}
           </Button>
         </div>
-      </div>
+      </fieldset>
+
+      {insertPanel ? (
+        <EditorInsertPanel
+          key={`${insertPanel.kind}:${insertPanel.selection.from}:${insertPanel.selection.to}`}
+          editor={editor}
+          kind={insertPanel.kind}
+          selection={insertPanel.selection}
+          onClose={() => setInsertPanel(null)}
+        />
+      ) : null}
 
       {/* ── 에디터 / 마크다운 영역 ─────────────────── */}
       {isMarkdownMode ? (
         <textarea
           value={markdownText}
           onChange={handleMarkdownChange}
+          disabled={disabled}
+          aria-label={`${ariaLabel} 마크다운`}
           className="flex-1 w-full p-6 font-mono text-sm text-foreground bg-background resize-none focus:outline-none leading-relaxed"
           style={{ minHeight }}
           placeholder="마크다운으로 작성하세요..."
@@ -484,6 +604,13 @@ export function FullEditor({
           <EditorContent editor={editor} />
         </div>
       )}
+      <div className="flex min-h-9 items-center justify-between gap-3 border-t border-border bg-muted/20 px-3 py-2">
+        <div className="min-w-0">{footer}</div>
+        <span className="shrink-0 text-[11px] text-muted-foreground">
+          <kbd className="font-sans">/</kbd> 블록
+          {onSave ? <><span aria-hidden="true"> · </span><kbd className="font-sans">⌘/Ctrl S</kbd> 저장</> : null}
+        </span>
+      </div>
     </div>
   );
 }

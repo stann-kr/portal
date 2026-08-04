@@ -126,7 +126,7 @@ export function AdminWorkQueueSection({
               {queue.openThreads.map((thread, index) => (
                 <Link
                   key={thread.id}
-                  href={`/dashboard/qna/${thread.id}`}
+                  href={`/dashboard/qna/${thread.id}?returnTo=%2Fdashboard%2Fadmin%3Fsection%3Dwork`}
                   className={`flex items-center gap-3 px-4 py-4 transition-colors hover:bg-muted focus-visible:bg-muted sm:px-5 ${
                     index > 0 ? "border-t border-border" : ""
                   }`}

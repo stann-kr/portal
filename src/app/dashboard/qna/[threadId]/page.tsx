@@ -12,18 +12,23 @@ import { getQnaThread } from "@/lib/actions/qna";
 import { ThreadDetailClient } from "@/components/qna/ThreadDetailClient";
 import type { QnaStatus } from "@/db/schema";
 import { StatusBadge } from "@/components/ui/status-badge";
+import { safeReturnPath } from "@/lib/safe-return-path";
 
 type QnaReply = NonNullable<Awaited<ReturnType<typeof getQnaThread>>>["replies"][number];
 
 export default async function QnaThreadPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ threadId: string }>;
+  searchParams: Promise<{ returnTo?: string }>;
 }) {
   const session = await auth();
   if (!session?.user) redirect("/login");
 
   const { threadId } = await params;
+  const query = await searchParams;
+  const returnTo = safeReturnPath(query.returnTo, "/dashboard/qna");
   const thread = await getQnaThread(threadId);
   if (!thread) redirect("/dashboard/qna");
 
@@ -38,7 +43,7 @@ export default async function QnaThreadPage({
       {/* 헤더 */}
       <div className="space-y-2">
         <Link
-          href="/dashboard/qna"
+          href={returnTo}
           className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
         >
           <ArrowLeft className="w-4 h-4" />
@@ -85,6 +90,7 @@ export default async function QnaThreadPage({
           authorRole: r.authorRole ?? null,
         }))}
         isAdmin={isAdmin}
+        actorId={session.user.id!}
       />
     </div>
   );

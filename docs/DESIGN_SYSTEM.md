@@ -84,8 +84,22 @@ pill 형태는 filter와 count처럼 모양 자체가 의미를 가질 때만 �
 | `UnifiedItemTypeBadge` | 통합 기록의 일정·노트·디깅·Q&A·과제 type icon·label |
 | `SectionHeader` | section 제목·설명·단일 보조 action |
 | `EmptyState` | 비어 있는 이유와 가능한 다음 행동 |
+| `FullEditor` | rich text·Markdown 작성, block command, inline 삽입, keyboard save 경계 |
+| `BlockCommandMenu` | `/` 검색과 keyboard로 실행하는 block 삽입 목록 |
+| `EditorInsertPanel` | 링크·이미지·YouTube URL을 검증하고 selection에 삽입하는 panel |
+| `DraftStatus` | 로컬 초안 저장·복원·오류 상태와 마지막 저장 시각 |
+| `RichTextContent` | 저장된 rich text의 공통 typography·embed 렌더 경계 |
 
 공통 component를 우회해 같은 패턴을 다시 만들지 않는다. 의미나 책임이 다른 경우에는 억지로 variant에 합치지 않는다.
+
+## 문서 작성 상호작용
+
+- 에디터 placeholder에 노출한 command는 실제 keyboard 동작과 일치해야 한다.
+- 제목·본문·첨부 등 문서를 구성하는 값은 하나의 draft payload로 저장하고 작성자·문서 ID로 격리한다.
+- draft 저장 상태와 복원 여부를 에디터 아래에 보이며 오류가 나면 직접 저장 행동을 안내한다.
+- `Cmd/Ctrl+S`는 브라우저 저장 dialog 대신 현재 form의 검증·저장 동작을 실행한다.
+- 저장된 본문의 heading, list, task, quote, code, table, link, image와 허용된 embed는 편집 화면과 읽기 화면에서 같은 hierarchy를 유지한다.
+- 편집 저장은 선행 변경을 조용히 덮지 않는다. 충돌을 감지하면 로컬 draft를 보존하고 서버 최신본 사용 또는 현재 초안 계속을 명시적으로 선택하게 한다.
 
 ## 접근성
 

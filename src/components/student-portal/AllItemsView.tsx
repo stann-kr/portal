@@ -33,9 +33,10 @@ function formatDate(date: Date): string {
 
 interface AllItemsViewProps {
   items: UnifiedItem[];
+  returnTo: string;
 }
 
-export function AllItemsView({ items }: AllItemsViewProps) {
+export function AllItemsView({ items, returnTo }: AllItemsViewProps) {
   const [activeTypes, setActiveTypes] = useState<Set<UnifiedItemType>>(
     new Set(ALL_TYPES),
   );
@@ -147,7 +148,7 @@ export function AllItemsView({ items }: AllItemsViewProps) {
         title={selectedItem?.title}
       >
         {selectedItem && (
-          <UnifiedItemDetail item={selectedItem} onClose={() => setPanelOpen(false)} />
+          <UnifiedItemDetail item={selectedItem} onClose={() => setPanelOpen(false)} returnTo={returnTo} />
         )}
       </SlidePanel>
     </>

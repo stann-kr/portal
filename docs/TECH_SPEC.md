@@ -60,6 +60,7 @@ OpenNext → Cloudflare Worker
 | `/dashboard/admin` | 관리자 원페이지 포털 |
 | `/dashboard/student/assignments/[id]` | 과제 상세 직접 접근 |
 | `/dashboard/student/notes/new` | 개인 노트 작성 직접 접근 |
+| `/dashboard/notes/[noteId]` | 권한 검증된 개인 노트 읽기·이어쓰기 |
 | `/dashboard/admin/students/new` | 학생 추가 |
 | `/dashboard/admin/students/[id]` | 학생 상세 |
 | `/dashboard/admin/categories` | 카테고리 관리 |
@@ -108,6 +109,17 @@ Migration SQL은 `drizzle/`, Drizzle metadata는 `drizzle/meta/`에 둔다. Wran
 - rich text는 서버 저장 경계에서 sanitize한다.
 - Q&A 상태 변경은 관리자 역할과 허용된 `OPEN`, `ANSWERED`, `CLOSED` 값인지 함께 검증한다.
 
+## 문서 작성과 연속성
+
+- `FullEditor`는 Tiptap 기반 block·inline 서식, slash command, 링크·이미지·YouTube 삽입 panel, Markdown 전환, 실행 취소와 `Cmd/Ctrl+S` 저장 경계를 제공한다.
+- 저장된 rich text는 `RichTextContent`와 공통 `.rich-text` 스타일로 렌더한다. 서버 저장 전에 sanitize하고 YouTube는 privacy-enhanced embed만 유지한다.
+- `useFormDraft`는 노트·게시물·Q&A의 작성자와 문서 문맥을 포함한 versioned local storage key를 사용한다. 변경을 debounce 저장하고 page hide·탭 숨김·unmount 전에 pending 값을 flush하며 저장·복원·오류 상태를 UI에 표시한다.
+- 포털 section, workspace view와 관리자 학생 선택은 URL에 기록한다. 작성 화면과 저장된 문서는 검증된 내부 `returnTo`를 전달해 직전 작업 문맥으로 돌아간다.
+- 개인 노트와 커뮤니티 게시물은 안정 URL에서 다시 편집할 수 있다. 편집 draft에는 서버 기준 snapshot을 함께 보존하고 조건부 update로 다른 화면의 선행 저장을 감지하며, 오래된 기준본을 복원하면 서버 최신본과 현재 초안 중 선택하게 한다.
+- Q&A의 생성·답변은 실패 시 같은 요청에서 만든 row를 보상 삭제한다. 이는 database transaction과 동일한 보장은 아니며 원자 mutation은 후속 persistence 보강 범위다.
+
+현재 초안은 단일 브라우저 기기용이다. 서버 초안 동기화, 문서 revision, 휴지통, 다중 기기 merge는 구현되지 않았다. 과거 owner 정보가 없는 local storage draft는 계정 간 노출을 막기 위해 자동 이관하지 않는다.
+
 ## 환경 변수와 설정
 
 | 항목 | 용도 | 값 관리 |
@@ -138,7 +150,7 @@ npm run build:worker
 npm audit --omit=dev --audit-level=moderate
 ```
 
-현재 migration consistency smoke, 개발용 관리자 seed의 환경·입력 경계, auth guard의 session·role·ownership, calendar token 변조·대상 불일치, HTML sanitize payload, portal 상태 registry, 학생 오늘과 관리자 업무함 selector 회귀 테스트가 자동화되어 있다. 대표 server action의 query·mutation integration/E2E test는 아직 없으며 DB migration과 production deploy는 별도 승인 후 실행한다.
+현재 migration consistency smoke, 개발용 관리자 seed의 환경·입력 경계, auth guard의 session·role·ownership, calendar token 변조·대상 불일치, HTML sanitize·YouTube payload, draft envelope·문서 key, rich text 빈 값, 안전한 복귀 경로, editor URL·slash command, portal 상태 registry, 학생 오늘과 관리자 업무함 selector 회귀 테스트가 자동화되어 있다. 대표 server action의 query·mutation integration/E2E test는 아직 없으며 DB migration과 production deploy는 별도 승인 후 실행한다.
 
 UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 시스템](./DESIGN_SYSTEM.md)을 기준으로 한다. 상태 registry는 label, semantic tone, icon key가 서로 어긋나지 않도록 단위 테스트로 보호한다.
 
@@ -148,6 +160,7 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 | 개발 credential | development/opt-in/env/input binding 단위 테스트 | 실제 local seed는 데이터 변경 작업으로 분리 |
 | 인증·권한 | 미인증·role·ownership 허용/거부 단위 테스트 | 대표 server action의 실제 query·mutation 경계 테스트 |
 | 입력·콘텐츠 | script·event handler·위험 protocol XSS payload 테스트 | upload MIME·size 정책 테스트 |
+| 문서 연속성 | draft envelope·key, rich text 판정, return path, editor command·URL 단위 테스트 | page hide·reload·동시 편집 server action integration/E2E |
 | UI 상태 | status registry 단위 테스트, loading/error route, semantic landmark·control 정적 검토 | keyboard interaction component 테스트 |
 
 ## 변경 시 같이 볼 파일
@@ -159,6 +172,7 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 | student portal | `src/app/dashboard/student/page.tsx`, `src/components/student-portal/**` |
 | admin portal | `src/app/dashboard/admin/page.tsx`, `src/components/admin-portal/**`, `src/lib/actions/students.ts` |
 | rich text·input | 관련 form, `src/lib/sanitize-html.ts`, server action |
+| 문서 draft·재진입 | `src/lib/form-draft.ts`, `src/lib/hooks/useFormDraft.ts`, 안정 문서 route, 관련 server action |
 | upload·media | `src/lib/r2.ts`, `src/lib/actions/upload.ts`, `.env.example`, `docs/DEPLOYMENT.md` |
 | Cloudflare binding | `wrangler.toml`, `open-next.config.ts`, `docs/DEPLOYMENT.md` |
 
@@ -178,5 +192,7 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 - 개발 도구 전체 audit에는 Drizzle Kit의 구형 esbuild loader 체인에서 발생하는 moderate 권고가 남아 있다. 현재 npm 제안은 호환되지 않는 구버전 downgrade이므로 upstream 패치를 추적한다.
 - migration SQL과 `drizzle/meta` 생성 이력은 `0007`까지 복구됐고 local D1도 빈 상태에서 전체 migration 재적용과 구조 검증을 통과했다. remote 이력은 별도 승인 전 추정하지 않는다.
 - 대표 server action과 핵심 사용자 흐름을 보호할 integration/E2E 테스트가 없다.
+- 문서 revision·휴지통·서버 초안과 원자적인 Q&A thread/reply mutation이 없다. 현재 노트·게시물은 snapshot 기반 충돌 감지, Q&A는 보상 삭제로 유실 위험을 줄인다.
+- 운영 D1 export·복구 절차는 문서화됐지만 승인된 원격 backup과 격리 restore rehearsal 기록은 아직 없다.
 - 일부 대형 client component는 상태 hook, domain view와 presentation 경계가 한 파일에 남아 있다.
 - 소셜 공유 이미지는 승인된 브랜드 asset이 준비된 뒤 metadata에 연결해야 한다.

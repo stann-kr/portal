@@ -20,7 +20,9 @@ import { DiggingBoard } from "@/components/digging/DiggingBoard";
 import { ThreadList } from "@/components/qna/ThreadList";
 import { PrivateNoteForm } from "@/components/notes/PrivateNoteForm";
 import { DeleteNoteButton } from "@/components/notes/DeleteNoteButton";
-import { MessageSquarePlus } from "lucide-react";
+import { RichTextContent } from "@/components/editor/RichTextContent";
+import { MessageSquarePlus, PencilLine } from "lucide-react";
+import Link from "next/link";
 import type { DiggingColumnType, QnaStatus } from "@/db/schema";
 
 type TabKey = "overview" | "digging" | "notes" | "qna";
@@ -70,7 +72,7 @@ async function NotesTabContent({
             <MessageSquarePlus className="w-5 h-5 text-muted-foreground" />
             노트 작성
           </h2>
-          <PrivateNoteForm studentId={studentId} />
+          <PrivateNoteForm studentId={studentId} actorId={adminId} />
         </div>
       </div>
 
@@ -107,14 +109,20 @@ async function NotesTabContent({
                       </span>
                     </div>
                   </div>
-                  {note.authorId === adminId && (
-                    <DeleteNoteButton noteId={note.id} />
-                  )}
+                  <div className="flex items-center gap-1">
+                    <Link
+                      href={`/dashboard/notes/${note.id}?returnTo=${encodeURIComponent(`/dashboard/admin/students/${studentId}?tab=notes`)}`}
+                      className="inline-flex h-8 items-center gap-1 rounded-md px-2 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                    >
+                      <PencilLine className="h-3.5 w-3.5" aria-hidden="true" />
+                      이어쓰기
+                    </Link>
+                    {note.authorId === adminId && (
+                      <DeleteNoteButton noteId={note.id} />
+                    )}
+                  </div>
                 </div>
-                <div
-                  className="prose prose-sm dark:prose-invert max-w-none text-muted-foreground"
-                  dangerouslySetInnerHTML={{ __html: note.contentHtml }}
-                />
+                <RichTextContent html={note.contentHtml} className="text-muted-foreground" />
               </div>
             ))}
           </div>
@@ -139,7 +147,13 @@ async function QnaTabContent({ studentId }: { studentId: string }) {
     );
   }
 
-  return <ThreadList threads={threads} isAdmin={true} />;
+  return (
+    <ThreadList
+      threads={threads}
+      isAdmin={true}
+      returnTo={`/dashboard/admin/students/${studentId}?tab=qna`}
+    />
+  );
 }
 
 // ─── 메인 페이지 (RSC) ────────────────────────────

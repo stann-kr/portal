@@ -9,8 +9,11 @@
  */
 "use client";
 
+import Link from "next/link";
+import { PencilLine } from "lucide-react";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 import { UnifiedItemTypeBadge } from "@/components/ui/unified-item-type";
+import { RichTextContent } from "@/components/editor/RichTextContent";
 
 // ── 타입 라벨 ────────────────────────────────────
 
@@ -50,9 +53,10 @@ function metaStr(
 interface UnifiedItemDetailProps {
   item: UnifiedItem;
   onClose: () => void;
+  returnTo: string;
 }
 
-export function UnifiedItemDetail({ item }: UnifiedItemDetailProps) {
+export function UnifiedItemDetail({ item, returnTo }: UnifiedItemDetailProps) {
   // metadata 값을 미리 문자열로 추출 (unknown → string | null 명확화)
   const metaDescription = metaStr(item.metadata, "description");
   const metaContentHtml = metaStr(item.metadata, "contentHtml");
@@ -107,10 +111,16 @@ export function UnifiedItemDetail({ item }: UnifiedItemDetailProps) {
 
       {/* NOTE */}
       {item.type === "NOTE" && metaContentHtml !== null ? (
-        <div
-          className="prose prose-sm max-w-none text-foreground prose-a:text-primary"
-          dangerouslySetInnerHTML={{ __html: metaContentHtml }}
-        />
+        <div className="space-y-5">
+          <RichTextContent html={metaContentHtml} />
+          <Link
+            href={`/dashboard/notes/${item.id}?returnTo=${encodeURIComponent(returnTo)}`}
+            className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-accent"
+          >
+            <PencilLine className="h-3.5 w-3.5" aria-hidden="true" />
+            전체 화면에서 이어쓰기
+          </Link>
+        </div>
       ) : null}
 
       {/* DIGGING */}
@@ -144,6 +154,12 @@ export function UnifiedItemDetail({ item }: UnifiedItemDetailProps) {
           <p className="text-xs text-muted-foreground pt-1">
             전체 Q&A 보기는 상단 메뉴에서 Q&A 섹션을 이용하세요.
           </p>
+          <Link
+            href={`/dashboard/qna/${item.id}?returnTo=${encodeURIComponent(returnTo)}`}
+            className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-accent"
+          >
+            전체 대화에서 이어보기
+          </Link>
         </div>
       ) : null}
 

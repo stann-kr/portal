@@ -7,6 +7,12 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  hasFormDraftStorageConflict,
+  parseFormDraft,
+  serializeFormDraft,
+  type FormDraftStatus,
+} from "@/lib/form-draft";
 
 interface UseFormDraftResult<T> {
   /** 클라이언트에서 복원 시도가 끝났는지 여부 (에디터 마운트 게이트용) */
@@ -15,60 +21,167 @@ interface UseFormDraftResult<T> {
   save: (data: T) => void;
   /** 저장된 draft 삭제 (제출 성공 시 호출) */
   clear: () => void;
+  /** 예약된 저장을 즉시 반영 (blur/page hide 경계용) */
+  flush: () => void;
+  /** 로컬 저장소 기록 상태 */
+  status: FormDraftStatus;
+  /** 마지막으로 저장된 시각 */
+  savedAt: Date | null;
+  /** 마운트 시 기존 draft를 복원했는지 여부 */
+  restored: boolean;
 }
 
 /**
  * 폼 임시저장 훅.
  * @param key localStorage 키 (폼별/대상별로 고유해야 함)
  * @param onRestore 마운트 시 저장된 draft가 있으면 1회 호출 — 폼 state 복원에 사용
- * @param debounceMs 저장 디바운스 (기본 500ms)
+ * @param options 저장 디바운스와 key 전환 시 폼 초기화 동작
  */
 export function useFormDraft<T>(
   key: string,
   onRestore: (draft: T) => void,
-  debounceMs = 500,
+  options: { debounceMs?: number; onReset?: () => void } = {},
 ): UseFormDraftResult<T> {
-  const [loaded, setLoaded] = useState(false);
+  const { debounceMs = 500, onReset } = options;
+  const [loadedKey, setLoadedKey] = useState<string | null>(null);
+  const [status, setStatus] = useState<FormDraftStatus>("idle");
+  const [savedAt, setSavedAt] = useState<Date | null>(null);
+  const [restored, setRestored] = useState(false);
   const onRestoreRef = useRef(onRestore);
   onRestoreRef.current = onRestore;
+  const onResetRef = useRef(onReset);
+  onResetRef.current = onReset;
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingRef = useRef<T | null>(null);
+  const mountedRef = useRef(false);
+  const lastKnownRawRef = useRef<string | null>(null);
+
+  const flush = useCallback(() => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+
+    if (pendingRef.current === null) return;
+
+    const data = pendingRef.current;
+    const writtenAt = new Date();
+
+    try {
+      const currentRaw = window.localStorage.getItem(key);
+      if (hasFormDraftStorageConflict(lastKnownRawRef.current, currentRaw)) {
+        if (mountedRef.current) setStatus("conflict");
+        return;
+      }
+
+      const nextRaw = serializeFormDraft(data, writtenAt.getTime());
+      window.localStorage.setItem(key, nextRaw);
+      lastKnownRawRef.current = nextRaw;
+      pendingRef.current = null;
+      if (mountedRef.current) {
+        setSavedAt(writtenAt);
+        setRestored(false);
+        setStatus("saved");
+      }
+    } catch {
+      if (mountedRef.current) setStatus("error");
+    }
+  }, [key]);
 
   // 마운트 시 1회 복원 (setState들이 setLoaded와 함께 배치되어 단일 렌더로 반영)
   useEffect(() => {
+    mountedRef.current = true;
+    // 이전 문서 flush가 storage 충돌/오류로 끝났더라도 그 pending 값을 새 key로 넘기지 않는다.
+    // 충돌 내용은 현재 문서 화면에서 직접 저장하도록 안내하며, 문서 간 초안 혼입을 우선 차단한다.
+    pendingRef.current = null;
+    setStatus("idle");
+    setSavedAt(null);
+    setRestored(false);
+    lastKnownRawRef.current = null;
     try {
       const raw = window.localStorage.getItem(key);
-      if (raw) onRestoreRef.current(JSON.parse(raw) as T);
+      const stored = raw ? parseFormDraft<T>(raw) : null;
+      if (stored) {
+        lastKnownRawRef.current = raw;
+        onRestoreRef.current(stored.data);
+        setSavedAt(stored.savedAt);
+        setRestored(true);
+        setStatus("saved");
+      } else if (raw) {
+        window.localStorage.removeItem(key);
+        onResetRef.current?.();
+      } else {
+        onResetRef.current?.();
+      }
     } catch {
-      // 손상된 draft는 무시
+      setStatus("error");
     }
-    setLoaded(true);
-    return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
+    setLoadedKey(key);
+
+    const handlePageHide = () => flush();
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") flush();
     };
-  }, [key]);
+    const handleStorage = (event: StorageEvent) => {
+      if (event.storageArea !== window.localStorage || event.key !== key) return;
+      if (hasFormDraftStorageConflict(lastKnownRawRef.current, event.newValue)) {
+        setStatus("conflict");
+      }
+    };
+    window.addEventListener("pagehide", handlePageHide);
+    window.addEventListener("storage", handleStorage);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      mountedRef.current = false;
+      flush();
+      window.removeEventListener("pagehide", handlePageHide);
+      window.removeEventListener("storage", handleStorage);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [flush, key]);
 
   const save = useCallback(
     (data: T) => {
       if (timerRef.current) clearTimeout(timerRef.current);
+      pendingRef.current = data;
+      setStatus("saving");
       timerRef.current = setTimeout(() => {
-        try {
-          window.localStorage.setItem(key, JSON.stringify(data));
-        } catch {
-          // 저장소 사용 불가/용량 초과 시 무시
-        }
+        flush();
       }, debounceMs);
     },
-    [key, debounceMs],
+    [debounceMs, flush],
   );
 
   const clear = useCallback(() => {
-    if (timerRef.current) clearTimeout(timerRef.current);
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    pendingRef.current = null;
     try {
+      const currentRaw = window.localStorage.getItem(key);
+      if (hasFormDraftStorageConflict(lastKnownRawRef.current, currentRaw)) {
+        setStatus("conflict");
+        return;
+      }
       window.localStorage.removeItem(key);
+      lastKnownRawRef.current = null;
+      setSavedAt(null);
+      setRestored(false);
+      setStatus("idle");
     } catch {
-      // 무시
+      setStatus("error");
     }
   }, [key]);
 
-  return { loaded, save, clear };
+  return {
+    loaded: loadedKey === key,
+    save,
+    clear,
+    flush,
+    status,
+    savedAt,
+    restored,
+  };
 }

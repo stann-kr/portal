@@ -21,9 +21,10 @@ type FeedbackPost = {
 
 interface MixsetFeedbackCardProps {
   post: FeedbackPost;
+  returnTo?: string;
 }
 
-export function MixsetFeedbackCard({ post }: MixsetFeedbackCardProps) {
+export function MixsetFeedbackCard({ post, returnTo = "/community" }: MixsetFeedbackCardProps) {
   const [isPlaying, setIsPlaying] = useState(false);
 
   const author =
@@ -73,7 +74,10 @@ export function MixsetFeedbackCard({ post }: MixsetFeedbackCardProps) {
             {post.title}
           </p>
         </div>
-        <Link href={`/community/${post.id}`} className="flex-shrink-0">
+        <Link
+          href={`/community/${post.id}?returnTo=${encodeURIComponent(returnTo)}`}
+          className="flex-shrink-0"
+        >
           <ChevronRight className="w-4 h-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
         </Link>
       </div>

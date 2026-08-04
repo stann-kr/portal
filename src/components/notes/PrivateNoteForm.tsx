@@ -1,11 +1,15 @@
 "use client";
 
-import { useActionState, useState, useEffect } from "react";
+import { useActionState, useState, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
 import { createPrivateNote, type CreateNoteState } from "@/lib/actions/privateNotes";
 import { useFormDraft } from "@/lib/hooks/useFormDraft";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DraftStatus } from "@/components/editor/DraftStatus";
+import { createDocumentDraftKey } from "@/lib/form-draft";
+import { isRichTextEmpty } from "@/lib/rich-text";
+import { toKstDateInputValue } from "@/lib/date-input";
 
 const FullEditor = dynamic(
   () => import("@/components/editor/FullEditor").then((m) => ({ default: m.FullEditor })),
@@ -14,28 +18,43 @@ const FullEditor = dynamic(
 
 const initialState: CreateNoteState = {};
 
-export function PrivateNoteForm({ studentId }: { studentId: string }) {
+export function PrivateNoteForm({
+  studentId,
+  actorId,
+}: {
+  studentId: string;
+  actorId: string;
+}) {
   const boundAction = createPrivateNote.bind(null, studentId);
   const [state, formAction, pending] = useActionState(boundAction, initialState);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = toKstDateInputValue();
   const [title, setTitle] = useState("");
   const [noteDate, setNoteDate] = useState(today);
   const [contentHtml, setContentHtml] = useState("");
   const [editorKey, setEditorKey] = useState(0);
+  const formRef = useRef<HTMLFormElement>(null);
 
   // 임시저장 복원/저장 (학생별 키)
-  const { loaded, save, clear } = useFormDraft<{ title: string; noteDate: string; contentHtml: string }>(
-    `draft:note:full:${studentId}`,
+  const { loaded, save, clear, status, savedAt, restored } = useFormDraft<{ title: string; noteDate: string; contentHtml: string }>(
+    createDocumentDraftKey("note", actorId, `new:${studentId}`),
     (d) => {
       setTitle(d.title ?? "");
       if (d.noteDate) setNoteDate(d.noteDate);
       setContentHtml(d.contentHtml ?? "");
     },
+    {
+      onReset: () => {
+        setTitle("");
+        setNoteDate(today);
+        setContentHtml("");
+        setEditorKey((key) => key + 1);
+      },
+    },
   );
 
   useEffect(() => {
     if (!loaded) return;
-    const isEmpty = !title && (!contentHtml || contentHtml === "<p></p>");
+    const isEmpty = !title && isRichTextEmpty(contentHtml);
     if (isEmpty) {
       clear();
       return;
@@ -53,10 +72,10 @@ export function PrivateNoteForm({ studentId }: { studentId: string }) {
       setEditorKey((k) => k + 1);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.success]);
+  }, [state.note?.id]);
 
   return (
-    <form action={formAction} className="space-y-4">
+    <form ref={formRef} action={formAction} className="space-y-4">
       {state.error && (
         <p role="alert" className="text-sm text-destructive">{state.error}</p>
       )}
@@ -102,11 +121,14 @@ export function PrivateNoteForm({ studentId }: { studentId: string }) {
             placeholder="수업 내용, 메모 등을 작성하세요..."
             disabled={pending}
             minHeight="300px"
+            ariaLabel="노트 내용"
+            footer={<DraftStatus status={status} savedAt={savedAt} restored={restored} />}
+            onSave={() => formRef.current?.requestSubmit()}
           />
         )}
       </div>
 
-      <Button type="submit" disabled={pending} className="w-full">
+      <Button type="submit" disabled={pending || !title.trim() || isRichTextEmpty(contentHtml)} className="w-full">
         {pending ? "작성 중..." : "노트 저장"}
       </Button>
     </form>

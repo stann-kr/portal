@@ -5,13 +5,17 @@
  */
 "use client";
 
-import { useActionState, useState, useEffect } from "react";
+import { useActionState, useState, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useFormDraft } from "@/lib/hooks/useFormDraft";
 import { createPrivateNote, type CreateNoteState } from "@/lib/actions/privateNotes";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
+import { DraftStatus } from "@/components/editor/DraftStatus";
+import { createDocumentDraftKey } from "@/lib/form-draft";
+import { isRichTextEmpty } from "@/lib/rich-text";
+import { toKstDateInputValue } from "@/lib/date-input";
 
 const FullEditor = dynamic(
   () => import("@/components/editor/FullEditor").then((m) => ({ default: m.FullEditor })),
@@ -20,33 +24,42 @@ const FullEditor = dynamic(
 
 interface NoteSlideFormProps {
   studentId: string;
+  actorId: string;
   /** 캘린더 날짜 클릭 시 기본값 (YYYY-MM-DD) */
   defaultDate?: string;
   onSuccess: (item: UnifiedItem) => void;
   onClose: () => void;
 }
 
-export function NoteSlideForm({ studentId, defaultDate, onSuccess, onClose }: NoteSlideFormProps) {
+export function NoteSlideForm({ studentId, actorId, defaultDate, onSuccess, onClose }: NoteSlideFormProps) {
   const boundAction = createPrivateNote.bind(null, studentId);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = toKstDateInputValue();
   const [title, setTitle] = useState("");
   const [noteDate, setNoteDate] = useState(defaultDate ?? today);
   const [contentHtml, setContentHtml] = useState("");
   const [state, formAction, isPending] = useActionState<CreateNoteState, FormData>(boundAction, {});
+  const formRef = useRef<HTMLFormElement>(null);
 
   // 임시저장 복원/저장 (학생별 키)
-  const { loaded, save, clear } = useFormDraft<{ title: string; noteDate: string; contentHtml: string }>(
-    `draft:note:slide:${studentId}`,
+  const { loaded, save, clear, status, savedAt, restored } = useFormDraft<{ title: string; noteDate: string; contentHtml: string }>(
+    createDocumentDraftKey("note", actorId, `new:${studentId}`),
     (d) => {
       setTitle(d.title ?? "");
       if (d.noteDate) setNoteDate(d.noteDate);
       setContentHtml(d.contentHtml ?? "");
     },
+    {
+      onReset: () => {
+        setTitle("");
+        setNoteDate(defaultDate ?? today);
+        setContentHtml("");
+      },
+    },
   );
 
   useEffect(() => {
     if (!loaded) return;
-    const isEmpty = !title && (!contentHtml || contentHtml === "<p></p>");
+    const isEmpty = !title && isRichTextEmpty(contentHtml);
     if (isEmpty) {
       clear();
       return;
@@ -58,21 +71,21 @@ export function NoteSlideForm({ studentId, defaultDate, onSuccess, onClose }: No
   useEffect(() => {
     if (state.success && state.note) {
       clear();
-      const { id, title: savedTitle, noteDate: savedDate, createdAt } = state.note;
+      const { id, title: savedTitle, contentHtml: savedContentHtml, noteDate: savedDate, createdAt } = state.note;
       const newItem: UnifiedItem = {
         id,
         type: "NOTE",
         title: savedTitle,
         date: new Date(savedDate ?? createdAt ?? Date.now()),
-        metadata: { contentHtml: "", authorId: studentId },
+        metadata: { contentHtml: savedContentHtml, authorId: actorId, noteDate: savedDate },
       };
       onSuccess(newItem);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.success]);
+  }, [state.note?.id]);
 
   return (
-    <form action={formAction} className="space-y-4">
+    <form ref={formRef} action={formAction} className="space-y-4">
       <input type="hidden" name="contentHtml" value={contentHtml} />
 
       {state.error && (
@@ -120,12 +133,15 @@ export function NoteSlideForm({ studentId, defaultDate, onSuccess, onClose }: No
             placeholder="수업 내용, 연습 기록, 메모 등을 자유롭게 작성하세요..."
             disabled={isPending}
             minHeight="300px"
+            ariaLabel="노트 내용"
+            footer={<DraftStatus status={status} savedAt={savedAt} restored={restored} />}
+            onSave={() => formRef.current?.requestSubmit()}
           />
         )}
       </div>
 
       <div className="flex gap-3 pt-2">
-        <Button type="submit" disabled={isPending || !contentHtml} className="flex-1">
+        <Button type="submit" disabled={isPending || !title.trim() || isRichTextEmpty(contentHtml)} className="flex-1">
           {isPending ? "저장 중..." : "노트 저장"}
         </Button>
         <Button type="button" variant="outline" onClick={onClose} disabled={isPending}>

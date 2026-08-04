@@ -15,6 +15,7 @@ import {
   AccordionContent,
 } from "@/components/ui/accordion";
 import { Button } from "@/components/ui/button";
+import { RichTextContent } from "@/components/editor/RichTextContent";
 import { togglePinPost } from "@/lib/actions/posts";
 
 type Post = {
@@ -30,9 +31,10 @@ type Post = {
 interface AnnouncementListProps {
   posts: Post[];
   isAdmin: boolean;
+  returnTo?: string;
 }
 
-export function AnnouncementList({ posts, isAdmin }: AnnouncementListProps) {
+export function AnnouncementList({ posts, isAdmin, returnTo = "/community" }: AnnouncementListProps) {
   const [isPending, startTransition] = useTransition();
 
   if (posts.length === 0) {
@@ -85,13 +87,10 @@ export function AnnouncementList({ posts, isAdmin }: AnnouncementListProps) {
               </div>
             </AccordionTrigger>
             <AccordionContent>
-              <div
-                className="prose prose-sm max-w-none text-foreground prose-a:text-primary mb-4"
-                dangerouslySetInnerHTML={{ __html: post.contentHtml }}
-              />
+              <RichTextContent html={post.contentHtml} className="mb-4" />
               <div className="flex items-center justify-between pt-2 border-t border-border/50">
                 <Link
-                  href={`/community/${post.id}`}
+                  href={`/community/${post.id}?returnTo=${encodeURIComponent(returnTo)}`}
                   className="text-xs text-primary hover:underline"
                 >
                   상세 보기 →

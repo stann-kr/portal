@@ -156,7 +156,7 @@ export function TodaySection({
                 const isAssignment = item.type === "ASSIGNMENT";
                 const href = isAssignment
                   ? `/dashboard/student/assignments/${item.id}`
-                  : `/dashboard/qna/${item.id}`;
+                  : `/dashboard/qna/${item.id}?returnTo=%2Fdashboard%2Fstudent%3Fsection%3Dtoday`;
                 const title = isAssignment ? "제출한 믹스셋" : item.title;
 
                 return (
@@ -190,13 +190,13 @@ export function TodaySection({
           />
           <div className="grid gap-2 sm:grid-cols-3 md:grid-cols-1">
             <Button asChild variant="outline" className="h-auto justify-start px-4 py-3">
-              <Link href="/dashboard/student/notes/new">
+              <Link href="/dashboard/student/notes/new?returnTo=%2Fdashboard%2Fstudent%3Fsection%3Dtoday">
                 <FileText className="mr-2 size-4 text-primary" aria-hidden="true" />
                 노트 작성
               </Link>
             </Button>
             <Button asChild variant="outline" className="h-auto justify-start px-4 py-3">
-              <Link href="/dashboard/qna/new">
+              <Link href="/dashboard/qna/new?returnTo=%2Fdashboard%2Fstudent%3Fsection%3Dtoday">
                 <HelpCircle className="mr-2 size-4 text-primary" aria-hidden="true" />
                 질문 작성
               </Link>
@@ -225,7 +225,7 @@ export function TodaySection({
             {recentAnnouncements.map((post) => (
               <Link
                 key={post.id}
-                href={`/community/${post.id}`}
+                href={`/community/${post.id}?returnTo=%2Fdashboard%2Fstudent%3Fsection%3Dtoday`}
                 className="group min-w-0 rounded-lg border border-border bg-surface px-4 py-4 transition-[border-color,background-color,transform] hover:border-primary/30 hover:bg-accent/40 active:translate-y-px"
               >
                 <p className="line-clamp-2 text-sm font-semibold leading-6 text-foreground">

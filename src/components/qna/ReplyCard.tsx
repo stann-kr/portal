@@ -4,6 +4,7 @@
  * 작성자 역할별 스타일 구분: 어드민(우측/강조) vs 학생(좌측/기본).
  */
 import { ExternalLink } from "lucide-react";
+import { RichTextContent } from "@/components/editor/RichTextContent";
 
 type Reply = {
   id: string;
@@ -64,11 +65,9 @@ export function ReplyCard({ reply }: ReplyCardProps) {
               : "bg-muted border border-border rounded-tl-sm"
           }`}
         >
-          <div
-            className={`prose prose-sm max-w-none ${
-              isAdmin ? "prose-invert" : "prose-foreground"
-            }`}
-            dangerouslySetInnerHTML={{ __html: reply.contentHtml }}
+          <RichTextContent
+            html={reply.contentHtml}
+            className={isAdmin ? "text-primary-foreground" : "text-foreground"}
           />
         </div>
 

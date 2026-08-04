@@ -5,13 +5,19 @@
  */
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { ArrowLeft, Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { CreateNoteState } from "@/lib/actions/privateNotes";
+import { DraftStatus } from "@/components/editor/DraftStatus";
+import { useFormDraft } from "@/lib/hooks/useFormDraft";
+import { createDocumentDraftKey } from "@/lib/form-draft";
+import { isRichTextEmpty } from "@/lib/rich-text";
+import { toKstDateInputValue } from "@/lib/date-input";
 
 const FullEditor = dynamic(
   () => import("@/components/editor/FullEditor").then((m) => ({ default: m.FullEditor })),
@@ -21,21 +27,54 @@ const FullEditor = dynamic(
 interface NoteFullFormProps {
   /** createPrivateNote.bind(null, studentId) */
   action: (prev: CreateNoteState, formData: FormData) => Promise<CreateNoteState>;
+  actorId: string;
+  studentId: string;
+  returnTo: string;
 }
 
-export function NoteFullForm({ action }: NoteFullFormProps) {
+export function NoteFullForm({ action, actorId, studentId, returnTo }: NoteFullFormProps) {
+  const today = toKstDateInputValue();
+  const [title, setTitle] = useState("");
+  const [noteDate, setNoteDate] = useState(today);
   const [contentHtml, setContentHtml] = useState("");
   const [state, formAction, isPending] = useActionState<CreateNoteState, FormData>(
     action,
     {}
   );
+  const formRef = useRef<HTMLFormElement>(null);
+  const router = useRouter();
+
+  const { loaded, save, clear, status, savedAt, restored } = useFormDraft<{
+    title: string;
+    noteDate: string;
+    contentHtml: string;
+  }>(createDocumentDraftKey("note", actorId, `new:${studentId}`), (draft) => {
+    setTitle(draft.title ?? "");
+    setNoteDate(draft.noteDate || today);
+    setContentHtml(draft.contentHtml ?? "");
+  });
+
+  useEffect(() => {
+    if (!loaded) return;
+    if (!title && isRichTextEmpty(contentHtml)) {
+      clear();
+      return;
+    }
+    save({ title, noteDate, contentHtml });
+  }, [clear, contentHtml, loaded, noteDate, save, title]);
+
+  useEffect(() => {
+    if (!state.note?.id) return;
+    clear();
+    router.replace(`/dashboard/notes/${state.note.id}?returnTo=${encodeURIComponent(returnTo)}`);
+  }, [clear, returnTo, router, state.note?.id]);
 
   return (
     <div className="max-w-4xl mx-auto space-y-6 py-6 px-4">
       {/* 헤더 */}
       <div className="space-y-1">
         <Link
-          href="/dashboard/student"
+          href={returnTo}
           className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
         >
           <ArrowLeft className="w-4 h-4" />
@@ -44,7 +83,7 @@ export function NoteFullForm({ action }: NoteFullFormProps) {
         <h1 className="text-2xl font-semibold mt-2">노트 작성</h1>
       </div>
 
-      <form action={formAction} className="space-y-5">
+      <form ref={formRef} action={formAction} className="space-y-5">
         <input type="hidden" name="contentHtml" value={contentHtml} />
 
         {state?.error && (
@@ -74,6 +113,8 @@ export function NoteFullForm({ action }: NoteFullFormProps) {
               placeholder="오늘의 수업 요약"
               required
               disabled={isPending}
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
             />
           </div>
           <div className="space-y-1.5 sm:w-44">
@@ -84,7 +125,8 @@ export function NoteFullForm({ action }: NoteFullFormProps) {
               id="note-date"
               name="noteDate"
               type="date"
-              defaultValue={new Date().toISOString().slice(0, 10)}
+              value={noteDate}
+              onChange={(event) => setNoteDate(event.target.value)}
               disabled={isPending}
             />
           </div>
@@ -95,25 +137,31 @@ export function NoteFullForm({ action }: NoteFullFormProps) {
           <label className="text-sm font-medium">
             내용 <span className="text-destructive">*</span>
           </label>
-          <FullEditor
-            onChange={setContentHtml}
-            placeholder="수업 내용, 연습 기록, 메모 등을 자유롭게 작성하세요..."
-            disabled={isPending}
-          />
+          {loaded ? (
+            <FullEditor
+              initialContent={contentHtml}
+              onChange={setContentHtml}
+              placeholder="수업 내용, 연습 기록, 메모 등을 자유롭게 작성하세요..."
+              disabled={isPending}
+              ariaLabel="노트 내용"
+              footer={<DraftStatus status={status} savedAt={savedAt} restored={restored} />}
+              onSave={() => formRef.current?.requestSubmit()}
+            />
+          ) : null}
         </div>
 
         {/* 버튼 */}
         <div className="flex gap-3">
           <Button
             type="submit"
-            disabled={isPending || !contentHtml}
+            disabled={isPending || !title.trim() || isRichTextEmpty(contentHtml)}
             className="flex-1 gap-2"
           >
             <Save className="w-4 h-4" />
             {isPending ? "저장 중..." : "노트 저장"}
           </Button>
           <Button variant="outline" asChild disabled={isPending}>
-            <Link href="/dashboard/student">취소</Link>
+            <Link href={returnTo}>취소</Link>
           </Button>
         </div>
       </form>

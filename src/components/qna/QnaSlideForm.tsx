@@ -6,7 +6,7 @@
  */
 "use client";
 
-import { useActionState, useState, useEffect } from "react";
+import { useActionState, useState, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,13 +14,15 @@ import { AttachmentField } from "@/components/qna/AttachmentField";
 import { useFormDraft } from "@/lib/hooks/useFormDraft";
 import { createQnaThreadInline, type CreateThreadInlineState } from "@/lib/actions/qna";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
+import { DraftStatus } from "@/components/editor/DraftStatus";
+import { createDocumentDraftKey } from "@/lib/form-draft";
+import { isRichTextEmpty } from "@/lib/rich-text";
+import { useRouter } from "next/navigation";
 
 const FullEditor = dynamic(
   () => import("@/components/editor/FullEditor").then((m) => ({ default: m.FullEditor })),
   { ssr: false },
 );
-
-const DRAFT_KEY = "draft:qna:thread";
 
 interface QnaDraft {
   title: string;
@@ -29,11 +31,13 @@ interface QnaDraft {
 }
 
 interface QnaSlideFormProps {
+  actorId: string;
   onSuccess: (item: UnifiedItem) => void;
   onClose: () => void;
+  returnTo: string;
 }
 
-export function QnaSlideForm({ onSuccess, onClose }: QnaSlideFormProps) {
+export function QnaSlideForm({ actorId, onSuccess, onClose, returnTo }: QnaSlideFormProps) {
   const [title, setTitle] = useState("");
   const [contentHtml, setContentHtml] = useState("");
   const [attachmentUrl, setAttachmentUrl] = useState("");
@@ -41,17 +45,22 @@ export function QnaSlideForm({ onSuccess, onClose }: QnaSlideFormProps) {
     createQnaThreadInline,
     {},
   );
+  const formRef = useRef<HTMLFormElement>(null);
+  const router = useRouter();
 
   // 임시저장 복원/저장
-  const { loaded, save, clear } = useFormDraft<QnaDraft>(DRAFT_KEY, (d) => {
+  const { loaded, save, clear, status, savedAt, restored } = useFormDraft<QnaDraft>(
+    createDocumentDraftKey("qna-thread", actorId),
+    (d) => {
     setTitle(d.title ?? "");
     setContentHtml(d.contentHtml ?? "");
     setAttachmentUrl(d.attachmentUrl ?? "");
-  });
+    },
+  );
 
   useEffect(() => {
     if (!loaded) return;
-    const isEmpty = !title && (!contentHtml || contentHtml === "<p></p>") && !attachmentUrl;
+    const isEmpty = !title && isRichTextEmpty(contentHtml) && !attachmentUrl;
     if (isEmpty) {
       clear();
       return;
@@ -73,12 +82,13 @@ export function QnaSlideForm({ onSuccess, onClose }: QnaSlideFormProps) {
         metadata: { status: "OPEN" },
       };
       onSuccess(newItem);
+      router.push(`/dashboard/qna/${id}?returnTo=${encodeURIComponent(returnTo)}`);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.success]);
+  }, [state.thread?.id]);
 
   return (
-    <form action={formAction} className="space-y-4">
+    <form ref={formRef} action={formAction} className="space-y-4">
       <input type="hidden" name="contentHtml" value={contentHtml} />
 
       {state.error && (
@@ -113,6 +123,9 @@ export function QnaSlideForm({ onSuccess, onClose }: QnaSlideFormProps) {
             placeholder="질문 내용을 자세히 작성하세요..."
             disabled={isPending}
             minHeight="300px"
+            ariaLabel="Q&A 질문 내용"
+            footer={<DraftStatus status={status} savedAt={savedAt} restored={restored} />}
+            onSave={() => formRef.current?.requestSubmit()}
           />
         )}
       </div>
@@ -124,7 +137,7 @@ export function QnaSlideForm({ onSuccess, onClose }: QnaSlideFormProps) {
       </div>
 
       <div className="flex gap-3 pt-2">
-        <Button type="submit" disabled={isPending || !contentHtml} className="flex-1">
+        <Button type="submit" disabled={isPending || !title.trim() || isRichTextEmpty(contentHtml)} className="flex-1">
           {isPending ? "전송 중..." : "질문 등록"}
         </Button>
         <Button type="button" variant="outline" onClick={onClose} disabled={isPending}>

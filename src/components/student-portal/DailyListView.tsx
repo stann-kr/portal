@@ -48,9 +48,10 @@ function groupByDate(items: UnifiedItem[]): Map<string, UnifiedItem[]> {
 
 interface DailyListViewProps {
   items: UnifiedItem[];
+  returnTo: string;
 }
 
-export function DailyListView({ items }: DailyListViewProps) {
+export function DailyListView({ items, returnTo }: DailyListViewProps) {
   const [selectedItem, setSelectedItem] = useState<UnifiedItem | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
 
@@ -126,7 +127,7 @@ export function DailyListView({ items }: DailyListViewProps) {
         title={selectedItem?.title}
       >
         {selectedItem && (
-          <UnifiedItemDetail item={selectedItem} onClose={() => setPanelOpen(false)} />
+          <UnifiedItemDetail item={selectedItem} onClose={() => setPanelOpen(false)} returnTo={returnTo} />
         )}
       </SlidePanel>
     </>

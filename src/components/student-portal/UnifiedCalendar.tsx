@@ -31,9 +31,10 @@ const TYPE_LABELS: Record<string, string> = {
 interface UnifiedCalendarProps {
   items: UnifiedItem[];
   onCreateRequest?: (date: string) => void;
+  returnTo: string;
 }
 
-export function UnifiedCalendar({ items, onCreateRequest }: UnifiedCalendarProps) {
+export function UnifiedCalendar({ items, onCreateRequest, returnTo }: UnifiedCalendarProps) {
   const calendarRef = useRef<FullCalendar>(null);
 
   // 타입 필터 (기본 전체 표시)
@@ -152,6 +153,7 @@ export function UnifiedCalendar({ items, onCreateRequest }: UnifiedCalendarProps
           <UnifiedItemDetail
             item={selectedItem}
             onClose={() => setPanelOpen(false)}
+            returnTo={returnTo}
           />
         )}
       </SlidePanel>

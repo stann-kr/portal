@@ -7,17 +7,31 @@ import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { createPrivateNote } from "@/lib/actions/privateNotes";
 import { NoteFullForm } from "@/components/notes/NoteFullForm";
+import { safeReturnPath } from "@/lib/safe-return-path";
 
 export const metadata = {
   title: "노트 작성",
 };
 
-export default async function NewNotePage() {
+export default async function NewNotePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ returnTo?: string }>;
+}) {
   const session = await auth();
   if (!session?.user?.id) redirect("/login");
 
   const studentId = session.user.id;
   const boundAction = createPrivateNote.bind(null, studentId);
+  const query = await searchParams;
+  const returnTo = safeReturnPath(query.returnTo, "/dashboard/student?section=workspace&view=all");
 
-  return <NoteFullForm action={boundAction} />;
+  return (
+    <NoteFullForm
+      action={boundAction}
+      actorId={studentId}
+      studentId={studentId}
+      returnTo={returnTo}
+    />
+  );
 }

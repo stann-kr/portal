@@ -5,7 +5,7 @@
  */
 "use client";
 
-import { useState, useTransition } from "react";
+import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { CalendarDays, Inbox, Megaphone, MessagesSquare, Users } from "lucide-react";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 import type { StudentRosterStat } from "@/lib/actions/students";
@@ -119,21 +119,62 @@ export function AdminPortalClient({
   );
   const [calendarItems, setCalendarItems] = useState<UnifiedItem[]>(initialUnifiedItems);
   const [isLoadingCalendar, startCalendarTransition] = useTransition();
+  const calendarRequestRef = useRef(0);
 
-  // 학생 필터 변경 시 캘린더 데이터 리패치
-  const handleStudentChange = (studentId: string) => {
+  const selectStudent = useCallback((studentId: string, historyMode: "push" | "replace" | "none") => {
+    if (!students.some((student) => student.id === studentId)) return;
+    const requestId = ++calendarRequestRef.current;
     setSelectedStudentId(studentId);
+    setCalendarItems([]);
+
+    if (historyMode !== "none") {
+      const url = new URL(window.location.href);
+      url.searchParams.set("section", "schedule");
+      url.searchParams.set("student", studentId);
+      window.history[historyMode === "push" ? "pushState" : "replaceState"](
+        {},
+        "",
+        `${url.pathname}${url.search}${url.hash}`,
+      );
+    }
+
     startCalendarTransition(async () => {
       const items = await getUnifiedItemsForStudent(studentId);
-      setCalendarItems(items);
+      if (calendarRequestRef.current === requestId) setCalendarItems(items);
     });
-  };
+  }, [students]);
+
+  // URL의 학생 선택을 복원하고, 뒤로/앞으로 이동도 같은 데이터 문맥으로 맞춘다.
+  useEffect(() => {
+    const restoreStudent = () => {
+      const fromUrl = new URLSearchParams(window.location.search).get("student");
+      const restored = students.find((student) => student.id === fromUrl)?.id;
+      const fallback = students[0]?.id ?? "";
+      const nextStudentId = restored ?? fallback;
+      if (!nextStudentId) return;
+
+      if (!restored) {
+        const url = new URL(window.location.href);
+        url.searchParams.set("student", nextStudentId);
+        window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+      }
+
+      if (nextStudentId !== selectedStudentId) selectStudent(nextStudentId, "none");
+    };
+
+    restoreStudent();
+    window.addEventListener("popstate", restoreStudent);
+    return () => window.removeEventListener("popstate", restoreStudent);
+  }, [selectStudent, selectedStudentId, students]);
+
+  const handleStudentChange = (studentId: string) => selectStudent(studentId, "push");
 
   return (
     <PortalShell
       items={TABS}
       initialItem="work"
       storageKey="adminPortal:section"
+      urlParamKey="section"
       ariaLabel="관리자 포털"
       endSlot={<p className="hidden text-xs font-medium text-foreground sm:block">관리자</p>}
     >
@@ -152,7 +193,10 @@ export function AdminPortalClient({
 
           {activeSection === "announcements" && (
             <div className="p-6 max-w-3xl mx-auto">
-              <AnnouncementSection posts={announcements} />
+              <AnnouncementSection
+                posts={announcements}
+                returnTo="/dashboard/admin?section=announcements"
+              />
             </div>
           )}
 
@@ -162,6 +206,8 @@ export function AdminPortalClient({
               curriculumModules={[]}
               assignments={[]}
               studentId={selectedStudentId}
+              actorId={adminId}
+              canCreateQna={false}
               headerSlot={
                 students.length > 0 ? (
                   <StudentFilterDropdown
@@ -182,7 +228,7 @@ export function AdminPortalClient({
             <div className="p-6 max-w-4xl mx-auto">
               <CommunitySection
                 initialPosts={communityPosts}
-                studentId={adminId}
+                returnTo="/dashboard/admin?section=community"
               />
             </div>
           )}

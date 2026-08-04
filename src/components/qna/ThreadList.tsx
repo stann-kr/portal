@@ -22,9 +22,10 @@ type Thread = {
 interface ThreadListProps {
   threads: Thread[];
   isAdmin: boolean;
+  returnTo?: string;
 }
 
-export function ThreadList({ threads, isAdmin }: ThreadListProps) {
+export function ThreadList({ threads, isAdmin, returnTo = "/dashboard/qna" }: ThreadListProps) {
   const [filter, setFilter] = useState<QnaFilterTab>("ALL");
 
   const counts = useMemo(
@@ -101,7 +102,7 @@ export function ThreadList({ threads, isAdmin }: ThreadListProps) {
             return (
               <Link
                 key={thread.id}
-                href={`/dashboard/qna/${thread.id}`}
+                href={`/dashboard/qna/${thread.id}?returnTo=${encodeURIComponent(returnTo)}`}
                 className="flex items-center gap-4 p-4 rounded-xl border border-border bg-card hover:bg-accent/5 transition-colors group"
               >
                 <Icon className={`w-4 h-4 flex-shrink-0 ${iconClassName}`} />

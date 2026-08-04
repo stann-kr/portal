@@ -5,9 +5,11 @@
  */
 "use client";
 
-import { useState, useEffect, useActionState, useCallback } from "react";
-import { Send } from "lucide-react";
+import { useState, useEffect, useActionState, useCallback, useRef } from "react";
+import Link from "next/link";
+import { ExternalLink, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { RichTextContent } from "@/components/editor/RichTextContent";
 import {
   getCommentsByPost,
   createComment,
@@ -27,6 +29,7 @@ type Comment = {
 interface PostDetailPanelProps {
   postId: string;
   contentHtml: string;
+  returnTo: string;
 }
 
 // ── 댓글 작성 폼 ──────────────────────────────────
@@ -39,17 +42,20 @@ function CommentForm({
   onSuccess: () => void;
 }) {
   const boundAction = createComment.bind(null, postId);
+  const formRef = useRef<HTMLFormElement>(null);
   const [state, action, isPending] = useActionState<CreateCommentState, FormData>(
     boundAction,
     {},
   );
 
   useEffect(() => {
-    if (state.success) onSuccess();
-  }, [state.success, onSuccess]);
+    if (!state.commentId) return;
+    formRef.current?.reset();
+    onSuccess();
+  }, [state.commentId, onSuccess]);
 
   return (
-    <form action={action} className="flex gap-2 mt-4">
+    <form ref={formRef} action={action} className="flex gap-2 mt-4">
       <input
         name="content"
         placeholder="댓글을 입력하세요..."
@@ -70,35 +76,53 @@ function CommentForm({
 
 // ── 메인 컴포넌트 ─────────────────────────────────
 
-export function PostDetailPanel({ postId, contentHtml }: PostDetailPanelProps) {
+export function PostDetailPanel({ postId, contentHtml, returnTo }: PostDetailPanelProps) {
   const [comments, setComments] = useState<Comment[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
+  const requestIdRef = useRef(0);
 
   const loadComments = useCallback(async () => {
-    const data = await getCommentsByPost(postId);
-    setComments(
-      (data as RawComment[]).map((c) => ({
-        id: c.id,
-        contentHtml: c.contentHtml ?? "",
-        authorName: c.authorName ?? null,
-        authorEmail: c.authorEmail ?? null,
-        createdAt: c.createdAt ? new Date(c.createdAt) : null,
-      })),
-    );
-    setLoading(false);
+    const requestId = ++requestIdRef.current;
+    setLoading(true);
+    setLoadError(false);
+    try {
+      const data = await getCommentsByPost(postId);
+      if (requestId !== requestIdRef.current) return;
+      setComments(
+        (data as RawComment[]).map((c) => ({
+          id: c.id,
+          contentHtml: c.contentHtml ?? "",
+          authorName: c.authorName ?? null,
+          authorEmail: c.authorEmail ?? null,
+          createdAt: c.createdAt ? new Date(c.createdAt) : null,
+        })),
+      );
+      setLoading(false);
+    } catch {
+      if (requestId !== requestIdRef.current) return;
+      setLoadError(true);
+      setLoading(false);
+    }
   }, [postId]);
 
   useEffect(() => {
     loadComments();
+    return () => {
+      requestIdRef.current += 1;
+    };
   }, [loadComments]);
 
   return (
     <div className="space-y-6">
       {/* 게시물 본문 */}
-      <div
-        className="prose prose-sm max-w-none text-foreground prose-a:text-primary"
-        dangerouslySetInnerHTML={{ __html: contentHtml }}
-      />
+      <RichTextContent html={contentHtml} />
+      <Button asChild variant="outline" size="sm" className="gap-1.5">
+        <Link href={`/community/${postId}?returnTo=${encodeURIComponent(returnTo)}`}>
+          <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+          전체 화면에서 열기·수정
+        </Link>
+      </Button>
 
       {/* 구분선 */}
       <div className="border-t border-border pt-4">
@@ -112,6 +136,15 @@ export function PostDetailPanel({ postId, contentHtml }: PostDetailPanelProps) {
             {[...Array(2)].map((_, i) => (
               <div key={i} className="h-12 rounded-lg bg-muted animate-pulse" />
             ))}
+          </div>
+        ) : loadError ? (
+          <div className="space-y-2 py-4 text-center">
+            <p role="alert" className="text-sm text-destructive">
+              댓글을 불러오지 못했습니다.
+            </p>
+            <Button type="button" variant="outline" size="sm" onClick={loadComments}>
+              다시 시도
+            </Button>
           </div>
         ) : comments.length === 0 ? (
           <p className="text-sm text-muted-foreground py-4 text-center">
@@ -137,10 +170,7 @@ export function PostDetailPanel({ postId, contentHtml }: PostDetailPanelProps) {
                       <span className="text-xs font-medium text-foreground">{author}</span>
                       <span className="text-xs text-muted-foreground">{date}</span>
                     </div>
-                    <div
-                      className="text-sm text-foreground"
-                      dangerouslySetInnerHTML={{ __html: c.contentHtml }}
-                    />
+                    <RichTextContent html={c.contentHtml} className="text-sm" />
                   </div>
                 </li>
               );

@@ -58,6 +58,8 @@
 | NFR-005 | 변경은 lint, typecheck, build와 핵심 회귀 테스트를 통과해야 한다. | `npm run lint`, `npx tsc --noEmit`, `npm run build`, unit/integration test가 성공한다. | 부분 충족 |
 | NFR-006 | D1 migration과 Cloudflare Worker build는 재현 가능해야 한다. | `npm run db:check`가 SQL·journal·snapshot·현재 schema 일치를 확인하고 local/remote 적용 이력이 정합하며 `npm run build:worker`가 성공한다. | 부분 충족 |
 | NFR-007 | 로딩·빈 상태·오류·성공 피드백은 사용자가 다음 행동을 알 수 있게 해야 한다. | route와 주요 mutation마다 상태 UI와 복구 행동을 제공한다. | 부분 충족 — 대시보드·과제·Q&A 보강 |
+| NFR-008 | 문서 작성은 새로고침·화면 이동·일시적 저장 실패 뒤에도 이어갈 수 있어야 한다. | 노트·게시물·Q&A의 사용자·문서별 로컬 초안, 저장 상태, 안정 URL, 복귀 경로와 동시 편집 충돌 감지가 동작한다. | 부분 충족 — 단일 기기 연속성 구현, 서버 초안·revision 미구현 |
+| NFR-009 | 운영 데이터는 검증 가능한 백업과 복구 절차를 가져야 한다. | D1 export의 무결성을 확인하고 격리 환경 복구 rehearsal을 정기적으로 수행하며 결과를 기록한다. | 부분 충족 — 절차 문서화, 원격 rehearsal 미실행 |
 
 ## 향후 결정 사항
 
@@ -65,3 +67,4 @@
 - 디깅 보드와 과제 피드백을 장기적으로 오디오 파형 기반 작업 공간까지 확장할지.
 - 알림 채널을 앱 내부, 이메일, 캘린더 중 어디까지 지원할지.
 - production smoke test 계정·fixture와 R2 media retention 정책을 어떻게 운영할지.
+- 문서 revision, 휴지통, 서버 초안과 다중 기기 충돌 해결을 어느 단계에서 도입할지.

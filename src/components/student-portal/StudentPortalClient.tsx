@@ -108,6 +108,7 @@ export function StudentPortalClient({
       initialItem="today"
       storageKey={SECTION_STORAGE_KEY}
       storageAliases={SECTION_ALIASES}
+      urlParamKey="section"
       ariaLabel="학생 포털"
       endSlot={
         <p className="hidden text-xs text-muted-foreground sm:block">
@@ -136,6 +137,8 @@ export function StudentPortalClient({
               curriculumModules={curriculumModules}
               assignments={assignments}
               studentId={studentId}
+              actorId={studentId}
+              isActive={activeSection === "workspace"}
               onAddItem={addItem}
             />
           </div>
@@ -144,7 +147,7 @@ export function StudentPortalClient({
             <div className="mx-auto max-w-4xl p-4 sm:p-6">
               <CommunitySection
                 initialPosts={communityPosts}
-                studentId={studentId}
+                returnTo="/dashboard/student?section=community"
               />
             </div>
           )}

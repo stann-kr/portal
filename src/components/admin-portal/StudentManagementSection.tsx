@@ -187,7 +187,7 @@ function StudentDetailInline({
                       detail.threads.slice(0, 5).map((t) => (
                         <Link
                           key={t.id}
-                          href={`/dashboard/qna/${t.id}`}
+                          href={`/dashboard/qna/${t.id}?returnTo=%2Fdashboard%2Fadmin%3Fsection%3Dstudents`}
                           className="flex items-center justify-between p-3 rounded-lg border border-border bg-background hover:bg-accent transition-colors"
                         >
                           <p className="text-sm font-medium truncate flex-1">{t.title}</p>

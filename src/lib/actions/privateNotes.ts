@@ -8,9 +8,10 @@
 import { revalidatePath } from "next/cache";
 import { createDb } from "@/db/client";
 import { privateNotes, profiles } from "@/db/schema";
-import { eq, desc } from "drizzle-orm";
+import { and, eq, desc, isNull } from "drizzle-orm";
 import { requireAuth, assertOwnerOrAdmin } from "@/lib/auth-guard";
 import { sanitizeHtml } from "@/lib/sanitize-html";
+import { isRichTextEmpty } from "@/lib/rich-text";
 
 /**
  * 특정 학생의 프라이빗 노트 목록 조회.
@@ -41,10 +42,41 @@ export async function getPrivateNotes(targetStudentId: string) {
   return notes;
 }
 
+/** 단일 노트를 권한 범위 안에서 조회한다. */
+export async function getPrivateNote(noteId: string) {
+  const session = await requireAuth();
+  const db = createDb();
+  const [note] = await db
+    .select({
+      id: privateNotes.id,
+      studentId: privateNotes.studentId,
+      authorId: privateNotes.authorId,
+      title: privateNotes.title,
+      contentHtml: privateNotes.contentHtml,
+      noteDate: privateNotes.noteDate,
+      createdAt: privateNotes.createdAt,
+      authorName: profiles.displayName,
+    })
+    .from(privateNotes)
+    .leftJoin(profiles, eq(privateNotes.authorId, profiles.id))
+    .where(eq(privateNotes.id, noteId))
+    .limit(1);
+
+  if (!note) return null;
+  assertOwnerOrAdmin(session, note.studentId);
+  return note;
+}
+
 export type CreateNoteState = {
   error?: string;
   success?: boolean;
-  note?: { id: string; title: string; noteDate: Date | null; createdAt: Date | null };
+  note?: {
+    id: string;
+    title: string;
+    contentHtml: string;
+    noteDate: Date | null;
+    createdAt: Date | null;
+  };
 };
 
 /**
@@ -60,9 +92,10 @@ export async function createPrivateNote(targetStudentId: string, _prev: CreateNo
   const title = formData.get("title") as string;
   const rawHtml = formData.get("contentHtml") as string;
 
-  if (!title || !rawHtml) return { error: "제목과 내용은 필수입니다." };
+  if (!title || isRichTextEmpty(rawHtml)) return { error: "제목과 내용은 필수입니다." };
 
   const contentHtml = sanitizeHtml(rawHtml);
+  if (isRichTextEmpty(contentHtml)) return { error: "유효한 노트 내용을 입력해 주세요." };
 
   // 사용자 지정 날짜 파싱 (YYYY-MM-DD → Date, 없으면 null)
   const noteDateStr = formData.get("noteDate") as string | null;
@@ -88,10 +121,97 @@ export async function createPrivateNote(targetStudentId: string, _prev: CreateNo
     revalidatePath(`/dashboard/student/notes`);
     revalidatePath("/dashboard/student");
 
-    return { success: true, note: { id, title, noteDate, createdAt: now } };
+    return { success: true, note: { id, title, contentHtml, noteDate, createdAt: now } };
   } catch {
     return { error: "노트 작성 중 오류가 발생했습니다." };
   }
+}
+
+export type UpdateNoteState = {
+  error?: string;
+  success?: boolean;
+  note?: { id: string; title: string; contentHtml: string; noteDate: Date | null };
+};
+
+/**
+ * 저장된 노트를 다시 편집한다. 작성자 또는 관리자로 제한한다.
+ * 현재 저장본 스냅샷으로 충돌을 감지하며, 버전 컬럼과 이력 보존은 schema migration 승인 후 추가한다.
+ */
+export async function updatePrivateNote(
+  noteId: string,
+  _prev: UpdateNoteState,
+  formData: FormData,
+): Promise<UpdateNoteState> {
+  const session = await requireAuth();
+  const db = createDb();
+  const [existing] = await db
+    .select({
+      id: privateNotes.id,
+      studentId: privateNotes.studentId,
+      authorId: privateNotes.authorId,
+      title: privateNotes.title,
+      contentHtml: privateNotes.contentHtml,
+      noteDate: privateNotes.noteDate,
+    })
+    .from(privateNotes)
+    .where(eq(privateNotes.id, noteId))
+    .limit(1);
+
+  if (!existing) return { error: "노트를 찾을 수 없습니다." };
+  assertOwnerOrAdmin(session, existing.authorId);
+
+  const title = String(formData.get("title") ?? "").trim();
+  const rawHtml = String(formData.get("contentHtml") ?? "");
+  if (!title || isRichTextEmpty(rawHtml)) return { error: "제목과 내용은 필수입니다." };
+
+  const contentHtml = sanitizeHtml(rawHtml);
+  if (isRichTextEmpty(contentHtml)) return { error: "유효한 노트 내용을 입력해 주세요." };
+
+  const noteDateValue = String(formData.get("noteDate") ?? "");
+  const noteDate = noteDateValue ? new Date(noteDateValue) : null;
+  if (noteDate && Number.isNaN(noteDate.getTime())) return { error: "올바른 날짜를 입력해 주세요." };
+
+  const baseTitle = formData.get("baseTitle");
+  const baseContentHtml = formData.get("baseContentHtml");
+  const baseNoteDateValue = formData.get("baseNoteDate");
+  if (
+    typeof baseTitle !== "string" ||
+    typeof baseContentHtml !== "string" ||
+    typeof baseNoteDateValue !== "string"
+  ) {
+    return { error: "편집 기준 정보를 확인할 수 없습니다. 페이지를 새로고침해 주세요." };
+  }
+  const baseNoteDate = baseNoteDateValue ? new Date(baseNoteDateValue) : null;
+  if (baseNoteDate && Number.isNaN(baseNoteDate.getTime())) {
+    return { error: "편집 기준 날짜를 확인할 수 없습니다. 페이지를 새로고침해 주세요." };
+  }
+
+  try {
+    const updated = await db
+      .update(privateNotes)
+      .set({ title, contentHtml, noteDate })
+      .where(and(
+        eq(privateNotes.id, noteId),
+        eq(privateNotes.title, baseTitle),
+        eq(privateNotes.contentHtml, baseContentHtml),
+        baseNoteDate ? eq(privateNotes.noteDate, baseNoteDate) : isNull(privateNotes.noteDate),
+      ))
+      .returning({ id: privateNotes.id });
+    if (updated.length === 0) {
+      return {
+        error: "다른 화면에서 이 노트가 먼저 변경되었습니다. 현재 내용은 임시 저장되어 있으며, 새로고침 후 서버 최신본과 초안 중 선택할 수 있습니다.",
+      };
+    }
+  } catch {
+    return { error: "노트를 저장하지 못했습니다. 다시 시도해 주세요." };
+  }
+
+  revalidatePath(`/dashboard/notes/${noteId}`);
+  revalidatePath(`/dashboard/admin/students/${existing.studentId}`);
+  revalidatePath(`/dashboard/admin/students/${existing.studentId}/notes`);
+  revalidatePath("/dashboard/student");
+
+  return { success: true, note: { id: noteId, title, contentHtml, noteDate } };
 }
 
 export async function deletePrivateNote(noteId: string) {

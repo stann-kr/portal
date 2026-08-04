@@ -5,7 +5,7 @@
  */
 "use client";
 
-import { useActionState, useState, useEffect, useTransition } from "react";
+import { useActionState, useState, useEffect, useRef, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import dynamic from "next/dynamic";
@@ -21,6 +21,9 @@ import { createQnaReply, updateThreadStatus, type CreateReplyState } from "@/lib
 import { QNA_STATUS_LABELS } from "@/lib/qna-status";
 import { STATUS_TONE_CLASS_NAMES } from "@/lib/portal-status";
 import type { QnaStatus } from "@/db/schema";
+import { DraftStatus } from "@/components/editor/DraftStatus";
+import { createDocumentDraftKey } from "@/lib/form-draft";
+import { isRichTextEmpty } from "@/lib/rich-text";
 
 type Reply = {
   id: string;
@@ -37,6 +40,7 @@ interface ThreadDetailClientProps {
   status: QnaStatus;
   replies: Reply[];
   isAdmin: boolean;
+  actorId: string;
 }
 
 export function ThreadDetailClient({
@@ -44,6 +48,7 @@ export function ThreadDetailClient({
   status,
   replies: initialReplies,
   isAdmin,
+  actorId,
 }: ThreadDetailClientProps) {
   const [contentHtml, setContentHtml] = useState("");
   const [attachmentUrl, setAttachmentUrl] = useState("");
@@ -51,6 +56,7 @@ export function ThreadDetailClient({
   const [isPending, startTransition] = useTransition();
   const [currentStatus, setCurrentStatus] = useState(status);
   const [statusError, setStatusError] = useState<string | null>(null);
+  const formRef = useRef<HTMLFormElement>(null);
   const router = useRouter();
 
   useEffect(() => setCurrentStatus(status), [status]);
@@ -62,17 +68,24 @@ export function ThreadDetailClient({
   >(boundAction, {});
 
   // 스레드별 임시저장 복원/저장
-  const { loaded, save, clear } = useFormDraft<{ contentHtml: string; attachmentUrl: string }>(
-    `draft:qna:reply:${threadId}`,
+  const { loaded, save, clear, status: draftStatus, savedAt, restored } = useFormDraft<{ contentHtml: string; attachmentUrl: string }>(
+    createDocumentDraftKey("qna-reply", actorId, threadId),
     (d) => {
       setContentHtml(d.contentHtml ?? "");
       setAttachmentUrl(d.attachmentUrl ?? "");
+    },
+    {
+      onReset: () => {
+        setContentHtml("");
+        setAttachmentUrl("");
+        setEditorKey((key) => key + 1);
+      },
     },
   );
 
   useEffect(() => {
     if (!loaded) return;
-    const isEmpty = (!contentHtml || contentHtml === "<p></p>") && !attachmentUrl;
+    const isEmpty = isRichTextEmpty(contentHtml) && !attachmentUrl;
     if (isEmpty) {
       clear();
       return;
@@ -82,14 +95,14 @@ export function ThreadDetailClient({
 
   // 답변 등록 성공 시 draft 삭제 + 폼 초기화 (에디터 remount)
   useEffect(() => {
-    if (replyState.success) {
+    if (replyState.replyId) {
       clear();
       setContentHtml("");
       setAttachmentUrl("");
       setEditorKey((k) => k + 1);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [replyState.success]);
+  }, [replyState.replyId]);
 
   const handleStatusChange = (newStatus: QnaStatus) => {
     setStatusError(null);
@@ -147,7 +160,7 @@ export function ThreadDetailClient({
 
       {/* 답변 작성 폼 */}
       {currentStatus !== "CLOSED" && (
-        <form action={replyAction} className="space-y-3">
+        <form ref={formRef} action={replyAction} className="space-y-3">
           <input type="hidden" name="contentHtml" value={contentHtml} />
           <p className="text-sm font-medium text-foreground">
             {isAdmin ? "답변 작성" : "추가 질문"}
@@ -166,10 +179,13 @@ export function ThreadDetailClient({
               placeholder={isAdmin ? "답변을 작성하세요..." : "추가 질문을 입력하세요..."}
               disabled={isReplying}
               minHeight="200px"
+              ariaLabel={isAdmin ? "Q&A 답변 내용" : "Q&A 추가 질문 내용"}
+              footer={<DraftStatus status={draftStatus} savedAt={savedAt} restored={restored} />}
+              onSave={() => formRef.current?.requestSubmit()}
             />
           )}
           <AttachmentField value={attachmentUrl} onChange={setAttachmentUrl} disabled={isReplying} />
-          <Button type="submit" disabled={isReplying} className="gap-2">
+          <Button type="submit" disabled={isReplying || isRichTextEmpty(contentHtml)} className="gap-2">
             {isReplying ? "등록 중..." : isAdmin ? "답변 등록" : "질문 추가"}
           </Button>
         </form>

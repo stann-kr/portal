@@ -5,11 +5,12 @@
 import { auth } from "@/auth";
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, BookOpen, MessageSquarePlus } from "lucide-react";
+import { ArrowLeft, BookOpen, MessageSquarePlus, PencilLine } from "lucide-react";
 import { getStudentById } from "@/lib/actions/students";
 import { getPrivateNotes } from "@/lib/actions/privateNotes";
 import { PrivateNoteForm } from "@/components/notes/PrivateNoteForm";
 import { DeleteNoteButton } from "@/components/notes/DeleteNoteButton";
+import { RichTextContent } from "@/components/editor/RichTextContent";
 
 type PrivateNote = Awaited<ReturnType<typeof getPrivateNotes>>[number];
 
@@ -57,7 +58,7 @@ export default async function AdminStudentNotesPage({
               <MessageSquarePlus className="w-5 h-5 text-muted-foreground" />
               노트 작성
             </h2>
-            <PrivateNoteForm studentId={studentId} />
+            <PrivateNoteForm studentId={studentId} actorId={session.user.id!} />
           </div>
         </div>
 
@@ -89,11 +90,20 @@ export default async function AdminStudentNotesPage({
                         </span>
                       </div>
                     </div>
-                    {(session.user.id === note.authorId || session.user.role === "admin") && (
-                      <DeleteNoteButton noteId={note.id} />
-                    )}
+                    <div className="flex items-center gap-1">
+                      <Link
+                        href={`/dashboard/notes/${note.id}?returnTo=${encodeURIComponent(`/dashboard/admin/students/${studentId}/notes`)}`}
+                        className="inline-flex h-8 items-center gap-1 rounded-md px-2 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                      >
+                        <PencilLine className="h-3.5 w-3.5" aria-hidden="true" />
+                        이어쓰기
+                      </Link>
+                      {(session.user.id === note.authorId || session.user.role === "admin") && (
+                        <DeleteNoteButton noteId={note.id} />
+                      )}
+                    </div>
                   </div>
-                  <div className="prose prose-sm dark:prose-invert max-w-none text-muted-foreground" dangerouslySetInnerHTML={{ __html: note.contentHtml }} />
+                  <RichTextContent html={note.contentHtml} className="text-muted-foreground" />
                 </div>
               ))}
             </div>
