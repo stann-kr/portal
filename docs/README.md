@@ -10,9 +10,9 @@
 - NextAuth credentials 인증으로 student/admin 역할을 분리한다.
 - Drizzle ORM을 통해 Cloudflare D1 또는 로컬 SQLite에 접근한다.
 - 미디어 업로드는 Cloudflare R2 presigned URL 흐름을 사용한다.
-- 학생·관리자 포털은 원페이지 탭 구조이며 일부 상세·작성 라우트를 병행한다.
+- 학생 포털은 오늘·워크스페이스·커뮤니티 구조이며 일부 상세·작성 라우트를 병행한다.
 - migration metadata·empty replay 자동 검사와 lint, TypeScript typecheck, Next.js·Worker build를 기본 검증으로 사용한다.
-- 개발용 관리자 seed의 환경·입력 경계 단위 테스트를 시작점으로 두고, auth guard와 대표 server action의 허용·거부 회귀 테스트를 보강하고 있다.
+- 개발용 관리자 seed, auth guard, calendar token, HTML sanitize, UI 상태 registry와 학생 오늘 selector를 단위 테스트로 보호한다.
 
 ## 빠른 시작
 
@@ -76,10 +76,10 @@ docs/                       # 프로젝트 문서
 
 ## 현재 개발 우선순위
 
-1. auth guard, calendar token, HTML sanitize의 허용·거부 경로를 자동화한다.
-2. 학생 `오늘`과 관리자 `업무함`의 핵심 행동·상태 계약을 확정한다.
-3. token·primitive·loading/error/empty 규칙을 만든 뒤 역할별 화면을 세로 단위로 개선한다.
-4. 각 화면의 기능, 접근성, 반응형 동작과 관련 server action 테스트를 같은 단위에서 완료한다.
+1. 관리자 `업무함`을 미답변 Q&A, 피드백 대기, 다가오는 레슨 중심으로 구현한다.
+2. 학생·관리자 shell의 loading/error 상태와 mobile 세부 동작을 완성한다.
+3. 대표 server action의 허용·거부와 핵심 mutation 실패 경로를 자동화한다.
+4. 기능, 접근성, 반응형 동작과 관련 테스트를 같은 세로 단위에서 완료한다.
 
 ## 문서 최신성 기준
 

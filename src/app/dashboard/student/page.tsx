@@ -62,6 +62,7 @@ export default async function StudentPortalPage() {
       communityPosts={communityPosts}
       studentId={studentId}
       displayName={displayName}
+      referenceTime={new Date()}
     />
   );
 }
