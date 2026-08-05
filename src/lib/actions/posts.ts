@@ -293,23 +293,52 @@ export async function updatePostContent(
     return { error: "편집 기준 정보를 확인할 수 없습니다. 페이지를 새로고침해 주세요." };
   }
 
-  try {
-    const updated = await db
-      .update(posts)
-      .set({ title, contentHtml })
-      .where(and(
-        eq(posts.id, postId),
-        eq(posts.title, baseTitle),
-        eq(posts.contentHtml, baseContentHtml),
-      ))
-      .returning({ id: posts.id });
-    if (updated.length === 0) {
-      return {
-        error: "다른 화면에서 이 게시물이 먼저 변경되었습니다. 현재 내용은 임시 저장되어 있으며, 새로고침 후 서버 최신본과 초안 중 선택할 수 있습니다.",
-      };
+  const alreadyCurrent =
+    existing.title === title && existing.contentHtml === contentHtml;
+
+  if (!alreadyCurrent) {
+    let updated: { id: string }[];
+    try {
+      updated = await db
+        .update(posts)
+        .set({ title, contentHtml })
+        .where(and(
+          eq(posts.id, postId),
+          eq(posts.title, baseTitle),
+          eq(posts.contentHtml, baseContentHtml),
+        ))
+        .returning({ id: posts.id });
+    } catch {
+      return { error: "게시물을 저장하지 못했습니다. 다시 시도해 주세요." };
     }
-  } catch {
-    return { error: "게시물을 저장하지 못했습니다. 다시 시도해 주세요." };
+    if (updated.length === 0) {
+      let current: {
+        authorId: string;
+        title: string;
+        contentHtml: string;
+      } | undefined;
+      try {
+        [current] = await db
+          .select({
+            authorId: posts.authorId,
+            title: posts.title,
+            contentHtml: posts.contentHtml,
+          })
+          .from(posts)
+          .where(eq(posts.id, postId))
+          .limit(1);
+      } catch {
+        return { error: "게시물을 저장하지 못했습니다. 다시 시도해 주세요." };
+      }
+      if (current) assertOwnerOrAdmin(session, current.authorId);
+      const converged =
+        current?.title === title && current.contentHtml === contentHtml;
+      if (!converged) {
+        return {
+          error: "다른 화면에서 이 게시물이 먼저 변경되었습니다. 현재 내용은 임시 저장되어 있으며, 새로고침 후 서버 최신본과 초안 중 선택할 수 있습니다.",
+        };
+      }
+    }
   }
 
   revalidatePath(`/community/${postId}`);

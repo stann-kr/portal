@@ -12,8 +12,10 @@ import { DraftStatus } from "@/components/editor/DraftStatus";
 import { createQnaThread, type CreateThreadState } from "@/lib/actions/qna";
 import { createDocumentDraftKey } from "@/lib/form-draft";
 import { useFormDraft } from "@/lib/hooks/useFormDraft";
+import { useDeferredEditorContent } from "@/lib/hooks/useDeferredEditorContent";
 import { isRichTextEmpty } from "@/lib/rich-text";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
+import { useDocumentSaveShortcut } from "@/lib/hooks/useDocumentSaveShortcut";
 import {
   CREATION_OPERATION_FIELD,
   createCreationOperationId,
@@ -35,7 +37,15 @@ type QnaDraft = {
 
 export function NewQnaForm({ actorId, returnTo }: { actorId: string; returnTo: string }) {
   const [title, setTitle] = useState("");
-  const [contentHtml, setContentHtml] = useState("");
+  const {
+    contentHtml,
+    contentVersion,
+    setContentHtml,
+    handleEditorChange,
+    handleEditorDirty,
+    readLatestContentHtml,
+    commitLatestContentHtml,
+  } = useDeferredEditorContent("");
   const [attachmentUrl, setAttachmentUrl] = useState("");
   const [operationId, setOperationId] = useState("");
   const [isUploading, setIsUploading] = useState(false);
@@ -44,6 +54,7 @@ export function NewQnaForm({ actorId, returnTo }: { actorId: string; returnTo: s
     {},
   );
   const formRef = useRef<HTMLFormElement>(null);
+  const contentInputRef = useRef<HTMLInputElement>(null);
   const submittedDraftRef = useRef<QnaDraft | null>(null);
   const handledThreadIdRef = useRef<string | null>(null);
   const router = useRouter();
@@ -80,16 +91,28 @@ export function NewQnaForm({ actorId, returnTo }: { actorId: string; returnTo: s
       },
     },
   );
+  const handleSaveShortcut = useDocumentSaveShortcut({
+    disabled: !loaded || isFormBusy || !operationId,
+    onSave: () => formRef.current?.requestSubmit(),
+  });
 
   useEffect(() => {
     if (!loaded) return;
-    if (!title && isRichTextEmpty(contentHtml) && !attachmentUrl) {
+    const latestContentHtml = readLatestContentHtml();
+    if (!title && isRichTextEmpty(latestContentHtml) && !attachmentUrl) {
       clear();
       return;
     }
     if (!operationId) return;
-    save({ operationId, title, contentHtml, attachmentUrl });
-  }, [attachmentUrl, clear, contentHtml, loaded, operationId, save, title]);
+    save({
+      operationId,
+      title,
+      attachmentUrl,
+      get contentHtml() {
+        return readLatestContentHtml();
+      },
+    });
+  }, [attachmentUrl, clear, contentHtml, loaded, operationId, readLatestContentHtml, save, title]);
 
   useEffect(() => {
     if (!state.thread?.id || handledThreadIdRef.current === state.thread.id) return;
@@ -136,9 +159,11 @@ export function NewQnaForm({ actorId, returnTo }: { actorId: string; returnTo: s
       <form
         ref={formRef}
         action={formAction}
+        aria-busy={!loaded || isFormBusy}
         className="space-y-5"
+        onKeyDownCapture={handleSaveShortcut}
         onSubmit={(event) => {
-          if (isFormBusy) {
+          if (!loaded || isFormBusy) {
             event.preventDefault();
             return;
           }
@@ -146,14 +171,25 @@ export function NewQnaForm({ actorId, returnTo }: { actorId: string; returnTo: s
             event.preventDefault();
             return;
           }
-          const submittedDraft = { operationId, title, contentHtml, attachmentUrl };
+          const latestContentHtml = commitLatestContentHtml();
+          if (!title.trim() || isRichTextEmpty(latestContentHtml)) {
+            event.preventDefault();
+            return;
+          }
+          if (contentInputRef.current) contentInputRef.current.value = latestContentHtml;
+          const submittedDraft = {
+            operationId,
+            title,
+            contentHtml: latestContentHtml,
+            attachmentUrl,
+          };
           save(submittedDraft);
           flush();
           submittedDraftRef.current = submittedDraft;
         }}
       >
         <input type="hidden" name={CREATION_OPERATION_FIELD} value={operationId} />
-        <input type="hidden" name="contentHtml" value={contentHtml} />
+        <input ref={contentInputRef} type="hidden" name="contentHtml" value={contentHtml} />
 
         {state.error && (!state.operationConflict || hasOperationConflict) ? (
           <p role="alert" className="rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">
@@ -182,7 +218,7 @@ export function NewQnaForm({ actorId, returnTo }: { actorId: string; returnTo: s
             onChange={(event) => setTitle(event.target.value)}
             placeholder="질문 제목을 입력하세요"
             required
-            disabled={isPending}
+            disabled={!loaded || isPending}
           />
         </label>
 
@@ -193,7 +229,20 @@ export function NewQnaForm({ actorId, returnTo }: { actorId: string; returnTo: s
           {loaded ? (
             <FullEditor
               initialContent={contentHtml}
-              onChange={setContentHtml}
+              contentVersion={contentVersion}
+              onChange={handleEditorChange}
+              onDirty={(reader) => {
+                handleEditorDirty(reader);
+                if (!operationId) return;
+                save({
+                  operationId,
+                  title,
+                  attachmentUrl,
+                  get contentHtml() {
+                    return reader();
+                  },
+                });
+              }}
               placeholder="질문 내용을 자세히 작성하세요. 악보, 코드, 이미지 등을 첨부할 수 있습니다."
               disabled={isPending}
               ariaLabel="Q&A 질문 내용"
@@ -220,7 +269,7 @@ export function NewQnaForm({ actorId, returnTo }: { actorId: string; returnTo: s
           <AttachmentField
             value={attachmentUrl}
             onChange={setAttachmentUrl}
-            disabled={isPending}
+            disabled={!loaded || isPending}
             onUploadingChange={setIsUploading}
           />
         </div>
@@ -228,7 +277,7 @@ export function NewQnaForm({ actorId, returnTo }: { actorId: string; returnTo: s
         <div className="flex gap-3">
           <Button
             type="submit"
-            disabled={isFormBusy || !operationId || !title.trim() || isRichTextEmpty(contentHtml)}
+            disabled={!loaded || isFormBusy || !operationId || !title.trim() || isRichTextEmpty(contentHtml)}
             className="flex-1 gap-2"
           >
             <Send className="h-4 w-4" aria-hidden="true" />

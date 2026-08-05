@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { AttachmentField } from "@/components/qna/AttachmentField";
 import { useFormDraft } from "@/lib/hooks/useFormDraft";
+import { useDeferredEditorContent } from "@/lib/hooks/useDeferredEditorContent";
 import { createQnaThreadInline, type CreateThreadInlineState } from "@/lib/actions/qna";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 import { DraftStatus } from "@/components/editor/DraftStatus";
@@ -19,6 +20,7 @@ import { createDocumentDraftKey } from "@/lib/form-draft";
 import { isRichTextEmpty } from "@/lib/rich-text";
 import { useRouter } from "next/navigation";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
+import { useDocumentSaveShortcut } from "@/lib/hooks/useDocumentSaveShortcut";
 import {
   CREATION_OPERATION_FIELD,
   createCreationOperationId,
@@ -54,7 +56,15 @@ export function QnaSlideForm({
   onBusyChange,
 }: QnaSlideFormProps) {
   const [title, setTitle] = useState("");
-  const [contentHtml, setContentHtml] = useState("");
+  const {
+    contentHtml,
+    contentVersion,
+    setContentHtml,
+    handleEditorChange,
+    handleEditorDirty,
+    readLatestContentHtml,
+    commitLatestContentHtml,
+  } = useDeferredEditorContent("");
   const [attachmentUrl, setAttachmentUrl] = useState("");
   const [operationId, setOperationId] = useState("");
   const [isUploading, setIsUploading] = useState(false);
@@ -63,6 +73,7 @@ export function QnaSlideForm({
     {},
   );
   const formRef = useRef<HTMLFormElement>(null);
+  const contentInputRef = useRef<HTMLInputElement>(null);
   const submittedDraftRef = useRef<QnaDraft | null>(null);
   const handledThreadIdRef = useRef<string | null>(null);
   const router = useRouter();
@@ -106,17 +117,29 @@ export function QnaSlideForm({
       },
     },
   );
+  const handleSaveShortcut = useDocumentSaveShortcut({
+    disabled: !loaded || isFormBusy || !operationId,
+    onSave: () => formRef.current?.requestSubmit(),
+  });
 
   useEffect(() => {
     if (!loaded) return;
-    const isEmpty = !title && isRichTextEmpty(contentHtml) && !attachmentUrl;
+    const latestContentHtml = readLatestContentHtml();
+    const isEmpty = !title && isRichTextEmpty(latestContentHtml) && !attachmentUrl;
     if (isEmpty) {
       clear();
       return;
     }
     if (!operationId) return;
-    save({ operationId, title, contentHtml, attachmentUrl });
-  }, [loaded, title, contentHtml, attachmentUrl, operationId, save, clear]);
+    save({
+      operationId,
+      title,
+      attachmentUrl,
+      get contentHtml() {
+        return readLatestContentHtml();
+      },
+    });
+  }, [loaded, title, contentHtml, attachmentUrl, operationId, readLatestContentHtml, save, clear]);
 
   // 저장 성공 시 draft 삭제 + 낙관적 업데이트 + 패널 닫기
   useEffect(() => {
@@ -161,9 +184,11 @@ export function QnaSlideForm({
     <form
       ref={formRef}
       action={formAction}
+      aria-busy={!loaded || isFormBusy}
       className="space-y-4"
+      onKeyDownCapture={handleSaveShortcut}
       onSubmit={(event) => {
-        if (isFormBusy) {
+        if (!loaded || isFormBusy) {
           event.preventDefault();
           return;
         }
@@ -171,17 +196,28 @@ export function QnaSlideForm({
           event.preventDefault();
           return;
         }
-        const submittedDraft = { operationId, title, contentHtml, attachmentUrl };
+        const latestContentHtml = commitLatestContentHtml();
+        if (!title.trim() || isRichTextEmpty(latestContentHtml)) {
+          event.preventDefault();
+          return;
+        }
+        if (contentInputRef.current) contentInputRef.current.value = latestContentHtml;
+        const submittedDraft = {
+          operationId,
+          title,
+          contentHtml: latestContentHtml,
+          attachmentUrl,
+        };
         save(submittedDraft);
         flush();
         submittedDraftRef.current = submittedDraft;
       }}
     >
       <input type="hidden" name={CREATION_OPERATION_FIELD} value={operationId} />
-      <input type="hidden" name="contentHtml" value={contentHtml} />
+      <input ref={contentInputRef} type="hidden" name="contentHtml" value={contentHtml} />
 
       {state.error && (!state.operationConflict || hasOperationConflict) && (
-        <p className="text-sm text-destructive">{state.error}</p>
+        <p role="alert" className="text-sm text-destructive">{state.error}</p>
       )}
 
       {hasOperationConflict && state.existingId ? (
@@ -206,7 +242,7 @@ export function QnaSlideForm({
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           required
-          disabled={isPending}
+          disabled={!loaded || isPending}
         />
       </div>
 
@@ -218,7 +254,20 @@ export function QnaSlideForm({
         {loaded && (
           <FullEditor
             initialContent={contentHtml}
-            onChange={setContentHtml}
+            contentVersion={contentVersion}
+            onChange={handleEditorChange}
+            onDirty={(reader) => {
+              handleEditorDirty(reader);
+              if (!operationId) return;
+              save({
+                operationId,
+                title,
+                attachmentUrl,
+                get contentHtml() {
+                  return reader();
+                },
+              });
+            }}
             placeholder="질문 내용을 자세히 작성하세요..."
             disabled={isPending}
             minHeight="300px"
@@ -247,13 +296,13 @@ export function QnaSlideForm({
         <AttachmentField
           value={attachmentUrl}
           onChange={setAttachmentUrl}
-          disabled={isPending}
+          disabled={!loaded || isPending}
           onUploadingChange={setIsUploading}
         />
       </div>
 
       <div className="flex gap-3 pt-2">
-        <Button type="submit" disabled={isFormBusy || !operationId || !title.trim() || isRichTextEmpty(contentHtml)} className="flex-1">
+        <Button type="submit" disabled={!loaded || isFormBusy || !operationId || !title.trim() || isRichTextEmpty(contentHtml)} className="flex-1">
           {isUploading ? "업로드 완료 대기..." : isPending ? "전송 중..." : "질문 등록"}
         </Button>
         <Button type="button" variant="outline" onClick={onClose} disabled={isFormBusy}>

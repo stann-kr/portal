@@ -279,6 +279,7 @@ export function CalendarSection({
         <NoteSlideForm
           studentId={studentId}
           actorId={actorId}
+          returnTo={workspaceReturnTo}
           defaultDate={createDefaultDate}
           onSuccess={(item) => {
             onAddItem?.(item);

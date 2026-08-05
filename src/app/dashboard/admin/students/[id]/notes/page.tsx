@@ -58,7 +58,11 @@ export default async function AdminStudentNotesPage({
               <MessageSquarePlus className="w-5 h-5 text-muted-foreground" />
               노트 작성
             </h2>
-            <PrivateNoteForm studentId={studentId} actorId={session.user.id!} />
+            <PrivateNoteForm
+              studentId={studentId}
+              actorId={session.user.id!}
+              returnTo={`/dashboard/admin/students/${studentId}/notes`}
+            />
           </div>
         </div>
 

@@ -6,6 +6,7 @@
  */
 "use client";
 
+import { useState } from "react";
 import { Paperclip, X } from "lucide-react";
 import { FileUploader } from "@/components/upload/FileUploader";
 
@@ -23,13 +24,15 @@ export function AttachmentField({
   disabled,
   onUploadingChange,
 }: AttachmentFieldProps) {
+  const [uploadError, setUploadError] = useState("");
+
   return (
     <div className="space-y-2">
       {/* 서버 액션 전송용 hidden 필드 */}
       <input type="hidden" name="attachmentUrl" value={value} />
 
       {value ? (
-        <div className="flex items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm">
+        <div role="status" className="flex items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm">
           <Paperclip className="w-4 h-4 text-muted-foreground flex-shrink-0" />
           <span className="flex-1 truncate text-foreground">{value.split("/").pop()}</span>
           <button
@@ -47,11 +50,22 @@ export function AttachmentField({
           prefix="qna/"
           label="파일 첨부"
           disabled={disabled}
-          onUploadingChange={onUploadingChange}
-          onUploadComplete={(publicUrl) => onChange(publicUrl)}
-          onError={(message) => console.error("[AttachmentField]", message)}
+          onUploadingChange={(isUploading) => {
+            if (isUploading) setUploadError("");
+            onUploadingChange?.(isUploading);
+          }}
+          onUploadComplete={(publicUrl) => {
+            setUploadError("");
+            onChange(publicUrl);
+          }}
+          onError={setUploadError}
         />
       )}
+      {uploadError ? (
+        <p role="alert" className="text-sm text-destructive">
+          파일을 업로드하지 못했습니다. {uploadError}
+        </p>
+      ) : null}
     </div>
   );
 }

@@ -16,7 +16,7 @@
     "build": "next build",
     "build:worker": "node_modules/.bin/opennextjs-cloudflare build",
     "start": "next start",
-    "test": "tsx --test src/**/*.test.ts",
+    "test": "tsx --test \"src/**/*.test.ts\"",
     "test:integration": "tsx --experimental-test-module-mocks --test --test-concurrency=1 src/test/document-workflow.integration.ts src/test/form-draft-hook.integration.tsx",
     "lint": "eslint src scripts eslint.config.mjs"
   },

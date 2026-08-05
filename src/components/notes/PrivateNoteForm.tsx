@@ -11,6 +11,8 @@ import { createDocumentDraftKey } from "@/lib/form-draft";
 import { isRichTextEmpty } from "@/lib/rich-text";
 import { toKstDateInputValue } from "@/lib/date-input";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
+import { useDeferredEditorContent } from "@/lib/hooks/useDeferredEditorContent";
+import { useDocumentSaveShortcut } from "@/lib/hooks/useDocumentSaveShortcut";
 import {
   CREATION_OPERATION_FIELD,
   createCreationOperationId,
@@ -35,9 +37,11 @@ type CreateNoteDraft = {
 export function PrivateNoteForm({
   studentId,
   actorId,
+  returnTo,
 }: {
   studentId: string;
   actorId: string;
+  returnTo: string;
 }) {
   const boundAction = createPrivateNote.bind(null, studentId);
   const [state, formAction, pending] = useActionState(boundAction, initialState);
@@ -45,10 +49,19 @@ export function PrivateNoteForm({
   const today = toKstDateInputValue();
   const [title, setTitle] = useState("");
   const [noteDate, setNoteDate] = useState(today);
-  const [contentHtml, setContentHtml] = useState("");
+  const {
+    contentHtml,
+    contentVersion,
+    setContentHtml,
+    handleEditorChange,
+    handleEditorDirty,
+    readLatestContentHtml,
+    commitLatestContentHtml,
+  } = useDeferredEditorContent("");
   const [operationId, setOperationId] = useState("");
   const [editorKey, setEditorKey] = useState(0);
   const formRef = useRef<HTMLFormElement>(null);
+  const contentHtmlInputRef = useRef<HTMLInputElement>(null);
   const submittedDraftRef = useRef<CreateNoteDraft | null>(null);
   const handledNoteIdRef = useRef<string | null>(null);
 
@@ -85,16 +98,38 @@ export function PrivateNoteForm({
     },
   );
 
+  const handleSaveShortcut = useDocumentSaveShortcut({
+    disabled: !loaded || pending || !operationId,
+    onSave: () => formRef.current?.requestSubmit(),
+  });
+
   useEffect(() => {
     if (!loaded) return;
-    const isEmpty = !title && isRichTextEmpty(contentHtml);
+    const latestContentHtml = readLatestContentHtml();
+    const isEmpty = !title && isRichTextEmpty(latestContentHtml);
     if (isEmpty) {
       clear();
       return;
     }
     if (!operationId) return;
-    save({ operationId, title, noteDate, contentHtml });
-  }, [loaded, title, noteDate, contentHtml, operationId, save, clear]);
+    save({
+      operationId,
+      title,
+      noteDate,
+      get contentHtml() {
+        return readLatestContentHtml();
+      },
+    });
+  }, [
+    loaded,
+    title,
+    noteDate,
+    contentHtml,
+    operationId,
+    readLatestContentHtml,
+    save,
+    clear,
+  ]);
 
   // 저장 성공 시 draft 삭제 + 폼 초기화 (에디터 remount)
   useEffect(() => {
@@ -133,14 +168,36 @@ export function PrivateNoteForm({
     <form
       ref={formRef}
       action={formAction}
+      aria-busy={!loaded || pending}
       className="space-y-4"
+      onKeyDownCapture={handleSaveShortcut}
       onSubmit={(event) => {
-        if (pending || !operationId) {
+        if (!loaded || pending || !operationId) {
           event.preventDefault();
           return;
         }
-        const submittedDraft = { operationId, title, noteDate, contentHtml };
-        save(submittedDraft);
+        const latestContentHtml = commitLatestContentHtml();
+        if (!title.trim() || isRichTextEmpty(latestContentHtml)) {
+          event.preventDefault();
+          return;
+        }
+        if (contentHtmlInputRef.current) {
+          contentHtmlInputRef.current.value = latestContentHtml;
+        }
+        const submittedDraft = {
+          operationId,
+          title,
+          noteDate,
+          contentHtml: latestContentHtml,
+        };
+        save({
+          operationId,
+          title,
+          noteDate,
+          get contentHtml() {
+            return readLatestContentHtml();
+          },
+        });
         flush();
         submittedDraftRef.current = submittedDraft;
       }}
@@ -152,7 +209,7 @@ export function PrivateNoteForm({
       )}
       {hasOperationConflict && state.existingId ? (
         <CreationConflictActions
-          existingHref={`/dashboard/notes/${state.existingId}`}
+          existingHref={`/dashboard/notes/${state.existingId}?returnTo=${encodeURIComponent(returnTo)}`}
           existingLabel="기존 노트 열기"
           separateLabel="별도 노트로 저장"
           onSeparate={() => setOperationId(createCreationOperationId())}
@@ -174,7 +231,7 @@ export function PrivateNoteForm({
             placeholder="오늘의 수업 요약"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            disabled={pending}
+            disabled={!loaded || pending}
           />
         </div>
         <div className="space-y-2 sm:w-44">
@@ -185,19 +242,32 @@ export function PrivateNoteForm({
             type="date"
             value={noteDate}
             onChange={(e) => setNoteDate(e.target.value)}
-            disabled={pending}
+            disabled={!loaded || pending}
           />
         </div>
       </div>
 
       <div className="space-y-2">
         <label className="text-sm font-medium">내용</label>
-        <input type="hidden" name="contentHtml" value={contentHtml} />
+        <input ref={contentHtmlInputRef} type="hidden" name="contentHtml" value={contentHtml} />
         {loaded && (
           <FullEditor
             key={editorKey}
             initialContent={contentHtml}
-            onChange={setContentHtml}
+            contentVersion={contentVersion}
+            onChange={handleEditorChange}
+            onDirty={(reader) => {
+              handleEditorDirty(reader);
+              if (!operationId) return;
+              save({
+                operationId,
+                title,
+                noteDate,
+                get contentHtml() {
+                  return reader();
+                },
+              });
+            }}
             placeholder="수업 내용, 메모 등을 작성하세요..."
             disabled={pending}
             minHeight="300px"
@@ -218,7 +288,7 @@ export function PrivateNoteForm({
         )}
       </div>
 
-      <Button type="submit" disabled={pending || !operationId || !title.trim() || isRichTextEmpty(contentHtml)} className="w-full">
+      <Button type="submit" disabled={!loaded || pending || !operationId || !title.trim() || isRichTextEmpty(contentHtml)} className="w-full">
         {pending ? "작성 중..." : "노트 저장"}
       </Button>
     </form>

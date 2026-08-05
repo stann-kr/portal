@@ -256,24 +256,59 @@ export async function updatePrivateNote(
     return { error: "편집 기준 날짜를 확인할 수 없습니다. 페이지를 새로고침해 주세요." };
   }
 
-  try {
-    const updated = await db
-      .update(privateNotes)
-      .set({ title, contentHtml, noteDate })
-      .where(and(
-        eq(privateNotes.id, noteId),
-        eq(privateNotes.title, baseTitle),
-        eq(privateNotes.contentHtml, baseContentHtml),
-        baseNoteDate ? eq(privateNotes.noteDate, baseNoteDate) : isNull(privateNotes.noteDate),
-      ))
-      .returning({ id: privateNotes.id });
-    if (updated.length === 0) {
-      return {
-        error: "다른 화면에서 이 노트가 먼저 변경되었습니다. 현재 내용은 임시 저장되어 있으며, 새로고침 후 서버 최신본과 초안 중 선택할 수 있습니다.",
-      };
+  const alreadyCurrent =
+    existing.title === title &&
+    existing.contentHtml === contentHtml &&
+    (existing.noteDate?.getTime() ?? null) === (noteDate?.getTime() ?? null);
+
+  if (!alreadyCurrent) {
+    let updated: { id: string }[];
+    try {
+      updated = await db
+        .update(privateNotes)
+        .set({ title, contentHtml, noteDate })
+        .where(and(
+          eq(privateNotes.id, noteId),
+          eq(privateNotes.title, baseTitle),
+          eq(privateNotes.contentHtml, baseContentHtml),
+          baseNoteDate ? eq(privateNotes.noteDate, baseNoteDate) : isNull(privateNotes.noteDate),
+        ))
+        .returning({ id: privateNotes.id });
+    } catch {
+      return { error: "노트를 저장하지 못했습니다. 다시 시도해 주세요." };
     }
-  } catch {
-    return { error: "노트를 저장하지 못했습니다. 다시 시도해 주세요." };
+    if (updated.length === 0) {
+      let current: {
+        authorId: string;
+        title: string;
+        contentHtml: string;
+        noteDate: Date | null;
+      } | undefined;
+      try {
+        [current] = await db
+          .select({
+            authorId: privateNotes.authorId,
+            title: privateNotes.title,
+            contentHtml: privateNotes.contentHtml,
+            noteDate: privateNotes.noteDate,
+          })
+          .from(privateNotes)
+          .where(eq(privateNotes.id, noteId))
+          .limit(1);
+      } catch {
+        return { error: "노트를 저장하지 못했습니다. 다시 시도해 주세요." };
+      }
+      if (current) assertOwnerOrAdmin(session, current.authorId);
+      const converged =
+        current?.title === title &&
+        current.contentHtml === contentHtml &&
+        (current.noteDate?.getTime() ?? null) === (noteDate?.getTime() ?? null);
+      if (!converged) {
+        return {
+          error: "다른 화면에서 이 노트가 먼저 변경되었습니다. 현재 내용은 임시 저장되어 있으며, 새로고침 후 서버 최신본과 초안 중 선택할 수 있습니다.",
+        };
+      }
+    }
   }
 
   revalidatePath(`/dashboard/notes/${noteId}`);

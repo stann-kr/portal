@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { Editor } from "@tiptap/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -52,13 +52,13 @@ export function EditorInsertPanel({
   const [text, setText] = useState(selectedText);
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const errorId = useId();
 
   useEffect(() => {
     if (!disabled) inputRef.current?.focus();
   }, [disabled]);
 
-  const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const handleInsert = () => {
     if (disabled) return;
     const normalizedUrl = normalizeEditorUrl(url, kind);
     if (!normalizedUrl) {
@@ -101,10 +101,31 @@ export function EditorInsertPanel({
   const copy = PANEL_COPY[kind];
 
   return (
-    <form
-      onSubmit={handleSubmit}
+    <div
+      data-editor-insert-panel
+      role="group"
       className="border-b border-border bg-surface px-3 py-3 sm:px-4"
       aria-label={`${copy.label} 입력`}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          event.stopPropagation();
+          onClose();
+          editor.commands.focus();
+          return;
+        }
+        if (
+          event.key !== "Enter" ||
+          !(event.target instanceof HTMLInputElement) ||
+          event.nativeEvent.isComposing ||
+          event.altKey ||
+          event.ctrlKey ||
+          event.metaKey
+        ) return;
+        event.preventDefault();
+        event.stopPropagation();
+        handleInsert();
+      }}
     >
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
         {(kind === "link" && selection.from === selection.to) || kind === "image" ? (
@@ -134,14 +155,15 @@ export function EditorInsertPanel({
             }}
             placeholder={copy.placeholder}
             aria-invalid={Boolean(error)}
+            aria-describedby={error ? errorId : undefined}
           />
         </label>
         <div className="flex gap-2">
-          <Button type="submit" size="sm" disabled={disabled}>삽입</Button>
+          <Button type="button" size="sm" disabled={disabled} onClick={handleInsert}>삽입</Button>
           <Button type="button" size="sm" variant="ghost" disabled={disabled} onClick={onClose}>취소</Button>
         </div>
       </div>
-      {error ? <p role="alert" className="mt-2 text-xs text-destructive">{error}</p> : null}
-    </form>
+      {error ? <p id={errorId} role="alert" className="mt-2 text-xs text-destructive">{error}</p> : null}
+    </div>
   );
 }

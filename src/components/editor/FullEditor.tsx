@@ -6,7 +6,7 @@
  */
 "use client";
 
-import { useEditor, EditorContent } from "@tiptap/react";
+import { useEditor, useEditorState, EditorContent } from "@tiptap/react";
 import { BubbleMenu } from "@tiptap/react/menus";
 import StarterKit from "@tiptap/starter-kit";
 import LinkExtension from "@tiptap/extension-link";
@@ -25,8 +25,9 @@ import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
 import Typography from "@tiptap/extension-typography";
 import { Markdown, type MarkdownStorage } from "tiptap-markdown";
+import type { Editor } from "@tiptap/core";
 import { common, createLowlight } from "lowlight";
-import { useState, useCallback, useEffect, useRef, type ReactNode } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
 import {
   Bold, Italic, Underline as UnderlineIcon, Strikethrough, Highlighter,
   Heading1, Heading2, Heading3, List, ListOrdered, ListTodo,
@@ -41,6 +42,7 @@ import {
   type EditorInsertKind,
   type EditorSelection,
 } from "./EditorInsertPanel";
+import { createDeferredDocumentSerializer } from "@/lib/deferred-document-serializer";
 
 // ── 타입 ──────────────────────────────────────────
 
@@ -49,6 +51,10 @@ interface FullEditorProps {
   initialContent?: string;
   /** 콘텐츠 변경 시 HTML 문자열 전달 */
   onChange?: (html: string) => void;
+  /** 문서가 바뀌었을 때 최신 HTML을 지연해서 읽을 수 있는 reader 전달 */
+  onDirty?: (readLatestHtml: () => string) => void;
+  /** 같은 HTML 값으로도 명시적 복원·초기화를 강제하는 version */
+  contentVersion?: number;
   placeholder?: string;
   /** 에디터 최소 높이 (CSS 값) */
   minHeight?: string;
@@ -57,7 +63,7 @@ interface FullEditorProps {
   ariaLabel?: string;
   /** draft 저장 상태·단축키 안내 등을 표시하는 하단 슬롯 */
   footer?: ReactNode;
-  /** Cmd/Ctrl+S 입력 시 호출할 저장 동작 */
+  /** 상위 form이 Cmd/Ctrl+S 저장을 제공할 때 하단 안내를 표시 */
   onSave?: () => void;
 }
 
@@ -138,6 +144,8 @@ function Divider() {
 export function FullEditor({
   initialContent = "",
   onChange,
+  onDirty,
+  contentVersion = 0,
   placeholder = "내용을 입력하세요... (/ 로 블록 삽입)",
   minHeight = "calc(100vh - 320px)",
   disabled = false,
@@ -151,14 +159,53 @@ export function FullEditor({
     kind: EditorInsertKind;
     selection: EditorSelection;
   } | null>(null);
-  const lastLocalHtmlRef = useRef<string | null>(null);
-  const saveShortcutLockedRef = useRef(false);
-  const saveShortcutUnlockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastLocalHtmlRef = useRef(initialContent);
+  const lastNotifiedHtmlRef = useRef(initialContent);
+  const editorInstanceRef = useRef<Editor | null>(null);
+  const markdownModeRef = useRef(false);
+  const markdownTextRef = useRef("");
+  const documentSerializerRef = useRef(
+    createDeferredDocumentSerializer(initialContent),
+  );
+  const onChangeRef = useRef(onChange);
+  const onDirtyRef = useRef(onDirty);
+  const changeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const initialEditorContentRef = useRef(initialContent);
+  const appliedContentVersionRef = useRef(contentVersion);
+  onChangeRef.current = onChange;
+  onDirtyRef.current = onDirty;
 
-  const editor = useEditor({
-    immediatelyRender: false,
-    editable: !disabled,
-    extensions: [
+  const readLatestHtml = useCallback(() => {
+    const currentEditor = editorInstanceRef.current;
+    const html = documentSerializerRef.current.read(() => {
+      if (!currentEditor) return lastLocalHtmlRef.current;
+      if (markdownModeRef.current) {
+        currentEditor.commands.setContent(markdownTextRef.current, {
+          emitUpdate: false,
+        });
+      }
+      return currentEditor.getHTML();
+    });
+    lastLocalHtmlRef.current = html;
+    return html;
+  }, []);
+
+  const publishLatestHtml = useCallback(() => {
+    changeTimerRef.current = null;
+    const html = readLatestHtml();
+    if (lastNotifiedHtmlRef.current === html) return;
+    lastNotifiedHtmlRef.current = html;
+    onChangeRef.current?.(html);
+  }, [readLatestHtml]);
+
+  const markContentDirty = useCallback(() => {
+    documentSerializerRef.current.markDirty();
+    onDirtyRef.current?.(readLatestHtml);
+    if (changeTimerRef.current) clearTimeout(changeTimerRef.current);
+    changeTimerRef.current = setTimeout(publishLatestHtml, 200);
+  }, [publishLatestHtml, readLatestHtml]);
+  const editorExtensions = useMemo(
+    () => [
       StarterKit.configure({
         // CodeBlock은 CodeBlockLowlight로 교체
         codeBlock: false,
@@ -212,44 +259,107 @@ export function FullEditor({
         transformCopiedText: false,
       }),
     ],
-    content: initialContent,
-    editorProps: {
+    [placeholder],
+  );
+  const editorProps = useMemo(
+    () => ({
       attributes: {
         class: "max-w-none p-5 text-foreground focus:outline-none sm:p-6",
         role: "textbox",
         "aria-label": ariaLabel,
         "aria-multiline": "true",
       },
-    },
-    onUpdate({ editor }) {
-      const html = editor.getHTML();
-      lastLocalHtmlRef.current = html;
-      onChange?.(html);
+    }),
+    [ariaLabel],
+  );
+
+  const editor = useEditor({
+    immediatelyRender: false,
+    shouldRerenderOnTransaction: false,
+    editable: !disabled,
+    extensions: editorExtensions,
+    content: initialEditorContentRef.current,
+    editorProps,
+    onUpdate({ editor, transaction }) {
+      if (!transaction.docChanged) return;
+      editorInstanceRef.current = editor;
+      markContentDirty();
     },
   });
+  const toolbarState = useEditorState({
+    editor,
+    selector: ({ editor: currentEditor }) => ({
+      canRedo: currentEditor?.can().redo() ?? false,
+      canUndo: currentEditor?.can().undo() ?? false,
+      blockquote: currentEditor?.isActive("blockquote") ?? false,
+      bold: currentEditor?.isActive("bold") ?? false,
+      bulletList: currentEditor?.isActive("bulletList") ?? false,
+      codeBlock: currentEditor?.isActive("codeBlock") ?? false,
+      heading1: currentEditor?.isActive("heading", { level: 1 }) ?? false,
+      heading2: currentEditor?.isActive("heading", { level: 2 }) ?? false,
+      heading3: currentEditor?.isActive("heading", { level: 3 }) ?? false,
+      highlight: currentEditor?.isActive("highlight") ?? false,
+      italic: currentEditor?.isActive("italic") ?? false,
+      link: currentEditor?.isActive("link") ?? false,
+      orderedList: currentEditor?.isActive("orderedList") ?? false,
+      paragraph: currentEditor?.isActive("paragraph") ?? false,
+      strike: currentEditor?.isActive("strike") ?? false,
+      table: currentEditor?.isActive("table") ?? false,
+      taskList: currentEditor?.isActive("taskList") ?? false,
+      textAlignCenter: currentEditor?.isActive({ textAlign: "center" }) ?? false,
+      textAlignLeft: currentEditor?.isActive({ textAlign: "left" }) ?? false,
+      textAlignRight: currentEditor?.isActive({ textAlign: "right" }) ?? false,
+      underline: currentEditor?.isActive("underline") ?? false,
+    }),
+  });
+
+  useEffect(() => {
+    editorInstanceRef.current = editor;
+    return () => {
+      if (editorInstanceRef.current === editor) {
+        readLatestHtml();
+        editorInstanceRef.current = null;
+      }
+    };
+  }, [editor, readLatestHtml]);
 
   // draft 복원·다른 문서 전환·저장 후 초기화를 모두 동기화한다.
   useEffect(() => {
     if (!editor) return;
     const nextContent = initialContent || "";
-    if (nextContent === lastLocalHtmlRef.current) return;
-    if (editor.getHTML() !== nextContent) editor.commands.setContent(nextContent);
+    const explicitContentReset =
+      contentVersion !== appliedContentVersionRef.current;
+    appliedContentVersionRef.current = contentVersion;
+    if (
+      !explicitContentReset &&
+      (nextContent === lastLocalHtmlRef.current ||
+        nextContent === lastNotifiedHtmlRef.current)
+    ) return;
+    if (changeTimerRef.current) {
+      clearTimeout(changeTimerRef.current);
+      changeTimerRef.current = null;
+    }
+    editor.commands.setContent(nextContent, { emitUpdate: false });
+    documentSerializerRef.current.replace(nextContent);
+    lastLocalHtmlRef.current = nextContent;
+    lastNotifiedHtmlRef.current = nextContent;
     if (isMarkdownMode) {
       const editorStorage = editor.storage as unknown as Record<string, unknown>;
       const markdownStorage = editorStorage.markdown as MarkdownStorage | undefined;
-      setMarkdownText(markdownStorage?.getMarkdown?.() ?? editor.getHTML());
+      const nextMarkdown = markdownStorage?.getMarkdown?.() ?? editor.getHTML();
+      markdownTextRef.current = nextMarkdown;
+      setMarkdownText(nextMarkdown);
     }
-  }, [editor, initialContent, isMarkdownMode]);
+  }, [contentVersion, editor, initialContent, isMarkdownMode]);
 
   useEffect(() => {
-    editor?.setEditable(!disabled);
+    editor?.setEditable(!disabled, false);
     if (disabled) setInsertPanel(null);
-    else saveShortcutLockedRef.current = false;
   }, [disabled, editor]);
 
   useEffect(() => () => {
-    if (saveShortcutUnlockTimerRef.current) {
-      clearTimeout(saveShortcutUnlockTimerRef.current);
+    if (changeTimerRef.current) {
+      clearTimeout(changeTimerRef.current);
     }
   }, []);
 
@@ -263,22 +373,25 @@ export function FullEditor({
       const editorStorage = editor.storage as unknown as Record<string, unknown>;
       const markdownStorage = editorStorage.markdown as MarkdownStorage | undefined;
       const md = markdownStorage?.getMarkdown?.() ?? editor.getHTML();
+      markdownModeRef.current = true;
+      markdownTextRef.current = md;
       setMarkdownText(md);
       setIsMarkdownMode(true);
     } else {
       // 마크다운 → WYSIWYG
-      editor.commands.setContent(markdownText);
-      onChange?.(editor.getHTML());
+      readLatestHtml();
+      markdownModeRef.current = false;
       setIsMarkdownMode(false);
+      publishLatestHtml();
     }
-  }, [disabled, editor, isMarkdownMode, markdownText, onChange]);
+  }, [disabled, editor, isMarkdownMode, publishLatestHtml, readLatestHtml]);
 
   const handleMarkdownChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     if (disabled) return;
     const nextMarkdown = e.target.value;
+    markdownTextRef.current = nextMarkdown;
     setMarkdownText(nextMarkdown);
-    // 숨겨진 HTML 필드와 draft가 Markdown 모드에서도 매 입력마다 최신 상태를 받는다.
-    editor?.commands.setContent(nextMarkdown);
+    markContentDirty();
   };
 
   const openInsertPanel = useCallback(
@@ -302,26 +415,6 @@ export function FullEditor({
   return (
     <div
       className="relative flex flex-col overflow-hidden rounded-xl border border-border bg-background transition-[border-color,box-shadow] focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/15"
-      onKeyDownCapture={(event) => {
-        if (
-          disabled ||
-          !onSave ||
-          event.repeat ||
-          saveShortcutLockedRef.current ||
-          event.key.toLocaleLowerCase() !== "s" ||
-          (!event.metaKey && !event.ctrlKey)
-        ) return;
-        event.preventDefault();
-        saveShortcutLockedRef.current = true;
-        if (saveShortcutUnlockTimerRef.current) {
-          clearTimeout(saveShortcutUnlockTimerRef.current);
-        }
-        saveShortcutUnlockTimerRef.current = setTimeout(() => {
-          saveShortcutLockedRef.current = false;
-          saveShortcutUnlockTimerRef.current = null;
-        }, 1_000);
-        onSave();
-      }}
     >
 
       {!isMarkdownMode && !disabled ? (
@@ -335,33 +428,33 @@ export function FullEditor({
           >
             <ToolbarButton
               onClick={() => editor.chain().focus().toggleBold().run()}
-              active={editor.isActive("bold")}
+              active={toolbarState?.bold}
               title="굵게"
             >
               <Bold className="h-4 w-4" />
             </ToolbarButton>
             <ToolbarButton
               onClick={() => editor.chain().focus().toggleItalic().run()}
-              active={editor.isActive("italic")}
+              active={toolbarState?.italic}
               title="기울임"
             >
               <Italic className="h-4 w-4" />
             </ToolbarButton>
             <ToolbarButton
               onClick={() => editor.chain().focus().toggleUnderline().run()}
-              active={editor.isActive("underline")}
+              active={toolbarState?.underline}
               title="밑줄"
             >
               <UnderlineIcon className="h-4 w-4" />
             </ToolbarButton>
             <ToolbarButton
               onClick={() => openInsertPanel("link")}
-              active={editor.isActive("link")}
+              active={toolbarState?.link}
               title="링크"
             >
               <LinkIcon className="h-4 w-4" />
             </ToolbarButton>
-            {editor.isActive("link") ? (
+            {toolbarState?.link ? (
               <ToolbarButton
                 onClick={() => editor.chain().focus().unsetLink().run()}
                 title="링크 제거"
@@ -384,14 +477,14 @@ export function FullEditor({
         {/* 실행 취소 / 다시 실행 */}
         <ToolbarButton
           onClick={() => editor.chain().focus().undo().run()}
-          disabled={!editor.can().undo()}
+          disabled={!toolbarState?.canUndo}
           title="실행 취소 (Ctrl+Z)"
         >
           <Undo2 className="w-4 h-4" />
         </ToolbarButton>
         <ToolbarButton
           onClick={() => editor.chain().focus().redo().run()}
-          disabled={!editor.can().redo()}
+          disabled={!toolbarState?.canRedo}
           title="다시 실행 (Ctrl+Shift+Z)"
         >
           <Redo2 className="w-4 h-4" />
@@ -402,28 +495,28 @@ export function FullEditor({
         {/* 헤딩 */}
         <ToolbarButton
           onClick={() => editor.chain().focus().setParagraph().run()}
-          active={editor.isActive("paragraph")}
+          active={toolbarState?.paragraph}
           title="본문"
         >
           <span className="text-xs font-medium w-4 text-center">P</span>
         </ToolbarButton>
         <ToolbarButton
           onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
-          active={editor.isActive("heading", { level: 1 })}
+          active={toolbarState?.heading1}
           title="제목 1 (H1)"
         >
           <Heading1 className="w-4 h-4" />
         </ToolbarButton>
         <ToolbarButton
           onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
-          active={editor.isActive("heading", { level: 2 })}
+          active={toolbarState?.heading2}
           title="제목 2 (H2)"
         >
           <Heading2 className="w-4 h-4" />
         </ToolbarButton>
         <ToolbarButton
           onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}
-          active={editor.isActive("heading", { level: 3 })}
+          active={toolbarState?.heading3}
           title="제목 3 (H3)"
         >
           <Heading3 className="w-4 h-4" />
@@ -434,35 +527,35 @@ export function FullEditor({
         {/* 인라인 서식 */}
         <ToolbarButton
           onClick={() => editor.chain().focus().toggleBold().run()}
-          active={editor.isActive("bold")}
+          active={toolbarState?.bold}
           title="굵게 (Ctrl+B)"
         >
           <Bold className="w-4 h-4" />
         </ToolbarButton>
         <ToolbarButton
           onClick={() => editor.chain().focus().toggleItalic().run()}
-          active={editor.isActive("italic")}
+          active={toolbarState?.italic}
           title="기울임 (Ctrl+I)"
         >
           <Italic className="w-4 h-4" />
         </ToolbarButton>
         <ToolbarButton
           onClick={() => editor.chain().focus().toggleUnderline().run()}
-          active={editor.isActive("underline")}
+          active={toolbarState?.underline}
           title="밑줄 (Ctrl+U)"
         >
           <UnderlineIcon className="w-4 h-4" />
         </ToolbarButton>
         <ToolbarButton
           onClick={() => editor.chain().focus().toggleStrike().run()}
-          active={editor.isActive("strike")}
+          active={toolbarState?.strike}
           title="취소선"
         >
           <Strikethrough className="w-4 h-4" />
         </ToolbarButton>
         <ToolbarButton
           onClick={() => editor.chain().focus().toggleHighlight().run()}
-          active={editor.isActive("highlight")}
+          active={toolbarState?.highlight}
           title="형광펜"
         >
           <Highlighter className="w-4 h-4" />
@@ -473,21 +566,21 @@ export function FullEditor({
         {/* 정렬 */}
         <ToolbarButton
           onClick={() => editor.chain().focus().setTextAlign("left").run()}
-          active={editor.isActive({ textAlign: "left" })}
+          active={toolbarState?.textAlignLeft}
           title="왼쪽 정렬"
         >
           <AlignLeft className="w-4 h-4" />
         </ToolbarButton>
         <ToolbarButton
           onClick={() => editor.chain().focus().setTextAlign("center").run()}
-          active={editor.isActive({ textAlign: "center" })}
+          active={toolbarState?.textAlignCenter}
           title="가운데 정렬"
         >
           <AlignCenter className="w-4 h-4" />
         </ToolbarButton>
         <ToolbarButton
           onClick={() => editor.chain().focus().setTextAlign("right").run()}
-          active={editor.isActive({ textAlign: "right" })}
+          active={toolbarState?.textAlignRight}
           title="오른쪽 정렬"
         >
           <AlignRight className="w-4 h-4" />
@@ -498,21 +591,21 @@ export function FullEditor({
         {/* 리스트 */}
         <ToolbarButton
           onClick={() => editor.chain().focus().toggleBulletList().run()}
-          active={editor.isActive("bulletList")}
+          active={toolbarState?.bulletList}
           title="글머리 기호 목록"
         >
           <List className="w-4 h-4" />
         </ToolbarButton>
         <ToolbarButton
           onClick={() => editor.chain().focus().toggleOrderedList().run()}
-          active={editor.isActive("orderedList")}
+          active={toolbarState?.orderedList}
           title="번호 매기기 목록"
         >
           <ListOrdered className="w-4 h-4" />
         </ToolbarButton>
         <ToolbarButton
           onClick={() => editor.chain().focus().toggleTaskList().run()}
-          active={editor.isActive("taskList")}
+          active={toolbarState?.taskList}
           title="체크리스트"
         >
           <ListTodo className="w-4 h-4" />
@@ -523,14 +616,14 @@ export function FullEditor({
         {/* 블록 요소 */}
         <ToolbarButton
           onClick={() => editor.chain().focus().toggleBlockquote().run()}
-          active={editor.isActive("blockquote")}
+          active={toolbarState?.blockquote}
           title="인용구"
         >
           <Quote className="w-4 h-4" />
         </ToolbarButton>
         <ToolbarButton
           onClick={() => editor.chain().focus().toggleCodeBlock().run()}
-          active={editor.isActive("codeBlock")}
+          active={toolbarState?.codeBlock}
           title="코드 블록"
         >
           <Code2 className="w-4 h-4" />
@@ -547,7 +640,7 @@ export function FullEditor({
         {/* 미디어 / 링크 */}
         <ToolbarButton
           onClick={() => openInsertPanel("link")}
-          active={editor.isActive("link")}
+          active={toolbarState?.link}
           title="링크 삽입"
         >
           <LinkIcon className="w-4 h-4" />
@@ -566,7 +659,7 @@ export function FullEditor({
         </ToolbarButton>
         <ToolbarButton
           onClick={addTable}
-          active={editor.isActive("table")}
+          active={toolbarState?.table}
           title="표 삽입"
         >
           <TableIcon className="w-4 h-4" />

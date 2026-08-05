@@ -13,6 +13,8 @@ import { createPost, type CreatePostState } from "@/lib/actions/posts";
 import { getCategories } from "@/lib/actions/categories";
 import { createDocumentDraftKey } from "@/lib/form-draft";
 import { useFormDraft } from "@/lib/hooks/useFormDraft";
+import { useDeferredEditorContent } from "@/lib/hooks/useDeferredEditorContent";
+import { useDocumentSaveShortcut } from "@/lib/hooks/useDocumentSaveShortcut";
 import { isRichTextEmpty } from "@/lib/rich-text";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
 import {
@@ -64,7 +66,15 @@ export function NewPostForm({
   const [category, setCategory] = useState(defaultCategory);
   const [isPinned, setIsPinned] = useState(false);
   const [title, setTitle] = useState("");
-  const [contentHtml, setContentHtml] = useState("");
+  const {
+    contentHtml,
+    contentVersion,
+    setContentHtml,
+    handleEditorChange,
+    handleEditorDirty,
+    readLatestContentHtml,
+    commitLatestContentHtml,
+  } = useDeferredEditorContent("");
   const [categories, setCategories] = useState<{ id: string; slug: string; name: string }[]>([]);
   const [mediaUrl, setMediaUrl] = useState("");
   const [operationId, setOperationId] = useState("");
@@ -72,6 +82,7 @@ export function NewPostForm({
   const [isUploading, setIsUploading] = useState(false);
   const [state, formAction, isPending] = useActionState<CreatePostState, FormData>(createPost, {});
   const formRef = useRef<HTMLFormElement>(null);
+  const contentInputRef = useRef<HTMLInputElement>(null);
   const submittedDraftRef = useRef<PostDraft | null>(null);
   const handledPostIdRef = useRef<string | null>(null);
   const router = useRouter();
@@ -114,6 +125,15 @@ export function NewPostForm({
       },
     },
   );
+  const isSubmitBlocked = !loaded || isFormBusy || !operationId;
+  const isSubmitDisabled =
+    isSubmitBlocked ||
+    !title.trim() ||
+    isRichTextEmpty(contentHtml);
+  const handleSaveShortcut = useDocumentSaveShortcut({
+    disabled: isSubmitBlocked,
+    onSave: () => formRef.current?.requestSubmit(),
+  });
 
   useEffect(() => {
     getCategories().then(setCategories);
@@ -121,13 +141,24 @@ export function NewPostForm({
 
   useEffect(() => {
     if (!loaded) return;
-    if (!title && isRichTextEmpty(contentHtml) && !mediaUrl) {
+    const latestContentHtml = readLatestContentHtml();
+    if (!title && isRichTextEmpty(latestContentHtml) && !mediaUrl) {
       clear();
       return;
     }
     if (!operationId) return;
-    save({ operationId, boardType, category, isPinned, title, contentHtml, mediaUrl });
-  }, [boardType, category, clear, contentHtml, isPinned, loaded, mediaUrl, operationId, save, title]);
+    save({
+      operationId,
+      boardType,
+      category,
+      isPinned,
+      title,
+      mediaUrl,
+      get contentHtml() {
+        return readLatestContentHtml();
+      },
+    });
+  }, [boardType, category, clear, contentHtml, isPinned, loaded, mediaUrl, operationId, readLatestContentHtml, save, title]);
 
   useEffect(() => {
     if (!state.postId || handledPostIdRef.current === state.postId) return;
@@ -178,9 +209,11 @@ export function NewPostForm({
       <form
         ref={formRef}
         action={formAction}
+        aria-busy={!loaded || isFormBusy}
         className="space-y-5"
+        onKeyDownCapture={handleSaveShortcut}
         onSubmit={(event) => {
-          if (isFormBusy) {
+          if (!loaded || isFormBusy) {
             event.preventDefault();
             return;
           }
@@ -188,13 +221,19 @@ export function NewPostForm({
             event.preventDefault();
             return;
           }
+          const latestContentHtml = commitLatestContentHtml();
+          if (!title.trim() || isRichTextEmpty(latestContentHtml)) {
+            event.preventDefault();
+            return;
+          }
+          if (contentInputRef.current) contentInputRef.current.value = latestContentHtml;
           const submittedDraft = {
             operationId,
             boardType,
             category,
             isPinned,
             title,
-            contentHtml,
+            contentHtml: latestContentHtml,
             mediaUrl,
           };
           save(submittedDraft);
@@ -206,7 +245,7 @@ export function NewPostForm({
         <input type="hidden" name="returnTo" value="community-editor" />
         <input type="hidden" name="boardType" value={boardType} />
         <input type="hidden" name="category" value={category} />
-        <input type="hidden" name="contentHtml" value={contentHtml} />
+        <input ref={contentInputRef} type="hidden" name="contentHtml" value={contentHtml} />
         <input type="hidden" name="mediaUrl" value={mediaUrl} />
         {isPinned ? <input type="hidden" name="isPinned" value="true" /> : null}
 
@@ -226,7 +265,7 @@ export function NewPostForm({
           />
         ) : null}
 
-        <fieldset className="space-y-1.5" disabled={isFormBusy}>
+        <fieldset className="space-y-1.5" disabled={!loaded || isFormBusy}>
           <legend className="text-sm font-medium">게시판 유형</legend>
           <div className="flex flex-wrap gap-2">
             {BOARD_TYPES.filter(({ value }) => value !== "ANNOUNCEMENT" || isAdmin).map(
@@ -251,7 +290,7 @@ export function NewPostForm({
         </fieldset>
 
         {boardType === "GENERAL" ? (
-          <fieldset className="space-y-1.5" disabled={isPending}>
+          <fieldset className="space-y-1.5" disabled={!loaded || isPending}>
             <legend className="text-sm font-medium">채널</legend>
             <div className="flex flex-wrap gap-2">
               {categories.map((item) => (
@@ -280,7 +319,7 @@ export function NewPostForm({
               checked={isPinned}
               onChange={(event) => setIsPinned(event.target.checked)}
               className="h-4 w-4 rounded border-border accent-primary"
-              disabled={isPending}
+              disabled={!loaded || isPending}
             />
             공지 상단 고정
           </label>
@@ -314,11 +353,14 @@ export function NewPostForm({
                   setUploadError("");
                 }}
                 onError={setUploadError}
-                onUploadingChange={setIsUploading}
-                disabled={isPending}
+                onUploadingChange={(uploading) => {
+                  if (uploading) setUploadError("");
+                  setIsUploading(uploading);
+                }}
+                disabled={!loaded || isPending}
               />
             )}
-            {uploadError ? <p className="text-sm text-destructive">{uploadError}</p> : null}
+            {uploadError ? <p role="alert" className="text-sm text-destructive">{uploadError}</p> : null}
           </div>
         ) : null}
 
@@ -333,7 +375,7 @@ export function NewPostForm({
             onChange={(event) => setTitle(event.target.value)}
             placeholder="게시물 제목"
             required
-            disabled={isPending}
+            disabled={!loaded || isPending}
           />
         </label>
 
@@ -344,7 +386,23 @@ export function NewPostForm({
           {loaded ? (
             <FullEditor
               initialContent={contentHtml}
-              onChange={setContentHtml}
+              contentVersion={contentVersion}
+              onChange={handleEditorChange}
+              onDirty={(reader) => {
+                handleEditorDirty(reader);
+                if (!operationId) return;
+                save({
+                  operationId,
+                  boardType,
+                  category,
+                  isPinned,
+                  title,
+                  mediaUrl,
+                  get contentHtml() {
+                    return reader();
+                  },
+                });
+              }}
               placeholder="게시물 내용을 작성하세요…"
               disabled={isPending}
               ariaLabel="커뮤니티 게시물 내용"
@@ -369,7 +427,7 @@ export function NewPostForm({
         <div className="flex gap-3">
           <Button
             type="submit"
-            disabled={isFormBusy || !operationId || !title.trim() || isRichTextEmpty(contentHtml)}
+            disabled={isSubmitDisabled}
             className="flex-1 gap-2"
           >
             <Send className="h-4 w-4" aria-hidden="true" />

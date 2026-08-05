@@ -414,6 +414,130 @@ test("노트 CAS에서 늦은 저장이 먼저 저장된 내용을 덮어쓰지 
   assert.deepEqual(note, { title: "먼저 저장", contentHtml: "<p>첫 내용</p>" });
 });
 
+test("노트 편집 성공 응답이 유실돼도 같은 저장 재전송은 현재 성공으로 회수한다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context);
+  await seedProfile(db, "student-1");
+  const originalCreatedAt = new Date("2026-07-01T00:00:00.000Z");
+  await db.insert(privateNotes).values({
+    id: "note-update-retry",
+    studentId: "student-1",
+    authorId: "student-1",
+    title: "저장 전 제목",
+    contentHtml: "<p>저장 전 본문</p>",
+    noteDate: new Date("2026-08-01T00:00:00.000Z"),
+    createdAt: originalCreatedAt,
+  });
+  const retryForm = () => {
+    const formData = new FormData();
+    formData.set("title", "저장된 제목");
+    formData.set("contentHtml", "<p>저장된 본문</p>");
+    formData.set("noteDate", "2026-08-05");
+    formData.set("baseTitle", "저장 전 제목");
+    formData.set("baseContentHtml", "<p>저장 전 본문</p>");
+    formData.set("baseNoteDate", "2026-08-01");
+    return formData;
+  };
+
+  const first = await privateNoteActions.updatePrivateNote(
+    "note-update-retry",
+    {},
+    retryForm(),
+  );
+  const lostResponseRetry = await privateNoteActions.updatePrivateNote(
+    "note-update-retry",
+    {},
+    retryForm(),
+  );
+
+  assert.equal(first.success, true);
+  assert.equal(lostResponseRetry.success, true);
+  assert.deepEqual(lostResponseRetry.note, first.note);
+  const [stored] = await db
+    .select({
+      title: privateNotes.title,
+      contentHtml: privateNotes.contentHtml,
+      noteDate: privateNotes.noteDate,
+      createdAt: privateNotes.createdAt,
+    })
+    .from(privateNotes)
+    .where(eq(privateNotes.id, "note-update-retry"));
+  assert.equal(stored?.title, "저장된 제목");
+  assert.equal(stored?.contentHtml, "<p>저장된 본문</p>");
+  assert.equal(stored?.noteDate?.toISOString().slice(0, 10), "2026-08-05");
+  assert.equal(stored?.createdAt?.getTime(), originalCreatedAt.getTime());
+});
+
+test("노트 CAS 직전 같은 내용이 반영돼도 후속 조회로 성공에 수렴한다", { concurrency: false }, async (context) => {
+  const { binding, db } = await setupDatabase(context);
+  await seedProfile(db, "student-1");
+  await db.insert(privateNotes).values({
+    id: "note-update-race-converged",
+    studentId: "student-1",
+    authorId: "student-1",
+    title: "경쟁 전 제목",
+    contentHtml: "<p>경쟁 전 본문</p>",
+  });
+  await binding
+    .prepare(
+      "CREATE TRIGGER integration_converge_note_update " +
+        "BEFORE UPDATE ON private_notes WHEN OLD.id = 'note-update-race-converged' " +
+        "BEGIN " +
+        "UPDATE private_notes SET title = '같은 저장', content_html = '<p>같은 본문</p>' WHERE id = OLD.id; " +
+        "SELECT RAISE(IGNORE); END",
+    )
+    .run();
+
+  const formData = new FormData();
+  formData.set("title", "같은 저장");
+  formData.set("contentHtml", "<p>같은 본문</p>");
+  formData.set("noteDate", "");
+  formData.set("baseTitle", "경쟁 전 제목");
+  formData.set("baseContentHtml", "<p>경쟁 전 본문</p>");
+  formData.set("baseNoteDate", "");
+  const result = await privateNoteActions.updatePrivateNote(
+    "note-update-race-converged",
+    {},
+    formData,
+  );
+
+  assert.equal(result.success, true);
+  assert.equal(result.note?.title, "같은 저장");
+  const [stored] = await db
+    .select({ title: privateNotes.title, contentHtml: privateNotes.contentHtml })
+    .from(privateNotes)
+    .where(eq(privateNotes.id, "note-update-race-converged"));
+  assert.deepEqual(stored, { title: "같은 저장", contentHtml: "<p>같은 본문</p>" });
+});
+
+test("다른 사용자는 노트가 이미 같은 payload여도 편집 성공을 회수할 수 없다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context, createSession("student-2", "student"));
+  await seedProfile(db, "student-1");
+  await seedProfile(db, "student-2");
+  await db.insert(privateNotes).values({
+    id: "note-update-retry-owner-guard",
+    studentId: "student-1",
+    authorId: "student-1",
+    title: "현재 제목",
+    contentHtml: "<p>현재 본문</p>",
+  });
+  const formData = new FormData();
+  formData.set("title", "현재 제목");
+  formData.set("contentHtml", "<p>현재 본문</p>");
+  formData.set("noteDate", "");
+  formData.set("baseTitle", "이전 제목");
+  formData.set("baseContentHtml", "<p>이전 본문</p>");
+  formData.set("baseNoteDate", "");
+
+  await assert.rejects(
+    privateNoteActions.updatePrivateNote(
+      "note-update-retry-owner-guard",
+      {},
+      formData,
+    ),
+    /Unauthorized/u,
+  );
+});
+
 test("게시물 CAS에서 늦은 저장이 먼저 저장된 내용을 덮어쓰지 않는다", { concurrency: false }, async (context) => {
   const { db } = await setupDatabase(context);
   await seedProfile(db, "student-1");
@@ -451,6 +575,124 @@ test("게시물 CAS에서 늦은 저장이 먼저 저장된 내용을 덮어쓰�
     .from(posts)
     .where(eq(posts.id, "post-1"));
   assert.deepEqual(post, { title: "먼저 저장", contentHtml: "<p>첫 내용</p>" });
+});
+
+test("게시물 편집 성공 응답이 유실돼도 같은 저장 재전송은 현재 성공으로 회수한다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context);
+  await seedProfile(db, "student-1");
+  const originalCreatedAt = new Date("2026-07-01T00:00:00.000Z");
+  await db.insert(posts).values({
+    id: "post-update-retry",
+    authorId: "student-1",
+    category: "general",
+    title: "저장 전 제목",
+    contentHtml: "<p>저장 전 본문</p>",
+    boardType: "GENERAL",
+    createdAt: originalCreatedAt,
+  });
+  const retryForm = () => {
+    const formData = new FormData();
+    formData.set("title", "저장된 제목");
+    formData.set("contentHtml", "<p>저장된 본문</p>");
+    formData.set("baseTitle", "저장 전 제목");
+    formData.set("baseContentHtml", "<p>저장 전 본문</p>");
+    return formData;
+  };
+
+  const first = await postActions.updatePostContent(
+    "post-update-retry",
+    {},
+    retryForm(),
+  );
+  const lostResponseRetry = await postActions.updatePostContent(
+    "post-update-retry",
+    {},
+    retryForm(),
+  );
+
+  assert.equal(first.success, true);
+  assert.equal(lostResponseRetry.success, true);
+  assert.deepEqual(lostResponseRetry.post, first.post);
+  const [stored] = await db
+    .select({
+      title: posts.title,
+      contentHtml: posts.contentHtml,
+      createdAt: posts.createdAt,
+    })
+    .from(posts)
+    .where(eq(posts.id, "post-update-retry"));
+  assert.equal(stored?.title, "저장된 제목");
+  assert.equal(stored?.contentHtml, "<p>저장된 본문</p>");
+  assert.equal(stored?.createdAt?.getTime(), originalCreatedAt.getTime());
+});
+
+test("게시물 CAS 직전 같은 내용이 반영돼도 후속 조회로 성공에 수렴한다", { concurrency: false }, async (context) => {
+  const { binding, db } = await setupDatabase(context);
+  await seedProfile(db, "student-1");
+  await db.insert(posts).values({
+    id: "post-update-race-converged",
+    authorId: "student-1",
+    category: "general",
+    title: "경쟁 전 제목",
+    contentHtml: "<p>경쟁 전 본문</p>",
+    boardType: "GENERAL",
+  });
+  await binding
+    .prepare(
+      "CREATE TRIGGER integration_converge_post_update " +
+        "BEFORE UPDATE ON posts WHEN OLD.id = 'post-update-race-converged' " +
+        "BEGIN " +
+        "UPDATE posts SET title = '같은 저장', content_html = '<p>같은 본문</p>' WHERE id = OLD.id; " +
+        "SELECT RAISE(IGNORE); END",
+    )
+    .run();
+
+  const formData = new FormData();
+  formData.set("title", "같은 저장");
+  formData.set("contentHtml", "<p>같은 본문</p>");
+  formData.set("baseTitle", "경쟁 전 제목");
+  formData.set("baseContentHtml", "<p>경쟁 전 본문</p>");
+  const result = await postActions.updatePostContent(
+    "post-update-race-converged",
+    {},
+    formData,
+  );
+
+  assert.equal(result.success, true);
+  assert.equal(result.post?.title, "같은 저장");
+  const [stored] = await db
+    .select({ title: posts.title, contentHtml: posts.contentHtml })
+    .from(posts)
+    .where(eq(posts.id, "post-update-race-converged"));
+  assert.deepEqual(stored, { title: "같은 저장", contentHtml: "<p>같은 본문</p>" });
+});
+
+test("다른 사용자는 게시물이 이미 같은 payload여도 편집 성공을 회수할 수 없다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context, createSession("student-2", "student"));
+  await seedProfile(db, "student-1");
+  await seedProfile(db, "student-2");
+  await db.insert(posts).values({
+    id: "post-update-retry-owner-guard",
+    authorId: "student-1",
+    category: "general",
+    title: "현재 제목",
+    contentHtml: "<p>현재 본문</p>",
+    boardType: "GENERAL",
+  });
+  const formData = new FormData();
+  formData.set("title", "현재 제목");
+  formData.set("contentHtml", "<p>현재 본문</p>");
+  formData.set("baseTitle", "이전 제목");
+  formData.set("baseContentHtml", "<p>이전 본문</p>");
+
+  await assert.rejects(
+    postActions.updatePostContent(
+      "post-update-retry-owner-guard",
+      {},
+      formData,
+    ),
+    /Unauthorized/u,
+  );
 });
 
 test("같은 노트 생성 작업을 재전송해도 한 건만 만들고 같은 결과를 반환한다", { concurrency: false }, async (context) => {

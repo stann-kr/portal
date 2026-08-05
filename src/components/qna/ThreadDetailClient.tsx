@@ -19,6 +19,7 @@ const FullEditor = dynamic(
 import { ReplyCard } from "./ReplyCard";
 import { AttachmentField } from "./AttachmentField";
 import { useFormDraft } from "@/lib/hooks/useFormDraft";
+import { useDeferredEditorContent } from "@/lib/hooks/useDeferredEditorContent";
 import { createQnaReply, updateThreadStatus, type CreateReplyState } from "@/lib/actions/qna";
 import { QNA_STATUS_LABELS } from "@/lib/qna-status";
 import { STATUS_TONE_CLASS_NAMES } from "@/lib/portal-status";
@@ -28,6 +29,7 @@ import { createDocumentDraftKey } from "@/lib/form-draft";
 import { isRichTextEmpty } from "@/lib/rich-text";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
+import { useDocumentSaveShortcut } from "@/lib/hooks/useDocumentSaveShortcut";
 import {
   CREATION_OPERATION_FIELD,
   createCreationOperationId,
@@ -74,7 +76,15 @@ export function ThreadDetailClient({
   createdAt,
   returnTo,
 }: ThreadDetailClientProps) {
-  const [contentHtml, setContentHtml] = useState("");
+  const {
+    contentHtml,
+    contentVersion,
+    setContentHtml,
+    handleEditorChange,
+    handleEditorDirty,
+    readLatestContentHtml,
+    commitLatestContentHtml,
+  } = useDeferredEditorContent("");
   const [attachmentUrl, setAttachmentUrl] = useState("");
   const [operationId, setOperationId] = useState("");
   const [isUploading, setIsUploading] = useState(false);
@@ -83,6 +93,7 @@ export function ThreadDetailClient({
   const [currentStatus, setCurrentStatus] = useState(status);
   const [statusError, setStatusError] = useState<string | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
+  const contentInputRef = useRef<HTMLInputElement>(null);
   const submittedReplyRef = useRef<QnaReplyDraft | null>(null);
   const handledReplyIdRef = useRef<string | null>(null);
   const router = useRouter();
@@ -127,17 +138,32 @@ export function ThreadDetailClient({
       },
     },
   );
+  const handleReplySaveShortcut = useDocumentSaveShortcut({
+    disabled:
+      !loaded ||
+      currentStatus === "CLOSED" ||
+      isReplyFormBusy ||
+      !operationId,
+    onSave: () => formRef.current?.requestSubmit(),
+  });
 
   useEffect(() => {
     if (!loaded) return;
-    const isEmpty = isRichTextEmpty(contentHtml) && !attachmentUrl;
+    const latestContentHtml = readLatestContentHtml();
+    const isEmpty = isRichTextEmpty(latestContentHtml) && !attachmentUrl;
     if (isEmpty) {
       clear();
       return;
     }
     if (!operationId) return;
-    save({ operationId, contentHtml, attachmentUrl });
-  }, [loaded, contentHtml, attachmentUrl, operationId, save, clear]);
+    save({
+      operationId,
+      attachmentUrl,
+      get contentHtml() {
+        return readLatestContentHtml();
+      },
+    });
+  }, [loaded, contentHtml, attachmentUrl, operationId, readLatestContentHtml, save, clear]);
 
   // 답변 등록 성공 시 draft 삭제 + 폼 초기화 (에디터 remount)
   useEffect(() => {
@@ -165,6 +191,12 @@ export function ThreadDetailClient({
     replyState.conflictedOperationId === operationId &&
     replyState.existingId,
   );
+  const hasReplyDraft =
+    !isRichTextEmpty(contentHtml) ||
+    Boolean(attachmentUrl) ||
+    recoveries.length > 0 ||
+    draftStatus !== "idle";
+  const showReplyComposer = currentStatus !== "CLOSED" || hasReplyDraft;
 
   const handleStatusChange = (newStatus: QnaStatus) => {
     setStatusError(null);
@@ -246,7 +278,7 @@ export function ThreadDetailClient({
               key={s}
               onClick={() => handleStatusChange(s)}
               type="button"
-              disabled={currentStatus === s || isPending || isReplyFormBusy}
+              disabled={!loaded || currentStatus === s || isPending || isReplyFormBusy}
               aria-pressed={currentStatus === s}
               className={`rounded-md border px-3 py-1 text-xs font-semibold transition-colors ${
                 currentStatus === s
@@ -267,27 +299,48 @@ export function ThreadDetailClient({
       {statusError ? <p role="alert" className="text-sm text-destructive">{statusError}</p> : null}
 
       {/* 답변 작성 폼 */}
-      {currentStatus !== "CLOSED" && (
+      {showReplyComposer && (
         <form
           ref={formRef}
           action={replyAction}
+          aria-busy={!loaded || isReplyFormBusy}
           className="space-y-3"
+          onKeyDownCapture={handleReplySaveShortcut}
           onSubmit={(event) => {
-            if (isReplyFormBusy || !operationId) {
+            if (!loaded || currentStatus === "CLOSED" || isReplyFormBusy || !operationId) {
               event.preventDefault();
               return;
             }
-            const submittedReply = { operationId, contentHtml, attachmentUrl };
+            const latestContentHtml = commitLatestContentHtml();
+            if (isRichTextEmpty(latestContentHtml)) {
+              event.preventDefault();
+              return;
+            }
+            if (contentInputRef.current) contentInputRef.current.value = latestContentHtml;
+            const submittedReply = {
+              operationId,
+              contentHtml: latestContentHtml,
+              attachmentUrl,
+            };
             save(submittedReply);
             flush();
             submittedReplyRef.current = submittedReply;
           }}
         >
           <input type="hidden" name={CREATION_OPERATION_FIELD} value={operationId} />
-          <input type="hidden" name="contentHtml" value={contentHtml} />
+          <input ref={contentInputRef} type="hidden" name="contentHtml" value={contentHtml} />
           <p className="text-sm font-medium text-foreground">
-            {isAdmin ? "답변 작성" : "추가 질문"}
+            {currentStatus === "CLOSED"
+              ? "미전송 초안"
+              : isAdmin
+                ? "답변 작성"
+                : "추가 질문"}
           </p>
+          {currentStatus === "CLOSED" ? (
+            <p role="status" className="rounded-md border border-warning/25 bg-warning-muted px-3 py-2 text-sm text-foreground">
+              스레드가 종료되어 등록할 수 없지만, 작성 중이던 내용은 이 기기에 보존되어 있습니다. 내용을 복사하거나 관리자가 다시 열 때 이어서 등록할 수 있습니다.
+            </p>
+          ) : null}
           {replyState.error && (!replyState.operationConflict || hasOperationConflict) && (
             <p role="alert" className="text-sm text-destructive">{replyState.error}</p>
           )}
@@ -300,16 +353,28 @@ export function ThreadDetailClient({
               disabled={isReplyFormBusy}
             />
           ) : null}
-          {replyState.success ? (
+          {replyState.success && !hasReplyDraft ? (
             <p role="status" className="text-sm text-success">등록했습니다.</p>
           ) : null}
           {loaded && (
             <FullEditor
               key={editorKey}
               initialContent={contentHtml}
-              onChange={setContentHtml}
+              contentVersion={contentVersion}
+              onChange={handleEditorChange}
+              onDirty={(reader) => {
+                handleEditorDirty(reader);
+                if (!operationId) return;
+                save({
+                  operationId,
+                  attachmentUrl,
+                  get contentHtml() {
+                    return reader();
+                  },
+                });
+              }}
               placeholder={isAdmin ? "답변을 작성하세요..." : "추가 질문을 입력하세요..."}
-              disabled={isReplyFormBusy}
+              disabled={currentStatus === "CLOSED" || isReplyFormBusy}
               minHeight="200px"
               ariaLabel={isAdmin ? "Q&A 답변 내용" : "Q&A 추가 질문 내용"}
               footer={
@@ -331,22 +396,24 @@ export function ThreadDetailClient({
           <AttachmentField
             value={attachmentUrl}
             onChange={setAttachmentUrl}
-            disabled={isReplyFormBusy}
+            disabled={!loaded || currentStatus === "CLOSED" || isReplyFormBusy}
             onUploadingChange={setIsUploading}
           />
-          <Button type="submit" disabled={isReplyFormBusy || !operationId || isRichTextEmpty(contentHtml)} className="gap-2">
-            {isUploading
-              ? "업로드 완료 대기..."
-              : isReplying
-                ? "등록 중..."
-                : isAdmin
-                  ? "답변 등록"
-                  : "질문 추가"}
-          </Button>
+          {currentStatus !== "CLOSED" ? (
+            <Button type="submit" disabled={!loaded || isReplyFormBusy || !operationId || isRichTextEmpty(contentHtml)} className="gap-2">
+              {isUploading
+                ? "업로드 완료 대기..."
+                : isReplying
+                  ? "등록 중..."
+                  : isAdmin
+                    ? "답변 등록"
+                    : "질문 추가"}
+            </Button>
+          ) : null}
         </form>
       )}
 
-      {currentStatus === "CLOSED" && (
+      {currentStatus === "CLOSED" && !hasReplyDraft && (
         <p className="text-sm text-muted-foreground text-center py-4">
           종료된 스레드입니다.
         </p>

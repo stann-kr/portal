@@ -12,6 +12,8 @@ import { createDocumentDraftKey } from "@/lib/form-draft";
 import { isRichTextEmpty } from "@/lib/rich-text";
 import type { UpdateNoteState } from "@/lib/actions/privateNotes";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
+import { useDeferredEditorContent } from "@/lib/hooks/useDeferredEditorContent";
+import { useDocumentSaveShortcut } from "@/lib/hooks/useDocumentSaveShortcut";
 
 const FullEditor = dynamic(
   () => import("@/components/editor/FullEditor").then((module) => ({ default: module.FullEditor })),
@@ -36,11 +38,20 @@ function toDateInputValue(value: Date | null): string {
 export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
   const [title, setTitle] = useState(note.title);
   const [noteDate, setNoteDate] = useState(toDateInputValue(note.noteDate));
-  const [contentHtml, setContentHtml] = useState(note.contentHtml);
+  const {
+    contentHtml,
+    contentVersion,
+    setContentHtml,
+    handleEditorChange,
+    handleEditorDirty,
+    readLatestContentHtml,
+    commitLatestContentHtml,
+  } = useDeferredEditorContent(note.contentHtml);
   const [hasStaleDraftBase, setHasStaleDraftBase] = useState(false);
   const [state, formAction, isPending] = useActionState<UpdateNoteState, FormData>(action, {});
   useBusyNavigationGuard(isPending);
   const formRef = useRef<HTMLFormElement>(null);
+  const contentHtmlInputRef = useRef<HTMLInputElement>(null);
   const handledSavedNoteRef = useRef<UpdateNoteState["note"]>(undefined);
   const submittedDraftRef = useRef<{
     title: string;
@@ -72,6 +83,7 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
     loaded,
     save,
     clear,
+    flush,
     status,
     savedAt,
     restored,
@@ -86,6 +98,15 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
   }>(
     createDocumentDraftKey("note", actorId, note.id),
     (draft) => {
+      const restoredSnapshot = {
+        title: draft.title ?? note.title,
+        noteDate: draft.noteDate ?? toDateInputValue(note.noteDate),
+        contentHtml: draft.contentHtml ?? note.contentHtml,
+      };
+      const draftMatchesCurrentServer =
+        restoredSnapshot.title === serverSnapshot.title &&
+        restoredSnapshot.noteDate === serverSnapshot.noteDate &&
+        restoredSnapshot.contentHtml === serverSnapshot.contentHtml;
       draftBaseRef.current = serverSnapshot;
       setHasStaleDraftBase(false);
       if (
@@ -99,12 +120,15 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
           draft.base.title === serverSnapshot.title &&
           draft.base.noteDate === serverSnapshot.noteDate &&
           draft.base.contentHtml === serverSnapshot.contentHtml;
-        if (matchesCurrentServer) savedSnapshotRef.current = draft.base;
-        setHasStaleDraftBase(!matchesCurrentServer);
+        if (matchesCurrentServer || draftMatchesCurrentServer) {
+          savedSnapshotRef.current = serverSnapshot;
+          draftBaseRef.current = serverSnapshot;
+        }
+        setHasStaleDraftBase(!matchesCurrentServer && !draftMatchesCurrentServer);
       }
-      setTitle(draft.title ?? note.title);
-      setNoteDate(draft.noteDate ?? toDateInputValue(note.noteDate));
-      setContentHtml(draft.contentHtml ?? note.contentHtml);
+      setTitle(restoredSnapshot.title);
+      setNoteDate(restoredSnapshot.noteDate);
+      setContentHtml(restoredSnapshot.contentHtml);
     },
     {
       onReset: () => {
@@ -118,12 +142,18 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
     },
   );
 
+  const handleSaveShortcut = useDocumentSaveShortcut({
+    disabled: !loaded || isPending || hasStaleDraftBase,
+    onSave: () => formRef.current?.requestSubmit(),
+  });
+
   useEffect(() => {
     if (!loaded) return;
+    const latestContentHtml = readLatestContentHtml();
     const matchesServer =
       title === savedSnapshotRef.current.title &&
       noteDate === savedSnapshotRef.current.noteDate &&
-      contentHtml === savedSnapshotRef.current.contentHtml;
+      latestContentHtml === savedSnapshotRef.current.contentHtml;
     if (!hasStaleDraftBase && matchesServer) {
       clear();
       return;
@@ -131,10 +161,21 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
     save({
       title,
       noteDate,
-      contentHtml,
+      get contentHtml() {
+        return readLatestContentHtml();
+      },
       base: hasStaleDraftBase ? draftBaseRef.current : savedSnapshotRef.current,
     });
-  }, [clear, contentHtml, hasStaleDraftBase, loaded, noteDate, save, title]);
+  }, [
+    clear,
+    contentHtml,
+    hasStaleDraftBase,
+    loaded,
+    noteDate,
+    readLatestContentHtml,
+    save,
+    title,
+  ]);
 
   useEffect(() => {
     if (!loaded) return;
@@ -146,14 +187,16 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
     if (!serverChanged) return;
 
     previousServerSnapshotRef.current = serverSnapshot;
+    // React 표시값은 editor보다 최대 200ms 늦을 수 있으므로 충돌 판정은 최신 reader를 사용한다.
+    const latestContentHtml = readLatestContentHtml();
     const localMatchesPrevious =
       title === previousServer.title &&
       noteDate === previousServer.noteDate &&
-      contentHtml === previousServer.contentHtml;
+      latestContentHtml === previousServer.contentHtml;
     const localMatchesCurrent =
       title === serverSnapshot.title &&
       noteDate === serverSnapshot.noteDate &&
-      contentHtml === serverSnapshot.contentHtml;
+      latestContentHtml === serverSnapshot.contentHtml;
 
     if (localMatchesCurrent || (!hasStaleDraftBase && localMatchesPrevious)) {
       clear();
@@ -170,11 +213,12 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
     setHasStaleDraftBase(true);
   }, [
     clear,
-    contentHtml,
     hasStaleDraftBase,
     loaded,
     noteDate,
+    readLatestContentHtml,
     serverSnapshot,
+    setContentHtml,
     title,
   ]);
 
@@ -200,23 +244,47 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
     setTitle(state.note.title);
     setNoteDate(toDateInputValue(state.note.noteDate));
     setContentHtml(state.note.contentHtml);
-  }, [clear, contentHtml, noteDate, state.note, title]);
+  }, [clear, contentHtml, noteDate, setContentHtml, state.note, title]);
 
   return (
     <form
       ref={formRef}
       action={formAction}
+      aria-busy={!loaded || isPending}
       className="space-y-5"
-      onSubmit={() => {
-        submittedDraftRef.current = {
+      onKeyDownCapture={handleSaveShortcut}
+      onSubmit={(event) => {
+        if (!loaded || isPending || hasStaleDraftBase) {
+          event.preventDefault();
+          return;
+        }
+        const latestContentHtml = commitLatestContentHtml();
+        if (!title.trim() || isRichTextEmpty(latestContentHtml)) {
+          event.preventDefault();
+          return;
+        }
+        if (contentHtmlInputRef.current) {
+          contentHtmlInputRef.current.value = latestContentHtml;
+        }
+        const submittedDraft = {
           title,
           noteDate,
-          contentHtml,
+          contentHtml: latestContentHtml,
           base: { ...savedSnapshotRef.current },
         };
+        save({
+          title,
+          noteDate,
+          get contentHtml() {
+            return readLatestContentHtml();
+          },
+          base: { ...savedSnapshotRef.current },
+        });
+        flush();
+        submittedDraftRef.current = submittedDraft;
       }}
     >
-      <input type="hidden" name="contentHtml" value={contentHtml} />
+      <input ref={contentHtmlInputRef} type="hidden" name="contentHtml" value={contentHtml} />
       <input type="hidden" name="baseTitle" value={savedSnapshotRef.current.title} />
       <input type="hidden" name="baseContentHtml" value={savedSnapshotRef.current.contentHtml} />
       <input type="hidden" name="baseNoteDate" value={savedSnapshotRef.current.noteDate} />
@@ -259,7 +327,7 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
             value={title}
             onChange={(event) => setTitle(event.target.value)}
             required
-            disabled={isPending}
+            disabled={!loaded || isPending}
           />
         </label>
         <label className="space-y-1.5 sm:w-44">
@@ -269,7 +337,7 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
             type="date"
             value={noteDate}
             onChange={(event) => setNoteDate(event.target.value)}
-            disabled={isPending}
+            disabled={!loaded || isPending}
           />
         </label>
       </div>
@@ -277,7 +345,21 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
       {loaded ? (
         <FullEditor
           initialContent={contentHtml}
-          onChange={setContentHtml}
+          contentVersion={contentVersion}
+          onChange={handleEditorChange}
+          onDirty={(reader) => {
+            handleEditorDirty(reader);
+            save({
+              title,
+              noteDate,
+              get contentHtml() {
+                return reader();
+              },
+              base: hasStaleDraftBase
+                ? draftBaseRef.current
+                : savedSnapshotRef.current,
+            });
+          }}
           placeholder="수업 내용, 연습 기록, 메모를 이어서 작성하세요..."
           minHeight="min(60dvh, 42rem)"
           disabled={isPending}
@@ -293,14 +375,16 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
               disabled={isPending}
             />
           }
-          onSave={() => formRef.current?.requestSubmit()}
+          onSave={() => {
+            if (!isPending && !hasStaleDraftBase) formRef.current?.requestSubmit();
+          }}
         />
       ) : null}
 
       <div className="flex justify-end">
         <Button
           type="submit"
-          disabled={isPending || hasStaleDraftBase || !title.trim() || isRichTextEmpty(contentHtml)}
+          disabled={!loaded || isPending || hasStaleDraftBase || !title.trim() || isRichTextEmpty(contentHtml)}
           className="gap-2"
         >
           <Save className="h-4 w-4" aria-hidden="true" />

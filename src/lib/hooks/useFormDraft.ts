@@ -44,9 +44,16 @@ type FormDraftChangeDetail = {
 
 type PendingDraft<T> = {
   data: T;
-  signature: string;
+  signature: string | null;
   queuedAt: number;
 };
+
+function getPendingDraftSignature<T>(pending: PendingDraft<T>): string {
+  if (pending.signature === null) {
+    pending.signature = createFormDraftDataSignature(pending.data);
+  }
+  return pending.signature;
+}
 
 const volatileDraftFallbacks = new Map<
   string,
@@ -176,12 +183,18 @@ function promoteClaimableVolatileDrafts<T>(
 ): { changed: boolean; storageReadable: boolean } {
   let changed = false;
   for (const orphaned of candidates) {
+    let pendingSignature: string;
+    try {
+      pendingSignature = getPendingDraftSignature(orphaned.pending);
+    } catch {
+      return { changed, storageReadable: true };
+    }
     let submittedMarker: ReturnType<typeof findFormDraftClearMarker>;
     try {
       submittedMarker = findFormDraftClearMarker(
         storage,
         key,
-        orphaned.pending.signature,
+        pendingSignature,
       );
     } catch {
       return { changed, storageReadable: false };
@@ -245,7 +258,13 @@ function forgetSubmittedVolatileDrafts(
   const writers = volatileDraftFallbacks.get(key);
   if (!writers) return;
   for (const [candidateWriterId, pending] of writers) {
-    if (pending.signature === signature && pending.queuedAt <= clearedAt) {
+    let pendingSignature: string;
+    try {
+      pendingSignature = getPendingDraftSignature(pending);
+    } catch {
+      continue;
+    }
+    if (pendingSignature === signature && pending.queuedAt <= clearedAt) {
       writers.delete(candidateWriterId);
     }
   }
@@ -476,14 +495,34 @@ export function useFormDraft<T>(
       return listClaimableVolatileDrafts<T>(key, writerId).length === 0;
     }
 
+    let pendingSignature: string;
+    try {
+      pendingSignature = getPendingDraftSignature(pending);
+    } catch {
+      if (mountedRef.current) setStatus("error");
+      return false;
+    }
+
+    if (
+      pendingSignature === lastDataSignatureRef.current &&
+      lastKnownCanonicalRawRef.current !== null &&
+      localSnapshotRawRef.current === lastKnownCanonicalRawRef.current &&
+      listClaimableVolatileDrafts<T>(key, writerId).length === 0
+    ) {
+      forgetVolatileDraft(key, writerId, pending);
+      pendingRef.current = null;
+      if (mountedRef.current) setStatus("saved");
+      return true;
+    }
+
     try {
       const submittedMarker = findFormDraftClearMarker(
         window.localStorage,
         key,
-        pending.signature,
+        pendingSignature,
       );
       if (
-        submittedMarker?.signature === pending.signature &&
+        submittedMarker?.signature === pendingSignature &&
         pending.queuedAt <= submittedMarker.clearedAt.getTime()
       ) {
         forgetVolatileDraft(key, writerId, pending);
@@ -491,13 +530,13 @@ export function useFormDraft<T>(
         removeFormDraftSnapshotsBySignature(
           window.localStorage,
           key,
-          pending.signature,
+          pendingSignature,
           { savedAtOrBefore: submittedMarker.clearedAt.getTime() },
         );
         removeFormDraftCanonicalSnapshotBySignature<T>(
           window.localStorage,
           key,
-          pending.signature,
+          pendingSignature,
           { savedAtOrBefore: submittedMarker.clearedAt.getTime() },
         );
         activeRecoveryKeyRef.current = null;
@@ -546,7 +585,7 @@ export function useFormDraft<T>(
       const submittedMarker = findFormDraftClearMarker(
         window.localStorage,
         key,
-        pending.signature,
+        pendingSignature,
       );
       if (
         submittedMarker &&
@@ -557,13 +596,13 @@ export function useFormDraft<T>(
         removeFormDraftSnapshotsBySignature(
           window.localStorage,
           key,
-          pending.signature,
+          pendingSignature,
           { savedAtOrBefore: submittedMarker.clearedAt.getTime() },
         );
         removeFormDraftCanonicalSnapshotBySignature<T>(
           window.localStorage,
           key,
-          pending.signature,
+          pendingSignature,
           { savedAtOrBefore: submittedMarker.clearedAt.getTime() },
         );
         activeRecoveryKeyRef.current = null;
@@ -584,7 +623,7 @@ export function useFormDraft<T>(
         window.localStorage.removeItem(previousRecoveryKey);
       }
       localSnapshotRawRef.current = result.raw;
-      lastDataSignatureRef.current = pending.signature;
+      lastDataSignatureRef.current = pendingSignature;
       if (result.status === "saved") lastKnownCanonicalRawRef.current = result.raw;
 
       if (mountedRef.current) {
@@ -698,12 +737,14 @@ export function useFormDraft<T>(
       : null;
     if (volatilePending) {
       let isSubmitted = false;
+      let volatileSignature: string | null = null;
       if (storageReadable) {
         try {
+          volatileSignature = getPendingDraftSignature(volatilePending);
           const submittedMarker = findFormDraftClearMarker(
             window.localStorage,
             key,
-            volatilePending.signature,
+            volatileSignature,
           );
           isSubmitted = Boolean(
             submittedMarker &&
@@ -722,7 +763,7 @@ export function useFormDraft<T>(
           volatilePending.data,
           volatilePending.queuedAt,
         );
-        lastDataSignatureRef.current = volatilePending.signature;
+        lastDataSignatureRef.current = volatileSignature;
         onRestoreRef.current(volatilePending.data);
         setSavedAt(new Date(volatilePending.queuedAt));
         setRestored(true);
@@ -782,7 +823,9 @@ export function useFormDraft<T>(
       const visible = localSnapshotRawRef.current
         ? parseFormDraft<T>(localSnapshotRawRef.current)
         : null;
-      const visibleSignature = pending?.signature ?? lastDataSignatureRef.current;
+      const visibleSignature = pending
+        ? getPendingDraftSignature(pending)
+        : lastDataSignatureRef.current;
       const visibleAt = pending?.queuedAt ??
         visible?.savedAt?.getTime() ??
         Number.NEGATIVE_INFINITY;
@@ -839,7 +882,9 @@ export function useFormDraft<T>(
         }
       }
 
-      const visibleSignature = pendingRef.current?.signature ?? lastDataSignatureRef.current;
+      const visibleSignature = pendingRef.current
+        ? getPendingDraftSignature(pendingRef.current)
+        : lastDataSignatureRef.current;
       const submittedMarker = currentRaw === null && visibleSignature
         ? findFormDraftClearMarker(window.localStorage, key, visibleSignature)
         : null;
@@ -982,16 +1027,12 @@ export function useFormDraft<T>(
   const save = useCallback(
     (data: T) => {
       try {
-        const signature = createFormDraftDataSignature(data);
-        if (
-          pendingRef.current?.signature === signature ||
-          (!pendingRef.current && lastDataSignatureRef.current === signature)
-        ) {
-          return;
-        }
-
         if (timerRef.current) clearTimeout(timerRef.current);
-        const pending = { data, signature, queuedAt: Date.now() };
+        const pending: PendingDraft<T> = {
+          data,
+          signature: null,
+          queuedAt: Date.now(),
+        };
         pendingRef.current = pending;
         rememberVolatileDraft(key, writerId, pending);
         setStatus("saving");
@@ -1011,9 +1052,12 @@ export function useFormDraft<T>(
   } = {}) => {
     try {
       const submitted = options.reason === "submitted";
+      const pendingSignature = submitted && pendingRef.current
+        ? getPendingDraftSignature(pendingRef.current)
+        : null;
       const signature = submitted
         ? options.submittedData === undefined
-          ? lastDataSignatureRef.current ?? pendingRef.current?.signature ?? null
+          ? lastDataSignatureRef.current ?? pendingSignature
           : createFormDraftDataSignature(options.submittedData)
         : lastDataSignatureRef.current;
       const clearedAt = Date.now();
@@ -1040,7 +1084,7 @@ export function useFormDraft<T>(
       };
 
       if (submitted && pendingRef.current) {
-        if (pendingRef.current.signature === signature) {
+        if (pendingSignature === signature) {
           if (timerRef.current) {
             clearTimeout(timerRef.current);
             timerRef.current = null;
@@ -1266,8 +1310,11 @@ export function useFormDraft<T>(
           ? parseFormDraft<T>(localSnapshotRawRef.current)
           : null;
         const visibleData = pending?.data ?? visibleStored?.data;
-        const visibleSignature = pending?.signature ??
-          (visibleStored ? createFormDraftDataSignature(visibleStored.data) : null);
+        const visibleSignature = pending
+          ? getPendingDraftSignature(pending)
+          : visibleStored
+            ? createFormDraftDataSignature(visibleStored.data)
+            : null;
         if (visibleData !== undefined && visibleSignature) {
           preserveRecoveryData(
             visibleData,
@@ -1390,7 +1437,9 @@ export function useFormDraft<T>(
         if (
           storageKey === activeRecoveryKeyRef.current &&
           selected.signature ===
-            (pendingRef.current?.signature ?? lastDataSignatureRef.current)
+            (pendingRef.current
+              ? getPendingDraftSignature(pendingRef.current)
+              : lastDataSignatureRef.current)
         ) {
           if (timerRef.current) {
             clearTimeout(timerRef.current);

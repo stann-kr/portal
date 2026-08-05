@@ -9,6 +9,8 @@ import { DraftStatus } from "@/components/editor/DraftStatus";
 import { DraftConflictRecovery } from "@/components/editor/DraftConflictRecovery";
 import { createDocumentDraftKey } from "@/lib/form-draft";
 import { useFormDraft } from "@/lib/hooks/useFormDraft";
+import { useDeferredEditorContent } from "@/lib/hooks/useDeferredEditorContent";
+import { useDocumentSaveShortcut } from "@/lib/hooks/useDocumentSaveShortcut";
 import { isRichTextEmpty } from "@/lib/rich-text";
 import { updatePostContent, type UpdatePostState } from "@/lib/actions/posts";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
@@ -34,7 +36,15 @@ export function PostEditForm({
   onBusyChange,
 }: PostEditFormProps) {
   const [title, setTitle] = useState(post.title);
-  const [contentHtml, setContentHtml] = useState(post.contentHtml);
+  const {
+    contentHtml,
+    contentVersion,
+    setContentHtml,
+    handleEditorChange,
+    handleEditorDirty,
+    readLatestContentHtml,
+    commitLatestContentHtml,
+  } = useDeferredEditorContent(post.contentHtml);
   const [hasStaleDraftBase, setHasStaleDraftBase] = useState(false);
   const [state, formAction, isPending] = useActionState<UpdatePostState, FormData>(
     updatePostContent.bind(null, post.id),
@@ -46,6 +56,7 @@ export function PostEditForm({
   }, [isPending, onBusyChange]);
   useEffect(() => () => onBusyChange?.(false), [onBusyChange]);
   const formRef = useRef<HTMLFormElement>(null);
+  const contentInputRef = useRef<HTMLInputElement>(null);
   const handledSavedPostRef = useRef<UpdatePostState["post"]>(undefined);
   const submittedDraftRef = useRef<{
     title: string;
@@ -64,6 +75,7 @@ export function PostEditForm({
     loaded,
     save,
     clear,
+    flush,
     status,
     savedAt,
     restored,
@@ -77,6 +89,13 @@ export function PostEditForm({
   }>(
     createDocumentDraftKey("community-post", actorId, post.id),
     (draft) => {
+      const restoredSnapshot = {
+        title: draft.title ?? post.title,
+        contentHtml: draft.contentHtml ?? post.contentHtml,
+      };
+      const draftMatchesCurrentServer =
+        restoredSnapshot.title === serverSnapshot.title &&
+        restoredSnapshot.contentHtml === serverSnapshot.contentHtml;
       draftBaseRef.current = serverSnapshot;
       setHasStaleDraftBase(false);
       if (
@@ -88,11 +107,14 @@ export function PostEditForm({
         const matchesCurrentServer =
           draft.base.title === serverSnapshot.title &&
           draft.base.contentHtml === serverSnapshot.contentHtml;
-        if (matchesCurrentServer) baseRef.current = draft.base;
-        setHasStaleDraftBase(!matchesCurrentServer);
+        if (matchesCurrentServer || draftMatchesCurrentServer) {
+          baseRef.current = serverSnapshot;
+          draftBaseRef.current = serverSnapshot;
+        }
+        setHasStaleDraftBase(!matchesCurrentServer && !draftMatchesCurrentServer);
       }
-      setTitle(draft.title ?? post.title);
-      setContentHtml(draft.contentHtml ?? post.contentHtml);
+      setTitle(restoredSnapshot.title);
+      setContentHtml(restoredSnapshot.contentHtml);
     },
     {
       onReset: () => {
@@ -104,20 +126,34 @@ export function PostEditForm({
       },
     },
   );
+  const isSubmitBlocked = !loaded || isPending || hasStaleDraftBase;
+  const isSubmitDisabled =
+    isSubmitBlocked ||
+    !title.trim() ||
+    isRichTextEmpty(contentHtml);
+  const handleSaveShortcut = useDocumentSaveShortcut({
+    disabled: isSubmitBlocked,
+    onSave: () => formRef.current?.requestSubmit(),
+  });
 
   useEffect(() => {
     if (!loaded) return;
-    const unchanged = title === baseRef.current.title && contentHtml === baseRef.current.contentHtml;
+    const latestContentHtml = readLatestContentHtml();
+    const unchanged =
+      title === baseRef.current.title &&
+      latestContentHtml === baseRef.current.contentHtml;
     if (!hasStaleDraftBase && unchanged) {
       clear();
       return;
     }
     save({
       title,
-      contentHtml,
       base: hasStaleDraftBase ? draftBaseRef.current : baseRef.current,
+      get contentHtml() {
+        return readLatestContentHtml();
+      },
     });
-  }, [clear, contentHtml, hasStaleDraftBase, loaded, save, title]);
+  }, [clear, contentHtml, hasStaleDraftBase, loaded, readLatestContentHtml, save, title]);
 
   useEffect(() => {
     if (!loaded) return;
@@ -128,10 +164,14 @@ export function PostEditForm({
     if (!serverChanged) return;
 
     previousServerSnapshotRef.current = serverSnapshot;
+    // React 표시값은 editor보다 최대 200ms 늦을 수 있으므로 충돌 판정은 최신 reader를 사용한다.
+    const latestContentHtml = readLatestContentHtml();
     const localMatchesPrevious =
-      title === previousServer.title && contentHtml === previousServer.contentHtml;
+      title === previousServer.title &&
+      latestContentHtml === previousServer.contentHtml;
     const localMatchesCurrent =
-      title === serverSnapshot.title && contentHtml === serverSnapshot.contentHtml;
+      title === serverSnapshot.title &&
+      latestContentHtml === serverSnapshot.contentHtml;
 
     if (localMatchesCurrent || (!hasStaleDraftBase && localMatchesPrevious)) {
       clear();
@@ -145,7 +185,15 @@ export function PostEditForm({
 
     if (!hasStaleDraftBase) draftBaseRef.current = baseRef.current;
     setHasStaleDraftBase(true);
-  }, [clear, contentHtml, hasStaleDraftBase, loaded, serverSnapshot, title]);
+  }, [
+    clear,
+    hasStaleDraftBase,
+    loaded,
+    readLatestContentHtml,
+    serverSnapshot,
+    setContentHtml,
+    title,
+  ]);
 
   useEffect(() => {
     if (!state.post?.id || handledSavedPostRef.current === state.post) return;
@@ -166,16 +214,31 @@ export function PostEditForm({
     <form
       ref={formRef}
       action={formAction}
+      aria-busy={!loaded || isPending}
       className="space-y-5"
-      onSubmit={() => {
-        submittedDraftRef.current = {
+      onKeyDownCapture={handleSaveShortcut}
+      onSubmit={(event) => {
+        if (!loaded || isPending || hasStaleDraftBase) {
+          event.preventDefault();
+          return;
+        }
+        const latestContentHtml = commitLatestContentHtml();
+        if (!title.trim() || isRichTextEmpty(latestContentHtml)) {
+          event.preventDefault();
+          return;
+        }
+        if (contentInputRef.current) contentInputRef.current.value = latestContentHtml;
+        const submittedDraft = {
           title,
-          contentHtml,
+          contentHtml: latestContentHtml,
           base: { ...baseRef.current },
         };
+        save(submittedDraft);
+        flush();
+        submittedDraftRef.current = submittedDraft;
       }}
     >
-      <input type="hidden" name="contentHtml" value={contentHtml} />
+      <input ref={contentInputRef} type="hidden" name="contentHtml" value={contentHtml} />
       <input type="hidden" name="baseTitle" value={baseRef.current.title} />
       <input type="hidden" name="baseContentHtml" value={baseRef.current.contentHtml} />
 
@@ -211,14 +274,25 @@ export function PostEditForm({
           value={title}
           onChange={(event) => setTitle(event.target.value)}
           required
-          disabled={isPending}
+          disabled={!loaded || isPending}
         />
       </label>
 
       {loaded ? (
         <FullEditor
           initialContent={contentHtml}
-          onChange={setContentHtml}
+          contentVersion={contentVersion}
+          onChange={handleEditorChange}
+          onDirty={(reader) => {
+            handleEditorDirty(reader);
+            save({
+              title,
+              base: hasStaleDraftBase ? draftBaseRef.current : baseRef.current,
+              get contentHtml() {
+                return reader();
+              },
+            });
+          }}
           minHeight="min(60dvh, 42rem)"
           placeholder="게시물 내용을 이어서 작성하세요…"
           ariaLabel="커뮤니티 게시물 내용"
@@ -234,7 +308,9 @@ export function PostEditForm({
               disabled={isPending}
             />
           }
-          onSave={() => formRef.current?.requestSubmit()}
+          onSave={() => {
+            if (!isPending && !hasStaleDraftBase) formRef.current?.requestSubmit();
+          }}
         />
       ) : null}
 
@@ -244,7 +320,7 @@ export function PostEditForm({
         </Button>
         <Button
           type="submit"
-          disabled={isPending || hasStaleDraftBase || !title.trim() || isRichTextEmpty(contentHtml)}
+          disabled={isSubmitDisabled}
           className="gap-2"
         >
           <Save className="h-4 w-4" aria-hidden="true" />

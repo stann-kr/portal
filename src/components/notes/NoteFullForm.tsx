@@ -19,6 +19,8 @@ import { createDocumentDraftKey } from "@/lib/form-draft";
 import { isRichTextEmpty } from "@/lib/rich-text";
 import { toKstDateInputValue } from "@/lib/date-input";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
+import { useDeferredEditorContent } from "@/lib/hooks/useDeferredEditorContent";
+import { useDocumentSaveShortcut } from "@/lib/hooks/useDocumentSaveShortcut";
 import {
   CREATION_OPERATION_FIELD,
   createCreationOperationId,
@@ -50,13 +52,22 @@ export function NoteFullForm({ action, actorId, studentId, returnTo }: NoteFullF
   const today = toKstDateInputValue();
   const [title, setTitle] = useState("");
   const [noteDate, setNoteDate] = useState(today);
-  const [contentHtml, setContentHtml] = useState("");
+  const {
+    contentHtml,
+    contentVersion,
+    setContentHtml,
+    handleEditorChange,
+    handleEditorDirty,
+    readLatestContentHtml,
+    commitLatestContentHtml,
+  } = useDeferredEditorContent("");
   const [operationId, setOperationId] = useState("");
   const [state, formAction, isPending] = useActionState<CreateNoteState, FormData>(
     action,
     {}
   );
   const formRef = useRef<HTMLFormElement>(null);
+  const contentHtmlInputRef = useRef<HTMLInputElement>(null);
   const submittedDraftRef = useRef<CreateNoteDraft | null>(null);
   const handledNoteIdRef = useRef<string | null>(null);
   const router = useRouter();
@@ -93,15 +104,37 @@ export function NoteFullForm({ action, actorId, studentId, returnTo }: NoteFullF
     },
   );
 
+  const handleSaveShortcut = useDocumentSaveShortcut({
+    disabled: !loaded || isPending || !operationId,
+    onSave: () => formRef.current?.requestSubmit(),
+  });
+
   useEffect(() => {
     if (!loaded) return;
-    if (!title && isRichTextEmpty(contentHtml)) {
+    const latestContentHtml = readLatestContentHtml();
+    if (!title && isRichTextEmpty(latestContentHtml)) {
       clear();
       return;
     }
     if (!operationId) return;
-    save({ operationId, title, noteDate, contentHtml });
-  }, [clear, contentHtml, loaded, noteDate, operationId, save, title]);
+    save({
+      operationId,
+      title,
+      noteDate,
+      get contentHtml() {
+        return readLatestContentHtml();
+      },
+    });
+  }, [
+    clear,
+    contentHtml,
+    loaded,
+    noteDate,
+    operationId,
+    readLatestContentHtml,
+    save,
+    title,
+  ]);
 
   useEffect(() => {
     if (!state.note?.id || handledNoteIdRef.current === state.note.id) return;
@@ -149,23 +182,45 @@ export function NoteFullForm({ action, actorId, studentId, returnTo }: NoteFullF
       <form
         ref={formRef}
         action={formAction}
+        aria-busy={!loaded || isPending}
         className="space-y-5"
+        onKeyDownCapture={handleSaveShortcut}
         onSubmit={(event) => {
-          if (isPending || !operationId) {
+          if (!loaded || isPending || !operationId) {
             event.preventDefault();
             return;
           }
-          const submittedDraft = { operationId, title, noteDate, contentHtml };
-          save(submittedDraft);
+          const latestContentHtml = commitLatestContentHtml();
+          if (!title.trim() || isRichTextEmpty(latestContentHtml)) {
+            event.preventDefault();
+            return;
+          }
+          if (contentHtmlInputRef.current) {
+            contentHtmlInputRef.current.value = latestContentHtml;
+          }
+          const submittedDraft = {
+            operationId,
+            title,
+            noteDate,
+            contentHtml: latestContentHtml,
+          };
+          save({
+            operationId,
+            title,
+            noteDate,
+            get contentHtml() {
+              return readLatestContentHtml();
+            },
+          });
           flush();
           submittedDraftRef.current = submittedDraft;
         }}
       >
         <input type="hidden" name={CREATION_OPERATION_FIELD} value={operationId} />
-        <input type="hidden" name="contentHtml" value={contentHtml} />
+        <input ref={contentHtmlInputRef} type="hidden" name="contentHtml" value={contentHtml} />
 
         {state?.error && (!state.operationConflict || hasOperationConflict) && (
-          <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/20 text-sm text-destructive">
+          <div role="alert" className="p-3 rounded-lg bg-destructive/10 border border-destructive/20 text-sm text-destructive">
             {state.error}
           </div>
         )}
@@ -200,7 +255,7 @@ export function NoteFullForm({ action, actorId, studentId, returnTo }: NoteFullF
               name="title"
               placeholder="오늘의 수업 요약"
               required
-              disabled={isPending}
+              disabled={!loaded || isPending}
               value={title}
               onChange={(event) => setTitle(event.target.value)}
             />
@@ -215,7 +270,7 @@ export function NoteFullForm({ action, actorId, studentId, returnTo }: NoteFullF
               type="date"
               value={noteDate}
               onChange={(event) => setNoteDate(event.target.value)}
-              disabled={isPending}
+              disabled={!loaded || isPending}
             />
           </div>
         </div>
@@ -228,7 +283,20 @@ export function NoteFullForm({ action, actorId, studentId, returnTo }: NoteFullF
           {loaded ? (
             <FullEditor
               initialContent={contentHtml}
-              onChange={setContentHtml}
+              contentVersion={contentVersion}
+              onChange={handleEditorChange}
+              onDirty={(reader) => {
+                handleEditorDirty(reader);
+                if (!operationId) return;
+                save({
+                  operationId,
+                  title,
+                  noteDate,
+                  get contentHtml() {
+                    return reader();
+                  },
+                });
+              }}
               placeholder="수업 내용, 연습 기록, 메모 등을 자유롭게 작성하세요..."
               disabled={isPending}
               ariaLabel="노트 내용"
@@ -252,7 +320,7 @@ export function NoteFullForm({ action, actorId, studentId, returnTo }: NoteFullF
         <div className="flex gap-3">
           <Button
             type="submit"
-            disabled={isPending || !operationId || !title.trim() || isRichTextEmpty(contentHtml)}
+            disabled={!loaded || isPending || !operationId || !title.trim() || isRichTextEmpty(contentHtml)}
             className="flex-1 gap-2"
           >
             <Save className="w-4 h-4" />

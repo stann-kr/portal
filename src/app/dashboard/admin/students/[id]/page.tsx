@@ -72,7 +72,11 @@ async function NotesTabContent({
             <MessageSquarePlus className="w-5 h-5 text-muted-foreground" />
             노트 작성
           </h2>
-          <PrivateNoteForm studentId={studentId} actorId={adminId} />
+          <PrivateNoteForm
+            studentId={studentId}
+            actorId={adminId}
+            returnTo={`/dashboard/admin/students/${studentId}?tab=notes`}
+          />
         </div>
       </div>
 

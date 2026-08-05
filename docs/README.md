@@ -78,9 +78,9 @@ docs/                       # 프로젝트 문서
 
 ## 현재 개발 우선순위
 
-1. 실제 브라우저의 reload·offline·navigation·delete/restore와 대용량 입력 성능을 자동화한다.
-2. 문서 revision·휴지통·서버 초안과 다중 기기 연속성을 승인된 schema·운영 정책으로 구현한다.
-3. 새 문서·답변 생성에 operation key 기반 요청 멱등성을 추가한다.
+1. 개인정보·계정 삭제·revision retention·용량 정책을 승인하고, 개인 노트 revision·휴지통·불변 operation ledger와 tombstone을 첫 schema vertical slice로 구현한다.
+2. 실제 브라우저의 reload·offline·navigation·delete/restore와 대용량 입력 성능을 자동화한다.
+3. 승인된 문서 생명주기를 게시물·Q&A와 서버 초안·다중 기기 연속성으로 확장한다.
 4. 큰 client component를 상태 hook, domain view, presentation 경계로 점진적으로 나눈다.
 
 ## 문서 최신성 기준

@@ -103,6 +103,9 @@ pill 형태는 filter와 count처럼 모양 자체가 의미를 가질 때만 �
 - 생성 form은 작업 nonce를 draft payload와 함께 저장하고 submit 직전에 같은 snapshot을 flush한다. 동일 작업의 다른 payload가 먼저 처리된 경우 현재 초안을 지우지 않고 기존 문서 열기 또는 별도 문서 분리를 명시적으로 선택하게 한다.
 - 저장공간 오류가 재시도 뒤에도 계속되면 작성 흐름별 메모리 안전본을 유지하고 페이지 이탈 전에 경고한다. 저장소가 회복되면 더 최신인 안전본만 이어 쓰고 나머지는 복구 목록으로 옮긴다. 현재 입력이 없어도 page hide·flush에서 남은 안전본의 영속화를 다시 시도하며, 제출 완료 신호는 열린 탭에 함께 전달한다.
 - `Cmd/Ctrl+S`는 브라우저 저장 dialog 대신 현재 form의 검증·저장 동작을 실행한다.
+- 저장 단축키는 editor뿐 아니라 같은 문서 form의 제목·날짜·첨부 입력에서도 동작해야 한다. 삽입 panel 안에서는 주소 적용과 문서 저장을 분리하고 Enter가 상위 form을 제출하지 않게 한다.
+- editor는 매 입력마다 전체 HTML을 만들지 않는다. 입력 시 최신 reader를 draft pending에 연결하고, 화면 표시·초안 flush·submit 경계에서 revision당 한 번만 직렬화한다.
+- draft hydration 전에는 form 입력을 비활성화해 초기 사용자 입력이 복원값으로 덮이지 않게 한다. 종료된 Q&A도 미전송 초안이 있으면 읽기 전용 상태로 본문과 복구 행동에 접근할 수 있어야 한다.
 - 첨부 업로드·제출 중에는 editor command, inline menu, 삽입 panel, 저장 단축키, 상위 링크·취소 control과 panel 닫기가 내용을 바꾸거나 작업 화면을 해제하지 않아야 한다.
 - 저장된 본문의 heading, list, task, quote, code, table, link, image와 허용된 embed는 편집 화면과 읽기 화면에서 같은 hierarchy를 유지한다.
 - 편집 저장은 선행 변경을 조용히 덮지 않는다. 충돌을 감지하면 로컬 draft를 보존하고 서버 최신본 사용 또는 현재 초안 계속을 명시적으로 선택하게 한다.

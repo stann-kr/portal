@@ -20,6 +20,8 @@ import {
   writeFormDraftClearMarker,
 } from "@/lib/form-draft";
 import { useFormDraft } from "@/lib/hooks/useFormDraft";
+import { useDeferredEditorContent } from "@/lib/hooks/useDeferredEditorContent";
+import { isRichTextEmpty } from "@/lib/rich-text";
 
 type DraftData = {
   operationId?: string;
@@ -225,6 +227,202 @@ test("unmount 시 debounce 대기 중인 draft를 즉시 flush한다", { concurr
     readDraft(harness.browserWindow.localStorage, draftKey),
     pendingDraft,
   );
+});
+
+test("지연 에디터 bridge는 입력 경로에서 본문을 읽지 않고 flush 경계에서 최신값을 반환한다", { concurrency: false }, async (context) => {
+  const browserWindow = new Window({ url: "https://portal.test/dashboard" });
+  const restoreBrowserGlobals = installBrowserGlobals(browserWindow);
+  const container = browserWindow.document.createElement("div");
+  browserWindow.document.body.append(container);
+  const root = createRoot(container as unknown as Element);
+  type DeferredEditorResult = ReturnType<typeof useDeferredEditorContent>;
+  let currentResult: DeferredEditorResult | null = null;
+
+  const getResult = (): DeferredEditorResult => {
+    if (!currentResult) throw new Error("deferred editor hook 결과가 없습니다.");
+    return currentResult;
+  };
+
+  function Probe() {
+    currentResult = useDeferredEditorContent("<p>초기</p>");
+    return null;
+  }
+
+  context.after(async () => {
+    await act(async () => root.unmount());
+    browserWindow.close();
+    restoreBrowserGlobals();
+  });
+  await act(async () => root.render(<Probe />));
+  assert.ok(getResult());
+
+  let contentReads = 0;
+  const readEditor = () => {
+    contentReads += 1;
+    return "<p>마지막 입력</p>";
+  };
+  await act(async () => getResult().handleEditorDirty(readEditor));
+  assert.equal(contentReads, 0);
+  assert.equal(getResult().contentHtml, "<p>초기</p>");
+
+  let latestHtml = "";
+  await act(async () => {
+    latestHtml = getResult().readLatestContentHtml();
+  });
+  assert.equal(latestHtml, "<p>마지막 입력</p>");
+  assert.equal(contentReads, 1);
+  assert.equal(
+    getResult().contentHtml,
+    "<p>초기</p>",
+    "draft flush용 read는 React 표시 상태를 변경하지 않아야 합니다.",
+  );
+
+  await act(async () => {
+    latestHtml = getResult().commitLatestContentHtml();
+  });
+  assert.equal(latestHtml, "<p>마지막 입력</p>");
+  assert.equal(contentReads, 2);
+  assert.equal(getResult().contentHtml, "<p>마지막 입력</p>");
+
+  await act(async () => getResult().setContentHtml("<p>서버 복원</p>"));
+  assert.equal(getResult().readLatestContentHtml(), "<p>서버 복원</p>");
+  assert.equal(contentReads, 2, "명시적 복원 뒤에는 이전 editor reader를 다시 사용하지 않아야 합니다.");
+
+  const restoredVersion = getResult().contentVersion;
+  await act(async () => getResult().handleEditorDirty(() => "<p>아직 publish되지 않은 입력</p>"));
+  await act(async () => getResult().setContentHtml("<p>서버 복원</p>"));
+  assert.equal(
+    getResult().contentVersion,
+    restoredVersion + 1,
+    "같은 HTML을 다시 복원해도 editor 동기화를 위한 version이 증가해야 합니다.",
+  );
+  assert.equal(getResult().readLatestContentHtml(), "<p>서버 복원</p>");
+});
+
+test("editor publish 전 메타 필드가 바뀌어도 최신 본문 pending을 빈 draft로 지우지 않는다", { concurrency: false }, async (context) => {
+  const browserWindow = new Window({ url: "https://portal.test/dashboard" });
+  const restoreBrowserGlobals = installBrowserGlobals(browserWindow);
+  const container = browserWindow.document.createElement("div");
+  browserWindow.document.body.append(container);
+  const root = createRoot(container as unknown as Element);
+  const draftKey = createDocumentDraftKey("community-post", "student-1", "unpublished-meta-change");
+  type MetadataDraft = { category: string; contentHtml: string };
+  type Controls = {
+    flush: () => boolean;
+    markEditorDirty: (reader: () => string) => void;
+    setCategory: (category: string) => void;
+  };
+  let controls: Controls | null = null;
+
+  const getControls = (): Controls => {
+    if (!controls) throw new Error("metadata draft probe가 준비되지 않았습니다.");
+    return controls;
+  };
+
+  function Probe() {
+    const [category, setCategory] = React.useState("general");
+    const {
+      contentHtml,
+      handleEditorDirty,
+      readLatestContentHtml,
+    } = useDeferredEditorContent("");
+    const { loaded, save, clear, flush } = useFormDraft<MetadataDraft>(
+      draftKey,
+      () => undefined,
+      { debounceMs: 60_000 },
+    );
+
+    React.useEffect(() => {
+      if (!loaded) return;
+      const latestContentHtml = readLatestContentHtml();
+      if (isRichTextEmpty(latestContentHtml)) {
+        clear();
+        return;
+      }
+      save({
+        category,
+        get contentHtml() {
+          return readLatestContentHtml();
+        },
+      });
+    }, [category, clear, contentHtml, loaded, readLatestContentHtml, save]);
+
+    controls = {
+      flush,
+      setCategory,
+      markEditorDirty: (reader) => {
+        handleEditorDirty(reader);
+        save({
+          category,
+          get contentHtml() {
+            return reader();
+          },
+        });
+      },
+    };
+    return null;
+  }
+
+  context.after(async () => {
+    await act(async () => root.unmount());
+    browserWindow.close();
+    restoreBrowserGlobals();
+  });
+  await act(async () => root.render(<Probe />));
+
+  await act(async () => {
+    getControls().markEditorDirty(() => "<p>publish 전 마지막 입력</p>");
+  });
+  await act(async () => getControls().setCategory("feedback"));
+  await act(async () => {
+    assert.equal(getControls().flush(), true);
+  });
+
+  const stored = browserWindow.localStorage.getItem(draftKey);
+  assert.ok(stored);
+  assert.deepEqual(parseFormDraft<MetadataDraft>(stored)?.data, {
+    category: "feedback",
+    contentHtml: "<p>publish 전 마지막 입력</p>",
+  });
+});
+
+test("연속 입력은 전체 draft 직렬화와 signature 계산을 flush 경계까지 지연한다", { concurrency: false }, async (context) => {
+  const draftKey = createDocumentDraftKey("note", "student-1", "note-input-burst");
+  const harness = await createDraftHookHarness(context, draftKey);
+  const contentReads = Array.from({ length: 20 }, () => 0);
+  const drafts = contentReads.map((_, index): DraftData => ({
+    title: `연속 입력 ${index}`,
+    get contentHtml() {
+      contentReads[index] += 1;
+      return `<p>${"가".repeat(50_000)} ${index}</p>`;
+    },
+  }));
+
+  await act(async () => {
+    for (const pendingDraft of drafts) harness.getResult().save(pendingDraft);
+  });
+
+  assert.equal(
+    contentReads.reduce((total, count) => total + count, 0),
+    0,
+    "debounce 전 입력 경로에서는 전체 문서 값을 순회하지 않아야 합니다.",
+  );
+  assert.equal(harness.browserWindow.localStorage.getItem(draftKey), null);
+
+  await act(async () => {
+    assert.equal(harness.getResult().flush(), true);
+  });
+
+  assert.equal(
+    contentReads.slice(0, -1).reduce((total, count) => total + count, 0),
+    0,
+    "덮어쓴 중간 입력은 직렬화하지 않아야 합니다.",
+  );
+  assert.ok(contentReads.at(-1)! > 0);
+  assert.deepEqual(readDraft(harness.browserWindow.localStorage, draftKey), {
+    title: "연속 입력 19",
+    contentHtml: `<p>${"가".repeat(50_000)} 19</p>`,
+  });
 });
 
 test("생성 operation ID를 본문과 함께 저장하고 remount에서 그대로 복원한다", { concurrency: false }, async (context) => {
