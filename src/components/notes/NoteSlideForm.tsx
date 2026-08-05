@@ -270,6 +270,7 @@ export function NoteSlideForm({
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             required
+            maxLength={200}
             disabled={!loaded || isPending}
           />
         </div>

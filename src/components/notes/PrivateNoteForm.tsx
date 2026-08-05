@@ -262,6 +262,7 @@ export function PrivateNoteForm({
             name="title"
             type="text"
             required
+            maxLength={200}
             placeholder="오늘의 수업 요약"
             value={title}
             onChange={(e) => {

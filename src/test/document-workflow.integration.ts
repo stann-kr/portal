@@ -4,6 +4,9 @@ import { count, eq } from "drizzle-orm";
 import type { AuthSession } from "@/lib/auth-guard";
 import {
   categories,
+  documentOperationLedger,
+  documentTombstones,
+  privateNoteRevisions,
   privateNotes,
   posts,
   profiles,
@@ -23,6 +26,14 @@ import {
   createDocumentSnapshotFingerprint,
   DOCUMENT_SNAPSHOT_FINGERPRINT_FIELD,
 } from "@/lib/document-snapshot-fingerprint";
+import {
+  PRIVATE_NOTE_BASE_REVISION_FIELD,
+  PRIVATE_NOTE_MAX_CONTENT_BYTES,
+  createPrivateNoteRequestHashForVersion,
+  createPrivateNoteSnapshotHashForVersion,
+  type PrivateNoteCanonicalRequest,
+  type PrivateNoteCanonicalSnapshot,
+} from "@/lib/private-note-continuity";
 
 type PortalTestDb = IsolatedPortalD1["db"];
 type D1TestContext = { kind: "d1"; db: PortalTestDb };
@@ -165,8 +176,12 @@ function createNoteUpdateForm(
   noteId: string,
   next: NoteUpdateSnapshot,
   base: NoteUpdateSnapshot,
+  operationId = crypto.randomUUID(),
+  baseRevision = 1,
 ): FormData {
   const formData = new FormData();
+  formData.set(CREATION_OPERATION_FIELD, operationId);
+  formData.set(PRIVATE_NOTE_BASE_REVISION_FIELD, String(baseRevision));
   formData.set("title", next.title);
   formData.set("contentHtml", next.contentHtml);
   formData.set("noteDate", next.noteDate ?? "");
@@ -220,6 +235,36 @@ async function countTableRows(
   const [row] = await db.select({ value: count() }).from(table);
   return row?.value ?? 0;
 }
+
+test("private note hash v1 verifier는 버전 교체 후에도 고정된 canonical byte를 재현한다", () => {
+  const noteDate = new Date("2026-08-04T15:00:00.000Z");
+  const request: PrivateNoteCanonicalRequest = {
+    operationType: "UPDATE",
+    resourceId: "note-1",
+    subjectId: "student-1",
+    baseRevision: 1,
+    title: "제목",
+    contentHtml: "<p>본문</p>",
+    noteDate,
+  };
+  const snapshot: PrivateNoteCanonicalSnapshot = {
+    title: "제목",
+    contentHtml: "<p>본문</p>",
+    noteDate,
+    deletedAt: null,
+  };
+
+  assert.equal(
+    createPrivateNoteRequestHashForVersion(request, 1),
+    "8cb69fc6cc749e72b8ccdbe4ead4bd50d9eef40ed3776e7c11577cfc7563ee8c",
+  );
+  assert.equal(
+    createPrivateNoteSnapshotHashForVersion(snapshot, 1),
+    "0ba8fd0f221c8e70579a2448ae18e4d924a5a2284b19d1da0375d1e3c73802d8",
+  );
+  assert.equal(createPrivateNoteRequestHashForVersion(request, 999), null);
+  assert.equal(createPrivateNoteSnapshotHashForVersion(snapshot, 999), null);
+});
 
 test("Q&A 스레드와 첫 본문을 한 번에 생성한다", { concurrency: false }, async (context) => {
   const { db } = await setupDatabase(context);
@@ -487,6 +532,7 @@ test("노트 편집 성공 응답이 유실돼도 같은 저장 재전송은 현
     noteDate: new Date("2026-08-01T00:00:00.000Z"),
     createdAt: originalCreatedAt,
   });
+  const updateOperationId = crypto.randomUUID();
   const retryForm = () => createNoteUpdateForm(
     "note-update-retry",
     {
@@ -499,6 +545,7 @@ test("노트 편집 성공 응답이 유실돼도 같은 저장 재전송은 현
       contentHtml: "<p>저장 전 본문</p>",
       noteDate: "2026-08-01",
     },
+    updateOperationId,
   );
 
   const first = await privateNoteActions.updatePrivateNote(
@@ -530,7 +577,7 @@ test("노트 편집 성공 응답이 유실돼도 같은 저장 재전송은 현
   assert.equal(stored?.createdAt?.getTime(), originalCreatedAt.getTime());
 });
 
-test("노트 CAS 직전 같은 내용이 반영돼도 후속 조회로 성공에 수렴한다", { concurrency: false }, async (context) => {
+test("노트 조건부 쓰기가 무시되면 원장과 본문을 함께 rollback한다", { concurrency: false }, async (context) => {
   const { binding, db } = await setupDatabase(context);
   await seedProfile(db, "student-1");
   await db.insert(privateNotes).values({
@@ -561,13 +608,17 @@ test("노트 CAS 직전 같은 내용이 반영돼도 후속 조회로 성공에
     formData,
   );
 
-  assert.equal(result.success, true);
-  assert.equal(result.note?.title, "같은 저장");
+  assert.equal(result.success, undefined);
+  assert.equal(result.conflictKind, "INTERNAL_INVARIANT_FAILURE");
   const [stored] = await db
     .select({ title: privateNotes.title, contentHtml: privateNotes.contentHtml })
     .from(privateNotes)
     .where(eq(privateNotes.id, "note-update-race-converged"));
-  assert.deepEqual(stored, { title: "같은 저장", contentHtml: "<p>같은 본문</p>" });
+  assert.deepEqual(stored, { title: "경쟁 전 제목", contentHtml: "<p>경쟁 전 본문</p>" });
+  const [ledgerCount] = await db
+    .select({ value: count() })
+    .from(documentOperationLedger);
+  assert.equal(ledgerCount?.value, 0);
 });
 
 test("다른 사용자는 노트가 이미 같은 payload여도 편집 성공을 회수할 수 없다", { concurrency: false }, async (context) => {
@@ -587,14 +638,14 @@ test("다른 사용자는 노트가 이미 같은 payload여도 편집 성공을
     { title: "이전 제목", contentHtml: "<p>이전 본문</p>", noteDate: null },
   );
 
-  await assert.rejects(
-    privateNoteActions.updatePrivateNote(
-      "note-update-retry-owner-guard",
-      {},
-      formData,
-    ),
-    /Unauthorized/u,
+  const result = await privateNoteActions.updatePrivateNote(
+    "note-update-retry-owner-guard",
+    {},
+    formData,
   );
+  assert.equal(result.success, undefined);
+  assert.equal(result.conflictKind, "NOT_FOUND_OR_FORBIDDEN");
+  assert.match(result.error ?? "", /권한/u);
 });
 
 test("노트 편집은 존재하지 않는 date-only 일자를 보정하지 않고 거부한다", { concurrency: false }, async (context) => {
@@ -636,7 +687,7 @@ test("노트 편집은 존재하지 않는 date-only 일자를 보정하지 않�
   assert.equal(stored?.noteDate?.toISOString(), "2026-02-28T00:00:00.000Z");
 });
 
-test("노트 CAS 0-row 후 소유자가 바뀌면 같은 결과여도 재인가에서 거부한다", { concurrency: false }, async (context) => {
+test("노트 CAS 중 소유자 변경 시도도 원장과 함께 rollback한다", { concurrency: false }, async (context) => {
   const { binding, db } = await setupDatabase(context);
   await seedProfile(db, "student-1");
   await seedProfile(db, "student-2");
@@ -658,18 +709,500 @@ test("노트 CAS 0-row 후 소유자가 바뀌면 같은 결과여도 재인가�
     )
     .run();
 
-  await assert.rejects(
-    privateNoteActions.updatePrivateNote(
+  const result = await privateNoteActions.updatePrivateNote(
+    "note-owner-race",
+    {},
+    createNoteUpdateForm(
       "note-owner-race",
+      { title: "같은 저장", contentHtml: "<p>같은 본문</p>", noteDate: null },
+      { title: "경쟁 전 제목", contentHtml: "<p>경쟁 전 본문</p>", noteDate: null },
+    ),
+  );
+  assert.equal(result.success, undefined);
+  assert.equal(result.conflictKind, "INTERNAL_INVARIANT_FAILURE");
+  const [stored] = await db
+    .select({
+      studentId: privateNotes.studentId,
+      authorId: privateNotes.authorId,
+      title: privateNotes.title,
+    })
+    .from(privateNotes)
+    .where(eq(privateNotes.id, "note-owner-race"));
+  assert.deepEqual(stored, {
+    studentId: "student-1",
+    authorId: "student-1",
+    title: "경쟁 전 제목",
+  });
+});
+
+test("노트 생성·수정 재전송은 immutable revision과 historical receipt를 한 번만 남긴다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context);
+  await seedProfile(db, "student-1");
+  const createOperationId = crypto.randomUUID();
+  const createForm = () =>
+    createNoteForm(createOperationId, "첫 제목", "<p>첫 본문</p>", "2026-08-05");
+  const created = await privateNoteActions.createPrivateNote(
+    "student-1",
+    {},
+    createForm(),
+  );
+  const noteId = created.note?.id;
+  assert.ok(noteId);
+
+  const firstUpdateOperationId = crypto.randomUUID();
+  const firstUpdateForm = () =>
+    createNoteUpdateForm(
+      noteId,
+      { title: "둘째 제목", contentHtml: "<p>둘째 본문</p>", noteDate: "2026-08-06" },
+      { title: "첫 제목", contentHtml: "<p>첫 본문</p>", noteDate: "2026-08-05" },
+      firstUpdateOperationId,
+      1,
+    );
+  const firstUpdate = await privateNoteActions.updatePrivateNote(
+    noteId,
+    {},
+    firstUpdateForm(),
+  );
+  const updateRetry = await privateNoteActions.updatePrivateNote(
+    noteId,
+    {},
+    firstUpdateForm(),
+  );
+  const createRetryAfterUpdate = await privateNoteActions.createPrivateNote(
+    "student-1",
+    {},
+    createForm(),
+  );
+
+  assert.equal(firstUpdate.success, true);
+  assert.equal(updateRetry.success, true);
+  assert.equal(updateRetry.replayed, true);
+  assert.equal(createRetryAfterUpdate.success, true);
+  assert.equal(createRetryAfterUpdate.replayed, true);
+  assert.equal(createRetryAfterUpdate.operationResultRevision, 1);
+  assert.equal(createRetryAfterUpdate.currentRevision, 2);
+  assert.equal(createRetryAfterUpdate.note?.title, "둘째 제목");
+
+  const revisions = await db
+    .select({
+      revisionNumber: privateNoteRevisions.revisionNumber,
+      changeType: privateNoteRevisions.changeType,
+      snapshotHash: privateNoteRevisions.snapshotHash,
+    })
+    .from(privateNoteRevisions)
+    .where(eq(privateNoteRevisions.noteId, noteId));
+  assert.deepEqual(
+    revisions.map(({ revisionNumber, changeType }) => ({ revisionNumber, changeType })),
+    [
+      { revisionNumber: 1, changeType: "CREATE" },
+      { revisionNumber: 2, changeType: "UPDATE" },
+    ],
+  );
+  assert.ok(revisions.every((revision) => /^[0-9a-f]{64}$/u.test(revision.snapshotHash ?? "")));
+  const [ledgerCount] = await db
+    .select({ value: count() })
+    .from(documentOperationLedger);
+  assert.equal(ledgerCount?.value, 2);
+});
+
+test("과거 update 재전송은 historical 결과와 현재 head를 분리하고 stale 저장은 거부한다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context);
+  await seedProfile(db, "student-1");
+  const created = await privateNoteActions.createPrivateNote(
+    "student-1",
+    {},
+    createNoteForm(crypto.randomUUID(), "v1", "<p>v1</p>"),
+  );
+  const noteId = created.note?.id;
+  assert.ok(noteId);
+  const firstOperationId = crypto.randomUUID();
+  const firstForm = () =>
+    createNoteUpdateForm(
+      noteId,
+      { title: "v2", contentHtml: "<p>v2</p>", noteDate: null },
+      { title: "v1", contentHtml: "<p>v1</p>", noteDate: null },
+      firstOperationId,
+      1,
+    );
+  assert.equal(
+    (await privateNoteActions.updatePrivateNote(noteId, {}, firstForm())).success,
+    true,
+  );
+  assert.equal(
+    (
+      await privateNoteActions.updatePrivateNote(
+        noteId,
+        {},
+        createNoteUpdateForm(
+          noteId,
+          { title: "v3", contentHtml: "<p>v3</p>", noteDate: null },
+          { title: "v2", contentHtml: "<p>v2</p>", noteDate: null },
+          crypto.randomUUID(),
+          2,
+        ),
+      )
+    ).success,
+    true,
+  );
+
+  const historicalRetry = await privateNoteActions.updatePrivateNote(
+    noteId,
+    {},
+    firstForm(),
+  );
+  const stale = await privateNoteActions.updatePrivateNote(
+    noteId,
+    {},
+    createNoteUpdateForm(
+      noteId,
+      { title: "stale", contentHtml: "<p>stale</p>", noteDate: null },
+      { title: "v1", contentHtml: "<p>v1</p>", noteDate: null },
+      crypto.randomUUID(),
+      1,
+    ),
+  );
+
+  assert.equal(historicalRetry.success, true);
+  assert.equal(historicalRetry.replayed, true);
+  assert.equal(historicalRetry.operationResultRevision, 2);
+  assert.equal(historicalRetry.currentRevision, 3);
+  assert.equal(historicalRetry.note?.title, "v3");
+  assert.equal(stale.conflictKind, "VERSION_CONFLICT");
+  assert.equal(stale.currentRevision, 3);
+  assert.equal(stale.conflictNote?.title, "v3");
+  assert.equal(stale.conflictNote?.version, 3);
+  const [head] = await db
+    .select({ title: privateNotes.title, version: privateNotes.version })
+    .from(privateNotes)
+    .where(eq(privateNotes.id, noteId));
+  assert.deepEqual(head, { title: "v3", version: 3 });
+  assert.equal(
+    (await db.select().from(privateNoteRevisions).where(eq(privateNoteRevisions.noteId, noteId))).length,
+    3,
+  );
+});
+
+test("노트 휴지통 이동과 복원은 기본 조회를 분리하고 각각 새 revision을 만든다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context);
+  await seedProfile(db, "student-1");
+  const created = await privateNoteActions.createPrivateNote(
+    "student-1",
+    {},
+    createNoteForm(crypto.randomUUID(), "휴지통 노트", "<p>보존할 본문</p>"),
+  );
+  const noteId = created.note?.id;
+  assert.ok(noteId);
+  const trashOperationId = crypto.randomUUID();
+
+  const trashed = await privateNoteActions.trashPrivateNote(
+    noteId,
+    trashOperationId,
+    1,
+  );
+  const trashRetry = await privateNoteActions.trashPrivateNote(
+    noteId,
+    trashOperationId,
+    1,
+  );
+  assert.equal(trashed.success, true);
+  assert.equal(trashed.resourceState, "TRASHED");
+  assert.equal(trashRetry.replayed, true);
+  assert.equal((await privateNoteActions.getPrivateNotes("student-1")).length, 0);
+  assert.equal((await privateNoteActions.getTrashedPrivateNotes("student-1")).length, 1);
+
+  const restored = await privateNoteActions.restorePrivateNote(
+    noteId,
+    crypto.randomUUID(),
+    2,
+  );
+  assert.equal(restored.success, true);
+  assert.equal(restored.resourceState, "ACTIVE");
+  assert.equal(restored.currentRevision, 3);
+  assert.equal((await privateNoteActions.getPrivateNotes("student-1")).length, 1);
+  assert.equal((await privateNoteActions.getTrashedPrivateNotes("student-1")).length, 0);
+
+  const history = await privateNoteActions.getPrivateNoteRevisions(noteId);
+  assert.deepEqual(
+    history.map((revision) => revision.changeType),
+    ["RESTORE_TRASH", "TRASH", "CREATE"],
+  );
+  const [head] = await db
+    .select({ version: privateNotes.version, deletedAt: privateNotes.deletedAt })
+    .from(privateNotes)
+    .where(eq(privateNotes.id, noteId));
+  assert.equal(head?.version, 3);
+  assert.equal(head?.deletedAt, null);
+});
+
+test("과거 revision 복원은 기존 이력을 바꾸지 않고 새 head revision을 추가한다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context);
+  await seedProfile(db, "student-1");
+  const created = await privateNoteActions.createPrivateNote(
+    "student-1",
+    {},
+    createNoteForm(crypto.randomUUID(), "원본", "<p>원본 본문</p>", "2026-08-01"),
+  );
+  const noteId = created.note?.id;
+  assert.ok(noteId);
+  await privateNoteActions.updatePrivateNote(
+    noteId,
+    {},
+    createNoteUpdateForm(
+      noteId,
+      { title: "수정본", contentHtml: "<p>수정 본문</p>", noteDate: "2026-08-02" },
+      { title: "원본", contentHtml: "<p>원본 본문</p>", noteDate: "2026-08-01" },
+      crypto.randomUUID(),
+      1,
+    ),
+  );
+  const [revisionOneBefore] = await db
+    .select()
+    .from(privateNoteRevisions)
+    .where(eq(privateNoteRevisions.revisionNumber, 1));
+
+  const restored = await privateNoteActions.restorePrivateNoteRevision(
+    noteId,
+    crypto.randomUUID(),
+    2,
+    1,
+  );
+  assert.equal(restored.success, true);
+  assert.equal(restored.currentRevision, 3);
+  const [head] = await db
+    .select({ title: privateNotes.title, contentHtml: privateNotes.contentHtml, version: privateNotes.version })
+    .from(privateNotes)
+    .where(eq(privateNotes.id, noteId));
+  assert.deepEqual(head, { title: "원본", contentHtml: "<p>원본 본문</p>", version: 3 });
+  const revisions = await db
+    .select()
+    .from(privateNoteRevisions)
+    .where(eq(privateNoteRevisions.noteId, noteId));
+  assert.equal(revisions.length, 3);
+  assert.deepEqual(revisions.find((revision) => revision.revisionNumber === 1), revisionOneBefore);
+  assert.equal(revisions.find((revision) => revision.revisionNumber === 3)?.changeType, "RESTORE_REVISION");
+  assert.equal(revisions.find((revision) => revision.revisionNumber === 3)?.restoredFromRevision, 1);
+});
+
+test("과거 revision 복원은 저장된 hash version으로 snapshot 무결성을 확인한다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context);
+  await seedProfile(db, "student-1");
+  const noteId = "note-corrupt-snapshot";
+  const operationRecordId = "receipt-corrupt-snapshot";
+  const now = new Date("2026-08-05T00:00:00.000Z");
+  await db.insert(privateNotes).values({
+    id: noteId,
+    studentId: "student-1",
+    authorId: "student-1",
+    title: "원본",
+    contentHtml: "<p>원본</p>",
+    createdAt: now,
+    updatedAt: now,
+    version: 1,
+  });
+  await db.insert(documentOperationLedger).values({
+    id: operationRecordId,
+    operationId: crypto.randomUUID(),
+    actorId: "student-1",
+    subjectId: "student-1",
+    resourceType: "PRIVATE_NOTE",
+    operationType: "CREATE",
+    resourceId: noteId,
+    requestHash: "a".repeat(64),
+    requestHashVersion: 1,
+    resultRevision: 1,
+    createdAt: now,
+  });
+  await db.insert(privateNoteRevisions).values({
+    id: "revision-corrupt-snapshot",
+    noteId,
+    revisionNumber: 1,
+    changeType: "CREATE",
+    title: "원본",
+    contentHtml: "<p>원본</p>",
+    snapshotHash: "b".repeat(64),
+    snapshotHashVersion: 1,
+    actorId: "student-1",
+    operationRecordId,
+    createdAt: now,
+  });
+
+  const restored = await privateNoteActions.restorePrivateNoteRevision(
+    noteId,
+    crypto.randomUUID(),
+    1,
+    1,
+  );
+  assert.equal(restored.success, undefined);
+  assert.equal(restored.conflictKind, "INTERNAL_INVARIANT_FAILURE");
+  const [head] = await db
+    .select({ version: privateNotes.version, title: privateNotes.title })
+    .from(privateNotes)
+    .where(eq(privateNotes.id, noteId));
+  assert.deepEqual(head, { version: 1, title: "원본" });
+  const [revisionCount] = await db
+    .select({ value: count() })
+    .from(privateNoteRevisions)
+    .where(eq(privateNoteRevisions.noteId, noteId));
+  assert.equal(revisionCount?.value, 1);
+});
+
+test("영구 삭제는 30일·admin 조건을 지키고 tombstone으로 과거 create 부활을 막는다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context);
+  await seedProfile(db, "student-1");
+  await seedProfile(db, "admin-1", "admin");
+  const createOperationId = crypto.randomUUID();
+  const createForm = () =>
+    createNoteForm(createOperationId, "삭제할 노트", "<p>삭제할 본문</p>");
+  const created = await privateNoteActions.createPrivateNote(
+    "student-1",
+    {},
+    createForm(),
+  );
+  const noteId = created.note?.id;
+  assert.ok(noteId);
+  assert.equal(
+    (await privateNoteActions.trashPrivateNote(noteId, crypto.randomUUID(), 1)).success,
+    true,
+  );
+
+  activeSession = createSession("admin-1", "admin");
+  const purgeOperationId = crypto.randomUUID();
+  const earlyPurge = await privateNoteActions.purgePrivateNote(
+    noteId,
+    purgeOperationId,
+    2,
+  );
+  assert.equal(earlyPurge.conflictKind, "RETENTION_NOT_EXPIRED");
+  assert.equal((await db.select().from(documentTombstones)).length, 0);
+
+  await db
+    .update(privateNotes)
+    .set({ deletedAt: new Date(Date.now() - 31 * 24 * 60 * 60 * 1000) })
+    .where(eq(privateNotes.id, noteId));
+  activeSession = createSession("student-1", "student");
+  const forbidden = await privateNoteActions.purgePrivateNote(
+    noteId,
+    purgeOperationId,
+    2,
+  );
+  assert.equal(forbidden.conflictKind, "NOT_FOUND_OR_FORBIDDEN");
+
+  activeSession = createSession("admin-1", "admin");
+  const purged = await privateNoteActions.purgePrivateNote(
+    noteId,
+    purgeOperationId,
+    2,
+  );
+  const purgeRetry = await privateNoteActions.purgePrivateNote(
+    noteId,
+    purgeOperationId,
+    2,
+  );
+  assert.equal(purged.success, true);
+  assert.equal(purged.resourceState, "PURGED");
+  assert.equal(purgeRetry.success, true);
+  assert.equal(purgeRetry.replayed, true);
+  assert.equal((await db.select().from(privateNotes).where(eq(privateNotes.id, noteId))).length, 0);
+  assert.equal((await db.select().from(privateNoteRevisions).where(eq(privateNoteRevisions.noteId, noteId))).length, 0);
+  const [tombstone] = await db
+    .select()
+    .from(documentTombstones)
+    .where(eq(documentTombstones.resourceId, noteId));
+  assert.equal(tombstone?.sourceVersion, 2);
+  assert.equal(tombstone?.purgedById, "admin-1");
+
+  activeSession = createSession("student-1", "student");
+  const lateCreateRetry = await privateNoteActions.createPrivateNote(
+    "student-1",
+    {},
+    createForm(),
+  );
+  assert.equal(lateCreateRetry.conflictKind, "PURGED");
+  assert.equal(lateCreateRetry.resourceState, "PURGED");
+  assert.equal((await db.select().from(privateNotes)).length, 0);
+});
+
+test("동일 base의 수정과 휴지통 경쟁은 한 작업만 commit한다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context);
+  await seedProfile(db, "student-1");
+  const created = await privateNoteActions.createPrivateNote(
+    "student-1",
+    {},
+    createNoteForm(crypto.randomUUID(), "경쟁 기준", "<p>경쟁 기준</p>"),
+  );
+  const noteId = created.note?.id;
+  assert.ok(noteId);
+
+  const [updated, trashed] = await Promise.all([
+    privateNoteActions.updatePrivateNote(
+      noteId,
       {},
       createNoteUpdateForm(
-        "note-owner-race",
-        { title: "같은 저장", contentHtml: "<p>같은 본문</p>", noteDate: null },
-        { title: "경쟁 전 제목", contentHtml: "<p>경쟁 전 본문</p>", noteDate: null },
+        noteId,
+        { title: "수정 승자 후보", contentHtml: "<p>수정</p>", noteDate: null },
+        { title: "경쟁 기준", contentHtml: "<p>경쟁 기준</p>", noteDate: null },
+        crypto.randomUUID(),
+        1,
       ),
     ),
-    /Unauthorized/u,
+    privateNoteActions.trashPrivateNote(noteId, crypto.randomUUID(), 1),
+  ]);
+  assert.equal([updated.success, trashed.success].filter(Boolean).length, 1);
+  assert.ok(
+    [updated.conflictKind, trashed.conflictKind].includes("VERSION_CONFLICT") ||
+      [updated.conflictKind, trashed.conflictKind].includes("TRASHED"),
   );
+  const [head] = await db
+    .select({ version: privateNotes.version })
+    .from(privateNotes)
+    .where(eq(privateNotes.id, noteId));
+  assert.equal(head?.version, 2);
+  assert.equal(
+    (await db.select().from(privateNoteRevisions).where(eq(privateNoteRevisions.noteId, noteId))).length,
+    2,
+  );
+  assert.equal((await db.select().from(documentOperationLedger)).length, 2);
+});
+
+test("문서 상한 초과 본문과 canonical no-op은 각각 쓰기 없음과 receipt-only로 처리한다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context);
+  await seedProfile(db, "student-1");
+  const oversized = await privateNoteActions.createPrivateNote(
+    "student-1",
+    {},
+    createNoteForm(
+      crypto.randomUUID(),
+      "대형 노트",
+      `<p>${"x".repeat(PRIVATE_NOTE_MAX_CONTENT_BYTES)}</p>`,
+    ),
+  );
+  assert.equal(oversized.conflictKind, "DOCUMENT_TOO_LARGE");
+  assert.equal((await db.select().from(documentOperationLedger)).length, 0);
+  assert.equal((await db.select().from(privateNotes)).length, 0);
+
+  const created = await privateNoteActions.createPrivateNote(
+    "student-1",
+    {},
+    createNoteForm(crypto.randomUUID(), "같은 내용", "<p>같은 내용</p>"),
+  );
+  const noteId = created.note?.id;
+  assert.ok(noteId);
+  const noOpOperationId = crypto.randomUUID();
+  const noOpForm = () =>
+    createNoteUpdateForm(
+      noteId,
+      { title: "같은 내용", contentHtml: "<p>같은 내용</p>", noteDate: null },
+      { title: "같은 내용", contentHtml: "<p>같은 내용</p>", noteDate: null },
+      noOpOperationId,
+      1,
+    );
+  const noOp = await privateNoteActions.updatePrivateNote(noteId, {}, noOpForm());
+  const noOpRetry = await privateNoteActions.updatePrivateNote(noteId, {}, noOpForm());
+  assert.equal(noOp.success, true);
+  assert.equal(noOp.currentRevision, 1);
+  assert.equal(noOpRetry.replayed, true);
+  assert.equal((await db.select().from(privateNoteRevisions)).length, 1);
+  assert.equal((await db.select().from(documentOperationLedger)).length, 2);
 });
 
 test("게시물 CAS에서 늦은 저장이 먼저 저장된 내용을 덮어쓰지 않는다", { concurrency: false }, async (context) => {
@@ -873,7 +1406,7 @@ test("편집 액션은 legacy full-base 필드만 있는 요청과 malformed fin
     malformedPostForm,
   );
 
-  assert.match(noteResult.error ?? "", /편집 기준 정보/u);
+  assert.match(noteResult.error ?? "", /기준/u);
   assert.match(postResult.error ?? "", /편집 기준 정보/u);
   assert.equal(noteResult.success, undefined);
   assert.equal(postResult.success, undefined);

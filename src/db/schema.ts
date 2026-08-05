@@ -1,4 +1,12 @@
-import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";
+import {
+  check,
+  index,
+  integer,
+  primaryKey,
+  sqliteTable,
+  text,
+  uniqueIndex,
+} from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 
 export const profiles = sqliteTable("profiles", {
@@ -73,22 +81,253 @@ export const categories = sqliteTable("categories", {
   ),
 });
 
-export const privateNotes = sqliteTable("private_notes", {
-  id: text("id").primaryKey(),
-  studentId: text("student_id")
-    .references(() => profiles.id, { onDelete: "cascade" })
-    .notNull(),
-  authorId: text("author_id")
-    .references(() => profiles.id, { onDelete: "cascade" })
-    .notNull(),
-  title: text("title").notNull(),
-  contentHtml: text("content_html").notNull(),
-  /** 사용자가 지정한 노트 날짜. 없으면 createdAt fallback. */
-  noteDate: integer("note_date", { mode: "timestamp" }),
-  createdAt: integer("created_at", { mode: "timestamp" }).default(
-    sql`(strftime('%s', 'now'))`,
-  ),
-});
+export type DocumentResourceType = "PRIVATE_NOTE";
+export type DocumentOperationType =
+  | "CREATE"
+  | "UPDATE"
+  | "TRASH"
+  | "RESTORE_TRASH"
+  | "RESTORE_REVISION"
+  | "PURGE";
+
+/** 원문과 분리된 문서 mutation receipt. row는 schema trigger로 불변이다. */
+export const documentOperationLedger = sqliteTable(
+  "document_operation_ledger",
+  {
+    id: text("id").primaryKey(),
+    operationId: text("operation_id").notNull(),
+    actorId: text("actor_id").notNull(),
+    subjectId: text("subject_id").notNull(),
+    resourceType: text("resource_type").$type<DocumentResourceType>().notNull(),
+    operationType: text("operation_type").$type<DocumentOperationType>().notNull(),
+    resourceId: text("resource_id").notNull(),
+    requestHash: text("request_hash").notNull(),
+    requestHashVersion: integer("request_hash_version").notNull(),
+    resultRevision: integer("result_revision").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("document_operation_ledger_actor_operation_unique").on(
+      table.actorId,
+      table.operationId,
+    ),
+    index("document_operation_ledger_resource_created_idx").on(
+      table.resourceType,
+      table.resourceId,
+      table.createdAt,
+    ),
+    check(
+      "document_operation_ledger_resource_type_check",
+      sql`${table.resourceType} = 'PRIVATE_NOTE'`,
+    ),
+    check(
+      "document_operation_ledger_operation_type_check",
+      sql`${table.operationType} IN ('CREATE', 'UPDATE', 'TRASH', 'RESTORE_TRASH', 'RESTORE_REVISION', 'PURGE')`,
+    ),
+    check(
+      "document_operation_ledger_nonempty_ids_check",
+      sql`length(${table.operationId}) > 0 AND length(${table.actorId}) > 0 AND length(${table.subjectId}) > 0 AND length(${table.resourceId}) > 0`,
+    ),
+    check(
+      "document_operation_ledger_request_hash_check",
+      sql`length(${table.requestHash}) = 64 AND ${table.requestHashVersion} >= 1`,
+    ),
+    check(
+      "document_operation_ledger_result_revision_check",
+      sql`${table.resultRevision} >= 1`,
+    ),
+  ],
+);
+
+/** 본문 purge 뒤에도 과거 resource ID 재점유를 막는 최소 tombstone. */
+export const documentTombstones = sqliteTable(
+  "document_tombstones",
+  {
+    resourceType: text("resource_type").$type<DocumentResourceType>().notNull(),
+    resourceId: text("resource_id").notNull(),
+    subjectId: text("subject_id").notNull(),
+    ownerId: text("owner_id").notNull(),
+    sourceCreatedAt: integer("source_created_at", { mode: "timestamp" }),
+    sourceVersion: integer("source_version").notNull(),
+    purgedAt: integer("purged_at", { mode: "timestamp" }).notNull(),
+    purgedById: text("purged_by_id"),
+  },
+  (table) => [
+    primaryKey({ columns: [table.resourceType, table.resourceId] }),
+    index("document_tombstones_subject_purged_idx").on(
+      table.resourceType,
+      table.subjectId,
+      table.purgedAt,
+    ),
+    check(
+      "document_tombstones_resource_type_check",
+      sql`${table.resourceType} = 'PRIVATE_NOTE'`,
+    ),
+    check(
+      "document_tombstones_nonempty_ids_check",
+      sql`length(${table.resourceId}) > 0 AND length(${table.subjectId}) > 0 AND length(${table.ownerId}) > 0`,
+    ),
+    check(
+      "document_tombstones_source_version_check",
+      sql`${table.sourceVersion} >= 1`,
+    ),
+  ],
+);
+
+/** D1 batch에서 0-row conditional DML을 오류로 승격하는 fail-closed sentinel. */
+export const documentBatchAbortGuard = sqliteTable(
+  "document_batch_abort_guard",
+  {
+    reason: text("reason").notNull(),
+  },
+);
+
+export const privateNotes = sqliteTable(
+  "private_notes",
+  {
+    id: text("id").primaryKey(),
+    studentId: text("student_id")
+      .references(() => profiles.id, { onDelete: "restrict" })
+      .notNull(),
+    authorId: text("author_id")
+      .references(() => profiles.id, { onDelete: "restrict" })
+      .notNull(),
+    title: text("title").notNull(),
+    contentHtml: text("content_html").notNull(),
+    /** 사용자가 지정한 노트 날짜. 없으면 createdAt fallback. */
+    noteDate: integer("note_date", { mode: "timestamp" }),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .default(sql`(strftime('%s', 'now'))`)
+      .notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .default(sql`(strftime('%s', 'now'))`)
+      .notNull(),
+    version: integer("version").default(1).notNull(),
+    deletedAt: integer("deleted_at", { mode: "timestamp" }),
+    deletedById: text("deleted_by_id").references(() => profiles.id, {
+      onDelete: "set null",
+    }),
+  },
+  (table) => [
+    index("private_notes_student_deleted_created_idx").on(
+      table.studentId,
+      table.deletedAt,
+      table.createdAt,
+    ),
+    index("private_notes_deleted_at_idx").on(table.deletedAt),
+    check("private_notes_version_check", sql`${table.version} >= 1`),
+    check(
+      "private_notes_deleted_actor_check",
+      sql`${table.deletedAt} IS NOT NULL OR ${table.deletedById} IS NULL`,
+    ),
+  ],
+);
+
+export type PrivateNoteRevisionChangeType =
+  | "BASELINE"
+  | "CREATE"
+  | "UPDATE"
+  | "RESTORE_REVISION"
+  | "TRASH"
+  | "RESTORE_TRASH";
+
+/** private note의 append-only full snapshot history. */
+export const privateNoteRevisions = sqliteTable(
+  "private_note_revisions",
+  {
+    id: text("id").primaryKey(),
+    noteId: text("note_id")
+      .references(() => privateNotes.id, { onDelete: "cascade" })
+      .notNull(),
+    revisionNumber: integer("revision_number").notNull(),
+    changeType: text("change_type").$type<PrivateNoteRevisionChangeType>().notNull(),
+    title: text("title").notNull(),
+    contentHtml: text("content_html").notNull(),
+    noteDate: integer("note_date", { mode: "timestamp" }),
+    deletedAt: integer("deleted_at", { mode: "timestamp" }),
+    snapshotHash: text("snapshot_hash"),
+    snapshotHashVersion: integer("snapshot_hash_version"),
+    actorId: text("actor_id"),
+    restoredFromRevision: integer("restored_from_revision"),
+    operationRecordId: text("operation_record_id").references(
+      () => documentOperationLedger.id,
+      { onDelete: "restrict" },
+    ),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("private_note_revisions_note_number_unique").on(
+      table.noteId,
+      table.revisionNumber,
+    ),
+    uniqueIndex("private_note_revisions_operation_unique").on(
+      table.operationRecordId,
+    ),
+    index("private_note_revisions_note_created_idx").on(
+      table.noteId,
+      table.createdAt,
+    ),
+    check(
+      "private_note_revisions_number_check",
+      sql`${table.revisionNumber} >= 1`,
+    ),
+    check(
+      "private_note_revisions_change_type_check",
+      sql`${table.changeType} IN ('BASELINE', 'CREATE', 'UPDATE', 'RESTORE_REVISION', 'TRASH', 'RESTORE_TRASH')`,
+    ),
+    check(
+      "private_note_revisions_identity_check",
+      sql`(
+        ${table.changeType} = 'BASELINE'
+        AND ${table.revisionNumber} = 1
+        AND ${table.actorId} IS NULL
+        AND ${table.snapshotHash} IS NULL
+        AND ${table.snapshotHashVersion} IS NULL
+        AND ${table.operationRecordId} IS NULL
+      ) OR (
+        ${table.changeType} <> 'BASELINE'
+        AND ${table.actorId} IS NOT NULL
+        AND length(${table.actorId}) > 0
+        AND ${table.snapshotHash} IS NOT NULL
+        AND length(${table.snapshotHash}) = 64
+        AND ${table.snapshotHashVersion} IS NOT NULL
+        AND ${table.snapshotHashVersion} >= 1
+        AND ${table.operationRecordId} IS NOT NULL
+      )`,
+    ),
+    check(
+      "private_note_revisions_initial_number_check",
+      sql`(
+        ${table.changeType} IN ('CREATE', 'BASELINE')
+        AND ${table.revisionNumber} = 1
+      ) OR (
+        ${table.changeType} NOT IN ('CREATE', 'BASELINE')
+        AND ${table.revisionNumber} > 1
+      )`,
+    ),
+    check(
+      "private_note_revisions_deleted_state_check",
+      sql`(
+        ${table.changeType} = 'TRASH'
+        AND ${table.deletedAt} IS NOT NULL
+      ) OR (
+        ${table.changeType} <> 'TRASH'
+        AND ${table.deletedAt} IS NULL
+      )`,
+    ),
+    check(
+      "private_note_revisions_restore_source_check",
+      sql`(
+        ${table.changeType} = 'RESTORE_REVISION'
+        AND ${table.restoredFromRevision} IS NOT NULL
+        AND ${table.restoredFromRevision} >= 1
+      ) OR (
+        ${table.changeType} <> 'RESTORE_REVISION'
+        AND ${table.restoredFromRevision} IS NULL
+      )`,
+    ),
+  ],
+);
 
 /**
  * Phase 3: boardType으로 게시판 유형 분리.

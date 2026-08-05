@@ -32,7 +32,12 @@ async function applyPortalMigrations(binding: AnyD1Database): Promise<void> {
       .map((statement) => statement.trim())
       .filter(Boolean);
 
-    await binding.batch(statements.map((statement) => binding.prepare(statement)));
+    try {
+      await binding.batch(statements.map((statement) => binding.prepare(statement)));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`${migrationFile} 적용 실패: ${message}`, { cause: error });
+    }
   }
 }
 

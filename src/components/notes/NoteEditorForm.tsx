@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DraftStatus } from "@/components/editor/DraftStatus";
 import { DraftConflictRecovery } from "@/components/editor/DraftConflictRecovery";
+import { RichTextContent } from "@/components/editor/RichTextContent";
 import { useFormDraft } from "@/lib/hooks/useFormDraft";
 import { createDocumentDraftKey } from "@/lib/form-draft";
 import { isRichTextEmpty } from "@/lib/rich-text";
@@ -14,6 +15,15 @@ import type { UpdateNoteState } from "@/lib/actions/privateNotes";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
 import { useDeferredEditorContent } from "@/lib/hooks/useDeferredEditorContent";
 import { useDocumentSaveShortcut } from "@/lib/hooks/useDocumentSaveShortcut";
+import {
+  CREATION_OPERATION_FIELD,
+  createCreationOperationId,
+  parseCreationOperationId,
+} from "@/lib/creation-operation";
+import {
+  PRIVATE_NOTE_BASE_REVISION_FIELD,
+  parsePrivateNoteRevision,
+} from "@/lib/private-note-continuity";
 import {
   createDocumentSnapshotFingerprint,
   DOCUMENT_SNAPSHOT_FINGERPRINT_FIELD,
@@ -42,6 +52,7 @@ type NoteEditorFormProps = {
     title: string;
     contentHtml: string;
     noteDate: Date | null;
+    version?: number;
   };
   actorId: string;
   action: (previous: UpdateNoteState, formData: FormData) => Promise<UpdateNoteState>;
@@ -53,14 +64,29 @@ type NoteEditSnapshot = {
   contentHtml: string;
 };
 
-type NoteEditDraft = NoteEditSnapshot & DocumentEditDraftBaseFields;
-type CompactNoteEditDraft = NoteEditSnapshot & CompactDocumentEditDraftMetadata;
+type NoteOperationDraftFields = {
+  operationId?: string;
+  baseRevision?: number;
+};
+
+type NoteEditDraft = NoteEditSnapshot &
+  DocumentEditDraftBaseFields &
+  NoteOperationDraftFields;
+type CompactNoteEditDraft = NoteEditSnapshot &
+  CompactDocumentEditDraftMetadata &
+  NoteOperationDraftFields;
+
+type ConflictServerState = {
+  snapshot: NoteEditSnapshot;
+  version: number;
+};
 
 function toDateInputValue(value: Date | null): string {
   return value ? new Date(value).toISOString().slice(0, 10) : "";
 }
 
 export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
+  const serverVersion = note.version ?? 1;
   const [title, setTitle] = useState(note.title);
   const [noteDate, setNoteDate] = useState(toDateInputValue(note.noteDate));
   const {
@@ -73,12 +99,17 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
     commitLatestContentHtml,
   } = useDeferredEditorContent(note.contentHtml);
   const [hasStaleDraftBase, setHasStaleDraftBase] = useState(false);
+  const [operationId, setOperationId] = useState("");
+  const [baseRevision, setBaseRevision] = useState(serverVersion);
   const [state, formAction, isPending] = useActionState<UpdateNoteState, FormData>(action, {});
   useBusyNavigationGuard(isPending);
   const formRef = useRef<HTMLFormElement>(null);
   const contentHtmlInputRef = useRef<HTMLInputElement>(null);
   const handledSavedNoteRef = useRef<UpdateNoteState["note"]>(undefined);
+  const handledConflictNoteRef = useRef<UpdateNoteState["conflictNote"]>(undefined);
+  const conflictServerRef = useRef<ConflictServerState | null>(null);
   const submittedDraftRef = useRef<CompactNoteEditDraft | null>(null);
+  const submittedOperationIdRef = useRef<string | null>(null);
   const submittedDraftAliasesRef = useRef<readonly NoteEditDraft[] | null>(null);
   const restoredDraftRef = useRef<NoteEditDraft | null>(null);
   const savedSnapshotRef = useRef({
@@ -163,6 +194,13 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
     createDocumentDraftKey("note", actorId, note.id),
     (draft) => {
       restoredDraftRef.current = draft;
+      setOperationId(
+        parseCreationOperationId(draft.operationId) ??
+          createCreationOperationId(),
+      );
+      setBaseRevision(
+        parsePrivateNoteRevision(draft.baseRevision) ?? serverVersion,
+      );
       hideSaveConfirmation();
       const restoredSnapshot = {
         title: draft.title ?? note.title,
@@ -196,6 +234,8 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
     {
       onReset: () => {
         restoredDraftRef.current = null;
+        setOperationId(createCreationOperationId());
+        setBaseRevision(serverVersion);
         hideSaveConfirmation();
         adoptSavedSnapshot(serverSnapshot);
         draftBaseFingerprintRef.current = baseFingerprintRef.current;
@@ -208,7 +248,8 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
   );
 
   const handleSaveShortcut = useDocumentSaveShortcut({
-    disabled: !loaded || !canSubmit || isPending || hasStaleDraftBase,
+    disabled:
+      !loaded || !canSubmit || isPending || hasStaleDraftBase || !operationId,
     onSave: () => formRef.current?.requestSubmit(),
   });
 
@@ -227,6 +268,8 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
     save({
       title,
       noteDate,
+      operationId,
+      baseRevision,
       ...createDocumentEditDraftMetadata(
         hasStaleDraftBase
           ? draftBaseFingerprintRef.current
@@ -242,6 +285,8 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
     hasStaleDraftBase,
     loaded,
     noteDate,
+    operationId,
+    baseRevision,
     readLatestContentHtml,
     save,
     title,
@@ -280,6 +325,7 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
       restoredDraftRef.current = null;
       clear();
       adoptSavedSnapshot(serverSnapshot);
+      setBaseRevision(serverVersion);
       draftBaseFingerprintRef.current = baseFingerprintRef.current;
       setTitle(serverSnapshot.title);
       setNoteDate(serverSnapshot.noteDate);
@@ -301,6 +347,7 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
     noteDate,
     readLatestContentHtml,
     serverSnapshot,
+    serverVersion,
     setContentHtml,
     state.note,
     state.success,
@@ -308,7 +355,36 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
   ]);
 
   useEffect(() => {
-    if (!state.note?.id || handledSavedNoteRef.current === state.note) return;
+    if (
+      !state.conflictNote ||
+      handledConflictNoteRef.current === state.conflictNote
+    ) {
+      return;
+    }
+    handledConflictNoteRef.current = state.conflictNote;
+    conflictServerRef.current = {
+      snapshot: {
+        title: state.conflictNote.title,
+        noteDate: toDateInputValue(state.conflictNote.noteDate),
+        contentHtml: state.conflictNote.contentHtml,
+      },
+      version: state.conflictNote.version,
+    };
+    if (!hasStaleDraftBase) {
+      draftBaseFingerprintRef.current = baseFingerprintRef.current;
+    }
+    hideSaveConfirmation();
+    setHasStaleDraftBase(true);
+  }, [hasStaleDraftBase, hideSaveConfirmation, state.conflictNote]);
+
+  useEffect(() => {
+    if (
+      !state.success ||
+      !state.note?.id ||
+      handledSavedNoteRef.current === state.note
+    ) {
+      return;
+    }
     handledSavedNoteRef.current = state.note;
     clear({
       reason: "submitted",
@@ -323,14 +399,21 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
         createSubmittedDraftAliases({ title, noteDate, contentHtml }),
     });
     submittedDraftRef.current = null;
+    submittedOperationIdRef.current = null;
     submittedDraftAliasesRef.current = null;
     restoredDraftRef.current = null;
+    conflictServerRef.current = null;
     const savedSnapshot = {
       title: state.note.title,
       noteDate: toDateInputValue(state.note.noteDate),
       contentHtml: state.note.contentHtml,
     };
     adoptSavedSnapshot(savedSnapshot);
+    setBaseRevision(
+      (currentRevision) =>
+        state.note?.version ?? state.currentRevision ?? currentRevision,
+    );
+    setOperationId(createCreationOperationId());
     draftBaseFingerprintRef.current = baseFingerprintRef.current;
     setHasStaleDraftBase(false);
     setTitle(state.note.title);
@@ -346,7 +429,9 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
     createSubmittedDraftAliases,
     noteDate,
     setContentHtml,
+    state.currentRevision,
     state.note,
+    state.success,
     title,
   ]);
 
@@ -358,7 +443,13 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
       className="space-y-5"
       onKeyDownCapture={handleSaveShortcut}
       onSubmit={(event) => {
-        if (!loaded || !canSubmit || isPending || hasStaleDraftBase) {
+        if (
+          !loaded ||
+          !canSubmit ||
+          isPending ||
+          hasStaleDraftBase ||
+          !operationId
+        ) {
           event.preventDefault();
           return;
         }
@@ -374,11 +465,14 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
           title,
           noteDate,
           contentHtml: latestContentHtml,
+          operationId,
+          baseRevision,
           ...createDocumentEditDraftMetadata(baseFingerprintRef.current),
         };
         save(submittedDraft);
         flush();
         submittedDraftRef.current = submittedDraft;
+        submittedOperationIdRef.current = operationId;
         submittedDraftAliasesRef.current = createSubmittedDraftAliases({
           title,
           noteDate,
@@ -387,6 +481,12 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
       }}
     >
       <input ref={contentHtmlInputRef} type="hidden" name="contentHtml" value={contentHtml} />
+      <input type="hidden" name={CREATION_OPERATION_FIELD} value={operationId} />
+      <input
+        type="hidden"
+        name={PRIVATE_NOTE_BASE_REVISION_FIELD}
+        value={baseRevision}
+      />
       <input
         type="hidden"
         name={DOCUMENT_SNAPSHOT_FINGERPRINT_FIELD}
@@ -405,26 +505,58 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
         </p>
       ) : null}
       {hasStaleDraftBase ? (
-        <DraftConflictRecovery
-          documentLabel="노트"
-          onUseServer={() => {
-            restoredDraftRef.current = null;
-            hideSaveConfirmation();
-            clear();
-            adoptSavedSnapshot(serverSnapshot);
-            draftBaseFingerprintRef.current = baseFingerprintRef.current;
-            setTitle(serverSnapshot.title);
-            setNoteDate(serverSnapshot.noteDate);
-            setContentHtml(serverSnapshot.contentHtml);
-            setHasStaleDraftBase(false);
-          }}
-          onKeepDraft={() => {
-            hideSaveConfirmation();
-            adoptSavedSnapshot(serverSnapshot);
-            draftBaseFingerprintRef.current = baseFingerprintRef.current;
-            setHasStaleDraftBase(false);
-          }}
-        />
+        <div className="space-y-3">
+          <DraftConflictRecovery
+            documentLabel="노트"
+            onUseServer={() => {
+              const latestServer = conflictServerRef.current ?? {
+                snapshot: serverSnapshot,
+                version: serverVersion,
+              };
+              restoredDraftRef.current = null;
+              hideSaveConfirmation();
+              clear();
+              adoptSavedSnapshot(latestServer.snapshot);
+              setBaseRevision(latestServer.version);
+              setOperationId(createCreationOperationId());
+              draftBaseFingerprintRef.current = baseFingerprintRef.current;
+              setTitle(latestServer.snapshot.title);
+              setNoteDate(latestServer.snapshot.noteDate);
+              setContentHtml(latestServer.snapshot.contentHtml);
+              conflictServerRef.current = null;
+              setHasStaleDraftBase(false);
+            }}
+            onKeepDraft={() => {
+              const latestServer = conflictServerRef.current ?? {
+                snapshot: serverSnapshot,
+                version: serverVersion,
+              };
+              hideSaveConfirmation();
+              adoptSavedSnapshot(latestServer.snapshot);
+              setBaseRevision(latestServer.version);
+              setOperationId(createCreationOperationId());
+              draftBaseFingerprintRef.current = baseFingerprintRef.current;
+              conflictServerRef.current = null;
+              setHasStaleDraftBase(false);
+            }}
+          />
+          <details className="rounded-lg border border-border bg-card p-3">
+            <summary className="cursor-pointer text-sm font-medium">
+              서버 최신본 {conflictServerRef.current?.version ?? serverVersion}번 확인·복사
+            </summary>
+            <div className="mt-3 space-y-2 border-t border-border pt-3">
+              <p className="font-medium">
+                {conflictServerRef.current?.snapshot.title ?? serverSnapshot.title}
+              </p>
+              <RichTextContent
+                html={
+                  conflictServerRef.current?.snapshot.contentHtml ??
+                  serverSnapshot.contentHtml
+                }
+              />
+            </div>
+          </details>
+        </div>
       ) : null}
 
       <div className="flex flex-col gap-4 sm:flex-row">
@@ -434,10 +566,15 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
             name="title"
             value={title}
             onChange={(event) => {
+              if (submittedOperationIdRef.current === operationId) {
+                submittedOperationIdRef.current = null;
+                setOperationId(createCreationOperationId());
+              }
               hideSaveConfirmation();
               setTitle(event.target.value);
             }}
             required
+            maxLength={200}
             disabled={!loaded || isPending}
           />
         </label>
@@ -448,6 +585,10 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
             type="date"
             value={noteDate}
             onChange={(event) => {
+              if (submittedOperationIdRef.current === operationId) {
+                submittedOperationIdRef.current = null;
+                setOperationId(createCreationOperationId());
+              }
               hideSaveConfirmation();
               setNoteDate(event.target.value);
             }}
@@ -462,11 +603,17 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
           contentVersion={contentVersion}
           onChange={handleEditorChange}
           onDirty={(reader) => {
+            if (submittedOperationIdRef.current === operationId) {
+              submittedOperationIdRef.current = null;
+              setOperationId(createCreationOperationId());
+            }
             hideSaveConfirmation();
             handleEditorDirty(reader);
             save({
               title,
               noteDate,
+              operationId,
+              baseRevision,
               ...createDocumentEditDraftMetadata(
                 hasStaleDraftBase
                   ? draftBaseFingerprintRef.current
@@ -503,7 +650,15 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
       <div className="flex justify-end">
         <Button
           type="submit"
-          disabled={!loaded || !canSubmit || isPending || hasStaleDraftBase || !title.trim() || isRichTextEmpty(contentHtml)}
+          disabled={
+            !loaded ||
+            !canSubmit ||
+            isPending ||
+            hasStaleDraftBase ||
+            !operationId ||
+            !title.trim() ||
+            isRichTextEmpty(contentHtml)
+          }
           className="gap-2"
         >
           <Save className="h-4 w-4" aria-hidden="true" />

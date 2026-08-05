@@ -46,6 +46,7 @@
 | FR-006 | 공지·커뮤니티·1:1 Q&A는 작성, 목록, 상세, 답변 또는 댓글 흐름을 제공해야 한다. | 역할별 작성 권한과 소유권 검사를 서버에서 수행하고 성공·실패 상태를 반환한다. | 구현 |
 | FR-007 | 캘린더 피드는 본인·관리자 세션 또는 유효한 서명 token으로만 접근할 수 있어야 한다. | 허용 요청은 `.ics`를 반환하고 그 외 요청은 거부한다. | 구현 |
 | FR-008 | 미디어 업로드는 서버가 발급한 제한 시간 presigned URL을 사용해야 한다. | 인증된 요청만 URL을 발급하고 허용하지 않은 파일 정책은 서버에서 거부한다. | 부분 구현 |
+| FR-009 | 개인 노트는 수정 이력과 휴지통을 제공하고, 재전송·동시 편집·영구 삭제 뒤 늦은 요청에도 일관된 상태를 유지해야 한다. | version 기반 조건부 저장, 불변 revision·operation ledger, 30일 휴지통, 복원·관리자 purge, tombstone 부활 방지를 격리 D1에서 검증한다. | 구현 |
 
 ## 비기능 요구사항
 
@@ -56,10 +57,24 @@
 | NFR-003 | 핵심 흐름은 키보드만으로 조작 가능하고 명확한 focus·상태 정보를 제공해야 한다. | semantic control, focus indicator, label, reduced-motion 대응이 정적·컴포넌트 테스트를 통과한다. | 부분 충족 |
 | NFR-004 | 360px 이상의 화면에서 주요 탐색과 작성 흐름이 가로 잘림 없이 동작해야 한다. | 탭·테이블·캘린더에 좁은 화면용 layout 또는 overflow 전략이 있다. | 부분 충족 |
 | NFR-005 | 변경은 lint, typecheck, build와 핵심 회귀 테스트를 통과해야 한다. | `npm run lint`, `npx tsc --noEmit`, `npm run build`, unit/integration test가 성공한다. | 부분 충족 |
-| NFR-006 | D1 migration과 Cloudflare Worker build는 재현 가능해야 한다. | `npm run db:check`가 SQL·journal·snapshot·현재 schema 일치를 확인하고 local/remote 적용 이력이 정합하며 `npm run build:worker`가 성공한다. | 부분 충족 |
+| NFR-006 | D1 migration과 Cloudflare Worker build는 재현 가능해야 한다. | `npm run db:check`가 SQL·journal·snapshot·현재 schema, CHECK·trigger, 기존 schema upgrade를 확인하고 local/remote 적용 이력이 정합하며 `npm run build:worker`가 성공한다. | 부분 충족 |
 | NFR-007 | 로딩·빈 상태·오류·성공 피드백은 사용자가 다음 행동을 알 수 있게 해야 한다. | route와 주요 mutation마다 상태 UI와 복구 행동을 제공한다. | 부분 충족 — 대시보드·과제·Q&A 보강 |
-| NFR-008 | 문서 작성은 새로고침·화면 이동·일시적 저장 실패 뒤에도 이어갈 수 있어야 한다. | 노트·게시물·Q&A의 사용자·문서별 로컬 초안, 식별 가능한 복구본, 미래 version 제출 잠금, 안정 URL, 복귀 경로, 최대 5초 입력 checkpoint, 저장소 전면 차단 제출 보호, 동시 편집 충돌 감지와 동일 생성·편집 요청 재전송 보호가 동작한다. | 부분 충족 — 개인 전용 단일 기기 연속성과 요청 재전송 보호 구현, 공유 기기·로그아웃 로컬 retention과 서버 초안·revision 미구현 |
+| NFR-008 | 문서 작성은 새로고침·화면 이동·일시적 저장 실패 뒤에도 이어갈 수 있어야 한다. | 노트·게시물·Q&A의 사용자·문서별 로컬 초안, 식별 가능한 복구본, 미래 version 제출 잠금, 안정 URL, 복귀 경로, 최대 5초 입력 checkpoint, 저장소 전면 차단 제출 보호, 동시 편집 충돌 감지와 동일 생성·편집 요청 재전송 보호가 동작한다. | 부분 충족 — 개인 노트 서버 revision·휴지통과 단일 기기 복구 구현, 서버 초안·다중 기기 동기화와 로그아웃 정리 미구현 |
 | NFR-009 | 운영 데이터는 검증 가능한 백업과 복구 절차를 가져야 한다. | D1 export의 무결성을 확인하고 격리 환경 복구 rehearsal을 정기적으로 수행하며 결과를 기록한다. | 부분 충족 — 절차 문서화, 원격 rehearsal 미실행 |
+
+## 문서 수명주기와 개인정보 정책
+
+| 항목 | 확정 정책 | 현재 적용 상태 |
+|---|---|---|
+| revision 보존 | 개인 노트의 full-snapshot revision은 문서가 active이거나 휴지통에 있는 동안 모두 보존한다. 과거 revision을 개별 삭제·수정하지 않으며 영구 삭제 또는 승인된 계정 삭제 때 본문과 함께 제거한다. | 개인 노트 적용 |
+| 휴지통 | 삭제 시점부터 30일 동안 복원할 수 있다. 30일이 지나도 자동 삭제하지 않으며 관리자만 명시적으로 영구 삭제할 수 있다. 복원 후 다시 삭제하면 새 삭제 시각부터 계산한다. | 개인 노트 적용 |
+| 영구 삭제 | 관리자, 30일 만료, 현재 version 일치를 모두 요구한다. head와 revision을 제거하고 최소 operation ledger와 tombstone을 남겨 늦은 요청의 부활을 막는다. | 개인 노트 적용 |
+| 문서 최대 크기 | sanitize가 끝난 개인 노트 HTML 본문은 800 KiB, 제목은 200자까지 허용한다. Server Action 기본 body에 action/form envelope 여유를 남긴 값이다. 초과 요청은 head·revision·receipt를 쓰지 않고 로컬 초안을 유지한다. | 개인 노트 적용 |
+| 사용자 저장공간 | 사용자별 active/trash head와 내용 변경 revision을 합쳐 100 MiB를 허용한다. `TRASH`·`RESTORE_TRASH` 상태 snapshot은 사용자 quota에서 제외하되 실제 DB 사용량에는 포함해 별도 관측한다. 한도 초과 시 내용 저장·과거 revision 복원을 막고 휴지통 이동·영구 삭제는 허용한다. | 개인 노트 적용, 운영 경보 미구현 |
+| 서버 초안 | 사용자·문서별 최신 서버 초안은 마지막 저장 뒤 30일 보존하고, 게시 완료·명시적 폐기·계정 삭제 때 즉시 제거한다. | 정책 확정, 구현 예정 |
+| 충돌 처리 | revision/version 기반 충돌을 감지하며 자동 병합하지 않는다. 현재 초안은 유지하고 서버 최신본을 확인·복사한 뒤 서버본 사용 또는 내 초안으로 계속을 명시적으로 선택한다. | 개인 노트 적용, 다중 기기 초안 비교는 구현 예정 |
+| 로그아웃·계정 전환 | 해당 계정의 canonical·recovery·future·legacy 로컬 초안을 즉시 지운다. 오프라인 기기는 다음 인증 동기화 때 정리한다. | 정책 확정, 구현 예정 |
+| 계정 삭제 | 문서 본문·revision·서버 초안은 승인된 삭제 흐름에서 즉시 제거하고 모든 기기의 로컬 초안은 다음 동기화 때 폐기한다. anti-replay용 ledger·tombstone의 raw 계정 식별자는 30일만 보존한 뒤 전용 erasure 작업으로 삭제한다. 이 흐름이 구현되기 전에는 note를 가진 profile 삭제를 `RESTRICT`한다. | `RESTRICT` 적용, 전용 삭제 흐름은 구현 예정 |
 
 ## 향후 결정 사항
 
@@ -67,4 +82,5 @@
 - 디깅 보드와 과제 피드백을 장기적으로 오디오 파형 기반 작업 공간까지 확장할지.
 - 알림 채널을 앱 내부, 이메일, 캘린더 중 어디까지 지원할지.
 - production smoke test 계정·fixture와 R2 media retention 정책을 어떻게 운영할지.
-- 문서 revision, 휴지통, 서버 초안과 다중 기기 충돌 해결을 어느 단계에서 도입할지.
+- 확정한 서버 초안·계정 삭제·로컬 초안 정리 정책을 어떤 운영 UI와 순서로 구현할지.
+- 개인 노트에서 검증한 revision·휴지통·ledger 계약을 게시물과 Q&A에 어떻게 확장할지.

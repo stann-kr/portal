@@ -2,6 +2,15 @@
 
 공개 가능한 결과 중심 변경 요약이다. 날짜 아래에 같은 날의 변경을 모으고 최신 항목을 위에 둔다.
 
+## 2026-08-06
+
+### 변경 요약
+
+- 개인 노트에 version 기반 동시 편집 감지와 full-snapshot 불변 revision 이력을 추가했다. 같은 저장 요청은 operation ledger로 정확히 재전송하고, 과거 요청의 결과 revision과 현재 head revision을 구분해 최신 내용을 되감지 않는다.
+- 노트 삭제를 30일 휴지통으로 바꾸고 목록 분리, 상세 읽기 전용 상태, 복원, 변경 이력 조회·과거 버전 복원과 만료 뒤 관리자 영구 삭제를 제공한다. 영구 삭제 뒤에는 최소 tombstone이 같은 ID의 부활을 막는다.
+- Server Action 요청 envelope 여유를 포함해 sanitize된 노트 본문 800 KiB·제목 200자·사용자별 내용 저장 100 MiB 정책을 적용했다. 충돌 시 자동 병합하지 않고 내 초안을 유지한 채 서버 최신본을 펼쳐 확인·복사하고 어느 쪽을 사용할지 선택한다.
+- 새 `0008` migration은 기존 노트를 version 1 `BASELINE`으로 이관하고 profile 삭제를 `RESTRICT`한다. migration doctor가 CHECK·trigger, 불변/부활 방지 부정 probe, `0007` fixture upgrade와 inbound foreign key 차단까지 검사한다.
+
 ## 2026-08-05
 
 ### 변경 요약

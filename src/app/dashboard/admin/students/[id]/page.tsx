@@ -21,7 +21,7 @@ import { ThreadList } from "@/components/qna/ThreadList";
 import { PrivateNoteForm } from "@/components/notes/PrivateNoteForm";
 import { DeleteNoteButton } from "@/components/notes/DeleteNoteButton";
 import { RichTextContent } from "@/components/editor/RichTextContent";
-import { MessageSquarePlus, PencilLine } from "lucide-react";
+import { MessageSquarePlus, PencilLine, Trash2 } from "lucide-react";
 import Link from "next/link";
 import type { DiggingColumnType, QnaStatus } from "@/db/schema";
 
@@ -82,7 +82,16 @@ async function NotesTabContent({
 
       {/* 노트 목록 */}
       <div className="md:col-span-2 space-y-4">
-        <h2 className="text-lg font-semibold">노트 기록 ({notes.length})</h2>
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-lg font-semibold">노트 기록 ({notes.length})</h2>
+          <Link
+            href={`/dashboard/notes/trash?studentId=${encodeURIComponent(studentId)}&returnTo=${encodeURIComponent(`/dashboard/admin/students/${studentId}?tab=notes`)}`}
+            className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
+          >
+            <Trash2 className="h-4 w-4" aria-hidden="true" />
+            휴지통
+          </Link>
+        </div>
         {notes.length === 0 ? (
           <div className="p-12 text-center text-muted-foreground border border-dashed rounded-xl bg-muted/10">
             <p className="text-sm">아직 작성된 1:1 노트가 없습니다.</p>
@@ -122,7 +131,7 @@ async function NotesTabContent({
                       이어쓰기
                     </Link>
                     {note.authorId === adminId && (
-                      <DeleteNoteButton noteId={note.id} />
+                      <DeleteNoteButton noteId={note.id} version={note.version} />
                     )}
                   </div>
                 </div>

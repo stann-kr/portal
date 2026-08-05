@@ -1067,6 +1067,102 @@ test("노트 자체 저장의 정규화 결과와 서버 prop이 먼저 반영�
   );
 });
 
+test("노트 version 충돌은 내 초안을 보존하고 서버 최신본 확인·선택 뒤 새 operation으로 재시도한다", { concurrency: false }, async (context) => {
+  const noteId = "note-version-conflict-choice";
+  const actorId = "note-version-conflict-actor";
+  const action = async () => ({
+    error: "다른 화면에서 이 노트가 먼저 변경되었습니다.",
+    conflictKind: "VERSION_CONFLICT" as const,
+    currentRevision: 2,
+    conflictNote: {
+      id: noteId,
+      title: "서버 최신 제목",
+      contentHtml: "<p>서버 최신 본문</p>",
+      noteDate: null,
+      version: 2,
+    },
+  });
+  const harness = await renderForm(
+    context,
+    <NoteEditorForm
+      action={action}
+      actorId={actorId}
+      note={{
+        id: noteId,
+        title: "기준 제목",
+        contentHtml: "<p>기준 본문</p>",
+        noteDate: null,
+        version: 1,
+      }}
+    />,
+  );
+  const titleInput = harness.container.querySelector('input[name="title"]');
+  const operationInput = harness.container.querySelector(
+    'input[name="operationId"]',
+  );
+  const baseRevisionInput = harness.container.querySelector(
+    'input[name="baseRevision"]',
+  );
+  assert.equal(titleInput?.tagName, "INPUT");
+  assert.equal(operationInput?.tagName, "INPUT");
+  assert.equal(baseRevisionInput?.tagName, "INPUT");
+  const firstOperationId = (operationInput as unknown as HTMLInputElement).value;
+  const editor = harness.container.querySelector('textarea[aria-label="노트 내용"]');
+  assert.equal(editor?.tagName, "TEXTAREA");
+  const editorValueSetter = Object.getOwnPropertyDescriptor(
+    harness.browserWindow.HTMLTextAreaElement.prototype,
+    "value",
+  )?.set;
+  assert.ok(editorValueSetter);
+  await act(async () => {
+    editorValueSetter.call(editor, "<p>내 충돌 본문</p>");
+    editor?.dispatchEvent(
+      new harness.browserWindow.Event("input", { bubbles: true }) as unknown as Event,
+    );
+  });
+  const submitButton = harness.container.querySelector('button[type="submit"]');
+  assert.equal(submitButton?.tagName, "BUTTON");
+  await act(async () => {
+    (submitButton as unknown as HTMLButtonElement).click();
+  });
+  await waitForCondition(
+    () => /서버 최신본 2번 확인·복사/u.test(harness.container.textContent ?? ""),
+    "version 충돌 뒤 서버 최신본 비교 UI가 표시되어야 합니다.",
+  );
+
+  assert.equal(
+    (harness.container.querySelector('textarea[aria-label="노트 내용"]') as unknown as HTMLTextAreaElement)
+      .value,
+    "<p>내 충돌 본문</p>",
+  );
+  assert.match(harness.container.textContent ?? "", /서버 최신 제목/u);
+  assert.match(harness.container.textContent ?? "", /서버 최신 본문/u);
+  const keepDraftButton = [...harness.container.querySelectorAll("button")].find(
+    (button) => button.textContent?.includes("현재 초안으로 계속"),
+  );
+  assert.ok(keepDraftButton);
+  await act(async () => {
+    (keepDraftButton as unknown as HTMLButtonElement).click();
+  });
+
+  assert.equal(
+    (harness.container.querySelector('textarea[aria-label="노트 내용"]') as unknown as HTMLTextAreaElement)
+      .value,
+    "<p>내 충돌 본문</p>",
+  );
+  assert.equal(
+    (harness.container.querySelector('input[name="baseRevision"]') as unknown as HTMLInputElement)
+      .value,
+    "2",
+  );
+  assert.notEqual(
+    (harness.container.querySelector('input[name="operationId"]') as unknown as HTMLInputElement)
+      .value,
+    firstOperationId,
+  );
+  assert.doesNotMatch(harness.container.textContent ?? "", /더 최신 서버 노트가 있습니다/u);
+});
+
 test("stale legacy 노트를 유지해 제출하면 canonical을 지우고 old-base recovery ghost를 숨긴다", { concurrency: false }, async (context) => {
   const noteId = "note-stale-legacy-submit";
   const actorId = "stale-legacy-submit-actor";

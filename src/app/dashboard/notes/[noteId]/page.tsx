@@ -1,11 +1,17 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { ArrowLeft, LockKeyhole } from "lucide-react";
+import { ArrowLeft, History, LockKeyhole } from "lucide-react";
 import { auth } from "@/auth";
-import { getPrivateNote, updatePrivateNote } from "@/lib/actions/privateNotes";
+import {
+  getPrivateNoteIncludingTrash,
+  updatePrivateNote,
+} from "@/lib/actions/privateNotes";
 import { safeReturnPath } from "@/lib/safe-return-path";
 import { NoteEditorForm } from "@/components/notes/NoteEditorForm";
 import { RichTextContent } from "@/components/editor/RichTextContent";
+import { DeleteNoteButton } from "@/components/notes/DeleteNoteButton";
+import { NoteTrashActions } from "@/components/notes/NoteTrashActions";
+import { PRIVATE_NOTE_TRASH_RETENTION_SECONDS } from "@/lib/private-note-continuity";
 
 export const metadata = { title: "노트" };
 
@@ -20,7 +26,7 @@ export default async function NotePage({
   if (!session?.user?.id) redirect("/login");
 
   const { noteId } = await params;
-  const note = await getPrivateNote(noteId);
+  const note = await getPrivateNoteIncludingTrash(noteId);
   if (!note) notFound();
 
   const fallback = session.user.role === "admin" ? "/dashboard/admin" : "/dashboard/student";
@@ -28,6 +34,18 @@ export default async function NotePage({
   const returnTo = safeReturnPath(requestedReturnTo, fallback);
   const canEdit = session.user.role === "admin" || session.user.id === note.authorId;
   const action = updatePrivateNote.bind(null, note.id);
+  const purgeEligibleAt = note.deletedAt
+    ? new Date(
+        note.deletedAt.getTime() +
+          PRIVATE_NOTE_TRASH_RETENTION_SECONDS * 1000,
+      )
+    : null;
+  const isTrashRetentionExpired = Boolean(
+    purgeEligibleAt && purgeEligibleAt.getTime() <= Date.now(),
+  );
+  const canPurge = Boolean(
+    session.user.role === "admin" && isTrashRetentionExpired,
+  );
 
   return (
     <article className="mx-auto max-w-4xl space-y-6 px-4 py-6 sm:px-6">
@@ -39,21 +57,54 @@ export default async function NotePage({
           <ArrowLeft className="h-4 w-4" aria-hidden="true" />
           이전 작업으로 돌아가기
         </Link>
-        <div>
-          <p className="text-xs text-muted-foreground">
-            {note.authorName ?? "작성자 미상"} · {new Date(note.noteDate ?? note.createdAt ?? Date.now()).toLocaleDateString("ko-KR")}
-          </p>
-          <h1 className="mt-1 text-2xl font-semibold tracking-tight">{note.title}</h1>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-xs text-muted-foreground">
+              {note.authorName ?? "작성자 미상"} · {new Date(note.noteDate ?? note.createdAt ?? Date.now()).toLocaleDateString("ko-KR")}
+            </p>
+            <h1 className="mt-1 text-2xl font-semibold tracking-tight">{note.title}</h1>
+          </div>
+          <div className="flex items-center gap-2">
+            <Link
+              href={`/dashboard/notes/${note.id}/history?returnTo=${encodeURIComponent(returnTo)}`}
+              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border px-3 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            >
+              <History className="h-4 w-4" aria-hidden="true" />
+              변경 이력
+            </Link>
+            {!note.deletedAt && canEdit ? (
+              <DeleteNoteButton noteId={note.id} version={note.version} />
+            ) : null}
+          </div>
         </div>
       </header>
 
-      {canEdit ? (
+      {note.deletedAt ? (
+        <section className="space-y-5 rounded-xl border border-warning/30 bg-warning-muted p-5">
+          <div className="space-y-1">
+            <h2 className="font-semibold">휴지통에 있는 노트입니다</h2>
+            <p className="text-sm text-muted-foreground">
+              {note.deletedAt.toLocaleString("ko-KR")}에 삭제되었습니다. 복원 가능 기한은{" "}
+              {purgeEligibleAt?.toLocaleString("ko-KR")}까지이며, 휴지통에서는 편집할 수 없습니다.
+            </p>
+          </div>
+          <NoteTrashActions
+            noteId={note.id}
+            version={note.version}
+            canRestore={canEdit && !isTrashRetentionExpired}
+            canPurge={canPurge}
+            returnTo={returnTo}
+          />
+          <RichTextContent html={note.contentHtml} />
+        </section>
+      ) : canEdit ? (
         <NoteEditorForm
           note={{
             id: note.id,
             title: note.title,
             contentHtml: note.contentHtml,
             noteDate: note.noteDate,
+            version: note.version,
           }}
           actorId={session.user.id}
           action={action}

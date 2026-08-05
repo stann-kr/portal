@@ -9,7 +9,7 @@ import { useActionState, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Save } from "lucide-react";
+import { ArrowLeft, Save, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { CreateNoteState } from "@/lib/actions/privateNotes";
@@ -193,7 +193,16 @@ export function NoteFullForm({ action, actorId, studentId, returnTo }: NoteFullF
           <ArrowLeft className="w-4 h-4" />
           포털로 돌아가기
         </Link>
-        <h1 className="text-2xl font-semibold mt-2">노트 작성</h1>
+        <div className="mt-2 flex items-center justify-between gap-3">
+          <h1 className="text-2xl font-semibold">노트 작성</h1>
+          <Link
+            href={`/dashboard/notes/trash?returnTo=${encodeURIComponent(returnTo)}`}
+            className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
+          >
+            <Trash2 className="h-4 w-4" aria-hidden="true" />
+            휴지통
+          </Link>
+        </div>
       </div>
 
       <form
@@ -272,6 +281,7 @@ export function NoteFullForm({ action, actorId, studentId, returnTo }: NoteFullF
               name="title"
               placeholder="오늘의 수업 요약"
               required
+              maxLength={200}
               disabled={!loaded || isPending}
               value={title}
               onChange={(event) => setTitle(event.target.value)}

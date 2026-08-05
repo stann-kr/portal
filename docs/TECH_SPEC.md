@@ -61,6 +61,8 @@ OpenNext → Cloudflare Worker
 | `/dashboard/student/assignments/[id]` | 과제 상세 직접 접근 |
 | `/dashboard/student/notes/new` | 개인 노트 작성 직접 접근 |
 | `/dashboard/notes/[noteId]` | 권한 검증된 개인 노트 읽기·이어쓰기 |
+| `/dashboard/notes/[noteId]/history` | 개인 노트 불변 revision 조회·선택 복원 |
+| `/dashboard/notes/trash` | 권한 범위의 개인 노트 휴지통·복원·관리자 영구 삭제 |
 | `/dashboard/admin/students/new` | 학생 추가 |
 | `/dashboard/admin/students/[id]` | 학생 상세 |
 | `/dashboard/admin/categories` | 카테고리 관리 |
@@ -86,7 +88,8 @@ OpenNext → Cloudflare Worker
 - 사용자·수업: `profiles`, `curriculums`, `lessons`
 - 과제·피드백: `assignments`, `feedbacks`
 - 콘텐츠: `categories`, `posts`, `comments`
-- 개인 학습 기록: `private_notes`, `calendar_events`
+- 개인 학습 기록: `private_notes`, `private_note_revisions`, `calendar_events`
+- 문서 연속성: `document_operation_ledger`, `document_tombstones`, `document_batch_abort_guard`
 - 디깅: `digging_columns`, `digging_tracks`
 - Q&A: `qna_threads`, `qna_replies`
 
@@ -98,7 +101,7 @@ Cloudflare binding:
 | `BUCKET` | R2 bucket | 미디어 저장 |
 | `ASSETS` | OpenNext assets | 정적 asset |
 
-Migration SQL은 `drizzle/`, Drizzle metadata는 `drizzle/meta/`에 둔다. Wrangler는 SQL 파일명과 D1의 적용 이력을 기준으로 migration을 실행하고, Drizzle metadata는 다음 schema diff 생성 기준으로 사용한다. SQL·journal·snapshot은 `0000~0007`까지 대응하며 `npm run db:check`가 empty replay, current schema, latest snapshot의 구조 일치를 검사한다.
+Migration SQL은 `drizzle/`, Drizzle metadata는 `drizzle/meta/`에 둔다. Wrangler는 SQL 파일명과 D1의 적용 이력을 기준으로 migration을 실행하고, Drizzle metadata는 다음 schema diff 생성 기준으로 사용한다. SQL·journal·snapshot은 `0000~0008`까지 대응한다. `npm run db:check`는 empty replay와 current schema/latest snapshot의 column·FK·index뿐 아니라 문서 연속성 CHECK·trigger, 불변·부활 방지 부정 probe, `0007` fixture upgrade와 inbound FK preflight를 검사한다.
 
 ## 인증과 권한
 
@@ -117,16 +120,19 @@ Migration SQL은 `drizzle/`, Drizzle metadata는 `drizzle/meta/`에 둔다. Wran
 - editor 입력 transaction은 문서 revision만 증가시키고 전체 HTML 직렬화는 200ms 정지, draft flush 또는 submit 경계까지 늦춘다. 연속 입력이 멈추지 않아도 첫 pending 뒤 최대 5초에 최신 snapshot을 checkpoint한다. 최신 HTML reader를 draft pending에 즉시 연결하고 revision별 결과를 cache해 마지막 입력을 잃지 않으면서 매 키 입력의 전체 문서 순회를 피한다. Markdown 전체 parse와 draft payload signature 계산도 같은 지연 경계를 사용한다.
 - slash command 탐색은 커서 앞 검색어 최대 64자와 경계 문자만 읽어 단일 문단 전체를 매 transaction마다 순회하지 않는다.
 - page hide·탭 숨김·unmount 전에 pending 값을 flush하며, 저장공간 재시도도 실패하면 writer별 메모리 안전본을 유지하고 브라우저 이탈을 경고한다. 저장소가 회복되면 canonical보다 최신인 안전본만 현재 입력으로 채택하고 나머지는 durable recovery로 승격한다. 제출 cutoff용 원래 작성 시각과 recovery 보존 시작 시각을 분리하며, 같은 문서의 열린 탭에는 `BroadcastChannel`과 동일 문서 event로 제출 완료를 전달한다. 제출 완료 시 저장소 읽기·쓰기·삭제가 모두 막혀도 page-session marker로 cutoff 이전 초안을 숨기고, durable tombstone과 정리가 확인될 때까지 이탈을 경고한다. 같은 내용의 cutoff는 새 벽시계와 이미 관측한 causal 저장 시각 중 큰 값을 사용해 최초 제출 직전 시계 역행에도 낮아지지 않는다.
-- 충돌·중단 복구본은 최대 30일 보존하며 최근 20개 기준으로 정리하고, UI에서 전체 저장 시각·제한된 제목/본문 미리보기·현재 화면본을 확인한 뒤 선택 복원하거나 2단계 확인으로 삭제할 수 있다. 같은 내용의 안전본은 causal 저장 시각이 가장 최신인 사본을 남기며, canonical과 같은 사본도 별도 key 사이의 교체 경합 때문에 화면에서만 숨기고 자동 물리 삭제하지 않는다. 복구본 목록 정리는 compaction에서 한 번 해석한 recovery·marker·canonical·causal raw 상태를 재사용하고, namespace가 달라지면 만료 marker를 보수적으로 유지한다. 여러 제출 표현의 cutoff 계산·삭제 후보 관측과 marker 기록도 각각 batch 처리해 같은 대형 원문과 marker namespace를 alias마다 다시 순회하지 않는다. 제출 이력은 내용 서명별 append-only tombstone을 같은 30일 동안 개수 제한 없이 유지해 연속 제출 뒤 잠든 탭의 ghost 복원을 차단한다. 복원·채택 시점에도 tombstone과 원래 저장 시각을 다시 검증하며, tombstone이 가리는 causal snapshot이 남아 있으면 기본 보존 기간을 넘겨도 먼저 제거하지 않는다. 작성 폼이 활성인 동안의 선제 정리는 브라우저 유휴 시간이 남으면 최대 4개, 시간 제한으로 실행될 때는 1개 key씩 나눠 현재 열리지 않은 문서의 current-version 불변 recovery만 정리한다. 큰 key·원문과 causal 전역 확인이 필요한 marker는 이 경로에서 보존하고, marker는 해당 source 정리에서, 큰 recovery와 marker를 포함한 전역 정리는 quota 재시도에서 수행한다. future·legacy·손상 데이터와 active source는 전역 정리에서 보수적으로 보존한다. 미제출 canonical은 이어쓰기를 위해 자동 TTL 정리 대상에서 제외되고 현재 로그아웃·계정 삭제 시 자동 제거되지 않으므로, 공유 기기 보존 정책과 기기별 초안 목록·명시 폐기 UX는 미확정이다.
+- 충돌·중단 복구본은 최대 30일 보존하며 최근 20개 기준으로 정리하고, UI에서 전체 저장 시각·제한된 제목/본문 미리보기·현재 화면본을 확인한 뒤 선택 복원하거나 2단계 확인으로 삭제할 수 있다. 같은 내용의 안전본은 causal 저장 시각이 가장 최신인 사본을 남기며, canonical과 같은 사본도 별도 key 사이의 교체 경합 때문에 화면에서만 숨기고 자동 물리 삭제하지 않는다. 복구본 목록 정리는 compaction에서 한 번 해석한 recovery·marker·canonical·causal raw 상태를 재사용하고, namespace가 달라지면 만료 marker를 보수적으로 유지한다. 여러 제출 표현의 cutoff 계산·삭제 후보 관측과 marker 기록도 각각 batch 처리해 같은 대형 원문과 marker namespace를 alias마다 다시 순회하지 않는다. 제출 이력은 내용 서명별 append-only tombstone을 같은 30일 동안 개수 제한 없이 유지해 연속 제출 뒤 잠든 탭의 ghost 복원을 차단한다. 복원·채택 시점에도 tombstone과 원래 저장 시각을 다시 검증하며, tombstone이 가리는 causal snapshot이 남아 있으면 기본 보존 기간을 넘겨도 먼저 제거하지 않는다. 작성 폼이 활성인 동안의 선제 정리는 브라우저 유휴 시간이 남으면 최대 4개, 시간 제한으로 실행될 때는 1개 key씩 나눠 현재 열리지 않은 문서의 current-version 불변 recovery만 정리한다. 큰 key·원문과 causal 전역 확인이 필요한 marker는 이 경로에서 보존하고, marker는 해당 source 정리에서, 큰 recovery와 marker를 포함한 전역 정리는 quota 재시도에서 수행한다. future·legacy·손상 데이터와 active source는 전역 정리에서 보수적으로 보존한다. 미제출 canonical은 이어쓰기를 위해 보존하지만 로그아웃·계정 전환·계정 삭제 시 해당 계정의 모든 local draft를 지우는 정책이다. 이 계정 경계 정리와 기기별 초안 폐기 UI는 아직 구현되지 않았다.
 - 포털 section, workspace view와 관리자 학생 선택은 URL에 기록한다. 작성 화면과 저장된 문서는 검증된 내부 `returnTo`를 전달해 직전 작업 문맥으로 돌아간다.
 - 첨부 업로드·서버 제출 중에는 제목·분류·첨부·editor mutation, submit, 화면 내 SPA link, 상위 상태 전환과 slide panel dismiss를 잠근다. hard navigation에는 이탈 경고를 제공하고 진행 중 업로드가 unmount되면 전송을 중단한다. 브라우저 Back/Forward와 임의의 programmatic route 전환은 client만으로 완전히 취소할 수 없으므로 실제 브라우저 E2E가 별도로 필요하다.
 - 새 노트·게시물·Q&A 질문·답변의 draft에는 UUIDv4 생성 작업 nonce를 저장하고 submit 직전에 전체 snapshot을 flush한다. 서버는 인증된 작성자·대상·문서 종류를 함께 영역 분리한 결정적 UUIDv8을 실제 resource ID로 사용한다. 같은 nonce와 정규화 payload의 순차·동시 재전송은 기존 결과를 반환하며, 같은 작성 흐름의 다른 payload는 초안을 유지한 채 기존 문서 열기 또는 별도 문서 분리를 선택하게 한다.
 - 개인 노트와 커뮤니티 게시물은 안정 URL에서 다시 편집할 수 있다. 편집 draft와 요청은 전체 서버 기준 본문을 복제하지 않고 문서 종류·ID·저장 원문·날짜를 영역 분리한 SHA-256 지문만 보존한다. rolling 구버전 client에는 유효 서버 문서와 같을 수 없는 고정 sentinel을 함께 저장해 compact draft를 안전한 stale 상태로 연다. 저장 성공 시 compact 표현, 기준 metadata가 없는 표현, 현재 서버 기준의 구버전 표현과 사용자 필드가 같은 실제 복원 표현에 각각 cutoff tombstone을 남겨 업데이트 전 탭이 제출 전 초안을 다시 복원하지 못하게 한다. 다른 사용자 내용의 복구본은 이 alias에 포함하지 않는다. 서버는 현재 저장본의 지문을 대조하고 실제 조회한 필드를 조건으로 갱신해 다른 화면의 선행 저장을 감지한다. 노트의 날짜 입력은 생성·편집 모두 비어 있거나 실제 존재하는 canonical `YYYY-MM-DD`만 허용한다. 오래된 기준본을 복원하면 서버 최신본과 현재 초안 중 선택하게 하며, 저장 성공 응답이 유실된 동일 payload 재전송은 update 전 현재값 확인과 CAS 실패 뒤 재조회로 성공에 수렴한다.
+- 개인 노트 mutation은 UUIDv4 operation ID와 명시적 base revision을 사용한다. D1 `batch()`와 로컬 SQLite transaction 안에서 immutable receipt, 조건부 head 변경, fail-closed sentinel, 새 full-snapshot revision을 함께 commit하거나 전부 rollback한다. 같은 operation의 exact replay는 historical result revision과 현재 head revision을 분리해 반환하며 다른 payload는 충돌로 거부한다. canonical no-op은 head와 revision을 늘리지 않고 재전송 가능한 receipt만 남긴다.
+- 개인 노트 삭제는 `deleted_at` soft delete다. active 기본 조회는 휴지통 노트를 제외하고, trash/restore와 과거 revision restore는 각각 새 revision을 만든다. 30일 만료 뒤 admin purge만 head와 revision을 제거하며 tombstone과 본문 없는 ledger가 늦은 create/update의 부활을 차단한다. revision은 문서가 active/trash인 동안 append-only이고 profile 삭제는 account-deletion workflow가 생기기 전 `RESTRICT`한다.
+- 개인 노트는 Server Action 기본 1MB body의 action/form envelope 여유를 남기기 위해 sanitize된 HTML 본문 800 KiB, 제목 200자, 사용자별 head와 내용 변경 revision 100 MiB의 logical quota를 적용한다. `TRASH`·`RESTORE_TRASH` 상태 snapshot은 사용자 quota에서 제외하고 실제 D1 사용량 관측 대상으로 남긴다. version 충돌은 자동 병합하지 않고 현재 초안을 보존한 채 서버 최신본을 펼쳐 확인·복사한 다음 서버본 사용 또는 현재 초안 계속을 선택한다.
 - 새 게시물·Q&A 질문·답변의 `Cmd/Ctrl+S`는 공개 action을 호출하지 않고 최신 form snapshot을 로컬에 flush한다. 노트와 기존 문서 편집의 단축키는 명시된 서버 저장 action을 사용한다.
 - Q&A의 스레드·첫 본문과 답변·상태 변경은 D1 binding batch 또는 로컬 SQLite transaction으로 함께 commit하거나 rollback한다. 답변 쓰기는 ownership과 `CLOSED` 상태를 원자 쓰기 안에서 다시 검증한다.
 - 모든 작성 form은 draft hydration이 끝날 때까지 입력을 잠근다. 종료된 Q&A도 로컬 초안이나 복구본이 남아 있으면 읽기 전용 composer를 유지하고, 업로드 오류·진행률은 alert와 progressbar 의미로 노출한다.
 
-현재 초안은 단일 브라우저 기기용이다. 서버 초안 동기화, 문서 revision, 휴지통, 다중 기기 merge는 구현되지 않았다. 저장소 자체를 사용할 수 없는 상태에서 브라우저 프로세스를 강제로 종료하면 메모리 안전본도 유지할 수 없다. 과거 owner 정보가 없는 local storage draft는 계정 간 노출을 막기 위해 자동 이관하지 않는다.
+현재 초안은 단일 브라우저 기기용이며 개인 노트만 서버 revision과 휴지통을 제공한다. 사용자·문서별 서버 초안, 오프라인 queue와 다중 기기 동기화는 구현되지 않았다. 저장소 자체를 사용할 수 없는 상태에서 브라우저 프로세스를 강제로 종료하면 메모리 안전본도 유지할 수 없다. 과거 owner 정보가 없는 local storage draft는 계정 간 노출을 막기 위해 자동 이관하지 않는다.
 
 ## 환경 변수와 설정
 
@@ -159,17 +165,17 @@ npm run build:worker
 npm audit --omit=dev --audit-level=moderate
 ```
 
-현재 migration consistency smoke, 개발용 관리자 seed의 환경·입력 경계, auth guard의 session·role·ownership, calendar token 변조·대상 불일치, HTML sanitize·YouTube payload, draft envelope·shadow·retention·연속 제출 tombstone·미래 version 보존과 제출 잠금, 안전한 복구 미리보기, 지연 문서 직렬화, rich text 빈 값, 안전한 복귀 경로, editor URL·삽입 panel Enter·고정 범위 slash command, portal 상태 registry, 학생 오늘과 관리자 업무함 selector 회귀 테스트가 자동화되어 있다. OS 임시 영역의 격리 D1으로 Q&A rollback·권한·`CLOSED` 경쟁과 노트·게시물 compact fingerprint CAS·동일 편집 재전송 수렴을 검증한다. DOM 격리 환경에서는 draft unmount·문서 전환·다중 작성 흐름·복구 동작과 실제 새 게시물·Q&A form의 최신 editor flush, `Cmd/Ctrl+S`·공개 action 분리, upload busy 잠금을 검증한다. 실제 브라우저 E2E, DB migration과 production deploy는 별도 범위다.
+현재 migration consistency와 `0007` upgrade, CHECK·trigger semantic probe, 개발용 관리자 seed의 환경·입력 경계, auth guard의 session·role·ownership, calendar token 변조·대상 불일치, HTML sanitize·YouTube payload, draft envelope·shadow·retention·연속 제출 tombstone·미래 version 보존과 제출 잠금, 안전한 복구 미리보기, 지연 문서 직렬화, rich text 빈 값, 안전한 복귀 경로, editor URL·삽입 panel Enter·고정 범위 slash command, portal 상태 registry, 학생 오늘과 관리자 업무함 selector 회귀 테스트가 자동화되어 있다. OS 임시 영역의 격리 D1으로 Q&A rollback·권한·`CLOSED` 경쟁과 개인 노트 create/update/no-op/trash/restore/revision restore/purge의 원자성·exact replay·동시 version 충돌·tombstone 부활 방지를 검증한다. DOM 격리 환경에서는 draft 복구와 실제 작성 form뿐 아니라 노트 충돌의 서버본 확인·초안 선택 UX를 검증한다. 실제 브라우저 E2E와 production migration·deploy는 별도 범위다.
 
 UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 시스템](./DESIGN_SYSTEM.md)을 기준으로 한다. 상태 registry는 label, semantic tone, icon key가 서로 어긋나지 않도록 단위 테스트로 보호한다.
 
 | 품질 경계 | 현재 자동화 | 다음 보강 |
 |---|---|---|
-| Migration | SQL·journal·snapshot·current schema empty replay | remote 적용 이력은 배포 준비 시 별도 점검 |
+| Migration | SQL·journal·snapshot·current schema empty replay, CHECK·trigger, `0007` upgrade·inbound FK preflight | remote 적용 이력은 배포 준비 시 별도 점검 |
 | 개발 credential | development/opt-in/env/input binding 단위 테스트 | 실제 local seed는 데이터 변경 작업으로 분리 |
 | 인증·권한 | 미인증·role·ownership 허용/거부 단위 테스트, Q&A 격리 D1 권한 회귀 | 다른 주요 server action의 실제 query·mutation 경계 테스트 |
 | 입력·콘텐츠 | script·event handler·위험 protocol XSS payload 테스트 | upload MIME·size 정책 테스트 |
-| 문서 연속성 | draft shadow·5초 최대 checkpoint·flush·복구·제출 경쟁 DOM 통합, storage 전면 차단 제출 보호, 실제 공개 form 저장 단축키·upload busy 조합, note/post compact draft·CAS 재전송과 Q&A 원자 쓰기 격리 D1 통합 | 실제 브라우저의 reload·offline·navigation·대형 문서 frame·delete/restore E2E |
+| 문서 연속성 | draft shadow·5초 최대 checkpoint·flush·복구·제출 경쟁 DOM 통합, storage 전면 차단 제출 보호, 개인 노트 revision·trash·ledger·tombstone 수명주기와 Q&A 원자 쓰기 격리 D1 통합 | 서버 초안·다중 기기 동기화와 실제 브라우저 reload·offline·navigation·대형 문서 E2E |
 | UI 상태 | status registry 단위 테스트, loading/error route, semantic landmark·control 정적 검토 | keyboard interaction component 테스트 |
 
 ## 변경 시 같이 볼 파일
@@ -199,12 +205,13 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 
 - runtime dependency audit은 현재 0건이다. 상위 의존성이 보안 패치 전 하위 의존성을 고정하는 구간은 `package.json` override로 제한하며, upstream stable이 해당 버전을 채택하면 override를 제거해야 한다.
 - 개발 도구 전체 audit에는 Drizzle Kit의 구형 esbuild loader 체인에서 발생하는 moderate 권고가 남아 있다. 현재 npm 제안은 호환되지 않는 구버전 downgrade이므로 upstream 패치를 추적한다.
-- migration SQL과 `drizzle/meta` 생성 이력은 `0007`까지 복구됐고 local D1도 빈 상태에서 전체 migration 재적용과 구조 검증을 통과했다. remote 이력은 별도 승인 전 추정하지 않는다.
+- migration SQL과 `drizzle/meta` 생성 이력은 `0008`까지 대응하고 local SQLite·격리 D1에서 전체 replay를 통과했다. remote 적용 이력은 별도 승인 전 추정하지 않는다.
 - 대표 문서 server action과 draft 생명주기의 격리 integration test는 있으나 실제 브라우저 reload·offline·navigation·delete/restore E2E는 없다.
-- 문서 revision·휴지통·서버 초안이 없다. 현재 노트·게시물은 snapshot 기반 충돌 감지와 탭별 복구본을 제공하지만 다중 기기 연속성은 지원하지 않는다.
-- 새 노트·게시물·Q&A·답변은 로컬 draft의 생성 작업 nonce와 기존 resource payload를 대조해 동일 재전송의 중복 생성을 막는다. 다만 별도 불변 생성 작업 원장이 없어 최초 생성 뒤 문서가 편집되거나 hard delete된 오래된 요청까지 영구적으로 증명할 수는 없다. Q&A 한 요청 안의 복합 쓰기 자체는 원자적이다.
-- 큰 문서의 전체 HTML·payload 서명은 매 입력이 아니라 지연된 flush·submit 경계에서 revision당 한 번만 만들고, 연속 입력은 최대 5초마다 최신본을 checkpoint한다. 편집 초안과 요청의 충돌 기준도 전체 원문 복제 대신 짧은 지문으로 제한한다. 다만 Server Action의 기본 요청 본문 한도와 제품의 문서 용량 정책을 확정하지 않았고, 실제 브라우저 대용량 문서의 frame budget과 autosave latency 기준·측정도 없어 제품급 입력 부드러움은 아직 검증되지 않았다.
+- 개인 노트는 revision·휴지통·불변 ledger/tombstone을 제공하지만 게시물·Q&A에는 아직 같은 수명주기가 없다. 서버 초안과 다중 기기 연속성도 지원하지 않는다.
+- 개인 노트의 오래된 요청은 immutable ledger와 tombstone으로 증명한다. 게시물·Q&A·답변은 여전히 resource payload와 생성 nonce를 대조하므로 수정·hard delete 뒤의 장기 anti-replay 원장이 없다. Q&A 한 요청 안의 복합 쓰기 자체는 원자적이다.
+- 큰 문서의 전체 HTML·payload 서명은 매 입력이 아니라 지연된 flush·submit 경계에서 revision당 한 번만 만들고, 연속 입력은 최대 5초마다 최신본을 checkpoint한다. 개인 노트는 저장 HTML 800 KiB와 logical history 100 MiB 정책을 적용한다. 다만 실제 브라우저의 100 KiB·500 KiB·1 MiB frame budget과 autosave·복구 latency를 측정하지 않아 제품급 입력 부드러움은 아직 검증되지 않았다.
 - rolling 호환용 제출 alias는 ghost 복원을 막기 위해 signature별 tombstone을 30일 동안 보존한다. 반복 편집 시 여러 unique entry가 origin 저장공간에 누적될 수 있으므로, 호환 종료 조건과 문서 namespace별 byte budget·용량 안내 정책은 아직 확정하지 않았다.
+- 로그아웃·계정 전환·계정 삭제 시 local draft를 즉시 폐기하고 계정 삭제 30일 뒤 ledger/tombstone raw ID를 지우는 정책은 확정했지만 전용 client cleanup·account-deletion erasure workflow는 아직 없다. 그 전까지 note를 가진 profile 삭제는 `RESTRICT`된다.
 - lockfile의 Wrangler는 Node.js 22 이상을 요구하지만 package engine과 Docker image는 Node.js 20을 허용한다. 지원 runtime과 배포 image를 같은 major로 정렬해야 한다.
 - 운영 D1 export·복구 절차는 문서화됐지만 승인된 원격 backup과 격리 restore rehearsal 기록은 아직 없다.
 - 일부 대형 client component는 상태 hook, domain view와 presentation 경계가 한 파일에 남아 있다.

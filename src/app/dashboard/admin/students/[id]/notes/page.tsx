@@ -5,7 +5,7 @@
 import { auth } from "@/auth";
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, BookOpen, MessageSquarePlus, PencilLine } from "lucide-react";
+import { ArrowLeft, BookOpen, MessageSquarePlus, PencilLine, Trash2 } from "lucide-react";
 import { getStudentById } from "@/lib/actions/students";
 import { getPrivateNotes } from "@/lib/actions/privateNotes";
 import { PrivateNoteForm } from "@/components/notes/PrivateNoteForm";
@@ -48,6 +48,13 @@ export default async function AdminStudentNotesPage({
         <p className="text-sm text-muted-foreground">
           {student.displayName || student.email} 학생과의 프라이빗 보드입니다.
         </p>
+        <Link
+          href={`/dashboard/notes/trash?studentId=${encodeURIComponent(studentId)}&returnTo=${encodeURIComponent(`/dashboard/admin/students/${studentId}/notes`)}`}
+          className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
+        >
+          <Trash2 className="h-4 w-4" aria-hidden="true" />
+          휴지통 보기
+        </Link>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
@@ -103,7 +110,7 @@ export default async function AdminStudentNotesPage({
                         이어쓰기
                       </Link>
                       {(session.user.id === note.authorId || session.user.role === "admin") && (
-                        <DeleteNoteButton noteId={note.id} />
+                        <DeleteNoteButton noteId={note.id} version={note.version} />
                       )}
                     </div>
                   </div>

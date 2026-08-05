@@ -15,6 +15,7 @@
 - migration metadata·empty replay 자동 검사와 lint, TypeScript typecheck, Next.js·Worker build를 기본 검증으로 사용한다.
 - 개발용 관리자 seed, auth guard, calendar token, HTML sanitize, UI 상태 registry와 학생 오늘 selector를 단위 테스트로 보호한다.
 - 문서 draft 생명주기와 Q&A·노트·게시물의 핵심 mutation은 격리 DOM·D1 integration test로 보호한다.
+- 개인 노트는 version 기반 저장, 불변 revision 이력, 30일 휴지통, 복원·관리자 영구 삭제와 anti-replay ledger/tombstone을 제공한다.
 
 ## 빠른 시작
 
@@ -78,10 +79,10 @@ docs/                       # 프로젝트 문서
 
 ## 현재 개발 우선순위
 
-1. 개인정보·계정 삭제·revision retention·용량 정책을 승인하고, 개인 노트 revision·휴지통·불변 operation ledger와 tombstone을 첫 schema vertical slice로 구현한다.
-2. 실제 브라우저의 reload·offline·navigation·delete/restore와 대용량 입력 성능을 자동화한다.
-3. 승인된 문서 생명주기를 게시물·Q&A와 서버 초안·다중 기기 연속성으로 확장한다.
-4. 큰 client component를 상태 hook, domain view, presentation 경계로 점진적으로 나눈다.
+1. 사용자·문서별 서버 초안, optimistic concurrency, 오프라인 재시도 queue와 다중 기기 초안 비교를 구현한다.
+2. 개인 노트에서 검증한 revision·휴지통·ledger 계약을 게시물과 Q&A에 확장한다.
+3. 실제 브라우저의 reload·offline·Back/Forward·다중 탭·대용량 입력 성능과 강제 종료 복구를 측정한다.
+4. 로그아웃·계정 전환·계정 삭제 시 로컬/서버 초안 정리와 D1 복구 rehearsal·관측을 완성한다.
 
 ## 문서 최신성 기준
 
