@@ -11,6 +11,12 @@ import { createDocumentDraftKey } from "@/lib/form-draft";
 import { isRichTextEmpty } from "@/lib/rich-text";
 import { toKstDateInputValue } from "@/lib/date-input";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
+import {
+  CREATION_OPERATION_FIELD,
+  createCreationOperationId,
+  parseCreationOperationId,
+} from "@/lib/creation-operation";
+import { CreationConflictActions } from "@/components/editor/CreationConflictActions";
 
 const FullEditor = dynamic(
   () => import("@/components/editor/FullEditor").then((m) => ({ default: m.FullEditor })),
@@ -18,6 +24,13 @@ const FullEditor = dynamic(
 );
 
 const initialState: CreateNoteState = {};
+
+type CreateNoteDraft = {
+  operationId?: string;
+  title: string;
+  noteDate: string;
+  contentHtml: string;
+};
 
 export function PrivateNoteForm({
   studentId,
@@ -33,13 +46,10 @@ export function PrivateNoteForm({
   const [title, setTitle] = useState("");
   const [noteDate, setNoteDate] = useState(today);
   const [contentHtml, setContentHtml] = useState("");
+  const [operationId, setOperationId] = useState("");
   const [editorKey, setEditorKey] = useState(0);
   const formRef = useRef<HTMLFormElement>(null);
-  const submittedDraftRef = useRef<{
-    title: string;
-    noteDate: string;
-    contentHtml: string;
-  } | null>(null);
+  const submittedDraftRef = useRef<CreateNoteDraft | null>(null);
   const handledNoteIdRef = useRef<string | null>(null);
 
   // 임시저장 복원/저장 (학생별 키)
@@ -47,21 +57,26 @@ export function PrivateNoteForm({
     loaded,
     save,
     clear,
+    flush,
     status,
     savedAt,
     restored,
     recoveries,
     restoreRecovery,
     discardRecovery,
-  } = useFormDraft<{ title: string; noteDate: string; contentHtml: string }>(
+  } = useFormDraft<CreateNoteDraft>(
     createDocumentDraftKey("note", actorId, `new:${studentId}`),
     (d) => {
+      setOperationId(
+        parseCreationOperationId(d.operationId) ?? createCreationOperationId(),
+      );
       setTitle(d.title ?? "");
       if (d.noteDate) setNoteDate(d.noteDate);
       setContentHtml(d.contentHtml ?? "");
     },
     {
       onReset: () => {
+        setOperationId(createCreationOperationId());
         setTitle("");
         setNoteDate(today);
         setContentHtml("");
@@ -77,8 +92,9 @@ export function PrivateNoteForm({
       clear();
       return;
     }
-    save({ title, noteDate, contentHtml });
-  }, [loaded, title, noteDate, contentHtml, save, clear]);
+    if (!operationId) return;
+    save({ operationId, title, noteDate, contentHtml });
+  }, [loaded, title, noteDate, contentHtml, operationId, save, clear]);
 
   // 저장 성공 시 draft 삭제 + 폼 초기화 (에디터 remount)
   useEffect(() => {
@@ -90,9 +106,15 @@ export function PrivateNoteForm({
       handledNoteIdRef.current = state.note.id;
       clear({
         reason: "submitted",
-        submittedData: submittedDraftRef.current ?? { title, noteDate, contentHtml },
+        submittedData: submittedDraftRef.current ?? {
+          operationId,
+          title,
+          noteDate,
+          contentHtml,
+        },
       });
       submittedDraftRef.current = null;
+      setOperationId(createCreationOperationId());
       setTitle("");
       setNoteDate(today);
       setContentHtml("");
@@ -101,18 +123,42 @@ export function PrivateNoteForm({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.note?.id]);
 
+  const hasOperationConflict = Boolean(
+    state.operationConflict &&
+    state.conflictedOperationId === operationId &&
+    state.existingId,
+  );
+
   return (
     <form
       ref={formRef}
       action={formAction}
       className="space-y-4"
-      onSubmit={() => {
-        submittedDraftRef.current = { title, noteDate, contentHtml };
+      onSubmit={(event) => {
+        if (pending || !operationId) {
+          event.preventDefault();
+          return;
+        }
+        const submittedDraft = { operationId, title, noteDate, contentHtml };
+        save(submittedDraft);
+        flush();
+        submittedDraftRef.current = submittedDraft;
       }}
     >
-      {state.error && (
+      <input type="hidden" name={CREATION_OPERATION_FIELD} value={operationId} />
+
+      {state.error && (!state.operationConflict || hasOperationConflict) && (
         <p role="alert" className="text-sm text-destructive">{state.error}</p>
       )}
+      {hasOperationConflict && state.existingId ? (
+        <CreationConflictActions
+          existingHref={`/dashboard/notes/${state.existingId}`}
+          existingLabel="기존 노트 열기"
+          separateLabel="별도 노트로 저장"
+          onSeparate={() => setOperationId(createCreationOperationId())}
+          disabled={pending}
+        />
+      ) : null}
       {state.success && (
         <p role="status" className="text-sm text-success">노트가 저장되었습니다.</p>
       )}
@@ -172,7 +218,7 @@ export function PrivateNoteForm({
         )}
       </div>
 
-      <Button type="submit" disabled={pending || !title.trim() || isRichTextEmpty(contentHtml)} className="w-full">
+      <Button type="submit" disabled={pending || !operationId || !title.trim() || isRichTextEmpty(contentHtml)} className="w-full">
         {pending ? "작성 중..." : "노트 저장"}
       </Button>
     </form>

@@ -19,6 +19,12 @@ import { createDocumentDraftKey } from "@/lib/form-draft";
 import { isRichTextEmpty } from "@/lib/rich-text";
 import { useRouter } from "next/navigation";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
+import {
+  CREATION_OPERATION_FIELD,
+  createCreationOperationId,
+  parseCreationOperationId,
+} from "@/lib/creation-operation";
+import { CreationConflictActions } from "@/components/editor/CreationConflictActions";
 
 const FullEditor = dynamic(
   () => import("@/components/editor/FullEditor").then((m) => ({ default: m.FullEditor })),
@@ -26,6 +32,7 @@ const FullEditor = dynamic(
 );
 
 interface QnaDraft {
+  operationId?: string;
   title: string;
   contentHtml: string;
   attachmentUrl: string;
@@ -49,6 +56,7 @@ export function QnaSlideForm({
   const [title, setTitle] = useState("");
   const [contentHtml, setContentHtml] = useState("");
   const [attachmentUrl, setAttachmentUrl] = useState("");
+  const [operationId, setOperationId] = useState("");
   const [isUploading, setIsUploading] = useState(false);
   const [state, formAction, isPending] = useActionState<CreateThreadInlineState, FormData>(
     createQnaThreadInline,
@@ -72,6 +80,7 @@ export function QnaSlideForm({
     loaded,
     save,
     clear,
+    flush,
     status,
     savedAt,
     restored,
@@ -81,12 +90,16 @@ export function QnaSlideForm({
   } = useFormDraft<QnaDraft>(
     createDocumentDraftKey("qna-thread", actorId),
     (d) => {
+      setOperationId(
+        parseCreationOperationId(d.operationId) ?? createCreationOperationId(),
+      );
       setTitle(d.title ?? "");
       setContentHtml(d.contentHtml ?? "");
       setAttachmentUrl(d.attachmentUrl ?? "");
     },
     {
       onReset: () => {
+        setOperationId(createCreationOperationId());
         setTitle("");
         setContentHtml("");
         setAttachmentUrl("");
@@ -101,8 +114,9 @@ export function QnaSlideForm({
       clear();
       return;
     }
-    save({ title, contentHtml, attachmentUrl });
-  }, [loaded, title, contentHtml, attachmentUrl, save, clear]);
+    if (!operationId) return;
+    save({ operationId, title, contentHtml, attachmentUrl });
+  }, [loaded, title, contentHtml, attachmentUrl, operationId, save, clear]);
 
   // 저장 성공 시 draft 삭제 + 낙관적 업데이트 + 패널 닫기
   useEffect(() => {
@@ -114,7 +128,12 @@ export function QnaSlideForm({
       handledThreadIdRef.current = state.thread.id;
       clear({
         reason: "submitted",
-        submittedData: submittedDraftRef.current ?? { title, contentHtml, attachmentUrl },
+        submittedData: submittedDraftRef.current ?? {
+          operationId,
+          title,
+          contentHtml,
+          attachmentUrl,
+        },
       });
       submittedDraftRef.current = null;
       const { id, title: savedTitle, createdAt } = state.thread;
@@ -132,6 +151,12 @@ export function QnaSlideForm({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.thread?.id]);
 
+  const hasOperationConflict = Boolean(
+    state.operationConflict &&
+    state.conflictedOperationId === operationId &&
+    state.existingId,
+  );
+
   return (
     <form
       ref={formRef}
@@ -142,14 +167,32 @@ export function QnaSlideForm({
           event.preventDefault();
           return;
         }
-        submittedDraftRef.current = { title, contentHtml, attachmentUrl };
+        if (!operationId) {
+          event.preventDefault();
+          return;
+        }
+        const submittedDraft = { operationId, title, contentHtml, attachmentUrl };
+        save(submittedDraft);
+        flush();
+        submittedDraftRef.current = submittedDraft;
       }}
     >
+      <input type="hidden" name={CREATION_OPERATION_FIELD} value={operationId} />
       <input type="hidden" name="contentHtml" value={contentHtml} />
 
-      {state.error && (
+      {state.error && (!state.operationConflict || hasOperationConflict) && (
         <p className="text-sm text-destructive">{state.error}</p>
       )}
+
+      {hasOperationConflict && state.existingId ? (
+        <CreationConflictActions
+          existingHref={`/dashboard/qna/${state.existingId}?returnTo=${encodeURIComponent(returnTo)}`}
+          existingLabel="기존 질문 열기"
+          separateLabel="별도 질문으로 저장"
+          onSeparate={() => setOperationId(createCreationOperationId())}
+          disabled={isFormBusy}
+        />
+      ) : null}
 
       {/* 제목 */}
       <div className="space-y-1.5">
@@ -210,7 +253,7 @@ export function QnaSlideForm({
       </div>
 
       <div className="flex gap-3 pt-2">
-        <Button type="submit" disabled={isFormBusy || !title.trim() || isRichTextEmpty(contentHtml)} className="flex-1">
+        <Button type="submit" disabled={isFormBusy || !operationId || !title.trim() || isRichTextEmpty(contentHtml)} className="flex-1">
           {isUploading ? "업로드 완료 대기..." : isPending ? "전송 중..." : "질문 등록"}
         </Button>
         <Button type="button" variant="outline" onClick={onClose} disabled={isFormBusy}>

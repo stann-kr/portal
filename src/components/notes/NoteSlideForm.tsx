@@ -17,6 +17,12 @@ import { createDocumentDraftKey } from "@/lib/form-draft";
 import { isRichTextEmpty } from "@/lib/rich-text";
 import { toKstDateInputValue } from "@/lib/date-input";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
+import {
+  CREATION_OPERATION_FIELD,
+  createCreationOperationId,
+  parseCreationOperationId,
+} from "@/lib/creation-operation";
+import { CreationConflictActions } from "@/components/editor/CreationConflictActions";
 
 const FullEditor = dynamic(
   () => import("@/components/editor/FullEditor").then((m) => ({ default: m.FullEditor })),
@@ -33,6 +39,13 @@ interface NoteSlideFormProps {
   onBusyChange?: (isBusy: boolean) => void;
 }
 
+type CreateNoteDraft = {
+  operationId?: string;
+  title: string;
+  noteDate: string;
+  contentHtml: string;
+};
+
 export function NoteSlideForm({
   studentId,
   actorId,
@@ -46,13 +59,10 @@ export function NoteSlideForm({
   const [title, setTitle] = useState("");
   const [noteDate, setNoteDate] = useState(defaultDate ?? today);
   const [contentHtml, setContentHtml] = useState("");
+  const [operationId, setOperationId] = useState("");
   const [state, formAction, isPending] = useActionState<CreateNoteState, FormData>(boundAction, {});
   const formRef = useRef<HTMLFormElement>(null);
-  const submittedDraftRef = useRef<{
-    title: string;
-    noteDate: string;
-    contentHtml: string;
-  } | null>(null);
+  const submittedDraftRef = useRef<CreateNoteDraft | null>(null);
   const handledNoteIdRef = useRef<string | null>(null);
   useBusyNavigationGuard(isPending);
 
@@ -67,21 +77,26 @@ export function NoteSlideForm({
     loaded,
     save,
     clear,
+    flush,
     status,
     savedAt,
     restored,
     recoveries,
     restoreRecovery,
     discardRecovery,
-  } = useFormDraft<{ title: string; noteDate: string; contentHtml: string }>(
+  } = useFormDraft<CreateNoteDraft>(
     createDocumentDraftKey("note", actorId, `new:${studentId}`),
     (d) => {
+      setOperationId(
+        parseCreationOperationId(d.operationId) ?? createCreationOperationId(),
+      );
       setTitle(d.title ?? "");
       if (d.noteDate) setNoteDate(d.noteDate);
       setContentHtml(d.contentHtml ?? "");
     },
     {
       onReset: () => {
+        setOperationId(createCreationOperationId());
         setTitle("");
         setNoteDate(defaultDate ?? today);
         setContentHtml("");
@@ -96,8 +111,9 @@ export function NoteSlideForm({
       clear();
       return;
     }
-    save({ title, noteDate, contentHtml });
-  }, [loaded, title, noteDate, contentHtml, save, clear]);
+    if (!operationId) return;
+    save({ operationId, title, noteDate, contentHtml });
+  }, [loaded, title, noteDate, contentHtml, operationId, save, clear]);
 
   // 저장 성공 시 draft 삭제 + 낙관적 업데이트 + 패널 닫기
   useEffect(() => {
@@ -109,7 +125,12 @@ export function NoteSlideForm({
       handledNoteIdRef.current = state.note.id;
       clear({
         reason: "submitted",
-        submittedData: submittedDraftRef.current ?? { title, noteDate, contentHtml },
+        submittedData: submittedDraftRef.current ?? {
+          operationId,
+          title,
+          noteDate,
+          contentHtml,
+        },
       });
       submittedDraftRef.current = null;
       const { id, title: savedTitle, contentHtml: savedContentHtml, noteDate: savedDate, createdAt } = state.note;
@@ -125,20 +146,44 @@ export function NoteSlideForm({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.note?.id]);
 
+  const hasOperationConflict = Boolean(
+    state.operationConflict &&
+    state.conflictedOperationId === operationId &&
+    state.existingId,
+  );
+
   return (
     <form
       ref={formRef}
       action={formAction}
       className="space-y-4"
-      onSubmit={() => {
-        submittedDraftRef.current = { title, noteDate, contentHtml };
+      onSubmit={(event) => {
+        if (isPending || !operationId) {
+          event.preventDefault();
+          return;
+        }
+        const submittedDraft = { operationId, title, noteDate, contentHtml };
+        save(submittedDraft);
+        flush();
+        submittedDraftRef.current = submittedDraft;
       }}
     >
+      <input type="hidden" name={CREATION_OPERATION_FIELD} value={operationId} />
       <input type="hidden" name="contentHtml" value={contentHtml} />
 
-      {state.error && (
+      {state.error && (!state.operationConflict || hasOperationConflict) && (
         <p className="text-sm text-destructive">{state.error}</p>
       )}
+
+      {hasOperationConflict && state.existingId ? (
+        <CreationConflictActions
+          existingHref={`/dashboard/notes/${state.existingId}`}
+          existingLabel="기존 노트 열기"
+          separateLabel="별도 노트로 저장"
+          onSeparate={() => setOperationId(createCreationOperationId())}
+          disabled={isPending}
+        />
+      ) : null}
 
       {/* 제목 + 날짜 */}
       <div className="flex flex-col sm:flex-row gap-3">
@@ -199,7 +244,7 @@ export function NoteSlideForm({
       </div>
 
       <div className="flex gap-3 pt-2">
-        <Button type="submit" disabled={isPending || !title.trim() || isRichTextEmpty(contentHtml)} className="flex-1">
+        <Button type="submit" disabled={isPending || !operationId || !title.trim() || isRichTextEmpty(contentHtml)} className="flex-1">
           {isPending ? "저장 중..." : "노트 저장"}
         </Button>
         <Button type="button" variant="outline" onClick={onClose} disabled={isPending}>

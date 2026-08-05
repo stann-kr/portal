@@ -19,6 +19,12 @@ import { createDocumentDraftKey } from "@/lib/form-draft";
 import { isRichTextEmpty } from "@/lib/rich-text";
 import { toKstDateInputValue } from "@/lib/date-input";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
+import {
+  CREATION_OPERATION_FIELD,
+  createCreationOperationId,
+  parseCreationOperationId,
+} from "@/lib/creation-operation";
+import { CreationConflictActions } from "@/components/editor/CreationConflictActions";
 
 const FullEditor = dynamic(
   () => import("@/components/editor/FullEditor").then((m) => ({ default: m.FullEditor })),
@@ -33,21 +39,25 @@ interface NoteFullFormProps {
   returnTo: string;
 }
 
+type CreateNoteDraft = {
+  operationId?: string;
+  title: string;
+  noteDate: string;
+  contentHtml: string;
+};
+
 export function NoteFullForm({ action, actorId, studentId, returnTo }: NoteFullFormProps) {
   const today = toKstDateInputValue();
   const [title, setTitle] = useState("");
   const [noteDate, setNoteDate] = useState(today);
   const [contentHtml, setContentHtml] = useState("");
+  const [operationId, setOperationId] = useState("");
   const [state, formAction, isPending] = useActionState<CreateNoteState, FormData>(
     action,
     {}
   );
   const formRef = useRef<HTMLFormElement>(null);
-  const submittedDraftRef = useRef<{
-    title: string;
-    noteDate: string;
-    contentHtml: string;
-  } | null>(null);
+  const submittedDraftRef = useRef<CreateNoteDraft | null>(null);
   const handledNoteIdRef = useRef<string | null>(null);
   const router = useRouter();
   useBusyNavigationGuard(isPending);
@@ -56,25 +66,26 @@ export function NoteFullForm({ action, actorId, studentId, returnTo }: NoteFullF
     loaded,
     save,
     clear,
+    flush,
     status,
     savedAt,
     restored,
     recoveries,
     restoreRecovery,
     discardRecovery,
-  } = useFormDraft<{
-    title: string;
-    noteDate: string;
-    contentHtml: string;
-  }>(
+  } = useFormDraft<CreateNoteDraft>(
     createDocumentDraftKey("note", actorId, `new:${studentId}`),
     (draft) => {
+      setOperationId(
+        parseCreationOperationId(draft.operationId) ?? createCreationOperationId(),
+      );
       setTitle(draft.title ?? "");
       setNoteDate(draft.noteDate || today);
       setContentHtml(draft.contentHtml ?? "");
     },
     {
       onReset: () => {
+        setOperationId(createCreationOperationId());
         setTitle("");
         setNoteDate(today);
         setContentHtml("");
@@ -88,19 +99,31 @@ export function NoteFullForm({ action, actorId, studentId, returnTo }: NoteFullF
       clear();
       return;
     }
-    save({ title, noteDate, contentHtml });
-  }, [clear, contentHtml, loaded, noteDate, save, title]);
+    if (!operationId) return;
+    save({ operationId, title, noteDate, contentHtml });
+  }, [clear, contentHtml, loaded, noteDate, operationId, save, title]);
 
   useEffect(() => {
     if (!state.note?.id || handledNoteIdRef.current === state.note.id) return;
     handledNoteIdRef.current = state.note.id;
     clear({
       reason: "submitted",
-      submittedData: submittedDraftRef.current ?? { title, noteDate, contentHtml },
+      submittedData: submittedDraftRef.current ?? {
+        operationId,
+        title,
+        noteDate,
+        contentHtml,
+      },
     });
     submittedDraftRef.current = null;
     router.replace(`/dashboard/notes/${state.note.id}?returnTo=${encodeURIComponent(returnTo)}`);
-  }, [clear, contentHtml, noteDate, returnTo, router, state.note?.id, title]);
+  }, [clear, contentHtml, noteDate, operationId, returnTo, router, state.note?.id, title]);
+
+  const hasOperationConflict = Boolean(
+    state.operationConflict &&
+    state.conflictedOperationId === operationId &&
+    state.existingId,
+  );
 
   return (
     <div className="max-w-4xl mx-auto space-y-6 py-6 px-4">
@@ -127,17 +150,35 @@ export function NoteFullForm({ action, actorId, studentId, returnTo }: NoteFullF
         ref={formRef}
         action={formAction}
         className="space-y-5"
-        onSubmit={() => {
-          submittedDraftRef.current = { title, noteDate, contentHtml };
+        onSubmit={(event) => {
+          if (isPending || !operationId) {
+            event.preventDefault();
+            return;
+          }
+          const submittedDraft = { operationId, title, noteDate, contentHtml };
+          save(submittedDraft);
+          flush();
+          submittedDraftRef.current = submittedDraft;
         }}
       >
+        <input type="hidden" name={CREATION_OPERATION_FIELD} value={operationId} />
         <input type="hidden" name="contentHtml" value={contentHtml} />
 
-        {state?.error && (
+        {state?.error && (!state.operationConflict || hasOperationConflict) && (
           <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/20 text-sm text-destructive">
             {state.error}
           </div>
         )}
+
+        {hasOperationConflict && state.existingId ? (
+          <CreationConflictActions
+            existingHref={`/dashboard/notes/${state.existingId}?returnTo=${encodeURIComponent(returnTo)}`}
+            existingLabel="기존 노트 열기"
+            separateLabel="별도 노트로 저장"
+            onSeparate={() => setOperationId(createCreationOperationId())}
+            disabled={isPending}
+          />
+        ) : null}
 
         {state?.success && (
           <div
@@ -211,7 +252,7 @@ export function NoteFullForm({ action, actorId, studentId, returnTo }: NoteFullF
         <div className="flex gap-3">
           <Button
             type="submit"
-            disabled={isPending || !title.trim() || isRichTextEmpty(contentHtml)}
+            disabled={isPending || !operationId || !title.trim() || isRichTextEmpty(contentHtml)}
             className="flex-1 gap-2"
           >
             <Save className="w-4 h-4" />

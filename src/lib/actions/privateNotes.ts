@@ -12,6 +12,11 @@ import { and, eq, desc, isNull } from "drizzle-orm";
 import { requireAuth, assertOwnerOrAdmin } from "@/lib/auth-guard";
 import { sanitizeHtml } from "@/lib/sanitize-html";
 import { isRichTextEmpty } from "@/lib/rich-text";
+import {
+  CREATION_OPERATION_FIELD,
+  deriveCreationResourceId,
+  resolveCreationOperationId,
+} from "@/lib/creation-operation";
 
 /**
  * 특정 학생의 프라이빗 노트 목록 조회.
@@ -70,6 +75,9 @@ export async function getPrivateNote(noteId: string) {
 export type CreateNoteState = {
   error?: string;
   success?: boolean;
+  operationConflict?: boolean;
+  conflictedOperationId?: string;
+  existingId?: string;
   note?: {
     id: string;
     title: string;
@@ -89,8 +97,8 @@ export async function createPrivateNote(targetStudentId: string, _prev: CreateNo
 
   assertOwnerOrAdmin(session, targetStudentId);
 
-  const title = formData.get("title") as string;
-  const rawHtml = formData.get("contentHtml") as string;
+  const title = String(formData.get("title") ?? "").trim();
+  const rawHtml = String(formData.get("contentHtml") ?? "");
 
   if (!title || isRichTextEmpty(rawHtml)) return { error: "제목과 내용은 필수입니다." };
 
@@ -98,33 +106,95 @@ export async function createPrivateNote(targetStudentId: string, _prev: CreateNo
   if (isRichTextEmpty(contentHtml)) return { error: "유효한 노트 내용을 입력해 주세요." };
 
   // 사용자 지정 날짜 파싱 (YYYY-MM-DD → Date, 없으면 null)
-  const noteDateStr = formData.get("noteDate") as string | null;
+  const noteDateStr = String(formData.get("noteDate") ?? "");
   const noteDate = noteDateStr ? new Date(noteDateStr) : null;
+  if (noteDate && Number.isNaN(noteDate.getTime())) {
+    return { error: "올바른 날짜를 입력해 주세요." };
+  }
+
+  const operationId = resolveCreationOperationId(
+    formData.get(CREATION_OPERATION_FIELD),
+  );
+  if (!operationId) {
+    return { error: "문서 생성 식별자가 올바르지 않습니다. 페이지를 새로고침해 주세요." };
+  }
+  const id = deriveCreationResourceId(
+    operationId,
+    JSON.stringify(["private-note", userId, targetStudentId]),
+  );
 
   const db = createDb();
-  const id = crypto.randomUUID();
-  const now = new Date();
+  const findExisting = async () => {
+    const [existing] = await db
+      .select({
+        id: privateNotes.id,
+        studentId: privateNotes.studentId,
+        authorId: privateNotes.authorId,
+        title: privateNotes.title,
+        contentHtml: privateNotes.contentHtml,
+        noteDate: privateNotes.noteDate,
+        createdAt: privateNotes.createdAt,
+      })
+      .from(privateNotes)
+      .where(eq(privateNotes.id, id))
+      .limit(1);
+    return existing ?? null;
+  };
+  const isSameSubmission = (existing: Awaited<ReturnType<typeof findExisting>>) =>
+    Boolean(
+      existing &&
+      existing.studentId === targetStudentId &&
+      existing.authorId === userId &&
+      existing.title === title &&
+      existing.contentHtml === contentHtml &&
+      (existing.noteDate?.getTime() ?? null) === (noteDate?.getTime() ?? null),
+    );
+
+  let createdAt: Date | null = null;
 
   try {
-    await db.insert(privateNotes).values({
-      id,
-      studentId: targetStudentId,
-      authorId: userId,
-      title,
-      contentHtml,
-      ...(noteDate ? { noteDate } : {}),
-    });
-
-    // Admin 뷰(탭 통합 포함)와 Student 뷰 양쪽 모두 갱신
-    revalidatePath(`/dashboard/admin/students/${targetStudentId}`);
-    revalidatePath(`/dashboard/admin/students/${targetStudentId}/notes`);
-    revalidatePath(`/dashboard/student/notes`);
-    revalidatePath("/dashboard/student");
-
-    return { success: true, note: { id, title, contentHtml, noteDate, createdAt: now } };
+    const [inserted] = await db
+      .insert(privateNotes)
+      .values({
+        id,
+        studentId: targetStudentId,
+        authorId: userId,
+        title,
+        contentHtml,
+        ...(noteDate ? { noteDate } : {}),
+      })
+      .returning({ createdAt: privateNotes.createdAt });
+    createdAt = inserted?.createdAt ?? null;
   } catch {
-    return { error: "노트 작성 중 오류가 발생했습니다." };
+    try {
+      const existing = await findExisting();
+      if (isSameSubmission(existing)) {
+        createdAt = existing?.createdAt ?? null;
+      } else if (
+        existing?.studentId === targetStudentId &&
+        existing.authorId === userId
+      ) {
+        return {
+          error: "이 초안은 다른 내용으로 이미 저장되었습니다. 기존 노트를 열거나 별도 노트로 분리해 주세요.",
+          operationConflict: true,
+          conflictedOperationId: operationId,
+          existingId: existing.id,
+        };
+      } else {
+        return { error: "노트 작성 중 오류가 발생했습니다." };
+      }
+    } catch {
+      return { error: "노트 작성 중 오류가 발생했습니다." };
+    }
   }
+
+  // Admin 뷰(탭 통합 포함)와 Student 뷰 양쪽 모두 갱신
+  revalidatePath(`/dashboard/admin/students/${targetStudentId}`);
+  revalidatePath(`/dashboard/admin/students/${targetStudentId}/notes`);
+  revalidatePath(`/dashboard/student/notes`);
+  revalidatePath("/dashboard/student");
+
+  return { success: true, note: { id, title, contentHtml, noteDate, createdAt } };
 }
 
 export type UpdateNoteState = {

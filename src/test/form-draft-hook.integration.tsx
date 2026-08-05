@@ -22,6 +22,7 @@ import {
 import { useFormDraft } from "@/lib/hooks/useFormDraft";
 
 type DraftData = {
+  operationId?: string;
   title: string;
   contentHtml: string;
 };
@@ -224,6 +225,57 @@ test("unmount 시 debounce 대기 중인 draft를 즉시 flush한다", { concurr
     readDraft(harness.browserWindow.localStorage, draftKey),
     pendingDraft,
   );
+});
+
+test("생성 operation ID를 본문과 함께 저장하고 remount에서 그대로 복원한다", { concurrency: false }, async (context) => {
+  const draftKey = createDocumentDraftKey("note", "student-1", "new:student-1");
+  const harness = await createDraftHookHarness(context, draftKey);
+  const pendingDraft: DraftData = {
+    operationId: "c00e5ee7-36ae-45eb-a39a-d96f6292a842",
+    title: "재전송 가능한 초안",
+    contentHtml: "<p>마지막 입력</p>",
+  };
+
+  await act(async () => {
+    harness.getResult().save(pendingDraft);
+    harness.getResult().flush();
+  });
+  await harness.remount(draftKey);
+
+  assert.deepEqual(harness.restoredDrafts.at(-1), pendingDraft);
+});
+
+test("생성 충돌을 별도 문서로 분리할 때 본문은 유지하고 operation ID만 회전한다", { concurrency: false }, async (context) => {
+  const draftKey = createDocumentDraftKey("community-post", "student-1");
+  const harness = await createDraftHookHarness(context, draftKey);
+  const original: DraftData = {
+    operationId: "c00e5ee7-36ae-45eb-a39a-d96f6292a842",
+    title: "분리할 초안",
+    contentHtml: "<p>보존할 본문</p>",
+  };
+  const separated: DraftData = {
+    ...original,
+    operationId: "00682a4f-122b-44d9-8606-28973e138cc4",
+  };
+
+  await act(async () => {
+    harness.getResult().save(original);
+    harness.getResult().flush();
+    harness.getResult().save(separated);
+    harness.getResult().flush();
+  });
+
+  assert.deepEqual(
+    readDraft(harness.browserWindow.localStorage, draftKey),
+    separated,
+  );
+  await act(async () => {
+    harness.getResult().clear({
+      reason: "submitted",
+      submittedData: separated,
+    });
+  });
+  assert.equal(harness.browserWindow.localStorage.getItem(draftKey), null);
 });
 
 test("구버전 hook은 미래 version canonical을 보존하고 새 입력을 recovery로 격리한다", { concurrency: false }, async (context) => {

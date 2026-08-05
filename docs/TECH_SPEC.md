@@ -117,7 +117,8 @@ Migration SQL은 `drizzle/`, Drizzle metadata는 `drizzle/meta/`에 둔다. Wran
 - page hide·탭 숨김·unmount 전에 pending 값을 flush하며, 저장공간 재시도도 실패하면 writer별 메모리 안전본을 유지하고 브라우저 이탈을 경고한다. 저장소가 회복되면 canonical보다 최신인 안전본만 현재 입력으로 채택하고 나머지는 durable recovery로 승격한다. 제출 cutoff용 원래 작성 시각과 recovery 보존 시작 시각을 분리하며, 같은 문서의 열린 탭에는 `BroadcastChannel`과 동일 문서 event로 제출 완료를 전달한다.
 - 충돌·중단 복구본은 최대 30일 보존하며 최근 20개 기준으로 정리하고, UI에서 선택 복원·삭제할 수 있다. 같은 내용의 안전본은 causal 저장 시각이 가장 최신인 사본을 남기며, canonical과 같은 사본도 별도 key 사이의 교체 경합 때문에 화면에서만 숨기고 자동 물리 삭제하지 않는다. 제출 이력은 내용 서명별 append-only tombstone을 같은 30일 동안 개수 제한 없이 유지해 연속 제출 뒤 잠든 탭의 ghost 복원을 차단한다. 복원·채택 시점에도 tombstone과 원래 저장 시각을 다시 검증한다.
 - 포털 section, workspace view와 관리자 학생 선택은 URL에 기록한다. 작성 화면과 저장된 문서는 검증된 내부 `returnTo`를 전달해 직전 작업 문맥으로 돌아간다.
-- 첨부 업로드·서버 제출 중에는 submit, editor mutation, 화면 내 SPA link, 상위 상태 전환과 slide panel dismiss를 잠근다. hard navigation에는 이탈 경고를 제공하고 진행 중 업로드가 unmount되면 전송을 중단한다. 브라우저 Back/Forward와 임의의 programmatic route 전환은 client만으로 완전히 취소할 수 없어 생성 요청 멱등성과 실제 브라우저 E2E가 별도로 필요하다.
+- 첨부 업로드·서버 제출 중에는 submit, editor mutation, 화면 내 SPA link, 상위 상태 전환과 slide panel dismiss를 잠근다. hard navigation에는 이탈 경고를 제공하고 진행 중 업로드가 unmount되면 전송을 중단한다. 브라우저 Back/Forward와 임의의 programmatic route 전환은 client만으로 완전히 취소할 수 없으므로 실제 브라우저 E2E가 별도로 필요하다.
+- 새 노트·게시물·Q&A 질문·답변의 draft에는 UUIDv4 생성 작업 nonce를 저장하고 submit 직전에 전체 snapshot을 flush한다. 서버는 인증된 작성자·대상·문서 종류를 함께 영역 분리한 결정적 UUIDv8을 실제 resource ID로 사용한다. 같은 nonce와 정규화 payload의 순차·동시 재전송은 기존 결과를 반환하며, 같은 작성 흐름의 다른 payload는 초안을 유지한 채 기존 문서 열기 또는 별도 문서 분리를 선택하게 한다.
 - 개인 노트와 커뮤니티 게시물은 안정 URL에서 다시 편집할 수 있다. 편집 draft에는 서버 기준 snapshot을 함께 보존하고 조건부 update로 다른 화면의 선행 저장을 감지하며, 오래된 기준본을 복원하면 서버 최신본과 현재 초안 중 선택하게 한다.
 - Q&A의 스레드·첫 본문과 답변·상태 변경은 D1 binding batch 또는 로컬 SQLite transaction으로 함께 commit하거나 rollback한다. 답변 쓰기는 ownership과 `CLOSED` 상태를 원자 쓰기 안에서 다시 검증한다.
 
@@ -197,7 +198,7 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 - migration SQL과 `drizzle/meta` 생성 이력은 `0007`까지 복구됐고 local D1도 빈 상태에서 전체 migration 재적용과 구조 검증을 통과했다. remote 이력은 별도 승인 전 추정하지 않는다.
 - 대표 문서 server action과 draft 생명주기의 격리 integration test는 있으나 실제 브라우저 reload·offline·navigation·delete/restore E2E는 없다.
 - 문서 revision·휴지통·서버 초안이 없다. 현재 노트·게시물은 snapshot 기반 충돌 감지와 탭별 복구본을 제공하지만 다중 기기 연속성은 지원하지 않는다.
-- 새 노트·게시물·Q&A·답변 생성은 요청 멱등 key가 없어 성공 응답이 유실된 뒤 같은 요청이 재전송되면 중복 문서가 생성될 수 있다. Q&A 한 요청 안의 복합 쓰기 자체는 원자적이다.
+- 새 노트·게시물·Q&A·답변은 로컬 draft의 생성 작업 nonce와 기존 resource payload를 대조해 동일 재전송의 중복 생성을 막는다. 다만 별도 불변 생성 작업 원장이 없어 최초 생성 뒤 문서가 편집되거나 hard delete된 오래된 요청까지 영구적으로 증명할 수는 없다. Q&A 한 요청 안의 복합 쓰기 자체는 원자적이다.
 - 큰 문서는 매 입력에서 전체 payload의 서명과 HTML을 만들고 browser storage flush도 동기 실행한다. 실제 브라우저 대용량 문서 성능 기준과 측정이 없어 Notion급 입력 부드러움은 아직 검증되지 않았다.
 - lockfile의 Wrangler는 Node.js 22 이상을 요구하지만 package engine과 Docker image는 Node.js 20을 허용한다. 지원 runtime과 배포 image를 같은 major로 정렬해야 한다.
 - 운영 D1 export·복구 절차는 문서화됐지만 승인된 원격 backup과 격리 restore rehearsal 기록은 아직 없다.

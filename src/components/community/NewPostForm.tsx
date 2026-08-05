@@ -15,6 +15,12 @@ import { createDocumentDraftKey } from "@/lib/form-draft";
 import { useFormDraft } from "@/lib/hooks/useFormDraft";
 import { isRichTextEmpty } from "@/lib/rich-text";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
+import {
+  CREATION_OPERATION_FIELD,
+  createCreationOperationId,
+  parseCreationOperationId,
+} from "@/lib/creation-operation";
+import { CreationConflictActions } from "@/components/editor/CreationConflictActions";
 
 const FullEditor = dynamic(
   () => import("@/components/editor/FullEditor").then((module) => ({ default: module.FullEditor })),
@@ -30,6 +36,7 @@ const BOARD_TYPES = [
 ] as const;
 
 type PostDraft = {
+  operationId?: string;
   boardType: PostBoardType;
   category: string;
   isPinned: boolean;
@@ -60,6 +67,7 @@ export function NewPostForm({
   const [contentHtml, setContentHtml] = useState("");
   const [categories, setCategories] = useState<{ id: string; slug: string; name: string }[]>([]);
   const [mediaUrl, setMediaUrl] = useState("");
+  const [operationId, setOperationId] = useState("");
   const [uploadError, setUploadError] = useState("");
   const [isUploading, setIsUploading] = useState(false);
   const [state, formAction, isPending] = useActionState<CreatePostState, FormData>(createPost, {});
@@ -74,6 +82,7 @@ export function NewPostForm({
     loaded,
     save,
     clear,
+    flush,
     status,
     savedAt,
     restored,
@@ -83,6 +92,9 @@ export function NewPostForm({
   } = useFormDraft<PostDraft>(
     createDocumentDraftKey("community-post", actorId),
     (draft) => {
+      setOperationId(
+        parseCreationOperationId(draft.operationId) ?? createCreationOperationId(),
+      );
       setBoardType(draft.boardType === "ANNOUNCEMENT" && !isAdmin ? "GENERAL" : (draft.boardType ?? defaultBoardType));
       setCategory(draft.category ?? defaultCategory);
       setIsPinned(draft.isPinned ?? false);
@@ -92,6 +104,7 @@ export function NewPostForm({
     },
     {
       onReset: () => {
+        setOperationId(createCreationOperationId());
         setBoardType(defaultBoardType);
         setCategory(defaultCategory);
         setIsPinned(false);
@@ -112,13 +125,15 @@ export function NewPostForm({
       clear();
       return;
     }
-    save({ boardType, category, isPinned, title, contentHtml, mediaUrl });
-  }, [boardType, category, clear, contentHtml, isPinned, loaded, mediaUrl, save, title]);
+    if (!operationId) return;
+    save({ operationId, boardType, category, isPinned, title, contentHtml, mediaUrl });
+  }, [boardType, category, clear, contentHtml, isPinned, loaded, mediaUrl, operationId, save, title]);
 
   useEffect(() => {
     if (!state.postId || handledPostIdRef.current === state.postId) return;
     handledPostIdRef.current = state.postId;
     const submittedDraft = submittedDraftRef.current ?? {
+      operationId,
       boardType,
       category,
       isPinned,
@@ -132,7 +147,13 @@ export function NewPostForm({
     });
     submittedDraftRef.current = null;
     router.replace(`/community/${state.postId}?returnTo=${encodeURIComponent(returnTo)}`);
-  }, [boardType, category, clear, contentHtml, isPinned, mediaUrl, returnTo, router, state.postId, title]);
+  }, [boardType, category, clear, contentHtml, isPinned, mediaUrl, operationId, returnTo, router, state.postId, title]);
+
+  const hasOperationConflict = Boolean(
+    state.operationConflict &&
+    state.conflictedOperationId === operationId &&
+    state.existingId,
+  );
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 px-4 py-6">
@@ -163,7 +184,12 @@ export function NewPostForm({
             event.preventDefault();
             return;
           }
-          submittedDraftRef.current = {
+          if (!operationId) {
+            event.preventDefault();
+            return;
+          }
+          const submittedDraft = {
+            operationId,
             boardType,
             category,
             isPinned,
@@ -171,8 +197,12 @@ export function NewPostForm({
             contentHtml,
             mediaUrl,
           };
+          save(submittedDraft);
+          flush();
+          submittedDraftRef.current = submittedDraft;
         }}
       >
+        <input type="hidden" name={CREATION_OPERATION_FIELD} value={operationId} />
         <input type="hidden" name="returnTo" value="community-editor" />
         <input type="hidden" name="boardType" value={boardType} />
         <input type="hidden" name="category" value={category} />
@@ -180,13 +210,23 @@ export function NewPostForm({
         <input type="hidden" name="mediaUrl" value={mediaUrl} />
         {isPinned ? <input type="hidden" name="isPinned" value="true" /> : null}
 
-        {state.error ? (
+        {state.error && (!state.operationConflict || hasOperationConflict) ? (
           <p role="alert" className="rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">
             {state.error}
           </p>
         ) : null}
 
-        <fieldset className="space-y-1.5" disabled={isPending}>
+        {hasOperationConflict && state.existingId ? (
+          <CreationConflictActions
+            existingHref={`/community/${state.existingId}?returnTo=${encodeURIComponent(returnTo)}`}
+            existingLabel="기존 게시물 열기"
+            separateLabel="별도 게시물로 저장"
+            onSeparate={() => setOperationId(createCreationOperationId())}
+            disabled={isFormBusy}
+          />
+        ) : null}
+
+        <fieldset className="space-y-1.5" disabled={isFormBusy}>
           <legend className="text-sm font-medium">게시판 유형</legend>
           <div className="flex flex-wrap gap-2">
             {BOARD_TYPES.filter(({ value }) => value !== "ANNOUNCEMENT" || isAdmin).map(
@@ -329,7 +369,7 @@ export function NewPostForm({
         <div className="flex gap-3">
           <Button
             type="submit"
-            disabled={isFormBusy || !title.trim() || isRichTextEmpty(contentHtml)}
+            disabled={isFormBusy || !operationId || !title.trim() || isRichTextEmpty(contentHtml)}
             className="flex-1 gap-2"
           >
             <Send className="h-4 w-4" aria-hidden="true" />

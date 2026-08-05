@@ -17,6 +17,11 @@ import { requireAuth, assertOwnerOrAdmin } from "@/lib/auth-guard";
 import { sanitizeHtml } from "@/lib/sanitize-html";
 import { isRichTextEmpty } from "@/lib/rich-text";
 import { safeReturnPath } from "@/lib/safe-return-path";
+import {
+  CREATION_OPERATION_FIELD,
+  deriveCreationResourceId,
+  resolveCreationOperationId,
+} from "@/lib/creation-operation";
 
 const VALID_BOARD_TYPES: readonly BoardType[] = ["ANNOUNCEMENT", "GENERAL", "FEEDBACK"];
 
@@ -87,6 +92,9 @@ export type CreatePostState = {
   error?: string;
   success?: boolean;
   postId?: string;
+  operationConflict?: boolean;
+  conflictedOperationId?: string;
+  existingId?: string;
 };
 
 /**
@@ -99,16 +107,17 @@ export async function createPost(
   formData: FormData,
 ): Promise<CreatePostState> {
   const session = await requireAuth();
+  const authorId = session.user.id!;
 
-  const title = (formData.get("title") as string)?.trim();
+  const title = String(formData.get("title") ?? "").trim();
   const categoryInput = String(formData.get("category") ?? "").trim();
-  const contentHtml = formData.get("contentHtml") as string;
+  const contentHtml = String(formData.get("contentHtml") ?? "");
   const boardTypeInput = String(formData.get("boardType") ?? "GENERAL");
   if (!VALID_BOARD_TYPES.includes(boardTypeInput as BoardType)) {
     return { error: "올바른 게시판 유형을 선택해 주세요." };
   }
   const boardType = boardTypeInput as BoardType;
-  const mediaUrl = (formData.get("mediaUrl") as string) || null;
+  const mediaUrl = String(formData.get("mediaUrl") ?? "").trim() || null;
   const isPinnedRaw = formData.get("isPinned");
   const isPinned = isPinnedRaw === "on" || isPinnedRaw === "true";
   const returnTo = (formData.get("returnTo") as string) || null;
@@ -126,9 +135,77 @@ export async function createPost(
     return { error: "공지 작성은 관리자만 가능합니다." };
   }
 
+  const operationId = resolveCreationOperationId(
+    formData.get(CREATION_OPERATION_FIELD),
+  );
+  if (!operationId) {
+    return { error: "문서 생성 식별자가 올바르지 않습니다. 페이지를 새로고침해 주세요." };
+  }
+  const id = deriveCreationResourceId(
+    operationId,
+    JSON.stringify(["community-post", authorId]),
+  );
+
   const db = createDb();
   let category = boardType.toLowerCase();
-  const id = crypto.randomUUID();
+  if (boardType === "GENERAL") category = categoryInput;
+  const storedPinned = boardType === "ANNOUNCEMENT" ? isPinned : false;
+  const storedMediaUrl = boardType === "FEEDBACK" ? mediaUrl : null;
+  const findExisting = async () => {
+    const [existing] = await db
+      .select({
+        id: posts.id,
+        authorId: posts.authorId,
+        category: posts.category,
+        boardType: posts.boardType,
+        isPinned: posts.isPinned,
+        mediaUrl: posts.mediaUrl,
+        title: posts.title,
+        contentHtml: posts.contentHtml,
+      })
+      .from(posts)
+      .where(eq(posts.id, id))
+      .limit(1);
+    return existing ?? null;
+  };
+  const isSameSubmission = (existing: Awaited<ReturnType<typeof findExisting>>) =>
+    Boolean(
+      existing &&
+      existing.authorId === authorId &&
+      existing.category === category &&
+      existing.boardType === boardType &&
+      existing.isPinned === storedPinned &&
+      existing.mediaUrl === storedMediaUrl &&
+      existing.title === title &&
+      existing.contentHtml === sanitizedContentHtml,
+    );
+  const operationConflict = (existingId: string): CreatePostState => ({
+    error: "이 초안은 다른 내용으로 이미 게시되었습니다. 기존 게시물을 열거나 별도 게시물로 분리해 주세요.",
+    operationConflict: true,
+    conflictedOperationId: operationId,
+    existingId,
+  });
+
+  let existingBeforeInsert: Awaited<ReturnType<typeof findExisting>>;
+  try {
+    existingBeforeInsert = await findExisting();
+  } catch {
+    return { error: "게시물을 저장하지 못했습니다. 다시 시도해 주세요." };
+  }
+  if (existingBeforeInsert) {
+    if (!isSameSubmission(existingBeforeInsert)) {
+      return existingBeforeInsert.authorId === authorId
+        ? operationConflict(existingBeforeInsert.id)
+        : { error: "게시물을 저장하지 못했습니다. 다시 시도해 주세요." };
+    }
+
+    revalidatePath("/community");
+    if (returnTo === "student-portal" || returnTo === "community-editor") {
+      if (returnTo === "student-portal") revalidatePath("/dashboard/student");
+      return { success: true, postId: id };
+    }
+    redirect(`/community/${id}`);
+  }
 
   try {
     if (boardType === "GENERAL") {
@@ -143,16 +220,25 @@ export async function createPost(
 
     await db.insert(posts).values({
       id,
-      authorId: session.user.id!,
+      authorId,
       category,
       boardType,
-      isPinned: boardType === "ANNOUNCEMENT" ? isPinned : false,
-      mediaUrl: boardType === "FEEDBACK" ? mediaUrl : null,
+      isPinned: storedPinned,
+      mediaUrl: storedMediaUrl,
       title,
       contentHtml: sanitizedContentHtml,
     });
   } catch {
-    return { error: "게시물을 저장하지 못했습니다. 다시 시도해 주세요." };
+    try {
+      const existing = await findExisting();
+      if (!isSameSubmission(existing)) {
+        return existing?.authorId === authorId
+          ? operationConflict(existing.id)
+          : { error: "게시물을 저장하지 못했습니다. 다시 시도해 주세요." };
+      }
+    } catch {
+      return { error: "게시물을 저장하지 못했습니다. 다시 시도해 주세요." };
+    }
   }
 
   revalidatePath("/community");

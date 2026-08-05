@@ -28,6 +28,12 @@ import { createDocumentDraftKey } from "@/lib/form-draft";
 import { isRichTextEmpty } from "@/lib/rich-text";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
+import {
+  CREATION_OPERATION_FIELD,
+  createCreationOperationId,
+  parseCreationOperationId,
+} from "@/lib/creation-operation";
+import { CreationConflictActions } from "@/components/editor/CreationConflictActions";
 
 type Reply = {
   id: string;
@@ -37,6 +43,12 @@ type Reply = {
   authorName: string | null | undefined;
   authorEmail: string | null | undefined;
   authorRole: string | null | undefined;
+};
+
+type QnaReplyDraft = {
+  operationId?: string;
+  contentHtml: string;
+  attachmentUrl: string;
 };
 
 interface ThreadDetailClientProps {
@@ -64,16 +76,14 @@ export function ThreadDetailClient({
 }: ThreadDetailClientProps) {
   const [contentHtml, setContentHtml] = useState("");
   const [attachmentUrl, setAttachmentUrl] = useState("");
+  const [operationId, setOperationId] = useState("");
   const [isUploading, setIsUploading] = useState(false);
   const [editorKey, setEditorKey] = useState(0);
   const [isPending, startTransition] = useTransition();
   const [currentStatus, setCurrentStatus] = useState(status);
   const [statusError, setStatusError] = useState<string | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
-  const submittedReplyRef = useRef<{
-    contentHtml: string;
-    attachmentUrl: string;
-  } | null>(null);
+  const submittedReplyRef = useRef<QnaReplyDraft | null>(null);
   const handledReplyIdRef = useRef<string | null>(null);
   const router = useRouter();
 
@@ -84,7 +94,7 @@ export function ThreadDetailClient({
     CreateReplyState,
     FormData
   >(boundAction, {});
-  const isReplyFormBusy = isReplying || isUploading;
+  const isReplyFormBusy = isReplying || isUploading || isPending;
   useBusyNavigationGuard(isReplyFormBusy);
 
   // 스레드별 임시저장 복원/저장
@@ -92,20 +102,25 @@ export function ThreadDetailClient({
     loaded,
     save,
     clear,
+    flush,
     status: draftStatus,
     savedAt,
     restored,
     recoveries,
     restoreRecovery,
     discardRecovery,
-  } = useFormDraft<{ contentHtml: string; attachmentUrl: string }>(
+  } = useFormDraft<QnaReplyDraft>(
     createDocumentDraftKey("qna-reply", actorId, threadId),
     (d) => {
+      setOperationId(
+        parseCreationOperationId(d.operationId) ?? createCreationOperationId(),
+      );
       setContentHtml(d.contentHtml ?? "");
       setAttachmentUrl(d.attachmentUrl ?? "");
     },
     {
       onReset: () => {
+        setOperationId(createCreationOperationId());
         setContentHtml("");
         setAttachmentUrl("");
         setEditorKey((key) => key + 1);
@@ -120,8 +135,9 @@ export function ThreadDetailClient({
       clear();
       return;
     }
-    save({ contentHtml, attachmentUrl });
-  }, [loaded, contentHtml, attachmentUrl, save, clear]);
+    if (!operationId) return;
+    save({ operationId, contentHtml, attachmentUrl });
+  }, [loaded, contentHtml, attachmentUrl, operationId, save, clear]);
 
   // 답변 등록 성공 시 draft 삭제 + 폼 초기화 (에디터 remount)
   useEffect(() => {
@@ -129,15 +145,26 @@ export function ThreadDetailClient({
       handledReplyIdRef.current = replyState.replyId;
       clear({
         reason: "submitted",
-        submittedData: submittedReplyRef.current ?? { contentHtml, attachmentUrl },
+        submittedData: submittedReplyRef.current ?? {
+          operationId,
+          contentHtml,
+          attachmentUrl,
+        },
       });
       submittedReplyRef.current = null;
+      setOperationId(createCreationOperationId());
       setContentHtml("");
       setAttachmentUrl("");
       setEditorKey((k) => k + 1);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [replyState.replyId]);
+
+  const hasOperationConflict = Boolean(
+    replyState.operationConflict &&
+    replyState.conflictedOperationId === operationId &&
+    replyState.existingId,
+  );
 
   const handleStatusChange = (newStatus: QnaStatus) => {
     setStatusError(null);
@@ -246,20 +273,33 @@ export function ThreadDetailClient({
           action={replyAction}
           className="space-y-3"
           onSubmit={(event) => {
-            if (isReplyFormBusy) {
+            if (isReplyFormBusy || !operationId) {
               event.preventDefault();
               return;
             }
-            submittedReplyRef.current = { contentHtml, attachmentUrl };
+            const submittedReply = { operationId, contentHtml, attachmentUrl };
+            save(submittedReply);
+            flush();
+            submittedReplyRef.current = submittedReply;
           }}
         >
+          <input type="hidden" name={CREATION_OPERATION_FIELD} value={operationId} />
           <input type="hidden" name="contentHtml" value={contentHtml} />
           <p className="text-sm font-medium text-foreground">
             {isAdmin ? "답변 작성" : "추가 질문"}
           </p>
-          {replyState.error && (
+          {replyState.error && (!replyState.operationConflict || hasOperationConflict) && (
             <p role="alert" className="text-sm text-destructive">{replyState.error}</p>
           )}
+          {hasOperationConflict ? (
+            <CreationConflictActions
+              existingLabel="현재 답변 새로고침"
+              separateLabel="별도 답변으로 등록"
+              onOpenExisting={() => router.refresh()}
+              onSeparate={() => setOperationId(createCreationOperationId())}
+              disabled={isReplyFormBusy}
+            />
+          ) : null}
           {replyState.success ? (
             <p role="status" className="text-sm text-success">등록했습니다.</p>
           ) : null}
@@ -269,7 +309,7 @@ export function ThreadDetailClient({
               initialContent={contentHtml}
               onChange={setContentHtml}
               placeholder={isAdmin ? "답변을 작성하세요..." : "추가 질문을 입력하세요..."}
-              disabled={isReplying}
+              disabled={isReplyFormBusy}
               minHeight="200px"
               ariaLabel={isAdmin ? "Q&A 답변 내용" : "Q&A 추가 질문 내용"}
               footer={
@@ -291,10 +331,10 @@ export function ThreadDetailClient({
           <AttachmentField
             value={attachmentUrl}
             onChange={setAttachmentUrl}
-            disabled={isReplying}
+            disabled={isReplyFormBusy}
             onUploadingChange={setIsUploading}
           />
-          <Button type="submit" disabled={isReplyFormBusy || isRichTextEmpty(contentHtml)} className="gap-2">
+          <Button type="submit" disabled={isReplyFormBusy || !operationId || isRichTextEmpty(contentHtml)} className="gap-2">
             {isUploading
               ? "업로드 완료 대기..."
               : isReplying

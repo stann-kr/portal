@@ -88,6 +88,7 @@ pill 형태는 filter와 count처럼 모양 자체가 의미를 가질 때만 �
 | `BlockCommandMenu` | `/` 검색과 keyboard로 실행하는 block 삽입 목록 |
 | `EditorInsertPanel` | 링크·이미지·YouTube URL을 검증하고 selection에 삽입하는 panel |
 | `DraftStatus` | 로컬 초안 저장·복원·충돌·오류 상태, 마지막 저장 시각과 복구본 선택 |
+| `CreationConflictActions` | 같은 생성 초안의 payload 충돌에서 기존 문서 열기와 별도 문서 분리 선택 |
 | `RichTextContent` | 저장된 rich text의 공통 typography·embed 렌더 경계 |
 
 공통 component를 우회해 같은 패턴을 다시 만들지 않는다. 의미나 책임이 다른 경우에는 억지로 variant에 합치지 않는다.
@@ -99,6 +100,7 @@ pill 형태는 filter와 count처럼 모양 자체가 의미를 가질 때만 �
 - 각 작성 흐름은 canonical보다 먼저 raw 내용에 결합된 불변 shadow를 기록하고, 다음 안전본이 기록된 뒤 이전 자기 shadow를 정리한다. 다른 흐름과 충돌하면 현재 입력, 선택 복구본과 밀려난 canonical을 각각 보존한다.
 - draft 저장 상태와 복원 여부를 에디터 아래에 보이며 충돌 복구본은 사용자가 복원하거나 삭제할 수 있게 한다. 오류가 나면 직접 저장 행동을 안내한다.
 - 제출 완료 tombstone은 문서·내용 서명별 entry를 복구본과 같은 30일 동안 개수 제한 없이 보존한다. 지연된 탭이 여러 번의 연속 제출 전 초안을 되살리지 않게 하되, 각 제출 뒤 새로 작성한 같은 내용은 지우지 않는다.
+- 생성 form은 작업 nonce를 draft payload와 함께 저장하고 submit 직전에 같은 snapshot을 flush한다. 동일 작업의 다른 payload가 먼저 처리된 경우 현재 초안을 지우지 않고 기존 문서 열기 또는 별도 문서 분리를 명시적으로 선택하게 한다.
 - 저장공간 오류가 재시도 뒤에도 계속되면 작성 흐름별 메모리 안전본을 유지하고 페이지 이탈 전에 경고한다. 저장소가 회복되면 더 최신인 안전본만 이어 쓰고 나머지는 복구 목록으로 옮긴다. 현재 입력이 없어도 page hide·flush에서 남은 안전본의 영속화를 다시 시도하며, 제출 완료 신호는 열린 탭에 함께 전달한다.
 - `Cmd/Ctrl+S`는 브라우저 저장 dialog 대신 현재 form의 검증·저장 동작을 실행한다.
 - 첨부 업로드·제출 중에는 editor command, inline menu, 삽입 panel, 저장 단축키, 상위 링크·취소 control과 panel 닫기가 내용을 바꾸거나 작업 화면을 해제하지 않아야 한다.

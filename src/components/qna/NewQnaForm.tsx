@@ -14,6 +14,12 @@ import { createDocumentDraftKey } from "@/lib/form-draft";
 import { useFormDraft } from "@/lib/hooks/useFormDraft";
 import { isRichTextEmpty } from "@/lib/rich-text";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
+import {
+  CREATION_OPERATION_FIELD,
+  createCreationOperationId,
+  parseCreationOperationId,
+} from "@/lib/creation-operation";
+import { CreationConflictActions } from "@/components/editor/CreationConflictActions";
 
 const FullEditor = dynamic(
   () => import("@/components/editor/FullEditor").then((module) => ({ default: module.FullEditor })),
@@ -21,6 +27,7 @@ const FullEditor = dynamic(
 );
 
 type QnaDraft = {
+  operationId?: string;
   title: string;
   contentHtml: string;
   attachmentUrl: string;
@@ -30,6 +37,7 @@ export function NewQnaForm({ actorId, returnTo }: { actorId: string; returnTo: s
   const [title, setTitle] = useState("");
   const [contentHtml, setContentHtml] = useState("");
   const [attachmentUrl, setAttachmentUrl] = useState("");
+  const [operationId, setOperationId] = useState("");
   const [isUploading, setIsUploading] = useState(false);
   const [state, formAction, isPending] = useActionState<CreateThreadState, FormData>(
     createQnaThread,
@@ -46,6 +54,7 @@ export function NewQnaForm({ actorId, returnTo }: { actorId: string; returnTo: s
     loaded,
     save,
     clear,
+    flush,
     status,
     savedAt,
     restored,
@@ -55,12 +64,16 @@ export function NewQnaForm({ actorId, returnTo }: { actorId: string; returnTo: s
   } = useFormDraft<QnaDraft>(
     createDocumentDraftKey("qna-thread", actorId),
     (draft) => {
+      setOperationId(
+        parseCreationOperationId(draft.operationId) ?? createCreationOperationId(),
+      );
       setTitle(draft.title ?? "");
       setContentHtml(draft.contentHtml ?? "");
       setAttachmentUrl(draft.attachmentUrl ?? "");
     },
     {
       onReset: () => {
+        setOperationId(createCreationOperationId());
         setTitle("");
         setContentHtml("");
         setAttachmentUrl("");
@@ -74,19 +87,31 @@ export function NewQnaForm({ actorId, returnTo }: { actorId: string; returnTo: s
       clear();
       return;
     }
-    save({ title, contentHtml, attachmentUrl });
-  }, [attachmentUrl, clear, contentHtml, loaded, save, title]);
+    if (!operationId) return;
+    save({ operationId, title, contentHtml, attachmentUrl });
+  }, [attachmentUrl, clear, contentHtml, loaded, operationId, save, title]);
 
   useEffect(() => {
     if (!state.thread?.id || handledThreadIdRef.current === state.thread.id) return;
     handledThreadIdRef.current = state.thread.id;
     clear({
       reason: "submitted",
-      submittedData: submittedDraftRef.current ?? { title, contentHtml, attachmentUrl },
+      submittedData: submittedDraftRef.current ?? {
+        operationId,
+        title,
+        contentHtml,
+        attachmentUrl,
+      },
     });
     submittedDraftRef.current = null;
     router.replace(`/dashboard/qna/${state.thread.id}?returnTo=${encodeURIComponent(returnTo)}`);
-  }, [attachmentUrl, clear, contentHtml, returnTo, router, state.thread?.id, title]);
+  }, [attachmentUrl, clear, contentHtml, operationId, returnTo, router, state.thread?.id, title]);
+
+  const hasOperationConflict = Boolean(
+    state.operationConflict &&
+    state.conflictedOperationId === operationId &&
+    state.existingId,
+  );
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 px-4 py-6">
@@ -117,15 +142,33 @@ export function NewQnaForm({ actorId, returnTo }: { actorId: string; returnTo: s
             event.preventDefault();
             return;
           }
-          submittedDraftRef.current = { title, contentHtml, attachmentUrl };
+          if (!operationId) {
+            event.preventDefault();
+            return;
+          }
+          const submittedDraft = { operationId, title, contentHtml, attachmentUrl };
+          save(submittedDraft);
+          flush();
+          submittedDraftRef.current = submittedDraft;
         }}
       >
+        <input type="hidden" name={CREATION_OPERATION_FIELD} value={operationId} />
         <input type="hidden" name="contentHtml" value={contentHtml} />
 
-        {state.error ? (
+        {state.error && (!state.operationConflict || hasOperationConflict) ? (
           <p role="alert" className="rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">
             {state.error}
           </p>
+        ) : null}
+
+        {hasOperationConflict && state.existingId ? (
+          <CreationConflictActions
+            existingHref={`/dashboard/qna/${state.existingId}?returnTo=${encodeURIComponent(returnTo)}`}
+            existingLabel="기존 질문 열기"
+            separateLabel="별도 질문으로 저장"
+            onSeparate={() => setOperationId(createCreationOperationId())}
+            disabled={isFormBusy}
+          />
         ) : null}
 
         <label className="block space-y-1.5" htmlFor="qna-title">
@@ -185,7 +228,7 @@ export function NewQnaForm({ actorId, returnTo }: { actorId: string; returnTo: s
         <div className="flex gap-3">
           <Button
             type="submit"
-            disabled={isFormBusy || !title.trim() || isRichTextEmpty(contentHtml)}
+            disabled={isFormBusy || !operationId || !title.trim() || isRichTextEmpty(contentHtml)}
             className="flex-1 gap-2"
           >
             <Send className="h-4 w-4" aria-hidden="true" />
