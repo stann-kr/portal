@@ -40,6 +40,7 @@ npm run dev:seed-admin
 ```bash
 npm run db:check
 npm test
+npm run test:integration
 npm run lint
 npx tsc --noEmit
 npm run build

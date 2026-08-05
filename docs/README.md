@@ -14,6 +14,7 @@
 - 관리자 포털은 미답변 Q&A·피드백 대기·다가오는 레슨을 우선하는 업무함에서 시작한다.
 - migration metadata·empty replay 자동 검사와 lint, TypeScript typecheck, Next.js·Worker build를 기본 검증으로 사용한다.
 - 개발용 관리자 seed, auth guard, calendar token, HTML sanitize, UI 상태 registry와 학생 오늘 selector를 단위 테스트로 보호한다.
+- 문서 draft 생명주기와 Q&A·노트·게시물의 핵심 mutation은 격리 DOM·D1 integration test로 보호한다.
 
 ## 빠른 시작
 
@@ -77,10 +78,10 @@ docs/                       # 프로젝트 문서
 
 ## 현재 개발 우선순위
 
-1. 대표 server action의 허용·거부와 핵심 mutation 실패 경로를 자동화한다.
-2. 큰 client component를 상태 hook, domain view, presentation 경계로 점진적으로 나눈다.
-3. 승인된 브랜드 asset이 준비되면 소셜 공유 이미지를 제품 metadata에 연결한다.
-4. 브라우저 시각 검증은 별도 요청이 있을 때 light·dark·360px·desktop 기준으로 수행한다.
+1. 실제 브라우저의 reload·offline·navigation·delete/restore와 대용량 입력 성능을 자동화한다.
+2. 문서 revision·휴지통·서버 초안과 다중 기기 연속성을 승인된 schema·운영 정책으로 구현한다.
+3. 새 문서·답변 생성에 operation key 기반 요청 멱등성을 추가한다.
+4. 큰 client component를 상태 hook, domain view, presentation 경계로 점진적으로 나눈다.
 
 ## 문서 최신성 기준
 

@@ -427,7 +427,6 @@ export default function CommunityClient({ isAdmin }: CommunityClientProps) {
                         key={post.id}
                         post={{
                           ...post,
-                          isPinned: post.isPinned ?? false,
                           createdAt: post.createdAt ?? null,
                         }}
                         returnTo={returnTo}

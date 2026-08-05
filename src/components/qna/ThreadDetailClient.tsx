@@ -6,7 +6,9 @@
 "use client";
 
 import { useActionState, useState, useEffect, useRef, useTransition } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import dynamic from "next/dynamic";
 
@@ -24,6 +26,8 @@ import type { QnaStatus } from "@/db/schema";
 import { DraftStatus } from "@/components/editor/DraftStatus";
 import { createDocumentDraftKey } from "@/lib/form-draft";
 import { isRichTextEmpty } from "@/lib/rich-text";
+import { StatusBadge } from "@/components/ui/status-badge";
+import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
 
 type Reply = {
   id: string;
@@ -41,6 +45,10 @@ interface ThreadDetailClientProps {
   replies: Reply[];
   isAdmin: boolean;
   actorId: string;
+  title: string;
+  studentName: string;
+  createdAt: string | null;
+  returnTo: string;
 }
 
 export function ThreadDetailClient({
@@ -49,14 +57,24 @@ export function ThreadDetailClient({
   replies: initialReplies,
   isAdmin,
   actorId,
+  title,
+  studentName,
+  createdAt,
+  returnTo,
 }: ThreadDetailClientProps) {
   const [contentHtml, setContentHtml] = useState("");
   const [attachmentUrl, setAttachmentUrl] = useState("");
+  const [isUploading, setIsUploading] = useState(false);
   const [editorKey, setEditorKey] = useState(0);
   const [isPending, startTransition] = useTransition();
   const [currentStatus, setCurrentStatus] = useState(status);
   const [statusError, setStatusError] = useState<string | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
+  const submittedReplyRef = useRef<{
+    contentHtml: string;
+    attachmentUrl: string;
+  } | null>(null);
+  const handledReplyIdRef = useRef<string | null>(null);
   const router = useRouter();
 
   useEffect(() => setCurrentStatus(status), [status]);
@@ -66,9 +84,21 @@ export function ThreadDetailClient({
     CreateReplyState,
     FormData
   >(boundAction, {});
+  const isReplyFormBusy = isReplying || isUploading;
+  useBusyNavigationGuard(isReplyFormBusy);
 
   // 스레드별 임시저장 복원/저장
-  const { loaded, save, clear, status: draftStatus, savedAt, restored } = useFormDraft<{ contentHtml: string; attachmentUrl: string }>(
+  const {
+    loaded,
+    save,
+    clear,
+    status: draftStatus,
+    savedAt,
+    restored,
+    recoveries,
+    restoreRecovery,
+    discardRecovery,
+  } = useFormDraft<{ contentHtml: string; attachmentUrl: string }>(
     createDocumentDraftKey("qna-reply", actorId, threadId),
     (d) => {
       setContentHtml(d.contentHtml ?? "");
@@ -95,8 +125,13 @@ export function ThreadDetailClient({
 
   // 답변 등록 성공 시 draft 삭제 + 폼 초기화 (에디터 remount)
   useEffect(() => {
-    if (replyState.replyId) {
-      clear();
+    if (replyState.replyId && handledReplyIdRef.current !== replyState.replyId) {
+      handledReplyIdRef.current = replyState.replyId;
+      clear({
+        reason: "submitted",
+        submittedData: submittedReplyRef.current ?? { contentHtml, attachmentUrl },
+      });
+      submittedReplyRef.current = null;
       setContentHtml("");
       setAttachmentUrl("");
       setEditorKey((k) => k + 1);
@@ -119,6 +154,52 @@ export function ThreadDetailClient({
 
   return (
     <div className="space-y-6">
+      <div className="space-y-2">
+        <Link
+          href={returnTo}
+          aria-disabled={isReplyFormBusy}
+          tabIndex={isReplyFormBusy ? -1 : undefined}
+          className={`inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground ${
+            isReplyFormBusy ? "pointer-events-none opacity-50" : ""
+          }`}
+          onClick={(event) => {
+            if (isReplyFormBusy) event.preventDefault();
+          }}
+        >
+          <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+          Q&amp;A 목록
+        </Link>
+
+        <div className="flex items-start gap-3">
+          <div className="min-w-0 flex-1">
+            <h1 className="text-xl font-semibold text-foreground">{title}</h1>
+            <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+              {isAdmin ? <span>{studentName} /</span> : null}
+              <span>
+                {createdAt
+                  ? new Date(createdAt).toLocaleDateString("ko-KR", {
+                      year: "numeric",
+                      month: "long",
+                      day: "numeric",
+                    })
+                  : "작성일 미정"}
+              </span>
+            </div>
+          </div>
+          <StatusBadge
+            status={
+              currentStatus === "OPEN"
+                ? "qnaOpen"
+                : currentStatus === "ANSWERED"
+                  ? "qnaAnswered"
+                  : "qnaClosed"
+            }
+          />
+        </div>
+      </div>
+
+      <div className="border-t border-border" />
+
       {/* 답변 목록 */}
       <div className="space-y-4">
         {initialReplies.map((reply) => (
@@ -138,7 +219,7 @@ export function ThreadDetailClient({
               key={s}
               onClick={() => handleStatusChange(s)}
               type="button"
-              disabled={currentStatus === s || isPending}
+              disabled={currentStatus === s || isPending || isReplyFormBusy}
               aria-pressed={currentStatus === s}
               className={`rounded-md border px-3 py-1 text-xs font-semibold transition-colors ${
                 currentStatus === s
@@ -160,7 +241,18 @@ export function ThreadDetailClient({
 
       {/* 답변 작성 폼 */}
       {currentStatus !== "CLOSED" && (
-        <form ref={formRef} action={replyAction} className="space-y-3">
+        <form
+          ref={formRef}
+          action={replyAction}
+          className="space-y-3"
+          onSubmit={(event) => {
+            if (isReplyFormBusy) {
+              event.preventDefault();
+              return;
+            }
+            submittedReplyRef.current = { contentHtml, attachmentUrl };
+          }}
+        >
           <input type="hidden" name="contentHtml" value={contentHtml} />
           <p className="text-sm font-medium text-foreground">
             {isAdmin ? "답변 작성" : "추가 질문"}
@@ -180,13 +272,36 @@ export function ThreadDetailClient({
               disabled={isReplying}
               minHeight="200px"
               ariaLabel={isAdmin ? "Q&A 답변 내용" : "Q&A 추가 질문 내용"}
-              footer={<DraftStatus status={draftStatus} savedAt={savedAt} restored={restored} />}
-              onSave={() => formRef.current?.requestSubmit()}
+              footer={
+                <DraftStatus
+                  status={draftStatus}
+                  savedAt={savedAt}
+                  restored={restored}
+                  recoveries={recoveries}
+                  onRestoreRecovery={restoreRecovery}
+                  onDiscardRecovery={discardRecovery}
+                  disabled={isReplyFormBusy}
+                />
+              }
+              onSave={() => {
+                if (!isReplyFormBusy) formRef.current?.requestSubmit();
+              }}
             />
           )}
-          <AttachmentField value={attachmentUrl} onChange={setAttachmentUrl} disabled={isReplying} />
-          <Button type="submit" disabled={isReplying || isRichTextEmpty(contentHtml)} className="gap-2">
-            {isReplying ? "등록 중..." : isAdmin ? "답변 등록" : "질문 추가"}
+          <AttachmentField
+            value={attachmentUrl}
+            onChange={setAttachmentUrl}
+            disabled={isReplying}
+            onUploadingChange={setIsUploading}
+          />
+          <Button type="submit" disabled={isReplyFormBusy || isRichTextEmpty(contentHtml)} className="gap-2">
+            {isUploading
+              ? "업로드 완료 대기..."
+              : isReplying
+                ? "등록 중..."
+                : isAdmin
+                  ? "답변 등록"
+                  : "질문 추가"}
           </Button>
         </form>
       )}

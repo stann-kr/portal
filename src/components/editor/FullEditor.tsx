@@ -152,6 +152,8 @@ export function FullEditor({
     selection: EditorSelection;
   } | null>(null);
   const lastLocalHtmlRef = useRef<string | null>(null);
+  const saveShortcutLockedRef = useRef(false);
+  const saveShortcutUnlockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const editor = useEditor({
     immediatelyRender: false,
@@ -241,12 +243,20 @@ export function FullEditor({
 
   useEffect(() => {
     editor?.setEditable(!disabled);
+    if (disabled) setInsertPanel(null);
+    else saveShortcutLockedRef.current = false;
   }, [disabled, editor]);
+
+  useEffect(() => () => {
+    if (saveShortcutUnlockTimerRef.current) {
+      clearTimeout(saveShortcutUnlockTimerRef.current);
+    }
+  }, []);
 
   // ── 마크다운 모드 토글 ────────────────────────────
 
   const handleMarkdownToggle = useCallback(() => {
-    if (!editor) return;
+    if (!editor || disabled) return;
 
     if (!isMarkdownMode) {
       // WYSIWYG → 마크다운
@@ -261,9 +271,10 @@ export function FullEditor({
       onChange?.(editor.getHTML());
       setIsMarkdownMode(false);
     }
-  }, [editor, isMarkdownMode, markdownText, onChange]);
+  }, [disabled, editor, isMarkdownMode, markdownText, onChange]);
 
   const handleMarkdownChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    if (disabled) return;
     const nextMarkdown = e.target.value;
     setMarkdownText(nextMarkdown);
     // 숨겨진 HTML 필드와 draft가 Markdown 모드에서도 매 입력마다 최신 상태를 받는다.
@@ -272,19 +283,19 @@ export function FullEditor({
 
   const openInsertPanel = useCallback(
     (kind: EditorInsertKind) => {
-      if (!editor) return;
+      if (!editor || disabled) return;
       const { from, to } = editor.state.selection;
       setInsertPanel({ kind, selection: { from, to } });
     },
-    [editor],
+    [disabled, editor],
   );
 
   // ── 테이블 삽입 ───────────────────────────────────
 
   const addTable = useCallback(() => {
-    if (!editor) return;
+    if (!editor || disabled) return;
     editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run();
-  }, [editor]);
+  }, [disabled, editor]);
 
   if (!editor) return null;
 
@@ -292,13 +303,28 @@ export function FullEditor({
     <div
       className="relative flex flex-col overflow-hidden rounded-xl border border-border bg-background transition-[border-color,box-shadow] focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/15"
       onKeyDownCapture={(event) => {
-        if (!onSave || event.key.toLocaleLowerCase() !== "s" || (!event.metaKey && !event.ctrlKey)) return;
+        if (
+          disabled ||
+          !onSave ||
+          event.repeat ||
+          saveShortcutLockedRef.current ||
+          event.key.toLocaleLowerCase() !== "s" ||
+          (!event.metaKey && !event.ctrlKey)
+        ) return;
         event.preventDefault();
+        saveShortcutLockedRef.current = true;
+        if (saveShortcutUnlockTimerRef.current) {
+          clearTimeout(saveShortcutUnlockTimerRef.current);
+        }
+        saveShortcutUnlockTimerRef.current = setTimeout(() => {
+          saveShortcutLockedRef.current = false;
+          saveShortcutUnlockTimerRef.current = null;
+        }, 1_000);
         onSave();
       }}
     >
 
-      {!isMarkdownMode ? (
+      {!isMarkdownMode && !disabled ? (
         <>
           <BubbleMenu
             editor={editor}
@@ -580,6 +606,7 @@ export function FullEditor({
           editor={editor}
           kind={insertPanel.kind}
           selection={insertPanel.selection}
+          disabled={disabled}
           onClose={() => setInsertPanel(null)}
         />
       ) : null}

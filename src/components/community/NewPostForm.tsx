@@ -14,6 +14,7 @@ import { getCategories } from "@/lib/actions/categories";
 import { createDocumentDraftKey } from "@/lib/form-draft";
 import { useFormDraft } from "@/lib/hooks/useFormDraft";
 import { isRichTextEmpty } from "@/lib/rich-text";
+import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
 
 const FullEditor = dynamic(
   () => import("@/components/editor/FullEditor").then((module) => ({ default: module.FullEditor })),
@@ -60,11 +61,26 @@ export function NewPostForm({
   const [categories, setCategories] = useState<{ id: string; slug: string; name: string }[]>([]);
   const [mediaUrl, setMediaUrl] = useState("");
   const [uploadError, setUploadError] = useState("");
+  const [isUploading, setIsUploading] = useState(false);
   const [state, formAction, isPending] = useActionState<CreatePostState, FormData>(createPost, {});
   const formRef = useRef<HTMLFormElement>(null);
+  const submittedDraftRef = useRef<PostDraft | null>(null);
+  const handledPostIdRef = useRef<string | null>(null);
   const router = useRouter();
+  const isFormBusy = isPending || isUploading;
+  useBusyNavigationGuard(isFormBusy);
 
-  const { loaded, save, clear, status, savedAt, restored } = useFormDraft<PostDraft>(
+  const {
+    loaded,
+    save,
+    clear,
+    status,
+    savedAt,
+    restored,
+    recoveries,
+    restoreRecovery,
+    discardRecovery,
+  } = useFormDraft<PostDraft>(
     createDocumentDraftKey("community-post", actorId),
     (draft) => {
       setBoardType(draft.boardType === "ANNOUNCEMENT" && !isAdmin ? "GENERAL" : (draft.boardType ?? defaultBoardType));
@@ -73,6 +89,16 @@ export function NewPostForm({
       setTitle(draft.title ?? "");
       setContentHtml(draft.contentHtml ?? "");
       setMediaUrl(draft.mediaUrl ?? "");
+    },
+    {
+      onReset: () => {
+        setBoardType(defaultBoardType);
+        setCategory(defaultCategory);
+        setIsPinned(false);
+        setTitle("");
+        setContentHtml("");
+        setMediaUrl("");
+      },
     },
   );
 
@@ -90,17 +116,37 @@ export function NewPostForm({
   }, [boardType, category, clear, contentHtml, isPinned, loaded, mediaUrl, save, title]);
 
   useEffect(() => {
-    if (!state.postId) return;
-    clear();
+    if (!state.postId || handledPostIdRef.current === state.postId) return;
+    handledPostIdRef.current = state.postId;
+    const submittedDraft = submittedDraftRef.current ?? {
+      boardType,
+      category,
+      isPinned,
+      title,
+      contentHtml,
+      mediaUrl,
+    };
+    clear({
+      reason: "submitted",
+      submittedData: submittedDraft,
+    });
+    submittedDraftRef.current = null;
     router.replace(`/community/${state.postId}?returnTo=${encodeURIComponent(returnTo)}`);
-  }, [clear, returnTo, router, state.postId]);
+  }, [boardType, category, clear, contentHtml, isPinned, mediaUrl, returnTo, router, state.postId, title]);
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 px-4 py-6">
       <div className="space-y-1">
         <Link
           href={returnTo}
-          className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
+          aria-disabled={isFormBusy}
+          tabIndex={isFormBusy ? -1 : undefined}
+          className={`inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground ${
+            isFormBusy ? "pointer-events-none opacity-50" : ""
+          }`}
+          onClick={(event) => {
+            if (isFormBusy) event.preventDefault();
+          }}
         >
           <ArrowLeft className="h-4 w-4" aria-hidden="true" />
           커뮤니티
@@ -108,7 +154,25 @@ export function NewPostForm({
         <h1 className="mt-2 text-2xl font-semibold">새 게시물</h1>
       </div>
 
-      <form ref={formRef} action={formAction} className="space-y-5">
+      <form
+        ref={formRef}
+        action={formAction}
+        className="space-y-5"
+        onSubmit={(event) => {
+          if (isFormBusy) {
+            event.preventDefault();
+            return;
+          }
+          submittedDraftRef.current = {
+            boardType,
+            category,
+            isPinned,
+            title,
+            contentHtml,
+            mediaUrl,
+          };
+        }}
+      >
         <input type="hidden" name="returnTo" value="community-editor" />
         <input type="hidden" name="boardType" value={boardType} />
         <input type="hidden" name="category" value={category} />
@@ -194,7 +258,8 @@ export function NewPostForm({
                 <button
                   type="button"
                   onClick={() => setMediaUrl("")}
-                  className="text-xs text-muted-foreground transition-colors hover:text-destructive"
+                  disabled={isFormBusy}
+                  className="text-xs text-muted-foreground transition-colors hover:text-destructive disabled:pointer-events-none disabled:opacity-50"
                 >
                   제거
                 </button>
@@ -209,6 +274,7 @@ export function NewPostForm({
                   setUploadError("");
                 }}
                 onError={setUploadError}
+                onUploadingChange={setIsUploading}
                 disabled={isPending}
               />
             )}
@@ -242,8 +308,20 @@ export function NewPostForm({
               placeholder="게시물 내용을 작성하세요…"
               disabled={isPending}
               ariaLabel="커뮤니티 게시물 내용"
-              footer={<DraftStatus status={status} savedAt={savedAt} restored={restored} />}
-              onSave={() => formRef.current?.requestSubmit()}
+              footer={
+                <DraftStatus
+                  status={status}
+                  savedAt={savedAt}
+                  restored={restored}
+                  recoveries={recoveries}
+                  onRestoreRecovery={restoreRecovery}
+                  onDiscardRecovery={discardRecovery}
+                  disabled={isFormBusy}
+                />
+              }
+              onSave={() => {
+                if (!isFormBusy) formRef.current?.requestSubmit();
+              }}
             />
           ) : null}
         </div>
@@ -251,14 +329,24 @@ export function NewPostForm({
         <div className="flex gap-3">
           <Button
             type="submit"
-            disabled={isPending || !title.trim() || isRichTextEmpty(contentHtml)}
+            disabled={isFormBusy || !title.trim() || isRichTextEmpty(contentHtml)}
             className="flex-1 gap-2"
           >
             <Send className="h-4 w-4" aria-hidden="true" />
-            {isPending ? "게시 중…" : "게시하기"}
+            {isUploading ? "업로드 완료 대기…" : isPending ? "게시 중…" : "게시하기"}
           </Button>
-          <Button variant="outline" asChild disabled={isPending}>
-            <Link href={returnTo}>취소</Link>
+          <Button variant="outline" asChild>
+            <Link
+              href={returnTo}
+              aria-disabled={isFormBusy}
+              tabIndex={isFormBusy ? -1 : undefined}
+              className={isFormBusy ? "pointer-events-none opacity-50" : undefined}
+              onClick={(event) => {
+                if (isFormBusy) event.preventDefault();
+              }}
+            >
+              취소
+            </Link>
           </Button>
         </div>
       </form>

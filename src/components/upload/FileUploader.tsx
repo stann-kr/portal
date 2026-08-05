@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { requestPresignedUploadUrl } from "@/lib/actions/upload";
 import type { PresignedUrlOptions } from "@/lib/r2";
 
@@ -19,6 +19,8 @@ export interface FileUploaderProps {
   label?: string;
   /** 비활성화 여부 */
   disabled?: boolean;
+  /** 업로드 진행 상태를 상위 폼에 전달 */
+  onUploadingChange?: (isUploading: boolean) => void;
 }
 
 /**
@@ -33,16 +35,32 @@ export function FileUploader({
   r2Options,
   label = "파일 선택",
   disabled = false,
+  onUploadingChange,
 }: FileUploaderProps) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const xhrRef = useRef<XMLHttpRequest | null>(null);
+  const mountedRef = useRef(true);
+  const onUploadingChangeRef = useRef(onUploadingChange);
+  onUploadingChangeRef.current = onUploadingChange;
   const [isUploading, setIsUploading] = useState(false);
   const [progress, setProgress] = useState(0);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      xhrRef.current?.abort();
+      xhrRef.current = null;
+      onUploadingChangeRef.current?.(false);
+    };
+  }, []);
 
   async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
 
     setIsUploading(true);
+    onUploadingChangeRef.current?.(true);
     setProgress(0);
 
     try {
@@ -57,20 +75,31 @@ export function FileUploader({
       if (!result.success || !result.uploadUrl || !result.key || !result.publicUrl) {
         throw new Error(result.error ?? "Presigned URL 발급 실패");
       }
+      if (!mountedRef.current) return;
 
       // 2) R2에 직접 PUT 업로드 (XMLHttpRequest로 진행률 추적)
-      await uploadWithProgress(file, result.uploadUrl, setProgress);
+      await uploadWithProgress(file, result.uploadUrl, setProgress, (xhr) => {
+        xhrRef.current = xhr;
+      });
+      xhrRef.current = null;
+      if (!mountedRef.current) return;
 
       onUploadComplete(result.publicUrl, result.key);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "업로드 중 오류 발생";
-      console.error("[FileUploader]", message);
-      onError?.(message);
+      if (mountedRef.current) {
+        console.error("[FileUploader]", message);
+        onError?.(message);
+      }
     } finally {
-      setIsUploading(false);
-      setProgress(0);
-      // input 초기화 (같은 파일 재선택 가능하도록)
-      if (inputRef.current) inputRef.current.value = "";
+      xhrRef.current = null;
+      if (mountedRef.current) {
+        setIsUploading(false);
+        onUploadingChangeRef.current?.(false);
+        setProgress(0);
+        // input 초기화 (같은 파일 재선택 가능하도록)
+        if (inputRef.current) inputRef.current.value = "";
+      }
     }
   }
 
@@ -116,10 +145,12 @@ export function FileUploader({
 function uploadWithProgress(
   file: File,
   presignedUrl: string,
-  onProgress: (percent: number) => void
+  onProgress: (percent: number) => void,
+  onRequest: (xhr: XMLHttpRequest) => void,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
+    onRequest(xhr);
 
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) {

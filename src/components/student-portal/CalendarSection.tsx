@@ -85,6 +85,8 @@ export function CalendarSection({
   const [diggingColumns, setDiggingColumns] = useState<DiggingColumn[]>([]);
   const [noteSlideOpen, setNoteSlideOpen] = useState(false);
   const [qnaSlideOpen, setQnaSlideOpen] = useState(false);
+  const [noteFormBusy, setNoteFormBusy] = useState(false);
+  const [qnaFormBusy, setQnaFormBusy] = useState(false);
   const [activeTab, setActiveTab] = useState<string>("calendar");
   const calendarTabStorageKey = `portal:calendarTab:${encodeURIComponent(actorId)}`;
   const isStudentWorkspace = actorId === studentId;
@@ -272,6 +274,7 @@ export function CalendarSection({
         onOpenChange={setNoteSlideOpen}
         title="노트 작성"
         size="xl"
+        dismissible={!noteFormBusy}
       >
         <NoteSlideForm
           studentId={studentId}
@@ -282,6 +285,7 @@ export function CalendarSection({
             setNoteSlideOpen(false);
           }}
           onClose={() => setNoteSlideOpen(false)}
+          onBusyChange={setNoteFormBusy}
         />
       </SlidePanel>
 
@@ -292,6 +296,7 @@ export function CalendarSection({
           onOpenChange={setQnaSlideOpen}
           title="Q&A 질문 작성"
           size="xl"
+          dismissible={!qnaFormBusy}
         >
           <QnaSlideForm
             actorId={actorId}
@@ -301,6 +306,7 @@ export function CalendarSection({
               setQnaSlideOpen(false);
             }}
             onClose={() => setQnaSlideOpen(false)}
+            onBusyChange={setQnaFormBusy}
           />
         </SlidePanel>
       ) : null}

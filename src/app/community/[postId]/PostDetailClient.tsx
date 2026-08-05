@@ -40,6 +40,7 @@ export function PostDetailClient({
   const commentList = initialCommentList;
   const [isPending, startTransition] = useTransition();
   const [isEditing, setIsEditing] = useState(false);
+  const [isEditPending, setIsEditPending] = useState(false);
   const commentFormRef = useRef<HTMLFormElement>(null);
   const router = useRouter();
 
@@ -104,7 +105,7 @@ export function PostDetailClient({
                 variant="ghost"
                 size="sm"
                 onClick={() => setIsEditing((value) => !value)}
-                disabled={isPending}
+                disabled={isPending || isEditPending}
                 aria-pressed={isEditing}
                 className="gap-1.5"
               >
@@ -117,7 +118,7 @@ export function PostDetailClient({
                 variant="ghost"
                 size="sm"
                 onClick={handleDeletePost}
-                disabled={isPending}
+                disabled={isPending || isEditPending}
                 className="text-destructive hover:bg-destructive/10"
                 aria-label="게시물 삭제"
               >
@@ -145,6 +146,7 @@ export function PostDetailClient({
           actorId={currentUserId}
           onCancel={() => setIsEditing(false)}
           onSaved={handleSaved}
+          onBusyChange={setIsEditPending}
         />
       ) : (
         <RichTextContent html={post.contentHtml} />

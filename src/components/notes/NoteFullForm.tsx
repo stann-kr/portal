@@ -18,6 +18,7 @@ import { useFormDraft } from "@/lib/hooks/useFormDraft";
 import { createDocumentDraftKey } from "@/lib/form-draft";
 import { isRichTextEmpty } from "@/lib/rich-text";
 import { toKstDateInputValue } from "@/lib/date-input";
+import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
 
 const FullEditor = dynamic(
   () => import("@/components/editor/FullEditor").then((m) => ({ default: m.FullEditor })),
@@ -42,17 +43,44 @@ export function NoteFullForm({ action, actorId, studentId, returnTo }: NoteFullF
     {}
   );
   const formRef = useRef<HTMLFormElement>(null);
-  const router = useRouter();
-
-  const { loaded, save, clear, status, savedAt, restored } = useFormDraft<{
+  const submittedDraftRef = useRef<{
     title: string;
     noteDate: string;
     contentHtml: string;
-  }>(createDocumentDraftKey("note", actorId, `new:${studentId}`), (draft) => {
-    setTitle(draft.title ?? "");
-    setNoteDate(draft.noteDate || today);
-    setContentHtml(draft.contentHtml ?? "");
-  });
+  } | null>(null);
+  const handledNoteIdRef = useRef<string | null>(null);
+  const router = useRouter();
+  useBusyNavigationGuard(isPending);
+
+  const {
+    loaded,
+    save,
+    clear,
+    status,
+    savedAt,
+    restored,
+    recoveries,
+    restoreRecovery,
+    discardRecovery,
+  } = useFormDraft<{
+    title: string;
+    noteDate: string;
+    contentHtml: string;
+  }>(
+    createDocumentDraftKey("note", actorId, `new:${studentId}`),
+    (draft) => {
+      setTitle(draft.title ?? "");
+      setNoteDate(draft.noteDate || today);
+      setContentHtml(draft.contentHtml ?? "");
+    },
+    {
+      onReset: () => {
+        setTitle("");
+        setNoteDate(today);
+        setContentHtml("");
+      },
+    },
+  );
 
   useEffect(() => {
     if (!loaded) return;
@@ -64,10 +92,15 @@ export function NoteFullForm({ action, actorId, studentId, returnTo }: NoteFullF
   }, [clear, contentHtml, loaded, noteDate, save, title]);
 
   useEffect(() => {
-    if (!state.note?.id) return;
-    clear();
+    if (!state.note?.id || handledNoteIdRef.current === state.note.id) return;
+    handledNoteIdRef.current = state.note.id;
+    clear({
+      reason: "submitted",
+      submittedData: submittedDraftRef.current ?? { title, noteDate, contentHtml },
+    });
+    submittedDraftRef.current = null;
     router.replace(`/dashboard/notes/${state.note.id}?returnTo=${encodeURIComponent(returnTo)}`);
-  }, [clear, returnTo, router, state.note?.id]);
+  }, [clear, contentHtml, noteDate, returnTo, router, state.note?.id, title]);
 
   return (
     <div className="max-w-4xl mx-auto space-y-6 py-6 px-4">
@@ -75,7 +108,14 @@ export function NoteFullForm({ action, actorId, studentId, returnTo }: NoteFullF
       <div className="space-y-1">
         <Link
           href={returnTo}
-          className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
+          aria-disabled={isPending}
+          tabIndex={isPending ? -1 : undefined}
+          className={`inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground ${
+            isPending ? "pointer-events-none opacity-50" : ""
+          }`}
+          onClick={(event) => {
+            if (isPending) event.preventDefault();
+          }}
         >
           <ArrowLeft className="w-4 h-4" />
           포털로 돌아가기
@@ -83,7 +123,14 @@ export function NoteFullForm({ action, actorId, studentId, returnTo }: NoteFullF
         <h1 className="text-2xl font-semibold mt-2">노트 작성</h1>
       </div>
 
-      <form ref={formRef} action={formAction} className="space-y-5">
+      <form
+        ref={formRef}
+        action={formAction}
+        className="space-y-5"
+        onSubmit={() => {
+          submittedDraftRef.current = { title, noteDate, contentHtml };
+        }}
+      >
         <input type="hidden" name="contentHtml" value={contentHtml} />
 
         {state?.error && (
@@ -144,7 +191,17 @@ export function NoteFullForm({ action, actorId, studentId, returnTo }: NoteFullF
               placeholder="수업 내용, 연습 기록, 메모 등을 자유롭게 작성하세요..."
               disabled={isPending}
               ariaLabel="노트 내용"
-              footer={<DraftStatus status={status} savedAt={savedAt} restored={restored} />}
+              footer={
+                <DraftStatus
+                  status={status}
+                  savedAt={savedAt}
+                  restored={restored}
+                  recoveries={recoveries}
+                  onRestoreRecovery={restoreRecovery}
+                  onDiscardRecovery={discardRecovery}
+                  disabled={isPending}
+                />
+              }
               onSave={() => formRef.current?.requestSubmit()}
             />
           ) : null}
@@ -160,8 +217,18 @@ export function NoteFullForm({ action, actorId, studentId, returnTo }: NoteFullF
             <Save className="w-4 h-4" />
             {isPending ? "저장 중..." : "노트 저장"}
           </Button>
-          <Button variant="outline" asChild disabled={isPending}>
-            <Link href={returnTo}>취소</Link>
+          <Button variant="outline" asChild>
+            <Link
+              href={returnTo}
+              aria-disabled={isPending}
+              tabIndex={isPending ? -1 : undefined}
+              className={isPending ? "pointer-events-none opacity-50" : undefined}
+              onClick={(event) => {
+                if (isPending) event.preventDefault();
+              }}
+            >
+              취소
+            </Link>
           </Button>
         </div>
       </form>

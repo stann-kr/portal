@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useRef, useState } from "react";
+import { useActionState, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,7 @@ import { useFormDraft } from "@/lib/hooks/useFormDraft";
 import { createDocumentDraftKey } from "@/lib/form-draft";
 import { isRichTextEmpty } from "@/lib/rich-text";
 import type { UpdateNoteState } from "@/lib/actions/privateNotes";
+import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
 
 const FullEditor = dynamic(
   () => import("@/components/editor/FullEditor").then((module) => ({ default: module.FullEditor })),
@@ -38,19 +39,46 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
   const [contentHtml, setContentHtml] = useState(note.contentHtml);
   const [hasStaleDraftBase, setHasStaleDraftBase] = useState(false);
   const [state, formAction, isPending] = useActionState<UpdateNoteState, FormData>(action, {});
+  useBusyNavigationGuard(isPending);
   const formRef = useRef<HTMLFormElement>(null);
+  const handledSavedNoteRef = useRef<UpdateNoteState["note"]>(undefined);
+  const submittedDraftRef = useRef<{
+    title: string;
+    noteDate: string;
+    contentHtml: string;
+    base: { title: string; noteDate: string; contentHtml: string };
+  } | null>(null);
   const savedSnapshotRef = useRef({
     title: note.title,
     noteDate: toDateInputValue(note.noteDate),
     contentHtml: note.contentHtml,
   });
-  const serverSnapshot = {
+  const draftBaseRef = useRef({
     title: note.title,
     noteDate: toDateInputValue(note.noteDate),
     contentHtml: note.contentHtml,
-  };
+  });
+  const serverSnapshot = useMemo(
+    () => ({
+      title: note.title,
+      noteDate: toDateInputValue(note.noteDate),
+      contentHtml: note.contentHtml,
+    }),
+    [note.contentHtml, note.noteDate, note.title],
+  );
+  const previousServerSnapshotRef = useRef(serverSnapshot);
 
-  const { loaded, save, clear, status, savedAt, restored } = useFormDraft<{
+  const {
+    loaded,
+    save,
+    clear,
+    status,
+    savedAt,
+    restored,
+    recoveries,
+    restoreRecovery,
+    discardRecovery,
+  } = useFormDraft<{
     title: string;
     noteDate: string;
     contentHtml: string;
@@ -58,18 +86,21 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
   }>(
     createDocumentDraftKey("note", actorId, note.id),
     (draft) => {
+      draftBaseRef.current = serverSnapshot;
+      setHasStaleDraftBase(false);
       if (
         draft.base &&
         typeof draft.base.title === "string" &&
         typeof draft.base.noteDate === "string" &&
         typeof draft.base.contentHtml === "string"
       ) {
+        draftBaseRef.current = draft.base;
         const matchesCurrentServer =
           draft.base.title === serverSnapshot.title &&
           draft.base.noteDate === serverSnapshot.noteDate &&
           draft.base.contentHtml === serverSnapshot.contentHtml;
         if (matchesCurrentServer) savedSnapshotRef.current = draft.base;
-        else setHasStaleDraftBase(true);
+        setHasStaleDraftBase(!matchesCurrentServer);
       }
       setTitle(draft.title ?? note.title);
       setNoteDate(draft.noteDate ?? toDateInputValue(note.noteDate));
@@ -78,6 +109,7 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
     {
       onReset: () => {
         savedSnapshotRef.current = serverSnapshot;
+        draftBaseRef.current = serverSnapshot;
         setHasStaleDraftBase(false);
         setTitle(serverSnapshot.title);
         setNoteDate(serverSnapshot.noteDate);
@@ -87,33 +119,103 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
   );
 
   useEffect(() => {
-    if (!loaded || hasStaleDraftBase) return;
+    if (!loaded) return;
     const matchesServer =
       title === savedSnapshotRef.current.title &&
       noteDate === savedSnapshotRef.current.noteDate &&
       contentHtml === savedSnapshotRef.current.contentHtml;
-    if (matchesServer) {
+    if (!hasStaleDraftBase && matchesServer) {
       clear();
       return;
     }
-    save({ title, noteDate, contentHtml, base: savedSnapshotRef.current });
+    save({
+      title,
+      noteDate,
+      contentHtml,
+      base: hasStaleDraftBase ? draftBaseRef.current : savedSnapshotRef.current,
+    });
   }, [clear, contentHtml, hasStaleDraftBase, loaded, noteDate, save, title]);
 
   useEffect(() => {
-    if (!state.note?.id) return;
+    if (!loaded) return;
+    const previousServer = previousServerSnapshotRef.current;
+    const serverChanged =
+      previousServer.title !== serverSnapshot.title ||
+      previousServer.noteDate !== serverSnapshot.noteDate ||
+      previousServer.contentHtml !== serverSnapshot.contentHtml;
+    if (!serverChanged) return;
+
+    previousServerSnapshotRef.current = serverSnapshot;
+    const localMatchesPrevious =
+      title === previousServer.title &&
+      noteDate === previousServer.noteDate &&
+      contentHtml === previousServer.contentHtml;
+    const localMatchesCurrent =
+      title === serverSnapshot.title &&
+      noteDate === serverSnapshot.noteDate &&
+      contentHtml === serverSnapshot.contentHtml;
+
+    if (localMatchesCurrent || (!hasStaleDraftBase && localMatchesPrevious)) {
+      clear();
+      savedSnapshotRef.current = serverSnapshot;
+      draftBaseRef.current = serverSnapshot;
+      setTitle(serverSnapshot.title);
+      setNoteDate(serverSnapshot.noteDate);
+      setContentHtml(serverSnapshot.contentHtml);
+      setHasStaleDraftBase(false);
+      return;
+    }
+
+    if (!hasStaleDraftBase) draftBaseRef.current = savedSnapshotRef.current;
+    setHasStaleDraftBase(true);
+  }, [
+    clear,
+    contentHtml,
+    hasStaleDraftBase,
+    loaded,
+    noteDate,
+    serverSnapshot,
+    title,
+  ]);
+
+  useEffect(() => {
+    if (!state.note?.id || handledSavedNoteRef.current === state.note) return;
+    handledSavedNoteRef.current = state.note;
+    clear({
+      reason: "submitted",
+      submittedData: submittedDraftRef.current ?? {
+        title,
+        noteDate,
+        contentHtml,
+        base: savedSnapshotRef.current,
+      },
+    });
+    submittedDraftRef.current = null;
     savedSnapshotRef.current = {
       title: state.note.title,
       noteDate: toDateInputValue(state.note.noteDate),
       contentHtml: state.note.contentHtml,
     };
+    draftBaseRef.current = savedSnapshotRef.current;
     setTitle(state.note.title);
     setNoteDate(toDateInputValue(state.note.noteDate));
     setContentHtml(state.note.contentHtml);
-    clear();
-  }, [clear, state.note]);
+  }, [clear, contentHtml, noteDate, state.note, title]);
 
   return (
-    <form ref={formRef} action={formAction} className="space-y-5">
+    <form
+      ref={formRef}
+      action={formAction}
+      className="space-y-5"
+      onSubmit={() => {
+        submittedDraftRef.current = {
+          title,
+          noteDate,
+          contentHtml,
+          base: { ...savedSnapshotRef.current },
+        };
+      }}
+    >
       <input type="hidden" name="contentHtml" value={contentHtml} />
       <input type="hidden" name="baseTitle" value={savedSnapshotRef.current.title} />
       <input type="hidden" name="baseContentHtml" value={savedSnapshotRef.current.contentHtml} />
@@ -135,6 +237,7 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
           onUseServer={() => {
             clear();
             savedSnapshotRef.current = serverSnapshot;
+            draftBaseRef.current = serverSnapshot;
             setTitle(serverSnapshot.title);
             setNoteDate(serverSnapshot.noteDate);
             setContentHtml(serverSnapshot.contentHtml);
@@ -142,6 +245,7 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
           }}
           onKeepDraft={() => {
             savedSnapshotRef.current = serverSnapshot;
+            draftBaseRef.current = serverSnapshot;
             setHasStaleDraftBase(false);
           }}
         />
@@ -178,7 +282,17 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
           minHeight="min(60dvh, 42rem)"
           disabled={isPending}
           ariaLabel="노트 내용"
-          footer={<DraftStatus status={status} savedAt={savedAt} restored={restored} />}
+          footer={
+            <DraftStatus
+              status={status}
+              savedAt={savedAt}
+              restored={restored}
+              recoveries={recoveries}
+              onRestoreRecovery={restoreRecovery}
+              onDiscardRecovery={discardRecovery}
+              disabled={isPending}
+            />
+          }
           onSave={() => formRef.current?.requestSubmit()}
         />
       ) : null}

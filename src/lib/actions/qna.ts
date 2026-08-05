@@ -7,11 +7,15 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createDb } from "@/db/client";
+import { createDb, createDbContext } from "@/db/client";
 import { qnaThreads, qnaReplies, profiles } from "@/db/schema";
 import type { QnaStatus } from "@/db/schema";
-import { and, eq, desc, count, ne } from "drizzle-orm";
+import { and, eq, desc, count } from "drizzle-orm";
 import { requireAuth } from "@/lib/auth-guard";
+import {
+  createQnaReplyAtomically,
+  createQnaThreadAtomically,
+} from "@/lib/qna-atomic";
 import { sanitizeHtml } from "@/lib/sanitize-html";
 import { isRichTextEmpty } from "@/lib/rich-text";
 
@@ -199,35 +203,20 @@ export async function createQnaThread(
   if (isRichTextEmpty(contentHtml))
     return { error: "내용을 입력해주세요." };
 
-  const db = createDb();
+  const dbContext = createDbContext();
   const threadId = crypto.randomUUID();
   const replyId = crypto.randomUUID();
 
-  let threadCreated = false;
   try {
-    await db.insert(qnaThreads).values({
-      id: threadId,
+    await createQnaThreadAtomically(dbContext, {
+      threadId,
+      replyId,
       studentId: session.user.id!,
       title,
-      status: "OPEN",
-    });
-    threadCreated = true;
-
-    await db.insert(qnaReplies).values({
-      id: replyId,
-      threadId,
-      authorId: session.user.id!,
       contentHtml,
       attachmentUrl: parseAttachmentUrl(formData),
     });
   } catch {
-    if (threadCreated) {
-      try {
-        await db.delete(qnaThreads).where(eq(qnaThreads.id, threadId));
-      } catch {
-        // 원자 transaction은 승인된 persistence 보강 단계에서 적용한다.
-      }
-    }
     return { error: "질문을 저장하지 못했습니다. 다시 시도해 주세요." };
   }
 
@@ -267,42 +256,26 @@ export async function createQnaThreadInline(
     return { error: "내용을 입력해주세요." };
   const attachmentUrl = parseAttachmentUrl(formData);
 
-  const db = createDb();
+  const dbContext = createDbContext();
   const threadId = crypto.randomUUID();
   const replyId = crypto.randomUUID();
 
-  let threadCreated = false;
   try {
-    await db.insert(qnaThreads).values({
-      id: threadId,
+    await createQnaThreadAtomically(dbContext, {
+      threadId,
+      replyId,
       studentId: session.user.id!,
       title,
-      status: "OPEN",
-    });
-    threadCreated = true;
-
-    await db.insert(qnaReplies).values({
-      id: replyId,
-      threadId,
-      authorId: session.user.id!,
       contentHtml,
       attachmentUrl,
     });
-
-    revalidatePath("/dashboard/qna");
-    revalidatePath("/dashboard/student");
-
-    return { success: true, thread: { id: threadId, title, createdAt: new Date() } };
   } catch {
-    if (threadCreated) {
-      try {
-        await db.delete(qnaThreads).where(eq(qnaThreads.id, threadId));
-      } catch {
-        // 원자 transaction은 승인된 persistence 보강 단계에서 적용한다.
-      }
-    }
     return { error: "질문 작성 중 오류가 발생했습니다." };
   }
+
+  revalidatePath("/dashboard/qna");
+  revalidatePath("/dashboard/student");
+  return { success: true, thread: { id: threadId, title, createdAt: new Date() } };
 }
 
 // ─── 답변 추가 ────────────────────────────────────
@@ -342,34 +315,30 @@ export async function createQnaReply(
     return { error: "종료된 스레드에는 답변을 추가할 수 없습니다." };
   }
 
-  const db = createDb();
+  const dbContext = createDbContext();
 
   const replyId = crypto.randomUUID();
   try {
-    await db.insert(qnaReplies).values({
-      id: replyId,
+    const created = await createQnaReplyAtomically(dbContext, {
       threadId,
-      authorId: session.user.id!,
+      replyId,
+      actorId: session.user.id!,
+      isAdmin,
       contentHtml,
       attachmentUrl,
     });
 
-    // 상태 확인 이후 CLOSED로 바뀐 경우 새 답변을 제거해 재오픈 경쟁을 막는다.
-    const updatedThreads = await db
-      .update(qnaThreads)
-      .set({ status: isAdmin ? "ANSWERED" : "OPEN", updatedAt: new Date() })
-      .where(and(eq(qnaThreads.id, threadId), ne(qnaThreads.status, "CLOSED")))
-      .returning({ id: qnaThreads.id });
-
-    if (updatedThreads.length === 0) {
-      await db.delete(qnaReplies).where(eq(qnaReplies.id, replyId));
+    if (!created) {
       return { error: "종료된 스레드에는 답변을 추가할 수 없습니다." };
     }
   } catch {
     try {
-      await db.delete(qnaReplies).where(eq(qnaReplies.id, replyId));
+      const latestThread = await getQnaThreadOwner(threadId);
+      if (latestThread?.status === "CLOSED") {
+        return { error: "종료된 스레드에는 답변을 추가할 수 없습니다." };
+      }
     } catch {
-      // 원자 transaction은 승인된 persistence 보강 단계에서 적용한다.
+      // 원래 쓰기 오류 메시지를 유지한다.
     }
     return { error: "답변을 저장하지 못했습니다. 다시 시도해 주세요." };
   }

@@ -37,11 +37,13 @@ export function EditorInsertPanel({
   editor,
   kind,
   selection,
+  disabled = false,
   onClose,
 }: {
   editor: Editor;
   kind: EditorInsertKind;
   selection: EditorSelection;
+  disabled?: boolean;
   onClose: () => void;
 }) {
   const selectedText = editor.state.doc.textBetween(selection.from, selection.to, " ");
@@ -51,10 +53,13 @@ export function EditorInsertPanel({
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => inputRef.current?.focus(), []);
+  useEffect(() => {
+    if (!disabled) inputRef.current?.focus();
+  }, [disabled]);
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (disabled) return;
     const normalizedUrl = normalizeEditorUrl(url, kind);
     if (!normalizedUrl) {
       setError("사용할 수 있는 주소를 입력해 주세요.");
@@ -108,6 +113,7 @@ export function EditorInsertPanel({
               {kind === "image" ? "대체 텍스트" : "표시할 텍스트"}
             </span>
             <Input
+              disabled={disabled}
               value={text}
               onChange={(event) => setText(event.target.value)}
               placeholder={kind === "image" ? "이미지 내용을 설명하세요" : "링크 텍스트"}
@@ -118,6 +124,7 @@ export function EditorInsertPanel({
           <span className="text-xs font-medium text-foreground">{copy.label}</span>
           <Input
             ref={inputRef}
+            disabled={disabled}
             type="url"
             inputMode="url"
             value={url}
@@ -130,8 +137,8 @@ export function EditorInsertPanel({
           />
         </label>
         <div className="flex gap-2">
-          <Button type="submit" size="sm">삽입</Button>
-          <Button type="button" size="sm" variant="ghost" onClick={onClose}>취소</Button>
+          <Button type="submit" size="sm" disabled={disabled}>삽입</Button>
+          <Button type="button" size="sm" variant="ghost" disabled={disabled} onClick={onClose}>취소</Button>
         </div>
       </div>
       {error ? <p role="alert" className="mt-2 text-xs text-destructive">{error}</p> : null}

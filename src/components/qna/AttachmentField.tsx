@@ -14,9 +14,15 @@ interface AttachmentFieldProps {
   value: string;
   onChange: (url: string) => void;
   disabled?: boolean;
+  onUploadingChange?: (isUploading: boolean) => void;
 }
 
-export function AttachmentField({ value, onChange, disabled }: AttachmentFieldProps) {
+export function AttachmentField({
+  value,
+  onChange,
+  disabled,
+  onUploadingChange,
+}: AttachmentFieldProps) {
   return (
     <div className="space-y-2">
       {/* 서버 액션 전송용 hidden 필드 */}
@@ -41,6 +47,7 @@ export function AttachmentField({ value, onChange, disabled }: AttachmentFieldPr
           prefix="qna/"
           label="파일 첨부"
           disabled={disabled}
+          onUploadingChange={onUploadingChange}
           onUploadComplete={(publicUrl) => onChange(publicUrl)}
           onError={(message) => console.error("[AttachmentField]", message)}
         />

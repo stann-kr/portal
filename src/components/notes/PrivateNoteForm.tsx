@@ -10,6 +10,7 @@ import { DraftStatus } from "@/components/editor/DraftStatus";
 import { createDocumentDraftKey } from "@/lib/form-draft";
 import { isRichTextEmpty } from "@/lib/rich-text";
 import { toKstDateInputValue } from "@/lib/date-input";
+import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
 
 const FullEditor = dynamic(
   () => import("@/components/editor/FullEditor").then((m) => ({ default: m.FullEditor })),
@@ -27,15 +28,32 @@ export function PrivateNoteForm({
 }) {
   const boundAction = createPrivateNote.bind(null, studentId);
   const [state, formAction, pending] = useActionState(boundAction, initialState);
+  useBusyNavigationGuard(pending);
   const today = toKstDateInputValue();
   const [title, setTitle] = useState("");
   const [noteDate, setNoteDate] = useState(today);
   const [contentHtml, setContentHtml] = useState("");
   const [editorKey, setEditorKey] = useState(0);
   const formRef = useRef<HTMLFormElement>(null);
+  const submittedDraftRef = useRef<{
+    title: string;
+    noteDate: string;
+    contentHtml: string;
+  } | null>(null);
+  const handledNoteIdRef = useRef<string | null>(null);
 
   // 임시저장 복원/저장 (학생별 키)
-  const { loaded, save, clear, status, savedAt, restored } = useFormDraft<{ title: string; noteDate: string; contentHtml: string }>(
+  const {
+    loaded,
+    save,
+    clear,
+    status,
+    savedAt,
+    restored,
+    recoveries,
+    restoreRecovery,
+    discardRecovery,
+  } = useFormDraft<{ title: string; noteDate: string; contentHtml: string }>(
     createDocumentDraftKey("note", actorId, `new:${studentId}`),
     (d) => {
       setTitle(d.title ?? "");
@@ -64,8 +82,17 @@ export function PrivateNoteForm({
 
   // 저장 성공 시 draft 삭제 + 폼 초기화 (에디터 remount)
   useEffect(() => {
-    if (state.success) {
-      clear();
+    if (
+      state.success &&
+      state.note?.id &&
+      handledNoteIdRef.current !== state.note.id
+    ) {
+      handledNoteIdRef.current = state.note.id;
+      clear({
+        reason: "submitted",
+        submittedData: submittedDraftRef.current ?? { title, noteDate, contentHtml },
+      });
+      submittedDraftRef.current = null;
       setTitle("");
       setNoteDate(today);
       setContentHtml("");
@@ -75,7 +102,14 @@ export function PrivateNoteForm({
   }, [state.note?.id]);
 
   return (
-    <form ref={formRef} action={formAction} className="space-y-4">
+    <form
+      ref={formRef}
+      action={formAction}
+      className="space-y-4"
+      onSubmit={() => {
+        submittedDraftRef.current = { title, noteDate, contentHtml };
+      }}
+    >
       {state.error && (
         <p role="alert" className="text-sm text-destructive">{state.error}</p>
       )}
@@ -122,7 +156,17 @@ export function PrivateNoteForm({
             disabled={pending}
             minHeight="300px"
             ariaLabel="노트 내용"
-            footer={<DraftStatus status={status} savedAt={savedAt} restored={restored} />}
+            footer={
+              <DraftStatus
+                status={status}
+                savedAt={savedAt}
+                restored={restored}
+                recoveries={recoveries}
+                onRestoreRecovery={restoreRecovery}
+                onDiscardRecovery={discardRecovery}
+                disabled={pending}
+              />
+            }
             onSave={() => formRef.current?.requestSubmit()}
           />
         )}

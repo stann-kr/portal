@@ -15,6 +15,7 @@ import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { config as loadEnv } from "dotenv";
+import { selectLocalD1SqliteFile } from "@/db/local-connection-cache";
 
 const LOCAL_D1_DIRECTORY = join(
   process.cwd(),
@@ -115,17 +116,8 @@ function findLocalD1Database(): string {
     );
   }
 
-  const sqliteFiles = readdirSync(LOCAL_D1_DIRECTORY)
-    .filter((fileName) => fileName.endsWith(".sqlite"))
-    .sort();
-
-  if (sqliteFiles.length !== 1) {
-    throw new Error(
-      `Wrangler 로컬 D1 SQLite 파일이 정확히 1개여야 합니다. 현재 ${sqliteFiles.length}개입니다.`,
-    );
-  }
-
-  return join(LOCAL_D1_DIRECTORY, sqliteFiles[0]);
+  const sqliteFile = selectLocalD1SqliteFile(readdirSync(LOCAL_D1_DIRECTORY));
+  return join(LOCAL_D1_DIRECTORY, sqliteFile);
 }
 
 async function run(): Promise<void> {

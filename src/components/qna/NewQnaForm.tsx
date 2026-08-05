@@ -13,6 +13,7 @@ import { createQnaThread, type CreateThreadState } from "@/lib/actions/qna";
 import { createDocumentDraftKey } from "@/lib/form-draft";
 import { useFormDraft } from "@/lib/hooks/useFormDraft";
 import { isRichTextEmpty } from "@/lib/rich-text";
+import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
 
 const FullEditor = dynamic(
   () => import("@/components/editor/FullEditor").then((module) => ({ default: module.FullEditor })),
@@ -29,19 +30,41 @@ export function NewQnaForm({ actorId, returnTo }: { actorId: string; returnTo: s
   const [title, setTitle] = useState("");
   const [contentHtml, setContentHtml] = useState("");
   const [attachmentUrl, setAttachmentUrl] = useState("");
+  const [isUploading, setIsUploading] = useState(false);
   const [state, formAction, isPending] = useActionState<CreateThreadState, FormData>(
     createQnaThread,
     {},
   );
   const formRef = useRef<HTMLFormElement>(null);
+  const submittedDraftRef = useRef<QnaDraft | null>(null);
+  const handledThreadIdRef = useRef<string | null>(null);
   const router = useRouter();
+  const isFormBusy = isPending || isUploading;
+  useBusyNavigationGuard(isFormBusy);
 
-  const { loaded, save, clear, status, savedAt, restored } = useFormDraft<QnaDraft>(
+  const {
+    loaded,
+    save,
+    clear,
+    status,
+    savedAt,
+    restored,
+    recoveries,
+    restoreRecovery,
+    discardRecovery,
+  } = useFormDraft<QnaDraft>(
     createDocumentDraftKey("qna-thread", actorId),
     (draft) => {
       setTitle(draft.title ?? "");
       setContentHtml(draft.contentHtml ?? "");
       setAttachmentUrl(draft.attachmentUrl ?? "");
+    },
+    {
+      onReset: () => {
+        setTitle("");
+        setContentHtml("");
+        setAttachmentUrl("");
+      },
     },
   );
 
@@ -55,17 +78,29 @@ export function NewQnaForm({ actorId, returnTo }: { actorId: string; returnTo: s
   }, [attachmentUrl, clear, contentHtml, loaded, save, title]);
 
   useEffect(() => {
-    if (!state.thread?.id) return;
-    clear();
+    if (!state.thread?.id || handledThreadIdRef.current === state.thread.id) return;
+    handledThreadIdRef.current = state.thread.id;
+    clear({
+      reason: "submitted",
+      submittedData: submittedDraftRef.current ?? { title, contentHtml, attachmentUrl },
+    });
+    submittedDraftRef.current = null;
     router.replace(`/dashboard/qna/${state.thread.id}?returnTo=${encodeURIComponent(returnTo)}`);
-  }, [clear, returnTo, router, state.thread?.id]);
+  }, [attachmentUrl, clear, contentHtml, returnTo, router, state.thread?.id, title]);
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 px-4 py-6">
       <div className="space-y-1">
         <Link
           href={returnTo}
-          className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
+          aria-disabled={isFormBusy}
+          tabIndex={isFormBusy ? -1 : undefined}
+          className={`inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground ${
+            isFormBusy ? "pointer-events-none opacity-50" : ""
+          }`}
+          onClick={(event) => {
+            if (isFormBusy) event.preventDefault();
+          }}
         >
           <ArrowLeft className="h-4 w-4" aria-hidden="true" />
           Q&amp;A
@@ -73,7 +108,18 @@ export function NewQnaForm({ actorId, returnTo }: { actorId: string; returnTo: s
         <h1 className="mt-2 text-2xl font-semibold">새 질문 작성</h1>
       </div>
 
-      <form ref={formRef} action={formAction} className="space-y-5">
+      <form
+        ref={formRef}
+        action={formAction}
+        className="space-y-5"
+        onSubmit={(event) => {
+          if (isFormBusy) {
+            event.preventDefault();
+            return;
+          }
+          submittedDraftRef.current = { title, contentHtml, attachmentUrl };
+        }}
+      >
         <input type="hidden" name="contentHtml" value={contentHtml} />
 
         {state.error ? (
@@ -108,28 +154,55 @@ export function NewQnaForm({ actorId, returnTo }: { actorId: string; returnTo: s
               placeholder="질문 내용을 자세히 작성하세요. 악보, 코드, 이미지 등을 첨부할 수 있습니다."
               disabled={isPending}
               ariaLabel="Q&A 질문 내용"
-              footer={<DraftStatus status={status} savedAt={savedAt} restored={restored} />}
-              onSave={() => formRef.current?.requestSubmit()}
+              footer={
+                <DraftStatus
+                  status={status}
+                  savedAt={savedAt}
+                  restored={restored}
+                  recoveries={recoveries}
+                  onRestoreRecovery={restoreRecovery}
+                  onDiscardRecovery={discardRecovery}
+                  disabled={isFormBusy}
+                />
+              }
+              onSave={() => {
+                if (!isFormBusy) formRef.current?.requestSubmit();
+              }}
             />
           ) : null}
         </div>
 
         <div className="space-y-1.5">
           <p className="text-sm font-medium">첨부 파일</p>
-          <AttachmentField value={attachmentUrl} onChange={setAttachmentUrl} disabled={isPending} />
+          <AttachmentField
+            value={attachmentUrl}
+            onChange={setAttachmentUrl}
+            disabled={isPending}
+            onUploadingChange={setIsUploading}
+          />
         </div>
 
         <div className="flex gap-3">
           <Button
             type="submit"
-            disabled={isPending || !title.trim() || isRichTextEmpty(contentHtml)}
+            disabled={isFormBusy || !title.trim() || isRichTextEmpty(contentHtml)}
             className="flex-1 gap-2"
           >
             <Send className="h-4 w-4" aria-hidden="true" />
-            {isPending ? "등록 중…" : "질문 등록"}
+            {isUploading ? "업로드 완료 대기…" : isPending ? "등록 중…" : "질문 등록"}
           </Button>
-          <Button variant="outline" asChild disabled={isPending}>
-            <Link href={returnTo}>취소</Link>
+          <Button variant="outline" asChild>
+            <Link
+              href={returnTo}
+              aria-disabled={isFormBusy}
+              tabIndex={isFormBusy ? -1 : undefined}
+              className={isFormBusy ? "pointer-events-none opacity-50" : undefined}
+              onClick={(event) => {
+                if (isFormBusy) event.preventDefault();
+              }}
+            >
+              취소
+            </Link>
           </Button>
         </div>
       </form>

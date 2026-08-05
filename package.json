@@ -17,11 +17,13 @@
     "build:worker": "node_modules/.bin/opennextjs-cloudflare build",
     "start": "next start",
     "test": "tsx --test src/**/*.test.ts",
+    "test:integration": "tsx --experimental-test-module-mocks --test --test-concurrency=1 src/test/document-workflow.integration.ts src/test/form-draft-hook.integration.tsx",
     "lint": "eslint src scripts eslint.config.mjs"
   },
   "dependencies": {
     "@auth/core": "^0.41.3",
     "@auth/drizzle-adapter": "^1.11.3",
+    "@noble/hashes": "^1.8.0",
     "@aws-sdk/client-s3": "^3.1015.0",
     "@aws-sdk/s3-request-presigner": "^3.1015.0",
     "@fullcalendar/core": "^6.1.20",
@@ -93,6 +95,7 @@
     "drizzle-kit": "^0.31.9",
     "eslint": "^9",
     "eslint-config-next": "15.5.22",
+    "happy-dom": "^20.11.1",
     "tailwindcss": "^4",
     "tsx": "^4.23.1",
     "typescript": "^5",
