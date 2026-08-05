@@ -21,8 +21,10 @@ import {
   hasFormDraftStorageConflict,
   isFormDraftRecoveryKey,
   parseFormDraft,
+  applyFormDraftSnapshotClearPlan,
   persistFormDraftRawSnapshot,
   persistFormDraftSnapshot,
+  prepareFormDraftSnapshotClearPlan,
   pruneFormDraftClearMarker,
   pruneFormDraftRecoveries,
   readFormDraftClearMarker,
@@ -32,7 +34,9 @@ import {
   removeFormDraftClearMarker,
   removeFormDraftSnapshotsBySignature,
   serializeFormDraft,
+  sweepExpiredFormDraftArtifacts,
   writeFormDraftClearMarker,
+  writeFormDraftClearMarkers,
 } from "./form-draft";
 
 class MemoryDraftStorage {
@@ -103,6 +107,16 @@ class RecoveryChangesBeforeRemovalStorage extends MemoryDraftStorage {
   }
 }
 
+class EnumerationDeniedStorage extends MemoryDraftStorage {
+  override get length(): number {
+    throw new Error("storage enumeration must not run");
+  }
+
+  override key(): string {
+    throw new Error("storage enumeration must not run");
+  }
+}
+
 function writeImmutableRecovery<T>(
   storage: MemoryDraftStorage,
   sourceKey: string,
@@ -115,6 +129,17 @@ function writeImmutableRecovery<T>(
   const recoveryKey = createImmutableFormDraftRecoveryKey(sourceKey, writerId, raw);
   storage.setItem(recoveryKey, raw);
   return recoveryKey;
+}
+
+function snapshotDraftStorage(storage: MemoryDraftStorage): Array<[string, string]> {
+  const entries: Array<[string, string]> = [];
+  for (let index = 0; index < storage.length; index += 1) {
+    const key = storage.key(index);
+    if (key === null) continue;
+    const raw = storage.getItem(key);
+    if (raw !== null) entries.push([key, raw]);
+  }
+  return entries.sort(([left], [right]) => left.localeCompare(right));
 }
 
 test("version과 저장 시각을 포함해 draft를 왕복한다", () => {
@@ -554,6 +579,555 @@ test("미래 version recovery는 구버전 compaction이 삭제하지 않는다"
   assert.equal(storage.getItem(recoveryKey), futureRaw);
 });
 
+test("전역 sweep은 future가 없는 inactive namespace의 입증된 TTL 초과 artifact만 정리한다", () => {
+  const storage = new MemoryDraftStorage();
+  const now = 1_800_000_000_000;
+  const expiredAt = now - FORM_DRAFT_RECOVERY_TTL_MS - 1;
+  const boundaryAt = now - FORM_DRAFT_RECOVERY_TTL_MS;
+  const inactiveSourceKey = createDocumentDraftKey(
+    "community-post",
+    "student-1",
+    "inactive",
+  );
+  const activeSourceKey = createDocumentDraftKey(
+    "community-post",
+    "student-1",
+    "active",
+  );
+  const protectedSourceKey = createDocumentDraftKey(
+    "note",
+    "student-1",
+    "protected-recovery",
+  );
+
+  const canonicalRaw = serializeFormDraft({ title: "canonical" }, expiredAt);
+  const futureCanonicalRaw = JSON.stringify({
+    version: FORM_DRAFT_STORAGE_VERSION + 1,
+    savedAt: expiredAt,
+    data: { title: "future canonical" },
+  });
+  const futureCanonicalKey = createDocumentDraftKey(
+    "note",
+    "student-1",
+    "future-canonical",
+  );
+  storage.setItem(inactiveSourceKey, canonicalRaw);
+  storage.setItem(futureCanonicalKey, futureCanonicalRaw);
+
+  const expiredRecoveryKey = writeImmutableRecovery(
+    storage,
+    inactiveSourceKey,
+    "expired",
+    { title: "expired" },
+    expiredAt,
+  );
+  const liveRecoveryKey = writeImmutableRecovery(
+    storage,
+    inactiveSourceKey,
+    "live",
+    { title: "live" },
+    now - 1,
+  );
+  const boundaryRecoveryKey = writeImmutableRecovery(
+    storage,
+    inactiveSourceKey,
+    "boundary",
+    { title: "boundary" },
+    boundaryAt,
+  );
+  const activeRecoveryKey = writeImmutableRecovery(
+    storage,
+    activeSourceKey,
+    "active",
+    { title: "active expired" },
+    expiredAt,
+  );
+  const protectedRecoveryKey = writeImmutableRecovery(
+    storage,
+    protectedSourceKey,
+    "protected",
+    { title: "protected expired" },
+    expiredAt,
+  );
+
+  const legacyMutableKey = createFormDraftRecoveryKey(
+    inactiveSourceKey,
+    "legacy-writer",
+  );
+  const legacyMutableRaw = serializeFormDraft(
+    { title: "legacy mutable" },
+    expiredAt,
+  );
+  storage.setItem(legacyMutableKey, legacyMutableRaw);
+
+  const futureRecoveryRaw = JSON.stringify({
+    version: FORM_DRAFT_STORAGE_VERSION + 1,
+    savedAt: expiredAt,
+    data: { title: "future recovery" },
+  });
+  const futureRecoveryKey = createImmutableFormDraftRecoveryKey(
+    inactiveSourceKey,
+    "future",
+    futureRecoveryRaw,
+  );
+  storage.setItem(futureRecoveryKey, futureRecoveryRaw);
+
+  const malformedRecoveryRaw = JSON.stringify({
+    version: FORM_DRAFT_STORAGE_VERSION,
+    savedAt: expiredAt,
+  });
+  const malformedRecoveryKey = createImmutableFormDraftRecoveryKey(
+    inactiveSourceKey,
+    "malformed",
+    malformedRecoveryRaw,
+  );
+  storage.setItem(malformedRecoveryKey, malformedRecoveryRaw);
+
+  const expectedHashRaw = serializeFormDraft(
+    { title: "expected hash" },
+    expiredAt,
+  );
+  const hashMismatchKey = createImmutableFormDraftRecoveryKey(
+    inactiveSourceKey,
+    "hash-mismatch",
+    expectedHashRaw,
+  );
+  const hashMismatchRaw = serializeFormDraft(
+    { title: "different raw" },
+    expiredAt,
+  );
+  storage.setItem(hashMismatchKey, hashMismatchRaw);
+
+  const expiredMarkerRaw = JSON.stringify({
+    version: FORM_DRAFT_CLEAR_MARKER_VERSION,
+    signature: "expired-marker",
+    clearedAt: expiredAt,
+  });
+  const expiredMarkerHeadKey = createFormDraftClearMarkerKey(inactiveSourceKey);
+  const expiredMarkerEntryKey = createFormDraftClearMarkerEntryKey(
+    inactiveSourceKey,
+    "expired-marker",
+    expiredAt,
+  );
+  storage.setItem(expiredMarkerHeadKey, expiredMarkerRaw);
+  storage.setItem(expiredMarkerEntryKey, expiredMarkerRaw);
+
+  const activeMarkerKey = createFormDraftClearMarkerKey(activeSourceKey);
+  storage.setItem(activeMarkerKey, expiredMarkerRaw);
+
+  const boundaryMarkerSourceKey = createDocumentDraftKey(
+    "note",
+    "student-1",
+    "boundary-marker",
+  );
+  const boundaryMarkerKey = createFormDraftClearMarkerKey(boundaryMarkerSourceKey);
+  const boundaryMarkerRaw = JSON.stringify({
+    version: FORM_DRAFT_CLEAR_MARKER_VERSION,
+    signature: "boundary-marker",
+    clearedAt: boundaryAt,
+  });
+  storage.setItem(boundaryMarkerKey, boundaryMarkerRaw);
+
+  const futureMarkerSourceKey = createDocumentDraftKey(
+    "note",
+    "student-1",
+    "future-marker",
+  );
+  const futureMarkerKey = createFormDraftClearMarkerKey(futureMarkerSourceKey);
+  const futureMarkerRaw = JSON.stringify({
+    version: FORM_DRAFT_CLEAR_MARKER_VERSION + 1,
+    signature: "future-marker",
+    clearedAt: expiredAt,
+  });
+  storage.setItem(futureMarkerKey, futureMarkerRaw);
+
+  const malformedMarkerSourceKey = createDocumentDraftKey(
+    "note",
+    "student-1",
+    "malformed-marker",
+  );
+  const malformedMarkerKey = createFormDraftClearMarkerKey(
+    malformedMarkerSourceKey,
+  );
+  const malformedMarkerRaw = JSON.stringify({
+    version: FORM_DRAFT_CLEAR_MARKER_VERSION,
+    signature: "malformed-marker",
+    clearedAt: "old",
+  });
+  storage.setItem(malformedMarkerKey, malformedMarkerRaw);
+
+  const mismatchedEntrySourceKey = createDocumentDraftKey(
+    "note",
+    "student-1",
+    "mismatched-entry",
+  );
+  const mismatchedEntryKey = createFormDraftClearMarkerEntryKey(
+    mismatchedEntrySourceKey,
+    "key-signature",
+    expiredAt,
+  );
+  const mismatchedEntryRaw = JSON.stringify({
+    version: FORM_DRAFT_CLEAR_MARKER_VERSION,
+    signature: "raw-signature",
+    clearedAt: expiredAt,
+  });
+  storage.setItem(mismatchedEntryKey, mismatchedEntryRaw);
+
+  const preservedEntries = new Map<string, string>([
+    [inactiveSourceKey, canonicalRaw],
+    [futureCanonicalKey, futureCanonicalRaw],
+    [liveRecoveryKey, storage.getItem(liveRecoveryKey)!],
+    [boundaryRecoveryKey, storage.getItem(boundaryRecoveryKey)!],
+    [activeRecoveryKey, storage.getItem(activeRecoveryKey)!],
+    [protectedRecoveryKey, storage.getItem(protectedRecoveryKey)!],
+    [legacyMutableKey, legacyMutableRaw],
+    [futureRecoveryKey, futureRecoveryRaw],
+    [malformedRecoveryKey, malformedRecoveryRaw],
+    [hashMismatchKey, hashMismatchRaw],
+    [expiredMarkerHeadKey, expiredMarkerRaw],
+    [expiredMarkerEntryKey, expiredMarkerRaw],
+    [activeMarkerKey, expiredMarkerRaw],
+    [boundaryMarkerKey, boundaryMarkerRaw],
+    [futureMarkerKey, futureMarkerRaw],
+    [malformedMarkerKey, malformedMarkerRaw],
+    [mismatchedEntryKey, mismatchedEntryRaw],
+  ]);
+
+  const result = sweepExpiredFormDraftArtifacts(storage, {
+    now,
+    protectedSourceKeys: [activeSourceKey],
+    protectedRecoveryKeys: [protectedRecoveryKey],
+  });
+
+  assert.deepEqual(result, {
+    removedRecoveryKeys: [expiredRecoveryKey],
+    removedClearMarkerKeys: [],
+  });
+  for (const [storageKey, raw] of preservedEntries) {
+    assert.equal(storage.getItem(storageKey), raw, `${storageKey}가 바뀌었습니다.`);
+  }
+});
+
+test("TTL을 넘긴 marker도 causal snapshot을 가리는 동안 유지하고 ghost를 노출하지 않는다", () => {
+  const storage = new MemoryDraftStorage();
+  const now = 1_800_000_000_000;
+  const markerAt = now - FORM_DRAFT_CLEAR_MARKER_TTL_MS - 1;
+  const sourceKey = createDocumentDraftKey(
+    "note",
+    "student-1",
+    "retained-submitted-ghost",
+  );
+  const data = { title: "이미 제출한 초안" };
+  const recoveryKey = writeImmutableRecovery(
+    storage,
+    sourceKey,
+    "late-retention",
+    data,
+    markerAt - 1_000,
+    now - 1,
+  );
+  writeFormDraftClearMarker(
+    storage,
+    sourceKey,
+    createFormDraftDataSignature(data),
+    markerAt,
+  );
+
+  assert.deepEqual(
+    sweepExpiredFormDraftArtifacts(storage, { now }),
+    { removedRecoveryKeys: [], removedClearMarkerKeys: [] },
+  );
+  assert.deepEqual(
+    pruneFormDraftRecoveries<typeof data>(storage, sourceKey, { now }),
+    [],
+  );
+  assert.ok(readFormDraftClearMarker(storage, sourceKey, now));
+  assert.notEqual(storage.getItem(recoveryKey), null);
+
+  storage.removeItem(recoveryKey);
+  const released = sweepExpiredFormDraftArtifacts(storage, { now });
+  assert.equal(released.removedClearMarkerKeys.length, 2);
+  assert.equal(readFormDraftClearMarker(storage, sourceKey, now), null);
+});
+
+test("TTL을 넘긴 marker는 같은 causal future recovery를 해석 가능한 범위에서 계속 가린다", () => {
+  const storage = new MemoryDraftStorage();
+  const now = 1_800_000_000_000;
+  const markerAt = now - FORM_DRAFT_CLEAR_MARKER_TTL_MS - 1;
+  const sourceKey = createDocumentDraftKey(
+    "community-post",
+    "student-1",
+    "future-submitted-ghost",
+  );
+  const data = { title: "미래 client 제출본" };
+  const futureRaw = JSON.stringify({
+    version: FORM_DRAFT_STORAGE_VERSION + 1,
+    savedAt: markerAt - 1_000,
+    retainedAt: now - 1,
+    data,
+  });
+  const futureKey = createImmutableFormDraftRecoveryKey(
+    sourceKey,
+    "future-writer",
+    futureRaw,
+  );
+  storage.setItem(futureKey, futureRaw);
+  writeFormDraftClearMarker(
+    storage,
+    sourceKey,
+    createFormDraftDataSignature(data),
+    markerAt,
+  );
+
+  assert.deepEqual(
+    sweepExpiredFormDraftArtifacts(storage, { now }),
+    { removedRecoveryKeys: [], removedClearMarkerKeys: [] },
+  );
+  assert.ok(readFormDraftClearMarker(storage, sourceKey, now));
+  assert.equal(storage.getItem(futureKey), futureRaw);
+});
+
+test("TTL을 넘긴 marker는 손상된 same-source snapshot의 causal 무관성을 증명할 수 없으면 보존한다", () => {
+  const storage = new MemoryDraftStorage();
+  const now = 1_800_000_000_000;
+  const markerAt = now - FORM_DRAFT_CLEAR_MARKER_TTL_MS - 1;
+  const sourceKey = createDocumentDraftKey(
+    "note",
+    "student-1",
+    "malformed-causal-snapshot",
+  );
+  const malformedRaw = JSON.stringify({
+    version: FORM_DRAFT_STORAGE_VERSION,
+    savedAt: markerAt - 1_000,
+  });
+  const malformedKey = createImmutableFormDraftRecoveryKey(
+    sourceKey,
+    "malformed-writer",
+    malformedRaw,
+  );
+  storage.setItem(malformedKey, malformedRaw);
+  writeFormDraftClearMarker(
+    storage,
+    sourceKey,
+    createFormDraftDataSignature({ title: "과거 제출본" }),
+    markerAt,
+  );
+
+  assert.deepEqual(
+    sweepExpiredFormDraftArtifacts(storage, { now }),
+    { removedRecoveryKeys: [], removedClearMarkerKeys: [] },
+  );
+  assert.ok(readFormDraftClearMarker(storage, sourceKey, now));
+  assert.equal(storage.getItem(malformedKey), malformedRaw);
+});
+
+test("전역 sweep은 삭제 직전 raw가 바뀐 recovery와 marker를 CAS 보존한다", () => {
+  const now = 1_800_000_000_000;
+  const expiredAt = now - FORM_DRAFT_RECOVERY_TTL_MS - 1;
+  const recoverySourceKey = createDocumentDraftKey(
+    "note",
+    "student-1",
+    "recovery-cas",
+  );
+  const expiredRecoveryRaw = serializeFormDraft(
+    { title: "expired recovery" },
+    expiredAt,
+  );
+  const replacementRecoveryRaw = serializeFormDraft(
+    { title: "replacement recovery" },
+    now,
+  );
+  const recoveryKey = createImmutableFormDraftRecoveryKey(
+    recoverySourceKey,
+    "cas",
+    expiredRecoveryRaw,
+  );
+  const recoveryStorage = new RecoveryChangesBeforeRemovalStorage(
+    recoveryKey,
+    replacementRecoveryRaw,
+  );
+  recoveryStorage.setItem(recoveryKey, expiredRecoveryRaw);
+
+  assert.deepEqual(
+    sweepExpiredFormDraftArtifacts(recoveryStorage, { now }),
+    { removedRecoveryKeys: [], removedClearMarkerKeys: [] },
+  );
+  assert.equal(recoveryStorage.getItem(recoveryKey), replacementRecoveryRaw);
+
+  const markerSourceKey = createDocumentDraftKey(
+    "note",
+    "student-1",
+    "marker-cas",
+  );
+  const markerKey = createFormDraftClearMarkerKey(markerSourceKey);
+  const expiredMarkerRaw = JSON.stringify({
+    version: FORM_DRAFT_CLEAR_MARKER_VERSION,
+    signature: "expired",
+    clearedAt: expiredAt,
+  });
+  const replacementMarkerRaw = JSON.stringify({
+    version: FORM_DRAFT_CLEAR_MARKER_VERSION,
+    signature: "replacement",
+    clearedAt: now,
+  });
+  const markerStorage = new RecoveryChangesBeforeRemovalStorage(
+    markerKey,
+    replacementMarkerRaw,
+  );
+  markerStorage.setItem(markerKey, expiredMarkerRaw);
+
+  assert.deepEqual(
+    sweepExpiredFormDraftArtifacts(markerStorage, { now }),
+    { removedRecoveryKeys: [], removedClearMarkerKeys: [] },
+  );
+  assert.equal(markerStorage.getItem(markerKey), replacementMarkerRaw);
+});
+
+test("전역 sweep 결과는 storage 삽입 순서와 무관하게 결정론적이다", () => {
+  const now = 1_800_000_000_000;
+  const expiredAt = now - FORM_DRAFT_RECOVERY_TTL_MS - 1;
+  const sourceKey = createDocumentDraftKey(
+    "qna-thread",
+    "student-1",
+    "deterministic",
+  );
+  const firstRaw = serializeFormDraft({ title: "first" }, expiredAt);
+  const secondRaw = serializeFormDraft({ title: "second" }, expiredAt);
+  const markerRaw = JSON.stringify({
+    version: FORM_DRAFT_CLEAR_MARKER_VERSION,
+    signature: "expired-marker",
+    clearedAt: expiredAt,
+  });
+  const entries: Array<[string, string]> = [
+    [createImmutableFormDraftRecoveryKey(sourceKey, "first", firstRaw), firstRaw],
+    [createImmutableFormDraftRecoveryKey(sourceKey, "second", secondRaw), secondRaw],
+    [createFormDraftClearMarkerKey(sourceKey), markerRaw],
+    [
+      createFormDraftClearMarkerEntryKey(
+        sourceKey,
+        "expired-marker",
+        expiredAt,
+      ),
+      markerRaw,
+    ],
+  ];
+  const forwardStorage = new MemoryDraftStorage();
+  const reverseStorage = new MemoryDraftStorage();
+  for (const [key, raw] of entries) forwardStorage.setItem(key, raw);
+  for (const [key, raw] of [...entries].reverse()) reverseStorage.setItem(key, raw);
+
+  const forwardResult = sweepExpiredFormDraftArtifacts(forwardStorage, { now });
+  const reverseResult = sweepExpiredFormDraftArtifacts(reverseStorage, { now });
+
+  assert.deepEqual(reverseResult, forwardResult);
+  assert.deepEqual(snapshotDraftStorage(reverseStorage), snapshotDraftStorage(forwardStorage));
+  assert.deepEqual(snapshotDraftStorage(forwardStorage), []);
+});
+
+test("지정 candidate sweep은 storage를 전역 열거하지 않고 빈 목록을 no-op으로 처리한다", () => {
+  const storage = new EnumerationDeniedStorage();
+  const now = 1_800_000_000_000;
+  const sourceKey = createDocumentDraftKey(
+    "note",
+    "student-1",
+    "candidate-only-sweep",
+  );
+  const raw = serializeFormDraft(
+    { title: "candidate expired" },
+    now - FORM_DRAFT_RECOVERY_TTL_MS - 1,
+  );
+  const recoveryKey = createImmutableFormDraftRecoveryKey(
+    sourceKey,
+    "candidate",
+    raw,
+  );
+  storage.setItem(recoveryKey, raw);
+
+  assert.deepEqual(
+    sweepExpiredFormDraftArtifacts(storage, { now, candidateKeys: [] }),
+    { removedRecoveryKeys: [], removedClearMarkerKeys: [] },
+  );
+  assert.equal(storage.getItem(recoveryKey), raw);
+
+  assert.deepEqual(
+    sweepExpiredFormDraftArtifacts(storage, {
+      now,
+      candidateKeys: [recoveryKey],
+    }),
+    { removedRecoveryKeys: [recoveryKey], removedClearMarkerKeys: [] },
+  );
+  assert.equal(storage.getItem(recoveryKey), null);
+});
+
+test("proactive raw 상한은 대형 artifact를 보존하고 무제한 quota sweep은 회수한다", () => {
+  const storage = new MemoryDraftStorage();
+  const now = 1_800_000_000_000;
+  const sourceKey = createDocumentDraftKey(
+    "community-post",
+    "student-1",
+    "oversized-proactive-sweep",
+  );
+  const raw = serializeFormDraft(
+    { title: "대형 복구본", contentHtml: "x".repeat(300 * 1024) },
+    now - FORM_DRAFT_RECOVERY_TTL_MS - 1,
+  );
+  const recoveryKey = createImmutableFormDraftRecoveryKey(
+    sourceKey,
+    "oversized",
+    raw,
+  );
+  storage.setItem(recoveryKey, raw);
+
+  assert.deepEqual(
+    sweepExpiredFormDraftArtifacts(storage, {
+      now,
+      candidateKeys: [recoveryKey],
+      maxArtifactRawCodeUnits: 256 * 1024,
+    }),
+    { removedRecoveryKeys: [], removedClearMarkerKeys: [] },
+  );
+  assert.equal(storage.getItem(recoveryKey), raw);
+
+  assert.deepEqual(
+    sweepExpiredFormDraftArtifacts(storage, { now }),
+    { removedRecoveryKeys: [recoveryKey], removedClearMarkerKeys: [] },
+  );
+  assert.equal(storage.getItem(recoveryKey), null);
+});
+
+test("proactive candidate sweep은 marker causal 전역 열거를 quota sweep으로 미룬다", () => {
+  const storage = new MemoryDraftStorage();
+  const now = 1_800_000_000_000;
+  const clearedAt = now - FORM_DRAFT_CLEAR_MARKER_TTL_MS - 1;
+  const sourceKey = createDocumentDraftKey(
+    "qna-reply",
+    "student-1",
+    "deferred-marker-sweep",
+  );
+  const signature = createFormDraftDataSignature({ title: "제출 완료" });
+  writeFormDraftClearMarker(storage, sourceKey, signature, clearedAt);
+  const markerKeys = [
+    createFormDraftClearMarkerKey(sourceKey),
+    createFormDraftClearMarkerEntryKey(sourceKey, signature, clearedAt),
+  ];
+
+  assert.deepEqual(
+    sweepExpiredFormDraftArtifacts(storage, {
+      now,
+      candidateKeys: markerKeys,
+      includeClearMarkers: false,
+    }),
+    { removedRecoveryKeys: [], removedClearMarkerKeys: [] },
+  );
+  for (const markerKey of markerKeys) {
+    assert.notEqual(storage.getItem(markerKey), null);
+  }
+
+  const fullSweep = sweepExpiredFormDraftArtifacts(storage, { now });
+  assert.deepEqual(fullSweep.removedRecoveryKeys, []);
+  assert.deepEqual(fullSweep.removedClearMarkerKeys, [...markerKeys].sort());
+});
+
 test("retention cap은 최신 unique divergent 20개와 protected 초과본을 보존한다", () => {
   const storage = new MemoryDraftStorage();
   const sourceKey = createDocumentDraftKey("community-post", "author-1", "post-1");
@@ -579,6 +1153,167 @@ test("retention cap은 최신 unique divergent 20개와 protected 초과본을 �
   assert.notEqual(storage.getItem(protectedKey), null);
   assert.equal(storage.getItem(keys[20]!), null);
   assert.equal(storage.getItem(keys[21]!), null);
+});
+
+test("recovery 목록 정리는 같은 대형 raw를 compaction 뒤 다시 parse하지 않는다", { concurrency: false }, () => {
+  const storage = new MemoryDraftStorage();
+  const sourceKey = createDocumentDraftKey(
+    "community-post",
+    "author-1",
+    "single-parse-refresh",
+  );
+  const now = 1_800_000_000_000;
+  const recoveryRaws = new Set<string>();
+  for (let index = 0; index < 20; index += 1) {
+    const raw = serializeFormDraft(
+      {
+        title: `대형 복구본 ${index}`,
+        contentHtml: `${index}:${"x".repeat(256 * 1024)}`,
+      },
+      now - index,
+    );
+    recoveryRaws.add(raw);
+    storage.setItem(
+      createImmutableFormDraftRecoveryKey(sourceKey, `large-${index}`, raw),
+      raw,
+    );
+  }
+
+  const parseDescriptor = Object.getOwnPropertyDescriptor(JSON, "parse");
+  const originalParse = JSON.parse;
+  let recoveryParseCount = 0;
+  Object.defineProperty(JSON, "parse", {
+    configurable: true,
+    value: (text: string) => {
+      if (recoveryRaws.has(text)) recoveryParseCount += 1;
+      return originalParse(text);
+    },
+  });
+
+  try {
+    const recoveries = pruneFormDraftRecoveries(storage, sourceKey, { now });
+    assert.equal(recoveries.length, 20);
+    assert.equal(recoveryParseCount, 20);
+  } finally {
+    if (parseDescriptor) Object.defineProperty(JSON, "parse", parseDescriptor);
+  }
+});
+
+test("만료 causal marker가 있어도 recovery raw는 목록 정리에서 한 번만 parse한다", { concurrency: false }, () => {
+  const storage = new MemoryDraftStorage();
+  const sourceKey = createDocumentDraftKey(
+    "community-post",
+    "author-1",
+    "single-parse-expired-marker",
+  );
+  const now = 1_800_000_000_000;
+  const clearedAt = now - FORM_DRAFT_CLEAR_MARKER_TTL_MS - 1;
+  const recoveryRaws = new Set<string>();
+  for (let index = 0; index < 20; index += 1) {
+    const data = {
+      title: `만료 마커 대형 복구본 ${index}`,
+      contentHtml: `${index}:${"x".repeat(256 * 1024)}`,
+    };
+    const raw = serializeFormDraft(data, clearedAt - index - 1, now - index);
+    recoveryRaws.add(raw);
+    storage.setItem(
+      createImmutableFormDraftRecoveryKey(sourceKey, `expired-${index}`, raw),
+      raw,
+    );
+    if (index === 0) {
+      writeFormDraftClearMarker(
+        storage,
+        sourceKey,
+        createFormDraftDataSignature(data),
+        clearedAt,
+      );
+    }
+  }
+
+  const parseDescriptor = Object.getOwnPropertyDescriptor(JSON, "parse");
+  const originalParse = JSON.parse;
+  let recoveryParseCount = 0;
+  Object.defineProperty(JSON, "parse", {
+    configurable: true,
+    value: (text: string) => {
+      if (recoveryRaws.has(text)) recoveryParseCount += 1;
+      return originalParse(text);
+    },
+  });
+
+  try {
+    const recoveries = pruneFormDraftRecoveries(storage, sourceKey, { now });
+    assert.equal(recoveries.length, 19);
+    assert.equal(recoveryParseCount, 20);
+  } finally {
+    if (parseDescriptor) Object.defineProperty(JSON, "parse", parseDescriptor);
+  }
+});
+
+test("multi-signature 제출 plan은 대형 namespace를 한 번만 parse하고 marker도 batch 기록한다", { concurrency: false }, () => {
+  const storage = new MemoryDraftStorage();
+  const sourceKey = createDocumentDraftKey(
+    "note",
+    "student-1",
+    "multi-signature-batch",
+  );
+  const now = 1_800_000_000_000;
+  const recoveryRaws = new Set<string>();
+  const submittedData = Array.from({ length: 3 }, (_, index) => ({
+    title: `제출 표현 ${index}`,
+    contentHtml: `${index}:${"x".repeat(256 * 1024)}`,
+  }));
+  for (let index = 0; index < 20; index += 1) {
+    const data = submittedData[index] ?? {
+      title: `다른 복구본 ${index}`,
+      contentHtml: `${index}:${"x".repeat(256 * 1024)}`,
+    };
+    const raw = serializeFormDraft(data, now - index);
+    recoveryRaws.add(raw);
+    storage.setItem(
+      createImmutableFormDraftRecoveryKey(sourceKey, `batch-${index}`, raw),
+      raw,
+    );
+  }
+  const canonicalRaw = serializeFormDraft(submittedData[0]!, now - 100);
+  storage.setItem(sourceKey, canonicalRaw);
+  const requestedCutoffs = new Map(
+    submittedData.map((data) => [createFormDraftDataSignature(data), now] as const),
+  );
+
+  const parseDescriptor = Object.getOwnPropertyDescriptor(JSON, "parse");
+  const originalParse = JSON.parse;
+  let recoveryParseCount = 0;
+  Object.defineProperty(JSON, "parse", {
+    configurable: true,
+    value: (text: string) => {
+      if (recoveryRaws.has(text)) recoveryParseCount += 1;
+      return originalParse(text);
+    },
+  });
+
+  try {
+    const plan = prepareFormDraftSnapshotClearPlan(
+      storage,
+      sourceKey,
+      requestedCutoffs,
+    );
+    writeFormDraftClearMarkers(
+      storage,
+      sourceKey,
+      [...plan.cutoffs].map(([signature, clearedAt]) => ({
+        signature,
+        clearedAt,
+      })),
+    );
+    const cleared = applyFormDraftSnapshotClearPlan(storage, plan);
+    assert.equal(cleared.canonicalRemoved, true);
+    assert.equal(cleared.removedRecoveryKeys.length, 3);
+    assert.equal(recoveryParseCount, 20);
+    assert.equal(readFormDraftClearMarkers(storage, sourceKey).length, 3);
+  } finally {
+    if (parseDescriptor) Object.defineProperty(JSON, "parse", parseDescriptor);
+  }
 });
 
 test("retention cap은 causal savedAt이 아니라 durable retainedAt 최신순으로 보존한다", () => {

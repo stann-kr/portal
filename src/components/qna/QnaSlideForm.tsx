@@ -258,7 +258,7 @@ export function QnaSlideForm({
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           required
-          disabled={!loaded || isPending}
+          disabled={!loaded || isFormBusy}
         />
       </div>
 
@@ -285,7 +285,7 @@ export function QnaSlideForm({
               });
             }}
             placeholder="질문 내용을 자세히 작성하세요..."
-            disabled={isPending}
+            disabled={isFormBusy}
             minHeight="300px"
             ariaLabel="Q&A 질문 내용"
             footer={
@@ -311,7 +311,7 @@ export function QnaSlideForm({
         <AttachmentField
           value={attachmentUrl}
           onChange={setAttachmentUrl}
-          disabled={!loaded || isPending}
+          disabled={!loaded || isFormBusy}
           onUploadingChange={setIsUploading}
         />
       </div>

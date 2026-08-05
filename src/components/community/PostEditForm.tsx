@@ -18,6 +18,12 @@ import {
   createDocumentSnapshotFingerprint,
   DOCUMENT_SNAPSHOT_FINGERPRINT_FIELD,
 } from "@/lib/document-snapshot-fingerprint";
+import {
+  createDocumentEditDraftMetadata,
+  resolveDocumentEditDraftBase,
+  type CompactDocumentEditDraftMetadata,
+  type DocumentEditDraftBaseFields,
+} from "@/lib/document-edit-draft";
 
 const FullEditor = dynamic(
   () => import("@/components/editor/FullEditor").then((module) => ({ default: module.FullEditor })),
@@ -33,6 +39,8 @@ type PostEditFormProps = {
 };
 
 type PostEditSnapshot = { title: string; contentHtml: string };
+type PostEditDraft = PostEditSnapshot & DocumentEditDraftBaseFields;
+type CompactPostEditDraft = PostEditSnapshot & CompactDocumentEditDraftMetadata;
 
 export function PostEditForm({
   post,
@@ -64,13 +72,10 @@ export function PostEditForm({
   const formRef = useRef<HTMLFormElement>(null);
   const contentInputRef = useRef<HTMLInputElement>(null);
   const handledSavedPostRef = useRef<UpdatePostState["post"]>(undefined);
-  const submittedDraftRef = useRef<{
-    title: string;
-    contentHtml: string;
-    base: { title: string; contentHtml: string };
-  } | null>(null);
+  const submittedDraftRef = useRef<CompactPostEditDraft | null>(null);
+  const submittedDraftAliasesRef = useRef<readonly PostEditDraft[] | null>(null);
+  const restoredDraftRef = useRef<PostEditDraft | null>(null);
   const baseRef = useRef({ title: post.title, contentHtml: post.contentHtml });
-  const draftBaseRef = useRef({ title: post.title, contentHtml: post.contentHtml });
   const [baseFingerprint, setBaseFingerprint] = useState(() =>
     createDocumentSnapshotFingerprint({
       kind: "community-post",
@@ -80,18 +85,20 @@ export function PostEditForm({
       noteDate: null,
     }),
   );
+  const baseFingerprintRef = useRef(baseFingerprint);
+  const draftBaseFingerprintRef = useRef(baseFingerprint);
   const adoptBaseSnapshot = useCallback(
     (snapshot: PostEditSnapshot) => {
       baseRef.current = snapshot;
-      setBaseFingerprint(
-        createDocumentSnapshotFingerprint({
-          kind: "community-post",
-          id: post.id,
-          title: snapshot.title,
-          contentHtml: snapshot.contentHtml,
-          noteDate: null,
-        }),
-      );
+      const fingerprint = createDocumentSnapshotFingerprint({
+        kind: "community-post",
+        id: post.id,
+        title: snapshot.title,
+        contentHtml: snapshot.contentHtml,
+        noteDate: null,
+      });
+      baseFingerprintRef.current = fingerprint;
+      setBaseFingerprint(fingerprint);
     },
     [post.id],
   );
@@ -100,6 +107,24 @@ export function PostEditForm({
     [post.contentHtml, post.title],
   );
   const previousServerSnapshotRef = useRef(serverSnapshot);
+  const createSubmittedDraftAliases = useCallback(
+    (snapshot: PostEditSnapshot): readonly PostEditDraft[] => {
+      const aliases: PostEditDraft[] = [
+        { ...snapshot },
+        { ...snapshot, base: { ...baseRef.current } },
+      ];
+      const restoredDraft = restoredDraftRef.current;
+      if (
+        restoredDraft &&
+        restoredDraft.title === snapshot.title &&
+        restoredDraft.contentHtml === snapshot.contentHtml
+      ) {
+        aliases.push(restoredDraft);
+      }
+      return aliases;
+    },
+    [],
+  );
 
   const {
     loaded,
@@ -113,13 +138,10 @@ export function PostEditForm({
     recoveries,
     restoreRecovery,
     discardRecovery,
-  } = useFormDraft<{
-    title: string;
-    contentHtml: string;
-    base?: { title: string; contentHtml: string };
-  }>(
+  } = useFormDraft<PostEditDraft>(
     createDocumentDraftKey("community-post", actorId, post.id),
     (draft) => {
+      restoredDraftRef.current = draft;
       const restoredSnapshot = {
         title: draft.title ?? post.title,
         contentHtml: draft.contentHtml ?? post.contentHtml,
@@ -127,30 +149,30 @@ export function PostEditForm({
       const draftMatchesCurrentServer =
         restoredSnapshot.title === serverSnapshot.title &&
         restoredSnapshot.contentHtml === serverSnapshot.contentHtml;
-      draftBaseRef.current = serverSnapshot;
-      setHasStaleDraftBase(false);
-      if (
-        draft.base &&
-        typeof draft.base.title === "string" &&
-        typeof draft.base.contentHtml === "string"
-      ) {
-        draftBaseRef.current = draft.base;
-        const matchesCurrentServer =
-          draft.base.title === serverSnapshot.title &&
-          draft.base.contentHtml === serverSnapshot.contentHtml;
-        if (matchesCurrentServer || draftMatchesCurrentServer) {
-          adoptBaseSnapshot(serverSnapshot);
-          draftBaseRef.current = serverSnapshot;
-        }
-        setHasStaleDraftBase(!matchesCurrentServer && !draftMatchesCurrentServer);
+      const resolvedBase = resolveDocumentEditDraftBase(
+        draft,
+        {
+          kind: "community-post",
+          id: post.id,
+          title: serverSnapshot.title,
+          contentHtml: serverSnapshot.contentHtml,
+          noteDate: null,
+        },
+        draftMatchesCurrentServer,
+      );
+      draftBaseFingerprintRef.current = resolvedBase.draftBaseFingerprint;
+      setHasStaleDraftBase(resolvedBase.hasStaleDraftBase);
+      if (!resolvedBase.hasStaleDraftBase) {
+        adoptBaseSnapshot(serverSnapshot);
       }
       setTitle(restoredSnapshot.title);
       setContentHtml(restoredSnapshot.contentHtml);
     },
     {
       onReset: () => {
+        restoredDraftRef.current = null;
         adoptBaseSnapshot(serverSnapshot);
-        draftBaseRef.current = serverSnapshot;
+        draftBaseFingerprintRef.current = baseFingerprintRef.current;
         setHasStaleDraftBase(false);
         setTitle(serverSnapshot.title);
         setContentHtml(serverSnapshot.contentHtml);
@@ -174,12 +196,17 @@ export function PostEditForm({
       title === baseRef.current.title &&
       latestContentHtml === baseRef.current.contentHtml;
     if (!hasStaleDraftBase && unchanged) {
+      restoredDraftRef.current = null;
       clear();
       return;
     }
     save({
       title,
-      base: hasStaleDraftBase ? draftBaseRef.current : baseRef.current,
+      ...createDocumentEditDraftMetadata(
+        hasStaleDraftBase
+          ? draftBaseFingerprintRef.current
+          : baseFingerprintRef.current,
+      ),
       get contentHtml() {
         return readLatestContentHtml();
       },
@@ -205,16 +232,19 @@ export function PostEditForm({
       latestContentHtml === serverSnapshot.contentHtml;
 
     if (localMatchesCurrent || (!hasStaleDraftBase && localMatchesPrevious)) {
+      restoredDraftRef.current = null;
       clear();
       adoptBaseSnapshot(serverSnapshot);
-      draftBaseRef.current = serverSnapshot;
+      draftBaseFingerprintRef.current = baseFingerprintRef.current;
       setTitle(serverSnapshot.title);
       setContentHtml(serverSnapshot.contentHtml);
       setHasStaleDraftBase(false);
       return;
     }
 
-    if (!hasStaleDraftBase) draftBaseRef.current = baseRef.current;
+    if (!hasStaleDraftBase) {
+      draftBaseFingerprintRef.current = baseFingerprintRef.current;
+    }
     setHasStaleDraftBase(true);
   }, [
     adoptBaseSnapshot,
@@ -235,12 +265,17 @@ export function PostEditForm({
       submittedData: submittedDraftRef.current ?? {
         title,
         contentHtml,
-        base: baseRef.current,
+        ...createDocumentEditDraftMetadata(baseFingerprintRef.current),
       },
+      submittedAliases:
+        submittedDraftAliasesRef.current ??
+        createSubmittedDraftAliases({ title, contentHtml }),
     });
     submittedDraftRef.current = null;
+    submittedDraftAliasesRef.current = null;
+    restoredDraftRef.current = null;
     onSaved();
-  }, [clear, contentHtml, onSaved, state.post, title]);
+  }, [clear, contentHtml, createSubmittedDraftAliases, onSaved, state.post, title]);
 
   return (
     <form
@@ -260,14 +295,18 @@ export function PostEditForm({
           return;
         }
         if (contentInputRef.current) contentInputRef.current.value = latestContentHtml;
-        const submittedDraft = {
+        const submittedDraft: CompactPostEditDraft = {
           title,
           contentHtml: latestContentHtml,
-          base: { ...baseRef.current },
+          ...createDocumentEditDraftMetadata(baseFingerprintRef.current),
         };
         save(submittedDraft);
         flush();
         submittedDraftRef.current = submittedDraft;
+        submittedDraftAliasesRef.current = createSubmittedDraftAliases({
+          title,
+          contentHtml: latestContentHtml,
+        });
       }}
     >
       <input ref={contentInputRef} type="hidden" name="contentHtml" value={contentHtml} />
@@ -286,16 +325,17 @@ export function PostEditForm({
         <DraftConflictRecovery
           documentLabel="게시물"
           onUseServer={() => {
+            restoredDraftRef.current = null;
             clear();
             adoptBaseSnapshot(serverSnapshot);
-            draftBaseRef.current = serverSnapshot;
+            draftBaseFingerprintRef.current = baseFingerprintRef.current;
             setTitle(serverSnapshot.title);
             setContentHtml(serverSnapshot.contentHtml);
             setHasStaleDraftBase(false);
           }}
           onKeepDraft={() => {
             adoptBaseSnapshot(serverSnapshot);
-            draftBaseRef.current = serverSnapshot;
+            draftBaseFingerprintRef.current = baseFingerprintRef.current;
             setHasStaleDraftBase(false);
           }}
         />
@@ -322,7 +362,11 @@ export function PostEditForm({
             handleEditorDirty(reader);
             save({
               title,
-              base: hasStaleDraftBase ? draftBaseRef.current : baseRef.current,
+              ...createDocumentEditDraftMetadata(
+                hasStaleDraftBase
+                  ? draftBaseFingerprintRef.current
+                  : baseFingerprintRef.current,
+              ),
               get contentHtml() {
                 return reader();
               },

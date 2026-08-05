@@ -316,7 +316,7 @@ export function NewPostForm({
         </fieldset>
 
         {boardType === "GENERAL" ? (
-          <fieldset className="space-y-1.5" disabled={!loaded || isPending}>
+          <fieldset className="space-y-1.5" disabled={!loaded || isFormBusy}>
             <legend className="text-sm font-medium">채널</legend>
             <div className="flex flex-wrap gap-2">
               {categories.map((item) => (
@@ -345,7 +345,7 @@ export function NewPostForm({
               checked={isPinned}
               onChange={(event) => setIsPinned(event.target.checked)}
               className="h-4 w-4 rounded border-border accent-primary"
-              disabled={!loaded || isPending}
+              disabled={!loaded || isFormBusy}
             />
             공지 상단 고정
           </label>
@@ -383,7 +383,7 @@ export function NewPostForm({
                   if (uploading) setUploadError("");
                   setIsUploading(uploading);
                 }}
-                disabled={!loaded || isPending}
+                disabled={!loaded || isFormBusy}
               />
             )}
             {uploadError ? <p role="alert" className="text-sm text-destructive">{uploadError}</p> : null}
@@ -401,7 +401,7 @@ export function NewPostForm({
             onChange={(event) => setTitle(event.target.value)}
             placeholder="게시물 제목"
             required
-            disabled={!loaded || isPending}
+            disabled={!loaded || isFormBusy}
           />
         </label>
 
@@ -430,7 +430,7 @@ export function NewPostForm({
                 });
               }}
               placeholder="게시물 내용을 작성하세요…"
-              disabled={isPending}
+              disabled={isFormBusy}
               ariaLabel="커뮤니티 게시물 내용"
               footer={
                 <DraftStatus

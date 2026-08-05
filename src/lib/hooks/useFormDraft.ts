@@ -12,7 +12,6 @@ import {
   createFormDraftRecoveryPreview,
   createImmutableFormDraftRecoveryKey,
   findFormDraftClearMarker,
-  findFormDraftClearMarkerForSnapshot,
   hasFutureFormDraftVersion,
   hasFormDraftStorageConflict,
   isImmutableFormDraftRecoveryKey,
@@ -20,13 +19,17 @@ import {
   isFormDraftRecoveryKey,
   parseFormDraftClearMarker,
   parseFormDraft,
+  applyFormDraftSnapshotClearPlan,
   persistFormDraftRawSnapshot,
+  prepareFormDraftSnapshotClearPlan,
   pruneFormDraftRecoveries,
   readFormDraftRecovery,
   removeFormDraftCanonicalSnapshotBySignature,
   removeFormDraftSnapshotsBySignature,
   serializeFormDraft,
+  sweepExpiredFormDraftArtifacts,
   writeFormDraftClearMarker,
+  writeFormDraftClearMarkers,
   type FormDraftRecoverySummary,
   type FormDraftStorage,
   type FormDraftStatus,
@@ -34,6 +37,16 @@ import {
 
 const FORM_DRAFT_CHANGE_EVENT = "portal:form-draft-change";
 const FORM_DRAFT_BROADCAST_CHANNEL = "portal:form-draft";
+export const FORM_DRAFT_MAX_WAIT_MS = 5_000;
+const FORM_DRAFT_ARTIFACT_SWEEP_MAX_KEYS_PER_SLICE = 4;
+const FORM_DRAFT_ARTIFACT_SWEEP_MIN_IDLE_MS = 8;
+const FORM_DRAFT_ARTIFACT_SWEEP_MAX_RAW_CODE_UNITS = 256 * 1024;
+const FORM_DRAFT_ARTIFACT_SWEEP_MAX_KEY_CODE_UNITS = 4 * 1024;
+
+type FormDraftIdleDeadline = {
+  didTimeout: boolean;
+  timeRemaining: () => number;
+};
 
 type FormDraftChangeDetail = {
   sourceKey: string;
@@ -49,6 +62,16 @@ type PendingDraft<T> = {
   queuedAt: number;
 };
 
+type SubmittedClearCutoff = {
+  signature: string;
+  clearedAt: Date;
+};
+
+type VolatileSubmittedClearMarker = {
+  signature: string;
+  clearedAt: number;
+};
+
 function getPendingDraftSignature<T>(pending: PendingDraft<T>): string {
   if (pending.signature === null) {
     pending.signature = createFormDraftDataSignature(pending.data);
@@ -60,6 +83,10 @@ const volatileDraftFallbacks = new Map<
   string,
   Map<string, PendingDraft<unknown>>
 >();
+const volatileSubmittedClearMarkers = new Map<
+  string,
+  Map<string, VolatileSubmittedClearMarker>
+>();
 /**
  * 이 page session에서 이미 확인한 미래 canonical을 key별로 기억한다.
  * 같은 key의 effect 재설정이나 SPA 왕복 중 storage read가 일시 실패해도
@@ -67,17 +94,208 @@ const volatileDraftFallbacks = new Map<
  */
 const knownIncompatibleCanonicalRaws = new Map<string, string>();
 const activeVolatileDraftWriters = new Set<string>();
+const activeFormDraftSourceCounts = new WeakMap<
+  FormDraftStorage,
+  Map<string, number>
+>();
+const scheduledFormDraftArtifactSweeps = new WeakSet<FormDraftStorage>();
+const pendingFormDraftArtifactSweepJobs = new WeakMap<
+  FormDraftStorage,
+  { cancel: () => void }
+>();
 let volatileBeforeUnloadGuardAttached = false;
 
+function registerActiveFormDraftSource(
+  storage: FormDraftStorage,
+  sourceKey: string,
+): void {
+  const counts = activeFormDraftSourceCounts.get(storage) ?? new Map();
+  counts.set(sourceKey, (counts.get(sourceKey) ?? 0) + 1);
+  activeFormDraftSourceCounts.set(storage, counts);
+}
+
+function unregisterActiveFormDraftSource(
+  storage: FormDraftStorage,
+  sourceKey: string,
+): void {
+  const counts = activeFormDraftSourceCounts.get(storage);
+  if (!counts) return;
+  const nextCount = (counts.get(sourceKey) ?? 0) - 1;
+  if (nextCount > 0) counts.set(sourceKey, nextCount);
+  else counts.delete(sourceKey);
+  if (counts.size === 0) {
+    activeFormDraftSourceCounts.delete(storage);
+    cancelPendingFormDraftArtifactSweep(storage);
+  }
+}
+
+function listActiveFormDraftSources(
+  storage: FormDraftStorage,
+  currentSourceKey?: string,
+): Set<string> {
+  const sourceKeys = new Set(activeFormDraftSourceCounts.get(storage)?.keys());
+  if (currentSourceKey) sourceKeys.add(currentSourceKey);
+  return sourceKeys;
+}
+
+function scheduleFormDraftIdleWork(
+  callback: (deadline: FormDraftIdleDeadline) => void,
+): () => void {
+  const idleWindow = window;
+  const requestIdleCallback = Reflect.get(idleWindow, "requestIdleCallback");
+  if (typeof requestIdleCallback === "function") {
+    try {
+      const handle: unknown = requestIdleCallback.call(
+        idleWindow,
+        callback,
+        { timeout: 1_000 },
+      );
+      return () => {
+        const cancelIdleCallback = Reflect.get(
+          idleWindow,
+          "cancelIdleCallback",
+        );
+        if (
+          typeof cancelIdleCallback === "function" &&
+          typeof handle === "number"
+        ) {
+          cancelIdleCallback.call(idleWindow, handle);
+        }
+      };
+    } catch {
+      // 일부 sandbox 구현은 API를 노출한 뒤 호출만 거부한다.
+    }
+  }
+  const scheduleTimeout = setTimeout;
+  const cancelTimeout = clearTimeout;
+  const timeout = scheduleTimeout(() => {
+    callback({ didTimeout: true, timeRemaining: () => 0 });
+  }, 0);
+  return () => cancelTimeout(timeout);
+}
+
+function cancelPendingFormDraftArtifactSweep(storage: FormDraftStorage): void {
+  const job = pendingFormDraftArtifactSweepJobs.get(storage);
+  if (!job) return;
+  job.cancel();
+  pendingFormDraftArtifactSweepJobs.delete(storage);
+  scheduledFormDraftArtifactSweeps.delete(storage);
+}
+
+function scheduleFormDraftArtifactSweep(storage: FormDraftStorage): void {
+  if (scheduledFormDraftArtifactSweeps.has(storage)) return;
+  scheduledFormDraftArtifactSweeps.add(storage);
+
+  let nextStorageIndex: number | null = null;
+  let cancelled = false;
+  let cancelScheduledSlice = () => {};
+  const job = {
+    cancel: () => {
+      cancelled = true;
+      cancelScheduledSlice();
+    },
+  };
+  pendingFormDraftArtifactSweepJobs.set(storage, job);
+
+  const sweepSlice = (deadline: FormDraftIdleDeadline) => {
+    cancelScheduledSlice = () => {};
+    if (cancelled) return;
+    try {
+      if (nextStorageIndex === null) nextStorageIndex = storage.length - 1;
+      const maxKeys = deadline.didTimeout
+        ? 1
+        : FORM_DRAFT_ARTIFACT_SWEEP_MAX_KEYS_PER_SLICE;
+      const protectedSourceKeys = listActiveFormDraftSources(storage);
+      const now = Date.now();
+      let scannedKeys = 0;
+
+      while (nextStorageIndex >= 0 && scannedKeys < maxKeys) {
+        if (
+          !deadline.didTimeout &&
+          deadline.timeRemaining() < FORM_DRAFT_ARTIFACT_SWEEP_MIN_IDLE_MS
+        ) {
+          break;
+        }
+        nextStorageIndex = Math.min(nextStorageIndex, storage.length - 1);
+        if (nextStorageIndex < 0) break;
+        const candidateKey = storage.key(nextStorageIndex);
+        nextStorageIndex -= 1;
+        scannedKeys += 1;
+        if (
+          candidateKey === null ||
+          candidateKey.length > FORM_DRAFT_ARTIFACT_SWEEP_MAX_KEY_CODE_UNITS
+        ) {
+          continue;
+        }
+        sweepExpiredFormDraftArtifacts(storage, {
+          now,
+          protectedSourceKeys,
+          candidateKeys: [candidateKey],
+          maxArtifactRawCodeUnits:
+            FORM_DRAFT_ARTIFACT_SWEEP_MAX_RAW_CODE_UNITS,
+          includeClearMarkers: false,
+        });
+      }
+    } catch {
+      // proactive sweep는 best-effort다. 현재 폼의 저장/복원 상태를 바꾸지 않는다.
+      pendingFormDraftArtifactSweepJobs.delete(storage);
+      return;
+    }
+
+    if (nextStorageIndex >= 0) {
+      cancelScheduledSlice = scheduleFormDraftIdleWork(sweepSlice);
+    } else {
+      pendingFormDraftArtifactSweepJobs.delete(storage);
+    }
+  };
+
+  cancelScheduledSlice = scheduleFormDraftIdleWork(sweepSlice);
+}
+
+function readBrowserLocalStorage(): FormDraftStorage | null {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+function prepareFormDraftQuotaRetry(
+  storage: FormDraftStorage,
+  sourceKey: string,
+  protectedRecoveryKeys: ReadonlySet<string>,
+): void {
+  try {
+    sweepExpiredFormDraftArtifacts(storage, {
+      protectedSourceKeys: listActiveFormDraftSources(storage, sourceKey),
+      protectedRecoveryKeys,
+    });
+  } catch {
+    // 다른 namespace 정리가 실패해도 기존 current-source compaction은 계속 시도한다.
+  }
+  compactFormDraftRecoveries(storage, sourceKey, {
+    protectedKeys: protectedRecoveryKeys,
+  });
+}
+
 function handleVolatileBeforeUnload(event: BeforeUnloadEvent): void {
-  if (!hasOrphanedVolatileDraftFallbacks()) return;
+  const storage = readBrowserLocalStorage();
+  if (storage) {
+    try {
+      drainInactiveVolatileContinuity(storage, "", new Set());
+    } catch {
+      // 개별 hook의 beforeunload flush와 아래 unresolved guard가 안전본을 유지한다.
+    }
+  }
+  if (!hasUnresolvedVolatileContinuityState()) return;
   event.preventDefault();
   event.returnValue = "";
 }
 
 function syncVolatileBeforeUnloadGuard(): void {
   if (typeof window === "undefined") return;
-  const shouldAttach = hasVolatileDraftFallbacks();
+  const shouldAttach =
+    hasVolatileDraftFallbacks() || hasVolatileSubmittedClearMarkers();
   if (shouldAttach && !volatileBeforeUnloadGuardAttached) {
     window.addEventListener("beforeunload", handleVolatileBeforeUnload);
     volatileBeforeUnloadGuardAttached = true;
@@ -89,6 +307,171 @@ function syncVolatileBeforeUnloadGuard(): void {
 
 function createVolatileWriterKey(key: string, writerId: string): string {
   return `${key}\u0000${writerId}`;
+}
+
+function rememberVolatileSubmittedClearMarker(
+  key: string,
+  signature: string,
+  clearedAt: number,
+): VolatileSubmittedClearMarker {
+  const markers = volatileSubmittedClearMarkers.get(key) ?? new Map();
+  const previous = markers.get(signature);
+  const marker = previous && previous.clearedAt >= clearedAt
+    ? previous
+    : { signature, clearedAt };
+  markers.set(signature, marker);
+  volatileSubmittedClearMarkers.set(key, markers);
+  syncVolatileBeforeUnloadGuard();
+  return marker;
+}
+
+function readVolatileSubmittedClearMarker(
+  key: string,
+  signature: string,
+): SubmittedClearCutoff | null {
+  const marker = volatileSubmittedClearMarkers.get(key)?.get(signature);
+  return marker
+    ? { signature: marker.signature, clearedAt: new Date(marker.clearedAt) }
+    : null;
+}
+
+function forgetVolatileSubmittedClearMarker(
+  key: string,
+  marker: VolatileSubmittedClearMarker,
+): void {
+  const markers = volatileSubmittedClearMarkers.get(key);
+  if (!markers || markers.get(marker.signature) !== marker) return;
+  markers.delete(marker.signature);
+  if (markers.size === 0) volatileSubmittedClearMarkers.delete(key);
+  syncVolatileBeforeUnloadGuard();
+}
+
+function findEffectiveSubmittedClearMarker(
+  storage: FormDraftStorage,
+  key: string,
+  signature: string,
+): SubmittedClearCutoff | null {
+  const volatileMarker = readVolatileSubmittedClearMarker(key, signature);
+  let durableMarker: ReturnType<typeof findFormDraftClearMarker> = null;
+  try {
+    durableMarker = findFormDraftClearMarker(storage, key, signature);
+  } catch (error) {
+    if (!volatileMarker) throw error;
+  }
+
+  if (!volatileMarker) return durableMarker;
+  if (!durableMarker) return volatileMarker;
+  return durableMarker.clearedAt.getTime() >= volatileMarker.clearedAt.getTime()
+    ? durableMarker
+    : volatileMarker;
+}
+
+function findEffectiveSubmittedClearMarkerForSnapshot<T>(
+  storage: FormDraftStorage,
+  key: string,
+  raw: string,
+): SubmittedClearCutoff | null {
+  const stored = parseFormDraft<T>(raw);
+  if (!stored) return null;
+  const marker = findEffectiveSubmittedClearMarker(
+    storage,
+    key,
+    createFormDraftDataSignature(stored.data),
+  );
+  if (!marker) return null;
+  const savedAt = stored.savedAt?.getTime();
+  return savedAt === undefined || savedAt <= marker.clearedAt.getTime()
+    ? marker
+    : null;
+}
+
+function reconcileVolatileSubmittedClearMarkers<T>(
+  storage: FormDraftStorage,
+  key: string,
+  protectedKeys: ReadonlySet<string> = new Set(),
+  allowQuotaRetry = true,
+): boolean {
+  const markers = volatileSubmittedClearMarkers.get(key);
+  if (!markers || markers.size === 0) return true;
+
+  for (const marker of [...markers.values()]) {
+    let durableMarker: ReturnType<typeof findFormDraftClearMarker> = null;
+    try {
+      durableMarker = findFormDraftClearMarker(storage, key, marker.signature);
+    } catch {
+      return false;
+    }
+
+    if (
+      !durableMarker ||
+      durableMarker.clearedAt.getTime() < marker.clearedAt
+    ) {
+      try {
+        writeFormDraftClearMarker(
+          storage,
+          key,
+          marker.signature,
+          marker.clearedAt,
+        );
+      } catch (error) {
+        if (allowQuotaRetry && isStorageQuotaError(error)) {
+          try {
+            prepareFormDraftQuotaRetry(storage, key, protectedKeys);
+            writeFormDraftClearMarker(
+              storage,
+              key,
+              marker.signature,
+              marker.clearedAt,
+            );
+          } catch {
+            // 부분 기록됐을 수 있으므로 아래 durable 재조회로 확정한다.
+          }
+        }
+      }
+
+      try {
+        durableMarker = findFormDraftClearMarker(storage, key, marker.signature);
+      } catch {
+        return false;
+      }
+    }
+
+    if (
+      !durableMarker ||
+      durableMarker.clearedAt.getTime() < marker.clearedAt
+    ) {
+      return false;
+    }
+
+    const effectiveClearedAt = Math.max(
+      marker.clearedAt,
+      durableMarker.clearedAt.getTime(),
+    );
+    try {
+      forgetSubmittedVolatileDrafts(
+        key,
+        marker.signature,
+        effectiveClearedAt,
+      );
+      removeFormDraftSnapshotsBySignature(
+        storage,
+        key,
+        marker.signature,
+        { savedAtOrBefore: effectiveClearedAt },
+      );
+      removeFormDraftCanonicalSnapshotBySignature<T>(
+        storage,
+        key,
+        marker.signature,
+        { savedAtOrBefore: effectiveClearedAt },
+      );
+    } catch {
+      return false;
+    }
+    forgetVolatileSubmittedClearMarker(key, marker);
+  }
+
+  return !volatileSubmittedClearMarkers.has(key);
 }
 
 function rememberVolatileDraft<T>(
@@ -182,6 +565,27 @@ function listClaimableVolatileDrafts<T>(
   );
 }
 
+function listOrphanedVolatileDrafts<T>(
+  key: string,
+): ClaimableVolatileDraft<T>[] {
+  const writers = volatileDraftFallbacks.get(key);
+  if (!writers) return [];
+
+  const orphaned: ClaimableVolatileDraft<T>[] = [];
+  for (const [writerId, pending] of writers) {
+    if (activeVolatileDraftWriters.has(createVolatileWriterKey(key, writerId))) {
+      continue;
+    }
+    orphaned.push({
+      writerId,
+      pending: pending as PendingDraft<T>,
+    });
+  }
+  return orphaned.sort(
+    (left, right) => right.pending.queuedAt - left.pending.queuedAt,
+  );
+}
+
 function promoteClaimableVolatileDrafts<T>(
   storage: FormDraftStorage,
   key: string,
@@ -196,9 +600,9 @@ function promoteClaimableVolatileDrafts<T>(
     } catch {
       return { changed, storageReadable: true };
     }
-    let submittedMarker: ReturnType<typeof findFormDraftClearMarker>;
+    let submittedMarker: SubmittedClearCutoff | null;
     try {
-      submittedMarker = findFormDraftClearMarker(
+      submittedMarker = findEffectiveSubmittedClearMarker(
         storage,
         key,
         pendingSignature,
@@ -230,9 +634,11 @@ function promoteClaimableVolatileDrafts<T>(
         storage.setItem(recoveryKey, raw);
       } catch (error) {
         if (!isStorageQuotaError(error)) throw error;
-        compactFormDraftRecoveries(storage, key, {
-          protectedKeys: new Set([...protectedKeys, recoveryKey]),
-        });
+        prepareFormDraftQuotaRetry(
+          storage,
+          key,
+          new Set([...protectedKeys, recoveryKey]),
+        );
         storage.setItem(recoveryKey, raw);
       }
       forgetVolatileDraft(key, orphaned.writerId, orphaned.pending);
@@ -242,6 +648,71 @@ function promoteClaimableVolatileDrafts<T>(
     }
   }
   return { changed, storageReadable: true };
+}
+
+function reconcileAllVolatileSubmittedClearMarkers(
+  storage: FormDraftStorage,
+  currentKey: string,
+  currentProtectedKeys: ReadonlySet<string>,
+): boolean {
+  const activeSources = listActiveFormDraftSources(storage);
+  let resolved = true;
+  for (const sourceKey of [...volatileSubmittedClearMarkers.keys()]) {
+    const isCurrent = sourceKey === currentKey;
+    const sourceResolved = reconcileVolatileSubmittedClearMarkers<unknown>(
+      storage,
+      sourceKey,
+      isCurrent ? currentProtectedKeys : new Set(),
+      isCurrent || !activeSources.has(sourceKey),
+    );
+    if (!sourceResolved) resolved = false;
+  }
+  return resolved;
+}
+
+function promoteAllInactiveOrphanedVolatileDrafts(
+  storage: FormDraftStorage,
+  currentKey: string,
+): { changed: boolean; resolved: boolean } {
+  const activeSources = listActiveFormDraftSources(storage);
+  let changed = false;
+  let resolved = true;
+
+  for (const sourceKey of [...volatileDraftFallbacks.keys()]) {
+    if (sourceKey === currentKey || activeSources.has(sourceKey)) continue;
+    const orphaned = listOrphanedVolatileDrafts<unknown>(sourceKey);
+    if (orphaned.length === 0) continue;
+    const promotion = promoteClaimableVolatileDrafts(
+      storage,
+      sourceKey,
+      orphaned,
+      new Set(),
+    );
+    if (promotion.changed) changed = true;
+    if (
+      !promotion.storageReadable ||
+      listOrphanedVolatileDrafts(sourceKey).length > 0
+    ) {
+      resolved = false;
+    }
+  }
+
+  return { changed, resolved };
+}
+
+function drainInactiveVolatileContinuity(
+  storage: FormDraftStorage,
+  currentKey: string,
+  currentProtectedKeys: ReadonlySet<string>,
+): boolean {
+  const submittedMarkersResolved = reconcileAllVolatileSubmittedClearMarkers(
+    storage,
+    currentKey,
+    currentProtectedKeys,
+  );
+  const drafts = promoteAllInactiveOrphanedVolatileDrafts(storage, currentKey);
+  return submittedMarkersResolved && drafts.resolved &&
+    !hasUnresolvedVolatileContinuityState();
 }
 
 function forgetVolatileDraft(
@@ -279,6 +750,24 @@ function forgetSubmittedVolatileDrafts(
   syncVolatileBeforeUnloadGuard();
 }
 
+function getMaxVolatileDraftQueuedAtBySignature(
+  key: string,
+  signature: string,
+): number | null {
+  const writers = volatileDraftFallbacks.get(key);
+  if (!writers) return null;
+  let latest: number | null = null;
+  for (const pending of writers.values()) {
+    try {
+      if (getPendingDraftSignature(pending) !== signature) continue;
+      if (latest === null || pending.queuedAt > latest) latest = pending.queuedAt;
+    } catch {
+      // 해석할 수 없는 다른 writer의 volatile data는 해당 signature로 추정하지 않는다.
+    }
+  }
+  return latest;
+}
+
 function hasVolatileDraftFallbacks(): boolean {
   for (const writers of volatileDraftFallbacks.values()) {
     if (writers.size > 0) return true;
@@ -286,15 +775,29 @@ function hasVolatileDraftFallbacks(): boolean {
   return false;
 }
 
+function hasVolatileSubmittedClearMarkers(): boolean {
+  for (const markers of volatileSubmittedClearMarkers.values()) {
+    if (markers.size > 0) return true;
+  }
+  return false;
+}
+
 function hasOrphanedVolatileDraftFallbacks(): boolean {
   for (const [key, writers] of volatileDraftFallbacks) {
     for (const writerId of writers.keys()) {
-      if (!activeVolatileDraftWriters.has(createVolatileWriterKey(key, writerId))) {
+      if (
+        !activeVolatileDraftWriters.has(createVolatileWriterKey(key, writerId))
+      ) {
         return true;
       }
     }
   }
   return false;
+}
+
+function hasUnresolvedVolatileContinuityState(): boolean {
+  return hasVolatileSubmittedClearMarkers() ||
+    hasOrphanedVolatileDraftFallbacks();
 }
 
 interface UseFormDraftResult<T> {
@@ -306,6 +809,7 @@ interface UseFormDraftResult<T> {
   clear: (options?: {
     reason?: "empty" | "discard" | "submitted";
     submittedData?: T;
+    submittedAliases?: readonly T[];
   }) => void;
   /** 예약된 저장을 즉시 반영 (blur/page hide 경계용) */
   flush: () => boolean;
@@ -345,14 +849,22 @@ function isStorageQuotaError(error: unknown): boolean {
  * 폼 임시저장 훅.
  * @param key localStorage 키 (폼별/대상별로 고유해야 함)
  * @param onRestore 저장된 draft 또는 선택한 복구본을 폼 state에 반영
- * @param options 저장 디바운스와 key 전환 시 폼 초기화 동작
+ * @param options 저장 디바운스·최대 대기 시간과 key 전환 시 폼 초기화 동작
  */
 export function useFormDraft<T>(
   key: string,
   onRestore: (draft: T) => void,
-  options: { debounceMs?: number; onReset?: () => void } = {},
+  options: {
+    debounceMs?: number;
+    maxWaitMs?: number;
+    onReset?: () => void;
+  } = {},
 ): UseFormDraftResult<T> {
-  const { debounceMs = 500, onReset } = options;
+  const {
+    debounceMs = 500,
+    maxWaitMs = FORM_DRAFT_MAX_WAIT_MS,
+    onReset,
+  } = options;
   const [writerId] = useState(createWriterId);
   const [loadedKey, setLoadedKey] = useState<string | null>(null);
   const [status, setStatus] = useState<FormDraftStatus>("idle");
@@ -365,16 +877,40 @@ export function useFormDraft<T>(
   onRestoreRef.current = onRestore;
   const onResetRef = useRef(onReset);
   onResetRef.current = onReset;
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const maxWaitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingRef = useRef<PendingDraft<T> | null>(null);
   const mountedRef = useRef(false);
   const lastKnownCanonicalRawRef = useRef<string | null>(null);
   const incompatibleCanonicalRawRef = useRef<string | null>(null);
   const localSnapshotRawRef = useRef<string | null>(null);
   const lastDataSignatureRef = useRef<string | null>(null);
+  const observedSavedAtBySignatureRef = useRef<Map<string, number>>(new Map());
   const activeRecoveryKeyRef = useRef<string | null>(null);
   const protectedRecoveryKeysRef = useRef<Set<string>>(new Set());
   const broadcastChannelRef = useRef<BroadcastChannel | null>(null);
+
+  const clearDebounceTimer = useCallback(() => {
+    if (debounceTimerRef.current === null) return;
+    clearTimeout(debounceTimerRef.current);
+    debounceTimerRef.current = null;
+  }, []);
+
+  const clearFlushTimers = useCallback(() => {
+    clearDebounceTimer();
+    if (maxWaitTimerRef.current === null) return;
+    clearTimeout(maxWaitTimerRef.current);
+    maxWaitTimerRef.current = null;
+  }, [clearDebounceTimer]);
+
+  const reconcileSubmittedClearMarkers = useCallback(
+    () => reconcileVolatileSubmittedClearMarkers<T>(
+      window.localStorage,
+      key,
+      protectedRecoveryKeysRef.current,
+    ),
+    [key],
+  );
 
   const updateIncompatibleCanonical = useCallback(
     (raw: string | null) => {
@@ -411,28 +947,61 @@ export function useFormDraft<T>(
     [key, writerId],
   );
 
+  const rememberObservedSavedAt = useCallback(
+    (signature: string, savedAt: number | null | undefined) => {
+      if (savedAt === null || savedAt === undefined || !Number.isFinite(savedAt)) {
+        return;
+      }
+      const previous = observedSavedAtBySignatureRef.current.get(signature);
+      if (previous === undefined || savedAt > previous) {
+        observedSavedAtBySignatureRef.current.set(signature, savedAt);
+      }
+    },
+    [],
+  );
+
   const refreshRecoveries = useCallback(() => {
     try {
-      const nextRecoveries = pruneFormDraftRecoveries<T>(window.localStorage, key, {
-        protectedKeys: protectedRecoveryKeysRef.current,
-      }).map(({ storageKey, savedAt: recoverySavedAt, data, signature }) => ({
-        storageKey,
-        savedAt: recoverySavedAt,
-        isCurrent: signature === lastDataSignatureRef.current,
-        preview: createFormDraftRecoveryPreview(data),
-      }));
+      const submittedMarkersResolved = reconcileSubmittedClearMarkers();
+      const prunedRecoveries = pruneFormDraftRecoveries<T>(
+        window.localStorage,
+        key,
+        { protectedKeys: protectedRecoveryKeysRef.current },
+      );
+      for (const recovery of prunedRecoveries) {
+        rememberObservedSavedAt(
+          recovery.signature,
+          recovery.savedAt.getTime(),
+        );
+      }
+      const nextRecoveries = prunedRecoveries
+        .filter(({ savedAt: recoverySavedAt, signature }) => {
+          // pruneFormDraftRecoveries가 durable marker를 한 번의 batch snapshot으로
+          // 이미 적용한다. 여기서는 storage 실패 동안 남은 process-local marker만
+          // 합쳐 recovery 수만큼 전체 localStorage를 다시 훑지 않는다.
+          const marker = readVolatileSubmittedClearMarker(key, signature);
+          return !marker || recoverySavedAt.getTime() > marker.clearedAt.getTime();
+        })
+        .map(({ storageKey, savedAt: recoverySavedAt, data, signature }) => ({
+          storageKey,
+          savedAt: recoverySavedAt,
+          isCurrent: signature === lastDataSignatureRef.current,
+          preview: createFormDraftRecoveryPreview(data),
+        }));
       if (mountedRef.current) setRecoveries(nextRecoveries);
+      if (!submittedMarkersResolved && mountedRef.current) setStatus("error");
       return nextRecoveries;
     } catch {
       if (mountedRef.current) setStatus("error");
       return [];
     }
-  }, [key]);
+  }, [key, reconcileSubmittedClearMarkers, rememberObservedSavedAt]);
 
   const adoptRemainingCanonical = useCallback(() => {
+    reconcileSubmittedClearMarkers();
     let currentRaw = window.localStorage.getItem(key);
     for (let attempt = 0; currentRaw && attempt < 3; attempt += 1) {
-      const submittedMarker = findFormDraftClearMarkerForSnapshot<T>(
+      const submittedMarker = findEffectiveSubmittedClearMarkerForSnapshot<T>(
         window.localStorage,
         key,
         currentRaw,
@@ -465,6 +1034,10 @@ export function useFormDraft<T>(
       lastKnownCanonicalRawRef.current = currentRaw;
       localSnapshotRawRef.current = currentRaw;
       lastDataSignatureRef.current = createFormDraftDataSignature(current.data);
+      rememberObservedSavedAt(
+        lastDataSignatureRef.current,
+        current.savedAt?.getTime(),
+      );
       if (mountedRef.current) {
         onRestoreRef.current(current.data);
         setSavedAt(current.savedAt);
@@ -492,7 +1065,12 @@ export function useFormDraft<T>(
             : "idle",
       );
     }
-  }, [key, updateIncompatibleCanonical]);
+  }, [
+    key,
+    reconcileSubmittedClearMarkers,
+    rememberObservedSavedAt,
+    updateIncompatibleCanonical,
+  ]);
 
   const promoteVolatileDrafts = useCallback(
     (candidates: readonly ClaimableVolatileDraft<T>[]) =>
@@ -506,45 +1084,55 @@ export function useFormDraft<T>(
   );
 
   const flush = useCallback(() => {
-    if (timerRef.current) {
-      clearTimeout(timerRef.current);
-      timerRef.current = null;
+    clearFlushTimers();
+    const storage = readBrowserLocalStorage();
+    if (!storage) {
+      if (mountedRef.current) setStatus("error");
+      return false;
     }
-
-    const pending = pendingRef.current;
-    if (!pending) {
-      const promotion = promoteVolatileDrafts(
-        listClaimableVolatileDrafts<T>(key, writerId),
-      );
-      if (promotion.changed) {
-        refreshRecoveries();
-        notifyDraftChange({ kind: "recovery" });
-      }
-      return listClaimableVolatileDrafts<T>(key, writerId).length === 0;
-    }
-
-    let pendingSignature: string;
     try {
-      pendingSignature = getPendingDraftSignature(pending);
+      reconcileVolatileSubmittedClearMarkers<T>(
+        storage,
+        key,
+        protectedRecoveryKeysRef.current,
+      );
     } catch {
       if (mountedRef.current) setStatus("error");
       return false;
     }
 
-    if (
-      pendingSignature === lastDataSignatureRef.current &&
-      lastKnownCanonicalRawRef.current !== null &&
-      localSnapshotRawRef.current === lastKnownCanonicalRawRef.current &&
-      listClaimableVolatileDrafts<T>(key, writerId).length === 0
-    ) {
-      forgetVolatileDraft(key, writerId, pending);
-      pendingRef.current = null;
-      if (mountedRef.current) setStatus("saved");
-      return true;
+    const isCurrentVolatileContinuityResolved = () =>
+      !volatileSubmittedClearMarkers.has(key) &&
+      listClaimableVolatileDrafts<T>(key, writerId).length === 0;
+
+    const pending = pendingRef.current;
+    if (!pending) {
+      try {
+        const promotion = promoteVolatileDrafts(
+          listClaimableVolatileDrafts<T>(key, writerId),
+        );
+        if (promotion.changed) {
+          refreshRecoveries();
+          notifyDraftChange({ kind: "recovery" });
+        }
+        return isCurrentVolatileContinuityResolved();
+      } catch {
+        if (mountedRef.current) setStatus("error");
+        return false;
+      }
+    }
+
+    let pendingSignature: string;
+    try {
+      pendingSignature = getPendingDraftSignature(pending);
+      rememberObservedSavedAt(pendingSignature, pending.queuedAt);
+    } catch {
+      if (mountedRef.current) setStatus("error");
+      return false;
     }
 
     try {
-      const submittedMarker = findFormDraftClearMarker(
+      const submittedMarker = findEffectiveSubmittedClearMarker(
         window.localStorage,
         key,
         pendingSignature,
@@ -572,7 +1160,33 @@ export function useFormDraft<T>(
         promoteVolatileDrafts(listClaimableVolatileDrafts<T>(key, writerId));
         adoptRemainingCanonical();
         refreshRecoveries();
-        return true;
+        return isCurrentVolatileContinuityResolved();
+      }
+
+      const lastKnownCanonicalSubmitted = lastKnownCanonicalRawRef.current
+        ? findEffectiveSubmittedClearMarkerForSnapshot<T>(
+            window.localStorage,
+            key,
+            lastKnownCanonicalRawRef.current,
+          )
+        : null;
+      if (
+        lastKnownCanonicalSubmitted &&
+        window.localStorage.getItem(key) === null
+      ) {
+        lastKnownCanonicalRawRef.current = null;
+      }
+      if (
+        !lastKnownCanonicalSubmitted &&
+        pendingSignature === lastDataSignatureRef.current &&
+        lastKnownCanonicalRawRef.current !== null &&
+        localSnapshotRawRef.current === lastKnownCanonicalRawRef.current &&
+        listClaimableVolatileDrafts<T>(key, writerId).length === 0
+      ) {
+        forgetVolatileDraft(key, writerId, pending);
+        pendingRef.current = null;
+        if (mountedRef.current) setStatus("saved");
+        return isCurrentVolatileContinuityResolved();
       }
     } catch {
       if (mountedRef.current) setStatus("error");
@@ -604,13 +1218,15 @@ export function useFormDraft<T>(
         result = persist();
       } catch (error) {
         if (!isStorageQuotaError(error)) throw error;
-        compactFormDraftRecoveries(window.localStorage, key, {
-          protectedKeys: protectedRecoveryKeysRef.current,
-        });
+        prepareFormDraftQuotaRetry(
+          window.localStorage,
+          key,
+          protectedRecoveryKeysRef.current,
+        );
         result = persist();
       }
 
-      const submittedMarker = findFormDraftClearMarker(
+      const submittedMarker = findEffectiveSubmittedClearMarker(
         window.localStorage,
         key,
         pendingSignature,
@@ -638,7 +1254,7 @@ export function useFormDraft<T>(
         promoteVolatileDrafts(listClaimableVolatileDrafts<T>(key, writerId));
         adoptRemainingCanonical();
         refreshRecoveries();
-        return true;
+        return isCurrentVolatileContinuityResolved();
       }
 
       forgetVolatileDraft(key, writerId, pending);
@@ -670,25 +1286,32 @@ export function useFormDraft<T>(
       }
       refreshRecoveries();
       notifyDraftChange({ kind: result.status === "saved" ? "canonical" : "recovery" });
-      return true;
+      return isCurrentVolatileContinuityResolved();
     } catch {
       if (mountedRef.current) setStatus("error");
       return false;
     }
   }, [
     adoptRemainingCanonical,
+    clearFlushTimers,
     key,
     notifyDraftChange,
     promoteVolatileDrafts,
     refreshRecoveries,
+    rememberObservedSavedAt,
     updateIncompatibleCanonical,
     writerId,
   ]);
 
   // 마운트 시 복원하고 탭/동일 window 문서 변경을 함께 감시한다.
   useEffect(() => {
+    const effectStorage = readBrowserLocalStorage();
     mountedRef.current = true;
     activeVolatileDraftWriters.add(createVolatileWriterKey(key, writerId));
+    if (effectStorage) {
+      registerActiveFormDraftSource(effectStorage, key);
+      scheduleFormDraftArtifactSweep(effectStorage);
+    }
     activeRecoveryKeyRef.current = null;
     protectedRecoveryKeysRef.current = new Set();
     pendingRef.current = null;
@@ -698,15 +1321,20 @@ export function useFormDraft<T>(
     );
     localSnapshotRawRef.current = null;
     lastDataSignatureRef.current = null;
+    observedSavedAtBySignatureRef.current = new Map();
     setStatus("idle");
     setSavedAt(null);
     setRestored(false);
     setRecoveries([]);
 
-    let storageReadable = true;
+    let storageReadable = effectStorage !== null;
     let mountedWithIncompatibleCanonical = false;
     let canonicalSavedAtMs: number | null = null;
     try {
+      if (!effectStorage) {
+        throw new Error("localStorage accessor is unavailable");
+      }
+      reconcileSubmittedClearMarkers();
       let raw: string | null = null;
       let stored: ReturnType<typeof parseFormDraft<T>> = null;
       let unstableCanonical = false;
@@ -716,7 +1344,11 @@ export function useFormDraft<T>(
         if (
           !raw ||
           !stored ||
-          !findFormDraftClearMarkerForSnapshot<T>(window.localStorage, key, raw)
+          !findEffectiveSubmittedClearMarkerForSnapshot<T>(
+            window.localStorage,
+            key,
+            raw,
+          )
         ) {
           unstableCanonical = false;
           break;
@@ -737,7 +1369,12 @@ export function useFormDraft<T>(
         canonicalSavedAtMs = stored.savedAt?.getTime() ?? null;
         lastKnownCanonicalRawRef.current = raw;
         localSnapshotRawRef.current = raw;
-        lastDataSignatureRef.current = createFormDraftDataSignature(stored.data);
+        const storedSignature = createFormDraftDataSignature(stored.data);
+        lastDataSignatureRef.current = storedSignature;
+        rememberObservedSavedAt(
+          storedSignature,
+          stored.savedAt?.getTime(),
+        );
         onRestoreRef.current(stored.data);
         setSavedAt(stored.savedAt);
         setRestored(true);
@@ -790,21 +1427,19 @@ export function useFormDraft<T>(
     if (volatilePending) {
       let isSubmitted = false;
       let volatileSignature: string | null = null;
-      if (storageReadable) {
-        try {
-          volatileSignature = getPendingDraftSignature(volatilePending);
-          const submittedMarker = findFormDraftClearMarker(
-            window.localStorage,
-            key,
-            volatileSignature,
-          );
-          isSubmitted = Boolean(
-            submittedMarker &&
-              volatilePending.queuedAt <= submittedMarker.clearedAt.getTime(),
-          );
-        } catch {
-          storageReadable = false;
-        }
+      try {
+        volatileSignature = getPendingDraftSignature(volatilePending);
+        const submittedMarker = findEffectiveSubmittedClearMarker(
+          window.localStorage,
+          key,
+          volatileSignature,
+        );
+        isSubmitted = Boolean(
+          submittedMarker &&
+            volatilePending.queuedAt <= submittedMarker.clearedAt.getTime(),
+        );
+      } catch {
+        storageReadable = false;
       }
 
       if (isSubmitted) {
@@ -816,11 +1451,18 @@ export function useFormDraft<T>(
           volatilePending.queuedAt,
         );
         lastDataSignatureRef.current = volatileSignature;
+        if (volatileSignature) {
+          rememberObservedSavedAt(
+            volatileSignature,
+            volatilePending.queuedAt,
+          );
+        }
         onRestoreRef.current(volatilePending.data);
         setSavedAt(new Date(volatilePending.queuedAt));
         setRestored(true);
         setStatus(mountedWithIncompatibleCanonical ? "incompatible" : "error");
-        timerRef.current = setTimeout(() => flush(), debounceMs);
+        debounceTimerRef.current = setTimeout(() => flush(), debounceMs);
+        maxWaitTimerRef.current = setTimeout(() => flush(), maxWaitMs);
       }
     }
     refreshRecoveries();
@@ -853,9 +1495,11 @@ export function useFormDraft<T>(
         window.localStorage.setItem(nextRecoveryKey, preservedRaw);
       } catch (error) {
         if (!isStorageQuotaError(error)) throw error;
-        compactFormDraftRecoveries(window.localStorage, key, {
-          protectedKeys: protectedRecoveryKeysRef.current,
-        });
+        prepareFormDraftQuotaRetry(
+          window.localStorage,
+          key,
+          protectedRecoveryKeysRef.current,
+        );
         window.localStorage.setItem(nextRecoveryKey, preservedRaw);
       }
       forgetVolatileDraft(key, writerId, volatileVisibleSnapshot);
@@ -873,11 +1517,17 @@ export function useFormDraft<T>(
       signature: string;
       clearedAt: Date;
     }) => {
+      rememberVolatileSubmittedClearMarker(
+        key,
+        marker.signature,
+        marker.clearedAt.getTime(),
+      );
       forgetSubmittedVolatileDrafts(
         key,
         marker.signature,
         marker.clearedAt.getTime(),
       );
+      reconcileSubmittedClearMarkers();
       const pending = pendingRef.current;
       const visible = localSnapshotRawRef.current
         ? parseFormDraft<T>(localSnapshotRawRef.current)
@@ -895,10 +1545,7 @@ export function useFormDraft<T>(
         return false;
       }
 
-      if (timerRef.current) {
-        clearTimeout(timerRef.current);
-        timerRef.current = null;
-      }
+      clearFlushTimers();
       if (pending) forgetVolatileDraft(key, writerId, pending);
       pendingRef.current = null;
       removeFormDraftSnapshotsBySignature(
@@ -927,7 +1574,11 @@ export function useFormDraft<T>(
 
       let currentRaw = nextRaw;
       const resolvedCanonicalMarker = currentRaw
-        ? findFormDraftClearMarkerForSnapshot<T>(window.localStorage, key, currentRaw)
+        ? findEffectiveSubmittedClearMarkerForSnapshot<T>(
+            window.localStorage,
+            key,
+            currentRaw,
+          )
         : null;
       if (resolvedCanonicalMarker) {
         if (window.localStorage.getItem(key) === currentRaw) {
@@ -948,7 +1599,11 @@ export function useFormDraft<T>(
         ? getPendingDraftSignature(pendingRef.current)
         : lastDataSignatureRef.current;
       const submittedMarker = currentRaw === null && visibleSignature
-        ? findFormDraftClearMarker(window.localStorage, key, visibleSignature)
+        ? findEffectiveSubmittedClearMarker(
+            window.localStorage,
+            key,
+            visibleSignature,
+          )
         : null;
       if (submittedMarker && handleSubmittedClear(submittedMarker)) return;
 
@@ -1008,9 +1663,28 @@ export function useFormDraft<T>(
       }
     };
 
-    const handlePageHide = () => flush();
+    const handleExitBoundary = () => {
+      const flushed = flush();
+      const storage = readBrowserLocalStorage();
+      if (!storage) {
+        return flushed && !hasUnresolvedVolatileContinuityState();
+      }
+      try {
+        const continuityDrained = drainInactiveVolatileContinuity(
+          storage,
+          key,
+          protectedRecoveryKeysRef.current,
+        );
+        return flushed && continuityDrained;
+      } catch {
+        return false;
+      }
+    };
+    const handlePageHide = () => {
+      handleExitBoundary();
+    };
     const handleVisibilityChange = () => {
-      if (document.visibilityState === "hidden") flush();
+      if (document.visibilityState === "hidden") handleExitBoundary();
     };
     const handleStorage = (event: StorageEvent) => {
       try {
@@ -1074,8 +1748,7 @@ export function useFormDraft<T>(
     }
 
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
-      const flushed = flush();
-      if (flushed && !hasOrphanedVolatileDraftFallbacks()) return;
+      if (handleExitBoundary()) return;
       event.preventDefault();
       event.returnValue = "";
     };
@@ -1089,6 +1762,7 @@ export function useFormDraft<T>(
       mountedRef.current = false;
       flush();
       activeVolatileDraftWriters.delete(createVolatileWriterKey(key, writerId));
+      if (effectStorage) unregisterActiveFormDraftSource(effectStorage, key);
       window.removeEventListener("pagehide", handlePageHide);
       window.removeEventListener("beforeunload", handleBeforeUnload);
       window.removeEventListener("storage", handleStorage);
@@ -1108,10 +1782,14 @@ export function useFormDraft<T>(
     };
   }, [
     adoptRemainingCanonical,
+    clearFlushTimers,
     debounceMs,
     flush,
     key,
+    maxWaitMs,
     promoteVolatileDrafts,
+    reconcileSubmittedClearMarkers,
+    rememberObservedSavedAt,
     refreshRecoveries,
     updateIncompatibleCanonical,
     writerId,
@@ -1120,7 +1798,7 @@ export function useFormDraft<T>(
   const save = useCallback(
     (data: T) => {
       try {
-        if (timerRef.current) clearTimeout(timerRef.current);
+        clearDebounceTimer();
         const pending: PendingDraft<T> = {
           data,
           signature: null,
@@ -1131,59 +1809,143 @@ export function useFormDraft<T>(
         setStatus(
           incompatibleCanonicalRawRef.current ? "incompatible" : "saving",
         );
-        timerRef.current = setTimeout(() => {
+        debounceTimerRef.current = setTimeout(() => {
           flush();
         }, debounceMs);
+        if (maxWaitTimerRef.current === null) {
+          maxWaitTimerRef.current = setTimeout(() => {
+            flush();
+          }, maxWaitMs);
+        }
       } catch {
         setStatus("error");
       }
     },
-    [debounceMs, flush, key, writerId],
+    [clearDebounceTimer, debounceMs, flush, key, maxWaitMs, writerId],
   );
 
   const clear = useCallback((options: {
     reason?: "empty" | "discard" | "submitted";
     submittedData?: T;
+    submittedAliases?: readonly T[];
   } = {}) => {
     try {
+      clearFlushTimers();
       const submitted = options.reason === "submitted";
       const pendingSignature = submitted && pendingRef.current
         ? getPendingDraftSignature(pendingRef.current)
         : null;
-      const signature = submitted
+      const requestedPrimarySignature = submitted
         ? options.submittedData === undefined
           ? lastDataSignatureRef.current ?? pendingSignature
           : createFormDraftDataSignature(options.submittedData)
         : lastDataSignatureRef.current;
-      const clearedAt = Date.now();
+      const submittedSignatures = new Set<string>();
+      if (submitted && requestedPrimarySignature) {
+        submittedSignatures.add(requestedPrimarySignature);
+      }
+      if (submitted) {
+        for (const alias of options.submittedAliases ?? []) {
+          submittedSignatures.add(createFormDraftDataSignature(alias));
+        }
+      }
+      const signature = requestedPrimarySignature ??
+        submittedSignatures.values().next().value ??
+        null;
+      const requestedClearedAt = Date.now();
+      let requestedCutoffs = new Map<string, number>();
+      for (const submittedSignature of submittedSignatures) {
+        requestedCutoffs.set(
+          submittedSignature,
+          Math.max(
+            requestedClearedAt,
+            observedSavedAtBySignatureRef.current.get(submittedSignature) ??
+              Number.NEGATIVE_INFINITY,
+            getMaxVolatileDraftQueuedAtBySignature(key, submittedSignature) ??
+              Number.NEGATIVE_INFINITY,
+            pendingSignature === submittedSignature && pendingRef.current
+              ? pendingRef.current.queuedAt
+              : Number.NEGATIVE_INFINITY,
+          ),
+        );
+      }
+      let submittedClearPlan: ReturnType<
+        typeof prepareFormDraftSnapshotClearPlan
+      > | null = null;
+      try {
+        submittedClearPlan = prepareFormDraftSnapshotClearPlan(
+          window.localStorage,
+          key,
+          requestedCutoffs,
+        );
+        requestedCutoffs = new Map(submittedClearPlan.cutoffs);
+      } catch {
+        // storage가 차단돼도 mount/refresh/save에서 관측한 signature별 cutoff는 유지한다.
+      }
+      for (const [submittedSignature, cutoff] of requestedCutoffs) {
+        rememberObservedSavedAt(submittedSignature, cutoff);
+      }
+      const volatileSubmittedMarkers = submitted
+        ? [...submittedSignatures].map((submittedSignature) =>
+            rememberVolatileSubmittedClearMarker(
+              key,
+              submittedSignature,
+              requestedCutoffs.get(submittedSignature) ?? requestedClearedAt,
+            ))
+        : [];
+      const clearedAtBySignature = new Map(
+        volatileSubmittedMarkers.map((marker) => [
+          marker.signature,
+          marker.clearedAt,
+        ] as const),
+      );
       const volatilePending = readVolatileDraft<T>(key, writerId);
-      if (submitted && signature) {
-        forgetSubmittedVolatileDrafts(key, signature, clearedAt);
+      if (submitted && submittedSignatures.size > 0) {
+        for (const submittedSignature of submittedSignatures) {
+          forgetSubmittedVolatileDrafts(
+            key,
+            submittedSignature,
+            clearedAtBySignature.get(submittedSignature) ?? requestedClearedAt,
+          );
+        }
       } else {
         forgetVolatileDraft(key, writerId, volatilePending ?? undefined);
       }
       const removeSubmittedSnapshots = () => {
-        if (!signature) return;
-        removeFormDraftSnapshotsBySignature(
-          window.localStorage,
-          key,
-          signature,
-          { savedAtOrBefore: clearedAt },
-        );
-        removeFormDraftCanonicalSnapshotBySignature<T>(
-          window.localStorage,
-          key,
-          signature,
-          { savedAtOrBefore: clearedAt },
-        );
+        if (submittedClearPlan) {
+          applyFormDraftSnapshotClearPlan(
+            window.localStorage,
+            submittedClearPlan,
+            clearedAtBySignature,
+          );
+          return;
+        }
+        for (const submittedSignature of submittedSignatures) {
+          removeFormDraftSnapshotsBySignature(
+            window.localStorage,
+            key,
+            submittedSignature,
+            {
+              savedAtOrBefore:
+                clearedAtBySignature.get(submittedSignature) ??
+                requestedClearedAt,
+            },
+          );
+          removeFormDraftCanonicalSnapshotBySignature<T>(
+            window.localStorage,
+            key,
+            submittedSignature,
+            {
+              savedAtOrBefore:
+                clearedAtBySignature.get(submittedSignature) ??
+                requestedClearedAt,
+            },
+          );
+        }
       };
 
       if (submitted && pendingRef.current) {
-        if (pendingSignature === signature) {
-          if (timerRef.current) {
-            clearTimeout(timerRef.current);
-            timerRef.current = null;
-          }
+        if (pendingSignature && submittedSignatures.has(pendingSignature)) {
           pendingRef.current = null;
         } else {
           flush();
@@ -1198,56 +1960,70 @@ export function useFormDraft<T>(
         }
       }
 
-      if (timerRef.current) {
-        clearTimeout(timerRef.current);
-        timerRef.current = null;
-      }
       pendingRef.current = null;
 
       let submittedMarker: ReturnType<typeof writeFormDraftClearMarker> | null = null;
       if (submitted && signature) {
+        let durableSubmittedMarkers: ReturnType<
+          typeof writeFormDraftClearMarkers
+        > | null = null;
+        let unresolvedMarkerError: unknown = null;
+        const markerInputs = volatileSubmittedMarkers.map((marker) => ({
+          signature: marker.signature,
+          clearedAt: marker.clearedAt,
+        }));
         try {
-          submittedMarker = writeFormDraftClearMarker(
+          durableSubmittedMarkers = writeFormDraftClearMarkers(
             window.localStorage,
             key,
-            signature,
-            clearedAt,
+            markerInputs,
           );
         } catch (error) {
-          let finalError = error;
+          unresolvedMarkerError = error;
           if (isStorageQuotaError(error)) {
             try {
               removeSubmittedSnapshots();
-              compactFormDraftRecoveries(window.localStorage, key, {
-                protectedKeys: protectedRecoveryKeysRef.current,
-              });
-              submittedMarker = writeFormDraftClearMarker(
+              prepareFormDraftQuotaRetry(
                 window.localStorage,
                 key,
-                signature,
-                clearedAt,
+                protectedRecoveryKeysRef.current,
               );
+              durableSubmittedMarkers = writeFormDraftClearMarkers(
+                window.localStorage,
+                key,
+                markerInputs,
+              );
+              unresolvedMarkerError = null;
             } catch (retryError) {
-              finalError = retryError;
+              unresolvedMarkerError = retryError;
             }
-          }
-          if (!submittedMarker) {
-            try {
-              removeSubmittedSnapshots();
-            } catch {
-              // 저장소 자체가 차단된 경우에도 활성 peer에는 제출 완료를 전파한다.
-            }
-            notifyDraftChange({
-              kind: "submitted-clear",
-              signature,
-              clearedAt,
-            });
-            throw finalError;
           }
         }
+        if (unresolvedMarkerError || !durableSubmittedMarkers) {
+          try {
+            removeSubmittedSnapshots();
+          } catch {
+            // 저장소 자체가 차단된 경우에도 활성 peer에는 제출 완료를 전파한다.
+          }
+          for (const volatileMarker of volatileSubmittedMarkers) {
+            notifyDraftChange({
+              kind: "submitted-clear",
+              signature: volatileMarker.signature,
+              clearedAt: volatileMarker.clearedAt,
+            });
+          }
+          throw unresolvedMarkerError ?? new Error("Form draft marker write failed");
+        }
+        submittedMarker =
+          durableSubmittedMarkers.find(
+            (marker) => marker.signature === signature,
+          ) ?? null;
       }
       if (submittedMarker) {
         removeSubmittedSnapshots();
+        for (const volatileMarker of volatileSubmittedMarkers) {
+          forgetVolatileSubmittedClearMarker(key, volatileMarker);
+        }
       } else {
         const activeRecoveryKey = activeRecoveryKeyRef.current;
         if (activeRecoveryKey) window.localStorage.removeItem(activeRecoveryKey);
@@ -1266,7 +2042,7 @@ export function useFormDraft<T>(
 
       const preserveVisibleDraft = submittedMarker !== null &&
         lastDataSignatureRef.current !== null &&
-        lastDataSignatureRef.current !== submittedMarker.signature;
+        !submittedSignatures.has(lastDataSignatureRef.current);
       if (!preserveVisibleDraft) {
         activeRecoveryKeyRef.current = null;
         protectedRecoveryKeysRef.current = new Set();
@@ -1281,11 +2057,14 @@ export function useFormDraft<T>(
       );
       refreshRecoveries();
       if (submittedMarker) {
-        notifyDraftChange({
-          kind: "submitted-clear",
-          signature: submittedMarker.signature,
-          clearedAt: submittedMarker.clearedAt.getTime(),
-        });
+        for (const submittedSignature of submittedSignatures) {
+          notifyDraftChange({
+            kind: "submitted-clear",
+            signature: submittedSignature,
+            clearedAt:
+              clearedAtBySignature.get(submittedSignature) ?? requestedClearedAt,
+          });
+        }
       } else {
         notifyDraftChange({
           kind: !conflict && currentRaw !== null ? "canonical" : "recovery",
@@ -1296,9 +2075,11 @@ export function useFormDraft<T>(
       refreshRecoveries();
     }
   }, [
+    clearFlushTimers,
     flush,
     key,
     notifyDraftChange,
+    rememberObservedSavedAt,
     refreshRecoveries,
     updateIncompatibleCanonical,
     writerId,
@@ -1307,12 +2088,13 @@ export function useFormDraft<T>(
   const restoreRecovery = useCallback(
     (storageKey: string) => {
       try {
+        reconcileSubmittedClearMarkers();
         const selected = readFormDraftRecovery<T>(window.localStorage, key, storageKey);
         if (!selected) {
           refreshRecoveries();
           return;
         }
-        const selectedMarker = findFormDraftClearMarker(
+        const selectedMarker = findEffectiveSubmittedClearMarker(
           window.localStorage,
           key,
           selected.signature,
@@ -1341,7 +2123,11 @@ export function useFormDraft<T>(
         protectedRecoveryKeysRef.current.add(storageKey);
         let currentRaw = window.localStorage.getItem(key);
         const currentMarker = currentRaw
-          ? findFormDraftClearMarkerForSnapshot<T>(window.localStorage, key, currentRaw)
+          ? findEffectiveSubmittedClearMarkerForSnapshot<T>(
+              window.localStorage,
+              key,
+              currentRaw,
+            )
           : null;
         if (currentMarker) {
           removeFormDraftSnapshotsBySignature(
@@ -1370,7 +2156,7 @@ export function useFormDraft<T>(
         ) => {
           if (preservedSignatures.has(signature)) return;
 
-          const submittedMarker = findFormDraftClearMarker(
+          const submittedMarker = findEffectiveSubmittedClearMarker(
             window.localStorage,
             key,
             signature,
@@ -1404,9 +2190,11 @@ export function useFormDraft<T>(
             window.localStorage.setItem(preservedKey, preservedRaw);
           } catch (error) {
             if (!isStorageQuotaError(error)) throw error;
-            compactFormDraftRecoveries(window.localStorage, key, {
-              protectedKeys: protectedRecoveryKeysRef.current,
-            });
+            prepareFormDraftQuotaRetry(
+              window.localStorage,
+              key,
+              protectedRecoveryKeysRef.current,
+            );
             window.localStorage.setItem(preservedKey, preservedRaw);
           }
           preservedSignatures.add(signature);
@@ -1438,10 +2226,7 @@ export function useFormDraft<T>(
           );
         }
 
-        if (timerRef.current) {
-          clearTimeout(timerRef.current);
-          timerRef.current = null;
-        }
+        clearFlushTimers();
         if (pending) forgetVolatileDraft(key, writerId, pending);
         pendingRef.current = null;
 
@@ -1469,13 +2254,15 @@ export function useFormDraft<T>(
           result = persist();
         } catch (error) {
           if (!isStorageQuotaError(error)) throw error;
-          compactFormDraftRecoveries(window.localStorage, key, {
-            protectedKeys: protectedRecoveryKeysRef.current,
-          });
+          prepareFormDraftQuotaRetry(
+            window.localStorage,
+            key,
+            protectedRecoveryKeysRef.current,
+          );
           result = persist();
         }
 
-        const postPersistMarker = findFormDraftClearMarker(
+        const postPersistMarker = findEffectiveSubmittedClearMarker(
           window.localStorage,
           key,
           selected.signature,
@@ -1507,6 +2294,10 @@ export function useFormDraft<T>(
         protectedRecoveryKeysRef.current = new Set([restoredRecoveryKey]);
         localSnapshotRawRef.current = restoredRaw;
         lastDataSignatureRef.current = selected.signature;
+        rememberObservedSavedAt(
+          selected.signature,
+          restoredAt.getTime(),
+        );
         const incompatibleRaw =
           result.currentRaw && hasFutureFormDraftVersion(result.currentRaw)
             ? result.currentRaw
@@ -1529,8 +2320,11 @@ export function useFormDraft<T>(
     },
     [
       adoptRemainingCanonical,
+      clearFlushTimers,
       key,
       notifyDraftChange,
+      rememberObservedSavedAt,
+      reconcileSubmittedClearMarkers,
       refreshRecoveries,
       updateIncompatibleCanonical,
       writerId,
@@ -1541,6 +2335,7 @@ export function useFormDraft<T>(
     (storageKey: string) => {
       if (!isFormDraftRecoveryKey(key, storageKey)) return;
       try {
+        reconcileSubmittedClearMarkers();
         const selected = readFormDraftRecovery<T>(window.localStorage, key, storageKey);
         if (!selected || window.localStorage.getItem(storageKey) !== selected.raw) {
           refreshRecoveries();
@@ -1564,10 +2359,7 @@ export function useFormDraft<T>(
               ? getPendingDraftSignature(pendingRef.current)
               : lastDataSignatureRef.current)
         ) {
-          if (timerRef.current) {
-            clearTimeout(timerRef.current);
-            timerRef.current = null;
-          }
+          clearFlushTimers();
           if (pendingRef.current) {
             forgetVolatileDraft(key, writerId, pendingRef.current);
           }
@@ -1582,7 +2374,15 @@ export function useFormDraft<T>(
         setStatus("error");
       }
     },
-    [adoptRemainingCanonical, key, notifyDraftChange, refreshRecoveries, writerId],
+    [
+      adoptRemainingCanonical,
+      clearFlushTimers,
+      key,
+      notifyDraftChange,
+      reconcileSubmittedClearMarkers,
+      refreshRecoveries,
+      writerId,
+    ],
   );
 
   return {

@@ -210,6 +210,23 @@ export type FormDraftRecoveryCompactionResult = {
   resolvedMarkerKeys: string[];
 };
 
+export type SweepExpiredFormDraftArtifactsOptions = {
+  now?: number;
+  protectedSourceKeys?: Iterable<string>;
+  protectedRecoveryKeys?: Iterable<string>;
+  /** 지정하면 전체 storage를 열거하지 않고 이 key들만 best-effort 정리한다. */
+  candidateKeys?: readonly string[];
+  /** proactive 정리에서 동기 parse/hash할 raw 크기를 code unit 기준으로 제한한다. */
+  maxArtifactRawCodeUnits?: number;
+  /** false면 causal 전역 열거가 필요한 clear marker 물리 정리를 건너뛴다. */
+  includeClearMarkers?: boolean;
+};
+
+export type SweepExpiredFormDraftArtifactsResult = {
+  removedRecoveryKeys: string[];
+  removedClearMarkerKeys: string[];
+};
+
 export type PersistFormDraftSnapshotOptions<T> = {
   sourceKey: string;
   recoveryKey: string;
@@ -409,26 +426,43 @@ export function isFormDraftClearMarkerKey(
     candidateKey.startsWith(createFormDraftClearMarkerEntryPrefix(sourceKey));
 }
 
-/** 제출 완료 snapshot을 recovery 보존 기간 동안 식별하는 marker를 기록한다. */
-export function writeFormDraftClearMarker(
+export type FormDraftClearMarkerInput = {
+  signature: string;
+  clearedAt: number;
+};
+
+/** 여러 제출 표현의 append-only marker를 기록하고 namespace 정리는 한 번만 수행한다. */
+export function writeFormDraftClearMarkers(
   storage: FormDraftStorage,
   sourceKey: string,
-  signature: string,
-  clearedAt = Date.now(),
-): FormDraftClearMarker {
-  if (!Number.isFinite(clearedAt)) {
-    throw new TypeError("Form draft clear marker time must be finite");
+  inputs: readonly FormDraftClearMarkerInput[],
+): FormDraftClearMarker[] {
+  if (inputs.length === 0) return [];
+  for (const { clearedAt } of inputs) {
+    if (!Number.isFinite(clearedAt)) {
+      throw new TypeError("Form draft clear marker time must be finite");
+    }
   }
-
-  const envelope: FormDraftClearMarkerEnvelope = {
-    version: FORM_DRAFT_CLEAR_MARKER_VERSION,
-    signature,
-    clearedAt,
-  };
-  const raw = JSON.stringify(envelope);
+  const markers = inputs.map(({ signature, clearedAt }) => {
+    const envelope: FormDraftClearMarkerEnvelope = {
+      version: FORM_DRAFT_CLEAR_MARKER_VERSION,
+      signature,
+      clearedAt,
+    };
+    const raw = JSON.stringify(envelope);
+    return {
+      version: FORM_DRAFT_CLEAR_MARKER_VERSION,
+      signature,
+      clearedAt: new Date(clearedAt),
+      raw,
+    } satisfies FormDraftClearMarker;
+  });
   const headKey = createFormDraftClearMarkerKey(sourceKey);
+  const newestClearedAt = Math.max(...inputs.map(({ clearedAt }) => clearedAt));
   const promoteLegacyHead = (headRaw: string | null) => {
-    const marker = headRaw ? parseFormDraftClearMarker(headRaw, clearedAt) : null;
+    const marker = headRaw
+      ? parseFormDraftClearMarker(headRaw, newestClearedAt)
+      : null;
     if (!marker) return;
     storage.setItem(
       createFormDraftClearMarkerEntryKey(
@@ -441,28 +475,57 @@ export function writeFormDraftClearMarker(
   };
 
   promoteLegacyHead(storage.getItem(headKey));
-  storage.setItem(createFormDraftClearMarkerEntryKey(sourceKey, signature, clearedAt), raw);
+  for (const marker of markers) {
+    storage.setItem(
+      createFormDraftClearMarkerEntryKey(
+        sourceKey,
+        marker.signature,
+        marker.clearedAt.getTime(),
+      ),
+      marker.raw,
+    );
+  }
   const latestHeadRaw = storage.getItem(headKey);
   promoteLegacyHead(latestHeadRaw);
   if (
     !latestHeadRaw ||
     !hasFutureEnvelopeVersion(latestHeadRaw, FORM_DRAFT_CLEAR_MARKER_VERSION)
   ) {
-    storage.setItem(headKey, raw);
+    storage.setItem(headKey, markers.at(-1)!.raw);
   }
-  pruneFormDraftClearMarkers(storage, sourceKey, clearedAt);
-  return {
-    version: FORM_DRAFT_CLEAR_MARKER_VERSION,
-    signature,
-    clearedAt: new Date(clearedAt),
-    raw,
-  };
+  pruneFormDraftClearMarkers(storage, sourceKey, newestClearedAt);
+  return markers;
+}
+
+/** 제출 완료 snapshot을 recovery 보존 기간 동안 식별하는 marker를 기록한다. */
+export function writeFormDraftClearMarker(
+  storage: FormDraftStorage,
+  sourceKey: string,
+  signature: string,
+  clearedAt = Date.now(),
+): FormDraftClearMarker {
+  return writeFormDraftClearMarkers(storage, sourceKey, [
+    { signature, clearedAt },
+  ])[0]!;
 }
 
 /** 유효 기간 안의 document-scoped clear marker만 반환한다. */
 export function parseFormDraftClearMarker(
   raw: string,
   now = Date.now(),
+): FormDraftClearMarker | null {
+  const marker = parseCurrentFormDraftClearMarker(raw);
+  if (
+    !marker ||
+    now - marker.clearedAt.getTime() > FORM_DRAFT_CLEAR_MARKER_TTL_MS
+  ) {
+    return null;
+  }
+  return marker;
+}
+
+function parseCurrentFormDraftClearMarker(
+  raw: string,
 ): FormDraftClearMarker | null {
   try {
     const parsed: unknown = JSON.parse(raw);
@@ -471,8 +534,7 @@ export function parseFormDraftClearMarker(
       parsed.version !== FORM_DRAFT_CLEAR_MARKER_VERSION ||
       typeof parsed.signature !== "string" ||
       typeof parsed.clearedAt !== "number" ||
-      !Number.isFinite(parsed.clearedAt) ||
-      now - parsed.clearedAt > FORM_DRAFT_CLEAR_MARKER_TTL_MS
+      !Number.isFinite(parsed.clearedAt)
     ) {
       return null;
     }
@@ -488,6 +550,149 @@ export function parseFormDraftClearMarker(
   } catch {
     return null;
   }
+}
+
+type FormDraftCausalSnapshotIndex = {
+  hasUnverifiableSnapshot: boolean;
+  earliestSavedAtBySignature: Map<string, number>;
+  observedRawByStorageKey?: Map<string, string>;
+};
+
+function indexParsedFormDraftCausalSnapshot(
+  index: FormDraftCausalSnapshotIndex,
+  signature: string,
+  savedAt: number,
+): void {
+  const previous = index.earliestSavedAtBySignature.get(signature);
+  if (previous === undefined || savedAt < previous) {
+    index.earliestSavedAtBySignature.set(signature, savedAt);
+  }
+}
+
+function indexFormDraftCausalSnapshotRaw(
+  index: FormDraftCausalSnapshotIndex,
+  raw: string,
+  maxArtifactRawCodeUnits?: number,
+): void {
+  if (
+    maxArtifactRawCodeUnits !== undefined &&
+    raw.length > maxArtifactRawCodeUnits
+  ) {
+    // proactive 정리의 동기 작업 상한을 넘으면 marker와 무관하다고 추론하지 않는다.
+    index.hasUnverifiableSnapshot = true;
+    return;
+  }
+  const stored = parseFormDraft<unknown>(raw);
+  if (!stored) {
+    // future·손상 envelope는 data/signature/causal timestamp의 무관성을
+    // 증명할 수 없다. tombstone 삭제는 저장공간 회수보다 보수적으로 판단한다.
+    index.hasUnverifiableSnapshot = true;
+    return;
+  }
+
+  indexParsedFormDraftCausalSnapshot(
+    index,
+    createFormDraftDataSignature(stored.data),
+    stored.savedAt?.getTime() ?? Number.NEGATIVE_INFINITY,
+  );
+}
+
+/**
+ * source의 causal snapshot을 한 번만 직렬화해 marker 수와 무관한 lookup index를 만든다.
+ * 해석할 수 없는 rolling snapshot은 marker와 무관하다고 증명할 수 없다고 기록한다.
+ */
+function createFormDraftCausalSnapshotIndex(
+  storage: FormDraftRecoveryStorage,
+  sourceKey: string,
+  maxArtifactRawCodeUnits?: number,
+): FormDraftCausalSnapshotIndex {
+  const causalIndex: FormDraftCausalSnapshotIndex = {
+    hasUnverifiableSnapshot: false,
+    earliestSavedAtBySignature: new Map(),
+  };
+  const canonicalRaw = storage.getItem(sourceKey);
+  if (canonicalRaw) {
+    indexFormDraftCausalSnapshotRaw(
+      causalIndex,
+      canonicalRaw,
+      maxArtifactRawCodeUnits,
+    );
+  }
+
+  const recoveryPrefix = createFormDraftRecoveryPrefix(sourceKey);
+  for (let index = 0; index < storage.length; index += 1) {
+    const recoveryKey = storage.key(index);
+    if (!recoveryKey?.startsWith(recoveryPrefix)) continue;
+    const recoveryRaw = storage.getItem(recoveryKey);
+    if (recoveryRaw) {
+      indexFormDraftCausalSnapshotRaw(
+        causalIndex,
+        recoveryRaw,
+        maxArtifactRawCodeUnits,
+      );
+    }
+  }
+  return causalIndex;
+}
+
+function validatePrecomputedFormDraftCausalSnapshotIndex(
+  storage: FormDraftRecoveryStorage,
+  sourceKey: string,
+  index: FormDraftCausalSnapshotIndex,
+): void {
+  const observed = index.observedRawByStorageKey;
+  if (!observed) return;
+
+  const currentKeys = new Set<string>();
+  const canonicalRaw = storage.getItem(sourceKey);
+  if (canonicalRaw !== null) currentKeys.add(sourceKey);
+  if (canonicalRaw !== (observed.get(sourceKey) ?? null)) {
+    index.hasUnverifiableSnapshot = true;
+    return;
+  }
+
+  for (const storageKey of collectFormDraftRecoveryKeys(storage, sourceKey)) {
+    const raw = storage.getItem(storageKey);
+    if (raw === null) continue;
+    currentKeys.add(storageKey);
+    if (raw !== observed.get(storageKey)) {
+      index.hasUnverifiableSnapshot = true;
+      return;
+    }
+  }
+  for (const storageKey of observed.keys()) {
+    if (storageKey !== sourceKey && !currentKeys.has(storageKey)) {
+      index.hasUnverifiableSnapshot = true;
+      return;
+    }
+  }
+}
+
+function hasFormDraftSnapshotGuardedByClearMarker(
+  causalIndex: FormDraftCausalSnapshotIndex,
+  marker: Pick<FormDraftClearMarker, "signature" | "clearedAt">,
+): boolean {
+  if (causalIndex.hasUnverifiableSnapshot) return true;
+  const earliestSavedAt = causalIndex.earliestSavedAtBySignature.get(
+    marker.signature,
+  );
+  return earliestSavedAt !== undefined &&
+    earliestSavedAt <= marker.clearedAt.getTime();
+}
+
+function readEffectiveFormDraftClearMarker(
+  raw: string,
+  now: number,
+  getCausalIndex: () => FormDraftCausalSnapshotIndex,
+): FormDraftClearMarker | null {
+  const marker = parseCurrentFormDraftClearMarker(raw);
+  if (!marker) return null;
+  if (now - marker.clearedAt.getTime() <= FORM_DRAFT_CLEAR_MARKER_TTL_MS) {
+    return marker;
+  }
+  return hasFormDraftSnapshotGuardedByClearMarker(getCausalIndex(), marker)
+    ? marker
+    : null;
 }
 
 function collectFormDraftClearMarkerKeys(
@@ -512,9 +717,16 @@ export function readFormDraftClearMarkers(
   now = Date.now(),
 ): FormDraftClearMarker[] {
   const markersBySignature = new Map<string, FormDraftClearMarker>();
+  let causalIndex: FormDraftCausalSnapshotIndex | null = null;
+  const getCausalIndex = () => {
+    causalIndex ??= createFormDraftCausalSnapshotIndex(storage, sourceKey);
+    return causalIndex;
+  };
   for (const markerKey of collectFormDraftClearMarkerKeys(storage, sourceKey)) {
     const raw = storage.getItem(markerKey);
-    const marker = raw ? parseFormDraftClearMarker(raw, now) : null;
+    const marker = raw
+      ? readEffectiveFormDraftClearMarker(raw, now, getCausalIndex)
+      : null;
     if (!marker) continue;
 
     const previous = markersBySignature.get(marker.signature);
@@ -598,13 +810,30 @@ export function removeFormDraftCanonicalSnapshotBySignature<T>(
 }
 
 /** 만료·손상·cap 초과 tombstone을 CAS 정리하고 최신 marker 목록을 반환한다. */
-export function pruneFormDraftClearMarkers(
+function pruneFormDraftClearMarkerState(
   storage: FormDraftRecoveryStorage,
   sourceKey: string,
   now = Date.now(),
+  precomputedCausalIndex?: FormDraftCausalSnapshotIndex,
 ): FormDraftClearMarker[] {
   const markerKey = createFormDraftClearMarkerKey(sourceKey);
-  const validEntries: Array<{
+  let causalIndex: FormDraftCausalSnapshotIndex | null = null;
+  let precomputedIndexValidated = false;
+  const getCausalIndex = () => {
+    if (precomputedCausalIndex && !precomputedIndexValidated) {
+      validatePrecomputedFormDraftCausalSnapshotIndex(
+        storage,
+        sourceKey,
+        precomputedCausalIndex,
+      );
+      precomputedIndexValidated = true;
+    }
+    causalIndex ??=
+      precomputedCausalIndex ??
+      createFormDraftCausalSnapshotIndex(storage, sourceKey);
+    return causalIndex;
+  };
+  const validArtifacts: Array<{
     storageKey: string;
     marker: FormDraftClearMarker;
   }> = [];
@@ -613,15 +842,22 @@ export function pruneFormDraftClearMarkers(
     const observedRaw = storage.getItem(storageKey);
     if (!observedRaw) continue;
 
-    const marker = parseFormDraftClearMarker(observedRaw, now);
+    const marker = readEffectiveFormDraftClearMarker(
+      observedRaw,
+      now,
+      getCausalIndex,
+    );
     if (!marker) {
       if (hasFutureEnvelopeVersion(observedRaw, FORM_DRAFT_CLEAR_MARKER_VERSION)) continue;
       if (storage.getItem(storageKey) === observedRaw) storage.removeItem(storageKey);
       continue;
     }
-    if (storageKey !== markerKey) validEntries.push({ storageKey, marker });
+    validArtifacts.push({ storageKey, marker });
   }
 
+  const validEntries = validArtifacts.filter(
+    ({ storageKey }) => storageKey !== markerKey,
+  );
   validEntries.sort(
     (left, right) => right.marker.clearedAt.getTime() - left.marker.clearedAt.getTime(),
   );
@@ -638,7 +874,32 @@ export function pruneFormDraftClearMarkers(
     }
   }
 
-  return readFormDraftClearMarkers(storage, sourceKey, now);
+  const duplicateKeys = new Set(
+    duplicateEntries.map(({ storageKey }) => storageKey),
+  );
+  const markersBySignature = new Map<string, FormDraftClearMarker>();
+  for (const artifact of validArtifacts) {
+    if (duplicateKeys.has(artifact.storageKey)) continue;
+    if (storage.getItem(artifact.storageKey) !== artifact.marker.raw) continue;
+    const previous = markersBySignature.get(artifact.marker.signature);
+    if (
+      !previous ||
+      artifact.marker.clearedAt.getTime() > previous.clearedAt.getTime()
+    ) {
+      markersBySignature.set(artifact.marker.signature, artifact.marker);
+    }
+  }
+  return [...markersBySignature.values()].sort(
+    (left, right) => right.clearedAt.getTime() - left.clearedAt.getTime(),
+  );
+}
+
+export function pruneFormDraftClearMarkers(
+  storage: FormDraftRecoveryStorage,
+  sourceKey: string,
+  now = Date.now(),
+): FormDraftClearMarker[] {
+  return pruneFormDraftClearMarkerState(storage, sourceKey, now);
 }
 
 /** 단일 marker API 호환 wrapper. */
@@ -720,8 +981,239 @@ function assertImmutableFormDraftRecoveryRaw(
   }
 }
 
+function hasMatchingImmutableFormDraftRecoveryRaw(
+  sourceKey: string,
+  recoveryKey: string,
+  raw: string,
+): boolean {
+  const expectedSignature = readImmutableFormDraftRecoveryRawSignature(
+    sourceKey,
+    recoveryKey,
+  );
+  if (!expectedSignature) return false;
+  return expectedSignature === bytesToHex(sha256(utf8ToBytes(raw)));
+}
+
 export function isFormDraftRecoveryKey(sourceKey: string, candidateKey: string): boolean {
   return candidateKey.startsWith(createFormDraftRecoveryPrefix(sourceKey));
+}
+
+function readFormDraftRecoveryArtifactSourceKey(
+  candidateKey: string,
+): string | null {
+  const namespacePrefix = "draft:document-recovery:";
+  if (!candidateKey.startsWith(namespacePrefix)) return null;
+
+  const suffix = candidateKey.slice(namespacePrefix.length);
+  const separatorIndex = suffix.indexOf(":");
+  if (separatorIndex <= 0) return null;
+
+  try {
+    const sourceKey = decodeURIComponent(suffix.slice(0, separatorIndex));
+    return candidateKey.startsWith(createFormDraftRecoveryPrefix(sourceKey))
+      ? sourceKey
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+type FormDraftClearMarkerArtifact = {
+  sourceKey: string;
+  kind: "head" | "entry";
+};
+
+function readFormDraftClearMarkerArtifact(
+  candidateKey: string,
+): FormDraftClearMarkerArtifact | null {
+  const namespacePrefix = "draft:document-clear-marker:";
+  if (!candidateKey.startsWith(namespacePrefix)) return null;
+
+  const suffix = candidateKey.slice(namespacePrefix.length);
+  const entrySeparator = ":entry:";
+  const entryIndex = suffix.indexOf(entrySeparator);
+  const encodedSourceKey = entryIndex === -1
+    ? suffix
+    : suffix.slice(0, entryIndex);
+  if (!encodedSourceKey) return null;
+
+  try {
+    const sourceKey = decodeURIComponent(encodedSourceKey);
+    if (candidateKey === createFormDraftClearMarkerKey(sourceKey)) {
+      return { sourceKey, kind: "head" };
+    }
+    if (candidateKey.startsWith(createFormDraftClearMarkerEntryPrefix(sourceKey))) {
+      return { sourceKey, kind: "entry" };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function parseExpiredCurrentFormDraftRecovery(
+  raw: string,
+  now: number,
+): boolean {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (
+      !isRecord(parsed) ||
+      parsed.version !== FORM_DRAFT_STORAGE_VERSION ||
+      typeof parsed.savedAt !== "number" ||
+      !Number.isFinite(parsed.savedAt) ||
+      ("retainedAt" in parsed &&
+        (typeof parsed.retainedAt !== "number" ||
+          !Number.isFinite(parsed.retainedAt))) ||
+      !("data" in parsed)
+    ) {
+      return false;
+    }
+
+    const retainedAt = typeof parsed.retainedAt === "number"
+      ? parsed.retainedAt
+      : parsed.savedAt;
+    return now - retainedAt > FORM_DRAFT_RECOVERY_TTL_MS;
+  } catch {
+    return false;
+  }
+}
+
+function parseExpiredCurrentFormDraftClearMarker(
+  raw: string,
+  now: number,
+): FormDraftClearMarker | null {
+  const marker = parseCurrentFormDraftClearMarker(raw);
+  if (
+    !marker ||
+    now - marker.clearedAt.getTime() <= FORM_DRAFT_CLEAR_MARKER_TTL_MS
+  ) {
+    return null;
+  }
+  return marker;
+}
+
+/**
+ * 현재 열려 있지 않은 문서 namespace에서 TTL 초과가 입증된 불변 artifact만 정리한다.
+ * rolling client 안전을 위해 canonical, future/malformed envelope, legacy mutable recovery는
+ * 전역 sweep에서 해석하거나 삭제하지 않는다.
+ */
+export function sweepExpiredFormDraftArtifacts(
+  storage: FormDraftRecoveryStorage,
+  options: SweepExpiredFormDraftArtifactsOptions = {},
+): SweepExpiredFormDraftArtifactsResult {
+  const now = options.now ?? Date.now();
+  if (!Number.isFinite(now)) {
+    throw new TypeError("Form draft artifact sweep time must be finite");
+  }
+  const maxArtifactRawCodeUnits = options.maxArtifactRawCodeUnits;
+  if (
+    maxArtifactRawCodeUnits !== undefined &&
+    (!Number.isSafeInteger(maxArtifactRawCodeUnits) ||
+      maxArtifactRawCodeUnits < 0)
+  ) {
+    throw new TypeError("Form draft artifact raw limit must be a non-negative safe integer");
+  }
+
+  const protectedSourceKeys = new Set(options.protectedSourceKeys ?? []);
+  const protectedRecoveryKeys = new Set(options.protectedRecoveryKeys ?? []);
+  const candidateKeys: string[] = options.candidateKeys === undefined
+    ? []
+    : [...options.candidateKeys];
+  if (options.candidateKeys === undefined) {
+    for (let index = 0; index < storage.length; index += 1) {
+      const candidateKey = storage.key(index);
+      if (candidateKey !== null) candidateKeys.push(candidateKey);
+    }
+    candidateKeys.sort();
+  }
+
+  const result: SweepExpiredFormDraftArtifactsResult = {
+    removedRecoveryKeys: [],
+    removedClearMarkerKeys: [],
+  };
+  const causalIndexes = new Map<string, FormDraftCausalSnapshotIndex>();
+
+  for (const storageKey of candidateKeys) {
+    const recoverySourceKey = readFormDraftRecoveryArtifactSourceKey(storageKey);
+    if (recoverySourceKey !== null) {
+      if (
+        protectedSourceKeys.has(recoverySourceKey) ||
+        protectedRecoveryKeys.has(storageKey) ||
+        !isImmutableFormDraftRecoveryKey(recoverySourceKey, storageKey)
+      ) {
+        continue;
+      }
+
+      const observedRaw = storage.getItem(storageKey);
+      if (
+        !observedRaw ||
+        (maxArtifactRawCodeUnits !== undefined &&
+          observedRaw.length > maxArtifactRawCodeUnits) ||
+        !parseExpiredCurrentFormDraftRecovery(observedRaw, now) ||
+        !hasMatchingImmutableFormDraftRecoveryRaw(
+          recoverySourceKey,
+          storageKey,
+          observedRaw,
+        ) ||
+        storage.getItem(storageKey) !== observedRaw
+      ) {
+        continue;
+      }
+      storage.removeItem(storageKey);
+      result.removedRecoveryKeys.push(storageKey);
+      continue;
+    }
+
+    const markerArtifact = readFormDraftClearMarkerArtifact(storageKey);
+    if (
+      markerArtifact === null ||
+      options.includeClearMarkers === false ||
+      protectedSourceKeys.has(markerArtifact.sourceKey)
+    ) {
+      continue;
+    }
+
+    const observedRaw = storage.getItem(storageKey);
+    if (
+      observedRaw &&
+      maxArtifactRawCodeUnits !== undefined &&
+      observedRaw.length > maxArtifactRawCodeUnits
+    ) {
+      continue;
+    }
+    const expiredMarker = observedRaw
+      ? parseExpiredCurrentFormDraftClearMarker(observedRaw, now)
+      : null;
+    if (!observedRaw || !expiredMarker) continue;
+    const causalIndex = causalIndexes.get(markerArtifact.sourceKey) ??
+      createFormDraftCausalSnapshotIndex(
+        storage,
+        markerArtifact.sourceKey,
+        maxArtifactRawCodeUnits,
+      );
+    causalIndexes.set(markerArtifact.sourceKey, causalIndex);
+    if (
+      hasFormDraftSnapshotGuardedByClearMarker(causalIndex, expiredMarker)
+    ) {
+      continue;
+    }
+    if (
+      markerArtifact.kind === "entry" &&
+      createFormDraftClearMarkerEntryKey(
+        markerArtifact.sourceKey,
+        expiredMarker.signature,
+        expiredMarker.clearedAt.getTime(),
+      ) !== storageKey
+    ) {
+      continue;
+    }
+    if (storage.getItem(storageKey) !== observedRaw) continue;
+    storage.removeItem(storageKey);
+    result.removedClearMarkerKeys.push(storageKey);
+  }
+
+  return result;
 }
 
 function parseFormDraftRecoveryRaw<T>(
@@ -831,6 +1323,7 @@ function collectValidFormDraftRecoveries<T>(
   sourceKey: string,
   retention: ResolvedFormDraftRecoveryRetention,
   invalidOrExpiredKeys?: string[],
+  causalIndex?: FormDraftCausalSnapshotIndex,
 ): RetainedFormDraftRecovery<T>[] {
   const valid: RetainedFormDraftRecovery<T>[] = [];
   for (const storageKey of collectFormDraftRecoveryKeys(storage, sourceKey)) {
@@ -839,17 +1332,40 @@ function collectValidFormDraftRecoveries<T>(
       ? parseFormDraftRecoveryRaw<T>(storageKey, observedRaw, retention.now)
       : null;
     if (!observedRaw || !recovery) {
-      if (observedRaw && hasFutureFormDraftVersion(observedRaw)) continue;
+      if (observedRaw && hasFutureFormDraftVersion(observedRaw)) {
+        if (causalIndex) {
+          causalIndex.hasUnverifiableSnapshot = true;
+          causalIndex.observedRawByStorageKey?.set(storageKey, observedRaw);
+        }
+        continue;
+      }
+      let removed = false;
       if (
         observedRaw &&
         isImmutableFormDraftRecoveryKey(sourceKey, storageKey) &&
         removeObservedFormDraftValue(storage, storageKey, observedRaw)
       ) {
         invalidOrExpiredKeys?.push(storageKey);
+        removed = true;
+      }
+      if (causalIndex && observedRaw && !removed) {
+        const currentRaw = storage.getItem(storageKey);
+        if (currentRaw !== null) {
+          causalIndex.hasUnverifiableSnapshot = true;
+          causalIndex.observedRawByStorageKey?.set(storageKey, currentRaw);
+        }
       }
       continue;
     }
 
+    if (causalIndex) {
+      causalIndex.observedRawByStorageKey?.set(storageKey, recovery.raw);
+      indexParsedFormDraftCausalSnapshot(
+        causalIndex,
+        recovery.signature,
+        recovery.savedAt.getTime(),
+      );
+    }
     valid.push({
       ...recovery,
       protected: retention.protectedKeys.has(storageKey),
@@ -868,8 +1384,22 @@ type FormDraftCanonicalMetadata = {
 
 function getFormDraftCanonicalMetadata<T>(
   raw: string | null,
+  causalIndex?: FormDraftCausalSnapshotIndex,
+  sourceKey?: string,
 ): FormDraftCanonicalMetadata | null {
   const stored = raw ? parseFormDraft<T>(raw) : null;
+  if (causalIndex && sourceKey && raw) {
+    causalIndex.observedRawByStorageKey?.set(sourceKey, raw);
+    if (stored) {
+      indexParsedFormDraftCausalSnapshot(
+        causalIndex,
+        createFormDraftDataSignature(stored.data),
+        stored.savedAt?.getTime() ?? Number.NEGATIVE_INFINITY,
+      );
+    } else {
+      causalIndex.hasUnverifiableSnapshot = true;
+    }
+  }
   if (!stored) return null;
   return {
     signature: createFormDraftDataSignature(stored.data),
@@ -893,11 +1423,18 @@ function getLiveFormDraftCanonicalSignature(
  * quota retry 전에 TTL/손상, 오래된 물리 중복, 오래된 cap 초과본 순으로 안전하게 정리한다.
  * 최근 1시간 및 protected key는 cap·중복 정리로 삭제하지 않는다.
  */
-export function compactFormDraftRecoveries<T>(
+type FormDraftRecoveryCompactionState<T> = {
+  result: FormDraftRecoveryCompactionResult;
+  liveRecoveries: RetainedFormDraftRecovery<T>[];
+  markersBySignature: Map<string, FormDraftClearMarker>;
+  canonicalSignature: string | null;
+};
+
+function compactFormDraftRecoveryState<T>(
   storage: FormDraftRecoveryStorage,
   sourceKey: string,
   optionsOrNow?: number | FormDraftRecoveryRetentionOptions,
-): FormDraftRecoveryCompactionResult {
+): FormDraftRecoveryCompactionState<T> {
   const retention = resolveFormDraftRecoveryRetention(optionsOrNow);
   const result: FormDraftRecoveryCompactionResult = {
     removedKeys: [],
@@ -906,13 +1443,29 @@ export function compactFormDraftRecoveries<T>(
     excessKeys: [],
     resolvedMarkerKeys: [],
   };
+  const causalIndex: FormDraftCausalSnapshotIndex = {
+    hasUnverifiableSnapshot: false,
+    earliestSavedAtBySignature: new Map(),
+    observedRawByStorageKey: new Map(),
+  };
   const valid = collectValidFormDraftRecoveries<T>(
     storage,
     sourceKey,
     retention,
     result.invalidOrExpiredKeys,
+    causalIndex,
   );
-  const markers = pruneFormDraftClearMarkers(storage, sourceKey, retention.now);
+  const canonical = getFormDraftCanonicalMetadata<T>(
+    storage.getItem(sourceKey),
+    causalIndex,
+    sourceKey,
+  );
+  const markers = pruneFormDraftClearMarkerState(
+    storage,
+    sourceKey,
+    retention.now,
+    causalIndex,
+  );
   const markersBySignature = new Map(
     markers.map((marker) => [marker.signature, marker] as const),
   );
@@ -955,7 +1508,6 @@ export function compactFormDraftRecoveries<T>(
 
   // canonical과 recovery는 서로 다른 key라 교체와 삭제를 하나의 CAS로 묶을 수 없다.
   // 같은 내용의 recovery도 후속 marker 뒤에는 유효본이 될 수 있어 물리 보존한다.
-  const canonical = getFormDraftCanonicalMetadata<T>(storage.getItem(sourceKey));
   const canonicalSignature = getLiveFormDraftCanonicalSignature(
     canonical,
     markersBySignature,
@@ -1012,7 +1564,28 @@ export function compactFormDraftRecoveries<T>(
     ...result.resolvedMarkerKeys,
     ...result.excessKeys,
   ];
-  return result;
+  const liveRecoveries = valid.filter(
+    (recovery) => storage.getItem(recovery.storageKey) === recovery.raw,
+  );
+  return {
+    result,
+    liveRecoveries,
+    markersBySignature,
+    canonicalSignature,
+  };
+}
+
+/** quota retry용 compaction 결과만 반환한다. */
+export function compactFormDraftRecoveries<T>(
+  storage: FormDraftRecoveryStorage,
+  sourceKey: string,
+  optionsOrNow?: number | FormDraftRecoveryRetentionOptions,
+): FormDraftRecoveryCompactionResult {
+  return compactFormDraftRecoveryState<T>(
+    storage,
+    sourceKey,
+    optionsOrNow,
+  ).result;
 }
 
 /**
@@ -1024,24 +1597,14 @@ export function pruneFormDraftRecoveries<T>(
   sourceKey: string,
   optionsOrNow?: number | FormDraftRecoveryRetentionOptions,
 ): FormDraftRecovery<T>[] {
-  const retention = resolveFormDraftRecoveryRetention(optionsOrNow);
-  compactFormDraftRecoveries<T>(storage, sourceKey, {
-    now: retention.now,
-    maxDivergent: retention.maxDivergent,
-    recentMs: retention.recentMs,
-    protectedKeys: retention.protectedKeys,
-  });
-
-  const valid = collectValidFormDraftRecoveries<T>(storage, sourceKey, retention);
-
-  const markersBySignature = new Map(
-    readFormDraftClearMarkers(storage, sourceKey, retention.now)
-      .map((marker) => [marker.signature, marker] as const),
-  );
-  const canonical = getFormDraftCanonicalMetadata<T>(storage.getItem(sourceKey));
-  const canonicalSignature = getLiveFormDraftCanonicalSignature(
-    canonical,
+  const {
+    liveRecoveries: valid,
     markersBySignature,
+    canonicalSignature,
+  } = compactFormDraftRecoveryState<T>(
+    storage,
+    sourceKey,
+    optionsOrNow,
   );
   const visibleBySignature = new Map<string, RetainedFormDraftRecovery<T>>();
   for (const recovery of valid) {
@@ -1079,6 +1642,114 @@ export function pruneFormDraftRecoveries<T>(
     }));
 }
 
+type FormDraftSnapshotClearCandidate = {
+  storageKey: string;
+  raw: string;
+  signature: string;
+  savedAt: number;
+  canonical: boolean;
+};
+
+export type FormDraftSnapshotClearPlan = {
+  sourceKey: string;
+  cutoffs: ReadonlyMap<string, number>;
+  candidates: readonly FormDraftSnapshotClearCandidate[];
+};
+
+/**
+ * signature별 인과 cutoff 계산과 삭제 후보 파싱을 한 namespace snapshot에서 함께 수행한다.
+ * 실제 삭제는 marker 기록 뒤 applyFormDraftSnapshotClearPlan으로 CAS 확정한다.
+ */
+export function prepareFormDraftSnapshotClearPlan(
+  storage: FormDraftRecoveryStorage,
+  sourceKey: string,
+  requestedCutoffs: ReadonlyMap<string, number>,
+): FormDraftSnapshotClearPlan {
+  const cutoffs = new Map<string, number>();
+  for (const [signature, cutoff] of requestedCutoffs) {
+    if (!Number.isFinite(cutoff)) {
+      throw new TypeError("Form draft snapshot cutoff must be finite");
+    }
+    cutoffs.set(signature, cutoff);
+  }
+  const candidates: FormDraftSnapshotClearCandidate[] = [];
+  const observeRaw = (
+    storageKey: string,
+    raw: string | null,
+    canonical: boolean,
+  ) => {
+    const stored = raw ? parseFormDraft<unknown>(raw) : null;
+    if (!raw || !stored) return;
+    const signature = createFormDraftDataSignature(stored.data);
+    const previous = cutoffs.get(signature);
+    if (previous === undefined) return;
+    const savedAt = stored.savedAt?.getTime() ?? Number.NEGATIVE_INFINITY;
+    if (savedAt > previous) cutoffs.set(signature, savedAt);
+    if (
+      canonical ||
+      isImmutableFormDraftRecoveryKey(sourceKey, storageKey)
+    ) {
+      candidates.push({ storageKey, raw, signature, savedAt, canonical });
+    }
+  };
+
+  observeRaw(sourceKey, storage.getItem(sourceKey), true);
+  for (const storageKey of collectFormDraftRecoveryKeys(storage, sourceKey)) {
+    observeRaw(storageKey, storage.getItem(storageKey), false);
+  }
+  return { sourceKey, cutoffs, candidates };
+}
+
+export function applyFormDraftSnapshotClearPlan(
+  storage: Pick<FormDraftRecoveryStorage, "getItem" | "removeItem">,
+  plan: FormDraftSnapshotClearPlan,
+  cutoffs: ReadonlyMap<string, number> = plan.cutoffs,
+): { canonicalRemoved: boolean; removedRecoveryKeys: string[] } {
+  let canonicalRemoved = false;
+  const removedRecoveryKeys: string[] = [];
+  for (const candidate of plan.candidates) {
+    const cutoff = cutoffs.get(candidate.signature);
+    if (cutoff === undefined || candidate.savedAt > cutoff) continue;
+    if (storage.getItem(candidate.storageKey) !== candidate.raw) continue;
+    storage.removeItem(candidate.storageKey);
+    if (candidate.canonical) canonicalRemoved = true;
+    else removedRecoveryKeys.push(candidate.storageKey);
+  }
+  return { canonicalRemoved, removedRecoveryKeys };
+}
+
+/**
+ * signature별 cutoff 이전의 immutable recovery를 namespace 한 번의 열거로 CAS 삭제한다.
+ * rolling legacy mutable recovery는 물리 보존하고 tombstone으로만 숨긴다.
+ */
+export function removeFormDraftSnapshotsBySignatures(
+  storage: FormDraftRecoveryStorage,
+  sourceKey: string,
+  cutoffs: ReadonlyMap<string, number>,
+): string[] {
+  for (const cutoff of cutoffs.values()) {
+    if (!Number.isFinite(cutoff)) {
+      throw new TypeError("Form draft snapshot cutoff must be finite");
+    }
+  }
+
+  const removedKeys: string[] = [];
+  for (const storageKey of collectFormDraftRecoveryKeys(storage, sourceKey)) {
+    if (!isImmutableFormDraftRecoveryKey(sourceKey, storageKey)) continue;
+    const observedRaw = storage.getItem(storageKey);
+    const observed = observedRaw ? parseFormDraft<unknown>(observedRaw) : null;
+    if (!observedRaw || !observed) continue;
+    const cutoff = cutoffs.get(createFormDraftDataSignature(observed.data));
+    if (cutoff === undefined) continue;
+    const savedAt = observed.savedAt?.getTime() ?? Number.NEGATIVE_INFINITY;
+    if (savedAt > cutoff) continue;
+    if (storage.getItem(storageKey) !== observedRaw) continue;
+    storage.removeItem(storageKey);
+    removedKeys.push(storageKey);
+  }
+  return removedKeys;
+}
+
 /**
  * 제출·명시 폐기된 data와 같은 recovery mirror만 문서 namespace에서 제거한다.
  * 삭제 직전에 raw를 다시 비교해 그 사이 다른 data로 바뀐 recovery는 보존한다.
@@ -1093,35 +1764,11 @@ export function removeFormDraftSnapshotsBySignature(
   if (cutoff !== undefined && !Number.isFinite(cutoff)) {
     throw new TypeError("Form draft snapshot cutoff must be finite");
   }
-  const prefix = createFormDraftRecoveryPrefix(sourceKey);
-  const candidateKeys: string[] = [];
-
-  for (let index = 0; index < storage.length; index += 1) {
-    const candidateKey = storage.key(index);
-    if (candidateKey?.startsWith(prefix)) candidateKeys.push(candidateKey);
-  }
-
-  const removedKeys: string[] = [];
-  for (const storageKey of candidateKeys) {
-    if (!isImmutableFormDraftRecoveryKey(sourceKey, storageKey)) continue;
-    const observedRaw = storage.getItem(storageKey);
-    const observed = observedRaw ? parseFormDraft<unknown>(observedRaw) : null;
-    if (!observed || createFormDraftDataSignature(observed.data) !== signature) continue;
-    const observedSavedAt = observed.savedAt?.getTime() ?? Number.NEGATIVE_INFINITY;
-    if (cutoff !== undefined && observedSavedAt > cutoff) continue;
-
-    const currentRaw = storage.getItem(storageKey);
-    if (currentRaw !== observedRaw) continue;
-    const current = currentRaw ? parseFormDraft<unknown>(currentRaw) : null;
-    if (!current || createFormDraftDataSignature(current.data) !== signature) continue;
-    const currentSavedAt = current.savedAt?.getTime() ?? Number.NEGATIVE_INFINITY;
-    if (cutoff !== undefined && currentSavedAt > cutoff) continue;
-
-    storage.removeItem(storageKey);
-    removedKeys.push(storageKey);
-  }
-
-  return removedKeys;
+  return removeFormDraftSnapshotsBySignatures(
+    storage,
+    sourceKey,
+    new Map([[signature, cutoff ?? Number.MAX_VALUE]]),
+  );
 }
 
 /**

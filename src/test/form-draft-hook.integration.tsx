@@ -5,21 +5,27 @@ import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import {
   FORM_DRAFT_CLEAR_MARKER_TTL_MS,
+  FORM_DRAFT_CLEAR_MARKER_VERSION,
   FORM_DRAFT_RECOVERY_TTL_MS,
   createDocumentDraftKey,
   createFormDraftDataSignature,
   createFormDraftClearMarkerEntryKey,
   createFormDraftClearMarkerKey,
+  createImmutableFormDraftRecoveryKey,
   createFormDraftRecoveryKey,
   createFormDraftRecoveryPrefix,
   isFormDraftClearMarkerKey,
   parseFormDraft,
   readFormDraftClearMarker,
+  readFormDraftClearMarkers,
   removeFormDraftClearMarker,
   serializeFormDraft,
   writeFormDraftClearMarker,
 } from "@/lib/form-draft";
-import { useFormDraft } from "@/lib/hooks/useFormDraft";
+import {
+  FORM_DRAFT_MAX_WAIT_MS,
+  useFormDraft,
+} from "@/lib/hooks/useFormDraft";
 import { useDeferredEditorContent } from "@/lib/hooks/useDeferredEditorContent";
 import { isRichTextEmpty } from "@/lib/rich-text";
 
@@ -30,6 +36,13 @@ type DraftData = {
 };
 
 type DraftHookResult = ReturnType<typeof useFormDraft<DraftData>>;
+
+type DeferredIdleDeadline = {
+  didTimeout: boolean;
+  timeRemaining: () => number;
+};
+
+type DeferredIdleCallback = (deadline: DeferredIdleDeadline) => void;
 
 const GLOBAL_BINDINGS = [
   "window",
@@ -55,7 +68,24 @@ type DraftHookHarness = {
   render: (draftKey: string) => Promise<void>;
   renderKeys: (draftKeys: readonly string[]) => Promise<void>;
   remount: (draftKey: string, nextInstanceCount?: number) => Promise<void>;
+  pendingIdleWorkCount: () => number;
+  cancelledIdleWorkCount: () => number;
+  runNextIdleWork: (options?: {
+    didTimeout?: boolean;
+    timeRemainingMs?: number;
+  }) => Promise<void>;
+  runNextCancelledIdleWork: (options?: {
+    didTimeout?: boolean;
+    timeRemainingMs?: number;
+  }) => Promise<void>;
   unmount: () => Promise<void>;
+};
+
+type DraftHookTimingOptions = {
+  debounceMs?: number;
+  maxWaitMs?: number;
+  blockLocalStorageAccessor?: boolean;
+  deferArtifactSweepIdleWork?: boolean;
 };
 
 function draft(title: string): DraftData {
@@ -98,13 +128,59 @@ function installBrowserGlobals(browserWindow: Window): () => void {
 
 async function createDraftHookHarness(
   context: TestContext,
-  initialKey: string,
+  initialKey: string | readonly string[],
   seed?: (storage: Storage) => void,
   instanceCount = 1,
+  timing: DraftHookTimingOptions = {},
 ): Promise<DraftHookHarness> {
   const browserWindow = new Window({ url: "https://portal.test/dashboard" });
   const restoreBrowserGlobals = installBrowserGlobals(browserWindow);
-  seed?.(browserWindow.localStorage);
+  const seedStorage = browserWindow.localStorage;
+  seed?.(seedStorage);
+  const deferredIdleWork = new Map<number, DeferredIdleCallback>();
+  const cancelledIdleWork = new Map<number, DeferredIdleCallback>();
+  let nextIdleHandle = 0;
+  const requestIdleCallbackDescriptor = Object.getOwnPropertyDescriptor(
+    browserWindow,
+    "requestIdleCallback",
+  );
+  const cancelIdleCallbackDescriptor = Object.getOwnPropertyDescriptor(
+    browserWindow,
+    "cancelIdleCallback",
+  );
+  if (timing.deferArtifactSweepIdleWork) {
+    Object.defineProperty(browserWindow, "requestIdleCallback", {
+      configurable: true,
+      value: (callback: DeferredIdleCallback) => {
+        const handle = ++nextIdleHandle;
+        deferredIdleWork.set(handle, callback);
+        return handle;
+      },
+    });
+    Object.defineProperty(browserWindow, "cancelIdleCallback", {
+      configurable: true,
+      value: (handle: number) => {
+        const callback = deferredIdleWork.get(handle);
+        if (!callback) return;
+        deferredIdleWork.delete(handle);
+        cancelledIdleWork.set(handle, callback);
+      },
+    });
+  }
+  const localStorageDescriptor = Object.getOwnPropertyDescriptor(
+    browserWindow,
+    "localStorage",
+  );
+  if (timing.blockLocalStorageAccessor) {
+    Object.defineProperty(browserWindow, "localStorage", {
+      configurable: true,
+      get: () => {
+        const error = new Error("localStorage accessor denied");
+        error.name = "SecurityError";
+        throw error;
+      },
+    });
+  }
 
   const container = browserWindow.document.createElement("div");
   browserWindow.document.body.append(container);
@@ -124,7 +200,8 @@ async function createDraftHookHarness(
       draftKey,
       (restoredDraft) => restoredDrafts.push(restoredDraft),
       {
-        debounceMs: 60_000,
+        debounceMs: timing.debounceMs ?? 60_000,
+        maxWaitMs: timing.maxWaitMs,
         onReset: () => {
           resetCounts[index] += 1;
         },
@@ -174,11 +251,43 @@ async function createDraftHookHarness(
 
   context.after(async () => {
     await unmount();
+    if (timing.blockLocalStorageAccessor) {
+      if (localStorageDescriptor) {
+        Object.defineProperty(
+          browserWindow,
+          "localStorage",
+          localStorageDescriptor,
+        );
+      } else {
+        Reflect.deleteProperty(browserWindow, "localStorage");
+      }
+    }
+    if (timing.deferArtifactSweepIdleWork) {
+      if (requestIdleCallbackDescriptor) {
+        Object.defineProperty(
+          browserWindow,
+          "requestIdleCallback",
+          requestIdleCallbackDescriptor,
+        );
+      } else {
+        Reflect.deleteProperty(browserWindow, "requestIdleCallback");
+      }
+      if (cancelIdleCallbackDescriptor) {
+        Object.defineProperty(
+          browserWindow,
+          "cancelIdleCallback",
+          cancelIdleCallbackDescriptor,
+        );
+      } else {
+        Reflect.deleteProperty(browserWindow, "cancelIdleCallback");
+      }
+    }
     browserWindow.close();
     restoreBrowserGlobals();
   });
 
-  await render(initialKey);
+  if (typeof initialKey === "string") await render(initialKey);
+  else await renderKeys(initialKey);
 
   return {
     browserWindow,
@@ -187,6 +296,42 @@ async function createDraftHookHarness(
     render,
     renderKeys,
     remount,
+    pendingIdleWorkCount: () => deferredIdleWork.size,
+    cancelledIdleWorkCount: () => cancelledIdleWork.size,
+    runNextIdleWork: async ({
+      didTimeout = false,
+      timeRemainingMs = 100,
+    } = {}) => {
+      const work = deferredIdleWork.entries().next().value as
+        | [number, DeferredIdleCallback]
+        | undefined;
+      assert.ok(work, "실행할 deferred idle callback이 없습니다.");
+      const [handle, callback] = work;
+      deferredIdleWork.delete(handle);
+      await act(async () => {
+        callback({
+          didTimeout,
+          timeRemaining: () => timeRemainingMs,
+        });
+      });
+    },
+    runNextCancelledIdleWork: async ({
+      didTimeout = false,
+      timeRemainingMs = 100,
+    } = {}) => {
+      const work = cancelledIdleWork.entries().next().value as
+        | [number, DeferredIdleCallback]
+        | undefined;
+      assert.ok(work, "실행할 cancelled idle callback이 없습니다.");
+      const [handle, callback] = work;
+      cancelledIdleWork.delete(handle);
+      await act(async () => {
+        callback({
+          didTimeout,
+          timeRemaining: () => timeRemainingMs,
+        });
+      });
+    },
     unmount,
     getResult: (index = 0) => {
       const result = currentResults[index];
@@ -211,6 +356,111 @@ function readDraft(storage: Storage, storageKey: string): DraftData | null {
   return raw ? parseFormDraft<DraftData>(raw)?.data ?? null : null;
 }
 
+type StorageWrite = { key: string; value: string };
+
+function trackStorageWrites(storage: Storage): {
+  restore: () => void;
+  writes: StorageWrite[];
+} {
+  const writes: StorageWrite[] = [];
+  const ownDescriptor = Object.getOwnPropertyDescriptor(storage, "setItem");
+  const originalSetItem = storage.setItem.bind(storage);
+  Object.defineProperty(storage, "setItem", {
+    configurable: true,
+    value: (key: string, value: string) => {
+      writes.push({ key, value });
+      originalSetItem(key, value);
+    },
+  });
+
+  return {
+    writes,
+    restore: () => {
+      if (ownDescriptor) {
+        Object.defineProperty(storage, "setItem", ownDescriptor);
+      } else {
+        Reflect.deleteProperty(storage, "setItem");
+      }
+    },
+  };
+}
+
+function lazyDraft(title: string, onRead: () => void): DraftData {
+  return {
+    title,
+    get contentHtml() {
+      onRead();
+      return `<p>${title}</p>`;
+    },
+  };
+}
+
+async function tickTimers(context: TestContext, milliseconds: number): Promise<void> {
+  await act(async () => {
+    context.mock.timers.tick(milliseconds);
+  });
+}
+
+function blockFormDraftStorage(storage: Storage): {
+  restore: () => void;
+  setItem: (key: string, value: string) => void;
+} {
+  const methodNames = ["getItem", "setItem", "removeItem"] as const;
+  const originalMethods = {
+    getItem: storage.getItem.bind(storage),
+    setItem: storage.setItem.bind(storage),
+    removeItem: storage.removeItem.bind(storage),
+  };
+  const denyAccess = () => {
+    const error = new Error("localStorage access denied");
+    error.name = "SecurityError";
+    throw error;
+  };
+
+  for (const name of methodNames) {
+    Object.defineProperty(storage, name, {
+      configurable: true,
+      value: denyAccess,
+    });
+  }
+
+  return {
+    setItem: originalMethods.setItem,
+    restore: () => {
+      for (const name of methodNames) {
+        Object.defineProperty(storage, name, {
+          configurable: true,
+          value: originalMethods[name],
+        });
+      }
+    },
+  };
+}
+
+test("localStorage accessor 자체가 차단돼도 mount와 flush는 예외 없이 error 상태로 수렴한다", { concurrency: false }, async (context) => {
+  const draftKey = createDocumentDraftKey(
+    "note",
+    "student-1",
+    "note-storage-accessor-blocked",
+  );
+  const harness = await createDraftHookHarness(
+    context,
+    draftKey,
+    undefined,
+    1,
+    { blockLocalStorageAccessor: true },
+  );
+
+  assert.equal(harness.getResult().loaded, true);
+  assert.equal(harness.getResult().status, "error");
+  assert.equal(harness.resetCounts[0], 1);
+
+  await act(async () => {
+    assert.equal(harness.getResult().flush(), false);
+  });
+  await harness.unmount();
+});
+
 test("unmount 시 debounce 대기 중인 draft를 즉시 flush한다", { concurrency: false }, async (context) => {
   const draftKey = createDocumentDraftKey("note", "student-1", "note-unmount");
   const harness = await createDraftHookHarness(context, draftKey);
@@ -227,6 +477,199 @@ test("unmount 시 debounce 대기 중인 draft를 즉시 flush한다", { concurr
     readDraft(harness.browserWindow.localStorage, draftKey),
     pendingDraft,
   );
+});
+
+test("연속 save가 trailing debounce를 밀어도 첫 pending의 max wait에서 최신 1건만 저장한다", { concurrency: false }, async (context) => {
+  assert.equal(FORM_DRAFT_MAX_WAIT_MS, 5_000);
+  context.mock.timers.enable({ apis: ["setTimeout"] });
+  const draftKey = createDocumentDraftKey(
+    "note",
+    "student-1",
+    "note-max-wait-checkpoint",
+  );
+  const harness = await createDraftHookHarness(
+    context,
+    draftKey,
+    undefined,
+    1,
+    { debounceMs: 100, maxWaitMs: 250 },
+  );
+  const storage = harness.browserWindow.localStorage;
+  const tracker = trackStorageWrites(storage);
+  const getterReads = [0, 0, 0];
+
+  try {
+    await act(async () => {
+      harness.getResult().save(lazyDraft("첫 입력", () => { getterReads[0] += 1; }));
+    });
+    await tickTimers(context, 80);
+    await act(async () => {
+      harness.getResult().save(lazyDraft("중간 입력", () => { getterReads[1] += 1; }));
+    });
+    await tickTimers(context, 80);
+    await act(async () => {
+      harness.getResult().save(lazyDraft("최신 입력", () => { getterReads[2] += 1; }));
+    });
+    await tickTimers(context, 89);
+
+    assert.equal(storage.getItem(draftKey), null);
+    assert.deepEqual(getterReads, [0, 0, 0]);
+    assert.equal(tracker.writes.length, 0);
+
+    await tickTimers(context, 1);
+
+    assert.deepEqual(readDraft(storage, draftKey), draft("최신 입력"));
+    assert.deepEqual(
+      getterReads,
+      [0, 0, 2],
+      "최신 getter는 signature와 envelope 직렬화에서 한 번씩만 읽어야 합니다.",
+    );
+    assert.equal(
+      tracker.writes.filter(({ key }) => key === draftKey).length,
+      1,
+    );
+    assert.equal(
+      tracker.writes.filter((write: StorageWrite) =>
+        write.key.startsWith(createFormDraftRecoveryPrefix(draftKey))).length,
+      1,
+    );
+    assert.equal(tracker.writes.length, 2);
+
+    await tickTimers(context, 500);
+    assert.deepEqual(getterReads, [0, 0, 2]);
+    assert.equal(tracker.writes.length, 2);
+  } finally {
+    tracker.restore();
+  }
+});
+
+test("일반 debounce flush는 남은 max wait timer를 취소한다", { concurrency: false }, async (context) => {
+  context.mock.timers.enable({ apis: ["setTimeout"] });
+  const draftKey = createDocumentDraftKey(
+    "note",
+    "student-1",
+    "note-debounce-cancels-max-wait",
+  );
+  const harness = await createDraftHookHarness(
+    context,
+    draftKey,
+    undefined,
+    1,
+    { debounceMs: 40, maxWaitMs: 200 },
+  );
+  const storage = harness.browserWindow.localStorage;
+  const tracker = trackStorageWrites(storage);
+  let getterReads = 0;
+
+  try {
+    await act(async () => {
+      harness.getResult().save(lazyDraft("debounce 저장", () => { getterReads += 1; }));
+    });
+    await tickTimers(context, 39);
+    assert.equal(storage.getItem(draftKey), null);
+
+    await tickTimers(context, 1);
+    assert.deepEqual(readDraft(storage, draftKey), draft("debounce 저장"));
+    assert.equal(getterReads, 2);
+    assert.equal(tracker.writes.length, 2);
+
+    await tickTimers(context, 500);
+    assert.equal(getterReads, 2);
+    assert.equal(tracker.writes.length, 2);
+  } finally {
+    tracker.restore();
+  }
+});
+
+test("수동 flush는 debounce와 max wait의 늦은 재실행을 모두 막는다", { concurrency: false }, async (context) => {
+  context.mock.timers.enable({ apis: ["setTimeout"] });
+  const draftKey = createDocumentDraftKey(
+    "note",
+    "student-1",
+    "note-manual-flush-cancels-max-wait",
+  );
+  const harness = await createDraftHookHarness(
+    context,
+    draftKey,
+    undefined,
+    1,
+    { debounceMs: 100, maxWaitMs: 200 },
+  );
+  const storage = harness.browserWindow.localStorage;
+  const tracker = trackStorageWrites(storage);
+  let getterReads = 0;
+
+  try {
+    let flushed = false;
+    await act(async () => {
+      harness.getResult().save(lazyDraft("수동 저장", () => { getterReads += 1; }));
+      flushed = harness.getResult().flush();
+    });
+
+    assert.equal(flushed, true);
+    assert.deepEqual(readDraft(storage, draftKey), draft("수동 저장"));
+    assert.equal(getterReads, 2);
+    assert.equal(tracker.writes.length, 2);
+
+    await tickTimers(context, 500);
+    assert.equal(getterReads, 2);
+    assert.equal(tracker.writes.length, 2);
+  } finally {
+    tracker.restore();
+  }
+});
+
+test("clear·key 변경·unmount는 두 flush timer를 정리하고 늦은 중복 쓰기를 만들지 않는다", { concurrency: false }, async (context) => {
+  context.mock.timers.enable({ apis: ["setTimeout"] });
+  const firstKey = createDocumentDraftKey("note", "student-1", "timer-key-a");
+  const secondKey = createDocumentDraftKey("note", "student-1", "timer-key-b");
+  const thirdKey = createDocumentDraftKey("note", "student-1", "timer-key-c");
+  const harness = await createDraftHookHarness(
+    context,
+    firstKey,
+    undefined,
+    1,
+    { debounceMs: 100, maxWaitMs: 250 },
+  );
+  const storage = harness.browserWindow.localStorage;
+  const tracker = trackStorageWrites(storage);
+  const getterReads = [0, 0, 0];
+
+  try {
+    await act(async () => {
+      harness.getResult().save(lazyDraft("key 변경 전", () => { getterReads[0] += 1; }));
+    });
+    await harness.render(secondKey);
+    assert.deepEqual(readDraft(storage, firstKey), draft("key 변경 전"));
+    assert.equal(getterReads[0], 2);
+    const writesAfterKeyChange = tracker.writes.length;
+    await tickTimers(context, 500);
+    assert.equal(tracker.writes.length, writesAfterKeyChange);
+    assert.equal(getterReads[0], 2);
+
+    await act(async () => {
+      harness.getResult().save(lazyDraft("clear 대상", () => { getterReads[1] += 1; }));
+      harness.getResult().clear();
+    });
+    await tickTimers(context, 500);
+    assert.equal(storage.getItem(secondKey), null);
+    assert.equal(getterReads[1], 0);
+    assert.equal(tracker.writes.length, writesAfterKeyChange);
+
+    await harness.render(thirdKey);
+    await act(async () => {
+      harness.getResult().save(lazyDraft("unmount 직전", () => { getterReads[2] += 1; }));
+    });
+    await harness.unmount();
+    assert.deepEqual(readDraft(storage, thirdKey), draft("unmount 직전"));
+    assert.equal(getterReads[2], 2);
+    const writesAfterUnmount = tracker.writes.length;
+    await tickTimers(context, 500);
+    assert.equal(tracker.writes.length, writesAfterUnmount);
+    assert.deepEqual(getterReads, [2, 0, 2]);
+  } finally {
+    tracker.restore();
+  }
 });
 
 test("지연 에디터 bridge는 입력 경로에서 본문을 읽지 않고 flush 경계에서 최신값을 반환한다", { concurrency: false }, async (context) => {
@@ -1883,6 +2326,164 @@ test("동일 signature를 제출한 hook은 다른 hook에서 ghost shadow를 �
   assert.notEqual(storage.getItem(createFormDraftClearMarkerKey(draftKey)), null);
 });
 
+test("compact 편집 제출은 stale legacy 원본을 마지막 head로 남기고 peer ghost를 막는다", { concurrency: false }, async (context) => {
+  const draftKey = createDocumentDraftKey(
+    "note",
+    "student-1",
+    "note-compact-legacy-alias",
+  );
+  const userSnapshot = draft("compact와 legacy가 공유하는 사용자 내용");
+  const currentLegacyDraft = {
+    ...userSnapshot,
+    base: {
+      title: "현재 서버 기준 제목",
+      noteDate: "2026-08-05",
+      contentHtml: "<p>현재 서버 기준 본문</p>",
+    },
+  };
+  const restoredLegacyDraft = {
+    ...userSnapshot,
+    base: {
+      title: "복원 당시 이전 서버 제목",
+      noteDate: "2026-07-31",
+      contentHtml: "<p>복원 당시 이전 서버 본문</p>",
+    },
+  };
+  const compactDraft = {
+    ...userSnapshot,
+    baseFingerprint: `sha256:${"a".repeat(64)}`,
+    base: { title: "", noteDate: "", contentHtml: "" },
+  };
+  const recoveryKey = createFormDraftRecoveryKey(draftKey, "sleeping-legacy-peer");
+  const restoredLegacyRaw = serializeFormDraft(
+    restoredLegacyDraft,
+    Date.now() - 10_000,
+  );
+  const harness = await createDraftHookHarness(
+    context,
+    draftKey,
+    (storage) => {
+      storage.setItem(draftKey, restoredLegacyRaw);
+      storage.setItem(recoveryKey, restoredLegacyRaw);
+    },
+    2,
+  );
+
+  await act(async () => {
+    harness.getResult(0).clear({
+      reason: "submitted",
+      submittedData: compactDraft,
+      // 마지막 alias가 legacy head key에도 남아 head-only rolling client를 보호한다.
+      submittedAliases: [userSnapshot, currentLegacyDraft, restoredLegacyDraft],
+    });
+  });
+
+  const storage = harness.browserWindow.localStorage;
+  const markerSignatures = new Set(
+    readFormDraftClearMarkers(storage, draftKey).map(
+      (marker) => marker.signature,
+    ),
+  );
+  assert.equal(storage.getItem(draftKey), null);
+  assert.equal(
+    storage.getItem(recoveryKey),
+    restoredLegacyRaw,
+    "mutable rolling recovery는 tombstone으로 숨기되 CAS 경쟁을 위해 원문을 보존합니다.",
+  );
+  assert.equal(harness.getResult(0).recoveries.length, 0);
+  assert.equal(harness.getResult(1).recoveries.length, 0);
+  assert.equal(harness.getResult(1).status, "idle");
+  assert.equal(
+    markerSignatures.has(createFormDraftDataSignature(compactDraft)),
+    true,
+  );
+  assert.equal(
+    markerSignatures.has(createFormDraftDataSignature(currentLegacyDraft)),
+    true,
+  );
+  assert.equal(
+    markerSignatures.has(createFormDraftDataSignature(userSnapshot)),
+    true,
+  );
+  assert.equal(
+    markerSignatures.has(createFormDraftDataSignature(restoredLegacyDraft)),
+    true,
+  );
+  assert.equal(
+    readFormDraftClearMarker(storage, draftKey)?.signature,
+    createFormDraftDataSignature(restoredLegacyDraft),
+    "단일 head만 읽는 rolling client에도 exact stale legacy tombstone이 보여야 합니다.",
+  );
+
+  const restoredCountBeforeRemount = harness.restoredDrafts.length;
+  await harness.remount(draftKey, 1);
+  assert.equal(harness.getResult().status, "idle");
+  assert.equal(harness.getResult().recoveries.length, 0);
+  assert.equal(
+    harness.restoredDrafts.length,
+    restoredCountBeforeRemount,
+    "marker가 가린 legacy recovery는 remount에서도 ghost로 복원하지 않아야 합니다.",
+  );
+});
+
+test("multi-alias clear 전체 경로는 대형 recovery를 alias 수와 무관하게 한 번만 parse한다", { concurrency: false }, async (context) => {
+  const draftKey = createDocumentDraftKey(
+    "note",
+    "student-1",
+    "note-multi-alias-single-pass",
+  );
+  const submittedRepresentations = [
+    { ...draft("compact 표현"), representation: "compact" },
+    { ...draft("legacy 표현"), representation: "legacy" },
+    { ...draft("bare 표현"), representation: "bare" },
+  ];
+  const recoveryRaws = new Set<string>();
+  const harness = await createDraftHookHarness(
+    context,
+    draftKey,
+    (storage) => {
+      for (let index = 0; index < 20; index += 1) {
+        const data = submittedRepresentations[index % 3]!;
+        const raw = serializeFormDraft(data, Date.now() - 10_000 - index);
+        recoveryRaws.add(raw);
+        storage.setItem(
+          createImmutableFormDraftRecoveryKey(
+            draftKey,
+            `single-pass-${index}`,
+            raw,
+          ),
+          raw,
+        );
+      }
+    },
+  );
+
+  const parseDescriptor = Object.getOwnPropertyDescriptor(JSON, "parse");
+  const originalParse = JSON.parse;
+  let recoveryParseCount = 0;
+  Object.defineProperty(JSON, "parse", {
+    configurable: true,
+    value: (text: string) => {
+      if (recoveryRaws.has(text)) recoveryParseCount += 1;
+      return originalParse(text);
+    },
+  });
+
+  try {
+    await act(async () => {
+      harness.getResult().clear({
+        reason: "submitted",
+        submittedData: submittedRepresentations[0],
+        submittedAliases: submittedRepresentations.slice(1),
+      });
+    });
+    assert.equal(recoveryParseCount, 20);
+    assert.equal(listRecoveryKeys(harness.browserWindow.localStorage, draftKey).length, 0);
+  } finally {
+    if (parseDescriptor) Object.defineProperty(JSON, "parse", parseDescriptor);
+  }
+});
+
 test("지연된 marker event는 현재 storage에서 marker가 사라져도 제출 전 snapshot을 정리한다", { concurrency: false }, async (context) => {
   const draftKey = createDocumentDraftKey("note", "student-1", "note-delayed-marker");
   const submittedDraft = draft("지연 이벤트 제출 내용");
@@ -1977,6 +2578,322 @@ test("hook mount는 TTL이 지난 clear marker를 storage에서 물리 정리한
   });
 
   assert.equal(harness.browserWindow.localStorage.getItem(markerKey), null);
+});
+
+test("recovery refresh는 항목마다 clear marker namespace를 다시 순회하지 않는다", { concurrency: false }, async (context) => {
+  const draftKey = createDocumentDraftKey(
+    "note",
+    "student-1",
+    "recovery-refresh-linear-scan",
+  );
+  const unrelatedEntryCount = 100;
+  const recoveryCount = 20;
+  let storageKeyCalls = 0;
+  const harness = await createDraftHookHarness(
+    context,
+    draftKey,
+    (storage) => {
+      for (let index = 0; index < unrelatedEntryCount; index += 1) {
+        storage.setItem(`unrelated:${index}`, `value:${index}`);
+      }
+      for (let index = 0; index < recoveryCount; index += 1) {
+        const raw = serializeFormDraft(
+          draft(`linear recovery ${index}`),
+          Date.now() - index,
+        );
+        storage.setItem(
+          createImmutableFormDraftRecoveryKey(draftKey, `linear-${index}`, raw),
+          raw,
+        );
+      }
+
+      const originalKey = storage.key.bind(storage);
+      Object.defineProperty(storage, "key", {
+        configurable: true,
+        value: (index: number) => {
+          storageKeyCalls += 1;
+          return originalKey(index);
+        },
+      });
+    },
+    1,
+    { deferArtifactSweepIdleWork: true },
+  );
+
+  assert.equal(harness.getResult().recoveries.length, recoveryCount);
+  assert.ok(
+    storageKeyCalls < (unrelatedEntryCount + recoveryCount) * 15,
+    `recovery별 namespace 재순회 없이 선형 범위여야 합니다: ${storageKeyCalls}`,
+  );
+});
+
+test("proactive sweep는 idle budget과 timeout fallback 모두 bounded slice로 나눠 실행한다", { concurrency: false }, async (context) => {
+  const activeKey = createDocumentDraftKey(
+    "note",
+    "student-1",
+    "idle-sweep-active",
+  );
+  const recoveryKeys: string[] = [];
+  const expiredAt = Date.now() - FORM_DRAFT_RECOVERY_TTL_MS - 1;
+  const harness = await createDraftHookHarness(
+    context,
+    activeKey,
+    (storage) => {
+      for (let index = 0; index < 6; index += 1) {
+        const sourceKey = createDocumentDraftKey(
+          "note",
+          "student-1",
+          `idle-sweep-inactive-${index}`,
+        );
+        const raw = serializeFormDraft(draft(`idle expired ${index}`), expiredAt);
+        const recoveryKey = createImmutableFormDraftRecoveryKey(
+          sourceKey,
+          `idle-${index}`,
+          raw,
+        );
+        recoveryKeys.push(recoveryKey);
+        storage.setItem(recoveryKey, raw);
+      }
+    },
+    1,
+    { deferArtifactSweepIdleWork: true },
+  );
+  const storage = harness.browserWindow.localStorage;
+  const countRemaining = () =>
+    recoveryKeys.filter((recoveryKey) => storage.getItem(recoveryKey) !== null)
+      .length;
+
+  assert.equal(harness.pendingIdleWorkCount(), 1);
+  assert.equal(countRemaining(), 6);
+
+  await harness.runNextIdleWork({ didTimeout: false, timeRemainingMs: 0 });
+  assert.equal(countRemaining(), 6);
+  assert.equal(harness.pendingIdleWorkCount(), 1);
+
+  await harness.runNextIdleWork({ didTimeout: true, timeRemainingMs: 0 });
+  assert.equal(countRemaining(), 5, "timeout fallback은 한 key만 처리해야 합니다.");
+  assert.equal(harness.pendingIdleWorkCount(), 1);
+
+  await harness.runNextIdleWork({ didTimeout: false, timeRemainingMs: 100 });
+  assert.equal(countRemaining(), 1, "idle slice는 최대 네 key만 처리해야 합니다.");
+  assert.equal(harness.pendingIdleWorkCount(), 1);
+
+  await harness.runNextIdleWork({ didTimeout: false, timeRemainingMs: 100 });
+  assert.equal(countRemaining(), 0);
+  assert.equal(harness.pendingIdleWorkCount(), 0);
+});
+
+test("마지막 hook unmount는 idle sweep를 취소하고 늦은 callback을 무효화한 뒤 remount에서 다시 예약한다", { concurrency: false }, async (context) => {
+  const activeKey = createDocumentDraftKey(
+    "note",
+    "student-1",
+    "idle-sweep-cancel-active",
+  );
+  const inactiveKey = createDocumentDraftKey(
+    "note",
+    "student-1",
+    "idle-sweep-cancel-inactive",
+  );
+  const expiredAt = Date.now() - FORM_DRAFT_RECOVERY_TTL_MS - 1;
+  let recoveryKey = "";
+  let recoveryRaw = "";
+  const harness = await createDraftHookHarness(
+    context,
+    activeKey,
+    (storage) => {
+      recoveryRaw = serializeFormDraft(draft("cancelled idle recovery"), expiredAt);
+      recoveryKey = createImmutableFormDraftRecoveryKey(
+        inactiveKey,
+        "cancelled-idle",
+        recoveryRaw,
+      );
+      storage.setItem(recoveryKey, recoveryRaw);
+    },
+    1,
+    { deferArtifactSweepIdleWork: true },
+  );
+  const storage = harness.browserWindow.localStorage;
+
+  assert.equal(harness.pendingIdleWorkCount(), 1);
+  assert.equal(harness.cancelledIdleWorkCount(), 0);
+  assert.equal(storage.getItem(recoveryKey), recoveryRaw);
+
+  await harness.remount(activeKey);
+
+  assert.equal(
+    harness.cancelledIdleWorkCount(),
+    1,
+    "마지막 기존 hook의 예약 작업은 cancelIdleCallback으로 취소해야 합니다.",
+  );
+  assert.equal(
+    harness.pendingIdleWorkCount(),
+    1,
+    "새 hook은 취소된 page-session sweep를 다시 예약해야 합니다.",
+  );
+
+  await harness.runNextCancelledIdleWork({ didTimeout: true, timeRemainingMs: 0 });
+
+  assert.equal(
+    storage.getItem(recoveryKey),
+    recoveryRaw,
+    "취소 뒤 늦게 전달된 callback은 storage를 변경하지 않아야 합니다.",
+  );
+  assert.equal(harness.pendingIdleWorkCount(), 1);
+
+  await harness.runNextIdleWork({ didTimeout: true, timeRemainingMs: 0 });
+
+  assert.equal(storage.getItem(recoveryKey), null);
+  assert.equal(harness.pendingIdleWorkCount(), 0);
+});
+
+test("page-session sweep는 동시에 활성화된 A/B source를 보존하고 inactive artifact만 정리한다", { concurrency: false }, async (context) => {
+  context.mock.timers.enable({ apis: ["setTimeout"] });
+  const activeKeyA = createDocumentDraftKey("note", "student-1", "active-a");
+  const activeKeyB = createDocumentDraftKey("note", "student-1", "active-b");
+  const inactiveKey = createDocumentDraftKey("note", "student-1", "inactive-c");
+  const harness = await createDraftHookHarness(
+    context,
+    [activeKeyA, activeKeyB],
+    undefined,
+    2,
+  );
+  const storage = harness.browserWindow.localStorage;
+  const expiredAt = Date.now() - FORM_DRAFT_RECOVERY_TTL_MS - 1;
+  const rawA = serializeFormDraft(draft("active A recovery"), expiredAt);
+  const rawB = serializeFormDraft(draft("active B recovery"), expiredAt);
+  const rawC = serializeFormDraft(draft("inactive C recovery"), expiredAt);
+  const recoveryKeyA = createImmutableFormDraftRecoveryKey(
+    activeKeyA,
+    "active-a",
+    rawA,
+  );
+  const recoveryKeyB = createImmutableFormDraftRecoveryKey(
+    activeKeyB,
+    "active-b",
+    rawB,
+  );
+  const recoveryKeyC = createImmutableFormDraftRecoveryKey(
+    inactiveKey,
+    "inactive-c",
+    rawC,
+  );
+  storage.setItem(recoveryKeyA, rawA);
+  storage.setItem(recoveryKeyB, rawB);
+  storage.setItem(recoveryKeyC, rawC);
+
+  await tickTimers(context, 1);
+
+  assert.equal(storage.getItem(recoveryKeyA), rawA);
+  assert.equal(storage.getItem(recoveryKeyB), rawB);
+  assert.equal(storage.getItem(recoveryKeyC), null);
+});
+
+test("proactive artifact sweep는 같은 storage의 page-session에서 한 번만 실행한다", { concurrency: false }, async (context) => {
+  context.mock.timers.enable({ apis: ["setTimeout"] });
+  const activeKey = createDocumentDraftKey("note", "student-1", "active-once");
+  const firstInactiveKey = createDocumentDraftKey(
+    "note",
+    "student-1",
+    "inactive-first",
+  );
+  const secondInactiveKey = createDocumentDraftKey(
+    "note",
+    "student-1",
+    "inactive-second",
+  );
+  const harness = await createDraftHookHarness(context, activeKey);
+  const storage = harness.browserWindow.localStorage;
+  const expiredAt = Date.now() - FORM_DRAFT_RECOVERY_TTL_MS - 1;
+  const firstRaw = serializeFormDraft(draft("first inactive"), expiredAt);
+  const firstRecoveryKey = createImmutableFormDraftRecoveryKey(
+    firstInactiveKey,
+    "first",
+    firstRaw,
+  );
+  storage.setItem(firstRecoveryKey, firstRaw);
+
+  await tickTimers(context, 1);
+  assert.equal(storage.getItem(firstRecoveryKey), null);
+
+  const secondRaw = serializeFormDraft(draft("second inactive"), expiredAt);
+  const secondRecoveryKey = createImmutableFormDraftRecoveryKey(
+    secondInactiveKey,
+    "second",
+    secondRaw,
+  );
+  storage.setItem(secondRecoveryKey, secondRaw);
+  await harness.remount(activeKey);
+  await tickTimers(context, 1);
+
+  assert.equal(storage.getItem(secondRecoveryKey), secondRaw);
+});
+
+test("quota retry는 inactive 전역 artifact를 먼저 정리한 뒤 current draft 저장을 재시도한다", { concurrency: false }, async (context) => {
+  context.mock.timers.enable({ apis: ["setTimeout"] });
+  const activeKey = createDocumentDraftKey("note", "student-1", "quota-active");
+  const inactiveKey = createDocumentDraftKey(
+    "community-post",
+    "student-1",
+    "quota-inactive",
+  );
+  const harness = await createDraftHookHarness(context, activeKey);
+  const storage = harness.browserWindow.localStorage;
+  await tickTimers(context, 1);
+
+  const expiredAt = Date.now() - FORM_DRAFT_RECOVERY_TTL_MS - 1;
+  const inactiveRaw = serializeFormDraft(draft("quota inactive"), expiredAt);
+  const inactiveRecoveryKey = createImmutableFormDraftRecoveryKey(
+    inactiveKey,
+    "quota-inactive",
+    inactiveRaw,
+  );
+  const inactiveMarkerKey = createFormDraftClearMarkerKey(inactiveKey);
+  const inactiveMarkerRaw = JSON.stringify({
+    version: FORM_DRAFT_CLEAR_MARKER_VERSION,
+    signature: createFormDraftDataSignature(draft("old submitted")),
+    clearedAt: expiredAt,
+  });
+  storage.setItem(inactiveRecoveryKey, inactiveRaw);
+  storage.setItem(inactiveMarkerKey, inactiveMarkerRaw);
+
+  const ownSetItemDescriptor = Object.getOwnPropertyDescriptor(storage, "setItem");
+  const originalSetItem = storage.setItem.bind(storage);
+  let quotaInjected = false;
+  Object.defineProperty(storage, "setItem", {
+    configurable: true,
+    value: (storageKey: string, raw: string) => {
+      if (
+        !quotaInjected &&
+        storageKey.startsWith(createFormDraftRecoveryPrefix(activeKey))
+      ) {
+        quotaInjected = true;
+        const quotaError = new Error("localStorage quota exceeded");
+        quotaError.name = "QuotaExceededError";
+        throw quotaError;
+      }
+      originalSetItem(storageKey, raw);
+    },
+  });
+
+  try {
+    const activeDraft = draft("quota retry active draft");
+    await act(async () => {
+      harness.getResult().save(activeDraft);
+      assert.equal(harness.getResult().flush(), true);
+    });
+
+    assert.equal(quotaInjected, true);
+    assert.equal(storage.getItem(inactiveRecoveryKey), null);
+    assert.equal(storage.getItem(inactiveMarkerKey), null);
+    assert.deepEqual(readDraft(storage, activeKey), activeDraft);
+    assert.equal(listRecoveryKeys(storage, activeKey).length, 1);
+  } finally {
+    if (ownSetItemDescriptor) {
+      Object.defineProperty(storage, "setItem", ownSetItemDescriptor);
+    } else {
+      Reflect.deleteProperty(storage, "setItem");
+    }
+  }
 });
 
 test("marker 이후 같은 signature로 새로 쓴 draft는 지연된 제출 이벤트에도 보존한다", { concurrency: false }, async (context) => {
@@ -2106,14 +3023,23 @@ test("제출 marker가 quota로 끝내 기록되지 않으면 제출 snapshot을
       reason: "submitted",
       submittedData: submittedDraft,
     });
-    assert.equal(harness.getResult(1).flush(), true);
+    assert.equal(harness.getResult(1).flush(), false);
   });
 
   assert.equal(storage.getItem(draftKey), null);
   assert.equal(listRecoveryKeys(storage, draftKey).length, 0);
   assert.equal(readFormDraftClearMarker(storage, draftKey), null);
   assert.equal(harness.getResult(0).status, "error");
-  assert.equal(harness.getResult(1).status, "idle");
+  assert.equal(harness.getResult(1).status, "error");
+
+  Object.defineProperty(storage, "setItem", {
+    configurable: true,
+    value: originalSetItem,
+  });
+  await act(async () => {
+    assert.equal(harness.getResult(1).flush(), true);
+  });
+  assert.ok(readFormDraftClearMarker(storage, draftKey));
 });
 
 test("제출 marker가 SecurityError로 실패해도 snapshot 정리와 peer 통지를 수행한다", { concurrency: false }, async (context) => {
@@ -2152,7 +3078,461 @@ test("제출 marker가 SecurityError로 실패해도 snapshot 정리와 peer 통
   assert.equal(listRecoveryKeys(storage, draftKey).length, 0);
   assert.equal(readFormDraftClearMarker(storage, draftKey), null);
   assert.equal(harness.getResult(0).status, "error");
-  assert.equal(harness.getResult(1).status, "idle");
+  assert.equal(harness.getResult(1).status, "error");
+
+  Object.defineProperty(storage, "setItem", {
+    configurable: true,
+    value: originalSetItem,
+  });
+  await act(async () => {
+    assert.equal(harness.getResult(1).flush(), true);
+  });
+  assert.ok(readFormDraftClearMarker(storage, draftKey));
+});
+
+test("storage 전면 차단 중 제출은 page-session marker로 ghost를 막고 회복 뒤 newer 동일본만 보존한다", { concurrency: false }, async (context) => {
+  const originalNow = Date.now;
+  const clearedAt = originalNow() + 10_000;
+  let currentTime = clearedAt - 100;
+  Object.defineProperty(Date, "now", {
+    configurable: true,
+    value: () => currentTime,
+  });
+
+  const draftKey = createDocumentDraftKey(
+    "note",
+    "student-1",
+    "note-submitted-storage-denied",
+  );
+  const firstAwayKey = createDocumentDraftKey(
+    "note",
+    "student-1",
+    "note-submitted-storage-denied-away-a",
+  );
+  const secondAwayKey = createDocumentDraftKey(
+    "note",
+    "student-1",
+    "note-submitted-storage-denied-away-b",
+  );
+  const submittedDraft = draft("서버에는 제출된 동일 내용");
+  const staleRaw = serializeFormDraft(submittedDraft, clearedAt - 1_000);
+  const staleRecoveryKey = createImmutableFormDraftRecoveryKey(
+    draftKey,
+    "stale-writer",
+    staleRaw,
+  );
+  const harness = await createDraftHookHarness(
+    context,
+    draftKey,
+    (storage) => {
+      storage.setItem(draftKey, staleRaw);
+      storage.setItem(staleRecoveryKey, staleRaw);
+    },
+    2,
+  );
+  const storage = harness.browserWindow.localStorage;
+  const restoresBeforeClear = harness.restoredDrafts.length;
+  const blockedStorage = blockFormDraftStorage(storage);
+  let storageRestored = false;
+
+  try {
+    await act(async () => {
+      harness.getResult(1).save(submittedDraft);
+    });
+    currentTime = clearedAt;
+    await act(async () => {
+      harness.getResult(0).clear({
+        reason: "submitted",
+        submittedData: submittedDraft,
+      });
+    });
+
+    assert.equal(harness.getResult(0).status, "error");
+    const unresolvedUnload = new harness.browserWindow.Event("beforeunload", {
+      cancelable: true,
+    });
+    await act(async () => {
+      harness.browserWindow.dispatchEvent(unresolvedUnload);
+    });
+    assert.equal(unresolvedUnload.defaultPrevented, true);
+
+    await harness.renderKeys([firstAwayKey, secondAwayKey]);
+    await harness.renderKeys([draftKey, draftKey]);
+    assert.equal(
+      harness.restoredDrafts.length,
+      restoresBeforeClear,
+      "cutoff 이전 canonical과 volatile pending을 A→B→A에서 복원하면 안 됩니다.",
+    );
+
+    const newerRecoverySavedAt = clearedAt + 500;
+    const newerRecoveryRaw = serializeFormDraft(
+      submittedDraft,
+      newerRecoverySavedAt,
+    );
+    const newerRecoveryKey = createImmutableFormDraftRecoveryKey(
+      draftKey,
+      "newer-writer",
+      newerRecoveryRaw,
+    );
+    blockedStorage.setItem(newerRecoveryKey, newerRecoveryRaw);
+
+    const newerPendingAt = clearedAt + 1_000;
+    currentTime = newerPendingAt;
+    await act(async () => {
+      harness.getResult(0).save(submittedDraft);
+    });
+    await harness.renderKeys([firstAwayKey, secondAwayKey]);
+    await harness.renderKeys([draftKey, draftKey]);
+
+    assert.deepEqual(harness.restoredDrafts.at(-1), submittedDraft);
+    assert.equal(harness.getResult(0).savedAt?.getTime(), newerPendingAt);
+    const stillUnresolvedUnload = new harness.browserWindow.Event(
+      "beforeunload",
+      { cancelable: true },
+    );
+    await act(async () => {
+      harness.browserWindow.dispatchEvent(stillUnresolvedUnload);
+    });
+    assert.equal(stillUnresolvedUnload.defaultPrevented, true);
+
+    blockedStorage.restore();
+    storageRestored = true;
+    let recoveredFlush = false;
+    await act(async () => {
+      recoveredFlush = harness.getResult(0).flush();
+    });
+    assert.equal(
+      recoveredFlush,
+      true,
+      `status=${harness.getResult(0).status}, marker=${String(readFormDraftClearMarker(storage, draftKey)?.clearedAt.getTime())}, canonical=${String(parseFormDraft<DraftData>(storage.getItem(draftKey) ?? "")?.savedAt?.getTime())}`,
+    );
+
+    const durableMarker = readFormDraftClearMarker(storage, draftKey);
+    assert.ok(durableMarker);
+    assert.equal(durableMarker.clearedAt.getTime(), clearedAt);
+    assert.equal(storage.getItem(staleRecoveryKey), null);
+    assert.equal(storage.getItem(newerRecoveryKey), newerRecoveryRaw);
+    const persistedRaw = storage.getItem(draftKey);
+    assert.ok(persistedRaw);
+    const persisted = parseFormDraft<DraftData>(persistedRaw);
+    assert.deepEqual(persisted?.data, submittedDraft);
+    assert.equal(persisted?.savedAt?.getTime(), newerPendingAt);
+
+    await harness.remount(draftKey, 1);
+    assert.deepEqual(harness.restoredDrafts.at(-1), submittedDraft);
+    assert.equal(harness.getResult().savedAt?.getTime(), newerPendingAt);
+
+    const resolvedUnload = new harness.browserWindow.Event("beforeunload", {
+      cancelable: true,
+    });
+    await act(async () => {
+      harness.browserWindow.dispatchEvent(resolvedUnload);
+    });
+    assert.equal(resolvedUnload.defaultPrevented, false);
+  } finally {
+    if (!storageRestored) blockedStorage.restore();
+    try {
+      await act(async () => {
+        harness.getResult().flush();
+      });
+    } catch {
+      // 실패 assertion 뒤에도 module-level volatile 상태가 다음 테스트에 새지 않게 정리한다.
+    }
+    Object.defineProperty(Date, "now", {
+      configurable: true,
+      value: originalNow,
+    });
+  }
+});
+
+test("A 제출 marker는 storage 회복 뒤 B flush가 실패해도 pagehide에서 durable화된다", { concurrency: false }, async (context) => {
+  const submittedKey = createDocumentDraftKey(
+    "note",
+    "student-1",
+    "submitted-away-key",
+  );
+  const activeKey = createDocumentDraftKey(
+    "note",
+    "student-1",
+    "submitted-away-active-key",
+  );
+  const submittedDraft = draft("A에서 서버 제출한 내용");
+  const staleRaw = serializeFormDraft(submittedDraft, Date.now() - 1_000);
+  const staleRecoveryKey = createImmutableFormDraftRecoveryKey(
+    submittedKey,
+    "stale-away-writer",
+    staleRaw,
+  );
+  const harness = await createDraftHookHarness(
+    context,
+    submittedKey,
+    (storage) => {
+      storage.setItem(submittedKey, staleRaw);
+      storage.setItem(staleRecoveryKey, staleRaw);
+    },
+  );
+  const storage = harness.browserWindow.localStorage;
+  const blockedStorage = blockFormDraftStorage(storage);
+  let storageRestored = false;
+
+  try {
+    await act(async () => {
+      harness.getResult().clear({
+        reason: "submitted",
+        submittedData: submittedDraft,
+      });
+    });
+    await harness.render(activeKey);
+
+    blockedStorage.restore();
+    storageRestored = true;
+    const circularActiveDraft = draft("B의 직렬화 불가 현재 입력") as DraftData & {
+      self?: unknown;
+    };
+    circularActiveDraft.self = circularActiveDraft;
+    await act(async () => {
+      harness.getResult().save(circularActiveDraft);
+    });
+    await act(async () => {
+      harness.browserWindow.dispatchEvent(
+        new harness.browserWindow.Event("pagehide"),
+      );
+    });
+
+    const marker = readFormDraftClearMarker(storage, submittedKey);
+    assert.ok(marker);
+    assert.equal(storage.getItem(submittedKey), null);
+    assert.equal(storage.getItem(staleRecoveryKey), null);
+
+    await act(async () => {
+      harness.getResult().save(draft("B의 복구 가능한 현재 입력"));
+      assert.equal(harness.getResult().flush(), true);
+    });
+
+    const resolvedUnload = new harness.browserWindow.Event("beforeunload", {
+      cancelable: true,
+    });
+    await act(async () => {
+      harness.browserWindow.dispatchEvent(resolvedUnload);
+    });
+    assert.equal(resolvedUnload.defaultPrevented, false);
+  } finally {
+    if (!storageRestored) blockedStorage.restore();
+  }
+});
+
+test("A orphan draft는 B 이탈 전 경고하고 storage 회복 뒤 B pagehide에서 recovery로 승격한다", { concurrency: false }, async (context) => {
+  const orphanKey = createDocumentDraftKey(
+    "community-post",
+    "student-1",
+    "orphan-away-key",
+  );
+  const activeKey = createDocumentDraftKey(
+    "community-post",
+    "student-1",
+    "orphan-away-active-key",
+  );
+  const orphanDraft = draft("A에서 영속화하지 못한 입력");
+  const harness = await createDraftHookHarness(context, orphanKey);
+  const storage = harness.browserWindow.localStorage;
+  const blockedStorage = blockFormDraftStorage(storage);
+  let storageRestored = false;
+
+  try {
+    await act(async () => {
+      harness.getResult().save(orphanDraft);
+    });
+    await harness.render(activeKey);
+
+    const unresolvedUnload = new harness.browserWindow.Event("beforeunload", {
+      cancelable: true,
+    });
+    await act(async () => {
+      harness.browserWindow.dispatchEvent(unresolvedUnload);
+    });
+    assert.equal(unresolvedUnload.defaultPrevented, true);
+
+    blockedStorage.restore();
+    storageRestored = true;
+    await act(async () => {
+      harness.browserWindow.dispatchEvent(
+        new harness.browserWindow.Event("pagehide"),
+      );
+    });
+
+    const recoveryKeys = listRecoveryKeys(storage, orphanKey);
+    assert.equal(recoveryKeys.length, 1);
+    assert.deepEqual(readDraft(storage, recoveryKeys[0]!), orphanDraft);
+    assert.equal(storage.getItem(orphanKey), null);
+
+    const resolvedUnload = new harness.browserWindow.Event("beforeunload", {
+      cancelable: true,
+    });
+    await act(async () => {
+      harness.browserWindow.dispatchEvent(resolvedUnload);
+    });
+    assert.equal(resolvedUnload.defaultPrevented, false);
+  } finally {
+    if (!storageRestored) blockedStorage.restore();
+  }
+});
+
+test("global beforeunload guard는 hook 정리 후에도 회복된 storage로 orphan을 drain한다", { concurrency: false }, async (context) => {
+  const orphanKey = createDocumentDraftKey(
+    "community-post",
+    "student-1",
+    "orphan-global-beforeunload",
+  );
+  const activeKey = createDocumentDraftKey(
+    "community-post",
+    "student-1",
+    "orphan-global-beforeunload-away",
+  );
+  const orphanDraft = draft("global guard가 영속화할 입력");
+  const harness = await createDraftHookHarness(context, orphanKey);
+  const storage = harness.browserWindow.localStorage;
+  const blockedStorage = blockFormDraftStorage(storage);
+  let storageRestored = false;
+
+  try {
+    await act(async () => {
+      harness.getResult().save(orphanDraft);
+    });
+    await harness.render(activeKey);
+    await harness.unmount();
+
+    blockedStorage.restore();
+    storageRestored = true;
+    const unload = new harness.browserWindow.Event("beforeunload", {
+      cancelable: true,
+    });
+    harness.browserWindow.dispatchEvent(unload);
+
+    assert.equal(unload.defaultPrevented, false);
+    const recoveryKeys = listRecoveryKeys(storage, orphanKey);
+    assert.equal(recoveryKeys.length, 1);
+    assert.deepEqual(readDraft(storage, recoveryKeys[0]!), orphanDraft);
+  } finally {
+    if (!storageRestored) blockedStorage.restore();
+  }
+});
+
+test("시계 역행 뒤 같은 signature를 다시 clear해도 더 강한 volatile cutoff를 낮추지 않는다", { concurrency: false }, async (context) => {
+  const originalNow = Date.now;
+  const baseTime = originalNow();
+  let currentTime = baseTime;
+  Object.defineProperty(Date, "now", {
+    configurable: true,
+    value: () => currentTime,
+  });
+
+  const draftKey = createDocumentDraftKey(
+    "note",
+    "student-1",
+    "submitted-clock-rollback",
+  );
+  const submittedDraft = draft("시계 역행 전 제출한 내용");
+  const staleRaw = serializeFormDraft(submittedDraft, baseTime + 150);
+  const harness = await createDraftHookHarness(
+    context,
+    draftKey,
+    (storage) => storage.setItem(draftKey, staleRaw),
+  );
+  const storage = harness.browserWindow.localStorage;
+  const blockedStorage = blockFormDraftStorage(storage);
+  let storageRestored = false;
+
+  try {
+    currentTime = baseTime + 200;
+    await act(async () => {
+      harness.getResult().clear({
+        reason: "submitted",
+        submittedData: submittedDraft,
+      });
+    });
+
+    blockedStorage.restore();
+    storageRestored = true;
+    currentTime = baseTime + 100;
+    await act(async () => {
+      harness.getResult().clear({
+        reason: "submitted",
+        submittedData: submittedDraft,
+      });
+    });
+
+    const marker = readFormDraftClearMarker(storage, draftKey, baseTime + 200);
+    assert.ok(marker);
+    assert.equal(marker.clearedAt.getTime(), baseTime + 200);
+    assert.equal(storage.getItem(draftKey), null);
+
+    const restoresBeforeRemount = harness.restoredDrafts.length;
+    await harness.remount(draftKey);
+    assert.equal(harness.restoredDrafts.length, restoresBeforeRemount);
+  } finally {
+    if (!storageRestored) blockedStorage.restore();
+    Object.defineProperty(Date, "now", {
+      configurable: true,
+      value: originalNow,
+    });
+  }
+});
+
+test("최초 제출에서 시계가 역행하고 storage가 차단돼도 관측한 savedAt까지 clear한다", { concurrency: false }, async (context) => {
+  const originalNow = Date.now;
+  const baseTime = originalNow();
+  let currentTime = baseTime + 200;
+  Object.defineProperty(Date, "now", {
+    configurable: true,
+    value: () => currentTime,
+  });
+
+  const draftKey = createDocumentDraftKey(
+    "note",
+    "student-1",
+    "submitted-first-clock-rollback",
+  );
+  const submittedDraft = draft("최초 제출 전 미래 시각 저장본");
+  const staleRaw = serializeFormDraft(submittedDraft, currentTime);
+  const harness = await createDraftHookHarness(
+    context,
+    draftKey,
+    (storage) => storage.setItem(draftKey, staleRaw),
+  );
+  const storage = harness.browserWindow.localStorage;
+  const blockedStorage = blockFormDraftStorage(storage);
+  let storageRestored = false;
+
+  try {
+    currentTime = baseTime + 100;
+    await act(async () => {
+      harness.getResult().clear({
+        reason: "submitted",
+        submittedData: submittedDraft,
+      });
+    });
+    assert.equal(harness.getResult().status, "error");
+
+    blockedStorage.restore();
+    storageRestored = true;
+    await act(async () => {
+      assert.equal(harness.getResult().flush(), true);
+    });
+
+    const marker = readFormDraftClearMarker(storage, draftKey, baseTime + 200);
+    assert.ok(marker);
+    assert.equal(marker.clearedAt.getTime(), baseTime + 200);
+    assert.equal(storage.getItem(draftKey), null);
+    const restoresBeforeRemount = harness.restoredDrafts.length;
+    await harness.remount(draftKey);
+    assert.equal(harness.restoredDrafts.length, restoresBeforeRemount);
+  } finally {
+    if (!storageRestored) blockedStorage.restore();
+    Object.defineProperty(Date, "now", {
+      configurable: true,
+      value: originalNow,
+    });
+  }
 });
 
 test("충돌 처리 중 flush quota 실패는 conflict로 덮지 않고 pending을 재시도한다", { concurrency: false }, async (context) => {

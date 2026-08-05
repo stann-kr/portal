@@ -234,7 +234,7 @@ export function NewQnaForm({ actorId, returnTo }: { actorId: string; returnTo: s
             onChange={(event) => setTitle(event.target.value)}
             placeholder="질문 제목을 입력하세요"
             required
-            disabled={!loaded || isPending}
+            disabled={!loaded || isFormBusy}
           />
         </label>
 
@@ -260,7 +260,7 @@ export function NewQnaForm({ actorId, returnTo }: { actorId: string; returnTo: s
                 });
               }}
               placeholder="질문 내용을 자세히 작성하세요. 악보, 코드, 이미지 등을 첨부할 수 있습니다."
-              disabled={isPending}
+              disabled={isFormBusy}
               ariaLabel="Q&A 질문 내용"
               footer={
                 <DraftStatus
@@ -284,7 +284,7 @@ export function NewQnaForm({ actorId, returnTo }: { actorId: string; returnTo: s
           <AttachmentField
             value={attachmentUrl}
             onChange={setAttachmentUrl}
-            disabled={!loaded || isPending}
+            disabled={!loaded || isFormBusy}
             onUploadingChange={setIsUploading}
           />
         </div>

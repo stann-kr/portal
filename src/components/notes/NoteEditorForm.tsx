@@ -19,6 +19,12 @@ import {
   DOCUMENT_SNAPSHOT_FINGERPRINT_FIELD,
 } from "@/lib/document-snapshot-fingerprint";
 import {
+  createDocumentEditDraftMetadata,
+  resolveDocumentEditDraftBase,
+  type CompactDocumentEditDraftMetadata,
+  type DocumentEditDraftBaseFields,
+} from "@/lib/document-edit-draft";
+import {
   acknowledgeServerSaveResponse,
   createServerSaveConfirmationState,
   dismissServerSaveConfirmation,
@@ -47,6 +53,9 @@ type NoteEditSnapshot = {
   contentHtml: string;
 };
 
+type NoteEditDraft = NoteEditSnapshot & DocumentEditDraftBaseFields;
+type CompactNoteEditDraft = NoteEditSnapshot & CompactDocumentEditDraftMetadata;
+
 function toDateInputValue(value: Date | null): string {
   return value ? new Date(value).toISOString().slice(0, 10) : "";
 }
@@ -69,18 +78,10 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
   const formRef = useRef<HTMLFormElement>(null);
   const contentHtmlInputRef = useRef<HTMLInputElement>(null);
   const handledSavedNoteRef = useRef<UpdateNoteState["note"]>(undefined);
-  const submittedDraftRef = useRef<{
-    title: string;
-    noteDate: string;
-    contentHtml: string;
-    base: { title: string; noteDate: string; contentHtml: string };
-  } | null>(null);
+  const submittedDraftRef = useRef<CompactNoteEditDraft | null>(null);
+  const submittedDraftAliasesRef = useRef<readonly NoteEditDraft[] | null>(null);
+  const restoredDraftRef = useRef<NoteEditDraft | null>(null);
   const savedSnapshotRef = useRef({
-    title: note.title,
-    noteDate: toDateInputValue(note.noteDate),
-    contentHtml: note.contentHtml,
-  });
-  const draftBaseRef = useRef({
     title: note.title,
     noteDate: toDateInputValue(note.noteDate),
     contentHtml: note.contentHtml,
@@ -94,18 +95,20 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
       noteDate: toDateInputValue(note.noteDate),
     }),
   );
+  const baseFingerprintRef = useRef(baseFingerprint);
+  const draftBaseFingerprintRef = useRef(baseFingerprint);
   const adoptSavedSnapshot = useCallback(
     (snapshot: NoteEditSnapshot) => {
       savedSnapshotRef.current = snapshot;
-      setBaseFingerprint(
-        createDocumentSnapshotFingerprint({
-          kind: "private-note",
-          id: note.id,
-          title: snapshot.title,
-          contentHtml: snapshot.contentHtml,
-          noteDate: snapshot.noteDate,
-        }),
-      );
+      const fingerprint = createDocumentSnapshotFingerprint({
+        kind: "private-note",
+        id: note.id,
+        title: snapshot.title,
+        contentHtml: snapshot.contentHtml,
+        noteDate: snapshot.noteDate,
+      });
+      baseFingerprintRef.current = fingerprint;
+      setBaseFingerprint(fingerprint);
     },
     [note.id],
   );
@@ -118,6 +121,25 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
     [note.contentHtml, note.noteDate, note.title],
   );
   const previousServerSnapshotRef = useRef(serverSnapshot);
+  const createSubmittedDraftAliases = useCallback(
+    (snapshot: NoteEditSnapshot): readonly NoteEditDraft[] => {
+      const aliases: NoteEditDraft[] = [
+        { ...snapshot },
+        { ...snapshot, base: { ...savedSnapshotRef.current } },
+      ];
+      const restoredDraft = restoredDraftRef.current;
+      if (
+        restoredDraft &&
+        restoredDraft.title === snapshot.title &&
+        restoredDraft.noteDate === snapshot.noteDate &&
+        restoredDraft.contentHtml === snapshot.contentHtml
+      ) {
+        aliases.push(restoredDraft);
+      }
+      return aliases;
+    },
+    [],
+  );
   const [saveConfirmation, setSaveConfirmation] = useState(
     createServerSaveConfirmationState<NonNullable<UpdateNoteState["note"]>>(),
   );
@@ -137,14 +159,10 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
     recoveries,
     restoreRecovery,
     discardRecovery,
-  } = useFormDraft<{
-    title: string;
-    noteDate: string;
-    contentHtml: string;
-    base?: { title: string; noteDate: string; contentHtml: string };
-  }>(
+  } = useFormDraft<NoteEditDraft>(
     createDocumentDraftKey("note", actorId, note.id),
     (draft) => {
+      restoredDraftRef.current = draft;
       hideSaveConfirmation();
       const restoredSnapshot = {
         title: draft.title ?? note.title,
@@ -155,24 +173,21 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
         restoredSnapshot.title === serverSnapshot.title &&
         restoredSnapshot.noteDate === serverSnapshot.noteDate &&
         restoredSnapshot.contentHtml === serverSnapshot.contentHtml;
-      draftBaseRef.current = serverSnapshot;
-      setHasStaleDraftBase(false);
-      if (
-        draft.base &&
-        typeof draft.base.title === "string" &&
-        typeof draft.base.noteDate === "string" &&
-        typeof draft.base.contentHtml === "string"
-      ) {
-        draftBaseRef.current = draft.base;
-        const matchesCurrentServer =
-          draft.base.title === serverSnapshot.title &&
-          draft.base.noteDate === serverSnapshot.noteDate &&
-          draft.base.contentHtml === serverSnapshot.contentHtml;
-        if (matchesCurrentServer || draftMatchesCurrentServer) {
-          adoptSavedSnapshot(serverSnapshot);
-          draftBaseRef.current = serverSnapshot;
-        }
-        setHasStaleDraftBase(!matchesCurrentServer && !draftMatchesCurrentServer);
+      const resolvedBase = resolveDocumentEditDraftBase(
+        draft,
+        {
+          kind: "private-note",
+          id: note.id,
+          title: serverSnapshot.title,
+          noteDate: serverSnapshot.noteDate,
+          contentHtml: serverSnapshot.contentHtml,
+        },
+        draftMatchesCurrentServer,
+      );
+      draftBaseFingerprintRef.current = resolvedBase.draftBaseFingerprint;
+      setHasStaleDraftBase(resolvedBase.hasStaleDraftBase);
+      if (!resolvedBase.hasStaleDraftBase) {
+        adoptSavedSnapshot(serverSnapshot);
       }
       setTitle(restoredSnapshot.title);
       setNoteDate(restoredSnapshot.noteDate);
@@ -180,9 +195,10 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
     },
     {
       onReset: () => {
+        restoredDraftRef.current = null;
         hideSaveConfirmation();
         adoptSavedSnapshot(serverSnapshot);
-        draftBaseRef.current = serverSnapshot;
+        draftBaseFingerprintRef.current = baseFingerprintRef.current;
         setHasStaleDraftBase(false);
         setTitle(serverSnapshot.title);
         setNoteDate(serverSnapshot.noteDate);
@@ -204,16 +220,21 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
       noteDate === savedSnapshotRef.current.noteDate &&
       latestContentHtml === savedSnapshotRef.current.contentHtml;
     if (!hasStaleDraftBase && matchesServer) {
+      restoredDraftRef.current = null;
       clear();
       return;
     }
     save({
       title,
       noteDate,
+      ...createDocumentEditDraftMetadata(
+        hasStaleDraftBase
+          ? draftBaseFingerprintRef.current
+          : baseFingerprintRef.current,
+      ),
       get contentHtml() {
         return readLatestContentHtml();
       },
-      base: hasStaleDraftBase ? draftBaseRef.current : savedSnapshotRef.current,
     });
   }, [
     clear,
@@ -256,9 +277,10 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
       latestContentHtml === serverSnapshot.contentHtml;
 
     if (localMatchesCurrent || (!hasStaleDraftBase && localMatchesPrevious)) {
+      restoredDraftRef.current = null;
       clear();
       adoptSavedSnapshot(serverSnapshot);
-      draftBaseRef.current = serverSnapshot;
+      draftBaseFingerprintRef.current = baseFingerprintRef.current;
       setTitle(serverSnapshot.title);
       setNoteDate(serverSnapshot.noteDate);
       setContentHtml(serverSnapshot.contentHtml);
@@ -266,7 +288,9 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
       return;
     }
 
-    if (!hasStaleDraftBase) draftBaseRef.current = savedSnapshotRef.current;
+    if (!hasStaleDraftBase) {
+      draftBaseFingerprintRef.current = baseFingerprintRef.current;
+    }
     setHasStaleDraftBase(true);
   }, [
     adoptSavedSnapshot,
@@ -292,24 +316,39 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
         title,
         noteDate,
         contentHtml,
-        base: savedSnapshotRef.current,
+        ...createDocumentEditDraftMetadata(baseFingerprintRef.current),
       },
+      submittedAliases:
+        submittedDraftAliasesRef.current ??
+        createSubmittedDraftAliases({ title, noteDate, contentHtml }),
     });
     submittedDraftRef.current = null;
+    submittedDraftAliasesRef.current = null;
+    restoredDraftRef.current = null;
     const savedSnapshot = {
       title: state.note.title,
       noteDate: toDateInputValue(state.note.noteDate),
       contentHtml: state.note.contentHtml,
     };
     adoptSavedSnapshot(savedSnapshot);
-    draftBaseRef.current = savedSnapshot;
+    draftBaseFingerprintRef.current = baseFingerprintRef.current;
+    setHasStaleDraftBase(false);
     setTitle(state.note.title);
     setNoteDate(toDateInputValue(state.note.noteDate));
     setContentHtml(state.note.contentHtml);
     setSaveConfirmation((current) =>
       acknowledgeServerSaveResponse(current, state.note),
     );
-  }, [adoptSavedSnapshot, clear, contentHtml, noteDate, setContentHtml, state.note, title]);
+  }, [
+    adoptSavedSnapshot,
+    clear,
+    contentHtml,
+    createSubmittedDraftAliases,
+    noteDate,
+    setContentHtml,
+    state.note,
+    title,
+  ]);
 
   return (
     <form
@@ -331,22 +370,20 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
         if (contentHtmlInputRef.current) {
           contentHtmlInputRef.current.value = latestContentHtml;
         }
-        const submittedDraft = {
+        const submittedDraft: CompactNoteEditDraft = {
           title,
           noteDate,
           contentHtml: latestContentHtml,
-          base: { ...savedSnapshotRef.current },
+          ...createDocumentEditDraftMetadata(baseFingerprintRef.current),
         };
-        save({
-          title,
-          noteDate,
-          get contentHtml() {
-            return readLatestContentHtml();
-          },
-          base: { ...savedSnapshotRef.current },
-        });
+        save(submittedDraft);
         flush();
         submittedDraftRef.current = submittedDraft;
+        submittedDraftAliasesRef.current = createSubmittedDraftAliases({
+          title,
+          noteDate,
+          contentHtml: latestContentHtml,
+        });
       }}
     >
       <input ref={contentHtmlInputRef} type="hidden" name="contentHtml" value={contentHtml} />
@@ -371,10 +408,11 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
         <DraftConflictRecovery
           documentLabel="노트"
           onUseServer={() => {
+            restoredDraftRef.current = null;
             hideSaveConfirmation();
             clear();
             adoptSavedSnapshot(serverSnapshot);
-            draftBaseRef.current = serverSnapshot;
+            draftBaseFingerprintRef.current = baseFingerprintRef.current;
             setTitle(serverSnapshot.title);
             setNoteDate(serverSnapshot.noteDate);
             setContentHtml(serverSnapshot.contentHtml);
@@ -383,7 +421,7 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
           onKeepDraft={() => {
             hideSaveConfirmation();
             adoptSavedSnapshot(serverSnapshot);
-            draftBaseRef.current = serverSnapshot;
+            draftBaseFingerprintRef.current = baseFingerprintRef.current;
             setHasStaleDraftBase(false);
           }}
         />
@@ -429,12 +467,14 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
             save({
               title,
               noteDate,
+              ...createDocumentEditDraftMetadata(
+                hasStaleDraftBase
+                  ? draftBaseFingerprintRef.current
+                  : baseFingerprintRef.current,
+              ),
               get contentHtml() {
                 return reader();
               },
-              base: hasStaleDraftBase
-                ? draftBaseRef.current
-                : savedSnapshotRef.current,
             });
           }}
           placeholder="수업 내용, 연습 기록, 메모를 이어서 작성하세요..."
