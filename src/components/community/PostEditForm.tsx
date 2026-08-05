@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useMemo, useRef, useState } from "react";
+import { useActionState, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,10 @@ import { useDocumentSaveShortcut } from "@/lib/hooks/useDocumentSaveShortcut";
 import { isRichTextEmpty } from "@/lib/rich-text";
 import { updatePostContent, type UpdatePostState } from "@/lib/actions/posts";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
+import {
+  createDocumentSnapshotFingerprint,
+  DOCUMENT_SNAPSHOT_FINGERPRINT_FIELD,
+} from "@/lib/document-snapshot-fingerprint";
 
 const FullEditor = dynamic(
   () => import("@/components/editor/FullEditor").then((module) => ({ default: module.FullEditor })),
@@ -27,6 +31,8 @@ type PostEditFormProps = {
   onSaved: () => void;
   onBusyChange?: (isBusy: boolean) => void;
 };
+
+type PostEditSnapshot = { title: string; contentHtml: string };
 
 export function PostEditForm({
   post,
@@ -65,6 +71,30 @@ export function PostEditForm({
   } | null>(null);
   const baseRef = useRef({ title: post.title, contentHtml: post.contentHtml });
   const draftBaseRef = useRef({ title: post.title, contentHtml: post.contentHtml });
+  const [baseFingerprint, setBaseFingerprint] = useState(() =>
+    createDocumentSnapshotFingerprint({
+      kind: "community-post",
+      id: post.id,
+      title: post.title,
+      contentHtml: post.contentHtml,
+      noteDate: null,
+    }),
+  );
+  const adoptBaseSnapshot = useCallback(
+    (snapshot: PostEditSnapshot) => {
+      baseRef.current = snapshot;
+      setBaseFingerprint(
+        createDocumentSnapshotFingerprint({
+          kind: "community-post",
+          id: post.id,
+          title: snapshot.title,
+          contentHtml: snapshot.contentHtml,
+          noteDate: null,
+        }),
+      );
+    },
+    [post.id],
+  );
   const serverSnapshot = useMemo(
     () => ({ title: post.title, contentHtml: post.contentHtml }),
     [post.contentHtml, post.title],
@@ -73,6 +103,7 @@ export function PostEditForm({
 
   const {
     loaded,
+    canSubmit,
     save,
     clear,
     flush,
@@ -108,7 +139,7 @@ export function PostEditForm({
           draft.base.title === serverSnapshot.title &&
           draft.base.contentHtml === serverSnapshot.contentHtml;
         if (matchesCurrentServer || draftMatchesCurrentServer) {
-          baseRef.current = serverSnapshot;
+          adoptBaseSnapshot(serverSnapshot);
           draftBaseRef.current = serverSnapshot;
         }
         setHasStaleDraftBase(!matchesCurrentServer && !draftMatchesCurrentServer);
@@ -118,7 +149,7 @@ export function PostEditForm({
     },
     {
       onReset: () => {
-        baseRef.current = serverSnapshot;
+        adoptBaseSnapshot(serverSnapshot);
         draftBaseRef.current = serverSnapshot;
         setHasStaleDraftBase(false);
         setTitle(serverSnapshot.title);
@@ -126,7 +157,7 @@ export function PostEditForm({
       },
     },
   );
-  const isSubmitBlocked = !loaded || isPending || hasStaleDraftBase;
+  const isSubmitBlocked = !loaded || !canSubmit || isPending || hasStaleDraftBase;
   const isSubmitDisabled =
     isSubmitBlocked ||
     !title.trim() ||
@@ -175,7 +206,7 @@ export function PostEditForm({
 
     if (localMatchesCurrent || (!hasStaleDraftBase && localMatchesPrevious)) {
       clear();
-      baseRef.current = serverSnapshot;
+      adoptBaseSnapshot(serverSnapshot);
       draftBaseRef.current = serverSnapshot;
       setTitle(serverSnapshot.title);
       setContentHtml(serverSnapshot.contentHtml);
@@ -186,6 +217,7 @@ export function PostEditForm({
     if (!hasStaleDraftBase) draftBaseRef.current = baseRef.current;
     setHasStaleDraftBase(true);
   }, [
+    adoptBaseSnapshot,
     clear,
     hasStaleDraftBase,
     loaded,
@@ -218,7 +250,7 @@ export function PostEditForm({
       className="space-y-5"
       onKeyDownCapture={handleSaveShortcut}
       onSubmit={(event) => {
-        if (!loaded || isPending || hasStaleDraftBase) {
+        if (!loaded || !canSubmit || isPending || hasStaleDraftBase) {
           event.preventDefault();
           return;
         }
@@ -239,8 +271,11 @@ export function PostEditForm({
       }}
     >
       <input ref={contentInputRef} type="hidden" name="contentHtml" value={contentHtml} />
-      <input type="hidden" name="baseTitle" value={baseRef.current.title} />
-      <input type="hidden" name="baseContentHtml" value={baseRef.current.contentHtml} />
+      <input
+        type="hidden"
+        name={DOCUMENT_SNAPSHOT_FINGERPRINT_FIELD}
+        value={baseFingerprint}
+      />
 
       {state.error ? (
         <p role="alert" className="rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">
@@ -252,14 +287,14 @@ export function PostEditForm({
           documentLabel="게시물"
           onUseServer={() => {
             clear();
-            baseRef.current = serverSnapshot;
+            adoptBaseSnapshot(serverSnapshot);
             draftBaseRef.current = serverSnapshot;
             setTitle(serverSnapshot.title);
             setContentHtml(serverSnapshot.contentHtml);
             setHasStaleDraftBase(false);
           }}
           onKeepDraft={() => {
-            baseRef.current = serverSnapshot;
+            adoptBaseSnapshot(serverSnapshot);
             draftBaseRef.current = serverSnapshot;
             setHasStaleDraftBase(false);
           }}
@@ -300,6 +335,7 @@ export function PostEditForm({
           footer={
             <DraftStatus
               status={status}
+              canSubmit={canSubmit}
               savedAt={savedAt}
               restored={restored}
               recoveries={recoveries}
@@ -308,9 +344,7 @@ export function PostEditForm({
               disabled={isPending}
             />
           }
-          onSave={() => {
-            if (!isPending && !hasStaleDraftBase) formRef.current?.requestSubmit();
-          }}
+          saveShortcutLabel={canSubmit ? "변경 저장" : undefined}
         />
       ) : null}
 

@@ -9,6 +9,7 @@ import {
   FORM_DRAFT_RECOVERY_TTL_MS,
   compactFormDraftRecoveries,
   createFormDraftDataSignature,
+  createFormDraftRecoveryPreview,
   createDocumentDraftKey,
   createImmutableFormDraftRecoveryKey,
   createFormDraftClearMarkerEntryKey,
@@ -153,6 +154,58 @@ test("문서 draft key는 사용자와 문서 문맥을 분리한다", () => {
     createDocumentDraftKey("qna-reply", "student-1", "thread-a"),
     createDocumentDraftKey("qna-reply", "student-2", "thread-a"),
   );
+});
+
+test("복구 preview는 제목과 HTML 본문을 짧은 안전한 평문으로 만든다", () => {
+  const preview = createFormDraftRecoveryPreview({
+    title: "<strong> 8월 수업 기록 </strong>\u202e",
+    contentHtml:
+      '<p>첫&nbsp;문장 &amp; 둘째 문장</p><script>alert("노출 금지")</script>',
+  });
+
+  assert.deepEqual(preview, {
+    title: "8월 수업 기록",
+    body: "첫 문장 & 둘째 문장",
+  });
+  assert.equal(preview.body?.includes("script"), false);
+  assert.equal(preview.body?.includes("alert"), false);
+  assert.deepEqual(
+    createFormDraftRecoveryPreview({
+      contentHtml: '<p>보존할 본문</p><script>alert("잘린 태그")',
+    }),
+    { title: null, body: "보존할 본문" },
+  );
+});
+
+test("텍스트가 없는 복구본은 embed와 첨부 여부를 사람용 preview로 표시한다", () => {
+  assert.deepEqual(
+    createFormDraftRecoveryPreview({
+      contentHtml: '<p><img src="x"><iframe src="x"></iframe></p>',
+    }),
+    { title: null, body: "이미지 포함 · 동영상 포함" },
+  );
+  assert.deepEqual(
+    createFormDraftRecoveryPreview({ attachmentUrl: "https://example.com/file.pdf" }),
+    { title: null, body: "첨부 파일 포함" },
+  );
+});
+
+test("복구 preview는 긴 Unicode 본문을 고정 길이에서 말줄임한다", () => {
+  const preview = createFormDraftRecoveryPreview({
+    contentHtml: `<p>${"🎧".repeat(200)}</p>`,
+  });
+
+  assert.equal(Array.from(preview.body ?? "").length, 160);
+  assert.equal(preview.body?.endsWith("…"), true);
+});
+
+test("복구 preview는 큰 문서의 작은 선두 구간만 검사한다", () => {
+  const preview = createFormDraftRecoveryPreview({
+    title: `${" ".repeat(512)}검사 범위 밖 제목`,
+    contentHtml: `${" ".repeat(4_096)}<img src="scan-cap-outside">`,
+  });
+
+  assert.deepEqual(preview, { title: null, body: null });
 });
 
 test("다른 탭이 draft를 쓰거나 지운 경우 storage 충돌로 판정한다", () => {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useMemo, useRef, useState } from "react";
+import { useActionState, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,16 @@ import type { UpdateNoteState } from "@/lib/actions/privateNotes";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
 import { useDeferredEditorContent } from "@/lib/hooks/useDeferredEditorContent";
 import { useDocumentSaveShortcut } from "@/lib/hooks/useDocumentSaveShortcut";
+import {
+  createDocumentSnapshotFingerprint,
+  DOCUMENT_SNAPSHOT_FINGERPRINT_FIELD,
+} from "@/lib/document-snapshot-fingerprint";
+import {
+  acknowledgeServerSaveResponse,
+  createServerSaveConfirmationState,
+  dismissServerSaveConfirmation,
+  isServerSaveConfirmationVisible,
+} from "@/lib/server-save-confirmation";
 
 const FullEditor = dynamic(
   () => import("@/components/editor/FullEditor").then((module) => ({ default: module.FullEditor })),
@@ -29,6 +39,12 @@ type NoteEditorFormProps = {
   };
   actorId: string;
   action: (previous: UpdateNoteState, formData: FormData) => Promise<UpdateNoteState>;
+};
+
+type NoteEditSnapshot = {
+  title: string;
+  noteDate: string;
+  contentHtml: string;
 };
 
 function toDateInputValue(value: Date | null): string {
@@ -69,6 +85,30 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
     noteDate: toDateInputValue(note.noteDate),
     contentHtml: note.contentHtml,
   });
+  const [baseFingerprint, setBaseFingerprint] = useState(() =>
+    createDocumentSnapshotFingerprint({
+      kind: "private-note",
+      id: note.id,
+      title: note.title,
+      contentHtml: note.contentHtml,
+      noteDate: toDateInputValue(note.noteDate),
+    }),
+  );
+  const adoptSavedSnapshot = useCallback(
+    (snapshot: NoteEditSnapshot) => {
+      savedSnapshotRef.current = snapshot;
+      setBaseFingerprint(
+        createDocumentSnapshotFingerprint({
+          kind: "private-note",
+          id: note.id,
+          title: snapshot.title,
+          contentHtml: snapshot.contentHtml,
+          noteDate: snapshot.noteDate,
+        }),
+      );
+    },
+    [note.id],
+  );
   const serverSnapshot = useMemo(
     () => ({
       title: note.title,
@@ -78,9 +118,16 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
     [note.contentHtml, note.noteDate, note.title],
   );
   const previousServerSnapshotRef = useRef(serverSnapshot);
+  const [saveConfirmation, setSaveConfirmation] = useState(
+    createServerSaveConfirmationState<NonNullable<UpdateNoteState["note"]>>(),
+  );
+  const hideSaveConfirmation = useCallback(() => {
+    setSaveConfirmation(dismissServerSaveConfirmation);
+  }, []);
 
   const {
     loaded,
+    canSubmit,
     save,
     clear,
     flush,
@@ -98,6 +145,7 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
   }>(
     createDocumentDraftKey("note", actorId, note.id),
     (draft) => {
+      hideSaveConfirmation();
       const restoredSnapshot = {
         title: draft.title ?? note.title,
         noteDate: draft.noteDate ?? toDateInputValue(note.noteDate),
@@ -121,7 +169,7 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
           draft.base.noteDate === serverSnapshot.noteDate &&
           draft.base.contentHtml === serverSnapshot.contentHtml;
         if (matchesCurrentServer || draftMatchesCurrentServer) {
-          savedSnapshotRef.current = serverSnapshot;
+          adoptSavedSnapshot(serverSnapshot);
           draftBaseRef.current = serverSnapshot;
         }
         setHasStaleDraftBase(!matchesCurrentServer && !draftMatchesCurrentServer);
@@ -132,7 +180,8 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
     },
     {
       onReset: () => {
-        savedSnapshotRef.current = serverSnapshot;
+        hideSaveConfirmation();
+        adoptSavedSnapshot(serverSnapshot);
         draftBaseRef.current = serverSnapshot;
         setHasStaleDraftBase(false);
         setTitle(serverSnapshot.title);
@@ -143,7 +192,7 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
   );
 
   const handleSaveShortcut = useDocumentSaveShortcut({
-    disabled: !loaded || isPending || hasStaleDraftBase,
+    disabled: !loaded || !canSubmit || isPending || hasStaleDraftBase,
     onSave: () => formRef.current?.requestSubmit(),
   });
 
@@ -187,6 +236,14 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
     if (!serverChanged) return;
 
     previousServerSnapshotRef.current = serverSnapshot;
+    const serverMatchesLatestSaveResponse = Boolean(
+      state.success &&
+      state.note &&
+      state.note.title === serverSnapshot.title &&
+      toDateInputValue(state.note.noteDate) === serverSnapshot.noteDate &&
+      state.note.contentHtml === serverSnapshot.contentHtml,
+    );
+    if (!serverMatchesLatestSaveResponse) hideSaveConfirmation();
     // React 표시값은 editor보다 최대 200ms 늦을 수 있으므로 충돌 판정은 최신 reader를 사용한다.
     const latestContentHtml = readLatestContentHtml();
     const localMatchesPrevious =
@@ -200,7 +257,7 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
 
     if (localMatchesCurrent || (!hasStaleDraftBase && localMatchesPrevious)) {
       clear();
-      savedSnapshotRef.current = serverSnapshot;
+      adoptSavedSnapshot(serverSnapshot);
       draftBaseRef.current = serverSnapshot;
       setTitle(serverSnapshot.title);
       setNoteDate(serverSnapshot.noteDate);
@@ -212,13 +269,17 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
     if (!hasStaleDraftBase) draftBaseRef.current = savedSnapshotRef.current;
     setHasStaleDraftBase(true);
   }, [
+    adoptSavedSnapshot,
     clear,
     hasStaleDraftBase,
+    hideSaveConfirmation,
     loaded,
     noteDate,
     readLatestContentHtml,
     serverSnapshot,
     setContentHtml,
+    state.note,
+    state.success,
     title,
   ]);
 
@@ -235,16 +296,20 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
       },
     });
     submittedDraftRef.current = null;
-    savedSnapshotRef.current = {
+    const savedSnapshot = {
       title: state.note.title,
       noteDate: toDateInputValue(state.note.noteDate),
       contentHtml: state.note.contentHtml,
     };
-    draftBaseRef.current = savedSnapshotRef.current;
+    adoptSavedSnapshot(savedSnapshot);
+    draftBaseRef.current = savedSnapshot;
     setTitle(state.note.title);
     setNoteDate(toDateInputValue(state.note.noteDate));
     setContentHtml(state.note.contentHtml);
-  }, [clear, contentHtml, noteDate, setContentHtml, state.note, title]);
+    setSaveConfirmation((current) =>
+      acknowledgeServerSaveResponse(current, state.note),
+    );
+  }, [adoptSavedSnapshot, clear, contentHtml, noteDate, setContentHtml, state.note, title]);
 
   return (
     <form
@@ -254,7 +319,7 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
       className="space-y-5"
       onKeyDownCapture={handleSaveShortcut}
       onSubmit={(event) => {
-        if (!loaded || isPending || hasStaleDraftBase) {
+        if (!loaded || !canSubmit || isPending || hasStaleDraftBase) {
           event.preventDefault();
           return;
         }
@@ -285,16 +350,19 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
       }}
     >
       <input ref={contentHtmlInputRef} type="hidden" name="contentHtml" value={contentHtml} />
-      <input type="hidden" name="baseTitle" value={savedSnapshotRef.current.title} />
-      <input type="hidden" name="baseContentHtml" value={savedSnapshotRef.current.contentHtml} />
-      <input type="hidden" name="baseNoteDate" value={savedSnapshotRef.current.noteDate} />
+      <input
+        type="hidden"
+        name={DOCUMENT_SNAPSHOT_FINGERPRINT_FIELD}
+        value={baseFingerprint}
+      />
 
       {state.error ? (
         <p role="alert" className="rounded-lg border border-destructive/20 bg-destructive-muted p-3 text-sm text-destructive">
           {state.error}
         </p>
       ) : null}
-      {state.success ? (
+      {state.success &&
+      isServerSaveConfirmationVisible(saveConfirmation, state.note) ? (
         <p role="status" className="rounded-lg border border-success/20 bg-success-muted p-3 text-sm text-success">
           변경사항을 저장했습니다.
         </p>
@@ -303,8 +371,9 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
         <DraftConflictRecovery
           documentLabel="노트"
           onUseServer={() => {
+            hideSaveConfirmation();
             clear();
-            savedSnapshotRef.current = serverSnapshot;
+            adoptSavedSnapshot(serverSnapshot);
             draftBaseRef.current = serverSnapshot;
             setTitle(serverSnapshot.title);
             setNoteDate(serverSnapshot.noteDate);
@@ -312,7 +381,8 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
             setHasStaleDraftBase(false);
           }}
           onKeepDraft={() => {
-            savedSnapshotRef.current = serverSnapshot;
+            hideSaveConfirmation();
+            adoptSavedSnapshot(serverSnapshot);
             draftBaseRef.current = serverSnapshot;
             setHasStaleDraftBase(false);
           }}
@@ -325,7 +395,10 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
           <Input
             name="title"
             value={title}
-            onChange={(event) => setTitle(event.target.value)}
+            onChange={(event) => {
+              hideSaveConfirmation();
+              setTitle(event.target.value);
+            }}
             required
             disabled={!loaded || isPending}
           />
@@ -336,7 +409,10 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
             name="noteDate"
             type="date"
             value={noteDate}
-            onChange={(event) => setNoteDate(event.target.value)}
+            onChange={(event) => {
+              hideSaveConfirmation();
+              setNoteDate(event.target.value);
+            }}
             disabled={!loaded || isPending}
           />
         </label>
@@ -348,6 +424,7 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
           contentVersion={contentVersion}
           onChange={handleEditorChange}
           onDirty={(reader) => {
+            hideSaveConfirmation();
             handleEditorDirty(reader);
             save({
               title,
@@ -367,24 +444,26 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
           footer={
             <DraftStatus
               status={status}
+              canSubmit={canSubmit}
               savedAt={savedAt}
               restored={restored}
               recoveries={recoveries}
-              onRestoreRecovery={restoreRecovery}
+              onRestoreRecovery={(storageKey) => {
+                hideSaveConfirmation();
+                restoreRecovery(storageKey);
+              }}
               onDiscardRecovery={discardRecovery}
               disabled={isPending}
             />
           }
-          onSave={() => {
-            if (!isPending && !hasStaleDraftBase) formRef.current?.requestSubmit();
-          }}
+          saveShortcutLabel={canSubmit ? "변경 저장" : undefined}
         />
       ) : null}
 
       <div className="flex justify-end">
         <Button
           type="submit"
-          disabled={!loaded || isPending || hasStaleDraftBase || !title.trim() || isRichTextEmpty(contentHtml)}
+          disabled={!loaded || !canSubmit || isPending || hasStaleDraftBase || !title.trim() || isRichTextEmpty(contentHtml)}
           className="gap-2"
         >
           <Save className="h-4 w-4" aria-hidden="true" />

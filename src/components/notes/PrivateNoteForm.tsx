@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState, useEffect, useRef } from "react";
+import { useActionState, useCallback, useState, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
 import { createPrivateNote, type CreateNoteState } from "@/lib/actions/privateNotes";
 import { useFormDraft } from "@/lib/hooks/useFormDraft";
@@ -9,6 +9,16 @@ import { Input } from "@/components/ui/input";
 import { DraftStatus } from "@/components/editor/DraftStatus";
 import { createDocumentDraftKey } from "@/lib/form-draft";
 import { isRichTextEmpty } from "@/lib/rich-text";
+import {
+  isCreateNoteDraftEmpty,
+  resolveRestoredCreateNoteDate,
+} from "@/lib/note-draft";
+import {
+  acknowledgeServerSaveResponse,
+  createServerSaveConfirmationState,
+  dismissServerSaveConfirmation,
+  isServerSaveConfirmationVisible,
+} from "@/lib/server-save-confirmation";
 import { toKstDateInputValue } from "@/lib/date-input";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
 import { useDeferredEditorContent } from "@/lib/hooks/useDeferredEditorContent";
@@ -60,14 +70,22 @@ export function PrivateNoteForm({
   } = useDeferredEditorContent("");
   const [operationId, setOperationId] = useState("");
   const [editorKey, setEditorKey] = useState(0);
+  const defaultNoteDateRef = useRef(today);
   const formRef = useRef<HTMLFormElement>(null);
   const contentHtmlInputRef = useRef<HTMLInputElement>(null);
   const submittedDraftRef = useRef<CreateNoteDraft | null>(null);
   const handledNoteIdRef = useRef<string | null>(null);
+  const [saveConfirmation, setSaveConfirmation] = useState(
+    createServerSaveConfirmationState<string>(),
+  );
+  const hideSaveConfirmation = useCallback(() => {
+    setSaveConfirmation(dismissServerSaveConfirmation);
+  }, []);
 
   // 임시저장 복원/저장 (학생별 키)
   const {
     loaded,
+    canSubmit,
     save,
     clear,
     flush,
@@ -80,15 +98,23 @@ export function PrivateNoteForm({
   } = useFormDraft<CreateNoteDraft>(
     createDocumentDraftKey("note", actorId, `new:${studentId}`),
     (d) => {
+      hideSaveConfirmation();
       setOperationId(
         parseCreationOperationId(d.operationId) ?? createCreationOperationId(),
       );
       setTitle(d.title ?? "");
-      if (d.noteDate) setNoteDate(d.noteDate);
+      setNoteDate(
+        resolveRestoredCreateNoteDate(
+          d.noteDate,
+          defaultNoteDateRef.current,
+        ),
+      );
       setContentHtml(d.contentHtml ?? "");
     },
     {
       onReset: () => {
+        hideSaveConfirmation();
+        defaultNoteDateRef.current = today;
         setOperationId(createCreationOperationId());
         setTitle("");
         setNoteDate(today);
@@ -99,14 +125,17 @@ export function PrivateNoteForm({
   );
 
   const handleSaveShortcut = useDocumentSaveShortcut({
-    disabled: !loaded || pending || !operationId,
+    disabled: !loaded || !canSubmit || pending || !operationId,
     onSave: () => formRef.current?.requestSubmit(),
   });
 
   useEffect(() => {
     if (!loaded) return;
     const latestContentHtml = readLatestContentHtml();
-    const isEmpty = !title && isRichTextEmpty(latestContentHtml);
+    const isEmpty = isCreateNoteDraftEmpty(
+      { title, noteDate, contentHtml: latestContentHtml },
+      defaultNoteDateRef.current,
+    );
     if (isEmpty) {
       clear();
       return;
@@ -149,11 +178,15 @@ export function PrivateNoteForm({
         },
       });
       submittedDraftRef.current = null;
+      defaultNoteDateRef.current = today;
       setOperationId(createCreationOperationId());
       setTitle("");
       setNoteDate(today);
       setContentHtml("");
       setEditorKey((k) => k + 1);
+      setSaveConfirmation((current) =>
+        acknowledgeServerSaveResponse(current, state.note?.id),
+      );
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.note?.id]);
@@ -172,7 +205,7 @@ export function PrivateNoteForm({
       className="space-y-4"
       onKeyDownCapture={handleSaveShortcut}
       onSubmit={(event) => {
-        if (!loaded || pending || !operationId) {
+        if (!loaded || !canSubmit || pending || !operationId) {
           event.preventDefault();
           return;
         }
@@ -216,7 +249,8 @@ export function PrivateNoteForm({
           disabled={pending}
         />
       ) : null}
-      {state.success && (
+      {state.success &&
+      isServerSaveConfirmationVisible(saveConfirmation, state.note?.id) && (
         <p role="status" className="text-sm text-success">노트가 저장되었습니다.</p>
       )}
 
@@ -230,7 +264,10 @@ export function PrivateNoteForm({
             required
             placeholder="오늘의 수업 요약"
             value={title}
-            onChange={(e) => setTitle(e.target.value)}
+            onChange={(e) => {
+              hideSaveConfirmation();
+              setTitle(e.target.value);
+            }}
             disabled={!loaded || pending}
           />
         </div>
@@ -241,7 +278,10 @@ export function PrivateNoteForm({
             name="noteDate"
             type="date"
             value={noteDate}
-            onChange={(e) => setNoteDate(e.target.value)}
+            onChange={(e) => {
+              hideSaveConfirmation();
+              setNoteDate(e.target.value);
+            }}
             disabled={!loaded || pending}
           />
         </div>
@@ -257,6 +297,7 @@ export function PrivateNoteForm({
             contentVersion={contentVersion}
             onChange={handleEditorChange}
             onDirty={(reader) => {
+              hideSaveConfirmation();
               handleEditorDirty(reader);
               if (!operationId) return;
               save({
@@ -275,20 +316,24 @@ export function PrivateNoteForm({
             footer={
               <DraftStatus
                 status={status}
+                canSubmit={canSubmit}
                 savedAt={savedAt}
                 restored={restored}
                 recoveries={recoveries}
-                onRestoreRecovery={restoreRecovery}
+                onRestoreRecovery={(storageKey) => {
+                  hideSaveConfirmation();
+                  restoreRecovery(storageKey);
+                }}
                 onDiscardRecovery={discardRecovery}
                 disabled={pending}
               />
             }
-            onSave={() => formRef.current?.requestSubmit()}
+            saveShortcutLabel={canSubmit ? "노트 저장" : undefined}
           />
         )}
       </div>
 
-      <Button type="submit" disabled={!loaded || pending || !operationId || !title.trim() || isRichTextEmpty(contentHtml)} className="w-full">
+      <Button type="submit" disabled={!loaded || !canSubmit || pending || !operationId || !title.trim() || isRichTextEmpty(contentHtml)} className="w-full">
         {pending ? "작성 중..." : "노트 저장"}
       </Button>
     </form>

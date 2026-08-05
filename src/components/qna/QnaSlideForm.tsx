@@ -21,6 +21,7 @@ import { isRichTextEmpty } from "@/lib/rich-text";
 import { useRouter } from "next/navigation";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
 import { useDocumentSaveShortcut } from "@/lib/hooks/useDocumentSaveShortcut";
+import { persistLocalDraftOnShortcut } from "@/lib/local-draft-shortcut";
 import {
   CREATION_OPERATION_FIELD,
   createCreationOperationId,
@@ -89,6 +90,7 @@ export function QnaSlideForm({
   // 임시저장 복원/저장
   const {
     loaded,
+    canSubmit,
     save,
     clear,
     flush,
@@ -118,8 +120,22 @@ export function QnaSlideForm({
     },
   );
   const handleSaveShortcut = useDocumentSaveShortcut({
-    disabled: !loaded || isFormBusy || !operationId,
-    onSave: () => formRef.current?.requestSubmit(),
+    disabled: !loaded || !canSubmit || isFormBusy || !operationId,
+    onSave: () => persistLocalDraftOnShortcut({
+      createSnapshot: () => ({
+        operationId,
+        title,
+        contentHtml: readLatestContentHtml(),
+        attachmentUrl,
+      }),
+      isEmpty: (draft) =>
+        !draft.title &&
+        isRichTextEmpty(draft.contentHtml) &&
+        !draft.attachmentUrl,
+      clear,
+      save,
+      flush,
+    }),
   });
 
   useEffect(() => {
@@ -188,7 +204,7 @@ export function QnaSlideForm({
       className="space-y-4"
       onKeyDownCapture={handleSaveShortcut}
       onSubmit={(event) => {
-        if (!loaded || isFormBusy) {
+        if (!loaded || !canSubmit || isFormBusy) {
           event.preventDefault();
           return;
         }
@@ -275,6 +291,7 @@ export function QnaSlideForm({
             footer={
               <DraftStatus
                 status={status}
+                canSubmit={canSubmit}
                 savedAt={savedAt}
                 restored={restored}
                 recoveries={recoveries}
@@ -283,9 +300,7 @@ export function QnaSlideForm({
                 disabled={isFormBusy}
               />
             }
-            onSave={() => {
-              if (!isFormBusy) formRef.current?.requestSubmit();
-            }}
+            saveShortcutLabel={canSubmit ? "초안 저장" : undefined}
           />
         )}
       </div>
@@ -302,7 +317,7 @@ export function QnaSlideForm({
       </div>
 
       <div className="flex gap-3 pt-2">
-        <Button type="submit" disabled={!loaded || isFormBusy || !operationId || !title.trim() || isRichTextEmpty(contentHtml)} className="flex-1">
+        <Button type="submit" disabled={!loaded || !canSubmit || isFormBusy || !operationId || !title.trim() || isRichTextEmpty(contentHtml)} className="flex-1">
           {isUploading ? "업로드 완료 대기..." : isPending ? "전송 중..." : "질문 등록"}
         </Button>
         <Button type="button" variant="outline" onClick={onClose} disabled={isFormBusy}>

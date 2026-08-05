@@ -133,6 +133,12 @@ export type SlashCommandMatch = {
   query: string;
 };
 
+/**
+ * 슬래시 명령 검색어의 최대 길이.
+ * 직전 경계 문자와 `/`까지 최대 66자만 읽어 긴 단일 문단에서도 transaction 비용을 제한한다.
+ */
+export const EDITOR_SLASH_COMMAND_MAX_QUERY_LENGTH = 64;
+
 export function findSlashCommandMatch(editor: Editor): SlashCommandMatch | null {
   const { selection } = editor.state;
   if (!selection.empty) return null;
@@ -140,9 +146,19 @@ export function findSlashCommandMatch(editor: Editor): SlashCommandMatch | null 
   const { $from } = selection;
   if (!$from.parent.isTextblock || $from.parent.type.name === "codeBlock") return null;
 
-  const textBeforeCursor = $from.parent.textBetween(0, $from.parentOffset, undefined, "\ufffc");
+  const scanLength = EDITOR_SLASH_COMMAND_MAX_QUERY_LENGTH + 2;
+  const scanFrom = Math.max(0, $from.parentOffset - scanLength);
+  const textBeforeCursor = $from.parent.textBetween(
+    scanFrom,
+    $from.parentOffset,
+    undefined,
+    "\ufffc",
+  );
   const match = textBeforeCursor.match(/(?:^|\s)\/([^\s/]*)$/u);
   if (!match) return null;
+
+  const query = match[1] ?? "";
+  if (query.length > EDITOR_SLASH_COMMAND_MAX_QUERY_LENGTH) return null;
 
   const slashOffset = match[0].lastIndexOf("/");
   const from = selection.from - (match[0].length - slashOffset);
@@ -150,6 +166,6 @@ export function findSlashCommandMatch(editor: Editor): SlashCommandMatch | null 
   return {
     from,
     to: selection.from,
-    query: match[1] ?? "",
+    query,
   };
 }

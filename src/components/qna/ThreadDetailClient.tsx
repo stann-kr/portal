@@ -30,6 +30,7 @@ import { isRichTextEmpty } from "@/lib/rich-text";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
 import { useDocumentSaveShortcut } from "@/lib/hooks/useDocumentSaveShortcut";
+import { persistLocalDraftOnShortcut } from "@/lib/local-draft-shortcut";
 import {
   CREATION_OPERATION_FIELD,
   createCreationOperationId,
@@ -111,6 +112,7 @@ export function ThreadDetailClient({
   // 스레드별 임시저장 복원/저장
   const {
     loaded,
+    canSubmit,
     save,
     clear,
     flush,
@@ -141,10 +143,22 @@ export function ThreadDetailClient({
   const handleReplySaveShortcut = useDocumentSaveShortcut({
     disabled:
       !loaded ||
+      !canSubmit ||
       currentStatus === "CLOSED" ||
       isReplyFormBusy ||
       !operationId,
-    onSave: () => formRef.current?.requestSubmit(),
+    onSave: () => persistLocalDraftOnShortcut({
+      createSnapshot: () => ({
+        operationId,
+        contentHtml: readLatestContentHtml(),
+        attachmentUrl,
+      }),
+      isEmpty: (draft) =>
+        isRichTextEmpty(draft.contentHtml) && !draft.attachmentUrl,
+      clear,
+      save,
+      flush,
+    }),
   });
 
   useEffect(() => {
@@ -307,7 +321,7 @@ export function ThreadDetailClient({
           className="space-y-3"
           onKeyDownCapture={handleReplySaveShortcut}
           onSubmit={(event) => {
-            if (!loaded || currentStatus === "CLOSED" || isReplyFormBusy || !operationId) {
+            if (!loaded || !canSubmit || currentStatus === "CLOSED" || isReplyFormBusy || !operationId) {
               event.preventDefault();
               return;
             }
@@ -380,6 +394,7 @@ export function ThreadDetailClient({
               footer={
                 <DraftStatus
                   status={draftStatus}
+                  canSubmit={canSubmit}
                   savedAt={savedAt}
                   restored={restored}
                   recoveries={recoveries}
@@ -388,9 +403,9 @@ export function ThreadDetailClient({
                   disabled={isReplyFormBusy}
                 />
               }
-              onSave={() => {
-                if (!isReplyFormBusy) formRef.current?.requestSubmit();
-              }}
+              saveShortcutLabel={
+                canSubmit && currentStatus !== "CLOSED" ? "초안 저장" : undefined
+              }
             />
           )}
           <AttachmentField
@@ -400,7 +415,7 @@ export function ThreadDetailClient({
             onUploadingChange={setIsUploading}
           />
           {currentStatus !== "CLOSED" ? (
-            <Button type="submit" disabled={!loaded || isReplyFormBusy || !operationId || isRichTextEmpty(contentHtml)} className="gap-2">
+            <Button type="submit" disabled={!loaded || !canSubmit || isReplyFormBusy || !operationId || isRichTextEmpty(contentHtml)} className="gap-2">
               {isUploading
                 ? "업로드 완료 대기..."
                 : isReplying

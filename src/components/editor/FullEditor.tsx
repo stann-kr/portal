@@ -63,8 +63,8 @@ interface FullEditorProps {
   ariaLabel?: string;
   /** draft 저장 상태·단축키 안내 등을 표시하는 하단 슬롯 */
   footer?: ReactNode;
-  /** 상위 form이 Cmd/Ctrl+S 저장을 제공할 때 하단 안내를 표시 */
-  onSave?: () => void;
+  /** 상위 form이 제공하는 Cmd/Ctrl+S 동작의 정확한 사용자-facing 이름 */
+  saveShortcutLabel?: string;
 }
 
 // ── lowlight 인스턴스 ─────────────────────────────
@@ -151,7 +151,7 @@ export function FullEditor({
   disabled = false,
   ariaLabel = "문서 내용",
   footer,
-  onSave,
+  saveShortcutLabel,
 }: FullEditorProps) {
   const [isMarkdownMode, setIsMarkdownMode] = useState(false);
   const [markdownText, setMarkdownText] = useState("");
@@ -726,10 +726,17 @@ export function FullEditor({
       )}
       <div className="flex min-h-9 items-center justify-between gap-3 border-t border-border bg-muted/20 px-3 py-2">
         <div className="min-w-0">{footer}</div>
-        <span className="shrink-0 text-[11px] text-muted-foreground">
-          <kbd className="font-sans">/</kbd> 블록
-          {onSave ? <><span aria-hidden="true"> · </span><kbd className="font-sans">⌘/Ctrl S</kbd> 저장</> : null}
-        </span>
+        {!disabled ? (
+          <span className="shrink-0 text-[11px] text-muted-foreground">
+            <kbd className="font-sans">/</kbd> 블록
+            {saveShortcutLabel ? (
+              <>
+                <span aria-hidden="true"> · </span>
+                <kbd className="font-sans">⌘/Ctrl S</kbd> {saveShortcutLabel}
+              </>
+            ) : null}
+          </span>
+        ) : null}
       </div>
     </div>
   );

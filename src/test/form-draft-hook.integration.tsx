@@ -498,6 +498,8 @@ test("구버전 hook은 미래 version canonical을 보존하고 새 입력을 r
 
   assert.equal(storage.getItem(draftKey), futureRaw);
   assert.deepEqual(harness.restoredDrafts, []);
+  assert.equal(harness.getResult().status, "incompatible");
+  assert.equal(harness.getResult().canSubmit, false);
 
   await act(async () => {
     harness.getResult().save(currentDraft);
@@ -505,7 +507,8 @@ test("구버전 hook은 미래 version canonical을 보존하고 새 입력을 r
   });
 
   assert.equal(storage.getItem(draftKey), futureRaw);
-  assert.equal(harness.getResult().status, "conflict");
+  assert.equal(harness.getResult().status, "incompatible");
+  assert.equal(harness.getResult().canSubmit, false);
   assert.deepEqual(
     listRecoveryKeys(storage, draftKey).map((storageKey) => readDraft(storage, storageKey)),
     [currentDraft],
@@ -517,7 +520,7 @@ test("구버전 hook은 미래 version canonical을 보존하고 새 입력을 r
     harness.getResult().discardRecovery(currentRecoveryKey);
   });
   assert.equal(storage.getItem(draftKey), futureRaw);
-  assert.equal(harness.getResult().status, "conflict");
+  assert.equal(harness.getResult().status, "incompatible");
 
   const nextCurrentDraft = draft("구버전 client 다시 입력");
   await act(async () => {
@@ -525,10 +528,378 @@ test("구버전 hook은 미래 version canonical을 보존하고 새 입력을 r
     harness.getResult().flush();
   });
   assert.equal(storage.getItem(draftKey), futureRaw);
+  assert.equal(harness.getResult().status, "incompatible");
   assert.deepEqual(
     listRecoveryKeys(storage, draftKey).map((storageKey) => readDraft(storage, storageKey)),
     [nextCurrentDraft],
   );
+
+  await act(async () => {
+    harness.getResult().clear({ reason: "discard" });
+  });
+  assert.equal(storage.getItem(draftKey), futureRaw);
+  assert.equal(harness.getResult().status, "incompatible");
+  assert.equal(harness.getResult().canSubmit, false);
+});
+
+test("미래 version canonical 잠금은 recovery quota 오류 뒤에도 제출을 막는다", { concurrency: false }, async (context) => {
+  const draftKey = createDocumentDraftKey(
+    "note",
+    "student-1",
+    "note-future-quota-lock",
+  );
+  const futureRaw = JSON.stringify({
+    version: 2,
+    savedAt: Date.now(),
+    data: draft("미래 canonical"),
+  });
+  const harness = await createDraftHookHarness(context, draftKey, (storage) => {
+    storage.setItem(draftKey, futureRaw);
+  });
+  const storage = harness.browserWindow.localStorage;
+  const originalSetItem = storage.setItem.bind(storage);
+
+  Object.defineProperty(storage, "setItem", {
+    configurable: true,
+    value: () => {
+      const quotaError = new Error("localStorage quota exceeded");
+      quotaError.name = "QuotaExceededError";
+      throw quotaError;
+    },
+  });
+  try {
+    await act(async () => {
+      harness.getResult().save(draft("quota 중 구버전 입력"));
+      assert.equal(harness.getResult().flush(), false);
+    });
+  } finally {
+    Object.defineProperty(storage, "setItem", {
+      configurable: true,
+      value: originalSetItem,
+    });
+  }
+
+  assert.equal(storage.getItem(draftKey), futureRaw);
+  assert.equal(harness.getResult().status, "error");
+  assert.equal(harness.getResult().canSubmit, false);
+});
+
+test("미래 version canonical 잠금은 recovery 목록 refresh 오류 뒤에도 제출을 막는다", { concurrency: false }, async (context) => {
+  const draftKey = createDocumentDraftKey(
+    "note",
+    "student-1",
+    "note-future-refresh-lock",
+  );
+  const futureRaw = JSON.stringify({
+    version: 2,
+    savedAt: Date.now(),
+    data: draft("미래 canonical"),
+  });
+  const harness = await createDraftHookHarness(context, draftKey, (storage) => {
+    storage.setItem(draftKey, futureRaw);
+  });
+  const { browserWindow } = harness;
+  const storage = browserWindow.localStorage;
+  const originalKey = storage.key.bind(storage);
+
+  Object.defineProperty(storage, "key", {
+    configurable: true,
+    value: () => {
+      const storageError = new Error("localStorage key enumeration failed");
+      storageError.name = "SecurityError";
+      throw storageError;
+    },
+  });
+  try {
+    await act(async () => {
+      browserWindow.dispatchEvent(
+        new browserWindow.StorageEvent("storage", {
+          key: createFormDraftRecoveryKey(draftKey, "refresh-error"),
+          storageArea: storage,
+          url: browserWindow.location.href,
+        }),
+      );
+    });
+  } finally {
+    Object.defineProperty(storage, "key", {
+      configurable: true,
+      value: originalKey,
+    });
+  }
+
+  assert.equal(storage.getItem(draftKey), futureRaw);
+  assert.equal(harness.getResult().status, "error");
+  assert.equal(harness.getResult().canSubmit, false);
+});
+
+test("이미 확인한 미래 canonical은 같은 key remount의 storage read 오류에도 제출 잠금을 유지한다", { concurrency: false }, async (context) => {
+  const draftKey = createDocumentDraftKey(
+    "note",
+    "student-1",
+    "note-future-remount-read-error",
+  );
+  const futureRaw = JSON.stringify({
+    version: 2,
+    savedAt: Date.now(),
+    data: draft("remount 전에 확인한 미래 canonical"),
+  });
+  const harness = await createDraftHookHarness(context, draftKey, (storage) => {
+    storage.setItem(draftKey, futureRaw);
+  });
+  const storage = harness.browserWindow.localStorage;
+  const originalGetItem = storage.getItem.bind(storage);
+
+  assert.equal(harness.getResult().status, "incompatible");
+  assert.equal(harness.getResult().canSubmit, false);
+
+  Object.defineProperty(storage, "getItem", {
+    configurable: true,
+    value: () => {
+      const storageError = new Error("localStorage read blocked");
+      storageError.name = "SecurityError";
+      throw storageError;
+    },
+  });
+  try {
+    await harness.remount(draftKey);
+    assert.equal(harness.getResult().loaded, true);
+    assert.equal(harness.getResult().status, "error");
+    assert.equal(harness.getResult().canSubmit, false);
+  } finally {
+    Object.defineProperty(storage, "getItem", {
+      configurable: true,
+      value: originalGetItem,
+    });
+  }
+
+  assert.equal(originalGetItem(draftKey), futureRaw);
+});
+
+test("미래 canonical key의 잠금은 A-B-A 복귀 read 오류에서도 key별로 유지된다", { concurrency: false }, async (context) => {
+  const futureKey = createDocumentDraftKey(
+    "note",
+    "student-1",
+    "note-future-key-return",
+  );
+  const compatibleKey = createDocumentDraftKey(
+    "note",
+    "student-1",
+    "note-compatible-key-between",
+  );
+  const futureRaw = JSON.stringify({
+    version: 2,
+    savedAt: Date.now(),
+    data: draft("돌아올 미래 canonical"),
+  });
+  const harness = await createDraftHookHarness(context, futureKey, (storage) => {
+    storage.setItem(futureKey, futureRaw);
+  });
+  const storage = harness.browserWindow.localStorage;
+  const originalGetItem = storage.getItem.bind(storage);
+
+  assert.equal(harness.getResult().canSubmit, false);
+  await harness.render(compatibleKey);
+  assert.equal(harness.getResult().loaded, true);
+  assert.equal(harness.getResult().status, "idle");
+  assert.equal(harness.getResult().canSubmit, true);
+
+  Object.defineProperty(storage, "getItem", {
+    configurable: true,
+    value: () => {
+      const storageError = new Error("localStorage read blocked on key return");
+      storageError.name = "SecurityError";
+      throw storageError;
+    },
+  });
+  try {
+    await harness.render(futureKey);
+    assert.equal(harness.getResult().loaded, true);
+    assert.equal(harness.getResult().status, "error");
+    assert.equal(harness.getResult().canSubmit, false);
+  } finally {
+    Object.defineProperty(storage, "getItem", {
+      configurable: true,
+      value: originalGetItem,
+    });
+  }
+
+  assert.equal(originalGetItem(futureKey), futureRaw);
+});
+
+async function assertFutureCanonicalVisibleFallback(
+  context: TestContext,
+  options: {
+    contextId: string;
+    errorName: "QuotaExceededError" | "SecurityError";
+    expectedInitialWriteAttempts: number;
+  },
+): Promise<void> {
+  const draftKey = createDocumentDraftKey(
+    "note",
+    "student-1",
+    options.contextId,
+  );
+  const awayKey = createDocumentDraftKey(
+    "note",
+    "student-1",
+    `${options.contextId}-away`,
+  );
+  const visibleDraft = draft("현재 화면 초안");
+  const visibleRaw = serializeFormDraft(visibleDraft, Date.now() - 1_000);
+  const futureRaw = JSON.stringify({
+    version: 2,
+    savedAt: Date.now(),
+    data: draft("미래 탭 초안"),
+  });
+  const harness = await createDraftHookHarness(context, draftKey, (storage) => {
+    storage.setItem(draftKey, visibleRaw);
+  });
+  const { browserWindow } = harness;
+  const storage = browserWindow.localStorage;
+  const originalSetItem = storage.setItem.bind(storage);
+  let blockedWriteAttempts = 0;
+
+  Object.defineProperty(storage, "setItem", {
+    configurable: true,
+    value: () => {
+      blockedWriteAttempts += 1;
+      const storageError = new Error("localStorage write blocked");
+      storageError.name = options.errorName;
+      throw storageError;
+    },
+  });
+  try {
+    originalSetItem(draftKey, futureRaw);
+    await act(async () => {
+      browserWindow.dispatchEvent(
+        new browserWindow.StorageEvent("storage", {
+          key: draftKey,
+          oldValue: visibleRaw,
+          newValue: futureRaw,
+          storageArea: storage,
+          url: browserWindow.location.href,
+        }),
+      );
+    });
+    assert.equal(blockedWriteAttempts, options.expectedInitialWriteAttempts);
+    assert.equal(storage.getItem(draftKey), futureRaw);
+    assert.equal(harness.getResult().status, "error");
+    assert.equal(harness.getResult().canSubmit, false);
+
+    const blockedUnload = new browserWindow.Event("beforeunload", {
+      cancelable: true,
+    });
+    browserWindow.dispatchEvent(blockedUnload);
+    assert.equal(blockedUnload.defaultPrevented, true);
+
+    await harness.render(awayKey);
+    assert.equal(storage.getItem(draftKey), futureRaw);
+  } finally {
+    Object.defineProperty(storage, "setItem", {
+      configurable: true,
+      value: originalSetItem,
+    });
+  }
+
+  await harness.render(draftKey);
+  assert.equal(storage.getItem(draftKey), futureRaw);
+  assert.deepEqual(harness.restoredDrafts.at(-1), visibleDraft);
+  assert.equal(harness.restoredDrafts.length, 2);
+  assert.equal(harness.getResult().status, "incompatible");
+  assert.equal(harness.getResult().canSubmit, false);
+
+  await act(async () => {
+    assert.equal(harness.getResult().flush(), true);
+  });
+  assert.equal(storage.getItem(draftKey), futureRaw);
+  assert.equal(
+    listRecoveryKeys(storage, draftKey)
+      .map((storageKey) => readDraft(storage, storageKey))
+      .some((storedDraft) => storedDraft?.title === visibleDraft.title),
+    true,
+  );
+  assert.equal(harness.getResult().status, "incompatible");
+  assert.equal(harness.getResult().canSubmit, false);
+}
+
+test("future canonical event의 visible snapshot SecurityError는 이탈을 경고하고 SPA 재진입에서 복원한다", { concurrency: false }, async (context) => {
+  await assertFutureCanonicalVisibleFallback(context, {
+    contextId: "note-future-storage-security-error",
+    errorName: "SecurityError",
+    expectedInitialWriteAttempts: 1,
+  });
+});
+
+test("future canonical event의 visible snapshot quota 재시도 실패도 SPA 재진입에서 복원한다", { concurrency: false }, async (context) => {
+  await assertFutureCanonicalVisibleFallback(context, {
+    contextId: "note-future-storage-quota-error",
+    errorName: "QuotaExceededError",
+    expectedInitialWriteAttempts: 2,
+  });
+});
+
+test("storage event로 미래 version canonical이 들어온 동안만 제출을 막는다", { concurrency: false }, async (context) => {
+  const draftKey = createDocumentDraftKey(
+    "note",
+    "student-1",
+    "note-future-storage-event",
+  );
+  const visibleDraft = draft("현재 화면 초안");
+  const visibleRaw = serializeFormDraft(visibleDraft, Date.now() - 1_000);
+  const futureRaw = JSON.stringify({
+    version: 2,
+    savedAt: Date.now(),
+    data: draft("미래 탭 초안"),
+  });
+  const harness = await createDraftHookHarness(context, draftKey, (storage) => {
+    storage.setItem(draftKey, visibleRaw);
+  });
+  const { browserWindow } = harness;
+
+  assert.equal(harness.getResult().canSubmit, true);
+  await act(async () => {
+    browserWindow.localStorage.setItem(draftKey, futureRaw);
+    browserWindow.dispatchEvent(
+      new browserWindow.StorageEvent("storage", {
+        key: draftKey,
+        oldValue: visibleRaw,
+        newValue: futureRaw,
+        storageArea: browserWindow.localStorage,
+        url: browserWindow.location.href,
+      }),
+    );
+  });
+
+  assert.equal(browserWindow.localStorage.getItem(draftKey), futureRaw);
+  assert.equal(harness.getResult().status, "incompatible");
+  assert.equal(harness.getResult().canSubmit, false);
+  assert.equal(
+    harness.getResult().recoveries.some(
+      (recovery) => recovery.isCurrent && recovery.preview.title === visibleDraft.title,
+    ),
+    true,
+  );
+  const durableUnload = new browserWindow.Event("beforeunload", {
+    cancelable: true,
+  });
+  browserWindow.dispatchEvent(durableUnload);
+  assert.equal(durableUnload.defaultPrevented, false);
+
+  await act(async () => {
+    browserWindow.localStorage.removeItem(draftKey);
+    browserWindow.dispatchEvent(
+      new browserWindow.StorageEvent("storage", {
+        key: draftKey,
+        oldValue: futureRaw,
+        newValue: undefined,
+        storageArea: browserWindow.localStorage,
+        url: browserWindow.location.href,
+      }),
+    );
+  });
+
+  assert.equal(harness.getResult().status, "conflict");
+  assert.equal(harness.getResult().canSubmit, true);
 });
 
 test("제출 tombstone cutoff 이전 canonical은 mount에서 ghost로 복원하지 않는다", { concurrency: false }, async (context) => {
@@ -972,6 +1343,7 @@ test("storage read까지 차단돼도 새 hook 인스턴스가 orphan volatile d
   await harness.remount(draftKey);
   assert.deepEqual(harness.restoredDrafts.at(-1), pendingDraft);
   assert.equal(harness.getResult().status, "error");
+  assert.equal(harness.getResult().canSubmit, true);
 
   Object.defineProperties(storage, {
     getItem: { configurable: true, value: originalGetItem },
@@ -1246,7 +1618,8 @@ test("30일 넘게 메모리에 머문 orphan도 durable write 시점부터 보�
   const storedRecovery = parseFormDraft<DraftData>(recoveryRaw);
   assert.ok(storedRecovery?.retainedAt);
   assert.ok(storedRecovery.retainedAt.getTime() > storedRecovery.savedAt!.getTime());
-  assert.equal(harness.getResult().status, "conflict");
+  assert.equal(harness.getResult().status, "incompatible");
+  assert.equal(harness.getResult().canSubmit, false);
 });
 
 test("recovery restore는 displaced canonical과 선택 recovery를 모두 보존한다", { concurrency: false }, async (context) => {
@@ -1262,6 +1635,11 @@ test("recovery restore는 displaced canonical과 선택 recovery를 모두 보�
   });
 
   assert.equal(harness.getResult().recoveries[0]?.storageKey, selectedKey);
+  assert.deepEqual(harness.getResult().recoveries[0]?.preview, {
+    title: "선택 recovery",
+    body: "선택 recovery",
+  });
+  assert.equal(harness.getResult().recoveries[0]?.isCurrent, false);
   await act(async () => {
     harness.getResult().restoreRecovery(selectedKey);
   });
@@ -1305,8 +1683,16 @@ test("recovery restore는 미래 version canonical을 덮지 않고 선택본을
 
   const storage = harness.browserWindow.localStorage;
   assert.equal(storage.getItem(draftKey), futureRaw);
-  assert.equal(harness.getResult().status, "conflict");
+  assert.equal(harness.getResult().status, "incompatible");
+  assert.equal(harness.getResult().canSubmit, false);
   assert.deepEqual(harness.restoredDrafts, [selectedDraft]);
+  assert.equal(
+    harness.getResult().recoveries.some(
+      (recovery) =>
+        recovery.isCurrent && recovery.preview.title === selectedDraft.title,
+    ),
+    true,
+  );
   assert.equal(
     listRecoveryKeys(storage, draftKey)
       .map((storageKey) => readDraft(storage, storageKey))

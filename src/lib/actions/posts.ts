@@ -22,6 +22,11 @@ import {
   deriveCreationResourceId,
   resolveCreationOperationId,
 } from "@/lib/creation-operation";
+import {
+  createDocumentSnapshotFingerprint,
+  DOCUMENT_SNAPSHOT_FINGERPRINT_FIELD,
+  isDocumentSnapshotFingerprint,
+} from "@/lib/document-snapshot-fingerprint";
 
 const VALID_BOARD_TYPES: readonly BoardType[] = ["ANNOUNCEMENT", "GENERAL", "FEEDBACK"];
 
@@ -280,6 +285,11 @@ export async function updatePostContent(
   if (!existing) return { error: "게시물을 찾을 수 없습니다." };
   assertOwnerOrAdmin(session, existing.authorId);
 
+  const baseFingerprint = formData.get(DOCUMENT_SNAPSHOT_FINGERPRINT_FIELD);
+  if (!isDocumentSnapshotFingerprint(baseFingerprint)) {
+    return { error: "편집 기준 정보를 확인할 수 없습니다. 페이지를 새로고침해 주세요." };
+  }
+
   const title = String(formData.get("title") ?? "").trim();
   const rawHtml = String(formData.get("contentHtml") ?? "");
   if (!title || isRichTextEmpty(rawHtml)) return { error: "제목과 내용은 필수입니다." };
@@ -287,16 +297,23 @@ export async function updatePostContent(
   const contentHtml = sanitizeHtml(rawHtml);
   if (isRichTextEmpty(contentHtml)) return { error: "유효한 게시물 내용을 입력해 주세요." };
 
-  const baseTitle = formData.get("baseTitle");
-  const baseContentHtml = formData.get("baseContentHtml");
-  if (typeof baseTitle !== "string" || typeof baseContentHtml !== "string") {
-    return { error: "편집 기준 정보를 확인할 수 없습니다. 페이지를 새로고침해 주세요." };
-  }
-
   const alreadyCurrent =
     existing.title === title && existing.contentHtml === contentHtml;
 
   if (!alreadyCurrent) {
+    const observedFingerprint = createDocumentSnapshotFingerprint({
+      kind: "community-post",
+      id: existing.id,
+      title: existing.title,
+      contentHtml: existing.contentHtml,
+      noteDate: null,
+    });
+    if (baseFingerprint !== observedFingerprint) {
+      return {
+        error: "다른 화면에서 이 게시물이 먼저 변경되었습니다. 현재 내용은 임시 저장되어 있으며, 새로고침 후 서버 최신본과 초안 중 선택할 수 있습니다.",
+      };
+    }
+
     let updated: { id: string }[];
     try {
       updated = await db
@@ -304,8 +321,9 @@ export async function updatePostContent(
         .set({ title, contentHtml })
         .where(and(
           eq(posts.id, postId),
-          eq(posts.title, baseTitle),
-          eq(posts.contentHtml, baseContentHtml),
+          eq(posts.authorId, existing.authorId),
+          eq(posts.title, existing.title),
+          eq(posts.contentHtml, existing.contentHtml),
         ))
         .returning({ id: posts.id });
     } catch {

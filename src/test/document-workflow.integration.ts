@@ -19,6 +19,10 @@ import {
   CREATION_OPERATION_FIELD,
   deriveCreationResourceId,
 } from "@/lib/creation-operation";
+import {
+  createDocumentSnapshotFingerprint,
+  DOCUMENT_SNAPSHOT_FINGERPRINT_FIELD,
+} from "@/lib/document-snapshot-fingerprint";
 
 type PortalTestDb = IsolatedPortalD1["db"];
 type D1TestContext = { kind: "d1"; db: PortalTestDb };
@@ -148,6 +152,57 @@ function createPostForm(
   formData.set("category", "feedback");
   formData.set("mediaUrl", "https://cdn.example.com/mix.mp3");
   formData.set("returnTo", "community-editor");
+  return formData;
+}
+
+type NoteUpdateSnapshot = {
+  title: string;
+  contentHtml: string;
+  noteDate: string | null;
+};
+
+function createNoteUpdateForm(
+  noteId: string,
+  next: NoteUpdateSnapshot,
+  base: NoteUpdateSnapshot,
+): FormData {
+  const formData = new FormData();
+  formData.set("title", next.title);
+  formData.set("contentHtml", next.contentHtml);
+  formData.set("noteDate", next.noteDate ?? "");
+  formData.set(
+    DOCUMENT_SNAPSHOT_FINGERPRINT_FIELD,
+    createDocumentSnapshotFingerprint({
+      kind: "private-note",
+      id: noteId,
+      title: base.title,
+      contentHtml: base.contentHtml,
+      noteDate: base.noteDate,
+    }),
+  );
+  return formData;
+}
+
+type PostUpdateSnapshot = { title: string; contentHtml: string };
+
+function createPostUpdateForm(
+  postId: string,
+  next: PostUpdateSnapshot,
+  base: PostUpdateSnapshot,
+): FormData {
+  const formData = new FormData();
+  formData.set("title", next.title);
+  formData.set("contentHtml", next.contentHtml);
+  formData.set(
+    DOCUMENT_SNAPSHOT_FINGERPRINT_FIELD,
+    createDocumentSnapshotFingerprint({
+      kind: "community-post",
+      id: postId,
+      title: base.title,
+      contentHtml: base.contentHtml,
+      noteDate: null,
+    }),
+  );
   return formData;
 }
 
@@ -385,24 +440,29 @@ test("노트 CAS에서 늦은 저장이 먼저 저장된 내용을 덮어쓰지 
     contentHtml: "<p>기준 본문</p>",
   });
 
-  const createUpdateForm = (title: string, contentHtml: string) => {
-    const formData = createDocumentForm(title, contentHtml);
-    formData.set("noteDate", "");
-    formData.set("baseTitle", "기준 제목");
-    formData.set("baseContentHtml", "<p>기준 본문</p>");
-    formData.set("baseNoteDate", "");
-    return formData;
+  const base = {
+    title: "기준 제목",
+    contentHtml: "<p>기준 본문</p>",
+    noteDate: null,
   };
 
   const first = await privateNoteActions.updatePrivateNote(
     "note-1",
     {},
-    createUpdateForm("먼저 저장", "<p>첫 내용</p>"),
+    createNoteUpdateForm(
+      "note-1",
+      { title: "먼저 저장", contentHtml: "<p>첫 내용</p>", noteDate: null },
+      base,
+    ),
   );
   const late = await privateNoteActions.updatePrivateNote(
     "note-1",
     {},
-    createUpdateForm("늦은 저장", "<p>덮어쓰면 안 됨</p>"),
+    createNoteUpdateForm(
+      "note-1",
+      { title: "늦은 저장", contentHtml: "<p>덮어쓰면 안 됨</p>", noteDate: null },
+      base,
+    ),
   );
 
   assert.equal(first.success, true);
@@ -427,16 +487,19 @@ test("노트 편집 성공 응답이 유실돼도 같은 저장 재전송은 현
     noteDate: new Date("2026-08-01T00:00:00.000Z"),
     createdAt: originalCreatedAt,
   });
-  const retryForm = () => {
-    const formData = new FormData();
-    formData.set("title", "저장된 제목");
-    formData.set("contentHtml", "<p>저장된 본문</p>");
-    formData.set("noteDate", "2026-08-05");
-    formData.set("baseTitle", "저장 전 제목");
-    formData.set("baseContentHtml", "<p>저장 전 본문</p>");
-    formData.set("baseNoteDate", "2026-08-01");
-    return formData;
-  };
+  const retryForm = () => createNoteUpdateForm(
+    "note-update-retry",
+    {
+      title: "저장된 제목",
+      contentHtml: "<p>저장된 본문</p>",
+      noteDate: "2026-08-05",
+    },
+    {
+      title: "저장 전 제목",
+      contentHtml: "<p>저장 전 본문</p>",
+      noteDate: "2026-08-01",
+    },
+  );
 
   const first = await privateNoteActions.updatePrivateNote(
     "note-update-retry",
@@ -487,13 +550,11 @@ test("노트 CAS 직전 같은 내용이 반영돼도 후속 조회로 성공에
     )
     .run();
 
-  const formData = new FormData();
-  formData.set("title", "같은 저장");
-  formData.set("contentHtml", "<p>같은 본문</p>");
-  formData.set("noteDate", "");
-  formData.set("baseTitle", "경쟁 전 제목");
-  formData.set("baseContentHtml", "<p>경쟁 전 본문</p>");
-  formData.set("baseNoteDate", "");
+  const formData = createNoteUpdateForm(
+    "note-update-race-converged",
+    { title: "같은 저장", contentHtml: "<p>같은 본문</p>", noteDate: null },
+    { title: "경쟁 전 제목", contentHtml: "<p>경쟁 전 본문</p>", noteDate: null },
+  );
   const result = await privateNoteActions.updatePrivateNote(
     "note-update-race-converged",
     {},
@@ -520,19 +581,92 @@ test("다른 사용자는 노트가 이미 같은 payload여도 편집 성공을
     title: "현재 제목",
     contentHtml: "<p>현재 본문</p>",
   });
-  const formData = new FormData();
-  formData.set("title", "현재 제목");
-  formData.set("contentHtml", "<p>현재 본문</p>");
-  formData.set("noteDate", "");
-  formData.set("baseTitle", "이전 제목");
-  formData.set("baseContentHtml", "<p>이전 본문</p>");
-  formData.set("baseNoteDate", "");
+  const formData = createNoteUpdateForm(
+    "note-update-retry-owner-guard",
+    { title: "현재 제목", contentHtml: "<p>현재 본문</p>", noteDate: null },
+    { title: "이전 제목", contentHtml: "<p>이전 본문</p>", noteDate: null },
+  );
 
   await assert.rejects(
     privateNoteActions.updatePrivateNote(
       "note-update-retry-owner-guard",
       {},
       formData,
+    ),
+    /Unauthorized/u,
+  );
+});
+
+test("노트 편집은 존재하지 않는 date-only 일자를 보정하지 않고 거부한다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context);
+  await seedProfile(db, "student-1");
+  await db.insert(privateNotes).values({
+    id: "note-invalid-date",
+    studentId: "student-1",
+    authorId: "student-1",
+    title: "기준 제목",
+    contentHtml: "<p>기준 본문</p>",
+    noteDate: new Date("2026-02-28T00:00:00.000Z"),
+  });
+
+  const result = await privateNoteActions.updatePrivateNote(
+    "note-invalid-date",
+    {},
+    createNoteUpdateForm(
+      "note-invalid-date",
+      {
+        title: "바뀌면 안 됨",
+        contentHtml: "<p>바뀌면 안 됨</p>",
+        noteDate: "2026-02-30",
+      },
+      {
+        title: "기준 제목",
+        contentHtml: "<p>기준 본문</p>",
+        noteDate: "2026-02-28",
+      },
+    ),
+  );
+
+  assert.match(result.error ?? "", /올바른 날짜/u);
+  const [stored] = await db
+    .select({ title: privateNotes.title, noteDate: privateNotes.noteDate })
+    .from(privateNotes)
+    .where(eq(privateNotes.id, "note-invalid-date"));
+  assert.equal(stored?.title, "기준 제목");
+  assert.equal(stored?.noteDate?.toISOString(), "2026-02-28T00:00:00.000Z");
+});
+
+test("노트 CAS 0-row 후 소유자가 바뀌면 같은 결과여도 재인가에서 거부한다", { concurrency: false }, async (context) => {
+  const { binding, db } = await setupDatabase(context);
+  await seedProfile(db, "student-1");
+  await seedProfile(db, "student-2");
+  await db.insert(privateNotes).values({
+    id: "note-owner-race",
+    studentId: "student-1",
+    authorId: "student-1",
+    title: "경쟁 전 제목",
+    contentHtml: "<p>경쟁 전 본문</p>",
+  });
+  await binding
+    .prepare(
+      "CREATE TRIGGER integration_note_owner_race " +
+        "BEFORE UPDATE ON private_notes WHEN OLD.id = 'note-owner-race' " +
+        "BEGIN " +
+        "UPDATE private_notes SET student_id = 'student-2', author_id = 'student-2', " +
+        "title = '같은 저장', content_html = '<p>같은 본문</p>' WHERE id = OLD.id; " +
+        "SELECT RAISE(IGNORE); END",
+    )
+    .run();
+
+  await assert.rejects(
+    privateNoteActions.updatePrivateNote(
+      "note-owner-race",
+      {},
+      createNoteUpdateForm(
+        "note-owner-race",
+        { title: "같은 저장", contentHtml: "<p>같은 본문</p>", noteDate: null },
+        { title: "경쟁 전 제목", contentHtml: "<p>경쟁 전 본문</p>", noteDate: null },
+      ),
     ),
     /Unauthorized/u,
   );
@@ -550,22 +684,25 @@ test("게시물 CAS에서 늦은 저장이 먼저 저장된 내용을 덮어쓰�
     boardType: "GENERAL",
   });
 
-  const createUpdateForm = (title: string, contentHtml: string) => {
-    const formData = createDocumentForm(title, contentHtml);
-    formData.set("baseTitle", "기준 제목");
-    formData.set("baseContentHtml", "<p>기준 본문</p>");
-    return formData;
-  };
+  const base = { title: "기준 제목", contentHtml: "<p>기준 본문</p>" };
 
   const first = await postActions.updatePostContent(
     "post-1",
     {},
-    createUpdateForm("먼저 저장", "<p>첫 내용</p>"),
+    createPostUpdateForm(
+      "post-1",
+      { title: "먼저 저장", contentHtml: "<p>첫 내용</p>" },
+      base,
+    ),
   );
   const late = await postActions.updatePostContent(
     "post-1",
     {},
-    createUpdateForm("늦은 저장", "<p>덮어쓰면 안 됨</p>"),
+    createPostUpdateForm(
+      "post-1",
+      { title: "늦은 저장", contentHtml: "<p>덮어쓰면 안 됨</p>" },
+      base,
+    ),
   );
 
   assert.equal(first.success, true);
@@ -590,14 +727,11 @@ test("게시물 편집 성공 응답이 유실돼도 같은 저장 재전송은 
     boardType: "GENERAL",
     createdAt: originalCreatedAt,
   });
-  const retryForm = () => {
-    const formData = new FormData();
-    formData.set("title", "저장된 제목");
-    formData.set("contentHtml", "<p>저장된 본문</p>");
-    formData.set("baseTitle", "저장 전 제목");
-    formData.set("baseContentHtml", "<p>저장 전 본문</p>");
-    return formData;
-  };
+  const retryForm = () => createPostUpdateForm(
+    "post-update-retry",
+    { title: "저장된 제목", contentHtml: "<p>저장된 본문</p>" },
+    { title: "저장 전 제목", contentHtml: "<p>저장 전 본문</p>" },
+  );
 
   const first = await postActions.updatePostContent(
     "post-update-retry",
@@ -647,11 +781,11 @@ test("게시물 CAS 직전 같은 내용이 반영돼도 후속 조회로 성공
     )
     .run();
 
-  const formData = new FormData();
-  formData.set("title", "같은 저장");
-  formData.set("contentHtml", "<p>같은 본문</p>");
-  formData.set("baseTitle", "경쟁 전 제목");
-  formData.set("baseContentHtml", "<p>경쟁 전 본문</p>");
+  const formData = createPostUpdateForm(
+    "post-update-race-converged",
+    { title: "같은 저장", contentHtml: "<p>같은 본문</p>" },
+    { title: "경쟁 전 제목", contentHtml: "<p>경쟁 전 본문</p>" },
+  );
   const result = await postActions.updatePostContent(
     "post-update-race-converged",
     {},
@@ -679,11 +813,11 @@ test("다른 사용자는 게시물이 이미 같은 payload여도 편집 성공
     contentHtml: "<p>현재 본문</p>",
     boardType: "GENERAL",
   });
-  const formData = new FormData();
-  formData.set("title", "현재 제목");
-  formData.set("contentHtml", "<p>현재 본문</p>");
-  formData.set("baseTitle", "이전 제목");
-  formData.set("baseContentHtml", "<p>이전 본문</p>");
+  const formData = createPostUpdateForm(
+    "post-update-retry-owner-guard",
+    { title: "현재 제목", contentHtml: "<p>현재 본문</p>" },
+    { title: "이전 제목", contentHtml: "<p>이전 본문</p>" },
+  );
 
   await assert.rejects(
     postActions.updatePostContent(
@@ -693,6 +827,87 @@ test("다른 사용자는 게시물이 이미 같은 payload여도 편집 성공
     ),
     /Unauthorized/u,
   );
+});
+
+test("편집 액션은 legacy full-base 필드만 있는 요청과 malformed fingerprint를 exact-current보다 먼저 거부한다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context);
+  await seedProfile(db, "student-1");
+  await db.insert(privateNotes).values({
+    id: "note-legacy-base",
+    studentId: "student-1",
+    authorId: "student-1",
+    title: "현재 노트",
+    contentHtml: "<p>현재 노트 본문</p>",
+  });
+  await db.insert(posts).values({
+    id: "post-malformed-fingerprint",
+    authorId: "student-1",
+    category: "general",
+    title: "현재 게시물",
+    contentHtml: "<p>현재 게시물 본문</p>",
+    boardType: "GENERAL",
+  });
+
+  const legacyNoteForm = new FormData();
+  legacyNoteForm.set("title", "현재 노트");
+  legacyNoteForm.set("contentHtml", "<p>현재 노트 본문</p>");
+  legacyNoteForm.set("noteDate", "");
+  legacyNoteForm.set("baseTitle", "현재 노트");
+  legacyNoteForm.set("baseContentHtml", "<p>현재 노트 본문</p>");
+  legacyNoteForm.set("baseNoteDate", "");
+  const malformedPostForm = createPostUpdateForm(
+    "post-malformed-fingerprint",
+    { title: "현재 게시물", contentHtml: "<p>현재 게시물 본문</p>" },
+    { title: "현재 게시물", contentHtml: "<p>현재 게시물 본문</p>" },
+  );
+  malformedPostForm.set(DOCUMENT_SNAPSHOT_FINGERPRINT_FIELD, "sha256:INVALID");
+
+  const noteResult = await privateNoteActions.updatePrivateNote(
+    "note-legacy-base",
+    {},
+    legacyNoteForm,
+  );
+  const postResult = await postActions.updatePostContent(
+    "post-malformed-fingerprint",
+    {},
+    malformedPostForm,
+  );
+
+  assert.match(noteResult.error ?? "", /편집 기준 정보/u);
+  assert.match(postResult.error ?? "", /편집 기준 정보/u);
+  assert.equal(noteResult.success, undefined);
+  assert.equal(postResult.success, undefined);
+});
+
+test("다른 리소스의 올바른 fingerprint를 이식해도 게시물을 변경할 수 없다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context);
+  await seedProfile(db, "student-1");
+  await db.insert(posts).values({
+    id: "post-fingerprint-target",
+    authorId: "student-1",
+    category: "general",
+    title: "기준 제목",
+    contentHtml: "<p>기준 본문</p>",
+    boardType: "GENERAL",
+  });
+  const formData = createPostUpdateForm(
+    "post-fingerprint-source",
+    { title: "변조 제목", contentHtml: "<p>변조 본문</p>" },
+    { title: "기준 제목", contentHtml: "<p>기준 본문</p>" },
+  );
+
+  const result = await postActions.updatePostContent(
+    "post-fingerprint-target",
+    {},
+    formData,
+  );
+
+  assert.match(result.error ?? "", /먼저 변경/u);
+  const [stored] = await db
+    .select({ title: posts.title, contentHtml: posts.contentHtml })
+    .from(posts)
+    .where(eq(posts.id, "post-fingerprint-target"));
+  assert.deepEqual(stored, { title: "기준 제목", contentHtml: "<p>기준 본문</p>" });
 });
 
 test("같은 노트 생성 작업을 재전송해도 한 건만 만들고 같은 결과를 반환한다", { concurrency: false }, async (context) => {
@@ -727,6 +942,29 @@ test("같은 노트 생성 작업을 재전송해도 한 건만 만들고 같은
     .from(privateNotes)
     .where(eq(privateNotes.id, expectedId));
   assert.equal(notes.length, 1);
+});
+
+test("노트 생성도 존재하지 않는 date-only 일자를 보정하지 않고 거부한다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context);
+  await seedProfile(db, "student-1");
+
+  const result = await privateNoteActions.createPrivateNote(
+    "student-1",
+    {},
+    createNoteForm(
+      crypto.randomUUID(),
+      "잘못된 날짜",
+      "<p>저장되면 안 됨</p>",
+      "2026-02-30",
+    ),
+  );
+
+  assert.match(result.error ?? "", /올바른 날짜/u);
+  assert.equal(result.success, undefined);
+  const stored = await db
+    .select({ id: privateNotes.id })
+    .from(privateNotes);
+  assert.equal(stored.length, 0);
 });
 
 test("같은 노트 작업 ID의 다른 payload는 기존 노트를 보존하고 충돌로 반환한다", { concurrency: false }, async (context) => {

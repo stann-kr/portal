@@ -9,6 +9,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   compactFormDraftRecoveries,
   createFormDraftDataSignature,
+  createFormDraftRecoveryPreview,
   createImmutableFormDraftRecoveryKey,
   findFormDraftClearMarker,
   findFormDraftClearMarkerForSnapshot,
@@ -59,6 +60,12 @@ const volatileDraftFallbacks = new Map<
   string,
   Map<string, PendingDraft<unknown>>
 >();
+/**
+ * 이 page session에서 이미 확인한 미래 canonical을 key별로 기억한다.
+ * 같은 key의 effect 재설정이나 SPA 왕복 중 storage read가 일시 실패해도
+ * 확인했던 제출 잠금을 조용히 해제하지 않는다.
+ */
+const knownIncompatibleCanonicalRaws = new Map<string, string>();
 const activeVolatileDraftWriters = new Set<string>();
 let volatileBeforeUnloadGuardAttached = false;
 
@@ -304,6 +311,8 @@ interface UseFormDraftResult<T> {
   flush: () => boolean;
   /** 로컬 저장소 기록 상태 */
   status: FormDraftStatus;
+  /** 더 최신 앱이 만든 canonical draft와 충돌하지 않고 서버 저장할 수 있는지 여부 */
+  canSubmit: boolean;
   /** 마지막으로 저장된 시각 */
   savedAt: Date | null;
   /** 마운트 시 기존 draft를 복원했는지 여부 */
@@ -347,6 +356,8 @@ export function useFormDraft<T>(
   const [writerId] = useState(createWriterId);
   const [loadedKey, setLoadedKey] = useState<string | null>(null);
   const [status, setStatus] = useState<FormDraftStatus>("idle");
+  const [hasIncompatibleCanonical, setHasIncompatibleCanonical] =
+    useState(false);
   const [savedAt, setSavedAt] = useState<Date | null>(null);
   const [restored, setRestored] = useState(false);
   const [recoveries, setRecoveries] = useState<FormDraftRecoverySummary[]>([]);
@@ -358,11 +369,22 @@ export function useFormDraft<T>(
   const pendingRef = useRef<PendingDraft<T> | null>(null);
   const mountedRef = useRef(false);
   const lastKnownCanonicalRawRef = useRef<string | null>(null);
+  const incompatibleCanonicalRawRef = useRef<string | null>(null);
   const localSnapshotRawRef = useRef<string | null>(null);
   const lastDataSignatureRef = useRef<string | null>(null);
   const activeRecoveryKeyRef = useRef<string | null>(null);
   const protectedRecoveryKeysRef = useRef<Set<string>>(new Set());
   const broadcastChannelRef = useRef<BroadcastChannel | null>(null);
+
+  const updateIncompatibleCanonical = useCallback(
+    (raw: string | null) => {
+      if (raw === null) knownIncompatibleCanonicalRaws.delete(key);
+      else knownIncompatibleCanonicalRaws.set(key, raw);
+      incompatibleCanonicalRawRef.current = raw;
+      if (mountedRef.current) setHasIncompatibleCanonical(raw !== null);
+    },
+    [key],
+  );
 
   const notifyDraftChange = useCallback(
     (detail: Pick<FormDraftChangeDetail, "kind" | "signature" | "clearedAt">) => {
@@ -393,9 +415,11 @@ export function useFormDraft<T>(
     try {
       const nextRecoveries = pruneFormDraftRecoveries<T>(window.localStorage, key, {
         protectedKeys: protectedRecoveryKeysRef.current,
-      }).map(({ storageKey, savedAt: recoverySavedAt }) => ({
+      }).map(({ storageKey, savedAt: recoverySavedAt, data, signature }) => ({
         storageKey,
         savedAt: recoverySavedAt,
+        isCurrent: signature === lastDataSignatureRef.current,
+        preview: createFormDraftRecoveryPreview(data),
       }));
       if (mountedRef.current) setRecoveries(nextRecoveries);
       return nextRecoveries;
@@ -437,6 +461,7 @@ export function useFormDraft<T>(
     const current = currentRaw ? parseFormDraft<T>(currentRaw) : null;
 
     if (currentRaw && current) {
+      updateIncompatibleCanonical(null);
       lastKnownCanonicalRawRef.current = currentRaw;
       localSnapshotRawRef.current = currentRaw;
       lastDataSignatureRef.current = createFormDraftDataSignature(current.data);
@@ -449,6 +474,9 @@ export function useFormDraft<T>(
       return;
     }
 
+    const incompatibleRaw =
+      currentRaw && hasFutureFormDraftVersion(currentRaw) ? currentRaw : null;
+    updateIncompatibleCanonical(incompatibleRaw);
     lastKnownCanonicalRawRef.current = null;
     localSnapshotRawRef.current = null;
     lastDataSignatureRef.current = null;
@@ -457,14 +485,14 @@ export function useFormDraft<T>(
       setSavedAt(null);
       setRestored(false);
       setStatus(
-        currentRaw && hasFutureFormDraftVersion(currentRaw)
-          ? "conflict"
+        incompatibleRaw
+          ? "incompatible"
           : currentRaw
             ? "error"
             : "idle",
       );
     }
-  }, [key]);
+  }, [key, updateIncompatibleCanonical]);
 
   const promoteVolatileDrafts = useCallback(
     (candidates: readonly ClaimableVolatileDraft<T>[]) =>
@@ -624,12 +652,21 @@ export function useFormDraft<T>(
       }
       localSnapshotRawRef.current = result.raw;
       lastDataSignatureRef.current = pendingSignature;
-      if (result.status === "saved") lastKnownCanonicalRawRef.current = result.raw;
+      const incompatibleRaw =
+        result.currentRaw && hasFutureFormDraftVersion(result.currentRaw)
+          ? result.currentRaw
+          : null;
+      updateIncompatibleCanonical(incompatibleRaw);
+      if (result.status === "saved") {
+        lastKnownCanonicalRawRef.current = result.raw;
+      } else if (incompatibleRaw) {
+        lastKnownCanonicalRawRef.current = null;
+      }
 
       if (mountedRef.current) {
         setSavedAt(writtenAt);
         setRestored(false);
-        setStatus(result.status);
+        setStatus(incompatibleRaw ? "incompatible" : result.status);
       }
       refreshRecoveries();
       notifyDraftChange({ kind: result.status === "saved" ? "canonical" : "recovery" });
@@ -644,6 +681,7 @@ export function useFormDraft<T>(
     notifyDraftChange,
     promoteVolatileDrafts,
     refreshRecoveries,
+    updateIncompatibleCanonical,
     writerId,
   ]);
 
@@ -655,6 +693,9 @@ export function useFormDraft<T>(
     protectedRecoveryKeysRef.current = new Set();
     pendingRef.current = null;
     lastKnownCanonicalRawRef.current = null;
+    updateIncompatibleCanonical(
+      knownIncompatibleCanonicalRaws.get(key) ?? null,
+    );
     localSnapshotRawRef.current = null;
     lastDataSignatureRef.current = null;
     setStatus("idle");
@@ -663,6 +704,7 @@ export function useFormDraft<T>(
     setRecoveries([]);
 
     let storageReadable = true;
+    let mountedWithIncompatibleCanonical = false;
     let canonicalSavedAtMs: number | null = null;
     try {
       let raw: string | null = null;
@@ -691,6 +733,7 @@ export function useFormDraft<T>(
         unstableCanonical = false;
       }
       if (stored) {
+        updateIncompatibleCanonical(null);
         canonicalSavedAtMs = stored.savedAt?.getTime() ?? null;
         lastKnownCanonicalRawRef.current = raw;
         localSnapshotRawRef.current = raw;
@@ -700,9 +743,18 @@ export function useFormDraft<T>(
         setRestored(true);
         setStatus("saved");
       } else if (raw) {
-        if (!hasFutureFormDraftVersion(raw)) window.localStorage.removeItem(key);
+        mountedWithIncompatibleCanonical = hasFutureFormDraftVersion(raw);
+        if (mountedWithIncompatibleCanonical) {
+          updateIncompatibleCanonical(raw);
+          setStatus("incompatible");
+        } else {
+          updateIncompatibleCanonical(null);
+          window.localStorage.removeItem(key);
+        }
         onResetRef.current?.();
       } else {
+        // 반복 교체로 안정된 snapshot을 읽지 못했다면 기존 key 잠금을 유지한다.
+        if (!unstableCanonical) updateIncompatibleCanonical(null);
         onResetRef.current?.();
         if (unstableCanonical) setStatus("conflict");
       }
@@ -767,7 +819,7 @@ export function useFormDraft<T>(
         onRestoreRef.current(volatilePending.data);
         setSavedAt(new Date(volatilePending.queuedAt));
         setRestored(true);
-        setStatus("error");
+        setStatus(mountedWithIncompatibleCanonical ? "incompatible" : "error");
         timerRef.current = setTimeout(() => flush(), debounceMs);
       }
     }
@@ -790,6 +842,12 @@ export function useFormDraft<T>(
         writerId,
         preservedRaw,
       );
+      const volatileVisibleSnapshot: PendingDraft<T> = {
+        data: visible.data,
+        signature: lastDataSignatureRef.current,
+        queuedAt: preservedAt.getTime(),
+      };
+      rememberVolatileDraft(key, writerId, volatileVisibleSnapshot);
       protectedRecoveryKeysRef.current.add(nextRecoveryKey);
       try {
         window.localStorage.setItem(nextRecoveryKey, preservedRaw);
@@ -800,6 +858,7 @@ export function useFormDraft<T>(
         });
         window.localStorage.setItem(nextRecoveryKey, preservedRaw);
       }
+      forgetVolatileDraft(key, writerId, volatileVisibleSnapshot);
       const previousRecoveryKey = activeRecoveryKeyRef.current;
       activeRecoveryKeyRef.current = nextRecoveryKey;
       protectedRecoveryKeysRef.current = new Set([nextRecoveryKey]);
@@ -862,7 +921,9 @@ export function useFormDraft<T>(
     };
 
     const handleCanonicalChange = (nextRaw: string | null) => {
-      if (!hasFormDraftStorageConflict(lastKnownCanonicalRawRef.current, nextRaw)) return;
+      const observedCanonicalRaw =
+        incompatibleCanonicalRawRef.current ?? lastKnownCanonicalRawRef.current;
+      if (!hasFormDraftStorageConflict(observedCanonicalRaw, nextRaw)) return;
 
       let currentRaw = nextRaw;
       const resolvedCanonicalMarker = currentRaw
@@ -875,6 +936,7 @@ export function useFormDraft<T>(
         currentRaw = window.localStorage.getItem(key);
         if (handleSubmittedClear(resolvedCanonicalMarker)) return;
         if (!pendingRef.current && !localSnapshotRawRef.current && currentRaw === null) {
+          updateIncompatibleCanonical(null);
           lastKnownCanonicalRawRef.current = null;
           setStatus("idle");
           refreshRecoveries();
@@ -890,11 +952,41 @@ export function useFormDraft<T>(
         : null;
       if (submittedMarker && handleSubmittedClear(submittedMarker)) return;
 
+      if (currentRaw && hasFutureFormDraftVersion(currentRaw)) {
+        updateIncompatibleCanonical(currentRaw);
+        lastKnownCanonicalRawRef.current = null;
+        try {
+          if (pendingRef.current) {
+            if (!flush()) return;
+          } else {
+            preserveVisibleSnapshot();
+          }
+          setStatus("incompatible");
+          refreshRecoveries();
+        } catch {
+          setStatus("error");
+        }
+        return;
+      }
+
+      if (
+        incompatibleCanonicalRawRef.current &&
+        !pendingRef.current &&
+        !localSnapshotRawRef.current
+      ) {
+        updateIncompatibleCanonical(null);
+        adoptRemainingCanonical();
+        refreshRecoveries();
+        return;
+      }
+      updateIncompatibleCanonical(null);
+
       const nextStored = currentRaw ? parseFormDraft<T>(currentRaw) : null;
       if (
         nextStored &&
         lastDataSignatureRef.current === createFormDraftDataSignature(nextStored.data)
       ) {
+        updateIncompatibleCanonical(null);
         lastKnownCanonicalRawRef.current = currentRaw;
         localSnapshotRawRef.current = currentRaw;
         setSavedAt(nextStored.savedAt);
@@ -1021,6 +1113,7 @@ export function useFormDraft<T>(
     key,
     promoteVolatileDrafts,
     refreshRecoveries,
+    updateIncompatibleCanonical,
     writerId,
   ]);
 
@@ -1035,7 +1128,9 @@ export function useFormDraft<T>(
         };
         pendingRef.current = pending;
         rememberVolatileDraft(key, writerId, pending);
-        setStatus("saving");
+        setStatus(
+          incompatibleCanonicalRawRef.current ? "incompatible" : "saving",
+        );
         timerRef.current = setTimeout(() => {
           flush();
         }, debounceMs);
@@ -1161,6 +1256,9 @@ export function useFormDraft<T>(
       }
 
       const currentRaw = window.localStorage.getItem(key);
+      const incompatibleRaw =
+        currentRaw && hasFutureFormDraftVersion(currentRaw) ? currentRaw : null;
+      updateIncompatibleCanonical(incompatibleRaw);
       const conflict = submittedMarker
         ? currentRaw !== null
         : hasFormDraftStorageConflict(lastKnownCanonicalRawRef.current, currentRaw);
@@ -1178,7 +1276,9 @@ export function useFormDraft<T>(
         setSavedAt(null);
         setRestored(false);
       }
-      setStatus(conflict ? "conflict" : "idle");
+      setStatus(
+        incompatibleRaw ? "incompatible" : conflict ? "conflict" : "idle",
+      );
       refreshRecoveries();
       if (submittedMarker) {
         notifyDraftChange({
@@ -1195,7 +1295,14 @@ export function useFormDraft<T>(
       setStatus("error");
       refreshRecoveries();
     }
-  }, [flush, key, notifyDraftChange, refreshRecoveries, writerId]);
+  }, [
+    flush,
+    key,
+    notifyDraftChange,
+    refreshRecoveries,
+    updateIncompatibleCanonical,
+    writerId,
+  ]);
 
   const restoreRecovery = useCallback(
     (storageKey: string) => {
@@ -1400,18 +1507,34 @@ export function useFormDraft<T>(
         protectedRecoveryKeysRef.current = new Set([restoredRecoveryKey]);
         localSnapshotRawRef.current = restoredRaw;
         lastDataSignatureRef.current = selected.signature;
-        if (result.status === "saved") lastKnownCanonicalRawRef.current = restoredRaw;
+        const incompatibleRaw =
+          result.currentRaw && hasFutureFormDraftVersion(result.currentRaw)
+            ? result.currentRaw
+            : null;
+        updateIncompatibleCanonical(incompatibleRaw);
+        if (result.status === "saved") {
+          lastKnownCanonicalRawRef.current = restoredRaw;
+        } else if (incompatibleRaw) {
+          lastKnownCanonicalRawRef.current = null;
+        }
         onRestoreRef.current(selected.data);
         setSavedAt(restoredAt);
         setRestored(true);
-        setStatus(result.status);
+        setStatus(incompatibleRaw ? "incompatible" : result.status);
         refreshRecoveries();
         notifyDraftChange({ kind: result.status === "saved" ? "canonical" : "recovery" });
       } catch {
         setStatus("error");
       }
     },
-    [adoptRemainingCanonical, key, notifyDraftChange, refreshRecoveries, writerId],
+    [
+      adoptRemainingCanonical,
+      key,
+      notifyDraftChange,
+      refreshRecoveries,
+      updateIncompatibleCanonical,
+      writerId,
+    ],
   );
 
   const discardRecovery = useCallback(
@@ -1468,6 +1591,7 @@ export function useFormDraft<T>(
     clear,
     flush,
     status,
+    canSubmit: !hasIncompatibleCanonical,
     savedAt,
     restored,
     recoveries,

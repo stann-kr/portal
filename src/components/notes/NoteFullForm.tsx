@@ -17,6 +17,10 @@ import { DraftStatus } from "@/components/editor/DraftStatus";
 import { useFormDraft } from "@/lib/hooks/useFormDraft";
 import { createDocumentDraftKey } from "@/lib/form-draft";
 import { isRichTextEmpty } from "@/lib/rich-text";
+import {
+  isCreateNoteDraftEmpty,
+  resolveRestoredCreateNoteDate,
+} from "@/lib/note-draft";
 import { toKstDateInputValue } from "@/lib/date-input";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
 import { useDeferredEditorContent } from "@/lib/hooks/useDeferredEditorContent";
@@ -62,6 +66,7 @@ export function NoteFullForm({ action, actorId, studentId, returnTo }: NoteFullF
     commitLatestContentHtml,
   } = useDeferredEditorContent("");
   const [operationId, setOperationId] = useState("");
+  const defaultNoteDateRef = useRef(today);
   const [state, formAction, isPending] = useActionState<CreateNoteState, FormData>(
     action,
     {}
@@ -75,6 +80,7 @@ export function NoteFullForm({ action, actorId, studentId, returnTo }: NoteFullF
 
   const {
     loaded,
+    canSubmit,
     save,
     clear,
     flush,
@@ -91,11 +97,17 @@ export function NoteFullForm({ action, actorId, studentId, returnTo }: NoteFullF
         parseCreationOperationId(draft.operationId) ?? createCreationOperationId(),
       );
       setTitle(draft.title ?? "");
-      setNoteDate(draft.noteDate || today);
+      setNoteDate(
+        resolveRestoredCreateNoteDate(
+          draft.noteDate,
+          defaultNoteDateRef.current,
+        ),
+      );
       setContentHtml(draft.contentHtml ?? "");
     },
     {
       onReset: () => {
+        defaultNoteDateRef.current = today;
         setOperationId(createCreationOperationId());
         setTitle("");
         setNoteDate(today);
@@ -105,14 +117,19 @@ export function NoteFullForm({ action, actorId, studentId, returnTo }: NoteFullF
   );
 
   const handleSaveShortcut = useDocumentSaveShortcut({
-    disabled: !loaded || isPending || !operationId,
+    disabled: !loaded || !canSubmit || isPending || !operationId,
     onSave: () => formRef.current?.requestSubmit(),
   });
 
   useEffect(() => {
     if (!loaded) return;
     const latestContentHtml = readLatestContentHtml();
-    if (!title && isRichTextEmpty(latestContentHtml)) {
+    if (
+      isCreateNoteDraftEmpty(
+        { title, noteDate, contentHtml: latestContentHtml },
+        defaultNoteDateRef.current,
+      )
+    ) {
       clear();
       return;
     }
@@ -186,7 +203,7 @@ export function NoteFullForm({ action, actorId, studentId, returnTo }: NoteFullF
         className="space-y-5"
         onKeyDownCapture={handleSaveShortcut}
         onSubmit={(event) => {
-          if (!loaded || isPending || !operationId) {
+          if (!loaded || !canSubmit || isPending || !operationId) {
             event.preventDefault();
             return;
           }
@@ -303,6 +320,7 @@ export function NoteFullForm({ action, actorId, studentId, returnTo }: NoteFullF
               footer={
                 <DraftStatus
                   status={status}
+                  canSubmit={canSubmit}
                   savedAt={savedAt}
                   restored={restored}
                   recoveries={recoveries}
@@ -311,7 +329,7 @@ export function NoteFullForm({ action, actorId, studentId, returnTo }: NoteFullF
                   disabled={isPending}
                 />
               }
-              onSave={() => formRef.current?.requestSubmit()}
+              saveShortcutLabel={canSubmit ? "노트 저장" : undefined}
             />
           ) : null}
         </div>
@@ -320,7 +338,7 @@ export function NoteFullForm({ action, actorId, studentId, returnTo }: NoteFullF
         <div className="flex gap-3">
           <Button
             type="submit"
-            disabled={!loaded || isPending || !operationId || !title.trim() || isRichTextEmpty(contentHtml)}
+            disabled={!loaded || !canSubmit || isPending || !operationId || !title.trim() || isRichTextEmpty(contentHtml)}
             className="flex-1 gap-2"
           >
             <Save className="w-4 h-4" />

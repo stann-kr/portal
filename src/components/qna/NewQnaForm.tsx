@@ -16,6 +16,7 @@ import { useDeferredEditorContent } from "@/lib/hooks/useDeferredEditorContent";
 import { isRichTextEmpty } from "@/lib/rich-text";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
 import { useDocumentSaveShortcut } from "@/lib/hooks/useDocumentSaveShortcut";
+import { persistLocalDraftOnShortcut } from "@/lib/local-draft-shortcut";
 import {
   CREATION_OPERATION_FIELD,
   createCreationOperationId,
@@ -63,6 +64,7 @@ export function NewQnaForm({ actorId, returnTo }: { actorId: string; returnTo: s
 
   const {
     loaded,
+    canSubmit,
     save,
     clear,
     flush,
@@ -92,8 +94,22 @@ export function NewQnaForm({ actorId, returnTo }: { actorId: string; returnTo: s
     },
   );
   const handleSaveShortcut = useDocumentSaveShortcut({
-    disabled: !loaded || isFormBusy || !operationId,
-    onSave: () => formRef.current?.requestSubmit(),
+    disabled: !loaded || !canSubmit || isFormBusy || !operationId,
+    onSave: () => persistLocalDraftOnShortcut({
+      createSnapshot: () => ({
+        operationId,
+        title,
+        contentHtml: readLatestContentHtml(),
+        attachmentUrl,
+      }),
+      isEmpty: (draft) =>
+        !draft.title &&
+        isRichTextEmpty(draft.contentHtml) &&
+        !draft.attachmentUrl,
+      clear,
+      save,
+      flush,
+    }),
   });
 
   useEffect(() => {
@@ -163,7 +179,7 @@ export function NewQnaForm({ actorId, returnTo }: { actorId: string; returnTo: s
         className="space-y-5"
         onKeyDownCapture={handleSaveShortcut}
         onSubmit={(event) => {
-          if (!loaded || isFormBusy) {
+          if (!loaded || !canSubmit || isFormBusy) {
             event.preventDefault();
             return;
           }
@@ -249,6 +265,7 @@ export function NewQnaForm({ actorId, returnTo }: { actorId: string; returnTo: s
               footer={
                 <DraftStatus
                   status={status}
+                  canSubmit={canSubmit}
                   savedAt={savedAt}
                   restored={restored}
                   recoveries={recoveries}
@@ -257,9 +274,7 @@ export function NewQnaForm({ actorId, returnTo }: { actorId: string; returnTo: s
                   disabled={isFormBusy}
                 />
               }
-              onSave={() => {
-                if (!isFormBusy) formRef.current?.requestSubmit();
-              }}
+              saveShortcutLabel={canSubmit ? "초안 저장" : undefined}
             />
           ) : null}
         </div>
@@ -277,7 +292,7 @@ export function NewQnaForm({ actorId, returnTo }: { actorId: string; returnTo: s
         <div className="flex gap-3">
           <Button
             type="submit"
-            disabled={!loaded || isFormBusy || !operationId || !title.trim() || isRichTextEmpty(contentHtml)}
+            disabled={!loaded || !canSubmit || isFormBusy || !operationId || !title.trim() || isRichTextEmpty(contentHtml)}
             className="flex-1 gap-2"
           >
             <Send className="h-4 w-4" aria-hidden="true" />

@@ -17,6 +17,12 @@ import {
   deriveCreationResourceId,
   resolveCreationOperationId,
 } from "@/lib/creation-operation";
+import {
+  createDocumentSnapshotFingerprint,
+  DOCUMENT_SNAPSHOT_FINGERPRINT_FIELD,
+  isDocumentSnapshotFingerprint,
+  parseDocumentNoteDateInput,
+} from "@/lib/document-snapshot-fingerprint";
 
 /**
  * 특정 학생의 프라이빗 노트 목록 조회.
@@ -105,10 +111,11 @@ export async function createPrivateNote(targetStudentId: string, _prev: CreateNo
   const contentHtml = sanitizeHtml(rawHtml);
   if (isRichTextEmpty(contentHtml)) return { error: "유효한 노트 내용을 입력해 주세요." };
 
-  // 사용자 지정 날짜 파싱 (YYYY-MM-DD → Date, 없으면 null)
-  const noteDateStr = String(formData.get("noteDate") ?? "");
-  const noteDate = noteDateStr ? new Date(noteDateStr) : null;
-  if (noteDate && Number.isNaN(noteDate.getTime())) {
+  // 사용자 지정 날짜 파싱 (strict YYYY-MM-DD → UTC 자정 Date, 없으면 null)
+  let noteDate: Date | null;
+  try {
+    noteDate = parseDocumentNoteDateInput(formData.get("noteDate"));
+  } catch {
     return { error: "올바른 날짜를 입력해 주세요." };
   }
 
@@ -230,6 +237,11 @@ export async function updatePrivateNote(
   if (!existing) return { error: "노트를 찾을 수 없습니다." };
   assertOwnerOrAdmin(session, existing.authorId);
 
+  const baseFingerprint = formData.get(DOCUMENT_SNAPSHOT_FINGERPRINT_FIELD);
+  if (!isDocumentSnapshotFingerprint(baseFingerprint)) {
+    return { error: "편집 기준 정보를 확인할 수 없습니다. 페이지를 새로고침해 주세요." };
+  }
+
   const title = String(formData.get("title") ?? "").trim();
   const rawHtml = String(formData.get("contentHtml") ?? "");
   if (!title || isRichTextEmpty(rawHtml)) return { error: "제목과 내용은 필수입니다." };
@@ -237,23 +249,11 @@ export async function updatePrivateNote(
   const contentHtml = sanitizeHtml(rawHtml);
   if (isRichTextEmpty(contentHtml)) return { error: "유효한 노트 내용을 입력해 주세요." };
 
-  const noteDateValue = String(formData.get("noteDate") ?? "");
-  const noteDate = noteDateValue ? new Date(noteDateValue) : null;
-  if (noteDate && Number.isNaN(noteDate.getTime())) return { error: "올바른 날짜를 입력해 주세요." };
-
-  const baseTitle = formData.get("baseTitle");
-  const baseContentHtml = formData.get("baseContentHtml");
-  const baseNoteDateValue = formData.get("baseNoteDate");
-  if (
-    typeof baseTitle !== "string" ||
-    typeof baseContentHtml !== "string" ||
-    typeof baseNoteDateValue !== "string"
-  ) {
-    return { error: "편집 기준 정보를 확인할 수 없습니다. 페이지를 새로고침해 주세요." };
-  }
-  const baseNoteDate = baseNoteDateValue ? new Date(baseNoteDateValue) : null;
-  if (baseNoteDate && Number.isNaN(baseNoteDate.getTime())) {
-    return { error: "편집 기준 날짜를 확인할 수 없습니다. 페이지를 새로고침해 주세요." };
+  let noteDate: Date | null;
+  try {
+    noteDate = parseDocumentNoteDateInput(formData.get("noteDate"));
+  } catch {
+    return { error: "올바른 날짜를 입력해 주세요." };
   }
 
   const alreadyCurrent =
@@ -262,6 +262,19 @@ export async function updatePrivateNote(
     (existing.noteDate?.getTime() ?? null) === (noteDate?.getTime() ?? null);
 
   if (!alreadyCurrent) {
+    const observedFingerprint = createDocumentSnapshotFingerprint({
+      kind: "private-note",
+      id: existing.id,
+      title: existing.title,
+      contentHtml: existing.contentHtml,
+      noteDate: existing.noteDate,
+    });
+    if (baseFingerprint !== observedFingerprint) {
+      return {
+        error: "다른 화면에서 이 노트가 먼저 변경되었습니다. 현재 내용은 임시 저장되어 있으며, 새로고침 후 서버 최신본과 초안 중 선택할 수 있습니다.",
+      };
+    }
+
     let updated: { id: string }[];
     try {
       updated = await db
@@ -269,9 +282,13 @@ export async function updatePrivateNote(
         .set({ title, contentHtml, noteDate })
         .where(and(
           eq(privateNotes.id, noteId),
-          eq(privateNotes.title, baseTitle),
-          eq(privateNotes.contentHtml, baseContentHtml),
-          baseNoteDate ? eq(privateNotes.noteDate, baseNoteDate) : isNull(privateNotes.noteDate),
+          eq(privateNotes.studentId, existing.studentId),
+          eq(privateNotes.authorId, existing.authorId),
+          eq(privateNotes.title, existing.title),
+          eq(privateNotes.contentHtml, existing.contentHtml),
+          existing.noteDate
+            ? eq(privateNotes.noteDate, existing.noteDate)
+            : isNull(privateNotes.noteDate),
         ))
         .returning({ id: privateNotes.id });
     } catch {
@@ -279,6 +296,7 @@ export async function updatePrivateNote(
     }
     if (updated.length === 0) {
       let current: {
+        studentId: string;
         authorId: string;
         title: string;
         contentHtml: string;
@@ -287,6 +305,7 @@ export async function updatePrivateNote(
       try {
         [current] = await db
           .select({
+            studentId: privateNotes.studentId,
             authorId: privateNotes.authorId,
             title: privateNotes.title,
             contentHtml: privateNotes.contentHtml,

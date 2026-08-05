@@ -15,6 +15,10 @@ import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 import { DraftStatus } from "@/components/editor/DraftStatus";
 import { createDocumentDraftKey } from "@/lib/form-draft";
 import { isRichTextEmpty } from "@/lib/rich-text";
+import {
+  isCreateNoteDraftEmpty,
+  resolveRestoredCreateNoteDate,
+} from "@/lib/note-draft";
 import { toKstDateInputValue } from "@/lib/date-input";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
 import { useDeferredEditorContent } from "@/lib/hooks/useDeferredEditorContent";
@@ -72,6 +76,7 @@ export function NoteSlideForm({
     commitLatestContentHtml,
   } = useDeferredEditorContent("");
   const [operationId, setOperationId] = useState("");
+  const defaultNoteDateRef = useRef(defaultDate ?? today);
   const [state, formAction, isPending] = useActionState<CreateNoteState, FormData>(boundAction, {});
   const formRef = useRef<HTMLFormElement>(null);
   const contentHtmlInputRef = useRef<HTMLInputElement>(null);
@@ -88,6 +93,7 @@ export function NoteSlideForm({
   // 임시저장 복원/저장 (학생별 키)
   const {
     loaded,
+    canSubmit,
     save,
     clear,
     flush,
@@ -104,11 +110,17 @@ export function NoteSlideForm({
         parseCreationOperationId(d.operationId) ?? createCreationOperationId(),
       );
       setTitle(d.title ?? "");
-      if (d.noteDate) setNoteDate(d.noteDate);
+      setNoteDate(
+        resolveRestoredCreateNoteDate(
+          d.noteDate,
+          defaultNoteDateRef.current,
+        ),
+      );
       setContentHtml(d.contentHtml ?? "");
     },
     {
       onReset: () => {
+        defaultNoteDateRef.current = defaultDate ?? today;
         setOperationId(createCreationOperationId());
         setTitle("");
         setNoteDate(defaultDate ?? today);
@@ -118,14 +130,17 @@ export function NoteSlideForm({
   );
 
   const handleSaveShortcut = useDocumentSaveShortcut({
-    disabled: !loaded || isPending || !operationId,
+    disabled: !loaded || !canSubmit || isPending || !operationId,
     onSave: () => formRef.current?.requestSubmit(),
   });
 
   useEffect(() => {
     if (!loaded) return;
     const latestContentHtml = readLatestContentHtml();
-    const isEmpty = !title && isRichTextEmpty(latestContentHtml);
+    const isEmpty = isCreateNoteDraftEmpty(
+      { title, noteDate, contentHtml: latestContentHtml },
+      defaultNoteDateRef.current,
+    );
     if (isEmpty) {
       clear();
       return;
@@ -195,7 +210,7 @@ export function NoteSlideForm({
       className="space-y-4"
       onKeyDownCapture={handleSaveShortcut}
       onSubmit={(event) => {
-        if (!loaded || isPending || !operationId) {
+        if (!loaded || !canSubmit || isPending || !operationId) {
           event.preventDefault();
           return;
         }
@@ -300,6 +315,7 @@ export function NoteSlideForm({
             footer={
               <DraftStatus
                 status={status}
+                canSubmit={canSubmit}
                 savedAt={savedAt}
                 restored={restored}
                 recoveries={recoveries}
@@ -308,13 +324,13 @@ export function NoteSlideForm({
                 disabled={isPending}
               />
             }
-            onSave={() => formRef.current?.requestSubmit()}
+            saveShortcutLabel={canSubmit ? "노트 저장" : undefined}
           />
         )}
       </div>
 
       <div className="flex gap-3 pt-2">
-        <Button type="submit" disabled={!loaded || isPending || !operationId || !title.trim() || isRichTextEmpty(contentHtml)} className="flex-1">
+        <Button type="submit" disabled={!loaded || !canSubmit || isPending || !operationId || !title.trim() || isRichTextEmpty(contentHtml)} className="flex-1">
           {isPending ? "저장 중..." : "노트 저장"}
         </Button>
         <Button type="button" variant="outline" onClick={onClose} disabled={isPending}>

@@ -16,6 +16,8 @@ import { useFormDraft } from "@/lib/hooks/useFormDraft";
 import { useDeferredEditorContent } from "@/lib/hooks/useDeferredEditorContent";
 import { useDocumentSaveShortcut } from "@/lib/hooks/useDocumentSaveShortcut";
 import { isRichTextEmpty } from "@/lib/rich-text";
+import { isCreatePostDraftEmpty } from "@/lib/post-draft";
+import { persistLocalDraftOnShortcut } from "@/lib/local-draft-shortcut";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
 import {
   CREATION_OPERATION_FIELD,
@@ -91,6 +93,7 @@ export function NewPostForm({
 
   const {
     loaded,
+    canSubmit,
     save,
     clear,
     flush,
@@ -125,14 +128,32 @@ export function NewPostForm({
       },
     },
   );
-  const isSubmitBlocked = !loaded || isFormBusy || !operationId;
+  const isSubmitBlocked = !loaded || !canSubmit || isFormBusy || !operationId;
   const isSubmitDisabled =
     isSubmitBlocked ||
     !title.trim() ||
     isRichTextEmpty(contentHtml);
   const handleSaveShortcut = useDocumentSaveShortcut({
     disabled: isSubmitBlocked,
-    onSave: () => formRef.current?.requestSubmit(),
+    onSave: () => persistLocalDraftOnShortcut({
+      createSnapshot: () => ({
+        operationId,
+        boardType,
+        category,
+        isPinned,
+        title,
+        contentHtml: readLatestContentHtml(),
+        mediaUrl,
+      }),
+      isEmpty: (draft) =>
+        isCreatePostDraftEmpty(draft, {
+          boardType: defaultBoardType,
+          category: defaultCategory,
+        }),
+      clear,
+      save,
+      flush,
+    }),
   });
 
   useEffect(() => {
@@ -142,7 +163,12 @@ export function NewPostForm({
   useEffect(() => {
     if (!loaded) return;
     const latestContentHtml = readLatestContentHtml();
-    if (!title && isRichTextEmpty(latestContentHtml) && !mediaUrl) {
+    if (
+      isCreatePostDraftEmpty(
+        { boardType, category, isPinned, title, contentHtml: latestContentHtml, mediaUrl },
+        { boardType: defaultBoardType, category: defaultCategory },
+      )
+    ) {
       clear();
       return;
     }
@@ -158,7 +184,7 @@ export function NewPostForm({
         return readLatestContentHtml();
       },
     });
-  }, [boardType, category, clear, contentHtml, isPinned, loaded, mediaUrl, operationId, readLatestContentHtml, save, title]);
+  }, [boardType, category, clear, contentHtml, defaultBoardType, defaultCategory, isPinned, loaded, mediaUrl, operationId, readLatestContentHtml, save, title]);
 
   useEffect(() => {
     if (!state.postId || handledPostIdRef.current === state.postId) return;
@@ -213,7 +239,7 @@ export function NewPostForm({
         className="space-y-5"
         onKeyDownCapture={handleSaveShortcut}
         onSubmit={(event) => {
-          if (!loaded || isFormBusy) {
+          if (!loaded || !canSubmit || isFormBusy) {
             event.preventDefault();
             return;
           }
@@ -409,6 +435,7 @@ export function NewPostForm({
               footer={
                 <DraftStatus
                   status={status}
+                  canSubmit={canSubmit}
                   savedAt={savedAt}
                   restored={restored}
                   recoveries={recoveries}
@@ -417,9 +444,7 @@ export function NewPostForm({
                   disabled={isFormBusy}
                 />
               }
-              onSave={() => {
-                if (!isFormBusy) formRef.current?.requestSubmit();
-              }}
+              saveShortcutLabel={canSubmit ? "초안 저장" : undefined}
             />
           ) : null}
         </div>
