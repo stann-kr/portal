@@ -88,6 +88,8 @@ pill 형태는 filter와 count처럼 모양 자체가 의미를 가질 때만 �
 | `BlockCommandMenu` | `/` 검색과 keyboard로 실행하는 block 삽입 목록 |
 | `EditorInsertPanel` | 링크·이미지·YouTube URL을 검증하고 selection에 삽입하는 panel |
 | `DraftStatus` | 로컬 초안 저장·복원·충돌·오류 상태, 마지막 저장 시각과 복구본 선택 |
+| `LocalDraftManager` | 현재 계정의 기기 초안 목록, 안전한 미리보기와 문서별·전체 2단계 폐기 |
+| `AccountLogoutButton` | 로컬 초안을 먼저 정리하고 인증 세션을 종료하는 공통 로그아웃 control |
 | `CreationConflictActions` | 같은 생성 초안의 payload 충돌에서 기존 문서 열기와 별도 문서 분리 선택 |
 | `RichTextContent` | 저장된 rich text의 공통 typography·embed 렌더 경계 |
 
@@ -99,6 +101,8 @@ pill 형태는 filter와 count처럼 모양 자체가 의미를 가질 때만 �
 - 제목·본문·첨부 등 문서를 구성하는 값은 하나의 draft payload로 저장하고 작성자·문서 ID로 격리한다.
 - 각 작성 흐름은 canonical보다 먼저 raw 내용에 결합된 불변 shadow를 기록하고, 다음 안전본이 기록된 뒤 이전 자기 shadow를 정리한다. 다른 흐름과 충돌하면 현재 입력, 선택 복구본과 밀려난 canonical을 각각 보존한다.
 - draft 저장 상태와 복원 여부를 에디터 아래에 보인다. 충돌 복구본은 전체 저장 시각, 길이가 제한된 제목·본문 미리보기, 현재 화면본 여부로 식별하고 사용자가 복원하거나 2단계 확인 뒤 삭제할 수 있게 한다. 저장소 오류가 나면 제출 잠금 여부와 모순되지 않는 복구 행동을 안내한다.
+- portal side rail에서 현재 계정의 기기 초안을 문서별로 확인하고 하나씩 또는 전체를 2단계 확인 뒤 폐기할 수 있게 한다. 이 목록은 제출 tombstone이 숨긴 ghost를 다시 노출하지 않으며, 미래·손상 표현은 내용을 잘못 해석하지 않고 폐기 가능 상태로만 표시한다.
+- 로그아웃은 해당 계정의 로컬 canonical·recovery·future·legacy·marker와 메모리 pending을 먼저 지운 뒤 세션을 종료한다. 계정 전환 뒤 dashboard 진입에서는 현재 계정과 다른 owner namespace를 다시 정리한다.
 - 제출 완료 tombstone은 문서·내용 서명별 entry를 복구본과 같은 30일 동안 개수 제한 없이 보존한다. 지연된 탭이 여러 번의 연속 제출 전 초안을 되살리지 않게 하되, 각 제출 뒤 새로 작성한 같은 내용은 지우지 않는다.
 - 생성 form은 작업 nonce를 draft payload와 함께 저장하고 submit 직전에 같은 snapshot을 flush한다. 동일 작업의 다른 payload가 먼저 처리된 경우 현재 초안을 지우지 않고 기존 문서 열기 또는 별도 문서 분리를 명시적으로 선택하게 한다.
 - 저장공간 오류가 재시도 뒤에도 계속되면 작성 흐름별 메모리 안전본을 유지하고 페이지 이탈 전에 경고한다. 저장소가 회복되면 더 최신인 안전본만 이어 쓰고 나머지는 복구 목록으로 옮긴다. 현재 입력이 없어도 page hide·flush에서 남은 안전본의 영속화를 다시 시도하며, 제출 완료 신호와 page-session cutoff는 열린 탭·재진입에 함께 적용한다. durable tombstone과 cutoff 정리가 확인되기 전에는 이탈 경고를 유지한다.

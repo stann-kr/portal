@@ -17,6 +17,7 @@ import {
   isImmutableFormDraftRecoveryKey,
   isFormDraftClearMarkerKey,
   isFormDraftRecoveryKey,
+  parseDocumentDraftKey,
   parseFormDraftClearMarker,
   parseFormDraft,
   applyFormDraftSnapshotClearPlan,
@@ -51,9 +52,23 @@ type FormDraftIdleDeadline = {
 type FormDraftChangeDetail = {
   sourceKey: string;
   writerId: string;
-  kind: "canonical" | "recovery" | "submitted-clear";
+  kind:
+    | "canonical"
+    | "recovery"
+    | "submitted-clear"
+    | "continuity-clear";
   signature?: string;
   clearedAt?: number;
+  clearMode?: "owner" | "except-owner" | "source";
+  ownerId?: string;
+  lock?: boolean;
+};
+
+export type FormDraftContinuityClearInput = {
+  mode: "owner" | "except-owner" | "source";
+  ownerId: string;
+  sourceKey?: string;
+  lock: boolean;
 };
 
 type PendingDraft<T> = {
@@ -104,6 +119,89 @@ const pendingFormDraftArtifactSweepJobs = new WeakMap<
   { cancel: () => void }
 >();
 let volatileBeforeUnloadGuardAttached = false;
+
+function shouldClearFormDraftSource(
+  sourceKey: string,
+  input: Pick<FormDraftContinuityClearInput, "mode" | "ownerId" | "sourceKey">,
+): boolean {
+  const identity = parseDocumentDraftKey(sourceKey);
+  if (!identity) return false;
+  if (input.mode === "source") {
+    return identity.ownerId === input.ownerId && sourceKey === input.sourceKey;
+  }
+  return input.mode === "owner"
+    ? identity.ownerId === input.ownerId
+    : identity.ownerId !== input.ownerId;
+}
+
+function clearVolatileFormDraftContinuity(
+  input: Pick<FormDraftContinuityClearInput, "mode" | "ownerId" | "sourceKey">,
+): void {
+  const clearMapKeys = <V>(map: Map<string, V>) => {
+    for (const sourceKey of [...map.keys()]) {
+      if (shouldClearFormDraftSource(sourceKey, input)) map.delete(sourceKey);
+    }
+  };
+
+  clearMapKeys(volatileDraftFallbacks);
+  clearMapKeys(volatileSubmittedClearMarkers);
+  clearMapKeys(knownIncompatibleCanonicalRaws);
+  for (const writerKey of [...activeVolatileDraftWriters]) {
+    const separatorIndex = writerKey.indexOf("\u0000");
+    const sourceKey = separatorIndex === -1
+      ? writerKey
+      : writerKey.slice(0, separatorIndex);
+    if (shouldClearFormDraftSource(sourceKey, input)) {
+      activeVolatileDraftWriters.delete(writerKey);
+    }
+  }
+  syncVolatileBeforeUnloadGuard();
+}
+
+/**
+ * 로그아웃·계정 전환·명시 폐기를 현재 window와 열린 peer에 먼저 알린다.
+ * 호출자는 이 알림 직후 같은 범위의 durable localStorage artifact를 제거한다.
+ */
+export function broadcastFormDraftContinuityClear(
+  input: FormDraftContinuityClearInput,
+): void {
+  if (
+    input.mode === "source" &&
+    (!input.sourceKey || !shouldClearFormDraftSource(input.sourceKey, input))
+  ) {
+    throw new Error("Form draft source does not belong to the requested owner");
+  }
+
+  clearVolatileFormDraftContinuity(input);
+  if (typeof window === "undefined") return;
+  const detail: FormDraftChangeDetail = {
+    sourceKey: input.sourceKey ?? "",
+    writerId: "account-boundary",
+    kind: "continuity-clear",
+    clearMode: input.mode,
+    ownerId: input.ownerId,
+    lock: input.lock,
+  };
+
+  try {
+    window.dispatchEvent(
+      new CustomEvent<FormDraftChangeDetail>(FORM_DRAFT_CHANGE_EVENT, {
+        detail,
+      }),
+    );
+  } catch {
+    // 현재 window 알림 실패와 무관하게 durable 정리는 호출자가 계속한다.
+  }
+
+  if (typeof window.BroadcastChannel !== "function") return;
+  try {
+    const channel = new window.BroadcastChannel(FORM_DRAFT_BROADCAST_CHANNEL);
+    channel.postMessage(detail);
+    channel.close();
+  } catch {
+    // opaque origin 등 BroadcastChannel 비지원 환경은 storage 정리로 수렴한다.
+  }
+}
 
 function registerActiveFormDraftSource(
   storage: FormDraftStorage,
@@ -870,6 +968,7 @@ export function useFormDraft<T>(
   const [status, setStatus] = useState<FormDraftStatus>("idle");
   const [hasIncompatibleCanonical, setHasIncompatibleCanonical] =
     useState(false);
+  const [accountCleared, setAccountCleared] = useState(false);
   const [savedAt, setSavedAt] = useState<Date | null>(null);
   const [restored, setRestored] = useState(false);
   const [recoveries, setRecoveries] = useState<FormDraftRecoverySummary[]>([]);
@@ -881,6 +980,7 @@ export function useFormDraft<T>(
   const maxWaitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingRef = useRef<PendingDraft<T> | null>(null);
   const mountedRef = useRef(false);
+  const accountClearedRef = useRef(false);
   const lastKnownCanonicalRawRef = useRef<string | null>(null);
   const incompatibleCanonicalRawRef = useRef<string | null>(null);
   const localSnapshotRawRef = useRef<string | null>(null);
@@ -1085,6 +1185,7 @@ export function useFormDraft<T>(
 
   const flush = useCallback(() => {
     clearFlushTimers();
+    if (accountClearedRef.current) return true;
     const storage = readBrowserLocalStorage();
     if (!storage) {
       if (mountedRef.current) setStatus("error");
@@ -1315,6 +1416,8 @@ export function useFormDraft<T>(
     activeRecoveryKeyRef.current = null;
     protectedRecoveryKeysRef.current = new Set();
     pendingRef.current = null;
+    accountClearedRef.current = false;
+    setAccountCleared(false);
     lastKnownCanonicalRawRef.current = null;
     updateIncompatibleCanonical(
       knownIncompatibleCanonicalRaws.get(key) ?? null,
@@ -1687,6 +1790,7 @@ export function useFormDraft<T>(
       if (document.visibilityState === "hidden") handleExitBoundary();
     };
     const handleStorage = (event: StorageEvent) => {
+      if (accountClearedRef.current) return;
       try {
         if (event.storageArea !== window.localStorage) return;
         if (event.key === key) {
@@ -1703,8 +1807,48 @@ export function useFormDraft<T>(
         setStatus("error");
       }
     };
+    const handleContinuityClear = (
+      detail: FormDraftChangeDetail,
+    ): boolean => {
+      if (
+        detail.kind !== "continuity-clear" ||
+        !detail.clearMode ||
+        typeof detail.ownerId !== "string" ||
+        !shouldClearFormDraftSource(key, {
+          mode: detail.clearMode,
+          ownerId: detail.ownerId,
+          sourceKey: detail.sourceKey || undefined,
+        })
+      ) {
+        return false;
+      }
+
+      clearFlushTimers();
+      const pending = pendingRef.current;
+      if (pending) forgetVolatileDraft(key, writerId, pending);
+      pendingRef.current = null;
+      activeRecoveryKeyRef.current = null;
+      protectedRecoveryKeysRef.current = new Set();
+      knownIncompatibleCanonicalRaws.delete(key);
+      incompatibleCanonicalRawRef.current = null;
+      lastKnownCanonicalRawRef.current = null;
+      localSnapshotRawRef.current = null;
+      lastDataSignatureRef.current = null;
+      observedSavedAtBySignatureRef.current = new Map();
+      accountClearedRef.current = detail.lock === true;
+      setAccountCleared(detail.lock === true);
+      setHasIncompatibleCanonical(false);
+      setSavedAt(null);
+      setRestored(false);
+      setRecoveries([]);
+      setStatus(detail.lock === true ? "error" : "idle");
+      onResetRef.current?.();
+      return true;
+    };
     const handleDraftChangeDetail = (detail: FormDraftChangeDetail | null | undefined) => {
-      if (!detail || detail.sourceKey !== key || detail.writerId === writerId) return;
+      if (!detail || detail.writerId === writerId) return;
+      if (handleContinuityClear(detail)) return;
+      if (detail.sourceKey !== key || accountClearedRef.current) return;
       if (
         detail.kind === "submitted-clear" &&
         detail.signature &&
@@ -1730,6 +1874,17 @@ export function useFormDraft<T>(
       );
     };
     const handleBroadcastDraftChange = (event: MessageEvent<FormDraftChangeDetail>) => {
+      if (
+        event.data.kind === "continuity-clear" &&
+        event.data.clearMode &&
+        typeof event.data.ownerId === "string"
+      ) {
+        clearVolatileFormDraftContinuity({
+          mode: event.data.clearMode,
+          ownerId: event.data.ownerId,
+          sourceKey: event.data.sourceKey || undefined,
+        });
+      }
       handleDraftChangeDetail(event.data);
     };
     let broadcastChannel: BroadcastChannel | null = null;
@@ -1797,6 +1952,10 @@ export function useFormDraft<T>(
 
   const save = useCallback(
     (data: T) => {
+      if (accountClearedRef.current) {
+        setStatus("error");
+        return;
+      }
       try {
         clearDebounceTimer();
         const pending: PendingDraft<T> = {
@@ -1829,6 +1988,7 @@ export function useFormDraft<T>(
     submittedData?: T;
     submittedAliases?: readonly T[];
   } = {}) => {
+    if (accountClearedRef.current) return;
     try {
       clearFlushTimers();
       const submitted = options.reason === "submitted";
@@ -2087,6 +2247,7 @@ export function useFormDraft<T>(
 
   const restoreRecovery = useCallback(
     (storageKey: string) => {
+      if (accountClearedRef.current) return;
       try {
         reconcileSubmittedClearMarkers();
         const selected = readFormDraftRecovery<T>(window.localStorage, key, storageKey);
@@ -2333,6 +2494,7 @@ export function useFormDraft<T>(
 
   const discardRecovery = useCallback(
     (storageKey: string) => {
+      if (accountClearedRef.current) return;
       if (!isFormDraftRecoveryKey(key, storageKey)) return;
       try {
         reconcileSubmittedClearMarkers();
@@ -2391,7 +2553,7 @@ export function useFormDraft<T>(
     clear,
     flush,
     status,
-    canSubmit: !hasIncompatibleCanonical,
+    canSubmit: !hasIncompatibleCanonical && !accountCleared,
     savedAt,
     restored,
     recoveries,

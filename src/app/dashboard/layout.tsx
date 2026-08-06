@@ -8,6 +8,7 @@ import { auth } from "@/auth";
 import { redirect } from "next/navigation";
 import { StudentSideRail } from "@/components/student-portal/StudentSideRail";
 import { AdminSideRail } from "@/components/admin-portal/AdminSideRail";
+import { LocalDraftAccountBoundary } from "@/components/auth/LocalDraftAccountBoundary";
 
 export default async function DashboardLayout({
   children,
@@ -21,10 +22,19 @@ export default async function DashboardLayout({
   }
 
   const role = session.user.role ?? "student";
+  const ownerId = session.user.id;
+  if (!ownerId) {
+    redirect("/login");
+  }
 
   return (
     <div className="flex min-h-[100dvh] bg-background text-foreground">
-      {role === "admin" ? <AdminSideRail /> : <StudentSideRail />}
+      <LocalDraftAccountBoundary ownerId={ownerId} />
+      {role === "admin" ? (
+        <AdminSideRail ownerId={ownerId} />
+      ) : (
+        <StudentSideRail ownerId={ownerId} />
+      )}
       <div className="min-w-0 flex-1 overflow-auto">{children}</div>
     </div>
   );

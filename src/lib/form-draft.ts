@@ -7,6 +7,20 @@ export const FORM_DRAFT_CLEAR_MARKER_VERSION = 1;
 export const FORM_DRAFT_CLEAR_MARKER_TTL_MS = FORM_DRAFT_RECOVERY_TTL_MS;
 export const FORM_DRAFT_RECOVERY_RECENT_MS = 60 * 60 * 1000;
 export const FORM_DRAFT_MAX_DIVERGENT_RECOVERIES = 20;
+export const DOCUMENT_DRAFT_KINDS = [
+  "note",
+  "qna-thread",
+  "qna-reply",
+  "community-post",
+] as const;
+
+export type DocumentDraftKind = (typeof DOCUMENT_DRAFT_KINDS)[number];
+
+export type DocumentDraftKeyIdentity = {
+  kind: DocumentDraftKind;
+  ownerId: string;
+  contextId: string;
+};
 
 export type FormDraftStatus =
   | "idle"
@@ -393,13 +407,44 @@ export function hasFutureFormDraftVersion(raw: string): boolean {
 }
 
 export function createDocumentDraftKey(
-  kind: "note" | "qna-thread" | "qna-reply" | "community-post",
+  kind: DocumentDraftKind,
   ownerId: string,
   contextId = "new",
 ): string {
   const safeOwnerId = encodeURIComponent(ownerId);
   const safeContextId = encodeURIComponent(contextId);
   return `draft:document:${kind}:${safeOwnerId}:${safeContextId}`;
+}
+
+function isDocumentDraftKind(value: string): value is DocumentDraftKind {
+  return (DOCUMENT_DRAFT_KINDS as readonly string[]).includes(value);
+}
+
+/**
+ * canonical 문서 draft key에서 계정·문서 경계를 복원한다.
+ * key를 다시 만들었을 때 정확히 일치하는 값만 받아 malformed namespace를
+ * 다른 계정의 artifact로 잘못 분류하지 않는다.
+ */
+export function parseDocumentDraftKey(
+  sourceKey: string,
+): DocumentDraftKeyIdentity | null {
+  const namespacePrefix = "draft:document:";
+  if (!sourceKey.startsWith(namespacePrefix)) return null;
+
+  const parts = sourceKey.slice(namespacePrefix.length).split(":");
+  if (parts.length !== 3) return null;
+  const [kind, encodedOwnerId, encodedContextId] = parts;
+  if (!kind || !isDocumentDraftKind(kind)) return null;
+
+  try {
+    const ownerId = decodeURIComponent(encodedOwnerId ?? "");
+    const contextId = decodeURIComponent(encodedContextId ?? "");
+    return createDocumentDraftKey(kind, ownerId, contextId) === sourceKey
+      ? { kind, ownerId, contextId }
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 export function createFormDraftClearMarkerKey(sourceKey: string): string {
@@ -1049,6 +1094,66 @@ function readFormDraftClearMarkerArtifact(
   } catch {
     return null;
   }
+}
+
+export type DocumentDraftArtifact = DocumentDraftKeyIdentity & {
+  sourceKey: string;
+  storageKey: string;
+  artifactKind: "canonical" | "recovery" | "clear-marker";
+};
+
+/** canonical·recovery·clear marker key를 하나의 소유 계정 namespace로 해석한다. */
+export function readDocumentDraftArtifact(
+  storageKey: string,
+): DocumentDraftArtifact | null {
+  const canonicalIdentity = parseDocumentDraftKey(storageKey);
+  if (canonicalIdentity) {
+    return {
+      ...canonicalIdentity,
+      sourceKey: storageKey,
+      storageKey,
+      artifactKind: "canonical",
+    };
+  }
+
+  const recoverySourceKey = readFormDraftRecoveryArtifactSourceKey(storageKey);
+  if (recoverySourceKey) {
+    const identity = parseDocumentDraftKey(recoverySourceKey);
+    if (identity) {
+      return {
+        ...identity,
+        sourceKey: recoverySourceKey,
+        storageKey,
+        artifactKind: "recovery",
+      };
+    }
+  }
+
+  const markerArtifact = readFormDraftClearMarkerArtifact(storageKey);
+  if (!markerArtifact) return null;
+  const identity = parseDocumentDraftKey(markerArtifact.sourceKey);
+  return identity
+    ? {
+        ...identity,
+        sourceKey: markerArtifact.sourceKey,
+        storageKey,
+        artifactKind: "clear-marker",
+      }
+    : null;
+}
+
+/** storage를 한 번 열거해 해석 가능한 문서 draft artifact만 반환한다. */
+export function listDocumentDraftArtifacts(
+  storage: FormDraftRecoveryStorage,
+): DocumentDraftArtifact[] {
+  const artifacts: DocumentDraftArtifact[] = [];
+  for (let index = 0; index < storage.length; index += 1) {
+    const storageKey = storage.key(index);
+    if (storageKey === null) continue;
+    const artifact = readDocumentDraftArtifact(storageKey);
+    if (artifact) artifacts.push(artifact);
+  }
+  return artifacts;
 }
 
 function parseExpiredCurrentFormDraftRecovery(

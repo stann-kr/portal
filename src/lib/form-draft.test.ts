@@ -20,7 +20,10 @@ import {
   hasFutureFormDraftVersion,
   hasFormDraftStorageConflict,
   isFormDraftRecoveryKey,
+  listDocumentDraftArtifacts,
   parseFormDraft,
+  parseDocumentDraftKey,
+  readDocumentDraftArtifact,
   applyFormDraftSnapshotClearPlan,
   persistFormDraftRawSnapshot,
   persistFormDraftSnapshot,
@@ -38,6 +41,12 @@ import {
   writeFormDraftClearMarker,
   writeFormDraftClearMarkers,
 } from "./form-draft";
+import {
+  listLocalDocumentDrafts,
+  removeLocalDocumentDraftSource,
+  removeLocalDocumentDraftsExceptOwner,
+  removeLocalDocumentDraftsForOwner,
+} from "./local-document-drafts";
 
 class MemoryDraftStorage {
   protected readonly values = new Map<string, string>();
@@ -117,6 +126,17 @@ class EnumerationDeniedStorage extends MemoryDraftStorage {
   }
 }
 
+class RemovalDeniedStorage extends MemoryDraftStorage {
+  constructor(private readonly deniedKey: string) {
+    super();
+  }
+
+  override removeItem(key: string) {
+    if (key === this.deniedKey) return;
+    super.removeItem(key);
+  }
+}
+
 function writeImmutableRecovery<T>(
   storage: MemoryDraftStorage,
   sourceKey: string,
@@ -179,6 +199,164 @@ test("문서 draft key는 사용자와 문서 문맥을 분리한다", () => {
     createDocumentDraftKey("qna-reply", "student-1", "thread-a"),
     createDocumentDraftKey("qna-reply", "student-2", "thread-a"),
   );
+});
+
+test("문서 draft key와 모든 artifact 표현에서 소유 계정 경계를 복원한다", () => {
+  const sourceKey = createDocumentDraftKey(
+    "note",
+    "student:한글/1",
+    "new:lesson/8",
+  );
+  const recoveryKey = createFormDraftRecoveryKey(sourceKey, "writer:1");
+  const markerKey = createFormDraftClearMarkerEntryKey(
+    sourceKey,
+    "sha256:abc",
+    100,
+  );
+
+  assert.deepEqual(parseDocumentDraftKey(sourceKey), {
+    kind: "note",
+    ownerId: "student:한글/1",
+    contextId: "new:lesson/8",
+  });
+  assert.equal(parseDocumentDraftKey("draft:document:unknown:owner:new"), null);
+  assert.equal(parseDocumentDraftKey("draft:document:note:%ZZ:new"), null);
+  assert.deepEqual(readDocumentDraftArtifact(recoveryKey), {
+    kind: "note",
+    ownerId: "student:한글/1",
+    contextId: "new:lesson/8",
+    sourceKey,
+    storageKey: recoveryKey,
+    artifactKind: "recovery",
+  });
+  assert.equal(readDocumentDraftArtifact(markerKey)?.artifactKind, "clear-marker");
+
+  const storage = new MemoryDraftStorage();
+  storage.setItem(sourceKey, "canonical");
+  storage.setItem(recoveryKey, "recovery");
+  storage.setItem(markerKey, "marker");
+  storage.setItem("unrelated", "preserve");
+  assert.deepEqual(
+    listDocumentDraftArtifacts(storage).map(({ artifactKind }) => artifactKind),
+    ["canonical", "recovery", "clear-marker"],
+  );
+});
+
+test("기기 초안 목록은 계정과 문서별로 묶고 최신 안전 preview를 고른다", () => {
+  const storage = new MemoryDraftStorage();
+  const ownerId = "student-1";
+  const noteKey = createDocumentDraftKey("note", ownerId, "note-1");
+  const futureKey = createDocumentDraftKey("qna-thread", ownerId, "new");
+  const submittedGhostKey = createDocumentDraftKey(
+    "community-post",
+    ownerId,
+    "post-submitted",
+  );
+  const otherOwnerKey = createDocumentDraftKey("note", "student-2", "note-2");
+  storage.setItem(
+    noteKey,
+    serializeFormDraft({ title: "이전 제목", contentHtml: "<p>이전 본문</p>" }, 100),
+  );
+  writeImmutableRecovery(
+    storage,
+    noteKey,
+    "writer-latest",
+    { title: "최신 제목", contentHtml: "<p>최신 본문</p>" },
+    200,
+  );
+  storage.setItem(
+    createFormDraftClearMarkerKey(noteKey),
+    JSON.stringify({ version: 1, signature: "other", clearedAt: 50 }),
+  );
+  storage.setItem(
+    futureKey,
+    JSON.stringify({ version: 99, savedAt: 300, data: { title: "미래" } }),
+  );
+  const submittedGhost = { title: "이미 제출한 글" };
+  storage.setItem(submittedGhostKey, serializeFormDraft(submittedGhost, 150));
+  writeFormDraftClearMarker(
+    storage,
+    submittedGhostKey,
+    createFormDraftDataSignature(submittedGhost),
+    200,
+  );
+  storage.setItem(otherOwnerKey, serializeFormDraft({ title: "다른 계정" }, 400));
+
+  const result = listLocalDocumentDrafts(storage, ownerId);
+
+  assert.equal(result.enumerationFailed, false);
+  assert.deepEqual(result.failedKeys, []);
+  assert.equal(result.drafts.length, 2);
+  const note = result.drafts.find(({ sourceKey }) => sourceKey === noteKey);
+  const future = result.drafts.find(({ sourceKey }) => sourceKey === futureKey);
+  assert.deepEqual(note?.preview, { title: "최신 제목", body: "최신 본문" });
+  assert.equal(note?.savedAt?.getTime(), 200);
+  assert.equal(note?.artifactCount, 3);
+  assert.equal(note?.hasIncompatibleArtifact, false);
+  assert.equal(future?.hasIncompatibleArtifact, true);
+  assert.deepEqual(future?.preview, { title: null, body: null });
+});
+
+test("계정 정리는 canonical·legacy·future·recovery·marker를 지우고 다른 저장값을 보존한다", () => {
+  const storage = new MemoryDraftStorage();
+  const ownerKey = createDocumentDraftKey("note", "owner-1", "note-1");
+  const ownerLegacyKey = createDocumentDraftKey("community-post", "owner-1", "new");
+  const otherOwnerKey = createDocumentDraftKey("note", "owner-2", "note-2");
+  const recoveryKey = createFormDraftRecoveryKey(ownerKey, "legacy-writer");
+  const markerHeadKey = createFormDraftClearMarkerKey(ownerKey);
+  const markerEntryKey = createFormDraftClearMarkerEntryKey(
+    ownerKey,
+    "sha256:submitted",
+    500,
+  );
+  storage.setItem(ownerKey, JSON.stringify({ version: 99, savedAt: 1, data: {} }));
+  storage.setItem(ownerLegacyKey, JSON.stringify({ title: "legacy" }));
+  storage.setItem(recoveryKey, "malformed future-compatible raw");
+  storage.setItem(markerHeadKey, "marker-head");
+  storage.setItem(markerEntryKey, "marker-entry");
+  storage.setItem(otherOwnerKey, serializeFormDraft({ title: "보존" }, 1));
+  storage.setItem("portal:navigation", "today");
+
+  const result = removeLocalDocumentDraftsForOwner(storage, "owner-1");
+
+  assert.equal(result.enumerationFailed, false);
+  assert.deepEqual(result.failedKeys, []);
+  assert.deepEqual(result.sourceKeys, [ownerLegacyKey, ownerKey].sort());
+  assert.equal(result.removedKeys.length, 5);
+  assert.equal(storage.getItem(ownerKey), null);
+  assert.equal(storage.getItem(ownerLegacyKey), null);
+  assert.equal(storage.getItem(recoveryKey), null);
+  assert.equal(storage.getItem(markerHeadKey), null);
+  assert.equal(storage.getItem(markerEntryKey), null);
+  assert.notEqual(storage.getItem(otherOwnerKey), null);
+  assert.equal(storage.getItem("portal:navigation"), "today");
+
+  const switched = removeLocalDocumentDraftsExceptOwner(storage, "owner-3");
+  assert.deepEqual(switched.failedKeys, []);
+  assert.equal(storage.getItem(otherOwnerKey), null);
+  assert.equal(storage.getItem("portal:navigation"), "today");
+});
+
+test("선택 폐기는 소유 계정이 일치하는 문서만 지우고 실패 key를 보수적으로 보고한다", () => {
+  const sourceKey = createDocumentDraftKey("note", "owner-1", "note-1");
+  const otherSourceKey = createDocumentDraftKey("note", "owner-1", "note-2");
+  const storage = new RemovalDeniedStorage(sourceKey);
+  storage.setItem(sourceKey, serializeFormDraft({ title: "삭제 실패" }, 1));
+  storage.setItem(otherSourceKey, serializeFormDraft({ title: "보존" }, 2));
+
+  const wrongOwner = removeLocalDocumentDraftSource(
+    storage,
+    "owner-2",
+    sourceKey,
+  );
+  assert.deepEqual(wrongOwner.removedKeys, []);
+  assert.deepEqual(wrongOwner.failedKeys, []);
+
+  const denied = removeLocalDocumentDraftSource(storage, "owner-1", sourceKey);
+  assert.deepEqual(denied.removedKeys, []);
+  assert.deepEqual(denied.failedKeys, [sourceKey]);
+  assert.notEqual(storage.getItem(sourceKey), null);
+  assert.notEqual(storage.getItem(otherSourceKey), null);
 });
 
 test("복구 preview는 제목과 HTML 본문을 짧은 안전한 평문으로 만든다", () => {
