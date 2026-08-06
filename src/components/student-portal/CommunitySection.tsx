@@ -5,18 +5,11 @@
  */
 "use client";
 
-import { useState, useActionState, useEffect } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Users, Plus, MessageSquare, Search } from "lucide-react";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { createPost, type CreatePostState } from "@/lib/actions/posts";
 import { SlidePanel } from "./SlidePanel";
 import { PostDetailPanel } from "./PostDetailPanel";
 
@@ -35,79 +28,7 @@ type Post = {
 
 interface CommunitySectionProps {
   initialPosts: Post[];
-  studentId: string;
-}
-
-// ── 작성 다이얼로그 ──────────────────────────────
-
-function CreatePostDialog({
-  open,
-  onOpenChange,
-  onSuccess,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onSuccess: () => void;
-}) {
-  const [state, action, isPending] = useActionState<CreatePostState, FormData>(
-    createPost,
-    {},
-  );
-
-  useEffect(() => {
-    if (state.success && !isPending) {
-      onSuccess();
-    }
-  }, [state, isPending, onSuccess]);
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>새 글 작성</DialogTitle>
-        </DialogHeader>
-        <form action={action} className="space-y-4 pt-2">
-          <input type="hidden" name="boardType" value="GENERAL" />
-          <input type="hidden" name="returnTo" value="student-portal" />
-
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium">제목</label>
-            <Input name="title" placeholder="제목을 입력하세요" required disabled={isPending} />
-          </div>
-
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium">내용</label>
-            <textarea
-              name="contentHtml"
-              placeholder="내용을 입력하세요..."
-              required
-              disabled={isPending}
-              rows={6}
-              className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary disabled:opacity-50 resize-none"
-            />
-          </div>
-
-          {state.error && (
-            <p className="text-sm text-destructive">{state.error}</p>
-          )}
-
-          <div className="flex gap-3 pt-1">
-            <Button type="submit" disabled={isPending} className="flex-1">
-              {isPending ? "게시 중..." : "게시"}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={isPending}
-              onClick={() => onOpenChange(false)}
-            >
-              취소
-            </Button>
-          </div>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
+  returnTo: string;
 }
 
 // ── 메인 컴포넌트 ─────────────────────────────────
@@ -120,11 +41,10 @@ const BOARD_TABS = [
 
 type BoardFilter = (typeof BOARD_TABS)[number]["id"];
 
-export function CommunitySection({ initialPosts }: CommunitySectionProps) {
+export function CommunitySection({ initialPosts, returnTo }: CommunitySectionProps) {
   const router = useRouter();
   const [boardFilter, setBoardFilter] = useState<BoardFilter>("ALL");
   const [query, setQuery] = useState("");
-  const [createOpen, setCreateOpen] = useState(false);
 
   // 상세 패널
   const [selectedPost, setSelectedPost] = useState<Post | null>(null);
@@ -142,11 +62,6 @@ export function CommunitySection({ initialPosts }: CommunitySectionProps) {
     );
   });
 
-  const handleCreateSuccess = () => {
-    setCreateOpen(false);
-    router.refresh();
-  };
-
   return (
     <div className="space-y-4">
       {/* 섹션 헤더 */}
@@ -162,7 +77,13 @@ export function CommunitySection({ initialPosts }: CommunitySectionProps) {
           size="sm"
           variant="outline"
           className="gap-1.5 h-8 text-xs"
-          onClick={() => setCreateOpen(true)}
+          onClick={() => {
+            const params = new URLSearchParams({
+              boardType: "GENERAL",
+              returnTo,
+            });
+            router.push(`/community/new?${params.toString()}`);
+          }}
         >
           <Plus className="w-3.5 h-3.5" />
           새 글 작성
@@ -218,7 +139,7 @@ export function CommunitySection({ initialPosts }: CommunitySectionProps) {
                   month: "short",
                   day: "numeric",
                 })
-              : "—";
+              : "날짜 정보 없음";
 
             return (
               <button
@@ -234,7 +155,7 @@ export function CommunitySection({ initialPosts }: CommunitySectionProps) {
                     <span
                       className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${
                         post.boardType === "FEEDBACK"
-                          ? "bg-orange-500/10 text-orange-600"
+                          ? "bg-warning-muted text-warning"
                           : "bg-primary/10 text-primary"
                       }`}
                     >
@@ -265,16 +186,10 @@ export function CommunitySection({ initialPosts }: CommunitySectionProps) {
           <PostDetailPanel
             postId={selectedPost.id}
             contentHtml={selectedPost.contentHtml}
+            returnTo={returnTo}
           />
         )}
       </SlidePanel>
-
-      {/* 글 작성 다이얼로그 */}
-      <CreatePostDialog
-        open={createOpen}
-        onOpenChange={setCreateOpen}
-        onSuccess={handleCreateSuccess}
-      />
     </div>
   );
 }

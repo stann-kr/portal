@@ -31,7 +31,7 @@ export default function NewStudentPage() {
           className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
         >
           <ArrowLeft className="w-4 h-4" />
-          Admin Dashboard
+          관리자 포털
         </Link>
         <h1 className="text-2xl font-semibold tracking-tight mt-2">
           학생 계정 생성

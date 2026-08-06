@@ -1,16 +1,20 @@
 /**
  * @file src/components/admin-portal/AdminPortalClient.tsx
  * @description 어드민 원페이지 포털 오케스트레이터.
- * 4개 섹션(공지사항 / 캘린더 / 커뮤니티 / 학생 관리)을 탭으로 전환.
- * StudentPortalClient.tsx 패턴 동일 적용.
+ * 5개 섹션(업무함 / 학생 / 일정 / 공지 / 커뮤니티)을 navigation으로 전환.
  */
 "use client";
 
-import { useState, useEffect, useRef, useCallback, useTransition } from "react";
-import { Megaphone, CalendarDays, Users, Settings } from "lucide-react";
+import { useCallback, useEffect, useRef, useState, useTransition } from "react";
+import { CalendarDays, Inbox, Megaphone, MessagesSquare, Users } from "lucide-react";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 import type { StudentRosterStat } from "@/lib/actions/students";
+import type {
+  AdminQueueThread,
+  PendingFeedbackAssignment,
+} from "@/lib/admin-work-queue";
 import { getUnifiedItemsForStudent } from "@/lib/actions/unifiedItems";
+import { PortalShell } from "@/components/ui/portal-shell";
 
 // ── 섹션 컴포넌트
 import { AnnouncementSection } from "@/components/student-portal/AnnouncementSection";
@@ -18,10 +22,11 @@ import { CalendarSection } from "@/components/student-portal/CalendarSection";
 import { CommunitySection } from "@/components/student-portal/CommunitySection";
 import { StudentManagementSection } from "./StudentManagementSection";
 import { StudentFilterDropdown } from "./StudentFilterDropdown";
+import { AdminWorkQueueSection } from "./AdminWorkQueueSection";
 
 // ── 타입 ──────────────────────────────────────────
 
-type Section = "announcements" | "calendar" | "community" | "management";
+type Section = "work" | "students" | "schedule" | "announcements" | "community";
 
 type Post = {
   id: string;
@@ -73,30 +78,26 @@ type StudentDetailData = {
   modules: AdminModule[];
 };
 
-type StatCard = {
-  label: string;
-  value: number;
-  sub: string;
-  color: string;
-};
-
 export interface AdminPortalClientProps {
   announcements: Post[];
   initialUnifiedItems: UnifiedItem[];
   students: StudentRosterStat[];
   communityPosts: CommunityPost[];
-  stats: StatCard[];
   adminId: string;
+  qnaThreads: AdminQueueThread[];
+  pendingAssignments: PendingFeedbackAssignment[];
+  referenceTime: Date;
   fetchStudentDetail: (studentId: string) => Promise<StudentDetailData>;
 }
 
 // ── 탭 정의 ──────────────────────────────────────
 
 const TABS: { id: Section; label: string; Icon: React.ElementType }[] = [
-  { id: "announcements", label: "공지사항",  Icon: Megaphone },
-  { id: "calendar",      label: "캘린더",    Icon: CalendarDays },
-  { id: "community",     label: "커뮤니티",  Icon: Users },
-  { id: "management",    label: "학생 관리", Icon: Settings },
+  { id: "work", label: "업무함", Icon: Inbox },
+  { id: "students", label: "학생", Icon: Users },
+  { id: "schedule", label: "일정", Icon: CalendarDays },
+  { id: "announcements", label: "공지", Icon: Megaphone },
+  { id: "community", label: "커뮤니티", Icon: MessagesSquare },
 ];
 
 // ── 컴포넌트 ─────────────────────────────────────
@@ -106,101 +107,107 @@ export function AdminPortalClient({
   initialUnifiedItems,
   students,
   communityPosts,
-  stats,
   adminId,
+  qnaThreads,
+  pendingAssignments,
+  referenceTime,
   fetchStudentDetail,
 }: AdminPortalClientProps) {
-  const [activeSection, setActiveSection] = useState<Section>("announcements");
-  const [animKey, setAnimKey] = useState(0);
-  const [fading, setFading] = useState(false);
-  const nextSection = useRef<Section | null>(null);
-
   // 캘린더 학생 필터 상태
   const [selectedStudentId, setSelectedStudentId] = useState<string>(
     students[0]?.id ?? ""
   );
   const [calendarItems, setCalendarItems] = useState<UnifiedItem[]>(initialUnifiedItems);
   const [isLoadingCalendar, startCalendarTransition] = useTransition();
+  const calendarRequestRef = useRef(0);
 
-  // 페이드 아웃(150ms) → 섹션 교체 → slide-in 애니메이션
-  const changeSection = useCallback(
-    (next: Section) => {
-      if (next === activeSection || fading) return;
-      nextSection.current = next;
-      setFading(true);
-    },
-    [activeSection, fading]
-  );
-
-  useEffect(() => {
-    if (!fading || !nextSection.current) return;
-    const timer = setTimeout(() => {
-      setActiveSection(nextSection.current!);
-      setAnimKey((k) => k + 1);
-      nextSection.current = null;
-      setFading(false);
-    }, 150);
-    return () => clearTimeout(timer);
-  }, [fading]);
-
-  // 학생 필터 변경 시 캘린더 데이터 리패치
-  const handleStudentChange = (studentId: string) => {
+  const selectStudent = useCallback((studentId: string, historyMode: "push" | "replace" | "none") => {
+    if (!students.some((student) => student.id === studentId)) return;
+    const requestId = ++calendarRequestRef.current;
     setSelectedStudentId(studentId);
+    setCalendarItems([]);
+
+    if (historyMode !== "none") {
+      const url = new URL(window.location.href);
+      url.searchParams.set("section", "schedule");
+      url.searchParams.set("student", studentId);
+      window.history[historyMode === "push" ? "pushState" : "replaceState"](
+        {},
+        "",
+        `${url.pathname}${url.search}${url.hash}`,
+      );
+    }
+
     startCalendarTransition(async () => {
       const items = await getUnifiedItemsForStudent(studentId);
-      setCalendarItems(items);
+      if (calendarRequestRef.current === requestId) setCalendarItems(items);
     });
-  };
+  }, [students]);
+
+  // URL의 학생 선택을 복원하고, 뒤로/앞으로 이동도 같은 데이터 문맥으로 맞춘다.
+  useEffect(() => {
+    const restoreStudent = () => {
+      const fromUrl = new URLSearchParams(window.location.search).get("student");
+      const restored = students.find((student) => student.id === fromUrl)?.id;
+      const fallback = students[0]?.id ?? "";
+      const nextStudentId = restored ?? fallback;
+      if (!nextStudentId) return;
+
+      if (!restored) {
+        const url = new URL(window.location.href);
+        url.searchParams.set("student", nextStudentId);
+        window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+      }
+
+      if (nextStudentId !== selectedStudentId) selectStudent(nextStudentId, "none");
+    };
+
+    restoreStudent();
+    window.addEventListener("popstate", restoreStudent);
+    return () => window.removeEventListener("popstate", restoreStudent);
+  }, [selectStudent, selectedStudentId, students]);
+
+  const handleStudentChange = (studentId: string) => selectStudent(studentId, "push");
 
   return (
-    <div className="flex flex-col h-full min-h-screen">
-      {/* 상단 탭 바 */}
-      <header className="flex items-center gap-0.5 px-4 pt-4 pb-0 border-b border-border bg-background sticky top-0 z-10">
-        {TABS.map(({ id, label, Icon }) => {
-          const isActive = activeSection === id;
-          return (
-            <button
-              key={id}
-              onClick={() => changeSection(id)}
-              className={`inline-flex items-center gap-1.5 px-3 py-2 text-sm rounded-t-md border-b-2 transition-colors ${
-                isActive
-                  ? "border-foreground text-foreground font-semibold"
-                  : "border-transparent text-muted-foreground font-medium hover:text-foreground hover:bg-accent/60"
-              }`}
-            >
-              <Icon className="w-3.5 h-3.5" />
-              {label}
-            </button>
-          );
-        })}
+    <PortalShell
+      items={TABS}
+      initialItem="work"
+      storageKey="adminPortal:section"
+      urlParamKey="section"
+      ariaLabel="관리자 포털"
+      endSlot={<p className="hidden text-xs font-medium text-foreground sm:block">관리자</p>}
+    >
+      {(activeSection, changeSection) => (
+        <>
+          {activeSection === "work" && (
+            <AdminWorkQueueSection
+              students={students}
+              threads={qnaThreads}
+              pendingAssignments={pendingAssignments}
+              referenceTime={referenceTime}
+              onOpenStudents={() => changeSection("students")}
+              onOpenSchedule={() => changeSection("schedule")}
+            />
+          )}
 
-        {/* 우측 — 관리자 표시 */}
-        <div className="ml-auto pr-1 hidden sm:block">
-          <p className="text-xs text-muted-foreground">
-            <span className="font-medium text-foreground">관리자</span>
-          </p>
-        </div>
-      </header>
-
-      {/* 섹션 콘텐츠 — fade out → slide-in 전환 */}
-      <div
-        className={`flex-1 overflow-hidden transition-opacity duration-150 ${
-          fading ? "opacity-0" : "opacity-100"
-        }`}
-      >
-        <div key={animKey} className="animate-section-in h-full">
           {activeSection === "announcements" && (
             <div className="p-6 max-w-3xl mx-auto">
-              <AnnouncementSection posts={announcements} />
+              <AnnouncementSection
+                posts={announcements}
+                returnTo="/dashboard/admin?section=announcements"
+              />
             </div>
           )}
 
-          {activeSection === "calendar" && (
+          {activeSection === "schedule" && (
             <CalendarSection
               unifiedItems={isLoadingCalendar ? [] : calendarItems}
               curriculumModules={[]}
               assignments={[]}
               studentId={selectedStudentId}
+              actorId={adminId}
+              canCreateQna={false}
               headerSlot={
                 students.length > 0 ? (
                   <StudentFilterDropdown
@@ -221,20 +228,19 @@ export function AdminPortalClient({
             <div className="p-6 max-w-4xl mx-auto">
               <CommunitySection
                 initialPosts={communityPosts}
-                studentId={adminId}
+                returnTo="/dashboard/admin?section=community"
               />
             </div>
           )}
 
-          {activeSection === "management" && (
+          {activeSection === "students" && (
             <StudentManagementSection
               students={students}
-              stats={stats}
               fetchStudentDetail={fetchStudentDetail}
             />
           )}
-        </div>
-      </div>
-    </div>
+        </>
+      )}
+    </PortalShell>
   );
 }

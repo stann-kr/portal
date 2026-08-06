@@ -5,13 +5,32 @@
  */
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { ArrowLeft, Save } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { ArrowLeft, Save, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { CreateNoteState } from "@/lib/actions/privateNotes";
+import { DraftStatus } from "@/components/editor/DraftStatus";
+import { useFormDraft } from "@/lib/hooks/useFormDraft";
+import { createDocumentDraftKey } from "@/lib/form-draft";
+import { isRichTextEmpty } from "@/lib/rich-text";
+import {
+  isCreateNoteDraftEmpty,
+  resolveRestoredCreateNoteDate,
+} from "@/lib/note-draft";
+import { toKstDateInputValue } from "@/lib/date-input";
+import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
+import { useDeferredEditorContent } from "@/lib/hooks/useDeferredEditorContent";
+import { useDocumentSaveShortcut } from "@/lib/hooks/useDocumentSaveShortcut";
+import {
+  CREATION_OPERATION_FIELD,
+  createCreationOperationId,
+  parseCreationOperationId,
+} from "@/lib/creation-operation";
+import { CreationConflictActions } from "@/components/editor/CreationConflictActions";
 
 const FullEditor = dynamic(
   () => import("@/components/editor/FullEditor").then((m) => ({ default: m.FullEditor })),
@@ -21,13 +40,139 @@ const FullEditor = dynamic(
 interface NoteFullFormProps {
   /** createPrivateNote.bind(null, studentId) */
   action: (prev: CreateNoteState, formData: FormData) => Promise<CreateNoteState>;
+  actorId: string;
+  studentId: string;
+  returnTo: string;
 }
 
-export function NoteFullForm({ action }: NoteFullFormProps) {
-  const [contentHtml, setContentHtml] = useState("");
+type CreateNoteDraft = {
+  operationId?: string;
+  title: string;
+  noteDate: string;
+  contentHtml: string;
+};
+
+export function NoteFullForm({ action, actorId, studentId, returnTo }: NoteFullFormProps) {
+  const today = toKstDateInputValue();
+  const [title, setTitle] = useState("");
+  const [noteDate, setNoteDate] = useState(today);
+  const {
+    contentHtml,
+    contentVersion,
+    setContentHtml,
+    handleEditorChange,
+    handleEditorDirty,
+    readLatestContentHtml,
+    commitLatestContentHtml,
+  } = useDeferredEditorContent("");
+  const [operationId, setOperationId] = useState("");
+  const defaultNoteDateRef = useRef(today);
   const [state, formAction, isPending] = useActionState<CreateNoteState, FormData>(
     action,
     {}
+  );
+  const formRef = useRef<HTMLFormElement>(null);
+  const contentHtmlInputRef = useRef<HTMLInputElement>(null);
+  const submittedDraftRef = useRef<CreateNoteDraft | null>(null);
+  const handledNoteIdRef = useRef<string | null>(null);
+  const router = useRouter();
+  useBusyNavigationGuard(isPending);
+
+  const {
+    loaded,
+    canSubmit,
+    save,
+    clear,
+    flush,
+    status,
+    savedAt,
+    restored,
+    recoveries,
+    restoreRecovery,
+    discardRecovery,
+  } = useFormDraft<CreateNoteDraft>(
+    createDocumentDraftKey("note", actorId, `new:${studentId}`),
+    (draft) => {
+      setOperationId(
+        parseCreationOperationId(draft.operationId) ?? createCreationOperationId(),
+      );
+      setTitle(draft.title ?? "");
+      setNoteDate(
+        resolveRestoredCreateNoteDate(
+          draft.noteDate,
+          defaultNoteDateRef.current,
+        ),
+      );
+      setContentHtml(draft.contentHtml ?? "");
+    },
+    {
+      onReset: () => {
+        defaultNoteDateRef.current = today;
+        setOperationId(createCreationOperationId());
+        setTitle("");
+        setNoteDate(today);
+        setContentHtml("");
+      },
+    },
+  );
+
+  const handleSaveShortcut = useDocumentSaveShortcut({
+    disabled: !loaded || !canSubmit || isPending || !operationId,
+    onSave: () => formRef.current?.requestSubmit(),
+  });
+
+  useEffect(() => {
+    if (!loaded) return;
+    const latestContentHtml = readLatestContentHtml();
+    if (
+      isCreateNoteDraftEmpty(
+        { title, noteDate, contentHtml: latestContentHtml },
+        defaultNoteDateRef.current,
+      )
+    ) {
+      clear();
+      return;
+    }
+    if (!operationId) return;
+    save({
+      operationId,
+      title,
+      noteDate,
+      get contentHtml() {
+        return readLatestContentHtml();
+      },
+    });
+  }, [
+    clear,
+    contentHtml,
+    loaded,
+    noteDate,
+    operationId,
+    readLatestContentHtml,
+    save,
+    title,
+  ]);
+
+  useEffect(() => {
+    if (!state.note?.id || handledNoteIdRef.current === state.note.id) return;
+    handledNoteIdRef.current = state.note.id;
+    clear({
+      reason: "submitted",
+      submittedData: submittedDraftRef.current ?? {
+        operationId,
+        title,
+        noteDate,
+        contentHtml,
+      },
+    });
+    submittedDraftRef.current = null;
+    router.replace(`/dashboard/notes/${state.note.id}?returnTo=${encodeURIComponent(returnTo)}`);
+  }, [clear, contentHtml, noteDate, operationId, returnTo, router, state.note?.id, title]);
+
+  const hasOperationConflict = Boolean(
+    state.operationConflict &&
+    state.conflictedOperationId === operationId &&
+    state.existingId,
   );
 
   return (
@@ -35,26 +180,92 @@ export function NoteFullForm({ action }: NoteFullFormProps) {
       {/* 헤더 */}
       <div className="space-y-1">
         <Link
-          href="/dashboard/student"
-          className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
+          href={returnTo}
+          aria-disabled={isPending}
+          tabIndex={isPending ? -1 : undefined}
+          className={`inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground ${
+            isPending ? "pointer-events-none opacity-50" : ""
+          }`}
+          onClick={(event) => {
+            if (isPending) event.preventDefault();
+          }}
         >
           <ArrowLeft className="w-4 h-4" />
           포털로 돌아가기
         </Link>
-        <h1 className="text-2xl font-semibold mt-2">노트 작성</h1>
+        <div className="mt-2 flex items-center justify-between gap-3">
+          <h1 className="text-2xl font-semibold">노트 작성</h1>
+          <Link
+            href={`/dashboard/notes/trash?returnTo=${encodeURIComponent(returnTo)}`}
+            className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
+          >
+            <Trash2 className="h-4 w-4" aria-hidden="true" />
+            휴지통
+          </Link>
+        </div>
       </div>
 
-      <form action={formAction} className="space-y-5">
-        <input type="hidden" name="contentHtml" value={contentHtml} />
+      <form
+        ref={formRef}
+        action={formAction}
+        aria-busy={!loaded || isPending}
+        className="space-y-5"
+        onKeyDownCapture={handleSaveShortcut}
+        onSubmit={(event) => {
+          if (!loaded || !canSubmit || isPending || !operationId) {
+            event.preventDefault();
+            return;
+          }
+          const latestContentHtml = commitLatestContentHtml();
+          if (!title.trim() || isRichTextEmpty(latestContentHtml)) {
+            event.preventDefault();
+            return;
+          }
+          if (contentHtmlInputRef.current) {
+            contentHtmlInputRef.current.value = latestContentHtml;
+          }
+          const submittedDraft = {
+            operationId,
+            title,
+            noteDate,
+            contentHtml: latestContentHtml,
+          };
+          save({
+            operationId,
+            title,
+            noteDate,
+            get contentHtml() {
+              return readLatestContentHtml();
+            },
+          });
+          flush();
+          submittedDraftRef.current = submittedDraft;
+        }}
+      >
+        <input type="hidden" name={CREATION_OPERATION_FIELD} value={operationId} />
+        <input ref={contentHtmlInputRef} type="hidden" name="contentHtml" value={contentHtml} />
 
-        {state?.error && (
-          <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/20 text-sm text-destructive">
+        {state?.error && (!state.operationConflict || hasOperationConflict) && (
+          <div role="alert" className="p-3 rounded-lg bg-destructive/10 border border-destructive/20 text-sm text-destructive">
             {state.error}
           </div>
         )}
 
+        {hasOperationConflict && state.existingId ? (
+          <CreationConflictActions
+            existingHref={`/dashboard/notes/${state.existingId}?returnTo=${encodeURIComponent(returnTo)}`}
+            existingLabel="기존 노트 열기"
+            separateLabel="별도 노트로 저장"
+            onSeparate={() => setOperationId(createCreationOperationId())}
+            disabled={isPending}
+          />
+        ) : null}
+
         {state?.success && (
-          <div className="p-3 rounded-lg bg-green-50 border border-green-200 text-sm text-green-700">
+          <div
+            role="status"
+            className="rounded-lg border border-success/20 bg-success/10 p-3 text-sm text-success"
+          >
             노트가 저장되었습니다.
           </div>
         )}
@@ -70,7 +281,10 @@ export function NoteFullForm({ action }: NoteFullFormProps) {
               name="title"
               placeholder="오늘의 수업 요약"
               required
-              disabled={isPending}
+              maxLength={200}
+              disabled={!loaded || isPending}
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
             />
           </div>
           <div className="space-y-1.5 sm:w-44">
@@ -81,8 +295,9 @@ export function NoteFullForm({ action }: NoteFullFormProps) {
               id="note-date"
               name="noteDate"
               type="date"
-              defaultValue={new Date().toISOString().slice(0, 10)}
-              disabled={isPending}
+              value={noteDate}
+              onChange={(event) => setNoteDate(event.target.value)}
+              disabled={!loaded || isPending}
             />
           </div>
         </div>
@@ -92,25 +307,65 @@ export function NoteFullForm({ action }: NoteFullFormProps) {
           <label className="text-sm font-medium">
             내용 <span className="text-destructive">*</span>
           </label>
-          <FullEditor
-            onChange={setContentHtml}
-            placeholder="수업 내용, 연습 기록, 메모 등을 자유롭게 작성하세요..."
-            disabled={isPending}
-          />
+          {loaded ? (
+            <FullEditor
+              initialContent={contentHtml}
+              contentVersion={contentVersion}
+              onChange={handleEditorChange}
+              onDirty={(reader) => {
+                handleEditorDirty(reader);
+                if (!operationId) return;
+                save({
+                  operationId,
+                  title,
+                  noteDate,
+                  get contentHtml() {
+                    return reader();
+                  },
+                });
+              }}
+              placeholder="수업 내용, 연습 기록, 메모 등을 자유롭게 작성하세요..."
+              disabled={isPending}
+              ariaLabel="노트 내용"
+              footer={
+                <DraftStatus
+                  status={status}
+                  canSubmit={canSubmit}
+                  savedAt={savedAt}
+                  restored={restored}
+                  recoveries={recoveries}
+                  onRestoreRecovery={restoreRecovery}
+                  onDiscardRecovery={discardRecovery}
+                  disabled={isPending}
+                />
+              }
+              saveShortcutLabel={canSubmit ? "노트 저장" : undefined}
+            />
+          ) : null}
         </div>
 
         {/* 버튼 */}
         <div className="flex gap-3">
           <Button
             type="submit"
-            disabled={isPending || !contentHtml}
+            disabled={!loaded || !canSubmit || isPending || !operationId || !title.trim() || isRichTextEmpty(contentHtml)}
             className="flex-1 gap-2"
           >
             <Save className="w-4 h-4" />
             {isPending ? "저장 중..." : "노트 저장"}
           </Button>
-          <Button variant="outline" asChild disabled={isPending}>
-            <Link href="/dashboard/student">취소</Link>
+          <Button variant="outline" asChild>
+            <Link
+              href={returnTo}
+              aria-disabled={isPending}
+              tabIndex={isPending ? -1 : undefined}
+              className={isPending ? "pointer-events-none opacity-50" : undefined}
+              onClick={(event) => {
+                if (isPending) event.preventDefault();
+              }}
+            >
+              취소
+            </Link>
           </Button>
         </div>
       </form>

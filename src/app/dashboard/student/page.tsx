@@ -57,11 +57,15 @@ export default async function StudentPortalPage() {
     <StudentPortalClient
       announcements={announcements}
       unifiedItems={unifiedItems}
-      curriculumModules={curriculumModules}
+      curriculumModules={curriculumModules.map((module) => ({
+        ...module,
+        description: null,
+      }))}
       assignments={assignmentList}
       communityPosts={communityPosts}
       studentId={studentId}
       displayName={displayName}
+      referenceTime={new Date()}
     />
   );
 }

@@ -17,7 +17,7 @@ import {
   feedbacks,
 } from "@/db/schema";
 import type { CalendarEventType, QnaStatus } from "@/db/schema";
-import { eq, desc, inArray } from "drizzle-orm";
+import { and, eq, desc, inArray, isNull } from "drizzle-orm";
 import type { InferSelectModel } from "drizzle-orm";
 import { requireAuth } from "@/lib/auth-guard";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
@@ -37,7 +37,16 @@ async function fetchUnifiedItemsForUser(userId: string): Promise<UnifiedItem[]> 
     myAssignments,
   ] = await Promise.all([
     db.select().from(calendarEvents).where(eq(calendarEvents.userId, userId)).orderBy(desc(calendarEvents.startTime)) as Promise<InferSelectModel<typeof calendarEvents>[]>,
-    db.select().from(privateNotes).where(eq(privateNotes.studentId, userId)).orderBy(desc(privateNotes.createdAt)) as Promise<InferSelectModel<typeof privateNotes>[]>,
+    db
+      .select()
+      .from(privateNotes)
+      .where(
+        and(
+          eq(privateNotes.studentId, userId),
+          isNull(privateNotes.deletedAt),
+        ),
+      )
+      .orderBy(desc(privateNotes.createdAt)) as Promise<InferSelectModel<typeof privateNotes>[]>,
     db.select().from(diggingTracks).where(eq(diggingTracks.userId, userId)).orderBy(desc(diggingTracks.createdAt)) as Promise<InferSelectModel<typeof diggingTracks>[]>,
     db.select().from(diggingColumns).where(eq(diggingColumns.userId, userId)) as Promise<InferSelectModel<typeof diggingColumns>[]>,
     db.select().from(qnaThreads).where(eq(qnaThreads.studentId, userId)).orderBy(desc(qnaThreads.createdAt)) as Promise<InferSelectModel<typeof qnaThreads>[]>,

@@ -14,6 +14,8 @@ interface SlidePanelProps {
   title?: string;
   /** 기본 480px, 넓은 콘텐츠는 "lg"(640px), 에디터 폼은 "xl"(768px) 사용 */
   size?: "md" | "lg" | "xl";
+  /** false면 서버 제출/업로드 중 닫기·Escape·바깥 클릭을 막는다. */
+  dismissible?: boolean;
   children: React.ReactNode;
 }
 
@@ -22,18 +24,34 @@ export function SlidePanel({
   onOpenChange,
   title,
   size = "md",
+  dismissible = true,
   children,
 }: SlidePanelProps) {
   const widthClass = size === "xl" ? "w-full max-w-3xl" : size === "lg" ? "w-full max-w-2xl" : "w-full max-w-lg";
 
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+    <Dialog.Root
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen && !dismissible) return;
+        onOpenChange(nextOpen);
+      }}
+    >
       <Dialog.Portal>
         {/* 반투명 백드롭 */}
         <Dialog.Overlay className="fixed inset-0 z-40 bg-black/30 backdrop-blur-[1px] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:fade-in-0 data-[state=closed]:fade-out-0" />
 
         {/* 슬라이드 패널 */}
         <Dialog.Content
+          onEscapeKeyDown={(event) => {
+            if (!dismissible) event.preventDefault();
+          }}
+          onPointerDownOutside={(event) => {
+            if (!dismissible) event.preventDefault();
+          }}
+          onInteractOutside={(event) => {
+            if (!dismissible) event.preventDefault();
+          }}
           className={`
             fixed right-0 top-0 z-50 h-full ${widthClass}
             bg-background border-l border-border shadow-2xl
@@ -53,6 +71,7 @@ export function SlidePanel({
               <button
                 className="w-7 h-7 rounded-md flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
                 aria-label="닫기"
+                disabled={!dismissible}
               >
                 <X className="w-4 h-4" />
               </button>

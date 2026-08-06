@@ -7,22 +7,18 @@
 import { useState } from "react";
 import { Search } from "lucide-react";
 import type { UnifiedItem, UnifiedItemType } from "@/lib/utils/unifiedItemUtils";
-import { getUnifiedItemColor } from "@/lib/utils/unifiedItemUtils";
 import { Input } from "@/components/ui/input";
+import {
+  UNIFIED_ITEM_TYPE_LABELS,
+  UnifiedItemTypeBadge,
+  UnifiedItemTypeIcon,
+} from "@/components/ui/unified-item-type";
 import { SlidePanel } from "./SlidePanel";
 import { UnifiedItemDetail } from "./UnifiedItemDetail";
 
 // ── 상수 ─────────────────────────────────────────
 
 const ALL_TYPES: UnifiedItemType[] = ["EVENT", "NOTE", "DIGGING", "QNA", "ASSIGNMENT"];
-
-const TYPE_LABELS: Record<UnifiedItemType, string> = {
-  EVENT: "일정",
-  NOTE: "노트",
-  DIGGING: "디깅",
-  QNA: "Q&A",
-  ASSIGNMENT: "과제",
-};
 
 // ── 날짜 포맷 ────────────────────────────────────
 
@@ -37,9 +33,10 @@ function formatDate(date: Date): string {
 
 interface AllItemsViewProps {
   items: UnifiedItem[];
+  returnTo: string;
 }
 
-export function AllItemsView({ items }: AllItemsViewProps) {
+export function AllItemsView({ items, returnTo }: AllItemsViewProps) {
   const [activeTypes, setActiveTypes] = useState<Set<UnifiedItemType>>(
     new Set(ALL_TYPES),
   );
@@ -68,36 +65,27 @@ export function AllItemsView({ items }: AllItemsViewProps) {
     return i.title.toLowerCase().includes(normalizedQuery);
   });
 
-  // 타입별 색상 샘플 맵
-  const colorSamples = Object.fromEntries(
-    ALL_TYPES.map((t) => {
-      const sample = items.find((i) => i.type === t);
-      return [t, sample ? getUnifiedItemColor(sample) : "#71717a"];
-    }),
-  );
-
   return (
     <>
       {/* 타입 필터 바 */}
       <div className="flex items-center gap-2 flex-wrap mb-4">
         {ALL_TYPES.map((type) => {
           const active = activeTypes.has(type);
-          const color = colorSamples[type];
           return (
             <button
               key={type}
+              type="button"
               onClick={() => toggleType(type)}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-all ${
-                active ? "border-transparent text-white" : "border-border text-muted-foreground"
+              aria-pressed={active}
+              className={`inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors ${
+                active
+                  ? "border-primary/20 bg-accent text-accent-foreground"
+                  : "border-border bg-surface text-muted-foreground hover:bg-muted"
               }`}
-              style={active ? { backgroundColor: color } : undefined}
             >
-              <span
-                className="w-2 h-2 rounded-full"
-                style={{ backgroundColor: active ? "white" : color }}
-              />
-              {TYPE_LABELS[type]}
-              <span className={`ml-0.5 ${active ? "text-white/70" : "text-muted-foreground"}`}>
+              <UnifiedItemTypeIcon type={type} className={active ? "text-primary" : undefined} />
+              {UNIFIED_ITEM_TYPE_LABELS[type]}
+              <span className="ml-0.5 text-muted-foreground">
                 ({items.filter((i) => i.type === type).length})
               </span>
             </button>
@@ -128,7 +116,6 @@ export function AllItemsView({ items }: AllItemsViewProps) {
       ) : (
         <div className="space-y-2">
           {filtered.map((item) => {
-            const color = getUnifiedItemColor(item);
             return (
               <button
                 key={item.id}
@@ -138,20 +125,12 @@ export function AllItemsView({ items }: AllItemsViewProps) {
                 }}
                 className="w-full text-left flex items-center gap-3 px-4 py-3 rounded-lg border border-border bg-card hover:bg-accent transition-colors"
               >
-                <span
-                  className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                  style={{ backgroundColor: color }}
-                />
+                <UnifiedItemTypeIcon type={item.type} className="shrink-0 text-primary" />
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-foreground truncate">{item.title}</p>
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
-                  <span
-                    className="text-[10px] font-medium px-1.5 py-0.5 rounded text-white"
-                    style={{ backgroundColor: color }}
-                  >
-                    {TYPE_LABELS[item.type]}
-                  </span>
+                  <UnifiedItemTypeBadge item={item} />
                   <span className="text-xs text-muted-foreground hidden sm:block">
                     {formatDate(item.date)}
                   </span>
@@ -169,7 +148,7 @@ export function AllItemsView({ items }: AllItemsViewProps) {
         title={selectedItem?.title}
       >
         {selectedItem && (
-          <UnifiedItemDetail item={selectedItem} onClose={() => setPanelOpen(false)} />
+          <UnifiedItemDetail item={selectedItem} onClose={() => setPanelOpen(false)} returnTo={returnTo} />
         )}
       </SlidePanel>
     </>

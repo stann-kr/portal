@@ -8,7 +8,7 @@
  */
 "use client";
 
-import { useState, useMemo, useCallback, useTransition } from "react";
+import { Fragment, useState, useMemo, useCallback, useTransition } from "react";
 import {
   useReactTable,
   getCoreRowModel,
@@ -93,7 +93,7 @@ function EditableCell({
           <ExternalLink className="w-3 h-3" />링크
         </a>
       );
-    return <span className="text-sm">{(value as string) ?? "—"}</span>;
+    return <span className="text-sm">{(value as string) ?? "미입력"}</span>;
   }
 
   if (columnType === "rating") {
@@ -122,7 +122,7 @@ function EditableCell({
         disabled={isPending}
         className="w-full bg-transparent text-sm border-none outline-none focus:ring-1 focus:ring-ring rounded px-1"
       >
-        <option value="">—</option>
+        <option value="">선택 안 함</option>
         {parsedOptions.map((o) => <option key={o} value={o}>{o}</option>)}
       </select>
     );
@@ -192,7 +192,9 @@ function DateGroupHeader({
     <tr className="bg-muted/40 border-t-2 border-border">
       <td colSpan={100} className="px-4 py-2">
         <button
+          type="button"
           onClick={onToggle}
+          aria-expanded={!collapsed}
           className="flex items-center gap-2 text-sm font-semibold text-foreground hover:text-primary transition-colors"
         >
           {collapsed ? (
@@ -297,6 +299,7 @@ export function DiggingBoard({
               size: 40,
               cell: ({ row }: { row: { original: Track } }) => (
                 <button
+                  type="button"
                   onClick={() => {
                     startTransition(async () => {
                       await deleteDiggingTrack(row.original.id);
@@ -304,6 +307,7 @@ export function DiggingBoard({
                     });
                   }}
                   disabled={isPending}
+                  aria-label="디깅 트랙 삭제"
                   className="text-muted-foreground hover:text-destructive transition-colors"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
@@ -337,32 +341,39 @@ export function DiggingBoard({
       {/* 툴바 */}
       <div className="flex flex-wrap items-center gap-3">
         {/* 날짜 범위 필터 */}
-        <div className="flex items-center gap-2 text-sm">
-          <span className="text-muted-foreground shrink-0">기간</span>
-          <Input
-            type="date"
-            value={dateFrom}
-            onChange={(e) => setDateFrom(e.target.value)}
-            className="w-36 h-8 text-xs"
-          />
-          <span className="text-muted-foreground">~</span>
-          <Input
-            type="date"
-            value={dateTo}
-            onChange={(e) => setDateTo(e.target.value)}
-            className="w-36 h-8 text-xs"
-          />
+        <div className="grid w-full grid-cols-2 gap-2 text-sm sm:flex sm:w-auto sm:items-end">
+          <div className="space-y-1">
+            <label htmlFor="digging-date-from" className="text-xs text-muted-foreground">시작일</label>
+            <Input
+              id="digging-date-from"
+              type="date"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+              className="h-8 w-full text-xs sm:w-36"
+            />
+          </div>
+          <div className="space-y-1">
+            <label htmlFor="digging-date-to" className="text-xs text-muted-foreground">종료일</label>
+            <Input
+              id="digging-date-to"
+              type="date"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+              className="h-8 w-full text-xs sm:w-36"
+            />
+          </div>
           {(dateFrom || dateTo) && (
             <button
+              type="button"
               onClick={() => { setDateFrom(""); setDateTo(""); }}
-              className="text-xs text-muted-foreground hover:text-foreground"
+              className="col-span-2 justify-self-start text-xs text-muted-foreground hover:text-foreground sm:col-span-1 sm:pb-2"
             >
               초기화
             </button>
           )}
         </div>
 
-        <div className="flex gap-2 ml-auto">
+        <div className="ml-auto flex flex-wrap gap-2">
           {!readonly && (
             <>
               <Button
@@ -383,8 +394,87 @@ export function DiggingBoard({
         </div>
       </div>
 
-      {/* 테이블 */}
-      <div className="rounded-xl border border-border overflow-auto">
+      {/* Mobile record list */}
+      <div className="space-y-4 md:hidden">
+        {groupedTracks.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-border px-4 py-12 text-center text-sm text-muted-foreground">
+            {tracks.length === 0
+              ? "아직 추가된 트랙이 없습니다."
+              : "선택한 기간에 트랙이 없습니다."}
+          </div>
+        ) : (
+          groupedTracks.map(([date, dateRows]) => {
+            const collapsed = collapsedDates.has(date);
+
+            return (
+              <section key={date} aria-labelledby={`digging-date-${encodeURIComponent(date)}`}>
+                <button
+                  type="button"
+                  onClick={() => toggleDate(date)}
+                  aria-expanded={!collapsed}
+                  className="mb-2 flex w-full items-center gap-2 rounded-md px-1 py-2 text-left text-sm font-semibold text-foreground"
+                >
+                  {collapsed ? (
+                    <ChevronRight className="size-4" aria-hidden="true" />
+                  ) : (
+                    <ChevronDown className="size-4" aria-hidden="true" />
+                  )}
+                  <span id={`digging-date-${encodeURIComponent(date)}`}>{date}</span>
+                  <span className="ml-auto text-xs font-normal text-muted-foreground">{dateRows.length}곡</span>
+                </button>
+                {!collapsed ? (
+                  <div className="space-y-3">
+                    {dateRows.map((track) => (
+                      <div key={track.id} className="rounded-lg border border-border bg-surface p-4">
+                        <div className="space-y-4">
+                          {columns.map((column) => (
+                            <div key={column.id} className="grid gap-1.5">
+                              <span className="text-xs font-medium text-muted-foreground">
+                                {column.name}
+                              </span>
+                              <EditableCell
+                                trackId={track.id}
+                                columnId={column.id}
+                                columnType={column.columnType}
+                                value={track.values[column.id]}
+                                options={column.options}
+                                readonly={readonly}
+                              />
+                            </div>
+                          ))}
+                        </div>
+                        {!readonly ? (
+                          <div className="mt-4 border-t border-border pt-3 text-right">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              disabled={isPending}
+                              className="text-destructive"
+                              onClick={() => {
+                                startTransition(async () => {
+                                  await deleteDiggingTrack(track.id);
+                                  setTracks((previous) => previous.filter((item) => item.id !== track.id));
+                                });
+                              }}
+                            >
+                              <Trash2 className="mr-1.5 size-3.5" aria-hidden="true" />
+                              트랙 삭제
+                            </Button>
+                          </div>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </section>
+            );
+          })
+        )}
+      </div>
+
+      {/* Desktop table */}
+      <div className="hidden overflow-auto rounded-lg border border-border md:block">
         <table className="w-full text-sm border-collapse">
           {/* 헤더 */}
           <thead>
@@ -421,9 +511,8 @@ export function DiggingBoard({
                 const collapsed = collapsedDates.has(date);
                 // 각 날짜 그룹마다 TanStack 인스턴스 없이 직접 렌더
                 return (
-                  <>
+                  <Fragment key={date}>
                     <DateGroupHeader
-                      key={`header-${date}`}
                       date={date}
                       count={dateRows.length}
                       collapsed={collapsed}
@@ -443,6 +532,7 @@ export function DiggingBoard({
                             >
                               {col.id === "_actions" ? (
                                 <button
+                                  type="button"
                                   onClick={() => {
                                     startTransition(async () => {
                                       await deleteDiggingTrack(track.id);
@@ -452,6 +542,7 @@ export function DiggingBoard({
                                     });
                                   }}
                                   disabled={isPending}
+                                  aria-label="디깅 트랙 삭제"
                                   className="text-muted-foreground hover:text-destructive transition-colors"
                                 >
                                   <Trash2 className="w-3.5 h-3.5" />
@@ -472,7 +563,7 @@ export function DiggingBoard({
                           ))}
                         </tr>
                       ))}
-                  </>
+                  </Fragment>
                 );
               })
             )}

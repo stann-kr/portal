@@ -24,14 +24,14 @@ export type UnifiedItem = {
 // ─── 색상 맵 ──────────────────────────────────────
 
 const TYPE_COLORS: Record<string, string> = {
-  EVENT_LESSON:   "#3B82F6",
-  EVENT_PRACTICE: "#22C55E",
-  EVENT_GIG:      "#EF4444",
-  EVENT_NOTE:     "#F59E0B",
-  NOTE:           "#8B5CF6",
-  DIGGING:        "#EC4899",
-  QNA:            "#F97316",
-  ASSIGNMENT:     "#06B6D4",
+  EVENT_LESSON:   "var(--color-event-lesson)",
+  EVENT_PRACTICE: "var(--color-event-practice)",
+  EVENT_GIG:      "var(--color-event-gig)",
+  EVENT_NOTE:     "var(--color-event-note)",
+  NOTE:           "var(--color-item-note)",
+  DIGGING:        "var(--color-item-digging)",
+  QNA:            "var(--color-item-qna)",
+  ASSIGNMENT:     "var(--color-item-assignment)",
 };
 
 /**
@@ -41,5 +41,5 @@ export function getUnifiedItemColor(item: UnifiedItem): string {
   if (item.type === "EVENT" && item.subType) {
     return TYPE_COLORS[`EVENT_${item.subType}`] ?? TYPE_COLORS["EVENT_NOTE"];
   }
-  return TYPE_COLORS[item.type] ?? "#71717a";
+  return TYPE_COLORS[item.type] ?? "var(--color-muted-foreground)";
 }

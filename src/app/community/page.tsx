@@ -12,10 +12,12 @@
 export const dynamic = "force-dynamic";
 
 import { auth } from "@/auth";
+import { redirect } from "next/navigation";
 import CommunityClient from "./CommunityClient";
 
 export default async function CommunityPage() {
   const session = await auth();
+  if (!session?.user?.id) redirect("/login");
   const isAdmin = session?.user?.role === "admin";
   return <CommunityClient isAdmin={isAdmin} />;
 }

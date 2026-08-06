@@ -211,7 +211,7 @@ export function OverviewTab({
                 className="flex items-center gap-3 p-3 rounded-lg border border-border bg-card group"
               >
                 {m.isCompleted ? (
-                  <CheckCircle2 className="w-4 h-4 text-green-500 flex-shrink-0" />
+                  <CheckCircle2 className="w-4 h-4 text-success flex-shrink-0" />
                 ) : (
                   <Circle className="w-4 h-4 text-muted-foreground flex-shrink-0" />
                 )}

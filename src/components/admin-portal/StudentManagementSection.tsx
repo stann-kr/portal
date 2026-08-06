@@ -1,6 +1,6 @@
 /**
  * @file src/components/admin-portal/StudentManagementSection.tsx
- * @description 어드민 원페이지 — 학생 관리 탭 콘텐츠.
+ * @description 어드민 원페이지 학생 관리 콘텐츠.
  * 통계 카드 + 학생 로스터 (행 클릭 시 인라인 상세 확장).
  */
 "use client";
@@ -18,16 +18,10 @@ import {
   HelpCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { StatusBadge } from "@/components/ui/status-badge";
 import type { StudentRosterStat } from "@/lib/actions/students";
 
 // ── 타입 ──────────────────────────────────────────
-
-type StatCard = {
-  label: string;
-  value: number;
-  sub: string;
-  color: string;
-};
 
 type AdminNote = {
   id: string;
@@ -62,7 +56,6 @@ type DetailTab = "overview" | "notes" | "qna";
 
 interface StudentManagementSectionProps {
   students: StudentRosterStat[];
-  stats: StatCard[];
   /** 학생 ID → 상세 데이터 패치 함수 */
   fetchStudentDetail: (studentId: string) => Promise<StudentDetailData>;
 }
@@ -81,13 +74,13 @@ function StudentDetailInline({
   onTabChange: (tab: DetailTab) => void;
 }) {
   const TABS: { key: DetailTab; label: string; Icon: React.ElementType }[] = [
-    { key: "overview", label: "Overview", Icon: LayoutDashboard },
-    { key: "notes",    label: "Notes",    Icon: BookOpen },
+    { key: "overview", label: "개요", Icon: LayoutDashboard },
+    { key: "notes",    label: "노트", Icon: BookOpen },
     { key: "qna",      label: "Q&A",      Icon: HelpCircle },
   ];
 
   return (
-    <tr>
+    <tr id={`student-detail-${student.id}`}>
       <td colSpan={5} className="px-0 pb-4">
         <div className="mx-4 rounded-xl border border-border bg-muted/20 overflow-hidden">
           {/* 탭 네비게이션 */}
@@ -96,6 +89,7 @@ function StudentDetailInline({
               <button
                 key={key}
                 onClick={() => onTabChange(key)}
+                aria-pressed={activeTab === key}
                 className={`inline-flex items-center gap-1.5 px-3 py-2.5 text-sm font-medium border-b-2 transition-colors ${
                   activeTab === key
                     ? "border-primary text-foreground"
@@ -119,7 +113,7 @@ function StudentDetailInline({
           {/* 탭 콘텐츠 */}
           <div className="p-4">
             {!detail ? (
-              <div className="py-8 text-center text-sm text-muted-foreground animate-pulse">
+              <div role="status" className="animate-pulse py-8 text-center text-sm text-muted-foreground">
                 로딩 중...
               </div>
             ) : (
@@ -146,7 +140,7 @@ function StudentDetailInline({
                         <div className="space-y-1">
                           {detail.modules.slice(0, 5).map((m) => (
                             <div key={m.id} className="flex items-center gap-2 text-sm">
-                              <span className={`w-2 h-2 rounded-full flex-shrink-0 ${m.isCompleted ? "bg-green-500" : "bg-muted-foreground/40"}`} />
+                              <span className={`w-2 h-2 rounded-full flex-shrink-0 ${m.isCompleted ? "bg-success" : "bg-muted-foreground/40"}`} />
                               <span className="text-xs text-muted-foreground w-10">W{m.weekNum}</span>
                               <span>{m.title}</span>
                             </div>
@@ -193,19 +187,19 @@ function StudentDetailInline({
                       detail.threads.slice(0, 5).map((t) => (
                         <Link
                           key={t.id}
-                          href={`/dashboard/qna/${t.id}`}
+                          href={`/dashboard/qna/${t.id}?returnTo=%2Fdashboard%2Fadmin%3Fsection%3Dstudents`}
                           className="flex items-center justify-between p-3 rounded-lg border border-border bg-background hover:bg-accent transition-colors"
                         >
                           <p className="text-sm font-medium truncate flex-1">{t.title}</p>
-                          <span className={`ml-2 text-xs px-1.5 py-0.5 rounded-full flex-shrink-0 ${
-                            t.status === "OPEN"
-                              ? "bg-orange-100 text-orange-600"
-                              : t.status === "ANSWERED"
-                              ? "bg-green-100 text-green-600"
-                              : "bg-muted text-muted-foreground"
-                          }`}>
-                            {t.status}
-                          </span>
+                          <StatusBadge
+                            status={
+                              t.status === "OPEN"
+                                ? "qnaOpen"
+                                : t.status === "ANSWERED"
+                                  ? "qnaAnswered"
+                                  : "qnaClosed"
+                            }
+                          />
                         </Link>
                       ))
                     )}
@@ -224,7 +218,6 @@ function StudentDetailInline({
 
 export function StudentManagementSection({
   students,
-  stats,
   fetchStudentDetail,
 }: StudentManagementSectionProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -249,23 +242,7 @@ export function StudentManagementSection({
   };
 
   return (
-    <div className="space-y-6 p-6">
-      {/* 통계 카드 */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {stats.map((stat) => (
-          <div
-            key={stat.label}
-            className="p-5 rounded-xl border border-border bg-card"
-          >
-            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-              {stat.label}
-            </p>
-            <p className="text-3xl font-bold text-foreground mt-1">{stat.value}</p>
-            <p className="text-xs text-muted-foreground mt-1">{stat.sub}</p>
-          </div>
-        ))}
-      </div>
-
+    <div className="space-y-6 p-4 sm:p-6">
       {/* 학생 로스터 */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
@@ -288,62 +265,116 @@ export function StudentManagementSection({
             </Button>
           </div>
         ) : (
-          <div className="rounded-xl border border-border bg-card overflow-hidden">
+          <>
+          <div className="space-y-3 md:hidden">
+            {students.map((student) => (
+              <Link
+                key={student.id}
+                href={`/dashboard/admin/students/${student.id}`}
+                className="block rounded-lg border border-border bg-surface p-4 transition-colors hover:bg-muted"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-foreground">
+                      {student.displayName || "이름 미등록"}
+                    </p>
+                    <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                      {student.email}
+                    </p>
+                  </div>
+                  {student.pendingFeedbackCount > 0 ? (
+                    <span className="rounded-md bg-warning-muted px-2 py-1 text-xs font-semibold text-warning">
+                      피드백 {student.pendingFeedbackCount}건
+                    </span>
+                  ) : null}
+                </div>
+                <dl className="mt-4 grid grid-cols-2 gap-3 text-xs">
+                  <div>
+                    <dt className="text-muted-foreground">현재 진도</dt>
+                    <dd className="mt-1 line-clamp-2 font-medium text-foreground">
+                      {student.currentModule || "미지정"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">다음 레슨</dt>
+                    <dd className="mt-1 font-mono font-medium tabular-nums text-foreground">
+                      {student.nextLessonDate
+                        ? format(student.nextLessonDate, "M/d HH:mm")
+                        : "미정"}
+                    </dd>
+                  </div>
+                </dl>
+              </Link>
+            ))}
+          </div>
+
+          <div className="hidden overflow-hidden rounded-lg border border-border bg-surface md:block">
             <table className="w-full text-sm text-left">
               <thead className="bg-muted/40 text-muted-foreground text-xs font-medium">
                 <tr>
-                  <th className="px-4 py-3">수강생</th>
-                  <th className="px-4 py-3">현재 모듈</th>
-                  <th className="px-4 py-3">다음 레슨</th>
-                  <th className="px-4 py-3 text-center">미답변</th>
-                  <th className="px-4 py-3 w-8" />
+                  <th scope="col" className="px-4 py-3">수강생</th>
+                  <th scope="col" className="px-4 py-3">현재 진도</th>
+                  <th scope="col" className="px-4 py-3">다음 레슨</th>
+                  <th scope="col" className="px-4 py-3 text-center">피드백 대기</th>
+                  <th scope="col" className="w-12 px-4 py-3"><span className="sr-only">학생 상세</span></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
                 {students.map((st) => (
                   <Fragment key={st.id}>
-                    <tr
-                      onClick={() => handleRowClick(st.id)}
-                      className="hover:bg-muted/30 transition-colors cursor-pointer"
-                    >
+                    <tr className="transition-colors hover:bg-muted/30">
                       <td className="px-4 py-3">
-                        <div className="flex items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => handleRowClick(st.id)}
+                          aria-expanded={expandedId === st.id}
+                          aria-controls={`student-detail-${st.id}`}
+                          className="flex w-full items-center gap-3 rounded-md text-left"
+                        >
                           <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-sm flex-shrink-0">
                             {st.displayName?.[0]?.toUpperCase() || "S"}
                           </div>
                           <div className="min-w-0">
                             <p className="font-medium text-foreground truncate">
-                              {st.displayName || "Unknown"}
+                              {st.displayName || "이름 미등록"}
                             </p>
                             <p className="text-xs text-muted-foreground truncate max-w-[150px]">
                               {st.email}
                             </p>
                           </div>
-                        </div>
+                          {expandedId === st.id ? (
+                            <ChevronDown className="ml-auto size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                          ) : (
+                            <ChevronRight className="ml-auto size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                          )}
+                        </button>
                       </td>
                       <td className="px-4 py-3 text-muted-foreground text-xs">
-                        {st.currentModule ?? "—"}
+                        {st.currentModule ?? "미지정"}
                       </td>
                       <td className="px-4 py-3 text-muted-foreground text-xs">
                         {st.nextLessonDate
                           ? format(st.nextLessonDate, "M/d HH:mm")
-                          : "—"}
+                          : "미정"}
                       </td>
                       <td className="px-4 py-3 text-center">
                         {st.pendingFeedbackCount > 0 ? (
-                          <span className="inline-flex items-center justify-center px-1.5 py-0.5 text-xs font-bold text-red-100 bg-red-500 rounded-full min-w-[20px]">
+                          <span className="inline-flex min-w-[20px] items-center justify-center rounded-md bg-warning-muted px-1.5 py-0.5 text-xs font-bold text-warning">
                             {st.pendingFeedbackCount}
                           </span>
                         ) : (
-                          <span className="text-muted-foreground">—</span>
+                          <span className="text-muted-foreground">0</span>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-muted-foreground">
-                        {expandedId === st.id ? (
-                          <ChevronDown className="w-4 h-4" />
-                        ) : (
-                          <ChevronRight className="w-4 h-4" />
-                        )}
+                      <td className="px-4 py-3">
+                        <Button asChild variant="ghost" size="icon">
+                          <Link
+                            href={`/dashboard/admin/students/${st.id}`}
+                            aria-label={`${st.displayName || st.email} 상세 열기`}
+                          >
+                            <Settings className="size-4" aria-hidden="true" />
+                          </Link>
+                        </Button>
                       </td>
                     </tr>
 
@@ -362,6 +393,7 @@ export function StudentManagementSection({
               </tbody>
             </table>
           </div>
+          </>
         )}
       </div>
     </div>

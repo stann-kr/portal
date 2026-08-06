@@ -21,20 +21,21 @@ type FeedbackPost = {
 
 interface MixsetFeedbackCardProps {
   post: FeedbackPost;
+  returnTo?: string;
 }
 
-export function MixsetFeedbackCard({ post }: MixsetFeedbackCardProps) {
+export function MixsetFeedbackCard({ post, returnTo = "/community" }: MixsetFeedbackCardProps) {
   const [isPlaying, setIsPlaying] = useState(false);
 
   const author =
-    post.authorName ?? post.authorEmail?.split("@")[0] ?? "Unknown";
+    post.authorName ?? post.authorEmail?.split("@")[0] ?? "작성자 미상";
   const initials = author.slice(0, 2).toUpperCase();
   const date = post.createdAt
     ? new Date(post.createdAt).toLocaleDateString("ko-KR", {
         month: "short",
         day: "numeric",
       })
-    : "—";
+    : "날짜 정보 없음";
 
   const preview = post.contentHtml
     .replace(/<[^>]+>/g, " ")
@@ -73,7 +74,10 @@ export function MixsetFeedbackCard({ post }: MixsetFeedbackCardProps) {
             {post.title}
           </p>
         </div>
-        <Link href={`/community/${post.id}`} className="flex-shrink-0">
+        <Link
+          href={`/community/${post.id}?returnTo=${encodeURIComponent(returnTo)}`}
+          className="flex-shrink-0"
+        >
           <ChevronRight className="w-4 h-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
         </Link>
       </div>
@@ -84,6 +88,7 @@ export function MixsetFeedbackCard({ post }: MixsetFeedbackCardProps) {
           <button
             onClick={handleAudioToggle}
             className="w-9 h-9 rounded-full bg-primary text-primary-foreground flex items-center justify-center flex-shrink-0 hover:bg-primary/90 transition-colors"
+            aria-label={isPlaying ? "오디오 일시 정지" : "오디오 재생"}
           >
             {isPlaying ? (
               <Pause className="w-4 h-4" />

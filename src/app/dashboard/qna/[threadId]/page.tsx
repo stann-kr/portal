@@ -1,83 +1,42 @@
 /**
  * @file src/app/dashboard/qna/[threadId]/page.tsx
- * @description Q&A 스레드 상세 페이지 — 답변 목록 + 작성 폼.
+ * @description Q&A 스레드 상세 페이지. 답변 목록 + 작성 폼.
  */
 export const dynamic = "force-dynamic";
 
 import { auth } from "@/auth";
 import { redirect } from "next/navigation";
-import Link from "next/link";
-import { ArrowLeft, Clock, CheckCircle2, XCircle } from "lucide-react";
 import { getQnaThread } from "@/lib/actions/qna";
 import { ThreadDetailClient } from "@/components/qna/ThreadDetailClient";
 import type { QnaStatus } from "@/db/schema";
+import { safeReturnPath } from "@/lib/safe-return-path";
 
 type QnaReply = NonNullable<Awaited<ReturnType<typeof getQnaThread>>>["replies"][number];
 
-const STATUS_CONFIG: Record<QnaStatus, { label: string; color: string; Icon: React.ElementType }> = {
-  OPEN: { label: "미답변", color: "bg-red-500/10 text-red-500", Icon: Clock },
-  ANSWERED: { label: "답변완료", color: "bg-green-500/10 text-green-500", Icon: CheckCircle2 },
-  CLOSED: { label: "종료", color: "bg-muted text-muted-foreground", Icon: XCircle },
-};
-
 export default async function QnaThreadPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ threadId: string }>;
+  searchParams: Promise<{ returnTo?: string }>;
 }) {
   const session = await auth();
   if (!session?.user) redirect("/login");
 
   const { threadId } = await params;
+  const query = await searchParams;
+  const returnTo = safeReturnPath(query.returnTo, "/dashboard/qna");
   const thread = await getQnaThread(threadId);
   if (!thread) redirect("/dashboard/qna");
 
   const isAdmin = session.user.role === "admin";
   const status = thread.status as QnaStatus;
-  const { label, color, Icon } = STATUS_CONFIG[status];
 
   const studentName =
     thread.studentName ?? thread.studentEmail?.split("@")[0] ?? "학생";
 
   return (
     <div className="max-w-3xl mx-auto space-y-6 py-6">
-      {/* 헤더 */}
-      <div className="space-y-2">
-        <Link
-          href="/dashboard/qna"
-          className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
-        >
-          <ArrowLeft className="w-4 h-4" />
-          Q&A 목록
-        </Link>
-
-        <div className="flex items-start gap-3">
-          <div className="flex-1 min-w-0">
-            <h1 className="text-xl font-semibold text-foreground">{thread.title}</h1>
-            <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground">
-              {isAdmin && <span>{studentName} ·</span>}
-              <span>
-                {thread.createdAt
-                  ? new Date(thread.createdAt).toLocaleDateString("ko-KR", {
-                      year: "numeric",
-                      month: "long",
-                      day: "numeric",
-                    })
-                  : "—"}
-              </span>
-            </div>
-          </div>
-          <span className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold shrink-0 ${color}`}>
-            <Icon className="w-3 h-3" />
-            {label}
-          </span>
-        </div>
-      </div>
-
-      {/* 구분선 */}
-      <div className="border-t border-border" />
-
-      {/* 답변 목록 + 작성 폼 (클라이언트) */}
       <ThreadDetailClient
         threadId={threadId}
         status={status}
@@ -86,7 +45,11 @@ export default async function QnaThreadPage({
           authorRole: r.authorRole ?? null,
         }))}
         isAdmin={isAdmin}
-        isClosed={status === "CLOSED"}
+        actorId={session.user.id!}
+        title={thread.title}
+        studentName={studentName}
+        createdAt={thread.createdAt?.toISOString() ?? null}
+        returnTo={returnTo}
       />
     </div>
   );

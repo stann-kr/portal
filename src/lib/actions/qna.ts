@@ -7,13 +7,22 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
-import { createDb } from "@/db/client";
+import { createDb, createDbContext } from "@/db/client";
 import { qnaThreads, qnaReplies, profiles } from "@/db/schema";
 import type { QnaStatus } from "@/db/schema";
 import { and, eq, desc, count } from "drizzle-orm";
 import { requireAuth } from "@/lib/auth-guard";
+import {
+  createQnaReplyAtomically,
+  createQnaThreadAtomically,
+} from "@/lib/qna-atomic";
 import { sanitizeHtml } from "@/lib/sanitize-html";
+import { isRichTextEmpty } from "@/lib/rich-text";
+import {
+  CREATION_OPERATION_FIELD,
+  deriveCreationResourceId,
+  resolveCreationOperationId,
+} from "@/lib/creation-operation";
 
 /**
  * 첨부 URL 파싱/검증.
@@ -31,7 +40,7 @@ function parseAttachmentUrl(formData: FormData): string | null {
 async function getQnaThreadOwner(threadId: string) {
   const db = createDb();
   const [thread] = await db
-    .select({ id: qnaThreads.id, studentId: qnaThreads.studentId })
+    .select({ id: qnaThreads.id, studentId: qnaThreads.studentId, status: qnaThreads.status })
     .from(qnaThreads)
     .where(eq(qnaThreads.id, threadId))
     .limit(1);
@@ -170,7 +179,144 @@ export async function getOpenThreadCount(): Promise<number> {
 
 // ─── 스레드 생성 ──────────────────────────────────
 
-export type CreateThreadState = { error?: string };
+export type CreateThreadState = {
+  error?: string;
+  success?: boolean;
+  operationConflict?: boolean;
+  conflictedOperationId?: string;
+  existingId?: string;
+  thread?: { id: string; title: string };
+};
+
+export type CreateThreadInlineState = {
+  error?: string;
+  success?: boolean;
+  operationConflict?: boolean;
+  conflictedOperationId?: string;
+  existingId?: string;
+  thread?: { id: string; title: string; createdAt: Date };
+};
+
+type CreateThreadRecordResult = {
+  error?: string;
+  operationConflict?: boolean;
+  conflictedOperationId?: string;
+  existingId?: string;
+  thread?: { id: string; title: string; createdAt: Date };
+};
+
+async function createQnaThreadRecord(
+  studentId: string,
+  formData: FormData,
+): Promise<CreateThreadRecordResult> {
+  const title = String(formData.get("title") ?? "").trim();
+  const rawHtml = String(formData.get("contentHtml") ?? "");
+
+  if (!title) return { error: "제목을 입력해주세요." };
+  if (isRichTextEmpty(rawHtml)) return { error: "내용을 입력해주세요." };
+
+  const contentHtml = sanitizeHtml(rawHtml);
+  if (isRichTextEmpty(contentHtml)) return { error: "내용을 입력해주세요." };
+  const attachmentUrl = parseAttachmentUrl(formData);
+  const operationId = resolveCreationOperationId(
+    formData.get(CREATION_OPERATION_FIELD),
+  );
+  if (!operationId) {
+    return { error: "문서 생성 식별자가 올바르지 않습니다. 페이지를 새로고침해 주세요." };
+  }
+  const threadId = deriveCreationResourceId(
+    operationId,
+    JSON.stringify(["qna-thread", studentId]),
+  );
+  const replyId = deriveCreationResourceId(
+    operationId,
+    JSON.stringify(["qna-initial-reply", studentId]),
+  );
+  const db = createDb();
+  const findExisting = async () => {
+    const [thread] = await db
+      .select({
+        id: qnaThreads.id,
+        studentId: qnaThreads.studentId,
+        title: qnaThreads.title,
+        createdAt: qnaThreads.createdAt,
+      })
+      .from(qnaThreads)
+      .where(eq(qnaThreads.id, threadId))
+      .limit(1);
+    const [reply] = await db
+      .select({
+        id: qnaReplies.id,
+        threadId: qnaReplies.threadId,
+        authorId: qnaReplies.authorId,
+        contentHtml: qnaReplies.contentHtml,
+        attachmentUrl: qnaReplies.attachmentUrl,
+      })
+      .from(qnaReplies)
+      .where(eq(qnaReplies.id, replyId))
+      .limit(1);
+    return { thread: thread ?? null, reply: reply ?? null };
+  };
+  const isSameSubmission = (
+    existing: Awaited<ReturnType<typeof findExisting>>,
+  ) =>
+    Boolean(
+      existing.thread &&
+      existing.reply &&
+      existing.thread.studentId === studentId &&
+      existing.thread.title === title &&
+      existing.reply.threadId === threadId &&
+      existing.reply.authorId === studentId &&
+      existing.reply.contentHtml === contentHtml &&
+      existing.reply.attachmentUrl === attachmentUrl,
+    );
+
+  try {
+    await createQnaThreadAtomically(createDbContext(), {
+      threadId,
+      replyId,
+      studentId,
+      title,
+      contentHtml,
+      attachmentUrl,
+    });
+  } catch {
+    try {
+      const existing = await findExisting();
+      if (!isSameSubmission(existing)) {
+        if (existing.thread?.studentId === studentId) {
+          return {
+            error: "이 초안은 다른 내용으로 이미 등록되었습니다. 기존 질문을 열거나 별도 질문으로 분리해 주세요.",
+            operationConflict: true,
+            conflictedOperationId: operationId,
+            existingId: existing.thread.id,
+          };
+        }
+        return { error: "질문을 저장하지 못했습니다. 다시 시도해 주세요." };
+      }
+      return {
+        thread: {
+          id: threadId,
+          title,
+          createdAt: existing.thread?.createdAt ?? new Date(),
+        },
+      };
+    } catch {
+      return { error: "질문을 저장하지 못했습니다. 다시 시도해 주세요." };
+    }
+  }
+
+  let createdAt = new Date();
+  try {
+    const existing = await findExisting();
+    if (isSameSubmission(existing) && existing.thread?.createdAt) {
+      createdAt = existing.thread.createdAt;
+    }
+  } catch {
+    // 원자 생성은 완료되었다. 생성 시각 조회 실패는 성공을 되돌리지 않는다.
+  }
+  return { thread: { id: threadId, title, createdAt } };
+}
 
 /**
  * 새 Q&A 스레드 생성 (학생 전용).
@@ -184,45 +330,16 @@ export async function createQnaThread(
     return { error: "학생만 새 Q&A 스레드를 생성할 수 있습니다." };
   }
 
-  const title = (formData.get("title") as string)?.trim();
-  const rawHtml = formData.get("contentHtml") as string;
-
-  if (!title) return { error: "제목을 입력해주세요." };
-  if (!rawHtml || rawHtml === "<p></p>")
-    return { error: "내용을 입력해주세요." };
-
-  const contentHtml = sanitizeHtml(rawHtml);
-
-  const db = createDb();
-  const threadId = crypto.randomUUID();
-  const replyId = crypto.randomUUID();
-
-  // 스레드 생성
-  await db.insert(qnaThreads).values({
-    id: threadId,
-    studentId: session.user.id!,
-    title,
-    status: "OPEN",
-  });
-
-  // 첫 번째 질문을 reply로 저장
-  await db.insert(qnaReplies).values({
-    id: replyId,
-    threadId,
-    authorId: session.user.id!,
-    contentHtml,
-  });
+  const result = await createQnaThreadRecord(session.user.id!, formData);
+  if (!result.thread) return result;
 
   revalidatePath("/dashboard/qna");
   revalidatePath("/dashboard/student");
-  redirect(`/dashboard/qna/${threadId}`);
+  return {
+    success: true,
+    thread: { id: result.thread.id, title: result.thread.title },
+  };
 }
-
-export type CreateThreadInlineState = {
-  error?: string;
-  success?: boolean;
-  thread?: { id: string; title: string; createdAt: Date };
-};
 
 /**
  * 새 Q&A 스레드 생성 — 인라인 폼용 (redirect 없이 결과 반환).
@@ -237,48 +354,24 @@ export async function createQnaThreadInline(
     return { error: "학생만 새 Q&A 스레드를 생성할 수 있습니다." };
   }
 
-  const title = (formData.get("title") as string)?.trim();
-  const rawHtml = formData.get("contentHtml") as string;
+  const result = await createQnaThreadRecord(session.user.id!, formData);
+  if (!result.thread) return result;
 
-  if (!title) return { error: "제목을 입력해주세요." };
-  if (!rawHtml || rawHtml === "<p></p>")
-    return { error: "내용을 입력해주세요." };
-
-  const contentHtml = sanitizeHtml(rawHtml);
-  const attachmentUrl = parseAttachmentUrl(formData);
-
-  const db = createDb();
-  const threadId = crypto.randomUUID();
-  const replyId = crypto.randomUUID();
-
-  try {
-    await db.insert(qnaThreads).values({
-      id: threadId,
-      studentId: session.user.id!,
-      title,
-      status: "OPEN",
-    });
-
-    await db.insert(qnaReplies).values({
-      id: replyId,
-      threadId,
-      authorId: session.user.id!,
-      contentHtml,
-      attachmentUrl,
-    });
-
-    revalidatePath("/dashboard/qna");
-    revalidatePath("/dashboard/student");
-
-    return { success: true, thread: { id: threadId, title, createdAt: new Date() } };
-  } catch {
-    return { error: "질문 작성 중 오류가 발생했습니다." };
-  }
+  revalidatePath("/dashboard/qna");
+  revalidatePath("/dashboard/student");
+  return { success: true, thread: result.thread };
 }
 
 // ─── 답변 추가 ────────────────────────────────────
 
-export type CreateReplyState = { error?: string; success?: boolean };
+export type CreateReplyState = {
+  error?: string;
+  success?: boolean;
+  replyId?: string;
+  operationConflict?: boolean;
+  conflictedOperationId?: string;
+  existingId?: string;
+};
 
 /**
  * 답변/추가 질문 작성 (학생 + 어드민).
@@ -291,12 +384,15 @@ export async function createQnaReply(
 ): Promise<CreateReplyState> {
   const session = await requireAuth();
   const isAdmin = session.user.role === "admin";
+  const actorId = session.user.id!;
 
-  const rawHtml = formData.get("contentHtml") as string;
-  if (!rawHtml || rawHtml === "<p></p>")
+  const rawHtml = String(formData.get("contentHtml") ?? "");
+  if (isRichTextEmpty(rawHtml))
     return { error: "내용을 입력해주세요." };
 
   const contentHtml = sanitizeHtml(rawHtml);
+  if (isRichTextEmpty(contentHtml))
+    return { error: "내용을 입력해주세요." };
   const attachmentUrl = parseAttachmentUrl(formData);
 
   const thread = await getQnaThreadOwner(threadId);
@@ -307,35 +403,103 @@ export async function createQnaReply(
   if (!isAdmin && thread.studentId !== session.user.id) {
     return { error: "권한이 없습니다." };
   }
-
+  const operationId = resolveCreationOperationId(
+    formData.get(CREATION_OPERATION_FIELD),
+  );
+  if (!operationId) {
+    return { error: "문서 생성 식별자가 올바르지 않습니다. 페이지를 새로고침해 주세요." };
+  }
+  const replyId = deriveCreationResourceId(
+    operationId,
+    JSON.stringify(["qna-reply", actorId, threadId]),
+  );
   const db = createDb();
-
-  await db.insert(qnaReplies).values({
-    id: crypto.randomUUID(),
-    threadId,
-    authorId: session.user.id!,
-    contentHtml,
-    attachmentUrl,
+  const findExisting = async () => {
+    const [existing] = await db
+      .select({
+        id: qnaReplies.id,
+        threadId: qnaReplies.threadId,
+        authorId: qnaReplies.authorId,
+        contentHtml: qnaReplies.contentHtml,
+        attachmentUrl: qnaReplies.attachmentUrl,
+      })
+      .from(qnaReplies)
+      .where(eq(qnaReplies.id, replyId))
+      .limit(1);
+    return existing ?? null;
+  };
+  const isSameSubmission = (existing: Awaited<ReturnType<typeof findExisting>>) =>
+    Boolean(
+      existing &&
+      existing.threadId === threadId &&
+      existing.authorId === actorId &&
+      existing.contentHtml === contentHtml &&
+      existing.attachmentUrl === attachmentUrl,
+    );
+  const conflictResult = (existingId: string): CreateReplyState => ({
+    error: "이 초안은 다른 내용으로 이미 등록되었습니다. 현재 답변을 확인하거나 별도 답변으로 분리해 주세요.",
+    operationConflict: true,
+    conflictedOperationId: operationId,
+    existingId,
   });
+  const successResult = (): CreateReplyState => {
+    revalidatePath(`/dashboard/qna/${threadId}`);
+    revalidatePath("/dashboard/qna");
+    revalidatePath("/dashboard/student");
+    return { success: true, replyId };
+  };
 
-  // 어드민 답변 시 → ANSWERED로 자동 전환
-  if (isAdmin) {
-    await db
-      .update(qnaThreads)
-      .set({ status: "ANSWERED", updatedAt: new Date() })
-      .where(eq(qnaThreads.id, threadId));
-  } else {
-    // 학생 추가 질문 시 → OPEN으로 재오픈
-    await db
-      .update(qnaThreads)
-      .set({ status: "OPEN", updatedAt: new Date() })
-      .where(eq(qnaThreads.id, threadId));
+  let existingBeforeInsert: Awaited<ReturnType<typeof findExisting>>;
+  try {
+    existingBeforeInsert = await findExisting();
+  } catch {
+    return { error: "답변을 저장하지 못했습니다. 다시 시도해 주세요." };
+  }
+  if (existingBeforeInsert) {
+    if (isSameSubmission(existingBeforeInsert)) return successResult();
+    return existingBeforeInsert.threadId === threadId &&
+      existingBeforeInsert.authorId === actorId
+      ? conflictResult(existingBeforeInsert.id)
+      : { error: "답변을 저장하지 못했습니다. 다시 시도해 주세요." };
   }
 
-  revalidatePath(`/dashboard/qna/${threadId}`);
-  revalidatePath("/dashboard/qna");
-  revalidatePath("/dashboard/student");
-  return { success: true };
+  if (thread.status === "CLOSED") {
+    return { error: "종료된 스레드에는 답변을 추가할 수 없습니다." };
+  }
+
+  const dbContext = createDbContext();
+
+  try {
+    const created = await createQnaReplyAtomically(dbContext, {
+      threadId,
+      replyId,
+      actorId,
+      isAdmin,
+      contentHtml,
+      attachmentUrl,
+    });
+
+    if (!created) {
+      return { error: "종료된 스레드에는 답변을 추가할 수 없습니다." };
+    }
+  } catch {
+    try {
+      const existing = await findExisting();
+      if (isSameSubmission(existing)) return successResult();
+      if (existing?.threadId === threadId && existing.authorId === actorId) {
+        return conflictResult(existing.id);
+      }
+      const latestThread = await getQnaThreadOwner(threadId);
+      if (latestThread?.status === "CLOSED") {
+        return { error: "종료된 스레드에는 답변을 추가할 수 없습니다." };
+      }
+    } catch {
+      // 원래 쓰기 오류 메시지를 유지한다.
+    }
+    return { error: "답변을 저장하지 못했습니다. 다시 시도해 주세요." };
+  }
+
+  return successResult();
 }
 
 // ─── 상태 변경 ────────────────────────────────────
@@ -346,6 +510,9 @@ export async function createQnaReply(
 export async function updateThreadStatus(threadId: string, status: QnaStatus) {
   const session = await requireAuth();
   if (session.user.role !== "admin") throw new Error("Unauthorized");
+  if (!["OPEN", "ANSWERED", "CLOSED"].includes(status)) {
+    throw new Error("Invalid Q&A status");
+  }
 
   const db = createDb();
   await db

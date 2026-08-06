@@ -32,6 +32,7 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
 
 # vercel
 .vercel
@@ -52,3 +53,20 @@ next-env.d.ts
 
 # local agent cache
 /cache/
+
+# --- 프로젝트 문서 정책 ---
+# docs/ = GitHub에 올릴 공개 프로젝트 문서
+# .docs/ = Obsidian 동기화/개인 작업/AI handoff 문서 (GitHub 업로드 금지)
+/.docs/
+!/docs/
+!/docs/**/*.md
+
+# 작업 로그는 비공개 레이어에서만 관리한다
+/WORK_LOG.md
+
+# 에이전트 지침 및 로컬 설정 (공개 금지)
+/CLAUDE.md
+/AGENTS.md
+/.claude/
+/.agents/
+/.codex/

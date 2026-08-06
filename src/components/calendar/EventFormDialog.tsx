@@ -18,10 +18,10 @@ import { createCalendarEvent, type CreateEventState } from "@/lib/actions/calend
 import type { CalendarEventType } from "@/db/schema";
 
 const EVENT_TYPES: { value: CalendarEventType; label: string; color: string }[] = [
-  { value: "LESSON", label: "수업", color: "bg-blue-500" },
-  { value: "PRACTICE", label: "연습", color: "bg-green-500" },
-  { value: "GIG", label: "공연", color: "bg-red-500" },
-  { value: "NOTE", label: "메모", color: "bg-amber-500" },
+  { value: "LESSON", label: "수업", color: "bg-event-lesson" },
+  { value: "PRACTICE", label: "연습", color: "bg-event-practice" },
+  { value: "GIG", label: "공연", color: "bg-event-gig" },
+  { value: "NOTE", label: "메모", color: "bg-event-note" },
 ];
 
 interface EventFormDialogProps {

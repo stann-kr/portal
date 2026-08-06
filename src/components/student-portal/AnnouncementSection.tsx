@@ -18,9 +18,10 @@ type Post = {
 
 interface AnnouncementSectionProps {
   posts: Post[];
+  returnTo?: string;
 }
 
-export function AnnouncementSection({ posts }: AnnouncementSectionProps) {
+export function AnnouncementSection({ posts, returnTo }: AnnouncementSectionProps) {
   return (
     <div className="h-full flex flex-col">
       {/* 섹션 헤더 */}
@@ -31,7 +32,7 @@ export function AnnouncementSection({ posts }: AnnouncementSectionProps) {
 
       {/* 공지 목록 */}
       <div className="flex-1 overflow-auto">
-        <AnnouncementList posts={posts} isAdmin={false} />
+        <AnnouncementList posts={posts} isAdmin={false} returnTo={returnTo} />
       </div>
     </div>
   );

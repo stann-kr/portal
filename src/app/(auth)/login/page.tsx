@@ -2,6 +2,7 @@ import { signIn } from "@/auth";
 import { AuthError } from "next-auth";
 import { redirect } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 /**
  * NextAuth 에러 코드 → 사용자 친화적 메시지 매핑
@@ -32,21 +33,24 @@ export default async function LoginPage({
   const errorMessage = getErrorMessage(error);
 
   return (
-    <div className="flex items-center justify-center min-h-screen bg-background p-4">
-      <div className="w-full max-w-sm space-y-6">
+    <div className="flex min-h-[100dvh] items-center justify-center bg-background p-4">
+      <div className="w-full max-w-sm rounded-lg border border-border bg-surface p-6 sm:p-8">
         {/* 헤더 */}
-        <div className="space-y-2 text-center">
-          <h1 className="text-3xl font-bold tracking-tight text-foreground">
-            Portal Access
+        <div className="space-y-2">
+          <div className="flex size-10 items-center justify-center rounded-md bg-primary text-sm font-bold text-primary-foreground">
+            SL
+          </div>
+          <h1 className="pt-4 text-2xl font-semibold tracking-[-0.03em] text-foreground">
+            DJ 레슨 포털
           </h1>
           <p className="text-sm text-muted-foreground">
-            Sign in with your credentials to continue.
+            수업 일정과 학습 기록을 계속하려면 로그인하세요.
           </p>
         </div>
 
         {/* 에러 메시지 */}
         {errorMessage && (
-          <div className="px-4 py-3 rounded-lg bg-destructive/10 border border-destructive/20 text-sm text-destructive font-medium text-center">
+          <div role="alert" className="mt-5 rounded-md border border-destructive/20 bg-destructive-muted px-4 py-3 text-sm font-medium text-destructive">
             {errorMessage}
           </div>
         )}
@@ -70,44 +74,44 @@ export default async function LoginPage({
               throw err;
             }
           }}
-          className="space-y-4"
+          className="mt-6 space-y-4"
         >
           <div className="space-y-2">
             <label htmlFor="email" className="text-sm font-medium">
-              Email
+              이메일
             </label>
-            <input
+            <Input
               id="email"
               name="email"
               type="email"
               required
               autoComplete="email"
-              placeholder="admin@example.com"
-              className="flex h-10 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-50"
+              placeholder="name@example.com"
+              className="h-10"
             />
           </div>
 
           <div className="space-y-2">
             <label htmlFor="password" className="text-sm font-medium">
-              Password
+              비밀번호
             </label>
-            <input
+            <Input
               id="password"
               name="password"
               type="password"
               required
               autoComplete="current-password"
-              className="flex h-10 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-50"
+              className="h-10"
             />
           </div>
 
           <Button type="submit" className="w-full">
-            Sign In
+            로그인
           </Button>
         </form>
 
-        <div className="text-center text-xs text-muted-foreground">
-          <p>Contact the administrator for account access.</p>
+        <div className="mt-5 text-xs text-muted-foreground">
+          <p>계정이 필요하면 담당 강사에게 문의하세요.</p>
         </div>
       </div>
     </div>

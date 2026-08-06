@@ -23,9 +23,9 @@ export default async function DashboardLayout({
   const role = session.user.role ?? "student";
 
   return (
-    <div className="flex min-h-screen bg-background text-foreground">
+    <div className="flex min-h-[100dvh] bg-background text-foreground">
       {role === "admin" ? <AdminSideRail /> : <StudentSideRail />}
-      <main className="flex-1 overflow-auto">{children}</main>
+      <div className="min-w-0 flex-1 overflow-auto">{children}</div>
     </div>
   );
 }

@@ -36,12 +36,17 @@ export function StudentFilterDropdown({
 
   return (
     <div className="flex items-center gap-1.5">
-      <Users className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+      <Users className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" aria-hidden="true" />
+      <label htmlFor="calendar-student-filter" className="sr-only">
+        캘린더 학생 선택
+      </label>
       <select
+        id="calendar-student-filter"
         value={selectedStudentId}
         onChange={handleChange}
         disabled={isPending}
-        className="text-xs rounded-md border border-input bg-background px-2 py-1 text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50 min-w-[120px]"
+        aria-busy={isPending}
+        className="min-w-[120px] rounded-md border border-input bg-surface px-2 py-1 text-xs text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
       >
         {students.map((s) => (
           <option key={s.id} value={s.id}>

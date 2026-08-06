@@ -1,6 +1,6 @@
 /**
  * @file src/app/dashboard/student/assignments/[id]/page.tsx
- * @description 과제 상세 페이지 — VideoPlayer + 타임라인 피드백 (Server Component).
+ * @description 과제 상세 페이지. VideoPlayer + 타임라인 피드백 (Server Component).
  * 데이터 패칭을 서버에서 처리하고, 복잡한 UI 상태는 클라이언트 컴포넌트로 위임합니다.
  */
 import Link from "next/link";
@@ -55,18 +55,20 @@ export default async function AssignmentDetailPage({
         month: "long",
         day: "numeric",
       })
-    : "—";
+    : "제출일 미정";
+  const backHref = isAdmin ? "/dashboard/admin" : "/dashboard/student";
+  const backLabel = isAdmin ? "업무함으로" : "학생 포털로";
 
   return (
     <div className="max-w-4xl mx-auto py-6 space-y-8">
       {/* 헤더 */}
       <div className="space-y-1">
         <Link
-          href="/dashboard/student/assignments"
+          href={backHref}
           className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
         >
           <ArrowLeft className="w-4 h-4" />
-          My Assignments
+          {backLabel}
         </Link>
         <h1 className="text-xl font-semibold mt-2 break-all">
           {assignment.mediaUrl}

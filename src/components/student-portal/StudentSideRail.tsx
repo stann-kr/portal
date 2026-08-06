@@ -9,12 +9,15 @@ import { signOut } from "@/auth";
 
 export function StudentSideRail() {
   return (
-    <aside className="w-14 shrink-0 border-r border-border bg-muted/30 flex flex-col items-center py-3 gap-2">
+    <aside
+      aria-label="학생 포털 도구"
+      className="flex w-12 shrink-0 flex-col items-center gap-2 border-r border-border bg-muted/30 py-3 sm:w-14"
+    >
       {/* 브랜드 로고 */}
       <Link
         href="/"
         className="w-9 h-9 rounded-lg bg-foreground text-background flex items-center justify-center text-xs font-bold tracking-tight hover:opacity-80 transition-opacity"
-        title="Stann Lumo Portal"
+        aria-label="Stann Lumo 홈"
       >
         SL
       </Link>
@@ -31,7 +34,7 @@ export function StudentSideRail() {
         <button
           type="submit"
           className="w-9 h-9 rounded-lg flex items-center justify-center text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
-          title="Sign out"
+          aria-label="로그아웃"
         >
           <LogOut className="w-4 h-4" />
         </button>

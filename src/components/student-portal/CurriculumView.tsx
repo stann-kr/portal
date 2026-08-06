@@ -82,7 +82,7 @@ export function CurriculumView({ initialModules }: CurriculumViewProps) {
               aria-label={m.isCompleted ? "미완료로 변경" : "완료로 변경"}
             >
               {m.isCompleted ? (
-                <CheckCircle2 className="w-5 h-5 text-green-500" />
+                <CheckCircle2 className="w-5 h-5 text-success" />
               ) : (
                 <Circle className="w-5 h-5 text-muted-foreground" />
               )}
@@ -103,7 +103,7 @@ export function CurriculumView({ initialModules }: CurriculumViewProps) {
             </div>
 
             {m.isCompleted && (
-              <span className="text-xs text-green-500 font-medium flex-shrink-0">완료</span>
+              <span className="text-xs text-success font-medium flex-shrink-0">완료</span>
             )}
           </li>
         ))}

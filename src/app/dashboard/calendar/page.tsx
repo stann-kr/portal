@@ -2,7 +2,7 @@
  * @file src/app/dashboard/calendar/page.tsx
  * @description 개인 캘린더 페이지 — Phase 4.
  * FullCalendar 기반 월간/주간/일간/목록 뷰 + 드래그&드롭 일정 관리.
- * 이벤트 유형: LESSON(파랑) / PRACTICE(초록) / GIG(빨강) / NOTE(주황)
+ * 이벤트 유형은 공통 semantic event token으로 표현한다.
  */
 export const dynamic = "force-dynamic";
 
@@ -31,7 +31,7 @@ export default async function CalendarPage() {
         <div className="space-y-1">
           <h1 className="text-2xl font-semibold tracking-tight text-foreground flex items-center gap-2">
             <CalendarDays className="w-6 h-6 text-primary" />
-            My Calendar
+            내 캘린더
           </h1>
           <p className="text-sm text-muted-foreground">
             날짜를 클릭하면 새 일정을 추가할 수 있습니다.

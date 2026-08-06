@@ -8,33 +8,40 @@ import { getPostById } from "@/lib/actions/posts";
 import { getCommentsByPost } from "@/lib/actions/comments";
 import { auth } from "@/auth";
 import { PostDetailClient } from "./PostDetailClient";
+import { safeReturnPath } from "@/lib/safe-return-path";
+import { redirect } from "next/navigation";
 
 export default async function PostDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ postId: string }>;
+  searchParams: Promise<{ returnTo?: string }>;
 }) {
   const { postId } = await params;
+  const query = await searchParams;
+  const returnTo = safeReturnPath(query.returnTo, "/community");
+  const session = await auth();
+  if (!session?.user?.id) redirect("/login");
 
-  const [post, commentList, session] = await Promise.all([
+  const [post, commentList] = await Promise.all([
     getPostById(postId),
     getCommentsByPost(postId),
-    auth(),
   ]);
 
   if (!post) {
     return (
       <div className="max-w-3xl mx-auto py-6 text-center text-muted-foreground">
         <p>게시물을 찾을 수 없습니다.</p>
-        <Link href="/community" className="text-sm underline mt-2 block">
+        <Link href={returnTo} className="text-sm underline mt-2 block">
           목록으로
         </Link>
       </div>
     );
   }
 
-  const currentUserId = session?.user?.id ?? null;
-  const isAdmin = session?.user?.role === "admin";
+  const currentUserId = session.user.id;
+  const isAdmin = session.user.role === "admin";
 
   return (
     <PostDetailClient
@@ -43,6 +50,7 @@ export default async function PostDetailPage({
       initialCommentList={commentList}
       currentUserId={currentUserId}
       isAdmin={isAdmin}
+      returnTo={returnTo}
     />
   );
 }

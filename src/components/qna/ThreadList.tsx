@@ -22,9 +22,10 @@ type Thread = {
 interface ThreadListProps {
   threads: Thread[];
   isAdmin: boolean;
+  returnTo?: string;
 }
 
-export function ThreadList({ threads, isAdmin }: ThreadListProps) {
+export function ThreadList({ threads, isAdmin, returnTo = "/dashboard/qna" }: ThreadListProps) {
   const [filter, setFilter] = useState<QnaFilterTab>("ALL");
 
   const counts = useMemo(
@@ -94,14 +95,14 @@ export function ThreadList({ threads, isAdmin }: ThreadListProps) {
                   month: "short",
                   day: "numeric",
                 })
-              : "—";
+              : "작성일 미정";
             const student =
-              thread.studentName ?? thread.studentEmail?.split("@")[0] ?? "—";
+              thread.studentName ?? thread.studentEmail?.split("@")[0] ?? "이름 미등록";
 
             return (
               <Link
                 key={thread.id}
-                href={`/dashboard/qna/${thread.id}`}
+                href={`/dashboard/qna/${thread.id}?returnTo=${encodeURIComponent(returnTo)}`}
                 className="flex items-center gap-4 p-4 rounded-xl border border-border bg-card hover:bg-accent/5 transition-colors group"
               >
                 <Icon className={`w-4 h-4 flex-shrink-0 ${iconClassName}`} />
@@ -109,12 +110,12 @@ export function ThreadList({ threads, isAdmin }: ThreadListProps) {
                   <p className="font-medium text-foreground truncate">{thread.title}</p>
                   <div className="flex items-center gap-2 mt-0.5">
                     {isAdmin && (
-                      <span className="text-xs text-muted-foreground">{student} ·</span>
+                      <span className="text-xs text-muted-foreground">{student} /</span>
                     )}
                     <span className="text-xs text-muted-foreground">{date}</span>
                   </div>
                 </div>
-                <span className={`px-2.5 py-1 rounded-full text-xs font-semibold shrink-0 ${color}`}>
+                <span className={`shrink-0 rounded-md border px-2.5 py-1 text-xs font-semibold ${color}`}>
                   {label}
                 </span>
               </Link>
