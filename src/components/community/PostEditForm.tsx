@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { DraftStatus } from "@/components/editor/DraftStatus";
 import { DraftConflictRecovery } from "@/components/editor/DraftConflictRecovery";
 import { createDocumentDraftKey } from "@/lib/form-draft";
-import { useFormDraft } from "@/lib/hooks/useFormDraft";
+import { useSyncedFormDraft } from "@/lib/hooks/useSyncedFormDraft";
 import { useDeferredEditorContent } from "@/lib/hooks/useDeferredEditorContent";
 import { useDocumentSaveShortcut } from "@/lib/hooks/useDocumentSaveShortcut";
 import { isRichTextEmpty } from "@/lib/rich-text";
@@ -138,7 +138,8 @@ export function PostEditForm({
     recoveries,
     restoreRecovery,
     discardRecovery,
-  } = useFormDraft<PostEditDraft>(
+    serverSync,
+  } = useSyncedFormDraft<PostEditDraft>(
     createDocumentDraftKey("community-post", actorId, post.id),
     (draft) => {
       restoredDraftRef.current = draft;
@@ -385,6 +386,7 @@ export function PostEditForm({
               recoveries={recoveries}
               onRestoreRecovery={restoreRecovery}
               onDiscardRecovery={discardRecovery}
+              serverSync={serverSync}
               disabled={isPending}
             />
           }

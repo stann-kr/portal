@@ -346,6 +346,20 @@ export function createFormDraftDataSignature(data: unknown): string {
   return `sha256:${bytesToHex(sha256(utf8ToBytes(serialized)))}`;
 }
 
+/** 서버 초안과 local queue가 공유할 key-order 독립 JSON object를 만든다. */
+export function serializeNormalizedFormDraftData(data: unknown): string {
+  const normalized = normalizeFormDraftData(data, new Set());
+  if (
+    normalized === OMITTED_JSON_VALUE ||
+    typeof normalized !== "object" ||
+    normalized === null ||
+    Array.isArray(normalized)
+  ) {
+    throw new TypeError("Document draft data must serialize to a JSON object");
+  }
+  return JSON.stringify(normalized);
+}
+
 export function serializeFormDraft<T>(
   data: T,
   savedAt = Date.now(),
@@ -449,6 +463,25 @@ export function parseDocumentDraftKey(
 
 export function createFormDraftClearMarkerKey(sourceKey: string): string {
   return `draft:document-clear-marker:${encodeURIComponent(sourceKey)}`;
+}
+
+export function createDocumentServerDraftQueueKey(sourceKey: string): string {
+  return `draft:document-server-queue:${encodeURIComponent(sourceKey)}`;
+}
+
+export function readDocumentServerDraftQueueSourceKey(
+  storageKey: string,
+): string | null {
+  const prefix = "draft:document-server-queue:";
+  if (!storageKey.startsWith(prefix)) return null;
+  try {
+    const sourceKey = decodeURIComponent(storageKey.slice(prefix.length));
+    return createDocumentServerDraftQueueKey(sourceKey) === storageKey
+      ? sourceKey
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 export function createFormDraftClearMarkerEntryPrefix(sourceKey: string): string {
@@ -1099,7 +1132,7 @@ function readFormDraftClearMarkerArtifact(
 export type DocumentDraftArtifact = DocumentDraftKeyIdentity & {
   sourceKey: string;
   storageKey: string;
-  artifactKind: "canonical" | "recovery" | "clear-marker";
+  artifactKind: "canonical" | "recovery" | "clear-marker" | "server-queue";
 };
 
 /** canonical·recovery·clear marker key를 하나의 소유 계정 namespace로 해석한다. */
@@ -1125,6 +1158,19 @@ export function readDocumentDraftArtifact(
         sourceKey: recoverySourceKey,
         storageKey,
         artifactKind: "recovery",
+      };
+    }
+  }
+
+  const queueSourceKey = readDocumentServerDraftQueueSourceKey(storageKey);
+  if (queueSourceKey) {
+    const identity = parseDocumentDraftKey(queueSourceKey);
+    if (identity) {
+      return {
+        ...identity,
+        sourceKey: queueSourceKey,
+        storageKey,
+        artifactKind: "server-queue",
       };
     }
   }

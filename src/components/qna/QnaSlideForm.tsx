@@ -11,7 +11,7 @@ import dynamic from "next/dynamic";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { AttachmentField } from "@/components/qna/AttachmentField";
-import { useFormDraft } from "@/lib/hooks/useFormDraft";
+import { useSyncedFormDraft } from "@/lib/hooks/useSyncedFormDraft";
 import { useDeferredEditorContent } from "@/lib/hooks/useDeferredEditorContent";
 import { createQnaThreadInline, type CreateThreadInlineState } from "@/lib/actions/qna";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
@@ -100,7 +100,8 @@ export function QnaSlideForm({
     recoveries,
     restoreRecovery,
     discardRecovery,
-  } = useFormDraft<QnaDraft>(
+    serverSync,
+  } = useSyncedFormDraft<QnaDraft>(
     createDocumentDraftKey("qna-thread", actorId),
     (d) => {
       setOperationId(
@@ -297,6 +298,7 @@ export function QnaSlideForm({
                 recoveries={recoveries}
                 onRestoreRecovery={restoreRecovery}
                 onDiscardRecovery={discardRecovery}
+                serverSync={serverSync}
                 disabled={isFormBusy}
               />
             }

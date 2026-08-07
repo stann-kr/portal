@@ -18,7 +18,7 @@ const FullEditor = dynamic(
 );
 import { ReplyCard } from "./ReplyCard";
 import { AttachmentField } from "./AttachmentField";
-import { useFormDraft } from "@/lib/hooks/useFormDraft";
+import { useSyncedFormDraft } from "@/lib/hooks/useSyncedFormDraft";
 import { useDeferredEditorContent } from "@/lib/hooks/useDeferredEditorContent";
 import { createQnaReply, updateThreadStatus, type CreateReplyState } from "@/lib/actions/qna";
 import { QNA_STATUS_LABELS } from "@/lib/qna-status";
@@ -122,7 +122,8 @@ export function ThreadDetailClient({
     recoveries,
     restoreRecovery,
     discardRecovery,
-  } = useFormDraft<QnaReplyDraft>(
+    serverSync,
+  } = useSyncedFormDraft<QnaReplyDraft>(
     createDocumentDraftKey("qna-reply", actorId, threadId),
     (d) => {
       setOperationId(
@@ -400,6 +401,7 @@ export function ThreadDetailClient({
                   recoveries={recoveries}
                   onRestoreRecovery={restoreRecovery}
                   onDiscardRecovery={discardRecovery}
+                  serverSync={serverSync}
                   disabled={isReplyFormBusy}
                 />
               }

@@ -5,6 +5,8 @@ import type { AuthSession } from "@/lib/auth-guard";
 import {
   categories,
   documentOperationLedger,
+  documentServerDraftOperations,
+  documentServerDrafts,
   documentTombstones,
   privateNoteRevisions,
   privateNotes,
@@ -34,6 +36,14 @@ import {
   type PrivateNoteCanonicalRequest,
   type PrivateNoteCanonicalSnapshot,
 } from "@/lib/private-note-continuity";
+import {
+  createDocumentDraftKey,
+} from "@/lib/form-draft";
+import { serializeDocumentServerDraftPayload } from "@/lib/document-server-draft-contract";
+import {
+  DOCUMENT_SERVER_DRAFT_MAX_PAYLOAD_BYTES,
+  DOCUMENT_SERVER_DRAFT_RETENTION_SECONDS,
+} from "@/lib/document-server-draft-constants";
 
 type PortalTestDb = IsolatedPortalD1["db"];
 type D1TestContext = { kind: "d1"; db: PortalTestDb };
@@ -41,6 +51,7 @@ type D1TestContext = { kind: "d1"; db: PortalTestDb };
 let activeDb: PortalTestDb | null = null;
 let activeDbContext: D1TestContext | null = null;
 let activeSession: AuthSession = createSession("student-1", "student");
+let documentDraftActions: typeof import("@/lib/actions/documentDrafts");
 let qnaActions: typeof import("@/lib/actions/qna");
 let privateNoteActions: typeof import("@/lib/actions/privateNotes");
 let postActions: typeof import("@/lib/actions/posts");
@@ -75,12 +86,35 @@ mock.module("next/navigation", {
 });
 
 before(async () => {
-  [qnaActions, privateNoteActions, postActions] = await Promise.all([
+  [documentDraftActions, qnaActions, privateNoteActions, postActions] = await Promise.all([
+    import("@/lib/actions/documentDrafts"),
     import("@/lib/actions/qna"),
     import("@/lib/actions/privateNotes"),
     import("@/lib/actions/posts"),
   ]);
 });
+
+function createServerDraftSaveInput(
+  ownerId: string,
+  data: Record<string, unknown>,
+  options: {
+    sourceKey?: string;
+    operationId?: string;
+    expectedDraftVersion?: number;
+    baseResourceVersion?: number | null;
+    writerDeviceId?: string;
+  } = {},
+) {
+  return {
+    sourceKey:
+      options.sourceKey ?? createDocumentDraftKey("note", ownerId, "new:student-1"),
+    operationId: options.operationId ?? crypto.randomUUID(),
+    expectedDraftVersion: options.expectedDraftVersion ?? 0,
+    payloadJson: serializeDocumentServerDraftPayload(data),
+    baseResourceVersion: options.baseResourceVersion ?? null,
+    writerDeviceId: options.writerDeviceId ?? crypto.randomUUID(),
+  };
+}
 
 after(() => {
   mock.restoreAll();
@@ -1912,4 +1946,277 @@ test("operation ID 누락과 비정상 값은 생성 쓰기 전에 거부한다"
   assert.match(invalidDateResult.error ?? "", /날짜/u);
   assert.equal((await db.select().from(privateNotes)).length, 0);
   assert.equal(await countTableRows(db, qnaThreads), 0);
+});
+
+test("서버 초안은 exact replay와 draft version CAS로 다중 기기 쓰기를 직렬화한다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context);
+  await seedProfile(db, "student-1");
+  const sourceKey = createDocumentDraftKey("note", "student-1", "new:student-1");
+  const firstOperationId = crypto.randomUUID();
+  const firstDeviceId = crypto.randomUUID();
+  const firstInput = createServerDraftSaveInput(
+    "student-1",
+    { operationId: "draft-create", title: "첫 기기", contentHtml: "<p>첫 초안</p>" },
+    { sourceKey, operationId: firstOperationId, writerDeviceId: firstDeviceId },
+  );
+
+  const first = await documentDraftActions.saveDocumentServerDraft(firstInput);
+  assert.equal(first.ok, true, JSON.stringify(first));
+  if (!first.ok) return;
+  assert.equal(first.replayed, false);
+  assert.equal(first.operationResultVersion, 1);
+  assert.equal(first.current?.draftVersion, 1);
+
+  const exactReplay = await documentDraftActions.saveDocumentServerDraft(firstInput);
+  assert.equal(exactReplay.ok, true);
+  if (!exactReplay.ok) return;
+  assert.equal(exactReplay.replayed, true);
+  assert.equal(exactReplay.operationResultVersion, 1);
+
+  const operationConflict = await documentDraftActions.saveDocumentServerDraft({
+    ...firstInput,
+    payloadJson: serializeDocumentServerDraftPayload({
+      operationId: "draft-create",
+      title: "같은 operation의 다른 내용",
+      contentHtml: "<p>충돌</p>",
+    }),
+  });
+  assert.equal(operationConflict.ok, false);
+  if (operationConflict.ok) return;
+  assert.equal(operationConflict.reason, "OPERATION_PAYLOAD_CONFLICT");
+
+  const staleDevice = await documentDraftActions.saveDocumentServerDraft(
+    createServerDraftSaveInput(
+      "student-1",
+      { operationId: "draft-create", title: "두 번째 기기", contentHtml: "<p>경쟁</p>" },
+      { sourceKey, expectedDraftVersion: 0 },
+    ),
+  );
+  assert.equal(staleDevice.ok, false);
+  if (staleDevice.ok) return;
+  assert.equal(staleDevice.reason, "VERSION_CONFLICT");
+  assert.equal(staleDevice.current?.draftVersion, 1);
+
+  const secondDeviceId = crypto.randomUUID();
+  const second = await documentDraftActions.saveDocumentServerDraft(
+    createServerDraftSaveInput(
+      "student-1",
+      { operationId: "draft-create", title: "두 번째 기기", contentHtml: "<p>최신 초안</p>" },
+      {
+        sourceKey,
+        expectedDraftVersion: 1,
+        writerDeviceId: secondDeviceId,
+      },
+    ),
+  );
+  assert.equal(second.ok, true);
+  if (!second.ok) return;
+  assert.equal(second.operationResultVersion, 2);
+  assert.equal(second.current?.writerDeviceId, secondDeviceId);
+
+  const oldReplayAfterAdvance = await documentDraftActions.saveDocumentServerDraft(firstInput);
+  assert.equal(oldReplayAfterAdvance.ok, true);
+  if (!oldReplayAfterAdvance.ok) return;
+  assert.equal(oldReplayAfterAdvance.operationResultVersion, 1);
+  assert.equal(oldReplayAfterAdvance.current?.draftVersion, 2);
+
+  const read = await documentDraftActions.readDocumentServerDraft(sourceKey);
+  assert.equal(read.ok, true);
+  if (!read.ok) return;
+  assert.equal(read.draft?.draftVersion, 2);
+  assert.match(read.draft?.payloadJson ?? "", /최신 초안/u);
+  assert.equal((await db.select().from(documentServerDrafts)).length, 1);
+  assert.equal((await db.select().from(documentServerDraftOperations)).length, 2);
+});
+
+test("같은 서버 초안 payload 저장은 version을 늘리지 않고 재시도 receipt만 남긴다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context);
+  await seedProfile(db, "student-1");
+  const sourceKey = createDocumentDraftKey("qna-reply", "student-1", "thread-1");
+  const data = {
+    operationId: "reply-create",
+    contentHtml: "<p>같은 답변 초안</p>",
+    attachmentUrl: "",
+  };
+  const first = await documentDraftActions.saveDocumentServerDraft(
+    createServerDraftSaveInput("student-1", data, { sourceKey }),
+  );
+  assert.equal(first.ok, true);
+
+  const noOp = await documentDraftActions.saveDocumentServerDraft(
+    createServerDraftSaveInput("student-1", data, {
+      sourceKey,
+      expectedDraftVersion: 1,
+      writerDeviceId: crypto.randomUUID(),
+    }),
+  );
+  assert.equal(noOp.ok, true);
+  if (!noOp.ok) return;
+  assert.equal(noOp.operationResultVersion, 1);
+  assert.equal(noOp.current?.draftVersion, 1);
+  assert.equal((await db.select().from(documentServerDraftOperations)).length, 2);
+});
+
+test("서버 초안 명시 폐기는 CAS 충돌 시 최신본을 보존하고 exact replay에 수렴한다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context);
+  await seedProfile(db, "student-1");
+  const sourceKey = createDocumentDraftKey("community-post", "student-1");
+  const saved = await documentDraftActions.saveDocumentServerDraft(
+    createServerDraftSaveInput(
+      "student-1",
+      { operationId: "post-create", title: "서버 초안", contentHtml: "<p>본문</p>" },
+      { sourceKey },
+    ),
+  );
+  assert.equal(saved.ok, true);
+
+  const staleDiscard = await documentDraftActions.discardDocumentServerDraft({
+    sourceKey,
+    operationId: crypto.randomUUID(),
+    expectedDraftVersion: 0,
+  });
+  assert.equal(staleDiscard.ok, false);
+  if (staleDiscard.ok) return;
+  assert.equal(staleDiscard.reason, "VERSION_CONFLICT");
+  assert.equal(staleDiscard.current?.draftVersion, 1);
+
+  const discardInput = {
+    sourceKey,
+    operationId: crypto.randomUUID(),
+    expectedDraftVersion: 1,
+  };
+  const discarded = await documentDraftActions.discardDocumentServerDraft(discardInput);
+  assert.equal(discarded.ok, true);
+  if (!discarded.ok) return;
+  assert.equal(discarded.current, null);
+  assert.equal((await db.select().from(documentServerDrafts)).length, 0);
+
+  const replay = await documentDraftActions.discardDocumentServerDraft(discardInput);
+  assert.equal(replay.ok, true);
+  if (!replay.ok) return;
+  assert.equal(replay.replayed, true);
+  assert.equal(replay.operationResultVersion, 1);
+  assert.equal(replay.current, null);
+});
+
+test("만료 서버 초안은 30일 경계에서 읽기 전에 제거되고 stale queue가 자동 부활시키지 않는다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context);
+  await seedProfile(db, "student-1");
+  const sourceKey = createDocumentDraftKey("note", "student-1", "expired-note");
+  const updatedAtSeconds = Math.floor(Date.now() / 1000) -
+    DOCUMENT_SERVER_DRAFT_RETENTION_SECONDS - 10;
+  await db.insert(documentServerDrafts).values({
+    ownerId: "student-1",
+    sourceKey,
+    documentKind: "note",
+    contextId: "expired-note",
+    payloadJson: serializeDocumentServerDraftPayload({ title: "만료", contentHtml: "<p>만료</p>" }),
+    payloadHash: "a".repeat(64),
+    draftVersion: 3,
+    baseResourceVersion: 2,
+    writerDeviceId: crypto.randomUUID(),
+    createdAt: new Date((updatedAtSeconds - 30) * 1000),
+    updatedAt: new Date(updatedAtSeconds * 1000),
+    expiresAt: new Date(
+      (updatedAtSeconds + DOCUMENT_SERVER_DRAFT_RETENTION_SECONDS) * 1000,
+    ),
+  });
+
+  const read = await documentDraftActions.readDocumentServerDraft(sourceKey);
+  assert.deepEqual(read, { ok: true, draft: null });
+  assert.equal((await db.select().from(documentServerDrafts)).length, 0);
+
+  const staleSave = await documentDraftActions.saveDocumentServerDraft(
+    createServerDraftSaveInput(
+      "student-1",
+      { title: "오래된 queue", contentHtml: "<p>자동 부활 금지</p>" },
+      { sourceKey, expectedDraftVersion: 3 },
+    ),
+  );
+  assert.equal(staleSave.ok, false);
+  if (staleSave.ok) return;
+  assert.equal(staleSave.reason, "VERSION_CONFLICT");
+  assert.equal(staleSave.current, null);
+});
+
+test("서버 초안은 owner 경계를 거부하고 profile 삭제 시 payload와 receipt를 cascade한다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context);
+  await seedProfile(db, "student-1");
+  await seedProfile(db, "student-2");
+  const foreignSourceKey = createDocumentDraftKey("note", "student-2", "new:student-2");
+  const denied = await documentDraftActions.saveDocumentServerDraft(
+    createServerDraftSaveInput(
+      "student-1",
+      { title: "다른 계정", contentHtml: "<p>금지</p>" },
+      { sourceKey: foreignSourceKey },
+    ),
+  );
+  assert.equal(denied.ok, false);
+  if (denied.ok) return;
+  assert.equal(denied.reason, "INVALID_INPUT");
+
+  const ownSourceKey = createDocumentDraftKey("note", "student-1", "new:student-1");
+  const saved = await documentDraftActions.saveDocumentServerDraft(
+    createServerDraftSaveInput(
+      "student-1",
+      { title: "삭제 대상", contentHtml: "<p>계정 삭제</p>" },
+      { sourceKey: ownSourceKey },
+    ),
+  );
+  assert.equal(saved.ok, true);
+  await db.delete(profiles).where(eq(profiles.id, "student-1"));
+  assert.equal((await db.select().from(documentServerDrafts)).length, 0);
+  assert.equal((await db.select().from(documentServerDraftOperations)).length, 0);
+});
+
+test("서버 초안 payload 상한과 원자 실패는 원문·receipt 부분 commit을 남기지 않는다", { concurrency: false }, async (context) => {
+  const { db, binding } = await setupDatabase(context);
+  await seedProfile(db, "student-1");
+  const sourceKey = createDocumentDraftKey("note", "student-1", "failure-note");
+  const oversized = await documentDraftActions.saveDocumentServerDraft({
+    ...createServerDraftSaveInput(
+      "student-1",
+      { title: "대형", contentHtml: "x".repeat(DOCUMENT_SERVER_DRAFT_MAX_PAYLOAD_BYTES) },
+      { sourceKey },
+    ),
+  });
+  assert.equal(oversized.ok, false);
+  if (oversized.ok) return;
+  assert.equal(oversized.reason, "PAYLOAD_TOO_LARGE");
+
+  const futurePayload = await documentDraftActions.saveDocumentServerDraft({
+    ...createServerDraftSaveInput(
+      "student-1",
+      { title: "미래 형식", contentHtml: "<p>보존</p>" },
+      { sourceKey },
+    ),
+    payloadJson: JSON.stringify({
+      data: { title: "미래 형식", contentHtml: "<p>보존</p>" },
+      version: 2,
+    }),
+  });
+  assert.equal(futurePayload.ok, false);
+  if (futurePayload.ok) return;
+  assert.equal(futurePayload.reason, "INVALID_INPUT");
+
+  await binding
+    .prepare(
+      "CREATE TRIGGER document_server_draft_test_failure " +
+        "BEFORE INSERT ON document_server_drafts " +
+        `WHEN NEW.source_key = '${sourceKey}' ` +
+        "BEGIN SELECT RAISE(ABORT, 'FORCED_SERVER_DRAFT_FAILURE'); END",
+    )
+    .run();
+  const failed = await documentDraftActions.saveDocumentServerDraft(
+    createServerDraftSaveInput(
+      "student-1",
+      { title: "실패", contentHtml: "<p>원자 실패</p>" },
+      { sourceKey },
+    ),
+  );
+  assert.equal(failed.ok, false);
+  if (failed.ok) return;
+  assert.equal(failed.reason, "INTERNAL_INVARIANT_FAILURE");
+  assert.equal((await db.select().from(documentServerDrafts)).length, 0);
+  assert.equal((await db.select().from(documentServerDraftOperations)).length, 0);
 });

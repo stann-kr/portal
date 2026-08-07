@@ -12,7 +12,7 @@ import { DraftStatus } from "@/components/editor/DraftStatus";
 import { createPost, type CreatePostState } from "@/lib/actions/posts";
 import { getCategories } from "@/lib/actions/categories";
 import { createDocumentDraftKey } from "@/lib/form-draft";
-import { useFormDraft } from "@/lib/hooks/useFormDraft";
+import { useSyncedFormDraft } from "@/lib/hooks/useSyncedFormDraft";
 import { useDeferredEditorContent } from "@/lib/hooks/useDeferredEditorContent";
 import { useDocumentSaveShortcut } from "@/lib/hooks/useDocumentSaveShortcut";
 import { isRichTextEmpty } from "@/lib/rich-text";
@@ -103,7 +103,8 @@ export function NewPostForm({
     recoveries,
     restoreRecovery,
     discardRecovery,
-  } = useFormDraft<PostDraft>(
+    serverSync,
+  } = useSyncedFormDraft<PostDraft>(
     createDocumentDraftKey("community-post", actorId),
     (draft) => {
       setOperationId(
@@ -441,6 +442,7 @@ export function NewPostForm({
                   recoveries={recoveries}
                   onRestoreRecovery={restoreRecovery}
                   onDiscardRecovery={discardRecovery}
+                  serverSync={serverSync}
                   disabled={isFormBusy}
                 />
               }

@@ -108,6 +108,41 @@ mock.module("@/lib/actions/categories", {
     getCategories: async () => [],
   },
 });
+mock.module("@/lib/actions/documentDrafts", {
+  namedExports: {
+    readDocumentServerDraft: async () => ({ ok: true, draft: null }),
+    saveDocumentServerDraft: async (input: {
+      sourceKey: string;
+      expectedDraftVersion: number;
+      payloadJson: string;
+      writerDeviceId: string;
+    }) => ({
+      ok: true,
+      replayed: false,
+      operationResultVersion: input.expectedDraftVersion + 1,
+      current: {
+        sourceKey: input.sourceKey,
+        kind: "community-post",
+        contextId: "new",
+        payloadJson: input.payloadJson,
+        payloadHash: createFormDraftDataSignature(JSON.parse(input.payloadJson)).slice(
+          "sha256:".length,
+        ),
+        draftVersion: input.expectedDraftVersion + 1,
+        baseResourceVersion: null,
+        writerDeviceId: input.writerDeviceId,
+        updatedAt: Date.now(),
+        expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1_000,
+      },
+    }),
+    discardDocumentServerDraft: async () => ({
+      ok: true,
+      replayed: false,
+      operationResultVersion: 0,
+      current: null,
+    }),
+  },
+});
 mock.module("@/lib/actions/qna", {
   namedExports: {
     createQnaReply: async () => {

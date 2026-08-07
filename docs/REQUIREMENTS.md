@@ -59,7 +59,7 @@
 | NFR-005 | 변경은 lint, typecheck, build와 핵심 회귀 테스트를 통과해야 한다. | `npm run lint`, `npx tsc --noEmit`, `npm run build`, unit/integration test가 성공한다. | 부분 충족 |
 | NFR-006 | D1 migration과 Cloudflare Worker build는 재현 가능해야 한다. | `npm run db:check`가 SQL·journal·snapshot·현재 schema, CHECK·trigger, 기존 schema upgrade를 확인하고 local/remote 적용 이력이 정합하며 `npm run build:worker`가 성공한다. | 부분 충족 |
 | NFR-007 | 로딩·빈 상태·오류·성공 피드백은 사용자가 다음 행동을 알 수 있게 해야 한다. | route와 주요 mutation마다 상태 UI와 복구 행동을 제공한다. | 부분 충족 — 대시보드·과제·Q&A 보강 |
-| NFR-008 | 문서 작성은 새로고침·화면 이동·일시적 저장 실패 뒤에도 이어갈 수 있어야 한다. | 노트·게시물·Q&A의 사용자·문서별 로컬 초안, 식별 가능한 복구본, 미래 version 제출 잠금, 안정 URL, 복귀 경로, 최대 5초 입력 checkpoint, 저장소 전면 차단 제출 보호, 동시 편집 충돌 감지와 동일 생성·편집 요청 재전송 보호가 동작한다. | 부분 충족 — 개인 노트 서버 revision·휴지통, 단일 기기 복구, 기기 초안 관리와 로그아웃·계정 전환 정리 구현. 서버 초안·다중 기기 동기화 미구현 |
+| NFR-008 | 문서 작성은 새로고침·화면 이동·일시적 저장 실패 뒤에도 이어갈 수 있어야 한다. | 노트·게시물·Q&A의 사용자·문서별 로컬·서버 초안, 식별 가능한 복구본, 미래 version 제출 잠금, 안정 URL, 최대 5초 checkpoint, 오프라인 재시도, version 충돌 감지와 명시적 작성본 선택이 동작한다. | 부분 충족 — 로컬 복구·계정 경계, 사용자·문서별 30일 서버 최신본, CAS·재전송 receipt, 오프라인 queue와 다중 기기 비교 구현. 실제 브라우저·강제 종료 E2E 미검증 |
 | NFR-009 | 운영 데이터는 검증 가능한 백업과 복구 절차를 가져야 한다. | D1 export의 무결성을 확인하고 격리 환경 복구 rehearsal을 정기적으로 수행하며 결과를 기록한다. | 부분 충족 — 절차 문서화, 원격 rehearsal 미실행 |
 
 ## 문서 수명주기와 개인정보 정책
@@ -71,9 +71,9 @@
 | 영구 삭제 | 관리자, 30일 만료, 현재 version 일치를 모두 요구한다. head와 revision을 제거하고 최소 operation ledger와 tombstone을 남겨 늦은 요청의 부활을 막는다. | 개인 노트 적용 |
 | 문서 최대 크기 | sanitize가 끝난 개인 노트 HTML 본문은 800 KiB, 제목은 200자까지 허용한다. Server Action 기본 body에 action/form envelope 여유를 남긴 값이다. 초과 요청은 head·revision·receipt를 쓰지 않고 로컬 초안을 유지한다. | 개인 노트 적용 |
 | 사용자 저장공간 | 사용자별 active/trash head와 내용 변경 revision을 합쳐 100 MiB를 허용한다. `TRASH`·`RESTORE_TRASH` 상태 snapshot은 사용자 quota에서 제외하되 실제 DB 사용량에는 포함해 별도 관측한다. 한도 초과 시 내용 저장·과거 revision 복원을 막고 휴지통 이동·영구 삭제는 허용한다. | 개인 노트 적용, 운영 경보 미구현 |
-| 서버 초안 | 사용자·문서별 최신 서버 초안은 마지막 저장 뒤 30일 보존하고, 게시 완료·명시적 폐기·계정 삭제 때 즉시 제거한다. | 정책 확정, 구현 예정 |
-| 충돌 처리 | revision/version 기반 충돌을 감지하며 자동 병합하지 않는다. 현재 초안은 유지하고 서버 최신본을 확인·복사한 뒤 서버본 사용 또는 내 초안으로 계속을 명시적으로 선택한다. | 개인 노트 적용, 다중 기기 초안 비교는 구현 예정 |
-| 로그아웃·계정 전환 | 해당 계정의 canonical·recovery·future·legacy 로컬 초안을 즉시 지운다. 오프라인 기기는 다음 인증 동기화 때 정리한다. | 로그아웃 직전 정리와 다음 계정 인증 시 다른 계정 잔여본 정리 적용 |
+| 서버 초안 | 사용자·문서별 최신 서버 초안은 마지막 저장 뒤 30일 보존한다. 게시 완료와 명시적 폐기는 즉시 삭제를 요청하고 실패 시 같은 operation으로 재시도하며, profile 삭제는 payload와 receipt를 cascade한다. | 노트·게시물·Q&A 작성·편집 적용 |
+| 충돌 처리 | revision/version 기반 충돌을 감지하며 자동 병합하지 않는다. 현재 초안은 유지하고 서버 최신본을 확인·복사한 뒤 서버본 사용 또는 내 초안으로 계속을 명시적으로 선택한다. | 문서 저장 충돌과 다중 기기 서버 초안 비교 적용 |
+| 로그아웃·계정 전환 | 해당 계정의 canonical·recovery·future·legacy 로컬 초안과 서버 재시도 queue를 즉시 지운다. 오프라인 기기는 다음 인증 동기화 때 정리한다. | 로그아웃 직전 정리와 다음 계정 인증 시 다른 계정 잔여본 정리 적용 |
 | 계정 삭제 | 문서 본문·revision·서버 초안은 승인된 삭제 흐름에서 즉시 제거하고 모든 기기의 로컬 초안은 다음 동기화 때 폐기한다. anti-replay용 ledger·tombstone의 raw 계정 식별자는 30일만 보존한 뒤 전용 erasure 작업으로 삭제한다. 이 흐름이 구현되기 전에는 note를 가진 profile 삭제를 `RESTRICT`한다. | `RESTRICT` 적용, 전용 삭제 흐름은 구현 예정 |
 
 ## 향후 결정 사항
@@ -82,5 +82,5 @@
 - 디깅 보드와 과제 피드백을 장기적으로 오디오 파형 기반 작업 공간까지 확장할지.
 - 알림 채널을 앱 내부, 이메일, 캘린더 중 어디까지 지원할지.
 - production smoke test 계정·fixture와 R2 media retention 정책을 어떻게 운영할지.
-- 확정한 서버 초안·계정 삭제·로컬 초안 정리 정책을 어떤 운영 UI와 순서로 구현할지.
+- 계정 삭제를 다른 기기에 전달할 인증 동기화 token과 30일 raw-ID erasure를 어떤 운영 흐름으로 구현할지.
 - 개인 노트에서 검증한 revision·휴지통·ledger 계약을 게시물과 Q&A에 어떻게 확장할지.

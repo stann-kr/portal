@@ -9,7 +9,7 @@ import { useActionState, useState, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useFormDraft } from "@/lib/hooks/useFormDraft";
+import { useSyncedFormDraft } from "@/lib/hooks/useSyncedFormDraft";
 import { createPrivateNote, type CreateNoteState } from "@/lib/actions/privateNotes";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 import { DraftStatus } from "@/components/editor/DraftStatus";
@@ -103,7 +103,8 @@ export function NoteSlideForm({
     recoveries,
     restoreRecovery,
     discardRecovery,
-  } = useFormDraft<CreateNoteDraft>(
+    serverSync,
+  } = useSyncedFormDraft<CreateNoteDraft>(
     createDocumentDraftKey("note", actorId, `new:${studentId}`),
     (d) => {
       setOperationId(
@@ -322,6 +323,7 @@ export function NoteSlideForm({
                 recoveries={recoveries}
                 onRestoreRecovery={restoreRecovery}
                 onDiscardRecovery={discardRecovery}
+                serverSync={serverSync}
                 disabled={isPending}
               />
             }

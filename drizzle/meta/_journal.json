@@ -64,6 +64,13 @@
       "when": 1785942364827,
       "tag": "0008_document_continuity",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1786062466528,
+      "tag": "0009_document_server_drafts",
+      "breakpoints": true
     }
   ]
 }

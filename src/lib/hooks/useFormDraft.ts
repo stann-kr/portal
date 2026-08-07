@@ -898,7 +898,7 @@ function hasUnresolvedVolatileContinuityState(): boolean {
     hasOrphanedVolatileDraftFallbacks();
 }
 
-interface UseFormDraftResult<T> {
+export interface UseFormDraftResult<T> {
   /** 클라이언트에서 복원 시도가 끝났는지 여부 (에디터 마운트 게이트용) */
   loaded: boolean;
   /** 현재 폼 값을 디바운스 저장 */

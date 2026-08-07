@@ -9,6 +9,9 @@ import {
   type FormDraftRecoveryPreview,
   type FormDraftStorage,
 } from "@/lib/form-draft";
+import {
+  readDocumentServerDraftDeviceStorageOwnerId,
+} from "@/lib/document-server-draft-queue";
 
 export type LocalDocumentDraftSummary = {
   sourceKey: string;
@@ -46,7 +49,12 @@ function readLocalDocumentDraftCandidates(
 ): LocalDocumentDraftCandidate[] {
   const candidates: LocalDocumentDraftCandidate[] = [];
   for (const artifact of artifacts) {
-    if (artifact.artifactKind === "clear-marker") continue;
+    if (
+      artifact.artifactKind === "clear-marker" ||
+      artifact.artifactKind === "server-queue"
+    ) {
+      continue;
+    }
     try {
       const raw = storage.getItem(artifact.storageKey);
       if (raw === null) continue;
@@ -174,6 +182,7 @@ export function listLocalDocumentDrafts(
 function removeMatchingLocalDocumentDraftArtifacts(
   storage: FormDraftStorage,
   predicate: (artifact: DocumentDraftArtifact) => boolean,
+  deviceOwnerPredicate?: (ownerId: string) => boolean,
 ): LocalDocumentDraftCleanupResult {
   let artifacts: DocumentDraftArtifact[];
   try {
@@ -189,12 +198,30 @@ function removeMatchingLocalDocumentDraftArtifacts(
 
   const sourceKeys = [...new Set(artifacts.map(({ sourceKey }) => sourceKey))]
     .sort();
-  const storageKeys = [...new Set(artifacts.map(({ storageKey }) => storageKey))]
-    .sort();
+  const storageKeys = new Set(artifacts.map(({ storageKey }) => storageKey));
+  if (deviceOwnerPredicate) {
+    try {
+      for (let index = 0; index < storage.length; index += 1) {
+        const storageKey = storage.key(index);
+        if (!storageKey) continue;
+        const deviceOwnerId = readDocumentServerDraftDeviceStorageOwnerId(storageKey);
+        if (deviceOwnerId && deviceOwnerPredicate(deviceOwnerId)) {
+          storageKeys.add(storageKey);
+        }
+      }
+    } catch {
+      return {
+        sourceKeys,
+        removedKeys: [],
+        failedKeys: [],
+        enumerationFailed: true,
+      };
+    }
+  }
   const removedKeys: string[] = [];
   const failedKeys: string[] = [];
 
-  for (const storageKey of storageKeys) {
+  for (const storageKey of [...storageKeys].sort()) {
     try {
       storage.removeItem(storageKey);
       if (storage.getItem(storageKey) === null) removedKeys.push(storageKey);
@@ -220,6 +247,7 @@ export function removeLocalDocumentDraftsForOwner(
   return removeMatchingLocalDocumentDraftArtifacts(
     storage,
     (artifact) => artifact.ownerId === ownerId,
+    (deviceOwnerId) => deviceOwnerId === ownerId,
   );
 }
 
@@ -231,6 +259,7 @@ export function removeLocalDocumentDraftsExceptOwner(
   return removeMatchingLocalDocumentDraftArtifacts(
     storage,
     (artifact) => artifact.ownerId !== ownerId,
+    (deviceOwnerId) => deviceOwnerId !== ownerId,
   );
 }
 

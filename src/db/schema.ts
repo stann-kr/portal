@@ -8,6 +8,12 @@ import {
   uniqueIndex,
 } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
+import {
+  DOCUMENT_SERVER_DRAFT_MAX_PAYLOAD_BYTES,
+  DOCUMENT_SERVER_DRAFT_RETENTION_SECONDS,
+  type DocumentServerDraftOperationType,
+  type DocumentServerDraftResultState,
+} from "@/lib/document-server-draft-constants";
 
 export const profiles = sqliteTable("profiles", {
   id: text("id").primaryKey(),
@@ -180,6 +186,113 @@ export const documentBatchAbortGuard = sqliteTable(
   {
     reason: text("reason").notNull(),
   },
+);
+
+export type DocumentServerDraftKind =
+  | "note"
+  | "community-post"
+  | "qna-thread"
+  | "qna-reply";
+
+/** 계정·문서 namespace별 최신 서버 초안. 계정 삭제 시 원문을 즉시 cascade한다. */
+export const documentServerDrafts = sqliteTable(
+  "document_server_drafts",
+  {
+    ownerId: text("owner_id")
+      .references(() => profiles.id, { onDelete: "cascade" })
+      .notNull(),
+    sourceKey: text("source_key").notNull(),
+    documentKind: text("document_kind").$type<DocumentServerDraftKind>().notNull(),
+    contextId: text("context_id").notNull(),
+    payloadJson: text("payload_json").notNull(),
+    payloadHash: text("payload_hash").notNull(),
+    draftVersion: integer("draft_version").notNull(),
+    baseResourceVersion: integer("base_resource_version"),
+    writerDeviceId: text("writer_device_id").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+    expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.ownerId, table.sourceKey] }),
+    index("document_server_drafts_owner_updated_idx").on(
+      table.ownerId,
+      table.updatedAt,
+    ),
+    index("document_server_drafts_expires_idx").on(table.expiresAt),
+    check(
+      "document_server_drafts_kind_check",
+      sql`${table.documentKind} IN ('note', 'community-post', 'qna-thread', 'qna-reply')`,
+    ),
+    check(
+      "document_server_drafts_identity_check",
+      sql`length(${table.ownerId}) > 0 AND length(${table.sourceKey}) > 0 AND length(${table.contextId}) > 0 AND length(${table.writerDeviceId}) > 0`,
+    ),
+    check(
+      "document_server_drafts_payload_check",
+      sql`json_valid(${table.payloadJson}) AND json_type(${table.payloadJson}) = 'object' AND length(CAST(${table.payloadJson} AS BLOB)) <= ${sql.raw(String(DOCUMENT_SERVER_DRAFT_MAX_PAYLOAD_BYTES))} AND length(${table.payloadHash}) = 64`,
+    ),
+    check(
+      "document_server_drafts_version_check",
+      sql`${table.draftVersion} >= 1 AND (${table.baseResourceVersion} IS NULL OR ${table.baseResourceVersion} >= 1)`,
+    ),
+    check(
+      "document_server_drafts_timestamp_check",
+      sql`${table.createdAt} <= ${table.updatedAt} AND ${table.expiresAt} = ${table.updatedAt} + ${sql.raw(String(DOCUMENT_SERVER_DRAFT_RETENTION_SECONDS))}`,
+    ),
+  ],
+);
+
+/** 재전송 판정을 위한 원문 없는 30일 server-draft operation receipt. */
+export const documentServerDraftOperations = sqliteTable(
+  "document_server_draft_operations",
+  {
+    ownerId: text("owner_id")
+      .references(() => profiles.id, { onDelete: "cascade" })
+      .notNull(),
+    operationId: text("operation_id").notNull(),
+    sourceKey: text("source_key").notNull(),
+    operationType: text("operation_type")
+      .$type<DocumentServerDraftOperationType>()
+      .notNull(),
+    requestHash: text("request_hash").notNull(),
+    requestHashVersion: integer("request_hash_version").notNull(),
+    resultVersion: integer("result_version").notNull(),
+    resultState: text("result_state")
+      .$type<DocumentServerDraftResultState>()
+      .notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.ownerId, table.operationId] }),
+    index("document_server_draft_operations_source_created_idx").on(
+      table.ownerId,
+      table.sourceKey,
+      table.createdAt,
+    ),
+    index("document_server_draft_operations_expires_idx").on(table.expiresAt),
+    check(
+      "document_server_draft_operations_type_check",
+      sql`${table.operationType} IN ('UPSERT', 'DISCARD')`,
+    ),
+    check(
+      "document_server_draft_operations_state_check",
+      sql`${table.resultState} IN ('PRESENT', 'DISCARDED') AND ((${table.operationType} = 'UPSERT' AND ${table.resultState} = 'PRESENT' AND ${table.resultVersion} >= 1) OR (${table.operationType} = 'DISCARD' AND ${table.resultState} = 'DISCARDED' AND ${table.resultVersion} >= 0))`,
+    ),
+    check(
+      "document_server_draft_operations_identity_check",
+      sql`length(${table.ownerId}) > 0 AND length(${table.operationId}) > 0 AND length(${table.sourceKey}) > 0`,
+    ),
+    check(
+      "document_server_draft_operations_hash_check",
+      sql`length(${table.requestHash}) = 64 AND ${table.requestHashVersion} >= 1`,
+    ),
+    check(
+      "document_server_draft_operations_timestamp_check",
+      sql`${table.expiresAt} = ${table.createdAt} + ${sql.raw(String(DOCUMENT_SERVER_DRAFT_RETENTION_SECONDS))}`,
+    ),
+  ],
 );
 
 export const privateNotes = sqliteTable(

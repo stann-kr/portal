@@ -11,7 +11,7 @@ import { AttachmentField } from "@/components/qna/AttachmentField";
 import { DraftStatus } from "@/components/editor/DraftStatus";
 import { createQnaThread, type CreateThreadState } from "@/lib/actions/qna";
 import { createDocumentDraftKey } from "@/lib/form-draft";
-import { useFormDraft } from "@/lib/hooks/useFormDraft";
+import { useSyncedFormDraft } from "@/lib/hooks/useSyncedFormDraft";
 import { useDeferredEditorContent } from "@/lib/hooks/useDeferredEditorContent";
 import { isRichTextEmpty } from "@/lib/rich-text";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
@@ -74,7 +74,8 @@ export function NewQnaForm({ actorId, returnTo }: { actorId: string; returnTo: s
     recoveries,
     restoreRecovery,
     discardRecovery,
-  } = useFormDraft<QnaDraft>(
+    serverSync,
+  } = useSyncedFormDraft<QnaDraft>(
     createDocumentDraftKey("qna-thread", actorId),
     (draft) => {
       setOperationId(
@@ -271,6 +272,7 @@ export function NewQnaForm({ actorId, returnTo }: { actorId: string; returnTo: s
                   recoveries={recoveries}
                   onRestoreRecovery={restoreRecovery}
                   onDiscardRecovery={discardRecovery}
+                  serverSync={serverSync}
                   disabled={isFormBusy}
                 />
               }
