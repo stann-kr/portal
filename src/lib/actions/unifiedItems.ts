@@ -49,7 +49,16 @@ async function fetchUnifiedItemsForUser(userId: string): Promise<UnifiedItem[]> 
       .orderBy(desc(privateNotes.createdAt)) as Promise<InferSelectModel<typeof privateNotes>[]>,
     db.select().from(diggingTracks).where(eq(diggingTracks.userId, userId)).orderBy(desc(diggingTracks.createdAt)) as Promise<InferSelectModel<typeof diggingTracks>[]>,
     db.select().from(diggingColumns).where(eq(diggingColumns.userId, userId)) as Promise<InferSelectModel<typeof diggingColumns>[]>,
-    db.select().from(qnaThreads).where(eq(qnaThreads.studentId, userId)).orderBy(desc(qnaThreads.createdAt)) as Promise<InferSelectModel<typeof qnaThreads>[]>,
+    db
+      .select()
+      .from(qnaThreads)
+      .where(
+        and(
+          eq(qnaThreads.studentId, userId),
+          isNull(qnaThreads.deletedAt),
+        ),
+      )
+      .orderBy(desc(qnaThreads.createdAt)) as Promise<InferSelectModel<typeof qnaThreads>[]>,
     db.select().from(assignments).where(eq(assignments.studentId, userId)).orderBy(desc(assignments.submittedAt)) as Promise<InferSelectModel<typeof assignments>[]>,
   ]);
 

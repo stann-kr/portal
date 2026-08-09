@@ -17,6 +17,7 @@ const snapshotPattern = /^\d{4}_snapshot\.json$/;
 const zeroSnapshotId = "00000000-0000-0000-0000-000000000000";
 const continuityMigrationFile = "0008_document_continuity.sql";
 const serverDraftMigrationFile = "0009_document_server_drafts.sql";
+const lifecycleExpansionMigrationFile = "0010_post_qna_lifecycle.sql";
 const continuityTables = [
   "document_operation_ledger",
   "document_server_draft_operations",
@@ -24,12 +25,17 @@ const continuityTables = [
   "document_tombstones",
   "private_notes",
   "private_note_revisions",
+  "post_revisions",
+  "posts",
+  "qna_thread_events",
+  "qna_threads",
 ];
 const continuityCheckNames = {
   document_operation_ledger: [
     "document_operation_ledger_nonempty_ids_check",
     "document_operation_ledger_operation_type_check",
     "document_operation_ledger_request_hash_check",
+    "document_operation_ledger_resource_operation_check",
     "document_operation_ledger_resource_type_check",
     "document_operation_ledger_result_revision_check",
   ],
@@ -64,6 +70,25 @@ const continuityCheckNames = {
     "private_note_revisions_number_check",
     "private_note_revisions_restore_source_check",
   ],
+  post_revisions: [
+    "post_revisions_change_type_check",
+    "post_revisions_deleted_state_check",
+    "post_revisions_identity_check",
+    "post_revisions_initial_number_check",
+    "post_revisions_number_check",
+    "post_revisions_restore_source_check",
+  ],
+  posts: ["posts_version_check"],
+  qna_thread_events: [
+    "qna_thread_events_deleted_state_check",
+    "qna_thread_events_identity_check",
+    "qna_thread_events_initial_number_check",
+    "qna_thread_events_number_check",
+    "qna_thread_events_reply_check",
+    "qna_thread_events_status_check",
+    "qna_thread_events_type_check",
+  ],
+  qna_threads: ["qna_threads_version_check"],
 };
 const continuityTriggerNames = [
   "document_batch_abort_guard_reject_insert",
@@ -80,6 +105,32 @@ const continuityTriggerNames = [
   "private_note_revisions_immutable_update",
   "private_notes_before_delete_tombstone",
   "private_notes_before_insert_tombstone",
+  "post_revisions_before_insert_baseline",
+  "post_revisions_before_insert_existing",
+  "post_revisions_before_insert_receipt_match",
+  "post_revisions_guard_delete",
+  "post_revisions_immutable_update",
+  "posts_before_delete_tombstone",
+  "posts_before_insert_tombstone",
+  "posts_deleted_actor_guard_insert",
+  "posts_deleted_actor_guard_update",
+  "qna_replies_before_insert_existing",
+  "qna_replies_before_insert_receipt_match",
+  "qna_replies_guard_delete",
+  "qna_replies_immutable_update",
+  "qna_thread_events_before_insert_baseline",
+  "qna_thread_events_before_insert_existing",
+  "qna_thread_events_before_insert_receipt_match",
+  "qna_thread_events_guard_delete",
+  "qna_thread_events_immutable_update",
+  "qna_threads_before_delete_tombstone",
+  "qna_threads_before_insert_tombstone",
+  "qna_threads_deleted_actor_guard_insert",
+  "qna_threads_deleted_actor_guard_update",
+  "comments_before_delete_trashed_post",
+  "comments_before_insert_active_post",
+  "comments_before_update_trashed_post",
+  "profiles_before_delete_document_history",
 ];
 const serverDraftTriggerNames = [
   "document_server_draft_operations_before_insert_existing",
@@ -516,11 +567,18 @@ function validateContinuityTriggers(database) {
     FROM sqlite_master
     WHERE type = 'trigger'
       AND tbl_name IN (
+        'comments',
         'document_batch_abort_guard',
         'document_operation_ledger',
         'document_tombstones',
+        'post_revisions',
+        'posts',
+        'profiles',
         'private_notes',
-        'private_note_revisions'
+        'private_note_revisions',
+        'qna_replies',
+        'qna_thread_events',
+        'qna_threads'
       )
     ORDER BY name
   `);
@@ -530,28 +588,35 @@ function validateContinuityTriggers(database) {
     [...continuityTriggerNames].sort(),
   );
 
-  const migrationStatements = readFileSync(
-    join(migrationsDirectory, continuityMigrationFile),
-    "utf8",
-  )
-    .split("--> statement-breakpoint")
-    .map((statement) => statement.trim())
-    .filter((statement) => /^CREATE TRIGGER\b/iu.test(statement));
   const sourceByName = new Map();
-  for (const statement of migrationStatements) {
-    const match = statement.match(/^CREATE TRIGGER\s+[`"]?([^`"\s]+)[`"]?/iu);
-    assert(match, "0008 trigger 이름을 해석하지 못했습니다.");
-    sourceByName.set(match[1], normalizeSqlSignature(statement));
+  for (const migrationFile of [
+    continuityMigrationFile,
+    lifecycleExpansionMigrationFile,
+  ]) {
+    const migrationStatements = readFileSync(
+      join(migrationsDirectory, migrationFile),
+      "utf8",
+    )
+      .split("--> statement-breakpoint")
+      .map((statement) => statement.trim())
+      .filter((statement) => /^CREATE TRIGGER\b/iu.test(statement));
+    for (const statement of migrationStatements) {
+      const match = statement.match(/^CREATE TRIGGER\s+[`"]?([^`"\s]+)[`"]?/iu);
+      assert(match, `${migrationFile} trigger 이름을 해석하지 못했습니다.`);
+      if (continuityTriggerNames.includes(match[1])) {
+        sourceByName.set(match[1], normalizeSqlSignature(statement));
+      }
+    }
   }
   assertRowsEqual(
-    "0008 trigger source allowlist",
+    "document lifecycle trigger source allowlist",
     [...sourceByName.keys()].sort(),
     [...continuityTriggerNames].sort(),
   );
   for (const trigger of triggerRows) {
     assert(
       normalizeSqlSignature(trigger.sql) === sourceByName.get(trigger.name),
-      `${trigger.name} trigger SQL이 0008 source와 다릅니다.`,
+      `${trigger.name} trigger SQL이 migration source와 다릅니다.`,
     );
   }
 }
@@ -769,6 +834,113 @@ async function validateServerDraftUpgrade(migrationFiles) {
     assert(
       upgradeDatabase.all("PRAGMA foreign_key_check;").length === 0,
       "0009 upgrade 뒤 foreign key 위반이 있습니다.",
+    );
+  } finally {
+    upgradeDatabase.close();
+  }
+}
+
+async function validateLifecycleExpansionUpgrade(migrationFiles) {
+  const migrationIndex = migrationFiles.indexOf(lifecycleExpansionMigrationFile);
+  assert(migrationIndex > 0, `${lifecycleExpansionMigrationFile} 순서를 찾지 못했습니다.`);
+  const priorMigrations = migrationFiles.slice(0, migrationIndex);
+  const upgradeDatabase = await createMemoryDatabase();
+
+  try {
+    applyMigrations(upgradeDatabase, priorMigrations);
+    upgradeDatabase.exec(`
+      INSERT INTO profiles (id, email, display_name, role)
+      VALUES
+        ('lifecycle-student', 'lifecycle-student@example.com', 'Lifecycle Student', 'student'),
+        ('lifecycle-admin', 'lifecycle-admin@example.com', 'Lifecycle Admin', 'admin');
+      INSERT INTO posts (
+        id, author_id, category, board_type, is_pinned, media_url,
+        title, content_html, created_at
+      ) VALUES (
+        'lifecycle-post', 'lifecycle-admin', 'general', 'ANNOUNCEMENT', 1,
+        'https://example.com/post-media', 'Lifecycle Post', '<p>Post</p>', 1700000000
+      );
+      INSERT INTO comments (id, post_id, author_id, content_html, created_at)
+      VALUES (
+        'lifecycle-comment', 'lifecycle-post', 'lifecycle-student',
+        '<p>Comment</p>', 1700000001
+      );
+      INSERT INTO qna_threads (
+        id, student_id, title, status, created_at, updated_at
+      ) VALUES (
+        'lifecycle-thread', 'lifecycle-student', 'Lifecycle Q&A',
+        'ANSWERED', 1700000000, 1700000002
+      );
+      INSERT INTO qna_replies (
+        id, thread_id, author_id, content_html, attachment_url, created_at
+      ) VALUES
+        ('lifecycle-question', 'lifecycle-thread', 'lifecycle-student', '<p>Question</p>', NULL, 1700000000),
+        ('lifecycle-answer', 'lifecycle-thread', 'lifecycle-admin', '<p>Answer</p>', NULL, 1700000002);
+    `);
+
+    applyMigration(upgradeDatabase, lifecycleExpansionMigrationFile);
+
+    const [post] = upgradeDatabase.all(`
+      SELECT version, deleted_at, updated_at FROM posts WHERE id = 'lifecycle-post';
+    `);
+    assert(
+      post?.version === 1 && post?.deleted_at === null && post?.updated_at === 1700000000,
+      "0010 upgrade가 기존 post head를 active version 1로 backfill하지 못했습니다.",
+    );
+    const [postBaseline] = upgradeDatabase.all(`
+      SELECT revision_number, change_type, board_type, category, is_pinned, media_url,
+             actor_id, operation_record_id
+      FROM post_revisions WHERE post_id = 'lifecycle-post';
+    `);
+    assert(
+      postBaseline?.revision_number === 1 &&
+        postBaseline?.change_type === "BASELINE" &&
+        postBaseline?.board_type === "ANNOUNCEMENT" &&
+        postBaseline?.category === "general" &&
+        postBaseline?.is_pinned === 1 &&
+        postBaseline?.media_url === "https://example.com/post-media" &&
+        postBaseline?.actor_id === null &&
+        postBaseline?.operation_record_id === null,
+      "0010 upgrade가 기존 post의 완전한 BASELINE snapshot을 만들지 못했습니다.",
+    );
+    assert(
+      upgradeDatabase.all("SELECT id FROM comments WHERE id = 'lifecycle-comment';").length === 1,
+      "0010 upgrade가 기존 post comment를 보존하지 못했습니다.",
+    );
+
+    const [thread] = upgradeDatabase.all(`
+      SELECT version, deleted_at, status FROM qna_threads WHERE id = 'lifecycle-thread';
+    `);
+    const [threadBaseline] = upgradeDatabase.all(`
+      SELECT event_number, event_type, title, status, actor_id, operation_record_id
+      FROM qna_thread_events WHERE thread_id = 'lifecycle-thread';
+    `);
+    assert(
+      thread?.version === 1 && thread?.deleted_at === null && thread?.status === "ANSWERED",
+      "0010 upgrade가 기존 Q&A head를 active version 1로 backfill하지 못했습니다.",
+    );
+    assert(
+      threadBaseline?.event_number === 1 &&
+        threadBaseline?.event_type === "BASELINE" &&
+        threadBaseline?.title === "Lifecycle Q&A" &&
+        threadBaseline?.status === "ANSWERED" &&
+        threadBaseline?.actor_id === null &&
+        threadBaseline?.operation_record_id === null,
+      "0010 upgrade가 기존 Q&A BASELINE event를 만들지 못했습니다.",
+    );
+    assert(
+      upgradeDatabase.all("SELECT id FROM qna_replies WHERE thread_id = 'lifecycle-thread';").length === 2,
+      "0010 upgrade가 기존 Q&A reply를 보존하지 못했습니다.",
+    );
+    assertSqlFails(
+      upgradeDatabase,
+      "DELETE FROM profiles WHERE id = 'lifecycle-student';",
+      "post comment/Q&A history 보유 profile RESTRICT",
+      "DOCUMENT_HISTORY_ACCOUNT_DELETE_RESTRICTED",
+    );
+    assert(
+      upgradeDatabase.all("PRAGMA foreign_key_check;").length === 0,
+      "0010 upgrade 뒤 foreign key 위반이 있습니다.",
     );
   } finally {
     upgradeDatabase.close();
@@ -1022,6 +1194,210 @@ function validateContinuitySemantics(database) {
   );
 }
 
+function validateLifecycleExpansionSemantics(database) {
+  const hashA = "c".repeat(64);
+  const hashB = "d".repeat(64);
+  database.exec(`
+    INSERT INTO profiles (id, email, display_name, role)
+    VALUES
+      ('lifecycle-probe-student', 'lifecycle-probe-student@example.com', 'Probe Student', 'student'),
+      ('lifecycle-probe-admin', 'lifecycle-probe-admin@example.com', 'Probe Admin', 'admin');
+    INSERT INTO document_operation_ledger (
+      id, operation_id, actor_id, subject_id, resource_type, operation_type,
+      resource_id, request_hash, request_hash_version, result_revision, created_at
+    ) VALUES (
+      'post-probe-receipt', 'post-probe-operation',
+      'lifecycle-probe-admin', 'lifecycle-probe-admin',
+      'COMMUNITY_POST', 'CREATE', 'post-probe', '${hashA}', 1, 1, 1700000000
+    );
+    INSERT INTO posts (
+      id, author_id, category, board_type, is_pinned, title, content_html,
+      created_at, updated_at, version
+    ) VALUES (
+      'post-probe', 'lifecycle-probe-admin', 'general', 'GENERAL', 0,
+      'Post probe', '<p>Post probe</p>', 1700000000, 1700000000, 1
+    );
+    INSERT INTO post_revisions (
+      id, post_id, revision_number, change_type, category, board_type,
+      is_pinned, title, content_html, snapshot_hash, snapshot_hash_version,
+      actor_id, operation_record_id, created_at
+    ) VALUES (
+      'post-probe-revision', 'post-probe', 1, 'CREATE', 'general', 'GENERAL',
+      0, 'Post probe', '<p>Post probe</p>', '${hashB}', 1,
+      'lifecycle-probe-admin', 'post-probe-receipt', 1700000000
+    );
+    INSERT INTO comments (id, post_id, author_id, content_html, created_at)
+    VALUES (
+      'post-probe-comment', 'post-probe', 'lifecycle-probe-student',
+      '<p>Comment</p>', 1700000001
+    );
+
+    INSERT INTO document_operation_ledger (
+      id, operation_id, actor_id, subject_id, resource_type, operation_type,
+      resource_id, request_hash, request_hash_version, result_revision, created_at
+    ) VALUES (
+      'qna-probe-receipt', 'qna-probe-operation',
+      'lifecycle-probe-student', 'lifecycle-probe-student',
+      'QNA_THREAD', 'CREATE', 'qna-probe', '${hashA}', 1, 1, 1700000000
+    );
+    INSERT INTO qna_threads (
+      id, student_id, title, status, created_at, updated_at, version
+    ) VALUES (
+      'qna-probe', 'lifecycle-probe-student', 'Q&A probe', 'OPEN',
+      1700000000, 1700000000, 1
+    );
+    INSERT INTO qna_replies (
+      id, thread_id, author_id, content_html, created_at
+    ) VALUES (
+      'qna-probe-reply', 'qna-probe', 'lifecycle-probe-student',
+      '<p>Question</p>', 1700000000
+    );
+    INSERT INTO qna_thread_events (
+      id, thread_id, event_number, event_type, title, status, reply_id,
+      event_hash, event_hash_version, actor_id, operation_record_id, created_at
+    ) VALUES (
+      'qna-probe-event', 'qna-probe', 1, 'CREATE', 'Q&A probe', 'OPEN',
+      'qna-probe-reply', '${hashB}', 1, 'lifecycle-probe-student',
+      'qna-probe-receipt', 1700000000
+    );
+  `);
+
+  assertSqlFails(
+    database,
+    `INSERT INTO document_operation_ledger (
+      id, operation_id, actor_id, subject_id, resource_type, operation_type,
+      resource_id, request_hash, request_hash_version, result_revision, created_at
+    ) VALUES (
+      'bad-resource-operation', 'bad-resource-operation',
+      'lifecycle-probe-student', 'lifecycle-probe-student',
+      'PRIVATE_NOTE', 'APPEND_REPLY', 'bad-note', '${hashA}', 1, 1, 1700000000
+    );`,
+    "ledger resource/operation compatibility CHECK",
+  );
+  assertSqlFails(
+    database,
+    "UPDATE post_revisions SET title = 'Changed' WHERE id = 'post-probe-revision';",
+    "post revision immutable update",
+    "POST_REVISION_IMMUTABLE",
+  );
+  assertSqlFails(
+    database,
+    `INSERT INTO post_revisions (
+      id, post_id, revision_number, change_type, category, board_type,
+      is_pinned, title, content_html, created_at
+    ) VALUES (
+      'post-late-baseline', 'post-probe', 1, 'BASELINE', 'general', 'GENERAL',
+      0, 'Late', '<p>Late</p>', 1700000001
+    );`,
+    "post rollout 뒤 BASELINE insert",
+    "POST_BASELINE_CLOSED",
+  );
+  assertSqlFails(
+    database,
+    `INSERT INTO comments (id, post_id, author_id, content_html)
+     VALUES ('missing-post-comment', 'missing-post', 'lifecycle-probe-student', '<p>Missing</p>');`,
+    "missing/trashed post comment insert",
+    "COMMENT_ACTIVE_POST_REQUIRED",
+  );
+  assertSqlFails(
+    database,
+    "UPDATE qna_replies SET content_html = '<p>Changed</p>' WHERE id = 'qna-probe-reply';",
+    "Q&A reply immutable update",
+    "QNA_REPLY_IMMUTABLE",
+  );
+  assertSqlFails(
+    database,
+    `INSERT INTO qna_replies (id, thread_id, author_id, content_html)
+     VALUES ('qna-unreceipted-reply', 'qna-probe', 'lifecycle-probe-student', '<p>Extra</p>');`,
+    "Q&A unreceipted reply insert",
+    "QNA_REPLY_RECEIPT_MISMATCH",
+  );
+  assertSqlFails(
+    database,
+    "UPDATE qna_thread_events SET title = 'Changed' WHERE id = 'qna-probe-event';",
+    "Q&A event immutable update",
+    "QNA_THREAD_EVENT_IMMUTABLE",
+  );
+  assertSqlFails(
+    database,
+    `INSERT INTO qna_threads (
+      id, student_id, title, status, created_at, updated_at, version
+    ) VALUES (
+      'qna-invalid-status', 'lifecycle-probe-student', 'Invalid', 'OTHER',
+      1700000000, 1700000000, 1
+    );`,
+    "Q&A status insert guard",
+    "QNA_THREAD_STATE_INVALID",
+  );
+
+  database.exec(`
+    UPDATE posts
+    SET deleted_at = 1700000002, deleted_by_id = 'lifecycle-probe-admin'
+    WHERE id = 'post-probe';
+    UPDATE qna_threads
+    SET deleted_at = 1700000002, deleted_by_id = 'lifecycle-probe-student'
+    WHERE id = 'qna-probe';
+  `);
+  assertSqlFails(
+    database,
+    "DELETE FROM comments WHERE id = 'post-probe-comment';",
+    "trashed post comment delete guard",
+    "COMMENT_TRASHED_POST_IMMUTABLE",
+  );
+  assertSqlFails(
+    database,
+    "DELETE FROM qna_replies WHERE id = 'qna-probe-reply';",
+    "active Q&A reply delete guard",
+    "QNA_REPLY_DELETE_GUARD",
+  );
+
+  database.exec(`
+    DELETE FROM posts WHERE id = 'post-probe';
+    DELETE FROM qna_threads WHERE id = 'qna-probe';
+  `);
+  assert(
+    database.all(`
+      SELECT resource_id FROM document_tombstones
+      WHERE (resource_type = 'COMMUNITY_POST' AND resource_id = 'post-probe')
+         OR (resource_type = 'QNA_THREAD' AND resource_id = 'qna-probe');
+    `).length === 2,
+    "post/Q&A hard delete가 tombstone을 남기지 않았습니다.",
+  );
+  assert(
+    database.all("SELECT id FROM comments WHERE post_id = 'post-probe';").length === 0 &&
+      database.all("SELECT id FROM qna_replies WHERE thread_id = 'qna-probe';").length === 0 &&
+      database.all("SELECT id FROM qna_thread_events WHERE thread_id = 'qna-probe';").length === 0,
+    "post/Q&A purge cascade가 child history를 정리하지 못했습니다.",
+  );
+  assertSqlFails(
+    database,
+    `INSERT INTO posts (
+      id, author_id, category, board_type, is_pinned, title, content_html,
+      created_at, updated_at, version
+    ) VALUES (
+      'post-probe', 'lifecycle-probe-admin', 'general', 'GENERAL', 0,
+      'Resurrect', '<p>Resurrect</p>', 1700000003, 1700000003, 1
+    );`,
+    "post tombstone resurrection",
+    "POST_RESURRECTION_BLOCKED",
+  );
+  assertSqlFails(
+    database,
+    `INSERT INTO qna_threads (
+      id, student_id, title, status, created_at, updated_at, version
+    ) VALUES (
+      'qna-probe', 'lifecycle-probe-student', 'Resurrect', 'OPEN',
+      1700000003, 1700000003, 1
+    );`,
+    "Q&A tombstone resurrection",
+    "QNA_THREAD_RESURRECTION_BLOCKED",
+  );
+  assert(
+    database.all("PRAGMA foreign_key_check;").length === 0,
+    "post/Q&A lifecycle semantic probe 뒤 foreign key 위반이 있습니다.",
+  );
+}
+
 function validateServerDraftSemantics(database) {
   const hashA = "a".repeat(64);
   const hashB = "b".repeat(64);
@@ -1224,8 +1600,9 @@ async function main() {
     console.log("PASS document continuity and server draft CHECK/trigger signatures");
 
     validateContinuitySemantics(migrationDatabase);
+    validateLifecycleExpansionSemantics(migrationDatabase);
     validateServerDraftSemantics(migrationDatabase);
-    console.log("PASS document continuity and server draft semantic negative probes");
+    console.log("PASS document lifecycle and server draft semantic negative probes");
 
     const integrity = migrationDatabase.all("PRAGMA integrity_check;");
     const foreignKeyViolations = migrationDatabase.all("PRAGMA foreign_key_check;");
@@ -1247,6 +1624,8 @@ async function main() {
   console.log("PASS 0007 fixture upgrade and inbound FK preflight");
   await validateServerDraftUpgrade(migrationFiles);
   console.log("PASS 0008 fixture upgrade and server draft account cascade");
+  await validateLifecycleExpansionUpgrade(migrationFiles);
+  console.log("PASS 0009 fixture upgrade and post/Q&A continuity backfill");
 }
 
 try {

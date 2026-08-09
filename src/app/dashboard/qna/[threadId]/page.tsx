@@ -6,12 +6,12 @@ export const dynamic = "force-dynamic";
 
 import { auth } from "@/auth";
 import { redirect } from "next/navigation";
-import { getQnaThread } from "@/lib/actions/qna";
+import { getQnaThreadIncludingTrash } from "@/lib/actions/qna";
 import { ThreadDetailClient } from "@/components/qna/ThreadDetailClient";
 import type { QnaStatus } from "@/db/schema";
 import { safeReturnPath } from "@/lib/safe-return-path";
 
-type QnaReply = NonNullable<Awaited<ReturnType<typeof getQnaThread>>>["replies"][number];
+type QnaReply = NonNullable<Awaited<ReturnType<typeof getQnaThreadIncludingTrash>>>["replies"][number];
 
 export default async function QnaThreadPage({
   params,
@@ -26,7 +26,7 @@ export default async function QnaThreadPage({
   const { threadId } = await params;
   const query = await searchParams;
   const returnTo = safeReturnPath(query.returnTo, "/dashboard/qna");
-  const thread = await getQnaThread(threadId);
+  const thread = await getQnaThreadIncludingTrash(threadId);
   if (!thread) redirect("/dashboard/qna");
 
   const isAdmin = session.user.role === "admin";
@@ -40,6 +40,8 @@ export default async function QnaThreadPage({
       <ThreadDetailClient
         threadId={threadId}
         status={status}
+        version={thread.version}
+        deletedAt={thread.deletedAt?.toISOString() ?? null}
         replies={thread.replies.map((r: QnaReply) => ({
           ...r,
           authorRole: r.authorRole ?? null,

@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 import { auth } from "@/auth";
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { MessageCircle, Plus } from "lucide-react";
+import { MessageCircle, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getQnaThreads } from "@/lib/actions/qna";
 import { ThreadList } from "@/components/qna/ThreadList";
@@ -61,13 +61,20 @@ export default async function QnaPage() {
               : "강사에게 질문을 남기고 답변을 받으세요."}
           </p>
         </div>
-        {!isAdmin && (
-          <Button asChild size="sm" className="gap-1.5">
-            <Link href="/dashboard/qna/new">
-              <Plus className="w-3.5 h-3.5" />새 질문
+        <div className="flex gap-2">
+          <Button asChild size="sm" variant="outline" className="gap-1.5">
+            <Link href="/dashboard/qna/trash">
+              <Trash2 className="w-3.5 h-3.5" />휴지통
             </Link>
           </Button>
-        )}
+          {!isAdmin && (
+            <Button asChild size="sm" className="gap-1.5">
+              <Link href="/dashboard/qna/new">
+                <Plus className="w-3.5 h-3.5" />새 질문
+              </Link>
+            </Button>
+          )}
+        </div>
       </div>
 
       <ThreadList threads={threads} isAdmin={isAdmin} />

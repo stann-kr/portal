@@ -33,6 +33,7 @@ OpenNext → Cloudflare Worker
 | Security helpers | `src/lib/auth-guard.ts`, `src/lib/sanitize-html.ts` | role·ownership, rich text sanitize |
 | Local draft account boundary | `src/components/auth/`, `src/lib/local-document-drafts.ts`, `src/lib/local-draft-continuity-client.ts` | 기기 초안 목록·명시 폐기, 로그아웃·계정 전환 정리 |
 | Server draft continuity | `src/lib/actions/documentDrafts.ts`, `src/lib/hooks/useSyncedFormDraft.ts`, `src/components/editor/ServerDraftStatus.tsx` | 사용자·문서별 최신본, CAS·재전송, 오프라인 queue와 명시적 다중 기기 선택 |
+| Document lifecycle | `src/lib/document-lifecycle-atomic.ts`, `src/lib/post-atomic.ts`, `src/lib/qna-atomic.ts` | 게시물·Q&A version CAS, 불변 이력·receipt, 휴지통·복원·purge·tombstone 원자 경계 |
 | Storage | `src/lib/r2.ts`, `src/lib/actions/upload.ts` | R2 presigned upload |
 | Calendar feed | `src/app/api/calendar/[studentId]/route.ts`, `src/lib/calendar-feed.ts` | session·서명 token 접근 |
 | Deploy | `open-next.config.ts`, `wrangler.toml` | Worker, D1, R2, asset binding |
@@ -65,10 +66,12 @@ OpenNext → Cloudflare Worker
 | `/dashboard/notes/[noteId]` | 권한 검증된 개인 노트 읽기·이어쓰기 |
 | `/dashboard/notes/[noteId]/history` | 개인 노트 불변 revision 조회·선택 복원 |
 | `/dashboard/notes/trash` | 권한 범위의 개인 노트 휴지통·복원·관리자 영구 삭제 |
+| `/community/[postId]/history` | 커뮤니티 게시물 불변 full-snapshot revision 조회·선택 복원 |
+| `/community/trash` | 권한 범위의 게시물 휴지통·복원·관리자 영구 삭제 |
 | `/dashboard/admin/students/new` | 학생 추가 |
 | `/dashboard/admin/students/[id]` | 학생 상세 |
 | `/dashboard/admin/categories` | 카테고리 관리 |
-| `/dashboard/qna/**` | Q&A 목록·작성·상세 |
+| `/dashboard/qna/**` | Q&A 목록·작성·상세·불변 event 이력·휴지통 |
 | `/community/**` | 커뮤니티 목록·작성·상세 |
 | `/dashboard/calendar` | 공유 캘린더 |
 | `/api/calendar/[studentId]` | 인증·서명 token 기반 `.ics` feed |
@@ -89,11 +92,11 @@ OpenNext → Cloudflare Worker
 
 - 사용자·수업: `profiles`, `curriculums`, `lessons`
 - 과제·피드백: `assignments`, `feedbacks`
-- 콘텐츠: `categories`, `posts`, `comments`
+- 콘텐츠: `categories`, `posts`, `post_revisions`, `comments`
 - 개인 학습 기록: `private_notes`, `private_note_revisions`, `calendar_events`
 - 문서 연속성: `document_operation_ledger`, `document_tombstones`, `document_batch_abort_guard`, `document_server_drafts`, `document_server_draft_operations`
 - 디깅: `digging_columns`, `digging_tracks`
-- Q&A: `qna_threads`, `qna_replies`
+- Q&A: `qna_threads`, `qna_thread_events`, `qna_replies`
 
 Cloudflare binding:
 
@@ -103,7 +106,7 @@ Cloudflare binding:
 | `BUCKET` | R2 bucket | 미디어 저장 |
 | `ASSETS` | OpenNext assets | 정적 asset |
 
-Migration SQL은 `drizzle/`, Drizzle metadata는 `drizzle/meta/`에 둔다. Wrangler는 SQL 파일명과 D1의 적용 이력을 기준으로 migration을 실행하고, Drizzle metadata는 다음 schema diff 생성 기준으로 사용한다. SQL·journal·snapshot은 `0000~0009`까지 대응한다. `npm run db:check`는 empty replay와 current schema/latest snapshot의 column·FK·index뿐 아니라 문서 연속성 CHECK·trigger, 불변·부활 방지 부정 probe, `0007` fixture upgrade·inbound FK preflight와 `0008→0009` account cascade를 검사한다. 로컬 persistent D1에는 `0009`까지 적용했고 원격 적용 이력은 별도 승인 전 추정하지 않는다.
+Migration SQL은 `drizzle/`, Drizzle metadata는 `drizzle/meta/`에 둔다. Wrangler는 SQL 파일명과 D1의 적용 이력을 기준으로 migration을 실행하고, Drizzle metadata는 다음 schema diff 생성 기준으로 사용한다. SQL·journal·snapshot은 `0000~0010`까지 대응한다. `npm run db:check`는 empty replay와 current schema/latest snapshot의 column·FK·index뿐 아니라 문서 연속성 CHECK·trigger, 불변·부활 방지 부정 probe, `0007` fixture upgrade·inbound FK preflight, `0008→0009` account cascade와 기존 게시물·댓글·Q&A·답변이 있는 `0009→0010` upgrade를 검사한다. 로컬 persistent D1에는 `0009`까지 적용했고 `0010`과 원격 적용 이력은 별도 승인 전 추정하지 않는다.
 
 ## 인증과 권한
 
@@ -133,11 +136,14 @@ Migration SQL은 `drizzle/`, Drizzle metadata는 `drizzle/meta/`에 둔다. Wran
 - 개인 노트 mutation은 UUIDv4 operation ID와 명시적 base revision을 사용한다. D1 `batch()`와 로컬 SQLite transaction 안에서 immutable receipt, 조건부 head 변경, fail-closed sentinel, 새 full-snapshot revision을 함께 commit하거나 전부 rollback한다. 같은 operation의 exact replay는 historical result revision과 현재 head revision을 분리해 반환하며 다른 payload는 충돌로 거부한다. canonical no-op은 head와 revision을 늘리지 않고 재전송 가능한 receipt만 남긴다.
 - 개인 노트 삭제는 `deleted_at` soft delete다. active 기본 조회는 휴지통 노트를 제외하고, trash/restore와 과거 revision restore는 각각 새 revision을 만든다. 30일 만료 뒤 admin purge만 head와 revision을 제거하며 tombstone과 본문 없는 ledger가 늦은 create/update의 부활을 차단한다. revision은 문서가 active/trash인 동안 append-only이고 profile 삭제는 account-deletion workflow가 생기기 전 `RESTRICT`한다.
 - 개인 노트는 Server Action 기본 1MB body의 action/form envelope 여유를 남기기 위해 sanitize된 HTML 본문 800 KiB, 제목 200자, 사용자별 head와 내용 변경 revision 100 MiB의 logical quota를 적용한다. `TRASH`·`RESTORE_TRASH` 상태 snapshot은 사용자 quota에서 제외하고 실제 D1 사용량 관측 대상으로 남긴다. version 충돌은 자동 병합하지 않고 현재 초안을 보존한 채 서버 최신본을 펼쳐 확인·복사한 다음 서버본 사용 또는 현재 초안 계속을 선택한다.
+- 커뮤니티 게시물의 생성·편집·고정 변경·휴지통 이동·복원·과거 revision 복원·영구 삭제도 UUIDv4 operation ID와 명시적 base revision을 사용한다. head, 불변 receipt와 full-snapshot revision을 D1 `batch()` 또는 로컬 transaction에서 함께 처리한다. exact replay는 이후 다른 변경이 있어도 원래 결과 revision으로 수렴하며, 저장된 snapshot hash가 맞지 않으면 과거 revision 복원을 거부한다.
+- 게시물 댓글은 head와 함께 삭제하지 않는다. 휴지통 게시물은 기본 목록과 통합 기록에서 제외하고 읽기 전용으로만 열며, DB trigger가 휴지통 상태에서 새 댓글과 댓글 삭제 경쟁을 차단한다. 게시물을 복원하면 기존 댓글이 다시 함께 보이고, 관리자 purge 때만 FK cascade로 제거한다.
 - 새 게시물·Q&A 질문·답변의 `Cmd/Ctrl+S`는 공개 action을 호출하지 않고 최신 form snapshot을 로컬에 flush한다. 노트와 기존 문서 편집의 단축키는 명시된 서버 저장 action을 사용한다.
-- Q&A의 스레드·첫 본문과 답변·상태 변경은 D1 binding batch 또는 로컬 SQLite transaction으로 함께 commit하거나 rollback한다. 답변 쓰기는 ownership과 `CLOSED` 상태를 원자 쓰기 안에서 다시 검증한다.
+- Q&A의 스레드·첫 본문, 답변·상태 변경, 휴지통 이동·복원·영구 삭제는 D1 binding batch 또는 로컬 SQLite transaction으로 함께 commit하거나 rollback한다. 각 mutation은 operation receipt와 append-only `qna_thread_events`를 남기고 version CAS를 적용한다. 답변 쓰기는 ownership과 `CLOSED`·휴지통 상태를 원자 쓰기 안에서 다시 검증한다.
+- Q&A 답변은 휴지통 이동·복원 동안 보존되고 관리자 purge 때만 스레드와 함께 제거된다. active 기본 조회와 통합 기록은 휴지통 질문을 제외하며, tombstone과 본문 없는 ledger가 purge 뒤 늦은 질문·답변·상태 요청의 부활을 차단한다.
 - 모든 작성 form은 draft hydration이 끝날 때까지 입력을 잠근다. 종료된 Q&A도 로컬 초안이나 복구본이 남아 있으면 읽기 전용 composer를 유지하고, 업로드 오류·진행률은 alert와 progressbar 의미로 노출한다.
 
-노트·게시물·Q&A 초안은 로컬 복구와 사용자·문서별 서버 최신본, 오프라인 재시도, 다중 기기 비교를 제공한다. 개인 노트만 서버 revision과 휴지통을 제공하며, 승인된 계정 삭제를 다른 오프라인 기기에 전달하는 동기화 token은 아직 없다. 저장소 자체를 사용할 수 없는 상태에서 브라우저 프로세스를 강제로 종료하면 메모리 안전본도 유지할 수 없다. 과거 owner 정보가 없는 local storage draft는 계정 간 노출을 막기 위해 자동 이관하거나 임의 계정 정리에 포함하지 않는다.
+노트·게시물·Q&A 초안은 로컬 복구와 사용자·문서별 서버 최신본, 오프라인 재시도, 다중 기기 비교를 제공한다. 세 문서 영역 모두 versioned server lifecycle, 30일 휴지통, 관리자 purge와 anti-replay ledger/tombstone을 제공한다. 게시물은 full-snapshot revision, Q&A는 질문 상태의 append-only event와 보존된 답변을 사용한다. 승인된 계정 삭제를 다른 오프라인 기기에 전달하는 동기화 token은 아직 없다. 저장소 자체를 사용할 수 없는 상태에서 브라우저 프로세스를 강제로 종료하면 메모리 안전본도 유지할 수 없다. 과거 owner 정보가 없는 local storage draft는 계정 간 노출을 막기 위해 자동 이관하거나 임의 계정 정리에 포함하지 않는다.
 
 ## 환경 변수와 설정
 
@@ -170,17 +176,17 @@ npm run build:worker
 npm audit --omit=dev --audit-level=moderate
 ```
 
-현재 migration consistency와 `0007` upgrade, `0008→0009` account cascade, CHECK·trigger semantic probe, 개발용 관리자 seed의 환경·입력 경계, auth guard의 session·role·ownership, calendar token 변조·대상 불일치, HTML sanitize·YouTube payload, local draft shadow·retention·제출 tombstone·미래 version 보호와 계정 경계, 서버 초안 queue·CAS·만료·exact retry가 자동화되어 있다. OS 임시 영역의 격리 D1으로 Q&A rollback, 개인 노트 수명주기와 서버 초안의 원자 저장·폐기·강제 실패 rollback을 검증한다. DOM 격리 환경에서는 로컬 복구와 실제 작성 form, 계정 정리 뒤 pending 재생성 차단, 오프라인 재시도, 다중 기기 비교·명시 선택과 2단계 서버본 폐기를 검증한다. 실제 브라우저 E2E와 production migration·deploy는 별도 범위다.
+현재 migration consistency와 `0007` upgrade, `0008→0009` account cascade, `0009→0010` 게시물·Q&A baseline 이관, CHECK·trigger semantic probe, 개발용 관리자 seed의 환경·입력 경계, auth guard의 session·role·ownership, calendar token 변조·대상 불일치, HTML sanitize·YouTube payload, local draft shadow·retention·제출 tombstone·미래 version 보호와 계정 경계, 서버 초안 queue·CAS·만료·exact retry가 자동화되어 있다. OS 임시 영역의 격리 D1으로 노트·게시물·Q&A 수명주기와 서버 초안의 원자 저장·폐기·강제 실패 rollback, exact replay, 하위 댓글·답변 보존과 tombstone 부활 방지를 검증한다. DOM 격리 환경에서는 로컬 복구와 실제 작성 form, 계정 정리 뒤 pending 재생성 차단, 오프라인 재시도, 다중 기기 비교·명시 선택과 2단계 서버본 폐기를 검증한다. 실제 브라우저 E2E와 production migration·deploy는 별도 범위다.
 
 UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 시스템](./DESIGN_SYSTEM.md)을 기준으로 한다. 상태 registry는 label, semantic tone, icon key가 서로 어긋나지 않도록 단위 테스트로 보호한다.
 
 | 품질 경계 | 현재 자동화 | 다음 보강 |
 |---|---|---|
-| Migration | SQL·journal·snapshot·current schema empty replay, CHECK·trigger, `0007` upgrade·inbound FK preflight, `0008→0009` cascade, local persistent 적용 | remote 적용 이력은 배포 준비 시 별도 점검 |
+| Migration | SQL·journal·snapshot·current schema empty replay, CHECK·trigger, `0007` upgrade·inbound FK preflight, `0008→0009` cascade, `0009→0010` 게시물·Q&A baseline upgrade | persistent local `0010`과 remote 적용 이력은 별도 승인 뒤 점검 |
 | 개발 credential | development/opt-in/env/input binding 단위 테스트 | 실제 local seed는 데이터 변경 작업으로 분리 |
 | 인증·권한 | 미인증·role·ownership 허용/거부 단위 테스트, Q&A 격리 D1 권한 회귀 | 다른 주요 server action의 실제 query·mutation 경계 테스트 |
 | 입력·콘텐츠 | script·event handler·위험 protocol XSS payload 테스트 | upload MIME·size 정책 테스트 |
-| 문서 연속성 | local shadow·5초 checkpoint·복구·제출 경쟁, 사용자·문서별 서버 최신본·CAS·offline queue·다중 기기 명시 선택 DOM 통합, 개인 노트 revision·trash와 Q&A 원자 쓰기 격리 D1 통합 | 실제 브라우저 reload·offline·navigation·강제 종료·대형 문서 E2E |
+| 문서 연속성 | local shadow·5초 checkpoint·복구·제출 경쟁, 사용자·문서별 서버 최신본·CAS·offline queue·다중 기기 명시 선택 DOM 통합, 노트·게시물·Q&A revision/event·trash·purge·anti-replay 격리 D1 통합 | 실제 브라우저 reload·offline·navigation·강제 종료·대형 문서 E2E |
 | UI 상태 | status registry 단위 테스트, loading/error route, semantic landmark·control 정적 검토 | keyboard interaction component 테스트 |
 
 ## 변경 시 같이 볼 파일
@@ -210,13 +216,12 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 
 - runtime dependency audit은 현재 0건이다. 상위 의존성이 보안 패치 전 하위 의존성을 고정하는 구간은 `package.json` override로 제한하며, upstream stable이 해당 버전을 채택하면 override를 제거해야 한다.
 - 개발 도구 전체 audit에는 Drizzle Kit의 구형 esbuild loader 체인에서 발생하는 moderate 권고가 남아 있다. 현재 npm 제안은 호환되지 않는 구버전 downgrade이므로 upstream 패치를 추적한다.
-- migration SQL과 `drizzle/meta` 생성 이력은 `0009`까지 대응하고 local persistent D1·격리 D1에서 전체 replay와 upgrade를 통과했다. remote 적용 이력은 별도 승인 전 추정하지 않는다.
+- migration SQL과 `drizzle/meta` 생성 이력은 `0010`까지 대응하고 격리 D1에서 전체 replay와 `0009→0010` upgrade를 검사한다. persistent local D1은 `0009`까지 적용됐으며 `0010`과 remote 적용 이력은 별도 승인 전 추정하지 않는다.
 - 대표 문서 server action과 draft 생명주기의 격리 integration test는 있으나 실제 브라우저 reload·offline·navigation·delete/restore E2E는 없다.
-- 노트·게시물·Q&A는 서버 초안과 다중 기기 명시 선택을 제공하지만, revision·휴지통·불변 ledger/tombstone 수명주기는 아직 개인 노트에만 적용된다.
-- 개인 노트의 오래된 요청은 immutable ledger와 tombstone으로 증명한다. 게시물·Q&A·답변은 여전히 resource payload와 생성 nonce를 대조하므로 수정·hard delete 뒤의 장기 anti-replay 원장이 없다. Q&A 한 요청 안의 복합 쓰기 자체는 원자적이다.
+- 게시물 purge는 DB의 본문·revision·댓글·미디어 URL 참조를 제거하지만 R2 객체 삭제·retention을 함께 처리하지 않는다. 업로드 객체 key를 추적하는 별도 media lifecycle과 고아 객체 정리가 필요하다.
 - 큰 문서의 전체 HTML·payload 서명은 매 입력이 아니라 지연된 flush·submit 경계에서 revision당 한 번만 만들고, 연속 입력은 최대 5초마다 최신본을 checkpoint한다. 개인 노트는 저장 HTML 800 KiB와 logical history 100 MiB 정책을 적용한다. 다만 실제 브라우저의 100 KiB·500 KiB·1 MiB frame budget과 autosave·복구 latency를 측정하지 않아 제품급 입력 부드러움은 아직 검증되지 않았다.
 - rolling 호환용 제출 alias는 ghost 복원을 막기 위해 signature별 tombstone을 30일 동안 보존한다. 반복 편집 시 여러 unique entry가 origin 저장공간에 누적될 수 있으므로, 호환 종료 조건과 문서 namespace별 byte budget·용량 안내 정책은 아직 확정하지 않았다.
-- 로그아웃·계정 전환의 owner-bound local draft와 서버 재시도 queue 정리는 구현했다. 계정 삭제를 오프라인 기기에 전달하는 동기화 token과 30일 뒤 ledger/tombstone raw ID erasure workflow는 아직 없으며, 그 전까지 note를 가진 profile 삭제는 `RESTRICT`된다.
+- 로그아웃·계정 전환의 owner-bound local draft와 서버 재시도 queue 정리는 구현했다. 계정 삭제를 오프라인 기기에 전달하는 동기화 token과 30일 뒤 ledger/tombstone raw ID erasure workflow는 아직 없으며, 그 전까지 문서·댓글·답변 이력이 있는 profile 삭제는 `RESTRICT`된다.
 - lockfile의 Wrangler는 Node.js 22 이상을 요구하지만 package engine과 Docker image는 Node.js 20을 허용한다. 지원 runtime과 배포 image를 같은 major로 정렬해야 한다.
 - 운영 D1 export·복구 절차는 문서화됐지만 승인된 원격 backup과 격리 restore rehearsal 기록은 아직 없다.
 - 일부 대형 client component는 상태 hook, domain view와 presentation 경계가 한 파일에 남아 있다.

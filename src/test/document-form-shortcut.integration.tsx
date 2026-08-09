@@ -157,7 +157,7 @@ mock.module("@/lib/actions/qna", {
       actionCalls.qnaInline += 1;
       return {};
     },
-    updateThreadStatus: async () => undefined,
+    updateThreadStatus: async () => ({ success: true, currentRevision: 2 }),
   },
 });
 mock.module("@/components/upload/FileUploader", {
@@ -632,6 +632,8 @@ test("Q&A 답변 Cmd/Ctrl+S는 최신 본문을 로컬 저장하고 등록하지
       replies={[]}
       returnTo="/dashboard/qna"
       status="OPEN"
+      version={1}
+      deletedAt={null}
       studentName="학생"
       threadId={threadId}
       title="단축키 검증 스레드"
@@ -717,6 +719,8 @@ const FRESH_META_SHORTCUT_CASES: ReadonlyArray<{
         replies={[]}
         returnTo="/dashboard/qna"
         status="OPEN"
+        version={1}
+        deletedAt={null}
         studentName="학생"
         threadId="thread-fresh-meta"
         title="fresh Cmd 검증 스레드"
@@ -968,6 +972,8 @@ test("종료된 Q&A의 보존 초안은 보이되 저장 단축키와 등록을 
       replies={[]}
       returnTo="/dashboard/qna"
       status="CLOSED"
+      version={1}
+      deletedAt={null}
       studentName="학생"
       threadId={threadId}
       title="종료된 스레드"

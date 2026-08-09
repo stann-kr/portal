@@ -5,8 +5,9 @@
  */
 "use client";
 
-import { useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Pin, PinOff, Megaphone } from "lucide-react";
 import {
   Accordion,
@@ -17,6 +18,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { RichTextContent } from "@/components/editor/RichTextContent";
 import { togglePinPost } from "@/lib/actions/posts";
+import { createCreationOperationId } from "@/lib/creation-operation";
 
 type Post = {
   id: string;
@@ -26,6 +28,7 @@ type Post = {
   authorName: string | null;
   authorEmail: string | null;
   createdAt: Date | null;
+  version: number;
 };
 
 interface AnnouncementListProps {
@@ -36,6 +39,9 @@ interface AnnouncementListProps {
 
 export function AnnouncementList({ posts, isAdmin, returnTo = "/community" }: AnnouncementListProps) {
   const [isPending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const operationIdsRef = useRef(new Map<string, string>());
+  const router = useRouter();
 
   if (posts.length === 0) {
     return (
@@ -46,12 +52,35 @@ export function AnnouncementList({ posts, isAdmin, returnTo = "/community" }: An
     );
   }
 
-  const handleTogglePin = (postId: string, currentPinned: boolean) => {
-    startTransition(() => togglePinPost(postId, currentPinned));
+  const handleTogglePin = (postId: string, currentPinned: boolean, version: number) => {
+    startTransition(async () => {
+      const operationId =
+        operationIdsRef.current.get(postId) ?? createCreationOperationId();
+      operationIdsRef.current.set(postId, operationId);
+      try {
+        const result = await togglePinPost(
+          postId,
+          !currentPinned,
+          operationId,
+          version,
+        );
+        if (!result.success) {
+          setError(result.error ?? "공지 고정 상태를 변경하지 못했습니다.");
+          return;
+        }
+        operationIdsRef.current.delete(postId);
+        setError(null);
+        router.refresh();
+      } catch {
+        setError("공지 고정 상태를 변경하지 못했습니다. 다시 시도해 주세요.");
+      }
+    });
   };
 
   return (
-    <Accordion type="multiple" className="space-y-2">
+    <div className="space-y-2">
+      {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
+      <Accordion type="multiple" className="space-y-2">
       {posts.map((post) => {
         const author =
           post.authorName ?? post.authorEmail?.split("@")[0] ?? "관리자";
@@ -100,7 +129,7 @@ export function AnnouncementList({ posts, isAdmin, returnTo = "/community" }: An
                     variant="ghost"
                     size="sm"
                     className="h-7 px-2 text-xs gap-1.5"
-                    onClick={() => handleTogglePin(post.id, post.isPinned)}
+                    onClick={() => handleTogglePin(post.id, post.isPinned, post.version)}
                     disabled={isPending}
                   >
                     {post.isPinned ? (
@@ -119,6 +148,7 @@ export function AnnouncementList({ posts, isAdmin, returnTo = "/community" }: An
           </AccordionItem>
         );
       })}
-    </Accordion>
+      </Accordion>
+    </div>
   );
 }

@@ -3,21 +3,22 @@
 import { useActionState, useCallback, useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Trash2, Hash, PencilLine } from "lucide-react";
+import { ArrowLeft, Trash2, Hash, History, PencilLine } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { RichTextContent } from "@/components/editor/RichTextContent";
 import { Input } from "@/components/ui/input";
-import { deletePost } from "@/lib/actions/posts";
+import { deletePost, getPostIncludingTrash } from "@/lib/actions/posts";
 import {
   createComment,
   deleteComment,
   getCommentsByPost,
   type CreateCommentState,
 } from "@/lib/actions/comments";
-import { getPostById } from "@/lib/actions/posts";
 import { PostEditForm } from "@/components/community/PostEditForm";
+import { PostTrashActions } from "@/components/community/PostTrashActions";
+import { createCreationOperationId } from "@/lib/creation-operation";
 
-type Post = NonNullable<Awaited<ReturnType<typeof getPostById>>>;
+type Post = NonNullable<Awaited<ReturnType<typeof getPostIncludingTrash>>>;
 type Comment = Awaited<ReturnType<typeof getCommentsByPost>>[number];
 
 interface PostDetailClientProps {
@@ -41,6 +42,8 @@ export function PostDetailClient({
   const [isPending, startTransition] = useTransition();
   const [isEditing, setIsEditing] = useState(false);
   const [isEditPending, setIsEditPending] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleteOperationId] = useState(() => createCreationOperationId());
   const commentFormRef = useRef<HTMLFormElement>(null);
   const router = useRouter();
 
@@ -58,9 +61,17 @@ export function PostDetailClient({
   }, [commentState.commentId, router]);
 
   const handleDeletePost = () => {
-    if (!post || !confirm("이 게시물을 삭제하시겠습니까?")) return;
+    if (!post || !confirm("이 게시물을 휴지통으로 이동하시겠습니까? 30일 동안 복원할 수 있습니다.")) return;
     startTransition(async () => {
-      await deletePost(post.id, returnTo);
+      try {
+        await deletePost(post.id, deleteOperationId, post.version, returnTo);
+      } catch (error) {
+        setDeleteError(
+          error instanceof Error
+            ? error.message
+            : "게시물을 휴지통으로 이동하지 못했습니다.",
+        );
+      }
     });
   };
 
@@ -80,7 +91,8 @@ export function PostDetailClient({
     : "날짜 정보 없음";
   const author =
     post.authorName ?? post.authorEmail?.split("@")[0] ?? "작성자 미상";
-  const canDeletePost = isAdmin || currentUserId === post.authorId;
+  const canManagePost = isAdmin || currentUserId === post.authorId;
+  const canDeletePost = canManagePost && !post.deletedAt;
   const canEditPost = canDeletePost;
   const handleSaved = useCallback(() => {
     setIsEditing(false);
@@ -113,6 +125,16 @@ export function PostDetailClient({
                 {isEditing ? "읽기" : "수정"}
               </Button>
             ) : null}
+            {canManagePost ? (
+              <Button asChild variant="ghost" size="sm" className="gap-1.5">
+                <Link
+                  href={`/community/${post.id}/history?returnTo=${encodeURIComponent(returnTo)}`}
+                >
+                  <History className="h-4 w-4" aria-hidden="true" />
+                  이력
+                </Link>
+              </Button>
+            ) : null}
             {canDeletePost ? (
               <Button
                 variant="ghost"
@@ -137,12 +159,41 @@ export function PostDetailClient({
           <span>·</span>
           <span>{date}</span>
         </div>
+        {deleteError ? (
+          <p role="alert" className="text-sm text-destructive">
+            {deleteError}
+          </p>
+        ) : null}
       </div>
+
+      {post.deletedAt ? (
+        <section className="space-y-3 rounded-xl border border-warning/30 bg-warning-muted p-4">
+          <div>
+            <p className="font-medium">휴지통에 있는 게시물입니다.</p>
+            <p className="text-sm text-muted-foreground">
+              삭제 {post.deletedAt.toLocaleString("ko-KR")} · 댓글과 변경 이력은 함께 보존됩니다.
+            </p>
+          </div>
+          <PostTrashActions
+            postId={post.id}
+            version={post.version}
+            deletedAt={post.deletedAt.toISOString()}
+            canRestore={canManagePost}
+            canPurge={isAdmin}
+            returnTo={returnTo}
+          />
+        </section>
+      ) : null}
 
       {/* 본문 */}
       {isEditing && currentUserId ? (
         <PostEditForm
-          post={{ id: post.id, title: post.title, contentHtml: post.contentHtml }}
+          post={{
+            id: post.id,
+            title: post.title,
+            contentHtml: post.contentHtml,
+            version: post.version,
+          }}
           actorId={currentUserId}
           onCancel={() => setIsEditing(false)}
           onSaved={handleSaved}
@@ -160,7 +211,9 @@ export function PostDetailClient({
 
         {/* 댓글 목록 */}
         {commentList.length === 0 ? (
-          <p className="text-sm text-muted-foreground">첫 댓글을 남겨보세요.</p>
+          <p className="text-sm text-muted-foreground">
+            {post.deletedAt ? "보존된 댓글이 없습니다." : "첫 댓글을 남겨보세요."}
+          </p>
         ) : (
           <ul className="space-y-3">
             {commentList.map((c) => {
@@ -173,7 +226,8 @@ export function PostDetailClient({
                   })
                 : "날짜 정보 없음";
               const cInitials = cAuthor.slice(0, 2).toUpperCase();
-              const canDelete = isAdmin || currentUserId === c.authorId;
+              const canDelete =
+                !post.deletedAt && (isAdmin || currentUserId === c.authorId);
 
               return (
                 <li key={c.id} className="flex gap-3 group">
@@ -207,22 +261,26 @@ export function PostDetailClient({
         )}
 
         {/* 댓글 입력 */}
-        <form ref={commentFormRef} action={commentAction} className="flex gap-2">
-          <Input
-            name="content"
-            type="text"
-            placeholder="댓글을 입력하세요..."
-            required
-            disabled={isCommentPending}
-            className="flex-1"
-          />
-          <Button type="submit" disabled={isCommentPending} size="sm">
-            등록
-          </Button>
-        </form>
-        {commentState.error && (
-          <p className="text-sm text-destructive">{commentState.error}</p>
-        )}
+        {!post.deletedAt ? (
+          <>
+            <form ref={commentFormRef} action={commentAction} className="flex gap-2">
+              <Input
+                name="content"
+                type="text"
+                placeholder="댓글을 입력하세요..."
+                required
+                disabled={isCommentPending}
+                className="flex-1"
+              />
+              <Button type="submit" disabled={isCommentPending} size="sm">
+                등록
+              </Button>
+            </form>
+            {commentState.error && (
+              <p className="text-sm text-destructive">{commentState.error}</p>
+            )}
+          </>
+        ) : null}
       </section>
     </div>
   );

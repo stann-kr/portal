@@ -87,10 +87,16 @@ export const categories = sqliteTable("categories", {
   ),
 });
 
-export type DocumentResourceType = "PRIVATE_NOTE";
+export type DocumentResourceType =
+  | "PRIVATE_NOTE"
+  | "COMMUNITY_POST"
+  | "QNA_THREAD";
 export type DocumentOperationType =
   | "CREATE"
   | "UPDATE"
+  | "SET_PIN"
+  | "APPEND_REPLY"
+  | "SET_STATUS"
   | "TRASH"
   | "RESTORE_TRASH"
   | "RESTORE_REVISION"
@@ -124,11 +130,24 @@ export const documentOperationLedger = sqliteTable(
     ),
     check(
       "document_operation_ledger_resource_type_check",
-      sql`${table.resourceType} = 'PRIVATE_NOTE'`,
+      sql`${table.resourceType} IN ('PRIVATE_NOTE', 'COMMUNITY_POST', 'QNA_THREAD')`,
     ),
     check(
       "document_operation_ledger_operation_type_check",
-      sql`${table.operationType} IN ('CREATE', 'UPDATE', 'TRASH', 'RESTORE_TRASH', 'RESTORE_REVISION', 'PURGE')`,
+      sql`${table.operationType} IN ('CREATE', 'UPDATE', 'SET_PIN', 'APPEND_REPLY', 'SET_STATUS', 'TRASH', 'RESTORE_TRASH', 'RESTORE_REVISION', 'PURGE')`,
+    ),
+    check(
+      "document_operation_ledger_resource_operation_check",
+      sql`(
+        ${table.resourceType} = 'PRIVATE_NOTE'
+        AND ${table.operationType} IN ('CREATE', 'UPDATE', 'TRASH', 'RESTORE_TRASH', 'RESTORE_REVISION', 'PURGE')
+      ) OR (
+        ${table.resourceType} = 'COMMUNITY_POST'
+        AND ${table.operationType} IN ('CREATE', 'UPDATE', 'SET_PIN', 'TRASH', 'RESTORE_TRASH', 'RESTORE_REVISION', 'PURGE')
+      ) OR (
+        ${table.resourceType} = 'QNA_THREAD'
+        AND ${table.operationType} IN ('CREATE', 'APPEND_REPLY', 'SET_STATUS', 'TRASH', 'RESTORE_TRASH', 'PURGE')
+      )`,
     ),
     check(
       "document_operation_ledger_nonempty_ids_check",
@@ -167,7 +186,7 @@ export const documentTombstones = sqliteTable(
     ),
     check(
       "document_tombstones_resource_type_check",
-      sql`${table.resourceType} = 'PRIVATE_NOTE'`,
+      sql`${table.resourceType} IN ('PRIVATE_NOTE', 'COMMUNITY_POST', 'QNA_THREAD')`,
     ),
     check(
       "document_tombstones_nonempty_ids_check",
@@ -451,25 +470,155 @@ export const privateNoteRevisions = sqliteTable(
  */
 export type BoardType = "ANNOUNCEMENT" | "GENERAL" | "FEEDBACK";
 
-export const posts = sqliteTable("posts", {
-  id: text("id").primaryKey(),
-  authorId: text("author_id")
-    .references(() => profiles.id, { onDelete: "cascade" })
-    .notNull(),
-  category: text("category").notNull(),
-  title: text("title").notNull(),
-  contentHtml: text("content_html").notNull(),
-  // Phase 3 추가 컬럼
-  boardType: text("board_type")
-    .$type<BoardType>()
-    .default("GENERAL")
-    .notNull(),
-  isPinned: integer("is_pinned", { mode: "boolean" }).default(false).notNull(),
-  mediaUrl: text("media_url"), // FEEDBACK 타입 R2 오디오 URL
-  createdAt: integer("created_at", { mode: "timestamp" }).default(
-    sql`(strftime('%s', 'now'))`,
-  ),
-});
+export const posts = sqliteTable(
+  "posts",
+  {
+    id: text("id").primaryKey(),
+    authorId: text("author_id")
+      .references(() => profiles.id, { onDelete: "cascade" })
+      .notNull(),
+    category: text("category").notNull(),
+    title: text("title").notNull(),
+    contentHtml: text("content_html").notNull(),
+    // Phase 3 추가 컬럼
+    boardType: text("board_type")
+      .$type<BoardType>()
+      .default("GENERAL")
+      .notNull(),
+    isPinned: integer("is_pinned", { mode: "boolean" }).default(false).notNull(),
+    mediaUrl: text("media_url"), // FEEDBACK 타입 R2 오디오 URL
+    createdAt: integer("created_at", { mode: "timestamp" }).default(
+      sql`(strftime('%s', 'now'))`,
+    ),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      // SQLite ADD COLUMN은 non-constant default를 허용하지 않는다.
+      // lifecycle mutation은 명시 시각을 쓰고, migration은 기존 row를 backfill한다.
+      .default(sql`0`)
+      .notNull(),
+    version: integer("version").default(1).notNull(),
+    deletedAt: integer("deleted_at", { mode: "timestamp" }),
+    deletedById: text("deleted_by_id").references(() => profiles.id, {
+      onDelete: "set null",
+    }),
+  },
+  (table) => [
+    index("posts_board_deleted_pinned_created_idx").on(
+      table.boardType,
+      table.deletedAt,
+      table.isPinned,
+      table.createdAt,
+    ),
+    index("posts_author_deleted_created_idx").on(
+      table.authorId,
+      table.deletedAt,
+      table.createdAt,
+    ),
+    index("posts_deleted_at_idx").on(table.deletedAt),
+    check("posts_version_check", sql`${table.version} >= 1`),
+  ],
+);
+
+export type PostRevisionChangeType =
+  | "BASELINE"
+  | "CREATE"
+  | "UPDATE"
+  | "SET_PIN"
+  | "RESTORE_REVISION"
+  | "TRASH"
+  | "RESTORE_TRASH";
+
+/** community post의 append-only full snapshot history. */
+export const postRevisions = sqliteTable(
+  "post_revisions",
+  {
+    id: text("id").primaryKey(),
+    postId: text("post_id")
+      .references(() => posts.id, { onDelete: "cascade" })
+      .notNull(),
+    revisionNumber: integer("revision_number").notNull(),
+    changeType: text("change_type").$type<PostRevisionChangeType>().notNull(),
+    category: text("category").notNull(),
+    boardType: text("board_type").$type<BoardType>().notNull(),
+    isPinned: integer("is_pinned", { mode: "boolean" }).notNull(),
+    mediaUrl: text("media_url"),
+    title: text("title").notNull(),
+    contentHtml: text("content_html").notNull(),
+    deletedAt: integer("deleted_at", { mode: "timestamp" }),
+    snapshotHash: text("snapshot_hash"),
+    snapshotHashVersion: integer("snapshot_hash_version"),
+    actorId: text("actor_id"),
+    restoredFromRevision: integer("restored_from_revision"),
+    operationRecordId: text("operation_record_id").references(
+      () => documentOperationLedger.id,
+      { onDelete: "restrict" },
+    ),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("post_revisions_post_number_unique").on(
+      table.postId,
+      table.revisionNumber,
+    ),
+    uniqueIndex("post_revisions_operation_unique").on(table.operationRecordId),
+    index("post_revisions_post_created_idx").on(table.postId, table.createdAt),
+    check("post_revisions_number_check", sql`${table.revisionNumber} >= 1`),
+    check(
+      "post_revisions_change_type_check",
+      sql`${table.changeType} IN ('BASELINE', 'CREATE', 'UPDATE', 'SET_PIN', 'RESTORE_REVISION', 'TRASH', 'RESTORE_TRASH')`,
+    ),
+    check(
+      "post_revisions_identity_check",
+      sql`(
+        ${table.changeType} = 'BASELINE'
+        AND ${table.revisionNumber} = 1
+        AND ${table.actorId} IS NULL
+        AND ${table.snapshotHash} IS NULL
+        AND ${table.snapshotHashVersion} IS NULL
+        AND ${table.operationRecordId} IS NULL
+      ) OR (
+        ${table.changeType} <> 'BASELINE'
+        AND ${table.actorId} IS NOT NULL
+        AND length(${table.actorId}) > 0
+        AND ${table.snapshotHash} IS NOT NULL
+        AND length(${table.snapshotHash}) = 64
+        AND ${table.snapshotHashVersion} IS NOT NULL
+        AND ${table.snapshotHashVersion} >= 1
+        AND ${table.operationRecordId} IS NOT NULL
+      )`,
+    ),
+    check(
+      "post_revisions_initial_number_check",
+      sql`(
+        ${table.changeType} IN ('CREATE', 'BASELINE')
+        AND ${table.revisionNumber} = 1
+      ) OR (
+        ${table.changeType} NOT IN ('CREATE', 'BASELINE')
+        AND ${table.revisionNumber} > 1
+      )`,
+    ),
+    check(
+      "post_revisions_deleted_state_check",
+      sql`(
+        ${table.changeType} = 'TRASH'
+        AND ${table.deletedAt} IS NOT NULL
+      ) OR (
+        ${table.changeType} <> 'TRASH'
+        AND ${table.deletedAt} IS NULL
+      )`,
+    ),
+    check(
+      "post_revisions_restore_source_check",
+      sql`(
+        ${table.changeType} = 'RESTORE_REVISION'
+        AND ${table.restoredFromRevision} IS NOT NULL
+        AND ${table.restoredFromRevision} >= 1
+      ) OR (
+        ${table.changeType} <> 'RESTORE_REVISION'
+        AND ${table.restoredFromRevision} IS NULL
+      )`,
+    ),
+  ],
+);
 
 export const comments = sqliteTable("comments", {
   id: text("id").primaryKey(),
@@ -543,20 +692,37 @@ export const diggingTracks = sqliteTable("digging_tracks", {
  */
 export type QnaStatus = "OPEN" | "ANSWERED" | "CLOSED";
 
-export const qnaThreads = sqliteTable("qna_threads", {
-  id: text("id").primaryKey(),
-  studentId: text("student_id")
-    .references(() => profiles.id, { onDelete: "cascade" })
-    .notNull(),
-  title: text("title").notNull(),
-  status: text("status").$type<QnaStatus>().default("OPEN").notNull(),
-  createdAt: integer("created_at", { mode: "timestamp" }).default(
-    sql`(strftime('%s', 'now'))`,
-  ),
-  updatedAt: integer("updated_at", { mode: "timestamp" }).default(
-    sql`(strftime('%s', 'now'))`,
-  ),
-});
+export const qnaThreads = sqliteTable(
+  "qna_threads",
+  {
+    id: text("id").primaryKey(),
+    studentId: text("student_id")
+      .references(() => profiles.id, { onDelete: "cascade" })
+      .notNull(),
+    title: text("title").notNull(),
+    status: text("status").$type<QnaStatus>().default("OPEN").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).default(
+      sql`(strftime('%s', 'now'))`,
+    ),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).default(
+      sql`(strftime('%s', 'now'))`,
+    ),
+    version: integer("version").default(1).notNull(),
+    deletedAt: integer("deleted_at", { mode: "timestamp" }),
+    deletedById: text("deleted_by_id").references(() => profiles.id, {
+      onDelete: "set null",
+    }),
+  },
+  (table) => [
+    index("qna_threads_student_deleted_updated_idx").on(
+      table.studentId,
+      table.deletedAt,
+      table.updatedAt,
+    ),
+    index("qna_threads_deleted_at_idx").on(table.deletedAt),
+    check("qna_threads_version_check", sql`${table.version} >= 1`),
+  ],
+);
 
 export const qnaReplies = sqliteTable("qna_replies", {
   id: text("id").primaryKey(),
@@ -572,6 +738,110 @@ export const qnaReplies = sqliteTable("qna_replies", {
     sql`(strftime('%s', 'now'))`,
   ),
 });
+
+export type QnaThreadEventType =
+  | "BASELINE"
+  | "CREATE"
+  | "APPEND_REPLY"
+  | "SET_STATUS"
+  | "TRASH"
+  | "RESTORE_TRASH";
+
+/** Q&A aggregate의 append-only reply/status/lifecycle event history. */
+export const qnaThreadEvents = sqliteTable(
+  "qna_thread_events",
+  {
+    id: text("id").primaryKey(),
+    threadId: text("thread_id")
+      .references(() => qnaThreads.id, { onDelete: "cascade" })
+      .notNull(),
+    eventNumber: integer("event_number").notNull(),
+    eventType: text("event_type").$type<QnaThreadEventType>().notNull(),
+    title: text("title").notNull(),
+    status: text("status").$type<QnaStatus>().notNull(),
+    replyId: text("reply_id"),
+    deletedAt: integer("deleted_at", { mode: "timestamp" }),
+    eventHash: text("event_hash"),
+    eventHashVersion: integer("event_hash_version"),
+    actorId: text("actor_id"),
+    operationRecordId: text("operation_record_id").references(
+      () => documentOperationLedger.id,
+      { onDelete: "restrict" },
+    ),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("qna_thread_events_thread_number_unique").on(
+      table.threadId,
+      table.eventNumber,
+    ),
+    uniqueIndex("qna_thread_events_operation_unique").on(table.operationRecordId),
+    index("qna_thread_events_thread_created_idx").on(
+      table.threadId,
+      table.createdAt,
+    ),
+    check("qna_thread_events_number_check", sql`${table.eventNumber} >= 1`),
+    check(
+      "qna_thread_events_type_check",
+      sql`${table.eventType} IN ('BASELINE', 'CREATE', 'APPEND_REPLY', 'SET_STATUS', 'TRASH', 'RESTORE_TRASH')`,
+    ),
+    check(
+      "qna_thread_events_status_check",
+      sql`${table.status} IN ('OPEN', 'ANSWERED', 'CLOSED')`,
+    ),
+    check(
+      "qna_thread_events_identity_check",
+      sql`(
+        ${table.eventType} = 'BASELINE'
+        AND ${table.eventNumber} = 1
+        AND ${table.actorId} IS NULL
+        AND ${table.eventHash} IS NULL
+        AND ${table.eventHashVersion} IS NULL
+        AND ${table.operationRecordId} IS NULL
+      ) OR (
+        ${table.eventType} <> 'BASELINE'
+        AND ${table.actorId} IS NOT NULL
+        AND length(${table.actorId}) > 0
+        AND ${table.eventHash} IS NOT NULL
+        AND length(${table.eventHash}) = 64
+        AND ${table.eventHashVersion} IS NOT NULL
+        AND ${table.eventHashVersion} >= 1
+        AND ${table.operationRecordId} IS NOT NULL
+      )`,
+    ),
+    check(
+      "qna_thread_events_initial_number_check",
+      sql`(
+        ${table.eventType} IN ('CREATE', 'BASELINE')
+        AND ${table.eventNumber} = 1
+      ) OR (
+        ${table.eventType} NOT IN ('CREATE', 'BASELINE')
+        AND ${table.eventNumber} > 1
+      )`,
+    ),
+    check(
+      "qna_thread_events_deleted_state_check",
+      sql`(
+        ${table.eventType} = 'TRASH'
+        AND ${table.deletedAt} IS NOT NULL
+      ) OR (
+        ${table.eventType} <> 'TRASH'
+        AND ${table.deletedAt} IS NULL
+      )`,
+    ),
+    check(
+      "qna_thread_events_reply_check",
+      sql`(
+        ${table.eventType} IN ('CREATE', 'APPEND_REPLY')
+        AND ${table.replyId} IS NOT NULL
+        AND length(${table.replyId}) > 0
+      ) OR (
+        ${table.eventType} NOT IN ('CREATE', 'APPEND_REPLY')
+        AND ${table.replyId} IS NULL
+      )`,
+    ),
+  ],
+);
 
 /**
  * Phase 4: 개인 캘린더 이벤트.

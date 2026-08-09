@@ -4,15 +4,18 @@ import { count, eq } from "drizzle-orm";
 import type { AuthSession } from "@/lib/auth-guard";
 import {
   categories,
+  comments,
   documentOperationLedger,
   documentServerDraftOperations,
   documentServerDrafts,
   documentTombstones,
   privateNoteRevisions,
   privateNotes,
+  postRevisions,
   posts,
   profiles,
   qnaReplies,
+  qnaThreadEvents,
   qnaThreads,
 } from "@/db/schema";
 import {
@@ -36,6 +39,7 @@ import {
   type PrivateNoteCanonicalRequest,
   type PrivateNoteCanonicalSnapshot,
 } from "@/lib/private-note-continuity";
+import { POST_BASE_REVISION_FIELD } from "@/lib/post-continuity";
 import {
   createDocumentDraftKey,
 } from "@/lib/form-draft";
@@ -55,6 +59,7 @@ let documentDraftActions: typeof import("@/lib/actions/documentDrafts");
 let qnaActions: typeof import("@/lib/actions/qna");
 let privateNoteActions: typeof import("@/lib/actions/privateNotes");
 let postActions: typeof import("@/lib/actions/posts");
+let commentActions: typeof import("@/lib/actions/comments");
 
 function requireActiveDb(): PortalTestDb {
   if (!activeDb) throw new Error("격리 D1 테스트 DB가 준비되지 않았습니다.");
@@ -86,11 +91,12 @@ mock.module("next/navigation", {
 });
 
 before(async () => {
-  [documentDraftActions, qnaActions, privateNoteActions, postActions] = await Promise.all([
+  [documentDraftActions, qnaActions, privateNoteActions, postActions, commentActions] = await Promise.all([
     import("@/lib/actions/documentDrafts"),
     import("@/lib/actions/qna"),
     import("@/lib/actions/privateNotes"),
     import("@/lib/actions/posts"),
+    import("@/lib/actions/comments"),
   ]);
 });
 
@@ -238,8 +244,12 @@ function createPostUpdateForm(
   postId: string,
   next: PostUpdateSnapshot,
   base: PostUpdateSnapshot,
+  operationId = crypto.randomUUID(),
+  baseRevision = 1,
 ): FormData {
   const formData = new FormData();
+  formData.set(CREATION_OPERATION_FIELD, operationId);
+  formData.set(POST_BASE_REVISION_FIELD, String(baseRevision));
   formData.set("title", next.title);
   formData.set("contentHtml", next.contentHtml);
   formData.set(
@@ -387,7 +397,7 @@ test("관리자 reply insert가 실패하면 ANSWERED 상태 변경도 rollback�
     formData,
   );
 
-  assert.match(result.error ?? "", /저장하지 못했습니다/u);
+  assert.match(result.error ?? "", /안전하게 변경하지 못했습니다|저장하지 못했습니다/u);
   const [thread] = await db
     .select({ status: qnaThreads.status })
     .from(qnaThreads)
@@ -419,7 +429,7 @@ test("첫 reply insert가 실패하면 별도 delete 없이 batch가 thread를 r
     createDocumentForm("실패 질문", "<p>저장되면 안 됨</p>"),
   );
 
-  assert.match(result.error ?? "", /저장하지 못했습니다/u);
+  assert.match(result.error ?? "", /안전하게 변경하지 못했습니다|저장하지 못했습니다/u);
   assert.equal(await countTableRows(db, qnaThreads), 0);
   assert.equal(await countTableRows(db, qnaReplies), 0);
 });
@@ -434,9 +444,9 @@ test("OPEN precheck 직후 CLOSED가 되면 reply 없이 CLOSED 상태를 보존
     status: "OPEN",
   });
 
-  const originalBatch = db.batch.bind(db);
+  const originalBatch = db.$client.batch.bind(db.$client);
   let raceInjected = false;
-  const racingDb = new Proxy(db, {
+  const racingClient = new Proxy(db.$client, {
     get(target, property, receiver) {
       if (property === "batch") {
         return async (queries: Parameters<typeof originalBatch>[0]) => {
@@ -454,6 +464,13 @@ test("OPEN precheck 직후 CLOSED가 되면 reply 없이 CLOSED 상태를 보존
           return originalBatch(queries);
         };
       }
+      const value = Reflect.get(target, property, receiver);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  const racingDb = new Proxy(db, {
+    get(target, property, receiver) {
+      if (property === "$client") return racingClient;
       const value = Reflect.get(target, property, receiver);
       return typeof value === "function" ? value.bind(target) : value;
     },
@@ -486,19 +503,22 @@ test("D1 원자 쓰기는 다른 학생의 직접 reply 호출도 rollback한다
     status: "ANSWERED",
   });
 
-  await assert.rejects(
-    createQnaReplyAtomically(
-      { kind: "d1", db },
-      {
-        threadId: "thread-owner-guard",
-        replyId: "unauthorized-reply",
-        actorId: "student-2",
-        isAdmin: false,
-        contentHtml: "<p>저장되면 안 되는 답변</p>",
-        attachmentUrl: null,
-      },
-    ),
+  const unauthorized = await createQnaReplyAtomically(
+    { kind: "d1", db },
+    {
+      actor: { id: "student-2", isAdmin: false },
+      threadId: "thread-owner-guard",
+      replyId: "unauthorized-reply",
+      operationId: crypto.randomUUID(),
+      contentHtml: "<p>저장되면 안 되는 답변</p>",
+      attachmentUrl: null,
+      now: new Date("2026-08-07T00:00:00.000Z"),
+    },
   );
+  assert.equal(unauthorized.ok, false);
+  if (!unauthorized.ok) {
+    assert.equal(unauthorized.reason, "NOT_FOUND_OR_FORBIDDEN");
+  }
 
   const [thread] = await db
     .select({ status: qnaThreads.status })
@@ -1294,10 +1314,12 @@ test("게시물 편집 성공 응답이 유실돼도 같은 저장 재전송은 
     boardType: "GENERAL",
     createdAt: originalCreatedAt,
   });
+  const operationId = crypto.randomUUID();
   const retryForm = () => createPostUpdateForm(
     "post-update-retry",
     { title: "저장된 제목", contentHtml: "<p>저장된 본문</p>" },
     { title: "저장 전 제목", contentHtml: "<p>저장 전 본문</p>" },
+    operationId,
   );
 
   const first = await postActions.updatePostContent(
@@ -1327,7 +1349,7 @@ test("게시물 편집 성공 응답이 유실돼도 같은 저장 재전송은 
   assert.equal(stored?.createdAt?.getTime(), originalCreatedAt.getTime());
 });
 
-test("게시물 CAS 직전 같은 내용이 반영돼도 후속 조회로 성공에 수렴한다", { concurrency: false }, async (context) => {
+test("게시물 조건부 쓰기가 무시되면 receipt, head, revision을 함께 rollback한다", { concurrency: false }, async (context) => {
   const { binding, db } = await setupDatabase(context);
   await seedProfile(db, "student-1");
   await db.insert(posts).values({
@@ -1359,13 +1381,420 @@ test("게시물 CAS 직전 같은 내용이 반영돼도 후속 조회로 성공
     formData,
   );
 
-  assert.equal(result.success, true);
-  assert.equal(result.post?.title, "같은 저장");
+  assert.match(result.error ?? "", /안전하게 변경하지 못했습니다/u);
   const [stored] = await db
     .select({ title: posts.title, contentHtml: posts.contentHtml })
     .from(posts)
     .where(eq(posts.id, "post-update-race-converged"));
-  assert.deepEqual(stored, { title: "같은 저장", contentHtml: "<p>같은 본문</p>" });
+  assert.deepEqual(stored, {
+    title: "경쟁 전 제목",
+    contentHtml: "<p>경쟁 전 본문</p>",
+  });
+  assert.equal((await db.select().from(postRevisions)).length, 0);
+  assert.equal((await db.select().from(documentOperationLedger)).length, 0);
+});
+
+test("게시물 full snapshot 이력과 휴지통 수명주기는 댓글을 보존하고 만료 purge에서 함께 정리한다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context);
+  await seedProfile(db, "student-1");
+  await seedProfile(db, "admin-1", "admin");
+  const createOperationId = crypto.randomUUID();
+  const createForm = () =>
+    createPostForm(
+      createOperationId,
+      "원본 믹스셋",
+      "<p>원본 믹스셋 본문</p>",
+    );
+  const created = await postActions.createPost({}, createForm());
+  const postId = created.postId;
+  assert.ok(postId);
+  await db.insert(comments).values({
+    id: "lifecycle-post-comment",
+    postId,
+    authorId: "student-1",
+    contentHtml: "<p>보존할 댓글</p>",
+  });
+
+  const updated = await postActions.updatePostContent(
+    postId,
+    {},
+    createPostUpdateForm(
+      postId,
+      { title: "수정 믹스셋", contentHtml: "<p>수정 본문</p>" },
+      { title: "원본 믹스셋", contentHtml: "<p>원본 믹스셋 본문</p>" },
+      crypto.randomUUID(),
+      1,
+    ),
+  );
+  assert.equal(updated.success, true);
+  const revisionRestored = await postActions.restorePostRevision(
+    postId,
+    crypto.randomUUID(),
+    2,
+    1,
+  );
+  assert.equal(revisionRestored.success, true);
+  const [restoredHead] = await db
+    .select({
+      title: posts.title,
+      contentHtml: posts.contentHtml,
+      category: posts.category,
+      boardType: posts.boardType,
+      mediaUrl: posts.mediaUrl,
+      version: posts.version,
+    })
+    .from(posts)
+    .where(eq(posts.id, postId));
+  assert.deepEqual(restoredHead, {
+    title: "원본 믹스셋",
+    contentHtml: "<p>원본 믹스셋 본문</p>",
+    category: "feedback",
+    boardType: "FEEDBACK",
+    mediaUrl: "https://cdn.example.com/mix.mp3",
+    version: 3,
+  });
+
+  const trashed = await postActions.trashPost(
+    postId,
+    crypto.randomUUID(),
+    3,
+  );
+  assert.equal(trashed.success, true);
+  assert.equal(await postActions.getPostById(postId), null);
+  assert.equal((await postActions.getTrashedPosts()).length, 1);
+  assert.equal(
+    (await db.select().from(comments).where(eq(comments.postId, postId))).length,
+    1,
+  );
+  activeSession = createSession("student-2", "student");
+  await assert.rejects(commentActions.getCommentsByPost(postId), /Unauthorized/u);
+  activeSession = createSession("student-1", "student");
+  assert.deepEqual(
+    (await postActions.getPostRevisions(postId)).map((revision) => revision.changeType),
+    ["TRASH", "RESTORE_REVISION", "UPDATE", "CREATE"],
+  );
+
+  const restored = await postActions.restorePost(
+    postId,
+    crypto.randomUUID(),
+    4,
+  );
+  assert.equal(restored.success, true);
+  assert.equal(restored.currentRevision, 5);
+  assert.ok(await postActions.getPostById(postId));
+  assert.equal(
+    (await postActions.trashPost(postId, crypto.randomUUID(), 5)).success,
+    true,
+  );
+
+  activeSession = createSession("admin-1", "admin");
+  const purgeOperationId = crypto.randomUUID();
+  const earlyPurge = await postActions.purgePost(
+    postId,
+    purgeOperationId,
+    6,
+  );
+  assert.equal(earlyPurge.conflictKind, "RETENTION_NOT_EXPIRED");
+  await db
+    .update(posts)
+    .set({ deletedAt: new Date(Date.now() - 31 * 24 * 60 * 60 * 1000) })
+    .where(eq(posts.id, postId));
+
+  activeSession = createSession("student-1", "student");
+  const forbidden = await postActions.purgePost(
+    postId,
+    crypto.randomUUID(),
+    6,
+  );
+  assert.equal(forbidden.conflictKind, "NOT_FOUND_OR_FORBIDDEN");
+  activeSession = createSession("admin-1", "admin");
+  const purged = await postActions.purgePost(postId, purgeOperationId, 6);
+  assert.equal(purged.success, true);
+  assert.equal(purged.purged, true);
+  assert.equal((await db.select().from(posts).where(eq(posts.id, postId))).length, 0);
+  assert.equal(
+    (await db.select().from(postRevisions).where(eq(postRevisions.postId, postId))).length,
+    0,
+  );
+  assert.equal(
+    (await db.select().from(comments).where(eq(comments.postId, postId))).length,
+    0,
+  );
+  const [tombstone] = await db
+    .select()
+    .from(documentTombstones)
+    .where(eq(documentTombstones.resourceId, postId));
+  assert.equal(tombstone?.resourceType, "COMMUNITY_POST");
+  assert.equal(tombstone?.sourceVersion, 6);
+  assert.equal(tombstone?.purgedById, "admin-1");
+
+  activeSession = createSession("student-1", "student");
+  const lateCreateRetry = await postActions.createPost({}, createForm());
+  assert.match(lateCreateRetry.error ?? "", /영구 삭제/u);
+  assert.equal((await db.select().from(posts)).length, 0);
+});
+
+test("게시물 과거 revision 복원은 저장된 hash version으로 full snapshot 무결성을 확인한다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context);
+  await seedProfile(db, "student-1");
+  const postId = "post-corrupt-snapshot";
+  const operationRecordId = "post-receipt-corrupt-snapshot";
+  const now = new Date("2026-08-07T00:00:00.000Z");
+  await db.insert(posts).values({
+    id: postId,
+    authorId: "student-1",
+    category: "feedback",
+    boardType: "FEEDBACK",
+    mediaUrl: "https://cdn.example.com/corrupt.mp3",
+    title: "원본 게시물",
+    contentHtml: "<p>원본 게시물</p>",
+    createdAt: now,
+    updatedAt: now,
+    version: 1,
+  });
+  await db.insert(documentOperationLedger).values({
+    id: operationRecordId,
+    operationId: crypto.randomUUID(),
+    actorId: "student-1",
+    subjectId: "student-1",
+    resourceType: "COMMUNITY_POST",
+    operationType: "CREATE",
+    resourceId: postId,
+    requestHash: "a".repeat(64),
+    requestHashVersion: 1,
+    resultRevision: 1,
+    createdAt: now,
+  });
+  await db.insert(postRevisions).values({
+    id: "post-revision-corrupt-snapshot",
+    postId,
+    revisionNumber: 1,
+    changeType: "CREATE",
+    category: "feedback",
+    boardType: "FEEDBACK",
+    isPinned: false,
+    mediaUrl: "https://cdn.example.com/corrupt.mp3",
+    title: "원본 게시물",
+    contentHtml: "<p>원본 게시물</p>",
+    snapshotHash: "b".repeat(64),
+    snapshotHashVersion: 1,
+    actorId: "student-1",
+    operationRecordId,
+    createdAt: now,
+  });
+
+  const restored = await postActions.restorePostRevision(
+    postId,
+    crypto.randomUUID(),
+    1,
+    1,
+  );
+  assert.equal(restored.success, false);
+  assert.equal(restored.conflictKind, "INTERNAL_INVARIANT_FAILURE");
+  const [head] = await db
+    .select({ version: posts.version, title: posts.title })
+    .from(posts)
+    .where(eq(posts.id, postId));
+  assert.deepEqual(head, { version: 1, title: "원본 게시물" });
+  assert.equal(
+    (await db.select().from(postRevisions).where(eq(postRevisions.postId, postId))).length,
+    1,
+  );
+});
+
+test("과거 게시물 update와 pin 재전송은 후속 변경과 분리된 request hash로 historical 성공을 회수한다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(
+    context,
+    createSession("admin-1", "admin"),
+  );
+  await seedProfile(db, "admin-1", "admin");
+  const createForm = new FormData();
+  createForm.set(CREATION_OPERATION_FIELD, crypto.randomUUID());
+  createForm.set("boardType", "ANNOUNCEMENT");
+  createForm.set("category", "announcement");
+  createForm.set("title", "공지 v1");
+  createForm.set("contentHtml", "<p>공지 v1</p>");
+  createForm.set("returnTo", "community-editor");
+  const created = await postActions.createPost({}, createForm);
+  const postId = created.postId;
+  assert.ok(postId);
+
+  const updateOperationId = crypto.randomUUID();
+  const firstUpdateForm = () =>
+    createPostUpdateForm(
+      postId,
+      { title: "공지 v2", contentHtml: "<p>공지 v2</p>" },
+      { title: "공지 v1", contentHtml: "<p>공지 v1</p>" },
+      updateOperationId,
+      1,
+    );
+  assert.equal(
+    (await postActions.updatePostContent(postId, {}, firstUpdateForm())).success,
+    true,
+  );
+  const pinOperationId = crypto.randomUUID();
+  assert.equal(
+    (
+      await postActions.togglePinPost(
+        postId,
+        true,
+        pinOperationId,
+        2,
+      )
+    ).success,
+    true,
+  );
+
+  const historicalUpdate = await postActions.updatePostContent(
+    postId,
+    {},
+    firstUpdateForm(),
+  );
+  assert.equal(historicalUpdate.success, true);
+  assert.equal(historicalUpdate.replayed, true);
+  assert.equal(historicalUpdate.currentRevision, 3);
+
+  const laterUpdate = await postActions.updatePostContent(
+    postId,
+    {},
+    createPostUpdateForm(
+      postId,
+      { title: "공지 v4", contentHtml: "<p>공지 v4</p>" },
+      { title: "공지 v2", contentHtml: "<p>공지 v2</p>" },
+      crypto.randomUUID(),
+      3,
+    ),
+  );
+  assert.equal(laterUpdate.success, true);
+  const historicalPin = await postActions.togglePinPost(
+    postId,
+    true,
+    pinOperationId,
+    2,
+  );
+  assert.equal(historicalPin.success, true);
+  assert.equal(historicalPin.currentRevision, 4);
+  const [head] = await db
+    .select({ title: posts.title, isPinned: posts.isPinned, version: posts.version })
+    .from(posts)
+    .where(eq(posts.id, postId));
+  assert.deepEqual(head, { title: "공지 v4", isPinned: true, version: 4 });
+  assert.deepEqual(
+    (
+      await db
+        .select({ changeType: postRevisions.changeType })
+        .from(postRevisions)
+        .where(eq(postRevisions.postId, postId))
+    ).map((revision) => revision.changeType),
+    ["CREATE", "UPDATE", "SET_PIN", "UPDATE"],
+  );
+});
+
+test("Q&A event 이력과 휴지통 수명주기는 답변을 보존하고 만료 purge에서 함께 정리한다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context);
+  await seedProfile(db, "student-1");
+  await seedProfile(db, "admin-1", "admin");
+  const createOperationId = crypto.randomUUID();
+  const createForm = () =>
+    createDocumentForm(
+      "수명주기 질문",
+      "<p>보존할 질문</p>",
+      createOperationId,
+    );
+  const created = await qnaActions.createQnaThread({}, createForm());
+  const threadId = created.thread?.id;
+  assert.ok(threadId);
+
+  activeSession = createSession("admin-1", "admin");
+  const statusChanged = await qnaActions.updateThreadStatus(
+    threadId,
+    "ANSWERED",
+    crypto.randomUUID(),
+    1,
+  );
+  assert.equal(statusChanged.success, true);
+  activeSession = createSession("student-1", "student");
+  const trashed = await qnaActions.trashQnaThread(
+    threadId,
+    crypto.randomUUID(),
+    2,
+  );
+  assert.equal(trashed.success, true);
+  assert.equal((await qnaActions.getQnaThreads()).length, 0);
+  assert.equal((await qnaActions.getTrashedQnaThreads()).length, 1);
+  assert.equal(
+    (await db.select().from(qnaReplies).where(eq(qnaReplies.threadId, threadId))).length,
+    1,
+  );
+  assert.deepEqual(
+    (await qnaActions.getQnaThreadEvents(threadId)).map((event) => event.eventType),
+    ["TRASH", "SET_STATUS", "CREATE"],
+  );
+
+  const restored = await qnaActions.restoreQnaThread(
+    threadId,
+    crypto.randomUUID(),
+    3,
+  );
+  assert.equal(restored.success, true);
+  assert.equal(restored.currentRevision, 4);
+  assert.equal(
+    (await qnaActions.trashQnaThread(threadId, crypto.randomUUID(), 4)).success,
+    true,
+  );
+
+  activeSession = createSession("admin-1", "admin");
+  const purgeOperationId = crypto.randomUUID();
+  const earlyPurge = await qnaActions.purgeQnaThread(
+    threadId,
+    purgeOperationId,
+    5,
+  );
+  assert.equal(earlyPurge.conflictKind, "RETENTION_NOT_EXPIRED");
+  await db
+    .update(qnaThreads)
+    .set({ deletedAt: new Date(Date.now() - 31 * 24 * 60 * 60 * 1000) })
+    .where(eq(qnaThreads.id, threadId));
+
+  activeSession = createSession("student-1", "student");
+  const forbidden = await qnaActions.purgeQnaThread(
+    threadId,
+    crypto.randomUUID(),
+    5,
+  );
+  assert.equal(forbidden.conflictKind, "NOT_FOUND_OR_FORBIDDEN");
+  activeSession = createSession("admin-1", "admin");
+  const purged = await qnaActions.purgeQnaThread(
+    threadId,
+    purgeOperationId,
+    5,
+  );
+  assert.equal(purged.success, true);
+  assert.equal(purged.purged, true);
+  assert.equal(
+    (await db.select().from(qnaThreads).where(eq(qnaThreads.id, threadId))).length,
+    0,
+  );
+  assert.equal(
+    (await db.select().from(qnaReplies).where(eq(qnaReplies.threadId, threadId))).length,
+    0,
+  );
+  assert.equal(
+    (await db.select().from(qnaThreadEvents).where(eq(qnaThreadEvents.threadId, threadId))).length,
+    0,
+  );
+  const [tombstone] = await db
+    .select()
+    .from(documentTombstones)
+    .where(eq(documentTombstones.resourceId, threadId));
+  assert.equal(tombstone?.resourceType, "QNA_THREAD");
+  assert.equal(tombstone?.sourceVersion, 5);
+  assert.equal(tombstone?.purgedById, "admin-1");
+
+  activeSession = createSession("student-1", "student");
+  const lateCreateRetry = await qnaActions.createQnaThread({}, createForm());
+  assert.match(lateCreateRetry.error ?? "", /영구 삭제/u);
+  assert.equal((await db.select().from(qnaThreads)).length, 0);
 });
 
 test("다른 사용자는 게시물이 이미 같은 payload여도 편집 성공을 회수할 수 없다", { concurrency: false }, async (context) => {
@@ -1469,7 +1898,7 @@ test("다른 리소스의 올바른 fingerprint를 이식해도 게시물을 변
     formData,
   );
 
-  assert.match(result.error ?? "", /먼저 변경/u);
+  assert.match(result.error ?? "", /다른 기준본|먼저 변경/u);
   const [stored] = await db
     .select({ title: posts.title, contentHtml: posts.contentHtml })
     .from(posts)
@@ -1679,13 +2108,13 @@ test("같은 Q&A thread 작업의 동시 재전송은 thread와 첫 reply를 하
   const { db } = await setupDatabase(context);
   await seedProfile(db, "student-1");
   const operationId = crypto.randomUUID();
-  const originalBatch = db.batch.bind(db);
+  const originalBatch = db.$client.batch.bind(db.$client);
   let batchArrivals = 0;
   let releaseBarrier: (() => void) | null = null;
   const barrier = new Promise<void>((resolve) => {
     releaseBarrier = resolve;
   });
-  const barrierDb = new Proxy(db, {
+  const barrierClient = new Proxy(db.$client, {
     get(target, property, receiver) {
       if (property === "batch") {
         return async (queries: Parameters<typeof originalBatch>[0]) => {
@@ -1695,6 +2124,13 @@ test("같은 Q&A thread 작업의 동시 재전송은 thread와 첫 reply를 하
           return originalBatch(queries);
         };
       }
+      const value = Reflect.get(target, property, receiver);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  const barrierDb = new Proxy(db, {
+    get(target, property, receiver) {
+      if (property === "$client") return barrierClient;
       const value = Reflect.get(target, property, receiver);
       return typeof value === "function" ? value.bind(target) : value;
     },

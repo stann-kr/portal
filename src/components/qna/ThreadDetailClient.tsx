@@ -8,7 +8,7 @@
 import { useActionState, useState, useEffect, useRef, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, History } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import dynamic from "next/dynamic";
 
@@ -37,6 +37,7 @@ import {
   parseCreationOperationId,
 } from "@/lib/creation-operation";
 import { CreationConflictActions } from "@/components/editor/CreationConflictActions";
+import { QnaThreadLifecycleActions } from "@/components/qna/QnaThreadLifecycleActions";
 
 type Reply = {
   id: string;
@@ -57,6 +58,8 @@ type QnaReplyDraft = {
 interface ThreadDetailClientProps {
   threadId: string;
   status: QnaStatus;
+  version: number;
+  deletedAt: string | null;
   replies: Reply[];
   isAdmin: boolean;
   actorId: string;
@@ -69,6 +72,8 @@ interface ThreadDetailClientProps {
 export function ThreadDetailClient({
   threadId,
   status,
+  version,
+  deletedAt,
   replies: initialReplies,
   isAdmin,
   actorId,
@@ -92,7 +97,9 @@ export function ThreadDetailClient({
   const [editorKey, setEditorKey] = useState(0);
   const [isPending, startTransition] = useTransition();
   const [currentStatus, setCurrentStatus] = useState(status);
+  const [currentVersion, setCurrentVersion] = useState(version);
   const [statusError, setStatusError] = useState<string | null>(null);
+  const statusOperationIdsRef = useRef(new Map<string, string>());
   const formRef = useRef<HTMLFormElement>(null);
   const contentInputRef = useRef<HTMLInputElement>(null);
   const submittedReplyRef = useRef<QnaReplyDraft | null>(null);
@@ -100,6 +107,7 @@ export function ThreadDetailClient({
   const router = useRouter();
 
   useEffect(() => setCurrentStatus(status), [status]);
+  useEffect(() => setCurrentVersion(version), [version]);
 
   const boundAction = createQnaReply.bind(null, threadId);
   const [replyState, replyAction, isReplying] = useActionState<
@@ -197,6 +205,7 @@ export function ThreadDetailClient({
       setContentHtml("");
       setAttachmentUrl("");
       setEditorKey((k) => k + 1);
+      if (replyState.currentRevision) setCurrentVersion(replyState.currentRevision);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [replyState.replyId]);
@@ -212,13 +221,31 @@ export function ThreadDetailClient({
     recoveries.length > 0 ||
     draftStatus !== "idle";
   const showReplyComposer = currentStatus !== "CLOSED" || hasReplyDraft;
+  const isTrashed = Boolean(deletedAt);
 
   const handleStatusChange = (newStatus: QnaStatus) => {
     setStatusError(null);
     startTransition(async () => {
+      const operationKey = `${newStatus}:${currentVersion}`;
+      const statusOperationId =
+        statusOperationIdsRef.current.get(operationKey) ??
+        createCreationOperationId();
+      statusOperationIdsRef.current.set(operationKey, statusOperationId);
       try {
-        await updateThreadStatus(threadId, newStatus);
+        const result = await updateThreadStatus(
+          threadId,
+          newStatus,
+          statusOperationId,
+          currentVersion,
+        );
+        if (!result.success) {
+          setStatusError(result.error ?? "상태를 변경하지 못했습니다.");
+          if (result.currentRevision) setCurrentVersion(result.currentRevision);
+          return;
+        }
+        statusOperationIdsRef.current.delete(operationKey);
         setCurrentStatus(newStatus);
+        if (result.currentRevision) setCurrentVersion(result.currentRevision);
         router.refresh();
       } catch {
         setStatusError("상태를 변경하지 못했습니다. 다시 시도해 주세요.");
@@ -270,7 +297,31 @@ export function ThreadDetailClient({
             }
           />
         </div>
+        <div className="flex flex-wrap gap-2">
+          <Button asChild variant="outline" size="sm" className="gap-1.5">
+            <Link
+              href={`/dashboard/qna/${threadId}/history?returnTo=${encodeURIComponent(returnTo)}`}
+            >
+              <History className="h-4 w-4" aria-hidden="true" />
+              변경 이력
+            </Link>
+          </Button>
+          <QnaThreadLifecycleActions
+            threadId={threadId}
+            version={currentVersion}
+            deletedAt={deletedAt}
+            canRestore
+            canPurge={isAdmin}
+            returnTo={returnTo}
+          />
+        </div>
       </div>
+
+      {isTrashed ? (
+        <p role="status" className="rounded-xl border border-warning/30 bg-warning-muted p-4 text-sm">
+          휴지통에 있는 Q&amp;A입니다. 답변과 상태 변경 이력은 함께 보존되며 복원 전에는 새 답변을 등록할 수 없습니다.
+        </p>
+      ) : null}
 
       <div className="border-t border-border" />
 
@@ -285,7 +336,7 @@ export function ThreadDetailClient({
       <div className="border-t border-border" />
 
       {/* 어드민 상태 변경 */}
-      {isAdmin && (
+      {isAdmin && !isTrashed && (
         <div className="flex items-center gap-2" aria-label="스레드 상태 변경">
           <span className="text-xs text-muted-foreground">상태 변경:</span>
           {(["OPEN", "ANSWERED", "CLOSED"] as QnaStatus[]).map((s) => (
@@ -314,7 +365,7 @@ export function ThreadDetailClient({
       {statusError ? <p role="alert" className="text-sm text-destructive">{statusError}</p> : null}
 
       {/* 답변 작성 폼 */}
-      {showReplyComposer && (
+      {showReplyComposer && !isTrashed && (
         <form
           ref={formRef}
           action={replyAction}
@@ -430,7 +481,7 @@ export function ThreadDetailClient({
         </form>
       )}
 
-      {currentStatus === "CLOSED" && !hasReplyDraft && (
+      {currentStatus === "CLOSED" && !hasReplyDraft && !isTrashed && (
         <p className="text-sm text-muted-foreground text-center py-4">
           종료된 스레드입니다.
         </p>
