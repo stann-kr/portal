@@ -294,6 +294,36 @@ export function createMediaUploadObjectKey(
   return `${MEDIA_PURPOSE_POLICIES[purpose].uploadKeyPrefix}${opaqueId}`;
 }
 
+function hasManagedMediaPrefix(
+  value: string,
+  prefixField: "keyPrefix" | "uploadKeyPrefix",
+): boolean {
+  return Object.values(MEDIA_PURPOSE_POLICIES).some((policy) => {
+    const prefix = policy[prefixField];
+    return (
+      value.startsWith(prefix) &&
+      UUID_V4_PATTERN.test(value.slice(prefix.length))
+    );
+  });
+}
+
+/** application registry가 소유하는 never-presigned final key만 허용한다. */
+export function isManagedFinalMediaObjectKey(value: string): boolean {
+  return hasManagedMediaPrefix(value, "keyPrefix");
+}
+
+/** browser presign에 사용하는 staging key만 허용한다. */
+export function isManagedUploadMediaObjectKey(value: string): boolean {
+  return hasManagedMediaPrefix(value, "uploadKeyPrefix");
+}
+
+export function isManagedMediaObjectKey(value: string): boolean {
+  return (
+    isManagedFinalMediaObjectKey(value) ||
+    isManagedUploadMediaObjectKey(value)
+  );
+}
+
 /** 원본 R2 주소를 노출하지 않는 인증형 애플리케이션 전달 경로다. */
 export function mediaDeliveryPath(mediaObjectId: string): string {
   return `/api/media/${assertUuidV4(mediaObjectId)}`;

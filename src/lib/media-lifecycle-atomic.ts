@@ -31,6 +31,7 @@ import {
   type MediaObjectHead,
   type MediaObjectStorage,
 } from "@/lib/r2";
+import type { MediaObjectDeletionStorage } from "@/lib/r2-deletion-storage";
 
 export type MediaObjectRecord = typeof mediaObjects.$inferSelect;
 
@@ -702,12 +703,31 @@ export function qnaMediaPurgeStatements(input: {
 export async function enqueueExpiredUnattachedMedia(
   context: DbContext,
   now: Date,
+  requestedLimit = 25,
 ): Promise<void> {
   const nowEpoch = documentEpochSeconds(now)!;
   const readyCutoff = nowEpoch - MEDIA_DRAFT_RETENTION_SECONDS;
+  const limit = Number.isSafeInteger(requestedLimit)
+    ? Math.min(Math.max(requestedLimit, 1), 100)
+    : 25;
   await executeDocumentStatementsAtomically(context, [
     {
       query: `
+        WITH expired_media AS (
+          SELECT id, upload_object_key, object_key, state,
+                 upload_expires_at, seal_lease_expires_at, ready_at
+          FROM media_objects
+          WHERE (state = 'PENDING_UPLOAD' AND upload_expires_at < ?)
+             OR (state = 'SEALING' AND seal_lease_expires_at <= ?)
+             OR (state = 'READY' AND ready_at < ?)
+          ORDER BY CASE state
+                     WHEN 'PENDING_UPLOAD' THEN upload_expires_at
+                     WHEN 'SEALING' THEN seal_lease_expires_at
+                     ELSE ready_at
+                   END,
+                   id
+          LIMIT ?
+        )
         INSERT INTO media_deletion_outbox (
           id, media_object_id, object_key, reason, not_before,
           attempt_count, next_attempt_at, lease_id, lease_expires_at,
@@ -717,12 +737,8 @@ export async function enqueueExpiredUnattachedMedia(
                'UPLOAD_STAGING_EXPIRED', max(?, upload_expires_at + ?),
                0, max(?, upload_expires_at + ?),
                NULL, NULL, NULL, NULL, ?, ?
-        FROM media_objects AS media
-        WHERE (
-          (media.state = 'PENDING_UPLOAD' AND media.upload_expires_at < ?)
-          OR (media.state = 'SEALING' AND media.seal_lease_expires_at <= ?)
-          OR (media.state = 'READY' AND media.ready_at < ?)
-        ) AND NOT EXISTS (
+        FROM expired_media AS media
+        WHERE NOT EXISTS (
           SELECT 1 FROM media_deletion_outbox AS existing
           WHERE existing.id = 'media-delete-upload:' || media.id
              OR (
@@ -733,18 +749,34 @@ export async function enqueueExpiredUnattachedMedia(
       `,
       params: [
         nowEpoch,
-        MEDIA_UPLOAD_STAGING_GRACE_SECONDS,
-        nowEpoch,
-        MEDIA_UPLOAD_STAGING_GRACE_SECONDS,
-        nowEpoch,
-        nowEpoch,
-        nowEpoch,
         nowEpoch,
         readyCutoff,
+        limit,
+        nowEpoch,
+        MEDIA_UPLOAD_STAGING_GRACE_SECONDS,
+        nowEpoch,
+        MEDIA_UPLOAD_STAGING_GRACE_SECONDS,
+        nowEpoch,
+        nowEpoch,
       ],
     },
     {
       query: `
+        WITH expired_media AS (
+          SELECT id, upload_object_key, object_key, state,
+                 upload_expires_at, seal_lease_expires_at, ready_at
+          FROM media_objects
+          WHERE (state = 'PENDING_UPLOAD' AND upload_expires_at < ?)
+             OR (state = 'SEALING' AND seal_lease_expires_at <= ?)
+             OR (state = 'READY' AND ready_at < ?)
+          ORDER BY CASE state
+                     WHEN 'PENDING_UPLOAD' THEN upload_expires_at
+                     WHEN 'SEALING' THEN seal_lease_expires_at
+                     ELSE ready_at
+                   END,
+                   id
+          LIMIT ?
+        )
         INSERT INTO media_deletion_outbox (
           id, media_object_id, object_key, reason, not_before,
           attempt_count, next_attempt_at, lease_id, lease_expires_at,
@@ -758,12 +790,8 @@ export async function enqueueExpiredUnattachedMedia(
                CASE WHEN state = 'SEALING'
                     THEN seal_lease_expires_at + ? ELSE ? END,
                NULL, NULL, NULL, NULL, ?, ?
-        FROM media_objects AS media
-        WHERE (
-          (media.state = 'PENDING_UPLOAD' AND media.upload_expires_at < ?)
-          OR (media.state = 'SEALING' AND media.seal_lease_expires_at <= ?)
-          OR (media.state = 'READY' AND media.ready_at < ?)
-        ) AND NOT EXISTS (
+        FROM expired_media AS media
+        WHERE NOT EXISTS (
           SELECT 1 FROM media_deletion_outbox AS existing
           WHERE existing.id = 'media-delete-final:' || media.id
              OR (
@@ -773,33 +801,59 @@ export async function enqueueExpiredUnattachedMedia(
         )
       `,
       params: [
+        nowEpoch,
+        nowEpoch,
+        readyCutoff,
+        limit,
         MEDIA_SEAL_RECOVERY_GRACE_SECONDS,
         nowEpoch,
         MEDIA_SEAL_RECOVERY_GRACE_SECONDS,
         nowEpoch,
+        nowEpoch,
+        nowEpoch,
+      ],
+    },
+    {
+      query: `
+        WITH expired_media AS (
+          SELECT id, state, upload_expires_at, seal_lease_expires_at, ready_at
+          FROM media_objects
+          WHERE (state = 'PENDING_UPLOAD' AND upload_expires_at < ?)
+             OR (state = 'SEALING' AND seal_lease_expires_at <= ?)
+             OR (state = 'READY' AND ready_at < ?)
+          ORDER BY CASE state
+                     WHEN 'PENDING_UPLOAD' THEN upload_expires_at
+                     WHEN 'SEALING' THEN seal_lease_expires_at
+                     ELSE ready_at
+                   END,
+                   id
+          LIMIT ?
+        )
+        UPDATE media_objects
+        SET state = 'PENDING_DELETE', seal_lease_id = NULL,
+            seal_lease_expires_at = NULL,
+            delete_requested_at = ?, updated_at = ?
+        WHERE id IN (SELECT id FROM expired_media)
+          AND id IN (
+            SELECT media_object_id FROM media_deletion_outbox
+            WHERE completed_at IS NULL AND reason = 'EXPIRED_UNATTACHED'
+          ) AND (
+          (state = 'PENDING_UPLOAD' AND upload_expires_at < ?)
+          OR (state = 'SEALING' AND seal_lease_expires_at <= ?)
+          OR (state = 'READY' AND ready_at < ?)
+        )
+      `,
+      params: [
+        nowEpoch,
+        nowEpoch,
+        readyCutoff,
+        limit,
         nowEpoch,
         nowEpoch,
         nowEpoch,
         nowEpoch,
         readyCutoff,
       ],
-    },
-    {
-      query: `
-        UPDATE media_objects
-        SET state = 'PENDING_DELETE', seal_lease_id = NULL,
-            seal_lease_expires_at = NULL,
-            delete_requested_at = ?, updated_at = ?
-        WHERE id IN (
-          SELECT media_object_id FROM media_deletion_outbox
-          WHERE completed_at IS NULL AND reason = 'EXPIRED_UNATTACHED'
-        ) AND (
-          (state = 'PENDING_UPLOAD' AND upload_expires_at < ?)
-          OR (state = 'SEALING' AND seal_lease_expires_at <= ?)
-          OR (state = 'READY' AND ready_at < ?)
-        )
-      `,
-      params: [nowEpoch, nowEpoch, nowEpoch, nowEpoch, readyCutoff],
     },
   ]);
 }
@@ -914,14 +968,18 @@ async function convergeCompletedMediaDeletions(
 
 export async function processMediaDeletionOutbox(
   context: DbContext,
-  storage: MediaObjectStorage,
+  storage: MediaObjectDeletionStorage,
   options: {
     now?: Date;
     limit?: number;
     leaseSeconds?: number;
     deleteTimeoutMs?: number;
+    shouldContinue?: () => boolean;
   } = {},
 ): Promise<ProcessMediaDeletionResult> {
+  if (options.shouldContinue && !options.shouldContinue()) {
+    return { completed: 0, failed: 0 };
+  }
   const queryNow = options.now ?? new Date();
   const requestedLimit = options.limit ?? 5;
   const requestedLeaseSeconds = options.leaseSeconds ?? 60;
@@ -964,6 +1022,7 @@ export async function processMediaDeletionOutbox(
   let completed = 0;
   let failed = 0;
   for (const candidate of candidates) {
+    if (options.shouldContinue && !options.shouldContinue()) break;
     const leaseNow = options.now ?? new Date();
     const leaseId = crypto.randomUUID();
     const leaseExpiresAt = new Date(leaseNow.getTime() + leaseSeconds * 1_000);

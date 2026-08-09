@@ -11,6 +11,8 @@
 | Worker name | `portal` |
 | Custom domain | `portal.stann.kr` |
 | Worker entry | `.open-next/worker.js` |
+| Scheduled candidate entry | `worker.ts` (`wrangler.scheduled.toml`) |
+| Maintenance entry | `src/workers/maintenance.ts` (`wrangler.maintenance.toml`) |
 | Static assets binding | `ASSETS` |
 | D1 binding | `DB` |
 | D1 database | `portal-db` |
@@ -19,9 +21,10 @@
 
 ## 사전 체크리스트
 
+- build·upload 환경은 Node.js 22 이상이어야 한다.
 - Wrangler 인증이 유효해야 한다.
 - D1 database와 R2 bucket이 존재해야 한다.
-- migration이 local/remote에 적용되어야 한다.
+- 대상 Worker를 promotion하기 전에는 승인된 작업 창에서 실제 pending migration을 적용·검증해야 한다. 비호환 migration은 maintenance 진입 전에 미리 적용하지 않는다.
 - auth secret과 기타 secret은 배포 환경에만 설정한다.
 - production deploy 전 admin/student smoke 계정과 test data를 준비한다.
 - production branch merge가 자동 배포를 시작하는지 확인하고, migration 작업 창에는 자동 promotion을 중지하거나 upload-only 절차로 전환한다.
@@ -34,8 +37,8 @@
 2. schema+data export의 checksum과 D1 Time Travel 복구 지점을 확보하고, 격리 D1에서 실제 pending 범위의 restore·migration rehearsal을 통과한다.
 3. 쓰기를 거부하는 maintenance Worker를 100% 적용한다.
 4. `0010`, `0011`, `0012`를 실제 pending 순서대로 적용하고 즉시 schema·trigger·핵심 row count를 검증한다.
-5. 대상 Worker를 schema smoke 뒤 100% 단일 전환한다.
-6. admin/student 로그인, 게시물·Q&A 생성·복원·purge, media와 계정 삭제 smoke를 통과한 뒤 maintenance를 해제한다.
+5. 대상 Worker를 schema smoke 뒤 100% 단일 전환하고 즉시 admin/student 로그인, 게시물·Q&A 생성·복원·purge, media와 계정 삭제 smoke를 수행한다.
+6. smoke가 실패하면 보존한 maintenance version ID를 다시 100% 적용하고, 통과하면 작업 창을 종료한다.
 
 장애 시 이전 Worker만 되돌리면 새 schema와 맞지 않는다. 쓰기를 계속 차단한 상태에서 Worker와 D1을 같은 pre-migration 지점으로 함께 복구하는 절차가 필요하다.
 
@@ -61,6 +64,54 @@
 - 계정에 연결된 managed media는 DB 원문 삭제와 함께 outbox에 들어가지만 R2 물리 삭제는 비동기다. UI와 운영 응답은 outbox가 남아 있는 동안 저장소 삭제 완료를 주장하지 않는다.
 - 기존 게시물·Q&A URL이 trusted R2 object를 가리키면 계정 삭제 전에 key를 registry로 backfill하거나 별도 deletion inventory에 보존한다. URL 원문부터 지우면 object key를 복원할 수 없으므로 legacy inventory 없이 계정 삭제 기능을 활성화하지 않는다.
 
+## 점검·예약 정리 Worker artifact
+
+두 별도 설정은 production 상태를 바꾸지 않는 local dry-run용 진입점을 제공한다.
+
+```bash
+npm run build:maintenance
+npm run build:scheduled
+```
+
+- `wrangler.maintenance.toml`은 동일한 `portal` 서비스의 점검용 version을 만든다. D1, R2, asset, application route와 Cron trigger를 포함하지 않는다.
+- `wrangler.scheduled.toml`은 OpenNext fetch를 유지하면서 `scheduled` handler를 추가한다. D1과 R2 binding은 event 환경에서 직접 주입하며 request AsyncLocalStorage에 의존하지 않는다.
+- scheduled 설정에는 아직 `[triggers]`와 route가 없다. 따라서 dry-run 또는 upload-only만으로 production Cron이 시작되지 않는다.
+- 예약 정리는 계정 raw-ID alias, 만료 media enqueue, 기존 R2 deletion outbox를 제한된 순차 batch로 처리한다. 로그에는 고정된 상태와 집계만 남긴다.
+
+production Cron을 활성화하기 전에는 Workers plan의 Cron CPU 한도, 실행 주기, log 보존, backlog·실패 alert를 확인한다. `0011`·`0012` migration, private R2·staging lifecycle, legacy inventory가 준비되기 전에 trigger를 추가하지 않는다.
+
+### 비호환 migration의 immutable version 전환
+
+아래 명령은 승인된 작업 창에서만 실행한다. upload와 100% 전환을 분리하고 version ID를 운영 기록에 보존한다.
+
+```bash
+# 점검 version upload-only
+npx wrangler versions upload \
+  --config wrangler.maintenance.toml \
+  --keep-vars \
+  --tag "$MAINTENANCE_TAG" \
+  --message "migration maintenance fence"
+
+# target application + scheduled handler build와 upload-only
+npm run build:worker
+npx opennextjs-cloudflare upload \
+  --config wrangler.scheduled.toml \
+  -- \
+  --keep-vars \
+  --tag "$TARGET_TAG" \
+  --message "schema-compatible target"
+
+# immutable version 확인
+npx wrangler versions list --name portal --json
+npx wrangler deployments status --name portal --json
+
+# 작업 창 진입과 target 전환은 각각 단일 version 100%
+npx wrangler versions deploy "${MAINTENANCE_VERSION_ID}@100%" --name portal -y
+npx wrangler versions deploy "${TARGET_VERSION_ID}@100%" --name portal -y
+```
+
+점검 version은 `GET`·`HEAD /__portal/maintenance/healthz`와 `readyz`만 `200`으로 응답하고, 나머지 application·asset·API 요청은 method와 무관하게 `503`으로 차단한다. `readyz`의 `applicationReady`는 항상 `false`다. 운영 probe는 HTTP status만 보지 않고 version metadata의 ID와 tag가 비어 있지 않으며 업로드 직후 기록한 maintenance version과 정확히 일치할 때만 준비 완료로 판정한다. migration 작업 중 old/new gradual split, bare `wrangler rollback`, `wrangler deploy`와 자동 promotion을 사용하지 않는다. target 장애 시 점검 version ID를 다시 100% 적용하고 D1·R2 상태를 확인한 뒤 forward-fix한다. Worker version 전환만으로 database나 object storage는 복구되지 않는다.
+
 ## 로컬 검증
 
 ```bash
@@ -68,6 +119,8 @@ npm run db:check
 npm run lint
 npm run build
 npm run build:worker
+npm run build:maintenance
+npm run build:scheduled
 ```
 
 `db:check`는 메모리 SQLite에서 SQL·Drizzle metadata·현재 schema를 비교하며 local·remote D1을 변경하지 않는다.
@@ -90,10 +143,13 @@ Remote migration은 production 데이터에 영향을 줄 수 있으므로 별�
 
 ## 배포
 
+schema와 양방향 호환되는 일반 application 변경만 OpenNext deploy를 사용할 수 있다.
+
 ```bash
-npm run build:worker
-npx wrangler deploy
+npx opennextjs-cloudflare deploy
 ```
+
+비호환 migration, 점검 전환 또는 scheduled entry 활성화에는 이 명령을 사용하지 않고 위의 upload-only·immutable version 절차를 따른다.
 
 ## 배포 후 확인
 

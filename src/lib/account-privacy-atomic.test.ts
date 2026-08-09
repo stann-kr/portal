@@ -69,6 +69,37 @@ function countRows(
   );
 }
 
+async function createDeletedAccountReceipt(
+  sqlite: SqliteDatabase,
+  dbContext: LocalDbContext,
+  input: {
+    studentId: string;
+    tokenDigest: string;
+    operationNumber: number;
+    deletedAt: Date;
+  },
+): Promise<string> {
+  seedProfile(sqlite, input.studentId);
+  assert.deepEqual(
+    await registerAccountCleanupTokenAtomically(dbContext, {
+      ownerId: input.studentId,
+      tokenDigest: input.tokenDigest,
+      now: input.deletedAt,
+    }),
+    { ok: true, status: "REGISTERED" },
+  );
+  const deletion = await deleteStudentAccountAtomically(dbContext, {
+    actorId: input.studentId,
+    operationId: operationId(input.operationNumber),
+    initiatingCleanupTokenDigest: input.tokenDigest,
+    now: input.deletedAt,
+  });
+  assert.equal(deletion.ok, true);
+  if (!deletion.ok) throw new Error("계정 삭제 receipt 생성에 실패했습니다.");
+  assert.equal(deletion.status, "DELETED");
+  return deletion.deletionJobId;
+}
+
 test("cleanup token은 무기한 ACTIVE로 등록되고 exact replay와 quota를 지킨다", async (context) => {
   const { sqlite, dbContext } = setupDatabase(context);
   seedProfile(sqlite, "student-token");
@@ -579,14 +610,14 @@ test("계정 삭제는 owned/cross-resource payload와 media를 한 transaction�
       now: new Date("2026-01-30T00:00:00.000Z"),
       limit: 10,
     }),
-    { processed: 0, skipped: 0 },
+    { processed: 0, skipped: 0, failed: 0 },
   );
   assert.deepEqual(
     await processDueAccountRawIdErasures(dbContext, {
       now: new Date("2026-02-01T00:00:01.000Z"),
       limit: 10,
     }),
-    { processed: 1, skipped: 0 },
+    { processed: 1, skipped: 0, failed: 0 },
   );
 
   const aliasedJob = sqlite
@@ -642,6 +673,134 @@ test("계정 삭제는 owned/cross-resource payload와 media를 한 transaction�
   assert.equal(
     countRows(sqlite, "SELECT count(*) AS value FROM pragma_foreign_key_check"),
     0,
+  );
+});
+
+test("raw ID erasure는 unexpected failure를 격리하고 다음 due job을 계속 처리한다", async (context) => {
+  const { sqlite, dbContext } = setupDatabase(context);
+  const firstJobId = await createDeletedAccountReceipt(sqlite, dbContext, {
+    studentId: "raw-poison-first",
+    tokenDigest: digest("1"),
+    operationNumber: 80,
+    deletedAt: new Date("2026-01-01T00:00:00.000Z"),
+  });
+  const secondJobId = await createDeletedAccountReceipt(sqlite, dbContext, {
+    studentId: "raw-poison-next",
+    tokenDigest: digest("2"),
+    operationNumber: 81,
+    deletedAt: new Date("2026-01-01T00:00:01.000Z"),
+  });
+  sqlite.exec(`
+    CREATE TRIGGER force_first_raw_id_erasure_abort
+    BEFORE UPDATE OF status ON account_deletion_jobs
+    WHEN OLD.subject_id = 'raw-poison-first' AND NEW.status = 'ALIASED'
+    BEGIN
+      SELECT RAISE(ABORT, 'FORCED_UNEXPECTED_RAW_ID_ERASURE_FAILURE');
+    END;
+  `);
+
+  assert.deepEqual(
+    await processDueAccountRawIdErasures(dbContext, {
+      now: new Date("2026-02-01T00:01:00.000Z"),
+      limit: 1,
+      shouldContinue: () => true,
+    }),
+    { processed: 1, skipped: 0, failed: 1 },
+  );
+
+  const readJob = sqlite.prepare<
+    [string],
+    { subject_id: string | null; status: string }
+  >("SELECT subject_id, status FROM account_deletion_jobs WHERE id = ?");
+  assert.deepEqual(readJob.get(firstJobId), {
+    subject_id: "raw-poison-first",
+    status: "ERASED",
+  });
+  assert.deepEqual(readJob.get(secondJobId), {
+    subject_id: null,
+    status: "ALIASED",
+  });
+  assert.deepEqual(
+    sqlite
+      .prepare<
+        [string],
+        { subject_id: string | null; status: string }
+      >(
+        "SELECT subject_id, status FROM account_cleanup_tokens WHERE token_digest = ?",
+      )
+      .get(digest("1")),
+    { subject_id: "raw-poison-first", status: "BOUND" },
+  );
+});
+
+test("raw ID erasure는 shouldContinue 중단 뒤 남은 due job을 변경하지 않는다", async (context) => {
+  const { sqlite, dbContext } = setupDatabase(context);
+  const firstJobId = await createDeletedAccountReceipt(sqlite, dbContext, {
+    studentId: "raw-budget-first",
+    tokenDigest: digest("3"),
+    operationNumber: 82,
+    deletedAt: new Date("2026-03-01T00:00:00.000Z"),
+  });
+  const secondJobId = await createDeletedAccountReceipt(sqlite, dbContext, {
+    studentId: "raw-budget-next",
+    tokenDigest: digest("4"),
+    operationNumber: 83,
+    deletedAt: new Date("2026-03-01T00:00:01.000Z"),
+  });
+  const processAt = new Date("2026-04-01T00:01:00.000Z");
+
+  assert.deepEqual(
+    await processDueAccountRawIdErasures(dbContext, {
+      now: processAt,
+      limit: 10,
+      shouldContinue: () => false,
+    }),
+    { processed: 0, skipped: 0, failed: 0 },
+  );
+  assert.equal(
+    countRows(
+      sqlite,
+      "SELECT count(*) AS value FROM account_deletion_jobs WHERE status = 'ERASED' AND subject_id IS NOT NULL",
+    ),
+    2,
+  );
+
+  let budgetChecks = 0;
+  assert.deepEqual(
+    await processDueAccountRawIdErasures(dbContext, {
+      now: processAt,
+      limit: 10,
+      shouldContinue: () => {
+        budgetChecks += 1;
+        return budgetChecks === 1;
+      },
+    }),
+    { processed: 1, skipped: 0, failed: 0 },
+  );
+  assert.equal(budgetChecks, 2);
+
+  const readJob = sqlite.prepare<
+    [string],
+    { subject_id: string | null; status: string }
+  >("SELECT subject_id, status FROM account_deletion_jobs WHERE id = ?");
+  assert.deepEqual(readJob.get(firstJobId), {
+    subject_id: null,
+    status: "ALIASED",
+  });
+  assert.deepEqual(readJob.get(secondJobId), {
+    subject_id: "raw-budget-next",
+    status: "ERASED",
+  });
+  assert.deepEqual(
+    sqlite
+      .prepare<
+        [string],
+        { subject_id: string | null; status: string }
+      >(
+        "SELECT subject_id, status FROM account_cleanup_tokens WHERE token_digest = ?",
+      )
+      .get(digest("4")),
+    { subject_id: "raw-budget-next", status: "BOUND" },
   );
 });
 
@@ -757,7 +916,7 @@ test("quota가 가득 차도 ephemeral job digest로 삭제·상태 조회·exac
       now: new Date("2026-02-01T00:00:01.000Z"),
       limit: 10,
     }),
-    { processed: 1, skipped: 0 },
+    { processed: 1, skipped: 0, failed: 0 },
   );
   seedProfile(sqlite, "ephemeral-student");
   assert.equal(

@@ -123,6 +123,39 @@ async function createReadyMedia(
   assert.equal(completed.ok, true);
 }
 
+async function createPendingMedia(
+  dbContext: LocalDbContext,
+  input: {
+    id: string;
+    ownerId: string;
+    operationId: string;
+    createdAt: Date;
+    uploadExpiresAt: Date;
+  },
+): Promise<void> {
+  assert.equal(
+    await createMediaUploadIntent(dbContext, {
+      id: input.id,
+      ownerId: input.ownerId,
+      purpose: "COMMUNITY_POST_AUDIO",
+      objectKey: createMediaObjectKey(
+        "COMMUNITY_POST_AUDIO",
+        storageIdFor(input.id),
+      ),
+      uploadObjectKey: createMediaUploadObjectKey(
+        "COMMUNITY_POST_AUDIO",
+        input.id,
+      ),
+      expectedContentType: "audio/mpeg",
+      expectedSizeBytes: 1_024,
+      draftOperationId: input.operationId,
+      uploadExpiresAt: input.uploadExpiresAt,
+      now: input.createdAt,
+    }),
+    true,
+  );
+}
+
 function readMedia(sqlite: SqliteDatabase, id: string) {
   return sqlite
     .prepare<
@@ -632,6 +665,124 @@ test("Copy 결과가 unknown으로 끝난 뒤 생긴 final도 lease recovery job
   assert.equal(finalExists, false);
 });
 
+test("만료 미귀속 media enqueue는 due time과 id 순서로 limit만 처리하고 반복 실행에도 outbox를 중복하지 않는다", async (context) => {
+  const { sqlite, dbContext } = setupDatabase(context);
+  seedProfile(sqlite, "student-1");
+  const mediaIds = Array.from(
+    { length: 5 },
+    (_, index) =>
+      `30000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+  );
+  const operationIds = Array.from(
+    { length: 5 },
+    (_, index) =>
+      `40000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+  );
+
+  await createReadyMedia(dbContext, {
+    id: mediaIds[0],
+    ownerId: "student-1",
+    operationId: operationIds[0],
+    now: new Date("2026-01-01T23:59:59.000Z"),
+  });
+  await createPendingMedia(dbContext, {
+    id: mediaIds[1],
+    ownerId: "student-1",
+    operationId: operationIds[1],
+    createdAt: new Date("2025-12-31T00:00:00.000Z"),
+    uploadExpiresAt: new Date("2026-01-02T00:00:00.000Z"),
+  });
+  await createReadyMedia(dbContext, {
+    id: mediaIds[2],
+    ownerId: "student-1",
+    operationId: operationIds[2],
+    now: new Date("2026-01-03T00:00:00.000Z"),
+  });
+  await createPendingMedia(dbContext, {
+    id: mediaIds[3],
+    ownerId: "student-1",
+    operationId: operationIds[3],
+    createdAt: new Date("2025-12-31T00:00:00.000Z"),
+    uploadExpiresAt: new Date("2026-01-01T00:00:00.000Z"),
+  });
+  await createReadyMedia(dbContext, {
+    id: mediaIds[4],
+    ownerId: "student-1",
+    operationId: operationIds[4],
+    now: new Date("2026-01-05T00:00:00.000Z"),
+  });
+
+  const sweptAt = new Date("2026-04-15T00:00:00.000Z");
+  const readPendingDeleteIds = () =>
+    sqlite
+      .prepare<[], { id: string }>(
+        "SELECT id FROM media_objects WHERE state = 'PENDING_DELETE' ORDER BY id",
+      )
+      .all()
+      .map((row) => row.id);
+  const readOutboxCounts = () =>
+    sqlite
+      .prepare<[], { media_object_id: string; count: number }>(
+        `SELECT media_object_id, count(*) AS count
+         FROM media_deletion_outbox
+         GROUP BY media_object_id
+         ORDER BY media_object_id`,
+      )
+      .all();
+
+  assert.deepEqual(readOutboxCounts(), [
+    { media_object_id: mediaIds[0], count: 1 },
+    { media_object_id: mediaIds[2], count: 1 },
+    { media_object_id: mediaIds[4], count: 1 },
+  ]);
+
+  await enqueueExpiredUnattachedMedia(dbContext, sweptAt, 2);
+  assert.deepEqual(readPendingDeleteIds(), [mediaIds[0], mediaIds[3]]);
+  assert.deepEqual(readOutboxCounts(), [
+    { media_object_id: mediaIds[0], count: 2 },
+    { media_object_id: mediaIds[2], count: 1 },
+    { media_object_id: mediaIds[3], count: 2 },
+    { media_object_id: mediaIds[4], count: 1 },
+  ]);
+
+  await enqueueExpiredUnattachedMedia(dbContext, sweptAt, 2);
+  assert.deepEqual(readPendingDeleteIds(), mediaIds.slice(0, 4));
+  assert.deepEqual(readOutboxCounts(), [
+    ...mediaIds.slice(0, 4).map((mediaId) => ({
+      media_object_id: mediaId,
+      count: 2,
+    })),
+    { media_object_id: mediaIds[4], count: 1 },
+  ]);
+
+  await enqueueExpiredUnattachedMedia(dbContext, sweptAt, 2);
+  assert.deepEqual(readPendingDeleteIds(), mediaIds);
+  assert.deepEqual(
+    readOutboxCounts(),
+    mediaIds.map((mediaId) => ({ media_object_id: mediaId, count: 2 })),
+  );
+
+  await enqueueExpiredUnattachedMedia(dbContext, sweptAt, 2);
+  assert.deepEqual(readPendingDeleteIds(), mediaIds);
+  assert.deepEqual(
+    readOutboxCounts(),
+    mediaIds.map((mediaId) => ({ media_object_id: mediaId, count: 2 })),
+  );
+  assert.deepEqual(
+    sqlite
+      .prepare<[], { id: string }>(
+        `SELECT id FROM media_deletion_outbox
+         ORDER BY media_object_id, id`,
+      )
+      .all()
+      .map((row) => row.id),
+    mediaIds.flatMap((mediaId) => [
+      `media-delete-final:${mediaId}`,
+      `media-delete-upload:${mediaId}`,
+    ]),
+  );
+});
+
 test("게시물 생성은 READY asset을 같은 transaction에서 claim하고 cross-owner 실패를 전부 rollback한다", async (context) => {
   const { sqlite, dbContext } = setupDatabase(context);
   seedProfile(sqlite, "student-1");
@@ -884,6 +1035,75 @@ test("R2 삭제 hang은 timeout으로 lease를 풀고 backoff 뒤 idempotent 재
     { completed: 1, failed: 0 },
   );
   assert.equal(readMedia(sqlite, STUDENT_MEDIA_ID)?.state, "DELETED");
+});
+
+test("삭제 processor budget이 시작 전에 끝나면 lease와 storage delete를 만들지 않는다", async (context) => {
+  const { sqlite, dbContext } = setupDatabase(context);
+  seedProfile(sqlite, "student-1");
+  await createReadyMedia(dbContext, {
+    id: STUDENT_MEDIA_ID,
+    ownerId: "student-1",
+    operationId: OPERATION_ONE,
+  });
+  const queuedAt = new Date("2026-01-01T00:02:00.000Z");
+  assert.equal(
+    await queueOwnedMediaDeletion(dbContext, {
+      ownerId: "student-1",
+      mediaObjectId: STUDENT_MEDIA_ID,
+      reason: "ABANDONED_UPLOAD",
+      now: queuedAt,
+    }),
+    true,
+  );
+
+  let deleteCalls = 0;
+  const result = await processMediaDeletionOutbox(
+    dbContext,
+    verifiedStorage({
+      async delete() {
+        deleteCalls += 1;
+      },
+    }),
+    {
+      now: new Date("2026-01-01T03:00:00.000Z"),
+      limit: 2,
+      shouldContinue: () => false,
+    },
+  );
+
+  assert.deepEqual(result, { completed: 0, failed: 0 });
+  assert.equal(deleteCalls, 0);
+  assert.deepEqual(
+    sqlite
+      .prepare<
+        [],
+        {
+          attempt_count: number;
+          lease_id: string | null;
+          lease_expires_at: number | null;
+          completed_at: number | null;
+        }
+      >(
+        `SELECT attempt_count, lease_id, lease_expires_at, completed_at
+         FROM media_deletion_outbox
+         ORDER BY id`,
+      )
+      .all(),
+    [
+      {
+        attempt_count: 0,
+        lease_id: null,
+        lease_expires_at: null,
+        completed_at: null,
+      },
+      {
+        attempt_count: 0,
+        lease_id: null,
+        lease_expires_at: null,
+        completed_at: null,
+      },
+    ],
+  );
 });
 
 test("outbox 완료 뒤 media finalization이 일시 실패해도 다음 runner가 수렴한다", async (context) => {

@@ -17,6 +17,9 @@ import {
   createMediaUploadObjectKey,
   createOpaqueMediaObjectKey,
   getTrustedLegacyMediaObjectKey,
+  isManagedFinalMediaObjectKey,
+  isManagedMediaObjectKey,
+  isManagedUploadMediaObjectKey,
   isTrustedLegacyMediaUrl,
   mediaUploadRequestHeaders,
   mediaDeletionBackoffSeconds,
@@ -223,6 +226,46 @@ test("opaque key 생성기는 UUID v4가 아닌 난수 결과를 거부한다", 
   );
   assert.equal(parseMediaUuidV4(MEDIA_OBJECT_ID.toUpperCase()), MEDIA_OBJECT_ID);
   assert.equal(parseMediaUuidV4("predictable"), null);
+});
+
+test("managed object key 판정은 목적별 canonical final과 upload UUID v4만 허용한다", () => {
+  const finalKeys = [
+    createMediaObjectKey("COMMUNITY_POST_AUDIO", STORAGE_OBJECT_ID),
+    createMediaObjectKey("QNA_ATTACHMENT", STORAGE_OBJECT_ID),
+  ];
+  const uploadKeys = [
+    createMediaUploadObjectKey("COMMUNITY_POST_AUDIO", MEDIA_OBJECT_ID),
+    createMediaUploadObjectKey("QNA_ATTACHMENT", MEDIA_OBJECT_ID),
+  ];
+
+  for (const key of finalKeys) {
+    assert.equal(isManagedFinalMediaObjectKey(key), true, key);
+    assert.equal(isManagedUploadMediaObjectKey(key), false, key);
+    assert.equal(isManagedMediaObjectKey(key), true, key);
+  }
+  for (const key of uploadKeys) {
+    assert.equal(isManagedFinalMediaObjectKey(key), false, key);
+    assert.equal(isManagedUploadMediaObjectKey(key), true, key);
+    assert.equal(isManagedMediaObjectKey(key), true, key);
+  }
+
+  const invalidKeys = [
+    `media/community-post-audio/${STORAGE_OBJECT_ID.toUpperCase()}`,
+    `media/community-post-audio/${STORAGE_OBJECT_ID}/extra`,
+    `media/community-post-audio/${STORAGE_OBJECT_ID}?version=1`,
+    "media/community-post-audio/71f9d4e5-dda9-1793-8b23-c1018526e258",
+    "media/community-post-audio/71f9d4e5-dda9-4793-7b23-c1018526e258",
+    "media-upload/qna-attachment/../secret",
+    "audio/legacy-track.mp3",
+    `https://media.example.com/media/qna-attachment/${STORAGE_OBJECT_ID}`,
+    `other/qna-attachment/${STORAGE_OBJECT_ID}`,
+    "",
+  ];
+  for (const key of invalidKeys) {
+    assert.equal(isManagedFinalMediaObjectKey(key), false, key);
+    assert.equal(isManagedUploadMediaObjectKey(key), false, key);
+    assert.equal(isManagedMediaObjectKey(key), false, key);
+  }
 });
 
 test("미디어 상태와 삭제 사유는 lifecycle/outbox 계약을 모두 포함한다", () => {

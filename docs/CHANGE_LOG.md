@@ -2,6 +2,16 @@
 
 공개 가능한 결과 중심 변경 요약이다. 날짜 아래에 같은 날의 변경을 모으고 최신 항목을 위에 둔다.
 
+## 2026-08-10
+
+### 변경 요약
+
+- schema 전환 작업 창에서 사용할 점검 전용 Worker artifact를 추가했다. 상태 확인 endpoint를 제외한 application·asset·API의 모든 읽기와 쓰기를 `503`으로 막으며 D1·R2·asset·route binding 없이 별도 dry-run으로 검증한다.
+- OpenNext application fetch에 예약 정리 handler를 결합할 수 있는 별도 Worker entry를 추가했다. 30일이 지난 계정 식별자 alias, 만료된 미귀속 media 등록, R2 삭제 outbox를 순차·제한 batch로 처리하고 개별 실패와 soft time budget 뒤의 나머지 작업을 durable 상태로 남긴다.
+- 예약 정리 로그를 stage 상태·처리 건수·backlog 집계로 제한해 계정 ID, object key, cleanup digest와 예외 원문이 운영 로그에 들어가지 않게 했다. production Cron trigger·alert·Worker version 전환과 migration은 활성화하지 않았다.
+- rich text 정리를 DOM emulation 없이 HTML5 AST allowlist로 통일해 Node·browser·Worker가 같은 결과를 사용하게 했다. malformed markup, foreign content, 위험 URL·속성, YouTube embed와 멱등성 회귀를 자동 검증한다.
+- Worker 도구chain과 개발 container의 지원 runtime을 Node.js 22로 정렬하고, application·예약 정리·점검 Worker를 각각 재현하는 build 명령을 추가했다.
+
 ## 2026-08-09
 
 ### 변경 요약

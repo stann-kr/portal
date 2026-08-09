@@ -30,7 +30,9 @@ import { createQnaReplyAtomically } from "@/lib/qna-atomic";
 import {
   ACCOUNT_CLEANUP_TOKEN_LIMIT,
   deleteStudentAccountAtomically,
+  registerAccountCleanupTokenAtomically,
 } from "@/lib/account-privacy-atomic";
+import { createD1DbContext } from "@/db/d1-context";
 import {
   CREATION_OPERATION_FIELD,
   deriveCreationResourceId,
@@ -64,6 +66,11 @@ import {
   DOCUMENT_SERVER_DRAFT_MAX_PAYLOAD_BYTES,
   DOCUMENT_SERVER_DRAFT_RETENTION_SECONDS,
 } from "@/lib/document-server-draft-constants";
+import { createR2BindingDeletionStorage } from "@/lib/r2-deletion-storage";
+import {
+  createScheduledMaintenanceOperations,
+  runScheduledMaintenance,
+} from "@/lib/scheduled-maintenance";
 
 type PortalTestDb = IsolatedPortalD1["db"];
 type D1TestContext = { kind: "d1"; db: PortalTestDb };
@@ -3118,4 +3125,109 @@ test("서버 초안 payload 상한과 원자 실패는 원문·receipt 부분 co
   assert.equal(failed.reason, "INTERNAL_INVARIANT_FAILURE");
   assert.equal((await db.select().from(documentServerDrafts)).length, 0);
   assert.equal((await db.select().from(documentServerDraftOperations)).length, 0);
+});
+
+test("예약 정리는 실제 D1 batch와 R2 binding adapter에서 account alias와 media outbox를 재실행 가능하게 수렴한다", { concurrency: false }, async (context) => {
+  const { binding, db } = await setupDatabase(context);
+  await seedProfile(db, "scheduled-erasure");
+  await seedProfile(db, "scheduled-media-owner");
+
+  const deletedAt = new Date("2026-01-01T00:00:00.000Z");
+  const cleanupDigest = "c".repeat(64);
+  assert.deepEqual(
+    await registerAccountCleanupTokenAtomically(
+      createD1DbContext(binding),
+      {
+        ownerId: "scheduled-erasure",
+        tokenDigest: cleanupDigest,
+        now: deletedAt,
+      },
+    ),
+    { ok: true, status: "REGISTERED" },
+  );
+  const deletion = await deleteStudentAccountAtomically(
+    createD1DbContext(binding),
+    {
+      actorId: "scheduled-erasure",
+      operationId: crypto.randomUUID(),
+      initiatingCleanupTokenDigest: cleanupDigest,
+      now: deletedAt,
+    },
+  );
+  assert.equal(deletion.ok, true, JSON.stringify(deletion));
+  if (!deletion.ok) return;
+
+  const mediaId = "70000000-0000-4000-8000-000000000001";
+  const finalObjectKey =
+    "media/community-post-audio/70000000-0000-4000-8000-000000000002";
+  const uploadObjectKey = `media-upload/community-post-audio/${mediaId}`;
+  await db.insert(mediaObjects).values({
+    id: mediaId,
+    ownerId: "scheduled-media-owner",
+    purpose: "COMMUNITY_POST_AUDIO",
+    objectKey: finalObjectKey,
+    uploadObjectKey,
+    state: "PENDING_UPLOAD",
+    expectedContentType: "audio/mpeg",
+    expectedSizeBytes: 1_024,
+    draftOperationId: "70000000-0000-4000-8000-000000000003",
+    uploadExpiresAt: new Date("2026-01-01T01:00:00.000Z"),
+    createdAt: deletedAt,
+    updatedAt: deletedAt,
+  });
+
+  const deletedKeys: string[] = [];
+  const storage = createR2BindingDeletionStorage({
+    async delete(objectKey) {
+      if (Array.isArray(objectKey)) deletedKeys.push(...objectKey);
+      else deletedKeys.push(objectKey);
+    },
+  });
+  const runAt = new Date("2026-02-01T00:00:01.000Z");
+  const operations = createScheduledMaintenanceOperations(
+    createD1DbContext(binding),
+    storage,
+  );
+  const first = await runScheduledMaintenance(operations, {
+    now: runAt,
+    scheduledAt: runAt,
+    clock: () => 0,
+  });
+
+  assert.equal(first.outcome, "ok");
+  assert.deepEqual(first.account, {
+    status: "completed",
+    processed: 1,
+    skipped: 0,
+    failed: 0,
+    dueAfter: 0,
+  });
+  assert.equal(first.media.completed, 2);
+  assert.equal(first.media.pendingAfter, 0);
+  assert.deepEqual(deletedKeys.sort(), [finalObjectKey, uploadObjectKey].sort());
+  assert.deepEqual(
+    await db
+      .select({ subjectId: accountDeletionJobs.subjectId, status: accountDeletionJobs.status })
+      .from(accountDeletionJobs)
+      .where(eq(accountDeletionJobs.id, deletion.deletionJobId)),
+    [{ subjectId: null, status: "ALIASED" }],
+  );
+  assert.deepEqual(
+    await db
+      .select({ state: mediaObjects.state, deletedAt: mediaObjects.deletedAt })
+      .from(mediaObjects)
+      .where(eq(mediaObjects.id, mediaId)),
+    [{ state: "DELETED", deletedAt: runAt }],
+  );
+
+  const second = await runScheduledMaintenance(operations, {
+    now: new Date(runAt.getTime() + 1_000),
+    scheduledAt: new Date(runAt.getTime() + 1_000),
+    clock: () => 0,
+  });
+  assert.equal(second.outcome, "ok");
+  assert.equal(second.account.processed, 0);
+  assert.equal(second.media.completed, 0);
+  assert.equal(deletedKeys.length, 2);
+  assert.equal((await db.select().from(mediaDeletionOutbox)).length, 2);
 });

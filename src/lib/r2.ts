@@ -7,7 +7,13 @@ import {
   S3Client,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { MEDIA_UPLOAD_IF_NONE_MATCH } from "@/lib/media-lifecycle";
+import {
+  isManagedFinalMediaObjectKey,
+  isManagedMediaObjectKey,
+  isManagedUploadMediaObjectKey,
+  MEDIA_UPLOAD_IF_NONE_MATCH,
+} from "@/lib/media-lifecycle";
+import type { MediaObjectDeletionStorage } from "@/lib/r2-deletion-storage";
 
 const BUCKET_NAME = process.env.R2_BUCKET_NAME ?? "portal-storage";
 
@@ -28,28 +34,20 @@ function createR2Client(): S3Client {
   });
 }
 
-const MANAGED_FINAL_OBJECT_KEY_PATTERN =
-  /^media\/(?:community-post-audio|qna-attachment)\/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
-const MANAGED_UPLOAD_OBJECT_KEY_PATTERN =
-  /^media-upload\/(?:community-post-audio|qna-attachment)\/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
-
 function assertManagedFinalObjectKey(objectKey: string): void {
-  if (!MANAGED_FINAL_OBJECT_KEY_PATTERN.test(objectKey)) {
+  if (!isManagedFinalMediaObjectKey(objectKey)) {
     throw new Error("관리 대상 R2 object key가 올바르지 않습니다.");
   }
 }
 
 function assertManagedUploadObjectKey(objectKey: string): void {
-  if (!MANAGED_UPLOAD_OBJECT_KEY_PATTERN.test(objectKey)) {
+  if (!isManagedUploadMediaObjectKey(objectKey)) {
     throw new Error("관리 대상 R2 upload key가 올바르지 않습니다.");
   }
 }
 
 function assertManagedObjectKey(objectKey: string): void {
-  if (
-    !MANAGED_FINAL_OBJECT_KEY_PATTERN.test(objectKey) &&
-    !MANAGED_UPLOAD_OBJECT_KEY_PATTERN.test(objectKey)
-  ) {
+  if (!isManagedMediaObjectKey(objectKey)) {
     throw new Error("관리 대상 R2 object key가 올바르지 않습니다.");
   }
 }
@@ -102,7 +100,7 @@ export type MediaObjectHead = {
   etag: string | null;
 };
 
-export interface MediaObjectStorage {
+export interface MediaObjectStorage extends MediaObjectDeletionStorage {
   head(objectKey: string, signal?: AbortSignal): Promise<MediaObjectHead | null>;
   seal(
     uploadObjectKey: string,

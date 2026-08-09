@@ -72,6 +72,7 @@ export type AccountCleanupTokenLookup = {
 export type ProcessAccountRawIdErasuresResult = {
   processed: number;
   skipped: number;
+  failed: number;
 };
 
 type StoredDeletionJob = {
@@ -908,9 +909,14 @@ function rawIdErasureStatements(input: {
 
 export async function processDueAccountRawIdErasures(
   context: DbContext,
-  input: { now: Date; limit: number },
+  input: { now: Date; limit: number; shouldContinue?: () => boolean },
 ): Promise<ProcessAccountRawIdErasuresResult> {
-  const limit = Math.max(1, Math.min(100, Math.trunc(input.limit)));
+  const limit = Number.isSafeInteger(input.limit)
+    ? Math.min(Math.max(input.limit, 1), 100)
+    : 10;
+  // 예약 실행은 실패 job이 성공 처리 한도를 소비하지 않게 더 넓게 훑되,
+  // soft budget과 hard cap 100 안에서만 진행한다.
+  const scanLimit = input.shouldContinue ? 100 : limit;
   const now = documentEpochSeconds(input.now)!;
   const dueJobs = await asReadDb(context)
     .select({
@@ -926,11 +932,14 @@ export async function processDueAccountRawIdErasures(
       ),
     )
     .orderBy(asc(accountDeletionJobs.aliasAfter), asc(accountDeletionJobs.id))
-    .limit(limit);
+    .limit(scanLimit);
 
   let processed = 0;
   let skipped = 0;
+  let failed = 0;
   for (const job of dueJobs) {
+    if (processed + skipped >= limit) break;
+    if (input.shouldContinue && !input.shouldContinue()) break;
     if (!job.subjectId) {
       skipped += 1;
       continue;
@@ -947,9 +956,12 @@ export async function processDueAccountRawIdErasures(
       );
       processed += 1;
     } catch (error) {
-      if (!isExpectedAtomicRace(error)) throw error;
-      skipped += 1;
+      if (isExpectedAtomicRace(error)) {
+        skipped += 1;
+      } else {
+        failed += 1;
+      }
     }
   }
-  return { processed, skipped };
+  return { processed, skipped, failed };
 }

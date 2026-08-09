@@ -17,7 +17,7 @@ export function AccountErasureCleanupControl() {
       try {
         const result = await processDueAccountErasures(10);
         setStatus(
-          `식별자 정리 완료: ${result.processed}건 처리, ${result.skipped}건 동시 작업으로 건너뜀`,
+          `식별자 정리 완료: ${result.processed}건 처리, ${result.skipped}건 동시 작업으로 건너뜀, ${result.failed}건 재시도 필요`,
         );
       } catch {
         setStatus("식별자 정리를 완료하지 못했습니다. 잠시 뒤 다시 시도해 주세요.");
