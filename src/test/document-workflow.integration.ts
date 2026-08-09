@@ -3,12 +3,16 @@ import { after, before, mock, test, type TestContext } from "node:test";
 import { count, eq } from "drizzle-orm";
 import type { AuthSession } from "@/lib/auth-guard";
 import {
+  accountCleanupTokens,
+  accountDeletionJobs,
   categories,
   comments,
   documentOperationLedger,
   documentServerDraftOperations,
   documentServerDrafts,
   documentTombstones,
+  mediaDeletionOutbox,
+  mediaObjects,
   privateNoteRevisions,
   privateNotes,
   postRevisions,
@@ -23,6 +27,10 @@ import {
   type IsolatedPortalD1,
 } from "@/test/isolated-d1";
 import { createQnaReplyAtomically } from "@/lib/qna-atomic";
+import {
+  ACCOUNT_CLEANUP_TOKEN_LIMIT,
+  deleteStudentAccountAtomically,
+} from "@/lib/account-privacy-atomic";
 import {
   CREATION_OPERATION_FIELD,
   deriveCreationResourceId,
@@ -2903,8 +2911,8 @@ test("만료 서버 초안은 30일 경계에서 읽기 전에 제거되고 stal
   assert.equal(staleSave.current, null);
 });
 
-test("서버 초안은 owner 경계를 거부하고 profile 삭제 시 payload와 receipt를 cascade한다", { concurrency: false }, async (context) => {
-  const { db } = await setupDatabase(context);
+test("서버 초안은 owner 경계를 거부하고 전용 계정 삭제 D1 batch가 payload와 receipt를 제거한다", { concurrency: false }, async (context) => {
+  const { binding, db } = await setupDatabase(context);
   await seedProfile(db, "student-1");
   await seedProfile(db, "student-2");
   const foreignSourceKey = createDocumentDraftKey("note", "student-2", "new:student-2");
@@ -2928,9 +2936,136 @@ test("서버 초안은 owner 경계를 거부하고 profile 삭제 시 payload�
     ),
   );
   assert.equal(saved.ok, true);
-  await db.delete(profiles).where(eq(profiles.id, "student-1"));
+  const mediaId = "10000000-0000-4000-8000-000000000001";
+  await db.insert(mediaObjects).values({
+    id: mediaId,
+    ownerId: "student-1",
+    purpose: "COMMUNITY_POST_AUDIO",
+    objectKey:
+      "media/community-post-audio/10000000-0000-4000-8000-000000000002",
+    uploadObjectKey: `media-upload/community-post-audio/${mediaId}`,
+    state: "PENDING_UPLOAD",
+    expectedContentType: "audio/mpeg",
+    expectedSizeBytes: 1024,
+    draftOperationId: "10000000-0000-4000-8000-000000000003",
+    uploadExpiresAt: new Date("2026-08-09T01:00:00.000Z"),
+    createdAt: new Date("2026-08-09T00:00:00.000Z"),
+    updatedAt: new Date("2026-08-09T00:00:00.000Z"),
+  });
+  await assert.rejects(db.delete(profiles).where(eq(profiles.id, "student-1")));
+  assert.equal((await db.select().from(documentServerDrafts)).length, 1);
+  assert.equal((await db.select().from(documentServerDraftOperations)).length, 1);
+
+  const privacyContext = { kind: "d1" as const, db };
+  const cleanupTokenDigest = "a".repeat(64);
+  await binding.batch(
+    Array.from({ length: ACCOUNT_CLEANUP_TOKEN_LIMIT }, (_, index) =>
+      binding
+        .prepare(
+          "INSERT INTO account_cleanup_tokens " +
+            "(token_digest, subject_id, status, created_at, updated_at) " +
+            "VALUES (?, 'student-1', 'ACTIVE', 1786233600, 1786233600)",
+        )
+        .bind(index.toString(16).padStart(64, "0"))),
+  );
+  const deleted = await deleteStudentAccountAtomically(privacyContext, {
+    actorId: "student-1",
+    operationId: crypto.randomUUID(),
+    initiatingCleanupTokenDigest: cleanupTokenDigest,
+    useEphemeralCleanupDigest: true,
+    now: new Date("2026-08-09T00:00:01.000Z"),
+  });
+  assert.equal(deleted.ok, true, JSON.stringify(deleted));
+  if (!deleted.ok) return;
+
+  const [receipt] = await db
+    .select({
+      initiatingTokenDigest: accountDeletionJobs.initiatingTokenDigest,
+      initiatingTokenMode: accountDeletionJobs.initiatingTokenMode,
+    })
+    .from(accountDeletionJobs)
+    .where(eq(accountDeletionJobs.id, deleted.deletionJobId));
+  assert.deepEqual(receipt, {
+    initiatingTokenDigest: cleanupTokenDigest,
+    initiatingTokenMode: "EPHEMERAL",
+  });
+  assert.equal(
+    (
+      await db
+        .select({ value: count() })
+        .from(accountCleanupTokens)
+        .where(eq(accountCleanupTokens.deletionJobId, deleted.deletionJobId))
+    )[0]?.value,
+    ACCOUNT_CLEANUP_TOKEN_LIMIT,
+  );
+  assert.equal(
+    (
+      await db
+        .select()
+        .from(accountCleanupTokens)
+        .where(eq(accountCleanupTokens.tokenDigest, cleanupTokenDigest))
+    ).length,
+    0,
+  );
+
+  assert.equal(
+    (await db.select().from(profiles).where(eq(profiles.id, "student-1"))).length,
+    0,
+  );
   assert.equal((await db.select().from(documentServerDrafts)).length, 0);
   assert.equal((await db.select().from(documentServerDraftOperations)).length, 0);
+  const [deletedMedia] = await db
+    .select({ ownerId: mediaObjects.ownerId, state: mediaObjects.state })
+    .from(mediaObjects)
+    .where(eq(mediaObjects.id, mediaId));
+  assert.deepEqual(deletedMedia, { ownerId: null, state: "PENDING_DELETE" });
+  assert.equal(
+    (
+      await db
+        .select()
+        .from(mediaDeletionOutbox)
+        .where(eq(mediaDeletionOutbox.mediaObjectId, mediaId))
+    ).length,
+    2,
+  );
+
+  await seedProfile(db, "ephemeral-rollback");
+  await binding
+    .prepare(
+      "CREATE TRIGGER integration_fail_ephemeral_account_job " +
+        "BEFORE INSERT ON account_deletion_jobs " +
+        "BEGIN SELECT RAISE(ABORT, 'FORCED_EPHEMERAL_ACCOUNT_JOB_FAILURE'); END",
+    )
+    .run();
+  const rollbackDigest = "b".repeat(64);
+  await assert.rejects(
+    () => deleteStudentAccountAtomically(privacyContext, {
+      actorId: "ephemeral-rollback",
+      operationId: crypto.randomUUID(),
+      initiatingCleanupTokenDigest: rollbackDigest,
+      useEphemeralCleanupDigest: true,
+      now: new Date("2026-08-09T00:00:02.000Z"),
+    }),
+    /FORCED_EPHEMERAL_ACCOUNT_JOB_FAILURE/u,
+  );
+  assert.equal(
+    (
+      await db
+        .select()
+        .from(accountCleanupTokens)
+        .where(eq(accountCleanupTokens.tokenDigest, rollbackDigest))
+    ).length,
+    0,
+  );
+  assert.equal(
+    (
+      await db
+        .select()
+        .from(profiles)
+        .where(eq(profiles.id, "ephemeral-rollback"))
+    ).length,
+    1,
+  );
 });
 
 test("서버 초안 payload 상한과 원자 실패는 원문·receipt 부분 commit을 남기지 않는다", { concurrency: false }, async (context) => {

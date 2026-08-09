@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import test from "node:test";
 import * as bcrypt from "bcryptjs";
+import Database from "better-sqlite3";
 import {
   assertNoCommandLineArguments,
   readAdminSeedConfig,
@@ -64,27 +67,77 @@ test("prepared statement에 값을 binding하고 비밀번호 원문을 남기�
     password: "local-password-only",
     displayName: "O'Brien'); DROP TABLE profiles; --",
   };
-  let preparedQuery = "";
-  let boundParameters: string[] = [];
+  const preparedQueries: string[] = [];
+  const boundParameterSets: string[][] = [];
   const database = {
     prepare(query: string) {
-      preparedQuery = query;
+      preparedQueries.push(query);
       return {
         run(...parameters: string[]) {
-          boundParameters = parameters;
+          boundParameterSets.push(parameters);
         },
       };
+    },
+    transaction<Result>(operation: () => Result) {
+      return operation;
     },
   };
 
   await seedAdmin(database, seed, "admin-id");
 
-  assert.match(preparedQuery, /VALUES \(\?, \?, \?, \?, 'admin'\)/);
-  assert.equal(preparedQuery.includes(seed.email), false);
-  assert.equal(preparedQuery.includes(seed.displayName), false);
-  assert.equal(boundParameters[0], "admin-id");
-  assert.equal(boundParameters[1], seed.email);
-  assert.notEqual(boundParameters[2], seed.password);
-  assert.equal(boundParameters[3], seed.displayName);
-  assert.equal(await bcrypt.compare(seed.password, boundParameters[2]), true);
+  assert.equal(preparedQueries.length, 2);
+  assert.match(preparedQueries[0], /UPDATE profiles/);
+  assert.match(preparedQueries[1], /WHERE NOT EXISTS/);
+  for (const preparedQuery of preparedQueries) {
+    assert.equal(preparedQuery.includes(seed.email), false);
+    assert.equal(preparedQuery.includes(seed.displayName), false);
+  }
+  assert.equal(boundParameterSets[0][1], seed.email);
+  assert.equal(boundParameterSets[1][0], "admin-id");
+  assert.equal(boundParameterSets[1][1], seed.email);
+  assert.notEqual(boundParameterSets[1][2], seed.password);
+  assert.equal(boundParameterSets[1][3], seed.displayName);
+  assert.equal(boundParameterSets[1][4], seed.email);
+  assert.equal(
+    await bcrypt.compare(seed.password, boundParameterSets[1][2]),
+    true,
+  );
+});
+
+test("0012 profile identity guard와 함께 관리자 seed insert/update가 동작한다", async (context) => {
+  const database = new Database(":memory:");
+  context.after(() => database.close());
+  database.pragma("foreign_keys = ON");
+  for (const migrationFile of readdirSync(join(process.cwd(), "drizzle"))
+    .filter((fileName) => /^\d{4}_.+\.sql$/u.test(fileName))
+    .sort()) {
+    database.exec(readFileSync(join(process.cwd(), "drizzle", migrationFile), "utf8"));
+  }
+
+  await seedAdmin(database, readAdminSeedConfig(validEnvironment), "seed-admin-id");
+  const rotatedSeed = {
+    email: validEnvironment.DEV_ADMIN_EMAIL!,
+    password: "rotated-local-password",
+    displayName: "Ignored replacement name",
+  };
+  await seedAdmin(database, rotatedSeed, "replacement-id-must-not-be-used");
+
+  const rows = database
+    .prepare(`
+      SELECT id, email, password_hash, display_name, role
+      FROM profiles
+      WHERE email = ?
+    `)
+    .all(rotatedSeed.email) as Array<{
+      id: string;
+      email: string;
+      password_hash: string;
+      display_name: string;
+      role: string;
+    }>;
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].id, "seed-admin-id");
+  assert.equal(rows[0].role, "admin");
+  assert.equal(rows[0].display_name, validEnvironment.DEV_ADMIN_DISPLAY_NAME);
+  assert.equal(await bcrypt.compare(rotatedSeed.password, rows[0].password_hash), true);
 });

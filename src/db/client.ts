@@ -150,7 +150,11 @@ function createLocalDb(): LocalDrizzleDb {
     connections,
     sqlitePath,
     fileIdentity,
-    () => new Database(sqlitePath),
+    () => {
+      const connection = new Database(sqlitePath);
+      connection.pragma("foreign_keys = ON");
+      return connection;
+    },
   );
 
   return drizzle(sqlite, { schema });

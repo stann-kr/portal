@@ -2,7 +2,7 @@
  * @file src/app/community/new/page.tsx
  * @description 권한과 draft 소유자를 서버에서 확정하는 게시물 작성 페이지.
  */
-import { auth } from "@/auth";
+import { getActiveAuthSession } from "@/lib/auth-guard";
 import { redirect } from "next/navigation";
 import { NewPostForm, type PostBoardType } from "@/components/community/NewPostForm";
 import { safeReturnPath } from "@/lib/safe-return-path";
@@ -14,7 +14,7 @@ export default async function NewPostPage({
 }: {
   searchParams: Promise<{ boardType?: string; category?: string; returnTo?: string }>;
 }) {
-  const session = await auth();
+  const session = await getActiveAuthSession();
   if (!session?.user?.id) redirect("/login");
 
   const query = await searchParams;

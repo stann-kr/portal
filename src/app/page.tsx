@@ -1,8 +1,8 @@
 import { redirect } from "next/navigation";
-import { auth } from "@/auth";
+import { getActiveAuthSession } from "@/lib/auth-guard";
 
 export default async function RootPage() {
-  const session = await auth();
+  const session = await getActiveAuthSession();
 
   if (session?.user) {
     const role = session.user.role;

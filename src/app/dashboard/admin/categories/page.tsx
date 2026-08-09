@@ -2,7 +2,7 @@
  * @file src/app/dashboard/admin/categories/page.tsx
  * @description Admin 전용 커뮤니티 카테고리 관리 페이지 (목록 및 추가)
  */
-import { auth } from "@/auth";
+import { getActiveAuthSession } from "@/lib/auth-guard";
 import { redirect } from "next/navigation";
 import { getCategories } from "@/lib/actions/categories";
 import { CategoryForm } from "./CategoryForm";
@@ -11,7 +11,7 @@ import { DeleteCategoryButton } from "./DeleteCategoryButton";
 type Category = Awaited<ReturnType<typeof getCategories>>[number];
 
 export default async function AdminCategoriesPage() {
-  const session = await auth();
+  const session = await getActiveAuthSession();
   if (session?.user?.role !== "admin") {
     redirect("/dashboard/student");
   }

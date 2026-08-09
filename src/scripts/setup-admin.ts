@@ -26,12 +26,16 @@ const LOCAL_D1_DIRECTORY = join(
   "miniflare-D1DatabaseObject",
 );
 
-const UPSERT_ADMIN_SQL = `
+const UPDATE_ADMIN_SQL = `
+  UPDATE profiles
+  SET role = 'admin', password_hash = ?
+  WHERE email = ?
+`;
+
+const INSERT_ADMIN_SQL = `
   INSERT INTO profiles (id, email, password_hash, display_name, role)
-  VALUES (?, ?, ?, ?, 'admin')
-  ON CONFLICT(email) DO UPDATE SET
-    role = 'admin',
-    password_hash = excluded.password_hash
+  SELECT ?, ?, ?, ?, 'admin'
+  WHERE NOT EXISTS (SELECT 1 FROM profiles WHERE email = ?)
 `;
 
 export type AdminSeedConfig = {
@@ -44,6 +48,7 @@ type SeedDatabase = {
   prepare: (query: string) => {
     run: (...parameters: string[]) => unknown;
   };
+  transaction: <Result>(operation: () => Result) => () => Result;
 };
 
 /**
@@ -104,9 +109,12 @@ export async function seedAdmin(
 ): Promise<void> {
   const passwordHash = await bcrypt.hash(seed.password, 10);
 
-  database
-    .prepare(UPSERT_ADMIN_SQL)
-    .run(id, seed.email, passwordHash, seed.displayName);
+  database.transaction(() => {
+    database.prepare(UPDATE_ADMIN_SQL).run(passwordHash, seed.email);
+    database
+      .prepare(INSERT_ADMIN_SQL)
+      .run(id, seed.email, passwordHash, seed.displayName, seed.email);
+  })();
 }
 
 function findLocalD1Database(): string {

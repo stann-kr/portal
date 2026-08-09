@@ -4,8 +4,10 @@ import {
   assertAdminSession,
   assertAuthenticatedSession,
   assertOwnerOrAdmin,
+  resolveActiveSession,
   type AuthSession,
 } from "./auth-guard";
+import type { ActiveProfile } from "./active-profile";
 
 function createSession(
   id: string,
@@ -68,4 +70,34 @@ test("student는 본인 데이터만 접근할 수 있다", () => {
 test("admin은 다른 사용자의 데이터에 접근할 수 있다", () => {
   const admin = createSession("admin-1", "admin");
   assert.doesNotThrow(() => assertOwnerOrAdmin(admin, "student-1"));
+});
+
+function createProfile(
+  id: string,
+  role: "admin" | "student",
+): ActiveProfile {
+  return {
+    id,
+    role,
+    email: `${id}@db.example.com`,
+    displayName: `DB ${role}`,
+  };
+}
+
+test("매 요청 profile 존재를 확인해 삭제된 계정의 stale JWT를 거부한다", async () => {
+  const stale = createSession("deleted-student", "student");
+  const resolved = await resolveActiveSession(stale, async () => null);
+  assert.equal(resolved, null);
+});
+
+test("JWT role 대신 현재 DB role과 profile 값을 사용한다", async () => {
+  const staleRole = createSession("promoted-user", "student");
+  const resolved = await resolveActiveSession(
+    staleRole,
+    async () => createProfile("promoted-user", "admin"),
+  );
+
+  assert.equal(resolved?.user.role, "admin");
+  assert.equal(resolved?.user.email, "promoted-user@db.example.com");
+  assert.equal(resolved?.user.name, "DB admin");
 });

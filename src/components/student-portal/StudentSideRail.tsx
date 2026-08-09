@@ -5,6 +5,7 @@
  */
 import Link from "next/link";
 import { AccountLogoutButton } from "@/components/auth/AccountLogoutButton";
+import { AccountDeletionControl } from "@/components/auth/AccountDeletionControl";
 import { LocalDraftManager } from "@/components/auth/LocalDraftManager";
 
 export function StudentSideRail({ ownerId }: { ownerId: string }) {
@@ -25,6 +26,7 @@ export function StudentSideRail({ ownerId }: { ownerId: string }) {
       <div className="flex-1" />
 
       <LocalDraftManager ownerId={ownerId} />
+      <AccountDeletionControl ownerId={ownerId} />
       <AccountLogoutButton ownerId={ownerId} />
     </aside>
   );

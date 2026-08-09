@@ -4,7 +4,7 @@
  * - admin: 56px 아이콘 레일 (AdminSideRail) + 풀-너비 main (p-0)
  * - student: 56px 아이콘 레일 (StudentSideRail) + 풀-너비 main (p-0)
  */
-import { auth } from "@/auth";
+import { getActiveAuthSession } from "@/lib/auth-guard";
 import { redirect } from "next/navigation";
 import { StudentSideRail } from "@/components/student-portal/StudentSideRail";
 import { AdminSideRail } from "@/components/admin-portal/AdminSideRail";
@@ -15,7 +15,7 @@ export default async function DashboardLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const session = await auth();
+  const session = await getActiveAuthSession();
 
   if (!session?.user) {
     redirect("/login");
@@ -29,7 +29,7 @@ export default async function DashboardLayout({
 
   return (
     <div className="flex min-h-[100dvh] bg-background text-foreground">
-      <LocalDraftAccountBoundary ownerId={ownerId} />
+      <LocalDraftAccountBoundary ownerId={ownerId} role={role} />
       {role === "admin" ? (
         <AdminSideRail ownerId={ownerId} />
       ) : (

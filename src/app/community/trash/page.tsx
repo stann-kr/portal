@@ -1,14 +1,14 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ArrowLeft, Trash2 } from "lucide-react";
-import { auth } from "@/auth";
+import { getActiveAuthSession } from "@/lib/auth-guard";
 import { getTrashedPosts } from "@/lib/actions/posts";
 import { PostTrashActions } from "@/components/community/PostTrashActions";
 
 export const metadata = { title: "게시물 휴지통" };
 
 export default async function CommunityTrashPage() {
-  const session = await auth();
+  const session = await getActiveAuthSession();
   if (!session?.user?.id) redirect("/login");
   const posts = await getTrashedPosts();
   const now = Date.now();

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { ArrowLeft, History } from "lucide-react";
-import { auth } from "@/auth";
+import { getActiveAuthSession } from "@/lib/auth-guard";
 import {
   getPostIncludingTrash,
   getPostRevisions,
@@ -29,7 +29,7 @@ export default async function PostHistoryPage({
   params: Promise<{ postId: string }>;
   searchParams: Promise<{ returnTo?: string }>;
 }) {
-  const session = await auth();
+  const session = await getActiveAuthSession();
   if (!session?.user?.id) redirect("/login");
   const { postId } = await params;
   const post = await getPostIncludingTrash(postId);

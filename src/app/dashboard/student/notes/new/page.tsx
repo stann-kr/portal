@@ -4,7 +4,7 @@
  * 세션에서 studentId를 가져와 createPrivateNote에 바인딩 후 클라이언트 폼에 전달.
  */
 import { redirect } from "next/navigation";
-import { auth } from "@/auth";
+import { getActiveAuthSession } from "@/lib/auth-guard";
 import { createPrivateNote } from "@/lib/actions/privateNotes";
 import { NoteFullForm } from "@/components/notes/NoteFullForm";
 import { safeReturnPath } from "@/lib/safe-return-path";
@@ -18,7 +18,7 @@ export default async function NewNotePage({
 }: {
   searchParams: Promise<{ returnTo?: string }>;
 }) {
-  const session = await auth();
+  const session = await getActiveAuthSession();
   if (!session?.user?.id) redirect("/login");
 
   const studentId = session.user.id;

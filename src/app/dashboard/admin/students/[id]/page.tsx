@@ -6,14 +6,13 @@
  */
 import { Suspense } from "react";
 import { redirect } from "next/navigation";
-import { auth } from "@/auth";
+import { getActiveAuthSession } from "@/lib/auth-guard";
 import { getStudentById } from "@/lib/actions/students";
 import { getCurriculumByStudent } from "@/lib/actions/curriculum";
 import { getLessonsByStudent } from "@/lib/actions/lessons";
 import { getOrSeedColumns, getDiggingTracks } from "@/lib/actions/digging";
 import { getPrivateNotes } from "@/lib/actions/privateNotes";
 import { getQnaThreadsByStudent } from "@/lib/actions/qna";
-import { createCalendarFeedToken } from "@/lib/calendar-feed";
 import { StudentDetailTabs } from "@/components/admin/StudentDetailTabs";
 import { OverviewTab } from "@/components/admin/OverviewTab";
 import { DiggingBoard } from "@/components/digging/DiggingBoard";
@@ -178,7 +177,7 @@ export default async function StudentDetailPage({
   params: Promise<{ id: string }>;
   searchParams: Promise<{ tab?: string }>;
 }) {
-  const session = await auth();
+  const session = await getActiveAuthSession();
   if (!session?.user || session.user.role !== "admin") redirect("/login");
 
   const { id: studentId } = await params;
@@ -217,7 +216,6 @@ export default async function StudentDetailPage({
         {activeTab === "overview" && (
           <OverviewTab
             studentId={studentId}
-            icsUrl={`/api/calendar/${studentId}?token=${encodeURIComponent(createCalendarFeedToken(studentId))}`}
             student={student}
             modules={modules}
             lessons={lessons}

@@ -5,7 +5,7 @@
  */
 export const dynamic = "force-dynamic";
 
-import { auth } from "@/auth";
+import { getActiveAuthSession } from "@/lib/auth-guard";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { MessageCircle, Plus, Trash2 } from "lucide-react";
@@ -28,7 +28,7 @@ type QnaThreadItem = {
 };
 
 export default async function QnaPage() {
-  const session = await auth();
+  const session = await getActiveAuthSession();
   if (!session?.user) redirect("/login");
 
   const isAdmin = session.user.role === "admin";

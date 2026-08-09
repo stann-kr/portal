@@ -1,4 +1,5 @@
 import { createCreationOperationId, parseCreationOperationId } from "@/lib/creation-operation";
+import { assertAccountOwnerMayPersist } from "@/lib/account-terminal-lock";
 import {
   createDocumentServerDraftQueueKey,
   parseDocumentDraftKey,
@@ -160,10 +161,13 @@ export function readQueuedDocumentServerDraft(
 }
 
 function writeQueueEntry(
-  storage: Pick<FormDraftStorage, "setItem">,
+  storage: Pick<FormDraftStorage, "getItem" | "setItem">,
   entry: QueuedDocumentServerDraft,
 ): StoredQueuedDocumentServerDraft {
+  const identity = parseDocumentDraftKey(entry.sourceKey);
+  if (!identity) throw new TypeError("서버 초안 queue에는 owner가 필요합니다.");
   const raw = serializeQueuedDocumentServerDraft(entry);
+  assertAccountOwnerMayPersist(storage, identity.ownerId);
   storage.setItem(createDocumentServerDraftQueueKey(entry.sourceKey), raw);
   return { entry, raw };
 }
@@ -290,6 +294,7 @@ export function getOrCreateDocumentServerDraftDeviceId(
   );
   if (stored) return stored;
   const created = createCreationOperationId();
+  assertAccountOwnerMayPersist(storage, ownerId);
   storage.setItem(storageKey, created);
   return created;
 }

@@ -5,6 +5,10 @@
  */
 
 import { auth } from "@/auth";
+import {
+  findActiveProfileById,
+  type ActiveProfile,
+} from "@/lib/active-profile";
 import type { Session } from "next-auth";
 
 export type AuthSession = Session & {
@@ -21,6 +25,34 @@ export function assertAuthenticatedSession(
   return session as AuthSession;
 }
 
+export type ActiveProfileLoader = (
+  profileId: string,
+) => Promise<ActiveProfile | null>;
+
+/**
+ * JWT session subject를 매 요청 DB profile과 대조하고 DB role을 권한 원본으로 쓴다.
+ * profile이 삭제되었거나 비활성 상태이면 stale JWT를 인증으로 승격하지 않는다.
+ */
+export async function resolveActiveSession(
+  session: Session | null | undefined,
+  loadProfile: ActiveProfileLoader = findActiveProfileById,
+): Promise<AuthSession | null> {
+  if (!session?.user?.id) return null;
+  const profile = await loadProfile(session.user.id);
+  if (!profile) return null;
+
+  return {
+    ...session,
+    user: {
+      ...session.user,
+      id: profile.id,
+      email: profile.email,
+      name: profile.displayName,
+      role: profile.role,
+    },
+  };
+}
+
 /**
  * 인증 세션의 관리자 role을 검증한다.
  */
@@ -34,7 +66,16 @@ export function assertAdminSession(session: AuthSession): AuthSession {
  * @returns 인증된 세션 객체
  */
 export async function requireAuth(): Promise<AuthSession> {
-  return assertAuthenticatedSession(await auth());
+  const session = await getActiveAuthSession();
+  if (!session) throw new Error("Unauthorized");
+  return session;
+}
+
+/**
+ * redirect/HTTP status를 직접 결정해야 하는 page와 route용 optional active session.
+ */
+export async function getActiveAuthSession(): Promise<AuthSession | null> {
+  return resolveActiveSession(await auth());
 }
 
 /**

@@ -26,6 +26,172 @@ export const profiles = sqliteTable("profiles", {
   ),
 });
 
+export type AccountDeletionStatus = "ERASING" | "ERASED" | "ALIASED";
+export type AccountDeletionInitiatingTokenMode = "PERSISTENT" | "EPHEMERAL";
+
+/**
+ * 계정 원문 삭제의 durable receipt. subjectId는 30일 유예 뒤 erasureAlias로
+ * 치환되고 NULL이 되며, operation receipt 자체는 exact replay를 위해 남긴다.
+ */
+export const accountDeletionJobs = sqliteTable(
+  "account_deletion_jobs",
+  {
+    id: text("id").primaryKey(),
+    operationId: text("operation_id").notNull(),
+    subjectId: text("subject_id"),
+    erasureAlias: text("erasure_alias").notNull(),
+    initiatingTokenDigest: text("initiating_token_digest").notNull(),
+    initiatingTokenMode: text("initiating_token_mode")
+      .$type<AccountDeletionInitiatingTokenMode>()
+      .notNull(),
+    requestHash: text("request_hash").notNull(),
+    requestHashVersion: integer("request_hash_version").notNull(),
+    status: text("status").$type<AccountDeletionStatus>().notNull(),
+    requestedAt: integer("requested_at", { mode: "timestamp" }).notNull(),
+    erasedAt: integer("erased_at", { mode: "timestamp" }),
+    aliasAfter: integer("alias_after", { mode: "timestamp" }).notNull(),
+    aliasedAt: integer("aliased_at", { mode: "timestamp" }),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("account_deletion_jobs_operation_unique").on(table.operationId),
+    uniqueIndex("account_deletion_jobs_subject_unique").on(table.subjectId),
+    uniqueIndex("account_deletion_jobs_alias_unique").on(table.erasureAlias),
+    uniqueIndex("account_deletion_jobs_initiating_token_unique").on(
+      table.initiatingTokenDigest,
+    ),
+    index("account_deletion_jobs_due_idx").on(
+      table.status,
+      table.aliasAfter,
+    ),
+    check(
+      "account_deletion_jobs_identity_check",
+      sql`length(${table.id}) > 0 AND length(${table.operationId}) > 0 AND length(${table.erasureAlias}) = 43 AND substr(${table.erasureAlias}, 1, 7) = 'erased:' AND substr(${table.erasureAlias}, 16, 1) = '-' AND substr(${table.erasureAlias}, 21, 1) = '-' AND substr(${table.erasureAlias}, 26, 1) = '-' AND substr(${table.erasureAlias}, 31, 1) = '-' AND length(replace(substr(${table.erasureAlias}, 8), '-', '')) = 32 AND replace(substr(${table.erasureAlias}, 8), '-', '') NOT GLOB '*[^0-9a-f]*' AND substr(${table.erasureAlias}, 22, 1) = '4' AND substr(${table.erasureAlias}, 27, 1) GLOB '[89ab]'`,
+    ),
+    check(
+      "account_deletion_jobs_hash_check",
+      sql`length(${table.requestHash}) = 64 AND ${table.requestHash} NOT GLOB '*[^0-9a-f]*' AND ${table.requestHashVersion} = 1`,
+    ),
+    check(
+      "account_deletion_jobs_initiator_check",
+      sql`length(${table.initiatingTokenDigest}) = 64 AND ${table.initiatingTokenDigest} NOT GLOB '*[^0-9a-f]*' AND ${table.initiatingTokenMode} IN ('PERSISTENT', 'EPHEMERAL')`,
+    ),
+    check(
+      "account_deletion_jobs_timestamp_check",
+      sql`${table.aliasAfter} = ${table.requestedAt} + 2592000 AND ${table.requestedAt} <= ${table.updatedAt}`,
+    ),
+    check(
+      "account_deletion_jobs_state_check",
+      sql`(
+        ${table.status} = 'ERASING'
+        AND ${table.subjectId} IS NOT NULL
+        AND length(${table.subjectId}) > 0
+        AND ${table.erasedAt} IS NULL
+        AND ${table.aliasedAt} IS NULL
+        AND ${table.updatedAt} = ${table.requestedAt}
+      ) OR (
+        ${table.status} = 'ERASED'
+        AND ${table.subjectId} IS NOT NULL
+        AND length(${table.subjectId}) > 0
+        AND ${table.erasedAt} IS NOT NULL
+        AND ${table.erasedAt} >= ${table.requestedAt}
+        AND ${table.aliasedAt} IS NULL
+        AND ${table.updatedAt} = ${table.erasedAt}
+      ) OR (
+        ${table.status} = 'ALIASED'
+        AND ${table.subjectId} IS NULL
+        AND ${table.erasedAt} IS NOT NULL
+        AND ${table.aliasedAt} IS NOT NULL
+        AND ${table.aliasedAt} >= ${table.aliasAfter}
+        AND ${table.updatedAt} = ${table.aliasedAt}
+      )`,
+    ),
+  ],
+);
+
+export type AccountCleanupTokenStatus = "ACTIVE" | "BOUND" | "ERASED";
+
+/** raw cleanup token은 저장하지 않고 SHA-256 digest만 보존한다. */
+export const accountCleanupTokens = sqliteTable(
+  "account_cleanup_tokens",
+  {
+    tokenDigest: text("token_digest").primaryKey(),
+    subjectId: text("subject_id"),
+    deletionJobId: text("deletion_job_id").references(
+      () => accountDeletionJobs.id,
+      { onDelete: "restrict" },
+    ),
+    status: text("status").$type<AccountCleanupTokenStatus>().notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    boundAt: integer("bound_at", { mode: "timestamp" }),
+    erasedAt: integer("erased_at", { mode: "timestamp" }),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [
+    index("account_cleanup_tokens_subject_status_idx").on(
+      table.subjectId,
+      table.status,
+    ),
+    index("account_cleanup_tokens_job_idx").on(table.deletionJobId),
+    check(
+      "account_cleanup_tokens_digest_check",
+      sql`length(${table.tokenDigest}) = 64 AND ${table.tokenDigest} NOT GLOB '*[^0-9a-f]*'`,
+    ),
+    check(
+      "account_cleanup_tokens_state_check",
+      sql`(
+        ${table.status} = 'ACTIVE'
+        AND ${table.subjectId} IS NOT NULL
+        AND length(${table.subjectId}) > 0
+        AND ${table.deletionJobId} IS NULL
+        AND ${table.boundAt} IS NULL
+        AND ${table.erasedAt} IS NULL
+        AND ${table.updatedAt} = ${table.createdAt}
+      ) OR (
+        ${table.status} = 'BOUND'
+        AND ${table.subjectId} IS NOT NULL
+        AND length(${table.subjectId}) > 0
+        AND ${table.deletionJobId} IS NOT NULL
+        AND ${table.boundAt} IS NOT NULL
+        AND ${table.boundAt} >= ${table.createdAt}
+        AND ${table.erasedAt} IS NULL
+        AND ${table.updatedAt} = ${table.boundAt}
+      ) OR (
+        ${table.status} = 'ERASED'
+        AND ${table.subjectId} IS NULL
+        AND ${table.deletionJobId} IS NOT NULL
+        AND ${table.boundAt} IS NOT NULL
+        AND ${table.erasedAt} IS NOT NULL
+        AND ${table.erasedAt} >= ${table.boundAt}
+        AND ${table.updatedAt} = ${table.erasedAt}
+      )`,
+    ),
+  ],
+);
+
+/** 공개 URL에는 opaque token만 노출하고 DB에는 digest만 둔다. */
+export const calendarFeedTokens = sqliteTable(
+  "calendar_feed_tokens",
+  {
+    ownerId: text("owner_id")
+      .primaryKey()
+      .references(() => profiles.id, { onDelete: "cascade" }),
+    tokenDigest: text("token_digest").unique().notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [
+    check(
+      "calendar_feed_tokens_digest_check",
+      sql`length(${table.tokenDigest}) = 64 AND ${table.tokenDigest} NOT GLOB '*[^0-9a-f]*'`,
+    ),
+    check(
+      "calendar_feed_tokens_timestamp_check",
+      sql`${table.createdAt} <= ${table.updatedAt}`,
+    ),
+  ],
+);
+
 export const curriculums = sqliteTable("curriculums", {
   id: text("id").primaryKey(),
   studentId: text("student_id")
@@ -494,7 +660,7 @@ export const mediaObjects = sqliteTable(
   {
     id: text("id").primaryKey(),
     ownerId: text("owner_id").references(() => profiles.id, {
-      onDelete: "restrict",
+      onDelete: "set null",
     }),
     purpose: text("purpose").$type<MediaPurpose>().notNull(),
     objectKey: text("object_key").unique().notNull(),
@@ -547,12 +713,30 @@ export const mediaObjects = sqliteTable(
       sql`(
         ${table.purpose} = 'COMMUNITY_POST_AUDIO'
         AND ${table.uploadObjectKey} = 'media-upload/community-post-audio/' || ${table.id}
-        AND ${table.objectKey} GLOB 'media/community-post-audio/[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]-4[0-9a-f][0-9a-f][0-9a-f]-[89ab][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'
+        AND length(${table.objectKey}) = 63
+        AND substr(${table.objectKey}, 1, 27) = 'media/community-post-audio/'
+        AND substr(${table.objectKey}, 36, 1) = '-'
+        AND substr(${table.objectKey}, 41, 1) = '-'
+        AND substr(${table.objectKey}, 46, 1) = '-'
+        AND substr(${table.objectKey}, 51, 1) = '-'
+        AND length(replace(substr(${table.objectKey}, 28), '-', '')) = 32
+        AND replace(substr(${table.objectKey}, 28), '-', '') NOT GLOB '*[^0-9a-f]*'
+        AND substr(${table.objectKey}, 42, 1) = '4'
+        AND substr(${table.objectKey}, 47, 1) GLOB '[89ab]'
         AND ${table.objectKey} <> 'media/community-post-audio/' || ${table.id}
       ) OR (
         ${table.purpose} = 'QNA_ATTACHMENT'
         AND ${table.uploadObjectKey} = 'media-upload/qna-attachment/' || ${table.id}
-        AND ${table.objectKey} GLOB 'media/qna-attachment/[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]-4[0-9a-f][0-9a-f][0-9a-f]-[89ab][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'
+        AND length(${table.objectKey}) = 57
+        AND substr(${table.objectKey}, 1, 21) = 'media/qna-attachment/'
+        AND substr(${table.objectKey}, 30, 1) = '-'
+        AND substr(${table.objectKey}, 35, 1) = '-'
+        AND substr(${table.objectKey}, 40, 1) = '-'
+        AND substr(${table.objectKey}, 45, 1) = '-'
+        AND length(replace(substr(${table.objectKey}, 22), '-', '')) = 32
+        AND replace(substr(${table.objectKey}, 22), '-', '') NOT GLOB '*[^0-9a-f]*'
+        AND substr(${table.objectKey}, 36, 1) = '4'
+        AND substr(${table.objectKey}, 41, 1) GLOB '[89ab]'
         AND ${table.objectKey} <> 'media/qna-attachment/' || ${table.id}
       )`,
     ),

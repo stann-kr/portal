@@ -14,7 +14,6 @@ import {
   BookOpen,
   Plus,
   Trash2,
-  Download,
   CheckCircle2,
   Circle,
 } from "lucide-react";
@@ -30,6 +29,7 @@ import {
   deleteLesson,
   type CreateLessonState,
 } from "@/lib/actions/lessons";
+import { CalendarFeedControl } from "@/components/admin/CalendarFeedControl";
 
 // ─── 타입 ──────────────────────────────────────────
 interface Module {
@@ -52,7 +52,6 @@ interface Student {
 
 interface OverviewTabProps {
   studentId: string;
-  icsUrl: string;
   student: Student;
   modules: Module[];
   lessons: Lesson[];
@@ -150,7 +149,6 @@ function AddLessonForm({
 
 export function OverviewTab({
   studentId,
-  icsUrl,
   student,
   modules,
   lessons,
@@ -251,22 +249,7 @@ export function OverviewTab({
           </span>
         </div>
 
-        {/* .ics 구독 URL */}
-        <div className="flex items-center gap-2 p-3 rounded-lg border border-dashed border-border bg-muted/20">
-          <Download className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-          <p className="text-xs text-muted-foreground flex-1">
-            캘린더 구독 URL (학생에게 공유)
-          </p>
-          <a
-            href={icsUrl}
-            download
-            className="text-xs font-mono text-primary hover:underline"
-          >
-            {typeof window !== "undefined"
-              ? `${window.location.origin}${icsUrl}`
-              : icsUrl}
-          </a>
-        </div>
+        <CalendarFeedControl studentId={studentId} />
 
         {lessons.length === 0 ? (
           <p className="text-sm text-muted-foreground py-4 text-center">

@@ -1,5 +1,5 @@
 import { and, eq } from "drizzle-orm";
-import { auth } from "@/auth";
+import { getActiveAuthSession } from "@/lib/auth-guard";
 import { createDb } from "@/db/client";
 import { mediaObjects, posts, qnaReplies, qnaThreads } from "@/db/schema";
 import {
@@ -28,7 +28,7 @@ export async function GET(
   request: Request,
   { params }: { params: Promise<{ mediaObjectId: string }> },
 ): Promise<Response> {
-  const session = await auth();
+  const session = await getActiveAuthSession();
   if (!session?.user?.id) return unavailable(401);
 
   const mediaObjectId = parseMediaUuidV4((await params).mediaObjectId);

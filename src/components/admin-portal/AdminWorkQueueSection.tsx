@@ -16,6 +16,7 @@ import {
 } from "@/lib/admin-work-queue";
 import type { StudentRosterStat } from "@/lib/actions/students";
 import { MediaCleanupControl } from "./MediaCleanupControl";
+import { AccountErasureCleanupControl } from "./AccountErasureCleanupControl";
 
 function formatDay(date: Date) {
   return new Intl.DateTimeFormat("ko-KR", {
@@ -233,6 +234,7 @@ export function AdminWorkQueueSection({
       </section>
 
       <MediaCleanupControl />
+      <AccountErasureCleanupControl />
 
       <div className="flex flex-col items-start justify-between gap-3 rounded-lg bg-accent px-5 py-4 sm:flex-row sm:items-center">
         <div className="flex items-center gap-3">

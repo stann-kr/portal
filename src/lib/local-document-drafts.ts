@@ -12,6 +12,7 @@ import {
 import {
   readDocumentServerDraftDeviceStorageOwnerId,
 } from "@/lib/document-server-draft-queue";
+import { readAccountCalendarTabStorageOwnerId } from "@/lib/local-owner-keys";
 
 export type LocalDocumentDraftSummary = {
   sourceKey: string;
@@ -35,6 +36,42 @@ export type LocalDocumentDraftCleanupResult = {
   failedKeys: string[];
   enumerationFailed: boolean;
 };
+
+export type LocalDocumentDraftOwnerInspectionResult = {
+  storageKeys: string[];
+  enumerationFailed: boolean;
+};
+
+export type OwnerlessLegacyDocumentDraftListResult = {
+  storageKeys: string[];
+  enumerationFailed: boolean;
+};
+
+export type OwnerlessLegacyDocumentDraftSnapshot = {
+  storageKey: string;
+  raw: string;
+};
+
+export type OwnerlessLegacyDocumentDraftSnapshotResult = {
+  snapshots: OwnerlessLegacyDocumentDraftSnapshot[];
+  enumerationFailed: boolean;
+};
+
+export type OwnerlessLegacyDocumentDraftCleanupResult =
+  LocalDocumentDraftCleanupResult & {
+    snapshotChanged: boolean;
+    currentSnapshots: OwnerlessLegacyDocumentDraftSnapshot[];
+  };
+
+export const OWNERLESS_LEGACY_DOCUMENT_DRAFT_EXACT_KEYS = [
+  "draft:qna:thread",
+] as const;
+
+export const OWNERLESS_LEGACY_DOCUMENT_DRAFT_PREFIXES = [
+  "draft:note:full:",
+  "draft:note:slide:",
+  "draft:qna:reply:",
+] as const;
 
 type LocalDocumentDraftCandidate = {
   artifact: DocumentDraftArtifact;
@@ -182,7 +219,7 @@ export function listLocalDocumentDrafts(
 function removeMatchingLocalDocumentDraftArtifacts(
   storage: FormDraftStorage,
   predicate: (artifact: DocumentDraftArtifact) => boolean,
-  deviceOwnerPredicate?: (ownerId: string) => boolean,
+  localOwnerPredicate?: (ownerId: string) => boolean,
 ): LocalDocumentDraftCleanupResult {
   let artifacts: DocumentDraftArtifact[];
   try {
@@ -199,13 +236,17 @@ function removeMatchingLocalDocumentDraftArtifacts(
   const sourceKeys = [...new Set(artifacts.map(({ sourceKey }) => sourceKey))]
     .sort();
   const storageKeys = new Set(artifacts.map(({ storageKey }) => storageKey));
-  if (deviceOwnerPredicate) {
+  if (localOwnerPredicate) {
     try {
       for (let index = 0; index < storage.length; index += 1) {
         const storageKey = storage.key(index);
         if (!storageKey) continue;
         const deviceOwnerId = readDocumentServerDraftDeviceStorageOwnerId(storageKey);
-        if (deviceOwnerId && deviceOwnerPredicate(deviceOwnerId)) {
+        const calendarOwnerId = readAccountCalendarTabStorageOwnerId(storageKey);
+        if (
+          (deviceOwnerId && localOwnerPredicate(deviceOwnerId)) ||
+          (calendarOwnerId && localOwnerPredicate(calendarOwnerId))
+        ) {
           storageKeys.add(storageKey);
         }
       }
@@ -237,6 +278,36 @@ function removeMatchingLocalDocumentDraftArtifacts(
     failedKeys,
     enumerationFailed: false,
   };
+}
+
+/** 계정 삭제 직후 재열거 검증에 쓸 owner-scoped durable key 목록을 반환한다. */
+export function inspectLocalDocumentDraftsForOwner(
+  storage: FormDraftStorage,
+  ownerId: string,
+): LocalDocumentDraftOwnerInspectionResult {
+  try {
+    const storageKeys = new Set(
+      listDocumentDraftArtifacts(storage)
+        .filter((artifact) => artifact.ownerId === ownerId)
+        .map((artifact) => artifact.storageKey),
+    );
+    for (let index = 0; index < storage.length; index += 1) {
+      const storageKey = storage.key(index);
+      if (!storageKey) continue;
+      if (readDocumentServerDraftDeviceStorageOwnerId(storageKey) === ownerId) {
+        storageKeys.add(storageKey);
+      }
+      if (readAccountCalendarTabStorageOwnerId(storageKey) === ownerId) {
+        storageKeys.add(storageKey);
+      }
+    }
+    return {
+      storageKeys: [...storageKeys].sort(),
+      enumerationFailed: false,
+    };
+  } catch {
+    return { storageKeys: [], enumerationFailed: true };
+  }
 }
 
 /** 로그아웃·계정 삭제 경계에서 해당 계정의 모든 draft 표현을 제거한다. */
@@ -274,4 +345,131 @@ export function removeLocalDocumentDraftSource(
     (artifact) =>
       artifact.ownerId === ownerId && artifact.sourceKey === sourceKey,
   );
+}
+
+export function isOwnerlessLegacyDocumentDraftKey(storageKey: string): boolean {
+  if (
+    (OWNERLESS_LEGACY_DOCUMENT_DRAFT_EXACT_KEYS as readonly string[]).includes(
+      storageKey,
+    )
+  ) {
+    return true;
+  }
+  return OWNERLESS_LEGACY_DOCUMENT_DRAFT_PREFIXES.some(
+    (prefix) => storageKey.length > prefix.length && storageKey.startsWith(prefix),
+  );
+}
+
+/** 현재 owner namespace로 자동 귀속할 수 없는 구버전 key만 좁은 allowlist로 찾는다. */
+export function listOwnerlessLegacyDocumentDrafts(
+  storage: FormDraftStorage,
+): OwnerlessLegacyDocumentDraftListResult {
+  try {
+    const storageKeys: string[] = [];
+    for (let index = 0; index < storage.length; index += 1) {
+      const storageKey = storage.key(index);
+      if (storageKey && isOwnerlessLegacyDocumentDraftKey(storageKey)) {
+        storageKeys.push(storageKey);
+      }
+    }
+    return {
+      storageKeys: [...new Set(storageKeys)].sort(),
+      enumerationFailed: false,
+    };
+  } catch {
+    return { storageKeys: [], enumerationFailed: true };
+  }
+}
+
+function sameOwnerlessLegacySnapshots(
+  left: readonly OwnerlessLegacyDocumentDraftSnapshot[],
+  right: readonly OwnerlessLegacyDocumentDraftSnapshot[],
+): boolean {
+  return left.length === right.length && left.every((snapshot, index) => {
+    const candidate = right[index];
+    return candidate?.storageKey === snapshot.storageKey &&
+      candidate.raw === snapshot.raw;
+  });
+}
+
+/** 두 번 검증한 exact key+raw snapshot만 destructive 확인 UI에 제공한다. */
+export function snapshotOwnerlessLegacyDocumentDrafts(
+  storage: FormDraftStorage,
+): OwnerlessLegacyDocumentDraftSnapshotResult {
+  const listed = listOwnerlessLegacyDocumentDrafts(storage);
+  if (listed.enumerationFailed) {
+    return { snapshots: [], enumerationFailed: true };
+  }
+
+  try {
+    const snapshots = listed.storageKeys.flatMap((storageKey) => {
+      const raw = storage.getItem(storageKey);
+      return raw === null ? [] : [{ storageKey, raw }];
+    });
+    const verified = listOwnerlessLegacyDocumentDrafts(storage);
+    if (
+      verified.enumerationFailed ||
+      verified.storageKeys.length !== snapshots.length ||
+      !verified.storageKeys.every((storageKey, index) =>
+        storageKey === snapshots[index]?.storageKey &&
+        storage.getItem(storageKey) === snapshots[index]?.raw)
+    ) {
+      return { snapshots: [], enumerationFailed: true };
+    }
+    return { snapshots, enumerationFailed: false };
+  } catch {
+    return { snapshots: [], enumerationFailed: true };
+  }
+}
+
+/** 확인한 exact key+raw snapshot만 CAS 방식으로 제거하고 새 key는 건드리지 않는다. */
+export function removeOwnerlessLegacyDocumentDrafts(
+  storage: FormDraftStorage,
+  expectedSnapshots: readonly OwnerlessLegacyDocumentDraftSnapshot[],
+): OwnerlessLegacyDocumentDraftCleanupResult {
+  const current = snapshotOwnerlessLegacyDocumentDrafts(storage);
+  if (current.enumerationFailed) {
+    return {
+      sourceKeys: expectedSnapshots.map(({ storageKey }) => storageKey),
+      removedKeys: [],
+      failedKeys: [],
+      enumerationFailed: true,
+      snapshotChanged: false,
+      currentSnapshots: [],
+    };
+  }
+  if (!sameOwnerlessLegacySnapshots(expectedSnapshots, current.snapshots)) {
+    return {
+      sourceKeys: expectedSnapshots.map(({ storageKey }) => storageKey),
+      removedKeys: [],
+      failedKeys: [],
+      enumerationFailed: false,
+      snapshotChanged: true,
+      currentSnapshots: current.snapshots,
+    };
+  }
+
+  const removedKeys: string[] = [];
+  const failedKeys: string[] = [];
+  for (const { storageKey, raw } of expectedSnapshots) {
+    try {
+      if (storage.getItem(storageKey) !== raw) {
+        failedKeys.push(storageKey);
+        continue;
+      }
+      storage.removeItem(storageKey);
+      if (storage.getItem(storageKey) === null) removedKeys.push(storageKey);
+      else failedKeys.push(storageKey);
+    } catch {
+      failedKeys.push(storageKey);
+    }
+  }
+  return {
+    sourceKeys: expectedSnapshots.map(({ storageKey }) => storageKey),
+    removedKeys,
+    failedKeys,
+    enumerationFailed: false,
+    snapshotChanged: false,
+    currentSnapshots: [],
+  };
 }

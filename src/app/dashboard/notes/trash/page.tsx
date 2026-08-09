@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ArrowLeft, Trash2 } from "lucide-react";
-import { auth } from "@/auth";
+import { getActiveAuthSession } from "@/lib/auth-guard";
 import { getTrashedPrivateNotes } from "@/lib/actions/privateNotes";
 import { safeReturnPath } from "@/lib/safe-return-path";
 import { NoteTrashActions } from "@/components/notes/NoteTrashActions";
@@ -13,7 +13,7 @@ export default async function NoteTrashPage({
 }: {
   searchParams: Promise<{ studentId?: string; returnTo?: string }>;
 }) {
-  const session = await auth();
+  const session = await getActiveAuthSession();
   if (!session?.user?.id) redirect("/login");
   const query = await searchParams;
   const studentId =

@@ -11,7 +11,11 @@ import { revalidatePath } from "next/cache";
 import { createDb } from "@/db/client";
 import { lessons } from "@/db/schema";
 import { and, eq, gte, asc, desc } from "drizzle-orm";
-import { requireAdmin } from "@/lib/auth-guard";
+import {
+  assertOwnerOrAdmin,
+  requireAdmin,
+  requireAuth,
+} from "@/lib/auth-guard";
 
 // ───────────────────────────────────────────────
 // 조회
@@ -21,6 +25,8 @@ import { requireAdmin } from "@/lib/auth-guard";
  * 특정 학생의 모든 레슨 조회 (날짜 내림차순).
  */
 export async function getLessonsByStudent(studentId: string) {
+  const session = await requireAuth();
+  assertOwnerOrAdmin(session, studentId);
   const db = createDb();
   return db
     .select()
@@ -33,6 +39,8 @@ export async function getLessonsByStudent(studentId: string) {
  * 학생 본인의 다음 예정 레슨 조회 (Student Dashboard용).
  */
 export async function getNextLesson(studentId: string) {
+  const session = await requireAuth();
+  assertOwnerOrAdmin(session, studentId);
   const db = createDb();
   const now = new Date();
   const rows = await db
@@ -62,6 +70,8 @@ export async function getUpcomingLessonCount(): Promise<number> {
  * .ics 생성용: 특정 학생의 미래 레슨 전체 조회.
  */
 export async function getLessonsForCalendar(studentId: string) {
+  const session = await requireAuth();
+  assertOwnerOrAdmin(session, studentId);
   const db = createDb();
   const now = new Date();
   return db

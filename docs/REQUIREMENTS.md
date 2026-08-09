@@ -15,6 +15,7 @@
 - 공지사항, 커뮤니티, 1:1 Q&A
 - 캘린더 구독 피드
 - R2 presigned URL 기반 미디어 업로드
+- 학생 본인 계정 삭제와 다른 기기의 잔여 초안 정리
 - Cloudflare D1/R2/OpenNext 배포 구조
 
 제외 범위:
@@ -44,16 +45,17 @@
 | FR-004 | 학생은 커리큘럼 진도를 확인하고 믹스셋 과제를 제출하며 피드백을 재생 위치와 함께 확인해야 한다. | 완료 토글, 과제 URL 제출, 미디어 재생, 피드백 목록이 동작한다. | 구현 |
 | FR-005 | 관리자는 업무함에서 미답변 Q&A, 피드백 대기, 다가오는 레슨을 처리하고 학생별 학습 상태를 관리해야 한다. | 실제 처리 항목을 우선순위대로 제공하고 Q&A·과제 상세, 학생 목록·상세·추가 경로로 연결한다. | 구현 |
 | FR-006 | 공지·커뮤니티·1:1 Q&A는 작성, 목록, 상세, 답변 또는 댓글 흐름을 제공해야 한다. | 역할별 작성 권한과 소유권 검사를 서버에서 수행하고 성공·실패 상태를 반환한다. | 구현 |
-| FR-007 | 캘린더 피드는 본인·관리자 세션 또는 유효한 서명 token으로만 접근할 수 있어야 한다. | 허용 요청은 `.ics`를 반환하고 그 외 요청은 거부한다. | 구현 |
+| FR-007 | 캘린더 피드는 본인·관리자 세션 또는 유효한 opaque token으로만 접근할 수 있어야 한다. | 신규 구독 URL에는 계정 ID를 노출하지 않고, 허용 요청만 `.ics`를 반환하며 token 회전 뒤 이전 URL을 거부한다. | 구현 |
 | FR-008 | 미디어 업로드는 서버가 발급한 제한 시간 presigned URL을 사용해야 한다. | 인증된 요청만 URL을 발급하고 허용하지 않은 파일 정책은 서버에서 거부한다. | 부분 구현 |
 | FR-009 | 개인 노트는 수정 이력과 휴지통을 제공하고, 재전송·동시 편집·영구 삭제 뒤 늦은 요청에도 일관된 상태를 유지해야 한다. | version 기반 조건부 저장, 불변 revision·operation ledger, 30일 휴지통, 복원·관리자 purge, tombstone 부활 방지를 격리 D1에서 검증한다. | 구현 |
 | FR-010 | 커뮤니티 게시물과 1:1 Q&A는 내용·상태 이력과 휴지통을 제공하고, 댓글·답변을 보존한 채 복원할 수 있어야 한다. | 게시물 full-snapshot revision, Q&A append-only event, version 기반 조건부 변경, 30일 휴지통, 관리자 purge와 tombstone 부활 방지를 격리 D1에서 검증한다. | 구현 |
+| FR-011 | 학생은 현재 비밀번호와 명시적 확인을 거쳐 본인 계정을 삭제할 수 있어야 한다. | profile·credential·문서 원문·서버 초안을 한 transaction에서 제거하고 기존 session을 즉시 거부한다. 현재 기기는 terminal lock 뒤 직접 정리하고, 사전 등록된 다른 기기만 재접속 때 해당 계정의 로컬 데이터를 정리하며, 저장소 차단 시 수동 정리를 안내한다. | 구현 — production migration·주기 정리 runner 미적용 |
 
 ## 비기능 요구사항
 
 | ID | 요구사항 | 검증 기준 | 현재 상태 |
 |---|---|---|---|
-| NFR-001 | 모든 server action은 인증·역할·소유권 경계를 자체적으로 검증해야 한다. | 허용·거부 경로를 자동 테스트하고 타 학생 데이터 접근을 차단한다. | 부분 충족 |
+| NFR-001 | 모든 server action은 인증·역할·소유권 경계를 자체적으로 검증해야 한다. | 매 server 인증 경계에서 profile 존재와 DB role을 다시 확인하고, 허용·거부 경로를 자동 테스트하며 타 학생 데이터 접근을 차단한다. | 부분 충족 |
 | NFR-002 | 사용자 입력과 rich text는 저장·렌더 경계에서 안전하게 처리해야 한다. | sanitize, protocol·host allowlist, 파일 크기·MIME 정책을 자동 테스트한다. | 부분 충족 — HTML sanitize 자동화 |
 | NFR-003 | 핵심 흐름은 키보드만으로 조작 가능하고 명확한 focus·상태 정보를 제공해야 한다. | semantic control, focus indicator, label, reduced-motion 대응이 정적·컴포넌트 테스트를 통과한다. | 부분 충족 |
 | NFR-004 | 360px 이상의 화면에서 주요 탐색과 작성 흐름이 가로 잘림 없이 동작해야 한다. | 탭·테이블·캘린더에 좁은 화면용 layout 또는 overflow 전략이 있다. | 부분 충족 |
@@ -74,13 +76,13 @@
 | 사용자 저장공간 | 사용자별 active/trash head와 내용 변경 revision을 합쳐 100 MiB를 허용한다. `TRASH`·`RESTORE_TRASH` 상태 snapshot은 사용자 quota에서 제외하되 실제 DB 사용량에는 포함해 별도 관측한다. 한도 초과 시 내용 저장·과거 revision 복원을 막고 휴지통 이동·영구 삭제는 허용한다. | 개인 노트 적용, 운영 경보 미구현 |
 | 서버 초안 | 사용자·문서별 최신 서버 초안은 마지막 저장 뒤 30일 보존한다. 게시 완료와 명시적 폐기는 즉시 삭제를 요청하고 실패 시 같은 operation으로 재시도하며, profile 삭제는 payload와 receipt를 cascade한다. | 노트·게시물·Q&A 작성·편집 적용 |
 | 충돌 처리 | revision/version 기반 충돌을 감지하며 자동 병합하지 않는다. 현재 초안은 유지하고 서버 최신본을 확인·복사한 뒤 서버본 사용 또는 내 초안으로 계속을 명시적으로 선택한다. | 문서 저장 충돌과 다중 기기 서버 초안 비교 적용 |
-| 로그아웃·계정 전환 | 해당 계정의 canonical·recovery·future·legacy 로컬 초안과 서버 재시도 queue를 즉시 지운다. 오프라인 기기는 다음 인증 동기화 때 정리한다. | 로그아웃 직전 정리와 다음 계정 인증 시 다른 계정 잔여본 정리 적용 |
-| 계정 삭제 | 문서 본문·revision·event·서버 초안은 승인된 삭제 흐름에서 즉시 제거하고 모든 기기의 로컬 초안은 다음 동기화 때 폐기한다. anti-replay용 ledger·tombstone의 raw 계정 식별자는 30일만 보존한 뒤 전용 erasure 작업으로 삭제한다. 이 흐름이 구현되기 전에는 문서·댓글·답변 이력이 있는 profile 삭제를 `RESTRICT`한다. | `RESTRICT` 적용, 전용 삭제 흐름은 구현 예정 |
+| 로그아웃·계정 전환 | 해당 계정의 canonical·recovery·future·legacy 로컬 초안과 서버 재시도 queue를 즉시 지운다. 삭제 신호를 사전 등록한 오프라인 기기는 익명 상태 동기화 뒤 해당 owner 데이터만 정리한다. | 로그아웃·계정 전환·삭제 신호 정리 적용 |
+| 계정 삭제 | 학생 본인, 현재 비밀번호, persistent 또는 memory-only 기기 digest와 단일 operation을 요구한다. persistent token은 모두 deletion job에 결합하고 memory-only digest는 token quota와 분리된 initiating receipt로 같은 transaction에 기록하며, 실패하면 job과 함께 rollback한다. profile·credential·문서 본문·revision·event·서버 초안은 즉시 제거하고 managed media는 durable outbox로 삭제한다. anti-replay용 raw 계정 식별자는 30일 보존 경계 뒤 alias 수렴 대상이 된다. | 전용 삭제·현재 기기 직접 정리·30일 alias source 구현, production migration·scheduler 미적용 |
 
 ## 향후 결정 사항
 
 - 과제 배정·마감일·읽음 상태를 추가해 학생 `오늘`을 실제 할 일과 새 응답 중심으로 확장할지.
 - 디깅 보드와 과제 피드백을 장기적으로 오디오 파형 기반 작업 공간까지 확장할지.
 - 알림 채널을 앱 내부, 이메일, 캘린더 중 어디까지 지원할지.
-- production smoke test 계정·fixture와 게시물 영구 삭제 뒤 R2 media retention·고아 객체 정리를 어떻게 운영할지.
-- 계정 삭제를 다른 기기에 전달할 인증 동기화 token과 30일 raw-ID erasure를 어떤 운영 흐름으로 구현할지.
+- production smoke test 계정·fixture와 게시물·계정 영구 삭제 뒤 R2 media retention·고아 객체 정리를 어떻게 운영할지.
+- media deletion outbox와 30일 raw-ID erasure를 실행할 production scheduler·backlog 경보 주기와 책임자를 확정할지.

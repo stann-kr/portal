@@ -4,7 +4,7 @@
  */
 export const dynamic = "force-dynamic";
 
-import { auth } from "@/auth";
+import { getActiveAuthSession } from "@/lib/auth-guard";
 import { redirect } from "next/navigation";
 import { getQnaThreadIncludingTrash } from "@/lib/actions/qna";
 import { ThreadDetailClient } from "@/components/qna/ThreadDetailClient";
@@ -20,7 +20,7 @@ export default async function QnaThreadPage({
   params: Promise<{ threadId: string }>;
   searchParams: Promise<{ returnTo?: string }>;
 }) {
-  const session = await auth();
+  const session = await getActiveAuthSession();
   if (!session?.user) redirect("/login");
 
   const { threadId } = await params;

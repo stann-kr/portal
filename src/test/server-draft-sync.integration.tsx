@@ -14,6 +14,11 @@ import {
   parseFormDraft,
 } from "@/lib/form-draft";
 import { parseQueuedDocumentServerDraft } from "@/lib/document-server-draft-queue";
+import {
+  createAccountTerminalLockStorageKey,
+  ensureAccountTerminalDeletionLock,
+} from "@/lib/account-terminal-lock";
+import { clearLocalDocumentDraftsForDeletedOwner } from "@/lib/local-draft-continuity-client";
 
 type DraftData = {
   title: string;
@@ -236,6 +241,58 @@ function resetServerMock(): void {
   discardCalls = [];
   readCalls = 0;
 }
+
+test("terminal owner lock은 late peer draft write와 server action을 막고 hook refs를 비운다", { concurrency: false }, async (context) => {
+  resetServerMock();
+  const ownerId = "student-terminal-peer";
+  const sourceKey = createDocumentDraftKey("note", ownerId, "terminal-note");
+  const harness = await createHarness(context, sourceKey);
+  setOnline(harness.browserWindow, false);
+
+  await act(async () => {
+    harness.getResult().save({
+      title: "삭제 전 작성본",
+      contentHtml: "<p>terminal</p>",
+    });
+  });
+  const queueKey = createDocumentServerDraftQueueKey(sourceKey);
+  assert.notEqual(harness.browserWindow.localStorage.getItem(queueKey), null);
+  assert.notEqual(harness.getResult().serverSync.localPreview, null);
+
+  await act(async () => {
+    ensureAccountTerminalDeletionLock(
+      harness.browserWindow.localStorage,
+      ownerId,
+    );
+    clearLocalDocumentDraftsForDeletedOwner(ownerId);
+  });
+
+  assert.equal(harness.getResult().canSubmit, false);
+  assert.equal(harness.getResult().serverSync.localPreview, null);
+  assert.equal(harness.getResult().serverSync.remoteDraft, null);
+  assert.equal(harness.browserWindow.localStorage.getItem(sourceKey), null);
+  assert.equal(harness.browserWindow.localStorage.getItem(queueKey), null);
+  const lockKey = createAccountTerminalLockStorageKey(ownerId);
+  assert.equal(lockKey.includes(ownerId), false);
+  assert.notEqual(harness.browserWindow.localStorage.getItem(lockKey), null);
+
+  const readCallsBeforeLateActions = readCalls;
+  await act(async () => {
+    harness.getResult().save({
+      title: "늦은 peer write",
+      contentHtml: "<p>blocked</p>",
+    });
+    harness.getResult().serverSync.keepLocalDraft();
+    harness.getResult().serverSync.discardRemoteDraft();
+    await harness.getResult().serverSync.refresh();
+  });
+
+  assert.equal(harness.browserWindow.localStorage.getItem(sourceKey), null);
+  assert.equal(harness.browserWindow.localStorage.getItem(queueKey), null);
+  assert.equal(saveCalls.length, 0);
+  assert.equal(discardCalls.length, 0);
+  assert.equal(readCalls, readCallsBeforeLateActions);
+});
 
 test("오프라인 queue는 원 operation ID로 재시도하고 성공한 raw만 제거한다", { concurrency: false }, async (context) => {
   resetServerMock();

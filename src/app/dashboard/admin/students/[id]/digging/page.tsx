@@ -4,7 +4,7 @@
  */
 export const dynamic = "force-dynamic";
 
-import { auth } from "@/auth";
+import { getActiveAuthSession } from "@/lib/auth-guard";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Disc3 } from "lucide-react";
@@ -20,7 +20,7 @@ export default async function AdminStudentDiggingPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const session = await auth();
+  const session = await getActiveAuthSession();
   if (!session?.user || session.user.role !== "admin") redirect("/login");
 
   const { id: studentId } = await params;

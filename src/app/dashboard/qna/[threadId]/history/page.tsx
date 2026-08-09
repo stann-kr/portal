@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { ArrowLeft, History } from "lucide-react";
-import { auth } from "@/auth";
+import { getActiveAuthSession } from "@/lib/auth-guard";
 import {
   getQnaThreadEvents,
   getQnaThreadIncludingTrash,
@@ -28,7 +28,7 @@ export default async function QnaHistoryPage({
   params: Promise<{ threadId: string }>;
   searchParams: Promise<{ returnTo?: string }>;
 }) {
-  const session = await auth();
+  const session = await getActiveAuthSession();
   if (!session?.user?.id) redirect("/login");
   const { threadId } = await params;
   const thread = await getQnaThreadIncludingTrash(threadId);

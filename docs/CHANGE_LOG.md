@@ -6,6 +6,10 @@
 
 ### 변경 요약
 
+- 학생 본인 계정 삭제를 추가했다. 현재 비밀번호와 persistent 또는 memory-only 기기 정리 digest를 확인하고, persistent token 결합 또는 memory-only initiating receipt·삭제 job·profile·credential·문서 원문·서버 초안·본인 댓글과 답변을 한 transaction에서 처리한다. 기존 session은 NextAuth session 응답과 매 server 인증 경계의 active profile 재검증으로 즉시 거부한다.
+- 삭제 성공 뒤 현재 기기는 token 유무와 관계없이 terminal lock을 먼저 기록하고 해당 owner 데이터만 직접 정리한다. 저장소가 막히면 수동 정리를 명시하며, 삭제 전에 신호를 등록한 다른 기기는 digest 상태를 익명으로 확인해 재접속 때 정리한다. owner 없는 구버전 초안은 로그인 화면의 명시적 2단계 확인에서만 allowlist·snapshot 일치 조건으로 삭제한다.
+- anti-replay ledger·tombstone과 교차 문서 actor에 남는 raw 계정 ID는 30일 보존 경계 뒤 관리자 수렴 작업으로 무작위 alias에 단방향 치환할 수 있다. 신규 opaque 캘린더 feed token은 URL에서 raw 계정 ID를 제거하고 회전 시 이전 token을 즉시 폐기한다.
+- 새 `0012` migration은 account deletion job·cleanup token·calendar feed token과 개인정보 수명주기 trigger를 추가한다. 계정 소유 media와 삭제되는 문서의 managed media는 staging URL 만료·봉인 복구 유예를 지키는 durable R2 outbox로 넘긴다. persistent local·remote D1과 production scheduler는 아직 적용하지 않았다.
 - 게시물 오디오와 1:1 Q&A 첨부를 D1 media registry에 등록하고, 문서 생성과 object claim, 관리자 영구 삭제와 R2 삭제 outbox를 같은 원자 경계로 연결했다. 신규 첨부는 공개 object URL 대신 권한을 다시 확인하는 `/api/media/` 경로로 전달한다.
 - 업로드는 사용자에게 서명한 staging key와 비공개 final key를 분리한다. R2 object의 Content-Type metadata·크기·ETag 검증, one-shot PUT, 봉인 lease, 만료·응답 유실 뒤 late Copy 재삭제, owner별 quota와 지수 backoff cleanup을 적용했다.
 - 새 `0011` migration은 media registry·삭제 outbox와 게시물/Q&A object reference를 추가하고 기존 URL 데이터는 그대로 보존한다. migration doctor는 populated `0010→0011` upgrade, 상태 전이·outbox·URL 역참조, `INSERT OR REPLACE` 우회 차단을 격리 DB에서 검증한다. persistent local·remote D1과 R2 운영 설정은 아직 적용하지 않았다.

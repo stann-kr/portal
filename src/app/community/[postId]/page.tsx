@@ -6,7 +6,7 @@
 import Link from "next/link";
 import { getPostIncludingTrash } from "@/lib/actions/posts";
 import { getCommentsByPost } from "@/lib/actions/comments";
-import { auth } from "@/auth";
+import { getActiveAuthSession } from "@/lib/auth-guard";
 import { PostDetailClient } from "./PostDetailClient";
 import { safeReturnPath } from "@/lib/safe-return-path";
 import { redirect } from "next/navigation";
@@ -21,7 +21,7 @@ export default async function PostDetailPage({
   const { postId } = await params;
   const query = await searchParams;
   const returnTo = safeReturnPath(query.returnTo, "/community");
-  const session = await auth();
+  const session = await getActiveAuthSession();
   if (!session?.user?.id) redirect("/login");
 
   const [post, commentList] = await Promise.all([

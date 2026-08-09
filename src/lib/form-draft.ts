@@ -1,5 +1,6 @@
 import { sha256 } from "@noble/hashes/sha256";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils";
+import { assertAccountOwnerMayPersist } from "@/lib/account-terminal-lock";
 
 export const FORM_DRAFT_STORAGE_VERSION = 1;
 export const FORM_DRAFT_RECOVERY_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -461,6 +462,15 @@ export function parseDocumentDraftKey(
   }
 }
 
+/** owner-scoped document key는 terminal deletion lock 뒤 다시 쓰지 않는다. */
+export function assertFormDraftSourceOwnerMayPersist(
+  storage: Pick<FormDraftStorage, "getItem">,
+  sourceKey: string,
+): void {
+  const identity = parseDocumentDraftKey(sourceKey);
+  if (identity) assertAccountOwnerMayPersist(storage, identity.ownerId);
+}
+
 export function createFormDraftClearMarkerKey(sourceKey: string): string {
   return `draft:document-clear-marker:${encodeURIComponent(sourceKey)}`;
 }
@@ -542,6 +552,7 @@ export function writeFormDraftClearMarkers(
       ? parseFormDraftClearMarker(headRaw, newestClearedAt)
       : null;
     if (!marker) return;
+    assertFormDraftSourceOwnerMayPersist(storage, sourceKey);
     storage.setItem(
       createFormDraftClearMarkerEntryKey(
         sourceKey,
@@ -554,6 +565,7 @@ export function writeFormDraftClearMarkers(
 
   promoteLegacyHead(storage.getItem(headKey));
   for (const marker of markers) {
+    assertFormDraftSourceOwnerMayPersist(storage, sourceKey);
     storage.setItem(
       createFormDraftClearMarkerEntryKey(
         sourceKey,
@@ -569,6 +581,7 @@ export function writeFormDraftClearMarkers(
     !latestHeadRaw ||
     !hasFutureEnvelopeVersion(latestHeadRaw, FORM_DRAFT_CLEAR_MARKER_VERSION)
   ) {
+    assertFormDraftSourceOwnerMayPersist(storage, sourceKey);
     storage.setItem(headKey, markers.at(-1)!.raw);
   }
   pruneFormDraftClearMarkers(storage, sourceKey, newestClearedAt);
@@ -1941,6 +1954,7 @@ export function persistFormDraftRawSnapshot(
     throw new Error("Immutable form draft recovery key cannot be overwritten");
   }
 
+  assertFormDraftSourceOwnerMayPersist(storage, sourceKey);
   storage.setItem(recoveryKey, raw);
 
   const currentRaw = storage.getItem(sourceKey);
@@ -1948,6 +1962,7 @@ export function persistFormDraftRawSnapshot(
     return { status: "conflict", raw, currentRaw, recoveryKey };
   }
 
+  assertFormDraftSourceOwnerMayPersist(storage, sourceKey);
   storage.setItem(sourceKey, raw);
   const persistedCanonicalRaw = storage.getItem(sourceKey);
   return {

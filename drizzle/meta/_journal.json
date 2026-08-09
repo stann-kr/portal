@@ -85,6 +85,13 @@
       "when": 1786274640670,
       "tag": "0011_media_lifecycle",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1786280215786,
+      "tag": "0012_account_privacy_lifecycle",
+      "breakpoints": true
     }
   ]
 }

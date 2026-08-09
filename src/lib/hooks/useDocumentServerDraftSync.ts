@@ -30,6 +30,12 @@ import {
   parseDocumentDraftKey,
   type FormDraftRecoveryPreview,
 } from "@/lib/form-draft";
+import {
+  ACCOUNT_TERMINAL_LOCK_EVENT,
+  createAccountTerminalLockStorageKey,
+  isAccountOwnerTerminallyLocked,
+  isAccountTerminalLockEventForOwner,
+} from "@/lib/account-terminal-lock";
 
 const SERVER_DRAFT_DEBOUNCE_MS = 1_200;
 const SERVER_DRAFT_MAX_WAIT_MS = 5_000;
@@ -137,6 +143,7 @@ export function useDocumentServerDraftSync<T>(
   const localDraftRef = useRef<LocalDraftState<T> | null>(null);
   const localDraftSourceRef = useRef<string | null>(null);
   const deviceIdRef = useRef<string | null>(null);
+  const terminalLockedOwnerRef = useRef<string | null>(null);
   const onApplyRemoteRef = useRef(onApplyRemote);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const maxWaitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -154,6 +161,40 @@ export function useDocumentServerDraftSync<T>(
     remoteDraftRef.current = draft;
     if (mountedRef.current) setRemoteDraft(draft);
   }, []);
+
+  const isOwnerTerminallyLocked = useCallback(() => {
+    if (!ownerId) return false;
+    if (terminalLockedOwnerRef.current === ownerId) return true;
+    try {
+      return isAccountOwnerTerminallyLocked(window.localStorage, ownerId);
+    } catch {
+      return false;
+    }
+  }, [ownerId]);
+
+  const purgeTerminallyLockedOwner = useCallback(() => {
+    terminalLockedOwnerRef.current = ownerId;
+    sourceGenerationRef.current += 1;
+    readyRef.current = false;
+    choiceRequiredRef.current = false;
+    clearTimers();
+    remoteDraftRef.current = null;
+    localDraftRef.current = null;
+    localDraftSourceRef.current = null;
+    deviceIdRef.current = null;
+    if (mountedRef.current) {
+      setRemoteDraft(null);
+      setLocalPreview(null);
+      setDeviceId(null);
+      setStatus("idle");
+    }
+  }, [clearTimers, ownerId]);
+
+  const allowOwnerPersistence = useCallback(() => {
+    if (!isOwnerTerminallyLocked()) return true;
+    purgeTerminallyLockedOwner();
+    return false;
+  }, [isOwnerTerminallyLocked, purgeTerminallyLockedOwner]);
 
   const evaluateState = useCallback(
     (draft: DocumentServerDraftSnapshot | null, queue?: QueuedDocumentServerDraft | null) => {
@@ -237,7 +278,9 @@ export function useDocumentServerDraftSync<T>(
   );
 
   const drain = useCallback(async () => {
-    if (!readyRef.current || !mountedRef.current) return;
+    if (!readyRef.current || !mountedRef.current || !allowOwnerPersistence()) {
+      return;
+    }
     clearTimers();
     let queued: ReturnType<typeof readQueuedDocumentServerDraft>;
     try {
@@ -265,6 +308,7 @@ export function useDocumentServerDraftSync<T>(
     const generation = sourceGenerationRef.current;
     setStatus("syncing");
     try {
+      if (!allowOwnerPersistence()) return;
       const result = queued.entry.operationType === "UPSERT"
         ? await saveDocumentServerDraft({
             sourceKey,
@@ -279,7 +323,11 @@ export function useDocumentServerDraftSync<T>(
             operationId: queued.entry.operationId,
             expectedDraftVersion: queued.entry.expectedDraftVersion,
           });
-      if (!mountedRef.current || generation !== sourceGenerationRef.current) return;
+      if (
+        !mountedRef.current ||
+        generation !== sourceGenerationRef.current ||
+        !allowOwnerPersistence()
+      ) return;
 
       if (result.ok) {
         updateRemote(result.current);
@@ -330,14 +378,22 @@ export function useDocumentServerDraftSync<T>(
           : "error",
       );
     } catch {
+      if (!allowOwnerPersistence()) return;
       if (!mountedRef.current || generation !== sourceGenerationRef.current) return;
       setStatus(isBrowserOffline() ? "offline" : "error");
     }
-  }, [clearTimers, evaluateState, rebaseNewerQueue, sourceKey, updateRemote]);
+  }, [
+    allowOwnerPersistence,
+    clearTimers,
+    evaluateState,
+    rebaseNewerQueue,
+    sourceKey,
+    updateRemote,
+  ]);
   drainRef.current = drain;
 
   const scheduleDrain = useCallback(() => {
-    if (!readyRef.current) return;
+    if (!readyRef.current || !allowOwnerPersistence()) return;
     if (isBrowserOffline()) {
       if (mountedRef.current) setStatus("offline");
       return;
@@ -351,13 +407,19 @@ export function useDocumentServerDraftSync<T>(
       );
     }
     if (mountedRef.current) setStatus("queued");
-  }, []);
+  }, [allowOwnerPersistence]);
 
   const refresh = useCallback(async () => {
+    if (!allowOwnerPersistence()) return;
     const generation = sourceGenerationRef.current;
     try {
+      if (!allowOwnerPersistence()) return;
       const result = await readDocumentServerDraft(sourceKey);
-      if (!mountedRef.current || generation !== sourceGenerationRef.current) return;
+      if (
+        !mountedRef.current ||
+        generation !== sourceGenerationRef.current ||
+        !allowOwnerPersistence()
+      ) return;
       readyRef.current = true;
       if (!result.ok) {
         setStatus("error");
@@ -387,15 +449,17 @@ export function useDocumentServerDraftSync<T>(
       evaluateState(result.draft, remaining?.entry ?? null);
       if (remaining && !isBrowserOffline()) void drainRef.current();
     } catch {
+      if (!allowOwnerPersistence()) return;
       if (!mountedRef.current || generation !== sourceGenerationRef.current) return;
       readyRef.current = true;
       const queued = readQueuedDocumentServerDraft(window.localStorage, sourceKey);
       setStatus(queued && isBrowserOffline() ? "offline" : "error");
     }
-  }, [evaluateState, sourceKey, updateRemote]);
+  }, [allowOwnerPersistence, evaluateState, sourceKey, updateRemote]);
 
   const observeLocalDraft = useCallback(
     (data: T) => {
+      if (!allowOwnerPersistence()) return;
       try {
         const local = createLocalDraftState(data);
         localDraftRef.current = local;
@@ -439,11 +503,12 @@ export function useDocumentServerDraftSync<T>(
         if (mountedRef.current) setStatus("error");
       }
     },
-    [evaluateState, ownerId, scheduleDrain, sourceKey],
+    [allowOwnerPersistence, evaluateState, ownerId, scheduleDrain, sourceKey],
   );
 
   const clearLocalDraft = useCallback(
     (reason: ClearServerDraftReason) => {
+      if (!allowOwnerPersistence()) return;
       const hadLocalDraft = localDraftRef.current !== null;
       localDraftRef.current = null;
       localDraftSourceRef.current = null;
@@ -487,10 +552,11 @@ export function useDocumentServerDraftSync<T>(
         if (mountedRef.current) setStatus("error");
       }
     },
-    [clearTimers, evaluateState, sourceKey],
+    [allowOwnerPersistence, clearTimers, evaluateState, sourceKey],
   );
 
   const useRemoteDraft = useCallback(() => {
+    if (!allowOwnerPersistence()) return;
     const remote = remoteDraftRef.current;
     if (!remote) return;
     const data = parsePayloadData<T>(remote.payloadJson);
@@ -518,9 +584,10 @@ export function useDocumentServerDraftSync<T>(
     } catch {
       setStatus("error");
     }
-  }, [clearTimers, sourceKey]);
+  }, [allowOwnerPersistence, clearTimers, sourceKey]);
 
   const keepLocalDraft = useCallback(() => {
+    if (!allowOwnerPersistence()) return;
     const local = localDraftRef.current;
     if (!local) return;
     choiceRequiredRef.current = false;
@@ -542,9 +609,10 @@ export function useDocumentServerDraftSync<T>(
     } catch {
       setStatus("error");
     }
-  }, [ownerId, sourceKey]);
+  }, [allowOwnerPersistence, ownerId, sourceKey]);
 
   const discardRemoteDraft = useCallback(() => {
+    if (!allowOwnerPersistence()) return;
     choiceRequiredRef.current = false;
     try {
       const queued = readQueuedDocumentServerDraft(window.localStorage, sourceKey);
@@ -561,10 +629,13 @@ export function useDocumentServerDraftSync<T>(
     } catch {
       setStatus("error");
     }
-  }, [sourceKey]);
+  }, [allowOwnerPersistence, sourceKey]);
 
   useEffect(() => {
     mountedRef.current = true;
+    if (terminalLockedOwnerRef.current !== ownerId) {
+      terminalLockedOwnerRef.current = null;
+    }
     sourceGenerationRef.current += 1;
     readyRef.current = false;
     choiceRequiredRef.current = false;
@@ -578,20 +649,23 @@ export function useDocumentServerDraftSync<T>(
       setLocalPreview(createFormDraftRecoveryPreview(localDraftRef.current.data));
     }
     setStatus("loading");
-    try {
-      const nextDeviceId = getOrCreateDocumentServerDraftDeviceId(
-        window.localStorage,
-        ownerId,
-      );
-      deviceIdRef.current = nextDeviceId;
-      setDeviceId(nextDeviceId);
-    } catch {
-      deviceIdRef.current = null;
-      setDeviceId(null);
+    if (allowOwnerPersistence()) {
+      try {
+        const nextDeviceId = getOrCreateDocumentServerDraftDeviceId(
+          window.localStorage,
+          ownerId,
+        );
+        deviceIdRef.current = nextDeviceId;
+        setDeviceId(nextDeviceId);
+      } catch {
+        deviceIdRef.current = null;
+        setDeviceId(null);
+      }
+      void refresh();
     }
-    void refresh();
 
     const queueKey = createDocumentServerDraftQueueKey(sourceKey);
+    const terminalLockKey = createAccountTerminalLockStorageKey(ownerId);
     const handleOnline = () => {
       const queued = readQueuedDocumentServerDraft(window.localStorage, sourceKey);
       if (queued) void drainRef.current();
@@ -601,20 +675,30 @@ export function useDocumentServerDraftSync<T>(
       if (document.visibilityState !== "hidden") void refresh();
     };
     const handleStorage = (event: StorageEvent) => {
+      if (event.key === terminalLockKey) {
+        if (!allowOwnerPersistence()) return;
+      }
       if (event.key !== queueKey) return;
+      if (!allowOwnerPersistence()) return;
       const queued = readQueuedDocumentServerDraft(window.localStorage, sourceKey);
       evaluateState(remoteDraftRef.current, queued?.entry ?? null);
       if (queued && !isBrowserOffline()) void drainRef.current();
     };
     const handleQueueChange = (event: Event) => {
+      if (!allowOwnerPersistence()) return;
       const detail = (event as CustomEvent<{ sourceKey?: string }>).detail;
       if (detail?.sourceKey !== sourceKey) return;
       const queued = readQueuedDocumentServerDraft(window.localStorage, sourceKey);
       evaluateState(remoteDraftRef.current, queued?.entry ?? null);
     };
+    const handleTerminalLock = (event: Event) => {
+      if (!isAccountTerminalLockEventForOwner(event, ownerId)) return;
+      purgeTerminallyLockedOwner();
+    };
     window.addEventListener("online", handleOnline);
     window.addEventListener("focus", handleFocus);
     window.addEventListener("storage", handleStorage);
+    window.addEventListener(ACCOUNT_TERMINAL_LOCK_EVENT, handleTerminalLock);
     window.addEventListener(DOCUMENT_SERVER_DRAFT_QUEUE_CHANGE_EVENT, handleQueueChange);
     const poll = setInterval(() => {
       if (document.visibilityState !== "hidden" && !isBrowserOffline()) void refresh();
@@ -628,12 +712,21 @@ export function useDocumentServerDraftSync<T>(
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("focus", handleFocus);
       window.removeEventListener("storage", handleStorage);
+      window.removeEventListener(ACCOUNT_TERMINAL_LOCK_EVENT, handleTerminalLock);
       window.removeEventListener(
         DOCUMENT_SERVER_DRAFT_QUEUE_CHANGE_EVENT,
         handleQueueChange,
       );
     };
-  }, [clearTimers, evaluateState, ownerId, refresh, sourceKey]);
+  }, [
+    allowOwnerPersistence,
+    clearTimers,
+    evaluateState,
+    ownerId,
+    purgeTerminallyLockedOwner,
+    refresh,
+    sourceKey,
+  ]);
 
   const remotePreview = remoteDraft
     ? createFormDraftRecoveryPreview(parsePayloadData<unknown>(remoteDraft.payloadJson))

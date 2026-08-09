@@ -3,6 +3,10 @@ import { AuthError } from "next-auth";
 import { redirect } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { AccountCleanupBootstrap } from "@/components/auth/AccountCleanupBootstrap";
+import { OwnerlessLegacyDraftCleanup } from "@/components/auth/OwnerlessLegacyDraftCleanup";
+import { getActiveAuthSession } from "@/lib/auth-guard";
+import { accountDeletionLoginMessage } from "@/lib/account-privacy-policy";
 
 /**
  * NextAuth 에러 코드 → 사용자 친화적 메시지 매핑
@@ -27,13 +31,33 @@ function getErrorMessage(error: string | undefined): string | null {
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string; callbackUrl?: string }>;
+  searchParams: Promise<{
+    error?: string;
+    callbackUrl?: string;
+    accountDeleted?: string;
+    deviceCleanup?: string;
+  }>;
 }) {
-  const { error, callbackUrl } = await searchParams;
+  const activeSession = await getActiveAuthSession();
+  if (activeSession) {
+    redirect(
+      activeSession.user.role === "admin"
+        ? "/dashboard/admin"
+        : "/dashboard/student",
+    );
+  }
+
+  const { error, callbackUrl, accountDeleted, deviceCleanup } =
+    await searchParams;
   const errorMessage = getErrorMessage(error);
+  const deletionMessage = accountDeletionLoginMessage(
+    accountDeleted,
+    deviceCleanup,
+  );
 
   return (
     <div className="flex min-h-[100dvh] items-center justify-center bg-background p-4">
+      <AccountCleanupBootstrap />
       <div className="w-full max-w-sm rounded-lg border border-border bg-surface p-6 sm:p-8">
         {/* 헤더 */}
         <div className="space-y-2">
@@ -52,6 +76,14 @@ export default async function LoginPage({
         {errorMessage && (
           <div role="alert" className="mt-5 rounded-md border border-destructive/20 bg-destructive-muted px-4 py-3 text-sm font-medium text-destructive">
             {errorMessage}
+          </div>
+        )}
+        {deletionMessage && (
+          <div
+            role="status"
+            className="mt-5 rounded-md border border-border bg-muted/50 px-4 py-3 text-sm text-foreground"
+          >
+            {deletionMessage}
           </div>
         )}
 
@@ -113,6 +145,7 @@ export default async function LoginPage({
         <div className="mt-5 text-xs text-muted-foreground">
           <p>계정이 필요하면 담당 강사에게 문의하세요.</p>
         </div>
+        <OwnerlessLegacyDraftCleanup />
       </div>
     </div>
   );

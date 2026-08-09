@@ -5,34 +5,49 @@
  */
 import type { NextAuthConfig } from "next-auth";
 
-type UserRole = "admin" | "student";
+export const AUTH_SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
+
+type CoarseAuthorizationInput = {
+  isLoggedIn: boolean;
+  pathname: string;
+};
+
+/**
+ * Edge middleware는 DB profile 상태를 판정하지 않는다. 여기서는 보호 UI의
+ * token 존재만 빠르게 거르고, 실제 인증·role은 server active-profile gate가
+ * 매 요청 다시 확인한다.
+ */
+export function isCoarseRequestAuthorized({
+  isLoggedIn,
+  pathname,
+}: CoarseAuthorizationInput): boolean {
+  if (pathname.startsWith("/login")) return true;
+  if (pathname.startsWith("/api/calendar/")) return true;
+  if (pathname === "/api/account-cleanup/status") return true;
+  return isLoggedIn;
+}
 
 export const authConfig: NextAuthConfig = {
   providers: [],
   session: {
     strategy: "jwt",
+    maxAge: AUTH_SESSION_MAX_AGE_SECONDS,
+  },
+  jwt: {
+    maxAge: AUTH_SESSION_MAX_AGE_SECONDS,
   },
   callbacks: {
     /**
-     * 페이지 접근 권한 제어 콜백.
-     * 로그인 페이지 접근 시 이미 로그인된 사용자는 역할별 대시보드로 리다이렉트.
-     * 그 외 모든 페이지는 로그인 필수.
+     * Edge의 coarse 페이지 접근 제어 콜백.
+     * 로그인 페이지는 stale JWT와 server active-profile gate 사이 redirect loop를
+     * 피하려고 항상 통과시킨다. calendar feed는 route의 session/token gate가 담당한다.
      */
     authorized({ auth, request: { nextUrl } }) {
       const isLoggedIn = !!auth?.user;
-      const isAuthPage = nextUrl.pathname.startsWith("/login");
-
-      if (isAuthPage) {
-        if (isLoggedIn) {
-          const role: UserRole = auth.user.role ?? "student";
-          const target =
-            role === "admin" ? "/dashboard/admin" : "/dashboard/student";
-          return Response.redirect(new URL(target, nextUrl));
-        }
-        return true;
-      }
-
-      return isLoggedIn;
+      return isCoarseRequestAuthorized({
+        isLoggedIn,
+        pathname: nextUrl.pathname,
+      });
     },
     /**
      * JWT 생성/갱신 시 role을 토큰에 포함.

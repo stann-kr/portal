@@ -2,7 +2,7 @@
  * @file src/app/dashboard/admin/students/[id]/notes/page.tsx
  * @description 1:1 Private Notes (Admin View)
  */
-import { auth } from "@/auth";
+import { getActiveAuthSession } from "@/lib/auth-guard";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, BookOpen, MessageSquarePlus, PencilLine, Trash2 } from "lucide-react";
@@ -19,7 +19,7 @@ export default async function AdminStudentNotesPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const session = await auth();
+  const session = await getActiveAuthSession();
   if (session?.user?.role !== "admin") {
     redirect("/dashboard/student");
   }

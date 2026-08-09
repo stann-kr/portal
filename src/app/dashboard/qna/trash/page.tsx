@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ArrowLeft, Trash2 } from "lucide-react";
-import { auth } from "@/auth";
+import { getActiveAuthSession } from "@/lib/auth-guard";
 import { getTrashedQnaThreads } from "@/lib/actions/qna";
 import { QnaThreadLifecycleActions } from "@/components/qna/QnaThreadLifecycleActions";
 import { QNA_STATUS_LABELS } from "@/lib/qna-status";
@@ -9,7 +9,7 @@ import { QNA_STATUS_LABELS } from "@/lib/qna-status";
 export const metadata = { title: "Q&A 휴지통" };
 
 export default async function QnaTrashPage() {
-  const session = await auth();
+  const session = await getActiveAuthSession();
   if (!session?.user?.id) redirect("/login");
   const threads = await getTrashedQnaThreads();
   const isAdmin = session.user.role === "admin";

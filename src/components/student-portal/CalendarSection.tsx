@@ -20,6 +20,8 @@ import { SlidePanel } from "./SlidePanel";
 import { NoteSlideForm } from "@/components/notes/NoteSlideForm";
 import { QnaSlideForm } from "@/components/qna/QnaSlideForm";
 import type { DiggingColumnType } from "@/db/schema";
+import { assertAccountOwnerMayPersist } from "@/lib/account-terminal-lock";
+import { createAccountCalendarTabStorageKey } from "@/lib/local-owner-keys";
 
 // ── 타입 ──────────────────────────────────────────
 
@@ -88,7 +90,7 @@ export function CalendarSection({
   const [noteFormBusy, setNoteFormBusy] = useState(false);
   const [qnaFormBusy, setQnaFormBusy] = useState(false);
   const [activeTab, setActiveTab] = useState<string>("calendar");
-  const calendarTabStorageKey = `portal:calendarTab:${encodeURIComponent(actorId)}`;
+  const calendarTabStorageKey = createAccountCalendarTabStorageKey(actorId);
   const isStudentWorkspace = actorId === studentId;
   const workspaceSection = isStudentWorkspace ? "workspace" : "schedule";
   const workspaceReturnTo = isStudentWorkspace
@@ -134,6 +136,7 @@ export function CalendarSection({
   const handleTabChange = (value: string) => {
     setActiveTab(value);
     try {
+      assertAccountOwnerMayPersist(localStorage, actorId);
       localStorage.setItem(calendarTabStorageKey, value);
     } catch {
       /* localStorage 접근 불가 환경 무시 */
