@@ -4,7 +4,7 @@ import type { DocumentOperationType, QnaStatus } from "@/db/schema";
 import { deriveCreationResourceId } from "@/lib/creation-operation";
 
 export const QNA_BASE_REVISION_FIELD = "baseRevision";
-export const QNA_REQUEST_HASH_VERSION = 1;
+export const QNA_REQUEST_HASH_VERSION = 2;
 export const QNA_EVENT_HASH_VERSION = 1;
 export const QNA_TRASH_RETENTION_SECONDS = 30 * 24 * 60 * 60;
 export const QNA_MAX_CONTENT_BYTES = 800 * 1024;
@@ -37,6 +37,7 @@ export type QnaCanonicalRequest = {
   replyAuthorId?: string | null;
   contentHtml?: string | null;
   attachmentUrl?: string | null;
+  attachmentObjectId?: string | null;
 };
 
 function sha256Hex(value: string): string {
@@ -67,11 +68,34 @@ function createQnaRequestHashV1(request: QnaCanonicalRequest): string {
   );
 }
 
+function createQnaRequestHashV2(request: QnaCanonicalRequest): string {
+  return sha256Hex(
+    JSON.stringify([
+      "portal-qna-thread-request",
+      2,
+      request.operationType,
+      "QNA_THREAD",
+      request.resourceId,
+      request.subjectId,
+      request.baseRevision,
+      request.title ?? null,
+      request.status ?? null,
+      request.replyId ?? null,
+      request.replyAuthorId ?? null,
+      request.contentHtml ?? null,
+      request.attachmentObjectId ? null : (request.attachmentUrl ?? null),
+      request.attachmentObjectId ?? null,
+    ]),
+  );
+}
+
 export function createQnaRequestHashForVersion(
   request: QnaCanonicalRequest,
   version: number,
 ): string | null {
-  return version === 1 ? createQnaRequestHashV1(request) : null;
+  if (version === 1) return createQnaRequestHashV1(request);
+  if (version === 2) return createQnaRequestHashV2(request);
+  return null;
 }
 
 export function createQnaRequestHash(request: QnaCanonicalRequest): string {

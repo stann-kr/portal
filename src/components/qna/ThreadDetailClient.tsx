@@ -38,6 +38,7 @@ import {
 } from "@/lib/creation-operation";
 import { CreationConflictActions } from "@/components/editor/CreationConflictActions";
 import { QnaThreadLifecycleActions } from "@/components/qna/QnaThreadLifecycleActions";
+import { abandonMediaUpload } from "@/lib/actions/upload";
 
 type Reply = {
   id: string;
@@ -53,6 +54,7 @@ type QnaReplyDraft = {
   operationId?: string;
   contentHtml: string;
   attachmentUrl: string;
+  attachmentObjectId?: string;
 };
 
 interface ThreadDetailClientProps {
@@ -92,6 +94,7 @@ export function ThreadDetailClient({
     commitLatestContentHtml,
   } = useDeferredEditorContent("");
   const [attachmentUrl, setAttachmentUrl] = useState("");
+  const [attachmentObjectId, setAttachmentObjectId] = useState("");
   const [operationId, setOperationId] = useState("");
   const [isUploading, setIsUploading] = useState(false);
   const [editorKey, setEditorKey] = useState(0);
@@ -139,12 +142,14 @@ export function ThreadDetailClient({
       );
       setContentHtml(d.contentHtml ?? "");
       setAttachmentUrl(d.attachmentUrl ?? "");
+      setAttachmentObjectId(d.attachmentObjectId ?? "");
     },
     {
       onReset: () => {
         setOperationId(createCreationOperationId());
         setContentHtml("");
         setAttachmentUrl("");
+        setAttachmentObjectId("");
         setEditorKey((key) => key + 1);
       },
     },
@@ -161,9 +166,12 @@ export function ThreadDetailClient({
         operationId,
         contentHtml: readLatestContentHtml(),
         attachmentUrl,
+        attachmentObjectId,
       }),
       isEmpty: (draft) =>
-        isRichTextEmpty(draft.contentHtml) && !draft.attachmentUrl,
+        isRichTextEmpty(draft.contentHtml) &&
+        !draft.attachmentUrl &&
+        !draft.attachmentObjectId,
       clear,
       save,
       flush,
@@ -173,7 +181,10 @@ export function ThreadDetailClient({
   useEffect(() => {
     if (!loaded) return;
     const latestContentHtml = readLatestContentHtml();
-    const isEmpty = isRichTextEmpty(latestContentHtml) && !attachmentUrl;
+    const isEmpty =
+      isRichTextEmpty(latestContentHtml) &&
+      !attachmentUrl &&
+      !attachmentObjectId;
     if (isEmpty) {
       clear();
       return;
@@ -182,11 +193,12 @@ export function ThreadDetailClient({
     save({
       operationId,
       attachmentUrl,
+      attachmentObjectId,
       get contentHtml() {
         return readLatestContentHtml();
       },
     });
-  }, [loaded, contentHtml, attachmentUrl, operationId, readLatestContentHtml, save, clear]);
+  }, [loaded, contentHtml, attachmentUrl, attachmentObjectId, operationId, readLatestContentHtml, save, clear]);
 
   // 답변 등록 성공 시 draft 삭제 + 폼 초기화 (에디터 remount)
   useEffect(() => {
@@ -198,12 +210,14 @@ export function ThreadDetailClient({
           operationId,
           contentHtml,
           attachmentUrl,
+          attachmentObjectId,
         },
       });
       submittedReplyRef.current = null;
       setOperationId(createCreationOperationId());
       setContentHtml("");
       setAttachmentUrl("");
+      setAttachmentObjectId("");
       setEditorKey((k) => k + 1);
       if (replyState.currentRevision) setCurrentVersion(replyState.currentRevision);
     }
@@ -218,6 +232,7 @@ export function ThreadDetailClient({
   const hasReplyDraft =
     !isRichTextEmpty(contentHtml) ||
     Boolean(attachmentUrl) ||
+    Boolean(attachmentObjectId) ||
     recoveries.length > 0 ||
     draftStatus !== "idle";
   const showReplyComposer = currentStatus !== "CLOSED" || hasReplyDraft;
@@ -387,6 +402,7 @@ export function ThreadDetailClient({
               operationId,
               contentHtml: latestContentHtml,
               attachmentUrl,
+              attachmentObjectId,
             };
             save(submittedReply);
             flush();
@@ -415,7 +431,14 @@ export function ThreadDetailClient({
               existingLabel="현재 답변 새로고침"
               separateLabel="별도 답변으로 등록"
               onOpenExisting={() => router.refresh()}
-              onSeparate={() => setOperationId(createCreationOperationId())}
+              onSeparate={() => {
+                if (attachmentObjectId) {
+                  void abandonMediaUpload(attachmentObjectId).catch(() => undefined);
+                }
+                setAttachmentUrl("");
+                setAttachmentObjectId("");
+                setOperationId(createCreationOperationId());
+              }}
               disabled={isReplyFormBusy}
             />
           ) : null}
@@ -434,6 +457,7 @@ export function ThreadDetailClient({
                 save({
                   operationId,
                   attachmentUrl,
+                  attachmentObjectId,
                   get contentHtml() {
                     return reader();
                   },
@@ -463,7 +487,12 @@ export function ThreadDetailClient({
           )}
           <AttachmentField
             value={attachmentUrl}
-            onChange={setAttachmentUrl}
+            mediaObjectId={attachmentObjectId}
+            draftOperationId={operationId}
+            onChange={(upload) => {
+              setAttachmentUrl(upload?.deliveryUrl ?? "");
+              setAttachmentObjectId(upload?.mediaObjectId ?? "");
+            }}
             disabled={!loaded || currentStatus === "CLOSED" || isReplyFormBusy}
             onUploadingChange={setIsUploading}
           />

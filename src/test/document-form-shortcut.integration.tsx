@@ -509,6 +509,7 @@ test("새 게시물 Cmd/Ctrl+S는 최신 본문을 로컬 저장하고 게시하
     contentHtml: string;
     isPinned: boolean;
     mediaUrl: string;
+    mediaObjectId: string;
     operationId: string;
     title: string;
   }>(raw)?.data;
@@ -522,6 +523,7 @@ test("새 게시물 Cmd/Ctrl+S는 최신 본문을 로컬 저장하고 게시하
     title: "단축키 게시물",
     contentHtml: "<p>publish 전 최신 게시물 본문</p>",
     mediaUrl: "",
+    mediaObjectId: "",
   });
 });
 
@@ -556,6 +558,7 @@ test("새 Q&A 페이지 Cmd/Ctrl+S는 최신 본문을 로컬 저장하고 등�
   assert.ok(raw);
   const stored = parseFormDraft<{
     attachmentUrl: string;
+    attachmentObjectId: string;
     contentHtml: string;
     operationId: string;
     title: string;
@@ -566,6 +569,7 @@ test("새 Q&A 페이지 Cmd/Ctrl+S는 최신 본문을 로컬 저장하고 등�
     title: "단축키 질문",
     contentHtml: "<p>publish 전 최신 질문 본문</p>",
     attachmentUrl: "",
+    attachmentObjectId: "",
   });
 });
 
@@ -605,6 +609,7 @@ test("Q&A 슬라이드 Cmd/Ctrl+S는 최신 본문을 로컬 저장하고 등록
   assert.ok(raw);
   const stored = parseFormDraft<{
     attachmentUrl: string;
+    attachmentObjectId: string;
     contentHtml: string;
     operationId: string;
     title: string;
@@ -615,6 +620,7 @@ test("Q&A 슬라이드 Cmd/Ctrl+S는 최신 본문을 로컬 저장하고 등록
     title: "슬라이드 단축키 질문",
     contentHtml: "<p>publish 전 슬라이드 본문</p>",
     attachmentUrl: "",
+    attachmentObjectId: "",
   });
 });
 
@@ -654,6 +660,7 @@ test("Q&A 답변 Cmd/Ctrl+S는 최신 본문을 로컬 저장하고 등록하지
   assert.ok(raw);
   const stored = parseFormDraft<{
     attachmentUrl: string;
+    attachmentObjectId: string;
     contentHtml: string;
     operationId: string;
   }>(raw)?.data;
@@ -662,6 +669,7 @@ test("Q&A 답변 Cmd/Ctrl+S는 최신 본문을 로컬 저장하고 등록하지
     operationId: stored.operationId,
     contentHtml: "<p>publish 전 최신 답변 본문</p>",
     attachmentUrl: "",
+    attachmentObjectId: "",
   });
 });
 

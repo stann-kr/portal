@@ -30,6 +30,10 @@ import {
   type QnaCanonicalRequest,
 } from "@/lib/qna-continuity";
 import { deriveDocumentOperationRecordId } from "@/lib/private-note-continuity";
+import {
+  mediaClaimStatements,
+  qnaMediaPurgeStatements,
+} from "@/lib/media-lifecycle-atomic";
 
 type QnaThreadHead = {
   id: string;
@@ -82,6 +86,7 @@ export type CreateQnaThreadWrite = {
   title: string;
   contentHtml: string;
   attachmentUrl: string | null;
+  attachmentObjectId: string | null;
   now: Date;
 };
 
@@ -92,6 +97,7 @@ export type CreateQnaReplyWrite = {
   operationId: string;
   contentHtml: string;
   attachmentUrl: string | null;
+  attachmentObjectId: string | null;
   now: Date;
 };
 
@@ -141,6 +147,7 @@ async function findReply(context: DbContext, replyId: string) {
       authorId: qnaReplies.authorId,
       contentHtml: qnaReplies.contentHtml,
       attachmentUrl: qnaReplies.attachmentUrl,
+      attachmentObjectId: qnaReplies.attachmentObjectId,
     })
     .from(qnaReplies)
     .where(eq(qnaReplies.id, replyId))
@@ -280,6 +287,94 @@ async function resolveQnaReceiptReplay(
   };
 }
 
+function createQnaThreadCreateRequest(
+  write: Omit<CreateQnaThreadWrite, "now">,
+): QnaCanonicalRequest {
+  return {
+    operationType: "CREATE",
+    resourceId: write.threadId,
+    subjectId: write.actor.id,
+    baseRevision: null,
+    title: write.title,
+    status: "OPEN",
+    replyId: write.replyId,
+    replyAuthorId: write.actor.id,
+    contentHtml: write.contentHtml,
+    attachmentUrl: write.attachmentUrl,
+    attachmentObjectId: write.attachmentObjectId,
+  };
+}
+
+async function createQnaReplyRequest(
+  context: DbContext,
+  write: Omit<CreateQnaReplyWrite, "now">,
+): Promise<QnaCanonicalRequest> {
+  const initialThread = await findThread(context, write.threadId);
+  const initialTombstone = initialThread
+    ? null
+    : await findDocumentTombstone(context, "QNA_THREAD", write.threadId);
+  return {
+    operationType: "APPEND_REPLY",
+    resourceId: write.threadId,
+    subjectId: initialThread?.studentId ?? initialTombstone?.subjectId ?? "unknown",
+    baseRevision: null,
+    replyId: write.replyId,
+    replyAuthorId: write.actor.id,
+    contentHtml: write.contentHtml,
+    attachmentUrl: write.attachmentUrl,
+    attachmentObjectId: write.attachmentObjectId,
+  };
+}
+
+async function isLegacyQnaReplay(
+  context: DbContext,
+  input: {
+    actor: DocumentAtomicActor;
+    operationId: string;
+    operationType: "CREATE" | "APPEND_REPLY";
+    request: QnaCanonicalRequest;
+    replyId: string;
+  },
+): Promise<boolean> {
+  const receipt = await findDocumentOperationReceipt(
+    context,
+    input.actor.id,
+    input.operationId,
+  );
+  if (receipt?.requestHashVersion !== 1) return false;
+
+  const replay = await resolveQnaReceiptReplay(context, input);
+  return Boolean(replay?.ok && replay.replayed);
+}
+
+/** v1 영수증과 정확히 일치하는 URL-only Q&A 생성 재실행만 허용한다. */
+export async function preflightLegacyQnaThreadCreateReplay(
+  context: DbContext,
+  write: Omit<CreateQnaThreadWrite, "now">,
+): Promise<boolean> {
+  return isLegacyQnaReplay(context, {
+    actor: write.actor,
+    operationId: write.operationId,
+    operationType: "CREATE",
+    request: createQnaThreadCreateRequest(write),
+    replyId: write.replyId,
+  });
+}
+
+/** v1 영수증과 정확히 일치하는 URL-only Q&A 답변 재실행만 허용한다. */
+export async function preflightLegacyQnaReplyCreateReplay(
+  context: DbContext,
+  write: Omit<CreateQnaReplyWrite, "now">,
+): Promise<boolean> {
+  return isLegacyQnaReplay(context, {
+    actor: write.actor,
+    operationId: write.operationId,
+    operationType: "APPEND_REPLY",
+    request: await createQnaReplyRequest(context, write),
+    replyId: write.replyId,
+  });
+}
+
 async function classifyQnaMutation(
   context: DbContext,
   actor: DocumentAtomicActor,
@@ -318,18 +413,7 @@ export async function createQnaThreadAtomically(
   context: DbContext,
   write: CreateQnaThreadWrite,
 ): Promise<QnaMutationResult> {
-  const request: QnaCanonicalRequest = {
-    operationType: "CREATE",
-    resourceId: write.threadId,
-    subjectId: write.actor.id,
-    baseRevision: null,
-    title: write.title,
-    status: "OPEN",
-    replyId: write.replyId,
-    replyAuthorId: write.actor.id,
-    contentHtml: write.contentHtml,
-    attachmentUrl: write.attachmentUrl,
-  };
+  const request = createQnaThreadCreateRequest(write);
   const requestHash = createQnaRequestHash(request);
   const replay = await resolveQnaReceiptReplay(context, {
     actor: write.actor,
@@ -362,7 +446,8 @@ export async function createQnaThreadAtomically(
         existingReply.threadId === write.threadId &&
         existingReply.authorId === write.actor.id &&
         existingReply.contentHtml === write.contentHtml &&
-        existingReply.attachmentUrl === write.attachmentUrl,
+        existingReply.attachmentUrl === write.attachmentUrl &&
+        existingReply.attachmentObjectId === write.attachmentObjectId,
     );
     if (!sameSubmission || !existingThread) {
       return {
@@ -388,6 +473,7 @@ export async function createQnaThreadAtomically(
             WHERE thread.id = ? AND thread.student_id = ? AND thread.deleted_at IS NULL
               AND thread.title = ? AND reply.author_id = ?
               AND reply.content_html = ? AND reply.attachment_url IS ?
+              AND reply.attachment_object_id IS ?
           `,
           params: [
             recordId,
@@ -403,6 +489,7 @@ export async function createQnaThreadAtomically(
             write.actor.id,
             write.contentHtml,
             write.attachmentUrl,
+            write.attachmentObjectId,
           ],
         },
         DOCUMENT_CONDITIONAL_WRITE_SENTINEL,
@@ -451,6 +538,15 @@ export async function createQnaThreadAtomically(
         resultRevision: 1,
         now: write.now,
       }),
+      ...mediaClaimStatements({
+        mediaObjectId: write.attachmentObjectId,
+        ownerId: write.actor.id,
+        purpose: "QNA_ATTACHMENT",
+        draftOperationId: write.operationId,
+        resourceType: "QNA_REPLY",
+        resourceId: write.replyId,
+        now: write.now,
+      }),
       {
         query: `
           INSERT INTO qna_threads (
@@ -474,8 +570,9 @@ export async function createQnaThreadAtomically(
       {
         query: `
           INSERT INTO qna_replies (
-            id, thread_id, author_id, content_html, attachment_url, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?)
+            id, thread_id, author_id, content_html, attachment_url,
+            attachment_object_id, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)
         `,
         params: [
           write.replyId,
@@ -483,6 +580,7 @@ export async function createQnaThreadAtomically(
           write.actor.id,
           write.contentHtml,
           write.attachmentUrl,
+          write.attachmentObjectId,
           documentEpochSeconds(write.now),
         ],
       },
@@ -532,21 +630,7 @@ export async function createQnaReplyAtomically(
   context: DbContext,
   write: CreateQnaReplyWrite,
 ): Promise<QnaMutationResult> {
-  const initialThread = await findThread(context, write.threadId);
-  const initialTombstone = initialThread
-    ? null
-    : await findDocumentTombstone(context, "QNA_THREAD", write.threadId);
-  const subjectId = initialThread?.studentId ?? initialTombstone?.subjectId ?? "unknown";
-  const request: QnaCanonicalRequest = {
-    operationType: "APPEND_REPLY",
-    resourceId: write.threadId,
-    subjectId,
-    baseRevision: null,
-    replyId: write.replyId,
-    replyAuthorId: write.actor.id,
-    contentHtml: write.contentHtml,
-    attachmentUrl: write.attachmentUrl,
-  };
+  const request = await createQnaReplyRequest(context, write);
   const requestHash = createQnaRequestHash(request);
   const replay = await resolveQnaReceiptReplay(context, {
     actor: write.actor,
@@ -563,7 +647,8 @@ export async function createQnaReplyAtomically(
       existingReply.threadId !== write.threadId ||
       existingReply.authorId !== write.actor.id ||
       existingReply.contentHtml !== write.contentHtml ||
-      existingReply.attachmentUrl !== write.attachmentUrl
+      existingReply.attachmentUrl !== write.attachmentUrl ||
+      existingReply.attachmentObjectId !== write.attachmentObjectId
     ) {
       return {
         ok: false,
@@ -626,11 +711,21 @@ export async function createQnaReplyAtomically(
           ],
         },
         DOCUMENT_CONDITIONAL_WRITE_SENTINEL,
+        ...mediaClaimStatements({
+          mediaObjectId: write.attachmentObjectId,
+          ownerId: write.actor.id,
+          purpose: "QNA_ATTACHMENT",
+          draftOperationId: write.operationId,
+          resourceType: "QNA_REPLY",
+          resourceId: write.replyId,
+          now: write.now,
+        }),
         {
           query: `
             INSERT INTO qna_replies (
-              id, thread_id, author_id, content_html, attachment_url, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?)
+              id, thread_id, author_id, content_html, attachment_url,
+              attachment_object_id, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
           `,
           params: [
             write.replyId,
@@ -638,6 +733,7 @@ export async function createQnaReplyAtomically(
             write.actor.id,
             write.contentHtml,
             write.attachmentUrl,
+            write.attachmentObjectId,
             documentEpochSeconds(write.now),
           ],
         },
@@ -1067,6 +1163,7 @@ export async function purgeQnaThreadAtomically(
         ],
       },
       DOCUMENT_CONDITIONAL_WRITE_SENTINEL,
+      ...qnaMediaPurgeStatements({ threadId: write.threadId, now: write.now }),
       {
         query: `
           DELETE FROM qna_threads

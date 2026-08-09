@@ -6,6 +6,9 @@
 
 ### 변경 요약
 
+- 게시물 오디오와 1:1 Q&A 첨부를 D1 media registry에 등록하고, 문서 생성과 object claim, 관리자 영구 삭제와 R2 삭제 outbox를 같은 원자 경계로 연결했다. 신규 첨부는 공개 object URL 대신 권한을 다시 확인하는 `/api/media/` 경로로 전달한다.
+- 업로드는 사용자에게 서명한 staging key와 비공개 final key를 분리한다. R2 object의 Content-Type metadata·크기·ETag 검증, one-shot PUT, 봉인 lease, 만료·응답 유실 뒤 late Copy 재삭제, owner별 quota와 지수 backoff cleanup을 적용했다.
+- 새 `0011` migration은 media registry·삭제 outbox와 게시물/Q&A object reference를 추가하고 기존 URL 데이터는 그대로 보존한다. migration doctor는 populated `0010→0011` upgrade, 상태 전이·outbox·URL 역참조, `INSERT OR REPLACE` 우회 차단을 격리 DB에서 검증한다. persistent local·remote D1과 R2 운영 설정은 아직 적용하지 않았다.
 - 커뮤니티 게시물에 version 기반 편집·고정 변경, 전체 스냅샷 이력, 30일 휴지통과 과거 버전 복원을 추가했다. 휴지통 이동·복원 동안 댓글을 보존하고, 만료 뒤 관리자 영구 삭제 시 최소 operation 기록과 tombstone이 늦은 요청의 부활을 막는다.
 - 1:1 Q&A에 질문·답변·상태·휴지통 변경의 불변 이벤트 이력을 추가했다. 질문을 휴지통으로 옮겨도 답변을 보존하며 복원할 수 있고, 종료·휴지통 상태의 새 답변을 서버 원자 경계에서 차단한다.
 - 게시물과 Q&A의 상세 화면에서 변경 이력을 확인하고 휴지통 항목을 복원할 수 있게 했다. 영구 삭제는 관리자, 30일 만료, 현재 version 일치를 모두 요구한다.

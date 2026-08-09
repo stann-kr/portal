@@ -34,7 +34,7 @@ OpenNext → Cloudflare Worker
 | Local draft account boundary | `src/components/auth/`, `src/lib/local-document-drafts.ts`, `src/lib/local-draft-continuity-client.ts` | 기기 초안 목록·명시 폐기, 로그아웃·계정 전환 정리 |
 | Server draft continuity | `src/lib/actions/documentDrafts.ts`, `src/lib/hooks/useSyncedFormDraft.ts`, `src/components/editor/ServerDraftStatus.tsx` | 사용자·문서별 최신본, CAS·재전송, 오프라인 queue와 명시적 다중 기기 선택 |
 | Document lifecycle | `src/lib/document-lifecycle-atomic.ts`, `src/lib/post-atomic.ts`, `src/lib/qna-atomic.ts` | 게시물·Q&A version CAS, 불변 이력·receipt, 휴지통·복원·purge·tombstone 원자 경계 |
-| Storage | `src/lib/r2.ts`, `src/lib/actions/upload.ts` | R2 presigned upload |
+| Storage | `src/lib/r2.ts`, `src/lib/media-lifecycle-atomic.ts`, `src/lib/actions/upload.ts`, `src/app/api/media/` | staging presigned upload, D1 registry·삭제 outbox, 인증 delivery |
 | Calendar feed | `src/app/api/calendar/[studentId]/route.ts`, `src/lib/calendar-feed.ts` | session·서명 token 접근 |
 | Deploy | `open-next.config.ts`, `wrangler.toml` | Worker, D1, R2, asset binding |
 
@@ -75,6 +75,7 @@ OpenNext → Cloudflare Worker
 | `/community/**` | 커뮤니티 목록·작성·상세 |
 | `/dashboard/calendar` | 공유 캘린더 |
 | `/api/calendar/[studentId]` | 인증·서명 token 기반 `.ics` feed |
+| `/api/media/[mediaObjectId]` | owner·게시물 audience·Q&A 참여자 권한을 재검증하는 private media delivery |
 
 `/dashboard/student/assignments`, `curriculum`, `digging`, `notes` 목록 경로는 원페이지 포털로 redirect한다.
 
@@ -95,6 +96,7 @@ OpenNext → Cloudflare Worker
 - 콘텐츠: `categories`, `posts`, `post_revisions`, `comments`
 - 개인 학습 기록: `private_notes`, `private_note_revisions`, `calendar_events`
 - 문서 연속성: `document_operation_ledger`, `document_tombstones`, `document_batch_abort_guard`, `document_server_drafts`, `document_server_draft_operations`
+- 미디어 수명주기: `media_objects`, `media_deletion_outbox`
 - 디깅: `digging_columns`, `digging_tracks`
 - Q&A: `qna_threads`, `qna_thread_events`, `qna_replies`
 
@@ -106,7 +108,9 @@ Cloudflare binding:
 | `BUCKET` | R2 bucket | 미디어 저장 |
 | `ASSETS` | OpenNext assets | 정적 asset |
 
-Migration SQL은 `drizzle/`, Drizzle metadata는 `drizzle/meta/`에 둔다. Wrangler는 SQL 파일명과 D1의 적용 이력을 기준으로 migration을 실행하고, Drizzle metadata는 다음 schema diff 생성 기준으로 사용한다. SQL·journal·snapshot은 `0000~0010`까지 대응한다. `npm run db:check`는 empty replay와 current schema/latest snapshot의 column·FK·index뿐 아니라 문서 연속성 CHECK·trigger, 불변·부활 방지 부정 probe, `0007` fixture upgrade·inbound FK preflight, `0008→0009` account cascade와 기존 게시물·댓글·Q&A·답변이 있는 `0009→0010` upgrade를 검사한다. 로컬 persistent D1에는 `0009`까지 적용했고 `0010`과 원격 적용 이력은 별도 승인 전 추정하지 않는다.
+Migration SQL은 `drizzle/`, Drizzle metadata는 `drizzle/meta/`에 둔다. Wrangler는 SQL 파일명과 D1의 적용 이력을 기준으로 migration을 실행하고, Drizzle metadata는 다음 schema diff 생성 기준으로 사용한다. SQL·journal·snapshot은 `0000~0011`까지 대응한다. `npm run db:check`는 empty replay와 current schema/latest snapshot의 column·FK·index뿐 아니라 문서·미디어 CHECK·trigger, 불변·부활·교체 우회 방지 probe, `0007` fixture upgrade·inbound FK preflight, `0008→0009` account cascade, 기존 게시물·Q&A의 `0009→0010`, 기존 URL을 보존하는 `0010→0011` populated upgrade를 검사한다. 로컬 persistent D1에는 `0009`까지 적용했고 `0010`, `0011`과 원격 적용 이력은 별도 승인 전 추정하지 않는다.
+
+신규 업로드는 사용자에게 노출된 `media-upload/` staging key로만 PUT하고, 서버가 size·Content-Type metadata·ETag를 확인한 뒤 사용자에게 공개되지 않은 별도 `media/` final key로 봉인한다. D1의 `SEALING` lease가 봉인과 삭제를 직렬화하며, 결과를 잃은 Copy는 복구 유예 뒤 final 삭제 outbox가 다시 정리한다. 문서에는 object ID와 `/api/media/{id}`만 저장하고, 게시물과 Q&A의 원자 생성·purge transaction이 registry claim과 R2 삭제 의도를 함께 commit한다. R2 삭제는 lease·지수 backoff를 사용하는 durable outbox로 재시도한다.
 
 ## 인증과 권한
 
@@ -159,9 +163,8 @@ Migration SQL은 `drizzle/`, Drizzle metadata는 `drizzle/meta/`에 둔다. Wran
 | `R2_ACCESS_KEY_ID` | R2 access key | secret |
 | `R2_SECRET_ACCESS_KEY` | R2 secret key | secret |
 | `R2_BUCKET_NAME` | upload bucket 이름 | 환경별 설정 |
-| `R2_PUBLIC_URL` | 공개 media base URL | 환경별 설정 |
 
-샘플 계약은 `.env.example`에 두고 실제 값은 commit하지 않는다.
+샘플 계약은 `.env.example`에 두고 실제 값은 commit하지 않는다. 신규 managed media는 public bucket URL을 runtime 설정으로 사용하지 않는다. 기존 URL의 trusted base는 배포 전 inventory·backfill 입력으로만 별도 관리한다.
 
 ## 테스트와 검증
 
@@ -176,16 +179,17 @@ npm run build:worker
 npm audit --omit=dev --audit-level=moderate
 ```
 
-현재 migration consistency와 `0007` upgrade, `0008→0009` account cascade, `0009→0010` 게시물·Q&A baseline 이관, CHECK·trigger semantic probe, 개발용 관리자 seed의 환경·입력 경계, auth guard의 session·role·ownership, calendar token 변조·대상 불일치, HTML sanitize·YouTube payload, local draft shadow·retention·제출 tombstone·미래 version 보호와 계정 경계, 서버 초안 queue·CAS·만료·exact retry가 자동화되어 있다. OS 임시 영역의 격리 D1으로 노트·게시물·Q&A 수명주기와 서버 초안의 원자 저장·폐기·강제 실패 rollback, exact replay, 하위 댓글·답변 보존과 tombstone 부활 방지를 검증한다. DOM 격리 환경에서는 로컬 복구와 실제 작성 form, 계정 정리 뒤 pending 재생성 차단, 오프라인 재시도, 다중 기기 비교·명시 선택과 2단계 서버본 폐기를 검증한다. 실제 브라우저 E2E와 production migration·deploy는 별도 범위다.
+현재 migration consistency와 `0007` upgrade, `0008→0009` account cascade, `0009→0010` 게시물·Q&A baseline, `0010→0011` media upgrade, CHECK·trigger semantic probe, 개발용 관리자 seed의 환경·입력 경계, auth guard의 session·role·ownership, calendar token 변조·대상 불일치, HTML sanitize·YouTube payload, local draft와 서버 초안 연속성이 자동화되어 있다. 격리 D1은 노트·게시물·Q&A와 미디어 claim·봉인·purge의 원자 rollback, exact replay, late Copy 복구, outbox lease·재시도, private delivery audience와 byte range를 검증한다. DOM 격리 환경에서는 로컬 복구와 실제 작성 form, 계정 정리, 오프라인 재시도, 다중 기기 선택과 미디어 ID 전달을 검증한다. 실제 브라우저 E2E와 production migration·R2 설정·deploy는 별도 범위다.
 
 UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 시스템](./DESIGN_SYSTEM.md)을 기준으로 한다. 상태 registry는 label, semantic tone, icon key가 서로 어긋나지 않도록 단위 테스트로 보호한다.
 
 | 품질 경계 | 현재 자동화 | 다음 보강 |
 |---|---|---|
-| Migration | SQL·journal·snapshot·current schema empty replay, CHECK·trigger, `0007` upgrade·inbound FK preflight, `0008→0009` cascade, `0009→0010` 게시물·Q&A baseline upgrade | persistent local `0010`과 remote 적용 이력은 별도 승인 뒤 점검 |
+| Migration | SQL·journal·snapshot·current schema empty replay, CHECK·trigger, `0007` upgrade·inbound FK preflight, `0008→0009` cascade, `0009→0010` 게시물·Q&A, `0010→0011` media upgrade | persistent local `0010~0011`과 remote 적용 이력은 별도 승인 뒤 점검 |
 | 개발 credential | development/opt-in/env/input binding 단위 테스트 | 실제 local seed는 데이터 변경 작업으로 분리 |
 | 인증·권한 | 미인증·role·ownership 허용/거부 단위 테스트, Q&A 격리 D1 권한 회귀 | 다른 주요 server action의 실제 query·mutation 경계 테스트 |
-| 입력·콘텐츠 | script·event handler·위험 protocol XSS payload 테스트 | upload MIME·size 정책 테스트 |
+| 입력·콘텐츠 | script·event handler·위험 protocol XSS, upload MIME·size·quota·opaque key 정책 | 실제 R2 CORS·대용량 PUT smoke |
+| 미디어 | staging/final key 분리, SEALING lease·late Copy 복구, claim/purge rollback, outbox 재시도·private RBAC·Range 자동 테스트 | private bucket·staging lifecycle·주기 runner와 legacy inventory 운영 검증 |
 | 문서 연속성 | local shadow·5초 checkpoint·복구·제출 경쟁, 사용자·문서별 서버 최신본·CAS·offline queue·다중 기기 명시 선택 DOM 통합, 노트·게시물·Q&A revision/event·trash·purge·anti-replay 격리 D1 통합 | 실제 브라우저 reload·offline·navigation·강제 종료·대형 문서 E2E |
 | UI 상태 | status registry 단위 테스트, loading/error route, semantic landmark·control 정적 검토 | keyboard interaction component 테스트 |
 
@@ -216,9 +220,9 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 
 - runtime dependency audit은 현재 0건이다. 상위 의존성이 보안 패치 전 하위 의존성을 고정하는 구간은 `package.json` override로 제한하며, upstream stable이 해당 버전을 채택하면 override를 제거해야 한다.
 - 개발 도구 전체 audit에는 Drizzle Kit의 구형 esbuild loader 체인에서 발생하는 moderate 권고가 남아 있다. 현재 npm 제안은 호환되지 않는 구버전 downgrade이므로 upstream 패치를 추적한다.
-- migration SQL과 `drizzle/meta` 생성 이력은 `0010`까지 대응하고 격리 D1에서 전체 replay와 `0009→0010` upgrade를 검사한다. persistent local D1은 `0009`까지 적용됐으며 `0010`과 remote 적용 이력은 별도 승인 전 추정하지 않는다.
+- migration SQL과 `drizzle/meta` 생성 이력은 `0011`까지 대응하고 격리 D1에서 전체 replay, `0009→0010`, populated `0010→0011` upgrade를 검사한다. persistent local D1은 `0009`까지 적용됐으며 `0010`, `0011`과 remote 적용 이력은 별도 승인 전 추정하지 않는다.
 - 대표 문서 server action과 draft 생명주기의 격리 integration test는 있으나 실제 브라우저 reload·offline·navigation·delete/restore E2E는 없다.
-- 게시물 purge는 DB의 본문·revision·댓글·미디어 URL 참조를 제거하지만 R2 객체 삭제·retention을 함께 처리하지 않는다. 업로드 객체 key를 추적하는 별도 media lifecycle과 고아 객체 정리가 필요하다.
+- 신규 managed media의 registry·문서 claim·purge 삭제 outbox와 인증 delivery는 구현했다. 배포 전에는 기존 공개 URL inventory/backfill, 신규 private bucket 또는 legacy proxy 분리, `media-upload/` prefix lifecycle, 주기 cleanup runner·알람, final prefix와 registry의 reconciliation을 운영 계약으로 확정해야 한다. Copy timeout·lease·recovery grace는 원격 side effect의 절대 완료 시각을 보장하지 않으므로 completed outbox 뒤 발견된 final object도 repair delete해야 한다. 기존 외부 URL과 inventory에 없는 legacy R2 object는 자동 삭제 대상으로 추정하지 않는다.
 - 큰 문서의 전체 HTML·payload 서명은 매 입력이 아니라 지연된 flush·submit 경계에서 revision당 한 번만 만들고, 연속 입력은 최대 5초마다 최신본을 checkpoint한다. 개인 노트는 저장 HTML 800 KiB와 logical history 100 MiB 정책을 적용한다. 다만 실제 브라우저의 100 KiB·500 KiB·1 MiB frame budget과 autosave·복구 latency를 측정하지 않아 제품급 입력 부드러움은 아직 검증되지 않았다.
 - rolling 호환용 제출 alias는 ghost 복원을 막기 위해 signature별 tombstone을 30일 동안 보존한다. 반복 편집 시 여러 unique entry가 origin 저장공간에 누적될 수 있으므로, 호환 종료 조건과 문서 namespace별 byte budget·용량 안내 정책은 아직 확정하지 않았다.
 - 로그아웃·계정 전환의 owner-bound local draft와 서버 재시도 queue 정리는 구현했다. 계정 삭제를 오프라인 기기에 전달하는 동기화 token과 30일 뒤 ledger/tombstone raw ID erasure workflow는 아직 없으며, 그 전까지 문서·댓글·답변 이력이 있는 profile 삭제는 `RESTRICT`된다.

@@ -1,20 +1,33 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { requestPresignedUploadUrl } from "@/lib/actions/upload";
-import type { PresignedUrlOptions } from "@/lib/r2";
+import {
+  abandonMediaUpload,
+  completeMediaUploadAction,
+  requestMediaUpload,
+} from "@/lib/actions/upload";
+import {
+  MEDIA_UPLOAD_CLIENT_TIMEOUT_MS,
+  mediaUploadRequestHeaders,
+  type MediaUploadPurpose,
+} from "@/lib/media-lifecycle";
+
+export type CompletedMediaUpload = {
+  mediaObjectId: string;
+  deliveryUrl: string;
+};
 
 export interface FileUploaderProps {
-  /** 업로드 완료 시 호출 — publicUrl과 R2 key를 전달 */
-  onUploadComplete: (publicUrl: string, key: string) => void;
+  /** R2 HEAD 검증까지 끝난 READY asset을 전달 */
+  onUploadComplete: (upload: CompletedMediaUpload) => void;
   /** 업로드 실패 시 호출 */
   onError?: (message: string) => void;
   /** 허용할 MIME 타입 (input accept 속성과 연동) */
   accept?: string;
-  /** R2 저장 경로 prefix */
-  prefix?: string;
-  /** 추가 R2 옵션 */
-  r2Options?: Omit<PresignedUrlOptions, "prefix">;
+  /** 서버가 MIME/size/prefix/expiry 정책을 선택하는 업로드 목적 */
+  purpose: MediaUploadPurpose;
+  /** 이 파일을 참조하는 문서 초안의 안정적인 operation ID */
+  draftOperationId: string;
   /** 버튼/드롭존 레이블 */
   label?: string;
   /** 비활성화 여부 */
@@ -31,8 +44,8 @@ export function FileUploader({
   onUploadComplete,
   onError,
   accept,
-  prefix = "uploads/",
-  r2Options,
+  purpose,
+  draftOperationId,
   label = "파일 선택",
   disabled = false,
   onUploadingChange,
@@ -63,29 +76,57 @@ export function FileUploader({
     onUploadingChangeRef.current?.(true);
     setProgress(0);
 
+    let issuedMediaObjectId: string | null = null;
     try {
       // 1) Server Action으로 Presigned URL 요청
-      const result = await requestPresignedUploadUrl({
+      const result = await requestMediaUpload({
+        purpose,
         fileName: file.name,
         mimeType: file.type,
         fileSize: file.size,
-        options: { prefix, ...r2Options },
+        draftOperationId,
       });
 
-      if (!result.success || !result.uploadUrl || !result.key || !result.publicUrl) {
+      if (!result.success) {
         throw new Error(result.error ?? "Presigned URL 발급 실패");
       }
-      if (!mountedRef.current) return;
+      issuedMediaObjectId = result.mediaObjectId;
+      if (!mountedRef.current) {
+        await abandonMediaUpload(result.mediaObjectId).catch(() => undefined);
+        issuedMediaObjectId = null;
+        return;
+      }
 
       // 2) R2에 직접 PUT 업로드 (XMLHttpRequest로 진행률 추적)
-      await uploadWithProgress(file, result.uploadUrl, setProgress, (xhr) => {
-        xhrRef.current = xhr;
-      });
+      await uploadWithProgress(
+        file,
+        result.uploadUrl,
+        result.uploadContentType,
+        setProgress,
+        (xhr) => {
+          xhrRef.current = xhr;
+        },
+      );
       xhrRef.current = null;
-      if (!mountedRef.current) return;
+      const completed = await completeMediaUploadAction(result.mediaObjectId);
+      if (!completed.success) {
+        throw new Error(completed.error ?? "업로드 완료 확인 실패");
+      }
+      if (!mountedRef.current) {
+        await abandonMediaUpload(result.mediaObjectId).catch(() => undefined);
+        issuedMediaObjectId = null;
+        return;
+      }
 
-      onUploadComplete(result.publicUrl, result.key);
+      onUploadComplete({
+        mediaObjectId: completed.mediaObjectId,
+        deliveryUrl: completed.deliveryUrl,
+      });
+      issuedMediaObjectId = null;
     } catch (err: unknown) {
+      if (issuedMediaObjectId) {
+        await abandonMediaUpload(issuedMediaObjectId).catch(() => undefined);
+      }
       const message = err instanceof Error ? err.message : "업로드 중 오류 발생";
       if (mountedRef.current) {
         console.error("[FileUploader]", message);
@@ -110,14 +151,14 @@ export function FileUploader({
         type="file"
         accept={accept}
         onChange={handleFileChange}
-        disabled={disabled || isUploading}
+        disabled={disabled || isUploading || !draftOperationId}
         className="hidden"
         aria-label={label}
       />
       <button
         type="button"
         onClick={() => inputRef.current?.click()}
-        disabled={disabled || isUploading}
+        disabled={disabled || isUploading || !draftOperationId}
         aria-busy={isUploading}
         className="inline-flex items-center gap-2 rounded-md border border-input bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50"
       >
@@ -154,6 +195,7 @@ export function FileUploader({
 function uploadWithProgress(
   file: File,
   presignedUrl: string,
+  contentType: string,
   onProgress: (percent: number) => void,
   onRequest: (xhr: XMLHttpRequest) => void,
 ): Promise<void> {
@@ -177,9 +219,15 @@ function uploadWithProgress(
 
     xhr.onerror = () => reject(new Error("네트워크 오류로 업로드 실패"));
     xhr.onabort = () => reject(new Error("업로드가 취소되었습니다."));
+    xhr.ontimeout = () => reject(new Error("업로드 제한 시간이 초과되었습니다."));
 
     xhr.open("PUT", presignedUrl);
-    xhr.setRequestHeader("Content-Type", file.type);
+    xhr.timeout = MEDIA_UPLOAD_CLIENT_TIMEOUT_MS;
+    for (const [name, value] of Object.entries(
+      mediaUploadRequestHeaders(contentType),
+    )) {
+      xhr.setRequestHeader(name, value);
+    }
     xhr.send(file);
   });
 }

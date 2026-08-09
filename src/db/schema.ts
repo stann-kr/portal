@@ -470,6 +470,226 @@ export const privateNoteRevisions = sqliteTable(
  */
 export type BoardType = "ANNOUNCEMENT" | "GENERAL" | "FEEDBACK";
 
+export type MediaPurpose = "COMMUNITY_POST_AUDIO" | "QNA_ATTACHMENT";
+export type MediaObjectState =
+  | "PENDING_UPLOAD"
+  | "SEALING"
+  | "READY"
+  | "ATTACHED"
+  | "PENDING_DELETE"
+  | "DELETED";
+export type MediaResourceType = "COMMUNITY_POST" | "QNA_REPLY";
+export type MediaDeletionReason =
+  | "ABANDONED_UPLOAD"
+  | "EXPIRED_UNATTACHED"
+  | "UPLOAD_STAGING_EXPIRED"
+  | "RESOURCE_PURGED"
+  | "ACCOUNT_DELETION"
+  | "UPLOAD_VERIFICATION_FAILED"
+  | "ADMIN_CLEANUP";
+
+/** R2 object의 소유권, 검증 상태, 문서 귀속을 D1에 보존한다. */
+export const mediaObjects = sqliteTable(
+  "media_objects",
+  {
+    id: text("id").primaryKey(),
+    ownerId: text("owner_id").references(() => profiles.id, {
+      onDelete: "restrict",
+    }),
+    purpose: text("purpose").$type<MediaPurpose>().notNull(),
+    objectKey: text("object_key").unique().notNull(),
+    uploadObjectKey: text("upload_object_key").unique().notNull(),
+    state: text("state").$type<MediaObjectState>().notNull(),
+    sealLeaseId: text("seal_lease_id"),
+    sealLeaseExpiresAt: integer("seal_lease_expires_at", {
+      mode: "timestamp",
+    }),
+    expectedContentType: text("expected_content_type").notNull(),
+    expectedSizeBytes: integer("expected_size_bytes").notNull(),
+    actualSizeBytes: integer("actual_size_bytes"),
+    etag: text("etag"),
+    draftOperationId: text("draft_operation_id").notNull(),
+    resourceType: text("resource_type").$type<MediaResourceType>(),
+    resourceId: text("resource_id"),
+    uploadExpiresAt: integer("upload_expires_at", { mode: "timestamp" }).notNull(),
+    readyAt: integer("ready_at", { mode: "timestamp" }),
+    attachedAt: integer("attached_at", { mode: "timestamp" }),
+    deleteRequestedAt: integer("delete_requested_at", { mode: "timestamp" }),
+    deletedAt: integer("deleted_at", { mode: "timestamp" }),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [
+    index("media_objects_owner_state_updated_idx").on(
+      table.ownerId,
+      table.state,
+      table.updatedAt,
+    ),
+    index("media_objects_state_upload_expiry_idx").on(
+      table.state,
+      table.uploadExpiresAt,
+    ),
+    index("media_objects_resource_idx").on(table.resourceType, table.resourceId),
+    check(
+      "media_objects_purpose_check",
+      sql`${table.purpose} IN ('COMMUNITY_POST_AUDIO', 'QNA_ATTACHMENT')`,
+    ),
+    check(
+      "media_objects_state_check",
+      sql`${table.state} IN ('PENDING_UPLOAD', 'SEALING', 'READY', 'ATTACHED', 'PENDING_DELETE', 'DELETED')`,
+    ),
+    check(
+      "media_objects_identity_check",
+      sql`length(${table.id}) > 0 AND length(${table.objectKey}) > 0 AND length(${table.uploadObjectKey}) > 0 AND length(${table.draftOperationId}) > 0`,
+    ),
+    check(
+      "media_objects_key_check",
+      sql`(
+        ${table.purpose} = 'COMMUNITY_POST_AUDIO'
+        AND ${table.uploadObjectKey} = 'media-upload/community-post-audio/' || ${table.id}
+        AND ${table.objectKey} GLOB 'media/community-post-audio/[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]-4[0-9a-f][0-9a-f][0-9a-f]-[89ab][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'
+        AND ${table.objectKey} <> 'media/community-post-audio/' || ${table.id}
+      ) OR (
+        ${table.purpose} = 'QNA_ATTACHMENT'
+        AND ${table.uploadObjectKey} = 'media-upload/qna-attachment/' || ${table.id}
+        AND ${table.objectKey} GLOB 'media/qna-attachment/[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]-4[0-9a-f][0-9a-f][0-9a-f]-[89ab][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'
+        AND ${table.objectKey} <> 'media/qna-attachment/' || ${table.id}
+      )`,
+    ),
+    check(
+      "media_objects_size_check",
+      sql`${table.expectedSizeBytes} > 0 AND (${table.actualSizeBytes} IS NULL OR ${table.actualSizeBytes} > 0)`,
+    ),
+    check(
+      "media_objects_resource_type_check",
+      sql`${table.resourceType} IS NULL OR ${table.resourceType} IN ('COMMUNITY_POST', 'QNA_REPLY')`,
+    ),
+    check(
+      "media_objects_resource_pair_check",
+      sql`(${table.resourceType} IS NULL AND ${table.resourceId} IS NULL) OR (${table.resourceType} IS NOT NULL AND ${table.resourceId} IS NOT NULL AND length(${table.resourceId}) > 0)`,
+    ),
+    check(
+      "media_objects_state_payload_check",
+      sql`(
+        ${table.state} = 'PENDING_UPLOAD'
+        AND ${table.ownerId} IS NOT NULL
+        AND ${table.sealLeaseId} IS NULL
+        AND ${table.sealLeaseExpiresAt} IS NULL
+        AND ${table.actualSizeBytes} IS NULL
+        AND ${table.readyAt} IS NULL
+        AND ${table.resourceType} IS NULL
+        AND ${table.attachedAt} IS NULL
+        AND ${table.deleteRequestedAt} IS NULL
+        AND ${table.deletedAt} IS NULL
+      ) OR (
+        ${table.state} = 'SEALING'
+        AND ${table.ownerId} IS NOT NULL
+        AND ${table.sealLeaseId} IS NOT NULL
+        AND length(${table.sealLeaseId}) > 0
+        AND ${table.sealLeaseExpiresAt} IS NOT NULL
+        AND ${table.sealLeaseExpiresAt} > ${table.updatedAt}
+        AND ${table.actualSizeBytes} IS NULL
+        AND ${table.readyAt} IS NULL
+        AND ${table.resourceType} IS NULL
+        AND ${table.attachedAt} IS NULL
+        AND ${table.deleteRequestedAt} IS NULL
+        AND ${table.deletedAt} IS NULL
+      ) OR (
+        ${table.state} = 'READY'
+        AND ${table.ownerId} IS NOT NULL
+        AND ${table.sealLeaseId} IS NULL
+        AND ${table.sealLeaseExpiresAt} IS NULL
+        AND ${table.actualSizeBytes} IS NOT NULL
+        AND ${table.readyAt} IS NOT NULL
+        AND ${table.resourceType} IS NULL
+        AND ${table.attachedAt} IS NULL
+        AND ${table.deleteRequestedAt} IS NULL
+        AND ${table.deletedAt} IS NULL
+      ) OR (
+        ${table.state} = 'ATTACHED'
+        AND ${table.ownerId} IS NOT NULL
+        AND ${table.sealLeaseId} IS NULL
+        AND ${table.sealLeaseExpiresAt} IS NULL
+        AND ${table.actualSizeBytes} IS NOT NULL
+        AND ${table.readyAt} IS NOT NULL
+        AND ${table.resourceType} IS NOT NULL
+        AND ${table.attachedAt} IS NOT NULL
+        AND ${table.deleteRequestedAt} IS NULL
+        AND ${table.deletedAt} IS NULL
+      ) OR (
+        ${table.state} = 'PENDING_DELETE'
+        AND ${table.sealLeaseId} IS NULL
+        AND ${table.sealLeaseExpiresAt} IS NULL
+        AND ${table.deleteRequestedAt} IS NOT NULL
+        AND ${table.deletedAt} IS NULL
+      ) OR (
+        ${table.state} = 'DELETED'
+        AND ${table.sealLeaseId} IS NULL
+        AND ${table.sealLeaseExpiresAt} IS NULL
+        AND ${table.deleteRequestedAt} IS NOT NULL
+        AND ${table.deletedAt} IS NOT NULL
+      )`,
+    ),
+    check(
+      "media_objects_timestamp_check",
+      sql`${table.createdAt} <= ${table.updatedAt} AND ${table.createdAt} < ${table.uploadExpiresAt}`,
+    ),
+  ],
+);
+
+/** DB commit 뒤 R2 삭제가 누락되지 않도록 하는 durable outbox. */
+export const mediaDeletionOutbox = sqliteTable(
+  "media_deletion_outbox",
+  {
+    id: text("id").primaryKey(),
+    mediaObjectId: text("media_object_id")
+      .references(() => mediaObjects.id, { onDelete: "restrict" })
+      .notNull(),
+    objectKey: text("object_key").notNull(),
+    reason: text("reason").$type<MediaDeletionReason>().notNull(),
+    notBefore: integer("not_before", { mode: "timestamp" }).notNull(),
+    attemptCount: integer("attempt_count").default(0).notNull(),
+    nextAttemptAt: integer("next_attempt_at", { mode: "timestamp" }).notNull(),
+    leaseId: text("lease_id"),
+    leaseExpiresAt: integer("lease_expires_at", { mode: "timestamp" }),
+    lastErrorCode: text("last_error_code"),
+    completedAt: integer("completed_at", { mode: "timestamp" }),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("media_deletion_outbox_object_unique").on(
+      table.mediaObjectId,
+      table.objectKey,
+    ),
+    index("media_deletion_outbox_pending_idx").on(
+      table.completedAt,
+      table.nextAttemptAt,
+      table.leaseExpiresAt,
+    ),
+    check(
+      "media_deletion_outbox_reason_check",
+      sql`${table.reason} IN ('ABANDONED_UPLOAD', 'EXPIRED_UNATTACHED', 'UPLOAD_STAGING_EXPIRED', 'RESOURCE_PURGED', 'ACCOUNT_DELETION', 'UPLOAD_VERIFICATION_FAILED', 'ADMIN_CLEANUP')`,
+    ),
+    check(
+      "media_deletion_outbox_identity_check",
+      sql`length(${table.id}) > 0 AND length(${table.mediaObjectId}) > 0 AND length(${table.objectKey}) > 0`,
+    ),
+    check(
+      "media_deletion_outbox_attempt_check",
+      sql`${table.attemptCount} >= 0`,
+    ),
+    check(
+      "media_deletion_outbox_lease_check",
+      sql`(${table.leaseId} IS NULL AND ${table.leaseExpiresAt} IS NULL) OR (${table.leaseId} IS NOT NULL AND length(${table.leaseId}) > 0 AND ${table.leaseExpiresAt} IS NOT NULL)`,
+    ),
+    check(
+      "media_deletion_outbox_timestamp_check",
+      sql`${table.createdAt} <= ${table.updatedAt} AND ${table.notBefore} <= ${table.nextAttemptAt}`,
+    ),
+  ],
+);
+
 export const posts = sqliteTable(
   "posts",
   {
@@ -487,6 +707,9 @@ export const posts = sqliteTable(
       .notNull(),
     isPinned: integer("is_pinned", { mode: "boolean" }).default(false).notNull(),
     mediaUrl: text("media_url"), // FEEDBACK 타입 R2 오디오 URL
+    mediaObjectId: text("media_object_id").references(() => mediaObjects.id, {
+      onDelete: "restrict",
+    }),
     createdAt: integer("created_at", { mode: "timestamp" }).default(
       sql`(strftime('%s', 'now'))`,
     ),
@@ -541,6 +764,9 @@ export const postRevisions = sqliteTable(
     boardType: text("board_type").$type<BoardType>().notNull(),
     isPinned: integer("is_pinned", { mode: "boolean" }).notNull(),
     mediaUrl: text("media_url"),
+    mediaObjectId: text("media_object_id").references(() => mediaObjects.id, {
+      onDelete: "restrict",
+    }),
     title: text("title").notNull(),
     contentHtml: text("content_html").notNull(),
     deletedAt: integer("deleted_at", { mode: "timestamp" }),
@@ -734,6 +960,10 @@ export const qnaReplies = sqliteTable("qna_replies", {
     .notNull(),
   contentHtml: text("content_html").notNull(),
   attachmentUrl: text("attachment_url"),
+  attachmentObjectId: text("attachment_object_id").references(
+    () => mediaObjects.id,
+    { onDelete: "restrict" },
+  ),
   createdAt: integer("created_at", { mode: "timestamp" }).default(
     sql`(strftime('%s', 'now'))`,
   ),

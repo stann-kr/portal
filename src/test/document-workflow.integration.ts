@@ -39,7 +39,15 @@ import {
   type PrivateNoteCanonicalRequest,
   type PrivateNoteCanonicalSnapshot,
 } from "@/lib/private-note-continuity";
-import { POST_BASE_REVISION_FIELD } from "@/lib/post-continuity";
+import {
+  POST_BASE_REVISION_FIELD,
+  createPostRequestHashForVersion,
+  type PostCanonicalRequest,
+} from "@/lib/post-continuity";
+import {
+  createQnaRequestHashForVersion,
+  type QnaCanonicalRequest,
+} from "@/lib/qna-continuity";
 import {
   createDocumentDraftKey,
 } from "@/lib/form-draft";
@@ -201,7 +209,7 @@ function createPostForm(
   const formData = createDocumentForm(title, contentHtml, operationId);
   formData.set("boardType", "FEEDBACK");
   formData.set("category", "feedback");
-  formData.set("mediaUrl", "https://cdn.example.com/mix.mp3");
+  formData.set("mediaUrl", "");
   formData.set("returnTo", "community-editor");
   return formData;
 }
@@ -512,6 +520,7 @@ test("D1 원자 쓰기는 다른 학생의 직접 reply 호출도 rollback한다
       operationId: crypto.randomUUID(),
       contentHtml: "<p>저장되면 안 되는 답변</p>",
       attachmentUrl: null,
+      attachmentObjectId: null,
       now: new Date("2026-08-07T00:00:00.000Z"),
     },
   );
@@ -1450,7 +1459,7 @@ test("게시물 full snapshot 이력과 휴지통 수명주기는 댓글을 보�
     contentHtml: "<p>원본 믹스셋 본문</p>",
     category: "feedback",
     boardType: "FEEDBACK",
-    mediaUrl: "https://cdn.example.com/mix.mp3",
+    mediaUrl: null,
     version: 3,
   });
 
@@ -2102,6 +2111,325 @@ test("기존 공개 UUIDv4를 operation nonce로 제출해도 그 URL을 재점�
   );
   const allPosts = await db.select().from(posts);
   assert.equal(allPosts.length, 1);
+});
+
+test("게시물 URL-only 입력은 정확한 v1 생성 영수증 재실행만 허용한다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context);
+  await seedProfile(db, "student-1");
+  const operationId = crypto.randomUUID();
+  const postId = deriveCreationResourceId(
+    operationId,
+    JSON.stringify(["community-post", "student-1"]),
+  );
+  const legacyUrl = "https://cdn.example.com/legacy/replay.mp3";
+  const request: PostCanonicalRequest = {
+    operationType: "CREATE",
+    resourceId: postId,
+    subjectId: "student-1",
+    baseRevision: null,
+    snapshot: {
+      category: "feedback",
+      boardType: "FEEDBACK",
+      isPinned: false,
+      mediaUrl: legacyUrl,
+      mediaObjectId: null,
+      title: "레거시 믹스셋",
+      contentHtml: "<p>레거시 본문</p>",
+      deletedAt: null,
+    },
+  };
+  await db.insert(posts).values({
+    id: postId,
+    authorId: "student-1",
+    category: "feedback",
+    boardType: "FEEDBACK",
+    mediaUrl: legacyUrl,
+    title: "레거시 믹스셋",
+    contentHtml: "<p>레거시 본문</p>",
+    version: 1,
+  });
+  await db.insert(documentOperationLedger).values({
+    id: crypto.randomUUID(),
+    operationId,
+    actorId: "student-1",
+    subjectId: "student-1",
+    resourceType: "COMMUNITY_POST",
+    operationType: "CREATE",
+    resourceId: postId,
+    requestHash: createPostRequestHashForVersion(request, 1)!,
+    requestHashVersion: 1,
+    resultRevision: 1,
+    createdAt: new Date("2026-08-01T00:00:00.000Z"),
+  });
+
+  const exactForm = () => {
+    const form = createPostForm(operationId, "레거시 믹스셋", "<p>레거시 본문</p>");
+    form.set("mediaUrl", legacyUrl);
+    return form;
+  };
+  const exactReplay = await postActions.createPost({}, exactForm());
+  assert.equal(exactReplay.success, true);
+  assert.equal(exactReplay.postId, postId);
+
+  const changedPayload = exactForm();
+  changedPayload.set("title", "변경된 제목");
+  const changedReplay = await postActions.createPost({}, changedPayload);
+  assert.equal(changedReplay.success, undefined);
+  assert.match(changedReplay.error ?? "", /이전 방식/u);
+
+  const v2OperationId = crypto.randomUUID();
+  const v2PostId = deriveCreationResourceId(
+    v2OperationId,
+    JSON.stringify(["community-post", "student-1"]),
+  );
+  const v2Request: PostCanonicalRequest = {
+    ...request,
+    resourceId: v2PostId,
+  };
+  await db.insert(posts).values({
+    id: v2PostId,
+    authorId: "student-1",
+    category: "feedback",
+    boardType: "FEEDBACK",
+    mediaUrl: legacyUrl,
+    title: "레거시 믹스셋",
+    contentHtml: "<p>레거시 본문</p>",
+    version: 1,
+  });
+  await db.insert(documentOperationLedger).values({
+    id: crypto.randomUUID(),
+    operationId: v2OperationId,
+    actorId: "student-1",
+    subjectId: "student-1",
+    resourceType: "COMMUNITY_POST",
+    operationType: "CREATE",
+    resourceId: v2PostId,
+    requestHash: createPostRequestHashForVersion(v2Request, 2)!,
+    requestHashVersion: 2,
+    resultRevision: 1,
+    createdAt: new Date("2026-08-01T00:00:00.000Z"),
+  });
+  const v2Form = createPostForm(
+    v2OperationId,
+    "레거시 믹스셋",
+    "<p>레거시 본문</p>",
+  );
+  v2Form.set("mediaUrl", legacyUrl);
+  const v2Replay = await postActions.createPost({}, v2Form);
+  assert.equal(v2Replay.success, undefined);
+  assert.match(v2Replay.error ?? "", /이전 방식/u);
+
+  const noReceiptForm = createPostForm(
+    crypto.randomUUID(),
+    "신규 URL-only",
+    "<p>신규 요청</p>",
+  );
+  noReceiptForm.set("mediaUrl", legacyUrl);
+  const noReceipt = await postActions.createPost({}, noReceiptForm);
+  assert.equal(noReceipt.success, undefined);
+  assert.match(noReceipt.error ?? "", /이전 방식/u);
+  assert.equal((await db.select().from(posts)).length, 2);
+});
+
+test("Q&A URL-only 입력은 CREATE와 APPEND_REPLY의 정확한 v1 영수증 재실행만 허용한다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context);
+  await seedProfile(db, "student-1");
+  const legacyUrl = "https://cdn.example.com/legacy/qna-replay.pdf";
+  const createOperationId = crypto.randomUUID();
+  const threadId = deriveCreationResourceId(
+    createOperationId,
+    JSON.stringify(["qna-thread", "student-1"]),
+  );
+  const initialReplyId = deriveCreationResourceId(
+    createOperationId,
+    JSON.stringify(["qna-initial-reply", "student-1"]),
+  );
+  const createRequest: QnaCanonicalRequest = {
+    operationType: "CREATE",
+    resourceId: threadId,
+    subjectId: "student-1",
+    baseRevision: null,
+    title: "레거시 질문",
+    status: "OPEN",
+    replyId: initialReplyId,
+    replyAuthorId: "student-1",
+    contentHtml: "<p>레거시 질문 본문</p>",
+    attachmentUrl: legacyUrl,
+    attachmentObjectId: null,
+  };
+  await db.insert(qnaThreads).values({
+    id: threadId,
+    studentId: "student-1",
+    title: "레거시 질문",
+    status: "OPEN",
+    version: 1,
+  });
+  await db.insert(documentOperationLedger).values({
+    id: crypto.randomUUID(),
+    operationId: createOperationId,
+    actorId: "student-1",
+    subjectId: "student-1",
+    resourceType: "QNA_THREAD",
+    operationType: "CREATE",
+    resourceId: threadId,
+    requestHash: createQnaRequestHashForVersion(createRequest, 1)!,
+    requestHashVersion: 1,
+    resultRevision: 1,
+    createdAt: new Date("2026-08-01T00:00:00.000Z"),
+  });
+  await db.insert(qnaReplies).values({
+    id: initialReplyId,
+    threadId,
+    authorId: "student-1",
+    contentHtml: "<p>레거시 질문 본문</p>",
+    attachmentUrl: legacyUrl,
+  });
+
+  const createForm = () => {
+    const form = createDocumentForm(
+      "레거시 질문",
+      "<p>레거시 질문 본문</p>",
+      createOperationId,
+    );
+    form.set("attachmentUrl", legacyUrl);
+    return form;
+  };
+  const exactCreateReplay = await qnaActions.createQnaThread({}, createForm());
+  assert.equal(exactCreateReplay.success, true);
+  assert.equal(exactCreateReplay.thread?.id, threadId);
+
+  const changedCreate = createForm();
+  changedCreate.set("attachmentUrl", `${legacyUrl}?changed=1`);
+  const changedCreateReplay = await qnaActions.createQnaThread({}, changedCreate);
+  assert.equal(changedCreateReplay.success, undefined);
+  assert.match(changedCreateReplay.error ?? "", /이전 방식/u);
+
+  const v2CreateOperationId = crypto.randomUUID();
+  const v2ThreadId = deriveCreationResourceId(
+    v2CreateOperationId,
+    JSON.stringify(["qna-thread", "student-1"]),
+  );
+  const v2InitialReplyId = deriveCreationResourceId(
+    v2CreateOperationId,
+    JSON.stringify(["qna-initial-reply", "student-1"]),
+  );
+  const v2CreateRequest: QnaCanonicalRequest = {
+    ...createRequest,
+    resourceId: v2ThreadId,
+    replyId: v2InitialReplyId,
+  };
+  await db.insert(qnaThreads).values({
+    id: v2ThreadId,
+    studentId: "student-1",
+    title: "레거시 질문",
+    status: "OPEN",
+    version: 1,
+  });
+  await db.insert(documentOperationLedger).values({
+    id: crypto.randomUUID(),
+    operationId: v2CreateOperationId,
+    actorId: "student-1",
+    subjectId: "student-1",
+    resourceType: "QNA_THREAD",
+    operationType: "CREATE",
+    resourceId: v2ThreadId,
+    requestHash: createQnaRequestHashForVersion(v2CreateRequest, 2)!,
+    requestHashVersion: 2,
+    resultRevision: 1,
+    createdAt: new Date("2026-08-01T00:00:00.000Z"),
+  });
+  await db.insert(qnaReplies).values({
+    id: v2InitialReplyId,
+    threadId: v2ThreadId,
+    authorId: "student-1",
+    contentHtml: "<p>레거시 질문 본문</p>",
+    attachmentUrl: legacyUrl,
+  });
+  const v2CreateForm = createDocumentForm(
+    "레거시 질문",
+    "<p>레거시 질문 본문</p>",
+    v2CreateOperationId,
+  );
+  v2CreateForm.set("attachmentUrl", legacyUrl);
+  const v2CreateReplay = await qnaActions.createQnaThread({}, v2CreateForm);
+  assert.equal(v2CreateReplay.success, undefined);
+  assert.match(v2CreateReplay.error ?? "", /이전 방식/u);
+
+  const replyOperationId = crypto.randomUUID();
+  const replyId = deriveCreationResourceId(
+    replyOperationId,
+    JSON.stringify(["qna-reply", "student-1", threadId]),
+  );
+  const replyRequest: QnaCanonicalRequest = {
+    operationType: "APPEND_REPLY",
+    resourceId: threadId,
+    subjectId: "student-1",
+    baseRevision: null,
+    replyId,
+    replyAuthorId: "student-1",
+    contentHtml: "<p>레거시 후속 질문</p>",
+    attachmentUrl: legacyUrl,
+    attachmentObjectId: null,
+  };
+  await db
+    .update(qnaThreads)
+    .set({ version: 2 })
+    .where(eq(qnaThreads.id, threadId));
+  await db.insert(documentOperationLedger).values({
+    id: crypto.randomUUID(),
+    operationId: replyOperationId,
+    actorId: "student-1",
+    subjectId: "student-1",
+    resourceType: "QNA_THREAD",
+    operationType: "APPEND_REPLY",
+    resourceId: threadId,
+    requestHash: createQnaRequestHashForVersion(replyRequest, 1)!,
+    requestHashVersion: 1,
+    resultRevision: 2,
+    createdAt: new Date("2026-08-01T00:01:00.000Z"),
+  });
+  await db.insert(qnaReplies).values({
+    id: replyId,
+    threadId,
+    authorId: "student-1",
+    contentHtml: "<p>레거시 후속 질문</p>",
+    attachmentUrl: legacyUrl,
+  });
+
+  const replyForm = () => {
+    const form = createReplyForm(replyOperationId, "<p>레거시 후속 질문</p>");
+    form.set("attachmentUrl", legacyUrl);
+    return form;
+  };
+  const exactReplyReplay = await qnaActions.createQnaReply(
+    threadId,
+    {},
+    replyForm(),
+  );
+  assert.equal(exactReplyReplay.success, true);
+  assert.equal(exactReplyReplay.replyId, replyId);
+
+  const changedReply = replyForm();
+  changedReply.set("contentHtml", "<p>변경된 후속 질문</p>");
+  const changedReplyReplay = await qnaActions.createQnaReply(
+    threadId,
+    {},
+    changedReply,
+  );
+  assert.equal(changedReplyReplay.success, undefined);
+  assert.match(changedReplyReplay.error ?? "", /이전 방식/u);
+
+  const noReceiptCreate = createDocumentForm(
+    "신규 URL-only 질문",
+    "<p>신규 요청</p>",
+    crypto.randomUUID(),
+  );
+  noReceiptCreate.set("attachmentUrl", legacyUrl);
+  const noReceipt = await qnaActions.createQnaThread({}, noReceiptCreate);
+  assert.equal(noReceipt.success, undefined);
+  assert.match(noReceipt.error ?? "", /이전 방식/u);
+  assert.equal((await db.select().from(qnaThreads)).length, 2);
+  assert.equal((await db.select().from(qnaReplies)).length, 3);
 });
 
 test("같은 Q&A thread 작업의 동시 재전송은 thread와 첫 reply를 하나씩만 만든다", { concurrency: false }, async (context) => {

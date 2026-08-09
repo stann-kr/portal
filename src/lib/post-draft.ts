@@ -7,6 +7,7 @@ type CreatePostDraftFields = {
   title: string;
   contentHtml: string;
   mediaUrl: string;
+  mediaObjectId?: string;
 };
 
 type CreatePostDraftDefaults = Pick<
@@ -23,6 +24,7 @@ export function isCreatePostDraftEmpty(
     !draft.title &&
     isRichTextEmpty(draft.contentHtml) &&
     !draft.mediaUrl &&
+    !draft.mediaObjectId &&
     draft.boardType === defaults.boardType &&
     draft.category === defaults.category &&
     !draft.isPinned

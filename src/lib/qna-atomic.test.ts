@@ -75,6 +75,7 @@ async function createThread(
     title: input.threadId,
     contentHtml: "<p>질문</p>",
     attachmentUrl: null,
+    attachmentObjectId: null,
     now: input.now ?? new Date("2026-01-01T00:00:00.000Z"),
   });
 }
@@ -159,6 +160,7 @@ test("reply ID가 다른 thread와 충돌하면 status와 event가 함께 rollba
     operationId: operationId(2),
     contentHtml: "<p>관리자 답변</p>",
     attachmentUrl: null,
+    attachmentObjectId: null,
     now: new Date("2026-01-01T00:01:00.000Z"),
   });
 
@@ -200,6 +202,7 @@ test("CLOSED thread에는 reply와 새 event를 남기지 않는다", async (con
     operationId: operationId(3),
     contentHtml: "<p>추가 질문</p>",
     attachmentUrl: null,
+    attachmentObjectId: null,
     now: new Date("2026-01-01T00:02:00.000Z"),
   });
 
@@ -233,6 +236,7 @@ test("다른 학생은 OPEN thread에도 reply를 남길 수 없다", async (con
     operationId: operationId(2),
     contentHtml: "<p>권한 없는 답변</p>",
     attachmentUrl: null,
+    attachmentObjectId: null,
     now: new Date("2026-01-01T00:01:00.000Z"),
   });
 
@@ -265,6 +269,7 @@ test("정상 관리자 답변은 reply, ANSWERED status, event, receipt를 함�
     operationId: operationId(2),
     contentHtml: "<p>관리자 답변</p>",
     attachmentUrl: "https://example.com/attachment",
+    attachmentObjectId: null,
     now: new Date("2026-01-01T00:01:00.000Z"),
   });
 

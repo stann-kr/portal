@@ -25,6 +25,7 @@ import {
   parseCreationOperationId,
 } from "@/lib/creation-operation";
 import { CreationConflictActions } from "@/components/editor/CreationConflictActions";
+import { abandonMediaUpload } from "@/lib/actions/upload";
 
 const FullEditor = dynamic(
   () => import("@/components/editor/FullEditor").then((module) => ({ default: module.FullEditor })),
@@ -47,6 +48,7 @@ type PostDraft = {
   title: string;
   contentHtml: string;
   mediaUrl: string;
+  mediaObjectId?: string;
 };
 
 type NewPostFormProps = {
@@ -79,6 +81,7 @@ export function NewPostForm({
   } = useDeferredEditorContent("");
   const [categories, setCategories] = useState<{ id: string; slug: string; name: string }[]>([]);
   const [mediaUrl, setMediaUrl] = useState("");
+  const [mediaObjectId, setMediaObjectId] = useState("");
   const [operationId, setOperationId] = useState("");
   const [uploadError, setUploadError] = useState("");
   const [isUploading, setIsUploading] = useState(false);
@@ -116,6 +119,7 @@ export function NewPostForm({
       setTitle(draft.title ?? "");
       setContentHtml(draft.contentHtml ?? "");
       setMediaUrl(draft.mediaUrl ?? "");
+      setMediaObjectId(draft.mediaObjectId ?? "");
     },
     {
       onReset: () => {
@@ -126,6 +130,7 @@ export function NewPostForm({
         setTitle("");
         setContentHtml("");
         setMediaUrl("");
+        setMediaObjectId("");
       },
     },
   );
@@ -145,6 +150,7 @@ export function NewPostForm({
         title,
         contentHtml: readLatestContentHtml(),
         mediaUrl,
+        mediaObjectId,
       }),
       isEmpty: (draft) =>
         isCreatePostDraftEmpty(draft, {
@@ -166,7 +172,15 @@ export function NewPostForm({
     const latestContentHtml = readLatestContentHtml();
     if (
       isCreatePostDraftEmpty(
-        { boardType, category, isPinned, title, contentHtml: latestContentHtml, mediaUrl },
+        {
+          boardType,
+          category,
+          isPinned,
+          title,
+          contentHtml: latestContentHtml,
+          mediaUrl,
+          mediaObjectId,
+        },
         { boardType: defaultBoardType, category: defaultCategory },
       )
     ) {
@@ -181,11 +195,12 @@ export function NewPostForm({
       isPinned,
       title,
       mediaUrl,
+      mediaObjectId,
       get contentHtml() {
         return readLatestContentHtml();
       },
     });
-  }, [boardType, category, clear, contentHtml, defaultBoardType, defaultCategory, isPinned, loaded, mediaUrl, operationId, readLatestContentHtml, save, title]);
+  }, [boardType, category, clear, contentHtml, defaultBoardType, defaultCategory, isPinned, loaded, mediaObjectId, mediaUrl, operationId, readLatestContentHtml, save, title]);
 
   useEffect(() => {
     if (!state.postId || handledPostIdRef.current === state.postId) return;
@@ -198,6 +213,7 @@ export function NewPostForm({
       title,
       contentHtml,
       mediaUrl,
+      mediaObjectId,
     };
     clear({
       reason: "submitted",
@@ -205,7 +221,7 @@ export function NewPostForm({
     });
     submittedDraftRef.current = null;
     router.replace(`/community/${state.postId}?returnTo=${encodeURIComponent(returnTo)}`);
-  }, [boardType, category, clear, contentHtml, isPinned, mediaUrl, operationId, returnTo, router, state.postId, title]);
+  }, [boardType, category, clear, contentHtml, isPinned, mediaObjectId, mediaUrl, operationId, returnTo, router, state.postId, title]);
 
   const hasOperationConflict = Boolean(
     state.operationConflict &&
@@ -262,6 +278,7 @@ export function NewPostForm({
             title,
             contentHtml: latestContentHtml,
             mediaUrl,
+            mediaObjectId,
           };
           save(submittedDraft);
           flush();
@@ -274,6 +291,7 @@ export function NewPostForm({
         <input type="hidden" name="category" value={category} />
         <input ref={contentInputRef} type="hidden" name="contentHtml" value={contentHtml} />
         <input type="hidden" name="mediaUrl" value={mediaUrl} />
+        <input type="hidden" name="mediaObjectId" value={mediaObjectId} />
         {isPinned ? <input type="hidden" name="isPinned" value="true" /> : null}
 
         {state.error && (!state.operationConflict || hasOperationConflict) ? (
@@ -287,7 +305,14 @@ export function NewPostForm({
             existingHref={`/community/${state.existingId}?returnTo=${encodeURIComponent(returnTo)}`}
             existingLabel="기존 게시물 열기"
             separateLabel="별도 게시물로 저장"
-            onSeparate={() => setOperationId(createCreationOperationId())}
+            onSeparate={() => {
+              if (mediaObjectId) {
+                void abandonMediaUpload(mediaObjectId).catch(() => undefined);
+              }
+              setMediaUrl("");
+              setMediaObjectId("");
+              setOperationId(createCreationOperationId());
+            }}
             disabled={isFormBusy}
           />
         ) : null}
@@ -301,7 +326,14 @@ export function NewPostForm({
                   key={value}
                   type="button"
                   aria-pressed={boardType === value}
-                  onClick={() => setBoardType(value)}
+                  onClick={() => {
+                    if (value !== "FEEDBACK" && mediaObjectId) {
+                      void abandonMediaUpload(mediaObjectId).catch(() => undefined);
+                      setMediaUrl("");
+                      setMediaObjectId("");
+                    }
+                    setBoardType(value);
+                  }}
                   className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm transition-colors ${
                     boardType === value
                       ? "border-foreground font-medium text-foreground"
@@ -363,7 +395,14 @@ export function NewPostForm({
                 <span className="flex-1 truncate text-sm text-foreground">업로드 완료</span>
                 <button
                   type="button"
-                  onClick={() => setMediaUrl("")}
+                  onClick={() => {
+                    const abandonedId = mediaObjectId;
+                    setMediaUrl("");
+                    setMediaObjectId("");
+                    if (abandonedId) {
+                      void abandonMediaUpload(abandonedId).catch(() => undefined);
+                    }
+                  }}
                   disabled={isFormBusy}
                   className="text-xs text-muted-foreground transition-colors hover:text-destructive disabled:pointer-events-none disabled:opacity-50"
                 >
@@ -373,10 +412,12 @@ export function NewPostForm({
             ) : (
               <FileUploader
                 accept="audio/*"
-                prefix="community/audio/"
+                purpose="COMMUNITY_POST_AUDIO"
+                draftOperationId={operationId}
                 label="오디오 파일 선택 (MP3, WAV, FLAC)"
-                onUploadComplete={(url) => {
-                  setMediaUrl(url);
+                onUploadComplete={(upload) => {
+                  setMediaUrl(upload.deliveryUrl);
+                  setMediaObjectId(upload.mediaObjectId);
                   setUploadError("");
                 }}
                 onError={setUploadError}

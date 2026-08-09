@@ -31,6 +31,10 @@ import {
   type PostCanonicalSnapshot,
 } from "@/lib/post-continuity";
 import { deriveDocumentOperationRecordId } from "@/lib/private-note-continuity";
+import {
+  mediaClaimStatements,
+  postMediaPurgeStatements,
+} from "@/lib/media-lifecycle-atomic";
 
 type PostHead = {
   id: string;
@@ -39,6 +43,7 @@ type PostHead = {
   boardType: BoardType;
   isPinned: boolean;
   mediaUrl: string | null;
+  mediaObjectId: string | null;
   title: string;
   contentHtml: string;
   createdAt: Date | null;
@@ -122,6 +127,7 @@ function postSnapshot(head: PostHead, deletedAt = head.deletedAt): PostCanonical
     boardType: head.boardType,
     isPinned: head.isPinned,
     mediaUrl: head.mediaUrl,
+    mediaObjectId: head.mediaObjectId,
     title: head.title,
     contentHtml: head.contentHtml,
     deletedAt,
@@ -137,6 +143,7 @@ function snapshotsEqual(
     left.boardType === right.boardType &&
     left.isPinned === right.isPinned &&
     left.mediaUrl === right.mediaUrl &&
+    left.mediaObjectId === right.mediaObjectId &&
     left.title === right.title &&
     left.contentHtml === right.contentHtml &&
     documentEpochSeconds(left.deletedAt) === documentEpochSeconds(right.deletedAt)
@@ -152,6 +159,7 @@ async function findPost(context: DbContext, postId: string): Promise<PostHead | 
       boardType: posts.boardType,
       isPinned: posts.isPinned,
       mediaUrl: posts.mediaUrl,
+      mediaObjectId: posts.mediaObjectId,
       title: posts.title,
       contentHtml: posts.contentHtml,
       createdAt: posts.createdAt,
@@ -191,10 +199,10 @@ function postRevisionInsertStatement(input: {
     query: `
       INSERT INTO post_revisions (
         id, post_id, revision_number, change_type, category, board_type,
-        is_pinned, media_url, title, content_html, deleted_at,
+        is_pinned, media_url, media_object_id, title, content_html, deleted_at,
         snapshot_hash, snapshot_hash_version, actor_id,
         restored_from_revision, operation_record_id, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     params: [
       input.revisionId,
@@ -205,6 +213,7 @@ function postRevisionInsertStatement(input: {
       input.snapshot.boardType,
       Number(input.snapshot.isPinned),
       input.snapshot.mediaUrl,
+      input.snapshot.mediaObjectId,
       input.snapshot.title,
       input.snapshot.contentHtml,
       documentEpochSeconds(input.snapshot.deletedAt),
@@ -298,6 +307,42 @@ async function resolvePostReceiptReplay(
   };
 }
 
+function createPostCreateRequest(
+  write: Omit<CreatePostWrite, "now">,
+): PostCanonicalRequest {
+  return {
+    operationType: "CREATE",
+    resourceId: write.postId,
+    subjectId: write.actor.id,
+    baseRevision: null,
+    snapshot: { ...write.snapshot, deletedAt: null },
+  };
+}
+
+/**
+ * 0010에서 발급한 v1 영수증과 정확히 일치하는 URL-only 생성 재실행인지
+ * 쓰기 전에 판별한다. 신규 요청이나 v2 영수증은 의도적으로 허용하지 않는다.
+ */
+export async function preflightLegacyPostCreateReplay(
+  context: DbContext,
+  write: Omit<CreatePostWrite, "now">,
+): Promise<boolean> {
+  const receipt = await findDocumentOperationReceipt(
+    context,
+    write.actor.id,
+    write.operationId,
+  );
+  if (receipt?.requestHashVersion !== 1) return false;
+
+  const replay = await resolvePostReceiptReplay(context, {
+    actor: write.actor,
+    operationId: write.operationId,
+    operationType: "CREATE",
+    request: createPostCreateRequest(write),
+  });
+  return Boolean(replay?.ok && replay.replayed);
+}
+
 async function classifyPostMutation(
   context: DbContext,
   actor: DocumentAtomicActor,
@@ -335,13 +380,7 @@ export async function createPostAtomically(
   write: CreatePostWrite,
 ): Promise<PostMutationResult> {
   const snapshot: PostCanonicalSnapshot = { ...write.snapshot, deletedAt: null };
-  const request: PostCanonicalRequest = {
-    operationType: "CREATE",
-    resourceId: write.postId,
-    subjectId: write.actor.id,
-    baseRevision: null,
-    snapshot,
-  };
+  const request = createPostCreateRequest(write);
   const requestHash = createPostRequestHash(request);
   const replay = await resolvePostReceiptReplay(context, {
     actor: write.actor,
@@ -397,7 +436,8 @@ export async function createPostAtomically(
             FROM posts
             WHERE id = ? AND author_id = ? AND deleted_at IS NULL
               AND category = ? AND board_type = ? AND is_pinned = ?
-              AND media_url IS ? AND title = ? AND content_html = ?
+              AND media_url IS ? AND media_object_id IS ?
+              AND title = ? AND content_html = ?
           `,
           params: [
             recordId,
@@ -412,6 +452,7 @@ export async function createPostAtomically(
             snapshot.boardType,
             Number(snapshot.isPinned),
             snapshot.mediaUrl,
+            snapshot.mediaObjectId,
             snapshot.title,
             snapshot.contentHtml,
           ],
@@ -454,14 +495,23 @@ export async function createPostAtomically(
         resultRevision: 1,
         now: write.now,
       }),
+      ...mediaClaimStatements({
+        mediaObjectId: snapshot.mediaObjectId,
+        ownerId: write.actor.id,
+        purpose: "COMMUNITY_POST_AUDIO",
+        draftOperationId: write.operationId,
+        resourceType: "COMMUNITY_POST",
+        resourceId: write.postId,
+        now: write.now,
+      }),
       {
         query: `
           INSERT INTO posts (
             id, author_id, category, title, content_html, board_type,
-            is_pinned, media_url, created_at, updated_at, version,
+            is_pinned, media_url, media_object_id, created_at, updated_at, version,
             deleted_at, deleted_by_id
           )
-          SELECT ?, profile.id, ?, ?, ?, ?, ?, ?, ?, ?, 1, NULL, NULL
+          SELECT ?, profile.id, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NULL, NULL
           FROM profiles AS profile
           WHERE profile.id = ? AND (? <> 'ANNOUNCEMENT' OR ? = 1)
         `,
@@ -473,6 +523,7 @@ export async function createPostAtomically(
           snapshot.boardType,
           Number(snapshot.isPinned),
           snapshot.mediaUrl,
+          snapshot.mediaObjectId,
           documentEpochSeconds(write.now),
           documentEpochSeconds(write.now),
           write.actor.id,
@@ -995,6 +1046,7 @@ export async function restorePostRevisionAtomically(
       boardType: postRevisions.boardType,
       isPinned: postRevisions.isPinned,
       mediaUrl: postRevisions.mediaUrl,
+      mediaObjectId: postRevisions.mediaObjectId,
       title: postRevisions.title,
       contentHtml: postRevisions.contentHtml,
       deletedAt: postRevisions.deletedAt,
@@ -1015,6 +1067,7 @@ export async function restorePostRevisionAtomically(
         boardType: revision.boardType,
         isPinned: revision.isPinned,
         mediaUrl: revision.mediaUrl,
+        mediaObjectId: revision.mediaObjectId,
         title: revision.title,
         contentHtml: revision.contentHtml,
         deletedAt: null,
@@ -1055,6 +1108,7 @@ export async function restorePostRevisionAtomically(
         boardType: revision.boardType,
         isPinned: revision.isPinned,
         mediaUrl: revision.mediaUrl,
+        mediaObjectId: revision.mediaObjectId,
         title: revision.title,
         contentHtml: revision.contentHtml,
         deletedAt: revision.deletedAt,
@@ -1089,7 +1143,7 @@ export async function restorePostRevisionAtomically(
       {
         query: `
           UPDATE posts
-          SET category = ?, board_type = ?, is_pinned = ?, media_url = ?,
+          SET category = ?, board_type = ?, is_pinned = ?, media_url = ?, media_object_id = ?,
               title = ?, content_html = ?, updated_at = ?, version = version + 1
           WHERE id = ? AND version = ? AND deleted_at IS NULL
             AND (author_id = ? OR ? = 1)
@@ -1103,6 +1157,7 @@ export async function restorePostRevisionAtomically(
           snapshot.boardType,
           Number(snapshot.isPinned),
           snapshot.mediaUrl,
+          snapshot.mediaObjectId,
           snapshot.title,
           snapshot.contentHtml,
           documentEpochSeconds(write.now),
@@ -1225,6 +1280,7 @@ export async function purgePostAtomically(
         ],
       },
       DOCUMENT_CONDITIONAL_WRITE_SENTINEL,
+      ...postMediaPurgeStatements({ postId: write.postId, now: write.now }),
       {
         query: `
           DELETE FROM posts

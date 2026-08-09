@@ -20,6 +20,8 @@ import {
 import {
   createQnaReplyAtomically,
   createQnaThreadAtomically,
+  preflightLegacyQnaReplyCreateReplay,
+  preflightLegacyQnaThreadCreateReplay,
   purgeQnaThreadAtomically,
   restoreTrashedQnaThreadAtomically,
   setQnaStatusAtomically,
@@ -35,11 +37,73 @@ import {
 } from "@/lib/qna-continuity";
 import { isRichTextEmpty } from "@/lib/rich-text";
 import { sanitizeHtml } from "@/lib/sanitize-html";
+import type { DbContext } from "@/db/client";
+import {
+  findOwnedMediaObject,
+  processMediaDeletionOutboxBestEffort,
+} from "@/lib/media-lifecycle-atomic";
+import { mediaDeliveryPath, parseMediaUuidV4 } from "@/lib/media-lifecycle";
 
-function parseAttachmentUrl(formData: FormData): string | null {
-  const raw = String(formData.get("attachmentUrl") ?? "").trim();
-  if (!raw || raw.length > 2048 || !/^https?:\/\//iu.test(raw)) return null;
-  return raw;
+type ResolvedQnaAttachment =
+  | { ok: true; attachmentUrl: string | null; attachmentObjectId: string | null }
+  | { ok: false; error: string };
+
+async function resolveQnaAttachment(
+  context: DbContext,
+  input: {
+    ownerId: string;
+    operationId: string;
+    replyId: string;
+    formData: FormData;
+    allowLegacyReplay?: boolean;
+  },
+): Promise<ResolvedQnaAttachment> {
+  const rawObjectId = String(input.formData.get("attachmentObjectId") ?? "").trim();
+  const submittedLegacyUrl = String(input.formData.get("attachmentUrl") ?? "").trim();
+  const attachmentObjectId = rawObjectId ? parseMediaUuidV4(rawObjectId) : null;
+  if (rawObjectId && !attachmentObjectId) {
+    return { ok: false, error: "첨부 파일 식별자가 올바르지 않습니다. 다시 업로드해 주세요." };
+  }
+  if (submittedLegacyUrl && !attachmentObjectId) {
+    if (input.allowLegacyReplay) {
+      return {
+        ok: true,
+        attachmentUrl: submittedLegacyUrl,
+        attachmentObjectId: null,
+      };
+    }
+    return {
+      ok: false,
+      error: "이전 방식의 첨부는 소유권을 확인할 수 없습니다. 파일을 다시 업로드해 주세요.",
+    };
+  }
+  if (!attachmentObjectId) {
+    return { ok: true, attachmentUrl: null, attachmentObjectId: null };
+  }
+
+  const media = await findOwnedMediaObject(
+    context,
+    input.ownerId,
+    attachmentObjectId,
+  );
+  const historicalAttachment =
+    media?.resourceType === "QNA_REPLY" && media.resourceId === input.replyId;
+  if (
+    !media ||
+    media.purpose !== "QNA_ATTACHMENT" ||
+    media.draftOperationId !== input.operationId ||
+    (media.state !== "READY" && !historicalAttachment)
+  ) {
+    return {
+      ok: false,
+      error: "첨부 파일의 소유권이나 업로드 상태를 확인할 수 없습니다.",
+    };
+  }
+  return {
+    ok: true,
+    attachmentUrl: mediaDeliveryPath(attachmentObjectId),
+    attachmentObjectId,
+  };
 }
 
 function actor(session: Awaited<ReturnType<typeof requireAuth>>) {
@@ -152,6 +216,7 @@ async function readQnaThread(threadId: string, includeTrash: boolean) {
       id: qnaReplies.id,
       contentHtml: qnaReplies.contentHtml,
       attachmentUrl: qnaReplies.attachmentUrl,
+      attachmentObjectId: qnaReplies.attachmentObjectId,
       createdAt: qnaReplies.createdAt,
       authorId: qnaReplies.authorId,
       authorName: profiles.displayName,
@@ -219,6 +284,7 @@ export async function getQnaThreadEvents(threadId: string) {
       createdAt: qnaThreadEvents.createdAt,
       replyContentHtml: qnaReplies.contentHtml,
       replyAttachmentUrl: qnaReplies.attachmentUrl,
+      replyAttachmentObjectId: qnaReplies.attachmentObjectId,
     })
     .from(qnaThreadEvents)
     .leftJoin(profiles, eq(qnaThreadEvents.actorId, profiles.id))
@@ -274,7 +340,6 @@ async function createQnaThreadRecord(
   if (!isQnaContentWithinLimit(contentHtml)) {
     return { error: `Q&A 본문은 ${QNA_MAX_CONTENT_LABEL} 이하로 저장할 수 있습니다.` };
   }
-  const attachmentUrl = parseAttachmentUrl(formData);
   const operationId = resolveCreationOperationId(formData.get(CREATION_OPERATION_FIELD));
   if (!operationId) {
     return { error: "문서 생성 식별자가 올바르지 않습니다. 페이지를 새로고침해 주세요." };
@@ -287,14 +352,43 @@ async function createQnaThreadRecord(
     operationId,
     JSON.stringify(["qna-initial-reply", studentId]),
   );
-  const result = await createQnaThreadAtomically(createDbContext(), {
-    actor: actor(session),
+  const context = createDbContext();
+  const threadActor = actor(session);
+  const submittedLegacyUrl = String(formData.get("attachmentUrl") ?? "").trim();
+  const rawAttachmentObjectId = String(
+    formData.get("attachmentObjectId") ?? "",
+  ).trim();
+  const allowLegacyReplay = Boolean(
+    submittedLegacyUrl &&
+      !rawAttachmentObjectId &&
+      (await preflightLegacyQnaThreadCreateReplay(context, {
+        actor: threadActor,
+        threadId,
+        replyId,
+        operationId,
+        title,
+        contentHtml,
+        attachmentUrl: submittedLegacyUrl,
+        attachmentObjectId: null,
+      })),
+  );
+  const attachment = await resolveQnaAttachment(context, {
+    ownerId: studentId,
+    operationId,
+    replyId,
+    formData,
+    allowLegacyReplay,
+  });
+  if (!attachment.ok) return { error: attachment.error };
+  const result = await createQnaThreadAtomically(context, {
+    actor: threadActor,
     threadId,
     replyId,
     operationId,
     title,
     contentHtml,
-    attachmentUrl,
+    attachmentUrl: attachment.attachmentUrl,
+    attachmentObjectId: attachment.attachmentObjectId,
     now: new Date(),
   });
   if (!result.ok) {
@@ -384,13 +478,41 @@ export async function createQnaReply(
     operationId,
     JSON.stringify(["qna-reply", session.user.id!, threadId]),
   );
-  const result = await createQnaReplyAtomically(createDbContext(), {
-    actor: actor(session),
+  const context = createDbContext();
+  const replyActor = actor(session);
+  const submittedLegacyUrl = String(formData.get("attachmentUrl") ?? "").trim();
+  const rawAttachmentObjectId = String(
+    formData.get("attachmentObjectId") ?? "",
+  ).trim();
+  const allowLegacyReplay = Boolean(
+    submittedLegacyUrl &&
+      !rawAttachmentObjectId &&
+      (await preflightLegacyQnaReplyCreateReplay(context, {
+        actor: replyActor,
+        threadId,
+        replyId,
+        operationId,
+        contentHtml,
+        attachmentUrl: submittedLegacyUrl,
+        attachmentObjectId: null,
+      })),
+  );
+  const attachment = await resolveQnaAttachment(context, {
+    ownerId: session.user.id!,
+    operationId,
+    replyId,
+    formData,
+    allowLegacyReplay,
+  });
+  if (!attachment.ok) return { error: attachment.error };
+  const result = await createQnaReplyAtomically(context, {
+    actor: replyActor,
     threadId,
     replyId,
     operationId,
     contentHtml,
-    attachmentUrl: parseAttachmentUrl(formData),
+    attachmentUrl: attachment.attachmentUrl,
+    attachmentObjectId: attachment.attachmentObjectId,
     now: new Date(),
   });
   if (!result.ok) {
@@ -477,7 +599,12 @@ async function runQnaLifecycle(
       : kind === "restore"
         ? await restoreTrashedQnaThreadAtomically(createDbContext(), write)
         : await purgeQnaThreadAtomically(createDbContext(), write);
-  if (result.ok) revalidateQnaPaths(threadId);
+  if (result.ok) {
+    revalidateQnaPaths(threadId);
+    if (kind === "purge") {
+      await processMediaDeletionOutboxBestEffort(createDbContext(), { limit: 5 });
+    }
+  }
   return lifecycleState(result);
 }
 

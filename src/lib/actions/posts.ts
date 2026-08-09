@@ -19,6 +19,7 @@ import {
 } from "@/lib/document-snapshot-fingerprint";
 import {
   createPostAtomically,
+  preflightLegacyPostCreateReplay,
   purgePostAtomically,
   restorePostRevisionAtomically,
   restoreTrashedPostAtomically,
@@ -32,7 +33,6 @@ import {
   POST_BASE_REVISION_FIELD,
   POST_MAX_CONTENT_LABEL,
   POST_MAX_TITLE_LENGTH,
-  POST_RESTORE_REVISION_FIELD,
   POST_TRASH_RETENTION_SECONDS,
   isPostContentWithinLimit,
   parsePostRevision,
@@ -40,6 +40,11 @@ import {
 import { isRichTextEmpty } from "@/lib/rich-text";
 import { safeReturnPath } from "@/lib/safe-return-path";
 import { sanitizeHtml } from "@/lib/sanitize-html";
+import {
+  findOwnedMediaObject,
+  processMediaDeletionOutboxBestEffort,
+} from "@/lib/media-lifecycle-atomic";
+import { mediaDeliveryPath, parseMediaUuidV4 } from "@/lib/media-lifecycle";
 
 const VALID_BOARD_TYPES: readonly BoardType[] = ["ANNOUNCEMENT", "GENERAL", "FEEDBACK"];
 
@@ -50,6 +55,7 @@ const POST_SELECT = {
   boardType: posts.boardType,
   isPinned: posts.isPinned,
   mediaUrl: posts.mediaUrl,
+  mediaObjectId: posts.mediaObjectId,
   title: posts.title,
   contentHtml: posts.contentHtml,
   createdAt: posts.createdAt,
@@ -183,6 +189,7 @@ export async function getPostRevisions(postId: string) {
       boardType: postRevisions.boardType,
       isPinned: postRevisions.isPinned,
       mediaUrl: postRevisions.mediaUrl,
+      mediaObjectId: postRevisions.mediaObjectId,
       title: postRevisions.title,
       contentHtml: postRevisions.contentHtml,
       restoredFromRevision: postRevisions.restoredFromRevision,
@@ -252,19 +259,73 @@ export async function createPost(
   const isPinned =
     boardType === "ANNOUNCEMENT" &&
     (isPinnedRaw === "on" || isPinnedRaw === "true");
-  const mediaUrl =
-    boardType === "FEEDBACK"
-      ? String(formData.get("mediaUrl") ?? "").trim() || null
-      : null;
   const postId = deriveCreationResourceId(
     operationId,
     JSON.stringify(["community-post", authorId]),
   );
-  const result = await createPostAtomically(createDbContext(), {
-    actor: actor(session),
+  const rawMediaObjectId = String(formData.get("mediaObjectId") ?? "").trim();
+  const submittedLegacyUrl = String(formData.get("mediaUrl") ?? "").trim();
+  if (boardType !== "FEEDBACK" && (rawMediaObjectId || submittedLegacyUrl)) {
+    return { error: "믹스셋 게시물에서만 오디오를 첨부할 수 있습니다." };
+  }
+
+  const mediaObjectId = rawMediaObjectId
+    ? parseMediaUuidV4(rawMediaObjectId)
+    : null;
+  if (rawMediaObjectId && !mediaObjectId) {
+    return { error: "첨부 오디오 식별자가 올바르지 않습니다. 다시 업로드해 주세요." };
+  }
+
+  const context = createDbContext();
+  const postActor = actor(session);
+  let mediaUrl: string | null = null;
+  if (submittedLegacyUrl && !mediaObjectId) {
+    const isExactLegacyReplay = await preflightLegacyPostCreateReplay(context, {
+      actor: postActor,
+      postId,
+      operationId,
+      snapshot: {
+        category,
+        boardType,
+        isPinned,
+        mediaUrl: submittedLegacyUrl,
+        mediaObjectId: null,
+        title,
+        contentHtml,
+      },
+    });
+    if (!isExactLegacyReplay) {
+      return { error: "이전 방식의 업로드는 소유권을 확인할 수 없습니다. 파일을 다시 업로드해 주세요." };
+    }
+    mediaUrl = submittedLegacyUrl;
+  } else if (mediaObjectId) {
+    const media = await findOwnedMediaObject(context, authorId, mediaObjectId);
+    const historicalAttachment =
+      media?.resourceType === "COMMUNITY_POST" && media.resourceId === postId;
+    if (
+      !media ||
+      media.purpose !== "COMMUNITY_POST_AUDIO" ||
+      media.draftOperationId !== operationId ||
+      (media.state !== "READY" && !historicalAttachment)
+    ) {
+      return { error: "첨부 오디오의 소유권이나 업로드 상태를 확인할 수 없습니다." };
+    }
+    mediaUrl = mediaDeliveryPath(mediaObjectId);
+  }
+
+  const result = await createPostAtomically(context, {
+    actor: postActor,
     postId,
     operationId,
-    snapshot: { category, boardType, isPinned, mediaUrl, title, contentHtml },
+    snapshot: {
+      category,
+      boardType,
+      isPinned,
+      mediaUrl,
+      mediaObjectId,
+      title,
+      contentHtml,
+    },
     now: new Date(),
   });
   if (!result.ok) {
@@ -433,7 +494,12 @@ async function runPostLifecycle(
       : kind === "restore"
         ? await restoreTrashedPostAtomically(createDbContext(), write)
         : await purgePostAtomically(createDbContext(), write);
-  if (result.ok) revalidatePostPaths(postId);
+  if (result.ok) {
+    revalidatePostPaths(postId);
+    if (kind === "purge") {
+      await processMediaDeletionOutboxBestEffort(createDbContext(), { limit: 2 });
+    }
+  }
   return lifecycleState(result);
 }
 

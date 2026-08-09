@@ -28,6 +28,7 @@ import {
   parseCreationOperationId,
 } from "@/lib/creation-operation";
 import { CreationConflictActions } from "@/components/editor/CreationConflictActions";
+import { abandonMediaUpload } from "@/lib/actions/upload";
 
 const FullEditor = dynamic(
   () => import("@/components/editor/FullEditor").then((m) => ({ default: m.FullEditor })),
@@ -39,6 +40,7 @@ interface QnaDraft {
   title: string;
   contentHtml: string;
   attachmentUrl: string;
+  attachmentObjectId?: string;
 }
 
 interface QnaSlideFormProps {
@@ -67,6 +69,7 @@ export function QnaSlideForm({
     commitLatestContentHtml,
   } = useDeferredEditorContent("");
   const [attachmentUrl, setAttachmentUrl] = useState("");
+  const [attachmentObjectId, setAttachmentObjectId] = useState("");
   const [operationId, setOperationId] = useState("");
   const [isUploading, setIsUploading] = useState(false);
   const [state, formAction, isPending] = useActionState<CreateThreadInlineState, FormData>(
@@ -110,6 +113,7 @@ export function QnaSlideForm({
       setTitle(d.title ?? "");
       setContentHtml(d.contentHtml ?? "");
       setAttachmentUrl(d.attachmentUrl ?? "");
+      setAttachmentObjectId(d.attachmentObjectId ?? "");
     },
     {
       onReset: () => {
@@ -117,6 +121,7 @@ export function QnaSlideForm({
         setTitle("");
         setContentHtml("");
         setAttachmentUrl("");
+        setAttachmentObjectId("");
       },
     },
   );
@@ -128,11 +133,13 @@ export function QnaSlideForm({
         title,
         contentHtml: readLatestContentHtml(),
         attachmentUrl,
+        attachmentObjectId,
       }),
       isEmpty: (draft) =>
         !draft.title &&
         isRichTextEmpty(draft.contentHtml) &&
-        !draft.attachmentUrl,
+        !draft.attachmentUrl &&
+        !draft.attachmentObjectId,
       clear,
       save,
       flush,
@@ -142,7 +149,11 @@ export function QnaSlideForm({
   useEffect(() => {
     if (!loaded) return;
     const latestContentHtml = readLatestContentHtml();
-    const isEmpty = !title && isRichTextEmpty(latestContentHtml) && !attachmentUrl;
+    const isEmpty =
+      !title &&
+      isRichTextEmpty(latestContentHtml) &&
+      !attachmentUrl &&
+      !attachmentObjectId;
     if (isEmpty) {
       clear();
       return;
@@ -152,11 +163,12 @@ export function QnaSlideForm({
       operationId,
       title,
       attachmentUrl,
+      attachmentObjectId,
       get contentHtml() {
         return readLatestContentHtml();
       },
     });
-  }, [loaded, title, contentHtml, attachmentUrl, operationId, readLatestContentHtml, save, clear]);
+  }, [loaded, title, contentHtml, attachmentUrl, attachmentObjectId, operationId, readLatestContentHtml, save, clear]);
 
   // 저장 성공 시 draft 삭제 + 낙관적 업데이트 + 패널 닫기
   useEffect(() => {
@@ -173,6 +185,7 @@ export function QnaSlideForm({
           title,
           contentHtml,
           attachmentUrl,
+          attachmentObjectId,
         },
       });
       submittedDraftRef.current = null;
@@ -224,6 +237,7 @@ export function QnaSlideForm({
           title,
           contentHtml: latestContentHtml,
           attachmentUrl,
+          attachmentObjectId,
         };
         save(submittedDraft);
         flush();
@@ -242,7 +256,14 @@ export function QnaSlideForm({
           existingHref={`/dashboard/qna/${state.existingId}?returnTo=${encodeURIComponent(returnTo)}`}
           existingLabel="기존 질문 열기"
           separateLabel="별도 질문으로 저장"
-          onSeparate={() => setOperationId(createCreationOperationId())}
+          onSeparate={() => {
+            if (attachmentObjectId) {
+              void abandonMediaUpload(attachmentObjectId).catch(() => undefined);
+            }
+            setAttachmentUrl("");
+            setAttachmentObjectId("");
+            setOperationId(createCreationOperationId());
+          }}
           disabled={isFormBusy}
         />
       ) : null}
@@ -280,6 +301,7 @@ export function QnaSlideForm({
                 operationId,
                 title,
                 attachmentUrl,
+                attachmentObjectId,
                 get contentHtml() {
                   return reader();
                 },
@@ -312,7 +334,12 @@ export function QnaSlideForm({
         <label className="text-sm font-medium">첨부 파일</label>
         <AttachmentField
           value={attachmentUrl}
-          onChange={setAttachmentUrl}
+          mediaObjectId={attachmentObjectId}
+          draftOperationId={operationId}
+          onChange={(upload) => {
+            setAttachmentUrl(upload?.deliveryUrl ?? "");
+            setAttachmentObjectId(upload?.mediaObjectId ?? "");
+          }}
           disabled={!loaded || isFormBusy}
           onUploadingChange={setIsUploading}
         />

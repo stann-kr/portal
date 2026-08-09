@@ -5,8 +5,8 @@ import { deriveCreationResourceId } from "@/lib/creation-operation";
 
 export const POST_BASE_REVISION_FIELD = "baseRevision";
 export const POST_RESTORE_REVISION_FIELD = "revisionNumber";
-export const POST_REQUEST_HASH_VERSION = 1;
-export const POST_SNAPSHOT_HASH_VERSION = 1;
+export const POST_REQUEST_HASH_VERSION = 2;
+export const POST_SNAPSHOT_HASH_VERSION = 2;
 export const POST_TRASH_RETENTION_SECONDS = 30 * 24 * 60 * 60;
 export const POST_MAX_CONTENT_BYTES = 800 * 1024;
 export const POST_MAX_CONTENT_LABEL = "800 KiB";
@@ -17,6 +17,7 @@ export type PostCanonicalSnapshot = {
   boardType: BoardType;
   isPinned: boolean;
   mediaUrl: string | null;
+  mediaObjectId: string | null;
   title: string;
   contentHtml: string;
   deletedAt: Date | null;
@@ -51,13 +52,28 @@ function epochSeconds(value: Date | null | undefined): number | null {
   return value ? Math.floor(value.getTime() / 1000) : null;
 }
 
-function snapshotTuple(snapshot: PostCanonicalSnapshot | undefined) {
+function snapshotTupleV1(snapshot: PostCanonicalSnapshot | undefined) {
   return snapshot
     ? [
         snapshot.category,
         snapshot.boardType,
         snapshot.isPinned,
         snapshot.mediaUrl,
+        snapshot.title,
+        snapshot.contentHtml,
+        epochSeconds(snapshot.deletedAt),
+      ]
+    : null;
+}
+
+function snapshotTupleV2(snapshot: PostCanonicalSnapshot | undefined) {
+  return snapshot
+    ? [
+        snapshot.category,
+        snapshot.boardType,
+        snapshot.isPinned,
+        snapshot.mediaObjectId ? null : snapshot.mediaUrl,
+        snapshot.mediaObjectId,
         snapshot.title,
         snapshot.contentHtml,
         epochSeconds(snapshot.deletedAt),
@@ -75,7 +91,26 @@ function createPostRequestHashV1(request: PostCanonicalRequest): string {
       request.resourceId,
       request.subjectId,
       request.baseRevision,
-      snapshotTuple(request.snapshot),
+      snapshotTupleV1(request.snapshot),
+      request.title ?? null,
+      request.contentHtml ?? null,
+      request.isPinned ?? null,
+      request.restoredFromRevision ?? null,
+    ]),
+  );
+}
+
+function createPostRequestHashV2(request: PostCanonicalRequest): string {
+  return sha256Hex(
+    JSON.stringify([
+      "portal-community-post-request",
+      2,
+      request.operationType,
+      "COMMUNITY_POST",
+      request.resourceId,
+      request.subjectId,
+      request.baseRevision,
+      snapshotTupleV2(request.snapshot),
       request.title ?? null,
       request.contentHtml ?? null,
       request.isPinned ?? null,
@@ -88,7 +123,9 @@ export function createPostRequestHashForVersion(
   request: PostCanonicalRequest,
   version: number,
 ): string | null {
-  return version === 1 ? createPostRequestHashV1(request) : null;
+  if (version === 1) return createPostRequestHashV1(request);
+  if (version === 2) return createPostRequestHashV2(request);
+  return null;
 }
 
 export function createPostRequestHash(request: PostCanonicalRequest): string {
@@ -99,7 +136,13 @@ export function createPostRequestHash(request: PostCanonicalRequest): string {
 
 function createPostSnapshotHashV1(snapshot: PostCanonicalSnapshot): string {
   return sha256Hex(
-    JSON.stringify(["portal-community-post-snapshot", 1, ...snapshotTuple(snapshot)!]),
+    JSON.stringify(["portal-community-post-snapshot", 1, ...snapshotTupleV1(snapshot)!]),
+  );
+}
+
+function createPostSnapshotHashV2(snapshot: PostCanonicalSnapshot): string {
+  return sha256Hex(
+    JSON.stringify(["portal-community-post-snapshot", 2, ...snapshotTupleV2(snapshot)!]),
   );
 }
 
@@ -107,7 +150,9 @@ export function createPostSnapshotHashForVersion(
   snapshot: PostCanonicalSnapshot,
   version: number,
 ): string | null {
-  return version === 1 ? createPostSnapshotHashV1(snapshot) : null;
+  if (version === 1) return createPostSnapshotHashV1(snapshot);
+  if (version === 2) return createPostSnapshotHashV2(snapshot);
+  return null;
 }
 
 export function createPostSnapshotHash(snapshot: PostCanonicalSnapshot): string {
