@@ -7,6 +7,7 @@
 ### 변경 요약
 
 - Wrangler 원격 관리 명령이 사용하는 `CLOUDFLARE_API_TOKEN` 환경 계약을 샘플에 추가했다. 실제 토큰은 Git에서 제외된 로컬 `.env`에만 두고 저장소·로그·채팅에는 남기지 않는다.
+- 비호환 D1 migration runbook을 사전 restore rehearsal과 maintenance 이후 최종 rollback 기준점으로 분리했다. maintenance 100% 전환 뒤 기존 invocation을 drain하고 새 export·checksum·Time Travel bookmark를 확보해야만 실제 pending migration을 시작한다.
 
 ## 2026-08-10
 

@@ -29,18 +29,21 @@
 - production deploy 전 admin/student smoke 계정과 test data를 준비한다.
 - production branch merge가 자동 배포를 시작하는지 확인하고, migration 작업 창에는 자동 promotion을 중지하거나 upload-only 절차로 전환한다.
 
-### 0010~0012 전환 gate
+### 비호환 migration 전환 gate
 
 `0010`의 문서 trigger와 새 애플리케이션은 이전 Worker와 양방향 호환되지 않는다. 이전·신규 Worker를 동시에 받는 gradual traffic split을 사용하지 않는다.
 
 1. 원격 migration 적용 목록과 D1 schema·foreign key 무결성을 읽기 전용으로 확인한다.
-2. schema+data export의 checksum과 D1 Time Travel 복구 지점을 확보하고, 격리 D1에서 실제 pending 범위의 restore·migration rehearsal을 통과한다.
-3. 쓰기를 거부하는 maintenance Worker를 100% 적용한다.
-4. `0010`, `0011`, `0012`를 실제 pending 순서대로 적용하고 즉시 schema·trigger·핵심 row count를 검증한다.
-5. 대상 Worker를 schema smoke 뒤 100% 단일 전환하고 즉시 admin/student 로그인, 게시물·Q&A 생성·복원·purge, media와 계정 삭제 smoke를 수행한다.
-6. smoke가 실패하면 보존한 maintenance version ID를 다시 100% 적용하고, 통과하면 작업 창을 종료한다.
+2. maintenance 진입 전에 full schema+data export와 checksum, D1 Time Travel bookmark를 확보하고 격리 D1에서 **실제 pending 전체 범위**의 restore·migration rehearsal을 통과한다. 이 사본은 rehearsal 입력이며 최종 rollback 기준점은 아니다.
+3. maintenance와 target Worker를 upload-only로 준비해 immutable version ID·tag·binding을 기록하고, Workers Builds 자동 promotion과 별도 Cron·queue 등 모든 writer를 중지한다.
+4. 쓰기를 거부하는 정확한 maintenance version ID를 100% 적용한다. version metadata 일치, app·asset·API `503`, old/new split 0%를 확인한다.
+5. 기존 Worker invocation이 끝날 drain window를 둔 뒤 핵심 row count와 write watermark가 더 이상 변하지 않는지 확인한다.
+6. write fence 뒤 full schema+data export를 다시 만들고 checksum과 새 D1 Time Travel bookmark를 기록한다. 이 post-fence 사본만 실제 migration의 rollback 기준점으로 사용한다.
+7. 실제 pending migration을 순서대로 적용하고 즉시 schema·trigger·foreign key·핵심 row count를 검증한다.
+8. 대상 Worker를 schema smoke 뒤 100% 단일 전환하고 즉시 admin/student 로그인, 게시물·Q&A 생성·복원·purge, media와 계정 삭제 smoke를 수행한다.
+9. smoke가 실패하면 보존한 maintenance version ID를 다시 100% 적용하고, 통과하면 작업 창을 종료한다.
 
-장애 시 이전 Worker만 되돌리면 새 schema와 맞지 않는다. 쓰기를 계속 차단한 상태에서 Worker와 D1을 같은 pre-migration 지점으로 함께 복구하는 절차가 필요하다.
+maintenance 전에 만든 export/bookmark만으로 복구하면 backup과 write fence 사이의 정상 쓰기를 잃을 수 있다. 장애 시 이전 Worker만 되돌리면 새 schema와도 맞지 않으므로, 쓰기를 계속 차단한 상태에서 post-fence 기준점으로 Worker와 D1을 함께 복구하는 절차가 필요하다.
 
 ### R2 private media gate
 
