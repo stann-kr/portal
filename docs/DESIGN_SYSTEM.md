@@ -82,6 +82,7 @@ pill 형태는 filter와 count처럼 모양 자체가 의미를 가질 때만 �
 | `PortalShell` | 역할별 navigation, section 상태 복원, 공통 content frame |
 | `StatusBadge` | registry 기반 label·icon·tone 표시 |
 | `UnifiedItemTypeBadge` | 통합 기록의 일정·노트·디깅·Q&A·과제 type icon·label |
+| `UnifiedItemSpaceBadge` | 통합 기록의 학생 스페이스·포털 출처 label과 접근성 문맥 |
 | `SectionHeader` | section 제목·설명·단일 보조 action |
 | `EmptyState` | 비어 있는 이유와 가능한 다음 행동 |
 | `FullEditor` | rich text·Markdown 작성, block command, inline 삽입, keyboard save 경계 |

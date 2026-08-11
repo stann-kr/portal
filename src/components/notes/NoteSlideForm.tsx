@@ -38,6 +38,7 @@ const FullEditor = dynamic(
 interface NoteSlideFormProps {
   studentId: string;
   actorId: string;
+  spaceLabel: string;
   returnTo: string;
   /** 캘린더 날짜 클릭 시 기본값 (YYYY-MM-DD) */
   defaultDate?: string;
@@ -56,6 +57,7 @@ type CreateNoteDraft = {
 export function NoteSlideForm({
   studentId,
   actorId,
+  spaceLabel,
   returnTo,
   defaultDate,
   onSuccess,
@@ -191,6 +193,8 @@ export function NoteSlideForm({
         title: savedTitle,
         date: new Date(savedDate ?? createdAt ?? Date.now()),
         metadata: { contentHtml: savedContentHtml, authorId: actorId, noteDate: savedDate },
+        space: { studentId, label: spaceLabel },
+        source: { kind: "PORTAL", entity: "PRIVATE_NOTE", label: "포털" },
       };
       onSuccess(newItem);
     }

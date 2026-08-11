@@ -64,6 +64,7 @@ export interface StudentPortalClientProps {
   communityPosts: CommunityPost[];
   studentId: string;
   displayName: string;
+  spaceLabel: string;
   referenceTime: Date;
 }
 
@@ -93,6 +94,7 @@ export function StudentPortalClient({
   communityPosts,
   studentId,
   displayName,
+  spaceLabel,
   referenceTime,
 }: StudentPortalClientProps) {
   const [items, setItems] = useState<UnifiedItem[]>(initialUnifiedItems);
@@ -138,6 +140,8 @@ export function StudentPortalClient({
               assignments={assignments}
               studentId={studentId}
               actorId={studentId}
+              spaceLabel={spaceLabel}
+              workspaceRole="student"
               isActive={activeSection === "workspace"}
               onAddItem={addItem}
             />

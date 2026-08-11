@@ -60,6 +60,10 @@ interface CalendarSectionProps {
   studentId: string;
   /** 현재 작성자의 ID. draft를 계정별로 격리한다. */
   actorId: string;
+  /** 현재 보고 있는 학생 스페이스의 표시명. */
+  spaceLabel: string;
+  /** 관리자/학생에 따른 스페이스 문맥 표기. */
+  workspaceRole: "admin" | "student";
   /** 어드민에서 주입하는 헤더 슬롯 (학생 필터 드롭다운 등) */
   headerSlot?: React.ReactNode;
   /** 노트/QnA 생성 성공 시 낙관적 업데이트 콜백 */
@@ -78,6 +82,8 @@ export function CalendarSection({
   assignments,
   studentId,
   actorId,
+  spaceLabel,
+  workspaceRole,
   headerSlot,
   onAddItem,
   canCreateQna = true,
@@ -92,6 +98,8 @@ export function CalendarSection({
   const [activeTab, setActiveTab] = useState<string>("calendar");
   const calendarTabStorageKey = createAccountCalendarTabStorageKey(actorId);
   const isStudentWorkspace = actorId === studentId;
+  const showSpaceContext = workspaceRole === "admin";
+  const workspaceContextLabel = workspaceRole === "student" ? "내 스페이스" : "학생 스페이스";
   const workspaceSection = isStudentWorkspace ? "workspace" : "schedule";
   const workspaceReturnTo = isStudentWorkspace
     ? `/dashboard/student?section=${workspaceSection}&view=${encodeURIComponent(activeTab)}`
@@ -240,6 +248,11 @@ export function CalendarSection({
             />
           </div>
         </div>
+        <div className="flex min-h-9 items-center border-b border-border px-3 text-xs text-muted-foreground sm:px-6">
+          <span aria-label={`${workspaceContextLabel}: ${spaceLabel || "선택된 학생 없음"}`}>
+            {workspaceContextLabel} · <span className="font-medium text-foreground">{spaceLabel || "선택된 학생 없음"}</span>
+          </span>
+        </div>
 
         {/* 탭 콘텐츠 */}
         <div className="flex-1 overflow-auto">
@@ -249,16 +262,25 @@ export function CalendarSection({
                 items={unifiedItems}
                 onCreateRequest={handleCreateRequest}
                 returnTo={workspaceReturnTo}
+                showSpaceContext={showSpaceContext}
               />
             </div>
           </TabsContent>
 
           <TabsContent value="daily" className="m-0 p-6">
-            <DailyListView items={unifiedItems} returnTo={workspaceReturnTo} />
+            <DailyListView
+              items={unifiedItems}
+              returnTo={workspaceReturnTo}
+              showSpaceContext={showSpaceContext}
+            />
           </TabsContent>
 
           <TabsContent value="all" className="m-0 p-6">
-            <AllItemsView items={unifiedItems} returnTo={workspaceReturnTo} />
+            <AllItemsView
+              items={unifiedItems}
+              returnTo={workspaceReturnTo}
+              showSpaceContext={showSpaceContext}
+            />
           </TabsContent>
 
           <TabsContent value="curriculum" className="m-0 p-6 max-w-3xl mx-auto">
@@ -282,6 +304,7 @@ export function CalendarSection({
         <NoteSlideForm
           studentId={studentId}
           actorId={actorId}
+          spaceLabel={spaceLabel}
           returnTo={workspaceReturnTo}
           defaultDate={createDefaultDate}
           onSuccess={(item) => {
@@ -304,6 +327,7 @@ export function CalendarSection({
         >
           <QnaSlideForm
             actorId={actorId}
+            spaceLabel={spaceLabel}
             returnTo={workspaceReturnTo}
             onSuccess={(item) => {
               onAddItem?.(item);

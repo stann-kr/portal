@@ -8,6 +8,14 @@
 
 export type UnifiedItemType = "EVENT" | "NOTE" | "DIGGING" | "QNA" | "ASSIGNMENT";
 
+export type UnifiedItemSourceEntity =
+  | "CALENDAR_EVENT"
+  | "LESSON"
+  | "PRIVATE_NOTE"
+  | "DIGGING_TRACK"
+  | "QNA_THREAD"
+  | "ASSIGNMENT";
+
 export type UnifiedItem = {
   id: string;
   type: UnifiedItemType;
@@ -19,7 +27,23 @@ export type UnifiedItem = {
   date: Date;
   endDate?: Date | null;
   metadata: Record<string, unknown>;
+  /** 이 항목이 속한 학생 워크스페이스. */
+  space: {
+    studentId: string;
+    label: string;
+  };
+  /** 현재 포털에서 생성·관리하는 항목의 출처. */
+  source: {
+    kind: "PORTAL";
+    entity: UnifiedItemSourceEntity;
+    label: string;
+  };
 };
+
+/** 서로 다른 엔티티가 같은 raw ID를 가질 때도 안전한 UI 식별 키. */
+export function getUnifiedItemKey(item: UnifiedItem): string {
+  return `${item.source.kind}:${item.source.entity}:${item.id}`;
+}
 
 // ─── 색상 맵 ──────────────────────────────────────
 

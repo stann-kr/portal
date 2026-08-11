@@ -6,6 +6,8 @@
 
 ### 변경 요약
 
+- 학생과 관리자 통합 일정에 `lessons` 행을 레슨 이벤트로 포함했다. 기존 개인 일정과 레슨 행은 같은 시각이어도 모두 유지한다.
+- 학생·관리자 일정에 현재 학생 스페이스 문맥을 표시하고 관리자 캘린더·목록과 항목 상세에서 학생·포털 출처를 식별하게 했다. 서로 다른 엔티티의 같은 ID도 UI 선택과 목록 key에서 충돌하지 않는다.
 - Wrangler 원격 관리 명령이 사용하는 `CLOUDFLARE_API_TOKEN`을 Next/OpenNext가 자동 로드하지 않는 전용 `.env.cloudflare` 계약으로 분리했다. 실제 값은 Git에서 제외된 mode `600` 파일에만 두고 저장소·build artifact·로그·채팅에는 남기지 않는다.
 - 비호환 D1 migration runbook을 사전 restore rehearsal과 maintenance 이후 최종 rollback 기준점으로 분리했다. maintenance 100% 전환 뒤 기존 invocation을 drain하고 새 export·checksum·Time Travel bookmark를 확보해야만 실제 pending migration을 시작한다.
 - 익명 계정 정리 상태 조회를 Worker Rate Limiting binding으로 제한하고, binding 오류도 token 본문을 읽기 전에 `503`으로 닫는다. 계정 삭제는 오프라인 기기의 정리 신호 보급을 확인할 때까지 production rollout flag로 숨기고 server action도 함께 거부한다.

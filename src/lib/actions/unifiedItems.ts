@@ -15,28 +15,42 @@ import {
   qnaThreads,
   assignments,
   feedbacks,
+  lessons,
+  profiles,
 } from "@/db/schema";
-import type { CalendarEventType, QnaStatus } from "@/db/schema";
 import { and, eq, desc, inArray, isNull } from "drizzle-orm";
 import type { InferSelectModel } from "drizzle-orm";
 import { requireAuth } from "@/lib/auth-guard";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
+import { normalizeUnifiedItems } from "@/lib/unified-item-normalization";
 
 // ─── 공통 조회 헬퍼 ──────────────────────────────
 
 async function fetchUnifiedItemsForUser(userId: string): Promise<UnifiedItem[]> {
   const db = createDb();
 
-  // 5개 테이블 + 디깅 컬럼 병렬 조회
+  // 학생 profile + 날짜 기반 테이블 + 디깅 컬럼 병렬 조회
   const [
+    profileRows,
     events,
+    studentLessons,
     notes,
     tracks,
     columns,
     threads,
     myAssignments,
   ] = await Promise.all([
+    db
+      .select({
+        id: profiles.id,
+        email: profiles.email,
+        displayName: profiles.displayName,
+      })
+      .from(profiles)
+      .where(eq(profiles.id, userId))
+      .limit(1),
     db.select().from(calendarEvents).where(eq(calendarEvents.userId, userId)).orderBy(desc(calendarEvents.startTime)) as Promise<InferSelectModel<typeof calendarEvents>[]>,
+    db.select().from(lessons).where(eq(lessons.studentId, userId)).orderBy(desc(lessons.scheduledAt)) as Promise<InferSelectModel<typeof lessons>[]>,
     db
       .select()
       .from(privateNotes)
@@ -62,6 +76,9 @@ async function fetchUnifiedItemsForUser(userId: string): Promise<UnifiedItem[]> 
     db.select().from(assignments).where(eq(assignments.studentId, userId)).orderBy(desc(assignments.submittedAt)) as Promise<InferSelectModel<typeof assignments>[]>,
   ]);
 
+  const profile = profileRows[0];
+  if (!profile) throw new Error("Student profile not found");
+
   const assignmentIds = myAssignments.map((assignment) => assignment.id);
   const scopedFeedbacks = assignmentIds.length
     ? await db
@@ -70,104 +87,23 @@ async function fetchUnifiedItemsForUser(userId: string): Promise<UnifiedItem[]> 
         .where(inArray(feedbacks.assignmentId, assignmentIds))
     : [];
 
-  // 디깅 track name 컬럼 ID 탐색
-  const trackNameColId = columns.find(
-    (c) => c.name.toLowerCase() === "track name",
-  )?.id;
-  const artistColId = columns.find(
-    (c) => c.name.toLowerCase() === "artist",
-  )?.id;
-
   // 과제별 피드백 카운트 맵
   const feedbackCountMap: Record<string, number> = {};
   for (const f of scopedFeedbacks) {
     feedbackCountMap[f.assignmentId] = (feedbackCountMap[f.assignmentId] ?? 0) + 1;
   }
 
-  const items: UnifiedItem[] = [];
-
-  // ── EVENT ────────────────────────────────────────
-  for (const e of events) {
-    items.push({
-      id: e.id,
-      type: "EVENT",
-      subType: e.eventType as CalendarEventType,
-      title: e.title,
-      description: e.description ?? undefined,
-      date: new Date(e.startTime!),
-      endDate: e.endTime ? new Date(e.endTime) : null,
-      metadata: { eventType: e.eventType, description: e.description },
-    });
-  }
-
-  // ── NOTE ─────────────────────────────────────────
-  for (const n of notes) {
-    items.push({
-      id: n.id,
-      type: "NOTE",
-      title: n.title,
-      date: new Date(n.noteDate ?? n.createdAt ?? Date.now()),
-      metadata: { contentHtml: n.contentHtml, authorId: n.authorId, noteDate: n.noteDate },
-    });
-  }
-
-  // ── DIGGING ──────────────────────────────────────
-  for (const t of tracks) {
-    let values: Record<string, unknown> = {};
-    try {
-      values = JSON.parse(t.values ?? "{}") as Record<string, unknown>;
-    } catch { /* 손상된 JSON 무시 */ }
-
-    // track name 컬럼 값 → 없으면 linkUrl → 없으면 기본 텍스트
-    const trackName = trackNameColId
-      ? (values[trackNameColId] as string | undefined)
-      : undefined;
-    const artistName = artistColId
-      ? (values[artistColId] as string | undefined)
-      : undefined;
-
-    const title =
-      trackName && artistName
-        ? `${trackName} — ${artistName}`
-        : trackName ?? t.linkUrl ?? "디깅 트랙";
-
-    items.push({
-      id: t.id,
-      type: "DIGGING",
-      title,
-      date: new Date(t.createdAt ?? Date.now()),
-      metadata: { values, linkUrl: t.linkUrl, columnIds: { trackName: trackNameColId, artist: artistColId } },
-    });
-  }
-
-  // ── QNA ──────────────────────────────────────────
-  for (const q of threads) {
-    items.push({
-      id: q.id,
-      type: "QNA",
-      subType: q.status as QnaStatus,
-      title: q.title,
-      date: new Date(q.createdAt ?? Date.now()),
-      metadata: { status: q.status },
-    });
-  }
-
-  // ── ASSIGNMENT ───────────────────────────────────
-  for (const a of myAssignments) {
-    const feedbackCount = feedbackCountMap[a.id] ?? 0;
-    items.push({
-      id: a.id,
-      type: "ASSIGNMENT",
-      title: a.mediaUrl,
-      date: new Date(a.submittedAt ?? Date.now()),
-      metadata: { mediaUrl: a.mediaUrl, feedbackCount },
-    });
-  }
-
-  // date desc 정렬
-  items.sort((a, b) => b.date.getTime() - a.date.getTime());
-
-  return items;
+  return normalizeUnifiedItems({
+    profile,
+    events,
+    lessons: studentLessons,
+    notes,
+    tracks,
+    columns,
+    threads,
+    assignments: myAssignments,
+    feedbackCounts: feedbackCountMap,
+  });
 }
 
 // ─── 집계 서버 액션 ───────────────────────────────

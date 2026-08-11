@@ -14,7 +14,7 @@ import listPlugin from "@fullcalendar/list";
 import type { DateClickArg } from "@fullcalendar/interaction";
 import type { EventClickArg, EventInput } from "@fullcalendar/core";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
-import { getUnifiedItemColor } from "@/lib/utils/unifiedItemUtils";
+import { getUnifiedItemColor, getUnifiedItemKey } from "@/lib/utils/unifiedItemUtils";
 import { SlidePanel } from "./SlidePanel";
 import { UnifiedItemDetail } from "./UnifiedItemDetail";
 
@@ -32,9 +32,15 @@ interface UnifiedCalendarProps {
   items: UnifiedItem[];
   onCreateRequest?: (date: string) => void;
   returnTo: string;
+  showSpaceContext: boolean;
 }
 
-export function UnifiedCalendar({ items, onCreateRequest, returnTo }: UnifiedCalendarProps) {
+export function UnifiedCalendar({
+  items,
+  onCreateRequest,
+  returnTo,
+  showSpaceContext,
+}: UnifiedCalendarProps) {
   const calendarRef = useRef<FullCalendar>(null);
 
   // 타입 필터 (기본 전체 표시)
@@ -62,13 +68,13 @@ export function UnifiedCalendar({ items, onCreateRequest, returnTo }: UnifiedCal
     .map((item) => {
       const color = getUnifiedItemColor(item);
       return {
-        id: item.id,
-        title: item.title,
+        id: getUnifiedItemKey(item),
+        title: showSpaceContext ? `${item.title} · ${item.space.label}` : item.title,
         start: item.date.toISOString(),
         end: item.endDate ? item.endDate.toISOString() : undefined,
         backgroundColor: color,
         borderColor: color,
-        extendedProps: { itemType: item.type },
+        extendedProps: { itemType: item.type, spaceLabel: item.space.label, sourceLabel: item.source.label },
       };
     });
 
@@ -83,7 +89,7 @@ export function UnifiedCalendar({ items, onCreateRequest, returnTo }: UnifiedCal
   // 이벤트 클릭 → 상세 패널
   const handleEventClick = useCallback(
     (arg: EventClickArg) => {
-      const found = items.find((i) => i.id === arg.event.id);
+      const found = items.find((item) => getUnifiedItemKey(item) === arg.event.id);
       if (found) {
         setSelectedItem(found);
         setPanelOpen(true);

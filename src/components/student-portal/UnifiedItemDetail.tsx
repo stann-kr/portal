@@ -12,7 +12,7 @@
 import Link from "next/link";
 import { PencilLine } from "lucide-react";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
-import { UnifiedItemTypeBadge } from "@/components/ui/unified-item-type";
+import { UnifiedItemSpaceBadge, UnifiedItemTypeBadge } from "@/components/ui/unified-item-type";
 import { RichTextContent } from "@/components/editor/RichTextContent";
 
 // ── 타입 라벨 ────────────────────────────────────
@@ -67,8 +67,11 @@ export function UnifiedItemDetail({ item, returnTo }: UnifiedItemDetailProps) {
   return (
     <div className="space-y-5">
       {/* 타입 배지 + 날짜 */}
-      <div className="flex items-center justify-between">
-        <UnifiedItemTypeBadge item={item} />
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <UnifiedItemTypeBadge item={item} />
+          <UnifiedItemSpaceBadge item={item} />
+        </div>
         <span className="text-xs text-muted-foreground">
           {formatDate(item.date)}
         </span>

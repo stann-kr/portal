@@ -27,7 +27,7 @@ OpenNext → Cloudflare Worker
 | Student portal | `src/app/dashboard/student/page.tsx`, `src/components/student-portal/` | 오늘 요약·통합 워크스페이스·커뮤니티 |
 | Admin portal | `src/app/dashboard/admin/page.tsx`, `src/components/admin-portal/` | 업무함·학생·일정·공지·커뮤니티 |
 | Shared flows | `src/app/community/`, `src/app/dashboard/qna/` | 게시판·Q&A |
-| Data aggregation | `src/lib/actions/unifiedItems.ts`, `src/lib/utils/unifiedItemUtils.ts` | 일정·노트·디깅·Q&A·과제 통합 |
+| Data aggregation | `src/lib/actions/unifiedItems.ts`, `src/lib/unified-item-normalization.ts`, `src/lib/utils/unifiedItemUtils.ts` | 학생 스페이스·포털 출처를 포함한 레슨·일정·노트·디깅·Q&A·과제 통합 |
 | DB schema·client | `src/db/schema.ts`, `src/db/client.ts` | table, D1/local SQLite 선택 |
 | Server actions | `src/lib/actions/` | query, mutation, revalidation |
 | Security helpers | `src/lib/auth-guard.ts`, `src/lib/active-profile.ts`, `src/lib/sanitize-html.ts` | active profile·DB role·ownership, AST allowlist rich text sanitize |
@@ -84,9 +84,11 @@ OpenNext → Cloudflare Worker
 
 `/dashboard/student/assignments`, `curriculum`, `digging`, `notes` 목록 경로는 원페이지 포털로 redirect한다.
 
-학생 포털의 기본 section은 `오늘`이다. 통합 item에서 다음 일정, 피드백이 있는 제출, Q&A 상태를 순수 selector로 분류하고 최근 공지와 실제 작성 경로를 함께 제공한다. 현재 schema에 없는 과제 배정·마감·읽음 상태는 추정하지 않는다. 캘린더, 일별 기록, 전체 항목, 커리큘럼, 과제는 `워크스페이스` section에서 기존 기능을 유지한다.
+학생 포털의 기본 section은 `오늘`이다. 통합 item에서 다음 일정, 피드백이 있는 제출, Q&A 상태를 순수 selector로 분류하고 최근 공지와 실제 작성 경로를 함께 제공한다. `lessons` 행은 `EVENT`/`LESSON` 항목으로 포함하므로 다음 일정 selector와 워크스페이스에서 같은 계약을 사용한다. 현재 schema에 없는 과제 배정·마감·읽음 상태는 추정하지 않는다. 캘린더, 일별 기록, 전체 항목, 커리큘럼, 과제는 `워크스페이스` section에서 기존 기능을 유지한다.
 
-관리자 포털의 기본 section은 `업무함`이다. 전체 Q&A 중 미답변 항목, feedback이 없는 assignment, 앞으로 7일 이내의 학생별 다음 레슨을 조회한다. 질문과 과제는 오래 기다린 항목부터 보여주고 실제 Q&A·과제 상세로 연결한다. 학생, 일정, 공지, 커뮤니티 section은 기존 관리 기능을 유지한다.
+관리자 포털의 기본 section은 `업무함`이다. 전체 Q&A 중 미답변 항목, feedback이 없는 assignment, 앞으로 7일 이내의 학생별 다음 레슨을 조회한다. 질문과 과제는 오래 기다린 항목부터 보여주고 실제 Q&A·과제 상세로 연결한다. 일정 section은 선택한 학생 스페이스를 상시 표시하고 각 통합 항목의 스페이스·출처를 식별한다.
+
+통합 항목은 raw `id`를 route 진입에 유지하면서 `PORTAL:<entity>:<id>` 형식의 UI key를 별도로 사용한다. `calendar_events`와 `lessons`에는 안정적인 연결 키가 없으므로 같은 시각이나 제목만으로 dedupe하지 않으며, 서로 다른 두 행을 모두 표시한다. 현재 출처는 `PORTAL`이고 entity는 `CALENDAR_EVENT`, `LESSON`, `PRIVATE_NOTE`, `DIGGING_TRACK`, `QNA_THREAD`, `ASSIGNMENT` 중 하나다. 학생 스페이스 label은 display name을 trim해 우선 사용하고 비어 있으면 email을 사용한다.
 
 학생과 관리자 포털은 공통 `PortalShell`과 `PortalNavigation`을 사용한다. section 선택은 역할별 local storage key에 편의 상태로 저장한다. root skip link와 main landmark, 이름이 있는 side rail control, dashboard loading/error boundary를 공통 shell 경계로 둔다. 학생 roster는 mobile label-value list와 desktop table을 분리하고 desktop 확장은 실제 button으로 조작한다.
 

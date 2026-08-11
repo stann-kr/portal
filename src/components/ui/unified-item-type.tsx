@@ -49,3 +49,15 @@ export function UnifiedItemTypeBadge({ item }: { item: UnifiedItem }) {
     </span>
   );
 }
+
+/** 통합 항목의 학생 스페이스와 시스템 출처를 일관되게 표시한다. */
+export function UnifiedItemSpaceBadge({ item }: { item: UnifiedItem }) {
+  return (
+    <span
+      className="inline-flex shrink-0 items-center rounded-md border border-border bg-background px-2 py-1 text-xs text-muted-foreground"
+      aria-label={`${item.space.label} 학생 스페이스, ${item.source.label} 출처`}
+    >
+      {item.space.label} · {item.source.label}
+    </span>
+  );
+}

@@ -14,6 +14,7 @@ import type {
   PendingFeedbackAssignment,
 } from "@/lib/admin-work-queue";
 import { getUnifiedItemsForStudent } from "@/lib/actions/unifiedItems";
+import { getUnifiedItemSpaceLabel } from "@/lib/unified-item-normalization";
 import { PortalShell } from "@/components/ui/portal-shell";
 
 // ── 섹션 컴포넌트
@@ -169,6 +170,10 @@ export function AdminPortalClient({
   }, [selectStudent, selectedStudentId, students]);
 
   const handleStudentChange = (studentId: string) => selectStudent(studentId, "push");
+  const selectedStudent = students.find((student) => student.id === selectedStudentId);
+  const selectedSpaceLabel = selectedStudent
+    ? getUnifiedItemSpaceLabel(selectedStudent)
+    : "";
 
   return (
     <PortalShell
@@ -208,6 +213,8 @@ export function AdminPortalClient({
               assignments={[]}
               studentId={selectedStudentId}
               actorId={adminId}
+              spaceLabel={selectedSpaceLabel}
+              workspaceRole="admin"
               canCreateQna={false}
               headerSlot={
                 students.length > 0 ? (

@@ -588,6 +588,7 @@ test("Q&A 슬라이드 Cmd/Ctrl+S는 최신 본문을 로컬 저장하고 등록
     context,
     <QnaSlideForm
       actorId={actorId}
+      spaceLabel="테스트 학생"
       onClose={() => undefined}
       onSuccess={() => undefined}
       returnTo="/dashboard"
@@ -708,6 +709,7 @@ const FRESH_META_SHORTCUT_CASES: ReadonlyArray<{
     createElement: (actorId) => (
       <QnaSlideForm
         actorId={actorId}
+        spaceLabel="테스트 학생"
         onClose={() => undefined}
         onSuccess={() => undefined}
         returnTo="/dashboard"
@@ -834,6 +836,7 @@ const UPLOAD_BUSY_CASES: ReadonlyArray<{
     createElement: (actorId) => (
       <QnaSlideForm
         actorId={actorId}
+        spaceLabel="테스트 학생"
         onClose={() => undefined}
         onSuccess={() => undefined}
         returnTo="/dashboard"

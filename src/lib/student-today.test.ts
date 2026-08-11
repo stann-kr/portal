@@ -25,6 +25,12 @@ function item(
       options.feedbackCount === undefined
         ? {}
         : { feedbackCount: options.feedbackCount },
+    space: { studentId: "student-1", label: "학생" },
+    source: {
+      kind: "PORTAL",
+      entity: type === "EVENT" ? "CALENDAR_EVENT" : type === "NOTE" ? "PRIVATE_NOTE" : type === "DIGGING" ? "DIGGING_TRACK" : type === "QNA" ? "QNA_THREAD" : "ASSIGNMENT",
+      label: "포털",
+    },
   };
 }
 
@@ -42,6 +48,19 @@ test("지난 일정을 제외하고 가장 가까운 레슨을 다음 cue로 선
   ]);
 
   assert.equal(result.nextCue?.id, "lesson");
+});
+
+test("lessons 테이블에서 정규화된 레슨도 다음 cue로 선택한다", () => {
+  const lesson = item("lesson-row", "EVENT", "2026-08-05T01:00:00.000Z", { subType: "LESSON" });
+  lesson.source.entity = "LESSON";
+
+  const result = summary([
+    item("practice", "EVENT", "2026-08-05T00:30:00.000Z", { subType: "PRACTICE" }),
+    lesson,
+  ]);
+
+  assert.equal(result.nextCue?.id, "lesson-row");
+  assert.equal(result.nextCue?.source.entity, "LESSON");
 });
 
 test("예정된 레슨이 없으면 가장 가까운 일정을 사용한다", () => {

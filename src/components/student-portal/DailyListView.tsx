@@ -6,8 +6,12 @@
 "use client";
 
 import { useState } from "react";
-import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 import {
+  getUnifiedItemKey,
+  type UnifiedItem,
+} from "@/lib/utils/unifiedItemUtils";
+import {
+  UnifiedItemSpaceBadge,
   UnifiedItemTypeBadge,
   UnifiedItemTypeIcon,
 } from "@/components/ui/unified-item-type";
@@ -49,9 +53,14 @@ function groupByDate(items: UnifiedItem[]): Map<string, UnifiedItem[]> {
 interface DailyListViewProps {
   items: UnifiedItem[];
   returnTo: string;
+  showSpaceContext: boolean;
 }
 
-export function DailyListView({ items, returnTo }: DailyListViewProps) {
+export function DailyListView({
+  items,
+  returnTo,
+  showSpaceContext,
+}: DailyListViewProps) {
   const [selectedItem, setSelectedItem] = useState<UnifiedItem | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
 
@@ -88,7 +97,8 @@ export function DailyListView({ items, returnTo }: DailyListViewProps) {
                 {dayItems.map((item) => {
                   return (
                     <button
-                      key={item.id}
+                      key={getUnifiedItemKey(item)}
+                      aria-label={`${item.title}, ${item.space.label} 학생 스페이스, ${item.source.label} 출처`}
                       onClick={() => {
                         setSelectedItem(item);
                         setPanelOpen(true);
@@ -104,9 +114,10 @@ export function DailyListView({ items, returnTo }: DailyListViewProps) {
                         </p>
                       </div>
 
-                      {/* 타입 라벨 + 시간 */}
+                      {/* 타입 라벨 + 관리자용 스페이스 + 시간 */}
                       <div className="flex items-center gap-2 flex-shrink-0">
                         <UnifiedItemTypeBadge item={item} />
+                        {showSpaceContext && <UnifiedItemSpaceBadge item={item} />}
                         <span className="text-xs text-muted-foreground hidden sm:block">
                           {formatTime(item.date)}
                         </span>

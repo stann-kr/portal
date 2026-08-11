@@ -6,10 +6,15 @@
 
 import { useState } from "react";
 import { Search } from "lucide-react";
-import type { UnifiedItem, UnifiedItemType } from "@/lib/utils/unifiedItemUtils";
+import {
+  getUnifiedItemKey,
+  type UnifiedItem,
+  type UnifiedItemType,
+} from "@/lib/utils/unifiedItemUtils";
 import { Input } from "@/components/ui/input";
 import {
   UNIFIED_ITEM_TYPE_LABELS,
+  UnifiedItemSpaceBadge,
   UnifiedItemTypeBadge,
   UnifiedItemTypeIcon,
 } from "@/components/ui/unified-item-type";
@@ -34,9 +39,14 @@ function formatDate(date: Date): string {
 interface AllItemsViewProps {
   items: UnifiedItem[];
   returnTo: string;
+  showSpaceContext: boolean;
 }
 
-export function AllItemsView({ items, returnTo }: AllItemsViewProps) {
+export function AllItemsView({
+  items,
+  returnTo,
+  showSpaceContext,
+}: AllItemsViewProps) {
   const [activeTypes, setActiveTypes] = useState<Set<UnifiedItemType>>(
     new Set(ALL_TYPES),
   );
@@ -118,7 +128,8 @@ export function AllItemsView({ items, returnTo }: AllItemsViewProps) {
           {filtered.map((item) => {
             return (
               <button
-                key={item.id}
+                key={getUnifiedItemKey(item)}
+                aria-label={`${item.title}, ${item.space.label} 학생 스페이스, ${item.source.label} 출처`}
                 onClick={() => {
                   setSelectedItem(item);
                   setPanelOpen(true);
@@ -131,6 +142,7 @@ export function AllItemsView({ items, returnTo }: AllItemsViewProps) {
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
                   <UnifiedItemTypeBadge item={item} />
+                  {showSpaceContext && <UnifiedItemSpaceBadge item={item} />}
                   <span className="text-xs text-muted-foreground hidden sm:block">
                     {formatDate(item.date)}
                   </span>

@@ -13,6 +13,7 @@ import { getMyFeedbacksMap } from "@/lib/actions/feedbacks";
 import type { InferSelectModel } from "drizzle-orm";
 import { assignments } from "@/db/schema";
 import { StudentPortalClient } from "@/components/student-portal/StudentPortalClient";
+import { getUnifiedItemSpaceLabel } from "@/lib/unified-item-normalization";
 
 export default async function StudentPortalPage() {
   const session = await getActiveAuthSession();
@@ -20,6 +21,10 @@ export default async function StudentPortalPage() {
 
   const studentId = session.user.id!;
   const displayName = session.user.name ?? "";
+  const spaceLabel = getUnifiedItemSpaceLabel({
+    displayName: session.user.name ?? null,
+    email: session.user.email ?? "학생",
+  });
 
   // 병렬 데이터 패치
   const [announcements, unifiedItems, curriculumModules, rawAssignments, feedbacksMap] =
@@ -65,6 +70,7 @@ export default async function StudentPortalPage() {
       communityPosts={communityPosts}
       studentId={studentId}
       displayName={displayName}
+      spaceLabel={spaceLabel}
       referenceTime={new Date()}
     />
   );

@@ -45,6 +45,7 @@ interface QnaDraft {
 
 interface QnaSlideFormProps {
   actorId: string;
+  spaceLabel: string;
   onSuccess: (item: UnifiedItem) => void;
   onClose: () => void;
   returnTo: string;
@@ -53,6 +54,7 @@ interface QnaSlideFormProps {
 
 export function QnaSlideForm({
   actorId,
+  spaceLabel,
   onSuccess,
   onClose,
   returnTo,
@@ -197,6 +199,8 @@ export function QnaSlideForm({
         title: savedTitle,
         date: new Date(createdAt),
         metadata: { status: "OPEN" },
+        space: { studentId: actorId, label: spaceLabel },
+        source: { kind: "PORTAL", entity: "QNA_THREAD", label: "포털" },
       };
       onSuccess(newItem);
       router.push(`/dashboard/qna/${id}?returnTo=${encodeURIComponent(returnTo)}`);

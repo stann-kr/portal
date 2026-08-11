@@ -115,6 +115,7 @@ export async function createLesson(
   });
 
   revalidatePath(`/dashboard/admin/students/${studentId}`);
+  revalidatePath("/dashboard/admin");
   revalidatePath("/dashboard/student");
   return { success: true };
 }
@@ -131,5 +132,6 @@ export async function deleteLesson(lessonId: string, studentId: string) {
   const db = createDb();
   await db.delete(lessons).where(eq(lessons.id, lessonId));
   revalidatePath(`/dashboard/admin/students/${studentId}`);
+  revalidatePath("/dashboard/admin");
   revalidatePath("/dashboard/student");
 }
