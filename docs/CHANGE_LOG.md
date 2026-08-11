@@ -6,8 +6,11 @@
 
 ### 변경 요약
 
-- Wrangler 원격 관리 명령이 사용하는 `CLOUDFLARE_API_TOKEN` 환경 계약을 샘플에 추가했다. 실제 토큰은 Git에서 제외된 로컬 `.env`에만 두고 저장소·로그·채팅에는 남기지 않는다.
+- Wrangler 원격 관리 명령이 사용하는 `CLOUDFLARE_API_TOKEN`을 Next/OpenNext가 자동 로드하지 않는 전용 `.env.cloudflare` 계약으로 분리했다. 실제 값은 Git에서 제외된 mode `600` 파일에만 두고 저장소·build artifact·로그·채팅에는 남기지 않는다.
 - 비호환 D1 migration runbook을 사전 restore rehearsal과 maintenance 이후 최종 rollback 기준점으로 분리했다. maintenance 100% 전환 뒤 기존 invocation을 drain하고 새 export·checksum·Time Travel bookmark를 확보해야만 실제 pending migration을 시작한다.
+- 익명 계정 정리 상태 조회를 Worker Rate Limiting binding으로 제한하고, binding 오류도 token 본문을 읽기 전에 `503`으로 닫는다. 계정 삭제는 오프라인 기기의 정리 신호 보급을 확인할 때까지 production rollout flag로 숨기고 server action도 함께 거부한다.
+- 예약 정리에 R2 final prefix inventory cursor를 추가했다. registry가 없거나 이미 삭제 상태인 managed object를 제한된 page로 재삭제해 늦게 완료된 원격 Copy와 outbox 완료 뒤 재생성된 객체를 다음 실행에서 수렴시킨다.
+- production R2 bucket에 portal origin 전용 `PUT` CORS와 `media-upload/` 2일 만료 lifecycle을 적용하고, Workers Builds의 production command를 자동 100% 배포가 아닌 version upload-only로 전환했다.
 
 ## 2026-08-10
 

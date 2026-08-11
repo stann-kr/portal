@@ -12,11 +12,13 @@ import {
   type ProcessMediaDeletionResult,
 } from "@/lib/media-lifecycle-atomic";
 import type { MediaObjectDeletionStorage } from "@/lib/r2-deletion-storage";
+import type { MediaInventoryReconciliationResult } from "@/lib/media-inventory-reconciliation";
 
 export const SCHEDULED_MAINTENANCE_SOFT_BUDGET_MS = 25_000;
 export const SCHEDULED_ACCOUNT_ERASURE_LIMIT = 10;
 export const SCHEDULED_EXPIRED_MEDIA_LIMIT = 25;
 export const SCHEDULED_MEDIA_DELETION_LIMIT = 8;
+export const SCHEDULED_MEDIA_RECONCILIATION_LIMIT = 50;
 
 type StageStatus = "completed" | "failed" | "skipped_budget";
 
@@ -44,8 +46,12 @@ export type ScheduledMaintenanceReport = {
   media: {
     enqueueStatus: StageStatus;
     cleanupStatus: StageStatus;
+    reconciliationStatus: StageStatus;
     completed: number;
     failed: number;
+    inspected: number;
+    reconciled: number;
+    reconciliationFailed: number;
     pendingAfter: number | null;
     dueAfter: number | null;
     retryingAfter: number | null;
@@ -65,6 +71,10 @@ export type ScheduledMaintenanceOperations = {
     limit: number;
     shouldContinue: () => boolean;
   }): Promise<ProcessMediaDeletionResult>;
+  reconcileMedia(input: {
+    limit: number;
+    shouldContinue: () => boolean;
+  }): Promise<MediaInventoryReconciliationResult>;
   readBacklog(now: Date): Promise<ScheduledMaintenanceBacklog>;
 };
 
@@ -120,6 +130,15 @@ export async function readScheduledMaintenanceBacklog(
 export function createScheduledMaintenanceOperations(
   context: DbContext,
   storage: MediaObjectDeletionStorage,
+  reconcileMedia: ScheduledMaintenanceOperations["reconcileMedia"] = async () => ({
+    inspected: 0,
+    deleted: 0,
+    preserved: 0,
+    invalid: 0,
+    failed: 0,
+    cycleCompleted: true,
+    budgetExhausted: false,
+  }),
 ): ScheduledMaintenanceOperations {
   return {
     processAccount: (input) =>
@@ -128,6 +147,7 @@ export function createScheduledMaintenanceOperations(
       enqueueExpiredUnattachedMedia(context, now, limit),
     processMedia: (input) =>
       processMediaDeletionOutbox(context, storage, input),
+    reconcileMedia,
     readBacklog: (now) => readScheduledMaintenanceBacklog(context, now),
   };
 }
@@ -201,6 +221,30 @@ export async function runScheduledMaintenance(
     }
   }
 
+  let reconciliationStatus: StageStatus = "skipped_budget";
+  let reconciliationResult: MediaInventoryReconciliationResult = {
+    inspected: 0,
+    deleted: 0,
+    preserved: 0,
+    invalid: 0,
+    failed: 0,
+    cycleCompleted: false,
+    budgetExhausted: false,
+  };
+  if (shouldContinue()) {
+    try {
+      reconciliationResult = await operations.reconcileMedia({
+        limit: SCHEDULED_MEDIA_RECONCILIATION_LIMIT,
+        shouldContinue,
+      });
+      reconciliationStatus = "completed";
+      if (reconciliationResult.failed > 0) stageFailure = true;
+    } catch {
+      reconciliationStatus = "failed";
+      stageFailure = true;
+    }
+  }
+
   let metricsStatus: StageStatus = "skipped_budget";
   let backlog: ScheduledMaintenanceBacklog | null = null;
   if (shouldContinue()) {
@@ -217,6 +261,7 @@ export async function runScheduledMaintenance(
   const budgetExhausted = !shouldContinue();
   const retryRequired =
     mediaResult.failed > 0 ||
+    reconciliationResult.failed > 0 ||
     (backlog !== null &&
       (backlog.accountDue > 0 ||
         backlog.mediaDue > 0 ||
@@ -244,7 +289,11 @@ export async function runScheduledMaintenance(
     media: {
       enqueueStatus,
       cleanupStatus,
+      reconciliationStatus,
       ...mediaResult,
+      inspected: reconciliationResult.inspected,
+      reconciled: reconciliationResult.deleted,
+      reconciliationFailed: reconciliationResult.failed,
       pendingAfter: backlog?.mediaPending ?? null,
       dueAfter: backlog?.mediaDue ?? null,
       retryingAfter: backlog?.mediaRetrying ?? null,

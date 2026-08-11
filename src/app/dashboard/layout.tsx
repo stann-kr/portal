@@ -9,6 +9,7 @@ import { redirect } from "next/navigation";
 import { StudentSideRail } from "@/components/student-portal/StudentSideRail";
 import { AdminSideRail } from "@/components/admin-portal/AdminSideRail";
 import { LocalDraftAccountBoundary } from "@/components/auth/LocalDraftAccountBoundary";
+import { isAccountDeletionEnabled } from "@/lib/account-privacy-rollout";
 
 export default async function DashboardLayout({
   children,
@@ -33,7 +34,10 @@ export default async function DashboardLayout({
       {role === "admin" ? (
         <AdminSideRail ownerId={ownerId} />
       ) : (
-        <StudentSideRail ownerId={ownerId} />
+        <StudentSideRail
+          ownerId={ownerId}
+          accountDeletionEnabled={isAccountDeletionEnabled()}
+        />
       )}
       <div className="min-w-0 flex-1 overflow-auto">{children}</div>
     </div>

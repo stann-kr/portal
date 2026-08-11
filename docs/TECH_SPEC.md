@@ -200,9 +200,9 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 | 개발 credential | development/opt-in/env/input binding 단위 테스트 | 실제 local seed는 데이터 변경 작업으로 분리 |
 | 인증·권한 | 미인증·role·ownership 허용/거부 단위 테스트, Q&A 격리 D1 권한 회귀 | 다른 주요 server action의 실제 query·mutation 경계 테스트 |
 | 입력·콘텐츠 | HTML5 AST tag·속성·URL allowlist, malformed·foreign-content XSS, 멱등성, upload MIME·size·quota·opaque key 정책 | 실제 R2 CORS·대용량 PUT smoke |
-| 미디어 | staging/final key 분리, SEALING lease·late Copy 복구, claim/purge rollback, bounded 만료 enqueue, outbox 재시도·private RBAC·Range 자동 테스트 | private bucket·staging lifecycle·Cron 활성화와 legacy inventory 운영 검증 |
+| 미디어 | staging/final key 분리, SEALING lease·late Copy 복구, claim/purge rollback, bounded 만료 enqueue, outbox 재시도·final prefix cursor reconciliation·private RBAC·Range 자동 테스트 | Cron 활성화와 실제 R2 PUT·inventory 운영 검증 |
 | 문서 연속성 | local shadow·5초 checkpoint·복구·제출 경쟁, 사용자·문서별 서버 최신본·CAS·offline queue·다중 기기 명시 선택 DOM 통합, 노트·게시물·Q&A revision/event·trash·purge·anti-replay 격리 D1 통합 | 실제 브라우저 reload·offline·navigation·강제 종료·대형 문서 E2E |
-| 계정 개인정보 | student-only 원자 삭제, old JWT 거부, cleanup digest·terminal lock, ownerless snapshot 확인, 30일 alias·second-run no-op·poison job 격리 | production rate limit·Cron/alert 활성화·legacy media backfill과 오프라인 adoption 확인 |
+| 계정 개인정보 | student-only 원자 삭제, old JWT 거부, cleanup digest·terminal lock, ownerless snapshot 확인, 30일 alias·second-run no-op·poison job 격리, edge-local status rate limit·rollout flag | Cron/alert 활성화와 오프라인 adoption 확인 뒤 삭제 flag 전환 |
 | UI 상태 | status registry 단위 테스트, loading/error route, semantic landmark·control 정적 검토 | keyboard interaction component 테스트 |
 
 ## 변경 시 같이 볼 파일
@@ -234,11 +234,11 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 - 개발 도구 전체 audit에는 Drizzle Kit의 구형 esbuild loader 체인에서 발생하는 moderate 권고가 남아 있다. 현재 npm 제안은 호환되지 않는 구버전 downgrade이므로 upstream 패치를 추적한다.
 - migration SQL과 `drizzle/meta` 생성 이력은 `0012`까지 대응하고 격리 D1에서 전체 replay, `0009→0010`, populated `0010→0011→0012` upgrade를 검사한다. persistent local D1은 `0009`까지 적용됐으며 `0010~0012`와 remote 적용 이력은 승인된 운영 점검 전 추정하지 않는다.
 - 대표 문서 server action과 draft 생명주기의 격리 integration test는 있으나 실제 브라우저 reload·offline·navigation·delete/restore E2E는 없다.
-- 신규 managed media의 registry·문서 claim·purge 삭제 outbox와 인증 delivery, bounded 예약 정리 source는 구현했다. 배포 전에는 기존 공개 URL inventory/backfill, 신규 private bucket 또는 legacy proxy 분리, `media-upload/` prefix lifecycle, Cron trigger·알람, final prefix와 registry의 reconciliation을 운영 계약으로 확정해야 한다. Copy timeout·lease·recovery grace는 원격 side effect의 절대 완료 시각을 보장하지 않으므로 completed outbox 뒤 발견된 final object도 repair delete해야 한다. 기존 외부 URL과 inventory에 없는 legacy R2 object는 자동 삭제 대상으로 추정하지 않는다.
+- 신규 managed media의 registry·문서 claim·purge 삭제 outbox와 인증 delivery, bounded 예약 정리·final prefix cursor reconciliation source를 구현했다. Copy timeout·lease·recovery grace 뒤 발견된 registry 없는 final object와 삭제 상태 object는 다음 inventory page에서 재삭제한다. production에서는 private R2 CORS·staging lifecycle·Cron과 알림을 검증해야 하며, 기존 외부 URL과 managed 형식이 아닌 legacy R2 object는 자동 삭제 대상으로 추정하지 않는다.
 - 큰 문서의 전체 HTML·payload 서명은 매 입력이 아니라 지연된 flush·submit 경계에서 revision당 한 번만 만들고, 연속 입력은 최대 5초마다 최신본을 checkpoint한다. 개인 노트는 저장 HTML 800 KiB와 logical history 100 MiB 정책을 적용한다. 다만 실제 브라우저의 100 KiB·500 KiB·1 MiB frame budget과 autosave·복구 latency를 측정하지 않아 제품급 입력 부드러움은 아직 검증되지 않았다.
 - rolling 호환용 제출 alias는 ghost 복원을 막기 위해 signature별 tombstone을 30일 동안 보존한다. 반복 편집 시 여러 unique entry가 origin 저장공간에 누적될 수 있으므로, 호환 종료 조건과 문서 namespace별 byte budget·용량 안내 정책은 아직 확정하지 않았다.
-- 계정 삭제의 profile·원문 즉시 제거, 등록된 오프라인 기기 cleanup digest와 30일 raw-ID alias workflow는 구현했다. production에서는 익명 status endpoint rate limit, cleanup·erasure scheduler와 backlog alert, 기능 활성화 전 기존 기기의 token adoption 기간이 필요하다. 등록 전부터 오프라인인 기기는 서버가 ownerless local draft를 식별할 수 없다.
-- maintenance와 scheduled Worker artifact는 source와 local dry-run까지만 준비돼 있다. production Cron trigger, Workers plan CPU 한도, log persistence·backlog alert와 immutable version 전환 rehearsal은 승인된 운영 작업에서 검증해야 한다.
-- 운영 D1 export·복구 절차는 문서화됐지만 승인된 원격 backup과 격리 restore rehearsal 기록은 아직 없다.
+- 계정 삭제의 profile·원문 즉시 제거, 등록된 오프라인 기기 cleanup digest, edge-local status rate limit과 30일 raw-ID alias workflow는 구현했다. 첫 production version은 삭제 rollout flag를 닫고 cleanup·erasure scheduler와 backlog를 확인한다. 등록 전부터 오프라인인 기기는 서버가 ownerless local draft를 식별할 수 없으므로 adoption 확인 뒤 별도 version에서만 삭제를 연다.
+- maintenance와 scheduled Worker artifact, log persistence·rate limit·inventory reconciliation config는 준비돼 있다. production Cron trigger와 backlog alert, immutable version 전환은 승인된 운영 작업에서 실제 검증한다.
+- 운영 D1의 read-only inventory와 full export 격리 restore rehearsal은 통과했다. 실제 migration rollback anchor는 maintenance write fence 뒤 새 export/checksum과 Time Travel bookmark로 다시 확보해야 한다.
 - 일부 대형 client component는 상태 hook, domain view와 presentation 경계가 한 파일에 남아 있다.
 - 소셜 공유 이미지는 승인된 브랜드 asset이 준비된 뒤 metadata에 연결해야 한다.

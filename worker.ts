@@ -13,10 +13,19 @@ import {
   createR2BindingDeletionStorage,
   type RuntimeR2DeletionBucket,
 } from "./src/lib/r2-deletion-storage";
+import {
+  enforceAccountCleanupStatusRateLimit,
+  type AccountCleanupRateLimiter,
+} from "./src/lib/account-cleanup-rate-limit";
+import {
+  reconcileManagedFinalMediaObjects,
+  type RuntimeR2InventoryBucket,
+} from "./src/lib/media-inventory-reconciliation";
 
 type PortalWorkerEnv = {
   DB: AnyD1Database;
-  BUCKET: RuntimeR2DeletionBucket;
+  BUCKET: RuntimeR2DeletionBucket & RuntimeR2InventoryBucket;
+  ACCOUNT_CLEANUP_RATE_LIMITER: AccountCleanupRateLimiter;
 };
 
 type PortalExecutionContext = {
@@ -62,7 +71,9 @@ async function runScheduledEvent(
   const context = createD1DbContext(env.DB);
   const storage = createR2BindingDeletionStorage(env.BUCKET);
   const report = await runScheduledMaintenance(
-    createScheduledMaintenanceOperations(context, storage),
+    createScheduledMaintenanceOperations(context, storage, (input) =>
+      reconcileManagedFinalMediaObjects(context, env.BUCKET, input),
+    ),
     {
       now: new Date(),
       scheduledAt: new Date(controller.scheduledTime),
@@ -75,11 +86,16 @@ async function runScheduledEvent(
 }
 
 const portalWorker = {
-  fetch(
+  async fetch(
     request: Request,
     env: PortalWorkerEnv,
     context: PortalExecutionContext,
-  ) {
+  ): Promise<Response> {
+    const rateLimitResponse = await enforceAccountCleanupStatusRateLimit(
+      request,
+      env.ACCOUNT_CLEANUP_RATE_LIMITER,
+    );
+    if (rateLimitResponse) return rateLimitResponse;
     return applicationWorker.fetch(request, env, context);
   },
   async scheduled(

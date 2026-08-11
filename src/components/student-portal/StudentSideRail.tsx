@@ -8,7 +8,13 @@ import { AccountLogoutButton } from "@/components/auth/AccountLogoutButton";
 import { AccountDeletionControl } from "@/components/auth/AccountDeletionControl";
 import { LocalDraftManager } from "@/components/auth/LocalDraftManager";
 
-export function StudentSideRail({ ownerId }: { ownerId: string }) {
+export function StudentSideRail({
+  ownerId,
+  accountDeletionEnabled = true,
+}: {
+  ownerId: string;
+  accountDeletionEnabled?: boolean;
+}) {
   return (
     <aside
       aria-label="학생 포털 도구"
@@ -26,7 +32,9 @@ export function StudentSideRail({ ownerId }: { ownerId: string }) {
       <div className="flex-1" />
 
       <LocalDraftManager ownerId={ownerId} />
-      <AccountDeletionControl ownerId={ownerId} />
+      {accountDeletionEnabled ? (
+        <AccountDeletionControl ownerId={ownerId} />
+      ) : null}
       <AccountLogoutButton ownerId={ownerId} />
     </aside>
   );

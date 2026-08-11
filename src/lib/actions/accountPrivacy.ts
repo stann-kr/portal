@@ -18,11 +18,18 @@ import {
   enqueueExpiredUnattachedMedia,
   processMediaDeletionOutboxBestEffort,
 } from "@/lib/media-lifecycle-atomic";
+import { isAccountDeletionEnabled } from "@/lib/account-privacy-rollout";
 
 /** 학생 본인만 현재 비밀번호와 persistent 또는 memory-only digest로 삭제한다. */
 export async function deleteOwnAccount(
   input: DeleteOwnAccountInput,
 ): Promise<DeleteOwnAccountResult> {
+  if (!isAccountDeletionEnabled()) {
+    return {
+      success: false,
+      error: "계정 삭제 기능을 안전하게 준비하고 있습니다. 잠시 뒤 다시 확인해 주세요.",
+    };
+  }
   const db = createDb();
   const context = createDbContext();
   return executeDeleteOwnAccount(input, {

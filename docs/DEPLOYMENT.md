@@ -10,7 +10,7 @@
 |---|---|
 | Worker name | `portal` |
 | Custom domain | `portal.stann.kr` |
-| Worker entry | `.open-next/worker.js` |
+| Worker entry | `worker.ts` (OpenNext fetch 합성) |
 | Scheduled candidate entry | `worker.ts` (`wrangler.scheduled.toml`) |
 | Maintenance entry | `src/workers/maintenance.ts` (`wrangler.maintenance.toml`) |
 | Static assets binding | `ASSETS` |
@@ -23,6 +23,7 @@
 
 - build·upload 환경은 Node.js 22 이상이어야 한다.
 - Wrangler 인증이 유효해야 한다.
+- Wrangler user API token은 `.env.cloudflare.example`을 참고해 Git에서 제외된 `.env.cloudflare`에 mode `600`으로 보관하고, 원격 명령 직전에만 source한다. Next/OpenNext가 자동 로드하는 `.env`·`.env.local`에 두면 server build artifact에 포함될 수 있으므로 금지한다.
 - D1 database와 R2 bucket이 존재해야 한다.
 - 대상 Worker를 promotion하기 전에는 승인된 작업 창에서 실제 pending migration을 적용·검증해야 한다. 비호환 migration은 maintenance 진입 전에 미리 적용하지 않는다.
 - auth secret과 기타 secret은 배포 환경에만 설정한다.
@@ -61,6 +62,7 @@ maintenance 전에 만든 export/bookmark만으로 복구하면 backup과 write 
 `0012`는 학생 본인 삭제 job, 기기 정리 digest와 opaque 캘린더 token을 추가한다. 다음 조건을 갖추기 전에는 계정 삭제 기능이 포함된 Worker를 production에 promotion하지 않는다.
 
 - `/api/account-cleanup/status`는 request body와 token digest를 access log에 남기지 않고, same-origin POST·body 상한에 더해 edge rate limit 또는 동등한 abuse 방어를 적용한다. 미등록·활성 digest는 모두 같은 `NO_ACTION` 응답을 사용한다.
+- 첫 production 전환에서는 `ACCOUNT_DELETION_ENABLED=false`를 유지한다. 기존 학생 기기가 새 cleanup token을 등록한 adoption 기간과 scheduler 정상 실행을 확인한 뒤 별도 version에서만 `true`로 바꾼다. UI를 숨기는 것과 server action 거부를 함께 유지한다.
 - media deletion outbox와 30일이 지난 account raw-ID erasure를 주기적으로 실행하고 backlog·실패를 경보한다. 관리자 수동 control은 비상 수렴 경로이며 scheduler를 대체하지 않는다.
 - 신규 캘린더 URL은 `/api/calendar/feed?token=…` 형태만 발급한다. 기존 v1 URL은 active profile이 없으면 거부하지만 외부 calendar client와 과거 log에 이미 복사된 raw ID 자체는 회수할 수 없음을 운영 기록에 남긴다.
 - 삭제 smoke는 기존 session endpoint와 read/write/upload 거부, 재로그인 거부, 다른 학생 데이터 불변, persistent-token 현재 기기의 직접 정리, cleanup token quota가 가득 찬 경우와 storage-unavailable memory-only 경로의 삭제 성공·수동 정리 안내, 사전 등록된 오프라인 기기의 재접속 정리, 30일 안의 subject ID 재사용 거부, 30일 경계 전후 aliasing과 second-run no-op을 확인한다.
@@ -79,9 +81,12 @@ npm run build:scheduled
 - `wrangler.maintenance.toml`은 동일한 `portal` 서비스의 점검용 version을 만든다. D1, R2, asset, application route와 Cron trigger를 포함하지 않는다.
 - `wrangler.scheduled.toml`은 OpenNext fetch를 유지하면서 `scheduled` handler를 추가한다. D1과 R2 binding은 event 환경에서 직접 주입하며 request AsyncLocalStorage에 의존하지 않는다.
 - scheduled 설정에는 아직 `[triggers]`와 route가 없다. 따라서 dry-run 또는 upload-only만으로 production Cron이 시작되지 않는다.
-- 예약 정리는 계정 raw-ID alias, 만료 media enqueue, 기존 R2 deletion outbox를 제한된 순차 batch로 처리한다. 로그에는 고정된 상태와 집계만 남긴다.
+- 예약 정리는 계정 raw-ID alias, 만료 media enqueue, 기존 R2 deletion outbox, final prefix inventory reconciliation을 제한된 순차 batch로 처리한다. inventory cursor는 R2 내부 운영 key에만 두며, registry가 없거나 `PENDING_DELETE`·`DELETED`인 managed final object만 재삭제한다. 로그에는 고정된 상태와 집계만 남긴다.
+- target entry는 `/api/account-cleanup/status`의 body를 읽기 전에 `ACCOUNT_CLEANUP_RATE_LIMITER`를 호출한다. 동일 Cloudflare 위치의 client address별 분당 30회를 넘으면 `429`, binding 오류면 `503`과 `no-store`로 닫는다.
 
 production Cron을 활성화하기 전에는 Workers plan의 Cron CPU 한도, 실행 주기, log 보존, backlog·실패 alert를 확인한다. `0011`·`0012` migration, private R2·staging lifecycle, legacy inventory가 준비되기 전에 trigger를 추가하지 않는다.
+
+target config는 Workers Logs와 invocation log를 활성화한다. 초기 Cron은 매시간 정각 충돌을 피한 `7 * * * *`를 사용하고, 첫 실행에서 account/media backlog 0, reconciliation failure 0을 확인한다. `partial_failure`는 invocation error로 승격되므로 운영 알림은 이 error와 반복 `retry`/backlog를 함께 감시한다.
 
 ### 비호환 migration의 immutable version 전환
 

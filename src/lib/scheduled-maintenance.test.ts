@@ -20,6 +20,17 @@ function operations(
     async processMedia() {
       return { completed: 2, failed: 0 };
     },
+    async reconcileMedia() {
+      return {
+        inspected: 3,
+        deleted: 1,
+        preserved: 2,
+        invalid: 0,
+        failed: 0,
+        cycleCompleted: true,
+        budgetExhausted: false,
+      };
+    },
     async readBacklog() {
       return {
         accountDue: 0,
@@ -50,6 +61,16 @@ test("scheduled maintenance는 account→enqueue→delete→metrics를 순차 �
         step("account", { processed: 1, skipped: 0, failed: 0 }),
       enqueueExpiredMedia: () => step("enqueue", undefined),
       processMedia: () => step("delete", { completed: 2, failed: 0 }),
+      reconcileMedia: () =>
+        step("reconcile", {
+          inspected: 3,
+          deleted: 1,
+          preserved: 2,
+          invalid: 0,
+          failed: 0,
+          cycleCompleted: true,
+          budgetExhausted: false,
+        }),
       readBacklog: () =>
         step("metrics", {
           accountDue: 0,
@@ -61,7 +82,7 @@ test("scheduled maintenance는 account→enqueue→delete→metrics를 순차 �
     { now: NOW, scheduledAt: NOW, clock: () => 0 },
   );
 
-  assert.deepEqual(order, ["account", "enqueue", "delete", "metrics"]);
+  assert.deepEqual(order, ["account", "enqueue", "delete", "reconcile", "metrics"]);
   assert.equal(maxInFlight, 1);
   assert.equal(report.outcome, "ok");
   assert.equal(report.account.processed, 1);
@@ -89,6 +110,18 @@ test("한 lane 실패가 뒤 lane을 막지 않고 민감한 error 내용은 rep
         calls.push("delete");
         return { completed: 1, failed: 0 };
       },
+      async reconcileMedia() {
+        calls.push("reconcile");
+        return {
+          inspected: 0,
+          deleted: 0,
+          preserved: 0,
+          invalid: 0,
+          failed: 0,
+          cycleCompleted: true,
+          budgetExhausted: false,
+        };
+      },
       async readBacklog() {
         calls.push("metrics");
         return {
@@ -102,7 +135,7 @@ test("한 lane 실패가 뒤 lane을 막지 않고 민감한 error 내용은 rep
     { now: NOW, scheduledAt: NOW, clock: () => 0 },
   );
 
-  assert.deepEqual(calls, ["account", "enqueue", "delete", "metrics"]);
+  assert.deepEqual(calls, ["account", "enqueue", "delete", "reconcile", "metrics"]);
   assert.equal(report.outcome, "partial_failure");
   const serialized = serializeScheduledMaintenanceReport(report);
   for (const marker of sensitive) assert.doesNotMatch(serialized, new RegExp(marker, "u"));

@@ -21,6 +21,22 @@ bucket_name = "portal-storage"
 
 [vars]
 AUTH_URL = "https://portal.stann.kr"
+ACCOUNT_DELETION_ENABLED = "false"
+
+[[ratelimits]]
+name = "ACCOUNT_CLEANUP_RATE_LIMITER"
+namespace_id = "2026081101"
+
+  [ratelimits.simple]
+  limit = 30
+  period = 60
+
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+  [observability.logs]
+  invocation_logs = true
 
 [version_metadata]
 binding = "CF_VERSION_METADATA"

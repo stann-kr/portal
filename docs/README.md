@@ -81,7 +81,7 @@ docs/                       # 프로젝트 문서
 ## 현재 개발 우선순위
 
 1. `0010~0012` 원격 D1 migration과 복구 rehearsal을 maintenance 전환 절차로 검증한다.
-2. private managed media bucket, staging lifecycle, cleanup·raw-ID erasure scheduler와 inventory reconciliation을 운영한다.
+2. private managed media CORS·staging lifecycle, cleanup·raw-ID erasure scheduler와 inventory reconciliation을 실제 production에서 검증한다.
 3. 실제 브라우저의 reload·offline·Back/Forward·다중 탭·대용량 입력 성능과 강제 종료 복구를 측정한다.
 
 ## 문서 최신성 기준
