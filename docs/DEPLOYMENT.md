@@ -11,7 +11,7 @@
 | Worker name | `portal` |
 | Custom domain | `portal.stann.kr` |
 | Worker entry | `worker.ts` (OpenNext fetch 합성) |
-| Scheduled candidate entry | `worker.ts` (`wrangler.scheduled.toml`) |
+| Scheduled production entry | `worker.ts` (`wrangler.scheduled.toml`) |
 | Maintenance entry | `src/workers/maintenance.ts` (`wrangler.maintenance.toml`) |
 | Static assets binding | `ASSETS` |
 | D1 binding | `DB` |
@@ -71,7 +71,7 @@ maintenance 전에 만든 export/bookmark만으로 복구하면 backup과 write 
 
 ## 점검·예약 정리 Worker artifact
 
-두 별도 설정은 production 상태를 바꾸지 않는 local dry-run용 진입점을 제공한다.
+두 별도 설정은 maintenance와 예약 정리 artifact를 독립적으로 검증하는 진입점을 제공한다.
 
 ```bash
 npm run build:maintenance
@@ -80,13 +80,13 @@ npm run build:scheduled
 
 - `wrangler.maintenance.toml`은 동일한 `portal` 서비스의 점검용 version을 만든다. D1, R2, asset, application route와 Cron trigger를 포함하지 않는다.
 - `wrangler.scheduled.toml`은 OpenNext fetch를 유지하면서 `scheduled` handler를 추가한다. D1과 R2 binding은 event 환경에서 직접 주입하며 request AsyncLocalStorage에 의존하지 않는다.
-- scheduled 설정에는 아직 `[triggers]`와 route가 없다. 따라서 dry-run 또는 upload-only만으로 production Cron이 시작되지 않는다.
+- scheduled 설정은 source-controlled `[triggers]`와 route를 의도적으로 포함하지 않는다. 따라서 dry-run 또는 upload-only만으로 production Cron이 시작되지 않으며, 승인된 전환 뒤 `wrangler triggers deploy`로 원격 trigger를 별도 적용한다.
 - 예약 정리는 계정 raw-ID alias, 만료 media enqueue, 기존 R2 deletion outbox, final prefix inventory reconciliation을 제한된 순차 batch로 처리한다. inventory cursor는 R2 내부 운영 key에만 두며, registry가 없거나 `PENDING_DELETE`·`DELETED`인 managed final object만 재삭제한다. 로그에는 고정된 상태와 집계만 남긴다.
 - target entry는 `/api/account-cleanup/status`의 body를 읽기 전에 `ACCOUNT_CLEANUP_RATE_LIMITER`를 호출한다. 동일 Cloudflare 위치의 client address별 분당 30회를 넘으면 `429`, binding 오류면 `503`과 `no-store`로 닫는다.
 
 production Cron을 활성화하기 전에는 Workers plan의 Cron CPU 한도, 실행 주기, log 보존, backlog·실패 alert를 확인한다. `0011`·`0012` migration, private R2·staging lifecycle, legacy inventory가 준비되기 전에 trigger를 추가하지 않는다.
 
-target config는 Workers Logs와 invocation log를 활성화한다. 초기 Cron은 매시간 정각 충돌을 피한 `7 * * * *`를 사용하고, 첫 실행에서 account/media backlog 0, reconciliation failure 0을 확인한다. `partial_failure`는 invocation error로 승격되므로 운영 알림은 이 error와 반복 `retry`/backlog를 함께 감시한다.
+production target config는 Workers Logs와 invocation log를 활성화한다. 운영 Cron은 매시간 정각 충돌을 피한 `7 * * * *`를 사용한다. 최초 전환에서는 임시 1분 trigger로 대상 version의 실제 실행을 한 번 확인한 뒤 즉시 운영 주기로 낮췄으며, account/media backlog와 reconciliation failure가 모두 0으로 수렴했다. `partial_failure`는 invocation error로 승격되므로 운영 알림은 이 error와 반복 `retry`/backlog를 함께 감시한다.
 
 ### 비호환 migration의 immutable version 전환
 

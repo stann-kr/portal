@@ -11,6 +11,9 @@
 - 익명 계정 정리 상태 조회를 Worker Rate Limiting binding으로 제한하고, binding 오류도 token 본문을 읽기 전에 `503`으로 닫는다. 계정 삭제는 오프라인 기기의 정리 신호 보급을 확인할 때까지 production rollout flag로 숨기고 server action도 함께 거부한다.
 - 예약 정리에 R2 final prefix inventory cursor를 추가했다. registry가 없거나 이미 삭제 상태인 managed object를 제한된 page로 재삭제해 늦게 완료된 원격 Copy와 outbox 완료 뒤 재생성된 객체를 다음 실행에서 수렴시킨다.
 - production R2 bucket에 portal origin 전용 `PUT` CORS와 `media-upload/` 2일 만료 lifecycle을 적용하고, Workers Builds의 production command를 자동 100% 배포가 아닌 version upload-only로 전환했다.
+- maintenance Worker로 application·asset·API 쓰기를 차단하고 최종 export·checksum·Time Travel 기준점을 확보한 뒤 production D1 migration `0003~0012`를 적용했다. FK 위반 0건, migration 13개, 기존 profile 2건 보존과 핵심 콘텐츠 row count 불변을 확인했다.
+- schema-compatible target Worker를 immutable version 100%로 단일 전환했다. 로그인·익명 session·cleanup status·calendar·private media 권한 경계 스모크를 통과했고 계정 삭제 rollout flag는 계속 비활성화했다.
+- 예약 정리 handler를 production에서 실제 1회 실행해 account/media backlog와 reconciliation failure가 모두 0으로 수렴하는 것을 확인한 뒤 운영 Cron을 `7 * * * *`로 고정했다.
 
 ## 2026-08-10
 
