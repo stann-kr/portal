@@ -21,7 +21,6 @@ import {
   isCreateNoteDraftEmpty,
   resolveRestoredCreateNoteDate,
 } from "@/lib/note-draft";
-import { toKstDateInputValue } from "@/lib/date-input";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
 import { useDeferredEditorContent } from "@/lib/hooks/useDeferredEditorContent";
 import { useDocumentSaveShortcut } from "@/lib/hooks/useDocumentSaveShortcut";
@@ -31,6 +30,7 @@ import {
   parseCreationOperationId,
 } from "@/lib/creation-operation";
 import { CreationConflictActions } from "@/components/editor/CreationConflictActions";
+import { resolveNoteCreateDefaultDate } from "@/lib/note-create-route";
 
 const FullEditor = dynamic(
   () => import("@/components/editor/FullEditor").then((m) => ({ default: m.FullEditor })),
@@ -43,6 +43,10 @@ interface NoteFullFormProps {
   actorId: string;
   studentId: string;
   returnTo: string;
+  /** 캘린더에서 선택한 날짜. 복구된 초안이 있으면 그 날짜가 우선한다. */
+  defaultDate?: string;
+  /** 작성 대상 학생 스페이스를 composer 상단에 명시한다. */
+  spaceLabel?: string;
 }
 
 type CreateNoteDraft = {
@@ -52,10 +56,10 @@ type CreateNoteDraft = {
   contentHtml: string;
 };
 
-export function NoteFullForm({ action, actorId, studentId, returnTo }: NoteFullFormProps) {
-  const today = toKstDateInputValue();
+export function NoteFullForm({ action, actorId, studentId, returnTo, defaultDate, spaceLabel }: NoteFullFormProps) {
+  const initialDefaultDate = resolveNoteCreateDefaultDate(defaultDate, new Date());
   const [title, setTitle] = useState("");
-  const [noteDate, setNoteDate] = useState(today);
+  const [noteDate, setNoteDate] = useState(initialDefaultDate);
   const {
     contentHtml,
     contentVersion,
@@ -66,7 +70,7 @@ export function NoteFullForm({ action, actorId, studentId, returnTo }: NoteFullF
     commitLatestContentHtml,
   } = useDeferredEditorContent("");
   const [operationId, setOperationId] = useState("");
-  const defaultNoteDateRef = useRef(today);
+  const defaultNoteDateRef = useRef(initialDefaultDate);
   const [state, formAction, isPending] = useActionState<CreateNoteState, FormData>(
     action,
     {}
@@ -108,10 +112,10 @@ export function NoteFullForm({ action, actorId, studentId, returnTo }: NoteFullF
     },
     {
       onReset: () => {
-        defaultNoteDateRef.current = today;
+        defaultNoteDateRef.current = initialDefaultDate;
         setOperationId(createCreationOperationId());
         setTitle("");
-        setNoteDate(today);
+        setNoteDate(initialDefaultDate);
         setContentHtml("");
       },
     },
@@ -195,7 +199,10 @@ export function NoteFullForm({ action, actorId, studentId, returnTo }: NoteFullF
           포털로 돌아가기
         </Link>
         <div className="mt-2 flex items-center justify-between gap-3">
-          <h1 className="text-2xl font-semibold">노트 작성</h1>
+          <div>
+            <h1 className="text-2xl font-semibold">노트 작성</h1>
+            {spaceLabel ? <p className="mt-1 text-sm text-muted-foreground">대상 스페이스 · {spaceLabel}</p> : null}
+          </div>
           <Link
             href={`/dashboard/notes/trash?returnTo=${encodeURIComponent(returnTo)}`}
             className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"

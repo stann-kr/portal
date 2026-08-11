@@ -6,6 +6,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import Link from "next/link";
 import { CalendarDays, List, Grid3x3, BookOpen, FileVideo } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
@@ -17,13 +18,13 @@ import { CurriculumView } from "./CurriculumView";
 import { AssignmentView } from "./AssignmentView";
 import { CreateEntryDropdown } from "./CreateEntryDropdown";
 import { SlidePanel } from "./SlidePanel";
-import { NoteSlideForm } from "@/components/notes/NoteSlideForm";
 import { QnaSlideForm } from "@/components/qna/QnaSlideForm";
 import type { DiggingColumnType } from "@/db/schema";
 import { assertAccountOwnerMayPersist } from "@/lib/account-terminal-lock";
 import { createAccountCalendarTabStorageKey } from "@/lib/local-owner-keys";
 import { ExternalCalendarConnection } from "./ExternalCalendarConnection";
 import type { ExternalCalendarConnectionSummary } from "@/lib/external-calendar";
+import { buildNoteCreateHref } from "@/lib/note-create-route";
 
 // ── 타입 ──────────────────────────────────────────
 
@@ -69,7 +70,7 @@ interface CalendarSectionProps {
   externalCalendarConnection?: ExternalCalendarConnectionSummary;
   /** 어드민에서 주입하는 헤더 슬롯 (학생 필터 드롭다운 등) */
   headerSlot?: React.ReactNode;
-  /** 노트/QnA 생성 성공 시 낙관적 업데이트 콜백 */
+  /** QnA 생성 성공 시 낙관적 업데이트 콜백 */
   onAddItem?: (item: UnifiedItem) => void;
   /** 학생 전용 Q&A 생성 허용 여부 */
   canCreateQna?: boolean;
@@ -95,9 +96,7 @@ export function CalendarSection({
 }: CalendarSectionProps) {
   const [createDefaultDate, setCreateDefaultDate] = useState<string | undefined>(undefined);
   const [diggingColumns, setDiggingColumns] = useState<DiggingColumn[]>([]);
-  const [noteSlideOpen, setNoteSlideOpen] = useState(false);
   const [qnaSlideOpen, setQnaSlideOpen] = useState(false);
-  const [noteFormBusy, setNoteFormBusy] = useState(false);
   const [qnaFormBusy, setQnaFormBusy] = useState(false);
   const [activeTab, setActiveTab] = useState<string>("calendar");
   const calendarTabStorageKey = createAccountCalendarTabStorageKey(actorId);
@@ -108,6 +107,23 @@ export function CalendarSection({
   const workspaceReturnTo = isStudentWorkspace
     ? `/dashboard/student?section=${workspaceSection}&view=${encodeURIComponent(activeTab)}`
     : `/dashboard/admin?section=${workspaceSection}&view=${encodeURIComponent(activeTab)}&student=${encodeURIComponent(studentId)}`;
+  const hasNoteTarget = workspaceRole === "student" || studentId.trim().length > 0;
+  const noteListHref = hasNoteTarget
+    ? workspaceRole === "student"
+      ? "/dashboard/student/notes"
+      : `/dashboard/admin/students/${studentId}/notes`
+    : undefined;
+  const noteCreateHref = hasNoteTarget
+    ? buildNoteCreateHref({
+      pathname: workspaceRole === "student"
+        ? "/dashboard/student/notes/new"
+        : `/dashboard/admin/students/${studentId}/notes/new`,
+      defaultDate: createDefaultDate,
+      returnTo: workspaceReturnTo,
+      returnFallback: workspaceRole === "student" ? "/dashboard/student" : "/dashboard/admin",
+    })
+    : undefined;
+  const canShowCreateMenu = Boolean(noteCreateHref) || canCreateQna || isStudentWorkspace;
 
   // 마운트 후 직전 내부 탭 복원 (SSR 기본값과 동일 초기값 → 하이드레이션 불일치 방지)
   useEffect(() => {
@@ -239,17 +255,27 @@ export function CalendarSection({
           </div>
 
           {/* 생성 드롭다운 */}
-          <div className="flex justify-end pb-2 sm:pb-0">
-            <CreateEntryDropdown
-              studentId={studentId}
-              diggingColumns={diggingColumns}
-              defaultDate={createDefaultDate}
-              onOpenNotePanel={() => setNoteSlideOpen(true)}
-              onOpenQnaPanel={() => setQnaSlideOpen(true)}
-              canCreateQna={canCreateQna}
-              canCreateEvent={isStudentWorkspace}
-              canCreateDigging={isStudentWorkspace}
-            />
+          <div className="flex items-center justify-end gap-2 pb-2 sm:pb-0">
+            {noteListHref ? (
+              <Link
+                href={noteListHref}
+                className="inline-flex h-7 shrink-0 items-center rounded-md border border-border px-2.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              >
+                노트 목록
+              </Link>
+            ) : null}
+            {canShowCreateMenu ? (
+              <CreateEntryDropdown
+                studentId={studentId}
+                diggingColumns={diggingColumns}
+                defaultDate={createDefaultDate}
+                noteCreateHref={noteCreateHref}
+                onOpenQnaPanel={() => setQnaSlideOpen(true)}
+                canCreateQna={canCreateQna}
+                canCreateEvent={isStudentWorkspace}
+                canCreateDigging={isStudentWorkspace}
+              />
+            ) : null}
           </div>
         </div>
         <div className="flex min-h-9 items-center border-b border-border px-3 text-xs text-muted-foreground sm:px-6">
@@ -302,29 +328,6 @@ export function CalendarSection({
           </TabsContent>
         </div>
       </Tabs>
-
-      {/* 노트 작성 슬라이드 패널 */}
-      <SlidePanel
-        open={noteSlideOpen}
-        onOpenChange={setNoteSlideOpen}
-        title="노트 작성"
-        size="xl"
-        dismissible={!noteFormBusy}
-      >
-        <NoteSlideForm
-          studentId={studentId}
-          actorId={actorId}
-          spaceLabel={spaceLabel}
-          returnTo={workspaceReturnTo}
-          defaultDate={createDefaultDate}
-          onSuccess={(item) => {
-            onAddItem?.(item);
-            setNoteSlideOpen(false);
-          }}
-          onClose={() => setNoteSlideOpen(false)}
-          onBusyChange={setNoteFormBusy}
-        />
-      </SlidePanel>
 
       {/* Q&A 작성 슬라이드 패널 */}
       {canCreateQna ? (

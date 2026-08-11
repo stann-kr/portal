@@ -63,8 +63,11 @@ OpenNext → Cloudflare Worker
 | `/login` | credentials login |
 | `/dashboard/student` | 학생 원페이지 포털 |
 | `/dashboard/admin` | 관리자 원페이지 포털 |
+| `/dashboard/student/notes` | 학생 노트 목록 |
 | `/dashboard/student/assignments/[id]` | 과제 상세 직접 접근 |
-| `/dashboard/student/notes/new` | 개인 노트 작성 직접 접근 |
+| `/dashboard/student/notes/new` | 학생 본인 노트 전체 화면 작성 |
+| `/dashboard/admin/students/[id]/notes` | 관리자 대상 학생 노트 목록 |
+| `/dashboard/admin/students/[id]/notes/new` | 관리자 대상 학생 노트 전체 화면 작성 |
 | `/dashboard/notes/[noteId]` | 권한 검증된 개인 노트 읽기·이어쓰기 |
 | `/dashboard/notes/[noteId]/history` | 개인 노트 불변 revision 조회·선택 복원 |
 | `/dashboard/notes/trash` | 권한 범위의 개인 노트 휴지통·복원·관리자 영구 삭제 |
@@ -82,7 +85,7 @@ OpenNext → Cloudflare Worker
 | `/api/account-cleanup/register` | 인증된 학생 기기의 cleanup token digest 등록 |
 | `/api/account-cleanup/status` | 삭제 신호만 반환하는 익명·same-origin·no-store 상태 조회 |
 
-`/dashboard/student/assignments`, `curriculum`, `digging`, `notes` 목록 경로는 원페이지 포털로 redirect한다.
+`/dashboard/student/assignments`, `curriculum`, `digging` 목록 경로는 원페이지 포털로 redirect한다. 노트 목록은 별도 route를 사용한다.
 
 학생 포털의 기본 section은 `오늘`이다. 통합 item에서 다음 일정, 피드백이 있는 제출, Q&A 상태를 순수 selector로 분류하고 최근 공지와 실제 작성 경로를 함께 제공한다. `lessons` 행은 `EVENT`/`LESSON` 항목으로 포함하므로 다음 일정 selector와 워크스페이스에서 같은 계약을 사용한다. 현재 schema에 없는 과제 배정·마감·읽음 상태는 추정하지 않는다. 캘린더, 일별 기록, 전체 항목, 커리큘럼, 과제는 `워크스페이스` section에서 기존 기능을 유지한다.
 
@@ -93,6 +96,8 @@ OpenNext → Cloudflare Worker
 학생은 하나의 전용 공개 Google 또는 iCloud iCal 레슨 캘린더를 연결할 수 있다. 구독 URL은 `external_calendar_subscriptions`에 AES-256-GCM과 학생·provider AAD로 암호화해 저장하며, 조회 action과 UI에는 provider·label·연결 여부만 반환한다. fetch는 허용 host/path, HTTPS, redirect 거부, 5초 timeout, 1 MiB streaming 상한과 VCALENDAR 검증을 거친다. 파서는 `ical.js`로 반복·EXDATE·override·취소·all-day를 bounded window의 read-only `EVENT`/`LESSON`으로 정규화한다. 외부 fetch 또는 복호화가 실패해도 내부 일정만 반환한다.
 
 학생과 관리자 포털은 공통 `PortalShell`과 `PortalNavigation`을 사용한다. section 선택은 역할별 local storage key에 편의 상태로 저장한다. root skip link와 main landmark, 이름이 있는 side rail control, dashboard loading/error boundary를 공통 shell 경계로 둔다. 학생 roster는 mobile label-value list와 desktop table을 분리하고 desktop 확장은 실제 button으로 조작한다.
+
+노트 탐색과 작성은 분리한다. 학생은 `/dashboard/student/notes`, 관리자는 학생별 `/dashboard/admin/students/[id]/notes`에서 제목·노트 날짜·작성자·평문 미리보기·최근 변경 시각과 노트 열기 링크를 확인한다. 목록은 저장 HTML을 직접 렌더하지 않는다. 캘린더의 노트 추가는 역할별 전체 화면 작성 URL에 선택한 엄격한 `YYYY-MM-DD`와 내부 `returnTo`만 전달한다. 잘못된 날짜는 KST 오늘로 대체하고, 기존 초안이 있으면 초안 날짜가 URL 기본값보다 우선한다.
 
 디깅 보드는 같은 column·track 데이터를 768px 미만에서 label-value record list로, 그 이상에서 TanStack Table 기반 data grid로 표시한다. 두 표현은 같은 edit cell과 server action을 사용한다.
 

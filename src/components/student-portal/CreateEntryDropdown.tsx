@@ -28,8 +28,8 @@ interface CreateEntryDropdownProps {
   diggingColumns: DiggingColumn[];
   defaultDate?: string;
   onSuccess?: () => void;
-  /** SlidePanel 기반 인라인 작성. 제공되면 router.push 대신 패널 열기 */
-  onOpenNotePanel?: () => void;
+  /** 선택한 학생과 날짜 문맥을 포함한 full-page 노트 composer URL. */
+  noteCreateHref?: string;
   onOpenQnaPanel?: () => void;
   /** 학생 전용 Q&A 생성 메뉴 노출 여부 */
   canCreateQna?: boolean;
@@ -74,7 +74,7 @@ export function CreateEntryDropdown({
   diggingColumns,
   defaultDate,
   onSuccess,
-  onOpenNotePanel,
+  noteCreateHref,
   onOpenQnaPanel,
   canCreateQna = true,
   canCreateEvent = true,
@@ -89,11 +89,7 @@ export function CreateEntryDropdown({
     setDropdownOpen(false);
     switch (id) {
       case "note":
-        if (onOpenNotePanel) {
-          onOpenNotePanel();
-        } else {
-          router.push("/dashboard/student/notes/new");
-        }
+        if (noteCreateHref) router.push(noteCreateHref);
         break;
       case "qna":
         if (onOpenQnaPanel) {
@@ -133,6 +129,7 @@ export function CreateEntryDropdown({
             className="z-50 min-w-[200px] bg-background border border-border rounded-xl shadow-lg p-1.5 animate-in fade-in-0 zoom-in-95"
           >
             {MENU_ITEMS.filter(({ id }) => {
+              if (id === "note") return Boolean(noteCreateHref);
               if (id === "qna") return canCreateQna;
               if (id === "event") return canCreateEvent;
               if (id === "digging") return canCreateDigging;

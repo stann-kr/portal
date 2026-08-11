@@ -11,22 +11,17 @@ import { getStudentById } from "@/lib/actions/students";
 import { getCurriculumByStudent } from "@/lib/actions/curriculum";
 import { getLessonsByStudent } from "@/lib/actions/lessons";
 import { getOrSeedColumns, getDiggingTracks } from "@/lib/actions/digging";
-import { getPrivateNotes } from "@/lib/actions/privateNotes";
 import { getQnaThreadsByStudent } from "@/lib/actions/qna";
 import { StudentDetailTabs } from "@/components/admin/StudentDetailTabs";
 import { OverviewTab } from "@/components/admin/OverviewTab";
 import { DiggingBoard } from "@/components/digging/DiggingBoard";
 import { ThreadList } from "@/components/qna/ThreadList";
-import { PrivateNoteForm } from "@/components/notes/PrivateNoteForm";
-import { DeleteNoteButton } from "@/components/notes/DeleteNoteButton";
-import { RichTextContent } from "@/components/editor/RichTextContent";
-import { MessageSquarePlus, PencilLine, Trash2 } from "lucide-react";
+import { BookOpen } from "lucide-react";
 import Link from "next/link";
 import type { DiggingColumnType, QnaStatus } from "@/db/schema";
 
 type TabKey = "overview" | "digging" | "notes" | "qna";
 type RawColumn = Awaited<ReturnType<typeof getOrSeedColumns>>[number];
-type RawNote = Awaited<ReturnType<typeof getPrivateNotes>>[number];
 type RawQnaThread = Awaited<ReturnType<typeof getQnaThreadsByStudent>>[number];
 
 // ─── 탭별 콘텐츠 ───────────────────────────────────
@@ -53,94 +48,14 @@ async function DiggingTabContent({ studentId }: { studentId: string }) {
   );
 }
 
-async function NotesTabContent({
-  studentId,
-  adminId,
-}: {
-  studentId: string;
-  adminId: string;
-}) {
-  const notes = await getPrivateNotes(studentId);
-
+function NotesTabContent({ studentId }: { studentId: string }) {
   return (
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-      {/* 노트 작성 */}
-      <div className="md:col-span-1">
-        <div className="p-6 rounded-xl border border-border bg-card shadow-sm sticky top-6">
-          <h2 className="text-lg font-semibold flex items-center gap-2 mb-4">
-            <MessageSquarePlus className="w-5 h-5 text-muted-foreground" />
-            노트 작성
-          </h2>
-          <PrivateNoteForm
-            studentId={studentId}
-            actorId={adminId}
-            returnTo={`/dashboard/admin/students/${studentId}?tab=notes`}
-          />
-        </div>
-      </div>
-
-      {/* 노트 목록 */}
-      <div className="md:col-span-2 space-y-4">
-        <div className="flex items-center justify-between gap-3">
-          <h2 className="text-lg font-semibold">노트 기록 ({notes.length})</h2>
-          <Link
-            href={`/dashboard/notes/trash?studentId=${encodeURIComponent(studentId)}&returnTo=${encodeURIComponent(`/dashboard/admin/students/${studentId}?tab=notes`)}`}
-            className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
-          >
-            <Trash2 className="h-4 w-4" aria-hidden="true" />
-            휴지통
-          </Link>
-        </div>
-        {notes.length === 0 ? (
-          <div className="p-12 text-center text-muted-foreground border border-dashed rounded-xl bg-muted/10">
-            <p className="text-sm">아직 작성된 1:1 노트가 없습니다.</p>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            {notes.map((note: RawNote) => (
-              <div
-                key={note.id}
-                className="p-5 rounded-xl border border-border bg-card shadow-sm space-y-3"
-              >
-                <div className="flex items-start justify-between">
-                  <div>
-                    <h3 className="font-semibold text-foreground">
-                      {note.title}
-                    </h3>
-                    <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground">
-                      <span>{note.authorName || "작성자 미상"}</span>
-                      <span>·</span>
-                      <span>
-                        {new Date(note.createdAt!).toLocaleString("ko-KR", {
-                          year: "numeric",
-                          month: "short",
-                          day: "numeric",
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <Link
-                      href={`/dashboard/notes/${note.id}?returnTo=${encodeURIComponent(`/dashboard/admin/students/${studentId}?tab=notes`)}`}
-                      className="inline-flex h-8 items-center gap-1 rounded-md px-2 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                    >
-                      <PencilLine className="h-3.5 w-3.5" aria-hidden="true" />
-                      이어쓰기
-                    </Link>
-                    {note.authorId === adminId && (
-                      <DeleteNoteButton noteId={note.id} version={note.version} />
-                    )}
-                  </div>
-                </div>
-                <RichTextContent html={note.contentHtml} className="text-muted-foreground" />
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
+    <section className="rounded-xl border border-border bg-card p-6">
+      <BookOpen className="size-5 text-primary" aria-hidden="true" />
+      <h2 className="mt-3 text-lg font-semibold">노트는 별도 목록에서 관리합니다</h2>
+      <p className="mt-1 text-sm text-muted-foreground">작성과 탐색을 분리해 학생 스페이스와 기록 문맥을 넓게 확인할 수 있습니다.</p>
+      <Link href={`/dashboard/admin/students/${studentId}/notes`} className="mt-4 inline-flex h-9 items-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90">학생 노트 목록 열기</Link>
+    </section>
   );
 }
 
@@ -238,10 +153,7 @@ export default async function StudentDetailPage({
               <div className="h-64 rounded-xl border bg-card animate-pulse" />
             }
           >
-            <NotesTabContent
-              studentId={studentId}
-              adminId={session.user.id!}
-            />
+            <NotesTabContent studentId={studentId} />
           </Suspense>
         )}
 
