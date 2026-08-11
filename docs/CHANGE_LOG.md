@@ -14,6 +14,7 @@
 - maintenance Worker로 application·asset·API 쓰기를 차단하고 최종 export·checksum·Time Travel 기준점을 확보한 뒤 production D1 migration `0003~0012`를 적용했다. FK 위반 0건, migration 13개, 기존 profile 2건 보존과 핵심 콘텐츠 row count 불변을 확인했다.
 - schema-compatible target Worker를 immutable version 100%로 단일 전환했다. 로그인·익명 session·cleanup status·calendar·private media 권한 경계 스모크를 통과했고 계정 삭제 rollout flag는 계속 비활성화했다.
 - 예약 정리 handler를 production에서 실제 1회 실행해 account/media backlog와 reconciliation failure가 모두 0으로 수렴하는 것을 확인한 뒤 운영 Cron을 `7 * * * *`로 고정했다.
+- 회전된 Workers Builds 인증을 현재 token으로 다시 등록하고 production·non-production trigger를 함께 갱신했다. 같은 PR 커밋의 OpenNext build와 upload-only 실행을 재검증하고 Workers Observability 실패 이메일 routing policy를 활성화했다.
 
 ## 2026-08-10
 
