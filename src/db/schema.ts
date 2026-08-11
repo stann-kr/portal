@@ -219,6 +219,44 @@ export const lessons = sqliteTable("lessons", {
   ),
 });
 
+export type ExternalCalendarProvider = "GOOGLE" | "ICLOUD";
+
+/** 학생이 직접 연결한 공개 iCal 레슨 캘린더. URL 원문은 AES-GCM으로만 보관한다. */
+export const externalCalendarSubscriptions = sqliteTable(
+  "external_calendar_subscriptions",
+  {
+    id: text("id").primaryKey(),
+    studentId: text("student_id")
+      .references(() => profiles.id, { onDelete: "cascade" })
+      .notNull(),
+    provider: text("provider").$type<ExternalCalendarProvider>().notNull(),
+    label: text("label").notNull(),
+    encryptedUrl: text("encrypted_url").notNull(),
+    urlIv: text("url_iv").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .default(sql`(strftime('%s', 'now'))`)
+      .notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .default(sql`(strftime('%s', 'now'))`)
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("external_calendar_subscriptions_student_unique").on(table.studentId),
+    check(
+      "external_calendar_subscriptions_provider_check",
+      sql`${table.provider} IN ('GOOGLE', 'ICLOUD')`,
+    ),
+    check(
+      "external_calendar_subscriptions_payload_check",
+      sql`length(${table.id}) > 0 AND length(${table.studentId}) > 0 AND length(${table.label}) > 0 AND length(${table.encryptedUrl}) > 0 AND length(${table.urlIv}) > 0`,
+    ),
+    check(
+      "external_calendar_subscriptions_timestamp_check",
+      sql`${table.createdAt} <= ${table.updatedAt}`,
+    ),
+  ],
+);
+
 export const assignments = sqliteTable("assignments", {
   id: text("id").primaryKey(),
   studentId: text("student_id")

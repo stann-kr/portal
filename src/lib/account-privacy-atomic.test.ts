@@ -224,6 +224,25 @@ test("student-only 삭제는 initiating token을 요구하고 admin/profile을 �
   );
 });
 
+test("계정 삭제는 암호화된 외부 캘린더 구독을 profile보다 먼저 명시적으로 제거한다", async (context) => {
+  const { sqlite, dbContext } = setupDatabase(context);
+  seedProfile(sqlite, "external-calendar-student");
+  sqlite.prepare(`
+    INSERT INTO external_calendar_subscriptions (
+      id, student_id, provider, label, encrypted_url, url_iv, created_at, updated_at
+    ) VALUES (?, ?, 'GOOGLE', 'Google 공개 레슨 캘린더', 'ciphertext', 'iv', 1767225600, 1767225600)
+  `).run("external-calendar-subscription", "external-calendar-student");
+  const result = await deleteStudentAccountAtomically(dbContext, {
+    actorId: "external-calendar-student",
+    operationId: operationId(130),
+    initiatingCleanupTokenDigest: digest("e"),
+    useEphemeralCleanupDigest: true,
+    now: new Date("2026-01-01T00:00:00.000Z"),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(countRows(sqlite, "SELECT count(*) AS value FROM external_calendar_subscriptions"), 0);
+});
+
 test("계정 삭제는 owned/cross-resource payload와 media를 한 transaction에서 정리한다", async (context) => {
   const { sqlite, dbContext } = setupDatabase(context);
   seedProfile(sqlite, "delete-student");

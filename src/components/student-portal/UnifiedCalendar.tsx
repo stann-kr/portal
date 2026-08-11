@@ -67,11 +67,21 @@ export function UnifiedCalendar({
     .filter((item) => visibleTypes.has(item.type))
     .map((item) => {
       const color = getUnifiedItemColor(item);
+      const allDay = item.metadata.allDay === true;
+      const allDayStartDate = typeof item.metadata.allDayStartDate === "string"
+        ? item.metadata.allDayStartDate
+        : null;
+      const allDayEndDate = typeof item.metadata.allDayEndDate === "string"
+        ? item.metadata.allDayEndDate
+        : null;
       return {
         id: getUnifiedItemKey(item),
         title: showSpaceContext ? `${item.title} · ${item.space.label}` : item.title,
-        start: item.date.toISOString(),
-        end: item.endDate ? item.endDate.toISOString() : undefined,
+        start: allDay && allDayStartDate ? allDayStartDate : item.date.toISOString(),
+        end: allDay && allDayEndDate
+          ? allDayEndDate
+          : item.endDate?.toISOString(),
+        allDay,
         backgroundColor: color,
         borderColor: color,
         extendedProps: { itemType: item.type, spaceLabel: item.space.label, sourceLabel: item.source.label },

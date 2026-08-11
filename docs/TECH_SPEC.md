@@ -88,7 +88,9 @@ OpenNext → Cloudflare Worker
 
 관리자 포털의 기본 section은 `업무함`이다. 전체 Q&A 중 미답변 항목, feedback이 없는 assignment, 앞으로 7일 이내의 학생별 다음 레슨을 조회한다. 질문과 과제는 오래 기다린 항목부터 보여주고 실제 Q&A·과제 상세로 연결한다. 일정 section은 선택한 학생 스페이스를 상시 표시하고 각 통합 항목의 스페이스·출처를 식별한다.
 
-통합 항목은 raw `id`를 route 진입에 유지하면서 `PORTAL:<entity>:<id>` 형식의 UI key를 별도로 사용한다. `calendar_events`와 `lessons`에는 안정적인 연결 키가 없으므로 같은 시각이나 제목만으로 dedupe하지 않으며, 서로 다른 두 행을 모두 표시한다. 현재 출처는 `PORTAL`이고 entity는 `CALENDAR_EVENT`, `LESSON`, `PRIVATE_NOTE`, `DIGGING_TRACK`, `QNA_THREAD`, `ASSIGNMENT` 중 하나다. 학생 스페이스 label은 display name을 trim해 우선 사용하고 비어 있으면 email을 사용한다.
+통합 항목은 raw `id`를 route 진입에 유지하면서 `<source kind>:<entity>:<id>` 형식의 UI key를 별도로 사용한다. `calendar_events`와 `lessons`, 외부 공개 캘린더 사이에는 안정적인 연결 키가 없으므로 같은 시각이나 제목만으로 dedupe하지 않으며, 서로 다른 행을 모두 표시한다. source kind는 `PORTAL`, `GOOGLE_CALENDAR`, `ICLOUD_CALENDAR`이고 entity는 내부 항목 또는 `EXTERNAL_CALENDAR_EVENT`다. 학생 스페이스 label은 display name을 trim해 우선 사용하고 비어 있으면 email을 사용한다.
+
+학생은 하나의 전용 공개 Google 또는 iCloud iCal 레슨 캘린더를 연결할 수 있다. 구독 URL은 `external_calendar_subscriptions`에 AES-256-GCM과 학생·provider AAD로 암호화해 저장하며, 조회 action과 UI에는 provider·label·연결 여부만 반환한다. fetch는 허용 host/path, HTTPS, redirect 거부, 5초 timeout, 1 MiB streaming 상한과 VCALENDAR 검증을 거친다. 파서는 `ical.js`로 반복·EXDATE·override·취소·all-day를 bounded window의 read-only `EVENT`/`LESSON`으로 정규화한다. 외부 fetch 또는 복호화가 실패해도 내부 일정만 반환한다.
 
 학생과 관리자 포털은 공통 `PortalShell`과 `PortalNavigation`을 사용한다. section 선택은 역할별 local storage key에 편의 상태로 저장한다. root skip link와 main landmark, 이름이 있는 side rail control, dashboard loading/error boundary를 공통 shell 경계로 둔다. 학생 roster는 mobile label-value list와 desktop table을 분리하고 desktop 확장은 실제 button으로 조작한다.
 
@@ -98,7 +100,7 @@ OpenNext → Cloudflare Worker
 
 `src/db/schema.ts`의 주요 table:
 
-- 사용자·수업: `profiles`, `curriculums`, `lessons`
+- 사용자·수업: `profiles`, `curriculums`, `lessons`, `external_calendar_subscriptions`
 - 과제·피드백: `assignments`, `feedbacks`
 - 콘텐츠: `categories`, `posts`, `post_revisions`, `comments`
 - 개인 학습 기록: `private_notes`, `private_note_revisions`, `calendar_events`
@@ -116,7 +118,7 @@ Cloudflare binding:
 | `BUCKET` | R2 bucket | 미디어 저장 |
 | `ASSETS` | OpenNext assets | 정적 asset |
 
-Migration SQL은 `drizzle/`, Drizzle metadata는 `drizzle/meta/`에 둔다. Wrangler는 SQL 파일명과 D1의 적용 이력을 기준으로 migration을 실행하고, Drizzle metadata는 다음 schema diff 생성 기준으로 사용한다. SQL·journal·snapshot은 `0000~0012`까지 대응한다. `npm run db:check`는 empty replay와 current schema/latest snapshot의 column·FK·index뿐 아니라 문서·미디어·개인정보 CHECK·trigger, 불변·부활·교체 우회 방지 probe, `0007` fixture upgrade·inbound FK preflight, `0008→0009` account cascade, 기존 게시물·Q&A의 `0009→0010`, 기존 URL을 보존하는 `0010→0011`, populated `0011→0012` upgrade를 검사한다. 로컬 persistent D1에는 `0009`까지 적용되어 있고, production D1은 maintenance write fence와 post-fence 복구 기준점을 확보한 뒤 `0012`까지 적용·검증했다.
+Migration SQL은 `drizzle/`, Drizzle metadata는 `drizzle/meta/`에 둔다. Wrangler는 SQL 파일명과 D1의 적용 이력을 기준으로 migration을 실행하고, Drizzle metadata는 다음 schema diff 생성 기준으로 사용한다. SQL·journal·snapshot은 `0000~0013`까지 대응한다. `npm run db:check`는 empty replay와 current schema/latest snapshot의 column·FK·index뿐 아니라 문서·미디어·개인정보·외부 캘린더 구독 CHECK·FK·unique index, 불변·부활·교체 우회 방지 probe, `0007` fixture upgrade·inbound FK preflight, `0008→0009` account cascade, 기존 게시물·Q&A의 `0009→0010`, 기존 URL을 보존하는 `0010→0011`, populated `0011→0012` upgrade를 검사한다. local persistent D1에는 `0009`까지, production D1에는 `0012`까지 적용되어 있으며, 저장된 공개 iCal URL을 위한 `0013`은 두 환경 모두 아직 적용하지 않았다.
 
 신규 업로드는 사용자에게 노출된 `media-upload/` staging key로만 PUT하고, 서버가 size·Content-Type metadata·ETag를 확인한 뒤 사용자에게 공개되지 않은 별도 `media/` final key로 봉인한다. D1의 `SEALING` lease가 봉인과 삭제를 직렬화하며, 결과를 잃은 Copy는 복구 유예 뒤 final 삭제 outbox가 다시 정리한다. 문서에는 object ID와 `/api/media/{id}`만 저장하고, 게시물과 Q&A의 원자 생성·purge transaction이 registry claim과 R2 삭제 의도를 함께 commit한다. R2 삭제는 lease·지수 backoff를 사용하는 durable outbox로 재시도한다.
 
@@ -173,6 +175,7 @@ Migration SQL은 `drizzle/`, Drizzle metadata는 `drizzle/meta/`에 둔다. Wran
 | `R2_ENDPOINT` | R2 S3-compatible endpoint | 환경별 설정 |
 | `R2_ACCESS_KEY_ID` | R2 access key | secret |
 | `R2_SECRET_ACCESS_KEY` | R2 secret key | secret |
+| `EXTERNAL_CALENDAR_ENCRYPTION_KEY` | 공개 iCal URL AES-256-GCM용 32-byte base64/base64url key | Worker/local secret, 운영 미설정 |
 | `R2_BUCKET_NAME` | upload bucket 이름 | 환경별 설정 |
 
 샘플 계약은 `.env.example`에 두고 실제 값은 commit하지 않는다. 신규 managed media는 public bucket URL을 runtime 설정으로 사용하지 않는다. 기존 URL의 trusted base는 배포 전 inventory·backfill 입력으로만 별도 관리한다.

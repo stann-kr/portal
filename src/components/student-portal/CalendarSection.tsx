@@ -22,6 +22,8 @@ import { QnaSlideForm } from "@/components/qna/QnaSlideForm";
 import type { DiggingColumnType } from "@/db/schema";
 import { assertAccountOwnerMayPersist } from "@/lib/account-terminal-lock";
 import { createAccountCalendarTabStorageKey } from "@/lib/local-owner-keys";
+import { ExternalCalendarConnection } from "./ExternalCalendarConnection";
+import type { ExternalCalendarConnectionSummary } from "@/lib/external-calendar";
 
 // ── 타입 ──────────────────────────────────────────
 
@@ -64,6 +66,7 @@ interface CalendarSectionProps {
   spaceLabel: string;
   /** 관리자/학생에 따른 스페이스 문맥 표기. */
   workspaceRole: "admin" | "student";
+  externalCalendarConnection?: ExternalCalendarConnectionSummary;
   /** 어드민에서 주입하는 헤더 슬롯 (학생 필터 드롭다운 등) */
   headerSlot?: React.ReactNode;
   /** 노트/QnA 생성 성공 시 낙관적 업데이트 콜백 */
@@ -84,6 +87,7 @@ export function CalendarSection({
   actorId,
   spaceLabel,
   workspaceRole,
+  externalCalendarConnection,
   headerSlot,
   onAddItem,
   canCreateQna = true,
@@ -253,6 +257,12 @@ export function CalendarSection({
             {workspaceContextLabel} · <span className="font-medium text-foreground">{spaceLabel || "선택된 학생 없음"}</span>
           </span>
         </div>
+        {workspaceRole === "student" && externalCalendarConnection ? (
+          <ExternalCalendarConnection
+            key={`${externalCalendarConnection.connected}:${externalCalendarConnection.provider ?? "NONE"}`}
+            connection={externalCalendarConnection}
+          />
+        ) : null}
 
         {/* 탭 콘텐츠 */}
         <div className="flex-1 overflow-auto">

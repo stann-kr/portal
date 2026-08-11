@@ -17,12 +17,15 @@ import {
   feedbacks,
   lessons,
   profiles,
+  externalCalendarSubscriptions,
 } from "@/db/schema";
 import { and, eq, desc, inArray, isNull } from "drizzle-orm";
 import type { InferSelectModel } from "drizzle-orm";
 import { requireAuth } from "@/lib/auth-guard";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 import { normalizeUnifiedItems } from "@/lib/unified-item-normalization";
+import { decryptExternalCalendarUrl, fetchExternalCalendarIcs, parseExternalCalendarItems } from "@/lib/external-calendar";
+import { getExternalCalendarEncryptionKey } from "@/lib/external-calendar-key";
 
 // ─── 공통 조회 헬퍼 ──────────────────────────────
 
@@ -32,6 +35,7 @@ async function fetchUnifiedItemsForUser(userId: string): Promise<UnifiedItem[]> 
   // 학생 profile + 날짜 기반 테이블 + 디깅 컬럼 병렬 조회
   const [
     profileRows,
+    subscriptionRows,
     events,
     studentLessons,
     notes,
@@ -49,6 +53,7 @@ async function fetchUnifiedItemsForUser(userId: string): Promise<UnifiedItem[]> 
       .from(profiles)
       .where(eq(profiles.id, userId))
       .limit(1),
+    db.select().from(externalCalendarSubscriptions).where(eq(externalCalendarSubscriptions.studentId, userId)).limit(1),
     db.select().from(calendarEvents).where(eq(calendarEvents.userId, userId)).orderBy(desc(calendarEvents.startTime)) as Promise<InferSelectModel<typeof calendarEvents>[]>,
     db.select().from(lessons).where(eq(lessons.studentId, userId)).orderBy(desc(lessons.scheduledAt)) as Promise<InferSelectModel<typeof lessons>[]>,
     db
@@ -93,7 +98,7 @@ async function fetchUnifiedItemsForUser(userId: string): Promise<UnifiedItem[]> 
     feedbackCountMap[f.assignmentId] = (feedbackCountMap[f.assignmentId] ?? 0) + 1;
   }
 
-  return normalizeUnifiedItems({
+  const internalItems = normalizeUnifiedItems({
     profile,
     events,
     lessons: studentLessons,
@@ -104,6 +109,30 @@ async function fetchUnifiedItemsForUser(userId: string): Promise<UnifiedItem[]> 
     assignments: myAssignments,
     feedbackCounts: feedbackCountMap,
   });
+  const subscription = subscriptionRows[0];
+  if (!subscription) return internalItems;
+
+  // 외부 공개 feed의 오류는 내부 일정 렌더를 막지 않는다.
+  try {
+    const url = await decryptExternalCalendarUrl({
+      encryptedUrl: subscription.encryptedUrl,
+      urlIv: subscription.urlIv,
+      studentId: profile.id,
+      provider: subscription.provider,
+      key: getExternalCalendarEncryptionKey(),
+    });
+    const ics = await fetchExternalCalendarIcs(url);
+    const externalItems = await parseExternalCalendarItems({
+      ics,
+      subscriptionId: subscription.id,
+      studentId: profile.id,
+      provider: subscription.provider,
+      spaceLabel: profile.displayName?.trim() || profile.email,
+    });
+    return [...internalItems, ...externalItems].sort((a, b) => b.date.getTime() - a.date.getTime());
+  } catch {
+    return internalItems;
+  }
 }
 
 // ─── 집계 서버 액션 ───────────────────────────────

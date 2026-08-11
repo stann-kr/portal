@@ -35,6 +35,32 @@ function formatDate(date: Date) {
   });
 }
 
+function formatAllDayDate(date: Date, dateOnly: string | null) {
+  const exactDate = dateOnly && /^\d{4}-\d{2}-\d{2}$/u.test(dateOnly)
+    ? new Date(`${dateOnly}T00:00:00.000Z`)
+    : new Date(date);
+  return exactDate.toLocaleDateString("ko-KR", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    ...(dateOnly ? { timeZone: "UTC" } : {}),
+  });
+}
+
+function formatAllDayEndDate(date: Date, dateOnly: string | null) {
+  if (!dateOnly || !/^\d{4}-\d{2}-\d{2}$/u.test(dateOnly)) {
+    return formatAllDayDate(date, null);
+  }
+  const inclusiveEnd = new Date(`${dateOnly}T00:00:00.000Z`);
+  inclusiveEnd.setUTCDate(inclusiveEnd.getUTCDate() - 1);
+  return inclusiveEnd.toLocaleDateString("ko-KR", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
+}
+
 /**
  * metadata 필드에서 문자열 값을 안전하게 추출.
  * null / undefined → null 반환.
@@ -62,7 +88,18 @@ export function UnifiedItemDetail({ item, returnTo }: UnifiedItemDetailProps) {
   const metaContentHtml = metaStr(item.metadata, "contentHtml");
   const metaLinkUrl = metaStr(item.metadata, "linkUrl");
   const metaMediaUrl = metaStr(item.metadata, "mediaUrl");
+  const allDayStartDate = metaStr(item.metadata, "allDayStartDate");
+  const allDayEndDate = metaStr(item.metadata, "allDayEndDate");
   const metaFeedbackCount = item.metadata.feedbackCount as number | undefined;
+  const isAllDay = item.metadata.allDay === true;
+  const startLabel = isAllDay
+    ? formatAllDayDate(item.date, allDayStartDate)
+    : formatDate(item.date);
+  const endLabel = item.endDate
+    ? isAllDay
+      ? formatAllDayEndDate(new Date(item.endDate), allDayEndDate)
+      : formatDate(new Date(item.endDate))
+    : null;
 
   return (
     <div className="space-y-5">
@@ -73,7 +110,7 @@ export function UnifiedItemDetail({ item, returnTo }: UnifiedItemDetailProps) {
           <UnifiedItemSpaceBadge item={item} />
         </div>
         <span className="text-xs text-muted-foreground">
-          {formatDate(item.date)}
+          {startLabel}
         </span>
       </div>
 
@@ -98,10 +135,10 @@ export function UnifiedItemDetail({ item, returnTo }: UnifiedItemDetailProps) {
               <span className="font-medium">{item.subType}</span>
             </div>
           ) : null}
-          {item.endDate !== null && item.endDate !== undefined ? (
+          {endLabel !== null && (!isAllDay || endLabel !== startLabel) ? (
             <div className="flex gap-2">
               <span className="text-muted-foreground w-16">종료</span>
-              <span>{formatDate(new Date(item.endDate))}</span>
+              <span>{endLabel}</span>
             </div>
           ) : null}
           {metaDescription !== null ? (

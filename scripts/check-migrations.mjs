@@ -20,6 +20,7 @@ const serverDraftMigrationFile = "0009_document_server_drafts.sql";
 const lifecycleExpansionMigrationFile = "0010_post_qna_lifecycle.sql";
 const mediaLifecycleMigrationFile = "0011_media_lifecycle.sql";
 const accountPrivacyMigrationFile = "0012_account_privacy_lifecycle.sql";
+const externalCalendarMigrationFile = "0013_external_calendar_subscriptions.sql";
 const continuityTables = [
   "account_cleanup_tokens",
   "account_deletion_jobs",
@@ -28,6 +29,7 @@ const continuityTables = [
   "document_server_draft_operations",
   "document_server_drafts",
   "document_tombstones",
+  "external_calendar_subscriptions",
   "media_deletion_outbox",
   "media_objects",
   "private_notes",
@@ -52,6 +54,11 @@ const continuityCheckNames = {
   calendar_feed_tokens: [
     "calendar_feed_tokens_digest_check",
     "calendar_feed_tokens_timestamp_check",
+  ],
+  external_calendar_subscriptions: [
+    "external_calendar_subscriptions_payload_check",
+    "external_calendar_subscriptions_provider_check",
+    "external_calendar_subscriptions_timestamp_check",
   ],
   document_operation_ledger: [
     "document_operation_ledger_nonempty_ids_check",
@@ -698,6 +705,27 @@ function validateContinuityTriggers(database) {
       `${trigger.name} trigger SQL이 migration source와 다릅니다.`,
     );
   }
+}
+
+function validateExternalCalendarSubscriptionSchema(database) {
+  const migrationSource = readFileSync(
+    join(migrationsDirectory, externalCalendarMigrationFile),
+    "utf8",
+  );
+  assert(
+    /CREATE TABLE [`"]?external_calendar_subscriptions/u.test(migrationSource),
+    "0013 external calendar table 생성이 없습니다.",
+  );
+  const foreignKeys = database.all("PRAGMA foreign_key_list('external_calendar_subscriptions');");
+  assert(
+    foreignKeys.some((foreignKey) => foreignKey.table === "profiles" && foreignKey.from === "student_id" && foreignKey.on_delete === "CASCADE"),
+    "external calendar subscription profile cascade FK가 없습니다.",
+  );
+  const indexes = database.all("PRAGMA index_list('external_calendar_subscriptions');");
+  assert(
+    indexes.some((index) => index.name === "external_calendar_subscriptions_student_unique" && index.unique === 1),
+    "external calendar subscription 학생별 unique index가 없습니다.",
+  );
 }
 
 function validateMediaLifecycleTriggers(database) {
@@ -3308,6 +3336,7 @@ async function main() {
     validateContinuityTriggers(migrationDatabase);
     validateServerDraftTriggers(migrationDatabase);
     validateMediaLifecycleTriggers(migrationDatabase);
+    validateExternalCalendarSubscriptionSchema(migrationDatabase);
     console.log("PASS document, server draft, media lifecycle CHECK/trigger signatures");
 
     validateContinuitySemantics(migrationDatabase);

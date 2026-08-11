@@ -646,6 +646,7 @@ function accountDeletionStatements(input: {
     { query: "DELETE FROM digging_columns WHERE user_id = ?", params: [actorId] },
     { query: "DELETE FROM digging_tracks WHERE user_id = ?", params: [actorId] },
     { query: "DELETE FROM calendar_events WHERE user_id = ?", params: [actorId] },
+    { query: "DELETE FROM external_calendar_subscriptions WHERE student_id = ?", params: [actorId] },
     {
       query: "DELETE FROM profiles WHERE id = ? AND role = 'student'",
       params: [actorId],

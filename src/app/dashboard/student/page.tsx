@@ -14,6 +14,7 @@ import type { InferSelectModel } from "drizzle-orm";
 import { assignments } from "@/db/schema";
 import { StudentPortalClient } from "@/components/student-portal/StudentPortalClient";
 import { getUnifiedItemSpaceLabel } from "@/lib/unified-item-normalization";
+import { getExternalCalendarConnectionSummary } from "@/lib/actions/externalCalendars";
 
 export default async function StudentPortalPage() {
   const session = await getActiveAuthSession();
@@ -27,13 +28,14 @@ export default async function StudentPortalPage() {
   });
 
   // 병렬 데이터 패치
-  const [announcements, unifiedItems, curriculumModules, rawAssignments, feedbacksMap] =
+  const [announcements, unifiedItems, curriculumModules, rawAssignments, feedbacksMap, externalCalendarConnection] =
     await Promise.all([
       getPostsByBoardType("ANNOUNCEMENT"),
       getUnifiedItems(),
       getMyCurriculum(),
       getMyAssignments(),
       getMyFeedbacksMap(),
+      getExternalCalendarConnectionSummary(),
     ]);
 
   // 커뮤니티 게시물 — GENERAL + FEEDBACK 통합 (최근 20개)
@@ -71,6 +73,7 @@ export default async function StudentPortalPage() {
       studentId={studentId}
       displayName={displayName}
       spaceLabel={spaceLabel}
+      externalCalendarConnection={externalCalendarConnection}
       referenceTime={new Date()}
     />
   );

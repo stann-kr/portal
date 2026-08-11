@@ -50,6 +50,7 @@
 | FR-009 | 개인 노트는 수정 이력과 휴지통을 제공하고, 재전송·동시 편집·영구 삭제 뒤 늦은 요청에도 일관된 상태를 유지해야 한다. | version 기반 조건부 저장, 불변 revision·operation ledger, 30일 휴지통, 복원·관리자 purge, tombstone 부활 방지를 격리 D1에서 검증한다. | 구현 |
 | FR-010 | 커뮤니티 게시물과 1:1 Q&A는 내용·상태 이력과 휴지통을 제공하고, 댓글·답변을 보존한 채 복원할 수 있어야 한다. | 게시물 full-snapshot revision, Q&A append-only event, version 기반 조건부 변경, 30일 휴지통, 관리자 purge와 tombstone 부활 방지를 격리 D1에서 검증한다. | 구현 |
 | FR-011 | 학생은 현재 비밀번호와 명시적 확인을 거쳐 본인 계정을 삭제할 수 있어야 한다. | profile·credential·문서 원문·서버 초안을 한 transaction에서 제거하고 기존 session을 즉시 거부한다. 현재 기기는 terminal lock 뒤 직접 정리하고, 사전 등록된 다른 기기만 재접속 때 해당 계정의 로컬 데이터를 정리하며, 저장소 차단 시 수동 정리를 안내한다. | 구현 — production migration·Cron trigger 미적용 |
+| FR-012 | 학생은 전용 공개 Google 또는 iCloud 레슨 캘린더를 연결하고 해제할 수 있어야 한다. | 공개 iCal 주소를 실제 읽기·파싱한 뒤 암호화 저장하고, 외부 일정은 읽기 전용 레슨으로 통합 캘린더에 표시한다. URL 원문은 학생·관리자·API 응답에 반환하지 않는다. | 구현 — 운영 secret·remote migration 미적용 |
 
 ## 비기능 요구사항
 

@@ -14,7 +14,13 @@ export type UnifiedItemSourceEntity =
   | "PRIVATE_NOTE"
   | "DIGGING_TRACK"
   | "QNA_THREAD"
-  | "ASSIGNMENT";
+  | "ASSIGNMENT"
+  | "EXTERNAL_CALENDAR_EVENT";
+
+export type UnifiedItemSourceKind =
+  | "PORTAL"
+  | "GOOGLE_CALENDAR"
+  | "ICLOUD_CALENDAR";
 
 export type UnifiedItem = {
   id: string;
@@ -32,9 +38,9 @@ export type UnifiedItem = {
     studentId: string;
     label: string;
   };
-  /** 현재 포털에서 생성·관리하는 항목의 출처. */
+  /** 항목을 제공한 포털 또는 외부 캘린더 출처. */
   source: {
-    kind: "PORTAL";
+    kind: UnifiedItemSourceKind;
     entity: UnifiedItemSourceEntity;
     label: string;
   };

@@ -27,6 +27,7 @@
 - D1 database와 R2 bucket이 존재해야 한다.
 - 대상 Worker를 promotion하기 전에는 승인된 작업 창에서 실제 pending migration을 적용·검증해야 한다. 비호환 migration은 maintenance 진입 전에 미리 적용하지 않는다.
 - auth secret과 기타 secret은 배포 환경에만 설정한다.
+- 외부 공개 레슨 캘린더를 활성화하려면 `EXTERNAL_CALENDAR_ENCRYPTION_KEY`를 32-byte base64 또는 base64url secret으로 환경마다 안정적으로 설정한다. 값 자체는 저장소·문서·로그에 남기지 않으며, 기존 구독이 있으면 key를 임의로 교체하지 않는다. `0013` migration 적용과 key 설정 전에는 연결 기능을 운영에 사용하지 않는다.
 - production deploy 전 admin/student smoke 계정과 test data를 준비한다.
 - production branch merge가 자동 배포를 시작하는지 확인하고, migration 작업 창에는 자동 promotion을 중지하거나 upload-only 절차로 전환한다.
 

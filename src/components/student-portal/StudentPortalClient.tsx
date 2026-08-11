@@ -15,6 +15,7 @@ import { PortalShell } from "@/components/ui/portal-shell";
 import { CalendarSection } from "./CalendarSection";
 import { CommunitySection } from "./CommunitySection";
 import { TodaySection } from "./TodaySection";
+import type { ExternalCalendarConnectionSummary } from "@/lib/external-calendar";
 
 // ── 타입 ──────────────────────────────────────────────
 
@@ -65,6 +66,7 @@ export interface StudentPortalClientProps {
   studentId: string;
   displayName: string;
   spaceLabel: string;
+  externalCalendarConnection: ExternalCalendarConnectionSummary;
   referenceTime: Date;
 }
 
@@ -95,6 +97,7 @@ export function StudentPortalClient({
   studentId,
   displayName,
   spaceLabel,
+  externalCalendarConnection,
   referenceTime,
 }: StudentPortalClientProps) {
   const [items, setItems] = useState<UnifiedItem[]>(initialUnifiedItems);
@@ -142,6 +145,7 @@ export function StudentPortalClient({
               actorId={studentId}
               spaceLabel={spaceLabel}
               workspaceRole="student"
+              externalCalendarConnection={externalCalendarConnection}
               isActive={activeSection === "workspace"}
               onAddItem={addItem}
             />
