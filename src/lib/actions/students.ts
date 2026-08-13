@@ -12,7 +12,7 @@ import { profiles, curriculums, lessons, assignments, feedbacks } from "@/db/sch
 import { eq, desc, asc } from "drizzle-orm";
 import type { InferSelectModel } from "drizzle-orm";
 import * as bcrypt from "bcryptjs";
-import { requireAdmin } from "@/lib/auth-guard";
+import { findStudentTarget, requireAdmin } from "@/lib/auth-guard";
 
 // ───────────────────────────────────────────────
 // 학생 목록 조회
@@ -102,13 +102,7 @@ export async function createStudent(
  */
 export async function getStudentById(studentId: string) {
   await requireAdmin();
-  const db = createDb();
-  const rows = await db
-    .select()
-    .from(profiles)
-    .where(eq(profiles.id, studentId))
-    .limit(1);
-  return rows[0] ?? null;
+  return findStudentTarget(studentId);
 }
 
 // ───────────────────────────────────────────────

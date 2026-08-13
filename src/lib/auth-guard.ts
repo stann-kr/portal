@@ -30,6 +30,45 @@ export type ActiveProfileLoader = (
 ) => Promise<ActiveProfile | null>;
 
 /**
+ * 학생 스페이스를 대상으로 하는 route/action의 대상 profile 계약.
+ * 존재하지 않거나 활성 학생이 아닌 profile은 같은 안전한 결과(null)로 좁힌다.
+ */
+export async function findStudentTarget(
+  studentId: string,
+  loadProfile: ActiveProfileLoader = findActiveProfileById,
+): Promise<ActiveProfile | null> {
+  const profile = await loadProfile(studentId);
+  return profile?.role === "student" ? profile : null;
+}
+
+/**
+ * 관리자 전용 학생 대상 action에서 실제 활성 학생 profile을 요구한다.
+ */
+export async function requireStudentTarget(
+  studentId: string,
+  loadProfile: ActiveProfileLoader = findActiveProfileById,
+): Promise<ActiveProfile> {
+  await requireAdmin();
+  const student = await findStudentTarget(studentId, loadProfile);
+  if (!student) throw new Error("Student not found");
+  return student;
+}
+
+/**
+ * 본인 또는 관리자가 학생 스페이스를 읽거나 변경할 때 대상 role까지 검증한다.
+ */
+export async function requireStudentOwnerOrAdmin(
+  session: AuthSession,
+  studentId: string,
+  loadProfile: ActiveProfileLoader = findActiveProfileById,
+): Promise<ActiveProfile> {
+  assertOwnerOrAdmin(session, studentId);
+  const student = await findStudentTarget(studentId, loadProfile);
+  if (!student) throw new Error("Student not found");
+  return student;
+}
+
+/**
  * JWT session subject를 매 요청 DB profile과 대조하고 DB role을 권한 원본으로 쓴다.
  * profile이 삭제되었거나 비활성 상태이면 stale JWT를 인증으로 승격하지 않는다.
  */

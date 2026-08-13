@@ -10,7 +10,12 @@ import { revalidatePath } from "next/cache";
 import { createDb } from "@/db/client";
 import { assignments, feedbacks, profiles } from "@/db/schema";
 import { asc, desc, eq, notExists } from "drizzle-orm";
-import { requireAuth, requireAdmin, assertOwnerOrAdmin } from "@/lib/auth-guard";
+import {
+  requireAuth,
+  requireAdmin,
+  assertOwnerOrAdmin,
+  requireStudentTarget,
+} from "@/lib/auth-guard";
 
 /** 지원하는 미디어 플랫폼 URL 패턴 */
 const MEDIA_URL_PATTERNS = [
@@ -88,7 +93,7 @@ export async function getMyAssignments() {
  * 특정 학생의 과제 목록 조회 (Admin용).
  */
 export async function getAssignmentsByStudent(studentId: string) {
-  await requireAdmin();
+  await requireStudentTarget(studentId);
   const db = createDb();
   return db
     .select()

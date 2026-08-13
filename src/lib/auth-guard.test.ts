@@ -4,6 +4,8 @@ import {
   assertAdminSession,
   assertAuthenticatedSession,
   assertOwnerOrAdmin,
+  findStudentTarget,
+  requireStudentOwnerOrAdmin,
   resolveActiveSession,
   type AuthSession,
 } from "./auth-guard";
@@ -70,6 +72,66 @@ test("student는 본인 데이터만 접근할 수 있다", () => {
 test("admin은 다른 사용자의 데이터에 접근할 수 있다", () => {
   const admin = createSession("admin-1", "admin");
   assert.doesNotThrow(() => assertOwnerOrAdmin(admin, "student-1"));
+});
+
+test("학생 대상은 활성 student profile만 허용한다", async () => {
+  const student = createProfile("student-1", "student");
+  const admin = createProfile("admin-1", "admin");
+
+  assert.equal(
+    await findStudentTarget("student-1", async () => student),
+    student,
+  );
+  assert.equal(
+    await findStudentTarget("admin-1", async () => admin),
+    null,
+  );
+  assert.equal(
+    await findStudentTarget("deleted-student", async () => null),
+    null,
+  );
+  assert.equal(
+    await findStudentTarget("unknown-student", async () => null),
+    null,
+  );
+});
+
+test("학생 대상 소유권 guard는 학생 본인과 관리자의 학생 접근만 통과시킨다", async () => {
+  const student = createProfile("student-1", "student");
+  const admin = createProfile("admin-1", "admin");
+
+  await assert.doesNotReject(() =>
+    requireStudentOwnerOrAdmin(
+      createSession("student-1", "student"),
+      "student-1",
+      async () => student,
+    ),
+  );
+  await assert.doesNotReject(() =>
+    requireStudentOwnerOrAdmin(
+      createSession("admin-1", "admin"),
+      "student-1",
+      async () => student,
+    ),
+  );
+  await assert.rejects(
+    () =>
+      requireStudentOwnerOrAdmin(
+        createSession("student-2", "student"),
+        "student-1",
+        async () => student,
+      ),
+    /Unauthorized/,
+  );
+  await assert.rejects(
+    () =>
+      requireStudentOwnerOrAdmin(
+        createSession("admin-1", "admin"),
+        "admin-1",
+        async () => admin,
+      ),
+    /Student not found/,
+  );
 });
 
 function createProfile(

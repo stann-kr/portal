@@ -12,9 +12,10 @@ import { createDb } from "@/db/client";
 import { lessons } from "@/db/schema";
 import { and, eq, gte, asc, desc } from "drizzle-orm";
 import {
-  assertOwnerOrAdmin,
   requireAdmin,
   requireAuth,
+  requireStudentOwnerOrAdmin,
+  requireStudentTarget,
 } from "@/lib/auth-guard";
 
 // ───────────────────────────────────────────────
@@ -26,7 +27,7 @@ import {
  */
 export async function getLessonsByStudent(studentId: string) {
   const session = await requireAuth();
-  assertOwnerOrAdmin(session, studentId);
+  await requireStudentOwnerOrAdmin(session, studentId);
   const db = createDb();
   return db
     .select()
@@ -40,7 +41,7 @@ export async function getLessonsByStudent(studentId: string) {
  */
 export async function getNextLesson(studentId: string) {
   const session = await requireAuth();
-  assertOwnerOrAdmin(session, studentId);
+  await requireStudentOwnerOrAdmin(session, studentId);
   const db = createDb();
   const now = new Date();
   const rows = await db
@@ -71,7 +72,7 @@ export async function getUpcomingLessonCount(): Promise<number> {
  */
 export async function getLessonsForCalendar(studentId: string) {
   const session = await requireAuth();
-  assertOwnerOrAdmin(session, studentId);
+  await requireStudentOwnerOrAdmin(session, studentId);
   const db = createDb();
   const now = new Date();
   return db
@@ -98,7 +99,7 @@ export async function createLesson(
   _prev: CreateLessonState,
   formData: FormData,
 ): Promise<CreateLessonState> {
-  await requireAdmin();
+  await requireStudentTarget(studentId);
 
   const scheduledAtStr = formData.get("scheduledAt") as string;
   if (!scheduledAtStr) return { error: "날짜와 시간을 입력해주세요." };
@@ -128,7 +129,7 @@ export async function createLesson(
  * 레슨 일정 삭제 (Admin 전용).
  */
 export async function deleteLesson(lessonId: string, studentId: string) {
-  await requireAdmin();
+  await requireStudentTarget(studentId);
   const db = createDb();
   await db.delete(lessons).where(eq(lessons.id, lessonId));
   revalidatePath(`/dashboard/admin/students/${studentId}`);

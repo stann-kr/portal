@@ -8,7 +8,7 @@ import { revalidatePath } from "next/cache";
 import { and, desc, eq, isNotNull, isNull } from "drizzle-orm";
 import { createDb, createDbContext } from "@/db/client";
 import { privateNoteRevisions, privateNotes, profiles } from "@/db/schema";
-import { assertOwnerOrAdmin, requireAuth } from "@/lib/auth-guard";
+import { requireAuth, requireStudentOwnerOrAdmin } from "@/lib/auth-guard";
 import {
   CREATION_OPERATION_FIELD,
   deriveCreationResourceId,
@@ -117,7 +117,7 @@ function revalidatePrivateNotePaths(studentId: string, noteId?: string): void {
 /** active note만 반환한다. */
 export async function getPrivateNotes(targetStudentId: string) {
   const session = await requireAuth();
-  assertOwnerOrAdmin(session, targetStudentId);
+  await requireStudentOwnerOrAdmin(session, targetStudentId);
   const db = createDb();
   return db
     .select({
@@ -152,6 +152,17 @@ export async function getPrivateNoteIncludingTrash(noteId: string) {
   return getPrivateNoteRecord(noteId, true);
 }
 
+/**
+ * Form action은 target guard의 거부를 throw가 아닌 기존 안전한 action state로 수렴시킨다.
+ */
+async function getPrivateNoteForMutation(noteId: string) {
+  try {
+    return await getPrivateNoteIncludingTrash(noteId);
+  } catch {
+    return null;
+  }
+}
+
 async function getPrivateNoteRecord(noteId: string, includeTrash: boolean) {
   const session = await requireAuth();
   const db = createDb();
@@ -179,13 +190,13 @@ async function getPrivateNoteRecord(noteId: string, includeTrash: boolean) {
     .limit(1);
 
   if (!note) return null;
-  assertOwnerOrAdmin(session, note.studentId);
+  await requireStudentOwnerOrAdmin(session, note.studentId);
   return note;
 }
 
 export async function getTrashedPrivateNotes(targetStudentId: string) {
   const session = await requireAuth();
-  assertOwnerOrAdmin(session, targetStudentId);
+  await requireStudentOwnerOrAdmin(session, targetStudentId);
   const db = createDb();
   const notes = await db
     .select({
@@ -269,7 +280,7 @@ export async function createPrivateNote(
 ): Promise<CreateNoteState> {
   const session = await requireAuth();
   const userId = session.user.id!;
-  assertOwnerOrAdmin(session, targetStudentId);
+  await requireStudentOwnerOrAdmin(session, targetStudentId);
   const payload = validateNotePayload(formData);
   if (!payload.ok) return { error: payload.error, conflictKind: payload.reason };
 
@@ -363,6 +374,13 @@ export async function updatePrivateNote(
   formData: FormData,
 ): Promise<UpdateNoteState> {
   const session = await requireAuth();
+  const noteBefore = await getPrivateNoteForMutation(noteId);
+  if (!noteBefore) {
+    return {
+      error: mutationErrorMessage("NOT_FOUND_OR_FORBIDDEN"),
+      conflictKind: "NOT_FOUND_OR_FORBIDDEN",
+    };
+  }
   const operationId = resolveCreationOperationId(
     formData.get(CREATION_OPERATION_FIELD),
   );
@@ -438,7 +456,7 @@ export async function updatePrivateNote(
   }
 
   const currentRevision = result.currentRevision ?? result.operationResultRevision;
-  const note = await getPrivateNoteIncludingTrash(noteId);
+  const note = await getPrivateNoteForMutation(noteId);
   if (!note) {
     return {
       error: mutationErrorMessage("INTERNAL_INVARIANT_FAILURE"),
@@ -483,7 +501,7 @@ async function runLifecycleAction(
   if (!operationId || !baseRevision) {
     return { error: "작업 기준을 확인할 수 없습니다. 페이지를 새로고침해 주세요." };
   }
-  const noteBefore = await getPrivateNoteIncludingTrash(noteId);
+  const noteBefore = await getPrivateNoteForMutation(noteId);
   const actor = { id: session.user.id!, isAdmin: session.user.role === "admin" };
   const write = { actor, noteId, operationId, baseRevision, now: new Date() };
   const result =
@@ -554,7 +572,7 @@ export async function restorePrivateNoteRevision(
   if (!operationId || !baseRevision || !revisionNumber) {
     return { error: "복원 기준을 확인할 수 없습니다. 페이지를 새로고침해 주세요." };
   }
-  const noteBefore = await getPrivateNoteIncludingTrash(noteId);
+  const noteBefore = await getPrivateNoteForMutation(noteId);
   const result = await restorePrivateNoteRevisionAtomically(createDbContext(), {
     actor: { id: session.user.id!, isAdmin: session.user.role === "admin" },
     noteId,

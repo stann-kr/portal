@@ -9,7 +9,7 @@ import { createDb } from "@/db/client";
 import { diggingColumns, diggingTracks } from "@/db/schema";
 import type { DiggingColumnType } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
-import { requireAuth, assertOwnerOrAdmin } from "@/lib/auth-guard";
+import { requireAuth, requireStudentOwnerOrAdmin } from "@/lib/auth-guard";
 
 const ALLOWED_LINK_META_HOSTS = [
   "youtube.com",
@@ -306,7 +306,7 @@ export async function fetchLinkMeta(url: string): Promise<LinkMeta> {
 
 async function assertCanAccessDiggingUser(userId: string) {
   const session = await requireAuth();
-  assertOwnerOrAdmin(session, userId);
+  await requireStudentOwnerOrAdmin(session, userId);
 }
 
 function isAllowedLinkMetaHost(hostname: string) {

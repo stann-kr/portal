@@ -11,7 +11,7 @@ import {
   qnaThreads,
   type QnaStatus,
 } from "@/db/schema";
-import { requireAuth } from "@/lib/auth-guard";
+import { requireAuth, requireStudentTarget } from "@/lib/auth-guard";
 import {
   CREATION_OPERATION_FIELD,
   deriveCreationResourceId,
@@ -185,8 +185,7 @@ export async function getQnaThreads() {
 }
 
 export async function getQnaThreadsByStudent(studentId: string) {
-  const session = await requireAuth();
-  if (session.user.role !== "admin") throw new Error("Unauthorized");
+  await requireStudentTarget(studentId);
   return createDb()
     .select(THREAD_SELECT)
     .from(qnaThreads)

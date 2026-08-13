@@ -11,9 +11,9 @@ import { createDb } from "@/db/client";
 import { curriculums } from "@/db/schema";
 import { and, eq, asc } from "drizzle-orm";
 import {
-  assertOwnerOrAdmin,
   requireAuth,
-  requireAdmin,
+  requireStudentOwnerOrAdmin,
+  requireStudentTarget,
 } from "@/lib/auth-guard";
 
 // ───────────────────────────────────────────────
@@ -25,7 +25,7 @@ import {
  */
 export async function getCurriculumByStudent(studentId: string) {
   const session = await requireAuth();
-  assertOwnerOrAdmin(session, studentId);
+  await requireStudentOwnerOrAdmin(session, studentId);
   const db = createDb();
   return db
     .select()
@@ -47,7 +47,7 @@ export async function getMyCurriculum() {
  */
 export async function getCurrentModule(studentId: string) {
   const session = await requireAuth();
-  assertOwnerOrAdmin(session, studentId);
+  await requireStudentOwnerOrAdmin(session, studentId);
   const db = createDb();
   const rows = await db
     .select()
@@ -80,7 +80,7 @@ export async function createModule(
   _prev: CreateModuleState,
   formData: FormData,
 ): Promise<CreateModuleState> {
-  await requireAdmin();
+  await requireStudentTarget(studentId);
 
   const title = formData.get("title") as string;
   const weekNum = Number(formData.get("weekNum"));
@@ -140,7 +140,7 @@ export async function toggleModuleComplete(moduleId: string, current: boolean) {
  * 커리큘럼 모듈 삭제 (Admin 전용).
  */
 export async function deleteModule(moduleId: string, studentId: string) {
-  await requireAdmin();
+  await requireStudentTarget(studentId);
   const db = createDb();
   await db.delete(curriculums).where(eq(curriculums.id, moduleId));
   revalidatePath(`/dashboard/admin/students/${studentId}`);

@@ -21,7 +21,7 @@ import {
 } from "@/db/schema";
 import { and, eq, desc, inArray, isNull } from "drizzle-orm";
 import type { InferSelectModel } from "drizzle-orm";
-import { requireAuth } from "@/lib/auth-guard";
+import { requireAuth, requireStudentTarget } from "@/lib/auth-guard";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 import { normalizeUnifiedItems } from "@/lib/unified-item-normalization";
 import { decryptExternalCalendarUrl, fetchExternalCalendarIcs, parseExternalCalendarItems } from "@/lib/external-calendar";
@@ -150,7 +150,6 @@ export async function getUnifiedItems(): Promise<UnifiedItem[]> {
  * @param studentId 조회 대상 학생 ID
  */
 export async function getUnifiedItemsForStudent(studentId: string): Promise<UnifiedItem[]> {
-  const session = await requireAuth();
-  if (session.user.role !== "admin") throw new Error("Admin only");
+  await requireStudentTarget(studentId);
   return fetchUnifiedItemsForUser(studentId);
 }
