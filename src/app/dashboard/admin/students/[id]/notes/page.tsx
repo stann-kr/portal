@@ -1,11 +1,12 @@
 /** 관리자 학생 스페이스의 canonical 노트 목록. 작성은 별도 composer route를 사용한다. */
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { ArrowLeft, BookOpen, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, BookOpen, Clock3, Plus, Trash2 } from "lucide-react";
 import { getActiveAuthSession } from "@/lib/auth-guard";
 import { getStudentById } from "@/lib/actions/students";
 import { getPrivateNotes } from "@/lib/actions/privateNotes";
 import { PrivateNoteList } from "@/components/notes/PrivateNoteList";
+import { buildNotesLessonsTimelineHref } from "@/lib/calendar-section-contract";
 
 export const metadata = { title: "학생 노트" };
 
@@ -34,6 +35,7 @@ export default async function AdminStudentNotesPage({
             <h1 className="mt-1 flex items-center gap-2 text-2xl font-semibold tracking-tight"><BookOpen className="size-6 text-primary" aria-hidden="true" />노트</h1>
           </div>
           <div className="flex items-center gap-2">
+            <Link href={buildNotesLessonsTimelineHref({ role: "admin", studentId })} className="inline-flex h-9 items-center gap-1.5 rounded-md border border-border px-3 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"><Clock3 className="size-4" aria-hidden="true" />시간으로 보기</Link>
             <Link href={`/dashboard/notes/trash?studentId=${encodeURIComponent(studentId)}&returnTo=${encodeURIComponent(returnTo)}`} className="inline-flex h-9 items-center gap-1.5 rounded-md border border-border px-3 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"><Trash2 className="size-4" aria-hidden="true" />휴지통</Link>
             <Link href={`/dashboard/admin/students/${studentId}/notes/new?returnTo=${encodeURIComponent(returnTo)}`} className="inline-flex h-9 items-center gap-1.5 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"><Plus className="size-4" aria-hidden="true" />노트 작성</Link>
           </div>

@@ -13,6 +13,7 @@ import { eq, desc, asc } from "drizzle-orm";
 import type { InferSelectModel } from "drizzle-orm";
 import * as bcrypt from "bcryptjs";
 import { findStudentTarget, requireAdmin } from "@/lib/auth-guard";
+import { getCurrentModuleLabel } from "@/lib/student-progress";
 
 // ───────────────────────────────────────────────
 // 학생 목록 조회
@@ -140,11 +141,9 @@ export async function getStudentRosterStats(): Promise<StudentRosterStat[]> {
 
   return allStudents.map((st) => {
     // 1. Current Module (완료되지 않은 가장 빠른 주차)
-    const stMods = allMods.filter((m) => m.studentId === st.id && !m.isCompleted);
-    stMods.sort((a, b) => (a.weekNum ?? 0) - (b.weekNum ?? 0));
-    const currentModule = stMods.length > 0
-      ? `${stMods[0].weekNum}주차: ${stMods[0].title}`
-      : "모든 과정 완료";
+    const currentModule = getCurrentModuleLabel(
+      allMods.filter((module) => module.studentId === st.id),
+    );
 
     // 2. Next Lesson
     const upcomingLess = allLess.filter((l) => l.studentId === st.id && l.scheduledAt !== null && new Date(l.scheduledAt) >= now);

@@ -17,11 +17,13 @@ import {
 } from "@/components/ui/unified-item-type";
 import { SlidePanel } from "./SlidePanel";
 import { UnifiedItemDetail } from "./UnifiedItemDetail";
+import { groupUnifiedItemsByKstDate } from "@/lib/unified-item-date-groups";
 
 // ── 날짜 포맷 ────────────────────────────────────
 
 function formatGroupDate(date: Date): string {
   return new Date(date).toLocaleDateString("ko-KR", {
+    timeZone: "Asia/Seoul",
     year: "numeric",
     month: "long",
     day: "numeric",
@@ -31,22 +33,13 @@ function formatGroupDate(date: Date): string {
 
 function formatTime(date: Date): string {
   return new Date(date).toLocaleTimeString("ko-KR", {
+    timeZone: "Asia/Seoul",
     hour: "2-digit",
     minute: "2-digit",
   });
 }
 
 // ── 날짜별 그룹핑 ────────────────────────────────
-
-function groupByDate(items: UnifiedItem[]): Map<string, UnifiedItem[]> {
-  const map = new Map<string, UnifiedItem[]>();
-  for (const item of items) {
-    const key = new Date(item.date).toISOString().slice(0, 10);
-    if (!map.has(key)) map.set(key, []);
-    map.get(key)!.push(item);
-  }
-  return map;
-}
 
 // ── 컴포넌트 ─────────────────────────────────────
 
@@ -64,7 +57,7 @@ export function DailyListView({
   const [selectedItem, setSelectedItem] = useState<UnifiedItem | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
 
-  const grouped = groupByDate(items);
+  const grouped = groupUnifiedItemsByKstDate(items);
   const sortedKeys = Array.from(grouped.keys()).sort((a, b) => b.localeCompare(a));
 
   if (items.length === 0) {

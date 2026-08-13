@@ -7,13 +7,14 @@ interface StarRatingProps {
   value: number;
   onChange?: (value: number) => void;
   readonly?: boolean;
+  "aria-label"?: string;
 }
 
-export function StarRating({ value, onChange, readonly = false }: StarRatingProps) {
+export function StarRating({ value, onChange, readonly = false, "aria-label": ariaLabel = "별점 평가" }: StarRatingProps) {
   const [hovered, setHovered] = useState(0);
 
   return (
-    <div className="flex gap-0.5" role="radiogroup" aria-label="별점 평가">
+    <div className="flex gap-0.5" role="radiogroup" aria-label={ariaLabel}>
       {[1, 2, 3, 4, 5].map((star) => {
         const filled = star <= (hovered || value);
         return (

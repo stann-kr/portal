@@ -1,7 +1,7 @@
 import type { CalendarEventType, QnaStatus } from "@/db/schema";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 
-type ProfileContext = {
+export type ProfileContext = {
   id: string;
   email: string;
   displayName: string | null;
@@ -40,6 +40,12 @@ type DiggingTrackRow = {
 type DiggingColumnRow = {
   id: string;
   name: string;
+};
+
+export type CreatedCalendarEventInput = CalendarEventRow;
+
+export type CreatedDiggingTrackInput = Omit<DiggingTrackRow, "values"> & {
+  values: Record<string, unknown> | string | null;
 };
 
 type QnaThreadRow = {
@@ -87,6 +93,79 @@ function parseDiggingValues(values: string | null): Record<string, unknown> {
   }
 }
 
+function normalizeColumnName(value: string): string {
+  return value.trim().toLocaleLowerCase().replace(/\s+/gu, " ");
+}
+
+function findNamedColumnId(
+  columns: DiggingColumnRow[],
+  names: readonly string[],
+): string | undefined {
+  const accepted = new Set(names.map(normalizeColumnName));
+  return columns.find((column) => accepted.has(normalizeColumnName(column.name)))?.id;
+}
+
+function createSource(entity: UnifiedItem["source"]["entity"]): UnifiedItem["source"] {
+  return { kind: "PORTAL", entity, label: "포털" };
+}
+
+function createSpace(profile: ProfileContext): UnifiedItem["space"] {
+  return { studentId: profile.id, label: getUnifiedItemSpaceLabel(profile) };
+}
+
+export function createCalendarEventUnifiedItem(
+  event: CreatedCalendarEventInput,
+  profile: ProfileContext,
+): UnifiedItem {
+  return {
+    id: event.id,
+    type: "EVENT",
+    subType: event.eventType,
+    title: event.title,
+    description: event.description ?? undefined,
+    date: new Date(event.startTime),
+    endDate: event.endTime ? new Date(event.endTime) : null,
+    metadata: { eventType: event.eventType, description: event.description },
+    space: createSpace(profile),
+    source: createSource("CALENDAR_EVENT"),
+  };
+}
+
+export function createDiggingTrackUnifiedItem(
+  track: CreatedDiggingTrackInput,
+  columns: DiggingColumnRow[],
+  profile: ProfileContext,
+): UnifiedItem {
+  const values = typeof track.values === "string"
+    ? parseDiggingValues(track.values)
+    : track.values ?? {};
+  const trackNameColumnId = findNamedColumnId(columns, ["track name", "트랙명"]);
+  const artistColumnId = findNamedColumnId(columns, ["artist", "아티스트"]);
+  const trackName = trackNameColumnId && typeof values[trackNameColumnId] === "string"
+    ? values[trackNameColumnId] as string
+    : undefined;
+  const artistName = artistColumnId && typeof values[artistColumnId] === "string"
+    ? values[artistColumnId] as string
+    : undefined;
+  const title = trackName && artistName
+    ? `${trackName} — ${artistName}`
+    : trackName ?? track.linkUrl ?? "디깅 트랙";
+
+  return {
+    id: track.id,
+    type: "DIGGING",
+    title,
+    date: new Date(track.createdAt ?? Date.now()),
+    metadata: {
+      values,
+      linkUrl: track.linkUrl,
+      columnIds: { trackName: trackNameColumnId, artist: artistColumnId },
+    },
+    space: createSpace(profile),
+    source: createSource("DIGGING_TRACK"),
+  };
+}
+
 /**
  * 학생 스페이스의 날짜 기반 엔티티를 UI 공통 계약으로 정규화한다.
  * lessons와 calendar_events는 안정적인 연결 키가 없으므로 절대 dedupe하지 않는다.
@@ -102,30 +181,12 @@ export function normalizeUnifiedItems({
   assignments,
   feedbackCounts,
 }: UnifiedItemNormalizationInput): UnifiedItem[] {
-  const space = {
-    studentId: profile.id,
-    label: getUnifiedItemSpaceLabel(profile),
-  };
-  const source = (entity: UnifiedItem["source"]["entity"]): UnifiedItem["source"] => ({
-    kind: "PORTAL",
-    entity,
-    label: "포털",
-  });
+  const space = createSpace(profile);
+  const source = createSource;
   const items: UnifiedItem[] = [];
 
   for (const event of events) {
-    items.push({
-      id: event.id,
-      type: "EVENT",
-      subType: event.eventType,
-      title: event.title,
-      description: event.description ?? undefined,
-      date: new Date(event.startTime),
-      endDate: event.endTime ? new Date(event.endTime) : null,
-      metadata: { eventType: event.eventType, description: event.description },
-      space,
-      source: source("CALENDAR_EVENT"),
-    });
+    items.push(createCalendarEventUnifiedItem(event, profile));
   }
 
   for (const lesson of lessons) {
@@ -158,33 +219,8 @@ export function normalizeUnifiedItems({
     });
   }
 
-  const trackNameColumnId = columns.find((column) => column.name.toLowerCase() === "track name")?.id;
-  const artistColumnId = columns.find((column) => column.name.toLowerCase() === "artist")?.id;
   for (const track of tracks) {
-    const values = parseDiggingValues(track.values);
-    const trackName = trackNameColumnId && typeof values[trackNameColumnId] === "string"
-      ? values[trackNameColumnId]
-      : undefined;
-    const artistName = artistColumnId && typeof values[artistColumnId] === "string"
-      ? values[artistColumnId]
-      : undefined;
-    const title = trackName && artistName
-      ? `${trackName} — ${artistName}`
-      : trackName ?? track.linkUrl ?? "디깅 트랙";
-
-    items.push({
-      id: track.id,
-      type: "DIGGING",
-      title,
-      date: new Date(track.createdAt ?? Date.now()),
-      metadata: {
-        values,
-        linkUrl: track.linkUrl,
-        columnIds: { trackName: trackNameColumnId, artist: artistColumnId },
-      },
-      space,
-      source: source("DIGGING_TRACK"),
-    });
+    items.push(createDiggingTrackUnifiedItem(track, columns, profile));
   }
 
   for (const thread of threads) {

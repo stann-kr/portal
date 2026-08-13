@@ -32,6 +32,20 @@ test("일정 생성 입력을 trim하고 허용된 값으로 정규화한다", (
   assert.equal(result.value.startTime.toISOString(), "2026-08-13T01:00:00.000Z");
 });
 
+test("timezone 없는 datetime-local 일정은 KST 시각으로 저장한다", () => {
+  const result = parseCalendarEventCreateInput({
+    title: "자정 연습",
+    eventType: "PRACTICE",
+    startTime: "2026-08-13T00:30",
+    endTime: "2026-08-13T01:30",
+    description: "",
+  });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.value.startTime.toISOString(), "2026-08-12T15:30:00.000Z");
+  assert.equal(result.value.endTime?.toISOString(), "2026-08-12T16:30:00.000Z");
+});
+
 test("일정의 type, 길이, 시각 순서와 문자열 상한을 거부한다", () => {
   const cases = [
     { ...current, eventType: "ADMIN" },

@@ -7,7 +7,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { CalendarDays, List, Grid3x3, BookOpen, FileVideo } from "lucide-react";
+import { CalendarDays, List, Grid3x3, BookOpen, FileVideo, X, type LucideIcon } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 import { getOrSeedColumns } from "@/lib/actions/digging";
@@ -25,6 +25,18 @@ import { createAccountCalendarTabStorageKey } from "@/lib/local-owner-keys";
 import { ExternalCalendarConnection } from "./ExternalCalendarConnection";
 import type { ExternalCalendarConnectionSummary } from "@/lib/external-calendar";
 import { buildNoteCreateHref } from "@/lib/note-create-route";
+import {
+  getCalendarTabs,
+  resolveCalendarPreset,
+  resolveCalendarTab,
+  type CalendarPreset,
+  type CalendarTabValue,
+} from "@/lib/calendar-section-contract";
+import {
+  calendarSelectionToKstDateKey,
+  calendarSelectionToKstDateTimeInput,
+  formatKstDateLabel,
+} from "@/lib/date-input";
 
 // ── 타입 ──────────────────────────────────────────
 
@@ -53,8 +65,13 @@ type DiggingColumn = {
 /** 이전 버전 캘린더 내부 탭 localStorage 키 */
 const LEGACY_CALENDAR_TAB_STORAGE_KEY = "studentPortal:calendarTab";
 
-/** 유효한 내부 탭 값 */
-const CALENDAR_TAB_VALUES = ["calendar", "daily", "all", "curriculum", "assignments"] as const;
+const TAB_ICONS: Record<CalendarTabValue, LucideIcon> = {
+  calendar: CalendarDays,
+  daily: List,
+  all: Grid3x3,
+  curriculum: BookOpen,
+  assignments: FileVideo,
+};
 
 interface CalendarSectionProps {
   unifiedItems: UnifiedItem[];
@@ -95,10 +112,14 @@ export function CalendarSection({
   isActive = true,
 }: CalendarSectionProps) {
   const [createDefaultDate, setCreateDefaultDate] = useState<string | undefined>(undefined);
+  const [createDefaultStart, setCreateDefaultStart] = useState<string | undefined>(undefined);
+  const [createMenuOpen, setCreateMenuOpen] = useState(false);
   const [diggingColumns, setDiggingColumns] = useState<DiggingColumn[]>([]);
   const [qnaSlideOpen, setQnaSlideOpen] = useState(false);
   const [qnaFormBusy, setQnaFormBusy] = useState(false);
-  const [activeTab, setActiveTab] = useState<string>("calendar");
+  const [activeTab, setActiveTab] = useState<CalendarTabValue>("calendar");
+  const [calendarPreset, setCalendarPreset] = useState<CalendarPreset | null>(null);
+  const calendarTabs = getCalendarTabs(workspaceRole);
   const calendarTabStorageKey = createAccountCalendarTabStorageKey(actorId);
   const isStudentWorkspace = actorId === studentId;
   const showSpaceContext = workspaceRole === "admin";
@@ -130,18 +151,18 @@ export function CalendarSection({
     const restore = () => {
       const params = new URLSearchParams(window.location.search);
       const fromUrl = params.get("view");
-      if (fromUrl && (CALENDAR_TAB_VALUES as readonly string[]).includes(fromUrl)) {
-        setActiveTab(fromUrl);
+      const resolvedFromUrl = resolveCalendarTab(fromUrl, workspaceRole);
+      setCalendarPreset(resolveCalendarPreset(params.get("preset")));
+      if (fromUrl && resolvedFromUrl === fromUrl) {
+        setActiveTab(resolvedFromUrl);
         return;
       }
 
-      let restored = "calendar";
+      let restored: CalendarTabValue = "calendar";
       try {
         const saved = localStorage.getItem(calendarTabStorageKey)
           ?? localStorage.getItem(LEGACY_CALENDAR_TAB_STORAGE_KEY);
-        if (saved && (CALENDAR_TAB_VALUES as readonly string[]).includes(saved)) {
-          restored = saved;
-        }
+        restored = resolveCalendarTab(saved, workspaceRole);
       } catch {
         /* localStorage 접근 불가 환경 무시 */
       }
@@ -158,20 +179,25 @@ export function CalendarSection({
     restore();
     window.addEventListener("popstate", restore);
     return () => window.removeEventListener("popstate", restore);
-  }, [calendarTabStorageKey, isActive]);
+  }, [calendarTabStorageKey, isActive, workspaceRole]);
 
   // 탭 변경 시 영속화
   const handleTabChange = (value: string) => {
-    setActiveTab(value);
+    const nextTab = resolveCalendarTab(value, workspaceRole);
+    setActiveTab(nextTab);
     try {
       assertAccountOwnerMayPersist(localStorage, actorId);
-      localStorage.setItem(calendarTabStorageKey, value);
+      localStorage.setItem(calendarTabStorageKey, nextTab);
     } catch {
       /* localStorage 접근 불가 환경 무시 */
     }
     const url = new URL(window.location.href);
     url.searchParams.set("section", workspaceSection);
-    url.searchParams.set("view", value);
+    url.searchParams.set("view", nextTab);
+    if (nextTab !== "calendar") {
+      setCalendarPreset(null);
+      url.searchParams.delete("preset");
+    }
     window.history.pushState({}, "", `${url.pathname}${url.search}${url.hash}`);
   };
 
@@ -201,7 +227,26 @@ export function CalendarSection({
 
   // 날짜 클릭 시 기본 날짜 설정
   const handleCreateRequest = (date: string) => {
-    setCreateDefaultDate(date);
+    const dateKey = calendarSelectionToKstDateKey(date);
+    const startValue = calendarSelectionToKstDateTimeInput(date);
+    if (!dateKey || !startValue || !canShowCreateMenu) return;
+    setCreateDefaultDate(dateKey);
+    setCreateDefaultStart(startValue);
+    setCreateMenuOpen(true);
+  };
+
+  const clearCreateSelection = () => {
+    setCreateMenuOpen(false);
+    setCreateDefaultDate(undefined);
+    setCreateDefaultStart(undefined);
+  };
+
+  const handlePresetChange = (preset: CalendarPreset | null) => {
+    setCalendarPreset(preset);
+    const url = new URL(window.location.href);
+    if (preset) url.searchParams.set("preset", preset);
+    else url.searchParams.delete("preset");
+    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
   };
 
   return (
@@ -211,41 +256,19 @@ export function CalendarSection({
         <div className="flex flex-shrink-0 flex-col gap-2 border-b border-border px-3 pt-3 sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:pt-4">
           <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto">
             <TabsList className="h-9 shrink-0 gap-0 border-b-0 bg-transparent p-0">
-              <TabsTrigger
-                value="calendar"
-                className="inline-flex items-center gap-1.5 px-3 py-2 text-sm rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none"
-              >
-                <CalendarDays className="w-3.5 h-3.5" />
-                캘린더
-              </TabsTrigger>
-              <TabsTrigger
-                value="daily"
-                className="inline-flex items-center gap-1.5 px-3 py-2 text-sm rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none"
-              >
-                <List className="w-3.5 h-3.5" />
-                일별 목록
-              </TabsTrigger>
-              <TabsTrigger
-                value="all"
-                className="inline-flex items-center gap-1.5 px-3 py-2 text-sm rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none"
-              >
-                <Grid3x3 className="w-3.5 h-3.5" />
-                전체 항목
-              </TabsTrigger>
-              <TabsTrigger
-                value="curriculum"
-                className="inline-flex items-center gap-1.5 px-3 py-2 text-sm rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none"
-              >
-                <BookOpen className="w-3.5 h-3.5" />
-                커리큘럼
-              </TabsTrigger>
-              <TabsTrigger
-                value="assignments"
-                className="inline-flex items-center gap-1.5 px-3 py-2 text-sm rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none"
-              >
-                <FileVideo className="w-3.5 h-3.5" />
-                과제
-              </TabsTrigger>
+              {calendarTabs.map(({ value, label }) => {
+                const Icon = TAB_ICONS[value];
+                return (
+                  <TabsTrigger
+                    key={value}
+                    value={value}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 text-sm rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none"
+                  >
+                    <Icon className="w-3.5 h-3.5" aria-hidden="true" />
+                    {label}
+                  </TabsTrigger>
+                );
+              })}
             </TabsList>
 
             {/* 어드민 학생 필터 슬롯 */}
@@ -268,12 +291,19 @@ export function CalendarSection({
               <CreateEntryDropdown
                 studentId={studentId}
                 diggingColumns={diggingColumns}
-                defaultDate={createDefaultDate}
+                spaceLabel={spaceLabel}
+                defaultDate={createDefaultStart}
+                open={createMenuOpen}
+                onOpenChange={setCreateMenuOpen}
                 noteCreateHref={noteCreateHref}
                 onOpenQnaPanel={() => setQnaSlideOpen(true)}
                 canCreateQna={canCreateQna}
                 canCreateEvent={isStudentWorkspace}
                 canCreateDigging={isStudentWorkspace}
+                onSuccess={(item) => {
+                  onAddItem?.(item);
+                  clearCreateSelection();
+                }}
               />
             ) : null}
           </div>
@@ -283,6 +313,23 @@ export function CalendarSection({
             {workspaceContextLabel} · <span className="font-medium text-foreground">{spaceLabel || "선택된 학생 없음"}</span>
           </span>
         </div>
+        {createDefaultDate ? (
+          <div className="flex min-h-10 flex-wrap items-center justify-between gap-2 border-b border-border bg-muted/20 px-3 py-2 text-xs sm:px-6" role="status">
+            <span>
+              선택한 날짜 · <strong className="font-medium text-foreground">{formatKstDateLabel(createDefaultDate)}</strong>
+              <span className="ml-2 text-muted-foreground">추가 메뉴에서 만들 항목을 선택하세요.</span>
+            </span>
+            <button
+              type="button"
+              onClick={clearCreateSelection}
+              aria-label="선택한 날짜 취소"
+              className="inline-flex min-h-7 items-center gap-1 rounded-md px-2 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            >
+              <X className="size-3.5" aria-hidden="true" />
+              취소
+            </button>
+          </div>
+        ) : null}
         {workspaceRole === "student" && externalCalendarConnection ? (
           <ExternalCalendarConnection
             key={`${externalCalendarConnection.connected}:${externalCalendarConnection.provider ?? "NONE"}`}
@@ -299,6 +346,8 @@ export function CalendarSection({
                 onCreateRequest={handleCreateRequest}
                 returnTo={workspaceReturnTo}
                 showSpaceContext={showSpaceContext}
+                preset={calendarPreset}
+                onPresetChange={handlePresetChange}
               />
             </div>
           </TabsContent>
@@ -319,13 +368,17 @@ export function CalendarSection({
             />
           </TabsContent>
 
-          <TabsContent value="curriculum" className="m-0 p-6 max-w-3xl mx-auto">
-            <CurriculumView initialModules={curriculumModules} />
-          </TabsContent>
+          {workspaceRole === "student" ? (
+            <>
+              <TabsContent value="curriculum" className="m-0 p-6 max-w-3xl mx-auto">
+                <CurriculumView initialModules={curriculumModules} />
+              </TabsContent>
 
-          <TabsContent value="assignments" className="m-0 p-6 max-w-3xl mx-auto">
-            <AssignmentView initialAssignments={assignments} />
-          </TabsContent>
+              <TabsContent value="assignments" className="m-0 p-6 max-w-3xl mx-auto">
+                <AssignmentView initialAssignments={assignments} />
+              </TabsContent>
+            </>
+          ) : null}
         </div>
       </Tabs>
 

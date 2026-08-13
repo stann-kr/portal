@@ -51,6 +51,13 @@ export function getUnifiedItemKey(item: UnifiedItem): string {
   return `${item.source.kind}:${item.source.entity}:${item.id}`;
 }
 
+/** 생성 응답 재전송이나 refresh가 겹쳐도 같은 source item은 정확히 한 번만 유지한다. */
+export function upsertUnifiedItem(items: readonly UnifiedItem[], item: UnifiedItem): UnifiedItem[] {
+  const itemKey = getUnifiedItemKey(item);
+  return [item, ...items.filter((candidate) => getUnifiedItemKey(candidate) !== itemKey)]
+    .sort((a, b) => b.date.getTime() - a.date.getTime());
+}
+
 // ─── 색상 맵 ──────────────────────────────────────
 
 const TYPE_COLORS: Record<string, string> = {

@@ -12,6 +12,8 @@ import {
 } from "@/components/ui/dialog";
 import { AddTrackInlineForm } from "./AddTrackInlineForm";
 import type { DiggingColumnType } from "@/db/schema";
+import { createDiggingTrackUnifiedItem } from "@/lib/unified-item-normalization";
+import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 
 type Column = {
   id: string;
@@ -24,13 +26,17 @@ interface AddTrackDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   columns: Column[];
-  onSuccess: () => void;
+  studentId?: string;
+  spaceLabel?: string;
+  onSuccess: (item: UnifiedItem) => void;
 }
 
 export function AddTrackDialog({
   open,
   onOpenChange,
   columns,
+  studentId,
+  spaceLabel,
   onSuccess,
 }: AddTrackDialogProps) {
   const handleClose = () => onOpenChange(false);
@@ -43,9 +49,13 @@ export function AddTrackDialog({
         </DialogHeader>
         <AddTrackInlineForm
           columns={columns}
-          onSuccess={() => {
+          onSuccess={(created) => {
             handleClose();
-            onSuccess();
+            onSuccess(createDiggingTrackUnifiedItem(created, columns, {
+              id: studentId ?? "current-student",
+              email: spaceLabel || "내 스페이스",
+              displayName: spaceLabel || "내 스페이스",
+            }));
           }}
           onCancel={handleClose}
         />

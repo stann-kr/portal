@@ -22,7 +22,7 @@ type Column = {
 
 interface AddTrackInlineFormProps {
   columns: Column[];
-  onSuccess: () => void;
+  onSuccess: (created: Awaited<ReturnType<typeof createDiggingTrack>>) => void;
   onCancel: () => void;
 }
 
@@ -35,6 +35,7 @@ export function AddTrackInlineForm({
   const [linkUrl, setLinkUrl] = useState("");
   const [isFetching, setIsFetching] = useState(false);
   const [fetchError, setFetchError] = useState("");
+  const [submitError, setSubmitError] = useState("");
   const [isPending, startTransition] = useTransition();
 
   const setValue = (colId: string, val: unknown) =>
@@ -65,30 +66,45 @@ export function AddTrackInlineForm({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setSubmitError("");
     startTransition(async () => {
-      const finalValues = { ...values };
-      if (linkColId && linkUrl) finalValues[linkColId] = linkUrl;
-      await createDiggingTrack({ linkUrl: linkUrl || undefined, values: finalValues });
-      setValues({});
-      setLinkUrl("");
-      onSuccess();
+      try {
+        const finalValues = { ...values };
+        if (linkColId && linkUrl) finalValues[linkColId] = linkUrl;
+        const created = await createDiggingTrack({
+          linkUrl: linkUrl || undefined,
+          values: finalValues,
+        });
+        setValues({});
+        setLinkUrl("");
+        onSuccess(created);
+      } catch {
+        setSubmitError("트랙을 저장하지 못했습니다. 입력을 확인하고 다시 시도해주세요.");
+      }
     });
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
+    <form onSubmit={handleSubmit} className="space-y-4" aria-busy={isPending}>
+      {submitError ? (
+        <p id="digging-form-error" role="alert" className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          {submitError}
+        </p>
+      ) : null}
       {/* 링크 (최상단 — 자동 추출 트리거) */}
       {linkColId && (
         <div className="space-y-1.5">
-          <label className="text-sm font-medium">링크</label>
+          <label htmlFor="digging-link" className="text-sm font-medium">링크</label>
           <div className="flex gap-2">
             <Input
+              id="digging-link"
               type="url"
               placeholder="https://youtube.com/..."
               value={linkUrl}
               onChange={(e) => setLinkUrl(e.target.value)}
               onBlur={(e) => handleLinkBlur(e.target.value)}
               disabled={isPending}
+              aria-describedby={submitError ? "digging-form-error" : undefined}
             />
             {isFetching && (
               <span className="text-xs text-muted-foreground self-center whitespace-nowrap">
@@ -111,10 +127,11 @@ export function AddTrackInlineForm({
 
           return (
             <div key={col.id} className="space-y-1.5">
-              <label className="text-sm font-medium">{col.name}</label>
+              <label htmlFor={`digging-column-${col.id}`} className="text-sm font-medium">{col.name}</label>
 
               {col.columnType === "text" && (
                 <Input
+                  id={`digging-column-${col.id}`}
                   value={(val as string) ?? ""}
                   onChange={(e) => setValue(col.id, e.target.value)}
                   disabled={isPending}
@@ -123,6 +140,7 @@ export function AddTrackInlineForm({
 
               {col.columnType === "textarea" && (
                 <textarea
+                  id={`digging-column-${col.id}`}
                   value={(val as string) ?? ""}
                   onChange={(e) => setValue(col.id, e.target.value)}
                   rows={3}
@@ -133,6 +151,7 @@ export function AddTrackInlineForm({
 
               {col.columnType === "number" && (
                 <Input
+                  id={`digging-column-${col.id}`}
                   type="number"
                   value={(val as string) ?? ""}
                   onChange={(e) => setValue(col.id, e.target.value)}
@@ -142,6 +161,7 @@ export function AddTrackInlineForm({
 
               {col.columnType === "select" && (
                 <select
+                  id={`digging-column-${col.id}`}
                   value={(val as string) ?? ""}
                   onChange={(e) => setValue(col.id, e.target.value)}
                   disabled={isPending}
@@ -156,6 +176,7 @@ export function AddTrackInlineForm({
 
               {col.columnType === "rating" && (
                 <StarRating
+                  aria-label={col.name}
                   value={(val as number) ?? 0}
                   onChange={(v) => setValue(col.id, v)}
                 />
@@ -163,6 +184,7 @@ export function AddTrackInlineForm({
 
               {col.columnType === "camelot_key" && (
                 <CamelotPicker
+                  aria-label={col.name}
                   value={(val as string) ?? ""}
                   onChange={(v) => setValue(col.id, v)}
                 />

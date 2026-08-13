@@ -164,7 +164,12 @@ export async function getDiggingTracks(userId: string) {
 export async function createDiggingTrack(data: {
   linkUrl?: string;
   values: Record<string, unknown>;
-}): Promise<{ id: string; createdAt: Date }> {
+}): Promise<{
+  id: string;
+  createdAt: Date;
+  linkUrl: string | null;
+  values: Record<string, unknown>;
+}> {
   const session = await requireAuth();
   assertStudentSession(session.user.role);
   const db = createDb();
@@ -194,7 +199,12 @@ export async function createDiggingTrack(data: {
   revalidatePath("/dashboard/student/digging");
   revalidatePath("/dashboard/student");
 
-  return { id, createdAt };
+  return {
+    id,
+    createdAt,
+    linkUrl: parsed.value.linkUrl,
+    values: parsed.value.values,
+  };
 }
 
 /**

@@ -41,7 +41,20 @@ export async function getCalendarEvents(start: string, end: string) {
 
 // ─── 생성 ────────────────────────────────────────
 
-export type CreateEventState = { error?: string; id?: string };
+export type CreatedCalendarEvent = {
+  id: string;
+  title: string;
+  eventType: CalendarEventType;
+  startTime: string;
+  endTime: string | null;
+  description: string | null;
+};
+
+export type CreateEventState = {
+  error?: string;
+  id?: string;
+  event?: CreatedCalendarEvent;
+};
 
 /**
  * 캘린더 이벤트 생성.
@@ -72,7 +85,17 @@ export async function createCalendarEvent(
 
   revalidatePath("/dashboard/calendar");
   revalidatePath("/dashboard/student");
-  return { id };
+  return {
+    id,
+    event: {
+      id,
+      title: parsed.value.title,
+      eventType: parsed.value.eventType,
+      startTime: parsed.value.startTime.toISOString(),
+      endTime: parsed.value.endTime?.toISOString() ?? null,
+      description: parsed.value.description,
+    },
+  };
 }
 
 // ─── 수정 ────────────────────────────────────────

@@ -5,7 +5,7 @@
  */
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import FullCalendar from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
 import timeGridPlugin from "@fullcalendar/timegrid";
@@ -13,14 +13,18 @@ import interactionPlugin from "@fullcalendar/interaction";
 import listPlugin from "@fullcalendar/list";
 import type { DateClickArg } from "@fullcalendar/interaction";
 import type { EventClickArg, EventInput } from "@fullcalendar/core";
-import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
+import type { UnifiedItem, UnifiedItemType } from "@/lib/utils/unifiedItemUtils";
 import { getUnifiedItemColor, getUnifiedItemKey } from "@/lib/utils/unifiedItemUtils";
 import { SlidePanel } from "./SlidePanel";
 import { UnifiedItemDetail } from "./UnifiedItemDetail";
+import {
+  matchesCalendarPreset,
+  type CalendarPreset,
+} from "@/lib/calendar-section-contract";
 
 // ── 타입 필터 라벨 ──────────────────────────────
 
-const TYPE_LABELS: Record<string, string> = {
+const TYPE_LABELS: Record<UnifiedItemType, string> = {
   EVENT: "일정",
   NOTE: "노트",
   DIGGING: "디깅",
@@ -33,6 +37,8 @@ interface UnifiedCalendarProps {
   onCreateRequest?: (date: string) => void;
   returnTo: string;
   showSpaceContext: boolean;
+  preset?: CalendarPreset | null;
+  onPresetChange?: (preset: CalendarPreset | null) => void;
 }
 
 export function UnifiedCalendar({
@@ -40,20 +46,29 @@ export function UnifiedCalendar({
   onCreateRequest,
   returnTo,
   showSpaceContext,
+  preset = null,
+  onPresetChange,
 }: UnifiedCalendarProps) {
   const calendarRef = useRef<FullCalendar>(null);
 
   // 타입 필터 (기본 전체 표시)
-  const [visibleTypes, setVisibleTypes] = useState<Set<string>>(
+  const [visibleTypes, setVisibleTypes] = useState<Set<UnifiedItemType>>(
     new Set(["EVENT", "NOTE", "DIGGING", "QNA", "ASSIGNMENT"]),
   );
+  const [activePreset, setActivePreset] = useState<CalendarPreset | null>(preset);
+
+  useEffect(() => setActivePreset(preset), [preset]);
 
   // 상세 패널 상태
   const [selectedItem, setSelectedItem] = useState<UnifiedItem | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
 
   // 타입 토글
-  const toggleType = (type: string) => {
+  const toggleType = (type: UnifiedItemType) => {
+    if (activePreset) {
+      setActivePreset(null);
+      onPresetChange?.(null);
+    }
     setVisibleTypes((prev) => {
       const next = new Set(prev);
       if (next.has(type)) next.delete(type);
@@ -64,7 +79,7 @@ export function UnifiedCalendar({
 
   // UnifiedItem → FullCalendar EventInput
   const fcEvents: EventInput[] = items
-    .filter((item) => visibleTypes.has(item.type))
+    .filter((item) => matchesCalendarPreset(item, activePreset) && visibleTypes.has(item.type))
     .map((item) => {
       const color = getUnifiedItemColor(item);
       const allDay = item.metadata.allDay === true;
@@ -111,16 +126,32 @@ export function UnifiedCalendar({
   return (
     <div className="flex flex-col gap-3 h-full">
       {/* 타입 필터 바 */}
-      <div className="flex items-center gap-2 flex-wrap">
-        {Object.entries(TYPE_LABELS).map(([type, label]) => {
+      <div className="flex items-center gap-2 flex-wrap" aria-label="캘린더 항목 필터">
+        {activePreset ? (
+          <button
+            type="button"
+            onClick={() => {
+              setActivePreset(null);
+              onPresetChange?.(null);
+            }}
+            className="inline-flex min-h-7 items-center rounded-full border border-primary bg-primary/10 px-3 text-xs font-medium text-primary"
+            aria-label="노트와 레슨 필터 해제"
+          >
+            노트 + 레슨 보기 · 해제
+          </button>
+        ) : null}
+        {(Object.entries(TYPE_LABELS) as [UnifiedItemType, string][]).map(([type, label]) => {
           const active = visibleTypes.has(type);
           // 색상은 샘플 아이템으로 도출
           const sampleItem = items.find((i) => i.type === type);
-          const color = sampleItem ? getUnifiedItemColor(sampleItem) : "#71717a";
+          const color = sampleItem ? getUnifiedItemColor(sampleItem) : "var(--color-muted-foreground)";
           return (
             <button
               key={type}
+              type="button"
               onClick={() => toggleType(type)}
+              aria-pressed={active}
+              aria-label={`${label} ${active ? "숨기기" : "표시하기"}`}
               className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium border transition-all ${
                 active
                   ? "border-transparent text-white"
@@ -139,7 +170,7 @@ export function UnifiedCalendar({
       </div>
 
       {/* FullCalendar */}
-      <div className="flex-1 min-h-0 [&_.fc]:h-full [&_.fc-view-harness]:flex-1">
+      <div className="fc-custom flex-1 min-h-0 [&_.fc]:h-full [&_.fc-view-harness]:flex-1" aria-label="통합 일정 달력">
         <FullCalendar
           ref={calendarRef}
           plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin, listPlugin]}

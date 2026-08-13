@@ -8,7 +8,7 @@
 
 import { useState, useCallback } from "react";
 import { CalendarRange, House, Users } from "lucide-react";
-import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
+import { upsertUnifiedItem, type UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 import { PortalShell } from "@/components/ui/portal-shell";
 
 // ── 섹션 컴포넌트
@@ -103,9 +103,7 @@ export function StudentPortalClient({
   const [items, setItems] = useState<UnifiedItem[]>(initialUnifiedItems);
 
   const addItem = useCallback((item: UnifiedItem) => {
-    setItems((prev) =>
-      [item, ...prev].sort((a, b) => b.date.getTime() - a.date.getTime()),
-    );
+    setItems((prev) => upsertUnifiedItem(prev, item));
   }, []);
   return (
     <PortalShell

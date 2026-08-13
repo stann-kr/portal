@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  createCalendarEventUnifiedItem,
+  createDiggingTrackUnifiedItem,
   getUnifiedItemSpaceLabel,
   normalizeUnifiedItems,
   type UnifiedItemNormalizationInput,
@@ -54,15 +56,9 @@ function createInput(): UnifiedItemNormalizationInput {
 
 test("모든 통합 유형에 학생 스페이스와 포털 출처를 제공한다", () => {
   const items = normalizeUnifiedItems(createInput());
-
   assert.equal(items.length, 6);
   assert.deepEqual(items.map((item) => item.source.entity), [
-    "CALENDAR_EVENT",
-    "LESSON",
-    "PRIVATE_NOTE",
-    "DIGGING_TRACK",
-    "QNA_THREAD",
-    "ASSIGNMENT",
+    "CALENDAR_EVENT", "LESSON", "PRIVATE_NOTE", "DIGGING_TRACK", "QNA_THREAD", "ASSIGNMENT",
   ]);
   for (const item of items) {
     assert.deepEqual(item.space, { studentId: "student-1", label: "Mina" });
@@ -72,15 +68,13 @@ test("모든 통합 유형에 학생 스페이스와 포털 출처를 제공한�
 });
 
 test("레슨은 EVENT/LESSON으로 정규화하고 동일 시각의 calendar event를 유지한다", () => {
-  const items = normalizeUnifiedItems(createInput());
-  const events = items.filter((item) => item.id === "shared-id");
-
+  const events = normalizeUnifiedItems(createInput()).filter((item) => item.id === "shared-id");
   assert.equal(events.length, 2);
   assert.deepEqual(events.map((item) => [item.type, item.subType, item.title]), [
     ["EVENT", "PRACTICE", "연습"],
     ["EVENT", "LESSON", "레슨"],
   ]);
-  assert.notEqual(getUnifiedItemKey(events[0]), getUnifiedItemKey(events[1]));
+  assert.notEqual(getUnifiedItemKey(events[0]!), getUnifiedItemKey(events[1]!));
 });
 
 test("표시명은 trim한 값을 우선하고 없으면 email을 사용한다", () => {
@@ -89,10 +83,37 @@ test("표시명은 trim한 값을 우선하고 없으면 email을 사용한다",
 });
 
 test("손상된 디깅 JSON은 안전한 fallback 제목과 빈 값을 사용한다", () => {
-  const items = normalizeUnifiedItems(createInput());
-  const track = items.find((item) => item.source.entity === "DIGGING_TRACK");
-
+  const track = normalizeUnifiedItems(createInput()).find((item) => item.source.entity === "DIGGING_TRACK");
   assert.ok(track);
   assert.equal(track.title, "https://example.com/track");
   assert.deepEqual(track.metadata.values, {});
+});
+
+const profile = { id: "student-1", email: "student@example.test", displayName: "학생" };
+
+test("일정 생성 응답은 기존 통합 일정과 같은 source 계약을 사용한다", () => {
+  const item = createCalendarEventUnifiedItem({
+    id: "event-1",
+    eventType: "PRACTICE",
+    title: "연습",
+    startTime: new Date("2026-08-12T15:30:00.000Z"),
+    endTime: null,
+    description: null,
+  }, profile);
+  assert.equal(item.source.entity, "CALENDAR_EVENT");
+  assert.equal(item.date.toISOString(), "2026-08-12T15:30:00.000Z");
+});
+
+test("기본 한국어 digging 컬럼으로 생성 직후 제목을 만든다", () => {
+  const item = createDiggingTrackUnifiedItem({
+    id: "track-1",
+    linkUrl: null,
+    values: { title: "Track", artist: "Artist" },
+    createdAt: new Date("2026-08-13T01:00:00.000Z"),
+  }, [
+    { id: "title", name: "트랙명" },
+    { id: "artist", name: "아티스트" },
+  ], profile);
+  assert.equal(item.title, "Track — Artist");
+  assert.equal(item.source.entity, "DIGGING_TRACK");
 });

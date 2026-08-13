@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { EventFormDialog } from "@/components/calendar/EventFormDialog";
 import { AddTrackDialog } from "@/components/digging/AddTrackDialog";
 import type { DiggingColumnType } from "@/db/schema";
+import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 
 // ── 타입 ──────────────────────────────────────────
 
@@ -26,8 +27,11 @@ type DiggingColumn = {
 interface CreateEntryDropdownProps {
   studentId: string;
   diggingColumns: DiggingColumn[];
+  spaceLabel: string;
   defaultDate?: string;
-  onSuccess?: () => void;
+  onSuccess?: (item: UnifiedItem) => void;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
   /** 선택한 학생과 날짜 문맥을 포함한 full-page 노트 composer URL. */
   noteCreateHref?: string;
   onOpenQnaPanel?: () => void;
@@ -71,9 +75,13 @@ const MENU_ITEMS = [
 // ── 컴포넌트 ─────────────────────────────────────
 
 export function CreateEntryDropdown({
+  studentId,
   diggingColumns,
+  spaceLabel,
   defaultDate,
   onSuccess,
+  open,
+  onOpenChange,
   noteCreateHref,
   onOpenQnaPanel,
   canCreateQna = true,
@@ -83,7 +91,9 @@ export function CreateEntryDropdown({
   const router = useRouter();
   const [eventDialogOpen, setEventDialogOpen] = useState(false);
   const [diggingDialogOpen, setDiggingDialogOpen] = useState(false);
-  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [internalDropdownOpen, setInternalDropdownOpen] = useState(false);
+  const dropdownOpen = open ?? internalDropdownOpen;
+  const setDropdownOpen = onOpenChange ?? setInternalDropdownOpen;
 
   const handleSelect = (id: (typeof MENU_ITEMS)[number]["id"]) => {
     setDropdownOpen(false);
@@ -156,7 +166,9 @@ export function CreateEntryDropdown({
         open={eventDialogOpen}
         onOpenChange={setEventDialogOpen}
         defaultStart={defaultDate}
-        onSuccess={onSuccess ?? (() => {})}
+        studentId={studentId}
+        spaceLabel={spaceLabel}
+        onSuccess={onSuccess}
       />
 
       {/* 디깅 다이얼로그 */}
@@ -164,6 +176,8 @@ export function CreateEntryDropdown({
         open={diggingDialogOpen}
         onOpenChange={setDiggingDialogOpen}
         columns={diggingColumns}
+        studentId={studentId}
+        spaceLabel={spaceLabel}
         onSuccess={onSuccess ?? (() => {})}
       />
     </>

@@ -1,4 +1,5 @@
 import type { CalendarEventType } from "@/db/schema";
+import { parseKstDateTimeInput } from "@/lib/date-input";
 
 export const CALENDAR_EVENT_TITLE_MAX_LENGTH = 120;
 export const CALENDAR_EVENT_DESCRIPTION_MAX_LENGTH = 2_000;
@@ -29,7 +30,7 @@ function parseDate(value: unknown, label: string): ValidationResult<Date> {
   const parsed = value instanceof Date
     ? new Date(value.getTime())
     : typeof value === "string" && value.trim()
-      ? new Date(value)
+      ? parseKstDateTimeInput(value.trim()) ?? new Date(value)
       : null;
   if (!parsed || !Number.isFinite(parsed.getTime())) {
     return { ok: false, error: `${label} 형식이 올바르지 않습니다.` };
