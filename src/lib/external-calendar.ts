@@ -7,6 +7,7 @@ export const EXTERNAL_CALENDAR_MAX_URL_LENGTH = 4_096;
 export const EXTERNAL_CALENDAR_TIMEOUT_MS = 5_000;
 export const EXTERNAL_CALENDAR_WINDOW_PAST_DAYS = 90;
 export const EXTERNAL_CALENDAR_WINDOW_FUTURE_DAYS = 365;
+export const EXTERNAL_CALENDAR_MAX_WINDOW_DAYS = 1_095;
 export const EXTERNAL_CALENDAR_MAX_EVENTS = 500;
 export const EXTERNAL_CALENDAR_MAX_OCCURRENCES = 2_000;
 
@@ -196,6 +197,25 @@ function calendarWindow(referenceTime: Date): { start: Date; end: Date } {
   return { start, end };
 }
 
+function resolveCalendarWindow(input: {
+  referenceTime?: Date;
+  window?: { start: Date; end: Date };
+}): { start: Date; end: Date } {
+  if (!input.window) return calendarWindow(input.referenceTime ?? new Date());
+  const { start, end } = input.window;
+  const startMs = start.getTime();
+  const endMs = end.getTime();
+  if (
+    !Number.isFinite(startMs) ||
+    !Number.isFinite(endMs) ||
+    startMs > endMs ||
+    endMs - startMs > EXTERNAL_CALENDAR_MAX_WINDOW_DAYS * 24 * 60 * 60 * 1_000
+  ) {
+    throw new ExternalCalendarError("External calendar window is invalid");
+  }
+  return { start: new Date(startMs), end: new Date(endMs) };
+}
+
 function sanitizeSummary(value: unknown): string {
   return String(value ?? "레슨").replace(/[\u0000-\u001F\u007F]/gu, " ").trim().slice(0, 200) || "레슨";
 }
@@ -213,10 +233,11 @@ export async function parseExternalCalendarItems(input: {
   provider: ExternalCalendarProvider;
   spaceLabel: string;
   referenceTime?: Date;
+  window?: { start: Date; end: Date };
 }): Promise<UnifiedItem[]> {
   const component = new ICAL.Component(ICAL.parse(input.ics));
   if (component.name !== "vcalendar") throw new ExternalCalendarError("External calendar is invalid");
-  const window = calendarWindow(input.referenceTime ?? new Date());
+  const window = resolveCalendarWindow(input);
   const result: UnifiedItem[] = [];
   const source = {
     kind: input.provider === "GOOGLE" ? "GOOGLE_CALENDAR" as const : "ICLOUD_CALENDAR" as const,

@@ -36,10 +36,10 @@ import {
   isAccountOwnerTerminallyLocked,
   isAccountTerminalLockEventForOwner,
 } from "@/lib/account-terminal-lock";
+import { getDocumentServerDraftPollDelay } from "@/lib/document-server-draft-polling";
 
 const SERVER_DRAFT_DEBOUNCE_MS = 1_200;
 const SERVER_DRAFT_MAX_WAIT_MS = 5_000;
-const SERVER_DRAFT_POLL_MS = 15_000;
 const SERVER_DRAFT_MAX_DISCARD_REBASES = 3;
 
 export type DocumentServerDraftSyncStatus =
@@ -148,6 +148,7 @@ export function useDocumentServerDraftSync<T>(
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const maxWaitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const drainRef = useRef<() => Promise<void>>(async () => undefined);
+  const refreshPromiseRef = useRef<Promise<void> | null>(null);
   onApplyRemoteRef.current = onApplyRemote;
 
   const clearTimers = useCallback(() => {
@@ -411,49 +412,58 @@ export function useDocumentServerDraftSync<T>(
 
   const refresh = useCallback(async () => {
     if (!allowOwnerPersistence()) return;
+    if (refreshPromiseRef.current) return refreshPromiseRef.current;
     const generation = sourceGenerationRef.current;
+    const task = (async () => {
+      try {
+        if (!allowOwnerPersistence()) return;
+        const result = await readDocumentServerDraft(sourceKey);
+        if (
+          !mountedRef.current ||
+          generation !== sourceGenerationRef.current ||
+          !allowOwnerPersistence()
+        ) return;
+        readyRef.current = true;
+        if (!result.ok) {
+          setStatus("error");
+          return;
+        }
+        updateRemote(result.draft);
+        const queued = readQueuedDocumentServerDraft(window.localStorage, sourceKey);
+        if (
+          queued?.entry.operationType === "UPSERT" &&
+          result.draft?.payloadHash === queued.entry.payloadHash
+        ) {
+          removeQueuedDocumentServerDraftIfUnchanged(
+            window.localStorage,
+            sourceKey,
+            queued.raw,
+          );
+          notifyQueueChange(sourceKey);
+        } else if (queued?.entry.operationType === "DISCARD" && !result.draft) {
+          removeQueuedDocumentServerDraftIfUnchanged(
+            window.localStorage,
+            sourceKey,
+            queued.raw,
+          );
+          notifyQueueChange(sourceKey);
+        }
+        const remaining = readQueuedDocumentServerDraft(window.localStorage, sourceKey);
+        evaluateState(result.draft, remaining?.entry ?? null);
+        if (remaining && !isBrowserOffline()) void drainRef.current();
+      } catch {
+        if (!allowOwnerPersistence()) return;
+        if (!mountedRef.current || generation !== sourceGenerationRef.current) return;
+        readyRef.current = true;
+        const queued = readQueuedDocumentServerDraft(window.localStorage, sourceKey);
+        setStatus(queued && isBrowserOffline() ? "offline" : "error");
+      }
+    })();
+    refreshPromiseRef.current = task;
     try {
-      if (!allowOwnerPersistence()) return;
-      const result = await readDocumentServerDraft(sourceKey);
-      if (
-        !mountedRef.current ||
-        generation !== sourceGenerationRef.current ||
-        !allowOwnerPersistence()
-      ) return;
-      readyRef.current = true;
-      if (!result.ok) {
-        setStatus("error");
-        return;
-      }
-      updateRemote(result.draft);
-      const queued = readQueuedDocumentServerDraft(window.localStorage, sourceKey);
-      if (
-        queued?.entry.operationType === "UPSERT" &&
-        result.draft?.payloadHash === queued.entry.payloadHash
-      ) {
-        removeQueuedDocumentServerDraftIfUnchanged(
-          window.localStorage,
-          sourceKey,
-          queued.raw,
-        );
-        notifyQueueChange(sourceKey);
-      } else if (queued?.entry.operationType === "DISCARD" && !result.draft) {
-        removeQueuedDocumentServerDraftIfUnchanged(
-          window.localStorage,
-          sourceKey,
-          queued.raw,
-        );
-        notifyQueueChange(sourceKey);
-      }
-      const remaining = readQueuedDocumentServerDraft(window.localStorage, sourceKey);
-      evaluateState(result.draft, remaining?.entry ?? null);
-      if (remaining && !isBrowserOffline()) void drainRef.current();
-    } catch {
-      if (!allowOwnerPersistence()) return;
-      if (!mountedRef.current || generation !== sourceGenerationRef.current) return;
-      readyRef.current = true;
-      const queued = readQueuedDocumentServerDraft(window.localStorage, sourceKey);
-      setStatus(queued && isBrowserOffline() ? "offline" : "error");
+      await task;
+    } finally {
+      if (refreshPromiseRef.current === task) refreshPromiseRef.current = null;
     }
   }, [allowOwnerPersistence, evaluateState, sourceKey, updateRemote]);
 
@@ -637,6 +647,7 @@ export function useDocumentServerDraftSync<T>(
       terminalLockedOwnerRef.current = null;
     }
     sourceGenerationRef.current += 1;
+    refreshPromiseRef.current = null;
     readyRef.current = false;
     choiceRequiredRef.current = false;
     remoteDraftRef.current = null;
@@ -649,7 +660,8 @@ export function useDocumentServerDraftSync<T>(
       setLocalPreview(createFormDraftRecoveryPreview(localDraftRef.current.data));
     }
     setStatus("loading");
-    if (allowOwnerPersistence()) {
+    const mayPersist = allowOwnerPersistence();
+    if (mayPersist) {
       try {
         const nextDeviceId = getOrCreateDocumentServerDraftDeviceId(
           window.localStorage,
@@ -661,18 +673,76 @@ export function useDocumentServerDraftSync<T>(
         deviceIdRef.current = null;
         setDeviceId(null);
       }
-      void refresh();
     }
 
     const queueKey = createDocumentServerDraftQueueKey(sourceKey);
     const terminalLockKey = createAccountTerminalLockStorageKey(ownerId);
+    let active = true;
+    let pollTimer: ReturnType<typeof setTimeout> | null = null;
+    let unchangedPolls = 0;
+    let resumeQueued = false;
+    const clearPollTimer = () => {
+      if (pollTimer !== null) clearTimeout(pollTimer);
+      pollTimer = null;
+    };
+    const remoteFingerprint = () => {
+      const draft = remoteDraftRef.current;
+      return draft ? `${draft.draftVersion}:${draft.payloadHash}` : "none";
+    };
+    const schedulePoll = () => {
+      clearPollTimer();
+      if (!active) return;
+      const delay = getDocumentServerDraftPollDelay({
+        visible: document.visibilityState !== "hidden",
+        online: !isBrowserOffline(),
+        unchangedPolls,
+      });
+      if (delay === null) return;
+      pollTimer = setTimeout(() => {
+        const before = remoteFingerprint();
+        void refresh().finally(() => {
+          if (!active) return;
+          unchangedPolls = before === remoteFingerprint() ? unchangedPolls + 1 : 0;
+          schedulePoll();
+        });
+      }, delay);
+    };
+    const resumeActiveSync = () => {
+      clearPollTimer();
+      unchangedPolls = 0;
+      if (
+        resumeQueued ||
+        document.visibilityState === "hidden" ||
+        isBrowserOffline()
+      ) return;
+      resumeQueued = true;
+      queueMicrotask(() => {
+        resumeQueued = false;
+        if (!active || document.visibilityState === "hidden" || isBrowserOffline()) return;
+        let queued: ReturnType<typeof readQueuedDocumentServerDraft>;
+        try {
+          queued = readQueuedDocumentServerDraft(window.localStorage, sourceKey);
+        } catch {
+          setStatus("error");
+          schedulePoll();
+          return;
+        }
+        const operation = queued ? drainRef.current() : refresh();
+        void operation.finally(schedulePoll);
+      });
+    };
     const handleOnline = () => {
-      const queued = readQueuedDocumentServerDraft(window.localStorage, sourceKey);
-      if (queued) void drainRef.current();
-      else void refresh();
+      resumeActiveSync();
     };
     const handleFocus = () => {
-      if (document.visibilityState !== "hidden") void refresh();
+      resumeActiveSync();
+    };
+    const handleOffline = () => {
+      clearPollTimer();
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") clearPollTimer();
+      else resumeActiveSync();
     };
     const handleStorage = (event: StorageEvent) => {
       if (event.key === terminalLockKey) {
@@ -682,7 +752,12 @@ export function useDocumentServerDraftSync<T>(
       if (!allowOwnerPersistence()) return;
       const queued = readQueuedDocumentServerDraft(window.localStorage, sourceKey);
       evaluateState(remoteDraftRef.current, queued?.entry ?? null);
-      if (queued && !isBrowserOffline()) void drainRef.current();
+      unchangedPolls = 0;
+      clearPollTimer();
+      schedulePoll();
+      if (queued && !isBrowserOffline()) {
+        void drainRef.current().finally(schedulePoll);
+      }
     };
     const handleQueueChange = (event: Event) => {
       if (!allowOwnerPersistence()) return;
@@ -690,28 +765,35 @@ export function useDocumentServerDraftSync<T>(
       if (detail?.sourceKey !== sourceKey) return;
       const queued = readQueuedDocumentServerDraft(window.localStorage, sourceKey);
       evaluateState(remoteDraftRef.current, queued?.entry ?? null);
+      unchangedPolls = 0;
+      clearPollTimer();
+      schedulePoll();
     };
     const handleTerminalLock = (event: Event) => {
       if (!isAccountTerminalLockEventForOwner(event, ownerId)) return;
+      clearPollTimer();
       purgeTerminallyLockedOwner();
     };
     window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
     window.addEventListener("focus", handleFocus);
     window.addEventListener("storage", handleStorage);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
     window.addEventListener(ACCOUNT_TERMINAL_LOCK_EVENT, handleTerminalLock);
     window.addEventListener(DOCUMENT_SERVER_DRAFT_QUEUE_CHANGE_EVENT, handleQueueChange);
-    const poll = setInterval(() => {
-      if (document.visibilityState !== "hidden" && !isBrowserOffline()) void refresh();
-    }, SERVER_DRAFT_POLL_MS);
+    if (mayPersist) void refresh().finally(schedulePoll);
 
     return () => {
+      active = false;
       mountedRef.current = false;
       sourceGenerationRef.current += 1;
       clearTimers();
-      clearInterval(poll);
+      clearPollTimer();
       window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
       window.removeEventListener("focus", handleFocus);
       window.removeEventListener("storage", handleStorage);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
       window.removeEventListener(ACCOUNT_TERMINAL_LOCK_EVENT, handleTerminalLock);
       window.removeEventListener(
         DOCUMENT_SERVER_DRAFT_QUEUE_CHANGE_EVENT,

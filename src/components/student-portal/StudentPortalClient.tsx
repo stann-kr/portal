@@ -6,9 +6,14 @@
  */
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { CalendarRange, House, Users } from "lucide-react";
-import { upsertUnifiedItem, type UnifiedItem } from "@/lib/utils/unifiedItemUtils";
+import {
+  upsertUnifiedItem,
+  upsertUnifiedItems,
+  type UnifiedItem,
+} from "@/lib/utils/unifiedItemUtils";
+import { getExternalUnifiedItems } from "@/lib/actions/unifiedItems";
 import { PortalShell } from "@/components/ui/portal-shell";
 
 // ── 섹션 컴포넌트
@@ -105,6 +110,21 @@ export function StudentPortalClient({
   const addItem = useCallback((item: UnifiedItem) => {
     setItems((prev) => upsertUnifiedItem(prev, item));
   }, []);
+
+  // 내부 일정은 RSC에서 먼저 표시하고 외부 provider는 hydration 뒤 fail-soft로 병합한다.
+  useEffect(() => {
+    if (!externalCalendarConnection.connected) return;
+    let cancelled = false;
+    void getExternalUnifiedItems().then((externalItems) => {
+      if (!cancelled) {
+        setItems((current) => upsertUnifiedItems(current, externalItems));
+      }
+    }).catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [externalCalendarConnection.connected, externalCalendarConnection.provider]);
+
   return (
     <PortalShell
       items={TABS}

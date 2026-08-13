@@ -181,6 +181,13 @@ function setOnline(browserWindow: Window, online: boolean): void {
   });
 }
 
+function setVisibility(browserWindow: Window, visibilityState: "hidden" | "visible"): void {
+  Object.defineProperty(browserWindow.document, "visibilityState", {
+    configurable: true,
+    value: visibilityState,
+  });
+}
+
 async function waitFor(predicate: () => boolean, message: string): Promise<void> {
   for (let attempt = 0; attempt < 80; attempt += 1) {
     if (predicate()) return;
@@ -495,4 +502,42 @@ test("poll과 같은 refresh에서 다른 기기 변경을 감지해 명시적 �
   assert.equal(harness.getResult().serverSync.status, "conflict");
   assert.equal(harness.getResult().serverSync.isDifferentDevice, true);
   assert.ok(readCalls >= 2);
+});
+
+test("hidden·offline에서는 poll하지 않고 visible·online 복귀 이벤트를 한 번으로 합친다", { concurrency: false }, async (context) => {
+  resetServerMock();
+  const sourceKey = createDocumentDraftKey("note", "student-1", "adaptive-poll-note");
+  const harness = await createHarness(context, sourceKey);
+  const initialReads = readCalls;
+
+  setVisibility(harness.browserWindow, "hidden");
+  await act(async () => {
+    harness.browserWindow.document.dispatchEvent(new harness.browserWindow.Event("visibilitychange"));
+    harness.browserWindow.dispatchEvent(new harness.browserWindow.Event("focus"));
+    harness.browserWindow.dispatchEvent(new harness.browserWindow.Event("online"));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  });
+  assert.equal(readCalls, initialReads);
+
+  setVisibility(harness.browserWindow, "visible");
+  await act(async () => {
+    harness.browserWindow.document.dispatchEvent(new harness.browserWindow.Event("visibilitychange"));
+    harness.browserWindow.dispatchEvent(new harness.browserWindow.Event("focus"));
+  });
+  await waitFor(() => readCalls === initialReads + 1, "visible 복귀 refresh는 한 번이어야 합니다.");
+
+  setOnline(harness.browserWindow, false);
+  await act(async () => {
+    harness.browserWindow.dispatchEvent(new harness.browserWindow.Event("offline"));
+    harness.browserWindow.dispatchEvent(new harness.browserWindow.Event("focus"));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  });
+  assert.equal(readCalls, initialReads + 1);
+
+  setOnline(harness.browserWindow, true);
+  await act(async () => {
+    harness.browserWindow.dispatchEvent(new harness.browserWindow.Event("online"));
+    harness.browserWindow.dispatchEvent(new harness.browserWindow.Event("focus"));
+  });
+  await waitFor(() => readCalls === initialReads + 2, "online 복귀 refresh는 한 번이어야 합니다.");
 });

@@ -7,13 +7,16 @@
 
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { CalendarDays, Inbox, Megaphone, MessagesSquare, Users } from "lucide-react";
-import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
+import { upsertUnifiedItems, type UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 import type { StudentRosterStat } from "@/lib/actions/students";
 import type {
   AdminQueueThread,
   PendingFeedbackAssignment,
 } from "@/lib/admin-work-queue";
-import { getUnifiedItemsForStudent } from "@/lib/actions/unifiedItems";
+import {
+  getExternalUnifiedItemsForStudent,
+  getUnifiedItemsForStudent,
+} from "@/lib/actions/unifiedItems";
 import { getUnifiedItemSpaceLabel } from "@/lib/unified-item-normalization";
 import { PortalShell } from "@/components/ui/portal-shell";
 
@@ -89,6 +92,9 @@ export function AdminPortalClient({
     students[0]?.id ?? ""
   );
   const [calendarItems, setCalendarItems] = useState<UnifiedItem[]>(initialUnifiedItems);
+  const [calendarLoadedStudentId, setCalendarLoadedStudentId] = useState(
+    students[0]?.id ?? "",
+  );
   const [isLoadingCalendar, startCalendarTransition] = useTransition();
   const [calendarError, setCalendarError] = useState<string | null>(null);
   const calendarRequestRef = useRef(0);
@@ -98,6 +104,7 @@ export function AdminPortalClient({
     const requestId = ++calendarRequestRef.current;
     setSelectedStudentId(studentId);
     setCalendarItems([]);
+    setCalendarLoadedStudentId("");
     setCalendarError(null);
 
     if (historyMode !== "none") {
@@ -114,7 +121,10 @@ export function AdminPortalClient({
     startCalendarTransition(async () => {
       try {
         const items = await getUnifiedItemsForStudent(studentId);
-        if (calendarRequestRef.current === requestId) setCalendarItems(items);
+        if (calendarRequestRef.current === requestId) {
+          setCalendarItems(items);
+          setCalendarLoadedStudentId(studentId);
+        }
       } catch {
         if (calendarRequestRef.current === requestId) {
           setCalendarError("학생 일정을 불러오지 못했습니다. 다시 시도해 주세요.");
@@ -122,6 +132,21 @@ export function AdminPortalClient({
       }
     });
   }, [students]);
+
+  // 내부 일정이 준비된 뒤에만 외부 provider를 별도 요청해 느린 feed가 첫 표시를 막지 않는다.
+  useEffect(() => {
+    if (!calendarLoadedStudentId || calendarLoadedStudentId !== selectedStudentId) return;
+    const requestId = calendarRequestRef.current;
+    let cancelled = false;
+    void getExternalUnifiedItemsForStudent(calendarLoadedStudentId).then((externalItems) => {
+      if (!cancelled && calendarRequestRef.current === requestId) {
+        setCalendarItems((current) => upsertUnifiedItems(current, externalItems));
+      }
+    }).catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [calendarLoadedStudentId, selectedStudentId]);
 
   // URL의 학생 선택을 복원하고, 뒤로/앞으로 이동도 같은 데이터 문맥으로 맞춘다.
   useEffect(() => {

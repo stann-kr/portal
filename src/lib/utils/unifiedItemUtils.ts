@@ -58,6 +58,19 @@ export function upsertUnifiedItem(items: readonly UnifiedItem[], item: UnifiedIt
     .sort((a, b) => b.date.getTime() - a.date.getTime());
 }
 
+/** 여러 source item을 기존 목록에 exact-once로 병합한다. */
+export function upsertUnifiedItems(
+  items: readonly UnifiedItem[],
+  incoming: readonly UnifiedItem[],
+): UnifiedItem[] {
+  if (incoming.length === 0) return [...items];
+  const incomingKeys = new Set(incoming.map(getUnifiedItemKey));
+  return [
+    ...incoming,
+    ...items.filter((candidate) => !incomingKeys.has(getUnifiedItemKey(candidate))),
+  ].sort((left, right) => right.date.getTime() - left.date.getTime());
+}
+
 // ─── 색상 맵 ──────────────────────────────────────
 
 const TYPE_COLORS: Record<string, string> = {

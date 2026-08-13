@@ -8,12 +8,16 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createDb } from "@/db/client";
-import { profiles, curriculums, lessons, assignments, feedbacks } from "@/db/schema";
-import { eq, desc, asc } from "drizzle-orm";
-import type { InferSelectModel } from "drizzle-orm";
+import { profiles } from "@/db/schema";
+import { count, eq } from "drizzle-orm";
 import * as bcrypt from "bcryptjs";
 import { findStudentTarget, requireAdmin } from "@/lib/auth-guard";
-import { getCurrentModuleLabel } from "@/lib/student-progress";
+import {
+  queryStudentRosterStats,
+  type StudentRosterStat,
+} from "@/lib/student-roster";
+
+export type { StudentRosterStat } from "@/lib/student-roster";
 
 // ───────────────────────────────────────────────
 // 학생 목록 조회
@@ -26,10 +30,10 @@ export async function getStudentCount(): Promise<number> {
   await requireAdmin();
   const db = createDb();
   const rows = await db
-    .select({ id: profiles.id })
+    .select({ value: count() })
     .from(profiles)
     .where(eq(profiles.role, "student"));
-  return rows.length;
+  return Number(rows[0]?.value ?? 0);
 }
 
 // ───────────────────────────────────────────────
@@ -110,62 +114,10 @@ export async function getStudentById(studentId: string) {
 // 학생 통합 스탯 조회 (Admin Dashboard 용)
 // ───────────────────────────────────────────────
 
-export type StudentRosterStat = {
-  id: string;
-  email: string;
-  displayName: string | null;
-  createdAt: Date | null;
-  currentModule: string | null;
-  nextLessonDate: Date | null;
-  pendingFeedbackCount: number;
-};
-
 /**
  * 모든 학생 레코드와 함께 진행 상황 스탯을 병합하여 반환합니다.
  */
 export async function getStudentRosterStats(): Promise<StudentRosterStat[]> {
   await requireAdmin();
-  const db = createDb();
-
-  // 모든 학생 조회
-  const allStudents: InferSelectModel<typeof profiles>[] = await db.select().from(profiles).where(eq(profiles.role, "student")).orderBy(desc(profiles.createdAt));
-
-  // 모든 데이터 패치 (학생 수가 매우 많지 않음을 가정)
-  // 향후 성능 이슈 시 raw sql join으로 최적화
-  const allMods: InferSelectModel<typeof curriculums>[] = await db.select().from(curriculums);
-  const allLess: InferSelectModel<typeof lessons>[] = await db.select().from(lessons).orderBy(asc(lessons.scheduledAt));
-  const allAssig: InferSelectModel<typeof assignments>[] = await db.select().from(assignments);
-  const allFeeds: InferSelectModel<typeof feedbacks>[] = await db.select().from(feedbacks);
-
-  const now = new Date();
-
-  return allStudents.map((st) => {
-    // 1. Current Module (완료되지 않은 가장 빠른 주차)
-    const currentModule = getCurrentModuleLabel(
-      allMods.filter((module) => module.studentId === st.id),
-    );
-
-    // 2. Next Lesson
-    const upcomingLess = allLess.filter((l) => l.studentId === st.id && l.scheduledAt !== null && new Date(l.scheduledAt) >= now);
-    const nextLessonDate = upcomingLess.length > 0 ? upcomingLess[0].scheduledAt : null;
-
-    // 3. Pending Feedbacks
-    // 학생의 애싸인먼트 중 코멘트(feedback)가 없는 것 개수
-    const stAssig = allAssig.filter((a) => a.studentId === st.id);
-    const pendingCount = stAssig.filter((a) => {
-      // 해당 assignmentId를 가진 피드백이 하나라도 있는지 확인
-      const hasFeedback = allFeeds.some((f) => f.assignmentId === a.id);
-      return !hasFeedback;
-    }).length;
-
-    return {
-      id: st.id,
-      email: st.email,
-      displayName: st.displayName,
-      createdAt: st.createdAt,
-      currentModule,
-      nextLessonDate: nextLessonDate ? new Date(nextLessonDate) : null,
-      pendingFeedbackCount: pendingCount,
-    };
-  });
+  return queryStudentRosterStats(createDb());
 }

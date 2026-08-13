@@ -105,6 +105,32 @@ test("VTIMEZONE과 DURATION을 실제 시작·종료 시각으로 변환한다",
   assert.equal(items[0]?.endDate?.toISOString(), "2026-08-10T11:30:00.000Z");
 });
 
+test("호출자가 지정한 bounded window 밖의 외부 일정은 반환하지 않는다", async () => {
+  const items = await parseExternalCalendarItems({
+    subscriptionId: "bounded-window",
+    studentId: "student-1",
+    provider: "GOOGLE",
+    spaceLabel: "Mina",
+    window: {
+      start: new Date("2026-08-01T00:00:00.000Z"),
+      end: new Date("2026-08-31T23:59:59.999Z"),
+    },
+    ics: "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:inside\r\nDTSTART:20260810T100000Z\r\nDTEND:20260810T110000Z\r\nSUMMARY:Inside\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:outside\r\nDTSTART:20260910T100000Z\r\nDTEND:20260910T110000Z\r\nSUMMARY:Outside\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n",
+  });
+  assert.deepEqual(items.map((item) => item.title), ["Inside"]);
+  await assert.rejects(() => parseExternalCalendarItems({
+    ics: "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n",
+    subscriptionId: "invalid-window",
+    studentId: "student-1",
+    provider: "GOOGLE",
+    spaceLabel: "Mina",
+    window: {
+      start: new Date("2026-09-01T00:00:00.000Z"),
+      end: new Date("2026-08-01T00:00:00.000Z"),
+    },
+  }));
+});
+
 test("window 이전 recurrence도 확장 상한에 포함해 조용히 누락하지 않는다", async () => {
   await assert.rejects(
     () => parseExternalCalendarItems({
