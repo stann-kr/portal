@@ -11,6 +11,10 @@ import { calendarEvents } from "@/db/schema";
 import type { CalendarEventType } from "@/db/schema";
 import { and, eq, gte, lte } from "drizzle-orm";
 import { requireAuth } from "@/lib/auth-guard";
+import {
+  parseCalendarEventCreateInput,
+  parseCalendarEventUpdateInput,
+} from "@/lib/calendar-event-contract";
 
 // ─── 조회 ────────────────────────────────────────
 
@@ -47,22 +51,14 @@ export async function createCalendarEvent(
   formData: FormData,
 ): Promise<CreateEventState> {
   const session = await requireAuth();
-
-  const title = (formData.get("title") as string)?.trim();
-  const eventType = (formData.get("eventType") as CalendarEventType) || "NOTE";
-  const startTimeRaw = formData.get("startTime") as string;
-  const endTimeRaw = formData.get("endTime") as string;
-  const description = (formData.get("description") as string)?.trim() || null;
-
-  if (!title) return { error: "제목을 입력해주세요." };
-  if (!startTimeRaw) return { error: "시작 시간을 입력해주세요." };
-
-  const startTime = new Date(startTimeRaw);
-  const endTime = endTimeRaw ? new Date(endTimeRaw) : null;
-
-  if (isNaN(startTime.getTime())) return { error: "시작 시간 형식이 올바르지 않습니다." };
-  if (endTime && isNaN(endTime.getTime())) return { error: "종료 시간 형식이 올바르지 않습니다." };
-  if (endTime && endTime <= startTime) return { error: "종료 시간은 시작 시간 이후여야 합니다." };
+  const parsed = parseCalendarEventCreateInput({
+    title: formData.get("title"),
+    eventType: formData.get("eventType"),
+    startTime: formData.get("startTime"),
+    endTime: formData.get("endTime"),
+    description: formData.get("description"),
+  });
+  if (!parsed.ok) return { error: parsed.error };
 
   const db = createDb();
   const id = crypto.randomUUID();
@@ -70,11 +66,8 @@ export async function createCalendarEvent(
   await db.insert(calendarEvents).values({
     id,
     userId: session.user.id!,
-    eventType,
-    title,
-    startTime,
-    endTime: endTime ?? undefined,
-    description,
+    ...parsed.value,
+    endTime: parsed.value.endTime ?? undefined,
   });
 
   revalidatePath("/dashboard/calendar");
@@ -100,9 +93,30 @@ export async function updateCalendarEvent(
   const session = await requireAuth();
   const db = createDb();
 
+  const [current] = await db
+    .select({
+      title: calendarEvents.title,
+      eventType: calendarEvents.eventType,
+      startTime: calendarEvents.startTime,
+      endTime: calendarEvents.endTime,
+      description: calendarEvents.description,
+    })
+    .from(calendarEvents)
+    .where(
+      and(
+        eq(calendarEvents.id, eventId),
+        eq(calendarEvents.userId, session.user.id!),
+      ),
+    )
+    .limit(1);
+  if (!current) throw new Error("일정을 찾을 수 없거나 권한이 없습니다.");
+
+  const parsed = parseCalendarEventUpdateInput(data, current);
+  if (!parsed.ok) throw new Error(parsed.error);
+
   await db
     .update(calendarEvents)
-    .set(data)
+    .set(parsed.value)
     .where(
       and(
         eq(calendarEvents.id, eventId),

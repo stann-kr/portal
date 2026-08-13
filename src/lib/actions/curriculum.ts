@@ -142,6 +142,13 @@ export async function toggleModuleComplete(moduleId: string, current: boolean) {
 export async function deleteModule(moduleId: string, studentId: string) {
   await requireStudentTarget(studentId);
   const db = createDb();
-  await db.delete(curriculums).where(eq(curriculums.id, moduleId));
+  await db
+    .delete(curriculums)
+    .where(
+      and(
+        eq(curriculums.id, moduleId),
+        eq(curriculums.studentId, studentId),
+      ),
+    );
   revalidatePath(`/dashboard/admin/students/${studentId}`);
 }

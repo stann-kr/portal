@@ -10,15 +10,17 @@ import { diggingColumns, diggingTracks } from "@/db/schema";
 import type { DiggingColumnType } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
 import { requireAuth, requireStudentOwnerOrAdmin } from "@/lib/auth-guard";
-
-const ALLOWED_LINK_META_HOSTS = [
-  "youtube.com",
-  "youtu.be",
-  "soundcloud.com",
-  "spotify.com",
-  "music.apple.com",
-  "bandcamp.com",
-];
+import {
+  DIGGING_COLUMNS_MAX_COUNT,
+  DIGGING_TRACK_VALUES_MAX_BYTES,
+  parseDiggingColumnInput,
+  parseDiggingColumnValue,
+  parseDiggingTrackInput,
+} from "@/lib/digging-contract";
+import {
+  fetchDiggingLinkMetadata,
+  type DiggingLinkMetadata,
+} from "@/lib/digging-link-metadata";
 
 // ─── 기본 컬럼 정의 ───────────────────────────────
 const DEFAULT_COLUMNS: {
@@ -41,7 +43,7 @@ const DEFAULT_COLUMNS: {
  * 유저의 컬럼 목록 조회. 없으면 기본 컬럼 시드.
  */
 export async function getOrSeedColumns(userId: string) {
-  await assertCanAccessDiggingUser(userId);
+  const session = await assertCanAccessDiggingUser(userId);
 
   const db = createDb();
   const existing = await db
@@ -51,6 +53,7 @@ export async function getOrSeedColumns(userId: string) {
     .orderBy(diggingColumns.sortOrder);
 
   if (existing.length > 0) return existing;
+  if (session.user.role === "admin") return existing;
 
   // 기본 컬럼 시드
   const rows = DEFAULT_COLUMNS.map((col) => ({
@@ -76,6 +79,9 @@ export async function addDiggingColumn(data: {
   options?: string[];
 }) {
   const session = await requireAuth();
+  assertStudentSession(session.user.role);
+  const parsed = parseDiggingColumnInput(data);
+  if (!parsed.ok) throw new Error(parsed.error);
   const db = createDb();
 
   const existing = await db
@@ -83,6 +89,9 @@ export async function addDiggingColumn(data: {
     .from(diggingColumns)
     .where(eq(diggingColumns.userId, session.user.id!))
     .orderBy(diggingColumns.sortOrder);
+  if (existing.length >= DIGGING_COLUMNS_MAX_COUNT) {
+    throw new Error(`컬럼은 최대 ${DIGGING_COLUMNS_MAX_COUNT}개까지 만들 수 있습니다.`);
+  }
 
   const maxOrder = existing.length > 0
     ? Math.max(...existing.map((c: { sortOrder: number | null }) => c.sortOrder ?? 0))
@@ -91,9 +100,9 @@ export async function addDiggingColumn(data: {
   await db.insert(diggingColumns).values({
     id: crypto.randomUUID(),
     userId: session.user.id!,
-    name: data.name,
-    columnType: data.columnType,
-    options: data.options ? JSON.stringify(data.options) : null,
+    name: parsed.value.name,
+    columnType: parsed.value.columnType,
+    options: parsed.value.options ? JSON.stringify(parsed.value.options) : null,
     sortOrder: maxOrder + 1,
     isDefault: false,
   });
@@ -107,6 +116,7 @@ export async function addDiggingColumn(data: {
  */
 export async function deleteDiggingColumn(columnId: string) {
   const session = await requireAuth();
+  assertStudentSession(session.user.role);
   const db = createDb();
 
   await db
@@ -156,7 +166,20 @@ export async function createDiggingTrack(data: {
   values: Record<string, unknown>;
 }): Promise<{ id: string; createdAt: Date }> {
   const session = await requireAuth();
+  assertStudentSession(session.user.role);
   const db = createDb();
+
+  const columns = await db
+    .select({
+      id: diggingColumns.id,
+      userId: diggingColumns.userId,
+      columnType: diggingColumns.columnType,
+      options: diggingColumns.options,
+    })
+    .from(diggingColumns)
+    .where(eq(diggingColumns.userId, session.user.id!));
+  const parsed = parseDiggingTrackInput(data, columns);
+  if (!parsed.ok) throw new Error(parsed.error);
 
   const id = crypto.randomUUID();
   const createdAt = new Date();
@@ -164,8 +187,8 @@ export async function createDiggingTrack(data: {
   await db.insert(diggingTracks).values({
     id,
     userId: session.user.id!,
-    linkUrl: data.linkUrl ?? null,
-    values: JSON.stringify(data.values),
+    linkUrl: parsed.value.linkUrl,
+    values: JSON.stringify(parsed.value.values),
   });
 
   revalidatePath("/dashboard/student/digging");
@@ -183,31 +206,62 @@ export async function updateDiggingTrackValue(
   value: unknown,
 ) {
   const session = await requireAuth();
+  assertStudentSession(session.user.role);
   const db = createDb();
 
-  const [track] = await db
-    .select()
-    .from(diggingTracks)
-    .where(
-      and(
-        eq(diggingTracks.id, trackId),
-        eq(diggingTracks.userId, session.user.id!),
-      ),
-    )
-    .limit(1);
+  const [[track], [column]] = await Promise.all([
+    db
+      .select()
+      .from(diggingTracks)
+      .where(
+        and(
+          eq(diggingTracks.id, trackId),
+          eq(diggingTracks.userId, session.user.id!),
+        ),
+      )
+      .limit(1),
+    db
+      .select({
+        id: diggingColumns.id,
+        userId: diggingColumns.userId,
+        columnType: diggingColumns.columnType,
+        options: diggingColumns.options,
+      })
+      .from(diggingColumns)
+      .where(
+        and(
+          eq(diggingColumns.id, columnId),
+          eq(diggingColumns.userId, session.user.id!),
+        ),
+      )
+      .limit(1),
+  ]);
 
-  if (!track) return;
+  if (!track || !column) {
+    throw new Error("트랙 또는 컬럼을 찾을 수 없습니다.");
+  }
+  const parsedValue = parseDiggingColumnValue(column, value);
+  if (!parsedValue.ok) throw new Error(parsedValue.error);
 
   const currentValues = (() => {
     try { return JSON.parse(track.values ?? "{}") as Record<string, unknown>; }
     catch { return {} as Record<string, unknown>; }
   })();
-  currentValues[columnId] = value;
+  currentValues[columnId] = parsedValue.value;
+  const serialized = JSON.stringify(currentValues);
+  if (new TextEncoder().encode(serialized).byteLength > DIGGING_TRACK_VALUES_MAX_BYTES) {
+    throw new Error("트랙 입력값이 저장 가능한 크기를 넘었습니다.");
+  }
 
   await db
     .update(diggingTracks)
-    .set({ values: JSON.stringify(currentValues) })
-    .where(eq(diggingTracks.id, trackId));
+    .set({ values: serialized })
+    .where(
+      and(
+        eq(diggingTracks.id, trackId),
+        eq(diggingTracks.userId, session.user.id!),
+      ),
+    );
 }
 
 /**
@@ -215,6 +269,7 @@ export async function updateDiggingTrackValue(
  */
 export async function deleteDiggingTrack(trackId: string) {
   const session = await requireAuth();
+  assertStudentSession(session.user.role);
   const db = createDb();
 
   await db
@@ -232,86 +287,23 @@ export async function deleteDiggingTrack(trackId: string) {
 
 // ─── 링크 메타 추출 ───────────────────────────────
 
-type LinkMeta = {
-  title?: string;
-  artist?: string;
-  siteName?: string;
-};
-
 /**
  * URL에서 트랙명/아티스트 자동 추출.
  * YouTube / SoundCloud → oEmbed API.
  * 기타 → Open Graph 태그 파싱.
  */
-export async function fetchLinkMeta(url: string): Promise<LinkMeta> {
-  await requireAuth();
-
-  try {
-    const parsedUrl = new URL(url);
-    if (!["http:", "https:"].includes(parsedUrl.protocol)) return {};
-
-    const hostname = parsedUrl.hostname.toLowerCase();
-    if (!isAllowedLinkMetaHost(hostname)) return {};
-
-    // YouTube oEmbed
-    if (/youtube\.com|youtu\.be/.test(url)) {
-      const res = await fetch(
-        `https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`,
-        { next: { revalidate: 3600 } },
-      );
-      if (res.ok) {
-        const data = await res.json();
-        return { title: data.title, artist: data.author_name, siteName: "YouTube" };
-      }
-    }
-
-    // SoundCloud oEmbed
-    if (/soundcloud\.com/.test(url)) {
-      const res = await fetch(
-        `https://soundcloud.com/oembed?url=${encodeURIComponent(url)}&format=json`,
-        { next: { revalidate: 3600 } },
-      );
-      if (res.ok) {
-        const data = await res.json();
-        // SoundCloud title 형식: "Artist - Track" 또는 "Track by Artist"
-        const titleRaw: string = data.title ?? "";
-        const byMatch = titleRaw.match(/^(.+) by (.+)$/);
-        const dashMatch = titleRaw.match(/^(.+?) - (.+)$/);
-        if (byMatch) return { title: byMatch[1], artist: byMatch[2], siteName: "SoundCloud" };
-        if (dashMatch) return { title: dashMatch[2], artist: dashMatch[1], siteName: "SoundCloud" };
-        return { title: titleRaw, artist: data.author_name, siteName: "SoundCloud" };
-      }
-    }
-
-    // Open Graph 파싱 (Spotify 등 기타)
-    const res = await fetch(url, {
-      headers: { "User-Agent": "Mozilla/5.0 (compatible; bot/1.0)" },
-      next: { revalidate: 3600 },
-    });
-    if (!res.ok) return {};
-    const html = await res.text();
-
-    const ogTitle = html.match(/<meta[^>]+property="og:title"[^>]+content="([^"]+)"/i)?.[1];
-    const ogSite = html.match(/<meta[^>]+property="og:site_name"[^>]+content="([^"]+)"/i)?.[1];
-    const title = html.match(/<title>([^<]+)<\/title>/i)?.[1];
-
-    return {
-      title: ogTitle ?? title ?? undefined,
-      siteName: ogSite,
-    };
-  } catch {
-    return {};
-  }
+export async function fetchLinkMeta(url: string): Promise<DiggingLinkMetadata> {
+  const session = await requireAuth();
+  assertStudentSession(session.user.role);
+  return fetchDiggingLinkMetadata(url);
 }
 
 async function assertCanAccessDiggingUser(userId: string) {
   const session = await requireAuth();
   await requireStudentOwnerOrAdmin(session, userId);
+  return session;
 }
 
-function isAllowedLinkMetaHost(hostname: string) {
-  return ALLOWED_LINK_META_HOSTS.some(
-    (allowedHost) =>
-      hostname === allowedHost || hostname.endsWith(`.${allowedHost}`),
-  );
+function assertStudentSession(role: unknown): void {
+  if (role !== "student") throw new Error("학생만 디깅 보드를 변경할 수 있습니다.");
 }

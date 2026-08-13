@@ -131,7 +131,9 @@ export async function createLesson(
 export async function deleteLesson(lessonId: string, studentId: string) {
   await requireStudentTarget(studentId);
   const db = createDb();
-  await db.delete(lessons).where(eq(lessons.id, lessonId));
+  await db
+    .delete(lessons)
+    .where(and(eq(lessons.id, lessonId), eq(lessons.studentId, studentId)));
   revalidatePath(`/dashboard/admin/students/${studentId}`);
   revalidatePath("/dashboard/admin");
   revalidatePath("/dashboard/student");
