@@ -24,7 +24,7 @@ export default function ErrorPage({ statusCode }: ErrorProps) {
       <h1 style={{ fontSize: "2rem", fontWeight: "bold", marginBottom: "1rem" }}>
         {statusCode ?? "오류"}
       </h1>
-      <p style={{ color: "#888" }}>
+      <p style={{ color: "var(--color-muted-foreground)" }}>
         {statusCode === 404
           ? "페이지를 찾을 수 없습니다."
           : "서버 오류가 발생했습니다."}

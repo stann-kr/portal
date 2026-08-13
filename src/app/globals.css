@@ -278,7 +278,7 @@
 
 /* 형광펜 */
 :where(.ProseMirror, .rich-text) mark {
-  background-color: color-mix(in srgb, #fbbf24 35%, transparent);
+  background-color: color-mix(in srgb, var(--color-warning) 35%, transparent);
   border-radius: 2px;
   padding: 0 2px;
 }

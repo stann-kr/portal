@@ -22,10 +22,10 @@ import type { CalendarEventType } from "@/db/schema";
 
 // ─── 이벤트 타입별 색상 ──────────────────────────
 const EVENT_COLORS: Record<CalendarEventType, string> = {
-  LESSON: "#3B82F6",
-  PRACTICE: "#10B981",
-  GIG: "#EF4444",
-  NOTE: "#F59E0B",
+  LESSON: "var(--color-event-lesson)",
+  PRACTICE: "var(--color-event-practice)",
+  GIG: "var(--color-event-gig)",
+  NOTE: "var(--color-event-note)",
 };
 
 const EVENT_TYPE_LABELS: Record<CalendarEventType, string> = {

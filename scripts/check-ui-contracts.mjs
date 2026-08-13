@@ -1,0 +1,71 @@
+import { access, readFile, readdir } from "node:fs/promises";
+import { join, relative } from "node:path";
+
+const repositoryRoot = process.cwd();
+const sourceRoot = join(repositoryRoot, "src");
+const failures = [];
+
+async function collectFiles(directory, suffix) {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const nested = await Promise.all(entries.map(async (entry) => {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) return collectFiles(path, suffix);
+    return entry.isFile() && entry.name.endsWith(suffix) ? [path] : [];
+  }));
+  return nested.flat();
+}
+
+function repoPath(path) {
+  return relative(repositoryRoot, path).replaceAll("\\", "/");
+}
+
+function findLine(text, index) {
+  return text.slice(0, index).split("\n").length;
+}
+
+const tsxFiles = await collectFiles(sourceRoot, ".tsx");
+const mainOwners = [];
+const forbiddenPatterns = [
+  { label: "hardcoded hex color", pattern: /#[0-9a-f]{3,8}\b/giu },
+  { label: "raw semantic Tailwind color", pattern: /\b(?:text|bg|border|ring)-(?:red|green|blue|yellow|orange|purple|pink|gray|slate|zinc|neutral|stone)-[0-9]{2,3}(?:\/\d{1,3})?\b/gu },
+  { label: "unbounded overlay shadow", pattern: /\bshadow-2xl\b/gu },
+];
+
+for (const file of tsxFiles) {
+  const text = await readFile(file, "utf8");
+  for (const match of text.matchAll(/<main\b/gu)) {
+    mainOwners.push(`${repoPath(file)}:${findLine(text, match.index ?? 0)}`);
+  }
+  for (const { label, pattern } of forbiddenPatterns) {
+    pattern.lastIndex = 0;
+    for (const match of text.matchAll(pattern)) {
+      failures.push(`${repoPath(file)}:${findLine(text, match.index ?? 0)} ${label}: ${match[0]}`);
+    }
+  }
+}
+
+if (mainOwners.length !== 1 || !mainOwners[0]?.startsWith("src/app/layout.tsx:")) {
+  failures.push(`main landmark owner must be src/app/layout.tsx only; found ${mainOwners.join(", ") || "none"}`);
+}
+
+const requiredRouteStates = [
+  "src/app/dashboard/loading.tsx",
+  "src/app/dashboard/error.tsx",
+  "src/app/community/loading.tsx",
+  "src/app/community/error.tsx",
+];
+for (const requiredPath of requiredRouteStates) {
+  try {
+    await access(join(repositoryRoot, requiredPath));
+  } catch {
+    failures.push(`required route state missing: ${requiredPath}`);
+  }
+}
+
+if (failures.length > 0) {
+  console.error("UI contract check: FAIL");
+  for (const failure of failures) console.error(`- ${failure}`);
+  process.exitCode = 1;
+} else {
+  console.log(`UI contract check: PASS (${tsxFiles.length} TSX files, one main owner, route states present)`);
+}

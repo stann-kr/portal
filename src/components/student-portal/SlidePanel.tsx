@@ -54,7 +54,7 @@ export function SlidePanel({
           }}
           className={`
             fixed right-0 top-0 z-50 h-full ${widthClass}
-            bg-background border-l border-border shadow-2xl
+            bg-background border-l border-border shadow-overlay
             flex flex-col
             data-[state=open]:animate-in data-[state=closed]:animate-out
             data-[state=open]:slide-in-from-right
