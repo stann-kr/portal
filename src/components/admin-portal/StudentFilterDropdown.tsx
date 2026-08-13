@@ -5,7 +5,6 @@
  */
 "use client";
 
-import { useTransition } from "react";
 import { Users } from "lucide-react";
 
 type Student = {
@@ -18,20 +17,17 @@ interface StudentFilterDropdownProps {
   students: Student[];
   selectedStudentId: string;
   onStudentChange: (studentId: string) => void;
+  loading?: boolean;
 }
 
 export function StudentFilterDropdown({
   students,
   selectedStudentId,
   onStudentChange,
+  loading = false,
 }: StudentFilterDropdownProps) {
-  const [isPending, startTransition] = useTransition();
-
   const handleChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const id = e.target.value;
-    startTransition(() => {
-      onStudentChange(id);
-    });
+    onStudentChange(e.target.value);
   };
 
   return (
@@ -44,8 +40,8 @@ export function StudentFilterDropdown({
         id="calendar-student-filter"
         value={selectedStudentId}
         onChange={handleChange}
-        disabled={isPending}
-        aria-busy={isPending}
+        disabled={loading}
+        aria-busy={loading}
         className="min-w-[120px] rounded-md border border-input bg-surface px-2 py-1 text-xs text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
       >
         {students.map((s) => (
@@ -54,8 +50,8 @@ export function StudentFilterDropdown({
           </option>
         ))}
       </select>
-      {isPending && (
-        <span className="text-xs text-muted-foreground">로딩 중...</span>
+      {loading && (
+        <span className="text-xs text-muted-foreground" role="status">로딩 중...</span>
       )}
     </div>
   );

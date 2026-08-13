@@ -17,6 +17,7 @@ import {
   requireStudentOwnerOrAdmin,
   requireStudentTarget,
 } from "@/lib/auth-guard";
+import { parseKstDateTimeInput } from "@/lib/date-input";
 
 // ───────────────────────────────────────────────
 // 조회
@@ -104,7 +105,7 @@ export async function createLesson(
   const scheduledAtStr = formData.get("scheduledAt") as string;
   if (!scheduledAtStr) return { error: "날짜와 시간을 입력해주세요." };
 
-  const scheduledAt = new Date(scheduledAtStr);
+  const scheduledAt = parseKstDateTimeInput(scheduledAtStr) ?? new Date(scheduledAtStr);
   if (isNaN(scheduledAt.getTime()))
     return { error: "유효하지 않은 날짜입니다." };
 

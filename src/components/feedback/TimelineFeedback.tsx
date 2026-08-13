@@ -167,7 +167,7 @@ export function TimelineFeedback({
                   onClick={() => handleDelete(fb.id)}
                   disabled={isPending}
                   aria-label="피드백 삭제"
-                  className="-mt-1 flex-shrink-0 text-destructive opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100"
+                  className="-mt-1 flex-shrink-0 text-destructive opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 focus:opacity-100"
                 >
                   <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
                 </Button>

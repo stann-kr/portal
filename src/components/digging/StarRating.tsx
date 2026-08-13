@@ -27,7 +27,8 @@ export function StarRating({ value, onChange, readonly = false, "aria-label": ar
             onMouseLeave={() => !readonly && setHovered(0)}
             className="disabled:cursor-default"
             aria-label={`${star}점`}
-            aria-pressed={star === value}
+            role="radio"
+            aria-checked={star === value}
           >
             <Star
               className={`w-4 h-4 transition-colors ${

@@ -56,6 +56,7 @@ interface DiggingBoardProps {
 function EditableCell({
   trackId,
   columnId,
+  columnName,
   columnType,
   value: initialValue,
   options,
@@ -63,6 +64,7 @@ function EditableCell({
 }: {
   trackId: string;
   columnId: string;
+  columnName: string;
   columnType: DiggingColumnType;
   value: unknown;
   options?: string | null;
@@ -70,25 +72,50 @@ function EditableCell({
 }) {
   const [value, setValue] = useState(initialValue);
   const [isPending, startTransition] = useTransition();
+  const [saveStatus, setSaveStatus] = useState<{ kind: "success" | "error"; message: string } | null>(null);
 
   const save = useCallback(
     (newVal: unknown) => {
+      const previousValue = value;
       setValue(newVal);
-      startTransition(() => updateDiggingTrackValue(trackId, columnId, newVal));
+      setSaveStatus(null);
+      startTransition(async () => {
+        try {
+          await updateDiggingTrackValue(trackId, columnId, newVal);
+          setSaveStatus({ kind: "success", message: `${columnName} 저장됨` });
+        } catch {
+          setValue(previousValue);
+          setSaveStatus({ kind: "error", message: `${columnName}을 저장하지 못했습니다. 다시 시도해 주세요.` });
+        }
+      });
     },
-    [trackId, columnId],
+    [columnId, columnName, trackId, value],
   );
 
   const parsedOptions: string[] = options ? JSON.parse(options) : [];
+  const withStatus = (control: React.ReactNode) => (
+    <div aria-busy={isPending}>
+      {control}
+      {saveStatus ? (
+        <p
+          className={saveStatus.kind === "error" ? "mt-1 text-xs text-destructive" : "sr-only"}
+          role={saveStatus.kind === "error" ? "alert" : "status"}
+          aria-live="polite"
+        >
+          {saveStatus.message}
+        </p>
+      ) : null}
+    </div>
+  );
 
   if (readonly) {
     if (columnType === "rating")
-      return <StarRating value={(value as number) ?? 0} readonly />;
+      return <StarRating aria-label={columnName} value={(value as number) ?? 0} readonly />;
     if (columnType === "camelot_key")
-      return <CamelotPicker value={(value as string) ?? ""} readonly />;
+      return <CamelotPicker aria-label={columnName} value={(value as string) ?? ""} readonly />;
     if (columnType === "link" && value)
       return (
-        <a href={value as string} target="_blank" rel="noreferrer"
+        <a href={value as string} target="_blank" rel="noreferrer" aria-label={`${columnName} 링크 열기`}
           className="text-primary hover:underline flex items-center gap-1 text-xs">
           <ExternalLink className="w-3 h-3" />링크
         </a>
@@ -97,26 +124,29 @@ function EditableCell({
   }
 
   if (columnType === "rating") {
-    return (
+    return withStatus(
       <StarRating
+        aria-label={columnName}
         value={(value as number) ?? 0}
         onChange={save}
-      />
+      />,
     );
   }
 
   if (columnType === "camelot_key") {
-    return (
+    return withStatus(
       <CamelotPicker
+        aria-label={columnName}
         value={(value as string) ?? ""}
         onChange={save}
-      />
+      />,
     );
   }
 
   if (columnType === "select") {
-    return (
+    return withStatus(
       <select
+        aria-label={columnName}
         value={(value as string) ?? ""}
         onChange={(e) => save(e.target.value)}
         disabled={isPending}
@@ -124,14 +154,15 @@ function EditableCell({
       >
         <option value="">선택 안 함</option>
         {parsedOptions.map((o) => <option key={o} value={o}>{o}</option>)}
-      </select>
+      </select>,
     );
   }
 
   if (columnType === "link") {
-    return (
+    return withStatus(
       <div className="flex items-center gap-1">
         <input
+          aria-label={columnName}
           type="url"
           value={(value as string) ?? ""}
           onChange={(e) => setValue(e.target.value)}
@@ -141,37 +172,39 @@ function EditableCell({
           className="flex-1 bg-transparent text-xs border-none outline-none focus:ring-1 focus:ring-ring rounded px-1 min-w-0"
         />
         {typeof value === "string" && value && (
-          <a href={value} target="_blank" rel="noreferrer">
+          <a href={value} target="_blank" rel="noreferrer" aria-label={`${columnName} 링크 새 창에서 열기`}>
             <ExternalLink className="w-3 h-3 text-muted-foreground hover:text-primary" />
           </a>
         )}
-      </div>
+      </div>,
     );
   }
 
   if (columnType === "textarea") {
-    return (
+    return withStatus(
       <textarea
+        aria-label={columnName}
         value={(value as string) ?? ""}
         onChange={(e) => setValue(e.target.value)}
         onBlur={(e) => save(e.target.value)}
         disabled={isPending}
         rows={2}
         className="w-full bg-transparent text-sm border-none outline-none focus:ring-1 focus:ring-ring rounded px-1 resize-none"
-      />
+      />,
     );
   }
 
   // text / number
-  return (
+  return withStatus(
     <input
+      aria-label={columnName}
       type={columnType === "number" ? "number" : "text"}
       value={(value as string) ?? ""}
       onChange={(e) => setValue(e.target.value)}
       onBlur={(e) => save(columnType === "number" ? Number(e.target.value) : e.target.value)}
       disabled={isPending}
       className="w-full bg-transparent text-sm border-none outline-none focus:ring-1 focus:ring-ring rounded px-1"
-    />
+    />,
   );
 }
 
@@ -227,6 +260,7 @@ export function DiggingBoard({
   const [dateTo, setDateTo] = useState("");
   const [collapsedDates, setCollapsedDates] = useState<Set<string>>(new Set());
   const [isPending, startTransition] = useTransition();
+  const [mutationError, setMutationError] = useState("");
 
   // 날짜 범위 필터 + 그룹핑
   const groupedTracks = useMemo(() => {
@@ -273,6 +307,19 @@ export function DiggingBoard({
     });
   };
 
+  const removeTrack = useCallback((trackId: string) => {
+    if (!confirm("이 디깅 트랙을 삭제할까요? 삭제 후에는 복구할 수 없습니다.")) return;
+    setMutationError("");
+    startTransition(async () => {
+      try {
+        await deleteDiggingTrack(trackId);
+        setTracks((previous) => previous.filter((track) => track.id !== trackId));
+      } catch {
+        setMutationError("트랙을 삭제하지 못했습니다. 다시 시도해 주세요.");
+      }
+    });
+  }, []);
+
   // TanStack Table 컬럼 정의
   const tableCols = useMemo<ColumnDef<Track>[]>(
     () => [
@@ -284,6 +331,7 @@ export function DiggingBoard({
           <EditableCell
             trackId={row.original.id}
             columnId={col.id}
+            columnName={col.name}
             columnType={col.columnType}
             value={row.original.values[col.id]}
             options={col.options}
@@ -300,24 +348,19 @@ export function DiggingBoard({
               cell: ({ row }: { row: { original: Track } }) => (
                 <button
                   type="button"
-                  onClick={() => {
-                    startTransition(async () => {
-                      await deleteDiggingTrack(row.original.id);
-                      setTracks((prev) => prev.filter((t) => t.id !== row.original.id));
-                    });
-                  }}
+                  onClick={() => removeTrack(row.original.id)}
                   disabled={isPending}
                   aria-label="디깅 트랙 삭제"
                   className="text-muted-foreground hover:text-destructive transition-colors"
                 >
-                  <Trash2 className="w-3.5 h-3.5" />
+                  <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
                 </button>
               ),
             } as ColumnDef<Track>,
           ]
         : []),
     ],
-    [columns, readonly, isPending],
+    [columns, readonly, isPending, removeTrack],
   );
 
   const table = useReactTable({
@@ -393,6 +436,7 @@ export function DiggingBoard({
           )}
         </div>
       </div>
+      {mutationError ? <p className="text-sm text-destructive" role="alert">{mutationError}</p> : null}
 
       {/* Mobile record list */}
       <div className="space-y-4 md:hidden">
@@ -435,6 +479,7 @@ export function DiggingBoard({
                               <EditableCell
                                 trackId={track.id}
                                 columnId={column.id}
+                                columnName={column.name}
                                 columnType={column.columnType}
                                 value={track.values[column.id]}
                                 options={column.options}
@@ -451,12 +496,7 @@ export function DiggingBoard({
                               size="sm"
                               disabled={isPending}
                               className="text-destructive"
-                              onClick={() => {
-                                startTransition(async () => {
-                                  await deleteDiggingTrack(track.id);
-                                  setTracks((previous) => previous.filter((item) => item.id !== track.id));
-                                });
-                              }}
+                              onClick={() => removeTrack(track.id)}
                             >
                               <Trash2 className="mr-1.5 size-3.5" aria-hidden="true" />
                               트랙 삭제
@@ -533,24 +573,18 @@ export function DiggingBoard({
                               {col.id === "_actions" ? (
                                 <button
                                   type="button"
-                                  onClick={() => {
-                                    startTransition(async () => {
-                                      await deleteDiggingTrack(track.id);
-                                      setTracks((prev) =>
-                                        prev.filter((t) => t.id !== track.id),
-                                      );
-                                    });
-                                  }}
+                                  onClick={() => removeTrack(track.id)}
                                   disabled={isPending}
                                   aria-label="디깅 트랙 삭제"
                                   className="text-muted-foreground hover:text-destructive transition-colors"
                                 >
-                                  <Trash2 className="w-3.5 h-3.5" />
+                                  <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
                                 </button>
                               ) : (
                                 <EditableCell
                                   trackId={track.id}
                                   columnId={col.id as string}
+                                  columnName={columns.find((c) => c.id === col.id)?.name ?? "트랙 값"}
                                   columnType={
                                     columns.find((c) => c.id === col.id)?.columnType ?? "text"
                                   }

@@ -5,6 +5,7 @@ import {
   getCalendarTabs,
   matchesCalendarPreset,
   resolveCalendarTab,
+  resolveUnifiedItemType,
 } from "./calendar-section-contract";
 import type { UnifiedItem } from "./utils/unifiedItemUtils";
 
@@ -27,6 +28,8 @@ test("관리자 일정은 학생 전용 커리큘럼과 과제 탭을 제공하�
     "calendar", "daily", "all", "curriculum", "assignments",
   ]);
   assert.equal(resolveCalendarTab("curriculum", "admin"), "calendar");
+  assert.equal(resolveUnifiedItemType("DIGGING"), "DIGGING");
+  assert.equal(resolveUnifiedItemType("ADMIN"), null);
 });
 
 test("노트와 레슨 preset은 다른 일정 유형을 섞지 않는다", () => {

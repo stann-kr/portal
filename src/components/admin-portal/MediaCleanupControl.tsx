@@ -11,8 +11,10 @@ export function MediaCleanupControl() {
     "만료된 미제출 파일과 실패한 삭제 작업을 최대 10건씩 정리합니다.",
   );
   const [isPending, startTransition] = useTransition();
+  const [confirming, setConfirming] = useState(false);
 
   function runCleanup() {
+    setConfirming(false);
     startTransition(async () => {
       try {
         const result = await processPendingMediaDeletions(10);
@@ -44,19 +46,18 @@ export function MediaCleanupControl() {
           {status}
         </p>
       </div>
-      <Button
-        type="button"
-        variant="outline"
-        disabled={isPending}
-        aria-describedby={statusId}
-        onClick={runCleanup}
-      >
-        <RefreshCw
-          className={isPending ? "motion-safe:animate-spin" : ""}
-          aria-hidden="true"
-        />
-        {isPending ? "정리 중" : "지금 정리"}
-      </Button>
+      {confirming ? (
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <span className="text-xs font-medium text-warning" role="alert">삭제 대기 파일을 실제로 정리합니다.</span>
+          <Button type="button" variant="ghost" size="sm" onClick={() => setConfirming(false)}>취소</Button>
+          <Button type="button" variant="outline" size="sm" disabled={isPending} aria-describedby={statusId} onClick={runCleanup}>정리 확인</Button>
+        </div>
+      ) : (
+        <Button type="button" variant="outline" disabled={isPending} aria-describedby={statusId} onClick={() => setConfirming(true)}>
+          <RefreshCw className={isPending ? "motion-safe:animate-spin" : ""} aria-hidden="true" />
+          {isPending ? "정리 중" : "지금 정리"}
+        </Button>
+      )}
     </section>
   );
 }

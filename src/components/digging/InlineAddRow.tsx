@@ -37,6 +37,7 @@ export function InlineAddRow({ columns, onTrackCreated }: InlineAddRowProps) {
   const [values, setValues] = useState<Record<string, unknown>>({});
   const [linkUrl, setLinkUrl] = useState("");
   const [isFetching, setIsFetching] = useState(false);
+  const [submitError, setSubmitError] = useState("");
   const [isPending, startTransition] = useTransition();
 
   const setValue = useCallback((colId: string, val: unknown) => {
@@ -65,16 +66,18 @@ export function InlineAddRow({ columns, onTrackCreated }: InlineAddRowProps) {
   };
 
   const handleSubmit = useCallback(() => {
+    setSubmitError("");
     startTransition(async () => {
-      const finalValues = { ...values };
-      if (linkColId && linkUrl) finalValues[linkColId] = linkUrl;
-      const { id, createdAt } = await createDiggingTrack({
-        linkUrl: linkUrl || undefined,
-        values: finalValues,
-      });
-      onTrackCreated({ id, linkUrl: linkUrl || null, values: finalValues, createdAt });
-      setValues({});
-      setLinkUrl("");
+      try {
+        const finalValues = { ...values };
+        if (linkColId && linkUrl) finalValues[linkColId] = linkUrl;
+        const created = await createDiggingTrack({ linkUrl: linkUrl || undefined, values: finalValues });
+        onTrackCreated(created);
+        setValues({});
+        setLinkUrl("");
+      } catch {
+        setSubmitError("트랙을 추가하지 못했습니다. 입력을 확인하고 다시 시도해 주세요.");
+      }
     });
   }, [values, linkUrl, linkColId, onTrackCreated]);
 
@@ -102,16 +105,19 @@ export function InlineAddRow({ columns, onTrackCreated }: InlineAddRowProps) {
           >
             {col.columnType === "rating" ? (
               <StarRating
+                aria-label={col.name}
                 value={(val as number) ?? 0}
                 onChange={(v) => setValue(col.id, v)}
               />
             ) : col.columnType === "camelot_key" ? (
               <CamelotPicker
+                aria-label={col.name}
                 value={(val as string) ?? ""}
                 onChange={(v) => setValue(col.id, v)}
               />
             ) : col.columnType === "select" ? (
               <select
+                aria-label={col.name}
                 value={(val as string) ?? ""}
                 onChange={(e) => setValue(col.id, e.target.value)}
                 disabled={isPending}
@@ -124,6 +130,7 @@ export function InlineAddRow({ columns, onTrackCreated }: InlineAddRowProps) {
               </select>
             ) : col.columnType === "textarea" ? (
               <textarea
+                aria-label={col.name}
                 value={(val as string) ?? ""}
                 onChange={(e) => setValue(col.id, e.target.value)}
                 onKeyDown={handleKeyDown}
@@ -134,6 +141,7 @@ export function InlineAddRow({ columns, onTrackCreated }: InlineAddRowProps) {
               />
             ) : col.columnType === "link" ? (
               <input
+                aria-label={col.name}
                 type="url"
                 value={linkUrl}
                 onChange={(e) => setLinkUrl(e.target.value)}
@@ -145,6 +153,7 @@ export function InlineAddRow({ columns, onTrackCreated }: InlineAddRowProps) {
               />
             ) : (
               <input
+                aria-label={col.name}
                 type={col.columnType === "number" ? "number" : "text"}
                 value={(val as string) ?? ""}
                 onChange={(e) =>
@@ -165,14 +174,16 @@ export function InlineAddRow({ columns, onTrackCreated }: InlineAddRowProps) {
 
       {/* 추가 버튼 셀 (_actions 위치) */}
       <td className="px-3 py-1.5 align-middle" style={{ width: 40 }}>
+        {submitError ? <p className="mb-1 min-w-40 text-xs text-destructive" role="alert">{submitError}</p> : null}
         <button
           type="button"
           onClick={handleSubmit}
           disabled={isPending}
           title="트랙 추가 (Enter)"
+          aria-label="디깅 트랙 추가"
           className="text-muted-foreground hover:text-primary transition-colors disabled:opacity-50"
         >
-          <Plus className="w-3.5 h-3.5" />
+          <Plus className="w-3.5 h-3.5" aria-hidden="true" />
         </button>
       </td>
     </tr>

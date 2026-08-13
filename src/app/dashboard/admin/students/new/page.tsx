@@ -109,6 +109,8 @@ export default function NewStudentPage() {
             <button
               type="button"
               onClick={() => setShowPassword((v) => !v)}
+              aria-label={showPassword ? "비밀번호 숨기기" : "비밀번호 보기"}
+              aria-pressed={showPassword}
               className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
             >
               {showPassword ? (

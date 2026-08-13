@@ -26,7 +26,7 @@ export default async function AdminStudentNotesPage({
   const returnTo = `/dashboard/admin/students/${studentId}/notes`;
   const notes = await getPrivateNotes(studentId);
   return (
-    <main className="mx-auto max-w-4xl space-y-6 px-4 py-6 sm:px-6">
+    <div className="mx-auto max-w-4xl space-y-6 px-4 py-6 sm:px-6">
       <header className="space-y-3 border-b border-border pb-5">
         <Link href={`/dashboard/admin/students/${studentId}`} className="inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"><ArrowLeft className="size-4" aria-hidden="true" />학생 상세로 돌아가기</Link>
         <div className="flex flex-wrap items-start justify-between gap-4">
@@ -42,6 +42,6 @@ export default async function AdminStudentNotesPage({
         </div>
       </header>
       <PrivateNoteList notes={notes} returnTo={returnTo} emptyMessage="아직 이 학생 스페이스에 작성된 노트가 없습니다." />
-    </main>
+    </div>
   );
 }

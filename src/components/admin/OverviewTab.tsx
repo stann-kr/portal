@@ -6,10 +6,8 @@
  */
 "use client";
 
-import { useActionState, useEffect, useTransition } from "react";
-import Link from "next/link";
+import { useActionState, useEffect, useState, useTransition } from "react";
 import {
-  ArrowLeft,
   CalendarDays,
   BookOpen,
   Plus,
@@ -44,15 +42,8 @@ interface Lesson {
   scheduledAt: Date | null;
 }
 
-interface Student {
-  id: string;
-  displayName: string | null;
-  email: string;
-}
-
 interface OverviewTabProps {
   studentId: string;
-  student: Student;
   modules: Module[];
   lessons: Lesson[];
 }
@@ -77,30 +68,21 @@ function AddModuleForm({
   }, [state.success, onSuccess]);
 
   return (
-    <form action={action} className="flex gap-2 mt-3">
-      <Input
-        name="weekNum"
-        type="number"
-        min={1}
-        placeholder="주차"
-        className="w-20"
-        required
-        disabled={isPending}
-      />
-      <Input
-        name="title"
-        type="text"
-        placeholder="모듈 제목 (예: BPM 매칭 연습)"
-        className="flex-1"
-        required
-        disabled={isPending}
-      />
+    <form action={action} className="mt-3 flex flex-wrap items-end gap-2" aria-busy={isPending}>
+      <div className="space-y-1">
+        <label htmlFor="module-week" className="text-xs font-medium text-muted-foreground">주차</label>
+        <Input id="module-week" name="weekNum" type="number" min={1} placeholder="예: 1" className="w-24" required disabled={isPending} />
+      </div>
+      <div className="min-w-52 flex-1 space-y-1">
+        <label htmlFor="module-title" className="text-xs font-medium text-muted-foreground">모듈 제목</label>
+        <Input id="module-title" name="title" type="text" placeholder="예: BPM 매칭 연습" required disabled={isPending} />
+      </div>
       <Button type="submit" size="sm" disabled={isPending} className="gap-1">
-        <Plus className="w-4 h-4" />
+        <Plus className="w-4 h-4" aria-hidden="true" />
         추가
       </Button>
       {state.error && (
-        <p className="text-xs text-destructive self-center">{state.error}</p>
+        <p className="w-full text-xs text-destructive" role="alert">{state.error}</p>
       )}
     </form>
   );
@@ -126,20 +108,17 @@ function AddLessonForm({
   }, [state.success, onSuccess]);
 
   return (
-    <form action={action} className="flex gap-2 mt-3">
-      <Input
-        name="scheduledAt"
-        type="datetime-local"
-        required
-        disabled={isPending}
-        className="flex-1"
-      />
+    <form action={action} className="mt-3 flex flex-wrap items-end gap-2" aria-busy={isPending}>
+      <div className="min-w-52 flex-1 space-y-1">
+        <label htmlFor="lesson-scheduled-at" className="text-xs font-medium text-muted-foreground">레슨 날짜와 시간</label>
+        <Input id="lesson-scheduled-at" name="scheduledAt" type="datetime-local" required disabled={isPending} />
+      </div>
       <Button type="submit" size="sm" disabled={isPending} className="gap-1">
-        <Plus className="w-4 h-4" />
+        <Plus className="w-4 h-4" aria-hidden="true" />
         추가
       </Button>
       {state.error && (
-        <p className="text-xs text-destructive self-center">{state.error}</p>
+        <p className="w-full text-xs text-destructive" role="alert">{state.error}</p>
       )}
     </form>
   );
@@ -149,44 +128,39 @@ function AddLessonForm({
 
 export function OverviewTab({
   studentId,
-  student,
   modules,
   lessons,
 }: OverviewTabProps) {
   const [isPending, startTransition] = useTransition();
+  const [mutationError, setMutationError] = useState("");
 
   const handleDeleteModule = (moduleId: string) => {
     if (!confirm("이 모듈을 삭제하시겠습니까?")) return;
+    setMutationError("");
     startTransition(async () => {
-      await deleteModule(moduleId, studentId);
+      try {
+        await deleteModule(moduleId, studentId);
+      } catch {
+        setMutationError("모듈을 삭제하지 못했습니다. 다시 시도해 주세요.");
+      }
     });
   };
 
   const handleDeleteLesson = (lessonId: string) => {
     if (!confirm("이 레슨을 삭제하시겠습니까?")) return;
+    setMutationError("");
     startTransition(async () => {
-      await deleteLesson(lessonId, studentId);
+      try {
+        await deleteLesson(lessonId, studentId);
+      } catch {
+        setMutationError("레슨을 삭제하지 못했습니다. 다시 시도해 주세요.");
+      }
     });
   };
 
   return (
     <div className="space-y-10">
-      {/* 헤더 */}
-      <div className="space-y-1">
-        <Link
-          href="/dashboard/admin"
-          className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
-        >
-          <ArrowLeft className="w-4 h-4" /> 어드민 포털
-        </Link>
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight mt-2">
-            {student.displayName ?? student.email}
-          </h1>
-          <p className="text-sm text-muted-foreground">{student.email}</p>
-        </div>
-      </div>
-
+      {mutationError ? <p className="text-sm text-destructive" role="alert">{mutationError}</p> : null}
       {/* 커리큘럼 */}
       <section className="space-y-4">
         <div className="flex items-center gap-2 border-b pb-3">
@@ -222,9 +196,10 @@ export function OverviewTab({
                   size="sm"
                   onClick={() => handleDeleteModule(m.id)}
                   disabled={isPending}
-                  className="text-destructive opacity-0 group-hover:opacity-100 transition-opacity"
+                  aria-label={`${m.title} 모듈 삭제`}
+                  className="text-destructive opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100"
                 >
-                  <Trash2 className="w-4 h-4" />
+                  <Trash2 className="w-4 h-4" aria-hidden="true" />
                 </Button>
               </li>
             ))}
@@ -269,6 +244,7 @@ export function OverviewTab({
                   <div className="flex-1">
                     <p className="text-sm font-medium">
                       {date.toLocaleDateString("ko-KR", {
+                        timeZone: "Asia/Seoul",
                         year: "numeric",
                         month: "long",
                         day: "numeric",
@@ -276,6 +252,7 @@ export function OverviewTab({
                     </p>
                     <p className="text-xs text-muted-foreground">
                       {date.toLocaleTimeString("ko-KR", {
+                        timeZone: "Asia/Seoul",
                         hour: "2-digit",
                         minute: "2-digit",
                       })}
@@ -287,9 +264,10 @@ export function OverviewTab({
                     size="sm"
                     onClick={() => handleDeleteLesson(l.id)}
                     disabled={isPending}
-                    className="text-destructive opacity-0 group-hover:opacity-100 transition-opacity"
+                    aria-label={`${date.toLocaleDateString("ko-KR")} 레슨 삭제`}
+                    className="text-destructive opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100"
                   >
-                    <Trash2 className="w-4 h-4" />
+                    <Trash2 className="w-4 h-4" aria-hidden="true" />
                   </Button>
                 </li>
               );

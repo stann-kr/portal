@@ -290,7 +290,7 @@ export default function CommunityClient({ isAdmin }: CommunityClientProps) {
       </aside>
 
       {/* 메인 영역 */}
-      <main className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex-1 flex flex-col overflow-hidden">
         {/* 상단 탭 + 헤더 */}
         <header className="border-b border-border bg-card/80 backdrop-blur-sm flex-shrink-0">
           <div className="flex items-center justify-between px-6 h-14">
@@ -470,7 +470,7 @@ export default function CommunityClient({ isAdmin }: CommunityClientProps) {
             </button>
           ))}
         </div>
-      </main>
+      </div>
     </div>
   );
 }

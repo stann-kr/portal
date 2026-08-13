@@ -4,7 +4,7 @@
  */
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Search } from "lucide-react";
 import {
   getUnifiedItemKey,
@@ -40,21 +40,30 @@ interface AllItemsViewProps {
   items: UnifiedItem[];
   returnTo: string;
   showSpaceContext: boolean;
+  initialType?: UnifiedItemType | null;
+  onInitialTypeCleared?: () => void;
 }
 
 export function AllItemsView({
   items,
   returnTo,
   showSpaceContext,
+  initialType = null,
+  onInitialTypeCleared,
 }: AllItemsViewProps) {
   const [activeTypes, setActiveTypes] = useState<Set<UnifiedItemType>>(
-    new Set(ALL_TYPES),
+    new Set(initialType ? [initialType] : ALL_TYPES),
   );
   const [selectedItem, setSelectedItem] = useState<UnifiedItem | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
   const [query, setQuery] = useState("");
 
+  useEffect(() => {
+    if (initialType) setActiveTypes(new Set([initialType]));
+  }, [initialType]);
+
   const toggleType = (type: UnifiedItemType) => {
+    if (initialType) onInitialTypeCleared?.();
     setActiveTypes((prev) => {
       const next = new Set(prev);
       if (next.has(type)) {

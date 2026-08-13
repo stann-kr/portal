@@ -51,35 +51,6 @@ type CommunityPost = {
   createdAt: Date | null;
 };
 
-type AdminNote = {
-  id: string;
-  title: string;
-  contentHtml: string;
-  createdAt: Date | null;
-  authorId: string | null;
-  authorName: string | null;
-};
-
-type AdminQnaThread = {
-  id: string;
-  title: string;
-  status: string;
-  createdAt: Date | null;
-};
-
-type AdminModule = {
-  id: string;
-  weekNum: number | null;
-  title: string;
-  isCompleted: boolean | null;
-};
-
-type StudentDetailData = {
-  notes: AdminNote[];
-  threads: AdminQnaThread[];
-  modules: AdminModule[];
-};
-
 export interface AdminPortalClientProps {
   announcements: Post[];
   initialUnifiedItems: UnifiedItem[];
@@ -89,7 +60,6 @@ export interface AdminPortalClientProps {
   qnaThreads: AdminQueueThread[];
   pendingAssignments: PendingFeedbackAssignment[];
   referenceTime: Date;
-  fetchStudentDetail: (studentId: string) => Promise<StudentDetailData>;
 }
 
 // ── 탭 정의 ──────────────────────────────────────
@@ -113,7 +83,6 @@ export function AdminPortalClient({
   qnaThreads,
   pendingAssignments,
   referenceTime,
-  fetchStudentDetail,
 }: AdminPortalClientProps) {
   // 캘린더 학생 필터 상태
   const [selectedStudentId, setSelectedStudentId] = useState<string>(
@@ -121,6 +90,7 @@ export function AdminPortalClient({
   );
   const [calendarItems, setCalendarItems] = useState<UnifiedItem[]>(initialUnifiedItems);
   const [isLoadingCalendar, startCalendarTransition] = useTransition();
+  const [calendarError, setCalendarError] = useState<string | null>(null);
   const calendarRequestRef = useRef(0);
 
   const selectStudent = useCallback((studentId: string, historyMode: "push" | "replace" | "none") => {
@@ -128,6 +98,7 @@ export function AdminPortalClient({
     const requestId = ++calendarRequestRef.current;
     setSelectedStudentId(studentId);
     setCalendarItems([]);
+    setCalendarError(null);
 
     if (historyMode !== "none") {
       const url = new URL(window.location.href);
@@ -141,8 +112,14 @@ export function AdminPortalClient({
     }
 
     startCalendarTransition(async () => {
-      const items = await getUnifiedItemsForStudent(studentId);
-      if (calendarRequestRef.current === requestId) setCalendarItems(items);
+      try {
+        const items = await getUnifiedItemsForStudent(studentId);
+        if (calendarRequestRef.current === requestId) setCalendarItems(items);
+      } catch {
+        if (calendarRequestRef.current === requestId) {
+          setCalendarError("학생 일정을 불러오지 못했습니다. 다시 시도해 주세요.");
+        }
+      }
     });
   }, [students]);
 
@@ -202,6 +179,7 @@ export function AdminPortalClient({
               <AnnouncementSection
                 posts={announcements}
                 returnTo="/dashboard/admin?section=announcements"
+                isAdmin
               />
             </div>
           )}
@@ -216,6 +194,9 @@ export function AdminPortalClient({
               spaceLabel={selectedSpaceLabel}
               workspaceRole="admin"
               canCreateQna={false}
+              loading={isLoadingCalendar}
+              loadError={calendarError}
+              onRetry={() => selectedStudentId && selectStudent(selectedStudentId, "none")}
               headerSlot={
                 students.length > 0 ? (
                   <StudentFilterDropdown
@@ -226,6 +207,7 @@ export function AdminPortalClient({
                     }))}
                     selectedStudentId={selectedStudentId}
                     onStudentChange={handleStudentChange}
+                    loading={isLoadingCalendar}
                   />
                 ) : undefined
               }
@@ -244,7 +226,6 @@ export function AdminPortalClient({
           {activeSection === "students" && (
             <StudentManagementSection
               students={students}
-              fetchStudentDetail={fetchStudentDetail}
             />
           )}
         </>

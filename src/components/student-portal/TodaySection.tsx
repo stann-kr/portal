@@ -8,6 +8,7 @@ import {
   HelpCircle,
   ListMusic,
   MessageSquareText,
+  MessagesSquare,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -15,6 +16,7 @@ import { SectionHeader } from "@/components/ui/section-header";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { getStudentTodaySummary } from "@/lib/student-today";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
+import { buildQnaListHref } from "@/lib/qna-routes";
 
 type Post = {
   id: string;
@@ -189,6 +191,12 @@ export function TodaySection({
             className="mb-4"
           />
           <div className="grid gap-2 sm:grid-cols-3 md:grid-cols-1">
+            <Button asChild variant="outline" className="h-auto justify-start px-4 py-3">
+              <Link href={buildQnaListHref("/dashboard/student?section=today")}>
+                <MessagesSquare className="mr-2 size-4 text-primary" aria-hidden="true" />
+                Q&A 전체 보기
+              </Link>
+            </Button>
             <Button asChild variant="outline" className="h-auto justify-start px-4 py-3">
               <Link href="/dashboard/student/notes/new?returnTo=%2Fdashboard%2Fstudent%3Fsection%3Dtoday">
                 <FileText className="mr-2 size-4 text-primary" aria-hidden="true" />

@@ -52,25 +52,36 @@ export function ColumnManager({
   const [newName, setNewName] = useState("");
   const [newType, setNewType] = useState<DiggingColumnType>("text");
   const [newOptions, setNewOptions] = useState(""); // 쉼표 구분
+  const [error, setError] = useState("");
 
   const handleAdd = () => {
     if (!newName.trim()) return;
+    setError("");
     startTransition(async () => {
-      const options =
-        newType === "select"
+      try {
+        const options = newType === "select"
           ? newOptions.split(",").map((s) => s.trim()).filter(Boolean)
           : undefined;
-      await addDiggingColumn({ name: newName.trim(), columnType: newType, options });
-      setNewName("");
-      setNewOptions("");
-      onSuccess();
+        await addDiggingColumn({ name: newName.trim(), columnType: newType, options });
+        setNewName("");
+        setNewOptions("");
+        onSuccess();
+      } catch {
+        setError("컬럼을 추가하지 못했습니다. 입력을 확인하고 다시 시도해 주세요.");
+      }
     });
   };
 
   const handleDelete = (colId: string) => {
+    if (!confirm("이 컬럼을 삭제할까요? 해당 컬럼의 트랙 값은 다시 표시할 수 없습니다.")) return;
+    setError("");
     startTransition(async () => {
-      await deleteDiggingColumn(colId);
-      onSuccess();
+      try {
+        await deleteDiggingColumn(colId);
+        onSuccess();
+      } catch {
+        setError("컬럼을 삭제하지 못했습니다. 다시 시도해 주세요.");
+      }
     });
   };
 
@@ -100,11 +111,13 @@ export function ColumnManager({
                 )}
               </div>
               <button
+                type="button"
                 onClick={() => handleDelete(col.id)}
                 disabled={col.isDefault || isPending}
                 className="text-muted-foreground hover:text-destructive transition-colors disabled:opacity-30 disabled:cursor-not-allowed ml-2 shrink-0"
+                aria-label={`${col.name} 컬럼 삭제`}
               >
-                <Trash2 className="w-3.5 h-3.5" />
+                <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
               </button>
             </div>
           ))}
@@ -113,14 +126,19 @@ export function ColumnManager({
         {/* 컬럼 추가 폼 */}
         <div className="border-t border-border pt-4 space-y-3">
           <p className="text-sm font-medium">새 컬럼 추가</p>
+          {error ? <p className="text-xs text-destructive" role="alert">{error}</p> : null}
           <div className="flex gap-2">
+            <label htmlFor="digging-new-column-name" className="sr-only">새 컬럼 이름</label>
             <Input
+              id="digging-new-column-name"
               placeholder="컬럼 이름"
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
               disabled={isPending}
             />
+            <label htmlFor="digging-new-column-type" className="sr-only">새 컬럼 유형</label>
             <select
+              id="digging-new-column-type"
               value={newType}
               onChange={(e) => setNewType(e.target.value as DiggingColumnType)}
               disabled={isPending}
@@ -134,14 +152,13 @@ export function ColumnManager({
             </select>
           </div>
           {newType === "select" && (
-            <Input
-              placeholder="선택지 (쉼표로 구분, 예: 좋음,보통,별로)"
-              value={newOptions}
-              onChange={(e) => setNewOptions(e.target.value)}
-              disabled={isPending}
-            />
+            <div>
+              <label htmlFor="digging-new-column-options" className="text-xs font-medium text-muted-foreground">선택지</label>
+              <Input id="digging-new-column-options" placeholder="쉼표로 구분, 예: 좋음,보통,별로" value={newOptions} onChange={(e) => setNewOptions(e.target.value)} disabled={isPending} />
+            </div>
           )}
           <Button
+            type="button"
             onClick={handleAdd}
             disabled={!newName.trim() || isPending}
             className="w-full gap-1.5"

@@ -1,17 +1,14 @@
 /**
  * @file src/components/student-portal/CommunitySection.tsx
- * @description 커뮤니티 섹션 — 최근 게시물 카드 리스트 + 상세 SlidePanel.
- * boardType(GENERAL/FEEDBACK) 탭 필터. "새 글 작성" 버튼 → 작성 다이얼로그.
+ * @description 포털의 최근 커뮤니티 목록. 작성·상세·분류 권한은 canonical /community route가 소유한다.
  */
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { Users, Plus, MessageSquare, Search } from "lucide-react";
+import Link from "next/link";
+import { Users, Plus, MessageSquare, Search, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { SlidePanel } from "./SlidePanel";
-import { PostDetailPanel } from "./PostDetailPanel";
 
 // ── 타입 ──────────────────────────────────────────
 
@@ -35,20 +32,21 @@ interface CommunitySectionProps {
 
 const BOARD_TABS = [
   { id: "ALL", label: "전체" },
-  { id: "GENERAL", label: "General" },
-  { id: "FEEDBACK", label: "Feedback" },
+  { id: "GENERAL", label: "자유" },
+  { id: "FEEDBACK", label: "피드백" },
 ] as const;
+
+const BOARD_LABELS: Record<string, string> = {
+  GENERAL: "자유",
+  FEEDBACK: "피드백",
+  ANNOUNCEMENT: "공지",
+};
 
 type BoardFilter = (typeof BOARD_TABS)[number]["id"];
 
 export function CommunitySection({ initialPosts, returnTo }: CommunitySectionProps) {
-  const router = useRouter();
   const [boardFilter, setBoardFilter] = useState<BoardFilter>("ALL");
   const [query, setQuery] = useState("");
-
-  // 상세 패널
-  const [selectedPost, setSelectedPost] = useState<Post | null>(null);
-  const [panelOpen, setPanelOpen] = useState(false);
 
   // 보드 타입 필터 + 제목/작성자 검색 결합
   const normalizedQuery = query.trim().toLowerCase();
@@ -65,7 +63,7 @@ export function CommunitySection({ initialPosts, returnTo }: CommunitySectionPro
   return (
     <div className="space-y-4">
       {/* 섹션 헤더 */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2.5">
           <Users className="w-5 h-5 text-primary flex-shrink-0" />
           <div>
@@ -73,21 +71,14 @@ export function CommunitySection({ initialPosts, returnTo }: CommunitySectionPro
             <p className="text-xs text-muted-foreground">전체 학생 소통 공간</p>
           </div>
         </div>
-        <Button
-          size="sm"
-          variant="outline"
-          className="gap-1.5 h-8 text-xs"
-          onClick={() => {
-            const params = new URLSearchParams({
-              boardType: "GENERAL",
-              returnTo,
-            });
-            router.push(`/community/new?${params.toString()}`);
-          }}
-        >
-          <Plus className="w-3.5 h-3.5" />
-          새 글 작성
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button asChild size="sm" variant="ghost" className="h-8 gap-1.5 text-xs">
+            <Link href="/community"><Users className="size-3.5" aria-hidden="true" />전체 커뮤니티</Link>
+          </Button>
+          <Button asChild size="sm" variant="outline" className="h-8 gap-1.5 text-xs">
+            <Link href={`/community/new?boardType=GENERAL&returnTo=${encodeURIComponent(returnTo)}`}><Plus className="size-3.5" aria-hidden="true" />새 글 작성</Link>
+          </Button>
+        </div>
       </div>
 
       {/* 탭 필터 + 검색 */}
@@ -96,7 +87,9 @@ export function CommunitySection({ initialPosts, returnTo }: CommunitySectionPro
           {BOARD_TABS.map(({ id, label }) => (
             <button
               key={id}
+              type="button"
               onClick={() => setBoardFilter(id)}
+              aria-pressed={boardFilter === id}
               className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
                 boardFilter === id
                   ? "bg-primary text-primary-foreground"
@@ -142,12 +135,9 @@ export function CommunitySection({ initialPosts, returnTo }: CommunitySectionPro
               : "날짜 정보 없음";
 
             return (
-              <button
+              <Link
                 key={post.id}
-                onClick={() => {
-                  setSelectedPost(post);
-                  setPanelOpen(true);
-                }}
+                href={`/community/${post.id}?returnTo=${encodeURIComponent(returnTo)}`}
                 className="w-full text-left flex items-start gap-3 px-4 py-3 rounded-xl border border-border bg-card hover:bg-accent transition-colors"
               >
                 <div className="flex-1 min-w-0">
@@ -159,7 +149,7 @@ export function CommunitySection({ initialPosts, returnTo }: CommunitySectionPro
                           : "bg-primary/10 text-primary"
                       }`}
                     >
-                      {post.boardType}
+                      {BOARD_LABELS[post.boardType] ?? post.boardType}
                     </span>
                     {post.isPinned && (
                       <span className="text-[10px] font-medium text-primary">📌</span>
@@ -170,26 +160,13 @@ export function CommunitySection({ initialPosts, returnTo }: CommunitySectionPro
                     {author} · {date}
                   </p>
                 </div>
-              </button>
+                <ArrowRight className="mt-1 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+              </Link>
             );
           })}
         </div>
       )}
 
-      {/* 게시물 상세 패널 */}
-      <SlidePanel
-        open={panelOpen}
-        onOpenChange={setPanelOpen}
-        title={selectedPost?.title}
-      >
-        {selectedPost && (
-          <PostDetailPanel
-            postId={selectedPost.id}
-            contentHtml={selectedPost.contentHtml}
-            returnTo={returnTo}
-          />
-        )}
-      </SlidePanel>
     </div>
   );
 }

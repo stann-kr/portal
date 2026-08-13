@@ -8,11 +8,13 @@ export const dynamic = "force-dynamic";
 import { getActiveAuthSession } from "@/lib/auth-guard";
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { MessageCircle, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, MessageCircle, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getQnaThreads } from "@/lib/actions/qna";
 import { ThreadList } from "@/components/qna/ThreadList";
 import type { QnaStatus } from "@/db/schema";
+import { safeReturnPath } from "@/lib/safe-return-path";
+import { buildQnaListHref } from "@/lib/qna-routes";
 
 type RawThread = Awaited<ReturnType<typeof getQnaThreads>>[number];
 
@@ -27,11 +29,21 @@ type QnaThreadItem = {
   studentEmail: string | null | undefined;
 };
 
-export default async function QnaPage() {
+export default async function QnaPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ returnTo?: string }>;
+}) {
   const session = await getActiveAuthSession();
   if (!session?.user) redirect("/login");
 
   const isAdmin = session.user.role === "admin";
+  const query = await searchParams;
+  const parentReturnTo = safeReturnPath(
+    query.returnTo,
+    isAdmin ? "/dashboard/admin?section=work" : "/dashboard/student?section=today",
+  );
+  const listHref = buildQnaListHref(parentReturnTo);
   const rawThreads = await getQnaThreads();
 
   const threads: QnaThreadItem[] = rawThreads.map((t: RawThread) => ({
@@ -44,8 +56,9 @@ export default async function QnaPage() {
   return (
     <div className="mx-auto max-w-3xl space-y-6 px-4 py-6 sm:px-6">
       {/* 헤더 */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="space-y-1">
+          <Link href={parentReturnTo} className="inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"><ArrowLeft className="size-4" aria-hidden="true" />포털로 돌아가기</Link>
           <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
             <MessageCircle className="w-6 h-6 text-primary" />
             Q&A
@@ -63,13 +76,13 @@ export default async function QnaPage() {
         </div>
         <div className="flex gap-2">
           <Button asChild size="sm" variant="outline" className="gap-1.5">
-            <Link href="/dashboard/qna/trash">
+            <Link href={`/dashboard/qna/trash?returnTo=${encodeURIComponent(listHref)}`}>
               <Trash2 className="w-3.5 h-3.5" />휴지통
             </Link>
           </Button>
           {!isAdmin && (
             <Button asChild size="sm" className="gap-1.5">
-              <Link href="/dashboard/qna/new">
+              <Link href={`/dashboard/qna/new?returnTo=${encodeURIComponent(listHref)}`}>
                 <Plus className="w-3.5 h-3.5" />새 질문
               </Link>
             </Button>
@@ -77,7 +90,7 @@ export default async function QnaPage() {
         </div>
       </div>
 
-      <ThreadList threads={threads} isAdmin={isAdmin} />
+      <ThreadList threads={threads} isAdmin={isAdmin} returnTo={listHref} />
     </div>
   );
 }

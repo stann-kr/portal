@@ -1,4 +1,4 @@
-import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
+import type { UnifiedItem, UnifiedItemType } from "@/lib/utils/unifiedItemUtils";
 
 export type CalendarWorkspaceRole = "admin" | "student";
 export type CalendarTabValue = "calendar" | "daily" | "all" | "curriculum" | "assignments";
@@ -28,6 +28,14 @@ export function resolveCalendarTab(value: string | null, role: CalendarWorkspace
 
 export function resolveCalendarPreset(value: string | null): CalendarPreset | null {
   return value === "notes-lessons" ? value : null;
+}
+
+const UNIFIED_ITEM_TYPES = new Set<UnifiedItemType>(["EVENT", "NOTE", "DIGGING", "QNA", "ASSIGNMENT"]);
+
+export function resolveUnifiedItemType(value: string | null): UnifiedItemType | null {
+  return value && UNIFIED_ITEM_TYPES.has(value as UnifiedItemType)
+    ? value as UnifiedItemType
+    : null;
 }
 
 export function matchesCalendarPreset(item: UnifiedItem, preset: CalendarPreset | null): boolean {

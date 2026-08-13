@@ -14,7 +14,7 @@ export default async function CommunityTrashPage() {
   const now = Date.now();
 
   return (
-    <main className="mx-auto max-w-4xl space-y-6 px-4 py-6 sm:px-6">
+    <div className="mx-auto max-w-4xl space-y-6 px-4 py-6 sm:px-6">
       <header className="space-y-3 border-b border-border pb-5">
         <Link
           href="/community"
@@ -75,6 +75,6 @@ export default async function CommunityTrashPage() {
           })}
         </ul>
       )}
-    </main>
+    </div>
   );
 }

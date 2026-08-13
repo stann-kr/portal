@@ -26,7 +26,7 @@ export default async function NoteTrashPage({
 
   if (!studentId) {
     return (
-      <main className="mx-auto max-w-3xl space-y-5 px-4 py-6 sm:px-6">
+      <div className="mx-auto max-w-3xl space-y-5 px-4 py-6 sm:px-6">
         <Link
           href={returnTo}
           className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
@@ -37,7 +37,7 @@ export default async function NoteTrashPage({
         <p className="rounded-xl border border-border p-5 text-sm text-muted-foreground">
           관리자 휴지통은 학생 노트 화면에서 학생을 선택한 뒤 열어 주세요.
         </p>
-      </main>
+      </div>
     );
   }
 
@@ -45,7 +45,7 @@ export default async function NoteTrashPage({
   const now = Date.now();
 
   return (
-    <main className="mx-auto max-w-4xl space-y-6 px-4 py-6 sm:px-6">
+    <div className="mx-auto max-w-4xl space-y-6 px-4 py-6 sm:px-6">
       <header className="space-y-3 border-b border-border pb-5">
         <Link
           href={returnTo}
@@ -111,6 +111,6 @@ export default async function NoteTrashPage({
           })}
         </ul>
       )}
-    </main>
+    </div>
   );
 }

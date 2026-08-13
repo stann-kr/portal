@@ -19,8 +19,13 @@ import { ThreadList } from "@/components/qna/ThreadList";
 import { BookOpen } from "lucide-react";
 import Link from "next/link";
 import type { DiggingColumnType, QnaStatus } from "@/db/schema";
+import { ArrowLeft } from "lucide-react";
+import {
+  buildAdminStudentDetailHref,
+  resolveStudentDetailTab,
+  type StudentDetailTab,
+} from "@/lib/student-space-routes";
 
-type TabKey = "overview" | "digging" | "notes" | "qna";
 type RawColumn = Awaited<ReturnType<typeof getOrSeedColumns>>[number];
 type RawQnaThread = Awaited<ReturnType<typeof getQnaThreadsByStudent>>[number];
 
@@ -97,7 +102,8 @@ export default async function StudentDetailPage({
 
   const { id: studentId } = await params;
   const { tab = "overview" } = await searchParams;
-  const activeTab = tab as TabKey;
+  const activeTab: StudentDetailTab = resolveStudentDetailTab(tab);
+  if (tab !== activeTab) redirect(buildAdminStudentDetailHref(studentId, activeTab));
 
   const student = await getStudentById(studentId);
   if (!student) redirect("/dashboard/admin");
@@ -116,7 +122,10 @@ export default async function StudentDetailPage({
   return (
     <div className="max-w-5xl mx-auto space-y-6 py-6">
       {/* 학생 헤더 */}
-      <div>
+      <div className="space-y-1">
+        <Link href="/dashboard/admin?section=students" className="inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground">
+          <ArrowLeft className="size-4" aria-hidden="true" />학생 목록으로 돌아가기
+        </Link>
         <h1 className="text-2xl font-semibold tracking-tight text-foreground">
           {student.displayName ?? student.email}
         </h1>
@@ -124,14 +133,13 @@ export default async function StudentDetailPage({
       </div>
 
       {/* 탭 네비게이션 */}
-      <StudentDetailTabs studentId={studentId} />
+      <StudentDetailTabs studentId={studentId} activeTab={activeTab} />
 
       {/* 탭 콘텐츠 */}
       <div className="pt-2">
         {activeTab === "overview" && (
           <OverviewTab
             studentId={studentId}
-            student={student}
             modules={modules}
             lessons={lessons}
           />

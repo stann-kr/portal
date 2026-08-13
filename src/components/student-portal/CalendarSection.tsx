@@ -9,7 +9,8 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { CalendarDays, List, Grid3x3, BookOpen, FileVideo, X, type LucideIcon } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
+import { Button } from "@/components/ui/button";
+import type { UnifiedItem, UnifiedItemType } from "@/lib/utils/unifiedItemUtils";
 import { getOrSeedColumns } from "@/lib/actions/digging";
 import { UnifiedCalendar } from "./UnifiedCalendar";
 import { DailyListView } from "./DailyListView";
@@ -29,6 +30,7 @@ import {
   getCalendarTabs,
   resolveCalendarPreset,
   resolveCalendarTab,
+  resolveUnifiedItemType,
   type CalendarPreset,
   type CalendarTabValue,
 } from "@/lib/calendar-section-contract";
@@ -93,6 +95,9 @@ interface CalendarSectionProps {
   canCreateQna?: boolean;
   /** 숨김 마운트 상태에서도 section 진입 시 view URL을 canonicalize하기 위한 활성 상태 */
   isActive?: boolean;
+  loading?: boolean;
+  loadError?: string | null;
+  onRetry?: () => void;
 }
 
 // ── 컴포넌트 ─────────────────────────────────────
@@ -110,6 +115,9 @@ export function CalendarSection({
   onAddItem,
   canCreateQna = true,
   isActive = true,
+  loading = false,
+  loadError = null,
+  onRetry,
 }: CalendarSectionProps) {
   const [createDefaultDate, setCreateDefaultDate] = useState<string | undefined>(undefined);
   const [createDefaultStart, setCreateDefaultStart] = useState<string | undefined>(undefined);
@@ -119,6 +127,7 @@ export function CalendarSection({
   const [qnaFormBusy, setQnaFormBusy] = useState(false);
   const [activeTab, setActiveTab] = useState<CalendarTabValue>("calendar");
   const [calendarPreset, setCalendarPreset] = useState<CalendarPreset | null>(null);
+  const [allItemsInitialType, setAllItemsInitialType] = useState<UnifiedItemType | null>(null);
   const calendarTabs = getCalendarTabs(workspaceRole);
   const calendarTabStorageKey = createAccountCalendarTabStorageKey(actorId);
   const isStudentWorkspace = actorId === studentId;
@@ -153,6 +162,7 @@ export function CalendarSection({
       const fromUrl = params.get("view");
       const resolvedFromUrl = resolveCalendarTab(fromUrl, workspaceRole);
       setCalendarPreset(resolveCalendarPreset(params.get("preset")));
+      setAllItemsInitialType(resolveUnifiedItemType(params.get("type")));
       if (fromUrl && resolvedFromUrl === fromUrl) {
         setActiveTab(resolvedFromUrl);
         return;
@@ -197,6 +207,10 @@ export function CalendarSection({
     if (nextTab !== "calendar") {
       setCalendarPreset(null);
       url.searchParams.delete("preset");
+    }
+    if (nextTab !== "all") {
+      setAllItemsInitialType(null);
+      url.searchParams.delete("type");
     }
     window.history.pushState({}, "", `${url.pathname}${url.search}${url.hash}`);
   };
@@ -250,7 +264,7 @@ export function CalendarSection({
   };
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full" aria-busy={loading}>
       <Tabs value={activeTab} onValueChange={handleTabChange} className="flex flex-col h-full">
         {/* 탭 헤더 */}
         <div className="flex flex-shrink-0 flex-col gap-2 border-b border-border px-3 pt-3 sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:pt-4">
@@ -313,6 +327,15 @@ export function CalendarSection({
             {workspaceContextLabel} · <span className="font-medium text-foreground">{spaceLabel || "선택된 학생 없음"}</span>
           </span>
         </div>
+        {loading ? (
+          <p className="border-b border-border px-3 py-2 text-xs text-muted-foreground sm:px-6" role="status">학생 일정을 불러오는 중입니다.</p>
+        ) : null}
+        {loadError ? (
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-destructive/20 bg-destructive/5 px-3 py-2 sm:px-6" role="alert">
+            <p className="text-xs text-destructive">{loadError}</p>
+            {onRetry ? <Button type="button" size="sm" variant="outline" onClick={onRetry}>다시 시도</Button> : null}
+          </div>
+        ) : null}
         {createDefaultDate ? (
           <div className="flex min-h-10 flex-wrap items-center justify-between gap-2 border-b border-border bg-muted/20 px-3 py-2 text-xs sm:px-6" role="status">
             <span>
@@ -365,6 +388,13 @@ export function CalendarSection({
               items={unifiedItems}
               returnTo={workspaceReturnTo}
               showSpaceContext={showSpaceContext}
+              initialType={allItemsInitialType}
+              onInitialTypeCleared={() => {
+                setAllItemsInitialType(null);
+                const url = new URL(window.location.href);
+                url.searchParams.delete("type");
+                window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+              }}
             />
           </TabsContent>
 

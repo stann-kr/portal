@@ -4,6 +4,7 @@ import {
   CalendarClock,
   CheckCircle2,
   Radio,
+  Settings2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -15,8 +16,6 @@ import {
   type PendingFeedbackAssignment,
 } from "@/lib/admin-work-queue";
 import type { StudentRosterStat } from "@/lib/actions/students";
-import { MediaCleanupControl } from "./MediaCleanupControl";
-import { AccountErasureCleanupControl } from "./AccountErasureCleanupControl";
 
 function formatDay(date: Date) {
   return new Intl.DateTimeFormat("ko-KR", {
@@ -80,11 +79,14 @@ export function AdminWorkQueueSection({
 
   return (
     <div className="mx-auto w-full max-w-[1240px] space-y-8 px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
-      <div>
-        <p className="text-sm text-muted-foreground">{formatDay(referenceTime)}</p>
-        <h1 className="mt-1 text-2xl font-semibold tracking-[-0.03em] text-foreground sm:text-3xl">
-          오늘 처리할 일
-        </h1>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-sm text-muted-foreground">{formatDay(referenceTime)}</p>
+          <h1 className="mt-1 text-2xl font-semibold tracking-[-0.03em] text-foreground sm:text-3xl">오늘 처리할 일</h1>
+        </div>
+        <Button asChild variant="ghost" size="sm">
+          <Link href="/dashboard/admin/operations"><Settings2 aria-hidden="true" />운영 도구</Link>
+        </Button>
       </div>
 
       <dl className="grid grid-cols-2 border-y border-border md:grid-cols-4">
@@ -232,9 +234,6 @@ export function AdminWorkQueueSection({
           </div>
         )}
       </section>
-
-      <MediaCleanupControl />
-      <AccountErasureCleanupControl />
 
       <div className="flex flex-col items-start justify-between gap-3 rounded-lg bg-accent px-5 py-4 sm:flex-row sm:items-center">
         <div className="flex items-center gap-3">

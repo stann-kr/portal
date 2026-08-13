@@ -11,8 +11,10 @@ export function AccountErasureCleanupControl() {
     "삭제 후 30일이 지난 계정 식별자를 최대 10건씩 무작위 alias로 바꿉니다.",
   );
   const [isPending, startTransition] = useTransition();
+  const [confirming, setConfirming] = useState(false);
 
   const run = () => {
+    setConfirming(false);
     startTransition(async () => {
       try {
         const result = await processDueAccountErasures(10);
@@ -45,15 +47,17 @@ export function AccountErasureCleanupControl() {
           {status}
         </p>
       </div>
-      <Button
-        type="button"
-        variant="outline"
-        disabled={isPending}
-        aria-describedby={statusId}
-        onClick={run}
-      >
-        {isPending ? "정리 중" : "기한 지난 ID 정리"}
-      </Button>
+      {confirming ? (
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <span className="text-xs font-medium text-warning" role="alert">기한이 지난 원래 식별자를 복구 불가능하게 바꿉니다.</span>
+          <Button type="button" variant="ghost" size="sm" onClick={() => setConfirming(false)}>취소</Button>
+          <Button type="button" variant="outline" size="sm" disabled={isPending} aria-describedby={statusId} onClick={run}>정리 확인</Button>
+        </div>
+      ) : (
+        <Button type="button" variant="outline" disabled={isPending} aria-describedby={statusId} onClick={() => setConfirming(true)}>
+          {isPending ? "정리 중" : "기한 지난 ID 정리"}
+        </Button>
+      )}
     </section>
   );
 }

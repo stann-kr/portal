@@ -20,7 +20,7 @@ export default async function StudentNotesPage() {
   const returnTo = "/dashboard/student/notes";
   const notes = await getPrivateNotes(session.user.id);
   return (
-    <main className="mx-auto max-w-4xl space-y-6 px-4 py-6 sm:px-6">
+    <div className="mx-auto max-w-4xl space-y-6 px-4 py-6 sm:px-6">
       <header className="flex flex-wrap items-start justify-between gap-4 border-b border-border pb-5">
         <div>
           <p className="text-sm text-muted-foreground">내 스페이스</p>
@@ -34,6 +34,6 @@ export default async function StudentNotesPage() {
         </div>
       </header>
       <PrivateNoteList notes={notes} returnTo={returnTo} />
-    </main>
+    </div>
   );
 }
