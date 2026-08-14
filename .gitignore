@@ -34,6 +34,8 @@ yarn-error.log*
 .env*
 !.env.example
 !.env.cloudflare.example
+.dev.vars*
+!.dev.vars.example
 
 # vercel
 .vercel
@@ -65,9 +67,12 @@ next-env.d.ts
 # 작업 로그는 비공개 레이어에서만 관리한다
 /WORK_LOG.md
 
-# 에이전트 지침 및 로컬 설정 (공개 금지)
-/CLAUDE.md
+# ProjectDocs local-only instructions
+/.projectdocs.json
 /AGENTS.md
+/CLAUDE.md
+
+# agent-local 설정
 /.claude/
 /.agents/
 /.codex/

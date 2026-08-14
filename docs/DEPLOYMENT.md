@@ -19,6 +19,8 @@
 | R2 binding | `BUCKET` |
 | R2 bucket | `portal-storage` |
 
+현재 source-controlled Wrangler 설정은 production Worker `portal`만 정의한다. 별도 development Worker·D1·R2 설정과 branch별 Workers Builds trigger는 저장소에서 확인되지 않으므로, 중앙 배포 계약의 development/production 분리는 아직 완료됐다고 볼 수 없다. remote 설정을 확인하거나 바꾸는 작업은 별도 승인 범위다.
+
 ## 사전 체크리스트
 
 - build·upload 환경은 Node.js 22 이상이어야 한다.
@@ -29,7 +31,10 @@
 - auth secret과 기타 secret은 배포 환경에만 설정한다.
 - 외부 공개 레슨 캘린더를 활성화하려면 `EXTERNAL_CALENDAR_ENCRYPTION_KEY`를 32-byte base64 또는 base64url secret으로 환경마다 안정적으로 설정한다. 값 자체는 저장소·문서·로그에 남기지 않으며, 기존 구독이 있으면 key를 임의로 교체하지 않는다. `0013` migration 적용과 key 설정 전에는 연결 기능을 운영에 사용하지 않는다.
 - production deploy 전 admin/student smoke 계정과 test data를 준비한다.
-- production branch merge가 자동 배포를 시작하는지 확인하고, migration 작업 창에는 자동 promotion을 중지하거나 upload-only 절차로 전환한다.
+- Cloudflare Workers Builds를 기본 배포 주체로 사용하고 development는 `dev`, production은 `main` push만 고정 Worker 배포를 시작하도록 분리한다. 두 환경의 Worker, binding, secret, D1, R2와 route를 공유하지 않는다.
+- trigger branch, required release gate, 예상 commit SHA, Active Deployment와 대상 URL smoke를 확인하기 전에는 배포 성공을 보고하지 않는다.
+- 현재 저장소에는 development 설정이 없으므로 feature/fix branch를 `dev`에 통합해도 development 자동 배포를 가정하지 않는다. remote trigger와 resource 분리가 확인될 때까지 `BLOCKED`로 다룬다.
+- 비호환 migration 작업 창에는 자동 promotion을 중지하거나 upload-only 절차로 전환한다.
 
 ### 비호환 migration 전환 gate
 
@@ -124,10 +129,7 @@ npx wrangler versions deploy "${TARGET_VERSION_ID}@100%" --name portal -y
 ## 로컬 검증
 
 ```bash
-npm run db:check
-npm run lint
-npm run build
-npm run build:worker
+npm run quality
 npm run build:maintenance
 npm run build:scheduled
 ```
@@ -152,7 +154,9 @@ Remote migration은 production 데이터에 영향을 줄 수 있으므로 별�
 
 ## 배포
 
-schema와 양방향 호환되는 일반 application 변경만 OpenNext deploy를 사용할 수 있다.
+일반 feature/fix 배포의 기준 경로는 Cloudflare Workers Builds다. feature/fix branch는 `dev`로 통합하고, 검증된 `dev` push는 분리된 development Worker, 명시적으로 승인된 `main` push는 production Worker를 배포해야 한다. 현재 저장소에서는 development Worker와 branch trigger를 확인할 수 없으므로 이 경로는 아직 활성화됐다고 주장하지 않는다.
+
+아래 수동 명령은 중앙 배포 경로의 대체 수단이 아니다. schema와 양방향 호환되는 application 변경을 승인된 운영 복구·전환 작업에서 직접 배포해야 할 때만 사용한다.
 
 ```bash
 npx opennextjs-cloudflare deploy
