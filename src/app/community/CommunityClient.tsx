@@ -22,6 +22,7 @@ import {
   Music2,
   ArrowLeft,
   RotateCcw,
+  Trash2,
 } from "lucide-react";
 import { getCategories } from "@/lib/actions/categories";
 import { getPostsByCategory, getPostsByBoardType } from "@/lib/actions/posts";
@@ -241,6 +242,13 @@ export default function CommunityClient({ isAdmin }: CommunityClientProps) {
             <Terminal className="w-4 h-4" />
             Community
           </div>
+          <Link
+            href="/community/trash"
+            className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+          >
+            <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+            게시물 휴지통
+          </Link>
         </div>
 
         {/* GENERAL일 때만 채널 사이드바 표시 */}

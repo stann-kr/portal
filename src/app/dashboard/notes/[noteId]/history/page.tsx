@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { ArrowLeft, History } from "lucide-react";
-import { auth } from "@/auth";
+import { getActiveAuthSession } from "@/lib/auth-guard";
 import {
   getPrivateNoteIncludingTrash,
   getPrivateNoteRevisions,
@@ -28,7 +28,7 @@ export default async function NoteHistoryPage({
   params: Promise<{ noteId: string }>;
   searchParams: Promise<{ returnTo?: string }>;
 }) {
-  const session = await auth();
+  const session = await getActiveAuthSession();
   if (!session?.user?.id) redirect("/login");
   const { noteId } = await params;
   const note = await getPrivateNoteIncludingTrash(noteId);

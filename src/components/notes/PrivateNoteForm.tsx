@@ -3,7 +3,7 @@
 import { useActionState, useCallback, useState, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
 import { createPrivateNote, type CreateNoteState } from "@/lib/actions/privateNotes";
-import { useFormDraft } from "@/lib/hooks/useFormDraft";
+import { useSyncedFormDraft } from "@/lib/hooks/useSyncedFormDraft";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DraftStatus } from "@/components/editor/DraftStatus";
@@ -95,7 +95,8 @@ export function PrivateNoteForm({
     recoveries,
     restoreRecovery,
     discardRecovery,
-  } = useFormDraft<CreateNoteDraft>(
+    serverSync,
+  } = useSyncedFormDraft<CreateNoteDraft>(
     createDocumentDraftKey("note", actorId, `new:${studentId}`),
     (d) => {
       hideSaveConfirmation();
@@ -326,6 +327,7 @@ export function PrivateNoteForm({
                   restoreRecovery(storageKey);
                 }}
                 onDiscardRecovery={discardRecovery}
+                serverSync={serverSync}
                 disabled={pending}
               />
             }

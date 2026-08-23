@@ -16,24 +16,87 @@ const migrationPattern = /^\d{4}_.+\.sql$/;
 const snapshotPattern = /^\d{4}_snapshot\.json$/;
 const zeroSnapshotId = "00000000-0000-0000-0000-000000000000";
 const continuityMigrationFile = "0008_document_continuity.sql";
+const serverDraftMigrationFile = "0009_document_server_drafts.sql";
+const lifecycleExpansionMigrationFile = "0010_post_qna_lifecycle.sql";
+const mediaLifecycleMigrationFile = "0011_media_lifecycle.sql";
+const accountPrivacyMigrationFile = "0012_account_privacy_lifecycle.sql";
 const continuityTables = [
+  "account_cleanup_tokens",
+  "account_deletion_jobs",
+  "calendar_feed_tokens",
   "document_operation_ledger",
+  "document_server_draft_operations",
+  "document_server_drafts",
   "document_tombstones",
+  "media_deletion_outbox",
+  "media_objects",
   "private_notes",
   "private_note_revisions",
+  "post_revisions",
+  "posts",
+  "qna_thread_events",
+  "qna_threads",
 ];
 const continuityCheckNames = {
+  account_cleanup_tokens: [
+    "account_cleanup_tokens_digest_check",
+    "account_cleanup_tokens_state_check",
+  ],
+  account_deletion_jobs: [
+    "account_deletion_jobs_hash_check",
+    "account_deletion_jobs_identity_check",
+    "account_deletion_jobs_initiator_check",
+    "account_deletion_jobs_state_check",
+    "account_deletion_jobs_timestamp_check",
+  ],
+  calendar_feed_tokens: [
+    "calendar_feed_tokens_digest_check",
+    "calendar_feed_tokens_timestamp_check",
+  ],
   document_operation_ledger: [
     "document_operation_ledger_nonempty_ids_check",
     "document_operation_ledger_operation_type_check",
     "document_operation_ledger_request_hash_check",
+    "document_operation_ledger_resource_operation_check",
     "document_operation_ledger_resource_type_check",
     "document_operation_ledger_result_revision_check",
+  ],
+  document_server_draft_operations: [
+    "document_server_draft_operations_hash_check",
+    "document_server_draft_operations_identity_check",
+    "document_server_draft_operations_state_check",
+    "document_server_draft_operations_timestamp_check",
+    "document_server_draft_operations_type_check",
+  ],
+  document_server_drafts: [
+    "document_server_drafts_identity_check",
+    "document_server_drafts_kind_check",
+    "document_server_drafts_payload_check",
+    "document_server_drafts_timestamp_check",
+    "document_server_drafts_version_check",
   ],
   document_tombstones: [
     "document_tombstones_nonempty_ids_check",
     "document_tombstones_resource_type_check",
     "document_tombstones_source_version_check",
+  ],
+  media_deletion_outbox: [
+    "media_deletion_outbox_attempt_check",
+    "media_deletion_outbox_identity_check",
+    "media_deletion_outbox_lease_check",
+    "media_deletion_outbox_reason_check",
+    "media_deletion_outbox_timestamp_check",
+  ],
+  media_objects: [
+    "media_objects_identity_check",
+    "media_objects_key_check",
+    "media_objects_purpose_check",
+    "media_objects_resource_pair_check",
+    "media_objects_resource_type_check",
+    "media_objects_size_check",
+    "media_objects_state_check",
+    "media_objects_state_payload_check",
+    "media_objects_timestamp_check",
   ],
   private_notes: [
     "private_notes_deleted_actor_check",
@@ -47,8 +110,38 @@ const continuityCheckNames = {
     "private_note_revisions_number_check",
     "private_note_revisions_restore_source_check",
   ],
+  post_revisions: [
+    "post_revisions_change_type_check",
+    "post_revisions_deleted_state_check",
+    "post_revisions_identity_check",
+    "post_revisions_initial_number_check",
+    "post_revisions_number_check",
+    "post_revisions_restore_source_check",
+  ],
+  posts: ["posts_version_check"],
+  qna_thread_events: [
+    "qna_thread_events_deleted_state_check",
+    "qna_thread_events_identity_check",
+    "qna_thread_events_initial_number_check",
+    "qna_thread_events_number_check",
+    "qna_thread_events_reply_check",
+    "qna_thread_events_status_check",
+    "qna_thread_events_type_check",
+  ],
+  qna_threads: ["qna_threads_version_check"],
 };
 const continuityTriggerNames = [
+  "account_cleanup_tokens_before_insert_existing",
+  "account_cleanup_tokens_before_insert_guard",
+  "account_cleanup_tokens_guard_delete",
+  "account_cleanup_tokens_transition_guard",
+  "account_deletion_jobs_before_insert_existing",
+  "account_deletion_jobs_before_insert_guard",
+  "account_deletion_jobs_guard_delete",
+  "account_deletion_jobs_transition_guard",
+  "calendar_feed_tokens_before_insert_existing",
+  "calendar_feed_tokens_before_insert_guard",
+  "calendar_feed_tokens_rotation_guard",
   "document_batch_abort_guard_reject_insert",
   "document_operation_ledger_before_insert_existing",
   "document_operation_ledger_immutable_delete",
@@ -63,6 +156,61 @@ const continuityTriggerNames = [
   "private_note_revisions_immutable_update",
   "private_notes_before_delete_tombstone",
   "private_notes_before_insert_tombstone",
+  "post_revisions_before_insert_baseline",
+  "post_revisions_before_insert_existing",
+  "post_revisions_before_insert_receipt_match",
+  "post_revisions_guard_delete",
+  "post_revisions_immutable_update",
+  "post_revisions_media_guard_insert",
+  "posts_before_delete_media_pending",
+  "posts_before_delete_tombstone",
+  "posts_before_insert_tombstone",
+  "posts_deleted_actor_guard_insert",
+  "posts_deleted_actor_guard_update",
+  "posts_media_guard_insert",
+  "posts_media_guard_update",
+  "qna_replies_before_insert_existing",
+  "qna_replies_before_insert_receipt_match",
+  "qna_replies_guard_delete",
+  "qna_replies_immutable_update",
+  "qna_replies_media_guard_insert",
+  "qna_thread_events_before_insert_baseline",
+  "qna_thread_events_before_insert_existing",
+  "qna_thread_events_before_insert_receipt_match",
+  "qna_thread_events_guard_delete",
+  "qna_thread_events_immutable_update",
+  "qna_threads_before_delete_tombstone",
+  "qna_threads_before_insert_tombstone",
+  "qna_threads_deleted_actor_guard_insert",
+  "qna_threads_deleted_actor_guard_update",
+  "qna_threads_before_delete_media_pending",
+  "comments_before_delete_trashed_post",
+  "comments_before_insert_active_post",
+  "comments_before_update_trashed_post",
+  "profiles_before_delete_document_history",
+  "profiles_before_insert_erased_identity",
+  "profiles_before_insert_existing",
+  "profiles_update_identity_guard",
+];
+const serverDraftTriggerNames = [
+  "document_server_draft_operations_before_insert_existing",
+  "document_server_draft_operations_immutable_update",
+  "document_server_drafts_before_insert_existing",
+  "document_server_drafts_cas_update_guard",
+];
+const mediaLifecycleTriggerNames = [
+  "media_deletion_outbox_before_insert_existing",
+  "media_deletion_outbox_before_insert_match",
+  "media_deletion_outbox_guard_delete",
+  "media_deletion_outbox_immutable_identity",
+  "media_deletion_outbox_transition_guard",
+  "media_objects_guard_delete",
+  "media_objects_before_insert_existing",
+  "media_objects_before_insert_guard",
+  "media_objects_deletion_outbox_guard",
+  "media_objects_immutable_identity",
+  "media_objects_transition_guard",
+  "media_objects_transition_payload_guard",
 ];
 
 const databaseSignatures = {
@@ -493,11 +641,21 @@ function validateContinuityTriggers(database) {
     FROM sqlite_master
     WHERE type = 'trigger'
       AND tbl_name IN (
+        'account_cleanup_tokens',
+        'account_deletion_jobs',
+        'calendar_feed_tokens',
+        'comments',
         'document_batch_abort_guard',
         'document_operation_ledger',
         'document_tombstones',
+        'post_revisions',
+        'posts',
+        'profiles',
         'private_notes',
-        'private_note_revisions'
+        'private_note_revisions',
+        'qna_replies',
+        'qna_thread_events',
+        'qna_threads'
       )
     ORDER BY name
   `);
@@ -507,8 +665,107 @@ function validateContinuityTriggers(database) {
     [...continuityTriggerNames].sort(),
   );
 
+  const sourceByName = new Map();
+  for (const migrationFile of [
+    continuityMigrationFile,
+    lifecycleExpansionMigrationFile,
+    mediaLifecycleMigrationFile,
+    accountPrivacyMigrationFile,
+  ]) {
+    const migrationStatements = readFileSync(
+      join(migrationsDirectory, migrationFile),
+      "utf8",
+    )
+      .split("--> statement-breakpoint")
+      .map((statement) => statement.trim())
+      .filter((statement) => /^CREATE TRIGGER\b/iu.test(statement));
+    for (const statement of migrationStatements) {
+      const match = statement.match(/^CREATE TRIGGER\s+[`"]?([^`"\s]+)[`"]?/iu);
+      assert(match, `${migrationFile} trigger 이름을 해석하지 못했습니다.`);
+      if (continuityTriggerNames.includes(match[1])) {
+        sourceByName.set(match[1], normalizeSqlSignature(statement));
+      }
+    }
+  }
+  assertRowsEqual(
+    "document lifecycle trigger source allowlist",
+    [...sourceByName.keys()].sort(),
+    [...continuityTriggerNames].sort(),
+  );
+  for (const trigger of triggerRows) {
+    assert(
+      normalizeSqlSignature(trigger.sql) === sourceByName.get(trigger.name),
+      `${trigger.name} trigger SQL이 migration source와 다릅니다.`,
+    );
+  }
+}
+
+function validateMediaLifecycleTriggers(database) {
+  const triggerRows = database.all(`
+    SELECT name, sql
+    FROM sqlite_master
+    WHERE type = 'trigger'
+      AND tbl_name IN ('media_objects', 'media_deletion_outbox')
+    ORDER BY name
+  `);
+  assertRowsEqual(
+    "media lifecycle trigger allowlist",
+    triggerRows.map((row) => row.name),
+    [...mediaLifecycleTriggerNames].sort(),
+  );
+
+  const sourceByName = new Map();
+  for (const migrationFile of [
+    mediaLifecycleMigrationFile,
+    accountPrivacyMigrationFile,
+  ]) {
+    const migrationStatements = readFileSync(
+      join(migrationsDirectory, migrationFile),
+      "utf8",
+    )
+      .split("--> statement-breakpoint")
+      .map((statement) => statement.trim())
+      .filter((statement) => /^CREATE TRIGGER\b/iu.test(statement));
+    for (const statement of migrationStatements) {
+      const match = statement.match(/^CREATE TRIGGER\s+[`"]?([^`"\s]+)[`"]?/iu);
+      assert(match, `${migrationFile} trigger 이름을 해석하지 못했습니다.`);
+      if (mediaLifecycleTriggerNames.includes(match[1])) {
+        sourceByName.set(match[1], normalizeSqlSignature(statement));
+      }
+    }
+  }
+  assertRowsEqual(
+    "0011 media trigger source allowlist",
+    [...sourceByName.keys()].sort(),
+    [...mediaLifecycleTriggerNames].sort(),
+  );
+  for (const trigger of triggerRows) {
+    assert(
+      normalizeSqlSignature(trigger.sql) === sourceByName.get(trigger.name),
+      `${trigger.name} trigger SQL이 latest media source와 다릅니다.`,
+    );
+  }
+}
+
+function validateServerDraftTriggers(database) {
+  const triggerRows = database.all(`
+    SELECT name, sql
+    FROM sqlite_master
+    WHERE type = 'trigger'
+      AND tbl_name IN (
+        'document_server_draft_operations',
+        'document_server_drafts'
+      )
+    ORDER BY name
+  `);
+  assertRowsEqual(
+    "server draft trigger allowlist",
+    triggerRows.map((row) => row.name),
+    [...serverDraftTriggerNames].sort(),
+  );
+
   const migrationStatements = readFileSync(
-    join(migrationsDirectory, continuityMigrationFile),
+    join(migrationsDirectory, serverDraftMigrationFile),
     "utf8",
   )
     .split("--> statement-breakpoint")
@@ -517,18 +774,18 @@ function validateContinuityTriggers(database) {
   const sourceByName = new Map();
   for (const statement of migrationStatements) {
     const match = statement.match(/^CREATE TRIGGER\s+[`"]?([^`"\s]+)[`"]?/iu);
-    assert(match, "0008 trigger 이름을 해석하지 못했습니다.");
+    assert(match, "0009 trigger 이름을 해석하지 못했습니다.");
     sourceByName.set(match[1], normalizeSqlSignature(statement));
   }
   assertRowsEqual(
-    "0008 trigger source allowlist",
+    "0009 trigger source allowlist",
     [...sourceByName.keys()].sort(),
-    [...continuityTriggerNames].sort(),
+    [...serverDraftTriggerNames].sort(),
   );
   for (const trigger of triggerRows) {
     assert(
       normalizeSqlSignature(trigger.sql) === sourceByName.get(trigger.name),
-      `${trigger.name} trigger SQL이 0008 source와 다릅니다.`,
+      `${trigger.name} trigger SQL이 0009 source와 다릅니다.`,
     );
   }
 }
@@ -644,6 +901,860 @@ async function validateContinuityUpgrade(migrationFiles) {
   } finally {
     inboundDatabase.close();
   }
+}
+
+async function validateServerDraftUpgrade(migrationFiles) {
+  const migrationIndex = migrationFiles.indexOf(serverDraftMigrationFile);
+  assert(migrationIndex > 0, `${serverDraftMigrationFile} 순서를 찾지 못했습니다.`);
+  const priorMigrations = migrationFiles.slice(0, migrationIndex);
+  const upgradeDatabase = await createMemoryDatabase();
+
+  try {
+    applyMigrations(upgradeDatabase, priorMigrations);
+    upgradeDatabase.exec(`
+      INSERT INTO profiles (id, email, display_name, role)
+      VALUES ('server-draft-upgrade-user', 'server-draft-upgrade@example.com', 'Server Draft', 'student');
+    `);
+    applyMigration(upgradeDatabase, serverDraftMigrationFile);
+    assert(
+      upgradeDatabase.all(
+        "SELECT id FROM profiles WHERE id = 'server-draft-upgrade-user';",
+      ).length === 1,
+      "0009 upgrade가 기존 profile을 변경했습니다.",
+    );
+    assert(
+      upgradeDatabase.all("SELECT * FROM document_server_drafts;").length === 0 &&
+        upgradeDatabase.all("SELECT * FROM document_server_draft_operations;").length === 0,
+      "0009 신규 server draft table이 비어 있지 않습니다.",
+    );
+
+    const hash = "a".repeat(64);
+    upgradeDatabase.exec(`
+      INSERT INTO document_server_drafts (
+        owner_id, source_key, document_kind, context_id, payload_json,
+        payload_hash, draft_version, writer_device_id,
+        created_at, updated_at, expires_at
+      ) VALUES (
+        'server-draft-upgrade-user',
+        'draft:document:note:server-draft-upgrade-user:new',
+        'note', 'new', '{"title":"upgrade"}', '${hash}', 1,
+        '00000000-0000-4000-8000-000000000001',
+        1700000000, 1700000000, 1702592000
+      );
+      INSERT INTO document_server_draft_operations (
+        owner_id, operation_id, source_key, operation_type, request_hash,
+        request_hash_version, result_version, result_state, created_at, expires_at
+      ) VALUES (
+        'server-draft-upgrade-user',
+        '00000000-0000-4000-8000-000000000002',
+        'draft:document:note:server-draft-upgrade-user:new',
+        'UPSERT', '${hash}', 1, 1, 'PRESENT', 1700000000, 1702592000
+      );
+      DELETE FROM profiles WHERE id = 'server-draft-upgrade-user';
+    `);
+    assert(
+      upgradeDatabase.all("SELECT * FROM document_server_drafts;").length === 0 &&
+        upgradeDatabase.all("SELECT * FROM document_server_draft_operations;").length === 0,
+      "profile 삭제가 server draft payload와 receipt를 cascade하지 않았습니다.",
+    );
+    assert(
+      upgradeDatabase.all("PRAGMA foreign_key_check;").length === 0,
+      "0009 upgrade 뒤 foreign key 위반이 있습니다.",
+    );
+  } finally {
+    upgradeDatabase.close();
+  }
+}
+
+async function validateLifecycleExpansionUpgrade(migrationFiles) {
+  const migrationIndex = migrationFiles.indexOf(lifecycleExpansionMigrationFile);
+  assert(migrationIndex > 0, `${lifecycleExpansionMigrationFile} 순서를 찾지 못했습니다.`);
+  const priorMigrations = migrationFiles.slice(0, migrationIndex);
+  const upgradeDatabase = await createMemoryDatabase();
+
+  try {
+    applyMigrations(upgradeDatabase, priorMigrations);
+    upgradeDatabase.exec(`
+      INSERT INTO profiles (id, email, display_name, role)
+      VALUES
+        ('lifecycle-student', 'lifecycle-student@example.com', 'Lifecycle Student', 'student'),
+        ('lifecycle-admin', 'lifecycle-admin@example.com', 'Lifecycle Admin', 'admin');
+      INSERT INTO posts (
+        id, author_id, category, board_type, is_pinned, media_url,
+        title, content_html, created_at
+      ) VALUES (
+        'lifecycle-post', 'lifecycle-admin', 'general', 'ANNOUNCEMENT', 1,
+        'https://example.com/post-media', 'Lifecycle Post', '<p>Post</p>', 1700000000
+      );
+      INSERT INTO comments (id, post_id, author_id, content_html, created_at)
+      VALUES (
+        'lifecycle-comment', 'lifecycle-post', 'lifecycle-student',
+        '<p>Comment</p>', 1700000001
+      );
+      INSERT INTO qna_threads (
+        id, student_id, title, status, created_at, updated_at
+      ) VALUES (
+        'lifecycle-thread', 'lifecycle-student', 'Lifecycle Q&A',
+        'ANSWERED', 1700000000, 1700000002
+      );
+      INSERT INTO qna_replies (
+        id, thread_id, author_id, content_html, attachment_url, created_at
+      ) VALUES
+        ('lifecycle-question', 'lifecycle-thread', 'lifecycle-student', '<p>Question</p>', NULL, 1700000000),
+        ('lifecycle-answer', 'lifecycle-thread', 'lifecycle-admin', '<p>Answer</p>', NULL, 1700000002);
+    `);
+
+    applyMigration(upgradeDatabase, lifecycleExpansionMigrationFile);
+
+    const [post] = upgradeDatabase.all(`
+      SELECT version, deleted_at, updated_at FROM posts WHERE id = 'lifecycle-post';
+    `);
+    assert(
+      post?.version === 1 && post?.deleted_at === null && post?.updated_at === 1700000000,
+      "0010 upgrade가 기존 post head를 active version 1로 backfill하지 못했습니다.",
+    );
+    const [postBaseline] = upgradeDatabase.all(`
+      SELECT revision_number, change_type, board_type, category, is_pinned, media_url,
+             actor_id, operation_record_id
+      FROM post_revisions WHERE post_id = 'lifecycle-post';
+    `);
+    assert(
+      postBaseline?.revision_number === 1 &&
+        postBaseline?.change_type === "BASELINE" &&
+        postBaseline?.board_type === "ANNOUNCEMENT" &&
+        postBaseline?.category === "general" &&
+        postBaseline?.is_pinned === 1 &&
+        postBaseline?.media_url === "https://example.com/post-media" &&
+        postBaseline?.actor_id === null &&
+        postBaseline?.operation_record_id === null,
+      "0010 upgrade가 기존 post의 완전한 BASELINE snapshot을 만들지 못했습니다.",
+    );
+    assert(
+      upgradeDatabase.all("SELECT id FROM comments WHERE id = 'lifecycle-comment';").length === 1,
+      "0010 upgrade가 기존 post comment를 보존하지 못했습니다.",
+    );
+
+    const [thread] = upgradeDatabase.all(`
+      SELECT version, deleted_at, status FROM qna_threads WHERE id = 'lifecycle-thread';
+    `);
+    const [threadBaseline] = upgradeDatabase.all(`
+      SELECT event_number, event_type, title, status, actor_id, operation_record_id
+      FROM qna_thread_events WHERE thread_id = 'lifecycle-thread';
+    `);
+    assert(
+      thread?.version === 1 && thread?.deleted_at === null && thread?.status === "ANSWERED",
+      "0010 upgrade가 기존 Q&A head를 active version 1로 backfill하지 못했습니다.",
+    );
+    assert(
+      threadBaseline?.event_number === 1 &&
+        threadBaseline?.event_type === "BASELINE" &&
+        threadBaseline?.title === "Lifecycle Q&A" &&
+        threadBaseline?.status === "ANSWERED" &&
+        threadBaseline?.actor_id === null &&
+        threadBaseline?.operation_record_id === null,
+      "0010 upgrade가 기존 Q&A BASELINE event를 만들지 못했습니다.",
+    );
+    assert(
+      upgradeDatabase.all("SELECT id FROM qna_replies WHERE thread_id = 'lifecycle-thread';").length === 2,
+      "0010 upgrade가 기존 Q&A reply를 보존하지 못했습니다.",
+    );
+    assertSqlFails(
+      upgradeDatabase,
+      "DELETE FROM profiles WHERE id = 'lifecycle-student';",
+      "post comment/Q&A history 보유 profile RESTRICT",
+      "DOCUMENT_HISTORY_ACCOUNT_DELETE_RESTRICTED",
+    );
+    assert(
+      upgradeDatabase.all("PRAGMA foreign_key_check;").length === 0,
+      "0010 upgrade 뒤 foreign key 위반이 있습니다.",
+    );
+  } finally {
+    upgradeDatabase.close();
+  }
+}
+
+async function validateMediaLifecycleUpgrade(migrationFiles) {
+  const lifecycleIndex = migrationFiles.indexOf(lifecycleExpansionMigrationFile);
+  const mediaIndex = migrationFiles.indexOf(mediaLifecycleMigrationFile);
+  assert(lifecycleIndex > 0, `${lifecycleExpansionMigrationFile} 순서를 찾지 못했습니다.`);
+  assert(mediaIndex > lifecycleIndex, `${mediaLifecycleMigrationFile} 순서를 찾지 못했습니다.`);
+  const upgradeDatabase = await createMemoryDatabase();
+
+  try {
+    applyMigrations(upgradeDatabase, migrationFiles.slice(0, lifecycleIndex));
+    upgradeDatabase.exec(`
+      INSERT INTO profiles (id, email, display_name, role)
+      VALUES
+        ('media-upgrade-student', 'media-upgrade-student@example.com', 'Media Student', 'student'),
+        ('media-upgrade-admin', 'media-upgrade-admin@example.com', 'Media Admin', 'admin');
+      INSERT INTO posts (
+        id, author_id, category, board_type, is_pinned, media_url,
+        title, content_html, created_at
+      ) VALUES (
+        'media-upgrade-post', 'media-upgrade-admin', 'feedback', 'FEEDBACK', 0,
+        'https://legacy.example/post.mp3', 'Legacy post', '<p>Legacy post</p>', 1700000000
+      );
+      INSERT INTO qna_threads (
+        id, student_id, title, status, created_at, updated_at
+      ) VALUES (
+        'media-upgrade-thread', 'media-upgrade-student', 'Legacy Q&A',
+        'ANSWERED', 1700000000, 1700000002
+      );
+      INSERT INTO qna_replies (
+        id, thread_id, author_id, content_html, attachment_url, created_at
+      ) VALUES
+        (
+          'media-upgrade-question', 'media-upgrade-thread', 'media-upgrade-student',
+          '<p>Question</p>', 'https://legacy.example/question.jpg', 1700000000
+        ),
+        (
+          'media-upgrade-answer', 'media-upgrade-thread', 'media-upgrade-admin',
+          '<p>Answer</p>', 'https://legacy.example/answer.mp3', 1700000002
+        );
+    `);
+
+    for (const migrationFile of migrationFiles.slice(lifecycleIndex, mediaIndex)) {
+      applyMigration(upgradeDatabase, migrationFile);
+    }
+
+    const revisionHash = "e".repeat(64);
+    upgradeDatabase.exec(`
+      INSERT INTO document_operation_ledger (
+        id, operation_id, actor_id, subject_id, resource_type, operation_type,
+        resource_id, request_hash, request_hash_version, result_revision, created_at
+      ) VALUES (
+        'media-upgrade-post-update-ledger', 'media-upgrade-post-update-operation',
+        'media-upgrade-admin', 'media-upgrade-admin', 'COMMUNITY_POST', 'UPDATE',
+        'media-upgrade-post', '${revisionHash}', 1, 2, 1700000003
+      );
+      UPDATE posts
+      SET title = 'Legacy post updated', content_html = '<p>Updated</p>',
+          version = 2, updated_at = 1700000003
+      WHERE id = 'media-upgrade-post';
+      INSERT INTO post_revisions (
+        id, post_id, revision_number, change_type, category, board_type,
+        is_pinned, media_url, title, content_html, snapshot_hash,
+        snapshot_hash_version, actor_id, operation_record_id, created_at
+      ) VALUES (
+        'media-upgrade-post-revision-2', 'media-upgrade-post', 2, 'UPDATE',
+        'feedback', 'FEEDBACK', 0, 'https://legacy.example/post.mp3',
+        'Legacy post updated', '<p>Updated</p>', '${revisionHash}', 1,
+        'media-upgrade-admin', 'media-upgrade-post-update-ledger', 1700000003
+      );
+    `);
+
+    applyMigration(upgradeDatabase, mediaLifecycleMigrationFile);
+
+    const [post] = upgradeDatabase.all(`
+      SELECT media_url, media_object_id
+      FROM posts WHERE id = 'media-upgrade-post';
+    `);
+    assert(
+      post?.media_url === "https://legacy.example/post.mp3" &&
+        post?.media_object_id === null,
+      "0011 upgrade가 legacy post URL을 보존하거나 nullable object ID를 추가하지 못했습니다.",
+    );
+    const revisions = upgradeDatabase.all(`
+      SELECT revision_number, media_url, media_object_id, snapshot_hash,
+             snapshot_hash_version
+      FROM post_revisions
+      WHERE post_id = 'media-upgrade-post'
+      ORDER BY revision_number;
+    `);
+    assert(
+      revisions.length === 2 &&
+        revisions.every(
+          (revision) =>
+            revision.media_url === "https://legacy.example/post.mp3" &&
+            revision.media_object_id === null,
+        ) &&
+        revisions[1]?.snapshot_hash === revisionHash &&
+        revisions[1]?.snapshot_hash_version === 1,
+      "0011 upgrade가 post revision history 또는 v1 hash를 보존하지 못했습니다.",
+    );
+    const replies = upgradeDatabase.all(`
+      SELECT id, attachment_url, attachment_object_id
+      FROM qna_replies
+      WHERE thread_id = 'media-upgrade-thread'
+      ORDER BY id;
+    `);
+    assert(
+      replies.length === 2 &&
+        replies.every(
+          (reply) => reply.attachment_url !== null && reply.attachment_object_id === null,
+        ),
+      "0011 upgrade가 Q&A reply attachment history를 보존하지 못했습니다.",
+    );
+    assert(
+      upgradeDatabase.all("SELECT * FROM media_objects;").length === 0 &&
+        upgradeDatabase.all("SELECT * FROM media_deletion_outbox;").length === 0,
+      "0011 upgrade의 신규 media table이 비어 있지 않습니다.",
+    );
+    assert(
+      upgradeDatabase.all("PRAGMA foreign_key_check;").length === 0,
+      "0011 populated upgrade 뒤 foreign key 위반이 있습니다.",
+    );
+  } finally {
+    upgradeDatabase.close();
+  }
+}
+
+async function validateAccountPrivacyUpgrade(migrationFiles) {
+  const migrationIndex = migrationFiles.indexOf(accountPrivacyMigrationFile);
+  assert(migrationIndex > 0, `${accountPrivacyMigrationFile} 순서를 찾지 못했습니다.`);
+  const priorMigrations = migrationFiles.slice(0, migrationIndex);
+  const upgradeDatabase = await createMemoryDatabase();
+
+  try {
+    applyMigrations(upgradeDatabase, priorMigrations);
+    upgradeDatabase.exec(`
+      INSERT INTO profiles (id, email, display_name, role)
+      VALUES
+        ('privacy-upgrade-student', 'privacy-upgrade-student@example.com', 'Privacy Student', 'student'),
+        ('privacy-upgrade-admin', 'privacy-upgrade-admin@example.com', 'Privacy Admin', 'admin');
+      INSERT INTO media_objects (
+        id, owner_id, purpose, object_key, upload_object_key, state,
+        expected_content_type, expected_size_bytes, draft_operation_id,
+        upload_expires_at, created_at, updated_at
+      ) VALUES (
+        '40000000-0000-4000-8000-000000000001', 'privacy-upgrade-student',
+        'COMMUNITY_POST_AUDIO',
+        'media/community-post-audio/41000000-0000-4000-8000-000000000001',
+        'media-upload/community-post-audio/40000000-0000-4000-8000-000000000001',
+        'PENDING_UPLOAD', 'audio/mpeg', 1024,
+        '40000000-0000-4000-8000-000000000002',
+        1800003600, 1800000000, 1800000000
+      );
+      INSERT INTO posts (
+        id, author_id, category, board_type, title, content_html,
+        created_at, updated_at, version
+      ) VALUES (
+        'privacy-upgrade-post', 'privacy-upgrade-student', 'general', 'GENERAL',
+        'Preserved', '<p>Preserved</p>', 1800000000, 1800000000, 1
+      );
+    `);
+
+    applyMigration(upgradeDatabase, accountPrivacyMigrationFile);
+
+    assert(
+      upgradeDatabase.all(`
+        SELECT id FROM profiles
+        WHERE id IN ('privacy-upgrade-student', 'privacy-upgrade-admin')
+      `).length === 2,
+      "0012 upgrade가 기존 profile을 보존하지 못했습니다.",
+    );
+    const [media] = upgradeDatabase.all(`
+      SELECT owner_id, state, object_key
+      FROM media_objects
+      WHERE id = '40000000-0000-4000-8000-000000000001'
+    `);
+    assert(
+      media?.owner_id === "privacy-upgrade-student" &&
+        media?.state === "PENDING_UPLOAD" &&
+        media?.object_key ===
+          "media/community-post-audio/41000000-0000-4000-8000-000000000001",
+      "0012 media FK rebuild가 populated registry를 보존하지 못했습니다.",
+    );
+    assert(
+      upgradeDatabase.all("SELECT * FROM account_deletion_jobs;").length === 0 &&
+        upgradeDatabase.all("SELECT * FROM account_cleanup_tokens;").length === 0 &&
+        upgradeDatabase.all("SELECT * FROM calendar_feed_tokens;").length === 0,
+      "0012 신규 privacy table이 비어 있지 않습니다.",
+    );
+    const [ownerForeignKey] = upgradeDatabase.all(`
+      SELECT lower(on_delete) AS on_delete
+      FROM pragma_foreign_key_list('media_objects')
+      WHERE "from" = 'owner_id' AND "table" = 'profiles'
+    `);
+    assert(
+      ownerForeignKey?.on_delete === "set null",
+      "0012 media owner FK가 ON DELETE SET NULL로 전환되지 않았습니다.",
+    );
+    assertSqlFails(
+      upgradeDatabase,
+      "DELETE FROM profiles WHERE id = 'privacy-upgrade-student';",
+      "0012 direct student profile delete",
+      "DOCUMENT_HISTORY_ACCOUNT_DELETE_RESTRICTED",
+    );
+    assert(
+      upgradeDatabase.all("PRAGMA foreign_key_check;").length === 0,
+      "0012 populated upgrade 뒤 foreign key 위반이 있습니다.",
+    );
+  } finally {
+    upgradeDatabase.close();
+  }
+
+  const rollbackDatabase = await createMemoryDatabase();
+  try {
+    applyMigrations(rollbackDatabase, priorMigrations);
+    rollbackDatabase.exec(`
+      INSERT INTO profiles (id, email, role)
+      VALUES ('privacy-rollback-student', 'privacy-rollback@example.com', 'student');
+      INSERT INTO media_objects (
+        id, owner_id, purpose, object_key, upload_object_key, state,
+        expected_content_type, expected_size_bytes, draft_operation_id,
+        upload_expires_at, created_at, updated_at
+      ) VALUES (
+        '42000000-0000-4000-8000-000000000001', 'privacy-rollback-student',
+        'COMMUNITY_POST_AUDIO',
+        'media/community-post-audio/43000000-0000-4000-8000-000000000001',
+        'media-upload/community-post-audio/42000000-0000-4000-8000-000000000001',
+        'PENDING_UPLOAD', 'audio/mpeg', 1024,
+        '42000000-0000-4000-8000-000000000002',
+        1800003600, 1800000000, 1800000000
+      );
+      CREATE TABLE privacy_extension_probe (id TEXT PRIMARY KEY NOT NULL);
+      CREATE TRIGGER privacy_extension_probe_media_guard
+      BEFORE INSERT ON privacy_extension_probe
+      WHEN EXISTS (SELECT 1 FROM media_objects)
+      BEGIN
+        SELECT RAISE(ABORT, 'PRIVACY_EXTENSION_MEDIA_PRESENT');
+      END;
+    `);
+    let migrationFailure = null;
+    try {
+      applyMigration(rollbackDatabase, accountPrivacyMigrationFile);
+    } catch (error) {
+      migrationFailure = error;
+    }
+    assert(
+      migrationFailure,
+      "0012가 알 수 없는 cross-table media trigger를 둔 채 rebuild를 진행했습니다.",
+    );
+    assert(
+      rollbackDatabase.all(`
+        SELECT id FROM media_objects
+        WHERE id = '42000000-0000-4000-8000-000000000001'
+      `).length === 1,
+      "0012 실패 rollback이 populated media row를 변경했습니다.",
+    );
+    assert(
+      rollbackDatabase.all(`
+        SELECT name FROM sqlite_master
+        WHERE type = 'table' AND name = 'account_deletion_jobs'
+      `).length === 0,
+      "0012 실패 rollback이 신규 privacy table 일부를 남겼습니다.",
+    );
+    const [ownerForeignKey] = rollbackDatabase.all(`
+      SELECT lower(on_delete) AS on_delete
+      FROM pragma_foreign_key_list('media_objects')
+      WHERE "from" = 'owner_id' AND "table" = 'profiles'
+    `);
+    assert(
+      ownerForeignKey?.on_delete === "restrict",
+      "0012 실패 rollback이 기존 media owner FK를 변경했습니다.",
+    );
+  } finally {
+    rollbackDatabase.close();
+  }
+}
+
+function validateAccountPrivacySemantics(database) {
+  const hash = "a".repeat(64);
+  const otherHash = "b".repeat(64);
+  const aliasProbeHash = "d".repeat(64);
+  const reuseHash = "e".repeat(64);
+  const ephemeralHash = "f".repeat(64);
+  database.exec(`
+    INSERT INTO profiles (id, email, role)
+    VALUES
+      ('privacy-probe-student', 'privacy-probe-student@example.com', 'student'),
+      ('privacy-probe-admin', 'privacy-probe-admin@example.com', 'admin'),
+      ('privacy-probe-alias', 'privacy-probe-alias@example.com', 'student'),
+      ('privacy-probe-reuse', 'privacy-probe-reuse@example.com', 'student'),
+      ('privacy-probe-ephemeral', 'privacy-probe-ephemeral@example.com', 'student');
+    INSERT INTO account_cleanup_tokens (
+      token_digest, subject_id, status, created_at, updated_at
+    ) VALUES
+      ('${hash}', 'privacy-probe-student', 'ACTIVE', 1700000000, 1700000000),
+      ('${aliasProbeHash}', 'privacy-probe-alias', 'ACTIVE', 1700000000, 1700000000),
+      ('${reuseHash}', 'privacy-probe-reuse', 'ACTIVE', 1700000000, 1700000000);
+    INSERT INTO calendar_feed_tokens (
+      owner_id, token_digest, created_at, updated_at
+    ) VALUES
+      ('privacy-probe-student', '${otherHash}', 1700000000, 1700000000),
+      ('privacy-probe-alias', '${aliasProbeHash}', 1700000000, 1700000000);
+    INSERT INTO account_deletion_jobs (
+      id, operation_id, subject_id, erasure_alias,
+      initiating_token_digest, initiating_token_mode, request_hash,
+      request_hash_version, status, requested_at, alias_after, updated_at
+    ) VALUES (
+      'privacy-probe-job', '50000000-0000-4000-8000-000000000001',
+      'privacy-probe-student',
+      'erased:51000000-0000-4000-8000-000000000001',
+      '${hash}', 'PERSISTENT', '${hash}', 1,
+      'ERASING', 1700000000, 1702592000, 1700000000
+    );
+  `);
+
+  for (const [label, invalidAlias] of [
+    ["길이 초과", "erased:51000000-0000-4000-8000-000000000001x"],
+    ["대문자 hex", "erased:51000000-0000-4000-8000-00000000000A"],
+    ["hyphen 위치", "erased:5100000-00000-4000-8000-000000000001"],
+    ["UUID version", "erased:51000000-0000-1000-8000-000000000001"],
+    ["UUID variant", "erased:51000000-0000-4000-7000-000000000001"],
+  ]) {
+    assertSqlFails(
+      database,
+      `INSERT INTO account_deletion_jobs (
+        id, operation_id, subject_id, erasure_alias,
+        initiating_token_digest, initiating_token_mode, request_hash,
+        request_hash_version, status, requested_at, alias_after, updated_at
+      ) VALUES (
+        'privacy-alias-negative-job',
+        '52000000-0000-4000-8000-000000000001',
+        'privacy-probe-alias', '${invalidAlias}',
+        '${aliasProbeHash}', 'PERSISTENT', '${hash}', 1,
+        'ERASING', 1700000000, 1702592000, 1700000000
+      );`,
+      `account erasure alias ${label}`,
+      "account_deletion_jobs_identity_check",
+    );
+  }
+
+  assertSqlFails(
+    database,
+    `UPDATE account_deletion_jobs
+     SET status = 'ERASED', erased_at = 1700000001, updated_at = 1700000001
+     WHERE id = 'privacy-probe-job';`,
+    "profile 존재 중 account deletion completion",
+    "ACCOUNT_DELETION_JOB_TRANSITION_INVALID",
+  );
+  assertSqlFails(
+    database,
+    `UPDATE account_cleanup_tokens
+     SET subject_id = NULL, deletion_job_id = 'privacy-probe-job',
+         status = 'ERASED', erased_at = 1700000001, updated_at = 1700000001
+     WHERE token_digest = '${hash}';`,
+    "ACTIVE cleanup token early erasure",
+    "ACCOUNT_CLEANUP_TOKEN_TRANSITION_INVALID",
+  );
+  database.exec(`
+    INSERT INTO account_deletion_jobs (
+      id, operation_id, subject_id, erasure_alias,
+      initiating_token_digest, initiating_token_mode, request_hash,
+      request_hash_version, status, requested_at, alias_after, updated_at
+    ) VALUES (
+      'privacy-probe-alias-job',
+      '53000000-0000-4000-8000-000000000001',
+      'privacy-probe-alias',
+      'erased:54000000-0000-4000-8000-000000000001',
+      '${aliasProbeHash}', 'PERSISTENT', '${hash}', 1,
+      'ERASING', 1700000000, 1702592000, 1700000000
+    );
+
+    INSERT INTO account_deletion_jobs (
+      id, operation_id, subject_id, erasure_alias,
+      initiating_token_digest, initiating_token_mode, request_hash,
+      request_hash_version, status, requested_at, alias_after, updated_at
+    ) VALUES (
+      'privacy-probe-reuse-job',
+      '55000000-0000-4000-8000-000000000001',
+      'privacy-probe-reuse',
+      'erased:56000000-0000-4000-8000-000000000001',
+      '${reuseHash}', 'PERSISTENT', '${hash}', 1,
+      'ERASING', 1700000000, 1702592000, 1700000000
+    );
+    UPDATE account_cleanup_tokens
+    SET deletion_job_id = 'privacy-probe-reuse-job', status = 'BOUND',
+        bound_at = 1700000001, updated_at = 1700000001
+    WHERE token_digest = '${reuseHash}';
+    DELETE FROM profiles WHERE id = 'privacy-probe-reuse';
+    UPDATE account_deletion_jobs
+    SET status = 'ERASED', erased_at = 1700000002, updated_at = 1700000002
+    WHERE id = 'privacy-probe-reuse-job';
+
+    INSERT INTO account_deletion_jobs (
+      id, operation_id, subject_id, erasure_alias,
+      initiating_token_digest, initiating_token_mode, request_hash,
+      request_hash_version, status, requested_at, alias_after, updated_at
+    ) VALUES (
+      'privacy-probe-ephemeral-job',
+      '57000000-0000-4000-8000-000000000001',
+      'privacy-probe-ephemeral',
+      'erased:58000000-0000-4000-8000-000000000001',
+      '${ephemeralHash}', 'EPHEMERAL', '${hash}', 1,
+      'ERASING', 1700000000, 1702592000, 1700000000
+    );
+    DELETE FROM profiles WHERE id = 'privacy-probe-ephemeral';
+    UPDATE account_deletion_jobs
+    SET status = 'ERASED', erased_at = 1700000002, updated_at = 1700000002
+    WHERE id = 'privacy-probe-ephemeral-job';
+  `);
+  for (const recursiveTriggers of ["OFF", "ON"]) {
+    database.exec(`PRAGMA recursive_triggers = ${recursiveTriggers};`);
+    assertSqlFails(
+      database,
+      `INSERT OR REPLACE INTO profiles (id, email, role)
+       VALUES (
+         'privacy-probe-student',
+         'privacy-probe-student@example.com',
+         'student'
+       );`,
+      `profile ID INSERT OR REPLACE recursive_triggers=${recursiveTriggers}`,
+      "PROFILE_DUPLICATE",
+    );
+    assertSqlFails(
+      database,
+      `INSERT OR REPLACE INTO profiles (id, email, role)
+       VALUES (
+         'privacy-probe-reuse',
+         'privacy-probe-reuse@example.com',
+         'student'
+       );`,
+      `erased profile ID reuse recursive_triggers=${recursiveTriggers}`,
+      "PROFILE_ERASED_ID_REUSE_BLOCKED",
+    );
+    assertSqlFails(
+      database,
+      `INSERT OR REPLACE INTO profiles (id, email, role)
+       VALUES (
+         'privacy-probe-shadow',
+         'privacy-probe-student@example.com',
+         'student'
+       );`,
+      `profile email INSERT OR REPLACE recursive_triggers=${recursiveTriggers}`,
+      "PROFILE_DUPLICATE",
+    );
+    assertSqlFails(
+      database,
+      `UPDATE OR REPLACE profiles
+       SET id = 'privacy-probe-renamed'
+       WHERE id = 'privacy-probe-student';`,
+      `profile ID UPDATE OR REPLACE recursive_triggers=${recursiveTriggers}`,
+      "PROFILE_IDENTITY_UPDATE_INVALID",
+    );
+    assertSqlFails(
+      database,
+      `UPDATE OR REPLACE profiles
+       SET email = 'privacy-probe-admin@example.com'
+       WHERE id = 'privacy-probe-student';`,
+      `profile email UPDATE OR REPLACE recursive_triggers=${recursiveTriggers}`,
+      "PROFILE_IDENTITY_UPDATE_INVALID",
+    );
+    assertSqlFails(
+      database,
+      `INSERT OR REPLACE INTO account_cleanup_tokens (
+        token_digest, subject_id, status, created_at, updated_at
+      ) VALUES (
+        '${hash}', 'privacy-probe-student', 'ACTIVE', 1700000000, 1700000000
+      );`,
+      `cleanup token INSERT OR REPLACE recursive_triggers=${recursiveTriggers}`,
+      "ACCOUNT_CLEANUP_TOKEN_DUPLICATE",
+    );
+    assertSqlFails(
+      database,
+      `INSERT OR REPLACE INTO account_deletion_jobs (
+        id, operation_id, subject_id, erasure_alias,
+        initiating_token_digest, initiating_token_mode, request_hash,
+        request_hash_version, status, requested_at, alias_after, updated_at
+      ) VALUES (
+        'privacy-probe-job', '50000000-0000-4000-8000-000000000001',
+        'privacy-probe-student',
+        'erased:51000000-0000-4000-8000-000000000001',
+        '${hash}', 'PERSISTENT', '${hash}', 1,
+        'ERASING', 1700000000, 1702592000, 1700000000
+      );`,
+      `deletion job INSERT OR REPLACE recursive_triggers=${recursiveTriggers}`,
+      "ACCOUNT_DELETION_JOB_DUPLICATE",
+    );
+    assertSqlFails(
+      database,
+      `UPDATE OR REPLACE account_cleanup_tokens
+       SET token_digest = '${aliasProbeHash}'
+       WHERE token_digest = '${hash}';`,
+      `cleanup token UPDATE OR REPLACE recursive_triggers=${recursiveTriggers}`,
+      "ACCOUNT_CLEANUP_TOKEN_TRANSITION_INVALID",
+    );
+    assertSqlFails(
+      database,
+      `INSERT OR REPLACE INTO account_cleanup_tokens (
+        token_digest, subject_id, status, created_at, updated_at
+      ) VALUES (
+        '${ephemeralHash}', 'privacy-probe-student', 'ACTIVE',
+        1700000000, 1700000000
+      );`,
+      `ephemeral job digest token collision recursive_triggers=${recursiveTriggers}`,
+      "ACCOUNT_CLEANUP_TOKEN_DUPLICATE",
+    );
+    assertSqlFails(
+      database,
+      `UPDATE OR REPLACE account_deletion_jobs
+       SET operation_id = '53000000-0000-4000-8000-000000000001'
+       WHERE id = 'privacy-probe-job';`,
+      `deletion job UPDATE OR REPLACE recursive_triggers=${recursiveTriggers}`,
+      "ACCOUNT_DELETION_JOB_TRANSITION_INVALID",
+    );
+    assertSqlFails(
+      database,
+      `UPDATE OR REPLACE account_deletion_jobs
+       SET initiating_token_digest = '${aliasProbeHash}'
+       WHERE id = 'privacy-probe-job';`,
+      `deletion initiator UPDATE OR REPLACE recursive_triggers=${recursiveTriggers}`,
+      "ACCOUNT_DELETION_JOB_TRANSITION_INVALID",
+    );
+    assertSqlFails(
+      database,
+      `INSERT OR REPLACE INTO calendar_feed_tokens (
+        owner_id, token_digest, created_at, updated_at
+      ) VALUES (
+        'privacy-probe-student', '${otherHash}', 1700000000, 1700000000
+      );`,
+      `calendar token INSERT OR REPLACE recursive_triggers=${recursiveTriggers}`,
+      "CALENDAR_FEED_TOKEN_DUPLICATE",
+    );
+    assertSqlFails(
+      database,
+      `UPDATE OR REPLACE calendar_feed_tokens
+       SET token_digest = '${aliasProbeHash}', updated_at = 1700000001
+       WHERE owner_id = 'privacy-probe-student';`,
+      `calendar token UPDATE OR REPLACE recursive_triggers=${recursiveTriggers}`,
+      "CALENDAR_FEED_TOKEN_ROTATION_INVALID",
+    );
+  }
+  database.exec("PRAGMA recursive_triggers = OFF;");
+  assert(
+    database.all(`
+      SELECT owner_id FROM calendar_feed_tokens
+      WHERE owner_id = 'privacy-probe-alias'
+        AND token_digest = '${aliasProbeHash}'
+    `).length === 1,
+    "calendar UPDATE OR REPLACE 충돌이 다른 owner token을 삭제했습니다.",
+  );
+  assert(
+    database.all(`
+      SELECT token_digest FROM account_cleanup_tokens
+      WHERE token_digest = '${aliasProbeHash}'
+        AND subject_id = 'privacy-probe-alias'
+    `).length === 1 &&
+      database.all(`
+        SELECT id FROM account_deletion_jobs
+        WHERE id = 'privacy-probe-alias-job'
+          AND operation_id = '53000000-0000-4000-8000-000000000001'
+      `).length === 1,
+    "account privacy UPDATE OR REPLACE 충돌이 다른 receipt를 삭제했습니다.",
+  );
+  assert(
+    database.all(`
+      SELECT id FROM account_deletion_jobs
+      WHERE id = 'privacy-probe-ephemeral-job'
+        AND initiating_token_digest = '${ephemeralHash}'
+        AND initiating_token_mode = 'EPHEMERAL'
+        AND status = 'ERASED'
+    `).length === 1 &&
+      database.all(`
+        SELECT token_digest FROM account_cleanup_tokens
+        WHERE token_digest = '${ephemeralHash}'
+      `).length === 0,
+    "ephemeral job digest receipt가 token quota namespace와 분리되지 않았습니다.",
+  );
+
+  database.exec(`
+    UPDATE account_cleanup_tokens
+    SET subject_id = NULL, status = 'ERASED', erased_at = 1702592000,
+        updated_at = 1702592000
+    WHERE token_digest = '${reuseHash}';
+    UPDATE account_deletion_jobs
+    SET subject_id = NULL, status = 'ALIASED', aliased_at = 1702592000,
+        updated_at = 1702592000
+    WHERE id = 'privacy-probe-reuse-job';
+    INSERT INTO profiles (id, email, role)
+    VALUES (
+      'privacy-probe-reuse', 'privacy-probe-reuse@example.com', 'student'
+    );
+  `);
+  assert(
+    database.all(`
+      SELECT id FROM profiles WHERE id = 'privacy-probe-reuse'
+    `).length === 1,
+    "raw ID alias 완료 뒤 profile ID 재사용이 허용되지 않았습니다.",
+  );
+
+  database.exec(`
+    INSERT INTO profiles (id, email, display_name, role)
+    VALUES (
+      'privacy-probe-normal-insert',
+      'privacy-probe-normal-insert@example.com',
+      'Before update',
+      'student'
+    );
+    UPDATE profiles
+    SET email = 'privacy-probe-normal-updated@example.com',
+        display_name = 'After update'
+    WHERE id = 'privacy-probe-normal-insert';
+  `);
+  assert(
+    database.all(`
+      SELECT id FROM profiles
+      WHERE id = 'privacy-probe-normal-insert'
+        AND email = 'privacy-probe-normal-updated@example.com'
+        AND display_name = 'After update'
+    `).length === 1,
+    "profile 정상 insert/update 경로가 identity guard에 막혔습니다.",
+  );
+
+  database.exec("PRAGMA foreign_keys = OFF;");
+  assertSqlFails(
+    database,
+    "DELETE FROM profiles WHERE id = 'privacy-probe-student';",
+    "foreign_keys OFF student profile delete",
+    "DOCUMENT_HISTORY_ACCOUNT_DELETE_RESTRICTED",
+  );
+  database.exec("PRAGMA foreign_keys = ON;");
+  assertSqlFails(
+    database,
+    "DELETE FROM profiles WHERE id = 'privacy-probe-admin';",
+    "admin profile delete",
+    "DOCUMENT_HISTORY_ACCOUNT_DELETE_RESTRICTED",
+  );
+
+  database.exec(`
+    UPDATE calendar_feed_tokens
+    SET token_digest = '${"c".repeat(64)}', updated_at = 1700000001
+    WHERE owner_id = 'privacy-probe-student';
+  `);
+  assert(
+    database.all(`
+      SELECT token_digest FROM calendar_feed_tokens
+      WHERE owner_id = 'privacy-probe-student'
+    `)[0]?.token_digest === "c".repeat(64),
+    "calendar v2 token 정상 rotation이 반영되지 않았습니다.",
+  );
+}
+
+function validateAccountPrivacyAtomicSource() {
+  const source = readFileSync(
+    join(repositoryRoot, "src/lib/account-privacy-atomic.ts"),
+    "utf8",
+  );
+  const migration = readFileSync(
+    join(migrationsDirectory, accountPrivacyMigrationFile),
+    "utf8",
+  );
+  assert(
+    source.includes("executeDocumentStatementsAtomically") &&
+      source.includes("initiating_token_mode") &&
+      source.includes('"EPHEMERAL"') &&
+      source.includes("ACCOUNT_DELETION_JOB_CREATE") &&
+      source.includes("ACCOUNT_DELETION_INITIATOR_RECEIPT_INVALID") &&
+      source.includes("ACCOUNT_PROFILE_DELETE") &&
+      source.includes("ACCOUNT_DELETION_COMPLETE") &&
+      source.includes("ACCOUNT_RAW_ID_ERASURE"),
+    "0012 atomic layer에 D1 batch rollback sentinel 계약이 누락되었습니다.",
+  );
+  assert(
+    !/INSERT\s+OR\s+REPLACE/iu.test(source) &&
+      !/INSERT\s+OR\s+REPLACE/iu.test(migration),
+    "0012 privacy write path에 INSERT OR REPLACE가 있습니다.",
+  );
+  assert(
+    !/PRAGMA\s+foreign_keys\s*=\s*OFF/iu.test(migration),
+    "0012 migration이 transaction 내부 foreign_keys OFF에 의존합니다.",
+  );
+  assert(
+    !/GLOB\s+'(?:erased:|media\/)[^']{100,}'/iu.test(migration),
+    "0012 migration이 D1 한도를 넘는 긴 UUID GLOB에 의존합니다.",
+  );
 }
 
 function validateContinuitySemantics(database) {
@@ -893,6 +2004,1240 @@ function validateContinuitySemantics(database) {
   );
 }
 
+function validateLifecycleExpansionSemantics(database) {
+  const hashA = "c".repeat(64);
+  const hashB = "d".repeat(64);
+  database.exec(`
+    INSERT INTO profiles (id, email, display_name, role)
+    VALUES
+      ('lifecycle-probe-student', 'lifecycle-probe-student@example.com', 'Probe Student', 'student'),
+      ('lifecycle-probe-admin', 'lifecycle-probe-admin@example.com', 'Probe Admin', 'admin');
+    INSERT INTO document_operation_ledger (
+      id, operation_id, actor_id, subject_id, resource_type, operation_type,
+      resource_id, request_hash, request_hash_version, result_revision, created_at
+    ) VALUES (
+      'post-probe-receipt', 'post-probe-operation',
+      'lifecycle-probe-admin', 'lifecycle-probe-admin',
+      'COMMUNITY_POST', 'CREATE', 'post-probe', '${hashA}', 1, 1, 1700000000
+    );
+    INSERT INTO posts (
+      id, author_id, category, board_type, is_pinned, title, content_html,
+      created_at, updated_at, version
+    ) VALUES (
+      'post-probe', 'lifecycle-probe-admin', 'general', 'GENERAL', 0,
+      'Post probe', '<p>Post probe</p>', 1700000000, 1700000000, 1
+    );
+    INSERT INTO post_revisions (
+      id, post_id, revision_number, change_type, category, board_type,
+      is_pinned, title, content_html, snapshot_hash, snapshot_hash_version,
+      actor_id, operation_record_id, created_at
+    ) VALUES (
+      'post-probe-revision', 'post-probe', 1, 'CREATE', 'general', 'GENERAL',
+      0, 'Post probe', '<p>Post probe</p>', '${hashB}', 1,
+      'lifecycle-probe-admin', 'post-probe-receipt', 1700000000
+    );
+    INSERT INTO comments (id, post_id, author_id, content_html, created_at)
+    VALUES (
+      'post-probe-comment', 'post-probe', 'lifecycle-probe-student',
+      '<p>Comment</p>', 1700000001
+    );
+
+    INSERT INTO document_operation_ledger (
+      id, operation_id, actor_id, subject_id, resource_type, operation_type,
+      resource_id, request_hash, request_hash_version, result_revision, created_at
+    ) VALUES (
+      'qna-probe-receipt', 'qna-probe-operation',
+      'lifecycle-probe-student', 'lifecycle-probe-student',
+      'QNA_THREAD', 'CREATE', 'qna-probe', '${hashA}', 1, 1, 1700000000
+    );
+    INSERT INTO qna_threads (
+      id, student_id, title, status, created_at, updated_at, version
+    ) VALUES (
+      'qna-probe', 'lifecycle-probe-student', 'Q&A probe', 'OPEN',
+      1700000000, 1700000000, 1
+    );
+    INSERT INTO qna_replies (
+      id, thread_id, author_id, content_html, created_at
+    ) VALUES (
+      'qna-probe-reply', 'qna-probe', 'lifecycle-probe-student',
+      '<p>Question</p>', 1700000000
+    );
+    INSERT INTO qna_thread_events (
+      id, thread_id, event_number, event_type, title, status, reply_id,
+      event_hash, event_hash_version, actor_id, operation_record_id, created_at
+    ) VALUES (
+      'qna-probe-event', 'qna-probe', 1, 'CREATE', 'Q&A probe', 'OPEN',
+      'qna-probe-reply', '${hashB}', 1, 'lifecycle-probe-student',
+      'qna-probe-receipt', 1700000000
+    );
+  `);
+
+  assertSqlFails(
+    database,
+    `INSERT INTO document_operation_ledger (
+      id, operation_id, actor_id, subject_id, resource_type, operation_type,
+      resource_id, request_hash, request_hash_version, result_revision, created_at
+    ) VALUES (
+      'bad-resource-operation', 'bad-resource-operation',
+      'lifecycle-probe-student', 'lifecycle-probe-student',
+      'PRIVATE_NOTE', 'APPEND_REPLY', 'bad-note', '${hashA}', 1, 1, 1700000000
+    );`,
+    "ledger resource/operation compatibility CHECK",
+  );
+  assertSqlFails(
+    database,
+    "UPDATE post_revisions SET title = 'Changed' WHERE id = 'post-probe-revision';",
+    "post revision immutable update",
+    "POST_REVISION_IMMUTABLE",
+  );
+  assertSqlFails(
+    database,
+    `INSERT INTO post_revisions (
+      id, post_id, revision_number, change_type, category, board_type,
+      is_pinned, title, content_html, created_at
+    ) VALUES (
+      'post-late-baseline', 'post-probe', 1, 'BASELINE', 'general', 'GENERAL',
+      0, 'Late', '<p>Late</p>', 1700000001
+    );`,
+    "post rollout 뒤 BASELINE insert",
+    "POST_BASELINE_CLOSED",
+  );
+  assertSqlFails(
+    database,
+    `INSERT INTO comments (id, post_id, author_id, content_html)
+     VALUES ('missing-post-comment', 'missing-post', 'lifecycle-probe-student', '<p>Missing</p>');`,
+    "missing/trashed post comment insert",
+    "COMMENT_ACTIVE_POST_REQUIRED",
+  );
+  assertSqlFails(
+    database,
+    "UPDATE qna_replies SET content_html = '<p>Changed</p>' WHERE id = 'qna-probe-reply';",
+    "Q&A reply immutable update",
+    "QNA_REPLY_IMMUTABLE",
+  );
+  assertSqlFails(
+    database,
+    `INSERT INTO qna_replies (id, thread_id, author_id, content_html)
+     VALUES ('qna-unreceipted-reply', 'qna-probe', 'lifecycle-probe-student', '<p>Extra</p>');`,
+    "Q&A unreceipted reply insert",
+    "QNA_REPLY_RECEIPT_MISMATCH",
+  );
+  assertSqlFails(
+    database,
+    "UPDATE qna_thread_events SET title = 'Changed' WHERE id = 'qna-probe-event';",
+    "Q&A event immutable update",
+    "QNA_THREAD_EVENT_IMMUTABLE",
+  );
+  assertSqlFails(
+    database,
+    `INSERT INTO qna_threads (
+      id, student_id, title, status, created_at, updated_at, version
+    ) VALUES (
+      'qna-invalid-status', 'lifecycle-probe-student', 'Invalid', 'OTHER',
+      1700000000, 1700000000, 1
+    );`,
+    "Q&A status insert guard",
+    "QNA_THREAD_STATE_INVALID",
+  );
+
+  database.exec(`
+    UPDATE posts
+    SET deleted_at = 1700000002, deleted_by_id = 'lifecycle-probe-admin'
+    WHERE id = 'post-probe';
+    UPDATE qna_threads
+    SET deleted_at = 1700000002, deleted_by_id = 'lifecycle-probe-student'
+    WHERE id = 'qna-probe';
+  `);
+  assertSqlFails(
+    database,
+    "DELETE FROM comments WHERE id = 'post-probe-comment';",
+    "trashed post comment delete guard",
+    "COMMENT_TRASHED_POST_IMMUTABLE",
+  );
+  assertSqlFails(
+    database,
+    "DELETE FROM qna_replies WHERE id = 'qna-probe-reply';",
+    "active Q&A reply delete guard",
+    "QNA_REPLY_DELETE_GUARD",
+  );
+
+  database.exec(`
+    DELETE FROM posts WHERE id = 'post-probe';
+    DELETE FROM qna_threads WHERE id = 'qna-probe';
+  `);
+  assert(
+    database.all(`
+      SELECT resource_id FROM document_tombstones
+      WHERE (resource_type = 'COMMUNITY_POST' AND resource_id = 'post-probe')
+         OR (resource_type = 'QNA_THREAD' AND resource_id = 'qna-probe');
+    `).length === 2,
+    "post/Q&A hard delete가 tombstone을 남기지 않았습니다.",
+  );
+  assert(
+    database.all("SELECT id FROM comments WHERE post_id = 'post-probe';").length === 0 &&
+      database.all("SELECT id FROM qna_replies WHERE thread_id = 'qna-probe';").length === 0 &&
+      database.all("SELECT id FROM qna_thread_events WHERE thread_id = 'qna-probe';").length === 0,
+    "post/Q&A purge cascade가 child history를 정리하지 못했습니다.",
+  );
+  assertSqlFails(
+    database,
+    `INSERT INTO posts (
+      id, author_id, category, board_type, is_pinned, title, content_html,
+      created_at, updated_at, version
+    ) VALUES (
+      'post-probe', 'lifecycle-probe-admin', 'general', 'GENERAL', 0,
+      'Resurrect', '<p>Resurrect</p>', 1700000003, 1700000003, 1
+    );`,
+    "post tombstone resurrection",
+    "POST_RESURRECTION_BLOCKED",
+  );
+  assertSqlFails(
+    database,
+    `INSERT INTO qna_threads (
+      id, student_id, title, status, created_at, updated_at, version
+    ) VALUES (
+      'qna-probe', 'lifecycle-probe-student', 'Resurrect', 'OPEN',
+      1700000003, 1700000003, 1
+    );`,
+    "Q&A tombstone resurrection",
+    "QNA_THREAD_RESURRECTION_BLOCKED",
+  );
+  assert(
+    database.all("PRAGMA foreign_key_check;").length === 0,
+    "post/Q&A lifecycle semantic probe 뒤 foreign key 위반이 있습니다.",
+  );
+}
+
+function validateMediaLifecycleSemantics(database) {
+  const mediaId = "30000000-0000-4000-8000-000000000001";
+  const objectKey = "media/community-post-audio/31000000-0000-4000-8000-000000000011";
+  const uploadObjectKey = `media-upload/community-post-audio/${mediaId}`;
+  const replacementMediaId = "30000000-0000-4000-8000-000000000003";
+  const replacementObjectKey =
+    "media/community-post-audio/31000000-0000-4000-8000-000000000013";
+  const replacementUploadObjectKey =
+    `media-upload/community-post-audio/${replacementMediaId}`;
+  const missingStagingMediaId = "30000000-0000-4000-8000-000000000007";
+  const missingStagingObjectKey =
+    "media/community-post-audio/31000000-0000-4000-8000-000000000017";
+  const missingStagingUploadObjectKey =
+    `media-upload/community-post-audio/${missingStagingMediaId}`;
+  database.exec(`
+    INSERT INTO profiles (id, email, display_name, role)
+    VALUES
+      ('media-probe-owner', 'media-probe-owner@example.com', 'Media Owner', 'student'),
+      ('media-probe-other', 'media-probe-other@example.com', 'Media Other', 'student');
+  `);
+
+  assertSqlFails(
+    database,
+    `INSERT INTO posts (
+      id, author_id, category, board_type, is_pinned, media_url,
+      title, content_html, created_at, updated_at, version
+    ) VALUES (
+      'media-probe-url-only-post', 'media-probe-other', 'feedback', 'FEEDBACK', 0,
+      '/api/media/30000000-0000-4000-8000-000000000099',
+      'Managed URL only', '<p>Managed URL only</p>', 1700000000, 1700000000, 1
+    );`,
+    "managed post URL without object ID",
+    "POST_MEDIA_REFERENCE_INVALID",
+  );
+  database.exec(`
+    INSERT INTO posts (
+      id, author_id, category, board_type, is_pinned, media_url,
+      title, content_html, created_at, updated_at, version
+    ) VALUES (
+      'media-probe-legacy-post', 'media-probe-other', 'feedback', 'FEEDBACK', 0,
+      'https://legacy.example/post.mp3',
+      'Legacy URL', '<p>Legacy URL</p>', 1700000000, 1700000000, 1
+    );
+  `);
+
+  assertSqlFails(
+    database,
+    `INSERT INTO media_objects (
+      id, owner_id, purpose, object_key, upload_object_key, state, expected_content_type,
+      expected_size_bytes, draft_operation_id, upload_expires_at,
+      created_at, updated_at
+    ) VALUES (
+      'bad-media-purpose', 'media-probe-owner', 'OTHER', 'media/other/bad-media-purpose',
+      'media-upload/other/bad-media-purpose',
+      'PENDING_UPLOAD', 'audio/mpeg', 1024, 'bad-operation',
+      1700003600, 1700000000, 1700000000
+    );`,
+    "media purpose/key CHECK",
+  );
+  for (const [index, purpose, objectKey, uploadPrefix] of [
+    [
+      1,
+      "COMMUNITY_POST_AUDIO",
+      "media/community-post-audio/31000000-0000-1000-8000-000000000001",
+      "media-upload/community-post-audio/",
+    ],
+    [
+      2,
+      "COMMUNITY_POST_AUDIO",
+      "media/community-post-audio/31000000-0000-4000-7000-000000000002",
+      "media-upload/community-post-audio/",
+    ],
+    [
+      3,
+      "COMMUNITY_POST_AUDIO",
+      "media/community-post-audio/3100000-00000-4000-8000-000000000003",
+      "media-upload/community-post-audio/",
+    ],
+    [
+      4,
+      "QNA_ATTACHMENT",
+      "media/qna-attachment/31000000-0000-4000-8000-00000000000A",
+      "media-upload/qna-attachment/",
+    ],
+  ]) {
+    const mediaId = `bad-media-key-${index}`;
+    assertSqlFails(
+      database,
+      `INSERT INTO media_objects (
+        id, owner_id, purpose, object_key, upload_object_key, state,
+        expected_content_type, expected_size_bytes, draft_operation_id,
+        upload_expires_at, created_at, updated_at
+      ) VALUES (
+        '${mediaId}', 'media-probe-owner', '${purpose}', '${objectKey}',
+        '${uploadPrefix}${mediaId}', 'PENDING_UPLOAD', 'audio/mpeg', 1024,
+        'bad-media-key-operation-${index}', 1700003600, 1700000000, 1700000000
+      );`,
+      `media UUID key negative ${index}`,
+      "media_objects_key_check",
+    );
+  }
+  assertSqlFails(
+    database,
+    `INSERT INTO media_objects (
+      id, owner_id, purpose, object_key, upload_object_key, state, expected_content_type,
+      expected_size_bytes, actual_size_bytes, draft_operation_id,
+      upload_expires_at, ready_at, created_at, updated_at
+    ) VALUES (
+      '30000000-0000-4000-8000-000000000091', 'media-probe-owner',
+      'COMMUNITY_POST_AUDIO',
+      'media/community-post-audio/31000000-0000-4000-8000-000000000091',
+      'media-upload/community-post-audio/30000000-0000-4000-8000-000000000091',
+      'READY',
+      'audio/mpeg', 1024, 1024, 'bad-ready-operation',
+      1700003600, 1700000001, 1700000000, 1700000001
+    );`,
+    "media initial state guard",
+    "MEDIA_OBJECT_INITIAL_STATE_INVALID",
+  );
+  assertSqlFails(
+    database,
+    `INSERT INTO media_objects (
+      id, owner_id, purpose, object_key, upload_object_key, state,
+      expected_content_type, expected_size_bytes, draft_operation_id,
+      upload_expires_at, created_at, updated_at
+    ) VALUES (
+      '30000000-0000-4000-8000-000000000092', 'media-probe-owner',
+      'COMMUNITY_POST_AUDIO',
+      'media/community-post-audio/30000000-0000-4000-8000-000000000092',
+      'media-upload/community-post-audio/30000000-0000-4000-8000-000000000092',
+      'PENDING_UPLOAD', 'audio/mpeg', 1024,
+      '30000000-0000-4000-8000-000000000092',
+      1700003600, 1700000000, 1700000000
+    );`,
+    "final object key reuses public media ID",
+  );
+  assertSqlFails(
+    database,
+    `INSERT INTO media_objects (
+      id, owner_id, purpose, object_key, upload_object_key, state,
+      expected_content_type, expected_size_bytes, draft_operation_id,
+      upload_expires_at, created_at, updated_at
+    ) VALUES (
+      '30000000-0000-4000-8000-000000000093', 'media-probe-owner',
+      'COMMUNITY_POST_AUDIO',
+      'media/community-post-audio/31000000-0000-4000-8000-000000000093',
+      'media-upload/community-post-audio/30000000-0000-4000-8000-000000000094',
+      'PENDING_UPLOAD', 'audio/mpeg', 1024,
+      '30000000-0000-4000-8000-000000000093',
+      1700003600, 1700000000, 1700000000
+    );`,
+    "staging object key does not match media ID",
+  );
+
+  database.exec(`
+    INSERT INTO media_objects (
+      id, owner_id, purpose, object_key, upload_object_key, state,
+      expected_content_type, expected_size_bytes, draft_operation_id,
+      upload_expires_at, created_at, updated_at
+    ) VALUES (
+      '${missingStagingMediaId}', 'media-probe-owner', 'COMMUNITY_POST_AUDIO',
+      '${missingStagingObjectKey}', '${missingStagingUploadObjectKey}',
+      'PENDING_UPLOAD', 'audio/mpeg', 1024,
+      '30000000-0000-4000-8000-000000000008',
+      1700003600, 1700000000, 1700000000
+    );
+    UPDATE media_objects
+    SET state = 'SEALING', seal_lease_id = 'expired-cleanup-lease',
+        seal_lease_expires_at = 1700000100, updated_at = 1700000001
+    WHERE id = '${missingStagingMediaId}';
+  `);
+  assertSqlFails(
+    database,
+    `INSERT INTO media_deletion_outbox (
+      id, media_object_id, object_key, reason, not_before,
+      attempt_count, next_attempt_at, created_at, updated_at
+    ) VALUES (
+      'bad-media-unrelated-key', '${missingStagingMediaId}',
+      'media/community-post-audio/31000000-0000-4000-8000-000000000099',
+      'ADMIN_CLEANUP', 1700000001, 0, 1700000001, 1700000001, 1700000001
+    );`,
+    "outbox key outside media final/staging pair",
+    "MEDIA_DELETION_OUTBOX_INVALID",
+  );
+  assertSqlFails(
+    database,
+    `INSERT INTO media_deletion_outbox (
+      id, media_object_id, object_key, reason, not_before,
+      attempt_count, next_attempt_at, created_at, updated_at
+    ) VALUES (
+      'bad-media-final-staging-reason', '${missingStagingMediaId}',
+      '${missingStagingObjectKey}', 'UPLOAD_STAGING_EXPIRED',
+      1700000001, 0, 1700000001, 1700000001, 1700000001
+    );`,
+    "final key staging-only reason",
+    "MEDIA_DELETION_OUTBOX_INVALID",
+  );
+  assertSqlFails(
+    database,
+    `INSERT INTO media_deletion_outbox (
+      id, media_object_id, object_key, reason, not_before,
+      attempt_count, next_attempt_at, created_at, updated_at
+    ) VALUES (
+      'bad-media-active-sealing-final', '${missingStagingMediaId}',
+      '${missingStagingObjectKey}', 'ADMIN_CLEANUP',
+      1700000050, 0, 1700000050, 1700000050, 1700000050
+    );`,
+    "active sealing final cleanup outbox",
+    "MEDIA_DELETION_OUTBOX_INVALID",
+  );
+  assertSqlFails(
+    database,
+    `INSERT INTO media_deletion_outbox (
+      id, media_object_id, object_key, reason, not_before,
+      attempt_count, next_attempt_at, created_at, updated_at
+    ) VALUES (
+      'bad-media-active-sealing-staging', '${missingStagingMediaId}',
+      '${missingStagingUploadObjectKey}', 'UPLOAD_STAGING_EXPIRED',
+      1700000050, 0, 1700000050, 1700000050, 1700000050
+    );`,
+    "active sealing staging cleanup scheduled before lease expiry",
+    "MEDIA_DELETION_OUTBOX_INVALID",
+  );
+  database.exec(`
+    INSERT INTO media_deletion_outbox (
+      id, media_object_id, object_key, reason, not_before,
+      attempt_count, next_attempt_at, created_at, updated_at
+    ) VALUES (
+      'media-delete:${missingStagingMediaId}:final', '${missingStagingMediaId}',
+      '${missingStagingObjectKey}', 'ADMIN_CLEANUP',
+      1700000100, 0, 1700000100, 1700000100, 1700000100
+    );
+  `);
+  assertSqlFails(
+    database,
+    `UPDATE media_objects
+     SET state = 'PENDING_DELETE', seal_lease_id = NULL,
+         seal_lease_expires_at = NULL, delete_requested_at = 1700000100,
+         updated_at = 1700000100
+     WHERE id = '${missingStagingMediaId}';`,
+    "media PENDING_DELETE without staging cleanup row",
+    "MEDIA_OBJECT_DELETION_OUTBOX_REQUIRED",
+  );
+  database.exec(`
+    INSERT INTO media_deletion_outbox (
+      id, media_object_id, object_key, reason, not_before,
+      attempt_count, next_attempt_at, created_at, updated_at
+    ) VALUES (
+      'media-delete:${missingStagingMediaId}:staging', '${missingStagingMediaId}',
+      '${missingStagingUploadObjectKey}', 'UPLOAD_STAGING_EXPIRED',
+      1700000101, 0, 1700000101, 1700000101, 1700000101
+    );
+  `);
+  assertSqlFails(
+    database,
+    `UPDATE media_objects
+     SET state = 'PENDING_DELETE', seal_lease_id = NULL,
+         seal_lease_expires_at = NULL, delete_requested_at = 1700000050,
+         updated_at = 1700000050
+     WHERE id = '${missingStagingMediaId}';`,
+    "active media sealing lease deletion",
+    "MEDIA_OBJECT_STATE_TRANSITION_INVALID",
+  );
+  database.exec(`
+    UPDATE media_objects
+    SET state = 'PENDING_DELETE', seal_lease_id = NULL,
+        seal_lease_expires_at = NULL, delete_requested_at = 1700000101,
+        updated_at = 1700000101
+    WHERE id = '${missingStagingMediaId}';
+  `);
+
+  database.exec(`
+    INSERT INTO media_objects (
+      id, owner_id, purpose, object_key, upload_object_key, state,
+      expected_content_type, expected_size_bytes, draft_operation_id,
+      upload_expires_at, created_at, updated_at
+    ) VALUES (
+      '30000000-0000-4000-8000-000000000009', 'media-probe-owner',
+      'QNA_ATTACHMENT',
+      'media/qna-attachment/31000000-0000-4000-8000-000000000019',
+      'media-upload/qna-attachment/30000000-0000-4000-8000-000000000009',
+      'PENDING_UPLOAD', 'image/jpeg', 2048,
+      '30000000-0000-4000-8000-000000000010',
+      1700003600, 1700000000, 1700000000
+    );
+  `);
+
+  database.exec(`
+    INSERT INTO media_objects (
+      id, owner_id, purpose, object_key, upload_object_key, state, expected_content_type,
+      expected_size_bytes, draft_operation_id, upload_expires_at,
+      created_at, updated_at
+    ) VALUES (
+      '${mediaId}', 'media-probe-owner', 'COMMUNITY_POST_AUDIO', '${objectKey}',
+      '${uploadObjectKey}', 'PENDING_UPLOAD', 'audio/mpeg', 1024,
+      '30000000-0000-4000-8000-000000000002',
+      1700003600, 1700000000, 1700000000
+    );
+  `);
+  for (const recursiveTriggers of ["OFF", "ON"]) {
+    database.exec(`PRAGMA recursive_triggers = ${recursiveTriggers};`);
+    assertSqlFails(
+      database,
+      `INSERT OR REPLACE INTO media_objects (
+        id, owner_id, purpose, object_key, upload_object_key, state,
+        expected_content_type, expected_size_bytes, draft_operation_id,
+        upload_expires_at, created_at, updated_at
+      ) VALUES (
+        '${mediaId}', 'media-probe-owner', 'COMMUNITY_POST_AUDIO',
+        '${objectKey}', '${uploadObjectKey}', 'PENDING_UPLOAD',
+        'audio/mpeg', 1024, '30000000-0000-4000-8000-000000000002',
+        1700003600, 1700000000, 1700000000
+      );`,
+      `media object ID INSERT OR REPLACE recursive_triggers=${recursiveTriggers}`,
+      "MEDIA_OBJECT_DUPLICATE",
+    );
+    assertSqlFails(
+      database,
+      `INSERT OR REPLACE INTO media_objects (
+        id, owner_id, purpose, object_key, upload_object_key, state,
+        expected_content_type, expected_size_bytes, draft_operation_id,
+        upload_expires_at, created_at, updated_at
+      ) VALUES (
+        '30000000-0000-4000-8000-000000000021', 'media-probe-owner',
+        'COMMUNITY_POST_AUDIO', '${objectKey}',
+        'media-upload/community-post-audio/30000000-0000-4000-8000-000000000021',
+        'PENDING_UPLOAD', 'audio/mpeg', 1024,
+        '30000000-0000-4000-8000-000000000022',
+        1700003600, 1700000000, 1700000000
+      );`,
+      `media object key INSERT OR REPLACE recursive_triggers=${recursiveTriggers}`,
+      "MEDIA_OBJECT_DUPLICATE",
+    );
+    assertSqlFails(
+      database,
+      `UPDATE OR REPLACE media_objects
+       SET object_key = '${missingStagingObjectKey}'
+       WHERE id = '${mediaId}';`,
+      `media object key UPDATE OR REPLACE recursive_triggers=${recursiveTriggers}`,
+    );
+  }
+  database.exec("PRAGMA recursive_triggers = OFF;");
+  assert(
+    database.all(`
+      SELECT id, object_key FROM media_objects WHERE id = '${mediaId}';
+    `)[0]?.object_key === objectKey &&
+      database.all(`
+        SELECT id FROM media_objects WHERE id = '${missingStagingMediaId}';
+      `).length === 1,
+    "media object INSERT/UPDATE OR REPLACE가 registry identity를 교체했습니다.",
+  );
+  assertSqlFails(
+    database,
+    `UPDATE media_objects
+     SET state = 'ATTACHED', actual_size_bytes = 1024, ready_at = 1700000001,
+         resource_type = 'COMMUNITY_POST', resource_id = 'media-probe-post',
+         attached_at = 1700000002, updated_at = 1700000002
+    WHERE id = '${mediaId}';`,
+    "media skipped state transition",
+  );
+  assertSqlFails(
+    database,
+    `UPDATE media_objects SET owner_id = 'media-probe-other'
+     WHERE id = '${mediaId}';`,
+    "media owner identity mutation",
+  );
+
+  assertSqlFails(
+    database,
+    `INSERT INTO media_deletion_outbox (
+      id, media_object_id, object_key, reason, not_before,
+      attempt_count, next_attempt_at, created_at, updated_at
+    ) VALUES (
+      'bad-media-staging-reason', '${mediaId}', '${uploadObjectKey}',
+      'RESOURCE_PURGED', 1700000001, 0, 1700000001, 1700000001, 1700000001
+    );`,
+    "staging key deletion reason mismatch",
+    "MEDIA_DELETION_OUTBOX_INVALID",
+  );
+  assertSqlFails(
+    database,
+    `UPDATE media_objects
+     SET state = 'READY', actual_size_bytes = 1024, etag = 'probe-etag',
+         ready_at = 1700000001, updated_at = 1700000001
+    WHERE id = '${mediaId}';`,
+    "media direct PENDING_UPLOAD to READY transition",
+  );
+
+  assertSqlFails(
+    database,
+    `UPDATE media_objects
+     SET state = 'SEALING', seal_lease_id = 'probe-seal-lease-1',
+         updated_at = 1700000001
+     WHERE id = '${mediaId}';`,
+    "media sealing claim without lease expiry",
+  );
+  database.exec(`
+    UPDATE media_objects
+    SET state = 'SEALING', seal_lease_id = 'probe-seal-lease-1',
+        seal_lease_expires_at = 1700000100, updated_at = 1700000001
+    WHERE id = '${mediaId}';
+  `);
+  assert(
+    database.all(`
+      SELECT state, seal_lease_id, seal_lease_expires_at
+      FROM media_objects WHERE id = '${mediaId}';
+    `)[0]?.state === "SEALING" &&
+      database.all(`
+        SELECT seal_lease_id FROM media_objects WHERE id = '${mediaId}';
+      `)[0]?.seal_lease_id === "probe-seal-lease-1",
+    "media sealing claim payload가 보존되지 않았습니다.",
+  );
+  database.exec(`
+    UPDATE media_objects
+    SET seal_lease_expires_at = 1700000150, updated_at = 1700000002
+    WHERE id = '${mediaId}' AND state = 'SEALING'
+      AND seal_lease_id = 'probe-seal-lease-1'
+      AND seal_lease_expires_at > 1700000002;
+  `);
+  assert(
+    database.all(`
+      SELECT state, seal_lease_id, seal_lease_expires_at, updated_at
+      FROM media_objects WHERE id = '${mediaId}';
+    `)[0]?.state === "SEALING" &&
+      database.all(`
+        SELECT seal_lease_id, seal_lease_expires_at, updated_at
+        FROM media_objects WHERE id = '${mediaId}';
+      `)[0]?.seal_lease_id === "probe-seal-lease-1" &&
+      database.all(`
+        SELECT seal_lease_expires_at FROM media_objects WHERE id = '${mediaId}';
+      `)[0]?.seal_lease_expires_at === 1700000150,
+    "matching media sealing lease renewal이 만료 시각을 연장하지 못했습니다.",
+  );
+  assertSqlFails(
+    database,
+    `UPDATE media_objects
+     SET updated_at = 1700000003
+     WHERE id = '${mediaId}' AND seal_lease_id = 'probe-seal-lease-1';`,
+    "media sealing same-state update without renewal",
+    "MEDIA_OBJECT_STATE_TRANSITION_INVALID",
+  );
+  assertSqlFails(
+    database,
+    `UPDATE media_objects
+     SET seal_lease_expires_at = 1700000200, updated_at = 1700000001
+     WHERE id = '${mediaId}' AND seal_lease_id = 'probe-seal-lease-1';`,
+    "media sealing renewal timestamp regression",
+    "MEDIA_OBJECT_TRANSITION_PAYLOAD_INVALID",
+  );
+  assertSqlFails(
+    database,
+    `UPDATE media_objects
+     SET seal_lease_id = 'arbitrary-seal-lease',
+         seal_lease_expires_at = 1700000200, updated_at = 1700000002
+    WHERE id = '${mediaId}';`,
+    "media sealing lease arbitrary mutation",
+    "MEDIA_OBJECT_TRANSITION_PAYLOAD_INVALID",
+  );
+  assertSqlFails(
+    database,
+    `UPDATE media_objects
+     SET seal_lease_expires_at = 1700000140, updated_at = 1700000003
+     WHERE id = '${mediaId}' AND seal_lease_id = 'probe-seal-lease-1';`,
+    "media sealing lease expiry shrink",
+    "MEDIA_OBJECT_TRANSITION_PAYLOAD_INVALID",
+  );
+  assertSqlFails(
+    database,
+    `UPDATE media_objects
+     SET seal_lease_expires_at = 1700000200, etag = 'renewal-mutation',
+         updated_at = 1700000003
+     WHERE id = '${mediaId}' AND seal_lease_id = 'probe-seal-lease-1';`,
+    "media sealing renewal payload mutation",
+    "MEDIA_OBJECT_TRANSITION_PAYLOAD_INVALID",
+  );
+  assertSqlFails(
+    database,
+    `UPDATE media_objects
+     SET state = 'PENDING_UPLOAD', seal_lease_id = NULL,
+         updated_at = 1700000002
+     WHERE id = '${mediaId}' AND seal_lease_id = 'probe-seal-lease-1';`,
+    "media sealing release with partial lease clear",
+  );
+  database.exec(`
+    UPDATE media_objects
+    SET state = 'PENDING_UPLOAD', seal_lease_id = NULL,
+        seal_lease_expires_at = NULL, updated_at = 1700000002
+    WHERE id = '${mediaId}' AND state = 'SEALING'
+      AND seal_lease_id = 'probe-seal-lease-1';
+  `);
+  assert(
+    database.all(`
+      SELECT state, seal_lease_id, seal_lease_expires_at
+      FROM media_objects WHERE id = '${mediaId}';
+    `)[0]?.state === "PENDING_UPLOAD" &&
+      database.all(`
+        SELECT seal_lease_id, seal_lease_expires_at
+        FROM media_objects WHERE id = '${mediaId}';
+      `)[0]?.seal_lease_id === null,
+    "matching media sealing release가 lease를 정리하지 못했습니다.",
+  );
+  database.exec(`
+    UPDATE media_objects
+    SET state = 'SEALING', seal_lease_id = 'probe-seal-lease-2',
+        seal_lease_expires_at = 1700000200, updated_at = 1700000003
+    WHERE id = '${mediaId}';
+  `);
+  assertSqlFails(
+    database,
+    `UPDATE media_objects
+     SET state = 'READY', seal_lease_id = NULL, seal_lease_expires_at = NULL,
+         actual_size_bytes = 1024, etag = 'probe-etag',
+         ready_at = 1700000004, updated_at = 1700000004
+     WHERE id = '${mediaId}' AND seal_lease_id = 'probe-seal-lease-2';`,
+    "media READY without staging cleanup",
+    "MEDIA_OBJECT_DELETION_OUTBOX_REQUIRED",
+  );
+
+  database.exec(`
+    INSERT INTO media_deletion_outbox (
+      id, media_object_id, object_key, reason, not_before,
+      attempt_count, next_attempt_at, created_at, updated_at
+    ) VALUES (
+      'media-staging-delete:${mediaId}', '${mediaId}', '${uploadObjectKey}',
+      'UPLOAD_STAGING_EXPIRED', 1700000200, 0, 1700000200,
+      1700000004, 1700000004
+    );
+    UPDATE media_objects
+    SET state = 'READY', seal_lease_id = NULL, seal_lease_expires_at = NULL,
+        actual_size_bytes = 1024, etag = 'probe-etag',
+        ready_at = 1700000004, updated_at = 1700000004
+    WHERE id = '${mediaId}' AND state = 'SEALING'
+      AND seal_lease_id = 'probe-seal-lease-2';
+  `);
+  for (const recursiveTriggers of ["OFF", "ON"]) {
+    database.exec(`PRAGMA recursive_triggers = ${recursiveTriggers};`);
+    assertSqlFails(
+      database,
+      `INSERT OR REPLACE INTO media_deletion_outbox (
+        id, media_object_id, object_key, reason, not_before,
+        attempt_count, next_attempt_at, created_at, updated_at
+      ) VALUES (
+        'media-staging-delete:${mediaId}', '${mediaId}', '${objectKey}',
+        'ADMIN_CLEANUP', 1700000201, 0, 1700000201,
+        1700000005, 1700000005
+      );`,
+      `media outbox ID INSERT OR REPLACE recursive_triggers=${recursiveTriggers}`,
+      "MEDIA_DELETION_OUTBOX_DUPLICATE",
+    );
+    assertSqlFails(
+      database,
+      `INSERT OR REPLACE INTO media_deletion_outbox (
+        id, media_object_id, object_key, reason, not_before,
+        attempt_count, next_attempt_at, created_at, updated_at
+      ) VALUES (
+        'replacement-staging-delete:${mediaId}', '${mediaId}', '${uploadObjectKey}',
+        'UPLOAD_STAGING_EXPIRED', 1700000250, 0, 1700000250,
+        1700000005, 1700000005
+      );`,
+      `media outbox object INSERT OR REPLACE recursive_triggers=${recursiveTriggers}`,
+      "MEDIA_DELETION_OUTBOX_DUPLICATE",
+    );
+  }
+  database.exec("PRAGMA recursive_triggers = OFF;");
+  assert(
+    database.all(`
+      SELECT id, not_before FROM media_deletion_outbox
+      WHERE media_object_id = '${mediaId}' AND object_key = '${uploadObjectKey}';
+    `)[0]?.not_before === 1700000200,
+    "media outbox INSERT OR REPLACE가 staging cleanup 일정을 교체했습니다.",
+  );
+  assertSqlFails(
+    database,
+    `INSERT INTO posts (
+       id, author_id, category, board_type, is_pinned, media_url, media_object_id,
+       title, content_html, created_at, updated_at, version
+     ) VALUES (
+       'media-probe-post', 'media-probe-owner', 'feedback', 'FEEDBACK', 0,
+       '/api/media/${mediaId}', '${mediaId}', 'Probe', '<p>Probe</p>',
+       1700000002, 1700000002, 1
+     );`,
+    "post media resource match guard",
+    "POST_MEDIA_REFERENCE_INVALID",
+  );
+
+  database.exec(`
+    UPDATE media_objects
+    SET state = 'ATTACHED', resource_type = 'COMMUNITY_POST',
+        resource_id = 'media-probe-post', attached_at = 1700000005,
+        updated_at = 1700000005
+    WHERE id = '${mediaId}';
+  `);
+  assertSqlFails(
+    database,
+    `INSERT INTO posts (
+      id, author_id, category, board_type, is_pinned, media_url, media_object_id,
+      title, content_html, created_at, updated_at, version
+    ) VALUES (
+      'media-probe-post', 'media-probe-owner', 'feedback', 'FEEDBACK', 0,
+      'https://public.example/probe', '${mediaId}', 'Probe', '<p>Probe</p>',
+      1700000002, 1700000002, 1
+    );`,
+    "managed post public URL bypass",
+    "POST_MEDIA_REFERENCE_INVALID",
+  );
+  database.exec(`
+    INSERT INTO posts (
+      id, author_id, category, board_type, is_pinned, media_url, media_object_id,
+      title, content_html, created_at, updated_at, version
+    ) VALUES (
+      'media-probe-post', 'media-probe-owner', 'feedback', 'FEEDBACK', 0,
+      '/api/media/${mediaId}', '${mediaId}', 'Probe', '<p>Probe</p>',
+      1700000002, 1700000002, 1
+    );
+  `);
+  assertSqlFails(
+    database,
+    `UPDATE posts
+     SET media_url = NULL, media_object_id = NULL, updated_at = 1700000003
+     WHERE id = 'media-probe-post';`,
+    "managed post object ID clear",
+    "POST_MEDIA_REFERENCE_INVALID",
+  );
+
+  database.exec(`
+    INSERT INTO media_objects (
+      id, owner_id, purpose, object_key, upload_object_key, state, expected_content_type,
+      expected_size_bytes, draft_operation_id, upload_expires_at,
+      created_at, updated_at
+    ) VALUES (
+      '${replacementMediaId}', 'media-probe-owner', 'COMMUNITY_POST_AUDIO',
+      '${replacementObjectKey}', '${replacementUploadObjectKey}',
+      'PENDING_UPLOAD', 'audio/mpeg', 2048,
+      '30000000-0000-4000-8000-000000000004',
+      1700003600, 1700000000, 1700000000
+    );
+    UPDATE media_objects
+    SET state = 'SEALING', seal_lease_id = 'replacement-seal-lease',
+        seal_lease_expires_at = 1700000100, updated_at = 1700000002
+    WHERE id = '${replacementMediaId}';
+    INSERT INTO media_deletion_outbox (
+      id, media_object_id, object_key, reason, not_before,
+      attempt_count, next_attempt_at, created_at, updated_at
+    ) VALUES (
+      'media-staging-delete:${replacementMediaId}', '${replacementMediaId}',
+      '${replacementUploadObjectKey}', 'UPLOAD_STAGING_EXPIRED',
+      1700000100, 0, 1700000100, 1700000003, 1700000003
+    );
+    UPDATE media_objects
+    SET state = 'READY', seal_lease_id = NULL, seal_lease_expires_at = NULL,
+        actual_size_bytes = 2048, etag = 'replacement-etag',
+        ready_at = 1700000003, updated_at = 1700000003
+    WHERE id = '${replacementMediaId}' AND state = 'SEALING'
+      AND seal_lease_id = 'replacement-seal-lease';
+    UPDATE media_objects
+    SET state = 'ATTACHED', resource_type = 'COMMUNITY_POST',
+        resource_id = 'media-probe-post', attached_at = 1700000004,
+        updated_at = 1700000004
+    WHERE id = '${replacementMediaId}';
+  `);
+  assertSqlFails(
+    database,
+    `UPDATE posts
+     SET media_url = '/api/media/${replacementMediaId}',
+         media_object_id = '${replacementMediaId}', updated_at = 1700000004
+     WHERE id = 'media-probe-post';`,
+    "managed post object ID replacement",
+    "POST_MEDIA_REFERENCE_INVALID",
+  );
+  assert(
+    database.all(`
+      SELECT media_object_id FROM posts WHERE id = 'media-probe-post';
+    `)[0]?.media_object_id === mediaId,
+    "거부된 managed post ID 변경이 head에 반영되었습니다.",
+  );
+
+  database.exec(`
+    INSERT INTO document_operation_ledger (
+      id, operation_id, actor_id, subject_id, resource_type, operation_type,
+      resource_id, request_hash, request_hash_version, result_revision, created_at
+    ) VALUES (
+      'media-probe-post-ledger',
+      '30000000-0000-4000-8000-000000000005',
+      'media-probe-owner', 'media-probe-owner', 'COMMUNITY_POST', 'CREATE',
+      'media-probe-post', '${"c".repeat(64)}', 2, 1, 1700000002
+    );
+  `);
+  assertSqlFails(
+    database,
+    `INSERT INTO post_revisions (
+      id, post_id, revision_number, change_type, category, board_type,
+      is_pinned, media_url, media_object_id, title, content_html,
+      snapshot_hash, snapshot_hash_version, actor_id,
+      operation_record_id, created_at
+    ) VALUES (
+      'media-probe-managed-url-revision', 'media-probe-post', 1, 'CREATE',
+      'feedback', 'FEEDBACK', 0, '/api/media/${mediaId}', NULL,
+      'Managed URL only', '<p>Managed URL only</p>', '${"d".repeat(64)}', 2,
+      'media-probe-owner', 'media-probe-post-ledger', 1700000002
+    );`,
+    "managed post revision URL without object ID",
+    "POST_REVISION_MEDIA_REFERENCE_INVALID",
+  );
+  database.exec(`
+    INSERT INTO post_revisions (
+      id, post_id, revision_number, change_type, category, board_type,
+      is_pinned, media_url, media_object_id, title, content_html,
+      snapshot_hash, snapshot_hash_version, actor_id,
+      operation_record_id, created_at
+    ) VALUES (
+      'media-probe-legacy-revision', 'media-probe-post', 1, 'CREATE',
+      'feedback', 'FEEDBACK', 0, 'https://legacy.example/revision.mp3', NULL,
+      'Legacy URL', '<p>Legacy URL</p>', '${"d".repeat(64)}', 2,
+      'media-probe-owner', 'media-probe-post-ledger', 1700000002
+    );
+  `);
+
+  database.exec(`
+    INSERT INTO qna_threads (
+      id, student_id, title, status, created_at, updated_at, version
+    ) VALUES (
+      'media-probe-managed-url-thread', 'media-probe-owner',
+      'Managed URL Q&A', 'OPEN', 1700000002, 1700000002, 1
+    );
+    INSERT INTO document_operation_ledger (
+      id, operation_id, actor_id, subject_id, resource_type, operation_type,
+      resource_id, request_hash, request_hash_version, result_revision, created_at
+    ) VALUES (
+      'media-probe-qna-ledger',
+      '30000000-0000-4000-8000-000000000006',
+      'media-probe-owner', 'media-probe-owner', 'QNA_THREAD', 'CREATE',
+      'media-probe-managed-url-thread', '${"e".repeat(64)}', 2, 1, 1700000002
+    );
+  `);
+  assertSqlFails(
+    database,
+    `INSERT INTO qna_replies (
+      id, thread_id, author_id, content_html, attachment_url,
+      attachment_object_id, created_at
+    ) VALUES (
+      'media-probe-managed-url-reply', 'media-probe-managed-url-thread',
+      'media-probe-owner', '<p>Managed URL only</p>',
+      '/api/media/30000000-0000-4000-8000-000000000098', NULL, 1700000002
+    );`,
+    "managed Q&A reply URL without object ID",
+    "QNA_REPLY_MEDIA_REFERENCE_INVALID",
+  );
+  database.exec(`
+    INSERT INTO qna_replies (
+      id, thread_id, author_id, content_html, attachment_url,
+      attachment_object_id, created_at
+    ) VALUES (
+      'media-probe-legacy-reply', 'media-probe-managed-url-thread',
+      'media-probe-owner', '<p>Legacy URL</p>',
+      'https://legacy.example/reply.jpg', NULL, 1700000002
+    );
+  `);
+  assertSqlFails(
+    database,
+    "DELETE FROM posts WHERE id = 'media-probe-post';",
+    "attached post media purge guard",
+    "POST_MEDIA_DELETE_NOT_QUEUED",
+  );
+  assertSqlFails(
+    database,
+    `UPDATE media_objects
+     SET state = 'PENDING_DELETE', delete_requested_at = 1700000300,
+         updated_at = 1700000300
+     WHERE id = '${mediaId}';`,
+    "media deletion without durable outbox",
+    "MEDIA_OBJECT_DELETION_OUTBOX_REQUIRED",
+  );
+  assertSqlFails(
+    database,
+    `INSERT INTO media_deletion_outbox (
+      id, media_object_id, object_key, reason, not_before,
+      attempt_count, next_attempt_at, created_at, updated_at
+    ) VALUES (
+      'bad-media-outbox', '${mediaId}', '${objectKey}', 'RESOURCE_PURGED',
+      1700000300, 1, 1700000300, 1700000300, 1700000300
+    );`,
+    "media outbox initial payload guard",
+    "MEDIA_DELETION_OUTBOX_INVALID",
+  );
+
+  database.exec(`
+    INSERT INTO media_deletion_outbox (
+      id, media_object_id, object_key, reason, not_before,
+      attempt_count, next_attempt_at, created_at, updated_at
+    ) VALUES (
+      'media-delete:${mediaId}', '${mediaId}', '${objectKey}', 'RESOURCE_PURGED',
+      1700000300, 0, 1700000300, 1700000300, 1700000300
+    );
+  `);
+  assertSqlFails(
+    database,
+    `UPDATE media_deletion_outbox
+     SET completed_at = 1700000400, updated_at = 1700000400
+     WHERE id = 'media-delete:${mediaId}';`,
+    "media outbox completion without lease",
+    "MEDIA_DELETION_OUTBOX_TRANSITION_INVALID",
+  );
+  database.exec(`
+    UPDATE media_objects
+    SET state = 'PENDING_DELETE', delete_requested_at = 1700000300,
+        updated_at = 1700000300
+    WHERE id = '${mediaId}';
+  `);
+  database.exec(`
+    UPDATE media_deletion_outbox
+    SET lease_id = 'probe-lease', lease_expires_at = 1700000500,
+        updated_at = 1700000350
+    WHERE id = 'media-delete:${mediaId}';
+    UPDATE media_deletion_outbox
+    SET completed_at = 1700000400, lease_id = NULL, lease_expires_at = NULL,
+        last_error_code = NULL, updated_at = 1700000400
+    WHERE id = 'media-delete:${mediaId}';
+  `);
+  assertSqlFails(
+    database,
+    `UPDATE media_objects
+     SET state = 'DELETED', deleted_at = 1700000400, updated_at = 1700000400
+     WHERE id = '${mediaId}';`,
+    "media DELETED while staging cleanup incomplete",
+    "MEDIA_OBJECT_DELETION_OUTBOX_REQUIRED",
+  );
+  database.exec(`
+    UPDATE media_deletion_outbox
+    SET lease_id = 'probe-staging-lease', lease_expires_at = 1700000495,
+        updated_at = 1700000395
+    WHERE id = 'media-staging-delete:${mediaId}';
+    UPDATE media_deletion_outbox
+    SET completed_at = 1700000399, lease_id = NULL, lease_expires_at = NULL,
+        last_error_code = NULL, updated_at = 1700000399
+    WHERE id = 'media-staging-delete:${mediaId}';
+  `);
+  assertSqlFails(
+    database,
+    `UPDATE media_objects
+     SET state = 'DELETED', delete_requested_at = 1700000301,
+         deleted_at = 1700000400, updated_at = 1700000400
+     WHERE id = '${mediaId}';`,
+    "media delete request timestamp mutation",
+    "MEDIA_OBJECT_TRANSITION_PAYLOAD_INVALID",
+  );
+  database.exec(`
+    INSERT INTO media_deletion_outbox (
+      id, media_object_id, object_key, reason, not_before,
+      attempt_count, next_attempt_at, created_at, updated_at
+    ) VALUES (
+      'media-delete:${replacementMediaId}', '${replacementMediaId}',
+      '${replacementObjectKey}', 'RESOURCE_PURGED',
+      1700000390, 0, 1700000390, 1700000390, 1700000390
+    );
+    UPDATE media_objects
+    SET state = 'PENDING_DELETE', delete_requested_at = 1700000390,
+        updated_at = 1700000390
+    WHERE id = '${replacementMediaId}';
+    UPDATE media_objects
+    SET state = 'DELETED', deleted_at = 1700000400, updated_at = 1700000400
+    WHERE id = '${mediaId}';
+    DELETE FROM qna_threads WHERE id = 'media-probe-managed-url-thread';
+    DELETE FROM posts WHERE id = 'media-probe-post';
+    DELETE FROM posts WHERE id = 'media-probe-legacy-post';
+  `);
+  assert(
+    database.all("SELECT id FROM posts WHERE id = 'media-probe-post';").length === 0 &&
+      database.all(`SELECT state FROM media_objects WHERE id = '${mediaId}';`)[0]?.state ===
+        "DELETED" &&
+      database.all(
+        `SELECT completed_at FROM media_deletion_outbox WHERE id = 'media-delete:${mediaId}';`,
+      )[0]?.completed_at === 1700000400 &&
+      database.all(
+        `SELECT completed_at FROM media_deletion_outbox WHERE id = 'media-staging-delete:${mediaId}';`,
+      )[0]?.completed_at === 1700000399,
+    "media purge/delete completion 상태가 수렴하지 않았습니다.",
+  );
+  assertSqlFails(
+    database,
+    `DELETE FROM media_objects WHERE id = '${mediaId}';`,
+    "media registry direct delete guard",
+    "MEDIA_OBJECT_DELETE_GUARD",
+  );
+  assertSqlFails(
+    database,
+    `DELETE FROM media_deletion_outbox WHERE id = 'media-delete:${mediaId}';`,
+    "media outbox direct delete guard",
+    "MEDIA_DELETION_OUTBOX_DELETE_GUARD",
+  );
+  assertSqlFails(
+    database,
+    "DELETE FROM profiles WHERE id = 'media-probe-owner';",
+    "media owner profile fail-closed RESTRICT",
+  );
+  assert(
+    database.all("PRAGMA foreign_key_check;").length === 0,
+    "media lifecycle semantic probe 뒤 foreign key 위반이 있습니다.",
+  );
+}
+
+function validateServerDraftSemantics(database) {
+  const hashA = "a".repeat(64);
+  const hashB = "b".repeat(64);
+  const sourceKey = "draft:document:note:server-probe-user:new";
+  database.exec(`
+    INSERT INTO profiles (id, email, display_name, role)
+    VALUES ('server-probe-user', 'server-probe@example.com', 'Server Probe', 'student');
+    INSERT INTO document_server_drafts (
+      owner_id, source_key, document_kind, context_id, payload_json,
+      payload_hash, draft_version, base_resource_version, writer_device_id,
+      created_at, updated_at, expires_at
+    ) VALUES (
+      'server-probe-user', '${sourceKey}', 'note', 'new',
+      '{"contentHtml":"<p>probe</p>","title":"probe"}', '${hashA}', 1, NULL,
+      '00000000-0000-4000-8000-000000000001',
+      1700000000, 1700000000, 1702592000
+    );
+    INSERT INTO document_server_draft_operations (
+      owner_id, operation_id, source_key, operation_type, request_hash,
+      request_hash_version, result_version, result_state, created_at, expires_at
+    ) VALUES (
+      'server-probe-user', '00000000-0000-4000-8000-000000000002',
+      '${sourceKey}', 'UPSERT', '${hashB}', 1, 1, 'PRESENT',
+      1700000000, 1702592000
+    );
+  `);
+
+  assertSqlFails(
+    database,
+    `UPDATE document_server_drafts SET draft_version = 3 WHERE owner_id = 'server-probe-user' AND source_key = '${sourceKey}';`,
+    "server draft skipped CAS version",
+    "DOCUMENT_SERVER_DRAFT_CAS_GUARD",
+  );
+  assertSqlFails(
+    database,
+    `UPDATE document_server_drafts SET context_id = 'other', draft_version = 2, updated_at = 1700000001, expires_at = 1702592001 WHERE owner_id = 'server-probe-user' AND source_key = '${sourceKey}';`,
+    "server draft identity mutation",
+    "DOCUMENT_SERVER_DRAFT_CAS_GUARD",
+  );
+  assertSqlFails(
+    database,
+    `UPDATE document_server_draft_operations SET result_version = 2 WHERE owner_id = 'server-probe-user';`,
+    "server draft operation immutable update",
+    "DOCUMENT_SERVER_DRAFT_OPERATION_IMMUTABLE",
+  );
+  assertSqlFails(
+    database,
+    `INSERT INTO document_server_drafts (
+      owner_id, source_key, document_kind, context_id, payload_json,
+      payload_hash, draft_version, writer_device_id, created_at, updated_at, expires_at
+    ) VALUES ('server-probe-user', 'invalid-kind', 'other', 'new', '{}', '${hashA}', 1,
+      'device', 1700000000, 1700000000, 1702592000);`,
+    "server draft kind CHECK",
+  );
+  assertSqlFails(
+    database,
+    `INSERT INTO document_server_drafts (
+      owner_id, source_key, document_kind, context_id, payload_json,
+      payload_hash, draft_version, writer_device_id, created_at, updated_at, expires_at
+    ) VALUES ('server-probe-user', 'invalid-json', 'note', 'new', '{', '${hashA}', 1,
+      'device', 1700000000, 1700000000, 1702592000);`,
+    "server draft JSON CHECK",
+  );
+  assertSqlFails(
+    database,
+    `INSERT INTO document_server_drafts (
+      owner_id, source_key, document_kind, context_id, payload_json,
+      payload_hash, draft_version, base_resource_version, writer_device_id,
+      created_at, updated_at, expires_at
+    ) VALUES ('server-probe-user', 'invalid-version', 'note', 'new', '{}', '${hashA}', 0, 0,
+      'device', 1700000000, 1700000000, 1702592000);`,
+    "server draft version CHECK",
+  );
+  assertSqlFails(
+    database,
+    `INSERT INTO document_server_draft_operations (
+      owner_id, operation_id, source_key, operation_type, request_hash,
+      request_hash_version, result_version, result_state, created_at, expires_at
+    ) VALUES ('server-probe-user', 'bad-state', '${sourceKey}', 'DISCARD',
+      '${hashA}', 1, 1, 'PRESENT', 1700000000, 1702592000);`,
+    "server draft operation state CHECK",
+  );
+
+  for (const recursiveTriggers of ["OFF", "ON"]) {
+    database.exec(`PRAGMA recursive_triggers = ${recursiveTriggers};`);
+    assertSqlFails(
+      database,
+      `INSERT OR REPLACE INTO document_server_drafts (
+        owner_id, source_key, document_kind, context_id, payload_json,
+        payload_hash, draft_version, writer_device_id, created_at, updated_at, expires_at
+      ) VALUES ('server-probe-user', '${sourceKey}', 'note', 'new', '{}', '${hashA}', 1,
+        'device', 1700000000, 1700000000, 1702592000);`,
+      `server draft INSERT OR REPLACE recursive_triggers=${recursiveTriggers}`,
+      "DOCUMENT_SERVER_DRAFT_DUPLICATE",
+    );
+    assertSqlFails(
+      database,
+      `INSERT OR REPLACE INTO document_server_draft_operations (
+        owner_id, operation_id, source_key, operation_type, request_hash,
+        request_hash_version, result_version, result_state, created_at, expires_at
+      ) VALUES ('server-probe-user', '00000000-0000-4000-8000-000000000002',
+        '${sourceKey}', 'UPSERT', '${hashB}', 1, 1, 'PRESENT', 1700000000, 1702592000);`,
+      `server draft operation INSERT OR REPLACE recursive_triggers=${recursiveTriggers}`,
+      "DOCUMENT_SERVER_DRAFT_OPERATION_DUPLICATE",
+    );
+  }
+  database.exec("PRAGMA recursive_triggers = OFF;");
+
+  database.exec(`
+    UPDATE document_server_drafts
+    SET payload_json = '{"title":"next"}', payload_hash = '${hashB}',
+        draft_version = 2, writer_device_id = '00000000-0000-4000-8000-000000000003',
+        updated_at = 1700000001, expires_at = 1702592001
+    WHERE owner_id = 'server-probe-user' AND source_key = '${sourceKey}';
+  `);
+  const [updated] = database.all(`
+    SELECT draft_version, payload_hash
+    FROM document_server_drafts
+    WHERE owner_id = 'server-probe-user' AND source_key = '${sourceKey}';
+  `);
+  assert(
+    updated?.draft_version === 2 && updated?.payload_hash === hashB,
+    "server draft 정상 CAS update가 반영되지 않았습니다.",
+  );
+  assert(
+    database.all("PRAGMA foreign_key_check;").length === 0,
+    "server draft semantic probe 뒤 foreign key 위반이 있습니다.",
+  );
+}
+
 async function main() {
   const migrationFiles = readdirSync(migrationsDirectory)
     .filter((name) => migrationPattern.test(name))
@@ -961,10 +3306,17 @@ async function main() {
       "current schema",
     );
     validateContinuityTriggers(migrationDatabase);
-    console.log("PASS document continuity CHECK/trigger signatures");
+    validateServerDraftTriggers(migrationDatabase);
+    validateMediaLifecycleTriggers(migrationDatabase);
+    console.log("PASS document, server draft, media lifecycle CHECK/trigger signatures");
 
     validateContinuitySemantics(migrationDatabase);
-    console.log("PASS document continuity semantic negative probes");
+    validateLifecycleExpansionSemantics(migrationDatabase);
+    validateServerDraftSemantics(migrationDatabase);
+    validateMediaLifecycleSemantics(migrationDatabase);
+    validateAccountPrivacySemantics(migrationDatabase);
+    validateAccountPrivacyAtomicSource();
+    console.log("PASS document, server draft, media, account privacy semantic negative probes");
 
     const integrity = migrationDatabase.all("PRAGMA integrity_check;");
     const foreignKeyViolations = migrationDatabase.all("PRAGMA foreign_key_check;");
@@ -984,6 +3336,14 @@ async function main() {
 
   await validateContinuityUpgrade(migrationFiles);
   console.log("PASS 0007 fixture upgrade and inbound FK preflight");
+  await validateServerDraftUpgrade(migrationFiles);
+  console.log("PASS 0008 fixture upgrade and server draft account cascade");
+  await validateLifecycleExpansionUpgrade(migrationFiles);
+  console.log("PASS 0009 fixture upgrade and post/Q&A continuity backfill");
+  await validateMediaLifecycleUpgrade(migrationFiles);
+  console.log("PASS 0010 populated fixture upgrade and media lifecycle additive columns");
+  await validateAccountPrivacyUpgrade(migrationFiles);
+  console.log("PASS populated 0011 → 0012 account privacy upgrade and rollback probes");
 }
 
 try {

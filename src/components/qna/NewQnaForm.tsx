@@ -11,7 +11,7 @@ import { AttachmentField } from "@/components/qna/AttachmentField";
 import { DraftStatus } from "@/components/editor/DraftStatus";
 import { createQnaThread, type CreateThreadState } from "@/lib/actions/qna";
 import { createDocumentDraftKey } from "@/lib/form-draft";
-import { useFormDraft } from "@/lib/hooks/useFormDraft";
+import { useSyncedFormDraft } from "@/lib/hooks/useSyncedFormDraft";
 import { useDeferredEditorContent } from "@/lib/hooks/useDeferredEditorContent";
 import { isRichTextEmpty } from "@/lib/rich-text";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
@@ -23,6 +23,7 @@ import {
   parseCreationOperationId,
 } from "@/lib/creation-operation";
 import { CreationConflictActions } from "@/components/editor/CreationConflictActions";
+import { abandonMediaUpload } from "@/lib/actions/upload";
 
 const FullEditor = dynamic(
   () => import("@/components/editor/FullEditor").then((module) => ({ default: module.FullEditor })),
@@ -34,6 +35,7 @@ type QnaDraft = {
   title: string;
   contentHtml: string;
   attachmentUrl: string;
+  attachmentObjectId?: string;
 };
 
 export function NewQnaForm({ actorId, returnTo }: { actorId: string; returnTo: string }) {
@@ -48,6 +50,7 @@ export function NewQnaForm({ actorId, returnTo }: { actorId: string; returnTo: s
     commitLatestContentHtml,
   } = useDeferredEditorContent("");
   const [attachmentUrl, setAttachmentUrl] = useState("");
+  const [attachmentObjectId, setAttachmentObjectId] = useState("");
   const [operationId, setOperationId] = useState("");
   const [isUploading, setIsUploading] = useState(false);
   const [state, formAction, isPending] = useActionState<CreateThreadState, FormData>(
@@ -74,7 +77,8 @@ export function NewQnaForm({ actorId, returnTo }: { actorId: string; returnTo: s
     recoveries,
     restoreRecovery,
     discardRecovery,
-  } = useFormDraft<QnaDraft>(
+    serverSync,
+  } = useSyncedFormDraft<QnaDraft>(
     createDocumentDraftKey("qna-thread", actorId),
     (draft) => {
       setOperationId(
@@ -83,6 +87,7 @@ export function NewQnaForm({ actorId, returnTo }: { actorId: string; returnTo: s
       setTitle(draft.title ?? "");
       setContentHtml(draft.contentHtml ?? "");
       setAttachmentUrl(draft.attachmentUrl ?? "");
+      setAttachmentObjectId(draft.attachmentObjectId ?? "");
     },
     {
       onReset: () => {
@@ -90,6 +95,7 @@ export function NewQnaForm({ actorId, returnTo }: { actorId: string; returnTo: s
         setTitle("");
         setContentHtml("");
         setAttachmentUrl("");
+        setAttachmentObjectId("");
       },
     },
   );
@@ -101,11 +107,13 @@ export function NewQnaForm({ actorId, returnTo }: { actorId: string; returnTo: s
         title,
         contentHtml: readLatestContentHtml(),
         attachmentUrl,
+        attachmentObjectId,
       }),
       isEmpty: (draft) =>
         !draft.title &&
         isRichTextEmpty(draft.contentHtml) &&
-        !draft.attachmentUrl,
+        !draft.attachmentUrl &&
+        !draft.attachmentObjectId,
       clear,
       save,
       flush,
@@ -115,7 +123,7 @@ export function NewQnaForm({ actorId, returnTo }: { actorId: string; returnTo: s
   useEffect(() => {
     if (!loaded) return;
     const latestContentHtml = readLatestContentHtml();
-    if (!title && isRichTextEmpty(latestContentHtml) && !attachmentUrl) {
+    if (!title && isRichTextEmpty(latestContentHtml) && !attachmentUrl && !attachmentObjectId) {
       clear();
       return;
     }
@@ -124,11 +132,12 @@ export function NewQnaForm({ actorId, returnTo }: { actorId: string; returnTo: s
       operationId,
       title,
       attachmentUrl,
+      attachmentObjectId,
       get contentHtml() {
         return readLatestContentHtml();
       },
     });
-  }, [attachmentUrl, clear, contentHtml, loaded, operationId, readLatestContentHtml, save, title]);
+  }, [attachmentObjectId, attachmentUrl, clear, contentHtml, loaded, operationId, readLatestContentHtml, save, title]);
 
   useEffect(() => {
     if (!state.thread?.id || handledThreadIdRef.current === state.thread.id) return;
@@ -140,11 +149,12 @@ export function NewQnaForm({ actorId, returnTo }: { actorId: string; returnTo: s
         title,
         contentHtml,
         attachmentUrl,
+        attachmentObjectId,
       },
     });
     submittedDraftRef.current = null;
     router.replace(`/dashboard/qna/${state.thread.id}?returnTo=${encodeURIComponent(returnTo)}`);
-  }, [attachmentUrl, clear, contentHtml, operationId, returnTo, router, state.thread?.id, title]);
+  }, [attachmentObjectId, attachmentUrl, clear, contentHtml, operationId, returnTo, router, state.thread?.id, title]);
 
   const hasOperationConflict = Boolean(
     state.operationConflict &&
@@ -198,6 +208,7 @@ export function NewQnaForm({ actorId, returnTo }: { actorId: string; returnTo: s
             title,
             contentHtml: latestContentHtml,
             attachmentUrl,
+            attachmentObjectId,
           };
           save(submittedDraft);
           flush();
@@ -218,7 +229,14 @@ export function NewQnaForm({ actorId, returnTo }: { actorId: string; returnTo: s
             existingHref={`/dashboard/qna/${state.existingId}?returnTo=${encodeURIComponent(returnTo)}`}
             existingLabel="기존 질문 열기"
             separateLabel="별도 질문으로 저장"
-            onSeparate={() => setOperationId(createCreationOperationId())}
+            onSeparate={() => {
+              if (attachmentObjectId) {
+                void abandonMediaUpload(attachmentObjectId).catch(() => undefined);
+              }
+              setAttachmentUrl("");
+              setAttachmentObjectId("");
+              setOperationId(createCreationOperationId());
+            }}
             disabled={isFormBusy}
           />
         ) : null}
@@ -254,6 +272,7 @@ export function NewQnaForm({ actorId, returnTo }: { actorId: string; returnTo: s
                   operationId,
                   title,
                   attachmentUrl,
+                  attachmentObjectId,
                   get contentHtml() {
                     return reader();
                   },
@@ -271,6 +290,7 @@ export function NewQnaForm({ actorId, returnTo }: { actorId: string; returnTo: s
                   recoveries={recoveries}
                   onRestoreRecovery={restoreRecovery}
                   onDiscardRecovery={discardRecovery}
+                  serverSync={serverSync}
                   disabled={isFormBusy}
                 />
               }
@@ -283,7 +303,12 @@ export function NewQnaForm({ actorId, returnTo }: { actorId: string; returnTo: s
           <p className="text-sm font-medium">첨부 파일</p>
           <AttachmentField
             value={attachmentUrl}
-            onChange={setAttachmentUrl}
+            mediaObjectId={attachmentObjectId}
+            draftOperationId={operationId}
+            onChange={(upload) => {
+              setAttachmentUrl(upload?.deliveryUrl ?? "");
+              setAttachmentObjectId(upload?.mediaObjectId ?? "");
+            }}
             disabled={!loaded || isFormBusy}
             onUploadingChange={setIsUploading}
           />

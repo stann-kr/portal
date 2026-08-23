@@ -8,7 +8,7 @@
 import { useActionState, useState, useEffect, useRef, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, History } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import dynamic from "next/dynamic";
 
@@ -18,7 +18,7 @@ const FullEditor = dynamic(
 );
 import { ReplyCard } from "./ReplyCard";
 import { AttachmentField } from "./AttachmentField";
-import { useFormDraft } from "@/lib/hooks/useFormDraft";
+import { useSyncedFormDraft } from "@/lib/hooks/useSyncedFormDraft";
 import { useDeferredEditorContent } from "@/lib/hooks/useDeferredEditorContent";
 import { createQnaReply, updateThreadStatus, type CreateReplyState } from "@/lib/actions/qna";
 import { QNA_STATUS_LABELS } from "@/lib/qna-status";
@@ -37,6 +37,8 @@ import {
   parseCreationOperationId,
 } from "@/lib/creation-operation";
 import { CreationConflictActions } from "@/components/editor/CreationConflictActions";
+import { QnaThreadLifecycleActions } from "@/components/qna/QnaThreadLifecycleActions";
+import { abandonMediaUpload } from "@/lib/actions/upload";
 
 type Reply = {
   id: string;
@@ -52,11 +54,14 @@ type QnaReplyDraft = {
   operationId?: string;
   contentHtml: string;
   attachmentUrl: string;
+  attachmentObjectId?: string;
 };
 
 interface ThreadDetailClientProps {
   threadId: string;
   status: QnaStatus;
+  version: number;
+  deletedAt: string | null;
   replies: Reply[];
   isAdmin: boolean;
   actorId: string;
@@ -69,6 +74,8 @@ interface ThreadDetailClientProps {
 export function ThreadDetailClient({
   threadId,
   status,
+  version,
+  deletedAt,
   replies: initialReplies,
   isAdmin,
   actorId,
@@ -87,12 +94,15 @@ export function ThreadDetailClient({
     commitLatestContentHtml,
   } = useDeferredEditorContent("");
   const [attachmentUrl, setAttachmentUrl] = useState("");
+  const [attachmentObjectId, setAttachmentObjectId] = useState("");
   const [operationId, setOperationId] = useState("");
   const [isUploading, setIsUploading] = useState(false);
   const [editorKey, setEditorKey] = useState(0);
   const [isPending, startTransition] = useTransition();
   const [currentStatus, setCurrentStatus] = useState(status);
+  const [currentVersion, setCurrentVersion] = useState(version);
   const [statusError, setStatusError] = useState<string | null>(null);
+  const statusOperationIdsRef = useRef(new Map<string, string>());
   const formRef = useRef<HTMLFormElement>(null);
   const contentInputRef = useRef<HTMLInputElement>(null);
   const submittedReplyRef = useRef<QnaReplyDraft | null>(null);
@@ -100,6 +110,7 @@ export function ThreadDetailClient({
   const router = useRouter();
 
   useEffect(() => setCurrentStatus(status), [status]);
+  useEffect(() => setCurrentVersion(version), [version]);
 
   const boundAction = createQnaReply.bind(null, threadId);
   const [replyState, replyAction, isReplying] = useActionState<
@@ -122,7 +133,8 @@ export function ThreadDetailClient({
     recoveries,
     restoreRecovery,
     discardRecovery,
-  } = useFormDraft<QnaReplyDraft>(
+    serverSync,
+  } = useSyncedFormDraft<QnaReplyDraft>(
     createDocumentDraftKey("qna-reply", actorId, threadId),
     (d) => {
       setOperationId(
@@ -130,12 +142,14 @@ export function ThreadDetailClient({
       );
       setContentHtml(d.contentHtml ?? "");
       setAttachmentUrl(d.attachmentUrl ?? "");
+      setAttachmentObjectId(d.attachmentObjectId ?? "");
     },
     {
       onReset: () => {
         setOperationId(createCreationOperationId());
         setContentHtml("");
         setAttachmentUrl("");
+        setAttachmentObjectId("");
         setEditorKey((key) => key + 1);
       },
     },
@@ -152,9 +166,12 @@ export function ThreadDetailClient({
         operationId,
         contentHtml: readLatestContentHtml(),
         attachmentUrl,
+        attachmentObjectId,
       }),
       isEmpty: (draft) =>
-        isRichTextEmpty(draft.contentHtml) && !draft.attachmentUrl,
+        isRichTextEmpty(draft.contentHtml) &&
+        !draft.attachmentUrl &&
+        !draft.attachmentObjectId,
       clear,
       save,
       flush,
@@ -164,7 +181,10 @@ export function ThreadDetailClient({
   useEffect(() => {
     if (!loaded) return;
     const latestContentHtml = readLatestContentHtml();
-    const isEmpty = isRichTextEmpty(latestContentHtml) && !attachmentUrl;
+    const isEmpty =
+      isRichTextEmpty(latestContentHtml) &&
+      !attachmentUrl &&
+      !attachmentObjectId;
     if (isEmpty) {
       clear();
       return;
@@ -173,11 +193,12 @@ export function ThreadDetailClient({
     save({
       operationId,
       attachmentUrl,
+      attachmentObjectId,
       get contentHtml() {
         return readLatestContentHtml();
       },
     });
-  }, [loaded, contentHtml, attachmentUrl, operationId, readLatestContentHtml, save, clear]);
+  }, [loaded, contentHtml, attachmentUrl, attachmentObjectId, operationId, readLatestContentHtml, save, clear]);
 
   // 답변 등록 성공 시 draft 삭제 + 폼 초기화 (에디터 remount)
   useEffect(() => {
@@ -189,13 +210,16 @@ export function ThreadDetailClient({
           operationId,
           contentHtml,
           attachmentUrl,
+          attachmentObjectId,
         },
       });
       submittedReplyRef.current = null;
       setOperationId(createCreationOperationId());
       setContentHtml("");
       setAttachmentUrl("");
+      setAttachmentObjectId("");
       setEditorKey((k) => k + 1);
+      if (replyState.currentRevision) setCurrentVersion(replyState.currentRevision);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [replyState.replyId]);
@@ -208,16 +232,35 @@ export function ThreadDetailClient({
   const hasReplyDraft =
     !isRichTextEmpty(contentHtml) ||
     Boolean(attachmentUrl) ||
+    Boolean(attachmentObjectId) ||
     recoveries.length > 0 ||
     draftStatus !== "idle";
   const showReplyComposer = currentStatus !== "CLOSED" || hasReplyDraft;
+  const isTrashed = Boolean(deletedAt);
 
   const handleStatusChange = (newStatus: QnaStatus) => {
     setStatusError(null);
     startTransition(async () => {
+      const operationKey = `${newStatus}:${currentVersion}`;
+      const statusOperationId =
+        statusOperationIdsRef.current.get(operationKey) ??
+        createCreationOperationId();
+      statusOperationIdsRef.current.set(operationKey, statusOperationId);
       try {
-        await updateThreadStatus(threadId, newStatus);
+        const result = await updateThreadStatus(
+          threadId,
+          newStatus,
+          statusOperationId,
+          currentVersion,
+        );
+        if (!result.success) {
+          setStatusError(result.error ?? "상태를 변경하지 못했습니다.");
+          if (result.currentRevision) setCurrentVersion(result.currentRevision);
+          return;
+        }
+        statusOperationIdsRef.current.delete(operationKey);
         setCurrentStatus(newStatus);
+        if (result.currentRevision) setCurrentVersion(result.currentRevision);
         router.refresh();
       } catch {
         setStatusError("상태를 변경하지 못했습니다. 다시 시도해 주세요.");
@@ -269,7 +312,31 @@ export function ThreadDetailClient({
             }
           />
         </div>
+        <div className="flex flex-wrap gap-2">
+          <Button asChild variant="outline" size="sm" className="gap-1.5">
+            <Link
+              href={`/dashboard/qna/${threadId}/history?returnTo=${encodeURIComponent(returnTo)}`}
+            >
+              <History className="h-4 w-4" aria-hidden="true" />
+              변경 이력
+            </Link>
+          </Button>
+          <QnaThreadLifecycleActions
+            threadId={threadId}
+            version={currentVersion}
+            deletedAt={deletedAt}
+            canRestore
+            canPurge={isAdmin}
+            returnTo={returnTo}
+          />
+        </div>
       </div>
+
+      {isTrashed ? (
+        <p role="status" className="rounded-xl border border-warning/30 bg-warning-muted p-4 text-sm">
+          휴지통에 있는 Q&amp;A입니다. 답변과 상태 변경 이력은 함께 보존되며 복원 전에는 새 답변을 등록할 수 없습니다.
+        </p>
+      ) : null}
 
       <div className="border-t border-border" />
 
@@ -284,7 +351,7 @@ export function ThreadDetailClient({
       <div className="border-t border-border" />
 
       {/* 어드민 상태 변경 */}
-      {isAdmin && (
+      {isAdmin && !isTrashed && (
         <div className="flex items-center gap-2" aria-label="스레드 상태 변경">
           <span className="text-xs text-muted-foreground">상태 변경:</span>
           {(["OPEN", "ANSWERED", "CLOSED"] as QnaStatus[]).map((s) => (
@@ -313,7 +380,7 @@ export function ThreadDetailClient({
       {statusError ? <p role="alert" className="text-sm text-destructive">{statusError}</p> : null}
 
       {/* 답변 작성 폼 */}
-      {showReplyComposer && (
+      {showReplyComposer && !isTrashed && (
         <form
           ref={formRef}
           action={replyAction}
@@ -335,6 +402,7 @@ export function ThreadDetailClient({
               operationId,
               contentHtml: latestContentHtml,
               attachmentUrl,
+              attachmentObjectId,
             };
             save(submittedReply);
             flush();
@@ -363,7 +431,14 @@ export function ThreadDetailClient({
               existingLabel="현재 답변 새로고침"
               separateLabel="별도 답변으로 등록"
               onOpenExisting={() => router.refresh()}
-              onSeparate={() => setOperationId(createCreationOperationId())}
+              onSeparate={() => {
+                if (attachmentObjectId) {
+                  void abandonMediaUpload(attachmentObjectId).catch(() => undefined);
+                }
+                setAttachmentUrl("");
+                setAttachmentObjectId("");
+                setOperationId(createCreationOperationId());
+              }}
               disabled={isReplyFormBusy}
             />
           ) : null}
@@ -382,6 +457,7 @@ export function ThreadDetailClient({
                 save({
                   operationId,
                   attachmentUrl,
+                  attachmentObjectId,
                   get contentHtml() {
                     return reader();
                   },
@@ -400,6 +476,7 @@ export function ThreadDetailClient({
                   recoveries={recoveries}
                   onRestoreRecovery={restoreRecovery}
                   onDiscardRecovery={discardRecovery}
+                  serverSync={serverSync}
                   disabled={isReplyFormBusy}
                 />
               }
@@ -410,7 +487,12 @@ export function ThreadDetailClient({
           )}
           <AttachmentField
             value={attachmentUrl}
-            onChange={setAttachmentUrl}
+            mediaObjectId={attachmentObjectId}
+            draftOperationId={operationId}
+            onChange={(upload) => {
+              setAttachmentUrl(upload?.deliveryUrl ?? "");
+              setAttachmentObjectId(upload?.mediaObjectId ?? "");
+            }}
             disabled={!loaded || currentStatus === "CLOSED" || isReplyFormBusy}
             onUploadingChange={setIsUploading}
           />
@@ -428,7 +510,7 @@ export function ThreadDetailClient({
         </form>
       )}
 
-      {currentStatus === "CLOSED" && !hasReplyDraft && (
+      {currentStatus === "CLOSED" && !hasReplyDraft && !isTrashed && (
         <p className="text-sm text-muted-foreground text-center py-4">
           종료된 스레드입니다.
         </p>

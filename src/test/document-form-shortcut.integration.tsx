@@ -108,6 +108,41 @@ mock.module("@/lib/actions/categories", {
     getCategories: async () => [],
   },
 });
+mock.module("@/lib/actions/documentDrafts", {
+  namedExports: {
+    readDocumentServerDraft: async () => ({ ok: true, draft: null }),
+    saveDocumentServerDraft: async (input: {
+      sourceKey: string;
+      expectedDraftVersion: number;
+      payloadJson: string;
+      writerDeviceId: string;
+    }) => ({
+      ok: true,
+      replayed: false,
+      operationResultVersion: input.expectedDraftVersion + 1,
+      current: {
+        sourceKey: input.sourceKey,
+        kind: "community-post",
+        contextId: "new",
+        payloadJson: input.payloadJson,
+        payloadHash: createFormDraftDataSignature(JSON.parse(input.payloadJson)).slice(
+          "sha256:".length,
+        ),
+        draftVersion: input.expectedDraftVersion + 1,
+        baseResourceVersion: null,
+        writerDeviceId: input.writerDeviceId,
+        updatedAt: Date.now(),
+        expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1_000,
+      },
+    }),
+    discardDocumentServerDraft: async () => ({
+      ok: true,
+      replayed: false,
+      operationResultVersion: 0,
+      current: null,
+    }),
+  },
+});
 mock.module("@/lib/actions/qna", {
   namedExports: {
     createQnaReply: async () => {
@@ -122,7 +157,7 @@ mock.module("@/lib/actions/qna", {
       actionCalls.qnaInline += 1;
       return {};
     },
-    updateThreadStatus: async () => undefined,
+    updateThreadStatus: async () => ({ success: true, currentRevision: 2 }),
   },
 });
 mock.module("@/components/upload/FileUploader", {
@@ -474,6 +509,7 @@ test("새 게시물 Cmd/Ctrl+S는 최신 본문을 로컬 저장하고 게시하
     contentHtml: string;
     isPinned: boolean;
     mediaUrl: string;
+    mediaObjectId: string;
     operationId: string;
     title: string;
   }>(raw)?.data;
@@ -487,6 +523,7 @@ test("새 게시물 Cmd/Ctrl+S는 최신 본문을 로컬 저장하고 게시하
     title: "단축키 게시물",
     contentHtml: "<p>publish 전 최신 게시물 본문</p>",
     mediaUrl: "",
+    mediaObjectId: "",
   });
 });
 
@@ -521,6 +558,7 @@ test("새 Q&A 페이지 Cmd/Ctrl+S는 최신 본문을 로컬 저장하고 등�
   assert.ok(raw);
   const stored = parseFormDraft<{
     attachmentUrl: string;
+    attachmentObjectId: string;
     contentHtml: string;
     operationId: string;
     title: string;
@@ -531,6 +569,7 @@ test("새 Q&A 페이지 Cmd/Ctrl+S는 최신 본문을 로컬 저장하고 등�
     title: "단축키 질문",
     contentHtml: "<p>publish 전 최신 질문 본문</p>",
     attachmentUrl: "",
+    attachmentObjectId: "",
   });
 });
 
@@ -570,6 +609,7 @@ test("Q&A 슬라이드 Cmd/Ctrl+S는 최신 본문을 로컬 저장하고 등록
   assert.ok(raw);
   const stored = parseFormDraft<{
     attachmentUrl: string;
+    attachmentObjectId: string;
     contentHtml: string;
     operationId: string;
     title: string;
@@ -580,6 +620,7 @@ test("Q&A 슬라이드 Cmd/Ctrl+S는 최신 본문을 로컬 저장하고 등록
     title: "슬라이드 단축키 질문",
     contentHtml: "<p>publish 전 슬라이드 본문</p>",
     attachmentUrl: "",
+    attachmentObjectId: "",
   });
 });
 
@@ -597,6 +638,8 @@ test("Q&A 답변 Cmd/Ctrl+S는 최신 본문을 로컬 저장하고 등록하지
       replies={[]}
       returnTo="/dashboard/qna"
       status="OPEN"
+      version={1}
+      deletedAt={null}
       studentName="학생"
       threadId={threadId}
       title="단축키 검증 스레드"
@@ -617,6 +660,7 @@ test("Q&A 답변 Cmd/Ctrl+S는 최신 본문을 로컬 저장하고 등록하지
   assert.ok(raw);
   const stored = parseFormDraft<{
     attachmentUrl: string;
+    attachmentObjectId: string;
     contentHtml: string;
     operationId: string;
   }>(raw)?.data;
@@ -625,6 +669,7 @@ test("Q&A 답변 Cmd/Ctrl+S는 최신 본문을 로컬 저장하고 등록하지
     operationId: stored.operationId,
     contentHtml: "<p>publish 전 최신 답변 본문</p>",
     attachmentUrl: "",
+    attachmentObjectId: "",
   });
 });
 
@@ -682,6 +727,8 @@ const FRESH_META_SHORTCUT_CASES: ReadonlyArray<{
         replies={[]}
         returnTo="/dashboard/qna"
         status="OPEN"
+        version={1}
+        deletedAt={null}
         studentName="학생"
         threadId="thread-fresh-meta"
         title="fresh Cmd 검증 스레드"
@@ -933,6 +980,8 @@ test("종료된 Q&A의 보존 초안은 보이되 저장 단축키와 등록을 
       replies={[]}
       returnTo="/dashboard/qna"
       status="CLOSED"
+      version={1}
+      deletedAt={null}
       studentName="학생"
       threadId={threadId}
       title="종료된 스레드"

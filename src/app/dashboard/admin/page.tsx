@@ -4,7 +4,7 @@
  * AdminPortalClient에 병렬 패치한 데이터를 props로 전달.
  */
 import { redirect } from "next/navigation";
-import { auth } from "@/auth";
+import { getActiveAuthSession } from "@/lib/auth-guard";
 import { getPostsByBoardType } from "@/lib/actions/posts";
 import { getStudentRosterStats } from "@/lib/actions/students";
 import { getUnifiedItemsForStudent } from "@/lib/actions/unifiedItems";
@@ -19,7 +19,7 @@ type RawQnaThread = Awaited<ReturnType<typeof getQnaThreadsByStudent>>[number];
 type RawModule = Awaited<ReturnType<typeof getCurriculumByStudent>>[number];
 
 export default async function AdminPortalPage() {
-  const session = await auth();
+  const session = await getActiveAuthSession();
   if (session?.user?.role !== "admin") redirect("/dashboard/student");
 
   const adminId = session.user.id!;

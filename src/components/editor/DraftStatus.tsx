@@ -2,7 +2,9 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import { AlertCircle, Check, CloudCog, RotateCcw, Trash2 } from "lucide-react";
+import { ServerDraftStatus } from "@/components/editor/ServerDraftStatus";
 import type { FormDraftRecoverySummary, FormDraftStatus } from "@/lib/form-draft";
+import type { DocumentServerDraftSyncResult } from "@/lib/hooks/useDocumentServerDraftSync";
 
 function formatSavedTime(value: Date | null): string | null {
   if (!value || !Number.isFinite(value.getTime())) return null;
@@ -266,6 +268,7 @@ export function DraftStatus({
   recoveries = [],
   onRestoreRecovery,
   onDiscardRecovery,
+  serverSync,
   disabled = false,
 }: {
   status: FormDraftStatus;
@@ -276,6 +279,7 @@ export function DraftStatus({
   recoveries?: readonly FormDraftRecoverySummary[];
   onRestoreRecovery?: (storageKey: string) => void;
   onDiscardRecovery?: (storageKey: string) => void;
+  serverSync?: DocumentServerDraftSyncResult;
   disabled?: boolean;
 }) {
   const [showAllRecoveries, setShowAllRecoveries] = useState(false);
@@ -300,6 +304,7 @@ export function DraftStatus({
         savedAt={savedAt}
         restored={restored}
       />
+      {serverSync ? <ServerDraftStatus sync={serverSync} disabled={disabled} /> : null}
       {recoveries.length > 0 ? (
         <div className="space-y-1.5 rounded-md border border-warning/25 bg-warning-muted px-2.5 py-2">
           <p

@@ -2,10 +2,61 @@
 
 공개 가능한 결과 중심 변경 요약이다. 날짜 아래에 같은 날의 변경을 모으고 최신 항목을 위에 둔다.
 
+## 2026-08-11
+
+### 변경 요약
+
+- Wrangler 원격 관리 명령이 사용하는 `CLOUDFLARE_API_TOKEN`을 Next/OpenNext가 자동 로드하지 않는 전용 `.env.cloudflare` 계약으로 분리했다. 실제 값은 Git에서 제외된 mode `600` 파일에만 두고 저장소·build artifact·로그·채팅에는 남기지 않는다.
+- 비호환 D1 migration runbook을 사전 restore rehearsal과 maintenance 이후 최종 rollback 기준점으로 분리했다. maintenance 100% 전환 뒤 기존 invocation을 drain하고 새 export·checksum·Time Travel bookmark를 확보해야만 실제 pending migration을 시작한다.
+- 익명 계정 정리 상태 조회를 Worker Rate Limiting binding으로 제한하고, binding 오류도 token 본문을 읽기 전에 `503`으로 닫는다. 계정 삭제는 오프라인 기기의 정리 신호 보급을 확인할 때까지 production rollout flag로 숨기고 server action도 함께 거부한다.
+- 예약 정리에 R2 final prefix inventory cursor를 추가했다. registry가 없거나 이미 삭제 상태인 managed object를 제한된 page로 재삭제해 늦게 완료된 원격 Copy와 outbox 완료 뒤 재생성된 객체를 다음 실행에서 수렴시킨다.
+- production R2 bucket에 portal origin 전용 `PUT` CORS와 `media-upload/` 2일 만료 lifecycle을 적용하고, Workers Builds의 production command를 자동 100% 배포가 아닌 version upload-only로 전환했다.
+- maintenance Worker로 application·asset·API 쓰기를 차단하고 최종 export·checksum·Time Travel 기준점을 확보한 뒤 production D1 migration `0003~0012`를 적용했다. FK 위반 0건, migration 13개, 기존 profile 2건 보존과 핵심 콘텐츠 row count 불변을 확인했다.
+- schema-compatible target Worker를 immutable version 100%로 단일 전환했다. 로그인·익명 session·cleanup status·calendar·private media 권한 경계 스모크를 통과했고 계정 삭제 rollout flag는 계속 비활성화했다.
+- 예약 정리 handler를 production에서 실제 1회 실행해 account/media backlog와 reconciliation failure가 모두 0으로 수렴하는 것을 확인한 뒤 운영 Cron을 `7 * * * *`로 고정했다.
+- 회전된 Workers Builds 인증을 현재 token으로 다시 등록하고 production·non-production trigger를 함께 갱신했다. 같은 PR 커밋의 OpenNext build와 upload-only 실행을 재검증하고 Workers Observability 실패 이메일 routing policy를 활성화했다.
+
+## 2026-08-10
+
+### 변경 요약
+
+- schema 전환 작업 창에서 사용할 점검 전용 Worker artifact를 추가했다. 상태 확인 endpoint를 제외한 application·asset·API의 모든 읽기와 쓰기를 `503`으로 막으며 D1·R2·asset·route binding 없이 별도 dry-run으로 검증한다.
+- OpenNext application fetch에 예약 정리 handler를 결합할 수 있는 별도 Worker entry를 추가했다. 30일이 지난 계정 식별자 alias, 만료된 미귀속 media 등록, R2 삭제 outbox를 순차·제한 batch로 처리하고 개별 실패와 soft time budget 뒤의 나머지 작업을 durable 상태로 남긴다.
+- 예약 정리 로그를 stage 상태·처리 건수·backlog 집계로 제한해 계정 ID, object key, cleanup digest와 예외 원문이 운영 로그에 들어가지 않게 했다. production Cron trigger·alert·Worker version 전환과 migration은 활성화하지 않았다.
+- rich text 정리를 DOM emulation 없이 HTML5 AST allowlist로 통일해 Node·browser·Worker가 같은 결과를 사용하게 했다. malformed markup, foreign content, 위험 URL·속성, YouTube embed와 멱등성 회귀를 자동 검증한다.
+- Worker 도구chain과 개발 container의 지원 runtime을 Node.js 22로 정렬하고, application·예약 정리·점검 Worker를 각각 재현하는 build 명령을 추가했다.
+
+## 2026-08-09
+
+### 변경 요약
+
+- 학생 본인 계정 삭제를 추가했다. 현재 비밀번호와 persistent 또는 memory-only 기기 정리 digest를 확인하고, persistent token 결합 또는 memory-only initiating receipt·삭제 job·profile·credential·문서 원문·서버 초안·본인 댓글과 답변을 한 transaction에서 처리한다. 기존 session은 NextAuth session 응답과 매 server 인증 경계의 active profile 재검증으로 즉시 거부한다.
+- 삭제 성공 뒤 현재 기기는 token 유무와 관계없이 terminal lock을 먼저 기록하고 해당 owner 데이터만 직접 정리한다. 저장소가 막히면 수동 정리를 명시하며, 삭제 전에 신호를 등록한 다른 기기는 digest 상태를 익명으로 확인해 재접속 때 정리한다. owner 없는 구버전 초안은 로그인 화면의 명시적 2단계 확인에서만 allowlist·snapshot 일치 조건으로 삭제한다.
+- anti-replay ledger·tombstone과 교차 문서 actor에 남는 raw 계정 ID는 30일 보존 경계 뒤 관리자 수렴 작업으로 무작위 alias에 단방향 치환할 수 있다. 신규 opaque 캘린더 feed token은 URL에서 raw 계정 ID를 제거하고 회전 시 이전 token을 즉시 폐기한다.
+- 새 `0012` migration은 account deletion job·cleanup token·calendar feed token과 개인정보 수명주기 trigger를 추가한다. 계정 소유 media와 삭제되는 문서의 managed media는 staging URL 만료·봉인 복구 유예를 지키는 durable R2 outbox로 넘긴다. persistent local·remote D1과 production scheduler는 아직 적용하지 않았다.
+- 게시물 오디오와 1:1 Q&A 첨부를 D1 media registry에 등록하고, 문서 생성과 object claim, 관리자 영구 삭제와 R2 삭제 outbox를 같은 원자 경계로 연결했다. 신규 첨부는 공개 object URL 대신 권한을 다시 확인하는 `/api/media/` 경로로 전달한다.
+- 업로드는 사용자에게 서명한 staging key와 비공개 final key를 분리한다. R2 object의 Content-Type metadata·크기·ETag 검증, one-shot PUT, 봉인 lease, 만료·응답 유실 뒤 late Copy 재삭제, owner별 quota와 지수 backoff cleanup을 적용했다.
+- 새 `0011` migration은 media registry·삭제 outbox와 게시물/Q&A object reference를 추가하고 기존 URL 데이터는 그대로 보존한다. migration doctor는 populated `0010→0011` upgrade, 상태 전이·outbox·URL 역참조, `INSERT OR REPLACE` 우회 차단을 격리 DB에서 검증한다. persistent local·remote D1과 R2 운영 설정은 아직 적용하지 않았다.
+- 커뮤니티 게시물에 version 기반 편집·고정 변경, 전체 스냅샷 이력, 30일 휴지통과 과거 버전 복원을 추가했다. 휴지통 이동·복원 동안 댓글을 보존하고, 만료 뒤 관리자 영구 삭제 시 최소 operation 기록과 tombstone이 늦은 요청의 부활을 막는다.
+- 1:1 Q&A에 질문·답변·상태·휴지통 변경의 불변 이벤트 이력을 추가했다. 질문을 휴지통으로 옮겨도 답변을 보존하며 복원할 수 있고, 종료·휴지통 상태의 새 답변을 서버 원자 경계에서 차단한다.
+- 게시물과 Q&A의 상세 화면에서 변경 이력을 확인하고 휴지통 항목을 복원할 수 있게 했다. 영구 삭제는 관리자, 30일 만료, 현재 version 일치를 모두 요구한다.
+- 새 `0010` migration은 기존 게시물과 Q&A를 기준 revision·event로 이관하고 불변 이력, 조건부 변경, 하위 데이터 보존, purge·tombstone 부활 방지 trigger를 추가한다. migration doctor는 기존 `0009` 데이터가 있는 upgrade와 부정 경로를 격리 DB에서 검증하며, persistent local·remote D1 적용은 별도 작업으로 남겨 두었다.
+
+## 2026-08-07
+
+### 변경 요약
+
+- 노트·게시물·Q&A 작성과 편집에 사용자·문서별 계정 초안을 추가했다. 최신 작성본은 마지막 저장 뒤 30일 보존하고 게시 완료·명시 폐기 때 삭제를 요청하며, 계정 삭제 시 원문과 재전송 기록을 함께 제거한다.
+- 일시적인 네트워크 실패에서는 source별 최신 저장·폐기 의도를 이 기기에 보존하고 연결 복구 뒤 같은 operation으로 재시도한다. 같은 요청의 응답이 유실돼도 중복 version을 만들지 않으며 오래된 queue가 만료된 서버본을 자동 부활시키지 않는다.
+- 다른 기기에서 저장한 작성본과 현재 입력이 다르면 자동 병합하거나 덮어쓰지 않는다. 안전한 평문 미리보기와 저장 시각을 비교해 계정 작성본 사용 또는 내 초안으로 계속을 선택하며, 선택 전에 이어 쓴 입력도 서버로 전송하지 않는다. 계정 원문 복사와 2단계 서버본 삭제를 사용할 수 있다.
+- 새 `0009` migration에 서버 초안과 불변 operation receipt, version CAS·`INSERT OR REPLACE` 방지 trigger를 추가했다. migration doctor와 격리 D1 테스트가 빈 DB replay, 기존 schema upgrade, 만료·계정 경계·cascade와 강제 실패 rollback을 확인한다.
+
 ## 2026-08-06
 
 ### 변경 요약
 
+- 학생·관리자 사이드 레일에 이 기기의 로컬 초안 목록을 추가했다. 안전한 제목·본문 미리보기와 저장 시각을 확인하고 문서별 또는 전체 초안을 2단계 확인 뒤 폐기할 수 있으며, 이미 제출된 ghost 복구본은 목록에 다시 나타나지 않는다.
+- 로그아웃 전에 현재 계정의 canonical·recovery·future·legacy 초안과 제출 marker·메모리 pending을 함께 정리하고 열린 작성 흐름의 늦은 재저장을 막는다. 다른 계정으로 인증하면 공유 기기에 남은 이전 계정 초안을 다시 정리한다.
 - 개인 노트에 version 기반 동시 편집 감지와 full-snapshot 불변 revision 이력을 추가했다. 같은 저장 요청은 operation ledger로 정확히 재전송하고, 과거 요청의 결과 revision과 현재 head revision을 구분해 최신 내용을 되감지 않는다.
 - 노트 삭제를 30일 휴지통으로 바꾸고 목록 분리, 상세 읽기 전용 상태, 복원, 변경 이력 조회·과거 버전 복원과 만료 뒤 관리자 영구 삭제를 제공한다. 영구 삭제 뒤에는 최소 tombstone이 같은 ID의 부활을 막는다.
 - Server Action 요청 envelope 여유를 포함해 sanitize된 노트 본문 800 KiB·제목 200자·사용자별 내용 저장 100 MiB 정책을 적용했다. 충돌 시 자동 병합하지 않고 내 초안을 유지한 채 서버 최신본을 펼쳐 확인·복사하고 어느 쪽을 사용할지 선택한다.

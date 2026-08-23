@@ -2,7 +2,8 @@
  * @file middleware.ts
  * @description NextAuth.js 인증 미들웨어.
  * Next.js App Router는 `src/middleware.ts`를 자동으로 인식함.
- * 역할 기반 리다이렉트 및 보호 라우트 처리를 담당.
+ * JWT 존재 기반 coarse redirect만 담당한다.
+ * profile 존재·현재 role 검증은 각 server entry의 active-profile gate가 담당한다.
  */
 import NextAuth from "next-auth";
 import { authConfig } from "./auth.config";

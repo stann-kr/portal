@@ -26,6 +26,11 @@ import {
   FORM_DRAFT_MAX_WAIT_MS,
   useFormDraft,
 } from "@/lib/hooks/useFormDraft";
+import {
+  clearLocalDocumentDraftsForLogout,
+  clearLocalDocumentDraftsFromOtherOwners,
+  discardLocalDocumentDraft,
+} from "@/lib/local-draft-continuity-client";
 import { useDeferredEditorContent } from "@/lib/hooks/useDeferredEditorContent";
 import { isRichTextEmpty } from "@/lib/rich-text";
 
@@ -3700,4 +3705,111 @@ test("제출 signature와 다른 pending은 clear marker 뒤에도 canonical과 
     .filter((storedDraft): storedDraft is DraftData => storedDraft !== null);
   assert.deepEqual(recoveryDrafts, [divergentDraft]);
   assert.equal(harness.getResult(1).status, "saved");
+});
+
+test("로그아웃 정리는 pending timer와 volatile 안전본까지 폐기하고 현재 계정 저장을 잠근다", { concurrency: false }, async (context) => {
+  const ownerId = "student-logout";
+  const draftKey = createDocumentDraftKey("note", ownerId, "note-logout");
+  const otherOwnerKey = createDocumentDraftKey(
+    "community-post",
+    "student-other",
+    "new",
+  );
+  const harness = await createDraftHookHarness(
+    context,
+    draftKey,
+    (storage) => {
+      storage.setItem(otherOwnerKey, serializeFormDraft(draft("다른 계정"), 1));
+    },
+    1,
+    { debounceMs: 20, maxWaitMs: 40 },
+  );
+
+  await act(async () => {
+    harness.getResult().save(draft("로그아웃 직전 입력"));
+  });
+  const resetBeforeLogout = harness.resetCounts[0] ?? 0;
+  let cleanupResult: ReturnType<typeof clearLocalDocumentDraftsForLogout> | undefined;
+  await act(async () => {
+    cleanupResult = clearLocalDocumentDraftsForLogout(ownerId);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+  });
+  assert.ok(cleanupResult);
+  const cleanup = cleanupResult;
+
+  assert.equal(cleanup.storageUnavailable, false);
+  assert.deepEqual(cleanup.failedKeys, []);
+  assert.equal(harness.getResult().canSubmit, false);
+  assert.equal(harness.getResult().status, "error");
+  assert.equal(harness.resetCounts[0], resetBeforeLogout + 1);
+  assert.equal(harness.browserWindow.localStorage.getItem(draftKey), null);
+  assert.equal(listRecoveryKeys(harness.browserWindow.localStorage, draftKey).length, 0);
+  assert.notEqual(harness.browserWindow.localStorage.getItem(otherOwnerKey), null);
+
+  await act(async () => {
+    harness.getResult().save(draft("로그아웃 뒤 입력"));
+    await new Promise((resolve) => setTimeout(resolve, 60));
+  });
+  await act(async () => {
+    cleanupResult = clearLocalDocumentDraftsForLogout(ownerId);
+  });
+  assert.equal(cleanupResult.removedKeys.length, 0);
+  assert.equal(harness.browserWindow.localStorage.getItem(draftKey), null);
+});
+
+test("계정 전환과 명시 폐기는 대상 namespace만 정리하고 활성 form의 재생성을 막는다", { concurrency: false }, async (context) => {
+  const previousOwnerKey = createDocumentDraftKey(
+    "qna-thread",
+    "student-previous",
+    "new",
+  );
+  const currentOwnerKey = createDocumentDraftKey(
+    "qna-thread",
+    "student-current",
+    "new",
+  );
+  const harness = await createDraftHookHarness(
+    context,
+    [previousOwnerKey, currentOwnerKey],
+    undefined,
+    2,
+    { debounceMs: 20, maxWaitMs: 40 },
+  );
+
+  await act(async () => {
+    harness.getResult(0).save(draft("이전 계정 초안"));
+    harness.getResult(1).save(draft("현재 계정 초안"));
+    assert.equal(harness.getResult(0).flush(), true);
+    assert.equal(harness.getResult(1).flush(), true);
+  });
+
+  let switched: ReturnType<typeof clearLocalDocumentDraftsFromOtherOwners> | undefined;
+  await act(async () => {
+    switched = clearLocalDocumentDraftsFromOtherOwners("student-current");
+    await new Promise((resolve) => setTimeout(resolve, 60));
+  });
+  assert.ok(switched);
+  assert.deepEqual(switched.failedKeys, []);
+  assert.equal(harness.getResult(0).canSubmit, false);
+  assert.equal(harness.getResult(1).canSubmit, true);
+  assert.equal(harness.browserWindow.localStorage.getItem(previousOwnerKey), null);
+  assert.deepEqual(
+    readDraft(harness.browserWindow.localStorage, currentOwnerKey),
+    draft("현재 계정 초안"),
+  );
+
+  let discarded: ReturnType<typeof discardLocalDocumentDraft> | undefined;
+  await act(async () => {
+    discarded = discardLocalDocumentDraft(
+      "student-current",
+      currentOwnerKey,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 60));
+  });
+  assert.ok(discarded);
+  assert.deepEqual(discarded.failedKeys, []);
+  assert.equal(harness.getResult(1).canSubmit, true);
+  assert.equal(harness.getResult(1).status, "idle");
+  assert.equal(harness.browserWindow.localStorage.getItem(currentOwnerKey), null);
+  assert.equal(listRecoveryKeys(harness.browserWindow.localStorage, currentOwnerKey).length, 0);
 });

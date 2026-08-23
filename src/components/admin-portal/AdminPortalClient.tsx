@@ -36,6 +36,7 @@ type Post = {
   authorName: string | null;
   authorEmail: string | null;
   createdAt: Date | null;
+  version: number;
 };
 
 type CommunityPost = {

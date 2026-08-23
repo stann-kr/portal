@@ -8,9 +8,9 @@
 
 import { revalidatePath } from "next/cache";
 import { createDb } from "@/db/client";
-import { comments, profiles } from "@/db/schema";
-import { and, eq, asc } from "drizzle-orm";
-import { requireAuth } from "@/lib/auth-guard";
+import { comments, posts, profiles } from "@/db/schema";
+import { and, eq, asc, isNull } from "drizzle-orm";
+import { assertOwnerOrAdmin, requireAuth } from "@/lib/auth-guard";
 
 function escapeHtml(text: string): string {
   return text
@@ -29,8 +29,15 @@ function escapeHtml(text: string): string {
  * 게시물별 댓글 목록 조회 (작성 순서 오름차순, 작성자 정보 포함).
  */
 export async function getCommentsByPost(postId: string) {
-  await requireAuth();
+  const session = await requireAuth();
   const db = createDb();
+  const [post] = await db
+    .select({ authorId: posts.authorId, deletedAt: posts.deletedAt })
+    .from(posts)
+    .where(eq(posts.id, postId))
+    .limit(1);
+  if (!post) return [];
+  if (post.deletedAt) assertOwnerOrAdmin(session, post.authorId);
   return db
     .select({
       id: comments.id,
@@ -76,6 +83,14 @@ export async function createComment(
   const db = createDb();
   const commentId = crypto.randomUUID();
   try {
+    const [activePost] = await db
+      .select({ id: posts.id })
+      .from(posts)
+      .where(and(eq(posts.id, postId), isNull(posts.deletedAt)))
+      .limit(1);
+    if (!activePost) {
+      return { error: "휴지통에 있거나 존재하지 않는 게시물에는 댓글을 남길 수 없습니다." };
+    }
     await db.insert(comments).values({
       id: commentId,
       postId,
@@ -100,6 +115,13 @@ export async function createComment(
 export async function deleteComment(commentId: string, postId: string) {
   const session = await requireAuth();
   const db = createDb();
+
+  const [activePost] = await db
+    .select({ id: posts.id })
+    .from(posts)
+    .where(and(eq(posts.id, postId), isNull(posts.deletedAt)))
+    .limit(1);
+  if (!activePost) return;
 
   const condition =
     session.user.role === "admin"

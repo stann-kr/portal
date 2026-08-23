@@ -1,36 +1,52 @@
-/**
- * @file src/lib/actions/posts.ts
- * @description 커뮤니티 게시물 CRUD 서버 액션.
- * Phase 3: boardType(ANNOUNCEMENT/GENERAL/FEEDBACK) 기반 조회/생성 추가.
- * 작성: 모든 인증 사용자 (ANNOUNCEMENT는 Admin 전용).
- * 수정/삭제: 본인 글 또는 Admin.
- */
+/** Community post query와 revision/trash lifecycle server action. */
 "use server";
 
+import { and, desc, eq, isNotNull, isNull } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { createDb } from "@/db/client";
-import { categories, posts, profiles } from "@/db/schema";
-import type { BoardType } from "@/db/schema";
-import { and, eq, desc } from "drizzle-orm";
-import { requireAuth, assertOwnerOrAdmin } from "@/lib/auth-guard";
-import { sanitizeHtml } from "@/lib/sanitize-html";
-import { isRichTextEmpty } from "@/lib/rich-text";
-import { safeReturnPath } from "@/lib/safe-return-path";
+import { createDb, createDbContext } from "@/db/client";
+import { categories, postRevisions, posts, profiles, type BoardType } from "@/db/schema";
+import { assertOwnerOrAdmin, requireAuth } from "@/lib/auth-guard";
 import {
   CREATION_OPERATION_FIELD,
   deriveCreationResourceId,
   resolveCreationOperationId,
 } from "@/lib/creation-operation";
 import {
-  createDocumentSnapshotFingerprint,
   DOCUMENT_SNAPSHOT_FINGERPRINT_FIELD,
+  createDocumentSnapshotFingerprint,
   isDocumentSnapshotFingerprint,
 } from "@/lib/document-snapshot-fingerprint";
+import {
+  createPostAtomically,
+  preflightLegacyPostCreateReplay,
+  purgePostAtomically,
+  restorePostRevisionAtomically,
+  restoreTrashedPostAtomically,
+  setPostPinAtomically,
+  trashPostAtomically,
+  updatePostAtomically,
+  type PostMutationFailureReason,
+  type PostMutationResult,
+} from "@/lib/post-atomic";
+import {
+  POST_BASE_REVISION_FIELD,
+  POST_MAX_CONTENT_LABEL,
+  POST_MAX_TITLE_LENGTH,
+  POST_TRASH_RETENTION_SECONDS,
+  isPostContentWithinLimit,
+  parsePostRevision,
+} from "@/lib/post-continuity";
+import { isRichTextEmpty } from "@/lib/rich-text";
+import { safeReturnPath } from "@/lib/safe-return-path";
+import { sanitizeHtml } from "@/lib/sanitize-html";
+import {
+  findOwnedMediaObject,
+  processMediaDeletionOutboxBestEffort,
+} from "@/lib/media-lifecycle-atomic";
+import { mediaDeliveryPath, parseMediaUuidV4 } from "@/lib/media-lifecycle";
 
 const VALID_BOARD_TYPES: readonly BoardType[] = ["ANNOUNCEMENT", "GENERAL", "FEEDBACK"];
-
-// ─── 공통 select 필드 ──────────────────────────
 
 const POST_SELECT = {
   id: posts.id,
@@ -39,372 +55,511 @@ const POST_SELECT = {
   boardType: posts.boardType,
   isPinned: posts.isPinned,
   mediaUrl: posts.mediaUrl,
+  mediaObjectId: posts.mediaObjectId,
   title: posts.title,
   contentHtml: posts.contentHtml,
   createdAt: posts.createdAt,
+  updatedAt: posts.updatedAt,
+  version: posts.version,
+  deletedAt: posts.deletedAt,
   authorName: profiles.displayName,
   authorEmail: profiles.email,
 } as const;
 
-// ─── 조회 ────────────────────────────────────────
+function lifecycleError(reason: PostMutationFailureReason): string {
+  switch (reason) {
+    case "VERSION_CONFLICT":
+      return "다른 화면에서 이 게시물이 먼저 변경되었습니다. 현재 초안은 유지됩니다.";
+    case "TRASHED":
+      return "이 게시물은 휴지통에 있습니다.";
+    case "PURGED":
+      return "이 게시물은 영구 삭제되어 다시 저장할 수 없습니다.";
+    case "OPERATION_PAYLOAD_CONFLICT":
+      return "같은 작업 식별자가 다른 내용에 이미 사용되었습니다.";
+    case "OPERATION_VERSION_UNSUPPORTED":
+      return "오래된 저장 요청을 확인할 수 없습니다. 페이지를 새로고침해 주세요.";
+    case "RETENTION_NOT_EXPIRED":
+      return "휴지통 보존 기간이 끝난 뒤에만 영구 삭제할 수 있습니다.";
+    case "RETENTION_EXPIRED":
+      return "복원 가능 기간이 지났습니다.";
+    case "NOT_FOUND_OR_FORBIDDEN":
+      return "게시물을 찾을 수 없거나 권한이 없습니다.";
+    case "INTERNAL_INVARIANT_FAILURE":
+      return "게시물 상태를 안전하게 변경하지 못했습니다. 다시 시도해 주세요.";
+  }
+}
 
-/**
- * boardType별 게시물 목록 조회 (최신순, isPinned 우선).
- */
+function actor(session: Awaited<ReturnType<typeof requireAuth>>) {
+  return { id: session.user.id!, isAdmin: session.user.role === "admin" };
+}
+
+function revalidatePostPaths(postId?: string) {
+  revalidatePath("/community");
+  revalidatePath("/community/trash");
+  if (postId) {
+    revalidatePath(`/community/${postId}`);
+    revalidatePath(`/community/${postId}/history`);
+  }
+  revalidatePath("/dashboard/student");
+  revalidatePath("/dashboard/admin");
+}
+
 export async function getPostsByBoardType(boardType: BoardType) {
   await requireAuth();
-  const db = createDb();
-  return db
+  return createDb()
     .select(POST_SELECT)
     .from(posts)
     .leftJoin(profiles, eq(posts.authorId, profiles.id))
-    .where(eq(posts.boardType, boardType))
+    .where(and(eq(posts.boardType, boardType), isNull(posts.deletedAt)))
     .orderBy(desc(posts.isPinned), desc(posts.createdAt));
 }
 
-/**
- * 카테고리별 GENERAL 게시물 목록 조회 (기존 호환성 유지).
- */
 export async function getPostsByCategory(category: string) {
   await requireAuth();
-  const db = createDb();
-  return db
+  return createDb()
     .select(POST_SELECT)
     .from(posts)
     .leftJoin(profiles, eq(posts.authorId, profiles.id))
-    .where(and(eq(posts.category, category), eq(posts.boardType, "GENERAL")))
+    .where(
+      and(
+        eq(posts.category, category),
+        eq(posts.boardType, "GENERAL"),
+        isNull(posts.deletedAt),
+      ),
+    )
     .orderBy(desc(posts.createdAt));
 }
 
-/**
- * 게시물 단건 조회 (작성자 정보 포함).
- */
 export async function getPostById(postId: string) {
   await requireAuth();
-  const db = createDb();
-  const rows = await db
+  const [post] = await createDb()
+    .select(POST_SELECT)
+    .from(posts)
+    .leftJoin(profiles, eq(posts.authorId, profiles.id))
+    .where(and(eq(posts.id, postId), isNull(posts.deletedAt)))
+    .limit(1);
+  return post ?? null;
+}
+
+export async function getPostIncludingTrash(postId: string) {
+  const session = await requireAuth();
+  const [post] = await createDb()
     .select(POST_SELECT)
     .from(posts)
     .leftJoin(profiles, eq(posts.authorId, profiles.id))
     .where(eq(posts.id, postId))
     .limit(1);
-  return rows[0] ?? null;
+  if (!post) return null;
+  if (post.deletedAt) assertOwnerOrAdmin(session, post.authorId);
+  return post;
 }
 
-// ─── 생성 ────────────────────────────────────────
+export async function getTrashedPosts() {
+  const session = await requireAuth();
+  const isAdmin = session.user.role === "admin";
+  const rows = await createDb()
+    .select(POST_SELECT)
+    .from(posts)
+    .leftJoin(profiles, eq(posts.authorId, profiles.id))
+    .where(
+      isAdmin
+        ? isNotNull(posts.deletedAt)
+        : and(eq(posts.authorId, session.user.id!), isNotNull(posts.deletedAt)),
+    )
+    .orderBy(desc(posts.deletedAt));
+  return rows.map((post) => ({
+    ...post,
+    purgeEligibleAt: post.deletedAt
+      ? new Date(post.deletedAt.getTime() + POST_TRASH_RETENTION_SECONDS * 1000)
+      : null,
+  }));
+}
+
+export async function getPostRevisions(postId: string) {
+  const session = await requireAuth();
+  const post = await getPostIncludingTrash(postId);
+  if (!post) return [];
+  assertOwnerOrAdmin(session, post.authorId);
+  return createDb()
+    .select({
+      id: postRevisions.id,
+      revisionNumber: postRevisions.revisionNumber,
+      changeType: postRevisions.changeType,
+      category: postRevisions.category,
+      boardType: postRevisions.boardType,
+      isPinned: postRevisions.isPinned,
+      mediaUrl: postRevisions.mediaUrl,
+      mediaObjectId: postRevisions.mediaObjectId,
+      title: postRevisions.title,
+      contentHtml: postRevisions.contentHtml,
+      restoredFromRevision: postRevisions.restoredFromRevision,
+      actorId: postRevisions.actorId,
+      actorName: profiles.displayName,
+      createdAt: postRevisions.createdAt,
+    })
+    .from(postRevisions)
+    .leftJoin(profiles, eq(postRevisions.actorId, profiles.id))
+    .where(eq(postRevisions.postId, postId))
+    .orderBy(desc(postRevisions.revisionNumber));
+}
 
 export type CreatePostState = {
   error?: string;
   success?: boolean;
   postId?: string;
+  currentRevision?: number;
   operationConflict?: boolean;
   conflictedOperationId?: string;
   existingId?: string;
 };
 
-/**
- * 게시물 작성.
- * - ANNOUNCEMENT 타입은 Admin만 작성 가능
- * - FEEDBACK 타입은 mediaUrl 포함 가능
- */
 export async function createPost(
   _prev: CreatePostState,
   formData: FormData,
 ): Promise<CreatePostState> {
   const session = await requireAuth();
   const authorId = session.user.id!;
-
   const title = String(formData.get("title") ?? "").trim();
+  const rawHtml = String(formData.get("contentHtml") ?? "");
   const categoryInput = String(formData.get("category") ?? "").trim();
-  const contentHtml = String(formData.get("contentHtml") ?? "");
   const boardTypeInput = String(formData.get("boardType") ?? "GENERAL");
+  const returnTo = String(formData.get("returnTo") ?? "") || null;
   if (!VALID_BOARD_TYPES.includes(boardTypeInput as BoardType)) {
     return { error: "올바른 게시판 유형을 선택해 주세요." };
   }
   const boardType = boardTypeInput as BoardType;
-  const mediaUrl = String(formData.get("mediaUrl") ?? "").trim() || null;
-  const isPinnedRaw = formData.get("isPinned");
-  const isPinned = isPinnedRaw === "on" || isPinnedRaw === "true";
-  const returnTo = (formData.get("returnTo") as string) || null;
-
-  if (!title) return { error: "제목을 입력해주세요." };
-  if (isRichTextEmpty(contentHtml))
-    return { error: "내용을 입력해주세요." };
-
-  const sanitizedContentHtml = sanitizeHtml(contentHtml);
-  if (isRichTextEmpty(sanitizedContentHtml))
-    return { error: "내용을 입력해주세요." };
-
-  // ANNOUNCEMENT 권한 체크
+  if (!title || isRichTextEmpty(rawHtml)) return { error: "제목과 내용은 필수입니다." };
+  if (title.length > POST_MAX_TITLE_LENGTH) {
+    return { error: `제목은 ${POST_MAX_TITLE_LENGTH}자 이하로 입력해 주세요.` };
+  }
+  const contentHtml = sanitizeHtml(rawHtml);
+  if (isRichTextEmpty(contentHtml)) return { error: "유효한 내용을 입력해 주세요." };
+  if (!isPostContentWithinLimit(contentHtml)) {
+    return { error: `게시물 본문은 ${POST_MAX_CONTENT_LABEL} 이하로 저장할 수 있습니다.` };
+  }
   if (boardType === "ANNOUNCEMENT" && session.user.role !== "admin") {
     return { error: "공지 작성은 관리자만 가능합니다." };
   }
-
-  const operationId = resolveCreationOperationId(
-    formData.get(CREATION_OPERATION_FIELD),
-  );
+  const operationId = resolveCreationOperationId(formData.get(CREATION_OPERATION_FIELD));
   if (!operationId) {
     return { error: "문서 생성 식별자가 올바르지 않습니다. 페이지를 새로고침해 주세요." };
   }
-  const id = deriveCreationResourceId(
+
+  let category = boardType.toLowerCase();
+  if (boardType === "GENERAL") {
+    const [existingCategory] = await createDb()
+      .select({ slug: categories.slug })
+      .from(categories)
+      .where(eq(categories.slug, categoryInput))
+      .limit(1);
+    if (!existingCategory) return { error: "존재하는 커뮤니티 채널을 선택해 주세요." };
+    category = existingCategory.slug;
+  }
+  const isPinnedRaw = formData.get("isPinned");
+  const isPinned =
+    boardType === "ANNOUNCEMENT" &&
+    (isPinnedRaw === "on" || isPinnedRaw === "true");
+  const postId = deriveCreationResourceId(
     operationId,
     JSON.stringify(["community-post", authorId]),
   );
-
-  const db = createDb();
-  let category = boardType.toLowerCase();
-  if (boardType === "GENERAL") category = categoryInput;
-  const storedPinned = boardType === "ANNOUNCEMENT" ? isPinned : false;
-  const storedMediaUrl = boardType === "FEEDBACK" ? mediaUrl : null;
-  const findExisting = async () => {
-    const [existing] = await db
-      .select({
-        id: posts.id,
-        authorId: posts.authorId,
-        category: posts.category,
-        boardType: posts.boardType,
-        isPinned: posts.isPinned,
-        mediaUrl: posts.mediaUrl,
-        title: posts.title,
-        contentHtml: posts.contentHtml,
-      })
-      .from(posts)
-      .where(eq(posts.id, id))
-      .limit(1);
-    return existing ?? null;
-  };
-  const isSameSubmission = (existing: Awaited<ReturnType<typeof findExisting>>) =>
-    Boolean(
-      existing &&
-      existing.authorId === authorId &&
-      existing.category === category &&
-      existing.boardType === boardType &&
-      existing.isPinned === storedPinned &&
-      existing.mediaUrl === storedMediaUrl &&
-      existing.title === title &&
-      existing.contentHtml === sanitizedContentHtml,
-    );
-  const operationConflict = (existingId: string): CreatePostState => ({
-    error: "이 초안은 다른 내용으로 이미 게시되었습니다. 기존 게시물을 열거나 별도 게시물로 분리해 주세요.",
-    operationConflict: true,
-    conflictedOperationId: operationId,
-    existingId,
-  });
-
-  let existingBeforeInsert: Awaited<ReturnType<typeof findExisting>>;
-  try {
-    existingBeforeInsert = await findExisting();
-  } catch {
-    return { error: "게시물을 저장하지 못했습니다. 다시 시도해 주세요." };
-  }
-  if (existingBeforeInsert) {
-    if (!isSameSubmission(existingBeforeInsert)) {
-      return existingBeforeInsert.authorId === authorId
-        ? operationConflict(existingBeforeInsert.id)
-        : { error: "게시물을 저장하지 못했습니다. 다시 시도해 주세요." };
-    }
-
-    revalidatePath("/community");
-    if (returnTo === "student-portal" || returnTo === "community-editor") {
-      if (returnTo === "student-portal") revalidatePath("/dashboard/student");
-      return { success: true, postId: id };
-    }
-    redirect(`/community/${id}`);
+  const rawMediaObjectId = String(formData.get("mediaObjectId") ?? "").trim();
+  const submittedLegacyUrl = String(formData.get("mediaUrl") ?? "").trim();
+  if (boardType !== "FEEDBACK" && (rawMediaObjectId || submittedLegacyUrl)) {
+    return { error: "믹스셋 게시물에서만 오디오를 첨부할 수 있습니다." };
   }
 
-  try {
-    if (boardType === "GENERAL") {
-      const [existingCategory] = await db
-        .select({ slug: categories.slug })
-        .from(categories)
-        .where(eq(categories.slug, categoryInput))
-        .limit(1);
-      if (!existingCategory) return { error: "존재하는 커뮤니티 채널을 선택해 주세요." };
-      category = existingCategory.slug;
-    }
+  const mediaObjectId = rawMediaObjectId
+    ? parseMediaUuidV4(rawMediaObjectId)
+    : null;
+  if (rawMediaObjectId && !mediaObjectId) {
+    return { error: "첨부 오디오 식별자가 올바르지 않습니다. 다시 업로드해 주세요." };
+  }
 
-    await db.insert(posts).values({
-      id,
-      authorId,
+  const context = createDbContext();
+  const postActor = actor(session);
+  let mediaUrl: string | null = null;
+  if (submittedLegacyUrl && !mediaObjectId) {
+    const isExactLegacyReplay = await preflightLegacyPostCreateReplay(context, {
+      actor: postActor,
+      postId,
+      operationId,
+      snapshot: {
+        category,
+        boardType,
+        isPinned,
+        mediaUrl: submittedLegacyUrl,
+        mediaObjectId: null,
+        title,
+        contentHtml,
+      },
+    });
+    if (!isExactLegacyReplay) {
+      return { error: "이전 방식의 업로드는 소유권을 확인할 수 없습니다. 파일을 다시 업로드해 주세요." };
+    }
+    mediaUrl = submittedLegacyUrl;
+  } else if (mediaObjectId) {
+    const media = await findOwnedMediaObject(context, authorId, mediaObjectId);
+    const historicalAttachment =
+      media?.resourceType === "COMMUNITY_POST" && media.resourceId === postId;
+    if (
+      !media ||
+      media.purpose !== "COMMUNITY_POST_AUDIO" ||
+      media.draftOperationId !== operationId ||
+      (media.state !== "READY" && !historicalAttachment)
+    ) {
+      return { error: "첨부 오디오의 소유권이나 업로드 상태를 확인할 수 없습니다." };
+    }
+    mediaUrl = mediaDeliveryPath(mediaObjectId);
+  }
+
+  const result = await createPostAtomically(context, {
+    actor: postActor,
+    postId,
+    operationId,
+    snapshot: {
       category,
       boardType,
-      isPinned: storedPinned,
-      mediaUrl: storedMediaUrl,
+      isPinned,
+      mediaUrl,
+      mediaObjectId,
       title,
-      contentHtml: sanitizedContentHtml,
-    });
-  } catch {
-    try {
-      const existing = await findExisting();
-      if (!isSameSubmission(existing)) {
-        return existing?.authorId === authorId
-          ? operationConflict(existing.id)
-          : { error: "게시물을 저장하지 못했습니다. 다시 시도해 주세요." };
-      }
-    } catch {
-      return { error: "게시물을 저장하지 못했습니다. 다시 시도해 주세요." };
+      contentHtml,
+    },
+    now: new Date(),
+  });
+  if (!result.ok) {
+    if (result.reason === "OPERATION_PAYLOAD_CONFLICT") {
+      return {
+        error: "이 초안은 다른 내용으로 이미 게시되었습니다. 기존 게시물을 열거나 별도 게시물로 분리해 주세요.",
+        operationConflict: true,
+        conflictedOperationId: operationId,
+        existingId: result.postId,
+      };
     }
+    return { error: lifecycleError(result.reason) };
   }
 
-  revalidatePath("/community");
-  if (returnTo === "student-portal") {
-    revalidatePath("/dashboard/student");
-    return { success: true, postId: id };
+  revalidatePostPaths(result.postId);
+  if (returnTo === "student-portal" || returnTo === "community-editor") {
+    return {
+      success: true,
+      postId: result.postId,
+      currentRevision: result.currentRevision ?? undefined,
+    };
   }
-  if (returnTo === "community-editor") {
-    return { success: true, postId: id };
-  }
-  redirect(`/community/${id}`);
+  redirect(`/community/${result.postId}`);
 }
 
 export type UpdatePostState = {
   error?: string;
   success?: boolean;
-  post?: { id: string; title: string; contentHtml: string };
+  conflictKind?: PostMutationFailureReason;
+  currentRevision?: number;
+  replayed?: boolean;
+  post?: { id: string; title: string; contentHtml: string; version: number };
 };
 
-/** 게시물 제목과 본문을 작성자 또는 관리자가 충돌 감지와 함께 수정한다. */
 export async function updatePostContent(
   postId: string,
   _prev: UpdatePostState,
   formData: FormData,
 ): Promise<UpdatePostState> {
   const session = await requireAuth();
-  const db = createDb();
-  const [existing] = await db
+  const [existing] = await createDb()
     .select({
       id: posts.id,
       authorId: posts.authorId,
       title: posts.title,
       contentHtml: posts.contentHtml,
+      version: posts.version,
+      deletedAt: posts.deletedAt,
     })
     .from(posts)
     .where(eq(posts.id, postId))
     .limit(1);
-
   if (!existing) return { error: "게시물을 찾을 수 없습니다." };
   assertOwnerOrAdmin(session, existing.authorId);
+  if (existing.deletedAt) return { error: "휴지통 게시물은 수정할 수 없습니다." };
 
+  const operationId = resolveCreationOperationId(formData.get(CREATION_OPERATION_FIELD));
+  const baseRevision = parsePostRevision(formData.get(POST_BASE_REVISION_FIELD));
+  if (!operationId || !baseRevision) {
+    return { error: "저장 작업 정보를 확인할 수 없습니다. 페이지를 새로고침해 주세요." };
+  }
   const baseFingerprint = formData.get(DOCUMENT_SNAPSHOT_FINGERPRINT_FIELD);
   if (!isDocumentSnapshotFingerprint(baseFingerprint)) {
     return { error: "편집 기준 정보를 확인할 수 없습니다. 페이지를 새로고침해 주세요." };
+  }
+  if (
+    baseRevision === existing.version &&
+    baseFingerprint !==
+      createDocumentSnapshotFingerprint({
+        kind: "community-post",
+        id: existing.id,
+        title: existing.title,
+        contentHtml: existing.contentHtml,
+        noteDate: null,
+      })
+  ) {
+    return {
+      error: "다른 기준본에서 시작한 초안입니다. 서버 최신본과 현재 초안 중 하나를 선택해 주세요.",
+      conflictKind: "VERSION_CONFLICT",
+      currentRevision: existing.version,
+    };
   }
 
   const title = String(formData.get("title") ?? "").trim();
   const rawHtml = String(formData.get("contentHtml") ?? "");
   if (!title || isRichTextEmpty(rawHtml)) return { error: "제목과 내용은 필수입니다." };
-
+  if (title.length > POST_MAX_TITLE_LENGTH) {
+    return { error: `제목은 ${POST_MAX_TITLE_LENGTH}자 이하로 입력해 주세요.` };
+  }
   const contentHtml = sanitizeHtml(rawHtml);
   if (isRichTextEmpty(contentHtml)) return { error: "유효한 게시물 내용을 입력해 주세요." };
-
-  const alreadyCurrent =
-    existing.title === title && existing.contentHtml === contentHtml;
-
-  if (!alreadyCurrent) {
-    const observedFingerprint = createDocumentSnapshotFingerprint({
-      kind: "community-post",
-      id: existing.id,
-      title: existing.title,
-      contentHtml: existing.contentHtml,
-      noteDate: null,
-    });
-    if (baseFingerprint !== observedFingerprint) {
-      return {
-        error: "다른 화면에서 이 게시물이 먼저 변경되었습니다. 현재 내용은 임시 저장되어 있으며, 새로고침 후 서버 최신본과 초안 중 선택할 수 있습니다.",
-      };
-    }
-
-    let updated: { id: string }[];
-    try {
-      updated = await db
-        .update(posts)
-        .set({ title, contentHtml })
-        .where(and(
-          eq(posts.id, postId),
-          eq(posts.authorId, existing.authorId),
-          eq(posts.title, existing.title),
-          eq(posts.contentHtml, existing.contentHtml),
-        ))
-        .returning({ id: posts.id });
-    } catch {
-      return { error: "게시물을 저장하지 못했습니다. 다시 시도해 주세요." };
-    }
-    if (updated.length === 0) {
-      let current: {
-        authorId: string;
-        title: string;
-        contentHtml: string;
-      } | undefined;
-      try {
-        [current] = await db
-          .select({
-            authorId: posts.authorId,
-            title: posts.title,
-            contentHtml: posts.contentHtml,
-          })
-          .from(posts)
-          .where(eq(posts.id, postId))
-          .limit(1);
-      } catch {
-        return { error: "게시물을 저장하지 못했습니다. 다시 시도해 주세요." };
-      }
-      if (current) assertOwnerOrAdmin(session, current.authorId);
-      const converged =
-        current?.title === title && current.contentHtml === contentHtml;
-      if (!converged) {
-        return {
-          error: "다른 화면에서 이 게시물이 먼저 변경되었습니다. 현재 내용은 임시 저장되어 있으며, 새로고침 후 서버 최신본과 초안 중 선택할 수 있습니다.",
-        };
-      }
-    }
+  if (!isPostContentWithinLimit(contentHtml)) {
+    return { error: `게시물 본문은 ${POST_MAX_CONTENT_LABEL} 이하로 저장할 수 있습니다.` };
   }
 
-  revalidatePath(`/community/${postId}`);
-  revalidatePath("/community");
-  revalidatePath("/dashboard/student");
-  revalidatePath("/dashboard/admin");
-  return { success: true, post: { id: postId, title, contentHtml } };
+  const result = await updatePostAtomically(createDbContext(), {
+    actor: actor(session),
+    postId,
+    operationId,
+    baseRevision,
+    title,
+    contentHtml,
+    now: new Date(),
+  });
+  if (!result.ok) {
+    return {
+      error: lifecycleError(result.reason),
+      conflictKind: result.reason,
+      currentRevision: result.currentRevision,
+    };
+  }
+  revalidatePostPaths(postId);
+  return {
+    success: true,
+    currentRevision: result.currentRevision ?? undefined,
+    replayed: result.replayed,
+    post: {
+      id: postId,
+      title,
+      contentHtml,
+      version: result.currentRevision ?? baseRevision,
+    },
+  };
 }
 
-// ─── 삭제 ────────────────────────────────────────
+export type PostLifecycleState = {
+  success: boolean;
+  error?: string;
+  conflictKind?: PostMutationFailureReason;
+  currentRevision?: number;
+  purged?: boolean;
+};
 
-/**
- * 게시물 삭제 (본인 글 또는 Admin).
- */
-export async function deletePost(postId: string, returnTo = "/community") {
+function lifecycleState(result: PostMutationResult): PostLifecycleState {
+  return result.ok
+    ? {
+        success: true,
+        currentRevision: result.currentRevision ?? undefined,
+        purged: result.resourceState === "PURGED",
+      }
+    : {
+        success: false,
+        error: lifecycleError(result.reason),
+        conflictKind: result.reason,
+        currentRevision: result.currentRevision,
+      };
+}
+
+async function runPostLifecycle(
+  kind: "trash" | "restore" | "purge",
+  postId: string,
+  operationId: string,
+  baseRevision: number,
+): Promise<PostLifecycleState> {
   const session = await requireAuth();
-  const db = createDb();
-
-  const rows = await db
-    .select({ authorId: posts.authorId })
-    .from(posts)
-    .where(eq(posts.id, postId))
-    .limit(1);
-
-  const post = rows[0];
-  if (!post) {
-    throw new Error("Not found");
+  const write = {
+    actor: actor(session),
+    postId,
+    operationId,
+    baseRevision,
+    now: new Date(),
+  };
+  const result =
+    kind === "trash"
+      ? await trashPostAtomically(createDbContext(), write)
+      : kind === "restore"
+        ? await restoreTrashedPostAtomically(createDbContext(), write)
+        : await purgePostAtomically(createDbContext(), write);
+  if (result.ok) {
+    revalidatePostPaths(postId);
+    if (kind === "purge") {
+      await processMediaDeletionOutboxBestEffort(createDbContext(), { limit: 2 });
+    }
   }
+  return lifecycleState(result);
+}
 
-  assertOwnerOrAdmin(session, post.authorId);
+export async function trashPost(postId: string, operationId: string, baseRevision: number) {
+  return runPostLifecycle("trash", postId, operationId, baseRevision);
+}
 
-  await db.delete(posts).where(eq(posts.id, postId));
-  revalidatePath("/community");
+export async function restorePost(postId: string, operationId: string, baseRevision: number) {
+  return runPostLifecycle("restore", postId, operationId, baseRevision);
+}
+
+export async function purgePost(postId: string, operationId: string, baseRevision: number) {
+  return runPostLifecycle("purge", postId, operationId, baseRevision);
+}
+
+export async function deletePost(
+  postId: string,
+  operationId: string,
+  baseRevision: number,
+  returnTo = "/community",
+) {
+  const result = await trashPost(postId, operationId, baseRevision);
+  if (!result.success) throw new Error(result.error ?? "게시물을 휴지통으로 이동하지 못했습니다.");
   redirect(safeReturnPath(returnTo, "/community"));
 }
 
-/**
- * 공지 고정 토글 (Admin 전용).
- */
-export async function togglePinPost(postId: string, currentPinned: boolean) {
+export async function restorePostRevision(
+  postId: string,
+  operationId: string,
+  baseRevision: number,
+  revisionNumber: number,
+): Promise<PostLifecycleState> {
   const session = await requireAuth();
-  if (session.user.role !== "admin") throw new Error("Unauthorized");
+  const result = await restorePostRevisionAtomically(createDbContext(), {
+    actor: actor(session),
+    postId,
+    operationId,
+    baseRevision,
+    revisionNumber,
+    now: new Date(),
+  });
+  if (result.ok) revalidatePostPaths(postId);
+  return lifecycleState(result);
+}
 
-  const db = createDb();
-  await db
-    .update(posts)
-    .set({ isPinned: !currentPinned })
-    .where(eq(posts.id, postId));
-
-  revalidatePath("/community");
+export async function togglePinPost(
+  postId: string,
+  nextPinned: boolean,
+  operationId: string,
+  baseRevision: number,
+): Promise<PostLifecycleState> {
+  const session = await requireAuth();
+  const result = await setPostPinAtomically(createDbContext(), {
+    actor: actor(session),
+    postId,
+    operationId,
+    baseRevision,
+    isPinned: nextPinned,
+    now: new Date(),
+  });
+  if (result.ok) revalidatePostPaths(postId);
+  return lifecycleState(result);
 }

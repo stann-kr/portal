@@ -10,7 +10,11 @@ import { revalidatePath } from "next/cache";
 import { createDb } from "@/db/client";
 import { curriculums } from "@/db/schema";
 import { and, eq, asc } from "drizzle-orm";
-import { requireAuth, requireAdmin } from "@/lib/auth-guard";
+import {
+  assertOwnerOrAdmin,
+  requireAuth,
+  requireAdmin,
+} from "@/lib/auth-guard";
 
 // ───────────────────────────────────────────────
 // 조회
@@ -20,6 +24,8 @@ import { requireAuth, requireAdmin } from "@/lib/auth-guard";
  * 특정 학생의 커리큘럼 목록 조회 (주차 오름차순).
  */
 export async function getCurriculumByStudent(studentId: string) {
+  const session = await requireAuth();
+  assertOwnerOrAdmin(session, studentId);
   const db = createDb();
   return db
     .select()
@@ -40,6 +46,8 @@ export async function getMyCurriculum() {
  * 가장 최근 미완료 모듈 1개 조회 (Student Dashboard 현재 모듈용).
  */
 export async function getCurrentModule(studentId: string) {
+  const session = await requireAuth();
+  assertOwnerOrAdmin(session, studentId);
   const db = createDb();
   const rows = await db
     .select()

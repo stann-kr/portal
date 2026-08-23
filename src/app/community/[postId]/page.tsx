@@ -4,9 +4,9 @@
  * Server Component로 분리하여 auth 및 db 호출을 서버 측에서 안전하게 수행.
  */
 import Link from "next/link";
-import { getPostById } from "@/lib/actions/posts";
+import { getPostIncludingTrash } from "@/lib/actions/posts";
 import { getCommentsByPost } from "@/lib/actions/comments";
-import { auth } from "@/auth";
+import { getActiveAuthSession } from "@/lib/auth-guard";
 import { PostDetailClient } from "./PostDetailClient";
 import { safeReturnPath } from "@/lib/safe-return-path";
 import { redirect } from "next/navigation";
@@ -21,11 +21,11 @@ export default async function PostDetailPage({
   const { postId } = await params;
   const query = await searchParams;
   const returnTo = safeReturnPath(query.returnTo, "/community");
-  const session = await auth();
+  const session = await getActiveAuthSession();
   if (!session?.user?.id) redirect("/login");
 
   const [post, commentList] = await Promise.all([
-    getPostById(postId),
+    getPostIncludingTrash(postId),
     getCommentsByPost(postId),
   ]);
 

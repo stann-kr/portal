@@ -16,6 +16,7 @@
 - 개발용 관리자 seed, auth guard, calendar token, HTML sanitize, UI 상태 registry와 학생 오늘 selector를 단위 테스트로 보호한다.
 - 문서 draft 생명주기와 Q&A·노트·게시물의 핵심 mutation은 격리 DOM·D1 integration test로 보호한다.
 - 개인 노트는 version 기반 저장, 불변 revision 이력, 30일 휴지통, 복원·관리자 영구 삭제와 anti-replay ledger/tombstone을 제공한다.
+- 학생 본인 계정 삭제는 profile과 원문을 즉시 제거하고 기존 session을 차단한다. 현재 기기는 직접 정리하고 사전 등록된 다른 기기에는 정리 신호를 남기며, raw ID의 30일 경계 뒤 alias 수렴 source를 제공한다. production scheduler는 배포 gate로 남아 있다.
 
 ## 빠른 시작
 
@@ -79,10 +80,9 @@ docs/                       # 프로젝트 문서
 
 ## 현재 개발 우선순위
 
-1. 사용자·문서별 서버 초안, optimistic concurrency, 오프라인 재시도 queue와 다중 기기 초안 비교를 구현한다.
-2. 개인 노트에서 검증한 revision·휴지통·ledger 계약을 게시물과 Q&A에 확장한다.
+1. `0010~0012` 원격 D1 migration과 복구 rehearsal을 maintenance 전환 절차로 검증한다.
+2. private managed media CORS·staging lifecycle, cleanup·raw-ID erasure scheduler와 inventory reconciliation을 실제 production에서 검증한다.
 3. 실제 브라우저의 reload·offline·Back/Forward·다중 탭·대용량 입력 성능과 강제 종료 복구를 측정한다.
-4. 로그아웃·계정 전환·계정 삭제 시 로컬/서버 초안 정리와 D1 복구 rehearsal·관측을 완성한다.
 
 ## 문서 최신성 기준
 

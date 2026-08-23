@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { DraftStatus } from "@/components/editor/DraftStatus";
 import { DraftConflictRecovery } from "@/components/editor/DraftConflictRecovery";
 import { createDocumentDraftKey } from "@/lib/form-draft";
-import { useFormDraft } from "@/lib/hooks/useFormDraft";
+import { useSyncedFormDraft } from "@/lib/hooks/useSyncedFormDraft";
 import { useDeferredEditorContent } from "@/lib/hooks/useDeferredEditorContent";
 import { useDocumentSaveShortcut } from "@/lib/hooks/useDocumentSaveShortcut";
 import { isRichTextEmpty } from "@/lib/rich-text";
@@ -24,6 +24,11 @@ import {
   type CompactDocumentEditDraftMetadata,
   type DocumentEditDraftBaseFields,
 } from "@/lib/document-edit-draft";
+import {
+  CREATION_OPERATION_FIELD,
+  createCreationOperationId,
+} from "@/lib/creation-operation";
+import { POST_BASE_REVISION_FIELD } from "@/lib/post-continuity";
 
 const FullEditor = dynamic(
   () => import("@/components/editor/FullEditor").then((module) => ({ default: module.FullEditor })),
@@ -31,7 +36,7 @@ const FullEditor = dynamic(
 );
 
 type PostEditFormProps = {
-  post: { id: string; title: string; contentHtml: string };
+  post: { id: string; title: string; contentHtml: string; version: number };
   actorId: string;
   onCancel: () => void;
   onSaved: () => void;
@@ -50,6 +55,7 @@ export function PostEditForm({
   onBusyChange,
 }: PostEditFormProps) {
   const [title, setTitle] = useState(post.title);
+  const [operationId] = useState(() => createCreationOperationId());
   const {
     contentHtml,
     contentVersion,
@@ -138,7 +144,8 @@ export function PostEditForm({
     recoveries,
     restoreRecovery,
     discardRecovery,
-  } = useFormDraft<PostEditDraft>(
+    serverSync,
+  } = useSyncedFormDraft<PostEditDraft>(
     createDocumentDraftKey("community-post", actorId, post.id),
     (draft) => {
       restoredDraftRef.current = draft;
@@ -310,6 +317,8 @@ export function PostEditForm({
       }}
     >
       <input ref={contentInputRef} type="hidden" name="contentHtml" value={contentHtml} />
+      <input type="hidden" name={CREATION_OPERATION_FIELD} value={operationId} />
+      <input type="hidden" name={POST_BASE_REVISION_FIELD} value={post.version} />
       <input
         type="hidden"
         name={DOCUMENT_SNAPSHOT_FINGERPRINT_FIELD}
@@ -385,6 +394,7 @@ export function PostEditForm({
               recoveries={recoveries}
               onRestoreRecovery={restoreRecovery}
               onDiscardRecovery={discardRecovery}
+              serverSync={serverSync}
               disabled={isPending}
             />
           }

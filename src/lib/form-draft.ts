@@ -1,5 +1,6 @@
 import { sha256 } from "@noble/hashes/sha256";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils";
+import { assertAccountOwnerMayPersist } from "@/lib/account-terminal-lock";
 
 export const FORM_DRAFT_STORAGE_VERSION = 1;
 export const FORM_DRAFT_RECOVERY_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -7,6 +8,20 @@ export const FORM_DRAFT_CLEAR_MARKER_VERSION = 1;
 export const FORM_DRAFT_CLEAR_MARKER_TTL_MS = FORM_DRAFT_RECOVERY_TTL_MS;
 export const FORM_DRAFT_RECOVERY_RECENT_MS = 60 * 60 * 1000;
 export const FORM_DRAFT_MAX_DIVERGENT_RECOVERIES = 20;
+export const DOCUMENT_DRAFT_KINDS = [
+  "note",
+  "qna-thread",
+  "qna-reply",
+  "community-post",
+] as const;
+
+export type DocumentDraftKind = (typeof DOCUMENT_DRAFT_KINDS)[number];
+
+export type DocumentDraftKeyIdentity = {
+  kind: DocumentDraftKind;
+  ownerId: string;
+  contextId: string;
+};
 
 export type FormDraftStatus =
   | "idle"
@@ -332,6 +347,20 @@ export function createFormDraftDataSignature(data: unknown): string {
   return `sha256:${bytesToHex(sha256(utf8ToBytes(serialized)))}`;
 }
 
+/** 서버 초안과 local queue가 공유할 key-order 독립 JSON object를 만든다. */
+export function serializeNormalizedFormDraftData(data: unknown): string {
+  const normalized = normalizeFormDraftData(data, new Set());
+  if (
+    normalized === OMITTED_JSON_VALUE ||
+    typeof normalized !== "object" ||
+    normalized === null ||
+    Array.isArray(normalized)
+  ) {
+    throw new TypeError("Document draft data must serialize to a JSON object");
+  }
+  return JSON.stringify(normalized);
+}
+
 export function serializeFormDraft<T>(
   data: T,
   savedAt = Date.now(),
@@ -393,7 +422,7 @@ export function hasFutureFormDraftVersion(raw: string): boolean {
 }
 
 export function createDocumentDraftKey(
-  kind: "note" | "qna-thread" | "qna-reply" | "community-post",
+  kind: DocumentDraftKind,
   ownerId: string,
   contextId = "new",
 ): string {
@@ -402,8 +431,67 @@ export function createDocumentDraftKey(
   return `draft:document:${kind}:${safeOwnerId}:${safeContextId}`;
 }
 
+function isDocumentDraftKind(value: string): value is DocumentDraftKind {
+  return (DOCUMENT_DRAFT_KINDS as readonly string[]).includes(value);
+}
+
+/**
+ * canonical 문서 draft key에서 계정·문서 경계를 복원한다.
+ * key를 다시 만들었을 때 정확히 일치하는 값만 받아 malformed namespace를
+ * 다른 계정의 artifact로 잘못 분류하지 않는다.
+ */
+export function parseDocumentDraftKey(
+  sourceKey: string,
+): DocumentDraftKeyIdentity | null {
+  const namespacePrefix = "draft:document:";
+  if (!sourceKey.startsWith(namespacePrefix)) return null;
+
+  const parts = sourceKey.slice(namespacePrefix.length).split(":");
+  if (parts.length !== 3) return null;
+  const [kind, encodedOwnerId, encodedContextId] = parts;
+  if (!kind || !isDocumentDraftKind(kind)) return null;
+
+  try {
+    const ownerId = decodeURIComponent(encodedOwnerId ?? "");
+    const contextId = decodeURIComponent(encodedContextId ?? "");
+    return createDocumentDraftKey(kind, ownerId, contextId) === sourceKey
+      ? { kind, ownerId, contextId }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/** owner-scoped document key는 terminal deletion lock 뒤 다시 쓰지 않는다. */
+export function assertFormDraftSourceOwnerMayPersist(
+  storage: Pick<FormDraftStorage, "getItem">,
+  sourceKey: string,
+): void {
+  const identity = parseDocumentDraftKey(sourceKey);
+  if (identity) assertAccountOwnerMayPersist(storage, identity.ownerId);
+}
+
 export function createFormDraftClearMarkerKey(sourceKey: string): string {
   return `draft:document-clear-marker:${encodeURIComponent(sourceKey)}`;
+}
+
+export function createDocumentServerDraftQueueKey(sourceKey: string): string {
+  return `draft:document-server-queue:${encodeURIComponent(sourceKey)}`;
+}
+
+export function readDocumentServerDraftQueueSourceKey(
+  storageKey: string,
+): string | null {
+  const prefix = "draft:document-server-queue:";
+  if (!storageKey.startsWith(prefix)) return null;
+  try {
+    const sourceKey = decodeURIComponent(storageKey.slice(prefix.length));
+    return createDocumentServerDraftQueueKey(sourceKey) === storageKey
+      ? sourceKey
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 export function createFormDraftClearMarkerEntryPrefix(sourceKey: string): string {
@@ -464,6 +552,7 @@ export function writeFormDraftClearMarkers(
       ? parseFormDraftClearMarker(headRaw, newestClearedAt)
       : null;
     if (!marker) return;
+    assertFormDraftSourceOwnerMayPersist(storage, sourceKey);
     storage.setItem(
       createFormDraftClearMarkerEntryKey(
         sourceKey,
@@ -476,6 +565,7 @@ export function writeFormDraftClearMarkers(
 
   promoteLegacyHead(storage.getItem(headKey));
   for (const marker of markers) {
+    assertFormDraftSourceOwnerMayPersist(storage, sourceKey);
     storage.setItem(
       createFormDraftClearMarkerEntryKey(
         sourceKey,
@@ -491,6 +581,7 @@ export function writeFormDraftClearMarkers(
     !latestHeadRaw ||
     !hasFutureEnvelopeVersion(latestHeadRaw, FORM_DRAFT_CLEAR_MARKER_VERSION)
   ) {
+    assertFormDraftSourceOwnerMayPersist(storage, sourceKey);
     storage.setItem(headKey, markers.at(-1)!.raw);
   }
   pruneFormDraftClearMarkers(storage, sourceKey, newestClearedAt);
@@ -1049,6 +1140,79 @@ function readFormDraftClearMarkerArtifact(
   } catch {
     return null;
   }
+}
+
+export type DocumentDraftArtifact = DocumentDraftKeyIdentity & {
+  sourceKey: string;
+  storageKey: string;
+  artifactKind: "canonical" | "recovery" | "clear-marker" | "server-queue";
+};
+
+/** canonical·recovery·clear marker key를 하나의 소유 계정 namespace로 해석한다. */
+export function readDocumentDraftArtifact(
+  storageKey: string,
+): DocumentDraftArtifact | null {
+  const canonicalIdentity = parseDocumentDraftKey(storageKey);
+  if (canonicalIdentity) {
+    return {
+      ...canonicalIdentity,
+      sourceKey: storageKey,
+      storageKey,
+      artifactKind: "canonical",
+    };
+  }
+
+  const recoverySourceKey = readFormDraftRecoveryArtifactSourceKey(storageKey);
+  if (recoverySourceKey) {
+    const identity = parseDocumentDraftKey(recoverySourceKey);
+    if (identity) {
+      return {
+        ...identity,
+        sourceKey: recoverySourceKey,
+        storageKey,
+        artifactKind: "recovery",
+      };
+    }
+  }
+
+  const queueSourceKey = readDocumentServerDraftQueueSourceKey(storageKey);
+  if (queueSourceKey) {
+    const identity = parseDocumentDraftKey(queueSourceKey);
+    if (identity) {
+      return {
+        ...identity,
+        sourceKey: queueSourceKey,
+        storageKey,
+        artifactKind: "server-queue",
+      };
+    }
+  }
+
+  const markerArtifact = readFormDraftClearMarkerArtifact(storageKey);
+  if (!markerArtifact) return null;
+  const identity = parseDocumentDraftKey(markerArtifact.sourceKey);
+  return identity
+    ? {
+        ...identity,
+        sourceKey: markerArtifact.sourceKey,
+        storageKey,
+        artifactKind: "clear-marker",
+      }
+    : null;
+}
+
+/** storage를 한 번 열거해 해석 가능한 문서 draft artifact만 반환한다. */
+export function listDocumentDraftArtifacts(
+  storage: FormDraftRecoveryStorage,
+): DocumentDraftArtifact[] {
+  const artifacts: DocumentDraftArtifact[] = [];
+  for (let index = 0; index < storage.length; index += 1) {
+    const storageKey = storage.key(index);
+    if (storageKey === null) continue;
+    const artifact = readDocumentDraftArtifact(storageKey);
+    if (artifact) artifacts.push(artifact);
+  }
+  return artifacts;
 }
 
 function parseExpiredCurrentFormDraftRecovery(
@@ -1790,6 +1954,7 @@ export function persistFormDraftRawSnapshot(
     throw new Error("Immutable form draft recovery key cannot be overwritten");
   }
 
+  assertFormDraftSourceOwnerMayPersist(storage, sourceKey);
   storage.setItem(recoveryKey, raw);
 
   const currentRaw = storage.getItem(sourceKey);
@@ -1797,6 +1962,7 @@ export function persistFormDraftRawSnapshot(
     return { status: "conflict", raw, currentRaw, recoveryKey };
   }
 
+  assertFormDraftSourceOwnerMayPersist(storage, sourceKey);
   storage.setItem(sourceKey, raw);
   const persistedCanonicalRaw = storage.getItem(sourceKey);
   return {

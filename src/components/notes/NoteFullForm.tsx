@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { CreateNoteState } from "@/lib/actions/privateNotes";
 import { DraftStatus } from "@/components/editor/DraftStatus";
-import { useFormDraft } from "@/lib/hooks/useFormDraft";
+import { useSyncedFormDraft } from "@/lib/hooks/useSyncedFormDraft";
 import { createDocumentDraftKey } from "@/lib/form-draft";
 import { isRichTextEmpty } from "@/lib/rich-text";
 import {
@@ -90,7 +90,8 @@ export function NoteFullForm({ action, actorId, studentId, returnTo }: NoteFullF
     recoveries,
     restoreRecovery,
     discardRecovery,
-  } = useFormDraft<CreateNoteDraft>(
+    serverSync,
+  } = useSyncedFormDraft<CreateNoteDraft>(
     createDocumentDraftKey("note", actorId, `new:${studentId}`),
     (draft) => {
       setOperationId(
@@ -336,6 +337,7 @@ export function NoteFullForm({ action, actorId, studentId, returnTo }: NoteFullF
                   recoveries={recoveries}
                   onRestoreRecovery={restoreRecovery}
                   onDiscardRecovery={discardRecovery}
+                  serverSync={serverSync}
                   disabled={isPending}
                 />
               }

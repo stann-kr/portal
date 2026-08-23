@@ -4,7 +4,7 @@
  * 5개 병렬 쿼리 후 StudentPortalClient에 props 전달. Waterfall 없음.
  */
 import { redirect } from "next/navigation";
-import { auth } from "@/auth";
+import { getActiveAuthSession } from "@/lib/auth-guard";
 import { getPostsByBoardType } from "@/lib/actions/posts";
 import { getUnifiedItems } from "@/lib/actions/unifiedItems";
 import { getMyCurriculum } from "@/lib/actions/curriculum";
@@ -15,7 +15,7 @@ import { assignments } from "@/db/schema";
 import { StudentPortalClient } from "@/components/student-portal/StudentPortalClient";
 
 export default async function StudentPortalPage() {
-  const session = await auth();
+  const session = await getActiveAuthSession();
   if (session?.user?.role !== "student") redirect("/dashboard/admin");
 
   const studentId = session.user.id!;

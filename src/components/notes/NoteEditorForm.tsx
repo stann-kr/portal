@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { DraftStatus } from "@/components/editor/DraftStatus";
 import { DraftConflictRecovery } from "@/components/editor/DraftConflictRecovery";
 import { RichTextContent } from "@/components/editor/RichTextContent";
-import { useFormDraft } from "@/lib/hooks/useFormDraft";
+import { useSyncedFormDraft } from "@/lib/hooks/useSyncedFormDraft";
 import { createDocumentDraftKey } from "@/lib/form-draft";
 import { isRichTextEmpty } from "@/lib/rich-text";
 import type { UpdateNoteState } from "@/lib/actions/privateNotes";
@@ -190,7 +190,8 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
     recoveries,
     restoreRecovery,
     discardRecovery,
-  } = useFormDraft<NoteEditDraft>(
+    serverSync,
+  } = useSyncedFormDraft<NoteEditDraft>(
     createDocumentDraftKey("note", actorId, note.id),
     (draft) => {
       restoredDraftRef.current = draft;
@@ -640,6 +641,7 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
                 restoreRecovery(storageKey);
               }}
               onDiscardRecovery={discardRecovery}
+              serverSync={serverSync}
               disabled={isPending}
             />
           }

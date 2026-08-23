@@ -1,13 +1,13 @@
 /**
  * @file src/components/admin-portal/AdminSideRail.tsx
  * @description 어드민 원페이지 전용 56px 아이콘 레일.
- * 로고 + 역할 표시 + 로그아웃 버튼.
+ * 로고 + 역할 표시 + 기기 초안 관리 + 로그아웃 버튼.
  */
 import Link from "next/link";
-import { LogOut } from "lucide-react";
-import { signOut } from "@/auth";
+import { AccountLogoutButton } from "@/components/auth/AccountLogoutButton";
+import { LocalDraftManager } from "@/components/auth/LocalDraftManager";
 
-export function AdminSideRail() {
+export function AdminSideRail({ ownerId }: { ownerId: string }) {
   return (
     <aside
       aria-label="관리자 포털 도구"
@@ -34,21 +34,8 @@ export function AdminSideRail() {
 
       <div className="flex-1" />
 
-      {/* 로그아웃 */}
-      <form
-        action={async () => {
-          "use server";
-          await signOut({ redirectTo: "/" });
-        }}
-      >
-        <button
-          type="submit"
-          className="w-9 h-9 rounded-lg flex items-center justify-center text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
-          aria-label="로그아웃"
-        >
-          <LogOut className="w-4 h-4" />
-        </button>
-      </form>
+      <LocalDraftManager ownerId={ownerId} />
+      <AccountLogoutButton ownerId={ownerId} />
     </aside>
   );
 }

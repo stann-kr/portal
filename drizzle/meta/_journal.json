@@ -64,6 +64,34 @@
       "when": 1785942364827,
       "tag": "0008_document_continuity",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1786062466528,
+      "tag": "0009_document_server_drafts",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1786103623930,
+      "tag": "0010_post_qna_lifecycle",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1786274640670,
+      "tag": "0011_media_lifecycle",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1786280215786,
+      "tag": "0012_account_privacy_lifecycle",
+      "breakpoints": true
     }
   ]
 }
