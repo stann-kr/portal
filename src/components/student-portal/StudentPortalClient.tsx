@@ -6,11 +6,12 @@
  */
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { CalendarRange, House, Users } from "lucide-react";
 import {
   upsertUnifiedItem,
   upsertUnifiedItems,
+  getUnifiedItemKey,
   type UnifiedItem,
 } from "@/lib/utils/unifiedItemUtils";
 import { getExternalUnifiedItems } from "@/lib/actions/unifiedItems";
@@ -108,19 +109,36 @@ export function StudentPortalClient({
   externalCalendarConnection,
   referenceTime,
 }: StudentPortalClientProps) {
-  const [items, setItems] = useState<UnifiedItem[]>(initialUnifiedItems);
+  const [createdItems, setCreatedItems] = useState<UnifiedItem[]>([]);
+  const [externalItems, setExternalItems] = useState<UnifiedItem[]>([]);
+  const serverItemKeys = useMemo(() => new Set(initialUnifiedItems.map(getUnifiedItemKey)), [initialUnifiedItems]);
+  const items = useMemo(() => upsertUnifiedItems(
+    upsertUnifiedItems(initialUnifiedItems, createdItems.filter((item) => !serverItemKeys.has(getUnifiedItemKey(item)))),
+    externalCalendarConnection.connected ? externalItems : [],
+  ), [createdItems, externalCalendarConnection.connected, externalItems, initialUnifiedItems, serverItemKeys]);
+
+  // Retire confirmed additions so a later server deletion cannot resurrect them.
+  useEffect(() => {
+    setCreatedItems((current) => {
+      const remaining = current.filter((item) => !serverItemKeys.has(getUnifiedItemKey(item)));
+      return remaining.length === current.length ? current : remaining;
+    });
+  }, [serverItemKeys]);
 
   const addItem = useCallback((item: UnifiedItem) => {
-    setItems((prev) => upsertUnifiedItem(prev, item));
+    setCreatedItems((prev) => upsertUnifiedItem(prev, item));
   }, []);
 
   // 내부 일정은 RSC에서 먼저 표시하고 외부 provider는 hydration 뒤 fail-soft로 병합한다.
   useEffect(() => {
-    if (!externalCalendarConnection.connected) return;
+    if (!externalCalendarConnection.connected) {
+      setExternalItems([]);
+      return;
+    }
     let cancelled = false;
-    void getExternalUnifiedItems().then((externalItems) => {
+    void getExternalUnifiedItems().then((loadedItems) => {
       if (!cancelled) {
-        setItems((current) => upsertUnifiedItems(current, externalItems));
+        setExternalItems(loadedItems);
       }
     }).catch(() => undefined);
     return () => {

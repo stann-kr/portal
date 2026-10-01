@@ -5,6 +5,7 @@ import React, { act, useEffect, useRef, useState } from "react";
 import type { Editor } from "@tiptap/core";
 import type { ReactPlayerProps } from "react-player/types";
 import { resolvePortalLocation } from "@/lib/portal-location";
+import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 let createRoot: typeof import("react-dom/client").createRoot;
 let renderToString: typeof import("react-dom/server").renderToString;
 
@@ -357,6 +358,24 @@ test("calendar list detail returns focus to its event link after a pointer opens
   assert.ok(browser.document.querySelector('[role="dialog"]'));
   await escape();
   assert.equal(browser.document.activeElement, browser.document.querySelector(".fc-list-event-title a"));
+});
+
+test("student portal reflects new server records and removals without a full reload", async (context) => {
+  browser.history.replaceState({}, "", "/dashboard/student?section=today");
+  const item: UnifiedItem = { id: "before", type: "ASSIGNMENT", title: "믹스셋", date: new Date(), metadata: {},
+    space: { studentId: "student", label: "학생" }, source: { kind: "PORTAL", entity: "ASSIGNMENT", label: "포털" } };
+  const portal = (items: UnifiedItem[]) => <StudentPortalClient
+    initialLocation={resolvePortalLocation("student", { section: "today" })}
+    announcements={[]} unifiedItems={items} communityPosts={[]} curriculumModules={[]} assignments={[]}
+    studentId="student" displayName="학생" spaceLabel="학생" externalCalendarConnection={{ connected: false }} referenceTime={new Date()}
+  />;
+  const root = await render(context, portal([item]));
+  assert.ok(browser.document.querySelector('a[href="/dashboard/student/assignments/before"]'));
+  await act(async () => root.render(portal([{ ...item, id: "after" }])));
+  assert.ok(browser.document.querySelector('a[href="/dashboard/student/assignments/after"]'));
+  assert.equal(browser.document.querySelector('a[href="/dashboard/student/assignments/before"]'), null);
+  await act(async () => root.render(portal([])));
+  assert.equal(browser.document.querySelector('a[href="/dashboard/student/assignments/after"]'), null);
 });
 
 test("event save protects every dismissal path while pending and keeps input after an error", async (context) => {
