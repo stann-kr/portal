@@ -4,6 +4,7 @@
 
 대표 사례 빠른 탐색:
 
+- [Node 24에서 로컬 SQLite 테스트 프로세스 종료](#node-24에서-로컬-sqlite-테스트-프로세스-종료)
 - [인증 provider 병합으로 로그인 전면 불가](#인증-provider-병합으로-로그인-전면-불가)
 - [서버 액션 파일에서 동기 함수 재노출 시 컴파일 실패](#서버-액션-파일에서-동기-함수-재노출-시-컴파일-실패)
 - [리치텍스트 에디터 SSR 하이드레이션 불일치](#리치텍스트-에디터-ssr-하이드레이션-불일치)
@@ -11,6 +12,32 @@
 - [개발 환경에서 데이터베이스 바인딩 미주입](#개발-환경에서-데이터베이스-바인딩-미주입)
 - [파일명 규약 불일치로 인증 미들웨어 미동작](#파일명-규약-불일치로-인증-미들웨어-미동작)
 - [로컬 스크립트에서 데이터베이스 어댑터 연결 실패](#로컬-스크립트에서-데이터베이스-어댑터-연결-실패)
+
+## 2026-10-01
+
+### Node 24에서 로컬 SQLite 테스트 프로세스 종료
+
+#### 증상과 원인
+
+`better-sqlite3@11.10.0`과 Node 24 조합에서 `Statement`가 해제될 때
+`RemoveEnvironmentCleanupHook` assertion으로 테스트 프로세스가 중단될 수 있다.
+SQLite 쿼리 한 건의 성공만으로 전체 테스트의 native lifecycle 호환성을 확인할 수 없다.
+
+#### 해결과 검증
+
+프로젝트는 Node 22 이상과 `better-sqlite3@13.0.3`을 사용한다. 이 드라이버는
+[N-API 기반 prebuilt 배포](https://github.com/WiseLibs/better-sqlite3/releases/tag/v13.0.0)를
+사용하며, lockfile에 버전을 고정한다. 기존 설치가 남았다면 `npm ci`로 맞춘 뒤
+실제 버전과 전체 회귀 테스트를 확인한다.
+
+```bash
+node --version
+node -p "require('better-sqlite3/package.json').version"
+npm test
+```
+
+이 드라이버는 로컬 SQLite와 테스트에서 사용한다. Cloudflare의 D1 schema나
+remote migration은 npm 설치로 변경되지 않는다.
 
 ## 2026-03-27
 
