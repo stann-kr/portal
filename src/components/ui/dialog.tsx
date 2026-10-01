@@ -31,8 +31,12 @@ function DialogContent({
   children,
   onOpenAutoFocus,
   onCloseAutoFocus,
+  onEscapeKeyDown,
+  onPointerDownOutside,
+  onInteractOutside,
+  dismissible = true,
   ...props
-}: React.ComponentProps<typeof DialogPrimitive.Content>) {
+}: React.ComponentProps<typeof DialogPrimitive.Content> & { dismissible?: boolean }) {
   const { captureFocus, restoreFocus } = useOverlayFocus();
 
   return (
@@ -47,6 +51,18 @@ function DialogContent({
           onCloseAutoFocus?.(event);
           restoreFocus(event);
         }}
+        onEscapeKeyDown={(event) => {
+          onEscapeKeyDown?.(event);
+          if (!dismissible) event.preventDefault();
+        }}
+        onPointerDownOutside={(event) => {
+          onPointerDownOutside?.(event);
+          if (!dismissible) event.preventDefault();
+        }}
+        onInteractOutside={(event) => {
+          onInteractOutside?.(event);
+          if (!dismissible) event.preventDefault();
+        }}
         className={cn(
           "portal-dialog fixed left-1/2 top-1/2 z-50 w-[calc(100%-2rem)] max-w-md max-h-[calc(100dvh-2rem)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto overscroll-contain rounded-xl border border-border bg-background p-5 shadow-lg sm:p-6",
           className,
@@ -54,7 +70,7 @@ function DialogContent({
         {...props}
       >
         {children}
-        <DialogPrimitive.Close type="button" className="absolute right-2 top-2 flex size-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background motion-reduce:transition-none">
+        <DialogPrimitive.Close type="button" disabled={!dismissible} className="absolute right-2 top-2 flex size-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background motion-reduce:transition-none disabled:opacity-40">
           <X className="h-4 w-4" aria-hidden="true" />
           <span className="sr-only">닫기</span>
         </DialogPrimitive.Close>

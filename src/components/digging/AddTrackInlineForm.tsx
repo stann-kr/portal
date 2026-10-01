@@ -5,7 +5,7 @@
  */
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { createDiggingTrack, fetchLinkMeta } from "@/lib/actions/digging";
@@ -24,12 +24,14 @@ interface AddTrackInlineFormProps {
   columns: Column[];
   onSuccess: (created: Awaited<ReturnType<typeof createDiggingTrack>>) => void;
   onCancel: () => void;
+  onBusyChange?: (busy: boolean) => void;
 }
 
 export function AddTrackInlineForm({
   columns,
   onSuccess,
   onCancel,
+  onBusyChange,
 }: AddTrackInlineFormProps) {
   const [values, setValues] = useState<Record<string, unknown>>({});
   const [linkUrl, setLinkUrl] = useState("");
@@ -37,6 +39,14 @@ export function AddTrackInlineForm({
   const [fetchError, setFetchError] = useState("");
   const [submitError, setSubmitError] = useState("");
   const [isPending, startTransition] = useTransition();
+  const metadataRequest = useRef(0);
+
+  useEffect(() => {
+    onBusyChange?.(isPending);
+    return () => onBusyChange?.(false);
+  }, [isPending, onBusyChange]);
+
+  useEffect(() => () => { metadataRequest.current += 1; }, []);
 
   const setValue = (colId: string, val: unknown) =>
     setValues((prev) => ({ ...prev, [colId]: val }));
@@ -44,28 +54,32 @@ export function AddTrackInlineForm({
   const linkColId = columns.find((c) => c.columnType === "link")?.id;
 
   const handleLinkBlur = async (url: string) => {
-    if (!url || !url.startsWith("http")) return;
+    if (!url || !/^https?:\/\//i.test(url) || isPending) return;
+    const request = ++metadataRequest.current;
     setIsFetching(true);
     setFetchError("");
     try {
       const meta = await fetchLinkMeta(url);
+      if (request !== metadataRequest.current) return;
       const trackNameCol = columns.find((c) => c.name === "트랙명");
       const artistCol = columns.find((c) => c.name === "아티스트");
-      if (meta.title && trackNameCol && !values[trackNameCol.id]) {
-        setValue(trackNameCol.id, meta.title);
-      }
-      if (meta.artist && artistCol && !values[artistCol.id]) {
-        setValue(artistCol.id, meta.artist);
-      }
+      setValues((current) => ({
+        ...current,
+        ...(meta.title && trackNameCol && !current[trackNameCol.id] ? { [trackNameCol.id]: meta.title } : {}),
+        ...(meta.artist && artistCol && !current[artistCol.id] ? { [artistCol.id]: meta.artist } : {}),
+      }));
     } catch {
-      setFetchError("링크 정보를 가져오지 못했습니다.");
+      if (request === metadataRequest.current) setFetchError("링크 정보를 가져오지 못했습니다. 직접 입력할 수 있습니다.");
     } finally {
-      setIsFetching(false);
+      if (request === metadataRequest.current) setIsFetching(false);
     }
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (isPending) return;
+    metadataRequest.current += 1;
+    setIsFetching(false);
     setSubmitError("");
     startTransition(async () => {
       try {
@@ -101,19 +115,24 @@ export function AddTrackInlineForm({
               type="url"
               placeholder="https://youtube.com/..."
               value={linkUrl}
-              onChange={(e) => setLinkUrl(e.target.value)}
+              onChange={(e) => {
+                metadataRequest.current += 1;
+                setLinkUrl(e.target.value);
+                setIsFetching(false);
+                setFetchError("");
+              }}
               onBlur={(e) => handleLinkBlur(e.target.value)}
               disabled={isPending}
               aria-describedby={submitError ? "digging-form-error" : undefined}
             />
             {isFetching && (
-              <span className="text-xs text-muted-foreground self-center whitespace-nowrap">
+              <span role="status" className="text-xs text-muted-foreground self-center whitespace-nowrap">
                 추출 중...
               </span>
             )}
           </div>
           {fetchError && (
-            <p className="text-xs text-muted-foreground">{fetchError}</p>
+            <p role="status" className="text-xs text-muted-foreground">{fetchError}</p>
           )}
         </div>
       )}
@@ -178,6 +197,7 @@ export function AddTrackInlineForm({
                 <StarRating
                   aria-label={col.name}
                   value={(val as number) ?? 0}
+                  disabled={isPending}
                   onChange={(v) => setValue(col.id, v)}
                 />
               )}
@@ -186,6 +206,7 @@ export function AddTrackInlineForm({
                 <CamelotPicker
                   aria-label={col.name}
                   value={(val as string) ?? ""}
+                  disabled={isPending}
                   onChange={(v) => setValue(col.id, v)}
                 />
               )}

@@ -243,7 +243,7 @@ export function AccountDeletionControlImpl({
           <UserX className="size-4" aria-hidden="true" />
         </button>
       </DialogTrigger>
-      <DialogContent className="max-w-md">
+      <DialogContent dismissible={!isPending} className="max-w-md">
         <DialogHeader>
           <DialogTitle>계정을 삭제할까요?</DialogTitle>
           <DialogDescription>

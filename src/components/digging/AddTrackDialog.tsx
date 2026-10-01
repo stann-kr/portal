@@ -4,11 +4,13 @@
  */
 "use client";
 
+import { useState } from "react";
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
 } from "@/components/ui/dialog";
 import { AddTrackInlineForm } from "./AddTrackInlineForm";
 import type { DiggingColumnType } from "@/db/schema";
@@ -39,16 +41,19 @@ export function AddTrackDialog({
   spaceLabel,
   onSuccess,
 }: AddTrackDialogProps) {
+  const [busy, setBusy] = useState(false);
   const handleClose = () => onOpenChange(false);
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+    <Dialog open={open} onOpenChange={(nextOpen) => { if (!busy) onOpenChange(nextOpen); }}>
+      <DialogContent dismissible={!busy} className="max-w-lg">
         <DialogHeader>
           <DialogTitle>트랙 추가</DialogTitle>
+          <DialogDescription>참고할 트랙의 링크와 정보를 기록하세요.</DialogDescription>
         </DialogHeader>
         <AddTrackInlineForm
           columns={columns}
+          onBusyChange={setBusy}
           onSuccess={(created) => {
             handleClose();
             onSuccess(createDiggingTrackUnifiedItem(created, columns, {

@@ -86,8 +86,8 @@ export function ColumnManager({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+    <Dialog open={open} onOpenChange={(nextOpen) => { if (!isPending) onOpenChange(nextOpen); }}>
+      <DialogContent dismissible={!isPending} className="max-w-md" aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle>컬럼 관리</DialogTitle>
         </DialogHeader>

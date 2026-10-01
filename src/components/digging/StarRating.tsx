@@ -7,10 +7,11 @@ interface StarRatingProps {
   value: number;
   onChange?: (value: number) => void;
   readonly?: boolean;
+  disabled?: boolean;
   "aria-label"?: string;
 }
 
-export function StarRating({ value, onChange, readonly = false, "aria-label": ariaLabel = "별점 평가" }: StarRatingProps) {
+export function StarRating({ value, onChange, readonly = false, disabled = false, "aria-label": ariaLabel = "별점 평가" }: StarRatingProps) {
   const [hovered, setHovered] = useState(0);
 
   return (
@@ -21,10 +22,10 @@ export function StarRating({ value, onChange, readonly = false, "aria-label": ar
           <button
             key={star}
             type="button"
-            disabled={readonly}
+            disabled={readonly || disabled}
             onClick={() => onChange?.(star)}
-            onMouseEnter={() => !readonly && setHovered(star)}
-            onMouseLeave={() => !readonly && setHovered(0)}
+            onMouseEnter={() => !readonly && !disabled && setHovered(star)}
+            onMouseLeave={() => setHovered(0)}
             className="disabled:cursor-default"
             aria-label={`${star}점`}
             role="radio"

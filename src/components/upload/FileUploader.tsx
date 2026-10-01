@@ -181,8 +181,8 @@ export function FileUploader({
           <div className="h-1.5 w-full rounded-full bg-secondary overflow-hidden">
             <div
               aria-hidden="true"
-              className="h-full rounded-full bg-primary transition-all duration-200 motion-reduce:transition-none"
-              style={{ width: `${progress}%` }}
+              className="h-full origin-left rounded-full bg-primary transition-transform duration-[var(--duration-standard)] ease-linear motion-reduce:transition-none"
+              style={{ transform: `scaleX(${progress / 100})` }}
             />
           </div>
         </div>

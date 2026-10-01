@@ -12,10 +12,11 @@ interface CamelotPickerProps {
   value: string;
   onChange?: (value: string) => void;
   readonly?: boolean;
+  disabled?: boolean;
   "aria-label"?: string;
 }
 
-export function CamelotPicker({ value, onChange, readonly = false, "aria-label": ariaLabel = "카멜롯 키" }: CamelotPickerProps) {
+export function CamelotPicker({ value, onChange, readonly = false, disabled = false, "aria-label": ariaLabel = "카멜롯 키" }: CamelotPickerProps) {
   const [open, setOpen] = useState(false);
 
   if (readonly) {
@@ -34,6 +35,7 @@ export function CamelotPicker({ value, onChange, readonly = false, "aria-label":
         type="button"
         aria-label={ariaLabel}
         aria-expanded={open}
+        disabled={disabled}
         onClick={() => setOpen(!open)}
         className="w-full text-left rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
@@ -47,6 +49,7 @@ export function CamelotPicker({ value, onChange, readonly = false, "aria-label":
               <button
                 key={key}
                 type="button"
+                disabled={disabled}
                 onClick={() => { onChange?.(key); setOpen(false); }}
                 className={`text-xs py-1 rounded font-mono font-semibold transition-colors ${
                   value === key
@@ -63,6 +66,7 @@ export function CamelotPicker({ value, onChange, readonly = false, "aria-label":
               <button
                 key={key}
                 type="button"
+                disabled={disabled}
                 onClick={() => { onChange?.(key); setOpen(false); }}
                 className={`text-xs py-1 rounded font-mono font-semibold transition-colors ${
                   value === key
@@ -77,6 +81,7 @@ export function CamelotPicker({ value, onChange, readonly = false, "aria-label":
           {value && (
             <button
               type="button"
+              disabled={disabled}
               onClick={() => { onChange?.(""); setOpen(false); }}
               className="mt-2 w-full text-xs text-muted-foreground hover:text-foreground text-center"
             >
