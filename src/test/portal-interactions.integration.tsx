@@ -19,6 +19,7 @@ let CurriculumView: typeof import("@/components/student-portal/CurriculumView").
 let TiptapEditor: typeof import("@tiptap/core").Editor;
 let StarterKit: typeof import("@tiptap/starter-kit").default;
 let BlockCommandMenu: typeof import("@/components/editor/BlockCommandMenu").BlockCommandMenu;
+let UnifiedCalendar: typeof import("@/components/student-portal/UnifiedCalendar").UnifiedCalendar;
 let saveEvent: typeof import("@/lib/actions/calendarEvents").createCalendarEvent = async () => ({});
 let saveTrack: typeof import("@/lib/actions/digging").createDiggingTrack = async (input) => ({ id: "track", createdAt: new Date(), linkUrl: input.linkUrl ?? null, values: input.values });
 let fetchMetadata: typeof import("@/lib/actions/digging").fetchLinkMeta = async () => ({});
@@ -92,6 +93,7 @@ before(async () => {
   ({ Editor: TiptapEditor } = await import("@tiptap/core"));
   ({ default: StarterKit } = await import("@tiptap/starter-kit"));
   ({ BlockCommandMenu } = await import("@/components/editor/BlockCommandMenu"));
+  ({ UnifiedCalendar } = await import("@/components/student-portal/UnifiedCalendar"));
   ({ CreateEntryDropdown } = await import("@/components/student-portal/CreateEntryDropdown"));
   ({ AdminPortalClient } = await import("@/components/admin-portal/AdminPortalClient"));
   ({ StudentPortalClient } = await import("@/components/student-portal/StudentPortalClient"));
@@ -308,6 +310,21 @@ test("portal deep links render their section, view and selected student before h
   assert.deepEqual(resolvePortalLocation("admin", { section: "workspace", view: "curriculum", type: "invalid", preset: "invalid" }), {
     section: "work", view: "calendar", type: null, preset: null,
   });
+});
+
+test("calendar list detail returns focus to its event link after a pointer opens the row", async (context) => {
+  await render(context, <UnifiedCalendar returnTo="/dashboard/student" showSpaceContext={false} items={[{
+    id: "practice", type: "EVENT", subType: "PRACTICE", title: "리듬 연습", date: new Date(), metadata: {},
+    space: { studentId: "student", label: "학생" }, source: { kind: "PORTAL", entity: "CALENDAR_EVENT", label: "포털" },
+  }]} />);
+  await press("목록");
+  const cell = browser.document.querySelector(".fc-list-event-title");
+  assert.ok(cell instanceof browser.HTMLElement);
+  await act(async () => { cell.click(); });
+  await settle();
+  assert.ok(browser.document.querySelector('[role="dialog"]'));
+  await escape();
+  assert.equal(browser.document.activeElement, browser.document.querySelector(".fc-list-event-title a"));
 });
 
 test("event save protects every dismissal path while pending and keeps input after an error", async (context) => {

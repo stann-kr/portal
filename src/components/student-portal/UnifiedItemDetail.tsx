@@ -23,6 +23,10 @@ const QNA_STATUS_LABELS: Record<string, string> = {
   CLOSED: "종료",
 };
 
+const EVENT_TYPE_LABELS: Record<string, string> = {
+  LESSON: "레슨", PRACTICE: "연습", GIG: "공연", NOTE: "메모",
+};
+
 // ── 포맷 헬퍼 ────────────────────────────────────
 
 function formatDate(date: Date) {
@@ -92,6 +96,9 @@ export function UnifiedItemDetail({ item, returnTo }: UnifiedItemDetailProps) {
   const allDayEndDate = metaStr(item.metadata, "allDayEndDate");
   const metaFeedbackCount = item.metadata.feedbackCount as number | undefined;
   const isAllDay = item.metadata.allDay === true;
+  const description = item.type === "NOTE" && metaContentHtml
+    ? null
+    : item.description ?? metaDescription;
   const startLabel = isAllDay
     ? formatAllDayDate(item.date, allDayStartDate)
     : formatDate(item.date);
@@ -104,7 +111,7 @@ export function UnifiedItemDetail({ item, returnTo }: UnifiedItemDetailProps) {
   return (
     <div className="space-y-5">
       {/* 타입 배지 + 날짜 */}
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <UnifiedItemTypeBadge item={item} />
           <UnifiedItemSpaceBadge item={item} />
@@ -114,14 +121,8 @@ export function UnifiedItemDetail({ item, returnTo }: UnifiedItemDetailProps) {
         </span>
       </div>
 
-      {/* 제목 */}
-      <h3 className="text-base font-semibold text-foreground leading-snug">
-        {item.title}
-      </h3>
-
-      {/* 설명 (description은 string | undefined — string으로 좁혀짐) */}
-      {typeof item.description === "string" ? (
-        <p className="text-sm text-muted-foreground">{item.description}</p>
+      {description ? (
+        <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-muted-foreground">{description}</p>
       ) : null}
 
       {/* ── 타입별 추가 정보 ── */}
@@ -132,18 +133,13 @@ export function UnifiedItemDetail({ item, returnTo }: UnifiedItemDetailProps) {
           {item.subType !== undefined ? (
             <div className="flex gap-2">
               <span className="text-muted-foreground w-16">종류</span>
-              <span className="font-medium">{item.subType}</span>
+              <span className="font-medium">{EVENT_TYPE_LABELS[item.subType] ?? "일정"}</span>
             </div>
           ) : null}
           {endLabel !== null && (!isAllDay || endLabel !== startLabel) ? (
             <div className="flex gap-2">
               <span className="text-muted-foreground w-16">종료</span>
               <span>{endLabel}</span>
-            </div>
-          ) : null}
-          {metaDescription !== null ? (
-            <div className="pt-2 text-sm text-muted-foreground">
-              {metaDescription}
             </div>
           ) : null}
         </div>
@@ -191,9 +187,6 @@ export function UnifiedItemDetail({ item, returnTo }: UnifiedItemDetailProps) {
               </span>
             </div>
           ) : null}
-          <p className="text-xs text-muted-foreground pt-1">
-            전체 Q&A 보기는 상단 메뉴에서 Q&A 섹션을 이용하세요.
-          </p>
           <Link
             href={`/dashboard/qna/${item.id}?returnTo=${encodeURIComponent(returnTo)}`}
             className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-accent"

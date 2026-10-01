@@ -134,7 +134,11 @@ export function UnifiedCalendar({
     (arg: EventClickArg) => {
       const found = items.find((item) => getUnifiedItemKey(item) === arg.event.id);
       if (found) {
-        arg.el.focus({ preventScroll: true });
+        // List view's event element is a non-focusable table row.
+        const trigger = arg.el.matches("a, button, [tabindex]")
+          ? arg.el
+          : arg.el.querySelector<HTMLElement>("a, button, [tabindex]");
+        trigger?.focus({ preventScroll: true });
         setSelectedItem(found);
         setPanelOpen(true);
       }
