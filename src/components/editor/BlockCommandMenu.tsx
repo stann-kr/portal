@@ -21,6 +21,7 @@ export function BlockCommandMenu({ editor }: { editor: Editor }) {
   const menuId = useId();
   const [menu, setMenu] = useState<CommandMenuState | null>(null);
   const menuRef = useRef<CommandMenuState | null>(null);
+  const dismissedMatchRef = useRef<SlashCommandMatch | null>(null);
   menuRef.current = menu;
 
   const commands = useMemo(
@@ -39,9 +40,16 @@ export function BlockCommandMenu({ editor }: { editor: Editor }) {
     }
     const match = findSlashCommandMatch(editor);
     if (!match) {
+      dismissedMatchRef.current = null;
       close();
       return;
     }
+    const dismissed = dismissedMatchRef.current;
+    if (dismissed?.from === match.from && dismissed.to === match.to && dismissed.query === match.query) {
+      close();
+      return;
+    }
+    dismissedMatchRef.current = null;
 
     const coords = editor.view.coordsAtPos(match.to);
     const owner = editor.view.dom.closest<HTMLElement>('[role="dialog"]');
@@ -102,6 +110,7 @@ export function BlockCommandMenu({ editor }: { editor: Editor }) {
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();
+        dismissedMatchRef.current = current;
         close();
         return;
       }
@@ -127,7 +136,10 @@ export function BlockCommandMenu({ editor }: { editor: Editor }) {
         event.stopPropagation();
         execute(current.activeIndex);
       }
-      if (event.key === "Tab") close();
+      if (event.key === "Tab") {
+        dismissedMatchRef.current = current;
+        close();
+      }
     };
 
     editor.on("transaction", handleTransaction);

@@ -382,6 +382,13 @@ test("editor command popup stays in its dialog and Escape closes only the popup"
   assert.equal(browser.document.querySelector('[role="listbox"]'), null);
   assert.ok(browser.document.querySelector('[role="dialog"]'));
   assert.equal(editor.view.dom.getAttribute("aria-controls"), null);
+  await act(async () => { editor.view.dispatch(editor.state.tr); });
+  assert.equal(browser.document.querySelector('[role="listbox"]'), null, "a selection refresh must not reopen the dismissed command menu");
+  await act(async () => { editor.commands.insertContent("h"); });
+  assert.ok(browser.document.querySelector('[role="listbox"]'), "typing a new query opens the command menu again");
+  await act(async () => {
+    editor.view.dom.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }) as unknown as Event);
+  });
   await escape();
   assert.equal(browser.document.querySelector('[role="dialog"]'), null);
 });
