@@ -123,11 +123,11 @@ Cloudflare binding:
 | `BUCKET` | R2 bucket | 미디어 저장 |
 | `ASSETS` | OpenNext assets | 정적 asset |
 
-Migration SQL은 `drizzle/`, Drizzle metadata는 `drizzle/meta/`에 둔다. Wrangler는 SQL 파일명과 D1의 적용 이력을 기준으로 migration을 실행하고, Drizzle metadata는 다음 schema diff 생성 기준으로 사용한다. SQL·journal·snapshot은 `0000~0013`까지 대응한다. `npm run db:check`는 empty replay와 current schema/latest snapshot의 column·FK·index뿐 아니라 문서·미디어·개인정보·외부 캘린더 구독 CHECK·FK·unique index, 불변·부활·교체 우회 방지 probe, `0007` fixture upgrade·inbound FK preflight, `0008→0009` account cascade, 기존 게시물·Q&A의 `0009→0010`, 기존 URL을 보존하는 `0010→0011`, populated `0011→0012` upgrade를 검사한다. local persistent D1에는 `0009`까지, production D1에는 `0012`까지 적용되어 있으며, 저장된 공개 iCal URL을 위한 `0013`은 두 환경 모두 아직 적용하지 않았다.
+Migration SQL은 `drizzle/`, Drizzle metadata는 `drizzle/meta/`에 둔다. Wrangler는 SQL 파일명과 D1의 적용 이력을 기준으로 migration을 실행하고, Drizzle metadata는 다음 schema diff 생성 기준으로 사용한다. SQL·journal·snapshot은 `0000~0013`까지 대응한다. `npm run db:check`는 empty replay와 current schema/latest snapshot의 column·FK·index뿐 아니라 문서·미디어·개인정보·외부 캘린더 구독 CHECK·FK·unique index, 불변·부활·교체 우회 방지 probe, `0007` fixture upgrade·inbound FK preflight, `0008→0009` account cascade, 기존 게시물·Q&A의 `0009→0010`, 기존 URL을 보존하는 `0010→0011`, populated `0011→0012` upgrade를 검사한다. 이 체인은 저장소의 schema 계약이며 persistent local·remote D1의 현재 적용 이력을 뜻하지 않는다. 환경별 실제 적용 목록과 pending 범위는 [운영 상태 확인 기준](./DEPLOYMENT.md#운영-상태-확인-기준)으로 확인한다. 외부 캘린더 코드의 promotion에는 대상 D1의 `0013`이 필요하다.
 
 신규 업로드는 사용자에게 노출된 `media-upload/` staging key로만 PUT하고, 서버가 size·Content-Type metadata·ETag를 확인한 뒤 사용자에게 공개되지 않은 별도 `media/` final key로 봉인한다. D1의 `SEALING` lease가 봉인과 삭제를 직렬화하며, 결과를 잃은 Copy는 복구 유예 뒤 final 삭제 outbox가 다시 정리한다. 문서에는 object ID와 `/api/media/{id}`만 저장하고, 게시물과 Q&A의 원자 생성·purge transaction이 registry claim과 R2 삭제 의도를 함께 commit한다. R2 삭제는 lease·지수 backoff를 사용하는 durable outbox로 재시도한다.
 
-예약 정리 source는 OpenNext application fetch를 유지한 custom Worker entry에 `scheduled` handler를 추가한다. request AsyncLocalStorage에 의존하지 않고 event의 D1·R2 binding을 직접 주입하며, 30일이 지난 계정 raw ID alias, 만료 미귀속 media enqueue, 기존 R2 deletion outbox를 작은 순차 batch로 처리한다. soft time budget은 처리 중인 transaction이나 R2 요청을 취소하지 않고 다음 작업 claim만 멈춘다. 로그는 처리 건수·backlog·stage 상태만 포함하며 계정 ID, object key, digest와 예외 원문을 기록하지 않는다. `wrangler.scheduled.toml`에는 Cron trigger와 route를 넣지 않고 원격 운영 trigger를 별도로 관리한다. production에서는 target version의 최초 예약 실행이 정상 수렴한 뒤 `7 * * * *` 주기로 활성화되어 있다.
+예약 정리 source는 OpenNext application fetch를 유지한 custom Worker entry에 `scheduled` handler를 추가한다. request AsyncLocalStorage에 의존하지 않고 event의 D1·R2 binding을 직접 주입하며, 30일이 지난 계정 raw ID alias, 만료 미귀속 media enqueue, 기존 R2 deletion outbox를 작은 순차 batch로 처리한다. soft time budget은 처리 중인 transaction이나 R2 요청을 취소하지 않고 다음 작업 claim만 멈춘다. 로그는 처리 건수·backlog·stage 상태만 포함하며 계정 ID, object key, digest와 예외 원문을 기록하지 않는다. `wrangler.scheduled.toml`에는 Cron trigger와 route를 넣지 않고 원격 운영 trigger를 별도로 관리한다. handler 구현과 원격 trigger 활성 상태는 별도로 확인한다. 운영 수용에는 활성 target version의 실제 scheduled invocation, backlog·실패와 alert 증거가 필요하다.
 
 ## 인증과 권한
 
@@ -206,13 +206,13 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 
 | 품질 경계 | 현재 자동화 | 다음 보강 |
 |---|---|---|
-| Migration | SQL·journal·snapshot·current schema empty replay, CHECK·trigger, `0007` upgrade·inbound FK preflight, `0008→0009` cascade, `0009→0010` 게시물·Q&A, `0010→0011` media, `0011→0012` privacy upgrade | persistent local `0010~0012`과 remote 적용 이력은 승인된 작업 창에서 점검 |
+| Migration | SQL·journal·snapshot·current schema empty replay, CHECK·trigger, `0007` upgrade·inbound FK preflight, `0008→0009` cascade, `0009→0010` 게시물·Q&A, `0010→0011` media, `0011→0012` privacy upgrade | persistent local·remote의 실제 적용 목록에서 pending 범위를 계산하고 승인된 작업 창에서 점검 |
 | 개발 credential | development/opt-in/env/input binding 단위 테스트 | 실제 local seed는 데이터 변경 작업으로 분리 |
 | 인증·권한 | 미인증·role·ownership 허용/거부 단위 테스트, Q&A 격리 D1 권한 회귀 | 다른 주요 server action의 실제 query·mutation 경계 테스트 |
 | 입력·콘텐츠 | HTML5 AST tag·속성·URL allowlist, malformed·foreign-content XSS, 멱등성, upload MIME·size·quota·opaque key 정책 | 실제 R2 CORS·대용량 PUT smoke |
-| 미디어 | staging/final key 분리, SEALING lease·late Copy 복구, claim/purge rollback, bounded 만료 enqueue, outbox 재시도·final prefix cursor reconciliation·private RBAC·Range 자동 테스트 | Cron 활성화와 실제 R2 PUT·inventory 운영 검증 |
+| 미디어 | staging/final key 분리, SEALING lease·late Copy 복구, claim/purge rollback, bounded 만료 enqueue, outbox 재시도·final prefix cursor reconciliation·private RBAC·Range 자동 테스트 | 원격 trigger·실행 상태와 실제 R2 PUT·inventory 운영 검증 |
 | 문서 연속성 | local shadow·5초 checkpoint·복구·제출 경쟁, 사용자·문서별 서버 최신본·CAS·offline queue·다중 기기 명시 선택 DOM 통합, 노트·게시물·Q&A revision/event·trash·purge·anti-replay 격리 D1 통합 | 실제 브라우저 reload·offline·navigation·강제 종료·대형 문서 E2E |
-| 계정 개인정보 | student-only 원자 삭제, old JWT 거부, cleanup digest·terminal lock, ownerless snapshot 확인, 30일 alias·second-run no-op·poison job 격리, edge-local status rate limit·rollout flag | Cron/alert 활성화와 오프라인 adoption 확인 뒤 삭제 flag 전환 |
+| 계정 개인정보 | student-only 원자 삭제, old JWT 거부, cleanup digest·terminal lock, ownerless snapshot 확인, 30일 alias·second-run no-op·poison job 격리, edge-local status rate limit·rollout flag | 유효 삭제 flag, Cron/alert·오프라인 adoption 확인과 승인된 삭제 smoke |
 | UI 상태 | status registry 단위 테스트, loading/error route, semantic landmark·control 정적 검토 | keyboard interaction component 테스트 |
 
 ## 변경 시 같이 볼 파일

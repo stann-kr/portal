@@ -21,6 +21,23 @@
 
 현재 source-controlled Wrangler 설정은 production Worker `portal`만 정의한다. 별도 development Worker·D1·R2 설정과 branch별 Workers Builds trigger는 저장소에서 확인되지 않으므로, 중앙 배포 계약의 development/production 분리는 아직 완료됐다고 볼 수 없다. remote 설정을 확인하거나 바꾸는 작업은 별도 승인 범위다.
 
+## 운영 상태 확인 기준
+
+이 문서의 설정과 검증 조건은 저장소의 코드 계약이다. 현재 운영 상태는 대상 환경,
+확인 시각, commit SHA와 실제 Worker version을 함께 대조해 비공개 운영 기록에 남긴다.
+과거 배포 기록이나 로컬 build 성공만으로 오늘의 migration·Cron·기능 활성화를 판정하지 않는다.
+
+| 항목 | 저장소에서 확인할 수 있는 것 | 운영 적용을 확인하는 증거 |
+|---|---|---|
+| D1 migration | SQL·journal·snapshot `0000~0013`, 메모리 DB에서 체인·schema 검증 | 대상 D1의 적용 목록과 실제 schema·FK, 그 목록에서 계산한 pending 범위 |
+| 계정 삭제 | `0012`와 삭제·정리 구현, application 설정의 `ACCOUNT_DELETION_ENABLED="false"` 기본값 | 활성 Worker의 유효 flag, 기기 adoption, 승인된 삭제·정리 smoke |
+| 예약 정리 | `worker.ts`의 `scheduled` handler, Workers Logs 설정, source에 없는 Cron trigger | 원격 trigger 주기, 대상 version의 실제 scheduled invocation, backlog·실패·alert 증거 |
+| 외부 캘린더 | `0013` 구독 테이블과 `EXTERNAL_CALENDAR_ENCRYPTION_KEY` 요구 조건 | 대상 schema, secret 설정 확인, 승인된 연결·읽기·교체·해제 smoke |
+| 배포 환경 분리 | 현재 tracked 설정의 Worker는 `portal` | development/production Worker·D1·R2·route·secret·branch trigger 각각의 inventory |
+
+운영 확인은 기존 상태 조회, migration·secret·trigger 변경, 데이터 쓰기 smoke를 구분해 승인된
+범위에서 수행한다. secret·캘린더 URL·학생 본문은 확인 기록에 넣지 않는다.
+
 ## 사전 체크리스트
 
 - build·upload 환경은 Node.js 22 이상이어야 한다.
@@ -35,6 +52,17 @@
 - trigger branch, required release gate, 예상 commit SHA, Active Deployment와 대상 URL smoke를 확인하기 전에는 배포 성공을 보고하지 않는다.
 - 현재 저장소에는 development 설정이 없으므로 feature/fix branch를 `dev`에 통합해도 development 자동 배포를 가정하지 않는다. remote trigger와 resource 분리가 확인될 때까지 `BLOCKED`로 다룬다.
 - 비호환 migration 작업 창에는 자동 promotion을 중지하거나 upload-only 절차로 전환한다.
+
+### 외부 캘린더 전환 gate
+
+연결 상태 조회와 연결·해제 action은 `external_calendar_subscriptions`를 사용한다.
+구독자가 아직 없어도 해당 테이블이 필요하므로, 이 코드를 포함한 Worker를 promotion하기 전에
+대상 D1에 `0013`이 적용됐는지 확인한다.
+
+1. 대상 D1의 실제 적용 목록을 확인하고 pending 범위를 확정한다. 기존 적용 migration을 추정해 다시 실행하지 않는다.
+2. pending이 있으면 승인된 작업 창에서 호환성·백업·복구 조건을 확인하고 적용한 뒤 schema·FK를 검증한다.
+3. 대상 환경의 안정적인 암호화 key를 확인한다. 기존 구독의 복호화에 쓰이는 key는 임의 교체하지 않는다.
+4. schema와 secret 조건을 갖춘 target version을 전환하고, 승인된 fixture로 학생·관리자 조회와 연결·교체·해제를 검증한다.
 
 ### 비호환 migration 전환 gate
 
@@ -92,7 +120,7 @@ npm run build:scheduled
 
 production Cron을 활성화하기 전에는 Workers plan의 Cron CPU 한도, 실행 주기, log 보존, backlog·실패 alert를 확인한다. `0011`·`0012` migration, private R2·staging lifecycle, legacy inventory가 준비되기 전에 trigger를 추가하지 않는다.
 
-production target config는 Workers Logs와 invocation log를 활성화한다. 운영 Cron은 매시간 정각 충돌을 피한 `7 * * * *`를 사용한다. 최초 전환에서는 임시 1분 trigger로 대상 version의 실제 실행을 한 번 확인한 뒤 즉시 운영 주기로 낮췄으며, account/media backlog와 reconciliation failure가 모두 0으로 수렴했다. `partial_failure`는 invocation error로 승격되므로 운영 알림은 이 error와 반복 `retry`/backlog를 함께 감시한다.
+production target config는 Workers Logs와 invocation log를 활성화한다. Cron 주기는 원격 설정에서 확인하고 변경 전 plan의 실행 한도와 예상 부하를 검토한다. trigger가 존재한다는 사실 외에 활성 target version의 실제 실행과 account/media backlog·reconciliation failure를 확인해야 한다. `partial_failure`는 invocation error로 승격되므로 운영 알림은 이 error와 반복 `retry`/backlog를 함께 감시한다.
 
 ### 비호환 migration의 immutable version 전환
 
