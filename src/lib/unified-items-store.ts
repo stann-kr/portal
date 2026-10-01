@@ -166,13 +166,17 @@ export async function queryInternalUnifiedItems(
   const assignmentIds = myAssignments.map((assignment) => assignment.id);
   const scopedFeedbacks = assignmentIds.length
     ? await db
-        .select({ assignmentId: feedbacks.assignmentId })
+        .select({
+          assignmentId: feedbacks.assignmentId,
+          count: sql<number>`count(*)`,
+        })
         .from(feedbacks)
         .where(inArray(feedbacks.assignmentId, assignmentIds))
+        .groupBy(feedbacks.assignmentId)
     : [];
   const feedbackCounts: Record<string, number> = {};
   for (const row of scopedFeedbacks) {
-    feedbackCounts[row.assignmentId] = (feedbackCounts[row.assignmentId] ?? 0) + 1;
+    feedbackCounts[row.assignmentId] = Number(row.count);
   }
 
   return selectUnifiedItemsWithinQuery(normalizeUnifiedItems({

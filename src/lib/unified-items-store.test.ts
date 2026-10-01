@@ -80,3 +80,56 @@ test("통합 일정 store는 source query와 최종 결과 모두에 기간·개
   assert.ok(!items.some((entry) => entry.id === "outside"));
   assert.equal(selectStatements.length, 3, "학생 수·이력 크기와 무관하게 profile/event/lesson만 조회해야 한다");
 });
+
+test("과제 피드백 개수는 학생·기간 범위를 유지하고 과제 수 이내의 행으로 조회한다", async (context) => {
+  let feedbackSelect = "";
+  const sqlite = new Database(":memory:", {
+    verbose: (statement) => {
+      if (typeof statement === "string" && /^select\b[\s\S]*\bfrom "feedbacks"/iu.test(statement)) {
+        feedbackSelect = statement;
+      }
+    },
+  });
+  context.after(() => sqlite.close());
+  sqlite.exec(`
+    CREATE TABLE profiles (id TEXT PRIMARY KEY, email TEXT NOT NULL, display_name TEXT);
+    CREATE TABLE assignments (id TEXT PRIMARY KEY, student_id TEXT NOT NULL, media_url TEXT NOT NULL, submitted_at INTEGER);
+    CREATE TABLE feedbacks (id TEXT PRIMARY KEY, assignment_id TEXT NOT NULL, time_marker INTEGER NOT NULL, content TEXT NOT NULL);
+    INSERT INTO profiles VALUES ('student-1', 'student@example.com', '학생');
+    INSERT INTO assignments VALUES
+      ('first', 'student-1', 'first.mp3', 1778000000),
+      ('second', 'student-1', 'second.mp3', 1778000100),
+      ('no-feedback', 'student-1', 'empty.mp3', 1778000200),
+      ('outside-period', 'student-1', 'old.mp3', 1600000000),
+      ('other-student', 'student-2', 'other.mp3', 1778000000);
+  `);
+  const insertFeedback = sqlite.prepare(
+    "INSERT INTO feedbacks (id, assignment_id, time_marker, content) VALUES (?, ?, 0, '피드백')",
+  );
+  sqlite.transaction(() => {
+    for (const [assignmentId, count] of [
+      ["first", 700], ["second", 300], ["outside-period", 5], ["other-student", 5],
+    ] as const) {
+      for (let index = 0; index < count; index += 1) {
+        insertFeedback.run(`${assignmentId}-${index}`, assignmentId);
+      }
+    }
+  })();
+
+  const items = await queryInternalUnifiedItems(
+    drizzle(sqlite, { schema }) as unknown as DrizzleDb,
+    "student-1",
+    resolveUnifiedItemsQuery({ start: "2026-05-01", end: "2026-05-31", types: ["ASSIGNMENT"] }),
+  );
+
+  assert.deepEqual(
+    Object.fromEntries(items.map((item) => [item.id, item.metadata.feedbackCount])),
+    { first: 700, second: 300, "no-feedback": 0 },
+  );
+  assert.ok(feedbackSelect, "피드백 조회가 실행되어야 한다");
+  const returnedRows = sqlite.prepare(feedbackSelect).all();
+  assert.ok(
+    returnedRows.length <= items.length,
+    `피드백 ${returnedRows.length}행을 전송하지 않고 조회 과제 ${items.length}개 이내로 집계해야 한다`,
+  );
+});
