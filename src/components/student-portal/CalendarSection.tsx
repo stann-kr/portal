@@ -277,9 +277,9 @@ export function CalendarSection({
                   <TabsTrigger
                     key={value}
                     value={value}
-                    className="inline-flex items-center gap-1.5 px-3 py-2 text-sm rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none"
+                    className="inline-flex items-center gap-1.5 px-2 py-2 text-xs rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none sm:px-3 sm:text-sm"
                   >
-                    <Icon className="w-3.5 h-3.5" aria-hidden="true" />
+                    <Icon className="hidden w-3.5 h-3.5 sm:block" aria-hidden="true" />
                     {label}
                   </TabsTrigger>
                 );

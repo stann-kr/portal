@@ -18,20 +18,11 @@ import type { UnifiedItem, UnifiedItemType } from "@/lib/utils/unifiedItemUtils"
 import { getUnifiedItemColor, getUnifiedItemKey } from "@/lib/utils/unifiedItemUtils";
 import { SlidePanel } from "./SlidePanel";
 import { UnifiedItemDetail } from "./UnifiedItemDetail";
+import { UNIFIED_ITEM_TYPE_LABELS, UnifiedItemTypeIcon } from "@/components/ui/unified-item-type";
 import {
   matchesCalendarPreset,
   type CalendarPreset,
 } from "@/lib/calendar-section-contract";
-
-// ── 타입 필터 라벨 ──────────────────────────────
-
-const TYPE_LABELS: Record<UnifiedItemType, string> = {
-  EVENT: "일정",
-  NOTE: "노트",
-  DIGGING: "디깅",
-  QNA: "Q&A",
-  ASSIGNMENT: "과제",
-};
 
 interface UnifiedCalendarProps {
   isActive?: boolean;
@@ -54,6 +45,11 @@ export function UnifiedCalendar({
 }: UnifiedCalendarProps) {
   const calendarRef = useRef<FullCalendar>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const [initialView] = useState(() =>
+    typeof window !== "undefined" && window.matchMedia("(max-width: 640px)").matches
+      ? "listWeek"
+      : "dayGridMonth",
+  );
 
   // Hidden tabs keep their date/view; FullCalendar must remeasure once visible.
   useEffect(() => {
@@ -137,6 +133,7 @@ export function UnifiedCalendar({
     (arg: EventClickArg) => {
       const found = items.find((item) => getUnifiedItemKey(item) === arg.event.id);
       if (found) {
+        arg.el.focus({ preventScroll: true });
         setSelectedItem(found);
         setPanelOpen(true);
       }
@@ -161,11 +158,8 @@ export function UnifiedCalendar({
             노트 + 레슨 보기 · 해제
           </button>
         ) : null}
-        {(Object.entries(TYPE_LABELS) as [UnifiedItemType, string][]).map(([type, label]) => {
+        {(Object.entries(UNIFIED_ITEM_TYPE_LABELS) as [UnifiedItemType, string][]).map(([type, label]) => {
           const active = visibleTypes.has(type);
-          // 색상은 샘플 아이템으로 도출
-          const sampleItem = items.find((i) => i.type === type);
-          const color = sampleItem ? getUnifiedItemColor(sampleItem) : "var(--color-muted-foreground)";
           return (
             <button
               key={type}
@@ -173,17 +167,13 @@ export function UnifiedCalendar({
               onClick={() => toggleType(type)}
               aria-pressed={active}
               aria-label={`${label} ${active ? "숨기기" : "표시하기"}`}
-              className={`inline-flex min-h-8 items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium border transition-colors duration-[var(--duration-fast)] motion-reduce:transition-none ${
+              className={`inline-flex min-h-8 items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium border transition-colors duration-[var(--duration-fast)] motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
                 active
-                  ? "border-transparent text-white"
-                  : "border-border text-muted-foreground bg-background"
+                  ? "border-primary/20 bg-accent text-accent-foreground"
+                  : "border-border text-muted-foreground bg-surface hover:bg-muted"
               }`}
-              style={active ? { backgroundColor: color, borderColor: color } : undefined}
             >
-              <span
-                className="w-2 h-2 rounded-full"
-                style={{ backgroundColor: active ? "white" : color }}
-              />
+              <UnifiedItemTypeIcon type={type} className="size-3.5" />
               {label}
             </button>
           );
@@ -195,13 +185,14 @@ export function UnifiedCalendar({
         <FullCalendar
           ref={calendarRef}
           plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin, listPlugin]}
-          initialView="dayGridMonth"
+          initialView={initialView}
           headerToolbar={{
             left: "prev,next today",
             center: "title",
             right: "dayGridMonth,timeGridWeek,listWeek",
           }}
           locale={koLocale}
+          buttonText={{ prev: "이전", next: "다음", list: "목록" }}
           events={fcEvents}
           dateClick={handleDateClick}
           eventClick={handleEventClick}
