@@ -7,6 +7,7 @@
 
 import * as Dialog from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
+import { useOverlayFocus } from "@/components/ui/use-overlay-focus";
 
 interface SlidePanelProps {
   open: boolean;
@@ -27,6 +28,7 @@ export function SlidePanel({
   dismissible = true,
   children,
 }: SlidePanelProps) {
+  const { captureFocus, restoreFocus } = useOverlayFocus();
   const widthClass = size === "xl" ? "w-full max-w-3xl" : size === "lg" ? "w-full max-w-2xl" : "w-full max-w-lg";
 
   return (
@@ -39,10 +41,13 @@ export function SlidePanel({
     >
       <Dialog.Portal>
         {/* 반투명 백드롭 */}
-        <Dialog.Overlay className="fixed inset-0 z-40 bg-black/30 backdrop-blur-[1px] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:fade-in-0 data-[state=closed]:fade-out-0" />
+        <Dialog.Overlay className="portal-backdrop fixed inset-0 z-40 bg-black/30 backdrop-blur-[1px]" />
 
         {/* 슬라이드 패널 */}
         <Dialog.Content
+          aria-describedby={undefined}
+          onOpenAutoFocus={captureFocus}
+          onCloseAutoFocus={restoreFocus}
           onEscapeKeyDown={(event) => {
             if (!dismissible) event.preventDefault();
           }}
@@ -53,13 +58,9 @@ export function SlidePanel({
             if (!dismissible) event.preventDefault();
           }}
           className={`
-            fixed right-0 top-0 z-50 h-full ${widthClass}
+            portal-panel fixed right-0 top-0 z-50 h-[100dvh] ${widthClass}
             bg-background border-l border-border shadow-overlay
             flex flex-col
-            data-[state=open]:animate-in data-[state=closed]:animate-out
-            data-[state=open]:slide-in-from-right
-            data-[state=closed]:slide-out-to-right
-            duration-200
           `}
         >
           {/* 패널 헤더 */}
@@ -69,17 +70,18 @@ export function SlidePanel({
             </Dialog.Title>
             <Dialog.Close asChild>
               <button
-                className="w-7 h-7 rounded-md flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                type="button"
+                className="size-9 rounded-md flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-accent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
                 aria-label="닫기"
                 disabled={!dismissible}
               >
-                <X className="w-4 h-4" />
+                <X className="w-4 h-4" aria-hidden="true" />
               </button>
             </Dialog.Close>
           </div>
 
           {/* 패널 콘텐츠 */}
-          <div className="flex-1 overflow-y-auto p-5">{children}</div>
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-5">{children}</div>
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>

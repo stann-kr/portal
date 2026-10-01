@@ -66,6 +66,7 @@ export function PortalShell<T extends string>({
 
   const changeItem = useCallback(
     (item: T) => {
+      if (item === activeItem) return;
       setActiveItem(item);
       if (storageKey) {
         try {
@@ -78,10 +79,10 @@ export function PortalShell<T extends string>({
       if (urlParamKey) {
         const url = new URL(window.location.href);
         url.searchParams.set(urlParamKey, item);
-        window.history.pushState({}, "", `${url.pathname}${url.search}${url.hash}`);
+        window.history.pushState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
       }
     },
-    [storageKey, urlParamKey],
+    [activeItem, storageKey, urlParamKey],
   );
 
   return (

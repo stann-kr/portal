@@ -5,7 +5,7 @@
  */
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Plus, CalendarPlus, FileText, Music, HelpCircle } from "lucide-react";
@@ -94,9 +94,22 @@ export function CreateEntryDropdown({
   const [internalDropdownOpen, setInternalDropdownOpen] = useState(false);
   const dropdownOpen = open ?? internalDropdownOpen;
   const setDropdownOpen = onOpenChange ?? setInternalDropdownOpen;
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const pendingSelection = useRef<(typeof MENU_ITEMS)[number]["id"] | null>(null);
 
   const handleSelect = (id: (typeof MENU_ITEMS)[number]["id"]) => {
+    pendingSelection.current = id;
     setDropdownOpen(false);
+  };
+
+  const handleCloseAutoFocus = (event: Event) => {
+    const id = pendingSelection.current;
+    pendingSelection.current = null;
+    if (!id) return;
+
+    // Finish the menu's focus scope before opening the next dialog's scope.
+    event.preventDefault();
+    triggerRef.current?.focus({ preventScroll: true });
     switch (id) {
       case "note":
         if (noteCreateHref) router.push(noteCreateHref);
@@ -122,9 +135,10 @@ export function CreateEntryDropdown({
       <DropdownMenu.Root open={dropdownOpen} onOpenChange={setDropdownOpen}>
         <DropdownMenu.Trigger asChild>
           <Button
+            ref={triggerRef}
             size="sm"
             variant="outline"
-            className="gap-1.5 h-7 text-xs ml-2 flex-shrink-0"
+            className="gap-1.5 h-9 text-xs flex-shrink-0"
             aria-label="새 항목 추가"
           >
             <Plus className="w-3.5 h-3.5" />
@@ -136,7 +150,8 @@ export function CreateEntryDropdown({
           <DropdownMenu.Content
             align="end"
             sideOffset={6}
-            className="z-50 min-w-[200px] bg-background border border-border rounded-xl shadow-lg p-1.5 animate-in fade-in-0 zoom-in-95"
+            onCloseAutoFocus={handleCloseAutoFocus}
+            className="portal-menu z-50 min-w-[200px] max-h-[var(--radix-dropdown-menu-content-available-height)] overflow-y-auto bg-background border border-border rounded-xl shadow-lg p-1.5"
           >
             {MENU_ITEMS.filter(({ id }) => {
               if (id === "note") return Boolean(noteCreateHref);
@@ -148,7 +163,7 @@ export function CreateEntryDropdown({
               <DropdownMenu.Item
                 key={id}
                 onSelect={() => handleSelect(id)}
-                className="flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer hover:bg-accent outline-none transition-colors"
+                className="flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer data-[highlighted]:bg-accent outline-none transition-colors duration-[var(--duration-fast)] motion-reduce:transition-none"
               >
                 <Icon className="h-4 w-4 flex-shrink-0 text-primary" aria-hidden="true" />
                 <div className="min-w-0">
