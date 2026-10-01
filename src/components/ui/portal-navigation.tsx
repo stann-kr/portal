@@ -37,13 +37,14 @@ export function PortalNavigation<T extends string>({
                 disabled={disabled}
                 onClick={() => onChange(id)}
                 className={cn(
-                  "relative inline-flex h-10 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-sm font-medium whitespace-nowrap transition-colors duration-[var(--duration-fast)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring motion-reduce:transition-none disabled:pointer-events-none disabled:opacity-50 sm:px-3",
+                  "relative inline-flex h-10 shrink-0 items-center gap-1.5 rounded-md font-medium whitespace-nowrap transition-colors duration-[var(--duration-fast)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring motion-reduce:transition-none disabled:pointer-events-none disabled:opacity-50 sm:px-3 sm:text-sm",
+                  items.length > 3 ? "px-2 text-xs" : "px-2.5 text-sm",
                   isActive
                     ? "bg-accent text-accent-foreground"
                     : "text-muted-foreground hover:bg-muted hover:text-foreground",
                 )}
               >
-                <Icon className="size-3.5" aria-hidden="true" />
+                <Icon className={cn("size-3.5", items.length > 3 && "hidden sm:block")} aria-hidden="true" />
                 {label}
               </button>
             );

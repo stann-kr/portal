@@ -322,10 +322,10 @@ export function CalendarSection({
           </div>
         </div>
         <div className="flex min-h-10 shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border px-3 py-2 text-xs text-muted-foreground sm:px-6">
-          <span aria-label={`${workspaceContextLabel}: ${spaceLabel || "선택된 학생 없음"}`}>
+          <span className="min-w-0 break-words" aria-label={`${workspaceContextLabel}: ${spaceLabel || "선택된 학생 없음"}`}>
             {workspaceContextLabel} · <span className="font-medium text-foreground">{spaceLabel || "선택된 학생 없음"}</span>
           </span>
-          {headerSlot ? <div className="shrink-0">{headerSlot}</div> : null}
+          {headerSlot ? <div className="min-w-0 max-w-full">{headerSlot}</div> : null}
         </div>
         {loading ? (
           <p className="shrink-0 border-b border-border px-3 py-2 text-xs text-muted-foreground sm:px-6" role="status">학생 일정을 불러오는 중입니다.</p>

@@ -106,9 +106,10 @@ export function UnifiedCalendar({
       const allDayEndDate = typeof item.metadata.allDayEndDate === "string"
         ? item.metadata.allDayEndDate
         : null;
+      const title = item.type === "ASSIGNMENT" ? "제출한 믹스셋" : item.title;
       return {
         id: getUnifiedItemKey(item),
-        title: showSpaceContext ? `${item.title} · ${item.space.label}` : item.title,
+        title: showSpaceContext ? `${title} · ${item.space.label}` : title,
         start: allDay && allDayStartDate ? allDayStartDate : item.date.toISOString(),
         end: allDay && allDayEndDate
           ? allDayEndDate

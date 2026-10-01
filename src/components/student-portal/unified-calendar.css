@@ -21,6 +21,33 @@
     flex-basis: 100%;
     text-align: center;
   }
+
+  .fc-custom .fc-list-event {
+    position: relative;
+  }
+
+  /* Keep FullCalendar's native time, title link and table semantics. */
+  .fc-custom .fc .fc-list-event-time {
+    position: absolute;
+    top: 0.5rem;
+    left: 2.5rem;
+    right: 0.75rem;
+    width: auto;
+    padding: 0;
+    border: 0;
+    font-size: 0.75rem;
+    line-height: 1rem;
+    color: var(--color-muted-foreground);
+  }
+
+  .fc-custom .fc .fc-list-event-graphic {
+    padding-top: 1.75rem;
+    padding-right: 0;
+  }
+
+  .fc-custom .fc .fc-list-event-title {
+    padding-top: 1.75rem;
+  }
 }
 
 .fc-custom .fc-list-event-title {

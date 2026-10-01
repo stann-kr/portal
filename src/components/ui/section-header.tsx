@@ -3,11 +3,13 @@ import { cn } from "@/lib/utils";
 
 export function SectionHeader({
   title,
+  titleId,
   description,
   action,
   className,
 }: {
   title: string;
+  titleId?: string;
   description?: string;
   action?: ReactNode;
   className?: string;
@@ -15,7 +17,7 @@ export function SectionHeader({
   return (
     <div className={cn("flex items-start justify-between gap-4", className)}>
       <div className="min-w-0">
-        <h2 className="text-base font-semibold tracking-[-0.015em] text-foreground">
+        <h2 id={titleId} className="text-base font-semibold tracking-[-0.015em] text-foreground">
           {title}
         </h2>
         {description ? (

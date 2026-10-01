@@ -110,6 +110,7 @@ export function AdminWorkQueueSection({
       <div className="grid gap-8 lg:grid-cols-[minmax(0,1.1fr)_minmax(20rem,0.9fr)]">
         <section aria-labelledby="open-qna-heading" className="min-w-0">
           <SectionHeader
+            titleId="open-qna-heading"
             title="미답변 Q&A"
             description="오래 기다린 질문부터 표시합니다."
             action={
@@ -131,20 +132,20 @@ export function AdminWorkQueueSection({
                 <Link
                   key={thread.id}
                   href={`/dashboard/qna/${thread.id}?returnTo=%2Fdashboard%2Fadmin%3Fsection%3Dwork`}
-                  className={`flex items-center gap-3 px-4 py-4 transition-colors hover:bg-muted focus-visible:bg-muted sm:px-5 ${
+                  className={`grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 px-4 py-4 transition-colors hover:bg-muted focus-visible:bg-muted sm:flex sm:gap-3 sm:px-5 ${
                     index > 0 ? "border-t border-border" : ""
                   }`}
                 >
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-semibold text-foreground">
+                    <p className="line-clamp-2 break-words text-sm font-semibold text-foreground sm:line-clamp-1">
                       {thread.title}
                     </p>
-                    <p className="mt-1 truncate text-xs text-muted-foreground">
+                    <p className="mt-1 text-xs leading-5 text-muted-foreground sm:truncate">
                       {displayStudent(thread)} / {formatDateTime(thread.updatedAt ?? thread.createdAt)}
                     </p>
                   </div>
-                  <StatusBadge status="qnaOpen" />
-                  <ArrowRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                  <div className="col-start-1 row-start-2 sm:contents"><StatusBadge status="qnaOpen" /></div>
+                  <ArrowRight className="col-start-2 row-start-1 row-span-2 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
                 </Link>
               ))}
             </div>
@@ -153,6 +154,7 @@ export function AdminWorkQueueSection({
 
         <section aria-labelledby="pending-feedback-heading" className="min-w-0">
           <SectionHeader
+            titleId="pending-feedback-heading"
             title="피드백 대기"
             description="오래된 제출부터 표시합니다."
             className="mb-4"
@@ -169,7 +171,7 @@ export function AdminWorkQueueSection({
                 <Link
                   key={assignment.id}
                   href={`/dashboard/student/assignments/${assignment.id}`}
-                  className={`flex items-center gap-3 px-4 py-4 transition-colors hover:bg-muted focus-visible:bg-muted sm:px-5 ${
+                  className={`grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 px-4 py-4 transition-colors hover:bg-muted focus-visible:bg-muted sm:flex sm:gap-3 sm:px-5 ${
                     index > 0 ? "border-t border-border" : ""
                   }`}
                 >
@@ -177,12 +179,12 @@ export function AdminWorkQueueSection({
                     <p className="truncate text-sm font-semibold text-foreground">
                       {displayStudent(assignment)}
                     </p>
-                    <p className="mt-1 truncate text-xs text-muted-foreground">
-                      {formatDateTime(assignment.submittedAt)} / {assignment.mediaUrl}
+                    <p className="mt-1 text-xs leading-5 text-muted-foreground sm:truncate">
+                      {formatDateTime(assignment.submittedAt)} 제출
                     </p>
                   </div>
-                  <StatusBadge status="feedbackWaiting" />
-                  <ArrowRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                  <div className="col-start-1 row-start-2 sm:contents"><StatusBadge status="feedbackWaiting" /></div>
+                  <ArrowRight className="col-start-2 row-start-1 row-span-2 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
                 </Link>
               ))}
             </div>
@@ -192,6 +194,7 @@ export function AdminWorkQueueSection({
 
       <section aria-labelledby="upcoming-lesson-heading">
         <SectionHeader
+          titleId="upcoming-lesson-heading"
           title="다가오는 레슨"
           description="앞으로 7일 이내에 예정된 레슨입니다."
           action={

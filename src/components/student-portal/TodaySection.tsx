@@ -101,7 +101,7 @@ export function TodaySection({
         </h1>
       </div>
 
-      <section aria-labelledby="next-cue-heading">
+      <section aria-label="다음 일정">
         {summary.nextCue ? (
           <div className="grid gap-6 rounded-lg border border-primary/25 bg-surface p-5 sm:p-6 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
             <div className="min-w-0">
@@ -142,6 +142,7 @@ export function TodaySection({
       <div className="grid gap-8 md:grid-cols-[minmax(0,1.35fr)_minmax(17rem,0.65fr)]">
         <section aria-labelledby="priority-heading" className="min-w-0">
           <SectionHeader
+            titleId="priority-heading"
             title="확인할 항목"
             description="현재 기록된 피드백과 질문 상태만 보여줍니다."
             className="mb-4"
@@ -165,18 +166,18 @@ export function TodaySection({
                   <Link
                     key={`${item.type}-${item.id}`}
                     href={href}
-                    className={`flex items-center gap-3 px-4 py-4 transition-colors hover:bg-muted focus-visible:bg-muted sm:px-5 ${
+                    className={`grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 px-4 py-4 transition-colors hover:bg-muted focus-visible:bg-muted sm:flex sm:gap-3 sm:px-5 ${
                       index > 0 ? "border-t border-border" : ""
                     }`}
                   >
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-semibold text-foreground">{title}</p>
+                      <p className="line-clamp-2 break-words text-sm font-semibold text-foreground sm:line-clamp-1">{title}</p>
                       <p className="mt-1 truncate text-xs text-muted-foreground">
-                        {isAssignment ? item.title : formatShortDate(item.date)}
+                        {formatShortDate(item.date)}{isAssignment ? " 제출" : ""}
                       </p>
                     </div>
-                    <StatusBadge status={status} />
-                    <ArrowRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                    <div className="col-start-1 row-start-2 sm:contents"><StatusBadge status={status} /></div>
+                    <ArrowRight className="col-start-2 row-start-1 row-span-2 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
                   </Link>
                 );
               })}
@@ -186,6 +187,7 @@ export function TodaySection({
 
         <section aria-labelledby="quick-record-heading" className="min-w-0">
           <SectionHeader
+            titleId="quick-record-heading"
             title="빠른 기록"
             description="생각이 사라지기 전에 바로 남겨보세요."
             className="mb-4"
@@ -223,7 +225,7 @@ export function TodaySection({
       </div>
 
       <section aria-labelledby="announcement-heading">
-        <SectionHeader title="최근 공지" className="mb-4" />
+        <SectionHeader titleId="announcement-heading" title="최근 공지" className="mb-4" />
         {recentAnnouncements.length === 0 ? (
           <p className="rounded-lg border border-dashed border-border px-5 py-6 text-sm text-muted-foreground">
             등록된 공지가 없습니다.
