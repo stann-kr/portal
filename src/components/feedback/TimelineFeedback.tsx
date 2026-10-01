@@ -7,7 +7,7 @@
  */
 "use client";
 
-import { useActionState, useEffect, useTransition } from "react";
+import { useActionState, useState, useTransition } from "react";
 import { MessageSquare, Trash2, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -31,7 +31,7 @@ interface TimelineFeedbackProps {
   isAdmin: boolean;
   /** VideoPlayer의 특정 시점 이동 콜백 */
   onSeek?: (seconds: number) => void;
-  onRefresh?: () => void;
+  onRefresh?: () => void | Promise<void>;
 }
 
 // ─── 관리자 피드백 작성 폼 ────────────────────────
@@ -41,17 +41,27 @@ function FeedbackForm({
   onSuccess,
 }: {
   assignmentId: string;
-  onSuccess?: () => void;
+  onSuccess: () => Promise<void>;
 }) {
-  const boundAction = createFeedback.bind(null, assignmentId);
+  const [timeMarker, setTimeMarker] = useState("");
+  const [content, setContent] = useState("");
   const [state, action, isPending] = useActionState<
     CreateFeedbackState,
     FormData
-  >(boundAction, {});
-
-  useEffect(() => {
-    if (state.success && onSuccess) onSuccess();
-  }, [state.success, onSuccess]);
+  >(async (previous, data) => {
+    let result: CreateFeedbackState;
+    try {
+      result = await createFeedback(assignmentId, previous, data);
+    } catch {
+      return { error: "저장 결과를 확인하지 못했습니다. 피드백 목록을 확인한 뒤 다시 시도해 주세요." };
+    }
+    if (result.success) {
+      setTimeMarker("");
+      setContent("");
+      await onSuccess();
+    }
+    return result;
+  }, {});
 
   return (
     <form
@@ -71,6 +81,8 @@ function FeedbackForm({
             name="timeMarker"
             type="text"
             placeholder="MM:SS"
+            value={timeMarker}
+            onChange={(event) => setTimeMarker(event.target.value)}
             className="font-mono"
             pattern="[0-9]{1,2}:[0-9]{2}"
             title="예: 01:30 (분:초)"
@@ -87,6 +99,8 @@ function FeedbackForm({
             name="content"
             type="text"
             placeholder="구체적인 수정 지점을 입력하세요"
+            value={content}
+            onChange={(event) => setContent(event.target.value)}
             required
             disabled={isPending}
           />
@@ -112,17 +126,38 @@ export function TimelineFeedback({
   onRefresh,
 }: TimelineFeedbackProps) {
   const [isPending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const [refreshError, setRefreshError] = useState(false);
+
+  const refreshAfterChange = async () => {
+    try {
+      await onRefresh?.();
+      setRefreshError(false);
+    } catch {
+      setRefreshError(true);
+    }
+  };
 
   const handleDelete = (feedbackId: string) => {
     if (!confirm("이 피드백을 삭제하시겠습니까?")) return;
+    setError(null);
     startTransition(async () => {
-      await deleteFeedback(feedbackId, assignmentId);
-      onRefresh?.();
+      try {
+        await deleteFeedback(feedbackId, assignmentId);
+        await refreshAfterChange();
+      } catch {
+        setError("피드백을 삭제하지 못했습니다. 다시 시도해 주세요.");
+      }
     });
   };
 
   return (
     <div className="space-y-4">
+      {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+      {refreshError && <div role="alert" className="space-y-2 text-sm">
+        <p>변경은 저장됐지만 피드백 목록을 새로 불러오지 못했습니다.</p>
+        <Button type="button" variant="outline" onClick={() => startTransition(refreshAfterChange)} disabled={isPending}>목록 다시 불러오기</Button>
+      </div>}
       <div className="flex items-center justify-between border-b pb-3">
         <h3 className="font-semibold flex items-center gap-2">
           <MessageSquare className="w-4 h-4 text-muted-foreground" />
@@ -179,7 +214,7 @@ export function TimelineFeedback({
 
       {/* 관리자 피드백 작성 폼 */}
       {isAdmin && (
-        <FeedbackForm assignmentId={assignmentId} onSuccess={onRefresh} />
+        <FeedbackForm assignmentId={assignmentId} onSuccess={refreshAfterChange} />
       )}
     </div>
   );

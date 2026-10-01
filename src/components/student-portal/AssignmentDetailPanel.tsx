@@ -8,7 +8,7 @@
 import { useState, useEffect } from "react";
 import type { InferSelectModel } from "drizzle-orm";
 import { feedbacks } from "@/db/schema";
-import { VideoPlayer } from "@/components/player/VideoPlayer";
+import { VideoPlayer, type MediaSeekRequest } from "@/components/player/VideoPlayer";
 import { getFeedbacksByAssignment } from "@/lib/actions/feedbacks";
 
 type RawFeedback = InferSelectModel<typeof feedbacks>;
@@ -35,11 +35,17 @@ export function AssignmentDetailPanel({
   mediaUrl,
 }: AssignmentDetailPanelProps) {
   const [feedbacks, setFeedbacks] = useState<Feedback[]>([]);
-  const [seekTo, setSeekTo] = useState<number | undefined>(undefined);
+  const [seekRequest, setSeekRequest] = useState<MediaSeekRequest>();
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [loadAttempt, setLoadAttempt] = useState(0);
 
   useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setError(false);
     getFeedbacksByAssignment(assignmentId).then((data) => {
+      if (!active) return;
       setFeedbacks(
         (data as RawFeedback[]).map((f) => ({
           id: f.id,
@@ -47,16 +53,15 @@ export function AssignmentDetailPanel({
           content: f.content,
         })),
       );
-      setLoading(false);
-    });
-  }, [assignmentId]);
+    }).catch(() => { if (active) setError(true); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [assignmentId, loadAttempt]);
 
   return (
     <div className="space-y-6">
       {/* 비디오 플레이어 */}
-      <div className="rounded-lg overflow-hidden bg-black aspect-video">
-        <VideoPlayer url={mediaUrl} seekToSeconds={seekTo} />
-      </div>
+      <VideoPlayer url={mediaUrl} seekRequest={seekRequest} />
 
       {/* 피드백 리스트 */}
       <div className="space-y-2">
@@ -65,10 +70,15 @@ export function AssignmentDetailPanel({
         </h4>
 
         {loading ? (
-          <div className="space-y-2">
+          <div className="space-y-2" role="status" aria-label="피드백을 불러오는 중">
             {[...Array(3)].map((_, i) => (
-              <div key={i} className="h-12 rounded-lg bg-muted animate-pulse" />
+              <div key={i} className="h-12 rounded-lg bg-muted animate-pulse motion-reduce:animate-none" />
             ))}
+          </div>
+        ) : error ? (
+          <div role="alert" className="space-y-2 text-sm">
+            <p>피드백을 불러오지 못했습니다.</p>
+            <button type="button" onClick={() => setLoadAttempt((value) => value + 1)} className="min-h-9 rounded-md border border-border px-3 focus-visible:ring-2 focus-visible:ring-ring">다시 시도</button>
           </div>
         ) : feedbacks.length === 0 ? (
           <p className="text-sm text-muted-foreground py-4 text-center">
@@ -82,7 +92,7 @@ export function AssignmentDetailPanel({
                 className="flex gap-3 p-3 rounded-lg border border-border bg-card"
               >
                 <button
-                  onClick={() => setSeekTo(fb.timeMarker)}
+                  onClick={() => setSeekRequest({ seconds: fb.timeMarker })}
                   className="flex-shrink-0 font-mono text-xs font-semibold text-primary bg-primary/10 px-2 py-0.5 rounded hover:bg-primary/20 transition-colors"
                   title={`${formatTime(fb.timeMarker)}으로 이동`}
                 >

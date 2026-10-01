@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { VideoPlayer } from "@/components/player/VideoPlayer";
+import { VideoPlayer, type MediaSeekRequest } from "@/components/player/VideoPlayer";
 import { TimelineFeedback, type FeedbackItem } from "@/components/feedback/TimelineFeedback";
 
 interface AssignmentDetailClientProps {
@@ -17,17 +17,16 @@ export function AssignmentDetailClient({
   feedbackList,
   isAdmin,
 }: AssignmentDetailClientProps) {
-  const [seekToSeconds, setSeekToSeconds] = useState<number | undefined>(undefined);
+  const [seekRequest, setSeekRequest] = useState<MediaSeekRequest>();
 
   const handleSeek = (seconds: number) => {
-    setSeekToSeconds(seconds);
-    setTimeout(() => setSeekToSeconds(undefined), 100);
+    setSeekRequest({ seconds });
   };
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
       <div className="lg:sticky lg:top-6">
-        <VideoPlayer url={mediaUrl} seekToSeconds={seekToSeconds} />
+        <VideoPlayer url={mediaUrl} seekRequest={seekRequest} />
       </div>
       <TimelineFeedback
         assignmentId={assignmentId}

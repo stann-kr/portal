@@ -56,11 +56,11 @@ export default async function AssignmentDetailPage({
         day: "numeric",
       })
     : "제출일 미정";
-  const backHref = isAdmin ? "/dashboard/admin" : "/dashboard/student";
+  const backHref = isAdmin ? "/dashboard/admin?section=work" : "/dashboard/student?section=today";
   const backLabel = isAdmin ? "업무함으로" : "학생 포털로";
 
   return (
-    <div className="max-w-4xl mx-auto py-6 space-y-8">
+    <div className="mx-auto max-w-4xl space-y-6 px-4 py-6 sm:space-y-8 sm:px-6">
       {/* 헤더 */}
       <div className="space-y-1">
         <Link
@@ -70,13 +70,14 @@ export default async function AssignmentDetailPage({
           <ArrowLeft className="w-4 h-4" />
           {backLabel}
         </Link>
-        <h1 className="text-xl font-semibold mt-2 break-all">
-          {assignment.mediaUrl}
+        <h1 className="mt-2 text-xl font-semibold">
+          믹스셋 피드백
         </h1>
         <p className="text-sm text-muted-foreground">제출일: {submittedDate}</p>
       </div>
 
       <AssignmentDetailClient
+        key={assignmentId}
         assignmentId={assignmentId}
         mediaUrl={assignment.mediaUrl}
         feedbackList={feedbackList}

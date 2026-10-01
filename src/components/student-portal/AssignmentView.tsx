@@ -5,7 +5,7 @@
  */
 "use client";
 
-import { useState, useActionState, useEffect, useCallback } from "react";
+import { useState, useActionState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { Youtube, Music, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -64,15 +64,24 @@ function formatDate(date: Date | null): string {
 
 // ── 제출 폼 ──────────────────────────────────────
 
-function SubmitForm({ onSuccess }: { onSuccess: () => void }) {
+function SubmitForm({ onSuccess }: { onSuccess: () => Promise<void> }) {
+  const [mediaUrl, setMediaUrl] = useState("");
   const [state, action, isPending] = useActionState<SubmitAssignmentState, FormData>(
-    submitAssignment,
+    async (previous, data) => {
+      let result: SubmitAssignmentState;
+      try {
+        result = await submitAssignment(previous, data);
+      } catch {
+        return { error: "제출 결과를 확인하지 못했습니다. 목록을 확인한 뒤 다시 시도해 주세요." };
+      }
+      if (result.success) {
+        setMediaUrl("");
+        await onSuccess();
+      }
+      return result;
+    },
     {},
   );
-
-  useEffect(() => {
-    if (state.success) onSuccess();
-  }, [state.success, onSuccess]);
 
   return (
     <form
@@ -88,6 +97,8 @@ function SubmitForm({ onSuccess }: { onSuccess: () => void }) {
           name="mediaUrl"
           type="url"
           placeholder="YouTube 또는 SoundCloud URL"
+          value={mediaUrl}
+          onChange={(event) => setMediaUrl(event.target.value)}
           required
           disabled={isPending}
           className="flex-1"
@@ -109,6 +120,8 @@ function SubmitForm({ onSuccess }: { onSuccess: () => void }) {
 export function AssignmentView({ initialAssignments }: AssignmentViewProps) {
   const router = useRouter();
   const [assignments, setAssignments] = useState<Assignment[]>(initialAssignments);
+  const [refreshError, setRefreshError] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   // 상세 패널 상태
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -116,23 +129,29 @@ export function AssignmentView({ initialAssignments }: AssignmentViewProps) {
   const [panelOpen, setPanelOpen] = useState(false);
 
   const refresh = useCallback(async () => {
-    const data = await getMyAssignments();
-    const fbMap = await getMyFeedbacksMap();
-    setAssignments(
-      (data as RawAssignment[]).map((a) => ({
-        id: a.id,
-        mediaUrl: a.mediaUrl,
-        submittedAt: a.submittedAt,
-        feedbackCount: fbMap[a.id] ?? 0,
-      })),
-    );
-    router.refresh();
+    setIsRefreshing(true);
+    try {
+      const [data, fbMap] = await Promise.all([getMyAssignments(), getMyFeedbacksMap()]);
+      setAssignments((data as RawAssignment[]).map((a) => ({
+        id: a.id, mediaUrl: a.mediaUrl, submittedAt: a.submittedAt, feedbackCount: fbMap[a.id] ?? 0,
+      })));
+      setRefreshError(false);
+      router.refresh();
+    } catch {
+      setRefreshError(true);
+    } finally {
+      setIsRefreshing(false);
+    }
   }, [router]);
 
   return (
     <div className="space-y-6">
       {/* 제출 폼 */}
       <SubmitForm onSuccess={refresh} />
+      {refreshError && <div role="alert" className="flex flex-wrap items-center gap-3 rounded-lg border border-border p-3 text-sm">
+        <p>제출은 완료됐지만 목록을 새로 불러오지 못했습니다.</p>
+        <Button type="button" variant="outline" onClick={refresh} disabled={isRefreshing}>목록 다시 불러오기</Button>
+      </div>}
 
       {/* 제출 목록 */}
       {assignments.length === 0 ? (
@@ -182,6 +201,7 @@ export function AssignmentView({ initialAssignments }: AssignmentViewProps) {
       >
         {selectedId && (
           <AssignmentDetailPanel
+            key={selectedId}
             assignmentId={selectedId}
             mediaUrl={selectedUrl}
           />

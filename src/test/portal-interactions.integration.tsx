@@ -3,6 +3,7 @@ import { after, before, mock, test, type TestContext } from "node:test";
 import { Window } from "happy-dom";
 import React, { act, useEffect, useRef, useState } from "react";
 import type { Editor } from "@tiptap/core";
+import type { ReactPlayerProps } from "react-player/types";
 import { resolvePortalLocation } from "@/lib/portal-location";
 let createRoot: typeof import("react-dom/client").createRoot;
 let renderToString: typeof import("react-dom/server").renderToString;
@@ -20,6 +21,12 @@ let TiptapEditor: typeof import("@tiptap/core").Editor;
 let StarterKit: typeof import("@tiptap/starter-kit").default;
 let BlockCommandMenu: typeof import("@/components/editor/BlockCommandMenu").BlockCommandMenu;
 let UnifiedCalendar: typeof import("@/components/student-portal/UnifiedCalendar").UnifiedCalendar;
+let VideoPlayer: typeof import("@/components/player/VideoPlayer").VideoPlayer;
+let TimelineFeedback: typeof import("@/components/feedback/TimelineFeedback").TimelineFeedback;
+let AssignmentView: typeof import("@/components/student-portal/AssignmentView").AssignmentView;
+let saveAssignment: typeof import("@/lib/actions/assignments").submitAssignment = async () => ({});
+let loadAssignments: typeof import("@/lib/actions/assignments").getMyAssignments = async () => [];
+let saveFeedback: typeof import("@/lib/actions/feedbacks").createFeedback = async () => ({});
 let saveEvent: typeof import("@/lib/actions/calendarEvents").createCalendarEvent = async () => ({});
 let saveTrack: typeof import("@/lib/actions/digging").createDiggingTrack = async (input) => ({ id: "track", createdAt: new Date(), linkUrl: input.linkUrl ?? null, values: input.values });
 let fetchMetadata: typeof import("@/lib/actions/digging").fetchLinkMeta = async () => ({});
@@ -27,7 +34,28 @@ let toggleModule: typeof import("@/lib/actions/curriculum").toggleModuleComplete
 let loadStudentCalendar: typeof import("@/lib/actions/unifiedItems").getUnifiedItemsForStudent = async () => [];
 const previousGlobals = new Map<string, PropertyDescriptor | undefined>();
 
-mock.module("next/navigation", { namedExports: { useRouter: () => ({ push() {} }) } });
+mock.module("next/navigation", { namedExports: { useRouter: () => ({ push() {}, refresh() {} }) } });
+// Browser/provider loading is exercised separately; this boundary exposes v3's HTML media API.
+const HtmlMediaBoundary = React.forwardRef<HTMLVideoElement, ReactPlayerProps>((props, ref) => (
+  <video ref={ref} src={props.src} controls={props.controls} onLoadedMetadata={props.onLoadedMetadata} onCanPlay={props.onCanPlay} onError={props.onError} />
+));
+HtmlMediaBoundary.displayName = "HtmlMediaBoundary";
+mock.module("next/dynamic", { defaultExport: () => HtmlMediaBoundary });
+mock.module("next/script", { defaultExport: function ScriptBoundary({ onReady }: { onReady?: () => void }) {
+  const callback = useRef(onReady);
+  useEffect(() => { callback.current?.(); }, []);
+  return null;
+} });
+mock.module("@/lib/actions/assignments", { namedExports: {
+  submitAssignment: (...args: Parameters<typeof saveAssignment>) => saveAssignment(...args),
+  getMyAssignments: () => loadAssignments(),
+} });
+mock.module("@/lib/actions/feedbacks", { namedExports: {
+  createFeedback: (...args: Parameters<typeof saveFeedback>) => saveFeedback(...args),
+  deleteFeedback: async () => {},
+  getMyFeedbacksMap: async () => ({}),
+  getFeedbacksByAssignment: async () => [],
+} });
 mock.module("@/lib/actions/calendarEvents", { namedExports: { createCalendarEvent: (...args: Parameters<typeof saveEvent>) => saveEvent(...args) } });
 mock.module("@/lib/actions/curriculum", { namedExports: { toggleModuleComplete: (...args: Parameters<typeof toggleModule>) => toggleModule(...args) } });
 mock.module("@/lib/actions/digging", { namedExports: {
@@ -44,7 +72,7 @@ mock.module("@/lib/actions/unifiedItems", { namedExports: {
 for (const [folder, name] of [
   ["student-portal", "UnifiedItemDetail"], ["student-portal", "DailyListView"],
   ["student-portal", "AllItemsView"],
-  ["student-portal", "AssignmentView"], ["student-portal", "ExternalCalendarConnection"],
+  ["student-portal", "ExternalCalendarConnection"],
   ["student-portal", "AnnouncementSection"], ["student-portal", "CommunitySection"],
   ["admin-portal", "StudentManagementSection"], ["admin-portal", "AdminWorkQueueSection"],
   ["qna", "QnaSlideForm"],
@@ -94,6 +122,9 @@ before(async () => {
   ({ default: StarterKit } = await import("@tiptap/starter-kit"));
   ({ BlockCommandMenu } = await import("@/components/editor/BlockCommandMenu"));
   ({ UnifiedCalendar } = await import("@/components/student-portal/UnifiedCalendar"));
+  ({ VideoPlayer } = await import("@/components/player/VideoPlayer"));
+  ({ TimelineFeedback } = await import("@/components/feedback/TimelineFeedback"));
+  ({ AssignmentView } = await import("@/components/student-portal/AssignmentView"));
   ({ CreateEntryDropdown } = await import("@/components/student-portal/CreateEntryDropdown"));
   ({ AdminPortalClient } = await import("@/components/admin-portal/AdminPortalClient"));
   ({ StudentPortalClient } = await import("@/components/student-portal/StudentPortalClient"));
@@ -122,6 +153,7 @@ async function render(context: TestContext, element: React.ReactElement) {
   });
   await act(async () => root.render(element));
   await settle();
+  return root;
 }
 
 function button(label: string) {
@@ -448,4 +480,87 @@ test("editor command popup stays in its dialog and Escape closes only the popup"
   });
   await escape();
   assert.equal(browser.document.querySelector('[role="dialog"]'), null);
+});
+
+test("media source and queued or repeated feedback seeks use the HTML media contract", async (context) => {
+  const url = "https://www.youtube.com/watch?v=aqz-KE-bpKQ";
+  const root = await render(context, <VideoPlayer url={url} seekRequest={{ seconds: 90 }} />);
+  const video = browser.document.querySelector("video");
+  assert.ok(video);
+  assert.equal(video.src, url);
+  assert.equal(video.controls, true);
+  assert.equal(video.currentTime, 0, "seek waits until metadata is ready");
+  await act(async () => { video.dispatchEvent(new browser.Event("loadedmetadata")); });
+  assert.equal(video.currentTime, 90);
+  video.currentTime = 105;
+  await act(async () => { root.render(<VideoPlayer url={url} seekRequest={{ seconds: 90 }} />); });
+  assert.equal(video.currentTime, 90, "the same timestamp can be requested again");
+  await act(async () => { video.dispatchEvent(new browser.Event("error")); });
+  assert.match(browser.document.querySelector('[role="alert"]')?.textContent ?? "", /원본 링크/);
+  assert.equal(browser.document.querySelector('a[target="_blank"]')?.getAttribute("href"), url);
+});
+
+test("SoundCloud queues seconds as widget milliseconds and releases its listeners", async (context) => {
+  const listeners = new Map<string, () => void>();
+  const seeks: number[] = [];
+  let plays = 0;
+  let pauses = 0;
+  const widget = { bind: (event: string, callback: () => void) => listeners.set(event, callback), unbind: (event: string) => listeners.delete(event), seekTo: (value: number) => seeks.push(value), play: () => { plays++; }, pause: () => { pauses++; } };
+  Object.defineProperty(browser, "SC", { configurable: true, value: { Widget: Object.assign(() => widget, { Events: { READY: "ready", ERROR: "error" } }) } });
+  context.after(() => Reflect.deleteProperty(browser, "SC"));
+  const url = "https://soundcloud.com/artist/mix";
+  const root = await render(context, <VideoPlayer url={url} seekRequest={{ seconds: 90 }} />);
+  const iframe = browser.document.querySelector("iframe");
+  assert.ok(iframe);
+  assert.equal(new URL(iframe.src).searchParams.get("url"), url);
+  assert.deepEqual(seeks, []);
+  const ready = listeners.get("ready");
+  assert.ok(ready);
+  await act(async () => ready());
+  assert.deepEqual(seeks, [90000]);
+  await act(async () => root.render(<VideoPlayer url={url} seekRequest={{ seconds: 90 }} />));
+  assert.deepEqual(seeks, [90000, 90000]);
+  assert.equal(plays, 2);
+  await act(async () => root.render(<div />));
+  assert.equal(listeners.size, 0);
+  assert.equal(pauses, 1);
+  await act(async () => ready());
+  assert.equal(seeks.length, 2);
+});
+
+test("feedback failure keeps the time and text; only a confirmed save clears them", async (context) => {
+  let refreshes = 0;
+  saveFeedback = async () => ({ error: "내용을 확인해 주세요." });
+  context.after(() => { saveFeedback = async () => ({}); });
+  await render(context, <TimelineFeedback assignmentId="assignment" feedbackList={[]} isAdmin onRefresh={() => { refreshes++; }} />);
+  await fill("feedback-time-marker", "01:30");
+  await fill("feedback-content", "전환 지점에서 저음을 천천히 교환해 주세요.");
+  await press("추가");
+  assert.equal((browser.document.getElementById("feedback-time-marker") as unknown as HTMLInputElement).value, "01:30");
+  assert.match((browser.document.getElementById("feedback-content") as unknown as HTMLInputElement).value, /저음을/);
+  assert.equal(refreshes, 0);
+  saveFeedback = async () => ({ success: true });
+  await press("추가");
+  assert.equal((browser.document.getElementById("feedback-content") as unknown as HTMLInputElement).value, "");
+  assert.equal(refreshes, 1);
+});
+
+test("assignment errors retain the URL and a failed refresh retries without resubmission", async (context) => {
+  let submissions = 0;
+  saveAssignment = async () => ({ error: "지원하지 않는 링크입니다." });
+  context.after(() => { saveAssignment = async () => ({}); loadAssignments = async () => []; });
+  await render(context, <AssignmentView initialAssignments={[]} />);
+  await fill("assignment-media-url", "https://example.test/mix");
+  await press("제출");
+  assert.equal((browser.document.getElementById("assignment-media-url") as unknown as HTMLInputElement).value, "https://example.test/mix");
+  saveAssignment = async () => { submissions++; return { success: true, id: "saved" }; };
+  loadAssignments = async () => { throw new Error("offline"); };
+  await fill("assignment-media-url", "https://youtu.be/aqz-KE-bpKQ");
+  await press("제출");
+  assert.equal((browser.document.getElementById("assignment-media-url") as unknown as HTMLInputElement).value, "");
+  assert.match(browser.document.querySelector('[role="alert"]')?.textContent ?? "", /제출은 완료/);
+  loadAssignments = async () => [];
+  await press("목록 다시 불러오기");
+  assert.equal(submissions, 1);
+  assert.equal(browser.document.querySelector('[role="alert"]'), null);
 });
