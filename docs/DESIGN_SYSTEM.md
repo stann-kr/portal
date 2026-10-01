@@ -55,6 +55,7 @@ pill 형태는 filter와 count처럼 모양 자체가 의미를 가질 때만 �
 - layer: base, sticky, dropdown, overlay, toast 순서
 - transform과 opacity만 전환 대상으로 사용한다.
 - `prefers-reduced-motion: reduce`에서는 애니메이션과 부드러운 스크롤을 즉시 전환으로 줄인다.
+- 공통 overlay는 `components/ui/overlay-motion.css`의 Radix `data-state` 진입·퇴장 스타일을 사용한다. 메뉴는 trigger를 기준으로 열리고, 다음 dialog는 메뉴의 focus scope가 종료된 뒤 열린다.
 
 ## 상태 Registry
 
@@ -79,7 +80,8 @@ pill 형태는 filter와 count처럼 모양 자체가 의미를 가질 때만 �
 | `Button` | variant, size, focus, disabled, active feedback |
 | `Input` | label과 조합되는 입력 surface, focus, disabled |
 | `PortalNavigation` | 역할별 section 이동, 현재 위치, horizontal mobile fallback |
-| `PortalShell` | 역할별 navigation, section 상태 복원, 공통 content frame |
+| `PortalShell` | 역할별 navigation, URL·section별 스크롤 복원, viewport 안의 공통 content frame |
+| `CalendarSection` | 세션 내 날짜·월/주 보기·필터 유지, 수동 키보드 탭 활성화, 활성 시 크기 재측정 |
 | `StatusBadge` | registry 기반 label·icon·tone 표시 |
 | `UnifiedItemTypeBadge` | 통합 기록의 일정·노트·디깅·Q&A·과제 type icon·label |
 | `UnifiedItemSpaceBadge` | 통합 기록의 학생 스페이스·포털 출처 label과 접근성 문맥 |
@@ -141,7 +143,8 @@ pill 형태는 filter와 count처럼 모양 자체가 의미를 가질 때만 �
 - portal navigation은 한 줄을 유지하고 필요한 경우 가로 스크롤한다.
 - 넓은 표는 mobile에서 핵심 label-value list로 대체한다.
 - CTA 문구는 desktop에서 줄바꿈되지 않게 짧고 구체적으로 작성한다.
-- 전체 높이는 `100dvh` 기반 최소 높이를 사용한다.
+- 문서 페이지는 `100dvh` 기반 최소 높이를 사용한다. 포털 shell은 `100dvh` 안에 navigation과 스크롤 영역을 두고, 캘린더는 헤더를 제외한 남은 공간을 사용한다.
+- 공개 캘린더 연결 설정은 접힌 disclosure 안에 둔다. 관리자 학생 선택은 가로 스크롤하는 뷰 탭과 분리해 학생 문맥 옆에 표시한다.
 
 ## 상태 완결성 점검
 

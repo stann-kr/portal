@@ -209,8 +209,10 @@ export function AdminPortalClient({
             </div>
           )}
 
-          {activeSection === "schedule" && (
+          <div hidden={activeSection !== "schedule"} className="h-full">
             <CalendarSection
+              key={selectedStudentId}
+              isActive={activeSection === "schedule"}
               unifiedItems={isLoadingCalendar ? [] : calendarItems}
               curriculumModules={[]}
               assignments={[]}
@@ -237,7 +239,7 @@ export function AdminPortalClient({
                 ) : undefined
               }
             />
-          )}
+          </div>
 
           {activeSection === "community" && (
             <div className="p-6 max-w-4xl mx-auto">

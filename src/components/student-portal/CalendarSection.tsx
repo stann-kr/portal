@@ -194,6 +194,7 @@ export function CalendarSection({
   // 탭 변경 시 영속화
   const handleTabChange = (value: string) => {
     const nextTab = resolveCalendarTab(value, workspaceRole);
+    if (nextTab === activeTab) return;
     setActiveTab(nextTab);
     try {
       assertAccountOwnerMayPersist(localStorage, actorId);
@@ -264,8 +265,8 @@ export function CalendarSection({
   };
 
   return (
-    <div className="flex flex-col h-full" aria-busy={loading}>
-      <Tabs value={activeTab} onValueChange={handleTabChange} className="flex flex-col h-full">
+    <div className="flex min-h-0 flex-col h-full" aria-busy={loading}>
+      <Tabs value={activeTab} onValueChange={handleTabChange} activationMode="manual" className="flex min-h-0 flex-col h-full">
         {/* 탭 헤더 */}
         <div className="flex flex-shrink-0 flex-col gap-2 border-b border-border px-3 pt-3 sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:pt-4">
           <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto">
@@ -284,11 +285,6 @@ export function CalendarSection({
                 );
               })}
             </TabsList>
-
-            {/* 어드민 학생 필터 슬롯 */}
-            {headerSlot && (
-              <div className="ml-2 flex-shrink-0">{headerSlot}</div>
-            )}
           </div>
 
           {/* 생성 드롭다운 */}
@@ -296,7 +292,7 @@ export function CalendarSection({
             {noteListHref ? (
               <Link
                 href={noteListHref}
-                className="inline-flex h-7 shrink-0 items-center rounded-md border border-border px-2.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                className="inline-flex h-9 shrink-0 items-center rounded-md border border-border px-2.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
               >
                 노트 목록
               </Link>
@@ -322,22 +318,23 @@ export function CalendarSection({
             ) : null}
           </div>
         </div>
-        <div className="flex min-h-9 items-center border-b border-border px-3 text-xs text-muted-foreground sm:px-6">
+        <div className="flex min-h-10 shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border px-3 py-2 text-xs text-muted-foreground sm:px-6">
           <span aria-label={`${workspaceContextLabel}: ${spaceLabel || "선택된 학생 없음"}`}>
             {workspaceContextLabel} · <span className="font-medium text-foreground">{spaceLabel || "선택된 학생 없음"}</span>
           </span>
+          {headerSlot ? <div className="shrink-0">{headerSlot}</div> : null}
         </div>
         {loading ? (
-          <p className="border-b border-border px-3 py-2 text-xs text-muted-foreground sm:px-6" role="status">학생 일정을 불러오는 중입니다.</p>
+          <p className="shrink-0 border-b border-border px-3 py-2 text-xs text-muted-foreground sm:px-6" role="status">학생 일정을 불러오는 중입니다.</p>
         ) : null}
         {loadError ? (
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-destructive/20 bg-destructive/5 px-3 py-2 sm:px-6" role="alert">
+          <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-destructive/20 bg-destructive/5 px-3 py-2 sm:px-6" role="alert">
             <p className="text-xs text-destructive">{loadError}</p>
             {onRetry ? <Button type="button" size="sm" variant="outline" onClick={onRetry}>다시 시도</Button> : null}
           </div>
         ) : null}
         {createDefaultDate ? (
-          <div className="flex min-h-10 flex-wrap items-center justify-between gap-2 border-b border-border bg-muted/20 px-3 py-2 text-xs sm:px-6" role="status">
+          <div className="flex min-h-10 shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border bg-muted/20 px-3 py-2 text-xs sm:px-6" role="status">
             <span>
               선택한 날짜 · <strong className="font-medium text-foreground">{formatKstDateLabel(createDefaultDate)}</strong>
               <span className="ml-2 text-muted-foreground">추가 메뉴에서 만들 항목을 선택하세요.</span>
@@ -361,10 +358,11 @@ export function CalendarSection({
         ) : null}
 
         {/* 탭 콘텐츠 */}
-        <div className="flex-1 overflow-auto">
-          <TabsContent value="calendar" className="m-0 h-full p-3 sm:p-4">
-            <div className="h-[calc(100dvh-12rem)] min-h-[32rem] max-h-[52rem]">
+        <div className="min-h-0 flex-1 overflow-auto">
+          <TabsContent value="calendar" forceMount hidden={activeTab !== "calendar"} className="m-0 h-full p-3 sm:p-4">
+            <div className="h-full min-h-[24rem]">
               <UnifiedCalendar
+                isActive={isActive && activeTab === "calendar"}
                 items={unifiedItems}
                 onCreateRequest={handleCreateRequest}
                 returnTo={workspaceReturnTo}

@@ -11,6 +11,7 @@ import dayGridPlugin from "@fullcalendar/daygrid";
 import timeGridPlugin from "@fullcalendar/timegrid";
 import interactionPlugin from "@fullcalendar/interaction";
 import listPlugin from "@fullcalendar/list";
+import koLocale from "@fullcalendar/core/locales/ko";
 import type { DateClickArg } from "@fullcalendar/interaction";
 import type { EventClickArg, EventInput } from "@fullcalendar/core";
 import type { UnifiedItem, UnifiedItemType } from "@/lib/utils/unifiedItemUtils";
@@ -33,6 +34,7 @@ const TYPE_LABELS: Record<UnifiedItemType, string> = {
 };
 
 interface UnifiedCalendarProps {
+  isActive?: boolean;
   items: UnifiedItem[];
   onCreateRequest?: (date: string) => void;
   returnTo: string;
@@ -42,6 +44,7 @@ interface UnifiedCalendarProps {
 }
 
 export function UnifiedCalendar({
+  isActive = true,
   items,
   onCreateRequest,
   returnTo,
@@ -50,6 +53,24 @@ export function UnifiedCalendar({
   onPresetChange,
 }: UnifiedCalendarProps) {
   const calendarRef = useRef<FullCalendar>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Hidden tabs keep their date/view; FullCalendar must remeasure once visible.
+  useEffect(() => {
+    if (!isActive) return;
+    let frame = 0;
+    const updateSize = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => calendarRef.current?.getApi().updateSize());
+    };
+    const observer = new ResizeObserver(updateSize);
+    if (containerRef.current) observer.observe(containerRef.current);
+    updateSize();
+    return () => {
+      observer.disconnect();
+      cancelAnimationFrame(frame);
+    };
+  }, [isActive]);
 
   // 타입 필터 (기본 전체 표시)
   const [visibleTypes, setVisibleTypes] = useState<Set<UnifiedItemType>>(
@@ -124,7 +145,7 @@ export function UnifiedCalendar({
   );
 
   return (
-    <div className="flex flex-col gap-3 h-full">
+    <div ref={containerRef} className="flex flex-col gap-3 h-full">
       {/* 타입 필터 바 */}
       <div className="flex items-center gap-2 flex-wrap" aria-label="캘린더 항목 필터">
         {activePreset ? (
@@ -152,7 +173,7 @@ export function UnifiedCalendar({
               onClick={() => toggleType(type)}
               aria-pressed={active}
               aria-label={`${label} ${active ? "숨기기" : "표시하기"}`}
-              className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium border transition-all ${
+              className={`inline-flex min-h-8 items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium border transition-colors duration-[var(--duration-fast)] motion-reduce:transition-none ${
                 active
                   ? "border-transparent text-white"
                   : "border-border text-muted-foreground bg-background"
@@ -180,7 +201,7 @@ export function UnifiedCalendar({
             center: "title",
             right: "dayGridMonth,timeGridWeek,listWeek",
           }}
-          locale="ko"
+          locale={koLocale}
           events={fcEvents}
           dateClick={handleDateClick}
           eventClick={handleEventClick}

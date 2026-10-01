@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import {
   PortalNavigation,
   type PortalNavigationItem,
@@ -27,6 +27,12 @@ export function PortalShell<T extends string>({
   children: (activeItem: T, changeItem: (item: T) => void) => ReactNode;
 }) {
   const [activeItem, setActiveItem] = useState<T>(initialItem);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const scrollPositions = useRef(new Map<T, number>());
+
+  useLayoutEffect(() => {
+    if (contentRef.current) contentRef.current.scrollTop = scrollPositions.current.get(activeItem) ?? 0;
+  }, [activeItem]);
 
   useEffect(() => {
     const restore = () => {
@@ -55,7 +61,7 @@ export function PortalShell<T extends string>({
       if (urlParamKey) {
         const url = new URL(window.location.href);
         url.searchParams.set(urlParamKey, restored);
-        window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+        window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
       }
     };
 
@@ -86,7 +92,7 @@ export function PortalShell<T extends string>({
   );
 
   return (
-    <div className="flex h-full min-h-[100dvh] flex-col">
+    <div className="flex h-[100dvh] min-h-0 flex-col">
       <PortalNavigation
         items={items}
         activeItem={activeItem}
@@ -94,7 +100,16 @@ export function PortalShell<T extends string>({
         ariaLabel={ariaLabel}
         endSlot={endSlot}
       />
-      <div className="flex-1 overflow-hidden">{children(activeItem, changeItem)}</div>
+      <div
+        ref={contentRef}
+        role="region"
+        aria-label={`${ariaLabel} 콘텐츠`}
+        tabIndex={0}
+        onScroll={(event) => scrollPositions.current.set(activeItem, event.currentTarget.scrollTop)}
+        className="min-h-0 flex-1 overflow-y-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+      >
+        {children(activeItem, changeItem)}
+      </div>
     </div>
   );
 }

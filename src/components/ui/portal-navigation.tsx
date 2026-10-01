@@ -23,7 +23,7 @@ export function PortalNavigation<T extends string>({
   ariaLabel: string;
 }) {
   return (
-    <header className="sticky top-0 z-20 border-b border-border bg-background/95 px-3 backdrop-blur-sm sm:px-5">
+    <header className="sticky top-0 z-20 shrink-0 border-b border-border bg-background/95 px-3 backdrop-blur-sm sm:px-5">
       <div className="mx-auto flex min-h-14 max-w-[1400px] items-center gap-1 overflow-x-auto">
         <nav aria-label={ariaLabel} className="flex items-center gap-1">
           {items.map(({ id, label, Icon }) => {

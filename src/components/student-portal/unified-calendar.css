@@ -1,0 +1,13 @@
+/* Keep date navigation and view controls reachable beside the mobile side rail. */
+@media (max-width: 40rem) {
+  .fc-custom .fc-header-toolbar {
+    flex-wrap: wrap;
+    gap: 0.75rem;
+  }
+
+  .fc-custom .fc-toolbar-chunk:nth-child(2) {
+    order: -1;
+    flex-basis: 100%;
+    text-align: center;
+  }
+}

@@ -9,6 +9,7 @@ let PortalShell: typeof import("@/components/ui/portal-shell").PortalShell;
 let SlidePanel: typeof import("@/components/student-portal/SlidePanel").SlidePanel;
 let CreateEntryDropdown: typeof import("@/components/student-portal/CreateEntryDropdown").CreateEntryDropdown;
 let dialog: typeof import("@/components/ui/dialog");
+let AdminPortalClient: typeof import("@/components/admin-portal/AdminPortalClient").AdminPortalClient;
 const previousGlobals = new Map<string, PropertyDescriptor | undefined>();
 
 mock.module("next/navigation", { namedExports: { useRouter: () => ({ push() {} }) } });
@@ -25,11 +26,28 @@ mock.module("@/components/calendar/EventFormDialog", {
   },
 });
 mock.module("@/components/digging/AddTrackDialog", { namedExports: { AddTrackDialog: () => null } });
+mock.module("@/lib/actions/digging", { namedExports: { getOrSeedColumns: async () => [] } });
+mock.module("@/lib/actions/unifiedItems", { namedExports: {
+  getUnifiedItemsForStudent: async () => [],
+  getExternalUnifiedItemsForStudent: async () => [],
+} });
+// Exercise the actual shell, calendar tabs and FullCalendar without unrelated editors/I/O.
+for (const [folder, name] of [
+  ["student-portal", "UnifiedItemDetail"], ["student-portal", "DailyListView"],
+  ["student-portal", "AllItemsView"], ["student-portal", "CurriculumView"],
+  ["student-portal", "AssignmentView"], ["student-portal", "ExternalCalendarConnection"],
+  ["student-portal", "AnnouncementSection"], ["student-portal", "CommunitySection"],
+  ["admin-portal", "StudentManagementSection"], ["admin-portal", "AdminWorkQueueSection"],
+  ["qna", "QnaSlideForm"],
+]) {
+  mock.module(`@/components/${folder}/${name}`, { namedExports: { [name]: () => null } });
+}
 
 before(async () => {
   browser = new Window({ url: "https://portal.test/dashboard/student" });
   const bindings = {
     window: browser,
+    self: browser,
     document: browser.document,
     navigator: browser.navigator,
     localStorage: browser.localStorage,
@@ -56,6 +74,7 @@ before(async () => {
   ({ SlidePanel } = await import("@/components/student-portal/SlidePanel"));
   dialog = await import("@/components/ui/dialog");
   ({ CreateEntryDropdown } = await import("@/components/student-portal/CreateEntryDropdown"));
+  ({ AdminPortalClient } = await import("@/components/admin-portal/AdminPortalClient"));
 });
 
 after(() => {
@@ -91,7 +110,12 @@ function button(label: string) {
 }
 
 async function press(label: string) {
-  await act(async () => { const element = button(label); element.focus(); element.click(); });
+  await act(async () => {
+    const element = button(label);
+    element.dispatchEvent(new browser.MouseEvent("mousedown", { button: 0, bubbles: true }));
+    element.focus();
+    element.click();
+  });
   await settle();
 }
 
@@ -113,9 +137,16 @@ test("portal navigation restores URL state and does not add history for the acti
     </PortalShell>
   ));
   assert.equal(button("workspace").getAttribute("aria-current"), "page");
+  const region = browser.document.querySelector('[role="region"]');
+  assert.ok(region);
+  await act(async () => {
+    region.scrollTop = 180;
+    region.dispatchEvent(new browser.Event("scroll"));
+  });
   await press("workspace");
   assert.equal(push.mock.callCount(), 0);
   await press("community");
+  assert.equal(region.scrollTop, 0);
   await press("community");
   assert.equal(push.mock.callCount(), 1);
   assert.deepEqual(browser.history.state, { marker: "keep" });
@@ -125,6 +156,7 @@ test("portal navigation restores URL state and does not add history for the acti
     browser.dispatchEvent(new browser.PopStateEvent("popstate"));
   });
   assert.equal(button("workspace").getAttribute("aria-current"), "page");
+  assert.equal(region.scrollTop, 180);
   assert.equal(browser.document.querySelector('[data-testid="section"]')?.textContent, "workspace");
 });
 
@@ -172,4 +204,42 @@ test("creation menu hands keyboard focus to its dialog and returns it to the sta
   await escape();
   assert.equal(browser.document.querySelector('[role="dialog"]'), null);
   assert.equal(browser.document.activeElement, button("새 항목 추가"));
+});
+
+test("calendar preserves its date, view and filters across view tabs and admin sections", async (context) => {
+  browser.history.replaceState({}, "", "/dashboard/admin?section=schedule&view=calendar&student=student");
+  await render(context, <AdminPortalClient
+    announcements={[]} initialUnifiedItems={[]} communityPosts={[]}
+    adminId="admin" qnaThreads={[]} pendingAssignments={[]} referenceTime={new Date()}
+    students={[{ id: "student", email: "student@example.test", displayName: "학생", createdAt: null, currentModule: null, nextLessonDate: null, pendingFeedbackCount: 0 }]}
+  />);
+  const next = [...browser.document.querySelectorAll("button")].find((element) => element.classList.contains("fc-next-button"));
+  assert.ok(next);
+  const initialTitle = browser.document.querySelector(".fc-toolbar-title")?.textContent;
+  await act(async () => next.click());
+  await settle();
+  const nextTitle = browser.document.querySelector(".fc-toolbar-title")?.textContent;
+  assert.notEqual(nextTitle, initialTitle);
+  assert.equal(button("월").getAttribute("aria-pressed"), "true");
+  await press("노트 숨기기");
+  await press("일별 목록");
+  assert.equal(button("일별 목록").getAttribute("aria-selected"), "true");
+  // Keyboard arrow navigation moves focus without replacing a heavy view until activation.
+  await act(async () => {
+    button("일별 목록").dispatchEvent(new browser.KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }));
+  });
+  await settle();
+  assert.equal(button("일별 목록").getAttribute("aria-selected"), "true");
+  await press("캘린더");
+  assert.equal(button("월").getAttribute("aria-pressed"), "true");
+  assert.equal(browser.document.querySelector(".fc-toolbar-title")?.textContent, nextTitle);
+  assert.equal(button("노트 표시하기").getAttribute("aria-pressed"), "false");
+  await press("주");
+  const weekTitle = browser.document.querySelector(".fc-toolbar-title")?.textContent;
+  assert.equal(button("주").getAttribute("aria-pressed"), "true");
+  await press("업무함");
+  await press("일정");
+  assert.equal(button("주").getAttribute("aria-pressed"), "true");
+  assert.equal(browser.document.querySelector(".fc-toolbar-title")?.textContent, weekTitle);
+  assert.equal(button("노트 표시하기").getAttribute("aria-pressed"), "false");
 });
