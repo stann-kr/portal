@@ -123,7 +123,7 @@ Cloudflare binding:
 | `BUCKET` | R2 bucket | 미디어 저장 |
 | `ASSETS` | OpenNext assets | 정적 asset |
 
-Migration SQL은 `drizzle/`, Drizzle metadata는 `drizzle/meta/`에 둔다. Wrangler는 SQL 파일명과 D1의 적용 이력을 기준으로 migration을 실행하고, Drizzle metadata는 다음 schema diff 생성 기준으로 사용한다. SQL·journal·snapshot은 `0000~0013`까지 대응한다. `npm run db:check`는 empty replay와 current schema/latest snapshot의 column·FK·index뿐 아니라 문서·미디어·개인정보·외부 캘린더 구독 CHECK·FK·unique index, 불변·부활·교체 우회 방지 probe, `0007` fixture upgrade·inbound FK preflight, `0008→0009` account cascade, 기존 게시물·Q&A의 `0009→0010`, 기존 URL을 보존하는 `0010→0011`, populated `0011→0012` upgrade를 검사한다. 이 체인은 저장소의 schema 계약이며 persistent local·remote D1의 현재 적용 이력을 뜻하지 않는다. 환경별 실제 적용 목록과 pending 범위는 [운영 상태 확인 기준](./DEPLOYMENT.md#운영-상태-확인-기준)으로 확인한다. 외부 캘린더 코드의 promotion에는 대상 D1의 `0013`이 필요하다.
+Migration SQL은 `drizzle/`, Drizzle metadata는 `drizzle/meta/`에 둔다. Wrangler는 SQL 파일명과 D1의 적용 이력을 기준으로 migration을 실행하고, Drizzle metadata는 다음 schema diff 생성 기준으로 사용한다. SQL·journal·snapshot은 `0000~0013`까지 대응한다. `npm run db:check`는 empty replay와 current schema/latest snapshot의 column·FK·index뿐 아니라 문서·미디어·개인정보·외부 캘린더 구독 CHECK·FK·unique index, 불변·부활·교체 우회 방지 probe, `0007` fixture upgrade·inbound FK preflight, `0008→0009` account cascade, 기존 게시물·Q&A의 `0009→0010`, 기존 URL을 보존하는 `0010→0011`, populated `0011→0012` 개인정보 및 `0012→0013` 외부 캘린더 upgrade를 검사한다. 이 체인은 저장소의 schema 계약이며 persistent local·remote D1의 현재 적용 이력을 뜻하지 않는다. 환경별 실제 적용 목록과 pending 범위는 [운영 상태 확인 기준](./DEPLOYMENT.md#운영-상태-확인-기준)으로 확인한다. 외부 캘린더 코드의 promotion에는 대상 D1의 `0013`이 필요하다.
 
 신규 업로드는 사용자에게 노출된 `media-upload/` staging key로만 PUT하고, 서버가 size·Content-Type metadata·ETag를 확인한 뒤 사용자에게 공개되지 않은 별도 `media/` final key로 봉인한다. D1의 `SEALING` lease가 봉인과 삭제를 직렬화하며, 결과를 잃은 Copy는 복구 유예 뒤 final 삭제 outbox가 다시 정리한다. 문서에는 object ID와 `/api/media/{id}`만 저장하고, 게시물과 Q&A의 원자 생성·purge transaction이 registry claim과 R2 삭제 의도를 함께 commit한다. R2 삭제는 lease·지수 backoff를 사용하는 durable outbox로 재시도한다.
 
@@ -200,13 +200,13 @@ npm run build:scheduled
 npm audit --omit=dev --audit-level=moderate
 ```
 
-현재 migration consistency와 `0007` upgrade, `0008→0009` account cascade, `0009→0010` 게시물·Q&A baseline, `0010→0011` media, `0011→0012` 개인정보 upgrade, CHECK·trigger semantic probe, 개발용 관리자 seed의 환경·입력 경계, active-profile auth guard, calendar token 회전·변조, HTML AST sanitize·YouTube payload, local draft와 서버 초안 연속성이 자동화되어 있다. 격리 D1은 노트·게시물·Q&A와 미디어 claim·봉인·purge, 학생 계정 삭제·exact replay·30일 raw-ID alias의 원자 rollback을 검증한다. 예약 정리는 bounded enqueue, poison job 격리, soft budget, 무민감 aggregate log를 검증하고 별도 설정의 maintenance·scheduled Worker를 dry-run bundle한다. DOM 격리 환경에서는 로컬 복구, terminal lock, owner별 계정 정리, ownerless snapshot 확인, 오프라인 재시도와 다중 기기 선택을 검증한다. 실제 브라우저 E2E와 production migration·R2 설정·Cron trigger·deploy는 별도 범위다.
+현재 migration consistency와 `0007` upgrade, `0008→0009` account cascade, `0009→0010` 게시물·Q&A baseline, `0010→0011` media, `0011→0012` 개인정보 및 `0012→0013` 외부 캘린더 upgrade, CHECK·trigger semantic probe, 개발용 관리자 seed의 환경·입력 경계, active-profile auth guard, calendar token 회전·변조, HTML AST sanitize·YouTube payload, local draft와 서버 초안 연속성이 자동화되어 있다. 격리 D1은 노트·게시물·Q&A와 미디어 claim·봉인·purge, 학생 계정 삭제·exact replay·30일 raw-ID alias의 원자 rollback을 검증한다. 예약 정리는 bounded enqueue, poison job 격리, soft budget, 무민감 aggregate log를 검증하고 별도 설정의 maintenance·scheduled Worker를 dry-run bundle한다. DOM 격리 환경에서는 로컬 복구, terminal lock, owner별 계정 정리, ownerless snapshot 확인, 오프라인 재시도와 다중 기기 선택을 검증한다. 실제 브라우저 E2E와 production migration·R2 설정·Cron trigger·deploy는 별도 범위다.
 
 UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 시스템](./DESIGN_SYSTEM.md)을 기준으로 한다. 상태 registry는 label, semantic tone, icon key가 서로 어긋나지 않도록 단위 테스트로 보호한다.
 
 | 품질 경계 | 현재 자동화 | 다음 보강 |
 |---|---|---|
-| Migration | SQL·journal·snapshot·current schema empty replay, CHECK·trigger, `0007` upgrade·inbound FK preflight, `0008→0009` cascade, `0009→0010` 게시물·Q&A, `0010→0011` media, `0011→0012` privacy upgrade | persistent local·remote의 실제 적용 목록에서 pending 범위를 계산하고 승인된 작업 창에서 점검 |
+| Migration | SQL·journal·snapshot·current schema empty replay, CHECK·trigger, `0007` upgrade·inbound FK preflight, `0008→0009` cascade, `0009→0010` 게시물·Q&A, `0010→0011` media, `0011→0012` privacy, `0012→0013` 기존 데이터 보존·구독 제약·owner cascade | persistent local·remote의 실제 적용 목록에서 pending 범위를 계산하고 승인된 작업 창에서 점검 |
 | 개발 credential | development/opt-in/env/input binding 단위 테스트 | 실제 local seed는 데이터 변경 작업으로 분리 |
 | 인증·권한 | 미인증·role·ownership 허용/거부 단위 테스트, Q&A 격리 D1 권한 회귀 | 다른 주요 server action의 실제 query·mutation 경계 테스트 |
 | 입력·콘텐츠 | HTML5 AST tag·속성·URL allowlist, malformed·foreign-content XSS, 멱등성, upload MIME·size·quota·opaque key 정책 | 실제 R2 CORS·대용량 PUT smoke |

@@ -34,6 +34,7 @@ import {
 } from "./migration-check/media-lifecycle.mjs";
 import {
   validateExternalCalendarSubscriptionSchema,
+  validateExternalCalendarSubscriptionUpgrade,
 } from "./migration-check/external-calendar.mjs";
 import {
   validateAccountPrivacyAtomicSource,
@@ -150,6 +151,8 @@ async function main() {
   console.log("PASS 0010 populated fixture upgrade and media lifecycle additive columns");
   await validateAccountPrivacyUpgrade(migrationFiles);
   console.log("PASS populated 0011 → 0012 account privacy upgrade and rollback probes");
+  await validateExternalCalendarSubscriptionUpgrade(migrationFiles);
+  console.log("PASS populated 0012 → 0013 external calendar upgrade, constraints and owner cascade");
 }
 
 try {
