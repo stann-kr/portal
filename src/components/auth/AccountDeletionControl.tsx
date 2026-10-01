@@ -21,6 +21,7 @@ import {
 } from "@/lib/account-cleanup-client";
 import { deleteOwnAccount } from "@/lib/actions/accountPrivacy";
 import { ACCOUNT_DELETION_CONFIRMATION } from "@/lib/account-privacy-policy";
+import { createSecureUuid } from "@/lib/secure-uuid";
 
 type RegistrationState =
   | { status: "idle" | "pending" }
@@ -40,10 +41,7 @@ type AccountDeletionControlDependencies = {
 };
 
 function createOperationId(): string {
-  if (typeof crypto === "undefined" || typeof crypto.randomUUID !== "function") {
-    throw new Error("안전한 삭제 요청 식별자를 만들 수 없습니다.");
-  }
-  return crypto.randomUUID();
+  return createSecureUuid();
 }
 
 async function finishDeletedAccountSession(target: string): Promise<void> {

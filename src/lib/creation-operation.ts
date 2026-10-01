@@ -1,5 +1,6 @@
 import { sha256 } from "@noble/hashes/sha256";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils";
+import { createSecureUuid } from "./secure-uuid";
 
 export const CREATION_OPERATION_FIELD = "operationId";
 
@@ -8,10 +9,7 @@ const CREATION_OPERATION_ID_PATTERN =
 
 /** 새 문서 생성 의도를 브라우저 초안과 서버 쓰기 사이에서 안정적으로 연결한다. */
 export function createCreationOperationId(): string {
-  if (typeof crypto === "undefined" || typeof crypto.randomUUID !== "function") {
-    throw new Error("안전한 문서 생성 식별자를 만들 수 없습니다.");
-  }
-  return crypto.randomUUID();
+  return createSecureUuid();
 }
 
 /** 외부 입력은 브라우저가 생성하는 UUID v4만 허용한다. */
