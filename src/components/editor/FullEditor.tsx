@@ -209,6 +209,9 @@ export function FullEditor({
       StarterKit.configure({
         // CodeBlock은 CodeBlockLowlight로 교체
         codeBlock: false,
+        // These extensions have their own configuration below in Tiptap v3.
+        link: false,
+        underline: false,
       }),
       Underline,
       Highlight.configure({ multicolor: false }),

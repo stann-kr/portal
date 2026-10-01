@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { after, before, mock, test, type TestContext } from "node:test";
 import { Window } from "happy-dom";
-import React, { act, useState } from "react";
+import React, { act, useEffect, useRef, useState } from "react";
+import type { Editor } from "@tiptap/core";
 let createRoot: typeof import("react-dom/client").createRoot;
 
 let browser: Window;
@@ -12,6 +13,9 @@ let AdminPortalClient: typeof import("@/components/admin-portal/AdminPortalClien
 let EventFormDialog: typeof import("@/components/calendar/EventFormDialog").EventFormDialog;
 let AddTrackDialog: typeof import("@/components/digging/AddTrackDialog").AddTrackDialog;
 let CurriculumView: typeof import("@/components/student-portal/CurriculumView").CurriculumView;
+let TiptapEditor: typeof import("@tiptap/core").Editor;
+let StarterKit: typeof import("@tiptap/starter-kit").default;
+let BlockCommandMenu: typeof import("@/components/editor/BlockCommandMenu").BlockCommandMenu;
 let saveEvent: typeof import("@/lib/actions/calendarEvents").createCalendarEvent = async () => ({});
 let saveTrack: typeof import("@/lib/actions/digging").createDiggingTrack = async (input) => ({ id: "track", createdAt: new Date(), linkUrl: input.linkUrl ?? null, values: input.values });
 let fetchMetadata: typeof import("@/lib/actions/digging").fetchLinkMeta = async () => ({});
@@ -55,6 +59,7 @@ before(async () => {
     HTMLFormElement: browser.HTMLFormElement,
     HTMLTextAreaElement: browser.HTMLTextAreaElement,
     FormData: browser.FormData,
+    DOMParser: browser.DOMParser,
     Node: browser.Node,
     NodeFilter: browser.NodeFilter,
     Element: browser.Element,
@@ -78,6 +83,9 @@ before(async () => {
   ({ EventFormDialog } = await import("@/components/calendar/EventFormDialog"));
   ({ AddTrackDialog } = await import("@/components/digging/AddTrackDialog"));
   ({ CurriculumView } = await import("@/components/student-portal/CurriculumView"));
+  ({ Editor: TiptapEditor } = await import("@tiptap/core"));
+  ({ default: StarterKit } = await import("@tiptap/starter-kit"));
+  ({ BlockCommandMenu } = await import("@/components/editor/BlockCommandMenu"));
   ({ CreateEntryDropdown } = await import("@/components/student-portal/CreateEntryDropdown"));
   ({ AdminPortalClient } = await import("@/components/admin-portal/AdminPortalClient"));
 });
@@ -336,4 +344,44 @@ test("curriculum rolls back failed optimistic completion and allows a successful
   await press("비트 매칭: 완료로 변경");
   assert.equal(button("비트 매칭: 미완료로 변경").getAttribute("aria-pressed"), "true");
   assert.equal(browser.document.querySelector('[role="alert"]'), null);
+});
+
+test("editor command popup stays in its dialog and Escape closes only the popup", async (context) => {
+  const ready = { editor: null as Editor | null };
+  function EditorBody() {
+    const host = useRef<HTMLDivElement>(null);
+    const [editor, setEditor] = useState<Editor | null>(null);
+    useEffect(() => {
+      const value = new TiptapEditor({ element: host.current!, extensions: [StarterKit], content: "<p></p>", injectCSS: false });
+      ready.editor = value;
+      setEditor(value);
+      return () => value.destroy();
+    }, []);
+    return <><div ref={host} />{editor && <BlockCommandMenu editor={editor} />}</>;
+  }
+  function Harness() {
+    const [open, setOpen] = useState(true);
+    return <SlidePanel open={open} onOpenChange={setOpen} title="작성"><EditorBody /></SlidePanel>;
+  }
+  await render(context, <Harness />);
+  assert.ok(ready.editor);
+  const editor = ready.editor;
+  const panel = browser.document.querySelector('[role="dialog"]');
+  assert.ok(panel);
+  // DOM tests supply geometry; actual clipping and hit testing are checked in the browser.
+  context.mock.method(panel, "getBoundingClientRect", () => new browser.DOMRect(360, 0, 640, 768));
+  context.mock.method(editor.view, "coordsAtPos", () => ({ left: 420, right: 420, top: 160, bottom: 180 }));
+  await act(async () => { editor.view.dom.focus(); editor.commands.insertContent("/"); });
+  const menu = browser.document.querySelector('[role="listbox"]');
+  assert.ok(menu);
+  assert.ok(panel.contains(menu));
+  assert.equal(editor.view.dom.getAttribute("aria-controls"), menu.id);
+  await act(async () => {
+    editor.view.dom.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }) as unknown as Event);
+  });
+  assert.equal(browser.document.querySelector('[role="listbox"]'), null);
+  assert.ok(browser.document.querySelector('[role="dialog"]'));
+  assert.equal(editor.view.dom.getAttribute("aria-controls"), null);
+  await escape();
+  assert.equal(browser.document.querySelector('[role="dialog"]'), null);
 });

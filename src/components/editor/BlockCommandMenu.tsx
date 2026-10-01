@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Editor } from "@tiptap/react";
 import {
@@ -12,10 +12,13 @@ import {
 type CommandMenuState = SlashCommandMatch & {
   left: number;
   top: number;
+  width: number;
+  maxHeight: number;
   activeIndex: number;
 };
 
 export function BlockCommandMenu({ editor }: { editor: Editor }) {
+  const menuId = useId();
   const [menu, setMenu] = useState<CommandMenuState | null>(null);
   const menuRef = useRef<CommandMenuState | null>(null);
   menuRef.current = menu;
@@ -30,6 +33,10 @@ export function BlockCommandMenu({ editor }: { editor: Editor }) {
   const close = useCallback(() => setMenu(null), []);
 
   const syncMenu = useCallback(() => {
+    if (!editor.isFocused) {
+      close();
+      return;
+    }
     const match = findSlashCommandMatch(editor);
     if (!match) {
       close();
@@ -37,14 +44,28 @@ export function BlockCommandMenu({ editor }: { editor: Editor }) {
     }
 
     const coords = editor.view.coordsAtPos(match.to);
-    const menuWidth = 304;
-    const left = Math.max(12, Math.min(coords.left, window.innerWidth - menuWidth - 12));
-    const top = Math.min(coords.bottom + 8, window.innerHeight - 360);
+    const owner = editor.view.dom.closest<HTMLElement>('[role="dialog"]');
+    const bounds = owner?.getBoundingClientRect();
+    const viewport = window.visualViewport;
+    const leftEdge = Math.max(bounds?.left ?? 0, viewport?.offsetLeft ?? 0) + 12;
+    const topEdge = Math.max(bounds?.top ?? 0, viewport?.offsetTop ?? 0) + 12;
+    const rightEdge = Math.min(bounds?.right ?? window.innerWidth, (viewport?.offsetLeft ?? 0) + (viewport?.width ?? window.innerWidth)) - 12;
+    const bottomEdge = Math.min(bounds?.bottom ?? window.innerHeight, (viewport?.offsetTop ?? 0) + (viewport?.height ?? window.innerHeight)) - 12;
+    const width = Math.min(304, rightEdge - leftEdge);
+    const maxHeight = Math.min(360, bottomEdge - topEdge);
+    if (width <= 0 || maxHeight < 80) {
+      close();
+      return;
+    }
+    const left = Math.max(leftEdge, Math.min(coords.left, rightEdge - width));
+    const top = Math.max(topEdge, Math.min(coords.bottom + 8, bottomEdge - maxHeight));
 
     setMenu((current) => ({
       ...match,
-      left,
-      top: Math.max(12, top),
+      left: left - (bounds?.left ?? 0) - (owner?.clientLeft ?? 0) + (owner?.scrollLeft ?? 0),
+      top: top - (bounds?.top ?? 0) - (owner?.clientTop ?? 0) + (owner?.scrollTop ?? 0),
+      width,
+      maxHeight,
       activeIndex: current?.query === match.query ? current.activeIndex : 0,
     }));
   }, [close, editor]);
@@ -64,22 +85,29 @@ export function BlockCommandMenu({ editor }: { editor: Editor }) {
 
   useEffect(() => {
     const handleTransaction = () => syncMenu();
-    const handleBlur = () => window.setTimeout(() => close(), 120);
+    let blurTimer: number | undefined;
+    const handleBlur = () => { blurTimer = window.setTimeout(close, 120); };
+    const handleFocus = () => {
+      window.clearTimeout(blurTimer);
+      syncMenu();
+    };
     const handleScroll = () => {
       if (menuRef.current) syncMenu();
     };
     const handleKeyDown = (event: KeyboardEvent) => {
       const current = menuRef.current;
-      if (!current) return;
+      if (!current || !(event.target instanceof Node) || !editor.view.dom.contains(event.target)) return;
 
       const availableCommands = commandsRef.current;
       if (event.key === "Escape") {
         event.preventDefault();
+        event.stopPropagation();
         close();
         return;
       }
       if (event.key === "ArrowDown" || event.key === "ArrowUp") {
         event.preventDefault();
+        event.stopPropagation();
         if (availableCommands.length === 0) return;
         const delta = event.key === "ArrowDown" ? 1 : -1;
         setMenu((value) =>
@@ -96,40 +124,70 @@ export function BlockCommandMenu({ editor }: { editor: Editor }) {
       }
       if (event.key === "Enter" && availableCommands.length > 0) {
         event.preventDefault();
+        event.stopPropagation();
         execute(current.activeIndex);
       }
+      if (event.key === "Tab") close();
     };
 
     editor.on("transaction", handleTransaction);
     editor.on("blur", handleBlur);
-    editor.view.dom.addEventListener("keydown", handleKeyDown, true);
+    editor.on("focus", handleFocus);
+    syncMenu();
+    // Window capture precedes the parent dialog's document-level Escape handler.
+    window.addEventListener("keydown", handleKeyDown, true);
     window.addEventListener("scroll", handleScroll, true);
+    window.addEventListener("resize", handleScroll);
+    window.visualViewport?.addEventListener("resize", handleScroll);
+    window.visualViewport?.addEventListener("scroll", handleScroll);
 
     return () => {
       editor.off("transaction", handleTransaction);
       editor.off("blur", handleBlur);
-      editor.view.dom.removeEventListener("keydown", handleKeyDown, true);
+      editor.off("focus", handleFocus);
+      window.clearTimeout(blurTimer);
+      window.removeEventListener("keydown", handleKeyDown, true);
       window.removeEventListener("scroll", handleScroll, true);
+      window.removeEventListener("resize", handleScroll);
+      window.visualViewport?.removeEventListener("resize", handleScroll);
+      window.visualViewport?.removeEventListener("scroll", handleScroll);
     };
   }, [close, editor, execute, syncMenu]);
 
+  useEffect(() => {
+    if (!menu) return;
+    const input = editor.view.dom;
+    const previousControls = input.getAttribute("aria-controls");
+    const previousActive = input.getAttribute("aria-activedescendant");
+    input.setAttribute("aria-controls", menuId);
+    if (commands[menu.activeIndex]) input.setAttribute("aria-activedescendant", `${menuId}-${menu.activeIndex}`);
+    return () => {
+      if (previousControls === null) input.removeAttribute("aria-controls");
+      else input.setAttribute("aria-controls", previousControls);
+      if (previousActive === null) input.removeAttribute("aria-activedescendant");
+      else input.setAttribute("aria-activedescendant", previousActive);
+    };
+  }, [commands, editor, menu, menuId]);
+
   if (!menu || typeof document === "undefined") return null;
+  const portalOwner = editor.view.dom.closest<HTMLElement>('[role="dialog"]');
 
   return createPortal(
     <div
+      id={menuId}
       role="listbox"
       aria-label="블록 삽입"
-      className="fixed z-[var(--z-dropdown)] w-[19rem] overflow-hidden rounded-xl border border-border bg-surface-elevated shadow-floating"
-      style={{ left: menu.left, top: menu.top }}
+      className="z-[var(--z-dropdown)] flex flex-col overflow-hidden rounded-xl border border-border bg-surface-elevated shadow-floating"
+      style={{ position: portalOwner ? "absolute" : "fixed", left: menu.left, top: menu.top, width: menu.width, maxHeight: menu.maxHeight }}
       onMouseDown={(event) => event.preventDefault()}
     >
-      <div className="border-b border-border px-3 py-2">
+      <div className="shrink-0 border-b border-border px-3 py-2">
         <p className="text-[11px] font-semibold tracking-wide text-muted-foreground">블록 삽입</p>
         <p className="mt-0.5 text-xs text-muted-foreground">
           {menu.query ? `“${menu.query}” 검색 결과` : "입력하거나 ↑↓ 키로 선택하세요"}
         </p>
       </div>
-      <div className="max-h-72 overflow-y-auto p-1.5">
+      <div className="min-h-0 overflow-y-auto p-1.5">
         {commands.length === 0 ? (
           <p className="px-3 py-6 text-center text-xs text-muted-foreground">
             일치하는 블록이 없습니다.
@@ -139,9 +197,11 @@ export function BlockCommandMenu({ editor }: { editor: Editor }) {
             const active = index === menu.activeIndex;
             return (
               <button
+                id={`${menuId}-${index}`}
                 key={id}
                 type="button"
                 role="option"
+                tabIndex={-1}
                 aria-selected={active}
                 onMouseEnter={() => setMenu((value) => (value ? { ...value, activeIndex: index } : null))}
                 onClick={() => execute(index)}
@@ -162,6 +222,6 @@ export function BlockCommandMenu({ editor }: { editor: Editor }) {
         )}
       </div>
     </div>,
-    document.body,
+    portalOwner ?? document.body,
   );
 }
