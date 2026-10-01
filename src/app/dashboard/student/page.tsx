@@ -15,10 +15,12 @@ import { assignments } from "@/db/schema";
 import { StudentPortalClient } from "@/components/student-portal/StudentPortalClient";
 import { getUnifiedItemSpaceLabel } from "@/lib/unified-item-normalization";
 import { getExternalCalendarConnectionSummary } from "@/lib/actions/externalCalendars";
+import { resolvePortalLocation, type PortalSearchParams } from "@/lib/portal-location";
 
-export default async function StudentPortalPage() {
+export default async function StudentPortalPage({ searchParams }: { searchParams: Promise<PortalSearchParams> }) {
   const session = await getActiveAuthSession();
   if (session?.user?.role !== "student") redirect("/dashboard/admin");
+  const initialLocation = resolvePortalLocation("student", await searchParams);
 
   const studentId = session.user.id!;
   const displayName = session.user.name ?? "";
@@ -62,6 +64,7 @@ export default async function StudentPortalPage() {
 
   return (
     <StudentPortalClient
+      initialLocation={initialLocation}
       announcements={announcements}
       unifiedItems={unifiedItems}
       curriculumModules={curriculumModules.map((module) => ({

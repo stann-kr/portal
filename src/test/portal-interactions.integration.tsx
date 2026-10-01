@@ -3,13 +3,16 @@ import { after, before, mock, test, type TestContext } from "node:test";
 import { Window } from "happy-dom";
 import React, { act, useEffect, useRef, useState } from "react";
 import type { Editor } from "@tiptap/core";
+import { resolvePortalLocation } from "@/lib/portal-location";
 let createRoot: typeof import("react-dom/client").createRoot;
+let renderToString: typeof import("react-dom/server").renderToString;
 
 let browser: Window;
 let PortalShell: typeof import("@/components/ui/portal-shell").PortalShell;
 let SlidePanel: typeof import("@/components/student-portal/SlidePanel").SlidePanel;
 let CreateEntryDropdown: typeof import("@/components/student-portal/CreateEntryDropdown").CreateEntryDropdown;
 let AdminPortalClient: typeof import("@/components/admin-portal/AdminPortalClient").AdminPortalClient;
+let StudentPortalClient: typeof import("@/components/student-portal/StudentPortalClient").StudentPortalClient;
 let EventFormDialog: typeof import("@/components/calendar/EventFormDialog").EventFormDialog;
 let AddTrackDialog: typeof import("@/components/digging/AddTrackDialog").AddTrackDialog;
 let CurriculumView: typeof import("@/components/student-portal/CurriculumView").CurriculumView;
@@ -20,6 +23,7 @@ let saveEvent: typeof import("@/lib/actions/calendarEvents").createCalendarEvent
 let saveTrack: typeof import("@/lib/actions/digging").createDiggingTrack = async (input) => ({ id: "track", createdAt: new Date(), linkUrl: input.linkUrl ?? null, values: input.values });
 let fetchMetadata: typeof import("@/lib/actions/digging").fetchLinkMeta = async () => ({});
 let toggleModule: typeof import("@/lib/actions/curriculum").toggleModuleComplete = async () => {};
+let loadStudentCalendar: typeof import("@/lib/actions/unifiedItems").getUnifiedItemsForStudent = async () => [];
 const previousGlobals = new Map<string, PropertyDescriptor | undefined>();
 
 mock.module("next/navigation", { namedExports: { useRouter: () => ({ push() {} }) } });
@@ -31,8 +35,9 @@ mock.module("@/lib/actions/digging", { namedExports: {
   fetchLinkMeta: (...args: Parameters<typeof fetchMetadata>) => fetchMetadata(...args),
 } });
 mock.module("@/lib/actions/unifiedItems", { namedExports: {
-  getUnifiedItemsForStudent: async () => [],
+  getUnifiedItemsForStudent: (...args: Parameters<typeof loadStudentCalendar>) => loadStudentCalendar(...args),
   getExternalUnifiedItemsForStudent: async () => [],
+  getExternalUnifiedItems: async () => [],
 } });
 // Exercise the actual shell, calendar tabs and FullCalendar without unrelated editors/I/O.
 for (const [folder, name] of [
@@ -78,6 +83,7 @@ before(async () => {
     Object.defineProperty(globalThis, name, { configurable: true, writable: true, value });
   }
   ({ createRoot } = await import("react-dom/client"));
+  ({ renderToString } = await import("react-dom/server"));
   ({ PortalShell } = await import("@/components/ui/portal-shell"));
   ({ SlidePanel } = await import("@/components/student-portal/SlidePanel"));
   ({ EventFormDialog } = await import("@/components/calendar/EventFormDialog"));
@@ -88,6 +94,7 @@ before(async () => {
   ({ BlockCommandMenu } = await import("@/components/editor/BlockCommandMenu"));
   ({ CreateEntryDropdown } = await import("@/components/student-portal/CreateEntryDropdown"));
   ({ AdminPortalClient } = await import("@/components/admin-portal/AdminPortalClient"));
+  ({ StudentPortalClient } = await import("@/components/student-portal/StudentPortalClient"));
 });
 
 after(() => {
@@ -268,6 +275,39 @@ test("calendar preserves its date, view and filters across view tabs and admin s
   assert.equal(button("주").getAttribute("aria-pressed"), "true");
   assert.equal(browser.document.querySelector(".fc-toolbar-title")?.textContent, weekTitle);
   assert.equal(button("노트 표시하기").getAttribute("aria-pressed"), "false");
+});
+
+test("portal deep links render their section, view and selected student before hydration", async (context) => {
+  const document = browser.document;
+  const markup = document.createElement("div");
+  markup.innerHTML = renderToString(<StudentPortalClient
+    initialLocation={resolvePortalLocation("student", { section: "workspace", view: "curriculum" })}
+    announcements={[]} unifiedItems={[]} communityPosts={[]} curriculumModules={[]} assignments={[]}
+    studentId="student" displayName="학생" spaceLabel="학생" externalCalendarConnection={{ connected: false }} referenceTime={new Date()}
+  />);
+  assert.equal(markup.querySelector('nav [aria-current="page"]')?.textContent, "워크스페이스");
+  assert.equal(markup.querySelector('[role="tab"][aria-selected="true"]')?.textContent, "커리큘럼");
+
+  const students = ["first", "requested"].map((id) => ({ id, email: `${id}@example.test`, displayName: id, createdAt: null, currentModule: null, nextLessonDate: null, pendingFeedbackCount: 0 }));
+  const admin = <AdminPortalClient
+    initialLocation={resolvePortalLocation("admin", { section: "schedule", view: "all", type: "NOTE" })}
+    initialStudentId="requested" students={students} initialUnifiedItems={[]}
+    announcements={[]} communityPosts={[]} adminId="admin" qnaThreads={[]} pendingAssignments={[]} referenceTime={new Date()}
+  />;
+  markup.innerHTML = renderToString(admin);
+  assert.equal(markup.querySelector('nav [aria-current="page"]')?.textContent, "일정");
+  assert.equal(markup.querySelector('[role="tab"][aria-selected="true"]')?.textContent, "전체 항목");
+  assert.equal(markup.querySelector("select")?.value, "requested");
+  const loads: string[] = [];
+  loadStudentCalendar = async (id) => { loads.push(id); return []; };
+  context.after(() => { loadStudentCalendar = async () => []; });
+  browser.history.replaceState({}, "", "/dashboard/admin?section=schedule&view=all&type=NOTE&student=requested");
+  await render(context, admin);
+  assert.equal(document.querySelector("select")?.value, "requested");
+  assert.deepEqual(loads, [], "the server-loaded student is not fetched a second time on mount");
+  assert.deepEqual(resolvePortalLocation("admin", { section: "workspace", view: "curriculum", type: "invalid", preset: "invalid" }), {
+    section: "work", view: "calendar", type: null, preset: null,
+  });
 });
 
 test("event save protects every dismissal path while pending and keeps input after an error", async (context) => {

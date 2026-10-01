@@ -19,6 +19,7 @@ import {
 } from "@/lib/actions/unifiedItems";
 import { getUnifiedItemSpaceLabel } from "@/lib/unified-item-normalization";
 import { PortalShell } from "@/components/ui/portal-shell";
+import type { PortalLocation, PortalSection } from "@/lib/portal-location";
 
 // ── 섹션 컴포넌트
 import { AnnouncementSection } from "@/components/student-portal/AnnouncementSection";
@@ -30,7 +31,7 @@ import { AdminWorkQueueSection } from "./AdminWorkQueueSection";
 
 // ── 타입 ──────────────────────────────────────────
 
-type Section = "work" | "students" | "schedule" | "announcements" | "community";
+type Section = PortalSection<"admin">;
 
 type Post = {
   id: string;
@@ -55,6 +56,8 @@ type CommunityPost = {
 };
 
 export interface AdminPortalClientProps {
+  initialLocation?: PortalLocation<"admin">;
+  initialStudentId?: string;
   announcements: Post[];
   initialUnifiedItems: UnifiedItem[];
   students: StudentRosterStat[];
@@ -78,9 +81,11 @@ const TABS: { id: Section; label: string; Icon: React.ElementType }[] = [
 // ── 컴포넌트 ─────────────────────────────────────
 
 export function AdminPortalClient({
+  initialLocation,
   announcements,
   initialUnifiedItems,
   students,
+  initialStudentId = students[0]?.id ?? "",
   communityPosts,
   adminId,
   qnaThreads,
@@ -89,11 +94,11 @@ export function AdminPortalClient({
 }: AdminPortalClientProps) {
   // 캘린더 학생 필터 상태
   const [selectedStudentId, setSelectedStudentId] = useState<string>(
-    students[0]?.id ?? ""
+    initialStudentId
   );
   const [calendarItems, setCalendarItems] = useState<UnifiedItem[]>(initialUnifiedItems);
   const [calendarLoadedStudentId, setCalendarLoadedStudentId] = useState(
-    students[0]?.id ?? "",
+    initialStudentId,
   );
   const [isLoadingCalendar, startCalendarTransition] = useTransition();
   const [calendarError, setCalendarError] = useState<string | null>(null);
@@ -180,7 +185,7 @@ export function AdminPortalClient({
   return (
     <PortalShell
       items={TABS}
-      initialItem="work"
+      initialItem={initialLocation?.section ?? "work"}
       storageKey="adminPortal:section"
       urlParamKey="section"
       ariaLabel="관리자 포털"
@@ -211,6 +216,7 @@ export function AdminPortalClient({
 
           <div hidden={activeSection !== "schedule"} className="h-full">
             <CalendarSection
+              initialLocation={initialLocation}
               key={selectedStudentId}
               isActive={activeSection === "schedule"}
               unifiedItems={isLoadingCalendar ? [] : calendarItems}

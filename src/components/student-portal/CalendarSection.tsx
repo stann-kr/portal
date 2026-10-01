@@ -26,6 +26,7 @@ import { createAccountCalendarTabStorageKey } from "@/lib/local-owner-keys";
 import { ExternalCalendarConnection } from "./ExternalCalendarConnection";
 import type { ExternalCalendarConnectionSummary } from "@/lib/external-calendar";
 import { buildNoteCreateHref } from "@/lib/note-create-route";
+import type { WorkspaceLocation } from "@/lib/portal-location";
 import {
   getCalendarTabs,
   resolveCalendarPreset,
@@ -76,6 +77,7 @@ const TAB_ICONS: Record<CalendarTabValue, LucideIcon> = {
 };
 
 interface CalendarSectionProps {
+  initialLocation?: WorkspaceLocation;
   unifiedItems: UnifiedItem[];
   curriculumModules: CurriculumModule[];
   assignments: Assignment[];
@@ -103,6 +105,7 @@ interface CalendarSectionProps {
 // ── 컴포넌트 ─────────────────────────────────────
 
 export function CalendarSection({
+  initialLocation,
   unifiedItems,
   curriculumModules,
   assignments,
@@ -125,9 +128,9 @@ export function CalendarSection({
   const [diggingColumns, setDiggingColumns] = useState<DiggingColumn[]>([]);
   const [qnaSlideOpen, setQnaSlideOpen] = useState(false);
   const [qnaFormBusy, setQnaFormBusy] = useState(false);
-  const [activeTab, setActiveTab] = useState<CalendarTabValue>("calendar");
-  const [calendarPreset, setCalendarPreset] = useState<CalendarPreset | null>(null);
-  const [allItemsInitialType, setAllItemsInitialType] = useState<UnifiedItemType | null>(null);
+  const [activeTab, setActiveTab] = useState<CalendarTabValue>(initialLocation?.view ?? "calendar");
+  const [calendarPreset, setCalendarPreset] = useState<CalendarPreset | null>(initialLocation?.preset ?? null);
+  const [allItemsInitialType, setAllItemsInitialType] = useState<UnifiedItemType | null>(initialLocation?.type ?? null);
   const calendarTabs = getCalendarTabs(workspaceRole);
   const calendarTabStorageKey = createAccountCalendarTabStorageKey(actorId);
   const isStudentWorkspace = actorId === studentId;
@@ -155,7 +158,7 @@ export function CalendarSection({
     : undefined;
   const canShowCreateMenu = Boolean(noteCreateHref) || canCreateQna || isStudentWorkspace;
 
-  // 마운트 후 직전 내부 탭 복원 (SSR 기본값과 동일 초기값 → 하이드레이션 불일치 방지)
+  // URL이 없을 때만 기기의 직전 탭을 복원하고 history 이동을 구독한다.
   useEffect(() => {
     const restore = () => {
       const params = new URLSearchParams(window.location.search);

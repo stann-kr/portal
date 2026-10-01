@@ -21,10 +21,11 @@ import { CalendarSection } from "./CalendarSection";
 import { CommunitySection } from "./CommunitySection";
 import { TodaySection } from "./TodaySection";
 import type { ExternalCalendarConnectionSummary } from "@/lib/external-calendar";
+import type { PortalLocation, PortalSection } from "@/lib/portal-location";
 
 // ── 타입 ──────────────────────────────────────────────
 
-type Section = "today" | "workspace" | "community";
+type Section = PortalSection<"student">;
 
 type Post = {
   id: string;
@@ -63,6 +64,7 @@ type CommunityPost = {
 };
 
 export interface StudentPortalClientProps {
+  initialLocation?: PortalLocation<"student">;
   announcements: Post[];
   unifiedItems: UnifiedItem[];
   curriculumModules: CurriculumModule[];
@@ -94,6 +96,7 @@ const SECTION_ALIASES: Readonly<Record<string, Section>> = {
 // ── 컴포넌트 ─────────────────────────────────────────
 
 export function StudentPortalClient({
+  initialLocation,
   announcements,
   unifiedItems: initialUnifiedItems,
   curriculumModules,
@@ -128,7 +131,7 @@ export function StudentPortalClient({
   return (
     <PortalShell
       items={TABS}
-      initialItem="today"
+      initialItem={initialLocation?.section ?? "today"}
       storageKey={SECTION_STORAGE_KEY}
       storageAliases={SECTION_ALIASES}
       urlParamKey="section"
@@ -156,6 +159,7 @@ export function StudentPortalClient({
             className="h-full"
           >
             <CalendarSection
+              initialLocation={initialLocation}
               unifiedItems={items}
               curriculumModules={curriculumModules}
               assignments={assignments}

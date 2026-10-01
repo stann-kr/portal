@@ -11,20 +11,24 @@ import { getUnifiedItemsForStudent } from "@/lib/actions/unifiedItems";
 import { getQnaThreads } from "@/lib/actions/qna";
 import { getPendingFeedbackAssignments } from "@/lib/actions/assignments";
 import { AdminPortalClient } from "@/components/admin-portal/AdminPortalClient";
+import { firstSearchValue, resolvePortalLocation, type PortalSearchParams } from "@/lib/portal-location";
 
-export default async function AdminPortalPage() {
+export default async function AdminPortalPage({ searchParams }: { searchParams: Promise<PortalSearchParams> }) {
   const session = await getActiveAuthSession();
   if (session?.user?.role !== "admin") redirect("/dashboard/student");
 
   const adminId = session.user.id!;
+  const params = await searchParams;
+  const initialLocation = resolvePortalLocation("admin", params);
 
   // 학생 목록 먼저 패치
   const students = await getStudentRosterStats();
-  const firstStudentId = students[0]?.id ?? "";
+  const requestedStudentId = firstSearchValue(params.student);
+  const initialStudentId = students.find((student) => student.id === requestedStudentId)?.id ?? students[0]?.id ?? "";
 
   // 병렬 데이터 패치
   const referenceTime = new Date();
-  const [announcements, communityPostsRaw, firstStudentItems, qnaThreads, pendingAssignments] = await Promise.all([
+  const [announcements, communityPostsRaw, initialStudentItems, qnaThreads, pendingAssignments] = await Promise.all([
     getPostsByBoardType("ANNOUNCEMENT"),
     Promise.all([
       getPostsByBoardType("GENERAL"),
@@ -38,15 +42,17 @@ export default async function AdminPortalPage() {
         )
         .slice(0, 20)
     ),
-    firstStudentId ? getUnifiedItemsForStudent(firstStudentId) : Promise.resolve([]),
+    initialStudentId ? getUnifiedItemsForStudent(initialStudentId) : Promise.resolve([]),
     getQnaThreads(),
     getPendingFeedbackAssignments(),
   ]);
 
   return (
     <AdminPortalClient
+      initialLocation={initialLocation}
+      initialStudentId={initialStudentId}
       announcements={announcements}
-      initialUnifiedItems={firstStudentItems}
+      initialUnifiedItems={initialStudentItems}
       students={students}
       communityPosts={communityPostsRaw}
       adminId={adminId}
