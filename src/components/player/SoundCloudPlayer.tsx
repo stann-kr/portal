@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import Script from "next/script";
+import { Button } from "@/components/ui/button";
 import type { MediaSeekRequest } from "./VideoPlayer";
 
 type SoundCloudWidget = {
@@ -18,8 +19,9 @@ type SoundCloudApi = {
   };
 };
 
-/** ReactPlayer v3 has no SoundCloud provider; use its official widget contract. */
-export function SoundCloudPlayer({ url, seekRequest }: { url: string; seekRequest?: MediaSeekRequest }) {
+type SoundCloudPlayerProps = { url: string; seekRequest?: MediaSeekRequest };
+
+function SoundCloudEmbed({ url, seekRequest, onRetry }: SoundCloudPlayerProps & { onRetry: () => void }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const widgetRef = useRef<SoundCloudWidget | null>(null);
   const readyRef = useRef(false);
@@ -36,7 +38,8 @@ export function SoundCloudPlayer({ url, seekRequest }: { url: string; seekReques
     pendingSeekRef.current = null;
   }, []);
 
-  useEffect(() => {
+  // The SDK posts to the iframe during unbind. Dispose before React removes it.
+  useLayoutEffect(() => {
     if (!sdkReady || !iframeRef.current) return;
     const api = (window as Window & { SC?: SoundCloudApi }).SC;
     if (!api) { setError(true); return; }
@@ -46,6 +49,7 @@ export function SoundCloudPlayer({ url, seekRequest }: { url: string; seekReques
     widget.bind(api.Widget.Events.READY, () => {
       if (!active) return;
       readyRef.current = true;
+      setError(false);
       applySeek();
     });
     widget.bind(api.Widget.Events.ERROR, () => {
@@ -62,6 +66,13 @@ export function SoundCloudPlayer({ url, seekRequest }: { url: string; seekReques
   }, [applySeek, sdkReady]);
 
   useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      if (!readyRef.current) setError(true);
+    }, 15_000);
+    return () => window.clearTimeout(timeout);
+  }, []);
+
+  useEffect(() => {
     if (!seekRequest || !Number.isFinite(seekRequest.seconds) || seekRequest.seconds < 0) return;
     pendingSeekRef.current = seekRequest.seconds;
     applySeek();
@@ -74,8 +85,18 @@ export function SoundCloudPlayer({ url, seekRequest }: { url: string; seekReques
       title="SoundCloud 믹스셋 플레이어"
       src={`https://w.soundcloud.com/player/?${new URLSearchParams({ url, auto_play: "false", show_artwork: "true", visual: "false" })}`}
       allow="autoplay"
+      hidden={error}
       className="h-[166px] w-full rounded-xl border border-border"
     />
-    {error && <p role="alert" className="text-sm text-destructive">SoundCloud를 불러오지 못했습니다. 원본 링크에서 재생해 주세요.</p>}
+    {error && <div role="alert" className="flex min-h-[166px] flex-col items-start justify-center gap-3 rounded-xl border border-border bg-muted/20 p-4 text-sm">
+      <p>SoundCloud에 연결하지 못했습니다. 다시 불러오거나 원본 링크에서 재생해 주세요.</p>
+      <Button type="button" variant="outline" onClick={onRetry}>플레이어 다시 불러오기</Button>
+    </div>}
   </>;
+}
+
+/** ReactPlayer v3 has no SoundCloud provider; use its official widget contract. */
+export function SoundCloudPlayer(props: SoundCloudPlayerProps) {
+  const [attempt, setAttempt] = useState(0);
+  return <SoundCloudEmbed key={attempt} {...props} onRetry={() => setAttempt((value) => value + 1)} />;
 }

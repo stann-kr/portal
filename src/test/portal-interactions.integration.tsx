@@ -505,8 +505,12 @@ test("SoundCloud queues seconds as widget milliseconds and releases its listener
   const seeks: number[] = [];
   let plays = 0;
   let pauses = 0;
-  const widget = { bind: (event: string, callback: () => void) => listeners.set(event, callback), unbind: (event: string) => listeners.delete(event), seekTo: (value: number) => seeks.push(value), play: () => { plays++; }, pause: () => { pauses++; } };
-  Object.defineProperty(browser, "SC", { configurable: true, value: { Widget: Object.assign(() => widget, { Events: { READY: "ready", ERROR: "error" } }) } });
+  let widgetFrame: HTMLIFrameElement;
+  const widget = { bind: (event: string, callback: () => void) => listeners.set(event, callback), unbind: (event: string) => {
+    assert.ok(widgetFrame.isConnected, "SDK teardown must run before the iframe is detached");
+    listeners.delete(event);
+  }, seekTo: (value: number) => seeks.push(value), play: () => { plays++; }, pause: () => { pauses++; } };
+  Object.defineProperty(browser, "SC", { configurable: true, value: { Widget: Object.assign((frame: HTMLIFrameElement) => { widgetFrame = frame; return widget; }, { Events: { READY: "ready", ERROR: "error" } }) } });
   context.after(() => Reflect.deleteProperty(browser, "SC"));
   const url = "https://soundcloud.com/artist/mix";
   const root = await render(context, <VideoPlayer url={url} seekRequest={{ seconds: 90 }} />);
