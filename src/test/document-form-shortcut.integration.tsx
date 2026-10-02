@@ -83,6 +83,12 @@ const router = {
   refresh: () => undefined,
   replace: () => undefined,
 };
+let restoreNote: typeof import("@/lib/actions/privateNotes").restorePrivateNoteRevision = async () => ({ success: true });
+let changeQnaStatus: typeof import("@/lib/actions/qna").updateThreadStatus = async () => ({ success: true, currentRevision: 2 });
+
+mock.module("@/lib/actions/privateNotes", { namedExports: {
+  restorePrivateNoteRevision: (...args: Parameters<typeof restoreNote>) => restoreNote(...args),
+} });
 
 mock.module("next/dynamic", {
   defaultExport: () => MockFullEditor,
@@ -157,7 +163,7 @@ mock.module("@/lib/actions/qna", {
       actionCalls.qnaInline += 1;
       return {};
     },
-    updateThreadStatus: async () => ({ success: true, currentRevision: 2 }),
+    updateThreadStatus: (...args: Parameters<typeof changeQnaStatus>) => changeQnaStatus(...args),
   },
 });
 mock.module("@/components/upload/FileUploader", {
@@ -214,6 +220,7 @@ let NewQnaForm: typeof import("@/components/qna/NewQnaForm").NewQnaForm;
 let NoteEditorForm: typeof import("@/components/notes/NoteEditorForm").NoteEditorForm;
 let QnaSlideForm: typeof import("@/components/qna/QnaSlideForm").QnaSlideForm;
 let ThreadDetailClient: typeof import("@/components/qna/ThreadDetailClient").ThreadDetailClient;
+let RestoreNoteRevisionButton: typeof import("@/components/notes/RestoreNoteRevisionButton").RestoreNoteRevisionButton;
 
 before(async () => {
   [
@@ -222,12 +229,14 @@ before(async () => {
     { NoteEditorForm },
     { QnaSlideForm },
     { ThreadDetailClient },
+    { RestoreNoteRevisionButton },
   ] = await Promise.all([
     import("@/components/community/NewPostForm"),
     import("@/components/qna/NewQnaForm"),
     import("@/components/notes/NoteEditorForm"),
     import("@/components/qna/QnaSlideForm"),
     import("@/components/qna/ThreadDetailClient"),
+    import("@/components/notes/RestoreNoteRevisionButton"),
   ]);
 });
 
@@ -254,6 +263,7 @@ const GLOBAL_BINDINGS = [
   "getComputedStyle",
   "IS_REACT_ACT_ENVIRONMENT",
   "React",
+  "confirm",
 ] as const;
 
 type GlobalBinding = (typeof GLOBAL_BINDINGS)[number];
@@ -282,6 +292,7 @@ function installBrowserGlobals(browserWindow: Window): () => void {
     getComputedStyle: browserWindow.getComputedStyle.bind(browserWindow),
     IS_REACT_ACT_ENVIRONMENT: true,
     React,
+    confirm: () => true,
   };
 
   for (const name of GLOBAL_BINDINGS) {
@@ -305,6 +316,7 @@ function installBrowserGlobals(browserWindow: Window): () => void {
 type FormHarness = {
   browserWindow: Window;
   container: HTMLElement;
+  rerender: (element: React.ReactElement) => Promise<void>;
 };
 
 async function renderForm(
@@ -329,8 +341,65 @@ async function renderForm(
     root.render(element);
   });
 
-  return { browserWindow, container: container as unknown as HTMLElement };
+  return { browserWindow, container: container as unknown as HTMLElement, rerender: (next) => act(async () => root.render(next)) };
 }
+
+test("노트 이력은 A→B→A를 새 복원 의도로 처리하고 전송 실패만 같은 ID로 재시도한다", { concurrency: false }, async (context) => {
+  const requests: Parameters<typeof restoreNote>[] = [];
+  let failNext = false;
+  restoreNote = async (...args) => {
+    requests.push(args);
+    if (failNext) { failNext = false; throw new Error("offline"); }
+    return { success: true, currentRevision: args[2] + 1 };
+  };
+  context.after(() => { restoreNote = async () => ({ success: true }); });
+  const screen = (base: number) => <div>{[1, 2].map((target) => <section key={target} data-revision={target}><RestoreNoteRevisionButton noteId="note-history" baseRevision={base} revisionNumber={target} /></section>)}</div>;
+  const harness = await renderForm(context, screen(2));
+  const click = async (target: number) => act(async () => harness.container.querySelector<HTMLButtonElement>(`[data-revision="${target}"] button`)!.click());
+  await click(1);
+  await harness.rerender(screen(3));
+  await click(2);
+  await harness.rerender(screen(4));
+  await click(1);
+  assert.deepEqual(requests.map((args) => [args[2], args[3]]), [[2, 1], [3, 2], [4, 1]]);
+  assert.notEqual(requests[0]![1], requests[2]![1], "새 head 기준 복원은 이전 완료 요청 ID를 재사용하지 않는다");
+  await harness.rerender(screen(5));
+  failNext = true;
+  await click(2);
+  assert.match(harness.container.querySelector('[role="alert"]')?.textContent ?? "", /복원하지 못했습니다/);
+  await click(2);
+  assert.equal(requests[3]![1], requests[4]![1]);
+  assert.equal(harness.container.querySelector('[role="alert"]'), null);
+});
+
+test("Q&A 충돌 응답의 version만 채택하지 않고 서버 상태와 답변 초안을 함께 유지한다", { concurrency: false }, async (context) => {
+  const requests: Parameters<typeof changeQnaStatus>[] = [];
+  changeQnaStatus = async (...args) => {
+    requests.push(args);
+    return args[3] === 1
+      ? { success: false, conflictKind: "VERSION_CONFLICT", currentRevision: 2, error: "최신 상태를 확인해 주세요." }
+      : { success: true, currentRevision: 3 };
+  };
+  context.after(() => { changeQnaStatus = async () => ({ success: true, currentRevision: 2 }); });
+  const refresh = context.mock.method(router, "refresh");
+  const key = createDocumentDraftKey("qna-reply", "admin-status", "thread-status");
+  const screen = (status: "OPEN" | "CLOSED" | "ANSWERED", version: number) => <ThreadDetailClient actorId="admin-status" threadId="thread-status" title="질문" status={status} version={version} isAdmin replies={[]} deletedAt={null} studentName="학생" createdAt={null} returnTo="/dashboard/qna" />;
+  const harness = await renderForm(context, screen("OPEN", 1), (storage) => storage.setItem(key, serializeFormDraft({ operationId: "012c1894-ea20-46b2-960f-35b01d873570", contentHtml: "<p>아직 전송하지 않은 답변</p>", attachmentUrl: "", attachmentObjectId: "" })));
+  const statusButton = (label: string) => [...harness.container.querySelectorAll<HTMLButtonElement>('[aria-label="스레드 상태 변경"] button')].find((button) => button.textContent === label)!;
+  await waitForCondition(() => !statusButton("답변 완료").disabled, "상태 변경 폼이 준비돼야 합니다.");
+  await act(async () => statusButton("답변 완료").click());
+  assert.equal(refresh.mock.callCount(), 1);
+  await act(async () => statusButton("답변 완료").click());
+  assert.deepEqual(requests.map((args) => args[3]), [1, 1], "새 화면 snapshot 전에는 stale 상태와 최신 version을 조합하지 않는다");
+  assert.equal(requests[0]![2], requests[1]![2]);
+  await harness.rerender(screen("CLOSED", 2));
+  assert.equal(statusButton("종료").getAttribute("aria-pressed"), "true");
+  assert.match(harness.container.querySelector("textarea")?.value ?? "", /전송하지 않은 답변/);
+  await act(async () => statusButton("답변 완료").click());
+  assert.equal(requests[2]![3], 2);
+  await harness.rerender(screen("ANSWERED", 3));
+  assert.equal(statusButton("답변 완료").getAttribute("aria-pressed"), "true");
+});
 
 async function waitForCondition(
   condition: () => boolean,

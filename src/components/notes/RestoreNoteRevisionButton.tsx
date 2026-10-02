@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -19,7 +19,7 @@ export function RestoreNoteRevisionButton({
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  const [operationId] = useState(() => createCreationOperationId());
+  const operationRef = useRef<{ key: string; id: string } | null>(null);
 
   return (
     <div className="space-y-1.5">
@@ -33,19 +33,28 @@ export function RestoreNoteRevisionButton({
           if (!confirm(`${revisionNumber}번 버전의 내용을 새 현재 버전으로 복원하시겠습니까? 기존 이력은 유지됩니다.`)) {
             return;
           }
+          const requestKey = JSON.stringify([noteId, baseRevision, revisionNumber]);
+          if (operationRef.current?.key !== requestKey) {
+            operationRef.current = { key: requestKey, id: createCreationOperationId() };
+          }
+          const operationId = operationRef.current.id;
           startTransition(async () => {
-            const result = await restorePrivateNoteRevision(
-              noteId,
-              operationId,
-              baseRevision,
-              revisionNumber,
-            );
-            if (!result.success) {
-              setError(result.error ?? "이 버전을 복원하지 못했습니다.");
-              return;
+            try {
+              const result = await restorePrivateNoteRevision(
+                noteId,
+                operationId,
+                baseRevision,
+                revisionNumber,
+              );
+              if (!result.success) {
+                setError(result.error ?? "이 버전을 복원하지 못했습니다.");
+                return;
+              }
+              setError(null);
+              router.refresh();
+            } catch {
+              setError("이 버전을 복원하지 못했습니다. 다시 시도해 주세요.");
             }
-            setError(null);
-            router.refresh();
           });
         }}
       >

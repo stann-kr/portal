@@ -99,8 +99,9 @@ export function ThreadDetailClient({
   const [isUploading, setIsUploading] = useState(false);
   const [editorKey, setEditorKey] = useState(0);
   const [isPending, startTransition] = useTransition();
-  const [currentStatus, setCurrentStatus] = useState(status);
-  const [currentVersion, setCurrentVersion] = useState(version);
+  // 상태와 CAS 기준은 같은 서버 snapshot에서 가져온다.
+  const currentStatus = status;
+  const currentVersion = version;
   const [statusError, setStatusError] = useState<string | null>(null);
   const statusOperationIdsRef = useRef(new Map<string, string>());
   const formRef = useRef<HTMLFormElement>(null);
@@ -108,9 +109,6 @@ export function ThreadDetailClient({
   const submittedReplyRef = useRef<QnaReplyDraft | null>(null);
   const handledReplyIdRef = useRef<string | null>(null);
   const router = useRouter();
-
-  useEffect(() => setCurrentStatus(status), [status]);
-  useEffect(() => setCurrentVersion(version), [version]);
 
   const boundAction = createQnaReply.bind(null, threadId);
   const [replyState, replyAction, isReplying] = useActionState<
@@ -219,7 +217,7 @@ export function ThreadDetailClient({
       setAttachmentUrl("");
       setAttachmentObjectId("");
       setEditorKey((k) => k + 1);
-      if (replyState.currentRevision) setCurrentVersion(replyState.currentRevision);
+      router.refresh();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [replyState.replyId]);
@@ -255,12 +253,10 @@ export function ThreadDetailClient({
         );
         if (!result.success) {
           setStatusError(result.error ?? "상태를 변경하지 못했습니다.");
-          if (result.currentRevision) setCurrentVersion(result.currentRevision);
+          if (result.currentRevision) router.refresh();
           return;
         }
         statusOperationIdsRef.current.delete(operationKey);
-        setCurrentStatus(newStatus);
-        if (result.currentRevision) setCurrentVersion(result.currentRevision);
         router.refresh();
       } catch {
         setStatusError("상태를 변경하지 못했습니다. 다시 시도해 주세요.");
