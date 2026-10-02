@@ -8,17 +8,23 @@ import { BookOpen, Clock3, Plus, Trash2 } from "lucide-react";
 import { getActiveAuthSession } from "@/lib/auth-guard";
 import { getPrivateNotes } from "@/lib/actions/privateNotes";
 import { PrivateNoteList } from "@/components/notes/PrivateNoteList";
+import { getNoteSearchQuery, NoteSearch, searchPrivateNotes } from "@/components/notes/NoteSearch";
 import { buildNotesLessonsTimelineHref } from "@/lib/calendar-section-contract";
 
 export const metadata = { title: "내 노트" };
 
-export default async function StudentNotesPage() {
+export default async function StudentNotesPage({ searchParams }: {
+  searchParams: Promise<{ q?: string | string[] }>;
+}) {
   const session = await getActiveAuthSession();
   if (!session?.user?.id) redirect("/login");
   if (session.user.role !== "student") redirect("/dashboard/admin");
 
-  const returnTo = "/dashboard/student/notes";
+  const listPath = "/dashboard/student/notes";
+  const query = getNoteSearchQuery((await searchParams).q);
+  const returnTo = query ? `${listPath}?q=${encodeURIComponent(query)}` : listPath;
   const notes = await getPrivateNotes(session.user.id);
+  const matchingNotes = searchPrivateNotes(notes, query);
   return (
     <div className="mx-auto max-w-4xl space-y-6 px-4 py-6 sm:px-6">
       <header className="flex flex-wrap items-start justify-between gap-4 border-b border-border pb-5">
@@ -33,7 +39,8 @@ export default async function StudentNotesPage() {
           <Link href={`/dashboard/student/notes/new?returnTo=${encodeURIComponent(returnTo)}`} className="inline-flex h-9 items-center gap-1.5 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"><Plus className="size-4" aria-hidden="true" />노트 작성</Link>
         </div>
       </header>
-      <PrivateNoteList notes={notes} returnTo={returnTo} />
+      <NoteSearch action={listPath} query={query} totalCount={notes.length} resultCount={matchingNotes.length} />
+      <PrivateNoteList notes={matchingNotes} returnTo={returnTo} emptyMessage={query ? "검색 결과가 없습니다. 다른 단어로 검색하거나 검색을 초기화해 주세요." : undefined} />
     </div>
   );
 }

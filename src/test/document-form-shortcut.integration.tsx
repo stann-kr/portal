@@ -85,9 +85,20 @@ const router = {
 };
 let restoreNote: typeof import("@/lib/actions/privateNotes").restorePrivateNoteRevision = async () => ({ success: true });
 let changeQnaStatus: typeof import("@/lib/actions/qna").updateThreadStatus = async () => ({ success: true, currentRevision: 2 });
+let notePageRole: "student" | "admin" = "student";
+let notePageData: Awaited<ReturnType<typeof import("@/lib/actions/privateNotes").getPrivateNotes>> = [];
+const notePageTargets: string[] = [];
+
+mock.module("@/lib/auth-guard", { namedExports: {
+  getActiveAuthSession: async () => ({ user: { id: `${notePageRole}-search`, role: notePageRole } }),
+} });
+mock.module("@/lib/actions/students", { namedExports: {
+  getStudentById: async (id: string) => ({ id, role: "student", displayName: "대상 학생" }),
+} });
 
 mock.module("@/lib/actions/privateNotes", { namedExports: {
   restorePrivateNoteRevision: (...args: Parameters<typeof restoreNote>) => restoreNote(...args),
+  getPrivateNotes: async (studentId: string) => { notePageTargets.push(studentId); return notePageData; },
 } });
 
 mock.module("next/dynamic", {
@@ -99,6 +110,7 @@ mock.module("next/link", {
 mock.module("next/navigation", {
   namedExports: {
     useRouter: () => router,
+    redirect: (path: string) => { throw new Error(`redirect:${path}`); },
   },
 });
 mock.module("@/lib/actions/posts", {
@@ -221,6 +233,9 @@ let NoteEditorForm: typeof import("@/components/notes/NoteEditorForm").NoteEdito
 let QnaSlideForm: typeof import("@/components/qna/QnaSlideForm").QnaSlideForm;
 let ThreadDetailClient: typeof import("@/components/qna/ThreadDetailClient").ThreadDetailClient;
 let RestoreNoteRevisionButton: typeof import("@/components/notes/RestoreNoteRevisionButton").RestoreNoteRevisionButton;
+let NoteFullForm: typeof import("@/components/notes/NoteFullForm").NoteFullForm;
+let StudentNotesPage: typeof import("@/app/dashboard/student/notes/page").default;
+let AdminStudentNotesPage: typeof import("@/app/dashboard/admin/students/[id]/notes/page").default;
 
 before(async () => {
   [
@@ -230,6 +245,9 @@ before(async () => {
     { QnaSlideForm },
     { ThreadDetailClient },
     { RestoreNoteRevisionButton },
+    { NoteFullForm },
+    { default: StudentNotesPage },
+    { default: AdminStudentNotesPage },
   ] = await Promise.all([
     import("@/components/community/NewPostForm"),
     import("@/components/qna/NewQnaForm"),
@@ -237,6 +255,9 @@ before(async () => {
     import("@/components/qna/QnaSlideForm"),
     import("@/components/qna/ThreadDetailClient"),
     import("@/components/notes/RestoreNoteRevisionButton"),
+    import("@/components/notes/NoteFullForm"),
+    import("@/app/dashboard/student/notes/page"),
+    import("@/app/dashboard/admin/students/[id]/notes/page"),
   ]);
 });
 
@@ -343,6 +364,57 @@ async function renderForm(
 
   return { browserWindow, container: container as unknown as HTMLElement, rerender: (next) => act(async () => root.render(next)) };
 }
+
+test("학생·관리자 노트 검색은 본문을 찾고 상세·작성·휴지통 왕복의 검색과 학생 문맥을 보존한다", { concurrency: false }, async (context) => {
+  const harness = await renderForm(context, <div />);
+  const date = new Date("2020-01-01T00:00:00Z");
+  notePageData = [
+    { id: "old-note", title: "오래된 레슨", contentHtml: "<p>비트<strong>매칭</strong> 연습</p>", authorName: "강사", authorId: "teacher", version: 1, noteDate: date, createdAt: date, updatedAt: date },
+    { id: "other-note", title: "다른 기록", contentHtml: "<p>다른 본문</p>", authorName: "학생", authorId: "student-search", version: 1, noteDate: null, createdAt: date, updatedAt: date },
+  ];
+  context.after(() => { notePageData = []; notePageTargets.length = 0; notePageRole = "student"; });
+  for (const role of ["student", "admin"] as const) {
+    notePageRole = role;
+    const studentId = role === "student" ? "student-search" : "student-selected";
+    const base = role === "student" ? "/dashboard/student/notes" : `/dashboard/admin/students/${studentId}/notes`;
+    const page = (q: string) => role === "student"
+      ? StudentNotesPage({ searchParams: Promise.resolve({ q }) })
+      : AdminStudentNotesPage({ params: Promise.resolve({ id: studentId }), searchParams: Promise.resolve({ q }) });
+    await harness.rerender(await page("비트매칭"));
+    assert.equal(notePageTargets.at(-1), studentId);
+    assert.match(harness.container.textContent ?? "", /전체 2개 중 1개/u);
+    assert.equal(harness.container.querySelectorAll('ul[aria-label="노트 목록"] li').length, 1);
+    const form = harness.container.querySelector('form[role="search"]')!;
+    assert.equal(form.getAttribute("action"), base);
+    assert.equal(form.getAttribute("method"), "get");
+    assert.equal(harness.container.querySelector('label[for="note-search"]')?.textContent, "제목·본문 검색");
+    const input = harness.container.querySelector<HTMLInputElement>('input[name="q"]')!;
+    assert.equal(input.value, "비트매칭");
+    const links = [...harness.container.querySelectorAll<HTMLAnchorElement>("a")].map((link) => new URL(link.href, "https://portal.test"));
+    const listHref = `${base}?q=${encodeURIComponent("비트매칭")}`;
+    for (const path of ["/dashboard/notes/old-note", `${base}/new`, "/dashboard/notes/trash"]) {
+      assert.equal(links.find((link) => link.pathname === path)?.searchParams.get("returnTo"), listHref);
+    }
+    if (role === "admin") assert.equal(links.find((link) => link.pathname === "/dashboard/notes/trash")?.searchParams.get("studentId"), studentId);
+    input.value = "전송 전 다른 검색어";
+    await harness.rerender(await page(""));
+    assert.equal(harness.container.querySelector<HTMLInputElement>('input[name="q"]')?.value, "");
+    assert.equal(harness.container.querySelectorAll('ul[aria-label="노트 목록"] li').length, 2);
+    await harness.rerender(await page(`${"a".repeat(119)}😀`));
+    assert.equal(harness.container.querySelector<HTMLInputElement>('input[name="q"]')?.value, "a".repeat(119));
+    assert.match(harness.container.textContent ?? "", /검색 결과가 없습니다/u);
+  }
+});
+
+test("관리자 노트 작성 화면의 휴지통 링크는 대상 학생과 검색 복귀 위치를 유지한다", { concurrency: false }, async (context) => {
+  const returnTo = "/dashboard/admin/students/student-selected/notes?q=EQ";
+  const harness = await renderForm(context, <NoteFullForm action={async () => ({})} actorId="admin-search" studentId="student-selected" returnTo={returnTo} spaceLabel="대상 학생" />);
+  const link = [...harness.container.querySelectorAll<HTMLAnchorElement>("a")].find((anchor) => anchor.getAttribute("href")?.startsWith("/dashboard/notes/trash?"));
+  assert.ok(link);
+  const target = new URL(link.getAttribute("href")!, "https://portal.test");
+  assert.equal(target.searchParams.get("studentId"), "student-selected");
+  assert.equal(target.searchParams.get("returnTo"), returnTo);
+});
 
 test("노트 이력은 A→B→A를 새 복원 의도로 처리하고 전송 실패만 같은 ID로 재시도한다", { concurrency: false }, async (context) => {
   const requests: Parameters<typeof restoreNote>[] = [];

@@ -204,7 +204,7 @@ export function NoteFullForm({ action, actorId, studentId, returnTo, defaultDate
             {spaceLabel ? <p className="mt-1 text-sm text-muted-foreground">대상 스페이스 · {spaceLabel}</p> : null}
           </div>
           <Link
-            href={`/dashboard/notes/trash?returnTo=${encodeURIComponent(returnTo)}`}
+            href={`/dashboard/notes/trash?studentId=${encodeURIComponent(studentId)}&returnTo=${encodeURIComponent(returnTo)}`}
             className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
           >
             <Trash2 className="h-4 w-4" aria-hidden="true" />

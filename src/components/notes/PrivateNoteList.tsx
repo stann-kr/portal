@@ -10,6 +10,7 @@ export type PrivateNoteListItem = {
   createdAt: Date | null;
   updatedAt: Date | null;
   authorName: string | null;
+  searchPreview?: string;
 };
 
 function formatDate(value: Date | null): string {
@@ -80,7 +81,7 @@ export function PrivateNoteList({
                   노트 열기
                 </Link>
               </div>
-              <p className="mt-3 line-clamp-2 text-sm text-muted-foreground">{getPrivateNotePreview(note.contentHtml)}</p>
+              <p className="mt-3 line-clamp-2 text-sm text-muted-foreground">{note.searchPreview ?? getPrivateNotePreview(note.contentHtml)}</p>
             </article>
           </li>
         );
