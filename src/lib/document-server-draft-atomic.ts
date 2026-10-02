@@ -1,5 +1,5 @@
 import type { DbContext } from "@/db/client";
-import type { DocumentDraftKind } from "@/lib/form-draft";
+import type { DocumentServerDraftKind } from "@/db/schema";
 import {
   type DocumentServerDraftOperationType,
   type DocumentServerDraftResultState,
@@ -31,7 +31,7 @@ export { pruneExpiredDocumentServerDraftState } from "@/lib/document-server-draf
 export type SaveDocumentServerDraftWrite = {
   ownerId: string;
   sourceKey: string;
-  kind: DocumentDraftKind;
+  kind: DocumentServerDraftKind;
   contextId: string;
   operationId: string;
   requestHash: string;

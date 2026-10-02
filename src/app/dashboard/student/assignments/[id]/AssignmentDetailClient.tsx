@@ -6,6 +6,7 @@ import { TimelineFeedback, type FeedbackItem } from "@/components/feedback/Timel
 
 interface AssignmentDetailClientProps {
   assignmentId: string;
+  actorId: string;
   mediaUrl: string;
   feedbackList: FeedbackItem[];
   isAdmin: boolean;
@@ -13,6 +14,7 @@ interface AssignmentDetailClientProps {
 
 export function AssignmentDetailClient({
   assignmentId,
+  actorId,
   mediaUrl,
   feedbackList,
   isAdmin,
@@ -30,6 +32,7 @@ export function AssignmentDetailClient({
       </div>
       <TimelineFeedback
         assignmentId={assignmentId}
+        actorId={actorId}
         feedbackList={feedbackList}
         isAdmin={isAdmin}
         onSeek={handleSeek}

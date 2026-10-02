@@ -7,7 +7,7 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { getAssignmentById } from "@/lib/actions/assignments";
 import { getFeedbacksByAssignment } from "@/lib/actions/feedbacks";
-import { getActiveAuthSession } from "@/lib/auth-guard";
+import { requireAuth } from "@/lib/auth-guard";
 import { AssignmentDetailClient } from "./AssignmentDetailClient";
 
 export type AssignmentFeedback = Awaited<
@@ -24,7 +24,7 @@ export default async function AssignmentDetailPage({
   const [assignment, fb, session] = await Promise.all([
     getAssignmentById(assignmentId),
     getFeedbacksByAssignment(assignmentId),
-    getActiveAuthSession(),
+    requireAuth(),
   ]);
 
   if (!assignment) {
@@ -79,6 +79,7 @@ export default async function AssignmentDetailPage({
       <AssignmentDetailClient
         key={assignmentId}
         assignmentId={assignmentId}
+        actorId={session.user.id!}
         mediaUrl={assignment.mediaUrl}
         feedbackList={feedbackList}
         isAdmin={isAdmin}

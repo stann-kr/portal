@@ -17,6 +17,10 @@ import {
   deleteFeedback,
   type CreateFeedbackState,
 } from "@/lib/actions/feedbacks";
+import { DraftStatus } from "@/components/editor/DraftStatus";
+import { createDocumentDraftKey } from "@/lib/form-draft";
+import { useFormDraft } from "@/lib/hooks/useFormDraft";
+import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
 
 export interface FeedbackItem {
   id: string;
@@ -27,6 +31,7 @@ export interface FeedbackItem {
 
 interface TimelineFeedbackProps {
   assignmentId: string;
+  actorId: string;
   feedbackList: FeedbackItem[];
   isAdmin: boolean;
   /** VideoPlayer의 특정 시점 이동 콜백 */
@@ -38,13 +43,25 @@ interface TimelineFeedbackProps {
 
 function FeedbackForm({
   assignmentId,
+  actorId,
   onSuccess,
 }: {
   assignmentId: string;
+  actorId: string;
   onSuccess: () => Promise<void>;
 }) {
   const [timeMarker, setTimeMarker] = useState("");
   const [content, setContent] = useState("");
+  const [showResult, setShowResult] = useState(false);
+  const draft = useFormDraft<{ timeMarker: string; content: string }>(
+    createDocumentDraftKey("assignment-feedback", actorId, assignmentId),
+    (saved) => {
+      setTimeMarker(typeof saved.timeMarker === "string" ? saved.timeMarker : "");
+      setContent(typeof saved.content === "string" ? saved.content : "");
+      setShowResult(false);
+    },
+    { onReset: () => { setTimeMarker(""); setContent(""); setShowResult(false); } },
+  );
   const [state, action, isPending] = useActionState<
     CreateFeedbackState,
     FormData
@@ -56,17 +73,38 @@ function FeedbackForm({
       return { error: "저장 결과를 확인하지 못했습니다. 피드백 목록을 확인한 뒤 다시 시도해 주세요." };
     }
     if (result.success) {
+      draft.clear({ reason: "submitted", submittedData: {
+        timeMarker: String(data.get("timeMarker") ?? ""),
+        content: String(data.get("content") ?? ""),
+      } });
       setTimeMarker("");
       setContent("");
       await onSuccess();
     }
     return result;
   }, {});
+  useBusyNavigationGuard(isPending);
+
+  const saveDraft = (next: { timeMarker: string; content: string }) => {
+    setShowResult(false);
+    if (next.timeMarker || next.content) draft.save(next);
+    else draft.clear();
+  };
 
   return (
     <form
       action={action}
       className="space-y-2 p-4 rounded-xl border border-dashed border-border bg-muted/20"
+      onBlur={draft.flush}
+      onSubmit={(event) => {
+        if (!draft.loaded || !draft.canSubmit || isPending) {
+          event.preventDefault();
+          return;
+        }
+        draft.save({ timeMarker, content });
+        draft.flush();
+        setShowResult(true);
+      }}
     >
       <p className="text-sm font-semibold text-foreground">
         새 피드백 추가
@@ -82,12 +120,16 @@ function FeedbackForm({
             type="text"
             placeholder="MM:SS"
             value={timeMarker}
-            onChange={(event) => setTimeMarker(event.target.value)}
+            onChange={(event) => {
+              setTimeMarker(event.target.value);
+              saveDraft({ timeMarker: event.target.value, content });
+            }}
             className="font-mono"
             pattern="[0-9]{1,2}:[0-9]{2}"
             title="예: 01:30 (분:초)"
             required
-            disabled={isPending}
+            disabled={!draft.loaded || isPending}
+            aria-describedby={showResult && state.error ? "feedback-error" : undefined}
           />
         </div>
         <div className="space-y-1.5">
@@ -100,18 +142,23 @@ function FeedbackForm({
             type="text"
             placeholder="구체적인 수정 지점을 입력하세요"
             value={content}
-            onChange={(event) => setContent(event.target.value)}
+            onChange={(event) => {
+              setContent(event.target.value);
+              saveDraft({ timeMarker, content: event.target.value });
+            }}
             required
-            disabled={isPending}
+            disabled={!draft.loaded || isPending}
+            aria-describedby={showResult && state.error ? "feedback-error" : undefined}
           />
         </div>
-        <Button type="submit" size="sm" disabled={isPending} className="gap-1 sm:mb-0.5">
+        <Button type="submit" size="sm" disabled={!draft.loaded || !draft.canSubmit || isPending} className="gap-1 sm:mb-0.5">
           <MessageSquare className="w-4 h-4" />
           {isPending ? "추가 중..." : "추가"}
         </Button>
       </div>
-      {state.error && <p role="alert" className="text-xs text-destructive">{state.error}</p>}
-      {state.success && <p role="status" className="text-xs text-success">피드백을 추가했습니다.</p>}
+      {showResult && state.error && <p id="feedback-error" role="alert" className="text-xs text-destructive">{state.error}</p>}
+      {showResult && state.success && <p role="status" className="text-xs text-success">피드백을 추가했습니다.</p>}
+      <DraftStatus {...draft} onRestoreRecovery={draft.restoreRecovery} onDiscardRecovery={draft.discardRecovery} disabled={isPending} />
     </form>
   );
 }
@@ -120,6 +167,7 @@ function FeedbackForm({
 
 export function TimelineFeedback({
   assignmentId,
+  actorId,
   feedbackList,
   isAdmin,
   onSeek,
@@ -214,7 +262,7 @@ export function TimelineFeedback({
 
       {/* 관리자 피드백 작성 폼 */}
       {isAdmin && (
-        <FeedbackForm assignmentId={assignmentId} onSuccess={refreshAfterChange} />
+        <FeedbackForm key={`${actorId}:${assignmentId}`} assignmentId={assignmentId} actorId={actorId} onSuccess={refreshAfterChange} />
       )}
     </div>
   );

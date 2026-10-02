@@ -24,6 +24,8 @@ let BlockCommandMenu: typeof import("@/components/editor/BlockCommandMenu").Bloc
 let UnifiedCalendar: typeof import("@/components/student-portal/UnifiedCalendar").UnifiedCalendar;
 let VideoPlayer: typeof import("@/components/player/VideoPlayer").VideoPlayer;
 let TimelineFeedback: typeof import("@/components/feedback/TimelineFeedback").TimelineFeedback;
+let PostDetailClient: typeof import("@/app/community/[postId]/PostDetailClient").PostDetailClient;
+let saveComment: typeof import("@/lib/actions/comments").createComment = async () => ({});
 let AssignmentView: typeof import("@/components/student-portal/AssignmentView").AssignmentView;
 let saveAssignment: typeof import("@/lib/actions/assignments").submitAssignment = async () => ({});
 let loadAssignments: typeof import("@/lib/actions/assignments").getMyAssignments = async () => [];
@@ -57,6 +59,14 @@ mock.module("@/lib/actions/feedbacks", { namedExports: {
   getMyFeedbacksMap: async () => ({}),
   getFeedbacksByAssignment: async () => [],
 } });
+mock.module("@/lib/actions/comments", { namedExports: {
+  createComment: (...args: Parameters<typeof saveComment>) => saveComment(...args),
+  deleteComment: async () => {},
+  getCommentsByPost: async () => [],
+} });
+mock.module("@/lib/actions/posts", { namedExports: { deletePost: async () => {} } });
+mock.module("@/components/community/PostEditForm", { namedExports: { PostEditForm: () => null } });
+mock.module("@/components/community/PostTrashActions", { namedExports: { PostTrashActions: () => null } });
 mock.module("@/lib/actions/calendarEvents", { namedExports: { createCalendarEvent: (...args: Parameters<typeof saveEvent>) => saveEvent(...args) } });
 mock.module("@/lib/actions/curriculum", { namedExports: { toggleModuleComplete: (...args: Parameters<typeof toggleModule>) => toggleModule(...args) } });
 mock.module("@/lib/actions/digging", { namedExports: {
@@ -125,6 +135,7 @@ before(async () => {
   ({ UnifiedCalendar } = await import("@/components/student-portal/UnifiedCalendar"));
   ({ VideoPlayer } = await import("@/components/player/VideoPlayer"));
   ({ TimelineFeedback } = await import("@/components/feedback/TimelineFeedback"));
+  ({ PostDetailClient } = await import("@/app/community/[postId]/PostDetailClient"));
   ({ AssignmentView } = await import("@/components/student-portal/AssignmentView"));
   ({ CreateEntryDropdown } = await import("@/components/student-portal/CreateEntryDropdown"));
   ({ AdminPortalClient } = await import("@/components/admin-portal/AdminPortalClient"));
@@ -182,7 +193,7 @@ async function escape() {
 }
 
 async function fill(id: string, value: string) {
-  const input = browser.document.getElementById(id);
+  const input = browser.document.getElementById(id) ?? browser.document.querySelector(`input[name="${id}"]`);
   assert.ok(input instanceof browser.HTMLInputElement);
   const setter = Object.getOwnPropertyDescriptor(browser.HTMLInputElement.prototype, "value")?.set;
   assert.ok(setter);
@@ -192,6 +203,12 @@ async function fill(id: string, value: string) {
     input.dispatchEvent(new browser.Event("input", { bubbles: true }));
     input.dispatchEvent(new browser.Event("change", { bubbles: true }));
   });
+}
+
+function inputValue(name: string): string {
+  const input = browser.document.querySelector(`input[name="${name}"]`);
+  assert.ok(input instanceof browser.HTMLInputElement);
+  return input.value;
 }
 
 test("portal navigation restores URL state and does not add history for the active section", async (context) => {
@@ -555,7 +572,7 @@ test("feedback failure keeps the time and text; only a confirmed save clears the
   let refreshes = 0;
   saveFeedback = async () => ({ error: "내용을 확인해 주세요." });
   context.after(() => { saveFeedback = async () => ({}); });
-  await render(context, <TimelineFeedback assignmentId="assignment" feedbackList={[]} isAdmin onRefresh={() => { refreshes++; }} />);
+  await render(context, <TimelineFeedback assignmentId="assignment" actorId="admin-1" feedbackList={[]} isAdmin onRefresh={() => { refreshes++; }} />);
   await fill("feedback-time-marker", "01:30");
   await fill("feedback-content", "전환 지점에서 저음을 천천히 교환해 주세요.");
   await press("추가");
@@ -566,6 +583,69 @@ test("feedback failure keeps the time and text; only a confirmed save clears the
   await press("추가");
   assert.equal((browser.document.getElementById("feedback-content") as unknown as HTMLInputElement).value, "");
   assert.equal(refreshes, 1);
+});
+
+test("community comment failure and remount preserve the author's draft", async (context) => {
+  browser.localStorage.clear();
+  saveComment = async () => ({ error: "댓글을 저장하지 못했습니다." });
+  context.after(() => { saveComment = async () => ({}); });
+  const post = {
+    id: "draft-post", authorId: "student-1", title: "레슨 이야기", contentHtml: "<p>본문</p>",
+    category: "general", boardType: "GENERAL" as const, isPinned: false, mediaUrl: null,
+    mediaObjectId: null, createdAt: new Date(), updatedAt: new Date(), deletedAt: null,
+    deletedById: null, version: 1, authorName: "학생", authorEmail: null,
+  };
+  const screen = (actorId: string) => <PostDetailClient postId={post.id} post={post} initialCommentList={[]} currentUserId={actorId} isAdmin={false} returnTo="/community" />;
+  const root = await render(context, screen("student-1"));
+  await fill("content", "이 부분을 다음 레슨에서 다시 연습하고 싶어요.");
+  await press("등록");
+  assert.equal(inputValue("content"), "이 부분을 다음 레슨에서 다시 연습하고 싶어요.");
+  await act(async () => root.render(<div />));
+  await act(async () => root.render(screen("student-2")));
+  await settle();
+  assert.equal(inputValue("content"), "");
+  await act(async () => root.render(<div />));
+  await act(async () => root.render(screen("student-1")));
+  await settle();
+  assert.match(inputValue("content"), /다음 레슨/);
+  saveComment = async () => { throw new Error("offline"); };
+  await press("등록");
+  assert.match(inputValue("content"), /다음 레슨/);
+  assert.match(browser.document.querySelector('[role="alert"]')?.textContent ?? "", /저장 결과/);
+  saveComment = async () => ({ success: true, commentId: "confirmed-comment" });
+  await press("등록");
+  assert.equal(inputValue("content"), "");
+  await act(async () => root.render(<div />));
+  await act(async () => root.render(screen("student-1")));
+  await settle();
+  assert.equal(inputValue("content"), "");
+});
+
+test("feedback draft survives leaving the assignment before submitting", async (context) => {
+  browser.localStorage.clear();
+  const screen = (actorId = "admin-1", assignmentId = "feedback-draft-assignment") => <TimelineFeedback assignmentId={assignmentId} actorId={actorId} feedbackList={[]} isAdmin />;
+  const root = await render(context, screen());
+  await fill("feedback-time-marker", "01:30");
+  await fill("feedback-content", "다음 전환에서는 저음을 천천히 바꿔주세요.");
+  await act(async () => root.render(<div />));
+  await act(async () => root.render(screen("admin-2")));
+  await settle();
+  assert.equal(inputValue("content"), "");
+  await act(async () => root.render(screen("admin-1", "other-assignment")));
+  await settle();
+  assert.equal(inputValue("content"), "");
+  await act(async () => root.render(screen()));
+  await settle();
+  assert.equal((browser.document.getElementById("feedback-time-marker") as unknown as HTMLInputElement).value, "01:30");
+  assert.match((browser.document.getElementById("feedback-content") as unknown as HTMLInputElement).value, /저음을/);
+  saveFeedback = async () => ({ success: true });
+  context.after(() => { saveFeedback = async () => ({}); });
+  await press("추가");
+  await act(async () => root.render(<div />));
+  await act(async () => root.render(screen()));
+  await settle();
+  assert.equal(inputValue("content"), "");
+  assert.equal(inputValue("timeMarker"), "");
 });
 
 test("assignment errors retain the URL and a failed refresh retries without resubmission", async (context) => {

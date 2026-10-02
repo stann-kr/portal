@@ -1,19 +1,17 @@
 "use client";
 
-import { useActionState, useCallback, useEffect, useRef, useState, useTransition } from "react";
+import { useCallback, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Trash2, Hash, History, PencilLine } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { RichTextContent } from "@/components/editor/RichTextContent";
-import { Input } from "@/components/ui/input";
 import { deletePost, getPostIncludingTrash } from "@/lib/actions/posts";
 import {
-  createComment,
   deleteComment,
   getCommentsByPost,
-  type CreateCommentState,
 } from "@/lib/actions/comments";
+import { CommentForm } from "@/components/community/CommentForm";
 import { PostEditForm } from "@/components/community/PostEditForm";
 import { PostTrashActions } from "@/components/community/PostTrashActions";
 import { createCreationOperationId } from "@/lib/creation-operation";
@@ -44,21 +42,7 @@ export function PostDetailClient({
   const [isEditPending, setIsEditPending] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleteOperationId] = useState(() => createCreationOperationId());
-  const commentFormRef = useRef<HTMLFormElement>(null);
   const router = useRouter();
-
-  // ─── 댓글 폼 ──────────────────────────────────
-  const boundCreateComment = createComment.bind(null, postId);
-  const [commentState, commentAction, isCommentPending] = useActionState<
-    CreateCommentState,
-    FormData
-  >(boundCreateComment, {});
-
-  useEffect(() => {
-    if (!commentState.commentId) return;
-    commentFormRef.current?.reset();
-    router.refresh();
-  }, [commentState.commentId, router]);
 
   const handleDeletePost = () => {
     if (!post || !confirm("이 게시물을 휴지통으로 이동하시겠습니까? 30일 동안 복원할 수 있습니다.")) return;
@@ -261,25 +245,8 @@ export function PostDetailClient({
         )}
 
         {/* 댓글 입력 */}
-        {!post.deletedAt ? (
-          <>
-            <form ref={commentFormRef} action={commentAction} className="flex gap-2">
-              <Input
-                name="content"
-                type="text"
-                placeholder="댓글을 입력하세요..."
-                required
-                disabled={isCommentPending}
-                className="flex-1"
-              />
-              <Button type="submit" disabled={isCommentPending} size="sm">
-                등록
-              </Button>
-            </form>
-            {commentState.error && (
-              <p className="text-sm text-destructive">{commentState.error}</p>
-            )}
-          </>
+        {!post.deletedAt && currentUserId ? (
+          <CommentForm key={`${currentUserId}:${postId}`} postId={postId} actorId={currentUserId} onSaved={() => router.refresh()} />
         ) : null}
       </section>
     </div>

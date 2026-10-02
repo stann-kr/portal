@@ -1,6 +1,6 @@
 import { and, eq, lte } from "drizzle-orm";
 import type { DbContext, DrizzleDb } from "@/db/client";
-import type { DocumentDraftKind } from "@/lib/form-draft";
+import type { DocumentServerDraftKind } from "@/db/schema";
 import type {
   DocumentServerDraftOperationType,
   DocumentServerDraftResultState,
@@ -12,7 +12,7 @@ import {
 
 export type StoredDraft = {
   sourceKey: string;
-  kind: DocumentDraftKind;
+  kind: DocumentServerDraftKind;
   contextId: string;
   payloadJson: string;
   payloadHash: string;

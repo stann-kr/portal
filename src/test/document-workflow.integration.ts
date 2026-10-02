@@ -2934,6 +2934,18 @@ test("서버 초안은 owner 경계를 거부하고 전용 계정 삭제 D1 batc
   if (denied.ok) return;
   assert.equal(denied.reason, "INVALID_INPUT");
 
+  for (const kind of ["community-comment", "assignment-feedback"] as const) {
+    const localOnly = await documentDraftActions.saveDocumentServerDraft(
+      createServerDraftSaveInput("student-1", { content: "이 기기 초안" }, {
+        sourceKey: createDocumentDraftKey(kind, "student-1", "target-1"),
+      }),
+    );
+    assert.equal(localOnly.ok, false);
+    if (!localOnly.ok) assert.equal(localOnly.reason, "INVALID_INPUT");
+  }
+  assert.equal((await db.select().from(documentServerDrafts)).length, 0);
+  assert.equal((await db.select().from(documentServerDraftOperations)).length, 0);
+
   const ownSourceKey = createDocumentDraftKey("note", "student-1", "new:student-1");
   const saved = await documentDraftActions.saveDocumentServerDraft(
     createServerDraftSaveInput(

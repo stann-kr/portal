@@ -36,10 +36,12 @@ test("AES-GCM은 32-byte key, fresh IV와 student/provider AAD로 URL을 보호�
   await assert.rejects(() => decryptExternalCalendarUrl({ ...first, studentId: "student-a", provider: "GOOGLE", key: KEY.map((byte) => byte ^ 0xff) }));
   await assert.rejects(() => decryptExternalCalendarUrl({ ...first, urlIv: "AA", studentId: "student-a", provider: "GOOGLE", key: KEY }));
 
-  const lastCharacter = first.encryptedUrl.at(-1);
+  const encryptedBytes = Buffer.from(first.encryptedUrl, "base64url");
+  // Base64의 마지막 문자만 바꾸면 padding bit만 달라져 원문 bytes가 같을 수 있다.
+  encryptedBytes[0] = encryptedBytes[0]! ^ 1;
   const tampered = {
     ...first,
-    encryptedUrl: `${first.encryptedUrl.slice(0, -1)}${lastCharacter === "A" ? "B" : "A"}`,
+    encryptedUrl: encryptedBytes.toString("base64url"),
   };
   await assert.rejects(
     () => decryptExternalCalendarUrl({ ...tampered, studentId: "student-a", provider: "GOOGLE", key: KEY }),

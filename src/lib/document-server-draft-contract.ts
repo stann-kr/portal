@@ -4,8 +4,8 @@ import { parseCreationOperationId } from "@/lib/creation-operation";
 import {
   parseDocumentDraftKey,
   serializeNormalizedFormDraftData,
-  type DocumentDraftKind,
 } from "@/lib/form-draft";
+import type { DocumentServerDraftKind } from "@/db/schema";
 import {
   DOCUMENT_SERVER_DRAFT_MAX_PAYLOAD_BYTES,
   DOCUMENT_SERVER_DRAFT_PAYLOAD_VERSION,
@@ -15,7 +15,7 @@ import {
 
 export type DocumentServerDraftSnapshot = {
   sourceKey: string;
-  kind: DocumentDraftKind;
+  kind: DocumentServerDraftKind;
   contextId: string;
   payloadJson: string;
   payloadHash: string;
@@ -141,7 +141,11 @@ export function validateDocumentServerDraftSource(
   ownerId: string,
 ) {
   const identity = parseDocumentDraftKey(sourceKey);
-  return identity?.ownerId === ownerId ? identity : null;
+  if (!identity || identity.ownerId !== ownerId) return null;
+  const { kind } = identity;
+  // 댓글·피드백은 이 기기 초안이다. 기존 서버 schema의 문서 종류만 허용한다.
+  if (kind === "community-comment" || kind === "assignment-feedback") return null;
+  return { ...identity, kind };
 }
 
 export function createDocumentServerDraftRequestHash(input: {

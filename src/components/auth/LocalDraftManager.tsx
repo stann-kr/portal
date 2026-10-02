@@ -22,6 +22,8 @@ import type { LocalDocumentDraftSummary } from "@/lib/local-document-drafts";
 const DRAFT_KIND_LABELS: Readonly<Record<DocumentDraftKind, string>> = {
   note: "개인 노트",
   "community-post": "커뮤니티 글",
+  "community-comment": "커뮤니티 댓글",
+  "assignment-feedback": "과제 피드백",
   "qna-thread": "1:1 질문",
   "qna-reply": "1:1 답변",
 };

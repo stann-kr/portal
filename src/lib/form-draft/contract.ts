@@ -17,6 +17,8 @@ export const DOCUMENT_DRAFT_KINDS = [
   "qna-thread",
   "qna-reply",
   "community-post",
+  "community-comment",
+  "assignment-feedback",
 ] as const;
 
 export type DocumentDraftKind = (typeof DOCUMENT_DRAFT_KINDS)[number];

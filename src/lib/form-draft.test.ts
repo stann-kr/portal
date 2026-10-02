@@ -301,6 +301,8 @@ test("계정 정리는 canonical·legacy·future·recovery·marker를 지우고 
   const storage = new MemoryDraftStorage();
   const ownerKey = createDocumentDraftKey("note", "owner-1", "note-1");
   const ownerLegacyKey = createDocumentDraftKey("community-post", "owner-1", "new");
+  const commentKey = createDocumentDraftKey("community-comment", "owner-1", "post-1");
+  const feedbackKey = createDocumentDraftKey("assignment-feedback", "owner-1", "assignment-1");
   const otherOwnerKey = createDocumentDraftKey("note", "owner-2", "note-2");
   const recoveryKey = createFormDraftRecoveryKey(ownerKey, "legacy-writer");
   const markerHeadKey = createFormDraftClearMarkerKey(ownerKey);
@@ -311,6 +313,8 @@ test("계정 정리는 canonical·legacy·future·recovery·marker를 지우고 
   );
   storage.setItem(ownerKey, JSON.stringify({ version: 99, savedAt: 1, data: {} }));
   storage.setItem(ownerLegacyKey, JSON.stringify({ title: "legacy" }));
+  storage.setItem(commentKey, serializeFormDraft({ content: "내 댓글 초안" }, 1));
+  storage.setItem(feedbackKey, serializeFormDraft({ timeMarker: "01:30", content: "내 피드백" }, 1));
   storage.setItem(recoveryKey, "malformed future-compatible raw");
   storage.setItem(markerHeadKey, "marker-head");
   storage.setItem(markerEntryKey, "marker-entry");
@@ -321,10 +325,12 @@ test("계정 정리는 canonical·legacy·future·recovery·marker를 지우고 
 
   assert.equal(result.enumerationFailed, false);
   assert.deepEqual(result.failedKeys, []);
-  assert.deepEqual(result.sourceKeys, [ownerLegacyKey, ownerKey].sort());
-  assert.equal(result.removedKeys.length, 5);
+  assert.deepEqual(result.sourceKeys, [ownerLegacyKey, ownerKey, commentKey, feedbackKey].sort());
+  assert.equal(result.removedKeys.length, 7);
   assert.equal(storage.getItem(ownerKey), null);
   assert.equal(storage.getItem(ownerLegacyKey), null);
+  assert.equal(storage.getItem(commentKey), null);
+  assert.equal(storage.getItem(feedbackKey), null);
   assert.equal(storage.getItem(recoveryKey), null);
   assert.equal(storage.getItem(markerHeadKey), null);
   assert.equal(storage.getItem(markerEntryKey), null);
