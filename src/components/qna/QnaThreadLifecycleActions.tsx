@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { RotateCcw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -30,15 +30,16 @@ export function QnaThreadLifecycleActions({
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
-  const [error, setError] = useState<string | null>(null);
-  const [trashOperationId] = useState(() => createCreationOperationId());
-  const [restoreOperationId] = useState(() => createCreationOperationId());
-  const [purgeOperationId] = useState(() => createCreationOperationId());
+  const [failure, setFailure] = useState<{ message: string; snapshot: string; refreshRequired: boolean } | null>(null);
+  const operation = useRef<{ key: string; id: string } | null>(null);
+  const snapshot = JSON.stringify([threadId, version, deletedAt, canRestore, canPurge]);
+  const needsRefresh = failure?.refreshRequired && failure.snapshot === snapshot;
   const expired = deletedAt
     ? new Date(deletedAt).getTime() + RETENTION_MILLISECONDS <= Date.now()
     : false;
 
   const run = (kind: "trash" | "restore" | "purge") => {
+    if (isPending || needsRefresh) return;
     const confirmed =
       kind === "trash"
         ? confirm("이 Q&A를 휴지통으로 이동하시겠습니까? 30일 동안 복원할 수 있습니다.")
@@ -46,23 +47,33 @@ export function QnaThreadLifecycleActions({
           ? confirm("스레드, 모든 답변과 이력을 영구 삭제합니다. 되돌릴 수 없습니다.")
           : true;
     if (!confirmed) return;
+    const operationKey = JSON.stringify([snapshot, kind]);
+    if (operation.current?.key !== operationKey) {
+      operation.current = { key: operationKey, id: createCreationOperationId() };
+    }
+    const operationId = operation.current.id;
+    setFailure(null);
     startTransition(async () => {
       try {
         const result =
           kind === "trash"
-            ? await trashQnaThread(threadId, trashOperationId, version)
+            ? await trashQnaThread(threadId, operationId, version)
             : kind === "restore"
-              ? await restoreQnaThread(threadId, restoreOperationId, version)
-              : await purgeQnaThread(threadId, purgeOperationId, version);
+              ? await restoreQnaThread(threadId, operationId, version)
+              : await purgeQnaThread(threadId, operationId, version);
         if (!result.success) {
-          setError(result.error ?? "Q&A 상태를 변경하지 못했습니다.");
+          setFailure({
+            message: result.error ?? "Q&A 상태를 변경하지 못했습니다.",
+            snapshot,
+            refreshRequired: ["VERSION_CONFLICT", "TRASHED", "PURGED"].includes(result.conflictKind ?? ""),
+          });
           return;
         }
-        setError(null);
+        setFailure(null);
         if (kind === "restore") router.refresh();
         else router.push(returnTo);
       } catch {
-        setError("Q&A 상태를 변경하지 못했습니다. 다시 시도해 주세요.");
+        setFailure({ message: "Q&A 상태를 변경하지 못했습니다. 다시 시도해 주세요.", snapshot, refreshRequired: false });
       }
     });
   };
@@ -75,7 +86,7 @@ export function QnaThreadLifecycleActions({
           variant="outline"
           size="sm"
           className="gap-1.5 text-destructive"
-          disabled={isPending}
+          disabled={isPending || Boolean(needsRefresh)}
           onClick={() => run("trash")}
         >
           <Trash2 className="h-4 w-4" aria-hidden="true" />
@@ -89,7 +100,7 @@ export function QnaThreadLifecycleActions({
               variant="outline"
               size="sm"
               className="gap-1.5"
-              disabled={isPending}
+              disabled={isPending || Boolean(needsRefresh)}
               onClick={() => run("restore")}
             >
               <RotateCcw className="h-4 w-4" aria-hidden="true" />
@@ -101,7 +112,7 @@ export function QnaThreadLifecycleActions({
               type="button"
               size="sm"
               className="gap-1.5 bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              disabled={isPending}
+              disabled={isPending || Boolean(needsRefresh)}
               onClick={() => run("purge")}
             >
               <Trash2 className="h-4 w-4" aria-hidden="true" />
@@ -110,7 +121,16 @@ export function QnaThreadLifecycleActions({
           ) : null}
         </span>
       )}
-      {error ? <span role="alert" className="text-xs text-destructive">{error}</span> : null}
+      {failure && <span role={failure.snapshot === snapshot ? "alert" : "status"} className="text-xs text-muted-foreground">
+        {failure.snapshot === snapshot ? failure.message : "최신 상태를 불러왔습니다. 현재 상태를 확인한 뒤 다시 진행해 주세요."}
+      </span>}
+      {failure?.refreshRequired && <Button type="button" variant="outline" size="sm" disabled={isPending} onClick={() => startTransition(() => {
+        try {
+          router.refresh();
+        } catch {
+          setFailure({ message: "최신 상태를 불러오지 못했습니다. 다시 시도해 주세요.", snapshot, refreshRequired: true });
+        }
+      })}>최신 상태 확인</Button>}
     </span>
   );
 }

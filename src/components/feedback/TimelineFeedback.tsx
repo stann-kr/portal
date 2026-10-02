@@ -21,6 +21,7 @@ import { DraftStatus } from "@/components/editor/DraftStatus";
 import { createDocumentDraftKey } from "@/lib/form-draft";
 import { useFormDraft } from "@/lib/hooks/useFormDraft";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
+import { CREATION_OPERATION_FIELD, createCreationOperationId, parseCreationOperationId } from "@/lib/creation-operation";
 
 export interface FeedbackItem {
   id: string;
@@ -52,15 +53,17 @@ function FeedbackForm({
 }) {
   const [timeMarker, setTimeMarker] = useState("");
   const [content, setContent] = useState("");
+  const [operationId, setOperationId] = useState("");
   const [showResult, setShowResult] = useState(false);
-  const draft = useFormDraft<{ timeMarker: string; content: string }>(
+  const draft = useFormDraft<{ timeMarker: string; content: string; operationId?: string }>(
     createDocumentDraftKey("assignment-feedback", actorId, assignmentId),
     (saved) => {
       setTimeMarker(typeof saved.timeMarker === "string" ? saved.timeMarker : "");
       setContent(typeof saved.content === "string" ? saved.content : "");
+      setOperationId(parseCreationOperationId(saved.operationId) ?? createCreationOperationId());
       setShowResult(false);
     },
-    { onReset: () => { setTimeMarker(""); setContent(""); setShowResult(false); } },
+    { onReset: () => { setTimeMarker(""); setContent(""); setOperationId(createCreationOperationId()); setShowResult(false); } },
   );
   const [state, action, isPending] = useActionState<
     CreateFeedbackState,
@@ -73,12 +76,14 @@ function FeedbackForm({
       return { error: "저장 결과를 확인하지 못했습니다. 피드백 목록을 확인한 뒤 다시 시도해 주세요." };
     }
     if (result.success) {
+      const submittedData = { timeMarker: String(data.get("timeMarker") ?? ""), content: String(data.get("content") ?? "") };
       draft.clear({ reason: "submitted", submittedData: {
-        timeMarker: String(data.get("timeMarker") ?? ""),
-        content: String(data.get("content") ?? ""),
-      } });
+        ...submittedData,
+        operationId: String(data.get(CREATION_OPERATION_FIELD) ?? ""),
+      }, submittedAliases: [submittedData] });
       setTimeMarker("");
       setContent("");
+      setOperationId(createCreationOperationId());
       await onSuccess();
     }
     return result;
@@ -86,8 +91,10 @@ function FeedbackForm({
   useBusyNavigationGuard(isPending);
 
   const saveDraft = (next: { timeMarker: string; content: string }) => {
+    const nextOperationId = createCreationOperationId();
+    setOperationId(nextOperationId);
     setShowResult(false);
-    if (next.timeMarker || next.content) draft.save(next);
+    if (next.timeMarker || next.content) draft.save({ ...next, operationId: nextOperationId });
     else draft.clear();
   };
 
@@ -97,15 +104,16 @@ function FeedbackForm({
       className="space-y-2 p-4 rounded-xl border border-dashed border-border bg-muted/20"
       onBlur={draft.flush}
       onSubmit={(event) => {
-        if (!draft.loaded || !draft.canSubmit || isPending) {
+        if (!draft.loaded || !draft.canSubmit || isPending || !operationId) {
           event.preventDefault();
           return;
         }
-        draft.save({ timeMarker, content });
+        draft.save({ timeMarker, content, operationId });
         draft.flush();
         setShowResult(true);
       }}
     >
+      <input type="hidden" name={CREATION_OPERATION_FIELD} value={operationId} />
       <p className="text-sm font-semibold text-foreground">
         새 피드백 추가
       </p>
@@ -151,7 +159,7 @@ function FeedbackForm({
             aria-describedby={showResult && state.error ? "feedback-error" : undefined}
           />
         </div>
-        <Button type="submit" size="sm" disabled={!draft.loaded || !draft.canSubmit || isPending} className="gap-1 sm:mb-0.5">
+        <Button type="submit" size="sm" disabled={!draft.loaded || !draft.canSubmit || isPending || !operationId} className="gap-1 sm:mb-0.5">
           <MessageSquare className="w-4 h-4" />
           {isPending ? "추가 중..." : "추가"}
         </Button>

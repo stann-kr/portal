@@ -572,24 +572,38 @@ test("SoundCloud queues seconds as widget milliseconds and releases its listener
 
 test("feedback failure keeps the time and text; only a confirmed save clears them", async (context) => {
   let refreshes = 0;
-  saveFeedback = async () => ({ error: "내용을 확인해 주세요." });
+  const operationIds: unknown[] = [];
+  saveFeedback = async (_id, _previous, data) => { operationIds.push(data.get("operationId")); return { error: "내용을 확인해 주세요." }; };
   context.after(() => { saveFeedback = async () => ({}); });
-  await render(context, <TimelineFeedback assignmentId="assignment" actorId="admin-1" feedbackList={[]} isAdmin onRefresh={() => { refreshes++; }} />);
+  const screen = () => <TimelineFeedback assignmentId="assignment" actorId="admin-1" feedbackList={[]} isAdmin onRefresh={() => { refreshes++; }} />;
+  const root = await render(context, screen());
   await fill("feedback-time-marker", "01:30");
   await fill("feedback-content", "전환 지점에서 저음을 천천히 교환해 주세요.");
   await press("추가");
   assert.equal((browser.document.getElementById("feedback-time-marker") as unknown as HTMLInputElement).value, "01:30");
   assert.match((browser.document.getElementById("feedback-content") as unknown as HTMLInputElement).value, /저음을/);
   assert.equal(refreshes, 0);
-  saveFeedback = async () => ({ success: true });
+  assert.ok(operationIds[0]);
+  await act(async () => root.render(<div />));
+  await act(async () => root.render(screen()));
+  await settle();
+  saveFeedback = async (_id, _previous, data) => { operationIds.push(data.get("operationId")); throw new Error("response lost"); };
   await press("추가");
+  saveFeedback = async (_id, _previous, data) => { operationIds.push(data.get("operationId")); return { success: true }; };
+  await press("추가");
+  assert.deepEqual(operationIds, [operationIds[0], operationIds[0], operationIds[0]], "실패·remount 후 재시도는 같은 제출이다");
   assert.equal((browser.document.getElementById("feedback-content") as unknown as HTMLInputElement).value, "");
   assert.equal(refreshes, 1);
+  await fill("feedback-time-marker", "01:30");
+  await fill("feedback-content", "전환 지점에서 저음을 천천히 교환해 주세요.");
+  await press("추가");
+  assert.notEqual(operationIds[3], operationIds[0], "성공 뒤 의도적인 새 피드백은 새 제출이다");
 });
 
 test("community comment failure and remount preserve the author's draft", async (context) => {
   browser.localStorage.clear();
-  saveComment = async () => ({ error: "댓글을 저장하지 못했습니다." });
+  const operationIds: unknown[] = [];
+  saveComment = async (_id, _previous, data) => { operationIds.push(data.get("operationId")); return { error: "댓글을 저장하지 못했습니다." }; };
   context.after(() => { saveComment = async () => ({}); });
   const post = {
     id: "draft-post", authorId: "student-1", title: "레슨 이야기", contentHtml: "<p>본문</p>",
@@ -610,17 +624,22 @@ test("community comment failure and remount preserve the author's draft", async 
   await act(async () => root.render(screen("student-1")));
   await settle();
   assert.match(inputValue("content"), /다음 레슨/);
-  saveComment = async () => { throw new Error("offline"); };
+  saveComment = async (_id, _previous, data) => { operationIds.push(data.get("operationId")); throw new Error("offline"); };
   await press("등록");
   assert.match(inputValue("content"), /다음 레슨/);
   assert.match(browser.document.querySelector('[role="alert"]')?.textContent ?? "", /저장 결과/);
-  saveComment = async () => ({ success: true, commentId: "confirmed-comment" });
+  saveComment = async (_id, _previous, data) => { operationIds.push(data.get("operationId")); return { success: true, commentId: "confirmed-comment" }; };
   await press("등록");
+  assert.ok(operationIds[0]);
+  assert.deepEqual(operationIds, [operationIds[0], operationIds[0], operationIds[0]]);
   assert.equal(inputValue("content"), "");
   await act(async () => root.render(<div />));
   await act(async () => root.render(screen("student-1")));
   await settle();
   assert.equal(inputValue("content"), "");
+  await fill("content", "이 부분을 다음 레슨에서 다시 연습하고 싶어요.");
+  await press("등록");
+  assert.notEqual(operationIds[3], operationIds[0]);
 });
 
 test("feedback draft survives leaving the assignment before submitting", async (context) => {

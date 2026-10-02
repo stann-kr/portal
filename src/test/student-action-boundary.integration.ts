@@ -157,6 +157,7 @@ test("피드백은 잘못된 재생 시점을 저장하지 않고 긴 믹스셋�
   await db.insert(assignments).values({ id: "assignment-1", studentId: "student-1", mediaUrl: "https://example.test/1" });
   const form = (timeMarker: string) => {
     const data = new FormData();
+    data.set("operationId", crypto.randomUUID());
     data.set("timeMarker", timeMarker);
     data.set("content", "전환 지점에서 저음을 교환해 주세요.");
     return data;
@@ -171,6 +172,53 @@ test("피드백은 잘못된 재생 시점을 저장하지 않고 긴 믹스셋�
     assert.equal((await feedbackActions.createFeedback("assignment-1", {}, form(value))).success, true);
   }
   assert.deepEqual((await feedbackActions.getFeedbacksByAssignment("assignment-1")).map((item) => item.timeMarker), [0, 90, 6030]);
+});
+
+test("댓글·피드백은 응답 유실 후 같은 제출을 한 번만 저장하고 다른 원문 재사용을 거부한다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("student-1", "student"));
+  await seedProfile(db, "student-1");
+  await seedProfile(db, "student-2");
+  await seedProfile(db, "admin-1", "admin");
+  await db.insert(posts).values({ id: "retry-post", authorId: "student-1", category: "general", boardType: "GENERAL", title: "질문", contentHtml: "<p>본문</p>" });
+  await db.insert(assignments).values({ id: "retry-assignment", studentId: "student-1", mediaUrl: "https://example.test/mix" });
+  const form = (operationId: string, content = "이 부분을 다시 연습할게요.", timeMarker = "01:30") => {
+    const data = new FormData();
+    data.set("operationId", operationId);
+    data.set("content", content);
+    data.set("timeMarker", timeMarker);
+    return data;
+  };
+  const commentId = crypto.randomUUID();
+  assert.ok((await commentActions.createComment("retry-post", {}, form("invalid"))).error);
+  await assert.rejects(async () => {
+    assert.equal((await commentActions.createComment("retry-post", {}, form(commentId))).success, true);
+    throw new Error("response lost after commit");
+  }, /response lost/);
+  const retries = await Promise.all([1, 2].map(() => commentActions.createComment("retry-post", {}, form(commentId))));
+  assert.ok(retries.every((result) => result.success));
+  assert.equal(retries[0].commentId, retries[1].commentId);
+  assert.equal((await db.select().from(comments)).length, 1);
+  assert.ok((await commentActions.createComment("retry-post", {}, form(commentId, "다른 본문"))).error);
+  assert.match((await db.select().from(comments))[0].contentHtml, /다시 연습/u);
+  activeSession = createSession("student-2", "student");
+  const anotherActor = await commentActions.createComment("retry-post", {}, form(commentId));
+  assert.equal(anotherActor.success, true);
+  assert.notEqual(anotherActor.commentId, retries[0].commentId);
+  assert.equal((await commentActions.createComment("retry-post", {}, form(crypto.randomUUID()))).success, true, "같은 내용의 의도적인 새 댓글은 허용한다");
+  await db.update(posts).set({ deletedAt: new Date() }).where(eq(posts.id, "retry-post"));
+  assert.ok((await commentActions.createComment("retry-post", {}, form(commentId))).error);
+  assert.equal((await db.select().from(comments)).length, 3);
+
+  activeSession = createSession("admin-1", "admin");
+  const feedbackId = crypto.randomUUID();
+  assert.ok((await feedbackActions.createFeedback("retry-assignment", {}, form("invalid"))).error);
+  assert.equal((await feedbackActions.createFeedback("retry-assignment", {}, form(feedbackId))).success, true);
+  assert.equal((await feedbackActions.createFeedback("retry-assignment", {}, form(feedbackId, undefined, "90"))).success, true);
+  assert.ok((await feedbackActions.createFeedback("retry-assignment", {}, form(feedbackId, "다른 본문"))).error);
+  assert.ok((await feedbackActions.createFeedback("retry-assignment", {}, form(feedbackId, undefined, "02:30"))).error);
+  assert.equal((await db.select().from(feedbacks)).length, 1);
+  assert.equal((await feedbackActions.createFeedback("retry-assignment", {}, form(crypto.randomUUID()))).success, true);
+  assert.equal((await db.select().from(feedbacks)).length, 2);
 });
 
 test("관리자 child delete는 전달한 학생과 실제 owner가 다르면 행을 보존한다", { concurrency: false }, async (context) => {

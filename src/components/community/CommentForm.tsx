@@ -8,8 +8,9 @@ import { createComment, type CreateCommentState } from "@/lib/actions/comments";
 import { createDocumentDraftKey } from "@/lib/form-draft";
 import { useFormDraft } from "@/lib/hooks/useFormDraft";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
+import { CREATION_OPERATION_FIELD, createCreationOperationId, parseCreationOperationId } from "@/lib/creation-operation";
 
-type CommentDraft = { content: string };
+type CommentDraft = { content: string; operationId?: string };
 
 export function CommentForm({
   postId,
@@ -23,14 +24,16 @@ export function CommentForm({
   const contentId = useId();
   const errorId = useId();
   const [content, setContent] = useState("");
+  const [operationId, setOperationId] = useState("");
   const [showResult, setShowResult] = useState(false);
   const draft = useFormDraft<CommentDraft>(
     createDocumentDraftKey("community-comment", actorId, postId),
     (saved) => {
       setContent(typeof saved.content === "string" ? saved.content : "");
+      setOperationId(parseCreationOperationId(saved.operationId) ?? createCreationOperationId());
       setShowResult(false);
     },
-    { onReset: () => { setContent(""); setShowResult(false); } },
+    { onReset: () => { setContent(""); setOperationId(createCreationOperationId()); setShowResult(false); } },
   );
   const [state, action, pending] = useActionState<CreateCommentState, FormData>(async (previous, data) => {
     let result: CreateCommentState;
@@ -40,8 +43,10 @@ export function CommentForm({
       return { error: "저장 결과를 확인하지 못했습니다. 댓글 목록을 확인한 뒤 다시 시도해 주세요." };
     }
     if (result.success && result.commentId) {
-      draft.clear({ reason: "submitted", submittedData: { content: String(data.get("content") ?? "") } });
+      const submittedContent = String(data.get("content") ?? "");
+      draft.clear({ reason: "submitted", submittedData: { content: submittedContent, operationId: String(data.get(CREATION_OPERATION_FIELD) ?? "") }, submittedAliases: [{ content: submittedContent }] });
       setContent("");
+      setOperationId(createCreationOperationId());
       onSaved();
     }
     return result;
@@ -54,15 +59,16 @@ export function CommentForm({
       className="space-y-2"
       onBlur={draft.flush}
       onSubmit={(event) => {
-        if (!draft.loaded || !draft.canSubmit || pending) {
+        if (!draft.loaded || !draft.canSubmit || pending || !operationId) {
           event.preventDefault();
           return;
         }
-        draft.save({ content });
+        draft.save({ content, operationId });
         draft.flush();
         setShowResult(true);
       }}
     >
+      <input type="hidden" name={CREATION_OPERATION_FIELD} value={operationId} />
       <label htmlFor={contentId} className="sr-only">댓글 내용</label>
       <div className="flex gap-2">
         <Input
@@ -73,9 +79,11 @@ export function CommentForm({
           value={content}
           onChange={(event) => {
             const value = event.target.value;
+            const nextOperationId = createCreationOperationId();
             setContent(value);
+            setOperationId(nextOperationId);
             setShowResult(false);
-            if (value) draft.save({ content: value });
+            if (value) draft.save({ content: value, operationId: nextOperationId });
             else draft.clear();
           }}
           required
@@ -83,7 +91,7 @@ export function CommentForm({
           aria-describedby={showResult && state.error ? errorId : undefined}
           className="min-w-0 flex-1"
         />
-        <Button type="submit" disabled={!draft.loaded || !draft.canSubmit || pending || !content.trim()} size="sm">
+        <Button type="submit" disabled={!draft.loaded || !draft.canSubmit || pending || !operationId || !content.trim()} size="sm">
           {pending ? "등록 중..." : "등록"}
         </Button>
       </div>

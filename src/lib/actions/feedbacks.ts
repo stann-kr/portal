@@ -11,6 +11,7 @@ import { createDb } from "@/db/client";
 import { feedbacks, assignments } from "@/db/schema";
 import { and, eq, asc, inArray } from "drizzle-orm";
 import type { InferSelectModel } from "drizzle-orm";
+import { CREATION_OPERATION_FIELD, deriveCreationResourceId, resolveCreationOperationId } from "@/lib/creation-operation";
 import {
   assertOwnerOrAdmin,
   requireAdmin,
@@ -54,14 +55,14 @@ export type CreateFeedbackState = { error?: string; success?: boolean };
  * 타임스탬프 피드백 작성 (Admin 전용).
  * @param assignmentId - 대상 과제 ID
  * @param _prev - useActionState 이전 상태
- * @param formData - { timeMarker(초 단위), content }
+ * @param formData - { timeMarker(분:초 또는 정수 초), content, operationId (UUID v4) }
  */
 export async function createFeedback(
   assignmentId: string,
   _prev: CreateFeedbackState,
   formData: FormData,
 ): Promise<CreateFeedbackState> {
-  await requireAdmin();
+  const session = await requireAdmin();
 
   const rawTimeMarker = formData.get("timeMarker");
   const timeMarkerStr = typeof rawTimeMarker === "string" ? rawTimeMarker.trim() : "";
@@ -77,18 +78,27 @@ export async function createFeedback(
   if (!Number.isSafeInteger(timeMarker) || timeMarker < 0) {
     return { error: "재생 시점은 01:30 같은 분:초 형식이나 0 이상의 정수 초로 입력해 주세요. 초는 00~59입니다." };
   }
+  const operationId = resolveCreationOperationId(formData.get(CREATION_OPERATION_FIELD));
+  if (!operationId) return { error: "작성 정보를 확인하지 못했습니다. 입력 내용을 보관한 뒤 새로고침해 주세요." };
+  const feedbackId = deriveCreationResourceId(operationId, JSON.stringify(["assignment-feedback", session.user.id, assignmentId]));
 
   const db = createDb();
   try {
     const [assignment] = await db.select({ id: assignments.id })
       .from(assignments).where(eq(assignments.id, assignmentId)).limit(1);
     if (!assignment) return { error: "과제를 찾을 수 없습니다. 목록에서 다시 확인해 주세요." };
-    await db.insert(feedbacks).values({
-      id: crypto.randomUUID(),
+    const inserted = await db.insert(feedbacks).values({
+      id: feedbackId,
       assignmentId,
       timeMarker,
       content,
-    });
+    }).onConflictDoNothing({ target: feedbacks.id }).returning({ id: feedbacks.id });
+    if (inserted.length === 0) {
+      const [existing] = await db.select().from(feedbacks).where(eq(feedbacks.id, feedbackId)).limit(1);
+      if (!existing || existing.assignmentId !== assignmentId || existing.timeMarker !== timeMarker || existing.content !== content) {
+        return { error: "이 피드백은 수정 전 내용으로 이미 저장되었거나 상태가 바뀌었습니다. 목록을 확인한 뒤 내용을 편집해 새 피드백으로 등록해 주세요." };
+      }
+    }
   } catch {
     return { error: "피드백을 저장하지 못했습니다. 다시 시도해 주세요." };
   }

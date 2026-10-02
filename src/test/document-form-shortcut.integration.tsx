@@ -85,6 +85,7 @@ const router = {
 };
 let restoreNote: typeof import("@/lib/actions/privateNotes").restorePrivateNoteRevision = async () => ({ success: true });
 let changeQnaStatus: typeof import("@/lib/actions/qna").updateThreadStatus = async () => ({ success: true, currentRevision: 2 });
+let changeQnaLifecycle: typeof import("@/lib/actions/qna").trashQnaThread = async () => ({ success: true, currentRevision: 2 });
 let notePageRole: "student" | "admin" = "student";
 let notePageData: Awaited<ReturnType<typeof import("@/lib/actions/privateNotes").getPrivateNotes>> = [];
 const notePageTargets: string[] = [];
@@ -176,6 +177,9 @@ mock.module("@/lib/actions/qna", {
       return {};
     },
     updateThreadStatus: (...args: Parameters<typeof changeQnaStatus>) => changeQnaStatus(...args),
+    trashQnaThread: (...args: Parameters<typeof changeQnaLifecycle>) => changeQnaLifecycle(...args),
+    restoreQnaThread: (...args: Parameters<typeof changeQnaLifecycle>) => changeQnaLifecycle(...args),
+    purgeQnaThread: (...args: Parameters<typeof changeQnaLifecycle>) => changeQnaLifecycle(...args),
   },
 });
 mock.module("@/components/upload/FileUploader", {
@@ -471,6 +475,44 @@ test("Q&A 충돌 응답의 version만 채택하지 않고 서버 상태와 답�
   assert.equal(requests[2]![3], 2);
   await harness.rerender(screen("ANSWERED", 3));
   assert.equal(statusButton("답변 완료").getAttribute("aria-pressed"), "true");
+});
+
+test("Q&A 휴지통 충돌은 오래된 요청을 잠그고 전체 snapshot 재조회 뒤에만 새 요청을 허용한다", { concurrency: false }, async (context) => {
+  const requests: Parameters<typeof changeQnaLifecycle>[] = [];
+  let throwNext = true;
+  changeQnaLifecycle = async (...args) => {
+    requests.push(args);
+    if (args[2] === 1) return { success: false, conflictKind: "VERSION_CONFLICT", currentRevision: 2, error: "최신 상태를 확인해 주세요." };
+    if (throwNext) { throwNext = false; throw new Error("response lost"); }
+    return { success: true, currentRevision: 3 };
+  };
+  context.after(() => { changeQnaLifecycle = async () => ({ success: true, currentRevision: 2 }); });
+  const refresh = context.mock.method(router, "refresh", () => { throw new Error("offline"); });
+  const key = createDocumentDraftKey("qna-reply", "admin-lifecycle", "thread-lifecycle");
+  const screen = (version: number, isAdmin = true) => <ThreadDetailClient actorId="admin-lifecycle" threadId="thread-lifecycle" title="질문" status={version === 1 ? "OPEN" : "CLOSED"} version={version} isAdmin={isAdmin} replies={[]} deletedAt={null} studentName="학생" createdAt={null} returnTo="/dashboard/qna" />;
+  const harness = await renderForm(context, screen(1), (storage) => storage.setItem(key, serializeFormDraft({ operationId: "012c1894-ea20-46b2-960f-35b01d873570", contentHtml: "<p>보관 중인 답변</p>", attachmentUrl: "", attachmentObjectId: "" })));
+  const find = (label: string) => [...harness.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === label)!;
+  await act(async () => find("휴지통 이동").click());
+  assert.equal(find("휴지통 이동").disabled, true);
+  await act(async () => find("휴지통 이동").click());
+  assert.equal(requests.length, 1);
+  await act(async () => find("최신 상태 확인").click());
+  assert.match(harness.container.textContent ?? "", /최신 상태를 불러오지 못했습니다/u);
+  refresh.mock.mockImplementation(() => undefined);
+  await act(async () => find("최신 상태 확인").click());
+  assert.equal(refresh.mock.callCount(), 2);
+  assert.equal(find("휴지통 이동").disabled, true, "현재 revision 숫자만으로 mutation을 열지 않는다");
+  await harness.rerender(screen(2));
+  assert.equal(find("휴지통 이동").disabled, false);
+  assert.match(harness.container.querySelector("textarea")?.value ?? "", /보관 중인 답변/u);
+  await act(async () => find("휴지통 이동").click());
+  await act(async () => find("휴지통 이동").click());
+  assert.deepEqual(requests.map((args) => args[2]), [1, 2, 2]);
+  assert.notEqual(requests[0][1], requests[1][1]);
+  assert.equal(requests[1][1], requests[2][1], "결과 불명확 재시도만 같은 operation을 유지한다");
+  await harness.rerender(screen(2, false));
+  await act(async () => find("휴지통 이동").click());
+  assert.notEqual(requests[2][1], requests[3][1], "실제 권한 snapshot이 바뀌면 version이 같아도 새 요청이다");
 });
 
 async function waitForCondition(

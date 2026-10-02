@@ -160,8 +160,10 @@ Migration SQL은 `drizzle/`, Drizzle metadata는 `drizzle/meta/`에 둔다. Wran
 - 개인 노트는 Server Action 기본 1MB body의 action/form envelope 여유를 남기기 위해 sanitize된 HTML 본문 800 KiB, 제목 200자, 사용자별 head와 내용 변경 revision 100 MiB의 logical quota를 적용한다. `TRASH`·`RESTORE_TRASH` 상태 snapshot은 사용자 quota에서 제외하고 실제 D1 사용량 관측 대상으로 남긴다. version 충돌은 자동 병합하지 않고 현재 초안을 보존한 채 서버 최신본을 펼쳐 확인·복사한 다음 서버본 사용 또는 현재 초안 계속을 선택한다.
 - 커뮤니티 게시물의 생성·편집·고정 변경·휴지통 이동·복원·과거 revision 복원·영구 삭제도 UUIDv4 operation ID와 명시적 base revision을 사용한다. head, 불변 receipt와 full-snapshot revision을 D1 `batch()` 또는 로컬 transaction에서 함께 처리한다. exact replay는 이후 다른 변경이 있어도 원래 결과 revision으로 수렴하며, 저장된 snapshot hash가 맞지 않으면 과거 revision 복원을 거부한다.
 - 게시물 댓글은 head와 함께 삭제하지 않는다. 휴지통 게시물은 기본 목록과 통합 기록에서 제외하고 읽기 전용으로만 열며, DB trigger가 휴지통 상태에서 새 댓글과 댓글 삭제 경쟁을 차단한다. 게시물을 복원하면 기존 댓글이 다시 함께 보이고, 관리자 purge 때만 FK cascade로 제거한다.
+- 댓글·과제 피드백의 로컬 작성본에는 UUIDv4 operation ID를 함께 보관한다. 응답 유실·화면 재진입 후 같은 작성본은 같은 ID로 재시도하고, 편집 또는 성공 후 새 작성은 새 ID를 사용한다. 서버는 작성자·대상별 결정적 PK와 정규화 원문을 대조해 같은 레코드의 중복 insert를 막고 다른 원문의 재사용을 거부한다. 개별 댓글·피드백을 직접 삭제해 row가 제거된 이후에는 이 재전송 보장이 유지되지 않는다.
 - 새 게시물·Q&A 질문·답변의 `Cmd/Ctrl+S`는 공개 action을 호출하지 않고 최신 form snapshot을 로컬에 flush한다. 노트와 기존 문서 편집의 단축키는 명시된 서버 저장 action을 사용한다.
 - Q&A의 스레드·첫 본문, 답변·상태 변경, 휴지통 이동·복원·영구 삭제는 D1 binding batch 또는 로컬 SQLite transaction으로 함께 commit하거나 rollback한다. 각 mutation은 operation receipt와 append-only `qna_thread_events`를 남기고 version CAS를 적용한다. 답변 쓰기는 ownership과 `CLOSED`·휴지통 상태를 원자 쓰기 안에서 다시 검증한다.
+- Q&A 휴지통 작업이 다른 화면의 변경과 충돌하면 오래된 snapshot의 쓰기를 잠그고 최신 상태 확인을 제공한다. 실제 서버 props의 version·삭제/권한 상태가 바뀐 후 새 작업을 허용하며, 재조회 실패의 재시도와 작성 중 답변은 유지한다. 같은 결과 불명 요청은 동일 operation으로, 새 version 또는 작업 종류는 새 operation으로 처리한다.
 - Q&A 답변은 휴지통 이동·복원 동안 보존되고 관리자 purge 때만 스레드와 함께 제거된다. active 기본 조회와 통합 기록은 휴지통 질문을 제외하며, tombstone과 본문 없는 ledger가 purge 뒤 늦은 질문·답변·상태 요청의 부활을 차단한다.
 - 모든 작성 form은 draft hydration이 끝날 때까지 입력을 잠근다. 종료된 Q&A도 로컬 초안이나 복구본이 남아 있으면 읽기 전용 composer를 유지하고, 업로드 오류·진행률은 alert와 progressbar 의미로 노출한다.
 
