@@ -61,7 +61,7 @@ import {
 import {
   createDocumentDraftKey,
 } from "@/lib/form-draft";
-import { serializeDocumentServerDraftPayload } from "@/lib/document-server-draft-contract";
+import { canonicalizeDocumentServerDraftPayload, serializeDocumentServerDraftPayload } from "@/lib/document-server-draft-contract";
 import {
   DOCUMENT_SERVER_DRAFT_MAX_PAYLOAD_BYTES,
   DOCUMENT_SERVER_DRAFT_RETENTION_SECONDS,
@@ -130,6 +130,7 @@ function createServerDraftSaveInput(
     sourceKey?: string;
     operationId?: string;
     expectedDraftVersion?: number;
+    expectedPayloadHash?: string;
     baseResourceVersion?: number | null;
     writerDeviceId?: string;
   } = {},
@@ -139,6 +140,7 @@ function createServerDraftSaveInput(
       options.sourceKey ?? createDocumentDraftKey("note", ownerId, "new:student-1"),
     operationId: options.operationId ?? crypto.randomUUID(),
     expectedDraftVersion: options.expectedDraftVersion ?? 0,
+    expectedPayloadHash: options.expectedPayloadHash,
     payloadJson: serializeDocumentServerDraftPayload(data),
     baseResourceVersion: options.baseResourceVersion ?? null,
     writerDeviceId: options.writerDeviceId ?? crypto.randomUUID(),
@@ -2784,6 +2786,7 @@ test("서버 초안은 exact replay와 draft version CAS로 다중 기기 쓰기
       {
         sourceKey,
         expectedDraftVersion: 1,
+        expectedPayloadHash: first.current?.payloadHash,
         writerDeviceId: secondDeviceId,
       },
     ),
@@ -2826,6 +2829,7 @@ test("같은 서버 초안 payload 저장은 version을 늘리지 않고 재시�
     createServerDraftSaveInput("student-1", data, {
       sourceKey,
       expectedDraftVersion: 1,
+      expectedPayloadHash: first.ok ? first.current?.payloadHash : undefined,
       writerDeviceId: crypto.randomUUID(),
     }),
   );
@@ -2876,6 +2880,85 @@ test("서버 초안 명시 폐기는 CAS 충돌 시 최신본을 보존하고 ex
   assert.equal(replay.replayed, true);
   assert.equal(replay.operationResultVersion, 1);
   assert.equal(replay.current, null);
+});
+
+test("제출 초안 정리는 같은 version의 다른 본문과 원자 삭제 직전 변경도 보존한다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context);
+  await seedProfile(db, "student-1");
+  const sourceKey = createDocumentDraftKey("note", "student-1", "payload-cleanup");
+  const initial = createServerDraftSaveInput("student-1", { title: "제출 A", contentHtml: "<p>A</p>" }, { sourceKey });
+  const saved = await documentDraftActions.saveDocumentServerDraft(initial);
+  assert.ok(saved.ok && saved.current);
+  if (!saved.ok || !saved.current) return;
+  const initialHash = saved.current.payloadHash;
+  const [originalRow] = await db.select().from(documentServerDrafts);
+  assert.ok(originalRow);
+  const peerPayload = canonicalizeDocumentServerDraftPayload(serializeDocumentServerDraftPayload({ title: "다른 B", contentHtml: "<p>B</p>" }));
+  assert.ok(peerPayload);
+  const originalBatch = db.$client.batch.bind(db.$client);
+  let injected = false;
+  let injectionError: unknown;
+  const racingClient = new Proxy(db.$client, {
+    get(target, property, receiver) {
+      if (property === "batch") return async (queries: Parameters<typeof originalBatch>[0]) => {
+        if (!injected) {
+          injected = true;
+          try {
+            await db.delete(documentServerDrafts).where(eq(documentServerDrafts.sourceKey, sourceKey));
+            await db.insert(documentServerDrafts).values({ ...originalRow, payloadJson: peerPayload.payloadJson, payloadHash: peerPayload.payloadHash });
+          } catch (error) {
+            injectionError = error;
+            throw error;
+          }
+        }
+        return originalBatch(queries);
+      };
+      const value = Reflect.get(target, property, receiver);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  activeDbContext = createD1DbContext(racingClient);
+  const cleanup = { sourceKey, expectedDraftVersion: 1, operationId: crypto.randomUUID(), targetPayloadHashes: [initialHash] };
+  const conflict = await documentDraftActions.discardDocumentServerDraft(cleanup);
+  assert.equal(injected, true);
+  assert.equal(injectionError, undefined);
+  assert.equal(conflict.ok, false);
+  if (!conflict.ok) assert.equal(conflict.reason, "VERSION_CONFLICT");
+  assert.equal(conflict.current?.payloadHash, peerPayload.payloadHash);
+  assert.equal((await db.select().from(documentServerDraftOperations)).length, 1, "삭제 receipt도 rollback된다");
+  const again = await documentDraftActions.discardDocumentServerDraft(cleanup);
+  assert.equal(again.ok, false, "같은 version이라도 다른 본문을 삭제하지 않는다");
+  const selected = { ...cleanup, targetPayloadHashes: [peerPayload.payloadHash] };
+  assert.equal((await documentDraftActions.discardDocumentServerDraft(selected)).ok, true);
+  const recreated = await documentDraftActions.saveDocumentServerDraft(createServerDraftSaveInput("student-1", { title: "다음 C", contentHtml: "<p>C</p>" }, { sourceKey }));
+  assert.ok(recreated.ok);
+  const replay = await documentDraftActions.discardDocumentServerDraft(selected);
+  assert.ok(replay.ok && replay.replayed);
+  assert.equal(replay.current?.draftVersion, 1);
+  assert.match(replay.current?.payloadJson ?? "", /다음 C/);
+  const changedIntent = await documentDraftActions.discardDocumentServerDraft(cleanup);
+  assert.equal(changedIntent.ok, false);
+  if (!changedIntent.ok) assert.equal(changedIntent.reason, "OPERATION_PAYLOAD_CONFLICT");
+
+  const staleWrite = createServerDraftSaveInput("student-1", { title: "오래된 요청의 D", contentHtml: "<p>D</p>" }, { sourceKey, expectedDraftVersion: 1, expectedPayloadHash: initialHash });
+  const legacyWrite = await documentDraftActions.saveDocumentServerDraft({ ...staleWrite, expectedPayloadHash: undefined });
+  assert.equal(legacyWrite.ok, false, "기준 본문을 모르는 기존 queue는 새 본문을 덮어쓰지 않는다");
+  const stale = await documentDraftActions.saveDocumentServerDraft(staleWrite);
+  assert.equal(stale.ok, false);
+  if (!stale.ok) assert.equal(stale.reason, "VERSION_CONFLICT");
+  assert.match(stale.current?.payloadJson ?? "", /다음 C/);
+
+  injected = false;
+  const updateRace = await documentDraftActions.saveDocumentServerDraft({ ...staleWrite, expectedPayloadHash: stale.current?.payloadHash });
+  assert.equal(updateRace.ok, false, "UPDATE 직전 동일 version 재생성도 본문 CAS가 막는다");
+  if (!updateRace.ok) assert.equal(updateRace.reason, "VERSION_CONFLICT");
+  assert.equal(updateRace.current?.payloadHash, peerPayload.payloadHash);
+  assert.equal((await db.select().from(documentServerDraftOperations).where(eq(documentServerDraftOperations.operationId, staleWrite.operationId))).length, 0);
+  const selectedWrite = { ...staleWrite, expectedPayloadHash: peerPayload.payloadHash };
+  assert.equal((await documentDraftActions.saveDocumentServerDraft(selectedWrite)).ok, true);
+  const updateReplay = await documentDraftActions.saveDocumentServerDraft(selectedWrite);
+  assert.ok(updateReplay.ok && updateReplay.replayed);
+  assert.equal(updateReplay.current?.draftVersion, 2);
 });
 
 test("만료 서버 초안은 30일 경계에서 읽기 전에 제거되고 stale queue가 자동 부활시키지 않는다", { concurrency: false }, async (context) => {

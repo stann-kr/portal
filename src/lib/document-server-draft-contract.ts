@@ -54,16 +54,30 @@ export type SaveDocumentServerDraftInput = {
   sourceKey: string;
   operationId: string;
   expectedDraftVersion: number;
+  expectedPayloadHash?: string;
   payloadJson: string;
   baseResourceVersion: number | null;
   writerDeviceId: string;
 };
 
+export function parseDocumentServerDraftExpectedHash(value: unknown): string | undefined | null {
+  if (value === undefined) return undefined;
+  return typeof value === "string" && /^[0-9a-f]{64}$/.test(value) ? value : null;
+}
+
 export type DiscardDocumentServerDraftInput = {
   sourceKey: string;
   operationId: string;
   expectedDraftVersion: number;
+  targetPayloadHashes?: readonly string[];
 };
+
+export function parseDocumentServerDraftTargetHashes(value: unknown): string[] | undefined | null {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length === 0 || value.length > 32 ||
+    !value.every((hash) => typeof hash === "string" && /^[0-9a-f]{64}$/.test(hash))) return null;
+  return [...new Set(value as string[])].sort();
+}
 
 export type CanonicalDocumentServerDraftPayload = {
   data: Record<string, unknown>;
@@ -155,6 +169,8 @@ export function createDocumentServerDraftRequestHash(input: {
   payloadHash?: string;
   baseResourceVersion?: number | null;
   writerDeviceId?: string;
+  targetPayloadHashes?: readonly string[];
+  expectedPayloadHash?: string;
 }): string {
   const canonical = JSON.stringify([
     "document-server-draft",
@@ -165,6 +181,9 @@ export function createDocumentServerDraftRequestHash(input: {
     input.payloadHash ?? null,
     input.baseResourceVersion ?? null,
     input.writerDeviceId ?? null,
+    // 기존 요청의 canonical bytes는 유지하고, 본문에 한정된 삭제 의도만 추가한다.
+    ...(input.targetPayloadHashes ? [input.targetPayloadHashes] : []),
+    ...(input.expectedPayloadHash ? [input.expectedPayloadHash] : []),
   ]);
   return bytesToHex(sha256(utf8ToBytes(canonical)));
 }

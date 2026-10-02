@@ -58,11 +58,14 @@ export type DocumentServerDraftSyncResult = {
   remoteDraft: DocumentServerDraftSnapshot | null;
   remotePreview: FormDraftRecoveryPreview | null;
   localPreview: FormDraftRecoveryPreview | null;
+  queuedPreview: FormDraftRecoveryPreview | null;
   isDifferentDevice: boolean;
   /** 서버본을 현재 폼과 이 기기 canonical 초안에 명시적으로 적용한다. */
   useRemoteDraft: () => void;
   /** 현재 폼을 최신 서버 version 기준으로 명시적으로 다시 저장한다. */
   keepLocalDraft: () => void;
+  /** 보관된 이전 요청의 원문을 명시적으로 폼에 복원한다. 서버에는 아직 쓰지 않는다. */
+  restoreQueuedDraft: () => void;
   /** 계정 귀속 서버본만 명시적으로 폐기한다. */
   discardRemoteDraft: () => void;
   refresh: () => Promise<void>;
@@ -80,7 +83,10 @@ type ClearServerDraftReason = "empty" | "discard" | "submitted";
 export type DocumentServerDraftSyncController<T> =
   DocumentServerDraftSyncResult & {
     observeLocalDraft: (data: T) => void;
-    clearLocalDraft: (reason: ClearServerDraftReason) => void;
+    clearLocalDraft: (reason: ClearServerDraftReason, submitted?: {
+      submittedData?: T;
+      submittedAliases?: readonly T[];
+    }) => void;
   };
 
 function parsePayloadData<T>(payloadJson: string): T | null {
@@ -112,6 +118,10 @@ function isBrowserOffline(): boolean {
   return typeof navigator !== "undefined" && navigator.onLine === false;
 }
 
+function requiresLegacyDraftChoice(queue: QueuedDocumentServerDraft | null | undefined): boolean {
+  return queue?.operationType === "UPSERT" && queue.expectedDraftVersion > 0 && !queue.expectedPayloadHash;
+}
+
 function notifyQueueChange(sourceKey: string): void {
   try {
     window.dispatchEvent(
@@ -133,6 +143,7 @@ export function useDocumentServerDraftSync<T>(
     useState<DocumentServerDraftSnapshot | null>(null);
   const [localPreview, setLocalPreview] =
     useState<FormDraftRecoveryPreview | null>(null);
+  const [queuedRecovery, setQueuedRecovery] = useState<QueuedDocumentServerDraft | null>(null);
   const [deviceId, setDeviceId] = useState<string | null>(null);
   const ownerId = parseDocumentDraftKey(sourceKey)?.ownerId ?? "";
   const sourceGenerationRef = useRef(0);
@@ -149,6 +160,10 @@ export function useDocumentServerDraftSync<T>(
   const maxWaitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const drainRef = useRef<() => Promise<void>>(async () => undefined);
   const refreshPromiseRef = useRef<Promise<void> | null>(null);
+  const drainingGenerationRef = useRef<number | null>(null);
+  const mutationEpochRef = useRef(0);
+  const refreshRequestedRef = useRef(false);
+  const refreshRef = useRef<() => Promise<void>>(async () => undefined);
   onApplyRemoteRef.current = onApplyRemote;
 
   const clearTimers = useCallback(() => {
@@ -161,6 +176,10 @@ export function useDocumentServerDraftSync<T>(
   const updateRemote = useCallback((draft: DocumentServerDraftSnapshot | null) => {
     remoteDraftRef.current = draft;
     if (mountedRef.current) setRemoteDraft(draft);
+  }, []);
+
+  const updateQueuedRecovery = useCallback((queue?: QueuedDocumentServerDraft | null) => {
+    if (mountedRef.current) setQueuedRecovery(queue && requiresLegacyDraftChoice(queue) ? queue : null);
   }, []);
 
   const isOwnerTerminallyLocked = useCallback(() => {
@@ -186,6 +205,7 @@ export function useDocumentServerDraftSync<T>(
     if (mountedRef.current) {
       setRemoteDraft(null);
       setLocalPreview(null);
+      setQueuedRecovery(null);
       setDeviceId(null);
       setStatus("idle");
     }
@@ -200,14 +220,16 @@ export function useDocumentServerDraftSync<T>(
   const evaluateState = useCallback(
     (draft: DocumentServerDraftSnapshot | null, queue?: QueuedDocumentServerDraft | null) => {
       if (!mountedRef.current) return;
+      updateQueuedRecovery(queue);
       const local = localDraftRef.current;
       if (queue) {
         const requiresChoice = queue.operationType === "UPSERT" && (
           choiceRequiredRef.current ||
+          requiresLegacyDraftChoice(queue) ||
           Boolean(
             draft &&
               draft.payloadHash !== queue.payloadHash &&
-              queue.expectedDraftVersion !== draft.draftVersion,
+              (queue.expectedDraftVersion !== draft.draftVersion || queue.expectedPayloadHash !== draft.payloadHash),
           )
         );
         choiceRequiredRef.current = requiresChoice;
@@ -232,15 +254,16 @@ export function useDocumentServerDraftSync<T>(
       choiceRequiredRef.current = !isSynced;
       setStatus(isSynced ? "synced" : "conflict");
     },
-    [],
+    [updateQueuedRecovery],
   );
 
   const rebaseNewerQueue = useCallback(
     (
       current: ReturnType<typeof readQueuedDocumentServerDraft>,
       serverDraft: DocumentServerDraftSnapshot | null,
+      mayRebaseUpsert: boolean,
     ) => {
-      if (!current) return;
+      if (!current || requiresLegacyDraftChoice(current.entry)) return;
       if (
         current.entry.operationType === "UPSERT" &&
         serverDraft?.payloadHash === current.entry.payloadHash
@@ -254,20 +277,26 @@ export function useDocumentServerDraftSync<T>(
         return;
       }
       const expectedDraftVersion = serverDraft?.draftVersion ?? 0;
-      if (current.entry.expectedDraftVersion === expectedDraftVersion) return;
       if (current.entry.operationType === "DISCARD") {
+        // 이전 요청의 응답은 이후에 생긴 삭제 의도를 완료한 증거가 아니다.
+        if (!serverDraft || !current.entry.targetPayloadHashes?.includes(serverDraft.payloadHash)) return;
+        if (current.entry.expectedDraftVersion === expectedDraftVersion) return;
         enqueueDocumentServerDraftDiscard(window.localStorage, {
           sourceKey,
           expectedDraftVersion,
           conflictCount: current.entry.conflictCount,
+          targetPayloadHashes: current.entry.targetPayloadHashes,
         });
       } else {
+        if (!mayRebaseUpsert || current.entry.expectedDraftVersion === expectedDraftVersion ||
+          localDraftRef.current?.payloadHash !== current.entry.payloadHash) return;
         const data = parsePayloadData<unknown>(current.entry.payloadJson);
         if (!data) return;
         enqueueDocumentServerDraftUpsert(window.localStorage, {
           sourceKey,
           data,
           expectedDraftVersion,
+          expectedPayloadHash: serverDraft?.payloadHash,
           baseResourceVersion: current.entry.baseResourceVersion,
           writerDeviceId: current.entry.writerDeviceId,
           conflictCount: current.entry.conflictCount,
@@ -282,6 +311,8 @@ export function useDocumentServerDraftSync<T>(
     if (!readyRef.current || !mountedRef.current || !allowOwnerPersistence()) {
       return;
     }
+    const generation = sourceGenerationRef.current;
+    if (drainingGenerationRef.current === generation) return;
     clearTimers();
     let queued: ReturnType<typeof readQueuedDocumentServerDraft>;
     try {
@@ -296,7 +327,7 @@ export function useDocumentServerDraftSync<T>(
     }
     if (
       queued.entry.operationType === "UPSERT" &&
-      choiceRequiredRef.current
+      (choiceRequiredRef.current || requiresLegacyDraftChoice(queued.entry))
     ) {
       evaluateState(remoteDraftRef.current, queued.entry);
       return;
@@ -306,7 +337,8 @@ export function useDocumentServerDraftSync<T>(
       return;
     }
 
-    const generation = sourceGenerationRef.current;
+    drainingGenerationRef.current = generation;
+    mutationEpochRef.current += 1;
     setStatus("syncing");
     try {
       if (!allowOwnerPersistence()) return;
@@ -315,6 +347,7 @@ export function useDocumentServerDraftSync<T>(
             sourceKey,
             operationId: queued.entry.operationId,
             expectedDraftVersion: queued.entry.expectedDraftVersion,
+            expectedPayloadHash: queued.entry.expectedPayloadHash,
             payloadJson: queued.entry.payloadJson,
             baseResourceVersion: queued.entry.baseResourceVersion,
             writerDeviceId: queued.entry.writerDeviceId,
@@ -323,6 +356,7 @@ export function useDocumentServerDraftSync<T>(
             sourceKey,
             operationId: queued.entry.operationId,
             expectedDraftVersion: queued.entry.expectedDraftVersion,
+            targetPayloadHashes: queued.entry.targetPayloadHashes,
           });
       if (
         !mountedRef.current ||
@@ -340,7 +374,10 @@ export function useDocumentServerDraftSync<T>(
         if (removed) notifyQueueChange(sourceKey);
         const newer = readQueuedDocumentServerDraft(window.localStorage, sourceKey);
         if (newer) {
-          rebaseNewerQueue(newer, result.current);
+          const ownResult = queued.entry.operationType === "UPSERT"
+            ? result.current?.payloadHash === queued.entry.payloadHash
+            : result.current === null;
+          rebaseNewerQueue(newer, result.current, ownResult);
           const rebased = readQueuedDocumentServerDraft(window.localStorage, sourceKey);
           evaluateState(result.current, rebased?.entry ?? null);
           if (rebased) setTimeout(() => void drainRef.current(), 0);
@@ -351,19 +388,36 @@ export function useDocumentServerDraftSync<T>(
       }
 
       updateRemote(result.current);
+      const currentQueue = readQueuedDocumentServerDraft(window.localStorage, sourceKey);
+      if (currentQueue?.raw !== queued.raw) {
+        rebaseNewerQueue(currentQueue, result.current, false);
+        const remaining = readQueuedDocumentServerDraft(window.localStorage, sourceKey);
+        evaluateState(result.current, remaining?.entry);
+        if (remaining && !choiceRequiredRef.current) setTimeout(() => void drainRef.current(), 0);
+        return;
+      }
       if (
         result.reason === "VERSION_CONFLICT" &&
         queued.entry.operationType === "DISCARD" &&
+        result.current &&
+        queued.entry.targetPayloadHashes?.includes(result.current.payloadHash) &&
         queued.entry.conflictCount < SERVER_DRAFT_MAX_DISCARD_REBASES
       ) {
         enqueueDocumentServerDraftDiscard(window.localStorage, {
           sourceKey,
           expectedDraftVersion: result.current?.draftVersion ?? 0,
           conflictCount: queued.entry.conflictCount + 1,
+          targetPayloadHashes: queued.entry.targetPayloadHashes,
         });
         notifyQueueChange(sourceKey);
         setStatus("queued");
         setTimeout(() => void drainRef.current(), 0);
+        return;
+      }
+      if (result.reason === "VERSION_CONFLICT" && queued.entry.operationType === "DISCARD") {
+        removeQueuedDocumentServerDraftIfUnchanged(window.localStorage, sourceKey, queued.raw);
+        notifyQueueChange(sourceKey);
+        evaluateState(result.current, null);
         return;
       }
       if (
@@ -382,6 +436,12 @@ export function useDocumentServerDraftSync<T>(
       if (!allowOwnerPersistence()) return;
       if (!mountedRef.current || generation !== sourceGenerationRef.current) return;
       setStatus(isBrowserOffline() ? "offline" : "error");
+    } finally {
+      if (drainingGenerationRef.current === generation) drainingGenerationRef.current = null;
+      if (mountedRef.current && generation === sourceGenerationRef.current && refreshRequestedRef.current) {
+        refreshRequestedRef.current = false;
+        queueMicrotask(() => void refreshRef.current());
+      }
     }
   }, [
     allowOwnerPersistence,
@@ -412,8 +472,13 @@ export function useDocumentServerDraftSync<T>(
 
   const refresh = useCallback(async () => {
     if (!allowOwnerPersistence()) return;
+    if (drainingGenerationRef.current === sourceGenerationRef.current) {
+      refreshRequestedRef.current = true;
+      return;
+    }
     if (refreshPromiseRef.current) return refreshPromiseRef.current;
     const generation = sourceGenerationRef.current;
+    const mutationEpoch = mutationEpochRef.current;
     const task = (async () => {
       try {
         if (!allowOwnerPersistence()) return;
@@ -423,15 +488,21 @@ export function useDocumentServerDraftSync<T>(
           generation !== sourceGenerationRef.current ||
           !allowOwnerPersistence()
         ) return;
+        if (mutationEpoch !== mutationEpochRef.current || drainingGenerationRef.current === generation) {
+          refreshRequestedRef.current = true;
+          return;
+        }
         readyRef.current = true;
+        const queued = readQueuedDocumentServerDraft(window.localStorage, sourceKey);
+        updateQueuedRecovery(queued?.entry);
         if (!result.ok) {
           setStatus("error");
           return;
         }
         updateRemote(result.draft);
-        const queued = readQueuedDocumentServerDraft(window.localStorage, sourceKey);
         if (
           queued?.entry.operationType === "UPSERT" &&
+          !requiresLegacyDraftChoice(queued.entry) &&
           result.draft?.payloadHash === queued.entry.payloadHash
         ) {
           removeQueuedDocumentServerDraftIfUnchanged(
@@ -456,6 +527,7 @@ export function useDocumentServerDraftSync<T>(
         if (!mountedRef.current || generation !== sourceGenerationRef.current) return;
         readyRef.current = true;
         const queued = readQueuedDocumentServerDraft(window.localStorage, sourceKey);
+        updateQueuedRecovery(queued?.entry);
         setStatus(queued && isBrowserOffline() ? "offline" : "error");
       }
     })();
@@ -464,8 +536,14 @@ export function useDocumentServerDraftSync<T>(
       await task;
     } finally {
       if (refreshPromiseRef.current === task) refreshPromiseRef.current = null;
+      if (mountedRef.current && generation === sourceGenerationRef.current &&
+        drainingGenerationRef.current !== generation && refreshRequestedRef.current) {
+        refreshRequestedRef.current = false;
+        queueMicrotask(() => void refreshRef.current());
+      }
     }
-  }, [allowOwnerPersistence, evaluateState, sourceKey, updateRemote]);
+  }, [allowOwnerPersistence, evaluateState, sourceKey, updateQueuedRecovery, updateRemote]);
+  refreshRef.current = refresh;
 
   const observeLocalDraft = useCallback(
     (data: T) => {
@@ -476,10 +554,15 @@ export function useDocumentServerDraftSync<T>(
         localDraftSourceRef.current = sourceKey;
         if (mountedRef.current) setLocalPreview(createFormDraftRecoveryPreview(data));
         const current = remoteDraftRef.current;
+        const queued = readQueuedDocumentServerDraft(window.localStorage, sourceKey);
+        // canonical 복원본과 다른 고유 원문도 명시적 선택 전에는 교체하지 않는다.
+        if (requiresLegacyDraftChoice(queued?.entry)) {
+          evaluateState(current, queued?.entry);
+          return;
+        }
         if (current?.payloadHash === local.payloadHash) {
           choiceRequiredRef.current = false;
-          const queued = readQueuedDocumentServerDraft(window.localStorage, sourceKey);
-          if (queued?.entry.operationType === "UPSERT") {
+          if (queued?.entry.operationType === "UPSERT" && queued.entry.payloadHash === local.payloadHash) {
             removeQueuedDocumentServerDraftIfUnchanged(
               window.localStorage,
               sourceKey,
@@ -490,7 +573,6 @@ export function useDocumentServerDraftSync<T>(
           if (mountedRef.current) setStatus("synced");
           return;
         }
-        const queued = readQueuedDocumentServerDraft(window.localStorage, sourceKey);
         if (choiceRequiredRef.current) {
           evaluateState(current, queued?.entry ?? null);
           return;
@@ -504,6 +586,7 @@ export function useDocumentServerDraftSync<T>(
           data,
           expectedDraftVersion:
             current?.draftVersion ?? queued?.entry.expectedDraftVersion ?? 0,
+          expectedPayloadHash: current?.payloadHash ?? (queued?.entry.operationType === "UPSERT" ? queued.entry.expectedPayloadHash : undefined),
           baseResourceVersion: local.baseResourceVersion,
           writerDeviceId,
         });
@@ -517,17 +600,34 @@ export function useDocumentServerDraftSync<T>(
   );
 
   const clearLocalDraft = useCallback(
-    (reason: ClearServerDraftReason) => {
+    (reason: ClearServerDraftReason, submitted?: { submittedData?: T; submittedAliases?: readonly T[] }) => {
       if (!allowOwnerPersistence()) return;
-      const hadLocalDraft = localDraftRef.current !== null;
+      const local = localDraftRef.current;
+      const hadLocalDraft = local !== null;
+      let targetPayloadHashes: string[];
+      try {
+        const data = submitted?.submittedData ?? local?.data;
+        targetPayloadHashes = data === undefined ? [] : [...new Set(
+          [data, ...(submitted?.submittedAliases ?? [])].map((value) => createLocalDraftState(value).payloadHash),
+        )];
+      } catch {
+        if (mountedRef.current) setStatus("error");
+        return;
+      }
+      // 성공 응답을 기다리는 동안 생긴 다른 로컬 작성본도 제출 정리의 대상이 아니다.
+      if (reason === "submitted" && local && !targetPayloadHashes.includes(local.payloadHash)) return;
       localDraftRef.current = null;
       localDraftSourceRef.current = null;
       if (mountedRef.current) setLocalPreview(null);
       clearTimers();
-      if (reason === "empty" && choiceRequiredRef.current) {
-        try {
-          const queued = readQueuedDocumentServerDraft(window.localStorage, sourceKey);
-          if (queued?.entry.operationType === "UPSERT") {
+      try {
+        const queued = readQueuedDocumentServerDraft(window.localStorage, sourceKey);
+        if (requiresLegacyDraftChoice(queued?.entry)) {
+          evaluateState(remoteDraftRef.current, queued?.entry);
+          return;
+        }
+        if (reason === "empty" && choiceRequiredRef.current) {
+          if (queued?.entry.operationType === "UPSERT" && targetPayloadHashes.includes(queued.entry.payloadHash)) {
             removeQueuedDocumentServerDraftIfUnchanged(
               window.localStorage,
               sourceKey,
@@ -535,21 +635,31 @@ export function useDocumentServerDraftSync<T>(
             );
             notifyQueueChange(sourceKey);
           }
-          evaluateState(remoteDraftRef.current, null);
-        } catch {
-          if (mountedRef.current) setStatus("error");
+          evaluateState(remoteDraftRef.current, readQueuedDocumentServerDraft(window.localStorage, sourceKey)?.entry);
+          return;
         }
-        return;
-      }
-      if (reason === "empty" && !hadLocalDraft) {
-        evaluateState(remoteDraftRef.current, null);
-        return;
-      }
-      choiceRequiredRef.current = false;
-      try {
-        const queued = readQueuedDocumentServerDraft(window.localStorage, sourceKey);
+        if (reason === "empty" && !hadLocalDraft) {
+          evaluateState(remoteDraftRef.current, queued?.entry ?? null);
+          return;
+        }
+        choiceRequiredRef.current = false;
+        if (queued?.entry.operationType === "UPSERT" && !targetPayloadHashes.includes(queued.entry.payloadHash)) {
+          evaluateState(remoteDraftRef.current, queued.entry);
+          return;
+        }
+        const remote = remoteDraftRef.current;
+        if (targetPayloadHashes.length === 0 || (remote && !targetPayloadHashes.includes(remote.payloadHash) &&
+          drainingGenerationRef.current !== sourceGenerationRef.current)) {
+          if (queued?.entry.operationType === "UPSERT") {
+            removeQueuedDocumentServerDraftIfUnchanged(window.localStorage, sourceKey, queued.raw);
+            notifyQueueChange(sourceKey);
+          }
+          evaluateState(remote, readQueuedDocumentServerDraft(window.localStorage, sourceKey)?.entry);
+          return;
+        }
         enqueueDocumentServerDraftDiscard(window.localStorage, {
           sourceKey,
+          targetPayloadHashes,
           expectedDraftVersion:
             remoteDraftRef.current?.draftVersion ??
             queued?.entry.expectedDraftVersion ??
@@ -564,6 +674,31 @@ export function useDocumentServerDraftSync<T>(
     },
     [allowOwnerPersistence, clearTimers, evaluateState, sourceKey],
   );
+
+  const restoreQueuedDraft = useCallback(() => {
+    if (!allowOwnerPersistence() || queuedRecovery?.operationType !== "UPSERT" ||
+      queuedRecovery.sourceKey !== sourceKey) return;
+    try {
+      const current = readQueuedDocumentServerDraft(window.localStorage, sourceKey);
+      // 화면에 표시한 원문과 달라졌다면 새 내용을 먼저 보여 주고 다시 선택받는다.
+      if (!requiresLegacyDraftChoice(current?.entry) || current?.entry.operationType !== "UPSERT" ||
+        current.entry.operationId !== queuedRecovery.operationId ||
+        current.entry.payloadHash !== queuedRecovery.payloadHash) {
+        evaluateState(remoteDraftRef.current, current?.entry);
+        return;
+      }
+      const data = parsePayloadData<T>(current.entry.payloadJson);
+      if (!data) return;
+      clearTimers();
+      localDraftRef.current = createLocalDraftState(data);
+      localDraftSourceRef.current = sourceKey;
+      setLocalPreview(createFormDraftRecoveryPreview(data));
+      onApplyRemoteRef.current(data);
+      evaluateState(remoteDraftRef.current, current.entry);
+    } catch {
+      setStatus("error");
+    }
+  }, [allowOwnerPersistence, clearTimers, evaluateState, queuedRecovery, sourceKey]);
 
   const useRemoteDraft = useCallback(() => {
     if (!allowOwnerPersistence()) return;
@@ -610,6 +745,7 @@ export function useDocumentServerDraftSync<T>(
         sourceKey,
         data: local.data,
         expectedDraftVersion: remoteDraftRef.current?.draftVersion ?? 0,
+        expectedPayloadHash: remoteDraftRef.current?.payloadHash,
         baseResourceVersion: local.baseResourceVersion,
         writerDeviceId,
       });
@@ -628,6 +764,7 @@ export function useDocumentServerDraftSync<T>(
       const queued = readQueuedDocumentServerDraft(window.localStorage, sourceKey);
       enqueueDocumentServerDraftDiscard(window.localStorage, {
         sourceKey,
+        targetPayloadHashes: remoteDraftRef.current ? [remoteDraftRef.current.payloadHash] : undefined,
         expectedDraftVersion:
           remoteDraftRef.current?.draftVersion ??
           queued?.entry.expectedDraftVersion ??
@@ -648,10 +785,12 @@ export function useDocumentServerDraftSync<T>(
     }
     sourceGenerationRef.current += 1;
     refreshPromiseRef.current = null;
+    refreshRequestedRef.current = false;
     readyRef.current = false;
     choiceRequiredRef.current = false;
     remoteDraftRef.current = null;
     setRemoteDraft(null);
+    setQueuedRecovery(null);
     if (localDraftSourceRef.current !== sourceKey) {
       localDraftRef.current = null;
       localDraftSourceRef.current = null;
@@ -669,6 +808,7 @@ export function useDocumentServerDraftSync<T>(
         );
         deviceIdRef.current = nextDeviceId;
         setDeviceId(nextDeviceId);
+        updateQueuedRecovery(readQueuedDocumentServerDraft(window.localStorage, sourceKey)?.entry);
       } catch {
         deviceIdRef.current = null;
         setDeviceId(null);
@@ -808,10 +948,16 @@ export function useDocumentServerDraftSync<T>(
     purgeTerminallyLockedOwner,
     refresh,
     sourceKey,
+    updateQueuedRecovery,
   ]);
 
   const remotePreview = remoteDraft
     ? createFormDraftRecoveryPreview(parsePayloadData<unknown>(remoteDraft.payloadJson))
+    : null;
+  const queuedPreview = queuedRecovery?.operationType === "UPSERT" &&
+    queuedRecovery.sourceKey === sourceKey &&
+    queuedRecovery.payloadHash !== localDraftRef.current?.payloadHash
+    ? createFormDraftRecoveryPreview(parsePayloadData<unknown>(queuedRecovery.payloadJson))
     : null;
 
   return {
@@ -819,6 +965,7 @@ export function useDocumentServerDraftSync<T>(
     remoteDraft,
     remotePreview,
     localPreview,
+    queuedPreview,
     isDifferentDevice: Boolean(
       remoteDraft && deviceId && remoteDraft.writerDeviceId !== deviceId,
     ),
@@ -826,6 +973,7 @@ export function useDocumentServerDraftSync<T>(
     clearLocalDraft,
     useRemoteDraft,
     keepLocalDraft,
+    restoreQueuedDraft,
     discardRemoteDraft,
     refresh,
   };

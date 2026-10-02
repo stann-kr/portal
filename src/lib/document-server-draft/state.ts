@@ -123,6 +123,8 @@ export async function classifyWriteFailure(
     operationType: DocumentServerDraftOperationType;
     requestHash: string;
     expectedDraftVersion: number;
+    targetPayloadHashes?: readonly string[];
+    expectedPayloadHash?: string;
     now: Date;
   },
 ): Promise<DocumentServerDraftMutationResult> {
@@ -135,7 +137,9 @@ export async function classifyWriteFailure(
     input.sourceKey,
     input.now,
   );
-  if (current && current.draftVersion !== input.expectedDraftVersion) {
+  if (current && (current.draftVersion !== input.expectedDraftVersion ||
+    (input.operationType === "UPSERT" && current.payloadHash !== input.expectedPayloadHash) ||
+    (input.targetPayloadHashes && !input.targetPayloadHashes.includes(current.payloadHash)))) {
     return { ok: false, reason: "VERSION_CONFLICT", current };
   }
   if (!current && input.expectedDraftVersion !== 0) {

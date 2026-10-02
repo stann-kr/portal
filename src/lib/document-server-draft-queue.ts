@@ -10,6 +10,8 @@ import {
   parseDocumentServerDraftBaseResourceVersion,
   parseDocumentServerDraftDeviceId,
   parseDocumentServerDraftVersion,
+  parseDocumentServerDraftExpectedHash,
+  parseDocumentServerDraftTargetHashes as parseTargetPayloadHashes,
   serializeDocumentServerDraftPayload,
 } from "@/lib/document-server-draft-contract";
 import { DOCUMENT_SERVER_DRAFT_RETENTION_SECONDS } from "@/lib/document-server-draft-constants";
@@ -37,10 +39,13 @@ export type QueuedDocumentServerDraftUpsert = QueuedDocumentServerDraftBase & {
   payloadHash: string;
   baseResourceVersion: number | null;
   writerDeviceId: string;
+  expectedPayloadHash?: string;
 };
 
 export type QueuedDocumentServerDraftDiscard = QueuedDocumentServerDraftBase & {
   operationType: "DISCARD";
+  /** 삭제 의도를 이 본문에 한정한다. 생략된 이전 요청은 원 version만 대상으로 한다. */
+  targetPayloadHashes?: string[];
 };
 
 export type QueuedDocumentServerDraft =
@@ -111,7 +116,9 @@ export function parseQueuedDocumentServerDraft(
       conflictCount,
     } as const;
     if (value.operationType === "DISCARD") {
-      return { ...base, operationType: "DISCARD" };
+      const targetPayloadHashes = parseTargetPayloadHashes(value.targetPayloadHashes);
+      if (targetPayloadHashes === null) return null;
+      return { ...base, operationType: "DISCARD", ...(targetPayloadHashes ? { targetPayloadHashes } : {}) };
     }
     if (
       value.operationType !== "UPSERT" ||
@@ -125,12 +132,15 @@ export function parseQueuedDocumentServerDraft(
       value.baseResourceVersion,
     );
     const writerDeviceId = parseDocumentServerDraftDeviceId(value.writerDeviceId);
+    const expectedPayloadHash = parseDocumentServerDraftExpectedHash(value.expectedPayloadHash);
     if (
       !payload ||
       payload.payloadJson !== value.payloadJson ||
       payload.payloadHash !== value.payloadHash ||
       baseResourceVersion === undefined ||
-      !writerDeviceId
+      !writerDeviceId ||
+      expectedPayloadHash === null ||
+      (expectedDraftVersion === 0 && expectedPayloadHash !== undefined)
     ) {
       return null;
     }
@@ -141,6 +151,7 @@ export function parseQueuedDocumentServerDraft(
       payloadHash: payload.payloadHash,
       baseResourceVersion,
       writerDeviceId,
+      ...(expectedPayloadHash ? { expectedPayloadHash } : {}),
     };
   } catch {
     return null;
@@ -178,6 +189,7 @@ export function enqueueDocumentServerDraftUpsert(
     sourceKey: string;
     data: unknown;
     expectedDraftVersion: number;
+    expectedPayloadHash?: string;
     baseResourceVersion: number | null;
     writerDeviceId: string;
     now?: number;
@@ -195,11 +207,14 @@ export function enqueueDocumentServerDraftUpsert(
   );
   const writerDeviceId = parseDocumentServerDraftDeviceId(input.writerDeviceId);
   const conflictCount = parseConflictCount(input.conflictCount ?? 0);
+  const expectedPayloadHash = parseDocumentServerDraftExpectedHash(input.expectedPayloadHash);
   if (
     expectedDraftVersion === null ||
     baseResourceVersion === undefined ||
     !writerDeviceId ||
-    conflictCount === null
+    conflictCount === null ||
+    expectedPayloadHash === null ||
+    (expectedDraftVersion === 0 && expectedPayloadHash !== undefined)
   ) {
     throw new TypeError("유효한 서버 초안 queue metadata가 필요합니다.");
   }
@@ -211,6 +226,7 @@ export function enqueueDocumentServerDraftUpsert(
   if (
     current?.entry.operationType === "UPSERT" &&
     current.entry.expectedDraftVersion === expectedDraftVersion &&
+    current.entry.expectedPayloadHash === expectedPayloadHash &&
     current.entry.payloadHash === payload.payloadHash &&
     current.entry.baseResourceVersion === baseResourceVersion &&
     current.entry.writerDeviceId === writerDeviceId &&
@@ -225,6 +241,7 @@ export function enqueueDocumentServerDraftUpsert(
     operationType: "UPSERT",
     operationId: createCreationOperationId(),
     expectedDraftVersion,
+    ...(expectedPayloadHash ? { expectedPayloadHash } : {}),
     payloadJson: payload.payloadJson,
     payloadHash: payload.payloadHash,
     baseResourceVersion,
@@ -241,6 +258,7 @@ export function enqueueDocumentServerDraftDiscard(
     expectedDraftVersion: number;
     now?: number;
     conflictCount?: number;
+    targetPayloadHashes?: readonly string[];
   },
 ): StoredQueuedDocumentServerDraft {
   if (!parseDocumentDraftKey(input.sourceKey)) {
@@ -250,14 +268,16 @@ export function enqueueDocumentServerDraftDiscard(
     input.expectedDraftVersion,
   );
   const conflictCount = parseConflictCount(input.conflictCount ?? 0);
-  if (expectedDraftVersion === null || conflictCount === null) {
+  const targetPayloadHashes = parseTargetPayloadHashes(input.targetPayloadHashes);
+  if (expectedDraftVersion === null || conflictCount === null || targetPayloadHashes === null) {
     throw new TypeError("유효한 서버 초안 queue metadata가 필요합니다.");
   }
   const current = readQueuedDocumentServerDraft(storage, input.sourceKey);
   if (
     current?.entry.operationType === "DISCARD" &&
     current.entry.expectedDraftVersion === expectedDraftVersion &&
-    current.entry.conflictCount === conflictCount
+    current.entry.conflictCount === conflictCount &&
+    JSON.stringify(current.entry.targetPayloadHashes) === JSON.stringify(targetPayloadHashes)
   ) {
     return current;
   }
@@ -269,6 +289,7 @@ export function enqueueDocumentServerDraftDiscard(
     expectedDraftVersion,
     queuedAt: input.now ?? Date.now(),
     conflictCount,
+    ...(targetPayloadHashes ? { targetPayloadHashes } : {}),
   });
 }
 

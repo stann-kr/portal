@@ -10,6 +10,8 @@ import {
   parseDocumentServerDraftBaseResourceVersion,
   parseDocumentServerDraftDeviceId,
   parseDocumentServerDraftVersion,
+  parseDocumentServerDraftTargetHashes,
+  parseDocumentServerDraftExpectedHash,
   validateDocumentServerDraftSource,
   type DiscardDocumentServerDraftInput,
   type DocumentServerDraftMutationResult,
@@ -89,12 +91,15 @@ export async function saveDocumentServerDraft(
     input?.baseResourceVersion,
   );
   const writerDeviceId = parseDocumentServerDraftDeviceId(input?.writerDeviceId);
+  const expectedPayloadHash = parseDocumentServerDraftExpectedHash(input?.expectedPayloadHash);
   if (
     !identity ||
     !operationId ||
     expectedDraftVersion === null ||
     baseResourceVersion === undefined ||
     !writerDeviceId ||
+    expectedPayloadHash === null ||
+    (expectedDraftVersion === 0 && expectedPayloadHash !== undefined) ||
     typeof input?.payloadJson !== "string"
   ) {
     return { ok: false, reason: "INVALID_INPUT", current: null };
@@ -124,8 +129,10 @@ export async function saveDocumentServerDraft(
         payloadHash: payload.payloadHash,
         baseResourceVersion,
         writerDeviceId,
+        expectedPayloadHash,
       }),
       expectedDraftVersion,
+      expectedPayloadHash,
       payloadJson: payload.payloadJson,
       payloadHash: payload.payloadHash,
       baseResourceVersion,
@@ -150,7 +157,8 @@ export async function discardDocumentServerDraft(
   const expectedDraftVersion = parseDocumentServerDraftVersion(
     input?.expectedDraftVersion,
   );
-  if (!identity || !operationId || expectedDraftVersion === null) {
+  const targetPayloadHashes = parseDocumentServerDraftTargetHashes(input?.targetPayloadHashes);
+  if (!identity || !operationId || expectedDraftVersion === null || targetPayloadHashes === null) {
     return { ok: false, reason: "INVALID_INPUT", current: null };
   }
 
@@ -166,8 +174,10 @@ export async function discardDocumentServerDraft(
         operationType: "DISCARD",
         sourceKey: input.sourceKey,
         expectedDraftVersion,
+        targetPayloadHashes,
       }),
       expectedDraftVersion,
+      targetPayloadHashes,
       now,
     });
   } catch {

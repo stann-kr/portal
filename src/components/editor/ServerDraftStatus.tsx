@@ -126,11 +126,12 @@ export function ServerDraftStatus({
   const [isConfirmingDiscard, setIsConfirmingDiscard] = useState(false);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
   const confirmationId = useId();
+  const recoveryDescriptionId = useId();
   const stableFocusRef = useRef<HTMLDivElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const discardRef = useRef<HTMLButtonElement>(null);
   const restoreDiscardFocusRef = useRef(false);
-  const isChoosing = sync.status === "conflict" || sync.status === "remote-available";
+  const isChoosing = sync.status === "conflict" || sync.status === "remote-available" || Boolean(sync.queuedPreview);
   const actionsDisabled = disabled || sync.status === "loading" || sync.status === "syncing";
 
   useEffect(() => {
@@ -186,7 +187,9 @@ export function ServerDraftStatus({
         >
           <div className="space-y-0.5 text-xs">
             <p className="font-medium text-foreground">
-              {sync.status === "remote-available"
+              {sync.queuedPreview
+                ? "이전에 보관한 작성본이 있습니다."
+                : sync.status === "remote-available"
                 ? "계정에 저장된 작성본이 있습니다."
                 : "이 기기와 계정의 작성본이 다릅니다."}
             </p>
@@ -206,14 +209,40 @@ export function ServerDraftStatus({
             {sync.localPreview ? (
               <DraftPreview label="이 기기 작성본" preview={sync.localPreview} />
             ) : null}
+            {sync.queuedPreview ? (
+              <DraftPreview label="보관된 작성본" preview={sync.queuedPreview} />
+            ) : null}
           </div>
 
+          {sync.queuedPreview ? (
+            <p id={recoveryDescriptionId} className="text-xs text-muted-foreground">
+              복원하면 현재 입력란의 내용을 바꿉니다. 계정 작성본은 변경하지 않습니다.
+            </p>
+          ) : null}
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs">
+            {sync.queuedPreview ? (
+              <button
+                type="button"
+                disabled={actionsDisabled}
+                aria-describedby={recoveryDescriptionId}
+                onClick={() => {
+                  stableFocusRef.current?.focus();
+                  sync.restoreQueuedDraft();
+                }}
+                className="inline-flex items-center gap-1 font-medium text-foreground hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <RotateCcw className="h-3 w-3" aria-hidden="true" />
+                보관된 작성본 복원
+              </button>
+            ) : null}
             {sync.remoteDraft ? (
               <button
                 type="button"
                 disabled={actionsDisabled}
-                onClick={sync.useRemoteDraft}
+                onClick={() => {
+                  stableFocusRef.current?.focus();
+                  sync.useRemoteDraft();
+                }}
                 className="inline-flex items-center gap-1 font-medium text-foreground hover:underline disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <RotateCcw className="h-3 w-3" aria-hidden="true" />
@@ -224,7 +253,10 @@ export function ServerDraftStatus({
               <button
                 type="button"
                 disabled={actionsDisabled}
-                onClick={sync.keepLocalDraft}
+                onClick={() => {
+                  stableFocusRef.current?.focus();
+                  sync.keepLocalDraft();
+                }}
                 className="font-medium text-foreground hover:underline disabled:cursor-not-allowed disabled:opacity-50"
               >
                 내 초안으로 계속

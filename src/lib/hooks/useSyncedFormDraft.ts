@@ -56,7 +56,7 @@ export function useSyncedFormDraft<T>(
   const clearLocalServerDraft = server.clearLocalDraft;
   const clear = useCallback<UseFormDraftResult<T>["clear"]>((clearOptions) => {
     localRef.current?.clear(clearOptions);
-    clearLocalServerDraft(clearOptions?.reason ?? "empty");
+    clearLocalServerDraft(clearOptions?.reason ?? "empty", clearOptions);
   }, [clearLocalServerDraft]);
 
   return {
@@ -68,9 +68,11 @@ export function useSyncedFormDraft<T>(
       remoteDraft: server.remoteDraft,
       remotePreview: server.remotePreview,
       localPreview: server.localPreview,
+      queuedPreview: server.queuedPreview,
       isDifferentDevice: server.isDifferentDevice,
       useRemoteDraft: server.useRemoteDraft,
       keepLocalDraft: server.keepLocalDraft,
+      restoreQueuedDraft: server.restoreQueuedDraft,
       discardRemoteDraft: server.discardRemoteDraft,
       refresh: server.refresh,
     },

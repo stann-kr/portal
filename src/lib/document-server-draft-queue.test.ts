@@ -127,6 +127,20 @@ test("응답 대상 raw가 현재 queue와 같을 때만 CAS 제거한다", () =
   assert.equal(readQueuedDocumentServerDraft(storage, sourceKey), null);
 });
 
+test("제출 초안 삭제는 본문 범위를 재시도에 보존하고 범위가 바뀌면 새 작업으로 구분한다", () => {
+  const storage = new MemoryStorage();
+  const sourceKey = createDocumentDraftKey("note", "student-1", "submitted-note");
+  const input = { sourceKey, expectedDraftVersion: 2, targetPayloadHashes: ["a".repeat(64)] };
+  const first = enqueueDocumentServerDraftDiscard(storage, input);
+  assert.equal(enqueueDocumentServerDraftDiscard(storage, input).raw, first.raw);
+  const parsed = parseQueuedDocumentServerDraft(first.raw);
+  assert.ok(parsed?.operationType === "DISCARD");
+  assert.deepEqual(parsed.targetPayloadHashes, input.targetPayloadHashes);
+  const other = enqueueDocumentServerDraftDiscard(storage, { ...input, targetPayloadHashes: ["b".repeat(64)] });
+  assert.notEqual(other.entry.operationId, first.entry.operationId);
+  assert.equal(parseQueuedDocumentServerDraft(JSON.stringify({ ...first.entry, targetPayloadHashes: ["invalid"] })), null);
+});
+
 test("queue parser는 source 위조, 비정규 payload, 미래 version을 실행하지 않는다", () => {
   const sourceKey = createDocumentDraftKey("qna-reply", "student-1", "thread-1");
   const raw = JSON.stringify({

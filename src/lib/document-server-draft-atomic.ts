@@ -36,6 +36,7 @@ export type SaveDocumentServerDraftWrite = {
   operationId: string;
   requestHash: string;
   expectedDraftVersion: number;
+  expectedPayloadHash?: string;
   payloadJson: string;
   payloadHash: string;
   baseResourceVersion: number | null;
@@ -49,6 +50,7 @@ export type DiscardDocumentServerDraftWrite = {
   operationId: string;
   requestHash: string;
   expectedDraftVersion: number;
+  targetPayloadHashes?: readonly string[];
   now: Date;
 };
 
@@ -123,7 +125,8 @@ export async function saveDocumentServerDraftAtomically(
 
   const stored = await findStoredDraft(context, write.ownerId, write.sourceKey);
   const current = isActiveDraft(stored, write.now) ? stored : null;
-  if (current && current.draftVersion !== write.expectedDraftVersion) {
+  if (current && (current.draftVersion !== write.expectedDraftVersion ||
+    current.payloadHash !== write.expectedPayloadHash)) {
     return {
       ok: false,
       reason: "VERSION_CONFLICT",
@@ -228,7 +231,7 @@ export async function saveDocumentServerDraftAtomically(
         SET payload_json = ?, payload_hash = ?, draft_version = draft_version + 1,
             base_resource_version = ?, writer_device_id = ?,
             updated_at = ?, expires_at = ?
-        WHERE owner_id = ? AND source_key = ? AND draft_version = ? AND expires_at > ?
+        WHERE owner_id = ? AND source_key = ? AND draft_version = ? AND expires_at > ? AND payload_hash = ?
       `,
       params: [
         write.payloadJson,
@@ -241,6 +244,7 @@ export async function saveDocumentServerDraftAtomically(
         write.sourceKey,
         write.expectedDraftVersion,
         nowSeconds,
+        write.expectedPayloadHash ?? null,
       ],
     });
     statements.push(CONDITIONAL_WRITE_SENTINEL);
@@ -286,7 +290,8 @@ export async function discardDocumentServerDraftAtomically(
 
   const stored = await findStoredDraft(context, write.ownerId, write.sourceKey);
   const current = isActiveDraft(stored, write.now) ? stored : null;
-  if (current && current.draftVersion !== write.expectedDraftVersion) {
+  if (current && (current.draftVersion !== write.expectedDraftVersion ||
+    (write.targetPayloadHashes && !write.targetPayloadHashes.includes(current.payloadHash)))) {
     return {
       ok: false,
       reason: "VERSION_CONFLICT",
@@ -343,12 +348,14 @@ export async function discardDocumentServerDraftAtomically(
     statements.push({
       query:
         "DELETE FROM document_server_drafts " +
-        "WHERE owner_id = ? AND source_key = ? AND draft_version = ? AND expires_at > ?",
+        "WHERE owner_id = ? AND source_key = ? AND draft_version = ? AND expires_at > ?" +
+        (write.targetPayloadHashes ? ` AND payload_hash IN (${write.targetPayloadHashes.map(() => "?").join(", ")})` : ""),
       params: [
         write.ownerId,
         write.sourceKey,
         write.expectedDraftVersion,
         nowSeconds,
+        ...(write.targetPayloadHashes ?? []),
       ],
     });
     statements.push(CONDITIONAL_WRITE_SENTINEL);
@@ -369,6 +376,6 @@ export async function discardDocumentServerDraftAtomically(
     ok: true,
     replayed: false,
     operationResultVersion: current?.draftVersion ?? 0,
-    current: null,
+    current: await readCurrentSnapshot(context, write.ownerId, write.sourceKey, write.now),
   };
 }
