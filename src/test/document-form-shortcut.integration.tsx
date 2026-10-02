@@ -88,6 +88,7 @@ let changeQnaStatus: typeof import("@/lib/actions/qna").updateThreadStatus = asy
 let changeQnaLifecycle: typeof import("@/lib/actions/qna").trashQnaThread = async () => ({ success: true, currentRevision: 2 });
 let notePageRole: "student" | "admin" = "student";
 let notePageData: Awaited<ReturnType<typeof import("@/lib/actions/privateNotes").getPrivateNotes>> = [];
+let qnaPageData: Awaited<ReturnType<typeof import("@/lib/actions/qna").getQnaThreads>> = [];
 const notePageTargets: string[] = [];
 
 mock.module("@/lib/auth-guard", { namedExports: {
@@ -164,6 +165,7 @@ mock.module("@/lib/actions/documentDrafts", {
 });
 mock.module("@/lib/actions/qna", {
   namedExports: {
+    getQnaThreads: async () => qnaPageData,
     createQnaReply: async () => {
       actionCalls.qnaReply += 1;
       return {};
@@ -240,6 +242,8 @@ let RestoreNoteRevisionButton: typeof import("@/components/notes/RestoreNoteRevi
 let NoteFullForm: typeof import("@/components/notes/NoteFullForm").NoteFullForm;
 let StudentNotesPage: typeof import("@/app/dashboard/student/notes/page").default;
 let AdminStudentNotesPage: typeof import("@/app/dashboard/admin/students/[id]/notes/page").default;
+let QnaPage: typeof import("@/app/dashboard/qna/page").default;
+let ThreadList: typeof import("@/components/qna/ThreadList").ThreadList;
 
 before(async () => {
   [
@@ -252,6 +256,8 @@ before(async () => {
     { NoteFullForm },
     { default: StudentNotesPage },
     { default: AdminStudentNotesPage },
+    { default: QnaPage },
+    { ThreadList },
   ] = await Promise.all([
     import("@/components/community/NewPostForm"),
     import("@/components/qna/NewQnaForm"),
@@ -262,6 +268,8 @@ before(async () => {
     import("@/components/notes/NoteFullForm"),
     import("@/app/dashboard/student/notes/page"),
     import("@/app/dashboard/admin/students/[id]/notes/page"),
+    import("@/app/dashboard/qna/page"),
+    import("@/components/qna/ThreadList"),
   ]);
 });
 
@@ -408,6 +416,48 @@ test("학생·관리자 노트 검색은 본문을 찾고 상세·작성·휴지
     assert.equal(harness.container.querySelector<HTMLInputElement>('input[name="q"]')?.value, "a".repeat(119));
     assert.match(harness.container.textContent ?? "", /검색 결과가 없습니다/u);
   }
+});
+
+test("Q&A 목록은 URL 상태 필터와 상세·작성·휴지통의 복귀 문맥을 첫 렌더부터 보존한다", { concurrency: false }, async (context) => {
+  const harness = await renderForm(context, <div />);
+  const base = { version: 1, deletedAt: null, studentId: "student-1", studentName: "학생", studentEmail: null, createdAt: null, updatedAt: null };
+  qnaPageData = [{ ...base, id: "thread-open", title: "새 질문", status: "OPEN" }, { ...base, id: "thread-answered", title: "지난 답변", status: "ANSWERED" }];
+  context.after(() => { qnaPageData = []; notePageRole = "student"; });
+  for (const role of ["student", "admin"] as const) {
+    notePageRole = role;
+    const parent = `/dashboard/${role}?section=${role === "admin" ? "work" : "today"}`;
+    const page = (qnaStatus: string) => QnaPage({ searchParams: Promise.resolve({ returnTo: parent, qnaStatus }) });
+    await harness.rerender(await page("ANSWERED"));
+    const form = harness.container.querySelector<HTMLFormElement>('form[aria-label="Q&A 상태 필터"]')!;
+    assert.equal(form.method, "get");
+    const answered = form.querySelector<HTMLButtonElement>('button[value="ANSWERED"]')!;
+    assert.equal(answered.getAttribute("aria-pressed"), "true");
+    const data = new FormData(form, answered);
+    assert.equal(data.get("qnaStatus"), "ANSWERED");
+    assert.equal(data.get("returnTo"), parent);
+    const links = [...harness.container.querySelectorAll<HTMLAnchorElement>("a")].map((link) => new URL(link.href, "https://portal.test"));
+    const details = links.filter((link) => link.pathname.startsWith("/dashboard/qna/thread-"));
+    assert.equal(details.length, 1);
+    assert.equal(details[0].pathname, "/dashboard/qna/thread-answered");
+    const listHref = details[0].searchParams.get("returnTo")!;
+    const list = new URL(listHref, "https://portal.test");
+    assert.equal(list.searchParams.get("qnaStatus"), "ANSWERED");
+    assert.equal(list.searchParams.get("returnTo"), parent);
+    assert.equal(links.find((link) => link.pathname === "/dashboard/qna/trash")?.searchParams.get("returnTo"), listHref);
+    if (role === "student") assert.equal(links.find((link) => link.pathname === "/dashboard/qna/new")?.searchParams.get("returnTo"), listHref);
+    const all = new FormData(form, form.querySelector<HTMLButtonElement>('button[value="ALL"]')!);
+    await harness.rerender(await page(String(all.get("qnaStatus"))));
+    assert.equal(harness.container.querySelectorAll('a[href^="/dashboard/qna/thread-"]').length, 2);
+  }
+  await harness.rerender(<ThreadList threads={qnaPageData} isAdmin filter="ANSWERED" returnTo="/dashboard/admin/students/student-1?tab=qna#records" />);
+  const form = harness.container.querySelector<HTMLFormElement>("form")!;
+  assert.equal(form.getAttribute("action"), "/dashboard/admin/students/student-1#records");
+  assert.equal(new FormData(form).get("tab"), "qna");
+  const detail = new URL(harness.container.querySelector<HTMLAnchorElement>('a[href^="/dashboard/qna/"]')!.href, "https://portal.test");
+  const back = new URL(detail.searchParams.get("returnTo")!, "https://portal.test");
+  assert.equal(back.pathname, "/dashboard/admin/students/student-1");
+  assert.equal(back.searchParams.get("tab"), "qna");
+  assert.equal(back.searchParams.get("qnaStatus"), "ANSWERED");
 });
 
 test("관리자 노트 작성 화면의 휴지통 링크는 대상 학생과 검색 복귀 위치를 유지한다", { concurrency: false }, async (context) => {

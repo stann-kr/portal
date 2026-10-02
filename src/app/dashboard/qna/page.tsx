@@ -14,7 +14,7 @@ import { getQnaThreads } from "@/lib/actions/qna";
 import { ThreadList } from "@/components/qna/ThreadList";
 import type { QnaStatus } from "@/db/schema";
 import { safeReturnPath } from "@/lib/safe-return-path";
-import { buildQnaListHref } from "@/lib/qna-routes";
+import { buildQnaListHref, resolveQnaFilter } from "@/lib/qna-routes";
 
 type RawThread = Awaited<ReturnType<typeof getQnaThreads>>[number];
 
@@ -32,7 +32,7 @@ type QnaThreadItem = {
 export default async function QnaPage({
   searchParams,
 }: {
-  searchParams: Promise<{ returnTo?: string }>;
+  searchParams: Promise<{ returnTo?: string; qnaStatus?: string | string[] }>;
 }) {
   const session = await getActiveAuthSession();
   if (!session?.user) redirect("/login");
@@ -43,7 +43,8 @@ export default async function QnaPage({
     query.returnTo,
     isAdmin ? "/dashboard/admin?section=work" : "/dashboard/student?section=today",
   );
-  const listHref = buildQnaListHref(parentReturnTo);
+  const filter = resolveQnaFilter(query.qnaStatus);
+  const listHref = buildQnaListHref(parentReturnTo, filter);
   const rawThreads = await getQnaThreads();
 
   const threads: QnaThreadItem[] = rawThreads.map((t: RawThread) => ({
@@ -90,7 +91,7 @@ export default async function QnaPage({
         </div>
       </div>
 
-      <ThreadList threads={threads} isAdmin={isAdmin} returnTo={listHref} />
+      <ThreadList threads={threads} isAdmin={isAdmin} returnTo={listHref} filter={filter} />
     </div>
   );
 }

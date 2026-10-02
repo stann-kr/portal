@@ -1,6 +1,3 @@
-"use client";
-
-import { useMemo, useState } from "react";
 import Link from "next/link";
 import { MessageCircle } from "lucide-react";
 import type { QnaStatus } from "@/db/schema";
@@ -9,6 +6,7 @@ import {
   QNA_STATUS_CONFIG,
   type QnaFilterTab,
 } from "@/lib/qna-status";
+import { buildQnaFilterHref } from "@/lib/qna-routes";
 
 type Thread = {
   id: string;
@@ -23,28 +21,19 @@ interface ThreadListProps {
   threads: Thread[];
   isAdmin: boolean;
   returnTo?: string;
+  filter?: QnaFilterTab;
 }
 
-export function ThreadList({ threads, isAdmin, returnTo = "/dashboard/qna" }: ThreadListProps) {
-  const [filter, setFilter] = useState<QnaFilterTab>("ALL");
-
-  const counts = useMemo(
-    () => ({
-      ALL: threads.length,
-      OPEN: threads.filter((thread) => thread.status === "OPEN").length,
-      ANSWERED: threads.filter((thread) => thread.status === "ANSWERED").length,
-      CLOSED: threads.filter((thread) => thread.status === "CLOSED").length,
-    }),
-    [threads],
-  );
-
-  const filteredThreads = useMemo(() => {
-    if (filter === "ALL") {
-      return threads;
-    }
-
-    return threads.filter((thread) => thread.status === filter);
-  }, [filter, threads]);
+export function ThreadList({ threads, isAdmin, returnTo = "/dashboard/qna", filter = "ALL" }: ThreadListProps) {
+  const listHref = buildQnaFilterHref(returnTo, filter);
+  const listUrl = new URL(listHref, "https://portal.local");
+  const counts = {
+    ALL: threads.length,
+    OPEN: threads.filter((thread) => thread.status === "OPEN").length,
+    ANSWERED: threads.filter((thread) => thread.status === "ANSWERED").length,
+    CLOSED: threads.filter((thread) => thread.status === "CLOSED").length,
+  };
+  const filteredThreads = filter === "ALL" ? threads : threads.filter((thread) => thread.status === filter);
 
   if (threads.length === 0) {
     return (
@@ -59,15 +48,19 @@ export function ThreadList({ threads, isAdmin, returnTo = "/dashboard/qna" }: Th
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap gap-2 text-sm">
+      <form action={`${listUrl.pathname}${listUrl.hash}`} method="get" aria-label="Q&A 상태 필터" className="flex flex-wrap gap-2 text-sm">
+        {[...listUrl.searchParams].filter(([key]) => key !== "qnaStatus").map(([name, value], index) => (
+          <input key={`${name}:${index}`} type="hidden" name={name} value={value} />
+        ))}
         {QNA_FILTER_TABS.map(({ id, label }) => {
           const isActive = filter === id;
 
           return (
             <button
               key={id}
-              type="button"
-              onClick={() => setFilter(id)}
+              type="submit"
+              name="qnaStatus"
+              value={id}
               aria-pressed={isActive}
               className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
                 isActive
@@ -79,7 +72,7 @@ export function ThreadList({ threads, isAdmin, returnTo = "/dashboard/qna" }: Th
             </button>
           );
         })}
-      </div>
+      </form>
 
       {filteredThreads.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-16 text-muted-foreground gap-2 rounded-xl border border-dashed border-border bg-muted/20">
@@ -102,7 +95,7 @@ export function ThreadList({ threads, isAdmin, returnTo = "/dashboard/qna" }: Th
             return (
               <Link
                 key={thread.id}
-                href={`/dashboard/qna/${thread.id}?returnTo=${encodeURIComponent(returnTo)}`}
+                href={`/dashboard/qna/${thread.id}?returnTo=${encodeURIComponent(listHref)}`}
                 className="flex items-center gap-4 p-4 rounded-xl border border-border bg-card hover:bg-accent/5 transition-colors group"
               >
                 <Icon className={`w-4 h-4 flex-shrink-0 ${iconClassName}`} />

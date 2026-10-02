@@ -16,6 +16,7 @@ import { StudentDetailTabs } from "@/components/admin/StudentDetailTabs";
 import { OverviewTab } from "@/components/admin/OverviewTab";
 import { DiggingBoard } from "@/components/digging/DiggingBoard";
 import { ThreadList } from "@/components/qna/ThreadList";
+import { resolveQnaFilter } from "@/lib/qna-routes";
 import { BookOpen } from "lucide-react";
 import Link from "next/link";
 import type { DiggingColumnType, QnaStatus } from "@/db/schema";
@@ -64,7 +65,7 @@ function NotesTabContent({ studentId }: { studentId: string }) {
   );
 }
 
-async function QnaTabContent({ studentId }: { studentId: string }) {
+async function QnaTabContent({ studentId, filter }: { studentId: string; filter: ReturnType<typeof resolveQnaFilter> }) {
   const rawThreads = await getQnaThreadsByStudent(studentId);
   const threads = rawThreads.map((t: RawQnaThread) => ({
     ...t,
@@ -84,6 +85,7 @@ async function QnaTabContent({ studentId }: { studentId: string }) {
       threads={threads}
       isAdmin={true}
       returnTo={`/dashboard/admin/students/${studentId}?tab=qna`}
+      filter={filter}
     />
   );
 }
@@ -95,13 +97,13 @@ export default async function StudentDetailPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ tab?: string }>;
+  searchParams: Promise<{ tab?: string; qnaStatus?: string | string[] }>;
 }) {
   const session = await getActiveAuthSession();
   if (!session?.user || session.user.role !== "admin") redirect("/login");
 
   const { id: studentId } = await params;
-  const { tab = "overview" } = await searchParams;
+  const { tab = "overview", qnaStatus } = await searchParams;
   const activeTab: StudentDetailTab = resolveStudentDetailTab(tab);
   if (tab !== activeTab) redirect(buildAdminStudentDetailHref(studentId, activeTab));
 
@@ -171,7 +173,7 @@ export default async function StudentDetailPage({
               <div className="h-40 rounded-xl border bg-card animate-pulse" />
             }
           >
-            <QnaTabContent studentId={studentId} />
+            <QnaTabContent studentId={studentId} filter={resolveQnaFilter(qnaStatus)} />
           </Suspense>
         )}
       </div>
