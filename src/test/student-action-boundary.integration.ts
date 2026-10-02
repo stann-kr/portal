@@ -3,11 +3,15 @@ import { after, before, mock, test, type TestContext } from "node:test";
 import { count, eq } from "drizzle-orm";
 import type { AuthSession } from "@/lib/auth-guard";
 import {
+  assignments,
   calendarEvents,
+  comments,
   curriculums,
   diggingColumns,
   diggingTracks,
+  feedbacks,
   lessons,
+  posts,
   profiles,
 } from "@/db/schema";
 import {
@@ -23,6 +27,8 @@ let calendarActions: typeof import("@/lib/actions/calendarEvents");
 let curriculumActions: typeof import("@/lib/actions/curriculum");
 let diggingActions: typeof import("@/lib/actions/digging");
 let lessonActions: typeof import("@/lib/actions/lessons");
+let commentActions: typeof import("@/lib/actions/comments");
+let feedbackActions: typeof import("@/lib/actions/feedbacks");
 
 function createSession(id: string, role: "admin" | "student"): AuthSession {
   return {
@@ -56,12 +62,14 @@ mock.module("next/cache", {
 });
 
 before(async () => {
-  [calendarActions, curriculumActions, diggingActions, lessonActions] =
+  [calendarActions, curriculumActions, diggingActions, lessonActions, commentActions, feedbackActions] =
     await Promise.all([
       import("@/lib/actions/calendarEvents"),
       import("@/lib/actions/curriculum"),
       import("@/lib/actions/digging"),
       import("@/lib/actions/lessons"),
+      import("@/lib/actions/comments"),
+      import("@/lib/actions/feedbacks"),
     ]);
 });
 
@@ -93,6 +101,77 @@ async function seedProfile(
     role,
   });
 }
+
+test("댓글 삭제는 게시물 대상과 작성자 권한을 함께 검증하고 휴지통 대화를 보존한다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("student-1", "student"));
+  await seedProfile(db, "student-1");
+  await seedProfile(db, "student-2");
+  await seedProfile(db, "admin-1", "admin");
+  await db.insert(posts).values(["post-1", "post-2"].map((id) => ({
+    id, authorId: "student-1", category: "general", boardType: "GENERAL" as const,
+    title: "레슨 기록", contentHtml: "<p>본문</p>",
+  })));
+  await db.insert(comments).values({ id: "comment-1", postId: "post-1", authorId: "student-1", contentHtml: "<p>보존할 대화</p>" });
+  await commentActions.deleteComment("comment-1", "post-2");
+  assert.equal((await db.select().from(comments)).length, 1);
+  activeSession = createSession("student-2", "student");
+  await commentActions.deleteComment("comment-1", "post-1");
+  assert.equal((await db.select().from(comments)).length, 1);
+  activeSession = createSession("admin-1", "admin");
+  await commentActions.deleteComment("comment-1", "post-2");
+  assert.equal((await db.select().from(comments)).length, 1);
+  await db.update(posts).set({ deletedAt: new Date() }).where(eq(posts.id, "post-1"));
+  await commentActions.deleteComment("comment-1", "post-1");
+  assert.equal((await db.select().from(comments)).length, 1);
+  await db.update(posts).set({ deletedAt: null }).where(eq(posts.id, "post-1"));
+  await commentActions.deleteComment("comment-1", "post-1");
+  assert.equal((await db.select().from(comments)).length, 0);
+});
+
+test("피드백 삭제·조회는 과제 대상과 학생 ownership을 보존한다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("admin-1", "admin"));
+  await seedProfile(db, "admin-1", "admin");
+  await seedProfile(db, "student-1");
+  await seedProfile(db, "student-2");
+  await db.insert(assignments).values([
+    { id: "assignment-1", studentId: "student-1", mediaUrl: "https://example.test/1" },
+    { id: "assignment-2", studentId: "student-2", mediaUrl: "https://example.test/2" },
+  ]);
+  await db.insert(feedbacks).values({ id: "feedback-1", assignmentId: "assignment-1", timeMarker: 90, content: "보존할 피드백" });
+  await feedbackActions.deleteFeedback("feedback-1", "assignment-2");
+  assert.equal((await db.select().from(feedbacks)).length, 1);
+  activeSession = createSession("student-2", "student");
+  await assert.rejects(feedbackActions.getFeedbacksByAssignment("assignment-1"), /Unauthorized/);
+  await assert.rejects(feedbackActions.deleteFeedback("feedback-1", "assignment-1"), /Admin only/);
+  activeSession = createSession("student-1", "student");
+  assert.equal((await feedbackActions.getFeedbacksByAssignment("assignment-1"))[0]?.content, "보존할 피드백");
+  activeSession = createSession("admin-1", "admin");
+  await feedbackActions.deleteFeedback("feedback-1", "assignment-1");
+  assert.equal((await db.select().from(feedbacks)).length, 0);
+});
+
+test("피드백은 잘못된 재생 시점을 저장하지 않고 긴 믹스셋의 시점을 정확히 보존한다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("admin-1", "admin"));
+  await seedProfile(db, "admin-1", "admin");
+  await seedProfile(db, "student-1");
+  await db.insert(assignments).values({ id: "assignment-1", studentId: "student-1", mediaUrl: "https://example.test/1" });
+  const form = (timeMarker: string) => {
+    const data = new FormData();
+    data.set("timeMarker", timeMarker);
+    data.set("content", "전환 지점에서 저음을 교환해 주세요.");
+    return data;
+  };
+  for (const value of ["", "abc", "-1", "01:99", "01:30:00", "1.5", "9007199254740992"]) {
+    const result = await feedbackActions.createFeedback("assignment-1", {}, form(value));
+    assert.ok(result.error, value);
+  }
+  assert.equal((await db.select().from(feedbacks)).length, 0);
+  assert.ok((await feedbackActions.createFeedback("missing", {}, form("01:30"))).error);
+  for (const value of ["100:30", "90", "00:00"]) {
+    assert.equal((await feedbackActions.createFeedback("assignment-1", {}, form(value))).success, true);
+  }
+  assert.deepEqual((await feedbackActions.getFeedbacksByAssignment("assignment-1")).map((item) => item.timeMarker), [0, 90, 6030]);
+});
 
 test("관리자 child delete는 전달한 학생과 실제 owner가 다르면 행을 보존한다", { concurrency: false }, async (context) => {
   const db = await setupDatabase(context, createSession("admin-1", "admin"));

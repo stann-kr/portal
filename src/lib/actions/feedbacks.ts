@@ -9,7 +9,7 @@
 import { revalidatePath } from "next/cache";
 import { createDb } from "@/db/client";
 import { feedbacks, assignments } from "@/db/schema";
-import { eq, asc, inArray } from "drizzle-orm";
+import { and, eq, asc, inArray } from "drizzle-orm";
 import type { InferSelectModel } from "drizzle-orm";
 import {
   assertOwnerOrAdmin,
@@ -63,27 +63,35 @@ export async function createFeedback(
 ): Promise<CreateFeedbackState> {
   await requireAdmin();
 
-  const timeMarkerStr = (formData.get("timeMarker") as string) ?? "";
-  const content = (formData.get("content") as string)?.trim();
+  const rawTimeMarker = formData.get("timeMarker");
+  const timeMarkerStr = typeof rawTimeMarker === "string" ? rawTimeMarker.trim() : "";
+  const rawContent = formData.get("content");
+  const content = typeof rawContent === "string" ? rawContent.trim() : "";
 
   if (!content) return { error: "피드백 내용을 입력해주세요." };
 
-  // "MM:SS" 또는 "초" 입력 처리
-  let timeMarker: number;
-  if (timeMarkerStr.includes(":")) {
-    const [m, s] = timeMarkerStr.split(":").map(Number);
-    timeMarker = (m || 0) * 60 + (s || 0);
-  } else {
-    timeMarker = Number(timeMarkerStr) || 0;
+  const minutesAndSeconds = /^(\d+):([0-5]\d)$/.exec(timeMarkerStr);
+  const timeMarker = minutesAndSeconds
+    ? Number(minutesAndSeconds[1]) * 60 + Number(minutesAndSeconds[2])
+    : /^\d+$/.test(timeMarkerStr) ? Number(timeMarkerStr) : NaN;
+  if (!Number.isSafeInteger(timeMarker) || timeMarker < 0) {
+    return { error: "재생 시점은 01:30 같은 분:초 형식이나 0 이상의 정수 초로 입력해 주세요. 초는 00~59입니다." };
   }
 
   const db = createDb();
-  await db.insert(feedbacks).values({
-    id: crypto.randomUUID(),
-    assignmentId,
-    timeMarker,
-    content,
-  });
+  try {
+    const [assignment] = await db.select({ id: assignments.id })
+      .from(assignments).where(eq(assignments.id, assignmentId)).limit(1);
+    if (!assignment) return { error: "과제를 찾을 수 없습니다. 목록에서 다시 확인해 주세요." };
+    await db.insert(feedbacks).values({
+      id: crypto.randomUUID(),
+      assignmentId,
+      timeMarker,
+      content,
+    });
+  } catch {
+    return { error: "피드백을 저장하지 못했습니다. 다시 시도해 주세요." };
+  }
 
   revalidatePath(`/dashboard/student/assignments/${assignmentId}`);
   return { success: true };
@@ -99,7 +107,10 @@ export async function createFeedback(
 export async function deleteFeedback(feedbackId: string, assignmentId: string) {
   await requireAdmin();
   const db = createDb();
-  await db.delete(feedbacks).where(eq(feedbacks.id, feedbackId));
+  await db.delete(feedbacks).where(and(
+    eq(feedbacks.id, feedbackId),
+    eq(feedbacks.assignmentId, assignmentId),
+  ));
   revalidatePath(`/dashboard/student/assignments/${assignmentId}`);
 }
 

@@ -26,6 +26,7 @@ let VideoPlayer: typeof import("@/components/player/VideoPlayer").VideoPlayer;
 let TimelineFeedback: typeof import("@/components/feedback/TimelineFeedback").TimelineFeedback;
 let PostDetailClient: typeof import("@/app/community/[postId]/PostDetailClient").PostDetailClient;
 let saveComment: typeof import("@/lib/actions/comments").createComment = async () => ({});
+let removeComment: typeof import("@/lib/actions/comments").deleteComment = async () => {};
 let AssignmentView: typeof import("@/components/student-portal/AssignmentView").AssignmentView;
 let saveAssignment: typeof import("@/lib/actions/assignments").submitAssignment = async () => ({});
 let loadAssignments: typeof import("@/lib/actions/assignments").getMyAssignments = async () => [];
@@ -61,7 +62,7 @@ mock.module("@/lib/actions/feedbacks", { namedExports: {
 } });
 mock.module("@/lib/actions/comments", { namedExports: {
   createComment: (...args: Parameters<typeof saveComment>) => saveComment(...args),
-  deleteComment: async () => {},
+  deleteComment: (...args: Parameters<typeof removeComment>) => removeComment(...args),
   getCommentsByPost: async () => [],
 } });
 mock.module("@/lib/actions/posts", { namedExports: { deletePost: async () => {} } });
@@ -98,6 +99,7 @@ before(async () => {
     self: browser,
     document: browser.document,
     navigator: browser.navigator,
+    confirm: () => false,
     localStorage: browser.localStorage,
     HTMLElement: browser.HTMLElement,
     HTMLInputElement: browser.HTMLInputElement,
@@ -646,6 +648,26 @@ test("feedback draft survives leaving the assignment before submitting", async (
   await settle();
   assert.equal(inputValue("content"), "");
   assert.equal(inputValue("timeMarker"), "");
+});
+
+test("failed comment deletion keeps the conversation and unfinished reply visible", async (context) => {
+  browser.localStorage.clear();
+  context.mock.method(globalThis, "confirm", () => true);
+  removeComment = async () => { throw new Error("offline"); };
+  context.after(() => { removeComment = async () => {}; });
+  const post = {
+    id: "delete-post", authorId: "student-1", title: "레슨 이야기", contentHtml: "<p>본문</p>",
+    category: "general", boardType: "GENERAL" as const, isPinned: false, mediaUrl: null,
+    mediaObjectId: null, createdAt: new Date(), updatedAt: new Date(), deletedAt: null,
+    deletedById: null, version: 1, authorName: "학생", authorEmail: null,
+  };
+  const comment = { id: "comment-1", postId: post.id, authorId: "student-1", contentHtml: "<p>기존 대화</p>", createdAt: new Date(), authorName: "학생", authorEmail: null };
+  await render(context, <PostDetailClient postId={post.id} post={post} initialCommentList={[comment]} currentUserId="student-1" isAdmin={false} returnTo="/community" />);
+  await fill("content", "아직 작성 중인 답글");
+  await press("학생 댓글 삭제");
+  assert.match(browser.document.querySelector('[role="alert"]')?.textContent ?? "", /댓글을 삭제하지 못했습니다/);
+  assert.match(browser.document.body.textContent, /기존 대화/);
+  assert.equal(inputValue("content"), "아직 작성 중인 답글");
 });
 
 test("assignment errors retain the URL and a failed refresh retries without resubmission", async (context) => {

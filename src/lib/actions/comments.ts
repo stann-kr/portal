@@ -123,13 +123,13 @@ export async function deleteComment(commentId: string, postId: string) {
     .limit(1);
   if (!activePost) return;
 
-  const condition =
+  const condition = and(
+    eq(comments.id, commentId),
+    eq(comments.postId, postId),
     session.user.role === "admin"
-      ? eq(comments.id, commentId)
-      : and(
-          eq(comments.id, commentId),
-          eq(comments.authorId, session.user.id!),
-        );
+      ? undefined
+      : eq(comments.authorId, session.user.id!),
+  );
 
   await db.delete(comments).where(condition);
   revalidatePath(`/community/${postId}`);

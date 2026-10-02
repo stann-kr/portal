@@ -61,8 +61,13 @@ export function PostDetailClient({
 
   const handleDeleteComment = (commentId: string) => {
     if (!confirm("댓글을 삭제하시겠습니까?")) return;
+    setDeleteError(null);
     startTransition(async () => {
-      await deleteComment(commentId, postId);
+      try {
+        await deleteComment(commentId, postId);
+      } catch {
+        setDeleteError("댓글을 삭제하지 못했습니다. 다시 시도해 주세요.");
+      }
     });
   };
 
@@ -233,9 +238,10 @@ export function PostDetailClient({
                       size="sm"
                       onClick={() => handleDeleteComment(c.id)}
                       disabled={isPending}
-                      className="text-destructive opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 self-start mt-0.5"
+                      aria-label={`${cAuthor} 댓글 삭제`}
+                      className="text-destructive opacity-100 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 focus:opacity-100 transition-opacity flex-shrink-0 self-start mt-0.5"
                     >
-                      <Trash2 className="w-3.5 h-3.5" />
+                      <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
                     </Button>
                   )}
                 </li>

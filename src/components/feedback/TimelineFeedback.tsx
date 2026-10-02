@@ -125,7 +125,7 @@ function FeedbackForm({
               saveDraft({ timeMarker: event.target.value, content });
             }}
             className="font-mono"
-            pattern="[0-9]{1,2}:[0-9]{2}"
+            pattern="[0-9]+:[0-5][0-9]"
             title="예: 01:30 (분:초)"
             required
             disabled={!draft.loaded || isPending}
