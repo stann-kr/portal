@@ -85,7 +85,11 @@ function toDateInputValue(value: Date | null): string {
   return value ? new Date(value).toISOString().slice(0, 10) : "";
 }
 
-export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
+export function NoteEditorForm(props: NoteEditorFormProps) {
+  return <NoteEditorFormContent key={`${props.actorId}:${props.note.id}`} {...props} />;
+}
+
+function NoteEditorFormContent({ note, actorId, action }: NoteEditorFormProps) {
   const serverVersion = note.version ?? 1;
   const [title, setTitle] = useState(note.title);
   const [noteDate, setNoteDate] = useState(toDateInputValue(note.noteDate));

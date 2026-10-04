@@ -50,7 +50,11 @@ type PostOperationDraftFields = { operationId?: string; baseRevision?: number };
 type PostEditDraft = PostEditSnapshot & DocumentEditDraftBaseFields & PostOperationDraftFields;
 type CompactPostEditDraft = PostEditSnapshot & CompactDocumentEditDraftMetadata & PostOperationDraftFields;
 
-export function PostEditForm({
+export function PostEditForm(props: PostEditFormProps) {
+  return <PostEditFormContent key={`${props.actorId}:${props.post.id}`} {...props} />;
+}
+
+function PostEditFormContent({
   post,
   actorId,
   onCancel,

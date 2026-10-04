@@ -79,7 +79,13 @@ function QnaSlideFormContent({
   const [operationId, setOperationId] = useState("");
   const [isUploading, setIsUploading] = useState(false);
   const [state, formAction, isPending] = useActionState<CreateThreadInlineState, FormData>(
-    createQnaThreadInline,
+    async (previous, data) => {
+      try {
+        return await createQnaThreadInline(previous, data);
+      } catch {
+        return { error: "저장 결과를 확인하지 못했습니다. 작성 내용은 유지됩니다. 다시 시도해 주세요." };
+      }
+    },
     {},
   );
   const formRef = useRef<HTMLFormElement>(null);

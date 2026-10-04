@@ -56,7 +56,11 @@ type CreateNoteDraft = {
   contentHtml: string;
 };
 
-export function NoteFullForm({ action, actorId, studentId, returnTo, defaultDate, spaceLabel }: NoteFullFormProps) {
+export function NoteFullForm(props: NoteFullFormProps) {
+  return <NoteFullFormContent key={`${props.actorId}:${props.studentId}`} {...props} />;
+}
+
+function NoteFullFormContent({ action, actorId, studentId, returnTo, defaultDate, spaceLabel }: NoteFullFormProps) {
   const initialDefaultDate = resolveNoteCreateDefaultDate(defaultDate, new Date());
   const [title, setTitle] = useState("");
   const [noteDate, setNoteDate] = useState(initialDefaultDate);

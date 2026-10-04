@@ -89,6 +89,8 @@ let changeNoteLifecycle: typeof import("@/lib/actions/privateNotes").trashPrivat
 let restorePost: typeof import("@/lib/actions/posts").restorePostRevision = async () => ({ success: true });
 let changePostLifecycle: typeof import("@/lib/actions/posts").restorePost = async () => ({ success: true, purged: false });
 let saveQnaReply: typeof import("@/lib/actions/qna").createQnaReply = async () => ({});
+let saveQnaThread: typeof import("@/lib/actions/qna").createQnaThread = async () => ({});
+let saveQnaInline: typeof import("@/lib/actions/qna").createQnaThreadInline = async () => ({});
 let saveNewPost: typeof import("@/lib/actions/posts").createPost = async () => ({});
 let savePostEdit: typeof import("@/lib/actions/posts").updatePostContent = async () => ({});
 let changeQnaStatus: typeof import("@/lib/actions/qna").updateThreadStatus = async () => ({ success: true, currentRevision: 2 });
@@ -187,13 +189,13 @@ mock.module("@/lib/actions/qna", {
       actionCalls.qnaReply += 1;
       return saveQnaReply(...args);
     },
-    createQnaThread: async () => {
+    createQnaThread: async (...args: Parameters<typeof saveQnaThread>) => {
       actionCalls.qnaThread += 1;
-      return {};
+      return saveQnaThread(...args);
     },
-    createQnaThreadInline: async () => {
+    createQnaThreadInline: async (...args: Parameters<typeof saveQnaInline>) => {
       actionCalls.qnaInline += 1;
-      return {};
+      return saveQnaInline(...args);
     },
     updateThreadStatus: (...args: Parameters<typeof changeQnaStatus>) => changeQnaStatus(...args),
     trashQnaThread: (...args: Parameters<typeof changeQnaLifecycle>) => changeQnaLifecycle(...args),
@@ -927,12 +929,87 @@ class SaveErrorBoundary extends React.Component<{ children: React.ReactNode }, {
 }
 
 for (const kind of ["new-note", "edit-note", "new-post", "edit-post"] as const) {
+  for (const boundary of kind === "new-post" ? ["actor"] as const : ["actor", "resource"] as const) {
+    test(`${kind} ${boundary} 전환 후 이전 저장 성공은 현재 원문·초안·이동을 변경하지 않는다`, { concurrency: false }, async (context) => {
+      type SaveResult = import("@/lib/actions/privateNotes").CreateNoteState & import("@/lib/actions/posts").UpdatePostState & import("@/lib/actions/posts").CreatePostState;
+      const isNote = kind.endsWith("note");
+      const isEdit = kind.startsWith("edit");
+      const actorA = `${kind}-${boundary}-actor-a`;
+      const actorB = boundary === "actor" ? `${kind}-${boundary}-actor-b` : actorA;
+      const resourceA = "resource-a";
+      const resourceB = boundary === "resource" ? "resource-b" : resourceA;
+      const requests: { data: Record<string, FormDataEntryValue>; resolve: (result: SaveResult) => void }[] = [];
+      const action = (_previous: object, data: FormData) => new Promise<SaveResult>((resolve) => { requests.push({ data: Object.fromEntries(data), resolve }); });
+      saveNewPost = action;
+      savePostEdit = (_id, previous, data) => action(previous, data);
+      context.after(() => { saveNewPost = async () => ({}); savePostEdit = async () => ({}); });
+      const navigation = context.mock.method(router, "replace");
+      let saves = 0;
+      const base = (id: string) => ({ id, title: `서버 ${id}`, contentHtml: `<p>서버 ${id}</p>`, version: 1 });
+      const key = (actor: string, id: string) => createDocumentDraftKey(isNote ? "note" : "community-post", actor, isEdit ? id : isNote ? `new:${id}` : undefined);
+      const screen = (actor: string, id: string) => kind === "new-note"
+        ? <NoteFullForm action={action} actorId={actor} studentId={id} returnTo="/dashboard/admin" />
+        : kind === "edit-note"
+          ? <NoteEditorForm action={action} actorId={actor} note={{ ...base(id), noteDate: null }} />
+          : kind === "new-post"
+            ? <NewPostForm actorId={actor} isAdmin={false} defaultBoardType="GENERAL" defaultCategory="general" returnTo="/community" />
+            : <PostEditForm actorId={actor} post={base(id)} onCancel={() => undefined} onSaved={() => { saves += 1; }} />;
+      const harness = await renderForm(context, screen(actorA, resourceA), (storage) => {
+        for (const [actor, id, label] of [[actorA, resourceA, "A"], [actorB, resourceB, "B"]]) {
+          storage.setItem(key(actor, id), serializeFormDraft({
+            title: `${label} 제목`, contentHtml: `<p>${label} 원문</p>`, operationId: crypto.randomUUID(),
+            ...(isNote ? { noteDate: "" } : { boardType: "GENERAL", category: "general", isPinned: false, mediaUrl: "" }),
+            ...(isEdit ? { baseRevision: 1, baseFingerprint: createDocumentSnapshotFingerprint({ kind: isNote ? "private-note" : "community-post", ...base(id), noteDate: isNote ? "" : null }) } : {}),
+          }));
+        }
+      });
+      const submit = () => harness.container.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+      const response = (index: number, id: string): SaveResult => {
+        const snapshot = { id, title: String(requests[index]!.data.title), contentHtml: String(requests[index]!.data.contentHtml), version: 2 };
+        return { success: true, ...(isNote ? { note: { ...snapshot, noteDate: null, createdAt: new Date() } } : isEdit ? { post: snapshot } : { postId: id }) };
+      };
+      await act(async () => submit().click());
+      assert.equal(requests.length, 1);
+      await harness.rerender(screen(actorB, resourceB));
+      type DraftContent = { title: string; contentHtml: string; operationId: string };
+      const beforeRaw = harness.browserWindow.localStorage.getItem(key(actorB, resourceB));
+      assert.ok(beforeRaw);
+      const before = parseFormDraft<DraftContent>(beforeRaw)!.data;
+      assert.equal(submit().disabled, false);
+      await act(async () => submit().click());
+      assert.equal(requests.length, 2);
+      assert.equal(requests[1]!.data.title, "B 제목");
+      assert.equal(requests[1]!.data.operationId, before.operationId);
+      await act(async () => requests[0]!.resolve(response(0, resourceA)));
+      assert.equal(harness.container.querySelector<HTMLInputElement>('input[name="title"]')?.value, "B 제목");
+      assert.equal(harness.container.querySelector<HTMLTextAreaElement>("textarea")?.value, "<p>B 원문</p>");
+      const afterRaw = harness.browserWindow.localStorage.getItem(key(actorB, resourceB));
+      assert.ok(afterRaw);
+      const after = parseFormDraft<DraftContent>(afterRaw)?.data;
+      assert.deepEqual(after && { title: after.title, contentHtml: after.contentHtml, operationId: after.operationId }, { title: before.title, contentHtml: before.contentHtml, operationId: before.operationId });
+      assert.equal(readFormDraftClearMarkers(harness.browserWindow.localStorage, key(actorB, resourceB)).length, 0);
+      assert.equal(navigation.mock.callCount(), 0);
+      assert.equal(saves, 0);
+      assert.ok(harness.browserWindow.localStorage.getItem(key(actorA, resourceA)), "완료 응답을 분리한 이전 초안은 재시도 가능해야 합니다.");
+      assert.equal(submit().disabled, true, "이전 문맥 완료가 새 요청의 진행 잠금을 해제하면 안 됩니다.");
+      await act(async () => requests[1]!.resolve(response(1, resourceB)));
+      assert.equal(harness.browserWindow.localStorage.getItem(key(actorB, resourceB)), null);
+      if (!isEdit) assert.equal(navigation.mock.callCount(), 1);
+      else if (!isNote) assert.equal(saves, 1);
+      else assert.match(harness.container.textContent ?? "", /변경사항을 저장했습니다/u);
+    });
+  }
+}
+
+for (const kind of ["new-note", "edit-note", "new-post", "edit-post", "new-qna", "inline-qna", "qna-reply"] as const) {
   test(`${kind} 저장 예외 뒤 편집 화면·원문·요청 ID를 유지하고 같은 내용으로 재시도한다`, { concurrency: false }, async (context) => {
     const isNote = kind.endsWith("note");
     const isEdit = kind.startsWith("edit");
+    const isQna = kind.includes("qna");
+    const isReply = kind === "qna-reply";
     const actorId = `retry-${kind}`;
     const resourceId = `resource-${kind}`;
-    const draftKey = createDocumentDraftKey(isNote ? "note" : "community-post", actorId, isEdit ? resourceId : isNote ? `new:${actorId}` : undefined);
+    const draftKey = createDocumentDraftKey(isQna ? isReply ? "qna-reply" : "qna-thread" : isNote ? "note" : "community-post", actorId, isEdit || isReply ? resourceId : isNote ? `new:${actorId}` : undefined);
     const snapshot = { title: "보존할 제목", contentHtml: "<p>보존할 본문</p>" };
     const base = { title: "서버 제목", contentHtml: "<p>서버 본문</p>" };
     const submitted: Record<string, FormDataEntryValue>[] = [];
@@ -942,25 +1019,34 @@ for (const kind of ["new-note", "edit-note", "new-post", "edit-post"] as const) 
     };
     saveNewPost = action;
     savePostEdit = (_id, previous, data) => action(previous, data);
-    context.after(() => { saveNewPost = async () => ({}); savePostEdit = async () => ({}); });
+    saveQnaThread = action;
+    saveQnaInline = action;
+    saveQnaReply = (_id, previous, data) => action(previous, data);
+    context.after(() => { saveNewPost = async () => ({}); savePostEdit = async () => ({}); saveQnaThread = async () => ({}); saveQnaInline = async () => ({}); saveQnaReply = async () => ({}); });
     const element = kind === "new-note"
       ? <NoteFullForm action={action} actorId={actorId} studentId={actorId} returnTo="/dashboard/student/notes" />
       : kind === "edit-note"
         ? <NoteEditorForm action={action} actorId={actorId} note={{ ...base, id: resourceId, noteDate: null, version: 1 }} />
         : kind === "new-post"
           ? <NewPostForm actorId={actorId} isAdmin={false} defaultBoardType="GENERAL" defaultCategory="general" returnTo="/community" />
-          : <PostEditForm actorId={actorId} post={{ ...base, id: resourceId, version: 1 }} onCancel={() => undefined} onSaved={() => assert.fail("응답을 확인하지 않고 저장 성공을 알리면 안 됩니다.")} />;
+          : kind === "edit-post"
+            ? <PostEditForm actorId={actorId} post={{ ...base, id: resourceId, version: 1 }} onCancel={() => undefined} onSaved={() => assert.fail("응답을 확인하지 않고 저장 성공을 알리면 안 됩니다.")} />
+            : kind === "new-qna"
+              ? <NewQnaForm actorId={actorId} returnTo="/dashboard/qna" />
+              : kind === "inline-qna"
+                ? <QnaSlideForm actorId={actorId} spaceLabel="내 스페이스" returnTo="/dashboard/qna" onClose={() => undefined} onSuccess={() => assert.fail("성공 미확인")} />
+                : <ThreadDetailClient actorId={actorId} threadId={resourceId} title="질문" status="OPEN" version={1} isAdmin replies={[]} deletedAt={null} studentName="학생" createdAt={null} returnTo="/dashboard/qna" />;
     const harness = await renderForm(context, <SaveErrorBoundary>{element}</SaveErrorBoundary>, (storage) => storage.setItem(draftKey, serializeFormDraft({
       ...snapshot,
       operationId: crypto.randomUUID(),
-      ...(isNote ? { noteDate: "" } : { boardType: "GENERAL", category: "general", isPinned: false, mediaUrl: "" }),
+      ...(isQna ? { attachmentUrl: "", attachmentObjectId: "" } : isNote ? { noteDate: "" } : { boardType: "GENERAL", category: "general", isPinned: false, mediaUrl: "" }),
       ...(isEdit ? { baseRevision: 1, baseFingerprint: createDocumentSnapshotFingerprint({ kind: isNote ? "private-note" : "community-post", id: resourceId, ...base, noteDate: isNote ? "" : null }) } : {}),
     })));
     const submit = () => harness.container.querySelector<HTMLButtonElement>('button[type="submit"]')!;
     await act(async () => submit().click());
     assert.equal(harness.container.querySelector('[data-testid="save-error-boundary"]'), null, "저장 실패는 편집 subtree를 제거하면 안 됩니다.");
     assert.match(harness.container.querySelector('[role="alert"]')?.textContent ?? "", /저장 결과를 확인하지 못했습니다/u);
-    assert.equal(harness.container.querySelector<HTMLInputElement>('input[name="title"]')?.value, snapshot.title);
+    if (!isReply) assert.equal(harness.container.querySelector<HTMLInputElement>('input[name="title"]')?.value, snapshot.title);
     assert.equal(harness.container.querySelector<HTMLTextAreaElement>("textarea")?.value, snapshot.contentHtml);
     assert.equal(submit().disabled, false);
     assert.equal(harness.container.querySelector("form")?.getAttribute("aria-busy"), "false");

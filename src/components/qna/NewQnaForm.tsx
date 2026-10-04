@@ -58,7 +58,13 @@ function NewQnaFormContent({ actorId, returnTo }: { actorId: string; returnTo: s
   const [operationId, setOperationId] = useState("");
   const [isUploading, setIsUploading] = useState(false);
   const [state, formAction, isPending] = useActionState<CreateThreadState, FormData>(
-    createQnaThread,
+    async (previous, data) => {
+      try {
+        return await createQnaThread(previous, data);
+      } catch {
+        return { error: "저장 결과를 확인하지 못했습니다. 작성 내용은 유지됩니다. 다시 시도해 주세요." };
+      }
+    },
     {},
   );
   const formRef = useRef<HTMLFormElement>(null);

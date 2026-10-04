@@ -114,11 +114,16 @@ function ThreadDetailContent({
   const handledReplyIdRef = useRef<string | null>(null);
   const router = useRouter();
 
-  const boundAction = createQnaReply.bind(null, threadId);
   const [replyState, replyAction, isReplying] = useActionState<
     CreateReplyState,
     FormData
-  >(boundAction, {});
+  >(async (previous, data) => {
+    try {
+      return await createQnaReply(threadId, previous, data);
+    } catch {
+      return { error: "저장 결과를 확인하지 못했습니다. 작성 내용은 유지됩니다. 다시 시도해 주세요." };
+    }
+  }, {});
   const isReplyFormBusy = isReplying || isUploading || isPending;
   useBusyNavigationGuard(isReplyFormBusy);
 

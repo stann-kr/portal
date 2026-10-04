@@ -59,7 +59,11 @@ type NewPostFormProps = {
   returnTo: string;
 };
 
-export function NewPostForm({
+export function NewPostForm(props: NewPostFormProps) {
+  return <NewPostFormContent key={props.actorId} {...props} />;
+}
+
+function NewPostFormContent({
   actorId,
   isAdmin,
   defaultBoardType,
