@@ -15,6 +15,7 @@ import { ThreadList } from "@/components/qna/ThreadList";
 import type { QnaStatus } from "@/db/schema";
 import { safeReturnPath } from "@/lib/safe-return-path";
 import { buildQnaListHref, resolveQnaFilter } from "@/lib/qna-routes";
+import { normalizeDocumentSearchQuery } from "@/lib/document-search";
 
 type RawThread = Awaited<ReturnType<typeof getQnaThreads>>[number];
 
@@ -27,12 +28,13 @@ type QnaThreadItem = {
   studentId: string | null | undefined;
   studentName: string | null | undefined;
   studentEmail: string | null | undefined;
+  searchPreview?: string;
 };
 
 export default async function QnaPage({
   searchParams,
 }: {
-  searchParams: Promise<{ returnTo?: string; qnaStatus?: string | string[] }>;
+  searchParams: Promise<{ returnTo?: string; qnaStatus?: string | string[]; qnaQuery?: string | string[] }>;
 }) {
   const session = await getActiveAuthSession();
   if (!session?.user) redirect("/login");
@@ -44,8 +46,9 @@ export default async function QnaPage({
     isAdmin ? "/dashboard/admin?section=work" : "/dashboard/student?section=today",
   );
   const filter = resolveQnaFilter(query.qnaStatus);
-  const listHref = buildQnaListHref(parentReturnTo, filter);
-  const rawThreads = await getQnaThreads();
+  const search = normalizeDocumentSearchQuery(query.qnaQuery);
+  const listHref = buildQnaListHref(parentReturnTo, filter, search);
+  const rawThreads = await getQnaThreads(search);
 
   const threads: QnaThreadItem[] = rawThreads.map((t: RawThread) => ({
     ...t,
@@ -64,7 +67,7 @@ export default async function QnaPage({
             <MessageCircle className="w-6 h-6 text-primary" />
             Q&A
             {openCount > 0 && (
-              <span className="inline-flex min-w-6 items-center justify-center rounded-md bg-warning-muted px-1.5 py-1 text-xs font-bold text-warning" aria-label={`답변 대기 ${openCount}건`}>
+              <span className="inline-flex min-w-6 items-center justify-center rounded-md bg-warning-muted px-1.5 py-1 text-xs font-bold text-warning" aria-label={`${search ? "검색 결과 중 " : ""}답변 대기 ${openCount}건`}>
                 {openCount}
               </span>
             )}
@@ -91,7 +94,7 @@ export default async function QnaPage({
         </div>
       </div>
 
-      <ThreadList threads={threads} isAdmin={isAdmin} returnTo={listHref} filter={filter} />
+      <ThreadList threads={threads} isAdmin={isAdmin} returnTo={listHref} filter={filter} query={search} />
     </div>
   );
 }

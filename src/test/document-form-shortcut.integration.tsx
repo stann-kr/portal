@@ -89,6 +89,8 @@ let changeQnaLifecycle: typeof import("@/lib/actions/qna").trashQnaThread = asyn
 let notePageRole: "student" | "admin" = "student";
 let notePageData: Awaited<ReturnType<typeof import("@/lib/actions/privateNotes").getPrivateNotes>> = [];
 let qnaPageData: Awaited<ReturnType<typeof import("@/lib/actions/qna").getQnaThreads>> = [];
+const qnaSearchCalls: string[] = [];
+let qnaTrashPageData: Awaited<ReturnType<typeof import("@/lib/actions/qna").getTrashedQnaThreads>> = [];
 const notePageTargets: string[] = [];
 
 mock.module("@/lib/auth-guard", { namedExports: {
@@ -165,7 +167,8 @@ mock.module("@/lib/actions/documentDrafts", {
 });
 mock.module("@/lib/actions/qna", {
   namedExports: {
-    getQnaThreads: async () => qnaPageData,
+    getQnaThreads: async (query = "") => { qnaSearchCalls.push(query); return qnaPageData; },
+    getTrashedQnaThreads: async () => qnaTrashPageData,
     createQnaReply: async () => {
       actionCalls.qnaReply += 1;
       return {};
@@ -243,9 +246,11 @@ let NoteFullForm: typeof import("@/components/notes/NoteFullForm").NoteFullForm;
 let StudentNotesPage: typeof import("@/app/dashboard/student/notes/page").default;
 let AdminStudentNotesPage: typeof import("@/app/dashboard/admin/students/[id]/notes/page").default;
 let QnaPage: typeof import("@/app/dashboard/qna/page").default;
+let QnaTrashPage: typeof import("@/app/dashboard/qna/trash/page").default;
 let ThreadList: typeof import("@/components/qna/ThreadList").ThreadList;
 
 before(async () => {
+  ({ default: QnaTrashPage } = await import("@/app/dashboard/qna/trash/page"));
   [
     { NewPostForm },
     { NewQnaForm },
@@ -450,7 +455,7 @@ test("Q&A 목록은 URL 상태 필터와 상세·작성·휴지통의 복귀 문
     assert.equal(harness.container.querySelectorAll('a[href^="/dashboard/qna/thread-"]').length, 2);
   }
   await harness.rerender(<ThreadList threads={qnaPageData} isAdmin filter="ANSWERED" returnTo="/dashboard/admin/students/student-1?tab=qna#records" />);
-  const form = harness.container.querySelector<HTMLFormElement>("form")!;
+  const form = harness.container.querySelector<HTMLFormElement>('form[aria-label="Q&A 상태 필터"]')!;
   assert.equal(form.getAttribute("action"), "/dashboard/admin/students/student-1#records");
   assert.equal(new FormData(form).get("tab"), "qna");
   const detail = new URL(harness.container.querySelector<HTMLAnchorElement>('a[href^="/dashboard/qna/"]')!.href, "https://portal.test");
@@ -458,6 +463,75 @@ test("Q&A 목록은 URL 상태 필터와 상세·작성·휴지통의 복귀 문
   assert.equal(back.pathname, "/dashboard/admin/students/student-1");
   assert.equal(back.searchParams.get("tab"), "qna");
   assert.equal(back.searchParams.get("qnaStatus"), "ANSWERED");
+});
+
+test("Q&A 검색은 본문 미리보기·빈 결과에서도 검색과 상태·학생 복귀 문맥을 유지한다", { concurrency: false }, async (context) => {
+  const harness = await renderForm(context, <div />);
+  const thread = { id: "search-thread", title: "오래된 레슨 질문", version: 1, deletedAt: null, studentId: "student-1", studentName: "학생", studentEmail: null, createdAt: null, updatedAt: null, status: "ANSWERED" as const, searchPreview: "EQ & <리듬>을 조절한 답변" };
+  context.after(() => { qnaPageData = []; qnaSearchCalls.length = 0; notePageRole = "student"; });
+  for (const role of ["student", "admin"] as const) {
+    notePageRole = role;
+    qnaPageData = [thread];
+    const parent = `/dashboard/${role}?section=work`;
+    const page = (qnaQuery: string) => QnaPage({ searchParams: Promise.resolve({ qnaQuery, qnaStatus: "ANSWERED", returnTo: parent }) });
+    await harness.rerender(await page("  EQ 리듬  "));
+    assert.equal(qnaSearchCalls.at(-1), "EQ 리듬");
+    const search = harness.container.querySelector<HTMLFormElement>('form[aria-label="Q&A 검색"]')!;
+    assert.equal(search.getAttribute("role"), "search");
+    const fields = new FormData(search);
+    assert.equal(fields.get("qnaQuery"), "EQ 리듬");
+    assert.equal(fields.get("qnaStatus"), "ANSWERED");
+    assert.equal(fields.get("returnTo"), parent);
+    const filter = harness.container.querySelector<HTMLFormElement>('form[aria-label="Q&A 상태 필터"]')!;
+    const filterFields = new FormData(filter, filter.querySelector<HTMLButtonElement>('button[value="OPEN"]')!);
+    assert.equal(filterFields.get("qnaQuery"), "EQ 리듬");
+    assert.equal(filterFields.getAll("qnaQuery").length, 1);
+    assert.match(harness.container.textContent ?? "", /EQ & <리듬>을 조절한 답변/u);
+    assert.equal(harness.container.querySelector("리듬"), null);
+    const details = harness.container.querySelector<HTMLAnchorElement>('a[href^="/dashboard/qna/search-thread"]')!;
+    const back = new URL(new URL(details.href, "https://portal.test").searchParams.get("returnTo")!, "https://portal.test");
+    assert.equal(back.searchParams.get("qnaQuery"), "EQ 리듬");
+    assert.equal(back.searchParams.get("qnaStatus"), "ANSWERED");
+    assert.equal(back.searchParams.get("returnTo"), parent);
+    const clear = [...harness.container.querySelectorAll<HTMLAnchorElement>("a")].find((link) => link.textContent === "검색 초기화")!;
+    const clearUrl = new URL(clear.href, "https://portal.test");
+    assert.equal(clearUrl.searchParams.has("qnaQuery"), false);
+    assert.equal(clearUrl.searchParams.get("qnaStatus"), "ANSWERED");
+    qnaPageData = [];
+    await harness.rerender(await page("없는 내용"));
+    assert.match(harness.container.textContent ?? "", /검색 조건에 맞는 대화가 없습니다/u);
+    assert.equal(harness.container.querySelector<HTMLInputElement>('input[name="qnaQuery"][type="search"]')?.value, "없는 내용");
+    await harness.rerender(await page(""));
+    assert.equal(harness.container.querySelector<HTMLInputElement>('input[name="qnaQuery"][type="search"]')?.value, "");
+  }
+  await harness.rerender(<ThreadList threads={[thread]} isAdmin filter="ANSWERED" query="EQ" returnTo="/dashboard/admin/students/student-1?tab=qna#records" />);
+  const search = harness.container.querySelector<HTMLFormElement>('form[aria-label="Q&A 검색"]')!;
+  assert.equal(new FormData(search).get("tab"), "qna");
+  assert.equal(new FormData(search).get("qnaStatus"), "ANSWERED");
+  const back = new URL(new URL(harness.container.querySelector<HTMLAnchorElement>('a[href^="/dashboard/qna/search-thread"]')!.href, "https://portal.test").searchParams.get("returnTo")!, "https://portal.test");
+  assert.equal(back.pathname, "/dashboard/admin/students/student-1");
+  assert.equal(back.searchParams.get("qnaQuery"), "EQ");
+  assert.equal(back.hash, "#records");
+});
+
+test("Q&A 휴지통은 전달받은 검색·상태 문맥을 상세 왕복과 목록 복귀에 사용한다", { concurrency: false }, async (context) => {
+  const parent = "/dashboard/admin/students/student-1?tab=qna&qnaStatus=ANSWERED&qnaQuery=EQ#records";
+  notePageRole = "admin";
+  qnaTrashPageData = [{ id: "trashed-thread", title: "보존된 대화", status: "ANSWERED", version: 4, createdAt: null, updatedAt: null, studentId: "student-1", studentName: "학생", studentEmail: null, deletedAt: new Date(), purgeEligibleAt: new Date(Date.now() + 86400000) }];
+  context.after(() => { qnaTrashPageData = []; notePageRole = "student"; });
+  const page = (returnTo: string) => QnaTrashPage({ searchParams: Promise.resolve({ returnTo }) });
+  const harness = await renderForm(context, <div />);
+  await harness.rerender(await page(parent));
+  const back = [...harness.container.querySelectorAll<HTMLAnchorElement>("a")].find((link) => link.textContent?.includes("목록으로 돌아가기"))!;
+  assert.equal(back.getAttribute("href"), parent);
+  const detail = new URL(harness.container.querySelector<HTMLAnchorElement>('a[href^="/dashboard/qna/trashed-thread"]')!.href, "https://portal.test");
+  const trash = new URL(detail.searchParams.get("returnTo")!, "https://portal.test");
+  assert.equal(trash.pathname, "/dashboard/qna/trash");
+  assert.equal(trash.searchParams.get("returnTo"), parent);
+  await harness.rerender(await page(trash.searchParams.get("returnTo")!));
+  assert.equal(harness.container.querySelector<HTMLAnchorElement>("header a")?.getAttribute("href"), parent);
+  await harness.rerender(await page("https://outside.example"));
+  assert.equal(harness.container.querySelector<HTMLAnchorElement>("header a")?.getAttribute("href"), "/dashboard/qna");
 });
 
 test("관리자 노트 작성 화면의 휴지통 링크는 대상 학생과 검색 복귀 위치를 유지한다", { concurrency: false }, async (context) => {

@@ -3,6 +3,7 @@
 
 import { and, count, desc, eq, isNotNull, isNull } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { searchQnaThreads } from "@/lib/qna-search";
 import { createDb, createDbContext } from "@/db/client";
 import {
   profiles,
@@ -166,10 +167,11 @@ const THREAD_SELECT = {
   studentEmail: profiles.email,
 } as const;
 
-export async function getQnaThreads() {
+export async function getQnaThreads(query = "") {
   const session = await requireAuth();
   const isAdmin = session.user.role === "admin";
-  return createDb()
+  const db = createDb();
+  const threads = await db
     .select(THREAD_SELECT)
     .from(qnaThreads)
     .leftJoin(profiles, eq(qnaThreads.studentId, profiles.id))
@@ -182,16 +184,19 @@ export async function getQnaThreads() {
           ),
     )
     .orderBy(desc(qnaThreads.updatedAt));
+  return searchQnaThreads(db, threads, query, isAdmin ? null : session.user.id!);
 }
 
-export async function getQnaThreadsByStudent(studentId: string) {
+export async function getQnaThreadsByStudent(studentId: string, query = "") {
   await requireStudentTarget(studentId);
-  return createDb()
+  const db = createDb();
+  const threads = await db
     .select(THREAD_SELECT)
     .from(qnaThreads)
     .leftJoin(profiles, eq(qnaThreads.studentId, profiles.id))
     .where(and(eq(qnaThreads.studentId, studentId), isNull(qnaThreads.deletedAt)))
     .orderBy(desc(qnaThreads.updatedAt));
+  return searchQnaThreads(db, threads, query, studentId);
 }
 
 async function readQnaThread(threadId: string, includeTrash: boolean) {

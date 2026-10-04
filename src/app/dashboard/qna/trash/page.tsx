@@ -5,21 +5,26 @@ import { getActiveAuthSession } from "@/lib/auth-guard";
 import { getTrashedQnaThreads } from "@/lib/actions/qna";
 import { QnaThreadLifecycleActions } from "@/components/qna/QnaThreadLifecycleActions";
 import { QNA_STATUS_LABELS } from "@/lib/qna-status";
+import { safeReturnPath } from "@/lib/safe-return-path";
 
 export const metadata = { title: "Q&A 휴지통" };
 
-export default async function QnaTrashPage() {
+export default async function QnaTrashPage({ searchParams }: {
+  searchParams: Promise<{ returnTo?: string }>;
+}) {
   const session = await getActiveAuthSession();
   if (!session?.user?.id) redirect("/login");
   const threads = await getTrashedQnaThreads();
   const isAdmin = session.user.role === "admin";
+  const returnTo = safeReturnPath((await searchParams).returnTo, "/dashboard/qna");
+  const trashHref = `/dashboard/qna/trash?returnTo=${encodeURIComponent(returnTo)}`;
   const now = Date.now();
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 px-4 py-6 sm:px-6">
       <header className="space-y-3 border-b border-border pb-5">
         <Link
-          href="/dashboard/qna"
+          href={returnTo}
           className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
         >
           <ArrowLeft className="h-4 w-4" aria-hidden="true" />
@@ -50,7 +55,7 @@ export default async function QnaTrashPage() {
               <li key={thread.id} className="space-y-3 rounded-xl border border-border bg-card p-5">
                 <div>
                   <Link
-                    href={`/dashboard/qna/${thread.id}?returnTo=${encodeURIComponent("/dashboard/qna/trash")}`}
+                    href={`/dashboard/qna/${thread.id}?returnTo=${encodeURIComponent(trashHref)}`}
                     className="font-medium hover:underline"
                   >
                     {thread.title}
@@ -71,7 +76,7 @@ export default async function QnaTrashPage() {
                   deletedAt={thread.deletedAt!.toISOString()}
                   canRestore={!expired}
                   canPurge={isAdmin && expired}
-                  returnTo="/dashboard/qna/trash"
+                  returnTo={trashHref}
                 />
               </li>
             );

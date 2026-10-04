@@ -362,6 +362,49 @@ test("Q&A 스레드와 첫 본문을 한 번에 생성한다", { concurrency: fa
   assert.equal(replies[0]?.contentHtml, "<p>질문 본문</p>");
 });
 
+test("Q&A 전체 대화 검색은 여러 답변·읽기 배치·학생 경계를 넘겨 섞지 않는다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context);
+  await seedProfile(db, "student-1");
+  await seedProfile(db, "student-2");
+  await seedProfile(db, "admin-1", "admin");
+  await db.insert(qnaThreads).values([
+    { id: "search-own", studentId: "student-1", title: "2020 아카이브 레슨", status: "OPEN", createdAt: new Date("2020-01-01") },
+    { id: "search-peer", studentId: "student-2", title: "다른 학생의 질문", status: "OPEN" },
+    { id: "search-trash", studentId: "student-1", title: "휴지통", status: "OPEN" },
+  ]);
+  const markers: { id: string; word: string }[] = [];
+  for (let index = 0; index < 70; index++) {
+    const word = `검색값-${String(index).padStart(2, "0")}-끝`;
+    const result = await qnaActions.createQnaReply("search-own", {}, createDocumentForm("", `<p>${word} 비트<strong>매칭</strong> &amp; ＥＱ 조절</p>`));
+    assert.equal(result.success, true);
+    assert.ok(result.replyId);
+    markers.push({ id: result.replyId, word });
+  }
+  const trashedReply = await qnaActions.createQnaReply("search-trash", {}, createDocumentForm("", "<p>비트매칭 EQ 게인</p>"));
+  assert.equal(trashedReply.success, true);
+  assert.equal((await qnaActions.trashQnaThread("search-trash", crypto.randomUUID(), 2)).success, true);
+  activeSession = createSession("student-2", "student");
+  assert.equal((await qnaActions.createQnaReply("search-peer", {}, createDocumentForm("", "<p>비트매칭 EQ 게인</p>"))).success, true);
+  activeSession = createSession("admin-1", "admin");
+  assert.equal((await qnaActions.createQnaReply("search-own", {}, createDocumentForm("", '<p>게인 조절</p><a href="https://test.invalid/hidden-url">참고</a><script>hidden-code</script>'))).success, true);
+  activeSession = createSession("student-1", "student");
+  const lastMarker = markers.sort((left, right) => left.id.localeCompare(right.id)).at(-1)!;
+  const lateMatch = await qnaActions.getQnaThreads(lastMarker.word);
+  assert.deepEqual(lateMatch.map((thread) => thread.id), ["search-own"]);
+  assert.ok(lateMatch[0].searchPreview?.includes(lastMarker.word), "64개 읽기 경계 이후 원문도 검색한다");
+  const matches = await qnaActions.getQnaThreads("2020 비트매칭 게인");
+  assert.deepEqual(matches.map((thread) => thread.id), ["search-own"]);
+  assert.match(matches[0].searchPreview ?? "", /비트매칭 & EQ|게인 조절/u);
+  assert.equal(matches[0].searchPreview?.includes("<"), false);
+  assert.equal((await qnaActions.getQnaThreads("hidden-url")).length, 0);
+  assert.equal((await qnaActions.getQnaThreads("hidden-code")).length, 0);
+  await assert.rejects(qnaActions.getQnaThreadsByStudent("student-2", "비트매칭"));
+  activeSession = createSession("admin-1", "admin");
+  assert.deepEqual((await qnaActions.getQnaThreads("비트매칭")).map((thread) => thread.id).sort(), ["search-own", "search-peer"]);
+  assert.deepEqual((await qnaActions.getQnaThreadsByStudent("student-2", "비트매칭")).map((thread) => thread.id), ["search-peer"]);
+  assert.deepEqual((await qnaActions.getQnaThreadsByStudent("student-1")).map((thread) => thread.id), ["search-own"]);
+});
+
 test("관리자 답변과 ANSWERED 상태를 한 번에 반영한다", { concurrency: false }, async (context) => {
   const { db } = await setupDatabase(context, createSession("admin-1", "admin"));
   await seedProfile(db, "student-1");

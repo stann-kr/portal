@@ -165,6 +165,7 @@ Migration SQL은 `drizzle/`, Drizzle metadata는 `drizzle/meta/`에 둔다. Wran
 - Q&A의 스레드·첫 본문, 답변·상태 변경, 휴지통 이동·복원·영구 삭제는 D1 binding batch 또는 로컬 SQLite transaction으로 함께 commit하거나 rollback한다. 각 mutation은 operation receipt와 append-only `qna_thread_events`를 남기고 version CAS를 적용한다. 답변 쓰기는 ownership과 `CLOSED`·휴지통 상태를 원자 쓰기 안에서 다시 검증한다.
 - Q&A 휴지통 작업이 다른 화면의 변경과 충돌하면 오래된 snapshot의 쓰기를 잠그고 최신 상태 확인을 제공한다. 실제 서버 props의 version·삭제/권한 상태가 바뀐 후 새 작업을 허용하며, 재조회 실패의 재시도와 작성 중 답변은 유지한다. 같은 결과 불명 요청은 동일 operation으로, 새 version 또는 작업 종류는 새 operation으로 처리한다.
 - Q&A 목록의 상태 필터는 `qnaStatus` URL query가 소유한다. 학생·관리자 목록과 관리자 학생별 Q&A 탭은 첫 서버 렌더에서 같은 필터를 적용하고, GET 필터 변경과 상세·새 질문·휴지통의 복귀 경로에 상위 포털/학생 탭 문맥을 함께 보존한다.
+- Q&A 검색은 `qnaQuery` URL query로 제목·질문·답변의 전체 기간을 대상으로 한다. NFKC·대소문자 정규화 뒤 띄어 쓴 단어를 대화 전체에서 AND로 찾고 HTML 속성·숨겨진 코드 없이 평문 일치 구간만 표시한다. 검색 시에만 인증된 active scope의 답변을 ID keyset으로64개씩 읽으며 관리자 학생별 검색도 동일한 student 조건을 사용한다. 상태 필터와 검색 초기화는 서로의 조건·상위 returnTo를 보존한다. 별도 검색 index나 schema 변경은 없으며 처리량은 해당 범위 대화량에 비례한다.
 - Q&A 답변은 휴지통 이동·복원 동안 보존되고 관리자 purge 때만 스레드와 함께 제거된다. active 기본 조회와 통합 기록은 휴지통 질문을 제외하며, tombstone과 본문 없는 ledger가 purge 뒤 늦은 질문·답변·상태 요청의 부활을 차단한다.
 - 모든 작성 form은 draft hydration이 끝날 때까지 입력을 잠근다. 종료된 Q&A도 로컬 초안이나 복구본이 남아 있으면 읽기 전용 composer를 유지하고, 업로드 오류·진행률은 alert와 progressbar 의미로 노출한다.
 

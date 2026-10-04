@@ -17,6 +17,7 @@ import { OverviewTab } from "@/components/admin/OverviewTab";
 import { DiggingBoard } from "@/components/digging/DiggingBoard";
 import { ThreadList } from "@/components/qna/ThreadList";
 import { resolveQnaFilter } from "@/lib/qna-routes";
+import { normalizeDocumentSearchQuery } from "@/lib/document-search";
 import { BookOpen } from "lucide-react";
 import Link from "next/link";
 import type { DiggingColumnType, QnaStatus } from "@/db/schema";
@@ -65,20 +66,12 @@ function NotesTabContent({ studentId }: { studentId: string }) {
   );
 }
 
-async function QnaTabContent({ studentId, filter }: { studentId: string; filter: ReturnType<typeof resolveQnaFilter> }) {
-  const rawThreads = await getQnaThreadsByStudent(studentId);
+async function QnaTabContent({ studentId, filter, query }: { studentId: string; filter: ReturnType<typeof resolveQnaFilter>; query: string }) {
+  const rawThreads = await getQnaThreadsByStudent(studentId, query);
   const threads = rawThreads.map((t: RawQnaThread) => ({
     ...t,
     status: t.status as QnaStatus,
   }));
-
-  if (threads.length === 0) {
-    return (
-      <div className="p-12 text-center text-muted-foreground border border-dashed rounded-xl bg-muted/10">
-        <p className="text-sm">아직 작성된 Q&A 스레드가 없습니다.</p>
-      </div>
-    );
-  }
 
   return (
     <ThreadList
@@ -86,6 +79,7 @@ async function QnaTabContent({ studentId, filter }: { studentId: string; filter:
       isAdmin={true}
       returnTo={`/dashboard/admin/students/${studentId}?tab=qna`}
       filter={filter}
+      query={query}
     />
   );
 }
@@ -97,13 +91,13 @@ export default async function StudentDetailPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ tab?: string; qnaStatus?: string | string[] }>;
+  searchParams: Promise<{ tab?: string; qnaStatus?: string | string[]; qnaQuery?: string | string[] }>;
 }) {
   const session = await getActiveAuthSession();
   if (!session?.user || session.user.role !== "admin") redirect("/login");
 
   const { id: studentId } = await params;
-  const { tab = "overview", qnaStatus } = await searchParams;
+  const { tab = "overview", qnaStatus, qnaQuery } = await searchParams;
   const activeTab: StudentDetailTab = resolveStudentDetailTab(tab);
   if (tab !== activeTab) redirect(buildAdminStudentDetailHref(studentId, activeTab));
 
@@ -173,7 +167,7 @@ export default async function StudentDetailPage({
               <div className="h-40 rounded-xl border bg-card animate-pulse" />
             }
           >
-            <QnaTabContent studentId={studentId} filter={resolveQnaFilter(qnaStatus)} />
+            <QnaTabContent studentId={studentId} filter={resolveQnaFilter(qnaStatus)} query={normalizeDocumentSearchQuery(qnaQuery)} />
           </Suspense>
         )}
       </div>

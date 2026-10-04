@@ -12,7 +12,14 @@ export function buildQnaFilterHref(listPath: string, filter: QnaFilterTab): stri
   return `${url.pathname}${url.search}${url.hash}`;
 }
 
-export function buildQnaListHref(returnTo?: string, filter: QnaFilterTab = "ALL"): string {
+export function buildQnaSearchHref(listPath: string, query: string): string {
+  const url = new URL(safeReturnPath(listPath, "/dashboard/qna"), "https://portal.local");
+  if (query) url.searchParams.set("qnaQuery", query);
+  else url.searchParams.delete("qnaQuery");
+  return `${url.pathname}${url.search}${url.hash}`;
+}
+
+export function buildQnaListHref(returnTo?: string, filter: QnaFilterTab = "ALL", query = ""): string {
   const safeReturnTo = safeReturnPath(returnTo, "/dashboard/student?section=today");
-  return buildQnaFilterHref(`/dashboard/qna?returnTo=${encodeURIComponent(safeReturnTo)}`, filter);
+  return buildQnaSearchHref(buildQnaFilterHref(`/dashboard/qna?returnTo=${encodeURIComponent(safeReturnTo)}`, filter), query);
 }
