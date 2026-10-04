@@ -1046,6 +1046,9 @@ for (const kind of ["new-note", "edit-note", "new-post", "edit-post", "new-qna",
     await act(async () => submit().click());
     assert.equal(harness.container.querySelector('[data-testid="save-error-boundary"]'), null, "저장 실패는 편집 subtree를 제거하면 안 됩니다.");
     assert.match(harness.container.querySelector('[role="alert"]')?.textContent ?? "", /저장 결과를 확인하지 못했습니다/u);
+    if (kind === "new-note") {
+      assert.ok(document.activeElement === harness.container.querySelector<HTMLDivElement>('[role="alert"]'), "긴 노트 화면에서도 저장 실패 안내를 바로 확인할 수 있어야 합니다.");
+    }
     if (!isReply) assert.equal(harness.container.querySelector<HTMLInputElement>('input[name="title"]')?.value, snapshot.title);
     assert.equal(harness.container.querySelector<HTMLTextAreaElement>("textarea")?.value, snapshot.contentHtml);
     assert.equal(submit().disabled, false);
@@ -1055,6 +1058,43 @@ for (const kind of ["new-note", "edit-note", "new-post", "edit-post", "new-qna",
     await act(async () => submit().click());
     assert.equal(submitted.length, 2);
     assert.deepEqual(submitted[1], submitted[0]);
+    if (kind === "new-note") assert.ok(document.activeElement === harness.container.querySelector<HTMLDivElement>('[role="alert"]'));
+  });
+}
+
+test("노트 저장 실패가 폼 밖으로 옮긴 포커스를 가로채지 않는다", { concurrency: false }, async (context) => {
+  let rejectSave!: (reason: Error) => void;
+  const action = () => new Promise<never>((_resolve, reject) => { rejectSave = reject; });
+  const harness = await renderForm(context, <NoteFullForm action={action} actorId="note-focus" studentId="note-focus" returnTo="/dashboard/student/notes" />, (storage) => storage.setItem(
+    createDocumentDraftKey("note", "note-focus", "new:note-focus"),
+    serializeFormDraft({ operationId: crypto.randomUUID(), title: "원문", contentHtml: "<p>보존할 본문</p>", noteDate: "" }),
+  ));
+  const submit = harness.container.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+  await act(async () => { submit.focus(); submit.click(); });
+  const elsewhere = harness.browserWindow.document.createElement("button");
+  elsewhere.textContent = "다른 작업";
+  harness.browserWindow.document.body.append(elsewhere);
+  await act(async () => { elsewhere.focus(); rejectSave(new Error("offline")); });
+  assert.ok(harness.container.querySelector('[role="alert"]'));
+  assert.ok(harness.browserWindow.document.activeElement === elsewhere);
+});
+
+for (const moveFocusElsewhere of [false, true]) {
+  test(`Q&A 복원 뒤 ${moveFocusElsewhere ? "사용자가 옮긴 포커스를 보존한다" : "현재 동작 버튼으로 포커스를 이어간다"}`, { concurrency: false }, async (context) => {
+    const deletedAt = new Date().toISOString();
+    const screen = (restored: boolean) => <ThreadDetailClient actorId="restore-focus" threadId="restore-focus-thread" title="복원 질문" status="OPEN" version={restored ? 2 : 1} isAdmin={false} replies={[]} deletedAt={restored ? null : deletedAt} studentName="학생" createdAt={null} returnTo="/dashboard/qna" />;
+    const harness = await renderForm(context, screen(false));
+    const restoreButton = [...harness.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Q&A 복원")!;
+    await act(async () => { restoreButton.focus(); restoreButton.click(); });
+    // 실제 브라우저는 요청 중 disabled가 된 버튼에서 포커스를 해제한다.
+    restoreButton.blur();
+    const elsewhere = harness.browserWindow.document.createElement("button");
+    elsewhere.textContent = "다른 작업";
+    harness.browserWindow.document.body.append(elsewhere);
+    if (moveFocusElsewhere) elsewhere.focus();
+    await harness.rerender(screen(true));
+    const currentButton = [...harness.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "휴지통 이동")!;
+    assert.ok(harness.browserWindow.document.activeElement === (moveFocusElsewhere ? elsewhere : currentButton), "복원 결과가 현재 키보드 작업 위치를 잃거나 가로채면 안 됩니다.");
   });
 }
 

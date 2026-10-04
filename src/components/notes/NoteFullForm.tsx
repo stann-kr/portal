@@ -86,6 +86,7 @@ function NoteFullFormContent({ action, actorId, studentId, returnTo, defaultDate
     {}
   );
   const formRef = useRef<HTMLFormElement>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
   const contentHtmlInputRef = useRef<HTMLInputElement>(null);
   const submittedDraftRef = useRef<CreateNoteDraft | null>(null);
   const handledNoteIdRef = useRef<string | null>(null);
@@ -190,6 +191,14 @@ function NoteFullFormContent({ action, actorId, studentId, returnTo, defaultDate
     state.existingId,
   );
 
+  useEffect(() => {
+    if (isPending || !state.error) return;
+    const activeElement = document.activeElement;
+    if (activeElement === document.body || formRef.current?.contains(activeElement)) {
+      errorRef.current?.focus();
+    }
+  }, [isPending, state]);
+
   return (
     <div className="max-w-4xl mx-auto space-y-6 py-6 px-4">
       {/* 헤더 */}
@@ -264,7 +273,7 @@ function NoteFullFormContent({ action, actorId, studentId, returnTo, defaultDate
         <input ref={contentHtmlInputRef} type="hidden" name="contentHtml" value={contentHtml} />
 
         {state?.error && (!state.operationConflict || hasOperationConflict) && (
-          <div role="alert" className="p-3 rounded-lg bg-destructive/10 border border-destructive/20 text-sm text-destructive">
+          <div ref={errorRef} role="alert" tabIndex={-1} className="scroll-mt-4 p-3 rounded-lg bg-destructive/10 border border-destructive/20 text-sm text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
             {state.error}
           </div>
         )}
