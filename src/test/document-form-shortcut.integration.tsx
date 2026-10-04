@@ -84,6 +84,10 @@ const router = {
   replace: () => undefined,
 };
 let restoreNote: typeof import("@/lib/actions/privateNotes").restorePrivateNoteRevision = async () => ({ success: true });
+let changeNoteLifecycle: typeof import("@/lib/actions/privateNotes").trashPrivateNote = async () => ({ success: true });
+let restorePost: typeof import("@/lib/actions/posts").restorePostRevision = async () => ({ success: true });
+let changePostLifecycle: typeof import("@/lib/actions/posts").restorePost = async () => ({ success: true, purged: false });
+let saveQnaReply: typeof import("@/lib/actions/qna").createQnaReply = async () => ({});
 let changeQnaStatus: typeof import("@/lib/actions/qna").updateThreadStatus = async () => ({ success: true, currentRevision: 2 });
 let changeQnaLifecycle: typeof import("@/lib/actions/qna").trashQnaThread = async () => ({ success: true, currentRevision: 2 });
 let notePageRole: "student" | "admin" = "student";
@@ -102,6 +106,9 @@ mock.module("@/lib/actions/students", { namedExports: {
 
 mock.module("@/lib/actions/privateNotes", { namedExports: {
   restorePrivateNoteRevision: (...args: Parameters<typeof restoreNote>) => restoreNote(...args),
+  trashPrivateNote: (...args: Parameters<typeof changeNoteLifecycle>) => changeNoteLifecycle(...args),
+  restorePrivateNote: (...args: Parameters<typeof changeNoteLifecycle>) => changeNoteLifecycle(...args),
+  purgePrivateNote: (...args: Parameters<typeof changeNoteLifecycle>) => changeNoteLifecycle(...args),
   getPrivateNotes: async (studentId: string) => { notePageTargets.push(studentId); return notePageData; },
 } });
 
@@ -119,6 +126,9 @@ mock.module("next/navigation", {
 });
 mock.module("@/lib/actions/posts", {
   namedExports: {
+    restorePostRevision: (...args: Parameters<typeof restorePost>) => restorePost(...args),
+    restorePost: (...args: Parameters<typeof changePostLifecycle>) => changePostLifecycle(...args),
+    purgePost: (...args: Parameters<typeof changePostLifecycle>) => changePostLifecycle(...args),
     createPost: async () => {
       actionCalls.post += 1;
       return {};
@@ -169,9 +179,9 @@ mock.module("@/lib/actions/qna", {
   namedExports: {
     getQnaThreads: async (query = "") => { qnaSearchCalls.push(query); return qnaPageData; },
     getTrashedQnaThreads: async () => qnaTrashPageData,
-    createQnaReply: async () => {
+    createQnaReply: async (...args: Parameters<typeof saveQnaReply>) => {
       actionCalls.qnaReply += 1;
-      return {};
+      return saveQnaReply(...args);
     },
     createQnaThread: async () => {
       actionCalls.qnaThread += 1;
@@ -242,6 +252,10 @@ let NoteEditorForm: typeof import("@/components/notes/NoteEditorForm").NoteEdito
 let QnaSlideForm: typeof import("@/components/qna/QnaSlideForm").QnaSlideForm;
 let ThreadDetailClient: typeof import("@/components/qna/ThreadDetailClient").ThreadDetailClient;
 let RestoreNoteRevisionButton: typeof import("@/components/notes/RestoreNoteRevisionButton").RestoreNoteRevisionButton;
+let DeleteNoteButton: typeof import("@/components/notes/DeleteNoteButton").DeleteNoteButton;
+let NoteTrashActions: typeof import("@/components/notes/NoteTrashActions").NoteTrashActions;
+let RestorePostRevisionButton: typeof import("@/components/community/RestorePostRevisionButton").RestorePostRevisionButton;
+let PostTrashActions: typeof import("@/components/community/PostTrashActions").PostTrashActions;
 let NoteFullForm: typeof import("@/components/notes/NoteFullForm").NoteFullForm;
 let StudentNotesPage: typeof import("@/app/dashboard/student/notes/page").default;
 let AdminStudentNotesPage: typeof import("@/app/dashboard/admin/students/[id]/notes/page").default;
@@ -250,6 +264,10 @@ let QnaTrashPage: typeof import("@/app/dashboard/qna/trash/page").default;
 let ThreadList: typeof import("@/components/qna/ThreadList").ThreadList;
 
 before(async () => {
+  ({ DeleteNoteButton } = await import("@/components/notes/DeleteNoteButton"));
+  ({ NoteTrashActions } = await import("@/components/notes/NoteTrashActions"));
+  ({ RestorePostRevisionButton } = await import("@/components/community/RestorePostRevisionButton"));
+  ({ PostTrashActions } = await import("@/components/community/PostTrashActions"));
   ({ default: QnaTrashPage } = await import("@/app/dashboard/qna/trash/page"));
   [
     { NewPostForm },
@@ -571,6 +589,130 @@ test("노트 이력은 A→B→A를 새 복원 의도로 처리하고 전송 실
   assert.equal(requests[3]![1], requests[4]![1]);
   assert.equal(harness.container.querySelector('[role="alert"]'), null);
 });
+
+for (const kind of ["trash", "restore", "purge"] as const) {
+  test(`노트 ${kind} 응답 유실은 편집 화면을 유지하고 같은 요청으로 재시도한다`, { concurrency: false }, async (context) => {
+    const requests: Parameters<typeof changeNoteLifecycle>[] = [];
+    changeNoteLifecycle = async (...args) => {
+      requests.push(args);
+      if (requests.length === 1) throw new Error("response lost");
+      return { success: true };
+    };
+    context.after(() => { changeNoteLifecycle = async () => ({ success: true }); });
+    const push = context.mock.method(router, "push");
+    const refresh = context.mock.method(router, "refresh");
+    const screen = (version: number) => <div>
+      <textarea aria-label="보존할 편집 내용" defaultValue="아직 전송하지 않은 내용" />
+      {kind === "trash" ? <DeleteNoteButton noteId="note-retry" version={version} /> :
+        <NoteTrashActions noteId="note-retry" version={version} canRestore canPurge returnTo="/dashboard/notes/trash" />}
+    </div>;
+    const harness = await renderForm(context, screen(2));
+    const find = () => [...harness.container.querySelectorAll<HTMLButtonElement>("button")].find((button) =>
+      kind === "trash" ? button.getAttribute("aria-label") === "노트를 휴지통으로 이동" : button.textContent === (kind === "restore" ? "노트 복원" : "영구 삭제"))!;
+    await act(async () => find().click());
+    assert.match(harness.container.querySelector('[role="alert"]')?.textContent ?? "", /결과를 확인하지 못했습니다/u);
+    assert.equal(harness.container.querySelector("textarea")?.value, "아직 전송하지 않은 내용");
+    assert.equal(find().disabled, false);
+    assert.equal(push.mock.callCount() + refresh.mock.callCount(), 0);
+    await act(async () => find().click());
+    assert.equal(requests[0][1], requests[1][1]);
+    assert.equal(harness.container.querySelector('[role="alert"]'), null);
+    assert.equal(push.mock.callCount() + refresh.mock.callCount(), 1);
+    await harness.rerender(screen(3));
+    await act(async () => find().click());
+    assert.notEqual(requests[1][1], requests[2][1], "새 version은 새로운 mutation이다");
+  });
+}
+
+test("게시물 복원은 응답 유실 재시도 ID를 보존하되 기준 revision 변경은 새 요청으로 구분한다", { concurrency: false }, async (context) => {
+  const requests: Parameters<typeof restorePost>[] = [];
+  restorePost = async (...args) => {
+    requests.push(args);
+    if (requests.length < 3) throw new Error("response lost");
+    return { success: true };
+  };
+  context.after(() => { restorePost = async () => ({ success: true }); });
+  const screen = (baseRevision: number) => <RestorePostRevisionButton postId="post-history" revisionNumber={1} baseRevision={baseRevision} />;
+  const harness = await renderForm(context, screen(2));
+  const click = () => act(async () => harness.container.querySelector<HTMLButtonElement>("button")!.click());
+  await click();
+  assert.ok(harness.container.querySelector('[role="alert"]'));
+  await click();
+  assert.equal(requests[0][1], requests[1][1]);
+  await harness.rerender(screen(3));
+  await click();
+  assert.notEqual(requests[1][1], requests[2][1]);
+  assert.deepEqual(requests.map((args) => [args[2], args[3]]), [[2, 1], [2, 1], [3, 1]]);
+  assert.equal(harness.container.querySelector('[role="alert"]'), null);
+});
+
+test("게시물 휴지통 복원 재시도는 같은 ID를 쓰고 다시 삭제된 새 version은 분리한다", { concurrency: false }, async (context) => {
+  const requests: Parameters<typeof changePostLifecycle>[] = [];
+  changePostLifecycle = async (...args) => { requests.push(args); throw new Error("response lost"); };
+  context.after(() => { changePostLifecycle = async () => ({ success: true, purged: false }); });
+  const screen = (version: number) => <PostTrashActions postId="post-trash-retry" version={version} deletedAt={new Date().toISOString()} canRestore canPurge={false} returnTo="/community" />;
+  const harness = await renderForm(context, screen(2));
+  const click = () => act(async () => harness.container.querySelector<HTMLButtonElement>("button")!.click());
+  await click();
+  assert.ok(harness.container.querySelector('[role="alert"]'));
+  await click();
+  assert.equal(requests[0][1], requests[1][1]);
+  await harness.rerender(screen(4));
+  await click();
+  assert.notEqual(requests[1][1], requests[2][1]);
+  assert.deepEqual(requests.map((args) => args[2]), [2, 2, 4]);
+});
+
+for (const busyKind of ["upload", "reply", "lifecycle"] as const) {
+  test(`Q&A ${busyKind} 작업 중에는 답변·첨부·휴지통 작업이 겹치지 않는다`, { concurrency: false }, async (context) => {
+    let releaseReply!: (result: Awaited<ReturnType<typeof saveQnaReply>>) => void;
+    let releaseLifecycle!: (result: Awaited<ReturnType<typeof changeQnaLifecycle>>) => void;
+    let replyCalls = 0;
+    let lifecycleCalls = 0;
+    saveQnaReply = async () => { replyCalls += 1; return new Promise((resolve) => { releaseReply = resolve; }); };
+    changeQnaLifecycle = async () => { lifecycleCalls += 1; return new Promise((resolve) => { releaseLifecycle = resolve; }); };
+    context.after(() => {
+      saveQnaReply = async () => ({});
+      changeQnaLifecycle = async () => ({ success: true, currentRevision: 2 });
+    });
+    const push = context.mock.method(router, "push");
+    const key = createDocumentDraftKey("qna-reply", "student-busy", "thread-busy");
+    const harness = await renderForm(context, <ThreadDetailClient actorId="student-busy" threadId="thread-busy" title="질문" status="OPEN" version={1} isAdmin={false} replies={[]} deletedAt={null} studentName="학생" createdAt={null} returnTo="/dashboard/qna" />,
+      (storage) => storage.setItem(key, serializeFormDraft({ operationId: "012c1894-ea20-46b2-960f-35b01d873570", contentHtml: "<p>전송할 답변</p>", attachmentUrl: "", attachmentObjectId: "" })));
+    const form = harness.container.querySelector<HTMLFormElement>("form")!;
+    const trash = [...harness.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "휴지통 이동")!;
+    const upload = harness.container.querySelector<HTMLButtonElement>('[data-testid="upload-start"]')!;
+    const submit = harness.container.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+    await waitForCondition(() => !submit.disabled, "답변 초안 준비");
+    await act(async () => {
+      if (busyKind === "upload") upload.click();
+      else if (busyKind === "reply") form.requestSubmit();
+      else trash.click();
+    });
+    assert.equal(trash.disabled, true);
+    assert.equal(upload.disabled, true);
+    assert.equal(submit.disabled, true);
+    assert.equal(harness.container.querySelector("textarea")?.disabled, true);
+    await act(async () => {
+      trash.click();
+      upload.click();
+      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    assert.equal(replyCalls, busyKind === "reply" ? 1 : 0);
+    assert.equal(lifecycleCalls, busyKind === "lifecycle" ? 1 : 0);
+    assert.equal(push.mock.callCount(), 0);
+    await act(async () => {
+      releaseReply?.({ error: "다시 시도해 주세요." });
+      releaseLifecycle?.({ success: false, error: "다시 시도해 주세요." });
+    });
+    if (busyKind !== "upload") {
+      assert.equal(trash.disabled, false);
+      assert.equal(upload.disabled, false);
+      assert.equal(submit.disabled, false);
+    }
+    assert.match(harness.container.querySelector("textarea")?.value ?? "", /전송할 답변/u);
+  });
+}
 
 test("Q&A 충돌 응답의 version만 채택하지 않고 서버 상태와 답변 초안을 함께 유지한다", { concurrency: false }, async (context) => {
   const requests: Parameters<typeof changeQnaStatus>[] = [];

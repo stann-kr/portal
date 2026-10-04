@@ -52,7 +52,11 @@ interface QnaSlideFormProps {
   onBusyChange?: (isBusy: boolean) => void;
 }
 
-export function QnaSlideForm({
+export function QnaSlideForm(props: QnaSlideFormProps) {
+  return <QnaSlideFormContent key={props.actorId} {...props} />;
+}
+
+function QnaSlideFormContent({
   actorId,
   spaceLabel,
   onSuccess,

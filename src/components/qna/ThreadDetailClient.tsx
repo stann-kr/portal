@@ -71,7 +71,11 @@ interface ThreadDetailClientProps {
   returnTo: string;
 }
 
-export function ThreadDetailClient({
+export function ThreadDetailClient(props: ThreadDetailClientProps) {
+  return <ThreadDetailContent key={JSON.stringify([props.actorId, props.threadId])} {...props} />;
+}
+
+function ThreadDetailContent({
   threadId,
   status,
   version,
@@ -318,6 +322,8 @@ export function ThreadDetailClient({
             </Link>
           </Button>
           <QnaThreadLifecycleActions
+            disabled={isReplyFormBusy}
+            transition={{ isPending, start: startTransition }}
             threadId={threadId}
             version={currentVersion}
             deletedAt={deletedAt}

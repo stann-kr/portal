@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import {
   abandonMediaUpload,
   completeMediaUploadAction,
@@ -51,26 +51,40 @@ export function FileUploader({
   onUploadingChange,
 }: FileUploaderProps) {
   const inputRef = useRef<HTMLInputElement>(null);
-  const xhrRef = useRef<XMLHttpRequest | null>(null);
-  const mountedRef = useRef(true);
+  const scope = JSON.stringify([purpose, draftOperationId]);
+  const scopeRef = useRef(scope);
+  const requestRef = useRef<{ scope: string; xhr: XMLHttpRequest | null } | null>(null);
+  const mountedRef = useRef(false);
   const onUploadingChangeRef = useRef(onUploadingChange);
-  onUploadingChangeRef.current = onUploadingChange;
   const [isUploading, setIsUploading] = useState(false);
   const [progress, setProgress] = useState(0);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    onUploadingChangeRef.current = onUploadingChange;
+  });
+
+  useLayoutEffect(() => {
+    // 미완료 transition 렌더는 현재 업로드의 소유 문맥을 바꾸지 않는다.
+    scopeRef.current = scope;
     mountedRef.current = true;
+    setIsUploading(false);
+    setProgress(0);
+    if (inputRef.current) inputRef.current.value = "";
     return () => {
       mountedRef.current = false;
-      xhrRef.current?.abort();
-      xhrRef.current = null;
+      const request = requestRef.current;
+      requestRef.current = null;
+      request?.xhr?.abort();
       onUploadingChangeRef.current?.(false);
     };
-  }, []);
+  }, [scope]);
 
   async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
-    if (!file) return;
+    if (!file || disabled || !draftOperationId || requestRef.current) return;
+    const request = { scope, xhr: null as XMLHttpRequest | null };
+    requestRef.current = request;
+    const isCurrent = () => mountedRef.current && requestRef.current === request && scopeRef.current === request.scope;
 
     setIsUploading(true);
     onUploadingChangeRef.current?.(true);
@@ -91,7 +105,7 @@ export function FileUploader({
         throw new Error(result.error ?? "Presigned URL 발급 실패");
       }
       issuedMediaObjectId = result.mediaObjectId;
-      if (!mountedRef.current) {
+      if (!isCurrent()) {
         await abandonMediaUpload(result.mediaObjectId).catch(() => undefined);
         issuedMediaObjectId = null;
         return;
@@ -102,17 +116,22 @@ export function FileUploader({
         file,
         result.uploadUrl,
         result.uploadContentType,
-        setProgress,
+        (value) => { if (isCurrent()) setProgress(value); },
         (xhr) => {
-          xhrRef.current = xhr;
+          request.xhr = xhr;
         },
       );
-      xhrRef.current = null;
+      request.xhr = null;
+      if (!isCurrent()) {
+        await abandonMediaUpload(result.mediaObjectId).catch(() => undefined);
+        issuedMediaObjectId = null;
+        return;
+      }
       const completed = await completeMediaUploadAction(result.mediaObjectId);
       if (!completed.success) {
         throw new Error(completed.error ?? "업로드 완료 확인 실패");
       }
-      if (!mountedRef.current) {
+      if (!isCurrent()) {
         await abandonMediaUpload(result.mediaObjectId).catch(() => undefined);
         issuedMediaObjectId = null;
         return;
@@ -128,13 +147,14 @@ export function FileUploader({
         await abandonMediaUpload(issuedMediaObjectId).catch(() => undefined);
       }
       const message = err instanceof Error ? err.message : "업로드 중 오류 발생";
-      if (mountedRef.current) {
+      if (isCurrent()) {
         console.error("[FileUploader]", message);
         onError?.(message);
       }
     } finally {
-      xhrRef.current = null;
-      if (mountedRef.current) {
+      request.xhr = null;
+      if (isCurrent()) {
+        requestRef.current = null;
         setIsUploading(false);
         onUploadingChangeRef.current?.(false);
         setProgress(0);

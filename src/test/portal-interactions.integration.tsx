@@ -27,7 +27,12 @@ let TimelineFeedback: typeof import("@/components/feedback/TimelineFeedback").Ti
 let PostDetailClient: typeof import("@/app/community/[postId]/PostDetailClient").PostDetailClient;
 let saveComment: typeof import("@/lib/actions/comments").createComment = async () => ({});
 let removeComment: typeof import("@/lib/actions/comments").deleteComment = async () => {};
+let trashPost: typeof import("@/lib/actions/posts").deletePost = async () => {};
 let AssignmentView: typeof import("@/components/student-portal/AssignmentView").AssignmentView;
+let FileUploader: typeof import("@/components/upload/FileUploader").FileUploader;
+let requestUpload: typeof import("@/lib/actions/upload").requestMediaUpload = async () => ({ success: false, error: "업로드 테스트 미설정" });
+let completeUpload: typeof import("@/lib/actions/upload").completeMediaUploadAction = async () => ({ success: false, error: "업로드 테스트 미설정" });
+let abandonUpload: typeof import("@/lib/actions/upload").abandonMediaUpload = async () => {};
 let saveAssignment: typeof import("@/lib/actions/assignments").submitAssignment = async () => ({});
 let loadAssignments: typeof import("@/lib/actions/assignments").getMyAssignments = async () => [];
 let saveFeedback: typeof import("@/lib/actions/feedbacks").createFeedback = async () => ({});
@@ -65,7 +70,12 @@ mock.module("@/lib/actions/comments", { namedExports: {
   deleteComment: (...args: Parameters<typeof removeComment>) => removeComment(...args),
   getCommentsByPost: async () => [],
 } });
-mock.module("@/lib/actions/posts", { namedExports: { deletePost: async () => {} } });
+mock.module("@/lib/actions/posts", { namedExports: { deletePost: (...args: Parameters<typeof trashPost>) => trashPost(...args) } });
+mock.module("@/lib/actions/upload", { namedExports: {
+  requestMediaUpload: (...args: Parameters<typeof requestUpload>) => requestUpload(...args),
+  completeMediaUploadAction: (...args: Parameters<typeof completeUpload>) => completeUpload(...args),
+  abandonMediaUpload: (...args: Parameters<typeof abandonUpload>) => abandonUpload(...args),
+} });
 mock.module("@/components/community/PostEditForm", { namedExports: { PostEditForm: () => null } });
 mock.module("@/components/community/PostTrashActions", { namedExports: { PostTrashActions: () => null } });
 mock.module("@/lib/actions/calendarEvents", { namedExports: { createCalendarEvent: (...args: Parameters<typeof saveEvent>) => saveEvent(...args) } });
@@ -106,6 +116,7 @@ before(async () => {
     HTMLFormElement: browser.HTMLFormElement,
     HTMLTextAreaElement: browser.HTMLTextAreaElement,
     FormData: browser.FormData,
+    XMLHttpRequest: browser.XMLHttpRequest,
     DOMParser: browser.DOMParser,
     Node: browser.Node,
     NodeFilter: browser.NodeFilter,
@@ -139,6 +150,7 @@ before(async () => {
   ({ TimelineFeedback } = await import("@/components/feedback/TimelineFeedback"));
   ({ PostDetailClient } = await import("@/app/community/[postId]/PostDetailClient"));
   ({ AssignmentView } = await import("@/components/student-portal/AssignmentView"));
+  ({ FileUploader } = await import("@/components/upload/FileUploader"));
   ({ CreateEntryDropdown } = await import("@/components/student-portal/CreateEntryDropdown"));
   ({ AdminPortalClient } = await import("@/components/admin-portal/AdminPortalClient"));
   ({ StudentPortalClient } = await import("@/components/student-portal/StudentPortalClient"));
@@ -212,6 +224,136 @@ function inputValue(name: string): string {
   assert.ok(input instanceof browser.HTMLInputElement);
   return input.value;
 }
+
+function mockUploadTransport(context: TestContext) {
+  const requests: UploadTransport[] = [];
+  class UploadTransport {
+    upload = { onprogress: null as ((event: { lengthComputable: boolean; loaded: number; total: number }) => void) | null };
+    status = 200;
+    onload: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    onabort: (() => void) | null = null;
+    aborted = false;
+    constructor() { requests.push(this); }
+    open() {}
+    setRequestHeader() {}
+    send() {}
+    abort() { this.aborted = true; this.onabort?.(); }
+  }
+  const original = globalThis.XMLHttpRequest;
+  Object.defineProperty(globalThis, "XMLHttpRequest", { configurable: true, writable: true, value: UploadTransport });
+  context.after(() => {
+    globalThis.XMLHttpRequest = original;
+    requestUpload = async () => ({ success: false, error: "업로드 테스트 미설정" });
+    completeUpload = async () => ({ success: false, error: "업로드 테스트 미설정" });
+    abandonUpload = async () => {};
+  });
+  return requests;
+}
+
+async function chooseUploadFile() {
+  const input = browser.document.querySelector('input[type="file"]');
+  assert.ok(input);
+  Object.defineProperty(input, "files", { configurable: true, value: [new browser.File(["fixture"], "fixture.png", { type: "image/png" })] });
+  await act(async () => input.dispatchEvent(new browser.Event("change", { bubbles: true })));
+}
+
+for (const waitingAt of ["intent", "complete"] as const) {
+  test(`FileUploader는 ${waitingAt} 응답 대기 중 초안을 바꿨다가 돌아와도 이전 응답을 격리한다`, { concurrency: false }, async (context) => {
+    const xhrs = mockUploadTransport(context);
+    let releaseOldIntent!: (value: Awaited<ReturnType<typeof requestUpload>>) => void;
+    let releaseOldComplete!: (value: Awaited<ReturnType<typeof completeUpload>>) => void;
+    let releaseNewComplete!: (value: Awaited<ReturnType<typeof completeUpload>>) => void;
+    const abandoned: string[] = [];
+    const uploaded: string[] = [];
+    const errors: string[] = [];
+    const busy: boolean[] = [];
+    const intent = (id: string) => ({ success: true as const, mediaObjectId: id, deliveryUrl: `/api/media/${id}`, uploadUrl: "https://upload.test/put", uploadContentType: "image/png" });
+    let issued = 0;
+    requestUpload = async () => {
+      issued += 1;
+      return issued === 1 && waitingAt === "intent" ? new Promise((resolve) => { releaseOldIntent = resolve; }) : intent(issued === 1 ? "old" : "new");
+    };
+    completeUpload = async (id) => new Promise((resolve) => { if (id === "old") releaseOldComplete = resolve; else releaseNewComplete = resolve; });
+    abandonUpload = async (id) => { abandoned.push(id); };
+    const screen = (operation: string) => <FileUploader purpose="QNA_ATTACHMENT" draftOperationId={operation} onUploadComplete={(upload) => uploaded.push(upload.mediaObjectId)} onError={(error) => errors.push(error)} onUploadingChange={(value) => busy.push(value)} />;
+    const root = await render(context, screen("draft-a"));
+    await chooseUploadFile();
+    if (waitingAt === "complete") await act(async () => xhrs[0].onload?.());
+    await act(async () => root.render(screen("draft-b")));
+    await act(async () => root.render(screen("draft-a")));
+    await chooseUploadFile();
+    await act(async () => xhrs.at(-1)!.onload?.());
+    assert.equal(button("업로드 중...").getAttribute("aria-busy"), "true");
+    await act(async () => {
+      if (waitingAt === "intent") releaseOldIntent(intent("old"));
+      else releaseOldComplete({ success: true, mediaObjectId: "old", deliveryUrl: "/api/media/old" });
+    });
+    assert.deepEqual(abandoned, ["old"]);
+    assert.deepEqual(uploaded, []);
+    assert.deepEqual(errors, []);
+    assert.equal(busy.at(-1), true, "이전 finally가 새 업로드의 busy를 해제하지 않는다");
+    assert.equal(button("업로드 중...").getAttribute("aria-busy"), "true");
+    assert.equal(xhrs.length, waitingAt === "intent" ? 1 : 2);
+    await act(async () => releaseNewComplete({ success: true, mediaObjectId: "new", deliveryUrl: "/api/media/new" }));
+    assert.deepEqual(uploaded, ["new"]);
+    assert.equal(busy.at(-1), false);
+    assert.equal(button("파일 선택").disabled, false);
+  });
+}
+
+test("FileUploader는 목적 변경 시 PUT을 중단하고 늦은 진행·오류가 새 업로드를 바꾸지 않는다", { concurrency: false }, async (context) => {
+  const xhrs = mockUploadTransport(context);
+  const abandoned: string[] = [];
+  const errors: string[] = [];
+  const uploaded: string[] = [];
+  let issued = 0;
+  requestUpload = async () => ({ success: true, mediaObjectId: String(++issued), deliveryUrl: `/api/media/${issued}`, uploadUrl: "https://upload.test/put", uploadContentType: "image/png" });
+  completeUpload = async (id) => ({ success: true, mediaObjectId: id, deliveryUrl: `/api/media/${id}` });
+  abandonUpload = async (id) => { abandoned.push(id); };
+  const screen = (purpose: "QNA_ATTACHMENT" | "COMMUNITY_POST_AUDIO") => <FileUploader purpose={purpose} draftOperationId="same-draft" onUploadComplete={(upload) => uploaded.push(upload.mediaObjectId)} onError={(error) => errors.push(error)} />;
+  const root = await render(context, screen("QNA_ATTACHMENT"));
+  await chooseUploadFile();
+  await act(async () => root.render(screen("COMMUNITY_POST_AUDIO")));
+  assert.equal(xhrs[0].aborted, true);
+  await chooseUploadFile();
+  await act(async () => {
+    xhrs[1].upload.onprogress?.({ lengthComputable: true, loaded: 20, total: 100 });
+    xhrs[0].upload.onprogress?.({ lengthComputable: true, loaded: 99, total: 100 });
+    xhrs[0].onerror?.();
+  });
+  assert.equal(browser.document.querySelector('[role="progressbar"]')?.getAttribute("aria-valuenow"), "20");
+  assert.deepEqual(errors, []);
+  assert.deepEqual(abandoned, ["1"]);
+  await act(async () => xhrs[1].onload?.());
+  assert.deepEqual(uploaded, ["2"]);
+  assert.equal(button("파일 선택").disabled, false);
+});
+
+test("FileUploader는 아직 반영되지 않은 전환 렌더 때문에 현재 업로드를 잃지 않는다", { concurrency: false }, async (context) => {
+  const xhrs = mockUploadTransport(context);
+  const uploaded: string[] = [];
+  let releaseComplete!: (value: Awaited<ReturnType<typeof completeUpload>>) => void;
+  requestUpload = async () => ({ success: true, mediaObjectId: "current", deliveryUrl: "/api/media/current", uploadUrl: "https://upload.test/put", uploadContentType: "image/png" });
+  completeUpload = async () => new Promise((resolve) => { releaseComplete = resolve; });
+  const suspended = new Promise<void>(() => {});
+  function PendingRoute({ pending }: { pending: boolean }) {
+    if (pending) throw suspended;
+    return null;
+  }
+  const screen = (operation: string, pending: boolean) => <React.Suspense fallback={<p>전환 중</p>}>
+    <FileUploader purpose="QNA_ATTACHMENT" draftOperationId={operation} onUploadComplete={(upload) => uploaded.push(upload.mediaObjectId)} />
+    <PendingRoute pending={pending} />
+  </React.Suspense>;
+  const root = await render(context, screen("visible-draft", false));
+  await chooseUploadFile();
+  await act(async () => xhrs[0].onload?.());
+  await act(async () => React.startTransition(() => root.render(screen("uncommitted-draft", true))));
+  assert.equal(button("업로드 중...").getAttribute("aria-busy"), "true");
+  await act(async () => releaseComplete({ success: true, mediaObjectId: "current", deliveryUrl: "/api/media/current" }));
+  assert.deepEqual(uploaded, ["current"]);
+  assert.equal(button("파일 선택").disabled, false);
+});
 
 test("portal navigation restores URL state and does not add history for the active section", async (context) => {
   browser.history.replaceState({ marker: "keep" }, "", "?section=workspace");
@@ -667,6 +809,31 @@ test("feedback draft survives leaving the assignment before submitting", async (
   await settle();
   assert.equal(inputValue("content"), "");
   assert.equal(inputValue("timeMarker"), "");
+});
+
+test("게시물 삭제는 응답 유실 재시도와 복원 후 새 삭제 의도를 구분한다", async (context) => {
+  browser.localStorage.clear();
+  context.mock.method(globalThis, "confirm", () => true);
+  const requests: Parameters<typeof trashPost>[] = [];
+  trashPost = async (...args) => { requests.push(args); throw new Error("response lost"); };
+  context.after(() => { trashPost = async () => {}; });
+  const post = {
+    id: "delete-retry-post", authorId: "student-1", title: "레슨 이야기", contentHtml: "<p>본문</p>",
+    category: "general", boardType: "GENERAL" as const, isPinned: false, mediaUrl: null,
+    mediaObjectId: null, createdAt: new Date(), updatedAt: new Date(), deletedAt: null,
+    deletedById: null, version: 1, authorName: "학생", authorEmail: null,
+  };
+  const screen = (version: number, deletedAt: Date | null = null) => <PostDetailClient postId={post.id} post={{ ...post, version, deletedAt }} initialCommentList={[]} currentUserId="student-1" isAdmin={false} returnTo="/community" />;
+  const root = await render(context, screen(1));
+  await press("게시물 삭제");
+  assert.match(browser.document.querySelector('[role="alert"]')?.textContent ?? "", /response lost/u);
+  await press("게시물 삭제");
+  assert.equal(requests[0][1], requests[1][1]);
+  await act(async () => root.render(screen(2, new Date())));
+  await act(async () => root.render(screen(3)));
+  await press("게시물 삭제");
+  assert.notEqual(requests[1][1], requests[2][1]);
+  assert.deepEqual(requests.map((args) => args[2]), [1, 1, 3]);
 });
 
 test("failed comment deletion keeps the conversation and unfinished reply visible", async (context) => {

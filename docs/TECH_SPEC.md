@@ -127,6 +127,8 @@ Migration SQL은 `drizzle/`, Drizzle metadata는 `drizzle/meta/`에 둔다. Wran
 
 신규 업로드는 사용자에게 노출된 `media-upload/` staging key로만 PUT하고, 서버가 size·Content-Type metadata·ETag를 확인한 뒤 사용자에게 공개되지 않은 별도 `media/` final key로 봉인한다. D1의 `SEALING` lease가 봉인과 삭제를 직렬화하며, 결과를 잃은 Copy는 복구 유예 뒤 final 삭제 outbox가 다시 정리한다. 문서에는 object ID와 `/api/media/{id}`만 저장하고, 게시물과 Q&A의 원자 생성·purge transaction이 registry claim과 R2 삭제 의도를 함께 commit한다. R2 삭제는 lease·지수 backoff를 사용하는 durable outbox로 재시도한다.
 
+클라이언트 업로드는 목적·초안 operation과 개별 요청에 귀속된다. 실제 화면에 반영된 문맥 변경이나 unmount는 진행 중 PUT을 중단하고, 이후 도착한 발급·완료 응답, 진행률·오류·busy 해제를 새 초안에 전달하지 않는다. 아직 반영되지 않은 transition 렌더는 현재 업로드를 취소하지 않는다. 오래된 발급 객체의 정리는 기존 owner 검증과 outbox 정책을 따른다.
+
 예약 정리 source는 OpenNext application fetch를 유지한 custom Worker entry에 `scheduled` handler를 추가한다. request AsyncLocalStorage에 의존하지 않고 event의 D1·R2 binding을 직접 주입하며, 30일이 지난 계정 raw ID alias, 만료 미귀속 media enqueue, 기존 R2 deletion outbox를 작은 순차 batch로 처리한다. soft time budget은 처리 중인 transaction이나 R2 요청을 취소하지 않고 다음 작업 claim만 멈춘다. 로그는 처리 건수·backlog·stage 상태만 포함하며 계정 ID, object key, digest와 예외 원문을 기록하지 않는다. `wrangler.scheduled.toml`에는 Cron trigger와 route를 넣지 않고 원격 운영 trigger를 별도로 관리한다. handler 구현과 원격 trigger 활성 상태는 별도로 확인한다. 운영 수용에는 활성 target version의 실제 scheduled invocation, backlog·실패와 alert 증거가 필요하다.
 
 ## 인증과 권한
@@ -159,11 +161,13 @@ Migration SQL은 `drizzle/`, Drizzle metadata는 `drizzle/meta/`에 둔다. Wran
 - 개인 노트 삭제는 `deleted_at` soft delete다. active 기본 조회는 휴지통 노트를 제외하고, trash/restore와 과거 revision restore는 각각 새 revision을 만든다. 30일 만료 뒤 admin purge만 head와 revision을 제거하며 tombstone과 본문 없는 ledger가 늦은 create/update의 부활을 차단한다. revision은 문서가 active/trash인 동안 append-only이고 일반 profile 삭제는 `RESTRICT`하며 전용 account-deletion transaction만 이력을 먼저 완결 삭제한 뒤 profile을 제거한다.
 - 개인 노트는 Server Action 기본 1MB body의 action/form envelope 여유를 남기기 위해 sanitize된 HTML 본문 800 KiB, 제목 200자, 사용자별 head와 내용 변경 revision 100 MiB의 logical quota를 적용한다. `TRASH`·`RESTORE_TRASH` 상태 snapshot은 사용자 quota에서 제외하고 실제 D1 사용량 관측 대상으로 남긴다. version 충돌은 자동 병합하지 않고 현재 초안을 보존한 채 서버 최신본을 펼쳐 확인·복사한 다음 서버본 사용 또는 현재 초안 계속을 선택한다.
 - 커뮤니티 게시물의 생성·편집·고정 변경·휴지통 이동·복원·과거 revision 복원·영구 삭제도 UUIDv4 operation ID와 명시적 base revision을 사용한다. head, 불변 receipt와 full-snapshot revision을 D1 `batch()` 또는 로컬 transaction에서 함께 처리한다. exact replay는 이후 다른 변경이 있어도 원래 결과 revision으로 수렴하며, 저장된 snapshot hash가 맞지 않으면 과거 revision 복원을 거부한다.
+- 노트·게시물의 휴지통 및 이력 복원 버튼은 문서·기준 version·작업 종류(이력 복원은 대상 revision 포함)에 요청 ID를 결합한다. 결과가 불명확한 같은 작업은 같은 ID로 재시도하고, 새 기준본에서 시작한 작업은 새 ID를 사용한다. 노트 휴지통 action의 예외는 화면 내부 오류로 표시해 편집 화면과 재시도 경로를 유지한다.
 - 게시물 댓글은 head와 함께 삭제하지 않는다. 휴지통 게시물은 기본 목록과 통합 기록에서 제외하고 읽기 전용으로만 열며, DB trigger가 휴지통 상태에서 새 댓글과 댓글 삭제 경쟁을 차단한다. 게시물을 복원하면 기존 댓글이 다시 함께 보이고, 관리자 purge 때만 FK cascade로 제거한다.
 - 댓글·과제 피드백의 로컬 작성본에는 UUIDv4 operation ID를 함께 보관한다. 응답 유실·화면 재진입 후 같은 작성본은 같은 ID로 재시도하고, 편집 또는 성공 후 새 작성은 새 ID를 사용한다. 서버는 작성자·대상별 결정적 PK와 정규화 원문을 대조해 같은 레코드의 중복 insert를 막고 다른 원문의 재사용을 거부한다. 개별 댓글·피드백을 직접 삭제해 row가 제거된 이후에는 이 재전송 보장이 유지되지 않는다.
 - 새 게시물·Q&A 질문·답변의 `Cmd/Ctrl+S`는 공개 action을 호출하지 않고 최신 form snapshot을 로컬에 flush한다. 노트와 기존 문서 편집의 단축키는 명시된 서버 저장 action을 사용한다.
 - Q&A의 스레드·첫 본문, 답변·상태 변경, 휴지통 이동·복원·영구 삭제는 D1 binding batch 또는 로컬 SQLite transaction으로 함께 commit하거나 rollback한다. 각 mutation은 operation receipt와 append-only `qna_thread_events`를 남기고 version CAS를 적용한다. 답변 쓰기는 ownership과 `CLOSED`·휴지통 상태를 원자 쓰기 안에서 다시 검증한다.
 - Q&A 휴지통 작업이 다른 화면의 변경과 충돌하면 오래된 snapshot의 쓰기를 잠그고 최신 상태 확인을 제공한다. 실제 서버 props의 version·삭제/권한 상태가 바뀐 후 새 작업을 허용하며, 재조회 실패의 재시도와 작성 중 답변은 유지한다. 같은 결과 불명 요청은 동일 operation으로, 새 version 또는 작업 종류는 새 operation으로 처리한다.
+- Q&A 상세는 답변 제출·첨부 업로드·상태 및 휴지통 변경의 busy 상태를 함께 사용해 작업이 겹치지 않도록 한다. 계정이나 스레드가 바뀌면 해당 작성 UI의 상태 수명을 분리하고, 같은 스레드의 version 갱신에서는 작성 중 답변을 유지한다.
 - Q&A 목록의 상태 필터는 `qnaStatus` URL query가 소유한다. 학생·관리자 목록과 관리자 학생별 Q&A 탭은 첫 서버 렌더에서 같은 필터를 적용하고, GET 필터 변경과 상세·새 질문·휴지통의 복귀 경로에 상위 포털/학생 탭 문맥을 함께 보존한다.
 - Q&A 검색은 `qnaQuery` URL query로 제목·질문·답변의 전체 기간을 대상으로 한다. NFKC·대소문자 정규화 뒤 띄어 쓴 단어를 대화 전체에서 AND로 찾고 HTML 속성·숨겨진 코드 없이 평문 일치 구간만 표시한다. 검색 시에만 인증된 active scope의 답변을 ID keyset으로64개씩 읽으며 관리자 학생별 검색도 동일한 student 조건을 사용한다. 상태 필터와 검색 초기화는 서로의 조건·상위 returnTo를 보존한다. 별도 검색 index나 schema 변경은 없으며 처리량은 해당 범위 대화량에 비례한다.
 - Q&A 답변은 휴지통 이동·복원 동안 보존되고 관리자 purge 때만 스레드와 함께 제거된다. active 기본 조회와 통합 기록은 휴지통 질문을 제외하며, tombstone과 본문 없는 ledger가 purge 뒤 늦은 질문·답변·상태 요청의 부활을 차단한다.

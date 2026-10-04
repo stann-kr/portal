@@ -38,7 +38,11 @@ type QnaDraft = {
   attachmentObjectId?: string;
 };
 
-export function NewQnaForm({ actorId, returnTo }: { actorId: string; returnTo: string }) {
+export function NewQnaForm(props: { actorId: string; returnTo: string }) {
+  return <NewQnaFormContent key={props.actorId} {...props} />;
+}
+
+function NewQnaFormContent({ actorId, returnTo }: { actorId: string; returnTo: string }) {
   const [title, setTitle] = useState("");
   const {
     contentHtml,

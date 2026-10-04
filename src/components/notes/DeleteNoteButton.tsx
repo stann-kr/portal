@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Trash2 } from "lucide-react";
 import { trashPrivateNote } from "@/lib/actions/privateNotes";
@@ -16,20 +16,31 @@ export function DeleteNoteButton({
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  const [operationId] = useState(() => createCreationOperationId());
+  const requestKey = JSON.stringify([noteId, version]);
+  const operation = useRef<{ key: string; id: string } | null>(null);
 
   const handleDelete = () => {
+    if (isPending) return;
     if (!confirm("이 노트를 휴지통으로 이동하시겠습니까? 30일 동안 복원할 수 있습니다.")) {
       return;
     }
+    if (operation.current?.key !== requestKey) {
+      operation.current = { key: requestKey, id: createCreationOperationId() };
+    }
+    const operationId = operation.current.id;
+    setError(null);
     startTransition(async () => {
-      const result = await trashPrivateNote(noteId, operationId, version);
-      if (!result.success) {
-        setError(result.error ?? "노트를 휴지통으로 이동하지 못했습니다.");
-        return;
+      try {
+        const result = await trashPrivateNote(noteId, operationId, version);
+        if (!result.success) {
+          setError(result.error ?? "노트를 휴지통으로 이동하지 못했습니다.");
+          return;
+        }
+        setError(null);
+        router.refresh();
+      } catch {
+        setError("노트를 휴지통으로 이동한 결과를 확인하지 못했습니다. 다시 시도해 주세요.");
       }
-      setError(null);
-      router.refresh();
     });
   };
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState, useTransition } from "react";
+import { useCallback, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Trash2, Hash, History, PencilLine } from "lucide-react";
@@ -41,11 +41,18 @@ export function PostDetailClient({
   const [isEditing, setIsEditing] = useState(false);
   const [isEditPending, setIsEditPending] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
-  const [deleteOperationId] = useState(() => createCreationOperationId());
+  const deleteOperation = useRef<{ key: string; id: string } | null>(null);
   const router = useRouter();
 
   const handleDeletePost = () => {
-    if (!post || !confirm("이 게시물을 휴지통으로 이동하시겠습니까? 30일 동안 복원할 수 있습니다.")) return;
+    if (isPending || isEditPending || post.deletedAt) return;
+    if (!confirm("이 게시물을 휴지통으로 이동하시겠습니까? 30일 동안 복원할 수 있습니다.")) return;
+    const requestKey = JSON.stringify([currentUserId, post.id, post.version]);
+    if (deleteOperation.current?.key !== requestKey) {
+      deleteOperation.current = { key: requestKey, id: createCreationOperationId() };
+    }
+    const deleteOperationId = deleteOperation.current.id;
+    setDeleteError(null);
     startTransition(async () => {
       try {
         await deletePost(post.id, deleteOperationId, post.version, returnTo);

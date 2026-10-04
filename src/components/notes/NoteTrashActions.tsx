@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { RotateCcw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -26,32 +26,36 @@ export function NoteTrashActions({
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  const [restoreOperationId] = useState(() => createCreationOperationId());
-  const [purgeOperationId] = useState(() => createCreationOperationId());
+  const requestKey = JSON.stringify([noteId, version]);
+  const operations = useRef<{ key: string; restore: string; purge: string } | null>(null);
 
   const run = (kind: "restore" | "purge") => {
+    if (isPending) return;
     if (
       kind === "purge" &&
       !confirm("노트 본문과 모든 revision을 영구 삭제합니다. 이 작업은 되돌릴 수 없습니다.")
     ) {
       return;
     }
+    if (operations.current?.key !== requestKey) {
+      operations.current = { key: requestKey, restore: createCreationOperationId(), purge: createCreationOperationId() };
+    }
+    const operationId = operations.current[kind];
+    setError(null);
     startTransition(async () => {
-      const operationId =
-        kind === "restore" ? restoreOperationId : purgeOperationId;
-      const result =
-        kind === "restore"
+      try {
+        const result = kind === "restore"
           ? await restorePrivateNote(noteId, operationId, version)
           : await purgePrivateNote(noteId, operationId, version);
-      if (!result.success) {
-        setError(result.error ?? "노트 상태를 변경하지 못했습니다.");
-        return;
-      }
-      setError(null);
-      if (kind === "purge") {
-        router.push(returnTo);
-      } else {
-        router.refresh();
+        if (!result.success) {
+          setError(result.error ?? "노트 상태를 변경하지 못했습니다.");
+          return;
+        }
+        setError(null);
+        if (kind === "purge") router.push(returnTo);
+        else router.refresh();
+      } catch {
+        setError("노트 상태를 변경한 결과를 확인하지 못했습니다. 다시 시도해 주세요.");
       }
     });
   };

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -19,10 +19,16 @@ export function RestorePostRevisionButton({
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  const [operationId, setOperationId] = useState(() => createCreationOperationId());
+  const requestKey = JSON.stringify([postId, baseRevision, revisionNumber]);
+  const operation = useRef<{ key: string; id: string } | null>(null);
 
   const restore = () => {
+    if (isPending) return;
     if (!confirm(`${revisionNumber}번 내용을 새 현재 버전으로 복원하시겠습니까?`)) return;
+    if (operation.current?.key !== requestKey) {
+      operation.current = { key: requestKey, id: createCreationOperationId() };
+    }
+    const operationId = operation.current.id;
     startTransition(async () => {
       try {
         const result = await restorePostRevision(
@@ -36,7 +42,6 @@ export function RestorePostRevisionButton({
           return;
         }
         setError(null);
-        setOperationId(createCreationOperationId());
         router.refresh();
       } catch {
         setError("게시물 버전을 복원하지 못했습니다. 다시 시도해 주세요.");

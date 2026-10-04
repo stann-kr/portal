@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { RotateCcw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -27,23 +27,29 @@ export function PostTrashActions({
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  const [restoreOperationId] = useState(() => createCreationOperationId());
-  const [purgeOperationId] = useState(() => createCreationOperationId());
+  const operations = useRef<{ key: string; restore: string; purge: string } | null>(null);
   const expired = new Date(deletedAt).getTime() + RETENTION_MILLISECONDS <= Date.now();
 
   const run = (kind: "restore" | "purge") => {
+    if (isPending) return;
     if (
       kind === "purge" &&
       !confirm("게시물 본문, 댓글, 모든 revision을 영구 삭제합니다. 되돌릴 수 없습니다.")
     ) {
       return;
     }
+    const requestKey = JSON.stringify([postId, version]);
+    if (operations.current?.key !== requestKey) {
+      operations.current = { key: requestKey, restore: createCreationOperationId(), purge: createCreationOperationId() };
+    }
+    const operationId = operations.current[kind];
+    setError(null);
     startTransition(async () => {
       try {
         const result =
           kind === "restore"
-            ? await restorePost(postId, restoreOperationId, version)
-            : await purgePost(postId, purgeOperationId, version);
+            ? await restorePost(postId, operationId, version)
+            : await purgePost(postId, operationId, version);
         if (!result.success) {
           setError(result.error ?? "게시물 상태를 변경하지 못했습니다.");
           return;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import { useRef, useState, useTransition, type TransitionStartFunction } from "react";
 import { useRouter } from "next/navigation";
 import { RotateCcw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -20,6 +20,8 @@ export function QnaThreadLifecycleActions({
   canRestore,
   canPurge,
   returnTo,
+  disabled = false,
+  transition,
 }: {
   threadId: string;
   version: number;
@@ -27,9 +29,13 @@ export function QnaThreadLifecycleActions({
   canRestore: boolean;
   canPurge: boolean;
   returnTo: string;
+  disabled?: boolean;
+  transition?: { isPending: boolean; start: TransitionStartFunction };
 }) {
   const router = useRouter();
-  const [isPending, startTransition] = useTransition();
+  const [ownPending, startOwnTransition] = useTransition();
+  const isPending = transition?.isPending ?? ownPending;
+  const startTransition = transition?.start ?? startOwnTransition;
   const [failure, setFailure] = useState<{ message: string; snapshot: string; refreshRequired: boolean } | null>(null);
   const operation = useRef<{ key: string; id: string } | null>(null);
   const snapshot = JSON.stringify([threadId, version, deletedAt, canRestore, canPurge]);
@@ -39,7 +45,7 @@ export function QnaThreadLifecycleActions({
     : false;
 
   const run = (kind: "trash" | "restore" | "purge") => {
-    if (isPending || needsRefresh) return;
+    if (disabled || isPending || needsRefresh) return;
     const confirmed =
       kind === "trash"
         ? confirm("이 Q&A를 휴지통으로 이동하시겠습니까? 30일 동안 복원할 수 있습니다.")
@@ -86,7 +92,7 @@ export function QnaThreadLifecycleActions({
           variant="outline"
           size="sm"
           className="gap-1.5 text-destructive"
-          disabled={isPending || Boolean(needsRefresh)}
+          disabled={disabled || isPending || Boolean(needsRefresh)}
           onClick={() => run("trash")}
         >
           <Trash2 className="h-4 w-4" aria-hidden="true" />
@@ -100,7 +106,7 @@ export function QnaThreadLifecycleActions({
               variant="outline"
               size="sm"
               className="gap-1.5"
-              disabled={isPending || Boolean(needsRefresh)}
+              disabled={disabled || isPending || Boolean(needsRefresh)}
               onClick={() => run("restore")}
             >
               <RotateCcw className="h-4 w-4" aria-hidden="true" />
@@ -112,7 +118,7 @@ export function QnaThreadLifecycleActions({
               type="button"
               size="sm"
               className="gap-1.5 bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              disabled={isPending || Boolean(needsRefresh)}
+              disabled={disabled || isPending || Boolean(needsRefresh)}
               onClick={() => run("purge")}
             >
               <Trash2 className="h-4 w-4" aria-hidden="true" />
@@ -124,7 +130,7 @@ export function QnaThreadLifecycleActions({
       {failure && <span role={failure.snapshot === snapshot ? "alert" : "status"} className="text-xs text-muted-foreground">
         {failure.snapshot === snapshot ? failure.message : "최신 상태를 불러왔습니다. 현재 상태를 확인한 뒤 다시 진행해 주세요."}
       </span>}
-      {failure?.refreshRequired && <Button type="button" variant="outline" size="sm" disabled={isPending} onClick={() => startTransition(() => {
+      {failure?.refreshRequired && <Button type="button" variant="outline" size="sm" disabled={disabled || isPending} onClick={() => startTransition(() => {
         try {
           router.refresh();
         } catch {
