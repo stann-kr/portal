@@ -83,6 +83,7 @@ let qnaActions: typeof import("@/lib/actions/qna");
 let privateNoteActions: typeof import("@/lib/actions/privateNotes");
 let postActions: typeof import("@/lib/actions/posts");
 let commentActions: typeof import("@/lib/actions/comments");
+let revalidationFailure: Error | null = null;
 
 function requireActiveDb(): PortalTestDb {
   if (!activeDb) throw new Error("격리 D1 테스트 DB가 준비되지 않았습니다.");
@@ -102,7 +103,13 @@ mock.module("@/db/client", {
 });
 mock.module("next/cache", {
   namedExports: {
-    revalidatePath: () => undefined,
+    revalidatePath: () => {
+      if (revalidationFailure) {
+        const failure = revalidationFailure;
+        revalidationFailure = null;
+        throw failure;
+      }
+    },
   },
 });
 mock.module("next/navigation", {
@@ -1363,6 +1370,7 @@ test("게시물 CAS에서 늦은 저장이 먼저 저장된 내용을 덮어쓰�
 
   assert.equal(first.success, true);
   assert.match(late.error ?? "", /먼저 변경/u);
+  assert.deepEqual(late.conflictPost, { id: "post-1", title: "먼저 저장", contentHtml: "<p>첫 내용</p>", version: 2 });
   const [post] = await db
     .select({ title: posts.title, contentHtml: posts.contentHtml })
     .from(posts)
@@ -1391,10 +1399,11 @@ test("게시물 편집 성공 응답이 유실돼도 같은 저장 재전송은 
     operationId,
   );
 
-  const first = await postActions.updatePostContent(
-    "post-update-retry",
-    {},
-    retryForm(),
+  revalidationFailure = new Error("response lost after commit");
+  context.after(() => { revalidationFailure = null; });
+  await assert.rejects(
+    postActions.updatePostContent("post-update-retry", {}, retryForm()),
+    /response lost after commit/u,
   );
   const lostResponseRetry = await postActions.updatePostContent(
     "post-update-retry",
@@ -1402,9 +1411,10 @@ test("게시물 편집 성공 응답이 유실돼도 같은 저장 재전송은 
     retryForm(),
   );
 
-  assert.equal(first.success, true);
   assert.equal(lostResponseRetry.success, true);
-  assert.deepEqual(lostResponseRetry.post, first.post);
+  assert.equal(lostResponseRetry.replayed, true);
+  assert.deepEqual(lostResponseRetry.post, { id: "post-update-retry", title: "저장된 제목", contentHtml: "<p>저장된 본문</p>", version: 2 });
+  assert.equal((await db.select().from(documentOperationLedger).where(eq(documentOperationLedger.resourceId, "post-update-retry"))).length, 1);
   const [stored] = await db
     .select({
       title: posts.title,
@@ -1968,6 +1978,7 @@ test("다른 리소스의 올바른 fingerprint를 이식해도 게시물을 변
   );
 
   assert.match(result.error ?? "", /다른 기준본|먼저 변경/u);
+  assert.deepEqual(result.conflictPost, { id: "post-fingerprint-target", title: "기준 제목", contentHtml: "<p>기준 본문</p>", version: 1 });
   const [stored] = await db
     .select({ title: posts.title, contentHtml: posts.contentHtml })
     .from(posts)

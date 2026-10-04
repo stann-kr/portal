@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DraftStatus } from "@/components/editor/DraftStatus";
 import { DraftConflictRecovery } from "@/components/editor/DraftConflictRecovery";
+import { RichTextContent } from "@/components/editor/RichTextContent";
 import { createDocumentDraftKey } from "@/lib/form-draft";
 import { useSyncedFormDraft } from "@/lib/hooks/useSyncedFormDraft";
 import { useDeferredEditorContent } from "@/lib/hooks/useDeferredEditorContent";
@@ -27,8 +28,9 @@ import {
 import {
   CREATION_OPERATION_FIELD,
   createCreationOperationId,
+  parseCreationOperationId,
 } from "@/lib/creation-operation";
-import { POST_BASE_REVISION_FIELD } from "@/lib/post-continuity";
+import { POST_BASE_REVISION_FIELD, parsePostRevision } from "@/lib/post-continuity";
 
 const FullEditor = dynamic(
   () => import("@/components/editor/FullEditor").then((module) => ({ default: module.FullEditor })),
@@ -44,8 +46,9 @@ type PostEditFormProps = {
 };
 
 type PostEditSnapshot = { title: string; contentHtml: string };
-type PostEditDraft = PostEditSnapshot & DocumentEditDraftBaseFields;
-type CompactPostEditDraft = PostEditSnapshot & CompactDocumentEditDraftMetadata;
+type PostOperationDraftFields = { operationId?: string; baseRevision?: number };
+type PostEditDraft = PostEditSnapshot & DocumentEditDraftBaseFields & PostOperationDraftFields;
+type CompactPostEditDraft = PostEditSnapshot & CompactDocumentEditDraftMetadata & PostOperationDraftFields;
 
 export function PostEditForm({
   post,
@@ -55,7 +58,8 @@ export function PostEditForm({
   onBusyChange,
 }: PostEditFormProps) {
   const [title, setTitle] = useState(post.title);
-  const [operationId] = useState(() => createCreationOperationId());
+  const [operationId, setOperationId] = useState("");
+  const [baseRevision, setBaseRevision] = useState(post.version);
   const {
     contentHtml,
     contentVersion,
@@ -67,7 +71,13 @@ export function PostEditForm({
   } = useDeferredEditorContent(post.contentHtml);
   const [hasStaleDraftBase, setHasStaleDraftBase] = useState(false);
   const [state, formAction, isPending] = useActionState<UpdatePostState, FormData>(
-    updatePostContent.bind(null, post.id),
+    async (previous, data) => {
+      try {
+        return await updatePostContent(post.id, previous, data);
+      } catch {
+        return { error: "저장 결과를 확인하지 못했습니다. 작성 내용은 유지됩니다. 다시 시도해 주세요." };
+      }
+    },
     {},
   );
   useBusyNavigationGuard(isPending);
@@ -78,6 +88,8 @@ export function PostEditForm({
   const formRef = useRef<HTMLFormElement>(null);
   const contentInputRef = useRef<HTMLInputElement>(null);
   const handledSavedPostRef = useRef<UpdatePostState["post"]>(undefined);
+  const handledConflictPostRef = useRef<UpdatePostState["conflictPost"]>(undefined);
+  const [conflictPost, setConflictPost] = useState<UpdatePostState["conflictPost"]>(undefined);
   const submittedDraftRef = useRef<CompactPostEditDraft | null>(null);
   const submittedDraftAliasesRef = useRef<readonly PostEditDraft[] | null>(null);
   const restoredDraftRef = useRef<PostEditDraft | null>(null);
@@ -95,7 +107,7 @@ export function PostEditForm({
   const draftBaseFingerprintRef = useRef(baseFingerprint);
   const adoptBaseSnapshot = useCallback(
     (snapshot: PostEditSnapshot) => {
-      baseRef.current = snapshot;
+      baseRef.current = { title: snapshot.title, contentHtml: snapshot.contentHtml };
       const fingerprint = createDocumentSnapshotFingerprint({
         kind: "community-post",
         id: post.id,
@@ -109,8 +121,8 @@ export function PostEditForm({
     [post.id],
   );
   const serverSnapshot = useMemo(
-    () => ({ title: post.title, contentHtml: post.contentHtml }),
-    [post.contentHtml, post.title],
+    () => ({ title: post.title, contentHtml: post.contentHtml, version: post.version }),
+    [post.contentHtml, post.title, post.version],
   );
   const previousServerSnapshotRef = useRef(serverSnapshot);
   const createSubmittedDraftAliases = useCallback(
@@ -149,6 +161,8 @@ export function PostEditForm({
     createDocumentDraftKey("community-post", actorId, post.id),
     (draft) => {
       restoredDraftRef.current = draft;
+      setOperationId(parseCreationOperationId(draft.operationId) ?? createCreationOperationId());
+      setBaseRevision(parsePostRevision(draft.baseRevision) ?? post.version);
       const restoredSnapshot = {
         title: draft.title ?? post.title,
         contentHtml: draft.contentHtml ?? post.contentHtml,
@@ -178,6 +192,9 @@ export function PostEditForm({
     {
       onReset: () => {
         restoredDraftRef.current = null;
+        setConflictPost(undefined);
+        setOperationId(createCreationOperationId());
+        setBaseRevision(post.version);
         adoptBaseSnapshot(serverSnapshot);
         draftBaseFingerprintRef.current = baseFingerprintRef.current;
         setHasStaleDraftBase(false);
@@ -186,7 +203,7 @@ export function PostEditForm({
       },
     },
   );
-  const isSubmitBlocked = !loaded || !canSubmit || isPending || hasStaleDraftBase;
+  const isSubmitBlocked = !loaded || !canSubmit || isPending || hasStaleDraftBase || !operationId;
   const isSubmitDisabled =
     isSubmitBlocked ||
     !title.trim() ||
@@ -209,6 +226,8 @@ export function PostEditForm({
     }
     save({
       title,
+      operationId,
+      baseRevision,
       ...createDocumentEditDraftMetadata(
         hasStaleDraftBase
           ? draftBaseFingerprintRef.current
@@ -218,17 +237,20 @@ export function PostEditForm({
         return readLatestContentHtml();
       },
     });
-  }, [clear, contentHtml, hasStaleDraftBase, loaded, readLatestContentHtml, save, title]);
+  }, [baseRevision, clear, contentHtml, hasStaleDraftBase, loaded, operationId, readLatestContentHtml, save, title]);
 
   useEffect(() => {
     if (!loaded) return;
     const previousServer = previousServerSnapshotRef.current;
     const serverChanged =
       previousServer.title !== serverSnapshot.title ||
-      previousServer.contentHtml !== serverSnapshot.contentHtml;
+      previousServer.contentHtml !== serverSnapshot.contentHtml ||
+      previousServer.version !== serverSnapshot.version;
     if (!serverChanged) return;
 
     previousServerSnapshotRef.current = serverSnapshot;
+    if (serverSnapshot.version < Math.max(baseRevision, conflictPost?.version ?? 0)) return;
+    setConflictPost(undefined);
     // React 표시값은 editor보다 최대 200ms 늦을 수 있으므로 충돌 판정은 최신 reader를 사용한다.
     const latestContentHtml = readLatestContentHtml();
     const localMatchesPrevious =
@@ -242,6 +264,8 @@ export function PostEditForm({
       restoredDraftRef.current = null;
       clear();
       adoptBaseSnapshot(serverSnapshot);
+      setBaseRevision(serverSnapshot.version);
+      setOperationId(createCreationOperationId());
       draftBaseFingerprintRef.current = baseFingerprintRef.current;
       setTitle(serverSnapshot.title);
       setContentHtml(serverSnapshot.contentHtml);
@@ -255,7 +279,9 @@ export function PostEditForm({
     setHasStaleDraftBase(true);
   }, [
     adoptBaseSnapshot,
+    baseRevision,
     clear,
+    conflictPost,
     hasStaleDraftBase,
     loaded,
     readLatestContentHtml,
@@ -265,6 +291,14 @@ export function PostEditForm({
   ]);
 
   useEffect(() => {
+    if (!state.conflictPost || handledConflictPostRef.current === state.conflictPost) return;
+    handledConflictPostRef.current = state.conflictPost;
+    setConflictPost(state.conflictPost);
+    if (!hasStaleDraftBase) draftBaseFingerprintRef.current = baseFingerprintRef.current;
+    setHasStaleDraftBase(true);
+  }, [hasStaleDraftBase, state.conflictPost]);
+
+  useEffect(() => {
     if (!state.post?.id || handledSavedPostRef.current === state.post) return;
     handledSavedPostRef.current = state.post;
     clear({
@@ -272,6 +306,8 @@ export function PostEditForm({
       submittedData: submittedDraftRef.current ?? {
         title,
         contentHtml,
+        operationId,
+        baseRevision,
         ...createDocumentEditDraftMetadata(baseFingerprintRef.current),
       },
       submittedAliases:
@@ -282,7 +318,7 @@ export function PostEditForm({
     submittedDraftAliasesRef.current = null;
     restoredDraftRef.current = null;
     onSaved();
-  }, [clear, contentHtml, createSubmittedDraftAliases, onSaved, state.post, title]);
+  }, [baseRevision, clear, contentHtml, createSubmittedDraftAliases, onSaved, operationId, state.post, title]);
 
   return (
     <form
@@ -292,7 +328,7 @@ export function PostEditForm({
       className="space-y-5"
       onKeyDownCapture={handleSaveShortcut}
       onSubmit={(event) => {
-        if (!loaded || !canSubmit || isPending || hasStaleDraftBase) {
+        if (isSubmitBlocked) {
           event.preventDefault();
           return;
         }
@@ -305,6 +341,8 @@ export function PostEditForm({
         const submittedDraft: CompactPostEditDraft = {
           title,
           contentHtml: latestContentHtml,
+          operationId,
+          baseRevision,
           ...createDocumentEditDraftMetadata(baseFingerprintRef.current),
         };
         save(submittedDraft);
@@ -318,7 +356,7 @@ export function PostEditForm({
     >
       <input ref={contentInputRef} type="hidden" name="contentHtml" value={contentHtml} />
       <input type="hidden" name={CREATION_OPERATION_FIELD} value={operationId} />
-      <input type="hidden" name={POST_BASE_REVISION_FIELD} value={post.version} />
+      <input type="hidden" name={POST_BASE_REVISION_FIELD} value={baseRevision} />
       <input
         type="hidden"
         name={DOCUMENT_SNAPSHOT_FINGERPRINT_FIELD}
@@ -331,23 +369,44 @@ export function PostEditForm({
         </p>
       ) : null}
       {hasStaleDraftBase ? (
-        <DraftConflictRecovery
-          documentLabel="게시물"
-          onUseServer={() => {
-            restoredDraftRef.current = null;
-            clear();
-            adoptBaseSnapshot(serverSnapshot);
-            draftBaseFingerprintRef.current = baseFingerprintRef.current;
-            setTitle(serverSnapshot.title);
-            setContentHtml(serverSnapshot.contentHtml);
-            setHasStaleDraftBase(false);
-          }}
-          onKeepDraft={() => {
-            adoptBaseSnapshot(serverSnapshot);
-            draftBaseFingerprintRef.current = baseFingerprintRef.current;
-            setHasStaleDraftBase(false);
-          }}
-        />
+        <div className="space-y-3">
+          <DraftConflictRecovery
+            documentLabel="게시물"
+            onUseServer={() => {
+              const latest = conflictPost ?? serverSnapshot;
+              restoredDraftRef.current = null;
+              clear();
+              adoptBaseSnapshot(latest);
+              setBaseRevision(latest.version);
+              setOperationId(createCreationOperationId());
+              draftBaseFingerprintRef.current = baseFingerprintRef.current;
+              setTitle(latest.title);
+              setContentHtml(latest.contentHtml);
+              setConflictPost(undefined);
+              setHasStaleDraftBase(false);
+              formRef.current?.querySelector<HTMLInputElement>('input[name="title"]')?.focus();
+            }}
+            onKeepDraft={() => {
+              const latest = conflictPost ?? serverSnapshot;
+              adoptBaseSnapshot(latest);
+              setBaseRevision(latest.version);
+              setOperationId(createCreationOperationId());
+              draftBaseFingerprintRef.current = baseFingerprintRef.current;
+              setConflictPost(undefined);
+              setHasStaleDraftBase(false);
+              formRef.current?.querySelector<HTMLInputElement>('input[name="title"]')?.focus();
+            }}
+          />
+          <details className="rounded-lg border border-border bg-card p-3">
+            <summary className="cursor-pointer text-sm font-medium">
+              서버 최신본 {conflictPost?.version ?? serverSnapshot.version}번 확인·복사
+            </summary>
+            <div className="mt-3 space-y-2 border-t border-border pt-3">
+              <p className="font-medium">{conflictPost?.title ?? serverSnapshot.title}</p>
+              <RichTextContent html={conflictPost?.contentHtml ?? serverSnapshot.contentHtml} />
+            </div>
+          </details>
+        </div>
       ) : null}
 
       <label className="block space-y-1.5" htmlFor="edit-post-title">
@@ -356,7 +415,10 @@ export function PostEditForm({
           id="edit-post-title"
           name="title"
           value={title}
-          onChange={(event) => setTitle(event.target.value)}
+          onChange={(event) => {
+            setOperationId(createCreationOperationId());
+            setTitle(event.target.value);
+          }}
           required
           disabled={!loaded || isPending}
         />
@@ -368,9 +430,13 @@ export function PostEditForm({
           contentVersion={contentVersion}
           onChange={handleEditorChange}
           onDirty={(reader) => {
+            const nextOperationId = createCreationOperationId();
+            setOperationId(nextOperationId);
             handleEditorDirty(reader);
             save({
               title,
+              operationId: nextOperationId,
+              baseRevision,
               ...createDocumentEditDraftMetadata(
                 hasStaleDraftBase
                   ? draftBaseFingerprintRef.current

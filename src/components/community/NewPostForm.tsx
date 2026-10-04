@@ -85,7 +85,13 @@ export function NewPostForm({
   const [operationId, setOperationId] = useState("");
   const [uploadError, setUploadError] = useState("");
   const [isUploading, setIsUploading] = useState(false);
-  const [state, formAction, isPending] = useActionState<CreatePostState, FormData>(createPost, {});
+  const [state, formAction, isPending] = useActionState<CreatePostState, FormData>(async (previous, data) => {
+    try {
+      return await createPost(previous, data);
+    } catch {
+      return { error: "저장 결과를 확인하지 못했습니다. 작성 내용은 유지됩니다. 다시 시도해 주세요." };
+    }
+  }, {});
   const formRef = useRef<HTMLFormElement>(null);
   const contentInputRef = useRef<HTMLInputElement>(null);
   const submittedDraftRef = useRef<PostDraft | null>(null);

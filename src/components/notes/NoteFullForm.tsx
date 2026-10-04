@@ -72,7 +72,13 @@ export function NoteFullForm({ action, actorId, studentId, returnTo, defaultDate
   const [operationId, setOperationId] = useState("");
   const defaultNoteDateRef = useRef(initialDefaultDate);
   const [state, formAction, isPending] = useActionState<CreateNoteState, FormData>(
-    action,
+    async (previous, data) => {
+      try {
+        return await action(previous, data);
+      } catch {
+        return { error: "저장 결과를 확인하지 못했습니다. 작성 내용은 유지됩니다. 다시 시도해 주세요." };
+      }
+    },
     {}
   );
   const formRef = useRef<HTMLFormElement>(null);

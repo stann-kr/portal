@@ -184,6 +184,7 @@ export function PostDetailClient({
       {/* 본문 */}
       {isEditing && currentUserId ? (
         <PostEditForm
+          key={`${currentUserId}:${post.id}`}
           post={{
             id: post.id,
             title: post.title,

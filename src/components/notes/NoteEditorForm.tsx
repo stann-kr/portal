@@ -101,15 +101,20 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
   const [hasStaleDraftBase, setHasStaleDraftBase] = useState(false);
   const [operationId, setOperationId] = useState("");
   const [baseRevision, setBaseRevision] = useState(serverVersion);
-  const [state, formAction, isPending] = useActionState<UpdateNoteState, FormData>(action, {});
+  const [state, formAction, isPending] = useActionState<UpdateNoteState, FormData>(async (previous, data) => {
+    try {
+      return await action(previous, data);
+    } catch {
+      return { error: "저장 결과를 확인하지 못했습니다. 작성 내용은 유지됩니다. 다시 시도해 주세요." };
+    }
+  }, {});
   useBusyNavigationGuard(isPending);
   const formRef = useRef<HTMLFormElement>(null);
   const contentHtmlInputRef = useRef<HTMLInputElement>(null);
   const handledSavedNoteRef = useRef<UpdateNoteState["note"]>(undefined);
   const handledConflictNoteRef = useRef<UpdateNoteState["conflictNote"]>(undefined);
-  const conflictServerRef = useRef<ConflictServerState | null>(null);
+  const [conflictServer, setConflictServer] = useState<ConflictServerState | null>(null);
   const submittedDraftRef = useRef<CompactNoteEditDraft | null>(null);
-  const submittedOperationIdRef = useRef<string | null>(null);
   const submittedDraftAliasesRef = useRef<readonly NoteEditDraft[] | null>(null);
   const restoredDraftRef = useRef<NoteEditDraft | null>(null);
   const savedSnapshotRef = useRef({
@@ -130,7 +135,7 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
   const draftBaseFingerprintRef = useRef(baseFingerprint);
   const adoptSavedSnapshot = useCallback(
     (snapshot: NoteEditSnapshot) => {
-      savedSnapshotRef.current = snapshot;
+      savedSnapshotRef.current = { title: snapshot.title, contentHtml: snapshot.contentHtml, noteDate: snapshot.noteDate };
       const fingerprint = createDocumentSnapshotFingerprint({
         kind: "private-note",
         id: note.id,
@@ -148,8 +153,9 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
       title: note.title,
       noteDate: toDateInputValue(note.noteDate),
       contentHtml: note.contentHtml,
+      version: serverVersion,
     }),
-    [note.contentHtml, note.noteDate, note.title],
+    [note.contentHtml, note.noteDate, note.title, serverVersion],
   );
   const previousServerSnapshotRef = useRef(serverSnapshot);
   const createSubmittedDraftAliases = useCallback(
@@ -299,10 +305,13 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
     const serverChanged =
       previousServer.title !== serverSnapshot.title ||
       previousServer.noteDate !== serverSnapshot.noteDate ||
-      previousServer.contentHtml !== serverSnapshot.contentHtml;
+      previousServer.contentHtml !== serverSnapshot.contentHtml ||
+      previousServer.version !== serverSnapshot.version;
     if (!serverChanged) return;
 
     previousServerSnapshotRef.current = serverSnapshot;
+    if (serverVersion < Math.max(baseRevision, conflictServer?.version ?? 0)) return;
+    setConflictServer(null);
     const serverMatchesLatestSaveResponse = Boolean(
       state.success &&
       state.note &&
@@ -341,7 +350,9 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
     setHasStaleDraftBase(true);
   }, [
     adoptSavedSnapshot,
+    baseRevision,
     clear,
+    conflictServer,
     hasStaleDraftBase,
     hideSaveConfirmation,
     loaded,
@@ -363,14 +374,14 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
       return;
     }
     handledConflictNoteRef.current = state.conflictNote;
-    conflictServerRef.current = {
+    setConflictServer({
       snapshot: {
         title: state.conflictNote.title,
         noteDate: toDateInputValue(state.conflictNote.noteDate),
         contentHtml: state.conflictNote.contentHtml,
       },
       version: state.conflictNote.version,
-    };
+    });
     if (!hasStaleDraftBase) {
       draftBaseFingerprintRef.current = baseFingerprintRef.current;
     }
@@ -400,10 +411,9 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
         createSubmittedDraftAliases({ title, noteDate, contentHtml }),
     });
     submittedDraftRef.current = null;
-    submittedOperationIdRef.current = null;
     submittedDraftAliasesRef.current = null;
     restoredDraftRef.current = null;
-    conflictServerRef.current = null;
+    setConflictServer(null);
     const savedSnapshot = {
       title: state.note.title,
       noteDate: toDateInputValue(state.note.noteDate),
@@ -473,7 +483,6 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
         save(submittedDraft);
         flush();
         submittedDraftRef.current = submittedDraft;
-        submittedOperationIdRef.current = operationId;
         submittedDraftAliasesRef.current = createSubmittedDraftAliases({
           title,
           noteDate,
@@ -510,7 +519,7 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
           <DraftConflictRecovery
             documentLabel="노트"
             onUseServer={() => {
-              const latestServer = conflictServerRef.current ?? {
+              const latestServer = conflictServer ?? {
                 snapshot: serverSnapshot,
                 version: serverVersion,
               };
@@ -524,11 +533,12 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
               setTitle(latestServer.snapshot.title);
               setNoteDate(latestServer.snapshot.noteDate);
               setContentHtml(latestServer.snapshot.contentHtml);
-              conflictServerRef.current = null;
+              setConflictServer(null);
               setHasStaleDraftBase(false);
+              formRef.current?.querySelector<HTMLInputElement>('input[name="title"]')?.focus();
             }}
             onKeepDraft={() => {
-              const latestServer = conflictServerRef.current ?? {
+              const latestServer = conflictServer ?? {
                 snapshot: serverSnapshot,
                 version: serverVersion,
               };
@@ -537,21 +547,22 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
               setBaseRevision(latestServer.version);
               setOperationId(createCreationOperationId());
               draftBaseFingerprintRef.current = baseFingerprintRef.current;
-              conflictServerRef.current = null;
+              setConflictServer(null);
               setHasStaleDraftBase(false);
+              formRef.current?.querySelector<HTMLInputElement>('input[name="title"]')?.focus();
             }}
           />
           <details className="rounded-lg border border-border bg-card p-3">
             <summary className="cursor-pointer text-sm font-medium">
-              서버 최신본 {conflictServerRef.current?.version ?? serverVersion}번 확인·복사
+              서버 최신본 {conflictServer?.version ?? serverVersion}번 확인·복사
             </summary>
             <div className="mt-3 space-y-2 border-t border-border pt-3">
               <p className="font-medium">
-                {conflictServerRef.current?.snapshot.title ?? serverSnapshot.title}
+                {conflictServer?.snapshot.title ?? serverSnapshot.title}
               </p>
               <RichTextContent
                 html={
-                  conflictServerRef.current?.snapshot.contentHtml ??
+                  conflictServer?.snapshot.contentHtml ??
                   serverSnapshot.contentHtml
                 }
               />
@@ -567,10 +578,7 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
             name="title"
             value={title}
             onChange={(event) => {
-              if (submittedOperationIdRef.current === operationId) {
-                submittedOperationIdRef.current = null;
-                setOperationId(createCreationOperationId());
-              }
+              setOperationId(createCreationOperationId());
               hideSaveConfirmation();
               setTitle(event.target.value);
             }}
@@ -586,10 +594,7 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
             type="date"
             value={noteDate}
             onChange={(event) => {
-              if (submittedOperationIdRef.current === operationId) {
-                submittedOperationIdRef.current = null;
-                setOperationId(createCreationOperationId());
-              }
+              setOperationId(createCreationOperationId());
               hideSaveConfirmation();
               setNoteDate(event.target.value);
             }}
@@ -604,16 +609,14 @@ export function NoteEditorForm({ note, actorId, action }: NoteEditorFormProps) {
           contentVersion={contentVersion}
           onChange={handleEditorChange}
           onDirty={(reader) => {
-            if (submittedOperationIdRef.current === operationId) {
-              submittedOperationIdRef.current = null;
-              setOperationId(createCreationOperationId());
-            }
+            const nextOperationId = createCreationOperationId();
+            setOperationId(nextOperationId);
             hideSaveConfirmation();
             handleEditorDirty(reader);
             save({
               title,
               noteDate,
-              operationId,
+              operationId: nextOperationId,
               baseRevision,
               ...createDocumentEditDraftMetadata(
                 hasStaleDraftBase

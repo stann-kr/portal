@@ -13,6 +13,7 @@ import {
   readFormDraftClearMarkers,
   serializeFormDraft,
 } from "@/lib/form-draft";
+import { createDocumentSnapshotFingerprint } from "@/lib/document-snapshot-fingerprint";
 
 type MockEditorProps = {
   ariaLabel?: string;
@@ -88,6 +89,8 @@ let changeNoteLifecycle: typeof import("@/lib/actions/privateNotes").trashPrivat
 let restorePost: typeof import("@/lib/actions/posts").restorePostRevision = async () => ({ success: true });
 let changePostLifecycle: typeof import("@/lib/actions/posts").restorePost = async () => ({ success: true, purged: false });
 let saveQnaReply: typeof import("@/lib/actions/qna").createQnaReply = async () => ({});
+let saveNewPost: typeof import("@/lib/actions/posts").createPost = async () => ({});
+let savePostEdit: typeof import("@/lib/actions/posts").updatePostContent = async () => ({});
 let changeQnaStatus: typeof import("@/lib/actions/qna").updateThreadStatus = async () => ({ success: true, currentRevision: 2 });
 let changeQnaLifecycle: typeof import("@/lib/actions/qna").trashQnaThread = async () => ({ success: true, currentRevision: 2 });
 let notePageRole: "student" | "admin" = "student";
@@ -129,10 +132,11 @@ mock.module("@/lib/actions/posts", {
     restorePostRevision: (...args: Parameters<typeof restorePost>) => restorePost(...args),
     restorePost: (...args: Parameters<typeof changePostLifecycle>) => changePostLifecycle(...args),
     purgePost: (...args: Parameters<typeof changePostLifecycle>) => changePostLifecycle(...args),
-    createPost: async () => {
+    createPost: async (...args: Parameters<typeof saveNewPost>) => {
       actionCalls.post += 1;
-      return {};
+      return saveNewPost(...args);
     },
+    updatePostContent: (...args: Parameters<typeof savePostEdit>) => savePostEdit(...args),
   },
 });
 mock.module("@/lib/actions/categories", {
@@ -247,6 +251,7 @@ mock.module("@/components/qna/ReplyCard", {
 });
 
 let NewPostForm: typeof import("@/components/community/NewPostForm").NewPostForm;
+let PostEditForm: typeof import("@/components/community/PostEditForm").PostEditForm;
 let NewQnaForm: typeof import("@/components/qna/NewQnaForm").NewQnaForm;
 let NoteEditorForm: typeof import("@/components/notes/NoteEditorForm").NoteEditorForm;
 let QnaSlideForm: typeof import("@/components/qna/QnaSlideForm").QnaSlideForm;
@@ -264,6 +269,7 @@ let QnaTrashPage: typeof import("@/app/dashboard/qna/trash/page").default;
 let ThreadList: typeof import("@/components/qna/ThreadList").ThreadList;
 
 before(async () => {
+  ({ PostEditForm } = await import("@/components/community/PostEditForm"));
   ({ DeleteNoteButton } = await import("@/components/notes/DeleteNoteButton"));
   ({ NoteTrashActions } = await import("@/components/notes/NoteTrashActions"));
   ({ RestorePostRevisionButton } = await import("@/components/community/RestorePostRevisionButton"));
@@ -911,6 +917,172 @@ function assertNoPublicActionCalled(): void {
     qnaInline: 0,
     qnaReply: 0,
     qnaThread: 0,
+  });
+}
+
+class SaveErrorBoundary extends React.Component<{ children: React.ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() { return { failed: true }; }
+  render() { return this.state.failed ? <p data-testid="save-error-boundary">편집 화면 오류</p> : this.props.children; }
+}
+
+for (const kind of ["new-note", "edit-note", "new-post", "edit-post"] as const) {
+  test(`${kind} 저장 예외 뒤 편집 화면·원문·요청 ID를 유지하고 같은 내용으로 재시도한다`, { concurrency: false }, async (context) => {
+    const isNote = kind.endsWith("note");
+    const isEdit = kind.startsWith("edit");
+    const actorId = `retry-${kind}`;
+    const resourceId = `resource-${kind}`;
+    const draftKey = createDocumentDraftKey(isNote ? "note" : "community-post", actorId, isEdit ? resourceId : isNote ? `new:${actorId}` : undefined);
+    const snapshot = { title: "보존할 제목", contentHtml: "<p>보존할 본문</p>" };
+    const base = { title: "서버 제목", contentHtml: "<p>서버 본문</p>" };
+    const submitted: Record<string, FormDataEntryValue>[] = [];
+    const action = async (_previous: object, data: FormData) => {
+      submitted.push(Object.fromEntries(data));
+      throw new Error("save response lost");
+    };
+    saveNewPost = action;
+    savePostEdit = (_id, previous, data) => action(previous, data);
+    context.after(() => { saveNewPost = async () => ({}); savePostEdit = async () => ({}); });
+    const element = kind === "new-note"
+      ? <NoteFullForm action={action} actorId={actorId} studentId={actorId} returnTo="/dashboard/student/notes" />
+      : kind === "edit-note"
+        ? <NoteEditorForm action={action} actorId={actorId} note={{ ...base, id: resourceId, noteDate: null, version: 1 }} />
+        : kind === "new-post"
+          ? <NewPostForm actorId={actorId} isAdmin={false} defaultBoardType="GENERAL" defaultCategory="general" returnTo="/community" />
+          : <PostEditForm actorId={actorId} post={{ ...base, id: resourceId, version: 1 }} onCancel={() => undefined} onSaved={() => assert.fail("응답을 확인하지 않고 저장 성공을 알리면 안 됩니다.")} />;
+    const harness = await renderForm(context, <SaveErrorBoundary>{element}</SaveErrorBoundary>, (storage) => storage.setItem(draftKey, serializeFormDraft({
+      ...snapshot,
+      operationId: crypto.randomUUID(),
+      ...(isNote ? { noteDate: "" } : { boardType: "GENERAL", category: "general", isPinned: false, mediaUrl: "" }),
+      ...(isEdit ? { baseRevision: 1, baseFingerprint: createDocumentSnapshotFingerprint({ kind: isNote ? "private-note" : "community-post", id: resourceId, ...base, noteDate: isNote ? "" : null }) } : {}),
+    })));
+    const submit = () => harness.container.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+    await act(async () => submit().click());
+    assert.equal(harness.container.querySelector('[data-testid="save-error-boundary"]'), null, "저장 실패는 편집 subtree를 제거하면 안 됩니다.");
+    assert.match(harness.container.querySelector('[role="alert"]')?.textContent ?? "", /저장 결과를 확인하지 못했습니다/u);
+    assert.equal(harness.container.querySelector<HTMLInputElement>('input[name="title"]')?.value, snapshot.title);
+    assert.equal(harness.container.querySelector<HTMLTextAreaElement>("textarea")?.value, snapshot.contentHtml);
+    assert.equal(submit().disabled, false);
+    assert.equal(harness.container.querySelector("form")?.getAttribute("aria-busy"), "false");
+    assert.ok(harness.browserWindow.localStorage.getItem(draftKey), "실패한 초안은 저장소에 남아야 합니다.");
+    assert.equal(readFormDraftClearMarkers(harness.browserWindow.localStorage, draftKey).length, 0);
+    await act(async () => submit().click());
+    assert.equal(submitted.length, 2);
+    assert.deepEqual(submitted[1], submitted[0]);
+  });
+}
+
+for (const kind of ["note", "post"] as const) {
+  test(`${kind} 편집 재시도는 다시 열어도 요청을 유지하고 본문 변경은 새 요청으로 분리한다`, { concurrency: false }, async (context) => {
+    const post = { id: `${kind}-edit-retry`, title: "기준 제목", contentHtml: "<p>기준 본문</p>", version: 3 };
+    const actorId = `${kind}-edit-retry-actor`;
+    const draftKey = createDocumentDraftKey(kind === "note" ? "note" : "community-post", actorId, post.id);
+    const requests: Record<string, FormDataEntryValue>[] = [];
+    const action = async (_previous: object, data: FormData) => { requests.push(Object.fromEntries(data)); throw new Error("response lost"); };
+    savePostEdit = (_id, previous, data) => action(previous, data);
+    context.after(() => { savePostEdit = async () => ({}); });
+    const screen = kind === "note"
+      ? <NoteEditorForm actorId={actorId} note={{ ...post, noteDate: null }} action={action} />
+      : <PostEditForm actorId={actorId} post={post} onCancel={() => undefined} onSaved={() => assert.fail("성공 미확인")} />;
+    const harness = await renderForm(context, screen, (storage) => storage.setItem(draftKey, serializeFormDraft({
+      title: "편집 중 제목", contentHtml: "<p>편집 중 본문</p>",
+      ...(kind === "note" ? { noteDate: "" } : {}),
+      baseFingerprint: createDocumentSnapshotFingerprint({ kind: kind === "note" ? "private-note" : "community-post", ...post, noteDate: kind === "note" ? "" : null }),
+    })));
+    const submit = () => harness.container.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+    await act(async () => submit().click());
+    await harness.rerender(<div />);
+    await harness.rerender(screen);
+    await act(async () => submit().click());
+    assert.deepEqual(requests[1], requests[0], "복원한 제출의 operation/base/content는 이전과 같아야 합니다.");
+
+    await harness.rerender(<div />);
+    await harness.rerender(screen);
+    const editor = harness.container.querySelector<HTMLTextAreaElement>("textarea")!;
+    await act(async () => {
+      editor.value = "<p>실패 뒤 의도적으로 고친 본문</p>";
+      editor.dispatchEvent(new harness.browserWindow.Event("input", { bubbles: true }) as unknown as Event);
+    });
+    await act(async () => submit().click());
+    assert.notEqual(requests[2]!.operationId, requests[1]!.operationId);
+    assert.equal(requests[2]!.baseRevision, "3");
+    assert.equal(requests[2]!.contentHtml, "<p>실패 뒤 의도적으로 고친 본문</p>");
+    await act(async () => submit().click());
+    assert.deepEqual(requests[3], requests[2]);
+  });
+}
+
+for (const choice of ["현재 초안으로 계속", "서버 최신본 사용"] as const) {
+  test(`게시물 충돌은 최신본을 보여 주고 '${choice}' 선택 뒤 새 기준으로 저장한다`, { concurrency: false }, async (context) => {
+    const post = { id: "post-edit-conflict", title: "기준 제목", contentHtml: "<p>기준 본문</p>", version: 1 };
+    const latest = { ...post, title: "다른 화면에서 저장한 제목", contentHtml: "<p>다른 화면에서 저장한 본문</p>", version: 2 };
+    const requests: Record<string, FormDataEntryValue>[] = [];
+    let saved = 0;
+    savePostEdit = async (_id, _previous, data) => {
+      requests.push(Object.fromEntries(data));
+      return requests.length === 1
+        ? { error: "다른 화면에서 먼저 변경되었습니다.", conflictKind: "VERSION_CONFLICT", currentRevision: 2, conflictPost: latest }
+        : { success: true, post: { ...latest, title: String(data.get("title")), contentHtml: String(data.get("contentHtml")), version: 3 } };
+    };
+    context.after(() => { savePostEdit = async () => ({}); });
+    const actorId = "post-edit-conflict-actor";
+    const draftKey = createDocumentDraftKey("community-post", actorId, post.id);
+    const harness = await renderForm(context, <PostEditForm actorId={actorId} post={post} onCancel={() => undefined} onSaved={() => { saved += 1; }} />, (storage) => storage.setItem(draftKey, serializeFormDraft({
+      title: "내 제목", contentHtml: "<p>내 본문</p>",
+      baseFingerprint: createDocumentSnapshotFingerprint({ kind: "community-post", ...post, noteDate: null }),
+    })));
+    const submit = () => harness.container.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+    await act(async () => submit().click());
+    assert.equal(submit().disabled, true);
+    assert.match(harness.container.textContent ?? "", /서버 최신본 2번 확인·복사/u);
+    assert.match(harness.container.textContent ?? "", /다른 화면에서 저장한 본문/u);
+    assert.equal(harness.container.querySelector<HTMLTextAreaElement>("textarea")?.value, "<p>내 본문</p>");
+    await act(async () => harness.container.querySelector<HTMLFormElement>("form")!.requestSubmit());
+    assert.equal(requests.length, 1, "선택 전 강제 제출도 막아야 합니다.");
+    const button = [...harness.container.querySelectorAll<HTMLButtonElement>("button")].find((candidate) => candidate.textContent?.includes(choice));
+    assert.ok(button);
+    await act(async () => button.click());
+    assert.equal(harness.browserWindow.document.activeElement?.getAttribute("name"), "title", "사라지는 선택 버튼에서 편집 입력으로 초점을 넘겨야 합니다.");
+    assert.equal(submit().disabled, false);
+    assert.equal(harness.container.querySelector<HTMLInputElement>('input[name="baseRevision"]')?.value, "2");
+    await act(async () => submit().click());
+    assert.equal(saved, 1);
+    assert.notEqual(requests[1]!.operationId, requests[0]!.operationId);
+    assert.equal(requests[1]!.baseRevision, "2");
+    assert.equal(requests[1]!.baseFingerprint, createDocumentSnapshotFingerprint({ kind: "community-post", ...latest, noteDate: null }));
+    assert.equal(requests[1]!.contentHtml, choice === "현재 초안으로 계속" ? "<p>내 본문</p>" : latest.contentHtml);
+    assert.equal(harness.browserWindow.localStorage.getItem(draftKey), null);
+  });
+}
+
+for (const kind of ["note", "post"] as const) {
+  test(`${kind} 저장 중 먼저 도착한 화면보다 늦은 충돌 응답이 최신이면 그 원문과 version을 함께 제시한다`, { concurrency: false }, async (context) => {
+    const post = { id: "post-pending-conflict", title: "기준 제목", contentHtml: "<p>기준 본문</p>", version: 1 };
+    const actorId = "post-pending-conflict-actor";
+    type SaveResult = import("@/lib/actions/posts").UpdatePostState & import("@/lib/actions/privateNotes").UpdateNoteState;
+    let respond: (state: SaveResult) => void = () => assert.fail("저장 요청 전 응답");
+    const action = () => new Promise<SaveResult>((resolve) => { respond = resolve; });
+    savePostEdit = action;
+    context.after(() => { savePostEdit = async () => ({}); });
+    const screen = (snapshot: typeof post) => kind === "post"
+      ? <PostEditForm actorId={actorId} post={snapshot} onCancel={() => undefined} onSaved={() => undefined} />
+      : <NoteEditorForm actorId={actorId} note={{ ...snapshot, noteDate: null }} action={action} />;
+    const harness = await renderForm(context, screen(post), (storage) => storage.setItem(createDocumentDraftKey(kind === "note" ? "note" : "community-post", actorId, post.id), serializeFormDraft({
+      title: "내 제목", contentHtml: "<p>내 본문</p>",
+      ...(kind === "note" ? { noteDate: "" } : {}),
+      baseFingerprint: createDocumentSnapshotFingerprint({ kind: kind === "note" ? "private-note" : "community-post", ...post, noteDate: kind === "note" ? "" : null }),
+    })));
+    await act(async () => harness.container.querySelector<HTMLButtonElement>('button[type="submit"]')!.click());
+    await harness.rerender(screen({ ...post, title: "두 번째 제목", contentHtml: "<p>두 번째 본문</p>", version: 2 }));
+    const latest = { ...post, title: "세 번째 제목", contentHtml: "<p>세 번째 본문</p>", version: 3 };
+    await act(async () => respond({ error: "먼저 변경되었습니다.", conflictKind: "VERSION_CONFLICT", currentRevision: 3, ...(kind === "post" ? { conflictPost: latest } : { conflictNote: { ...latest, noteDate: null } }) }));
+    assert.match(harness.container.querySelector("summary")?.textContent ?? "", /서버 최신본 3번/u);
+    assert.match(harness.container.querySelector("details")?.textContent ?? "", /세 번째 본문/u);
+    assert.equal(harness.container.querySelector<HTMLTextAreaElement>("textarea")?.value, "<p>내 본문</p>");
+    const keep = [...harness.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("현재 초안으로 계속"))!;
+    await act(async () => keep.click());
+    assert.equal(harness.browserWindow.document.activeElement?.getAttribute("name"), "title");
+    assert.equal(harness.container.querySelector<HTMLInputElement>('input[name="baseRevision"]')?.value, "3");
   });
 }
 

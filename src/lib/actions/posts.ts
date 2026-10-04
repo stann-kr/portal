@@ -358,6 +358,7 @@ export type UpdatePostState = {
   currentRevision?: number;
   replayed?: boolean;
   post?: { id: string; title: string; contentHtml: string; version: number };
+  conflictPost?: { id: string; title: string; contentHtml: string; version: number };
 };
 
 export async function updatePostContent(
@@ -406,6 +407,12 @@ export async function updatePostContent(
       error: "다른 기준본에서 시작한 초안입니다. 서버 최신본과 현재 초안 중 하나를 선택해 주세요.",
       conflictKind: "VERSION_CONFLICT",
       currentRevision: existing.version,
+      conflictPost: {
+        id: existing.id,
+        title: existing.title,
+        contentHtml: existing.contentHtml,
+        version: existing.version,
+      },
     };
   }
 
@@ -431,10 +438,23 @@ export async function updatePostContent(
     now: new Date(),
   });
   if (!result.ok) {
+    let conflictPost: UpdatePostState["conflictPost"];
+    if (result.reason === "VERSION_CONFLICT") {
+      [conflictPost] = await createDb()
+        .select({ id: posts.id, title: posts.title, contentHtml: posts.contentHtml, version: posts.version })
+        .from(posts)
+        .where(and(
+          eq(posts.id, postId),
+          isNull(posts.deletedAt),
+          session.user.role === "admin" ? undefined : eq(posts.authorId, session.user.id),
+        ))
+        .limit(1);
+    }
     return {
       error: lifecycleError(result.reason),
       conflictKind: result.reason,
       currentRevision: result.currentRevision,
+      conflictPost,
     };
   }
   revalidatePostPaths(postId);
