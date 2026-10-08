@@ -26,6 +26,7 @@ import { createAccountCalendarTabStorageKey } from "@/lib/local-owner-keys";
 import { ExternalCalendarConnection } from "./ExternalCalendarConnection";
 import type { ExternalCalendarConnectionSummary } from "@/lib/external-calendar";
 import { buildNoteCreateHref } from "@/lib/note-create-route";
+import { buildAdminStudentDetailHref, buildStudentDiggingBoardHref } from "@/lib/student-space-routes";
 import type { WorkspaceLocation } from "@/lib/portal-location";
 import {
   getCalendarTabs,
@@ -159,6 +160,11 @@ export function CalendarSection({
       returnFallback: workspaceRole === "student" ? "/dashboard/student" : "/dashboard/admin",
     })
     : undefined;
+  const diggingBoardHref = workspaceRole === "student"
+    ? buildStudentDiggingBoardHref(workspaceReturnTo)
+    : hasNoteTarget
+      ? buildAdminStudentDetailHref(studentId, "digging")
+      : undefined;
   const canShowCreateMenu = Boolean(noteCreateHref) || canCreateQna || isStudentWorkspace;
 
   // URL이 없을 때만 기기의 직전 탭을 복원하고 history 이동을 구독한다.
@@ -240,6 +246,9 @@ export function CalendarSection({
           options: c.options,
         }))
       );
+    }).catch(() => {
+      // 컬럼을 못 불러와도 일정·노트 작성은 계속 쓸 수 있다. 디깅 추가는 링크만 받는다.
+      if (!cancelled) setDiggingColumns([]);
     });
     return () => {
       cancelled = true;
@@ -301,6 +310,14 @@ export function CalendarSection({
                 className="inline-flex h-9 shrink-0 items-center rounded-md border border-border px-2.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
               >
                 노트 목록
+              </Link>
+            ) : null}
+            {diggingBoardHref ? (
+              <Link
+                href={diggingBoardHref}
+                className="inline-flex h-9 shrink-0 items-center rounded-md border border-border px-2.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              >
+                디깅 보드
               </Link>
             ) : null}
             {canShowCreateMenu ? (

@@ -196,9 +196,9 @@ export function AddTrackInlineForm({
               {col.columnType === "rating" && (
                 <StarRating
                   aria-label={col.name}
-                  value={(val as number) ?? 0}
+                  value={Number(val) || 0}
                   disabled={isPending}
-                  onChange={(v) => setValue(col.id, v)}
+                  onChange={(v) => setValue(col.id, v || "")}
                 />
               )}
 

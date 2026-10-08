@@ -10,7 +10,7 @@
 "use client";
 
 import Link from "next/link";
-import { PencilLine } from "lucide-react";
+import { Disc3, PencilLine } from "lucide-react";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 import { UnifiedItemSpaceBadge, UnifiedItemTypeBadge } from "@/components/ui/unified-item-type";
 import { RichTextContent } from "@/components/editor/RichTextContent";
@@ -19,6 +19,7 @@ import {
   isEditableCalendarEventItem,
 } from "@/components/calendar/CalendarEventActions";
 import { formatKst } from "@/lib/kst-format";
+import { buildAdminStudentDetailHref, buildStudentDiggingBoardHref } from "@/lib/student-space-routes";
 
 // ── 타입 라벨 ────────────────────────────────────
 
@@ -176,19 +177,30 @@ export function UnifiedItemDetail({
       ) : null}
 
       {/* DIGGING */}
-      {item.type === "DIGGING" && metaLinkUrl !== null ? (
-        <div className="space-y-2 text-sm">
-          <div className="flex gap-2">
-            <span className="text-muted-foreground w-16">링크</span>
-            <a
-              href={metaLinkUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-primary hover:underline truncate"
-            >
-              {metaLinkUrl}
-            </a>
-          </div>
+      {item.type === "DIGGING" ? (
+        <div className="space-y-3 text-sm">
+          {metaLinkUrl ? (
+            <div className="flex gap-2">
+              <span className="text-muted-foreground w-16 shrink-0">링크</span>
+              <a
+                href={metaLinkUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="min-w-0 truncate text-primary hover:underline"
+              >
+                {metaLinkUrl}
+              </a>
+            </div>
+          ) : null}
+          <Link
+            href={canManageEvents
+              ? buildStudentDiggingBoardHref(returnTo)
+              : buildAdminStudentDetailHref(item.space.studentId, "digging")}
+            className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-accent"
+          >
+            <Disc3 className="h-3.5 w-3.5" aria-hidden="true" />
+            {canManageEvents ? "디깅 보드에서 편집" : "디깅 보드에서 보기"}
+          </Link>
         </div>
       ) : null}
 

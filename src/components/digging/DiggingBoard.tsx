@@ -8,7 +8,8 @@
  */
 "use client";
 
-import { Fragment, useState, useMemo, useCallback, useTransition } from "react";
+import { Fragment, useState, useMemo, useCallback, useRef, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import {
   useReactTable,
   getCoreRowModel,
@@ -28,6 +29,7 @@ import {
   deleteDiggingTrack,
 } from "@/lib/actions/digging";
 import type { DiggingColumnType } from "@/db/schema";
+import { parseStoredDiggingOptions } from "@/lib/digging-contract";
 import { formatKst } from "@/lib/kst-format";
 import { toKstDateInputValue } from "@/lib/date-input";
 
@@ -73,17 +75,24 @@ function EditableCell({
   readonly?: boolean;
 }) {
   const [value, setValue] = useState(initialValue);
+  const savedValueRef = useRef(initialValue);
   const [isPending, startTransition] = useTransition();
   const [saveStatus, setSaveStatus] = useState<{ kind: "success" | "error"; message: string } | null>(null);
 
   const save = useCallback(
     (newVal: unknown) => {
-      const previousValue = value;
+      // 포커스만 이동한 경우 같은 값을 다시 저장하지 않는다.
+      if (String(newVal ?? "") === String(savedValueRef.current ?? "")) {
+        setValue(newVal);
+        return;
+      }
+      const previousValue = savedValueRef.current;
       setValue(newVal);
       setSaveStatus(null);
       startTransition(async () => {
         try {
           await updateDiggingTrackValue(trackId, columnId, newVal);
+          savedValueRef.current = newVal;
           setSaveStatus({ kind: "success", message: `${columnName} 저장됨` });
         } catch {
           setValue(previousValue);
@@ -91,10 +100,10 @@ function EditableCell({
         }
       });
     },
-    [columnId, columnName, trackId, value],
+    [columnId, columnName, trackId],
   );
 
-  const parsedOptions: string[] = options ? JSON.parse(options) : [];
+  const parsedOptions = parseStoredDiggingOptions(options ?? null) ?? [];
   const withStatus = (control: React.ReactNode) => (
     <div aria-busy={isPending}>
       {control}
@@ -112,7 +121,7 @@ function EditableCell({
 
   if (readonly) {
     if (columnType === "rating")
-      return <StarRating aria-label={columnName} value={(value as number) ?? 0} readonly />;
+      return <StarRating aria-label={columnName} value={Number(value) || 0} readonly />;
     if (columnType === "camelot_key")
       return <CamelotPicker aria-label={columnName} value={(value as string) ?? ""} readonly />;
     if (columnType === "link" && value)
@@ -129,8 +138,9 @@ function EditableCell({
     return withStatus(
       <StarRating
         aria-label={columnName}
-        value={(value as number) ?? 0}
-        onChange={save}
+        value={Number(value) || 0}
+        disabled={isPending}
+        onChange={(rating) => save(rating || "")}
       />,
     );
   }
@@ -203,7 +213,7 @@ function EditableCell({
       type={columnType === "number" ? "number" : "text"}
       value={(value as string) ?? ""}
       onChange={(e) => setValue(e.target.value)}
-      onBlur={(e) => save(columnType === "number" ? Number(e.target.value) : e.target.value)}
+      onBlur={(e) => save(e.target.value)}
       disabled={isPending}
       className="w-full bg-transparent text-sm border-none outline-none focus:ring-1 focus:ring-ring rounded px-1"
     />,
@@ -254,7 +264,9 @@ export function DiggingBoard({
   initialTracks,
   readonly = false,
 }: DiggingBoardProps) {
-  const [columns] = useState<Column[]>(initialColumns);
+  // 컬럼은 서버가 소유하고 변경 뒤 router.refresh로 다시 받는다. 트랙은 편집 중 상태를 유지한다.
+  const columns = initialColumns;
+  const router = useRouter();
   const [tracks, setTracks] = useState<Track[]>(initialTracks);
   const [addOpen, setAddOpen] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
@@ -376,7 +388,7 @@ export function DiggingBoard({
   );
 
   // ColumnManager 성공 시 서버에서 최신 컬럼 목록 재조회
-  const handleColumnsRefresh = useCallback(() => window.location.reload(), []);
+  const handleColumnsRefresh = useCallback(() => router.refresh(), [router]);
 
   return (
     <div className="space-y-4">
@@ -619,11 +631,8 @@ export function DiggingBoard({
             open={addOpen}
             onOpenChange={setAddOpen}
             columns={columns}
-            onSuccess={() => {
-              setAddOpen(false);
-              // AddTrackDialog는 서버 재검증으로 처리
-              window.location.reload();
-            }}
+            onTrackCreated={handleTrackCreated}
+            onSuccess={() => setAddOpen(false)}
           />
           <ColumnManager
             open={manageOpen}

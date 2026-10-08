@@ -106,8 +106,8 @@ export function InlineAddRow({ columns, onTrackCreated }: InlineAddRowProps) {
             {col.columnType === "rating" ? (
               <StarRating
                 aria-label={col.name}
-                value={(val as number) ?? 0}
-                onChange={(v) => setValue(col.id, v)}
+                value={Number(val) || 0}
+                onChange={(v) => setValue(col.id, v || "")}
               />
             ) : col.columnType === "camelot_key" ? (
               <CamelotPicker

@@ -31,6 +31,8 @@ interface AddTrackDialogProps {
   studentId?: string;
   spaceLabel?: string;
   onSuccess: (item: UnifiedItem) => void;
+  /** 디깅 보드처럼 원본 트랙 행을 직접 갱신하는 화면용. */
+  onTrackCreated?: (track: { id: string; createdAt: Date; linkUrl: string | null; values: Record<string, unknown> }) => void;
 }
 
 export function AddTrackDialog({
@@ -40,6 +42,7 @@ export function AddTrackDialog({
   studentId,
   spaceLabel,
   onSuccess,
+  onTrackCreated,
 }: AddTrackDialogProps) {
   const [busy, setBusy] = useState(false);
   const handleClose = () => onOpenChange(false);
@@ -56,6 +59,7 @@ export function AddTrackDialog({
           onBusyChange={setBusy}
           onSuccess={(created) => {
             handleClose();
+            onTrackCreated?.(created);
             onSuccess(createDiggingTrackUnifiedItem(created, columns, {
               id: studentId ?? "current-student",
               email: spaceLabel || "내 스페이스",

@@ -23,18 +23,19 @@ export function StarRating({ value, onChange, readonly = false, disabled = false
             key={star}
             type="button"
             disabled={readonly || disabled}
-            onClick={() => onChange?.(star)}
+            onClick={() => onChange?.(star === value ? 0 : star)}
             onMouseEnter={() => !readonly && !disabled && setHovered(star)}
             onMouseLeave={() => setHovered(0)}
             className="disabled:cursor-default"
-            aria-label={`${star}점`}
+            aria-label={star === value && onChange ? `${star}점 (다시 누르면 지우기)` : `${star}점`}
             role="radio"
             aria-checked={star === value}
           >
             <Star
+              aria-hidden="true"
               className={`w-4 h-4 transition-colors ${
                 filled
-                  ? "fill-amber-400 text-amber-400"
+                  ? "fill-primary text-primary"
                   : "fill-transparent text-muted-foreground/40"
               }`}
             />

@@ -42,6 +42,8 @@ let removeEvent: typeof import("@/lib/actions/calendarEvents").deleteCalendarEve
 let CalendarEventActions: typeof import("@/components/calendar/CalendarEventActions").CalendarEventActions;
 let saveTrack: typeof import("@/lib/actions/digging").createDiggingTrack = async (input) => ({ id: "track", createdAt: new Date(), linkUrl: input.linkUrl ?? null, values: input.values });
 let fetchMetadata: typeof import("@/lib/actions/digging").fetchLinkMeta = async () => ({});
+let saveTrackValue: typeof import("@/lib/actions/digging").updateDiggingTrackValue = async () => {};
+let DiggingBoard: typeof import("@/components/digging/DiggingBoard").DiggingBoard;
 let toggleModule: typeof import("@/lib/actions/curriculum").toggleModuleComplete = async () => {};
 let loadStudentCalendar: typeof import("@/lib/actions/unifiedItems").getUnifiedItemsForStudent = async () => [];
 const previousGlobals = new Map<string, PropertyDescriptor | undefined>();
@@ -91,6 +93,10 @@ mock.module("@/lib/actions/digging", { namedExports: {
   getOrSeedColumns: async () => [],
   createDiggingTrack: (...args: Parameters<typeof saveTrack>) => saveTrack(...args),
   fetchLinkMeta: (...args: Parameters<typeof fetchMetadata>) => fetchMetadata(...args),
+  updateDiggingTrackValue: (...args: Parameters<typeof saveTrackValue>) => saveTrackValue(...args),
+  deleteDiggingTrack: async () => {},
+  addDiggingColumn: async () => {},
+  deleteDiggingColumn: async () => {},
 } });
 mock.module("@/lib/actions/unifiedItems", { namedExports: {
   getUnifiedItemsForStudent: (...args: Parameters<typeof loadStudentCalendar>) => loadStudentCalendar(...args),
@@ -149,6 +155,7 @@ before(async () => {
   ({ EventFormDialog } = await import("@/components/calendar/EventFormDialog"));
   ({ CalendarEventActions } = await import("@/components/calendar/CalendarEventActions"));
   ({ AddTrackDialog } = await import("@/components/digging/AddTrackDialog"));
+  ({ DiggingBoard } = await import("@/components/digging/DiggingBoard"));
   ({ CurriculumView } = await import("@/components/student-portal/CurriculumView"));
   ({ Editor: TiptapEditor } = await import("@tiptap/core"));
   ({ default: StarterKit } = await import("@tiptap/starter-kit"));
@@ -648,6 +655,45 @@ test("track metadata cannot overwrite newer typing and track save locks custom c
   assert.ok(browser.document.querySelector('[role="alert"]'));
   assert.equal((browser.document.getElementById("digging-column-title") as unknown as HTMLInputElement).value, "직접 입력한 트랙명");
   assert.equal(button("닫기").disabled, false);
+});
+
+test("digging board saves only changed cells, clears numbers and ratings without coercing to zero", async (context) => {
+  const saves: [string, string, unknown][] = [];
+  saveTrackValue = async (trackId, columnId, value) => { saves.push([trackId, columnId, value]); };
+  context.after(() => { saveTrackValue = async () => {}; });
+  await render(context, <DiggingBoard
+    initialColumns={[
+      { id: "title", name: "트랙명", columnType: "text", options: null, isDefault: true, sortOrder: 0 },
+      { id: "bpm", name: "BPM", columnType: "number", options: null, isDefault: false, sortOrder: 1 },
+      { id: "rating", name: "별점", columnType: "rating", options: null, isDefault: true, sortOrder: 2 },
+    ]}
+    initialTracks={[{ id: "track-1", linkUrl: null, createdAt: new Date("2026-10-09T01:00:00.000Z"), values: { title: "Intro", bpm: 124, rating: 3 } }]}
+  />);
+  const desktopInput = (label: string) => [...browser.document.querySelectorAll(`table input[aria-label="${label}"]`)][0] as unknown as HTMLInputElement;
+  const blur = async (input: HTMLInputElement) => act(async () => { input.dispatchEvent(new browser.FocusEvent("focusout", { bubbles: true })); input.dispatchEvent(new browser.FocusEvent("blur")); });
+
+  await blur(desktopInput("트랙명"));
+  await settle();
+  assert.deepEqual(saves, [], "focus leaving an unchanged cell does not save");
+
+  const setter = Object.getOwnPropertyDescriptor(browser.HTMLInputElement.prototype, "value")?.set;
+  assert.ok(setter);
+  const bpm = desktopInput("BPM");
+  await act(async () => {
+    setter.call(bpm, "");
+    bpm.dispatchEvent(new browser.Event("input", { bubbles: true }));
+  });
+  await blur(bpm);
+  await settle();
+  assert.deepEqual(saves.at(-1), ["track-1", "bpm", ""], "clearing a number stores empty, not 0");
+
+  const ratingGroup = browser.document.querySelector('table [role="radiogroup"][aria-label="별점"]');
+  assert.ok(ratingGroup);
+  const selectedStar = [...ratingGroup.querySelectorAll("button")].find((star) => star.getAttribute("aria-checked") === "true");
+  assert.ok(selectedStar);
+  await act(async () => selectedStar.click());
+  await settle();
+  assert.deepEqual(saves.at(-1), ["track-1", "rating", ""], "pressing the selected star clears the rating");
 });
 
 test("curriculum rolls back failed optimistic completion and allows a successful retry", async (context) => {
