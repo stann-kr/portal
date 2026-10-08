@@ -243,6 +243,7 @@ export function TimelineFeedback({
                 onClick={() => onSeek?.(fb.timeMarker)}
                 className="flex-shrink-0 px-2 py-1 rounded-md bg-primary/10 hover:bg-primary/20 text-primary font-mono text-xs font-bold transition-colors"
                 title="이 시점으로 이동"
+                aria-label={`${formatTimestamp(fb.timeMarker)} 시점으로 이동`}
               >
                 {formatTimestamp(fb.timeMarker)}
               </button>

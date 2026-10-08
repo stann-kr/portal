@@ -8,6 +8,7 @@
 import { useState, useTransition } from "react";
 import { CheckCircle2, Circle } from "lucide-react";
 import { toggleModuleComplete } from "@/lib/actions/curriculum";
+import { EmptyState } from "@/components/ui/empty-state";
 
 type Module = {
   id: string;
@@ -49,10 +50,10 @@ export function CurriculumView({ initialModules }: CurriculumViewProps) {
 
   if (modules.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center p-12 border border-dashed rounded-xl bg-muted/20 text-muted-foreground">
-        <p className="text-sm">아직 등록된 커리큘럼이 없습니다.</p>
-        <p className="text-xs mt-1">강사에게 문의하세요.</p>
-      </div>
+      <EmptyState
+        title="아직 등록된 커리큘럼이 없습니다"
+        description="강사가 주차별 학습 모듈을 등록하면 이곳에서 진도를 체크할 수 있습니다."
+      />
     );
   }
 
@@ -90,17 +91,17 @@ export function CurriculumView({ initialModules }: CurriculumViewProps) {
               disabled={isPending}
               className="flex size-9 shrink-0 items-center justify-center rounded-md transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
               aria-pressed={m.isCompleted}
-              aria-label={`${m.title}: ${m.isCompleted ? "미완료로 변경" : "완료로 변경"}`}
+              aria-label={`${m.title} 완료`}
             >
               {m.isCompleted ? (
-                <CheckCircle2 className="w-5 h-5 text-success" />
+                <CheckCircle2 className="w-5 h-5 text-success" aria-hidden="true" />
               ) : (
-                <Circle className="w-5 h-5 text-muted-foreground" />
+                <Circle className="w-5 h-5 text-muted-foreground" aria-hidden="true" />
               )}
             </button>
 
             <div className="flex-1 min-w-0">
-              <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">
+              <span className="font-mono text-xs font-semibold text-muted-foreground">
                 WEEK {String(m.weekNum).padStart(2, "0")}
               </span>
               <p className={`font-medium mt-0.5 ${m.isCompleted ? "line-through" : ""}`}>

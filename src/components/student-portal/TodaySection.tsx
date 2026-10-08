@@ -17,6 +17,7 @@ import { StatusBadge } from "@/components/ui/status-badge";
 import { getStudentTodaySummary } from "@/lib/student-today";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 import { buildQnaListHref } from "@/lib/qna-routes";
+import { buildStudentDiggingBoardHref } from "@/lib/student-space-routes";
 import { formatKst, formatKstShortDate } from "@/lib/kst-format";
 
 type Post = {
@@ -177,13 +178,7 @@ export function TodaySection({
             description="생각이 사라지기 전에 바로 남겨보세요."
             className="mb-4"
           />
-          <div className="grid gap-2 sm:grid-cols-3 md:grid-cols-1">
-            <Button asChild variant="outline" className="h-auto justify-start px-4 py-3">
-              <Link href={buildQnaListHref("/dashboard/student?section=today")}>
-                <MessagesSquare className="mr-2 size-4 text-primary" aria-hidden="true" />
-                Q&A 전체 보기
-              </Link>
-            </Button>
+          <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-1">
             <Button asChild variant="outline" className="h-auto justify-start px-4 py-3">
               <Link href="/dashboard/student/notes/new?returnTo=%2Fdashboard%2Fstudent%3Fsection%3Dtoday">
                 <FileText className="mr-2 size-4 text-primary" aria-hidden="true" />
@@ -196,14 +191,26 @@ export function TodaySection({
                 질문 작성
               </Link>
             </Button>
+            <Button asChild variant="outline" className="h-auto justify-start px-4 py-3">
+              <Link href={buildStudentDiggingBoardHref("/dashboard/student?section=today")}>
+                <ListMusic className="mr-2 size-4 text-primary" aria-hidden="true" />
+                디깅 보드
+              </Link>
+            </Button>
             <Button
               type="button"
               variant="outline"
               className="h-auto justify-start px-4 py-3"
               onClick={onOpenWorkspace}
             >
-              <ListMusic className="mr-2 size-4 text-primary" aria-hidden="true" />
-              일정·디깅 열기
+              <CalendarDays className="mr-2 size-4 text-primary" aria-hidden="true" />
+              일정 열기
+            </Button>
+            <Button asChild variant="ghost" className="h-auto justify-start px-4 py-3 text-muted-foreground sm:col-span-2 md:col-span-1">
+              <Link href={buildQnaListHref("/dashboard/student?section=today")}>
+                <MessagesSquare className="mr-2 size-4" aria-hidden="true" />
+                Q&A 전체 보기
+              </Link>
             </Button>
           </div>
         </section>

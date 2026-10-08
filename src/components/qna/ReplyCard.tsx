@@ -45,7 +45,7 @@ export function ReplyCard({ reply }: ReplyCardProps) {
         <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
           <span className="font-medium text-foreground">{author}</span>
           {isAdmin && (
-            <span className="px-1.5 py-0.5 rounded bg-primary/10 text-primary text-[10px] font-semibold">
+            <span className="px-1.5 py-0.5 rounded bg-primary/10 text-primary text-xs font-semibold">
               강사
             </span>
           )}

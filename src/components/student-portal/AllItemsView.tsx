@@ -13,6 +13,7 @@ import {
 } from "@/lib/utils/unifiedItemUtils";
 import { Input } from "@/components/ui/input";
 import {
+  describeUnifiedItemRow,
   UNIFIED_ITEM_TYPE_LABELS,
   UnifiedItemSpaceBadge,
   UnifiedItemTypeBadge,
@@ -87,7 +88,7 @@ export function AllItemsView({
   return (
     <>
       {/* 타입 필터 바 */}
-      <div className="flex items-center gap-2 flex-wrap mb-4">
+      <div className="flex items-center gap-2 flex-wrap mb-4" role="group" aria-label="항목 유형 필터">
         {ALL_TYPES.map((type) => {
           const active = activeTypes.has(type);
           return (
@@ -114,7 +115,7 @@ export function AllItemsView({
 
       {/* 검색 바 */}
       <div className="relative w-full sm:w-64 mb-4">
-        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" aria-hidden="true" />
         <Input
           type="search"
           value={query}
@@ -138,21 +139,23 @@ export function AllItemsView({
             return (
               <button
                 key={getUnifiedItemKey(item)}
-                aria-label={`${item.title}, ${item.space.label} 학생 스페이스, ${item.source.label} 출처`}
+                type="button"
+                aria-label={describeUnifiedItemRow(item, formatDate(item.date), showSpaceContext)}
                 onClick={() => {
                   setSelectedItem(item);
                   setPanelOpen(true);
                 }}
-                className="w-full text-left flex items-center gap-3 px-4 py-3 rounded-lg border border-border bg-card hover:bg-accent transition-colors"
+                className="w-full text-left flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3 rounded-lg border border-border bg-card hover:bg-accent transition-colors sm:flex-nowrap"
               >
                 <UnifiedItemTypeIcon type={item.type} className="shrink-0 text-primary" />
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-foreground truncate">{item.title}</p>
                 </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
+                {/* 좁은 화면에서는 제목 아래 줄로 내려 제목이 잘리지 않게 한다. */}
+                <div className="flex w-full flex-wrap items-center gap-2 pl-7 sm:w-auto sm:flex-shrink-0 sm:flex-nowrap sm:pl-0">
                   <UnifiedItemTypeBadge item={item} />
                   {showSpaceContext && <UnifiedItemSpaceBadge item={item} />}
-                  <span className="text-xs text-muted-foreground hidden sm:block">
+                  <span className="text-xs text-muted-foreground tabular-nums">
                     {formatDate(item.date)}
                   </span>
                 </div>

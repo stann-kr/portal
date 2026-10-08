@@ -138,6 +138,8 @@ pill 형태는 filter와 count처럼 모양 자체가 의미를 가질 때만 �
 - 모든 form control은 placeholder가 아닌 별도 label을 가진다.
 - 오류는 문제가 발생한 영역 안에서 설명하고, 일시적 상태 변화는 live region으로 알린다.
 - 클릭 가능한 행은 Tab과 Enter 또는 Space로 동작해야 한다.
+- 통합 기록 행의 accessible name은 제목·유형·시각과 필요한 경우 학생 스페이스·외부 출처를 함께 읽는다. 좁은 화면에서는 배지와 시각을 제목 아래 줄로 내려 제목을 보존한다.
+- 토글 버튼은 상태를 `aria-pressed`로 전달하고 이름에는 행동이 아니라 대상(예: "비트 매칭 완료")을 쓴다.
 - focus indicator를 제거하지 않으며 foreground와 focus ring은 배경에 충분한 대비를 유지한다.
 
 ## 반응형

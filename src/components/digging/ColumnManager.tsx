@@ -105,7 +105,7 @@ export function ColumnManager({
                   {COLUMN_TYPE_LABELS[col.columnType]}
                 </span>
                 {col.isDefault && (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-medium shrink-0">
+                  <span className="text-xs px-1.5 py-0.5 rounded bg-primary/10 text-primary font-medium shrink-0">
                     기본
                   </span>
                 )}

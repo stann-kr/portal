@@ -708,16 +708,18 @@ test("curriculum rolls back failed optimistic completion and allows a successful
   toggleModule = async () => pending.promise;
   context.after(() => { pending.resolve(); toggleModule = async () => {}; });
   await render(context, <CurriculumView initialModules={[{ id: "module", weekNum: 1, title: "비트 매칭", description: null, isCompleted: false }]} />);
-  await press("비트 매칭: 완료로 변경");
+  assert.equal(button("비트 매칭 완료").getAttribute("aria-pressed"), "false");
+  await press("비트 매칭 완료");
   assert.equal(browser.document.querySelector('[role="progressbar"]')?.getAttribute("aria-valuenow"), "100");
-  assert.equal(button("비트 매칭: 미완료로 변경").disabled, true);
+  assert.equal(button("비트 매칭 완료").disabled, true);
   await act(async () => pending.reject(new Error("offline")));
   await settle();
   assert.equal(browser.document.querySelector('[role="progressbar"]')?.getAttribute("aria-valuenow"), "0");
+  assert.equal(button("비트 매칭 완료").getAttribute("aria-pressed"), "false");
   assert.ok(browser.document.querySelector('[role="alert"]'));
   toggleModule = async () => {};
-  await press("비트 매칭: 완료로 변경");
-  assert.equal(button("비트 매칭: 미완료로 변경").getAttribute("aria-pressed"), "true");
+  await press("비트 매칭 완료");
+  assert.equal(button("비트 매칭 완료").getAttribute("aria-pressed"), "true");
   assert.equal(browser.document.querySelector('[role="alert"]'), null);
 });
 

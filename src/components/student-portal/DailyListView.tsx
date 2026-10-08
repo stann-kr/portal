@@ -11,12 +11,14 @@ import {
   type UnifiedItem,
 } from "@/lib/utils/unifiedItemUtils";
 import {
+  describeUnifiedItemRow,
   UnifiedItemSpaceBadge,
   UnifiedItemTypeBadge,
   UnifiedItemTypeIcon,
 } from "@/components/ui/unified-item-type";
 import { UnifiedItemDetailPanel, type UnifiedItemChangeHandlers } from "./UnifiedItemDetailPanel";
 import { groupUnifiedItemsByKstDate } from "@/lib/unified-item-date-groups";
+import { EmptyState } from "@/components/ui/empty-state";
 import { formatKst } from "@/lib/kst-format";
 
 // ── 날짜 포맷 ────────────────────────────────────
@@ -55,9 +57,10 @@ export function DailyListView({
 
   if (items.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center py-20 text-muted-foreground gap-2">
-        <p className="text-sm">등록된 항목이 없습니다.</p>
-      </div>
+      <EmptyState
+        title="표시할 기록이 없습니다"
+        description="상단의 추가 메뉴에서 일정·노트·디깅·질문을 기록하면 날짜별로 모입니다."
+      />
     );
   }
 
@@ -84,27 +87,28 @@ export function DailyListView({
                   return (
                     <button
                       key={getUnifiedItemKey(item)}
-                      aria-label={`${item.title}, ${item.space.label} 학생 스페이스, ${item.source.label} 출처`}
+                      type="button"
+                      aria-label={describeUnifiedItemRow(item, formatTime(item.date), showSpaceContext)}
                       onClick={() => {
                         setSelectedItem(item);
                         setPanelOpen(true);
                       }}
-                      className="w-full text-left flex items-center gap-3 px-4 py-3 rounded-lg border border-border bg-card hover:bg-accent transition-colors"
+                      className="w-full text-left flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3 rounded-lg border border-border bg-card hover:bg-accent transition-colors sm:flex-nowrap"
                     >
                       <UnifiedItemTypeIcon type={item.type} className="shrink-0 text-primary" />
 
-                      {/* 제목 + 타입 */}
+                      {/* 제목 */}
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-foreground truncate">
                           {item.title}
                         </p>
                       </div>
 
-                      {/* 타입 라벨 + 관리자용 스페이스 + 시간 */}
-                      <div className="flex items-center gap-2 flex-shrink-0">
+                      {/* 좁은 화면에서는 제목 아래 줄로 내려 제목이 잘리지 않게 한다. */}
+                      <div className="flex w-full flex-wrap items-center gap-2 pl-7 sm:w-auto sm:flex-shrink-0 sm:flex-nowrap sm:pl-0">
                         <UnifiedItemTypeBadge item={item} />
                         {showSpaceContext && <UnifiedItemSpaceBadge item={item} />}
-                        <span className="text-xs text-muted-foreground hidden sm:block">
+                        <span className="text-xs text-muted-foreground tabular-nums">
                           {formatTime(item.date)}
                         </span>
                       </div>

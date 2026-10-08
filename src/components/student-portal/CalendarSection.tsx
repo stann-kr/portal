@@ -399,7 +399,7 @@ export function CalendarSection({
             </div>
           </TabsContent>
 
-          <TabsContent value="daily" className="m-0 p-6">
+          <TabsContent value="daily" className="m-0 p-4 sm:p-6">
             <DailyListView
               items={unifiedItems}
               returnTo={workspaceReturnTo}
@@ -410,7 +410,7 @@ export function CalendarSection({
             />
           </TabsContent>
 
-          <TabsContent value="all" className="m-0 p-6">
+          <TabsContent value="all" className="m-0 p-4 sm:p-6">
             <AllItemsView
               items={unifiedItems}
               returnTo={workspaceReturnTo}
@@ -430,11 +430,11 @@ export function CalendarSection({
 
           {workspaceRole === "student" ? (
             <>
-              <TabsContent value="curriculum" className="m-0 p-6 max-w-3xl mx-auto">
+              <TabsContent value="curriculum" className="m-0 mx-auto max-w-3xl p-4 sm:p-6">
                 <CurriculumView initialModules={curriculumModules} />
               </TabsContent>
 
-              <TabsContent value="assignments" className="m-0 p-6 max-w-3xl mx-auto">
+              <TabsContent value="assignments" className="m-0 mx-auto max-w-3xl p-4 sm:p-6">
                 <AssignmentView initialAssignments={assignments} />
               </TabsContent>
             </>

@@ -92,6 +92,8 @@ export function AssignmentDetailPanel({
                 className="flex gap-3 p-3 rounded-lg border border-border bg-card"
               >
                 <button
+                  type="button"
+                  aria-label={`${formatTime(fb.timeMarker)} 시점으로 이동`}
                   onClick={() => setSeekRequest({ seconds: fb.timeMarker })}
                   className="flex-shrink-0 font-mono text-xs font-semibold text-primary bg-primary/10 px-2 py-0.5 rounded hover:bg-primary/20 transition-colors"
                   title={`${formatTime(fb.timeMarker)}으로 이동`}

@@ -50,6 +50,14 @@ export function UnifiedItemTypeBadge({ item }: { item: UnifiedItem }) {
   );
 }
 
+/** 목록 행 button의 이름: 제목·유형·시각과(관리자) 학생 스페이스, 외부 출처만 읽는다. */
+export function describeUnifiedItemRow(item: UnifiedItem, when: string, showSpaceContext: boolean): string {
+  const parts = [item.title, UNIFIED_ITEM_TYPE_LABELS[item.type], when];
+  if (showSpaceContext) parts.push(`${item.space.label} 학생 스페이스`);
+  if (item.source.kind !== "PORTAL") parts.push(`${item.source.label} 출처`);
+  return parts.filter(Boolean).join(", ");
+}
+
 /** 통합 항목의 학생 스페이스와 시스템 출처를 일관되게 표시한다. */
 export function UnifiedItemSpaceBadge({ item }: { item: UnifiedItem }) {
   return (

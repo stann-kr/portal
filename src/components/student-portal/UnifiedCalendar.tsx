@@ -151,7 +151,7 @@ export function UnifiedCalendar({
   return (
     <div ref={containerRef} className="flex flex-col gap-3 h-full">
       {/* 타입 필터 바 */}
-      <div className="flex items-center gap-2 flex-wrap" aria-label="캘린더 항목 필터">
+      <div className="flex items-center gap-2 flex-wrap" role="group" aria-label="캘린더 항목 필터">
         {activePreset ? (
           <button
             type="button"
