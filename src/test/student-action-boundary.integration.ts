@@ -307,6 +307,53 @@ test("일정 update는 rogue field, type, 시간 역전과 다른 owner 행을 �
   );
 });
 
+test("일정 상세 수정 form은 본인 일정만 바꾸고 검증 실패를 상태로 돌려준다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("student-1", "student"));
+  await seedProfile(db, "student-1");
+  await seedProfile(db, "student-2");
+  const original = {
+    id: "event-1",
+    userId: "student-1",
+    eventType: "PRACTICE" as const,
+    title: "Original",
+    startTime: new Date("2026-08-13T01:00:00.000Z"),
+    endTime: new Date("2026-08-13T02:00:00.000Z"),
+  };
+  await db.insert(calendarEvents).values([
+    original,
+    { ...original, id: "event-2", userId: "student-2" },
+  ]);
+  const form = (fields: Record<string, string>) => {
+    const data = new FormData();
+    for (const [key, value] of Object.entries(fields)) data.set(key, value);
+    return data;
+  };
+  const valid = { title: "Moved", eventType: "GIG", startTime: "2026-08-14T19:00", endTime: "2026-08-14T21:00", description: "메모" };
+
+  assert.deepEqual(
+    await calendarActions.updateCalendarEventDetails({}, form({ ...valid, eventId: "event-1", endTime: "2026-08-14T18:00" })),
+    { error: "종료 시간은 시작 시간 이후여야 합니다." },
+  );
+  assert.match(
+    (await calendarActions.updateCalendarEventDetails({}, form({ ...valid, eventId: "event-2" }))).error ?? "",
+    /권한/u,
+  );
+  const saved = await calendarActions.updateCalendarEventDetails({}, form({ ...valid, eventId: "event-1" }));
+  assert.equal(saved.event?.title, "Moved");
+  assert.equal(saved.event?.startTime, "2026-08-14T10:00:00.000Z");
+
+  const rows = await db.select().from(calendarEvents).orderBy(calendarEvents.id);
+  assert.equal(rows[0]?.title, "Moved");
+  assert.equal(rows[0]?.eventType, "GIG");
+  assert.equal(rows[0]?.description, "메모");
+  assert.equal(rows[1]?.title, "Original", "다른 학생의 일정은 바뀌지 않는다");
+
+  await calendarActions.deleteCalendarEvent("event-2");
+  assert.equal((await db.select().from(calendarEvents)).length, 2, "다른 학생의 일정은 삭제되지 않는다");
+  await calendarActions.deleteCalendarEvent("event-1");
+  assert.deepEqual((await db.select().from(calendarEvents)).map((row) => row.id), ["event-2"]);
+});
+
 test("digging write는 student session과 소유 column/type을 요구하고 거부 시 DB가 불변이다", { concurrency: false }, async (context) => {
   const db = await setupDatabase(context, createSession("student-1", "student"));
   await seedProfile(db, "admin-1", "admin");

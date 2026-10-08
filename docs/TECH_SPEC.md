@@ -91,6 +91,8 @@ OpenNext → Cloudflare Worker
 
 관리자 포털의 기본 section은 `업무함`이다. 전체 Q&A 중 미답변 항목, feedback이 없는 assignment, 앞으로 7일 이내의 학생별 다음 레슨을 조회한다. 질문과 과제는 오래 기다린 항목부터 보여주고 실제 Q&A·과제 상세로 연결한다. 일정 section은 선택한 학생 스페이스를 상시 표시하고 각 통합 항목의 스페이스·출처를 식별한다.
 
+학생 본인 워크스페이스의 상세 패널은 `PORTAL`·`CALENDAR_EVENT` 항목에만 수정·삭제를 제공한다. 수정은 form 상태를 반환하는 `updateCalendarEventDetails`가 owner 조건으로 갱신하고, 삭제 성공 항목은 서버 목록 갱신 전에도 화면에서 즉시 제외한다.
+
 통합 항목은 raw `id`를 route 진입에 유지하면서 `<source kind>:<entity>:<id>` 형식의 UI key를 별도로 사용한다. `calendar_events`와 `lessons`, 외부 공개 캘린더 사이에는 안정적인 연결 키가 없으므로 같은 시각이나 제목만으로 dedupe하지 않으며, 서로 다른 행을 모두 표시한다. source kind는 `PORTAL`, `GOOGLE_CALENDAR`, `ICLOUD_CALENDAR`이고 entity는 내부 항목 또는 `EXTERNAL_CALENDAR_EVENT`다. 학생 스페이스 label은 display name을 trim해 우선 사용하고 비어 있으면 email을 사용한다.
 
 학생은 하나의 전용 공개 Google 또는 iCloud iCal 레슨 캘린더를 연결할 수 있다. 구독 URL은 `external_calendar_subscriptions`에 AES-256-GCM과 학생·provider AAD로 암호화해 저장하며, 조회 action과 UI에는 provider·label·연결 여부만 반환한다. fetch는 허용 host/path, HTTPS, redirect 거부, 5초 timeout, 1 MiB streaming 상한과 VCALENDAR 검증을 거친다. 파서는 `ical.js`로 반복·EXDATE·override·취소·all-day를 bounded window의 read-only `EVENT`/`LESSON`으로 정규화한다. 외부 fetch 또는 복호화가 실패해도 내부 일정만 반환한다.

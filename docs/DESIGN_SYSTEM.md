@@ -85,6 +85,9 @@ pill 형태는 filter와 count처럼 모양 자체가 의미를 가질 때만 �
 | `StatusBadge` | registry 기반 label·icon·tone 표시 |
 | `UnifiedItemTypeBadge` | 통합 기록의 일정·노트·디깅·Q&A·과제 type icon·label |
 | `UnifiedItemSpaceBadge` | 통합 기록의 학생 스페이스·포털 출처 label과 접근성 문맥 |
+| `UnifiedItemDetailPanel` | 캘린더·일별·전체 보기의 공통 상세 패널, 변경 중 닫힘 잠금 |
+| `CalendarEventFields` | 일정 생성 dialog와 상세 수정 form이 공유하는 유형·제목·시간·메모 입력 |
+| `CalendarEventActions` | 학생 본인 포털 일정의 상세 패널 수정과 취소 우선 2단계 삭제 |
 | `ExternalCalendarConnection` | 공개 레슨 캘린더 provider 선택·연결·교체·해제와 live status |
 | `PrivateNoteList` | 저장 HTML을 직접 렌더하지 않는 노트 메타데이터·평문 미리보기·열기 링크 목록 |
 | `NoteFullForm` | 대상 학생 스페이스와 선택 날짜 문맥을 표시하는 전체 화면 노트 작성 폼 |

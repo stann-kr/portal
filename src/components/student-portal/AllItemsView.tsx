@@ -18,8 +18,7 @@ import {
   UnifiedItemTypeBadge,
   UnifiedItemTypeIcon,
 } from "@/components/ui/unified-item-type";
-import { SlidePanel } from "./SlidePanel";
-import { UnifiedItemDetail } from "./UnifiedItemDetail";
+import { UnifiedItemDetailPanel, type UnifiedItemChangeHandlers } from "./UnifiedItemDetailPanel";
 import { formatKstShortDate } from "@/lib/kst-format";
 
 // ── 상수 ─────────────────────────────────────────
@@ -34,7 +33,7 @@ function formatDate(date: Date): string {
 
 // ── 컴포넌트 ─────────────────────────────────────
 
-interface AllItemsViewProps {
+interface AllItemsViewProps extends UnifiedItemChangeHandlers {
   items: UnifiedItem[];
   returnTo: string;
   showSpaceContext: boolean;
@@ -48,6 +47,9 @@ export function AllItemsView({
   showSpaceContext,
   initialType = null,
   onInitialTypeCleared,
+  canManageEvents,
+  onItemUpdated,
+  onItemRemoved,
 }: AllItemsViewProps) {
   const [activeTypes, setActiveTypes] = useState<Set<UnifiedItemType>>(
     new Set(initialType ? [initialType] : ALL_TYPES),
@@ -161,15 +163,16 @@ export function AllItemsView({
       )}
 
       {/* 상세 패널 */}
-      <SlidePanel
+      <UnifiedItemDetailPanel
+        item={selectedItem}
         open={panelOpen}
         onOpenChange={setPanelOpen}
-        title={selectedItem?.title}
-      >
-        {selectedItem && (
-          <UnifiedItemDetail item={selectedItem} onClose={() => setPanelOpen(false)} returnTo={returnTo} />
-        )}
-      </SlidePanel>
+        onItemChange={setSelectedItem}
+        returnTo={returnTo}
+        canManageEvents={canManageEvents}
+        onItemUpdated={onItemUpdated}
+        onItemRemoved={onItemRemoved}
+      />
     </>
   );
 }

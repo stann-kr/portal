@@ -75,8 +75,8 @@ export function AdminWorkQueueSection({
           <p className="text-sm text-muted-foreground">{formatDay(referenceTime)}</p>
           <h1 className="mt-1 text-2xl font-semibold tracking-[-0.03em] text-foreground sm:text-3xl">오늘 처리할 일</h1>
         </div>
-        <Button asChild variant="ghost" size="sm">
-          <Link href="/dashboard/admin/operations"><Settings2 aria-hidden="true" />운영 도구</Link>
+        <Button asChild variant="ghost" size="sm" className="gap-1.5">
+          <Link href="/dashboard/admin/operations"><Settings2 className="size-3.5" aria-hidden="true" />운영 도구</Link>
         </Button>
       </div>
 

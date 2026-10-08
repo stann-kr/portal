@@ -111,11 +111,12 @@ export function StudentPortalClient({
 }: StudentPortalClientProps) {
   const [createdItems, setCreatedItems] = useState<UnifiedItem[]>([]);
   const [externalItems, setExternalItems] = useState<UnifiedItem[]>([]);
+  const [removedKeys, setRemovedKeys] = useState<ReadonlySet<string>>(() => new Set());
   const serverItemKeys = useMemo(() => new Set(initialUnifiedItems.map(getUnifiedItemKey)), [initialUnifiedItems]);
   const items = useMemo(() => upsertUnifiedItems(
     upsertUnifiedItems(initialUnifiedItems, createdItems.filter((item) => !serverItemKeys.has(getUnifiedItemKey(item)))),
     externalCalendarConnection.connected ? externalItems : [],
-  ), [createdItems, externalCalendarConnection.connected, externalItems, initialUnifiedItems, serverItemKeys]);
+  ).filter((item) => !removedKeys.has(getUnifiedItemKey(item))), [createdItems, externalCalendarConnection.connected, externalItems, initialUnifiedItems, removedKeys, serverItemKeys]);
 
   // Retire confirmed additions so a later server deletion cannot resurrect them.
   useEffect(() => {
@@ -123,10 +124,22 @@ export function StudentPortalClient({
       const remaining = current.filter((item) => !serverItemKeys.has(getUnifiedItemKey(item)));
       return remaining.length === current.length ? current : remaining;
     });
+    // 서버 목록에서 사라진 삭제 항목은 더 숨길 필요가 없다.
+    setRemovedKeys((current) => {
+      if (current.size === 0) return current;
+      const remaining = new Set([...current].filter((key) => serverItemKeys.has(key)));
+      return remaining.size === current.size ? current : remaining;
+    });
   }, [serverItemKeys]);
 
   const addItem = useCallback((item: UnifiedItem) => {
     setCreatedItems((prev) => upsertUnifiedItem(prev, item));
+  }, []);
+
+  const removeItem = useCallback((item: UnifiedItem) => {
+    const key = getUnifiedItemKey(item);
+    setCreatedItems((prev) => prev.filter((candidate) => getUnifiedItemKey(candidate) !== key));
+    setRemovedKeys((prev) => new Set(prev).add(key));
   }, []);
 
   // 내부 일정은 RSC에서 먼저 표시하고 외부 provider는 hydration 뒤 fail-soft로 병합한다.
@@ -188,6 +201,7 @@ export function StudentPortalClient({
               externalCalendarConnection={externalCalendarConnection}
               isActive={activeSection === "workspace"}
               onAddItem={addItem}
+              onRemoveItem={removeItem}
             />
           </div>
 

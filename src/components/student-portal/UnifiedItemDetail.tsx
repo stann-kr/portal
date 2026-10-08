@@ -14,6 +14,10 @@ import { PencilLine } from "lucide-react";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 import { UnifiedItemSpaceBadge, UnifiedItemTypeBadge } from "@/components/ui/unified-item-type";
 import { RichTextContent } from "@/components/editor/RichTextContent";
+import {
+  CalendarEventActions,
+  isEditableCalendarEventItem,
+} from "@/components/calendar/CalendarEventActions";
 import { formatKst } from "@/lib/kst-format";
 
 // ── 타입 라벨 ────────────────────────────────────
@@ -72,9 +76,20 @@ interface UnifiedItemDetailProps {
   item: UnifiedItem;
   onClose: () => void;
   returnTo: string;
+  canManageEvents?: boolean;
+  onItemUpdated?: (item: UnifiedItem) => void;
+  onItemRemoved?: (item: UnifiedItem) => void;
+  onBusyChange?: (busy: boolean) => void;
 }
 
-export function UnifiedItemDetail({ item, returnTo }: UnifiedItemDetailProps) {
+export function UnifiedItemDetail({
+  item,
+  returnTo,
+  canManageEvents = false,
+  onItemUpdated,
+  onItemRemoved,
+  onBusyChange,
+}: UnifiedItemDetailProps) {
   // metadata 값을 미리 문자열로 추출 (unknown → string | null 명확화)
   const metaDescription = metaStr(item.metadata, "description");
   const metaContentHtml = metaStr(item.metadata, "contentHtml");
@@ -129,6 +144,19 @@ export function UnifiedItemDetail({ item, returnTo }: UnifiedItemDetailProps) {
               <span className="text-muted-foreground w-16">종료</span>
               <span>{endLabel}</span>
             </div>
+          ) : null}
+          {canManageEvents && item.source.entity === "LESSON" ? (
+            <p className="text-xs text-muted-foreground">레슨 일정은 강사가 관리합니다.</p>
+          ) : canManageEvents && item.source.kind !== "PORTAL" ? (
+            <p className="text-xs text-muted-foreground">연결한 외부 캘린더의 일정은 읽기 전용입니다.</p>
+          ) : null}
+          {canManageEvents && isEditableCalendarEventItem(item) && onItemUpdated && onItemRemoved ? (
+            <CalendarEventActions
+              item={item}
+              onUpdated={onItemUpdated}
+              onDeleted={onItemRemoved}
+              onBusyChange={onBusyChange}
+            />
           ) : null}
         </div>
       ) : null}

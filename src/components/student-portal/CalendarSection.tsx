@@ -93,6 +93,8 @@ interface CalendarSectionProps {
   headerSlot?: React.ReactNode;
   /** QnA 생성 성공 시 낙관적 업데이트 콜백 */
   onAddItem?: (item: UnifiedItem) => void;
+  /** 학생 본인 일정 삭제 성공 시 즉시 목록에서 제외한다. */
+  onRemoveItem?: (item: UnifiedItem) => void;
   /** 학생 전용 Q&A 생성 허용 여부 */
   canCreateQna?: boolean;
   /** 숨김 마운트 상태에서도 section 진입 시 view URL을 canonicalize하기 위한 활성 상태 */
@@ -116,6 +118,7 @@ export function CalendarSection({
   externalCalendarConnection,
   headerSlot,
   onAddItem,
+  onRemoveItem,
   canCreateQna = true,
   isActive = true,
   loading = false,
@@ -372,6 +375,9 @@ export function CalendarSection({
                 showSpaceContext={showSpaceContext}
                 preset={calendarPreset}
                 onPresetChange={handlePresetChange}
+                canManageEvents={isStudentWorkspace}
+                onItemUpdated={onAddItem}
+                onItemRemoved={onRemoveItem}
               />
             </div>
           </TabsContent>
@@ -381,6 +387,9 @@ export function CalendarSection({
               items={unifiedItems}
               returnTo={workspaceReturnTo}
               showSpaceContext={showSpaceContext}
+              canManageEvents={isStudentWorkspace}
+              onItemUpdated={onAddItem}
+              onItemRemoved={onRemoveItem}
             />
           </TabsContent>
 
@@ -390,6 +399,9 @@ export function CalendarSection({
               returnTo={workspaceReturnTo}
               showSpaceContext={showSpaceContext}
               initialType={allItemsInitialType}
+              canManageEvents={isStudentWorkspace}
+              onItemUpdated={onAddItem}
+              onItemRemoved={onRemoveItem}
               onInitialTypeCleared={() => {
                 setAllItemsInitialType(null);
                 const url = new URL(window.location.href);

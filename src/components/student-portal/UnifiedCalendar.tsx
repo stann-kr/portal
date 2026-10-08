@@ -16,15 +16,14 @@ import type { DateClickArg } from "@fullcalendar/interaction";
 import type { EventClickArg, EventInput } from "@fullcalendar/core";
 import type { UnifiedItem, UnifiedItemType } from "@/lib/utils/unifiedItemUtils";
 import { getUnifiedItemColor, getUnifiedItemKey } from "@/lib/utils/unifiedItemUtils";
-import { SlidePanel } from "./SlidePanel";
-import { UnifiedItemDetail } from "./UnifiedItemDetail";
+import { UnifiedItemDetailPanel, type UnifiedItemChangeHandlers } from "./UnifiedItemDetailPanel";
 import { UNIFIED_ITEM_TYPE_LABELS, UnifiedItemTypeIcon } from "@/components/ui/unified-item-type";
 import {
   matchesCalendarPreset,
   type CalendarPreset,
 } from "@/lib/calendar-section-contract";
 
-interface UnifiedCalendarProps {
+interface UnifiedCalendarProps extends UnifiedItemChangeHandlers {
   isActive?: boolean;
   items: UnifiedItem[];
   onCreateRequest?: (date: string) => void;
@@ -42,6 +41,9 @@ export function UnifiedCalendar({
   showSpaceContext,
   preset = null,
   onPresetChange,
+  canManageEvents,
+  onItemUpdated,
+  onItemRemoved,
 }: UnifiedCalendarProps) {
   const calendarRef = useRef<FullCalendar>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -208,19 +210,16 @@ export function UnifiedCalendar({
       </div>
 
       {/* 상세 패널 */}
-      <SlidePanel
+      <UnifiedItemDetailPanel
+        item={selectedItem}
         open={panelOpen}
         onOpenChange={setPanelOpen}
-        title={selectedItem?.title}
-      >
-        {selectedItem && (
-          <UnifiedItemDetail
-            item={selectedItem}
-            onClose={() => setPanelOpen(false)}
-            returnTo={returnTo}
-          />
-        )}
-      </SlidePanel>
+        onItemChange={setSelectedItem}
+        returnTo={returnTo}
+        canManageEvents={canManageEvents}
+        onItemUpdated={onItemUpdated}
+        onItemRemoved={onItemRemoved}
+      />
     </div>
   );
 }

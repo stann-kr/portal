@@ -37,6 +37,9 @@ let saveAssignment: typeof import("@/lib/actions/assignments").submitAssignment 
 let loadAssignments: typeof import("@/lib/actions/assignments").getMyAssignments = async () => [];
 let saveFeedback: typeof import("@/lib/actions/feedbacks").createFeedback = async () => ({});
 let saveEvent: typeof import("@/lib/actions/calendarEvents").createCalendarEvent = async () => ({});
+let editEvent: typeof import("@/lib/actions/calendarEvents").updateCalendarEventDetails = async () => ({});
+let removeEvent: typeof import("@/lib/actions/calendarEvents").deleteCalendarEvent = async () => {};
+let CalendarEventActions: typeof import("@/components/calendar/CalendarEventActions").CalendarEventActions;
 let saveTrack: typeof import("@/lib/actions/digging").createDiggingTrack = async (input) => ({ id: "track", createdAt: new Date(), linkUrl: input.linkUrl ?? null, values: input.values });
 let fetchMetadata: typeof import("@/lib/actions/digging").fetchLinkMeta = async () => ({});
 let toggleModule: typeof import("@/lib/actions/curriculum").toggleModuleComplete = async () => {};
@@ -78,7 +81,11 @@ mock.module("@/lib/actions/upload", { namedExports: {
 } });
 mock.module("@/components/community/PostEditForm", { namedExports: { PostEditForm: () => null } });
 mock.module("@/components/community/PostTrashActions", { namedExports: { PostTrashActions: () => null } });
-mock.module("@/lib/actions/calendarEvents", { namedExports: { createCalendarEvent: (...args: Parameters<typeof saveEvent>) => saveEvent(...args) } });
+mock.module("@/lib/actions/calendarEvents", { namedExports: {
+  createCalendarEvent: (...args: Parameters<typeof saveEvent>) => saveEvent(...args),
+  updateCalendarEventDetails: (...args: Parameters<typeof editEvent>) => editEvent(...args),
+  deleteCalendarEvent: (...args: Parameters<typeof removeEvent>) => removeEvent(...args),
+} });
 mock.module("@/lib/actions/curriculum", { namedExports: { toggleModuleComplete: (...args: Parameters<typeof toggleModule>) => toggleModule(...args) } });
 mock.module("@/lib/actions/digging", { namedExports: {
   getOrSeedColumns: async () => [],
@@ -140,6 +147,7 @@ before(async () => {
   ({ PortalShell } = await import("@/components/ui/portal-shell"));
   ({ SlidePanel } = await import("@/components/student-portal/SlidePanel"));
   ({ EventFormDialog } = await import("@/components/calendar/EventFormDialog"));
+  ({ CalendarEventActions } = await import("@/components/calendar/CalendarEventActions"));
   ({ AddTrackDialog } = await import("@/components/digging/AddTrackDialog"));
   ({ CurriculumView } = await import("@/components/student-portal/CurriculumView"));
   ({ Editor: TiptapEditor } = await import("@tiptap/core"));
@@ -562,6 +570,51 @@ test("event save protects every dismissal path while pending and keeps input aft
   assert.equal(button("닫기").disabled, false);
   await escape();
   assert.equal(browser.document.querySelector('[role="dialog"]'), null);
+});
+
+test("own calendar event edit keeps input on failure and delete confirms before removing", async (context) => {
+  const item: UnifiedItem = {
+    id: "event-1", type: "EVENT", subType: "PRACTICE", title: "리듬 연습", description: "기존 메모",
+    date: new Date("2026-10-09T01:00:00.000Z"), endDate: new Date("2026-10-09T02:00:00.000Z"), metadata: {},
+    space: { studentId: "student", label: "학생" }, source: { kind: "PORTAL", entity: "CALENDAR_EVENT", label: "포털" },
+  };
+  const updates: UnifiedItem[] = [];
+  const removals: UnifiedItem[] = [];
+  const busy: boolean[] = [];
+  const submitted: FormData[] = [];
+  editEvent = async (_previous, data) => { submitted.push(data); return { error: "종료 시간은 시작 시간 이후여야 합니다." }; };
+  removeEvent = async () => { throw new Error("offline"); };
+  context.after(() => { editEvent = async () => ({}); removeEvent = async () => {}; });
+  await render(context, <CalendarEventActions item={item} onUpdated={(next) => updates.push(next)} onDeleted={(removed) => removals.push(removed)} onBusyChange={(value) => busy.push(value)} />);
+
+  await press("일정 수정");
+  assert.equal((browser.document.getElementById("event-edit-event-1-title") as unknown as HTMLInputElement).value, "리듬 연습");
+  assert.equal((browser.document.getElementById("event-edit-event-1-start") as unknown as HTMLInputElement).value, "2026-10-09T10:00");
+  await fill("event-edit-event-1-title", "리듬 연습 2");
+  await press("저장");
+  assert.equal(browser.document.querySelector('[role="alert"]')?.textContent, "종료 시간은 시작 시간 이후여야 합니다.");
+  assert.equal((browser.document.getElementById("event-edit-event-1-title") as unknown as HTMLInputElement).value, "리듬 연습 2");
+  assert.equal(submitted[0]?.get("eventId"), "event-1");
+  assert.equal(updates.length, 0);
+  assert.ok(busy.includes(true), "save locks the surrounding panel");
+
+  editEvent = async (_previous, data) => ({ id: "event-1", event: {
+    id: "event-1", title: String(data.get("title")), eventType: "PRACTICE",
+    startTime: "2026-10-09T01:00:00.000Z", endTime: "2026-10-09T02:00:00.000Z", description: "기존 메모",
+  } });
+  await press("저장");
+  assert.equal(updates[0]?.title, "리듬 연습 2");
+  assert.equal(browser.document.querySelector('[role="status"]')?.textContent, "일정을 저장했습니다.");
+  assert.equal(busy.at(-1), false);
+
+  await press("일정 삭제");
+  assert.equal(browser.document.activeElement?.textContent, "취소", "irreversible delete starts on cancel");
+  await press("삭제");
+  assert.match(browser.document.querySelector('[role="alert"]')?.textContent ?? "", /삭제하지 못했습니다/u);
+  assert.equal(removals.length, 0);
+  removeEvent = async () => {};
+  await press("삭제");
+  assert.deepEqual(removals.map((removed) => removed.id), ["event-1"]);
 });
 
 test("track metadata cannot overwrite newer typing and track save locks custom controls and dismissal", async (context) => {

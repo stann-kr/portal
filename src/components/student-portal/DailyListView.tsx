@@ -15,8 +15,7 @@ import {
   UnifiedItemTypeBadge,
   UnifiedItemTypeIcon,
 } from "@/components/ui/unified-item-type";
-import { SlidePanel } from "./SlidePanel";
-import { UnifiedItemDetail } from "./UnifiedItemDetail";
+import { UnifiedItemDetailPanel, type UnifiedItemChangeHandlers } from "./UnifiedItemDetailPanel";
 import { groupUnifiedItemsByKstDate } from "@/lib/unified-item-date-groups";
 import { formatKst } from "@/lib/kst-format";
 
@@ -34,7 +33,7 @@ function formatTime(date: Date): string {
 
 // ── 컴포넌트 ─────────────────────────────────────
 
-interface DailyListViewProps {
+interface DailyListViewProps extends UnifiedItemChangeHandlers {
   items: UnifiedItem[];
   returnTo: string;
   showSpaceContext: boolean;
@@ -44,6 +43,9 @@ export function DailyListView({
   items,
   returnTo,
   showSpaceContext,
+  canManageEvents,
+  onItemUpdated,
+  onItemRemoved,
 }: DailyListViewProps) {
   const [selectedItem, setSelectedItem] = useState<UnifiedItem | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
@@ -116,15 +118,16 @@ export function DailyListView({
       </div>
 
       {/* 상세 패널 */}
-      <SlidePanel
+      <UnifiedItemDetailPanel
+        item={selectedItem}
         open={panelOpen}
         onOpenChange={setPanelOpen}
-        title={selectedItem?.title}
-      >
-        {selectedItem && (
-          <UnifiedItemDetail item={selectedItem} onClose={() => setPanelOpen(false)} returnTo={returnTo} />
-        )}
-      </SlidePanel>
+        onItemChange={setSelectedItem}
+        returnTo={returnTo}
+        canManageEvents={canManageEvents}
+        onItemUpdated={onItemUpdated}
+        onItemRemoved={onItemRemoved}
+      />
     </>
   );
 }

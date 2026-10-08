@@ -49,17 +49,17 @@ function StudentSummaryInline({ student }: { student: StudentRosterStat }) {
             </div>
           </dl>
           <nav aria-label={`${displayName} 기록 바로가기`} className="mt-4 flex flex-wrap gap-2 border-t border-border pt-3">
-            <Button asChild variant="outline" size="sm">
-              <Link href={buildAdminStudentDetailHref(student.id, "overview")}><Settings aria-hidden="true" />학생 상세</Link>
+            <Button asChild variant="outline" size="sm" className="gap-1.5">
+              <Link href={buildAdminStudentDetailHref(student.id, "overview")}><Settings className="size-3.5" aria-hidden="true" />학생 상세</Link>
             </Button>
-            <Button asChild variant="outline" size="sm">
-              <Link href={`/dashboard/admin/students/${encodeURIComponent(student.id)}/notes`}><BookOpen aria-hidden="true" />노트</Link>
+            <Button asChild variant="outline" size="sm" className="gap-1.5">
+              <Link href={`/dashboard/admin/students/${encodeURIComponent(student.id)}/notes`}><BookOpen className="size-3.5" aria-hidden="true" />노트</Link>
             </Button>
-            <Button asChild variant="outline" size="sm">
-              <Link href={buildAdminStudentDetailHref(student.id, "qna")}><HelpCircle aria-hidden="true" />Q&A</Link>
+            <Button asChild variant="outline" size="sm" className="gap-1.5">
+              <Link href={buildAdminStudentDetailHref(student.id, "qna")}><HelpCircle className="size-3.5" aria-hidden="true" />Q&A</Link>
             </Button>
-            <Button asChild variant="outline" size="sm">
-              <Link href={buildAdminStudentDetailHref(student.id, "digging")}><Disc3 aria-hidden="true" />디깅</Link>
+            <Button asChild variant="outline" size="sm" className="gap-1.5">
+              <Link href={buildAdminStudentDetailHref(student.id, "digging")}><Disc3 className="size-3.5" aria-hidden="true" />디깅</Link>
             </Button>
           </nav>
         </section>

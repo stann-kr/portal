@@ -100,6 +100,64 @@ export async function createCalendarEvent(
 
 // ─── 수정 ────────────────────────────────────────
 
+type CalendarEventWriteResult =
+  | { ok: true; value: CreatedCalendarEvent }
+  | { ok: false; error: string };
+
+/** 본인 일정의 현재 값을 기준으로 patch를 검증하고 같은 owner 조건으로만 갱신한다. */
+async function writeOwnCalendarEventPatch(
+  userId: string,
+  eventId: string,
+  data: unknown,
+): Promise<CalendarEventWriteResult> {
+  const db = createDb();
+  const [current] = await db
+    .select({
+      title: calendarEvents.title,
+      eventType: calendarEvents.eventType,
+      startTime: calendarEvents.startTime,
+      endTime: calendarEvents.endTime,
+      description: calendarEvents.description,
+    })
+    .from(calendarEvents)
+    .where(
+      and(
+        eq(calendarEvents.id, eventId),
+        eq(calendarEvents.userId, userId),
+      ),
+    )
+    .limit(1);
+  if (!current) return { ok: false, error: "일정을 찾을 수 없거나 권한이 없습니다." };
+
+  const parsed = parseCalendarEventUpdateInput(data, current);
+  if (!parsed.ok) return parsed;
+
+  await db
+    .update(calendarEvents)
+    .set(parsed.value)
+    .where(
+      and(
+        eq(calendarEvents.id, eventId),
+        eq(calendarEvents.userId, userId),
+      ),
+    );
+
+  revalidatePath("/dashboard/calendar");
+  revalidatePath("/dashboard/student");
+  const next = { ...current, ...parsed.value };
+  return {
+    ok: true,
+    value: {
+      id: eventId,
+      title: next.title,
+      eventType: next.eventType,
+      startTime: next.startTime.toISOString(),
+      endTime: next.endTime?.toISOString() ?? null,
+      description: next.description,
+    },
+  };
+}
+
 /**
  * 캘린더 이벤트 수정 (드래그&드롭 날짜 변경 포함).
  */
@@ -114,41 +172,34 @@ export async function updateCalendarEvent(
   },
 ) {
   const session = await requireAuth();
-  const db = createDb();
+  const result = await writeOwnCalendarEventPatch(session.user.id!, eventId, data);
+  if (!result.ok) throw new Error(result.error);
+}
 
-  const [current] = await db
-    .select({
-      title: calendarEvents.title,
-      eventType: calendarEvents.eventType,
-      startTime: calendarEvents.startTime,
-      endTime: calendarEvents.endTime,
-      description: calendarEvents.description,
-    })
-    .from(calendarEvents)
-    .where(
-      and(
-        eq(calendarEvents.id, eventId),
-        eq(calendarEvents.userId, session.user.id!),
-      ),
-    )
-    .limit(1);
-  if (!current) throw new Error("일정을 찾을 수 없거나 권한이 없습니다.");
+/**
+ * 상세 패널의 일정 수정 form action. 검증 실패를 throw 대신 상태로 돌려 입력을 유지한다.
+ */
+export async function updateCalendarEventDetails(
+  _prev: CreateEventState,
+  formData: FormData,
+): Promise<CreateEventState> {
+  const session = await requireAuth();
+  const eventId = formData.get("eventId");
+  if (typeof eventId !== "string" || !eventId) {
+    return { error: "수정할 일정을 찾을 수 없습니다." };
+  }
+  const parsed = parseCalendarEventCreateInput({
+    title: formData.get("title"),
+    eventType: formData.get("eventType"),
+    startTime: formData.get("startTime"),
+    endTime: formData.get("endTime"),
+    description: formData.get("description"),
+  });
+  if (!parsed.ok) return { error: parsed.error };
 
-  const parsed = parseCalendarEventUpdateInput(data, current);
-  if (!parsed.ok) throw new Error(parsed.error);
-
-  await db
-    .update(calendarEvents)
-    .set(parsed.value)
-    .where(
-      and(
-        eq(calendarEvents.id, eventId),
-        eq(calendarEvents.userId, session.user.id!),
-      ),
-    );
-
-  revalidatePath("/dashboard/calendar");
-  revalidatePath("/dashboard/student");
+  const result = await writeOwnCalendarEventPatch(session.user.id!, eventId, parsed.value);
+  if (!result.ok) return { error: result.error };
+  return { id: eventId, event: result.value };
 }
 
 // ─── 삭제 ────────────────────────────────────────
