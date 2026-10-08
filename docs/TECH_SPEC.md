@@ -64,7 +64,7 @@ OpenNext → Cloudflare Worker
 | `/dashboard/student` | 학생 원페이지 포털 |
 | `/dashboard/admin` | 관리자 원페이지 포털 |
 | `/dashboard/student/notes` | 학생 노트 목록 |
-| `/dashboard/student/assignments/[id]` | 과제 상세 직접 접근 |
+| `/dashboard/student/assignments/[id]` | 과제 재생·타임라인 피드백. 학생 본인과 관리자만 열고, 검증된 `returnTo`로 직전 화면에 복귀한다. 관리자에게는 제출 학생을 표시한다 |
 | `/dashboard/student/notes/new` | 학생 본인 노트 전체 화면 작성 |
 | `/dashboard/student/digging` | 학생 본인 디깅 보드: 트랙 값 편집·삭제, 컬럼 관리. 검증된 `returnTo`로 복귀 |
 | `/dashboard/admin/students/[id]/notes` | 관리자 대상 학생 노트 목록 |
@@ -75,7 +75,7 @@ OpenNext → Cloudflare Worker
 | `/community/[postId]/history` | 커뮤니티 게시물 불변 full-snapshot revision 조회·선택 복원 |
 | `/community/trash` | 권한 범위의 게시물 휴지통·복원·관리자 영구 삭제 |
 | `/dashboard/admin/students/new` | 학생 추가 |
-| `/dashboard/admin/students/[id]` | 학생 상세 |
+| `/dashboard/admin/students/[id]` | 학생 상세: 개요·과제·디깅·노트·Q&A 탭. 과제 탭은 제출 최신순과 과제별 피드백 수를 보여 준다 |
 | `/dashboard/admin/categories` | 자유 게시판 채널 관리. 관리자 커뮤니티 section과 `/community`에서 진입 |
 | `/dashboard/qna/**` | Q&A 목록·작성·상세·불변 event 이력·휴지통 |
 | `/community/**` | 커뮤니티 목록·작성·상세 |

@@ -669,8 +669,15 @@ test("digging board saves only changed cells, clears numbers and ratings without
     ]}
     initialTracks={[{ id: "track-1", linkUrl: null, createdAt: new Date("2026-10-09T01:00:00.000Z"), values: { title: "Intro", bpm: 124, rating: 3 } }]}
   />);
-  const desktopInput = (label: string) => [...browser.document.querySelectorAll(`table input[aria-label="${label}"]`)][0] as unknown as HTMLInputElement;
-  const blur = async (input: HTMLInputElement) => act(async () => { input.dispatchEvent(new browser.FocusEvent("focusout", { bubbles: true })); input.dispatchEvent(new browser.FocusEvent("blur")); });
+  const desktopInput = (label: string) => {
+    const input = browser.document.querySelector(`table input[aria-label="${label}"]`);
+    assert.ok(input instanceof browser.HTMLInputElement);
+    return input;
+  };
+  const blur = async (input: ReturnType<typeof desktopInput>) => act(async () => {
+    input.dispatchEvent(new browser.FocusEvent("focusout", { bubbles: true }));
+    input.dispatchEvent(new browser.FocusEvent("blur"));
+  });
 
   await blur(desktopInput("트랙명"));
   await settle();

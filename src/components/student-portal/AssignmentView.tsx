@@ -24,6 +24,7 @@ import { SlidePanel } from "./SlidePanel";
 import { AssignmentDetailPanel } from "./AssignmentDetailPanel";
 import { EmptyState } from "@/components/ui/empty-state";
 import { StatusBadge } from "@/components/ui/status-badge";
+import { describeAssignmentMedia } from "@/lib/unified-item-normalization";
 import { formatKst } from "@/lib/kst-format";
 
 // ── 타입 ──────────────────────────────────────────
@@ -42,16 +43,12 @@ interface AssignmentViewProps {
 // ── 헬퍼 ─────────────────────────────────────────
 
 function mediaIcon(url: string) {
-  if (url.includes("youtube") || url.includes("youtu.be"))
+  if (describeAssignmentMedia(url).startsWith("YouTube"))
     return <Youtube className="w-4 h-4 text-primary" aria-hidden="true" />;
   return <Music className="w-4 h-4 text-primary" aria-hidden="true" />;
 }
 
-function mediaPlatform(url: string) {
-  return url.includes("youtube") || url.includes("youtu.be")
-    ? "YouTube 믹스셋"
-    : "SoundCloud 믹스셋";
-}
+
 
 function formatDate(date: Date | null): string {
   return formatKst(date, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }, "제출일 미정");
@@ -171,7 +168,7 @@ export function AssignmentView({ initialAssignments }: AssignmentViewProps) {
 
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-foreground truncate">
-                    {mediaPlatform(a.mediaUrl)}
+                    {describeAssignmentMedia(a.mediaUrl)}
                   </p>
                   <p className="text-xs text-muted-foreground mt-0.5">
                     {formatDate(a.submittedAt)}

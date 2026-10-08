@@ -108,7 +108,7 @@ export function UnifiedCalendar({
       const allDayEndDate = typeof item.metadata.allDayEndDate === "string"
         ? item.metadata.allDayEndDate
         : null;
-      const title = item.type === "ASSIGNMENT" ? "제출한 믹스셋" : item.title;
+      const title = item.title;
       return {
         id: getUnifiedItemKey(item),
         title: showSpaceContext ? `${title} · ${item.space.label}` : title,

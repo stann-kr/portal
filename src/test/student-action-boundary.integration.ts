@@ -29,6 +29,7 @@ let diggingActions: typeof import("@/lib/actions/digging");
 let lessonActions: typeof import("@/lib/actions/lessons");
 let commentActions: typeof import("@/lib/actions/comments");
 let feedbackActions: typeof import("@/lib/actions/feedbacks");
+let assignmentActions: typeof import("@/lib/actions/assignments");
 
 function createSession(id: string, role: "admin" | "student"): AuthSession {
   return {
@@ -62,7 +63,7 @@ mock.module("next/cache", {
 });
 
 before(async () => {
-  [calendarActions, curriculumActions, diggingActions, lessonActions, commentActions, feedbackActions] =
+  [calendarActions, curriculumActions, diggingActions, lessonActions, commentActions, feedbackActions, assignmentActions] =
     await Promise.all([
       import("@/lib/actions/calendarEvents"),
       import("@/lib/actions/curriculum"),
@@ -70,6 +71,7 @@ before(async () => {
       import("@/lib/actions/lessons"),
       import("@/lib/actions/comments"),
       import("@/lib/actions/feedbacks"),
+      import("@/lib/actions/assignments"),
     ]);
 });
 
@@ -148,6 +150,29 @@ test("피드백 삭제·조회는 과제 대상과 학생 ownership을 보존한
   activeSession = createSession("admin-1", "admin");
   await feedbackActions.deleteFeedback("feedback-1", "assignment-1");
   assert.equal((await db.select().from(feedbacks)).length, 0);
+});
+
+test("학생별 과제 요약은 관리자에게만 최신 제출순과 피드백 수를 돌려준다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("admin-1", "admin"));
+  await seedProfile(db, "admin-1", "admin");
+  await seedProfile(db, "student-1");
+  await seedProfile(db, "student-2");
+  await db.insert(assignments).values([
+    { id: "older", studentId: "student-1", mediaUrl: "https://youtu.be/older", submittedAt: new Date("2026-08-01T00:00:00.000Z") },
+    { id: "newer", studentId: "student-1", mediaUrl: "https://soundcloud.com/dj/newer", submittedAt: new Date("2026-08-05T00:00:00.000Z") },
+    { id: "other", studentId: "student-2", mediaUrl: "https://youtu.be/other", submittedAt: new Date("2026-08-06T00:00:00.000Z") },
+  ]);
+  await db.insert(feedbacks).values([
+    { id: "f-1", assignmentId: "older", timeMarker: 30, content: "첫 피드백" },
+    { id: "f-2", assignmentId: "older", timeMarker: 90, content: "둘째 피드백" },
+  ]);
+
+  const summaries = await assignmentActions.getAssignmentSummariesByStudent("student-1");
+  assert.deepEqual(summaries.map(({ id, feedbackCount }) => [id, feedbackCount]), [["newer", 0], ["older", 2]]);
+
+  await assert.rejects(assignmentActions.getAssignmentSummariesByStudent("admin-1"), /Student not found/u);
+  activeSession = createSession("student-1", "student");
+  await assert.rejects(assignmentActions.getAssignmentSummariesByStudent("student-1"), /Admin only/u);
 });
 
 test("피드백은 잘못된 재생 시점을 저장하지 않고 긴 믹스셋의 시점을 정확히 보존한다", { concurrency: false }, async (context) => {

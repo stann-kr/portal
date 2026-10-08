@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   createCalendarEventUnifiedItem,
   createDiggingTrackUnifiedItem,
+  describeAssignmentMedia,
   getUnifiedItemSpaceLabel,
   normalizeUnifiedItems,
   type UnifiedItemNormalizationInput,
@@ -65,6 +66,16 @@ test("모든 통합 유형에 학생 스페이스와 포털 출처를 제공한�
     assert.deepEqual(item.source.kind, "PORTAL");
     assert.equal(item.source.label, "포털");
   }
+});
+
+test("과제 항목 제목은 원본 URL 대신 제출 플랫폼을 표시한다", () => {
+  const assignment = normalizeUnifiedItems(createInput()).find((item) => item.type === "ASSIGNMENT");
+  assert.equal(assignment?.title, "제출한 믹스셋");
+  assert.equal(assignment?.metadata.mediaUrl, "https://example.com/media");
+  assert.equal(describeAssignmentMedia("https://m.youtube.com/watch?v=abc"), "YouTube 믹스셋");
+  assert.equal(describeAssignmentMedia("https://youtu.be/abc"), "YouTube 믹스셋");
+  assert.equal(describeAssignmentMedia("https://soundcloud.com/dj/mix"), "SoundCloud 믹스셋");
+  assert.equal(describeAssignmentMedia("https://youtube.com.evil.test/watch"), "제출한 믹스셋");
 });
 
 test("레슨은 EVENT/LESSON으로 정규화하고 동일 시각의 calendar event를 유지한다", () => {

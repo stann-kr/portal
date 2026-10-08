@@ -12,13 +12,18 @@ import { getCurriculumByStudent } from "@/lib/actions/curriculum";
 import { getLessonsByStudent } from "@/lib/actions/lessons";
 import { getOrSeedColumns, getDiggingTracks } from "@/lib/actions/digging";
 import { getQnaThreadsByStudent } from "@/lib/actions/qna";
+import { getAssignmentSummariesByStudent } from "@/lib/actions/assignments";
+import { EmptyState } from "@/components/ui/empty-state";
+import { StatusBadge } from "@/components/ui/status-badge";
+import { formatKst } from "@/lib/kst-format";
+import { describeAssignmentMedia } from "@/lib/unified-item-normalization";
 import { StudentDetailTabs } from "@/components/admin/StudentDetailTabs";
 import { OverviewTab } from "@/components/admin/OverviewTab";
 import { DiggingBoard } from "@/components/digging/DiggingBoard";
 import { ThreadList } from "@/components/qna/ThreadList";
 import { resolveQnaFilter } from "@/lib/qna-routes";
 import { normalizeDocumentSearchQuery } from "@/lib/document-search";
-import { BookOpen } from "lucide-react";
+import { BookOpen, ChevronRight, Radio } from "lucide-react";
 import Link from "next/link";
 import type { DiggingColumnType, QnaStatus } from "@/db/schema";
 import { ArrowLeft } from "lucide-react";
@@ -52,6 +57,44 @@ async function DiggingTabContent({ studentId }: { studentId: string }) {
       initialTracks={tracks}
       readonly
     />
+  );
+}
+
+async function AssignmentsTabContent({ studentId }: { studentId: string }) {
+  const summaries = await getAssignmentSummariesByStudent(studentId);
+  const returnTo = buildAdminStudentDetailHref(studentId, "assignments");
+
+  if (summaries.length === 0) {
+    return (
+      <EmptyState
+        title="제출한 믹스셋이 없습니다"
+        description="학생이 워크스페이스의 과제 탭에서 YouTube나 SoundCloud 링크를 제출하면 이곳에 표시됩니다."
+        icon={<Radio className="size-4" aria-hidden="true" />}
+      />
+    );
+  }
+
+  return (
+    <ul className="overflow-hidden rounded-lg border border-border bg-surface" aria-label="제출한 믹스셋">
+      {summaries.map((assignment, index) => (
+        <li key={assignment.id} className={index > 0 ? "border-t border-border" : undefined}>
+          <Link
+            href={`/dashboard/student/assignments/${encodeURIComponent(assignment.id)}?returnTo=${encodeURIComponent(returnTo)}`}
+            className="flex items-center gap-3 px-4 py-4 transition-colors hover:bg-muted focus-visible:bg-muted sm:px-5"
+          >
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-semibold text-foreground">{describeAssignmentMedia(assignment.mediaUrl)}</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {formatKst(assignment.submittedAt, { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }, "제출일 미정")} 제출
+                {assignment.feedbackCount > 0 ? ` · 피드백 ${assignment.feedbackCount}건` : ""}
+              </p>
+            </div>
+            <StatusBadge status={assignment.feedbackCount > 0 ? "feedbackReady" : "feedbackWaiting"} />
+            <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+          </Link>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -139,6 +182,16 @@ export default async function StudentDetailPage({
             modules={modules}
             lessons={lessons}
           />
+        )}
+
+        {activeTab === "assignments" && (
+          <Suspense
+            fallback={
+              <div className="h-40 rounded-lg border bg-card animate-pulse motion-reduce:animate-none" />
+            }
+          >
+            <AssignmentsTabContent studentId={studentId} />
+          </Suspense>
         )}
 
         {activeTab === "digging" && (

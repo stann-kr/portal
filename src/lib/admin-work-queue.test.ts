@@ -74,6 +74,16 @@ test("피드백 대기 과제는 오래된 제출부터 정렬한다", () => {
 
   assert.deepEqual(queue.pendingAssignments.map((entry) => entry.id), ["old", "new"]);
   assert.equal(queue.metrics.pendingFeedbackCount, 2);
+
+  // 업무함 미리보기(5건)를 넘는 대기 과제도 펼쳐 볼 수 있도록 모두 반환한다.
+  const many = getAdminWorkQueue(
+    [],
+    [],
+    Array.from({ length: 7 }, (_, day) => assignment(`a${day}`, `2026-08-0${day + 1}T00:00:00.000Z`)),
+    NOW,
+  );
+  assert.equal(many.pendingAssignments.length, 7);
+  assert.equal(many.pendingAssignments[0]?.id, "a0");
 });
 
 test("현재부터 7일 이내의 레슨만 가까운 순서로 포함한다", () => {

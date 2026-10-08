@@ -1,3 +1,6 @@
+"use client";
+
+import { useState } from "react";
 import Link from "next/link";
 import {
   ArrowRight,
@@ -16,6 +19,9 @@ import {
   type PendingFeedbackAssignment,
 } from "@/lib/admin-work-queue";
 import type { StudentRosterStat } from "@/lib/actions/students";
+import { describeAssignmentMedia } from "@/lib/unified-item-normalization";
+
+const QUEUE_PREVIEW_COUNT = 5;
 import { formatKst } from "@/lib/kst-format";
 
 function formatDay(date: Date) {
@@ -61,6 +67,11 @@ export function AdminWorkQueueSection({
     pendingAssignments,
     referenceTime,
   );
+  const [showAllPending, setShowAllPending] = useState(false);
+  const visiblePendingAssignments = showAllPending
+    ? queue.pendingAssignments
+    : queue.pendingAssignments.slice(0, QUEUE_PREVIEW_COUNT);
+  const hiddenPendingCount = queue.pendingAssignments.length - visiblePendingAssignments.length;
   const metrics = [
     { label: "미답변 질문", value: queue.metrics.openThreadCount },
     { label: "피드백 대기", value: queue.metrics.pendingFeedbackCount },
@@ -158,10 +169,10 @@ export function AdminWorkQueueSection({
             />
           ) : (
             <div className="overflow-hidden rounded-lg border border-border bg-surface">
-              {queue.pendingAssignments.map((assignment, index) => (
+              {visiblePendingAssignments.map((assignment, index) => (
                 <Link
                   key={assignment.id}
-                  href={`/dashboard/student/assignments/${assignment.id}`}
+                  href={`/dashboard/student/assignments/${encodeURIComponent(assignment.id)}?returnTo=%2Fdashboard%2Fadmin%3Fsection%3Dwork`}
                   className={`grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 px-4 py-4 transition-colors hover:bg-muted focus-visible:bg-muted sm:flex sm:gap-3 sm:px-5 ${
                     index > 0 ? "border-t border-border" : ""
                   }`}
@@ -171,7 +182,7 @@ export function AdminWorkQueueSection({
                       {displayStudent(assignment)}
                     </p>
                     <p className="mt-1 text-xs leading-5 text-muted-foreground sm:truncate">
-                      {formatDateTime(assignment.submittedAt)} 제출
+                      {describeAssignmentMedia(assignment.mediaUrl)} / {formatDateTime(assignment.submittedAt)} 제출
                     </p>
                   </div>
                   <div className="col-start-1 row-start-2 sm:contents"><StatusBadge status="feedbackWaiting" /></div>
@@ -180,6 +191,18 @@ export function AdminWorkQueueSection({
               ))}
             </div>
           )}
+          {queue.pendingAssignments.length > QUEUE_PREVIEW_COUNT ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="mt-2"
+              aria-expanded={showAllPending}
+              onClick={() => setShowAllPending((value) => !value)}
+            >
+              {showAllPending ? "처음 5건만 보기" : `나머지 ${hiddenPendingCount}건 더 보기`}
+            </Button>
+          ) : null}
         </section>
       </div>
 

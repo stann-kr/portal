@@ -1,4 +1,4 @@
-export const STUDENT_DETAIL_TABS = ["overview", "digging", "notes", "qna"] as const;
+export const STUDENT_DETAIL_TABS = ["overview", "assignments", "digging", "notes", "qna"] as const;
 export type StudentDetailTab = (typeof STUDENT_DETAIL_TABS)[number];
 
 export function resolveStudentDetailTab(value: string | null | undefined): StudentDetailTab {

@@ -145,7 +145,7 @@ export function TodaySection({
                 const href = isAssignment
                   ? `/dashboard/student/assignments/${item.id}`
                   : `/dashboard/qna/${item.id}?returnTo=%2Fdashboard%2Fstudent%3Fsection%3Dtoday`;
-                const title = isAssignment ? "제출한 믹스셋" : item.title;
+                const title = item.title;
 
                 return (
                   <Link

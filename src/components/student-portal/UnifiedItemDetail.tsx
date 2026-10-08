@@ -10,7 +10,7 @@
 "use client";
 
 import Link from "next/link";
-import { Disc3, PencilLine } from "lucide-react";
+import { Disc3, MessageSquareText, PencilLine } from "lucide-react";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 import { UnifiedItemSpaceBadge, UnifiedItemTypeBadge } from "@/components/ui/unified-item-type";
 import { RichTextContent } from "@/components/editor/RichTextContent";
@@ -244,10 +244,17 @@ export function UnifiedItemDetail({
                 rel="noopener noreferrer"
                 className="text-primary hover:underline truncate"
               >
-                재생하기
+                원본 열기
               </a>
             </div>
           ) : null}
+          <Link
+            href={`/dashboard/student/assignments/${encodeURIComponent(item.id)}?returnTo=${encodeURIComponent(returnTo)}`}
+            className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-accent"
+          >
+            <MessageSquareText className="h-3.5 w-3.5" aria-hidden="true" />
+            {canManageEvents ? "재생하며 피드백 보기" : "재생하며 피드백 작성"}
+          </Link>
         </div>
       ) : null}
     </div>

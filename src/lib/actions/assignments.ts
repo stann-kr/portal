@@ -9,7 +9,7 @@
 import { revalidatePath } from "next/cache";
 import { createDb } from "@/db/client";
 import { assignments, feedbacks, profiles } from "@/db/schema";
-import { asc, desc, eq, notExists } from "drizzle-orm";
+import { asc, count, desc, eq, notExists } from "drizzle-orm";
 import {
   requireAuth,
   requireAdmin,
@@ -100,6 +100,27 @@ export async function getAssignmentsByStudent(studentId: string) {
     .from(assignments)
     .where(eq(assignments.studentId, studentId))
     .orderBy(desc(assignments.submittedAt));
+}
+
+/**
+ * 관리자 학생 상세의 과제 목록: 제출 최신순과 과제별 피드백 수.
+ */
+export async function getAssignmentSummariesByStudent(studentId: string) {
+  await requireStudentTarget(studentId);
+  const db = createDb();
+  const rows = await db
+    .select({
+      id: assignments.id,
+      mediaUrl: assignments.mediaUrl,
+      submittedAt: assignments.submittedAt,
+      feedbackCount: count(feedbacks.id),
+    })
+    .from(assignments)
+    .leftJoin(feedbacks, eq(feedbacks.assignmentId, assignments.id))
+    .where(eq(assignments.studentId, studentId))
+    .groupBy(assignments.id)
+    .orderBy(desc(assignments.submittedAt));
+  return rows.map((row) => ({ ...row, feedbackCount: Number(row.feedbackCount) }));
 }
 
 /**

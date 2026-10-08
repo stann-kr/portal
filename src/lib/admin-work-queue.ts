@@ -68,7 +68,8 @@ export function getAdminWorkQueue(
 
   return {
     openThreads: openThreads.slice(0, 5),
-    pendingAssignments: sortedPendingAssignments.slice(0, 5),
+    // 업무함이 처음 5건을 보여 주고 나머지는 펼쳐 볼 수 있도록 전체 정렬 결과를 반환한다.
+    pendingAssignments: sortedPendingAssignments,
     upcomingLessons: upcomingLessons.slice(0, 5),
     metrics: {
       openThreadCount: openThreads.length,

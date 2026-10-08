@@ -4,12 +4,17 @@
  * 데이터 패칭을 서버에서 처리하고, 복잡한 UI 상태는 클라이언트 컴포넌트로 위임합니다.
  */
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { getAssignmentById } from "@/lib/actions/assignments";
 import { getFeedbacksByAssignment } from "@/lib/actions/feedbacks";
-import { requireAuth } from "@/lib/auth-guard";
+import { getStudentById } from "@/lib/actions/students";
+import { getActiveAuthSession } from "@/lib/auth-guard";
 import { AssignmentDetailClient } from "./AssignmentDetailClient";
 import { formatKst } from "@/lib/kst-format";
+import { safeReturnPath } from "@/lib/safe-return-path";
+import { describeAssignmentMedia, getUnifiedItemSpaceLabel } from "@/lib/unified-item-normalization";
+import { buildAdminStudentDetailHref } from "@/lib/student-space-routes";
 
 export type AssignmentFeedback = Awaited<
   ReturnType<typeof getFeedbacksByAssignment>
@@ -17,30 +22,36 @@ export type AssignmentFeedback = Awaited<
 
 export default async function AssignmentDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ returnTo?: string }>;
 }) {
+  const session = await getActiveAuthSession();
+  if (!session?.user?.id) redirect("/login");
+
   const { id: assignmentId } = await params;
+  const isAdmin = session.user.role === "admin";
+  const fallback = isAdmin ? "/dashboard/admin?section=work" : "/dashboard/student?section=workspace&view=assignments";
+  const returnTo = safeReturnPath((await searchParams).returnTo, fallback);
 
-  const [assignment, fb, session] = await Promise.all([
-    getAssignmentById(assignmentId),
-    getFeedbacksByAssignment(assignmentId),
-    requireAuth(),
-  ]);
-
+  // 다른 학생의 과제와 없는 과제를 같은 화면으로 처리해 존재 여부를 드러내지 않는다.
+  const assignment = await getAssignmentById(assignmentId).catch(() => null);
   if (!assignment) {
     return (
       <div className="mx-auto max-w-4xl px-4 py-6 text-center text-muted-foreground sm:px-6">
         <p>과제를 찾을 수 없습니다.</p>
-        <Link
-          href="/dashboard/student/assignments"
-          className="text-sm underline mt-2 block"
-        >
-          목록으로
+        <Link href={returnTo} className="text-sm underline mt-2 block">
+          이전 화면으로 돌아가기
         </Link>
       </div>
     );
   }
+
+  const [fb, student] = await Promise.all([
+    getFeedbacksByAssignment(assignmentId),
+    isAdmin ? getStudentById(assignment.studentId) : Promise.resolve(null),
+  ]);
 
   const feedbackList = fb.map((f: AssignmentFeedback) => ({
     id: f.id,
@@ -48,37 +59,47 @@ export default async function AssignmentDetailPage({
     content: f.content,
     createdAt: f.createdAt,
   }));
-  const isAdmin = session?.user?.role === "admin";
 
   const submittedDate = formatKst(
     assignment.submittedAt,
-    { year: "numeric", month: "long", day: "numeric" },
+    { year: "numeric", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" },
     "제출일 미정",
   );
-  const backHref = isAdmin ? "/dashboard/admin?section=work" : "/dashboard/student?section=today";
-  const backLabel = isAdmin ? "업무함으로" : "학생 포털로";
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 px-4 py-6 sm:space-y-8 sm:px-6">
       {/* 헤더 */}
       <div className="space-y-1">
         <Link
-          href={backHref}
+          href={returnTo}
           className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
         >
-          <ArrowLeft className="w-4 h-4" />
-          {backLabel}
+          <ArrowLeft className="w-4 h-4" aria-hidden="true" />
+          이전 화면으로 돌아가기
         </Link>
         <h1 className="mt-2 text-xl font-semibold">
-          믹스셋 피드백
+          {describeAssignmentMedia(assignment.mediaUrl)} 피드백
         </h1>
-        <p className="text-sm text-muted-foreground">제출일: {submittedDate}</p>
+        <p className="text-sm text-muted-foreground">
+          {student ? (
+            <>
+              <Link
+                href={buildAdminStudentDetailHref(student.id, "overview")}
+                className="font-medium text-foreground underline-offset-4 hover:underline"
+              >
+                {getUnifiedItemSpaceLabel(student)}
+              </Link>
+              {" · "}
+            </>
+          ) : null}
+          제출 {submittedDate}
+        </p>
       </div>
 
       <AssignmentDetailClient
         key={assignmentId}
         assignmentId={assignmentId}
-        actorId={session.user.id!}
+        actorId={session.user.id}
         mediaUrl={assignment.mediaUrl}
         feedbackList={feedbackList}
         isAdmin={isAdmin}

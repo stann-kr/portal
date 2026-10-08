@@ -4,7 +4,7 @@
  * URL searchParams(?tab=xxx) 기반으로 탭 활성 상태 표시.
  */
 import Link from "next/link";
-import { LayoutDashboard, Disc3, BookOpen, HelpCircle } from "lucide-react";
+import { LayoutDashboard, Disc3, BookOpen, HelpCircle, Radio } from "lucide-react";
 import {
   buildAdminStudentDetailHref,
   type StudentDetailTab,
@@ -12,6 +12,7 @@ import {
 
 const TABS: { key: StudentDetailTab; label: string; icon: React.ElementType }[] = [
   { key: "overview", label: "개요", icon: LayoutDashboard },
+  { key: "assignments", label: "과제", icon: Radio },
   { key: "digging",  label: "디깅",  icon: Disc3 },
   { key: "notes",    label: "노트",    icon: BookOpen },
   { key: "qna",      label: "Q&A",      icon: HelpCircle },

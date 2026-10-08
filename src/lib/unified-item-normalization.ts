@@ -73,6 +73,23 @@ export type UnifiedItemNormalizationInput = {
   feedbackCounts: Record<string, number>;
 };
 
+/** 목록·캘린더에 원본 URL 대신 제출 플랫폼을 보여 주는 과제 제목. */
+export function describeAssignmentMedia(mediaUrl: string): string {
+  let hostname = "";
+  try {
+    hostname = new URL(mediaUrl).hostname.toLowerCase();
+  } catch {
+    return "제출한 믹스셋";
+  }
+  if (hostname === "youtu.be" || hostname === "youtube.com" || hostname.endsWith(".youtube.com")) {
+    return "YouTube 믹스셋";
+  }
+  if (hostname === "soundcloud.com" || hostname.endsWith(".soundcloud.com")) {
+    return "SoundCloud 믹스셋";
+  }
+  return "제출한 믹스셋";
+}
+
 /** 학생 스페이스의 단일 표시명 규칙. */
 export function getUnifiedItemSpaceLabel({
   displayName,
@@ -240,7 +257,7 @@ export function normalizeUnifiedItems({
     items.push({
       id: assignment.id,
       type: "ASSIGNMENT",
-      title: assignment.mediaUrl,
+      title: describeAssignmentMedia(assignment.mediaUrl),
       date: new Date(assignment.submittedAt ?? Date.now()),
       metadata: {
         mediaUrl: assignment.mediaUrl,
