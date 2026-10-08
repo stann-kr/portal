@@ -165,7 +165,8 @@ export function CalendarSection({
     : hasNoteTarget
       ? buildAdminStudentDetailHref(studentId, "digging")
       : undefined;
-  const canShowCreateMenu = Boolean(noteCreateHref) || canCreateQna || isStudentWorkspace;
+  const canManageLessons = workspaceRole === "admin" && studentId.trim().length > 0;
+  const canShowCreateMenu = Boolean(noteCreateHref) || canCreateQna || isStudentWorkspace || canManageLessons;
 
   // URL이 없을 때만 기기의 직전 탭을 복원하고 history 이동을 구독한다.
   useEffect(() => {
@@ -333,6 +334,7 @@ export function CalendarSection({
                 canCreateQna={canCreateQna}
                 canCreateEvent={isStudentWorkspace}
                 canCreateDigging={isStudentWorkspace}
+                canCreateLesson={canManageLessons}
                 onSuccess={(item) => {
                   onAddItem?.(item);
                   clearCreateSelection();
@@ -393,6 +395,7 @@ export function CalendarSection({
                 preset={calendarPreset}
                 onPresetChange={handlePresetChange}
                 canManageEvents={isStudentWorkspace}
+                canManageLessons={canManageLessons}
                 onItemUpdated={onAddItem}
                 onItemRemoved={onRemoveItem}
               />
@@ -405,6 +408,7 @@ export function CalendarSection({
               returnTo={workspaceReturnTo}
               showSpaceContext={showSpaceContext}
               canManageEvents={isStudentWorkspace}
+              canManageLessons={canManageLessons}
               onItemUpdated={onAddItem}
               onItemRemoved={onRemoveItem}
             />
@@ -417,6 +421,7 @@ export function CalendarSection({
               showSpaceContext={showSpaceContext}
               initialType={allItemsInitialType}
               canManageEvents={isStudentWorkspace}
+              canManageLessons={canManageLessons}
               onItemUpdated={onAddItem}
               onItemRemoved={onRemoveItem}
               onInitialTypeCleared={() => {

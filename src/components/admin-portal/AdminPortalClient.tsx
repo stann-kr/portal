@@ -7,7 +7,7 @@
 
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { CalendarDays, Inbox, Megaphone, MessagesSquare, Users } from "lucide-react";
-import { upsertUnifiedItems, type UnifiedItem } from "@/lib/utils/unifiedItemUtils";
+import { getUnifiedItemKey, upsertUnifiedItems, type UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 import type { StudentRosterStat } from "@/lib/actions/students";
 import type {
   AdminQueueThread,
@@ -102,6 +102,7 @@ export function AdminPortalClient({
   const [isLoadingCalendar, startCalendarTransition] = useTransition();
   const [calendarError, setCalendarError] = useState<string | null>(null);
   const calendarRequestRef = useRef(0);
+  const calendarLoadedStudentIdRef = useRef(initialStudentId);
 
   const selectStudent = useCallback((studentId: string, historyMode: "push" | "replace" | "none") => {
     if (!students.some((student) => student.id === studentId)) return;
@@ -109,6 +110,7 @@ export function AdminPortalClient({
     setSelectedStudentId(studentId);
     setCalendarItems([]);
     setCalendarLoadedStudentId("");
+    calendarLoadedStudentIdRef.current = "";
     setCalendarError(null);
 
     if (historyMode !== "none") {
@@ -128,6 +130,7 @@ export function AdminPortalClient({
         if (calendarRequestRef.current === requestId) {
           setCalendarItems(items);
           setCalendarLoadedStudentId(studentId);
+          calendarLoadedStudentIdRef.current = studentId;
         }
       } catch {
         if (calendarRequestRef.current === requestId) {
@@ -176,6 +179,16 @@ export function AdminPortalClient({
   }, [selectStudent, selectedStudentId, students]);
 
   const handleStudentChange = (studentId: string) => selectStudent(studentId, "push");
+  // 레슨 예약·변경·삭제는 현재 학생 캘린더에 즉시 반영한다. 다른 학생으로 바뀐 뒤 늦은 결과는 무시한다.
+  const upsertCalendarItem = useCallback((item: UnifiedItem) => {
+    setCalendarItems((current) => item.space.studentId === calendarLoadedStudentIdRef.current
+      ? upsertUnifiedItems(current, [item])
+      : current);
+  }, []);
+  const removeCalendarItem = useCallback((item: UnifiedItem) => {
+    const key = getUnifiedItemKey(item);
+    setCalendarItems((current) => current.filter((candidate) => getUnifiedItemKey(candidate) !== key));
+  }, []);
   const selectedStudent = students.find((student) => student.id === selectedStudentId);
   const selectedSpaceLabel = selectedStudent
     ? getUnifiedItemSpaceLabel(selectedStudent)
@@ -226,6 +239,8 @@ export function AdminPortalClient({
               spaceLabel={selectedSpaceLabel}
               workspaceRole="admin"
               canCreateQna={false}
+              onAddItem={upsertCalendarItem}
+              onRemoveItem={removeCalendarItem}
               loading={isLoadingCalendar}
               loadError={calendarError}
               onRetry={() => selectedStudentId && selectStudent(selectedStudentId, "none")}

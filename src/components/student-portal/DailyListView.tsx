@@ -46,6 +46,7 @@ export function DailyListView({
   returnTo,
   showSpaceContext,
   canManageEvents,
+  canManageLessons,
   onItemUpdated,
   onItemRemoved,
 }: DailyListViewProps) {
@@ -129,6 +130,7 @@ export function DailyListView({
         onItemChange={setSelectedItem}
         returnTo={returnTo}
         canManageEvents={canManageEvents}
+        canManageLessons={canManageLessons}
         onItemUpdated={onItemUpdated}
         onItemRemoved={onItemRemoved}
       />

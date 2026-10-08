@@ -200,6 +200,42 @@ test("학생 생성은 이메일을 정규화하고 대소문자만 다른 중�
   assert.equal(created?.role, "student");
 });
 
+test("레슨 예약·시간 변경은 관리자와 대상 학생 레슨으로 제한하고 결과를 상태로 돌려준다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("admin-1", "admin"));
+  await seedProfile(db, "admin-1", "admin");
+  await seedProfile(db, "student-1");
+  await seedProfile(db, "student-2");
+  const form = (scheduledAt: string) => {
+    const data = new FormData();
+    data.set("scheduledAt", scheduledAt);
+    return data;
+  };
+
+  const created = await lessonActions.createLesson("student-1", {}, form("2026-10-09T19:30"));
+  assert.equal(created.success, true);
+  assert.equal(created.lesson?.scheduledAt, "2026-10-09T10:30:00.000Z");
+  const lessonId = created.lesson!.id;
+  await db.insert(lessons).values({ id: "other-lesson", studentId: "student-2", scheduledAt: new Date("2026-10-11T10:00:00.000Z") });
+
+  assert.deepEqual(await lessonActions.rescheduleLesson(lessonId, "student-1", {}, form("not-a-date")), { error: "유효하지 않은 날짜입니다." });
+  assert.match(
+    (await lessonActions.rescheduleLesson("other-lesson", "student-1", {}, form("2026-10-12T19:00"))).error ?? "",
+    /찾을 수 없습니다/u,
+    "다른 학생의 레슨은 학생 ID를 바꿔 보내도 바뀌지 않는다",
+  );
+  const moved = await lessonActions.rescheduleLesson(lessonId, "student-1", {}, form("2026-10-12T20:00"));
+  assert.equal(moved.lesson?.scheduledAt, "2026-10-12T11:00:00.000Z");
+
+  const rows = await db.select().from(lessons).orderBy(lessons.id);
+  assert.deepEqual(
+    rows.map((row) => [row.id === lessonId ? "created" : row.id, row.scheduledAt.toISOString()]).sort(),
+    [["created", "2026-10-12T11:00:00.000Z"], ["other-lesson", "2026-10-11T10:00:00.000Z"]],
+  );
+
+  activeSession = createSession("student-1", "student");
+  await assert.rejects(lessonActions.rescheduleLesson(lessonId, "student-1", {}, form("2026-10-13T20:00")), /Admin only/u);
+});
+
 test("대시보드 게시물 요약은 본문 없이 범위·정렬·개수를 제한한다", { concurrency: false }, async (context) => {
   const db = await setupDatabase(context, createSession("student-1", "student"));
   await seedProfile(db, "student-1");

@@ -18,6 +18,7 @@ import {
   CalendarEventActions,
   isEditableCalendarEventItem,
 } from "@/components/calendar/CalendarEventActions";
+import { isManagedLessonItem, LessonActions } from "@/components/calendar/LessonActions";
 import { formatKst } from "@/lib/kst-format";
 import { buildAdminStudentDetailHref, buildStudentDiggingBoardHref } from "@/lib/student-space-routes";
 
@@ -78,6 +79,7 @@ interface UnifiedItemDetailProps {
   onClose: () => void;
   returnTo: string;
   canManageEvents?: boolean;
+  canManageLessons?: boolean;
   onItemUpdated?: (item: UnifiedItem) => void;
   onItemRemoved?: (item: UnifiedItem) => void;
   onBusyChange?: (busy: boolean) => void;
@@ -87,6 +89,7 @@ export function UnifiedItemDetail({
   item,
   returnTo,
   canManageEvents = false,
+  canManageLessons = false,
   onItemUpdated,
   onItemRemoved,
   onBusyChange,
@@ -153,6 +156,14 @@ export function UnifiedItemDetail({
           ) : null}
           {canManageEvents && isEditableCalendarEventItem(item) && onItemUpdated && onItemRemoved ? (
             <CalendarEventActions
+              item={item}
+              onUpdated={onItemUpdated}
+              onDeleted={onItemRemoved}
+              onBusyChange={onBusyChange}
+            />
+          ) : null}
+          {canManageLessons && isManagedLessonItem(item) && onItemUpdated && onItemRemoved ? (
+            <LessonActions
               item={item}
               onUpdated={onItemUpdated}
               onDeleted={onItemRemoved}

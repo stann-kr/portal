@@ -40,6 +40,10 @@ let saveEvent: typeof import("@/lib/actions/calendarEvents").createCalendarEvent
 let editEvent: typeof import("@/lib/actions/calendarEvents").updateCalendarEventDetails = async () => ({});
 let removeEvent: typeof import("@/lib/actions/calendarEvents").deleteCalendarEvent = async () => {};
 let CalendarEventActions: typeof import("@/components/calendar/CalendarEventActions").CalendarEventActions;
+let LessonActions: typeof import("@/components/calendar/LessonActions").LessonActions;
+let saveLesson: typeof import("@/lib/actions/lessons").createLesson = async () => ({});
+let moveLesson: typeof import("@/lib/actions/lessons").rescheduleLesson = async () => ({});
+let removeLesson: typeof import("@/lib/actions/lessons").deleteLesson = async () => {};
 let saveTrack: typeof import("@/lib/actions/digging").createDiggingTrack = async (input) => ({ id: "track", createdAt: new Date(), linkUrl: input.linkUrl ?? null, values: input.values });
 let fetchMetadata: typeof import("@/lib/actions/digging").fetchLinkMeta = async () => ({});
 let saveTrackValue: typeof import("@/lib/actions/digging").updateDiggingTrackValue = async () => {};
@@ -87,6 +91,11 @@ mock.module("@/lib/actions/calendarEvents", { namedExports: {
   createCalendarEvent: (...args: Parameters<typeof saveEvent>) => saveEvent(...args),
   updateCalendarEventDetails: (...args: Parameters<typeof editEvent>) => editEvent(...args),
   deleteCalendarEvent: (...args: Parameters<typeof removeEvent>) => removeEvent(...args),
+} });
+mock.module("@/lib/actions/lessons", { namedExports: {
+  createLesson: (...args: Parameters<typeof saveLesson>) => saveLesson(...args),
+  rescheduleLesson: (...args: Parameters<typeof moveLesson>) => moveLesson(...args),
+  deleteLesson: (...args: Parameters<typeof removeLesson>) => removeLesson(...args),
 } });
 mock.module("@/lib/actions/curriculum", { namedExports: { toggleModuleComplete: (...args: Parameters<typeof toggleModule>) => toggleModule(...args) } });
 mock.module("@/lib/actions/digging", { namedExports: {
@@ -154,6 +163,7 @@ before(async () => {
   ({ SlidePanel } = await import("@/components/student-portal/SlidePanel"));
   ({ EventFormDialog } = await import("@/components/calendar/EventFormDialog"));
   ({ CalendarEventActions } = await import("@/components/calendar/CalendarEventActions"));
+  ({ LessonActions } = await import("@/components/calendar/LessonActions"));
   ({ AddTrackDialog } = await import("@/components/digging/AddTrackDialog"));
   ({ DiggingBoard } = await import("@/components/digging/DiggingBoard"));
   ({ CurriculumView } = await import("@/components/student-portal/CurriculumView"));
@@ -448,6 +458,69 @@ test("creation menu hands keyboard focus to its dialog and returns it to the sta
   await escape();
   assert.equal(browser.document.querySelector('[role="dialog"]'), null);
   assert.equal(browser.document.activeElement, button("새 항목 추가"));
+});
+
+test("admin lesson booking from the calendar keeps the chosen time on failure and adds the lesson", async (context) => {
+  const created: UnifiedItem[] = [];
+  const requests: { studentId: string; scheduledAt: unknown }[] = [];
+  saveLesson = async (studentId, _previous, data) => {
+    requests.push({ studentId, scheduledAt: data.get("scheduledAt") });
+    return { error: "유효하지 않은 날짜입니다." };
+  };
+  context.after(() => { saveLesson = async () => ({}); });
+  await render(context, <CreateEntryDropdown studentId="student-1" diggingColumns={[]} spaceLabel="민지" defaultDate="2026-10-09T09:00"
+    canCreateQna={false} canCreateEvent={false} canCreateDigging={false} canCreateLesson onSuccess={(item) => created.push(item)} />);
+  await act(async () => {
+    button("새 항목 추가").focus();
+    button("새 항목 추가").dispatchEvent(new browser.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+  });
+  await settle();
+  const item = browser.document.querySelector('[role="menuitem"]');
+  assert.match(item?.textContent ?? "", /레슨 예약/u);
+  await act(async () => { item!.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Enter", bubbles: true })); });
+  await settle();
+  assert.equal(inputValue("scheduledAt"), "2026-10-09T09:00", "선택한 날짜와 기본 시각으로 시작한다");
+  await fill("lesson-schedule-start", "2026-10-09T19:30");
+  await press("레슨 저장");
+  assert.equal(browser.document.querySelector('[role="alert"]')?.textContent, "유효하지 않은 날짜입니다.");
+  assert.equal(inputValue("scheduledAt"), "2026-10-09T19:30");
+  assert.deepEqual(requests[0], { studentId: "student-1", scheduledAt: "2026-10-09T19:30" });
+
+  saveLesson = async () => ({ success: true, lesson: { id: "lesson-9", scheduledAt: "2026-10-09T10:30:00.000Z" } });
+  await press("레슨 저장");
+  assert.equal(browser.document.querySelector('[role="dialog"]'), null);
+  assert.deepEqual(created.map((entry) => [entry.id, entry.subType, entry.source.entity, entry.space.studentId]), [["lesson-9", "LESSON", "LESSON", "student-1"]]);
+});
+
+test("admin lesson detail reschedules and deletes only after a cancel-first confirmation", async (context) => {
+  const lesson: UnifiedItem = {
+    id: "lesson-1", type: "EVENT", subType: "LESSON", title: "레슨", date: new Date("2026-10-09T10:00:00.000Z"), endDate: null, metadata: {},
+    space: { studentId: "student-1", label: "민지" }, source: { kind: "PORTAL", entity: "LESSON", label: "포털" },
+  };
+  const updates: UnifiedItem[] = [];
+  const removals: string[] = [];
+  moveLesson = async (lessonId, studentId, _previous, data) => {
+    assert.deepEqual([lessonId, studentId], ["lesson-1", "student-1"]);
+    return { success: true, lesson: { id: lessonId, scheduledAt: new Date(`${String(data.get("scheduledAt"))}:00+09:00`).toISOString() } };
+  };
+  removeLesson = async () => { throw new Error("offline"); };
+  context.after(() => { moveLesson = async () => ({}); removeLesson = async () => {}; });
+  await render(context, <LessonActions item={lesson} onUpdated={(next) => updates.push(next)} onDeleted={(removed) => removals.push(removed.id)} />);
+
+  await press("레슨 시간 변경");
+  assert.equal(inputValue("scheduledAt"), "2026-10-09T19:00");
+  await fill("lesson-reschedule-lesson-1", "2026-10-10T20:00");
+  await press("저장");
+  assert.equal(updates[0]?.date.toISOString(), "2026-10-10T11:00:00.000Z");
+  assert.equal(browser.document.querySelector('[role="status"]')?.textContent, "레슨 시간을 변경했습니다.");
+
+  await press("레슨 삭제");
+  assert.equal(browser.document.activeElement?.textContent, "취소");
+  await press("삭제");
+  assert.match(browser.document.querySelector('[role="alert"]')?.textContent ?? "", /삭제하지 못했습니다/u);
+  removeLesson = async () => {};
+  await press("삭제");
+  assert.deepEqual(removals, ["lesson-1"]);
 });
 
 test("calendar preserves its date, view and filters across view tabs and admin sections", async (context) => {

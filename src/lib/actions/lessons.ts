@@ -87,7 +87,25 @@ export async function getLessonsForCalendar(studentId: string) {
 // Admin: 레슨 생성
 // ───────────────────────────────────────────────
 
-export type CreateLessonState = { error?: string; success?: boolean };
+export type ScheduledLesson = { id: string; scheduledAt: string };
+
+export type CreateLessonState = { error?: string; success?: boolean; lesson?: ScheduledLesson };
+
+function parseLessonScheduleInput(formData: FormData): { ok: true; value: Date } | { ok: false; error: string } {
+  const scheduledAtStr = formData.get("scheduledAt");
+  if (typeof scheduledAtStr !== "string" || !scheduledAtStr) {
+    return { ok: false, error: "날짜와 시간을 입력해주세요." };
+  }
+  const scheduledAt = parseKstDateTimeInput(scheduledAtStr) ?? new Date(scheduledAtStr);
+  if (isNaN(scheduledAt.getTime())) return { ok: false, error: "유효하지 않은 날짜입니다." };
+  return { ok: true, value: scheduledAt };
+}
+
+function revalidateLessonPaths(studentId: string): void {
+  revalidatePath(`/dashboard/admin/students/${studentId}`);
+  revalidatePath("/dashboard/admin");
+  revalidatePath("/dashboard/student");
+}
 
 /**
  * 레슨 일정 생성 (Admin 전용).
@@ -102,24 +120,45 @@ export async function createLesson(
 ): Promise<CreateLessonState> {
   await requireStudentTarget(studentId);
 
-  const scheduledAtStr = formData.get("scheduledAt") as string;
-  if (!scheduledAtStr) return { error: "날짜와 시간을 입력해주세요." };
-
-  const scheduledAt = parseKstDateTimeInput(scheduledAtStr) ?? new Date(scheduledAtStr);
-  if (isNaN(scheduledAt.getTime()))
-    return { error: "유효하지 않은 날짜입니다." };
+  const parsed = parseLessonScheduleInput(formData);
+  if (!parsed.ok) return { error: parsed.error };
 
   const db = createDb();
+  const id = crypto.randomUUID();
   await db.insert(lessons).values({
-    id: crypto.randomUUID(),
+    id,
     studentId,
-    scheduledAt,
+    scheduledAt: parsed.value,
   });
 
-  revalidatePath(`/dashboard/admin/students/${studentId}`);
-  revalidatePath("/dashboard/admin");
-  revalidatePath("/dashboard/student");
-  return { success: true };
+  revalidateLessonPaths(studentId);
+  return { success: true, lesson: { id, scheduledAt: parsed.value.toISOString() } };
+}
+
+/**
+ * 레슨 시간 변경 (Admin 전용). 대상 학생의 레슨만 바꾸고 결과를 상태로 돌려준다.
+ */
+export async function rescheduleLesson(
+  lessonId: string,
+  studentId: string,
+  _prev: CreateLessonState,
+  formData: FormData,
+): Promise<CreateLessonState> {
+  await requireStudentTarget(studentId);
+
+  const parsed = parseLessonScheduleInput(formData);
+  if (!parsed.ok) return { error: parsed.error };
+
+  const db = createDb();
+  const updated = await db
+    .update(lessons)
+    .set({ scheduledAt: parsed.value })
+    .where(and(eq(lessons.id, lessonId), eq(lessons.studentId, studentId)))
+    .returning({ id: lessons.id });
+  if (updated.length === 0) return { error: "레슨을 찾을 수 없습니다. 목록을 새로고침해 주세요." };
+
+  revalidateLessonPaths(studentId);
+  return { success: true, lesson: { id: lessonId, scheduledAt: parsed.value.toISOString() } };
 }
 
 // ───────────────────────────────────────────────
@@ -135,7 +174,5 @@ export async function deleteLesson(lessonId: string, studentId: string) {
   await db
     .delete(lessons)
     .where(and(eq(lessons.id, lessonId), eq(lessons.studentId, studentId)));
-  revalidatePath(`/dashboard/admin/students/${studentId}`);
-  revalidatePath("/dashboard/admin");
-  revalidatePath("/dashboard/student");
+  revalidateLessonPaths(studentId);
 }

@@ -49,6 +49,7 @@ export function AllItemsView({
   initialType = null,
   onInitialTypeCleared,
   canManageEvents,
+  canManageLessons,
   onItemUpdated,
   onItemRemoved,
 }: AllItemsViewProps) {
@@ -173,6 +174,7 @@ export function AllItemsView({
         onItemChange={setSelectedItem}
         returnTo={returnTo}
         canManageEvents={canManageEvents}
+        canManageLessons={canManageLessons}
         onItemUpdated={onItemUpdated}
         onItemRemoved={onItemRemoved}
       />

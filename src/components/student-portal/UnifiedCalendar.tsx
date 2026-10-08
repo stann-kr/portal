@@ -42,6 +42,7 @@ export function UnifiedCalendar({
   preset = null,
   onPresetChange,
   canManageEvents,
+  canManageLessons,
   onItemUpdated,
   onItemRemoved,
 }: UnifiedCalendarProps) {
@@ -217,6 +218,7 @@ export function UnifiedCalendar({
         onItemChange={setSelectedItem}
         returnTo={returnTo}
         canManageEvents={canManageEvents}
+        canManageLessons={canManageLessons}
         onItemUpdated={onItemUpdated}
         onItemRemoved={onItemRemoved}
       />

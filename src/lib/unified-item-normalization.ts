@@ -160,6 +160,23 @@ export function createCalendarEventUnifiedItem(
   };
 }
 
+export function createLessonUnifiedItem(
+  lesson: LessonRow,
+  profile: ProfileContext,
+): UnifiedItem {
+  return {
+    id: lesson.id,
+    type: "EVENT",
+    subType: "LESSON",
+    title: "레슨",
+    date: new Date(lesson.scheduledAt),
+    endDate: null,
+    metadata: {},
+    space: createSpace(profile),
+    source: createSource("LESSON"),
+  };
+}
+
 export function createDiggingTrackUnifiedItem(
   track: CreatedDiggingTrackInput,
   columns: DiggingColumnRow[],
@@ -219,17 +236,7 @@ export function normalizeUnifiedItems({
   }
 
   for (const lesson of lessons) {
-    items.push({
-      id: lesson.id,
-      type: "EVENT",
-      subType: "LESSON",
-      title: "레슨",
-      date: new Date(lesson.scheduledAt),
-      endDate: null,
-      metadata: {},
-      space,
-      source: source("LESSON"),
-    });
+    items.push(createLessonUnifiedItem(lesson, profile));
   }
 
   for (const note of notes) {

@@ -8,10 +8,11 @@
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { Plus, CalendarPlus, FileText, Music, HelpCircle } from "lucide-react";
+import { Plus, CalendarPlus, CalendarClock, FileText, Music, HelpCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { EventFormDialog } from "@/components/calendar/EventFormDialog";
 import { AddTrackDialog } from "@/components/digging/AddTrackDialog";
+import { LessonScheduleDialog } from "@/components/calendar/LessonScheduleDialog";
 import type { DiggingColumnType } from "@/db/schema";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 
@@ -41,11 +42,19 @@ interface CreateEntryDropdownProps {
   canCreateEvent?: boolean;
   /** 현재 action이 선택 학생을 target으로 받지 못하는 디깅 생성 노출 여부 */
   canCreateDigging?: boolean;
+  /** 관리자가 선택한 학생의 레슨을 예약할 수 있는지 여부 */
+  canCreateLesson?: boolean;
 }
 
 // ── 메뉴 항목 정의 ────────────────────────────────
 
 const MENU_ITEMS = [
+  {
+    id: "lesson" as const,
+    label: "레슨 예약",
+    description: "학생 레슨 일정",
+    Icon: CalendarClock,
+  },
   {
     id: "event" as const,
     label: "일정 추가",
@@ -87,10 +96,12 @@ export function CreateEntryDropdown({
   canCreateQna = true,
   canCreateEvent = true,
   canCreateDigging = true,
+  canCreateLesson = false,
 }: CreateEntryDropdownProps) {
   const router = useRouter();
   const [eventDialogOpen, setEventDialogOpen] = useState(false);
   const [diggingDialogOpen, setDiggingDialogOpen] = useState(false);
+  const [lessonDialogOpen, setLessonDialogOpen] = useState(false);
   const [internalDropdownOpen, setInternalDropdownOpen] = useState(false);
   const dropdownOpen = open ?? internalDropdownOpen;
   const setDropdownOpen = onOpenChange ?? setInternalDropdownOpen;
@@ -127,6 +138,9 @@ export function CreateEntryDropdown({
       case "digging":
         setDiggingDialogOpen(true);
         break;
+      case "lesson":
+        setLessonDialogOpen(true);
+        break;
     }
   };
 
@@ -158,6 +172,7 @@ export function CreateEntryDropdown({
               if (id === "qna") return canCreateQna;
               if (id === "event") return canCreateEvent;
               if (id === "digging") return canCreateDigging;
+              if (id === "lesson") return canCreateLesson;
               return true;
             }).map(({ id, label, description, Icon }) => (
               <DropdownMenu.Item
@@ -185,6 +200,17 @@ export function CreateEntryDropdown({
         spaceLabel={spaceLabel}
         onSuccess={onSuccess}
       />
+
+      {canCreateLesson ? (
+        <LessonScheduleDialog
+          open={lessonDialogOpen}
+          onOpenChange={setLessonDialogOpen}
+          studentId={studentId}
+          spaceLabel={spaceLabel}
+          defaultStart={defaultDate}
+          onSuccess={onSuccess}
+        />
+      ) : null}
 
       {/* 디깅 다이얼로그 */}
       <AddTrackDialog
