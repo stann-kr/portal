@@ -16,7 +16,6 @@ import { formatKstShortDate } from "@/lib/kst-format";
 type Post = {
   id: string;
   title: string;
-  contentHtml: string;
   boardType: string;
   isPinned: boolean;
   authorName: string | null;

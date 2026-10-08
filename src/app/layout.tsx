@@ -1,14 +1,8 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
 import "./globals.css";
 
 // 인증 기반 앱: 정적 생성 없이 모든 페이지를 동적 렌더링으로 처리
 export const dynamic = "force-dynamic";
-
-const inter = Inter({
-  subsets: ["latin"],
-  variable: "--font-inter",
-});
 
 export const metadata: Metadata = {
   title: {
@@ -27,7 +21,7 @@ export default function RootLayout({
   return (
     <html lang="ko">
       <body
-        className={`${inter.variable} font-sans antialiased bg-background text-foreground`}
+        className="font-sans antialiased bg-background text-foreground"
       >
         <a
           href="#main-content"

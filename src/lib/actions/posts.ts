@@ -1,7 +1,7 @@
 /** Community post query와 revision/trash lifecycle server action. */
 "use server";
 
-import { and, desc, eq, isNotNull, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createDb, createDbContext } from "@/db/client";
@@ -112,6 +112,46 @@ export async function getPostsByBoardType(boardType: BoardType) {
     .leftJoin(profiles, eq(posts.authorId, profiles.id))
     .where(and(eq(posts.boardType, boardType), isNull(posts.deletedAt)))
     .orderBy(desc(posts.isPinned), desc(posts.createdAt));
+}
+
+const POST_SUMMARY_SELECT = {
+  id: posts.id,
+  title: posts.title,
+  boardType: posts.boardType,
+  isPinned: posts.isPinned,
+  createdAt: posts.createdAt,
+  authorName: profiles.displayName,
+  authorEmail: profiles.email,
+} as const;
+
+const POST_SUMMARY_MAX_LIMIT = 50;
+
+function clampSummaryLimit(limit: number): number {
+  return Number.isSafeInteger(limit) ? Math.min(Math.max(limit, 1), POST_SUMMARY_MAX_LIMIT) : 1;
+}
+
+/** 대시보드 미리보기용: 본문 없이 최근 자유·피드백 게시물만 개수 제한해 읽는다. */
+export async function getRecentCommunityPostSummaries(limit = 20) {
+  await requireAuth();
+  return createDb()
+    .select(POST_SUMMARY_SELECT)
+    .from(posts)
+    .leftJoin(profiles, eq(posts.authorId, profiles.id))
+    .where(and(inArray(posts.boardType, ["GENERAL", "FEEDBACK"]), isNull(posts.deletedAt)))
+    .orderBy(desc(posts.createdAt))
+    .limit(clampSummaryLimit(limit));
+}
+
+/** 학생 오늘 화면용: 고정 공지 우선·최신순 공지 제목만 개수 제한해 읽는다. */
+export async function getAnnouncementSummaries(limit = 3) {
+  await requireAuth();
+  return createDb()
+    .select(POST_SUMMARY_SELECT)
+    .from(posts)
+    .leftJoin(profiles, eq(posts.authorId, profiles.id))
+    .where(and(eq(posts.boardType, "ANNOUNCEMENT"), isNull(posts.deletedAt)))
+    .orderBy(desc(posts.isPinned), desc(posts.createdAt))
+    .limit(clampSummaryLimit(limit));
 }
 
 export async function getPostsByCategory(category: string) {

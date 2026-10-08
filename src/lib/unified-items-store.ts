@@ -21,7 +21,17 @@ import type { UnifiedItem, UnifiedItemType } from "@/lib/utils/unifiedItemUtils"
 
 type CalendarEventRow = InferSelectModel<typeof calendarEvents>;
 type LessonRow = InferSelectModel<typeof lessons>;
-type NoteRow = InferSelectModel<typeof privateNotes>;
+type NoteRow = {
+  id: string;
+  title: string;
+  contentHtml: string;
+  authorId: string;
+  noteDate: Date | null;
+  createdAt: Date;
+};
+
+/** 통합 일정은 노트 미리보기만 쓰므로 본문 앞부분만 읽는다. 전체 본문은 상세에서 따로 불러온다. */
+export const UNIFIED_NOTE_PREVIEW_SOURCE_CHARS = 4_096;
 type DiggingTrackRow = InferSelectModel<typeof diggingTracks>;
 type DiggingColumnRow = InferSelectModel<typeof diggingColumns>;
 type QnaThreadRow = InferSelectModel<typeof qnaThreads>;
@@ -71,7 +81,14 @@ export async function queryInternalUnifiedItems(
     : Promise.resolve([] as LessonRow[]);
   const noteRows = wants(requestedTypes, "NOTE")
     ? db
-        .select()
+        .select({
+          id: privateNotes.id,
+          title: privateNotes.title,
+          contentHtml: sql<string>`substr(${privateNotes.contentHtml}, 1, ${UNIFIED_NOTE_PREVIEW_SOURCE_CHARS})`,
+          authorId: privateNotes.authorId,
+          noteDate: privateNotes.noteDate,
+          createdAt: privateNotes.createdAt,
+        })
         .from(privateNotes)
         .where(and(
           eq(privateNotes.studentId, userId),

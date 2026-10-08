@@ -32,6 +32,7 @@ let feedbackActions: typeof import("@/lib/actions/feedbacks");
 let assignmentActions: typeof import("@/lib/actions/assignments");
 let studentActions: typeof import("@/lib/actions/students");
 let activeProfileModule: typeof import("@/lib/active-profile");
+let postActions: typeof import("@/lib/actions/posts");
 
 function createSession(id: string, role: "admin" | "student"): AuthSession {
   return {
@@ -65,7 +66,7 @@ mock.module("next/cache", {
 });
 
 before(async () => {
-  [calendarActions, curriculumActions, diggingActions, lessonActions, commentActions, feedbackActions, assignmentActions, studentActions, activeProfileModule] =
+  [calendarActions, curriculumActions, diggingActions, lessonActions, commentActions, feedbackActions, assignmentActions, studentActions, activeProfileModule, postActions] =
     await Promise.all([
       import("@/lib/actions/calendarEvents"),
       import("@/lib/actions/curriculum"),
@@ -76,6 +77,7 @@ before(async () => {
       import("@/lib/actions/assignments"),
       import("@/lib/actions/students"),
       import("@/lib/active-profile"),
+      import("@/lib/actions/posts"),
     ]);
 });
 
@@ -196,6 +198,26 @@ test("학생 생성은 이메일을 정규화하고 대소문자만 다른 중�
   const [created] = await db.select().from(profiles).where(eq(profiles.email, "new.student@example.com"));
   assert.equal(created?.displayName, "새 학생");
   assert.equal(created?.role, "student");
+});
+
+test("대시보드 게시물 요약은 본문 없이 범위·정렬·개수를 제한한다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("student-1", "student"));
+  await seedProfile(db, "student-1");
+  const base = { authorId: "student-1", category: "general", contentHtml: "<p>긴 본문</p>" };
+  await db.insert(posts).values([
+    { ...base, id: "general-old", boardType: "GENERAL", title: "자유 1", createdAt: new Date("2026-08-01T00:00:00.000Z") },
+    { ...base, id: "feedback-new", boardType: "FEEDBACK", title: "믹스셋", createdAt: new Date("2026-08-03T00:00:00.000Z") },
+    { ...base, id: "general-trashed", boardType: "GENERAL", title: "삭제됨", createdAt: new Date("2026-08-04T00:00:00.000Z"), deletedAt: new Date("2026-08-05T00:00:00.000Z") },
+    { ...base, id: "notice-pinned", boardType: "ANNOUNCEMENT", title: "고정 공지", isPinned: true, createdAt: new Date("2026-07-01T00:00:00.000Z") },
+    { ...base, id: "notice-new", boardType: "ANNOUNCEMENT", title: "새 공지", createdAt: new Date("2026-08-06T00:00:00.000Z") },
+  ]);
+
+  const community = await postActions.getRecentCommunityPostSummaries(20);
+  assert.deepEqual(community.map((post) => post.id), ["feedback-new", "general-old"]);
+  assert.equal("contentHtml" in community[0]!, false, "대시보드 목록은 게시물 본문을 싣지 않는다");
+  assert.deepEqual((await postActions.getRecentCommunityPostSummaries(1)).map((post) => post.id), ["feedback-new"]);
+  assert.deepEqual((await postActions.getAnnouncementSummaries(2)).map((post) => post.id), ["notice-pinned", "notice-new"]);
+  assert.equal((await postActions.getAnnouncementSummaries(Number.NaN)).length, 1, "잘못된 limit은 최소 1개로 닫힌다");
 });
 
 test("학생별 과제 요약은 관리자에게만 최신 제출순과 피드백 수를 돌려준다", { concurrency: false }, async (context) => {

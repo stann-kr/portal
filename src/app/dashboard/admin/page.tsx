@@ -5,7 +5,7 @@
  */
 import { redirect } from "next/navigation";
 import { getActiveAuthSession } from "@/lib/auth-guard";
-import { getPostsByBoardType } from "@/lib/actions/posts";
+import { getPostsByBoardType, getRecentCommunityPostSummaries } from "@/lib/actions/posts";
 import { getStudentRosterStats } from "@/lib/actions/students";
 import { getUnifiedItemsForStudent } from "@/lib/actions/unifiedItems";
 import { getQnaThreads } from "@/lib/actions/qna";
@@ -30,18 +30,7 @@ export default async function AdminPortalPage({ searchParams }: { searchParams: 
   const referenceTime = new Date();
   const [announcements, communityPostsRaw, initialStudentItems, qnaThreads, pendingAssignments] = await Promise.all([
     getPostsByBoardType("ANNOUNCEMENT"),
-    Promise.all([
-      getPostsByBoardType("GENERAL"),
-      getPostsByBoardType("FEEDBACK"),
-    ]).then(([g, f]) =>
-      [...g, ...f]
-        .sort(
-          (a, b) =>
-            new Date(b.createdAt ?? 0).getTime() -
-            new Date(a.createdAt ?? 0).getTime()
-        )
-        .slice(0, 20)
-    ),
+    getRecentCommunityPostSummaries(20),
     initialStudentId ? getUnifiedItemsForStudent(initialStudentId) : Promise.resolve([]),
     getQnaThreads(),
     getPendingFeedbackAssignments(),

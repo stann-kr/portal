@@ -1,11 +1,11 @@
 /**
  * @file src/app/dashboard/student/page.tsx
  * @description 학생 원페이지 포털 — RSC 데이터 프리패치 셸.
- * 5개 병렬 쿼리 후 StudentPortalClient에 props 전달. Waterfall 없음.
+ * 모든 조회를 한 번에 병렬로 실행한 뒤 StudentPortalClient에 props 전달.
  */
 import { redirect } from "next/navigation";
 import { getActiveAuthSession } from "@/lib/auth-guard";
-import { getPostsByBoardType } from "@/lib/actions/posts";
+import { getAnnouncementSummaries, getRecentCommunityPostSummaries } from "@/lib/actions/posts";
 import { getUnifiedItems } from "@/lib/actions/unifiedItems";
 import { getMyCurriculum } from "@/lib/actions/curriculum";
 import { getMyAssignments } from "@/lib/actions/assignments";
@@ -29,29 +29,17 @@ export default async function StudentPortalPage({ searchParams }: { searchParams
     email: session.user.email ?? "학생",
   });
 
-  // 병렬 데이터 패치
-  const [announcements, unifiedItems, curriculumModules, rawAssignments, feedbacksMap, externalCalendarConnection] =
+  // 병렬 데이터 패치. 게시물은 본문 없이 화면에 필요한 개수만 읽는다.
+  const [announcements, communityPosts, unifiedItems, curriculumModules, rawAssignments, feedbacksMap, externalCalendarConnection] =
     await Promise.all([
-      getPostsByBoardType("ANNOUNCEMENT"),
+      getAnnouncementSummaries(3),
+      getRecentCommunityPostSummaries(20),
       getUnifiedItems(),
       getMyCurriculum(),
       getMyAssignments(),
       getMyFeedbacksMap(),
       getExternalCalendarConnectionSummary(),
     ]);
-
-  // 커뮤니티 게시물 — GENERAL + FEEDBACK 통합 (최근 20개)
-  const [generalPosts, feedbackPosts] = await Promise.all([
-    getPostsByBoardType("GENERAL"),
-    getPostsByBoardType("FEEDBACK"),
-  ]);
-  const communityPosts = [...generalPosts, ...feedbackPosts]
-    .sort(
-      (a, b) =>
-        new Date(b.createdAt ?? 0).getTime() -
-        new Date(a.createdAt ?? 0).getTime(),
-    )
-    .slice(0, 20);
 
   // 과제 피드백 카운트 병합
   type RawAssignment = InferSelectModel<typeof assignments>;

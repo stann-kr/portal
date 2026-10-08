@@ -88,6 +88,8 @@ OpenNext → Cloudflare Worker
 
 `/dashboard/student/assignments`, `curriculum` 목록 경로는 원페이지 포털로 redirect한다. 노트 목록과 디깅 보드는 별도 route를 사용한다.
 
+학생·관리자 대시보드는 게시물 본문 없이 최근 자유·피드백 게시물 20개와(학생) 공지 3개의 요약만 개수 제한해 읽는다. 통합 일정의 노트는 본문 앞 4,096자만 읽어 240자 평문 미리보기로 전달하고, 상세 패널을 열 때 해당 노트 본문만 권한을 다시 확인해 불러온다.
+
 학생 포털의 기본 section은 `오늘`이다. 통합 item에서 다음 일정, 피드백이 있는 제출, Q&A 상태를 순수 selector로 분류하고 최근 공지와 실제 작성 경로를 함께 제공한다. `lessons` 행은 `EVENT`/`LESSON` 항목으로 포함하므로 다음 일정 selector와 워크스페이스에서 같은 계약을 사용한다. 현재 schema에 없는 과제 배정·마감·읽음 상태는 추정하지 않는다. 캘린더, 일별 기록, 전체 항목, 커리큘럼, 과제는 `워크스페이스` section에서 기존 기능을 유지한다.
 
 관리자 포털의 기본 section은 `업무함`이다. 전체 Q&A 중 미답변 항목, feedback이 없는 assignment, 앞으로 7일 이내의 학생별 다음 레슨을 조회한다. 질문과 과제는 오래 기다린 항목부터 보여주고 실제 Q&A·과제 상세로 연결한다. 일정 section은 선택한 학생 스페이스를 상시 표시하고 각 통합 항목의 스페이스·출처를 식별한다.
@@ -137,6 +139,7 @@ Migration SQL은 `drizzle/`, Drizzle metadata는 `drizzle/meta/`에 둔다. Wran
 ## 인증과 권한
 
 - credentials provider는 email/password와 bcrypt hash를 비교한다. 로그인 이메일은 앞뒤 공백을 무시하고, 정확히 일치하는 계정이 없을 때만 대소문자만 다른 계정이 하나인 경우를 같은 계정으로 본다. 관리자가 만드는 학생 이메일은 소문자로 저장하고 대소문자만 다른 중복을 거부한다.
+- 한 server component 렌더 안의 layout·page·query는 React `cache`로 active session 확인을 한 번만 수행한다. server action·route handler 호출은 렌더 범위 밖이므로 매번 JWT와 profile을 다시 검증한다.
 - session의 `user.id`는 profile 조회의 시작점으로만 사용한다. Node auth의 JWT callback, `/api/auth/session`과 모든 server 인증 경계가 profile 존재와 DB의 최신 role을 다시 확인해 삭제된 JWT를 즉시 거부한다. JWT/session 최대 수명은 7일로 고정해 raw subject ID의 30일 보존 경계보다 먼저 만료시킨다.
 - 데이터 조회·변경 함수는 호출 화면에 의존하지 않고 role과 ownership을 자체 검증해야 한다.
 - 신규 캘린더 feed는 256-bit opaque token의 SHA-256 digest로 owner를 찾고 회전 시 이전 digest를 폐기한다. 기존 v1 URL은 active 학생 profile을 먼저 확인한 뒤 서명을 검증한다. `.ics`의 각 레슨은 레슨 ID 기반 고정 UID와 UTC 시작 시각을 사용하고, 예정 레슨이 없으면 일정 없는 빈 캘린더를 반환한다.

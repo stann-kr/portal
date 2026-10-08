@@ -47,7 +47,6 @@ type Post = {
 type CommunityPost = {
   id: string;
   title: string;
-  contentHtml: string;
   boardType: string;
   isPinned: boolean;
   authorName: string | null;

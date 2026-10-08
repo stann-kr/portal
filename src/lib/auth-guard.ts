@@ -4,6 +4,7 @@
  * 모든 서버 액션에서 중복 정의되던 requireAuth / requireAdmin 패턴을 중앙화.
  */
 
+import { cache } from "react";
 import { auth } from "@/auth";
 import {
   findActiveProfileById,
@@ -111,10 +112,19 @@ export async function requireAuth(): Promise<AuthSession> {
 }
 
 /**
+ * 한 server component 렌더 안에서 layout·page·여러 query가 반복 호출해도 JWT 해석과
+ * profile 재검증을 한 번만 수행한다. React cache는 렌더 요청 범위에서만 memoize하므로
+ * server action·route handler 호출은 매번 다시 검증한다.
+ */
+const resolveRequestActiveSession = cache(
+  async (): Promise<AuthSession | null> => resolveActiveSession(await auth()),
+);
+
+/**
  * redirect/HTTP status를 직접 결정해야 하는 page와 route용 optional active session.
  */
 export async function getActiveAuthSession(): Promise<AuthSession | null> {
-  return resolveActiveSession(await auth());
+  return resolveRequestActiveSession();
 }
 
 /**

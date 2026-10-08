@@ -31,10 +31,7 @@ type Section = PortalSection<"student">;
 type Post = {
   id: string;
   title: string;
-  contentHtml: string;
   isPinned: boolean;
-  authorName: string | null;
-  authorEmail: string | null;
   createdAt: Date | null;
 };
 
@@ -56,7 +53,6 @@ type Assignment = {
 type CommunityPost = {
   id: string;
   title: string;
-  contentHtml: string;
   boardType: string;
   isPinned: boolean;
   authorName: string | null;

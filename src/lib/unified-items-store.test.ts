@@ -133,3 +133,40 @@ test("과제 피드백 개수는 학생·기간 범위를 유지하고 과제 �
     `피드백 ${returnedRows.length}행을 전송하지 않고 조회 과제 ${items.length}개 이내로 집계해야 한다`,
   );
 });
+
+test("통합 일정의 노트는 본문 앞부분만 읽고 HTML 대신 평문 미리보기를 전달한다", async (context) => {
+  let noteSelect = "";
+  const sqlite = new Database(":memory:", {
+    verbose: (statement) => {
+      if (typeof statement === "string" && /^select\b[\s\S]*\bfrom "private_notes"/iu.test(statement)) {
+        noteSelect = statement;
+      }
+    },
+  });
+  context.after(() => sqlite.close());
+  sqlite.exec(`
+    CREATE TABLE profiles (id TEXT PRIMARY KEY, email TEXT NOT NULL, display_name TEXT);
+    CREATE TABLE private_notes (
+      id TEXT PRIMARY KEY, student_id TEXT NOT NULL, author_id TEXT NOT NULL, title TEXT NOT NULL,
+      content_html TEXT NOT NULL, note_date INTEGER, created_at INTEGER NOT NULL, deleted_at INTEGER
+    );
+    INSERT INTO profiles VALUES ('student-1', 'student@example.com', '학생');
+  `);
+  const longBody = `<p>첫 문단 &amp; 핵심</p><p>${"긴 기록 ".repeat(5_000)}</p>`;
+  sqlite.prepare(
+    "INSERT INTO private_notes (id, student_id, author_id, title, content_html, created_at) VALUES ('note-1', 'student-1', 'student-1', '레슨 메모', ?, 1778000000)",
+  ).run(longBody);
+
+  const [note] = await queryInternalUnifiedItems(
+    drizzle(sqlite, { schema }) as unknown as DrizzleDb,
+    "student-1",
+    resolveUnifiedItemsQuery({ start: "2026-05-01", end: "2026-05-31", types: ["NOTE"] }),
+  );
+
+  assert.equal(note?.type, "NOTE");
+  assert.equal("contentHtml" in (note?.metadata ?? {}), false, "노트 HTML 원문을 클라이언트 payload에 싣지 않는다");
+  const preview = String(note?.metadata.preview ?? "");
+  assert.match(preview, /^첫 문단 & 핵심/u);
+  assert.ok(Array.from(preview).length <= 241);
+  assert.match(noteSelect, /substr\("(?:private_notes"\.")?content_html", 1, 4096/u, "본문 전체가 아닌 앞부분만 읽는다");
+});

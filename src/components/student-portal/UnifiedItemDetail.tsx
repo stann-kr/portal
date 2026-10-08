@@ -10,10 +10,10 @@
 "use client";
 
 import Link from "next/link";
-import { Disc3, MessageSquareText, PencilLine } from "lucide-react";
+import { Disc3, MessageSquareText } from "lucide-react";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 import { UnifiedItemSpaceBadge, UnifiedItemTypeBadge } from "@/components/ui/unified-item-type";
-import { RichTextContent } from "@/components/editor/RichTextContent";
+import { UnifiedNoteDetail } from "./UnifiedNoteDetail";
 import {
   CalendarEventActions,
   isEditableCalendarEventItem,
@@ -93,14 +93,14 @@ export function UnifiedItemDetail({
 }: UnifiedItemDetailProps) {
   // metadata 값을 미리 문자열로 추출 (unknown → string | null 명확화)
   const metaDescription = metaStr(item.metadata, "description");
-  const metaContentHtml = metaStr(item.metadata, "contentHtml");
+  const metaPreview = metaStr(item.metadata, "preview");
   const metaLinkUrl = metaStr(item.metadata, "linkUrl");
   const metaMediaUrl = metaStr(item.metadata, "mediaUrl");
   const allDayStartDate = metaStr(item.metadata, "allDayStartDate");
   const allDayEndDate = metaStr(item.metadata, "allDayEndDate");
   const metaFeedbackCount = item.metadata.feedbackCount as number | undefined;
   const isAllDay = item.metadata.allDay === true;
-  const description = item.type === "NOTE" && metaContentHtml
+  const description = item.type === "NOTE"
     ? null
     : item.description ?? metaDescription;
   const startLabel = isAllDay
@@ -163,17 +163,8 @@ export function UnifiedItemDetail({
       ) : null}
 
       {/* NOTE */}
-      {item.type === "NOTE" && metaContentHtml !== null ? (
-        <div className="space-y-5">
-          <RichTextContent html={metaContentHtml} />
-          <Link
-            href={`/dashboard/notes/${item.id}?returnTo=${encodeURIComponent(returnTo)}`}
-            className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-accent"
-          >
-            <PencilLine className="h-3.5 w-3.5" aria-hidden="true" />
-            전체 화면에서 이어쓰기
-          </Link>
-        </div>
+      {item.type === "NOTE" ? (
+        <UnifiedNoteDetail key={item.id} noteId={item.id} preview={metaPreview} returnTo={returnTo} />
       ) : null}
 
       {/* DIGGING */}

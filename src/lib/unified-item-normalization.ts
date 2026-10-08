@@ -1,5 +1,17 @@
 import type { CalendarEventType, QnaStatus } from "@/db/schema";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
+import { getSearchableDocumentText } from "@/lib/document-search";
+
+const NOTE_PREVIEW_MAX_CHARS = 240;
+
+/** 통합 일정의 노트 상세는 HTML을 싣지 않고 안전한 평문 미리보기만 전달한다. */
+export function createNotePreview(contentHtml: string): string {
+  const text = getSearchableDocumentText(contentHtml);
+  const characters = Array.from(text);
+  return characters.length > NOTE_PREVIEW_MAX_CHARS
+    ? `${characters.slice(0, NOTE_PREVIEW_MAX_CHARS).join("")}…`
+    : text;
+}
 
 export type ProfileContext = {
   id: string;
@@ -227,7 +239,7 @@ export function normalizeUnifiedItems({
       title: note.title,
       date: new Date(note.noteDate ?? note.createdAt),
       metadata: {
-        contentHtml: note.contentHtml,
+        preview: createNotePreview(note.contentHtml),
         authorId: note.authorId,
         noteDate: note.noteDate,
       },
