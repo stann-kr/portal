@@ -30,6 +30,8 @@ let lessonActions: typeof import("@/lib/actions/lessons");
 let commentActions: typeof import("@/lib/actions/comments");
 let feedbackActions: typeof import("@/lib/actions/feedbacks");
 let assignmentActions: typeof import("@/lib/actions/assignments");
+let studentActions: typeof import("@/lib/actions/students");
+let activeProfileModule: typeof import("@/lib/active-profile");
 
 function createSession(id: string, role: "admin" | "student"): AuthSession {
   return {
@@ -63,7 +65,7 @@ mock.module("next/cache", {
 });
 
 before(async () => {
-  [calendarActions, curriculumActions, diggingActions, lessonActions, commentActions, feedbackActions, assignmentActions] =
+  [calendarActions, curriculumActions, diggingActions, lessonActions, commentActions, feedbackActions, assignmentActions, studentActions, activeProfileModule] =
     await Promise.all([
       import("@/lib/actions/calendarEvents"),
       import("@/lib/actions/curriculum"),
@@ -72,6 +74,8 @@ before(async () => {
       import("@/lib/actions/comments"),
       import("@/lib/actions/feedbacks"),
       import("@/lib/actions/assignments"),
+      import("@/lib/actions/students"),
+      import("@/lib/active-profile"),
     ]);
 });
 
@@ -150,6 +154,48 @@ test("피드백 삭제·조회는 과제 대상과 학생 ownership을 보존한
   activeSession = createSession("admin-1", "admin");
   await feedbackActions.deleteFeedback("feedback-1", "assignment-1");
   assert.equal((await db.select().from(feedbacks)).length, 0);
+});
+
+test("로그인 이메일은 공백·대소문자 차이를 허용하되 모호한 계정은 고르지 않는다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("admin-1", "admin"));
+  await db.insert(profiles).values([
+    { id: "mixed", email: "Mina@Example.com", displayName: "Mina", role: "student", passwordHash: "hash" },
+    { id: "dup-1", email: "Dup@Example.com", displayName: "Dup 1", role: "student", passwordHash: "hash" },
+    { id: "dup-2", email: "dup@example.com", displayName: "Dup 2", role: "student", passwordHash: "hash" },
+  ]);
+  const find = (email: string) => activeProfileModule.findActiveProfileByEmail(email, db);
+  assert.equal((await find("mina@example.com"))?.id, "mixed");
+  assert.equal((await find("  MINA@EXAMPLE.COM "))?.id, "mixed");
+  assert.equal((await find("dup@example.com"))?.id, "dup-2", "정확히 일치하는 계정을 먼저 쓴다");
+  assert.equal(await find("DUP@EXAMPLE.COM"), null, "대소문자만 다른 계정이 둘이면 고르지 않는다");
+  assert.equal(await find("   "), null);
+});
+
+test("학생 생성은 이메일을 정규화하고 대소문자만 다른 중복을 거부한다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("admin-1", "admin"));
+  await seedProfile(db, "admin-1", "admin");
+  await db.insert(profiles).values({ id: "legacy", email: "Legacy@Example.com", displayName: "Legacy", role: "student" });
+  const form = (fields: Record<string, string>) => {
+    const data = new FormData();
+    for (const [key, value] of Object.entries(fields)) data.set(key, value);
+    return data;
+  };
+
+  assert.deepEqual(
+    await studentActions.createStudent({}, form({ displayName: "레거시", email: "legacy@example.com", password: "password-1" })),
+    { error: "이미 존재하는 이메일입니다." },
+  );
+  assert.deepEqual(
+    await studentActions.createStudent({}, form({ displayName: "잘못", email: "not-an-email", password: "password-1" })),
+    { error: "올바른 이메일 주소를 입력해 주세요." },
+  );
+  await assert.rejects(
+    studentActions.createStudent({}, form({ displayName: "  새 학생  ", email: "  New.Student@Example.COM ", password: "password-1" })),
+    /NEXT_REDIRECT/u,
+  );
+  const [created] = await db.select().from(profiles).where(eq(profiles.email, "new.student@example.com"));
+  assert.equal(created?.displayName, "새 학생");
+  assert.equal(created?.role, "student");
 });
 
 test("학생별 과제 요약은 관리자에게만 최신 제출순과 피드백 수를 돌려준다", { concurrency: false }, async (context) => {

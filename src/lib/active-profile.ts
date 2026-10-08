@@ -1,4 +1,4 @@
-import { eq, getTableColumns } from "drizzle-orm";
+import { eq, getTableColumns, sql } from "drizzle-orm";
 import { createDb, type DrizzleDb } from "@/db/client";
 import { profiles } from "@/db/schema";
 import type { UserRole } from "@/types/user";
@@ -85,11 +85,22 @@ export async function findActiveProfileByEmail(
   email: string,
   db: DrizzleDb = createDb(),
 ): Promise<ActiveLoginProfile | null> {
-  if (!email) return null;
+  const normalized = email.trim();
+  if (!normalized) return null;
   const [row] = await db
     .select()
     .from(profiles)
-    .where(eq(profiles.email, email))
+    .where(eq(profiles.email, normalized))
     .limit(1);
-  return parseActiveLoginProfile(row);
+  if (row) return parseActiveLoginProfile(row);
+
+  // 대소문자만 다르게 입력한 경우는 그런 계정이 정확히 하나일 때만 같은 계정으로 본다.
+  const caseInsensitiveRows = await db
+    .select()
+    .from(profiles)
+    .where(sql`lower(${profiles.email}) = ${normalized.toLowerCase()}`)
+    .limit(2);
+  return caseInsensitiveRows.length === 1
+    ? parseActiveLoginProfile(caseInsensitiveRows[0])
+    : null;
 }

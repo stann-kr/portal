@@ -27,7 +27,7 @@ let TimelineFeedback: typeof import("@/components/feedback/TimelineFeedback").Ti
 let PostDetailClient: typeof import("@/app/community/[postId]/PostDetailClient").PostDetailClient;
 let saveComment: typeof import("@/lib/actions/comments").createComment = async () => ({});
 let removeComment: typeof import("@/lib/actions/comments").deleteComment = async () => {};
-let trashPost: typeof import("@/lib/actions/posts").deletePost = async () => {};
+let trashPost: typeof import("@/lib/actions/posts").deletePost = async () => ({ success: true });
 let AssignmentView: typeof import("@/components/student-portal/AssignmentView").AssignmentView;
 let FileUploader: typeof import("@/components/upload/FileUploader").FileUploader;
 let requestUpload: typeof import("@/lib/actions/upload").requestMediaUpload = async () => ({ success: false, error: "업로드 테스트 미설정" });
@@ -922,7 +922,7 @@ test("게시물 삭제는 응답 유실 재시도와 복원 후 새 삭제 의�
   context.mock.method(globalThis, "confirm", () => true);
   const requests: Parameters<typeof trashPost>[] = [];
   trashPost = async (...args) => { requests.push(args); throw new Error("response lost"); };
-  context.after(() => { trashPost = async () => {}; });
+  context.after(() => { trashPost = async () => ({ success: true }); });
   const post = {
     id: "delete-retry-post", authorId: "student-1", title: "레슨 이야기", contentHtml: "<p>본문</p>",
     category: "general", boardType: "GENERAL" as const, isPinned: false, mediaUrl: null,
@@ -932,7 +932,7 @@ test("게시물 삭제는 응답 유실 재시도와 복원 후 새 삭제 의�
   const screen = (version: number, deletedAt: Date | null = null) => <PostDetailClient postId={post.id} post={{ ...post, version, deletedAt }} initialCommentList={[]} currentUserId="student-1" isAdmin={false} returnTo="/community" />;
   const root = await render(context, screen(1));
   await press("게시물 삭제");
-  assert.match(browser.document.querySelector('[role="alert"]')?.textContent ?? "", /response lost/u);
+  assert.match(browser.document.querySelector('[role="alert"]')?.textContent ?? "", /휴지통으로 이동하지 못했습니다/u);
   await press("게시물 삭제");
   assert.equal(requests[0][1], requests[1][1]);
   await act(async () => root.render(screen(2, new Date())));
@@ -940,6 +940,11 @@ test("게시물 삭제는 응답 유실 재시도와 복원 후 새 삭제 의�
   await press("게시물 삭제");
   assert.notEqual(requests[1][1], requests[2][1]);
   assert.deepEqual(requests.map((args) => args[2]), [1, 1, 3]);
+
+  // 서버가 돌려준 충돌 안내는 production에서도 그대로 보여 준다.
+  trashPost = async () => ({ success: false, error: "다른 화면에서 이 게시물이 먼저 변경되었습니다. 현재 초안은 유지됩니다." });
+  await press("게시물 삭제");
+  assert.match(browser.document.querySelector('[role="alert"]')?.textContent ?? "", /먼저 변경되었습니다/u);
 });
 
 test("failed comment deletion keeps the conversation and unfinished reply visible", async (context) => {

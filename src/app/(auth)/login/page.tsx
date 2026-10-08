@@ -1,8 +1,8 @@
 import { signIn } from "@/auth";
 import { AuthError } from "next-auth";
 import { redirect } from "next/navigation";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { LoginSubmitButton } from "@/components/auth/LoginSubmitButton";
 import { AccountCleanupBootstrap } from "@/components/auth/AccountCleanupBootstrap";
 import { OwnerlessLegacyDraftCleanup } from "@/components/auth/OwnerlessLegacyDraftCleanup";
 import { getActiveAuthSession } from "@/lib/auth-guard";
@@ -20,7 +20,8 @@ function getErrorMessage(error: string | undefined): string | null {
     Verification: "인증 링크가 만료되었습니다.",
     Default: "로그인 중 오류가 발생했습니다. 다시 시도해 주세요.",
   };
-  return map[error] ?? `알 수 없는 오류 (${error})`;
+  // 알 수 없는 query 값은 화면에 그대로 반사하지 않는다.
+  return map[error] ?? map.Default;
 }
 
 /**
@@ -137,9 +138,7 @@ export default async function LoginPage({
             />
           </div>
 
-          <Button type="submit" className="w-full">
-            로그인
-          </Button>
+          <LoginSubmitButton />
         </form>
 
         <div className="mt-5 text-xs text-muted-foreground">

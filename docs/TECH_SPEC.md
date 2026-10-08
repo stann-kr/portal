@@ -136,7 +136,7 @@ Migration SQL은 `drizzle/`, Drizzle metadata는 `drizzle/meta/`에 둔다. Wran
 
 ## 인증과 권한
 
-- credentials provider는 email/password와 bcrypt hash를 비교한다.
+- credentials provider는 email/password와 bcrypt hash를 비교한다. 로그인 이메일은 앞뒤 공백을 무시하고, 정확히 일치하는 계정이 없을 때만 대소문자만 다른 계정이 하나인 경우를 같은 계정으로 본다. 관리자가 만드는 학생 이메일은 소문자로 저장하고 대소문자만 다른 중복을 거부한다.
 - session의 `user.id`는 profile 조회의 시작점으로만 사용한다. Node auth의 JWT callback, `/api/auth/session`과 모든 server 인증 경계가 profile 존재와 DB의 최신 role을 다시 확인해 삭제된 JWT를 즉시 거부한다. JWT/session 최대 수명은 7일로 고정해 raw subject ID의 30일 보존 경계보다 먼저 만료시킨다.
 - 데이터 조회·변경 함수는 호출 화면에 의존하지 않고 role과 ownership을 자체 검증해야 한다.
 - 신규 캘린더 feed는 256-bit opaque token의 SHA-256 digest로 owner를 찾고 회전 시 이전 digest를 폐기한다. 기존 v1 URL은 active 학생 profile을 먼저 확인한 뒤 서명을 검증한다. `.ics`의 각 레슨은 레슨 ID 기반 고정 UID와 UTC 시작 시각을 사용하고, 예정 레슨이 없으면 일정 없는 빈 캘린더를 반환한다.

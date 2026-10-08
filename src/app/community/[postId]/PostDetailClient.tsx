@@ -56,13 +56,11 @@ export function PostDetailClient({
     setDeleteError(null);
     startTransition(async () => {
       try {
-        await deletePost(post.id, deleteOperationId, post.version, returnTo);
-      } catch (error) {
-        setDeleteError(
-          error instanceof Error
-            ? error.message
-            : "게시물을 휴지통으로 이동하지 못했습니다.",
-        );
+        const result = await deletePost(post.id, deleteOperationId, post.version, returnTo);
+        if (result && !result.success) setDeleteError(result.error ?? "게시물을 휴지통으로 이동하지 못했습니다.");
+      } catch {
+        // 성공한 redirect는 router가 처리한다. 예외 원문은 production에서 숨겨지므로 고정 안내를 쓴다.
+        setDeleteError("게시물을 휴지통으로 이동하지 못했습니다. 연결을 확인한 뒤 다시 시도해 주세요.");
       }
     });
   };

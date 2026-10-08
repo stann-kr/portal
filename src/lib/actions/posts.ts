@@ -535,14 +535,20 @@ export async function purgePost(postId: string, operationId: string, baseRevisio
   return runPostLifecycle("purge", postId, operationId, baseRevision);
 }
 
+/**
+ * 휴지통 이동 뒤 목록으로 이동한다. 실패는 throw 대신 상태로 돌려
+ * production에서도 화면이 서버의 한국어 안내를 그대로 보여 줄 수 있게 한다.
+ */
 export async function deletePost(
   postId: string,
   operationId: string,
   baseRevision: number,
   returnTo = "/community",
-) {
+): Promise<PostLifecycleState> {
   const result = await trashPost(postId, operationId, baseRevision);
-  if (!result.success) throw new Error(result.error ?? "게시물을 휴지통으로 이동하지 못했습니다.");
+  if (!result.success) {
+    return { ...result, error: result.error ?? "게시물을 휴지통으로 이동하지 못했습니다." };
+  }
   redirect(safeReturnPath(returnTo, "/community"));
 }
 

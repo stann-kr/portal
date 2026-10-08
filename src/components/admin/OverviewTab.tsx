@@ -6,7 +6,7 @@
  */
 "use client";
 
-import { useActionState, useEffect, useState, useTransition } from "react";
+import { useActionState, useState, useTransition } from "react";
 import {
   CalendarDays,
   BookOpen,
@@ -51,32 +51,41 @@ interface OverviewTabProps {
 
 // ─── 커리큘럼 추가 폼 ──────────────────────────────
 
+// form action은 결과와 무관하게 uncontrolled 입력을 비우므로, 실패 시 입력을 지키려고 값을 제어하고 성공 때만 비운다.
 function AddModuleForm({
   studentId,
-  onSuccess,
+  nextWeek,
 }: {
   studentId: string;
-  onSuccess: () => void;
+  nextWeek: number;
 }) {
-  const boundAction = createModule.bind(null, studentId);
+  const [weekNum, setWeekNum] = useState(String(nextWeek));
+  const [title, setTitle] = useState("");
   const [state, action, isPending] = useActionState<CreateModuleState, FormData>(
-    boundAction,
+    async (previous, data) => {
+      try {
+        const result = await createModule(studentId, previous, data);
+        if (result.success) {
+          setTitle("");
+          setWeekNum(String(Number(data.get("weekNum")) + 1));
+        }
+        return result;
+      } catch {
+        return { error: "모듈을 추가하지 못했습니다. 다시 시도해 주세요." };
+      }
+    },
     {},
   );
-
-  useEffect(() => {
-    if (state.success) onSuccess();
-  }, [state.success, onSuccess]);
 
   return (
     <form action={action} className="mt-3 flex flex-wrap items-end gap-2" aria-busy={isPending}>
       <div className="space-y-1">
         <label htmlFor="module-week" className="text-xs font-medium text-muted-foreground">주차</label>
-        <Input id="module-week" name="weekNum" type="number" min={1} placeholder="예: 1" className="w-24" required disabled={isPending} />
+        <Input id="module-week" name="weekNum" type="number" min={1} max={520} step={1} placeholder="예: 1" className="w-24" required value={weekNum} onChange={(event) => setWeekNum(event.target.value)} disabled={isPending} />
       </div>
       <div className="min-w-52 flex-1 space-y-1">
         <label htmlFor="module-title" className="text-xs font-medium text-muted-foreground">모듈 제목</label>
-        <Input id="module-title" name="title" type="text" placeholder="예: BPM 매칭 연습" required disabled={isPending} />
+        <Input id="module-title" name="title" type="text" maxLength={120} placeholder="예: BPM 매칭 연습" required value={title} onChange={(event) => setTitle(event.target.value)} disabled={isPending} />
       </div>
       <Button type="submit" size="sm" disabled={isPending} className="gap-1">
         <Plus className="w-4 h-4" aria-hidden="true" />
@@ -91,28 +100,26 @@ function AddModuleForm({
 
 // ─── 레슨 추가 폼 ──────────────────────────────────
 
-function AddLessonForm({
-  studentId,
-  onSuccess,
-}: {
-  studentId: string;
-  onSuccess: () => void;
-}) {
-  const boundAction = createLesson.bind(null, studentId);
+function AddLessonForm({ studentId }: { studentId: string }) {
+  const [scheduledAt, setScheduledAt] = useState("");
   const [state, action, isPending] = useActionState<CreateLessonState, FormData>(
-    boundAction,
+    async (previous, data) => {
+      try {
+        const result = await createLesson(studentId, previous, data);
+        if (result.success) setScheduledAt("");
+        return result;
+      } catch {
+        return { error: "레슨을 추가하지 못했습니다. 다시 시도해 주세요." };
+      }
+    },
     {},
   );
-
-  useEffect(() => {
-    if (state.success) onSuccess();
-  }, [state.success, onSuccess]);
 
   return (
     <form action={action} className="mt-3 flex flex-wrap items-end gap-2" aria-busy={isPending}>
       <div className="min-w-52 flex-1 space-y-1">
         <label htmlFor="lesson-scheduled-at" className="text-xs font-medium text-muted-foreground">레슨 날짜와 시간</label>
-        <Input id="lesson-scheduled-at" name="scheduledAt" type="datetime-local" required disabled={isPending} />
+        <Input id="lesson-scheduled-at" name="scheduledAt" type="datetime-local" required value={scheduledAt} onChange={(event) => setScheduledAt(event.target.value)} disabled={isPending} />
       </div>
       <Button type="submit" size="sm" disabled={isPending} className="gap-1">
         <Plus className="w-4 h-4" aria-hidden="true" />
@@ -209,9 +216,7 @@ export function OverviewTab({
 
         <AddModuleForm
           studentId={studentId}
-          onSuccess={() => {
-            /* RSC revalidate 처리됨 */
-          }}
+          nextWeek={modules.reduce((max, module) => Math.max(max, module.weekNum ?? 0), 0) + 1}
         />
       </section>
 
@@ -267,12 +272,7 @@ export function OverviewTab({
           </ul>
         )}
 
-        <AddLessonForm
-          studentId={studentId}
-          onSuccess={() => {
-            /* RSC revalidate 처리됨 */
-          }}
-        />
+        <AddLessonForm studentId={studentId} />
       </section>
     </div>
   );

@@ -82,18 +82,21 @@ export async function createModule(
 ): Promise<CreateModuleState> {
   await requireStudentTarget(studentId);
 
-  const title = formData.get("title") as string;
+  const title = String(formData.get("title") ?? "").trim();
   const weekNum = Number(formData.get("weekNum"));
 
-  if (!title?.trim()) return { error: "제목을 입력해주세요." };
-  if (!weekNum || weekNum < 1) return { error: "주차를 입력해주세요." };
+  if (!title) return { error: "제목을 입력해주세요." };
+  if (title.length > 120) return { error: "모듈 제목은 120자까지 입력할 수 있습니다." };
+  if (!Number.isInteger(weekNum) || weekNum < 1 || weekNum > 520) {
+    return { error: "주차는 1부터 520 사이의 정수로 입력해 주세요." };
+  }
 
   const db = createDb();
   await db.insert(curriculums).values({
     id: crypto.randomUUID(),
     studentId,
     weekNum,
-    title: title.trim(),
+    title,
     isCompleted: false,
   });
 
@@ -151,4 +154,5 @@ export async function deleteModule(moduleId: string, studentId: string) {
       ),
     );
   revalidatePath(`/dashboard/admin/students/${studentId}`);
+  revalidatePath("/dashboard/student");
 }
