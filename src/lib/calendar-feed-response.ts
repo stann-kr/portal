@@ -1,8 +1,42 @@
 import { and, asc, eq, gte } from "drizzle-orm";
-import { createEvent, type EventAttributes } from "ics";
+import { createEvents, type EventAttributes, type ReturnObject } from "ics";
 import type { DrizzleDb } from "@/db/client";
 import { lessons } from "@/db/schema";
 import type { ActiveProfile } from "@/lib/active-profile";
+
+type FeedLesson = { id: string; scheduledAt: Date };
+
+/**
+ * 구독 캘린더가 같은 레슨을 같은 항목으로 갱신하도록 레슨 ID 기반 UID를 고정하고,
+ * 실행 환경 timezone과 무관하게 UTC 구성요소로 시작 시각을 기록한다.
+ */
+export function buildLessonCalendarIcs(
+  student: Pick<ActiveProfile, "displayName" | "email">,
+  lessonList: readonly FeedLesson[],
+): ReturnObject {
+  const events: EventAttributes[] = lessonList.map((lesson) => {
+    const date = lesson.scheduledAt;
+    return {
+      uid: `${lesson.id}@lessons.stannlumo`,
+      start: [
+        date.getUTCFullYear(),
+        date.getUTCMonth() + 1,
+        date.getUTCDate(),
+        date.getUTCHours(),
+        date.getUTCMinutes(),
+      ],
+      startInputType: "utc",
+      startOutputType: "utc",
+      duration: { hours: 1 },
+      title: `DJ Lesson — ${student.displayName ?? student.email}`,
+      description: "Stann Lumo DJ Lesson",
+      organizer: { name: "Stann Lumo", email: "admin@stannlumo.com" },
+      status: "CONFIRMED",
+      busyStatus: "BUSY",
+    };
+  });
+  return createEvents(events, { productId: "stannlumo/portal", calName: "Stann Lumo DJ 레슨" });
+}
 
 export async function createCalendarFeedResponse(
   student: ActiveProfile,
@@ -19,50 +53,12 @@ export async function createCalendarFeedResponse(
     )
     .orderBy(asc(lessons.scheduledAt));
 
-  const events: EventAttributes[] = lessonList.map((lesson) => {
-    const date = lesson.scheduledAt;
-    return {
-      start: [
-        date.getFullYear(),
-        date.getMonth() + 1,
-        date.getDate(),
-        date.getHours(),
-        date.getMinutes(),
-      ],
-      duration: { hours: 1 },
-      title: `DJ Lesson — ${student.displayName ?? student.email}`,
-      description: "Stann Lumo DJ Lesson",
-      organizer: { name: "Stann Lumo", email: "admin@stannlumo.com" },
-      status: "CONFIRMED",
-      busyStatus: "BUSY",
-    };
-  });
-
-  const { error, value } = createEvent(
-    events[0] ?? {
-      start: [2026, 1, 1, 12, 0],
-      title: "Stann Lumo — No upcoming lessons",
-    },
-  );
+  const { error, value } = buildLessonCalendarIcs(student, lessonList);
   if (error || !value) {
     return new Response("Failed to generate calendar", { status: 500 });
   }
 
-  let icsContent = value;
-  if (events.length > 1) {
-    const additionalEvents: string[] = [];
-    for (const event of events.slice(1)) {
-      const { value: nextCalendar } = createEvent(event);
-      const match = nextCalendar?.match(/BEGIN:VEVENT[\s\S]+?END:VEVENT/);
-      if (match) additionalEvents.push(match[0]);
-    }
-    icsContent = icsContent.replace(
-      "END:VCALENDAR",
-      `${additionalEvents.join("\r\n")}\r\nEND:VCALENDAR`,
-    );
-  }
-
-  return new Response(icsContent, {
+  return new Response(value, {
     status: 200,
     headers: {
       "Content-Type": "text/calendar; charset=utf-8",

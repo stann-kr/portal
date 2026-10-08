@@ -18,6 +18,7 @@ import {
 } from "@/lib/local-draft-continuity-client";
 import type { DocumentDraftKind } from "@/lib/form-draft";
 import type { LocalDocumentDraftSummary } from "@/lib/local-document-drafts";
+import { formatKst } from "@/lib/kst-format";
 
 const DRAFT_KIND_LABELS: Readonly<Record<DocumentDraftKind, string>> = {
   note: "개인 노트",
@@ -37,11 +38,7 @@ function createDraftContextLabel(draft: LocalDocumentDraftSummary): string {
 }
 
 function formatSavedAt(savedAt: Date | null): string {
-  if (!savedAt) return "저장 시각을 알 수 없음";
-  return new Intl.DateTimeFormat("ko-KR", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(savedAt);
+  return formatKst(savedAt, { dateStyle: "medium", timeStyle: "short" }, "저장 시각을 알 수 없음");
 }
 
 export function LocalDraftManager({ ownerId }: { ownerId: string }) {

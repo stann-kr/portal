@@ -9,6 +9,7 @@ import {
 import { safeReturnPath } from "@/lib/safe-return-path";
 import { RichTextContent } from "@/components/editor/RichTextContent";
 import { QNA_STATUS_LABELS } from "@/lib/qna-status";
+import { formatKst } from "@/lib/kst-format";
 
 export const metadata = { title: "Q&A 변경 이력" };
 
@@ -72,7 +73,7 @@ export default async function QnaHistoryPage({
                   {event.eventNumber}번 · {EVENT_LABELS[event.eventType]}
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  {event.createdAt.toLocaleString("ko-KR")} · {event.actorName ?? "시스템"}
+                  {formatKst(event.createdAt)} · {event.actorName ?? "시스템"}
                 </p>
               </div>
               <span className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground">
@@ -102,7 +103,7 @@ export default async function QnaHistoryPage({
             ) : null}
             {event.deletedAt ? (
               <p className="text-xs text-muted-foreground">
-                삭제 시각: {event.deletedAt.toLocaleString("ko-KR")}
+                삭제 시각: {formatKst(event.deletedAt)}
               </p>
             ) : null}
           </li>

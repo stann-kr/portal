@@ -16,27 +16,18 @@ import {
   type PendingFeedbackAssignment,
 } from "@/lib/admin-work-queue";
 import type { StudentRosterStat } from "@/lib/actions/students";
+import { formatKst } from "@/lib/kst-format";
 
 function formatDay(date: Date) {
-  return new Intl.DateTimeFormat("ko-KR", {
-    timeZone: "Asia/Seoul",
-    month: "long",
-    day: "numeric",
-    weekday: "long",
-  }).format(date);
+  return formatKst(date, { month: "long", day: "numeric", weekday: "long" });
 }
 
 function formatDateTime(date: Date | null | undefined) {
-  if (!date) return "시간 미정";
-
-  return new Intl.DateTimeFormat("ko-KR", {
-    timeZone: "Asia/Seoul",
-    month: "short",
-    day: "numeric",
-    weekday: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(date);
+  return formatKst(
+    date,
+    { month: "short", day: "numeric", weekday: "short", hour: "2-digit", minute: "2-digit" },
+    "시간 미정",
+  );
 }
 
 function displayStudent({

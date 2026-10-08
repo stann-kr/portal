@@ -9,6 +9,7 @@ import {
 import { safeReturnPath } from "@/lib/safe-return-path";
 import { RichTextContent } from "@/components/editor/RichTextContent";
 import { RestorePostRevisionButton } from "@/components/community/RestorePostRevisionButton";
+import { formatKst } from "@/lib/kst-format";
 
 export const metadata = { title: "게시물 변경 이력" };
 
@@ -75,7 +76,7 @@ export default async function PostHistoryPage({
                   {revision.revisionNumber}번 · {CHANGE_LABELS[revision.changeType]}
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  {revision.createdAt.toLocaleString("ko-KR")} · {revision.actorName ?? "시스템"}
+                  {formatKst(revision.createdAt)} · {revision.actorName ?? "시스템"}
                   {revision.restoredFromRevision
                     ? ` · ${revision.restoredFromRevision}번에서 복원`
                     : ""}

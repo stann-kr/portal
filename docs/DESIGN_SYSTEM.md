@@ -167,3 +167,4 @@ pill 형태는 filter와 count처럼 모양 자체가 의미를 가질 때만 �
 - keyboard, mobile 1열, empty·loading·error 상태가 있는가
 - 실제 데이터가 없는 상태를 추정한 문구가 없는가
 - 보이는 문구가 짧고 구체적인 한국어로 통일되었는가
+- 날짜·시각을 `src/lib/kst-format.ts`의 `formatKst`·`formatKstShortDate`로만 표시하는가. Worker SSR은 UTC로 실행되므로 `toLocale*String`·`Intl.DateTimeFormat`·`date-fns` 직접 호출은 `npm run check:ui`가 거부한다.

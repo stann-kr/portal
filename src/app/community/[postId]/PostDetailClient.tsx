@@ -15,6 +15,7 @@ import { CommentForm } from "@/components/community/CommentForm";
 import { PostEditForm } from "@/components/community/PostEditForm";
 import { PostTrashActions } from "@/components/community/PostTrashActions";
 import { createCreationOperationId } from "@/lib/creation-operation";
+import { formatKst, formatKstShortDate } from "@/lib/kst-format";
 
 type Post = NonNullable<Awaited<ReturnType<typeof getPostIncludingTrash>>>;
 type Comment = Awaited<ReturnType<typeof getCommentsByPost>>[number];
@@ -78,13 +79,7 @@ export function PostDetailClient({
     });
   };
 
-  const date = post.createdAt
-    ? new Date(post.createdAt).toLocaleDateString("ko-KR", {
-        year: "numeric",
-        month: "long",
-        day: "numeric",
-      })
-    : "날짜 정보 없음";
+  const date = formatKst(post.createdAt, { year: "numeric", month: "long", day: "numeric" }, "날짜 정보 없음");
   const author =
     post.authorName ?? post.authorEmail?.split("@")[0] ?? "작성자 미상";
   const canManagePost = isAdmin || currentUserId === post.authorId;
@@ -167,7 +162,7 @@ export function PostDetailClient({
           <div>
             <p className="font-medium">휴지통에 있는 게시물입니다.</p>
             <p className="text-sm text-muted-foreground">
-              삭제 {post.deletedAt.toLocaleString("ko-KR")} · 댓글과 변경 이력은 함께 보존됩니다.
+              삭제 {formatKst(post.deletedAt)} · 댓글과 변경 이력은 함께 보존됩니다.
             </p>
           </div>
           <PostTrashActions
@@ -215,12 +210,7 @@ export function PostDetailClient({
             {commentList.map((c) => {
               const cAuthor =
                 c.authorName ?? c.authorEmail?.split("@")[0] ?? "작성자 미상";
-              const cDate = c.createdAt
-                ? new Date(c.createdAt).toLocaleDateString("ko-KR", {
-                    month: "short",
-                    day: "numeric",
-                  })
-                : "날짜 정보 없음";
+              const cDate = formatKstShortDate(c.createdAt, "날짜 정보 없음");
               const cInitials = cAuthor.slice(0, 2).toUpperCase();
               const canDelete =
                 !post.deletedAt && (isAdmin || currentUserId === c.authorId);

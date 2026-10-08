@@ -136,7 +136,7 @@ Migration SQL은 `drizzle/`, Drizzle metadata는 `drizzle/meta/`에 둔다. Wran
 - credentials provider는 email/password와 bcrypt hash를 비교한다.
 - session의 `user.id`는 profile 조회의 시작점으로만 사용한다. Node auth의 JWT callback, `/api/auth/session`과 모든 server 인증 경계가 profile 존재와 DB의 최신 role을 다시 확인해 삭제된 JWT를 즉시 거부한다. JWT/session 최대 수명은 7일로 고정해 raw subject ID의 30일 보존 경계보다 먼저 만료시킨다.
 - 데이터 조회·변경 함수는 호출 화면에 의존하지 않고 role과 ownership을 자체 검증해야 한다.
-- 신규 캘린더 feed는 256-bit opaque token의 SHA-256 digest로 owner를 찾고 회전 시 이전 digest를 폐기한다. 기존 v1 URL은 active 학생 profile을 먼저 확인한 뒤 서명을 검증한다.
+- 신규 캘린더 feed는 256-bit opaque token의 SHA-256 digest로 owner를 찾고 회전 시 이전 digest를 폐기한다. 기존 v1 URL은 active 학생 profile을 먼저 확인한 뒤 서명을 검증한다. `.ics`의 각 레슨은 레슨 ID 기반 고정 UID와 UTC 시작 시각을 사용하고, 예정 레슨이 없으면 일정 없는 빈 캘린더를 반환한다.
 - 학생 계정 삭제는 현재 비밀번호, persistent 또는 memory-only 기기 digest와 UUID operation을 요구한다. persistent token은 삭제 batch에서 모두 job에 결합하고 memory-only digest는 cleanup token quota를 소비하지 않는 job initiating receipt로 기록한다. job·profile 삭제는 함께 commit하거나 rollback하며, admin 삭제는 이 흐름에서 거부한다.
 - rich text는 HTML5 AST를 새 안전 트리로 복사하는 tag·속성·URL allowlist로 서버 저장과 렌더 경계에서 sanitize한다. DOM emulation 없이 Node·browser·Worker에서 같은 동기 결과를 사용한다.
 - Q&A 상태 변경은 관리자 역할과 허용된 `OPEN`, `ANSWERED`, `CLOSED` 값인지 함께 검증한다.
@@ -211,6 +211,8 @@ npm audit --omit=dev --audit-level=moderate
 ```
 
 현재 migration consistency와 `0007` upgrade, `0008→0009` account cascade, `0009→0010` 게시물·Q&A baseline, `0010→0011` media, `0011→0012` 개인정보 및 `0012→0013` 외부 캘린더 upgrade, CHECK·trigger semantic probe, 개발용 관리자 seed의 환경·입력 경계, active-profile auth guard, calendar token 회전·변조, HTML AST sanitize·YouTube payload, local draft와 서버 초안 연속성이 자동화되어 있다. 격리 D1은 노트·게시물·Q&A와 미디어 claim·봉인·purge, 학생 계정 삭제·exact replay·30일 raw-ID alias의 원자 rollback을 검증한다. 예약 정리는 bounded enqueue, poison job 격리, soft budget, 무민감 aggregate log를 검증하고 별도 설정의 maintenance·scheduled Worker를 dry-run bundle한다. DOM 격리 환경에서는 로컬 복구, terminal lock, owner별 계정 정리, ownerless snapshot 확인, 오프라인 재시도와 다중 기기 선택을 검증한다. 실제 브라우저 E2E와 production migration·R2 설정·Cron trigger·deploy는 별도 범위다.
+
+화면의 날짜·시각은 실행 환경 timezone(Worker SSR은 UTC)과 무관하게 `src/lib/kst-format.ts`로 Asia/Seoul 기준 표시한다. UI 계약 검사는 이 경계 밖의 locale 날짜 포맷 호출을 거부한다.
 
 UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 시스템](./DESIGN_SYSTEM.md)을 기준으로 한다. 상태 registry는 label, semantic tone, icon key가 서로 어긋나지 않도록 단위 테스트로 보호한다.
 

@@ -5,24 +5,20 @@ import { AlertCircle, Check, CloudCog, RotateCcw, Trash2 } from "lucide-react";
 import { ServerDraftStatus } from "@/components/editor/ServerDraftStatus";
 import type { FormDraftRecoverySummary, FormDraftStatus } from "@/lib/form-draft";
 import type { DocumentServerDraftSyncResult } from "@/lib/hooks/useDocumentServerDraftSync";
+import { formatKst } from "@/lib/kst-format";
 
 function formatSavedTime(value: Date | null): string | null {
-  if (!value || !Number.isFinite(value.getTime())) return null;
-  return new Intl.DateTimeFormat("ko-KR", {
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(value);
+  return formatKst(value, { hour: "2-digit", minute: "2-digit" }) || null;
 }
 
 function formatRecoveryDateTime(value: Date): string | null {
-  if (!Number.isFinite(value.getTime())) return null;
-  return new Intl.DateTimeFormat("ko-KR", {
+  return formatKst(value, {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
-  }).format(value);
+  }) || null;
 }
 
 function DraftStateLine({

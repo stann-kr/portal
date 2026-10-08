@@ -4,6 +4,7 @@ import { ArrowLeft, Trash2 } from "lucide-react";
 import { getActiveAuthSession } from "@/lib/auth-guard";
 import { getTrashedPosts } from "@/lib/actions/posts";
 import { PostTrashActions } from "@/components/community/PostTrashActions";
+import { formatKst } from "@/lib/kst-format";
 
 export const metadata = { title: "게시물 휴지통" };
 
@@ -54,12 +55,12 @@ export default async function CommunityTrashPage() {
                     {post.title}
                   </Link>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    {post.authorName ?? "작성자 미상"} · 삭제 {post.deletedAt?.toLocaleString("ko-KR")}
+                    {post.authorName ?? "작성자 미상"} · 삭제 {formatKst(post.deletedAt)}
                   </p>
                   <p className="text-xs text-muted-foreground">
                     {expired
                       ? "복원 기한이 만료되어 영구 삭제할 수 있습니다."
-                      : `복원 가능: ${post.purgeEligibleAt?.toLocaleString("ko-KR")}까지`}
+                      : `복원 가능: ${formatKst(post.purgeEligibleAt)}까지`}
                   </p>
                 </div>
                 <PostTrashActions

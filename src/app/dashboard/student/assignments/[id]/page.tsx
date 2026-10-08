@@ -9,6 +9,7 @@ import { getAssignmentById } from "@/lib/actions/assignments";
 import { getFeedbacksByAssignment } from "@/lib/actions/feedbacks";
 import { requireAuth } from "@/lib/auth-guard";
 import { AssignmentDetailClient } from "./AssignmentDetailClient";
+import { formatKst } from "@/lib/kst-format";
 
 export type AssignmentFeedback = Awaited<
   ReturnType<typeof getFeedbacksByAssignment>
@@ -49,13 +50,11 @@ export default async function AssignmentDetailPage({
   }));
   const isAdmin = session?.user?.role === "admin";
 
-  const submittedDate = assignment.submittedAt
-    ? new Date(assignment.submittedAt).toLocaleDateString("ko-KR", {
-        year: "numeric",
-        month: "long",
-        day: "numeric",
-      })
-    : "제출일 미정";
+  const submittedDate = formatKst(
+    assignment.submittedAt,
+    { year: "numeric", month: "long", day: "numeric" },
+    "제출일 미정",
+  );
   const backHref = isAdmin ? "/dashboard/admin?section=work" : "/dashboard/student?section=today";
   const backLabel = isAdmin ? "업무함으로" : "학생 포털로";
 

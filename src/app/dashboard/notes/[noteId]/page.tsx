@@ -12,6 +12,7 @@ import { RichTextContent } from "@/components/editor/RichTextContent";
 import { DeleteNoteButton } from "@/components/notes/DeleteNoteButton";
 import { NoteTrashActions } from "@/components/notes/NoteTrashActions";
 import { PRIVATE_NOTE_TRASH_RETENTION_SECONDS } from "@/lib/private-note-continuity";
+import { formatKst } from "@/lib/kst-format";
 
 export const metadata = { title: "노트" };
 
@@ -60,7 +61,7 @@ export default async function NotePage({
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <p className="text-xs text-muted-foreground">
-              {note.authorName ?? "작성자 미상"} · {new Date(note.noteDate ?? note.createdAt ?? Date.now()).toLocaleDateString("ko-KR")}
+              {note.authorName ?? "작성자 미상"} · {formatKst(note.noteDate ?? note.createdAt, { year: "numeric", month: "numeric", day: "numeric" }, "날짜 정보 없음")}
             </p>
             <h1 className="mt-1 text-2xl font-semibold tracking-tight">{note.title}</h1>
           </div>
@@ -84,8 +85,8 @@ export default async function NotePage({
           <div className="space-y-1">
             <h2 className="font-semibold">휴지통에 있는 노트입니다</h2>
             <p className="text-sm text-muted-foreground">
-              {note.deletedAt.toLocaleString("ko-KR")}에 삭제되었습니다. 복원 가능 기한은{" "}
-              {purgeEligibleAt?.toLocaleString("ko-KR")}까지이며, 휴지통에서는 편집할 수 없습니다.
+              {formatKst(note.deletedAt)}에 삭제되었습니다. 복원 가능 기한은{" "}
+              {formatKst(purgeEligibleAt)}까지이며, 휴지통에서는 편집할 수 없습니다.
             </p>
           </div>
           <NoteTrashActions

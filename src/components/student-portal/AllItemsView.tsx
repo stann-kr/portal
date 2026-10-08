@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/unified-item-type";
 import { SlidePanel } from "./SlidePanel";
 import { UnifiedItemDetail } from "./UnifiedItemDetail";
+import { formatKstShortDate } from "@/lib/kst-format";
 
 // ── 상수 ─────────────────────────────────────────
 
@@ -28,10 +29,7 @@ const ALL_TYPES: UnifiedItemType[] = ["EVENT", "NOTE", "DIGGING", "QNA", "ASSIGN
 // ── 날짜 포맷 ────────────────────────────────────
 
 function formatDate(date: Date): string {
-  return new Date(date).toLocaleDateString("ko-KR", {
-    month: "short",
-    day: "numeric",
-  });
+  return formatKstShortDate(date);
 }
 
 // ── 컴포넌트 ─────────────────────────────────────

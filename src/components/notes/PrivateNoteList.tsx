@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { BookOpen, CalendarDays, UserRound } from "lucide-react";
 import { createFormDraftRecoveryPreview } from "@/lib/form-draft";
+import { formatKst } from "@/lib/kst-format";
 
 export type PrivateNoteListItem = {
   id: string;
@@ -14,23 +15,15 @@ export type PrivateNoteListItem = {
 };
 
 function formatDate(value: Date | null): string {
-  if (!value) return "날짜 정보 없음";
-  return new Intl.DateTimeFormat("ko-KR", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  }).format(value);
+  return formatKst(value, { year: "numeric", month: "short", day: "numeric" }, "날짜 정보 없음");
 }
 
 function formatUpdated(value: Date | null): string {
-  if (!value) return "날짜 정보 없음";
-  return new Intl.DateTimeFormat("ko-KR", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(value);
+  return formatKst(
+    value,
+    { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" },
+    "날짜 정보 없음",
+  );
 }
 
 /** 노트 HTML은 목록에서 렌더하지 않고 안전한 짧은 평문 preview로만 표시한다. */

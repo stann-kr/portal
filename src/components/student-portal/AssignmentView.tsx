@@ -24,6 +24,7 @@ import { SlidePanel } from "./SlidePanel";
 import { AssignmentDetailPanel } from "./AssignmentDetailPanel";
 import { EmptyState } from "@/components/ui/empty-state";
 import { StatusBadge } from "@/components/ui/status-badge";
+import { formatKst } from "@/lib/kst-format";
 
 // ── 타입 ──────────────────────────────────────────
 
@@ -53,13 +54,7 @@ function mediaPlatform(url: string) {
 }
 
 function formatDate(date: Date | null): string {
-  if (!date) return "제출일 미정";
-  return new Date(date).toLocaleString("ko-KR", {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return formatKst(date, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }, "제출일 미정");
 }
 
 // ── 제출 폼 ──────────────────────────────────────

@@ -28,6 +28,8 @@ import {
   deleteDiggingTrack,
 } from "@/lib/actions/digging";
 import type { DiggingColumnType } from "@/db/schema";
+import { formatKst } from "@/lib/kst-format";
+import { toKstDateInputValue } from "@/lib/date-input";
 
 type Column = {
   id: string;
@@ -264,35 +266,32 @@ export function DiggingBoard({
 
   // 날짜 범위 필터 + 그룹핑
   const groupedTracks = useMemo(() => {
+    // 날짜 입력과 그룹은 모두 KST 날짜 key(YYYY-MM-DD)로 비교한다.
     const filtered = tracks.filter((t) => {
       if (!t.createdAt) return true;
-      const d = new Date(t.createdAt);
-      if (dateFrom && d < new Date(dateFrom)) return false;
-      if (dateTo && d > new Date(dateTo + "T23:59:59")) return false;
+      const dateKey = toKstDateInputValue(new Date(t.createdAt));
+      if (dateFrom && dateKey < dateFrom) return false;
+      if (dateTo && dateKey > dateTo) return false;
       return true;
     });
 
-    const groups: Record<string, Track[]> = {};
+    const groups = new Map<string, { label: string; tracks: Track[] }>();
     filtered.forEach((t) => {
-      const key = t.createdAt
-        ? new Date(t.createdAt).toLocaleDateString("ko-KR", {
-            year: "numeric",
-            month: "long",
-            day: "numeric",
-            weekday: "short",
-          })
-        : "날짜 없음";
-      if (!groups[key]) groups[key] = [];
-      groups[key].push(t);
+      const dateKey = t.createdAt ? toKstDateInputValue(new Date(t.createdAt)) : "";
+      const group = groups.get(dateKey) ?? {
+        label: t.createdAt
+          ? formatKst(t.createdAt, { year: "numeric", month: "long", day: "numeric", weekday: "short" })
+          : "날짜 없음",
+        tracks: [],
+      };
+      group.tracks.push(t);
+      groups.set(dateKey, group);
     });
 
-    // 최신 날짜 순 정렬
-    return Object.entries(groups).sort(([a], [b]) => {
-      const da = groups[a][0]?.createdAt;
-      const db = groups[b][0]?.createdAt;
-      if (!da || !db) return 0;
-      return new Date(db).getTime() - new Date(da).getTime();
-    });
+    // 최신 날짜 순 정렬, 날짜 없는 트랙은 마지막
+    return [...groups.entries()]
+      .sort(([a], [b]) => (a && b ? b.localeCompare(a) : a ? -1 : b ? 1 : 0))
+      .map(([, group]) => [group.label, group.tracks] as [string, Track[]]);
   }, [tracks, dateFrom, dateTo]);
 
   const toggleDate = (date: string) => {

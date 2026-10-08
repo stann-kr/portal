@@ -19,6 +19,7 @@ import type { EventClickArg, EventDropArg, EventInput } from "@fullcalendar/core
 import { EventFormDialog } from "./EventFormDialog";
 import { updateCalendarEvent, deleteCalendarEvent } from "@/lib/actions/calendarEvents";
 import type { CalendarEventType } from "@/db/schema";
+import { formatKst } from "@/lib/kst-format";
 
 // ─── 이벤트 타입별 색상 ──────────────────────────
 const EVENT_COLORS: Record<CalendarEventType, string> = {
@@ -199,19 +200,11 @@ export function PersonalCalendar({ initialEvents }: PersonalCalendarProps) {
             <div className="text-sm text-muted-foreground space-y-1">
               <p>
                 🕒{" "}
-                {new Date(detailEvent.startTime).toLocaleString("ko-KR", {
-                  month: "short",
-                  day: "numeric",
-                  hour: "2-digit",
-                  minute: "2-digit",
-                })}
+                {formatKst(detailEvent.startTime, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
                 {detailEvent.endTime && (
                   <>
                     {" "}~{" "}
-                    {new Date(detailEvent.endTime).toLocaleString("ko-KR", {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
+                    {formatKst(detailEvent.endTime, { hour: "2-digit", minute: "2-digit" })}
                   </>
                 )}
               </p>

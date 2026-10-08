@@ -10,6 +10,7 @@ import Link from "next/link";
 import { ExternalLink, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { RichTextContent } from "@/components/editor/RichTextContent";
+import { formatKstShortDate } from "@/lib/kst-format";
 import {
   getCommentsByPost,
   createComment,
@@ -154,12 +155,7 @@ export function PostDetailPanel({ postId, contentHtml, returnTo }: PostDetailPan
           <ul className="space-y-3">
             {comments.map((c) => {
               const author = c.authorName ?? c.authorEmail?.split("@")[0] ?? "익명";
-              const date = c.createdAt
-                ? new Date(c.createdAt).toLocaleDateString("ko-KR", {
-                    month: "short",
-                    day: "numeric",
-                  })
-                : "날짜 정보 없음";
+              const date = formatKstShortDate(c.createdAt, "날짜 정보 없음");
               return (
                 <li
                   key={c.id}

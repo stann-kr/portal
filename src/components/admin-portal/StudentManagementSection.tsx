@@ -6,7 +6,6 @@
 
 import { Fragment, useState } from "react";
 import Link from "next/link";
-import { format } from "date-fns";
 import {
   BookOpen,
   ChevronDown,
@@ -19,6 +18,10 @@ import {
 import { Button } from "@/components/ui/button";
 import type { StudentRosterStat } from "@/lib/actions/students";
 import { buildAdminStudentDetailHref } from "@/lib/student-space-routes";
+import { formatKst } from "@/lib/kst-format";
+
+const LESSON_DATE_LONG: Intl.DateTimeFormatOptions = { month: "long", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" };
+const LESSON_DATE_SHORT: Intl.DateTimeFormatOptions = { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" };
 
 function StudentSummaryInline({ student }: { student: StudentRosterStat }) {
   const displayName = student.displayName?.trim() || student.email;
@@ -37,7 +40,7 @@ function StudentSummaryInline({ student }: { student: StudentRosterStat }) {
             <div>
               <dt className="text-xs font-medium text-muted-foreground">다음 레슨</dt>
               <dd className="mt-1 font-medium text-foreground">
-                {student.nextLessonDate ? format(student.nextLessonDate, "M월 d일 HH:mm") : "미정"}
+                {student.nextLessonDate ? formatKst(student.nextLessonDate, LESSON_DATE_LONG) : "미정"}
               </dd>
             </div>
             <div>
@@ -103,7 +106,7 @@ export function StudentManagementSection({ students }: { students: StudentRoster
                   </div>
                   <dl className="mt-4 grid grid-cols-2 gap-3 text-xs">
                     <div><dt className="text-muted-foreground">현재 진도</dt><dd className="mt-1 line-clamp-2 font-medium text-foreground">{student.currentModule || "진도 미지정"}</dd></div>
-                    <div><dt className="text-muted-foreground">다음 레슨</dt><dd className="mt-1 font-mono font-medium tabular-nums text-foreground">{student.nextLessonDate ? format(student.nextLessonDate, "M/d HH:mm") : "미정"}</dd></div>
+                    <div><dt className="text-muted-foreground">다음 레슨</dt><dd className="mt-1 font-mono font-medium tabular-nums text-foreground">{student.nextLessonDate ? formatKst(student.nextLessonDate, LESSON_DATE_SHORT) : "미정"}</dd></div>
                   </dl>
                 </Link>
               ))}
@@ -142,7 +145,7 @@ export function StudentManagementSection({ students }: { students: StudentRoster
                             </button>
                           </td>
                           <td className="px-4 py-3 text-xs text-muted-foreground">{student.currentModule || "진도 미지정"}</td>
-                          <td className="px-4 py-3 text-xs text-muted-foreground">{student.nextLessonDate ? format(student.nextLessonDate, "M/d HH:mm") : "미정"}</td>
+                          <td className="px-4 py-3 text-xs text-muted-foreground">{student.nextLessonDate ? formatKst(student.nextLessonDate, LESSON_DATE_SHORT) : "미정"}</td>
                           <td className="px-4 py-3 text-center">{student.pendingFeedbackCount > 0 ? <span className="inline-flex min-w-5 items-center justify-center rounded-md bg-warning-muted px-1.5 py-0.5 text-xs font-bold text-warning">{student.pendingFeedbackCount}</span> : <span className="text-muted-foreground">0</span>}</td>
                           <td className="px-4 py-3"><Button asChild variant="ghost" size="icon"><Link href={buildAdminStudentDetailHref(student.id, "overview")} aria-label={`${displayName} 상세 열기`}><Settings className="size-4" aria-hidden="true" /></Link></Button></td>
                         </tr>

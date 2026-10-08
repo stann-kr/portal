@@ -14,6 +14,7 @@ import { PencilLine } from "lucide-react";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 import { UnifiedItemSpaceBadge, UnifiedItemTypeBadge } from "@/components/ui/unified-item-type";
 import { RichTextContent } from "@/components/editor/RichTextContent";
+import { formatKst } from "@/lib/kst-format";
 
 // ── 타입 라벨 ────────────────────────────────────
 
@@ -29,26 +30,18 @@ const EVENT_TYPE_LABELS: Record<string, string> = {
 
 // ── 포맷 헬퍼 ────────────────────────────────────
 
+const DATE_LABEL: Intl.DateTimeFormatOptions = { year: "numeric", month: "short", day: "numeric" };
+
 function formatDate(date: Date) {
-  return new Date(date).toLocaleString("ko-KR", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return formatKst(date, { ...DATE_LABEL, hour: "2-digit", minute: "2-digit" });
 }
 
+// date-only 값은 UTC 자정으로 만들어 KST(+9)에서도 같은 날짜로 표시한다.
 function formatAllDayDate(date: Date, dateOnly: string | null) {
   const exactDate = dateOnly && /^\d{4}-\d{2}-\d{2}$/u.test(dateOnly)
     ? new Date(`${dateOnly}T00:00:00.000Z`)
     : new Date(date);
-  return exactDate.toLocaleDateString("ko-KR", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    ...(dateOnly ? { timeZone: "UTC" } : {}),
-  });
+  return formatKst(exactDate, DATE_LABEL);
 }
 
 function formatAllDayEndDate(date: Date, dateOnly: string | null) {
@@ -57,12 +50,7 @@ function formatAllDayEndDate(date: Date, dateOnly: string | null) {
   }
   const inclusiveEnd = new Date(`${dateOnly}T00:00:00.000Z`);
   inclusiveEnd.setUTCDate(inclusiveEnd.getUTCDate() - 1);
-  return inclusiveEnd.toLocaleDateString("ko-KR", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    timeZone: "UTC",
-  });
+  return formatKst(inclusiveEnd, DATE_LABEL);
 }
 
 /**

@@ -6,6 +6,7 @@ import { getTrashedQnaThreads } from "@/lib/actions/qna";
 import { QnaThreadLifecycleActions } from "@/components/qna/QnaThreadLifecycleActions";
 import { QNA_STATUS_LABELS } from "@/lib/qna-status";
 import { safeReturnPath } from "@/lib/safe-return-path";
+import { formatKst } from "@/lib/kst-format";
 
 export const metadata = { title: "Q&A 휴지통" };
 
@@ -62,12 +63,12 @@ export default async function QnaTrashPage({ searchParams }: {
                   </Link>
                   <p className="mt-1 text-xs text-muted-foreground">
                     {isAdmin ? `${thread.studentName ?? "학생"} · ` : ""}
-                    {QNA_STATUS_LABELS[thread.status]} · 삭제 {thread.deletedAt?.toLocaleString("ko-KR")}
+                    {QNA_STATUS_LABELS[thread.status]} · 삭제 {formatKst(thread.deletedAt)}
                   </p>
                   <p className="text-xs text-muted-foreground">
                     {expired
                       ? "복원 기한이 만료되어 영구 삭제할 수 있습니다."
-                      : `복원 가능: ${thread.purgeEligibleAt?.toLocaleString("ko-KR")}까지`}
+                      : `복원 가능: ${formatKst(thread.purgeEligibleAt)}까지`}
                   </p>
                 </div>
                 <QnaThreadLifecycleActions

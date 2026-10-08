@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button";
 import { RichTextContent } from "@/components/editor/RichTextContent";
 import { togglePinPost } from "@/lib/actions/posts";
 import { createCreationOperationId } from "@/lib/creation-operation";
+import { formatKst } from "@/lib/kst-format";
 
 type Post = {
   id: string;
@@ -84,13 +85,7 @@ export function AnnouncementList({ posts, isAdmin, returnTo = "/community" }: An
       {posts.map((post) => {
         const author =
           post.authorName ?? post.authorEmail?.split("@")[0] ?? "관리자";
-        const date = post.createdAt
-          ? new Date(post.createdAt).toLocaleDateString("ko-KR", {
-              year: "numeric",
-              month: "short",
-              day: "numeric",
-            })
-          : "날짜 정보 없음";
+        const date = formatKst(post.createdAt, { year: "numeric", month: "short", day: "numeric" }, "날짜 정보 없음");
 
         return (
           <AccordionItem

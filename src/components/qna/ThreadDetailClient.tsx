@@ -39,6 +39,7 @@ import {
 import { CreationConflictActions } from "@/components/editor/CreationConflictActions";
 import { QnaThreadLifecycleActions } from "@/components/qna/QnaThreadLifecycleActions";
 import { abandonMediaUpload } from "@/lib/actions/upload";
+import { formatKst } from "@/lib/kst-format";
 
 type Reply = {
   id: string;
@@ -297,13 +298,7 @@ function ThreadDetailContent({
             <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
               {isAdmin ? <span>{studentName} /</span> : null}
               <span>
-                {createdAt
-                  ? new Date(createdAt).toLocaleDateString("ko-KR", {
-                      year: "numeric",
-                      month: "long",
-                      day: "numeric",
-                    })
-                  : "작성일 미정"}
+                {formatKst(createdAt, { year: "numeric", month: "long", day: "numeric" }, "작성일 미정")}
               </span>
             </div>
           </div>

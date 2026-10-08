@@ -89,6 +89,7 @@ test("복구본은 날짜·시간과 안전한 preview를 표시하되 최신 5�
   const firstTime = container.querySelector("time");
   assert.ok(firstTime);
   const expectedDateTime = new Intl.DateTimeFormat("ko-KR", {
+    timeZone: "Asia/Seoul",
     year: "numeric",
     month: "2-digit",
     day: "2-digit",

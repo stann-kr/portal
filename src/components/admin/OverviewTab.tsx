@@ -28,6 +28,7 @@ import {
   type CreateLessonState,
 } from "@/lib/actions/lessons";
 import { CalendarFeedControl } from "@/components/admin/CalendarFeedControl";
+import { formatKst } from "@/lib/kst-format";
 
 // ─── 타입 ──────────────────────────────────────────
 interface Module {
@@ -243,20 +244,11 @@ export function OverviewTab({
                   <CalendarDays className="w-4 h-4 text-muted-foreground flex-shrink-0" />
                   <div className="flex-1">
                     <p className="text-sm font-medium">
-                      {date.toLocaleDateString("ko-KR", {
-                        timeZone: "Asia/Seoul",
-                        year: "numeric",
-                        month: "long",
-                        day: "numeric",
-                      })}
+                      {formatKst(date, { year: "numeric", month: "long", day: "numeric" })}
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      {date.toLocaleTimeString("ko-KR", {
-                        timeZone: "Asia/Seoul",
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
-                      {isPast && " · 완료"}
+                      {formatKst(date, { hour: "2-digit", minute: "2-digit" })}
+                      {isPast && " · 지난 레슨"}
                     </p>
                   </div>
                   <Button
@@ -264,7 +256,7 @@ export function OverviewTab({
                     size="sm"
                     onClick={() => handleDeleteLesson(l.id)}
                     disabled={isPending}
-                    aria-label={`${date.toLocaleDateString("ko-KR")} 레슨 삭제`}
+                    aria-label={`${formatKst(date, { year: "numeric", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" })} 레슨 삭제`}
                     className="text-destructive opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100"
                   >
                     <Trash2 className="w-4 h-4" aria-hidden="true" />

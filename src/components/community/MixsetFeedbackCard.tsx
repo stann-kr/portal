@@ -8,6 +8,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { Music2, Play, Pause, ChevronRight } from "lucide-react";
+import { formatKstShortDate } from "@/lib/kst-format";
 
 type FeedbackPost = {
   id: string;
@@ -30,12 +31,7 @@ export function MixsetFeedbackCard({ post, returnTo = "/community" }: MixsetFeed
   const author =
     post.authorName ?? post.authorEmail?.split("@")[0] ?? "작성자 미상";
   const initials = author.slice(0, 2).toUpperCase();
-  const date = post.createdAt
-    ? new Date(post.createdAt).toLocaleDateString("ko-KR", {
-        month: "short",
-        day: "numeric",
-      })
-    : "날짜 정보 없음";
+  const date = formatKstShortDate(post.createdAt, "날짜 정보 없음");
 
   const preview = post.contentHtml
     .replace(/<[^>]+>/g, " ")

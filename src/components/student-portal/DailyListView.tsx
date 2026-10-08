@@ -18,25 +18,16 @@ import {
 import { SlidePanel } from "./SlidePanel";
 import { UnifiedItemDetail } from "./UnifiedItemDetail";
 import { groupUnifiedItemsByKstDate } from "@/lib/unified-item-date-groups";
+import { formatKst } from "@/lib/kst-format";
 
 // ── 날짜 포맷 ────────────────────────────────────
 
 function formatGroupDate(date: Date): string {
-  return new Date(date).toLocaleDateString("ko-KR", {
-    timeZone: "Asia/Seoul",
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-    weekday: "short",
-  });
+  return formatKst(date, { year: "numeric", month: "long", day: "numeric", weekday: "short" });
 }
 
 function formatTime(date: Date): string {
-  return new Date(date).toLocaleTimeString("ko-KR", {
-    timeZone: "Asia/Seoul",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return formatKst(date, { hour: "2-digit", minute: "2-digit" });
 }
 
 // ── 날짜별 그룹핑 ────────────────────────────────

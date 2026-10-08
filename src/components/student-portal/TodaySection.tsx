@@ -17,6 +17,7 @@ import { StatusBadge } from "@/components/ui/status-badge";
 import { getStudentTodaySummary } from "@/lib/student-today";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 import { buildQnaListHref } from "@/lib/qna-routes";
+import { formatKst, formatKstShortDate } from "@/lib/kst-format";
 
 type Post = {
   id: string;
@@ -26,33 +27,17 @@ type Post = {
 };
 
 function formatDay(date: Date) {
-  return new Intl.DateTimeFormat("ko-KR", {
-    timeZone: "Asia/Seoul",
-    month: "long",
-    day: "numeric",
-    weekday: "long",
-  }).format(date);
+  return formatKst(date, { month: "long", day: "numeric", weekday: "long" });
 }
 
 function formatCueDate(date: Date) {
-  return new Intl.DateTimeFormat("ko-KR", {
-    timeZone: "Asia/Seoul",
+  return formatKst(date, {
     month: "long",
     day: "numeric",
     weekday: "short",
     hour: "2-digit",
     minute: "2-digit",
-  }).format(date);
-}
-
-function formatShortDate(date: Date | null) {
-  if (!date) return null;
-
-  return new Intl.DateTimeFormat("ko-KR", {
-    timeZone: "Asia/Seoul",
-    month: "short",
-    day: "numeric",
-  }).format(date);
+  });
 }
 
 function cueTypeLabel(item: UnifiedItem) {
@@ -173,7 +158,7 @@ export function TodaySection({
                     <div className="min-w-0 flex-1">
                       <p className="line-clamp-2 break-words text-sm font-semibold text-foreground sm:line-clamp-1">{title}</p>
                       <p className="mt-1 truncate text-xs text-muted-foreground">
-                        {formatShortDate(item.date)}{isAssignment ? " 제출" : ""}
+                        {formatKstShortDate(item.date)}{isAssignment ? " 제출" : ""}
                       </p>
                     </div>
                     <div className="col-start-1 row-start-2 sm:contents"><StatusBadge status={status} /></div>
@@ -242,7 +227,7 @@ export function TodaySection({
                   {post.title}
                 </p>
                 <div className="mt-3 flex items-center justify-between gap-3 text-xs text-muted-foreground">
-                  <span>{post.isPinned ? "고정 공지" : formatShortDate(post.createdAt)}</span>
+                  <span>{post.isPinned ? "고정 공지" : formatKstShortDate(post.createdAt)}</span>
                   <ArrowRight
                     className="size-3.5 transition-transform group-hover:translate-x-0.5"
                     aria-hidden="true"

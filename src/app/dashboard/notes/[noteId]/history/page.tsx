@@ -9,6 +9,7 @@ import {
 import { safeReturnPath } from "@/lib/safe-return-path";
 import { RichTextContent } from "@/components/editor/RichTextContent";
 import { RestoreNoteRevisionButton } from "@/components/notes/RestoreNoteRevisionButton";
+import { formatKst } from "@/lib/kst-format";
 
 export const metadata = { title: "노트 변경 이력" };
 
@@ -78,7 +79,7 @@ export default async function NoteHistoryPage({
                   {revision.revisionNumber}번 · {CHANGE_LABELS[revision.changeType]}
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  {revision.createdAt.toLocaleString("ko-KR")} · {revision.actorName ?? "시스템"}
+                  {formatKst(revision.createdAt)} · {revision.actorName ?? "시스템"}
                   {revision.restoredFromRevision
                     ? ` · ${revision.restoredFromRevision}번에서 복원`
                     : ""}

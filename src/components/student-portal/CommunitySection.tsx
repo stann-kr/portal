@@ -9,6 +9,7 @@ import Link from "next/link";
 import { Users, Plus, MessageSquare, Search, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { formatKstShortDate } from "@/lib/kst-format";
 
 // ── 타입 ──────────────────────────────────────────
 
@@ -127,12 +128,7 @@ export function CommunitySection({ initialPosts, returnTo }: CommunitySectionPro
           {filtered.map((post) => {
             const author =
               post.authorName ?? post.authorEmail?.split("@")[0] ?? "익명";
-            const date = post.createdAt
-              ? new Date(post.createdAt).toLocaleDateString("ko-KR", {
-                  month: "short",
-                  day: "numeric",
-                })
-              : "날짜 정보 없음";
+            const date = formatKstShortDate(post.createdAt, "날짜 정보 없음");
 
             return (
               <Link

@@ -3,7 +3,7 @@
  * @description 관리자 대시보드의 수강생 목록 테이블 및 스켈레톤 UI.
  */
 import Link from "next/link";
-import { format } from "date-fns";
+import { formatKst } from "@/lib/kst-format";
 import { Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getStudentRosterStats } from "@/lib/actions/students";
@@ -56,7 +56,7 @@ export async function StudentRoster() {
                 {st.currentModule}
               </td>
               <td className="px-4 py-3 text-muted-foreground">
-                {st.nextLessonDate ? format(st.nextLessonDate, "MMM d, h:mm a") : "미정"}
+                {st.nextLessonDate ? formatKst(st.nextLessonDate, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "미정"}
               </td>
               <td className="px-4 py-3 text-center">
                 {st.pendingFeedbackCount > 0 ? (

@@ -28,6 +28,7 @@ import { getCategories } from "@/lib/actions/categories";
 import { getPostsByCategory, getPostsByBoardType } from "@/lib/actions/posts";
 import { AnnouncementList } from "@/components/community/AnnouncementList";
 import { MixsetFeedbackCard } from "@/components/community/MixsetFeedbackCard";
+import { formatKstShortDate } from "@/lib/kst-format";
 
 type Category = Awaited<ReturnType<typeof getCategories>>[number];
 type Post = Awaited<ReturnType<typeof getPostsByCategory>>[number];
@@ -40,12 +41,7 @@ interface CommunityClientProps {
 // ─── GENERAL 탭 게시물 카드 ───────────────────────
 
 function PostCard({ post, returnTo }: { post: Post; returnTo: string }) {
-  const date = post.createdAt
-    ? new Date(post.createdAt).toLocaleDateString("ko-KR", {
-        month: "short",
-        day: "numeric",
-      })
-    : "날짜 정보 없음";
+  const date = formatKstShortDate(post.createdAt, "날짜 정보 없음");
 
   const author =
     post.authorName ?? post.authorEmail?.split("@")[0] ?? "작성자 미상";

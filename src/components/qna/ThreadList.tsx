@@ -10,6 +10,7 @@ import { buildQnaFilterHref, buildQnaSearchHref } from "@/lib/qna-routes";
 import { DOCUMENT_SEARCH_MAX_QUERY_LENGTH } from "@/lib/document-search";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { formatKstShortDate } from "@/lib/kst-format";
 
 type Thread = {
   id: string;
@@ -90,12 +91,7 @@ export function ThreadList({ threads, isAdmin, returnTo = "/dashboard/qna", filt
         <div className="space-y-2">
           {filteredThreads.map((thread) => {
             const { label, color, iconClassName, Icon } = QNA_STATUS_CONFIG[thread.status];
-            const date = thread.createdAt
-              ? new Date(thread.createdAt).toLocaleDateString("ko-KR", {
-                  month: "short",
-                  day: "numeric",
-                })
-              : "작성일 미정";
+            const date = formatKstShortDate(thread.createdAt, "작성일 미정");
             const student =
               thread.studentName ?? thread.studentEmail?.split("@")[0] ?? "이름 미등록";
 

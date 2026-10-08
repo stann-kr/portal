@@ -44,6 +44,19 @@ for (const file of tsxFiles) {
   }
 }
 
+// Worker SSR runs in UTC: display dates must go through the explicit KST formatter.
+const dateFormatOwners = new Set(["src/lib/kst-format.ts", "src/lib/date-input.ts"]);
+const rawDateFormatPattern = /\.toLocale(?:Date|Time)String\(|\.toLocaleString\(\s*["']ko-KR["']|new Intl\.DateTimeFormat\(|from ["']date-fns["']/gu;
+const sourceFiles = [...tsxFiles, ...await collectFiles(sourceRoot, ".ts")]
+  .filter((file) => !/\.test\.tsx?$|\/src\/test\//u.test(file.replaceAll("\\", "/")));
+for (const file of sourceFiles) {
+  if (dateFormatOwners.has(repoPath(file))) continue;
+  const text = await readFile(file, "utf8");
+  for (const match of text.matchAll(rawDateFormatPattern)) {
+    failures.push(`${repoPath(file)}:${findLine(text, match.index ?? 0)} raw date formatting (use formatKst): ${match[0]}`);
+  }
+}
+
 if (mainOwners.length !== 1 || !mainOwners[0]?.startsWith("src/app/layout.tsx:")) {
   failures.push(`main landmark owner must be src/app/layout.tsx only; found ${mainOwners.join(", ") || "none"}`);
 }

@@ -13,16 +13,15 @@ import {
 } from "lucide-react";
 import type { DocumentServerDraftSyncResult } from "@/lib/hooks/useDocumentServerDraftSync";
 import type { FormDraftRecoveryPreview } from "@/lib/form-draft";
+import { formatKst } from "@/lib/kst-format";
 
 function formatServerDraftTime(value: number): string | null {
-  const date = new Date(value);
-  if (!Number.isFinite(date.getTime())) return null;
-  return new Intl.DateTimeFormat("ko-KR", {
+  return formatKst(value, {
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
-  }).format(date);
+  }) || null;
 }
 
 function DraftPreview({
