@@ -38,6 +38,8 @@ interface TimelineFeedbackProps {
   /** VideoPlayer의 특정 시점 이동 콜백 */
   onSeek?: (seconds: number) => void;
   onRefresh?: () => void | Promise<void>;
+  /** 관리자 작성 폼이 현재 재생 위치로 시점을 채울 때 사용한다. */
+  readPlaybackPosition?: () => Promise<number | null>;
 }
 
 // ─── 관리자 피드백 작성 폼 ────────────────────────
@@ -46,12 +48,16 @@ function FeedbackForm({
   assignmentId,
   actorId,
   onSuccess,
+  readPlaybackPosition,
 }: {
   assignmentId: string;
   actorId: string;
   onSuccess: () => Promise<void>;
+  readPlaybackPosition?: () => Promise<number | null>;
 }) {
   const [timeMarker, setTimeMarker] = useState("");
+  const [positionError, setPositionError] = useState<string | null>(null);
+  const [readingPosition, setReadingPosition] = useState(false);
   const [content, setContent] = useState("");
   const [operationId, setOperationId] = useState("");
   const [showResult, setShowResult] = useState(false);
@@ -98,6 +104,28 @@ function FeedbackForm({
     else draft.clear();
   };
 
+  // 듣다가 멈춘 위치를 직접 옮겨 적지 않도록 현재 재생 위치로 시점을 채운다.
+  const fillCurrentPosition = async () => {
+    if (!readPlaybackPosition) return;
+    setPositionError(null);
+    setReadingPosition(true);
+    try {
+      const seconds = await readPlaybackPosition();
+      if (seconds === null) {
+        setPositionError("재생 위치를 읽지 못했습니다. 플레이어를 재생한 뒤 다시 시도해 주세요.");
+        return;
+      }
+      const marker = formatTimestamp(Math.floor(seconds));
+      setTimeMarker(marker);
+      saveDraft({ timeMarker: marker, content });
+      document.getElementById("feedback-content")?.focus();
+    } catch {
+      setPositionError("재생 위치를 읽지 못했습니다. 시점을 직접 입력해 주세요.");
+    } finally {
+      setReadingPosition(false);
+    }
+  };
+
   return (
     <form
       action={action}
@@ -119,9 +147,21 @@ function FeedbackForm({
       </p>
       <div className="grid gap-3 sm:grid-cols-[7rem_minmax(0,1fr)_auto] sm:items-end">
         <div className="space-y-1.5">
-          <label htmlFor="feedback-time-marker" className="text-xs font-medium text-muted-foreground">
-            재생 시점
-          </label>
+          <div className="flex items-center justify-between gap-2">
+            <label htmlFor="feedback-time-marker" className="text-xs font-medium text-muted-foreground">
+              재생 시점
+            </label>
+            {readPlaybackPosition ? (
+              <button
+                type="button"
+                onClick={fillCurrentPosition}
+                disabled={!draft.loaded || isPending || readingPosition}
+                className="text-xs font-medium text-primary underline-offset-4 hover:underline disabled:opacity-50"
+              >
+                현재 위치
+              </button>
+            ) : null}
+          </div>
           <Input
             id="feedback-time-marker"
             name="timeMarker"
@@ -164,6 +204,7 @@ function FeedbackForm({
           {isPending ? "추가 중..." : "추가"}
         </Button>
       </div>
+      {positionError ? <p role="alert" className="text-xs text-destructive">{positionError}</p> : null}
       {showResult && state.error && <p id="feedback-error" role="alert" className="text-xs text-destructive">{state.error}</p>}
       {showResult && state.success && <p role="status" className="text-xs text-success">피드백을 추가했습니다.</p>}
       <DraftStatus {...draft} onRestoreRecovery={draft.restoreRecovery} onDiscardRecovery={draft.discardRecovery} disabled={isPending} />
@@ -180,6 +221,7 @@ export function TimelineFeedback({
   isAdmin,
   onSeek,
   onRefresh,
+  readPlaybackPosition,
 }: TimelineFeedbackProps) {
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -271,7 +313,13 @@ export function TimelineFeedback({
 
       {/* 관리자 피드백 작성 폼 */}
       {isAdmin && (
-        <FeedbackForm key={`${actorId}:${assignmentId}`} assignmentId={assignmentId} actorId={actorId} onSuccess={refreshAfterChange} />
+        <FeedbackForm
+          key={`${actorId}:${assignmentId}`}
+          assignmentId={assignmentId}
+          actorId={actorId}
+          onSuccess={refreshAfterChange}
+          readPlaybackPosition={readPlaybackPosition}
+        />
       )}
     </div>
   );

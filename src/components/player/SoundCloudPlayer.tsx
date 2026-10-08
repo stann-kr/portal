@@ -3,12 +3,13 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import Script from "next/script";
 import { Button } from "@/components/ui/button";
-import type { MediaSeekRequest } from "./VideoPlayer";
+import type { MediaSeekRequest, PlaybackPositionReader } from "./VideoPlayer";
 
 type SoundCloudWidget = {
   bind(event: string, handler: () => void): void;
   unbind(event: string): void;
   seekTo(milliseconds: number): void;
+  getPosition(callback: (milliseconds: number) => void): void;
   play(): void;
   pause(): void;
 };
@@ -19,9 +20,16 @@ type SoundCloudApi = {
   };
 };
 
-type SoundCloudPlayerProps = { url: string; seekRequest?: MediaSeekRequest };
+type SoundCloudPlayerProps = {
+  url: string;
+  seekRequest?: MediaSeekRequest;
+  onPositionReaderChange?: (reader: PlaybackPositionReader | null) => void;
+};
 
-function SoundCloudEmbed({ url, seekRequest, onRetry }: SoundCloudPlayerProps & { onRetry: () => void }) {
+// widget이 응답하지 않으면 피드백 입력을 막지 않도록 짧게 포기한다.
+const POSITION_READ_TIMEOUT_MS = 1_500;
+
+function SoundCloudEmbed({ url, seekRequest, onPositionReaderChange, onRetry }: SoundCloudPlayerProps & { onRetry: () => void }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const widgetRef = useRef<SoundCloudWidget | null>(null);
   const readyRef = useRef(false);
@@ -71,6 +79,23 @@ function SoundCloudEmbed({ url, seekRequest, onRetry }: SoundCloudPlayerProps & 
     }, 15_000);
     return () => window.clearTimeout(timeout);
   }, []);
+
+  useEffect(() => {
+    if (!onPositionReaderChange) return;
+    onPositionReaderChange(() => new Promise<number | null>((resolve) => {
+      const widget = widgetRef.current;
+      if (!widget || !readyRef.current) {
+        resolve(null);
+        return;
+      }
+      const timer = window.setTimeout(() => resolve(null), POSITION_READ_TIMEOUT_MS);
+      widget.getPosition((milliseconds) => {
+        window.clearTimeout(timer);
+        resolve(Number.isFinite(milliseconds) && milliseconds >= 0 ? milliseconds / 1000 : null);
+      });
+    }));
+    return () => onPositionReaderChange(null);
+  }, [onPositionReaderChange]);
 
   useEffect(() => {
     if (!seekRequest || !Number.isFinite(seekRequest.seconds) || seekRequest.seconds < 0) return;

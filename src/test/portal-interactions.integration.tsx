@@ -788,6 +788,23 @@ test("media source and queued or repeated feedback seeks use the HTML media cont
   assert.equal(browser.document.querySelector('a[target="_blank"]')?.getAttribute("href"), url);
 });
 
+test("media players expose the playback position only while ready and release the reader", async (context) => {
+  const readers: (null | (() => Promise<number | null>))[] = [];
+  const track = (reader: (() => Promise<number | null>) | null) => { readers.push(reader); };
+  const url = "https://www.youtube.com/watch?v=aqz-KE-bpKQ";
+  const root = await render(context, <VideoPlayer url={url} onPositionReaderChange={track} />);
+  const reader = readers.at(-1);
+  assert.ok(reader);
+  assert.equal(await reader(), null, "metadata 전에는 위치를 추정하지 않는다");
+  const video = browser.document.querySelector("video");
+  assert.ok(video);
+  await act(async () => { video.dispatchEvent(new browser.Event("loadedmetadata")); });
+  video.currentTime = 2715.4;
+  assert.equal(await reader(), 2715.4);
+  await act(async () => root.render(<div />));
+  assert.equal(readers.at(-1), null, "unmount 뒤에는 오래된 player를 읽지 않는다");
+});
+
 test("SoundCloud queues seconds as widget milliseconds and releases its listeners", async (context) => {
   const listeners = new Map<string, () => void>();
   const seeks: number[] = [];
@@ -797,20 +814,25 @@ test("SoundCloud queues seconds as widget milliseconds and releases its listener
   const widget = { bind: (event: string, callback: () => void) => listeners.set(event, callback), unbind: (event: string) => {
     assert.ok(widgetFrame.isConnected, "SDK teardown must run before the iframe is detached");
     listeners.delete(event);
-  }, seekTo: (value: number) => seeks.push(value), play: () => { plays++; }, pause: () => { pauses++; } };
+  }, seekTo: (value: number) => seeks.push(value), play: () => { plays++; }, pause: () => { pauses++; },
+  getPosition: (callback: (milliseconds: number) => void) => callback(125_500) };
   Object.defineProperty(browser, "SC", { configurable: true, value: { Widget: Object.assign((frame: HTMLIFrameElement) => { widgetFrame = frame; return widget; }, { Events: { READY: "ready", ERROR: "error" } }) } });
   context.after(() => Reflect.deleteProperty(browser, "SC"));
   const url = "https://soundcloud.com/artist/mix";
-  const root = await render(context, <VideoPlayer url={url} seekRequest={{ seconds: 90 }} />);
+  let positionReader: (() => Promise<number | null>) | null = null;
+  const trackReader = (reader: (() => Promise<number | null>) | null) => { positionReader = reader; };
+  const root = await render(context, <VideoPlayer url={url} seekRequest={{ seconds: 90 }} onPositionReaderChange={trackReader} />);
   const iframe = browser.document.querySelector("iframe");
   assert.ok(iframe);
   assert.equal(new URL(iframe.src).searchParams.get("url"), url);
   assert.deepEqual(seeks, []);
   const ready = listeners.get("ready");
   assert.ok(ready);
+  assert.equal(await positionReader!(), null, "widget READY 전에는 위치를 읽지 않는다");
   await act(async () => ready());
   assert.deepEqual(seeks, [90000]);
-  await act(async () => root.render(<VideoPlayer url={url} seekRequest={{ seconds: 90 }} />));
+  assert.equal(await positionReader!(), 125.5, "widget milliseconds를 초로 바꾼다");
+  await act(async () => root.render(<VideoPlayer url={url} seekRequest={{ seconds: 90 }} onPositionReaderChange={trackReader} />));
   assert.deepEqual(seeks, [90000, 90000]);
   assert.equal(plays, 2);
   await act(async () => root.render(<div />));
@@ -848,6 +870,19 @@ test("feedback failure keeps the time and text; only a confirmed save clears the
   await fill("feedback-content", "전환 지점에서 저음을 천천히 교환해 주세요.");
   await press("추가");
   assert.notEqual(operationIds[3], operationIds[0], "성공 뒤 의도적인 새 피드백은 새 제출이다");
+});
+
+test("feedback time can be filled from the current playback position", async (context) => {
+  let position: number | null = null;
+  await render(context, <TimelineFeedback assignmentId="position" actorId="admin-1" feedbackList={[]} isAdmin readPlaybackPosition={async () => position} />);
+  await press("현재 위치");
+  assert.match(browser.document.querySelector('[role="alert"]')?.textContent ?? "", /재생 위치를 읽지 못했습니다/u);
+  assert.equal(inputValue("timeMarker"), "");
+  position = 2715.9;
+  await press("현재 위치");
+  assert.equal(inputValue("timeMarker"), "45:15", "초 단위 내림으로 MM:SS를 채운다");
+  assert.equal(browser.document.activeElement?.id, "feedback-content", "이어서 피드백 내용을 입력한다");
+  assert.equal(browser.document.querySelector('[role="alert"]'), null);
 });
 
 test("community comment failure and remount preserve the author's draft", async (context) => {
