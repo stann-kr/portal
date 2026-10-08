@@ -30,7 +30,7 @@ export default async function AssignmentDetailPage({
 
   if (!assignment) {
     return (
-      <div className="max-w-4xl mx-auto py-6 text-center text-muted-foreground">
+      <div className="mx-auto max-w-4xl px-4 py-6 text-center text-muted-foreground sm:px-6">
         <p>과제를 찾을 수 없습니다.</p>
         <Link
           href="/dashboard/student/assignments"

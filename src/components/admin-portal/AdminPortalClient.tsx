@@ -205,7 +205,7 @@ export function AdminPortalClient({
           )}
 
           {activeSection === "announcements" && (
-            <div className="p-6 max-w-3xl mx-auto">
+            <div className="mx-auto max-w-3xl p-4 sm:p-6">
               <AnnouncementSection
                 posts={announcements}
                 returnTo="/dashboard/admin?section=announcements"
@@ -248,10 +248,11 @@ export function AdminPortalClient({
           </div>
 
           {activeSection === "community" && (
-            <div className="p-6 max-w-4xl mx-auto">
+            <div className="mx-auto max-w-4xl p-4 sm:p-6">
               <CommunitySection
                 initialPosts={communityPosts}
                 returnTo="/dashboard/admin?section=community"
+                manageHref="/dashboard/admin/categories"
               />
             </div>
           )}

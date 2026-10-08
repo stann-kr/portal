@@ -9,11 +9,15 @@ export function DeleteCategoryButton({ categoryId }: { categoryId: string }) {
   const [error, setError] = useState<string | null>(null);
 
   const handleDelete = () => {
-    if (confirm("정말 이 카테고리를 삭제하시겠습니까?")) {
+    if (confirm("이 채널을 삭제할까요? 게시물이 있는 채널은 삭제되지 않습니다.")) {
       setError(null);
       startTransition(async () => {
-        const result = await deleteCategory(categoryId);
-        if (result.error) setError(result.error);
+        try {
+          const result = await deleteCategory(categoryId);
+          if (result.error) setError(result.error);
+        } catch {
+          setError("채널을 삭제하지 못했습니다. 다시 시도해 주세요.");
+        }
       });
     }
   };
@@ -21,13 +25,14 @@ export function DeleteCategoryButton({ categoryId }: { categoryId: string }) {
   return (
     <div className="flex flex-col items-end gap-1">
       <button
+        type="button"
         onClick={handleDelete}
         disabled={isPending}
         className="p-2 text-muted-foreground transition-colors hover:text-destructive disabled:opacity-50"
-        aria-label="카테고리 삭제"
+        aria-label="채널 삭제"
         title="삭제"
       >
-        <Trash2 className="w-4 h-4" />
+        <Trash2 className="w-4 h-4" aria-hidden="true" />
       </button>
       {error ? <p role="alert" className="max-w-48 text-right text-xs text-destructive">{error}</p> : null}
     </div>

@@ -75,7 +75,7 @@ OpenNext → Cloudflare Worker
 | `/community/trash` | 권한 범위의 게시물 휴지통·복원·관리자 영구 삭제 |
 | `/dashboard/admin/students/new` | 학생 추가 |
 | `/dashboard/admin/students/[id]` | 학생 상세 |
-| `/dashboard/admin/categories` | 카테고리 관리 |
+| `/dashboard/admin/categories` | 자유 게시판 채널 관리. 관리자 커뮤니티 section과 `/community`에서 진입 |
 | `/dashboard/qna/**` | Q&A 목록·작성·상세·불변 event 이력·휴지통 |
 | `/community/**` | 커뮤니티 목록·작성·상세 |
 | `/dashboard/calendar` | 공유 캘린더 |

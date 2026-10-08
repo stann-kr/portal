@@ -140,6 +140,8 @@ pill 형태는 filter와 count처럼 모양 자체가 의미를 가질 때만 �
 ## 반응형
 
 - 768px 미만에서는 다단 콘텐츠를 한 열로 접는다.
+- 전체 화면 route는 `mx-auto max-w-* px-4 sm:px-6` gutter를 사용해 좁은 화면에서도 side rail이나 화면 끝에 붙지 않는다.
+- 독립 route(`/community` 등)는 모바일에서도 포털 복귀·휴지통 같은 상위 이동 경로를 숨기지 않는다.
 - portal navigation은 한 줄을 유지하고 필요한 경우 가로 스크롤한다.
 - 넓은 표는 mobile에서 핵심 label-value list로 대체한다.
 - CTA 문구는 desktop에서 줄바꿈되지 않게 짧고 구체적으로 작성한다.

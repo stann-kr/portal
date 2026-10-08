@@ -25,7 +25,10 @@ export async function createCategory(_prev: CategoryState, formData: FormData): 
   const description = String(formData.get("description") ?? "").trim();
   const sortOrder = parseInt((formData.get("sortOrder") as string) || "0", 10);
 
-  if (!slug || !name) return { error: "Slug와 Name은 필수입니다." };
+  if (!slug || !name) return { error: "채널 이름과 주소 식별자를 입력해 주세요." };
+  if (name.length > 60 || slug.length > 60 || description.length > 200) {
+    return { error: "이름과 식별자는 60자, 설명은 200자까지 입력할 수 있습니다." };
+  }
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(slug)) {
     return { error: "Slug는 영문 소문자, 숫자와 하이픈만 사용할 수 있습니다." };
   }
@@ -47,9 +50,9 @@ export async function createCategory(_prev: CategoryState, formData: FormData): 
     return { success: true };
   } catch (err: unknown) {
     if (err instanceof Error && err.message.includes("UNIQUE constraint failed")) {
-      return { error: "이미 존재하는 Slug입니다." };
+      return { error: "이미 사용 중인 주소 식별자입니다." };
     }
-    return { error: "카테고리 생성 중 오류가 발생했습니다." };
+    return { error: "채널을 추가하지 못했습니다. 다시 시도해 주세요." };
   }
 }
 
@@ -62,7 +65,7 @@ export async function deleteCategory(id: string): Promise<CategoryState> {
       .from(categories)
       .where(eq(categories.id, id))
       .limit(1);
-    if (!category) return { error: "카테고리를 찾을 수 없습니다." };
+    if (!category) return { error: "채널을 찾을 수 없습니다." };
 
     const [linkedPost] = await db
       .select({ id: posts.id })
@@ -70,7 +73,7 @@ export async function deleteCategory(id: string): Promise<CategoryState> {
       .where(eq(posts.category, category.slug))
       .limit(1);
     if (linkedPost) {
-      return { error: "게시물이 있는 카테고리는 삭제할 수 없습니다." };
+      return { error: "게시물이 있는 채널은 삭제할 수 없습니다." };
     }
 
     await db.delete(categories).where(eq(categories.id, id));
@@ -78,6 +81,6 @@ export async function deleteCategory(id: string): Promise<CategoryState> {
     revalidatePath("/community");
     return { success: true };
   } catch {
-    return { error: "카테고리를 삭제하지 못했습니다. 다시 시도해 주세요." };
+    return { error: "채널을 삭제하지 못했습니다. 다시 시도해 주세요." };
   }
 }

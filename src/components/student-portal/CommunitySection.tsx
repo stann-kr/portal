@@ -6,7 +6,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Users, Plus, MessageSquare, Search, ArrowRight } from "lucide-react";
+import { Users, Plus, MessageSquare, Search, ArrowRight, Pin, Settings2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatKstShortDate } from "@/lib/kst-format";
@@ -27,6 +27,8 @@ type Post = {
 interface CommunitySectionProps {
   initialPosts: Post[];
   returnTo: string;
+  /** 관리자에게만 전달하는 채널 관리 경로. */
+  manageHref?: string;
 }
 
 // ── 메인 컴포넌트 ─────────────────────────────────
@@ -45,7 +47,7 @@ const BOARD_LABELS: Record<string, string> = {
 
 type BoardFilter = (typeof BOARD_TABS)[number]["id"];
 
-export function CommunitySection({ initialPosts, returnTo }: CommunitySectionProps) {
+export function CommunitySection({ initialPosts, returnTo, manageHref }: CommunitySectionProps) {
   const [boardFilter, setBoardFilter] = useState<BoardFilter>("ALL");
   const [query, setQuery] = useState("");
 
@@ -66,13 +68,18 @@ export function CommunitySection({ initialPosts, returnTo }: CommunitySectionPro
       {/* 섹션 헤더 */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2.5">
-          <Users className="w-5 h-5 text-primary flex-shrink-0" />
+          <Users className="w-5 h-5 text-primary flex-shrink-0" aria-hidden="true" />
           <div>
             <h2 className="text-lg font-semibold tracking-tight">커뮤니티</h2>
-            <p className="text-xs text-muted-foreground">전체 학생 소통 공간</p>
+            <p className="text-xs text-muted-foreground">최근 게시물 20개를 보여줍니다.</p>
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
+          {manageHref ? (
+            <Button asChild size="sm" variant="ghost" className="h-8 gap-1.5 text-xs">
+              <Link href={manageHref}><Settings2 className="size-3.5" aria-hidden="true" />채널 관리</Link>
+            </Button>
+          ) : null}
           <Button asChild size="sm" variant="ghost" className="h-8 gap-1.5 text-xs">
             <Link href="/community"><Users className="size-3.5" aria-hidden="true" />전체 커뮤니티</Link>
           </Button>
@@ -84,7 +91,7 @@ export function CommunitySection({ initialPosts, returnTo }: CommunitySectionPro
 
       {/* 탭 필터 + 검색 */}
       <div className="flex items-center justify-between gap-2 flex-wrap">
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1" role="group" aria-label="게시판 분류">
           {BOARD_TABS.map(({ id, label }) => (
             <button
               key={id}
@@ -103,7 +110,7 @@ export function CommunitySection({ initialPosts, returnTo }: CommunitySectionPro
         </div>
 
         <div className="relative w-full sm:w-56">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" aria-hidden="true" />
           <Input
             type="search"
             value={query}
@@ -118,7 +125,7 @@ export function CommunitySection({ initialPosts, returnTo }: CommunitySectionPro
       {/* 게시물 리스트 */}
       {filtered.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-16 text-muted-foreground gap-2">
-          <MessageSquare className="w-8 h-8 opacity-20" />
+          <MessageSquare className="w-8 h-8 opacity-20" aria-hidden="true" />
           <p className="text-sm">
             {normalizedQuery ? "검색 결과가 없습니다." : "게시물이 없습니다."}
           </p>
@@ -139,7 +146,7 @@ export function CommunitySection({ initialPosts, returnTo }: CommunitySectionPro
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-0.5">
                     <span
-                      className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${
+                      className={`text-xs font-medium px-1.5 py-0.5 rounded ${
                         post.boardType === "FEEDBACK"
                           ? "bg-warning-muted text-warning"
                           : "bg-primary/10 text-primary"
@@ -148,7 +155,10 @@ export function CommunitySection({ initialPosts, returnTo }: CommunitySectionPro
                       {BOARD_LABELS[post.boardType] ?? post.boardType}
                     </span>
                     {post.isPinned && (
-                      <span className="text-[10px] font-medium text-primary">📌</span>
+                      <span className="inline-flex items-center gap-0.5 text-xs font-medium text-primary">
+                        <Pin className="size-3" aria-hidden="true" />
+                        고정
+                      </span>
                     )}
                   </div>
                   <p className="text-sm font-medium text-foreground truncate">{post.title}</p>

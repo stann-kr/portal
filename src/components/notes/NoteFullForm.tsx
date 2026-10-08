@@ -200,7 +200,7 @@ function NoteFullFormContent({ action, actorId, studentId, returnTo, defaultDate
   }, [isPending, state]);
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6 py-6 px-4">
+    <div className="mx-auto max-w-4xl space-y-6 px-4 py-6 sm:px-6">
       {/* 헤더 */}
       <div className="space-y-1">
         <Link

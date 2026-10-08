@@ -31,7 +31,7 @@ export default async function PostDetailPage({
 
   if (!post) {
     return (
-      <div className="max-w-3xl mx-auto py-6 text-center text-muted-foreground">
+      <div className="mx-auto max-w-3xl px-4 py-6 text-center text-muted-foreground sm:px-6">
         <p>게시물을 찾을 수 없습니다.</p>
         <Link href={returnTo} className="text-sm underline mt-2 block">
           목록으로

@@ -23,7 +23,7 @@ export default function NewStudentPage() {
   const [showPassword, setShowPassword] = useState(false);
 
   return (
-    <div className="max-w-lg mx-auto py-6 space-y-8">
+    <div className="mx-auto max-w-lg space-y-8 px-4 py-6 sm:px-6">
       {/* 헤더 */}
       <div className="space-y-1">
         <Link

@@ -33,7 +33,7 @@ export default async function AdminStudentDiggingPage({
   if (!student) redirect("/dashboard/admin");
 
   return (
-    <div className="space-y-6">
+    <div className="mx-auto max-w-6xl space-y-6 px-4 py-6 sm:px-6">
       <div className="space-y-1">
         <Link
           href={`/dashboard/admin/students/${studentId}`}

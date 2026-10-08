@@ -91,14 +91,14 @@ export function PostDetailClient({
   }, [router]);
 
   return (
-    <div className="max-w-3xl mx-auto py-6 space-y-8">
+    <div className="mx-auto max-w-3xl space-y-8 px-4 py-6 sm:px-6">
       {/* 헤더 */}
       <div className="space-y-1">
         <Link
           href={returnTo}
           className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
         >
-          <ArrowLeft className="w-4 h-4" /> 커뮤니티
+          <ArrowLeft className="w-4 h-4" aria-hidden="true" /> 이전 화면으로 돌아가기
         </Link>
         <div className="flex items-start justify-between gap-4 mt-2">
           <h1 className="text-2xl font-semibold">{post.title}</h1>

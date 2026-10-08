@@ -116,7 +116,7 @@ export default async function StudentDetailPage({
       ]));
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6 py-6">
+    <div className="mx-auto max-w-5xl space-y-6 px-4 py-6 sm:px-6">
       {/* 학생 헤더 */}
       <div className="space-y-1">
         <Link href="/dashboard/admin?section=students" className="inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground">

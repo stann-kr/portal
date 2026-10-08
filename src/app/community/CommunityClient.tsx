@@ -13,7 +13,6 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
-  Terminal,
   Hash,
   Plus,
   ChevronRight,
@@ -22,13 +21,16 @@ import {
   Music2,
   ArrowLeft,
   RotateCcw,
+  Settings2,
   Trash2,
+  Users,
 } from "lucide-react";
 import { getCategories } from "@/lib/actions/categories";
 import { getPostsByCategory, getPostsByBoardType } from "@/lib/actions/posts";
 import { AnnouncementList } from "@/components/community/AnnouncementList";
 import { MixsetFeedbackCard } from "@/components/community/MixsetFeedbackCard";
 import { formatKstShortDate } from "@/lib/kst-format";
+import { getSearchableDocumentText } from "@/lib/document-search";
 
 type Category = Awaited<ReturnType<typeof getCategories>>[number];
 type Post = Awaited<ReturnType<typeof getPostsByCategory>>[number];
@@ -47,11 +49,7 @@ function PostCard({ post, returnTo }: { post: Post; returnTo: string }) {
     post.authorName ?? post.authorEmail?.split("@")[0] ?? "작성자 미상";
   const initials = author.slice(0, 2).toUpperCase();
 
-  const preview = post.contentHtml
-    .replace(/<[^>]+>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 100);
+  const preview = Array.from(getSearchableDocumentText(post.contentHtml)).slice(0, 100).join("");
 
   return (
     <Link
@@ -209,6 +207,8 @@ export default function CommunityClient({ isAdmin }: CommunityClientProps) {
 
   const currentCat = categories.find((c) => c.slug === activeCategory);
   const returnTo = `/community?boardType=${activeTab}&category=${encodeURIComponent(activeCategory)}`;
+  const portalHref = isAdmin ? "/dashboard/admin?section=community" : "/dashboard/student?section=community";
+  const trashHref = `/community/trash?returnTo=${encodeURIComponent(returnTo)}`;
 
   const changeLocation = (
     nextTab: "ANNOUNCEMENT" | "GENERAL" | "FEEDBACK",
@@ -223,49 +223,60 @@ export default function CommunityClient({ isAdmin }: CommunityClientProps) {
   };
 
   return (
-    <div className="flex h-[calc(100vh-57px)] overflow-hidden bg-background">
+    <div className="flex h-[100dvh] overflow-hidden bg-background">
       {/* 사이드바 */}
       <aside className="hidden md:flex w-56 border-r border-border flex-col bg-card">
         <div className="p-4 border-b border-border space-y-3">
           <Link
-            href="/dashboard/student"
+            href={portalHref}
             className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
           >
-            <ArrowLeft className="w-3.5 h-3.5" />
-            대시보드로
+            <ArrowLeft className="w-3.5 h-3.5" aria-hidden="true" />
+            포털로 돌아가기
           </Link>
           <div className="flex items-center gap-2 font-semibold text-foreground">
-            <Terminal className="w-4 h-4" />
-            Community
+            <Users className="w-4 h-4" aria-hidden="true" />
+            커뮤니티
           </div>
           <Link
-            href="/community/trash"
+            href={trashHref}
             className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
           >
             <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
             게시물 휴지통
           </Link>
+          {isAdmin ? (
+            <Link
+              href="/dashboard/admin/categories"
+              className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+            >
+              <Settings2 className="h-3.5 w-3.5" aria-hidden="true" />
+              채널 관리
+            </Link>
+          ) : null}
         </div>
 
         {/* GENERAL일 때만 채널 사이드바 표시 */}
         {activeTab === "GENERAL" ? (
           <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto">
-            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider px-2 py-1.5">
-              Channels
+            <p className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">
+              채널
             </p>
             {categories.map((cat) => {
               const isActive = cat.slug === activeCategory;
               return (
                 <button
                   key={cat.id}
+                  type="button"
                   onClick={() => changeLocation("GENERAL", cat.slug)}
+                  aria-current={isActive ? "page" : undefined}
                   className={`w-full text-left flex items-center gap-2 px-2 py-2 rounded-lg text-sm transition-colors ${
                     isActive
                       ? "bg-accent text-foreground font-medium"
                       : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
                   }`}
                 >
-                  <Hash className="w-3.5 h-3.5 flex-shrink-0" />
+                  <Hash className="w-3.5 h-3.5 flex-shrink-0" aria-hidden="true" />
                   {cat.name}
                 </button>
               );
@@ -273,7 +284,7 @@ export default function CommunityClient({ isAdmin }: CommunityClientProps) {
           </nav>
         ) : (
           <div className="flex-1 p-4 flex flex-col gap-2">
-            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+            <p className="text-xs font-semibold text-muted-foreground">
               {activeTab === "ANNOUNCEMENT" ? "공지사항" : "믹스셋 공유"}
             </p>
             <p className="text-xs text-muted-foreground">
@@ -287,9 +298,43 @@ export default function CommunityClient({ isAdmin }: CommunityClientProps) {
 
       {/* 메인 영역 */}
       <div className="flex-1 flex flex-col overflow-hidden">
+        {/* 모바일에서는 사이드바 대신 포털 복귀·휴지통·채널을 상단에 둔다. */}
+        <div className="flex shrink-0 flex-col gap-2 border-b border-border bg-card px-4 py-2 md:hidden">
+          <div className="flex items-center justify-between gap-3">
+            <Link href={portalHref} className="inline-flex min-h-9 items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">
+              <ArrowLeft className="size-4" aria-hidden="true" />
+              포털로 돌아가기
+            </Link>
+            <Link href={trashHref} className="inline-flex min-h-9 items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">
+              <Trash2 className="size-4" aria-hidden="true" />
+              휴지통
+            </Link>
+          </div>
+          {activeTab === "GENERAL" && categories.length > 0 ? (
+            <div className="-mx-1 flex gap-1 overflow-x-auto pb-1" role="group" aria-label="채널">
+              {categories.map((cat) => {
+                const isActive = cat.slug === activeCategory;
+                return (
+                  <button
+                    key={cat.id}
+                    type="button"
+                    onClick={() => changeLocation("GENERAL", cat.slug)}
+                    aria-pressed={isActive}
+                    className={`inline-flex min-h-8 shrink-0 items-center gap-1 rounded-md px-2.5 text-xs transition-colors ${
+                      isActive ? "bg-accent font-medium text-accent-foreground" : "text-muted-foreground hover:bg-muted"
+                    }`}
+                  >
+                    <Hash className="size-3" aria-hidden="true" />
+                    {cat.name}
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
+        </div>
         {/* 상단 탭 + 헤더 */}
         <header className="border-b border-border bg-card/80 backdrop-blur-sm flex-shrink-0">
-          <div className="flex items-center justify-between px-6 h-14">
+          <div className="flex h-14 items-center justify-between gap-3 px-4 sm:px-6">
             {/* 탭 전환 */}
             <Tabs
               value={activeTab}
@@ -339,7 +384,7 @@ export default function CommunityClient({ isAdmin }: CommunityClientProps) {
         </header>
 
         {/* 게시물 목록 */}
-        <div className="flex-1 overflow-y-auto p-6">
+        <div className="flex-1 overflow-y-auto p-4 sm:p-6">
           {loading ? (
             <div className="space-y-3">
               {[...Array(4)].map((_, i) => (
@@ -454,14 +499,16 @@ export default function CommunityClient({ isAdmin }: CommunityClientProps) {
           ).map(({ value, icon: Icon, label }) => (
             <button
               key={value}
+              type="button"
               onClick={() => changeLocation(value)}
-              className={`flex-1 flex flex-col items-center py-2.5 text-[10px] gap-1 transition-colors ${
+              aria-pressed={activeTab === value}
+              className={`flex-1 flex flex-col items-center py-2.5 text-xs gap-1 transition-colors ${
                 activeTab === value
-                  ? "text-foreground"
+                  ? "font-medium text-foreground"
                   : "text-muted-foreground"
               }`}
             >
-              <Icon className="w-4 h-4" />
+              <Icon className="w-4 h-4" aria-hidden="true" />
               {label}
             </button>
           ))}
