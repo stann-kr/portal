@@ -26,7 +26,7 @@ import {
   Users,
 } from "lucide-react";
 import { getCategories } from "@/lib/actions/categories";
-import { getPostsByCategory, getPostsByBoardType } from "@/lib/actions/posts";
+import { getCommunityPostPage } from "@/lib/actions/posts";
 import { AnnouncementList } from "@/components/community/AnnouncementList";
 import { MixsetFeedbackCard } from "@/components/community/MixsetFeedbackCard";
 import { formatKstShortDate } from "@/lib/kst-format";
@@ -34,18 +34,25 @@ import { getSearchableDocumentText } from "@/lib/document-search";
 import { resolveCommunityBoardType, type CommunityBoardType } from "@/lib/community-location";
 
 type Category = Awaited<ReturnType<typeof getCategories>>[number];
-type Post = Awaited<ReturnType<typeof getPostsByCategory>>[number];
-type FeedbackPost = Awaited<ReturnType<typeof getPostsByBoardType>>[number];
+type Post = Awaited<ReturnType<typeof getCommunityPostPage>>["posts"][number];
+type FeedbackPost = Post;
 
 interface CommunityClientProps {
   isAdmin: boolean;
-  /** 서버가 URL로 확정한 첫 위치와 목록. */
+  /** 서버가 URL로 확정한 첫 위치와 첫 페이지. */
   initial: {
     boardType: CommunityBoardType;
     category: string;
     categories: Category[];
     posts: Post[];
+    nextCursor: string | null;
   };
+}
+
+/** 이어 읽은 페이지를 붙이되 이미 보이는 게시물은 다시 넣지 않는다. */
+function appendPage(current: Post[], next: Post[]): Post[] {
+  const seen = new Set(current.map((post) => post.id));
+  return [...current, ...next.filter((post) => !seen.has(post.id))];
 }
 
 /** 지금 화면에 필요한 목록의 식별자. 받은 목록의 key와 다르면 skeleton을 보인다. */
@@ -129,11 +136,15 @@ export default function CommunityClient({ isAdmin, initial }: CommunityClientPro
     initial.boardType === "FEEDBACK" ? initial.posts : [],
   );
   const [loadedKey, setLoadedKey] = useState<string | null>(() => listKey(initial.boardType, initial.category));
+  const [nextCursor, setNextCursor] = useState<string | null>(initial.nextCursor);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
   const loadedKeyRef = useRef(loadedKey);
   const handledReloadRef = useRef(reloadToken);
+  const requestedKeyRef = useRef<string | null>(loadedKey);
 
   // 다시 시도할 때만 채널 목록을 새로 읽는다. 첫 목록은 서버가 함께 보냈다.
   useEffect(() => {
@@ -182,18 +193,14 @@ export default function CommunityClient({ isAdmin, initial }: CommunityClientPro
     let cancelled = false;
     setLoading(true);
     setLoadError(null);
-    const request = activeTab === "GENERAL"
-      ? getPostsByCategory(activeCategory).then((data) => {
-        if (!cancelled) setGeneralPosts(data);
-      })
-      : getPostsByBoardType(activeTab).then((data) => {
+    setLoadMoreError(null);
+    getCommunityPostPage({ boardType: activeTab, category: activeCategory })
+      .then((page) => {
         if (cancelled) return;
-        if (activeTab === "ANNOUNCEMENT") setAnnouncementPosts(data);
-        else setFeedbackPosts(data);
-      });
-    request
-      .then(() => {
-        if (cancelled) return;
+        if (activeTab === "GENERAL") setGeneralPosts(page.posts);
+        else if (activeTab === "ANNOUNCEMENT") setAnnouncementPosts(page.posts);
+        else setFeedbackPosts(page.posts);
+        setNextCursor(page.nextCursor);
         loadedKeyRef.current = key;
         setLoadedKey(key);
         setLoading(false);
@@ -209,8 +216,32 @@ export default function CommunityClient({ isAdmin, initial }: CommunityClientPro
   }, [activeTab, activeCategory, reloadToken]);
 
   const requestedKey = listKey(activeTab, activeCategory);
+  requestedKeyRef.current = requestedKey;
   const hasNoChannel = activeTab === "GENERAL" && categories.length === 0;
   const awaitingList = !loadError && !hasNoChannel && (loading || requestedKey !== loadedKey);
+  const visibleCount = activeTab === "GENERAL"
+    ? generalPosts.length
+    : activeTab === "ANNOUNCEMENT" ? announcementPosts.length : feedbackPosts.length;
+
+  const loadMore = () => {
+    const key = requestedKey;
+    if (!nextCursor || loadingMore || !key || key !== loadedKey) return;
+    setLoadingMore(true);
+    setLoadMoreError(null);
+    getCommunityPostPage({ boardType: activeTab, category: activeCategory, cursor: nextCursor })
+      .then((page) => {
+        // 읽는 동안 다른 목록으로 옮겼으면 결과를 섞지 않는다.
+        if (requestedKeyRef.current !== key) return;
+        if (activeTab === "GENERAL") setGeneralPosts((current) => appendPage(current, page.posts));
+        else if (activeTab === "ANNOUNCEMENT") setAnnouncementPosts((current) => appendPage(current, page.posts));
+        else setFeedbackPosts((current) => appendPage(current, page.posts));
+        setNextCursor(page.nextCursor);
+      })
+      .catch(() => {
+        if (requestedKeyRef.current === key) setLoadMoreError("다음 게시물을 불러오지 못했습니다. 다시 시도해 주세요.");
+      })
+      .finally(() => setLoadingMore(false));
+  };
   const currentCat = categories.find((c) => c.slug === activeCategory);
   const returnTo = `/community?boardType=${activeTab}&category=${encodeURIComponent(activeCategory)}`;
   const portalHref = isAdmin ? "/dashboard/admin?section=community" : "/dashboard/student?section=community";
@@ -505,6 +536,25 @@ export default function CommunityClient({ isAdmin, initial }: CommunityClientPro
                   )}
                 </div>
               )}
+
+              {nextCursor && !hasNoChannel ? (
+                <div className="mt-4 max-w-3xl space-y-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={loadMore}
+                    disabled={loadingMore}
+                    aria-describedby="community-list-count"
+                  >
+                    {loadingMore ? "불러오는 중..." : "게시물 더 보기"}
+                  </Button>
+                  <p id="community-list-count" role="status" className="text-xs text-muted-foreground">
+                    최근 {visibleCount}개 표시 중
+                  </p>
+                  {loadMoreError ? <p role="alert" className="text-sm text-destructive">{loadMoreError}</p> : null}
+                </div>
+              ) : null}
             </>
           )}
         </div>

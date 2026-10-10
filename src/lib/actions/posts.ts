@@ -1,7 +1,7 @@
 /** Community post query와 revision/trash lifecycle server action. */
 "use server";
 
-import { and, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createDb, createDbContext } from "@/db/client";
@@ -37,6 +37,12 @@ import {
   isPostContentWithinLimit,
   parsePostRevision,
 } from "@/lib/post-continuity";
+import {
+  COMMUNITY_PAGE_SIZE,
+  COMMUNITY_PREVIEW_SOURCE_CHARS,
+  decodeCommunityPostCursor,
+  encodeCommunityPostCursor,
+} from "@/lib/community-post-page";
 import { isRichTextEmpty } from "@/lib/rich-text";
 import { safeReturnPath } from "@/lib/safe-return-path";
 import { sanitizeHtml } from "@/lib/sanitize-html";
@@ -154,20 +160,70 @@ export async function getAnnouncementSummaries(limit = 3) {
     .limit(clampSummaryLimit(limit));
 }
 
-export async function getPostsByCategory(category: string) {
+/**
+ * 커뮤니티 목록 한 페이지. 공지·믹스셋은 고정 우선, 자유 게시판은 채널별 최신순이며
+ * (고정 여부, 작성 시각, ID) keyset으로 다음 페이지를 이어 읽는다. 공지는 펼쳐 읽는 본문 전체를,
+ * 자유·믹스셋은 미리보기에 필요한 본문 앞부분만 보낸다.
+ */
+export async function getCommunityPostPage(input: {
+  boardType: BoardType;
+  category?: string | null;
+  cursor?: string | null;
+}) {
   await requireAuth();
-  return createDb()
-    .select(POST_SELECT)
+  const { boardType } = input;
+  if (!VALID_BOARD_TYPES.includes(boardType)) throw new Error("Invalid board type");
+  const cursor = input.cursor ? decodeCommunityPostCursor(input.cursor) : null;
+  if (input.cursor && !cursor) throw new Error("Invalid community cursor");
+  const category = boardType === "GENERAL" ? input.category?.trim() ?? "" : "";
+  if (boardType === "GENERAL" && !category) return { posts: [], nextCursor: null };
+
+  const ordersByPin = boardType !== "GENERAL";
+  const pinnedKey = sql<number>`(CASE WHEN ${posts.isPinned} THEN 1 ELSE 0 END)`;
+  const createdKey = sql<number>`coalesce(${posts.createdAt}, 0)`;
+  const afterCreated = cursor
+    ? sql`(${createdKey} < ${cursor.createdAt} OR (${createdKey} = ${cursor.createdAt} AND ${posts.id} < ${cursor.id}))`
+    : undefined;
+  const afterCursor = cursor && ordersByPin
+    ? sql`(${pinnedKey} < ${cursor.pinned} OR (${pinnedKey} = ${cursor.pinned} AND ${afterCreated}))`
+    : afterCreated;
+
+  const rows = await createDb()
+    .select({
+      ...POST_SELECT,
+      contentHtml: boardType === "ANNOUNCEMENT"
+        ? posts.contentHtml
+        : sql<string>`substr(${posts.contentHtml}, 1, ${COMMUNITY_PREVIEW_SOURCE_CHARS})`,
+      pinnedKey,
+      createdKey,
+    })
     .from(posts)
     .leftJoin(profiles, eq(posts.authorId, profiles.id))
-    .where(
-      and(
-        eq(posts.category, category),
-        eq(posts.boardType, "GENERAL"),
-        isNull(posts.deletedAt),
-      ),
-    )
-    .orderBy(desc(posts.createdAt));
+    .where(and(
+      eq(posts.boardType, boardType),
+      isNull(posts.deletedAt),
+      category ? eq(posts.category, category) : undefined,
+      afterCursor,
+    ))
+    .orderBy(...(ordersByPin ? [desc(pinnedKey)] : []), desc(createdKey), desc(posts.id))
+    .limit(COMMUNITY_PAGE_SIZE + 1);
+
+  const pageRows = rows.slice(0, COMMUNITY_PAGE_SIZE);
+  const last = pageRows.at(-1);
+  return {
+    posts: pageRows.map(({ pinnedKey, createdKey, ...post }) => {
+      void pinnedKey;
+      void createdKey;
+      return post;
+    }),
+    nextCursor: rows.length > COMMUNITY_PAGE_SIZE && last
+      ? encodeCommunityPostCursor({
+        pinned: ordersByPin && Number(last.pinnedKey) === 1 ? 1 : 0,
+        createdAt: Number(last.createdKey),
+        id: last.id,
+      })
+      : null,
+  };
 }
 
 export async function getPostById(postId: string) {

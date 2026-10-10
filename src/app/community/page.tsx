@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 import { getActiveAuthSession } from "@/lib/auth-guard";
 import { redirect } from "next/navigation";
 import { getCategories } from "@/lib/actions/categories";
-import { getPostsByBoardType, getPostsByCategory } from "@/lib/actions/posts";
+import { getCommunityPostPage } from "@/lib/actions/posts";
 import { resolveCommunityBoardType } from "@/lib/community-location";
 import { firstSearchValue } from "@/lib/portal-location";
 import CommunityClient from "./CommunityClient";
@@ -32,14 +32,12 @@ export default async function CommunityPage({
   const category = categories.find((item) => item.slug === requestedCategory)?.slug
     ?? categories[0]?.slug
     ?? "";
-  const posts = boardType === "GENERAL"
-    ? category ? await getPostsByCategory(category) : []
-    : await getPostsByBoardType(boardType);
+  const page = await getCommunityPostPage({ boardType, category });
 
   return (
     <CommunityClient
       isAdmin={isAdmin}
-      initial={{ boardType, category, categories, posts }}
+      initial={{ boardType, category, categories, posts: page.posts, nextCursor: page.nextCursor }}
     />
   );
 }

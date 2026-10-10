@@ -271,6 +271,51 @@ test("대시보드 게시물 요약은 본문 없이 범위·정렬·개수를 �
   assert.equal((await postActions.getAnnouncementSummaries(Number.NaN)).length, 1, "잘못된 limit은 최소 1개로 닫힌다");
 });
 
+test("커뮤니티 목록은 keyset으로 겹침 없이 이어 읽고 미리보기 본문만 보낸다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("student-1", "student"));
+  await seedProfile(db, "student-1");
+  const base = Date.UTC(2026, 8, 1) / 1_000;
+  const longBody = `<p>${"가".repeat(5_000)}</p>`;
+  // 같은 초에 쓴 글(3개씩)이 page 경계를 걸치게 해 ID tie-break까지 확인한다. D1 bind 상한 때문에 나눠 넣는다.
+  const generalRows = Array.from({ length: 35 }, (_, index) => ({
+    id: `general-${String(index).padStart(2, "0")}`,
+    authorId: "student-1",
+    category: "general",
+    boardType: "GENERAL" as const,
+    title: `자유 ${index}`,
+    contentHtml: index === 34 ? longBody : "<p>본문</p>",
+    createdAt: new Date((base + Math.floor(index / 3)) * 1_000),
+  }));
+  for (let start = 0; start < generalRows.length; start += 5) {
+    await db.insert(posts).values(generalRows.slice(start, start + 5));
+  }
+  await db.insert(posts).values([
+    { id: "other-channel", authorId: "student-1", category: "gear", boardType: "GENERAL" as const, title: "다른 채널", contentHtml: "<p>x</p>", createdAt: new Date((base + 100) * 1_000) },
+    { id: "trashed", authorId: "student-1", category: "general", boardType: "GENERAL" as const, title: "휴지통", contentHtml: "<p>x</p>", createdAt: new Date((base + 100) * 1_000), deletedAt: new Date() },
+    { id: "mix-old-pinned", authorId: "student-1", category: "general", boardType: "FEEDBACK" as const, title: "고정 믹스셋", contentHtml: "<p>x</p>", isPinned: true, createdAt: new Date(base * 1_000) },
+    { id: "mix-new", authorId: "student-1", category: "general", boardType: "FEEDBACK" as const, title: "새 믹스셋", contentHtml: "<p>x</p>", createdAt: new Date((base + 50) * 1_000) },
+  ]);
+
+  const first = await postActions.getCommunityPostPage({ boardType: "GENERAL", category: "general" });
+  assert.equal(first.posts.length, 30);
+  assert.ok(first.nextCursor);
+  const second = await postActions.getCommunityPostPage({ boardType: "GENERAL", category: "general", cursor: first.nextCursor });
+  assert.equal(second.nextCursor, null);
+  const ids = [...first.posts, ...second.posts].map((post) => post.id);
+  assert.equal(ids.length, 35);
+  assert.equal(new Set(ids).size, 35, "page 경계에서 겹치거나 빠지지 않는다");
+  // 작성 시각 내림차순, 같은 초는 ID 내림차순: 이 fixture에서는 색인 역순이다.
+  assert.deepEqual(ids, Array.from({ length: 35 }, (_, index) => `general-${String(34 - index).padStart(2, "0")}`));
+  assert.equal(ids.includes("other-channel") || ids.includes("trashed"), false);
+  const longPreview = first.posts.find((post) => post.id === "general-34");
+  assert.ok(longPreview && longPreview.contentHtml.length === 4_096, "목록은 본문 앞 4,096자만 받는다");
+
+  const feedback = await postActions.getCommunityPostPage({ boardType: "FEEDBACK" });
+  assert.deepEqual(feedback.posts.map((post) => post.id), ["mix-old-pinned", "mix-new"], "고정 게시물이 먼저 온다");
+  await assert.rejects(postActions.getCommunityPostPage({ boardType: "GENERAL", category: "general", cursor: "invalid!" }), /Invalid community cursor/u);
+  assert.deepEqual(await postActions.getCommunityPostPage({ boardType: "GENERAL", category: "" }), { posts: [], nextCursor: null });
+});
+
 test("학생별 과제 요약은 관리자에게만 최신 제출순과 피드백 수를 돌려준다", { concurrency: false }, async (context) => {
   const db = await setupDatabase(context, createSession("admin-1", "admin"));
   await seedProfile(db, "admin-1", "admin");

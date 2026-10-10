@@ -61,8 +61,7 @@ let connectCalendar: typeof import("@/lib/actions/externalCalendars").connectExt
 let ExternalCalendarConnection: typeof import("@/components/student-portal/ExternalCalendarConnection").ExternalCalendarConnection;
 let loadStudentCalendar: typeof import("@/lib/actions/unifiedItems").getUnifiedItemsForStudent = async () => [];
 let login: typeof import("@/lib/actions/session").loginWithCredentials = async () => ({});
-let loadCategoryPosts: typeof import("@/lib/actions/posts").getPostsByCategory = async () => [];
-let loadBoardPosts: typeof import("@/lib/actions/posts").getPostsByBoardType = async () => [];
+let loadCommunityPage: typeof import("@/lib/actions/posts").getCommunityPostPage = async () => ({ posts: [], nextCursor: null });
 let CommunityClient: typeof import("@/app/community/CommunityClient").default;
 let LoginForm: typeof import("@/components/auth/LoginForm").LoginForm;
 const previousGlobals = new Map<string, PropertyDescriptor | undefined>();
@@ -97,8 +96,7 @@ mock.module("@/lib/actions/comments", { namedExports: {
 } });
 mock.module("@/lib/actions/posts", { namedExports: {
   deletePost: (...args: Parameters<typeof trashPost>) => trashPost(...args),
-  getPostsByCategory: (...args: Parameters<typeof loadCategoryPosts>) => loadCategoryPosts(...args),
-  getPostsByBoardType: (...args: Parameters<typeof loadBoardPosts>) => loadBoardPosts(...args),
+  getCommunityPostPage: (...args: Parameters<typeof loadCommunityPage>) => loadCommunityPage(...args),
   togglePinPost: async () => ({ success: true }),
 } });
 mock.module("@/lib/actions/categories", { namedExports: { getCategories: async () => [] } });
@@ -1168,20 +1166,22 @@ test("failed login keeps the email and return target and moves focus to the pass
 
 test("community shows the server-loaded list first and explains a board without channels", async (context) => {
   const requests: string[] = [];
-  loadCategoryPosts = async (category) => { requests.push(`GENERAL:${category}`); return []; };
-  loadBoardPosts = async (boardType) => { requests.push(boardType); return []; };
-  context.after(() => { loadCategoryPosts = async () => []; loadBoardPosts = async () => []; });
+  loadCommunityPage = async ({ boardType, category }) => {
+    requests.push(boardType === "GENERAL" ? `GENERAL:${category}` : boardType);
+    return { posts: [], nextCursor: null };
+  };
+  context.after(() => { loadCommunityPage = async () => ({ posts: [], nextCursor: null }); });
   const category = { id: "category-1", slug: "general", name: "자유", description: null, sortOrder: 0, createdAt: null };
   const post = {
     id: "post-1", authorId: "student-1", category: "general", boardType: "GENERAL" as const, isPinned: false,
     mediaUrl: null, mediaObjectId: null, title: "레슨 후기", contentHtml: "<p>오늘 배운 것</p>",
-    createdAt: new Date(), updatedAt: new Date(), deletedAt: null, deletedById: null, version: 1,
+    createdAt: new Date(), updatedAt: new Date(), deletedAt: null, version: 1,
     authorName: "학생", authorEmail: null,
   };
   const previousUrl = browser.location.href;
   context.after(() => browser.history.replaceState({}, "", previousUrl));
   browser.history.replaceState({}, "", "/community?boardType=GENERAL&category=general");
-  const root = await render(context, <CommunityClient isAdmin={false} initial={{ boardType: "GENERAL", category: "general", categories: [category], posts: [post] }} />);
+  const root = await render(context, <CommunityClient isAdmin={false} initial={{ boardType: "GENERAL", category: "general", categories: [category], posts: [post], nextCursor: null }} />);
   assert.match(browser.document.body.textContent ?? "", /레슨 후기/u);
   assert.doesNotMatch(browser.document.body.textContent ?? "", /아직 게시물이 없습니다/u);
   assert.equal(requests.length, 0, "server list is not fetched again on mount");
@@ -1191,22 +1191,48 @@ test("community shows the server-loaded list first and explains a board without 
   assert.match(browser.document.body.textContent ?? "", /공유된 믹스셋이 없습니다/u);
 
   // 응답 전에 이미 받은 목록으로 돌아오면 취소된 요청 때문에 skeleton에 머물지 않는다.
-  const pendingAnnouncements = Promise.withResolvers<Awaited<ReturnType<typeof loadBoardPosts>>>();
-  loadBoardPosts = async (boardType) => { requests.push(boardType); return pendingAnnouncements.promise; };
+  const pendingAnnouncements = Promise.withResolvers<Awaited<ReturnType<typeof loadCommunityPage>>>();
+  loadCommunityPage = async ({ boardType }) => { requests.push(boardType); return pendingAnnouncements.promise; };
   await press("공지");
   assert.ok(browser.document.querySelector('[aria-label="게시물을 불러오는 중"]'));
   await press("믹스셋");
   assert.equal(browser.document.querySelector('[aria-label="게시물을 불러오는 중"]'), null);
   assert.match(browser.document.body.textContent ?? "", /공유된 믹스셋이 없습니다/u);
-  pendingAnnouncements.resolve([]);
+  pendingAnnouncements.resolve({ posts: [], nextCursor: null });
   await settle();
   assert.match(browser.document.body.textContent ?? "", /공유된 믹스셋이 없습니다/u);
 
   browser.history.replaceState({}, "", "/community");
-  await act(async () => root.render(<CommunityClient key="empty" isAdmin initial={{ boardType: "GENERAL", category: "", categories: [], posts: [] }} />));
+  await act(async () => root.render(<CommunityClient key="empty" isAdmin initial={{ boardType: "GENERAL", category: "", categories: [], posts: [], nextCursor: null }} />));
   await settle();
   assert.ok([...browser.document.querySelectorAll("a")].some((anchor) => anchor.getAttribute("href") === "/dashboard/admin/categories" && anchor.textContent === "채널 추가하기"));
   assert.equal([...browser.document.querySelectorAll("a")].some((anchor) => anchor.textContent === "새 글"), false);
+});
+
+test("community load-more appends the next page once and stops at the last page", async (context) => {
+  const cursors: (string | null | undefined)[] = [];
+  const makePost = (index: number) => ({
+    id: `post-${index}`, authorId: "student-1", category: "general", boardType: "GENERAL" as const, isPinned: false,
+    mediaUrl: null, mediaObjectId: null, title: `기록 ${index}`, contentHtml: "<p>본문</p>",
+    createdAt: new Date(), updatedAt: new Date(), deletedAt: null, version: 1, authorName: "학생", authorEmail: null,
+  });
+  loadCommunityPage = async ({ cursor }) => {
+    cursors.push(cursor);
+    // 같은 게시물이 다시 와도 한 번만 보인다.
+    return { posts: [makePost(2), makePost(3)], nextCursor: null };
+  };
+  context.after(() => { loadCommunityPage = async () => ({ posts: [], nextCursor: null }); });
+  const previousUrl = browser.location.href;
+  context.after(() => browser.history.replaceState({}, "", previousUrl));
+  browser.history.replaceState({}, "", "/community?boardType=GENERAL&category=general");
+  const category = { id: "category-1", slug: "general", name: "자유", description: null, sortOrder: 0, createdAt: null };
+  await render(context, <CommunityClient isAdmin={false} initial={{ boardType: "GENERAL", category: "general", categories: [category], posts: [makePost(1), makePost(2)], nextCursor: "cursor-1" }} />);
+  assert.match(browser.document.getElementById("community-list-count")?.textContent ?? "", /2개/u);
+  await press("게시물 더 보기");
+  assert.deepEqual(cursors, ["cursor-1"]);
+  const titles = [...browser.document.querySelectorAll("a")].map((anchor) => anchor.textContent ?? "").filter((text) => text.includes("기록"));
+  assert.equal(titles.length, 3, "post-2 is not duplicated");
+  assert.equal(browser.document.getElementById("community-list-count"), null, "no more button after the last page");
 });
 
 test("a submission without feedback is deleted only after a cancel-first confirmation", async (context) => {
