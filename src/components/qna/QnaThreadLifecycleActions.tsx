@@ -108,7 +108,7 @@ export function QnaThreadLifecycleActions({
   };
 
   return (
-    <span className="inline-flex flex-col items-start gap-1">
+    <div className="inline-flex flex-col items-start gap-1">
       {actionKind ? (
         <Button
           ref={actionButtonRef}
@@ -152,6 +152,6 @@ export function QnaThreadLifecycleActions({
           setFailure({ message: "최신 상태를 불러오지 못했습니다. 다시 시도해 주세요.", snapshot, refreshRequired: true });
         }
       })}>최신 상태 확인</Button>}
-    </span>
+    </div>
   );
 }
