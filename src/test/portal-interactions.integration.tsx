@@ -57,6 +57,8 @@ let PasswordChangeControl: typeof import("@/components/auth/PasswordChangeContro
 let confirmActionModule: typeof import("@/components/ui/confirm-action");
 let issueFeedUrl: typeof import("@/lib/actions/calendarFeed").issueStudentCalendarFeedUrl = async () => "/api/calendar/feed?token=test";
 let CalendarFeedControl: typeof import("@/components/admin/CalendarFeedControl").CalendarFeedControl;
+let connectCalendar: typeof import("@/lib/actions/externalCalendars").connectExternalCalendar = async () => ({});
+let ExternalCalendarConnection: typeof import("@/components/student-portal/ExternalCalendarConnection").ExternalCalendarConnection;
 let loadStudentCalendar: typeof import("@/lib/actions/unifiedItems").getUnifiedItemsForStudent = async () => [];
 let login: typeof import("@/lib/actions/session").loginWithCredentials = async () => ({});
 let loadCategoryPosts: typeof import("@/lib/actions/posts").getPostsByCategory = async () => [];
@@ -137,6 +139,11 @@ mock.module("@/lib/actions/digging", { namedExports: {
   addDiggingColumn: async () => {},
   deleteDiggingColumn: async () => {},
 } });
+mock.module("@/lib/actions/externalCalendars", { namedExports: {
+  connectExternalCalendar: (...args: Parameters<typeof connectCalendar>) => connectCalendar(...args),
+  disconnectExternalCalendar: async () => {},
+  getExternalCalendarConnectionSummary: async () => ({ connected: false }),
+} });
 mock.module("@/lib/actions/session", { namedExports: {
   loginWithCredentials: (...args: Parameters<typeof login>) => login(...args),
   logoutCurrentUser: async () => {},
@@ -150,7 +157,6 @@ mock.module("@/lib/actions/unifiedItems", { namedExports: {
 for (const [folder, name] of [
   ["student-portal", "UnifiedItemDetail"], ["student-portal", "DailyListView"],
   ["student-portal", "AllItemsView"],
-  ["student-portal", "ExternalCalendarConnection"],
   ["student-portal", "AnnouncementSection"], ["student-portal", "CommunitySection"],
   ["admin-portal", "StudentManagementSection"], ["admin-portal", "AdminWorkQueueSection"],
   ["qna", "QnaSlideForm"],
@@ -218,6 +224,7 @@ before(async () => {
   ({ PasswordChangeControl } = await import("@/components/auth/PasswordChangeControl"));
   confirmActionModule = await import("@/components/ui/confirm-action");
   ({ CalendarFeedControl } = await import("@/components/admin/CalendarFeedControl"));
+  ({ ExternalCalendarConnection } = await import("@/components/student-portal/ExternalCalendarConnection"));
 });
 
 after(() => {
@@ -1351,4 +1358,27 @@ test("calendar feed replacement asks before expiring the student's existing subs
   await press("URL 교체 확인");
   assert.deepEqual(issued, ["new-student", "subscribed-student"]);
   assert.match(browser.document.body.textContent ?? "", /token-2/u);
+});
+
+test("public lesson calendar keeps a refused address for correction and sends only the address", async (context) => {
+  const submitted: [string, string | null][] = [];
+  connectCalendar = async (_previous, data) => {
+    submitted.push([String(data.get("url")), data.get("provider") as string | null]);
+    return submitted.length === 1
+      ? { error: "Google 공개 iCal 기본 주소만 사용할 수 있습니다." }
+      : { success: "공개 레슨 캘린더를 연결했습니다." };
+  };
+  context.after(() => { connectCalendar = async () => ({}); });
+  await render(context, <ExternalCalendarConnection connection={{ connected: false }} />);
+  assert.equal(browser.document.querySelector("select"), null, "the provider follows the pasted address");
+  const privateUrl = "https://calendar.google.com/calendar/ical/abc/private-123/basic.ics";
+  await fill("external-calendar-url", privateUrl);
+  await press("연결");
+  assert.match(browser.document.getElementById("external-calendar-error")?.textContent ?? "", /공개 iCal 기본 주소/u);
+  assert.equal(inputValue("url"), privateUrl, "the refused address stays for correction");
+  const publicUrl = "https://calendar.google.com/calendar/ical/abc/public/basic.ics";
+  await fill("external-calendar-url", publicUrl);
+  await press("연결");
+  assert.deepEqual(submitted, [[privateUrl, null], [publicUrl, null]]);
+  assert.equal(inputValue("url"), "");
 });

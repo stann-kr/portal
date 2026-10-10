@@ -5,7 +5,9 @@ import { revalidatePath } from "next/cache";
 import { createDb } from "@/db/client";
 import { externalCalendarSubscriptions } from "@/db/schema";
 import {
+  ExternalCalendarError,
   encryptExternalCalendarUrl,
+  normalizeExternalCalendarUrl,
   validateExternalCalendarConnection,
   type ExternalCalendarConnectionSummary,
 } from "@/lib/external-calendar";
@@ -35,22 +37,40 @@ export async function getExternalCalendarConnectionSummary(): Promise<ExternalCa
   return subscription ? { connected: true, provider: subscription.provider, label: subscription.label } : { connected: false };
 }
 
-/** 공개 URL이 실제 iCal로 읽히고 파싱되는 경우에만 암호화해 upsert한다. */
+/**
+ * 공개 URL이 실제 iCal로 읽히고 파싱되는 경우에만 암호화해 upsert한다.
+ * 제공자는 주소의 host로 정해 선택 값과 주소가 어긋나는 실패를 만들지 않는다.
+ * 주소 형식 안내만 그대로 보여 주고, 읽기·설정 실패는 원문 없이 고정 안내로 바꾼다.
+ */
 export async function connectExternalCalendar(
   _previous: ExternalCalendarMutationState,
   formData: FormData,
 ): Promise<ExternalCalendarMutationState> {
   const session = await requireAuth();
   const studentId = requireStudent(session);
+  const rawUrl = formData.get("url");
+  if (typeof rawUrl !== "string" || !rawUrl.trim()) {
+    return { error: "공개 iCal 주소를 입력해 주세요." };
+  }
+  let provider: ReturnType<typeof normalizeExternalCalendarUrl>["provider"];
   try {
-    const configuredProvider = formData.get("provider");
-    const rawUrl = formData.get("url");
-    if ((configuredProvider !== "GOOGLE" && configuredProvider !== "ICLOUD") || typeof rawUrl !== "string") {
-      return { error: "캘린더 제공자와 공개 iCal 주소를 확인해 주세요." };
-    }
-    const encryptionKey = getExternalCalendarEncryptionKey();
+    provider = normalizeExternalCalendarUrl(rawUrl).provider;
+  } catch (error) {
+    return {
+      error: error instanceof ExternalCalendarError
+        ? error.message
+        : "공개 iCal URL 형식이 올바르지 않습니다.",
+    };
+  }
+  let encryptionKey: Uint8Array;
+  try {
+    encryptionKey = getExternalCalendarEncryptionKey();
+  } catch {
+    return { error: "지금은 공개 레슨 캘린더를 연결할 수 없습니다. 강사에게 문의해 주세요." };
+  }
+  try {
     const normalized = await validateExternalCalendarConnection({
-      provider: configuredProvider,
+      provider,
       url: rawUrl,
       studentId,
       spaceLabel: session.user.name?.trim() || session.user.email || "학생",
@@ -77,7 +97,7 @@ export async function connectExternalCalendar(
     revalidateCalendars();
     return { success: "공개 레슨 캘린더를 연결했습니다." };
   } catch {
-    return { error: "공개 레슨 캘린더를 연결하지 못했습니다. 주소와 공개 상태를 확인해 주세요." };
+    return { error: "주소에서 공개 캘린더를 읽지 못했습니다. 캘린더가 공개 상태인지와 iCal 주소를 확인해 주세요." };
   }
 }
 

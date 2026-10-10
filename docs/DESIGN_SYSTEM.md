@@ -92,7 +92,7 @@ pill 형태는 filter와 count처럼 모양 자체가 의미를 가질 때만 �
 | `ConfirmPanel`·`useConfirmAction` | 휴지통 이동·영구 삭제·이력 복원·댓글/피드백/모듈/레슨/트랙/컬럼/채널 삭제 등 되돌리기 어려운 동작의 공통 취소 우선 2단계 확인. hook이 확인 대상과 연 버튼으로의 초점 복귀를, 패널이 열릴 때 취소 초점·Esc 취소·확인 뒤 진행 문구·작업 종료 시 닫힘을 소유한다. 실패 안내는 호출 화면의 기존 오류 영역이 맡는다 |
 | `LessonActions` | 관리자 레슨 상세의 시간 변경과 취소 우선 2단계 삭제 |
 | `AssignmentDeleteAction` | 피드백 전 학생 본인 제출의 취소 우선 2단계 삭제, 거부 사유를 확인 영역 안에서 표시 |
-| `ExternalCalendarConnection` | 공개 레슨 캘린더 provider 선택·연결·교체·해제와 live status |
+| `ExternalCalendarConnection` | 주소로 제공자를 판별하는 공개 레슨 캘린더 연결·교체·해제, 거부된 주소 유지와 live status |
 | `PrivateNoteList` | 저장 HTML을 직접 렌더하지 않는 노트 메타데이터·평문 미리보기·열기 링크 목록 |
 | `NoteFullForm` | 대상 학생 스페이스와 선택 날짜 문맥을 표시하는 전체 화면 노트 작성 폼 |
 | `SectionHeader` | section 제목·설명·단일 보조 action |

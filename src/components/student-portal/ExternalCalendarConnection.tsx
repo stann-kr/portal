@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useRef, useState, useTransition } from "react";
+import { useActionState, useEffect, useState, useTransition } from "react";
 import { ChevronDown, Link2, Unlink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,14 +14,25 @@ import { useRouter } from "next/navigation";
 
 export function ExternalCalendarConnection({ connection }: { connection: ExternalCalendarConnectionSummary }) {
   const router = useRouter();
-  const formRef = useRef<HTMLFormElement>(null);
-  const [state, formAction, pending] = useActionState<ExternalCalendarMutationState, FormData>(connectExternalCalendar, {});
+  // form action은 결과와 무관하게 uncontrolled 입력을 비우므로, 거부된 주소를 고쳐 다시 시도할 수 있게 값을 제어한다.
+  const [url, setUrl] = useState("");
+  const [state, formAction, pending] = useActionState<ExternalCalendarMutationState, FormData>(
+    async (previous, data) => {
+      try {
+        const result = await connectExternalCalendar(previous, data);
+        if (result.success) setUrl("");
+        return result;
+      } catch {
+        return { error: "연결 결과를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요." };
+      }
+    },
+    {},
+  );
   const [disconnecting, startDisconnect] = useTransition();
   const [disconnectError, setDisconnectError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!state.success) return;
-    formRef.current?.reset();
     router.refresh();
   }, [router, state.success]);
 
@@ -40,7 +51,7 @@ export function ExternalCalendarConnection({ connection }: { connection: Externa
       </summary>
       <div className="pb-3">
         <p id="external-calendar-help" className="text-xs text-muted-foreground">
-          전용 공개 Google iCal 또는 iCloud 공개 캘린더만 연결하세요. Google 비공개 Secret iCal 주소는 사용할 수 없습니다.
+          전용 공개 Google iCal 또는 iCloud 공개 캘린더 주소를 붙여 넣으면 제공자를 자동으로 확인합니다. Google 비공개 Secret iCal 주소는 사용할 수 없습니다.
         </p>
 
         {connection.connected ? (
@@ -74,15 +85,10 @@ export function ExternalCalendarConnection({ connection }: { connection: Externa
           </p>
         ) : null}
 
-        <form ref={formRef} action={formAction} className="mt-3 grid gap-2 sm:grid-cols-[10rem_minmax(0,1fr)_auto]" aria-describedby="external-calendar-help" aria-busy={pending}>
-          <label className="sr-only" htmlFor="external-calendar-provider">캘린더 제공자</label>
-          <select id="external-calendar-provider" name="provider" defaultValue={connection.provider ?? "GOOGLE"} className="h-9 rounded-md border border-input bg-background px-3 text-sm" disabled={pending}>
-            <option value="GOOGLE">Google Calendar</option>
-            <option value="ICLOUD">iCloud Calendar</option>
-          </select>
+        <form action={formAction} className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]" aria-describedby="external-calendar-help" aria-busy={pending}>
           <div>
             <label className="sr-only" htmlFor="external-calendar-url">공개 iCal 주소</label>
-            <Input id="external-calendar-url" name="url" type="url" required aria-required="true" disabled={pending} aria-invalid={Boolean(state.error)} aria-describedby={state.error ? "external-calendar-help external-calendar-error" : "external-calendar-help"} placeholder="https://…/public/basic.ics 또는 https://p…-caldav.icloud.com/published/2/…" />
+            <Input id="external-calendar-url" name="url" type="url" required aria-required="true" disabled={pending} value={url} onChange={(event) => setUrl(event.target.value)} aria-invalid={Boolean(state.error) && !pending} aria-describedby={state.error ? "external-calendar-help external-calendar-error" : "external-calendar-help"} placeholder="https://…/public/basic.ics 또는 https://p…-caldav.icloud.com/published/2/…" />
           </div>
           <Button type="submit" size="sm" disabled={pending}>
             <Link2 className="size-3.5" aria-hidden="true" />
