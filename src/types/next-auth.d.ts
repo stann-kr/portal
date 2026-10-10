@@ -17,11 +17,14 @@ declare module "next-auth" {
 
   interface User extends DefaultUser {
     role: UserRole;
+    /** 로그인에 사용한 비밀번호 hash의 지문. JWT에만 결합하고 session 응답에는 노출하지 않는다. */
+    credentialFingerprint?: string | null;
   }
 }
 
 declare module "next-auth/jwt" {
   interface JWT extends DefaultJWT {
     role: UserRole;
+    credentialFingerprint?: string;
   }
 }

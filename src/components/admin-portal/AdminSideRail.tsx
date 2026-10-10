@@ -1,11 +1,12 @@
 /**
  * @file src/components/admin-portal/AdminSideRail.tsx
  * @description 어드민 원페이지 전용 56px 아이콘 레일.
- * 로고 + 역할 표시 + 기기 초안 관리 + 로그아웃 버튼.
+ * 로고 + 역할 표시 + 기기 초안 관리 + 비밀번호 변경 + 로그아웃 버튼.
  */
 import Link from "next/link";
 import { AccountLogoutButton } from "@/components/auth/AccountLogoutButton";
 import { LocalDraftManager } from "@/components/auth/LocalDraftManager";
+import { PasswordChangeControl } from "@/components/auth/PasswordChangeControl";
 
 export function AdminSideRail({ ownerId }: { ownerId: string }) {
   return (
@@ -35,6 +36,7 @@ export function AdminSideRail({ ownerId }: { ownerId: string }) {
       <div className="flex-1" />
 
       <LocalDraftManager ownerId={ownerId} />
+      <PasswordChangeControl />
       <AccountLogoutButton ownerId={ownerId} />
     </aside>
   );

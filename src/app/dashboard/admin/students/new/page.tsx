@@ -134,7 +134,7 @@ export default function NewStudentPage() {
             </button>
           </div>
           <p className="text-xs text-muted-foreground">
-            학생에게 초기 비밀번호를 안전하게 전달하세요.
+            학생에게 초기 비밀번호를 안전하게 전달하세요. 학생은 로그인한 뒤 사이드 레일의 열쇠 버튼에서 직접 바꿀 수 있습니다.
           </p>
         </div>
 

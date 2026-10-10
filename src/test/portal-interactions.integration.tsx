@@ -52,6 +52,8 @@ let DiggingBoard: typeof import("@/components/digging/DiggingBoard").DiggingBoar
 let toggleModule: typeof import("@/lib/actions/curriculum").toggleModuleComplete = async () => {};
 let editModule: typeof import("@/lib/actions/curriculum").updateModule = async () => ({ success: true });
 let OverviewTab: typeof import("@/components/admin/OverviewTab").OverviewTab;
+let changePassword: typeof import("@/lib/actions/password").changeOwnPassword = async () => ({ success: true });
+let PasswordChangeControl: typeof import("@/components/auth/PasswordChangeControl").PasswordChangeControl;
 let loadStudentCalendar: typeof import("@/lib/actions/unifiedItems").getUnifiedItemsForStudent = async () => [];
 let login: typeof import("@/lib/actions/session").loginWithCredentials = async () => ({});
 let loadCategoryPosts: typeof import("@/lib/actions/posts").getPostsByCategory = async () => [];
@@ -119,6 +121,7 @@ mock.module("@/lib/actions/curriculum", { namedExports: {
   deleteModule: async () => {},
 } });
 mock.module("@/lib/actions/calendarFeed", { namedExports: { issueStudentCalendarFeedUrl: async () => "/api/calendar/feed?token=test" } });
+mock.module("@/lib/actions/password", { namedExports: { changeOwnPassword: (...args: Parameters<typeof changePassword>) => changePassword(...args) } });
 mock.module("@/lib/actions/digging", { namedExports: {
   getOrSeedColumns: async () => [],
   createDiggingTrack: (...args: Parameters<typeof saveTrack>) => saveTrack(...args),
@@ -207,6 +210,7 @@ before(async () => {
   ({ LoginForm } = await import("@/components/auth/LoginForm"));
   ({ default: CommunityClient } = await import("@/app/community/CommunityClient"));
   ({ OverviewTab } = await import("@/components/admin/OverviewTab"));
+  ({ PasswordChangeControl } = await import("@/components/auth/PasswordChangeControl"));
 });
 
 after(() => {
@@ -1219,4 +1223,43 @@ test("admin module edit keeps input on refusal and returns focus to the row afte
   assert.deepEqual(requests, [["module-1", "student-1", "1", "EQ 전환"], ["module-1", "student-1", "1", "EQ 전환"]]);
   assert.equal(browser.document.getElementById("module-edit-module-1-title"), null);
   assert.equal(browser.document.activeElement, browser.document.getElementById("module-edit-trigger-module-1"));
+});
+
+test("password change keeps typed values on a refused field and confirms success without leaving secrets", async (context) => {
+  const submitted: string[] = [];
+  changePassword = async (_previous, data) => {
+    submitted.push(String(data.get("currentPassword")));
+    return submitted.length === 1
+      ? { error: "현재 비밀번호가 올바르지 않습니다.", field: "currentPassword" }
+      : { success: true };
+  };
+  context.after(() => { changePassword = async () => ({ success: true }); });
+  await render(context, <PasswordChangeControl />);
+  await press("비밀번호 변경");
+  const inputs = () => [...browser.document.querySelectorAll<HTMLInputElement>('[role="dialog"] input[type="password"]')];
+  assert.equal(inputs().length, 3);
+  const setter = Object.getOwnPropertyDescriptor(browser.HTMLInputElement.prototype, "value")?.set;
+  for (const [index, value] of ["wrong-password", "second-password", "second-password"].entries()) {
+    await act(async () => {
+      setter?.call(inputs()[index], value);
+      inputs()[index].dispatchEvent(new browser.Event("input", { bubbles: true }));
+    });
+  }
+  const submit = () => [...browser.document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button[type="submit"]')][0];
+  await act(async () => submit().click());
+  await settle();
+  assert.match(browser.document.querySelector('[role="dialog"] [role="alert"]')?.textContent ?? "", /현재 비밀번호가 올바르지 않습니다/u);
+  assert.equal(browser.document.activeElement, inputs()[0]);
+  assert.equal(inputs()[0].getAttribute("aria-invalid"), "true");
+  assert.deepEqual(inputs().map((input) => input.value), ["wrong-password", "second-password", "second-password"]);
+
+  await act(async () => {
+    setter?.call(inputs()[0], "first-password");
+    inputs()[0].dispatchEvent(new browser.Event("input", { bubbles: true }));
+  });
+  await act(async () => submit().click());
+  await settle();
+  assert.deepEqual(submitted, ["wrong-password", "first-password"]);
+  assert.match(browser.document.querySelector('[role="dialog"] [role="status"]')?.textContent ?? "", /비밀번호를 변경했습니다/u);
+  assert.equal(inputs().length, 0, "the success view no longer holds the typed passwords");
 });

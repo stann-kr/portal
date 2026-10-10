@@ -2,6 +2,7 @@ import { eq, getTableColumns, sql } from "drizzle-orm";
 import { createDb, type DrizzleDb } from "@/db/client";
 import { profiles } from "@/db/schema";
 import type { UserRole } from "@/types/user";
+import { credentialFingerprint } from "@/lib/credential-fingerprint";
 
 export type ActiveProfile = {
   id: string;
@@ -12,6 +13,11 @@ export type ActiveProfile = {
 
 export type ActiveLoginProfile = ActiveProfile & {
   passwordHash: string | null;
+};
+
+/** JWT 갱신 경계용 profile. 비밀번호 hash 대신 session 결합 지문만 노출한다. */
+export type ActiveSessionProfile = ActiveProfile & {
+  credentialFingerprint: string | null;
 };
 
 type ProfileRecord = Record<string, unknown>;
@@ -79,6 +85,22 @@ export async function findActiveProfileById(
     .where(eq(profiles.id, profileId))
     .limit(1);
   return parseActiveProfile(row);
+}
+
+export async function findActiveSessionProfileById(
+  profileId: string,
+  db: DrizzleDb = createDb(),
+): Promise<ActiveSessionProfile | null> {
+  if (!profileId) return null;
+  const [row] = await db
+    .select()
+    .from(profiles)
+    .where(eq(profiles.id, profileId))
+    .limit(1);
+  const profile = parseActiveLoginProfile(row);
+  if (!profile) return null;
+  const { passwordHash, ...activeProfile } = profile;
+  return { ...activeProfile, credentialFingerprint: credentialFingerprint(passwordHash) };
 }
 
 export async function findActiveProfileByEmail(

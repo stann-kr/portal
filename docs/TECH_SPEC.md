@@ -145,6 +145,8 @@ Migration SQL은 `drizzle/`, Drizzle metadata는 `drizzle/meta/`에 둔다. Wran
 - 로그인 form은 `loginWithCredentials` server action의 상태로 실패를 돌려받아 입력한 이메일과 middleware가 넘긴 `callbackUrl`을 유지하고 비밀번호 입력으로 초점을 옮긴다. 이동 주소의 same-origin 확인은 NextAuth redirect callback이 수행한다. NextAuth가 직접 붙인 `?error=` query는 고정 안내로만 바꿔 표시한다.
 - credentials provider는 email/password와 bcrypt hash를 비교한다. 로그인 이메일은 앞뒤 공백을 무시하고, 정확히 일치하는 계정이 없을 때만 대소문자만 다른 계정이 하나인 경우를 같은 계정으로 본다. 관리자가 만드는 학생 이메일은 소문자로 저장하고 대소문자만 다른 중복을 거부한다.
 - 한 server component 렌더 안의 layout·page·query는 React `cache`로 active session 확인을 한 번만 수행한다. server action·route handler 호출은 렌더 범위 밖이므로 매번 JWT와 profile을 다시 검증한다.
+- 로그인 token은 비밀번호 hash의 SHA-256 지문(`credential-fingerprint`)에 결합한다. Node JWT callback은 매 갱신에서 profile의 현재 지문과 대조해 비밀번호가 바뀐 뒤 남은 다른 기기의 token을 거부하고, 지문 결합 이전에 발급된 token은 기존 최대 수명까지 허용한다. 지문과 hash는 session 응답에 노출하지 않는다.
+- `changeOwnPassword`는 현재 비밀번호를 bcrypt로 확인하고 읽은 hash가 그대로일 때만 새 hash를 저장한 뒤, 새 비밀번호로 현재 기기의 session을 다시 발급한다. 재발급에 실패하면 변경 성공과 재로그인 필요를 함께 알린다. 관리자가 학생 비밀번호를 대신 바꾸는 경로는 학생 계정 소유권 경계 때문에 두지 않는다.
 - session의 `user.id`는 profile 조회의 시작점으로만 사용한다. Node auth의 JWT callback, `/api/auth/session`과 모든 server 인증 경계가 profile 존재와 DB의 최신 role을 다시 확인해 삭제된 JWT를 즉시 거부한다. JWT/session 최대 수명은 7일로 고정해 raw subject ID의 30일 보존 경계보다 먼저 만료시킨다.
 - 데이터 조회·변경 함수는 호출 화면에 의존하지 않고 role과 ownership을 자체 검증해야 한다.
 - 신규 캘린더 feed는 256-bit opaque token의 SHA-256 digest로 owner를 찾고 회전 시 이전 digest를 폐기한다. 기존 v1 URL은 active 학생 profile을 먼저 확인한 뒤 서명을 검증한다. `.ics`의 각 레슨은 레슨 ID 기반 고정 UID와 UTC 시작 시각을 사용하고, 예정 레슨이 없으면 일정 없는 빈 캘린더를 반환한다.
@@ -245,7 +247,7 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 
 | 변경 영역 | 함께 확인할 파일 |
 |---|---|
-| auth·role | `src/auth.ts`, `src/auth.config.ts`, `src/middleware.ts`, `docs/REQUIREMENTS.md` |
+| auth·role | `src/auth.ts`, `src/auth.config.ts`, `src/middleware.ts`, `src/lib/active-profile.ts`, `src/lib/credential-fingerprint.ts`, `src/lib/actions/password.ts`, `docs/REQUIREMENTS.md` |
 | schema·migration | `src/db/schema.ts`, `drizzle/**`, 관련 action, `docs/TECH_SPEC.md` |
 | student portal | `src/app/dashboard/student/page.tsx`, `src/components/student-portal/**` |
 | admin portal | `src/app/dashboard/admin/page.tsx`, `src/components/admin-portal/**`, `src/lib/actions/students.ts` |

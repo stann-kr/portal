@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { after, before, mock, test, type TestContext } from "node:test";
 import { count, eq } from "drizzle-orm";
+import * as bcrypt from "bcryptjs";
+import { credentialFingerprint } from "@/lib/credential-fingerprint";
 import type { AuthSession } from "@/lib/auth-guard";
 import {
   assignments,
@@ -35,6 +37,7 @@ let studentActions: typeof import("@/lib/actions/students");
 let activeProfileModule: typeof import("@/lib/active-profile");
 let postActions: typeof import("@/lib/actions/posts");
 let categoryActions: typeof import("@/lib/actions/categories");
+let passwordActions: typeof import("@/lib/actions/password");
 
 function createSession(id: string, role: "admin" | "student"): AuthSession {
   return {
@@ -54,8 +57,16 @@ function requireActiveDb(): PortalTestDb {
   return activeDb;
 }
 
+let signInCalls: unknown[][] = [];
+let signInImpl: (...args: unknown[]) => Promise<unknown> = async () => "/dashboard";
 mock.module("@/auth", {
-  namedExports: { auth: async () => activeSession },
+  namedExports: {
+    auth: async () => activeSession,
+    signIn: async (...args: unknown[]) => {
+      signInCalls.push(args);
+      return signInImpl(...args);
+    },
+  },
 });
 mock.module("@/db/client", {
   namedExports: {
@@ -68,7 +79,7 @@ mock.module("next/cache", {
 });
 
 before(async () => {
-  [calendarActions, curriculumActions, diggingActions, lessonActions, commentActions, feedbackActions, assignmentActions, studentActions, activeProfileModule, postActions, categoryActions] =
+  [calendarActions, curriculumActions, diggingActions, lessonActions, commentActions, feedbackActions, assignmentActions, studentActions, activeProfileModule, postActions, categoryActions, passwordActions] =
     await Promise.all([
       import("@/lib/actions/calendarEvents"),
       import("@/lib/actions/curriculum"),
@@ -81,6 +92,7 @@ before(async () => {
       import("@/lib/active-profile"),
       import("@/lib/actions/posts"),
       import("@/lib/actions/categories"),
+      import("@/lib/actions/password"),
     ]);
 });
 
@@ -432,6 +444,39 @@ test("채널 수정은 관리자만 이름·설명·순서를 바꾸고 게시�
 
   activeSession = createSession("student-1", "student");
   await assert.rejects(categoryActions.updateCategory("channel-1", {}, form("학생 변경")), /Admin only/u);
+});
+
+test("비밀번호 변경은 현재 비밀번호를 확인하고 새 hash로 현재 기기만 다시 로그인시킨다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("student-1", "student"));
+  const originalHash = await bcrypt.hash("first-password", 4);
+  await db.insert(profiles).values({ id: "student-1", email: "student-1@example.com", displayName: "학생", role: "student", passwordHash: originalHash });
+  signInCalls = [];
+  context.after(() => { signInCalls = []; signInImpl = async () => "/dashboard"; });
+  const form = (currentPassword: string, newPassword: string, confirmPassword = newPassword) => {
+    const data = new FormData();
+    data.set("currentPassword", currentPassword);
+    data.set("newPassword", newPassword);
+    data.set("confirmPassword", confirmPassword);
+    return data;
+  };
+  const storedHash = async () => (await db.select({ hash: profiles.passwordHash }).from(profiles))[0].hash;
+
+  assert.equal((await passwordActions.changeOwnPassword({}, form("wrong-password", "second-password"))).field, "currentPassword");
+  assert.equal((await passwordActions.changeOwnPassword({}, form("first-password", "short"))).field, "newPassword");
+  assert.equal((await passwordActions.changeOwnPassword({}, form("first-password", "second-password", "different"))).field, "confirmPassword");
+  assert.equal((await passwordActions.changeOwnPassword({}, form("first-password", "first-password"))).field, "newPassword");
+  assert.equal(await storedHash(), originalHash, "거부한 요청은 hash를 바꾸지 않는다");
+  assert.equal(signInCalls.length, 0);
+
+  assert.deepEqual(await passwordActions.changeOwnPassword({}, form("first-password", "second-password")), { success: true });
+  const nextHash = await storedHash();
+  assert.ok(nextHash && await bcrypt.compare("second-password", nextHash));
+  assert.notEqual(credentialFingerprint(nextHash), credentialFingerprint(originalHash), "다른 기기의 이전 session 지문이 맞지 않게 된다");
+  assert.deepEqual(signInCalls, [["credentials", { email: "student-1@example.com", password: "second-password", redirect: false }]]);
+
+  signInImpl = async () => { throw new Error("CredentialsSignin"); };
+  assert.deepEqual(await passwordActions.changeOwnPassword({}, form("second-password", "third-password")), { success: true, signInRequired: true });
+  assert.ok(await bcrypt.compare("third-password", (await storedHash())!));
 });
 
 test("관리자 child delete는 전달한 학생과 실제 owner가 다르면 행을 보존한다", { concurrency: false }, async (context) => {

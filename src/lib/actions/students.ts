@@ -12,6 +12,7 @@ import { profiles } from "@/db/schema";
 import { count, eq, sql } from "drizzle-orm";
 import * as bcrypt from "bcryptjs";
 import { findStudentTarget, requireAdmin } from "@/lib/auth-guard";
+import { newPasswordPolicyError } from "@/lib/password-policy";
 import {
   queryStudentRosterStats,
   type StudentRosterStat,
@@ -47,7 +48,6 @@ export type CreateStudentState = {
 
 const STUDENT_NAME_MAX_LENGTH = 60;
 const STUDENT_EMAIL_MAX_LENGTH = 254;
-const STUDENT_PASSWORD_MAX_LENGTH = 72; // bcrypt는 72 byte 뒤를 비교하지 않는다.
 
 /**
  * 학생 계정 생성 서버 액션 (FormData 기반).
@@ -75,12 +75,8 @@ export async function createStudent(
   if (email.length > STUDENT_EMAIL_MAX_LENGTH || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(email)) {
     return { error: "올바른 이메일 주소를 입력해 주세요." };
   }
-  if (password.length < 8) {
-    return { error: "비밀번호는 8자 이상이어야 합니다." };
-  }
-  if (new TextEncoder().encode(password).byteLength > STUDENT_PASSWORD_MAX_LENGTH) {
-    return { error: "비밀번호가 너무 깁니다. 더 짧게 입력해 주세요." };
-  }
+  const passwordError = newPasswordPolicyError(password);
+  if (passwordError) return { error: passwordError };
 
   const db = createDb();
 

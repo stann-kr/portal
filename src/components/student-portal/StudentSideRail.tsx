@@ -1,12 +1,13 @@
 /**
  * @file src/components/student-portal/StudentSideRail.tsx
  * @description 학생 원페이지 전용 56px 아이콘 레일.
- * 로고 + 기기 초안 관리 + 로그아웃 버튼만 포함. 섹션 네비게이션은 StudentPortalClient 내부 탭으로 처리.
+ * 로고 + 기기 초안 관리 + 비밀번호 변경 + 로그아웃 버튼만 포함. 섹션 네비게이션은 StudentPortalClient 내부 탭으로 처리.
  */
 import Link from "next/link";
 import { AccountLogoutButton } from "@/components/auth/AccountLogoutButton";
 import { AccountDeletionControl } from "@/components/auth/AccountDeletionControl";
 import { LocalDraftManager } from "@/components/auth/LocalDraftManager";
+import { PasswordChangeControl } from "@/components/auth/PasswordChangeControl";
 
 export function StudentSideRail({
   ownerId,
@@ -32,6 +33,7 @@ export function StudentSideRail({
       <div className="flex-1" />
 
       <LocalDraftManager ownerId={ownerId} />
+      <PasswordChangeControl />
       {accountDeletionEnabled ? (
         <AccountDeletionControl ownerId={ownerId} />
       ) : null}
