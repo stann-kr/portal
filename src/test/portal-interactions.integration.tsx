@@ -55,6 +55,8 @@ let OverviewTab: typeof import("@/components/admin/OverviewTab").OverviewTab;
 let changePassword: typeof import("@/lib/actions/password").changeOwnPassword = async () => ({ success: true });
 let PasswordChangeControl: typeof import("@/components/auth/PasswordChangeControl").PasswordChangeControl;
 let confirmActionModule: typeof import("@/components/ui/confirm-action");
+let issueFeedUrl: typeof import("@/lib/actions/calendarFeed").issueStudentCalendarFeedUrl = async () => "/api/calendar/feed?token=test";
+let CalendarFeedControl: typeof import("@/components/admin/CalendarFeedControl").CalendarFeedControl;
 let loadStudentCalendar: typeof import("@/lib/actions/unifiedItems").getUnifiedItemsForStudent = async () => [];
 let login: typeof import("@/lib/actions/session").loginWithCredentials = async () => ({});
 let loadCategoryPosts: typeof import("@/lib/actions/posts").getPostsByCategory = async () => [];
@@ -121,7 +123,10 @@ mock.module("@/lib/actions/curriculum", { namedExports: {
   updateModule: (...args: Parameters<typeof editModule>) => editModule(...args),
   deleteModule: async () => {},
 } });
-mock.module("@/lib/actions/calendarFeed", { namedExports: { issueStudentCalendarFeedUrl: async () => "/api/calendar/feed?token=test" } });
+mock.module("@/lib/actions/calendarFeed", { namedExports: {
+  issueStudentCalendarFeedUrl: (...args: Parameters<typeof issueFeedUrl>) => issueFeedUrl(...args),
+  getStudentCalendarFeedIssuedAt: async () => null,
+} });
 mock.module("@/lib/actions/password", { namedExports: { changeOwnPassword: (...args: Parameters<typeof changePassword>) => changePassword(...args) } });
 mock.module("@/lib/actions/digging", { namedExports: {
   getOrSeedColumns: async () => [],
@@ -212,6 +217,7 @@ before(async () => {
   ({ OverviewTab } = await import("@/components/admin/OverviewTab"));
   ({ PasswordChangeControl } = await import("@/components/auth/PasswordChangeControl"));
   confirmActionModule = await import("@/components/ui/confirm-action");
+  ({ CalendarFeedControl } = await import("@/components/admin/CalendarFeedControl"));
 });
 
 after(() => {
@@ -1322,4 +1328,27 @@ test("confirm panel starts on cancel, closes on Escape, and stays open only whil
   await settle();
   assert.equal(panel(), null);
   assert.equal(browser.document.activeElement, button("위험 작업"));
+});
+
+test("calendar feed replacement asks before expiring the student's existing subscription", async (context) => {
+  const issued: string[] = [];
+  issueFeedUrl = async (studentId) => { issued.push(studentId); return `/api/calendar/feed?token=token-${issued.length}`; };
+  context.after(() => { issueFeedUrl = async () => "/api/calendar/feed?token=test"; });
+
+  const first = await render(context, <CalendarFeedControl studentId="new-student" issuedAt={null} />);
+  await press("구독 URL 발급");
+  assert.deepEqual(issued, ["new-student"], "a first URL has no subscription to break");
+  assert.match(browser.document.body.textContent ?? "", /token-1/u);
+  await press("새 URL로 교체");
+  assert.deepEqual(issued, ["new-student"], "replacing the URL just issued also asks first");
+  await press("취소");
+
+  await act(async () => first.render(<CalendarFeedControl key="subscribed" studentId="subscribed-student" issuedAt={new Date("2026-10-01T01:30:00.000Z")} />));
+  assert.match(browser.document.body.textContent ?? "", /2026년 10월 1일/u);
+  await press("새 URL로 교체");
+  assert.deepEqual(issued, ["new-student"]);
+  assert.equal(browser.document.activeElement?.textContent, "취소");
+  await press("URL 교체 확인");
+  assert.deepEqual(issued, ["new-student", "subscribed-student"]);
+  assert.match(browser.document.body.textContent ?? "", /token-2/u);
 });

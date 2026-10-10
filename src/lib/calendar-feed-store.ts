@@ -24,6 +24,19 @@ export async function findCalendarFeedTokenDigest(
   return row?.tokenDigest ?? null;
 }
 
+/** 현재 v2 구독 URL을 마지막으로 발급·교체한 시각. digest는 반환하지 않는다. */
+export async function findCalendarFeedTokenIssuedAt(
+  ownerId: string,
+  db: DrizzleDb = createDb(),
+): Promise<Date | null> {
+  const [row] = await db
+    .select({ updatedAt: calendarFeedTokens.updatedAt })
+    .from(calendarFeedTokens)
+    .where(eq(calendarFeedTokens.ownerId, ownerId))
+    .limit(1);
+  return row?.updatedAt ?? null;
+}
+
 export async function findCalendarFeedOwnerByDigest(
   tokenDigest: string,
   db: DrizzleDb = createDb(),

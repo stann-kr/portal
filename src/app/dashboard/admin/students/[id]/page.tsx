@@ -13,6 +13,7 @@ import { getLessonsByStudent } from "@/lib/actions/lessons";
 import { getOrSeedColumns, getDiggingTracks } from "@/lib/actions/digging";
 import { getQnaThreadsByStudent } from "@/lib/actions/qna";
 import { getAssignmentSummariesByStudent } from "@/lib/actions/assignments";
+import { getStudentCalendarFeedIssuedAt } from "@/lib/actions/calendarFeed";
 import { EmptyState } from "@/components/ui/empty-state";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { formatKst } from "@/lib/kst-format";
@@ -150,14 +151,16 @@ export default async function StudentDetailPage({
   if (!student) redirect("/dashboard/admin");
 
   // Overview 탭 데이터는 미리 병렬 fetch
-  const [modules, lessons] = await (activeTab === "overview"
+  const [modules, lessons, calendarFeedIssuedAt] = await (activeTab === "overview"
     ? Promise.all([
         getCurriculumByStudent(studentId),
         getLessonsByStudent(studentId),
+        getStudentCalendarFeedIssuedAt(studentId),
       ])
-    : Promise.resolve([[], []] as [
+    : Promise.resolve([[], [], null] as [
         Awaited<ReturnType<typeof getCurriculumByStudent>>,
         Awaited<ReturnType<typeof getLessonsByStudent>>,
+        Date | null,
       ]));
 
   return (
@@ -183,6 +186,7 @@ export default async function StudentDetailPage({
             studentId={studentId}
             modules={modules}
             lessons={lessons}
+            calendarFeedIssuedAt={calendarFeedIssuedAt}
           />
         )}
 

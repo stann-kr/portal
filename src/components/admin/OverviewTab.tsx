@@ -50,6 +50,8 @@ interface OverviewTabProps {
   studentId: string;
   modules: Module[];
   lessons: Lesson[];
+  /** 현재 레슨 캘린더 구독 URL의 마지막 발급 시각. */
+  calendarFeedIssuedAt?: Date | null;
 }
 
 // ─── 커리큘럼 추가 폼 ──────────────────────────────
@@ -201,6 +203,7 @@ export function OverviewTab({
   studentId,
   modules,
   lessons,
+  calendarFeedIssuedAt = null,
 }: OverviewTabProps) {
   const [isPending, startTransition] = useTransition();
   const [mutationError, setMutationError] = useState("");
@@ -329,7 +332,7 @@ export function OverviewTab({
           </span>
         </div>
 
-        <CalendarFeedControl studentId={studentId} />
+        <CalendarFeedControl studentId={studentId} issuedAt={calendarFeedIssuedAt} />
 
         {lessons.length === 0 ? (
           <p className="text-sm text-muted-foreground py-4 text-center">

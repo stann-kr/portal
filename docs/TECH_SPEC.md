@@ -149,7 +149,7 @@ Migration SQL은 `drizzle/`, Drizzle metadata는 `drizzle/meta/`에 둔다. Wran
 - `changeOwnPassword`는 현재 비밀번호를 bcrypt로 확인하고 읽은 hash가 그대로일 때만 새 hash를 저장한 뒤, 새 비밀번호로 현재 기기의 session을 다시 발급한다. 재발급에 실패하면 변경 성공과 재로그인 필요를 함께 알린다. 관리자가 학생 비밀번호를 대신 바꾸는 경로는 학생 계정 소유권 경계 때문에 두지 않는다.
 - session의 `user.id`는 profile 조회의 시작점으로만 사용한다. Node auth의 JWT callback, `/api/auth/session`과 모든 server 인증 경계가 profile 존재와 DB의 최신 role을 다시 확인해 삭제된 JWT를 즉시 거부한다. JWT/session 최대 수명은 7일로 고정해 raw subject ID의 30일 보존 경계보다 먼저 만료시킨다.
 - 데이터 조회·변경 함수는 호출 화면에 의존하지 않고 role과 ownership을 자체 검증해야 한다.
-- 신규 캘린더 feed는 256-bit opaque token의 SHA-256 digest로 owner를 찾고 회전 시 이전 digest를 폐기한다. 기존 v1 URL은 active 학생 profile을 먼저 확인한 뒤 서명을 검증한다. `.ics`의 각 레슨은 레슨 ID 기반 고정 UID와 UTC 시작 시각을 사용하고, 예정 레슨이 없으면 일정 없는 빈 캘린더를 반환한다.
+- 신규 캘린더 feed는 256-bit opaque token의 SHA-256 digest로 owner를 찾고 회전 시 이전 digest를 폐기한다. 관리자 학생 상세는 현재 v2 구독 URL의 마지막 발급 시각만 조회해 보여 주고(원문·digest는 반환하지 않음), 기존 URL이 있으면 교체 전에 취소 우선 확인을 거친다. URL 원문은 발급 직후 한 번만 표시한다. 기존 v1 URL은 active 학생 profile을 먼저 확인한 뒤 서명을 검증한다. `.ics`의 각 레슨은 레슨 ID 기반 고정 UID와 UTC 시작 시각을 사용하고, 예정 레슨이 없으면 일정 없는 빈 캘린더를 반환한다.
 - 학생 계정 삭제는 현재 비밀번호, persistent 또는 memory-only 기기 digest와 UUID operation을 요구한다. persistent token은 삭제 batch에서 모두 job에 결합하고 memory-only digest는 cleanup token quota를 소비하지 않는 job initiating receipt로 기록한다. job·profile 삭제는 함께 commit하거나 rollback하며, admin 삭제는 이 흐름에서 거부한다.
 - rich text는 HTML5 AST를 새 안전 트리로 복사하는 tag·속성·URL allowlist로 서버 저장과 렌더 경계에서 sanitize한다. DOM emulation 없이 Node·browser·Worker에서 같은 동기 결과를 사용한다.
 - Q&A 상태 변경은 관리자 역할과 허용된 `OPEN`, `ANSWERED`, `CLOSED` 값인지 함께 검증한다.
