@@ -8,7 +8,7 @@
  */
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -31,6 +31,7 @@ import { AnnouncementList } from "@/components/community/AnnouncementList";
 import { MixsetFeedbackCard } from "@/components/community/MixsetFeedbackCard";
 import { formatKstShortDate } from "@/lib/kst-format";
 import { getSearchableDocumentText } from "@/lib/document-search";
+import { resolveCommunityBoardType, type CommunityBoardType } from "@/lib/community-location";
 
 type Category = Awaited<ReturnType<typeof getCategories>>[number];
 type Post = Awaited<ReturnType<typeof getPostsByCategory>>[number];
@@ -38,6 +39,19 @@ type FeedbackPost = Awaited<ReturnType<typeof getPostsByBoardType>>[number];
 
 interface CommunityClientProps {
   isAdmin: boolean;
+  /** 서버가 URL로 확정한 첫 위치와 목록. */
+  initial: {
+    boardType: CommunityBoardType;
+    category: string;
+    categories: Category[];
+    posts: Post[];
+  };
+}
+
+/** 지금 화면에 필요한 목록의 식별자. 받은 목록의 key와 다르면 skeleton을 보인다. */
+function listKey(boardType: CommunityBoardType, category: string): string | null {
+  if (boardType !== "GENERAL") return boardType;
+  return category ? `GENERAL:${category}` : null;
 }
 
 // ─── GENERAL 탭 게시물 카드 ───────────────────────
@@ -70,7 +84,7 @@ function PostCard({ post, returnTo }: { post: Post; returnTo: string }) {
           {preview}
         </p>
       </div>
-      <ChevronRight className="w-4 h-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 self-center" />
+      <ChevronRight className="w-4 h-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 self-center" aria-hidden="true" />
     </Link>
   );
 }
@@ -90,7 +104,7 @@ function EmptyState({
 }) {
   return (
     <div className="flex flex-col items-center justify-center h-64 text-muted-foreground space-y-3">
-      <Icon className="w-10 h-10 opacity-20" />
+      <Icon className="w-10 h-10 opacity-20" aria-hidden="true" />
       <p className="text-sm">{message}</p>
       <Button asChild size="sm" variant="outline">
         <Link href={href}>{label}</Link>
@@ -101,25 +115,30 @@ function EmptyState({
 
 // ─── 메인 컴포넌트 ────────────────────────────────
 
-export default function CommunityClient({ isAdmin }: CommunityClientProps) {
-  const [activeTab, setActiveTab] = useState<
-    "ANNOUNCEMENT" | "GENERAL" | "FEEDBACK"
-  >("GENERAL");
-  const [activeCategory, setActiveCategory] = useState<string>("");
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [generalPosts, setGeneralPosts] = useState<Post[]>([]);
-  const [announcementPosts, setAnnouncementPosts] = useState<FeedbackPost[]>(
-    [],
+export default function CommunityClient({ isAdmin, initial }: CommunityClientProps) {
+  const [activeTab, setActiveTab] = useState<CommunityBoardType>(initial.boardType);
+  const [activeCategory, setActiveCategory] = useState<string>(initial.category);
+  const [categories, setCategories] = useState<Category[]>(initial.categories);
+  const [generalPosts, setGeneralPosts] = useState<Post[]>(
+    initial.boardType === "GENERAL" ? initial.posts : [],
   );
-  const [feedbackPosts, setFeedbackPosts] = useState<FeedbackPost[]>([]);
+  const [announcementPosts, setAnnouncementPosts] = useState<FeedbackPost[]>(
+    initial.boardType === "ANNOUNCEMENT" ? initial.posts : [],
+  );
+  const [feedbackPosts, setFeedbackPosts] = useState<FeedbackPost[]>(
+    initial.boardType === "FEEDBACK" ? initial.posts : [],
+  );
+  const [loadedKey, setLoadedKey] = useState<string | null>(() => listKey(initial.boardType, initial.category));
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
+  const loadedKeyRef = useRef(loadedKey);
+  const handledReloadRef = useRef(reloadToken);
 
-  // 카테고리 초기 로드
+  // 다시 시도할 때만 채널 목록을 새로 읽는다. 첫 목록은 서버가 함께 보냈다.
   useEffect(() => {
+    if (reloadToken === 0) return;
     let cancelled = false;
-    setLoadError(null);
     getCategories()
       .then((data) => {
         if (!cancelled) setCategories(data);
@@ -136,12 +155,7 @@ export default function CommunityClient({ isAdmin }: CommunityClientProps) {
   useEffect(() => {
     const restore = () => {
       const params = new URLSearchParams(window.location.search);
-      const tab = params.get("boardType");
-      if (tab === "ANNOUNCEMENT" || tab === "GENERAL" || tab === "FEEDBACK") {
-        setActiveTab(tab);
-      } else {
-        setActiveTab("GENERAL");
-      }
+      setActiveTab(resolveCommunityBoardType(params.get("boardType")));
 
       const requestedCategory = params.get("category");
       const restoredCategory = categories.find((item) => item.slug === requestedCategory)?.slug
@@ -154,64 +168,51 @@ export default function CommunityClient({ isAdmin }: CommunityClientProps) {
     return () => window.removeEventListener("popstate", restore);
   }, [categories]);
 
-  // GENERAL 탭: 카테고리별 게시물 로드
+  // 현재 위치의 목록이 없거나 다시 시도를 요청했을 때만 읽는다.
   useEffect(() => {
-    if (activeTab !== "GENERAL" || !activeCategory) return;
+    const key = listKey(activeTab, activeCategory);
+    const reloadRequested = handledReloadRef.current !== reloadToken;
+    if (!key || (key === loadedKeyRef.current && !reloadRequested)) return;
+    handledReloadRef.current = reloadToken;
     let cancelled = false;
     setLoading(true);
     setLoadError(null);
-    getPostsByCategory(
-      activeCategory,
-    )
-      .then((data) => {
-        if (!cancelled) {
-          setGeneralPosts(data);
-          setLoading(false);
-        }
+    const request = activeTab === "GENERAL"
+      ? getPostsByCategory(activeCategory).then((data) => {
+        if (!cancelled) setGeneralPosts(data);
+      })
+      : getPostsByBoardType(activeTab).then((data) => {
+        if (cancelled) return;
+        if (activeTab === "ANNOUNCEMENT") setAnnouncementPosts(data);
+        else setFeedbackPosts(data);
+      });
+    request
+      .then(() => {
+        if (cancelled) return;
+        loadedKeyRef.current = key;
+        setLoadedKey(key);
+        setLoading(false);
       })
       .catch(() => {
-        if (!cancelled) {
-          setLoadError("게시물을 불러오지 못했습니다.");
-          setLoading(false);
-        }
+        if (cancelled) return;
+        setLoadError("게시물을 불러오지 못했습니다.");
+        setLoading(false);
       });
     return () => {
       cancelled = true;
     };
   }, [activeTab, activeCategory, reloadToken]);
 
-  // ANNOUNCEMENT/FEEDBACK 탭: boardType별 로드
-  useEffect(() => {
-    if (activeTab === "GENERAL") return;
-    let cancelled = false;
-    setLoading(true);
-    setLoadError(null);
-    getPostsByBoardType(activeTab)
-      .then((data) => {
-        if (!cancelled) {
-          if (activeTab === "ANNOUNCEMENT") setAnnouncementPosts(data);
-          else setFeedbackPosts(data);
-          setLoading(false);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setLoadError("게시물을 불러오지 못했습니다.");
-          setLoading(false);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [activeTab, reloadToken]);
-
+  const requestedKey = listKey(activeTab, activeCategory);
+  const hasNoChannel = activeTab === "GENERAL" && categories.length === 0;
+  const awaitingList = !loadError && !hasNoChannel && (loading || requestedKey !== loadedKey);
   const currentCat = categories.find((c) => c.slug === activeCategory);
   const returnTo = `/community?boardType=${activeTab}&category=${encodeURIComponent(activeCategory)}`;
   const portalHref = isAdmin ? "/dashboard/admin?section=community" : "/dashboard/student?section=community";
   const trashHref = `/community/trash?returnTo=${encodeURIComponent(returnTo)}`;
 
   const changeLocation = (
-    nextTab: "ANNOUNCEMENT" | "GENERAL" | "FEEDBACK",
+    nextTab: CommunityBoardType,
     nextCategory = activeCategory,
   ) => {
     setActiveTab(nextTab);
@@ -258,10 +259,13 @@ export default function CommunityClient({ isAdmin }: CommunityClientProps) {
 
         {/* GENERAL일 때만 채널 사이드바 표시 */}
         {activeTab === "GENERAL" ? (
-          <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto">
+          <nav aria-label="채널" className="flex-1 p-3 space-y-0.5 overflow-y-auto">
             <p className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">
               채널
             </p>
+            {categories.length === 0 ? (
+              <p className="px-2 py-1.5 text-xs text-muted-foreground">등록된 채널이 없습니다.</p>
+            ) : null}
             {categories.map((cat) => {
               const isActive = cat.slug === activeCategory;
               return (
@@ -338,20 +342,18 @@ export default function CommunityClient({ isAdmin }: CommunityClientProps) {
             {/* 탭 전환 */}
             <Tabs
               value={activeTab}
-              onValueChange={(value) =>
-                changeLocation(value as "ANNOUNCEMENT" | "GENERAL" | "FEEDBACK")
-              }
+              onValueChange={(value) => changeLocation(resolveCommunityBoardType(value))}
             >
               <TabsList className="h-8">
                 <TabsTrigger
                   value="ANNOUNCEMENT"
                   className="text-xs gap-1.5 px-3"
                 >
-                  <Megaphone className="w-3 h-3" />
+                  <Megaphone className="w-3 h-3" aria-hidden="true" />
                   공지
                 </TabsTrigger>
                 <TabsTrigger value="GENERAL" className="text-xs gap-1.5 px-3">
-                  <MessageSquare className="w-3 h-3" />
+                  <MessageSquare className="w-3 h-3" aria-hidden="true" />
                   자유{" "}
                   {activeTab === "GENERAL" && currentCat && (
                     <span className="text-muted-foreground">
@@ -360,14 +362,14 @@ export default function CommunityClient({ isAdmin }: CommunityClientProps) {
                   )}
                 </TabsTrigger>
                 <TabsTrigger value="FEEDBACK" className="text-xs gap-1.5 px-3">
-                  <Music2 className="w-3 h-3" />
+                  <Music2 className="w-3 h-3" aria-hidden="true" />
                   믹스셋
                 </TabsTrigger>
               </TabsList>
             </Tabs>
 
             {/* 새 글 버튼 */}
-            {(activeTab !== "ANNOUNCEMENT" || isAdmin) && (
+            {(activeTab !== "ANNOUNCEMENT" || isAdmin) && !hasNoChannel && (
               <Button
                 asChild
                 size="sm"
@@ -376,7 +378,7 @@ export default function CommunityClient({ isAdmin }: CommunityClientProps) {
                 <Link
                   href={`/community/new?boardType=${activeTab}&category=${activeCategory}&returnTo=${encodeURIComponent(returnTo)}`}
                 >
-                  <Plus className="w-3.5 h-3.5" />새 글
+                  <Plus className="w-3.5 h-3.5" aria-hidden="true" />새 글
                 </Link>
               </Button>
             )}
@@ -385,12 +387,12 @@ export default function CommunityClient({ isAdmin }: CommunityClientProps) {
 
         {/* 게시물 목록 */}
         <div className="flex-1 overflow-y-auto p-4 sm:p-6">
-          {loading ? (
-            <div className="space-y-3">
+          {awaitingList ? (
+            <div className="space-y-3" role="status" aria-label="게시물을 불러오는 중">
               {[...Array(4)].map((_, i) => (
                 <div
                   key={i}
-                  className="h-24 rounded-xl border bg-muted animate-pulse"
+                  className="h-24 rounded-xl border bg-muted animate-pulse motion-reduce:animate-none"
                 />
               ))}
             </div>
@@ -431,7 +433,7 @@ export default function CommunityClient({ isAdmin }: CommunityClientProps) {
                         className="gap-1.5"
                       >
                         <Link href={`/community/new?boardType=ANNOUNCEMENT&returnTo=${encodeURIComponent(returnTo)}`}>
-                          <Plus className="w-3.5 h-3.5" />
+                          <Plus className="w-3.5 h-3.5" aria-hidden="true" />
                           공지 작성
                         </Link>
                       </Button>
@@ -443,7 +445,21 @@ export default function CommunityClient({ isAdmin }: CommunityClientProps) {
               {/* GENERAL 탭 */}
               {activeTab === "GENERAL" && (
                 <div className="space-y-3 max-w-3xl">
-                  {generalPosts.length === 0 ? (
+                  {hasNoChannel ? (
+                    <div className="flex h-64 flex-col items-center justify-center gap-3 text-center text-muted-foreground">
+                      <Hash className="size-10 opacity-20" aria-hidden="true" />
+                      <p className="text-sm">
+                        {isAdmin
+                          ? "자유 게시판에 글을 쓰려면 채널이 하나 이상 필요합니다."
+                          : "아직 열린 채널이 없습니다. 강사가 채널을 추가하면 글을 쓸 수 있습니다."}
+                      </p>
+                      {isAdmin ? (
+                        <Button asChild size="sm" variant="outline">
+                          <Link href="/dashboard/admin/categories">채널 추가하기</Link>
+                        </Button>
+                      ) : null}
+                    </div>
+                  ) : generalPosts.length === 0 ? (
                     <EmptyState
                       icon={MessageSquare}
                       message="아직 게시물이 없습니다."

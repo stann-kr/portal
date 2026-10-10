@@ -51,6 +51,9 @@ let DiggingBoard: typeof import("@/components/digging/DiggingBoard").DiggingBoar
 let toggleModule: typeof import("@/lib/actions/curriculum").toggleModuleComplete = async () => {};
 let loadStudentCalendar: typeof import("@/lib/actions/unifiedItems").getUnifiedItemsForStudent = async () => [];
 let login: typeof import("@/lib/actions/session").loginWithCredentials = async () => ({});
+let loadCategoryPosts: typeof import("@/lib/actions/posts").getPostsByCategory = async () => [];
+let loadBoardPosts: typeof import("@/lib/actions/posts").getPostsByBoardType = async () => [];
+let CommunityClient: typeof import("@/app/community/CommunityClient").default;
 let LoginForm: typeof import("@/components/auth/LoginForm").LoginForm;
 const previousGlobals = new Map<string, PropertyDescriptor | undefined>();
 
@@ -81,7 +84,13 @@ mock.module("@/lib/actions/comments", { namedExports: {
   deleteComment: (...args: Parameters<typeof removeComment>) => removeComment(...args),
   getCommentsByPost: async () => [],
 } });
-mock.module("@/lib/actions/posts", { namedExports: { deletePost: (...args: Parameters<typeof trashPost>) => trashPost(...args) } });
+mock.module("@/lib/actions/posts", { namedExports: {
+  deletePost: (...args: Parameters<typeof trashPost>) => trashPost(...args),
+  getPostsByCategory: (...args: Parameters<typeof loadCategoryPosts>) => loadCategoryPosts(...args),
+  getPostsByBoardType: (...args: Parameters<typeof loadBoardPosts>) => loadBoardPosts(...args),
+  togglePinPost: async () => ({ success: true }),
+} });
+mock.module("@/lib/actions/categories", { namedExports: { getCategories: async () => [] } });
 mock.module("@/lib/actions/upload", { namedExports: {
   requestMediaUpload: (...args: Parameters<typeof requestUpload>) => requestUpload(...args),
   completeMediaUploadAction: (...args: Parameters<typeof completeUpload>) => completeUpload(...args),
@@ -186,6 +195,7 @@ before(async () => {
   ({ AdminPortalClient } = await import("@/components/admin-portal/AdminPortalClient"));
   ({ StudentPortalClient } = await import("@/components/student-portal/StudentPortalClient"));
   ({ LoginForm } = await import("@/components/auth/LoginForm"));
+  ({ default: CommunityClient } = await import("@/app/community/CommunityClient"));
 });
 
 after(() => {
@@ -1120,4 +1130,35 @@ test("failed login keeps the email and return target and moves focus to the pass
   assert.equal(inputValue("email"), "student@example.com");
   assert.match(browser.document.querySelector('[role="alert"]')?.textContent ?? "", /올바르지 않습니다/u);
   assert.equal(browser.document.activeElement, browser.document.getElementById("password"));
+});
+
+test("community shows the server-loaded list first and explains a board without channels", async (context) => {
+  const requests: string[] = [];
+  loadCategoryPosts = async (category) => { requests.push(`GENERAL:${category}`); return []; };
+  loadBoardPosts = async (boardType) => { requests.push(boardType); return []; };
+  context.after(() => { loadCategoryPosts = async () => []; loadBoardPosts = async () => []; });
+  const category = { id: "category-1", slug: "general", name: "자유", description: null, sortOrder: 0, createdAt: null };
+  const post = {
+    id: "post-1", authorId: "student-1", category: "general", boardType: "GENERAL" as const, isPinned: false,
+    mediaUrl: null, mediaObjectId: null, title: "레슨 후기", contentHtml: "<p>오늘 배운 것</p>",
+    createdAt: new Date(), updatedAt: new Date(), deletedAt: null, deletedById: null, version: 1,
+    authorName: "학생", authorEmail: null,
+  };
+  const previousUrl = browser.location.href;
+  context.after(() => browser.history.replaceState({}, "", previousUrl));
+  browser.history.replaceState({}, "", "/community?boardType=GENERAL&category=general");
+  const root = await render(context, <CommunityClient isAdmin={false} initial={{ boardType: "GENERAL", category: "general", categories: [category], posts: [post] }} />);
+  assert.match(browser.document.body.textContent ?? "", /레슨 후기/u);
+  assert.doesNotMatch(browser.document.body.textContent ?? "", /아직 게시물이 없습니다/u);
+  assert.deepEqual(requests, [], "server list is not fetched again on mount");
+
+  await press("믹스셋");
+  assert.deepEqual(requests, ["FEEDBACK"]);
+  assert.match(browser.document.body.textContent ?? "", /공유된 믹스셋이 없습니다/u);
+
+  browser.history.replaceState({}, "", "/community");
+  await act(async () => root.render(<CommunityClient key="empty" isAdmin initial={{ boardType: "GENERAL", category: "", categories: [], posts: [] }} />));
+  await settle();
+  assert.ok([...browser.document.querySelectorAll("a")].some((anchor) => anchor.getAttribute("href") === "/dashboard/admin/categories" && anchor.textContent === "채널 추가하기"));
+  assert.equal([...browser.document.querySelectorAll("a")].some((anchor) => anchor.textContent === "새 글"), false);
 });
