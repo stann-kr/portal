@@ -20,6 +20,8 @@ export type AssignmentFeedback = Awaited<
   ReturnType<typeof getFeedbacksByAssignment>
 >[number];
 
+export const metadata = { title: "과제 피드백" };
+
 export default async function AssignmentDetailPage({
   params,
   searchParams,

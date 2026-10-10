@@ -31,6 +31,8 @@ type QnaThreadItem = {
   searchPreview?: string;
 };
 
+export const metadata = { title: "Q&A" };
+
 export default async function QnaPage({
   searchParams,
 }: {

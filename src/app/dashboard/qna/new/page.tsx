@@ -7,6 +7,8 @@ import { redirect } from "next/navigation";
 import { NewQnaForm } from "@/components/qna/NewQnaForm";
 import { safeReturnPath } from "@/lib/safe-return-path";
 
+export const metadata = { title: "새 질문" };
+
 export default async function NewQnaPage({
   searchParams,
 }: {

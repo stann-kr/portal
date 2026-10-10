@@ -134,6 +134,7 @@ pill 형태는 filter와 count처럼 모양 자체가 의미를 가질 때만 �
 
 ## 접근성
 
+- 화면을 렌더하는 route는 page 또는 segment layout의 `metadata`로 고유한 제목을 둔다. 브라우저 탭과 보조기기가 화면을 구분하며 `npm run check:ui`가 누락을 거부한다.
 - native button, link, input을 우선한다.
 - icon-only button은 `aria-label` 또는 보이는 label을 가진다.
 - portal navigation의 현재 section은 `aria-current="page"`로 전달한다.

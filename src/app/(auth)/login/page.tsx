@@ -24,6 +24,8 @@ function getErrorMessage(error: string | undefined): string | null {
   return map[error] ?? map.Default;
 }
 
+export const metadata = { title: "로그인" };
+
 /**
  * @file src/app/(auth)/login/page.tsx
  * @description 로그인 페이지.

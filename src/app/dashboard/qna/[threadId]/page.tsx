@@ -13,6 +13,8 @@ import { safeReturnPath } from "@/lib/safe-return-path";
 
 type QnaReply = NonNullable<Awaited<ReturnType<typeof getQnaThreadIncludingTrash>>>["replies"][number];
 
+export const metadata = { title: "Q&A 대화" };
+
 export default async function QnaThreadPage({
   params,
   searchParams,

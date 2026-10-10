@@ -9,6 +9,8 @@ import { safeReturnPath } from "@/lib/safe-return-path";
 
 const BOARD_TYPES: readonly PostBoardType[] = ["ANNOUNCEMENT", "GENERAL", "FEEDBACK"];
 
+export const metadata = { title: "새 게시물" };
+
 export default async function NewPostPage({
   searchParams,
 }: {

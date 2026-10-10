@@ -12,6 +12,8 @@ import { DeleteCategoryButton } from "./DeleteCategoryButton";
 
 type Category = Awaited<ReturnType<typeof getCategories>>[number];
 
+export const metadata = { title: "커뮤니티 채널" };
+
 export default async function AdminCategoriesPage() {
   const session = await getActiveAuthSession();
   if (session?.user?.role !== "admin") {

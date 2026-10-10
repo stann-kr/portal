@@ -15,6 +15,8 @@ import { getActiveAuthSession } from "@/lib/auth-guard";
 import { redirect } from "next/navigation";
 import CommunityClient from "./CommunityClient";
 
+export const metadata = { title: "커뮤니티" };
+
 export default async function CommunityPage() {
   const session = await getActiveAuthSession();
   if (!session?.user?.id) redirect("/login");

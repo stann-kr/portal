@@ -129,6 +129,8 @@ async function QnaTabContent({ studentId, filter, query }: { studentId: string; 
 
 // ─── 메인 페이지 (RSC) ────────────────────────────
 
+export const metadata = { title: "학생 상세" };
+
 export default async function StudentDetailPage({
   params,
   searchParams,

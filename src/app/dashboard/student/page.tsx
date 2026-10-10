@@ -17,6 +17,8 @@ import { getUnifiedItemSpaceLabel } from "@/lib/unified-item-normalization";
 import { getExternalCalendarConnectionSummary } from "@/lib/actions/externalCalendars";
 import { resolvePortalLocation, type PortalSearchParams } from "@/lib/portal-location";
 
+export const metadata = { title: "학생 포털" };
+
 export default async function StudentPortalPage({ searchParams }: { searchParams: Promise<PortalSearchParams> }) {
   const session = await getActiveAuthSession();
   if (session?.user?.role !== "student") redirect("/dashboard/admin");

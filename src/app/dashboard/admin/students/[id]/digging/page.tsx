@@ -15,6 +15,8 @@ import type { DiggingColumnType } from "@/db/schema";
 
 type RawColumn = Awaited<ReturnType<typeof getOrSeedColumns>>[number];
 
+export const metadata = { title: "학생 디깅 보드" };
+
 export default async function AdminStudentDiggingPage({
   params,
 }: {

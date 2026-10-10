@@ -11,6 +11,8 @@ import { PostDetailClient } from "./PostDetailClient";
 import { safeReturnPath } from "@/lib/safe-return-path";
 import { redirect } from "next/navigation";
 
+export const metadata = { title: "게시물" };
+
 export default async function PostDetailPage({
   params,
   searchParams,

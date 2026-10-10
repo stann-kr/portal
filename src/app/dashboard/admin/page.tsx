@@ -13,6 +13,8 @@ import { getPendingFeedbackAssignments } from "@/lib/actions/assignments";
 import { AdminPortalClient } from "@/components/admin-portal/AdminPortalClient";
 import { firstSearchValue, resolvePortalLocation, type PortalSearchParams } from "@/lib/portal-location";
 
+export const metadata = { title: "관리자 포털" };
+
 export default async function AdminPortalPage({ searchParams }: { searchParams: Promise<PortalSearchParams> }) {
   const session = await getActiveAuthSession();
   if (session?.user?.role !== "admin") redirect("/dashboard/student");

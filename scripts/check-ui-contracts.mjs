@@ -57,6 +57,19 @@ for (const file of sourceFiles) {
   }
 }
 
+// Screen readers and browser tabs identify a route by its title (WCAG 2.4.2).
+// Pages that render UI declare one themselves or through their segment layout.
+const metadataExportPattern = /export\s+(?:const\s+metadata\b|(?:async\s+)?function\s+generateMetadata\b)/u;
+for (const file of tsxFiles.filter((path) => /\/src\/app\/.*\/?page\.tsx$/u.test(path.replaceAll("\\", "/")))) {
+  const text = await readFile(file, "utf8");
+  if (!/return\s*[(<]/u.test(text) || metadataExportPattern.test(text)) continue;
+  const layoutPath = join(file, "..", "layout.tsx");
+  const layoutText = await readFile(layoutPath, "utf8").catch(() => "");
+  if (!metadataExportPattern.test(layoutText)) {
+    failures.push(`${repoPath(file)} page title missing: export metadata from the page or its segment layout`);
+  }
+}
+
 if (mainOwners.length !== 1 || !mainOwners[0]?.startsWith("src/app/layout.tsx:")) {
   failures.push(`main landmark owner must be src/app/layout.tsx only; found ${mainOwners.join(", ") || "none"}`);
 }
@@ -80,5 +93,5 @@ if (failures.length > 0) {
   for (const failure of failures) console.error(`- ${failure}`);
   process.exitCode = 1;
 } else {
-  console.log(`UI contract check: PASS (${tsxFiles.length} TSX files, one main owner, route states present)`);
+  console.log(`UI contract check: PASS (${tsxFiles.length} TSX files, one main owner, route states and page titles present)`);
 }
