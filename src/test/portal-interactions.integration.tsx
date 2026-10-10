@@ -1165,7 +1165,7 @@ test("community shows the server-loaded list first and explains a board without 
   const root = await render(context, <CommunityClient isAdmin={false} initial={{ boardType: "GENERAL", category: "general", categories: [category], posts: [post] }} />);
   assert.match(browser.document.body.textContent ?? "", /레슨 후기/u);
   assert.doesNotMatch(browser.document.body.textContent ?? "", /아직 게시물이 없습니다/u);
-  assert.deepEqual(requests, [], "server list is not fetched again on mount");
+  assert.equal(requests.length, 0, "server list is not fetched again on mount");
 
   await press("믹스셋");
   assert.deepEqual(requests, ["FEEDBACK"]);
