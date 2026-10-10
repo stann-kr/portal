@@ -86,7 +86,7 @@ OpenNext → Cloudflare Worker
 | `/api/account-cleanup/register` | 인증된 학생 기기의 cleanup token digest 등록 |
 | `/api/account-cleanup/status` | 삭제 신호만 반환하는 익명·same-origin·no-store 상태 조회 |
 
-`/dashboard/student/assignments`, `curriculum` 목록 경로는 원페이지 포털로 redirect한다. 노트 목록과 디깅 보드는 별도 route를 사용한다.
+`/dashboard/student/assignments`, `curriculum` 목록 경로는 원페이지 포털로, 예전 `/dashboard/admin/students/[id]/digging`은 학생 상세 디깅 탭으로 redirect한다. 노트 목록과 디깅 보드는 별도 route를 사용한다.
 
 `/community`는 URL의 게시판·채널을 서버에서 확정해 채널 목록과 첫 페이지(30개)를 함께 렌더하고, 이후 탭·채널 전환과 "게시물 더 보기"만 client에서 읽는다. `getCommunityPostPage`는 공지·믹스셋을 고정 우선, 자유 게시판을 채널별 최신순으로 정렬하고 (고정 여부, 작성 시각, ID) keyset cursor로 겹침 없이 이어 읽으며, 자유·믹스셋 목록에는 미리보기에 필요한 본문 앞 4,096자만 보낸다. 받은 목록과 현재 위치가 다르면 빈 상태 대신 skeleton을 보이며, 자유 게시판 채널이 없으면 관리자에게는 채널 추가 경로를, 학생에게는 대기 안내를 보인다.
 
