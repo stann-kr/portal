@@ -105,6 +105,7 @@ export default async function AssignmentDetailPage({
         mediaUrl={assignment.mediaUrl}
         feedbackList={feedbackList}
         isAdmin={isAdmin}
+        deleteReturnTo={!isAdmin && assignment.studentId === session.user.id ? returnTo : undefined}
       />
     </div>
   );

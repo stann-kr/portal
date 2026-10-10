@@ -10,6 +10,7 @@ import type { InferSelectModel } from "drizzle-orm";
 import { feedbacks } from "@/db/schema";
 import { VideoPlayer, type MediaSeekRequest } from "@/components/player/VideoPlayer";
 import { getFeedbacksByAssignment } from "@/lib/actions/feedbacks";
+import { AssignmentDeleteAction } from "./AssignmentDeleteAction";
 
 type RawFeedback = InferSelectModel<typeof feedbacks>;
 
@@ -22,6 +23,8 @@ type Feedback = {
 interface AssignmentDetailPanelProps {
   assignmentId: string;
   mediaUrl: string;
+  /** 피드백 전 제출을 삭제한 뒤 목록에서 제외한다. */
+  onDeleted?: () => void;
 }
 
 function formatTime(seconds: number): string {
@@ -33,6 +36,7 @@ function formatTime(seconds: number): string {
 export function AssignmentDetailPanel({
   assignmentId,
   mediaUrl,
+  onDeleted,
 }: AssignmentDetailPanelProps) {
   const [feedbacks, setFeedbacks] = useState<Feedback[]>([]);
   const [seekRequest, setSeekRequest] = useState<MediaSeekRequest>();
@@ -81,9 +85,17 @@ export function AssignmentDetailPanel({
             <button type="button" onClick={() => setLoadAttempt((value) => value + 1)} className="min-h-9 rounded-md border border-border px-3 focus-visible:ring-2 focus-visible:ring-ring">다시 시도</button>
           </div>
         ) : feedbacks.length === 0 ? (
-          <p className="text-sm text-muted-foreground py-4 text-center">
-            아직 피드백이 없습니다.
-          </p>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground py-4 text-center">
+              아직 피드백이 없습니다.
+            </p>
+            {onDeleted ? (
+              <div className="border-t border-border pt-3">
+                <p className="mb-2 text-xs text-muted-foreground">잘못 제출했다면 피드백이 달리기 전에 삭제할 수 있습니다.</p>
+                <AssignmentDeleteAction assignmentId={assignmentId} onDeleted={onDeleted} />
+              </div>
+            ) : null}
+          </div>
         ) : (
           <ul className="space-y-2">
             {feedbacks.map((fb) => (
@@ -100,7 +112,7 @@ export function AssignmentDetailPanel({
                 >
                   {formatTime(fb.timeMarker)}
                 </button>
-                <p className="text-sm text-foreground leading-relaxed">{fb.content}</p>
+                <p className="min-w-0 break-words text-sm text-foreground leading-relaxed">{fb.content}</p>
               </li>
             ))}
           </ul>

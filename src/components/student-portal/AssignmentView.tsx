@@ -114,6 +114,7 @@ export function AssignmentView({ initialAssignments }: AssignmentViewProps) {
   const [assignments, setAssignments] = useState<Assignment[]>(initialAssignments);
   const [refreshError, setRefreshError] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [deletedNotice, setDeletedNotice] = useState(false);
 
   // 상세 패널 상태
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -139,7 +140,8 @@ export function AssignmentView({ initialAssignments }: AssignmentViewProps) {
   return (
     <div className="space-y-6">
       {/* 제출 폼 */}
-      <SubmitForm onSuccess={refresh} />
+      <SubmitForm onSuccess={async () => { setDeletedNotice(false); await refresh(); }} />
+      {deletedNotice ? <p role="status" className="text-sm text-muted-foreground">제출을 삭제했습니다.</p> : null}
       {refreshError && <div role="alert" className="flex flex-wrap items-center gap-3 rounded-lg border border-border p-3 text-sm">
         <p>제출은 완료됐지만 목록을 새로 불러오지 못했습니다.</p>
         <Button type="button" variant="outline" onClick={refresh} disabled={isRefreshing}>목록 다시 불러오기</Button>
@@ -196,6 +198,12 @@ export function AssignmentView({ initialAssignments }: AssignmentViewProps) {
             key={selectedId}
             assignmentId={selectedId}
             mediaUrl={selectedUrl}
+            onDeleted={() => {
+              setAssignments((current) => current.filter((assignment) => assignment.id !== selectedId));
+              setPanelOpen(false);
+              setDeletedNotice(true);
+              router.refresh();
+            }}
           />
         )}
       </SlidePanel>

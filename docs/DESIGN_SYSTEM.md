@@ -90,6 +90,7 @@ pill 형태는 filter와 count처럼 모양 자체가 의미를 가질 때만 �
 | `CalendarEventActions` | 학생 본인 포털 일정의 상세 패널 수정과 취소 우선 2단계 삭제 |
 | `LessonScheduleDialog` | 관리자 일정 캘린더의 날짜 선택에서 시작하는 레슨 예약 |
 | `LessonActions` | 관리자 레슨 상세의 시간 변경과 취소 우선 2단계 삭제 |
+| `AssignmentDeleteAction` | 피드백 전 학생 본인 제출의 취소 우선 2단계 삭제, 거부 사유를 확인 영역 안에서 표시 |
 | `ExternalCalendarConnection` | 공개 레슨 캘린더 provider 선택·연결·교체·해제와 live status |
 | `PrivateNoteList` | 저장 HTML을 직접 렌더하지 않는 노트 메타데이터·평문 미리보기·열기 링크 목록 |
 | `NoteFullForm` | 대상 학생 스페이스와 선택 날짜 문맥을 표시하는 전체 화면 노트 작성 폼 |

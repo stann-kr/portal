@@ -35,6 +35,7 @@ let completeUpload: typeof import("@/lib/actions/upload").completeMediaUploadAct
 let abandonUpload: typeof import("@/lib/actions/upload").abandonMediaUpload = async () => {};
 let saveAssignment: typeof import("@/lib/actions/assignments").submitAssignment = async () => ({});
 let loadAssignments: typeof import("@/lib/actions/assignments").getMyAssignments = async () => [];
+let removeAssignment: typeof import("@/lib/actions/assignments").deleteMyAssignment = async () => ({ success: true });
 let saveFeedback: typeof import("@/lib/actions/feedbacks").createFeedback = async () => ({});
 let saveEvent: typeof import("@/lib/actions/calendarEvents").createCalendarEvent = async () => ({});
 let editEvent: typeof import("@/lib/actions/calendarEvents").updateCalendarEventDetails = async () => ({});
@@ -72,6 +73,7 @@ mock.module("next/script", { defaultExport: function ScriptBoundary({ onReady }:
 mock.module("@/lib/actions/assignments", { namedExports: {
   submitAssignment: (...args: Parameters<typeof saveAssignment>) => saveAssignment(...args),
   getMyAssignments: () => loadAssignments(),
+  deleteMyAssignment: (...args: Parameters<typeof removeAssignment>) => removeAssignment(...args),
 } });
 mock.module("@/lib/actions/feedbacks", { namedExports: {
   createFeedback: (...args: Parameters<typeof saveFeedback>) => saveFeedback(...args),
@@ -1161,4 +1163,30 @@ test("community shows the server-loaded list first and explains a board without 
   await settle();
   assert.ok([...browser.document.querySelectorAll("a")].some((anchor) => anchor.getAttribute("href") === "/dashboard/admin/categories" && anchor.textContent === "채널 추가하기"));
   assert.equal([...browser.document.querySelectorAll("a")].some((anchor) => anchor.textContent === "새 글"), false);
+});
+
+test("a submission without feedback is deleted only after a cancel-first confirmation", async (context) => {
+  const requests: string[] = [];
+  removeAssignment = async (assignmentId) => {
+    requests.push(assignmentId);
+    return requests.length === 1
+      ? { success: false, error: "피드백이 등록된 제출은 삭제할 수 없습니다. 필요하면 강사에게 문의해 주세요." }
+      : { success: true };
+  };
+  context.after(() => { removeAssignment = async () => ({ success: true }); });
+  await render(context, <AssignmentView initialAssignments={[{ id: "mistake", mediaUrl: "https://youtu.be/aqz-KE-bpKQ", submittedAt: new Date(), feedbackCount: 0 }]} />);
+  const listItem = [...browser.document.querySelectorAll("button")].find((element) => element.textContent?.includes("YouTube 믹스셋"));
+  assert.ok(listItem);
+  await act(async () => listItem.click());
+  await settle();
+  await press("제출 삭제");
+  assert.equal(browser.document.activeElement?.textContent, "취소", "focus starts on the safe choice");
+  assert.deepEqual(requests, []);
+  await press("삭제");
+  assert.match(browser.document.querySelector('[role="alert"]')?.textContent ?? "", /피드백이 등록된 제출/u);
+  assert.ok(browser.document.querySelector('[aria-label="제출 삭제 확인"]'), "the confirmation stays open after a refusal");
+  await press("삭제");
+  assert.deepEqual(requests, ["mistake", "mistake"]);
+  assert.match(browser.document.querySelector('[role="status"]')?.textContent ?? "", /제출을 삭제했습니다/u);
+  assert.equal([...browser.document.querySelectorAll("button")].some((element) => element.textContent?.includes("YouTube 믹스셋")), false);
 });

@@ -279,6 +279,34 @@ test("학생별 과제 요약은 관리자에게만 최신 제출순과 피드�
   await assert.rejects(assignmentActions.getAssignmentSummariesByStudent("student-1"), /Admin only/u);
 });
 
+test("학생은 피드백 전 본인 제출만 삭제하고 관리자·다른 학생은 지우지 못한다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("student-2", "student"));
+  await seedProfile(db, "admin-1", "admin");
+  await seedProfile(db, "student-1");
+  await seedProfile(db, "student-2");
+  await db.insert(assignments).values([
+    { id: "pending", studentId: "student-1", mediaUrl: "https://youtu.be/aqz-KE-bpKQ" },
+    { id: "reviewed", studentId: "student-1", mediaUrl: "https://soundcloud.com/dj/reviewed" },
+  ]);
+  await db.insert(feedbacks).values({ id: "f-reviewed", assignmentId: "reviewed", timeMarker: 30, content: "보존할 피드백" });
+  const remainingIds = async () => (await db.select({ id: assignments.id }).from(assignments)).map((row) => row.id).sort();
+
+  assert.equal((await assignmentActions.deleteMyAssignment("pending")).success, false, "다른 학생");
+  activeSession = createSession("admin-1", "admin");
+  assert.equal((await assignmentActions.deleteMyAssignment("pending")).success, false, "관리자");
+  activeSession = createSession("student-1", "student");
+  const reviewed = await assignmentActions.deleteMyAssignment("reviewed");
+  assert.equal(reviewed.success, false);
+  assert.match(reviewed.success ? "" : reviewed.error, /피드백이 등록된 제출/u);
+  assert.deepEqual(await remainingIds(), ["pending", "reviewed"]);
+  assert.equal((await db.select().from(feedbacks)).length, 1);
+
+  assert.deepEqual(await assignmentActions.deleteMyAssignment("pending"), { success: true });
+  assert.deepEqual(await remainingIds(), ["reviewed"]);
+  const repeated = await assignmentActions.deleteMyAssignment("pending");
+  assert.match(repeated.success ? "" : repeated.error, /찾을 수 없는 제출/u);
+});
+
 test("피드백은 잘못된 재생 시점을 저장하지 않고 긴 믹스셋의 시점을 정확히 보존한다", { concurrency: false }, async (context) => {
   const db = await setupDatabase(context, createSession("admin-1", "admin"));
   await seedProfile(db, "admin-1", "admin");

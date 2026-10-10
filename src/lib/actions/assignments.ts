@@ -9,7 +9,7 @@
 import { revalidatePath } from "next/cache";
 import { createDb } from "@/db/client";
 import { assignments, feedbacks, profiles } from "@/db/schema";
-import { asc, count, desc, eq, notExists } from "drizzle-orm";
+import { and, asc, count, desc, eq, notExists } from "drizzle-orm";
 import {
   requireAuth,
   requireAdmin,
@@ -56,6 +56,56 @@ export async function submitAssignment(
   revalidatePath("/dashboard/student/assignments");
   revalidatePath("/dashboard/student");
   return { success: true, id };
+}
+
+export type DeleteAssignmentResult = { success: true } | { success: false; error: string };
+
+/**
+ * 학생 본인의 잘못된 제출을 피드백이 달리기 전에만 삭제한다.
+ * 피드백 존재 확인과 삭제를 한 DELETE 문으로 처리해 그 사이 등록된 피드백을 지우지 않는다.
+ * 관리자는 학생 제출을 대신 삭제하지 않는다.
+ */
+export async function deleteMyAssignment(assignmentId: string): Promise<DeleteAssignmentResult> {
+  const session = await requireAuth();
+  if (session.user.role !== "student") {
+    return { success: false, error: "제출한 학생만 삭제할 수 있습니다." };
+  }
+  const ownAssignment = and(
+    eq(assignments.id, assignmentId),
+    eq(assignments.studentId, session.user.id),
+  );
+
+  const db = createDb();
+  const deleted = await db
+    .delete(assignments)
+    .where(and(
+      ownAssignment,
+      notExists(
+        db
+          .select({ id: feedbacks.id })
+          .from(feedbacks)
+          .where(eq(feedbacks.assignmentId, assignments.id)),
+      ),
+    ))
+    .returning({ id: assignments.id });
+
+  if (deleted.length === 0) {
+    const [remaining] = await db
+      .select({ id: assignments.id })
+      .from(assignments)
+      .where(ownAssignment)
+      .limit(1);
+    return {
+      success: false,
+      error: remaining
+        ? "피드백이 등록된 제출은 삭제할 수 없습니다. 필요하면 강사에게 문의해 주세요."
+        : "이미 삭제됐거나 찾을 수 없는 제출입니다. 목록을 새로고침해 주세요.",
+    };
+  }
+
+  revalidatePath("/dashboard/student");
+  revalidatePath("/dashboard/admin");
+  return { success: true };
 }
 
 // ───────────────────────────────────────────────
