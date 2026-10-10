@@ -88,11 +88,15 @@ for (const file of tsxFiles.filter((path) => /\/src\/app\/.*\/?page\.tsx$/u.test
   }
 }
 
-if (mainOwners.length !== 1 || !mainOwners[0]?.startsWith("src/app/layout.tsx:")) {
+// global-error.tsx replaces the root layout when it fails, so the two main landmarks never render together.
+const layoutMainOwners = mainOwners.filter((owner) => !owner.startsWith("src/app/global-error.tsx:"));
+if (layoutMainOwners.length !== 1 || !layoutMainOwners[0]?.startsWith("src/app/layout.tsx:")) {
   failures.push(`main landmark owner must be src/app/layout.tsx only; found ${mainOwners.join(", ") || "none"}`);
 }
 
 const requiredRouteStates = [
+  "src/app/error.tsx",
+  "src/app/global-error.tsx",
   "src/app/dashboard/loading.tsx",
   "src/app/dashboard/error.tsx",
   "src/app/community/loading.tsx",

@@ -169,7 +169,7 @@ pill 형태는 filter와 count처럼 모양 자체가 의미를 가질 때만 �
 4. pending control의 disabled와 진행 문구
 5. 성공 결과의 즉시 반영과 필요한 상태 안내
 
-대시보드 route는 최종 화면 구조를 닮은 `loading.tsx` skeleton과 맥락 안에서 재시도하는 `error.tsx`를 공통 fallback으로 사용한다.
+대시보드 route는 최종 화면 구조를 닮은 `loading.tsx` skeleton과 맥락 안에서 재시도하는 `error.tsx`를 공통 fallback으로 사용한다. 그 밖의 route(로그인 등)는 앱 루트 `error.tsx`가, root layout 자체의 실패는 `global-error.tsx`가 같은 한국어 재시도 화면으로 받는다.
 
 ## 변경 점검
 
