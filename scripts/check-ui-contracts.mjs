@@ -24,6 +24,10 @@ function findLine(text, index) {
 }
 
 const tsxFiles = await collectFiles(sourceRoot, ".tsx");
+// Tailwind 4 silently drops color utilities without a matching theme token.
+const globalStyles = await readFile(join(sourceRoot, "app", "globals.css"), "utf8");
+const definedColorTokens = new Set([...globalStyles.matchAll(/--color-([a-z0-9-]+)\s*:/gu)].map((match) => match[1]));
+const foregroundUtilityPattern = /(?<![\w-])(?:bg|text|border|ring|fill|stroke|outline|decoration|divide|placeholder|caret)-([a-z]+(?:-[a-z]+)*-foreground)(?![\w-])/gu;
 const mainOwners = [];
 const forbiddenPatterns = [
   { label: "hardcoded hex color", pattern: /#[0-9a-f]{3,8}\b/giu },
@@ -35,6 +39,11 @@ for (const file of tsxFiles) {
   const text = await readFile(file, "utf8");
   for (const match of text.matchAll(/<main\b/gu)) {
     mainOwners.push(`${repoPath(file)}:${findLine(text, match.index ?? 0)}`);
+  }
+  for (const match of text.matchAll(foregroundUtilityPattern)) {
+    if (!definedColorTokens.has(match[1])) {
+      failures.push(`${repoPath(file)}:${findLine(text, match.index ?? 0)} undefined color token: ${match[0]}`);
+    }
   }
   for (const { label, pattern } of forbiddenPatterns) {
     pattern.lastIndex = 0;

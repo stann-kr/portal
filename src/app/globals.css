@@ -30,6 +30,7 @@
   --color-warning: #875918;
   --color-warning-muted: #f5ecd8;
   --color-destructive: #a13d46;
+  --color-destructive-foreground: #fffaf6;
   --color-destructive-muted: #f5e4e6;
   --color-info: #3e6278;
   --color-info-muted: #e3edf1;
@@ -92,6 +93,7 @@
     --color-warning: #e0b364;
     --color-warning-muted: #42351f;
     --color-destructive: #e78c94;
+    --color-destructive-foreground: #21130d;
     --color-destructive-muted: #48282c;
     --color-info: #8eb9cf;
     --color-info-muted: #263b46;

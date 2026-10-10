@@ -27,7 +27,7 @@ Token은 `src/app/globals.css`의 Tailwind theme layer에 정의한다. 화면 �
 | Text | `foreground`, `muted-foreground` | 기본·보조 텍스트 |
 | Structure | `border`, `input`, `ring` | 경계·입력·focus |
 | Action | `primary`, `primary-foreground`, `accent`, `accent-foreground` | 주요 행동·선택 상태 |
-| Semantic | `success`, `warning`, `destructive`, `info`와 각 `*-muted` | 완료·대기·오류·정보 |
+| Semantic | `success`, `warning`, `destructive`, `info`와 각 `*-muted`, 위험 동작 버튼 글자색 `destructive-foreground` | 완료·대기·오류·정보 |
 
 운영체제의 `prefers-color-scheme`에 따라 같은 semantic token의 dark 값이 적용된다. 개별 section이 임의로 theme를 반전하지 않는다.
 
@@ -172,6 +172,7 @@ pill 형태는 filter와 count처럼 모양 자체가 의미를 가질 때만 �
 ## 변경 점검
 
 - 임의 hex와 raw red, green, blue, orange 계열 status class가 새로 추가되지 않았는가
+- 색 utility가 `globals.css`에 정의된 token만 참조하는가. Tailwind 4는 없는 token의 class를 조용히 버리므로 `*-foreground` 누락은 `npm run check:ui`가 거부한다.
 - 한 화면의 주요 accent가 하나로 유지되는가
 - radius가 control, container, overlay 규칙을 따르는가
 - button·input·focus·placeholder 대비가 충분한가
