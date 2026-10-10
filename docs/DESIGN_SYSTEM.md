@@ -89,7 +89,7 @@ pill 형태는 filter와 count처럼 모양 자체가 의미를 가질 때만 �
 | `CalendarEventFields` | 일정 생성 dialog와 상세 수정 form이 공유하는 유형·제목·시간·메모 입력 |
 | `CalendarEventActions` | 학생 본인 포털 일정의 상세 패널 수정과 취소 우선 2단계 삭제 |
 | `LessonScheduleDialog` | 관리자 일정 캘린더의 날짜 선택에서 시작하는 레슨 예약 |
-| `ConfirmPanel`·`useConfirmAction` | 휴지통 이동·영구 삭제·이력 복원·댓글/피드백/모듈/레슨/트랙/컬럼/채널 삭제 등 되돌리기 어려운 동작의 공통 취소 우선 2단계 확인. hook이 확인 대상과 연 버튼으로의 초점 복귀를, 패널이 열릴 때 취소 초점·Esc 취소·확인 뒤 진행 문구·작업 종료 시 닫힘을 소유한다. 실패 안내는 호출 화면의 기존 오류 영역이 맡는다 |
+| `ConfirmPanel`·`useConfirmAction` | 휴지통 이동·영구 삭제·이력 복원·댓글/피드백/모듈/레슨/트랙/컬럼/채널 삭제 등 되돌리기 어려운 동작의 공통 취소 우선 2단계 확인. hook이 확인 대상과 연 버튼으로의 초점 복귀를, 패널이 열릴 때 취소 초점·Esc 취소·확인 뒤 진행 문구·작업 종료 시 닫힘을 소유한다. 실패 안내는 호출 화면의 기존 오류 영역이 맡는다. 삭제·만료처럼 되돌릴 수 없으면 destructive, 이력이 남는 버전 복원은 neutral 톤을 쓴다 |
 | `LessonActions` | 관리자 레슨 상세의 시간 변경과 취소 우선 2단계 삭제 |
 | `AssignmentDeleteAction` | 피드백 전 학생 본인 제출의 취소 우선 2단계 삭제, 거부 사유를 확인 영역 안에서 표시 |
 | `ExternalCalendarConnection` | 주소로 제공자를 판별하는 공개 레슨 캘린더 연결·교체·해제, 거부된 주소 유지와 live status |

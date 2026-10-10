@@ -70,6 +70,7 @@ export function RestoreNoteRevisionButton({
           confirm={restoreConfirm}
           message={`${revisionNumber}번 버전의 내용을 새 현재 버전으로 복원할까요? 기존 이력은 유지됩니다.`}
           confirmLabel="복원 확인"
+          tone="neutral"
           pendingLabel="복원 중..."
           pending={isPending}
           onConfirm={restore}

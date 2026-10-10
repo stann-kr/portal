@@ -52,6 +52,7 @@ export function ConfirmPanel({
   pending = false,
   onConfirm,
   className,
+  tone = "destructive",
 }: {
   confirm: Pick<ConfirmActionState<unknown>, "close">;
   message: ReactNode;
@@ -60,6 +61,8 @@ export function ConfirmPanel({
   pending?: boolean;
   onConfirm: () => void;
   className?: string;
+  /** 삭제·만료처럼 되돌릴 수 없으면 destructive, 이력이 남는 복원은 neutral. */
+  tone?: "destructive" | "neutral";
 }) {
   const messageId = useId();
   const cancelRef = useRef<HTMLButtonElement>(null);
@@ -81,7 +84,11 @@ export function ConfirmPanel({
     <div
       role="group"
       aria-labelledby={messageId}
-      className={cn("space-y-3 rounded-lg border border-destructive/30 bg-destructive-muted p-3", className)}
+      className={cn(
+        "space-y-3 rounded-lg border p-3",
+        tone === "destructive" ? "border-destructive/30 bg-destructive-muted" : "border-border bg-muted/50",
+        className,
+      )}
       onKeyDown={(event) => {
         if (event.key !== "Escape" || pending) return;
         event.preventDefault();
@@ -98,7 +105,7 @@ export function ConfirmPanel({
           type="button"
           variant="outline"
           size="sm"
-          className="border-destructive/40 text-destructive hover:bg-destructive/10"
+          className={tone === "destructive" ? "border-destructive/40 text-destructive hover:bg-destructive/10" : undefined}
           aria-describedby={messageId}
           disabled={pending}
           onClick={() => {
