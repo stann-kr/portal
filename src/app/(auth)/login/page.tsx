@@ -1,28 +1,10 @@
-import { signIn } from "@/auth";
-import { AuthError } from "next-auth";
 import { redirect } from "next/navigation";
-import { Input } from "@/components/ui/input";
-import { LoginSubmitButton } from "@/components/auth/LoginSubmitButton";
+import { LoginForm } from "@/components/auth/LoginForm";
 import { AccountCleanupBootstrap } from "@/components/auth/AccountCleanupBootstrap";
 import { OwnerlessLegacyDraftCleanup } from "@/components/auth/OwnerlessLegacyDraftCleanup";
 import { getActiveAuthSession } from "@/lib/auth-guard";
 import { accountDeletionLoginMessage } from "@/lib/account-privacy-policy";
-
-/**
- * NextAuth 에러 코드 → 사용자 친화적 메시지 매핑
- */
-function getErrorMessage(error: string | undefined): string | null {
-  if (!error) return null;
-  const map: Record<string, string> = {
-    CredentialsSignin: "이메일 또는 비밀번호가 올바르지 않습니다.",
-    Configuration: "서버 설정 오류가 발생했습니다. 관리자에게 문의하세요.",
-    AccessDenied: "접근 권한이 없습니다.",
-    Verification: "인증 링크가 만료되었습니다.",
-    Default: "로그인 중 오류가 발생했습니다. 다시 시도해 주세요.",
-  };
-  // 알 수 없는 query 값은 화면에 그대로 반사하지 않는다.
-  return map[error] ?? map.Default;
-}
+import { loginErrorMessage } from "@/lib/login-messages";
 
 export const metadata = { title: "로그인" };
 
@@ -52,7 +34,6 @@ export default async function LoginPage({
 
   const { error, callbackUrl, accountDeleted, deviceCleanup } =
     await searchParams;
-  const errorMessage = getErrorMessage(error);
   const deletionMessage = accountDeletionLoginMessage(
     accountDeleted,
     deviceCleanup,
@@ -75,12 +56,6 @@ export default async function LoginPage({
           </p>
         </div>
 
-        {/* 에러 메시지 */}
-        {errorMessage && (
-          <div role="alert" className="mt-5 rounded-md border border-destructive/20 bg-destructive-muted px-4 py-3 text-sm font-medium text-destructive">
-            {errorMessage}
-          </div>
-        )}
         {deletionMessage && (
           <div
             role="status"
@@ -90,58 +65,10 @@ export default async function LoginPage({
           </div>
         )}
 
-        {/* 로그인 폼 */}
-        <form
-          action={async (formData: FormData) => {
-            "use server";
-            try {
-              await signIn("credentials", {
-                email: formData.get("email"),
-                password: formData.get("password"),
-                redirectTo: callbackUrl ?? "/dashboard",
-              });
-            } catch (err) {
-              if (err instanceof AuthError) {
-                // NextAuth 에러는 URL 파라미터로 리다이렉트하여 사용자에게 표시
-                redirect(`/login?error=${err.type}`);
-              }
-              // Next.js redirect()는 내부적으로 throw를 사용하므로 반드시 re-throw
-              throw err;
-            }
-          }}
-          className="mt-6 space-y-4"
-        >
-          <div className="space-y-2">
-            <label htmlFor="email" className="text-sm font-medium">
-              이메일
-            </label>
-            <Input
-              id="email"
-              name="email"
-              type="email"
-              required
-              autoComplete="email"
-              placeholder="name@example.com"
-              className="h-10"
-            />
-          </div>
-
-          <div className="space-y-2">
-            <label htmlFor="password" className="text-sm font-medium">
-              비밀번호
-            </label>
-            <Input
-              id="password"
-              name="password"
-              type="password"
-              required
-              autoComplete="current-password"
-              className="h-10"
-            />
-          </div>
-
-          <LoginSubmitButton />
-        </form>
+        <LoginForm
+          callbackUrl={typeof callbackUrl === "string" ? callbackUrl : undefined}
+          initialError={typeof error === "string" ? loginErrorMessage(error) : null}
+        />
 
         <div className="mt-5 text-xs text-muted-foreground">
           <p>계정이 필요하면 담당 강사에게 문의하세요.</p>

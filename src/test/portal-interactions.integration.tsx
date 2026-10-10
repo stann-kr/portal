@@ -50,6 +50,8 @@ let saveTrackValue: typeof import("@/lib/actions/digging").updateDiggingTrackVal
 let DiggingBoard: typeof import("@/components/digging/DiggingBoard").DiggingBoard;
 let toggleModule: typeof import("@/lib/actions/curriculum").toggleModuleComplete = async () => {};
 let loadStudentCalendar: typeof import("@/lib/actions/unifiedItems").getUnifiedItemsForStudent = async () => [];
+let login: typeof import("@/lib/actions/session").loginWithCredentials = async () => ({});
+let LoginForm: typeof import("@/components/auth/LoginForm").LoginForm;
 const previousGlobals = new Map<string, PropertyDescriptor | undefined>();
 
 mock.module("next/navigation", { namedExports: { useRouter: () => ({ push() {}, refresh() {} }) } });
@@ -106,6 +108,10 @@ mock.module("@/lib/actions/digging", { namedExports: {
   deleteDiggingTrack: async () => {},
   addDiggingColumn: async () => {},
   deleteDiggingColumn: async () => {},
+} });
+mock.module("@/lib/actions/session", { namedExports: {
+  loginWithCredentials: (...args: Parameters<typeof login>) => login(...args),
+  logoutCurrentUser: async () => {},
 } });
 mock.module("@/lib/actions/unifiedItems", { namedExports: {
   getUnifiedItemsForStudent: (...args: Parameters<typeof loadStudentCalendar>) => loadStudentCalendar(...args),
@@ -179,6 +185,7 @@ before(async () => {
   ({ CreateEntryDropdown } = await import("@/components/student-portal/CreateEntryDropdown"));
   ({ AdminPortalClient } = await import("@/components/admin-portal/AdminPortalClient"));
   ({ StudentPortalClient } = await import("@/components/student-portal/StudentPortalClient"));
+  ({ LoginForm } = await import("@/components/auth/LoginForm"));
 });
 
 after(() => {
@@ -1095,4 +1102,21 @@ test("assignment errors retain the URL and a failed refresh retries without resu
   await press("목록 다시 불러오기");
   assert.equal(submissions, 1);
   assert.equal(browser.document.querySelector('[role="alert"]'), null);
+});
+
+test("failed login keeps the email and return target and moves focus to the password", async (context) => {
+  const submitted: { email: string; callbackUrl: string }[] = [];
+  login = async (_previous, data) => {
+    submitted.push({ email: String(data.get("email")), callbackUrl: String(data.get("callbackUrl")) });
+    return { error: "이메일 또는 비밀번호가 올바르지 않습니다.", email: String(data.get("email")) };
+  };
+  context.after(() => { login = async () => ({}); });
+  await render(context, <LoginForm callbackUrl="https://portal.test/dashboard/qna/thread-1" />);
+  await fill("email", "student@example.com");
+  await fill("password", "wrong-password");
+  await press("로그인");
+  assert.deepEqual(submitted, [{ email: "student@example.com", callbackUrl: "https://portal.test/dashboard/qna/thread-1" }]);
+  assert.equal(inputValue("email"), "student@example.com");
+  assert.match(browser.document.querySelector('[role="alert"]')?.textContent ?? "", /올바르지 않습니다/u);
+  assert.equal(browser.document.activeElement, browser.document.getElementById("password"));
 });

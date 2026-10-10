@@ -140,6 +140,7 @@ Migration SQL은 `drizzle/`, Drizzle metadata는 `drizzle/meta/`에 둔다. Wran
 
 ## 인증과 권한
 
+- 로그인 form은 `loginWithCredentials` server action의 상태로 실패를 돌려받아 입력한 이메일과 middleware가 넘긴 `callbackUrl`을 유지하고 비밀번호 입력으로 초점을 옮긴다. 이동 주소의 same-origin 확인은 NextAuth redirect callback이 수행한다. NextAuth가 직접 붙인 `?error=` query는 고정 안내로만 바꿔 표시한다.
 - credentials provider는 email/password와 bcrypt hash를 비교한다. 로그인 이메일은 앞뒤 공백을 무시하고, 정확히 일치하는 계정이 없을 때만 대소문자만 다른 계정이 하나인 경우를 같은 계정으로 본다. 관리자가 만드는 학생 이메일은 소문자로 저장하고 대소문자만 다른 중복을 거부한다.
 - 한 server component 렌더 안의 layout·page·query는 React `cache`로 active session 확인을 한 번만 수행한다. server action·route handler 호출은 렌더 범위 밖이므로 매번 JWT와 profile을 다시 검증한다.
 - session의 `user.id`는 profile 조회의 시작점으로만 사용한다. Node auth의 JWT callback, `/api/auth/session`과 모든 server 인증 경계가 profile 존재와 DB의 최신 role을 다시 확인해 삭제된 JWT를 즉시 거부한다. JWT/session 최대 수명은 7일로 고정해 raw subject ID의 30일 보존 경계보다 먼저 만료시킨다.
