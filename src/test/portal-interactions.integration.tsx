@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { after, before, mock, test, type TestContext } from "node:test";
 import { Window } from "happy-dom";
-import React, { act, useEffect, useRef, useState } from "react";
+import React, { act, useEffect, useRef, useState, useTransition } from "react";
 import type { Editor } from "@tiptap/core";
 import type { ReactPlayerProps } from "react-player/types";
 import { resolvePortalLocation } from "@/lib/portal-location";
@@ -54,6 +54,7 @@ let editModule: typeof import("@/lib/actions/curriculum").updateModule = async (
 let OverviewTab: typeof import("@/components/admin/OverviewTab").OverviewTab;
 let changePassword: typeof import("@/lib/actions/password").changeOwnPassword = async () => ({ success: true });
 let PasswordChangeControl: typeof import("@/components/auth/PasswordChangeControl").PasswordChangeControl;
+let confirmActionModule: typeof import("@/components/ui/confirm-action");
 let loadStudentCalendar: typeof import("@/lib/actions/unifiedItems").getUnifiedItemsForStudent = async () => [];
 let login: typeof import("@/lib/actions/session").loginWithCredentials = async () => ({});
 let loadCategoryPosts: typeof import("@/lib/actions/posts").getPostsByCategory = async () => [];
@@ -159,7 +160,6 @@ before(async () => {
     self: browser,
     document: browser.document,
     navigator: browser.navigator,
-    confirm: () => false,
     localStorage: browser.localStorage,
     HTMLElement: browser.HTMLElement,
     HTMLInputElement: browser.HTMLInputElement,
@@ -211,6 +211,7 @@ before(async () => {
   ({ default: CommunityClient } = await import("@/app/community/CommunityClient"));
   ({ OverviewTab } = await import("@/components/admin/OverviewTab"));
   ({ PasswordChangeControl } = await import("@/components/auth/PasswordChangeControl"));
+  confirmActionModule = await import("@/components/ui/confirm-action");
 });
 
 after(() => {
@@ -1062,7 +1063,10 @@ test("feedback draft survives leaving the assignment before submitting", async (
 
 test("게시물 삭제는 응답 유실 재시도와 복원 후 새 삭제 의도를 구분한다", async (context) => {
   browser.localStorage.clear();
-  context.mock.method(globalThis, "confirm", () => true);
+  const deletePost = async () => {
+    await press("게시물 삭제");
+    await press("휴지통 이동 확인");
+  };
   const requests: Parameters<typeof trashPost>[] = [];
   trashPost = async (...args) => { requests.push(args); throw new Error("response lost"); };
   context.after(() => { trashPost = async () => ({ success: true }); });
@@ -1074,25 +1078,24 @@ test("게시물 삭제는 응답 유실 재시도와 복원 후 새 삭제 의�
   };
   const screen = (version: number, deletedAt: Date | null = null) => <PostDetailClient postId={post.id} post={{ ...post, version, deletedAt }} initialCommentList={[]} currentUserId="student-1" isAdmin={false} returnTo="/community" />;
   const root = await render(context, screen(1));
-  await press("게시물 삭제");
+  await deletePost();
   assert.match(browser.document.querySelector('[role="alert"]')?.textContent ?? "", /휴지통으로 이동하지 못했습니다/u);
-  await press("게시물 삭제");
+  await deletePost();
   assert.equal(requests[0][1], requests[1][1]);
   await act(async () => root.render(screen(2, new Date())));
   await act(async () => root.render(screen(3)));
-  await press("게시물 삭제");
+  await deletePost();
   assert.notEqual(requests[1][1], requests[2][1]);
   assert.deepEqual(requests.map((args) => args[2]), [1, 1, 3]);
 
   // 서버가 돌려준 충돌 안내는 production에서도 그대로 보여 준다.
   trashPost = async () => ({ success: false, error: "다른 화면에서 이 게시물이 먼저 변경되었습니다. 현재 초안은 유지됩니다." });
-  await press("게시물 삭제");
+  await deletePost();
   assert.match(browser.document.querySelector('[role="alert"]')?.textContent ?? "", /먼저 변경되었습니다/u);
 });
 
 test("failed comment deletion keeps the conversation and unfinished reply visible", async (context) => {
   browser.localStorage.clear();
-  context.mock.method(globalThis, "confirm", () => true);
   removeComment = async () => { throw new Error("offline"); };
   context.after(() => { removeComment = async () => {}; });
   const post = {
@@ -1105,7 +1108,10 @@ test("failed comment deletion keeps the conversation and unfinished reply visibl
   await render(context, <PostDetailClient postId={post.id} post={post} initialCommentList={[comment]} currentUserId="student-1" isAdmin={false} returnTo="/community" />);
   await fill("content", "아직 작성 중인 답글");
   await press("학생 댓글 삭제");
+  assert.equal(browser.document.activeElement?.textContent, "취소", "확인은 취소에서 시작한다");
+  await press("댓글 삭제 확인");
   assert.match(browser.document.querySelector('[role="alert"]')?.textContent ?? "", /댓글을 삭제하지 못했습니다/);
+  assert.equal(browser.document.activeElement?.getAttribute("aria-label"), "학생 댓글 삭제", "실패 뒤 확인을 연 버튼으로 돌아간다");
   assert.match(browser.document.body.textContent, /기존 대화/);
   assert.equal(inputValue("content"), "아직 작성 중인 답글");
 });
@@ -1275,4 +1281,45 @@ test("password change keeps typed values on a refused field and confirms success
   assert.deepEqual(submitted, ["wrong-password", "first-password"]);
   assert.match(browser.document.querySelector('[role="dialog"] [role="status"]')?.textContent ?? "", /비밀번호를 변경했습니다/u);
   assert.equal(inputs().length, 0, "the success view no longer holds the typed passwords");
+});
+
+test("confirm panel starts on cancel, closes on Escape, and stays open only while the confirmed action runs", async (context) => {
+  const { ConfirmPanel, useConfirmAction } = confirmActionModule;
+  let runs = 0;
+  let release: () => void = () => undefined;
+  function Harness() {
+    const confirm = useConfirmAction();
+    const [isPending, startTransition] = useTransition();
+    return <div>
+      <button type="button" aria-expanded={confirm.isOpen} onClick={(event) => confirm.request(event.currentTarget)}>위험 작업</button>
+      {confirm.isOpen ? <ConfirmPanel confirm={confirm} message="되돌릴 수 없습니다." confirmLabel="작업 확인" pendingLabel="처리 중..." pending={isPending}
+        onConfirm={() => startTransition(async () => {
+          runs += 1;
+          await new Promise<void>((resolve) => { release = resolve; });
+        })} /> : null}
+    </div>;
+  }
+  await render(context, <Harness />);
+  const panel = () => browser.document.querySelector('[role="group"][aria-labelledby]');
+
+  await press("위험 작업");
+  assert.equal(browser.document.activeElement?.textContent, "취소");
+  assert.equal(button("위험 작업").getAttribute("aria-expanded"), "true");
+  await act(async () => {
+    browser.document.activeElement?.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  });
+  assert.equal(panel(), null);
+  assert.equal(browser.document.activeElement, button("위험 작업"), "Esc returns focus to the trigger");
+  assert.equal(runs, 0);
+
+  await press("위험 작업");
+  await press("작업 확인");
+  assert.equal(runs, 1);
+  assert.ok(panel(), "the confirmation stays visible while the action is pending");
+  assert.equal(button("처리 중...").disabled, true);
+  assert.equal(button("취소").disabled, true);
+  await act(async () => release());
+  await settle();
+  assert.equal(panel(), null);
+  assert.equal(browser.document.activeElement, button("위험 작업"));
 });

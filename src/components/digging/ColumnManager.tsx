@@ -14,6 +14,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { ConfirmPanel, useConfirmAction } from "@/components/ui/confirm-action";
 import { Input } from "@/components/ui/input";
 import { addDiggingColumn, deleteDiggingColumn } from "@/lib/actions/digging";
 import type { DiggingColumnType } from "@/db/schema";
@@ -72,8 +73,9 @@ export function ColumnManager({
     });
   };
 
+  const columnDeleteConfirm = useConfirmAction<string>();
+
   const handleDelete = (colId: string) => {
-    if (!confirm("이 컬럼을 삭제할까요? 해당 컬럼의 트랙 값은 다시 표시할 수 없습니다.")) return;
     setError("");
     startTransition(async () => {
       try {
@@ -87,7 +89,17 @@ export function ColumnManager({
 
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => { if (!isPending) onOpenChange(nextOpen); }}>
-      <DialogContent dismissible={!isPending} className="max-w-md" aria-describedby={undefined}>
+      <DialogContent
+        dismissible={!isPending}
+        className="max-w-md"
+        aria-describedby={undefined}
+        onEscapeKeyDown={(event) => {
+          // 열린 삭제 확인이 있으면 Esc는 dialog 대신 확인만 닫는다.
+          if (!columnDeleteConfirm.isOpen) return;
+          event.preventDefault();
+          if (!isPending) columnDeleteConfirm.close();
+        }}
+      >
         <DialogHeader>
           <DialogTitle>컬럼 관리</DialogTitle>
         </DialogHeader>
@@ -97,8 +109,9 @@ export function ColumnManager({
           {columns.map((col) => (
             <div
               key={col.id}
-              className="flex items-center justify-between px-3 py-2 rounded-lg border border-border bg-muted/30"
+              className="space-y-2 px-3 py-2 rounded-lg border border-border bg-muted/30"
             >
+              <div className="flex items-center justify-between">
               <div className="flex items-center gap-2 min-w-0">
                 <span className="text-sm font-medium truncate">{col.name}</span>
                 <span className="text-xs text-muted-foreground shrink-0">
@@ -112,13 +125,25 @@ export function ColumnManager({
               </div>
               <button
                 type="button"
-                onClick={() => handleDelete(col.id)}
+                onClick={(event) => columnDeleteConfirm.request(event.currentTarget, col.id)}
                 disabled={col.isDefault || isPending}
+                aria-expanded={col.isDefault ? undefined : columnDeleteConfirm.value === col.id}
                 className="text-muted-foreground hover:text-destructive transition-colors disabled:opacity-30 disabled:cursor-not-allowed ml-2 shrink-0"
                 aria-label={`${col.name} 컬럼 삭제`}
               >
                 <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
               </button>
+              </div>
+              {columnDeleteConfirm.value === col.id ? (
+                <ConfirmPanel
+                  confirm={columnDeleteConfirm}
+                  message={`${col.name} 컬럼을 삭제할까요? 이 컬럼의 트랙 값은 다시 표시할 수 없습니다.`}
+                  confirmLabel="컬럼 삭제 확인"
+                  pendingLabel="삭제 중..."
+                  pending={isPending}
+                  onConfirm={() => handleDelete(col.id)}
+                />
+              ) : null}
             </div>
           ))}
         </div>

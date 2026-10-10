@@ -4,6 +4,7 @@ import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ConfirmPanel, useConfirmAction } from "@/components/ui/confirm-action";
 import { restorePostRevision } from "@/lib/actions/posts";
 import { createCreationOperationId } from "@/lib/creation-operation";
 
@@ -22,9 +23,10 @@ export function RestorePostRevisionButton({
   const requestKey = JSON.stringify([postId, baseRevision, revisionNumber]);
   const operation = useRef<{ key: string; id: string } | null>(null);
 
+  const restoreConfirm = useConfirmAction();
+
   const restore = () => {
     if (isPending) return;
-    if (!confirm(`${revisionNumber}번 내용을 새 현재 버전으로 복원하시겠습니까?`)) return;
     if (operation.current?.key !== requestKey) {
       operation.current = { key: requestKey, id: createCreationOperationId() };
     }
@@ -50,19 +52,31 @@ export function RestorePostRevisionButton({
   };
 
   return (
-    <span className="inline-flex flex-col items-end gap-1">
+    <div className="flex flex-col items-end gap-1">
       <Button
         type="button"
         variant="outline"
         size="sm"
         className="gap-1.5"
         disabled={isPending}
-        onClick={restore}
+        aria-expanded={restoreConfirm.isOpen}
+        onClick={(event) => restoreConfirm.request(event.currentTarget)}
       >
         <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
         이 버전 복원
       </Button>
+      {restoreConfirm.isOpen ? (
+        <ConfirmPanel
+          confirm={restoreConfirm}
+          message={`${revisionNumber}번 내용을 새 현재 버전으로 복원할까요? 기존 이력은 유지됩니다.`}
+          confirmLabel="복원 확인"
+          pendingLabel="복원 중..."
+          pending={isPending}
+          onConfirm={restore}
+          className="max-w-sm text-left"
+        />
+      ) : null}
       {error ? <span role="alert" className="text-xs text-destructive">{error}</span> : null}
-    </span>
+    </div>
   );
 }

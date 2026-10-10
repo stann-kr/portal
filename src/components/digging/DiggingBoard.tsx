@@ -18,6 +18,7 @@ import {
 } from "@tanstack/react-table";
 import { Plus, Settings2, Trash2, ExternalLink, ChevronDown, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ConfirmPanel, useConfirmAction } from "@/components/ui/confirm-action";
 import { Input } from "@/components/ui/input";
 import { AddTrackDialog } from "./AddTrackDialog";
 import { ColumnManager } from "./ColumnManager";
@@ -318,8 +319,29 @@ export function DiggingBoard({
     });
   };
 
+  const trackDeleteConfirm = useConfirmAction<string>();
+  const requestTrackDelete = trackDeleteConfirm.request;
+  const trackLabelColumn = columns.find((column) => column.name === "트랙명")
+    ?? columns.find((column) => column.columnType === "text");
+  const describeTrack = (track: Track) => {
+    const label = trackLabelColumn ? track.values[trackLabelColumn.id] : null;
+    return typeof label === "string" && label.trim() ? `‘${label.trim()}’ 트랙` : "이 트랙";
+  };
+  const renderTrackDeleteConfirm = (track: Track, className?: string) => (
+    trackDeleteConfirm.value === track.id ? (
+      <ConfirmPanel
+        confirm={trackDeleteConfirm}
+        message={`${describeTrack(track)}을 삭제할까요? 삭제 후에는 복구할 수 없습니다.`}
+        confirmLabel="트랙 삭제 확인"
+        pendingLabel="삭제 중..."
+        pending={isPending}
+        onConfirm={() => removeTrack(track.id)}
+        className={className}
+      />
+    ) : null
+  );
+
   const removeTrack = useCallback((trackId: string) => {
-    if (!confirm("이 디깅 트랙을 삭제할까요? 삭제 후에는 복구할 수 없습니다.")) return;
     setMutationError("");
     startTransition(async () => {
       try {
@@ -359,7 +381,7 @@ export function DiggingBoard({
               cell: ({ row }: { row: { original: Track } }) => (
                 <button
                   type="button"
-                  onClick={() => removeTrack(row.original.id)}
+                  onClick={(event) => requestTrackDelete(event.currentTarget, row.original.id)}
                   disabled={isPending}
                   aria-label="디깅 트랙 삭제"
                   className="text-muted-foreground hover:text-destructive transition-colors"
@@ -371,7 +393,7 @@ export function DiggingBoard({
           ]
         : []),
     ],
-    [columns, readonly, isPending, removeTrack],
+    [columns, readonly, isPending, requestTrackDelete],
   );
 
   const table = useReactTable({
@@ -507,11 +529,13 @@ export function DiggingBoard({
                               size="sm"
                               disabled={isPending}
                               className="text-destructive"
-                              onClick={() => removeTrack(track.id)}
+                              aria-expanded={trackDeleteConfirm.value === track.id}
+                              onClick={(event) => requestTrackDelete(event.currentTarget, track.id)}
                             >
                               <Trash2 className="mr-1.5 size-3.5" aria-hidden="true" />
                               트랙 삭제
                             </Button>
+                            {renderTrackDeleteConfirm(track, "mt-3 text-left")}
                           </div>
                         ) : null}
                       </div>
@@ -571,8 +595,8 @@ export function DiggingBoard({
                     />
                     {!collapsed &&
                       dateRows.map((track) => (
+                        <Fragment key={track.id}>
                         <tr
-                          key={track.id}
                           className="border-b border-border/60 hover:bg-muted/20 transition-colors"
                         >
                           {tableCols.map((col) => (
@@ -584,8 +608,9 @@ export function DiggingBoard({
                               {col.id === "_actions" ? (
                                 <button
                                   type="button"
-                                  onClick={() => removeTrack(track.id)}
+                                  onClick={(event) => requestTrackDelete(event.currentTarget, track.id)}
                                   disabled={isPending}
+                                  aria-expanded={trackDeleteConfirm.value === track.id}
                                   aria-label="디깅 트랙 삭제"
                                   className="text-muted-foreground hover:text-destructive transition-colors"
                                 >
@@ -607,6 +632,14 @@ export function DiggingBoard({
                             </td>
                           ))}
                         </tr>
+                        {trackDeleteConfirm.value === track.id ? (
+                          <tr className="border-b border-border/60">
+                            <td colSpan={tableCols.length} className="px-3 py-2">
+                              {renderTrackDeleteConfirm(track, "max-w-xl")}
+                            </td>
+                          </tr>
+                        ) : null}
+                        </Fragment>
                       ))}
                   </Fragment>
                 );

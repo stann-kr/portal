@@ -327,7 +327,6 @@ const GLOBAL_BINDINGS = [
   "getComputedStyle",
   "IS_REACT_ACT_ENVIRONMENT",
   "React",
-  "confirm",
 ] as const;
 
 type GlobalBinding = (typeof GLOBAL_BINDINGS)[number];
@@ -356,7 +355,6 @@ function installBrowserGlobals(browserWindow: Window): () => void {
     getComputedStyle: browserWindow.getComputedStyle.bind(browserWindow),
     IS_REACT_ACT_ENVIRONMENT: true,
     React,
-    confirm: () => true,
   };
 
   for (const name of GLOBAL_BINDINGS) {
@@ -406,6 +404,13 @@ async function renderForm(
   });
 
   return { browserWindow, container: container as unknown as HTMLElement, rerender: (next) => act(async () => root.render(next)) };
+}
+
+/** 취소 우선 2단계 확인 영역의 확인 버튼을 누른다. */
+async function confirmAction(harness: FormHarness, label: string, scope: ParentNode = harness.container): Promise<void> {
+  const button = [...scope.querySelectorAll<HTMLButtonElement>("button")].find((candidate) => candidate.textContent === label);
+  assert.ok(button, `확인 버튼: ${label}`);
+  await act(async () => button.click());
 }
 
 test("학생·관리자 노트 검색은 본문을 찾고 상세·작성·휴지통 왕복의 검색과 학생 문맥을 보존한다", { concurrency: false }, async (context) => {
@@ -581,7 +586,11 @@ test("노트 이력은 A→B→A를 새 복원 의도로 처리하고 전송 실
   context.after(() => { restoreNote = async () => ({ success: true }); });
   const screen = (base: number) => <div>{[1, 2].map((target) => <section key={target} data-revision={target}><RestoreNoteRevisionButton noteId="note-history" baseRevision={base} revisionNumber={target} /></section>)}</div>;
   const harness = await renderForm(context, screen(2));
-  const click = async (target: number) => act(async () => harness.container.querySelector<HTMLButtonElement>(`[data-revision="${target}"] button`)!.click());
+  const click = async (target: number) => {
+    const section = harness.container.querySelector(`[data-revision="${target}"]`)!;
+    await act(async () => section.querySelector<HTMLButtonElement>("button")!.click());
+    await confirmAction(harness, "복원 확인", section);
+  };
   await click(1);
   await harness.rerender(screen(3));
   await click(2);
@@ -617,17 +626,21 @@ for (const kind of ["trash", "restore", "purge"] as const) {
     const harness = await renderForm(context, screen(2));
     const find = () => [...harness.container.querySelectorAll<HTMLButtonElement>("button")].find((button) =>
       kind === "trash" ? button.getAttribute("aria-label") === "노트를 휴지통으로 이동" : button.textContent === (kind === "restore" ? "노트 복원" : "영구 삭제"))!;
-    await act(async () => find().click());
+    const run = async () => {
+      await act(async () => find().click());
+      if (kind !== "restore") await confirmAction(harness, kind === "trash" ? "휴지통 이동 확인" : "영구 삭제 확인");
+    };
+    await run();
     assert.match(harness.container.querySelector('[role="alert"]')?.textContent ?? "", /결과를 확인하지 못했습니다/u);
     assert.equal(harness.container.querySelector("textarea")?.value, "아직 전송하지 않은 내용");
     assert.equal(find().disabled, false);
     assert.equal(push.mock.callCount() + refresh.mock.callCount(), 0);
-    await act(async () => find().click());
+    await run();
     assert.equal(requests[0][1], requests[1][1]);
     assert.equal(harness.container.querySelector('[role="alert"]'), null);
     assert.equal(push.mock.callCount() + refresh.mock.callCount(), 1);
     await harness.rerender(screen(3));
-    await act(async () => find().click());
+    await run();
     assert.notEqual(requests[1][1], requests[2][1], "새 version은 새로운 mutation이다");
   });
 }
@@ -642,7 +655,10 @@ test("게시물 복원은 응답 유실 재시도 ID를 보존하되 기준 revi
   context.after(() => { restorePost = async () => ({ success: true }); });
   const screen = (baseRevision: number) => <RestorePostRevisionButton postId="post-history" revisionNumber={1} baseRevision={baseRevision} />;
   const harness = await renderForm(context, screen(2));
-  const click = () => act(async () => harness.container.querySelector<HTMLButtonElement>("button")!.click());
+  const click = async () => {
+    await act(async () => harness.container.querySelector<HTMLButtonElement>("button")!.click());
+    await confirmAction(harness, "복원 확인");
+  };
   await click();
   assert.ok(harness.container.querySelector('[role="alert"]'));
   await click();
@@ -697,6 +713,7 @@ for (const busyKind of ["upload", "reply", "lifecycle"] as const) {
       else if (busyKind === "reply") form.requestSubmit();
       else trash.click();
     });
+    if (busyKind === "lifecycle") await confirmAction(harness, "휴지통 이동 확인");
     assert.equal(trash.disabled, true);
     assert.equal(upload.disabled, true);
     assert.equal(submit.disabled, true);
@@ -766,7 +783,11 @@ test("Q&A 휴지통 충돌은 오래된 요청을 잠그고 전체 snapshot 재�
   const screen = (version: number, isAdmin = true) => <ThreadDetailClient actorId="admin-lifecycle" threadId="thread-lifecycle" title="질문" status={version === 1 ? "OPEN" : "CLOSED"} version={version} isAdmin={isAdmin} replies={[]} deletedAt={null} studentName="학생" createdAt={null} returnTo="/dashboard/qna" />;
   const harness = await renderForm(context, screen(1), (storage) => storage.setItem(key, serializeFormDraft({ operationId: "012c1894-ea20-46b2-960f-35b01d873570", contentHtml: "<p>보관 중인 답변</p>", attachmentUrl: "", attachmentObjectId: "" })));
   const find = (label: string) => [...harness.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === label)!;
-  await act(async () => find("휴지통 이동").click());
+  const trashAndConfirm = async () => {
+    await act(async () => find("휴지통 이동").click());
+    await confirmAction(harness, "휴지통 이동 확인");
+  };
+  await trashAndConfirm();
   assert.equal(find("휴지통 이동").disabled, true);
   await act(async () => find("휴지통 이동").click());
   assert.equal(requests.length, 1);
@@ -779,13 +800,13 @@ test("Q&A 휴지통 충돌은 오래된 요청을 잠그고 전체 snapshot 재�
   await harness.rerender(screen(2));
   assert.equal(find("휴지통 이동").disabled, false);
   assert.match(harness.container.querySelector("textarea")?.value ?? "", /보관 중인 답변/u);
-  await act(async () => find("휴지통 이동").click());
-  await act(async () => find("휴지통 이동").click());
+  await trashAndConfirm();
+  await trashAndConfirm();
   assert.deepEqual(requests.map((args) => args[2]), [1, 2, 2]);
   assert.notEqual(requests[0][1], requests[1][1]);
   assert.equal(requests[1][1], requests[2][1], "결과 불명확 재시도만 같은 operation을 유지한다");
   await harness.rerender(screen(2, false));
-  await act(async () => find("휴지통 이동").click());
+  await trashAndConfirm();
   assert.notEqual(requests[2][1], requests[3][1], "실제 권한 snapshot이 바뀌면 version이 같아도 새 요청이다");
 });
 

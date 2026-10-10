@@ -89,6 +89,7 @@ pill 형태는 filter와 count처럼 모양 자체가 의미를 가질 때만 �
 | `CalendarEventFields` | 일정 생성 dialog와 상세 수정 form이 공유하는 유형·제목·시간·메모 입력 |
 | `CalendarEventActions` | 학생 본인 포털 일정의 상세 패널 수정과 취소 우선 2단계 삭제 |
 | `LessonScheduleDialog` | 관리자 일정 캘린더의 날짜 선택에서 시작하는 레슨 예약 |
+| `ConfirmPanel`·`useConfirmAction` | 휴지통 이동·영구 삭제·이력 복원·댓글/피드백/모듈/레슨/트랙/컬럼/채널 삭제 등 되돌리기 어려운 동작의 공통 취소 우선 2단계 확인. hook이 확인 대상과 연 버튼으로의 초점 복귀를, 패널이 열릴 때 취소 초점·Esc 취소·확인 뒤 진행 문구·작업 종료 시 닫힘을 소유한다. 실패 안내는 호출 화면의 기존 오류 영역이 맡는다 |
 | `LessonActions` | 관리자 레슨 상세의 시간 변경과 취소 우선 2단계 삭제 |
 | `AssignmentDeleteAction` | 피드백 전 학생 본인 제출의 취소 우선 2단계 삭제, 거부 사유를 확인 영역 안에서 표시 |
 | `ExternalCalendarConnection` | 공개 레슨 캘린더 provider 선택·연결·교체·해제와 live status |
@@ -173,6 +174,7 @@ pill 형태는 filter와 count처럼 모양 자체가 의미를 가질 때만 �
 ## 변경 점검
 
 - 임의 hex와 raw red, green, blue, orange 계열 status class가 새로 추가되지 않았는가
+- 되돌리기 어려운 동작이 브라우저 기본 `confirm`·`alert`·`prompt` 대신 화면 안의 `ConfirmPanel`을 쓰는가. `npm run check:ui`가 기본 대화상자 호출을 거부한다.
 - 색 utility가 `globals.css`에 정의된 token만 참조하는가. Tailwind 4는 없는 token의 class를 조용히 버리므로 `*-foreground` 누락은 `npm run check:ui`가 거부한다.
 - 한 화면의 주요 accent가 하나로 유지되는가
 - radius가 control, container, overlay 규칙을 따르는가

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useTransition, type TransitionStartFunctio
 import { useRouter } from "next/navigation";
 import { RotateCcw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ConfirmPanel, useConfirmAction } from "@/components/ui/confirm-action";
 import {
   purgeQnaThread,
   restoreQnaThread,
@@ -68,15 +69,10 @@ export function QnaThreadLifecycleActions({
     }
   }, [deletedAt, isPending, threadId, version]);
 
+  const lifecycleConfirm = useConfirmAction<"trash" | "purge">();
+
   const run = (kind: "trash" | "restore" | "purge") => {
     if (disabled || isPending || needsRefresh) return;
-    const confirmed =
-      kind === "trash"
-        ? confirm("이 Q&A를 휴지통으로 이동하시겠습니까? 30일 동안 복원할 수 있습니다.")
-        : kind === "purge"
-          ? confirm("스레드, 모든 답변과 이력을 영구 삭제합니다. 되돌릴 수 없습니다.")
-          : true;
-    if (!confirmed) return;
     const operationKey = JSON.stringify([snapshot, kind]);
     if (operation.current?.key !== operationKey) {
       operation.current = { key: operationKey, id: createCreationOperationId() };
@@ -121,11 +117,30 @@ export function QnaThreadLifecycleActions({
           size="sm"
           className={`gap-1.5 ${actionKind === "purge" ? "bg-destructive text-destructive-foreground hover:bg-destructive/90" : actionKind === "trash" ? "text-destructive" : ""}`}
           disabled={disabled || isPending || Boolean(needsRefresh)}
-          onClick={() => run(actionKind)}
+          aria-expanded={actionKind === "restore" ? undefined : lifecycleConfirm.isOpen}
+          onClick={(event) => {
+            if (actionKind === "restore") run("restore");
+            else lifecycleConfirm.request(event.currentTarget, actionKind);
+          }}
         >
           {actionKind === "restore" ? <RotateCcw className="h-4 w-4" aria-hidden="true" /> : <Trash2 className="h-4 w-4" aria-hidden="true" />}
           {actionKind === "restore" ? "Q&A 복원" : actionKind === "trash" ? "휴지통 이동" : "영구 삭제"}
         </Button>
+      ) : null}
+      {lifecycleConfirm.isOpen && lifecycleConfirm.value ? (
+        <ConfirmPanel
+          confirm={lifecycleConfirm}
+          message={lifecycleConfirm.value === "trash"
+            ? "이 Q&A를 휴지통으로 이동할까요? 30일 동안 복원할 수 있습니다."
+            : "스레드, 모든 답변과 이력을 영구 삭제합니다. 되돌릴 수 없습니다."}
+          confirmLabel={lifecycleConfirm.value === "trash" ? "휴지통 이동 확인" : "영구 삭제 확인"}
+          pendingLabel={lifecycleConfirm.value === "trash" ? "이동 중..." : "삭제 중..."}
+          pending={isPending}
+          onConfirm={() => {
+            if (lifecycleConfirm.value) run(lifecycleConfirm.value);
+          }}
+          className="max-w-md"
+        />
       ) : null}
       {failure && <span role={failure.snapshot === snapshot ? "alert" : "status"} className="text-xs text-muted-foreground">
         {failure.snapshot === snapshot ? failure.message : "최신 상태를 불러왔습니다. 현재 상태를 확인한 뒤 다시 진행해 주세요."}

@@ -1,11 +1,11 @@
 "use client";
 
-import { useActionState, useEffect, useRef, useState } from "react";
-import { Pencil } from "lucide-react";
+import { useActionState, useEffect, useRef, useState, useTransition } from "react";
+import { Pencil, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ConfirmPanel, useConfirmAction } from "@/components/ui/confirm-action";
 import { Input } from "@/components/ui/input";
-import { updateCategory, type CategoryState } from "@/lib/actions/categories";
-import { DeleteCategoryButton } from "./DeleteCategoryButton";
+import { deleteCategory, updateCategory, type CategoryState } from "@/lib/actions/categories";
 
 type Category = {
   id: string;
@@ -84,6 +84,21 @@ export function CategoryListItem({ category }: { category: Category }) {
   const [editing, setEditing] = useState(false);
   const editTriggerRef = useRef<HTMLButtonElement>(null);
   const restoreFocus = useRef(false);
+  const deleteConfirm = useConfirmAction();
+  const [isDeleting, startDelete] = useTransition();
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const removeCategory = () => {
+    setDeleteError(null);
+    startDelete(async () => {
+      try {
+        const result = await deleteCategory(category.id);
+        if (result.error) setDeleteError(result.error);
+      } catch {
+        setDeleteError("채널을 삭제하지 못했습니다. 다시 시도해 주세요.");
+      }
+    });
+  };
 
   useEffect(() => {
     if (!editing && restoreFocus.current) {
@@ -107,7 +122,8 @@ export function CategoryListItem({ category }: { category: Category }) {
   }
 
   return (
-    <li className="flex items-start justify-between gap-3 rounded-lg border border-border bg-card p-4">
+    <li className="space-y-3 rounded-lg border border-border bg-card p-4">
+      <div className="flex items-start justify-between gap-3">
       <div className="min-w-0 space-y-1">
         <p className="flex flex-wrap items-center gap-2 font-semibold text-foreground">
           <span className="break-words">{category.name}</span>
@@ -132,8 +148,32 @@ export function CategoryListItem({ category }: { category: Category }) {
         >
           <Pencil className="size-4" aria-hidden="true" />
         </Button>
-        <DeleteCategoryButton categoryId={category.id} />
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          onClick={(event) => deleteConfirm.request(event.currentTarget)}
+          disabled={isDeleting}
+          aria-expanded={deleteConfirm.isOpen}
+          aria-label={`${category.name} 채널 삭제`}
+          title="삭제"
+          className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+        >
+          <Trash2 className="size-4" aria-hidden="true" />
+        </Button>
       </div>
+      </div>
+      {deleteConfirm.isOpen ? (
+        <ConfirmPanel
+          confirm={deleteConfirm}
+          message={`${category.name} 채널을 삭제할까요? 게시물이 있는 채널은 삭제되지 않습니다.`}
+          confirmLabel="채널 삭제 확인"
+          pendingLabel="삭제 중..."
+          pending={isDeleting}
+          onConfirm={removeCategory}
+        />
+      ) : null}
+      {deleteError ? <p role="alert" className="text-sm text-destructive">{deleteError}</p> : null}
     </li>
   );
 }

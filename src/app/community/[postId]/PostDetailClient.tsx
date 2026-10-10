@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Trash2, Hash, History, PencilLine } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ConfirmPanel, useConfirmAction } from "@/components/ui/confirm-action";
 import { RichTextContent } from "@/components/editor/RichTextContent";
 import { deletePost, getPostIncludingTrash } from "@/lib/actions/posts";
 import {
@@ -44,10 +45,11 @@ export function PostDetailClient({
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const deleteOperation = useRef<{ key: string; id: string } | null>(null);
   const router = useRouter();
+  const postDeleteConfirm = useConfirmAction();
+  const commentDeleteConfirm = useConfirmAction<string>();
 
   const handleDeletePost = () => {
     if (isPending || isEditPending || post.deletedAt) return;
-    if (!confirm("이 게시물을 휴지통으로 이동하시겠습니까? 30일 동안 복원할 수 있습니다.")) return;
     const requestKey = JSON.stringify([currentUserId, post.id, post.version]);
     if (deleteOperation.current?.key !== requestKey) {
       deleteOperation.current = { key: requestKey, id: createCreationOperationId() };
@@ -66,7 +68,6 @@ export function PostDetailClient({
   };
 
   const handleDeleteComment = (commentId: string) => {
-    if (!confirm("댓글을 삭제하시겠습니까?")) return;
     setDeleteError(null);
     startTransition(async () => {
       try {
@@ -128,8 +129,9 @@ export function PostDetailClient({
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={handleDeletePost}
+                onClick={(event) => postDeleteConfirm.request(event.currentTarget)}
                 disabled={isPending || isEditPending}
+                aria-expanded={postDeleteConfirm.isOpen}
                 className="text-destructive hover:bg-destructive/10"
                 aria-label="게시물 삭제"
               >
@@ -148,6 +150,17 @@ export function PostDetailClient({
           <span>·</span>
           <span>{date}</span>
         </div>
+        {postDeleteConfirm.isOpen && !post.deletedAt ? (
+          <ConfirmPanel
+            confirm={postDeleteConfirm}
+            message="이 게시물을 휴지통으로 이동할까요? 30일 동안 복원할 수 있고 댓글과 이력은 함께 보존됩니다."
+            confirmLabel="휴지통 이동 확인"
+            pendingLabel="이동 중..."
+            pending={isPending}
+            onConfirm={handleDeletePost}
+            className="mt-3"
+          />
+        ) : null}
         {deleteError ? (
           <p role="alert" className="text-sm text-destructive">
             {deleteError}
@@ -214,31 +227,45 @@ export function PostDetailClient({
                 !post.deletedAt && (isAdmin || currentUserId === c.authorId);
 
               return (
-                <li key={c.id} className="flex gap-3 group">
-                  <div className="w-8 h-8 rounded-full bg-muted border border-border flex items-center justify-center text-xs font-semibold flex-shrink-0 mt-0.5">
-                    {cInitials}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
-                      <span className="font-medium text-foreground">
-                        {cAuthor}
-                      </span>
-                      <span>{cDate}</span>
+                <li key={c.id} className="group space-y-2">
+                  <div className="flex gap-3">
+                    <div className="w-8 h-8 rounded-full bg-muted border border-border flex items-center justify-center text-xs font-semibold flex-shrink-0 mt-0.5">
+                      {cInitials}
                     </div>
-                    <RichTextContent html={c.contentHtml} className="text-sm" />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
+                        <span className="font-medium text-foreground">
+                          {cAuthor}
+                        </span>
+                        <span>{cDate}</span>
+                      </div>
+                      <RichTextContent html={c.contentHtml} className="text-sm" />
+                    </div>
+                    {canDelete && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={(event) => commentDeleteConfirm.request(event.currentTarget, c.id)}
+                        disabled={isPending}
+                        aria-expanded={commentDeleteConfirm.value === c.id}
+                        aria-label={`${cAuthor} 댓글 삭제`}
+                        className="text-destructive opacity-100 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 focus:opacity-100 aria-expanded:opacity-100 transition-opacity flex-shrink-0 self-start mt-0.5"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
+                      </Button>
+                    )}
                   </div>
-                  {canDelete && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => handleDeleteComment(c.id)}
-                      disabled={isPending}
-                      aria-label={`${cAuthor} 댓글 삭제`}
-                      className="text-destructive opacity-100 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 focus:opacity-100 transition-opacity flex-shrink-0 self-start mt-0.5"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
-                    </Button>
-                  )}
+                  {canDelete && commentDeleteConfirm.value === c.id ? (
+                    <ConfirmPanel
+                      confirm={commentDeleteConfirm}
+                      message="이 댓글을 삭제할까요? 삭제한 댓글은 되돌릴 수 없습니다."
+                      confirmLabel="댓글 삭제 확인"
+                      pendingLabel="삭제 중..."
+                      pending={isPending}
+                      onConfirm={() => handleDeleteComment(c.id)}
+                      className="ml-11"
+                    />
+                  ) : null}
                 </li>
               );
             })}

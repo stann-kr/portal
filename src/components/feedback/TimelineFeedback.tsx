@@ -10,6 +10,7 @@
 import { useActionState, useState, useTransition } from "react";
 import { MessageSquare, Trash2, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ConfirmPanel, useConfirmAction } from "@/components/ui/confirm-action";
 import { Input } from "@/components/ui/input";
 import { formatTimestamp } from "@/lib/utils/format";
 import {
@@ -236,8 +237,9 @@ export function TimelineFeedback({
     }
   };
 
+  const deleteConfirm = useConfirmAction<string>();
+
   const handleDelete = (feedbackId: string) => {
-    if (!confirm("이 피드백을 삭제하시겠습니까?")) return;
     setError(null);
     startTransition(async () => {
       try {
@@ -277,8 +279,9 @@ export function TimelineFeedback({
           {feedbackList.map((fb) => (
             <li
               key={fb.id}
-              className="flex items-start gap-3 p-3 rounded-lg border border-border bg-card group hover:bg-accent/5 transition-colors"
+              className="space-y-3 p-3 rounded-lg border border-border bg-card group hover:bg-accent/5 transition-colors"
             >
+              <div className="flex items-start gap-3">
               {/* 타임스탬프 버튼 */}
               <button
                 type="button"
@@ -298,14 +301,26 @@ export function TimelineFeedback({
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => handleDelete(fb.id)}
+                  onClick={(event) => deleteConfirm.request(event.currentTarget, fb.id)}
                   disabled={isPending}
-                  aria-label="피드백 삭제"
-                  className="-mt-1 flex-shrink-0 text-destructive opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 focus:opacity-100"
+                  aria-expanded={deleteConfirm.value === fb.id}
+                  aria-label={`${formatTimestamp(fb.timeMarker)} 피드백 삭제`}
+                  className="-mt-1 flex-shrink-0 text-destructive opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 focus:opacity-100 aria-expanded:opacity-100"
                 >
                   <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
                 </Button>
               )}
+              </div>
+              {isAdmin && deleteConfirm.value === fb.id ? (
+                <ConfirmPanel
+                  confirm={deleteConfirm}
+                  message={`${formatTimestamp(fb.timeMarker)} 피드백을 삭제할까요? 학생 화면에서도 사라지며 되돌릴 수 없습니다.`}
+                  confirmLabel="피드백 삭제 확인"
+                  pendingLabel="삭제 중..."
+                  pending={isPending}
+                  onConfirm={() => handleDelete(fb.id)}
+                />
+              ) : null}
             </li>
           ))}
         </ul>

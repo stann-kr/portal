@@ -53,6 +53,15 @@ for (const file of tsxFiles) {
   }
 }
 
+// Destructive and confirm steps use the in-page cancel-first ConfirmPanel, not blocking browser dialogs.
+const nativeDialogPattern = /(?<![\w.$])(?:window\.)?(?:confirm|alert|prompt)\(/gu;
+for (const file of tsxFiles.filter((path) => !/\.test\.tsx$|\/src\/test\//u.test(path.replaceAll("\\", "/")))) {
+  const text = await readFile(file, "utf8");
+  for (const match of text.matchAll(nativeDialogPattern)) {
+    failures.push(`${repoPath(file)}:${findLine(text, match.index ?? 0)} native browser dialog (use ConfirmPanel): ${match[0]}`);
+  }
+}
+
 // Worker SSR runs in UTC: display dates must go through the explicit KST formatter.
 const dateFormatOwners = new Set(["src/lib/kst-format.ts", "src/lib/date-input.ts"]);
 const rawDateFormatPattern = /\.toLocale(?:Date|Time)String\(|\.toLocaleString\(\s*["']ko-KR["']|new Intl\.DateTimeFormat\(|from ["']date-fns["']/gu;

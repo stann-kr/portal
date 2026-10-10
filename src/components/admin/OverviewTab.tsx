@@ -30,6 +30,7 @@ import {
   type CreateLessonState,
 } from "@/lib/actions/lessons";
 import { CalendarFeedControl } from "@/components/admin/CalendarFeedControl";
+import { ConfirmPanel, useConfirmAction } from "@/components/ui/confirm-action";
 import { formatKst } from "@/lib/kst-format";
 
 // ─── 타입 ──────────────────────────────────────────
@@ -210,8 +211,10 @@ export function OverviewTab({
     requestAnimationFrame(() => document.getElementById(`module-edit-trigger-${moduleId}`)?.focus());
   };
 
+  const moduleDeleteConfirm = useConfirmAction<string>();
+  const lessonDeleteConfirm = useConfirmAction<string>();
+
   const handleDeleteModule = (moduleId: string) => {
-    if (!confirm("이 모듈을 삭제하시겠습니까?")) return;
     setMutationError("");
     startTransition(async () => {
       try {
@@ -223,7 +226,6 @@ export function OverviewTab({
   };
 
   const handleDeleteLesson = (lessonId: string) => {
-    if (!confirm("이 레슨을 삭제하시겠습니까?")) return;
     setMutationError("");
     startTransition(async () => {
       try {
@@ -260,8 +262,9 @@ export function OverviewTab({
             ) : (
               <li
                 key={m.id}
-                className="flex items-center gap-3 p-3 rounded-lg border border-border bg-card group"
+                className="group space-y-3 rounded-lg border border-border bg-card p-3"
               >
+                <div className="flex items-center gap-3">
                 {m.isCompleted ? (
                   <CheckCircle2 className="w-4 h-4 text-success flex-shrink-0" aria-hidden="true" />
                 ) : (
@@ -286,13 +289,25 @@ export function OverviewTab({
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => handleDeleteModule(m.id)}
+                  onClick={(event) => moduleDeleteConfirm.request(event.currentTarget, m.id)}
                   disabled={isPending}
+                  aria-expanded={moduleDeleteConfirm.value === m.id}
                   aria-label={`${m.title} 모듈 삭제`}
-                  className="text-destructive opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100"
+                  className="text-destructive opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 aria-expanded:opacity-100"
                 >
                   <Trash2 className="w-4 h-4" aria-hidden="true" />
                 </Button>
+                </div>
+                {moduleDeleteConfirm.value === m.id ? (
+                  <ConfirmPanel
+                    confirm={moduleDeleteConfirm}
+                    message={`${m.title} 모듈을 삭제할까요? 학생의 진도 표시에서도 사라집니다.`}
+                    confirmLabel="모듈 삭제 확인"
+                    pendingLabel="삭제 중..."
+                    pending={isPending}
+                    onConfirm={() => handleDeleteModule(m.id)}
+                  />
+                ) : null}
               </li>
             ))}
           </ul>
@@ -325,11 +340,13 @@ export function OverviewTab({
             {lessons.map((l) => {
               const date = new Date(l.scheduledAt!);
               const isPast = date < new Date();
+              const lessonLabel = formatKst(date, { year: "numeric", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" });
               return (
                 <li
                   key={l.id}
-                  className={`flex items-center gap-3 p-3 rounded-lg border border-border bg-card group ${isPast ? "opacity-50" : ""}`}
+                  className="group space-y-3 rounded-lg border border-border bg-card p-3"
                 >
+                  <div className={`flex items-center gap-3 ${isPast ? "opacity-50" : ""}`}>
                   <CalendarDays className="w-4 h-4 text-muted-foreground flex-shrink-0" aria-hidden="true" />
                   <div className="flex-1">
                     <p className="text-sm font-medium">
@@ -343,13 +360,25 @@ export function OverviewTab({
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => handleDeleteLesson(l.id)}
+                    onClick={(event) => lessonDeleteConfirm.request(event.currentTarget, l.id)}
                     disabled={isPending}
-                    aria-label={`${formatKst(date, { year: "numeric", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" })} 레슨 삭제`}
-                    className="text-destructive opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100"
+                    aria-expanded={lessonDeleteConfirm.value === l.id}
+                    aria-label={`${lessonLabel} 레슨 삭제`}
+                    className="text-destructive opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 aria-expanded:opacity-100"
                   >
                     <Trash2 className="w-4 h-4" aria-hidden="true" />
                   </Button>
+                  </div>
+                  {lessonDeleteConfirm.value === l.id ? (
+                    <ConfirmPanel
+                      confirm={lessonDeleteConfirm}
+                      message={`${lessonLabel} 레슨을 삭제할까요? 학생의 일정과 구독 캘린더에서도 사라집니다.`}
+                      confirmLabel="레슨 삭제 확인"
+                      pendingLabel="삭제 중..."
+                      pending={isPending}
+                      onConfirm={() => handleDeleteLesson(l.id)}
+                    />
+                  ) : null}
                 </li>
               );
             })}

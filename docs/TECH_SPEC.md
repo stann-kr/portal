@@ -230,7 +230,7 @@ npm audit --omit=dev --audit-level=moderate
 
 화면의 날짜·시각은 실행 환경 timezone(Worker SSR은 UTC)과 무관하게 `src/lib/kst-format.ts`로 Asia/Seoul 기준 표시한다. UI 계약 검사는 이 경계 밖의 locale 날짜 포맷 호출을 거부한다.
 
-UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 시스템](./DESIGN_SYSTEM.md)을 기준으로 한다. 상태 registry는 label, semantic tone, icon key가 서로 어긋나지 않도록 단위 테스트로 보호한다.
+UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 시스템](./DESIGN_SYSTEM.md)을 기준으로 한다. 되돌리기 어려운 동작은 브라우저 기본 확인창 대신 `ConfirmPanel`의 취소 우선 2단계 확인을 거치며, 확인 단계는 기존 operation ID 재사용 규칙(결과 불명 재시도는 같은 ID, 새 기준 version은 새 ID)을 바꾸지 않는다. 상태 registry는 label, semantic tone, icon key가 서로 어긋나지 않도록 단위 테스트로 보호한다.
 
 | 품질 경계 | 현재 자동화 | 다음 보강 |
 |---|---|---|
