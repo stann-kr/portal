@@ -1171,6 +1171,18 @@ test("community shows the server-loaded list first and explains a board without 
   assert.deepEqual(requests, ["FEEDBACK"]);
   assert.match(browser.document.body.textContent ?? "", /공유된 믹스셋이 없습니다/u);
 
+  // 응답 전에 이미 받은 목록으로 돌아오면 취소된 요청 때문에 skeleton에 머물지 않는다.
+  const pendingAnnouncements = Promise.withResolvers<Awaited<ReturnType<typeof loadBoardPosts>>>();
+  loadBoardPosts = async (boardType) => { requests.push(boardType); return pendingAnnouncements.promise; };
+  await press("공지");
+  assert.ok(browser.document.querySelector('[aria-label="게시물을 불러오는 중"]'));
+  await press("믹스셋");
+  assert.equal(browser.document.querySelector('[aria-label="게시물을 불러오는 중"]'), null);
+  assert.match(browser.document.body.textContent ?? "", /공유된 믹스셋이 없습니다/u);
+  pendingAnnouncements.resolve([]);
+  await settle();
+  assert.match(browser.document.body.textContent ?? "", /공유된 믹스셋이 없습니다/u);
+
   browser.history.replaceState({}, "", "/community");
   await act(async () => root.render(<CommunityClient key="empty" isAdmin initial={{ boardType: "GENERAL", category: "", categories: [], posts: [] }} />));
   await settle();

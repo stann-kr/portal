@@ -172,7 +172,12 @@ export default function CommunityClient({ isAdmin, initial }: CommunityClientPro
   useEffect(() => {
     const key = listKey(activeTab, activeCategory);
     const reloadRequested = handledReloadRef.current !== reloadToken;
-    if (!key || (key === loadedKeyRef.current && !reloadRequested)) return;
+    if (!key || (key === loadedKeyRef.current && !reloadRequested)) {
+      // 다른 목록을 읽던 중 이미 받은 목록으로 돌아오면 취소된 요청의 진행·오류 상태를 남기지 않는다.
+      setLoading(false);
+      setLoadError(null);
+      return;
+    }
     handledReloadRef.current = reloadToken;
     let cancelled = false;
     setLoading(true);
