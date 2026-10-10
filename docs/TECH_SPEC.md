@@ -75,8 +75,8 @@ OpenNext → Cloudflare Worker
 | `/community/[postId]/history` | 커뮤니티 게시물 불변 full-snapshot revision 조회·선택 복원 |
 | `/community/trash` | 권한 범위의 게시물 휴지통·복원·관리자 영구 삭제 |
 | `/dashboard/admin/students/new` | 학생 추가 |
-| `/dashboard/admin/students/[id]` | 학생 상세: 개요·과제·디깅·노트·Q&A 탭. 과제 탭은 제출 최신순과 과제별 피드백 수를 보여 준다 |
-| `/dashboard/admin/categories` | 자유 게시판 채널 관리. 관리자 커뮤니티 section과 `/community`에서 진입 |
+| `/dashboard/admin/students/[id]` | 학생 상세: 개요·과제·디깅·노트·Q&A 탭. 개요 탭은 커리큘럼 모듈 추가·주차/제목 수정·삭제와 레슨을 관리하며 완료 여부는 학생이 바꾼다. 과제 탭은 제출 최신순과 과제별 피드백 수를 보여 준다 |
+| `/dashboard/admin/categories` | 자유 게시판 채널 추가·수정·삭제. 게시물이 참조하는 주소 식별자(slug)는 생성 뒤 바꾸지 않고 이름·설명·정렬 순서만 수정한다. 관리자 커뮤니티 section과 `/community`에서 진입 |
 | `/dashboard/qna/**` | Q&A 목록·작성·상세·불변 event 이력·휴지통 |
 | `/community/**` | 커뮤니티 목록·작성·상세 |
 | `/dashboard/calendar` | 공유 캘린더 |

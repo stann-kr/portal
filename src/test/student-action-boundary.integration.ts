@@ -5,6 +5,7 @@ import type { AuthSession } from "@/lib/auth-guard";
 import {
   assignments,
   calendarEvents,
+  categories,
   comments,
   curriculums,
   diggingColumns,
@@ -33,6 +34,7 @@ let assignmentActions: typeof import("@/lib/actions/assignments");
 let studentActions: typeof import("@/lib/actions/students");
 let activeProfileModule: typeof import("@/lib/active-profile");
 let postActions: typeof import("@/lib/actions/posts");
+let categoryActions: typeof import("@/lib/actions/categories");
 
 function createSession(id: string, role: "admin" | "student"): AuthSession {
   return {
@@ -66,7 +68,7 @@ mock.module("next/cache", {
 });
 
 before(async () => {
-  [calendarActions, curriculumActions, diggingActions, lessonActions, commentActions, feedbackActions, assignmentActions, studentActions, activeProfileModule, postActions] =
+  [calendarActions, curriculumActions, diggingActions, lessonActions, commentActions, feedbackActions, assignmentActions, studentActions, activeProfileModule, postActions, categoryActions] =
     await Promise.all([
       import("@/lib/actions/calendarEvents"),
       import("@/lib/actions/curriculum"),
@@ -78,6 +80,7 @@ before(async () => {
       import("@/lib/actions/students"),
       import("@/lib/active-profile"),
       import("@/lib/actions/posts"),
+      import("@/lib/actions/categories"),
     ]);
 });
 
@@ -376,6 +379,59 @@ test("댓글·피드백은 응답 유실 후 같은 제출을 한 번만 저장�
   assert.equal((await db.select().from(feedbacks)).length, 1);
   assert.equal((await feedbackActions.createFeedback("retry-assignment", {}, form(crypto.randomUUID()))).success, true);
   assert.equal((await db.select().from(feedbacks)).length, 2);
+});
+
+test("관리자 모듈 수정은 대상 학생의 모듈만 바꾸고 완료 상태와 잘못된 입력을 보존한다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("admin-1", "admin"));
+  await seedProfile(db, "admin-1", "admin");
+  await seedProfile(db, "student-1");
+  await seedProfile(db, "student-2");
+  await db.insert(curriculums).values([
+    { id: "module-1", studentId: "student-1", weekNum: 1, title: "비트 매칭", isCompleted: true },
+    { id: "module-2", studentId: "student-2", weekNum: 1, title: "다른 학생 모듈" },
+  ]);
+  const form = (weekNum: string, title: string) => {
+    const data = new FormData();
+    data.set("weekNum", weekNum);
+    data.set("title", title);
+    return data;
+  };
+  const rows = async () => (await db.select().from(curriculums)).map(({ id, weekNum, title, isCompleted }) => [id, weekNum, title, isCompleted]).sort();
+
+  for (const [weekNum, title] of [["0", "제목"], ["1.5", "제목"], ["2", " "], ["2", "x".repeat(121)]]) {
+    assert.ok((await curriculumActions.updateModule("module-1", "student-1", {}, form(weekNum, title))).error, `${weekNum}/${title.length}`);
+  }
+  assert.ok((await curriculumActions.updateModule("module-2", "student-1", {}, form("3", "가로채기"))).error, "다른 학생의 모듈");
+  assert.deepEqual(await curriculumActions.updateModule("module-1", "student-1", {}, form("2", "  EQ 전환  ")), { success: true });
+  assert.deepEqual(await rows(), [["module-1", 2, "EQ 전환", true], ["module-2", 1, "다른 학생 모듈", false]]);
+
+  activeSession = createSession("student-1", "student");
+  await assert.rejects(curriculumActions.updateModule("module-1", "student-1", {}, form("4", "학생 변경")), /Admin only/u);
+  assert.deepEqual((await rows())[0], ["module-1", 2, "EQ 전환", true]);
+});
+
+test("채널 수정은 관리자만 이름·설명·순서를 바꾸고 게시물이 참조하는 주소 식별자는 유지한다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("admin-1", "admin"));
+  await seedProfile(db, "admin-1", "admin");
+  await seedProfile(db, "student-1");
+  await db.insert(categories).values({ id: "channel-1", slug: "gear", name: "장비", description: "", sortOrder: 0 });
+  const form = (name: string, sortOrder = "3", description = "셋업 이야기") => {
+    const data = new FormData();
+    data.set("name", name);
+    data.set("description", description);
+    data.set("sortOrder", sortOrder);
+    data.set("slug", "changed-slug");
+    return data;
+  };
+  assert.ok((await categoryActions.updateCategory("channel-1", {}, form(""))).error);
+  assert.ok((await categoryActions.updateCategory("channel-1", {}, form("장비", "1.5"))).error);
+  assert.ok((await categoryActions.updateCategory("missing", {}, form("장비"))).error);
+  assert.deepEqual(await categoryActions.updateCategory("channel-1", {}, form(" 장비·셋업 ")), { success: true });
+  const [channel] = await db.select().from(categories);
+  assert.deepEqual([channel.slug, channel.name, channel.description, channel.sortOrder], ["gear", "장비·셋업", "셋업 이야기", 3]);
+
+  activeSession = createSession("student-1", "student");
+  await assert.rejects(categoryActions.updateCategory("channel-1", {}, form("학생 변경")), /Admin only/u);
 });
 
 test("관리자 child delete는 전달한 학생과 실제 owner가 다르면 행을 보존한다", { concurrency: false }, async (context) => {

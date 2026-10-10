@@ -6,10 +6,11 @@
  */
 "use client";
 
-import { useActionState, useState, useTransition } from "react";
+import { useActionState, useEffect, useRef, useState, useTransition } from "react";
 import {
   CalendarDays,
   BookOpen,
+  Pencil,
   Plus,
   Trash2,
   CheckCircle2,
@@ -20,6 +21,7 @@ import { Input } from "@/components/ui/input";
 import {
   createModule,
   deleteModule,
+  updateModule,
   type CreateModuleState,
 } from "@/lib/actions/curriculum";
 import {
@@ -98,6 +100,66 @@ function AddModuleForm({
   );
 }
 
+// ─── 커리큘럼 수정 폼 ──────────────────────────────
+
+/** 모듈 행 안에서 주차·제목을 고친다. 실패하면 입력을 유지하고 행 안에서 이유를 알린다. */
+function EditModuleForm({
+  studentId,
+  curriculumModule,
+  onClose,
+}: {
+  studentId: string;
+  curriculumModule: Module;
+  onClose: () => void;
+}) {
+  const [weekNum, setWeekNum] = useState(String(curriculumModule.weekNum ?? 1));
+  const [title, setTitle] = useState(curriculumModule.title);
+  const titleRef = useRef<HTMLInputElement>(null);
+  const fieldId = `module-edit-${curriculumModule.id}`;
+  const [state, action, isPending] = useActionState<CreateModuleState, FormData>(
+    async (previous, data) => {
+      try {
+        const result = await updateModule(curriculumModule.id, studentId, previous, data);
+        if (result.success) onClose();
+        return result;
+      } catch {
+        return { error: "모듈을 수정하지 못했습니다. 다시 시도해 주세요." };
+      }
+    },
+    {},
+  );
+
+  useEffect(() => {
+    titleRef.current?.focus();
+  }, []);
+
+  return (
+    <form
+      action={action}
+      aria-label={`${curriculumModule.title} 모듈 수정`}
+      aria-busy={isPending}
+      className="flex flex-wrap items-end gap-2"
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && !isPending) onClose();
+      }}
+    >
+      <div className="space-y-1">
+        <label htmlFor={`${fieldId}-week`} className="text-xs font-medium text-muted-foreground">주차</label>
+        <Input id={`${fieldId}-week`} name="weekNum" type="number" min={1} max={520} step={1} className="w-24" required value={weekNum} onChange={(event) => setWeekNum(event.target.value)} disabled={isPending} />
+      </div>
+      <div className="min-w-52 flex-1 space-y-1">
+        <label htmlFor={`${fieldId}-title`} className="text-xs font-medium text-muted-foreground">모듈 제목</label>
+        <Input ref={titleRef} id={`${fieldId}-title`} name="title" type="text" maxLength={120} required value={title} onChange={(event) => setTitle(event.target.value)} disabled={isPending} />
+      </div>
+      <div className="flex gap-2">
+        <Button type="submit" size="sm" disabled={isPending}>{isPending ? "저장 중..." : "저장"}</Button>
+        <Button type="button" size="sm" variant="outline" onClick={onClose} disabled={isPending}>취소</Button>
+      </div>
+      {state.error ? <p className="w-full text-xs text-destructive" role="alert">{state.error}</p> : null}
+    </form>
+  );
+}
+
 // ─── 레슨 추가 폼 ──────────────────────────────────
 
 function AddLessonForm({ studentId }: { studentId: string }) {
@@ -141,6 +203,12 @@ export function OverviewTab({
 }: OverviewTabProps) {
   const [isPending, startTransition] = useTransition();
   const [mutationError, setMutationError] = useState("");
+  const [editingModuleId, setEditingModuleId] = useState<string | null>(null);
+  const closeModuleEdit = (moduleId: string) => {
+    setEditingModuleId(null);
+    // 수정 form이 닫힌 뒤 같은 행의 수정 버튼으로 초점을 돌려준다.
+    requestAnimationFrame(() => document.getElementById(`module-edit-trigger-${moduleId}`)?.focus());
+  };
 
   const handleDeleteModule = (moduleId: string) => {
     if (!confirm("이 모듈을 삭제하시겠습니까?")) return;
@@ -172,7 +240,7 @@ export function OverviewTab({
       {/* 커리큘럼 */}
       <section className="space-y-4">
         <div className="flex items-center gap-2 border-b pb-3">
-          <BookOpen className="w-5 h-5 text-muted-foreground" />
+          <BookOpen className="w-5 h-5 text-muted-foreground" aria-hidden="true" />
           <h2 className="text-lg font-semibold">커리큘럼</h2>
           <span className="ml-auto text-sm text-muted-foreground">
             {modules.length}개
@@ -185,20 +253,36 @@ export function OverviewTab({
           </p>
         ) : (
           <ul className="space-y-2">
-            {modules.map((m) => (
+            {modules.map((m) => editingModuleId === m.id ? (
+              <li key={m.id} className="rounded-lg border border-primary/30 bg-card p-3">
+                <EditModuleForm studentId={studentId} curriculumModule={m} onClose={() => closeModuleEdit(m.id)} />
+              </li>
+            ) : (
               <li
                 key={m.id}
                 className="flex items-center gap-3 p-3 rounded-lg border border-border bg-card group"
               >
                 {m.isCompleted ? (
-                  <CheckCircle2 className="w-4 h-4 text-success flex-shrink-0" />
+                  <CheckCircle2 className="w-4 h-4 text-success flex-shrink-0" aria-hidden="true" />
                 ) : (
-                  <Circle className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                  <Circle className="w-4 h-4 text-muted-foreground flex-shrink-0" aria-hidden="true" />
                 )}
+                <span className="sr-only">{m.isCompleted ? "완료" : "진행 전"}</span>
                 <span className="text-xs font-bold text-muted-foreground w-12">
                   WEEK {String(m.weekNum ?? 0).padStart(2, "0")}
                 </span>
-                <span className="flex-1 text-sm font-medium">{m.title}</span>
+                <span className="min-w-0 flex-1 break-words text-sm font-medium">{m.title}</span>
+                <Button
+                  id={`module-edit-trigger-${m.id}`}
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setEditingModuleId(m.id)}
+                  disabled={isPending}
+                  aria-label={`${m.title} 모듈 수정`}
+                  className="opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100"
+                >
+                  <Pencil className="w-4 h-4" aria-hidden="true" />
+                </Button>
                 <Button
                   variant="ghost"
                   size="sm"
@@ -223,7 +307,7 @@ export function OverviewTab({
       {/* 레슨 일정 */}
       <section className="space-y-4">
         <div className="flex items-center gap-2 border-b pb-3">
-          <CalendarDays className="w-5 h-5 text-muted-foreground" />
+          <CalendarDays className="w-5 h-5 text-muted-foreground" aria-hidden="true" />
           <h2 className="text-lg font-semibold">레슨 일정</h2>
           <span className="ml-auto text-sm text-muted-foreground">
             {lessons.length}개
@@ -246,7 +330,7 @@ export function OverviewTab({
                   key={l.id}
                   className={`flex items-center gap-3 p-3 rounded-lg border border-border bg-card group ${isPast ? "opacity-50" : ""}`}
                 >
-                  <CalendarDays className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                  <CalendarDays className="w-4 h-4 text-muted-foreground flex-shrink-0" aria-hidden="true" />
                   <div className="flex-1">
                     <p className="text-sm font-medium">
                       {formatKst(date, { year: "numeric", month: "long", day: "numeric" })}

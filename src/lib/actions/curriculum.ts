@@ -1,7 +1,7 @@
 /**
  * @file src/lib/actions/curriculum.ts
  * @description 커리큘럼(학습 모듈) 관련 서버 액션.
- * Admin: 모듈 생성/삭제.
+ * Admin: 모듈 생성/수정/삭제.
  * Student: 완료 여부 토글, 본인 모듈 조회.
  */
 "use server";
@@ -69,6 +69,26 @@ export async function getCurrentModule(studentId: string) {
 
 export type CreateModuleState = { error?: string; success?: boolean };
 
+function parseModuleInput(formData: FormData):
+  | { ok: true; title: string; weekNum: number }
+  | { ok: false; error: string } {
+  const title = String(formData.get("title") ?? "").trim();
+  const weekNum = Number(formData.get("weekNum"));
+
+  if (!title) return { ok: false, error: "제목을 입력해주세요." };
+  if (title.length > 120) return { ok: false, error: "모듈 제목은 120자까지 입력할 수 있습니다." };
+  if (!Number.isInteger(weekNum) || weekNum < 1 || weekNum > 520) {
+    return { ok: false, error: "주차는 1부터 520 사이의 정수로 입력해 주세요." };
+  }
+  return { ok: true, title, weekNum };
+}
+
+function revalidateCurriculumPaths(studentId: string): void {
+  revalidatePath(`/dashboard/admin/students/${studentId}`);
+  revalidatePath("/dashboard/admin");
+  revalidatePath("/dashboard/student");
+}
+
 /**
  * 학생에게 커리큘럼 모듈 추가 (Admin 전용).
  * @param studentId - 대상 학생 ID
@@ -82,26 +102,45 @@ export async function createModule(
 ): Promise<CreateModuleState> {
   await requireStudentTarget(studentId);
 
-  const title = String(formData.get("title") ?? "").trim();
-  const weekNum = Number(formData.get("weekNum"));
-
-  if (!title) return { error: "제목을 입력해주세요." };
-  if (title.length > 120) return { error: "모듈 제목은 120자까지 입력할 수 있습니다." };
-  if (!Number.isInteger(weekNum) || weekNum < 1 || weekNum > 520) {
-    return { error: "주차는 1부터 520 사이의 정수로 입력해 주세요." };
-  }
+  const input = parseModuleInput(formData);
+  if (!input.ok) return { error: input.error };
 
   const db = createDb();
   await db.insert(curriculums).values({
     id: crypto.randomUUID(),
     studentId,
-    weekNum,
-    title,
+    weekNum: input.weekNum,
+    title: input.title,
     isCompleted: false,
   });
 
-  revalidatePath(`/dashboard/admin/students/${studentId}`);
-  revalidatePath("/dashboard/student");
+  revalidateCurriculumPaths(studentId);
+  return { success: true };
+}
+
+/**
+ * 커리큘럼 모듈의 주차·제목 수정 (Admin 전용). 완료 여부는 학생이 관리하므로 바꾸지 않는다.
+ */
+export async function updateModule(
+  moduleId: string,
+  studentId: string,
+  _prev: CreateModuleState,
+  formData: FormData,
+): Promise<CreateModuleState> {
+  await requireStudentTarget(studentId);
+
+  const input = parseModuleInput(formData);
+  if (!input.ok) return { error: input.error };
+
+  const db = createDb();
+  const updated = await db
+    .update(curriculums)
+    .set({ title: input.title, weekNum: input.weekNum })
+    .where(and(eq(curriculums.id, moduleId), eq(curriculums.studentId, studentId)))
+    .returning({ id: curriculums.id });
+  if (updated.length === 0) return { error: "모듈을 찾을 수 없습니다. 화면을 새로고침해 주세요." };
+
+  revalidateCurriculumPaths(studentId);
   return { success: true };
 }
 
@@ -153,6 +192,5 @@ export async function deleteModule(moduleId: string, studentId: string) {
         eq(curriculums.studentId, studentId),
       ),
     );
-  revalidatePath(`/dashboard/admin/students/${studentId}`);
-  revalidatePath("/dashboard/student");
+  revalidateCurriculumPaths(studentId);
 }

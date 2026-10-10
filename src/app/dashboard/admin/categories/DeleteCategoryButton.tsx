@@ -28,7 +28,7 @@ export function DeleteCategoryButton({ categoryId }: { categoryId: string }) {
         type="button"
         onClick={handleDelete}
         disabled={isPending}
-        className="p-2 text-muted-foreground transition-colors hover:text-destructive disabled:opacity-50"
+        className="flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
         aria-label="채널 삭제"
         title="삭제"
       >

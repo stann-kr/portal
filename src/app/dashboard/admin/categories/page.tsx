@@ -8,7 +8,7 @@ import { getActiveAuthSession } from "@/lib/auth-guard";
 import { redirect } from "next/navigation";
 import { getCategories } from "@/lib/actions/categories";
 import { CategoryForm } from "./CategoryForm";
-import { DeleteCategoryButton } from "./DeleteCategoryButton";
+import { CategoryListItem } from "./CategoryListItem";
 
 type Category = Awaited<ReturnType<typeof getCategories>>[number];
 
@@ -35,7 +35,7 @@ export default async function AdminCategoriesPage() {
         <div className="space-y-1">
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">커뮤니티 채널</h1>
           <p className="text-sm text-muted-foreground">
-            자유 게시판의 채널을 추가하거나 비어 있는 채널을 정리합니다.
+            자유 게시판의 채널을 추가·수정하거나 비어 있는 채널을 정리합니다.
           </p>
         </div>
       </header>
@@ -57,21 +57,7 @@ export default async function AdminCategoriesPage() {
           ) : (
             <ul className="space-y-3">
               {categoriesList.map((cat: Category) => (
-                <li key={cat.id} className="flex items-start justify-between gap-3 rounded-lg border border-border bg-card p-4">
-                  <div className="space-y-1">
-                    <p className="font-semibold text-foreground flex items-center gap-2">
-                      {cat.name}
-                      <span className="rounded-sm bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground">
-                        {cat.slug}
-                      </span>
-                    </p>
-                    {cat.description && (
-                      <p className="text-sm text-muted-foreground">{cat.description}</p>
-                    )}
-                    <p className="text-xs text-muted-foreground mt-2">정렬 우선순위: {cat.sortOrder}</p>
-                  </div>
-                  <DeleteCategoryButton categoryId={cat.id} />
-                </li>
+                <CategoryListItem key={cat.id} category={cat} />
               ))}
             </ul>
           )}

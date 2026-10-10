@@ -50,6 +50,8 @@ let fetchMetadata: typeof import("@/lib/actions/digging").fetchLinkMeta = async 
 let saveTrackValue: typeof import("@/lib/actions/digging").updateDiggingTrackValue = async () => {};
 let DiggingBoard: typeof import("@/components/digging/DiggingBoard").DiggingBoard;
 let toggleModule: typeof import("@/lib/actions/curriculum").toggleModuleComplete = async () => {};
+let editModule: typeof import("@/lib/actions/curriculum").updateModule = async () => ({ success: true });
+let OverviewTab: typeof import("@/components/admin/OverviewTab").OverviewTab;
 let loadStudentCalendar: typeof import("@/lib/actions/unifiedItems").getUnifiedItemsForStudent = async () => [];
 let login: typeof import("@/lib/actions/session").loginWithCredentials = async () => ({});
 let loadCategoryPosts: typeof import("@/lib/actions/posts").getPostsByCategory = async () => [];
@@ -110,7 +112,13 @@ mock.module("@/lib/actions/lessons", { namedExports: {
   rescheduleLesson: (...args: Parameters<typeof moveLesson>) => moveLesson(...args),
   deleteLesson: (...args: Parameters<typeof removeLesson>) => removeLesson(...args),
 } });
-mock.module("@/lib/actions/curriculum", { namedExports: { toggleModuleComplete: (...args: Parameters<typeof toggleModule>) => toggleModule(...args) } });
+mock.module("@/lib/actions/curriculum", { namedExports: {
+  toggleModuleComplete: (...args: Parameters<typeof toggleModule>) => toggleModule(...args),
+  createModule: async () => ({ success: true }),
+  updateModule: (...args: Parameters<typeof editModule>) => editModule(...args),
+  deleteModule: async () => {},
+} });
+mock.module("@/lib/actions/calendarFeed", { namedExports: { issueStudentCalendarFeedUrl: async () => "/api/calendar/feed?token=test" } });
 mock.module("@/lib/actions/digging", { namedExports: {
   getOrSeedColumns: async () => [],
   createDiggingTrack: (...args: Parameters<typeof saveTrack>) => saveTrack(...args),
@@ -198,6 +206,7 @@ before(async () => {
   ({ StudentPortalClient } = await import("@/components/student-portal/StudentPortalClient"));
   ({ LoginForm } = await import("@/components/auth/LoginForm"));
   ({ default: CommunityClient } = await import("@/app/community/CommunityClient"));
+  ({ OverviewTab } = await import("@/components/admin/OverviewTab"));
 });
 
 after(() => {
@@ -1189,4 +1198,25 @@ test("a submission without feedback is deleted only after a cancel-first confirm
   assert.deepEqual(requests, ["mistake", "mistake"]);
   assert.match(browser.document.querySelector('[role="status"]')?.textContent ?? "", /제출을 삭제했습니다/u);
   assert.equal([...browser.document.querySelectorAll("button")].some((element) => element.textContent?.includes("YouTube 믹스셋")), false);
+});
+
+test("admin module edit keeps input on refusal and returns focus to the row after saving", async (context) => {
+  const requests: [string, string, string | null, string | null][] = [];
+  editModule = async (moduleId, studentId, _previous, data) => {
+    requests.push([moduleId, studentId, data.get("weekNum") as string | null, data.get("title") as string | null]);
+    return requests.length === 1 ? { error: "주차는 1부터 520 사이의 정수로 입력해 주세요." } : { success: true };
+  };
+  context.after(() => { editModule = async () => ({ success: true }); });
+  await render(context, <OverviewTab studentId="student-1" lessons={[]} modules={[{ id: "module-1", weekNum: 1, title: "비트 매칭", isCompleted: true }]} />);
+  await press("비트 매칭 모듈 수정");
+  assert.equal(browser.document.activeElement, browser.document.getElementById("module-edit-module-1-title"));
+  await fill("module-edit-module-1-title", "EQ 전환");
+  await press("저장");
+  assert.match(browser.document.querySelector('[role="alert"]')?.textContent ?? "", /주차는/u);
+  assert.equal((browser.document.getElementById("module-edit-module-1-title") as unknown as HTMLInputElement).value, "EQ 전환");
+  await press("저장");
+  await act(async () => { await new Promise((resolve) => browser.requestAnimationFrame(() => resolve(undefined))); });
+  assert.deepEqual(requests, [["module-1", "student-1", "1", "EQ 전환"], ["module-1", "student-1", "1", "EQ 전환"]]);
+  assert.equal(browser.document.getElementById("module-edit-module-1-title"), null);
+  assert.equal(browser.document.activeElement, browser.document.getElementById("module-edit-trigger-module-1"));
 });
