@@ -96,11 +96,11 @@ function SubmitForm({ onSuccess }: { onSuccess: () => Promise<void> }) {
           className="flex-1"
         />
         <Button type="submit" disabled={isPending} className="gap-1.5">
-          <Upload className="w-4 h-4" />
+          <Upload className="w-4 h-4" aria-hidden="true" />
           {isPending ? "제출 중..." : "제출"}
         </Button>
       </div>
-      <p className="text-xs text-muted-foreground">YouTube와 SoundCloud 링크를 지원합니다.</p>
+      <p className="text-xs text-muted-foreground">YouTube 영상·Shorts·라이브와 SoundCloud 트랙·세트 링크를 지원합니다.</p>
       {state.error && <p role="alert" className="text-sm text-destructive">{state.error}</p>}
       {state.success && <p role="status" className="text-sm text-success">믹스셋을 제출했습니다.</p>}
     </form>

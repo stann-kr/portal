@@ -16,17 +16,7 @@ import {
   assertOwnerOrAdmin,
   requireStudentTarget,
 } from "@/lib/auth-guard";
-
-/** 지원하는 미디어 플랫폼 URL 패턴 */
-const MEDIA_URL_PATTERNS = [
-  /^https?:\/\/(www\.)?youtube\.com\/watch/,
-  /^https?:\/\/youtu\.be\//,
-  /^https?:\/\/(www\.)?soundcloud\.com\//,
-];
-
-function isValidMediaUrl(url: string): boolean {
-  return MEDIA_URL_PATTERNS.some((p) => p.test(url));
-}
+import { normalizeAssignmentMediaUrl } from "@/lib/assignment-media-url";
 
 // ───────────────────────────────────────────────
 // 학생: 과제 제출
@@ -51,12 +41,8 @@ export async function submitAssignment(
   if (session.user.role !== "student")
     return { error: "학생만 과제를 제출할 수 있습니다." };
 
-  const mediaUrl = (formData.get("mediaUrl") as string)?.trim();
-
-  if (!mediaUrl) return { error: "미디어 URL을 입력해주세요." };
-  if (!isValidMediaUrl(mediaUrl)) {
-    return { error: "YouTube 또는 SoundCloud URL만 지원합니다." };
-  }
+  const media = normalizeAssignmentMediaUrl(formData.get("mediaUrl"));
+  if (!media.ok) return { error: media.error };
 
   const db = createDb();
   const id = crypto.randomUUID();
@@ -64,7 +50,7 @@ export async function submitAssignment(
   await db.insert(assignments).values({
     id,
     studentId: session.user.id!,
-    mediaUrl,
+    mediaUrl: media.url,
   });
 
   revalidatePath("/dashboard/student/assignments");

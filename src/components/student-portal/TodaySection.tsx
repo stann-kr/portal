@@ -144,7 +144,7 @@ export function TodaySection({
               {priorityItems.map(({ item, status }, index) => {
                 const isAssignment = item.type === "ASSIGNMENT";
                 const href = isAssignment
-                  ? `/dashboard/student/assignments/${item.id}`
+                  ? `/dashboard/student/assignments/${encodeURIComponent(item.id)}?returnTo=%2Fdashboard%2Fstudent%3Fsection%3Dtoday`
                   : `/dashboard/qna/${item.id}?returnTo=%2Fdashboard%2Fstudent%3Fsection%3Dtoday`;
                 const title = item.title;
 
