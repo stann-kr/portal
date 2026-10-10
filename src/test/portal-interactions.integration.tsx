@@ -625,13 +625,14 @@ test("student portal reflects new server records and removals without a full rel
     announcements={[]} unifiedItems={items} communityPosts={[]} curriculumModules={[]} assignments={[]}
     studentId="student" displayName="학생" spaceLabel="학생" externalCalendarConnection={{ connected: false }} referenceTime={new Date()}
   />;
+  const assignmentLink = (id: string) => browser.document.querySelector(`a[href="/dashboard/student/assignments/${id}?returnTo=%2Fdashboard%2Fstudent%3Fsection%3Dtoday"]`);
   const root = await render(context, portal([item]));
-  assert.ok(browser.document.querySelector('a[href="/dashboard/student/assignments/before"]'));
+  assert.ok(assignmentLink("before"));
   await act(async () => root.render(portal([{ ...item, id: "after" }])));
-  assert.ok(browser.document.querySelector('a[href="/dashboard/student/assignments/after"]'));
-  assert.equal(browser.document.querySelector('a[href="/dashboard/student/assignments/before"]'), null);
+  assert.ok(assignmentLink("after"));
+  assert.equal(assignmentLink("before"), null);
   await act(async () => root.render(portal([])));
-  assert.equal(browser.document.querySelector('a[href="/dashboard/student/assignments/after"]'), null);
+  assert.equal(assignmentLink("after"), null);
 });
 
 test("event save protects every dismissal path while pending and keeps input after an error", async (context) => {
