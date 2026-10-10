@@ -1236,7 +1236,8 @@ test("password change keeps typed values on a refused field and confirms success
   context.after(() => { changePassword = async () => ({ success: true }); });
   await render(context, <PasswordChangeControl />);
   await press("비밀번호 변경");
-  const inputs = () => [...browser.document.querySelectorAll<HTMLInputElement>('[role="dialog"] input[type="password"]')];
+  const inputs = () => [...browser.document.querySelectorAll('[role="dialog"] input[type="password"]')]
+    .filter((element) => element instanceof browser.HTMLInputElement) as InstanceType<typeof browser.HTMLInputElement>[];
   assert.equal(inputs().length, 3);
   const setter = Object.getOwnPropertyDescriptor(browser.HTMLInputElement.prototype, "value")?.set;
   for (const [index, value] of ["wrong-password", "second-password", "second-password"].entries()) {
@@ -1245,7 +1246,7 @@ test("password change keeps typed values on a refused field and confirms success
       inputs()[index].dispatchEvent(new browser.Event("input", { bubbles: true }));
     });
   }
-  const submit = () => [...browser.document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button[type="submit"]')][0];
+  const submit = () => browser.document.querySelector('[role="dialog"] button[type="submit"]') as InstanceType<typeof browser.HTMLButtonElement>;
   await act(async () => submit().click());
   await settle();
   assert.match(browser.document.querySelector('[role="dialog"] [role="alert"]')?.textContent ?? "", /현재 비밀번호가 올바르지 않습니다/u);
