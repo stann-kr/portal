@@ -291,7 +291,7 @@ export function TimelineFeedback({
               </button>
 
               {/* 피드백 내용 */}
-              <p className="flex-1 text-sm leading-relaxed">{fb.content}</p>
+              <p className="min-w-0 flex-1 break-words text-sm leading-relaxed">{fb.content}</p>
 
               {/* 삭제 버튼 (Admin only) */}
               {isAdmin && (

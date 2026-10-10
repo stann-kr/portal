@@ -31,7 +31,7 @@ const foregroundUtilityPattern = /(?<![\w-])(?:bg|text|border|ring|fill|stroke|o
 const mainOwners = [];
 const forbiddenPatterns = [
   { label: "hardcoded hex color", pattern: /#[0-9a-f]{3,8}\b/giu },
-  { label: "raw semantic Tailwind color", pattern: /\b(?:text|bg|border|ring)-(?:red|green|blue|yellow|orange|purple|pink|gray|slate|zinc|neutral|stone)-[0-9]{2,3}(?:\/\d{1,3})?\b/gu },
+  { label: "raw semantic Tailwind color", pattern: /\b(?:text|bg|border|ring)-(?:red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose|gray|slate|zinc|neutral|stone)-[0-9]{2,3}(?:\/\d{1,3})?\b/gu },
   { label: "unbounded overlay shadow", pattern: /\bshadow-2xl\b/gu },
 ];
 

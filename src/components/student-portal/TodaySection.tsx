@@ -82,7 +82,7 @@ export function TodaySection({
     <div className="mx-auto w-full max-w-[1180px] space-y-8 px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
       <div>
         <p className="text-sm text-muted-foreground">{formatDay(referenceTime)}</p>
-        <h1 className="mt-1 text-2xl font-semibold tracking-[-0.03em] text-foreground sm:text-3xl">
+        <h1 className="mt-1 break-words text-2xl font-semibold tracking-[-0.03em] text-foreground sm:text-3xl">
           {safeName}님, 오늘의 흐름입니다.
         </h1>
       </div>

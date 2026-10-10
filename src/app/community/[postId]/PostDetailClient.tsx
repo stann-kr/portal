@@ -98,8 +98,8 @@ export function PostDetailClient({
         >
           <ArrowLeft className="w-4 h-4" aria-hidden="true" /> 이전 화면으로 돌아가기
         </Link>
-        <div className="flex items-start justify-between gap-4 mt-2">
-          <h1 className="text-2xl font-semibold">{post.title}</h1>
+        <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+          <h1 className="min-w-0 break-words text-2xl font-semibold">{post.title}</h1>
           <div className="flex shrink-0 items-center gap-1">
             {canEditPost ? (
               <Button
@@ -133,7 +133,7 @@ export function PostDetailClient({
                 className="text-destructive hover:bg-destructive/10"
                 aria-label="게시물 삭제"
               >
-                <Trash2 className="h-4 w-4" />
+                <Trash2 className="h-4 w-4" aria-hidden="true" />
               </Button>
             ) : null}
           </div>

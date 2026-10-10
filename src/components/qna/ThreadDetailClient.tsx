@@ -294,7 +294,7 @@ function ThreadDetailContent({
 
         <div className="flex items-start gap-3">
           <div className="min-w-0 flex-1">
-            <h1 className="text-xl font-semibold text-foreground">{title}</h1>
+            <h1 className="break-words text-xl font-semibold text-foreground">{title}</h1>
             <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
               {isAdmin ? <span>{studentName} /</span> : null}
               <span>

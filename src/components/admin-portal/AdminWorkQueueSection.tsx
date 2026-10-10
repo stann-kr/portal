@@ -20,9 +20,11 @@ import {
 } from "@/lib/admin-work-queue";
 import type { StudentRosterStat } from "@/lib/actions/students";
 import { describeAssignmentMedia } from "@/lib/unified-item-normalization";
+import { formatKst } from "@/lib/kst-format";
+import { buildQnaListHref } from "@/lib/qna-routes";
 
 const QUEUE_PREVIEW_COUNT = 5;
-import { formatKst } from "@/lib/kst-format";
+const WORK_QUEUE_PATH = "/dashboard/admin?section=work";
 
 function formatDay(date: Date) {
   return formatKst(date, { month: "long", day: "numeric", weekday: "long" });
@@ -117,7 +119,7 @@ export function AdminWorkQueueSection({
             description="오래 기다린 질문부터 표시합니다."
             action={
               <Button asChild variant="ghost" size="sm">
-                <Link href="/dashboard/qna">전체 Q&A</Link>
+                <Link href={buildQnaListHref(WORK_QUEUE_PATH)}>전체 Q&A</Link>
               </Button>
             }
             className="mb-4"
@@ -133,7 +135,7 @@ export function AdminWorkQueueSection({
               {queue.openThreads.map((thread, index) => (
                 <Link
                   key={thread.id}
-                  href={`/dashboard/qna/${thread.id}?returnTo=%2Fdashboard%2Fadmin%3Fsection%3Dwork`}
+                  href={`/dashboard/qna/${thread.id}?returnTo=${encodeURIComponent(WORK_QUEUE_PATH)}`}
                   className={`grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 px-4 py-4 transition-colors hover:bg-muted focus-visible:bg-muted sm:flex sm:gap-3 sm:px-5 ${
                     index > 0 ? "border-t border-border" : ""
                   }`}
@@ -152,6 +154,13 @@ export function AdminWorkQueueSection({
               ))}
             </div>
           )}
+          {queue.metrics.openThreadCount > queue.openThreads.length ? (
+            <Button asChild variant="ghost" size="sm" className="mt-2">
+              <Link href={buildQnaListHref(WORK_QUEUE_PATH, "OPEN")}>
+                미답변 {queue.metrics.openThreadCount}건 모두 보기
+              </Link>
+            </Button>
+          ) : null}
         </section>
 
         <section aria-labelledby="pending-feedback-heading" className="min-w-0">
@@ -172,7 +181,7 @@ export function AdminWorkQueueSection({
               {visiblePendingAssignments.map((assignment, index) => (
                 <Link
                   key={assignment.id}
-                  href={`/dashboard/student/assignments/${encodeURIComponent(assignment.id)}?returnTo=%2Fdashboard%2Fadmin%3Fsection%3Dwork`}
+                  href={`/dashboard/student/assignments/${encodeURIComponent(assignment.id)}?returnTo=${encodeURIComponent(WORK_QUEUE_PATH)}`}
                   className={`grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 px-4 py-4 transition-colors hover:bg-muted focus-visible:bg-muted sm:flex sm:gap-3 sm:px-5 ${
                     index > 0 ? "border-t border-border" : ""
                   }`}

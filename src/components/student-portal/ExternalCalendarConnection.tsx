@@ -90,7 +90,7 @@ export function ExternalCalendarConnection({ connection }: { connection: Externa
           </Button>
         </form>
         {state.error ? <p id="external-calendar-error" className="mt-2 text-xs text-destructive" role="alert" aria-live="assertive" aria-atomic="true">{state.error}</p> : null}
-        {state.success ? <p className="mt-2 text-xs text-emerald-700 dark:text-emerald-300" role="status" aria-live="polite" aria-atomic="true">{state.success}</p> : null}
+        {state.success ? <p className="mt-2 text-xs text-success" role="status" aria-live="polite" aria-atomic="true">{state.success}</p> : null}
       </div>
     </details>
   );

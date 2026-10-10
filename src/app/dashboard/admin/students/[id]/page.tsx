@@ -167,10 +167,10 @@ export default async function StudentDetailPage({
         <Link href="/dashboard/admin?section=students" className="inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground">
           <ArrowLeft className="size-4" aria-hidden="true" />학생 목록으로 돌아가기
         </Link>
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">
+        <h1 className="break-words text-2xl font-semibold tracking-tight text-foreground">
           {student.displayName ?? student.email}
         </h1>
-        <p className="text-sm text-muted-foreground mt-0.5">{student.email}</p>
+        <p className="mt-0.5 break-all text-sm text-muted-foreground">{student.email}</p>
       </div>
 
       {/* 탭 네비게이션 */}

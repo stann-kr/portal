@@ -59,11 +59,11 @@ export default async function NotePage({
           이전 작업으로 돌아가기
         </Link>
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
+          <div className="min-w-0">
             <p className="text-xs text-muted-foreground">
               {note.authorName ?? "작성자 미상"} · {formatKst(note.noteDate ?? note.createdAt, { year: "numeric", month: "numeric", day: "numeric" }, "날짜 정보 없음")}
             </p>
-            <h1 className="mt-1 text-2xl font-semibold tracking-tight">{note.title}</h1>
+            <h1 className="mt-1 break-words text-2xl font-semibold tracking-tight">{note.title}</h1>
           </div>
           <div className="flex items-center gap-2">
             <Link
