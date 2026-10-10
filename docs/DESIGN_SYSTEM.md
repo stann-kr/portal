@@ -29,7 +29,7 @@ Token은 `src/app/globals.css`의 Tailwind theme layer에 정의한다. 화면 �
 | Action | `primary`, `primary-foreground`, `accent`, `accent-foreground` | 주요 행동·선택 상태 |
 | Semantic | `success`, `warning`, `destructive`, `info`와 각 `*-muted`, 위험 동작 버튼 글자색 `destructive-foreground` | 완료·대기·오류·정보 |
 
-운영체제의 `prefers-color-scheme`에 따라 같은 semantic token의 dark 값이 적용된다. 개별 section이 임의로 theme를 반전하지 않는다.
+운영체제의 `prefers-color-scheme`에 따라 같은 semantic token의 dark 값이 적용된다. 개별 section이 임의로 theme를 반전하지 않는다. 일정·통합 항목 유형 색(`event-*`, `item-*`)도 dark에서 밝은 값으로 바뀌어 어두운 면의 아이콘이 3:1 이상 대비를 가지며, 이때 캘린더 일정 블록의 글자는 배경색 계열의 어두운 색을 사용한다.
 
 ### Shape
 

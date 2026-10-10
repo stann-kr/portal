@@ -5,6 +5,13 @@
   --fc-list-event-hover-bg-color: var(--color-accent);
 }
 
+/* 다크 모드의 일정 색은 밝은 값이므로 블록 글자는 어두운 배경색으로 대비를 맞춘다. */
+@media (prefers-color-scheme: dark) {
+  .fc-custom {
+    --fc-event-text-color: var(--color-background);
+  }
+}
+
 /* Keep date navigation and view controls reachable beside the mobile side rail. */
 @media (max-width: 40rem) {
   .fc-custom .fc-button {

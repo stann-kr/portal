@@ -97,6 +97,15 @@
     --color-destructive-muted: #48282c;
     --color-info: #8eb9cf;
     --color-info-muted: #263b46;
+    /* 어두운 면 위의 아이콘·일정 블록이 보이도록 밝힌 값. 블록 글자색은 unified-calendar.css가 맞춘다. */
+    --color-event-lesson: #8eb9cf;
+    --color-event-practice: #82c6a3;
+    --color-event-gig: #e78c94;
+    --color-event-note: #e0b364;
+    --color-item-note: #b9a6cf;
+    --color-item-digging: #d39ab3;
+    --color-item-qna: #d78b63;
+    --color-item-assignment: #86c2c6;
     --shadow-floating: 0 12px 32px rgb(0 0 0 / 0.3);
     --shadow-overlay: 0 24px 72px rgb(0 0 0 / 0.46);
   }
