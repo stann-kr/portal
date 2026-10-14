@@ -27,21 +27,21 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
     const Comp = asChild ? Slot : "button";
 
     const baseClass =
-      "inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium transition-all focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary disabled:pointer-events-none disabled:opacity-50";
+      "inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium transition-[background-color,border-color,color,translate] duration-[var(--duration-fast)] ease-studio active:translate-y-px motion-reduce:transition-none motion-reduce:active:translate-y-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50 disabled:active:translate-y-0";
 
     const variants: Record<NonNullable<ButtonProps["variant"]>, string> = {
       default:
-        "bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm",
-      secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/80",
-      outline: "border border-border text-foreground hover:bg-accent",
-      ghost: "hover:bg-accent hover:text-accent-foreground",
+        "bg-primary text-primary-foreground hover:bg-primary/90",
+      secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/70",
+      outline: "border border-border bg-background text-foreground hover:bg-accent hover:border-border/80",
+      ghost: "text-foreground hover:bg-accent",
     };
 
     const sizes: Record<NonNullable<ButtonProps["size"]>, string> = {
-      default: "h-9 px-4 py-2",
-      sm: "h-8 rounded-md px-3 text-xs",
-      lg: "h-10 rounded-md px-8",
-      icon: "h-9 w-9",
+      default: "h-8 px-3.5 py-2",
+      sm: "h-7 rounded-md px-2.5 text-xs",
+      lg: "h-9 rounded-md px-6",
+      icon: "h-8 w-8",
     };
 
     return (

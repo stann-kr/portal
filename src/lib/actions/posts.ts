@@ -1,144 +1,687 @@
-/**
- * @file src/lib/actions/posts.ts
- * @description 커뮤니티 게시물 CRUD 서버 액션.
- * 작성: 모든 인증 사용자.
- * 수정/삭제: 본인 글만.
- */
+/** Community post query와 revision/trash lifecycle server action. */
 "use server";
 
+import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { auth } from "@/auth";
-import { createDb } from "@/db/client";
-import { posts, profiles } from "@/db/schema";
-import { and, eq, desc } from "drizzle-orm";
+import { createDb, createDbContext } from "@/db/client";
+import { categories, postRevisions, posts, profiles, type BoardType } from "@/db/schema";
+import { assertOwnerOrAdmin, requireAuth } from "@/lib/auth-guard";
+import {
+  CREATION_OPERATION_FIELD,
+  deriveCreationResourceId,
+  resolveCreationOperationId,
+} from "@/lib/creation-operation";
+import {
+  DOCUMENT_SNAPSHOT_FINGERPRINT_FIELD,
+  createDocumentSnapshotFingerprint,
+  isDocumentSnapshotFingerprint,
+} from "@/lib/document-snapshot-fingerprint";
+import {
+  createPostAtomically,
+  preflightLegacyPostCreateReplay,
+  purgePostAtomically,
+  restorePostRevisionAtomically,
+  restoreTrashedPostAtomically,
+  setPostPinAtomically,
+  trashPostAtomically,
+  updatePostAtomically,
+  type PostMutationFailureReason,
+  type PostMutationResult,
+} from "@/lib/post-atomic";
+import {
+  POST_BASE_REVISION_FIELD,
+  POST_MAX_CONTENT_LABEL,
+  POST_MAX_TITLE_LENGTH,
+  POST_TRASH_RETENTION_SECONDS,
+  isPostContentWithinLimit,
+  parsePostRevision,
+} from "@/lib/post-continuity";
+import {
+  COMMUNITY_PAGE_SIZE,
+  COMMUNITY_PREVIEW_SOURCE_CHARS,
+  decodeCommunityPostCursor,
+  encodeCommunityPostCursor,
+} from "@/lib/community-post-page";
+import { isRichTextEmpty } from "@/lib/rich-text";
+import { safeReturnPath } from "@/lib/safe-return-path";
+import { sanitizeHtml } from "@/lib/sanitize-html";
+import {
+  findOwnedMediaObject,
+  processMediaDeletionOutboxBestEffort,
+} from "@/lib/media-lifecycle-atomic";
+import { mediaDeliveryPath, parseMediaUuidV4 } from "@/lib/media-lifecycle";
 
-const VALID_CATEGORIES = [
-  "gear-and-setup",
-  "track-id",
-  "terminal-info",
-  "general",
-] as const;
-type Category = (typeof VALID_CATEGORIES)[number];
+const VALID_BOARD_TYPES: readonly BoardType[] = ["ANNOUNCEMENT", "GENERAL", "FEEDBACK"];
 
-async function requireAuth() {
-  const session = await auth();
-  console.log("[posts] Checking auth session. User ID exists:", !!session?.user?.id);
-  if (!session?.user?.id) {
-    console.warn("[posts] Authorization failed: Session or User ID missing");
-    throw new Error("Unauthorized");
+const POST_SELECT = {
+  id: posts.id,
+  authorId: posts.authorId,
+  category: posts.category,
+  boardType: posts.boardType,
+  isPinned: posts.isPinned,
+  mediaUrl: posts.mediaUrl,
+  mediaObjectId: posts.mediaObjectId,
+  title: posts.title,
+  contentHtml: posts.contentHtml,
+  createdAt: posts.createdAt,
+  updatedAt: posts.updatedAt,
+  version: posts.version,
+  deletedAt: posts.deletedAt,
+  authorName: profiles.displayName,
+  authorEmail: profiles.email,
+} as const;
+
+function lifecycleError(reason: PostMutationFailureReason): string {
+  switch (reason) {
+    case "VERSION_CONFLICT":
+      return "다른 화면에서 이 게시물이 먼저 변경되었습니다. 현재 초안은 유지됩니다.";
+    case "TRASHED":
+      return "이 게시물은 휴지통에 있습니다.";
+    case "PURGED":
+      return "이 게시물은 영구 삭제되어 다시 저장할 수 없습니다.";
+    case "OPERATION_PAYLOAD_CONFLICT":
+      return "같은 작업 식별자가 다른 내용에 이미 사용되었습니다.";
+    case "OPERATION_VERSION_UNSUPPORTED":
+      return "오래된 저장 요청을 확인할 수 없습니다. 페이지를 새로고침해 주세요.";
+    case "RETENTION_NOT_EXPIRED":
+      return "휴지통 보존 기간이 끝난 뒤에만 영구 삭제할 수 있습니다.";
+    case "RETENTION_EXPIRED":
+      return "복원 가능 기간이 지났습니다.";
+    case "NOT_FOUND_OR_FORBIDDEN":
+      return "게시물을 찾을 수 없거나 권한이 없습니다.";
+    case "INTERNAL_INVARIANT_FAILURE":
+      return "게시물 상태를 안전하게 변경하지 못했습니다. 다시 시도해 주세요.";
   }
-  return session;
 }
 
-// ───────────────────────────────────────────────
-// 조회
-// ───────────────────────────────────────────────
+function actor(session: Awaited<ReturnType<typeof requireAuth>>) {
+  return { id: session.user.id!, isAdmin: session.user.role === "admin" };
+}
+
+function revalidatePostPaths(postId?: string) {
+  revalidatePath("/community");
+  revalidatePath("/community/trash");
+  if (postId) {
+    revalidatePath(`/community/${postId}`);
+    revalidatePath(`/community/${postId}/history`);
+  }
+  revalidatePath("/dashboard/student");
+  revalidatePath("/dashboard/admin");
+}
+
+export async function getPostsByBoardType(boardType: BoardType) {
+  await requireAuth();
+  return createDb()
+    .select(POST_SELECT)
+    .from(posts)
+    .leftJoin(profiles, eq(posts.authorId, profiles.id))
+    .where(and(eq(posts.boardType, boardType), isNull(posts.deletedAt)))
+    .orderBy(desc(posts.isPinned), desc(posts.createdAt));
+}
+
+const POST_SUMMARY_SELECT = {
+  id: posts.id,
+  title: posts.title,
+  boardType: posts.boardType,
+  isPinned: posts.isPinned,
+  createdAt: posts.createdAt,
+  authorName: profiles.displayName,
+  authorEmail: profiles.email,
+} as const;
+
+const POST_SUMMARY_MAX_LIMIT = 50;
+
+function clampSummaryLimit(limit: number): number {
+  return Number.isSafeInteger(limit) ? Math.min(Math.max(limit, 1), POST_SUMMARY_MAX_LIMIT) : 1;
+}
+
+/** 대시보드 미리보기용: 본문 없이 최근 자유·피드백 게시물만 개수 제한해 읽는다. */
+export async function getRecentCommunityPostSummaries(limit = 20) {
+  await requireAuth();
+  return createDb()
+    .select(POST_SUMMARY_SELECT)
+    .from(posts)
+    .leftJoin(profiles, eq(posts.authorId, profiles.id))
+    .where(and(inArray(posts.boardType, ["GENERAL", "FEEDBACK"]), isNull(posts.deletedAt)))
+    .orderBy(desc(posts.createdAt))
+    .limit(clampSummaryLimit(limit));
+}
+
+/** 학생 오늘 화면용: 고정 공지 우선·최신순 공지 제목만 개수 제한해 읽는다. */
+export async function getAnnouncementSummaries(limit = 3) {
+  await requireAuth();
+  return createDb()
+    .select(POST_SUMMARY_SELECT)
+    .from(posts)
+    .leftJoin(profiles, eq(posts.authorId, profiles.id))
+    .where(and(eq(posts.boardType, "ANNOUNCEMENT"), isNull(posts.deletedAt)))
+    .orderBy(desc(posts.isPinned), desc(posts.createdAt))
+    .limit(clampSummaryLimit(limit));
+}
 
 /**
- * 카테고리별 게시물 목록 조회 (최신순, 작성자 정보 포함).
+ * 커뮤니티 목록 한 페이지. 공지·믹스셋은 고정 우선, 자유 게시판은 채널별 최신순이며
+ * (고정 여부, 작성 시각, ID) keyset으로 다음 페이지를 이어 읽는다. 공지는 펼쳐 읽는 본문 전체를,
+ * 자유·믹스셋은 미리보기에 필요한 본문 앞부분만 보낸다.
  */
-export async function getPostsByCategory(category: Category) {
-  const db = createDb();
-  return db
+export async function getCommunityPostPage(input: {
+  boardType: BoardType;
+  category?: string | null;
+  cursor?: string | null;
+}) {
+  await requireAuth();
+  const { boardType } = input;
+  if (!VALID_BOARD_TYPES.includes(boardType)) throw new Error("Invalid board type");
+  const cursor = input.cursor ? decodeCommunityPostCursor(input.cursor) : null;
+  if (input.cursor && !cursor) throw new Error("Invalid community cursor");
+  const category = boardType === "GENERAL" ? input.category?.trim() ?? "" : "";
+  if (boardType === "GENERAL" && !category) return { posts: [], nextCursor: null };
+
+  const ordersByPin = boardType !== "GENERAL";
+  const pinnedKey = sql<number>`(CASE WHEN ${posts.isPinned} THEN 1 ELSE 0 END)`;
+  const createdKey = sql<number>`coalesce(${posts.createdAt}, 0)`;
+  const afterCreated = cursor
+    ? sql`(${createdKey} < ${cursor.createdAt} OR (${createdKey} = ${cursor.createdAt} AND ${posts.id} < ${cursor.id}))`
+    : undefined;
+  const afterCursor = cursor && ordersByPin
+    ? sql`(${pinnedKey} < ${cursor.pinned} OR (${pinnedKey} = ${cursor.pinned} AND ${afterCreated}))`
+    : afterCreated;
+
+  const rows = await createDb()
     .select({
-      id: posts.id,
-      authorId: posts.authorId,
-      category: posts.category,
-      title: posts.title,
-      contentHtml: posts.contentHtml,
-      createdAt: posts.createdAt,
-      authorName: profiles.displayName,
-      authorEmail: profiles.email,
+      ...POST_SELECT,
+      contentHtml: boardType === "ANNOUNCEMENT"
+        ? posts.contentHtml
+        : sql<string>`substr(${posts.contentHtml}, 1, ${COMMUNITY_PREVIEW_SOURCE_CHARS})`,
+      pinnedKey,
+      createdKey,
     })
     .from(posts)
     .leftJoin(profiles, eq(posts.authorId, profiles.id))
-    .where(eq(posts.category, category))
-    .orderBy(desc(posts.createdAt));
+    .where(and(
+      eq(posts.boardType, boardType),
+      isNull(posts.deletedAt),
+      category ? eq(posts.category, category) : undefined,
+      afterCursor,
+    ))
+    .orderBy(...(ordersByPin ? [desc(pinnedKey)] : []), desc(createdKey), desc(posts.id))
+    .limit(COMMUNITY_PAGE_SIZE + 1);
+
+  const pageRows = rows.slice(0, COMMUNITY_PAGE_SIZE);
+  const last = pageRows.at(-1);
+  return {
+    posts: pageRows.map(({ pinnedKey, createdKey, ...post }) => {
+      void pinnedKey;
+      void createdKey;
+      return post;
+    }),
+    nextCursor: rows.length > COMMUNITY_PAGE_SIZE && last
+      ? encodeCommunityPostCursor({
+        pinned: ordersByPin && Number(last.pinnedKey) === 1 ? 1 : 0,
+        createdAt: Number(last.createdKey),
+        id: last.id,
+      })
+      : null,
+  };
 }
 
-/**
- * 게시물 단건 조회 (작성자 정보 포함).
- */
 export async function getPostById(postId: string) {
-  const db = createDb();
-  const rows = await db
-    .select({
-      id: posts.id,
-      authorId: posts.authorId,
-      category: posts.category,
-      title: posts.title,
-      contentHtml: posts.contentHtml,
-      createdAt: posts.createdAt,
-      authorName: profiles.displayName,
-      authorEmail: profiles.email,
-    })
+  await requireAuth();
+  const [post] = await createDb()
+    .select(POST_SELECT)
+    .from(posts)
+    .leftJoin(profiles, eq(posts.authorId, profiles.id))
+    .where(and(eq(posts.id, postId), isNull(posts.deletedAt)))
+    .limit(1);
+  return post ?? null;
+}
+
+export async function getPostIncludingTrash(postId: string) {
+  const session = await requireAuth();
+  const [post] = await createDb()
+    .select(POST_SELECT)
     .from(posts)
     .leftJoin(profiles, eq(posts.authorId, profiles.id))
     .where(eq(posts.id, postId))
     .limit(1);
-  return rows[0] ?? null;
+  if (!post) return null;
+  if (post.deletedAt) assertOwnerOrAdmin(session, post.authorId);
+  return post;
 }
 
-// ───────────────────────────────────────────────
-// 생성
-// ───────────────────────────────────────────────
+export async function getTrashedPosts() {
+  const session = await requireAuth();
+  const isAdmin = session.user.role === "admin";
+  const rows = await createDb()
+    .select(POST_SELECT)
+    .from(posts)
+    .leftJoin(profiles, eq(posts.authorId, profiles.id))
+    .where(
+      isAdmin
+        ? isNotNull(posts.deletedAt)
+        : and(eq(posts.authorId, session.user.id!), isNotNull(posts.deletedAt)),
+    )
+    .orderBy(desc(posts.deletedAt));
+  return rows.map((post) => ({
+    ...post,
+    purgeEligibleAt: post.deletedAt
+      ? new Date(post.deletedAt.getTime() + POST_TRASH_RETENTION_SECONDS * 1000)
+      : null,
+  }));
+}
 
-export type CreatePostState = { error?: string };
+export async function getPostRevisions(postId: string) {
+  const session = await requireAuth();
+  const post = await getPostIncludingTrash(postId);
+  if (!post) return [];
+  assertOwnerOrAdmin(session, post.authorId);
+  return createDb()
+    .select({
+      id: postRevisions.id,
+      revisionNumber: postRevisions.revisionNumber,
+      changeType: postRevisions.changeType,
+      category: postRevisions.category,
+      boardType: postRevisions.boardType,
+      isPinned: postRevisions.isPinned,
+      mediaUrl: postRevisions.mediaUrl,
+      mediaObjectId: postRevisions.mediaObjectId,
+      title: postRevisions.title,
+      contentHtml: postRevisions.contentHtml,
+      restoredFromRevision: postRevisions.restoredFromRevision,
+      actorId: postRevisions.actorId,
+      actorName: profiles.displayName,
+      createdAt: postRevisions.createdAt,
+    })
+    .from(postRevisions)
+    .leftJoin(profiles, eq(postRevisions.actorId, profiles.id))
+    .where(eq(postRevisions.postId, postId))
+    .orderBy(desc(postRevisions.revisionNumber));
+}
 
-/**
- * 게시물 작성.
- * @param _prev - useActionState 이전 상태
- * @param formData - { title, category, contentHtml }
- */
+export type CreatePostState = {
+  error?: string;
+  success?: boolean;
+  postId?: string;
+  currentRevision?: number;
+  operationConflict?: boolean;
+  conflictedOperationId?: string;
+  existingId?: string;
+};
+
 export async function createPost(
   _prev: CreatePostState,
   formData: FormData,
 ): Promise<CreatePostState> {
   const session = await requireAuth();
+  const authorId = session.user.id!;
+  const title = String(formData.get("title") ?? "").trim();
+  const rawHtml = String(formData.get("contentHtml") ?? "");
+  const categoryInput = String(formData.get("category") ?? "").trim();
+  const boardTypeInput = String(formData.get("boardType") ?? "GENERAL");
+  const returnTo = String(formData.get("returnTo") ?? "") || null;
+  if (!VALID_BOARD_TYPES.includes(boardTypeInput as BoardType)) {
+    return { error: "올바른 게시판 유형을 선택해 주세요." };
+  }
+  const boardType = boardTypeInput as BoardType;
+  if (!title || isRichTextEmpty(rawHtml)) return { error: "제목과 내용은 필수입니다." };
+  if (title.length > POST_MAX_TITLE_LENGTH) {
+    return { error: `제목은 ${POST_MAX_TITLE_LENGTH}자 이하로 입력해 주세요.` };
+  }
+  const contentHtml = sanitizeHtml(rawHtml);
+  if (isRichTextEmpty(contentHtml)) return { error: "유효한 내용을 입력해 주세요." };
+  if (!isPostContentWithinLimit(contentHtml)) {
+    return { error: `게시물 본문은 ${POST_MAX_CONTENT_LABEL} 이하로 저장할 수 있습니다.` };
+  }
+  if (boardType === "ANNOUNCEMENT" && session.user.role !== "admin") {
+    return { error: "공지 작성은 관리자만 가능합니다." };
+  }
+  const operationId = resolveCreationOperationId(formData.get(CREATION_OPERATION_FIELD));
+  if (!operationId) {
+    return { error: "문서 생성 식별자가 올바르지 않습니다. 페이지를 새로고침해 주세요." };
+  }
 
-  const title = (formData.get("title") as string)?.trim();
-  const category = formData.get("category") as string;
-  const contentHtml = formData.get("contentHtml") as string;
+  let category = boardType.toLowerCase();
+  if (boardType === "GENERAL") {
+    const [existingCategory] = await createDb()
+      .select({ slug: categories.slug })
+      .from(categories)
+      .where(eq(categories.slug, categoryInput))
+      .limit(1);
+    if (!existingCategory) return { error: "존재하는 커뮤니티 채널을 선택해 주세요." };
+    category = existingCategory.slug;
+  }
+  const isPinnedRaw = formData.get("isPinned");
+  const isPinned =
+    boardType === "ANNOUNCEMENT" &&
+    (isPinnedRaw === "on" || isPinnedRaw === "true");
+  const postId = deriveCreationResourceId(
+    operationId,
+    JSON.stringify(["community-post", authorId]),
+  );
+  const rawMediaObjectId = String(formData.get("mediaObjectId") ?? "").trim();
+  const submittedLegacyUrl = String(formData.get("mediaUrl") ?? "").trim();
+  if (boardType !== "FEEDBACK" && (rawMediaObjectId || submittedLegacyUrl)) {
+    return { error: "믹스셋 게시물에서만 오디오를 첨부할 수 있습니다." };
+  }
 
-  if (!title) return { error: "제목을 입력해주세요." };
-  if (!VALID_CATEGORIES.includes(category as Category))
-    return { error: "유효하지 않은 카테고리입니다." };
-  if (!contentHtml || contentHtml === "<p></p>")
-    return { error: "내용을 입력해주세요." };
+  const mediaObjectId = rawMediaObjectId
+    ? parseMediaUuidV4(rawMediaObjectId)
+    : null;
+  if (rawMediaObjectId && !mediaObjectId) {
+    return { error: "첨부 오디오 식별자가 올바르지 않습니다. 다시 업로드해 주세요." };
+  }
 
-  const db = createDb();
-  const id = crypto.randomUUID();
+  const context = createDbContext();
+  const postActor = actor(session);
+  let mediaUrl: string | null = null;
+  if (submittedLegacyUrl && !mediaObjectId) {
+    const isExactLegacyReplay = await preflightLegacyPostCreateReplay(context, {
+      actor: postActor,
+      postId,
+      operationId,
+      snapshot: {
+        category,
+        boardType,
+        isPinned,
+        mediaUrl: submittedLegacyUrl,
+        mediaObjectId: null,
+        title,
+        contentHtml,
+      },
+    });
+    if (!isExactLegacyReplay) {
+      return { error: "이전 방식의 업로드는 소유권을 확인할 수 없습니다. 파일을 다시 업로드해 주세요." };
+    }
+    mediaUrl = submittedLegacyUrl;
+  } else if (mediaObjectId) {
+    const media = await findOwnedMediaObject(context, authorId, mediaObjectId);
+    const historicalAttachment =
+      media?.resourceType === "COMMUNITY_POST" && media.resourceId === postId;
+    if (
+      !media ||
+      media.purpose !== "COMMUNITY_POST_AUDIO" ||
+      media.draftOperationId !== operationId ||
+      (media.state !== "READY" && !historicalAttachment)
+    ) {
+      return { error: "첨부 오디오의 소유권이나 업로드 상태를 확인할 수 없습니다." };
+    }
+    mediaUrl = mediaDeliveryPath(mediaObjectId);
+  }
 
-  await db.insert(posts).values({
-    id,
-    authorId: session.user.id!,
-    category,
-    title,
-    contentHtml,
+  const result = await createPostAtomically(context, {
+    actor: postActor,
+    postId,
+    operationId,
+    snapshot: {
+      category,
+      boardType,
+      isPinned,
+      mediaUrl,
+      mediaObjectId,
+      title,
+      contentHtml,
+    },
+    now: new Date(),
   });
+  if (!result.ok) {
+    if (result.reason === "OPERATION_PAYLOAD_CONFLICT") {
+      return {
+        error: "이 초안은 다른 내용으로 이미 게시되었습니다. 기존 게시물을 열거나 별도 게시물로 분리해 주세요.",
+        operationConflict: true,
+        conflictedOperationId: operationId,
+        existingId: result.postId,
+      };
+    }
+    return { error: lifecycleError(result.reason) };
+  }
 
-  revalidatePath("/community");
-  redirect(`/community/${id}`);
+  revalidatePostPaths(result.postId);
+  if (returnTo === "student-portal" || returnTo === "community-editor") {
+    return {
+      success: true,
+      postId: result.postId,
+      currentRevision: result.currentRevision ?? undefined,
+    };
+  }
+  redirect(`/community/${result.postId}`);
 }
 
-// ───────────────────────────────────────────────
-// 삭제 (본인 글만)
-// ───────────────────────────────────────────────
+export type UpdatePostState = {
+  error?: string;
+  success?: boolean;
+  conflictKind?: PostMutationFailureReason;
+  currentRevision?: number;
+  replayed?: boolean;
+  post?: { id: string; title: string; contentHtml: string; version: number };
+  conflictPost?: { id: string; title: string; contentHtml: string; version: number };
+};
+
+export async function updatePostContent(
+  postId: string,
+  _prev: UpdatePostState,
+  formData: FormData,
+): Promise<UpdatePostState> {
+  const session = await requireAuth();
+  const [existing] = await createDb()
+    .select({
+      id: posts.id,
+      authorId: posts.authorId,
+      title: posts.title,
+      contentHtml: posts.contentHtml,
+      version: posts.version,
+      deletedAt: posts.deletedAt,
+    })
+    .from(posts)
+    .where(eq(posts.id, postId))
+    .limit(1);
+  if (!existing) return { error: "게시물을 찾을 수 없습니다." };
+  assertOwnerOrAdmin(session, existing.authorId);
+  if (existing.deletedAt) return { error: "휴지통 게시물은 수정할 수 없습니다." };
+
+  const operationId = resolveCreationOperationId(formData.get(CREATION_OPERATION_FIELD));
+  const baseRevision = parsePostRevision(formData.get(POST_BASE_REVISION_FIELD));
+  if (!operationId || !baseRevision) {
+    return { error: "저장 작업 정보를 확인할 수 없습니다. 페이지를 새로고침해 주세요." };
+  }
+  const baseFingerprint = formData.get(DOCUMENT_SNAPSHOT_FINGERPRINT_FIELD);
+  if (!isDocumentSnapshotFingerprint(baseFingerprint)) {
+    return { error: "편집 기준 정보를 확인할 수 없습니다. 페이지를 새로고침해 주세요." };
+  }
+  if (
+    baseRevision === existing.version &&
+    baseFingerprint !==
+      createDocumentSnapshotFingerprint({
+        kind: "community-post",
+        id: existing.id,
+        title: existing.title,
+        contentHtml: existing.contentHtml,
+        noteDate: null,
+      })
+  ) {
+    return {
+      error: "다른 기준본에서 시작한 초안입니다. 서버 최신본과 현재 초안 중 하나를 선택해 주세요.",
+      conflictKind: "VERSION_CONFLICT",
+      currentRevision: existing.version,
+      conflictPost: {
+        id: existing.id,
+        title: existing.title,
+        contentHtml: existing.contentHtml,
+        version: existing.version,
+      },
+    };
+  }
+
+  const title = String(formData.get("title") ?? "").trim();
+  const rawHtml = String(formData.get("contentHtml") ?? "");
+  if (!title || isRichTextEmpty(rawHtml)) return { error: "제목과 내용은 필수입니다." };
+  if (title.length > POST_MAX_TITLE_LENGTH) {
+    return { error: `제목은 ${POST_MAX_TITLE_LENGTH}자 이하로 입력해 주세요.` };
+  }
+  const contentHtml = sanitizeHtml(rawHtml);
+  if (isRichTextEmpty(contentHtml)) return { error: "유효한 게시물 내용을 입력해 주세요." };
+  if (!isPostContentWithinLimit(contentHtml)) {
+    return { error: `게시물 본문은 ${POST_MAX_CONTENT_LABEL} 이하로 저장할 수 있습니다.` };
+  }
+
+  const result = await updatePostAtomically(createDbContext(), {
+    actor: actor(session),
+    postId,
+    operationId,
+    baseRevision,
+    title,
+    contentHtml,
+    now: new Date(),
+  });
+  if (!result.ok) {
+    let conflictPost: UpdatePostState["conflictPost"];
+    if (result.reason === "VERSION_CONFLICT") {
+      [conflictPost] = await createDb()
+        .select({ id: posts.id, title: posts.title, contentHtml: posts.contentHtml, version: posts.version })
+        .from(posts)
+        .where(and(
+          eq(posts.id, postId),
+          isNull(posts.deletedAt),
+          session.user.role === "admin" ? undefined : eq(posts.authorId, session.user.id),
+        ))
+        .limit(1);
+    }
+    return {
+      error: lifecycleError(result.reason),
+      conflictKind: result.reason,
+      currentRevision: result.currentRevision,
+      conflictPost,
+    };
+  }
+  revalidatePostPaths(postId);
+  return {
+    success: true,
+    currentRevision: result.currentRevision ?? undefined,
+    replayed: result.replayed,
+    post: {
+      id: postId,
+      title,
+      contentHtml,
+      version: result.currentRevision ?? baseRevision,
+    },
+  };
+}
+
+export type PostLifecycleState = {
+  success: boolean;
+  error?: string;
+  conflictKind?: PostMutationFailureReason;
+  currentRevision?: number;
+  purged?: boolean;
+};
+
+function lifecycleState(result: PostMutationResult): PostLifecycleState {
+  return result.ok
+    ? {
+        success: true,
+        currentRevision: result.currentRevision ?? undefined,
+        purged: result.resourceState === "PURGED",
+      }
+    : {
+        success: false,
+        error: lifecycleError(result.reason),
+        conflictKind: result.reason,
+        currentRevision: result.currentRevision,
+      };
+}
+
+async function runPostLifecycle(
+  kind: "trash" | "restore" | "purge",
+  postId: string,
+  operationId: string,
+  baseRevision: number,
+): Promise<PostLifecycleState> {
+  const session = await requireAuth();
+  const write = {
+    actor: actor(session),
+    postId,
+    operationId,
+    baseRevision,
+    now: new Date(),
+  };
+  const result =
+    kind === "trash"
+      ? await trashPostAtomically(createDbContext(), write)
+      : kind === "restore"
+        ? await restoreTrashedPostAtomically(createDbContext(), write)
+        : await purgePostAtomically(createDbContext(), write);
+  if (result.ok) {
+    revalidatePostPaths(postId);
+    if (kind === "purge") {
+      await processMediaDeletionOutboxBestEffort(createDbContext(), { limit: 2 });
+    }
+  }
+  return lifecycleState(result);
+}
+
+export async function trashPost(postId: string, operationId: string, baseRevision: number) {
+  return runPostLifecycle("trash", postId, operationId, baseRevision);
+}
+
+export async function restorePost(postId: string, operationId: string, baseRevision: number) {
+  return runPostLifecycle("restore", postId, operationId, baseRevision);
+}
+
+export async function purgePost(postId: string, operationId: string, baseRevision: number) {
+  return runPostLifecycle("purge", postId, operationId, baseRevision);
+}
 
 /**
- * 게시물 삭제 (본인 글 또는 Admin).
+ * 휴지통 이동 뒤 목록으로 이동한다. 실패는 throw 대신 상태로 돌려
+ * production에서도 화면이 서버의 한국어 안내를 그대로 보여 줄 수 있게 한다.
  */
-export async function deletePost(postId: string, category: Category) {
+export async function deletePost(
+  postId: string,
+  operationId: string,
+  baseRevision: number,
+  returnTo = "/community",
+): Promise<PostLifecycleState> {
+  const result = await trashPost(postId, operationId, baseRevision);
+  if (!result.success) {
+    return { ...result, error: result.error ?? "게시물을 휴지통으로 이동하지 못했습니다." };
+  }
+  redirect(safeReturnPath(returnTo, "/community"));
+}
+
+export async function restorePostRevision(
+  postId: string,
+  operationId: string,
+  baseRevision: number,
+  revisionNumber: number,
+): Promise<PostLifecycleState> {
   const session = await requireAuth();
-  const db = createDb();
+  const result = await restorePostRevisionAtomically(createDbContext(), {
+    actor: actor(session),
+    postId,
+    operationId,
+    baseRevision,
+    revisionNumber,
+    now: new Date(),
+  });
+  if (result.ok) revalidatePostPaths(postId);
+  return lifecycleState(result);
+}
 
-  const condition =
-    session.user.role === "admin"
-      ? eq(posts.id, postId)
-      : and(eq(posts.id, postId), eq(posts.authorId, session.user.id!));
-
-  await db.delete(posts).where(condition);
-  revalidatePath("/community");
-  redirect(`/community?category=${category}`);
+export async function togglePinPost(
+  postId: string,
+  nextPinned: boolean,
+  operationId: string,
+  baseRevision: number,
+): Promise<PostLifecycleState> {
+  const session = await requireAuth();
+  const result = await setPostPinAtomically(createDbContext(), {
+    actor: actor(session),
+    postId,
+    operationId,
+    baseRevision,
+    isPinned: nextPinned,
+    now: new Date(),
+  });
+  if (result.ok) revalidatePostPaths(postId);
+  return lifecycleState(result);
 }

@@ -1,0 +1,183 @@
+/**
+ * @file src/components/student-portal/AllItemsView.tsx
+ * @description 전체 항목 플랫 리스트 뷰. 타입 필터 토글 + 최신순 카드 리스트.
+ */
+"use client";
+
+import { useEffect, useState } from "react";
+import { Search } from "lucide-react";
+import {
+  getUnifiedItemKey,
+  type UnifiedItem,
+  type UnifiedItemType,
+} from "@/lib/utils/unifiedItemUtils";
+import { Input } from "@/components/ui/input";
+import {
+  describeUnifiedItemRow,
+  UNIFIED_ITEM_TYPE_LABELS,
+  UnifiedItemSpaceBadge,
+  UnifiedItemTypeBadge,
+  UnifiedItemTypeIcon,
+} from "@/components/ui/unified-item-type";
+import { UnifiedItemDetailPanel, type UnifiedItemChangeHandlers } from "./UnifiedItemDetailPanel";
+import { formatKstShortDate } from "@/lib/kst-format";
+
+// ── 상수 ─────────────────────────────────────────
+
+const ALL_TYPES: UnifiedItemType[] = ["EVENT", "NOTE", "DIGGING", "QNA", "ASSIGNMENT"];
+
+// ── 날짜 포맷 ────────────────────────────────────
+
+function formatDate(date: Date): string {
+  return formatKstShortDate(date);
+}
+
+// ── 컴포넌트 ─────────────────────────────────────
+
+interface AllItemsViewProps extends UnifiedItemChangeHandlers {
+  items: UnifiedItem[];
+  returnTo: string;
+  showSpaceContext: boolean;
+  initialType?: UnifiedItemType | null;
+  onInitialTypeCleared?: () => void;
+}
+
+export function AllItemsView({
+  items,
+  returnTo,
+  showSpaceContext,
+  initialType = null,
+  onInitialTypeCleared,
+  canManageEvents,
+  canManageLessons,
+  onItemUpdated,
+  onItemRemoved,
+}: AllItemsViewProps) {
+  const [activeTypes, setActiveTypes] = useState<Set<UnifiedItemType>>(
+    new Set(initialType ? [initialType] : ALL_TYPES),
+  );
+  const [selectedItem, setSelectedItem] = useState<UnifiedItem | null>(null);
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [query, setQuery] = useState("");
+
+  useEffect(() => {
+    if (initialType) setActiveTypes(new Set([initialType]));
+  }, [initialType]);
+
+  const toggleType = (type: UnifiedItemType) => {
+    if (initialType) onInitialTypeCleared?.();
+    setActiveTypes((prev) => {
+      const next = new Set(prev);
+      if (next.has(type)) {
+        if (next.size === 1) return prev; // 최소 1개 유지
+        next.delete(type);
+      } else {
+        next.add(type);
+      }
+      return next;
+    });
+  };
+
+  // 타입 토글 + 제목 검색 결합
+  const normalizedQuery = query.trim().toLowerCase();
+  const filtered = items.filter((i) => {
+    if (!activeTypes.has(i.type)) return false;
+    if (!normalizedQuery) return true;
+    return i.title.toLowerCase().includes(normalizedQuery);
+  });
+
+  return (
+    <>
+      {/* 타입 필터 바 */}
+      <div className="flex items-center gap-2 flex-wrap mb-4" role="group" aria-label="항목 유형 필터">
+        {ALL_TYPES.map((type) => {
+          const active = activeTypes.has(type);
+          return (
+            <button
+              key={type}
+              type="button"
+              onClick={() => toggleType(type)}
+              aria-pressed={active}
+              className={`inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors ${
+                active
+                  ? "border-primary/20 bg-accent text-accent-foreground"
+                  : "border-border bg-surface text-muted-foreground hover:bg-muted"
+              }`}
+            >
+              <UnifiedItemTypeIcon type={type} className={active ? "text-primary" : undefined} />
+              {UNIFIED_ITEM_TYPE_LABELS[type]}
+              <span className="ml-0.5 text-muted-foreground">
+                ({items.filter((i) => i.type === type).length})
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* 검색 바 */}
+      <div className="relative w-full sm:w-64 mb-4">
+        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" aria-hidden="true" />
+        <Input
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="제목 검색"
+          className="h-8 pl-8 text-xs"
+          aria-label="항목 검색"
+        />
+      </div>
+
+      {/* 아이템 리스트 */}
+      {filtered.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-16 text-muted-foreground gap-2">
+          <p className="text-sm">
+            {normalizedQuery ? "검색 결과가 없습니다." : "항목이 없습니다."}
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {filtered.map((item) => {
+            return (
+              <button
+                key={getUnifiedItemKey(item)}
+                type="button"
+                aria-label={describeUnifiedItemRow(item, formatDate(item.date), showSpaceContext)}
+                onClick={() => {
+                  setSelectedItem(item);
+                  setPanelOpen(true);
+                }}
+                className="w-full text-left flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3 rounded-lg border border-border bg-card hover:bg-accent transition-colors sm:flex-nowrap"
+              >
+                <UnifiedItemTypeIcon type={item.type} className="shrink-0 text-primary" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-foreground truncate">{item.title}</p>
+                </div>
+                {/* 좁은 화면에서는 제목 아래 줄로 내려 제목이 잘리지 않게 한다. */}
+                <div className="flex w-full flex-wrap items-center gap-2 pl-7 sm:w-auto sm:flex-shrink-0 sm:flex-nowrap sm:pl-0">
+                  <UnifiedItemTypeBadge item={item} />
+                  {showSpaceContext && <UnifiedItemSpaceBadge item={item} />}
+                  <span className="text-xs text-muted-foreground tabular-nums">
+                    {formatDate(item.date)}
+                  </span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* 상세 패널 */}
+      <UnifiedItemDetailPanel
+        item={selectedItem}
+        open={panelOpen}
+        onOpenChange={setPanelOpen}
+        onItemChange={setSelectedItem}
+        returnTo={returnTo}
+        canManageEvents={canManageEvents}
+        canManageLessons={canManageLessons}
+        onItemUpdated={onItemUpdated}
+        onItemRemoved={onItemRemoved}
+      />
+    </>
+  );
+}

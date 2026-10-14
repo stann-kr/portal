@@ -1,0 +1,76 @@
+/* Radix Presence waits for these exit animations before unmounting. */
+.portal-backdrop[data-state="open"] {
+  animation: portal-fade-in var(--duration-standard) var(--ease-studio) both;
+}
+
+.portal-backdrop[data-state="closed"] {
+  animation: portal-fade-out var(--duration-fast) ease-out both;
+}
+
+.portal-dialog[data-state="open"] {
+  animation: portal-dialog-in var(--duration-standard) var(--ease-studio) both;
+}
+
+.portal-dialog[data-state="closed"] {
+  animation: portal-dialog-out var(--duration-fast) ease-out both;
+}
+
+.portal-panel[data-state="open"] {
+  animation: portal-panel-in var(--duration-slow) var(--ease-studio) both;
+}
+
+.portal-panel[data-state="closed"] {
+  animation: portal-panel-out var(--duration-standard) var(--ease-studio) both;
+}
+
+.portal-menu {
+  transform-origin: var(--radix-dropdown-menu-content-transform-origin);
+}
+
+.portal-menu[data-state="open"] {
+  animation: portal-dialog-in var(--duration-fast) var(--ease-studio) both;
+}
+
+.portal-menu[data-state="closed"] {
+  animation: portal-fade-out var(--duration-fast) ease-out both;
+}
+
+@keyframes portal-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes portal-fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+/* Keep Tailwind's independent translate used for dialog centering intact. */
+@keyframes portal-dialog-in {
+  from { opacity: 0; transform: translateY(4px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes portal-dialog-out {
+  from { opacity: 1; transform: scale(1); }
+  to { opacity: 0; transform: scale(0.98); }
+}
+
+@keyframes portal-panel-in {
+  from { opacity: 0; transform: translateX(24px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes portal-panel-out {
+  from { opacity: 1; transform: translateX(0); }
+  to { opacity: 0; transform: translateX(16px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .portal-backdrop[data-state],
+  .portal-dialog[data-state],
+  .portal-panel[data-state],
+  .portal-menu[data-state] {
+    animation: none;
+  }
+}

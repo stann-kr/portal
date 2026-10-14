@@ -1,207 +1,73 @@
 /**
  * @file src/app/dashboard/student/page.tsx
- * @description Student Dashboard — DB 연동 버전.
- * - 현재 진행 중인 모듈 (미완료 중 최소 주차)
- * - 다음 예정 레슨
- * - 최근 피드백 (Phase 3 이후 연동)
+ * @description 학생 원페이지 포털 — RSC 데이터 프리패치 셸.
+ * 모든 조회를 한 번에 병렬로 실행한 뒤 StudentPortalClient에 props 전달.
  */
-import { auth } from "@/auth";
 import { redirect } from "next/navigation";
-import Link from "next/link";
-import { Suspense } from "react";
-import { PlayCircle, CalendarDays, BookOpen } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { getCurrentModule, getCurriculumByStudent } from "@/lib/actions/curriculum";
-import { getNextLesson } from "@/lib/actions/lessons";
-import { ProgressCharts } from "@/components/dashboard/ProgressCharts";
+import { getActiveAuthSession } from "@/lib/auth-guard";
+import { getAnnouncementSummaries, getRecentCommunityPostSummaries } from "@/lib/actions/posts";
+import { getUnifiedItems } from "@/lib/actions/unifiedItems";
+import { getMyCurriculum } from "@/lib/actions/curriculum";
+import { getMyAssignments } from "@/lib/actions/assignments";
+import { getMyFeedbacksMap } from "@/lib/actions/feedbacks";
+import type { InferSelectModel } from "drizzle-orm";
+import { assignments } from "@/db/schema";
+import { StudentPortalClient } from "@/components/student-portal/StudentPortalClient";
+import { getUnifiedItemSpaceLabel } from "@/lib/unified-item-normalization";
+import { getExternalCalendarConnectionSummary } from "@/lib/actions/externalCalendars";
+import { resolvePortalLocation, type PortalSearchParams } from "@/lib/portal-location";
 
-// ─────────────────────────────────────────────────
-// 현재 모듈 섹션 (시각화 포함)
-// ─────────────────────────────────────────────────
+export const metadata = { title: "학생 포털" };
 
-async function DashboardOverview({ studentId, displayName }: { studentId: string; displayName: string }) {
-  const allModules = await getCurriculumByStudent(studentId);
-  const completedCount = allModules.filter((m: { isCompleted: boolean }) => m.isCompleted).length;
-  const totalCount = allModules.length;
-  
-  const currentMod = await getCurrentModule(studentId);
+export default async function StudentPortalPage({ searchParams }: { searchParams: Promise<PortalSearchParams> }) {
+  const session = await getActiveAuthSession();
+  if (session?.user?.role !== "student") redirect("/dashboard/admin");
+  const initialLocation = resolvePortalLocation("student", await searchParams);
 
-  return (
-    <div className="space-y-8">
-      {/* 1. 시각화 차트 및 요약 */}
-      <ProgressCharts 
-        completedCount={completedCount} 
-        totalCount={totalCount} 
-        displayName={displayName} 
-      />
-
-      {/* 2. 현재 진행 중인 모듈 숏컷 */}
-      {currentMod && (
-        <section className="p-6 rounded-2xl border border-border bg-card shadow-sm space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold tracking-tight text-muted-foreground uppercase flex items-center gap-2">
-              <BookOpen className="w-4 h-4" />
-              Next Activity
-            </h2>
-            <Link href="/dashboard/student/curriculum" className="text-xs text-primary hover:underline">
-              전체 커리큘럼 보기
-            </Link>
-          </div>
-          <div className="flex items-center justify-between p-6 rounded-xl border border-primary/20 bg-primary/5">
-            <div className="space-y-1">
-              <p className="text-[10px] font-bold text-primary uppercase tracking-widest">
-                WEEK {String(currentMod.weekNum).padStart(2, "0")}
-              </p>
-              <h3 className="font-medium text-foreground text-lg">{currentMod.title}</h3>
-            </div>
-            <Button asChild variant="default" className="gap-2">
-              <Link href="/dashboard/student/curriculum">
-                <PlayCircle className="w-4 h-4" />
-                Resume
-              </Link>
-            </Button>
-          </div>
-        </section>
-      )}
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────
-// 다음 레슨 섹션
-// ─────────────────────────────────────────────────
-
-async function NextLessonSection({ studentId }: { studentId: string }) {
-  const lesson = await getNextLesson(studentId);
-
-  if (!lesson) {
-    return (
-      <div className="flex flex-col items-center justify-center p-8 border border-dashed rounded-lg bg-muted/10 text-muted-foreground">
-        <p className="text-sm">예정된 레슨이 없습니다.</p>
-      </div>
-    );
-  }
-
-  const date = new Date(lesson.scheduledAt!);
-  const month = date
-    .toLocaleDateString("en-US", { month: "short" })
-    .toUpperCase();
-  const day = date.getDate();
-  const time = date.toLocaleTimeString("ko-KR", {
-    hour: "2-digit",
-    minute: "2-digit",
+  const studentId = session.user.id!;
+  const displayName = session.user.name ?? "";
+  const spaceLabel = getUnifiedItemSpaceLabel({
+    displayName: session.user.name ?? null,
+    email: session.user.email ?? "학생",
   });
 
-  // .ics 다운로드 링크
-  const icsUrl = `/api/calendar/${studentId}`;
+  // 병렬 데이터 패치. 게시물은 본문 없이 화면에 필요한 개수만 읽는다.
+  const [announcements, communityPosts, unifiedItems, curriculumModules, rawAssignments, feedbacksMap, externalCalendarConnection] =
+    await Promise.all([
+      getAnnouncementSummaries(3),
+      getRecentCommunityPostSummaries(20),
+      getUnifiedItems(),
+      getMyCurriculum(),
+      getMyAssignments(),
+      getMyFeedbacksMap(),
+      getExternalCalendarConnectionSummary(),
+    ]);
+
+  // 과제 피드백 카운트 병합
+  type RawAssignment = InferSelectModel<typeof assignments>;
+  const assignmentList = (rawAssignments as RawAssignment[]).map((a) => ({
+    id: a.id,
+    mediaUrl: a.mediaUrl,
+    submittedAt: a.submittedAt,
+    feedbackCount: feedbacksMap[a.id] ?? 0,
+  }));
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center gap-5">
-        <div className="w-16 h-16 rounded-md bg-muted flex flex-col items-center justify-center border border-border flex-shrink-0">
-          <span className="text-[10px] font-bold text-muted-foreground">
-            {month}
-          </span>
-          <span className="text-2xl font-bold">{day}</span>
-        </div>
-        <div className="space-y-0.5 flex-1">
-          <p className="font-semibold text-foreground">1:1 Feedback Session</p>
-          <p className="text-sm text-muted-foreground">
-            {time} KST / Online Studio
-          </p>
-        </div>
-        <a href={icsUrl} download>
-          <Button variant="ghost" size="sm" className="gap-1 text-xs">
-            <CalendarDays className="w-3 h-3" />
-            .ics
-          </Button>
-        </a>
-      </div>
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────
-// 스켈레톤
-// ─────────────────────────────────────────────────
-
-function ModuleSkeleton() {
-  return <div className="h-24 rounded-lg border bg-muted animate-pulse" />;
-}
-function LessonSkeleton() {
-  return <div className="h-16 rounded-lg bg-muted animate-pulse" />;
-}
-
-// ─────────────────────────────────────────────────
-// 메인 페이지
-// ─────────────────────────────────────────────────
-
-export default async function StudentDashboard() {
-  const session = await auth();
-  const role = session?.user?.role;
-
-  if (role !== "student") {
-    redirect("/dashboard/admin");
-  }
-
-  const studentId = session!.user!.id!;
-
-  return (
-    <div className="max-w-7xl mx-auto space-y-10 py-6">
-      {/* 헤더 */}
-      <header className="flex flex-col md:flex-row md:items-end justify-between gap-4">
-        <div className="space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground flex items-center gap-2">
-            Personal Portal
-            <span className="text-muted-foreground font-normal">/ Student</span>
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            Track your progress and upcoming lessons.
-          </p>
-        </div>
-        <Button asChild variant="outline" className="gap-2">
-          <Link href="/dashboard/student/notes">
-            <BookOpen className="w-4 h-4" />
-            1:1 수업 노트
-          </Link>
-        </Button>
-      </header>
-
-      {/* 대시보드 오버뷰 (차트 + 현재 모듈) */}
-      <Suspense fallback={<ModuleSkeleton />}>
-        <DashboardOverview 
-          studentId={studentId} 
-          displayName={session?.user?.name || ""} 
-        />
-      </Suspense>
-
-      {/* 하단 그리드 */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-        {/* 다음 레슨 */}
-        <div className="p-6 rounded-xl border border-border bg-card shadow-sm space-y-4">
-          <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-            Next Lesson
-          </h3>
-          <Suspense fallback={<LessonSkeleton />}>
-            <NextLessonSection studentId={studentId} />
-          </Suspense>
-        </div>
-
-        {/* 최근 피드백 (Phase 3 이후 연동) */}
-        <div className="p-6 rounded-xl border border-border bg-card shadow-sm space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-              Recent Feedback
-            </h3>
-          </div>
-          <div className="flex flex-col items-center justify-center p-8 border border-dashed rounded-lg bg-muted/10 text-muted-foreground">
-            <p className="text-sm italic">No active feedback requests.</p>
-            <p className="text-xs mt-1 text-muted-foreground/50">
-              Phase 3에서 연동 예정
-            </p>
-          </div>
-        </div>
-      </div>
-    </div>
+    <StudentPortalClient
+      initialLocation={initialLocation}
+      announcements={announcements}
+      unifiedItems={unifiedItems}
+      curriculumModules={curriculumModules.map((module) => ({
+        ...module,
+        description: null,
+      }))}
+      assignments={assignmentList}
+      communityPosts={communityPosts}
+      studentId={studentId}
+      displayName={displayName}
+      spaceLabel={spaceLabel}
+      externalCalendarConnection={externalCalendarConnection}
+      referenceTime={new Date()}
+    />
   );
 }

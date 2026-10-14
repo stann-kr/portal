@@ -26,17 +26,19 @@ case "$1" in
     docker compose run --rm web sh
     ;;
   "seed")
-    echo "🌱 Seeding admin user..."
-    # wrangler d1 execute를 통해 로컬 D1에 관리자 계정 삽입
-    echo "Usage: Run the SQL below via:"
-    echo "  docker compose run --rm web npx wrangler d1 execute portal-db --local --command \"INSERT INTO profiles …\""
+    EMAIL="${2:-admin@stannlumo.com}"
+    PASS="${3:-adminpassword123!}"
+    DISPLAY_NAME="${4:-Stann}"
+    echo "🌱 Seeding admin user: $EMAIL"
+    docker compose run --rm web npx tsx src/scripts/setup-admin.ts "$EMAIL" "$PASS" "$DISPLAY_NAME" --exec
     ;;
   "logs")
     echo "📋 Showing logs..."
     docker compose logs -f web
     ;;
   *)
-    echo "Usage: ./dev.sh [dev|migrate|studio|build|shell|logs]"
+    echo "Usage: ./dev.sh [dev|migrate|studio|build|shell|seed|logs]"
+    echo "       ./dev.sh seed [email] [password] [displayName]"
     exit 1
     ;;
 esac

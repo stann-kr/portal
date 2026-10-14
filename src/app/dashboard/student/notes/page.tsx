@@ -1,95 +1,46 @@
 /**
  * @file src/app/dashboard/student/notes/page.tsx
- * @description 1:1 Private Notes (Student View)
+ * @description 학생 전용 노트 목록. 작성은 별도 full-page composer로 이동한다.
  */
-import { auth } from "@/auth";
-import { redirect } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, BookOpen, MessageSquarePlus } from "lucide-react";
+import { redirect } from "next/navigation";
+import { BookOpen, Clock3, Plus, Trash2 } from "lucide-react";
+import { getActiveAuthSession } from "@/lib/auth-guard";
 import { getPrivateNotes } from "@/lib/actions/privateNotes";
-import { PrivateNoteForm } from "@/components/notes/PrivateNoteForm";
-import { DeleteNoteButton } from "@/components/notes/DeleteNoteButton";
+import { PrivateNoteList } from "@/components/notes/PrivateNoteList";
+import { getNoteSearchQuery, NoteSearch, searchPrivateNotes } from "@/components/notes/NoteSearch";
+import { buildNotesLessonsTimelineHref } from "@/lib/calendar-section-contract";
 
-export default async function StudentNotesPage() {
-  const session = await auth();
-  if (session?.user?.role !== "student") {
-    redirect("/dashboard/admin");
-  }
+export const metadata = { title: "내 노트" };
 
-  const studentId = session.user.id!;
-  const notes = await getPrivateNotes(studentId);
+export default async function StudentNotesPage({ searchParams }: {
+  searchParams: Promise<{ q?: string | string[] }>;
+}) {
+  const session = await getActiveAuthSession();
+  if (!session?.user?.id) redirect("/login");
+  if (session.user.role !== "student") redirect("/dashboard/admin");
 
+  const listPath = "/dashboard/student/notes";
+  const query = getNoteSearchQuery((await searchParams).q);
+  const returnTo = query ? `${listPath}?q=${encodeURIComponent(query)}` : listPath;
+  const notes = await getPrivateNotes(session.user.id);
+  const matchingNotes = searchPrivateNotes(notes, query);
   return (
-    <div className="max-w-4xl mx-auto space-y-8 py-6">
-      {/* 헤더 */}
-      <div className="space-y-1">
-        <Link
-          href="/dashboard/student"
-          className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
-        >
-          <ArrowLeft className="w-4 h-4" />
-          대시보드로 돌아가기
-        </Link>
-        <h1 className="text-2xl font-semibold tracking-tight mt-2 flex items-center gap-2">
-          <BookOpen className="w-6 h-6 text-primary" />
-          1:1 수업 노트
-        </h1>
-        <p className="text-sm text-muted-foreground">
-          강사님과 프라이빗하게 피드백과 자료를 공유하는 공간입니다.
-        </p>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-        {/* 새 노트 작성 */}
-        <div className="md:col-span-1">
-          <div className="p-6 rounded-xl border border-border bg-card shadow-sm sticky top-6">
-            <h2 className="text-lg font-semibold flex items-center gap-2 mb-4">
-              <MessageSquarePlus className="w-5 h-5 text-muted-foreground" />
-              질문 또는 노트 작성
-            </h2>
-            <PrivateNoteForm studentId={studentId} />
-          </div>
+    <div className="mx-auto max-w-4xl space-y-6 px-4 py-6 sm:px-6">
+      <header className="flex flex-wrap items-start justify-between gap-4 border-b border-border pb-5">
+        <div>
+          <p className="text-sm text-muted-foreground">내 스페이스</p>
+          <h1 className="mt-1 flex items-center gap-2 text-2xl font-semibold tracking-tight"><BookOpen className="size-6 text-primary" aria-hidden="true" />노트</h1>
+          <p className="mt-1 text-sm text-muted-foreground">작성 기록을 확인하고 전체 화면에서 이어서 편집할 수 있습니다.</p>
         </div>
-
-        {/* 노트 목록 */}
-        <div className="md:col-span-2 space-y-4">
-          <h2 className="text-lg font-semibold">노트 기록 ({notes.length})</h2>
-          {notes.length === 0 ? (
-            <div className="p-12 text-center text-muted-foreground border border-dashed rounded-xl bg-muted/10">
-              <p className="text-sm">아직 작성된 1:1 노트가 없습니다.</p>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {notes.map((note: any) => (
-                <div key={note.id} className="p-5 rounded-xl border border-border bg-card shadow-sm space-y-3">
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <h3 className="font-semibold text-foreground">{note.title}</h3>
-                      <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground">
-                        <span>{note.authorName || "Unknown"}</span>
-                        <span>·</span>
-                        <span>
-                          {new Date(note.createdAt!).toLocaleDateString("ko-KR", {
-                            year: "numeric",
-                            month: "short",
-                            day: "numeric",
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })}
-                        </span>
-                      </div>
-                    </div>
-                    {session.user.id === note.authorId && (
-                      <DeleteNoteButton noteId={note.id} />
-                    )}
-                  </div>
-                  <div className="prose prose-sm dark:prose-invert max-w-none text-muted-foreground" dangerouslySetInnerHTML={{ __html: note.contentHtml }} />
-                </div>
-              ))}
-            </div>
-          )}
+        <div className="flex flex-wrap items-center gap-2">
+          <Link href={buildNotesLessonsTimelineHref({ role: "student" })} className="inline-flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-border px-3 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"><Clock3 className="size-4" aria-hidden="true" />시간으로 보기</Link>
+          <Link href={`/dashboard/notes/trash?returnTo=${encodeURIComponent(returnTo)}`} className="inline-flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-border px-3 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"><Trash2 className="size-4" aria-hidden="true" />휴지통</Link>
+          <Link href={`/dashboard/student/notes/new?returnTo=${encodeURIComponent(returnTo)}`} className="inline-flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"><Plus className="size-4" aria-hidden="true" />노트 작성</Link>
         </div>
-      </div>
+      </header>
+      <NoteSearch action={listPath} query={query} totalCount={notes.length} resultCount={matchingNotes.length} />
+      <PrivateNoteList notes={matchingNotes} returnTo={returnTo} emptyMessage={query ? "검색 결과가 없습니다. 다른 단어로 검색하거나 검색을 초기화해 주세요." : undefined} />
     </div>
   );
 }

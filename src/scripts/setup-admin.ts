@@ -1,46 +1,161 @@
-import * as bcrypt from "bcryptjs";
-import { randomUUID } from "crypto";
-
 /**
  * @file src/scripts/setup-admin.ts
- * @description 관리자 계정을 D1 데이터베이스에 생성하거나 기존 계정에 관리자 권한을 부여하는 스크립트.
- * 로컬 또는 원격 D1의 SQL 명령어를 생성하여 출력함.
+ * @description 명시적으로 허용된 개발 환경에서만 로컬 관리자 계정을 생성한다.
+ *
+ * `.env.local`에 DEV_ADMIN_* 값을 설정한 뒤 아래 명령으로 실행한다.
+ *
+ *   npm run dev:seed-admin
+ *
+ * 비밀번호를 명령행 인자로 받거나 SQL·해시를 출력하지 않으며 remote D1에는 접근하지 않는다.
  */
 
-const email = process.argv[2];
-const password = process.argv[3];
-const displayName = process.argv[4] || "Stann";
+import * as bcrypt from "bcryptjs";
+import { randomUUID } from "node:crypto";
+import { existsSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+import { config as loadEnv } from "dotenv";
+import { selectLocalD1SqliteFile } from "@/db/local-connection-cache";
 
-if (!email || !password) {
-  console.error(
-    "Usage: npx tsx src/scripts/setup-admin.ts <email> <password> [displayName]",
-  );
-  process.exit(1);
+const LOCAL_D1_DIRECTORY = join(
+  process.cwd(),
+  ".wrangler",
+  "state",
+  "v3",
+  "d1",
+  "miniflare-D1DatabaseObject",
+);
+
+const UPDATE_ADMIN_SQL = `
+  UPDATE profiles
+  SET role = 'admin', password_hash = ?
+  WHERE email = ?
+`;
+
+const INSERT_ADMIN_SQL = `
+  INSERT INTO profiles (id, email, password_hash, display_name, role)
+  SELECT ?, ?, ?, ?, 'admin'
+  WHERE NOT EXISTS (SELECT 1 FROM profiles WHERE email = ?)
+`;
+
+export type AdminSeedConfig = {
+  email: string;
+  password: string;
+  displayName: string;
+};
+
+type SeedDatabase = {
+  prepare: (query: string) => {
+    run: (...parameters: string[]) => unknown;
+  };
+  transaction: <Result>(operation: () => Result) => () => Result;
+};
+
+/**
+ * 관리자 seed는 개발 환경과 명시적인 opt-in이 모두 있을 때만 허용한다.
+ */
+export function readAdminSeedConfig(
+  environment: NodeJS.ProcessEnv,
+): AdminSeedConfig {
+  if (environment.NODE_ENV !== "development") {
+    throw new Error("관리자 seed는 development 환경에서만 실행할 수 있습니다.");
+  }
+
+  if (environment.DEV_ADMIN_SEED_ENABLED !== "true") {
+    throw new Error(
+      "DEV_ADMIN_SEED_ENABLED=true로 명시적으로 허용해야 합니다.",
+    );
+  }
+
+  const email = environment.DEV_ADMIN_EMAIL?.trim();
+  const password = environment.DEV_ADMIN_PASSWORD;
+  const displayName = environment.DEV_ADMIN_DISPLAY_NAME?.trim();
+
+  if (!email || !password || !displayName) {
+    throw new Error(
+      "DEV_ADMIN_EMAIL, DEV_ADMIN_PASSWORD, DEV_ADMIN_DISPLAY_NAME을 모두 설정해야 합니다.",
+    );
+  }
+
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new Error("DEV_ADMIN_EMAIL 형식이 올바르지 않습니다.");
+  }
+
+  if (password.length < 12) {
+    throw new Error("DEV_ADMIN_PASSWORD는 12자 이상이어야 합니다.");
+  }
+
+  return { email, password, displayName };
 }
 
-async function generateSql() {
-  const hash = await bcrypt.hash(password, 10);
-  const id = randomUUID();
-
-  const sql = `INSERT INTO profiles (id, email, password_hash, display_name, role) VALUES ('${id}', '${email}', '${hash}', '${displayName}', 'admin') ON CONFLICT(email) DO UPDATE SET role='admin', password_hash='${hash}';`;
-
-  console.log(
-    "\n✅ SQL 명령어가 생성되었습니다! 아래 명령어를 상황에 맞게 실행하세요:\n",
-  );
-
-  console.log("--- [ 로컬 전용 (Local) ] ---");
-  console.log(
-    `docker compose run --rm web npx wrangler d1 execute portal-db --local --command "${sql.replace(/"/g, '\\"')}"`,
-  );
-
-  console.log("\n--- [ 원격 전용 (Remote/Production) ] ---");
-  console.log(
-    `docker compose run --rm web npx wrangler d1 execute portal-db --remote --command "${sql.replace(/"/g, '\\"')}"`,
-  );
-
-  console.log(
-    "\n⚠️  주의: 비밀번호가 포함된 해시값이 터미널 로그에 남지 않도록 실행 후 터미널을 클리어하는 것이 좋습니다.\n",
-  );
+/**
+ * 민감한 값이 process 목록이나 shell history에 남지 않도록 CLI 인자를 거부한다.
+ */
+export function assertNoCommandLineArguments(args: readonly string[]): void {
+  if (args.length > 0) {
+    throw new Error(
+      "명령행 인자는 지원하지 않습니다. 관리자 정보는 .env.local의 DEV_ADMIN_* 변수로 설정하세요.",
+    );
+  }
 }
 
-generateSql().catch(console.error);
+/**
+ * prepared statement로 관리자 계정을 생성하거나 기존 계정의 role/password만 갱신한다.
+ */
+export async function seedAdmin(
+  database: SeedDatabase,
+  seed: AdminSeedConfig,
+  id: string = randomUUID(),
+): Promise<void> {
+  const passwordHash = await bcrypt.hash(seed.password, 10);
+
+  database.transaction(() => {
+    database.prepare(UPDATE_ADMIN_SQL).run(passwordHash, seed.email);
+    database
+      .prepare(INSERT_ADMIN_SQL)
+      .run(id, seed.email, passwordHash, seed.displayName, seed.email);
+  })();
+}
+
+function findLocalD1Database(): string {
+  if (!existsSync(LOCAL_D1_DIRECTORY)) {
+    throw new Error(
+      `Wrangler 로컬 D1을 찾을 수 없습니다. 먼저 npm run db:migrate를 실행하세요. (${LOCAL_D1_DIRECTORY})`,
+    );
+  }
+
+  const sqliteFile = selectLocalD1SqliteFile(readdirSync(LOCAL_D1_DIRECTORY));
+  return join(LOCAL_D1_DIRECTORY, sqliteFile);
+}
+
+async function run(): Promise<void> {
+  assertNoCommandLineArguments(process.argv.slice(2));
+  loadEnv({ path: ".env.local", quiet: true });
+
+  const seed = readAdminSeedConfig(process.env);
+  const sqlitePath = findLocalD1Database();
+  const Database = (await import("better-sqlite3")).default;
+  const database = new Database(sqlitePath);
+
+  try {
+    await seedAdmin(database, seed);
+    console.log("로컬 개발용 관리자 계정을 준비했습니다.");
+    console.log(`이메일: ${seed.email}`);
+    console.log(`이름: ${seed.displayName}`);
+    console.log("역할: admin");
+  } finally {
+    database.close();
+  }
+}
+
+const entryPath = process.argv[1]
+  ? pathToFileURL(process.argv[1]).href
+  : undefined;
+
+if (entryPath === import.meta.url) {
+  run().catch((error: unknown) => {
+    const message = error instanceof Error ? error.message : "알 수 없는 오류";
+    console.error(`관리자 seed 실패: ${message}`);
+    process.exitCode = 1;
+  });
+}

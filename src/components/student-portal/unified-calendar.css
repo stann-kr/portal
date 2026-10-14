@@ -1,0 +1,70 @@
+.fc-custom {
+  --fc-border-color: var(--color-border);
+  --fc-page-bg-color: var(--color-background);
+  --fc-neutral-bg-color: var(--color-muted);
+  --fc-list-event-hover-bg-color: var(--color-accent);
+}
+
+/* 다크 모드의 일정 색은 밝은 값이므로 블록 글자는 어두운 배경색으로 대비를 맞춘다. */
+@media (prefers-color-scheme: dark) {
+  .fc-custom {
+    --fc-event-text-color: var(--color-background);
+  }
+}
+
+/* Keep date navigation and view controls reachable beside the mobile side rail. */
+@media (max-width: 40rem) {
+  .fc-custom .fc-button {
+    min-height: 2.25rem;
+  }
+
+  .fc-custom .fc-header-toolbar {
+    flex-wrap: wrap;
+    gap: 0.75rem;
+  }
+
+  .fc-custom .fc-toolbar-chunk:nth-child(2) {
+    order: -1;
+    flex-basis: 100%;
+    text-align: center;
+  }
+
+  .fc-custom .fc-list-event {
+    position: relative;
+  }
+
+  /* Keep FullCalendar's native time, title link and table semantics. */
+  .fc-custom .fc .fc-list-event-time {
+    position: absolute;
+    top: 0.5rem;
+    left: 2.5rem;
+    right: 0.75rem;
+    width: auto;
+    padding: 0;
+    border: 0;
+    font-size: 0.75rem;
+    line-height: 1rem;
+    color: var(--color-muted-foreground);
+  }
+
+  .fc-custom .fc .fc-list-event-graphic {
+    padding-top: 1.75rem;
+    padding-right: 0;
+  }
+
+  .fc-custom .fc .fc-list-event-title {
+    padding-top: 1.75rem;
+  }
+}
+
+.fc-custom .fc-list-event-title {
+  overflow-wrap: anywhere;
+}
+
+.fc-custom .fc-list-day-cushion {
+  background-color: var(--color-muted);
+}
+
+.fc-custom .fc-list-event:hover td {
+  background-color: var(--color-accent);
+}

@@ -1,64 +1,55 @@
 /**
  * @file src/app/dashboard/admin/page.tsx
- * @description Admin Dashboard — DB 연동 버전.
- * 하위 컴포넌트들을 분리하여 관심사 제어.
+ * @description 관리자 원페이지 포털. RSC 데이터 프리패치 셸.
+ * AdminPortalClient에 병렬 패치한 데이터를 props로 전달.
  */
-import Link from "next/link";
 import { redirect } from "next/navigation";
-import { Suspense } from "react";
-import { UserPlus } from "lucide-react";
-import { auth } from "@/auth";
-import { Button } from "@/components/ui/button";
-import { StatsCards, StatsSkeleton } from "@/components/admin/StatsCards";
-import { StudentRoster, RosterSkeleton } from "@/components/admin/StudentRoster";
+import { getActiveAuthSession } from "@/lib/auth-guard";
+import { getPostsByBoardType, getRecentCommunityPostSummaries } from "@/lib/actions/posts";
+import { getStudentRosterStats } from "@/lib/actions/students";
+import { getUnifiedItemsForStudent } from "@/lib/actions/unifiedItems";
+import { getQnaThreads } from "@/lib/actions/qna";
+import { getPendingFeedbackAssignments } from "@/lib/actions/assignments";
+import { AdminPortalClient } from "@/components/admin-portal/AdminPortalClient";
+import { firstSearchValue, resolvePortalLocation, type PortalSearchParams } from "@/lib/portal-location";
 
-// ─────────────────────────────────────────────────
-// 메인 페이지
-// ─────────────────────────────────────────────────
+export const metadata = { title: "관리자 포털" };
 
-export default async function AdminDashboard() {
-  const session = await auth();
-  const role = session?.user?.role;
+export default async function AdminPortalPage({ searchParams }: { searchParams: Promise<PortalSearchParams> }) {
+  const session = await getActiveAuthSession();
+  if (session?.user?.role !== "admin") redirect("/dashboard/student");
 
-  if (role !== "admin") {
-    redirect("/dashboard/student");
-  }
+  const adminId = session.user.id!;
+  const params = await searchParams;
+  const initialLocation = resolvePortalLocation("admin", params);
+
+  // 학생 목록 먼저 패치
+  const students = await getStudentRosterStats();
+  const requestedStudentId = firstSearchValue(params.student);
+  const initialStudentId = students.find((student) => student.id === requestedStudentId)?.id ?? students[0]?.id ?? "";
+
+  // 병렬 데이터 패치
+  const referenceTime = new Date();
+  const [announcements, communityPostsRaw, initialStudentItems, qnaThreads, pendingAssignments] = await Promise.all([
+    getPostsByBoardType("ANNOUNCEMENT"),
+    getRecentCommunityPostSummaries(20),
+    initialStudentId ? getUnifiedItemsForStudent(initialStudentId) : Promise.resolve([]),
+    getQnaThreads(),
+    getPendingFeedbackAssignments(),
+  ]);
 
   return (
-    <div className="max-w-7xl mx-auto space-y-10 py-6">
-      {/* 헤더 */}
-      <header className="flex items-start justify-between">
-        <div className="space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground flex items-center gap-2">
-            Dashboard
-            <span className="text-muted-foreground font-normal">/ Admin</span>
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            Manage your students and lesson schedules.
-          </p>
-        </div>
-        <Button asChild className="gap-2">
-          <Link href="/dashboard/admin/students/new">
-            <UserPlus className="w-4 h-4" />
-            수강생 추가
-          </Link>
-        </Button>
-      </header>
-
-      {/* 통계 카드 */}
-      <Suspense fallback={<StatsSkeleton />}>
-        <StatsCards />
-      </Suspense>
-
-      {/* Student Roster */}
-      <section className="space-y-4">
-        <div className="flex items-center justify-between border-b pb-4">
-          <h2 className="text-lg font-semibold">Student Roster</h2>
-        </div>
-        <Suspense fallback={<RosterSkeleton />}>
-          <StudentRoster />
-        </Suspense>
-      </section>
-    </div>
+    <AdminPortalClient
+      initialLocation={initialLocation}
+      initialStudentId={initialStudentId}
+      announcements={announcements}
+      initialUnifiedItems={initialStudentItems}
+      students={students}
+      communityPosts={communityPostsRaw}
+      adminId={adminId}
+      qnaThreads={qnaThreads}
+      pendingAssignments={pendingAssignments}
+      referenceTime={referenceTime}
+    />
   );
 }

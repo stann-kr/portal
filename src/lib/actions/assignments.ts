@@ -7,33 +7,16 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { auth } from "@/auth";
 import { createDb } from "@/db/client";
-import { assignments } from "@/db/schema";
-import { and, eq, desc, count } from "drizzle-orm";
-
-async function requireAuth() {
-  const session = await auth();
-  if (!session?.user?.id) throw new Error("Unauthorized");
-  return session;
-}
-
-async function requireAdmin() {
-  const session = await requireAuth();
-  if (session.user.role !== "admin") throw new Error("Admin only");
-  return session;
-}
-
-/** 지원하는 미디어 플랫폼 URL 패턴 */
-const MEDIA_URL_PATTERNS = [
-  /^https?:\/\/(www\.)?youtube\.com\/watch/,
-  /^https?:\/\/youtu\.be\//,
-  /^https?:\/\/(www\.)?soundcloud\.com\//,
-];
-
-function isValidMediaUrl(url: string): boolean {
-  return MEDIA_URL_PATTERNS.some((p) => p.test(url));
-}
+import { assignments, feedbacks, profiles } from "@/db/schema";
+import { and, asc, count, desc, eq, notExists } from "drizzle-orm";
+import {
+  requireAuth,
+  requireAdmin,
+  assertOwnerOrAdmin,
+  requireStudentTarget,
+} from "@/lib/auth-guard";
+import { normalizeAssignmentMediaUrl } from "@/lib/assignment-media-url";
 
 // ───────────────────────────────────────────────
 // 학생: 과제 제출
@@ -58,13 +41,8 @@ export async function submitAssignment(
   if (session.user.role !== "student")
     return { error: "학생만 과제를 제출할 수 있습니다." };
 
-  const mediaUrl = (formData.get("mediaUrl") as string)?.trim();
-  const title = (formData.get("title") as string)?.trim();
-
-  if (!mediaUrl) return { error: "미디어 URL을 입력해주세요." };
-  if (!isValidMediaUrl(mediaUrl)) {
-    return { error: "YouTube 또는 SoundCloud URL만 지원합니다." };
-  }
+  const media = normalizeAssignmentMediaUrl(formData.get("mediaUrl"));
+  if (!media.ok) return { error: media.error };
 
   const db = createDb();
   const id = crypto.randomUUID();
@@ -72,11 +50,62 @@ export async function submitAssignment(
   await db.insert(assignments).values({
     id,
     studentId: session.user.id!,
-    mediaUrl,
+    mediaUrl: media.url,
   });
 
   revalidatePath("/dashboard/student/assignments");
+  revalidatePath("/dashboard/student");
   return { success: true, id };
+}
+
+export type DeleteAssignmentResult = { success: true } | { success: false; error: string };
+
+/**
+ * 학생 본인의 잘못된 제출을 피드백이 달리기 전에만 삭제한다.
+ * 피드백 존재 확인과 삭제를 한 DELETE 문으로 처리해 그 사이 등록된 피드백을 지우지 않는다.
+ * 관리자는 학생 제출을 대신 삭제하지 않는다.
+ */
+export async function deleteMyAssignment(assignmentId: string): Promise<DeleteAssignmentResult> {
+  const session = await requireAuth();
+  if (session.user.role !== "student") {
+    return { success: false, error: "제출한 학생만 삭제할 수 있습니다." };
+  }
+  const ownAssignment = and(
+    eq(assignments.id, assignmentId),
+    eq(assignments.studentId, session.user.id),
+  );
+
+  const db = createDb();
+  const deleted = await db
+    .delete(assignments)
+    .where(and(
+      ownAssignment,
+      notExists(
+        db
+          .select({ id: feedbacks.id })
+          .from(feedbacks)
+          .where(eq(feedbacks.assignmentId, assignments.id)),
+      ),
+    ))
+    .returning({ id: assignments.id });
+
+  if (deleted.length === 0) {
+    const [remaining] = await db
+      .select({ id: assignments.id })
+      .from(assignments)
+      .where(ownAssignment)
+      .limit(1);
+    return {
+      success: false,
+      error: remaining
+        ? "피드백이 등록된 제출은 삭제할 수 없습니다. 필요하면 강사에게 문의해 주세요."
+        : "이미 삭제됐거나 찾을 수 없는 제출입니다. 목록을 새로고침해 주세요.",
+    };
+  }
+
+  revalidatePath("/dashboard/student");
+  revalidatePath("/dashboard/admin");
+  return { success: true };
 }
 
 // ───────────────────────────────────────────────
@@ -100,7 +129,7 @@ export async function getMyAssignments() {
  * 특정 학생의 과제 목록 조회 (Admin용).
  */
 export async function getAssignmentsByStudent(studentId: string) {
-  await requireAdmin();
+  await requireStudentTarget(studentId);
   const db = createDb();
   return db
     .select()
@@ -110,16 +139,44 @@ export async function getAssignmentsByStudent(studentId: string) {
 }
 
 /**
+ * 관리자 학생 상세의 과제 목록: 제출 최신순과 과제별 피드백 수.
+ */
+export async function getAssignmentSummariesByStudent(studentId: string) {
+  await requireStudentTarget(studentId);
+  const db = createDb();
+  const rows = await db
+    .select({
+      id: assignments.id,
+      mediaUrl: assignments.mediaUrl,
+      submittedAt: assignments.submittedAt,
+      feedbackCount: count(feedbacks.id),
+    })
+    .from(assignments)
+    .leftJoin(feedbacks, eq(feedbacks.assignmentId, assignments.id))
+    .where(eq(assignments.studentId, studentId))
+    .groupBy(assignments.id)
+    .orderBy(desc(assignments.submittedAt));
+  return rows.map((row) => ({ ...row, feedbackCount: Number(row.feedbackCount) }));
+}
+
+/**
  * 과제 단건 조회 (ID로).
  */
 export async function getAssignmentById(assignmentId: string) {
+  const session = await requireAuth();
   const db = createDb();
   const rows = await db
     .select()
     .from(assignments)
     .where(eq(assignments.id, assignmentId))
     .limit(1);
-  return rows[0] ?? null;
+
+  const assignment = rows[0] ?? null;
+  if (!assignment) return null;
+
+  assertOwnerOrAdmin(session, assignment.studentId);
+
+  return assignment;
 }
 
 /**
@@ -128,8 +185,6 @@ export async function getAssignmentById(assignmentId: string) {
 export async function getPendingFeedbackCount(): Promise<number> {
   await requireAdmin();
   const db = createDb();
-  const { feedbacks } = await import("@/db/schema");
-  const { notExists } = await import("drizzle-orm");
 
   const rows = await db
     .select({ id: assignments.id })
@@ -143,4 +198,33 @@ export async function getPendingFeedbackCount(): Promise<number> {
       ),
     );
   return rows.length;
+}
+
+/**
+ * Admin 업무함: 피드백이 아직 없는 과제를 오래된 제출 순으로 조회합니다.
+ */
+export async function getPendingFeedbackAssignments() {
+  await requireAdmin();
+  const db = createDb();
+
+  return db
+    .select({
+      id: assignments.id,
+      mediaUrl: assignments.mediaUrl,
+      submittedAt: assignments.submittedAt,
+      studentId: assignments.studentId,
+      studentName: profiles.displayName,
+      studentEmail: profiles.email,
+    })
+    .from(assignments)
+    .innerJoin(profiles, eq(assignments.studentId, profiles.id))
+    .where(
+      notExists(
+        db
+          .select({ id: feedbacks.id })
+          .from(feedbacks)
+          .where(eq(feedbacks.assignmentId, assignments.id)),
+      ),
+    )
+    .orderBy(asc(assignments.submittedAt));
 }

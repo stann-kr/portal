@@ -1,0 +1,50 @@
+name = "portal"
+main = "worker.ts"
+compatibility_date = "2024-11-18"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+preview_urls = false
+
+[assets]
+directory = ".open-next/assets"
+binding = "ASSETS"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "portal-db"
+database_id = "cde94290-17b3-4626-9a62-5bb83e68380b"
+migrations_dir = "drizzle"
+
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "portal-storage"
+
+[vars]
+AUTH_URL = "https://portal.stann.kr"
+ACCOUNT_DELETION_ENABLED = "false"
+
+[[ratelimits]]
+name = "ACCOUNT_CLEANUP_RATE_LIMITER"
+namespace_id = "2026081101"
+
+  [ratelimits.simple]
+  limit = 30
+  period = 60
+
+[[ratelimits]]
+name = "PASSWORD_ATTEMPT_RATE_LIMITER"
+namespace_id = "2026101401"
+
+  [ratelimits.simple]
+  limit = 10
+  period = 60
+
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+  [observability.logs]
+  invocation_logs = true
+
+[version_metadata]
+binding = "CF_VERSION_METADATA"
