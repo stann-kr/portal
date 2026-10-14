@@ -4,6 +4,8 @@ import {
   AUTH_SESSION_MAX_AGE_SECONDS,
   authConfig,
   isCoarseRequestAuthorized,
+  PASSWORD_CHANGE_PATH,
+  shouldRedirectToPasswordChange,
 } from "./auth.config";
 import { ACCOUNT_RAW_ID_RETENTION_SECONDS } from "./lib/account-privacy-atomic";
 
@@ -64,4 +66,17 @@ test("보호 UI의 coarse gate는 JWT token 존재를 요구한다", () => {
     isCoarseRequestAuthorized({ isLoggedIn: true, pathname: "/dashboard" }),
     true,
   );
+});
+
+test("임시 비밀번호 session의 화면 이동만 새 비밀번호 설정으로 돌리고 login·API는 server gate에 맡긴다", () => {
+  const redirect = (pathname: string, passwordChangeRequired = true) =>
+    shouldRedirectToPasswordChange({ passwordChangeRequired, pathname });
+
+  assert.equal(redirect("/dashboard/student"), true);
+  assert.equal(redirect("/"), true);
+  assert.equal(redirect("/community"), true);
+  assert.equal(redirect(PASSWORD_CHANGE_PATH), false);
+  assert.equal(redirect("/login"), false);
+  assert.equal(redirect("/api/media/media-1"), false);
+  assert.equal(redirect("/dashboard/student", false), false);
 });

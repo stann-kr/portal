@@ -72,8 +72,9 @@ export async function requireStudentOwnerOrAdmin(
 /**
  * JWT session subject를 매 요청 DB profile과 대조하고 DB role을 권한 원본으로 쓴다.
  * profile이 삭제되었거나 비활성 상태이면 stale JWT를 인증으로 승격하지 않는다.
+ * 임시 비밀번호 session도 포함하므로 새 비밀번호 설정 화면과 action에서만 직접 쓴다.
  */
-export async function resolveActiveSession(
+export async function resolveSignedInSession(
   session: Session | null | undefined,
   loadProfile: ActiveProfileLoader = findActiveProfileById,
 ): Promise<AuthSession | null> {
@@ -91,6 +92,22 @@ export async function resolveActiveSession(
       role: profile.role,
     },
   };
+}
+
+/**
+ * 관리자가 발급한 임시 비밀번호로 로그인한 session은 새 비밀번호를 정하기 전까지
+ * 어떤 page·action·route에서도 포털 인증으로 승격하지 않는다.
+ */
+function withoutPendingPasswordChange(session: AuthSession | null): AuthSession | null {
+  return session?.user.passwordChangeRequired ? null : session;
+}
+
+/** 포털 기능용 active session. */
+export async function resolveActiveSession(
+  session: Session | null | undefined,
+  loadProfile: ActiveProfileLoader = findActiveProfileById,
+): Promise<AuthSession | null> {
+  return withoutPendingPasswordChange(await resolveSignedInSession(session, loadProfile));
 }
 
 /**
@@ -116,15 +133,27 @@ export async function requireAuth(): Promise<AuthSession> {
  * profile 재검증을 한 번만 수행한다. React cache는 렌더 요청 범위에서만 memoize하므로
  * server action·route handler 호출은 매번 다시 검증한다.
  */
-const resolveRequestActiveSession = cache(
-  async (): Promise<AuthSession | null> => resolveActiveSession(await auth()),
+const resolveRequestSignedInSession = cache(
+  async (): Promise<AuthSession | null> => resolveSignedInSession(await auth()),
 );
 
 /**
  * redirect/HTTP status를 직접 결정해야 하는 page와 route용 optional active session.
  */
 export async function getActiveAuthSession(): Promise<AuthSession | null> {
-  return resolveRequestActiveSession();
+  return withoutPendingPasswordChange(await resolveRequestSignedInSession());
+}
+
+/** 새 비밀번호 설정 화면과 login 분기용. 임시 비밀번호 session을 포함한다. */
+export async function getSignedInSession(): Promise<AuthSession | null> {
+  return resolveRequestSignedInSession();
+}
+
+/** 본인 비밀번호 변경 action용. 임시 비밀번호 session도 새 비밀번호를 정할 수 있다. */
+export async function requireSignedInSession(): Promise<AuthSession> {
+  const session = await getSignedInSession();
+  if (!session) throw new Error("Unauthorized");
+  return session;
 }
 
 /**

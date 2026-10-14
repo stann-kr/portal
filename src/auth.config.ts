@@ -6,6 +6,8 @@
 import type { NextAuthConfig } from "next-auth";
 
 export const AUTH_SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
+/** 임시 비밀번호로 로그인한 사용자가 포털을 쓰기 전에 새 비밀번호를 정하는 화면. */
+export const PASSWORD_CHANGE_PATH = "/account/password";
 
 type CoarseAuthorizationInput = {
   isLoggedIn: boolean;
@@ -27,6 +29,26 @@ export function isCoarseRequestAuthorized({
   return isLoggedIn;
 }
 
+/**
+ * 임시 비밀번호 session의 화면 이동을 새 비밀번호 설정으로 돌린다. 실제 차단은 server gate가
+ * 매 요청 현재 hash로 판단한다. login은 stale claim과의 redirect loop를 피하려고, API는
+ * redirect 대신 route의 인증 응답을 받도록 제외한다.
+ */
+export function shouldRedirectToPasswordChange({
+  passwordChangeRequired,
+  pathname,
+}: {
+  passwordChangeRequired: boolean;
+  pathname: string;
+}): boolean {
+  if (!passwordChangeRequired) return false;
+  return (
+    pathname !== PASSWORD_CHANGE_PATH &&
+    !pathname.startsWith("/login") &&
+    !pathname.startsWith("/api/")
+  );
+}
+
 export const authConfig: NextAuthConfig = {
   providers: [],
   session: {
@@ -44,6 +66,15 @@ export const authConfig: NextAuthConfig = {
      */
     authorized({ auth, request: { nextUrl } }) {
       const isLoggedIn = !!auth?.user;
+      if (
+        isLoggedIn &&
+        shouldRedirectToPasswordChange({
+          passwordChangeRequired: auth?.user?.passwordChangeRequired === true,
+          pathname: nextUrl.pathname,
+        })
+      ) {
+        return Response.redirect(new URL(PASSWORD_CHANGE_PATH, nextUrl));
+      }
       return isCoarseRequestAuthorized({
         isLoggedIn,
         pathname: nextUrl.pathname,
@@ -66,6 +97,7 @@ export const authConfig: NextAuthConfig = {
       if (session.user) {
         session.user.role = token.role;
         session.user.id = token.sub ?? "";
+        if (token.passwordChangeRequired === true) session.user.passwordChangeRequired = true;
       }
       return session;
     },

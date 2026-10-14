@@ -2,7 +2,8 @@ import { redirect } from "next/navigation";
 import { LoginForm } from "@/components/auth/LoginForm";
 import { AccountCleanupBootstrap } from "@/components/auth/AccountCleanupBootstrap";
 import { OwnerlessLegacyDraftCleanup } from "@/components/auth/OwnerlessLegacyDraftCleanup";
-import { getActiveAuthSession } from "@/lib/auth-guard";
+import { PASSWORD_CHANGE_PATH } from "@/auth.config";
+import { getSignedInSession } from "@/lib/auth-guard";
 import { accountDeletionLoginMessage } from "@/lib/account-privacy-policy";
 import { loginErrorMessage } from "@/lib/login-messages";
 
@@ -23,12 +24,14 @@ export default async function LoginPage({
     deviceCleanup?: string;
   }>;
 }) {
-  const activeSession = await getActiveAuthSession();
-  if (activeSession) {
+  const signedInSession = await getSignedInSession();
+  if (signedInSession) {
     redirect(
-      activeSession.user.role === "admin"
-        ? "/dashboard/admin"
-        : "/dashboard/student",
+      signedInSession.user.passwordChangeRequired
+        ? PASSWORD_CHANGE_PATH
+        : signedInSession.user.role === "admin"
+          ? "/dashboard/admin"
+          : "/dashboard/student",
     );
   }
 

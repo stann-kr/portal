@@ -524,6 +524,58 @@ test("비밀번호 변경은 현재 비밀번호를 확인하고 새 hash로 현
   assert.ok(await bcrypt.compare("third-password", (await storedHash())!));
 });
 
+test("관리자 임시 비밀번호 발급은 학생만 대상으로 기존 로그인을 만료시키고 학생이 새 비밀번호를 정해야 포털을 쓴다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("admin-1", "admin"));
+  const originalHash = await bcrypt.hash("forgotten-password", 4);
+  await db.insert(profiles).values([
+    { id: "admin-1", email: "admin-1@example.com", displayName: "관리자", role: "admin", passwordHash: "admin-hash" },
+    { id: "student-1", email: "student-1@example.com", displayName: "학생", role: "student", passwordHash: originalHash },
+  ]);
+  signInCalls = [];
+  context.after(() => { signInCalls = []; signInImpl = async () => "/dashboard"; });
+  const storedHash = async (id: string) => (await db.select({ hash: profiles.passwordHash }).from(profiles).where(eq(profiles.id, id)))[0].hash;
+  const { isTemporaryPasswordHash, verifyStoredPassword } = await import("@/lib/password-storage");
+
+  await assert.rejects(studentActions.resetStudentPassword("admin-1"), /Student not found/u);
+  assert.equal(await storedHash("admin-1"), "admin-hash");
+  activeSession = createSession("student-1", "student");
+  await assert.rejects(studentActions.resetStudentPassword("student-1"), /Admin only/u);
+  assert.equal(await storedHash("student-1"), originalHash);
+
+  activeSession = createSession("admin-1", "admin");
+  assert.equal(await studentActions.getStudentPasswordChangePending("student-1"), false);
+  const temporaryPassword = await studentActions.resetStudentPassword("student-1");
+  const temporaryHash = await storedHash("student-1");
+  assert.ok(isTemporaryPasswordHash(temporaryHash));
+  assert.equal(temporaryHash?.includes(temporaryPassword), false, "원문은 저장하지 않는다");
+  assert.ok(await verifyStoredPassword(temporaryPassword, temporaryHash));
+  assert.equal(await verifyStoredPassword("forgotten-password", temporaryHash), false);
+  assert.notEqual(credentialFingerprint(temporaryHash), credentialFingerprint(originalHash), "학생의 기존 로그인 지문이 맞지 않게 된다");
+  assert.equal(await studentActions.getStudentPasswordChangePending("student-1"), true);
+
+  // 임시 비밀번호 session은 포털 기능에 쓸 수 없고 새 비밀번호 설정만 할 수 있다.
+  activeSession = createSession("student-1", "student");
+  activeSession.user.passwordChangeRequired = true;
+  await assert.rejects(curriculumActions.getMyCurriculum(), /Unauthorized/u);
+  const form = (currentPassword: string, newPassword: string) => {
+    const data = new FormData();
+    data.set("currentPassword", currentPassword);
+    data.set("newPassword", newPassword);
+    data.set("confirmPassword", newPassword);
+    return data;
+  };
+  assert.deepEqual(await passwordActions.changeOwnPassword({}, form("wrong-temporary", "my-new-password")), { error: "임시 비밀번호가 올바르지 않습니다.", field: "currentPassword" });
+  assert.equal((await passwordActions.changeOwnPassword({}, form(temporaryPassword, temporaryPassword))).field, "newPassword");
+  assert.deepEqual(await passwordActions.changeOwnPassword({}, form(temporaryPassword, "my-new-password")), { success: true });
+  const ownHash = await storedHash("student-1");
+  assert.equal(isTemporaryPasswordHash(ownHash), false);
+  assert.ok(await verifyStoredPassword("my-new-password", ownHash));
+  assert.deepEqual(signInCalls, [["credentials", { email: "student-1@example.com", password: "my-new-password", redirect: false }]]);
+
+  activeSession = createSession("admin-1", "admin");
+  assert.equal(await studentActions.getStudentPasswordChangePending("student-1"), false);
+});
+
 test("관리자 child delete는 전달한 학생과 실제 owner가 다르면 행을 보존한다", { concurrency: false }, async (context) => {
   const db = await setupDatabase(context, createSession("admin-1", "admin"));
   await seedProfile(db, "admin-1", "admin");

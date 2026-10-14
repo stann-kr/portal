@@ -54,6 +54,9 @@ let editModule: typeof import("@/lib/actions/curriculum").updateModule = async (
 let OverviewTab: typeof import("@/components/admin/OverviewTab").OverviewTab;
 let changePassword: typeof import("@/lib/actions/password").changeOwnPassword = async () => ({ success: true });
 let PasswordChangeControl: typeof import("@/components/auth/PasswordChangeControl").PasswordChangeControl;
+let PasswordChangeForm: typeof import("@/components/auth/PasswordChangeControl").PasswordChangeForm;
+let resetPassword: typeof import("@/lib/actions/students").resetStudentPassword = async () => "abcd-efgh-jkmn";
+let StudentPasswordResetControl: typeof import("@/components/admin/StudentPasswordResetControl").StudentPasswordResetControl;
 let confirmActionModule: typeof import("@/components/ui/confirm-action");
 let issueFeedUrl: typeof import("@/lib/actions/calendarFeed").issueStudentCalendarFeedUrl = async () => "/api/calendar/feed?token=test";
 let CalendarFeedControl: typeof import("@/components/admin/CalendarFeedControl").CalendarFeedControl;
@@ -128,6 +131,10 @@ mock.module("@/lib/actions/calendarFeed", { namedExports: {
   getStudentCalendarFeedIssuedAt: async () => null,
 } });
 mock.module("@/lib/actions/password", { namedExports: { changeOwnPassword: (...args: Parameters<typeof changePassword>) => changePassword(...args) } });
+mock.module("@/lib/actions/students", { namedExports: {
+  resetStudentPassword: (...args: Parameters<typeof resetPassword>) => resetPassword(...args),
+  getStudentPasswordChangePending: async () => false,
+} });
 mock.module("@/lib/actions/digging", { namedExports: {
   getOrSeedColumns: async () => [],
   createDiggingTrack: (...args: Parameters<typeof saveTrack>) => saveTrack(...args),
@@ -219,7 +226,8 @@ before(async () => {
   ({ LoginForm } = await import("@/components/auth/LoginForm"));
   ({ default: CommunityClient } = await import("@/app/community/CommunityClient"));
   ({ OverviewTab } = await import("@/components/admin/OverviewTab"));
-  ({ PasswordChangeControl } = await import("@/components/auth/PasswordChangeControl"));
+  ({ PasswordChangeControl, PasswordChangeForm } = await import("@/components/auth/PasswordChangeControl"));
+  ({ StudentPasswordResetControl } = await import("@/components/admin/StudentPasswordResetControl"));
   confirmActionModule = await import("@/components/ui/confirm-action");
   ({ CalendarFeedControl } = await import("@/components/admin/CalendarFeedControl"));
   ({ ExternalCalendarConnection } = await import("@/components/student-portal/ExternalCalendarConnection"));
@@ -1320,6 +1328,53 @@ test("password change keeps typed values on a refused field and confirms success
   assert.deepEqual(submitted, ["wrong-password", "first-password"]);
   assert.match(browser.document.querySelector('[role="dialog"] [role="status"]')?.textContent ?? "", /비밀번호를 변경했습니다/u);
   assert.equal(inputs().length, 0, "the success view no longer holds the typed passwords");
+});
+
+test("required password change asks for the temporary password and moves focus to entering the portal", async (context) => {
+  const submitted: string[][] = [];
+  changePassword = async (_previous, data) => {
+    submitted.push(["currentPassword", "newPassword", "confirmPassword"].map((name) => String(data.get(name))));
+    return { success: true };
+  };
+  context.after(() => { changePassword = async () => ({ success: true }); });
+  let entered = 0;
+  await render(context, <PasswordChangeForm variant="required" onDone={() => { entered += 1; }} />);
+  const labels = [...browser.document.querySelectorAll("label")].map((label) => label.textContent);
+  assert.deepEqual(labels, ["임시 비밀번호", "새 비밀번호", "새 비밀번호 확인"]);
+  for (const [name, value] of [["currentPassword", "abcd-efgh-jkmn"], ["newPassword", "my-new-password"], ["confirmPassword", "my-new-password"]]) {
+    await fill(name, value);
+  }
+  await press("새 비밀번호 저장");
+  assert.deepEqual(submitted, [["abcd-efgh-jkmn", "my-new-password", "my-new-password"]]);
+  assert.match(browser.document.querySelector('[role="status"]')?.textContent ?? "", /새 비밀번호를 저장했습니다/u);
+  assert.equal(browser.document.querySelectorAll('input[type="password"]').length, 0);
+  assert.equal(browser.document.activeElement, button("포털로 이동"));
+  await press("포털로 이동");
+  assert.equal(entered, 1);
+});
+
+test("student password reset confirms first and shows the temporary password only once", async (context) => {
+  const issued: string[] = [];
+  resetPassword = async (studentId) => { issued.push(studentId); return `temp-${issued.length}`; };
+  context.after(() => { resetPassword = async () => "abcd-efgh-jkmn"; });
+
+  const root = await render(context, <StudentPasswordResetControl studentId="student-1" />);
+  await press("임시 비밀번호 발급");
+  assert.deepEqual(issued, [], "issuing expires the student's password, so it never runs on the first click");
+  assert.equal(browser.document.activeElement?.textContent, "취소");
+  assert.match(browser.document.body.textContent ?? "", /모든 기기의 로그인이 즉시 만료됩니다/u);
+  await press("임시 비밀번호 발급 확인");
+  assert.deepEqual(issued, ["student-1"]);
+  assert.equal(browser.document.querySelector("code")?.textContent, "temp-1");
+  button("임시 비밀번호 다시 발급");
+
+  await act(async () => root.render(<StudentPasswordResetControl key="pending" studentId="student-2" changePending />));
+  assert.equal(browser.document.querySelector("code"), null, "a reloaded screen never shows an earlier temporary password");
+  assert.match(browser.document.body.textContent ?? "", /학생이 아직 바꾸지 않았습니다/u);
+  await press("임시 비밀번호 다시 발급");
+  await press("임시 비밀번호 발급 확인");
+  assert.deepEqual(issued, ["student-1", "student-2"]);
+  assert.equal(browser.document.querySelector("code")?.textContent, "temp-2");
 });
 
 test("confirm panel starts on cancel, closes on Escape, and stays open only while the confirmed action runs", async (context) => {

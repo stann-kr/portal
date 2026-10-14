@@ -37,14 +37,23 @@ const FIELD_AUTOCOMPLETE: Record<ChangePasswordField, string> = {
   confirmPassword: "new-password",
 };
 
-function PasswordChangeForm({
+/** change: 사이드 레일의 자발적 변경, required: 임시 비밀번호 로그인 뒤 필수 변경. */
+export type PasswordChangeVariant = "change" | "required";
+
+export function PasswordChangeForm({
+  variant = "change",
   onDone,
   onBusyChange,
 }: {
+  variant?: PasswordChangeVariant;
   onDone: () => void;
-  onBusyChange: (busy: boolean) => void;
+  onBusyChange?: (busy: boolean) => void;
 }) {
   const baseId = useId();
+  const labels: Record<ChangePasswordField, string> = variant === "required"
+    ? { ...FIELD_LABELS, currentPassword: "임시 비밀번호" }
+    : FIELD_LABELS;
+  const doneButtonRef = useRef<HTMLButtonElement>(null);
   // form action은 uncontrolled 입력을 비우므로 거부된 뒤에도 고칠 수 있게 값을 제어한다.
   const [fields, setFields] = useState(EMPTY_FIELDS);
   const inputRefs = useRef<Partial<Record<ChangePasswordField, HTMLInputElement | null>>>({});
@@ -67,10 +76,15 @@ function PasswordChangeForm({
   }, [state]);
 
   useEffect(() => {
-    onBusyChange(pending);
+    onBusyChange?.(pending);
   }, [onBusyChange, pending]);
 
-  useEffect(() => () => onBusyChange(false), [onBusyChange]);
+  useEffect(() => () => onBusyChange?.(false), [onBusyChange]);
+
+  // 입력 form이 사라지므로 결과 화면의 다음 행동으로 초점을 옮긴다.
+  useEffect(() => {
+    if (state.success) doneButtonRef.current?.focus();
+  }, [state.success]);
 
   if (state.success) {
     return (
@@ -78,14 +92,20 @@ function PasswordChangeForm({
         <p role="status" className="rounded-md bg-success-muted px-3 py-2 text-sm text-success">
           {state.signInRequired
             ? "비밀번호를 변경했습니다. 이 기기에서도 새 비밀번호로 다시 로그인해 주세요."
-            : "비밀번호를 변경했습니다. 다른 기기의 기존 로그인은 다음 요청부터 만료됩니다."}
+            : variant === "required"
+              ? "새 비밀번호를 저장했습니다. 이제 포털을 이용할 수 있습니다."
+              : "비밀번호를 변경했습니다. 다른 기기의 기존 로그인은 다음 요청부터 만료됩니다."}
         </p>
         {state.signInRequired ? (
-          <Button type="button" className="w-full" onClick={() => window.location.assign("/login")}>
+          <Button ref={doneButtonRef} type="button" className="w-full" onClick={() => window.location.assign("/login")}>
             로그인 화면으로 이동
           </Button>
+        ) : variant === "required" ? (
+          <Button ref={doneButtonRef} type="button" className="w-full" onClick={onDone}>
+            포털로 이동
+          </Button>
         ) : (
-          <Button type="button" variant="outline" className="w-full" onClick={onDone}>
+          <Button ref={doneButtonRef} type="button" variant="outline" className="w-full" onClick={onDone}>
             닫기
           </Button>
         )}
@@ -95,12 +115,12 @@ function PasswordChangeForm({
 
   return (
     <form action={action} className="space-y-4" aria-busy={pending}>
-      {(Object.keys(FIELD_LABELS) as ChangePasswordField[]).map((field) => {
+      {(Object.keys(labels) as ChangePasswordField[]).map((field) => {
         const inputId = `${baseId}-${field}`;
         const invalid = !pending && state.field === field;
         return (
           <div key={field} className="space-y-1.5">
-            <label htmlFor={inputId} className="text-sm font-medium">{FIELD_LABELS[field]}</label>
+            <label htmlFor={inputId} className="text-sm font-medium">{labels[field]}</label>
             <Input
               ref={(element) => { inputRefs.current[field] = element; }}
               id={inputId}
@@ -129,7 +149,9 @@ function PasswordChangeForm({
         </p>
       ) : null}
       <Button type="submit" className="w-full" disabled={pending}>
-        {pending ? "변경 중..." : "비밀번호 변경"}
+        {variant === "required"
+          ? pending ? "저장 중..." : "새 비밀번호 저장"
+          : pending ? "변경 중..." : "비밀번호 변경"}
       </Button>
     </form>
   );

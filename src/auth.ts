@@ -3,7 +3,7 @@
  * @description NextAuth.js 핵심 인증 로직 (Node.js 런타임).
  * Cloudflare Workers 환경: getCloudflareContext().env.DB를 통해 D1 접근.
  * 로컬 개발: db/client.ts의 SQLite fallback 사용.
- * 자격증명 기반(Credentials) 인증: 이메일 + bcrypt 해시 비교.
+ * 자격증명 기반(Credentials) 인증: 이메일 + bcrypt 해시 비교(관리자 발급 임시 비밀번호 포함).
  */
 import NextAuth from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
@@ -15,7 +15,10 @@ import {
   type ActiveSessionProfile,
 } from "@/lib/active-profile";
 import { credentialFingerprint } from "@/lib/credential-fingerprint";
-import * as bcrypt from "bcryptjs";
+import {
+  isTemporaryPasswordHash,
+  verifyStoredPassword,
+} from "@/lib/password-storage";
 
 type FindActiveSessionProfileById = (
   profileId: string,
@@ -49,6 +52,7 @@ export function createNodeAuthConfig(
           // 로그인 직후: authorize가 검증한 비밀번호 hash의 지문에 session을 결합한다.
           const fingerprint = params.user.credentialFingerprint;
           if (typeof fingerprint === "string") token.credentialFingerprint = fingerprint;
+          if (params.user.passwordChangeRequired) token.passwordChangeRequired = true;
           return token;
         }
 
@@ -68,6 +72,10 @@ export function createNodeAuthConfig(
         token.name = profile.displayName;
         token.email = profile.email;
         token.role = profile.role;
+        // 임시 비밀번호 여부는 매 요청 현재 hash에서 다시 판단한다. 지문 없는 이전 token도
+        // 관리자가 비밀번호를 초기화한 뒤에는 포털 기능을 쓰지 못한다.
+        if (profile.passwordChangeRequired) token.passwordChangeRequired = true;
+        else delete token.passwordChangeRequired;
         return token;
       },
     },
@@ -93,7 +101,7 @@ export function createNodeAuthConfig(
               return null;
             }
 
-            const isValid = await bcrypt.compare(
+            const isValid = await verifyStoredPassword(
               credentials.password as string,
               user.passwordHash,
             );
@@ -106,6 +114,7 @@ export function createNodeAuthConfig(
               name: user.displayName,
               role: user.role,
               credentialFingerprint: credentialFingerprint(user.passwordHash),
+              passwordChangeRequired: isTemporaryPasswordHash(user.passwordHash),
             };
           } catch {
             console.error("[auth] authorize error");

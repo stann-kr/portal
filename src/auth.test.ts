@@ -5,10 +5,11 @@ import { decode, encode } from "@auth/core/jwt";
 import * as bcrypt from "bcryptjs";
 import NextAuth from "next-auth";
 import { NextRequest } from "next/server";
-import { AUTH_SESSION_MAX_AGE_SECONDS } from "./auth.config";
+import { AUTH_SESSION_MAX_AGE_SECONDS, authConfig, PASSWORD_CHANGE_PATH } from "./auth.config";
 import { createNodeAuthConfig } from "./auth";
 import type { ActiveSessionProfile } from "./lib/active-profile";
 import { credentialFingerprint } from "./lib/credential-fingerprint";
+import { temporaryPasswordHash } from "./lib/password-storage";
 
 const AUTH_SECRET = "test-only-auth-secret-with-sufficient-entropy";
 const SESSION_COOKIE_NAME = "authjs.session-token";
@@ -18,6 +19,7 @@ const PROFILE: ActiveSessionProfile = {
   displayName: "Student",
   role: "student",
   credentialFingerprint: credentialFingerprint("$2a$10$current-password-hash"),
+  passwordChangeRequired: false,
 };
 
 async function sessionRequest(
@@ -102,6 +104,55 @@ test("비밀번호가 바뀐 뒤 이전 지문의 session은 폐기하고 지문
   assert.equal(legacyBody?.user.id, PROFILE.id);
 });
 
+async function credentialsLogin(passwordHash: string, password: string) {
+  const response = await Auth(
+    new Request("http://localhost/api/auth/callback/credentials", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ email: PROFILE.email, password, callbackUrl: "/dashboard" }),
+    }),
+    {
+      ...createNodeAuthConfig(async () => PROFILE, async () => ({ ...PROFILE, passwordHash })),
+      secret: AUTH_SECRET,
+      basePath: "/api/auth",
+      skipCSRFCheck,
+      // 거부된 로그인의 예상된 CredentialsSignin 오류 로그를 테스트 출력에서 뺀다.
+      logger: { error: () => undefined },
+    },
+  );
+  const sessionCookie = response.headers.getSetCookie().find((cookie) => cookie.startsWith(`${SESSION_COOKIE_NAME}=`));
+  if (!sessionCookie) return null;
+  return decode({
+    token: sessionCookie.slice(SESSION_COOKIE_NAME.length + 1).split(";")[0],
+    secret: AUTH_SECRET,
+    salt: SESSION_COOKIE_NAME,
+  });
+}
+
+test("관리자가 발급한 임시 비밀번호 로그인은 새 비밀번호 설정 필요 상태로 발급된다", async () => {
+  const storedHash = temporaryPasswordHash(await bcrypt.hash("abcd-efgh-jkmn", 4));
+  assert.equal(await credentialsLogin(storedHash, "wrong-password"), null);
+
+  const token = await credentialsLogin(storedHash, "abcd-efgh-jkmn");
+  assert.equal(token?.sub, PROFILE.id);
+  assert.equal(token?.passwordChangeRequired, true);
+  assert.equal(token?.credentialFingerprint, credentialFingerprint(storedHash));
+
+  const normal = await credentialsLogin(await bcrypt.hash("abcd-efgh-jkmn", 4), "abcd-efgh-jkmn");
+  assert.equal(normal?.passwordChangeRequired, undefined);
+});
+
+test("임시 비밀번호 상태는 매 요청 현재 profile에서 다시 판단해 지문 없는 이전 token에도 적용한다", async () => {
+  const temporary = { ...PROFILE, passwordChangeRequired: true };
+  const current = await sessionRequest(async () => temporary, PROFILE.credentialFingerprint ?? undefined);
+  const currentBody = (await current.json()) as { user: Record<string, unknown> };
+  assert.equal(currentBody.user.passwordChangeRequired, true);
+
+  const legacy = await sessionRequest(async () => temporary);
+  const legacyBody = (await legacy.json()) as { user: Record<string, unknown> };
+  assert.equal(legacyBody.user.passwordChangeRequired, true);
+});
+
 test("credentials 로그인은 검증한 비밀번호 hash의 지문을 session token에 결합한다", async () => {
   const passwordHash = await bcrypt.hash("correct horse battery", 4);
   const response = await Auth(
@@ -126,4 +177,34 @@ test("credentials 로그인은 검증한 비밀번호 hash의 지문을 session 
   });
   assert.equal(token?.sub, PROFILE.id);
   assert.equal(token?.credentialFingerprint, credentialFingerprint(passwordHash));
+});
+
+test("edge middleware는 임시 비밀번호 token의 화면 이동을 새 비밀번호 설정으로 돌린다", async () => {
+  const middleware = NextAuth({ ...authConfig, secret: AUTH_SECRET }).auth as unknown as (
+    request: NextRequest,
+    event: unknown,
+  ) => Promise<Response | undefined>;
+  const request = async (pathname: string, passwordChangeRequired: boolean) => {
+    const token = await encode({
+      token: { sub: PROFILE.id, role: "student", ...(passwordChangeRequired ? { passwordChangeRequired: true } : {}) },
+      secret: AUTH_SECRET,
+      salt: SESSION_COOKIE_NAME,
+      maxAge: AUTH_SESSION_MAX_AGE_SECONDS,
+    });
+    return middleware(
+      // middleware는 host·protocol header로 session 확인 주소와 cookie 이름을 정한다.
+      new NextRequest(`http://localhost${pathname}`, {
+        headers: { host: "localhost", "x-forwarded-proto": "http", cookie: `${SESSION_COOKIE_NAME}=${token}` },
+      }),
+      {},
+    );
+  };
+
+  const redirected = await request("/dashboard/student", true);
+  assert.ok(redirected && redirected.status >= 300 && redirected.status < 400);
+  assert.equal(new URL(redirected?.headers.get("location") ?? "").pathname, PASSWORD_CHANGE_PATH);
+  for (const pathname of [PASSWORD_CHANGE_PATH, "/login"]) {
+    assert.equal((await request(pathname, true))?.headers.get("location") ?? null, null, pathname);
+  }
+  assert.equal((await request("/dashboard/student", false))?.headers.get("location") ?? null, null);
 });

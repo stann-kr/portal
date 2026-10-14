@@ -1,6 +1,6 @@
 /**
  * @file src/components/admin/OverviewTab.tsx
- * @description 학생 상세 — Overview 탭 (커리큘럼 + 레슨 관리).
+ * @description 학생 상세 — Overview 탭 (커리큘럼 + 레슨 관리 + 계정).
  * 기존 students/[id]/page.tsx 클라이언트 로직을 분리한 컴포넌트.
  * 데이터는 RSC 부모(page.tsx)에서 props로 전달받음.
  */
@@ -15,6 +15,7 @@ import {
   Trash2,
   CheckCircle2,
   Circle,
+  UserRound,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -30,6 +31,7 @@ import {
   type CreateLessonState,
 } from "@/lib/actions/lessons";
 import { CalendarFeedControl } from "@/components/admin/CalendarFeedControl";
+import { StudentPasswordResetControl } from "@/components/admin/StudentPasswordResetControl";
 import { ConfirmPanel, useConfirmAction } from "@/components/ui/confirm-action";
 import { formatKst } from "@/lib/kst-format";
 
@@ -52,6 +54,8 @@ interface OverviewTabProps {
   lessons: Lesson[];
   /** 현재 레슨 캘린더 구독 URL의 마지막 발급 시각. */
   calendarFeedIssuedAt?: Date | null;
+  /** 발급한 임시 비밀번호를 학생이 아직 바꾸지 않았는지. */
+  passwordChangePending?: boolean;
 }
 
 // ─── 커리큘럼 추가 폼 ──────────────────────────────
@@ -204,6 +208,7 @@ export function OverviewTab({
   modules,
   lessons,
   calendarFeedIssuedAt = null,
+  passwordChangePending = false,
 }: OverviewTabProps) {
   const [isPending, startTransition] = useTransition();
   const [mutationError, setMutationError] = useState("");
@@ -389,6 +394,16 @@ export function OverviewTab({
         )}
 
         <AddLessonForm studentId={studentId} />
+      </section>
+
+      {/* 계정 */}
+      <section className="space-y-4">
+        <div className="flex items-center gap-2 border-b pb-3">
+          <UserRound className="w-5 h-5 text-muted-foreground" aria-hidden="true" />
+          <h2 className="text-lg font-semibold">계정</h2>
+        </div>
+
+        <StudentPasswordResetControl studentId={studentId} changePending={passwordChangePending} />
       </section>
     </div>
   );

@@ -1,6 +1,5 @@
 "use server";
 
-import * as bcrypt from "bcryptjs";
 import { eq } from "drizzle-orm";
 import { createDb, createDbContext } from "@/db/client";
 import { profiles } from "@/db/schema";
@@ -19,6 +18,7 @@ import {
   processMediaDeletionOutboxBestEffort,
 } from "@/lib/media-lifecycle-atomic";
 import { isAccountDeletionEnabled } from "@/lib/account-privacy-rollout";
+import { verifyStoredPassword } from "@/lib/password-storage";
 
 /** 학생 본인만 현재 비밀번호와 persistent 또는 memory-only digest로 삭제한다. */
 export async function deleteOwnAccount(
@@ -49,7 +49,7 @@ export async function deleteOwnAccount(
         passwordHash: profile.passwordHash,
       };
     },
-    comparePassword: bcrypt.compare,
+    comparePassword: verifyStoredPassword,
     enqueueExpiredMedia: (now) => enqueueExpiredUnattachedMedia(context, now),
     deleteAccount: (deletionInput) =>
       deleteStudentAccountAtomically(context, deletionInput),

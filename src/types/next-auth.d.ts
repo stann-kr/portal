@@ -12,6 +12,8 @@ declare module "next-auth" {
   interface Session {
     user: {
       role: UserRole;
+      /** 관리자가 발급한 임시 비밀번호로 로그인해 새 비밀번호를 정해야 하는 session. */
+      passwordChangeRequired?: boolean;
     } & DefaultSession["user"];
   }
 
@@ -19,6 +21,7 @@ declare module "next-auth" {
     role: UserRole;
     /** 로그인에 사용한 비밀번호 hash의 지문. JWT에만 결합하고 session 응답에는 노출하지 않는다. */
     credentialFingerprint?: string | null;
+    passwordChangeRequired?: boolean;
   }
 }
 
@@ -26,5 +29,6 @@ declare module "next-auth/jwt" {
   interface JWT extends DefaultJWT {
     role: UserRole;
     credentialFingerprint?: string;
+    passwordChangeRequired?: boolean;
   }
 }

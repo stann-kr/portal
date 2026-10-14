@@ -3,6 +3,7 @@ import { createDb, type DrizzleDb } from "@/db/client";
 import { profiles } from "@/db/schema";
 import type { UserRole } from "@/types/user";
 import { credentialFingerprint } from "@/lib/credential-fingerprint";
+import { isTemporaryPasswordHash } from "@/lib/password-storage";
 
 export type ActiveProfile = {
   id: string;
@@ -15,9 +16,10 @@ export type ActiveLoginProfile = ActiveProfile & {
   passwordHash: string | null;
 };
 
-/** JWT 갱신 경계용 profile. 비밀번호 hash 대신 session 결합 지문만 노출한다. */
+/** JWT 갱신 경계용 profile. 비밀번호 hash 대신 session 결합 지문과 임시 비밀번호 여부만 노출한다. */
 export type ActiveSessionProfile = ActiveProfile & {
   credentialFingerprint: string | null;
+  passwordChangeRequired: boolean;
 };
 
 type ProfileRecord = Record<string, unknown>;
@@ -100,7 +102,11 @@ export async function findActiveSessionProfileById(
   const profile = parseActiveLoginProfile(row);
   if (!profile) return null;
   const { passwordHash, ...activeProfile } = profile;
-  return { ...activeProfile, credentialFingerprint: credentialFingerprint(passwordHash) };
+  return {
+    ...activeProfile,
+    credentialFingerprint: credentialFingerprint(passwordHash),
+    passwordChangeRequired: isTemporaryPasswordHash(passwordHash),
+  };
 }
 
 export async function findActiveProfileByEmail(

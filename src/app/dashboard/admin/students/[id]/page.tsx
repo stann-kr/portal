@@ -7,7 +7,7 @@
 import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import { getActiveAuthSession } from "@/lib/auth-guard";
-import { getStudentById } from "@/lib/actions/students";
+import { getStudentById, getStudentPasswordChangePending } from "@/lib/actions/students";
 import { getCurriculumByStudent } from "@/lib/actions/curriculum";
 import { getLessonsByStudent } from "@/lib/actions/lessons";
 import { getOrSeedColumns, getDiggingTracks } from "@/lib/actions/digging";
@@ -151,16 +151,18 @@ export default async function StudentDetailPage({
   if (!student) redirect("/dashboard/admin");
 
   // Overview 탭 데이터는 미리 병렬 fetch
-  const [modules, lessons, calendarFeedIssuedAt] = await (activeTab === "overview"
+  const [modules, lessons, calendarFeedIssuedAt, passwordChangePending] = await (activeTab === "overview"
     ? Promise.all([
         getCurriculumByStudent(studentId),
         getLessonsByStudent(studentId),
         getStudentCalendarFeedIssuedAt(studentId),
+        getStudentPasswordChangePending(studentId),
       ])
-    : Promise.resolve([[], [], null] as [
+    : Promise.resolve([[], [], null, false] as [
         Awaited<ReturnType<typeof getCurriculumByStudent>>,
         Awaited<ReturnType<typeof getLessonsByStudent>>,
         Date | null,
+        boolean,
       ]));
 
   return (
@@ -187,6 +189,7 @@ export default async function StudentDetailPage({
             modules={modules}
             lessons={lessons}
             calendarFeedIssuedAt={calendarFeedIssuedAt}
+            passwordChangePending={passwordChangePending}
           />
         )}
 
