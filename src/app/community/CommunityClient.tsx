@@ -391,8 +391,9 @@ export default function CommunityClient({ isAdmin, initial }: CommunityClientPro
                 <TabsTrigger value="GENERAL" className="text-xs gap-1.5 px-3">
                   <MessageSquare className="w-3 h-3" aria-hidden="true" />
                   자유{" "}
+                  {/* 좁은 화면은 위 채널 칩이 같은 이름을 보여 주므로 새 글 버튼 자리를 남긴다. */}
                   {activeTab === "GENERAL" && currentCat && (
-                    <span className="text-muted-foreground">
+                    <span className="hidden text-muted-foreground sm:inline">
                       / {currentCat.name}
                     </span>
                   )}
@@ -409,7 +410,7 @@ export default function CommunityClient({ isAdmin, initial }: CommunityClientPro
               <Button
                 asChild
                 size="sm"
-                className="gap-1.5"
+                className="shrink-0 gap-1.5"
               >
                 <Link
                   href={`/community/new?boardType=${activeTab}&category=${activeCategory}&returnTo=${encodeURIComponent(returnTo)}`}

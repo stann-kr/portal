@@ -33,7 +33,7 @@ export function StudentDetailTabs({ studentId, activeTab }: StudentDetailTabsPro
             key={key}
             href={buildAdminStudentDetailHref(studentId, key)}
             aria-current={isActive ? "page" : undefined}
-            className={`inline-flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+            className={`inline-flex shrink-0 items-center gap-2 whitespace-nowrap px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
               isActive
                 ? "border-primary text-foreground"
                 : "border-transparent text-muted-foreground hover:text-foreground hover:border-border"
