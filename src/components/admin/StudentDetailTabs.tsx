@@ -25,7 +25,7 @@ interface StudentDetailTabsProps {
 
 export function StudentDetailTabs({ studentId, activeTab }: StudentDetailTabsProps) {
   return (
-    <nav aria-label="학생 상세" className="flex gap-1 overflow-x-auto border-b border-border">
+    <nav aria-label="학생 상세" className="scroll-row flex gap-1 border-b border-border">
       {TABS.map(({ key, label, icon: Icon }) => {
         const isActive = activeTab === key;
         return (

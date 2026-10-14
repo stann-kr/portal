@@ -351,7 +351,7 @@ export default function CommunityClient({ isAdmin, initial }: CommunityClientPro
             </Link>
           </div>
           {activeTab === "GENERAL" && categories.length > 0 ? (
-            <div className="-mx-1 flex gap-1 overflow-x-auto pb-1" role="group" aria-label="채널">
+            <div className="scroll-row -mx-1 flex gap-1 pb-1" role="group" aria-label="채널">
               {categories.map((cat) => {
                 const isActive = cat.slug === activeCategory;
                 return (

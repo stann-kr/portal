@@ -475,7 +475,7 @@ export function FullEditor({
         disabled={disabled}
         role="toolbar"
         aria-label="편집 도구"
-        className="flex min-w-0 flex-nowrap items-center gap-0.5 overflow-x-auto border-b border-border bg-muted/40 px-2 py-2 disabled:opacity-60 sm:px-3"
+        className="flex min-w-0 flex-nowrap items-center gap-0.5 overflow-x-auto overflow-y-hidden border-b border-border bg-muted/40 px-2 py-2 disabled:opacity-60 sm:px-3"
       >
         {/* 실행 취소 / 다시 실행 */}
         <ToolbarButton

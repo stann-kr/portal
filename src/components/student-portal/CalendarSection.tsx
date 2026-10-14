@@ -285,7 +285,7 @@ export function CalendarSection({
       <Tabs value={activeTab} onValueChange={handleTabChange} activationMode="manual" className="flex min-h-0 flex-col h-full">
         {/* 탭 헤더 */}
         <div className="flex flex-shrink-0 flex-col gap-2 border-b border-border px-3 pt-3 sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:pt-4">
-          <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto">
+          <div className="scroll-row flex min-w-0 flex-1 items-center gap-2">
             <TabsList className="h-9 shrink-0 gap-0 border-b-0 bg-transparent p-0">
               {calendarTabs.map(({ value, label }) => {
                 const Icon = TAB_ICONS[value];

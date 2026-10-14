@@ -24,8 +24,8 @@ export function PortalNavigation<T extends string>({
 }) {
   return (
     <header className="sticky top-0 z-20 shrink-0 border-b border-border bg-background/95 px-3 backdrop-blur-sm sm:px-5">
-      <div className="mx-auto flex min-h-14 max-w-[1400px] items-center gap-1 overflow-x-auto">
-        <nav aria-label={ariaLabel} className="flex items-center gap-1">
+      <div className="mx-auto flex min-h-14 max-w-[1400px] items-center gap-1">
+        <nav aria-label={ariaLabel} className="scroll-row flex min-w-0 items-center gap-1">
           {items.map(({ id, label, Icon }) => {
             const isActive = activeItem === id;
 
