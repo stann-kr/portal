@@ -311,6 +311,9 @@
   body {
     background-color: var(--color-background);
     color: var(--color-foreground);
+    /* 한국어는 어절 단위로 줄을 바꾸고, 공백 없이 긴 낱말·주소만 넘칠 때 끊는다. */
+    word-break: keep-all;
+    overflow-wrap: break-word;
     @apply min-h-[100dvh] font-sans antialiased;
   }
 
