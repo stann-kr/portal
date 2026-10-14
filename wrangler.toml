@@ -21,6 +21,10 @@ migrations_dir = "drizzle"
 binding = "BUCKET"
 bucket_name = "portal-storage"
 
+# 사용자 접속 지점과 관계없이 D1 가까이에서 Worker를 실행해 요청마다 반복되는 DB 왕복을 줄인다.
+[placement]
+mode = "smart"
+
 [vars]
 AUTH_URL = "https://portal.stann.kr"
 ACCOUNT_DELETION_ENABLED = "false"

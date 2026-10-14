@@ -151,6 +151,9 @@
 .fc-custom .fc-day-today { background-color: color-mix(in srgb, var(--color-primary) 5%, transparent) !important; }
 .fc-custom .fc-day-today .fc-daygrid-day-number { color: var(--color-primary); font-weight: 700; }
 .fc-custom .fc-event { border-radius: 4px; font-size: 0.72rem; padding: 1px 4px; }
+/* 제목이 길어도 시간은 줄이지 않고 제목만 말줄임한다. */
+.fc-custom .fc-h-event .fc-event-time { flex-shrink: 0; overflow: visible; }
+.fc-custom .fc-h-event .fc-event-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fc-custom th, .fc-custom td { border-color: var(--color-border) !important; }
 
 /* ─── FullEditor / ProseMirror 스타일 ───────────── */
@@ -298,6 +301,18 @@
 
 /* 최상위 포커스 아웃라인 제거 */
 .ProseMirror:focus { outline: none; }
+
+/* 탭·메뉴처럼 한 줄로 늘어선 조작 줄. 좁은 화면에서는 가로로만 넘기고, 세로 스크롤과
+   스크롤바는 만들지 않는다. 1px 높이 차이로 메뉴 줄에 세로 스크롤이 생기던 문제를 막는다. */
+@utility scroll-row {
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
 
 @layer base {
   *,
