@@ -6,9 +6,19 @@
  * profile 존재·현재 role 검증은 각 server entry의 active-profile gate가 담당한다.
  */
 import NextAuth from "next-auth";
+import type { NextFetchEvent, NextRequest } from "next/server";
 import { authConfig } from "./auth.config";
+import { withoutSessionRefreshOnMutation } from "./lib/middleware-session-cookie";
 
-export default NextAuth(authConfig).auth;
+// `export default auth`로 쓰던 middleware 형태다. auth overload 타입은 이 호출 형태를 표현하지 않는다.
+const authMiddleware = NextAuth(authConfig).auth as unknown as (
+  request: NextRequest,
+  event: NextFetchEvent,
+) => Promise<Response>;
+
+export default async function middleware(request: NextRequest, event: NextFetchEvent) {
+  return withoutSessionRefreshOnMutation(request.method, await authMiddleware(request, event));
+}
 
 export const config = {
   /**
