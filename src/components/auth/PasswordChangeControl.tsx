@@ -86,6 +86,15 @@ export function PasswordChangeForm({
     if (state.success) doneButtonRef.current?.focus();
   }, [state.success]);
 
+  // 필수 변경은 새 로그인이 발급되면 결과 화면 없이 바로 포털로 이동한다. 서버도 다시 그린
+  // 설정 화면에서 같은 이동을 하므로, 어느 쪽이 먼저든 한 번만 요청한다.
+  const hasEnteredPortalRef = useRef(false);
+  useEffect(() => {
+    if (variant !== "required" || !state.success || state.signInRequired || hasEnteredPortalRef.current) return;
+    hasEnteredPortalRef.current = true;
+    onDone();
+  }, [variant, state, onDone]);
+
   if (state.success) {
     return (
       <div className="space-y-4">
@@ -93,18 +102,14 @@ export function PasswordChangeForm({
           {state.signInRequired
             ? "비밀번호를 변경했습니다. 이 기기에서도 새 비밀번호로 다시 로그인해 주세요."
             : variant === "required"
-              ? "새 비밀번호를 저장했습니다. 이제 포털을 이용할 수 있습니다."
+              ? "새 비밀번호를 저장했습니다. 포털로 이동합니다."
               : "비밀번호를 변경했습니다. 다른 기기의 기존 로그인은 다음 요청부터 만료됩니다."}
         </p>
         {state.signInRequired ? (
           <Button ref={doneButtonRef} type="button" className="w-full" onClick={() => window.location.assign("/login")}>
             로그인 화면으로 이동
           </Button>
-        ) : variant === "required" ? (
-          <Button ref={doneButtonRef} type="button" className="w-full" onClick={onDone}>
-            포털로 이동
-          </Button>
-        ) : (
+        ) : variant === "required" ? null : (
           <Button ref={doneButtonRef} type="button" variant="outline" className="w-full" onClick={onDone}>
             닫기
           </Button>

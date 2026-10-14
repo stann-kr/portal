@@ -553,6 +553,20 @@ test("관리자 임시 비밀번호 발급은 학생만 대상으로 기존 로�
   assert.notEqual(credentialFingerprint(temporaryHash), credentialFingerprint(originalHash), "학생의 기존 로그인 지문이 맞지 않게 된다");
   assert.equal(await studentActions.getStudentPasswordChangePending("student-1"), true);
 
+  // 임시 비밀번호 계정의 로그인은 다른 주소를 거치지 않고 새 비밀번호 설정으로 이동한다.
+  const { loginWithCredentials } = await import("@/lib/actions/session");
+  const login = (email: string) => {
+    const data = new FormData();
+    data.set("email", email);
+    data.set("password", "entered-password");
+    data.set("callbackUrl", "/dashboard/student?tab=notes");
+    return loginWithCredentials({}, data);
+  };
+  await login("Student-1@Example.com");
+  await login("admin-1@example.com");
+  assert.deepEqual(signInCalls.map((call) => (call[1] as { redirectTo?: string }).redirectTo), ["/account/password", "/dashboard/student?tab=notes"]);
+  signInCalls = [];
+
   // 임시 비밀번호 session은 포털 기능에 쓸 수 없고 새 비밀번호 설정만 할 수 있다.
   activeSession = createSession("student-1", "student");
   activeSession.user.passwordChangeRequired = true;

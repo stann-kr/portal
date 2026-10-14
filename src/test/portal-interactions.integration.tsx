@@ -1330,7 +1330,7 @@ test("password change keeps typed values on a refused field and confirms success
   assert.equal(inputs().length, 0, "the success view no longer holds the typed passwords");
 });
 
-test("required password change asks for the temporary password and moves focus to entering the portal", async (context) => {
+test("required password change asks for the temporary password and enters the portal once saved", async (context) => {
   const submitted: string[][] = [];
   changePassword = async (_previous, data) => {
     submitted.push(["currentPassword", "newPassword", "confirmPassword"].map((name) => String(data.get(name))));
@@ -1346,11 +1346,11 @@ test("required password change asks for the temporary password and moves focus t
   }
   await press("새 비밀번호 저장");
   assert.deepEqual(submitted, [["abcd-efgh-jkmn", "my-new-password", "my-new-password"]]);
-  assert.match(browser.document.querySelector('[role="status"]')?.textContent ?? "", /새 비밀번호를 저장했습니다/u);
+  assert.match(browser.document.querySelector('[role="status"]')?.textContent ?? "", /새 비밀번호를 저장했습니다\. 포털로 이동합니다/u);
   assert.equal(browser.document.querySelectorAll('input[type="password"]').length, 0);
-  assert.equal(browser.document.activeElement, button("포털로 이동"));
-  await press("포털로 이동");
-  assert.equal(entered, 1);
+  assert.equal(entered, 1, "the saved login opens the portal without another click");
+  await settle();
+  assert.equal(entered, 1, "re-renders never navigate twice");
 });
 
 test("student password reset confirms first and shows the temporary password only once", async (context) => {
