@@ -19,6 +19,7 @@ export default async function LoginPage({
 }: {
   searchParams: Promise<{
     error?: string;
+    code?: string;
     callbackUrl?: string;
     accountDeleted?: string;
     deviceCleanup?: string;
@@ -35,7 +36,7 @@ export default async function LoginPage({
     );
   }
 
-  const { error, callbackUrl, accountDeleted, deviceCleanup } =
+  const { error, code, callbackUrl, accountDeleted, deviceCleanup } =
     await searchParams;
   const deletionMessage = accountDeletionLoginMessage(
     accountDeleted,
@@ -70,7 +71,7 @@ export default async function LoginPage({
 
         <LoginForm
           callbackUrl={typeof callbackUrl === "string" ? callbackUrl : undefined}
-          initialError={typeof error === "string" ? loginErrorMessage(error) : null}
+          initialError={typeof error === "string" ? loginErrorMessage(error, typeof code === "string" ? code : null) : null}
         />
 
         <div className="mt-5 text-xs text-muted-foreground">

@@ -31,6 +31,7 @@ import {
   type CreateLessonState,
 } from "@/lib/actions/lessons";
 import { CalendarFeedControl } from "@/components/admin/CalendarFeedControl";
+import { StudentInviteControl } from "@/components/admin/StudentInviteControl";
 import { StudentPasswordResetControl } from "@/components/admin/StudentPasswordResetControl";
 import { ConfirmPanel, useConfirmAction } from "@/components/ui/confirm-action";
 import { formatKst } from "@/lib/kst-format";
@@ -54,8 +55,10 @@ interface OverviewTabProps {
   lessons: Lesson[];
   /** 현재 레슨 캘린더 구독 URL의 마지막 발급 시각. */
   calendarFeedIssuedAt?: Date | null;
-  /** 발급한 임시 비밀번호를 학생이 아직 바꾸지 않았는지. */
-  passwordChangePending?: boolean;
+  /** 학생 계정 상태. 가입 대기면 만료 시각과 서버가 판단한 만료 여부를 함께 받는다. */
+  account?:
+    | { kind: "active" | "temporary" }
+    | { kind: "invite"; expiresAt: Date; expired: boolean };
 }
 
 // ─── 커리큘럼 추가 폼 ──────────────────────────────
@@ -208,7 +211,7 @@ export function OverviewTab({
   modules,
   lessons,
   calendarFeedIssuedAt = null,
-  passwordChangePending = false,
+  account = { kind: "active" },
 }: OverviewTabProps) {
   const [isPending, startTransition] = useTransition();
   const [mutationError, setMutationError] = useState("");
@@ -403,7 +406,11 @@ export function OverviewTab({
           <h2 className="text-lg font-semibold">계정</h2>
         </div>
 
-        <StudentPasswordResetControl studentId={studentId} changePending={passwordChangePending} />
+        {account.kind === "invite" ? (
+          <StudentInviteControl studentId={studentId} expiresAt={account.expiresAt} expired={account.expired} />
+        ) : (
+          <StudentPasswordResetControl studentId={studentId} changePending={account.kind === "temporary"} />
+        )}
       </section>
     </div>
   );

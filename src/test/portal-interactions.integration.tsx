@@ -57,6 +57,13 @@ let PasswordChangeControl: typeof import("@/components/auth/PasswordChangeContro
 let PasswordChangeForm: typeof import("@/components/auth/PasswordChangeControl").PasswordChangeForm;
 let resetPassword: typeof import("@/lib/actions/students").resetStudentPassword = async () => "abcd-efgh-jkmn";
 let StudentPasswordResetControl: typeof import("@/components/admin/StudentPasswordResetControl").StudentPasswordResetControl;
+let createStudentAction: typeof import("@/lib/actions/students").createStudent = async () => ({});
+let reissueInvite: typeof import("@/lib/actions/students").reissueStudentInvite = async () => "/invite#student-1.secret";
+let StudentInviteControl: typeof import("@/components/admin/StudentInviteControl").StudentInviteControl;
+let NewStudentPage: typeof import("@/app/dashboard/admin/students/new/page").default;
+let inviteStatus: typeof import("@/lib/actions/invite").getInviteStatus = async () => ({ status: "invalid" });
+let completeInviteAction: typeof import("@/lib/actions/invite").completeInvite = async () => ({ success: true });
+let InviteSignup: typeof import("@/components/auth/InviteSignup").InviteSignup;
 let confirmActionModule: typeof import("@/components/ui/confirm-action");
 let issueFeedUrl: typeof import("@/lib/actions/calendarFeed").issueStudentCalendarFeedUrl = async () => "/api/calendar/feed?token=test";
 let CalendarFeedControl: typeof import("@/components/admin/CalendarFeedControl").CalendarFeedControl;
@@ -133,7 +140,13 @@ mock.module("@/lib/actions/calendarFeed", { namedExports: {
 mock.module("@/lib/actions/password", { namedExports: { changeOwnPassword: (...args: Parameters<typeof changePassword>) => changePassword(...args) } });
 mock.module("@/lib/actions/students", { namedExports: {
   resetStudentPassword: (...args: Parameters<typeof resetPassword>) => resetPassword(...args),
-  getStudentPasswordChangePending: async () => false,
+  createStudent: (...args: Parameters<typeof createStudentAction>) => createStudentAction(...args),
+  reissueStudentInvite: (...args: Parameters<typeof reissueInvite>) => reissueInvite(...args),
+  getStudentAccountState: async () => ({ kind: "active" }),
+} });
+mock.module("@/lib/actions/invite", { namedExports: {
+  getInviteStatus: (...args: Parameters<typeof inviteStatus>) => inviteStatus(...args),
+  completeInvite: (...args: Parameters<typeof completeInviteAction>) => completeInviteAction(...args),
 } });
 mock.module("@/lib/actions/digging", { namedExports: {
   getOrSeedColumns: async () => [],
@@ -228,6 +241,9 @@ before(async () => {
   ({ OverviewTab } = await import("@/components/admin/OverviewTab"));
   ({ PasswordChangeControl, PasswordChangeForm } = await import("@/components/auth/PasswordChangeControl"));
   ({ StudentPasswordResetControl } = await import("@/components/admin/StudentPasswordResetControl"));
+  ({ StudentInviteControl } = await import("@/components/admin/StudentInviteControl"));
+  ({ default: NewStudentPage } = await import("@/app/dashboard/admin/students/new/page"));
+  ({ InviteSignup } = await import("@/components/auth/InviteSignup"));
   confirmActionModule = await import("@/components/ui/confirm-action");
   ({ CalendarFeedControl } = await import("@/components/admin/CalendarFeedControl"));
   ({ ExternalCalendarConnection } = await import("@/components/student-portal/ExternalCalendarConnection"));
@@ -1375,6 +1391,90 @@ test("student password reset confirms first and shows the temporary password onl
   await press("임시 비밀번호 발급 확인");
   assert.deepEqual(issued, ["student-1", "student-2"]);
   assert.equal(browser.document.querySelector("code")?.textContent, "temp-2");
+});
+
+test("creating a student shows the signup link once and starts a fresh form for the next student", async (context) => {
+  const submitted: string[][] = [];
+  createStudentAction = async (_previous, data) => {
+    submitted.push([String(data.get("displayName")), String(data.get("email")), String(data.get("password"))]);
+    return { created: { studentId: "student-9", displayName: "민지", invitePath: "/invite#student-9.secret-value" } };
+  };
+  context.after(() => { createStudentAction = async () => ({}); });
+  await render(context, <NewStudentPage />);
+  assert.equal(browser.document.querySelector('input[name="password"]'), null, "the admin never sets the student's password");
+  await fill("displayName", "민지");
+  await fill("email", "minji@example.com");
+  await press("계정 생성");
+  assert.deepEqual(submitted, [["민지", "minji@example.com", "null"]]);
+  assert.equal(browser.document.querySelector("code")?.textContent, "https://portal.test/invite#student-9.secret-value");
+  assert.equal(browser.document.activeElement?.id, "created-student-heading");
+  const detail = [...browser.document.querySelectorAll("a")].find((link) => link.textContent === "학생 상세로 이동");
+  assert.equal(detail?.getAttribute("href"), "/dashboard/admin/students/student-9?tab=overview");
+  await press("다른 학생 추가");
+  assert.equal(browser.document.querySelector("code"), null, "the link is not shown again");
+  assert.equal((browser.document.getElementById("displayName") as InstanceType<typeof browser.HTMLInputElement> | null)?.value, "");
+});
+
+test("signup link checks the token, lets the student set a password and enters the portal once", async (context) => {
+  const statusCalls: string[] = [];
+  const submitted: string[][] = [];
+  inviteStatus = async (token) => { statusCalls.push(token); return { status: "valid", displayName: "민지", email: "minji@example.com" }; };
+  completeInviteAction = async (_previous, data) => {
+    submitted.push(["token", "newPassword", "confirmPassword"].map((name) => String(data.get(name))));
+    return submitted.length === 1 ? { error: "비밀번호 확인이 일치하지 않습니다.", field: "confirmPassword" } : { success: true };
+  };
+  context.after(() => {
+    inviteStatus = async () => ({ status: "invalid" });
+    completeInviteAction = async () => ({ success: true });
+  });
+  let entered = 0;
+  await render(context, <InviteSignup readToken={() => "student-9.secret-value"} onSignedIn={() => { entered += 1; }} />);
+  assert.deepEqual(statusCalls, ["student-9.secret-value"]);
+  assert.match(browser.document.querySelector("h1")?.textContent ?? "", /민지님, 환영합니다/u);
+  assert.match(browser.document.body.textContent ?? "", /minji@example\.com/u);
+  const passwordInputs = () => [...browser.document.querySelectorAll('input[type="password"]')] as InstanceType<typeof browser.HTMLInputElement>[];
+  await fill(passwordInputs()[0].id, "minji-pass-1");
+  await fill(passwordInputs()[1].id, "different-1");
+  await press("가입 완료");
+  assert.equal(browser.document.activeElement, passwordInputs()[1]);
+  assert.equal(passwordInputs()[1].getAttribute("aria-invalid"), "true");
+  await fill(passwordInputs()[1].id, "minji-pass-1");
+  await press("가입 완료");
+  assert.deepEqual(submitted.at(-1), ["student-9.secret-value", "minji-pass-1", "minji-pass-1"]);
+  assert.match(browser.document.querySelector('[role="status"]')?.textContent ?? "", /가입을 마쳤습니다/u);
+  assert.equal(entered, 1);
+  await settle();
+  assert.equal(entered, 1);
+});
+
+test("signup link explains an expired or missing token without showing the form", async (context) => {
+  inviteStatus = async () => ({ status: "expired" });
+  context.after(() => { inviteStatus = async () => ({ status: "invalid" }); });
+  const root = await render(context, <InviteSignup readToken={() => "student-9.old"} onSignedIn={() => undefined} />);
+  assert.equal(browser.document.querySelector("h1")?.textContent, "가입 링크가 만료됐습니다");
+  assert.equal(browser.document.querySelector('input[type="password"]'), null);
+  assert.equal(browser.document.activeElement, browser.document.querySelector("h1"));
+  await act(async () => root.render(<InviteSignup key="missing" readToken={() => ""} onSignedIn={() => undefined} />));
+  await settle();
+  assert.equal(browser.document.querySelector("h1")?.textContent, "가입 링크를 열 수 없습니다");
+});
+
+test("signup link reissue confirms first while a link is live and shows the new link once", async (context) => {
+  const issued: string[] = [];
+  reissueInvite = async (studentId) => { issued.push(studentId); return `/invite#${studentId}.new-${issued.length}`; };
+  context.after(() => { reissueInvite = async () => "/invite#student-1.secret"; });
+  const root = await render(context, <StudentInviteControl studentId="student-live" expiresAt={new Date("2026-10-21T03:00:00.000Z")} expired={false} />);
+  assert.match(browser.document.body.textContent ?? "", /10월 21일/u);
+  await press("가입 링크 다시 발급");
+  assert.deepEqual(issued, [], "a live link is not broken on the first click");
+  assert.equal(browser.document.activeElement?.textContent, "취소");
+  await press("가입 링크 다시 발급 확인");
+  assert.equal(browser.document.querySelector("code")?.textContent, "https://portal.test/invite#student-live.new-1");
+
+  await act(async () => root.render(<StudentInviteControl key="expired" studentId="student-old" expiresAt={new Date("2026-10-01T03:00:00.000Z")} expired />));
+  assert.match(browser.document.body.textContent ?? "", /가입 링크가 만료됐습니다/u);
+  await press("가입 링크 다시 발급");
+  assert.deepEqual(issued, ["student-live", "student-old"], "an expired link has nothing to break, so it is issued directly");
 });
 
 test("confirm panel starts on cancel, closes on Escape, and stays open only while the confirmed action runs", async (context) => {

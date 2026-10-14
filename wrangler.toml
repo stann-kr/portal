@@ -33,6 +33,14 @@ namespace_id = "2026081101"
   limit = 30
   period = 60
 
+[[ratelimits]]
+name = "PASSWORD_ATTEMPT_RATE_LIMITER"
+namespace_id = "2026101401"
+
+  [ratelimits.simple]
+  limit = 10
+  period = 60
+
 [observability]
 enabled = true
 head_sampling_rate = 1

@@ -7,7 +7,7 @@
 import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import { getActiveAuthSession } from "@/lib/auth-guard";
-import { getStudentById, getStudentPasswordChangePending } from "@/lib/actions/students";
+import { getStudentAccountState, getStudentById } from "@/lib/actions/students";
 import { getCurriculumByStudent } from "@/lib/actions/curriculum";
 import { getLessonsByStudent } from "@/lib/actions/lessons";
 import { getOrSeedColumns, getDiggingTracks } from "@/lib/actions/digging";
@@ -151,19 +151,23 @@ export default async function StudentDetailPage({
   if (!student) redirect("/dashboard/admin");
 
   // Overview 탭 데이터는 미리 병렬 fetch
-  const [modules, lessons, calendarFeedIssuedAt, passwordChangePending] = await (activeTab === "overview"
+  const [modules, lessons, calendarFeedIssuedAt, accountState] = await (activeTab === "overview"
     ? Promise.all([
         getCurriculumByStudent(studentId),
         getLessonsByStudent(studentId),
         getStudentCalendarFeedIssuedAt(studentId),
-        getStudentPasswordChangePending(studentId),
+        getStudentAccountState(studentId),
       ])
-    : Promise.resolve([[], [], null, false] as [
+    : Promise.resolve([[], [], null, { kind: "active" }] as [
         Awaited<ReturnType<typeof getCurriculumByStudent>>,
         Awaited<ReturnType<typeof getLessonsByStudent>>,
         Date | null,
-        boolean,
+        Awaited<ReturnType<typeof getStudentAccountState>>,
       ]));
+  // 만료 판단은 서버 시각 하나로 정해 화면 hydration과 어긋나지 않게 한다.
+  const account = accountState.kind === "invite"
+    ? { ...accountState, expired: accountState.expiresAt.getTime() <= Date.now() }
+    : accountState;
 
   return (
     <div className="mx-auto max-w-5xl space-y-6 px-4 py-6 sm:px-6">
@@ -189,7 +193,7 @@ export default async function StudentDetailPage({
             modules={modules}
             lessons={lessons}
             calendarFeedIssuedAt={calendarFeedIssuedAt}
-            passwordChangePending={passwordChangePending}
+            account={account}
           />
         )}
 

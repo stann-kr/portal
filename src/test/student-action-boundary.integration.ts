@@ -199,20 +199,67 @@ test("학생 생성은 이메일을 정규화하고 대소문자만 다른 중�
   };
 
   assert.deepEqual(
-    await studentActions.createStudent({}, form({ displayName: "레거시", email: "legacy@example.com", password: "password-1" })),
+    await studentActions.createStudent({}, form({ displayName: "레거시", email: "legacy@example.com" })),
     { error: "이미 존재하는 이메일입니다." },
   );
   assert.deepEqual(
-    await studentActions.createStudent({}, form({ displayName: "잘못", email: "not-an-email", password: "password-1" })),
+    await studentActions.createStudent({}, form({ displayName: "잘못", email: "not-an-email" })),
     { error: "올바른 이메일 주소를 입력해 주세요." },
   );
-  await assert.rejects(
-    studentActions.createStudent({}, form({ displayName: "  새 학생  ", email: "  New.Student@Example.COM ", password: "password-1" })),
-    /NEXT_REDIRECT/u,
-  );
+  const result = await studentActions.createStudent({}, form({ displayName: "  새 학생  ", email: "  New.Student@Example.COM " }));
   const [created] = await db.select().from(profiles).where(eq(profiles.email, "new.student@example.com"));
   assert.equal(created?.displayName, "새 학생");
   assert.equal(created?.role, "student");
+  assert.equal(result.created?.studentId, created?.id);
+  assert.match(result.created?.invitePath ?? "", new RegExp(`^/invite#${created?.id}\\.[A-Za-z0-9_-]{43}$`, "u"));
+  assert.match(created?.passwordHash ?? "", /^invite:\d+:\$2[aby]\$/u, "가입 전에는 가입 링크 secret의 hash만 저장한다");
+});
+
+test("가입 링크는 학생이 한 번만 직접 비밀번호를 정하게 하고 만료·재발급·관리자 권한을 지킨다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("admin-1", "admin"));
+  await seedProfile(db, "admin-1", "admin");
+  signInCalls = [];
+  context.after(() => { signInCalls = []; signInImpl = async () => "/dashboard"; });
+  const inviteActions = await import("@/lib/actions/invite");
+  const { verifyStoredPassword } = await import("@/lib/password-storage");
+  const form = (fields: Record<string, string>) => {
+    const data = new FormData();
+    for (const [key, value] of Object.entries(fields)) data.set(key, value);
+    return data;
+  };
+  const storedHash = async (id: string) => (await db.select({ hash: profiles.passwordHash }).from(profiles).where(eq(profiles.id, id)))[0].hash;
+  const tokenOf = (path: string | undefined) => (path ?? "").slice("/invite#".length);
+
+  const minji = (await studentActions.createStudent({}, form({ displayName: "민지", email: "minji@example.com" }))).created!;
+  const token = tokenOf(minji.invitePath);
+  assert.equal(await verifyStoredPassword(token.split(".")[1], await storedHash(minji.studentId)), false, "가입 링크 secret으로는 로그인할 수 없다");
+  assert.equal((await studentActions.getStudentAccountState(minji.studentId)).kind, "invite");
+  assert.deepEqual(await inviteActions.getInviteStatus(token), { status: "valid", displayName: "민지", email: "minji@example.com" });
+  assert.deepEqual(await inviteActions.getInviteStatus(`${token}x`), { status: "invalid" });
+  assert.deepEqual(await inviteActions.getInviteStatus("not-a-token"), { status: "invalid" });
+
+  assert.equal((await inviteActions.completeInvite({}, form({ token, newPassword: "short", confirmPassword: "short" }))).field, "newPassword");
+  assert.equal((await inviteActions.completeInvite({}, form({ token, newPassword: "minji-pass-1", confirmPassword: "other-pass" }))).field, "confirmPassword");
+  assert.deepEqual(await inviteActions.completeInvite({}, form({ token, newPassword: "minji-pass-1", confirmPassword: "minji-pass-1" })), { success: true });
+  assert.ok(await verifyStoredPassword("minji-pass-1", await storedHash(minji.studentId)));
+  assert.equal((await studentActions.getStudentAccountState(minji.studentId)).kind, "active");
+  assert.deepEqual(signInCalls, [["credentials", { email: "minji@example.com", password: "minji-pass-1", redirect: false }]]);
+  assert.equal((await inviteActions.completeInvite({}, form({ token, newPassword: "takeover-pass", confirmPassword: "takeover-pass" }))).linkUnusable, "invalid", "한 번 쓴 링크는 다시 쓸 수 없다");
+  assert.ok(await verifyStoredPassword("minji-pass-1", await storedHash(minji.studentId)));
+  await assert.rejects(studentActions.reissueStudentInvite(minji.studentId), /Invite unavailable/u, "가입한 학생은 임시 비밀번호 발급을 쓴다");
+
+  const jun = (await studentActions.createStudent({}, form({ displayName: "준", email: "jun@example.com" }))).created!;
+  const expired = (await storedHash(jun.studentId))!.replace(/^invite:\d+:/u, "invite:1:");
+  await db.update(profiles).set({ passwordHash: expired }).where(eq(profiles.id, jun.studentId));
+  assert.deepEqual(await inviteActions.getInviteStatus(tokenOf(jun.invitePath)), { status: "expired" });
+  assert.equal((await inviteActions.completeInvite({}, form({ token: tokenOf(jun.invitePath), newPassword: "jun-pass-1", confirmPassword: "jun-pass-1" }))).linkUnusable, "expired");
+
+  activeSession = createSession(minji.studentId, "student");
+  await assert.rejects(studentActions.reissueStudentInvite(jun.studentId), /Admin only/u);
+  activeSession = createSession("admin-1", "admin");
+  const reissued = await studentActions.reissueStudentInvite(jun.studentId);
+  assert.deepEqual(await inviteActions.getInviteStatus(tokenOf(jun.invitePath)), { status: "invalid" }, "다시 발급하면 이전 링크는 쓸 수 없다");
+  assert.deepEqual(await inviteActions.getInviteStatus(tokenOf(reissued)), { status: "valid", displayName: "준", email: "jun@example.com" });
 });
 
 test("레슨 예약·시간 변경은 관리자와 대상 학생 레슨으로 제한하고 결과를 상태로 돌려준다", { concurrency: false }, async (context) => {
@@ -543,7 +590,7 @@ test("관리자 임시 비밀번호 발급은 학생만 대상으로 기존 로�
   assert.equal(await storedHash("student-1"), originalHash);
 
   activeSession = createSession("admin-1", "admin");
-  assert.equal(await studentActions.getStudentPasswordChangePending("student-1"), false);
+  assert.equal((await studentActions.getStudentAccountState("student-1")).kind, "active");
   const temporaryPassword = await studentActions.resetStudentPassword("student-1");
   const temporaryHash = await storedHash("student-1");
   assert.ok(isTemporaryPasswordHash(temporaryHash));
@@ -551,7 +598,7 @@ test("관리자 임시 비밀번호 발급은 학생만 대상으로 기존 로�
   assert.ok(await verifyStoredPassword(temporaryPassword, temporaryHash));
   assert.equal(await verifyStoredPassword("forgotten-password", temporaryHash), false);
   assert.notEqual(credentialFingerprint(temporaryHash), credentialFingerprint(originalHash), "학생의 기존 로그인 지문이 맞지 않게 된다");
-  assert.equal(await studentActions.getStudentPasswordChangePending("student-1"), true);
+  assert.equal((await studentActions.getStudentAccountState("student-1")).kind, "temporary");
 
   // 임시 비밀번호 계정의 로그인은 다른 주소를 거치지 않고 새 비밀번호 설정으로 이동한다.
   const { loginWithCredentials } = await import("@/lib/actions/session");
@@ -587,7 +634,23 @@ test("관리자 임시 비밀번호 발급은 학생만 대상으로 기존 로�
   assert.deepEqual(signInCalls, [["credentials", { email: "student-1@example.com", password: "my-new-password", redirect: false }]]);
 
   activeSession = createSession("admin-1", "admin");
-  assert.equal(await studentActions.getStudentPasswordChangePending("student-1"), false);
+  assert.equal((await studentActions.getStudentAccountState("student-1")).kind, "active");
+});
+
+test("로그인 시도 한도 초과는 입력한 이메일을 유지하고 다시 시도할 시점을 안내한다", { concurrency: false }, async (context) => {
+  await setupDatabase(context, createSession("student-1", "student"));
+  const { CredentialsSignin } = await import("next-auth");
+  class Limited extends CredentialsSignin { code = "rate_limited"; }
+  signInImpl = async () => { throw new Limited(); };
+  context.after(() => { signInCalls = []; signInImpl = async () => "/dashboard"; });
+  const { loginWithCredentials } = await import("@/lib/actions/session");
+  const data = new FormData();
+  data.set("email", "student-1@example.com");
+  data.set("password", "entered-password");
+  assert.deepEqual(await loginWithCredentials({}, data), {
+    error: "시도가 너무 많습니다. 1분 뒤 다시 시도해 주세요.",
+    email: "student-1@example.com",
+  });
 });
 
 test("관리자 child delete는 전달한 학생과 실제 owner가 다르면 행을 보존한다", { concurrency: false }, async (context) => {

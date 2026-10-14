@@ -1,12 +1,11 @@
 /**
  * @file src/lib/actions/students.ts
  * @description 학생 계정 관련 서버 액션.
- * Admin 전용: 학생 생성(초대), 목록 조회, 비밀번호 초기화.
+ * Admin 전용: 학생 생성(가입 링크), 목록 조회, 비밀번호 초기화.
  */
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
 import { createDb } from "@/db/client";
 import { profiles } from "@/db/schema";
 import { and, count, eq, sql } from "drizzle-orm";
@@ -16,12 +15,16 @@ import {
   requireAdmin,
   requireStudentTarget,
 } from "@/lib/auth-guard";
-import { newPasswordPolicyError } from "@/lib/password-policy";
 import {
+  generateInviteSecret,
   generateTemporaryPassword,
-  isTemporaryPasswordHash,
+  inviteHash,
+  parseInviteHash,
+  storedCredentialState,
   temporaryPasswordHash,
+  type StoredCredentialState,
 } from "@/lib/password-storage";
+import { buildInvitePath, INVITE_LIFETIME_MS } from "@/lib/invite-token";
 import {
   queryStudentRosterStats,
   type StudentRosterStat,
@@ -52,17 +55,28 @@ export async function getStudentCount(): Promise<number> {
 
 export type CreateStudentState = {
   error?: string;
-  success?: boolean;
+  /** 만든 학생. 가입 링크는 이 응답으로 한 번만 돌려준다. */
+  created?: { studentId: string; displayName: string; invitePath: string };
 };
 
 const STUDENT_NAME_MAX_LENGTH = 60;
 const STUDENT_EMAIL_MAX_LENGTH = 254;
 
+/** 7일 동안 한 번 쓸 수 있는 가입 링크 secret을 만들고 저장할 hash와 링크 경로를 돌려준다. */
+async function issueInvite(studentId: string): Promise<{ passwordHash: string; invitePath: string }> {
+  const secret = generateInviteSecret();
+  return {
+    passwordHash: inviteHash(await bcrypt.hash(secret, 10), new Date(Date.now() + INVITE_LIFETIME_MS)),
+    invitePath: buildInvitePath(studentId, secret),
+  };
+}
+
 /**
  * 학생 계정 생성 서버 액션 (FormData 기반).
- * 이메일은 trim·소문자로 저장해 로그인 입력의 대소문자 차이와 중복 계정을 막는다.
+ * 관리자는 비밀번호를 정하지 않고 가입 링크를 받는다. 학생이 링크에서 직접 비밀번호를 정하기 전에는
+ * 로그인할 수 없다. 이메일은 trim·소문자로 저장해 로그인 입력의 대소문자 차이와 중복 계정을 막는다.
  * @param _prev - 이전 상태 (useActionState용)
- * @param formData - { email, password, displayName }
+ * @param formData - { email, displayName }
  */
 export async function createStudent(
   _prev: CreateStudentState,
@@ -71,12 +85,11 @@ export async function createStudent(
   await requireAdmin();
 
   const email = String(formData.get("email") ?? "").trim().toLowerCase();
-  const password = String(formData.get("password") ?? "");
   const displayName = String(formData.get("displayName") ?? "").trim();
 
   // 입력 검증
-  if (!email || !password || !displayName) {
-    return { error: "모든 필드를 입력해주세요." };
+  if (!email || !displayName) {
+    return { error: "이름과 이메일을 모두 입력해 주세요." };
   }
   if (displayName.length > STUDENT_NAME_MAX_LENGTH) {
     return { error: `이름은 ${STUDENT_NAME_MAX_LENGTH}자까지 입력할 수 있습니다.` };
@@ -84,9 +97,6 @@ export async function createStudent(
   if (email.length > STUDENT_EMAIL_MAX_LENGTH || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(email)) {
     return { error: "올바른 이메일 주소를 입력해 주세요." };
   }
-  const passwordError = newPasswordPolicyError(password);
-  if (passwordError) return { error: passwordError };
-
   const db = createDb();
 
   // 이메일 중복 확인 (기존 대소문자 혼합 계정 포함)
@@ -100,9 +110,8 @@ export async function createStudent(
     return { error: "이미 존재하는 이메일입니다." };
   }
 
-  // 비밀번호 해시 및 계정 삽입
-  const passwordHash = await bcrypt.hash(password, 10);
   const id = crypto.randomUUID();
+  const { passwordHash, invitePath } = await issueInvite(id);
 
   await db.insert(profiles).values({
     id,
@@ -113,8 +122,31 @@ export async function createStudent(
   });
 
   revalidatePath("/dashboard/admin");
-  // 바로 커리큘럼·레슨을 등록할 수 있도록 새 학생 상세로 이동한다.
-  redirect(`/dashboard/admin/students/${encodeURIComponent(id)}?tab=overview`);
+  return { created: { studentId: id, displayName, invitePath } };
+}
+
+/**
+ * 아직 가입하지 않은 학생의 가입 링크를 다시 발급한다. 이전 링크는 바로 쓸 수 없게 된다.
+ * 이미 비밀번호를 정한 학생은 임시 비밀번호 발급을 쓴다.
+ */
+export async function reissueStudentInvite(studentId: string): Promise<string> {
+  const student = await requireStudentTarget(studentId);
+  const db = createDb();
+  const [row] = await db
+    .select({ passwordHash: profiles.passwordHash })
+    .from(profiles)
+    .where(eq(profiles.id, student.id))
+    .limit(1);
+  if (!row?.passwordHash || !parseInviteHash(row.passwordHash)) throw new Error("Invite unavailable");
+
+  const { passwordHash, invitePath } = await issueInvite(student.id);
+  const updated = await db
+    .update(profiles)
+    .set({ passwordHash })
+    .where(and(eq(profiles.id, student.id), eq(profiles.passwordHash, row.passwordHash)))
+    .returning({ id: profiles.id });
+  if (updated.length === 0) throw new Error("Invite changed");
+  return invitePath;
 }
 
 // ───────────────────────────────────────────────
@@ -141,15 +173,15 @@ export async function resetStudentPassword(studentId: string): Promise<string> {
   return temporaryPassword;
 }
 
-/** 학생이 아직 임시 비밀번호를 새 비밀번호로 바꾸지 않았는지 확인한다. */
-export async function getStudentPasswordChangePending(studentId: string): Promise<boolean> {
+/** 학생 계정이 가입 대기·임시 비밀번호·일반 중 어느 상태인지 확인한다. hash는 돌려주지 않는다. */
+export async function getStudentAccountState(studentId: string): Promise<StoredCredentialState> {
   const student = await requireStudentTarget(studentId);
   const [row] = await createDb()
     .select({ passwordHash: profiles.passwordHash })
     .from(profiles)
     .where(eq(profiles.id, student.id))
     .limit(1);
-  return isTemporaryPasswordHash(row?.passwordHash);
+  return storedCredentialState(row?.passwordHash);
 }
 
 // ───────────────────────────────────────────────

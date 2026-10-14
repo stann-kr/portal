@@ -8,6 +8,8 @@ import { profiles } from "@/db/schema";
 import { requireSignedInSession } from "@/lib/auth-guard";
 import { newPasswordPolicyError } from "@/lib/password-policy";
 import { verifyStoredPassword } from "@/lib/password-storage";
+import { headers } from "next/headers";
+import { isPasswordAttemptAllowed, PASSWORD_ATTEMPT_LIMITED_MESSAGE } from "@/lib/password-attempt-limit";
 
 export type ChangePasswordField = "currentPassword" | "newPassword" | "confirmPassword";
 
@@ -46,6 +48,10 @@ export async function changeOwnPassword(
   }
   if (newPassword === currentPassword) {
     return { error: `${currentLabel}와 다른 비밀번호를 입력해 주세요.`, field: "newPassword" };
+  }
+
+  if (!(await isPasswordAttemptAllowed("password-change", headers))) {
+    return { error: PASSWORD_ATTEMPT_LIMITED_MESSAGE };
   }
 
   const db = createDb();

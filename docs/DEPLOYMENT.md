@@ -18,6 +18,7 @@
 | D1 database | `portal-db` |
 | R2 binding | `BUCKET` |
 | R2 bucket | `portal-storage` |
+| Rate Limiting | `ACCOUNT_CLEANUP_RATE_LIMITER`(익명 정리 상태 조회, 분당 30회), `PASSWORD_ATTEMPT_RATE_LIMITER`(비밀번호 확인, 접속 주소·용도별 분당 10회) |
 
 현재 source-controlled Wrangler 설정은 production Worker `portal`만 정의한다. 별도 development Worker·D1·R2 설정과 branch별 Workers Builds trigger는 저장소에서 확인되지 않으므로, 중앙 배포 계약의 development/production 분리는 아직 완료됐다고 볼 수 없다. remote 설정을 확인하거나 바꾸는 작업은 별도 승인 범위다.
 

@@ -5,7 +5,7 @@
  * 로컬 개발: db/client.ts의 SQLite fallback 사용.
  * 자격증명 기반(Credentials) 인증: 이메일 + bcrypt 해시 비교(관리자 발급 임시 비밀번호 포함).
  */
-import NextAuth from "next-auth";
+import NextAuth, { CredentialsSignin } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { authConfig } from "./auth.config";
 import {
@@ -19,6 +19,7 @@ import {
   isTemporaryPasswordHash,
   verifyStoredPassword,
 } from "@/lib/password-storage";
+import { isPasswordAttemptAllowed } from "@/lib/password-attempt-limit";
 
 type FindActiveSessionProfileById = (
   profileId: string,
@@ -26,6 +27,15 @@ type FindActiveSessionProfileById = (
 type FindActiveLoginProfileByEmail = (
   email: string,
 ) => Promise<ActiveLoginProfile | null>;
+type AllowLoginAttempt = (request: Request) => Promise<boolean>;
+
+/** 접속 주소별 로그인 시도 한도를 넘었다. 로그인 form은 이 code로 안내를 구분한다. */
+export class LoginAttemptLimited extends CredentialsSignin {
+  code = "rate_limited";
+}
+
+const allowLoginAttempt: AllowLoginAttempt = (request) =>
+  isPasswordAttemptAllowed("login", () => request.headers);
 
 /**
  * Node runtime 전용 auth 설정을 만든다. Edge middleware가 import하는 authConfig에는
@@ -35,6 +45,7 @@ type FindActiveLoginProfileByEmail = (
 export function createNodeAuthConfig(
   findProfileById: FindActiveSessionProfileById = findActiveSessionProfileById,
   findProfileByEmail: FindActiveLoginProfileByEmail = findActiveProfileByEmail,
+  allowAttempt: AllowLoginAttempt = allowLoginAttempt,
 ) {
   const baseJwtCallback = authConfig.callbacks?.jwt;
 
@@ -88,10 +99,12 @@ export function createNodeAuthConfig(
          * @param credentials - { email, password }
          * @returns 유저 객체 (성공 시) 또는 null
          */
-        async authorize(credentials) {
+        async authorize(credentials, request) {
           if (!credentials?.email || !credentials?.password) {
             return null;
           }
+          // server action과 callback endpoint 직접 호출이 모두 이 경계를 지난다.
+          if (!(await allowAttempt(request))) throw new LoginAttemptLimited();
 
           try {
             const user = await findProfileByEmail(

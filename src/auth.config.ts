@@ -24,6 +24,8 @@ export function isCoarseRequestAuthorized({
   pathname,
 }: CoarseAuthorizationInput): boolean {
   if (pathname.startsWith("/login")) return true;
+  // 가입 링크는 아직 로그인할 수 없는 학생이 연다. token 확인은 server action이 맡는다.
+  if (pathname === "/invite") return true;
   if (pathname.startsWith("/api/calendar/")) return true;
   if (pathname === "/api/account-cleanup/status") return true;
   return isLoggedIn;

@@ -106,6 +106,9 @@ pill 형태는 filter와 count처럼 모양 자체가 의미를 가질 때만 �
 | `AccountLogoutButton` | 로컬 초안을 먼저 정리하고 인증 세션을 종료하는 공통 로그아웃 control |
 | `PasswordChangeControl` | side rail의 본인 비밀번호 변경 dialog. 거부된 필드로 초점과 `aria-invalid`를 옮기고 성공 화면에는 입력값을 남기지 않으며 다음 행동 버튼으로 초점을 옮긴다. 같은 `PasswordChangeForm`의 `required` variant가 임시 비밀번호 로그인 뒤 `/account/password` 화면을 맡고, 저장되면 결과 버튼 없이 바로 포털로 이동한다 |
 | `StudentPasswordResetControl` | 관리자 학생 상세 계정 영역의 임시 비밀번호 발급. 항상 취소 우선 확인을 거치고 원문은 발급 직후 한 번만 복사 버튼과 함께 보이며, 학생이 아직 바꾸지 않은 상태만 다시 알린다 |
+| `StudentInviteControl` | 가입 전 학생의 가입 링크 재발급. 쓸 수 있는 링크가 남아 있으면 취소 우선 확인을 거치고, 만료된 링크는 바로 다시 발급한다 |
+| `OneTimeSecret` | 발급 직후 한 번만 보이는 임시 비밀번호·가입 링크 표시와 복사. 자동 복사가 막히면 값을 직접 선택하라고 안내한다 |
+| `InviteSignup` | `/invite`의 가입 화면. 링크 확인 중·사용 불가(잘못됨·만료·시도 한도)·비밀번호 설정 상태를 구분하고, 상태가 바뀌면 제목으로 초점을 옮긴다 |
 | `CreationConflictActions` | 같은 생성 초안의 payload 충돌에서 기존 문서 열기와 별도 문서 분리 선택 |
 | `RichTextContent` | 저장된 rich text의 공통 typography·embed 렌더 경계 |
 

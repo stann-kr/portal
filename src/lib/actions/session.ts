@@ -6,6 +6,14 @@ import { PASSWORD_CHANGE_PATH } from "@/auth.config";
 import { findActiveProfileByEmail } from "@/lib/active-profile";
 import { loginCallbackUrl, loginErrorMessage } from "@/lib/login-messages";
 import { isTemporaryPasswordHash } from "@/lib/password-storage";
+import { PASSWORD_ATTEMPT_LIMITED_MESSAGE } from "@/lib/password-attempt-limit";
+
+/** class 사본이 둘 이상 load돼도 같은 판정을 하도록 Auth.js 오류의 type·code로 구분한다. */
+function isLoginAttemptLimited(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const { type, code } = error as { type?: unknown; code?: unknown };
+  return type === "CredentialsSignin" && code === "rate_limited";
+}
 
 /**
  * 임시 비밀번호 계정은 로그인 직후 새 비밀번호 설정으로 바로 보낸다. 다른 주소를 거치면
@@ -43,6 +51,9 @@ export async function loginWithCredentials(
       redirectTo: await loginRedirectTarget(email, formData.get("callbackUrl")),
     });
   } catch (error) {
+    if (isLoginAttemptLimited(error)) {
+      return { error: PASSWORD_ATTEMPT_LIMITED_MESSAGE, email };
+    }
     if (error instanceof AuthError) {
       return { error: loginErrorMessage(error.type) ?? undefined, email };
     }

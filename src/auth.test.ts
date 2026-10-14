@@ -104,6 +104,46 @@ test("비밀번호가 바뀐 뒤 이전 지문의 session은 폐기하고 지문
   assert.equal(legacyBody?.user.id, PROFILE.id);
 });
 
+async function credentialsLoginResponse(
+  passwordHash: string,
+  password: string,
+  allowAttempt: (request: Request) => Promise<boolean> = async () => true,
+  onProfileLookup: () => void = () => undefined,
+) {
+  return Auth(
+    new Request("http://localhost/api/auth/callback/credentials", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded", "cf-connecting-ip": "203.0.113.9" },
+      body: new URLSearchParams({ email: PROFILE.email, password, callbackUrl: "/dashboard" }),
+    }),
+    {
+      ...createNodeAuthConfig(async () => PROFILE, async () => { onProfileLookup(); return { ...PROFILE, passwordHash }; }, allowAttempt),
+      secret: AUTH_SECRET,
+      basePath: "/api/auth",
+      skipCSRFCheck,
+      logger: { error: () => undefined },
+    },
+  );
+}
+
+test("로그인 시도 한도를 넘으면 계정 조회와 비밀번호 비교 전에 rate_limited로 거부한다", async () => {
+  const passwordHash = await bcrypt.hash("correct horse battery", 4);
+  const seenAddresses: (string | null)[] = [];
+  let lookups = 0;
+  const response = await credentialsLoginResponse(
+    passwordHash,
+    "correct horse battery",
+    async (request) => { seenAddresses.push(request.headers.get("cf-connecting-ip")); return false; },
+    () => { lookups += 1; },
+  );
+  const location = new URL(response.headers.get("location") ?? "", "http://localhost");
+  assert.equal(location.searchParams.get("error"), "CredentialsSignin");
+  assert.equal(location.searchParams.get("code"), "rate_limited");
+  assert.equal(response.headers.getSetCookie().some((cookie) => cookie.startsWith(`${SESSION_COOKIE_NAME}=`)), false);
+  assert.deepEqual(seenAddresses, ["203.0.113.9"]);
+  assert.equal(lookups, 0);
+});
+
 async function credentialsLogin(passwordHash: string, password: string) {
   const response = await Auth(
     new Request("http://localhost/api/auth/callback/credentials", {

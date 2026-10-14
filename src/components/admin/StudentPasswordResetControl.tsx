@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { Check, Copy, KeyRound } from "lucide-react";
+import { KeyRound } from "lucide-react";
+import { OneTimeSecret } from "@/components/admin/OneTimeSecret";
 import { Button } from "@/components/ui/button";
 import { ConfirmPanel, useConfirmAction } from "@/components/ui/confirm-action";
 import { resetStudentPassword } from "@/lib/actions/students";
@@ -21,13 +22,11 @@ export function StudentPasswordResetControl({
   const [temporaryPassword, setTemporaryPassword] = useState<string | null>(null);
   const [isChangePending, setIsChangePending] = useState(changePending);
   const [error, setError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
   const [isPending, startTransition] = useTransition();
   const resetConfirm = useConfirmAction();
 
   const reset = () => {
     setError(null);
-    setCopied(false);
     startTransition(async () => {
       try {
         setTemporaryPassword(await resetStudentPassword(studentId));
@@ -36,16 +35,6 @@ export function StudentPasswordResetControl({
         setError("임시 비밀번호를 발급하지 못했습니다. 잠시 후 다시 시도해 주세요.");
       }
     });
-  };
-
-  const copy = async () => {
-    if (!temporaryPassword) return;
-    try {
-      await navigator.clipboard.writeText(temporaryPassword);
-      setCopied(true);
-    } catch {
-      setError("자동 복사에 실패했습니다. 임시 비밀번호를 직접 선택해 복사해 주세요.");
-    }
   };
 
   return (
@@ -86,24 +75,11 @@ export function StudentPasswordResetControl({
 
       <div aria-live="polite" aria-atomic="true">
         {temporaryPassword ? (
-          <div className="space-y-2">
-            <p className="text-xs text-destructive">
-              이 화면을 벗어나면 다시 볼 수 없습니다. 학생에게 직접 전달해 주세요.
-            </p>
-            <div className="flex items-center gap-2">
-              <code className="min-w-0 flex-1 break-all font-mono text-sm text-foreground">
-                {temporaryPassword}
-              </code>
-              <Button type="button" size="sm" variant="outline" onClick={copy}>
-                {copied ? (
-                  <Check className="h-4 w-4" aria-hidden="true" />
-                ) : (
-                  <Copy className="h-4 w-4" aria-hidden="true" />
-                )}
-                {copied ? "복사됨" : "복사"}
-              </Button>
-            </div>
-          </div>
+          <OneTimeSecret
+            key={temporaryPassword}
+            value={temporaryPassword}
+            notice="이 화면을 벗어나면 다시 볼 수 없습니다. 학생에게 직접 전달해 주세요."
+          />
         ) : null}
       </div>
 

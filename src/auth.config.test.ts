@@ -30,6 +30,11 @@ test("login은 stale JWT 유무와 관계없이 통과시켜 redirect loop를 �
   );
 });
 
+test("가입 링크 화면은 로그인 전에도 열린다", () => {
+  assert.equal(isCoarseRequestAuthorized({ isLoggedIn: false, pathname: "/invite" }), true);
+  assert.equal(isCoarseRequestAuthorized({ isLoggedIn: false, pathname: "/invite/other" }), false);
+});
+
 test("calendar feed는 route token gate에 도달할 수 있다", () => {
   assert.equal(
     isCoarseRequestAuthorized({
