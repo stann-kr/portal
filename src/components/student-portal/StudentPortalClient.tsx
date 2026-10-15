@@ -163,11 +163,6 @@ export function StudentPortalClient({
       storageAliases={SECTION_ALIASES}
       urlParamKey="section"
       ariaLabel="학생 포털"
-      endSlot={
-        <p className="hidden text-xs text-muted-foreground sm:block">
-          <span className="font-medium text-foreground">{displayName || "학생"}</span>님
-        </p>
-      }
     >
       {(activeSection, changeSection) => (
         <>

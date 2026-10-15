@@ -302,6 +302,19 @@
 /* 최상위 포커스 아웃라인 제거 */
 .ProseMirror:focus { outline: none; }
 
+/* 좁은 화면에서만 사이드바 대신 위쪽 메뉴 막대(48px)가 있다. 화면 높이를 쓰는 영역은 이 높이를 뺀다. */
+:root {
+  --app-topbar-height: 3rem;
+}
+@media (min-width: 48rem) {
+  :root {
+    --app-topbar-height: 0px;
+  }
+}
+@utility h-app {
+  height: calc(100dvh - var(--app-topbar-height));
+}
+
 /* 탭·메뉴처럼 한 줄로 늘어선 조작 줄. 좁은 화면에서는 가로로만 넘기고, 세로 스크롤과
    스크롤바는 만들지 않는다. 1px 높이 차이로 메뉴 줄에 세로 스크롤이 생기던 문제를 막는다. */
 @utility scroll-row {

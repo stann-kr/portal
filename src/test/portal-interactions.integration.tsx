@@ -11,6 +11,7 @@ let renderToString: typeof import("react-dom/server").renderToString;
 
 let browser: Window;
 let PortalShell: typeof import("@/components/ui/portal-shell").PortalShell;
+let navigateWithinPage: typeof import("@/components/app-shell/navigation").navigateWithinPage;
 let SlidePanel: typeof import("@/components/student-portal/SlidePanel").SlidePanel;
 let CreateEntryDropdown: typeof import("@/components/student-portal/CreateEntryDropdown").CreateEntryDropdown;
 let AdminPortalClient: typeof import("@/components/admin-portal/AdminPortalClient").AdminPortalClient;
@@ -217,6 +218,7 @@ before(async () => {
   ({ createRoot } = await import("react-dom/client"));
   ({ renderToString } = await import("react-dom/server"));
   ({ PortalShell } = await import("@/components/ui/portal-shell"));
+  ({ navigateWithinPage } = await import("@/components/app-shell/navigation"));
   ({ SlidePanel } = await import("@/components/student-portal/SlidePanel"));
   ({ EventFormDialog } = await import("@/components/calendar/EventFormDialog"));
   ({ CalendarEventActions } = await import("@/components/calendar/CalendarEventActions"));
@@ -448,38 +450,36 @@ test("FileUploader는 아직 반영되지 않은 전환 렌더 때문에 현재 
   assert.equal(button("파일 선택").disabled, false);
 });
 
-test("portal navigation restores URL state and does not add history for the active section", async (context) => {
+test("portal sections follow the URL from sidebar navigation and keep each section's scroll", async (context) => {
   browser.history.replaceState({ marker: "keep" }, "", "?section=workspace");
   browser.localStorage.setItem("test:section", "community");
-  const push = context.mock.method(browser.history, "pushState");
-  const items = ["today", "workspace", "community"].map((id) => ({ id, label: id, Icon: () => null }));
+  const items = ["today", "workspace", "community"].map((id) => ({ id }));
   await render(context, (
     <PortalShell items={items} initialItem="today" storageKey="test:section" urlParamKey="section" ariaLabel="포털">
       {(active) => <p data-testid="section">{active}</p>}
     </PortalShell>
   ));
-  assert.equal(button("workspace").getAttribute("aria-current"), "page");
+  const section = () => browser.document.querySelector('[data-testid="section"]')?.textContent;
+  assert.equal(section(), "workspace");
   const region = browser.document.querySelector('[role="region"]');
   assert.ok(region);
   await act(async () => {
     region.scrollTop = 180;
     region.dispatchEvent(new browser.Event("scroll"));
   });
-  await press("workspace");
-  assert.equal(push.mock.callCount(), 0);
-  await press("community");
-  assert.equal(region.scrollTop, 0);
-  await press("community");
-  assert.equal(push.mock.callCount(), 1);
-  assert.deepEqual(browser.history.state, { marker: "keep" });
-  assert.equal(browser.localStorage.getItem("test:section"), "community");
   await act(async () => {
-    browser.history.replaceState({}, "", "?section=workspace");
+    assert.equal(navigateWithinPage(`${browser.location.pathname}?section=community`), true);
+  });
+  assert.equal(section(), "community");
+  assert.equal(region.scrollTop, 0);
+  assert.deepEqual(browser.history.state, { marker: "keep" });
+  await act(async () => {
+    browser.history.replaceState(browser.history.state, "", "?section=workspace");
     browser.dispatchEvent(new browser.PopStateEvent("popstate"));
   });
-  assert.equal(button("workspace").getAttribute("aria-current"), "page");
+  assert.equal(section(), "workspace");
   assert.equal(region.scrollTop, 180);
-  assert.equal(browser.document.querySelector('[data-testid="section"]')?.textContent, "workspace");
+  assert.equal(navigateWithinPage("/elsewhere-route?section=today"), false);
 });
 
 test("controlled panel restores its opener focus and preserves busy dismissal protection", async (context) => {
@@ -622,8 +622,10 @@ test("calendar preserves its date, view and filters across view tabs and admin s
   await press("주");
   const weekTitle = browser.document.querySelector(".fc-toolbar-title")?.textContent;
   assert.equal(button("주").getAttribute("aria-pressed"), "true");
-  await press("업무함");
-  await press("일정");
+  await act(async () => { navigateWithinPage("/dashboard/admin?section=work&student=student"); });
+  await settle();
+  await act(async () => { navigateWithinPage("/dashboard/admin?section=schedule&view=calendar&student=student"); });
+  await settle();
   assert.equal(button("주").getAttribute("aria-pressed"), "true");
   assert.equal(browser.document.querySelector(".fc-toolbar-title")?.textContent, weekTitle);
   assert.equal(button("노트 표시하기").getAttribute("aria-pressed"), "false");
@@ -637,8 +639,8 @@ test("portal deep links render their section, view and selected student before h
     announcements={[]} unifiedItems={[]} communityPosts={[]} curriculumModules={[]} assignments={[]}
     studentId="student" displayName="학생" spaceLabel="학생" externalCalendarConnection={{ connected: false }} referenceTime={new Date()}
   />);
-  assert.equal(markup.querySelector('nav [aria-current="page"]')?.textContent, "워크스페이스");
-  assert.equal(markup.querySelector('[role="tab"][aria-selected="true"]')?.textContent, "커리큘럼");
+  // 구역 이동은 사이드바가 맡고, 화면은 주소의 보기를 제목으로 바로 그린다.
+  assert.equal(markup.querySelector("h1")?.textContent, "커리큘럼");
 
   const students = ["first", "requested"].map((id) => ({ id, email: `${id}@example.test`, displayName: id, createdAt: null, currentModule: null, nextLessonDate: null, pendingFeedbackCount: 0 }));
   const admin = <AdminPortalClient
@@ -647,7 +649,7 @@ test("portal deep links render their section, view and selected student before h
     announcements={[]} communityPosts={[]} adminId="admin" qnaThreads={[]} pendingAssignments={[]} referenceTime={new Date()}
   />;
   markup.innerHTML = renderToString(admin);
-  assert.equal(markup.querySelector('nav [aria-current="page"]')?.textContent, "일정");
+  assert.equal(markup.querySelector("h1")?.textContent, "일정");
   assert.equal(markup.querySelector('[role="tab"][aria-selected="true"]')?.textContent, "전체 항목");
   assert.equal(markup.querySelector("select")?.value, "requested");
   const loads: string[] = [];

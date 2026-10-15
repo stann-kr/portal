@@ -260,7 +260,7 @@ export default function CommunityClient({ isAdmin, initial }: CommunityClientPro
   };
 
   return (
-    <div className="flex h-[100dvh] overflow-hidden bg-background">
+    <div className="flex h-app overflow-hidden bg-background">
       {/* 사이드바 */}
       <aside className="hidden md:flex w-56 border-r border-border flex-col bg-card">
         <div className="p-4 border-b border-border space-y-3">

@@ -7,7 +7,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { CalendarDays, List, Grid3x3, BookOpen, FileVideo, X, type LucideIcon } from "lucide-react";
+import { X } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import type { UnifiedItem, UnifiedItemType } from "@/lib/utils/unifiedItemUtils";
@@ -69,13 +69,8 @@ type DiggingColumn = {
 /** 이전 버전 캘린더 내부 탭 localStorage 키 */
 const LEGACY_CALENDAR_TAB_STORAGE_KEY = "studentPortal:calendarTab";
 
-const TAB_ICONS: Record<CalendarTabValue, LucideIcon> = {
-  calendar: CalendarDays,
-  daily: List,
-  all: Grid3x3,
-  curriculum: BookOpen,
-  assignments: FileVideo,
-};
+/** 같은 일정을 다른 모양으로 보는 보기. 화면 안에서 전환한다. */
+const CALENDAR_FAMILY_VIEWS: ReadonlySet<CalendarTabValue> = new Set(["calendar", "daily", "all"]);
 
 interface CalendarSectionProps {
   initialLocation?: WorkspaceLocation;
@@ -166,6 +161,13 @@ export function CalendarSection({
       ? buildAdminStudentDetailHref(studentId, "digging")
       : undefined;
   const canManageLessons = workspaceRole === "admin" && studentId.trim().length > 0;
+  const viewTabs = calendarTabs.filter(({ value }) => CALENDAR_FAMILY_VIEWS.has(value));
+  const isCalendarFamily = CALENDAR_FAMILY_VIEWS.has(activeTab);
+  const pageTitle = activeTab === "assignments"
+    ? "과제"
+    : activeTab === "curriculum"
+      ? "커리큘럼"
+      : workspaceRole === "admin" ? "일정" : "캘린더";
   const canShowCreateMenu = Boolean(noteCreateHref) || canCreateQna || isStudentWorkspace || canManageLessons;
 
   // URL이 없을 때만 기기의 직전 탭을 복원하고 history 이동을 구독한다.
@@ -283,40 +285,38 @@ export function CalendarSection({
   return (
     <div className="flex min-h-0 flex-col h-full" aria-busy={loading}>
       <Tabs value={activeTab} onValueChange={handleTabChange} activationMode="manual" className="flex min-h-0 flex-col h-full">
-        {/* 탭 헤더 */}
-        <div className="flex flex-shrink-0 flex-col gap-2 border-b border-border px-3 pt-3 sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:pt-4">
-          <div className="scroll-row flex min-w-0 flex-1 items-center gap-2">
-            <TabsList className="h-9 shrink-0 gap-0 border-b-0 bg-transparent p-0">
-              {calendarTabs.map(({ value, label }) => {
-                const Icon = TAB_ICONS[value];
-                return (
+        {/* 화면 제목과 보기 전환. 캘린더·과제·커리큘럼 이동은 사이드바가 맡는다. */}
+        <div className="flex flex-shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 pb-3 pt-4 sm:px-6 sm:pt-6">
+          <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2">
+            <h1 className="text-2xl font-semibold tracking-[-0.02em]">{pageTitle}</h1>
+            {isCalendarFamily ? (
+              <TabsList aria-label="보기" className="h-8 gap-0.5 rounded-lg border-0 bg-muted p-0.5">
+                {viewTabs.map(({ value, label }) => (
                   <TabsTrigger
                     key={value}
                     value={value}
-                    className="inline-flex items-center gap-1.5 px-2 py-2 text-xs rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none sm:px-3 sm:text-sm"
+                    className="h-7 rounded-md px-2.5 text-xs text-muted-foreground data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm"
                   >
-                    <Icon className="hidden w-3.5 h-3.5 sm:block" aria-hidden="true" />
                     {label}
                   </TabsTrigger>
-                );
-              })}
-            </TabsList>
+                ))}
+              </TabsList>
+            ) : null}
           </div>
 
-          {/* 생성 드롭다운 */}
-          <div className="flex items-center justify-end gap-2 pb-2 sm:pb-0">
-            {noteListHref ? (
+          <div className="flex items-center gap-2">
+            {showSpaceContext && noteListHref ? (
               <Link
                 href={noteListHref}
-                className="inline-flex h-9 shrink-0 items-center rounded-md border border-border px-2.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                className="inline-flex h-8 shrink-0 items-center rounded-md border border-border px-2.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
               >
                 노트 목록
               </Link>
             ) : null}
-            {diggingBoardHref ? (
+            {showSpaceContext && diggingBoardHref ? (
               <Link
                 href={diggingBoardHref}
-                className="inline-flex h-9 shrink-0 items-center rounded-md border border-border px-2.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                className="inline-flex h-8 shrink-0 items-center rounded-md border border-border px-2.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
               >
                 디깅 보드
               </Link>
@@ -343,12 +343,14 @@ export function CalendarSection({
             ) : null}
           </div>
         </div>
-        <div className="flex min-h-10 shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border px-3 py-2 text-xs text-muted-foreground sm:px-6">
-          <span className="min-w-0 break-words" aria-label={`${workspaceContextLabel}: ${spaceLabel || "선택된 학생 없음"}`}>
-            {workspaceContextLabel} · <span className="font-medium text-foreground">{spaceLabel || "선택된 학생 없음"}</span>
-          </span>
-          {headerSlot ? <div className="min-w-0 max-w-full">{headerSlot}</div> : null}
-        </div>
+        {showSpaceContext ? (
+          <div className="flex min-h-10 shrink-0 flex-wrap items-center justify-between gap-2 border-y border-border px-4 py-2 text-xs text-muted-foreground sm:px-6">
+            <span className="min-w-0 break-words" aria-label={`${workspaceContextLabel}: ${spaceLabel || "선택된 학생 없음"}`}>
+              {workspaceContextLabel} · <span className="font-medium text-foreground">{spaceLabel || "선택된 학생 없음"}</span>
+            </span>
+            {headerSlot ? <div className="min-w-0 max-w-full">{headerSlot}</div> : null}
+          </div>
+        ) : null}
         {loading ? (
           <p className="shrink-0 border-b border-border px-3 py-2 text-xs text-muted-foreground sm:px-6" role="status">학생 일정을 불러오는 중입니다.</p>
         ) : null}
@@ -375,7 +377,7 @@ export function CalendarSection({
             </button>
           </div>
         ) : null}
-        {workspaceRole === "student" && externalCalendarConnection ? (
+        {workspaceRole === "student" && externalCalendarConnection && isCalendarFamily ? (
           <ExternalCalendarConnection
             key={`${externalCalendarConnection.connected}:${externalCalendarConnection.provider ?? "NONE"}`}
             connection={externalCalendarConnection}

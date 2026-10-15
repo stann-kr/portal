@@ -1,11 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import {
-  PortalNavigation,
-  type PortalNavigationItem,
-} from "@/components/ui/portal-navigation";
 
+/**
+ * 포털 화면의 구역 상태. 구역 이동 메뉴는 사이드바가 맡고, 이 컴포넌트는 주소·기기 저장값에서
+ * 현재 구역을 정해 그리며 구역별 스크롤 위치를 기억한다.
+ */
 export function PortalShell<T extends string>({
   items,
   initialItem,
@@ -13,17 +13,15 @@ export function PortalShell<T extends string>({
   storageAliases,
   urlParamKey,
   ariaLabel,
-  endSlot,
   children,
 }: {
-  items: readonly PortalNavigationItem<T>[];
+  items: readonly { id: T }[];
   initialItem: T;
   storageKey?: string;
   storageAliases?: Readonly<Record<string, T>>;
   /** section을 URL에도 기록해 새로고침·뒤로가기·공유 가능한 위치로 만든다. */
   urlParamKey?: string;
   ariaLabel: string;
-  endSlot?: ReactNode;
   children: (activeItem: T, changeItem: (item: T) => void) => ReactNode;
 }) {
   const [activeItem, setActiveItem] = useState<T>(initialItem);
@@ -92,14 +90,7 @@ export function PortalShell<T extends string>({
   );
 
   return (
-    <div className="flex h-[100dvh] min-h-0 flex-col">
-      <PortalNavigation
-        items={items}
-        activeItem={activeItem}
-        onChange={changeItem}
-        ariaLabel={ariaLabel}
-        endSlot={endSlot}
-      />
+    <div className="flex h-app min-h-0 flex-col">
       <div
         ref={contentRef}
         role="region"

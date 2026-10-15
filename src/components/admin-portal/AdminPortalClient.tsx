@@ -201,7 +201,6 @@ export function AdminPortalClient({
       storageKey="adminPortal:section"
       urlParamKey="section"
       ariaLabel="관리자 포털"
-      endSlot={<p className="hidden text-xs font-medium text-foreground sm:block">관리자</p>}
     >
       {(activeSection, changeSection) => (
         <>
