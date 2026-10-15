@@ -24,6 +24,24 @@ type MockEditorProps = {
   onDirty?: (readLatestHtml: () => string) => void;
 };
 
+/** 저장 버튼이 있는 form은 그 버튼을, 저장 버튼 없이 자동 저장하는 노트 form은 form 제출을 같은 조작으로 다룬다. */
+type SubmitControl = { click(): void; focus(): void; readonly disabled: boolean };
+function submitControl(container: Element): SubmitControl {
+  const button = container.querySelector<HTMLButtonElement>('button[type="submit"]');
+  if (button) return button;
+  const form = container.querySelector<HTMLFormElement>("form");
+  assert.ok(form, "제출할 form이 있어야 합니다.");
+  return {
+    click: () => form.requestSubmit(),
+    focus: () => form.querySelector<HTMLElement>('[name="title"]')?.focus(),
+    get disabled() {
+      return form.getAttribute("aria-busy") === "true";
+    },
+  };
+}
+/** 노트 제목도 textarea라서 본문 편집기는 제목이 아닌 textarea로 찾는다. */
+const BODY_FIELD = 'textarea:not([name="title"])';
+
 function MockFullEditor({
   ariaLabel = "문서 내용",
   contentVersion = 0,
@@ -706,7 +724,7 @@ for (const busyKind of ["upload", "reply", "lifecycle"] as const) {
     const form = harness.container.querySelector<HTMLFormElement>("form")!;
     const trash = [...harness.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "휴지통 이동")!;
     const upload = harness.container.querySelector<HTMLButtonElement>('[data-testid="upload-start"]')!;
-    const submit = harness.container.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+    const submit = submitControl(harness.container);
     await waitForCondition(() => !submit.disabled, "답변 초안 준비");
     await act(async () => {
       if (busyKind === "upload") upload.click();
@@ -984,7 +1002,7 @@ for (const kind of ["new-note", "edit-note", "new-post", "edit-post"] as const) 
           }));
         }
       });
-      const submit = () => harness.container.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+      const submit = () => submitControl(harness.container);
       const response = (index: number, id: string): SaveResult => {
         const snapshot = { id, title: String(requests[index]!.data.title), contentHtml: String(requests[index]!.data.contentHtml), version: 2 };
         return { success: true, ...(isNote ? { note: { ...snapshot, noteDate: null, createdAt: new Date() } } : isEdit ? { post: snapshot } : { postId: id }) };
@@ -1002,8 +1020,8 @@ for (const kind of ["new-note", "edit-note", "new-post", "edit-post"] as const) 
       assert.equal(requests[1]!.data.title, "B 제목");
       assert.equal(requests[1]!.data.operationId, before.operationId);
       await act(async () => requests[0]!.resolve(response(0, resourceA)));
-      assert.equal(harness.container.querySelector<HTMLInputElement>('input[name="title"]')?.value, "B 제목");
-      assert.equal(harness.container.querySelector<HTMLTextAreaElement>("textarea")?.value, "<p>B 원문</p>");
+      assert.equal(harness.container.querySelector<HTMLInputElement>('[name="title"]')?.value, "B 제목");
+      assert.equal(harness.container.querySelector<HTMLTextAreaElement>(BODY_FIELD)?.value, "<p>B 원문</p>");
       const afterRaw = harness.browserWindow.localStorage.getItem(key(actorB, resourceB));
       assert.ok(afterRaw);
       const after = parseFormDraft<DraftContent>(afterRaw)?.data;
@@ -1017,7 +1035,7 @@ for (const kind of ["new-note", "edit-note", "new-post", "edit-post"] as const) 
       assert.equal(harness.browserWindow.localStorage.getItem(key(actorB, resourceB)), null);
       if (!isEdit) assert.equal(navigation.mock.callCount(), 1);
       else if (!isNote) assert.equal(saves, 1);
-      else assert.match(harness.container.textContent ?? "", /변경사항을 저장했습니다/u);
+      else assert.match(harness.container.textContent ?? "", /저장됨/u);
     });
   }
 }
@@ -1063,15 +1081,15 @@ for (const kind of ["new-note", "edit-note", "new-post", "edit-post", "new-qna",
       ...(isQna ? { attachmentUrl: "", attachmentObjectId: "" } : isNote ? { noteDate: "" } : { boardType: "GENERAL", category: "general", isPinned: false, mediaUrl: "" }),
       ...(isEdit ? { baseRevision: 1, baseFingerprint: createDocumentSnapshotFingerprint({ kind: isNote ? "private-note" : "community-post", id: resourceId, ...base, noteDate: isNote ? "" : null }) } : {}),
     })));
-    const submit = () => harness.container.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+    const submit = () => submitControl(harness.container);
     await act(async () => submit().click());
     assert.equal(harness.container.querySelector('[data-testid="save-error-boundary"]'), null, "저장 실패는 편집 subtree를 제거하면 안 됩니다.");
     assert.match(harness.container.querySelector('[role="alert"]')?.textContent ?? "", /저장 결과를 확인하지 못했습니다/u);
     if (kind === "new-note") {
       assert.ok(document.activeElement === harness.container.querySelector<HTMLDivElement>('[role="alert"]'), "긴 노트 화면에서도 저장 실패 안내를 바로 확인할 수 있어야 합니다.");
     }
-    if (!isReply) assert.equal(harness.container.querySelector<HTMLInputElement>('input[name="title"]')?.value, snapshot.title);
-    assert.equal(harness.container.querySelector<HTMLTextAreaElement>("textarea")?.value, snapshot.contentHtml);
+    if (!isReply) assert.equal(harness.container.querySelector<HTMLInputElement>('[name="title"]')?.value, snapshot.title);
+    assert.equal(harness.container.querySelector<HTMLTextAreaElement>(BODY_FIELD)?.value, snapshot.contentHtml);
     assert.equal(submit().disabled, false);
     assert.equal(harness.container.querySelector("form")?.getAttribute("aria-busy"), "false");
     assert.ok(harness.browserWindow.localStorage.getItem(draftKey), "실패한 초안은 저장소에 남아야 합니다.");
@@ -1090,7 +1108,7 @@ test("노트 저장 실패가 폼 밖으로 옮긴 포커스를 가로채지 않
     createDocumentDraftKey("note", "note-focus", "new:note-focus"),
     serializeFormDraft({ operationId: crypto.randomUUID(), title: "원문", contentHtml: "<p>보존할 본문</p>", noteDate: "" }),
   ));
-  const submit = harness.container.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+  const submit = submitControl(harness.container);
   await act(async () => { submit.focus(); submit.click(); });
   const elsewhere = harness.browserWindow.document.createElement("button");
   elsewhere.textContent = "다른 작업";
@@ -1136,7 +1154,7 @@ for (const kind of ["note", "post"] as const) {
       ...(kind === "note" ? { noteDate: "" } : {}),
       baseFingerprint: createDocumentSnapshotFingerprint({ kind: kind === "note" ? "private-note" : "community-post", ...post, noteDate: kind === "note" ? "" : null }),
     })));
-    const submit = () => harness.container.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+    const submit = () => submitControl(harness.container);
     await act(async () => submit().click());
     await harness.rerender(<div />);
     await harness.rerender(screen);
@@ -1145,7 +1163,7 @@ for (const kind of ["note", "post"] as const) {
 
     await harness.rerender(<div />);
     await harness.rerender(screen);
-    const editor = harness.container.querySelector<HTMLTextAreaElement>("textarea")!;
+    const editor = harness.container.querySelector<HTMLTextAreaElement>(BODY_FIELD)!;
     await act(async () => {
       editor.value = "<p>실패 뒤 의도적으로 고친 본문</p>";
       editor.dispatchEvent(new harness.browserWindow.Event("input", { bubbles: true }) as unknown as Event);
@@ -1178,12 +1196,12 @@ for (const choice of ["현재 초안으로 계속", "서버 최신본 사용"] a
       title: "내 제목", contentHtml: "<p>내 본문</p>",
       baseFingerprint: createDocumentSnapshotFingerprint({ kind: "community-post", ...post, noteDate: null }),
     })));
-    const submit = () => harness.container.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+    const submit = () => submitControl(harness.container);
     await act(async () => submit().click());
     assert.equal(submit().disabled, true);
     assert.match(harness.container.textContent ?? "", /서버 최신본 2번 확인·복사/u);
     assert.match(harness.container.textContent ?? "", /다른 화면에서 저장한 본문/u);
-    assert.equal(harness.container.querySelector<HTMLTextAreaElement>("textarea")?.value, "<p>내 본문</p>");
+    assert.equal(harness.container.querySelector<HTMLTextAreaElement>(BODY_FIELD)?.value, "<p>내 본문</p>");
     await act(async () => harness.container.querySelector<HTMLFormElement>("form")!.requestSubmit());
     assert.equal(requests.length, 1, "선택 전 강제 제출도 막아야 합니다.");
     const button = [...harness.container.querySelectorAll<HTMLButtonElement>("button")].find((candidate) => candidate.textContent?.includes(choice));
@@ -1219,13 +1237,13 @@ for (const kind of ["note", "post"] as const) {
       ...(kind === "note" ? { noteDate: "" } : {}),
       baseFingerprint: createDocumentSnapshotFingerprint({ kind: kind === "note" ? "private-note" : "community-post", ...post, noteDate: kind === "note" ? "" : null }),
     })));
-    await act(async () => harness.container.querySelector<HTMLButtonElement>('button[type="submit"]')!.click());
+    await act(async () => submitControl(harness.container).click());
     await harness.rerender(screen({ ...post, title: "두 번째 제목", contentHtml: "<p>두 번째 본문</p>", version: 2 }));
     const latest = { ...post, title: "세 번째 제목", contentHtml: "<p>세 번째 본문</p>", version: 3 };
     await act(async () => respond({ error: "먼저 변경되었습니다.", conflictKind: "VERSION_CONFLICT", currentRevision: 3, ...(kind === "post" ? { conflictPost: latest } : { conflictNote: { ...latest, noteDate: null } }) }));
     assert.match(harness.container.querySelector("summary")?.textContent ?? "", /서버 최신본 3번/u);
     assert.match(harness.container.querySelector("details")?.textContent ?? "", /세 번째 본문/u);
-    assert.equal(harness.container.querySelector<HTMLTextAreaElement>("textarea")?.value, "<p>내 본문</p>");
+    assert.equal(harness.container.querySelector<HTMLTextAreaElement>(BODY_FIELD)?.value, "<p>내 본문</p>");
     const keep = [...harness.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("현재 초안으로 계속"))!;
     await act(async () => keep.click());
     assert.equal(harness.browserWindow.document.activeElement?.getAttribute("name"), "title");
@@ -1814,8 +1832,8 @@ test("노트 자체 저장의 정규화 결과와 서버 prop이 먼저 반영�
   }
 
   const harness = await renderForm(context, <NormalizedNoteSaveHarness />);
-  const titleInput = harness.container.querySelector('input[name="title"]');
-  assert.equal(titleInput?.tagName, "INPUT");
+  const titleInput = harness.container.querySelector('[name="title"]');
+  assert.equal(titleInput?.tagName, "TEXTAREA");
 
   const editor = harness.container.querySelector('textarea[aria-label="노트 내용"]');
   assert.equal(editor?.tagName, "TEXTAREA");
@@ -1836,39 +1854,39 @@ test("노트 자체 저장의 정규화 결과와 서버 prop이 먼저 반영�
     );
   });
 
-  const submitButton = harness.container.querySelector('button[type="submit"]');
-  assert.equal(submitButton?.tagName, "BUTTON");
+  const submitButton = submitControl(harness.container);
   assert.equal(
-    (harness.container.querySelector('input[name="title"]') as unknown as HTMLInputElement)
+    (harness.container.querySelector('[name="title"]') as unknown as HTMLInputElement)
       .value,
     "  새 제목  ",
   );
   assert.equal(
-    (submitButton as unknown as HTMLButtonElement).disabled,
+    submitButton.disabled,
     false,
     "지연 publish 중에도 최신 reader로 제출할 수 있어야 합니다.",
   );
   await act(async () => {
-    (submitButton as unknown as HTMLButtonElement).click();
+    submitButton.click();
   });
   await waitForCondition(
     () =>
-      (harness.container.querySelector('input[name="title"]') as
+      (harness.container.querySelector('[name="title"]') as
         | HTMLInputElement
-        | null)?.value === "새 제목" &&
-      /변경사항을 저장했습니다\./u.test(harness.container.textContent ?? ""),
+        | null)?.value === "  새 제목  " &&
+      /저장됨/u.test(harness.container.textContent ?? ""),
     "정규화된 자체 저장 결과와 완료 상태가 반영되어야 합니다.",
   );
 
   assert.equal(
-    (harness.container.querySelector('input[name="title"]') as unknown as HTMLInputElement)
+    (harness.container.querySelector('[name="title"]') as unknown as HTMLInputElement)
       .value,
-    "새 제목",
+    "  새 제목  ",
+    "서버가 지운 앞뒤 공백 때문에 입력 중인 제목을 바꾸지 않는다.",
   );
-  assert.match(harness.container.textContent ?? "", /변경사항을 저장했습니다\./u);
+  assert.match(harness.container.textContent ?? "", /저장됨/u);
   assert.doesNotMatch(harness.container.textContent ?? "", /더 최신 서버 노트가 있습니다\./u);
   assert.equal(
-    (harness.container.querySelector('button[type="submit"]') as unknown as HTMLButtonElement)
+    submitControl(harness.container)
       .disabled,
     false,
   );
@@ -1916,14 +1934,14 @@ test("노트 version 충돌은 내 초안을 보존하고 서버 최신본 확�
       }}
     />,
   );
-  const titleInput = harness.container.querySelector('input[name="title"]');
+  const titleInput = harness.container.querySelector('[name="title"]');
   const operationInput = harness.container.querySelector(
     'input[name="operationId"]',
   );
   const baseRevisionInput = harness.container.querySelector(
     'input[name="baseRevision"]',
   );
-  assert.equal(titleInput?.tagName, "INPUT");
+  assert.equal(titleInput?.tagName, "TEXTAREA");
   assert.equal(operationInput?.tagName, "INPUT");
   assert.equal(baseRevisionInput?.tagName, "INPUT");
   const firstOperationId = (operationInput as unknown as HTMLInputElement).value;
@@ -1940,10 +1958,9 @@ test("노트 version 충돌은 내 초안을 보존하고 서버 최신본 확�
       new harness.browserWindow.Event("input", { bubbles: true }) as unknown as Event,
     );
   });
-  const submitButton = harness.container.querySelector('button[type="submit"]');
-  assert.equal(submitButton?.tagName, "BUTTON");
+  const submitButton = submitControl(harness.container);
   await act(async () => {
-    (submitButton as unknown as HTMLButtonElement).click();
+    submitButton.click();
   });
   await waitForCondition(
     () => /서버 최신본 2번 확인·복사/u.test(harness.container.textContent ?? ""),
@@ -2034,11 +2051,10 @@ test("stale legacy 노트를 유지해 제출하면 canonical을 지우고 old-b
     (keepDraftButton as unknown as HTMLButtonElement).click();
   });
 
-  const submitButton = harness.container.querySelector('button[type="submit"]');
-  assert.equal(submitButton?.tagName, "BUTTON");
-  assert.equal((submitButton as unknown as HTMLButtonElement).disabled, false);
+  const submitButton = submitControl(harness.container);
+  assert.equal(submitButton.disabled, false);
   await act(async () => {
-    (submitButton as unknown as HTMLButtonElement).click();
+    submitButton.click();
     await Promise.resolve();
     await Promise.resolve();
   });
@@ -2112,11 +2128,10 @@ test("stale compact S0 노트를 S1 기준으로 유지·제출하면 exact fing
     (keepDraftButton as unknown as HTMLButtonElement).click();
   });
 
-  const submitButton = harness.container.querySelector('button[type="submit"]');
-  assert.equal(submitButton?.tagName, "BUTTON");
-  assert.equal((submitButton as unknown as HTMLButtonElement).disabled, false);
+  const submitButton = submitControl(harness.container);
+  assert.equal(submitButton.disabled, false);
   await act(async () => {
-    (submitButton as unknown as HTMLButtonElement).click();
+    submitButton.click();
     await Promise.resolve();
     await Promise.resolve();
   });

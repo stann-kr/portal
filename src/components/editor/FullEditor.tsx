@@ -65,6 +65,11 @@ interface FullEditorProps {
   footer?: ReactNode;
   /** 상위 form이 제공하는 Cmd/Ctrl+S 동작의 정확한 사용자-facing 이름 */
   saveShortcutLabel?: string;
+  /**
+   * boxed: 테두리 상자 안의 편집기(댓글·작은 form).
+   * page: 문서 페이지 본문. 테두리 없이 쓰고 편집 도구 줄은 스크롤해도 위에 남는다.
+   */
+  variant?: "boxed" | "page";
 }
 
 // ── lowlight 인스턴스 ─────────────────────────────
@@ -152,7 +157,9 @@ export function FullEditor({
   ariaLabel = "문서 내용",
   footer,
   saveShortcutLabel,
+  variant = "boxed",
 }: FullEditorProps) {
+  const isPage = variant === "page";
   const [isMarkdownMode, setIsMarkdownMode] = useState(false);
   const [markdownText, setMarkdownText] = useState("");
   const [insertPanel, setInsertPanel] = useState<{
@@ -267,13 +274,15 @@ export function FullEditor({
   const editorProps = useMemo(
     () => ({
       attributes: {
-        class: "max-w-none p-5 text-foreground focus:outline-none sm:p-6",
+        class: isPage
+          ? "max-w-none py-5 text-foreground focus:outline-none"
+          : "max-w-none p-5 text-foreground focus:outline-none sm:p-6",
         role: "textbox",
         "aria-label": ariaLabel,
         "aria-multiline": "true",
       },
     }),
-    [ariaLabel],
+    [ariaLabel, isPage],
   );
 
   const editor = useEditor({
@@ -417,7 +426,11 @@ export function FullEditor({
 
   return (
     <div
-      className="relative flex flex-col overflow-hidden rounded-xl border border-border bg-background transition-[border-color,box-shadow] focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/15"
+      className={
+        isPage
+          ? "relative flex flex-col bg-background"
+          : "relative flex flex-col overflow-hidden rounded-xl border border-border bg-background transition-[border-color,box-shadow] focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/15"
+      }
     >
 
       {!isMarkdownMode && !disabled ? (
@@ -475,7 +488,11 @@ export function FullEditor({
         disabled={disabled}
         role="toolbar"
         aria-label="편집 도구"
-        className="flex min-w-0 flex-nowrap items-center gap-0.5 overflow-x-auto overflow-y-hidden border-b border-border bg-muted/40 px-2 py-2 disabled:opacity-60 sm:px-3"
+        className={
+          isPage
+            ? "sticky top-[var(--app-topbar-height)] z-10 flex min-w-0 flex-nowrap items-center gap-0.5 overflow-x-auto overflow-y-hidden rounded-lg border border-border bg-background/95 px-1.5 py-1 backdrop-blur-sm disabled:opacity-60"
+            : "flex min-w-0 flex-nowrap items-center gap-0.5 overflow-x-auto overflow-y-hidden border-b border-border bg-muted/40 px-2 py-2 disabled:opacity-60 sm:px-3"
+        }
       >
         {/* 실행 취소 / 다시 실행 */}
         <ToolbarButton
@@ -714,7 +731,7 @@ export function FullEditor({
           onChange={handleMarkdownChange}
           disabled={disabled}
           aria-label={`${ariaLabel} 마크다운`}
-          className="flex-1 w-full p-6 font-mono text-sm text-foreground bg-background resize-none focus:outline-none leading-relaxed"
+          className={`${isPage ? "py-5" : "p-6"} flex-1 w-full font-mono text-sm text-foreground bg-background resize-none focus:outline-none leading-relaxed`}
           style={{ minHeight }}
           placeholder="마크다운으로 작성하세요..."
         />
@@ -727,7 +744,13 @@ export function FullEditor({
           <EditorContent editor={editor} />
         </div>
       )}
-      <div className="flex min-h-9 items-center justify-between gap-3 border-t border-border bg-muted/20 px-3 py-2">
+      <div
+        className={
+          isPage
+            ? "flex min-h-9 items-center justify-between gap-3 border-t border-border py-2"
+            : "flex min-h-9 items-center justify-between gap-3 border-t border-border bg-muted/20 px-3 py-2"
+        }
+      >
         <div className="min-w-0">{footer}</div>
         {!disabled ? (
           <span className="shrink-0 text-[11px] text-muted-foreground">

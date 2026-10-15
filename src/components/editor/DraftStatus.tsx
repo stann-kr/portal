@@ -4,7 +4,10 @@ import { useEffect, useId, useRef, useState } from "react";
 import { AlertCircle, Check, CloudCog, RotateCcw, Trash2 } from "lucide-react";
 import { ServerDraftStatus } from "@/components/editor/ServerDraftStatus";
 import type { FormDraftRecoverySummary, FormDraftStatus } from "@/lib/form-draft";
-import type { DocumentServerDraftSyncResult } from "@/lib/hooks/useDocumentServerDraftSync";
+import type {
+  DocumentServerDraftSyncResult,
+  DocumentServerDraftSyncStatus,
+} from "@/lib/hooks/useDocumentServerDraftSync";
 import { formatKst } from "@/lib/kst-format";
 
 function formatSavedTime(value: Date | null): string | null {
@@ -20,6 +23,14 @@ function formatRecoveryDateTime(value: Date): string | null {
     minute: "2-digit",
   }) || null;
 }
+
+const QUIET_VISIBLE_LOCAL_STATUSES: ReadonlySet<FormDraftStatus> = new Set(["error", "incompatible", "conflict"]);
+const QUIET_VISIBLE_SERVER_STATUSES: ReadonlySet<DocumentServerDraftSyncStatus> = new Set([
+  "remote-available",
+  "conflict",
+  "error",
+  "offline",
+]);
 
 function DraftStateLine({
   status,
@@ -266,6 +277,7 @@ export function DraftStatus({
   onDiscardRecovery,
   serverSync,
   disabled = false,
+  quiet = false,
 }: {
   status: FormDraftStatus;
   /** 미래 버전 canonical 보호를 포함해 현재 서버 제출이 허용되는지 여부 */
@@ -277,6 +289,11 @@ export function DraftStatus({
   onDiscardRecovery?: (storageKey: string) => void;
   serverSync?: DocumentServerDraftSyncResult;
   disabled?: boolean;
+  /**
+   * 자동 저장 문서에서는 평소의 임시 저장 진행 문구를 숨기고, 복원·충돌·오류·다른 기기 작성본처럼
+   * 사용자가 판단할 일이 있을 때만 보여 준다.
+   */
+  quiet?: boolean;
 }) {
   const [showAllRecoveries, setShowAllRecoveries] = useState(false);
   const recoveryListId = useId();
@@ -294,13 +311,17 @@ export function DraftStatus({
       tabIndex={-1}
       className="space-y-2"
     >
-      <DraftStateLine
-        status={status}
-        canSubmit={canSubmit}
-        savedAt={savedAt}
-        restored={restored}
-      />
-      {serverSync ? <ServerDraftStatus sync={serverSync} disabled={disabled} /> : null}
+      {!quiet || restored || QUIET_VISIBLE_LOCAL_STATUSES.has(status) ? (
+        <DraftStateLine
+          status={status}
+          canSubmit={canSubmit}
+          savedAt={savedAt}
+          restored={restored}
+        />
+      ) : null}
+      {serverSync && (!quiet || QUIET_VISIBLE_SERVER_STATUSES.has(serverSync.status)) ? (
+        <ServerDraftStatus sync={serverSync} disabled={disabled} />
+      ) : null}
       {recoveries.length > 0 ? (
         <div className="space-y-1.5 rounded-md border border-warning/25 bg-warning-muted px-2.5 py-2">
           <p

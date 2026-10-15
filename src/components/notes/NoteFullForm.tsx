@@ -5,14 +5,13 @@
  */
 "use client";
 
-import { useActionState, useEffect, useRef, useState } from "react";
+import { useActionState, useEffect, useLayoutEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Save, Trash2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { ArrowLeft, Trash2 } from "lucide-react";
 import type { CreateNoteState } from "@/lib/actions/privateNotes";
+import { AutosaveStatus } from "@/components/editor/AutosaveStatus";
 import { DraftStatus } from "@/components/editor/DraftStatus";
 import { useSyncedFormDraft } from "@/lib/hooks/useSyncedFormDraft";
 import { createDocumentDraftKey } from "@/lib/form-draft";
@@ -23,6 +22,7 @@ import {
 } from "@/lib/note-draft";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
 import { useDeferredEditorContent } from "@/lib/hooks/useDeferredEditorContent";
+import { useDocumentAutosave } from "@/lib/hooks/useDocumentAutosave";
 import { useDocumentSaveShortcut } from "@/lib/hooks/useDocumentSaveShortcut";
 import {
   CREATION_OPERATION_FIELD,
@@ -182,7 +182,8 @@ function NoteFullFormContent({ action, actorId, studentId, returnTo, defaultDate
       },
     });
     submittedDraftRef.current = null;
-    router.replace(`/dashboard/notes/${state.note.id}?returnTo=${encodeURIComponent(returnTo)}`);
+    // 만든 노트 페이지에서 본문 끝에 커서를 두고 이어서 쓰게 한다.
+    router.replace(`/dashboard/notes/${state.note.id}?returnTo=${encodeURIComponent(returnTo)}&focus=end`);
   }, [clear, contentHtml, noteDate, operationId, returnTo, router, state.note?.id, title]);
 
   const hasOperationConflict = Boolean(
@@ -191,18 +192,47 @@ function NoteFullFormContent({ action, actorId, studentId, returnTo, defaultDate
     state.existingId,
   );
 
+
+  const titleRef = useRef<HTMLTextAreaElement>(null);
+  useLayoutEffect(() => {
+    const element = titleRef.current;
+    if (!element) return;
+    element.style.height = "auto";
+    element.style.height = `${element.scrollHeight}px`;
+  }, [title]);
+  const changeKey = `${title}\u0000${noteDate}\u0000${contentHtml}`;
+  const submittedKeyRef = useRef("");
+  const [failedKey, setFailedKey] = useState<string | null>(null);
   useEffect(() => {
-    if (isPending || !state.error) return;
+    if (state.error) setFailedKey(submittedKeyRef.current);
+  }, [state]);
+  const missingRequired = !title.trim() || isRichTextEmpty(contentHtml);
+  useDocumentAutosave({
+    enabled:
+      loaded && canSubmit && !isPending && Boolean(operationId) && !missingRequired &&
+      !hasOperationConflict && failedKey !== changeKey && !state.note?.id,
+    dirty: true,
+    changeKey,
+    onSave: () => formRef.current?.requestSubmit(),
+  });
+  const autosaveStatus = isPending || state.note?.id
+    ? "saving"
+    : state.error && failedKey === changeKey
+      ? "error"
+      : missingRequired ? "blocked" : "pending";
+
+  // 실패 안내가 나타나면 긴 노트에서도 바로 보이게 초점을 옮긴다. 사용자가 폼 밖으로 옮긴 초점은 두고 간다.
+  useEffect(() => {
+    if (autosaveStatus !== "error") return;
     const activeElement = document.activeElement;
     if (activeElement === document.body || formRef.current?.contains(activeElement)) {
       errorRef.current?.focus();
     }
-  }, [isPending, state]);
+  }, [autosaveStatus, state]);
 
   return (
-    <div className="mx-auto max-w-4xl space-y-6 px-4 py-6 sm:px-6">
-      {/* 헤더 */}
-      <div className="space-y-1">
+    <div className="mx-auto max-w-3xl space-y-6 px-4 py-6 sm:px-8 sm:py-10">
+      <div className="flex items-center justify-between gap-3">
         <Link
           href={returnTo}
           aria-disabled={isPending}
@@ -214,14 +244,11 @@ function NoteFullFormContent({ action, actorId, studentId, returnTo, defaultDate
             if (isPending) event.preventDefault();
           }}
         >
-          <ArrowLeft className="w-4 h-4" />
-          포털로 돌아가기
+          <ArrowLeft className="w-4 h-4" aria-hidden="true" />
+          돌아가기
         </Link>
-        <div className="mt-2 flex items-center justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-semibold">노트 작성</h1>
-            {spaceLabel ? <p className="mt-1 text-sm text-muted-foreground">대상 스페이스 · {spaceLabel}</p> : null}
-          </div>
+        <div className="flex items-center gap-3">
+          {spaceLabel ? <p className="hidden text-xs text-muted-foreground sm:block">{spaceLabel}</p> : null}
           <Link
             href={`/dashboard/notes/trash?studentId=${encodeURIComponent(studentId)}&returnTo=${encodeURIComponent(returnTo)}`}
             className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
@@ -248,6 +275,7 @@ function NoteFullFormContent({ action, actorId, studentId, returnTo, defaultDate
             event.preventDefault();
             return;
           }
+          submittedKeyRef.current = `${title}\u0000${noteDate}\u0000${latestContentHtml}`;
           if (contentHtmlInputRef.current) {
             contentHtmlInputRef.current.value = latestContentHtml;
           }
@@ -272,11 +300,14 @@ function NoteFullFormContent({ action, actorId, studentId, returnTo, defaultDate
         <input type="hidden" name={CREATION_OPERATION_FIELD} value={operationId} />
         <input ref={contentHtmlInputRef} type="hidden" name="contentHtml" value={contentHtml} />
 
-        {state?.error && (!state.operationConflict || hasOperationConflict) && (
-          <div ref={errorRef} role="alert" tabIndex={-1} className="scroll-mt-4 p-3 rounded-lg bg-destructive/10 border border-destructive/20 text-sm text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-            {state.error}
-          </div>
-        )}
+        <div className="flex justify-end">
+          <AutosaveStatus
+            alertRef={errorRef}
+            status={autosaveStatus}
+            message={autosaveStatus === "error" ? state.error : "제목과 내용을 입력하면 자동으로 저장됩니다."}
+            onRetry={() => formRef.current?.requestSubmit()}
+          />
+        </div>
 
         {hasOperationConflict && state.existingId ? (
           <CreationConflictActions
@@ -288,52 +319,43 @@ function NoteFullFormContent({ action, actorId, studentId, returnTo, defaultDate
           />
         ) : null}
 
-        {state?.success && (
-          <div
-            role="status"
-            className="rounded-lg border border-success/20 bg-success/10 p-3 text-sm text-success"
-          >
-            노트가 저장되었습니다.
-          </div>
-        )}
-
-        {/* 제목 + 날짜 */}
-        <div className="flex flex-col sm:flex-row gap-4">
-          <div className="flex-1 space-y-1.5">
-            <label htmlFor="note-title" className="text-sm font-medium">
-              제목 <span className="text-destructive">*</span>
-            </label>
-            <Input
-              id="note-title"
-              name="title"
-              placeholder="오늘의 수업 요약"
-              required
-              maxLength={200}
-              disabled={!loaded || isPending}
-              value={title}
-              onChange={(event) => setTitle(event.target.value)}
-            />
-          </div>
-          <div className="space-y-1.5 sm:w-44">
-            <label htmlFor="note-date" className="text-sm font-medium">
-              날짜
-            </label>
-            <Input
+        <div className="space-y-2">
+          <h1 className="sr-only">새 노트</h1>
+          <textarea
+            ref={titleRef}
+            id="note-title"
+            name="title"
+            aria-label="제목"
+            rows={1}
+            placeholder="제목 없음"
+            required
+            maxLength={200}
+            disabled={!loaded || isPending}
+            value={title}
+            onChange={(event) => setTitle(event.target.value.replace(/\n/gu, " "))}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+              event.preventDefault();
+              formRef.current?.querySelector<HTMLElement>('[contenteditable="true"]')?.focus();
+            }}
+            className="w-full resize-none overflow-hidden border-0 bg-transparent p-0 text-3xl font-bold leading-tight tracking-[-0.02em] text-foreground placeholder:text-muted-foreground/60 focus:outline-none sm:text-4xl"
+          />
+          <label className="inline-flex items-center gap-2 text-sm text-muted-foreground">
+            <span>날짜</span>
+            <input
               id="note-date"
               name="noteDate"
               type="date"
               value={noteDate}
               onChange={(event) => setNoteDate(event.target.value)}
               disabled={!loaded || isPending}
+              className="rounded-md bg-transparent px-1.5 py-0.5 text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
-          </div>
+          </label>
         </div>
 
         {/* 에디터 */}
-        <div className="space-y-1.5">
-          <label className="text-sm font-medium">
-            내용 <span className="text-destructive">*</span>
-          </label>
+        <div>
           {loaded ? (
             <FullEditor
               initialContent={contentHtml}
@@ -354,6 +376,8 @@ function NoteFullFormContent({ action, actorId, studentId, returnTo, defaultDate
               placeholder="수업 내용, 연습 기록, 메모 등을 자유롭게 작성하세요..."
               disabled={isPending}
               ariaLabel="노트 내용"
+              variant="page"
+              minHeight="50dvh"
               footer={
                 <DraftStatus
                   status={status}
@@ -365,37 +389,14 @@ function NoteFullFormContent({ action, actorId, studentId, returnTo, defaultDate
                   onDiscardRecovery={discardRecovery}
                   serverSync={serverSync}
                   disabled={isPending}
+                  quiet
                 />
               }
-              saveShortcutLabel={canSubmit ? "노트 저장" : undefined}
+              saveShortcutLabel={canSubmit ? "바로 저장" : undefined}
             />
           ) : null}
         </div>
 
-        {/* 버튼 */}
-        <div className="flex gap-3">
-          <Button
-            type="submit"
-            disabled={!loaded || !canSubmit || isPending || !operationId || !title.trim() || isRichTextEmpty(contentHtml)}
-            className="flex-1 gap-2"
-          >
-            <Save className="w-4 h-4" />
-            {isPending ? "저장 중..." : "노트 저장"}
-          </Button>
-          <Button variant="outline" asChild>
-            <Link
-              href={returnTo}
-              aria-disabled={isPending}
-              tabIndex={isPending ? -1 : undefined}
-              className={isPending ? "pointer-events-none opacity-50" : undefined}
-              onClick={(event) => {
-                if (isPending) event.preventDefault();
-              }}
-            >
-              취소
-            </Link>
-          </Button>
-        </div>
       </form>
     </div>
   );

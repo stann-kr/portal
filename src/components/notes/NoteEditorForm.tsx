@@ -1,10 +1,8 @@
 "use client";
 
-import { useActionState, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useActionState, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
-import { Save } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { AutosaveStatus } from "@/components/editor/AutosaveStatus";
 import { DraftStatus } from "@/components/editor/DraftStatus";
 import { DraftConflictRecovery } from "@/components/editor/DraftConflictRecovery";
 import { RichTextContent } from "@/components/editor/RichTextContent";
@@ -14,6 +12,7 @@ import { isRichTextEmpty } from "@/lib/rich-text";
 import type { UpdateNoteState } from "@/lib/actions/privateNotes";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
 import { useDeferredEditorContent } from "@/lib/hooks/useDeferredEditorContent";
+import { useDocumentAutosave } from "@/lib/hooks/useDocumentAutosave";
 import { useDocumentSaveShortcut } from "@/lib/hooks/useDocumentSaveShortcut";
 import {
   CREATION_OPERATION_FIELD,
@@ -34,12 +33,6 @@ import {
   type CompactDocumentEditDraftMetadata,
   type DocumentEditDraftBaseFields,
 } from "@/lib/document-edit-draft";
-import {
-  acknowledgeServerSaveResponse,
-  createServerSaveConfirmationState,
-  dismissServerSaveConfirmation,
-  isServerSaveConfirmationVisible,
-} from "@/lib/server-save-confirmation";
 
 const FullEditor = dynamic(
   () => import("@/components/editor/FullEditor").then((module) => ({ default: module.FullEditor })),
@@ -56,6 +49,8 @@ type NoteEditorFormProps = {
   };
   actorId: string;
   action: (previous: UpdateNoteState, formData: FormData) => Promise<UpdateNoteState>;
+  /** 새 노트를 만든 직후처럼 본문 끝에서 바로 이어 쓰게 한다. */
+  focusBodyEnd?: boolean;
 };
 
 type NoteEditSnapshot = {
@@ -85,11 +80,16 @@ function toDateInputValue(value: Date | null): string {
   return value ? new Date(value).toISOString().slice(0, 10) : "";
 }
 
+/** 서버는 제목 앞뒤 공백을 지운다. 입력 중인 띄어쓰기를 저장 차이로 보지 않는다. */
+function sameSnapshot(a: NoteEditSnapshot, b: NoteEditSnapshot): boolean {
+  return a.title.trim() === b.title.trim() && a.noteDate === b.noteDate && a.contentHtml === b.contentHtml;
+}
+
 export function NoteEditorForm(props: NoteEditorFormProps) {
   return <NoteEditorFormContent key={`${props.actorId}:${props.note.id}`} {...props} />;
 }
 
-function NoteEditorFormContent({ note, actorId, action }: NoteEditorFormProps) {
+function NoteEditorFormContent({ note, actorId, action, focusBodyEnd = false }: NoteEditorFormProps) {
   const serverVersion = note.version ?? 1;
   const [title, setTitle] = useState(note.title);
   const [noteDate, setNoteDate] = useState(toDateInputValue(note.noteDate));
@@ -181,12 +181,6 @@ function NoteEditorFormContent({ note, actorId, action }: NoteEditorFormProps) {
     },
     [],
   );
-  const [saveConfirmation, setSaveConfirmation] = useState(
-    createServerSaveConfirmationState<NonNullable<UpdateNoteState["note"]>>(),
-  );
-  const hideSaveConfirmation = useCallback(() => {
-    setSaveConfirmation(dismissServerSaveConfirmation);
-  }, []);
 
   const {
     loaded,
@@ -212,7 +206,6 @@ function NoteEditorFormContent({ note, actorId, action }: NoteEditorFormProps) {
       setBaseRevision(
         parsePrivateNoteRevision(draft.baseRevision) ?? serverVersion,
       );
-      hideSaveConfirmation();
       const restoredSnapshot = {
         title: draft.title ?? note.title,
         noteDate: draft.noteDate ?? toDateInputValue(note.noteDate),
@@ -247,7 +240,6 @@ function NoteEditorFormContent({ note, actorId, action }: NoteEditorFormProps) {
         restoredDraftRef.current = null;
         setOperationId(createCreationOperationId());
         setBaseRevision(serverVersion);
-        hideSaveConfirmation();
         adoptSavedSnapshot(serverSnapshot);
         draftBaseFingerprintRef.current = baseFingerprintRef.current;
         setHasStaleDraftBase(false);
@@ -315,15 +307,17 @@ function NoteEditorFormContent({ note, actorId, action }: NoteEditorFormProps) {
 
     previousServerSnapshotRef.current = serverSnapshot;
     if (serverVersion < Math.max(baseRevision, conflictServer?.version ?? 0)) return;
+    // 방금 자동 저장한 내용이 화면 갱신으로 돌아온 것이면 이어서 쓴 내용과의 충돌이 아니다.
+    const submitted = submittedDraftRef.current;
+    const ownSave =
+      (submitted && sameSnapshot(submitted, serverSnapshot)) ||
+      (state.success && state.note && sameSnapshot({
+        title: state.note.title,
+        noteDate: toDateInputValue(state.note.noteDate),
+        contentHtml: state.note.contentHtml,
+      }, serverSnapshot));
+    if (ownSave) return;
     setConflictServer(null);
-    const serverMatchesLatestSaveResponse = Boolean(
-      state.success &&
-      state.note &&
-      state.note.title === serverSnapshot.title &&
-      toDateInputValue(state.note.noteDate) === serverSnapshot.noteDate &&
-      state.note.contentHtml === serverSnapshot.contentHtml,
-    );
-    if (!serverMatchesLatestSaveResponse) hideSaveConfirmation();
     // React 표시값은 editor보다 최대 200ms 늦을 수 있으므로 충돌 판정은 최신 reader를 사용한다.
     const latestContentHtml = readLatestContentHtml();
     const localMatchesPrevious =
@@ -358,7 +352,6 @@ function NoteEditorFormContent({ note, actorId, action }: NoteEditorFormProps) {
     clear,
     conflictServer,
     hasStaleDraftBase,
-    hideSaveConfirmation,
     loaded,
     noteDate,
     readLatestContentHtml,
@@ -389,9 +382,8 @@ function NoteEditorFormContent({ note, actorId, action }: NoteEditorFormProps) {
     if (!hasStaleDraftBase) {
       draftBaseFingerprintRef.current = baseFingerprintRef.current;
     }
-    hideSaveConfirmation();
     setHasStaleDraftBase(true);
-  }, [hasStaleDraftBase, hideSaveConfirmation, state.conflictNote]);
+  }, [hasStaleDraftBase, state.conflictNote]);
 
   useEffect(() => {
     if (
@@ -402,6 +394,13 @@ function NoteEditorFormContent({ note, actorId, action }: NoteEditorFormProps) {
       return;
     }
     handledSavedNoteRef.current = state.note;
+    const submittedSnapshot = submittedDraftRef.current;
+    const latestContentHtml = readLatestContentHtml();
+    // 저장 요청 뒤에도 계속 썼다면 그 내용을 지키고 다음 자동 저장에 맡긴다.
+    const typedSinceSubmit = Boolean(
+      submittedSnapshot &&
+        !sameSnapshot(submittedSnapshot, { title, noteDate, contentHtml: latestContentHtml }),
+    );
     clear({
       reason: "submitted",
       submittedData: submittedDraftRef.current ?? {
@@ -431,24 +430,86 @@ function NoteEditorFormContent({ note, actorId, action }: NoteEditorFormProps) {
     setOperationId(createCreationOperationId());
     draftBaseFingerprintRef.current = baseFingerprintRef.current;
     setHasStaleDraftBase(false);
-    setTitle(state.note.title);
-    setNoteDate(toDateInputValue(state.note.noteDate));
-    setContentHtml(state.note.contentHtml);
-    setSaveConfirmation((current) =>
-      acknowledgeServerSaveResponse(current, state.note),
-    );
+    if (!typedSinceSubmit) {
+      if (title.trim() !== state.note.title) setTitle(state.note.title);
+      setNoteDate(toDateInputValue(state.note.noteDate));
+      // 서버가 정리한 HTML이 다를 때만 편집기를 다시 채운다. 같으면 커서를 건드리지 않는다.
+      if (latestContentHtml !== state.note.contentHtml) setContentHtml(state.note.contentHtml);
+    }
   }, [
     adoptSavedSnapshot,
     clear,
     contentHtml,
     createSubmittedDraftAliases,
     noteDate,
+    readLatestContentHtml,
     setContentHtml,
     state.currentRevision,
     state.note,
     state.success,
     title,
   ]);
+
+  const titleRef = useRef<HTMLTextAreaElement>(null);
+  const focusedBodyRef = useRef(false);
+  useEffect(() => {
+    if (!focusBodyEnd || !loaded || focusedBodyRef.current) return;
+    // 편집기는 지연 로드되므로 나타날 때까지 짧게 기다린다.
+    let attempts = 0;
+    const timer = window.setInterval(() => {
+      const body = formRef.current?.querySelector<HTMLElement>('[contenteditable="true"]');
+      attempts += 1;
+      if (!body && attempts < 40) return;
+      window.clearInterval(timer);
+      if (!body) return;
+      focusedBodyRef.current = true;
+      body.focus();
+      const range = document.createRange();
+      range.selectNodeContents(body);
+      range.collapse(false);
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      const url = new URL(window.location.href);
+      url.searchParams.delete("focus");
+      window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+    }, 50);
+    return () => window.clearInterval(timer);
+  }, [focusBodyEnd, loaded]);
+  // 긴 제목도 잘리지 않게 내용 높이에 맞춘다(field-sizing을 지원하지 않는 브라우저 포함).
+  useLayoutEffect(() => {
+    const element = titleRef.current;
+    if (!element) return;
+    element.style.height = "auto";
+    element.style.height = `${element.scrollHeight}px`;
+  }, [title]);
+  const savedSnapshot = savedSnapshotRef.current;
+  const dirty = loaded && !sameSnapshot(savedSnapshot, { title, noteDate, contentHtml });
+  const changeKey = `${title}\u0000${noteDate}\u0000${contentHtml}`;
+  const submittedKeyRef = useRef("");
+  const [failedKey, setFailedKey] = useState<string | null>(null);
+  useEffect(() => {
+    if (state.error) setFailedKey(submittedKeyRef.current);
+    else if (state.success) setFailedKey(null);
+  }, [state]);
+  const missingRequired = !title.trim() || isRichTextEmpty(contentHtml);
+  const autosaveReady =
+    loaded && canSubmit && !isPending && !hasStaleDraftBase && Boolean(operationId) && !missingRequired;
+  useDocumentAutosave({
+    enabled: autosaveReady && failedKey !== changeKey,
+    dirty,
+    changeKey,
+    onSave: () => formRef.current?.requestSubmit(),
+  });
+  const autosaveStatus = isPending
+    ? "saving"
+    : hasStaleDraftBase
+      ? "blocked"
+      : state.error && failedKey === changeKey
+        ? "error"
+        : dirty
+          ? missingRequired ? "blocked" : "pending"
+          : "saved";
 
   return (
     <form
@@ -473,6 +534,7 @@ function NoteEditorFormContent({ note, actorId, action }: NoteEditorFormProps) {
           event.preventDefault();
           return;
         }
+        submittedKeyRef.current = `${title}\u0000${noteDate}\u0000${latestContentHtml}`;
         if (contentHtmlInputRef.current) {
           contentHtmlInputRef.current.value = latestContentHtml;
         }
@@ -507,17 +569,20 @@ function NoteEditorFormContent({ note, actorId, action }: NoteEditorFormProps) {
         value={baseFingerprint}
       />
 
-      {state.error ? (
-        <p role="alert" className="rounded-lg border border-destructive/20 bg-destructive-muted p-3 text-sm text-destructive">
-          {state.error}
-        </p>
-      ) : null}
-      {state.success &&
-      isServerSaveConfirmationVisible(saveConfirmation, state.note) ? (
-        <p role="status" className="rounded-lg border border-success/20 bg-success-muted p-3 text-sm text-success">
-          변경사항을 저장했습니다.
-        </p>
-      ) : null}
+      <div className="flex justify-end">
+        <AutosaveStatus
+          status={autosaveStatus}
+          message={
+            autosaveStatus === "error"
+              ? state.error
+              : hasStaleDraftBase
+                ? "다른 곳의 변경을 확인할 때까지 저장을 멈췄습니다."
+                : "제목과 내용을 입력하면 자동으로 저장됩니다."
+          }
+          onRetry={() => formRef.current?.requestSubmit()}
+        />
+      </div>
+
       {hasStaleDraftBase ? (
         <div className="space-y-3">
           <DraftConflictRecovery
@@ -528,7 +593,6 @@ function NoteEditorFormContent({ note, actorId, action }: NoteEditorFormProps) {
                 version: serverVersion,
               };
               restoredDraftRef.current = null;
-              hideSaveConfirmation();
               clear();
               adoptSavedSnapshot(latestServer.snapshot);
               setBaseRevision(latestServer.version);
@@ -539,21 +603,20 @@ function NoteEditorFormContent({ note, actorId, action }: NoteEditorFormProps) {
               setContentHtml(latestServer.snapshot.contentHtml);
               setConflictServer(null);
               setHasStaleDraftBase(false);
-              formRef.current?.querySelector<HTMLInputElement>('input[name="title"]')?.focus();
+              formRef.current?.querySelector<HTMLTextAreaElement>('textarea[name="title"]')?.focus();
             }}
             onKeepDraft={() => {
               const latestServer = conflictServer ?? {
                 snapshot: serverSnapshot,
                 version: serverVersion,
               };
-              hideSaveConfirmation();
               adoptSavedSnapshot(latestServer.snapshot);
               setBaseRevision(latestServer.version);
               setOperationId(createCreationOperationId());
               draftBaseFingerprintRef.current = baseFingerprintRef.current;
               setConflictServer(null);
               setHasStaleDraftBase(false);
-              formRef.current?.querySelector<HTMLInputElement>('input[name="title"]')?.focus();
+              formRef.current?.querySelector<HTMLTextAreaElement>('textarea[name="title"]')?.focus();
             }}
           />
           <details className="rounded-lg border border-border bg-card p-3">
@@ -575,34 +638,42 @@ function NoteEditorFormContent({ note, actorId, action }: NoteEditorFormProps) {
         </div>
       ) : null}
 
-      <div className="flex flex-col gap-4 sm:flex-row">
-        <label className="min-w-0 flex-1 space-y-1.5">
-          <span className="text-sm font-medium">제목</span>
-          <Input
-            name="title"
-            value={title}
-            onChange={(event) => {
-              setOperationId(createCreationOperationId());
-              hideSaveConfirmation();
-              setTitle(event.target.value);
-            }}
-            required
-            maxLength={200}
-            disabled={!loaded || isPending}
-          />
-        </label>
-        <label className="space-y-1.5 sm:w-44">
-          <span className="text-sm font-medium">날짜</span>
-          <Input
+      <div className="space-y-2">
+        <h1 className="sr-only">노트 편집</h1>
+        <textarea
+          ref={titleRef}
+          name="title"
+          aria-label="제목"
+          value={title}
+          rows={1}
+          onChange={(event) => {
+            setOperationId(createCreationOperationId());
+            setTitle(event.target.value.replace(/\n/gu, " "));
+          }}
+          onKeyDown={(event) => {
+            // 제목에서 Enter는 줄바꿈 대신 본문으로 이동한다.
+            if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+            event.preventDefault();
+            formRef.current?.querySelector<HTMLElement>('[contenteditable="true"]')?.focus();
+          }}
+          required
+          maxLength={200}
+          placeholder="제목 없음"
+          disabled={!loaded}
+          className="w-full resize-none overflow-hidden border-0 bg-transparent p-0 text-3xl font-bold leading-tight tracking-[-0.02em] text-foreground placeholder:text-muted-foreground/60 focus:outline-none sm:text-4xl"
+        />
+        <label className="inline-flex items-center gap-2 text-sm text-muted-foreground">
+          <span>날짜</span>
+          <input
             name="noteDate"
             type="date"
             value={noteDate}
             onChange={(event) => {
               setOperationId(createCreationOperationId());
-              hideSaveConfirmation();
               setNoteDate(event.target.value);
             }}
-            disabled={!loaded || isPending}
+            disabled={!loaded}
+            className="rounded-md bg-transparent px-1.5 py-0.5 text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
         </label>
       </div>
@@ -615,7 +686,6 @@ function NoteEditorFormContent({ note, actorId, action }: NoteEditorFormProps) {
           onDirty={(reader) => {
             const nextOperationId = createCreationOperationId();
             setOperationId(nextOperationId);
-            hideSaveConfirmation();
             handleEditorDirty(reader);
             save({
               title,
@@ -633,9 +703,9 @@ function NoteEditorFormContent({ note, actorId, action }: NoteEditorFormProps) {
             });
           }}
           placeholder="수업 내용, 연습 기록, 메모를 이어서 작성하세요..."
-          minHeight="min(60dvh, 42rem)"
-          disabled={isPending}
+          minHeight="50dvh"
           ariaLabel="노트 내용"
+          variant="page"
           footer={
             <DraftStatus
               status={status}
@@ -643,37 +713,16 @@ function NoteEditorFormContent({ note, actorId, action }: NoteEditorFormProps) {
               savedAt={savedAt}
               restored={restored}
               recoveries={recoveries}
-              onRestoreRecovery={(storageKey) => {
-                hideSaveConfirmation();
-                restoreRecovery(storageKey);
-              }}
+              onRestoreRecovery={restoreRecovery}
               onDiscardRecovery={discardRecovery}
               serverSync={serverSync}
-              disabled={isPending}
+              quiet
             />
           }
-          saveShortcutLabel={canSubmit ? "변경 저장" : undefined}
+          saveShortcutLabel={canSubmit ? "바로 저장" : undefined}
         />
       ) : null}
 
-      <div className="flex justify-end">
-        <Button
-          type="submit"
-          disabled={
-            !loaded ||
-            !canSubmit ||
-            isPending ||
-            hasStaleDraftBase ||
-            !operationId ||
-            !title.trim() ||
-            isRichTextEmpty(contentHtml)
-          }
-          className="gap-2"
-        >
-          <Save className="h-4 w-4" aria-hidden="true" />
-          {isPending ? "저장 중…" : "변경사항 저장"}
-        </Button>
-      </div>
     </form>
   );
 }
