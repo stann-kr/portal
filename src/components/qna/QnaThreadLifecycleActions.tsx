@@ -37,6 +37,8 @@ type QnaThreadLifecycleOptions = {
 type QnaThreadLifecycleHookOptions = QnaThreadLifecycleOptions & {
   /** 동작 버튼(복원 뒤 초점이 이어질 곳). 화면에 하나만 붙인다. */
   actionButtonRef: RefObject<HTMLButtonElement | null>;
+  /** 동작 버튼이 화면에 없을 때(좁은 화면은 더 보기 메뉴로 연다) 대신 초점을 받을 곳. */
+  fallbackFocusRef?: RefObject<HTMLElement | null>;
 };
 
 export type QnaThreadLifecycle = {
@@ -65,6 +67,7 @@ export function useQnaThreadLifecycle({
   disabled = false,
   transition,
   actionButtonRef,
+  fallbackFocusRef,
 }: QnaThreadLifecycleHookOptions): QnaThreadLifecycle {
   const router = useRouter();
   const [ownPending, startOwnTransition] = useTransition();
@@ -97,8 +100,9 @@ export function useQnaThreadLifecycle({
     const activeElement = document.activeElement;
     if (activeElement === document.body || activeElement === actionButtonRef.current) {
       actionButtonRef.current?.focus({ preventScroll: true });
+      if (document.activeElement !== actionButtonRef.current) fallbackFocusRef?.current?.focus({ preventScroll: true });
     }
-  }, [actionButtonRef, deletedAt, isPending, threadId, version]);
+  }, [actionButtonRef, deletedAt, fallbackFocusRef, isPending, threadId, version]);
 
   const lifecycleConfirm = useConfirmAction<"trash" | "purge">();
   const triggerDisabled = disabled || isPending || Boolean(needsRefresh);

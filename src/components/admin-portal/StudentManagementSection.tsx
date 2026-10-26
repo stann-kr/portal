@@ -31,7 +31,8 @@ function studentInitial(student: StudentRosterStat): string {
 }
 
 function nextLessonLabel(student: StudentRosterStat): string {
-  return student.nextLessonDate ? formatKstDot(student.nextLessonDate, { time: true }) : "미정";
+  // 올해가 아닌 레슨은 연도까지 보인다.
+  return student.nextLessonDate ? formatKstDot(student.nextLessonDate, { time: true, referenceTime: new Date() }) : "미정";
 }
 
 /** 학생 이름과 이메일에 검색어가 들어 있는지(대소문자 무시). */

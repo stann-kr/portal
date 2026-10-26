@@ -13,6 +13,7 @@ let browser: Window;
 let PortalShell: typeof import("@/components/ui/portal-shell").PortalShell;
 let navigateWithinPage: typeof import("@/components/app-shell/navigation").navigateWithinPage;
 let SlidePanel: typeof import("@/components/student-portal/SlidePanel").SlidePanel;
+let SlidePanelDock: typeof import("@/components/student-portal/SlidePanel").SlidePanelDock;
 let CreateEntryDropdown: typeof import("@/components/student-portal/CreateEntryDropdown").CreateEntryDropdown;
 let AdminPortalClient: typeof import("@/components/admin-portal/AdminPortalClient").AdminPortalClient;
 let StudentPortalClient: typeof import("@/components/student-portal/StudentPortalClient").StudentPortalClient;
@@ -227,7 +228,7 @@ before(async () => {
   ({ renderToString } = await import("react-dom/server"));
   ({ PortalShell } = await import("@/components/ui/portal-shell"));
   ({ navigateWithinPage } = await import("@/components/app-shell/navigation"));
-  ({ SlidePanel } = await import("@/components/student-portal/SlidePanel"));
+  ({ SlidePanel, SlidePanelDock } = await import("@/components/student-portal/SlidePanel"));
   ({ EventFormDialog } = await import("@/components/calendar/EventFormDialog"));
   ({ CalendarEventActions } = await import("@/components/calendar/CalendarEventActions"));
   ({ LessonActions } = await import("@/components/calendar/LessonActions"));
@@ -731,6 +732,50 @@ test("controlled panel restores its opener focus and preserves busy dismissal pr
   assert.equal(browser.document.activeElement, button("패널 열기"));
 });
 
+test("docked panel opens beside the page without a modal, keeps busy protection and returns focus only from inside", async (context) => {
+  function Panel() {
+    const [open, setOpen] = useState(false);
+    const [busy, setBusy] = useState(false);
+    return (
+      <SlidePanelDock>
+        <button onClick={() => setOpen(true)}>패널 열기</button>
+        <button onClick={() => setOpen(false)}>바깥에서 닫기</button>
+        <SlidePanel open={open} onOpenChange={setOpen} title="상세" dismissible={!busy} docked>
+          <button onClick={() => setBusy(!busy)}>{busy ? "저장 완료" : "저장 시작"}</button>
+        </SlidePanel>
+      </SlidePanelDock>
+    );
+  }
+  const panel = () => browser.document.querySelector('aside[aria-label="상세"]');
+  const pressEscapeInside = async () => {
+    await act(async () => {
+      browser.document.activeElement?.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    });
+    await settle();
+  };
+  await render(context, <Panel />);
+  await press("패널 열기");
+  assert.ok(panel(), "넓은 화면 dock 안에서는 화면 옆 패널(complementary)로 연다");
+  assert.equal(browser.document.querySelector('[role="dialog"]'), null, "모달 대화상자가 아니다");
+  assert.equal(browser.document.querySelector(".portal-backdrop"), null, "뒤 화면을 어둡게 하지 않는다");
+  assert.ok(panel()?.parentElement?.hasAttribute("data-slide-panel-dock"), "화면 내용 옆 패널 자리에 붙는다");
+  assert.ok(panel()?.contains(browser.document.activeElement), "열면 초점이 패널로 옮겨진다");
+  await press("저장 시작");
+  assert.equal(button("닫기").disabled, true);
+  await pressEscapeInside();
+  assert.ok(panel(), "저장 중에는 Esc로 닫히지 않는다");
+  await press("저장 완료");
+  await pressEscapeInside();
+  assert.equal(panel(), null, "초점이 패널 안에 있으면 Esc로 닫힌다");
+  assert.equal(browser.document.activeElement, button("패널 열기"), "연 요소로 초점을 돌려준다");
+
+  await press("패널 열기");
+  assert.ok(panel()?.contains(browser.document.activeElement));
+  await press("바깥에서 닫기");
+  assert.equal(panel(), null);
+  assert.equal(browser.document.activeElement, button("바깥에서 닫기"), "사용자가 패널 밖으로 옮긴 초점은 되돌리지 않는다");
+});
+
 test("creation menu hands keyboard focus to its dialog and returns it to the stable add button", async (context) => {
   await render(context, <CreateEntryDropdown studentId="student" diggingColumns={[]} spaceLabel="학생" noteCreateHref="/dashboard/student/notes/new" canCreateQna={false} canCreateDigging={false} />);
   await act(async () => {
@@ -876,6 +921,24 @@ test("top bar + opens today's quick create or lesson booking once and clears the
   await act(async () => { button("빠른 만들기 닫기").click(); });
   await settle();
   assert.equal(browser.document.querySelector('[role="dialog"]'), null);
+  assert.equal(browser.document.activeElement, button("새로 만들기"), "주소로 바로 연 창을 닫으면 머리의 만들기 버튼으로 초점이 간다");
+  // 위쪽 막대 +처럼 초점을 가진 요소로 열면 닫을 때 그 요소로, 그 요소가 사라졌으면 머리의 만들기 버튼으로 돌아간다.
+  const topBarPlus = browser.document.createElement("a");
+  topBarPlus.href = "/dashboard/student?section=workspace&create=today";
+  topBarPlus.textContent = "오늘 만들기";
+  browser.document.body.append(topBarPlus);
+  context.after(() => topBarPlus.remove());
+  for (const removeOpener of [false, true]) {
+    topBarPlus.focus();
+    await act(async () => { navigateWithinPage("/dashboard/student?section=workspace&view=calendar&create=today"); });
+    await settle();
+    assert.ok(browser.document.querySelector('[role="dialog"]'), "같은 화면 안의 이동으로도 다시 열린다");
+    if (removeOpener) topBarPlus.remove();
+    await act(async () => { button("빠른 만들기 닫기").click(); });
+    await settle();
+    assert.equal(browser.document.querySelector('[role="dialog"]'), null);
+    assert.equal(browser.document.activeElement, removeOpener ? button("새로 만들기") : topBarPlus);
+  }
   await act(async () => student.unmount());
   await settle();
 
@@ -895,9 +958,122 @@ test("top bar + opens today's quick create or lesson booking once and clears the
   assert.equal(new URLSearchParams(browser.location.search).get("create"), null);
   await escape();
   assert.equal(browser.document.querySelector('[role="dialog"]'), null);
+  assert.equal(browser.document.activeElement, button("레슨 예약"), "연 요소가 없으면 머리의 레슨 예약 버튼으로 초점이 간다");
+  const lessonPlus = browser.document.createElement("a");
+  lessonPlus.href = "/dashboard/admin?section=schedule&create=lesson";
+  lessonPlus.textContent = "레슨 예약하기";
+  browser.document.body.append(lessonPlus);
+  lessonPlus.focus();
+  await act(async () => { navigateWithinPage("/dashboard/admin?section=schedule&create=lesson&student=student"); });
+  await settle();
+  assert.match(browser.document.querySelector('[role="dialog"]')?.textContent ?? "", /레슨 예약/u);
+  lessonPlus.remove();
+  await escape();
+  await settle();
+  assert.equal(browser.document.querySelector('[role="dialog"]'), null);
+  assert.equal(browser.document.activeElement, button("레슨 예약"), "연 요소가 사라졌으면 머리의 레슨 예약 버튼으로 돌아간다");
   await act(async () => { browser.dispatchEvent(new browser.PopStateEvent("popstate")); });
   await settle();
   assert.equal(browser.document.querySelector('[role="dialog"]'), null, "같은 주소로 돌아와도 다시 열리지 않는다");
+});
+
+test("student calendar docks item detail beside the calendar column instead of a modal", async (context) => {
+  // 붙는 패널은 1280px(80rem) 이상에서만 쓴다. happy-dom 기본 폭(1024)에서는 넓은 화면을 흉내 낸다.
+  const originalMatchMedia = browser.matchMedia.bind(browser);
+  browser.matchMedia = ((query: string) => (query === "(min-width: 80rem)"
+    ? { ...originalMatchMedia(query), matches: true, media: query, addEventListener() {}, removeEventListener() {} }
+    : originalMatchMedia(query))) as typeof browser.matchMedia;
+  context.after(() => { browser.matchMedia = originalMatchMedia; });
+  browser.history.replaceState({}, "", "/dashboard/student?section=workspace&view=calendar");
+  await render(context, <StudentPortalClient
+    initialLocation={resolvePortalLocation("student", { section: "workspace", view: "calendar" })}
+    announcements={[]} communityPosts={[]} curriculumModules={[]} assignments={[]}
+    unifiedItems={[{
+      id: "practice", type: "EVENT", subType: "PRACTICE", title: "리듬 연습", date: new Date(), metadata: {},
+      space: { studentId: "student", label: "학생" }, source: { kind: "PORTAL", entity: "CALENDAR_EVENT", label: "포털" },
+    }]}
+    studentId="student" displayName="학생" spaceLabel="학생" externalCalendarConnection={{ connected: false }} referenceTime={new Date()}
+  />);
+  const chip = browser.document.querySelector(".fc-daygrid-event");
+  assert.ok(chip instanceof browser.HTMLElement);
+  await act(async () => { chip.click(); });
+  await settle();
+  const panel = browser.document.querySelector("aside[data-slide-panel]");
+  assert.ok(panel, "넓은 화면 캘린더는 항목 상세를 옆 패널로 연다");
+  assert.equal(browser.document.querySelector('[role="dialog"]'), null);
+  assert.equal(browser.document.querySelector(".portal-backdrop"), null);
+  const row = panel.parentElement?.parentElement;
+  assert.ok(panel.parentElement?.hasAttribute("data-slide-panel-dock"));
+  const segment = browser.document.querySelector('[role="tablist"][aria-label="보기"]');
+  assert.ok(segment && row?.contains(segment), "캘린더 머리·달력과 같은 줄에 붙는다");
+  assert.ok(panel.contains(browser.document.activeElement));
+  await act(async () => {
+    browser.document.activeElement?.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+  });
+  await settle();
+  assert.equal(browser.document.querySelector("aside[data-slide-panel]"), null);
+  assert.equal(browser.document.activeElement, chip);
+});
+
+test("calendar menu without a view ignores a stale assignments tab while an explicit view still opens it", async (context) => {
+  const props = {
+    announcements: [], unifiedItems: [], communityPosts: [], curriculumModules: [], assignments: [],
+    studentId: "student", displayName: "학생", spaceLabel: "학생", externalCalendarConnection: { connected: false }, referenceTime: new Date(),
+  };
+  const headings = () => [...browser.document.querySelectorAll("h1")].map((heading) => heading.textContent);
+  context.after(() => browser.localStorage.removeItem("studentPortal:calendarTab"));
+  browser.localStorage.setItem("studentPortal:calendarTab", "assignments");
+  browser.history.replaceState({}, "", "/dashboard/student?section=workspace");
+  const calendar = await render(context, <StudentPortalClient initialLocation={resolvePortalLocation("student", { section: "workspace" })} {...props} />);
+  assert.equal(button("월").getAttribute("aria-selected"), "true", "사이드바 캘린더는 예전 기기 저장값(과제)이 있어도 캘린더를 연다");
+  assert.equal(new URLSearchParams(browser.location.search).get("view"), "calendar");
+  assert.ok(!headings().includes("과제"));
+  await act(async () => calendar.unmount());
+  await settle();
+
+  browser.history.replaceState({}, "", "/dashboard/student?section=workspace&view=assignments");
+  await render(context, <StudentPortalClient initialLocation={resolvePortalLocation("student", { section: "workspace", view: "assignments" })} {...props} />);
+  assert.ok(headings().includes("과제"), "주소에 과제 보기가 있으면 그대로 연다");
+  assert.equal(browser.document.querySelector('[role="tablist"][aria-label="보기"]'), null);
+});
+
+test("월·주 tabs control the always-mounted calendar panel without remounting the calendar", async (context) => {
+  browser.history.replaceState({}, "", "/dashboard/student?section=workspace&view=calendar");
+  await render(context, <StudentPortalClient
+    initialLocation={resolvePortalLocation("student", { section: "workspace", view: "calendar" })}
+    announcements={[]} unifiedItems={[]} communityPosts={[]} curriculumModules={[]} assignments={[]}
+    studentId="student" displayName="학생" spaceLabel="학생" externalCalendarConnection={{ connected: false }} referenceTime={new Date()}
+  />);
+  const controlled = (label: string) => browser.document.getElementById(button(label).getAttribute("aria-controls") ?? "");
+  const panel = controlled("월");
+  assert.ok(panel, "활성 월 탭이 실제 패널을 가리킨다");
+  assert.equal(panel.getAttribute("role"), "tabpanel");
+  assert.equal(panel.getAttribute("aria-labelledby"), button("월").id);
+  const calendarRoot = panel.querySelector(".fc");
+  assert.ok(calendarRoot, "월 패널 안에 달력이 있다");
+  await press("주");
+  assert.equal(controlled("주"), panel, "주 탭도 같은 자리의 패널을 가리킨다");
+  assert.equal(panel.querySelector(".fc"), calendarRoot, "보기를 바꿔도 달력을 다시 마운트하지 않는다");
+  await press("일별");
+  assert.ok(panel.hasAttribute("hidden"), "다른 보기에서는 달력 패널을 숨긴다");
+  assert.equal(panel.querySelector(".fc"), calendarRoot);
+});
+
+test("top bar lesson booking without any student clears the create address and explains why", async (context) => {
+  browser.history.replaceState({}, "", "/dashboard/admin?section=work");
+  await render(context, <AdminPortalClient
+    announcements={[]} initialUnifiedItems={[]} communityPosts={[]}
+    adminId="admin" qnaThreads={[]} pendingAssignments={[]} referenceTime={new Date()} students={[]}
+  />);
+  await act(async () => { navigateWithinPage("/dashboard/admin?section=schedule&create=lesson"); });
+  await settle();
+  assert.equal(browser.document.querySelector('[role="dialog"]'), null);
+  assert.equal(new URLSearchParams(browser.location.search).get("create"), null, "열 수 없는 만들기도 주소에서 지운다");
+  const notice = [...browser.document.querySelectorAll('[role="status"]')].find((element) => /등록된 수강생이 없습니다/u.test(element.textContent ?? ""));
+  assert.ok(notice, "학생이 없어 레슨을 예약할 수 없다고 알린다");
+  assert.ok(notice.querySelector('a[href="/dashboard/admin/students/new"]'));
+  await press("알림 닫기");
+  assert.equal([...browser.document.querySelectorAll('[role="status"]')].some((element) => /등록된 수강생이 없습니다/u.test(element.textContent ?? "")), false);
 });
 
 test("portal deep links render their section, view and selected student before hydration", async (context) => {
@@ -985,6 +1161,44 @@ test("calendar detail returns focus to the month chip that opened it", async (co
   await escape();
   assert.equal(browser.document.querySelector('[role="dialog"]'), null);
   assert.equal(browser.document.activeElement, chip);
+});
+
+test("wide calendar opens item detail beside the grid, switches items in place and returns focus to the chip", async (context) => {
+  const item = (id: string, title: string): UnifiedItem => ({
+    id, type: "EVENT", subType: "PRACTICE", title, date: new Date(), metadata: {},
+    space: { studentId: "student", label: "학생" }, source: { kind: "PORTAL", entity: "CALENDAR_EVENT", label: "포털" },
+  });
+  await render(context, <SlidePanelDock className="flex">
+    <div><UnifiedCalendar returnTo="/dashboard/student" showSpaceContext={false} items={[item("practice", "리듬 연습"), item("gig", "합주")]} /></div>
+  </SlidePanelDock>);
+  const chip = (title: string) => {
+    const found = [...browser.document.querySelectorAll(".fc-daygrid-event")].find((element) => element.textContent?.includes(title));
+    assert.ok(found instanceof browser.HTMLElement, `chip: ${title}`);
+    return found;
+  };
+  const first = chip("리듬 연습");
+  await act(async () => { first.click(); });
+  await settle();
+  let panel = browser.document.querySelector("aside[data-slide-panel]");
+  assert.ok(panel, "항목 상세가 캘린더 옆 패널로 열린다");
+  assert.equal(panel.getAttribute("aria-label"), "리듬 연습");
+  assert.equal(browser.document.querySelector('[role="dialog"]'), null, "모달이 아니라 캘린더를 계속 조작할 수 있다");
+  assert.match(panel.textContent ?? "", /일정/u, "panel header shows the type");
+  assert.ok(panel.contains(browser.document.activeElement), "열면 초점이 패널로 옮겨진다");
+  assert.ok(first.classList.contains("calendar-event-selected"), "연 항목을 캘린더에서 표시한다");
+
+  const second = chip("합주");
+  await act(async () => { second.click(); });
+  await settle();
+  panel = browser.document.querySelector("aside[data-slide-panel]");
+  assert.equal(panel?.getAttribute("aria-label"), "합주", "패널을 닫지 않고 다른 항목으로 바꾼다");
+  assert.ok(panel?.contains(browser.document.activeElement));
+  await act(async () => {
+    browser.document.activeElement?.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+  });
+  await settle();
+  assert.equal(browser.document.querySelector("aside[data-slide-panel]"), null);
+  assert.equal(browser.document.activeElement, chip("합주"), "마지막으로 연 칩으로 초점을 돌려준다");
 });
 
 test("calendar quick create works from the keyboard and keeps a typed title on outside clicks", async (context) => {

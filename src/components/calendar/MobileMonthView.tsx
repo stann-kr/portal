@@ -8,6 +8,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { getUnifiedItemColor, getUnifiedItemKey, type UnifiedItem } from "@/lib/utils/unifiedItemUtils";
+import { eventDayRange } from "@/lib/student-today";
 import { describeRelativeDay, sortDayAgenda } from "@/lib/unified-item-views";
 import { cn } from "@/lib/utils";
 import { CalendarAgendaRow } from "./CalendarAgendaRow";
@@ -18,12 +19,39 @@ import {
   isInMonth,
   monthGridWeeks,
   monthOf,
+  shiftDateKey,
   shiftMonth,
   todayKey as readTodayKey,
   type MonthCursor,
 } from "./calendar-dates";
 
 const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
+
+/** 여러 날에 걸친 일정을 그 기간의 날마다 놓는다(월 보기 점·고른 날 목록). 노트·과제 등은 한 날짜다. */
+const MAX_SPAN_DAYS = 62;
+export function groupItemsBySpannedDay(items: readonly UnifiedItem[]): Map<string, UnifiedItem[]> {
+  const groups = new Map<string, UnifiedItem[]>();
+  const push = (key: string, item: UnifiedItem) => {
+    const current = groups.get(key);
+    if (current) current.push(item);
+    else groups.set(key, [item]);
+  };
+  for (const item of items) {
+    const start = getItemDateKey(item);
+    if (item.type !== "EVENT") {
+      push(start, item);
+      continue;
+    }
+    const { end } = eventDayRange(item);
+    let key = start;
+    for (let day = 0; day < MAX_SPAN_DAYS && key <= end; day += 1) {
+      push(key, item);
+      key = shiftDateKey(key, 1);
+    }
+    if (!groups.get(start)?.includes(item)) push(start, item);
+  }
+  return groups;
+}
 
 export function groupItemsByDay(items: readonly UnifiedItem[]): Map<string, UnifiedItem[]> {
   const groups = new Map<string, UnifiedItem[]>();
@@ -93,7 +121,7 @@ export function MobileMonthView({
   const [today] = useState(readTodayKey);
   const [cursor, setCursor] = useState<MonthCursor>(() => monthOf(today));
   const [selected, setSelected] = useState(today);
-  const byDay = useMemo(() => groupItemsByDay(items), [items]);
+  const byDay = useMemo(() => groupItemsBySpannedDay(items), [items]);
   const weeks = monthGridWeeks(cursor);
   const selectedItems = sortDayAgenda(byDay.get(selected) ?? []);
 

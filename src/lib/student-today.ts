@@ -83,7 +83,7 @@ export function isAllDayItem(item: UnifiedItem): boolean {
 }
 
 /** 일정이 시작하는 KST 날짜와 끝나는 날짜(포함)를 구한다. */
-function eventDayRange(item: UnifiedItem): { start: string; end: string } {
+export function eventDayRange(item: UnifiedItem): { start: string; end: string } {
   if (isAllDayItem(item)) {
     const startRaw = item.metadata.allDayStartDate;
     const endRaw = item.metadata.allDayEndDate;

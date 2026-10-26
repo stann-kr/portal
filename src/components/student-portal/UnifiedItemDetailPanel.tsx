@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
+import { getUnifiedItemKey, type UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 import { UnifiedItemSpaceBadge, UnifiedItemTypeBadge } from "@/components/ui/unified-item-type";
 import { SlidePanel } from "./SlidePanel";
 import { UnifiedItemDetail } from "./UnifiedItemDetail";
@@ -20,7 +20,9 @@ export type UnifiedItemChangeHandlers = {
 
 /**
  * 캘린더·일별·전체 보기가 같은 상세 패널과 변경 중 닫힘 잠금을 공유한다.
- * 머리 왼쪽은 유형 점·이름과 (관리자·외부 출처) 학생 칩, 노트는 전체 화면 열기를 닫기 옆에 둔다.
+ * 넓은 화면(`SlidePanelDock` 안)은 캘린더 옆 비모달 패널, 좁은 화면은 모달 시트다.
+ * 머리 왼쪽은 유형 점·이름과 (관리자·외부 출처) 학생 칩. 노트는 유형 대신 저장 상태(편집할 때)를
+ * 노트 상세가 채우고, 전체 화면 열기를 닫기 옆에 둔다(캔버스 Calendar 보드 노트 패널).
  */
 export function UnifiedItemDetailPanel({
   item,
@@ -45,25 +47,35 @@ export function UnifiedItemDetailPanel({
   showSpaceContext?: boolean;
 } & UnifiedItemChangeHandlers) {
   const [busy, setBusy] = useState(false);
-  const isNote = item?.type === "NOTE";
+  // 넓은 화면 패널은 비모달이라 저장·삭제 중에도 캘린더의 다른 항목·보기를 누를 수 있다.
+  // 그동안은 지금 항목과 열림을 붙잡아 두고(같은 항목의 저장 결과만 반영), 끝나면 마지막 요청을 따른다.
+  const [shown, setShown] = useState({ item, open });
+  const shownKey = shown.item ? getUnifiedItemKey(shown.item) : null;
+  const canFollow = !busy || (open && item !== null && getUnifiedItemKey(item) === shownKey);
+  if (canFollow && (shown.item !== item || shown.open !== open)) setShown({ item, open });
+  const current = canFollow ? item : shown.item;
+  const isOpen = canFollow ? open : shown.open;
+  const isNote = current?.type === "NOTE";
 
   return (
     <SlidePanel
-      open={open}
+      open={isOpen}
       onOpenChange={onOpenChange}
-      title={isNote ? "노트" : item?.title}
-      headerStart={item ? (
+      title={isNote ? "노트" : current?.title}
+      headerStart={current ? (
         <>
-          <UnifiedItemTypeBadge item={item} />
-          {showSpaceContext || item.source.kind !== "PORTAL" ? <UnifiedItemSpaceBadge item={item} /> : null}
+          {isNote ? null : <UnifiedItemTypeBadge item={current} />}
+          {showSpaceContext || current.source.kind !== "PORTAL" ? <UnifiedItemSpaceBadge item={current} /> : null}
         </>
       ) : undefined}
       size={isNote ? "note" : "md"}
       dismissible={!busy}
+      docked
+      contentKey={current ? getUnifiedItemKey(current) : undefined}
     >
-      {item ? (
+      {current ? (
         <UnifiedItemDetail
-          item={item}
+          item={current}
           onClose={() => onOpenChange(false)}
           returnTo={returnTo}
           canManageEvents={canManageEvents}

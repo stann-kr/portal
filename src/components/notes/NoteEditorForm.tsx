@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState, useCallback, useEffect, useId, useInsertionEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import dynamic from "next/dynamic";
 import { CalendarDays, Clock3, UserRound } from "lucide-react";
 import { AutosaveStatus } from "@/components/editor/AutosaveStatus";
@@ -66,6 +67,19 @@ type NoteEditorFormProps = {
   onBusyChange?: (busy: boolean) => void;
   /** 노트 문서 페이지 배치(NoteDoc·MobileNoteDoc 보드). 없으면 캘린더 패널 배치로 그린다. */
   document?: NoteDocumentLayout;
+  /** 캘린더 상세 패널 배치(Calendar 보드 노트 패널). `document`가 없을 때만 쓴다. 없으면 지금 배치 그대로다. */
+  panel?: NotePanelLayout;
+};
+
+/**
+ * 캘린더 상세 패널 배치: 저장 상태를 패널 머리 왼쪽에 두고, 제목(24/32) 아래 날짜·작성자·수정 줄(88px 이름 칸)과
+ * 구분선을 그린다. 작성자·수정 값이 없으면 그 줄을 생략한다. 저장 동작·초안·충돌 처리는 다른 배치와 같다.
+ */
+export type NotePanelLayout = {
+  /** 저장 상태를 그릴 패널 머리 자리. null이면 본문 위에 그린다. */
+  statusSlot: HTMLElement | null;
+  authorName?: string | null;
+  updatedLabel?: string | null;
 };
 
 /**
@@ -121,7 +135,7 @@ export function NoteEditorForm(props: NoteEditorFormProps) {
   return <NoteEditorFormContent key={`${props.actorId}:${props.note.id}`} {...props} />;
 }
 
-function NoteEditorFormContent({ note, actorId, action, focusBodyEnd = false, onSaved, onBusyChange, document: documentLayout }: NoteEditorFormProps) {
+function NoteEditorFormContent({ note, actorId, action, focusBodyEnd = false, onSaved, onBusyChange, document: documentLayout, panel: panelLayout }: NoteEditorFormProps) {
   const dateInputId = useId();
   const serverVersion = note.version ?? 1;
   const [title, setTitle] = useState(note.title);
@@ -653,7 +667,12 @@ function NoteEditorFormContent({ note, actorId, action, focusBodyEnd = false, on
       maxLength={200}
       placeholder="제목 없음"
       disabled={!loaded}
-      className={documentLayout ? NOTE_TITLE_FIELD_CLASS : "w-full resize-none overflow-hidden border-0 bg-transparent p-0 text-xl font-semibold tracking-title text-foreground placeholder:text-faint focus:outline-none"}
+      className={documentLayout
+        ? NOTE_TITLE_FIELD_CLASS
+        : cn(
+          "w-full resize-none overflow-hidden border-0 bg-transparent p-0 font-semibold text-foreground placeholder:text-faint focus:outline-none",
+          panelLayout ? "text-2xl tracking-display" : "text-xl tracking-title",
+        )}
     />
   );
 
@@ -804,6 +823,49 @@ function NoteEditorFormContent({ note, actorId, action, focusBodyEnd = false, on
             {conflictRecovery}
             {editor}
           </NoteDocumentBody>
+        </>
+      ) : panelLayout ? (
+        <>
+          {/* 머리는 짧은 상태만 보이고, 실패 이유와 다시 시도는 본문의 alert가 맡는다(문서 배치와 같다). */}
+          {panelLayout.statusSlot ? createPortal(
+            <AutosaveStatus
+              variant="bar"
+              status={autosaveStatus}
+              message={autosaveMessage}
+              shortMessage={hasStaleDraftBase ? "저장 멈춤" : "저장 대기"}
+            />,
+            panelLayout.statusSlot,
+          ) : (
+            <div className="flex justify-end">
+              <AutosaveStatus status={autosaveStatus} message={autosaveMessage} onRetry={retrySave} />
+            </div>
+          )}
+          <h1 className="sr-only">노트 편집</h1>
+          {titleField}
+          <div className="flex flex-col">
+            <div className="flex min-h-11 items-center text-ui md:min-h-8">
+              <label htmlFor={dateInputId} className="w-[88px] shrink-0 text-muted-foreground">날짜</label>
+              <div className="min-w-0">{dateField}</div>
+            </div>
+            {panelLayout.authorName ? (
+              <div className="flex min-h-8 items-center text-ui">
+                <span className="w-[88px] shrink-0 text-muted-foreground">작성자</span>
+                <span className="min-w-0 truncate">{panelLayout.authorName}</span>
+              </div>
+            ) : null}
+            {panelLayout.updatedLabel ? (
+              <div className="flex min-h-8 items-center text-ui">
+                <span className="w-[88px] shrink-0 text-muted-foreground">수정</span>
+                <span className="min-w-0 truncate">{panelLayout.updatedLabel}</span>
+              </div>
+            ) : null}
+          </div>
+          <div aria-hidden="true" className="h-px bg-muted" />
+          {panelLayout.statusSlot && autosaveStatus === "error" ? (
+            <AutosaveStatus status="error" message={autosaveMessage} onRetry={retrySave} />
+          ) : null}
+          {conflictRecovery}
+          {editor}
         </>
       ) : (
         <>

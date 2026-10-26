@@ -127,7 +127,7 @@ pill 형태는 오늘 날짜 표시와 개수처럼 모양 자체가 의미를 �
 | `StatusBadge` | registry 기반 상태를 점 + 이름으로 표시(대기=Q&A 노란 점, 완료·도착·예정=강조 파랑, 종료=비활성). 면 있는 칩이 아니다 |
 | `UnifiedItemTypeBadge` | 통합 기록의 일정·노트·디깅·Q&A·과제 type icon·label |
 | `UnifiedItemSpaceBadge` | 통합 기록의 학생 스페이스·포털 출처 label과 접근성 문맥 |
-| `UnifiedItemDetailPanel`·`SlidePanel` | 캘린더·일별·전체 보기의 공통 상세 패널(오른쪽 서랍, `note` 크기 440/520, 머리 슬롯), 변경 중 닫힘 잠금. 노트는 넓은 패널에서 수정 권한이 있으면 `NoteEditorForm`으로 바로 편집 |
+| `UnifiedItemDetailPanel`·`SlidePanel`·`SlidePanelDock` | 캘린더·일별·전체 보기의 공통 상세 패널. 1280px 이상은 캘린더 옆에 붙는 비모달 `<aside>`(440–520, 왼쪽 선, 52px 머리에 저장 상태·크게 보기·닫기, 날짜·작성자·수정 속성 줄), 그보다 좁으면 오른쪽 서랍, 좁은 화면은 시트. 변경 중 닫힘 잠금, 열면 패널로·닫으면 연 칩으로 초점. 노트는 수정 권한이 있으면 `NoteEditorForm`으로 바로 편집 |
 | `CalendarEventFields` | 일정 생성 dialog와 상세 수정 form이 공유하는 유형·제목·시간·메모 입력 |
 | `CalendarEventActions` | 학생 본인 포털 일정의 상세 패널 수정과 취소 우선 2단계 삭제 |
 | `LessonScheduleDialog` | 관리자 일정의 레슨 예약(머리 버튼·칸 선택·위쪽 막대 +). 시작 시각을 다음 정시로 채운다 |

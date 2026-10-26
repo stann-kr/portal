@@ -39,6 +39,8 @@ import {
 import { CreationConflictActions } from "@/components/editor/CreationConflictActions";
 import { resolveNoteCreateDefaultDate } from "@/lib/note-create-route";
 import { NoteDateField } from "./NoteDateField";
+import { resolveNoteParent } from "./NoteDocumentChrome";
+import { MobileTopBar } from "@/components/app-shell/AppSidebar";
 
 const FullEditor = dynamic(
   () => import("@/components/editor/FullEditor").then((m) => ({ default: m.FullEditor })),
@@ -253,8 +255,12 @@ function NoteFullFormContent({ action, actorId, studentId, returnTo, defaultDate
   const trashHref = `/dashboard/notes/trash?studentId=${encodeURIComponent(studentId)}&returnTo=${encodeURIComponent(returnTo)}`;
   const autosaveMessage = autosaveStatus === "error" ? state.error : "제목과 내용을 입력하면 자동으로 저장됩니다.";
 
+  const parent = resolveNoteParent(returnTo);
+
   return (
     <div>
+      {/* 좁은 화면 위쪽 막대의 뒤로도 노트를 연 화면(returnTo)으로 돌아간다. */}
+      <MobileTopBar title="새 노트" back={{ href: returnTo, label: parent.backLabel }} />
       {/* 위쪽 줄(NoteNew 보드): 넓은 화면은 돌아가기·저장 상태·스페이스·휴지통, 좁은 화면은 셸 위쪽 막대가 뒤로를 맡아 상태·휴지통만 둔다. */}
       <div className="flex h-11 items-center justify-between gap-3 border-b border-muted px-5 md:sticky md:top-0 md:z-20 md:h-[52px] md:bg-background md:px-6">
         <Link

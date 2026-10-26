@@ -1,3 +1,8 @@
+/**
+ * @file src/components/student-portal/UnifiedNoteDetail.tsx
+ * @description 상세 패널의 노트(캔버스 Calendar 보드 노트 패널): 머리 왼쪽 저장 상태(편집할 때, 아니면 유형),
+ * 머리 오른쪽 전체 화면 열기, 24/32 제목, 88px 이름 칸의 날짜·작성자·수정 줄, 구분선, 본문.
+ */
 "use client";
 
 import { useEffect, useState } from "react";
@@ -10,16 +15,17 @@ import { Button } from "@/components/ui/button";
 import { getPrivateNote, updatePrivateNote, type UpdateNoteState } from "@/lib/actions/privateNotes";
 import { createNotePreview } from "@/lib/unified-item-normalization";
 import { toKstDateInputValue } from "@/lib/date-input";
-import { formatKst } from "@/lib/kst-format";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 import { formatDetailDate } from "@/components/calendar/calendar-dates";
-import { useSlidePanelHeaderSlot } from "./SlidePanel";
+import { formatNoteUpdated } from "@/components/notes/note-display";
+import { UnifiedItemTypeBadge } from "@/components/ui/unified-item-type";
+import { useSlidePanelHeaderSlots } from "./SlidePanel";
 
 type LoadedNote = NonNullable<Awaited<ReturnType<typeof getPrivateNote>>>;
 
 type NoteBodyState =
   | { status: "loading" }
-  | { status: "ready"; note: LoadedNote }
+  | { status: "ready"; note: LoadedNote; loadedAt: number }
   | { status: "missing" }
   | { status: "error" };
 
@@ -75,13 +81,16 @@ export function UnifiedNoteDetail({
   const preview = typeof item.metadata.preview === "string" ? item.metadata.preview : null;
   const [body, setBody] = useState<NoteBodyState>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
-  const headerSlot = useSlidePanelHeaderSlot();
+  // 패널에서 저장한 시각. 저장 결과에는 서버 수정 시각이 없어 "수정" 줄은 이 시각으로 맞춘다.
+  const [savedAt, setSavedAt] = useState<number | null>(null);
+  const { start: headerStartSlot, end: headerSlot } = useSlidePanelHeaderSlots();
 
   // 다른 노트로 바뀌면 렌더 중 바로 불러오는 상태로 돌린다. 다시 시도는 버튼 이벤트에서 같은 일을 한다.
   const [requestedNoteId, setRequestedNoteId] = useState(noteId);
   if (requestedNoteId !== noteId) {
     setRequestedNoteId(noteId);
     setBody({ status: "loading" });
+    setSavedAt(null);
   }
 
   useEffect(() => {
@@ -89,7 +98,7 @@ export function UnifiedNoteDetail({
     getPrivateNote(noteId)
       .then((note) => {
         if (!active) return;
-        setBody(note ? { status: "ready", note } : { status: "missing" });
+        setBody(note ? { status: "ready", note, loadedAt: Date.now() } : { status: "missing" });
       })
       .catch(() => {
         if (active) setBody({ status: "error" });
@@ -103,6 +112,9 @@ export function UnifiedNoteDetail({
   const canEdit = body.status === "ready" && Boolean(
     viewer && (viewer.role === "admin" || viewer.actorId === body.note.authorId),
   );
+  const updatedLabel = body.status === "ready"
+    ? savedAt !== null ? formatNoteUpdated(savedAt, savedAt) : formatNoteUpdated(body.note.updatedAt, body.loadedAt)
+    : null;
 
   // 패널 안에서는 머리의 닫기 옆에 아이콘으로, 패널 밖에서는 본문 아래 링크로 둔다.
   const fullPageLink = body.status !== "missing" ? (
@@ -139,8 +151,12 @@ export function UnifiedNoteDetail({
             }}
             actorId={viewer.actorId}
             action={(previous: UpdateNoteState, formData: FormData) => updatePrivateNote(noteId, previous, formData)}
-            onSaved={(saved) => onItemUpdated?.(applySavedNote(item, saved, body.note.createdAt))}
+            onSaved={(saved) => {
+              setSavedAt(Date.now());
+              onItemUpdated?.(applySavedNote(item, saved, body.note.createdAt));
+            }}
             onBusyChange={onBusyChange}
+            panel={{ statusSlot: headerStartSlot, authorName: body.note.authorName, updatedLabel }}
           />
         ) : (
           <div className="flex flex-col gap-5">
@@ -148,10 +164,7 @@ export function UnifiedNoteDetail({
             <dl className="flex flex-col">
               <MetaRow label="날짜" value={formatDetailDate(noteDateKey(body.note))} />
               {body.note.authorName ? <MetaRow label="작성자" value={body.note.authorName} /> : null}
-              <MetaRow
-                label="수정"
-                value={formatKst(body.note.updatedAt, { month: "long", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" })}
-              />
+              {updatedLabel ? <MetaRow label="수정" value={updatedLabel} /> : null}
             </dl>
             <div className="h-px bg-muted" aria-hidden="true" />
             <p className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -185,6 +198,8 @@ export function UnifiedNoteDetail({
           )}
         </div>
       )}
+      {/* 머리 왼쪽: 편집할 때는 편집기가 저장 상태를 두고, 그 밖에는 유형을 둔다. */}
+      {headerStartSlot && !canEdit ? createPortal(<UnifiedItemTypeBadge item={item} />, headerStartSlot) : null}
       {fullPageLink && headerSlot ? createPortal(fullPageLink, headerSlot) : fullPageLink}
     </div>
   );

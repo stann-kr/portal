@@ -10,8 +10,8 @@ interface StarRatingProps {
   readonly?: boolean;
   disabled?: boolean;
   "aria-label"?: string;
-  /** sm: 디깅 표 칸(별 14px), md: 카드·대화상자(별 16px, 터치 높이 44) */
-  size?: "sm" | "md";
+  /** sm: 디깅 표 칸(별 14px), md: 대화상자(별 16px, 높이 44), touch: 좁은 화면 카드(별 18px, 누르는 곳 44×44) */
+  size?: "sm" | "md" | "touch";
 }
 
 /**
@@ -27,7 +27,7 @@ export function StarRating({
   size = "md",
 }: StarRatingProps) {
   const [hovered, setHovered] = useState(0);
-  const iconClass = size === "sm" ? "size-3.5" : "size-4";
+  const iconClass = size === "sm" ? "size-3.5" : size === "touch" ? "size-[18px]" : "size-4";
 
   if (readonly) {
     return (
@@ -62,7 +62,7 @@ export function StarRating({
             onMouseLeave={() => setHovered(0)}
             className={cn(
               "flex h-11 items-center justify-center rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:opacity-50",
-              size === "sm" ? "w-[18px]" : "w-7",
+              size === "sm" ? "w-[18px]" : size === "touch" ? "w-11" : "w-7",
             )}
             aria-label={star === value && onChange ? `${star}점 (다시 누르면 지우기)` : `${star}점`}
             role="radio"

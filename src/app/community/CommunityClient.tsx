@@ -207,7 +207,8 @@ export default function CommunityClient({ isAdmin, initial }: CommunityClientPro
 
   return (
     <div className="px-5 pb-8 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-14">
-      <MobileTopBar title="커뮤니티" action={{ href: newPostHref, label: "새 글" }} />
+      {/* 쓸 수 없는 탭(학생의 공지)·채널이 없을 때는 위쪽 막대 + 도 숨긴다. */}
+      <MobileTopBar title="커뮤니티" action={canWrite ? { href: newPostHref, label: "새 글" } : null} />
       <div className="flex max-w-[880px] flex-col md:gap-6">
         <header className="flex flex-wrap items-end justify-between gap-4">
           <h1 className="sr-only md:not-sr-only md:text-display md:font-semibold md:tracking-display">커뮤니티</h1>

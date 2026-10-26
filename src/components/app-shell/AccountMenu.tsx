@@ -12,8 +12,9 @@ import { cn } from "@/lib/utils";
 
 type MenuChoice = "drafts" | "password" | "delete" | "logout";
 
+// 데스크톱 36px 행, 메뉴 서랍(좁은 화면)에서는 누르는 곳 44px.
 const ITEM_CLASS =
-  "flex h-9 w-full cursor-default select-none items-center gap-2.5 rounded-md px-2.5 text-ui text-foreground outline-none data-[highlighted]:bg-muted";
+  "flex h-11 w-full cursor-default select-none items-center gap-2.5 rounded-md px-2.5 text-ui text-foreground outline-none data-[highlighted]:bg-muted md:h-9";
 
 /**
  * 사이드바 아래 계정 줄의 … 메뉴(AccountDialogs 보드): 이 기기의 초안, 비밀번호 변경, (학생) 계정 삭제, 로그아웃.
@@ -30,6 +31,8 @@ export function AccountMenu({
   size?: "md" | "touch";
 }) {
   const [open, setOpen] = useState(false);
+  // 로그아웃 요청을 한 번만 보낸다(이전 로그아웃 버튼의 제출 중 비활성과 같은 역할).
+  const [loggingOut, setLoggingOut] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const pendingChoice = useRef<MenuChoice | null>(null);
   const draftsRef = useRef<AccountDialogHandle>(null);
@@ -51,7 +54,10 @@ export function AccountMenu({
     if (choice === "drafts") draftsRef.current?.open();
     if (choice === "password") passwordRef.current?.open();
     if (choice === "delete") deleteRef.current?.open();
-    if (choice === "logout") logoutFormRef.current?.requestSubmit();
+    if (choice === "logout" && !loggingOut) {
+      setLoggingOut(true);
+      logoutFormRef.current?.requestSubmit();
+    }
   };
 
   return (
@@ -95,9 +101,9 @@ export function AccountMenu({
               </DropdownMenu.Item>
             ) : null}
             <DropdownMenu.Separator className="mx-0 my-1 h-px bg-muted" />
-            <DropdownMenu.Item className={ITEM_CLASS} onSelect={() => choose("logout")}>
+            <DropdownMenu.Item className={cn(ITEM_CLASS, "data-[disabled]:opacity-50")} disabled={loggingOut} onSelect={() => choose("logout")}>
               <LogOut className="size-4 text-secondary-foreground" strokeWidth={1.6} aria-hidden="true" />
-              로그아웃
+              {loggingOut ? "로그아웃 중" : "로그아웃"}
             </DropdownMenu.Item>
           </DropdownMenu.Content>
         </DropdownMenu.Portal>

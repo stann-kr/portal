@@ -99,6 +99,7 @@ function EditableCell({
   readonly,
   variant,
   emphasis = false,
+  onSaved,
 }: {
   trackId: string;
   columnId: string;
@@ -110,6 +111,8 @@ function EditableCell({
   variant: CellVariant;
   /** 트랙명처럼 행을 대표하는 값 */
   emphasis?: boolean;
+  /** 저장이 확정된 값을 보드의 트랙 상태에도 반영한다(링크 열기·설명 이름이 새 값을 쓴다). */
+  onSaved?: (trackId: string, columnId: string, value: unknown) => void;
 }) {
   const [value, setValue] = useState(initialValue);
   const savedValueRef = useRef(initialValue);
@@ -137,6 +140,7 @@ function EditableCell({
         try {
           await updateDiggingTrackValue(trackId, columnId, newVal);
           savedValueRef.current = newVal;
+          onSaved?.(trackId, columnId, newVal);
           setSaveStatus({ kind: "success", message: `${columnName} 저장됨` });
         } catch {
           setValue(previousValue);
@@ -144,7 +148,7 @@ function EditableCell({
         }
       });
     },
-    [columnId, columnName, trackId],
+    [columnId, columnName, onSaved, trackId],
   );
 
   const parsedOptions = parseStoredDiggingOptions(options ?? null) ?? [];
@@ -209,7 +213,7 @@ function EditableCell({
     return withStatus(
       <StarRating
         aria-label={columnName}
-        size={table ? "sm" : "md"}
+        size={table ? "sm" : "touch"}
         value={Number(value) || 0}
         disabled={isPending}
         onChange={(rating) => save(rating || "")}
@@ -371,6 +375,11 @@ export function DiggingBoard({
   const columns = initialColumns;
   const router = useRouter();
   const [tracks, setTracks] = useState<Track[]>(initialTracks);
+  const handleCellSaved = useCallback((trackId: string, columnId: string, value: unknown) => {
+    setTracks((previous) => previous.map((track) => (
+      track.id === trackId ? { ...track, values: { ...track.values, [columnId]: value } } : track
+    )));
+  }, []);
   const [addOpen, setAddOpen] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
   const [dateFrom, setDateFrom] = useState("");
@@ -652,7 +661,10 @@ export function DiggingBoard({
                                 key={column.id}
                                 className={cn(
                                   "flex min-w-0 flex-col",
-                                  COMPACT_TYPES.has(column.columnType) ? "col-span-1 gap-1" : "col-span-2 gap-0.5",
+                                  // 고칠 수 있는 별점은 별 다섯 개가 각각 44px이라 한 줄을 다 쓴다.
+                                  COMPACT_TYPES.has(column.columnType) && !(column.columnType === "rating" && !readonly)
+                                    ? "col-span-1 gap-1"
+                                    : "col-span-2 gap-0.5",
                                 )}
                               >
                                 <span className="text-xs text-muted-foreground">{column.name}</span>
@@ -665,6 +677,7 @@ export function DiggingBoard({
                                   options={column.options}
                                   readonly={readonly}
                                   variant="card"
+                                  onSaved={handleCellSaved}
                                   emphasis={column.id === trackLabelColumn?.id}
                                 />
                               </div>
@@ -772,6 +785,7 @@ export function DiggingBoard({
                                 readonly={readonly}
                                 variant="table"
                                 emphasis={column.id === trackLabelColumn?.id}
+                                onSaved={handleCellSaved}
                               />
                             </td>
                           ))}

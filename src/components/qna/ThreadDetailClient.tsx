@@ -318,8 +318,10 @@ function ThreadDetailContent({
   };
 
   const lifecycleButtonRef = useRef<HTMLButtonElement>(null);
+  const titleRef = useRef<HTMLHeadingElement>(null);
   const lifecycle = useQnaThreadLifecycle({
     actionButtonRef: lifecycleButtonRef,
+    fallbackFocusRef: titleRef,
     disabled: isReplyFormBusy,
     transition: { isPending, start: startTransition },
     threadId,
@@ -405,7 +407,7 @@ function ThreadDetailContent({
 
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex min-w-0 flex-col gap-1.5">
-          <h1 className="break-words text-xl font-semibold tracking-title md:text-2xl md:tracking-display">{title}</h1>
+          <h1 ref={titleRef} tabIndex={-1} className="break-words text-xl font-semibold tracking-title focus:outline-none md:text-2xl md:tracking-display">{title}</h1>
           <p className="flex flex-wrap items-center gap-2 text-ui text-muted-foreground">
             <QnaStatusLabel status={currentStatus} />
             <span>
