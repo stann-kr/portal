@@ -1,5 +1,5 @@
 import { toKstDateInputValue } from "@/lib/date-input";
-import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
+import { getUnifiedItemKey, type UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 
 /** 캘린더를 보는 사람이 이 스페이스에서 바꿀 수 있는 범위. 서버가 같은 규칙을 다시 검사한다. */
 export type CalendarEditContext = {
@@ -57,6 +57,33 @@ export function getNoteCalendarDateKey(item: UnifiedItem): string {
   return noteDate ? noteDate.toISOString().slice(0, 10) : toKstDateInputValue(item.date);
 }
 
+/**
+ * FullCalendar는 기기 시간대를 쓰므로 캘린더를 UTC로 두고 KST 벽시계 시각을 넣는다.
+ * 한국은 일광절약시간이 없어 9시간 고정 이동으로 정확히 맞는다.
+ */
+export const CALENDAR_TIME_ZONE = "UTC";
+const KST_OFFSET_MS = 9 * 60 * 60 * 1_000;
+
+/** 실제 시각을 캘린더 칸 위치(KST 벽시계, offset 없는 ISO)로 바꾼다. */
+export function toCalendarWallTime(date: Date): string {
+  return new Date(date.getTime() + KST_OFFSET_MS).toISOString().slice(0, 19);
+}
+
+/** 캘린더가 돌려준 칸 위치(UTC로 읽힌 KST 벽시계)를 실제 시각으로 되돌린다. */
+export function fromCalendarWallTime(date: Date): Date {
+  return new Date(date.getTime() - KST_OFFSET_MS);
+}
+
+/** 캘린더의 "지금"(오늘 칸·현재 시각 선)도 KST 벽시계로 준다. */
+export function getCalendarNow(): Date {
+  return new Date(Date.now() + KST_OFFSET_MS);
+}
+
+/** 캘린더 선택 문자열을 KST offset이 붙은 ISO로 바꾼다. 하루 칸 날짜는 그대로 둔다. */
+export function calendarWallStringToKst(value: string): string {
+  return /^\d{4}-\d{2}-\d{2}$/u.test(value) ? value : `${value.slice(0, 19)}+09:00`;
+}
+
 export type CalendarMoveRequest =
   | { kind: "event"; startTime: string; endTime: string | null }
   | { kind: "lesson"; scheduledAt: string }
@@ -99,5 +126,32 @@ export function applyCalendarMoveToItem(item: UnifiedItem, request: CalendarMove
       const noteDate = new Date(`${request.noteDate}T00:00:00.000Z`);
       return { ...item, date: noteDate, metadata: { ...item.metadata, noteDate } };
     }
+  }
+}
+
+/**
+ * 저장이 끝난 이동을 그 사이 바뀌었을 수 있는 최신 목록에 합친다. 기다리는 동안 목록에서 빠진
+ * 항목은 되살리지 않도록 null을 돌려준다.
+ */
+export function resolveSavedMove(
+  latestItems: readonly UnifiedItem[],
+  itemKey: string,
+  request: CalendarMoveRequest,
+): UnifiedItem | null {
+  const latest = latestItems.find((item) => getUnifiedItemKey(item) === itemKey);
+  return latest ? applyCalendarMoveToItem(latest, request) : null;
+}
+
+/** 서버에서 다시 받은 항목이 이미 이동한 자리에 있는지. 그때까지 화면은 이동한 자리를 유지한다. */
+export function isCalendarMoveReflected(item: UnifiedItem, request: CalendarMoveRequest): boolean {
+  switch (request.kind) {
+    case "event": {
+      const end = item.endDate ? new Date(item.endDate).toISOString() : null;
+      return item.date.toISOString() === request.startTime && end === request.endTime;
+    }
+    case "lesson":
+      return item.date.toISOString() === request.scheduledAt;
+    case "note":
+      return getNoteCalendarDateKey(item) === request.noteDate;
   }
 }

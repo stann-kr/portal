@@ -6,7 +6,7 @@
  */
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useInsertionEffect, useRef } from "react";
 import FullCalendar from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
 import timeGridPlugin from "@fullcalendar/timegrid";
@@ -25,7 +25,7 @@ import type {
   EventMountArg,
   MoreLinkContentArg,
 } from "@fullcalendar/core";
-import type { EventResizeDoneArg } from "@fullcalendar/interaction";
+import type { DateClickArg, EventResizeDoneArg } from "@fullcalendar/interaction";
 import { ChevronLeft, ChevronRight, Undo2 } from "lucide-react";
 import type { UnifiedItem, UnifiedItemType } from "@/lib/utils/unifiedItemUtils";
 import { getUnifiedItemColor, getUnifiedItemKey } from "@/lib/utils/unifiedItemUtils";
@@ -44,12 +44,20 @@ import {
 import {
   applyCalendarMoveToItem,
   buildCalendarMoveRequest,
+  CALENDAR_TIME_ZONE,
+  calendarWallStringToKst,
+  fromCalendarWallTime,
   getCalendarItemEditing,
+  getCalendarNow,
+  isCalendarMoveReflected,
+  resolveSavedMove,
+  toCalendarWallTime,
   getNoteCalendarDateKey,
   type CalendarEditContext,
   type CalendarMoveRequest,
 } from "@/lib/calendar-interaction";
 import type { CalendarQuickCreateSelection } from "@/lib/calendar-quick-create";
+import { createDaySelection } from "@/lib/unified-item-views";
 import { moveCalendarEvent } from "@/lib/actions/calendarEvents";
 import { moveLesson } from "@/lib/actions/lessons";
 import { movePrivateNoteDate } from "@/lib/actions/privateNotes";
@@ -76,6 +84,22 @@ const VIEW_OPTIONS: ReadonlyArray<{ value: CalendarViewName; label: string }> = 
   { value: "timeGridWeek", label: "주" },
   { value: "listWeek", label: "목록" },
 ];
+
+type PendingMove = { request: CalendarMoveRequest; saved: boolean };
+
+function isTouchEvent(event: Event | null | undefined): boolean {
+  if (!event) return false;
+  return event.type.startsWith("touch") || (event as PointerEvent).pointerType === "touch";
+}
+
+/** 마우스·포인터는 clientX/Y, 터치는 마지막 손가락 위치를 빠른 만들기 창의 기준점으로 쓴다. */
+function getEventPoint(event: Event | null | undefined): { x: number; y: number } | null {
+  if (!event) return null;
+  const touch = (event as TouchEvent).changedTouches?.[0];
+  if (touch) return { x: touch.clientX, y: touch.clientY };
+  const pointer = event as MouseEvent;
+  return typeof pointer.clientX === "number" ? { x: pointer.clientX, y: pointer.clientY } : null;
+}
 
 type MoveNotice =
   | { tone: "status"; message: string; undo?: { item: UnifiedItem; request: CalendarMoveRequest } }
@@ -116,20 +140,30 @@ function reverseRequest(item: UnifiedItem, request: CalendarMoveRequest): Calend
   }
 }
 
-async function saveMove(item: UnifiedItem, request: CalendarMoveRequest): Promise<string | null> {
-  try {
-    if (request.kind === "event") {
-      const result = await moveCalendarEvent(item.id, request.startTime, request.endTime);
-      return result.ok ? null : result.error;
-    }
-    if (request.kind === "lesson") {
-      const result = await moveLesson(item.id, item.space.studentId, request.scheduledAt);
-      return result.success ? null : result.error ?? "레슨을 옮기지 못했습니다.";
-    }
-    const result = await movePrivateNoteDate(item.id, request.noteDate, createCreationOperationId());
+async function sendMove(item: UnifiedItem, request: CalendarMoveRequest, operationId: string): Promise<string | null> {
+  if (request.kind === "event") {
+    const result = await moveCalendarEvent(item.id, request.startTime, request.endTime);
     return result.ok ? null : result.error;
+  }
+  if (request.kind === "lesson") {
+    const result = await moveLesson(item.id, item.space.studentId, request.scheduledAt);
+    return result.success ? null : result.error ?? "레슨을 옮기지 못했습니다.";
+  }
+  const result = await movePrivateNoteDate(item.id, request.noteDate, operationId);
+  return result.ok ? null : result.error;
+}
+
+// 이동은 같은 값을 다시 보내도 결과가 같으므로, 응답을 잃으면 같은 작업 ID로 한 번 더 보낸다.
+async function saveMove(item: UnifiedItem, request: CalendarMoveRequest): Promise<string | null> {
+  const operationId = createCreationOperationId();
+  try {
+    return await sendMove(item, request, operationId);
   } catch {
-    return "저장 결과를 확인하지 못했습니다. 원래 자리로 되돌렸습니다.";
+    try {
+      return await sendMove(item, request, operationId);
+    } catch {
+      return "저장 결과를 확인하지 못했습니다. 원래 자리로 되돌렸습니다. 새로고침해 실제 날짜를 확인해 주세요.";
+    }
   }
 }
 
@@ -215,8 +249,28 @@ export function UnifiedCalendar({
   const [selectedItem, setSelectedItem] = useState<UnifiedItem | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
 
-  // 저장을 기다리는 이동은 화면에 먼저 보여 주고, 실패하면 지워 원래 자리로 돌린다.
-  const [pendingMoves, setPendingMoves] = useState<ReadonlyMap<string, UnifiedItem>>(() => new Map());
+  // 저장을 기다리는 이동은 요청만 들고 있다가 최신 항목에 겹쳐 보여 주고, 실패하면 지워 원래 자리로 돌린다.
+  // 저장된 이동(saved)은 서버에서 다시 받은 목록이 그 자리를 반영할 때까지 유지해 원위치로 깜빡이지 않게 한다.
+  const [pendingMoves, setPendingMoves] = useState<ReadonlyMap<string, PendingMove>>(() => new Map());
+  const [reconciledItems, setReconciledItems] = useState(items);
+  if (reconciledItems !== items) {
+    setReconciledItems(items);
+    const settled = [...pendingMoves].filter(([key, pending]) => {
+      if (!pending.saved) return false;
+      const current = items.find((item) => getUnifiedItemKey(item) === key);
+      return !current || isCalendarMoveReflected(current, pending.request);
+    });
+    if (settled.length > 0) {
+      const next = new Map(pendingMoves);
+      for (const [key] of settled) next.delete(key);
+      setPendingMoves(next);
+    }
+  }
+  // 저장이 끝났을 때 그 사이 바뀐 항목(제목·metadata)에 이동만 합치기 위해 최신 목록을 둔다.
+  const latestItemsRef = useRef(items);
+  useInsertionEffect(() => {
+    latestItemsRef.current = items;
+  });
   const [notice, setNotice] = useState<MoveNotice | null>(null);
   const [quickSelection, setQuickSelection] = useState<{
     selection: CalendarQuickCreateSelection;
@@ -226,9 +280,11 @@ export function UnifiedCalendar({
   const context: CalendarEditContext | null = editContext
     ? { ...editContext, canManageEvents: canManageEvents === true, canManageLessons: canManageLessons === true }
     : null;
-  const displayedItems = pendingMoves.size === 0
-    ? items
-    : items.map((item) => pendingMoves.get(getUnifiedItemKey(item)) ?? item);
+  const withPendingMove = (item: UnifiedItem) => {
+    const pending = pendingMoves.get(getUnifiedItemKey(item));
+    return pending ? applyCalendarMoveToItem(item, pending.request) : item;
+  };
+  const displayedItems = pendingMoves.size === 0 ? items : items.map(withPendingMove);
 
   // 타입 토글
   const toggleType = (type: UnifiedItemType) => {
@@ -251,7 +307,7 @@ export function UnifiedCalendar({
       const key = getUnifiedItemKey(item);
       const color = getUnifiedItemColor(item);
       const editing = context ? getCalendarItemEditing(item, context) : null;
-      const movable = Boolean(editing?.movable) && !pendingMoves.has(key);
+      const movable = Boolean(editing?.movable) && pendingMoves.get(key)?.saved !== false;
       const isNote = item.type === "NOTE";
       const allDay = isNote || item.metadata.allDay === true;
       const allDayStartDate = isNote
@@ -264,15 +320,16 @@ export function UnifiedCalendar({
       return {
         id: key,
         title: showSpaceContext ? `${title} · ${item.space.label}` : title,
-        start: allDay && allDayStartDate ? allDayStartDate : item.date.toISOString(),
+        start: allDay && allDayStartDate ? allDayStartDate : toCalendarWallTime(item.date),
         end: allDay
           ? allDayEndDate ?? undefined
-          : item.endDate ? new Date(item.endDate).toISOString() : undefined,
+          : item.endDate ? toCalendarWallTime(new Date(item.endDate)) : undefined,
         allDay,
         startEditable: movable,
         durationEditable: movable && editing?.resizable === true && Boolean(item.endDate),
         backgroundColor: "transparent",
-        borderColor: "transparent",
+        // 목록 보기의 유형 점은 FullCalendar가 borderColor를 inline으로 칠한다. 칩은 CSS가 테두리를 지운다.
+        borderColor: color,
         textColor: "inherit",
         classNames: ["calendar-event", movable ? "calendar-event-movable" : "calendar-event-locked"],
         extendedProps: {
@@ -289,20 +346,26 @@ export function UnifiedCalendar({
   const commitMove = useCallback(
     async (original: UnifiedItem, request: CalendarMoveRequest, options: { undoable: boolean }) => {
       const key = getUnifiedItemKey(original);
-      const moved = applyCalendarMoveToItem(original, request);
-      setPendingMoves((current) => new Map(current).set(key, moved));
+      const entry: PendingMove = { request, saved: false };
+      setPendingMoves((current) => new Map(current).set(key, entry));
       setNotice(null);
       const error = await saveMove(original, request);
+      // 그 사이 같은 항목을 다시 옮겼다면 나중 이동의 상태를 건드리지 않는다.
       setPendingMoves((current) => {
+        if (current.get(key) !== entry) return current;
         const next = new Map(current);
-        next.delete(key);
+        if (error) next.delete(key);
+        else next.set(key, { request, saved: true });
         return next;
       });
       if (error) {
         setNotice({ tone: "error", message: error });
         return;
       }
-      onItemUpdated?.(moved);
+      // 기다리는 동안 목록에서 빠진 항목은 되살리지 않고, 남아 있으면 최신 값에 이동만 합친다.
+      const saved = resolveSavedMove(latestItemsRef.current, key, request);
+      if (saved) onItemUpdated?.(saved);
+      const moved = saved ?? applyCalendarMoveToItem(original, request);
       setNotice({
         tone: "status",
         message: describeMove(original, request),
@@ -313,12 +376,14 @@ export function UnifiedCalendar({
   );
 
   const handleMove = (info: EventDropArg | EventResizeDoneArg) => {
-    const original = items.find((item) => getUnifiedItemKey(item) === info.event.id);
+    const listed = items.find((item) => getUnifiedItemKey(item) === info.event.id);
+    // 저장됐지만 아직 목록에 반영되지 않은 이동이 있으면 그 자리를 출발점으로 삼는다.
+    const original = listed ? withPendingMove(listed) : undefined;
     const editing = original && context ? getCalendarItemEditing(original, context) : null;
     const request = editing
       ? buildCalendarMoveRequest(editing, {
-        start: info.event.start,
-        end: info.event.end,
+        start: info.event.start ? fromCalendarWallTime(info.event.start) : null,
+        end: info.event.end ? fromCalendarWallTime(info.event.end) : null,
         allDay: info.event.allDay,
         startStr: info.event.startStr,
       })
@@ -333,11 +398,33 @@ export function UnifiedCalendar({
   const handleSelect = useCallback(
     (arg: DateSelectArg) => {
       if (!quickCreate) return;
-      const pointer = arg.jsEvent && "clientX" in arg.jsEvent ? arg.jsEvent : null;
       setQuickSelection({
-        selection: { startStr: arg.startStr, endStr: arg.endStr, allDay: arg.allDay },
-        anchor: pointer ? { x: pointer.clientX, y: pointer.clientY } : null,
+        selection: {
+          startStr: calendarWallStringToKst(arg.startStr),
+          endStr: calendarWallStringToKst(arg.endStr),
+          allDay: arg.allDay,
+        },
+        anchor: getEventPoint(arg.jsEvent),
       });
+    },
+    [quickCreate],
+  );
+
+  // 터치는 칸을 길게 눌러야 선택이 시작되므로, 짧게 탭한 칸도 바로 만들기를 연다. 마우스는 select가 맡는다.
+  const handleDateClick = useCallback(
+    (arg: DateClickArg) => {
+      if (!quickCreate || !isTouchEvent(arg.jsEvent)) return;
+      const selection: CalendarQuickCreateSelection = arg.allDay
+        ? createDaySelection(arg.dateStr.slice(0, 10))
+        : {
+          startStr: calendarWallStringToKst(arg.dateStr),
+          endStr: calendarWallStringToKst(
+            toCalendarWallTime(new Date(fromCalendarWallTime(arg.date).getTime() + 30 * 60 * 1_000)),
+          ),
+          allDay: false,
+        };
+      setQuickSelection((current) =>
+        current?.selection.startStr === selection.startStr ? current : { selection, anchor: getEventPoint(arg.jsEvent) });
     },
     [quickCreate],
   );
@@ -348,21 +435,17 @@ export function UnifiedCalendar({
   }, []);
 
   // 이벤트 클릭 → 상세 패널
-  const handleEventClick = useCallback(
-    (arg: EventClickArg) => {
-      const found = items.find((item) => getUnifiedItemKey(item) === arg.event.id);
-      if (found) {
-        // List view's event element is a non-focusable table row.
-        const trigger = arg.el.matches("a, button, [tabindex]")
-          ? arg.el
-          : arg.el.querySelector<HTMLElement>("a, button, [tabindex]");
-        trigger?.focus({ preventScroll: true });
-        setSelectedItem(pendingMoves.get(arg.event.id) ?? found);
-        setPanelOpen(true);
-      }
-    },
-    [items, pendingMoves],
-  );
+  const handleEventClick = (arg: EventClickArg) => {
+    const found = items.find((item) => getUnifiedItemKey(item) === arg.event.id);
+    if (!found) return;
+    // List view's event element is a non-focusable table row.
+    const trigger = arg.el.matches("a, button, [tabindex]")
+      ? arg.el
+      : arg.el.querySelector<HTMLElement>("a, button, [tabindex]");
+    trigger?.focus({ preventScroll: true });
+    setSelectedItem(withPendingMove(found));
+    setPanelOpen(true);
+  };
 
   const handleDatesSet = useCallback((arg: DatesSetArg) => {
     const next = { type: arg.view.type as CalendarViewName | null, title: arg.view.title };
@@ -460,7 +543,7 @@ export function UnifiedCalendar({
           );
         })}
         {canQuickCreate || context ? (
-          <p className="ml-auto hidden text-xs text-muted-foreground lg:block">
+          <p className="ml-auto hidden text-xs text-muted-foreground sm:block">
             {canQuickCreate ? "칸을 누르거나 끌어서 바로 만들기" : null}
             {canQuickCreate && context ? " · " : null}
             {context ? "항목을 끌어 날짜 옮기기" : null}
@@ -509,6 +592,8 @@ export function UnifiedCalendar({
           initialView={initialView}
           headerToolbar={false}
           locale={koLocale}
+          timeZone={CALENDAR_TIME_ZONE}
+          now={getCalendarNow}
           events={fcEvents}
           datesSet={handleDatesSet}
           eventClick={handleEventClick}
@@ -523,6 +608,7 @@ export function UnifiedCalendar({
           selectLongPressDelay={350}
           unselectAuto={false}
           select={handleSelect}
+          dateClick={handleDateClick}
           height="100%"
           eventDisplay="block"
           dayMaxEvents={4}

@@ -3,6 +3,11 @@ import test from "node:test";
 import {
   applyCalendarMoveToItem,
   buildCalendarMoveRequest,
+  calendarWallStringToKst,
+  fromCalendarWallTime,
+  isCalendarMoveReflected,
+  resolveSavedMove,
+  toCalendarWallTime,
   getCalendarItemEditing,
   getNoteCalendarDateKey,
   type CalendarEditContext,
@@ -138,4 +143,36 @@ test("먼저 보여 줄 항목은 새 날짜만 바꾸고 나머지는 그대로
   });
   assert.equal(event.date.toISOString(), "2026-10-28T05:00:00.000Z");
   assert.equal(event.endDate, null);
+});
+
+test("캘린더 칸 위치는 기기 시간대와 무관하게 KST 벽시계로 오가고 선택 문자열은 KST offset을 붙인다", () => {
+  const instant = new Date("2026-10-27T05:00:00.000Z"); // KST 14:00
+  assert.equal(toCalendarWallTime(instant), "2026-10-27T14:00:00");
+  // UTC 모드 캘린더는 "14:00" 칸을 UTC 14:00 Date로 돌려준다.
+  assert.equal(fromCalendarWallTime(new Date("2026-10-27T14:00:00Z")).toISOString(), instant.toISOString());
+  assert.equal(toCalendarWallTime(new Date("2026-10-27T16:30:00.000Z")), "2026-10-28T01:30:00", "KST 자정을 넘으면 다음 날 칸");
+  assert.equal(calendarWallStringToKst("2026-10-27T14:00:00Z"), "2026-10-27T14:00:00+09:00");
+  assert.equal(calendarWallStringToKst("2026-10-27"), "2026-10-27");
+});
+
+test("저장이 끝난 이동은 그 사이 바뀐 최신 항목에 날짜만 합치고 빠진 항목은 되살리지 않는다", () => {
+  const original = item("CALENDAR_EVENT", { title: "옛 제목" });
+  const renamed = { ...original, title: "새 제목", metadata: { description: "메모" } };
+  const request = { kind: "event", startTime: "2026-10-29T03:00:00.000Z", endTime: null } as const;
+  const key = "PORTAL:CALENDAR_EVENT:CALENDAR_EVENT-1";
+  const saved = resolveSavedMove([renamed], key, request);
+  assert.equal(saved?.title, "새 제목");
+  assert.equal(saved?.metadata.description, "메모");
+  assert.equal(saved?.date.toISOString(), "2026-10-29T03:00:00.000Z");
+  assert.equal(resolveSavedMove([], key, request), null);
+});
+
+test("다시 받은 항목이 이동한 자리에 있는지 종류별로 판정한다", () => {
+  const event = item("CALENDAR_EVENT", { date: new Date("2026-10-29T03:00:00.000Z"), endDate: new Date("2026-10-29T04:00:00.000Z") });
+  assert.equal(isCalendarMoveReflected(event, { kind: "event", startTime: "2026-10-29T03:00:00.000Z", endTime: "2026-10-29T04:00:00.000Z" }), true);
+  assert.equal(isCalendarMoveReflected(event, { kind: "event", startTime: "2026-10-29T03:00:00.000Z", endTime: null }), false);
+  assert.equal(isCalendarMoveReflected(item("LESSON"), { kind: "lesson", scheduledAt: "2026-10-27T01:00:00.000Z" }), true);
+  const note = item("PRIVATE_NOTE", { metadata: { noteDate: new Date("2026-10-30T00:00:00.000Z") } });
+  assert.equal(isCalendarMoveReflected(note, { kind: "note", noteDate: "2026-10-30" }), true);
+  assert.equal(isCalendarMoveReflected(note, { kind: "note", noteDate: "2026-10-31" }), false);
 });

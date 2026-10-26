@@ -938,6 +938,34 @@ test("calendar quick create works from the keyboard and keeps a typed title on o
   assert.equal(closes, 1);
 });
 
+test("calendar quick create follows a new selection while open and keeps the typed title", async (context) => {
+  const options = { buildNoteHref: () => "/notes/new", canCreateEvent: true, canCreateLesson: false, studentId: "student", spaceLabel: "학생" };
+  const container = browser.document.createElement("div");
+  browser.document.body.append(container);
+  const root = createRoot(container as unknown as Element);
+  context.after(async () => {
+    await act(async () => root.unmount());
+    container.remove();
+  });
+  const view = (startStr: string, endStr: string) => <CalendarQuickCreate
+    selection={{ startStr, endStr, allDay: false }} anchor={null} options={options} onCreated={() => {}} onClose={() => {}}
+  />;
+  await act(async () => root.render(view("2026-10-27T14:00:00+09:00", "2026-10-27T15:00:00+09:00")));
+  const title = browser.document.querySelector('input[aria-label="일정 제목"]');
+  assert.ok(title instanceof browser.HTMLInputElement);
+  const setter = Object.getOwnPropertyDescriptor(browser.HTMLInputElement.prototype, "value")?.set;
+  await act(async () => {
+    setter?.call(title, "합주");
+    title.dispatchEvent(new browser.Event("input", { bubbles: true }));
+  });
+  await act(async () => root.render(view("2026-10-28T10:00:00+09:00", "2026-10-28T11:30:00+09:00")));
+  const times = [...browser.document.querySelectorAll('[role="dialog"] input[type="datetime-local"]')]
+    .map((input) => (input as unknown as { value: string }).value);
+  assert.deepEqual(times, ["2026-10-28T10:00", "2026-10-28T11:30"], "the form moves with the header");
+  assert.match(browser.document.querySelector('[role="dialog"]')?.textContent ?? "", /10월 28일/u);
+  assert.equal((browser.document.querySelector('input[aria-label="일정 제목"]') as unknown as { value: string } | null)?.value, "합주");
+});
+
 test("calendar quick create closes with Escape and on an outside click while empty", async (context) => {
   let closes = 0;
   await render(context, <CalendarQuickCreate

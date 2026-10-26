@@ -75,15 +75,36 @@ export function CalendarQuickCreate({ selection, anchor, options, onCreated, onC
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [position, setPosition] = useState<{ left: number; top: number } | null>(null);
+  const [kindChosen, setKindChosen] = useState(false);
+
+  // 창이 열린 채 다른 칸을 고르면 시각을 새 선택으로 옮기고, 입력한 제목과 직접 고른 유형은 그대로 둔다.
+  const selectionKey = `${selection.startStr}|${selection.endStr}|${selection.allDay}`;
+  const [appliedSelectionKey, setAppliedSelectionKey] = useState(selectionKey);
+  if (appliedSelectionKey !== selectionKey) {
+    setAppliedSelectionKey(selectionKey);
+    setStart(defaults.start);
+    setEnd(defaults.end);
+    setError(null);
+    if (!kindChosen || !kinds.includes(kind)) setKind(defaults.kind);
+  }
 
   // 고른 칸 옆에 띄우되 화면 밖으로 나가지 않게 한다. 좁은 화면은 아래쪽 시트로 둔다.
   useLayoutEffect(() => {
     const panel = panelRef.current;
-    if (!panel || !anchor || window.matchMedia("(max-width: 640px)").matches) {
+    // Tailwind sm(40rem)보다 좁으면 아래 시트. 경계값이 sm 클래스와 겹치지 않게 같은 기준을 쓴다.
+    if (!panel || window.matchMedia("(max-width: 39.99rem)").matches) {
       setPosition(null);
       return;
     }
     const height = panel.offsetHeight;
+    if (!anchor) {
+      // 터치 선택처럼 기준점이 없으면 화면 가운데 위쪽에 둔다.
+      setPosition({
+        left: Math.max((window.innerWidth - PANEL_WIDTH) / 2, VIEWPORT_GUTTER),
+        top: Math.max((window.innerHeight - height) / 3, VIEWPORT_GUTTER),
+      });
+      return;
+    }
     const left = Math.min(
       Math.max(anchor.x - PANEL_WIDTH / 2, VIEWPORT_GUTTER),
       window.innerWidth - PANEL_WIDTH - VIEWPORT_GUTTER,
@@ -103,7 +124,7 @@ export function CalendarQuickCreate({ selection, anchor, options, onCreated, onC
   useLayoutEffect(() => {
     const handlePointerDown = (event: PointerEvent) => {
       if (pending || panelRef.current?.contains(event.target as Node)) return;
-      if (title.trim()) {
+      if (kind !== "lesson" && title.trim()) {
         titleRef.current?.focus({ preventScroll: true });
         return;
       }
@@ -111,7 +132,7 @@ export function CalendarQuickCreate({ selection, anchor, options, onCreated, onC
     };
     document.addEventListener("pointerdown", handlePointerDown, true);
     return () => document.removeEventListener("pointerdown", handlePointerDown, true);
-  }, [onClose, pending, title]);
+  }, [kind, onClose, pending, title]);
 
   async function submit() {
     if (pending) return;
@@ -230,6 +251,7 @@ export function CalendarQuickCreate({ selection, anchor, options, onCreated, onC
               event.preventDefault();
               const next = kinds[(kinds.indexOf(kind) + step + kinds.length) % kinds.length];
               setKind(next);
+              setKindChosen(true);
               event.currentTarget.querySelector<HTMLElement>(`[data-kind="${next}"]`)?.focus();
             }}
           >
@@ -246,6 +268,7 @@ export function CalendarQuickCreate({ selection, anchor, options, onCreated, onC
                   tabIndex={checked ? 0 : -1}
                   onClick={(event) => {
                     setKind(candidate);
+                    setKindChosen(true);
                     // 마우스로 고르면 바로 제목을 이어 쓰게 한다. 키보드 선택은 포커스를 그대로 둔다.
                     if (event.detail > 0 && candidate !== "lesson") {
                       requestAnimationFrame(() => titleRef.current?.focus({ preventScroll: true }));

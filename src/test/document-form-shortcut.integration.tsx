@@ -1146,6 +1146,26 @@ test("캘린더 빠른 입력 제목은 쓰던 새 노트 초안의 제목을 �
   assert.equal(noteTitleValue(restored.container), "쓰던 초안");
 });
 
+test("빠른 입력 제목은 제목 없이 본문만 쓴 초안의 빈 제목을 채우지 않는다", { concurrency: false }, async (context) => {
+  const restored = await renderForm(context, <NoteFullForm action={async () => ({})} actorId="quick-empty" studentId="quick-empty" returnTo="/dashboard/student" defaultTitle="빠른 제목" />, (storage) => storage.setItem(
+    createDocumentDraftKey("note", "quick-empty", "new:quick-empty"),
+    serializeFormDraft({ operationId: crypto.randomUUID(), title: "", contentHtml: "<p>본문만 쓴 초안</p>", noteDate: "" }),
+  ));
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+  assert.equal(noteTitleValue(restored.container), "");
+});
+
+test("주소 제목·날짜와 같은 제목만 있는 복원 초안도 지우지 않는다", { concurrency: false }, async (context) => {
+  const key = createDocumentDraftKey("note", "quick-same", "new:quick-same");
+  const restored = await renderForm(context, <NoteFullForm action={async () => ({})} actorId="quick-same" studentId="quick-same" returnTo="/dashboard/student" defaultTitle="같은 제목" defaultDate="2026-10-30" />, (storage) => storage.setItem(
+    key,
+    serializeFormDraft({ operationId: crypto.randomUUID(), title: "같은 제목", contentHtml: "", noteDate: "2026-10-30" }),
+  ));
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 700)); });
+  assert.equal(noteTitleValue(restored.container), "같은 제목");
+  assert.notEqual(restored.browserWindow.localStorage.getItem(key), null, "복원한 초안은 기본값과 같아도 남긴다");
+});
+
 test("노트 저장 실패가 폼 밖으로 옮긴 포커스를 가로채지 않는다", { concurrency: false }, async (context) => {
   let rejectSave!: (reason: Error) => void;
   const action = () => new Promise<never>((_resolve, reject) => { rejectSave = reject; });

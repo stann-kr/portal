@@ -77,6 +77,8 @@ function NoteFullFormContent({ action, actorId, studentId, returnTo, defaultDate
   } = useDeferredEditorContent("");
   const [operationId, setOperationId] = useState("");
   const defaultNoteDateRef = useRef(initialDefaultDate);
+  // 주소에서 받은 기본 제목이 지금 화면의 출발점인지. 복원한 초안의 제목은 기본값으로 보지 않는다.
+  const defaultTitleRef = useRef("");
   const [state, formAction, isPending] = useActionState<CreateNoteState, FormData>(
     async (previous, data) => {
       try {
@@ -116,7 +118,8 @@ function NoteFullFormContent({ action, actorId, studentId, returnTo, defaultDate
       setOperationId(
         parseCreationOperationId(draft.operationId) ?? createCreationOperationId(),
       );
-      setTitle(draft.title || defaultTitle);
+      defaultTitleRef.current = "";
+      setTitle(draft.title ?? "");
       setNoteDate(
         resolveRestoredCreateNoteDate(
           draft.noteDate,
@@ -130,6 +133,7 @@ function NoteFullFormContent({ action, actorId, studentId, returnTo, defaultDate
         defaultNoteDateRef.current = initialDefaultDate;
         setOperationId(createCreationOperationId());
         // 저장된 초안이 없을 때도 이 경로로 시작하므로 주소의 제목·날짜를 기본값으로 둔다.
+        defaultTitleRef.current = defaultTitle;
         setTitle(defaultTitle);
         setNoteDate(initialDefaultDate);
         setContentHtml("");
@@ -149,7 +153,7 @@ function NoteFullFormContent({ action, actorId, studentId, returnTo, defaultDate
       isCreateNoteDraftEmpty(
         { title, noteDate, contentHtml: latestContentHtml },
         defaultNoteDateRef.current,
-        defaultTitle,
+        defaultTitleRef.current,
       )
     ) {
       clear();
@@ -167,7 +171,6 @@ function NoteFullFormContent({ action, actorId, studentId, returnTo, defaultDate
   }, [
     clear,
     contentHtml,
-    defaultTitle,
     loaded,
     noteDate,
     operationId,

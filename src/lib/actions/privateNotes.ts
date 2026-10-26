@@ -543,15 +543,23 @@ export async function movePrivateNoteDate(
   if (!parsedDate) return { ok: false, error: "올바른 날짜를 입력해 주세요." };
 
   const current = await getPrivateNoteForMutation(noteId);
-  if (!current || current.deletedAt) {
+  const isAdmin = session.user.role === "admin";
+  if (!current || (!isAdmin && current.authorId !== session.user.id)) {
     return {
       ok: false,
-      error: mutationErrorMessage(current ? "TRASHED" : "NOT_FOUND_OR_FORBIDDEN"),
-      conflictKind: current ? "TRASHED" : "NOT_FOUND_OR_FORBIDDEN",
+      error: mutationErrorMessage("NOT_FOUND_OR_FORBIDDEN"),
+      conflictKind: "NOT_FOUND_OR_FORBIDDEN",
     };
   }
+  if (current.deletedAt) {
+    return { ok: false, error: mutationErrorMessage("TRASHED"), conflictKind: "TRASHED" };
+  }
+  // 이미 그 날짜면 쓰지 않고 성공으로 돌려준다. 응답을 잃은 같은 이동을 다시 보내도 같은 결과가 된다.
+  if (current.noteDate?.getTime() === parsedDate.getTime()) {
+    return { ok: true, noteDate: parsedDate, version: current.version };
+  }
   const result = await updatePrivateNoteAtomically(createDbContext(), {
-    actor: { id: session.user.id!, isAdmin: session.user.role === "admin" },
+    actor: { id: session.user.id!, isAdmin },
     noteId,
     operationId,
     baseRevision: current.version,

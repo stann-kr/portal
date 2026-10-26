@@ -1121,9 +1121,12 @@ test("캘린더 노트 날짜 이동은 수정 권한자만 날짜만 바꾸고 
   const noteId = created.note?.id;
   assert.ok(noteId);
 
-  const moved = await privateNoteActions.movePrivateNoteDate(noteId, "2026-08-05", crypto.randomUUID());
+  const moveOperationId = crypto.randomUUID();
+  const moved = await privateNoteActions.movePrivateNoteDate(noteId, "2026-08-05", moveOperationId);
   assert.equal(moved.ok, true);
   assert.equal(moved.ok && moved.version, 2);
+  const replayed = await privateNoteActions.movePrivateNoteDate(noteId, "2026-08-05", moveOperationId);
+  assert.deepEqual(replayed, moved, "응답을 잃은 같은 이동을 다시 보내도 같은 결과로 끝난다");
   const readHead = async () => {
     const [head] = await db
       .select({
@@ -1168,6 +1171,8 @@ test("캘린더 노트 날짜 이동은 수정 권한자만 날짜만 바꾸고 
   const notAuthor = await privateNoteActions.movePrivateNoteDate(adminNote.note.id, "2026-08-07", crypto.randomUUID());
   assert.equal(notAuthor.ok, false, "학생은 관리자가 쓴 노트를 옮기지 못한다");
   assert.equal(!notAuthor.ok && notAuthor.conflictKind, "NOT_FOUND_OR_FORBIDDEN");
+  const sameDay = await privateNoteActions.movePrivateNoteDate(adminNote.note.id, "2026-08-02", crypto.randomUUID());
+  assert.equal(!sameDay.ok && sameDay.conflictKind, "NOT_FOUND_OR_FORBIDDEN", "이미 같은 날짜여도 권한 없는 이동은 성공으로 돌려주지 않는다");
 
   const trashed = await privateNoteActions.trashPrivateNote(noteId, crypto.randomUUID(), 3);
   assert.equal(trashed.success, true);
