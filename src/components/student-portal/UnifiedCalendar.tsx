@@ -33,6 +33,7 @@ import { UnifiedItemDetailPanel, type UnifiedItemChangeHandlers } from "./Unifie
 import { UNIFIED_ITEM_TYPE_LABELS, UnifiedItemTypeIcon } from "@/components/ui/unified-item-type";
 import {
   CalendarQuickCreate,
+  canUseQuickCreate,
   type CalendarQuickCreateOptions,
 } from "@/components/calendar/CalendarQuickCreate";
 import {
@@ -377,9 +378,7 @@ export function UnifiedCalendar({
   }, []);
 
   const api = () => calendarRef.current?.getApi();
-  const canQuickCreate = Boolean(quickCreate) && (
-    Boolean(quickCreate?.buildNoteHref) || quickCreate?.canCreateEvent === true || quickCreate?.canCreateLesson === true
-  );
+  const canQuickCreate = canUseQuickCreate(quickCreate);
 
   return (
     <div ref={containerRef} className="flex h-full flex-col gap-3">

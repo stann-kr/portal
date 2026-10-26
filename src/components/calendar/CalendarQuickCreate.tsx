@@ -30,6 +30,17 @@ export type CalendarQuickCreateOptions = {
   spaceLabel: string;
 };
 
+/** 만들 수 있는 항목이 하나라도 있을 때만 빠른 만들기를 연다. */
+export function canUseQuickCreate(options: CalendarQuickCreateOptions | undefined): options is CalendarQuickCreateOptions {
+  return Boolean(options && (options.buildNoteHref || options.canCreateEvent || options.canCreateLesson));
+}
+
+/** 버튼에서 연 창은 버튼 바로 아래에 붙인다. */
+export function getQuickCreateAnchor(element: HTMLElement): { x: number; y: number } {
+  const rect = element.getBoundingClientRect();
+  return { x: rect.left + Math.min(rect.width, 320) / 2, y: rect.bottom };
+}
+
 type Props = {
   selection: CalendarQuickCreateSelection;
   anchor: { x: number; y: number } | null;

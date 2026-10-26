@@ -23,6 +23,7 @@ let TiptapEditor: typeof import("@tiptap/core").Editor;
 let StarterKit: typeof import("@tiptap/starter-kit").default;
 let BlockCommandMenu: typeof import("@/components/editor/BlockCommandMenu").BlockCommandMenu;
 let UnifiedCalendar: typeof import("@/components/student-portal/UnifiedCalendar").UnifiedCalendar;
+let CalendarQuickCreate: typeof import("@/components/calendar/CalendarQuickCreate").CalendarQuickCreate;
 let VideoPlayer: typeof import("@/components/player/VideoPlayer").VideoPlayer;
 let TimelineFeedback: typeof import("@/components/feedback/TimelineFeedback").TimelineFeedback;
 let PostDetailClient: typeof import("@/app/community/[postId]/PostDetailClient").PostDetailClient;
@@ -124,11 +125,13 @@ mock.module("@/lib/actions/calendarEvents", { namedExports: {
   createCalendarEvent: (...args: Parameters<typeof saveEvent>) => saveEvent(...args),
   updateCalendarEventDetails: (...args: Parameters<typeof editEvent>) => editEvent(...args),
   deleteCalendarEvent: (...args: Parameters<typeof removeEvent>) => removeEvent(...args),
+  moveCalendarEvent: async () => ({ ok: false, error: "테스트에서는 옮기지 않습니다." }),
 } });
 mock.module("@/lib/actions/lessons", { namedExports: {
   createLesson: (...args: Parameters<typeof saveLesson>) => saveLesson(...args),
   rescheduleLesson: (...args: Parameters<typeof moveLesson>) => moveLesson(...args),
   deleteLesson: (...args: Parameters<typeof removeLesson>) => removeLesson(...args),
+  moveLesson: async () => ({ error: "테스트에서는 옮기지 않습니다." }),
 } });
 mock.module("@/lib/actions/curriculum", { namedExports: {
   toggleModuleComplete: (...args: Parameters<typeof toggleModule>) => toggleModule(...args),
@@ -232,6 +235,7 @@ before(async () => {
   ({ default: StarterKit } = await import("@tiptap/starter-kit"));
   ({ BlockCommandMenu } = await import("@/components/editor/BlockCommandMenu"));
   ({ UnifiedCalendar } = await import("@/components/student-portal/UnifiedCalendar"));
+  ({ CalendarQuickCreate } = await import("@/components/calendar/CalendarQuickCreate"));
   ({ VideoPlayer } = await import("@/components/player/VideoPlayer"));
   ({ TimelineFeedback } = await import("@/components/feedback/TimelineFeedback"));
   ({ PostDetailClient } = await import("@/app/community/[postId]/PostDetailClient"));
@@ -842,6 +846,77 @@ test("calendar list detail returns focus to its event link after a pointer opens
   assert.ok(browser.document.querySelector('[role="dialog"]'));
   await escape();
   assert.equal(browser.document.activeElement, browser.document.querySelector(".fc-list-event-title a"));
+});
+
+test("calendar quick create works from the keyboard and keeps a typed title on outside clicks", async (context) => {
+  const created: UnifiedItem[] = [];
+  let closes = 0;
+  const submitted: FormData[] = [];
+  saveEvent = async (_previous, formData) => {
+    submitted.push(formData);
+    return { id: "quick-event", event: {
+      id: "quick-event", title: String(formData.get("title")), eventType: "PRACTICE",
+      startTime: "2026-10-27T00:00:00.000Z", endTime: "2026-10-27T01:00:00.000Z", description: null,
+    } };
+  };
+  context.after(() => { saveEvent = async () => ({}); });
+  await render(context, <CalendarQuickCreate
+    selection={{ startStr: "2026-10-27", endStr: "2026-10-28", allDay: true }}
+    anchor={null}
+    options={{ buildNoteHref: (date, title) => `/notes/new?date=${date}&title=${title}`, canCreateEvent: true, canCreateLesson: false, studentId: "student", spaceLabel: "학생" }}
+    onCreated={(item) => created.push(item)}
+    onClose={() => { closes += 1; }}
+  />);
+  const dialog = browser.document.querySelector('[role="dialog"]');
+  assert.ok(dialog);
+  assert.equal(browser.document.activeElement?.getAttribute("aria-label"), "노트 제목", "the title field takes focus first");
+  assert.equal(button("노트").getAttribute("aria-checked"), "true", "a day cell starts with a note");
+  await press("일정");
+  assert.equal(button("일정").getAttribute("aria-checked"), "true");
+
+  const title = browser.document.querySelector('input[aria-label="일정 제목"]');
+  assert.ok(title instanceof browser.HTMLInputElement);
+  const setter = Object.getOwnPropertyDescriptor(browser.HTMLInputElement.prototype, "value")?.set;
+  await act(async () => {
+    setter?.call(title, "리듬 연습");
+    title.dispatchEvent(new browser.Event("input", { bubbles: true }));
+  });
+  await act(async () => {
+    browser.document.body.dispatchEvent(new browser.PointerEvent("pointerdown", { bubbles: true }));
+  });
+  assert.equal(closes, 0, "an outside click does not discard a typed title");
+
+  await act(async () => {
+    title.form?.dispatchEvent(new browser.Event("submit", { bubbles: true, cancelable: true }));
+  });
+  await settle();
+  assert.equal(submitted.length, 1);
+  assert.equal(submitted[0].get("title"), "리듬 연습");
+  assert.equal(submitted[0].get("startTime"), "2026-10-27T09:00");
+  assert.equal(submitted[0].get("endTime"), "2026-10-27T10:00");
+  assert.deepEqual(created.map((item) => [item.title, item.source.entity]), [["리듬 연습", "CALENDAR_EVENT"]]);
+  assert.equal(closes, 1);
+});
+
+test("calendar quick create closes with Escape and on an outside click while empty", async (context) => {
+  let closes = 0;
+  await render(context, <CalendarQuickCreate
+    selection={{ startStr: "2026-10-27T14:00:00+09:00", endStr: "2026-10-27T15:00:00+09:00", allDay: false }}
+    anchor={{ x: 200, y: 200 }}
+    options={{ canCreateEvent: false, canCreateLesson: true, studentId: "student", spaceLabel: "학생" }}
+    onCreated={() => {}}
+    onClose={() => { closes += 1; }}
+  />);
+  assert.equal(browser.document.querySelector('[role="radiogroup"]'), null, "a single choice needs no switch");
+  assert.match(browser.document.querySelector('[role="dialog"]')?.textContent ?? "", /14:00–15:00/u);
+  await act(async () => {
+    browser.document.querySelector('[role="dialog"]')?.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  });
+  assert.equal(closes, 1);
+  await act(async () => {
+    browser.document.body.dispatchEvent(new browser.PointerEvent("pointerdown", { bubbles: true }));
+  });
+  assert.equal(closes, 2);
 });
 
 test("student portal reflects new server records and removals without a full reload", async (context) => {

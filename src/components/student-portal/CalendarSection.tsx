@@ -392,6 +392,7 @@ export function CalendarSection({
           <TabsContent value="daily" className="m-0 p-4 sm:p-6">
             <DailyListView
               items={unifiedItems}
+              quickCreate={quickCreate}
               returnTo={workspaceReturnTo}
               showSpaceContext={showSpaceContext}
               canManageEvents={isStudentWorkspace}
@@ -404,6 +405,7 @@ export function CalendarSection({
           <TabsContent value="all" className="m-0 p-4 sm:p-6">
             <AllItemsView
               items={unifiedItems}
+              quickCreate={quickCreate}
               returnTo={workspaceReturnTo}
               showSpaceContext={showSpaceContext}
               initialType={allItemsInitialType}
