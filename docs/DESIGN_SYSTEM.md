@@ -29,7 +29,7 @@ Token은 `src/app/globals.css`의 Tailwind theme layer에 정의한다. 화면 �
 | Action | `primary`, `primary-foreground`, `accent`, `accent-foreground` | 주요 행동·선택 상태 |
 | Semantic | `success`, `warning`, `destructive`, `info`와 각 `*-muted`, 위험 동작 버튼 글자색 `destructive-foreground` | 완료·대기·오류·정보 |
 
-운영체제의 `prefers-color-scheme`에 따라 같은 semantic token의 dark 값이 적용된다. 개별 section이 임의로 theme를 반전하지 않는다. 일정·통합 항목 유형 색(`event-*`, `item-*`)도 dark에서 밝은 값으로 바뀌어 어두운 면의 아이콘이 3:1 이상 대비를 가지며, 이때 캘린더 일정 블록의 글자는 배경색 계열의 어두운 색을 사용한다.
+운영체제의 `prefers-color-scheme`에 따라 같은 semantic token의 dark 값이 적용된다. 개별 section이 임의로 theme를 반전하지 않는다. 일정·통합 항목 유형 색(`event-*`, `item-*`)도 dark에서 밝은 값으로 바뀌어 어두운 면의 아이콘이 3:1 이상 대비를 가진다. 캘린더 칩은 유형 색을 왼쪽 막대와 배경에 옅게 섞어(`color-mix`) 쓰고 글자는 `foreground`를 유지해 두 모드에서 같은 대비를 낸다.
 
 ### Shape
 
@@ -82,6 +82,11 @@ pill 형태는 filter와 count처럼 모양 자체가 의미를 가질 때만 �
 | `PortalNavigation` | 역할별 section 이동, 현재 위치, horizontal mobile fallback |
 | `PortalShell` | 역할별 navigation, URL·section별 스크롤 복원, viewport 안의 공통 content frame |
 | `CalendarSection` | 세션 내 날짜·월/주 보기·필터 유지, 수동 키보드 탭 활성화, 활성 시 크기 재측정 |
+| `UnifiedCalendar` | 노션식 자체 툴바(제목·이전/오늘/다음·월/주/목록), 타입 필터, KST 벽시계 칸(UTC 모드), 권한 있는 일정·레슨·노트 끌어 옮기기와 저장 전 반영·실패 원위치·되돌리기, 칸 클릭·끌어 선택·터치 탭으로 빠른 만들기 |
+| `CalendarQuickCreate` | 캘린더·일별·전체 보기가 공유하는 빠른 만들기 창(좁은 화면은 아래 시트). 노트는 제목·날짜를 채운 작성 화면으로, 일정·레슨은 그 자리에서 저장. 라디오 키보드 규칙, Esc 닫기, 제목이 있으면 바깥 클릭에도 유지 |
+| `CalendarEventChip` | 타입 색 왼쪽 막대·옅은 배경·아이콘·시각·제목의 캘린더 칩. 목록 보기와 선택 미리보기는 FullCalendar 기본 렌더 |
+| `DailyListView`·`AllItemsView` | 날짜별 노션식 목록(오늘·내일 표시, 하루 안 종일→시간순, 날짜별 추가 행)과 유형 칩·검색·정렬·새 항목이 있는 전체 항목 표 |
+| `NotesDatabase` | 노트 목록의 표/목록 전환(계정별 기억), 열 머리 정렬(aria-sort), 서버 본문 검색, 맨 아래 빠른 새 노트 행 |
 | `StatusBadge` | registry 기반 label·icon·tone 표시 |
 | `UnifiedItemTypeBadge` | 통합 기록의 일정·노트·디깅·Q&A·과제 type icon·label |
 | `UnifiedItemSpaceBadge` | 통합 기록의 학생 스페이스·포털 출처 label과 접근성 문맥 |
