@@ -27,7 +27,7 @@ export function NotesPageHeader({
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div className="min-w-0">
           <p className="text-sm text-muted-foreground">{eyebrow}</p>
-          <h1 className="mt-1 text-2xl font-semibold tracking-tight text-foreground">{title}</h1>
+          <h1 className="mt-1 text-2xl font-semibold tracking-[-0.02em] text-foreground">{title}</h1>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Link href={timelineHref} className={SECONDARY_ACTION}>

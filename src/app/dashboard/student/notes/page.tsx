@@ -6,8 +6,9 @@ import { redirect } from "next/navigation";
 import { getActiveAuthSession } from "@/lib/auth-guard";
 import { getPrivateNotes } from "@/lib/actions/privateNotes";
 import { NotesPageHeader } from "@/components/notes/NotesPageHeader";
-import { PrivateNoteList } from "@/components/notes/PrivateNoteList";
-import { getNoteSearchQuery, NoteSearch, searchPrivateNotes } from "@/components/notes/NoteSearch";
+import { NotesDatabase } from "@/components/notes/NotesDatabase";
+import { toNotesDatabaseRows } from "@/lib/notes-database";
+import { getNoteSearchQuery, searchPrivateNotes } from "@/components/notes/NoteSearch";
 import { buildNotesLessonsTimelineHref } from "@/lib/calendar-section-contract";
 
 export const metadata = { title: "내 노트" };
@@ -20,6 +21,7 @@ export default async function StudentNotesPage({ searchParams }: {
   if (session.user.role !== "student") redirect("/dashboard/admin");
 
   const listPath = "/dashboard/student/notes";
+  const composerPath = `${listPath}/new`;
   const query = getNoteSearchQuery((await searchParams).q);
   const returnTo = query ? `${listPath}?q=${encodeURIComponent(query)}` : listPath;
   const notes = await getPrivateNotes(session.user.id);
@@ -30,10 +32,19 @@ export default async function StudentNotesPage({ searchParams }: {
         eyebrow="내 스페이스"
         timelineHref={buildNotesLessonsTimelineHref({ role: "student" })}
         trashHref={`/dashboard/notes/trash?returnTo=${encodeURIComponent(returnTo)}`}
-        newNoteHref={`/dashboard/student/notes/new?returnTo=${encodeURIComponent(returnTo)}`}
+        newNoteHref={`${composerPath}?returnTo=${encodeURIComponent(returnTo)}`}
       />
-      <NoteSearch action={listPath} query={query} totalCount={notes.length} resultCount={matchingNotes.length} />
-      <PrivateNoteList notes={matchingNotes} returnTo={returnTo} emptyMessage={query ? "검색 결과가 없습니다. 다른 단어로 검색하거나 검색을 초기화해 주세요." : undefined} />
+      <NotesDatabase
+        rows={toNotesDatabaseRows(matchingNotes)}
+        ownerId={session.user.id}
+        returnTo={returnTo}
+        returnFallback={listPath}
+        composerPath={composerPath}
+        searchAction={listPath}
+        query={query}
+        totalCount={notes.length}
+        emptyMessage={query ? "검색 결과가 없습니다. 다른 단어로 검색하거나 검색을 초기화해 주세요." : "아직 작성된 노트가 없습니다."}
+      />
     </div>
   );
 }
