@@ -46,6 +46,7 @@ import {
   buildCalendarMoveRequest,
   CALENDAR_TIME_ZONE,
   calendarWallStringToKst,
+  createLatestMoveTracker,
   fromCalendarWallTime,
   getCalendarItemEditing,
   getCalendarNow,
@@ -268,6 +269,7 @@ export function UnifiedCalendar({
   }
   // 저장이 끝났을 때 그 사이 바뀐 항목(제목·metadata)에 이동만 합치기 위해 최신 목록을 둔다.
   const latestItemsRef = useRef(items);
+  const moveTrackerRef = useRef(createLatestMoveTracker());
   useInsertionEffect(() => {
     latestItemsRef.current = items;
   });
@@ -347,10 +349,13 @@ export function UnifiedCalendar({
     async (original: UnifiedItem, request: CalendarMoveRequest, options: { undoable: boolean }) => {
       const key = getUnifiedItemKey(original);
       const entry: PendingMove = { request, saved: false };
+      const token = moveTrackerRef.current.start(key);
       setPendingMoves((current) => new Map(current).set(key, entry));
       setNotice(null);
       const error = await saveMove(original, request);
-      // 그 사이 같은 항목을 다시 옮겼다면 나중 이동의 상태를 건드리지 않는다.
+      // 그 사이 같은 항목을 다시 옮겼다면 이 응답은 목록·알림·되돌리기 어느 것도 바꾸지 않는다.
+      if (!moveTrackerRef.current.isLatest(key, token)) return;
+      moveTrackerRef.current.finish(key, token);
       setPendingMoves((current) => {
         if (current.get(key) !== entry) return current;
         const next = new Map(current);

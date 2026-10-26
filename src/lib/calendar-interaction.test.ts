@@ -4,6 +4,7 @@ import {
   applyCalendarMoveToItem,
   buildCalendarMoveRequest,
   calendarWallStringToKst,
+  createLatestMoveTracker,
   fromCalendarWallTime,
   isCalendarMoveReflected,
   resolveSavedMove,
@@ -175,4 +176,18 @@ test("다시 받은 항목이 이동한 자리에 있는지 종류별로 판정�
   const note = item("PRIVATE_NOTE", { metadata: { noteDate: new Date("2026-10-30T00:00:00.000Z") } });
   assert.equal(isCalendarMoveReflected(note, { kind: "note", noteDate: "2026-10-30" }), true);
   assert.equal(isCalendarMoveReflected(note, { kind: "note", noteDate: "2026-10-31" }), false);
+});
+
+test("겹친 이동은 마지막 요청만 결과를 반영하고 늦게 온 이전 응답은 무시한다", () => {
+  const tracker = createLatestMoveTracker();
+  const first = tracker.start("item");
+  const second = tracker.start("item");
+  const other = tracker.start("other");
+  assert.equal(tracker.isLatest("item", first), false);
+  assert.equal(tracker.isLatest("item", second), true);
+  assert.equal(tracker.isLatest("other", other), true);
+  tracker.finish("item", first);
+  assert.equal(tracker.isLatest("item", second), true, "이전 요청의 마무리가 최신 요청을 지우지 않는다");
+  tracker.finish("item", second);
+  assert.equal(tracker.isLatest("item", second), false);
 });

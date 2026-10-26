@@ -155,3 +155,24 @@ export function isCalendarMoveReflected(item: UnifiedItem, request: CalendarMove
       return getNoteCalendarDateKey(item) === request.noteDate;
   }
 }
+
+/**
+ * 같은 항목의 이동이 겹칠 때 마지막 요청만 결과를 반영하게 한다. 먼저 시작한 요청의 응답이
+ * 늦게 와도 목록·알림·되돌리기 상태를 바꾸지 못한다.
+ */
+export function createLatestMoveTracker() {
+  const latest = new Map<string, symbol>();
+  return {
+    start(itemKey: string): symbol {
+      const token = Symbol(itemKey);
+      latest.set(itemKey, token);
+      return token;
+    },
+    isLatest(itemKey: string, token: symbol): boolean {
+      return latest.get(itemKey) === token;
+    },
+    finish(itemKey: string, token: symbol): void {
+      if (latest.get(itemKey) === token) latest.delete(itemKey);
+    },
+  };
+}
