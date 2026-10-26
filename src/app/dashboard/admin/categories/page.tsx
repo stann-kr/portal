@@ -26,11 +26,11 @@ export default async function AdminCategoriesPage() {
     <div className="mx-auto max-w-4xl space-y-10 px-4 py-6 sm:px-6">
       <header className="space-y-3 border-b border-border pb-5">
         <Link
-          href="/dashboard/admin?section=community"
+          href="/community"
           className="inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
         >
           <ArrowLeft className="size-4" aria-hidden="true" />
-          커뮤니티 관리로 돌아가기
+          커뮤니티로 돌아가기
         </Link>
         <div className="space-y-1">
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">커뮤니티 채널</h1>

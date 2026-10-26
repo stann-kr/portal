@@ -138,6 +138,12 @@ test("본문 HTML에서 관리 이미지 ID만 중복 없이 꺼낸다", () => {
     extractDocumentImageMediaIds(`<p><img alt="a > b" src="/api/media/${first}"></p>`),
     [first],
   );
+  assert.deepEqual(
+    extractDocumentImageMediaIds(
+      `<p><img src="/api/media/${first}"><img src="/api/media/${second}"></p>`,
+    ),
+    [first, second],
+  );
 });
 
 test("본문 이미지가 많아도 모두 연결하도록 D1 parameter 한도 안에서 나눠 갱신한다", () => {

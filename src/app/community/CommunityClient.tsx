@@ -19,7 +19,6 @@ import {
   Megaphone,
   MessageSquare,
   Music2,
-  ArrowLeft,
   RotateCcw,
   Settings2,
   Trash2,
@@ -244,7 +243,6 @@ export default function CommunityClient({ isAdmin, initial }: CommunityClientPro
   };
   const currentCat = categories.find((c) => c.slug === activeCategory);
   const returnTo = `/community?boardType=${activeTab}&category=${encodeURIComponent(activeCategory)}`;
-  const portalHref = isAdmin ? "/dashboard/admin?section=community" : "/dashboard/student?section=community";
   const trashHref = `/community/trash?returnTo=${encodeURIComponent(returnTo)}`;
 
   const changeLocation = (
@@ -264,13 +262,6 @@ export default function CommunityClient({ isAdmin, initial }: CommunityClientPro
       {/* 사이드바 */}
       <aside className="hidden md:flex w-56 border-r border-border flex-col bg-card">
         <div className="p-4 border-b border-border space-y-3">
-          <Link
-            href={portalHref}
-            className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <ArrowLeft className="w-3.5 h-3.5" aria-hidden="true" />
-            포털로 돌아가기
-          </Link>
           <div className="flex items-center gap-2 font-semibold text-foreground">
             <Users className="w-4 h-4" aria-hidden="true" />
             커뮤니티
@@ -338,13 +329,9 @@ export default function CommunityClient({ isAdmin, initial }: CommunityClientPro
 
       {/* 메인 영역 */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        {/* 모바일에서는 사이드바 대신 포털 복귀·휴지통·채널을 상단에 둔다. */}
+        {/* 모바일에서는 채널 목록 대신 휴지통·채널을 상단에 둔다. 게시판 전환은 아래 탭이 맡는다. */}
         <div className="flex shrink-0 flex-col gap-2 border-b border-border bg-card px-4 py-2 md:hidden">
-          <div className="flex items-center justify-between gap-3">
-            <Link href={portalHref} className="inline-flex min-h-9 items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">
-              <ArrowLeft className="size-4" aria-hidden="true" />
-              포털로 돌아가기
-            </Link>
+          <div className="flex items-center justify-end gap-3">
             <Link href={trashHref} className="inline-flex min-h-9 items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">
               <Trash2 className="size-4" aria-hidden="true" />
               휴지통
@@ -560,31 +547,6 @@ export default function CommunityClient({ isAdmin, initial }: CommunityClientPro
           )}
         </div>
 
-        {/* 모바일 탭 바 */}
-        <div className="md:hidden flex border-t border-border bg-card">
-          {(
-            [
-              { value: "ANNOUNCEMENT", icon: Megaphone, label: "공지" },
-              { value: "GENERAL", icon: MessageSquare, label: "자유" },
-              { value: "FEEDBACK", icon: Music2, label: "믹스셋" },
-            ] as const
-          ).map(({ value, icon: Icon, label }) => (
-            <button
-              key={value}
-              type="button"
-              onClick={() => changeLocation(value)}
-              aria-pressed={activeTab === value}
-              className={`flex-1 flex flex-col items-center py-2.5 text-xs gap-1 transition-colors ${
-                activeTab === value
-                  ? "font-medium text-foreground"
-                  : "text-muted-foreground"
-              }`}
-            >
-              <Icon className="w-4 h-4" aria-hidden="true" />
-              {label}
-            </button>
-          ))}
-        </div>
       </div>
     </div>
   );

@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { getPrivateNotePreview } from "./PrivateNoteList";
+import React, { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { getPrivateNotePreview, PrivateNoteList } from "./PrivateNoteList";
 import { getNoteSearchQuery, searchPrivateNotes } from "./NoteSearch";
 
 const note = {
@@ -39,4 +41,29 @@ test("노트 목록 preview는 HTML을 렌더하지 않는 짧은 평문이다",
   assert.equal(preview, "첫 문장 & 둘째");
   assert.equal(preview.includes("alert"), false);
   assert.equal(preview.includes("<"), false);
+});
+
+test("노트 목록은 노트마다 행 전체가 하나의 링크이고 제목·미리보기·날짜·작성자를 담는다", (context) => {
+  // unit runner는 classic JSX로 변환하므로 integration harness처럼 React global을 둔다.
+  const globals = globalThis as { React?: typeof React };
+  const previousReact = globals.React;
+  globals.React = React;
+  context.after(() => {
+    globals.React = previousReact;
+  });
+  const markup = renderToStaticMarkup(createElement(PrivateNoteList, {
+    returnTo: "/dashboard/student/notes?q=비트",
+    notes: [
+      { ...note, id: "note-a", title: "비트 매칭", contentHtml: "<p>템포를 맞춘다</p>", noteDate: new Date("2026-10-20T03:00:00Z") },
+      { ...note, id: "note-b", title: "EQ", contentHtml: "<p>저음 정리</p>", authorName: null },
+    ],
+  }));
+  const links = [...markup.matchAll(/<a [^>]*href="([^"]+)"/gu)].map((match) => match[1]);
+  assert.deepEqual(links, [
+    "/dashboard/notes/note-a?returnTo=%2Fdashboard%2Fstudent%2Fnotes%3Fq%3D%EB%B9%84%ED%8A%B8",
+    "/dashboard/notes/note-b?returnTo=%2Fdashboard%2Fstudent%2Fnotes%3Fq%3D%EB%B9%84%ED%8A%B8",
+  ]);
+  assert.match(markup, /비트 매칭[\s\S]*템포를 맞춘다[\s\S]*2026년 10월 20일[\s\S]*강사/u);
+  assert.equal(markup.includes("노트 열기"), false);
+  assert.match(renderToStaticMarkup(createElement(PrivateNoteList, { notes: [], returnTo: "/x", emptyMessage: "비어 있음" })), /비어 있음/u);
 });

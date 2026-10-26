@@ -6,7 +6,6 @@ import {
   ArrowRight,
   CalendarClock,
   CheckCircle2,
-  Radio,
   Settings2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -53,14 +52,12 @@ export function AdminWorkQueueSection({
   threads,
   pendingAssignments,
   referenceTime,
-  onOpenStudents,
   onOpenSchedule,
 }: {
   students: StudentRosterStat[];
   threads: AdminQueueThread[];
   pendingAssignments: PendingFeedbackAssignment[];
   referenceTime: Date;
-  onOpenStudents: () => void;
   onOpenSchedule: () => void;
 }) {
   const queue = getAdminWorkQueue(
@@ -261,22 +258,6 @@ export function AdminWorkQueueSection({
         )}
       </section>
 
-      <div className="flex flex-col items-start justify-between gap-3 rounded-lg bg-accent px-5 py-4 sm:flex-row sm:items-center">
-        <div className="flex items-center gap-3">
-          <div className="flex size-9 items-center justify-center rounded-md bg-surface text-primary">
-            <Radio className="size-4" aria-hidden="true" />
-          </div>
-          <div>
-            <p className="text-sm font-semibold text-accent-foreground">학생 기록 살펴보기</p>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              진도, 노트, 디깅, Q&A를 학생별로 확인합니다.
-            </p>
-          </div>
-        </div>
-        <Button type="button" variant="outline" onClick={onOpenStudents}>
-          학생 열기
-        </Button>
-      </div>
     </div>
   );
 }

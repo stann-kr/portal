@@ -1,13 +1,12 @@
 /**
  * @file src/components/student-portal/StudentPortalClient.tsx
- * @description 학생 원페이지 포털 메인 오케스트레이터.
- * 3개 섹션(오늘 / 워크스페이스 / 커뮤니티)을 상단 navigation으로 전환.
- * 공통 PortalShell로 navigation과 section 상태를 관리.
+ * @description 학생 포털 메인 오케스트레이터.
+ * 구역(오늘 / 워크스페이스 / 커뮤니티)은 공통 사이드바가 주소로 전환하고,
+ * PortalShell은 주소 기반 구역 상태만 관리한다.
  */
 "use client";
 
 import { useState, useCallback, useEffect, useMemo } from "react";
-import { CalendarRange, House, Users } from "lucide-react";
 import {
   upsertUnifiedItem,
   upsertUnifiedItems,
@@ -74,15 +73,16 @@ export interface StudentPortalClientProps {
   referenceTime: Date;
 }
 
-// ── 탭 정의 ──────────────────────────────────────────
+// ── 구역 정의 ──────────────────────────────────────────
 
-const TABS: { id: Section; label: string; Icon: React.ElementType }[] = [
-  { id: "today", label: "오늘", Icon: House },
-  { id: "workspace", label: "워크스페이스", Icon: CalendarRange },
-  { id: "community", label: "커뮤니티", Icon: Users },
+/** 사이드바가 이동을 맡고, 여기서는 주소로 열 수 있는 구역만 정한다. */
+const SECTIONS: readonly { id: Section }[] = [
+  { id: "today" },
+  { id: "workspace" },
+  { id: "community" },
 ];
 
-/** 상단 섹션 탭 영속화 localStorage 키 */
+/** 마지막으로 연 구역을 기억하는 localStorage 키 */
 const SECTION_STORAGE_KEY = "studentPortal:section";
 
 const SECTION_ALIASES: Readonly<Record<string, Section>> = {
@@ -157,7 +157,7 @@ export function StudentPortalClient({
 
   return (
     <PortalShell
-      items={TABS}
+      items={SECTIONS}
       initialItem={initialLocation?.section ?? "today"}
       storageKey={SECTION_STORAGE_KEY}
       storageAliases={SECTION_ALIASES}

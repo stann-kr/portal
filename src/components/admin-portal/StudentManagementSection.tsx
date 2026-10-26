@@ -72,11 +72,14 @@ export function StudentManagementSection({ students }: { students: StudentRoster
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   return (
-    <div className="space-y-6 p-4 sm:p-6">
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-foreground">수강생 ({students.length}명)</h2>
-          <Button asChild size="sm" variant="outline" className="h-7 gap-1 text-xs">
+    <div className="mx-auto w-full max-w-[1240px] space-y-6 px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-[-0.03em] text-foreground sm:text-3xl">학생</h1>
+            <p className="mt-1 text-sm text-muted-foreground">수강생 {students.length}명</p>
+          </div>
+          <Button asChild size="sm" variant="outline" className="gap-1.5">
             <Link href="/dashboard/admin/students/new"><UserPlus className="size-3.5" aria-hidden="true" />수강생 추가</Link>
           </Button>
         </div>

@@ -6,7 +6,6 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
-import { CalendarDays, Inbox, Megaphone, MessagesSquare, Users } from "lucide-react";
 import { getUnifiedItemKey, upsertUnifiedItems, type UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 import type { StudentRosterStat } from "@/lib/actions/students";
 import type {
@@ -67,14 +66,15 @@ export interface AdminPortalClientProps {
   referenceTime: Date;
 }
 
-// ── 탭 정의 ──────────────────────────────────────
+// ── 구역 정의 ────────────────────────────────────
 
-const TABS: { id: Section; label: string; Icon: React.ElementType }[] = [
-  { id: "work", label: "업무함", Icon: Inbox },
-  { id: "students", label: "학생", Icon: Users },
-  { id: "schedule", label: "일정", Icon: CalendarDays },
-  { id: "announcements", label: "공지", Icon: Megaphone },
-  { id: "community", label: "커뮤니티", Icon: MessagesSquare },
+/** 사이드바가 이동을 맡고, 여기서는 주소로 열 수 있는 구역만 정한다. */
+const SECTIONS: readonly { id: Section }[] = [
+  { id: "work" },
+  { id: "students" },
+  { id: "schedule" },
+  { id: "announcements" },
+  { id: "community" },
 ];
 
 // ── 컴포넌트 ─────────────────────────────────────
@@ -196,7 +196,7 @@ export function AdminPortalClient({
 
   return (
     <PortalShell
-      items={TABS}
+      items={SECTIONS}
       initialItem={initialLocation?.section ?? "work"}
       storageKey="adminPortal:section"
       urlParamKey="section"
@@ -210,7 +210,6 @@ export function AdminPortalClient({
               threads={qnaThreads}
               pendingAssignments={pendingAssignments}
               referenceTime={referenceTime}
-              onOpenStudents={() => changeSection("students")}
               onOpenSchedule={() => changeSection("schedule")}
             />
           )}

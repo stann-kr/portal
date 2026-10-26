@@ -13,6 +13,8 @@ import { getLessonsByStudent } from "@/lib/actions/lessons";
 import { getOrSeedColumns, getDiggingTracks } from "@/lib/actions/digging";
 import { getQnaThreadsByStudent } from "@/lib/actions/qna";
 import { getAssignmentSummariesByStudent } from "@/lib/actions/assignments";
+import { getPrivateNotes } from "@/lib/actions/privateNotes";
+import { PrivateNoteList } from "@/components/notes/PrivateNoteList";
 import { getStudentCalendarFeedIssuedAt } from "@/lib/actions/calendarFeed";
 import { EmptyState } from "@/components/ui/empty-state";
 import { StatusBadge } from "@/components/ui/status-badge";
@@ -24,7 +26,7 @@ import { DiggingBoard } from "@/components/digging/DiggingBoard";
 import { ThreadList } from "@/components/qna/ThreadList";
 import { resolveQnaFilter } from "@/lib/qna-routes";
 import { normalizeDocumentSearchQuery } from "@/lib/document-search";
-import { BookOpen, ChevronRight, Radio } from "lucide-react";
+import { ChevronRight, Plus, Radio, Search } from "lucide-react";
 import Link from "next/link";
 import type { DiggingColumnType, QnaStatus } from "@/db/schema";
 import { ArrowLeft } from "lucide-react";
@@ -99,13 +101,41 @@ async function AssignmentsTabContent({ studentId }: { studentId: string }) {
   );
 }
 
-function NotesTabContent({ studentId }: { studentId: string }) {
+const NOTES_TAB_PREVIEW_COUNT = 20;
+
+/** 학생 상세에서 바로 최근 노트를 훑고 열 수 있게 한다. 검색·전체 목록은 노트 페이지가 맡는다. */
+async function NotesTabContent({ studentId }: { studentId: string }) {
+  const notes = await getPrivateNotes(studentId);
+  const returnTo = buildAdminStudentDetailHref(studentId, "notes");
+  const notesPageHref = `/dashboard/admin/students/${encodeURIComponent(studentId)}/notes`;
+  const visibleNotes = notes.slice(0, NOTES_TAB_PREVIEW_COUNT);
+
   return (
-    <section className="rounded-xl border border-border bg-card p-6">
-      <BookOpen className="size-5 text-primary" aria-hidden="true" />
-      <h2 className="mt-3 text-lg font-semibold">노트는 별도 목록에서 관리합니다</h2>
-      <p className="mt-1 text-sm text-muted-foreground">작성과 탐색을 분리해 학생 스페이스와 기록 문맥을 넓게 확인할 수 있습니다.</p>
-      <Link href={`/dashboard/admin/students/${studentId}/notes`} className="mt-4 inline-flex h-9 items-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90">학생 노트 목록 열기</Link>
+    <section className="space-y-3" aria-label="학생 노트">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-muted-foreground">
+          노트 {notes.length}개{notes.length > visibleNotes.length ? ` 중 최근 ${visibleNotes.length}개` : ""}
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <Link
+            href={notesPageHref}
+            className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border px-3 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          >
+            <Search className="size-3.5" aria-hidden="true" />검색·전체 목록
+          </Link>
+          <Link
+            href={`${notesPageHref}/new?returnTo=${encodeURIComponent(returnTo)}`}
+            className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+          >
+            <Plus className="size-3.5" aria-hidden="true" />노트 작성
+          </Link>
+        </div>
+      </div>
+      <PrivateNoteList
+        notes={visibleNotes}
+        returnTo={returnTo}
+        emptyMessage="아직 이 학생 스페이스에 작성된 노트가 없습니다."
+      />
     </section>
   );
 }
