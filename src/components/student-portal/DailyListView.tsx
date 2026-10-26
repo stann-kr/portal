@@ -31,6 +31,7 @@ import {
   describeRelativeDay,
   findClosestDayKey,
   isUnifiedItemAllDay,
+  sortDayAgenda,
 } from "@/lib/unified-item-views";
 import type { CalendarQuickCreateSelection } from "@/lib/calendar-quick-create";
 import { toKstDateInputValue } from "@/lib/date-input";
@@ -145,7 +146,7 @@ export function DailyListView({
         ) : null}
 
         {sortedKeys.map((dateKey) => {
-          const dayItems = grouped.get(dateKey)!;
+          const dayItems = sortDayAgenda(grouped.get(dateKey)!);
           const sampleDate = new Date(`${dateKey}T12:00:00+09:00`);
           const relative = describeRelativeDay(dateKey, todayKey);
           const year = formatGroupYear(sampleDate);

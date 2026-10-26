@@ -249,7 +249,7 @@ export function AdminWorkQueueSection({
             {queue.upcomingLessons.map((student) => (
               <li key={student.id} className="min-w-0">
                 <Link href={`/dashboard/admin/students/${student.id}`} className={ROW_CLASS}>
-                  <span className="w-[7.5rem] shrink-0 pt-px font-mono text-xs tabular-nums text-muted-foreground">
+                  <span className="shrink-0 whitespace-nowrap pt-px text-xs tabular-nums text-muted-foreground sm:w-[9.5rem]">
                     {formatDateTime(student.nextLessonDate)}
                   </span>
                   <span className="min-w-0 flex-1">

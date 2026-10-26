@@ -217,7 +217,22 @@ export function CalendarQuickCreate({ selection, anchor, options, onCreated, onC
         </div>
 
         {kinds.length > 1 ? (
-          <div role="radiogroup" aria-label="만들 항목" className="flex gap-1 rounded-md bg-muted p-0.5">
+          <div
+            role="radiogroup"
+            aria-label="만들 항목"
+            className="flex gap-1 rounded-md bg-muted p-0.5"
+            onKeyDown={(event) => {
+              // 라디오 묶음 규칙: 화살표로 고르고, 탭 정지는 선택된 항목 하나만 둔다.
+              const step = event.key === "ArrowRight" || event.key === "ArrowDown"
+                ? 1
+                : event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 0;
+              if (!step) return;
+              event.preventDefault();
+              const next = kinds[(kinds.indexOf(kind) + step + kinds.length) % kinds.length];
+              setKind(next);
+              event.currentTarget.querySelector<HTMLElement>(`[data-kind="${next}"]`)?.focus();
+            }}
+          >
             {kinds.map((candidate) => {
               const CandidateIcon = KIND_META[candidate].icon;
               const checked = candidate === kind;
@@ -226,8 +241,16 @@ export function CalendarQuickCreate({ selection, anchor, options, onCreated, onC
                   key={candidate}
                   type="button"
                   role="radio"
+                  data-kind={candidate}
                   aria-checked={checked}
-                  onClick={() => setKind(candidate)}
+                  tabIndex={checked ? 0 : -1}
+                  onClick={(event) => {
+                    setKind(candidate);
+                    // 마우스로 고르면 바로 제목을 이어 쓰게 한다. 키보드 선택은 포커스를 그대로 둔다.
+                    if (event.detail > 0 && candidate !== "lesson") {
+                      requestAnimationFrame(() => titleRef.current?.focus({ preventScroll: true }));
+                    }
+                  }}
                   className={`inline-flex h-7 flex-1 items-center justify-center gap-1.5 rounded text-xs font-medium transition-colors duration-[var(--duration-fast)] motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
                     checked ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
                   }`}

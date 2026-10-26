@@ -6,6 +6,7 @@ import {
   findClosestDayKey,
   isUnifiedItemAllDay,
   resolveUnifiedItemSort,
+  sortDayAgenda,
   sortUnifiedItems,
 } from "./unified-item-views";
 import type { UnifiedItem, UnifiedItemType } from "./utils/unifiedItemUtils";
@@ -55,4 +56,13 @@ test("정렬은 선택 기준 뒤에 최신순, 원래 순서로 동률을 고�
   assert.deepEqual(sortUnifiedItems(items, "type").map((entry) => entry.id), ["new-event", "mid-event", "old-note"]);
   assert.equal(resolveUnifiedItemSort("constructor"), "date-desc");
   assert.equal(resolveUnifiedItemSort("title"), "title");
+});
+
+test("하루 일정은 종일 항목을 먼저, 나머지는 이른 시각부터 놓는다", () => {
+  const day = [
+    item("late", "EVENT", "2026-10-28T10:00:00Z"),
+    item("note", "NOTE", "2026-10-28T00:00:00Z"),
+    item("early", "EVENT", "2026-10-28T03:00:00Z"),
+  ];
+  assert.deepEqual(sortDayAgenda(day).map((entry) => entry.id), ["note", "early", "late"]);
 });

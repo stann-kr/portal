@@ -24,6 +24,7 @@ let StarterKit: typeof import("@tiptap/starter-kit").default;
 let BlockCommandMenu: typeof import("@/components/editor/BlockCommandMenu").BlockCommandMenu;
 let UnifiedCalendar: typeof import("@/components/student-portal/UnifiedCalendar").UnifiedCalendar;
 let CalendarQuickCreate: typeof import("@/components/calendar/CalendarQuickCreate").CalendarQuickCreate;
+let renderCalendarEventContent: typeof import("@/components/calendar/CalendarEventChip").renderCalendarEventContent;
 let VideoPlayer: typeof import("@/components/player/VideoPlayer").VideoPlayer;
 let TimelineFeedback: typeof import("@/components/feedback/TimelineFeedback").TimelineFeedback;
 let PostDetailClient: typeof import("@/app/community/[postId]/PostDetailClient").PostDetailClient;
@@ -236,6 +237,7 @@ before(async () => {
   ({ BlockCommandMenu } = await import("@/components/editor/BlockCommandMenu"));
   ({ UnifiedCalendar } = await import("@/components/student-portal/UnifiedCalendar"));
   ({ CalendarQuickCreate } = await import("@/components/calendar/CalendarQuickCreate"));
+  ({ renderCalendarEventContent } = await import("@/components/calendar/CalendarEventChip"));
   ({ VideoPlayer } = await import("@/components/player/VideoPlayer"));
   ({ TimelineFeedback } = await import("@/components/feedback/TimelineFeedback"));
   ({ PostDetailClient } = await import("@/app/community/[postId]/PostDetailClient"));
@@ -833,6 +835,33 @@ test("portal deep links render their section, view and selected student before h
   });
 });
 
+test("calendar chips leave the week-view selection preview and list rows to FullCalendar and survive missing item metadata", () => {
+  type ContentArg = Parameters<typeof renderCalendarEventContent>[0];
+  const arg = (overrides: { view: string; isMirror?: boolean; extendedProps?: Record<string, unknown>; allDay?: boolean }) => ({
+    view: { type: overrides.view },
+    isMirror: overrides.isMirror ?? false,
+    event: { title: "리듬 연습", allDay: overrides.allDay ?? false, extendedProps: overrides.extendedProps ?? {} },
+  }) as unknown as ContentArg;
+  assert.equal(renderCalendarEventContent(arg({ view: "timeGridWeek", isMirror: true })), true, "the slot selection preview has no item data");
+  assert.equal(renderCalendarEventContent(arg({ view: "listWeek", extendedProps: { itemType: "EVENT" } })), true);
+  const dragged = renderCalendarEventContent(arg({ view: "timeGridWeek", isMirror: true, extendedProps: { itemType: "EVENT", timeLabel: "14:00", movable: true } }));
+  assert.notEqual(dragged, true, "a dragged item keeps its chip");
+  const markup = browser.document.createElement("div");
+  markup.innerHTML = renderToString(<>{dragged}</>);
+  assert.match(markup.textContent ?? "", /14:00리듬 연습/u);
+  markup.innerHTML = renderToString(<>{renderCalendarEventContent(arg({ view: "dayGridMonth", extendedProps: { itemType: "UNKNOWN" } }))}</>);
+  assert.equal(markup.querySelector("svg"), null);
+  assert.match(markup.textContent ?? "", /리듬 연습/u);
+});
+
+test("calendar view switch marks no view on the server so a mobile list view hydrates without a stale month state", () => {
+  const markup = browser.document.createElement("div");
+  markup.innerHTML = renderToString(<UnifiedCalendar returnTo="/dashboard/student" showSpaceContext={false} items={[]} />);
+  const group = markup.querySelector('[aria-label="달력 보기"]');
+  assert.ok(group);
+  assert.deepEqual([...group.querySelectorAll("button")].map((element) => element.getAttribute("aria-pressed")), ["false", "false", "false"]);
+});
+
 test("calendar list detail returns focus to its event link after a pointer opens the row", async (context) => {
   await render(context, <UnifiedCalendar returnTo="/dashboard/student" showSpaceContext={false} items={[{
     id: "practice", type: "EVENT", subType: "PRACTICE", title: "리듬 연습", date: new Date(), metadata: {},
@@ -871,6 +900,17 @@ test("calendar quick create works from the keyboard and keeps a typed title on o
   assert.ok(dialog);
   assert.equal(browser.document.activeElement?.getAttribute("aria-label"), "노트 제목", "the title field takes focus first");
   assert.equal(button("노트").getAttribute("aria-checked"), "true", "a day cell starts with a note");
+  assert.deepEqual([button("노트").tabIndex, button("일정").tabIndex], [0, -1], "only the chosen kind is a tab stop");
+  await act(async () => {
+    button("노트").focus();
+    button("노트").dispatchEvent(new browser.KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+  });
+  assert.equal(button("일정").getAttribute("aria-checked"), "true", "arrow keys move the choice");
+  assert.equal(browser.document.activeElement, button("일정"));
+  await act(async () => {
+    button("일정").dispatchEvent(new browser.KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+  });
+  assert.equal(button("노트").getAttribute("aria-checked"), "true", "the choice wraps around");
   await press("일정");
   assert.equal(button("일정").getAttribute("aria-checked"), "true");
 

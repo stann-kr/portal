@@ -1128,6 +1128,24 @@ for (const kind of ["new-note", "edit-note", "new-post", "edit-post", "new-qna",
   });
 }
 
+const noteTitleValue = (container: HTMLElement) => container.querySelector<HTMLTextAreaElement>("textarea[name=title]")?.value;
+
+test("캘린더 빠른 입력 제목은 저장된 초안이 없으면 새 노트 작성 화면에 채워진다", { concurrency: false }, async (context) => {
+  const fresh = await renderForm(context, <NoteFullForm action={async () => ({})} actorId="quick-title" studentId="quick-title" returnTo="/dashboard/student" defaultTitle="레슨 복습" defaultDate="2026-10-30" />);
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+  assert.equal(noteTitleValue(fresh.container), "레슨 복습");
+  assert.equal(fresh.container.querySelector<HTMLInputElement>("input[name=noteDate]")?.value, "2026-10-30");
+});
+
+test("캘린더 빠른 입력 제목은 쓰던 새 노트 초안의 제목을 덮어쓰지 않는다", { concurrency: false }, async (context) => {
+  const restored = await renderForm(context, <NoteFullForm action={async () => ({})} actorId="quick-draft" studentId="quick-draft" returnTo="/dashboard/student" defaultTitle="새 제목" />, (storage) => storage.setItem(
+    createDocumentDraftKey("note", "quick-draft", "new:quick-draft"),
+    serializeFormDraft({ operationId: crypto.randomUUID(), title: "쓰던 초안", contentHtml: "<p>보존할 본문</p>", noteDate: "" }),
+  ));
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+  assert.equal(noteTitleValue(restored.container), "쓰던 초안");
+});
+
 test("노트 저장 실패가 폼 밖으로 옮긴 포커스를 가로채지 않는다", { concurrency: false }, async (context) => {
   let rejectSave!: (reason: Error) => void;
   const action = () => new Promise<never>((_resolve, reject) => { rejectSave = reject; });

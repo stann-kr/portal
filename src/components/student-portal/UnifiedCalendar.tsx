@@ -16,10 +16,10 @@ import koLocale from "@fullcalendar/core/locales/ko";
 import type {
   DateSelectArg,
   DateSpanApi,
+  DayCellContentArg,
   DatesSetArg,
   EventApi,
   EventClickArg,
-  EventContentArg,
   EventDropArg,
   EventInput,
   EventMountArg,
@@ -31,6 +31,7 @@ import type { UnifiedItem, UnifiedItemType } from "@/lib/utils/unifiedItemUtils"
 import { getUnifiedItemColor, getUnifiedItemKey } from "@/lib/utils/unifiedItemUtils";
 import { UnifiedItemDetailPanel, type UnifiedItemChangeHandlers } from "./UnifiedItemDetailPanel";
 import { UNIFIED_ITEM_TYPE_LABELS, UnifiedItemTypeIcon } from "@/components/ui/unified-item-type";
+import { renderCalendarEventContent } from "@/components/calendar/CalendarEventChip";
 import {
   CalendarQuickCreate,
   canUseQuickCreate,
@@ -54,7 +55,6 @@ import { moveLesson } from "@/lib/actions/lessons";
 import { movePrivateNoteDate } from "@/lib/actions/privateNotes";
 import { createCreationOperationId } from "@/lib/creation-operation";
 import { formatKst } from "@/lib/kst-format";
-import { formatKstDateLabel } from "@/lib/date-input";
 
 interface UnifiedCalendarProps extends UnifiedItemChangeHandlers {
   isActive?: boolean;
@@ -83,16 +83,22 @@ type MoveNotice =
 
 const KST_TIME = { hour: "2-digit", minute: "2-digit", hourCycle: "h23" } as const;
 
+const KST_MOVE_DATE = { month: "long", day: "numeric", weekday: "short" } as const;
+
+// 조사가 앞말에 따라 바뀌지 않도록 "무엇 · 어디로" 형태로 알린다.
 function describeMove(item: UnifiedItem, request: CalendarMoveRequest): string {
-  const name = item.type === "NOTE" ? `노트 "${item.title}"` : item.source.entity === "LESSON" ? "레슨" : `일정 "${item.title}"`;
-  const when = request.kind === "note"
-    ? formatKstDateLabel(request.noteDate)
-    : formatKst(request.kind === "lesson" ? request.scheduledAt : request.startTime, {
-      month: "long",
-      day: "numeric",
-      ...KST_TIME,
-    });
-  return `${name}을(를) ${when}(으)로 옮겼습니다.`;
+  const kind = item.type === "NOTE" ? "노트" : item.source.entity === "LESSON" ? "레슨" : "일정";
+  const name = item.source.entity === "LESSON" ? "" : ` "${item.title}"`;
+  let when: string;
+  if (request.kind === "note") {
+    when = formatKst(`${request.noteDate}T12:00:00+09:00`, KST_MOVE_DATE);
+  } else if (request.kind === "lesson") {
+    when = `${formatKst(request.scheduledAt, KST_MOVE_DATE)} ${formatKst(request.scheduledAt, KST_TIME)}`;
+  } else {
+    when = `${formatKst(request.startTime, KST_MOVE_DATE)} ${formatKst(request.startTime, KST_TIME)}`;
+    if (request.endTime) when += `–${formatKst(request.endTime, KST_TIME)}`;
+  }
+  return `${kind}${name} → ${when}에 저장했습니다.`;
 }
 
 function reverseRequest(item: UnifiedItem, request: CalendarMoveRequest): CalendarMoveRequest {
@@ -127,27 +133,7 @@ async function saveMove(item: UnifiedItem, request: CalendarMoveRequest): Promis
   }
 }
 
-function CalendarEventChip({ arg }: { arg: EventContentArg }) {
-  const { itemType, movable, timeLabel } = arg.event.extendedProps as {
-    itemType: UnifiedItemType;
-    movable: boolean;
-    timeLabel: string | null;
-  };
-  return (
-    <span className="calendar-chip" data-movable={movable ? "true" : undefined}>
-      <UnifiedItemTypeIcon type={itemType} className="calendar-chip-icon" />
-      {timeLabel && !arg.event.allDay ? <span className="calendar-chip-time">{timeLabel}</span> : null}
-      <span className="calendar-chip-title">{arg.event.title}</span>
-    </span>
-  );
-}
-
 // FullCalendar 옵션은 렌더마다 새로 만들면 다시 계산되므로 모듈 상수로 고정한다.
-// 목록 보기는 기본 렌더(true)를 써서 제목 링크와 표 의미를 그대로 둔다.
-function renderEventContent(arg: EventContentArg) {
-  return arg.view.type.startsWith("list") ? true : <CalendarEventChip arg={arg} />;
-}
-
 function handleEventDidMount(arg: EventMountArg) {
   const { color, movable } = arg.event.extendedProps as { color?: string; movable?: boolean };
   if (color) arg.el.style.setProperty("--chip-color", color);
@@ -156,6 +142,11 @@ function handleEventDidMount(arg: EventMountArg) {
 
 function allowSameSlotKind(drop: DateSpanApi, dragged: EventApi | null) {
   return drop.allDay === Boolean(dragged?.allDay);
+}
+
+// 한국어 locale은 "26일"처럼 붙이므로 숫자만 남겨 칸을 가볍게 한다.
+function renderDayCell(arg: DayCellContentArg) {
+  return arg.dayNumberText.replace(/일$/u, "");
 }
 
 function renderMoreLink(arg: MoreLinkContentArg) {
@@ -187,7 +178,8 @@ export function UnifiedCalendar({
       ? "listWeek"
       : "dayGridMonth",
   );
-  const [view, setView] = useState<{ type: CalendarViewName; title: string }>({ type: initialView, title: "" });
+  // 서버 렌더에는 화면 폭을 모르므로 보기를 비워 두고, 달력이 알려 준 실제 보기로 채운다(hydration 불일치 방지).
+  const [view, setView] = useState<{ type: CalendarViewName | null; title: string }>({ type: null, title: "" });
 
   // Hidden tabs keep their date/view; FullCalendar must remeasure once visible.
   useEffect(() => {
@@ -373,7 +365,7 @@ export function UnifiedCalendar({
   );
 
   const handleDatesSet = useCallback((arg: DatesSetArg) => {
-    const next = { type: arg.view.type as CalendarViewName, title: arg.view.title };
+    const next = { type: arg.view.type as CalendarViewName | null, title: arg.view.title };
     setView((current) => (current.type === next.type && current.title === next.title ? current : next));
   }, []);
 
@@ -520,7 +512,7 @@ export function UnifiedCalendar({
           events={fcEvents}
           datesSet={handleDatesSet}
           eventClick={handleEventClick}
-          eventContent={renderEventContent}
+          eventContent={renderCalendarEventContent}
           eventDidMount={handleEventDidMount}
           eventAllow={allowSameSlotKind}
           eventDrop={handleMove}
@@ -535,6 +527,7 @@ export function UnifiedCalendar({
           eventDisplay="block"
           dayMaxEvents={4}
           moreLinkContent={renderMoreLink}
+          dayCellContent={renderDayCell}
           allDayText="종일"
           nowIndicator
           scrollTime="08:00:00"

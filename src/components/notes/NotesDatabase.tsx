@@ -254,13 +254,6 @@ export function NotesDatabase({
           >
             {SORT_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
           </select>
-          <button
-            type="button"
-            onClick={startAdding}
-            className="inline-flex h-8 shrink-0 items-center gap-1 rounded-md bg-primary px-2.5 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-          >
-            <Plus className="size-3.5" aria-hidden="true" />새 노트
-          </button>
         </div>
       </div>
 

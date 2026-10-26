@@ -129,32 +129,7 @@
 .animate-accordion-down { animation: accordion-down 0.2s ease-out; }
 .animate-accordion-up { animation: accordion-up 0.2s ease-out; }
 
-/* ─── FullCalendar 테마 오버라이드 ──────────────── */
-.fc-custom .fc-toolbar-title { font-size: 1rem; font-weight: 600; }
-.fc-custom .fc-button {
-  background-color: var(--color-background) !important;
-  border-color: var(--color-border) !important;
-  color: var(--color-foreground) !important;
-  font-size: 0.75rem !important;
-  padding: 0.25rem 0.625rem !important;
-  box-shadow: none !important;
-}
-.fc-custom .fc-button:hover { background-color: var(--color-accent) !important; }
-.fc-custom .fc-button-active,
-.fc-custom .fc-button-primary:not(:disabled):active {
-  background-color: var(--color-primary) !important;
-  color: var(--color-primary-foreground) !important;
-  border-color: var(--color-primary) !important;
-}
-.fc-custom .fc-col-header-cell { font-size: 0.7rem; font-weight: 700; color: var(--color-muted-foreground); text-transform: uppercase; letter-spacing: 0.05em; }
-.fc-custom .fc-daygrid-day-number { font-size: 0.8rem; color: var(--color-muted-foreground); }
-.fc-custom .fc-day-today { background-color: color-mix(in srgb, var(--color-primary) 5%, transparent) !important; }
-.fc-custom .fc-day-today .fc-daygrid-day-number { color: var(--color-primary); font-weight: 700; }
-.fc-custom .fc-event { border-radius: 4px; font-size: 0.72rem; padding: 1px 4px; }
-/* 제목이 길어도 시간은 줄이지 않고 제목만 말줄임한다. */
-.fc-custom .fc-h-event .fc-event-time { flex-shrink: 0; overflow: visible; }
-.fc-custom .fc-h-event .fc-event-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.fc-custom th, .fc-custom td { border-color: var(--color-border) !important; }
+/* FullCalendar 화면은 components/student-portal/unified-calendar.css가 맡는다. */
 
 /* ─── FullEditor / ProseMirror 스타일 ───────────── */
 

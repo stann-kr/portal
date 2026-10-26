@@ -37,6 +37,17 @@ export function isUnifiedItemAllDay(item: UnifiedItem): boolean {
   return item.type === "NOTE" || item.metadata.allDay === true;
 }
 
+/** 하루 안에서는 종일 항목을 먼저, 나머지는 이른 시각부터 놓는다. */
+export function sortDayAgenda(items: readonly UnifiedItem[]): UnifiedItem[] {
+  return items
+    .map((item, index) => ({ item, index }))
+    .sort((left, right) =>
+      Number(isUnifiedItemAllDay(right.item)) - Number(isUnifiedItemAllDay(left.item))
+      || left.item.date.getTime() - right.item.date.getTime()
+      || left.index - right.index)
+    .map(({ item }) => item);
+}
+
 /** 표·목록에서 하루짜리 항목을 만드는 빠른 만들기 선택. */
 export function createDaySelection(dateKey: string): CalendarQuickCreateSelection {
   const next = new Date(Date.parse(`${dateKey}T00:00:00Z`) + DAY_MS).toISOString().slice(0, 10);

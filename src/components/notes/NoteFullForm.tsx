@@ -129,7 +129,8 @@ function NoteFullFormContent({ action, actorId, studentId, returnTo, defaultDate
       onReset: () => {
         defaultNoteDateRef.current = initialDefaultDate;
         setOperationId(createCreationOperationId());
-        setTitle("");
+        // 저장된 초안이 없을 때도 이 경로로 시작하므로 주소의 제목·날짜를 기본값으로 둔다.
+        setTitle(defaultTitle);
         setNoteDate(initialDefaultDate);
         setContentHtml("");
       },
@@ -148,6 +149,7 @@ function NoteFullFormContent({ action, actorId, studentId, returnTo, defaultDate
       isCreateNoteDraftEmpty(
         { title, noteDate, contentHtml: latestContentHtml },
         defaultNoteDateRef.current,
+        defaultTitle,
       )
     ) {
       clear();
@@ -165,6 +167,7 @@ function NoteFullFormContent({ action, actorId, studentId, returnTo, defaultDate
   }, [
     clear,
     contentHtml,
+    defaultTitle,
     loaded,
     noteDate,
     operationId,

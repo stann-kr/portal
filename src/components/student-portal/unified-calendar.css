@@ -10,6 +10,11 @@
   --fc-small-font-size: 0.75rem;
 }
 
+.fc-custom th,
+.fc-custom td {
+  border-color: var(--color-border);
+}
+
 /* ── 노션식 표: 바깥 테두리를 지우고 얇은 칸 선만 남긴다. ── */
 .fc-notion .fc-scrollgrid {
   border: 0;
@@ -214,7 +219,7 @@
 
 /* ── 주 보기 ── */
 .fc-notion .fc-timegrid-slot {
-  height: 2.5rem;
+  height: 1.5rem;
 }
 
 .fc-notion .fc-timegrid-slot-minor {
