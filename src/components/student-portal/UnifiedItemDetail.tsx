@@ -13,7 +13,7 @@ import Link from "next/link";
 import { Disc3, MessageSquareText } from "lucide-react";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 import { UnifiedItemSpaceBadge, UnifiedItemTypeBadge } from "@/components/ui/unified-item-type";
-import { UnifiedNoteDetail } from "./UnifiedNoteDetail";
+import { UnifiedNoteDetail, type NoteDetailViewer } from "./UnifiedNoteDetail";
 import {
   CalendarEventActions,
   isEditableCalendarEventItem,
@@ -83,6 +83,7 @@ interface UnifiedItemDetailProps {
   onItemUpdated?: (item: UnifiedItem) => void;
   onItemRemoved?: (item: UnifiedItem) => void;
   onBusyChange?: (busy: boolean) => void;
+  viewer?: NoteDetailViewer;
 }
 
 export function UnifiedItemDetail({
@@ -93,10 +94,10 @@ export function UnifiedItemDetail({
   onItemUpdated,
   onItemRemoved,
   onBusyChange,
+  viewer,
 }: UnifiedItemDetailProps) {
   // metadata 값을 미리 문자열로 추출 (unknown → string | null 명확화)
   const metaDescription = metaStr(item.metadata, "description");
-  const metaPreview = metaStr(item.metadata, "preview");
   const metaLinkUrl = metaStr(item.metadata, "linkUrl");
   const metaMediaUrl = metaStr(item.metadata, "mediaUrl");
   const allDayStartDate = metaStr(item.metadata, "allDayStartDate");
@@ -175,7 +176,14 @@ export function UnifiedItemDetail({
 
       {/* NOTE */}
       {item.type === "NOTE" ? (
-        <UnifiedNoteDetail key={item.id} noteId={item.id} preview={metaPreview} returnTo={returnTo} />
+        <UnifiedNoteDetail
+          key={item.id}
+          item={item}
+          returnTo={returnTo}
+          viewer={viewer}
+          onItemUpdated={onItemUpdated}
+          onBusyChange={onBusyChange}
+        />
       ) : null}
 
       {/* DIGGING */}

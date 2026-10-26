@@ -49,6 +49,7 @@ import {
   createLatestMoveTracker,
   fromCalendarWallTime,
   getCalendarItemEditing,
+  getCalendarItemLockReason,
   getCalendarNow,
   isCalendarMoveReflected,
   resolveSavedMove,
@@ -73,7 +74,7 @@ interface UnifiedCalendarProps extends UnifiedItemChangeHandlers {
   preset?: CalendarPreset | null;
   onPresetChange?: (preset: CalendarPreset | null) => void;
   /** 보는 사람과 이 스페이스에서의 권한. 없으면 아무것도 끌 수 없다. */
-  editContext?: Omit<CalendarEditContext, "canManageEvents" | "canManageLessons">;
+  editContext?: CalendarEditContext;
   /** 칸을 눌러 바로 만들기. 없으면 칸 선택을 끈다. */
   quickCreate?: CalendarQuickCreateOptions;
 }
@@ -143,7 +144,7 @@ function reverseRequest(item: UnifiedItem, request: CalendarMoveRequest): Calend
 
 async function sendMove(item: UnifiedItem, request: CalendarMoveRequest, operationId: string): Promise<string | null> {
   if (request.kind === "event") {
-    const result = await moveCalendarEvent(item.id, request.startTime, request.endTime);
+    const result = await moveCalendarEvent(item.id, request.startTime, request.endTime, item.space.studentId);
     return result.ok ? null : result.error;
   }
   if (request.kind === "lesson") {
@@ -170,9 +171,12 @@ async function saveMove(item: UnifiedItem, request: CalendarMoveRequest): Promis
 
 // FullCalendar 옵션은 렌더마다 새로 만들면 다시 계산되므로 모듈 상수로 고정한다.
 function handleEventDidMount(arg: EventMountArg) {
-  const { color, movable } = arg.event.extendedProps as { color?: string; movable?: boolean };
+  const { color, lockReason } = arg.event.extendedProps as { color?: string; lockReason?: string | null };
   if (color) arg.el.style.setProperty("--chip-color", color);
-  if (!movable) arg.el.setAttribute("title", `${arg.event.title} · 이 화면에서는 옮길 수 없습니다`);
+  if (lockReason) {
+    arg.el.dataset.lockReason = lockReason;
+    arg.el.setAttribute("title", `${arg.event.title} · ${lockReason}`);
+  }
 }
 
 function allowSameSlotKind(drop: DateSpanApi, dragged: EventApi | null) {
@@ -279,9 +283,9 @@ export function UnifiedCalendar({
     anchor: { x: number; y: number } | null;
   } | null>(null);
 
-  const context: CalendarEditContext | null = editContext
-    ? { ...editContext, canManageEvents: canManageEvents === true, canManageLessons: canManageLessons === true }
-    : null;
+  const context: CalendarEditContext | null = editContext ?? null;
+  // 잠긴 칩을 끌려고 하면 이유를 알려 준다(끌기는 FullCalendar가 시작하지 않음).
+  const lockedPressRef = useRef<{ x: number; y: number; reason: string } | null>(null);
   const withPendingMove = (item: UnifiedItem) => {
     const pending = pendingMoves.get(getUnifiedItemKey(item));
     return pending ? applyCalendarMoveToItem(item, pending.request) : item;
@@ -339,6 +343,7 @@ export function UnifiedCalendar({
           movable,
           color,
           timeLabel: allDay ? null : formatKst(item.date, KST_TIME),
+          lockReason: context ? getCalendarItemLockReason(item, context) : null,
           spaceLabel: item.space.label,
           sourceLabel: item.source.label,
         },
@@ -461,7 +466,24 @@ export function UnifiedCalendar({
   const canQuickCreate = canUseQuickCreate(quickCreate);
 
   return (
-    <div ref={containerRef} className="flex h-full flex-col gap-3">
+    <div
+      ref={containerRef}
+      className="flex h-full flex-col gap-3"
+      onPointerDownCapture={(event) => {
+        const locked = (event.target as Element).closest<HTMLElement>(".calendar-event-locked");
+        const reason = locked?.dataset.lockReason;
+        lockedPressRef.current = reason ? { x: event.clientX, y: event.clientY, reason } : null;
+      }}
+      onPointerMoveCapture={(event) => {
+        const press = lockedPressRef.current;
+        if (!press || Math.hypot(event.clientX - press.x, event.clientY - press.y) < 6) return;
+        lockedPressRef.current = null;
+        setNotice({ tone: "status", message: press.reason });
+      }}
+      onPointerUpCapture={() => {
+        lockedPressRef.current = null;
+      }}
+    >
       {/* 노션식 툴바: 기간 이동 · 제목 · 보기 전환 */}
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
         <div className="flex min-w-0 items-center gap-1">
@@ -656,6 +678,7 @@ export function UnifiedCalendar({
         canManageLessons={canManageLessons}
         onItemUpdated={onItemUpdated}
         onItemRemoved={onItemRemoved}
+        viewer={editContext}
       />
     </div>
   );

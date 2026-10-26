@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useActionState, useCallback, useEffect, useInsertionEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { AutosaveStatus } from "@/components/editor/AutosaveStatus";
 import { DraftStatus } from "@/components/editor/DraftStatus";
@@ -51,6 +51,17 @@ type NoteEditorFormProps = {
   action: (previous: UpdateNoteState, formData: FormData) => Promise<UpdateNoteState>;
   /** 새 노트를 만든 직후처럼 본문 끝에서 바로 이어 쓰게 한다. */
   focusBodyEnd?: boolean;
+  /** 저장이 끝난 서버 값. 캘린더 패널처럼 바깥 목록이 제목·날짜를 맞출 때 쓴다. */
+  onSaved?: (note: SavedNote) => void;
+  /** 저장·이미지 업로드 중인지. 패널이 그동안 닫히지 않게 한다. */
+  onBusyChange?: (busy: boolean) => void;
+};
+
+export type SavedNote = {
+  id: string;
+  title: string;
+  contentHtml: string;
+  noteDate: Date | null;
 };
 
 type NoteEditSnapshot = {
@@ -89,7 +100,7 @@ export function NoteEditorForm(props: NoteEditorFormProps) {
   return <NoteEditorFormContent key={`${props.actorId}:${props.note.id}`} {...props} />;
 }
 
-function NoteEditorFormContent({ note, actorId, action, focusBodyEnd = false }: NoteEditorFormProps) {
+function NoteEditorFormContent({ note, actorId, action, focusBodyEnd = false, onSaved, onBusyChange }: NoteEditorFormProps) {
   const serverVersion = note.version ?? 1;
   const [title, setTitle] = useState(note.title);
   const [noteDate, setNoteDate] = useState(toDateInputValue(note.noteDate));
@@ -113,8 +124,20 @@ function NoteEditorFormContent({ note, actorId, action, focusBodyEnd = false }: 
     }
   }, {});
   useBusyNavigationGuard(isPending);
+  const onSavedRef = useRef(onSaved);
+  const onBusyChangeRef = useRef(onBusyChange);
+  useInsertionEffect(() => {
+    onSavedRef.current = onSaved;
+    onBusyChangeRef.current = onBusyChange;
+  });
   // 본문 이미지가 올라가는 동안에는 이미지 없는 본문을 저장하지 않는다.
   const [isEditorUploading, setIsEditorUploading] = useState(false);
+  // 패널처럼 바깥에서 닫힐 수 있는 곳은 저장·업로드가 끝날 때까지 닫지 않게 알린다.
+  const busy = isPending || isEditorUploading;
+  useEffect(() => {
+    onBusyChangeRef.current?.(busy);
+  }, [busy]);
+  useEffect(() => () => onBusyChangeRef.current?.(false), []);
   const formRef = useRef<HTMLFormElement>(null);
   const contentHtmlInputRef = useRef<HTMLInputElement>(null);
   const handledSavedNoteRef = useRef<UpdateNoteState["note"]>(undefined);
@@ -400,6 +423,12 @@ function NoteEditorFormContent({ note, actorId, action, focusBodyEnd = false }: 
       return;
     }
     handledSavedNoteRef.current = state.note;
+    onSavedRef.current?.({
+      id: state.note.id,
+      title: state.note.title,
+      contentHtml: state.note.contentHtml,
+      noteDate: state.note.noteDate,
+    });
     const submittedSnapshot = submittedDraftRef.current;
     const latestContentHtml = readLatestContentHtml();
     // 저장 요청 뒤에도 계속 썼다면 그 내용을 지키고 다음 자동 저장에 맡긴다.

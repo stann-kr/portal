@@ -70,6 +70,7 @@ export function AllItemsView({
   canManageLessons,
   onItemUpdated,
   onItemRemoved,
+  viewer,
 }: AllItemsViewProps) {
   const [activeTypes, setActiveTypes] = useState<Set<UnifiedItemType>>(
     new Set(initialType ? [initialType] : ALL_TYPES),
@@ -274,6 +275,7 @@ export function AllItemsView({
         canManageLessons={canManageLessons}
         onItemUpdated={onItemUpdated}
         onItemRemoved={onItemRemoved}
+        viewer={viewer}
       />
     </div>
   );

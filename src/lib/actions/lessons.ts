@@ -145,7 +145,15 @@ export async function rescheduleLesson(
   formData: FormData,
 ): Promise<CreateLessonState> {
   await requireStudentTarget(studentId);
+  return writeLessonSchedule(lessonId, studentId, formData);
+}
 
+/** 권한 확인을 마친 호출만 쓴다. 대상 학생의 레슨일 때만 시간을 바꾼다. */
+async function writeLessonSchedule(
+  lessonId: string,
+  studentId: string,
+  formData: FormData,
+): Promise<CreateLessonState> {
   const parsed = parseLessonScheduleInput(formData);
   if (!parsed.ok) return { error: parsed.error };
 
@@ -162,16 +170,23 @@ export async function rescheduleLesson(
 }
 
 /**
- * 캘린더에서 끌어 옮긴 레슨 시간을 저장한다 (Admin 전용). 실패는 상태로 돌려 화면이 원위치하게 한다.
+ * 캘린더에서 끌어 옮긴 레슨 시간을 저장한다. 관리자는 대상 학생의 레슨을, 학생은 본인 레슨을
+ * 옮긴다(2026-10-26 사용자 결정). 실패는 상태로 돌려 화면이 원위치하게 한다.
  */
 export async function moveLesson(
   lessonId: string,
   studentId: string,
   scheduledAt: string,
 ): Promise<CreateLessonState> {
+  const session = await requireAuth();
+  try {
+    await requireStudentOwnerOrAdmin(session, studentId);
+  } catch {
+    return { error: "레슨을 찾을 수 없거나 권한이 없습니다." };
+  }
   const formData = new FormData();
   formData.set("scheduledAt", scheduledAt);
-  return rescheduleLesson(lessonId, studentId, {}, formData);
+  return writeLessonSchedule(lessonId, studentId, formData);
 }
 
 // ───────────────────────────────────────────────

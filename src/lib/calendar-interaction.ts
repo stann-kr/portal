@@ -1,14 +1,10 @@
 import { toKstDateInputValue } from "@/lib/date-input";
 import { getUnifiedItemKey, type UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 
-/** 캘린더를 보는 사람이 이 스페이스에서 바꿀 수 있는 범위. 서버가 같은 규칙을 다시 검사한다. */
+/** 캘린더를 보는 사람. 서버가 같은 규칙을 다시 검사한다. */
 export type CalendarEditContext = {
   actorId: string;
   role: "admin" | "student";
-  /** 학생 본인 스페이스일 때만 개인 일정을 옮긴다. */
-  canManageEvents: boolean;
-  /** 관리자가 학생 스페이스를 볼 때만 레슨을 옮긴다. */
-  canManageLessons: boolean;
 };
 
 export type CalendarItemEditing =
@@ -19,23 +15,45 @@ export type CalendarItemEditing =
 
 const READ_ONLY: CalendarItemEditing = { kind: null, movable: false, resizable: false };
 
+/**
+ * 일정·레슨은 관리자와 그 학생 본인이 모두 옮긴다(2026-10-26 사용자 결정).
+ * 노트는 노트 수정 권한과 같다: 관리자이거나 본인이 쓴 노트.
+ */
 export function getCalendarItemEditing(
   item: UnifiedItem,
   context: CalendarEditContext,
 ): CalendarItemEditing {
   if (item.source.kind !== "PORTAL") return READ_ONLY;
+  const ownsSpace = context.role === "admin" || item.space.studentId === context.actorId;
   switch (item.source.entity) {
     case "CALENDAR_EVENT":
-      return context.canManageEvents ? { kind: "event", movable: true, resizable: true } : READ_ONLY;
+      return ownsSpace ? { kind: "event", movable: true, resizable: true } : READ_ONLY;
     case "LESSON":
-      return context.canManageLessons ? { kind: "lesson", movable: true, resizable: false } : READ_ONLY;
+      return ownsSpace ? { kind: "lesson", movable: true, resizable: false } : READ_ONLY;
     case "PRIVATE_NOTE":
-      // 노트 수정 권한과 같다: 관리자이거나 본인이 쓴 노트.
       return context.role === "admin" || item.metadata.authorId === context.actorId
         ? { kind: "note", movable: true, resizable: false }
         : READ_ONLY;
     default:
       return READ_ONLY;
+  }
+}
+
+/** 끌 수 없는 항목을 끌려고 할 때 보여 줄 이유. 옮길 수 있으면 null. */
+export function getCalendarItemLockReason(item: UnifiedItem, context: CalendarEditContext): string | null {
+  if (getCalendarItemEditing(item, context).movable) return null;
+  if (item.source.kind !== "PORTAL") return "연결한 외부 캘린더의 일정은 그 캘린더에서 바꿔 주세요.";
+  switch (item.source.entity) {
+    case "PRIVATE_NOTE":
+      return "다른 사람이 쓴 노트는 작성자나 관리자만 날짜를 옮길 수 있습니다.";
+    case "DIGGING_TRACK":
+      return "디깅 트랙은 추가한 날짜에 기록되어 옮길 수 없습니다.";
+    case "QNA_THREAD":
+      return "질문은 올린 날짜에 기록되어 옮길 수 없습니다.";
+    case "ASSIGNMENT":
+      return "과제는 제출한 날짜에 기록되어 옮길 수 없습니다.";
+    default:
+      return "이 항목은 옮길 수 없습니다.";
   }
 }
 

@@ -10,7 +10,7 @@ import { createDb } from "@/db/client";
 import { calendarEvents } from "@/db/schema";
 import type { CalendarEventType } from "@/db/schema";
 import { and, eq, gte, lte } from "drizzle-orm";
-import { requireAuth } from "@/lib/auth-guard";
+import { requireAuth, requireStudentOwnerOrAdmin } from "@/lib/auth-guard";
 import {
   parseCalendarEventCreateInput,
   parseCalendarEventUpdateInput,
@@ -181,18 +181,27 @@ export type MoveCalendarEventResult =
   | { ok: false; error: string };
 
 /**
- * 캘린더에서 끌어 옮기거나 길이를 바꾼 본인 일정의 시간만 저장한다. 실패는 상태로 돌려 화면이 원위치하게 한다.
+ * 캘린더에서 끌어 옮기거나 길이를 바꾼 일정의 시간만 저장한다. 학생은 본인 일정을, 관리자는
+ * 대상 학생의 일정을 옮긴다(2026-10-26 사용자 결정). 실패는 상태로 돌려 화면이 원위치하게 한다.
  */
 export async function moveCalendarEvent(
   eventId: string,
   startTime: string,
   endTime: string | null,
+  studentId?: string,
 ): Promise<MoveCalendarEventResult> {
   const session = await requireAuth();
   if (typeof eventId !== "string" || !eventId) {
     return { ok: false, error: "옮길 일정을 찾을 수 없습니다." };
   }
-  const result = await writeOwnCalendarEventPatch(session.user.id!, eventId, { startTime, endTime });
+  const ownerId = typeof studentId === "string" && studentId ? studentId : session.user.id!;
+  try {
+    await requireStudentOwnerOrAdmin(session, ownerId);
+  } catch {
+    return { ok: false, error: "일정을 찾을 수 없거나 권한이 없습니다." };
+  }
+  const result = await writeOwnCalendarEventPatch(ownerId, eventId, { startTime, endTime });
+  if (result.ok && ownerId !== session.user.id) revalidatePath("/dashboard/admin");
   return result.ok ? { ok: true, event: result.value } : result;
 }
 

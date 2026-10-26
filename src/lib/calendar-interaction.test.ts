@@ -10,6 +10,7 @@ import {
   resolveSavedMove,
   toCalendarWallTime,
   getCalendarItemEditing,
+  getCalendarItemLockReason,
   getNoteCalendarDateKey,
   type CalendarEditContext,
 } from "./calendar-interaction";
@@ -29,26 +30,18 @@ function item(entity: UnifiedItemSourceEntity, overrides: Partial<UnifiedItem> =
   };
 }
 
-const student: CalendarEditContext = {
-  actorId: "student-1",
-  role: "student",
-  canManageEvents: true,
-  canManageLessons: false,
-};
-const admin: CalendarEditContext = {
-  actorId: "admin-1",
-  role: "admin",
-  canManageEvents: false,
-  canManageLessons: true,
-};
+const student: CalendarEditContext = { actorId: "student-1", role: "student" };
+const otherStudent: CalendarEditContext = { actorId: "student-2", role: "student" };
+const admin: CalendarEditContext = { actorId: "admin-1", role: "admin" };
 
-test("학생은 본인 일정과 본인이 쓴 노트만 옮기고 레슨은 옮기지 못한다", () => {
+test("학생은 자기 스페이스의 일정·레슨과 본인이 쓴 노트를 옮기고 다른 학생 것은 옮기지 못한다", () => {
   assert.deepEqual(getCalendarItemEditing(item("CALENDAR_EVENT"), student), {
     kind: "event",
     movable: true,
     resizable: true,
   });
-  assert.equal(getCalendarItemEditing(item("LESSON"), student).movable, false);
+  assert.equal(getCalendarItemEditing(item("LESSON"), student).kind, "lesson");
+  assert.equal(getCalendarItemEditing(item("LESSON"), student).resizable, false);
   assert.equal(
     getCalendarItemEditing(item("PRIVATE_NOTE", { metadata: { authorId: "student-1" } }), student).kind,
     "note",
@@ -57,16 +50,29 @@ test("학생은 본인 일정과 본인이 쓴 노트만 옮기고 레슨은 옮
     getCalendarItemEditing(item("PRIVATE_NOTE", { metadata: { authorId: "admin-1" } }), student).movable,
     false,
   );
+  assert.equal(getCalendarItemEditing(item("CALENDAR_EVENT"), otherStudent).movable, false);
+  assert.equal(getCalendarItemEditing(item("LESSON"), otherStudent).movable, false);
 });
 
-test("관리자는 학생 스페이스의 레슨과 노트를 옮기고 학생 개인 일정은 옮기지 못한다", () => {
+test("관리자는 학생 스페이스의 일정·레슨·노트를 모두 옮긴다", () => {
   assert.equal(getCalendarItemEditing(item("LESSON"), admin).kind, "lesson");
-  assert.equal(getCalendarItemEditing(item("LESSON"), admin).resizable, false);
+  assert.equal(getCalendarItemEditing(item("CALENDAR_EVENT"), admin).kind, "event");
+  assert.equal(getCalendarItemEditing(item("CALENDAR_EVENT"), admin).resizable, true);
   assert.equal(
     getCalendarItemEditing(item("PRIVATE_NOTE", { metadata: { authorId: "student-1" } }), admin).kind,
     "note",
   );
-  assert.equal(getCalendarItemEditing(item("CALENDAR_EVENT"), admin).movable, false);
+});
+
+test("끌 수 없는 항목은 이유를 알려 주고 옮길 수 있는 항목은 이유가 없다", () => {
+  assert.equal(getCalendarItemLockReason(item("CALENDAR_EVENT"), student), null);
+  assert.match(getCalendarItemLockReason(item("PRIVATE_NOTE", { metadata: { authorId: "admin-1" } }), student) ?? "", /작성자나 관리자/u);
+  assert.match(getCalendarItemLockReason(item("QNA_THREAD"), admin) ?? "", /올린 날짜/u);
+  assert.match(getCalendarItemLockReason(item("ASSIGNMENT"), admin) ?? "", /제출한 날짜/u);
+  assert.match(getCalendarItemLockReason(item("DIGGING_TRACK"), student) ?? "", /추가한 날짜/u);
+  assert.match(getCalendarItemLockReason(item("EXTERNAL_CALENDAR_EVENT", {
+    source: { kind: "ICLOUD_CALENDAR", entity: "EXTERNAL_CALENDAR_EVENT", label: "iCloud" },
+  }), admin) ?? "", /외부 캘린더/u);
 });
 
 test("외부 캘린더·디깅·Q&A·과제는 누구도 끌 수 없다", () => {
@@ -80,7 +86,7 @@ test("외부 캘린더·디깅·Q&A·과제는 누구도 끌 수 없다", () => 
     item("ASSIGNMENT"),
   ]) {
     assert.equal(getCalendarItemEditing(candidate, student).movable, false);
-    assert.equal(getCalendarItemEditing(candidate, { ...admin, canManageEvents: true }).movable, false);
+    assert.equal(getCalendarItemEditing(candidate, admin).movable, false);
   }
 });
 
@@ -124,7 +130,7 @@ test("이동 요청은 항목이 표현할 수 있는 칸에서만 만든다", (
     { kind: "lesson", scheduledAt: start.toISOString() },
   );
   assert.equal(
-    buildCalendarMoveRequest(getCalendarItemEditing(item("LESSON"), student), { start, end, allDay: false, startStr: "" }),
+    buildCalendarMoveRequest(getCalendarItemEditing(item("LESSON"), otherStudent), { start, end, allDay: false, startStr: "" }),
     null,
   );
 });

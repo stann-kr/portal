@@ -393,6 +393,7 @@ export function CalendarSection({
             <DailyListView
               items={unifiedItems}
               quickCreate={quickCreate}
+              viewer={{ actorId, role: workspaceRole }}
               returnTo={workspaceReturnTo}
               showSpaceContext={showSpaceContext}
               canManageEvents={isStudentWorkspace}
@@ -406,6 +407,7 @@ export function CalendarSection({
             <AllItemsView
               items={unifiedItems}
               quickCreate={quickCreate}
+              viewer={{ actorId, role: workspaceRole }}
               returnTo={workspaceReturnTo}
               showSpaceContext={showSpaceContext}
               initialType={allItemsInitialType}

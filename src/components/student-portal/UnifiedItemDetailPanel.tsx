@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 import { SlidePanel } from "./SlidePanel";
 import { UnifiedItemDetail } from "./UnifiedItemDetail";
+import type { NoteDetailViewer } from "./UnifiedNoteDetail";
 
 export type UnifiedItemChangeHandlers = {
   /** 학생 본인 스페이스에서만 포털 일정을 수정·삭제할 수 있다. */
@@ -12,6 +13,8 @@ export type UnifiedItemChangeHandlers = {
   canManageLessons?: boolean;
   onItemUpdated?: (item: UnifiedItem) => void;
   onItemRemoved?: (item: UnifiedItem) => void;
+  /** 보는 사람. 노트 수정 권한(관리자 또는 작성자)이 있으면 패널 안에서 바로 고친다. */
+  viewer?: NoteDetailViewer;
 };
 
 /** 캘린더·일별·전체 보기가 같은 상세 패널과 변경 중 닫힘 잠금을 공유한다. */
@@ -25,6 +28,7 @@ export function UnifiedItemDetailPanel({
   canManageLessons = false,
   onItemUpdated,
   onItemRemoved,
+  viewer,
 }: {
   item: UnifiedItem | null;
   open: boolean;
@@ -39,7 +43,8 @@ export function UnifiedItemDetailPanel({
     <SlidePanel
       open={open}
       onOpenChange={onOpenChange}
-      title={item?.title}
+      title={item?.type === "NOTE" ? "노트" : item?.title}
+      size={item?.type === "NOTE" ? "xl" : "md"}
       dismissible={!busy}
     >
       {item ? (
@@ -49,6 +54,7 @@ export function UnifiedItemDetailPanel({
           returnTo={returnTo}
           canManageEvents={canManageEvents}
           canManageLessons={canManageLessons}
+          viewer={viewer}
           onBusyChange={setBusy}
           onItemUpdated={(updated) => {
             onItemChange(updated);

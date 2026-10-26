@@ -72,6 +72,7 @@ export function DailyListView({
   canManageLessons,
   onItemUpdated,
   onItemRemoved,
+  viewer,
 }: DailyListViewProps) {
   const [selectedItem, setSelectedItem] = useState<UnifiedItem | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
@@ -231,6 +232,7 @@ export function DailyListView({
         canManageLessons={canManageLessons}
         onItemUpdated={onItemUpdated}
         onItemRemoved={onItemRemoved}
+        viewer={viewer}
       />
     </>
   );

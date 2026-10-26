@@ -2,29 +2,57 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { PencilLine } from "lucide-react";
+import { LockKeyhole, Maximize2 } from "lucide-react";
 import { RichTextContent } from "@/components/editor/RichTextContent";
+import { NoteEditorForm, type SavedNote } from "@/components/notes/NoteEditorForm";
 import { Button } from "@/components/ui/button";
-import { getPrivateNote } from "@/lib/actions/privateNotes";
+import { getPrivateNote, updatePrivateNote, type UpdateNoteState } from "@/lib/actions/privateNotes";
+import { createNotePreview } from "@/lib/unified-item-normalization";
+import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
+
+type LoadedNote = NonNullable<Awaited<ReturnType<typeof getPrivateNote>>>;
 
 type NoteBodyState =
   | { status: "loading" }
-  | { status: "ready"; contentHtml: string }
+  | { status: "ready"; note: LoadedNote }
   | { status: "missing" }
   | { status: "error" };
 
+export type NoteDetailViewer = { actorId: string; role: "admin" | "student" };
+
+/** 패널에서 저장한 값을 캘린더·목록 항목에 반영한다. 날짜를 비우면 작성일로 돌아간다. */
+function applySavedNote(item: UnifiedItem, saved: SavedNote, createdAt: Date): UnifiedItem {
+  return {
+    ...item,
+    title: saved.title,
+    date: saved.noteDate ? new Date(saved.noteDate) : new Date(createdAt),
+    metadata: {
+      ...item.metadata,
+      noteDate: saved.noteDate,
+      preview: createNotePreview(saved.contentHtml),
+    },
+  };
+}
+
 /**
  * 통합 일정 payload에는 평문 미리보기만 싣고, 패널을 연 노트의 본문만 권한을 다시 확인해 불러온다.
+ * 수정 권한(관리자 또는 작성자)이 있으면 문서 페이지와 같은 편집기로 패널 안에서 바로 고친다.
  */
 export function UnifiedNoteDetail({
-  noteId,
-  preview,
+  item,
   returnTo,
+  viewer,
+  onItemUpdated,
+  onBusyChange,
 }: {
-  noteId: string;
-  preview: string | null;
+  item: UnifiedItem;
   returnTo: string;
+  viewer?: NoteDetailViewer;
+  onItemUpdated?: (item: UnifiedItem) => void;
+  onBusyChange?: (busy: boolean) => void;
 }) {
+  const noteId = item.id;
+  const preview = typeof item.metadata.preview === "string" ? item.metadata.preview : null;
   const [body, setBody] = useState<NoteBodyState>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
 
@@ -40,7 +68,7 @@ export function UnifiedNoteDetail({
     getPrivateNote(noteId)
       .then((note) => {
         if (!active) return;
-        setBody(note ? { status: "ready", contentHtml: note.contentHtml } : { status: "missing" });
+        setBody(note ? { status: "ready", note } : { status: "missing" });
       })
       .catch(() => {
         if (active) setBody({ status: "error" });
@@ -50,10 +78,38 @@ export function UnifiedNoteDetail({
     };
   }, [noteId, attempt]);
 
+  const fullPageHref = `/dashboard/notes/${encodeURIComponent(noteId)}?returnTo=${encodeURIComponent(returnTo)}`;
+  const canEdit = body.status === "ready" && Boolean(
+    viewer && (viewer.role === "admin" || viewer.actorId === body.note.authorId),
+  );
+
   return (
     <div className="space-y-5">
       {body.status === "ready" ? (
-        <RichTextContent html={body.contentHtml} />
+        canEdit && viewer ? (
+          <NoteEditorForm
+            note={{
+              id: body.note.id,
+              title: body.note.title,
+              contentHtml: body.note.contentHtml,
+              noteDate: body.note.noteDate,
+              version: body.note.version,
+            }}
+            actorId={viewer.actorId}
+            action={(previous: UpdateNoteState, formData: FormData) => updatePrivateNote(noteId, previous, formData)}
+            onSaved={(saved) => onItemUpdated?.(applySavedNote(item, saved, body.note.createdAt))}
+            onBusyChange={onBusyChange}
+          />
+        ) : (
+          <div className="space-y-4">
+            <h2 className="break-words text-xl font-semibold tracking-[-0.01em]">{body.note.title}</h2>
+            <p className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+              <LockKeyhole className="size-3.5" aria-hidden="true" />
+              다른 작성자의 노트는 읽기 전용입니다.
+            </p>
+            <RichTextContent html={body.note.contentHtml} />
+          </div>
+        )
       ) : body.status === "missing" ? (
         <p className="text-sm text-muted-foreground" role="status">
           휴지통으로 옮겼거나 더 이상 볼 수 없는 노트입니다.
@@ -80,11 +136,11 @@ export function UnifiedNoteDetail({
       )}
       {body.status !== "missing" ? (
         <Link
-          href={`/dashboard/notes/${encodeURIComponent(noteId)}?returnTo=${encodeURIComponent(returnTo)}`}
+          href={fullPageHref}
           className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-accent"
         >
-          <PencilLine className="h-3.5 w-3.5" aria-hidden="true" />
-          전체 화면에서 이어쓰기
+          <Maximize2 className="size-3.5" aria-hidden="true" />
+          전체 화면으로 열기
         </Link>
       ) : null}
     </div>
