@@ -18,6 +18,30 @@ export const UNIFIED_ITEM_TYPE_LABELS: Record<UnifiedItemType, string> = {
   ASSIGNMENT: "과제",
 };
 
+export const UNIFIED_ITEM_TYPES: readonly UnifiedItemType[] = ["EVENT", "NOTE", "DIGGING", "QNA", "ASSIGNMENT"];
+
+/** 유형 필터·개수 칩의 점. 일정 묶음은 레슨 점으로 대표한다(캔버스 Calendar 보드). */
+export const UNIFIED_ITEM_TYPE_DOT_CLASS: Record<UnifiedItemType, string> = {
+  EVENT: "bg-event-lesson",
+  NOTE: "bg-item-note",
+  DIGGING: "bg-item-digging",
+  QNA: "bg-item-qna",
+  ASSIGNMENT: "bg-item-assignment",
+};
+
+const EVENT_KIND_LABELS: Record<string, string> = {
+  LESSON: "레슨",
+  PRACTICE: "연습",
+  GIG: "공연",
+  NOTE: "메모",
+};
+
+/** 목록 행 오른쪽의 종류: 일정은 레슨·연습·공연·메모, 나머지는 유형 이름. */
+export function getUnifiedItemKindLabel(item: UnifiedItem): string {
+  if (item.type === "EVENT") return EVENT_KIND_LABELS[item.subType ?? ""] ?? UNIFIED_ITEM_TYPE_LABELS.EVENT;
+  return UNIFIED_ITEM_TYPE_LABELS[item.type];
+}
+
 const TYPE_ICONS: Record<UnifiedItemType, React.ElementType> = {
   EVENT: CalendarDays,
   NOTE: FileText,
@@ -36,16 +60,26 @@ export function UnifiedItemTypeIcon({
   style?: CSSProperties;
 }) {
   const Icon = TYPE_ICONS[type];
-  return <Icon className={cn("size-4", className)} style={style} aria-hidden="true" />;
+  return <Icon className={cn("size-4", className)} style={style} strokeWidth={1.6} aria-hidden="true" />;
 }
 
-export function UnifiedItemTypeBadge({ item }: { item: UnifiedItem }) {
-  const color = getUnifiedItemColor(item);
-
+/** 항목 유형·일정 종류를 6px 점으로 구분한다. 글자는 먹색을 유지한다. */
+export function UnifiedItemDot({ item, className }: { item: UnifiedItem; className?: string }) {
   return (
-    <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-muted px-2 py-1 text-xs font-medium text-foreground">
-      <UnifiedItemTypeIcon type={item.type} className="size-3" style={{ color }} />
-      {UNIFIED_ITEM_TYPE_LABELS[item.type]}
+    <span
+      aria-hidden="true"
+      className={cn("size-1.5 shrink-0 rounded-full", className)}
+      style={{ backgroundColor: getUnifiedItemColor(item) }}
+    />
+  );
+}
+
+/** 상세 머리의 유형 표시: 점과 유형 이름, 레슨만 "레슨"(캔버스 CalendarDialogs). */
+export function UnifiedItemTypeBadge({ item }: { item: UnifiedItem }) {
+  return (
+    <span className="inline-flex shrink-0 items-center gap-1.5 text-xs text-secondary-foreground">
+      <UnifiedItemDot item={item} />
+      {item.type === "EVENT" && item.subType === "LESSON" ? EVENT_KIND_LABELS.LESSON : UNIFIED_ITEM_TYPE_LABELS[item.type]}
     </span>
   );
 }
@@ -58,14 +92,16 @@ export function describeUnifiedItemRow(item: UnifiedItem, when: string, showSpac
   return parts.filter(Boolean).join(", ");
 }
 
-/** 통합 항목의 학생 스페이스와 시스템 출처를 일관되게 표시한다. */
+/** 통합 항목의 학생 스페이스와 외부 출처를 작은 칩으로 표시한다(레슨 상세의 학생 칩). */
 export function UnifiedItemSpaceBadge({ item }: { item: UnifiedItem }) {
+  const external = item.source.kind !== "PORTAL";
   return (
     <span
-      className="inline-flex shrink-0 items-center rounded-md border border-border bg-background px-2 py-1 text-xs text-muted-foreground"
+      className="inline-flex h-5 shrink-0 items-center rounded-sm bg-muted px-1.5 text-[11px] text-secondary-foreground"
       aria-label={`${item.space.label} 학생 스페이스, ${item.source.label} 출처`}
     >
-      {item.space.label} · {item.source.label}
+      {item.space.label}
+      {external ? ` · ${item.source.label}` : null}
     </span>
   );
 }

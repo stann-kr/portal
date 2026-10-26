@@ -73,7 +73,7 @@ export function AccountMenu({
         <DropdownMenu.Portal>
           <DropdownMenu.Content
             side="top"
-            align="start"
+            align={size === "touch" ? "end" : "start"}
             sideOffset={6}
             collisionPadding={12}
             onCloseAutoFocus={handleCloseAutoFocus}

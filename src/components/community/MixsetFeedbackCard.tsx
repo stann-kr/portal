@@ -1,15 +1,16 @@
 /**
  * @file src/components/community/MixsetFeedbackCard.tsx
- * @description 믹스셋 피드백 게시물 카드 — 인라인 오디오 플레이어 포함.
+ * @description 믹스셋 게시판의 한 줄 — 인라인 오디오 재생 버튼 포함.
+ * 캔버스 Community 목록 줄(제목·미리보기·작성자·날짜) 앞에 재생 버튼을 둔다.
  * R2에 업로드된 오디오 파일을 HTML5 audio 태그로 인라인 재생.
  */
 "use client";
 
 import { useRef, useState } from "react";
 import Link from "next/link";
-import { Music2, Play, Pause, ChevronRight } from "lucide-react";
+import { Music2, Pause, Play } from "lucide-react";
 import { formatKstShortDate } from "@/lib/kst-format";
-import { getSearchableDocumentText } from "@/lib/document-search";
+import { communityAuthorName, communityPreview } from "./CommunityPostRow";
 
 type FeedbackPost = {
   id: string;
@@ -31,12 +32,9 @@ export function MixsetFeedbackCard({ post, returnTo = "/community" }: MixsetFeed
   const [playError, setPlayError] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
 
-  const author =
-    post.authorName ?? post.authorEmail?.split("@")[0] ?? "작성자 미상";
-  const initials = author.slice(0, 2).toUpperCase();
+  const author = communityAuthorName(post);
   const date = formatKstShortDate(post.createdAt, "날짜 정보 없음");
-
-  const preview = Array.from(getSearchableDocumentText(post.contentHtml)).slice(0, 80).join("");
+  const preview = communityPreview(post.contentHtml, 80);
 
   // 재생 상태는 실제 media event로만 바꿔 실패한 play()가 재생 중으로 보이지 않게 한다.
   const handleAudioToggle = () => {
@@ -51,71 +49,55 @@ export function MixsetFeedbackCard({ post, returnTo = "/community" }: MixsetFeed
   };
 
   return (
-    <div className="flex flex-col gap-3 p-4 rounded-xl border border-border bg-card hover:bg-accent/5 transition-colors group">
-      {/* 헤더 */}
-      <div className="flex items-center gap-3">
-        <div className="w-9 h-9 rounded-full bg-muted border border-border flex items-center justify-center flex-shrink-0 text-xs font-semibold">
-          {initials}
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <span>{author}</span>
-            <span>·</span>
-            <span>{date}</span>
-          </div>
-          <Link
-            href={`/community/${post.id}?returnTo=${encodeURIComponent(returnTo)}`}
-            className="mt-0.5 block truncate text-sm font-medium text-foreground hover:underline"
-          >
-            {post.title}
-          </Link>
-        </div>
-        <ChevronRight className="size-4 flex-shrink-0 text-muted-foreground" aria-hidden="true" />
-      </div>
-
-      {/* 오디오 플레이어 */}
+    <li className="flex items-start gap-3 border-b border-muted py-3.5 md:gap-3.5 md:px-1 md:py-4">
       {post.mediaUrl ? (
-        <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/50 border border-border">
+        <>
           <button
             type="button"
             onClick={handleAudioToggle}
-            className="w-9 h-9 rounded-full bg-primary text-primary-foreground flex items-center justify-center flex-shrink-0 hover:bg-primary/90 transition-colors"
-            aria-label={isPlaying ? "오디오 일시 정지" : "오디오 재생"}
+            aria-label={`${post.title} 재생`}
+            aria-pressed={isPlaying}
+            className="flex size-11 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground transition-colors hover:bg-primary/88 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background md:size-9"
           >
             {isPlaying ? (
-              <Pause className="w-4 h-4" aria-hidden="true" />
+              <Pause className="size-4" strokeWidth={1.6} aria-hidden="true" />
             ) : (
-              <Play className="w-4 h-4 ml-0.5" aria-hidden="true" />
+              <Play className="ml-0.5 size-4" strokeWidth={1.6} aria-hidden="true" />
             )}
           </button>
-          <div className="flex-1 min-w-0">
-            <p className="text-xs text-muted-foreground flex items-center gap-1.5">
-              <Music2 className="w-3 h-3" aria-hidden="true" />
-              <span className="truncate">{playError ? "오디오를 재생하지 못했습니다. 상세 화면에서 다시 시도해 주세요." : post.title}</span>
-            </p>
-            <audio
-              ref={audioRef}
-              src={post.mediaUrl}
-              preload="none"
-              onPlay={() => setIsPlaying(true)}
-              onPause={() => setIsPlaying(false)}
-              onEnded={() => setIsPlaying(false)}
-              onError={() => { setIsPlaying(false); setPlayError(true); }}
-              className="hidden"
-            />
-          </div>
-        </div>
+          <audio
+            ref={audioRef}
+            src={post.mediaUrl}
+            preload="none"
+            onPlay={() => setIsPlaying(true)}
+            onPause={() => setIsPlaying(false)}
+            onEnded={() => setIsPlaying(false)}
+            onError={() => { setIsPlaying(false); setPlayError(true); }}
+            className="hidden"
+          />
+        </>
       ) : (
-        <div className="flex items-center gap-2 p-3 rounded-lg bg-muted/30 text-xs text-muted-foreground">
-          <Music2 className="w-3.5 h-3.5" aria-hidden="true" />
-          <span>오디오 파일 없음</span>
-        </div>
+        <span aria-hidden="true" className="flex size-11 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground md:size-9">
+          <Music2 className="size-4" strokeWidth={1.6} />
+        </span>
       )}
 
-      {/* 미리보기 텍스트 */}
-      {preview && (
-        <p className="text-sm text-muted-foreground line-clamp-2">{preview}</p>
-      )}
-    </div>
+      <div className="flex min-w-0 flex-1 flex-col gap-1">
+        <Link
+          href={`/community/${post.id}?returnTo=${encodeURIComponent(returnTo)}`}
+          className="self-start text-md font-medium text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          {post.title}
+        </Link>
+        {preview ? <p className="truncate text-ui text-secondary-foreground">{preview}</p> : null}
+        <p className="text-xs text-muted-foreground">
+          {author} · {date}
+          {post.mediaUrl ? null : " · 오디오 파일 없음"}
+        </p>
+        {playError ? (
+          <p role="alert" className="text-xs text-destructive">오디오를 재생하지 못했습니다. 상세 화면에서 다시 시도해 주세요.</p>
+        ) : null}
+      </div>
+    </li>
   );
 }

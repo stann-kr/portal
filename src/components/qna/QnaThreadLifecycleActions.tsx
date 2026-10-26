@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition, type TransitionStartFunction } from "react";
+import { useEffect, useRef, useState, useTransition, type ReactNode, type RefObject, type TransitionStartFunction } from "react";
 import { useRouter } from "next/navigation";
 import { RotateCcw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -15,16 +15,15 @@ import { useHasPassed } from "@/lib/hooks/useHasPassed";
 
 const RETENTION_MILLISECONDS = 30 * 24 * 60 * 60 * 1000;
 
-export function QnaThreadLifecycleActions({
-  threadId,
-  version,
-  deletedAt,
-  canRestore,
-  canPurge,
-  returnTo,
-  disabled = false,
-  transition,
-}: {
+export type QnaLifecycleKind = "trash" | "restore" | "purge";
+
+export const QNA_LIFECYCLE_LABELS: Record<QnaLifecycleKind, string> = {
+  trash: "휴지통 이동",
+  restore: "Q&A 복원",
+  purge: "영구 삭제",
+};
+
+type QnaThreadLifecycleOptions = {
   threadId: string;
   version: number;
   deletedAt: string | null;
@@ -33,20 +32,52 @@ export function QnaThreadLifecycleActions({
   returnTo: string;
   disabled?: boolean;
   transition?: { isPending: boolean; start: TransitionStartFunction };
-}) {
+};
+
+type QnaThreadLifecycleHookOptions = QnaThreadLifecycleOptions & {
+  /** 동작 버튼(복원 뒤 초점이 이어질 곳). 화면에 하나만 붙인다. */
+  actionButtonRef: RefObject<HTMLButtonElement | null>;
+};
+
+export type QnaThreadLifecycle = {
+  /** 지금 가능한 한 가지 동작. 없으면 null. */
+  actionKind: QnaLifecycleKind | null;
+  triggerDisabled: boolean;
+  confirmOpen: boolean;
+  /** 복원은 바로 실행하고, 휴지통 이동·영구 삭제는 취소 우선 확인을 연다. trigger는 확인을 닫을 때 초점이 돌아갈 곳이다. */
+  request: (trigger: HTMLElement | null) => void;
+  /** 확인 영역·실패 안내·최신 상태 확인 버튼. 동작 버튼과 떨어진 본문 자리에 그릴 수 있다. */
+  feedback: ReactNode;
+};
+
+/**
+ * Q&A 스레드의 휴지통 이동·복원·영구 삭제 상태를 한 곳에서 소유한다.
+ * 같은 스레드 화면 안에서 버튼(넓은 화면 머리)과 더 보기 메뉴(좁은 화면 위쪽 막대)가
+ * 하나의 요청 식별자·실패 상태를 함께 쓰도록 hook으로 연다.
+ */
+export function useQnaThreadLifecycle({
+  threadId,
+  version,
+  deletedAt,
+  canRestore,
+  canPurge,
+  returnTo,
+  disabled = false,
+  transition,
+  actionButtonRef,
+}: QnaThreadLifecycleHookOptions): QnaThreadLifecycle {
   const router = useRouter();
   const [ownPending, startOwnTransition] = useTransition();
   const isPending = transition?.isPending ?? ownPending;
   const startTransition = transition?.start ?? startOwnTransition;
   const [failure, setFailure] = useState<{ message: string; snapshot: string; refreshRequired: boolean } | null>(null);
   const operation = useRef<{ key: string; id: string } | null>(null);
-  const actionButtonRef = useRef<HTMLButtonElement>(null);
   const restoreFocusRef = useRef<{ threadId: string; version: number } | null>(null);
   const snapshot = JSON.stringify([threadId, version, deletedAt, canRestore, canPurge]);
   const needsRefresh = failure?.refreshRequired && failure.snapshot === snapshot;
   // 화면이 열린 채 보관 기간을 넘겨도 버튼이 바뀐다. 실제 영구 삭제 가능 여부는 서버가 다시 확인한다.
   const expired = useHasPassed(deletedAt ? new Date(deletedAt).getTime() + RETENTION_MILLISECONDS : null);
-  const actionKind = !deletedAt
+  const actionKind: QnaLifecycleKind | null = !deletedAt
     ? "trash"
     : canRestore && !expired
       ? "restore"
@@ -67,11 +98,12 @@ export function QnaThreadLifecycleActions({
     if (activeElement === document.body || activeElement === actionButtonRef.current) {
       actionButtonRef.current?.focus({ preventScroll: true });
     }
-  }, [deletedAt, isPending, threadId, version]);
+  }, [actionButtonRef, deletedAt, isPending, threadId, version]);
 
   const lifecycleConfirm = useConfirmAction<"trash" | "purge">();
+  const triggerDisabled = disabled || isPending || Boolean(needsRefresh);
 
-  const run = (kind: "trash" | "restore" | "purge") => {
+  const run = (kind: QnaLifecycleKind) => {
     if (disabled || isPending || needsRefresh) return;
     const operationKey = JSON.stringify([snapshot, kind]);
     if (operation.current?.key !== operationKey) {
@@ -107,26 +139,14 @@ export function QnaThreadLifecycleActions({
     });
   };
 
-  return (
-    <div className="inline-flex flex-col items-start gap-1">
-      {actionKind ? (
-        <Button
-          ref={actionButtonRef}
-          type="button"
-          variant={actionKind === "purge" ? "default" : "outline"}
-          size="sm"
-          className={`gap-1.5 ${actionKind === "purge" ? "bg-destructive text-destructive-foreground hover:bg-destructive/90" : actionKind === "trash" ? "text-destructive" : ""}`}
-          disabled={disabled || isPending || Boolean(needsRefresh)}
-          aria-expanded={actionKind === "restore" ? undefined : lifecycleConfirm.isOpen}
-          onClick={(event) => {
-            if (actionKind === "restore") run("restore");
-            else lifecycleConfirm.request(event.currentTarget, actionKind);
-          }}
-        >
-          {actionKind === "restore" ? <RotateCcw className="h-4 w-4" aria-hidden="true" /> : <Trash2 className="h-4 w-4" aria-hidden="true" />}
-          {actionKind === "restore" ? "Q&A 복원" : actionKind === "trash" ? "휴지통 이동" : "영구 삭제"}
-        </Button>
-      ) : null}
+  const request = (trigger: HTMLElement | null) => {
+    if (!actionKind || triggerDisabled) return;
+    if (actionKind === "restore") run("restore");
+    else lifecycleConfirm.request(trigger, actionKind);
+  };
+
+  const feedback = (
+    <>
       {lifecycleConfirm.isOpen && lifecycleConfirm.value ? (
         <ConfirmPanel
           confirm={lifecycleConfirm}
@@ -139,19 +159,61 @@ export function QnaThreadLifecycleActions({
           onConfirm={() => {
             if (lifecycleConfirm.value) run(lifecycleConfirm.value);
           }}
-          className="max-w-md"
+          className="w-full max-w-md"
         />
       ) : null}
-      {failure && <span role={failure.snapshot === snapshot ? "alert" : "status"} className="text-xs text-muted-foreground">
-        {failure.snapshot === snapshot ? failure.message : "최신 상태를 불러왔습니다. 현재 상태를 확인한 뒤 다시 진행해 주세요."}
-      </span>}
-      {failure?.refreshRequired && <Button type="button" variant="outline" size="sm" disabled={disabled || isPending} onClick={() => startTransition(() => {
-        try {
-          router.refresh();
-        } catch {
-          setFailure({ message: "최신 상태를 불러오지 못했습니다. 다시 시도해 주세요.", snapshot, refreshRequired: true });
-        }
-      })}>최신 상태 확인</Button>}
+      {failure ? (
+        <span role={failure.snapshot === snapshot ? "alert" : "status"} className="text-xs text-muted-foreground">
+          {failure.snapshot === snapshot ? failure.message : "최신 상태를 불러왔습니다. 현재 상태를 확인한 뒤 다시 진행해 주세요."}
+        </span>
+      ) : null}
+      {failure?.refreshRequired ? (
+        <Button type="button" variant="outline" size="sm" disabled={disabled || isPending} onClick={() => startTransition(() => {
+          try {
+            router.refresh();
+          } catch {
+            setFailure({ message: "최신 상태를 불러오지 못했습니다. 다시 시도해 주세요.", snapshot, refreshRequired: true });
+          }
+        })}>최신 상태 확인</Button>
+      ) : null}
+    </>
+  );
+
+  return {
+    actionKind,
+    triggerDisabled,
+    confirmOpen: lifecycleConfirm.isOpen,
+    request,
+    feedback,
+  };
+}
+
+/** 휴지통 화면처럼 버튼과 확인 영역을 한 자리에 두는 기본 조합. */
+export function QnaThreadLifecycleActions(props: QnaThreadLifecycleOptions) {
+  const actionButtonRef = useRef<HTMLButtonElement>(null);
+  const lifecycle = useQnaThreadLifecycle({ ...props, actionButtonRef });
+  const { actionKind } = lifecycle;
+
+  return (
+    <div className="inline-flex flex-col items-start gap-1">
+      {actionKind ? (
+        <Button
+          ref={actionButtonRef}
+          type="button"
+          variant={actionKind === "purge" ? "destructive" : "outline"}
+          size="sm"
+          className={actionKind === "trash" ? "text-destructive" : undefined}
+          disabled={lifecycle.triggerDisabled}
+          aria-expanded={actionKind === "restore" ? undefined : lifecycle.confirmOpen}
+          onClick={(event) => lifecycle.request(event.currentTarget)}
+        >
+          {actionKind === "restore"
+            ? <RotateCcw className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
+            : <Trash2 className="size-3.5" strokeWidth={1.6} aria-hidden="true" />}
+          {QNA_LIFECYCLE_LABELS[actionKind]}
+        </Button>
+      ) : null}
+      {lifecycle.feedback}
     </div>
   );
 }

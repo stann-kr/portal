@@ -11,7 +11,7 @@ export const metadata = { title: "로그인" };
 
 /**
  * @file src/app/(auth)/login/page.tsx
- * @description 로그인 페이지.
+ * @description 로그인 페이지(캔버스 Login·MobileLogin). 로고와 가운데 열은 (auth) layout이 그린다.
  * NextAuth `searchParams.error`를 읽어 실패 사유를 사용자에게 표시.
  */
 export default async function LoginPage({
@@ -44,39 +44,28 @@ export default async function LoginPage({
   );
 
   return (
-    <div className="flex min-h-[100dvh] items-center justify-center bg-background p-4">
+    <div className="flex flex-col gap-8">
       <AccountCleanupBootstrap />
-      <div className="w-full max-w-sm rounded-lg border border-border bg-surface p-6 sm:p-8">
-        {/* 헤더 */}
-        <div className="space-y-2">
-          <div className="flex size-10 items-center justify-center rounded-md bg-primary text-sm font-bold text-primary-foreground">
-            SL
-          </div>
-          <h1 className="pt-4 text-2xl font-semibold tracking-[-0.03em] text-foreground">
-            DJ 레슨 포털
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            수업 일정과 학습 기록을 계속하려면 로그인하세요.
-          </p>
+      <div className="flex flex-col gap-1.5">
+        <h1 className="text-2xl font-semibold tracking-display text-foreground">DJ 레슨 포털</h1>
+        <p className="text-md leading-6 text-secondary-foreground md:text-body md:leading-[22px]">
+          수업 일정과 학습 기록을 계속하려면 로그인하세요.
+        </p>
+      </div>
+
+      {deletionMessage && (
+        <div role="status" className="rounded-md bg-sidebar px-3 py-2.5 text-ui text-foreground">
+          {deletionMessage}
         </div>
+      )}
 
-        {deletionMessage && (
-          <div
-            role="status"
-            className="mt-5 rounded-md border border-border bg-muted/50 px-4 py-3 text-sm text-foreground"
-          >
-            {deletionMessage}
-          </div>
-        )}
+      <LoginForm
+        callbackUrl={typeof callbackUrl === "string" ? callbackUrl : undefined}
+        initialError={typeof error === "string" ? loginErrorMessage(error, typeof code === "string" ? code : null) : null}
+      />
 
-        <LoginForm
-          callbackUrl={typeof callbackUrl === "string" ? callbackUrl : undefined}
-          initialError={typeof error === "string" ? loginErrorMessage(error, typeof code === "string" ? code : null) : null}
-        />
-
-        <div className="mt-5 text-xs text-muted-foreground">
-          <p>계정이 필요하면 담당 강사에게 문의하세요.</p>
-        </div>
+      <div className="border-t border-muted pt-4 text-ui text-muted-foreground">
+        <p>계정이 필요하면 담당 강사에게 문의하세요.</p>
         <OwnerlessLegacyDraftCleanup />
       </div>
     </div>

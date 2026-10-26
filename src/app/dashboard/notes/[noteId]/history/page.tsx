@@ -1,6 +1,4 @@
-import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { ArrowLeft, History } from "lucide-react";
 import { getActiveAuthSession } from "@/lib/auth-guard";
 import {
   getPrivateNoteIncludingTrash,
@@ -9,7 +7,15 @@ import {
 import { safeReturnPath } from "@/lib/safe-return-path";
 import { RichTextContent } from "@/components/editor/RichTextContent";
 import { RestoreNoteRevisionButton } from "@/components/notes/RestoreNoteRevisionButton";
-import { formatKst } from "@/lib/kst-format";
+import {
+  HistoryRecordItem,
+  RecordDetails,
+  RecordList,
+  RecordMeta,
+  RecordPageFrame,
+} from "@/components/notes/DocumentRecordFrame";
+import { formatRecordTime } from "@/components/notes/note-display";
+import { getRequestNow } from "@/lib/request-time";
 
 export const metadata = { title: "노트 변경 이력" };
 
@@ -22,6 +28,7 @@ const CHANGE_LABELS = {
   RESTORE_TRASH: "휴지통 복원",
 } as const;
 
+/** 노트 변경 이력(NoteHistory 보드). */
 export default async function NoteHistoryPage({
   params,
   searchParams,
@@ -42,68 +49,43 @@ export default async function NoteHistoryPage({
   const canRestore =
     !note.deletedAt &&
     (session.user.role === "admin" || session.user.id === note.authorId);
+  const now = getRequestNow();
 
   return (
-    <div className="mx-auto max-w-4xl space-y-6 px-4 py-6 sm:px-6">
-      <header className="space-y-3 border-b border-border pb-5">
-        <Link
-          href={noteHref}
-          className="inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
-        >
-          <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-          노트로 돌아가기
-        </Link>
-        <div className="flex items-center gap-2">
-          <History className="h-5 w-5 text-muted-foreground" aria-hidden="true" />
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight">변경 이력</h1>
-            <p className="text-sm text-muted-foreground">
-              {note.title} · 현재 {note.version}번 버전
-            </p>
-          </div>
-        </div>
-        <p className="text-sm text-muted-foreground">
-          과거 버전을 복원하면 기존 기록을 덮어쓰지 않고 새 현재 버전이 추가됩니다.
-        </p>
-      </header>
-
-      <ol className="space-y-4" aria-label="노트 변경 이력">
+    <RecordPageFrame
+      width="history"
+      back={{ href: noteHref, label: "노트로 돌아가기" }}
+      title="변경 이력"
+      subtitle={<>{note.title} · 현재 <span className="font-mono">{note.version}</span>번 버전</>}
+      description="과거 버전을 복원하면 기존 기록을 덮어쓰지 않고 새 현재 버전이 추가됩니다."
+    >
+      <RecordList ordered label="노트 변경 이력">
         {revisions.map((revision) => (
-          <li
+          <HistoryRecordItem
             key={revision.id}
-            className="space-y-3 rounded-xl border border-border bg-card p-5"
+            number={revision.revisionNumber}
+            changeLabel={CHANGE_LABELS[revision.changeType]}
+            meta={
+              <RecordMeta
+                time={formatRecordTime(revision.createdAt, now)}
+                actor={revision.actorName ?? "시스템"}
+                extra={revision.restoredFromRevision ? `${revision.restoredFromRevision}번에서 복원` : undefined}
+              />
+            }
+            action={canRestore ? (
+              <RestoreNoteRevisionButton
+                noteId={note.id}
+                baseRevision={note.version}
+                revisionNumber={revision.revisionNumber}
+              />
+            ) : null}
           >
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <p className="font-medium">
-                  {revision.revisionNumber}번 · {CHANGE_LABELS[revision.changeType]}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  {formatKst(revision.createdAt)} · {revision.actorName ?? "시스템"}
-                  {revision.restoredFromRevision
-                    ? ` · ${revision.restoredFromRevision}번에서 복원`
-                    : ""}
-                </p>
-              </div>
-              {canRestore ? (
-                <RestoreNoteRevisionButton
-                  noteId={note.id}
-                  baseRevision={note.version}
-                  revisionNumber={revision.revisionNumber}
-                />
-              ) : null}
-            </div>
-            <details>
-              <summary className="cursor-pointer text-sm font-medium text-muted-foreground hover:text-foreground">
-                저장된 내용 보기 — {revision.title}
-              </summary>
-              <div className="mt-3 border-t border-border pt-3">
-                <RichTextContent html={revision.contentHtml} />
-              </div>
-            </details>
-          </li>
+            <RecordDetails summary={`저장된 내용 보기 — ${revision.title}`}>
+              <RichTextContent html={revision.contentHtml} className="text-body text-secondary-foreground" />
+            </RecordDetails>
+          </HistoryRecordItem>
         ))}
-      </ol>
-    </div>
+      </RecordList>
+    </RecordPageFrame>
   );
 }

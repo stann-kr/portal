@@ -4,6 +4,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import type { Editor } from "@tiptap/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
 
 export type EditorInsertKind = "link" | "image" | "youtube";
 
@@ -39,12 +40,15 @@ export function EditorInsertPanel({
   selection,
   disabled = false,
   onClose,
+  className,
 }: {
   editor: Editor;
   kind: EditorInsertKind;
   selection: EditorSelection;
   disabled?: boolean;
   onClose: () => void;
+  /** 놓일 자리(상자 편집기의 도구 줄 아래, 문서 페이지의 떠 있는 패널)에 맞춘 틀. */
+  className?: string;
 }) {
   const selectedText = editor.state.doc.textBetween(selection.from, selection.to, " ");
   const currentHref = kind === "link" ? String(editor.getAttributes("link").href ?? "") : "";
@@ -104,7 +108,7 @@ export function EditorInsertPanel({
     <div
       data-editor-insert-panel
       role="group"
-      className="border-b border-border bg-surface px-3 py-3 sm:px-4"
+      className={cn("border-b border-muted bg-background px-3 py-3", className)}
       aria-label={`${copy.label} 입력`}
       onKeyDown={(event) => {
         if (event.key === "Escape") {
@@ -129,8 +133,8 @@ export function EditorInsertPanel({
     >
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
         {(kind === "link" && selection.from === selection.to) || kind === "image" ? (
-          <label className="min-w-0 flex-1 space-y-1">
-            <span className="text-xs font-medium text-foreground">
+          <label className="flex min-w-0 flex-1 flex-col gap-1.5">
+            <span className="text-xs font-medium text-secondary-foreground">
               {kind === "image" ? "대체 텍스트" : "표시할 텍스트"}
             </span>
             <Input
@@ -141,8 +145,8 @@ export function EditorInsertPanel({
             />
           </label>
         ) : null}
-        <label className="min-w-0 flex-[2] space-y-1">
-          <span className="text-xs font-medium text-foreground">{copy.label}</span>
+        <label className="flex min-w-0 flex-[2] flex-col gap-1.5">
+          <span className="text-xs font-medium text-secondary-foreground">{copy.label}</span>
           <Input
             ref={inputRef}
             disabled={disabled}
@@ -158,9 +162,9 @@ export function EditorInsertPanel({
             aria-describedby={error ? errorId : undefined}
           />
         </label>
-        <div className="flex gap-2">
-          <Button type="button" size="sm" disabled={disabled} onClick={handleInsert}>삽입</Button>
-          <Button type="button" size="sm" variant="ghost" disabled={disabled} onClick={onClose}>취소</Button>
+        <div className="flex gap-2 md:pb-0.5">
+          <Button type="button" variant="outline" disabled={disabled} onClick={onClose}>취소</Button>
+          <Button type="button" disabled={disabled} onClick={handleInsert}>삽입</Button>
         </div>
       </div>
       {error ? <p id={errorId} role="alert" className="mt-2 text-xs text-destructive">{error}</p> : null}

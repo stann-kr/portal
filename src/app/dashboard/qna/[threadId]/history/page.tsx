@@ -1,6 +1,4 @@
-import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { ArrowLeft, History } from "lucide-react";
 import { getActiveAuthSession } from "@/lib/auth-guard";
 import {
   getQnaThreadEvents,
@@ -8,8 +6,19 @@ import {
 } from "@/lib/actions/qna";
 import { safeReturnPath } from "@/lib/safe-return-path";
 import { RichTextContent } from "@/components/editor/RichTextContent";
+import {
+  HistoryRecordItem,
+  RECORD_ACTION_CELL,
+  RECORD_FULL_ROW,
+  RecordDetails,
+  RecordList,
+  RecordMeta,
+  RecordPageFrame,
+} from "@/components/notes/DocumentRecordFrame";
+import { formatRecordTime } from "@/components/notes/note-display";
 import { QNA_STATUS_LABELS } from "@/lib/qna-status";
-import { formatKst } from "@/lib/kst-format";
+import { getRequestNow } from "@/lib/request-time";
+import { cn } from "@/lib/utils";
 
 export const metadata = { title: "Q&A 변경 이력" };
 
@@ -22,6 +31,7 @@ const EVENT_LABELS = {
   RESTORE_TRASH: "휴지통 복원",
 } as const;
 
+/** Q&A 변경 이력. 노트 변경 이력(NoteHistory 보드)과 같은 틀이며, 복원 대신 그 시점의 상태를 보인다. */
 export default async function QnaHistoryPage({
   params,
   searchParams,
@@ -39,76 +49,53 @@ export default async function QnaHistoryPage({
   const query = await searchParams;
   const returnTo = safeReturnPath(query.returnTo, "/dashboard/qna");
   const threadHref = `/dashboard/qna/${threadId}?returnTo=${encodeURIComponent(returnTo)}`;
+  const now = getRequestNow();
 
   return (
-    <div className="mx-auto max-w-4xl space-y-6 px-4 py-6 sm:px-6">
-      <header className="space-y-3 border-b border-border pb-5">
-        <Link
-          href={threadHref}
-          className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
-        >
-          <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-          Q&amp;A로 돌아가기
-        </Link>
-        <div className="flex items-center gap-2">
-          <History className="h-5 w-5 text-muted-foreground" aria-hidden="true" />
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight">Q&amp;A 변경 이력</h1>
-            <p className="text-sm text-muted-foreground">
-              {thread.title} · 현재 {thread.version}번 이벤트
-            </p>
-          </div>
-        </div>
-        <p className="text-sm text-muted-foreground">
-          질문 생성, 답변 추가, 상태 변경과 휴지통 작업을 발생 순서대로 보존합니다.
-        </p>
-      </header>
-
-      <ol className="space-y-4" aria-label="Q&A 변경 이력">
+    <RecordPageFrame
+      width="history"
+      back={{ href: threadHref, label: "Q&A로 돌아가기" }}
+      title="변경 이력"
+      subtitle={<>{thread.title} · 현재 <span className="font-mono">{thread.version}</span>번 이벤트</>}
+      description="질문 생성, 답변 추가, 상태 변경과 휴지통 작업을 발생 순서대로 보존합니다."
+    >
+      <RecordList ordered label="Q&A 변경 이력">
         {events.map((event) => (
-          <li key={event.id} className="space-y-3 rounded-xl border border-border bg-card p-5">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <p className="font-medium">
-                  {event.eventNumber}번 · {EVENT_LABELS[event.eventType]}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  {formatKst(event.createdAt)} · {event.actorName ?? "시스템"}
-                </p>
-              </div>
-              <span className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground">
+          <HistoryRecordItem
+            key={event.id}
+            number={event.eventNumber}
+            changeLabel={EVENT_LABELS[event.eventType]}
+            meta={<RecordMeta time={formatRecordTime(event.createdAt, now)} actor={event.actorName ?? "시스템"} />}
+            action={
+              <span className={cn(RECORD_ACTION_CELL, "inline-flex h-7 items-center rounded-md bg-muted px-2.5 text-xs text-secondary-foreground")}>
                 {QNA_STATUS_LABELS[event.status]}
               </span>
-            </div>
-            <p className="text-sm font-medium">{event.title}</p>
+            }
+          >
+            <p className={cn(RECORD_FULL_ROW, "text-ui text-foreground")}>{event.title}</p>
             {event.replyContentHtml ? (
-              <details>
-                <summary className="cursor-pointer text-sm font-medium text-muted-foreground hover:text-foreground">
-                  이 이벤트의 답변 보기
-                </summary>
-                <div className="mt-3 space-y-2 border-t border-border pt-3">
-                  <RichTextContent html={event.replyContentHtml} />
-                  {event.replyAttachmentUrl ? (
-                    <a
-                      href={event.replyAttachmentUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-xs text-primary hover:underline"
-                    >
-                      첨부 파일 열기
-                    </a>
-                  ) : null}
-                </div>
-              </details>
+              <RecordDetails summary="이 이벤트의 답변 보기">
+                <RichTextContent html={event.replyContentHtml} className="text-body text-secondary-foreground" />
+                {event.replyAttachmentUrl ? (
+                  <a
+                    href={event.replyAttachmentUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="w-fit rounded-sm text-xs text-foreground underline underline-offset-4 hover:text-secondary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    첨부 파일 열기
+                  </a>
+                ) : null}
+              </RecordDetails>
             ) : null}
             {event.deletedAt ? (
-              <p className="text-xs text-muted-foreground">
-                삭제 시각: {formatKst(event.deletedAt)}
+              <p className={cn(RECORD_FULL_ROW, "text-xs text-muted-foreground")}>
+                삭제 시각: <span className="font-mono">{formatRecordTime(event.deletedAt, now)}</span>
               </p>
             ) : null}
-          </li>
+          </HistoryRecordItem>
         ))}
-      </ol>
-    </div>
+      </RecordList>
+    </RecordPageFrame>
   );
 }

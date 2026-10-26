@@ -1,6 +1,9 @@
 "use client";
 
 import { useLayoutEffect, useRef, useState } from "react";
+import { Paperclip } from "lucide-react";
+import { buttonClassName } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import {
   abandonMediaUpload,
   completeMediaUploadAction,
@@ -34,6 +37,13 @@ export interface FileUploaderProps {
   disabled?: boolean;
   /** 업로드 진행 상태를 상위 폼에 전달 */
   onUploadingChange?: (isUploading: boolean) => void;
+  /**
+   * 선택 버튼 모양.
+   * block(기본): 줄을 채우는 외곽선 버튼과 아래 진행 막대.
+   * inline: 클립 아이콘이 있는 외곽선 버튼(QnaNew 32px · MobileQnaNew 44px).
+   * composer: 답글 상자 바닥 줄의 클립 버튼(QnaThread 32px 글자 버튼 · MobileQnaThread 44×44 아이콘 버튼). 진행은 버튼 아래 얇은 막대로 보인다.
+   */
+  trigger?: "block" | "inline" | "composer";
 }
 
 type UploadRequest = { scope: string; xhr: XMLHttpRequest | null };
@@ -52,6 +62,7 @@ export function FileUploader({
   label = "파일 선택",
   disabled = false,
   onUploadingChange,
+  trigger = "block",
 }: FileUploaderProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const scope = JSON.stringify([purpose, draftOperationId]);
@@ -173,25 +184,78 @@ export function FileUploader({
     }
   }
 
+  const isTriggerDisabled = disabled || isUploading || !draftOperationId;
+  const buttonText = isUploading ? "업로드 중..." : label;
+  const fileInput = (
+    <input
+      ref={inputRef}
+      type="file"
+      accept={accept}
+      onChange={handleFileChange}
+      disabled={isTriggerDisabled}
+      className="hidden"
+      aria-label={label}
+    />
+  );
+
+  if (trigger === "composer") {
+    return (
+      <div className="relative inline-flex shrink-0">
+        {fileInput}
+        <button
+          type="button"
+          onClick={() => inputRef.current?.click()}
+          disabled={isTriggerDisabled}
+          aria-busy={isUploading}
+          title={label}
+          className={buttonClassName({
+            variant: "ghost",
+            className: "size-11 gap-1.5 rounded-touch p-0 md:h-8 md:w-auto md:rounded-md md:px-2 md:text-ui",
+          })}
+        >
+          <Paperclip className="size-[18px] shrink-0 md:size-3.5" strokeWidth={1.6} aria-hidden="true" />
+          <span className="max-md:sr-only">{buttonText}</span>
+        </button>
+        {isUploading ? (
+          <div
+            role="progressbar"
+            aria-label={`${label} 업로드 진행률`}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={progress}
+            className="pointer-events-none absolute inset-x-1.5 bottom-0.5 h-0.5 overflow-hidden rounded-full bg-muted"
+          >
+            <div
+              aria-hidden="true"
+              className="h-full origin-left bg-foreground transition-transform duration-[var(--duration-standard)] ease-linear motion-reduce:transition-none"
+              style={{ transform: `scaleX(${progress / 100})` }}
+            />
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  const isInline = trigger === "inline";
   return (
-    <div className="flex flex-col gap-2">
-      <input
-        ref={inputRef}
-        type="file"
-        accept={accept}
-        onChange={handleFileChange}
-        disabled={disabled || isUploading || !draftOperationId}
-        className="hidden"
-        aria-label={label}
-      />
+    <div className={cn("flex flex-col gap-2", isInline && "items-start")}>
+      {fileInput}
       <button
         type="button"
         onClick={() => inputRef.current?.click()}
-        disabled={disabled || isUploading || !draftOperationId}
+        disabled={isTriggerDisabled}
         aria-busy={isUploading}
-        className="inline-flex items-center gap-2 rounded-md border border-input bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50"
+        className={buttonClassName({
+          variant: "outline",
+          className: isInline
+            ? "h-11 rounded-touch px-3.5 text-body md:h-8 md:rounded-md md:px-3 md:text-ui"
+            : "h-11 rounded-touch px-4 text-body md:h-8 md:rounded-md md:px-3.5 md:text-ui",
+        })}
       >
-        {isUploading ? "업로드 중..." : label}
+        {isInline ? (
+          <Paperclip className="size-4 shrink-0 md:size-3.5" strokeWidth={1.6} aria-hidden="true" />
+        ) : null}
+        {buttonText}
       </button>
 
       {isUploading && (
@@ -203,14 +267,14 @@ export function FileUploader({
           aria-valuemax={100}
           aria-valuenow={progress}
         >
-          <div className="flex justify-between text-xs text-muted-foreground mb-1">
+          <div className="mb-1 flex justify-between text-xs text-muted-foreground">
             <span>업로드 중</span>
-            <span>{progress}%</span>
+            <span className="font-mono">{progress}%</span>
           </div>
-          <div className="h-1.5 w-full rounded-full bg-secondary overflow-hidden">
+          <div className="h-1 w-full overflow-hidden rounded-full bg-muted">
             <div
               aria-hidden="true"
-              className="h-full origin-left rounded-full bg-primary transition-transform duration-[var(--duration-standard)] ease-linear motion-reduce:transition-none"
+              className="h-full origin-left bg-foreground transition-transform duration-[var(--duration-standard)] ease-linear motion-reduce:transition-none"
               style={{ transform: `scaleX(${progress / 100})` }}
             />
           </div>

@@ -2,6 +2,7 @@
 
 import { useActionState, useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
+import { AUTH_INPUT_CLASS, AUTH_LABEL_CLASS, AUTH_SUBMIT_CLASS } from "@/components/auth/LoginSubmitButton";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -29,6 +30,15 @@ const UNUSABLE_COPY: Record<"invalid" | "expired" | "limited" | "failed", { titl
   limited: { title: "잠시 뒤 다시 열어 주세요", body: "" },
   failed: { title: "가입 링크를 확인하지 못했습니다", body: "네트워크 연결을 확인한 뒤 이 페이지를 새로고침해 주세요." },
 };
+
+const AUTH_HEADING_CLASS = "break-words text-2xl font-semibold tracking-display text-foreground focus:outline-none";
+const AUTH_LEAD_CLASS = "text-md leading-6 text-secondary-foreground md:text-body md:leading-[22px]";
+
+/** 입력에 연결할 설명 id를 오류 먼저, 도움말 다음 순서로 잇는다. */
+function describedBy(...ids: (string | null)[]): string | undefined {
+  const joined = ids.filter(Boolean).join(" ");
+  return joined || undefined;
+}
 
 const FIELD_LABELS: Record<CompleteInviteField, string> = {
   newPassword: "비밀번호",
@@ -75,56 +85,63 @@ function InviteForm({
 
   if (state.success) {
     return state.signInRequired ? (
-      <div className="space-y-4">
-        <p role="status" className="rounded-md bg-success-muted px-3 py-2 text-sm text-success">
+      <div className="flex flex-col gap-4">
+        <p role="status" className="rounded-md bg-success-muted px-3 py-2.5 text-ui text-success">
           가입을 마쳤습니다. 정한 비밀번호로 로그인해 주세요.
         </p>
-        <Button asChild className="w-full"><Link href="/login">로그인 화면으로 이동</Link></Button>
+        <Button asChild size="touch" className={AUTH_SUBMIT_CLASS}><Link href="/login">로그인 화면으로 이동</Link></Button>
       </div>
     ) : (
-      <p role="status" className="rounded-md bg-success-muted px-3 py-2 text-sm text-success">
+      <p role="status" className="rounded-md bg-success-muted px-3 py-2.5 text-ui text-success">
         가입을 마쳤습니다. 포털로 이동합니다.
       </p>
     );
   }
 
   return (
-    <form action={action} className="space-y-4" aria-busy={pending}>
-      <input type="hidden" name="token" value={view.token} />
-      <p className="text-sm text-muted-foreground">
-        로그인 이메일 <span className="break-all font-medium text-foreground">{view.email}</span>
-      </p>
-      {(Object.keys(FIELD_LABELS) as CompleteInviteField[]).map((field) => {
-        const inputId = `${baseId}-${field}`;
-        const invalid = !pending && state.field === field;
-        return (
-          <div key={field} className="space-y-1.5">
-            <label htmlFor={inputId} className="text-sm font-medium">{FIELD_LABELS[field]}</label>
-            <Input
-              ref={(element) => { inputRefs.current[field] = element; }}
-              id={inputId}
-              name={field}
-              type="password"
-              required
-              autoComplete="new-password"
-              minLength={PASSWORD_MIN_LENGTH}
-              value={fields[field]}
-              onChange={(event) => setFields((current) => ({ ...current, [field]: event.target.value }))}
-              disabled={pending}
-              aria-invalid={invalid || undefined}
-              aria-describedby={invalid ? errorId : field === "newPassword" ? `${inputId}-help` : undefined}
-            />
-            {field === "newPassword" ? (
-              <p id={`${inputId}-help`} className="text-xs text-muted-foreground">{PASSWORD_MIN_LENGTH}자 이상으로 입력해 주세요.</p>
-            ) : null}
-          </div>
-        );
-      })}
-      {state.error && !pending ? (
-        <p id={errorId} role="alert" className="rounded-md bg-destructive-muted px-3 py-2 text-sm text-destructive">{state.error}</p>
-      ) : null}
-      <Button type="submit" className="w-full" disabled={pending}>{pending ? "가입 중..." : "가입 완료"}</Button>
-    </form>
+    <>
+      <div className="flex flex-col gap-0.5 rounded-touch bg-sidebar px-3.5 py-3 md:min-h-10 md:flex-row md:items-center md:gap-0 md:rounded-md md:px-3 md:py-2">
+        <span className="text-xs text-muted-foreground md:w-[88px] md:shrink-0 md:text-ui">로그인 이메일</span>
+        <span className="min-w-0 break-all font-mono text-ui text-foreground md:text-xs">{view.email}</span>
+      </div>
+      <form action={action} className="flex flex-col gap-4" aria-busy={pending}>
+        <input type="hidden" name="token" value={view.token} />
+        {(Object.keys(FIELD_LABELS) as CompleteInviteField[]).map((field) => {
+          const inputId = `${baseId}-${field}`;
+          const invalid = !pending && state.field === field;
+          return (
+            <div key={field} className="flex flex-col gap-1.5">
+              <label htmlFor={inputId} className={AUTH_LABEL_CLASS}>{FIELD_LABELS[field]}</label>
+              <Input
+                ref={(element) => { inputRefs.current[field] = element; }}
+                id={inputId}
+                name={field}
+                type="password"
+                required
+                autoComplete="new-password"
+                minLength={PASSWORD_MIN_LENGTH}
+                value={fields[field]}
+                onChange={(event) => setFields((current) => ({ ...current, [field]: event.target.value }))}
+                disabled={pending}
+                className={AUTH_INPUT_CLASS}
+                aria-invalid={invalid || undefined}
+                aria-describedby={describedBy(invalid ? errorId : null, field === "newPassword" ? `${inputId}-help` : null)}
+              />
+              {field === "newPassword" ? (
+                <p id={`${inputId}-help`} className="text-xs text-muted-foreground">{PASSWORD_MIN_LENGTH}자 이상으로 입력해 주세요.</p>
+              ) : null}
+              {invalid && state.error ? (
+                <p id={errorId} role="alert" className="text-xs text-destructive">{state.error}</p>
+              ) : null}
+            </div>
+          );
+        })}
+        {state.error && !pending && !state.field ? (
+          <p id={errorId} role="alert" className="rounded-md bg-destructive-muted px-3 py-2.5 text-ui text-destructive">{state.error}</p>
+        ) : null}
+        <Button type="submit" size="touch" className={AUTH_SUBMIT_CLASS} disabled={pending}>{pending ? "가입 중..." : "가입 완료"}</Button>
+      </form>
+    </>
   );
 }
 
@@ -189,27 +206,29 @@ export function InviteSignup({
   }, [view.kind]);
 
   if (view.kind === "checking") {
-    return <p role="status" className="text-sm text-muted-foreground">가입 링크를 확인하고 있습니다…</p>;
+    return <p role="status" className="text-md leading-6 text-muted-foreground md:text-body md:leading-[22px]">가입 링크를 확인하고 있습니다…</p>;
   }
 
   if (view.kind === "unusable") {
     const copy = UNUSABLE_COPY[view.reason];
     return (
-      <div className="space-y-4">
-        <h1 ref={headingRef} tabIndex={-1} className="text-2xl font-semibold tracking-[-0.03em] text-foreground focus:outline-none">{copy.title}</h1>
-        <p className="text-sm text-muted-foreground">{view.message ?? copy.body}</p>
-        <Button asChild variant="outline" className="w-full"><Link href="/login">로그인 화면으로 이동</Link></Button>
+      <div className="flex flex-col gap-7">
+        <div className="flex flex-col gap-1.5">
+          <h1 ref={headingRef} tabIndex={-1} className={AUTH_HEADING_CLASS}>{copy.title}</h1>
+          <p className={AUTH_LEAD_CLASS}>{view.message ?? copy.body}</p>
+        </div>
+        <Button asChild variant="outline" size="touch" className={AUTH_SUBMIT_CLASS}><Link href="/login">로그인 화면으로 이동</Link></Button>
       </div>
     );
   }
 
   return (
-    <div className="space-y-5">
-      <div className="space-y-2">
-        <h1 ref={headingRef} tabIndex={-1} className="break-words text-2xl font-semibold tracking-[-0.03em] text-foreground focus:outline-none">
+    <div className="flex flex-col gap-7">
+      <div className="flex flex-col gap-1.5">
+        <h1 ref={headingRef} tabIndex={-1} className={AUTH_HEADING_CLASS}>
           {view.displayName ? `${view.displayName}님, 환영합니다` : "가입을 환영합니다"}
         </h1>
-        <p className="text-sm text-muted-foreground">로그인에 쓸 비밀번호를 정하면 바로 포털을 쓸 수 있습니다.</p>
+        <p className={AUTH_LEAD_CLASS}>로그인에 쓸 비밀번호를 정하면 바로 포털을 쓸 수 있습니다.</p>
       </div>
       <InviteForm
         view={view}

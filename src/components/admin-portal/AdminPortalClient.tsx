@@ -215,13 +215,11 @@ export function AdminPortalClient({
           )}
 
           {activeSection === "announcements" && (
-            <div className="mx-auto max-w-3xl p-4 sm:p-6">
-              <AnnouncementSection
-                posts={announcements}
-                returnTo="/dashboard/admin?section=announcements"
-                isAdmin
-              />
-            </div>
+            <AnnouncementSection
+              posts={announcements}
+              returnTo="/dashboard/admin?section=announcements"
+              isAdmin
+            />
           )}
 
           <div hidden={activeSection !== "schedule"} className="h-full">

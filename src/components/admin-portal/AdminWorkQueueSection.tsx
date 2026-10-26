@@ -4,15 +4,6 @@ import { useState } from "react";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import {
-  ArrowRight,
-  CalendarClock,
-  FileVideo,
-  MessageCircleQuestion,
-  Settings2,
-  type LucideIcon,
-} from "lucide-react";
-import { StatusBadge } from "@/components/ui/status-badge";
-import {
   getAdminWorkQueue,
   type AdminQueueThread,
   type PendingFeedbackAssignment,
@@ -21,62 +12,33 @@ import type { StudentRosterStat } from "@/lib/actions/students";
 import { describeAssignmentMedia } from "@/lib/unified-item-normalization";
 import { formatKst } from "@/lib/kst-format";
 import { buildQnaListHref } from "@/lib/qna-routes";
+import { cn } from "@/lib/utils";
+import { formatKstDot } from "@/components/student-portal/today/format";
+import {
+  LEDGER_ADD_ROW_CLASS,
+  LEDGER_HEADER_LINK_CLASS,
+  LEDGER_HEADER_NOTE_CLASS,
+  LEDGER_ROW_CLASS,
+  LedgerEmptyRow,
+  LedgerSection,
+  LedgerSectionHeader,
+} from "@/components/student-portal/today/HomeSection";
 
 const QUEUE_PREVIEW_COUNT = 5;
 const WORK_QUEUE_PATH = "/dashboard/admin?section=work";
+const DAY_MS = 24 * 60 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
 
 function formatDay(date: Date) {
   return formatKst(date, { month: "long", day: "numeric", weekday: "long" });
 }
 
-function formatDateTime(date: Date | null | undefined) {
-  return formatKst(
-    date,
-    { month: "short", day: "numeric", weekday: "short", hour: "2-digit", minute: "2-digit" },
-    "시간 미정",
-  );
-}
-
-const ROW_CLASS =
-  "flex min-w-0 items-start gap-3 rounded-md px-2 py-2 text-sm transition-colors duration-[var(--duration-fast)] hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none";
-const ACTION_CLASS =
-  "inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
-
-/** 학생 홈과 같은 조용한 소제목 + 얇은 구분선 구역. */
-function QueueSection({
-  id,
-  title,
-  description,
-  icon: Icon,
-  action,
-  children,
-}: {
-  id: string;
-  title: string;
-  description: string;
-  icon: LucideIcon;
-  action?: ReactNode;
-  children: ReactNode;
-}) {
-  return (
-    <section aria-labelledby={id} className="min-w-0">
-      <div className="mb-1.5 flex min-h-8 items-center justify-between gap-3 border-b border-border pb-1.5">
-        <div className="flex min-w-0 items-baseline gap-2">
-          <h2 id={id} className="flex shrink-0 items-center gap-1.5 self-center text-sm font-medium text-muted-foreground">
-            <Icon className="size-4 shrink-0" aria-hidden="true" />
-            {title}
-          </h2>
-          <p className="hidden truncate text-xs text-muted-foreground/80 sm:block">{description}</p>
-        </div>
-        {action}
-      </div>
-      {children}
-    </section>
-  );
-}
-
-function EmptyRow({ children }: { children: ReactNode }) {
-  return <p className="px-2 py-2 text-sm text-muted-foreground">{children}</p>;
+/** 질문이 답을 기다린 시간: 하루 이상은 일, 그 아래는 시간(1시간 미만은 1시간). */
+function formatWaiting(since: Date | null | undefined, referenceTime: Date): string | null {
+  if (!since) return null;
+  const elapsed = Math.max(0, referenceTime.getTime() - since.getTime());
+  if (elapsed >= DAY_MS) return `${Math.floor(elapsed / DAY_MS)}일`;
+  return `${Math.max(1, Math.floor(elapsed / HOUR_MS))}시간`;
 }
 
 function displayStudent({
@@ -87,6 +49,29 @@ function displayStudent({
   studentEmail: string | null | undefined;
 }) {
   return studentName?.trim() || studentEmail?.split("@")[0] || "이름 미등록";
+}
+
+/**
+ * 업무함 목록 행(AdminWork·MobileAdminWork 보드): 넓은 화면은 학생(56px) · 제목 · 값 한 줄 52px,
+ * 좁은 화면은 제목 아래 학생과 값 두 줄. DOM은 제목 → 학생 → 값 순서로 읽힌다.
+ */
+const QUEUE_ROW_CLASS = cn(
+  LEDGER_ROW_CLASS,
+  "flex flex-wrap items-center gap-x-2 gap-y-0.5 py-3 md:h-13 md:flex-nowrap md:gap-x-3 md:px-1 md:py-0",
+);
+
+function QueueRowTitle({ children, truncate = true }: { children: ReactNode; truncate?: boolean }) {
+  return (
+    <span className={cn("min-w-0 basis-full text-md md:flex-1 md:basis-auto md:text-body", truncate && "truncate")}>
+      {children}
+    </span>
+  );
+}
+
+function QueueRowStudent({ children }: { children: ReactNode }) {
+  return (
+    <span className="truncate text-ui text-secondary-foreground md:order-first md:w-14 md:shrink-0">{children}</span>
+  );
 }
 
 export function AdminWorkQueueSection({
@@ -116,156 +101,155 @@ export function AdminWorkQueueSection({
   const metrics = [
     { label: "미답변 질문", value: queue.metrics.openThreadCount },
     { label: "피드백 대기", value: queue.metrics.pendingFeedbackCount },
-    { label: "7일 이내 레슨", value: queue.metrics.upcomingLessonCount },
+    { label: "7일 내 레슨", value: queue.metrics.upcomingLessonCount },
     { label: "전체 학생", value: queue.metrics.studentCount },
   ];
 
   return (
-    <div className="mx-auto w-full max-w-[1120px] space-y-8 px-4 py-6 sm:px-6 sm:py-8 lg:px-10">
-      <header className="space-y-4">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-sm text-muted-foreground">{formatDay(referenceTime)}</p>
-            <h1 className="mt-1 text-2xl font-semibold tracking-[-0.02em] text-foreground">오늘 처리할 일</h1>
-          </div>
-          <Link href="/dashboard/admin/operations" className={`${ACTION_CLASS} h-8 px-2.5 text-sm`}>
-            <Settings2 className="size-3.5" aria-hidden="true" />
-            운영 도구
-          </Link>
+    <div className="px-5 pb-8 pt-6 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-14">
+      <div className="flex max-w-[1040px] flex-col gap-7 md:gap-10">
+        <header className="flex flex-col gap-1.5 md:gap-2">
+          <p className="font-mono text-xs text-muted-foreground">{formatDay(referenceTime)}</p>
+          <h1 className="text-mobile-title font-semibold tracking-display text-foreground md:text-display">오늘 처리할 일</h1>
+          <dl className="mt-[22px] grid grid-cols-2 gap-x-5 border-t border-border md:mt-2 md:flex md:flex-wrap md:gap-x-7 md:gap-y-2 md:border-0">
+            {metrics.map((metric) => (
+              <div
+                key={metric.label}
+                className="flex flex-col gap-0.5 border-b border-muted py-3 md:flex-row md:gap-2 md:border-0 md:py-0 md:text-ui"
+              >
+                <dt className="text-xs text-muted-foreground md:text-ui">{metric.label}</dt>
+                <dd className="font-mono text-xl font-medium tabular-nums text-foreground md:text-ui">{metric.value}</dd>
+              </div>
+            ))}
+          </dl>
+        </header>
+
+        <div className="flex flex-col gap-7 md:flex-row md:flex-wrap md:gap-x-14 md:gap-y-10">
+          <LedgerSection labelledBy="open-qna-heading" className="md:flex-[1_1_400px]">
+            <LedgerSectionHeader
+              id="open-qna-heading"
+              title="미답변 Q&A"
+              count={<span className="md:hidden">{queue.metrics.openThreadCount}</span>}
+              aside={
+                <Link href={buildQnaListHref(WORK_QUEUE_PATH)} className={cn(LEDGER_HEADER_LINK_CLASS, "hidden md:flex")}>
+                  전체 Q&A
+                </Link>
+              }
+            />
+            {queue.openThreads.length === 0 ? (
+              <LedgerEmptyRow>미답변 질문이 없습니다. 현재 모든 질문에 답변했습니다.</LedgerEmptyRow>
+            ) : (
+              <ul>
+                {queue.openThreads.map((thread) => {
+                  // 정렬 기준(마지막 활동 시각)과 같은 값으로 기다린 시간을 센다.
+                  const waiting = formatWaiting(thread.updatedAt ?? thread.createdAt, referenceTime);
+                  return (
+                    <li key={thread.id}>
+                      <Link
+                        href={`/dashboard/qna/${thread.id}?returnTo=${encodeURIComponent(WORK_QUEUE_PATH)}`}
+                        className={QUEUE_ROW_CLASS}
+                      >
+                        <QueueRowTitle>{thread.title}</QueueRowTitle>
+                        <QueueRowStudent>{displayStudent(thread)}</QueueRowStudent>
+                        {waiting ? (
+                          <span className="shrink-0 font-mono text-xs text-warning">
+                            {waiting}
+                            <span className="md:sr-only"> 대기</span>
+                          </span>
+                        ) : null}
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            {queue.metrics.openThreadCount > queue.openThreads.length ? (
+              <Link href={buildQnaListHref(WORK_QUEUE_PATH, "OPEN")} className={LEDGER_ADD_ROW_CLASS}>
+                미답변 {queue.metrics.openThreadCount}건 모두 보기
+              </Link>
+            ) : null}
+          </LedgerSection>
+
+          <LedgerSection labelledBy="pending-feedback-heading" className="md:flex-[1_1_400px]">
+            <LedgerSectionHeader
+              id="pending-feedback-heading"
+              title="피드백 대기"
+              count={<span className="md:hidden">{queue.metrics.pendingFeedbackCount}</span>}
+              aside={<span className={cn(LEDGER_HEADER_NOTE_CLASS, "hidden md:inline")}>오래된 순</span>}
+            />
+            {queue.pendingAssignments.length === 0 ? (
+              <LedgerEmptyRow>피드백 대기가 없습니다. 현재 모든 제출에 피드백이 등록됐습니다.</LedgerEmptyRow>
+            ) : (
+              <ul>
+                {visiblePendingAssignments.map((assignment) => {
+                  const submitted = formatKstDot(assignment.submittedAt, { referenceTime });
+                  return (
+                    <li key={assignment.id}>
+                      <Link
+                        href={`/dashboard/student/assignments/${encodeURIComponent(assignment.id)}?returnTo=${encodeURIComponent(WORK_QUEUE_PATH)}`}
+                        className={QUEUE_ROW_CLASS}
+                      >
+                        <QueueRowTitle>{describeAssignmentMedia(assignment.mediaUrl)}</QueueRowTitle>
+                        <QueueRowStudent>{displayStudent(assignment)}</QueueRowStudent>
+                        <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                          {submitted || "제출일 미정"}
+                          {submitted ? <span className="md:sr-only"> 제출</span> : null}
+                        </span>
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            {queue.pendingAssignments.length > QUEUE_PREVIEW_COUNT ? (
+              <button
+                type="button"
+                className={LEDGER_ADD_ROW_CLASS}
+                aria-expanded={showAllPending}
+                onClick={() => setShowAllPending((value) => !value)}
+              >
+                {showAllPending ? "처음 5건만 보기" : `나머지 ${hiddenPendingCount}건 더 보기`}
+              </button>
+            ) : null}
+          </LedgerSection>
         </div>
 
-        <dl className="flex flex-wrap gap-1.5">
-          {metrics.map((metric) => (
-            <div
-              key={metric.label}
-              className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-2.5 py-1 text-sm"
-            >
-              <dt className="text-muted-foreground">{metric.label}</dt>
-              <dd className="font-mono font-semibold tabular-nums text-foreground">{metric.value}</dd>
-            </div>
-          ))}
-        </dl>
-      </header>
-
-      <div className="grid gap-x-10 gap-y-8 lg:grid-cols-2">
-        <QueueSection
-          id="open-qna-heading"
-          title="미답변 Q&A"
-          description="오래 기다린 질문부터 표시합니다."
-          icon={MessageCircleQuestion}
-          action={
-            <Link href={buildQnaListHref(WORK_QUEUE_PATH)} className={ACTION_CLASS}>
-              전체 Q&A
-              <ArrowRight className="size-3" aria-hidden="true" />
-            </Link>
-          }
-        >
-          {queue.openThreads.length === 0 ? (
-            <EmptyRow>미답변 질문이 없습니다. 현재 모든 질문에 답변했습니다.</EmptyRow>
+        <LedgerSection labelledBy="upcoming-lesson-heading">
+          <LedgerSectionHeader
+            id="upcoming-lesson-heading"
+            title="다가오는 레슨"
+            aside={
+              <button type="button" className={cn(LEDGER_HEADER_LINK_CLASS, "hidden md:flex")} onClick={onOpenSchedule}>
+                일정 열기
+              </button>
+            }
+          />
+          {queue.upcomingLessons.length === 0 ? (
+            <LedgerEmptyRow>7일 이내 레슨이 없습니다. 일정 화면에서 학생별 캘린더를 확인할 수 있습니다.</LedgerEmptyRow>
           ) : (
-            <ul className="space-y-0.5">
-              {queue.openThreads.map((thread) => (
-                <li key={thread.id}>
+            <ul className="grid grid-cols-[repeat(auto-fit,minmax(min(400px,100%),1fr))] gap-x-14">
+              {queue.upcomingLessons.map((student) => (
+                <li key={student.id} className="min-w-0">
                   <Link
-                    href={`/dashboard/qna/${thread.id}?returnTo=${encodeURIComponent(WORK_QUEUE_PATH)}`}
-                    className={ROW_CLASS}
+                    href={`/dashboard/admin/students/${student.id}`}
+                    className={cn(LEDGER_ROW_CLASS, "flex h-12 items-center gap-3 md:h-13 md:px-1")}
                   >
-                    <span className="min-w-0 flex-1">
-                      <span className="line-clamp-2 break-words text-foreground sm:line-clamp-1">{thread.title}</span>
-                      <span className="mt-0.5 block text-xs leading-5 text-muted-foreground sm:truncate">
-                        {displayStudent(thread)} · {formatDateTime(thread.updatedAt ?? thread.createdAt)}
-                      </span>
+                    <span className="w-29 shrink-0 whitespace-nowrap font-mono text-xs tabular-nums text-secondary-foreground md:w-33">
+                      {formatKstDot(student.nextLessonDate, { weekday: true, time: true, referenceTime })}
                     </span>
-                    <StatusBadge status="qnaOpen" className="shrink-0 px-1.5 py-0.5 font-medium" />
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          )}
-          {queue.metrics.openThreadCount > queue.openThreads.length ? (
-            <Link href={buildQnaListHref(WORK_QUEUE_PATH, "OPEN")} className={`${ACTION_CLASS} mt-1`}>
-              미답변 {queue.metrics.openThreadCount}건 모두 보기
-            </Link>
-          ) : null}
-        </QueueSection>
-
-        <QueueSection
-          id="pending-feedback-heading"
-          title="피드백 대기"
-          description="오래된 제출부터 표시합니다."
-          icon={FileVideo}
-        >
-          {queue.pendingAssignments.length === 0 ? (
-            <EmptyRow>피드백 대기가 없습니다. 현재 모든 제출에 피드백이 등록됐습니다.</EmptyRow>
-          ) : (
-            <ul className="space-y-0.5">
-              {visiblePendingAssignments.map((assignment) => (
-                <li key={assignment.id}>
-                  <Link
-                    href={`/dashboard/student/assignments/${encodeURIComponent(assignment.id)}?returnTo=${encodeURIComponent(WORK_QUEUE_PATH)}`}
-                    className={ROW_CLASS}
-                  >
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-foreground">{displayStudent(assignment)}</span>
-                      <span className="mt-0.5 block text-xs leading-5 text-muted-foreground sm:truncate">
-                        {describeAssignmentMedia(assignment.mediaUrl)} · {formatDateTime(assignment.submittedAt)} 제출
-                      </span>
-                    </span>
-                    <StatusBadge status="feedbackWaiting" className="shrink-0 px-1.5 py-0.5 font-medium" />
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          )}
-          {queue.pendingAssignments.length > QUEUE_PREVIEW_COUNT ? (
-            <button
-              type="button"
-              className={`${ACTION_CLASS} mt-1`}
-              aria-expanded={showAllPending}
-              onClick={() => setShowAllPending((value) => !value)}
-            >
-              {showAllPending ? "처음 5건만 보기" : `나머지 ${hiddenPendingCount}건 더 보기`}
-            </button>
-          ) : null}
-        </QueueSection>
-      </div>
-
-      <QueueSection
-        id="upcoming-lesson-heading"
-        title="다가오는 레슨"
-        description="앞으로 7일 이내에 예정된 레슨입니다."
-        icon={CalendarClock}
-        action={
-          <button type="button" className={ACTION_CLASS} onClick={onOpenSchedule}>
-            일정 열기
-            <ArrowRight className="size-3" aria-hidden="true" />
-          </button>
-        }
-      >
-        {queue.upcomingLessons.length === 0 ? (
-          <EmptyRow>7일 이내 레슨이 없습니다. 일정 화면에서 학생별 캘린더를 확인할 수 있습니다.</EmptyRow>
-        ) : (
-          <ul className="grid gap-x-6 gap-y-0.5 md:grid-cols-2">
-            {queue.upcomingLessons.map((student) => (
-              <li key={student.id} className="min-w-0">
-                <Link href={`/dashboard/admin/students/${student.id}`} className={ROW_CLASS}>
-                  <span className="shrink-0 whitespace-nowrap pt-px text-xs tabular-nums text-muted-foreground sm:w-[9.5rem]">
-                    {formatDateTime(student.nextLessonDate)}
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-foreground">
+                    <span className="shrink-0 text-md font-medium md:text-body">
                       {student.displayName?.trim() || student.email}
                     </span>
-                    <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                    <span className="min-w-0 truncate text-ui text-muted-foreground">
                       {student.currentModule || "진도 미지정"}
                     </span>
-                  </span>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        )}
-      </QueueSection>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+        </LedgerSection>
+      </div>
     </div>
   );
 }

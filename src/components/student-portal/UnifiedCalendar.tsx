@@ -1,22 +1,22 @@
 /**
  * @file src/components/student-portal/UnifiedCalendar.tsx
- * @description 노션 캘린더처럼 쓰는 통합 캘린더 뷰.
+ * @description 통합 캘린더의 월·주 보기(캔버스 Calendar·CalendarWeek·AdminSchedule).
  * 칸을 누르거나 끌어 고르면 그 자리에서 만들고, 권한이 있는 일정·레슨·노트는 끌어서 옮긴다.
- * 항목을 누르면 SlidePanel 상세를 연다.
+ * 항목을 누르면 상세 패널을 연다. 좁은 화면은 MobileSpec대로 작은 월 달력과 고른 날 목록을 그린다.
  */
 "use client";
 
-import { useState, useCallback, useEffect, useInsertionEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useInsertionEffect, useRef, type ReactNode } from "react";
 import FullCalendar from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
 import timeGridPlugin from "@fullcalendar/timegrid";
 import interactionPlugin from "@fullcalendar/interaction";
-import listPlugin from "@fullcalendar/list";
 import koLocale from "@fullcalendar/core/locales/ko";
 import type {
   DateSelectArg,
   DateSpanApi,
   DayCellContentArg,
+  DayHeaderContentArg,
   DatesSetArg,
   EventApi,
   EventClickArg,
@@ -24,19 +24,22 @@ import type {
   EventInput,
   EventMountArg,
   MoreLinkContentArg,
+  SlotLabelContentArg,
 } from "@fullcalendar/core";
 import type { DateClickArg, EventResizeDoneArg } from "@fullcalendar/interaction";
-import { ChevronLeft, ChevronRight, Undo2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, TriangleAlert, X } from "lucide-react";
 import type { UnifiedItem, UnifiedItemType } from "@/lib/utils/unifiedItemUtils";
 import { getUnifiedItemColor, getUnifiedItemKey } from "@/lib/utils/unifiedItemUtils";
 import { UnifiedItemDetailPanel, type UnifiedItemChangeHandlers } from "./UnifiedItemDetailPanel";
-import { UNIFIED_ITEM_TYPE_LABELS, UnifiedItemTypeIcon } from "@/components/ui/unified-item-type";
+import { UNIFIED_ITEM_TYPES } from "@/components/ui/unified-item-type";
 import { renderCalendarEventContent } from "@/components/calendar/CalendarEventChip";
+import { MobileMonthView } from "@/components/calendar/MobileMonthView";
 import {
   CalendarQuickCreate,
   canUseQuickCreate,
   type CalendarQuickCreateOptions,
 } from "@/components/calendar/CalendarQuickCreate";
+import { Button } from "@/components/ui/button";
 import {
   matchesCalendarPreset,
   type CalendarPreset,
@@ -65,27 +68,30 @@ import { moveLesson } from "@/lib/actions/lessons";
 import { movePrivateNoteDate } from "@/lib/actions/privateNotes";
 import { createCreationOperationId } from "@/lib/creation-operation";
 import { formatKst } from "@/lib/kst-format";
+import { cn } from "@/lib/utils";
+
+export type CalendarGridView = "dayGridMonth" | "timeGridWeek";
+
+const ALL_TYPES: ReadonlySet<UnifiedItemType> = new Set(UNIFIED_ITEM_TYPES);
 
 interface UnifiedCalendarProps extends UnifiedItemChangeHandlers {
   isActive?: boolean;
   items: UnifiedItem[];
   returnTo: string;
   showSpaceContext: boolean;
+  /** 월·주 보기. 보기 전환은 CalendarSection의 "월·주·일별·전체" 세그먼트가 맡는다. */
+  view?: CalendarGridView;
+  /** 보기를 바꿔도 남도록 CalendarSection이 가진 유형 필터. 없으면 모두 보인다. */
+  visibleTypes?: ReadonlySet<UnifiedItemType>;
   preset?: CalendarPreset | null;
-  onPresetChange?: (preset: CalendarPreset | null) => void;
+  /** 기간 줄 오른쪽(좁은 화면은 기간 줄 아래)에 놓는 필터. */
+  filters?: ReactNode;
+  mobileFilters?: ReactNode;
   /** 보는 사람과 이 스페이스에서의 권한. 없으면 아무것도 끌 수 없다. */
   editContext?: CalendarEditContext;
   /** 칸을 눌러 바로 만들기. 없으면 칸 선택을 끈다. */
   quickCreate?: CalendarQuickCreateOptions;
 }
-
-type CalendarViewName = "dayGridMonth" | "timeGridWeek" | "listWeek";
-
-const VIEW_OPTIONS: ReadonlyArray<{ value: CalendarViewName; label: string }> = [
-  { value: "dayGridMonth", label: "월" },
-  { value: "timeGridWeek", label: "주" },
-  { value: "listWeek", label: "목록" },
-];
 
 type PendingMove = { request: CalendarMoveRequest; saved: boolean };
 
@@ -183,26 +189,60 @@ function allowSameSlotKind(drop: DateSpanApi, dragged: EventApi | null) {
   return drop.allDay === Boolean(dragged?.allDay);
 }
 
-// 한국어 locale은 "26일"처럼 붙이므로 숫자만 남겨 칸을 가볍게 한다.
+// 한국어 locale은 "26일"처럼 붙이므로 숫자만 남긴다.
 function renderDayCell(arg: DayCellContentArg) {
   return arg.dayNumberText.replace(/일$/u, "");
+}
+
+// 주 보기 머리는 요일과 날짜 숫자(오늘은 파랑 원)를 함께 둔다. 월 보기는 요일만.
+function renderDayHeader(arg: DayHeaderContentArg) {
+  if (!arg.view.type.startsWith("timeGrid")) return arg.text;
+  return (
+    <span className="calendar-dayhead">
+      <span>{arg.text}</span>
+      <span className="calendar-dayhead-num">{arg.date.getUTCDate()}</span>
+    </span>
+  );
 }
 
 function renderMoreLink(arg: MoreLinkContentArg) {
   return `+${arg.num}개 더`;
 }
 
-const SLOT_LABEL_FORMAT = { hour: "numeric", hour12: false } as const;
+/** 캘린더는 UTC에 KST 벽시계를 넣으므로 UTC 값이 곧 화면 날짜다. */
+function formatPeriodTitle(arg: DatesSetArg): string {
+  const start = arg.view.currentStart;
+  if (arg.view.type === "dayGridMonth") return `${start.getUTCFullYear()}년 ${start.getUTCMonth() + 1}월`;
+  const last = new Date(arg.view.currentEnd.getTime() - 24 * 60 * 60 * 1_000);
+  const startLabel = `${start.getUTCMonth() + 1}월 ${start.getUTCDate()}일`;
+  const endLabel = last.getUTCMonth() === start.getUTCMonth()
+    ? `${last.getUTCDate()}일`
+    : `${last.getUTCMonth() + 1}월 ${last.getUTCDate()}일`;
+  const thisYear = getCalendarNow().getUTCFullYear();
+  const year = start.getUTCFullYear() !== thisYear || last.getUTCFullYear() !== thisYear ? `${start.getUTCFullYear()}년 ` : "";
+  return `${year}${startLabel} – ${endLabel}`;
+}
+
+// 시각 열은 "10:00"(Mono 11). UTC 칸에 KST 벽시계를 넣으므로 UTC 시가 곧 화면 시각이다.
+function renderSlotLabel(arg: SlotLabelContentArg) {
+  return `${String(arg.date.getUTCHours()).padStart(2, "0")}:00`;
+}
+
 const DAY_HEADER_FORMAT = { weekday: "short" } as const;
-const CALENDAR_PLUGINS = [dayGridPlugin, timeGridPlugin, interactionPlugin, listPlugin];
+const CALENDAR_PLUGINS = [dayGridPlugin, timeGridPlugin, interactionPlugin];
+/** 주 보기는 12시간(48px × 12)이 한 화면에 들어오는 높이로 두고 안에서 넘긴다. */
+const WEEK_CONTENT_HEIGHT = 680;
 
 export function UnifiedCalendar({
   isActive = true,
   items,
   returnTo,
   showSpaceContext,
+  view = "dayGridMonth",
+  visibleTypes = ALL_TYPES,
   preset = null,
-  onPresetChange,
+  filters,
+  mobileFilters,
   editContext,
   quickCreate,
   canManageEvents,
@@ -212,13 +252,9 @@ export function UnifiedCalendar({
 }: UnifiedCalendarProps) {
   const calendarRef = useRef<FullCalendar>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const [initialView] = useState<CalendarViewName>(() =>
-    typeof window !== "undefined" && window.matchMedia("(max-width: 640px)").matches
-      ? "listWeek"
-      : "dayGridMonth",
-  );
-  // 서버 렌더에는 화면 폭을 모르므로 보기를 비워 두고, 달력이 알려 준 실제 보기로 채운다(hydration 불일치 방지).
-  const [view, setView] = useState<{ type: CalendarViewName | null; title: string }>({ type: null, title: "" });
+  const [initialView] = useState<CalendarGridView>(view);
+  // 서버 렌더에는 기간 제목을 모르므로 비워 두고, 달력이 알려 준 실제 기간으로 채운다.
+  const [period, setPeriod] = useState<{ type: CalendarGridView | null; title: string }>({ type: null, title: "" });
 
   // Hidden tabs keep their date/view; FullCalendar must remeasure once visible.
   useEffect(() => {
@@ -237,18 +273,18 @@ export function UnifiedCalendar({
     };
   }, [isActive]);
 
-  // 타입 필터 (기본 전체 표시)
-  const [visibleTypes, setVisibleTypes] = useState<Set<UnifiedItemType>>(
-    new Set(["EVENT", "NOTE", "DIGGING", "QNA", "ASSIGNMENT"]),
-  );
-  const [activePreset, setActivePreset] = useState<CalendarPreset | null>(preset);
-
-  // 바깥에서 preset이 바뀌면 렌더 중 바로 따라간다(이전 값과 비교).
-  const [syncedPreset, setSyncedPreset] = useState(preset);
-  if (syncedPreset !== preset) {
-    setSyncedPreset(preset);
-    setActivePreset(preset);
-  }
+  // 세그먼트에서 고른 월·주 보기를 달력에 맞춘다. 날짜는 그대로 둔다. FullCalendar는 보기를 바꿀 때
+  // 동기 렌더(flushSync)를 쓰므로 React의 커밋이 끝난 뒤(microtask)에 바꾼다.
+  useEffect(() => {
+    let cancelled = false;
+    queueMicrotask(() => {
+      const api = calendarRef.current?.getApi();
+      if (!cancelled && api && api.view.type !== view) api.changeView(view);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [view]);
 
   // 상세 패널 상태
   const [selectedItem, setSelectedItem] = useState<UnifiedItem | null>(null);
@@ -291,64 +327,55 @@ export function UnifiedCalendar({
     return pending ? applyCalendarMoveToItem(item, pending.request) : item;
   };
   const displayedItems = pendingMoves.size === 0 ? items : items.map(withPendingMove);
-
-  // 타입 토글
-  const toggleType = (type: UnifiedItemType) => {
-    if (activePreset) {
-      setActivePreset(null);
-      onPresetChange?.(null);
-    }
-    setVisibleTypes((prev) => {
-      const next = new Set(prev);
-      if (next.has(type)) next.delete(type);
-      else next.add(type);
-      return next;
-    });
-  };
+  const visibleItems = displayedItems.filter((item) => matchesCalendarPreset(item, preset) && visibleTypes.has(item.type));
+  const selectedKey = panelOpen && selectedItem ? getUnifiedItemKey(selectedItem) : null;
 
   // UnifiedItem → FullCalendar EventInput
-  const fcEvents: EventInput[] = displayedItems
-    .filter((item) => matchesCalendarPreset(item, activePreset) && visibleTypes.has(item.type))
-    .map((item) => {
-      const key = getUnifiedItemKey(item);
-      const color = getUnifiedItemColor(item);
-      const editing = context ? getCalendarItemEditing(item, context) : null;
-      const movable = Boolean(editing?.movable) && pendingMoves.get(key)?.saved !== false;
-      const isNote = item.type === "NOTE";
-      const allDay = isNote || item.metadata.allDay === true;
-      const allDayStartDate = isNote
-        ? getNoteCalendarDateKey(item)
-        : typeof item.metadata.allDayStartDate === "string" ? item.metadata.allDayStartDate : null;
-      const allDayEndDate = !isNote && typeof item.metadata.allDayEndDate === "string"
-        ? item.metadata.allDayEndDate
-        : null;
-      const title = item.title;
-      return {
-        id: key,
-        title: showSpaceContext ? `${title} · ${item.space.label}` : title,
-        start: allDay && allDayStartDate ? allDayStartDate : toCalendarWallTime(item.date),
-        end: allDay
-          ? allDayEndDate ?? undefined
-          : item.endDate ? toCalendarWallTime(new Date(item.endDate)) : undefined,
-        allDay,
-        startEditable: movable,
-        durationEditable: movable && editing?.resizable === true && Boolean(item.endDate),
-        backgroundColor: "transparent",
-        // 목록 보기의 유형 점은 FullCalendar가 borderColor를 inline으로 칠한다. 칩은 CSS가 테두리를 지운다.
-        borderColor: color,
-        textColor: "inherit",
-        classNames: ["calendar-event", movable ? "calendar-event-movable" : "calendar-event-locked"],
-        extendedProps: {
-          itemType: item.type,
-          movable,
-          color,
-          timeLabel: allDay ? null : formatKst(item.date, KST_TIME),
-          lockReason: context ? getCalendarItemLockReason(item, context) : null,
-          spaceLabel: item.space.label,
-          sourceLabel: item.source.label,
-        },
-      };
-    });
+  const fcEvents: EventInput[] = visibleItems.map((item) => {
+    const key = getUnifiedItemKey(item);
+    const color = getUnifiedItemColor(item);
+    const editing = context ? getCalendarItemEditing(item, context) : null;
+    const movable = Boolean(editing?.movable) && pendingMoves.get(key)?.saved !== false;
+    const isNote = item.type === "NOTE";
+    const allDay = isNote || item.metadata.allDay === true;
+    const allDayStartDate = isNote
+      ? getNoteCalendarDateKey(item)
+      : typeof item.metadata.allDayStartDate === "string" ? item.metadata.allDayStartDate : null;
+    const allDayEndDate = !isNote && typeof item.metadata.allDayEndDate === "string"
+      ? item.metadata.allDayEndDate
+      : null;
+    const title = item.title;
+    const timeLabel = allDay ? null : formatKst(item.date, KST_TIME);
+    return {
+      id: key,
+      title: showSpaceContext ? `${title} · ${item.space.label}` : title,
+      start: allDay && allDayStartDate ? allDayStartDate : toCalendarWallTime(item.date),
+      end: allDay
+        ? allDayEndDate ?? undefined
+        : item.endDate ? toCalendarWallTime(new Date(item.endDate)) : undefined,
+      allDay,
+      startEditable: movable,
+      durationEditable: movable && editing?.resizable === true && Boolean(item.endDate),
+      backgroundColor: "transparent",
+      borderColor: "transparent",
+      textColor: "inherit",
+      classNames: [
+        "calendar-event",
+        movable ? "calendar-event-movable" : "calendar-event-locked",
+        ...(key === selectedKey ? ["calendar-event-selected"] : []),
+      ],
+      extendedProps: {
+        itemType: item.type,
+        movable,
+        color,
+        timeLabel,
+        timeRangeLabel: timeLabel && item.endDate ? `${timeLabel}–${formatKst(item.endDate, KST_TIME)}` : timeLabel,
+        lockReason: context ? getCalendarItemLockReason(item, context) : null,
+        spaceLabel: item.space.label,
+        sourceLabel: item.source.label,
+      },
+    };
+  });
 
   const commitMove = useCallback(
     async (original: UnifiedItem, request: CalendarMoveRequest, options: { undoable: boolean }) => {
@@ -444,31 +471,47 @@ export function UnifiedCalendar({
     calendarRef.current?.getApi().unselect();
   }, []);
 
+  const openItem = (item: UnifiedItem) => {
+    setSelectedItem(withPendingMove(item));
+    setPanelOpen(true);
+  };
+
   // 이벤트 클릭 → 상세 패널
   const handleEventClick = (arg: EventClickArg) => {
     const found = items.find((item) => getUnifiedItemKey(item) === arg.event.id);
     if (!found) return;
-    // List view's event element is a non-focusable table row.
+    // 패널이 닫히면 누른 칩으로 초점을 돌려주도록 먼저 칩에 초점을 둔다.
     const trigger = arg.el.matches("a, button, [tabindex]")
       ? arg.el
       : arg.el.querySelector<HTMLElement>("a, button, [tabindex]");
     trigger?.focus({ preventScroll: true });
-    setSelectedItem(withPendingMove(found));
-    setPanelOpen(true);
+    openItem(found);
   };
 
   const handleDatesSet = useCallback((arg: DatesSetArg) => {
-    const next = { type: arg.view.type as CalendarViewName | null, title: arg.view.title };
-    setView((current) => (current.type === next.type && current.title === next.title ? current : next));
+    const next = { type: arg.view.type as CalendarGridView, title: formatPeriodTitle(arg) };
+    setPeriod((current) => (current.type === next.type && current.title === next.title ? current : next));
   }, []);
 
   const api = () => calendarRef.current?.getApi();
   const canQuickCreate = canUseQuickCreate(quickCreate);
+  const isWeek = (period.type ?? view) === "timeGridWeek";
+  const unit = isWeek ? "주" : "달";
+  const hint = canQuickCreate && context
+    ? isWeek
+      ? "칸을 끌어서 시간을 정해 만들고, 항목을 끌어 날짜와 시간을 옮깁니다."
+      : "칸을 누르거나 끌어서 만들고, 항목을 끌어 날짜를 옮깁니다."
+    : canQuickCreate
+      ? isWeek ? "칸을 끌어서 시간을 정해 만듭니다." : "칸을 누르거나 끌어서 만듭니다."
+      : context
+        ? isWeek ? "항목을 끌어 날짜와 시간을 옮깁니다." : "항목을 끌어 날짜를 옮깁니다."
+        : null;
+  const iconButton = "inline-flex size-8 items-center justify-center rounded-md text-secondary-foreground transition-colors duration-[var(--duration-fast)] hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none";
 
   return (
     <div
       ref={containerRef}
-      className="flex h-full flex-col gap-3"
+      className="flex flex-col md:gap-5"
       onPointerDownCapture={(event) => {
         const locked = (event.target as Element).closest<HTMLElement>(".calendar-event-locked");
         const reason = locked?.dataset.lockReason;
@@ -490,135 +533,68 @@ export function UnifiedCalendar({
         lockedPressRef.current = null;
       }}
     >
-      {/* 노션식 툴바: 기간 이동 · 제목 · 보기 전환 */}
-      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+      {/* 기간 줄: 제목 · 이전/오늘/다음 · 유형 필터 */}
+      <div className="hidden flex-wrap items-center justify-between gap-3 md:flex">
         <div className="flex min-w-0 items-center gap-1">
-          <h2 className="mr-2 min-w-0 truncate text-lg font-semibold tracking-[-0.01em]" data-calendar-title aria-live="polite">
-            {view.title}
+          <h2 className="mr-3 min-w-0 truncate text-lg/[26px] font-semibold tracking-title" data-calendar-title aria-live="polite">
+            {period.title}
           </h2>
-          <button
-            type="button"
-            onClick={() => api()?.prev()}
-            aria-label="이전"
-            className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <ChevronLeft className="size-4" aria-hidden="true" />
+          <button type="button" onClick={() => api()?.prev()} aria-label={`이전 ${unit}`} className={iconButton}>
+            <ChevronLeft className="size-4" strokeWidth={1.8} aria-hidden="true" />
           </button>
-          <button
-            type="button"
-            onClick={() => api()?.today()}
-            className="inline-flex h-8 items-center rounded-md px-2.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
+          <Button type="button" variant="outline" className="px-2.5" onClick={() => api()?.today()}>
             오늘
-          </button>
-          <button
-            type="button"
-            onClick={() => api()?.next()}
-            aria-label="다음"
-            className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <ChevronRight className="size-4" aria-hidden="true" />
+          </Button>
+          <button type="button" onClick={() => api()?.next()} aria-label={`다음 ${unit}`} className={iconButton}>
+            <ChevronRight className="size-4" strokeWidth={1.8} aria-hidden="true" />
           </button>
         </div>
-        <div role="group" aria-label="달력 보기" className="flex h-8 items-center gap-0.5 rounded-lg bg-muted p-0.5">
-          {VIEW_OPTIONS.map((option) => {
-            const active = view.type === option.value;
-            return (
-              <button
-                key={option.value}
-                type="button"
-                aria-pressed={active}
-                onClick={() => api()?.changeView(option.value)}
-                className={`h-7 rounded-md px-2.5 text-xs transition-colors duration-[var(--duration-fast)] motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-                  active ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                {option.label}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* 타입 필터 바 */}
-      <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="캘린더 항목 필터">
-        {activePreset ? (
-          <button
-            type="button"
-            onClick={() => {
-              setActivePreset(null);
-              onPresetChange?.(null);
-            }}
-            className="inline-flex min-h-7 items-center rounded-full border border-primary bg-primary/10 px-3 text-xs font-medium text-primary"
-            aria-label="노트와 레슨 필터 해제"
-          >
-            노트 + 레슨 보기 · 해제
-          </button>
-        ) : null}
-        {(Object.entries(UNIFIED_ITEM_TYPE_LABELS) as [UnifiedItemType, string][]).map(([type, label]) => {
-          const active = visibleTypes.has(type);
-          return (
-            <button
-              key={type}
-              type="button"
-              onClick={() => toggleType(type)}
-              aria-pressed={active}
-              aria-label={`${label} ${active ? "숨기기" : "표시하기"}`}
-              className={`inline-flex min-h-7 items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs transition-colors duration-[var(--duration-fast)] motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-                active
-                  ? "bg-muted text-foreground"
-                  : "text-muted-foreground line-through decoration-muted-foreground/60 hover:bg-muted/60"
-              }`}
-            >
-              <UnifiedItemTypeIcon type={type} className="size-3.5" />
-              {label}
-            </button>
-          );
-        })}
-        {canQuickCreate || context ? (
-          <p className="ml-auto hidden text-xs text-muted-foreground sm:block">
-            {canQuickCreate ? "칸을 누르거나 끌어서 바로 만들기" : null}
-            {canQuickCreate && context ? " · " : null}
-            {context ? "항목을 끌어 날짜 옮기기" : null}
-          </p>
-        ) : null}
+        {filters}
       </div>
 
       {notice ? (
         <div
           role={notice.tone === "error" ? "alert" : "status"}
-          className={`flex min-h-9 flex-wrap items-center justify-between gap-2 rounded-md px-3 py-1.5 text-xs ${
-            notice.tone === "error" ? "bg-destructive-muted text-destructive" : "bg-muted text-foreground"
-          }`}
+          className={cn(
+            "mx-5 mb-3 flex min-h-10 flex-wrap items-center gap-2 rounded-touch text-ui md:mx-0 md:mb-0",
+            notice.tone === "error"
+              ? "bg-destructive-muted px-3.5 py-2 text-destructive"
+              : "justify-between bg-sidebar py-1.5 pl-3.5 pr-2 text-foreground",
+          )}
         >
-          <span className="min-w-0 break-words">{notice.message}</span>
+          {notice.tone === "error" ? <TriangleAlert className="size-3.5 shrink-0" strokeWidth={1.8} aria-hidden="true" /> : null}
+          <span className="min-w-0 flex-1 break-words">{notice.message}</span>
           <span className="flex items-center gap-1">
             {notice.tone === "status" && notice.undo ? (
-              <button
+              <Button
                 type="button"
+                variant="outline"
+                size="sm"
                 onClick={() => {
                   const undo = notice.undo;
                   if (undo) void commitMove(undo.item, undo.request, { undoable: false });
                 }}
-                className="inline-flex min-h-7 items-center gap-1 rounded-md px-2 font-medium hover:bg-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
-                <Undo2 className="size-3.5" aria-hidden="true" />
                 되돌리기
-              </button>
+              </Button>
             ) : null}
             <button
               type="button"
               onClick={() => setNotice(null)}
-              className="inline-flex min-h-7 items-center rounded-md px-2 text-muted-foreground hover:bg-background hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              aria-label="알림 닫기"
+              className={cn(
+                "inline-flex size-7 items-center justify-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                notice.tone === "error" ? "hover:bg-background/60" : "text-secondary-foreground hover:bg-background hover:text-foreground",
+              )}
             >
-              닫기
+              <X className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
             </button>
           </span>
         </div>
       ) : null}
 
-      {/* FullCalendar */}
-      <div className={`fc-custom fc-notion min-h-0 flex-1 [&_.fc]:h-full [&_.fc-view-harness]:flex-1 ${canQuickCreate ? "calendar-can-create" : ""}`} aria-label="통합 일정 달력">
+      {/* 넓은 화면: FullCalendar 월·주 */}
+      <div className={cn("fc-custom fc-notion hidden md:block", canQuickCreate && "calendar-can-create")} aria-label="통합 일정 달력">
         <FullCalendar
           ref={calendarRef}
           plugins={CALENDAR_PLUGINS}
@@ -642,18 +618,30 @@ export function UnifiedCalendar({
           unselectAuto={false}
           select={handleSelect}
           dateClick={handleDateClick}
-          height="100%"
+          height={view === "timeGridWeek" ? undefined : "auto"}
+          contentHeight={view === "timeGridWeek" ? WEEK_CONTENT_HEIGHT : undefined}
           eventDisplay="block"
-          dayMaxEvents={4}
+          dayMaxEvents={3}
           moreLinkContent={renderMoreLink}
           dayCellContent={renderDayCell}
+          dayHeaderContent={renderDayHeader}
           allDayText="종일"
           nowIndicator
-          scrollTime="08:00:00"
-          slotLabelFormat={SLOT_LABEL_FORMAT}
+          scrollTime="10:00:00"
+          slotLabelContent={renderSlotLabel}
           dayHeaderFormat={DAY_HEADER_FORMAT}
-          noEventsContent="이 기간에는 항목이 없습니다"
           fixedWeekCount={false}
+        />
+      </div>
+      {hint ? <p className="hidden text-xs text-muted-foreground md:block">{hint}</p> : null}
+
+      {/* 좁은 화면: 작은 월 달력과 고른 날 목록(MobileCalendarMonth) */}
+      <div className="md:hidden">
+        <MobileMonthView
+          items={visibleItems}
+          showSpaceContext={showSpaceContext}
+          onOpenItem={openItem}
+          filters={mobileFilters}
         />
       </div>
 
@@ -676,10 +664,11 @@ export function UnifiedCalendar({
       {/* 상세 패널 */}
       <UnifiedItemDetailPanel
         item={selectedItem}
-        open={panelOpen}
+        open={panelOpen && isActive}
         onOpenChange={setPanelOpen}
         onItemChange={setSelectedItem}
         returnTo={returnTo}
+        showSpaceContext={showSpaceContext}
         canManageEvents={canManageEvents}
         canManageLessons={canManageLessons}
         onItemUpdated={onItemUpdated}

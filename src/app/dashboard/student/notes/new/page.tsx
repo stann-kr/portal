@@ -1,6 +1,6 @@
 /**
  * @file src/app/dashboard/student/notes/new/page.tsx
- * @description 학생 노트 작성 풀 페이지.
+ * @description 학생 노트 작성 풀 페이지(NoteNew 보드).
  * 세션에서 studentId를 가져와 createPrivateNote에 바인딩 후 클라이언트 폼에 전달.
  */
 import { redirect } from "next/navigation";
@@ -36,7 +36,8 @@ export default async function NewNotePage({
       returnTo={returnTo}
       defaultDate={resolveNoteCreateDefaultDate(query.date)}
       defaultTitle={resolveNoteCreateDefaultTitle(query.title)}
-      spaceLabel={session.user.name?.trim() || session.user.email || "내 스페이스"}
+      spaceLabel="내 스페이스"
+      authorName={session.user.name?.trim() || session.user.email || undefined}
     />
   );
 }

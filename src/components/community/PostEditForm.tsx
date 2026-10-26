@@ -2,7 +2,6 @@
 
 import { useActionState, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
-import { Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DraftStatus } from "@/components/editor/DraftStatus";
@@ -335,7 +334,7 @@ function PostEditFormContent({
       ref={formRef}
       action={formAction}
       aria-busy={!loaded || isPending}
-      className="space-y-5"
+      className="flex flex-col gap-5"
       onKeyDownCapture={handleSaveShortcut}
       onSubmit={(event) => {
         if (isSubmitBlocked) {
@@ -374,12 +373,12 @@ function PostEditFormContent({
       />
 
       {state.error ? (
-        <p role="alert" className="rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">
+        <p role="alert" className="rounded-lg border border-destructive-border bg-destructive-muted p-3 text-ui text-destructive">
           {state.error}
         </p>
       ) : null}
       {hasStaleDraftBase ? (
-        <div className="space-y-3">
+        <div className="flex flex-col gap-3">
           <DraftConflictRecovery
             documentLabel="게시물"
             onUseServer={() => {
@@ -407,11 +406,11 @@ function PostEditFormContent({
               formRef.current?.querySelector<HTMLInputElement>('input[name="title"]')?.focus();
             }}
           />
-          <details className="rounded-lg border border-border bg-card p-3">
-            <summary className="cursor-pointer text-sm font-medium">
+          <details className="rounded-lg border border-border bg-background p-3">
+            <summary className="cursor-pointer text-ui font-medium">
               서버 최신본 {conflictPost?.version ?? serverSnapshot.version}번 확인·복사
             </summary>
-            <div className="mt-3 space-y-2 border-t border-border pt-3">
+            <div className="mt-3 flex flex-col gap-2 border-t border-muted pt-3">
               <p className="font-medium">{conflictPost?.title ?? serverSnapshot.title}</p>
               <RichTextContent html={conflictPost?.contentHtml ?? serverSnapshot.contentHtml} />
             </div>
@@ -419,8 +418,8 @@ function PostEditFormContent({
         </div>
       ) : null}
 
-      <label className="block space-y-1.5" htmlFor="edit-post-title">
-        <span className="text-sm font-medium">제목</span>
+      <label className="flex flex-col gap-1.5 text-body font-medium text-secondary-foreground md:text-ui" htmlFor="edit-post-title">
+        <span>제목</span>
         <Input
           id="edit-post-title"
           name="title"
@@ -431,6 +430,7 @@ function PostEditFormContent({
           }}
           required
           disabled={!loaded || isPending}
+          className="h-12 px-3.5 font-normal md:h-10 md:px-3 md:text-md"
         />
       </label>
 
@@ -461,6 +461,7 @@ function PostEditFormContent({
           minHeight="min(60dvh, 42rem)"
           placeholder="게시물 내용을 이어서 작성하세요…"
           ariaLabel="커뮤니티 게시물 내용"
+          toolbar="none"
           disabled={isPending}
           footer={
             <DraftStatus
@@ -479,16 +480,16 @@ function PostEditFormContent({
         />
       ) : null}
 
-      <div className="flex justify-end gap-2">
-        <Button type="button" variant="outline" onClick={onCancel} disabled={isPending || isEditorUploading}>
+      <div className="flex justify-end gap-2 border-t border-muted pt-3 md:pt-2">
+        <Button type="button" variant="outline" size="touch" onClick={onCancel} disabled={isPending || isEditorUploading} className="md:h-9 md:rounded-md md:px-3.5 md:text-ui">
           취소
         </Button>
         <Button
           type="submit"
+          size="touch"
           disabled={isSubmitDisabled}
-          className="gap-2"
+          className="flex-1 md:h-9 md:flex-none md:rounded-md md:px-4 md:text-ui"
         >
-          <Save className="h-4 w-4" aria-hidden="true" />
           {isEditorUploading ? "업로드 완료 대기…" : isPending ? "저장 중…" : "변경사항 저장"}
         </Button>
       </div>

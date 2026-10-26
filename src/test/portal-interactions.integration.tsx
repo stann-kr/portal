@@ -32,6 +32,7 @@ let saveComment: typeof import("@/lib/actions/comments").createComment = async (
 let removeComment: typeof import("@/lib/actions/comments").deleteComment = async () => {};
 let trashPost: typeof import("@/lib/actions/posts").deletePost = async () => ({ success: true });
 let AssignmentView: typeof import("@/components/student-portal/AssignmentView").AssignmentView;
+let AssignmentDetailClient: typeof import("@/app/dashboard/student/assignments/[id]/AssignmentDetailClient").AssignmentDetailClient;
 let FileUploader: typeof import("@/components/upload/FileUploader").FileUploader;
 let FullEditor: typeof import("@/components/editor/FullEditor").FullEditor;
 let pastedEditorImageFiles: typeof import("@/components/editor/useEditorImageUpload").pastedEditorImageFiles;
@@ -81,7 +82,8 @@ let CommunityClient: typeof import("@/app/community/CommunityClient").default;
 let LoginForm: typeof import("@/components/auth/LoginForm").LoginForm;
 const previousGlobals = new Map<string, PropertyDescriptor | undefined>();
 
-mock.module("next/navigation", { namedExports: { useRouter: () => ({ push() {}, refresh() {} }) } });
+const routerReplacements: string[] = [];
+mock.module("next/navigation", { namedExports: { useRouter: () => ({ push() {}, refresh() {}, replace(href: string) { routerReplacements.push(href); } }) } });
 // Browser/provider loading is exercised separately; this boundary exposes v3's HTML media API.
 const HtmlMediaBoundary = React.forwardRef<HTMLVideoElement, ReactPlayerProps>((props, ref) => (
   <video ref={ref} src={props.src} controls={props.controls} onLoadedMetadata={props.onLoadedMetadata} onCanPlay={props.onCanPlay} onError={props.onError} />
@@ -242,6 +244,7 @@ before(async () => {
   ({ TimelineFeedback } = await import("@/components/feedback/TimelineFeedback"));
   ({ PostDetailClient } = await import("@/app/community/[postId]/PostDetailClient"));
   ({ AssignmentView } = await import("@/components/student-portal/AssignmentView"));
+  ({ AssignmentDetailClient } = await import("@/app/dashboard/student/assignments/[id]/AssignmentDetailClient"));
   ({ FileUploader } = await import("@/components/upload/FileUploader"));
   ({ FullEditor } = await import("@/components/editor/FullEditor"));
   ({ pastedEditorImageFiles } = await import("@/components/editor/useEditorImageUpload"));
@@ -621,6 +624,57 @@ test("FileUploader는 아직 반영되지 않은 전환 렌더 때문에 현재 
   assert.equal(button("파일 선택").disabled, false);
 });
 
+test("FullEditor 고정 서식 줄은 compact에서 네 칸만 두고, none·bare에서는 없애며 마크다운 전환을 상태 줄이나 상위 자리로 옮긴다", { concurrency: false }, async (context) => {
+  const changes: string[] = [];
+  const toolbarLabels = () => [...browser.document.querySelectorAll('[role="toolbar"] button')].map((element) => element.getAttribute("aria-label"));
+  const root = await render(context, <FullEditor initialContent="<p>본문</p>" ariaLabel="본문" toolbar="compact" onChange={(html) => changes.push(html)} />);
+  await settleEditor();
+  assert.equal(browser.document.querySelector('[role="toolbar"]')?.getAttribute("aria-label"), "서식");
+  assert.deepEqual(toolbarLabels(), ["굵게", "기울임", "목록", "이미지"], "QnaNew 보드의 네 칸만 둔다");
+  assert.ok(button("마크다운"), "마크다운 전환은 상태 줄로 옮긴다");
+  await act(async () => button("목록").click());
+  await settleEditor();
+  assert.match(changes.at(-1) ?? "", /<ul/u, "목록 칸은 기존 글머리 목록 동작을 쓴다");
+
+  await act(async () => root.render(<FullEditor initialContent="<p>본문</p>" ariaLabel="본문" toolbar="none" />));
+  await settleEditor();
+  assert.equal(browser.document.querySelector('[role="toolbar"]'), null, "none은 고정 줄을 그리지 않는다");
+  assert.ok(button("마크다운"));
+  assert.ok(browser.document.querySelector('input[type="file"]'), "`/` 메뉴의 이미지 올리기가 쓰는 파일 입력은 남는다");
+
+  function BareHarness() {
+    const [tools, setTools] = React.useState<HTMLElement | null>(null);
+    return (
+      <div>
+        <FullEditor variant="bare" initialContent="<p>본문</p>" ariaLabel="본문" toolsContainer={tools} />
+        <span data-testid="editor-tools" ref={setTools} />
+      </div>
+    );
+  }
+  await act(async () => root.render(<BareHarness />));
+  await settleEditor();
+  const tools = browser.document.querySelector('[data-testid="editor-tools"]');
+  assert.equal(browser.document.querySelector('[role="toolbar"]'), null);
+  assert.ok(tools?.querySelector('[role="status"]'), "이미지 업로드 상태는 상위 화면이 정한 자리에 둔다");
+  assert.equal(tools?.querySelector("button")?.textContent, "마크다운");
+});
+
+test("FileUploader composer 버튼은 클립 아이콘과 '파일 첨부' 이름을 쓰고 업로드 진행을 버튼 아래 막대로 보인다", { concurrency: false }, async (context) => {
+  const xhrs = mockUploadTransport(context);
+  const uploaded: string[] = [];
+  requestUpload = async () => ({ success: true, mediaObjectId: "composer", deliveryUrl: "/api/media/composer", uploadUrl: "https://upload.test/put", uploadContentType: "image/png" });
+  completeUpload = async (id) => ({ success: true, mediaObjectId: id, deliveryUrl: `/api/media/${id}` });
+  await render(context, <FileUploader purpose="QNA_ATTACHMENT" draftOperationId="composer-draft" label="파일 첨부" trigger="composer" onUploadComplete={(upload) => uploaded.push(upload.mediaObjectId)} />);
+  assert.ok(button("파일 첨부").querySelector("svg"), "클립 아이콘이 있다");
+  await chooseUploadFile();
+  assert.equal(button("업로드 중...").getAttribute("aria-busy"), "true");
+  await act(async () => xhrs[0].upload.onprogress?.({ lengthComputable: true, loaded: 40, total: 100 }));
+  assert.equal(browser.document.querySelector('[role="progressbar"]')?.getAttribute("aria-valuenow"), "40");
+  await act(async () => xhrs[0].onload?.());
+  assert.deepEqual(uploaded, ["composer"]);
+  assert.equal(button("파일 첨부").disabled, false);
+});
+
 test("portal sections follow the URL from sidebar navigation and keep each section's scroll", async (context) => {
   browser.history.replaceState({ marker: "keep" }, "", "?section=workspace");
   browser.localStorage.setItem("test:section", "community");
@@ -678,10 +732,10 @@ test("controlled panel restores its opener focus and preserves busy dismissal pr
 });
 
 test("creation menu hands keyboard focus to its dialog and returns it to the stable add button", async (context) => {
-  await render(context, <CreateEntryDropdown studentId="student" diggingColumns={[]} spaceLabel="학생" canCreateQna={false} canCreateDigging={false} />);
+  await render(context, <CreateEntryDropdown studentId="student" diggingColumns={[]} spaceLabel="학생" noteCreateHref="/dashboard/student/notes/new" canCreateQna={false} canCreateDigging={false} />);
   await act(async () => {
-    button("새 항목 추가").focus();
-    button("새 항목 추가").dispatchEvent(new browser.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+    button("새로 만들기").focus();
+    button("새로 만들기").dispatchEvent(new browser.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
   });
   await settle();
   const item = browser.document.querySelector('[role="menuitem"]');
@@ -696,7 +750,7 @@ test("creation menu hands keyboard focus to its dialog and returns it to the sta
   assert.ok(content.contains(browser.document.activeElement));
   await escape();
   assert.equal(browser.document.querySelector('[role="dialog"]'), null);
-  assert.equal(browser.document.activeElement, button("새 항목 추가"));
+  assert.equal(browser.document.activeElement, button("새로 만들기"));
 });
 
 test("admin lesson booking from the calendar keeps the chosen time on failure and adds the lesson", async (context) => {
@@ -709,15 +763,10 @@ test("admin lesson booking from the calendar keeps the chosen time on failure an
   context.after(() => { saveLesson = async () => ({}); });
   await render(context, <CreateEntryDropdown studentId="student-1" diggingColumns={[]} spaceLabel="민지" defaultDate="2026-10-09T09:00"
     canCreateQna={false} canCreateEvent={false} canCreateDigging={false} canCreateLesson onSuccess={(item) => created.push(item)} />);
-  await act(async () => {
-    button("새 항목 추가").focus();
-    button("새 항목 추가").dispatchEvent(new browser.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
-  });
-  await settle();
-  const item = browser.document.querySelector('[role="menuitem"]');
-  assert.match(item?.textContent ?? "", /레슨 예약/u);
-  await act(async () => { item!.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Enter", bubbles: true })); });
-  await settle();
+  // 관리자 일정 머리는 만들 수 있는 항목이 레슨 하나라 메뉴 없이 "레슨 예약" 버튼으로 바로 연다(AdminSchedule).
+  assert.equal(browser.document.querySelector('[aria-haspopup="menu"]'), null);
+  await press("레슨 예약");
+  assert.ok(browser.document.querySelector('[role="dialog"]')?.contains(browser.document.activeElement));
   assert.equal(inputValue("scheduledAt"), "2026-10-09T09:00", "선택한 날짜와 기본 시각으로 시작한다");
   await fill("lesson-schedule-start", "2026-10-09T19:30");
   await press("레슨 저장");
@@ -749,7 +798,7 @@ test("admin lesson detail reschedules and deletes only after a cancel-first conf
   await press("레슨 시간 변경");
   assert.equal(inputValue("scheduledAt"), "2026-10-09T19:00");
   await fill("lesson-reschedule-lesson-1", "2026-10-10T20:00");
-  await press("저장");
+  await press("레슨 저장");
   assert.equal(updates[0]?.date.toISOString(), "2026-10-10T11:00:00.000Z");
   assert.equal(browser.document.querySelector('[role="status"]')?.textContent, "레슨 시간을 변경했습니다.");
 
@@ -769,37 +818,86 @@ test("calendar preserves its date, view and filters across view tabs and admin s
     adminId="admin" qnaThreads={[]} pendingAssignments={[]} referenceTime={new Date()}
     students={[{ id: "student", email: "student@example.test", displayName: "학생", createdAt: null, currentModule: null, nextLessonDate: null, pendingFeedbackCount: 0 }]}
   />);
-  const next = browser.document.querySelector('[data-calendar-title] ~ button[aria-label="다음"]');
+  // 관리자 일정은 "월·주·일별·전체" 한 세그먼트에서 주 보기로 시작한다(AdminSchedule).
+  const tabs = [...browser.document.querySelectorAll('[role="tablist"][aria-label="보기"] [role="tab"]')];
+  assert.deepEqual(tabs.map((tab) => tab.textContent), ["월", "주", "일별", "전체"]);
+  assert.equal(button("주").getAttribute("aria-selected"), "true");
+  await press("월");
+  assert.equal(button("월").getAttribute("aria-selected"), "true");
+  const next = browser.document.querySelector('[data-calendar-title] ~ button[aria-label="다음 달"]');
   assert.ok(next instanceof browser.HTMLElement);
   const initialTitle = browser.document.querySelector("[data-calendar-title]")?.textContent;
   await act(async () => next.click());
   await settle();
   const nextTitle = browser.document.querySelector("[data-calendar-title]")?.textContent;
   assert.notEqual(nextTitle, initialTitle);
-  assert.equal(button("월").getAttribute("aria-pressed"), "true");
+  assert.equal(browser.location.search.includes("view=calendar"), true);
   await press("노트 숨기기");
-  await press("일별 목록");
-  assert.equal(button("일별 목록").getAttribute("aria-selected"), "true");
+  await press("일별");
+  assert.equal(button("일별").getAttribute("aria-selected"), "true");
+  assert.equal(new URLSearchParams(browser.location.search).get("view"), "daily", "일별 보기도 주소의 view 값을 지킨다");
   // Keyboard arrow navigation moves focus without replacing a heavy view until activation.
   await act(async () => {
-    button("일별 목록").dispatchEvent(new browser.KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }));
+    button("일별").dispatchEvent(new browser.KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }));
   });
   await settle();
-  assert.equal(button("일별 목록").getAttribute("aria-selected"), "true");
-  await press("캘린더");
-  assert.equal(button("월").getAttribute("aria-pressed"), "true");
+  assert.equal(button("일별").getAttribute("aria-selected"), "true");
+  await press("월");
+  assert.equal(button("월").getAttribute("aria-selected"), "true");
+  assert.equal(new URLSearchParams(browser.location.search).get("view"), "calendar");
   assert.equal(browser.document.querySelector("[data-calendar-title]")?.textContent, nextTitle);
   assert.equal(button("노트 표시하기").getAttribute("aria-pressed"), "false");
   await press("주");
   const weekTitle = browser.document.querySelector("[data-calendar-title]")?.textContent;
-  assert.equal(button("주").getAttribute("aria-pressed"), "true");
+  assert.equal(button("주").getAttribute("aria-selected"), "true");
+  assert.ok(browser.document.querySelector('[data-calendar-title] ~ button[aria-label="다음 주"]'));
   await act(async () => { navigateWithinPage("/dashboard/admin?section=work&student=student"); });
   await settle();
   await act(async () => { navigateWithinPage("/dashboard/admin?section=schedule&view=calendar&student=student"); });
   await settle();
-  assert.equal(button("주").getAttribute("aria-pressed"), "true");
+  assert.equal(button("주").getAttribute("aria-selected"), "true");
   assert.equal(browser.document.querySelector("[data-calendar-title]")?.textContent, weekTitle);
   assert.equal(button("노트 표시하기").getAttribute("aria-pressed"), "false");
+});
+
+test("top bar + opens today's quick create or lesson booking once and clears the create address", async (context) => {
+  browser.history.replaceState({}, "", "/dashboard/student?section=workspace&view=calendar&create=today");
+  const student = await render(context, <StudentPortalClient
+    initialLocation={resolvePortalLocation("student", { section: "workspace", view: "calendar" })}
+    announcements={[]} unifiedItems={[]} communityPosts={[]} curriculumModules={[]} assignments={[]}
+    studentId="student" displayName="학생" spaceLabel="학생" externalCalendarConnection={{ connected: false }} referenceTime={new Date()}
+  />);
+  const sheet = browser.document.querySelector('[role="dialog"]');
+  assert.ok(sheet, "오늘 날짜 빠른 만들기가 열린다");
+  assert.match(sheet.textContent ?? "", /에 만들기/u);
+  assert.equal(sheet.querySelector('[role="radio"][aria-checked="true"]')?.textContent, "노트", "하루 칸처럼 노트부터 고른다");
+  assert.equal(new URLSearchParams(browser.location.search).get("create"), null, "뒤로 가기에 다시 열리지 않게 주소에서 지운다");
+  assert.equal(new URLSearchParams(browser.location.search).get("view"), "calendar");
+  await act(async () => { button("빠른 만들기 닫기").click(); });
+  await settle();
+  assert.equal(browser.document.querySelector('[role="dialog"]'), null);
+  await act(async () => student.unmount());
+  await settle();
+
+  browser.history.replaceState({}, "", "/dashboard/admin?section=work&student=student");
+  await render(context, <AdminPortalClient
+    announcements={[]} initialUnifiedItems={[]} communityPosts={[]}
+    adminId="admin" qnaThreads={[]} pendingAssignments={[]} referenceTime={new Date()}
+    students={[{ id: "student", email: "student@example.test", displayName: "학생", createdAt: null, currentModule: null, nextLessonDate: null, pendingFeedbackCount: 0 }]}
+  />);
+  assert.equal(browser.document.querySelector('[role="dialog"]'), null);
+  // 같은 화면 안의 이동(pushState + popstate)으로도 열린다.
+  await act(async () => { navigateWithinPage("/dashboard/admin?section=schedule&create=lesson&student=student"); });
+  await settle();
+  const dialog = browser.document.querySelector('[role="dialog"]');
+  assert.match(dialog?.textContent ?? "", /레슨 예약/u);
+  assert.ok(browser.document.getElementById("lesson-schedule-start"));
+  assert.equal(new URLSearchParams(browser.location.search).get("create"), null);
+  await escape();
+  assert.equal(browser.document.querySelector('[role="dialog"]'), null);
+  await act(async () => { browser.dispatchEvent(new browser.PopStateEvent("popstate")); });
+  await settle();
+  assert.equal(browser.document.querySelector('[role="dialog"]'), null, "같은 주소로 돌아와도 다시 열리지 않는다");
 });
 
 test("portal deep links render their section, view and selected student before hydration", async (context) => {
@@ -821,7 +919,7 @@ test("portal deep links render their section, view and selected student before h
   />;
   markup.innerHTML = renderToString(admin);
   assert.equal(markup.querySelector("h1")?.textContent, "일정");
-  assert.equal(markup.querySelector('[role="tab"][aria-selected="true"]')?.textContent, "전체 항목");
+  assert.equal(markup.querySelector('[role="tab"][aria-selected="true"]')?.textContent, "전체");
   assert.equal(markup.querySelector("select")?.value, "requested");
   const loads: string[] = [];
   loadStudentCalendar = async (id) => { loads.push(id); return []; };
@@ -835,7 +933,7 @@ test("portal deep links render their section, view and selected student before h
   });
 });
 
-test("calendar chips leave the week-view selection preview and list rows to FullCalendar and survive missing item metadata", () => {
+test("calendar chips leave the week-view selection preview to FullCalendar and survive missing item metadata", () => {
   type ContentArg = Parameters<typeof renderCalendarEventContent>[0];
   const arg = (overrides: { view: string; isMirror?: boolean; extendedProps?: Record<string, unknown>; allDay?: boolean }) => ({
     view: { type: overrides.view },
@@ -843,38 +941,50 @@ test("calendar chips leave the week-view selection preview and list rows to Full
     event: { title: "리듬 연습", allDay: overrides.allDay ?? false, extendedProps: overrides.extendedProps ?? {} },
   }) as unknown as ContentArg;
   assert.equal(renderCalendarEventContent(arg({ view: "timeGridWeek", isMirror: true })), true, "the slot selection preview has no item data");
-  assert.equal(renderCalendarEventContent(arg({ view: "listWeek", extendedProps: { itemType: "EVENT" } })), true);
   const dragged = renderCalendarEventContent(arg({ view: "timeGridWeek", isMirror: true, extendedProps: { itemType: "EVENT", timeLabel: "14:00", movable: true } }));
   assert.notEqual(dragged, true, "a dragged item keeps its chip");
   const markup = browser.document.createElement("div");
   markup.innerHTML = renderToString(<>{dragged}</>);
   assert.match(markup.textContent ?? "", /14:00리듬 연습/u);
+  assert.ok(markup.querySelector(".calendar-chip-dot"), "a known item type keeps its type dot");
   markup.innerHTML = renderToString(<>{renderCalendarEventContent(arg({ view: "dayGridMonth", extendedProps: { itemType: "UNKNOWN" } }))}</>);
+  assert.equal(markup.querySelector(".calendar-chip-dot"), null);
   assert.equal(markup.querySelector("svg"), null);
   assert.match(markup.textContent ?? "", /리듬 연습/u);
 });
 
-test("calendar view switch marks no view on the server so a mobile list view hydrates without a stale month state", () => {
+test("calendar views share one 월·주·일별·전체 segment on the server and leave no separate list view", () => {
   const markup = browser.document.createElement("div");
-  markup.innerHTML = renderToString(<UnifiedCalendar returnTo="/dashboard/student" showSpaceContext={false} items={[]} />);
-  const group = markup.querySelector('[aria-label="달력 보기"]');
-  assert.ok(group);
-  assert.deepEqual([...group.querySelectorAll("button")].map((element) => element.getAttribute("aria-pressed")), ["false", "false", "false"]);
+  markup.innerHTML = renderToString(<StudentPortalClient
+    initialLocation={resolvePortalLocation("student", { section: "workspace", view: "calendar" })}
+    announcements={[]} unifiedItems={[]} communityPosts={[]} curriculumModules={[]} assignments={[]}
+    studentId="student" displayName="학생" spaceLabel="학생" externalCalendarConnection={{ connected: false }} referenceTime={new Date()}
+  />);
+  const tabs = [...markup.querySelectorAll('[role="tablist"][aria-label="보기"] [role="tab"]')];
+  assert.deepEqual(tabs.map((tab) => tab.textContent), ["월", "주", "일별", "전체"]);
+  assert.equal(markup.querySelector('[role="tab"][aria-selected="true"]')?.textContent, "월", "학생 캘린더는 월 보기로 시작한다");
+  assert.equal(markup.querySelector('[aria-label="달력 보기"]'), null, "달력 안의 월/주/목록 전환은 세그먼트로 합쳤다");
+  assert.equal(markup.querySelector(".fc-list"), null);
+  assert.equal(markup.querySelector("[data-calendar-title]")?.textContent, "", "기간 제목은 달력이 실제 기간을 알린 뒤 채운다");
+  assert.ok([...markup.querySelectorAll("button")].some((element) => element.textContent?.includes("새로 만들기")));
 });
 
-test("calendar list detail returns focus to its event link after a pointer opens the row", async (context) => {
+test("calendar detail returns focus to the month chip that opened it", async (context) => {
   await render(context, <UnifiedCalendar returnTo="/dashboard/student" showSpaceContext={false} items={[{
     id: "practice", type: "EVENT", subType: "PRACTICE", title: "리듬 연습", date: new Date(), metadata: {},
     space: { studentId: "student", label: "학생" }, source: { kind: "PORTAL", entity: "CALENDAR_EVENT", label: "포털" },
   }]} />);
-  await press("목록");
-  const cell = browser.document.querySelector(".fc-list-event-title");
-  assert.ok(cell instanceof browser.HTMLElement);
-  await act(async () => { cell.click(); });
+  const chip = browser.document.querySelector(".fc-daygrid-event");
+  assert.ok(chip instanceof browser.HTMLElement);
+  assert.match(chip.textContent ?? "", /리듬 연습/u);
+  await act(async () => { chip.click(); });
   await settle();
-  assert.ok(browser.document.querySelector('[role="dialog"]'));
+  const panel = browser.document.querySelector('[role="dialog"]');
+  assert.ok(panel);
+  assert.match(panel.textContent ?? "", /일정/u, "panel header shows the type");
   await escape();
-  assert.equal(browser.document.activeElement, browser.document.querySelector(".fc-list-event-title a"));
+  assert.equal(browser.document.querySelector('[role="dialog"]'), null);
+  assert.equal(browser.document.activeElement, chip);
 });
 
 test("calendar quick create works from the keyboard and keeps a typed title on outside clicks", async (context) => {
@@ -1155,23 +1265,48 @@ test("digging board saves only changed cells, clears numbers and ratings without
   assert.deepEqual(saves.at(-1), ["track-1", "rating", ""], "pressing the selected star clears the rating");
 });
 
+test("digging board opens the inline add row from its link prompt and the read-only board has no edit controls", async (context) => {
+  const columns = [
+    { id: "title", name: "트랙명", columnType: "text" as const, options: null, isDefault: true, sortOrder: 0 },
+    { id: "rating", name: "별점", columnType: "rating" as const, options: null, isDefault: true, sortOrder: 1 },
+    { id: "link", name: "링크", columnType: "link" as const, options: null, isDefault: true, sortOrder: 2 },
+  ];
+  const tracks = [{ id: "track-1", linkUrl: null, createdAt: new Date("2026-10-09T01:00:00.000Z"), values: { title: "Intro", rating: 3 } }];
+  const root = await render(context, <DiggingBoard initialColumns={columns} initialTracks={tracks} />);
+  assert.equal(browser.document.querySelector('table input[aria-label="링크"]'), null, "the add row starts as a single prompt");
+  await press("링크를 붙여넣어 트랙 추가");
+  const link = browser.document.querySelector('table input[aria-label="링크"]');
+  assert.ok(link instanceof browser.HTMLInputElement);
+  assert.equal(browser.document.activeElement, link, "the link cell takes focus");
+  assert.ok(button("디깅 트랙 추가"));
+  await act(async () => { link.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
+  assert.equal(browser.document.querySelector('table input[aria-label="링크"]'), null);
+  assert.equal(browser.document.activeElement, button("링크를 붙여넣어 트랙 추가"), "Escape returns to the prompt");
+
+  await act(async () => root.render(<DiggingBoard key="readonly" initialColumns={columns} initialTracks={tracks} readonly />));
+  assert.equal(browser.document.querySelectorAll("table input, table textarea, table select").length, 0);
+  assert.equal([...browser.document.querySelectorAll("button")].some((element) => ["디깅 트랙 삭제", "링크를 붙여넣어 트랙 추가", "트랙 삭제"].includes(element.getAttribute("aria-label") ?? element.textContent ?? "")), false);
+  assert.ok(browser.document.querySelector('table [role="img"][aria-label="별점 3점"]'), "read-only stars read as one rating");
+  assert.match(browser.document.querySelector("table tbody")?.textContent ?? "", /2026년 10월 9일 \(.\) · 1곡/u);
+});
+
 test("curriculum rolls back failed optimistic completion and allows a successful retry", async (context) => {
   const pending = Promise.withResolvers<void>();
   toggleModule = async () => pending.promise;
   context.after(() => { pending.resolve(); toggleModule = async () => {}; });
   await render(context, <CurriculumView initialModules={[{ id: "module", weekNum: 1, title: "비트 매칭", description: null, isCompleted: false }]} />);
-  assert.equal(button("비트 매칭 완료").getAttribute("aria-pressed"), "false");
-  await press("비트 매칭 완료");
+  assert.equal(button("완료 표시: 비트 매칭").getAttribute("aria-pressed"), "false");
+  await press("완료 표시: 비트 매칭");
   assert.equal(browser.document.querySelector('[role="progressbar"]')?.getAttribute("aria-valuenow"), "100");
-  assert.equal(button("비트 매칭 완료").disabled, true);
+  assert.equal(button("완료 취소: 비트 매칭").disabled, true);
   await act(async () => pending.reject(new Error("offline")));
   await settle();
   assert.equal(browser.document.querySelector('[role="progressbar"]')?.getAttribute("aria-valuenow"), "0");
-  assert.equal(button("비트 매칭 완료").getAttribute("aria-pressed"), "false");
+  assert.equal(button("완료 표시: 비트 매칭").getAttribute("aria-pressed"), "false");
   assert.ok(browser.document.querySelector('[role="alert"]'));
   toggleModule = async () => {};
-  await press("비트 매칭 완료");
-  assert.equal(button("비트 매칭 완료").getAttribute("aria-pressed"), "true");
+  await press("완료 표시: 비트 매칭");
+  assert.equal(button("완료 취소: 비트 매칭").getAttribute("aria-pressed"), "true");
   assert.equal(browser.document.querySelector('[role="alert"]'), null);
 });
 
@@ -1520,16 +1655,25 @@ test("community shows the server-loaded list first and explains a board without 
   assert.doesNotMatch(browser.document.body.textContent ?? "", /아직 게시물이 없습니다/u);
   assert.equal(requests.length, 0, "server list is not fetched again on mount");
 
-  await press("믹스셋");
+  // 게시판 탭은 주소를 가진 링크다. 같은 화면에서 주소만 바꾸고 목록을 다시 읽는다.
+  const openBoard = async (label: string) => {
+    const tab = [...browser.document.querySelectorAll('nav[aria-label="게시판"] a')].find((anchor) => anchor.textContent === label);
+    assert.ok(tab, `board tab: ${label}`);
+    await act(async () => { tab.dispatchEvent(new browser.MouseEvent("click", { button: 0, bubbles: true, cancelable: true })); });
+    await settle();
+  };
+  await openBoard("믹스셋");
   assert.deepEqual(requests, ["FEEDBACK"]);
+  assert.equal(new URL(browser.location.href).searchParams.get("boardType"), "FEEDBACK");
+  assert.equal([...browser.document.querySelectorAll('nav[aria-label="게시판"] a')].find((anchor) => anchor.textContent === "믹스셋")?.getAttribute("aria-current"), "page");
   assert.match(browser.document.body.textContent ?? "", /공유된 믹스셋이 없습니다/u);
 
   // 응답 전에 이미 받은 목록으로 돌아오면 취소된 요청 때문에 skeleton에 머물지 않는다.
   const pendingAnnouncements = Promise.withResolvers<Awaited<ReturnType<typeof loadCommunityPage>>>();
   loadCommunityPage = async ({ boardType }) => { requests.push(boardType); return pendingAnnouncements.promise; };
-  await press("공지");
+  await openBoard("공지");
   assert.ok(browser.document.querySelector('[aria-label="게시물을 불러오는 중"]'));
-  await press("믹스셋");
+  await openBoard("믹스셋");
   assert.equal(browser.document.querySelector('[aria-label="게시물을 불러오는 중"]'), null);
   assert.match(browser.document.body.textContent ?? "", /공유된 믹스셋이 없습니다/u);
   pendingAnnouncements.resolve({ posts: [], nextCursor: null });
@@ -1577,22 +1721,36 @@ test("a submission without feedback is deleted only after a cancel-first confirm
       ? { success: false, error: "피드백이 등록된 제출은 삭제할 수 없습니다. 필요하면 강사에게 문의해 주세요." }
       : { success: true };
   };
-  context.after(() => { removeAssignment = async () => ({ success: true }); });
-  await render(context, <AssignmentView initialAssignments={[{ id: "mistake", mediaUrl: "https://youtu.be/aqz-KE-bpKQ", submittedAt: new Date(), feedbackCount: 0 }]} />);
-  const listItem = [...browser.document.querySelectorAll("button")].find((element) => element.textContent?.includes("YouTube 믹스셋"));
-  assert.ok(listItem);
-  await act(async () => listItem.click());
-  await settle();
+  context.after(() => { removeAssignment = async () => ({ success: true }); routerReplacements.length = 0; });
+  const listHref = "/dashboard/student?section=workspace&view=assignments";
+  // 목록 행은 상세(타임라인 피드백) 화면으로 이동하고, 삭제는 상세 화면에서 한다.
+  const root = await render(context, <AssignmentView initialAssignments={[{ id: "mistake", mediaUrl: "https://youtu.be/aqz-KE-bpKQ", submittedAt: new Date(), feedbackCount: 0 }]} />);
+  const listItem = [...browser.document.querySelectorAll("a")].find((element) => element.textContent?.includes("YouTube 믹스셋"));
+  assert.equal(listItem?.getAttribute("href"), `/dashboard/student/assignments/mistake?returnTo=${encodeURIComponent(listHref)}`);
+  const detail = (feedbackList: { id: string; timeMarker: number; content: string; createdAt: Date | null }[]) => (
+    <AssignmentDetailClient
+      assignmentId="mistake" actorId="student-1" mediaUrl="https://youtu.be/aqz-KE-bpKQ" feedbackList={feedbackList}
+      isAdmin={false} deleteReturnTo={listHref} title="YouTube 믹스셋" submittedLabel="2026년 10월 18일 19:05 제출"
+      submittedLabelShort="10월 18일 19:05 제출" breadcrumb={{ href: listHref, label: "과제" }} returnTo={listHref}
+    />
+  );
+  await act(async () => root.render(detail([{ id: "reviewed", timeMarker: 90, content: "전환을 늦춰 보세요.", createdAt: null }])));
+  assert.equal([...browser.document.querySelectorAll("button")].some((element) => element.textContent === "제출 삭제"), false, "a reviewed submission offers no deletion");
+  await act(async () => root.render(detail([])));
   await press("제출 삭제");
   assert.equal(browser.document.activeElement?.textContent, "취소", "focus starts on the safe choice");
   assert.deepEqual(requests, []);
+  await press("취소");
+  assert.equal(browser.document.activeElement?.textContent, "제출 삭제", "cancel returns focus to the trigger");
+  assert.equal(browser.document.querySelector('[aria-label="제출 삭제 확인"]'), null);
+  await press("제출 삭제");
   await press("삭제");
   assert.match(browser.document.querySelector('[role="alert"]')?.textContent ?? "", /피드백이 등록된 제출/u);
   assert.ok(browser.document.querySelector('[aria-label="제출 삭제 확인"]'), "the confirmation stays open after a refusal");
+  assert.deepEqual(routerReplacements, []);
   await press("삭제");
   assert.deepEqual(requests, ["mistake", "mistake"]);
-  assert.match(browser.document.querySelector('[role="status"]')?.textContent ?? "", /제출을 삭제했습니다/u);
-  assert.equal([...browser.document.querySelectorAll("button")].some((element) => element.textContent?.includes("YouTube 믹스셋")), false);
+  assert.deepEqual(routerReplacements, [listHref], "a confirmed deletion returns to the list, which reloads without the submission");
 });
 
 test("admin module edit keeps input on refusal and returns focus to the row after saving", async (context) => {
@@ -1834,21 +1992,69 @@ test("calendar feed replacement asks before expiring the student's existing subs
   context.after(() => { issueFeedUrl = async () => "/api/calendar/feed?token=test"; });
 
   const first = await render(context, <CalendarFeedControl studentId="new-student" issuedAt={null} />);
+  assert.match(browser.document.body.textContent ?? "", /캘린더 구독발급 전/u);
   await press("구독 URL 발급");
   assert.deepEqual(issued, ["new-student"], "a first URL has no subscription to break");
-  assert.match(browser.document.body.textContent ?? "", /token-1/u);
-  await press("새 URL로 교체");
+  assert.equal(browser.document.querySelector("code")?.textContent, "https://portal.test/api/calendar/feed?token=token-1");
+  await press("구독 URL 다시 발급");
   assert.deepEqual(issued, ["new-student"], "replacing the URL just issued also asks first");
   await press("취소");
 
   await act(async () => first.render(<CalendarFeedControl key="subscribed" studentId="subscribed-student" issuedAt={new Date("2026-10-01T01:30:00.000Z")} />));
-  assert.match(browser.document.body.textContent ?? "", /2026년 10월 1일/u);
-  await press("새 URL로 교체");
+  assert.match(browser.document.body.textContent ?? "", /10월 1일 발급 · 사용 중/u);
+  assert.equal(browser.document.querySelector("code"), null, "a reloaded screen never shows the earlier URL");
+  await press("구독 URL 다시 발급");
   assert.deepEqual(issued, ["new-student"]);
   assert.equal(browser.document.activeElement?.textContent, "취소");
-  await press("URL 교체 확인");
+  await press("구독 URL 다시 발급 확인");
   assert.deepEqual(issued, ["new-student", "subscribed-student"]);
-  assert.match(browser.document.body.textContent ?? "", /token-2/u);
+  assert.equal(browser.document.querySelector("code")?.textContent, "https://portal.test/api/calendar/feed?token=token-2");
+});
+
+test("admin overview gathers account rows first, keeps each issue button in order, and orders lessons next → later → past", async (context) => {
+  const referenceTime = new Date("2026-10-26T03:00:00.000Z");
+  await render(context, <OverviewTab
+    studentId="student-1"
+    referenceTime={referenceTime}
+    modules={[
+      { id: "module-1", weekNum: 1, title: "장비와 신호 흐름", isCompleted: true },
+      { id: "module-2", weekNum: 2, title: "BPM 매칭", isCompleted: false },
+    ]}
+    lessons={[
+      { id: "lesson-past", scheduledAt: new Date("2026-10-21T10:00:00.000Z") },
+      { id: "lesson-later", scheduledAt: new Date("2026-11-04T10:00:00.000Z") },
+      { id: "lesson-next", scheduledAt: new Date("2026-10-28T10:00:00.000Z") },
+    ]}
+    calendarFeedIssuedAt={new Date("2026-10-14T01:00:00.000Z")}
+    account={{ kind: "temporary" }}
+  />);
+  const heading = browser.document.getElementById("curriculum-heading");
+  assert.match(heading?.textContent ?? "", /커리큘럼\s*1 \/ 2/u);
+  const lessonRows = [...browser.document.querySelectorAll('[aria-labelledby="lessons-heading"] li')].map((row) => row.textContent ?? "");
+  assert.deepEqual(lessonRows.map((text) => text.slice(0, 15)), ["10.28 (수) 19:00", "11.04 (수) 19:00", "10.21 (수) 19:00"]);
+  assert.match(lessonRows[0], /다음 레슨/u);
+  assert.match(lessonRows[2], /지난 레슨/u);
+
+  const account = browser.document.querySelector('[aria-labelledby="account-heading"] > div:last-of-type');
+  assert.ok(account);
+  const order = (element: { className: string }) => element.className.split(/\s+/u).find((name) => /^order-\d$/u.test(name));
+  const children = [...account.children];
+  const rowFor = (label: string) => children.find((child) => child.tagName === "P" && child.textContent?.startsWith(label));
+  assert.equal(order(rowFor("가입")!), "order-1");
+  assert.match(rowFor("가입")?.textContent ?? "", /임시 비밀번호를 학생이 아직 바꾸지 않았습니다/u);
+  assert.equal(order(rowFor("캘린더 구독")!), "order-2");
+  assert.match(rowFor("캘린더 구독")?.textContent ?? "", /10월 14일 발급 · 사용 중/u);
+  const actionOrder = children.filter((child) => child.querySelector("button")).map((child) => [child.querySelector("button")?.textContent, order(child)]);
+  assert.deepEqual(actionOrder, [["구독 URL 다시 발급", "order-3"], ["임시 비밀번호 다시 발급", "order-4"]], "tab order follows the visual button order");
+
+  await press("레슨 추가");
+  assert.equal(browser.document.activeElement, browser.document.getElementById("lesson-scheduled-at"), "the revealed form takes focus");
+  await act(async () => {
+    browser.document.activeElement?.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  });
+  await act(async () => { await new Promise((resolve) => browser.requestAnimationFrame(() => resolve(undefined))); });
+  assert.equal(browser.document.getElementById("lesson-scheduled-at"), null);
+  assert.equal(browser.document.activeElement, browser.document.getElementById("lesson-add-trigger"), "Esc returns focus to the add button");
 });
 
 test("public lesson calendar keeps a refused address for correction and sends only the address", async (context) => {

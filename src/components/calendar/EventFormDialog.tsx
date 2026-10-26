@@ -1,7 +1,6 @@
 /**
  * @file src/components/calendar/EventFormDialog.tsx
- * @description 캘린더 이벤트 생성/수정 다이얼로그.
- * 날짜 클릭 또는 이벤트 클릭 시 열림.
+ * @description "새 일정 추가" 대화상자(캔버스 CalendarDialogs). 좁은 화면은 아래 시트, 넓은 화면은 r10 패널.
  */
 "use client";
 
@@ -101,9 +100,9 @@ export function EventFormDialog({
           <DialogDescription>날짜와 시간을 확인하고 일정을 저장하세요.</DialogDescription>
         </DialogHeader>
 
-        <form action={action} onSubmit={() => setHasSubmitted(true)} className="space-y-4" aria-busy={isPending}>
+        <form action={action} onSubmit={() => setHasSubmitted(true)} className="flex flex-col gap-4" aria-busy={isPending}>
           {error && (
-            <p id="event-form-error" role="alert" className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-lg">
+            <p id="event-form-error" role="alert" className="rounded-touch bg-destructive-muted px-3.5 py-2 text-ui text-destructive">
               {error}
             </p>
           )}
@@ -116,18 +115,20 @@ export function EventFormDialog({
             errorId={error ? "event-form-error" : undefined}
           />
 
-          {/* 버튼 */}
-          <div className="flex gap-2 pt-1">
-            <Button type="submit" disabled={isPending} className="flex-1">
-              {isPending ? "저장 중..." : "저장"}
-            </Button>
+          {/* 버튼: 취소 · 저장(캔버스 CalendarDialogs). 좁은 화면은 48px 주 버튼이 위로 온다. */}
+          <div className="flex flex-col-reverse gap-2 md:flex-row md:justify-end">
             <Button
               type="button"
               variant="outline"
+              size="touch"
+              className="md:h-8 md:rounded-md md:px-3.5 md:text-ui"
               onClick={() => onOpenChange(false)}
               disabled={isPending}
             >
               취소
+            </Button>
+            <Button type="submit" size="touch" className="md:h-8 md:rounded-md md:px-3.5 md:text-ui" disabled={isPending}>
+              {isPending ? "저장 중..." : "저장"}
             </Button>
           </div>
         </form>

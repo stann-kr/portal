@@ -27,7 +27,18 @@ test("좁은 화면 위쪽 막대는 목록 화면에 메뉴와 주 행동, 상�
     title: "노트",
     action: { href: "/dashboard/student/notes/new", label: "새 노트" },
   });
-  assert.equal(resolveMobileTopBar("student", at("/dashboard/student?section=workspace&view=daily")).action?.label, "새로 만들기");
+  assert.deepEqual(resolveMobileTopBar("student", at("/dashboard/student?section=workspace&view=daily")).action, {
+    href: "/dashboard/student?section=workspace&view=daily&create=today",
+    label: "새로 만들기",
+  });
+  assert.equal(
+    resolveMobileTopBar("student", at("/dashboard/student?section=today")).action?.href,
+    "/dashboard/student?section=workspace&create=today",
+  );
+  assert.equal(
+    resolveMobileTopBar("admin", at("/dashboard/admin?section=schedule&student=s2&create=lesson")).action?.href,
+    "/dashboard/admin?section=schedule&student=s2&create=lesson",
+  );
   assert.deepEqual(resolveMobileTopBar("student", at("/dashboard/notes/n1")).back, { href: "/dashboard/student/notes", label: "노트 목록으로" });
   assert.equal(resolveMobileTopBar("student", at("/dashboard/qna/new")).title, "새 질문 작성");
   assert.equal(resolveMobileTopBar("admin", at("/dashboard/qna")).action, undefined);

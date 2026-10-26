@@ -1,13 +1,17 @@
+/*
+ * 통합 캘린더(FullCalendar) 모양. 캔버스 Calendar(월)·CalendarWeek·AdminSchedule(주) 보드 값.
+ * 캔버스의 #FBFBFA(주말 칸)·#FAFBFF(오늘 열)·#C7D2FE(선택 칩 테두리)는 토큰이 없어 color-mix로 만든다.
+ */
 .fc-custom {
   --fc-border-color: var(--color-border);
   --fc-page-bg-color: var(--color-background);
   --fc-neutral-bg-color: var(--color-muted);
-  --fc-list-event-hover-bg-color: var(--color-accent);
   --fc-today-bg-color: transparent;
-  --fc-highlight-color: color-mix(in oklab, var(--color-primary) 10%, transparent);
-  --fc-now-indicator-color: var(--color-primary);
+  --fc-highlight-color: color-mix(in srgb, var(--color-highlight) 6%, transparent);
+  --fc-now-indicator-color: var(--color-highlight);
   --fc-event-text-color: var(--color-foreground);
   --fc-small-font-size: 0.75rem;
+  color: var(--color-foreground);
 }
 
 .fc-custom th,
@@ -15,147 +19,155 @@
   border-color: var(--color-border);
 }
 
-/* ── 노션식 표: 바깥 테두리를 지우고 얇은 칸 선만 남긴다. ── */
-.fc-notion .fc-scrollgrid {
-  border: 0;
-}
-
-.fc-notion .fc-scrollgrid > tbody > tr > td,
-.fc-notion .fc-scrollgrid > thead > tr > th {
-  border-right: 0;
-}
-
+/* ── 요일 머리: 12px 글자 3, 왼쪽 정렬 ── */
 .fc-notion .fc-col-header-cell {
-  border-left: 0;
-  border-right: 0;
-  padding: 0.375rem 0;
-  font-size: 0.75rem;
-  font-weight: 500;
-  color: var(--color-muted-foreground);
+  padding: 0;
   text-align: left;
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: var(--color-muted-foreground);
 }
 
 .fc-notion .fc-col-header-cell-cushion {
-  padding: 0 0.5rem;
+  display: flex;
+  padding: 8px 10px;
+  color: inherit;
 }
 
-.fc-notion .fc-daygrid-day {
+/* ── 월 보기 칸 ── */
+.fc-notion .fc-daygrid-day-frame {
+  min-height: 128px;
+  box-sizing: border-box;
+  padding: 6px 6px 8px;
   transition: background-color var(--duration-fast) ease;
 }
 
-.fc-notion .fc-day-sat,
-.fc-notion .fc-day-sun {
-  background-color: color-mix(in oklab, var(--color-muted) 35%, transparent);
-}
-
-.fc-notion .fc-day-other .fc-daygrid-day-number {
-  color: var(--color-muted-foreground);
-  opacity: 0.6;
+.fc-notion .fc-dayGridMonth-view .fc-daygrid-day.fc-day-sat,
+.fc-notion .fc-dayGridMonth-view .fc-daygrid-day.fc-day-sun {
+  background-color: color-mix(in srgb, var(--color-sidebar) 50%, var(--color-background));
 }
 
 .fc-notion .fc-daygrid-day-top {
   flex-direction: row;
-  justify-content: space-between;
-  align-items: center;
-  padding: 0.25rem 0.375rem 0;
 }
 
 .fc-notion .fc-daygrid-day-number {
   display: inline-flex;
-  min-width: 1.5rem;
-  height: 1.5rem;
+  height: 22px;
   align-items: center;
-  justify-content: center;
-  border-radius: 9999px;
-  padding: 0 0.375rem;
-  font-size: 0.8125rem;
+  margin: 0 0 4px 6px;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
   color: var(--color-foreground);
 }
 
-/* 오늘 날짜는 숫자만 동그랗게 강조한다. */
-.fc-notion .fc-day-today .fc-daygrid-day-number {
-  background-color: var(--color-primary);
-  color: var(--color-primary-foreground);
-  font-weight: 600;
+/* FullCalendar 기본값(앞뒤 달 날짜 opacity 0.3)은 글자 3보다 옅어 읽기 어렵다. 색으로만 구분한다. */
+.fc-notion .fc-day-other .fc-daygrid-day-top {
+  opacity: 1;
 }
 
-.fc-notion .fc-day-today .fc-col-header-cell-cushion,
-.fc-notion .fc-timegrid .fc-col-header-cell.fc-day-today {
-  color: var(--color-primary);
-}
-
-/* 칸을 누르면 만들 수 있다는 단서. 실제 동작은 칸 전체 선택이 맡는다. */
-.fc-notion .fc-daygrid-day-top::before {
-  content: "+";
-  display: inline-flex;
-  width: 1.25rem;
-  height: 1.25rem;
-  align-items: center;
-  justify-content: center;
-  border-radius: 0.25rem;
+.fc-notion .fc-day-other .fc-daygrid-day-number {
   color: var(--color-muted-foreground);
-  font-size: 0.875rem;
-  opacity: 0;
-  transition: opacity var(--duration-fast) ease;
+}
+
+/* 오늘 날짜는 숫자만 22px 파랑 원으로 표시한다. */
+.fc-notion .fc-daygrid-day.fc-day-today .fc-daygrid-day-number {
+  width: 22px;
+  justify-content: center;
+  margin-left: 2px;
+  border-radius: 9999px;
+  background-color: var(--color-highlight);
+  color: var(--color-highlight-foreground);
+  font-weight: 500;
+}
+
+/* 칩 사이 2px는 칩 자체의 위 여백으로 둔다. FullCalendar가 여러 날 칩과 "+n개 더" 위치를 칩 높이로 재기 때문이다. */
+.fc-notion .fc-daygrid-day-events {
+  margin: 0;
+}
+
+.fc-notion .fc-daygrid-event-harness {
+  margin: 0;
+}
+
+.fc-notion .fc-daygrid-event-harness .calendar-event {
+  margin: 2px 0 0;
 }
 
 @media (hover: hover) {
   .fc-notion.calendar-can-create .fc-daygrid-day:hover {
-    background-color: color-mix(in oklab, var(--color-muted) 55%, transparent);
-  }
-
-  .fc-notion.calendar-can-create .fc-daygrid-day:hover .fc-daygrid-day-top::before {
-    opacity: 1;
+    background-color: color-mix(in srgb, var(--color-muted) 45%, transparent);
   }
 }
 
-/* ── 항목 칩 ── */
+.fc-notion .fc-daygrid-more-link {
+  display: inline-flex;
+  height: 20px;
+  align-items: center;
+  margin: 2px 0 0 6px;
+  border-radius: 4px;
+  padding: 0 4px;
+  font-size: 0.75rem;
+  color: var(--color-muted-foreground);
+}
+
+.fc-notion .fc-daygrid-more-link:hover {
+  background-color: var(--color-muted);
+  color: var(--color-foreground);
+}
+
+.fc-notion .fc-popover {
+  border-radius: 10px;
+  border-color: var(--color-border);
+  background-color: var(--color-background);
+  box-shadow: var(--shadow-floating);
+  overflow: hidden;
+}
+
+.fc-notion .fc-popover-header {
+  background-color: transparent;
+  padding: 8px 10px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+/* ── 항목 칩: 점 6px · 시각 Mono · 제목, 높이 24 · r4 ── */
 .fc-notion .calendar-event {
   border: 0;
   background: transparent;
   box-shadow: none;
-  margin: 1px 0.25rem;
-}
-
-.fc-notion .fc-daygrid-event-harness .calendar-event {
-  margin-inline: 0.25rem;
 }
 
 .fc-notion .calendar-chip {
   display: flex;
   width: 100%;
   min-width: 0;
-  min-height: 1.375rem;
+  height: 24px;
+  box-sizing: border-box;
   align-items: center;
-  gap: 0.3125rem;
-  border-radius: 0.3125rem;
-  border-left: 3px solid var(--chip-color, var(--color-muted-foreground));
-  background-color: color-mix(in oklab, var(--chip-color, var(--color-muted-foreground)) 14%, var(--color-background));
-  padding: 0.125rem 0.375rem;
+  gap: 6px;
+  border-radius: 4px;
+  padding: 0 6px;
   color: var(--color-foreground);
   font-size: 0.75rem;
-  line-height: 1.1rem;
+  line-height: 1rem;
   overflow: hidden;
+  transition: background-color var(--duration-fast) ease;
 }
 
-.fc-notion .fc-timegrid-event .calendar-chip {
-  height: 100%;
-  align-items: flex-start;
-  flex-wrap: wrap;
-  align-content: flex-start;
-}
-
-.fc-notion .calendar-chip-icon {
-  width: 0.8125rem;
-  height: 0.8125rem;
+.fc-notion .calendar-chip-dot {
+  width: 6px;
+  height: 6px;
   flex-shrink: 0;
-  color: var(--chip-color, var(--color-muted-foreground));
+  border-radius: 9999px;
+  background-color: var(--chip-color, var(--color-muted-foreground));
 }
 
 .fc-notion .calendar-chip-time {
   flex-shrink: 0;
+  font-family: var(--font-mono);
   color: var(--color-muted-foreground);
-  font-variant-numeric: tabular-nums;
 }
 
 .fc-notion .calendar-chip-title {
@@ -163,19 +175,26 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-weight: 500;
 }
 
 .fc-notion .calendar-event-movable {
   cursor: grab;
 }
 
-.fc-notion .calendar-event-movable:hover .calendar-chip {
-  background-color: color-mix(in oklab, var(--chip-color, var(--color-muted-foreground)) 22%, var(--color-background));
+.fc-notion .calendar-event:hover .calendar-chip {
+  background-color: var(--color-muted);
+}
+
+/* 패널에 열린 항목 */
+.fc-notion .calendar-event-selected .calendar-chip,
+.fc-notion .calendar-event-selected:hover .calendar-chip {
+  background-color: var(--color-accent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-highlight) 28%, var(--color-background));
 }
 
 .fc-notion .fc-event-dragging .calendar-chip,
 .fc-notion .fc-event-mirror .calendar-chip {
+  background-color: var(--color-background);
   box-shadow: var(--shadow-floating);
   cursor: grabbing;
 }
@@ -187,129 +206,207 @@
 .fc-notion .calendar-event:focus-visible {
   outline: 2px solid var(--color-ring);
   outline-offset: 1px;
+  border-radius: 4px;
 }
 
-.fc-notion .fc-daygrid-more-link {
-  margin-left: 0.375rem;
-  border-radius: 0.25rem;
-  padding: 0 0.25rem;
+/* ── 주 보기: 시간 칸 48px(30분 2칸), 시각 열 56px, 선은 옅게 ── */
+.fc-notion .fc-timeGridWeek-view .fc-scrollgrid {
+  border-left: 0;
+  border-right: 0;
+}
+
+.fc-notion .fc-timeGridWeek-view th,
+.fc-notion .fc-timeGridWeek-view td {
+  border-left-color: var(--color-muted);
+  border-right-color: var(--color-muted);
+}
+
+.fc-notion .fc-timeGridWeek-view .fc-scrollgrid-section > td,
+.fc-notion .fc-timeGridWeek-view .fc-scrollgrid-section > th {
+  border-right: 0;
+}
+
+.fc-notion .fc-timeGridWeek-view .fc-col-header-cell {
+  border-bottom-color: var(--color-border);
+}
+
+.fc-notion .calendar-dayhead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
   font-size: 0.75rem;
   color: var(--color-muted-foreground);
 }
 
-.fc-notion .fc-daygrid-more-link:hover {
-  background-color: var(--color-muted);
+.fc-notion .calendar-dayhead-num {
+  font-family: var(--font-mono);
   color: var(--color-foreground);
 }
 
-.fc-notion .fc-popover {
-  border-radius: 0.5rem;
-  border-color: var(--color-border);
-  background-color: var(--color-surface-elevated);
-  box-shadow: var(--shadow-overlay);
-  overflow: hidden;
+.fc-notion .fc-day-today .calendar-dayhead {
+  color: var(--color-highlight);
 }
 
-.fc-notion .fc-popover-header {
-  background-color: transparent;
-  padding: 0.5rem 0.625rem;
-  font-size: 0.8125rem;
-  font-weight: 600;
+.fc-notion .fc-day-today .calendar-dayhead-num {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  background-color: var(--color-highlight);
+  color: var(--color-highlight-foreground);
+  font-weight: 500;
 }
 
-/* ── 주 보기 ── */
+.fc-notion .fc-timeGridWeek-view .fc-col-header-cell-cushion {
+  padding: 0;
+}
+
+.fc-notion .fc-timegrid-axis-cushion,
+.fc-notion .fc-timegrid-slot-label-cushion {
+  min-width: 48px;
+  box-sizing: content-box;
+  padding: 0 8px 0 0;
+  text-align: right;
+  font-size: 11px;
+  color: var(--color-muted-foreground);
+}
+
+.fc-notion .fc-timegrid-axis-cushion {
+  padding-top: 8px;
+}
+
+.fc-notion .fc-timegrid-slot-label-cushion {
+  display: inline-block;
+  font-family: var(--font-mono);
+  transform: translateY(-7px);
+}
+
+.fc-notion .fc .fc-timegrid-slot-label {
+  vertical-align: top;
+  border-color: transparent;
+}
+
 .fc-notion .fc-timegrid-slot {
-  height: 1.5rem;
+  height: 24px;
+  border-color: var(--color-muted);
 }
 
 .fc-notion .fc-timegrid-slot-minor {
   border-top-style: none;
 }
 
-.fc-notion .fc-timegrid-slot-label-cushion,
-.fc-notion .fc-timegrid-axis-cushion {
-  font-size: 0.6875rem;
-  color: var(--color-muted-foreground);
+.fc-notion .fc-timegrid-divider {
+  padding: 0;
+  background: transparent;
+}
+
+/* 종일 줄: 칸 높이 36 이상, 칩은 사이드바 면 */
+/* 주 보기 종일 줄은 날짜 숫자가 머리에 있으므로 칸 안 날짜 줄(빈 링크·오늘 원)을 그리지 않는다. */
+.fc-notion .fc-timeGridWeek-view .fc-daygrid-body .fc-daygrid-day-top {
+  display: none;
+}
+
+.fc-notion .fc-timeGridWeek-view .fc-daygrid-body .fc-daygrid-day-frame {
+  min-height: 36px;
+  padding: 4px;
+}
+
+.fc-notion .fc-timeGridWeek-view .fc-daygrid-event .calendar-chip {
+  background-color: var(--color-sidebar);
 }
 
 .fc-notion .fc-timegrid-col.fc-day-today {
-  background-color: color-mix(in oklab, var(--color-primary) 4%, transparent);
+  background-color: color-mix(in srgb, var(--color-highlight) 2.5%, var(--color-background));
+}
+
+.fc-notion .fc-timegrid-col-events {
+  margin: 0 3px;
+}
+
+.fc-notion .fc-timegrid-event {
+  border-radius: 4px;
+}
+
+.fc-notion .fc-timegrid-event .fc-event-main {
+  padding: 0;
+}
+
+.fc-notion .calendar-chip-block {
+  height: 100%;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 2px;
+  padding: 5px 8px;
+  background-color: color-mix(in srgb, var(--chip-color, var(--color-muted-foreground)) 10%, var(--color-background));
+}
+
+.fc-notion .calendar-event:hover .calendar-chip-block {
+  background-color: color-mix(in srgb, var(--chip-color, var(--color-muted-foreground)) 16%, var(--color-background));
+}
+
+.fc-notion .calendar-chip-line {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.fc-notion .calendar-chip-block .calendar-chip-time {
+  font-size: 11px;
+  color: var(--color-secondary-foreground);
+  white-space: nowrap;
+}
+
+.fc-notion .calendar-chip-block .calendar-chip-title {
+  font-weight: 500;
+  white-space: normal;
+}
+
+/* 칸을 끌어 고르는 선택 미리보기: 점선 파랑 블록(AdminSchedule "새 레슨") */
+.fc-notion .fc-timegrid-event.fc-event-mirror:not(.calendar-event) {
+  border: 1.5px dashed var(--color-highlight);
+  background-color: color-mix(in srgb, var(--color-highlight) 6%, transparent);
+  box-shadow: none;
+}
+
+.fc-notion .fc-event-mirror:not(.calendar-event) .fc-event-time {
+  padding: 4px 6px 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-secondary-foreground);
 }
 
 .fc-notion .fc-highlight {
-  border-radius: 0.25rem;
+  border-radius: 4px;
 }
 
-/* ── 목록 보기 ── */
-.fc-custom .fc-list {
-  border: 0;
+/* 현재 시각: 2px 파랑 선과 왼쪽 8px 점 */
+.fc-notion .fc-timegrid-now-indicator-line {
+  border-top-width: 2px;
 }
 
-.fc-custom .fc-list-event-title {
-  overflow-wrap: anywhere;
+.fc-notion .fc-timegrid-now-indicator-line::before {
+  content: "";
+  position: absolute;
+  left: -4px;
+  top: -5px;
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  background-color: var(--color-highlight);
 }
 
-.fc-custom .fc-list-day-cushion {
-  background-color: var(--color-muted);
-  font-size: 0.8125rem;
-}
-
-.fc-custom .fc-list-event:hover td {
-  background-color: var(--color-accent);
-}
-
-.fc-custom .fc-list-event-dot {
-  border-color: var(--chip-color, var(--color-muted-foreground));
-}
-
-.fc-custom .fc-list-empty {
-  background-color: transparent;
-  color: var(--color-muted-foreground);
-  font-size: 0.875rem;
+.fc-notion .fc-timegrid-now-indicator-arrow {
+  display: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .fc-notion .fc-daygrid-day,
-  .fc-notion .fc-daygrid-day-top::before {
+  .fc-notion .fc-daygrid-day-frame,
+  .fc-notion .calendar-chip {
     transition: none;
-  }
-}
-
-/* Keep list rows readable beside the mobile side rail. */
-@media (max-width: 40rem) {
-  .fc-custom .fc-list-event {
-    position: relative;
-  }
-
-  /* Keep FullCalendar's native time, title link and table semantics. */
-  .fc-custom .fc .fc-list-event-time {
-    position: absolute;
-    top: 0.5rem;
-    left: 2.5rem;
-    right: 0.75rem;
-    width: auto;
-    padding: 0;
-    border: 0;
-    font-size: 0.75rem;
-    line-height: 1rem;
-    color: var(--color-muted-foreground);
-  }
-
-  .fc-custom .fc .fc-list-event-graphic {
-    padding-top: 1.75rem;
-    padding-right: 0;
-  }
-
-  .fc-custom .fc .fc-list-event-title {
-    padding-top: 1.75rem;
-  }
-
-  .fc-notion .fc-daygrid-day-number {
-    font-size: 0.75rem;
-  }
-
-  .fc-notion .calendar-chip-time,
-  .fc-notion .calendar-chip-icon {
-    display: none;
   }
 }

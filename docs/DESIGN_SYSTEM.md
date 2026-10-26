@@ -89,7 +89,7 @@ pill 형태는 오늘 날짜 표시와 개수처럼 모양 자체가 의미를 �
 
 - 지속 시간: fast 120ms, standard 200ms, slow 280ms
 - easing: `--ease-studio`
-- layer: base, sticky, dropdown, overlay, toast 순서
+- layer: base, sticky, overlay, dropdown, toast 순서. 메뉴·선택 창은 시트·서랍·대화상자 안에서도 열리므로 overlay 위에 둔다
 - transform과 opacity만 전환 대상으로 사용한다.
 - `prefers-reduced-motion: reduce`에서는 애니메이션과 부드러운 스크롤을 즉시 전환으로 줄인다.
 - 공통 overlay는 `components/ui/overlay-motion.css`의 Radix `data-state` 진입·퇴장 스타일을 사용한다. 메뉴는 trigger를 기준으로 열리고, 다음 dialog는 메뉴의 focus scope가 종료된 뒤 열린다.
@@ -116,29 +116,29 @@ pill 형태는 오늘 날짜 표시와 개수처럼 모양 자체가 의미를 �
 |---|---|
 | `Button` | variant, size, focus, disabled, active feedback |
 | `Input` | label과 조합되는 입력 surface, focus, disabled |
-| `PortalNavigation` | 역할별 section 이동, 현재 위치, horizontal mobile fallback |
-| `PortalShell` | 역할별 navigation, URL·section별 스크롤 복원, viewport 안의 공통 content frame |
-| `CalendarSection` | 세션 내 날짜·월/주 보기·필터 유지, 수동 키보드 탭 활성화, 활성 시 크기 재측정 |
-| `UnifiedCalendar` | 노션식 자체 툴바(제목·이전/오늘/다음·월/주/목록), 타입 필터, KST 벽시계 칸(UTC 모드), 권한 있는 일정·레슨·노트 끌어 옮기기와 저장 전 반영·실패 원위치·되돌리기, 잠긴 항목 끌기 시 이유 안내, 칸 클릭·끌어 선택·터치 탭으로 빠른 만들기 |
+| `AppSidebar`·`MobileTopBar` | 240px 사이드바, 좁은 화면 52px 위쪽 막대(주소 기본값 `resolveMobileTopBar`, 화면이 제목·뒤로·행동을 덮어쓰고 `action: null`로 숨김)와 280px 메뉴 서랍 |
+| `PortalShell` | 역할별 section 상태, URL·section별 스크롤 복원, viewport 안의 공통 content frame |
+| `CalendarSection` | 캘린더 머리(제목·"월·주·일별·전체" 세그먼트·새로 만들기/레슨 예약), 보기 기억(계정별, 없으면 좁은 화면 일별·넓은 화면 달력), 주소 `create=today|lesson`으로 빠른 만들기·레슨 예약 열기 뒤 값 지우기, 과제·커리큘럼 보기 연결 |
+| `UnifiedCalendar` | 이전·오늘·다음과 기간 제목, 타입 필터, KST 벽시계 칸(UTC 모드), 월(오늘 원)·주(48px 시간 칸·현재 시각 선·옅은 유형 면 블록) 보기, 권한 있는 일정·레슨·노트 끌어 옮기기와 저장 전 반영·실패 원위치·되돌리기, 잠긴 항목 끌기 시 이유 안내, 칸 클릭·끌어 선택·터치 탭으로 빠른 만들기. 좁은 화면 월은 `MobileMonthView`(점 표시 + 선택 날짜 목록) |
 | `CalendarQuickCreate` | 캘린더·일별·전체 보기가 공유하는 빠른 만들기 창(좁은 화면은 아래 시트). 노트는 제목·날짜를 채운 작성 화면으로, 일정·레슨은 그 자리에서 저장. 라디오 키보드 규칙, Esc 닫기, 제목이 있으면 바깥 클릭에도 유지 |
-| `CalendarEventChip` | 타입 색 왼쪽 막대·옅은 배경·아이콘·시각·제목의 캘린더 칩. 목록 보기와 선택 미리보기는 FullCalendar 기본 렌더 |
-| `DailyListView`·`AllItemsView` | 날짜별 노션식 목록(오늘·내일 표시, 하루 안 종일→시간순, 날짜별 추가 행)과 유형 칩·검색·정렬·새 항목이 있는 전체 항목 표 |
-| `NotesDatabase` | 노트 목록의 표/목록 전환(계정별 기억), 열 머리 정렬(aria-sort), 서버 본문 검색, 맨 아래 빠른 새 노트 행 |
-| `StatusBadge` | registry 기반 label·icon·tone 표시 |
+| `CalendarEventChip`·`CalendarAgendaRow` | 유형 점·Mono 시각·제목의 캘린더 칩(r4)과 일별·모바일 목록 행 |
+| `DailyListView`·`AllItemsView` | 날짜별 목록(오늘·내일·어제 표시, 하루 안 종일→시간순, 날짜 머리 오른쪽 추가)과 유형 칩·검색·정렬이 있는 전체 항목 표(좁은 화면은 두 줄 목록). 유형 필터는 일별에도 적용된다 |
+| `NotesDatabase` | 노트 목록의 표/목록 전환(계정별 기억), 열 머리 정렬(aria-sort), 서버 본문 검색, 맨 아래 빠른 새 노트 행, 좁은 화면 두 줄 목록 |
+| `StatusBadge` | registry 기반 상태를 점 + 이름으로 표시(대기=Q&A 노란 점, 완료·도착·예정=강조 파랑, 종료=비활성). 면 있는 칩이 아니다 |
 | `UnifiedItemTypeBadge` | 통합 기록의 일정·노트·디깅·Q&A·과제 type icon·label |
 | `UnifiedItemSpaceBadge` | 통합 기록의 학생 스페이스·포털 출처 label과 접근성 문맥 |
-| `UnifiedItemDetailPanel` | 캘린더·일별·전체 보기의 공통 상세 패널, 변경 중 닫힘 잠금. 노트는 넓은 패널에서 수정 권한이 있으면 `NoteEditorForm`으로 바로 편집 |
+| `UnifiedItemDetailPanel`·`SlidePanel` | 캘린더·일별·전체 보기의 공통 상세 패널(오른쪽 서랍, `note` 크기 440/520, 머리 슬롯), 변경 중 닫힘 잠금. 노트는 넓은 패널에서 수정 권한이 있으면 `NoteEditorForm`으로 바로 편집 |
 | `CalendarEventFields` | 일정 생성 dialog와 상세 수정 form이 공유하는 유형·제목·시간·메모 입력 |
 | `CalendarEventActions` | 학생 본인 포털 일정의 상세 패널 수정과 취소 우선 2단계 삭제 |
-| `LessonScheduleDialog` | 관리자 일정 캘린더의 날짜 선택에서 시작하는 레슨 예약 |
+| `LessonScheduleDialog` | 관리자 일정의 레슨 예약(머리 버튼·칸 선택·위쪽 막대 +). 시작 시각을 다음 정시로 채운다 |
 | `ConfirmPanel`·`useConfirmAction` | 휴지통 이동·영구 삭제·이력 복원·댓글/피드백/모듈/레슨/트랙/컬럼/채널 삭제 등 되돌리기 어려운 동작의 공통 취소 우선 2단계 확인. hook이 확인 대상과 연 버튼으로의 초점 복귀를, 패널이 열릴 때 취소 초점·Esc 취소·확인 뒤 진행 문구·작업 종료 시 닫힘을 소유한다. 실패 안내는 호출 화면의 기존 오류 영역이 맡는다. 삭제·만료처럼 되돌릴 수 없으면 destructive, 이력이 남는 버전 복원은 neutral 톤을 쓴다 |
 | `LessonActions` | 관리자 레슨 상세의 시간 변경과 취소 우선 2단계 삭제 |
-| `AssignmentDeleteAction` | 피드백 전 학생 본인 제출의 취소 우선 2단계 삭제, 거부 사유를 확인 영역 안에서 표시 |
+| `AssignmentDeleteAction` | 피드백 전 학생 본인 제출의 취소 우선 2단계 삭제(과제 상세 아래, 좁은 화면은 더 보기 메뉴에서도 열림), 거부 사유를 확인 영역 안에서 표시 |
 | `ExternalCalendarConnection` | 주소로 제공자를 판별하는 공개 레슨 캘린더 연결·교체·해제, 거부된 주소 유지와 live status |
 | `PrivateNoteList` | 저장 HTML을 직접 렌더하지 않는 노트 메타데이터·평문 미리보기·열기 링크 목록 |
-| `NoteFullForm` | 대상 학생 스페이스와 선택 날짜 문맥을 표시하는 전체 화면 노트 작성 폼 |
-| `SectionHeader` | section 제목·설명·단일 보조 action |
-| `EmptyState` | 비어 있는 이유와 가능한 다음 행동 |
+| `NoteFullForm`·`NoteDocEditor`·`NoteDocumentChrome` | 노트 새로 쓰기·문서 편집 화면의 공통 틀(위치 줄·저장 상태·변경 이력·더 보기, 날짜·작성자·수정 속성 줄). 날짜는 글자로 보이고 누르면 native 날짜 선택(`NoteDateField`) |
+| `SectionHeader` | section 제목(13/20 글자 2)·Mono 개수(`count`)·설명·단일 보조 action |
+| `EmptyState` | 비어 있는 이유와 가능한 다음 행동(States 보드), 제목 단계 `titleAs` |
 | `FullEditor` | rich text·Markdown 작성, block command, inline 삽입, keyboard save 경계 |
 | `BlockCommandMenu` | `/` 검색과 keyboard로 실행하는 block 삽입 목록 |
 | `EditorInsertPanel` | 링크·이미지·YouTube URL을 검증하고 selection에 삽입하는 panel |
@@ -147,12 +147,18 @@ pill 형태는 오늘 날짜 표시와 개수처럼 모양 자체가 의미를 �
 | `LocalDraftManager` | 현재 계정의 기기 초안 목록, 안전한 미리보기와 문서별·전체 2단계 폐기 |
 | `AccountMenu` | 사이드바·메뉴 서랍 계정 줄의 … 메뉴. 메뉴 focus scope가 끝난 뒤 초안·비밀번호·계정 삭제 대화상자를 열고, 로그아웃은 로컬 초안을 먼저 정리한 뒤 세션을 종료한다 |
 | `PasswordChangeControl` | 계정 메뉴의 본인 비밀번호 변경 dialog. 거부된 필드로 초점과 `aria-invalid`를 옮기고 성공 화면에는 입력값을 남기지 않으며 다음 행동 버튼으로 초점을 옮긴다. 같은 `PasswordChangeForm`의 `required` variant가 임시 비밀번호 로그인 뒤 `/account/password` 화면을 맡고, 저장되면 결과 버튼 없이 바로 포털로 이동한다 |
-| `StudentPasswordResetControl` | 관리자 학생 상세 계정 영역의 임시 비밀번호 발급. 항상 취소 우선 확인을 거치고 원문은 발급 직후 한 번만 복사 버튼과 함께 보이며, 학생이 아직 바꾸지 않은 상태만 다시 알린다 |
+| `StudentPasswordResetControl` | 관리자 학생 상세 계정 구역(가입·캘린더 구독 줄 아래)의 임시 비밀번호 발급. 항상 취소 우선 확인을 거치고 원문은 발급 직후 한 번만 복사 버튼과 함께 보이며, 학생이 아직 바꾸지 않은 상태만 다시 알린다 |
 | `StudentInviteControl` | 가입 전 학생의 가입 링크 재발급. 쓸 수 있는 링크가 남아 있으면 취소 우선 확인을 거치고, 만료된 링크는 바로 다시 발급한다 |
 | `OneTimeSecret` | 발급 직후 한 번만 보이는 임시 비밀번호·가입 링크 표시와 복사. 자동 복사가 막히면 값을 직접 선택하라고 안내한다 |
 | `InviteSignup` | `/invite`의 가입 화면. 링크 확인 중·사용 불가(잘못됨·만료·시도 한도)·비밀번호 설정 상태를 구분하고, 상태가 바뀌면 제목으로 초점을 옮긴다 |
 | `CreationConflictActions` | 같은 생성 초안의 payload 충돌에서 기존 문서 열기와 별도 문서 분리 선택 |
 | `RichTextContent` | 저장된 rich text의 공통 typography·embed 렌더 경계 |
+| `DocumentRecordFrame` | 노트·Q&A·게시물의 변경 이력과 휴지통 6화면 공통 틀(NoteHistory·NotesTrash 보드) |
+| `DiggingBoard` | 날짜별 트랙 표(넓은 화면)와 카드 목록(좁은 화면), 바뀐 칸만 저장, 한 줄 프롬프트로 여는 인라인 추가, 컬럼 관리·기간 필터, 읽기 전용 모드(관리자, 별점 `role="img"`) |
+| `AssignmentView`·`CurriculumView` | 과제 목록(행 = 상세 링크)과 커리큘럼 진도(주차 단위 완료), `pageHeader`로 화면 제목·여백을 직접 그린다 |
+| `ThreadList` | Q&A 목록. `variant="tabs"`(Q&A 화면 상태 탭)·`"chips"`(관리자 학생 상세) |
+| `AnnouncementList` | 공지 목록. 고정 공지는 본문 미리보기 + 상세 보기, 나머지는 한 줄 링크(`layout`) |
+| `CommunityPostRow`·`ChoiceGroup`·`MobileMoreMenu` | 게시물 목록 행, 화살표·Home·End로 움직이는 라디오 칩 그룹, 좁은 화면 위쪽 막대 … 메뉴 |
 
 공통 component를 우회해 같은 패턴을 다시 만들지 않는다. 의미나 책임이 다른 경우에는 억지로 variant에 합치지 않는다.
 
@@ -196,14 +202,13 @@ pill 형태는 오늘 날짜 표시와 개수처럼 모양 자체가 의미를 �
 
 ## 반응형
 
-- 768px 미만에서는 다단 콘텐츠를 한 열로 접는다.
-- 전체 화면 route는 `mx-auto max-w-* px-4 sm:px-6` gutter를 사용해 좁은 화면에서도 side rail이나 화면 끝에 붙지 않는다.
+- 768px 미만은 모바일 artboard(390), 이상은 데스크톱 artboard(1440)의 모양이다. 다단 콘텐츠는 한 열로 접고, 좌우 여백 20, 목록 행 48 이상, 누르는 곳 44×44 이상, 입력 글자 16px이다.
+- 데스크톱 본문은 보드 여백(`56px clamp(20px, 4.5vw, 64px) 80px`)과 보드별 최대 폭을 따른다.
 - 독립 route(`/community` 등)는 모바일에서도 포털 복귀·휴지통 같은 상위 이동 경로를 숨기지 않는다.
-- portal navigation은 한 줄을 유지하고 필요한 경우 가로 스크롤한다.
 - 넓은 표는 mobile에서 핵심 label-value list로 대체한다.
 - CTA 문구는 desktop에서 줄바꿈되지 않게 짧고 구체적으로 작성한다.
-- 문서 페이지는 `100dvh` 기반 최소 높이를 사용한다. 포털 shell은 `100dvh` 안에 navigation과 스크롤 영역을 두고, 캘린더는 헤더를 제외한 남은 공간을 사용한다.
-- 공개 캘린더 연결 설정은 접힌 disclosure 안에 둔다. 관리자 학생 선택은 가로 스크롤하는 뷰 탭과 분리해 학생 문맥 옆에 표시한다.
+- 문서 페이지는 `100dvh` 기반 최소 높이를 사용한다. 포털 shell은 `100dvh`(좁은 화면은 52px 위쪽 막대를 뺀 `h-app`) 안에 스크롤 영역을 두고, 캘린더는 헤더를 제외한 남은 공간을 사용한다.
+- 공개 캘린더 연결 설정은 캘린더 아래 접힌 disclosure 안에 둔다. 관리자 학생 선택은 캘린더 머리의 보기 세그먼트 옆에 둔다. 캘린더 보기는 넓은 화면 월·주·일별·전체, 좁은 화면 월·일별·전체다.
 
 ## 상태 완결성 점검
 
@@ -222,7 +227,7 @@ pill 형태는 오늘 날짜 표시와 개수처럼 모양 자체가 의미를 �
 - 임의 hex와 raw red, green, blue, orange 계열 status class가 새로 추가되지 않았는가
 - 되돌리기 어려운 동작이 브라우저 기본 `confirm`·`alert`·`prompt` 대신 화면 안의 `ConfirmPanel`을 쓰는가. `npm run check:ui`가 기본 대화상자 호출을 거부한다.
 - 색 utility가 `globals.css`에 정의된 token만 참조하는가. Tailwind 4는 없는 token의 class를 조용히 버리므로 `*-foreground` 누락은 `npm run check:ui`가 거부한다.
-- 한 화면의 주요 accent가 하나로 유지되는가
+- 강조 파랑이 오늘·선택·초점에만 쓰이고 주 버튼은 먹색인가
 - radius가 control, container, overlay 규칙을 따르는가
 - button·input·focus·placeholder 대비가 충분한가
 - keyboard, mobile 1열, empty·loading·error 상태가 있는가

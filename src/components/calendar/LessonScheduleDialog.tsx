@@ -14,7 +14,7 @@ import { createLesson, type CreateLessonState } from "@/lib/actions/lessons";
 import { createLessonUnifiedItem } from "@/lib/unified-item-normalization";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 
-/** 관리자가 학생 일정 캘린더에서 바로 레슨을 예약한다. */
+/** 관리자가 학생 일정 캘린더에서 바로 레슨을 예약한다(머리의 "레슨 예약", 좁은 화면 위쪽 막대의 +). */
 export function LessonScheduleDialog({
   open,
   onOpenChange,
@@ -73,14 +73,14 @@ export function LessonScheduleDialog({
           <DialogTitle>레슨 예약</DialogTitle>
           <DialogDescription>{spaceLabel} 학생의 레슨 날짜와 시간을 정하세요. 구독 캘린더에도 반영됩니다.</DialogDescription>
         </DialogHeader>
-        <form action={action} onSubmit={() => setHasSubmitted(true)} className="space-y-4" aria-busy={isPending}>
+        <form action={action} onSubmit={() => setHasSubmitted(true)} className="flex flex-col gap-4" aria-busy={isPending}>
           {error ? (
-            <p id="lesson-form-error" role="alert" className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">
+            <p id="lesson-form-error" role="alert" className="rounded-touch bg-destructive-muted px-3.5 py-2 text-ui text-destructive">
               {error}
             </p>
           ) : null}
-          <div className="space-y-1.5">
-            <label htmlFor="lesson-schedule-start" className="text-sm font-medium">레슨 날짜와 시간</label>
+          <label htmlFor="lesson-schedule-start" className="flex flex-col gap-1.5 text-xs text-secondary-foreground">
+            레슨 날짜와 시간
             <Input
               id="lesson-schedule-start"
               name="scheduledAt"
@@ -90,14 +90,22 @@ export function LessonScheduleDialog({
               onChange={(event) => setScheduledAt(event.target.value)}
               disabled={isPending}
               aria-describedby={error ? "lesson-form-error" : undefined}
+              className="font-mono md:px-2.5 md:text-xs"
             />
-          </div>
-          <div className="flex gap-2 pt-1">
-            <Button type="submit" disabled={isPending} className="flex-1">
-              {isPending ? "저장 중..." : "레슨 저장"}
-            </Button>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={isPending}>
+          </label>
+          <div className="flex flex-col-reverse gap-2 md:flex-row md:justify-end">
+            <Button
+              type="button"
+              variant="outline"
+              size="touch"
+              className="md:h-8 md:rounded-md md:px-3.5 md:text-ui"
+              onClick={() => onOpenChange(false)}
+              disabled={isPending}
+            >
               취소
+            </Button>
+            <Button type="submit" size="touch" className="md:h-8 md:rounded-md md:px-3.5 md:text-ui" disabled={isPending}>
+              {isPending ? "저장 중..." : "레슨 저장"}
             </Button>
           </div>
         </form>

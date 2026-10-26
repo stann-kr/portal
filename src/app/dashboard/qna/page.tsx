@@ -1,6 +1,6 @@
 /**
  * @file src/app/dashboard/qna/page.tsx
- * @description Q&A 스레드 목록 페이지.
+ * @description Q&A 스레드 목록 페이지(캔버스 Qna·MobileQna 보드).
  * 학생: 본인 스레드만, 어드민: 전체 + 학생명 표시.
  */
 export const dynamic = "force-dynamic";
@@ -8,8 +8,9 @@ export const dynamic = "force-dynamic";
 import { getActiveAuthSession } from "@/lib/auth-guard";
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, MessageCircle, Plus, Trash2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Plus, Trash2 } from "lucide-react";
+import { buttonClassName } from "@/components/ui/button";
+import { MobileTopBar } from "@/components/app-shell/AppSidebar";
 import { getQnaThreads } from "@/lib/actions/qna";
 import { ThreadList } from "@/components/qna/ThreadList";
 import type { QnaStatus } from "@/db/schema";
@@ -57,46 +58,40 @@ export default async function QnaPage({
     status: t.status as QnaStatus,
   }));
 
-  const openCount = threads.filter((t) => t.status === "OPEN").length;
+  const trashHref = `/dashboard/qna/trash?returnTo=${encodeURIComponent(listHref)}`;
+  const newHref = `/dashboard/qna/new?returnTo=${encodeURIComponent(listHref)}`;
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6 px-4 py-6 sm:px-6">
-      {/* 헤더 */}
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="space-y-1">
-          <Link href={parentReturnTo} className="inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"><ArrowLeft className="size-4" aria-hidden="true" />포털로 돌아가기</Link>
-          <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
-            <MessageCircle className="w-6 h-6 text-primary" />
-            Q&A
-            {openCount > 0 && (
-              <span className="inline-flex min-w-6 items-center justify-center rounded-md bg-warning-muted px-1.5 py-1 text-xs font-bold text-warning" aria-label={`${search ? "검색 결과 중 " : ""}답변 대기 ${openCount}건`}>
-                {openCount}
-              </span>
-            )}
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            {isAdmin
-              ? "전체 학생의 질문을 관리합니다."
-              : "강사에게 질문을 남기고 답변을 받으세요."}
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <Button asChild size="sm" variant="outline" className="gap-1.5">
-            <Link href={`/dashboard/qna/trash?returnTo=${encodeURIComponent(listHref)}`}>
-              <Trash2 className="w-3.5 h-3.5" />휴지통
-            </Link>
-          </Button>
-          {!isAdmin && (
-            <Button asChild size="sm" className="gap-1.5">
-              <Link href={`/dashboard/qna/new?returnTo=${encodeURIComponent(listHref)}`}>
-                <Plus className="w-3.5 h-3.5" />새 질문
+    <div className="px-5 pb-8 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-14">
+      {/* 좁은 화면의 새 질문(+)도 지금 목록 문맥으로 돌아오게 한다. */}
+      {!isAdmin ? <MobileTopBar title="Q&A" action={{ href: newHref, label: "새 질문" }} /> : null}
+      <div className="flex max-w-[880px] flex-col md:gap-6">
+        <header className="flex flex-wrap items-end justify-between gap-4">
+          <div className="flex flex-col gap-1">
+            <h1 className="sr-only md:not-sr-only md:text-display md:font-semibold md:tracking-display">Q&amp;A</h1>
+            <p className="hidden text-body text-secondary-foreground md:block">
+              {isAdmin ? "전체 학생의 질문을 관리합니다." : "강사에게 질문을 남기고 답변을 받으세요."}
+            </p>
+          </div>
+          <div className="hidden gap-2 md:flex">
+            <Link href={trashHref} className={buttonClassName({ variant: "ghost" })}>휴지통</Link>
+            {!isAdmin ? (
+              <Link href={newHref} className={buttonClassName({ className: "gap-1.5" })}>
+                <Plus className="size-3.5" strokeWidth={1.8} aria-hidden="true" />새 질문
               </Link>
-            </Button>
-          )}
-        </div>
-      </div>
+            ) : null}
+          </div>
+        </header>
 
-      <ThreadList threads={threads} isAdmin={isAdmin} returnTo={listHref} filter={filter} query={search} />
+        <ThreadList variant="tabs" threads={threads} isAdmin={isAdmin} returnTo={listHref} filter={filter} query={search} />
+
+        <Link
+          href={trashHref}
+          className="mt-2 flex h-11 items-center gap-2 self-start text-body text-secondary-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:hidden"
+        >
+          <Trash2 className="size-4" strokeWidth={1.6} aria-hidden="true" />휴지통
+        </Link>
+      </div>
     </div>
   );
 }

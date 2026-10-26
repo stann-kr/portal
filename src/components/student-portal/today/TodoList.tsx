@@ -1,11 +1,25 @@
 import Link from "next/link";
-import { Circle, MessageCircleReply } from "lucide-react";
-import { StatusBadge } from "@/components/ui/status-badge";
 import { formatKstShortDate } from "@/lib/kst-format";
-import type { StudentTodoEntry } from "@/lib/student-today";
-import { HOME_ROW_CLASS } from "./HomeSection";
+import type { StudentTodoEntry, StudentTodoStatus } from "@/lib/student-today";
+import { cn } from "@/lib/utils";
+import { LEDGER_ROW_CLASS } from "./HomeSection";
 
-/** 할 일: 도착한 응답은 말풍선, 기다리는 항목은 빈 원으로 표시하는 체크리스트형 목록. */
+/** 할 일 제목: 항목 이름 대신 지금 확인할 일을 문장으로 적는다(Main 보드). */
+const TODO_TITLES: Record<StudentTodoStatus, string> = {
+  feedbackReady: "피드백이 도착했어요",
+  qnaAnswered: "질문에 답변이 달렸어요",
+  feedbackWaiting: "피드백을 기다리는 과제",
+  qnaOpen: "답변을 기다리는 질문",
+};
+
+function describeTodo({ item, status }: StudentTodoEntry, referenceTime: Date): string {
+  if (item.type !== "ASSIGNMENT") return item.title;
+  const date = formatKstShortDate(item.date, "", referenceTime);
+  if (!date) return item.title;
+  return status === "feedbackWaiting" ? `${item.title} · ${date} 제출` : `${item.title} · ${date}`;
+}
+
+/** 할 일: 빈 체크 칸 · 확인할 일 · 항목 이름과 날짜. 과제는 과제 상세로, 질문은 Q&A 스레드로 연결한다. */
 export function TodoList({
   entries,
   referenceTime,
@@ -17,31 +31,25 @@ export function TodoList({
 }) {
   const encodedReturnTo = encodeURIComponent(returnTo);
   return (
-    <ul className="space-y-0.5">
-      {entries.map(({ item, status }) => {
-        const isAssignment = item.type === "ASSIGNMENT";
-        const href = isAssignment
+    <ul>
+      {entries.map((entry) => {
+        const { item, status } = entry;
+        const href = item.type === "ASSIGNMENT"
           ? `/dashboard/student/assignments/${encodeURIComponent(item.id)}?returnTo=${encodedReturnTo}`
           : `/dashboard/qna/${encodeURIComponent(item.id)}?returnTo=${encodedReturnTo}`;
-        const arrived = status === "feedbackReady" || status === "qnaAnswered";
-        const Marker = arrived ? MessageCircleReply : Circle;
         return (
           <li key={`${item.type}-${item.id}`}>
-            <Link href={href} className={`${HOME_ROW_CLASS} items-start`}>
-              <Marker
-                className={`mt-0.5 size-4 shrink-0 ${arrived ? "text-primary" : "text-muted-foreground"}`}
+            <Link href={href} className={cn(LEDGER_ROW_CLASS, "flex items-start gap-3 py-[13px] md:gap-2.5 md:px-1 md:py-3")}>
+              <span
                 aria-hidden="true"
+                className="mt-[3px] size-4 shrink-0 rounded-sm border-[1.5px] border-faint md:size-3.5"
               />
-              <span className="min-w-0 flex-1">
-                <span className="line-clamp-2 break-words text-foreground">{item.title}</span>
-                <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-                  <span>
-                    {isAssignment ? "과제" : "Q&A"} · {formatKstShortDate(item.date, "", referenceTime)}
-                    {isAssignment ? " 제출" : ""}
-                  </span>
+              <span className="flex min-w-0 flex-col gap-0.5">
+                <span className="text-md md:text-body">{TODO_TITLES[status]}</span>
+                <span className="truncate text-ui leading-[18px] text-muted-foreground md:text-xs">
+                  {describeTodo(entry, referenceTime)}
                 </span>
               </span>
-              <StatusBadge status={status} className="shrink-0 px-1.5 py-0.5 font-medium" />
             </Link>
           </li>
         );

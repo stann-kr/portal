@@ -755,7 +755,7 @@ for (const busyKind of ["upload", "reply", "lifecycle"] as const) {
     const harness = await renderForm(context, <ThreadDetailClient actorId="student-busy" threadId="thread-busy" title="질문" status="OPEN" version={1} isAdmin={false} replies={[]} deletedAt={null} studentName="학생" createdAt={null} returnTo="/dashboard/qna" />,
       (storage) => storage.setItem(key, serializeFormDraft({ operationId: "012c1894-ea20-46b2-960f-35b01d873570", contentHtml: "<p>전송할 답변</p>", attachmentUrl: "", attachmentObjectId: "" })));
     const form = harness.container.querySelector<HTMLFormElement>("form")!;
-    const trash = [...harness.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "휴지통 이동")!;
+    const trash = [...harness.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.getAttribute("aria-label") === "휴지통으로 이동")!;
     const upload = harness.container.querySelector<HTMLButtonElement>('[data-testid="upload-start"]')!;
     const submit = submitControl(harness.container);
     await waitForCondition(() => !submit.disabled, "답변 초안 준비");
@@ -833,23 +833,23 @@ test("Q&A 휴지통 충돌은 오래된 요청을 잠그고 전체 snapshot 재�
   const key = createDocumentDraftKey("qna-reply", "admin-lifecycle", "thread-lifecycle");
   const screen = (version: number, isAdmin = true) => <ThreadDetailClient actorId="admin-lifecycle" threadId="thread-lifecycle" title="질문" status={version === 1 ? "OPEN" : "CLOSED"} version={version} isAdmin={isAdmin} replies={[]} deletedAt={null} studentName="학생" createdAt={null} returnTo="/dashboard/qna" />;
   const harness = await renderForm(context, screen(1), (storage) => storage.setItem(key, serializeFormDraft({ operationId: "012c1894-ea20-46b2-960f-35b01d873570", contentHtml: "<p>보관 중인 답변</p>", attachmentUrl: "", attachmentObjectId: "" })));
-  const find = (label: string) => [...harness.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === label)!;
+  const find = (label: string) => [...harness.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => (button.getAttribute("aria-label") ?? button.textContent) === label)!;
   const trashAndConfirm = async () => {
-    await act(async () => find("휴지통 이동").click());
+    await act(async () => find("휴지통으로 이동").click());
     await confirmAction(harness, "휴지통 이동 확인");
   };
   await trashAndConfirm();
-  assert.equal(find("휴지통 이동").disabled, true);
-  await act(async () => find("휴지통 이동").click());
+  assert.equal(find("휴지통으로 이동").disabled, true);
+  await act(async () => find("휴지통으로 이동").click());
   assert.equal(requests.length, 1);
   await act(async () => find("최신 상태 확인").click());
   assert.match(harness.container.textContent ?? "", /최신 상태를 불러오지 못했습니다/u);
   refresh.mock.mockImplementation(() => undefined);
   await act(async () => find("최신 상태 확인").click());
   assert.equal(refresh.mock.callCount(), 2);
-  assert.equal(find("휴지통 이동").disabled, true, "현재 revision 숫자만으로 mutation을 열지 않는다");
+  assert.equal(find("휴지통으로 이동").disabled, true, "현재 revision 숫자만으로 mutation을 열지 않는다");
   await harness.rerender(screen(2));
-  assert.equal(find("휴지통 이동").disabled, false);
+  assert.equal(find("휴지통으로 이동").disabled, false);
   assert.match(harness.container.querySelector("textarea")?.value ?? "", /보관 중인 답변/u);
   await trashAndConfirm();
   await trashAndConfirm();
@@ -1280,7 +1280,7 @@ for (const moveFocusElsewhere of [false, true]) {
     harness.browserWindow.document.body.append(elsewhere);
     if (moveFocusElsewhere) elsewhere.focus();
     await harness.rerender(screen(true));
-    const currentButton = [...harness.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "휴지통 이동")!;
+    const currentButton = [...harness.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.getAttribute("aria-label") === "휴지통으로 이동")!;
     assert.ok(harness.browserWindow.document.activeElement === (moveFocusElsewhere ? elsewhere : currentButton), "복원 결과가 현재 키보드 작업 위치를 잃거나 가로채면 안 됩니다.");
   });
 }
@@ -1606,6 +1606,35 @@ test("Q&A 답변 Cmd/Ctrl+S는 최신 본문을 로컬 저장하고 등록하지
     attachmentUrl: "",
     attachmentObjectId: "",
   });
+});
+
+test("Q&A 답글 상자는 짧은 초안 상태만 보이고, 누르면 이 기기·계정 초안 줄과 저장 단축키를 펼친다", { concurrency: false }, async (context) => {
+  const actorId = "qna-reply-summary-actor";
+  const threadId = "thread-reply-summary";
+  const harness = await renderForm(
+    context,
+    <ThreadDetailClient actorId={actorId} createdAt={null} isAdmin={false} replies={[]} returnTo="/dashboard/qna" status="OPEN" version={1} deletedAt={null} studentName="학생" threadId={threadId} title="초안 상태 스레드" />,
+    (storage) => storage.setItem(createDocumentDraftKey("qna-reply", actorId, threadId), serializeFormDraft({ operationId: "6f3c1d2a-5b4e-4c3d-8a2b-1c0d9e8f7a6b", contentHtml: "<p>이어 쓸 질문</p>", attachmentUrl: "", attachmentObjectId: "" })),
+  );
+  const form = harness.container.querySelector("form")!;
+  const submit = submitControl(harness.container);
+  await waitForCondition(() => !submit.disabled, "답글 초안 준비");
+  const submits = form.querySelectorAll('button[type="submit"]');
+  assert.equal(submits.length, 1, "좁은 화면과 넓은 화면이 같은 등록 버튼 하나를 쓴다");
+  assert.equal(submits[0]!.getAttribute("aria-label"), "질문 추가");
+  assert.ok(form.querySelector('[data-testid="upload-start"]'), "첨부 버튼은 같은 상자 안에 있다");
+  const toggle = form.querySelector<HTMLButtonElement>("button[aria-controls]")!;
+  assert.ok(toggle, "초안 상태 문구는 자세히 보기 버튼이다");
+  assert.equal(toggle.getAttribute("aria-expanded"), "false");
+  assert.match(toggle.textContent ?? "", /^초안 (복원됨|저장됨)$|^저장 중…$/u);
+  const details = () => harness.container.querySelector(`[id="${toggle.getAttribute("aria-controls")}"]`)!;
+  assert.equal(details().querySelector('[aria-label="계정 초안 동기화 상태"]'), null, "평소에는 계정 초안 줄을 접어 둔다");
+  await act(async () => toggle.click());
+  assert.equal(toggle.getAttribute("aria-expanded"), "true");
+  assert.ok(details().querySelector('[aria-label="계정 초안 동기화 상태"]'), "펼치면 계정 초안 줄이 보인다");
+  assert.match(details().textContent ?? "", /초안 저장 (⌘S|Ctrl\+S)/u);
+  await act(async () => toggle.click());
+  assert.equal(details().querySelector('[aria-label="계정 초안 동기화 상태"]'), null);
 });
 
 const FRESH_META_SHORTCUT_CASES: ReadonlyArray<{

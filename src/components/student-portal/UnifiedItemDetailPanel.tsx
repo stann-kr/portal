@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
+import { UnifiedItemSpaceBadge, UnifiedItemTypeBadge } from "@/components/ui/unified-item-type";
 import { SlidePanel } from "./SlidePanel";
 import { UnifiedItemDetail } from "./UnifiedItemDetail";
 import type { NoteDetailViewer } from "./UnifiedNoteDetail";
@@ -17,13 +18,17 @@ export type UnifiedItemChangeHandlers = {
   viewer?: NoteDetailViewer;
 };
 
-/** 캘린더·일별·전체 보기가 같은 상세 패널과 변경 중 닫힘 잠금을 공유한다. */
+/**
+ * 캘린더·일별·전체 보기가 같은 상세 패널과 변경 중 닫힘 잠금을 공유한다.
+ * 머리 왼쪽은 유형 점·이름과 (관리자·외부 출처) 학생 칩, 노트는 전체 화면 열기를 닫기 옆에 둔다.
+ */
 export function UnifiedItemDetailPanel({
   item,
   open,
   onOpenChange,
   onItemChange,
   returnTo,
+  showSpaceContext = false,
   canManageEvents = false,
   canManageLessons = false,
   onItemUpdated,
@@ -36,15 +41,24 @@ export function UnifiedItemDetailPanel({
   /** 수정된 항목을 패널이 계속 보여 주도록 선택 상태를 갱신한다. */
   onItemChange: (item: UnifiedItem) => void;
   returnTo: string;
+  /** 관리자 화면처럼 학생 스페이스를 함께 보여야 하면 true. */
+  showSpaceContext?: boolean;
 } & UnifiedItemChangeHandlers) {
   const [busy, setBusy] = useState(false);
+  const isNote = item?.type === "NOTE";
 
   return (
     <SlidePanel
       open={open}
       onOpenChange={onOpenChange}
-      title={item?.type === "NOTE" ? "노트" : item?.title}
-      size={item?.type === "NOTE" ? "xl" : "md"}
+      title={isNote ? "노트" : item?.title}
+      headerStart={item ? (
+        <>
+          <UnifiedItemTypeBadge item={item} />
+          {showSpaceContext || item.source.kind !== "PORTAL" ? <UnifiedItemSpaceBadge item={item} /> : null}
+        </>
+      ) : undefined}
+      size={isNote ? "note" : "md"}
       dismissible={!busy}
     >
       {item ? (

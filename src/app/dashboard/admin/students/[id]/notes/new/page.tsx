@@ -35,6 +35,7 @@ export default async function AdminStudentNewNotePage({
       defaultDate={resolveNoteCreateDefaultDate(query.date)}
       defaultTitle={resolveNoteCreateDefaultTitle(query.title)}
       spaceLabel={student.displayName?.trim() || student.email}
+      authorName={session.user.name || "관리자"}
     />
   );
 }

@@ -39,8 +39,12 @@ export function useConfirmAction<T = true>() {
 
 export type ConfirmActionState<T = true> = ReturnType<typeof useConfirmAction<T>>;
 
+// 좁은 화면은 줄을 채우는 44px 터치 대상(문구가 길면 다음 줄로 넘겨 전체 폭), 넓은 화면은 32px 기본 버튼.
+const PANEL_BUTTON_CLASS = "h-11 flex-auto rounded-touch text-body md:h-8 md:flex-none md:rounded-md md:text-ui";
+
 /**
- * 확인 문구와 취소·확인 버튼. 열리면 취소에 초점을 두고 Esc로 닫는다.
+ * 확인 문구와 취소·확인 버튼(캔버스 AdminOps·CalendarDialogs·NoteHistory의 확인 줄).
+ * 열리면 취소에 초점을 두고 Esc로 닫는다.
  * 확인 뒤에는 `pending`이 끝날 때까지 진행 문구를 보이고, 끝나면 닫는다.
  * 실패 안내는 호출한 화면의 기존 오류 영역이 담당한다.
  */
@@ -61,7 +65,7 @@ export function ConfirmPanel({
   pending?: boolean;
   onConfirm: () => void;
   className?: string;
-  /** 삭제·만료처럼 되돌릴 수 없으면 destructive, 이력이 남는 복원은 neutral. */
+  /** 삭제·만료처럼 되돌릴 수 없으면 destructive(위험 옅은 면·위험 면 버튼), 이력이 남는 복원은 neutral(옅은 면·먹색 버튼). */
   tone?: "destructive" | "neutral";
 }) {
   const messageId = useId();
@@ -87,8 +91,8 @@ export function ConfirmPanel({
       role="group"
       aria-labelledby={messageId}
       className={cn(
-        "space-y-3 rounded-lg border p-3",
-        tone === "destructive" ? "border-destructive/30 bg-destructive-muted" : "border-border bg-muted/50",
+        "flex flex-col gap-3 rounded-touch px-3.5 py-3 md:flex-row md:flex-wrap md:items-center md:justify-between md:gap-x-3 md:gap-y-2.5",
+        tone === "destructive" ? "bg-destructive-muted" : "bg-sidebar",
         className,
       )}
       onKeyDown={(event) => {
@@ -98,16 +102,23 @@ export function ConfirmPanel({
         close();
       }}
     >
-      <p id={messageId} className="break-words text-sm text-foreground">{message}</p>
-      <div className="flex flex-wrap gap-2">
-        <Button ref={cancelRef} type="button" variant="outline" size="sm" onClick={close} disabled={pending}>
+      <p
+        id={messageId}
+        className={cn(
+          "min-w-0 break-words text-body md:flex-[1_1_16rem] md:text-ui",
+          tone === "destructive" ? "text-destructive" : "text-foreground",
+        )}
+      >
+        {message}
+      </p>
+      <div className="flex flex-wrap gap-2 md:ml-auto">
+        <Button ref={cancelRef} type="button" variant="outline" className={PANEL_BUTTON_CLASS} onClick={close} disabled={pending}>
           취소
         </Button>
         <Button
           type="button"
-          variant="outline"
-          size="sm"
-          className={tone === "destructive" ? "border-destructive/40 text-destructive hover:bg-destructive/10" : undefined}
+          variant={tone === "destructive" ? "destructive-solid" : "default"}
+          className={PANEL_BUTTON_CLASS}
           aria-describedby={messageId}
           disabled={pending}
           onClick={() => {

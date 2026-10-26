@@ -1,17 +1,21 @@
 /**
  * @file src/components/student-portal/CalendarSection.tsx
- * @description 캘린더 섹션의 5개 뷰 (캘린더 / 일별 목록 / 전체 항목 / 커리큘럼 / 과제).
- * 우측 상단 "+" 버튼으로 UnifiedCreateDialog 열기.
+ * @description 캘린더(학생)·일정(관리자) 화면과 같은 워크스페이스의 커리큘럼·과제 보기.
+ * 캘린더는 "월·주·일별·전체" 하나의 세그먼트로 보기를 바꾼다(좁은 화면은 월·일별·전체, MobileSpec).
+ * 머리의 "새로 만들기"(관리자는 "레슨 예약")가 만들기를 맡고, 좁은 화면 위쪽 막대의 +는
+ * `create=today`·`create=lesson` 주소로 들어와 오늘 빠른 만들기·레슨 예약을 연다.
  */
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useSyncExternalStore } from "react";
 import Link from "next/link";
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
+import { Ellipsis, FileText, Music, NotebookPen, TriangleAlert } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import type { UnifiedItem, UnifiedItemType } from "@/lib/utils/unifiedItemUtils";
 import { getOrSeedColumns } from "@/lib/actions/digging";
-import { UnifiedCalendar } from "./UnifiedCalendar";
+import { UnifiedCalendar, type CalendarGridView } from "./UnifiedCalendar";
 import { DailyListView } from "./DailyListView";
 import { AllItemsView } from "./AllItemsView";
 import { CurriculumView } from "./CurriculumView";
@@ -19,6 +23,10 @@ import { AssignmentView } from "./AssignmentView";
 import { CreateEntryDropdown } from "./CreateEntryDropdown";
 import { SlidePanel } from "./SlidePanel";
 import { QnaSlideForm } from "@/components/qna/QnaSlideForm";
+import { CalendarTypeFilter } from "@/components/calendar/CalendarTypeFilter";
+import { CalendarQuickCreate, type CalendarQuickCreateOptions } from "@/components/calendar/CalendarQuickCreate";
+import { LessonScheduleDialog } from "@/components/calendar/LessonScheduleDialog";
+import { UNIFIED_ITEM_TYPES } from "@/components/ui/unified-item-type";
 import type { DiggingColumnType } from "@/db/schema";
 import { assertAccountOwnerMayPersist } from "@/lib/account-terminal-lock";
 import { createAccountCalendarTabStorageKey } from "@/lib/local-owner-keys";
@@ -28,14 +36,16 @@ import { buildNoteCreateHref } from "@/lib/note-create-route";
 import { buildAdminStudentDetailHref, buildStudentDiggingBoardHref } from "@/lib/student-space-routes";
 import type { WorkspaceLocation } from "@/lib/portal-location";
 import {
-  getCalendarTabs,
   resolveCalendarPreset,
   resolveCalendarTab,
   resolveUnifiedItemType,
   type CalendarPreset,
   type CalendarTabValue,
 } from "@/lib/calendar-section-contract";
-import type { CalendarQuickCreateOptions } from "@/components/calendar/CalendarQuickCreate";
+import type { CalendarQuickCreateSelection } from "@/lib/calendar-quick-create";
+import { createDaySelection } from "@/lib/unified-item-views";
+import { toKstDateInputValue, toKstDateTimeInputValue } from "@/lib/date-input";
+import { cn } from "@/lib/utils";
 
 // ── 타입 ──────────────────────────────────────────
 
@@ -61,12 +71,40 @@ type DiggingColumn = {
   options: string | null | undefined;
 };
 
+/** 세그먼트 칸. 월·주는 같은 캘린더 보기(view=calendar) 안의 달력 모양이다. */
+type SegmentValue = "month" | "week" | "daily" | "all";
+
+const SEGMENTS: ReadonlyArray<{ value: SegmentValue; label: string }> = [
+  { value: "month", label: "월" },
+  { value: "week", label: "주" },
+  { value: "daily", label: "일별" },
+  { value: "all", label: "전체" },
+];
+
 /** 이전 버전 캘린더 내부 탭 localStorage 키 */
 const LEGACY_CALENDAR_TAB_STORAGE_KEY = "studentPortal:calendarTab";
 
 /** 같은 일정을 다른 모양으로 보는 보기. 화면 안에서 전환한다. */
 const CALENDAR_FAMILY_VIEWS: ReadonlySet<CalendarTabValue> = new Set(["calendar", "daily", "all"]);
 const NO_DIGGING_COLUMNS: DiggingColumn[] = [];
+
+/** 좁은 화면(md 미만)은 주 보기를 두지 않는다. 서버 렌더는 넓은 화면으로 본다. */
+const NARROW_QUERY = "(max-width: 47.99rem)";
+function subscribeNarrow(onChange: () => void) {
+  const query = window.matchMedia(NARROW_QUERY);
+  query.addEventListener("change", onChange);
+  return () => query.removeEventListener("change", onChange);
+}
+function useNarrowViewport(): boolean {
+  return useSyncExternalStore(
+    subscribeNarrow,
+    () => window.matchMedia(NARROW_QUERY).matches,
+    () => false,
+  );
+}
+
+/** 요청마다 새 객체라 같은 만들기를 다시 눌러도 주소 정리가 다시 돈다. */
+type CreateRequest = { kind: "today" | "lesson" };
 
 interface CalendarSectionProps {
   initialLocation?: WorkspaceLocation;
@@ -81,7 +119,7 @@ interface CalendarSectionProps {
   /** 관리자/학생에 따른 스페이스 문맥 표기. */
   workspaceRole: "admin" | "student";
   externalCalendarConnection?: ExternalCalendarConnectionSummary;
-  /** 어드민에서 주입하는 헤더 슬롯 (학생 필터 드롭다운 등) */
+  /** 어드민에서 주입하는 머리 슬롯(학생 선택). 세그먼트 옆, 좁은 화면은 세그먼트 위에 놓는다. */
   headerSlot?: React.ReactNode;
   /** QnA 생성 성공 시 낙관적 업데이트 콜백 */
   onAddItem?: (item: UnifiedItem) => void;
@@ -126,9 +164,20 @@ export function CalendarSection({
   const [qnaSlideOpen, setQnaSlideOpen] = useState(false);
   const [qnaFormBusy, setQnaFormBusy] = useState(false);
   const [activeTab, setActiveTab] = useState<CalendarTabValue>(initialLocation?.view ?? "calendar");
+  // 관리자 일정은 주 보기(AdminSchedule 보드), 학생 캘린더는 월 보기(Calendar 보드)로 시작한다. 이 세션 동안 유지한다.
+  const [calendarView, setCalendarView] = useState<CalendarGridView>(
+    workspaceRole === "admin" ? "timeGridWeek" : "dayGridMonth",
+  );
   const [calendarPreset, setCalendarPreset] = useState<CalendarPreset | null>(initialLocation?.preset ?? null);
   const [allItemsInitialType, setAllItemsInitialType] = useState<UnifiedItemType | null>(initialLocation?.type ?? null);
-  const calendarTabs = getCalendarTabs(workspaceRole);
+  // 보기를 바꿔도 남는 유형 필터(월·주·일별 공통).
+  const [visibleTypes, setVisibleTypes] = useState<ReadonlySet<UnifiedItemType>>(() => new Set(UNIFIED_ITEM_TYPES));
+  // 위쪽 막대의 +로 들어온 만들기 요청. 화면이 그린 뒤 주소에서 지운다.
+  const [createRequest, setCreateRequest] = useState<CreateRequest | null>(null);
+  const [todayQuickCreate, setTodayQuickCreate] = useState<CalendarQuickCreateSelection | null>(null);
+  const [lessonDialogOpen, setLessonDialogOpen] = useState(false);
+  const [lessonDefaultStart, setLessonDefaultStart] = useState<string | undefined>(undefined);
+  const narrow = useNarrowViewport();
   const calendarTabStorageKey = createAccountCalendarTabStorageKey(actorId);
   const isStudentWorkspace = actorId === studentId;
   const diggingColumns =
@@ -136,7 +185,6 @@ export function CalendarSection({
       ? loadedDiggingColumns.columns
       : NO_DIGGING_COLUMNS;
   const showSpaceContext = workspaceRole === "admin";
-  const workspaceContextLabel = workspaceRole === "student" ? "내 스페이스" : "학생 스페이스";
   const workspaceSection = isStudentWorkspace ? "workspace" : "schedule";
   const workspaceReturnTo = isStudentWorkspace
     ? `/dashboard/student?section=${workspaceSection}&view=${encodeURIComponent(activeTab)}`
@@ -164,14 +212,18 @@ export function CalendarSection({
       ? buildAdminStudentDetailHref(studentId, "digging")
       : undefined;
   const canManageLessons = workspaceRole === "admin" && studentId.trim().length > 0;
-  const viewTabs = calendarTabs.filter(({ value }) => CALENDAR_FAMILY_VIEWS.has(value));
+  const canQuickCreateToday = hasNoteTarget || isStudentWorkspace || canManageLessons;
   const isCalendarFamily = CALENDAR_FAMILY_VIEWS.has(activeTab);
-  const pageTitle = activeTab === "assignments"
-    ? "과제"
-    : activeTab === "curriculum"
-      ? "커리큘럼"
-      : workspaceRole === "admin" ? "일정" : "캘린더";
-  const canShowCreateMenu = Boolean(noteCreateHref) || canCreateQna || isStudentWorkspace || canManageLessons;
+  // 캘린더 보기의 제목. 과제·커리큘럼 보기는 그 화면이 제목을 그린다.
+  const pageTitle = workspaceRole === "admin" ? "일정" : "캘린더";
+  // 관리자 머리의 주 버튼은 "레슨 예약" 하나다. 노트는 칸 선택의 빠른 만들기와 더 보기 메뉴가 맡는다.
+  const canShowCreateMenu = workspaceRole === "admin"
+    ? canManageLessons
+    : Boolean(noteCreateHref) || canCreateQna || isStudentWorkspace;
+  const segmentValue: SegmentValue = activeTab === "calendar"
+    ? calendarView === "timeGridWeek" && !narrow ? "week" : "month"
+    : activeTab === "daily" ? "daily" : "all";
+  const effectiveCalendarView: CalendarGridView = narrow ? "dayGridMonth" : calendarView;
 
   // URL이 없을 때만 기기의 직전 탭을 복원하고 history 이동을 구독한다.
   useEffect(() => {
@@ -179,24 +231,37 @@ export function CalendarSection({
       const params = new URLSearchParams(window.location.search);
       const fromUrl = params.get("view");
       const resolvedFromUrl = resolveCalendarTab(fromUrl, workspaceRole);
+      const section = params.get("section");
       setCalendarPreset(resolveCalendarPreset(params.get("preset")));
       setAllItemsInitialType(resolveUnifiedItemType(params.get("type")));
+      // 위쪽 막대의 +: 이 화면 주소일 때만 받는다. 주소에서 지우는 일은 화면이 그린 뒤에 한다.
+      const create = params.get("create");
+      if (section === workspaceSection && create === "lesson" && canManageLessons) {
+        // 다음 정시로 시작 시각을 채운다(AdminSchedule 빠른 만들기처럼 시작 시각이 보이게).
+        const nextHour = new Date(Math.ceil((Date.now() + 1) / 3_600_000) * 3_600_000);
+        setLessonDefaultStart(toKstDateTimeInputValue(nextHour));
+        setLessonDialogOpen(true);
+        setCreateRequest({ kind: create });
+      } else if (section === workspaceSection && create === "today" && canQuickCreateToday) {
+        setTodayQuickCreate(createDaySelection(toKstDateInputValue(new Date())));
+        setCreateRequest({ kind: create });
+      }
       if (fromUrl && resolvedFromUrl === fromUrl) {
         setActiveTab(resolvedFromUrl);
         return;
       }
 
-      let restored: CalendarTabValue = "calendar";
+      // 저장된 선택이 없으면 좁은 화면은 일별(MobileCalendar·MobileAdminSchedule), 넓은 화면은 달력으로 시작한다.
+      let restored: CalendarTabValue = window.matchMedia(NARROW_QUERY).matches ? "daily" : "calendar";
       try {
         const saved = localStorage.getItem(calendarTabStorageKey)
           ?? localStorage.getItem(LEGACY_CALENDAR_TAB_STORAGE_KEY);
-        restored = resolveCalendarTab(saved, workspaceRole);
+        if (saved) restored = resolveCalendarTab(saved, workspaceRole);
       } catch {
         /* localStorage 접근 불가 환경 무시 */
       }
       setActiveTab(restored);
 
-      const section = params.get("section");
       if (isActive && (section === "workspace" || section === "schedule")) {
         const url = new URL(window.location.href);
         url.searchParams.set("view", restored);
@@ -207,7 +272,17 @@ export function CalendarSection({
     restore();
     window.addEventListener("popstate", restore);
     return () => window.removeEventListener("popstate", restore);
-  }, [calendarTabStorageKey, isActive, workspaceRole]);
+  }, [calendarTabStorageKey, canManageLessons, canQuickCreateToday, isActive, workspaceRole, workspaceSection]);
+
+  // 만들기 창을 연 뒤 뒤로 가기에 다시 열리지 않게 주소의 create 값을 지운다. 같은 이동에서 관리자 학생이
+  // 바뀌어 화면이 새로 마운트되면, 이 정리가 돌기 전에 새 화면이 같은 값을 다시 읽어 연다.
+  useEffect(() => {
+    if (!createRequest) return;
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has("create")) return;
+    url.searchParams.delete("create");
+    window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+  }, [createRequest]);
 
   // 탭 변경 시 영속화
   const handleTabChange = (value: string) => {
@@ -232,6 +307,15 @@ export function CalendarSection({
       url.searchParams.delete("type");
     }
     window.history.pushState({}, "", `${url.pathname}${url.search}${url.hash}`);
+  };
+
+  const handleSegmentChange = (value: string) => {
+    if (value === "month" || value === "week") {
+      setCalendarView(value === "week" ? "timeGridWeek" : "dayGridMonth");
+      handleTabChange("calendar");
+      return;
+    }
+    handleTabChange(value);
   };
 
   // 마운트 시 1회 digging columns 패치
@@ -276,167 +360,224 @@ export function CalendarSection({
     spaceLabel,
   };
 
-  const handlePresetChange = (preset: CalendarPreset | null) => {
-    setCalendarPreset(preset);
+  const clearPreset = () => {
+    setCalendarPreset(null);
     const url = new URL(window.location.href);
-    if (preset) url.searchParams.set("preset", preset);
-    else url.searchParams.delete("preset");
+    url.searchParams.delete("preset");
     window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
   };
 
+  const toggleType = (type: UnifiedItemType) => {
+    if (calendarPreset) clearPreset();
+    setVisibleTypes((prev) => {
+      const next = new Set(prev);
+      if (next.has(type)) next.delete(type);
+      else next.add(type);
+      return next;
+    });
+  };
+
+  const filterProps = {
+    visibleTypes,
+    onToggle: toggleType,
+    presetActive: Boolean(calendarPreset),
+    onClearPreset: clearPreset,
+  };
+  const filters = <CalendarTypeFilter {...filterProps} />;
+  const mobileFilters = <CalendarTypeFilter {...filterProps} variant="touch" className="-mr-5 pr-5" />;
+  const viewer = { actorId, role: workspaceRole };
+
+  const moreLinks = workspaceRole === "admin" ? [
+    noteCreateHref ? { href: noteCreateHref, label: "새 노트", Icon: NotebookPen } : null,
+    noteListHref ? { href: noteListHref, label: "노트 목록", Icon: FileText } : null,
+    diggingBoardHref ? { href: diggingBoardHref, label: "디깅 보드", Icon: Music } : null,
+  ].filter((link): link is NonNullable<typeof link> => link !== null) : [];
+
   return (
-    <div className="flex min-h-0 flex-col h-full" aria-busy={loading}>
-      <Tabs value={activeTab} onValueChange={handleTabChange} activationMode="manual" className="flex min-h-0 flex-col h-full">
-        {/* 화면 제목과 보기 전환. 캘린더·과제·커리큘럼 이동은 사이드바가 맡는다. */}
-        <div className="flex flex-shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 pb-3 pt-4 sm:px-6 sm:pt-6">
-          <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2">
-            <h1 className="text-2xl font-semibold tracking-[-0.02em]">{pageTitle}</h1>
-            {isCalendarFamily ? (
-              <TabsList aria-label="보기" className="h-8 gap-0.5 rounded-lg border-0 bg-muted p-0.5">
-                {viewTabs.map(({ value, label }) => (
-                  <TabsTrigger
-                    key={value}
-                    value={value}
-                    className="h-7 rounded-md px-2.5 text-xs text-muted-foreground data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm"
-                  >
-                    {label}
-                  </TabsTrigger>
-                ))}
-              </TabsList>
-            ) : null}
-          </div>
+    <div className="flex min-h-full flex-col" aria-busy={loading}>
+      <Tabs
+        value={segmentValue}
+        onValueChange={handleSegmentChange}
+        activationMode="manual"
+        className={cn("flex flex-col", isCalendarFamily && "pb-8 md:gap-5 md:px-[clamp(20px,3vw,40px)] md:pb-10 md:pt-8")}
+      >
+        {isCalendarFamily ? (
+          <>
+            {/* 머리: 제목 · 보기 세그먼트 · (관리자) 학생 선택 · 주 버튼 */}
+            <header className="flex flex-wrap items-center justify-between gap-4 px-5 pt-3 md:px-0 md:pt-0">
+              <div className={cn("flex w-full min-w-0 flex-col gap-2 md:w-auto md:flex-row md:flex-wrap md:items-center", workspaceRole === "admin" ? "md:gap-4" : "md:gap-x-5 md:gap-y-2")}>
+                <h1 className="sr-only text-2xl font-semibold tracking-display md:not-sr-only">{pageTitle}</h1>
+                <TabsList aria-label="보기" className="flex w-full md:inline-flex md:w-auto">
+                  {SEGMENTS.map(({ value, label }) => (
+                    <TabsTrigger key={value} value={value} className={value === "week" ? "hidden md:inline-flex" : undefined}>
+                      {label}
+                    </TabsTrigger>
+                  ))}
+                </TabsList>
+                {workspaceRole === "admin" && headerSlot ? <div className="-order-1 min-w-0 md:order-none">{headerSlot}</div> : null}
+              </div>
 
-          <div className="flex items-center gap-2">
-            {showSpaceContext && noteListHref ? (
-              <Link
-                href={noteListHref}
-                className="inline-flex h-8 shrink-0 items-center rounded-md border border-border px-2.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-              >
-                노트 목록
-              </Link>
-            ) : null}
-            {showSpaceContext && diggingBoardHref ? (
-              <Link
-                href={diggingBoardHref}
-                className="inline-flex h-8 shrink-0 items-center rounded-md border border-border px-2.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-              >
-                디깅 보드
-              </Link>
-            ) : null}
-            {canShowCreateMenu ? (
-              <CreateEntryDropdown
-                studentId={studentId}
-                diggingColumns={diggingColumns}
-                spaceLabel={spaceLabel}
-                open={createMenuOpen}
-                onOpenChange={setCreateMenuOpen}
-                noteCreateHref={noteCreateHref}
-                onOpenQnaPanel={() => setQnaSlideOpen(true)}
-                canCreateQna={canCreateQna}
-                canCreateEvent={isStudentWorkspace}
-                canCreateDigging={isStudentWorkspace}
-                canCreateLesson={canManageLessons}
-                onSuccess={(item) => {
-                  onAddItem?.(item);
-                  setCreateMenuOpen(false);
-                }}
-              />
-            ) : null}
-          </div>
-        </div>
-        {showSpaceContext ? (
-          <div className="flex min-h-10 shrink-0 flex-wrap items-center justify-between gap-2 border-y border-border px-4 py-2 text-xs text-muted-foreground sm:px-6">
-            <span className="min-w-0 break-words" aria-label={`${workspaceContextLabel}: ${spaceLabel || "선택된 학생 없음"}`}>
-              {workspaceContextLabel} · <span className="font-medium text-foreground">{spaceLabel || "선택된 학생 없음"}</span>
-            </span>
-            {headerSlot ? <div className="min-w-0 max-w-full">{headerSlot}</div> : null}
-          </div>
-        ) : null}
-        {loading ? (
-          <p className="shrink-0 border-b border-border px-3 py-2 text-xs text-muted-foreground sm:px-6" role="status">학생 일정을 불러오는 중입니다.</p>
-        ) : null}
-        {loadError ? (
-          <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-destructive/20 bg-destructive/5 px-3 py-2 sm:px-6" role="alert">
-            <p className="text-xs text-destructive">{loadError}</p>
-            {onRetry ? <Button type="button" size="sm" variant="outline" onClick={onRetry}>다시 시도</Button> : null}
-          </div>
-        ) : null}
-        {workspaceRole === "student" && externalCalendarConnection && isCalendarFamily ? (
-          <ExternalCalendarConnection
-            key={`${externalCalendarConnection.connected}:${externalCalendarConnection.provider ?? "NONE"}`}
-            connection={externalCalendarConnection}
-          />
-        ) : null}
+              <div className="hidden items-center gap-1 md:flex">
+                {canShowCreateMenu ? (
+                  <CreateEntryDropdown
+                    studentId={studentId}
+                    diggingColumns={diggingColumns}
+                    spaceLabel={spaceLabel}
+                    open={createMenuOpen}
+                    onOpenChange={setCreateMenuOpen}
+                    noteCreateHref={workspaceRole === "admin" ? undefined : noteCreateHref}
+                    onOpenQnaPanel={() => setQnaSlideOpen(true)}
+                    canCreateQna={workspaceRole === "admin" ? false : canCreateQna}
+                    canCreateEvent={isStudentWorkspace}
+                    canCreateDigging={isStudentWorkspace}
+                    canCreateLesson={canManageLessons}
+                    onSuccess={(item) => {
+                      onAddItem?.(item);
+                      setCreateMenuOpen(false);
+                    }}
+                  />
+                ) : null}
+                {moreLinks.length > 0 ? (
+                  <DropdownMenu.Root>
+                    <DropdownMenu.Trigger asChild>
+                      <Button type="button" variant="ghost" size="icon" aria-label="더 보기">
+                        <Ellipsis className="size-4" strokeWidth={1.6} aria-hidden="true" />
+                      </Button>
+                    </DropdownMenu.Trigger>
+                    <DropdownMenu.Portal>
+                      <DropdownMenu.Content align="end" sideOffset={6} className="portal-menu z-50 w-48 rounded-lg border border-border bg-background p-1 shadow-floating">
+                        {moreLinks.map(({ href, label, Icon }) => (
+                          <DropdownMenu.Item key={href} asChild>
+                            <Link href={href} className="flex h-9 w-full cursor-default select-none items-center gap-2.5 rounded-md px-2.5 text-ui text-foreground outline-none data-[highlighted]:bg-muted">
+                              <Icon className="size-4 text-secondary-foreground" strokeWidth={1.6} aria-hidden="true" />
+                              {label}
+                            </Link>
+                          </DropdownMenu.Item>
+                        ))}
+                      </DropdownMenu.Content>
+                    </DropdownMenu.Portal>
+                  </DropdownMenu.Root>
+                ) : null}
+              </div>
+            </header>
 
-        {/* 탭 콘텐츠 */}
-        <div className="min-h-0 flex-1 overflow-auto">
-          <TabsContent value="calendar" forceMount hidden={activeTab !== "calendar"} className="m-0 h-full p-3 sm:p-4">
-            <div className="h-full min-h-[24rem]">
+            {loading ? (
+              <p className="mx-5 mt-3 text-xs text-muted-foreground md:mx-0 md:mt-0" role="status">학생 일정을 불러오는 중입니다.</p>
+            ) : null}
+            {loadError ? (
+              <div className="mx-5 mt-3 flex min-h-10 flex-wrap items-center justify-between gap-2 rounded-touch bg-destructive-muted py-1.5 pl-3.5 pr-2 md:mx-0 md:mt-0" role="alert">
+                <p className="flex items-center gap-2 text-ui text-destructive">
+                  <TriangleAlert className="size-3.5 shrink-0" strokeWidth={1.8} aria-hidden="true" />
+                  {loadError}
+                </p>
+                {onRetry ? <Button type="button" size="sm" variant="outline" onClick={onRetry}>다시 시도</Button> : null}
+              </div>
+            ) : null}
+
+            {/* 월·주: FullCalendar(넓은 화면)·작은 월 달력(좁은 화면). 날짜와 보기를 지키려고 늘 마운트해 둔다. */}
+            <div
+              role="tabpanel"
+              aria-label={segmentValue === "week" ? "주" : "월"}
+              hidden={activeTab !== "calendar"}
+            >
               <UnifiedCalendar
                 isActive={isActive && activeTab === "calendar"}
                 items={unifiedItems}
-                editContext={{ actorId, role: workspaceRole }}
+                view={effectiveCalendarView}
+                visibleTypes={visibleTypes}
+                preset={calendarPreset}
+                filters={activeTab === "calendar" ? filters : null}
+                mobileFilters={activeTab === "calendar" ? mobileFilters : null}
+                editContext={viewer}
                 quickCreate={quickCreate}
                 returnTo={workspaceReturnTo}
                 showSpaceContext={showSpaceContext}
-                preset={calendarPreset}
-                onPresetChange={handlePresetChange}
                 canManageEvents={isStudentWorkspace}
                 canManageLessons={canManageLessons}
                 onItemUpdated={onAddItem}
                 onItemRemoved={onRemoveItem}
               />
             </div>
-          </TabsContent>
 
-          <TabsContent value="daily" className="m-0 p-4 sm:p-6">
-            <DailyListView
-              items={unifiedItems}
-              quickCreate={quickCreate}
-              viewer={{ actorId, role: workspaceRole }}
-              returnTo={workspaceReturnTo}
-              showSpaceContext={showSpaceContext}
-              canManageEvents={isStudentWorkspace}
-              canManageLessons={canManageLessons}
-              onItemUpdated={onAddItem}
-              onItemRemoved={onRemoveItem}
-            />
-          </TabsContent>
+            <TabsContent value="daily" className="m-0">
+              <DailyListView
+                items={unifiedItems}
+                quickCreate={quickCreate}
+                visibleTypes={visibleTypes}
+                preset={calendarPreset}
+                filters={filters}
+                mobileFilters={mobileFilters}
+                viewer={viewer}
+                returnTo={workspaceReturnTo}
+                showSpaceContext={showSpaceContext}
+                canManageEvents={isStudentWorkspace}
+                canManageLessons={canManageLessons}
+                onItemUpdated={onAddItem}
+                onItemRemoved={onRemoveItem}
+              />
+            </TabsContent>
 
-          <TabsContent value="all" className="m-0 p-4 sm:p-6">
-            <AllItemsView
-              items={unifiedItems}
-              quickCreate={quickCreate}
-              viewer={{ actorId, role: workspaceRole }}
-              returnTo={workspaceReturnTo}
-              showSpaceContext={showSpaceContext}
-              initialType={allItemsInitialType}
-              canManageEvents={isStudentWorkspace}
-              canManageLessons={canManageLessons}
-              onItemUpdated={onAddItem}
-              onItemRemoved={onRemoveItem}
-              onInitialTypeCleared={() => {
-                setAllItemsInitialType(null);
-                const url = new URL(window.location.href);
-                url.searchParams.delete("type");
-                window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
-              }}
-            />
-          </TabsContent>
+            <TabsContent value="all" className="m-0">
+              <AllItemsView
+                items={unifiedItems}
+                viewer={viewer}
+                returnTo={workspaceReturnTo}
+                showSpaceContext={showSpaceContext}
+                initialType={allItemsInitialType}
+                canManageEvents={isStudentWorkspace}
+                canManageLessons={canManageLessons}
+                onItemUpdated={onAddItem}
+                onItemRemoved={onRemoveItem}
+                onInitialTypeCleared={() => {
+                  setAllItemsInitialType(null);
+                  const url = new URL(window.location.href);
+                  url.searchParams.delete("type");
+                  window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+                }}
+              />
+            </TabsContent>
 
-          {workspaceRole === "student" ? (
-            <>
-              <TabsContent value="curriculum" className="m-0 mx-auto max-w-3xl p-4 sm:p-6">
-                <CurriculumView initialModules={curriculumModules} />
-              </TabsContent>
+            {workspaceRole === "student" && externalCalendarConnection ? (
+              <ExternalCalendarConnection
+                key={`${externalCalendarConnection.connected}:${externalCalendarConnection.provider ?? "NONE"}`}
+                connection={externalCalendarConnection}
+                className="mx-5 mt-6 md:mx-0 md:mt-0 md:max-w-[640px]"
+              />
+            ) : null}
+          </>
+        ) : null}
 
-              <TabsContent value="assignments" className="m-0 mx-auto max-w-3xl p-4 sm:p-6">
-                <AssignmentView initialAssignments={assignments} />
-              </TabsContent>
-            </>
-          ) : null}
-        </div>
+        {/* 같은 워크스페이스의 커리큘럼·과제. 두 보기가 캔버스(Curriculum·Assignments)의 제목·여백·최대 폭을 직접 그린다. */}
+        {workspaceRole === "student" && activeTab === "curriculum" ? (
+          <CurriculumView pageHeader initialModules={curriculumModules} />
+        ) : null}
+        {workspaceRole === "student" && activeTab === "assignments" ? (
+          <AssignmentView pageHeader initialAssignments={assignments} />
+        ) : null}
       </Tabs>
+
+      {/* 위쪽 막대 +: 오늘 빠른 만들기(학생) */}
+      {todayQuickCreate ? (
+        <CalendarQuickCreate
+          selection={todayQuickCreate}
+          anchor={null}
+          options={quickCreate}
+          onCreated={(item) => onAddItem?.(item)}
+          onClose={() => setTodayQuickCreate(null)}
+        />
+      ) : null}
+
+      {/* 위쪽 막대 +: 레슨 예약(관리자) */}
+      {canManageLessons ? (
+        <LessonScheduleDialog
+          open={lessonDialogOpen}
+          onOpenChange={setLessonDialogOpen}
+          studentId={studentId}
+          spaceLabel={spaceLabel}
+          defaultStart={lessonDefaultStart}
+          onSuccess={(item) => onAddItem?.(item)}
+        />
+      ) : null}
 
       {/* Q&A 작성 슬라이드 패널 */}
       {canCreateQna ? (

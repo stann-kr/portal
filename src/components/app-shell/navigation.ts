@@ -30,7 +30,8 @@ export type AppNavItem = {
 export const APP_NAV_ITEMS: Record<AppRole, readonly AppNavItem[]> = {
   student: [
     { id: "today", label: "홈", href: "/dashboard/student?section=today", Icon: House },
-    { id: "calendar", label: "캘린더", href: "/dashboard/student?section=workspace&view=calendar", Icon: CalendarDays },
+    // 보기는 고정하지 않는다. 캘린더가 기기의 직전 보기(없으면 좁은 화면 일별·넓은 화면 달력)를 고른다.
+    { id: "calendar", label: "캘린더", href: "/dashboard/student?section=workspace", Icon: CalendarDays },
     { id: "notes", label: "노트", href: "/dashboard/student/notes", Icon: FileText },
     { id: "assignments", label: "과제", href: "/dashboard/student?section=workspace&view=assignments", Icon: FilePlay },
     { id: "curriculum", label: "커리큘럼", href: "/dashboard/student?section=workspace&view=curriculum", Icon: BookOpen },
@@ -92,12 +93,20 @@ export type MobileTopBarConfig = {
 };
 
 const STUDENT_NOTES_HREF = "/dashboard/student/notes";
-const STUDENT_CALENDAR_HREF = "/dashboard/student?section=workspace&view=calendar";
+const STUDENT_CALENDAR_HREF = "/dashboard/student?section=workspace";
 const ADMIN_STUDENTS_HREF = "/dashboard/admin?section=students";
 
-/** 빠른 만들기 시트를 오늘 날짜로 연다(캘린더가 `create` 주소 값을 읽는다). */
-export function quickCreateHref(base: string): string {
-  return `${base}${base.includes("?") ? "&" : "?"}create=today`;
+/**
+ * 빠른 만들기(학생 `create=today`)·레슨 예약(관리자 `create=lesson`)을 여는 주소. 캘린더가 `create` 값을 읽고 지운다.
+ * 지금 보는 보기·학생 같은 주소 값은 그대로 두어 +를 눌러도 화면 문맥이 바뀌지 않는다.
+ */
+export function quickCreateHref(base: string, create: "today" | "lesson", keep?: URLSearchParams): string {
+  const url = new URL(base, "http://portal.local");
+  keep?.forEach((value, key) => {
+    if (key !== "create") url.searchParams.set(key, value);
+  });
+  url.searchParams.set("create", create);
+  return `${url.pathname}${url.search}`;
 }
 
 /** 주소에서 위쪽 막대의 기본값을 정한다. 화면이 더 정확한 제목·행동을 가지면 MobileTopBar로 덮어쓴다. */
@@ -124,8 +133,10 @@ export function resolveMobileTopBar(role: AppRole, location: Location): MobileTo
   if (role === "student") {
     if (pathname === "/dashboard/student") {
       const active = resolveActiveNavItem(role, location);
-      if (active === "calendar") return { title: "캘린더", action: { href: quickCreateHref(STUDENT_CALENDAR_HREF), label: "새로 만들기" } };
-      if (active === "today") return { title: "홈", action: { href: quickCreateHref(STUDENT_CALENDAR_HREF), label: "새로 만들기" } };
+      if (active === "calendar") {
+        return { title: "캘린더", action: { href: quickCreateHref(STUDENT_CALENDAR_HREF, "today", searchParams), label: "새로 만들기" } };
+      }
+      if (active === "today") return { title: "홈", action: { href: quickCreateHref(STUDENT_CALENDAR_HREF, "today"), label: "새로 만들기" } };
       return { title: navLabel(active) };
     }
     if (pathname === STUDENT_NOTES_HREF) return { title: "노트", action: { href: `${STUDENT_NOTES_HREF}/new`, label: "새 노트" } };
@@ -142,11 +153,19 @@ export function resolveMobileTopBar(role: AppRole, location: Location): MobileTo
   if (pathname === "/dashboard/admin") {
     const active = resolveActiveNavItem(role, location);
     if (active === "work" || active === "schedule") {
-      return { title: navLabel(active), action: { href: "/dashboard/admin?section=schedule&create=lesson", label: "레슨 예약" } };
+      const student = searchParams.get("student");
+      const keep = new URLSearchParams(student ? { student } : {});
+      return { title: navLabel(active), action: { href: quickCreateHref("/dashboard/admin?section=schedule", "lesson", keep), label: "레슨 예약" } };
     }
     if (active === "students") return { title: "학생", action: { href: "/dashboard/admin/students/new", label: "수강생 추가" } };
     if (active === "announcements" || section === "announcements") {
-      return { title: "공지", action: { href: "/dashboard/admin?section=announcements&compose=1", label: "공지 작성" } };
+      return {
+        title: "공지",
+        action: {
+          href: `/community/new?boardType=ANNOUNCEMENT&returnTo=${encodeURIComponent("/dashboard/admin?section=announcements")}`,
+          label: "공지 작성",
+        },
+      };
     }
     return { title: navLabel(active) };
   }

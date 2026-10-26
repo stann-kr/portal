@@ -2,7 +2,7 @@
 
 import { useActionState, useEffect, useRef, useState } from "react";
 import { Input } from "@/components/ui/input";
-import { LoginSubmitButton } from "@/components/auth/LoginSubmitButton";
+import { AUTH_INPUT_CLASS, AUTH_LABEL_CLASS, LoginSubmitButton } from "@/components/auth/LoginSubmitButton";
 import { loginWithCredentials, type LoginState } from "@/lib/actions/session";
 
 const INITIAL_LOGIN_STATE: LoginState = {};
@@ -30,51 +30,48 @@ export function LoginForm({
   }, [state]);
 
   return (
-    <>
+    <form action={action} className="flex flex-col gap-4" aria-busy={pending}>
       {errorMessage ? (
-        <div id="login-error" role="alert" className="mt-5 rounded-md border border-destructive/20 bg-destructive-muted px-4 py-3 text-sm font-medium text-destructive">
+        <div id="login-error" role="alert" className="rounded-md bg-destructive-muted px-3 py-2.5 text-ui text-destructive">
           {errorMessage}
         </div>
       ) : null}
+      {callbackUrl ? <input type="hidden" name="callbackUrl" value={callbackUrl} /> : null}
+      <div className="flex flex-col gap-1.5">
+        <label htmlFor="email" className={AUTH_LABEL_CLASS}>
+          이메일
+        </label>
+        <Input
+          id="email"
+          name="email"
+          type="email"
+          required
+          autoComplete="email"
+          placeholder="name@example.com"
+          className={AUTH_INPUT_CLASS}
+          value={email}
+          onChange={(event) => setEmail(event.target.value)}
+          aria-describedby={errorMessage ? "login-error" : undefined}
+        />
+      </div>
 
-      <form action={action} className="mt-6 space-y-4" aria-busy={pending}>
-        {callbackUrl ? <input type="hidden" name="callbackUrl" value={callbackUrl} /> : null}
-        <div className="space-y-2">
-          <label htmlFor="email" className="text-sm font-medium">
-            이메일
-          </label>
-          <Input
-            id="email"
-            name="email"
-            type="email"
-            required
-            autoComplete="email"
-            placeholder="name@example.com"
-            className="h-10"
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-            aria-describedby={errorMessage ? "login-error" : undefined}
-          />
-        </div>
+      <div className="flex flex-col gap-1.5">
+        <label htmlFor="password" className={AUTH_LABEL_CLASS}>
+          비밀번호
+        </label>
+        <Input
+          ref={passwordRef}
+          id="password"
+          name="password"
+          type="password"
+          required
+          autoComplete="current-password"
+          className={AUTH_INPUT_CLASS}
+          aria-describedby={errorMessage ? "login-error" : undefined}
+        />
+      </div>
 
-        <div className="space-y-2">
-          <label htmlFor="password" className="text-sm font-medium">
-            비밀번호
-          </label>
-          <Input
-            ref={passwordRef}
-            id="password"
-            name="password"
-            type="password"
-            required
-            autoComplete="current-password"
-            className="h-10"
-            aria-describedby={errorMessage ? "login-error" : undefined}
-          />
-        </div>
-
-        <LoginSubmitButton />
-      </form>
-    </>
+      <LoginSubmitButton />
+    </form>
   );
 }

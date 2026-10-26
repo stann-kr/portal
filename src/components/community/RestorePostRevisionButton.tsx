@@ -2,9 +2,10 @@
 
 import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ConfirmPanel, useConfirmAction } from "@/components/ui/confirm-action";
+import { RECORD_ACTION_CELL, RECORD_FULL_ROW, RESTORE_CONFIRM_CLASS } from "@/components/notes/DocumentRecordFrame";
+import { cn } from "@/lib/utils";
 import { restorePostRevision } from "@/lib/actions/posts";
 import { createCreationOperationId } from "@/lib/creation-operation";
 
@@ -24,9 +25,10 @@ export function RestorePostRevisionButton({
   const operation = useRef<{ key: string; id: string } | null>(null);
 
   const restoreConfirm = useConfirmAction();
+  const isCurrent = revisionNumber === baseRevision;
 
   const restore = () => {
-    if (isPending) return;
+    if (isPending || isCurrent) return;
     if (operation.current?.key !== requestKey) {
       operation.current = { key: requestKey, id: createCreationOperationId() };
     }
@@ -51,19 +53,23 @@ export function RestorePostRevisionButton({
     });
   };
 
+  // 변경 이력 행(HistoryRecordItem)의 grid에 버튼·확인·오류가 각자 칸을 차지하도록 감싸는 상자를 만들지 않는다.
   return (
-    <div className="flex flex-col items-end gap-1">
+    <div className="contents">
       <Button
         type="button"
-        variant="outline"
+        variant={isCurrent ? "secondary" : "outline"}
         size="sm"
-        className="gap-1.5"
-        disabled={isPending}
-        aria-expanded={restoreConfirm.isOpen}
+        className={cn(
+          RECORD_ACTION_CELL,
+          "aria-expanded:bg-muted",
+          isCurrent && "font-normal text-muted-foreground disabled:opacity-100",
+        )}
+        disabled={isPending || isCurrent}
+        aria-expanded={isCurrent ? undefined : restoreConfirm.isOpen}
         onClick={(event) => restoreConfirm.request(event.currentTarget)}
       >
-        <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
-        이 버전 복원
+        {isCurrent ? "현재 버전" : "이 버전 복원"}
       </Button>
       {restoreConfirm.isOpen ? (
         <ConfirmPanel
@@ -74,10 +80,10 @@ export function RestorePostRevisionButton({
           pendingLabel="복원 중..."
           pending={isPending}
           onConfirm={restore}
-          className="max-w-sm text-left"
+          className={cn(RECORD_FULL_ROW, RESTORE_CONFIRM_CLASS)}
         />
       ) : null}
-      {error ? <span role="alert" className="text-xs text-destructive">{error}</span> : null}
+      {error ? <p role="alert" className={cn(RECORD_FULL_ROW, "text-xs text-destructive")}>{error}</p> : null}
     </div>
   );
 }

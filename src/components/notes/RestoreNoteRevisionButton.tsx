@@ -2,9 +2,10 @@
 
 import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ConfirmPanel, useConfirmAction } from "@/components/ui/confirm-action";
+import { RECORD_ACTION_CELL, RECORD_FULL_ROW, RESTORE_CONFIRM_CLASS } from "@/components/notes/DocumentRecordFrame";
+import { cn } from "@/lib/utils";
 import { restorePrivateNoteRevision } from "@/lib/actions/privateNotes";
 import { createCreationOperationId } from "@/lib/creation-operation";
 
@@ -51,18 +52,22 @@ export function RestoreNoteRevisionButton({
     });
   };
 
+  // 변경 이력 행(HistoryRecordItem)의 grid에 버튼·확인·오류가 각자 칸을 차지하도록 감싸는 상자를 만들지 않는다.
   return (
-    <div className="space-y-1.5">
+    <div className="contents">
       <Button
         type="button"
-        variant="outline"
+        variant={isCurrent ? "secondary" : "outline"}
         size="sm"
-        className="gap-1.5"
+        className={cn(
+          RECORD_ACTION_CELL,
+          "aria-expanded:bg-muted",
+          isCurrent && "font-normal text-muted-foreground disabled:opacity-100",
+        )}
         disabled={isPending || isCurrent}
         aria-expanded={isCurrent ? undefined : restoreConfirm.isOpen}
         onClick={(event) => restoreConfirm.request(event.currentTarget)}
       >
-        <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
         {isCurrent ? "현재 버전" : "이 버전 복원"}
       </Button>
       {restoreConfirm.isOpen ? (
@@ -74,11 +79,11 @@ export function RestoreNoteRevisionButton({
           pendingLabel="복원 중..."
           pending={isPending}
           onConfirm={restore}
-          className="max-w-sm"
+          className={cn(RECORD_FULL_ROW, RESTORE_CONFIRM_CLASS)}
         />
       ) : null}
       {error ? (
-        <p role="alert" className="max-w-72 text-xs text-destructive">
+        <p role="alert" className={cn(RECORD_FULL_ROW, "text-xs text-destructive")}>
           {error}
         </p>
       ) : null}

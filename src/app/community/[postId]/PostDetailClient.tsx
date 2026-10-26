@@ -1,11 +1,18 @@
+/**
+ * @file src/app/community/[postId]/PostDetailClient.tsx
+ * @description 게시물 상세(캔버스 CommunityPost·MobileCommunityPost 보드): 위치·제목·채널·작성자 머리,
+ * 본문(수정 시 PostEditForm), 댓글 목록과 댓글 입력. 좁은 화면에서는 수정·이력·삭제를 위쪽 막대의
+ * 게시물 메뉴로 옮기고 댓글 입력을 화면 아래에 붙인다.
+ */
 "use client";
 
-import { useCallback, useRef, useState, useTransition } from "react";
+import { useCallback, useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Trash2, Hash, History, PencilLine } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { BookOpen, History, PencilLine, Trash2 } from "lucide-react";
+import { Button, buttonClassName } from "@/components/ui/button";
 import { ConfirmPanel, useConfirmAction } from "@/components/ui/confirm-action";
+import { MobileTopBar } from "@/components/app-shell/AppSidebar";
 import { RichTextContent } from "@/components/editor/RichTextContent";
 import { deletePost, getPostIncludingTrash } from "@/lib/actions/posts";
 import {
@@ -15,8 +22,13 @@ import {
 import { CommentForm } from "@/components/community/CommentForm";
 import { PostEditForm } from "@/components/community/PostEditForm";
 import { PostTrashActions } from "@/components/community/PostTrashActions";
+import { COMMUNITY_BOARD_LABELS, communityAuthorName } from "@/components/community/CommunityPostRow";
+import { MobileMoreMenu, type MobileMoreMenuItem } from "@/components/qna/MobileMoreMenu";
+import { formatKstMonthDayTime, initialOf } from "@/components/qna/qna-display";
 import { createCreationOperationId } from "@/lib/creation-operation";
+import { resolveCommunityBoardType } from "@/lib/community-location";
 import { formatKst, formatKstShortDate } from "@/lib/kst-format";
+import { cn } from "@/lib/utils";
 
 type Post = NonNullable<Awaited<ReturnType<typeof getPostIncludingTrash>>>;
 type Comment = Awaited<ReturnType<typeof getCommentsByPost>>[number];
@@ -24,6 +36,8 @@ type Comment = Awaited<ReturnType<typeof getCommentsByPost>>[number];
 interface PostDetailClientProps {
   postId: string;
   post: Post;
+  /** 자유 게시판 채널 이름. 없으면 저장된 주소 식별자를 보인다. */
+  channelName?: string | null;
   initialCommentList: Comment[];
   currentUserId: string | null;
   isAdmin: boolean;
@@ -33,6 +47,7 @@ interface PostDetailClientProps {
 export function PostDetailClient({
   postId,
   post,
+  channelName = null,
   initialCommentList,
   currentUserId,
   isAdmin,
@@ -78,101 +93,116 @@ export function PostDetailClient({
     });
   };
 
-  const date = formatKst(post.createdAt, { year: "numeric", month: "long", day: "numeric" }, "날짜 정보 없음");
-  const author =
-    post.authorName ?? post.authorEmail?.split("@")[0] ?? "작성자 미상";
+  const boardType = resolveCommunityBoardType(post.boardType);
+  const boardLabel = COMMUNITY_BOARD_LABELS[boardType];
+  const longDate = formatKst(post.createdAt, { year: "numeric", month: "long", day: "numeric" }, "날짜 정보 없음");
+  const shortDate = formatKstShortDate(post.createdAt, "날짜 정보 없음");
+  const author = communityAuthorName(post);
   const canManagePost = isAdmin || currentUserId === post.authorId;
   const canDeletePost = canManagePost && !post.deletedAt;
   const canEditPost = canDeletePost;
+  const isBusy = isPending || isEditPending;
+  const historyHref = `/community/${post.id}/history?returnTo=${encodeURIComponent(returnTo)}`;
   const handleSaved = useCallback(() => {
     setIsEditing(false);
     router.refresh();
   }, [router]);
+  const requestPostDelete = postDeleteConfirm.request;
+  const toggleEditing = useCallback(() => setIsEditing((value) => !value), []);
+
+  const mobileActions = useMemo(() => {
+    const items: MobileMoreMenuItem[] = [];
+    if (canEditPost) {
+      items.push({ key: "edit", label: isEditing ? "읽기" : "수정", Icon: isEditing ? BookOpen : PencilLine, onSelect: toggleEditing, disabled: isBusy });
+    }
+    if (canManagePost) items.push({ key: "history", label: "이력", Icon: History, href: historyHref });
+    if (canDeletePost) {
+      items.push({ key: "delete", label: "게시물 삭제", Icon: Trash2, destructive: true, disabled: isBusy, onSelect: (trigger) => requestPostDelete(trigger) });
+    }
+    return <MobileMoreMenu label="게시물 메뉴" items={items} />;
+  }, [canDeletePost, canEditPost, canManagePost, historyHref, isBusy, isEditing, requestPostDelete, toggleEditing]);
+
+  const backLabel = returnTo.startsWith("/community") ? "커뮤니티 목록으로" : "이전 화면으로";
+  const canComment = !post.deletedAt && Boolean(currentUserId);
 
   return (
-    <div className="mx-auto max-w-3xl space-y-8 px-4 py-6 sm:px-6">
-      {/* 헤더 */}
-      <div className="space-y-1">
-        <Link
-          href={returnTo}
-          className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
-        >
-          <ArrowLeft className="w-4 h-4" aria-hidden="true" /> 이전 화면으로 돌아가기
-        </Link>
-        <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
-          <h1 className="min-w-0 break-words text-2xl font-semibold">{post.title}</h1>
-          <div className="flex shrink-0 items-center gap-1">
-            {canEditPost ? (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setIsEditing((value) => !value)}
-                disabled={isPending || isEditPending}
-                aria-pressed={isEditing}
-                className="gap-1.5"
-              >
-                <PencilLine className="h-4 w-4" aria-hidden="true" />
-                {isEditing ? "읽기" : "수정"}
-              </Button>
+    <article className={cn("flex flex-1 flex-col gap-4 md:gap-6", !canComment && "pb-8 md:pb-0")}>
+      <MobileTopBar title={boardLabel} back={{ href: returnTo, label: backLabel }} actions={mobileActions} />
+
+      <nav aria-label="위치" className="hidden items-center gap-1.5 text-ui md:flex">
+        <Link href={returnTo} className="text-secondary-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">커뮤니티</Link>
+        <span aria-hidden="true" className="text-faint">/</span>
+        <span className="text-secondary-foreground">{boardLabel}</span>
+      </nav>
+
+      {/* 머리 */}
+      <header className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex min-w-0 flex-col gap-1.5 md:gap-2">
+          <h1 className="break-words text-xl font-semibold tracking-title md:text-display md:tracking-display">{post.title}</h1>
+          <p className="text-ui text-muted-foreground">
+            {boardType === "GENERAL" ? (
+              <>
+                <span className="text-secondary-foreground"># {channelName ?? post.category}</span>
+                {" · "}
+              </>
             ) : null}
-            {canManagePost ? (
-              <Button asChild variant="ghost" size="sm" className="gap-1.5">
-                <Link
-                  href={`/community/${post.id}/history?returnTo=${encodeURIComponent(returnTo)}`}
-                >
-                  <History className="h-4 w-4" aria-hidden="true" />
-                  이력
-                </Link>
-              </Button>
-            ) : null}
-            {canDeletePost ? (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={(event) => postDeleteConfirm.request(event.currentTarget)}
-                disabled={isPending || isEditPending}
-                aria-expanded={postDeleteConfirm.isOpen}
-                className="text-destructive hover:bg-destructive/10"
-                aria-label="게시물 삭제"
-              >
-                <Trash2 className="h-4 w-4" aria-hidden="true" />
-              </Button>
-            ) : null}
-          </div>
-        </div>
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <span className="flex items-center gap-1">
-            <Hash className="w-3 h-3" />
-            {post.category}
-          </span>
-          <span>·</span>
-          <span>{author}</span>
-          <span>·</span>
-          <span>{date}</span>
-        </div>
-        {postDeleteConfirm.isOpen && !post.deletedAt ? (
-          <ConfirmPanel
-            confirm={postDeleteConfirm}
-            message="이 게시물을 휴지통으로 이동할까요? 30일 동안 복원할 수 있고 댓글과 이력은 함께 보존됩니다."
-            confirmLabel="휴지통 이동 확인"
-            pendingLabel="이동 중..."
-            pending={isPending}
-            onConfirm={handleDeletePost}
-            className="mt-3"
-          />
-        ) : null}
-        {deleteError ? (
-          <p role="alert" className="text-sm text-destructive">
-            {deleteError}
+            {author}
+            {" · "}
+            <span className="md:hidden">{shortDate}</span>
+            <span className="hidden md:inline">{longDate}</span>
           </p>
-        ) : null}
-      </div>
+        </div>
+        <div className="hidden shrink-0 items-center gap-1 md:flex">
+          {canEditPost ? (
+            <Button
+              variant="ghost"
+              onClick={toggleEditing}
+              disabled={isBusy}
+              aria-pressed={isEditing}
+            >
+              {isEditing ? "읽기" : "수정"}
+            </Button>
+          ) : null}
+          {canManagePost ? (
+            <Link href={historyHref} className={buttonClassName({ variant: "ghost" })}>이력</Link>
+          ) : null}
+          {canDeletePost ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={(event) => postDeleteConfirm.request(event.currentTarget)}
+              disabled={isBusy}
+              aria-expanded={postDeleteConfirm.isOpen}
+              aria-label="게시물 삭제"
+            >
+              <Trash2 className="size-4" strokeWidth={1.6} aria-hidden="true" />
+            </Button>
+          ) : null}
+        </div>
+      </header>
+
+      {postDeleteConfirm.isOpen && !post.deletedAt ? (
+        <ConfirmPanel
+          confirm={postDeleteConfirm}
+          message="이 게시물을 휴지통으로 이동할까요? 30일 동안 복원할 수 있고 댓글과 이력은 함께 보존됩니다."
+          confirmLabel="휴지통 이동 확인"
+          pendingLabel="이동 중..."
+          pending={isPending}
+          onConfirm={handleDeletePost}
+          className="max-w-md"
+        />
+      ) : null}
+      {deleteError ? (
+        <p role="alert" className="text-ui text-destructive">
+          {deleteError}
+        </p>
+      ) : null}
 
       {post.deletedAt ? (
-        <section className="space-y-3 rounded-xl border border-warning/30 bg-warning-muted p-4">
-          <div>
-            <p className="font-medium">휴지통에 있는 게시물입니다.</p>
-            <p className="text-sm text-muted-foreground">
+        <section className="flex flex-col gap-3 rounded-lg border border-warning-border bg-warning-muted p-4">
+          <div className="flex flex-col gap-1">
+            <p className="text-body font-semibold">휴지통에 있는 게시물입니다.</p>
+            <p className="text-ui text-secondary-foreground">
               삭제 {formatKst(post.deletedAt)} · 댓글과 변경 이력은 함께 보존됩니다.
             </p>
           </div>
@@ -202,58 +232,53 @@ export function PostDetailClient({
           onBusyChange={setIsEditPending}
         />
       ) : (
-        <RichTextContent html={post.contentHtml} />
+        <RichTextContent html={post.contentHtml} className="border-b border-border pb-5 text-base leading-7 md:pb-8" />
       )}
 
-      {/* 댓글 섹션 */}
-      <section className="space-y-4 border-t pt-6">
-        <h2 className="font-semibold text-sm text-muted-foreground uppercase tracking-wider">
-          댓글 {commentList.length}개
+      {/* 댓글 */}
+      <section aria-labelledby="comments-title" className="flex flex-col">
+        <h2 id="comments-title" className="mb-1 text-ui font-semibold text-secondary-foreground">
+          댓글 <span className="font-mono font-normal text-muted-foreground">{commentList.length}</span>
         </h2>
 
-        {/* 댓글 목록 */}
         {commentList.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
+          <p className="py-3 text-body text-muted-foreground">
             {post.deletedAt ? "보존된 댓글이 없습니다." : "첫 댓글을 남겨보세요."}
           </p>
         ) : (
-          <ul className="space-y-3">
+          <ol className="flex flex-col">
             {commentList.map((c) => {
-              const cAuthor =
-                c.authorName ?? c.authorEmail?.split("@")[0] ?? "작성자 미상";
-              const cDate = formatKstShortDate(c.createdAt, "날짜 정보 없음");
-              const cInitials = cAuthor.slice(0, 2).toUpperCase();
+              const cAuthor = communityAuthorName(c);
+              const cDate = formatKstMonthDayTime(c.createdAt, "날짜 정보 없음");
               const canDelete =
                 !post.deletedAt && (isAdmin || currentUserId === c.authorId);
 
               return (
-                <li key={c.id} className="group space-y-2">
+                <li key={c.id} className="flex flex-col gap-2 border-b border-muted py-3 md:py-3.5">
                   <div className="flex gap-3">
-                    <div className="w-8 h-8 rounded-full bg-muted border border-border flex items-center justify-center text-xs font-semibold flex-shrink-0 mt-0.5">
-                      {cInitials}
+                    <span aria-hidden="true" className="flex size-7 shrink-0 items-center justify-center rounded-full bg-selected text-xs font-semibold text-secondary-foreground">
+                      {initialOf(cAuthor)}
+                    </span>
+                    <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                      <p className="flex flex-wrap items-center gap-2 text-ui">
+                        <span className="font-semibold">{cAuthor}</span>
+                        <span className="font-mono text-xs text-muted-foreground">{cDate}</span>
+                      </p>
+                      <RichTextContent html={c.contentHtml} className="text-md leading-6 md:text-body" />
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
-                        <span className="font-medium text-foreground">
-                          {cAuthor}
-                        </span>
-                        <span>{cDate}</span>
-                      </div>
-                      <RichTextContent html={c.contentHtml} className="text-sm" />
-                    </div>
-                    {canDelete && (
+                    {canDelete ? (
                       <Button
                         variant="ghost"
-                        size="sm"
+                        size="icon"
                         onClick={(event) => commentDeleteConfirm.request(event.currentTarget, c.id)}
                         disabled={isPending}
                         aria-expanded={commentDeleteConfirm.value === c.id}
                         aria-label={`${cAuthor} 댓글 삭제`}
-                        className="text-destructive opacity-100 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 focus:opacity-100 aria-expanded:opacity-100 transition-opacity flex-shrink-0 self-start mt-0.5"
+                        className="-mr-2 -mt-2 size-11 shrink-0 rounded-touch text-muted-foreground md:mr-0 md:mt-0 md:size-7 md:rounded-md"
                       >
-                        <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
+                        <Trash2 className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
                       </Button>
-                    )}
+                    ) : null}
                   </div>
                   {canDelete && commentDeleteConfirm.value === c.id ? (
                     <ConfirmPanel
@@ -263,20 +288,29 @@ export function PostDetailClient({
                       pendingLabel="삭제 중..."
                       pending={isPending}
                       onConfirm={() => handleDeleteComment(c.id)}
-                      className="ml-11"
+                      className="ml-10"
                     />
                   ) : null}
                 </li>
               );
             })}
-          </ul>
+          </ol>
         )}
-
-        {/* 댓글 입력 */}
-        {!post.deletedAt && currentUserId ? (
-          <CommentForm key={`${currentUserId}:${postId}`} postId={postId} actorId={currentUserId} onSaved={() => router.refresh()} />
-        ) : null}
       </section>
-    </div>
+
+      {/* 댓글 입력: 좁은 화면은 화면 아래에 붙는다(게시물 영역 안에서만). */}
+      {canComment && currentUserId ? (
+        <CommentForm
+          key={`${currentUserId}:${postId}`}
+          postId={postId}
+          actorId={currentUserId}
+          onSaved={() => router.refresh()}
+          className={cn(
+            "sticky bottom-0 -mx-5 mt-auto border-t border-border bg-background px-3 pb-[calc(0.5rem+env(safe-area-inset-bottom))] pt-2",
+            "md:static md:mx-0 md:-mt-3 md:border-0 md:p-0",
+          )}
+        />
+      ) : null}
+    </article>
   );
 }

@@ -2,6 +2,7 @@
 
 import { useActionState, useId, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { DraftStatus } from "@/components/editor/DraftStatus";
 import { createComment, type CreateCommentState } from "@/lib/actions/comments";
@@ -12,14 +13,21 @@ import { CREATION_OPERATION_FIELD, createCreationOperationId, parseCreationOpera
 
 type CommentDraft = { content: string; operationId?: string };
 
+/**
+ * 게시물 댓글 입력(캔버스 CommunityPost·MobileCommunityPost 댓글 줄: 한 줄 입력 + 등록).
+ * 입력값은 이 기기 초안으로 조용히 보존하고, 복원·충돌·오류·복구본이 있을 때만 줄 아래에 안내한다.
+ */
 export function CommentForm({
   postId,
   actorId,
   onSaved,
+  className,
 }: {
   postId: string;
   actorId: string;
   onSaved: () => void;
+  /** 좁은 화면 아래 고정 막대처럼 놓일 자리의 모양 */
+  className?: string;
 }) {
   const contentId = useId();
   const errorId = useId();
@@ -56,7 +64,8 @@ export function CommentForm({
   return (
     <form
       action={action}
-      className="space-y-2"
+      // 평소에는 비어 있는 초안 상태 묶음이 줄 아래 간격을 만들지 않게 숨긴다.
+      className={cn("flex flex-col gap-1 [&>[role=group]:empty]:hidden", className)}
       onBlur={draft.flush}
       onSubmit={(event) => {
         if (!draft.loaded || !draft.canSubmit || pending || !operationId) {
@@ -89,16 +98,22 @@ export function CommentForm({
           required
           disabled={!draft.loaded || pending}
           aria-describedby={showResult && state.error ? errorId : undefined}
-          className="min-w-0 flex-1"
+          className="min-w-0 flex-1 md:h-10"
         />
-        <Button type="submit" disabled={!draft.loaded || !draft.canSubmit || pending || !operationId || !content.trim()} size="sm">
+        <Button
+          type="submit"
+          size="touch"
+          disabled={!draft.loaded || !draft.canSubmit || pending || !operationId || !content.trim()}
+          className="h-11 shrink-0 md:h-10 md:rounded-md md:px-4 md:text-ui"
+        >
           {pending ? "등록 중..." : "등록"}
         </Button>
       </div>
-      {showResult && state.error && <p id={errorId} role="alert" className="text-sm text-destructive">{state.error}</p>}
+      {showResult && state.error && <p id={errorId} role="alert" className="text-ui text-destructive">{state.error}</p>}
       {showResult && state.success && <p role="status" className="text-xs text-success">댓글이 저장되었습니다.</p>}
       <DraftStatus
         {...draft}
+        quiet
         onRestoreRecovery={draft.restoreRecovery}
         onDiscardRecovery={draft.discardRecovery}
         disabled={pending}

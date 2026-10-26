@@ -1,12 +1,13 @@
 /**
  * @file src/components/calendar/CalendarQuickCreate.tsx
- * @description 캘린더 칸을 누르거나 끌어 고른 자리에서 바로 노트·일정·레슨을 만드는 작은 창.
+ * @description 캘린더 칸을 누르거나 끌어 고른 자리에서 바로 노트·일정·레슨을 만드는 창.
+ * 넓은 화면은 고른 칸 옆의 300px 떠 있는 창(캔버스 AdminSchedule), 좁은 화면은 아래 시트(MobileQuickCreate).
  */
 "use client";
 
 import { useId, useLayoutEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { CalendarClock, FileText, GraduationCap, X } from "lucide-react";
+import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { createCalendarEvent } from "@/lib/actions/calendarEvents";
 import { createLesson } from "@/lib/actions/lessons";
@@ -20,6 +21,8 @@ import {
   type CalendarQuickCreateKind,
   type CalendarQuickCreateSelection,
 } from "@/lib/calendar-quick-create";
+import { cn } from "@/lib/utils";
+import { formatDayLong } from "./calendar-dates";
 
 export type CalendarQuickCreateOptions = {
   /** 노트 composer 주소. 없으면 노트를 만들 수 없다. */
@@ -38,7 +41,7 @@ export function canUseQuickCreate(options: CalendarQuickCreateOptions | undefine
 /** 버튼에서 연 창은 버튼 바로 아래에 붙인다. */
 export function getQuickCreateAnchor(element: HTMLElement): { x: number; y: number } {
   const rect = element.getBoundingClientRect();
-  return { x: rect.left + Math.min(rect.width, 320) / 2, y: rect.bottom };
+  return { x: rect.left + Math.min(rect.width, 300) / 2, y: rect.bottom };
 }
 
 type Props = {
@@ -49,14 +52,16 @@ type Props = {
   onClose: () => void;
 };
 
-const KIND_META: Record<CalendarQuickCreateKind, { label: string; icon: typeof FileText; submit: string }> = {
-  note: { label: "노트", icon: FileText, submit: "노트 쓰기" },
-  event: { label: "일정", icon: CalendarClock, submit: "일정 만들기" },
-  lesson: { label: "레슨", icon: GraduationCap, submit: "레슨 예약" },
+const KIND_META: Record<CalendarQuickCreateKind, { label: string; submit: string }> = {
+  note: { label: "노트", submit: "노트 쓰기" },
+  event: { label: "일정", submit: "일정 만들기" },
+  lesson: { label: "레슨", submit: "레슨 예약" },
 };
 
-const PANEL_WIDTH = 320;
+const PANEL_WIDTH = 300;
 const VIEWPORT_GUTTER = 12;
+/** md(48rem)보다 좁으면 아래 시트. 경계값이 md 클래스와 겹치지 않게 같은 기준을 쓴다. */
+const SHEET_QUERY = "(max-width: 47.99rem)";
 
 export function CalendarQuickCreate({ selection, anchor, options, onCreated, onClose }: Props) {
   const router = useRouter();
@@ -91,14 +96,13 @@ export function CalendarQuickCreate({ selection, anchor, options, onCreated, onC
   // 고른 칸 옆에 띄우되 화면 밖으로 나가지 않게 한다. 좁은 화면은 아래쪽 시트로 둔다.
   useLayoutEffect(() => {
     const panel = panelRef.current;
-    // Tailwind sm(40rem)보다 좁으면 아래 시트. 경계값이 sm 클래스와 겹치지 않게 같은 기준을 쓴다.
-    if (!panel || window.matchMedia("(max-width: 39.99rem)").matches) {
+    if (!panel || window.matchMedia(SHEET_QUERY).matches) {
       setPosition(null);
       return;
     }
     const height = panel.offsetHeight;
     if (!anchor) {
-      // 터치 선택처럼 기준점이 없으면 화면 가운데 위쪽에 둔다.
+      // 터치 선택이나 위쪽 막대의 만들기처럼 기준점이 없으면 화면 가운데 위쪽에 둔다.
       setPosition({
         left: Math.max((window.innerWidth - PANEL_WIDTH) / 2, VIEWPORT_GUTTER),
         top: Math.max((window.innerHeight - height) / 3, VIEWPORT_GUTTER),
@@ -197,150 +201,158 @@ export function CalendarQuickCreate({ selection, anchor, options, onCreated, onC
   const Meta = KIND_META[kind];
   const showTitle = kind !== "lesson";
   const maxTitle = kind === "note" ? PRIVATE_NOTE_MAX_TITLE_LENGTH : CALENDAR_EVENT_TITLE_MAX_LENGTH;
+  const caption = [formatKstDateLabel(defaults.dateKey), defaults.spanLabel, options.canCreateLesson ? options.spaceLabel : null]
+    .filter(Boolean)
+    .join(" · ");
+  const timeInput = "h-11 w-full rounded-touch border border-input bg-background px-3 font-mono text-base text-foreground focus-visible:outline-2 focus-visible:-outline-offset-1 focus-visible:outline-ring md:h-[30px] md:w-[150px] md:rounded-md md:px-2 md:text-xs";
 
   return (
-    <div
-      ref={panelRef}
-      role="dialog"
-      aria-labelledby={titleId}
-      tabIndex={-1}
-      className="calendar-quick-create fixed inset-x-0 bottom-0 z-[var(--z-overlay)] rounded-t-xl border border-border bg-surface-elevated p-3 shadow-overlay sm:inset-x-auto sm:bottom-auto sm:w-80 sm:rounded-lg"
-      style={position ? { left: position.left, top: position.top } : undefined}
-      onKeyDown={(event) => {
-        if (event.key === "Escape" && !pending) {
-          event.stopPropagation();
-          onClose();
-        }
-      }}
-    >
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          void submit();
+    <>
+      {/* 좁은 화면 시트 뒤 화면을 32% 어둡게. 누르면 바깥 누름과 같이 처리된다. */}
+      <div aria-hidden="true" data-state="open" className="portal-backdrop fixed inset-0 z-[var(--z-overlay)] bg-scrim md:hidden" />
+      <div
+        ref={panelRef}
+        role="dialog"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        data-state="open"
+        className="calendar-quick-create portal-dialog fixed inset-x-0 bottom-0 z-[var(--z-overlay)] flex flex-col rounded-t-xl bg-background px-5 pb-[calc(2.125rem+env(safe-area-inset-bottom))] pt-2 shadow-sheet focus-visible:outline-none md:inset-x-auto md:bottom-auto md:w-[300px] md:rounded-lg md:border md:border-border md:p-3.5 md:shadow-overlay"
+        style={position ? { left: position.left, top: position.top } : undefined}
+        onKeyDown={(event) => {
+          if (event.key === "Escape" && !pending) {
+            event.stopPropagation();
+            onClose();
+          }
         }}
-        className="flex flex-col gap-3"
-        aria-describedby={error ? errorId : undefined}
       >
-        <div className="flex items-start justify-between gap-2">
-          <p id={titleId} className="text-xs font-medium text-muted-foreground">
-            {formatKstDateLabel(defaults.dateKey)}
-            {defaults.spanLabel ? <span> · {defaults.spanLabel}</span> : null}
-          </p>
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={pending}
-            aria-label="빠른 만들기 닫기"
-            className="-m-1 inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <X className="size-4" aria-hidden="true" />
-          </button>
-        </div>
-
-        {kinds.length > 1 ? (
-          <div
-            role="radiogroup"
-            aria-label="만들 항목"
-            className="flex gap-1 rounded-md bg-muted p-0.5"
-            onKeyDown={(event) => {
-              // 라디오 묶음 규칙: 화살표로 고르고, 탭 정지는 선택된 항목 하나만 둔다.
-              const step = event.key === "ArrowRight" || event.key === "ArrowDown"
-                ? 1
-                : event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 0;
-              if (!step) return;
-              event.preventDefault();
-              const next = kinds[(kinds.indexOf(kind) + step + kinds.length) % kinds.length];
-              setKind(next);
-              setKindChosen(true);
-              event.currentTarget.querySelector<HTMLElement>(`[data-kind="${next}"]`)?.focus();
-            }}
-          >
-            {kinds.map((candidate) => {
-              const CandidateIcon = KIND_META[candidate].icon;
-              const checked = candidate === kind;
-              return (
-                <button
-                  key={candidate}
-                  type="button"
-                  role="radio"
-                  data-kind={candidate}
-                  aria-checked={checked}
-                  tabIndex={checked ? 0 : -1}
-                  onClick={(event) => {
-                    setKind(candidate);
-                    setKindChosen(true);
-                    // 마우스로 고르면 바로 제목을 이어 쓰게 한다. 키보드 선택은 포커스를 그대로 둔다.
-                    if (event.detail > 0 && candidate !== "lesson") {
-                      requestAnimationFrame(() => titleRef.current?.focus({ preventScroll: true }));
-                    }
-                  }}
-                  className={`inline-flex h-7 flex-1 items-center justify-center gap-1.5 rounded text-xs font-medium transition-colors duration-[var(--duration-fast)] motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-                    checked ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  <CandidateIcon className="size-3.5" aria-hidden="true" />
-                  {KIND_META[candidate].label}
-                </button>
-              );
-            })}
+        <span aria-hidden="true" className="mx-auto mb-4 block h-1 w-9 rounded-full bg-border md:hidden" />
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            void submit();
+          }}
+          className="flex flex-col gap-4 md:gap-3"
+          aria-describedby={error ? errorId : undefined}
+        >
+          <div className="flex items-center justify-between gap-3">
+            <h2 id={titleId} className="text-md font-semibold text-foreground md:text-xs md:font-normal md:text-muted-foreground">
+              <span className="md:hidden">{formatDayLong(defaults.dateKey)}에 만들기</span>
+              <span className="hidden md:inline">{caption}</span>
+            </h2>
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={pending}
+              aria-label="빠른 만들기 닫기"
+              className="-mr-3 flex size-11 shrink-0 items-center justify-center rounded-touch text-secondary-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:hidden"
+            >
+              <X className="size-[18px]" strokeWidth={1.6} aria-hidden="true" />
+            </button>
           </div>
-        ) : null}
 
-        {showTitle ? (
-          <input
-            ref={titleRef}
-            value={title}
-            onChange={(event) => setTitle(event.target.value)}
-            maxLength={maxTitle}
-            placeholder={kind === "note" ? "새 노트 제목" : "일정 제목"}
-            aria-label={kind === "note" ? "노트 제목" : "일정 제목"}
-            className="h-9 w-full rounded-md border-0 bg-transparent px-1 text-base font-semibold placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          />
-        ) : (
-          <p className="px-1 text-base font-semibold">레슨</p>
-        )}
+          {kinds.length > 1 ? (
+            <div
+              role="radiogroup"
+              aria-label="만들 항목"
+              className="flex h-12 gap-0.5 rounded-lg bg-muted p-0.5 md:h-8 md:rounded-md"
+              onKeyDown={(event) => {
+                // 라디오 묶음 규칙: 화살표로 고르고, 탭 정지는 선택된 항목 하나만 둔다.
+                const step = event.key === "ArrowRight" || event.key === "ArrowDown"
+                  ? 1
+                  : event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 0;
+                if (!step) return;
+                event.preventDefault();
+                const next = kinds[(kinds.indexOf(kind) + step + kinds.length) % kinds.length];
+                setKind(next);
+                setKindChosen(true);
+                event.currentTarget.querySelector<HTMLElement>(`[data-kind="${next}"]`)?.focus();
+              }}
+            >
+              {kinds.map((candidate) => {
+                const checked = candidate === kind;
+                return (
+                  <button
+                    key={candidate}
+                    type="button"
+                    role="radio"
+                    data-kind={candidate}
+                    aria-checked={checked}
+                    tabIndex={checked ? 0 : -1}
+                    onClick={(event) => {
+                      setKind(candidate);
+                      setKindChosen(true);
+                      // 마우스로 고르면 바로 제목을 이어 쓰게 한다. 키보드 선택은 포커스를 그대로 둔다.
+                      if (event.detail > 0 && candidate !== "lesson") {
+                        requestAnimationFrame(() => titleRef.current?.focus({ preventScroll: true }));
+                      }
+                    }}
+                    className={cn(
+                      "flex-1 rounded-touch text-md transition-colors duration-[var(--duration-fast)] motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:rounded-sm md:text-xs",
+                      checked ? "bg-background font-medium text-foreground shadow-segment" : "text-secondary-foreground hover:text-foreground",
+                    )}
+                  >
+                    {KIND_META[candidate].label}
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
 
-        {kind !== "note" ? (
-          <div className="grid gap-2 text-xs">
-            <label className="flex items-center justify-between gap-3">
-              <span className="text-muted-foreground">시작</span>
-              <input
-                type="datetime-local"
-                value={start}
-                onChange={(event) => setStart(event.target.value)}
-                required
-                className="h-8 rounded-md border border-input bg-background px-2 text-xs"
-              />
-            </label>
-            {kind === "event" ? (
-              <label className="flex items-center justify-between gap-3">
-                <span className="text-muted-foreground">종료</span>
+          {showTitle ? (
+            <input
+              ref={titleRef}
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+              maxLength={maxTitle}
+              placeholder={kind === "note" ? "새 노트 제목" : "일정 제목"}
+              aria-label={kind === "note" ? "노트 제목" : "일정 제목"}
+              className="h-[52px] w-full rounded-none border-0 border-b-[1.5px] border-foreground bg-transparent px-0.5 text-xl font-semibold text-foreground placeholder:text-muted-foreground focus:outline-none md:h-9 md:border-b md:border-border md:text-md md:focus:border-foreground"
+            />
+          ) : null}
+
+          {kind !== "note" ? (
+            <div className="flex flex-col gap-3 md:gap-2">
+              <label className="flex flex-col gap-1.5 text-ui text-secondary-foreground md:flex-row md:items-center md:justify-between md:text-xs md:text-muted-foreground">
+                시작
                 <input
                   type="datetime-local"
-                  value={end}
-                  min={start}
-                  onChange={(event) => setEnd(event.target.value)}
-                  className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+                  value={start}
+                  onChange={(event) => setStart(event.target.value)}
+                  required
+                  className={timeInput}
                 />
               </label>
-            ) : null}
+              {kind === "event" ? (
+                <label className="flex flex-col gap-1.5 text-ui text-secondary-foreground md:flex-row md:items-center md:justify-between md:text-xs md:text-muted-foreground">
+                  종료
+                  <input
+                    type="datetime-local"
+                    value={end}
+                    min={start}
+                    onChange={(event) => setEnd(event.target.value)}
+                    className={timeInput}
+                  />
+                </label>
+              ) : null}
+            </div>
+          ) : (
+            <p className="text-ui text-muted-foreground md:text-xs">이 날짜의 노트를 만들고 바로 이어서 씁니다.</p>
+          )}
+
+          {error ? (
+            <p id={errorId} role="alert" className="text-ui text-destructive md:text-xs">{error}</p>
+          ) : null}
+
+          <div className="flex items-center justify-end gap-1.5">
+            <Button type="button" variant="ghost" className="hidden h-[30px] px-2.5 text-xs md:inline-flex" onClick={onClose} disabled={pending}>
+              취소
+            </Button>
+            <Button type="submit" size="touch" className="w-full md:h-[30px] md:w-auto md:rounded-md md:px-3 md:text-xs" disabled={pending} aria-busy={pending}>
+              {pending ? "저장 중..." : Meta.submit}
+            </Button>
           </div>
-        ) : (
-          <p className="px-1 text-xs text-muted-foreground">이 날짜의 노트 페이지를 열어 바로 이어서 씁니다.</p>
-        )}
-
-        {error ? (
-          <p id={errorId} role="alert" className="text-xs text-destructive">{error}</p>
-        ) : null}
-
-        <div className="flex items-center justify-end gap-2">
-          <Button type="button" variant="ghost" size="sm" onClick={onClose} disabled={pending}>취소</Button>
-          <Button type="submit" size="sm" disabled={pending} aria-busy={pending}>
-            <Meta.icon className="size-3.5" aria-hidden="true" />
-            {pending ? "저장 중..." : Meta.submit}
-          </Button>
-        </div>
-      </form>
-    </div>
+        </form>
+      </div>
+    </>
   );
 }

@@ -1,11 +1,9 @@
 /**
  * @file src/components/admin-portal/StudentFilterDropdown.tsx
- * @description 어드민 캘린더 섹션 학생 필터 드롭다운.
+ * @description 관리자 일정의 학생 선택(캔버스 AdminSchedule 머리의 "학생" 선택, MobileAdminSchedule의 44px 선택).
  * 선택된 학생 변경 시 onStudentChange 콜백 호출.
  */
 "use client";
-
-import { Users } from "lucide-react";
 
 type Student = {
   id: string;
@@ -26,33 +24,28 @@ export function StudentFilterDropdown({
   onStudentChange,
   loading = false,
 }: StudentFilterDropdownProps) {
-  const handleChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    onStudentChange(e.target.value);
-  };
-
   return (
-    <div className="flex min-w-0 items-center gap-1.5">
-      <Users className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" aria-hidden="true" />
-      <label htmlFor="calendar-student-filter" className="sr-only">
-        캘린더 학생 선택
+    <div className="flex min-w-0 items-center gap-2">
+      <label className="flex min-w-0 flex-1 items-center gap-3 text-body text-muted-foreground md:flex-none md:gap-2 md:text-ui">
+        학생
+        <select
+          id="calendar-student-filter"
+          value={selectedStudentId}
+          onChange={(event) => onStudentChange(event.target.value)}
+          disabled={loading}
+          aria-busy={loading}
+          className="h-11 min-w-0 flex-1 rounded-touch border border-border bg-background px-3 text-base text-foreground focus-visible:outline-2 focus-visible:-outline-offset-1 focus-visible:outline-ring disabled:opacity-50 md:h-8 md:max-w-56 md:flex-none md:rounded-md md:px-2.5 md:text-ui"
+        >
+          {students.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.displayName || s.email}
+            </option>
+          ))}
+        </select>
       </label>
-      <select
-        id="calendar-student-filter"
-        value={selectedStudentId}
-        onChange={handleChange}
-        disabled={loading}
-        aria-busy={loading}
-        className="h-9 min-w-0 max-w-full flex-1 rounded-md border border-input bg-surface px-2 py-1 text-xs text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
-      >
-        {students.map((s) => (
-          <option key={s.id} value={s.id}>
-            {s.displayName || s.email}
-          </option>
-        ))}
-      </select>
-      {loading && (
-        <span className="text-xs text-muted-foreground" role="status">로딩 중...</span>
-      )}
+      {loading ? (
+        <span className="shrink-0 text-xs text-muted-foreground" role="status">불러오는 중</span>
+      ) : null}
     </div>
   );
 }

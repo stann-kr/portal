@@ -2,7 +2,6 @@
 
 import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { RotateCcw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ConfirmPanel, useConfirmAction } from "@/components/ui/confirm-action";
 import { purgePost, restorePost } from "@/lib/actions/posts";
@@ -63,29 +62,26 @@ export function PostTrashActions({
   };
 
   return (
-    <div className="space-y-3">
+    <div className="flex min-w-0 max-w-md flex-col items-start gap-3">
       <div className="flex flex-wrap gap-2">
         {canRestore && !expired ? (
           <Button
             type="button"
             variant="outline"
-            className="gap-2"
             disabled={isPending}
             onClick={() => run("restore")}
           >
-            <RotateCcw className="h-4 w-4" aria-hidden="true" />
             게시물 복원
           </Button>
         ) : null}
         {canPurge && expired ? (
           <Button
             type="button"
-            className="gap-2 bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            variant="destructive"
             disabled={isPending}
             aria-expanded={purgeConfirm.isOpen}
             onClick={(event) => purgeConfirm.request(event.currentTarget)}
           >
-            <Trash2 className="h-4 w-4" aria-hidden="true" />
             영구 삭제
           </Button>
         ) : null}
@@ -98,10 +94,10 @@ export function PostTrashActions({
           pendingLabel="삭제 중..."
           pending={isPending}
           onConfirm={() => run("purge")}
-          className="max-w-md"
+          className="w-full"
         />
       ) : null}
-      {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
+      {error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}
     </div>
   );
 }

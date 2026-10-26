@@ -1,53 +1,34 @@
 /**
  * @file src/components/student-portal/AllItemsView.tsx
- * @description 전체 항목을 노션 데이터베이스 표처럼 보는 뷰. 유형 필터·제목 검색·정렬과 새 항목 만들기를 둔다.
+ * @description 전체 보기(캔버스 CalendarAll·MobileCalendarAll): 개수가 붙은 유형 알약, 제목 검색, 정렬과
+ * 넓은 화면의 표(제목·유형·날짜), 좁은 화면의 두 줄 목록. 새 항목은 화면 머리의 "새로 만들기"가 맡는다.
  */
 "use client";
 
 import { useState } from "react";
-import { ArrowDownUp, Plus, Search } from "lucide-react";
+import { ArrowDownUp, ChevronDown, Search } from "lucide-react";
 import {
-  getUnifiedItemColor,
   getUnifiedItemKey,
   type UnifiedItem,
   type UnifiedItemType,
 } from "@/lib/utils/unifiedItemUtils";
-import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
 import {
   describeUnifiedItemRow,
+  UNIFIED_ITEM_TYPE_DOT_CLASS,
   UNIFIED_ITEM_TYPE_LABELS,
-  UnifiedItemSpaceBadge,
-  UnifiedItemTypeBadge,
-  UnifiedItemTypeIcon,
+  UNIFIED_ITEM_TYPES,
+  UnifiedItemDot,
 } from "@/components/ui/unified-item-type";
 import { UnifiedItemDetailPanel, type UnifiedItemChangeHandlers } from "./UnifiedItemDetailPanel";
+import { formatLedgerDate } from "@/components/calendar/calendar-dates";
+import { Input } from "@/components/ui/input";
 import {
-  CalendarQuickCreate,
-  canUseQuickCreate,
-  getQuickCreateAnchor,
-  type CalendarQuickCreateOptions,
-} from "@/components/calendar/CalendarQuickCreate";
-import {
-  createDaySelection,
-  isUnifiedItemAllDay,
   resolveUnifiedItemSort,
   sortUnifiedItems,
   UNIFIED_ITEM_SORT_LABELS,
   type UnifiedItemSort,
 } from "@/lib/unified-item-views";
-import type { CalendarQuickCreateSelection } from "@/lib/calendar-quick-create";
-import { toKstDateInputValue } from "@/lib/date-input";
-import { formatKst, formatKstShortDate } from "@/lib/kst-format";
-
-const ALL_TYPES: UnifiedItemType[] = ["EVENT", "NOTE", "DIGGING", "QNA", "ASSIGNMENT"];
-
-function formatDate(item: UnifiedItem): string {
-  const date = formatKstShortDate(item.date);
-  return isUnifiedItemAllDay(item)
-    ? date
-    : `${date} ${formatKst(item.date, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" })}`;
-}
+import { cn } from "@/lib/utils";
 
 interface AllItemsViewProps extends UnifiedItemChangeHandlers {
   items: UnifiedItem[];
@@ -55,8 +36,46 @@ interface AllItemsViewProps extends UnifiedItemChangeHandlers {
   showSpaceContext: boolean;
   initialType?: UnifiedItemType | null;
   onInitialTypeCleared?: () => void;
-  /** 캘린더와 같은 빠른 만들기. 없으면 새 항목 버튼을 숨긴다. */
-  quickCreate?: CalendarQuickCreateOptions;
+}
+
+function TypeLabel({ item }: { item: UnifiedItem }) {
+  return (
+    <span className="inline-flex min-w-0 items-center gap-1.5">
+      <UnifiedItemDot item={item} />
+      <span className="truncate">
+        {UNIFIED_ITEM_TYPE_LABELS[item.type]}
+        {item.source.kind !== "PORTAL" ? ` · ${item.source.label}` : null}
+      </span>
+    </span>
+  );
+}
+
+function SortSelect({ sort, onChange, variant }: { sort: UnifiedItemSort; onChange: (sort: UnifiedItemSort) => void; variant: "toolbar" | "touch" }) {
+  return (
+    <label className={cn("relative flex items-center", variant === "touch" && "-mr-2")}>
+      <span className="sr-only">정렬</span>
+      {variant === "touch" ? (
+        <ArrowDownUp className="pointer-events-none absolute left-2 size-3.5 text-secondary-foreground" strokeWidth={1.6} aria-hidden="true" />
+      ) : null}
+      <select
+        value={sort}
+        onChange={(event) => onChange(resolveUnifiedItemSort(event.target.value))}
+        className={cn(
+          "appearance-none bg-background text-secondary-foreground field-sizing-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          variant === "touch"
+            ? "h-11 rounded-touch pl-7 pr-2 text-ui"
+            : "h-8 rounded-md border border-border pl-2.5 pr-7 text-ui",
+        )}
+      >
+        {(Object.entries(UNIFIED_ITEM_SORT_LABELS) as [UnifiedItemSort, string][]).map(([value, label]) => (
+          <option key={value} value={value}>{label}</option>
+        ))}
+      </select>
+      {variant === "touch" ? null : (
+        <ChevronDown className="pointer-events-none absolute right-2 size-3.5 text-secondary-foreground" strokeWidth={1.6} aria-hidden="true" />
+      )}
+    </label>
+  );
 }
 
 export function AllItemsView({
@@ -65,7 +84,6 @@ export function AllItemsView({
   showSpaceContext,
   initialType = null,
   onInitialTypeCleared,
-  quickCreate,
   canManageEvents,
   canManageLessons,
   onItemUpdated,
@@ -73,18 +91,12 @@ export function AllItemsView({
   viewer,
 }: AllItemsViewProps) {
   const [activeTypes, setActiveTypes] = useState<Set<UnifiedItemType>>(
-    new Set(initialType ? [initialType] : ALL_TYPES),
+    new Set(initialType ? [initialType] : UNIFIED_ITEM_TYPES),
   );
   const [selectedItem, setSelectedItem] = useState<UnifiedItem | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<UnifiedItemSort>("date-desc");
-  const [quick, setQuick] = useState<{
-    selection: CalendarQuickCreateSelection;
-    anchor: { x: number; y: number } | null;
-    returnFocus: HTMLElement | null;
-  } | null>(null);
-  const canAdd = canUseQuickCreate(quickCreate);
 
   // 바깥에서 다른 유형으로 바로 들어오면 그 유형만 보이게 맞춘다. 이전 값과 렌더 중에 비교한다.
   const [appliedInitialType, setAppliedInitialType] = useState(initialType);
@@ -107,6 +119,11 @@ export function AllItemsView({
     });
   };
 
+  const openItem = (item: UnifiedItem) => {
+    setSelectedItem(item);
+    setPanelOpen(true);
+  };
+
   // 타입 토글 + 제목 검색 결합
   const normalizedQuery = query.trim().toLowerCase();
   const filtered = sortUnifiedItems(
@@ -117,16 +134,19 @@ export function AllItemsView({
     }),
     sort,
   );
-  const gridColumns = showSpaceContext
-    ? "sm:grid-cols-[minmax(0,1fr)_6rem_9rem_9rem]"
-    : "sm:grid-cols-[minmax(0,1fr)_6rem_9rem]";
+  const countLabel = filtered.length === items.length ? `${items.length}개 항목` : `전체 ${items.length}개 중 ${filtered.length}개`;
+  const dateSort = sort === "date-desc" ? "descending" : sort === "date-asc" ? "ascending" : undefined;
 
   return (
-    <div className="mx-auto flex max-w-5xl flex-col gap-3">
-      {/* 툴바: 유형 필터 · 검색 · 정렬 · 새 항목 */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="항목 유형 필터">
-          {ALL_TYPES.map((type) => {
+    <div className="flex flex-col md:gap-5">
+      {/* 유형 · 검색 · 정렬. 좁은 화면은 검색이 먼저, 유형은 가로로 넘긴다. */}
+      <div className="flex flex-col gap-1 px-5 pt-3 md:flex-row md:flex-wrap md:items-center md:justify-between md:gap-3 md:border-b md:border-border md:px-0 md:pb-3 md:pt-0">
+        <div
+          role="group"
+          aria-label="유형"
+          className="order-2 -mr-5 flex gap-1 pr-5 scroll-row md:order-1 md:mr-0 md:flex-wrap md:overflow-visible md:pr-0"
+        >
+          {UNIFIED_ITEM_TYPES.map((type) => {
             const active = activeTypes.has(type);
             return (
               <button
@@ -134,72 +154,52 @@ export function AllItemsView({
                 type="button"
                 onClick={() => toggleType(type)}
                 aria-pressed={active}
-                className={`inline-flex min-h-7 items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs transition-colors duration-[var(--duration-fast)] motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-                  active ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted/60"
-                }`}
+                className="flex h-11 shrink-0 items-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:h-7"
               >
-                <UnifiedItemTypeIcon type={type} className="size-3.5" />
-                {UNIFIED_ITEM_TYPE_LABELS[type]}
-                <span className="text-muted-foreground tabular-nums">
-                  {items.filter((i) => i.type === type).length}
+                <span
+                  className={cn(
+                    "inline-flex h-8 items-center gap-[5px] rounded-full px-2.5 text-ui transition-colors duration-[var(--duration-fast)] motion-reduce:transition-none md:h-7 md:gap-1.5 md:text-xs",
+                    active ? "bg-muted text-foreground" : "text-muted-foreground line-through hover:bg-muted/60",
+                  )}
+                >
+                  <span aria-hidden="true" className={cn("size-1.5 shrink-0 rounded-full", UNIFIED_ITEM_TYPE_DOT_CLASS[type])} />
+                  {UNIFIED_ITEM_TYPE_LABELS[type]}
+                  <span className="font-mono text-muted-foreground">
+                    {items.filter((i) => i.type === type).length}
+                  </span>
                 </span>
               </button>
             );
           })}
         </div>
 
-        <div className="ml-auto flex w-full flex-wrap items-center gap-2 sm:w-auto">
-          <div className="relative min-w-0 flex-1 sm:w-56 sm:flex-none">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+        <div className="order-1 flex items-center gap-2 md:order-2">
+          <label className="relative flex min-w-0 flex-1 items-center md:w-[220px] md:flex-none">
+            <span className="sr-only">제목 검색</span>
+            <Search className="pointer-events-none absolute left-3.5 size-4 text-muted-foreground md:left-2.5 md:size-3.5" strokeWidth={1.8} aria-hidden="true" />
             <Input
               type="search"
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(event) => setQuery(event.target.value)}
               placeholder="제목 검색"
-              className="h-8 pl-8 text-xs"
-              aria-label="항목 검색"
+              className="pl-10 pr-3.5 md:h-8 md:pl-8 md:pr-3 md:text-ui"
             />
-          </div>
-          <label className="relative inline-flex h-8 items-center">
-            <span className="sr-only">정렬</span>
-            <ArrowDownUp className="pointer-events-none absolute left-2.5 size-3.5 text-muted-foreground" aria-hidden="true" />
-            <select
-              value={sort}
-              onChange={(event) => setSort(resolveUnifiedItemSort(event.target.value))}
-              className="h-8 appearance-none rounded-md border border-input bg-background pl-8 pr-3 text-xs text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              {(Object.entries(UNIFIED_ITEM_SORT_LABELS) as [UnifiedItemSort, string][]).map(([value, label]) => (
-                <option key={value} value={value}>{label}</option>
-              ))}
-            </select>
           </label>
-          {canAdd ? (
-            <Button
-              type="button"
-              size="sm"
-              onClick={(event) => {
-                const trigger = event.currentTarget;
-                setQuick({
-                  selection: createDaySelection(toKstDateInputValue(new Date())),
-                  anchor: getQuickCreateAnchor(trigger),
-                  returnFocus: trigger,
-                });
-              }}
-            >
-              <Plus className="size-3.5" aria-hidden="true" />
-              새 항목
-            </Button>
-          ) : null}
+          <div className="hidden md:block">
+            <SortSelect sort={sort} onChange={setSort} variant="toolbar" />
+          </div>
         </div>
       </div>
 
-      <p className="text-xs text-muted-foreground" aria-live="polite">
-        {filtered.length === items.length ? `${items.length}개 항목` : `전체 ${items.length}개 중 ${filtered.length}개`}
-      </p>
+      {/* 개수(좁은 화면은 정렬과 한 줄) */}
+      <div className="mx-5 flex h-11 items-center justify-between border-b border-border md:hidden">
+        <p className="text-ui text-muted-foreground" aria-live="polite">{countLabel}</p>
+        <SortSelect sort={sort} onChange={setSort} variant="touch" />
+      </div>
+      <p className="hidden text-xs text-muted-foreground md:block" aria-live="polite">{countLabel}</p>
 
-      {/* 표 */}
       {filtered.length === 0 ? (
-        <div className="flex flex-col items-start gap-2 rounded-lg border border-dashed border-border px-5 py-8 text-sm text-muted-foreground">
+        <div className="mx-5 flex flex-col items-start gap-2 py-8 text-body text-muted-foreground md:mx-0">
           <p>{normalizedQuery ? "검색 결과가 없습니다." : "항목이 없습니다."}</p>
           {normalizedQuery ? (
             <button
@@ -212,57 +212,68 @@ export function AllItemsView({
           ) : null}
         </div>
       ) : (
-        <div className="border-y border-border">
-          <div
-            aria-hidden="true"
-            className={`hidden h-9 items-center gap-3 border-b border-border px-2 text-xs text-muted-foreground sm:grid ${gridColumns}`}
-          >
-            <span>제목</span>
-            <span>유형</span>
-            <span>날짜</span>
-            {showSpaceContext ? <span>스페이스</span> : null}
-          </div>
-          <ul className="divide-y divide-border">
+        <>
+          {/* 넓은 화면: 표 */}
+          <table className="hidden w-full max-w-[1080px] table-fixed border-collapse text-body md:table">
+            <thead>
+              <tr className="border-b border-border">
+                <th scope="col" aria-sort={sort === "title" ? "ascending" : undefined} className={cn("h-9 px-2 text-left text-xs", sort === "title" ? "font-medium text-foreground" : "font-normal text-muted-foreground")}>
+                  제목{sort === "title" ? " ↑" : ""}
+                </th>
+                <th scope="col" className={cn("w-[140px] px-2 text-left text-xs", sort === "type" ? "font-medium text-foreground" : "font-normal text-muted-foreground")}>
+                  유형
+                </th>
+                <th scope="col" aria-sort={dateSort} className={cn("w-40 px-2 text-left text-xs", dateSort ? "font-medium text-foreground" : "font-normal text-muted-foreground")}>
+                  날짜{dateSort === "descending" ? " ↓" : dateSort === "ascending" ? " ↑" : ""}
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((item) => (
+                // 행 어디를 눌러도 열리고, 키보드·보조기기는 제목 버튼을 쓴다(버튼 클릭이 행으로 올라와도 같은 동작).
+                <tr
+                  key={getUnifiedItemKey(item)}
+                  onClick={() => openItem(item)}
+                  className="cursor-pointer border-b border-muted transition-colors duration-[var(--duration-fast)] hover:bg-sidebar motion-reduce:transition-none"
+                >
+                  <td className="h-11 overflow-hidden px-2">
+                    <button
+                      type="button"
+                      aria-label={describeUnifiedItemRow(item, formatLedgerDate(item, { withYear: true }), showSpaceContext)}
+                      onClick={() => openItem(item)}
+                      className="block w-full truncate rounded-sm text-left text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      {item.title}
+                    </button>
+                  </td>
+                  <td className="px-2 text-ui text-secondary-foreground"><TypeLabel item={item} /></td>
+                  <td className="px-2 font-mono text-xs text-secondary-foreground">{formatLedgerDate(item, { withYear: true })}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          {/* 좁은 화면: 두 줄 목록 */}
+          <ul className="flex flex-col px-5 pb-8 md:hidden">
             {filtered.map((item) => (
               <li key={getUnifiedItemKey(item)}>
                 <button
                   type="button"
-                  aria-label={describeUnifiedItemRow(item, formatDate(item), showSpaceContext)}
-                  onClick={() => {
-                    setSelectedItem(item);
-                    setPanelOpen(true);
-                  }}
-                  className={`grid min-h-10 w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 px-2 py-1.5 text-left transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${gridColumns}`}
+                  aria-label={describeUnifiedItemRow(item, formatLedgerDate(item, { withYear: true }), showSpaceContext)}
+                  onClick={() => openItem(item)}
+                  className="flex w-full flex-col gap-0.5 border-b border-muted py-[11px] text-left text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                 >
-                  <span className="flex min-w-0 items-center gap-2">
-                    <UnifiedItemTypeIcon type={item.type} className="size-4 shrink-0" style={{ color: getUnifiedItemColor(item) }} />
-                    <span className="min-w-0 truncate text-sm font-medium text-foreground">{item.title}</span>
+                  <span className="truncate text-md">{item.title}</span>
+                  <span className="flex items-center gap-2 text-xs text-secondary-foreground">
+                    <TypeLabel item={item} />
+                    <span className="font-mono text-muted-foreground">{formatLedgerDate(item, { withYear: false })}</span>
                   </span>
-                  <span className="hidden sm:block"><UnifiedItemTypeBadge item={item} /></span>
-                  <span className="text-xs tabular-nums text-muted-foreground">{formatDate(item)}</span>
-                  {showSpaceContext ? (
-                    <span className="col-span-2 sm:col-span-1"><UnifiedItemSpaceBadge item={item} /></span>
-                  ) : null}
                 </button>
               </li>
             ))}
           </ul>
-        </div>
+        </>
       )}
-
-      {quick && quickCreate ? (
-        <CalendarQuickCreate
-          selection={quick.selection}
-          anchor={quick.anchor}
-          options={quickCreate}
-          onCreated={(item) => onItemUpdated?.(item)}
-          onClose={() => {
-            const target = quick.returnFocus;
-            setQuick(null);
-            target?.focus({ preventScroll: true });
-          }}
-        />
-      ) : null}
 
       {/* 상세 패널 */}
       <UnifiedItemDetailPanel
@@ -271,6 +282,7 @@ export function AllItemsView({
         onOpenChange={setPanelOpen}
         onItemChange={setSelectedItem}
         returnTo={returnTo}
+        showSpaceContext={showSpaceContext}
         canManageEvents={canManageEvents}
         canManageLessons={canManageLessons}
         onItemUpdated={onItemUpdated}

@@ -16,7 +16,9 @@ import {
   type MobileTopBarConfig,
 } from "./navigation";
 
-type TopBarOverride = Partial<MobileTopBarConfig> & {
+type TopBarOverride = Partial<Omit<MobileTopBarConfig, "action">> & {
+  /** 주소 기본 행동을 바꾼다. null이면 이 화면에서는 오른쪽 + 행동을 숨긴다. */
+  action?: MobileTopBarConfig["action"] | null;
   /** 위쪽 막대 오른쪽에 화면이 직접 두는 조작(더 보기 메뉴·저장 상태 등). */
   actions?: ReactNode;
   /** 제목 자리를 비우고 오른쪽 조작만 둘 때(노트 편집처럼) true. */
@@ -36,16 +38,17 @@ export function MobileTopBar(props: TopBarOverride) {
   const backLabel = back?.label;
   const actionHref = action?.href;
   const actionLabel = action?.label;
+  const actionHidden = action === null;
   useLayoutEffect(() => {
     if (!setOverride) return;
     setOverride({
       title,
       back: backHref && backLabel ? { href: backHref, label: backLabel } : undefined,
-      action: actionHref && actionLabel ? { href: actionHref, label: actionLabel } : undefined,
+      action: actionHidden ? null : actionHref && actionLabel ? { href: actionHref, label: actionLabel } : undefined,
       actions,
       hideTitle,
     });
-  }, [setOverride, title, backHref, backLabel, actionHref, actionLabel, actions, hideTitle]);
+  }, [setOverride, title, backHref, backLabel, actionHidden, actionHref, actionLabel, actions, hideTitle]);
   useLayoutEffect(() => () => setOverride?.(null), [setOverride]);
   return null;
 }
@@ -193,7 +196,7 @@ export function AppSidebar({
   const routeTopBar = resolveMobileTopBar(role, location);
   const title = override?.title ?? routeTopBar.title;
   const back = override?.back ?? routeTopBar.back;
-  const action = override?.action ?? routeTopBar.action;
+  const action = override?.action === null ? undefined : override?.action ?? routeTopBar.action;
 
   return (
     <TopBarContext.Provider value={setOverride}>

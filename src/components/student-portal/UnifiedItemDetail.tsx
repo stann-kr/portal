@@ -1,7 +1,7 @@
 /**
  * @file src/components/student-portal/UnifiedItemDetail.tsx
- * @description SlidePanel 내 UnifiedItem 타입별 상세 뷰.
- * EVENT / NOTE / DIGGING / QNA / ASSIGNMENT 분기 렌더링.
+ * @description 상세 패널 본문(캔버스 CalendarDialogs): 20/28 제목, 72px 이름 칸의 32px 정보 줄,
+ * 글자 2 설명, 유형별 조작. 노트는 UnifiedNoteDetail이 맡는다.
  *
  * 타입 노트:
  * - metadata 는 Record<string, unknown> → 모든 값은 String() 변환 후 JSX 삽입
@@ -10,17 +10,19 @@
 "use client";
 
 import Link from "next/link";
+import type { ReactNode } from "react";
 import { Disc3, MessageSquareText } from "lucide-react";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
-import { UnifiedItemSpaceBadge, UnifiedItemTypeBadge } from "@/components/ui/unified-item-type";
+import { getUnifiedItemKindLabel } from "@/components/ui/unified-item-type";
+import { buttonClassName } from "@/components/ui/button";
 import { UnifiedNoteDetail, type NoteDetailViewer } from "./UnifiedNoteDetail";
-import { getNoteCalendarDateKey } from "@/lib/calendar-interaction";
 import {
   CalendarEventActions,
   isEditableCalendarEventItem,
 } from "@/components/calendar/CalendarEventActions";
 import { isManagedLessonItem, LessonActions } from "@/components/calendar/LessonActions";
-import { formatKst } from "@/lib/kst-format";
+import { formatDetailDate, formatDetailMoment, shiftDateKey } from "@/components/calendar/calendar-dates";
+import { toKstDateInputValue } from "@/lib/date-input";
 import { buildAdminStudentDetailHref, buildStudentDiggingBoardHref } from "@/lib/student-space-routes";
 
 // ── 타입 라벨 ────────────────────────────────────
@@ -31,34 +33,7 @@ const QNA_STATUS_LABELS: Record<string, string> = {
   CLOSED: "종료",
 };
 
-const EVENT_TYPE_LABELS: Record<string, string> = {
-  LESSON: "레슨", PRACTICE: "연습", GIG: "공연", NOTE: "메모",
-};
-
-// ── 포맷 헬퍼 ────────────────────────────────────
-
-const DATE_LABEL: Intl.DateTimeFormatOptions = { year: "numeric", month: "short", day: "numeric" };
-
-function formatDate(date: Date) {
-  return formatKst(date, { ...DATE_LABEL, hour: "2-digit", minute: "2-digit" });
-}
-
-// date-only 값은 UTC 자정으로 만들어 KST(+9)에서도 같은 날짜로 표시한다.
-function formatAllDayDate(date: Date, dateOnly: string | null) {
-  const exactDate = dateOnly && /^\d{4}-\d{2}-\d{2}$/u.test(dateOnly)
-    ? new Date(`${dateOnly}T00:00:00.000Z`)
-    : new Date(date);
-  return formatKst(exactDate, DATE_LABEL);
-}
-
-function formatAllDayEndDate(date: Date, dateOnly: string | null) {
-  if (!dateOnly || !/^\d{4}-\d{2}-\d{2}$/u.test(dateOnly)) {
-    return formatAllDayDate(date, null);
-  }
-  const inclusiveEnd = new Date(`${dateOnly}T00:00:00.000Z`);
-  inclusiveEnd.setUTCDate(inclusiveEnd.getUTCDate() - 1);
-  return formatKst(inclusiveEnd, DATE_LABEL);
-}
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/u;
 
 /**
  * metadata 필드에서 문자열 값을 안전하게 추출.
@@ -72,6 +47,18 @@ function metaStr(
   if (val === null || val === undefined) return null;
   return String(val);
 }
+
+/** 정보 줄: 72px 이름 칸 · 값. 시각은 Mono 12. */
+export function DetailRow({ label, children, mono = false }: { label: string; children: ReactNode; mono?: boolean }) {
+  return (
+    <div className="flex min-h-8 items-center text-ui">
+      <dt className="w-[72px] shrink-0 text-muted-foreground">{label}</dt>
+      <dd className={mono ? "min-w-0 font-mono text-xs" : "min-w-0 break-words"}>{children}</dd>
+    </div>
+  );
+}
+
+const linkButton = buttonClassName({ variant: "outline", className: "self-start px-3" });
 
 // ── 컴포넌트 ─────────────────────────────────────
 
@@ -97,6 +84,19 @@ export function UnifiedItemDetail({
   onBusyChange,
   viewer,
 }: UnifiedItemDetailProps) {
+  if (item.type === "NOTE") {
+    return (
+      <UnifiedNoteDetail
+        key={item.id}
+        item={item}
+        returnTo={returnTo}
+        viewer={viewer}
+        onItemUpdated={onItemUpdated}
+        onBusyChange={onBusyChange}
+      />
+    );
+  }
+
   // metadata 값을 미리 문자열로 추출 (unknown → string | null 명확화)
   const metaDescription = metaStr(item.metadata, "description");
   const metaLinkUrl = metaStr(item.metadata, "linkUrl");
@@ -105,59 +105,85 @@ export function UnifiedItemDetail({
   const allDayEndDate = metaStr(item.metadata, "allDayEndDate");
   const metaFeedbackCount = item.metadata.feedbackCount as number | undefined;
   const isAllDay = item.metadata.allDay === true;
-  const description = item.type === "NOTE"
-    ? null
-    : item.description ?? metaDescription;
-  // 노트는 날짜만 가진다(지정 날짜는 UTC 자정, 없으면 작성일의 KST 날짜).
-  const startLabel = item.type === "NOTE"
-    ? formatAllDayDate(item.date, getNoteCalendarDateKey(item))
-    : isAllDay
-      ? formatAllDayDate(item.date, allDayStartDate)
-      : formatDate(item.date);
-  const endLabel = item.endDate
-    ? isAllDay
-      ? formatAllDayEndDate(new Date(item.endDate), allDayEndDate)
-      : formatDate(new Date(item.endDate))
-    : null;
+  const description = item.description ?? metaDescription;
+  const isLesson = item.type === "EVENT" && item.subType === "LESSON";
+
+  // 종일 일정은 날짜만. 끝 날짜는 포함하지 않는 값으로 저장되므로 하루 앞을 보인다.
+  const allDayStartKey = allDayStartDate && DATE_ONLY.test(allDayStartDate) ? allDayStartDate : toKstDateInputValue(item.date);
+  const allDayLastKey = allDayEndDate && DATE_ONLY.test(allDayEndDate)
+    ? shiftDateKey(allDayEndDate, -1)
+    : item.endDate ? toKstDateInputValue(new Date(item.endDate)) : null;
 
   return (
-    <div className="space-y-5">
-      {/* 타입 배지 + 날짜 */}
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <UnifiedItemTypeBadge item={item} />
-          <UnifiedItemSpaceBadge item={item} />
-        </div>
-        <span className="text-xs text-muted-foreground">
-          {startLabel}
-        </span>
-      </div>
+    <div className="flex flex-col gap-4">
+      <h2 className="break-words text-xl font-semibold tracking-title">{item.title}</h2>
+
+      <dl className="flex flex-col">
+        {item.type === "EVENT" ? (
+          isAllDay ? (
+            <>
+              <DetailRow label="날짜">{formatDetailDate(allDayStartKey)}</DetailRow>
+              {allDayLastKey && allDayLastKey !== allDayStartKey ? (
+                <DetailRow label="종료">{formatDetailDate(allDayLastKey)}</DetailRow>
+              ) : null}
+            </>
+          ) : (
+            <>
+              <DetailRow label="시작" mono>{formatDetailMoment(item.date)}</DetailRow>
+              {item.endDate ? <DetailRow label="종료" mono>{formatDetailMoment(new Date(item.endDate))}</DetailRow> : null}
+            </>
+          )
+        ) : (
+          <DetailRow label="날짜" mono>{formatDetailMoment(item.date)}</DetailRow>
+        )}
+        {item.type === "EVENT" && !isLesson && item.subType !== undefined ? (
+          <DetailRow label="종류">{getUnifiedItemKindLabel(item)}</DetailRow>
+        ) : null}
+        {item.source.kind !== "PORTAL" ? <DetailRow label="출처">{item.source.label}</DetailRow> : null}
+        {item.type === "DIGGING" && metaLinkUrl ? (
+          <DetailRow label="링크">
+            <a
+              href={metaLinkUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block truncate text-accent-foreground underline-offset-4 hover:underline"
+            >
+              {metaLinkUrl}
+            </a>
+          </DetailRow>
+        ) : null}
+        {item.type === "QNA" && item.subType !== undefined ? (
+          <DetailRow label="상태">{QNA_STATUS_LABELS[item.subType] ?? item.subType}</DetailRow>
+        ) : null}
+        {item.type === "ASSIGNMENT" && metaFeedbackCount !== undefined && metaFeedbackCount > 0 ? (
+          <DetailRow label="피드백"><span className="font-mono text-xs">{metaFeedbackCount}건</span></DetailRow>
+        ) : null}
+        {item.type === "ASSIGNMENT" && metaMediaUrl !== null ? (
+          <DetailRow label="미디어">
+            <a
+              href={metaMediaUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-accent-foreground underline-offset-4 hover:underline"
+            >
+              원본 열기
+            </a>
+          </DetailRow>
+        ) : null}
+      </dl>
 
       {description ? (
-        <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-muted-foreground">{description}</p>
+        <p className="whitespace-pre-wrap break-words text-body text-secondary-foreground">{description}</p>
       ) : null}
 
-      {/* ── 타입별 추가 정보 ── */}
+      {/* ── 타입별 조작 ── */}
 
-      {/* EVENT */}
       {item.type === "EVENT" ? (
-        <div className="space-y-2 text-sm">
-          {item.subType !== undefined ? (
-            <div className="flex gap-2">
-              <span className="text-muted-foreground w-16">종류</span>
-              <span className="font-medium">{EVENT_TYPE_LABELS[item.subType] ?? "일정"}</span>
-            </div>
-          ) : null}
-          {endLabel !== null && (!isAllDay || endLabel !== startLabel) ? (
-            <div className="flex gap-2">
-              <span className="text-muted-foreground w-16">종료</span>
-              <span>{endLabel}</span>
-            </div>
-          ) : null}
+        <>
           {canManageEvents && item.source.entity === "LESSON" ? (
-            <p className="text-xs text-muted-foreground">레슨 일정은 강사가 관리합니다.</p>
+            <p className="text-xs/[18px] text-muted-foreground">레슨 일정은 강사가 관리합니다.</p>
           ) : canManageEvents && item.source.kind !== "PORTAL" ? (
-            <p className="text-xs text-muted-foreground">연결한 외부 캘린더의 일정은 읽기 전용입니다.</p>
+            <p className="text-xs/[18px] text-muted-foreground">연결한 외부 캘린더의 일정은 읽기 전용입니다.</p>
           ) : null}
           {canManageEvents && isEditableCalendarEventItem(item) && onItemUpdated && onItemRemoved ? (
             <CalendarEventActions
@@ -175,101 +201,38 @@ export function UnifiedItemDetail({
               onBusyChange={onBusyChange}
             />
           ) : null}
-        </div>
+        </>
       ) : null}
 
-      {/* NOTE */}
-      {item.type === "NOTE" ? (
-        <UnifiedNoteDetail
-          key={item.id}
-          item={item}
-          returnTo={returnTo}
-          viewer={viewer}
-          onItemUpdated={onItemUpdated}
-          onBusyChange={onBusyChange}
-        />
-      ) : null}
-
-      {/* DIGGING */}
       {item.type === "DIGGING" ? (
-        <div className="space-y-3 text-sm">
-          {metaLinkUrl ? (
-            <div className="flex gap-2">
-              <span className="text-muted-foreground w-16 shrink-0">링크</span>
-              <a
-                href={metaLinkUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="min-w-0 truncate text-primary hover:underline"
-              >
-                {metaLinkUrl}
-              </a>
-            </div>
-          ) : null}
-          <Link
-            href={canManageEvents
-              ? buildStudentDiggingBoardHref(returnTo)
-              : buildAdminStudentDetailHref(item.space.studentId, "digging")}
-            className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-accent"
-          >
-            <Disc3 className="h-3.5 w-3.5" aria-hidden="true" />
-            {canManageEvents ? "디깅 보드에서 편집" : "디깅 보드에서 보기"}
-          </Link>
-        </div>
+        <Link
+          href={canManageEvents
+            ? buildStudentDiggingBoardHref(returnTo)
+            : buildAdminStudentDetailHref(item.space.studentId, "digging")}
+          className={linkButton}
+        >
+          <Disc3 className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
+          {canManageEvents ? "디깅 보드에서 편집" : "디깅 보드에서 보기"}
+        </Link>
       ) : null}
 
-      {/* QNA */}
       {item.type === "QNA" ? (
-        <div className="space-y-2 text-sm">
-          {item.subType !== undefined ? (
-            <div className="flex gap-2 items-center">
-              <span className="text-muted-foreground w-16">상태</span>
-              <span className="px-2 py-0.5 text-xs border border-border rounded-full">
-                {QNA_STATUS_LABELS[item.subType] ?? item.subType}
-              </span>
-            </div>
-          ) : null}
-          <Link
-            href={`/dashboard/qna/${item.id}?returnTo=${encodeURIComponent(returnTo)}`}
-            className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-accent"
-          >
-            전체 대화에서 이어보기
-          </Link>
-        </div>
+        <Link
+          href={`/dashboard/qna/${item.id}?returnTo=${encodeURIComponent(returnTo)}`}
+          className={linkButton}
+        >
+          전체 대화에서 이어보기
+        </Link>
       ) : null}
 
-      {/* ASSIGNMENT */}
       {item.type === "ASSIGNMENT" ? (
-        <div className="space-y-2 text-sm">
-          {metaFeedbackCount !== undefined && metaFeedbackCount > 0 ? (
-            <div className="flex gap-2 items-center">
-              <span className="text-muted-foreground w-16">피드백</span>
-              <span className="px-2 py-0.5 text-xs bg-muted rounded-full">
-                {metaFeedbackCount}건
-              </span>
-            </div>
-          ) : null}
-          {metaMediaUrl !== null ? (
-            <div className="flex gap-2">
-              <span className="text-muted-foreground w-16">미디어</span>
-              <a
-                href={metaMediaUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-primary hover:underline truncate"
-              >
-                원본 열기
-              </a>
-            </div>
-          ) : null}
-          <Link
-            href={`/dashboard/student/assignments/${encodeURIComponent(item.id)}?returnTo=${encodeURIComponent(returnTo)}`}
-            className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-accent"
-          >
-            <MessageSquareText className="h-3.5 w-3.5" aria-hidden="true" />
-            {canManageEvents ? "재생하며 피드백 보기" : "재생하며 피드백 작성"}
-          </Link>
-        </div>
+        <Link
+          href={`/dashboard/student/assignments/${encodeURIComponent(item.id)}?returnTo=${encodeURIComponent(returnTo)}`}
+          className={linkButton}
+        >
+          <MessageSquareText className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
+          {canManageEvents ? "재생하며 피드백 보기" : "재생하며 피드백 작성"}
+        </Link>
       ) : null}
     </div>
   );

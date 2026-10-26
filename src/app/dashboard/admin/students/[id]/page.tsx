@@ -1,11 +1,13 @@
 /**
  * @file src/app/dashboard/admin/students/[id]/page.tsx
- * @description 학생 상세 페이지 (Admin 전용) — RSC 탭 통합 뷰.
- * URL searchParams(?tab=xxx)로 Overview / Digging / Notes / Q&A 전환.
+ * @description 학생 상세 페이지 (Admin 전용) — RSC 탭 통합 뷰(AdminStudentDetail·Assignments·Digging·Qna 보드).
+ * URL searchParams(?tab=xxx)로 개요 / 과제 / 디깅 / Q&A 전환. 노트 탭은 학생 스페이스 노트 화면으로 보낸다.
  * 각 탭은 서버에서 데이터를 병렬 fetch하여 렌더링.
  */
 import { Suspense } from "react";
 import { redirect } from "next/navigation";
+import Link from "next/link";
+import { Play, Radio } from "lucide-react";
 import { getActiveAuthSession } from "@/lib/auth-guard";
 import { getStudentAccountState, getStudentById } from "@/lib/actions/students";
 import { getCurriculumByStudent } from "@/lib/actions/curriculum";
@@ -13,32 +15,37 @@ import { getLessonsByStudent } from "@/lib/actions/lessons";
 import { getOrSeedColumns, getDiggingTracks } from "@/lib/actions/digging";
 import { getQnaThreadsByStudent } from "@/lib/actions/qna";
 import { getAssignmentSummariesByStudent } from "@/lib/actions/assignments";
-import { getRecentPrivateNotesOverview } from "@/lib/actions/privateNotes";
-import { PrivateNoteList } from "@/components/notes/PrivateNoteList";
 import { getStudentCalendarFeedIssuedAt } from "@/lib/actions/calendarFeed";
 import { EmptyState } from "@/components/ui/empty-state";
 import { StatusBadge } from "@/components/ui/status-badge";
-import { formatKst } from "@/lib/kst-format";
+import { formatKstShortDate } from "@/lib/kst-format";
 import { describeAssignmentMedia } from "@/lib/unified-item-normalization";
-import { StudentDetailTabs } from "@/components/admin/StudentDetailTabs";
+import { buildAdminStudentNotesHref, StudentDetailTabs } from "@/components/admin/StudentDetailTabs";
 import { OverviewTab } from "@/components/admin/OverviewTab";
 import { DiggingBoard } from "@/components/digging/DiggingBoard";
 import { ThreadList } from "@/components/qna/ThreadList";
+import {
+  LEDGER_HEADER_NOTE_CLASS,
+  LEDGER_ROW_CLASS,
+  LedgerSection,
+  LedgerSectionHeader,
+} from "@/components/student-portal/today/HomeSection";
 import { resolveQnaFilter } from "@/lib/qna-routes";
 import { normalizeDocumentSearchQuery } from "@/lib/document-search";
-import { ChevronRight, Plus, Radio, Search } from "lucide-react";
-import Link from "next/link";
+import { cn } from "@/lib/utils";
 import type { DiggingColumnType, QnaStatus } from "@/db/schema";
-import { ArrowLeft } from "lucide-react";
 import {
   buildAdminStudentDetailHref,
   resolveStudentDetailTab,
   type StudentDetailTab,
 } from "@/lib/student-space-routes";
 import { getRequestNow } from "@/lib/request-time";
+import { StudentDetailTopBar } from "./StudentDetailTopBar";
 
 type RawColumn = Awaited<ReturnType<typeof getOrSeedColumns>>[number];
 type RawQnaThread = Awaited<ReturnType<typeof getQnaThreadsByStudent>>[number];
+
+const TAB_FALLBACK_CLASS = "rounded-lg bg-muted animate-pulse motion-reduce:animate-none";
 
 // ─── 탭별 콘텐츠 ───────────────────────────────────
 
@@ -64,79 +71,54 @@ async function DiggingTabContent({ studentId }: { studentId: string }) {
   );
 }
 
-async function AssignmentsTabContent({ studentId }: { studentId: string }) {
+async function AssignmentsTabContent({ studentId, referenceTime }: { studentId: string; referenceTime: Date }) {
   const summaries = await getAssignmentSummariesByStudent(studentId);
   const returnTo = buildAdminStudentDetailHref(studentId, "assignments");
 
   if (summaries.length === 0) {
     return (
       <EmptyState
+        className="max-w-[880px]"
         title="제출한 믹스셋이 없습니다"
-        description="학생이 워크스페이스의 과제 탭에서 YouTube나 SoundCloud 링크를 제출하면 이곳에 표시됩니다."
-        icon={<Radio className="size-4" aria-hidden="true" />}
+        description="학생이 과제 화면에서 YouTube나 SoundCloud 링크를 제출하면 이곳에 표시됩니다."
+        icon={<Radio strokeWidth={1.6} aria-hidden="true" />}
       />
     );
   }
 
   return (
-    <ul className="overflow-hidden rounded-lg border border-border bg-surface" aria-label="제출한 믹스셋">
-      {summaries.map((assignment, index) => (
-        <li key={assignment.id} className={index > 0 ? "border-t border-border" : undefined}>
-          <Link
-            href={`/dashboard/student/assignments/${encodeURIComponent(assignment.id)}?returnTo=${encodeURIComponent(returnTo)}`}
-            className="flex items-center gap-3 px-4 py-4 transition-colors hover:bg-muted focus-visible:bg-muted sm:px-5"
-          >
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-semibold text-foreground">{describeAssignmentMedia(assignment.mediaUrl)}</p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {formatKst(assignment.submittedAt, { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }, "제출일 미정")} 제출
-                {assignment.feedbackCount > 0 ? ` · 피드백 ${assignment.feedbackCount}건` : ""}
-              </p>
-            </div>
-            <StatusBadge status={assignment.feedbackCount > 0 ? "feedbackReady" : "feedbackWaiting"} />
-            <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-          </Link>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-const NOTES_TAB_PREVIEW_COUNT = 20;
-
-/** 학생 상세에서 바로 최근 노트를 훑고 열 수 있게 한다. 검색·전체 목록은 노트 페이지가 맡는다. */
-async function NotesTabContent({ studentId }: { studentId: string }) {
-  const { notes: visibleNotes, total } = await getRecentPrivateNotesOverview(studentId, NOTES_TAB_PREVIEW_COUNT);
-  const returnTo = buildAdminStudentDetailHref(studentId, "notes");
-  const notesPageHref = `/dashboard/admin/students/${encodeURIComponent(studentId)}/notes`;
-
-  return (
-    <section className="space-y-3" aria-label="학생 노트">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm text-muted-foreground">
-          노트 {total}개{total > visibleNotes.length ? ` 중 최근 ${visibleNotes.length}개` : ""}
-        </p>
-        <div className="flex flex-wrap items-center gap-2">
-          <Link
-            href={notesPageHref}
-            className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border px-3 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          >
-            <Search className="size-3.5" aria-hidden="true" />검색·전체 목록
-          </Link>
-          <Link
-            href={`${notesPageHref}/new?returnTo=${encodeURIComponent(returnTo)}`}
-            className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-          >
-            <Plus className="size-3.5" aria-hidden="true" />노트 작성
-          </Link>
-        </div>
-      </div>
-      <PrivateNoteList
-        notes={visibleNotes}
-        returnTo={returnTo}
-        emptyMessage="아직 이 학생 스페이스에 작성된 노트가 없습니다."
+    <LedgerSection labelledBy="assignments-heading" className="max-w-[880px]">
+      <LedgerSectionHeader
+        id="assignments-heading"
+        title="제출한 믹스셋"
+        count={summaries.length}
+        aside={<span className={LEDGER_HEADER_NOTE_CLASS}>최신순</span>}
       />
-    </section>
+      <ul>
+        {summaries.map((assignment) => {
+          const submitted = formatKstShortDate(assignment.submittedAt, "", referenceTime);
+          return (
+            <li key={assignment.id}>
+              <Link
+                href={`/dashboard/student/assignments/${encodeURIComponent(assignment.id)}?returnTo=${encodeURIComponent(returnTo)}`}
+                className={cn(LEDGER_ROW_CLASS, "flex min-h-15 items-center gap-3.5 py-2 md:px-1")}
+              >
+                <span aria-hidden="true" className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-secondary-foreground">
+                  <Play className="size-3.5 fill-current" strokeWidth={1.6} />
+                </span>
+                <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                  <span className="truncate text-body font-medium">{describeAssignmentMedia(assignment.mediaUrl)}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {submitted ? `${submitted} 제출` : "제출일 미정"} · 피드백 {assignment.feedbackCount}건
+                  </span>
+                </span>
+                <StatusBadge status={assignment.feedbackCount > 0 ? "feedbackReady" : "feedbackWaiting"} />
+              </Link>
+            </li>
+          );
+        })}
+      </ul>
+    </LedgerSection>
   );
 }
 
@@ -148,13 +130,16 @@ async function QnaTabContent({ studentId, filter, query }: { studentId: string; 
   }));
 
   return (
-    <ThreadList
-      threads={threads}
-      isAdmin={true}
-      returnTo={`/dashboard/admin/students/${studentId}?tab=qna`}
-      filter={filter}
-      query={query}
-    />
+    <div className="max-w-[880px]">
+      <ThreadList
+        threads={threads}
+        isAdmin={true}
+        returnTo={buildAdminStudentDetailHref(studentId, "qna")}
+        filter={filter}
+        query={query}
+        variant="chips"
+      />
+    </div>
   );
 }
 
@@ -179,6 +164,8 @@ export default async function StudentDetailPage({
 
   const student = await getStudentById(studentId);
   if (!student) redirect("/dashboard/admin");
+  // 노트 탭은 검색·표/목록을 갖춘 학생 스페이스 노트 화면이 canonical이다(AdminStudentNotes 보드).
+  if (activeTab === "notes") redirect(buildAdminStudentNotesHref(studentId));
 
   // Overview 탭 데이터는 미리 병렬 fetch
   const [modules, lessons, calendarFeedIssuedAt, accountState] = await (activeTab === "overview"
@@ -194,78 +181,74 @@ export default async function StudentDetailPage({
         Date | null,
         Awaited<ReturnType<typeof getStudentAccountState>>,
       ]));
-  // 만료 판단은 서버 시각 하나로 정해 화면 hydration과 어긋나지 않게 한다.
+  // 만료·지난 레슨 판단은 서버 시각 하나로 정해 화면 hydration과 어긋나지 않게 한다.
+  const referenceTime = new Date(getRequestNow());
   const account = accountState.kind === "invite"
-    ? { ...accountState, expired: accountState.expiresAt.getTime() <= getRequestNow() }
+    ? { ...accountState, expired: accountState.expiresAt.getTime() <= referenceTime.getTime() }
     : accountState;
+  const name = student.displayName?.trim() || student.email;
+  const initial = Array.from(name)[0]?.toUpperCase() ?? "학";
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6 px-4 py-6 sm:px-6">
-      {/* 학생 헤더 */}
-      <div className="space-y-1">
-        <Link href="/dashboard/admin?section=students" className="inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground">
-          <ArrowLeft className="size-4" aria-hidden="true" />학생 목록으로 돌아가기
-        </Link>
-        <h1 className="break-words text-2xl font-semibold tracking-tight text-foreground">
-          {student.displayName ?? student.email}
-        </h1>
-        <p className="mt-0.5 break-all text-sm text-muted-foreground">{student.email}</p>
-      </div>
-
-      {/* 탭 네비게이션 */}
-      <StudentDetailTabs studentId={studentId} activeTab={activeTab} />
-
-      {/* 탭 콘텐츠 */}
-      <div className="pt-2">
-        {activeTab === "overview" && (
-          <OverviewTab
-            studentId={studentId}
-            modules={modules}
-            lessons={lessons}
-            calendarFeedIssuedAt={calendarFeedIssuedAt}
-            account={account}
-          />
-        )}
-
-        {activeTab === "assignments" && (
-          <Suspense
-            fallback={
-              <div className="h-40 rounded-lg border bg-card animate-pulse motion-reduce:animate-none" />
-            }
+    <div className="px-5 pb-8 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-10">
+      <StudentDetailTopBar studentId={studentId} returnTo={buildAdminStudentDetailHref(studentId, activeTab)} />
+      <div className="flex max-w-[1080px] flex-col md:gap-7">
+        <nav aria-label="위치" className="hidden items-center gap-1.5 text-ui md:flex">
+          <Link
+            href="/dashboard/admin?section=students"
+            className="rounded-sm text-secondary-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            <AssignmentsTabContent studentId={studentId} />
-          </Suspense>
-        )}
+            학생
+          </Link>
+          <span aria-hidden="true" className="text-faint">/</span>
+          <span aria-current="page" className="min-w-0 truncate text-foreground">{name}</span>
+        </nav>
 
-        {activeTab === "digging" && (
-          <Suspense
-            fallback={
-              <div className="h-64 rounded-xl border bg-card animate-pulse" />
-            }
+        <header className="flex items-center gap-3.5 pb-4 pt-5 md:gap-4 md:p-0">
+          <span
+            aria-hidden="true"
+            className="flex size-12 shrink-0 items-center justify-center rounded-full bg-selected text-lg font-semibold text-secondary-foreground"
           >
-            <DiggingTabContent studentId={studentId} />
-          </Suspense>
-        )}
+            {initial}
+          </span>
+          <div className="flex min-w-0 flex-col gap-0.5">
+            <h1 className="break-words text-xl font-semibold tracking-title text-foreground md:text-2xl md:tracking-display">{name}</h1>
+            <p className="break-all text-ui text-muted-foreground">{student.email}</p>
+          </div>
+        </header>
 
-        {activeTab === "notes" && (
-          <Suspense
-            fallback={
-              <div className="h-64 rounded-xl border bg-card animate-pulse" />
-            }
-          >
-            <NotesTabContent studentId={studentId} />
-          </Suspense>
-        )}
+        <StudentDetailTabs studentId={studentId} activeTab={activeTab} className="-mx-5 px-5 md:mx-0 md:px-0" />
 
-        {activeTab === "qna" && (
-          <Suspense
-            fallback={
-              <div className="h-40 rounded-xl border bg-card animate-pulse" />
-            }
-          >
-            <QnaTabContent studentId={studentId} filter={resolveQnaFilter(qnaStatus)} query={normalizeDocumentSearchQuery(qnaQuery)} />
-          </Suspense>
-        )}
+        <div className="pt-2 md:pt-0">
+          {activeTab === "overview" && (
+            <OverviewTab
+              studentId={studentId}
+              modules={modules}
+              lessons={lessons}
+              calendarFeedIssuedAt={calendarFeedIssuedAt}
+              account={account}
+              referenceTime={referenceTime}
+            />
+          )}
+
+          {activeTab === "assignments" && (
+            <Suspense fallback={<div className={cn(TAB_FALLBACK_CLASS, "h-40 max-w-[880px]")} />}>
+              <AssignmentsTabContent studentId={studentId} referenceTime={referenceTime} />
+            </Suspense>
+          )}
+
+          {activeTab === "digging" && (
+            <Suspense fallback={<div className={cn(TAB_FALLBACK_CLASS, "h-64")} />}>
+              <DiggingTabContent studentId={studentId} />
+            </Suspense>
+          )}
+
+          {activeTab === "qna" && (
+            <Suspense fallback={<div className={cn(TAB_FALLBACK_CLASS, "h-40 max-w-[880px]")} />}>
+              <QnaTabContent studentId={studentId} filter={resolveQnaFilter(qnaStatus)} query={normalizeDocumentSearchQuery(qnaQuery)} />
+            </Suspense>
+          )}
+        </div>
       </div>
     </div>
   );

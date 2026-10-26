@@ -86,8 +86,10 @@
   --text-dialog--line-height: 24px;
   --text-mobile-title: 22px;
   --text-mobile-title--line-height: 30px;
+  --text-mobile-title--font-weight: 600;
   --text-display: 28px;
   --text-display--line-height: 36px;
+  --text-display--font-weight: 600;
   --tracking-display: -0.02em;
   --tracking-title: -0.01em;
 
@@ -101,8 +103,9 @@
   --duration-slow: 280ms;
   --z-base: 0;
   --z-sticky: 20;
-  --z-dropdown: 40;
+  /* 메뉴·선택 창은 시트·서랍·대화상자 안에서도 열리므로 overlay 위, toast 아래에 둔다. */
   --z-overlay: 50;
+  --z-dropdown: 55;
   --z-toast: 60;
 }
 
@@ -182,9 +185,11 @@
 /* FullCalendar 화면은 components/student-portal/unified-calendar.css가 맡는다. */
 
 /* ─── FullEditor / ProseMirror 스타일 ───────────── */
+/* 편집 화면(.ProseMirror)과 읽기 화면(.rich-text)이 같은 hierarchy를 쓴다(NoteDoc·MobileNoteDoc 보드).
+   글자 크기·줄 높이는 바깥 container(문서 16/28, 상자 15/26)가 정하고 여기서는 em으로만 맞춘다. */
 
-/* Placeholder */
-.ProseMirror p.is-editor-empty:first-child::before {
+/* Placeholder: 빈 문서는 화면 안내, 내용이 있는 문서의 빈 줄(커서 위치)은 `/` 블록 안내 */
+.ProseMirror > .is-empty::before {
   content: attr(data-placeholder);
   color: var(--color-muted-foreground);
   pointer-events: none;
@@ -195,15 +200,26 @@
 /* 선택 영역 */
 :where(.ProseMirror, .rich-text) .selection,
 :where(.ProseMirror, .rich-text) *::selection {
-  background-color: color-mix(in srgb, var(--color-primary) 15%, transparent);
+  background-color: var(--color-accent);
+}
+
+/* 블록 간격: 문단 사이 14px(좁은 화면 12px) */
+:where(.ProseMirror, .rich-text) > * + * { margin-top: 0.875em; }
+@media (max-width: 47.999rem) {
+  :where(.ProseMirror, .rich-text) > * + * { margin-top: 0.75em; }
 }
 
 /* 헤딩 */
-:where(.ProseMirror, .rich-text) h1 { font-size: 1.75rem; font-weight: 700; line-height: 1.2; margin: 1.5rem 0 0.75rem; letter-spacing: -0.025em; }
-:where(.ProseMirror, .rich-text) h2 { font-size: 1.375rem; font-weight: 600; line-height: 1.3; margin: 1.25rem 0 0.5rem; letter-spacing: -0.02em; }
-:where(.ProseMirror, .rich-text) h3 { font-size: 1.125rem; font-weight: 600; line-height: 1.4; margin: 1rem 0 0.5rem; }
-:where(.ProseMirror, .rich-text) p { margin: 0.4rem 0; line-height: 1.7; }
-:where(.ProseMirror, .rich-text) p:first-child { margin-top: 0; }
+:where(.ProseMirror, .rich-text) h1 { font-size: 1.5em; line-height: 1.333; font-weight: 600; letter-spacing: -0.02em; }
+:where(.ProseMirror, .rich-text) h2 { font-size: 1.25em; line-height: 1.4; font-weight: 600; letter-spacing: -0.01em; }
+:where(.ProseMirror, .rich-text) h3 { font-size: 1.0625em; line-height: 1.5; font-weight: 600; }
+:where(.ProseMirror, .rich-text) > :is(h1, h2, h3):not(:first-child) { margin-top: 1.375em; }
+@media (max-width: 47.999rem) {
+  :where(.ProseMirror, .rich-text) h1 { font-size: 1.375em; line-height: 1.364; }
+  :where(.ProseMirror, .rich-text) h2 { font-size: 1.125em; line-height: 1.444; }
+  :where(.ProseMirror, .rich-text) > :is(h1, h2, h3):not(:first-child) { margin-top: 1em; }
+}
+:where(.ProseMirror, .rich-text) p { margin: 0; }
 .rich-text { overflow-wrap: anywhere; }
 :where(.ProseMirror, .rich-text) [data-text-align="left"] { text-align: left; }
 :where(.ProseMirror, .rich-text) [data-text-align="center"] { text-align: center; }
@@ -213,7 +229,6 @@
 /* 인라인 코드 */
 :where(.ProseMirror, .rich-text) code:not(pre code) {
   background: var(--color-muted);
-  border: 1px solid var(--color-border);
   border-radius: 4px;
   padding: 0.1em 0.35em;
   font-size: 0.875em;
@@ -222,15 +237,15 @@
 
 /* 코드 블록 */
 :where(.ProseMirror, .rich-text) pre {
-  background: var(--color-muted);
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  padding: 1rem;
+  background: var(--color-sidebar);
+  border: 1px solid var(--color-muted);
+  border-radius: 8px;
+  padding: 14px 16px;
   overflow-x: auto;
-  margin: 0.75rem 0;
 }
 :where(.ProseMirror, .rich-text) pre code {
-  font-size: 0.875rem;
+  font-size: 0.8125em;
+  line-height: 1.7;
   font-family: var(--font-mono);
   color: var(--color-foreground);
   background: none;
@@ -238,90 +253,125 @@
   padding: 0;
 }
 
-/* 인용구 */
+/* 인용구: 먹색 2px 선, 글자 2 */
 :where(.ProseMirror, .rich-text) blockquote {
-  border-left: 3px solid var(--color-border);
-  margin: 0.75rem 0;
-  padding: 0.5rem 0 0.5rem 1rem;
-  color: var(--color-muted-foreground);
-  font-style: italic;
+  border-left: 2px solid var(--color-foreground);
+  margin-block: 4px;
+  padding: 2px 0 2px 16px;
+  color: var(--color-secondary-foreground);
 }
+:where(.ProseMirror, .rich-text) blockquote > * + * { margin-top: 0.5em; }
 
 /* 리스트 */
 :where(.ProseMirror, .rich-text) ul,
-:where(.ProseMirror, .rich-text) ol { padding-left: 1.5rem; margin: 0.5rem 0; }
-:where(.ProseMirror, .rich-text) li { margin: 0.2rem 0; }
+:where(.ProseMirror, .rich-text) ol { padding-left: 1.5em; }
+:where(.ProseMirror, .rich-text) li + li { margin-top: 0.25em; }
+:where(.ProseMirror, .rich-text) li > * + * { margin-top: 0.25em; }
 :where(.ProseMirror, .rich-text) ul { list-style-type: disc; }
 :where(.ProseMirror, .rich-text) ol { list-style-type: decimal; }
+:where(.ProseMirror, .rich-text) li::marker { color: var(--color-muted-foreground); }
 
-/* Task List (체크리스트) */
-:where(.ProseMirror, .rich-text) ul[data-type="taskList"] { list-style: none; padding-left: 0.25rem; }
-:where(.ProseMirror, .rich-text) ul[data-type="taskList"] li { display: flex; align-items: flex-start; gap: 0.5rem; margin: 0.35rem 0; }
-:where(.ProseMirror, .rich-text) ul[data-type="taskList"] li > label { flex-shrink: 0; margin-top: 2px; cursor: pointer; }
-:where(.ProseMirror, .rich-text) ul[data-type="taskList"] li > div { flex: 1; min-width: 0; }
-:where(.ProseMirror, .rich-text) ul[data-type="taskList"] li[data-checked="true"] > div { text-decoration: line-through; color: var(--color-muted-foreground); }
-:where(.ProseMirror, .rich-text) ul[data-type="taskList"] input[type="checkbox"] { accent-color: var(--color-primary); width: 14px; height: 14px; }
-.rich-text ul[data-type="taskList"] li > label { cursor: default; }
-.rich-text ul[data-type="taskList"] li > label::before {
-  content: "";
-  display: grid;
-  width: 14px;
-  height: 14px;
-  place-items: center;
-  border: 1px solid var(--color-border);
-  border-radius: 3px;
-  color: var(--color-primary-foreground);
-  font-size: 10px;
-  line-height: 1;
+/* 할 일 목록: 16px 칸(좁은 화면 18px), 완료는 먹색 면과 흰 체크, 글자는 글자 3과 취소선 */
+:where(.ProseMirror, .rich-text) ul[data-type="taskList"] { list-style: none; padding-left: 0; }
+:where(.ProseMirror, .rich-text) ul[data-type="taskList"] li { display: flex; align-items: flex-start; gap: 10px; }
+:where(.ProseMirror, .rich-text) ul[data-type="taskList"] li + li { margin-top: 6px; }
+:where(.ProseMirror, .rich-text) ul[data-type="taskList"] li > label {
+  position: relative;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  width: 16px;
+  height: 16px;
+  margin-top: calc((1lh - 16px) / 2);
+  border: 1.5px solid var(--color-faint);
+  border-radius: 4px;
 }
-.rich-text ul[data-type="taskList"] li[data-checked="true"] > label::before {
-  content: "✓";
-  border-color: var(--color-primary);
-  background: var(--color-primary);
+:where(.ProseMirror, .rich-text) ul[data-type="taskList"] li[data-checked="true"] > label {
+  border-color: var(--color-foreground);
+  background: var(--color-foreground);
+}
+:where(.ProseMirror, .rich-text) ul[data-type="taskList"] li[data-checked="true"] > label::after {
+  content: "";
+  position: absolute;
+  inset: -1.5px;
+  background: var(--color-background);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m5 12 5 5L20 7'/%3E%3C/svg%3E") center / 11px no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m5 12 5 5L20 7'/%3E%3C/svg%3E") center / 11px no-repeat;
+}
+/* 편집 화면의 checkbox는 칸 전체를 덮는 투명 입력으로 두어 누르기·키보드가 그대로 동작한다. */
+:where(.ProseMirror, .rich-text) ul[data-type="taskList"] li > label > input[type="checkbox"] {
+  position: absolute;
+  inset: -1.5px;
+  width: calc(100% + 3px);
+  height: calc(100% + 3px);
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+:where(.ProseMirror, .rich-text) ul[data-type="taskList"] li > label > span { display: none; }
+.ProseMirror ul[data-type="taskList"] li > label:has(input:focus-visible) {
+  outline: 2px solid var(--color-ring);
+  outline-offset: 2px;
+}
+:where(.ProseMirror, .rich-text) ul[data-type="taskList"] li > div { flex: 1; min-width: 0; }
+:where(.ProseMirror, .rich-text) ul[data-type="taskList"] li[data-checked="true"] > div {
+  text-decoration: line-through;
+  color: var(--color-muted-foreground);
+}
+@media (max-width: 47.999rem) {
+  :where(.ProseMirror, .rich-text) ul[data-type="taskList"] li { gap: 12px; }
+  :where(.ProseMirror, .rich-text) ul[data-type="taskList"] li + li { margin-top: 4px; }
+  :where(.ProseMirror, .rich-text) ul[data-type="taskList"] li > label {
+    width: 18px;
+    height: 18px;
+    margin-top: calc((1lh - 18px) / 2);
+  }
 }
 
 /* 구분선 */
-:where(.ProseMirror, .rich-text) hr { border: none; border-top: 1px solid var(--color-border); margin: 1.5rem 0; }
+:where(.ProseMirror, .rich-text) hr { border: none; border-top: 1px solid var(--color-border); margin-block: 1.5em; }
 
 /* 테이블 */
-:where(.ProseMirror, .rich-text) table { border-collapse: collapse; width: 100%; margin: 0.75rem 0; table-layout: auto; }
+:where(.ProseMirror, .rich-text) table { border-collapse: collapse; width: 100%; table-layout: auto; }
 :where(.ProseMirror, .rich-text) table td,
 :where(.ProseMirror, .rich-text) table th {
   border: 1px solid var(--color-border);
-  padding: 0.5rem 0.75rem;
+  padding: 8px 12px;
   text-align: left;
   vertical-align: top;
   min-width: 80px;
 }
 :where(.ProseMirror, .rich-text) table th {
-  background: var(--color-muted);
+  background: var(--color-sidebar);
   font-weight: 600;
-  font-size: 0.875rem;
+  font-size: 0.875em;
 }
-.ProseMirror table .selectedCell { background: color-mix(in srgb, var(--color-primary) 8%, transparent); }
+:where(.ProseMirror, .rich-text) table :is(td, th) > * + * { margin-top: 0.5em; }
+.ProseMirror table .selectedCell { background: var(--color-accent); }
 .ProseMirror table .column-resize-handle {
   position: absolute;
   right: -2px;
   top: 0;
   bottom: 0;
   width: 4px;
-  background: var(--color-primary);
+  background: var(--color-highlight);
   pointer-events: none;
 }
 
-/* 링크 */
-:where(.ProseMirror, .rich-text) a { color: var(--color-primary); text-decoration: underline; text-underline-offset: 2px; }
-:where(.ProseMirror, .rich-text) a:hover { opacity: 0.75; }
+/* 링크: 먹색 글자와 밑줄 */
+:where(.ProseMirror, .rich-text) a { color: var(--color-foreground); text-decoration: underline; text-decoration-color: var(--color-faint); text-underline-offset: 3px; }
+:where(.ProseMirror, .rich-text) a:hover { text-decoration-color: currentColor; }
 
-/* 이미지 */
-:where(.ProseMirror, .rich-text) img { max-width: 100%; height: auto; border-radius: 8px; margin: 0.5rem 0; display: block; }
-:where(.ProseMirror, .rich-text) iframe { display: block; width: min(100%, 42rem); aspect-ratio: 16 / 9; height: auto; margin: 0.75rem 0; border: 0; border-radius: 8px; }
+/* 이미지·영상: r10 */
+:where(.ProseMirror, .rich-text) img { max-width: 100%; height: auto; border-radius: 10px; display: block; }
+:where(.ProseMirror, .rich-text) iframe { display: block; width: min(100%, 42rem); aspect-ratio: 16 / 9; height: auto; border: 0; border-radius: 10px; }
+.ProseMirror img.ProseMirror-selectednode { outline: 2px solid var(--color-ring); outline-offset: 2px; }
 
-/* 형광펜 */
+/* 형광펜: 강조 옅게 면 */
 :where(.ProseMirror, .rich-text) mark {
-  background-color: color-mix(in srgb, var(--color-warning) 35%, transparent);
+  background-color: var(--color-accent);
+  color: inherit;
+  box-shadow: 0 0 0 2px var(--color-accent);
   border-radius: 2px;
-  padding: 0 2px;
 }
 
 /* 최상위 포커스 아웃라인 제거 */

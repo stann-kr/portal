@@ -1,6 +1,6 @@
 /**
  * @file accordion.tsx
- * @description Radix UI 기반 Accordion 컴포넌트.
+ * @description Radix UI 기반 Accordion 컴포넌트. 캔버스 펼침 행처럼 옅은 행 구분선, 44px 이상 머리 행, 16px 꺾쇠.
  */
 "use client";
 
@@ -17,7 +17,7 @@ const AccordionItem = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <AccordionPrimitive.Item
     ref={ref}
-    className={cn("border-b border-border", className)}
+    className={cn("border-b border-muted", className)}
     {...props}
   />
 ));
@@ -31,13 +31,17 @@ const AccordionTrigger = React.forwardRef<
     <AccordionPrimitive.Trigger
       ref={ref}
       className={cn(
-        "flex flex-1 items-center justify-between py-4 text-sm font-medium transition-all hover:underline text-left [&[data-state=open]>svg]:rotate-180",
+        "flex min-h-11 flex-1 items-center justify-between gap-3 rounded-sm py-3 text-left text-body font-medium text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&[data-state=open]>svg]:rotate-180",
         className,
       )}
       {...props}
     >
       {children}
-      <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200" />
+      <ChevronDown
+        className="size-4 shrink-0 text-muted-foreground transition-transform duration-[var(--duration-standard)] ease-studio motion-reduce:transition-none"
+        strokeWidth={1.6}
+        aria-hidden="true"
+      />
     </AccordionPrimitive.Trigger>
   </AccordionPrimitive.Header>
 ));
@@ -49,7 +53,7 @@ const AccordionContent = React.forwardRef<
 >(({ className, children, ...props }, ref) => (
   <AccordionPrimitive.Content
     ref={ref}
-    className="overflow-hidden text-sm data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down"
+    className="overflow-hidden text-body text-secondary-foreground motion-safe:data-[state=closed]:animate-accordion-up motion-safe:data-[state=open]:animate-accordion-down"
     {...props}
   >
     <div className={cn("pb-4 pt-0", className)}>{children}</div>
