@@ -344,22 +344,8 @@ export function isManagedMediaObjectKey(value: string): boolean {
   );
 }
 
-/** 한 문서 저장에서 연결을 시도할 본문 이미지 수 상한(D1 bound parameter 한도 아래). */
-export const DOCUMENT_IMAGE_CLAIM_LIMIT = 60;
-
-const DOCUMENT_IMAGE_SOURCE_PATTERN =
-  /<img\b[^>]*?\bsrc\s*=\s*["']\/api\/media\/([0-9a-fA-F-]{36})["']/gu;
-
-/** 저장할 본문 HTML의 img가 참조하는 관리 media ID를 순서대로 중복 없이 꺼낸다. */
-export function extractDocumentImageMediaIds(contentHtml: string): string[] {
-  const ids = new Set<string>();
-  for (const match of contentHtml.matchAll(DOCUMENT_IMAGE_SOURCE_PATTERN)) {
-    const id = parseMediaUuidV4(match[1]);
-    if (id) ids.add(id);
-    if (ids.size >= DOCUMENT_IMAGE_CLAIM_LIMIT) break;
-  }
-  return [...ids];
-}
+/** 한 UPDATE에 묶을 본문 이미지 ID 수(D1 bound parameter 100개 한도 아래). */
+export const DOCUMENT_IMAGE_CLAIM_BATCH_SIZE = 50;
 
 /** 원본 R2 주소를 노출하지 않는 인증형 애플리케이션 전달 경로다. */
 export function mediaDeliveryPath(mediaObjectId: string): string {

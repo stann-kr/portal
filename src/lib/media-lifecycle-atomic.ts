@@ -24,9 +24,10 @@ import {
   MEDIA_SEAL_RECOVERY_GRACE_SECONDS,
   MEDIA_SEAL_REQUEST_TIMEOUT_MS,
   MEDIA_UPLOAD_STAGING_GRACE_SECONDS,
-  extractDocumentImageMediaIds,
+  DOCUMENT_IMAGE_CLAIM_BATCH_SIZE,
   mediaDeletionBackoffSeconds,
 } from "@/lib/media-lifecycle";
+import { extractDocumentImageMediaIds } from "@/lib/document-image-references";
 import {
   getMediaObjectStorage,
   type MediaObjectHead,
@@ -642,10 +643,15 @@ export function documentImageClaimStatements(input: {
   now: Date;
 }): DocumentAtomicStatement[] {
   const mediaIds = extractDocumentImageMediaIds(input.contentHtml);
-  if (mediaIds.length === 0) return [];
   const now = documentEpochSeconds(input.now)!;
-  return [
-    {
+  const statements: DocumentAtomicStatement[] = [];
+  for (
+    let offset = 0;
+    offset < mediaIds.length;
+    offset += DOCUMENT_IMAGE_CLAIM_BATCH_SIZE
+  ) {
+    const batch = mediaIds.slice(offset, offset + DOCUMENT_IMAGE_CLAIM_BATCH_SIZE);
+    statements.push({
       query: `
         UPDATE media_objects
         SET state = 'ATTACHED', resource_type = ?, resource_id = ?,
@@ -653,7 +659,7 @@ export function documentImageClaimStatements(input: {
         WHERE purpose = 'DOCUMENT_IMAGE' AND owner_id = ? AND state = 'READY'
           AND resource_type IS NULL AND resource_id IS NULL
           AND ready_at >= ?
-          AND id IN (${mediaIds.map(() => "?").join(", ")})
+          AND id IN (${batch.map(() => "?").join(", ")})
       `,
       params: [
         input.resourceType,
@@ -662,10 +668,11 @@ export function documentImageClaimStatements(input: {
         now,
         input.ownerId,
         now - MEDIA_DRAFT_RETENTION_SECONDS,
-        ...mediaIds,
+        ...batch,
       ],
-    },
-  ];
+    });
+  }
+  return statements;
 }
 
 export function postMediaPurgeStatements(input: {

@@ -94,3 +94,48 @@ export function sniffImageMimeType(bytes: Uint8Array): string | null {
   }
   return null;
 }
+
+/** 형식 판정에 필요한 bytes 수. WebP가 가장 길다(12 bytes). */
+export const IMAGE_SIGNATURE_BYTES = 16;
+
+/**
+ * stream 앞부분만 읽어 돌려주고, 읽은 부분을 다시 앞에 붙인 같은 내용의 stream을 만든다.
+ * 큰 첨부도 전체를 메모리에 올리지 않고 형식을 확인할 수 있다.
+ */
+export async function peekStreamPrefix(
+  body: ReadableStream<Uint8Array>,
+  prefixLength: number,
+): Promise<{ prefix: Uint8Array; stream: ReadableStream<Uint8Array> }> {
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let collected = 0;
+  while (collected < prefixLength) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (value.byteLength === 0) continue;
+    chunks.push(value);
+    collected += value.byteLength;
+  }
+  const prefix = new Uint8Array(Math.min(collected, prefixLength));
+  let offset = 0;
+  for (const chunk of chunks) {
+    if (offset >= prefix.byteLength) break;
+    const part = chunk.subarray(0, prefix.byteLength - offset);
+    prefix.set(part, offset);
+    offset += part.byteLength;
+  }
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(chunk);
+    },
+    async pull(controller) {
+      const { done, value } = await reader.read();
+      if (done) controller.close();
+      else controller.enqueue(value);
+    },
+    cancel(reason) {
+      return reader.cancel(reason);
+    },
+  });
+  return { prefix, stream };
+}

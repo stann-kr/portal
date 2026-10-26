@@ -103,6 +103,7 @@ type RuntimeR2Bucket = {
     value: ReadableStream<Uint8Array>,
     options?: {
       httpMetadata?: { contentType?: string };
+      onlyIf?: Headers;
     },
   ): Promise<{
     size: number;
@@ -197,12 +198,16 @@ async function createBoundOrS3Storage(): Promise<MediaObjectStorage> {
     return {
       async putUpload(uploadObjectKey, body) {
         assertManagedUploadObjectKey(uploadObjectKey);
-        // 같은 staging key를 다시 덮어쓰지 못하게 한다. route의 PENDING_UPLOAD 확인과 함께 쓴다.
+        // 같은 staging key를 다시 덮어쓰지 못하게 한다. HEAD는 빠른 거절이고,
+        // 동시에 들어온 PUT 사이의 원자성은 R2 조건부 쓰기(If-None-Match: *)가 맡는다.
         if (await bucket.head(uploadObjectKey)) return false;
         const stored = await bucket.put(
           uploadObjectKey,
           withKnownLength(body.stream, body.size),
-          { httpMetadata: { contentType: body.contentType } },
+          {
+            httpMetadata: { contentType: body.contentType },
+            onlyIf: new Headers({ "If-None-Match": "*" }),
+          },
         );
         return stored !== null;
       },

@@ -10,14 +10,16 @@ import { canAccessMediaDelivery } from "./media-delivery";
 import {
   completeMediaUpload,
   createMediaUploadIntent,
+  documentImageClaimStatements,
 } from "./media-lifecycle-atomic";
 import {
   createMediaObjectKey,
   createMediaUploadObjectKey,
-  extractDocumentImageMediaIds,
 } from "./media-lifecycle";
+import { extractDocumentImageMediaIds } from "./document-image-references";
 import {
   evaluateMediaUploadRequest,
+  peekStreamPrefix,
   sniffImageMimeType,
   type MediaUploadRequestHeaders,
 } from "./media-upload-request";
@@ -131,6 +133,69 @@ test("본문 HTML에서 관리 이미지 ID만 중복 없이 꺼낸다", () => {
     ),
     [first, second],
   );
+  // 속성 값 안의 '>'도 정상 HTML이므로 이미지 참조를 놓치지 않는다.
+  assert.deepEqual(
+    extractDocumentImageMediaIds(`<p><img alt="a > b" src="/api/media/${first}"></p>`),
+    [first],
+  );
+});
+
+test("본문 이미지가 많아도 모두 연결하도록 D1 parameter 한도 안에서 나눠 갱신한다", () => {
+  const ids = Array.from(
+    { length: 120 },
+    (_, index) => `30000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+  );
+  const statements = documentImageClaimStatements({
+    contentHtml: imageHtml(...ids),
+    ownerId: STUDENT,
+    resourceType: "PRIVATE_NOTE",
+    resourceId: "note",
+    now: NOW,
+  });
+  assert.equal(statements.length, 3);
+  assert.ok(statements.every((statement) => (statement.params?.length ?? 0) <= 100));
+  assert.deepEqual(
+    statements.flatMap((statement) => (statement.params ?? []).slice(6)),
+    ids,
+  );
+  assert.deepEqual(
+    documentImageClaimStatements({
+      contentHtml: "<p>이미지 없음</p>",
+      ownerId: STUDENT,
+      resourceType: "PRIVATE_NOTE",
+      resourceId: "note",
+      now: NOW,
+    }),
+    [],
+  );
+});
+
+test("형식 판정은 stream 앞부분만 읽고 나머지 내용을 그대로 이어 준다", async () => {
+  const chunks = [
+    new Uint8Array([0x89, 0x50, 0x4e]),
+    new Uint8Array([0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]),
+    new Uint8Array(4_096).fill(7),
+  ];
+  let pulled = 0;
+  const source = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      const next = chunks[pulled];
+      pulled += 1;
+      if (next) controller.enqueue(next);
+      else controller.close();
+    },
+  });
+  const peeked = await peekStreamPrefix(source, 16);
+  assert.equal(peeked.prefix.byteLength, 16);
+  assert.equal(sniffImageMimeType(peeked.prefix), "image/png");
+  const rebuilt = new Uint8Array(await new Response(peeked.stream).arrayBuffer());
+  const original = new Uint8Array(chunks.reduce((total, chunk) => total + chunk.byteLength, 0));
+  let offset = 0;
+  for (const chunk of chunks) {
+    original.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  assert.deepEqual(rebuilt, original);
 });
 
 test("노트 저장은 저장자 소유 READY 이미지만 노트에 연결하고 영구 삭제 때 함께 지운다", async (context) => {

@@ -3,7 +3,9 @@ import { getActiveAuthSession } from "@/lib/auth-guard";
 import { findOwnedMediaObject } from "@/lib/media-lifecycle-atomic";
 import { parseMediaUuidV4 } from "@/lib/media-lifecycle";
 import {
+  IMAGE_SIGNATURE_BYTES,
   evaluateMediaUploadRequest,
+  peekStreamPrefix,
   sniffImageMimeType,
 } from "@/lib/media-upload-request";
 import { getMediaObjectStorage } from "@/lib/r2";
@@ -52,11 +54,13 @@ export async function PUT(
 
   let stream: ReadableStream<Uint8Array> = request.body;
   if (decision.sniffImage) {
-    // 이미지는 최대 크기가 작으므로 전체를 읽어 실제 형식이 선언과 같은지 확인한다.
-    const bytes = new Uint8Array(await request.arrayBuffer());
-    if (bytes.byteLength !== media.expectedSizeBytes) return reply(400);
-    if (sniffImageMimeType(bytes) !== media.expectedContentType) return reply(415);
-    stream = new Response(bytes).body!;
+    // 첫 bytes로 실제 형식이 선언과 같은지 확인하고 나머지는 그대로 흘려 보낸다.
+    const peeked = await peekStreamPrefix(request.body, IMAGE_SIGNATURE_BYTES);
+    if (sniffImageMimeType(peeked.prefix) !== media.expectedContentType) {
+      await peeked.stream.cancel().catch(() => undefined);
+      return reply(415);
+    }
+    stream = peeked.stream;
   }
 
   try {
