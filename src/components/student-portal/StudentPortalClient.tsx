@@ -171,7 +171,7 @@ export function StudentPortalClient({
       urlParamKey="section"
       ariaLabel="학생 포털"
     >
-      {(activeSection, changeSection) => (
+      {(activeSection) => (
         <>
           {activeSection === "today" && (
             <TodaySection
@@ -179,7 +179,6 @@ export function StudentPortalClient({
               unifiedItems={items}
               displayName={displayName}
               referenceTime={referenceTime}
-              onOpenWorkspace={() => changeSection("workspace")}
             />
           )}
 
