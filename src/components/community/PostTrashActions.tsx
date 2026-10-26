@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { ConfirmPanel, useConfirmAction } from "@/components/ui/confirm-action";
 import { purgePost, restorePost } from "@/lib/actions/posts";
 import { createCreationOperationId } from "@/lib/creation-operation";
+import { useHasPassed } from "@/lib/hooks/useHasPassed";
 
 const RETENTION_MILLISECONDS = 30 * 24 * 60 * 60 * 1000;
 
@@ -29,9 +30,8 @@ export function PostTrashActions({
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const operations = useRef<{ key: string; restore: string; purge: string } | null>(null);
-  // 보관 기간 판단 기준 시각은 처음 그릴 때 한 번만 정한다. 실제 영구 삭제 가능 여부는 서버가 다시 확인한다.
-  const [renderedAt] = useState(() => Date.now());
-  const expired = new Date(deletedAt).getTime() + RETENTION_MILLISECONDS <= renderedAt;
+  // 화면이 열린 채 보관 기간을 넘겨도 버튼이 바뀐다. 실제 영구 삭제 가능 여부는 서버가 다시 확인한다.
+  const expired = useHasPassed(new Date(deletedAt).getTime() + RETENTION_MILLISECONDS);
 
   const purgeConfirm = useConfirmAction();
 

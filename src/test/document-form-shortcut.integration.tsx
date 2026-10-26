@@ -705,6 +705,19 @@ test("게시물 휴지통 복원 재시도는 같은 ID를 쓰고 다시 삭제�
   assert.deepEqual(requests.map((args) => args[2]), [2, 2, 4]);
 });
 
+test("게시물 휴지통 화면을 연 채 보관 기간이 지나면 영구 삭제 버튼으로 바뀐다", { concurrency: false }, async (context) => {
+  const retentionMilliseconds = 30 * 24 * 60 * 60 * 1000;
+  // 만료 80ms 전에 화면을 열고, 서버 값이 만료 뒤 상태(canRestore=false, canPurge=true)로 갱신된 경우다.
+  const deletedAt = new Date(Date.now() - retentionMilliseconds + 80).toISOString();
+  const screen = (expiredOnServer: boolean) => <PostTrashActions postId="post-trash-expiry" version={2} deletedAt={deletedAt} canRestore={!expiredOnServer} canPurge={expiredOnServer} returnTo="/community" />;
+  const harness = await renderForm(context, screen(false));
+  const labels = () => [...harness.container.querySelectorAll("button")].map((button) => button.textContent?.trim());
+  assert.deepEqual(labels(), ["게시물 복원"]);
+  await harness.rerender(screen(true));
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 150)); });
+  assert.deepEqual(labels(), ["영구 삭제"]);
+});
+
 for (const busyKind of ["upload", "reply", "lifecycle"] as const) {
   test(`Q&A ${busyKind} 작업 중에는 답변·첨부·휴지통 작업이 겹치지 않는다`, { concurrency: false }, async (context) => {
     let releaseReply!: (result: Awaited<ReturnType<typeof saveQnaReply>>) => void;
