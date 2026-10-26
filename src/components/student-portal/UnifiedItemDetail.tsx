@@ -14,6 +14,7 @@ import { Disc3, MessageSquareText } from "lucide-react";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 import { UnifiedItemSpaceBadge, UnifiedItemTypeBadge } from "@/components/ui/unified-item-type";
 import { UnifiedNoteDetail, type NoteDetailViewer } from "./UnifiedNoteDetail";
+import { getNoteCalendarDateKey } from "@/lib/calendar-interaction";
 import {
   CalendarEventActions,
   isEditableCalendarEventItem,
@@ -107,9 +108,12 @@ export function UnifiedItemDetail({
   const description = item.type === "NOTE"
     ? null
     : item.description ?? metaDescription;
-  const startLabel = isAllDay
-    ? formatAllDayDate(item.date, allDayStartDate)
-    : formatDate(item.date);
+  // 노트는 날짜만 가진다(지정 날짜는 UTC 자정, 없으면 작성일의 KST 날짜).
+  const startLabel = item.type === "NOTE"
+    ? formatAllDayDate(item.date, getNoteCalendarDateKey(item))
+    : isAllDay
+      ? formatAllDayDate(item.date, allDayStartDate)
+      : formatDate(item.date);
   const endLabel = item.endDate
     ? isAllDay
       ? formatAllDayEndDate(new Date(item.endDate), allDayEndDate)
