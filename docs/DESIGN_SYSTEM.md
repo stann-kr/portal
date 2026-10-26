@@ -82,7 +82,7 @@ pill 형태는 filter와 count처럼 모양 자체가 의미를 가질 때만 �
 | `PortalNavigation` | 역할별 section 이동, 현재 위치, horizontal mobile fallback |
 | `PortalShell` | 역할별 navigation, URL·section별 스크롤 복원, viewport 안의 공통 content frame |
 | `CalendarSection` | 세션 내 날짜·월/주 보기·필터 유지, 수동 키보드 탭 활성화, 활성 시 크기 재측정 |
-| `UnifiedCalendar` | 노션식 자체 툴바(제목·이전/오늘/다음·월/주/목록), 타입 필터, KST 벽시계 칸(UTC 모드), 권한 있는 일정·레슨·노트 끌어 옮기기와 저장 전 반영·실패 원위치·되돌리기, 칸 클릭·끌어 선택·터치 탭으로 빠른 만들기 |
+| `UnifiedCalendar` | 노션식 자체 툴바(제목·이전/오늘/다음·월/주/목록), 타입 필터, KST 벽시계 칸(UTC 모드), 권한 있는 일정·레슨·노트 끌어 옮기기와 저장 전 반영·실패 원위치·되돌리기, 잠긴 항목 끌기 시 이유 안내, 칸 클릭·끌어 선택·터치 탭으로 빠른 만들기 |
 | `CalendarQuickCreate` | 캘린더·일별·전체 보기가 공유하는 빠른 만들기 창(좁은 화면은 아래 시트). 노트는 제목·날짜를 채운 작성 화면으로, 일정·레슨은 그 자리에서 저장. 라디오 키보드 규칙, Esc 닫기, 제목이 있으면 바깥 클릭에도 유지 |
 | `CalendarEventChip` | 타입 색 왼쪽 막대·옅은 배경·아이콘·시각·제목의 캘린더 칩. 목록 보기와 선택 미리보기는 FullCalendar 기본 렌더 |
 | `DailyListView`·`AllItemsView` | 날짜별 노션식 목록(오늘·내일 표시, 하루 안 종일→시간순, 날짜별 추가 행)과 유형 칩·검색·정렬·새 항목이 있는 전체 항목 표 |
@@ -90,7 +90,7 @@ pill 형태는 filter와 count처럼 모양 자체가 의미를 가질 때만 �
 | `StatusBadge` | registry 기반 label·icon·tone 표시 |
 | `UnifiedItemTypeBadge` | 통합 기록의 일정·노트·디깅·Q&A·과제 type icon·label |
 | `UnifiedItemSpaceBadge` | 통합 기록의 학생 스페이스·포털 출처 label과 접근성 문맥 |
-| `UnifiedItemDetailPanel` | 캘린더·일별·전체 보기의 공통 상세 패널, 변경 중 닫힘 잠금 |
+| `UnifiedItemDetailPanel` | 캘린더·일별·전체 보기의 공통 상세 패널, 변경 중 닫힘 잠금. 노트는 넓은 패널에서 수정 권한이 있으면 `NoteEditorForm`으로 바로 편집 |
 | `CalendarEventFields` | 일정 생성 dialog와 상세 수정 form이 공유하는 유형·제목·시간·메모 입력 |
 | `CalendarEventActions` | 학생 본인 포털 일정의 상세 패널 수정과 취소 우선 2단계 삭제 |
 | `LessonScheduleDialog` | 관리자 일정 캘린더의 날짜 선택에서 시작하는 레슨 예약 |
