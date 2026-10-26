@@ -251,10 +251,16 @@ export function FullEditor({
         markContentDirty();
         return;
       }
-      // 다른 입력란의 포커스를 빼앗지 않고 현재 선택 위치에 넣는다.
-      editorInstanceRef.current
-        ?.chain()
-        .setImage({ src: upload.deliveryUrl, alt: alt || undefined })
+      // 다른 입력란의 포커스를 빼앗지 않고 현재 선택의 뒤에 넣는다.
+      // 앞서 넣은 이미지가 선택된 채여도 바꾸지 않고 그 뒤에 이어 붙인다.
+      const currentEditor = editorInstanceRef.current;
+      if (!currentEditor) return;
+      currentEditor
+        .chain()
+        .insertContentAt(currentEditor.state.selection.to, {
+          type: "image",
+          attrs: { src: upload.deliveryUrl, alt: alt || null },
+        })
         .run();
     },
     [markContentDirty],

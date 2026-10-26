@@ -489,6 +489,32 @@ test("FullEditor는 잠긴 동안 끝난 업로드를 잠금이 풀린 뒤 넣�
   assert.deepEqual(abandoned, []);
 });
 
+test("FullEditor는 빈 본문에 여러 장을 차례로 넣어도 앞 이미지를 바꾸지 않는다", { concurrency: false }, async (context) => {
+  const { releases } = mockEditorImageUpload(context);
+  const changes: string[] = [];
+  await render(context, <FullEditor initialContent="" ariaLabel="본문" onChange={(html) => changes.push(html)} />);
+  await settleEditor();
+  const input = browser.document.querySelector('input[type="file"]');
+  assert.ok(input);
+  Object.defineProperty(input, "files", { configurable: true, value: [
+    new browser.File(["a"], "first.png", { type: "image/png" }),
+    new browser.File(["b"], "second.png", { type: "image/png" }),
+  ] });
+  await act(async () => {
+    input.dispatchEvent(new browser.Event("change", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  });
+  await act(async () => { releases[0]?.(undefined as never); await new Promise((resolve) => setTimeout(resolve, 10)); });
+  await act(async () => { releases[1]?.(undefined as never); await new Promise((resolve) => setTimeout(resolve, 10)); });
+  await settleEditor();
+  const html = changes.at(-1) ?? "";
+  const sources = [...html.matchAll(/<img[^>]+src="([^"]+)"/gu)].map((match) => match[1]);
+  assert.deepEqual(sources, [
+    "/api/media/30000000-0000-4000-8000-000000000001",
+    "/api/media/30000000-0000-4000-8000-000000000002",
+  ]);
+});
+
 for (const waitingAt of ["intent", "complete"] as const) {
   test(`FileUploader는 ${waitingAt} 응답 대기 중 초안을 바꿨다가 돌아와도 이전 응답을 격리한다`, { concurrency: false }, async (context) => {
     const xhrs = mockUploadTransport(context);

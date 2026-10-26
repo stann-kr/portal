@@ -88,8 +88,8 @@ function PostEditFormContent({
   );
   useBusyNavigationGuard(isPending);
   useEffect(() => {
-    onBusyChange?.(isPending);
-  }, [isPending, onBusyChange]);
+    onBusyChange?.(isPending || isEditorUploading);
+  }, [isEditorUploading, isPending, onBusyChange]);
   useEffect(() => () => onBusyChange?.(false), [onBusyChange]);
   const formRef = useRef<HTMLFormElement>(null);
   const contentInputRef = useRef<HTMLInputElement>(null);
@@ -477,7 +477,7 @@ function PostEditFormContent({
       ) : null}
 
       <div className="flex justify-end gap-2">
-        <Button type="button" variant="outline" onClick={onCancel} disabled={isPending}>
+        <Button type="button" variant="outline" onClick={onCancel} disabled={isPending || isEditorUploading}>
           취소
         </Button>
         <Button

@@ -99,8 +99,8 @@ function QnaSlideFormContent({
   useBusyNavigationGuard(isFormBusy);
 
   useEffect(() => {
-    onBusyChange?.(isFormBusy);
-  }, [isFormBusy, onBusyChange]);
+    onBusyChange?.(isFormBusy || isEditorUploading);
+  }, [isEditorUploading, isFormBusy, onBusyChange]);
 
   useEffect(() => () => onBusyChange?.(false), [onBusyChange]);
 
@@ -140,7 +140,7 @@ function QnaSlideFormContent({
     },
   );
   const handleSaveShortcut = useDocumentSaveShortcut({
-    disabled: !loaded || !canSubmit || isFormBusy || !operationId,
+    disabled: !loaded || !canSubmit || isFormBusy || isEditorUploading || !operationId,
     onSave: () => persistLocalDraftOnShortcut({
       createSnapshot: () => ({
         operationId,
@@ -366,7 +366,7 @@ function QnaSlideFormContent({
         <Button type="submit" disabled={!loaded || !canSubmit || isFormBusy || isEditorUploading || !operationId || !title.trim() || isRichTextEmpty(contentHtml)} className="flex-1">
           {isUploading || isEditorUploading ? "업로드 완료 대기..." : isPending ? "전송 중..." : "질문 등록"}
         </Button>
-        <Button type="button" variant="outline" onClick={onClose} disabled={isFormBusy}>
+        <Button type="button" variant="outline" onClick={onClose} disabled={isFormBusy || isEditorUploading}>
           취소
         </Button>
       </div>

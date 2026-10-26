@@ -113,6 +113,8 @@ function NoteEditorFormContent({ note, actorId, action, focusBodyEnd = false }: 
     }
   }, {});
   useBusyNavigationGuard(isPending);
+  // 본문 이미지가 올라가는 동안에는 이미지 없는 본문을 저장하지 않는다.
+  const [isEditorUploading, setIsEditorUploading] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
   const contentHtmlInputRef = useRef<HTMLInputElement>(null);
   const handledSavedNoteRef = useRef<UpdateNoteState["note"]>(undefined);
@@ -496,7 +498,7 @@ function NoteEditorFormContent({ note, actorId, action, focusBodyEnd = false }: 
   const autosaveReady =
     loaded && canSubmit && !isPending && !hasStaleDraftBase && Boolean(operationId) && !missingRequired;
   useDocumentAutosave({
-    enabled: autosaveReady && failedKey !== changeKey,
+    enabled: autosaveReady && failedKey !== changeKey && !isEditorUploading,
     dirty,
     changeKey,
     onSave: () => formRef.current?.requestSubmit(),
@@ -523,6 +525,7 @@ function NoteEditorFormContent({ note, actorId, action, focusBodyEnd = false }: 
           !loaded ||
           !canSubmit ||
           isPending ||
+          isEditorUploading ||
           hasStaleDraftBase ||
           !operationId
         ) {
@@ -682,6 +685,7 @@ function NoteEditorFormContent({ note, actorId, action, focusBodyEnd = false }: 
         <FullEditor
           initialContent={contentHtml}
           contentVersion={contentVersion}
+          onUploadingChange={setIsEditorUploading}
           onChange={handleEditorChange}
           onDirty={(reader) => {
             const nextOperationId = createCreationOperationId();
