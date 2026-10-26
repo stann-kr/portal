@@ -6,7 +6,7 @@
 
 ## 현재 상태
 
-- Next.js 15 App Router와 React 19를 사용한다.
+- Next.js 16 App Router(Turbopack 빌드)와 React 19를 사용한다.
 - NextAuth credentials 인증으로 student/admin 역할을 분리한다.
 - Drizzle ORM을 통해 Cloudflare D1 또는 로컬 SQLite에 접근한다.
 - 미디어 업로드는 같은 출처의 Worker route가 파일을 받아 Cloudflare R2 binding에 저장한다(파일당 최대 95MiB, 본문 이미지 10MB).
@@ -37,7 +37,7 @@ npm run dev
 
 | 영역 | 내용 |
 |---|---|
-| Framework | Next.js 15 App Router, React 19 |
+| Framework | Next.js 16 App Router, React 19 |
 | Language | TypeScript |
 | Auth | NextAuth v5 Credentials |
 | Data | Drizzle ORM, Cloudflare D1, local SQLite fallback |

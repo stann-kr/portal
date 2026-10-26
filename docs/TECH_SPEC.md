@@ -45,7 +45,7 @@ OpenNext → Cloudflare Worker
 | 영역 | 값 |
 |---|---|
 | Runtime | Node.js 22 이상, Cloudflare Workers |
-| Framework | Next.js 15.5 App Router, React 19 |
+| Framework | Next.js 16.4 App Router(Turbopack), React 19, OpenNext Cloudflare 1.20 |
 | Language | TypeScript |
 | Styling | Tailwind CSS 4 |
 | UI | Radix UI, FullCalendar, Recharts, Lucide |

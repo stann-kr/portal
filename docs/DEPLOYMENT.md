@@ -54,7 +54,7 @@
 - trigger branch, required release gate, 예상 commit SHA, Active Deployment와 대상 URL smoke를 확인하기 전에는 배포 성공을 보고하지 않는다.
 - 현재 저장소에는 development 설정이 없으므로 feature/fix branch를 `dev`에 통합해도 development 자동 배포를 가정하지 않는다. remote trigger와 resource 분리가 확인될 때까지 `BLOCKED`로 다룬다.
 - 비호환 migration 작업 창에는 자동 promotion을 중지하거나 upload-only 절차로 전환한다.
-- 2026-10-21 이후 OpenNext Cloudflare 빌드가 Next.js 15.5.22를 지원 종료 버전으로 보고 거부한다. 운영 빌드 전에 Next.js 업그레이드 또는 `--dangerouslyUseUnsupportedNextVersion` 사용 여부를 먼저 결정한다(2026-10-26 확인, 로컬 검증 빌드만 플래그 사용).
+- OpenNext Cloudflare 빌드는 지원 기간이 끝난 Next.js major를 거부한다. 2026-10-26에 Next.js 15.5.22 → 16.4.3, OpenNext 1.20, wrangler 4.152로 올렸고 플래그 없이 빌드한다. `middleware.ts`는 Next 16에서 deprecated(`proxy`로 이전 권장)지만 동작하며, 이전은 후속 작업이다.
 - 본문 이미지·Worker 업로드 코드는 `0014`가 필요하다. `0014`는 `media_objects`의 허용 값을 넓히는 table rebuild라 기존 코드와 호환되므로 promotion 전에 먼저 적용한다.
 
 ### 외부 캘린더 전환 gate
