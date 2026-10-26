@@ -142,10 +142,21 @@ export function ServerDraftStatus({
     }
   }, [isConfirmingDiscard]);
 
-  useEffect(() => {
+  // 다른 서버 초안이 오면 버리기 확인과 복사 결과를 그 렌더에서 바로 초기화한다.
+  const remoteDraftVersion = sync.remoteDraft?.draftVersion;
+  const remotePayloadHash = sync.remoteDraft?.payloadHash;
+  const [shownRemoteDraft, setShownRemoteDraft] = useState({
+    draftVersion: remoteDraftVersion,
+    payloadHash: remotePayloadHash,
+  });
+  if (
+    shownRemoteDraft.draftVersion !== remoteDraftVersion ||
+    shownRemoteDraft.payloadHash !== remotePayloadHash
+  ) {
+    setShownRemoteDraft({ draftVersion: remoteDraftVersion, payloadHash: remotePayloadHash });
     setIsConfirmingDiscard(false);
     setCopyState("idle");
-  }, [sync.remoteDraft?.draftVersion, sync.remoteDraft?.payloadHash]);
+  }
 
   const copyRemote = async () => {
     if (!sync.remoteDraft) return;

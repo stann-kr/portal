@@ -47,9 +47,8 @@ export function LocalDraftManager({ ownerId }: { ownerId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [confirmSourceKey, setConfirmSourceKey] = useState<string | null>(null);
   const [confirmAll, setConfirmAll] = useState(false);
-  const [focusAfterDiscard, setFocusAfterDiscard] = useState<
-    string | null | undefined
-  >(undefined);
+  // 삭제 직후 다음 초안 버튼(null이면 빈 상태)으로 focus를 옮길 대상. 목록이 다시 그려진 뒤 한 번만 쓴다.
+  const focusAfterDiscardRef = useRef<string | null | undefined>(undefined);
   const discardButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const emptyStateRef = useRef<HTMLDivElement>(null);
 
@@ -65,22 +64,23 @@ export function LocalDraftManager({ ownerId }: { ownerId: string }) {
     );
   }, [ownerId]);
 
+  // 처음 목록은 대화상자를 여는 이벤트에서 읽고, 열려 있는 동안 다른 탭의 저장소 변경만 구독한다.
   useEffect(() => {
     if (!open) return;
-    refresh();
     const handleStorage = () => refresh();
     window.addEventListener("storage", handleStorage);
     return () => window.removeEventListener("storage", handleStorage);
   }, [open, refresh]);
 
   useEffect(() => {
-    if (focusAfterDiscard === undefined) return;
-    const target = focusAfterDiscard
-      ? discardButtonRefs.current.get(focusAfterDiscard)
+    const focusTarget = focusAfterDiscardRef.current;
+    if (focusTarget === undefined) return;
+    focusAfterDiscardRef.current = undefined;
+    const target = focusTarget
+      ? discardButtonRefs.current.get(focusTarget)
       : emptyStateRef.current;
     target?.focus();
-    setFocusAfterDiscard(undefined);
-  }, [drafts, focusAfterDiscard]);
+  }, [drafts]);
 
   const artifactCount = useMemo(
     () => drafts.reduce((total, draft) => total + draft.artifactCount, 0),
@@ -110,7 +110,7 @@ export function LocalDraftManager({ ownerId }: { ownerId: string }) {
       return;
     }
     setConfirmSourceKey(null);
-    setFocusAfterDiscard(nextFocusSourceKey);
+    focusAfterDiscardRef.current = nextFocusSourceKey;
     refresh();
   };
 
@@ -130,7 +130,7 @@ export function LocalDraftManager({ ownerId }: { ownerId: string }) {
       return;
     }
     setConfirmAll(false);
-    setFocusAfterDiscard(null);
+    focusAfterDiscardRef.current = null;
     refresh();
   };
 
@@ -139,10 +139,12 @@ export function LocalDraftManager({ ownerId }: { ownerId: string }) {
       open={open}
       onOpenChange={(nextOpen) => {
         setOpen(nextOpen);
-        if (!nextOpen) {
+        if (nextOpen) {
+          refresh();
+        } else {
           setConfirmSourceKey(null);
           setConfirmAll(false);
-          setFocusAfterDiscard(undefined);
+          focusAfterDiscardRef.current = undefined;
           setError(null);
         }
       }}

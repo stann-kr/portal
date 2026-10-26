@@ -257,6 +257,9 @@ function PostEditFormContent({
 
     previousServerSnapshotRef.current = serverSnapshot;
     if (serverSnapshot.version < Math.max(baseRevision, conflictPost?.version ?? 0)) return;
+    // 서버 prop이 충돌 사본 이상으로 따라잡으면 편집기의 최신 본문(React state보다 앞설 수 있는 외부 값)과
+    // 함께 한 번에 재조정한다. 렌더 중에는 편집기·ref를 읽을 수 없어 이 동기화는 effect에 남긴다.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 외부 편집기 본문과의 서버 snapshot 재조정
     setConflictPost(undefined);
     // React 표시값은 editor보다 최대 200ms 늦을 수 있으므로 충돌 판정은 최신 reader를 사용한다.
     const latestContentHtml = readLatestContentHtml();

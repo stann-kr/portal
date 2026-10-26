@@ -123,11 +123,13 @@ function NoteEditorFormContent({ note, actorId, action, focusBodyEnd = false }: 
   const submittedDraftRef = useRef<CompactNoteEditDraft | null>(null);
   const submittedDraftAliasesRef = useRef<readonly NoteEditDraft[] | null>(null);
   const restoredDraftRef = useRef<NoteEditDraft | null>(null);
-  const savedSnapshotRef = useRef({
+  // 화면의 저장 여부 표시는 state로 읽고, effect·callback은 같은 값을 ref로 즉시 읽는다.
+  const [savedSnapshot, setSavedSnapshot] = useState<NoteEditSnapshot>(() => ({
     title: note.title,
     noteDate: toDateInputValue(note.noteDate),
     contentHtml: note.contentHtml,
-  });
+  }));
+  const savedSnapshotRef = useRef(savedSnapshot);
   const [baseFingerprint, setBaseFingerprint] = useState(() =>
     createDocumentSnapshotFingerprint({
       kind: "private-note",
@@ -141,7 +143,9 @@ function NoteEditorFormContent({ note, actorId, action, focusBodyEnd = false }: 
   const draftBaseFingerprintRef = useRef(baseFingerprint);
   const adoptSavedSnapshot = useCallback(
     (snapshot: NoteEditSnapshot) => {
-      savedSnapshotRef.current = { title: snapshot.title, contentHtml: snapshot.contentHtml, noteDate: snapshot.noteDate };
+      const nextSavedSnapshot = { title: snapshot.title, contentHtml: snapshot.contentHtml, noteDate: snapshot.noteDate };
+      savedSnapshotRef.current = nextSavedSnapshot;
+      setSavedSnapshot(nextSavedSnapshot);
       const fingerprint = createDocumentSnapshotFingerprint({
         kind: "private-note",
         id: note.id,
@@ -419,12 +423,12 @@ function NoteEditorFormContent({ note, actorId, action, focusBodyEnd = false }: 
     submittedDraftAliasesRef.current = null;
     restoredDraftRef.current = null;
     setConflictServer(null);
-    const savedSnapshot = {
+    const nextSavedSnapshot = {
       title: state.note.title,
       noteDate: toDateInputValue(state.note.noteDate),
       contentHtml: state.note.contentHtml,
     };
-    adoptSavedSnapshot(savedSnapshot);
+    adoptSavedSnapshot(nextSavedSnapshot);
     setBaseRevision(
       (currentRevision) =>
         state.note?.version ?? state.currentRevision ?? currentRevision,
@@ -433,6 +437,7 @@ function NoteEditorFormContent({ note, actorId, action, focusBodyEnd = false }: 
     draftBaseFingerprintRef.current = baseFingerprintRef.current;
     setHasStaleDraftBase(false);
     if (!typedSinceSubmit) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- 저장 결과를 편집기 최신 HTML(외부 reader)·초안 저장소와 맞추는 ref 가드 effect다. 형제 setState는 ref 가드로 허용되는데, 입력 중 공백을 보존하는 이 안쪽 조건만 판정에서 빠진다.
       if (title.trim() !== state.note.title) setTitle(state.note.title);
       setNoteDate(toDateInputValue(state.note.noteDate));
       // 서버가 정리한 HTML이 다를 때만 편집기를 다시 채운다. 같으면 커서를 건드리지 않는다.
@@ -485,7 +490,6 @@ function NoteEditorFormContent({ note, actorId, action, focusBodyEnd = false }: 
     element.style.height = "auto";
     element.style.height = `${element.scrollHeight}px`;
   }, [title]);
-  const savedSnapshot = savedSnapshotRef.current;
   const dirty = loaded && !sameSnapshot(savedSnapshot, { title, noteDate, contentHtml });
   const changeKey = `${title}\u0000${noteDate}\u0000${contentHtml}`;
   const submittedKeyRef = useRef("");

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import * as Dialog from "@radix-ui/react-dialog";
@@ -104,9 +104,12 @@ export function AppSidebar({
   const [open, setOpen] = useState(false);
   const pathname = usePathname();
 
-  useEffect(() => {
+  // 경로가 바뀌면(메뉴 링크로 이동하면) 모바일 메뉴를 닫는다. 렌더 중 이전 경로와 비교해 바로 맞춘다.
+  const [openedPathname, setOpenedPathname] = useState(pathname);
+  if (openedPathname !== pathname) {
+    setOpenedPathname(pathname);
     setOpen(false);
-  }, [pathname]);
+  }
 
   return (
     <>

@@ -27,7 +27,7 @@ import Typography from "@tiptap/extension-typography";
 import { Markdown, type MarkdownStorage } from "tiptap-markdown";
 import type { Editor } from "@tiptap/core";
 import { common, createLowlight } from "lowlight";
-import { useState, useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
+import { useState, useCallback, useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
 import {
   Bold, Italic, Underline as UnderlineIcon, Strikethrough, Highlighter,
   Heading1, Heading2, Heading3, List, ListOrdered, ListTodo,
@@ -194,10 +194,14 @@ export function FullEditor({
   const onChangeRef = useRef(onChange);
   const onDirtyRef = useRef(onDirty);
   const changeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const initialEditorContentRef = useRef(initialContent);
+  // 편집기 생성 때만 쓰는 첫 본문. 이후 본문 교체는 아래 동기화 effect가 맡는다.
+  const [initialEditorContent] = useState(initialContent);
   const appliedContentVersionRef = useRef(contentVersion);
-  onChangeRef.current = onChange;
-  onDirtyRef.current = onDirty;
+  // 최신 콜백을 다른 effect·편집기 이벤트보다 먼저 반영한다.
+  useLayoutEffect(() => {
+    onChangeRef.current = onChange;
+    onDirtyRef.current = onDirty;
+  }, [onChange, onDirty]);
 
   const readLatestHtml = useCallback(() => {
     const currentEditor = editorInstanceRef.current;
@@ -403,18 +407,22 @@ export function FullEditor({
     [ariaLabel, isPage, uploadImages],
   );
 
+  const handleEditorUpdate = useCallback(
+    ({ editor, transaction }: { editor: Editor; transaction: { docChanged: boolean } }) => {
+      if (!transaction.docChanged) return;
+      editorInstanceRef.current = editor;
+      markContentDirty();
+    },
+    [markContentDirty],
+  );
   const editor = useEditor({
     immediatelyRender: false,
     shouldRerenderOnTransaction: false,
     editable: !disabled,
     extensions: editorExtensions,
-    content: initialEditorContentRef.current,
+    content: initialEditorContent,
     editorProps,
-    onUpdate({ editor, transaction }) {
-      if (!transaction.docChanged) return;
-      editorInstanceRef.current = editor;
-      markContentDirty();
-    },
+    onUpdate: handleEditorUpdate,
   });
   const toolbarState = useEditorState({
     editor,
@@ -480,20 +488,21 @@ export function FullEditor({
       const markdownStorage = editorStorage.markdown as MarkdownStorage | undefined;
       const nextMarkdown = markdownStorage?.getMarkdown?.() ?? editor.getHTML();
       markdownTextRef.current = nextMarkdown;
-      setMarkdownText(nextMarkdown);
+      // textarea 표시값은 편집기에서 다시 읽어 ref에 둔 마크다운을 그대로 따른다.
+      setMarkdownText(markdownTextRef.current);
     }
   }, [contentVersion, discardDeferredImages, editor, initialContent, isMarkdownMode]);
 
+  // 잠기면 열린 삽입 패널을 그 렌더에서 바로 닫는다.
+  if (disabled && insertPanel) setInsertPanel(null);
+
   useEffect(() => {
     editor?.setEditable(!disabled, false);
-    if (disabled) {
-      setInsertPanel(null);
-      return;
-    }
+    if (disabled) return;
     const deferred = deferredImagesRef.current;
     if (deferred.length === 0) return;
     deferredImagesRef.current = [];
-    setDeferredImageCount(0);
+    setDeferredImageCount(deferredImagesRef.current.length);
     for (const upload of deferred) insertImageNow(upload);
   }, [disabled, editor, insertImageNow]);
 

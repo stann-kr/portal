@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Editor } from "@tiptap/react";
 import {
@@ -22,14 +22,17 @@ export function BlockCommandMenu({ editor }: { editor: Editor }) {
   const [menu, setMenu] = useState<CommandMenuState | null>(null);
   const menuRef = useRef<CommandMenuState | null>(null);
   const dismissedMatchRef = useRef<SlashCommandMatch | null>(null);
-  menuRef.current = menu;
 
   const commands = useMemo(
     () => filterEditorBlockCommands(menu?.query ?? ""),
     [menu?.query],
   );
   const commandsRef = useRef(commands);
-  commandsRef.current = commands;
+  // 키보드·스크롤 핸들러가 읽는 최신 메뉴를 커밋 직후, 다음 입력 전에 반영한다.
+  useLayoutEffect(() => {
+    menuRef.current = menu;
+    commandsRef.current = commands;
+  }, [menu, commands]);
 
   const close = useCallback(() => setMenu(null), []);
 
@@ -145,6 +148,8 @@ export function BlockCommandMenu({ editor }: { editor: Editor }) {
     editor.on("transaction", handleTransaction);
     editor.on("blur", handleBlur);
     editor.on("focus", handleFocus);
+    // 구독 직전에 이미 있던 편집기 포커스·슬래시 입력·DOM 위치(외부 상태)를 한 번 읽어 맞춘다.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 이후 갱신은 위 편집기 이벤트 콜백이 맡는 외부 구독의 초기 동기화다.
     syncMenu();
     // Window capture precedes the parent dialog's document-level Escape handler.
     window.addEventListener("keydown", handleKeyDown, true);

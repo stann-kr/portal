@@ -66,7 +66,9 @@ export function ConfirmPanel({
 }) {
   const messageId = useId();
   const cancelRef = useRef<HTMLButtonElement>(null);
-  const [submitted, setSubmitted] = useState(false);
+  // 확인을 누를 때마다 번호를 올리고, 그 확인의 작업(pending)이 끝나면 한 번만 닫는다.
+  const [submission, setSubmission] = useState(0);
+  const closedSubmissionRef = useRef(0);
   const { close } = confirm;
 
   useEffect(() => {
@@ -75,10 +77,10 @@ export function ConfirmPanel({
   }, []);
 
   useEffect(() => {
-    if (!submitted || pending) return;
-    setSubmitted(false);
+    if (submission === 0 || pending || closedSubmissionRef.current === submission) return;
+    closedSubmissionRef.current = submission;
     close();
-  }, [close, pending, submitted]);
+  }, [close, pending, submission]);
 
   return (
     <div
@@ -109,7 +111,7 @@ export function ConfirmPanel({
           aria-describedby={messageId}
           disabled={pending}
           onClick={() => {
-            setSubmitted(true);
+            setSubmission((current) => current + 1);
             onConfirm();
           }}
         >

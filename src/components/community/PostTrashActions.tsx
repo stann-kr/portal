@@ -29,7 +29,9 @@ export function PostTrashActions({
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const operations = useRef<{ key: string; restore: string; purge: string } | null>(null);
-  const expired = new Date(deletedAt).getTime() + RETENTION_MILLISECONDS <= Date.now();
+  // 보관 기간 판단 기준 시각은 처음 그릴 때 한 번만 정한다. 실제 영구 삭제 가능 여부는 서버가 다시 확인한다.
+  const [renderedAt] = useState(() => Date.now());
+  const expired = new Date(deletedAt).getTime() + RETENTION_MILLISECONDS <= renderedAt;
 
   const purgeConfirm = useConfirmAction();
 

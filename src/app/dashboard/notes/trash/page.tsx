@@ -6,6 +6,7 @@ import { getTrashedPrivateNotes } from "@/lib/actions/privateNotes";
 import { safeReturnPath } from "@/lib/safe-return-path";
 import { NoteTrashActions } from "@/components/notes/NoteTrashActions";
 import { formatKst } from "@/lib/kst-format";
+import { getRequestNow } from "@/lib/request-time";
 
 export const metadata = { title: "노트 휴지통" };
 
@@ -43,7 +44,7 @@ export default async function NoteTrashPage({
   }
 
   const notes = await getTrashedPrivateNotes(studentId);
-  const now = Date.now();
+  const now = getRequestNow();
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 px-4 py-6 sm:px-6">

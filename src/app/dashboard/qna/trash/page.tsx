@@ -7,6 +7,7 @@ import { QnaThreadLifecycleActions } from "@/components/qna/QnaThreadLifecycleAc
 import { QNA_STATUS_LABELS } from "@/lib/qna-status";
 import { safeReturnPath } from "@/lib/safe-return-path";
 import { formatKst } from "@/lib/kst-format";
+import { getRequestNow } from "@/lib/request-time";
 
 export const metadata = { title: "Q&A 휴지통" };
 
@@ -19,7 +20,7 @@ export default async function QnaTrashPage({ searchParams }: {
   const isAdmin = session.user.role === "admin";
   const returnTo = safeReturnPath((await searchParams).returnTo, "/dashboard/qna");
   const trashHref = `/dashboard/qna/trash?returnTo=${encodeURIComponent(returnTo)}`;
-  const now = Date.now();
+  const now = getRequestNow();
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 px-4 py-6 sm:px-6">

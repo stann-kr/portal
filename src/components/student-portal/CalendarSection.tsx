@@ -71,6 +71,7 @@ const LEGACY_CALENDAR_TAB_STORAGE_KEY = "studentPortal:calendarTab";
 
 /** 같은 일정을 다른 모양으로 보는 보기. 화면 안에서 전환한다. */
 const CALENDAR_FAMILY_VIEWS: ReadonlySet<CalendarTabValue> = new Set(["calendar", "daily", "all"]);
+const NO_DIGGING_COLUMNS: DiggingColumn[] = [];
 
 interface CalendarSectionProps {
   initialLocation?: WorkspaceLocation;
@@ -124,7 +125,11 @@ export function CalendarSection({
   const [createDefaultDate, setCreateDefaultDate] = useState<string | undefined>(undefined);
   const [createDefaultStart, setCreateDefaultStart] = useState<string | undefined>(undefined);
   const [createMenuOpen, setCreateMenuOpen] = useState(false);
-  const [diggingColumns, setDiggingColumns] = useState<DiggingColumn[]>([]);
+  // 불러온 컬럼은 어느 학생 것인지 함께 둔다. 지금 학생 본인의 스페이스가 아니면 렌더에서 빈 목록으로 본다.
+  const [loadedDiggingColumns, setLoadedDiggingColumns] = useState<{
+    studentId: string;
+    columns: DiggingColumn[];
+  } | null>(null);
   const [qnaSlideOpen, setQnaSlideOpen] = useState(false);
   const [qnaFormBusy, setQnaFormBusy] = useState(false);
   const [activeTab, setActiveTab] = useState<CalendarTabValue>(initialLocation?.view ?? "calendar");
@@ -133,6 +138,10 @@ export function CalendarSection({
   const calendarTabs = getCalendarTabs(workspaceRole);
   const calendarTabStorageKey = createAccountCalendarTabStorageKey(actorId);
   const isStudentWorkspace = actorId === studentId;
+  const diggingColumns =
+    studentId && isStudentWorkspace && loadedDiggingColumns?.studentId === studentId
+      ? loadedDiggingColumns.columns
+      : NO_DIGGING_COLUMNS;
   const showSpaceContext = workspaceRole === "admin";
   const workspaceContextLabel = workspaceRole === "student" ? "내 스페이스" : "학생 스페이스";
   const workspaceSection = isStudentWorkspace ? "workspace" : "schedule";
@@ -233,25 +242,23 @@ export function CalendarSection({
 
   // 마운트 시 1회 digging columns 패치
   useEffect(() => {
-    if (!studentId || !isStudentWorkspace) {
-      setDiggingColumns([]);
-      return;
-    }
+    if (!studentId || !isStudentWorkspace) return;
     let cancelled = false;
     type RawCol = Awaited<ReturnType<typeof getOrSeedColumns>>[number];
     getOrSeedColumns(studentId).then((cols) => {
       if (cancelled) return;
-      setDiggingColumns(
-        cols.map((c: RawCol) => ({
+      setLoadedDiggingColumns({
+        studentId,
+        columns: cols.map((c: RawCol) => ({
           id: c.id,
           name: c.name,
           columnType: c.columnType as DiggingColumnType,
           options: c.options,
-        }))
-      );
+        })),
+      });
     }).catch(() => {
       // 컬럼을 못 불러와도 일정·노트 작성은 계속 쓸 수 있다. 디깅 추가는 링크만 받는다.
-      if (!cancelled) setDiggingColumns([]);
+      if (!cancelled) setLoadedDiggingColumns({ studentId, columns: [] });
     });
     return () => {
       cancelled = true;

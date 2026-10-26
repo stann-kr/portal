@@ -5,6 +5,7 @@ import { getActiveAuthSession } from "@/lib/auth-guard";
 import { getTrashedPosts } from "@/lib/actions/posts";
 import { PostTrashActions } from "@/components/community/PostTrashActions";
 import { formatKst } from "@/lib/kst-format";
+import { getRequestNow } from "@/lib/request-time";
 
 export const metadata = { title: "게시물 휴지통" };
 
@@ -12,7 +13,7 @@ export default async function CommunityTrashPage() {
   const session = await getActiveAuthSession();
   if (!session?.user?.id) redirect("/login");
   const posts = await getTrashedPosts();
-  const now = Date.now();
+  const now = getRequestNow();
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 px-4 py-6 sm:px-6">

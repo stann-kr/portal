@@ -13,6 +13,7 @@ import { DeleteNoteButton } from "@/components/notes/DeleteNoteButton";
 import { NoteTrashActions } from "@/components/notes/NoteTrashActions";
 import { PRIVATE_NOTE_TRASH_RETENTION_SECONDS } from "@/lib/private-note-continuity";
 import { formatKst } from "@/lib/kst-format";
+import { getRequestNow } from "@/lib/request-time";
 
 export const metadata = { title: "노트" };
 
@@ -42,7 +43,7 @@ export default async function NotePage({
       )
     : null;
   const isTrashRetentionExpired = Boolean(
-    purgeEligibleAt && purgeEligibleAt.getTime() <= Date.now(),
+    purgeEligibleAt && purgeEligibleAt.getTime() <= getRequestNow(),
   );
   const canPurge = Boolean(
     session.user.role === "admin" && isTrashRetentionExpired,

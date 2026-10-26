@@ -115,7 +115,10 @@ export function StudentPortalClient({
   ).filter((item) => !removedKeys.has(getUnifiedItemKey(item))), [createdItems, externalCalendarConnection.connected, externalItems, initialUnifiedItems, removedKeys, serverItemKeys]);
 
   // Retire confirmed additions so a later server deletion cannot resurrect them.
-  useEffect(() => {
+  // 서버 목록이 바뀐 렌더에서 바로 정리한다(이전 서버 목록과 비교).
+  const [reconciledServerItemKeys, setReconciledServerItemKeys] = useState(serverItemKeys);
+  if (reconciledServerItemKeys !== serverItemKeys) {
+    setReconciledServerItemKeys(serverItemKeys);
     setCreatedItems((current) => {
       const remaining = current.filter((item) => !serverItemKeys.has(getUnifiedItemKey(item)));
       return remaining.length === current.length ? current : remaining;
@@ -126,7 +129,7 @@ export function StudentPortalClient({
       const remaining = new Set([...current].filter((key) => serverItemKeys.has(key)));
       return remaining.size === current.size ? current : remaining;
     });
-  }, [serverItemKeys]);
+  }
 
   const addItem = useCallback((item: UnifiedItem) => {
     setCreatedItems((prev) => upsertUnifiedItem(prev, item));
@@ -139,11 +142,15 @@ export function StudentPortalClient({
   }, []);
 
   // 내부 일정은 RSC에서 먼저 표시하고 외부 provider는 hydration 뒤 fail-soft로 병합한다.
+  // 연결이 끊기면 렌더 중 바로 외부 일정을 비운다(이전 연결 상태와 비교).
+  const [externalConnected, setExternalConnected] = useState(externalCalendarConnection.connected);
+  if (externalConnected !== externalCalendarConnection.connected) {
+    setExternalConnected(externalCalendarConnection.connected);
+    if (!externalCalendarConnection.connected) setExternalItems([]);
+  }
+
   useEffect(() => {
-    if (!externalCalendarConnection.connected) {
-      setExternalItems([]);
-      return;
-    }
+    if (!externalCalendarConnection.connected) return;
     let cancelled = false;
     void getExternalUnifiedItems().then((loadedItems) => {
       if (!cancelled) {

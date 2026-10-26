@@ -101,8 +101,7 @@ export function AccountDeletionControlImpl({
   useEffect(() => {
     if (!open) return;
     let active = true;
-    setRegistration({ status: "pending" });
-    setMessage("이 기기의 계정 삭제 정리 신호를 등록하고 있습니다.");
+    // pending 상태와 안내 문구는 대화상자를 여는 이벤트에서 함께 설정한다.
     void dependencies.registerPersistentToken(ownerId).then(async (persistentResult) => {
       if (!active) return;
       const persistent = persistentResult.ok;
@@ -228,7 +227,12 @@ export function AccountDeletionControlImpl({
       onOpenChange={(nextOpen) => {
         if (isPending) return;
         setOpen(nextOpen);
-        if (!nextOpen) reset();
+        if (nextOpen) {
+          setRegistration({ status: "pending" });
+          setMessage("이 기기의 계정 삭제 정리 신호를 등록하고 있습니다.");
+        } else {
+          reset();
+        }
       }}
     >
       <DialogTrigger asChild>

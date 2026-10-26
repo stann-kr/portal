@@ -106,7 +106,7 @@ export function PasswordChangeForm({
               : "비밀번호를 변경했습니다. 다른 기기의 기존 로그인은 다음 요청부터 만료됩니다."}
         </p>
         {state.signInRequired ? (
-          <Button ref={doneButtonRef} type="button" className="w-full" onClick={() => window.location.assign("/login")}>
+          <Button ref={doneButtonRef} type="button" className="w-full" onClick={() => window.location.assign(new URL("/login", window.location.origin))}>
             로그인 화면으로 이동
           </Button>
         ) : variant === "required" ? null : (

@@ -44,10 +44,16 @@ export function AssignmentDetailPanel({
   const [error, setError] = useState(false);
   const [loadAttempt, setLoadAttempt] = useState(0);
 
-  useEffect(() => {
-    let active = true;
+  // 다른 과제로 바뀌면 렌더 중 바로 불러오는 상태로 돌린다. 다시 시도는 버튼 이벤트에서 같은 일을 한다.
+  const [loadedAssignmentId, setLoadedAssignmentId] = useState(assignmentId);
+  if (loadedAssignmentId !== assignmentId) {
+    setLoadedAssignmentId(assignmentId);
     setLoading(true);
     setError(false);
+  }
+
+  useEffect(() => {
+    let active = true;
     getFeedbacksByAssignment(assignmentId).then((data) => {
       if (!active) return;
       setFeedbacks(
@@ -82,7 +88,11 @@ export function AssignmentDetailPanel({
         ) : error ? (
           <div role="alert" className="space-y-2 text-sm">
             <p>피드백을 불러오지 못했습니다.</p>
-            <button type="button" onClick={() => setLoadAttempt((value) => value + 1)} className="min-h-9 rounded-md border border-border px-3 focus-visible:ring-2 focus-visible:ring-ring">다시 시도</button>
+            <button type="button" onClick={() => {
+              setLoading(true);
+              setError(false);
+              setLoadAttempt((value) => value + 1);
+            }} className="min-h-9 rounded-md border border-border px-3 focus-visible:ring-2 focus-visible:ring-ring">다시 시도</button>
           </div>
         ) : feedbacks.length === 0 ? (
           <div className="space-y-3">

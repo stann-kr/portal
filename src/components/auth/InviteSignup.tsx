@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useId, useRef, useState } from "react";
+import { useActionState, useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -128,27 +128,38 @@ function InviteForm({
   );
 }
 
+function subscribeToNothing(): () => void {
+  return () => {};
+}
+
+function readNoTokenOnServer(): string | null {
+  return null;
+}
+
 /**
  * 가입 링크(`/invite#<token>`)의 token을 읽어 확인하고 학생이 직접 비밀번호를 정하게 한다.
  * token은 주소의 `#` 뒤에만 있어 서버 요청 주소에 남지 않고, server action 본문으로만 보낸다.
  */
 export function InviteSignup({
   readToken = () => decodeURIComponent(window.location.hash.slice(1)),
-  onSignedIn = () => window.location.assign("/dashboard"),
+  // 새 session cookie를 middleware와 layout이 처음부터 읽도록 client 라우팅이 아닌 전체 문서 이동을 쓴다.
+  onSignedIn = () => window.location.assign(new URL("/dashboard", window.location.origin)),
 }: {
   readToken?: () => string;
   onSignedIn?: () => void;
 }) {
-  const [view, setView] = useState<InviteView>({ kind: "checking" });
+  // 주소의 `#` token은 브라우저에서만 읽을 수 있다. 서버 렌더와 hydration 동안에는 null(확인 중)로 두어
+  // 화면이 어긋나지 않게 하고, 링크는 이 화면을 여는 순간의 주소로 한 번만 확인한다.
+  const currentToken = useSyncExternalStore(subscribeToNothing, readToken, readNoTokenOnServer);
+  const [token, setToken] = useState<string | null>(null);
+  if (token === null && currentToken !== null) setToken(currentToken);
+  const [checkedView, setView] = useState<InviteView>({ kind: "checking" });
+  const view: InviteView = token === "" ? { kind: "unusable", reason: "invalid" } : checkedView;
   const headingRef = useRef<HTMLHeadingElement>(null);
 
   useEffect(() => {
+    if (!token) return;
     let cancelled = false;
-    const token = readToken();
-    if (!token) {
-      setView({ kind: "unusable", reason: "invalid" });
-      return;
-    }
     getInviteStatus(token)
       .then((status) => {
         if (cancelled) return;
@@ -162,9 +173,7 @@ export function InviteSignup({
     return () => {
       cancelled = true;
     };
-    // 링크는 이 화면을 여는 순간의 주소로 한 번만 확인한다.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [token]);
 
   useEffect(() => {
     if (view.kind !== "checking") headingRef.current?.focus();

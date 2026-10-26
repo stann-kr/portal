@@ -46,11 +46,15 @@ export function LessonScheduleDialog({
   const [hasSubmitted, setHasSubmitted] = useState(false);
   const error = hasSubmitted && !isPending ? state.error : undefined;
 
-  useEffect(() => {
-    if (!open) return;
-    setScheduledAt(defaultStart ?? "");
-    setHasSubmitted(false);
-  }, [defaultStart, open]);
+  // 열 때나 열린 채로 기본 시각이 바뀔 때 입력을 새로 채운다. 이전 값과 렌더 중에 비교해 바로 맞춘다.
+  const [resetSource, setResetSource] = useState({ open, defaultStart });
+  if (resetSource.open !== open || resetSource.defaultStart !== defaultStart) {
+    setResetSource({ open, defaultStart });
+    if (open) {
+      setScheduledAt(defaultStart ?? "");
+      setHasSubmitted(false);
+    }
+  }
 
   useEffect(() => {
     if (!state.lesson || handledLessonRef.current === state.lesson.id) return;

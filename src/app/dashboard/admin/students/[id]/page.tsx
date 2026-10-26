@@ -35,6 +35,7 @@ import {
   resolveStudentDetailTab,
   type StudentDetailTab,
 } from "@/lib/student-space-routes";
+import { getRequestNow } from "@/lib/request-time";
 
 type RawColumn = Awaited<ReturnType<typeof getOrSeedColumns>>[number];
 type RawQnaThread = Awaited<ReturnType<typeof getQnaThreadsByStudent>>[number];
@@ -196,7 +197,7 @@ export default async function StudentDetailPage({
       ]));
   // 만료 판단은 서버 시각 하나로 정해 화면 hydration과 어긋나지 않게 한다.
   const account = accountState.kind === "invite"
-    ? { ...accountState, expired: accountState.expiresAt.getTime() <= Date.now() }
+    ? { ...accountState, expired: accountState.expiresAt.getTime() <= getRequestNow() }
     : accountState;
 
   return (

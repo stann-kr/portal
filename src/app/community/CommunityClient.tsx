@@ -8,7 +8,7 @@
  */
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -215,7 +215,10 @@ export default function CommunityClient({ isAdmin, initial }: CommunityClientPro
   }, [activeTab, activeCategory, reloadToken]);
 
   const requestedKey = listKey(activeTab, activeCategory);
-  requestedKeyRef.current = requestedKey;
+  // 늦게 도착한 "더 보기" 응답이 지금 보이는 목록인지 비교할 수 있게 커밋된 위치만 기록한다.
+  useLayoutEffect(() => {
+    requestedKeyRef.current = requestedKey;
+  }, [requestedKey]);
   const hasNoChannel = activeTab === "GENERAL" && categories.length === 0;
   const awaitingList = !loadError && !hasNoChannel && (loading || requestedKey !== loadedKey);
   const visibleCount = activeTab === "GENERAL"

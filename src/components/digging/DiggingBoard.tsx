@@ -1,7 +1,7 @@
 /**
  * @file src/components/digging/DiggingBoard.tsx
  * @description 디깅 게시판 메인 클라이언트 컴포넌트 (Phase 5).
- * - TanStack Table 기반 동적 컬럼 테이블
+ * - 동적 컬럼 테이블
  * - 날짜 범위 필터 + 날짜별 그룹핑
  * - 인라인 셀 편집
  * - 트랙 추가/삭제, 컬럼 추가/삭제
@@ -10,12 +10,6 @@
 
 import { Fragment, useState, useMemo, useCallback, useRef, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import {
-  useReactTable,
-  getCoreRowModel,
-  flexRender,
-  type ColumnDef,
-} from "@tanstack/react-table";
 import { Plus, Settings2, Trash2, ExternalLink, ChevronDown, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ConfirmPanel, useConfirmAction } from "@/components/ui/confirm-action";
@@ -33,6 +27,8 @@ import type { DiggingColumnType } from "@/db/schema";
 import { parseStoredDiggingOptions } from "@/lib/digging-contract";
 import { formatKst } from "@/lib/kst-format";
 import { toKstDateInputValue } from "@/lib/date-input";
+
+type TableColumn = { id: string; header: string; size: number };
 
 type Column = {
   id: string;
@@ -353,54 +349,18 @@ export function DiggingBoard({
     });
   }, []);
 
-  // TanStack Table 컬럼 정의
-  const tableCols = useMemo<ColumnDef<Track>[]>(
+  // 데스크톱 표의 열 정의. 행은 날짜 그룹마다 직접 그리므로 머리글·너비만 담는다.
+  const tableCols = useMemo<TableColumn[]>(
     () => [
-      ...columns.map<ColumnDef<Track>>((col) => ({
+      ...columns.map((col) => ({
         id: col.id,
         header: col.name,
         size: col.columnType === "textarea" ? 200 : col.columnType === "link" ? 160 : 120,
-        cell: ({ row }) => (
-          <EditableCell
-            trackId={row.original.id}
-            columnId={col.id}
-            columnName={col.name}
-            columnType={col.columnType}
-            value={row.original.values[col.id]}
-            options={col.options}
-            readonly={readonly}
-          />
-        ),
       })),
-      ...(!readonly
-        ? [
-            {
-              id: "_actions",
-              header: "",
-              size: 40,
-              cell: ({ row }: { row: { original: Track } }) => (
-                <button
-                  type="button"
-                  onClick={(event) => requestTrackDelete(event.currentTarget, row.original.id)}
-                  disabled={isPending}
-                  aria-label="디깅 트랙 삭제"
-                  className="text-muted-foreground hover:text-destructive transition-colors"
-                >
-                  <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
-                </button>
-              ),
-            } as ColumnDef<Track>,
-          ]
-        : []),
+      ...(!readonly ? [{ id: "_actions", header: "", size: 40 }] : []),
     ],
-    [columns, readonly, isPending, requestTrackDelete],
+    [columns, readonly],
   );
-
-  const table = useReactTable({
-    data: [],
-    columns: tableCols,
-    getCoreRowModel: getCoreRowModel(),
-  });
 
   const handleTrackCreated = useCallback(
     (newTrack: Track) => {
@@ -553,19 +513,17 @@ export function DiggingBoard({
         <table className="w-full text-sm border-collapse">
           {/* 헤더 */}
           <thead>
-            {table.getHeaderGroups().map((hg) => (
-              <tr key={hg.id} className="border-b border-border bg-muted/30">
-                {hg.headers.map((header) => (
-                  <th
-                    key={header.id}
-                    className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider whitespace-nowrap"
-                    style={{ width: header.getSize() }}
-                  >
-                    {flexRender(header.column.columnDef.header, header.getContext())}
-                  </th>
-                ))}
-              </tr>
-            ))}
+            <tr className="border-b border-border bg-muted/30">
+              {tableCols.map((col) => (
+                <th
+                  key={col.id}
+                  className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider whitespace-nowrap"
+                  style={{ width: col.size }}
+                >
+                  {col.header}
+                </th>
+              ))}
+            </tr>
           </thead>
 
           {/* 날짜 그룹별 바디 */}
@@ -584,7 +542,7 @@ export function DiggingBoard({
             ) : (
               groupedTracks.map(([date, dateRows]: [string, Track[]]) => {
                 const collapsed = collapsedDates.has(date);
-                // 각 날짜 그룹마다 TanStack 인스턴스 없이 직접 렌더
+                // 각 날짜 그룹마다 직접 렌더
                 return (
                   <Fragment key={date}>
                     <DateGroupHeader
@@ -601,9 +559,9 @@ export function DiggingBoard({
                         >
                           {tableCols.map((col) => (
                             <td
-                              key={col.id as string}
+                              key={col.id}
                               className="px-3 py-2 align-top"
-                              style={{ width: (col as { size?: number }).size }}
+                              style={{ width: col.size }}
                             >
                               {col.id === "_actions" ? (
                                 <button
@@ -619,12 +577,12 @@ export function DiggingBoard({
                               ) : (
                                 <EditableCell
                                   trackId={track.id}
-                                  columnId={col.id as string}
+                                  columnId={col.id}
                                   columnName={columns.find((c) => c.id === col.id)?.name ?? "트랙 값"}
                                   columnType={
                                     columns.find((c) => c.id === col.id)?.columnType ?? "text"
                                   }
-                                  value={track.values[col.id as string]}
+                                  value={track.values[col.id]}
                                   options={columns.find((c) => c.id === col.id)?.options}
                                   readonly={readonly}
                                 />

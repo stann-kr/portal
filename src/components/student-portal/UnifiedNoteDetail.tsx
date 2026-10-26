@@ -28,9 +28,15 @@ export function UnifiedNoteDetail({
   const [body, setBody] = useState<NoteBodyState>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
 
+  // 다른 노트로 바뀌면 렌더 중 바로 불러오는 상태로 돌린다. 다시 시도는 버튼 이벤트에서 같은 일을 한다.
+  const [requestedNoteId, setRequestedNoteId] = useState(noteId);
+  if (requestedNoteId !== noteId) {
+    setRequestedNoteId(noteId);
+    setBody({ status: "loading" });
+  }
+
   useEffect(() => {
     let active = true;
-    setBody({ status: "loading" });
     getPrivateNote(noteId)
       .then((note) => {
         if (!active) return;
@@ -62,7 +68,10 @@ export function UnifiedNoteDetail({
           ) : (
             <div role="alert" className="flex flex-wrap items-center gap-2 text-sm">
               <span>전체 내용을 불러오지 못했습니다.</span>
-              <Button type="button" variant="outline" size="sm" onClick={() => setAttempt((value) => value + 1)}>
+              <Button type="button" variant="outline" size="sm" onClick={() => {
+                setBody({ status: "loading" });
+                setAttempt((value) => value + 1);
+              }}>
                 다시 시도
               </Button>
             </div>

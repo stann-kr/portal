@@ -43,8 +43,10 @@ export function QnaThreadLifecycleActions({
   const restoreFocusRef = useRef<{ threadId: string; version: number } | null>(null);
   const snapshot = JSON.stringify([threadId, version, deletedAt, canRestore, canPurge]);
   const needsRefresh = failure?.refreshRequired && failure.snapshot === snapshot;
+  // 보관 기간 판단 기준 시각은 처음 그릴 때 한 번만 정한다. 실제 영구 삭제 가능 여부는 서버가 다시 확인한다.
+  const [renderedAt] = useState(() => Date.now());
   const expired = deletedAt
-    ? new Date(deletedAt).getTime() + RETENTION_MILLISECONDS <= Date.now()
+    ? new Date(deletedAt).getTime() + RETENTION_MILLISECONDS <= renderedAt
     : false;
   const actionKind = !deletedAt
     ? "trash"

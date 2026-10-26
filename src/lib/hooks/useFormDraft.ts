@@ -32,6 +32,7 @@ import {
   useRef,
   useCallback,
   useEffect,
+  useInsertionEffect,
 } from "react";
 import {
   type PendingDraft,
@@ -149,9 +150,13 @@ export function useFormDraft<T>(
   const [restored, setRestored] = useState(false);
   const [recoveries, setRecoveries] = useState<FormDraftRecoverySummary[]>([]);
   const onRestoreRef = useRef(onRestore);
-  onRestoreRef.current = onRestore;
   const onResetRef = useRef(onReset);
-  onResetRef.current = onReset;
+  // insertion effect는 같은 commit의 모든 layout/passive effect보다 먼저 실행되므로
+  // mount 복원 effect와 이벤트 handler가 항상 최신 callback을 호출한다.
+  useInsertionEffect(() => {
+    onRestoreRef.current = onRestore;
+    onResetRef.current = onReset;
+  }, [onRestore, onReset]);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const maxWaitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingRef = useRef<PendingDraft<T> | null>(null);
@@ -624,6 +629,10 @@ export function useFormDraft<T>(
     protectedRecoveryKeysRef.current = new Set();
     pendingRef.current = null;
     accountClearedRef.current = mountedWithTerminalLock;
+    // 이 effect는 hydration 뒤에만 읽을 수 있는 localStorage·terminal lock(외부 시스템)에서
+    // key별 상태를 다시 맞추고 구독한다. ref 초기화와 같은 시점에 state를 함께 되돌려야
+    // remount·key 전환에서 ref/state가 어긋나지 않으므로 render 단계로 옮길 수 없다.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- localStorage 복원·구독 effect의 외부 시스템 동기화
     setAccountCleared(mountedWithTerminalLock);
     lastKnownCanonicalRawRef.current = null;
     updateIncompatibleCanonical(

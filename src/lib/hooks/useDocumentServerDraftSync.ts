@@ -4,7 +4,7 @@
  */
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useInsertionEffect, useRef, useState } from "react";
 import {
   discardDocumentServerDraft,
   readDocumentServerDraft,
@@ -141,8 +141,11 @@ export function useDocumentServerDraftSync<T>(
   const [status, setStatus] = useState<DocumentServerDraftSyncStatus>("loading");
   const [remoteDraft, setRemoteDraft] =
     useState<DocumentServerDraftSnapshot | null>(null);
-  const [localPreview, setLocalPreview] =
-    useState<FormDraftRecoveryPreview | null>(null);
+  // 화면에 쓰는 로컬 초안 정보는 localDraftRef와 같은 시점에 state로 반영한다.
+  const [localDraftView, setLocalDraftView] = useState<{
+    preview: FormDraftRecoveryPreview;
+    payloadHash: string;
+  } | null>(null);
   const [queuedRecovery, setQueuedRecovery] = useState<QueuedDocumentServerDraft | null>(null);
   const [deviceId, setDeviceId] = useState<string | null>(null);
   const ownerId = parseDocumentDraftKey(sourceKey)?.ownerId ?? "";
@@ -164,7 +167,19 @@ export function useDocumentServerDraftSync<T>(
   const mutationEpochRef = useRef(0);
   const refreshRequestedRef = useRef(false);
   const refreshRef = useRef<() => Promise<void>>(async () => undefined);
-  onApplyRemoteRef.current = onApplyRemote;
+  // insertion effect는 같은 commit의 모든 layout/passive effect·이벤트보다 먼저 실행된다.
+  useInsertionEffect(() => {
+    onApplyRemoteRef.current = onApplyRemote;
+  }, [onApplyRemote]);
+
+  const updateLocalDraftView = useCallback((local: LocalDraftState<T> | null) => {
+    setLocalDraftView(local
+      ? {
+          preview: createFormDraftRecoveryPreview(local.data),
+          payloadHash: local.payloadHash,
+        }
+      : null);
+  }, []);
 
   const clearTimers = useCallback(() => {
     if (debounceTimerRef.current !== null) clearTimeout(debounceTimerRef.current);
@@ -204,7 +219,7 @@ export function useDocumentServerDraftSync<T>(
     deviceIdRef.current = null;
     if (mountedRef.current) {
       setRemoteDraft(null);
-      setLocalPreview(null);
+      setLocalDraftView(null);
       setQueuedRecovery(null);
       setDeviceId(null);
       setStatus("idle");
@@ -451,7 +466,9 @@ export function useDocumentServerDraftSync<T>(
     sourceKey,
     updateRemote,
   ]);
-  drainRef.current = drain;
+  useInsertionEffect(() => {
+    drainRef.current = drain;
+  }, [drain]);
 
   const scheduleDrain = useCallback(() => {
     if (!readyRef.current || !allowOwnerPersistence()) return;
@@ -543,7 +560,9 @@ export function useDocumentServerDraftSync<T>(
       }
     }
   }, [allowOwnerPersistence, evaluateState, sourceKey, updateQueuedRecovery, updateRemote]);
-  refreshRef.current = refresh;
+  useInsertionEffect(() => {
+    refreshRef.current = refresh;
+  }, [refresh]);
 
   const observeLocalDraft = useCallback(
     (data: T) => {
@@ -552,7 +571,7 @@ export function useDocumentServerDraftSync<T>(
         const local = createLocalDraftState(data);
         localDraftRef.current = local;
         localDraftSourceRef.current = sourceKey;
-        if (mountedRef.current) setLocalPreview(createFormDraftRecoveryPreview(data));
+        if (mountedRef.current) updateLocalDraftView(local);
         const current = remoteDraftRef.current;
         const queued = readQueuedDocumentServerDraft(window.localStorage, sourceKey);
         // canonical 복원본과 다른 고유 원문도 명시적 선택 전에는 교체하지 않는다.
@@ -596,7 +615,7 @@ export function useDocumentServerDraftSync<T>(
         if (mountedRef.current) setStatus("error");
       }
     },
-    [allowOwnerPersistence, evaluateState, ownerId, scheduleDrain, sourceKey],
+    [allowOwnerPersistence, evaluateState, ownerId, scheduleDrain, sourceKey, updateLocalDraftView],
   );
 
   const clearLocalDraft = useCallback(
@@ -618,7 +637,7 @@ export function useDocumentServerDraftSync<T>(
       if (reason === "submitted" && local && !targetPayloadHashes.includes(local.payloadHash)) return;
       localDraftRef.current = null;
       localDraftSourceRef.current = null;
-      if (mountedRef.current) setLocalPreview(null);
+      if (mountedRef.current) setLocalDraftView(null);
       clearTimers();
       try {
         const queued = readQueuedDocumentServerDraft(window.localStorage, sourceKey);
@@ -690,15 +709,16 @@ export function useDocumentServerDraftSync<T>(
       const data = parsePayloadData<T>(current.entry.payloadJson);
       if (!data) return;
       clearTimers();
-      localDraftRef.current = createLocalDraftState(data);
+      const local = createLocalDraftState(data);
+      localDraftRef.current = local;
       localDraftSourceRef.current = sourceKey;
-      setLocalPreview(createFormDraftRecoveryPreview(data));
+      updateLocalDraftView(local);
       onApplyRemoteRef.current(data);
       evaluateState(remoteDraftRef.current, current.entry);
     } catch {
       setStatus("error");
     }
-  }, [allowOwnerPersistence, clearTimers, evaluateState, queuedRecovery, sourceKey]);
+  }, [allowOwnerPersistence, clearTimers, evaluateState, queuedRecovery, sourceKey, updateLocalDraftView]);
 
   const useRemoteDraft = useCallback(() => {
     if (!allowOwnerPersistence()) return;
@@ -721,15 +741,16 @@ export function useDocumentServerDraftSync<T>(
         );
         notifyQueueChange(sourceKey);
       }
-      localDraftRef.current = createLocalDraftState(data);
+      const local = createLocalDraftState(data);
+      localDraftRef.current = local;
       localDraftSourceRef.current = sourceKey;
-      setLocalPreview(createFormDraftRecoveryPreview(data));
+      updateLocalDraftView(local);
       onApplyRemoteRef.current(data);
       setStatus("synced");
     } catch {
       setStatus("error");
     }
-  }, [allowOwnerPersistence, clearTimers, sourceKey]);
+  }, [allowOwnerPersistence, clearTimers, sourceKey, updateLocalDraftView]);
 
   const keepLocalDraft = useCallback(() => {
     if (!allowOwnerPersistence()) return;
@@ -789,14 +810,18 @@ export function useDocumentServerDraftSync<T>(
     readyRef.current = false;
     choiceRequiredRef.current = false;
     remoteDraftRef.current = null;
+    // 이 effect는 sourceKey별 서버 초안 구독과 localStorage(device id·queue) 읽기를 시작하는
+    // 외부 시스템 동기화다. ref 초기화와 같은 시점에 state도 되돌려야 remount·source 전환에서
+    // ref/state가 어긋나지 않으므로 render 단계로 옮길 수 없다.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 서버 초안 구독·localStorage 동기화 effect의 source별 초기화
     setRemoteDraft(null);
     setQueuedRecovery(null);
     if (localDraftSourceRef.current !== sourceKey) {
       localDraftRef.current = null;
       localDraftSourceRef.current = null;
-      setLocalPreview(null);
+      setLocalDraftView(null);
     } else if (localDraftRef.current) {
-      setLocalPreview(createFormDraftRecoveryPreview(localDraftRef.current.data));
+      updateLocalDraftView(localDraftRef.current);
     }
     setStatus("loading");
     const mayPersist = allowOwnerPersistence();
@@ -948,15 +973,17 @@ export function useDocumentServerDraftSync<T>(
     purgeTerminallyLockedOwner,
     refresh,
     sourceKey,
+    updateLocalDraftView,
     updateQueuedRecovery,
   ]);
 
+  const localPreview = localDraftView?.preview ?? null;
   const remotePreview = remoteDraft
     ? createFormDraftRecoveryPreview(parsePayloadData<unknown>(remoteDraft.payloadJson))
     : null;
   const queuedPreview = queuedRecovery?.operationType === "UPSERT" &&
     queuedRecovery.sourceKey === sourceKey &&
-    queuedRecovery.payloadHash !== localDraftRef.current?.payloadHash
+    queuedRecovery.payloadHash !== localDraftView?.payloadHash
     ? createFormDraftRecoveryPreview(parsePayloadData<unknown>(queuedRecovery.payloadJson))
     : null;
 

@@ -26,6 +26,10 @@ type SoundCloudPlayerProps = {
   onPositionReaderChange?: (reader: PlaybackPositionReader | null) => void;
 };
 
+function readSoundCloudApi(): SoundCloudApi | undefined {
+  return (window as Window & { SC?: SoundCloudApi }).SC;
+}
+
 // widget이 응답하지 않으면 피드백 입력을 막지 않도록 짧게 포기한다.
 const POSITION_READ_TIMEOUT_MS = 1_500;
 
@@ -49,8 +53,9 @@ function SoundCloudEmbed({ url, seekRequest, onPositionReaderChange, onRetry }: 
   // The SDK posts to the iframe during unbind. Dispose before React removes it.
   useLayoutEffect(() => {
     if (!sdkReady || !iframeRef.current) return;
-    const api = (window as Window & { SC?: SoundCloudApi }).SC;
-    if (!api) { setError(true); return; }
+    const api = readSoundCloudApi();
+    // SDK가 준비됐는데 전역 API가 없으면 onReady에서 이미 오류로 표시했다.
+    if (!api) return;
     let active = true;
     const widget = api.Widget(iframeRef.current);
     widgetRef.current = widget;
@@ -104,7 +109,10 @@ function SoundCloudEmbed({ url, seekRequest, onPositionReaderChange, onRetry }: 
   }, [applySeek, seekRequest]);
 
   return <>
-    <Script src="https://w.soundcloud.com/player/api.js" onReady={() => setSdkReady(true)} onError={() => setError(true)} />
+    <Script src="https://w.soundcloud.com/player/api.js" onReady={() => {
+      if (readSoundCloudApi()) setSdkReady(true);
+      else setError(true);
+    }} onError={() => setError(true)} />
     <iframe
       ref={iframeRef}
       title="SoundCloud 믹스셋 플레이어"

@@ -77,7 +77,12 @@ export function UnifiedCalendar({
   );
   const [activePreset, setActivePreset] = useState<CalendarPreset | null>(preset);
 
-  useEffect(() => setActivePreset(preset), [preset]);
+  // 바깥에서 preset이 바뀌면 렌더 중 바로 따라간다(이전 값과 비교).
+  const [syncedPreset, setSyncedPreset] = useState(preset);
+  if (syncedPreset !== preset) {
+    setSyncedPreset(preset);
+    setActivePreset(preset);
+  }
 
   // 상세 패널 상태
   const [selectedItem, setSelectedItem] = useState<UnifiedItem | null>(null);

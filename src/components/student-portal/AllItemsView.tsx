@@ -4,7 +4,7 @@
  */
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Search } from "lucide-react";
 import {
   getUnifiedItemKey,
@@ -60,9 +60,12 @@ export function AllItemsView({
   const [panelOpen, setPanelOpen] = useState(false);
   const [query, setQuery] = useState("");
 
-  useEffect(() => {
+  // 바깥에서 다른 유형으로 바로 들어오면 그 유형만 보이게 맞춘다. 이전 값과 렌더 중에 비교한다.
+  const [appliedInitialType, setAppliedInitialType] = useState(initialType);
+  if (appliedInitialType !== initialType) {
+    setAppliedInitialType(initialType);
     if (initialType) setActiveTypes(new Set([initialType]));
-  }, [initialType]);
+  }
 
   const toggleType = (type: UnifiedItemType) => {
     if (initialType) onInitialTypeCleared?.();

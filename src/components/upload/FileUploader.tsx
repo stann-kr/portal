@@ -36,6 +36,9 @@ export interface FileUploaderProps {
   onUploadingChange?: (isUploading: boolean) => void;
 }
 
+type UploadRequest = { scope: string; xhr: XMLHttpRequest | null };
+type UploadProgressState = { request: UploadRequest; scope: string; progress: number };
+
 /**
  * Presigned URL 기반 R2 직접 업로드 컴포넌트
  * 파일 선택 → Server Action으로 Presigned URL 발급 → R2로 직접 PUT 전송
@@ -53,11 +56,14 @@ export function FileUploader({
   const inputRef = useRef<HTMLInputElement>(null);
   const scope = JSON.stringify([purpose, draftOperationId]);
   const scopeRef = useRef(scope);
-  const requestRef = useRef<{ scope: string; xhr: XMLHttpRequest | null } | null>(null);
+  const requestRef = useRef<UploadRequest | null>(null);
   const mountedRef = useRef(false);
   const onUploadingChangeRef = useRef(onUploadingChange);
-  const [isUploading, setIsUploading] = useState(false);
-  const [progress, setProgress] = useState(0);
+  // 진행 표시는 시작한 요청과 그 문맥(목적·초안 작업)에 묶는다. 요청은 끝나거나 중단되면 자기 표시만 지우고,
+  // 렌더 중인 문맥과 다른 요청의 진행은 보이지 않게 계산한다(이전 요청 중단은 아래 layout effect가 맡는다).
+  const [upload, setUpload] = useState<UploadProgressState | null>(null);
+  const isUploading = upload !== null && upload.scope === scope;
+  const progress = isUploading ? upload.progress : 0;
 
   useLayoutEffect(() => {
     onUploadingChangeRef.current = onUploadingChange;
@@ -67,8 +73,6 @@ export function FileUploader({
     // 미완료 transition 렌더는 현재 업로드의 소유 문맥을 바꾸지 않는다.
     scopeRef.current = scope;
     mountedRef.current = true;
-    setIsUploading(false);
-    setProgress(0);
     if (inputRef.current) inputRef.current.value = "";
     return () => {
       mountedRef.current = false;
@@ -82,13 +86,12 @@ export function FileUploader({
   async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file || disabled || !draftOperationId || requestRef.current) return;
-    const request = { scope, xhr: null as XMLHttpRequest | null };
+    const request: UploadRequest = { scope, xhr: null };
     requestRef.current = request;
     const isCurrent = () => mountedRef.current && requestRef.current === request && scopeRef.current === request.scope;
 
-    setIsUploading(true);
+    setUpload({ request, scope: request.scope, progress: 0 });
     onUploadingChangeRef.current?.(true);
-    setProgress(0);
 
     let issuedMediaObjectId: string | null = null;
     try {
@@ -116,7 +119,11 @@ export function FileUploader({
         file,
         result.uploadUrl,
         result.uploadContentType,
-        (value) => { if (isCurrent()) setProgress(value); },
+        (value) => {
+          if (isCurrent()) {
+            setUpload((current) => (current?.request === request ? { ...current, progress: value } : current));
+          }
+        },
         (xhr) => {
           request.xhr = xhr;
         },
@@ -153,11 +160,11 @@ export function FileUploader({
       }
     } finally {
       request.xhr = null;
+      // 중단된 이전 요청도 자기 진행 표시는 지운다. 다른 요청의 표시는 건드리지 않는다.
+      setUpload((current) => (current?.request === request ? null : current));
       if (isCurrent()) {
         requestRef.current = null;
-        setIsUploading(false);
         onUploadingChangeRef.current?.(false);
-        setProgress(0);
         // input 초기화 (같은 파일 재선택 가능하도록)
         if (inputRef.current) inputRef.current.value = "";
       }

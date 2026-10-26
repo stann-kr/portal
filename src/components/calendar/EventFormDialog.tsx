@@ -66,11 +66,15 @@ export function EventFormDialog({
   const handledEventIdRef = useRef<string | null>(null);
   const error = hasSubmitted && !isPending ? state.error : undefined;
 
-  useEffect(() => {
-    if (!open) return;
-    setFields(initialFields(defaultStart));
-    setHasSubmitted(false);
-  }, [open, defaultStart]);
+  // 열 때나 열린 채로 시작 시각이 바뀔 때 입력을 새로 채운다. 이전 값과 렌더 중에 비교해 바로 맞춘다.
+  const [resetSource, setResetSource] = useState({ open, defaultStart });
+  if (resetSource.open !== open || resetSource.defaultStart !== defaultStart) {
+    setResetSource({ open, defaultStart });
+    if (open) {
+      setFields(initialFields(defaultStart));
+      setHasSubmitted(false);
+    }
+  }
 
   useEffect(() => {
     if (state.event && handledEventIdRef.current !== state.event.id) {
