@@ -92,6 +92,8 @@ function NoteFullFormContent({ action, actorId, studentId, returnTo, defaultDate
   const handledNoteIdRef = useRef<string | null>(null);
   const router = useRouter();
   useBusyNavigationGuard(isPending);
+  // 본문 이미지가 올라가는 동안 새 노트를 만들면 문서 페이지로 넘어가며 남은 이미지가 빠진다.
+  const [isEditorUploading, setIsEditorUploading] = useState(false);
 
   const {
     loaded,
@@ -210,7 +212,7 @@ function NoteFullFormContent({ action, actorId, studentId, returnTo, defaultDate
   useDocumentAutosave({
     enabled:
       loaded && canSubmit && !isPending && Boolean(operationId) && !missingRequired &&
-      !hasOperationConflict && failedKey !== changeKey && !state.note?.id,
+      !hasOperationConflict && failedKey !== changeKey && !state.note?.id && !isEditorUploading,
     dirty: true,
     changeKey,
     onSave: () => formRef.current?.requestSubmit(),
@@ -266,7 +268,7 @@ function NoteFullFormContent({ action, actorId, studentId, returnTo, defaultDate
         className="space-y-5"
         onKeyDownCapture={handleSaveShortcut}
         onSubmit={(event) => {
-          if (!loaded || !canSubmit || isPending || !operationId) {
+          if (!loaded || !canSubmit || isPending || !operationId || isEditorUploading) {
             event.preventDefault();
             return;
           }
@@ -360,6 +362,7 @@ function NoteFullFormContent({ action, actorId, studentId, returnTo, defaultDate
             <FullEditor
               initialContent={contentHtml}
               contentVersion={contentVersion}
+              onUploadingChange={setIsEditorUploading}
               onChange={handleEditorChange}
               onDirty={(reader) => {
                 handleEditorDirty(reader);

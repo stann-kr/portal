@@ -89,6 +89,8 @@ function NewPostFormContent({
   const [operationId, setOperationId] = useState("");
   const [uploadError, setUploadError] = useState("");
   const [isUploading, setIsUploading] = useState(false);
+  // 본문 이미지가 올라가는 동안에는 제출하지 않는다. 편집기는 계속 쓸 수 있다.
+  const [isEditorUploading, setIsEditorUploading] = useState(false);
   const [state, formAction, isPending] = useActionState<CreatePostState, FormData>(async (previous, data) => {
     try {
       return await createPost(previous, data);
@@ -144,7 +146,7 @@ function NewPostFormContent({
       },
     },
   );
-  const isSubmitBlocked = !loaded || !canSubmit || isFormBusy || !operationId;
+  const isSubmitBlocked = !loaded || !canSubmit || isFormBusy || isEditorUploading || !operationId;
   const isSubmitDisabled =
     isSubmitBlocked ||
     !title.trim() ||
@@ -266,7 +268,7 @@ function NewPostFormContent({
         className="space-y-5"
         onKeyDownCapture={handleSaveShortcut}
         onSubmit={(event) => {
-          if (!loaded || !canSubmit || isFormBusy) {
+          if (!loaded || !canSubmit || isFormBusy || isEditorUploading) {
             event.preventDefault();
             return;
           }
@@ -463,6 +465,7 @@ function NewPostFormContent({
           </p>
           {loaded ? (
             <FullEditor
+              onUploadingChange={setIsEditorUploading}
               initialContent={contentHtml}
               contentVersion={contentVersion}
               onChange={handleEditorChange}
@@ -509,7 +512,7 @@ function NewPostFormContent({
             className="flex-1 gap-2"
           >
             <Send className="h-4 w-4" aria-hidden="true" />
-            {isUploading ? "업로드 완료 대기…" : isPending ? "게시 중…" : "게시하기"}
+            {isUploading || isEditorUploading ? "업로드 완료 대기…" : isPending ? "게시 중…" : "게시하기"}
           </Button>
           <Button variant="outline" asChild>
             <Link

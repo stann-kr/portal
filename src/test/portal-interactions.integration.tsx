@@ -32,6 +32,7 @@ let trashPost: typeof import("@/lib/actions/posts").deletePost = async () => ({ 
 let AssignmentView: typeof import("@/components/student-portal/AssignmentView").AssignmentView;
 let FileUploader: typeof import("@/components/upload/FileUploader").FileUploader;
 let FullEditor: typeof import("@/components/editor/FullEditor").FullEditor;
+let pastedEditorImageFiles: typeof import("@/components/editor/useEditorImageUpload").pastedEditorImageFiles;
 let requestUpload: typeof import("@/lib/actions/upload").requestMediaUpload = async () => ({ success: false, error: "업로드 테스트 미설정" });
 let completeUpload: typeof import("@/lib/actions/upload").completeMediaUploadAction = async () => ({ success: false, error: "업로드 테스트 미설정" });
 let abandonUpload: typeof import("@/lib/actions/upload").abandonMediaUpload = async () => {};
@@ -237,6 +238,7 @@ before(async () => {
   ({ AssignmentView } = await import("@/components/student-portal/AssignmentView"));
   ({ FileUploader } = await import("@/components/upload/FileUploader"));
   ({ FullEditor } = await import("@/components/editor/FullEditor"));
+  ({ pastedEditorImageFiles } = await import("@/components/editor/useEditorImageUpload"));
   ({ CreateEntryDropdown } = await import("@/components/student-portal/CreateEntryDropdown"));
   ({ AdminPortalClient } = await import("@/components/admin-portal/AdminPortalClient"));
   ({ StudentPortalClient } = await import("@/components/student-portal/StudentPortalClient"));
@@ -403,6 +405,88 @@ test("FullEditor는 고른 이미지를 Worker 경로로 올린 뒤 본문에 �
   await choose([oversized]);
   assert.equal(requests.length, 1, "10MB를 넘는 이미지는 서버에 요청하지 않는다");
   assert.match(browser.document.querySelector('[role="status"]')?.textContent ?? "", /10MB/u);
+});
+
+test("편집기 붙여넣기는 글과 함께 온 미리보기 그림을 올리지 않고 그림만 있을 때 올린다", () => {
+  const image = new browser.File(["png"], "shot.png", { type: "image/png" }) as unknown as File;
+  assert.equal(pastedEditorImageFiles({ types: ["text/html", "Files"], files: [image] }), null);
+  assert.equal(pastedEditorImageFiles({ types: ["text/plain", "Files"], files: [image] }), null);
+  assert.deepEqual(pastedEditorImageFiles({ types: ["Files"], files: [image] }), [image]);
+  assert.equal(pastedEditorImageFiles({ types: ["Files"], files: [] }), null);
+  assert.equal(pastedEditorImageFiles(null), null);
+});
+
+function mockEditorImageUpload(context: TestContext) {
+  const releases: ((value: Awaited<ReturnType<typeof completeUpload>>) => void)[] = [];
+  const abandoned: string[] = [];
+  let issued = 0;
+  requestUpload = async (input) => {
+    issued += 1;
+    const id = `30000000-0000-4000-8000-${String(issued).padStart(12, "0")}`;
+    return { success: true, mediaObjectId: id, deliveryUrl: `/api/media/${id}`, uploadUrl: `/api/media/upload/${id}`, uploadContentType: input.mimeType };
+  };
+  completeUpload = async (id) => new Promise((resolve) => {
+    releases.push(() => resolve({ success: true, mediaObjectId: id, deliveryUrl: `/api/media/${id}` }));
+  });
+  abandonUpload = async (id) => { abandoned.push(id); };
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(null, { status: 200 })) as typeof fetch;
+  context.after(() => {
+    globalThis.fetch = originalFetch;
+    requestUpload = async () => ({ success: false, error: "업로드 테스트 미설정" });
+    completeUpload = async () => ({ success: false, error: "업로드 테스트 미설정" });
+    abandonUpload = async () => {};
+  });
+  return { releases, abandoned };
+}
+
+async function chooseEditorImage() {
+  const input = browser.document.querySelector('input[type="file"]');
+  assert.ok(input);
+  Object.defineProperty(input, "files", { configurable: true, value: [new browser.File(["png"], "photo.png", { type: "image/png" })] });
+  await act(async () => {
+    input.dispatchEvent(new browser.Event("change", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  });
+}
+
+const settleEditor = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 260)); });
+
+test("FullEditor는 업로드 중 본문이 다른 초안으로 바뀌면 늦게 끝난 이미지를 넣지 않고 버린다", { concurrency: false }, async (context) => {
+  const { releases, abandoned } = mockEditorImageUpload(context);
+  const changes: string[] = [];
+  const uploading: boolean[] = [];
+  const screen = (version: number, content: string) => <FullEditor initialContent={content} contentVersion={version} ariaLabel="본문" onChange={(html) => changes.push(html)} onUploadingChange={(value) => uploading.push(value)} />;
+  const root = await render(context, screen(0, "<p>초안 A</p>"));
+  await settleEditor();
+  await chooseEditorImage();
+  assert.equal(uploading.at(-1), true, "올리는 동안 상위 form에 알린다");
+  await act(async () => root.render(screen(1, "<p>복원한 초안 B</p>")));
+  await act(async () => { releases[0]?.(undefined as never); await new Promise((resolve) => setTimeout(resolve, 10)); });
+  await settleEditor();
+  assert.deepEqual(abandoned, ["30000000-0000-4000-8000-000000000001"]);
+  assert.equal(changes.some((html) => html.includes("<img")), false);
+  assert.equal(uploading.at(-1), false);
+});
+
+test("FullEditor는 잠긴 동안 끝난 업로드를 잠금이 풀린 뒤 넣는다", { concurrency: false }, async (context) => {
+  const { releases, abandoned } = mockEditorImageUpload(context);
+  const changes: string[] = [];
+  const uploading: boolean[] = [];
+  const screen = (disabled: boolean) => <FullEditor initialContent="<p>본문</p>" ariaLabel="본문" disabled={disabled} onChange={(html) => changes.push(html)} onUploadingChange={(value) => uploading.push(value)} />;
+  const root = await render(context, screen(false));
+  await settleEditor();
+  await chooseEditorImage();
+  await act(async () => root.render(screen(true)));
+  await act(async () => { releases[0]?.(undefined as never); await new Promise((resolve) => setTimeout(resolve, 10)); });
+  await settleEditor();
+  assert.equal(changes.some((html) => html.includes("<img")), false, "잠긴 동안에는 본문을 바꾸지 않는다");
+  assert.equal(uploading.at(-1), true, "넣기를 기다리는 동안에도 제출을 막는다");
+  await act(async () => root.render(screen(false)));
+  await settleEditor();
+  assert.match(changes.at(-1) ?? "", /<img[^>]+src="\/api\/media\/30000000-0000-4000-8000-000000000001"/u);
+  assert.equal(uploading.at(-1), false);
+  assert.deepEqual(abandoned, []);
 });
 
 for (const waitingAt of ["intent", "complete"] as const) {

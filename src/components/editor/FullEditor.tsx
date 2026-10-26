@@ -45,9 +45,13 @@ import {
 import { createDeferredDocumentSerializer } from "@/lib/deferred-document-serializer";
 import {
   EDITOR_IMAGE_ACCEPT,
+  abandonEditorImage,
   isEditorImageFile,
+  pastedEditorImageFiles,
   useEditorImageUpload,
+  type EditorUploadedImage,
 } from "./useEditorImageUpload";
+import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
 
 // ── 타입 ──────────────────────────────────────────
 
@@ -75,6 +79,13 @@ interface FullEditorProps {
    * page: 문서 페이지 본문. 테두리 없이 쓰고 편집 도구 줄은 스크롤해도 위에 남는다.
    */
   variant?: "boxed" | "page";
+  /** 본문 이미지가 올라가는 중이거나 넣기를 기다리는 동안 true. 상위 form은 제출·자동 저장을 미룬다. */
+  onUploadingChange?: (uploading: boolean) => void;
+}
+
+/** 마크다운 이미지 문법을 깨지 않도록 대체 텍스트의 특수 문자를 정리한다. */
+function markdownImageAlt(value: string): string {
+  return value.replace(/[\r\n]+/gu, " ").replace(/([\\[\]()])/gu, "\\$1");
 }
 
 // ── lowlight 인스턴스 ─────────────────────────────
@@ -163,6 +174,7 @@ export function FullEditor({
   footer,
   saveShortcutLabel,
   variant = "boxed",
+  onUploadingChange,
 }: FullEditorProps) {
   const isPage = variant === "page";
   const [isMarkdownMode, setIsMarkdownMode] = useState(false);
@@ -218,27 +230,73 @@ export function FullEditor({
   }, [publishLatestHtml, readLatestHtml]);
 
   const imageInputRef = useRef<HTMLInputElement>(null);
-  const insertUploadedImage = useCallback(
-    (deliveryUrl: string, file: File) => {
-      const alt = file.name.replace(/\.[^.]+$/u, "");
+  // 본문을 다른 초안으로 바꾸거나 편집기가 사라지면 세대를 올려, 그 전에 시작한 업로드를 넣지 않는다.
+  const contentGenerationRef = useRef(0);
+  const disabledRef = useRef(disabled);
+  useEffect(() => {
+    disabledRef.current = disabled;
+  }, [disabled]);
+  // 저장 중처럼 잠긴 동안 끝난 업로드는 잠금이 풀린 뒤 넣는다.
+  const deferredImagesRef = useRef<EditorUploadedImage[]>([]);
+  const [deferredImageCount, setDeferredImageCount] = useState(0);
+
+  const insertImageNow = useCallback(
+    (upload: EditorUploadedImage) => {
+      const alt = upload.file.name.replace(/\.[^.]+$/u, "");
       if (markdownModeRef.current) {
         // 마크다운 모드에서는 textarea가 원본이므로 그 끝에 이미지를 붙인다.
-        const nextMarkdown = `${markdownTextRef.current.trimEnd()}\n\n![${alt}](${deliveryUrl})\n`;
+        const nextMarkdown = `${markdownTextRef.current.trimEnd()}\n\n![${markdownImageAlt(alt)}](${upload.deliveryUrl})\n`;
         markdownTextRef.current = nextMarkdown;
         setMarkdownText(nextMarkdown);
         markContentDirty();
         return;
       }
+      // 다른 입력란의 포커스를 빼앗지 않고 현재 선택 위치에 넣는다.
       editorInstanceRef.current
         ?.chain()
-        .focus()
-        .setImage({ src: deliveryUrl, alt: alt || undefined })
+        .setImage({ src: upload.deliveryUrl, alt: alt || undefined })
         .run();
     },
     [markContentDirty],
   );
-  const imageUpload = useEditorImageUpload(insertUploadedImage);
-  const { uploadImages } = imageUpload;
+
+  const discardDeferredImages = useCallback(() => {
+    for (const upload of deferredImagesRef.current) abandonEditorImage(upload.mediaObjectId);
+    deferredImagesRef.current = [];
+    setDeferredImageCount(0);
+  }, []);
+
+  const handleUploadedImage = useCallback(
+    (upload: EditorUploadedImage, generation: number) => {
+      if (generation !== contentGenerationRef.current || !editorInstanceRef.current) {
+        abandonEditorImage(upload.mediaObjectId);
+        return;
+      }
+      if (disabledRef.current) {
+        deferredImagesRef.current.push(upload);
+        setDeferredImageCount(deferredImagesRef.current.length);
+        return;
+      }
+      insertImageNow(upload);
+    },
+    [insertImageNow],
+  );
+  const imageUpload = useEditorImageUpload<number>(handleUploadedImage);
+  const uploadImagesForCurrentContent = imageUpload.uploadImages;
+  const uploadImages = useCallback(
+    (files: readonly File[]) => uploadImagesForCurrentContent(files, contentGenerationRef.current),
+    [uploadImagesForCurrentContent],
+  );
+  const imageUploadBusy = imageUpload.pendingCount > 0 || deferredImageCount > 0;
+  useBusyNavigationGuard(imageUploadBusy);
+  const onUploadingChangeRef = useRef(onUploadingChange);
+  useEffect(() => {
+    onUploadingChangeRef.current = onUploadingChange;
+  }, [onUploadingChange]);
+  useEffect(() => {
+    onUploadingChangeRef.current?.(imageUploadBusy);
+  }, [imageUploadBusy]);
+  useEffect(() => () => onUploadingChangeRef.current?.(false), []);
   const editorExtensions = useMemo(
     () => [
       StarterKit.configure({
@@ -311,8 +369,9 @@ export function FullEditor({
       },
       // 붙여넣거나 끌어 놓은 이미지 파일은 data URL 대신 업로드한 주소로 넣는다.
       handlePaste: (_view: unknown, event: ClipboardEvent) => {
-        const files = Array.from(event.clipboardData?.files ?? []);
-        if (!files.some(isEditorImageFile)) return false;
+        // 표·문서에서 복사하면 글과 함께 미리보기 그림이 들어온다. 이때는 글을 붙인다.
+        const files = pastedEditorImageFiles(event.clipboardData);
+        if (!files) return false;
         event.preventDefault();
         uploadImages(files);
         return true;
@@ -404,6 +463,8 @@ export function FullEditor({
       clearTimeout(changeTimerRef.current);
       changeTimerRef.current = null;
     }
+    contentGenerationRef.current += 1;
+    discardDeferredImages();
     editor.commands.setContent(nextContent, { emitUpdate: false });
     documentSerializerRef.current.replace(nextContent);
     lastLocalHtmlRef.current = nextContent;
@@ -415,12 +476,29 @@ export function FullEditor({
       markdownTextRef.current = nextMarkdown;
       setMarkdownText(nextMarkdown);
     }
-  }, [contentVersion, editor, initialContent, isMarkdownMode]);
+  }, [contentVersion, discardDeferredImages, editor, initialContent, isMarkdownMode]);
 
   useEffect(() => {
     editor?.setEditable(!disabled, false);
-    if (disabled) setInsertPanel(null);
-  }, [disabled, editor]);
+    if (disabled) {
+      setInsertPanel(null);
+      return;
+    }
+    const deferred = deferredImagesRef.current;
+    if (deferred.length === 0) return;
+    deferredImagesRef.current = [];
+    setDeferredImageCount(0);
+    for (const upload of deferred) insertImageNow(upload);
+  }, [disabled, editor, insertImageNow]);
+
+  useEffect(
+    () => () => {
+      contentGenerationRef.current += 1;
+      for (const upload of deferredImagesRef.current) abandonEditorImage(upload.mediaObjectId);
+      deferredImagesRef.current = [];
+    },
+    [],
+  );
 
   useEffect(() => () => {
     if (changeTimerRef.current) {

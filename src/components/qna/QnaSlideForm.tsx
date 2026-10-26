@@ -78,6 +78,8 @@ function QnaSlideFormContent({
   const [attachmentObjectId, setAttachmentObjectId] = useState("");
   const [operationId, setOperationId] = useState("");
   const [isUploading, setIsUploading] = useState(false);
+  // 본문 이미지가 올라가는 동안에는 제출하지 않는다. 편집기는 계속 쓸 수 있다.
+  const [isEditorUploading, setIsEditorUploading] = useState(false);
   const [state, formAction, isPending] = useActionState<CreateThreadInlineState, FormData>(
     async (previous, data) => {
       try {
@@ -232,7 +234,7 @@ function QnaSlideFormContent({
       className="space-y-4"
       onKeyDownCapture={handleSaveShortcut}
       onSubmit={(event) => {
-        if (!loaded || !canSubmit || isFormBusy) {
+        if (!loaded || !canSubmit || isFormBusy || isEditorUploading) {
           event.preventDefault();
           return;
         }
@@ -305,6 +307,7 @@ function QnaSlideFormContent({
         </label>
         {loaded && (
           <FullEditor
+            onUploadingChange={setIsEditorUploading}
             initialContent={contentHtml}
             contentVersion={contentVersion}
             onChange={handleEditorChange}
@@ -360,8 +363,8 @@ function QnaSlideFormContent({
       </div>
 
       <div className="flex gap-3 pt-2">
-        <Button type="submit" disabled={!loaded || !canSubmit || isFormBusy || !operationId || !title.trim() || isRichTextEmpty(contentHtml)} className="flex-1">
-          {isUploading ? "업로드 완료 대기..." : isPending ? "전송 중..." : "질문 등록"}
+        <Button type="submit" disabled={!loaded || !canSubmit || isFormBusy || isEditorUploading || !operationId || !title.trim() || isRichTextEmpty(contentHtml)} className="flex-1">
+          {isUploading || isEditorUploading ? "업로드 완료 대기..." : isPending ? "전송 중..." : "질문 등록"}
         </Button>
         <Button type="button" variant="outline" onClick={onClose} disabled={isFormBusy}>
           취소

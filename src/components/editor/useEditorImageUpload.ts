@@ -24,6 +24,20 @@ export function isEditorImageFile(file: File): boolean {
   return (DOCUMENT_IMAGE_MIME_TYPES as readonly string[]).includes(file.type);
 }
 
+/**
+ * 붙여넣기에서 올릴 이미지 파일을 고른다. 표·문서 복사처럼 글(HTML·텍스트)이 함께 오면
+ * 미리보기 그림 대신 글을 붙여야 하므로 null을 돌려 기본 붙여넣기에 맡긴다.
+ */
+export function pastedEditorImageFiles(clipboard: {
+  types: readonly string[];
+  files: ArrayLike<File>;
+} | null): File[] | null {
+  if (!clipboard) return null;
+  if (clipboard.types.includes("text/html") || clipboard.types.includes("text/plain")) return null;
+  const files = Array.from(clipboard.files);
+  return files.some(isEditorImageFile) ? files : null;
+}
+
 /** 업로드 전에 사용자에게 바로 알려 줄 수 있는 형식·크기 문제를 찾는다. */
 export function editorImageFileError(file: File): string | null {
   if (!isEditorImageFile(file)) {
@@ -36,7 +50,21 @@ export function editorImageFileError(file: File): string | null {
   return null;
 }
 
-async function uploadOne(file: File, draftOperationId: string): Promise<string> {
+export type EditorUploadedImage = {
+  deliveryUrl: string;
+  mediaObjectId: string;
+  file: File;
+};
+
+/** 본문에 넣지 않을 업로드를 서버 삭제 대기열에 넘긴다. 실패해도 만료 정리가 뒤따른다. */
+export function abandonEditorImage(mediaObjectId: string): void {
+  void abandonMediaUpload(mediaObjectId).catch(() => undefined);
+}
+
+async function uploadOne(
+  file: File,
+  draftOperationId: string,
+): Promise<{ deliveryUrl: string; mediaObjectId: string }> {
   const requested = await requestMediaUpload({
     purpose: "DOCUMENT_IMAGE",
     fileName: file.name || "image",
@@ -55,11 +83,11 @@ async function uploadOne(file: File, draftOperationId: string): Promise<string> 
       credentials: "same-origin",
     });
   } catch {
-    await abandonMediaUpload(requested.mediaObjectId).catch(() => undefined);
+    abandonEditorImage(requested.mediaObjectId);
     throw new Error("네트워크 문제로 이미지를 올리지 못했습니다.");
   }
   if (!response.ok) {
-    await abandonMediaUpload(requested.mediaObjectId).catch(() => undefined);
+    abandonEditorImage(requested.mediaObjectId);
     throw new Error(
       response.status === 415
         ? "이미지 파일 내용이 형식과 맞지 않습니다."
@@ -67,17 +95,27 @@ async function uploadOne(file: File, draftOperationId: string): Promise<string> 
     );
   }
 
-  const completed = await completeMediaUploadAction(requested.mediaObjectId);
-  if (!completed.success) throw new Error(completed.error);
-  return completed.deliveryUrl;
+  let completed: Awaited<ReturnType<typeof completeMediaUploadAction>>;
+  try {
+    completed = await completeMediaUploadAction(requested.mediaObjectId);
+  } catch {
+    abandonEditorImage(requested.mediaObjectId);
+    throw new Error("이미지 업로드 완료를 확인하지 못했습니다.");
+  }
+  if (!completed.success) {
+    abandonEditorImage(requested.mediaObjectId);
+    throw new Error(completed.error);
+  }
+  return { deliveryUrl: completed.deliveryUrl, mediaObjectId: requested.mediaObjectId };
 }
 
 /**
  * 편집기 본문 이미지 업로드를 맡는다. 편집기 하나가 한 draft 작업 ID를 쓰고,
- * 업로드가 끝난 이미지만 본문에 넣는다. 문서 저장 때 서버가 이미지를 문서에 연결한다.
+ * 업로드가 끝난 이미지만 넘긴다. 넣을지·미룰지·버릴지는 편집기가 `context`로 판단한다.
+ * 문서 저장 때 서버가 이미지를 문서에 연결한다.
  */
-export function useEditorImageUpload(
-  onUploaded: (deliveryUrl: string, file: File) => void,
+export function useEditorImageUpload<Context>(
+  onUploaded: (upload: EditorUploadedImage, context: Context) => void,
 ) {
   const [state, setState] = useState<EditorImageUploadState>({
     pendingCount: 0,
@@ -87,7 +125,7 @@ export function useEditorImageUpload(
   const onUploadedRef = useRef(onUploaded);
   onUploadedRef.current = onUploaded;
 
-  const uploadImages = useCallback((files: readonly File[]) => {
+  const uploadImages = useCallback((files: readonly File[], context: Context) => {
     const images = files.filter(isEditorImageFile);
     const firstError = files.map(editorImageFileError).find(Boolean) ?? null;
     const valid = images.filter((file) => editorImageFileError(file) === null);
@@ -103,8 +141,8 @@ export function useEditorImageUpload(
     void (async () => {
       for (const file of valid) {
         try {
-          const deliveryUrl = await uploadOne(file, draftOperationId);
-          onUploadedRef.current(deliveryUrl, file);
+          const uploaded = await uploadOne(file, draftOperationId);
+          onUploadedRef.current({ ...uploaded, file }, context);
           setState((current) => ({ ...current, pendingCount: current.pendingCount - 1 }));
         } catch (error) {
           setState((current) => ({

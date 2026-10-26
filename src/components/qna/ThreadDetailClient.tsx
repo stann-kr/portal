@@ -102,6 +102,8 @@ function ThreadDetailContent({
   const [attachmentObjectId, setAttachmentObjectId] = useState("");
   const [operationId, setOperationId] = useState("");
   const [isUploading, setIsUploading] = useState(false);
+  // 본문 이미지가 올라가는 동안에는 제출하지 않는다. 편집기는 계속 쓸 수 있다.
+  const [isEditorUploading, setIsEditorUploading] = useState(false);
   const [editorKey, setEditorKey] = useState(0);
   const [isPending, startTransition] = useTransition();
   // 상태와 CAS 기준은 같은 서버 snapshot에서 가져온다.
@@ -390,7 +392,7 @@ function ThreadDetailContent({
           className="space-y-3"
           onKeyDownCapture={handleReplySaveShortcut}
           onSubmit={(event) => {
-            if (!loaded || !canSubmit || currentStatus === "CLOSED" || isReplyFormBusy || !operationId) {
+            if (!loaded || !canSubmit || currentStatus === "CLOSED" || isReplyFormBusy || isEditorUploading || !operationId) {
               event.preventDefault();
               return;
             }
@@ -449,6 +451,7 @@ function ThreadDetailContent({
           ) : null}
           {loaded && (
             <FullEditor
+              onUploadingChange={setIsEditorUploading}
               key={editorKey}
               initialContent={contentHtml}
               contentVersion={contentVersion}
@@ -499,8 +502,8 @@ function ThreadDetailContent({
             onUploadingChange={setIsUploading}
           />
           {currentStatus !== "CLOSED" ? (
-            <Button type="submit" disabled={!loaded || !canSubmit || isReplyFormBusy || !operationId || isRichTextEmpty(contentHtml)} className="gap-2">
-              {isUploading
+            <Button type="submit" disabled={!loaded || !canSubmit || isReplyFormBusy || isEditorUploading || !operationId || isRichTextEmpty(contentHtml)} className="gap-2">
+              {isUploading || isEditorUploading
                 ? "업로드 완료 대기..."
                 : isReplying
                   ? "등록 중..."

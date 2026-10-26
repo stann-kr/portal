@@ -57,6 +57,8 @@ function NewQnaFormContent({ actorId, returnTo }: { actorId: string; returnTo: s
   const [attachmentObjectId, setAttachmentObjectId] = useState("");
   const [operationId, setOperationId] = useState("");
   const [isUploading, setIsUploading] = useState(false);
+  // 본문 이미지가 올라가는 동안에는 제출하지 않는다. 편집기는 계속 쓸 수 있다.
+  const [isEditorUploading, setIsEditorUploading] = useState(false);
   const [state, formAction, isPending] = useActionState<CreateThreadState, FormData>(
     async (previous, data) => {
       try {
@@ -199,7 +201,7 @@ function NewQnaFormContent({ actorId, returnTo }: { actorId: string; returnTo: s
         className="space-y-5"
         onKeyDownCapture={handleSaveShortcut}
         onSubmit={(event) => {
-          if (!loaded || !canSubmit || isFormBusy) {
+          if (!loaded || !canSubmit || isFormBusy || isEditorUploading) {
             event.preventDefault();
             return;
           }
@@ -272,6 +274,7 @@ function NewQnaFormContent({ actorId, returnTo }: { actorId: string; returnTo: s
           </p>
           {loaded ? (
             <FullEditor
+              onUploadingChange={setIsEditorUploading}
               initialContent={contentHtml}
               contentVersion={contentVersion}
               onChange={handleEditorChange}
@@ -327,11 +330,11 @@ function NewQnaFormContent({ actorId, returnTo }: { actorId: string; returnTo: s
         <div className="flex gap-3">
           <Button
             type="submit"
-            disabled={!loaded || !canSubmit || isFormBusy || !operationId || !title.trim() || isRichTextEmpty(contentHtml)}
+            disabled={!loaded || !canSubmit || isFormBusy || isEditorUploading || !operationId || !title.trim() || isRichTextEmpty(contentHtml)}
             className="flex-1 gap-2"
           >
             <Send className="h-4 w-4" aria-hidden="true" />
-            {isUploading ? "업로드 완료 대기…" : isPending ? "등록 중…" : "질문 등록"}
+            {isUploading || isEditorUploading ? "업로드 완료 대기…" : isPending ? "등록 중…" : "질문 등록"}
           </Button>
           <Button variant="outline" asChild>
             <Link

@@ -62,6 +62,8 @@ function PostEditFormContent({
   onBusyChange,
 }: PostEditFormProps) {
   const [title, setTitle] = useState(post.title);
+  // 본문 이미지가 올라가는 동안에는 제출하지 않는다. 편집기는 계속 쓸 수 있다.
+  const [isEditorUploading, setIsEditorUploading] = useState(false);
   const [operationId, setOperationId] = useState("");
   const [baseRevision, setBaseRevision] = useState(post.version);
   const {
@@ -207,7 +209,8 @@ function PostEditFormContent({
       },
     },
   );
-  const isSubmitBlocked = !loaded || !canSubmit || isPending || hasStaleDraftBase || !operationId;
+  const isSubmitBlocked =
+    !loaded || !canSubmit || isPending || isEditorUploading || hasStaleDraftBase || !operationId;
   const isSubmitDisabled =
     isSubmitBlocked ||
     !title.trim() ||
@@ -430,6 +433,7 @@ function PostEditFormContent({
 
       {loaded ? (
         <FullEditor
+          onUploadingChange={setIsEditorUploading}
           initialContent={contentHtml}
           contentVersion={contentVersion}
           onChange={handleEditorChange}
@@ -482,7 +486,7 @@ function PostEditFormContent({
           className="gap-2"
         >
           <Save className="h-4 w-4" aria-hidden="true" />
-          {isPending ? "저장 중…" : "변경사항 저장"}
+          {isEditorUploading ? "업로드 완료 대기…" : isPending ? "저장 중…" : "변경사항 저장"}
         </Button>
       </div>
     </form>

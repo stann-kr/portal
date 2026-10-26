@@ -47,7 +47,7 @@ export function PrivateNoteList({
         <li key={note.id} className={index > 0 ? "border-t border-border" : undefined}>
           <Link
             href={`/dashboard/notes/${note.id}?returnTo=${encodeURIComponent(returnTo)}`}
-            className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-muted focus-visible:bg-muted focus-visible:outline-none sm:px-5"
+            className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-muted focus-visible:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:px-5"
           >
             <div className="min-w-0 flex-1">
               <h2 className="truncate text-sm font-semibold text-foreground">{note.title}</h2>
