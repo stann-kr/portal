@@ -136,13 +136,22 @@ function readNoTokenOnServer(): string | null {
   return null;
 }
 
+/** 잘못 인코딩된 주소는 빈 token으로 보고 "사용할 수 없는 링크"로 안내한다. */
+function readInviteTokenFromHash(): string {
+  try {
+    return decodeURIComponent(window.location.hash.slice(1));
+  } catch {
+    return "";
+  }
+}
+
 /**
  * 가입 링크(`/invite#<token>`)의 token을 읽어 확인하고 학생이 직접 비밀번호를 정하게 한다.
  * token은 주소의 `#` 뒤에만 있어 서버 요청 주소에 남지 않고, server action 본문으로만 보낸다.
  */
 export function InviteSignup({
-  readToken = () => decodeURIComponent(window.location.hash.slice(1)),
-  // 새 session cookie를 middleware와 layout이 처음부터 읽도록 client 라우팅이 아닌 전체 문서 이동을 쓴다.
+  readToken = readInviteTokenFromHash,
+  // 새 session cookie를 proxy와 layout이 처음부터 읽도록 client 라우팅이 아닌 전체 문서 이동을 쓴다.
   onSignedIn = () => window.location.assign(new URL("/dashboard", window.location.origin)),
 }: {
   readToken?: () => string;

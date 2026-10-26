@@ -437,7 +437,7 @@ function NoteEditorFormContent({ note, actorId, action, focusBodyEnd = false }: 
     draftBaseFingerprintRef.current = baseFingerprintRef.current;
     setHasStaleDraftBase(false);
     if (!typedSinceSubmit) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- 저장 결과를 편집기 최신 HTML(외부 reader)·초안 저장소와 맞추는 ref 가드 effect다. 형제 setState는 ref 가드로 허용되는데, 입력 중 공백을 보존하는 이 안쪽 조건만 판정에서 빠진다.
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- 서버 저장 결과를 편집기 최신 HTML·초안 저장소와 한 번에 맞추는 effect다. 제목은 앞뒤 공백만 다른 입력 중 값을 덮어쓰지 않을 때만 서버 값으로 바꾼다.
       if (title.trim() !== state.note.title) setTitle(state.note.title);
       setNoteDate(toDateInputValue(state.note.noteDate));
       // 서버가 정리한 HTML이 다를 때만 편집기를 다시 채운다. 같으면 커서를 건드리지 않는다.

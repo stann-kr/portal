@@ -79,6 +79,8 @@ export function FileUploader({
       const request = requestRef.current;
       requestRef.current = null;
       request?.xhr?.abort();
+      // 중단한 요청의 진행 표시도 바로 지워 같은 문맥으로 돌아왔을 때 버튼이 잠겨 보이지 않게 한다.
+      if (request) setUpload((current) => (current?.request === request ? null : current));
       onUploadingChangeRef.current?.(false);
     };
   }, [scope]);

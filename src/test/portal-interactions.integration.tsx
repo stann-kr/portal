@@ -539,6 +539,9 @@ for (const waitingAt of ["intent", "complete"] as const) {
     if (waitingAt === "complete") await act(async () => xhrs[0].onload?.());
     await act(async () => root.render(screen("draft-b")));
     await act(async () => root.render(screen("draft-a")));
+    // 돌아온 직후 중단된 이전 요청 때문에 선택 버튼이 잠겨 보이면 안 된다.
+    assert.equal(button("파일 선택").disabled, false);
+    assert.notEqual(button("파일 선택").getAttribute("aria-busy"), "true");
     await chooseUploadFile();
     await act(async () => xhrs.at(-1)!.onload?.());
     assert.equal(button("업로드 중...").getAttribute("aria-busy"), "true");

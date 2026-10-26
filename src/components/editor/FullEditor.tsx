@@ -502,6 +502,7 @@ export function FullEditor({
     const deferred = deferredImagesRef.current;
     if (deferred.length === 0) return;
     deferredImagesRef.current = [];
+    // 보류 개수는 방금 비운 ref를 따른다(0). 이미지를 편집기에 넣은 뒤 상위 form이 업로드 끝을 받는 순서는 아래 insert가 지킨다.
     setDeferredImageCount(deferredImagesRef.current.length);
     for (const upload of deferred) insertImageNow(upload);
   }, [disabled, editor, insertImageNow]);
