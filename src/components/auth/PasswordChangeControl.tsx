@@ -1,6 +1,7 @@
 "use client";
 
-import { useActionState, useEffect, useId, useRef, useState } from "react";
+import { useActionState, useEffect, useId, useImperativeHandle, useRef, useState, type Ref } from "react";
+import type { AccountDialogHandle } from "@/components/auth/LocalDraftManager";
 import { KeyRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -163,22 +164,27 @@ export function PasswordChangeForm({
 }
 
 /** 사이드 레일의 본인 비밀번호 변경. 변경 중에는 대화상자를 닫지 못하게 한다. */
-export function PasswordChangeControl() {
+export function PasswordChangeControl({
+  controlRef,
+  hideTrigger = false,
+}: {
+  controlRef?: Ref<AccountDialogHandle>;
+  hideTrigger?: boolean;
+} = {}) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [formKey, setFormKey] = useState(0);
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (busy) return;
+    setOpen(nextOpen);
+    // 닫았다 다시 열면 이전 입력과 결과 없이 새 form으로 시작한다.
+    if (!nextOpen) setFormKey((key) => key + 1);
+  };
+  useImperativeHandle(controlRef, () => ({ open: () => handleOpenChange(true) }));
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(nextOpen) => {
-        if (busy) return;
-        setOpen(nextOpen);
-        // 닫았다 다시 열면 이전 입력과 결과 없이 새 form으로 시작한다.
-        if (!nextOpen) setFormKey((key) => key + 1);
-      }}
-    >
-      <DialogTrigger asChild>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      {hideTrigger ? null : <DialogTrigger asChild>
         <button
           type="button"
           className="flex size-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
@@ -187,7 +193,7 @@ export function PasswordChangeControl() {
         >
           <KeyRound className="size-4" aria-hidden="true" />
         </button>
-      </DialogTrigger>
+      </DialogTrigger>}
       <DialogContent dismissible={!busy} className="max-w-md">
         <DialogHeader>
           <DialogTitle>비밀번호 변경</DialogTitle>

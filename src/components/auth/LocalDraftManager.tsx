@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from "react";
 import { AlertCircle, FileClock, Trash2 } from "lucide-react";
 import {
   Dialog,
@@ -41,7 +41,18 @@ function formatSavedAt(savedAt: Date | null): string {
   return formatKst(savedAt, { dateStyle: "medium", timeStyle: "short" }, "저장 시각을 알 수 없음");
 }
 
-export function LocalDraftManager({ ownerId }: { ownerId: string }) {
+/** 계정 메뉴가 메뉴 항목을 고른 뒤 대화상자를 여는 연결점. */
+export type AccountDialogHandle = { open: () => void };
+
+export function LocalDraftManager({
+  ownerId,
+  controlRef,
+  hideTrigger = false,
+}: {
+  ownerId: string;
+  controlRef?: Ref<AccountDialogHandle>;
+  hideTrigger?: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const [drafts, setDrafts] = useState<LocalDocumentDraftSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -134,22 +145,22 @@ export function LocalDraftManager({ ownerId }: { ownerId: string }) {
     refresh();
   };
 
+  const handleOpenChange = (nextOpen: boolean) => {
+    setOpen(nextOpen);
+    if (nextOpen) {
+      refresh();
+    } else {
+      setConfirmSourceKey(null);
+      setConfirmAll(false);
+      focusAfterDiscardRef.current = undefined;
+      setError(null);
+    }
+  };
+  useImperativeHandle(controlRef, () => ({ open: () => handleOpenChange(true) }));
+
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(nextOpen) => {
-        setOpen(nextOpen);
-        if (nextOpen) {
-          refresh();
-        } else {
-          setConfirmSourceKey(null);
-          setConfirmAll(false);
-          focusAfterDiscardRef.current = undefined;
-          setError(null);
-        }
-      }}
-    >
-      <DialogTrigger asChild>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      {hideTrigger ? null : <DialogTrigger asChild>
         <button
           type="button"
           className="flex size-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
@@ -158,7 +169,7 @@ export function LocalDraftManager({ ownerId }: { ownerId: string }) {
         >
           <FileClock className="size-4" aria-hidden="true" />
         </button>
-      </DialogTrigger>
+      </DialogTrigger>}
       <DialogContent className="max-h-[min(80dvh,42rem)] max-w-lg overflow-hidden p-0">
         <DialogHeader className="mb-0 border-b border-border px-6 pb-4 pt-6 pr-12">
           <DialogTitle>이 기기의 초안</DialogTitle>

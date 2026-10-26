@@ -6,47 +6,84 @@
 
 ## 설계 방향
 
-`quiet studio console`을 기본 방향으로 사용한다.
+`Quiet Ledger`를 기본 방향으로 사용한다. 디자인 원본은 Claude Artifact Design 캔버스 "Stann Lumo 포털 미니멀 리디자인"(링크는 `.docs/HANDOFF.md`)이며, 구현 화면은 해당 artboard와 1:1로 맞추고 이 문서의 값은 캔버스 Tokens·MobileSpec 보드와 같게 유지한다.
 
-- 따뜻한 graphite 계열 중립색 위에 copper 한 가지를 주요 행동 강조색으로 사용한다.
+- 흰 바탕과 먹색 글자, 1px 선으로 구획한다. 면을 겹겹이 쌓지 않고 선과 여백으로 나눈다.
+- 강조색은 파랑(`highlight`) 하나로 오늘·선택·초점에만 쓴다. 주 버튼은 강조색이 아니라 먹색이다.
+- 일정·노트·디깅·Q&A·과제 같은 유형과 상태는 작은 점(6–8px)으로 구분하고 글자는 먹색을 유지한다.
 - success, warning, destructive, info는 의미 전달에만 사용한다.
-- 모든 내용을 card로 감싸지 않고 section, list row, inset panel, overlay를 역할별로 구분한다.
 - 학생과 관리자의 첫 화면은 다음 행동과 그 근거가 되는 시간·상태를 먼저 보여준다.
 - 애니메이션은 hierarchy, feedback, state transition을 설명할 때만 사용한다.
 
 ## Token
 
-Token은 `src/app/globals.css`의 Tailwind theme layer에 정의한다. 화면 구현에서는 가능한 한 아래 semantic 이름을 사용하고 임의 hex 또는 원색 utility를 추가하지 않는다.
+Token은 `src/app/globals.css`의 Tailwind theme layer에 정의한다. 화면 구현에서는 아래 semantic 이름을 사용하고 임의 hex 또는 원색 utility를 추가하지 않는다. `cn()`은 `src/lib/utils.ts`에서 아래 글자·모서리·그림자 토큰을 tailwind-merge에 등록해 같은 종류끼리만 덮어쓴다. 새 토큰을 추가하면 그 목록도 갱신한다.
 
 ### Color
 
-| 역할 | Token | 용도 |
-|---|---|---|
-| Canvas | `background`, `canvas` | 앱 전체 배경 |
-| Surface | `surface`, `surface-elevated`, `card` | 기본 내용·떠 있는 면 |
-| Text | `foreground`, `muted-foreground` | 기본·보조 텍스트 |
-| Structure | `border`, `input`, `ring` | 경계·입력·focus |
-| Action | `primary`, `primary-foreground`, `accent`, `accent-foreground` | 주요 행동·선택 상태 |
-| Semantic | `success`, `warning`, `destructive`, `info`와 각 `*-muted`, 위험 동작 버튼 글자색 `destructive-foreground` | 완료·대기·오류·정보 |
+| 캔버스 이름 | Token | 라이트 | 다크 | 용도 |
+|---|---|---|---|---|
+| 배경 | `background`, `canvas`, `surface`, `card` | #FFFFFF | #0F0F11 | 앱 바탕·기본 면 |
+| 사이드바 | `sidebar` | #F7F7F6 | #151517 | 데스크톱 사이드바, 옅은 안내 면 |
+| 채움 | `muted`, `secondary` | #F1F1EF | #1E1E21 | 채움 면, 목록 행 구분선(`border-muted`), 세그먼트 바탕 |
+| 선택 채움 | `selected` | #EAEAE8 | #26262A | 사이드바 현재 메뉴, 아바타 |
+| 선 | `border`, `input` | #E8E8E6 | #2A2A2E | 구획선·입력 테두리 |
+| 글자 | `foreground`, `primary` | #18181B | #ECECEE | 본문·제목, 주 버튼 면 |
+| 글자 2 | `secondary-foreground` | #52525B | #B4B4BB | 보조 글자, 비활성 메뉴, 섹션 머리 |
+| 글자 3 | `muted-foreground` | #6B6B73 | #8E8E96 | 날짜·메타·캡션. 읽는 글자는 글자 3까지만 쓴다 |
+| 비활성·장식 | `faint` | #B4B4BB | #52525B | 체크 테두리와 구분 기호에만 쓴다 |
+| 강조 | `highlight`, `ring` | #2D5BFF | #7B95FF | 오늘·선택·초점 |
+| 강조 옅게 | `accent` / `accent-foreground` | #EEF2FF / #2D4BCC | #1C2240 / #A5B4FC | 선택 면과 그 위 파랑 글자 |
+| 위험 | `destructive`, `destructive-muted`, `destructive-border` | #B42318 · #FEF3F2 · #F3C7C2 | #F97066 · #2D1513 · #5F2420 | 삭제·오류 |
+| 경고 | `warning`, `warning-muted`, `warning-border` | #B54708 · #FFFAEB · #FEDF89 | #F5A65B · #2E2110 · #5C3D14 | 대기·주의 |
+| 완료 | `success`, `success-muted` | #0B7A6E · #E7F5F3 | #34C3B0 · #10302C | 완료 상태 |
+| 정보 | `info`, `info-muted` | #2D4BCC · #EEF2FF | #A5B4FC · #1C2240 | 안내 |
+| 시트 뒤 | `scrim` | rgb(24 24 27 / .32) | rgb(0 0 0 / .5) | 시트·서랍·대화상자 뒤 화면 |
 
-운영체제의 `prefers-color-scheme`에 따라 같은 semantic token의 dark 값이 적용된다. 개별 section이 임의로 theme를 반전하지 않는다. 일정·통합 항목 유형 색(`event-*`, `item-*`)도 dark에서 밝은 값으로 바뀌어 어두운 면의 아이콘이 3:1 이상 대비를 가진다. 캘린더 칩은 유형 색을 왼쪽 막대와 배경에 옅게 섞어(`color-mix`) 쓰고 글자는 `foreground`를 유지해 두 모드에서 같은 대비를 낸다.
+항목 유형 점(`event-*`, `item-*`): 레슨 #2D5BFF, 연습 #0E9384, 공연 #E8590C, 노트 #8A8A93, 디깅 #7A5AF8, Q&A #CA8A04, 과제 #DD2590. 다크에서는 레슨 #7B95FF, 연습 #34C3B0, 공연 #F2884B, 노트 #A1A1AA(HomeDark 보드)와 디깅 #A48BFA, Q&A #EAB308, 과제 #F472B6로 밝혀 어두운 면에서 3:1 이상을 낸다. 일정 노트와 통합 노트는 같은 점을 쓴다.
+
+운영체제의 `prefers-color-scheme`에 따라 같은 semantic token의 dark 값이 적용된다. 개별 section이 임의로 theme를 반전하지 않는다. 캔버스 다크 보드가 정하지 않은 값(위험·경고·완료·정보·강조 옅게, 디깅·Q&A·과제 점, 다크 주 버튼)은 위 표 값으로 정했고 캔버스 갱신 항목으로 남긴다.
+
+### Typography
+
+글자는 본문 IBM Plex Sans KR(400·500·600), 시간·숫자 IBM Plex Mono(400·500)다. `next/font/google`이 빌드 때 받아 자체 호스팅하고 `--font-sans`·`--font-mono`로 연결한다. 한국어 줄바꿈은 `word-break: keep-all`이다.
+
+| 단계 | Utility | 크기/줄 | 굵기 |
+|---|---|---|---|
+| Display | `text-display tracking-display` | 28/36 | 600 |
+| Title | `text-xl tracking-title` | 20/28 | 600 |
+| Dialog | `text-dialog` | 17/24 | 600 |
+| 목록 제목 | `text-md` | 15/22 | 400–500 |
+| Body | `text-body` | 14/22 | 400 |
+| Section·컨트롤 | `text-ui` | 13/20 | 600(섹션 머리, 글자 2) · 400–500(버튼) |
+| Caption | `text-xs` | 12/16 | 400, 글자 3 |
+| Mono | `font-mono text-xs` | 12/16 | 시간·날짜·BPM·개수 |
+| 모바일 제목 | `text-mobile-title` | 22/30 | 600 |
+
+모바일 본문은 15/24(`text-md leading-6`), 보조 13/20, 입력 글자는 16px(확대 방지)이다.
 
 ### Shape
 
 | 역할 | Radius |
 |---|---|
-| 작은 label·보조 control | `sm`, 6px |
-| button·input·일반 control | `md`, 8px |
-| section container·inset panel | `lg`, 12px |
-| dialog·sheet·overlay | `xl`, 16px |
+| 칩·세그먼트 칸 | `xs`/`sm`, 4px |
+| 버튼·입력 등 데스크톱 control | `md`, 6px |
+| 모바일 control(입력·주 버튼·목록 버튼) | `touch`, 8px |
+| 패널·대화상자·메뉴 | `lg`, 10px |
+| 시트 위 모서리 | `xl`, 16px |
 
-pill 형태는 filter와 count처럼 모양 자체가 의미를 가질 때만 사용한다.
+pill 형태는 오늘 날짜 표시와 개수처럼 모양 자체가 의미를 가질 때만 사용한다.
 
 ### Elevation
 
-- 기본 surface는 border 또는 여백으로 구분한다.
-- dropdown에는 `shadow-floating`, dialog·sheet에는 `shadow-overlay`를 사용한다.
-- 정보 그룹을 구분하기 위한 일반 card에는 shadow를 사용하지 않는다.
+- 기본 면은 선 또는 여백으로 구분하고 그림자를 쓰지 않는다. 떠 있는 창만 그림자를 쓴다.
+- 메뉴·드롭다운 `shadow-floating`, 대화상자 `shadow-overlay`(0 12px 32px / 12%), 아래 시트 `shadow-sheet`, 메뉴 서랍 `shadow-drawer`, 세그먼트 선택 칸 `shadow-segment`.
+
+### Shell
+
+- 넓은 화면(≥768px): 240px 사이드바(`sidebar` 면, 오른쪽 1px 선, 위아래 16·좌우 12 여백, 묶음 간격 24). 로고 24px, 메뉴 행 32px·r6·14px, 현재 메뉴는 `selected` 면+먹색 500, 나머지는 글자 2. 아래 계정 줄은 위 1px 선, 28px 아바타, 이름 13/500, 역할 12, … 계정 메뉴(이 기기의 초안·비밀번호 변경·(학생) 계정 삭제·구분선·로그아웃).
+- 좁은 화면: 52px 위쪽 막대(아래 `border-muted` 선, 44×44 버튼). 왼쪽은 메뉴 또는 뒤로, 가운데 제목, 오른쪽은 화면의 주 행동이다. 기본값은 `resolveMobileTopBar`가 주소에서 정하고 화면은 `MobileTopBar`로 덮어쓴다. 메뉴 서랍은 왼쪽에서 열리는 280px, 메뉴 행 44px·r8·15px, 현재 메뉴 `muted` 면.
+- 대화상자는 좁은 화면에서 아래 시트(위 모서리 16, 손잡이 36×4, 뒤 화면 32% 어둡게, 홈 표시줄 위 34), 넓은 화면에서 가운데 r10 패널이다.
 
 ### Motion과 layer
 
@@ -108,8 +145,8 @@ pill 형태는 filter와 count처럼 모양 자체가 의미를 가질 때만 �
 | `DraftStatus` | 로컬·계정 초안 저장 상태, 복구본과 다중 기기 충돌의 명시적 선택 |
 | `ServerDraftStatus` | 오프라인 재시도·서버 저장 시각·다른 기기 비교·원문 복사·2단계 서버본 폐기 |
 | `LocalDraftManager` | 현재 계정의 기기 초안 목록, 안전한 미리보기와 문서별·전체 2단계 폐기 |
-| `AccountLogoutButton` | 로컬 초안을 먼저 정리하고 인증 세션을 종료하는 공통 로그아웃 control |
-| `PasswordChangeControl` | side rail의 본인 비밀번호 변경 dialog. 거부된 필드로 초점과 `aria-invalid`를 옮기고 성공 화면에는 입력값을 남기지 않으며 다음 행동 버튼으로 초점을 옮긴다. 같은 `PasswordChangeForm`의 `required` variant가 임시 비밀번호 로그인 뒤 `/account/password` 화면을 맡고, 저장되면 결과 버튼 없이 바로 포털로 이동한다 |
+| `AccountMenu` | 사이드바·메뉴 서랍 계정 줄의 … 메뉴. 메뉴 focus scope가 끝난 뒤 초안·비밀번호·계정 삭제 대화상자를 열고, 로그아웃은 로컬 초안을 먼저 정리한 뒤 세션을 종료한다 |
+| `PasswordChangeControl` | 계정 메뉴의 본인 비밀번호 변경 dialog. 거부된 필드로 초점과 `aria-invalid`를 옮기고 성공 화면에는 입력값을 남기지 않으며 다음 행동 버튼으로 초점을 옮긴다. 같은 `PasswordChangeForm`의 `required` variant가 임시 비밀번호 로그인 뒤 `/account/password` 화면을 맡고, 저장되면 결과 버튼 없이 바로 포털로 이동한다 |
 | `StudentPasswordResetControl` | 관리자 학생 상세 계정 영역의 임시 비밀번호 발급. 항상 취소 우선 확인을 거치고 원문은 발급 직후 한 번만 복사 버튼과 함께 보이며, 학생이 아직 바꾸지 않은 상태만 다시 알린다 |
 | `StudentInviteControl` | 가입 전 학생의 가입 링크 재발급. 쓸 수 있는 링크가 남아 있으면 취소 우선 확인을 거치고, 만료된 링크는 바로 다시 발급한다 |
 | `OneTimeSecret` | 발급 직후 한 번만 보이는 임시 비밀번호·가입 링크 표시와 복사. 자동 복사가 막히면 값을 직접 선택하라고 안내한다 |

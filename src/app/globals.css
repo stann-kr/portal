@@ -3,54 +3,93 @@
 @import "../components/student-portal/unified-calendar.css";
 
 @theme {
-  /* Quiet studio console: warm graphite + one copper signal accent. */
-  --color-canvas: #f6f6f3;
-  --color-background: #f6f6f3;
-  --color-foreground: #292925;
-  --color-surface: #fdfdfb;
+  /* Quiet Ledger: 흰 바탕·먹색 글자·1px 선. 강조 파랑은 오늘·선택·초점에만 쓴다(캔버스 Tokens 보드). */
+  --font-sans: var(--font-plex-sans), "IBM Plex Sans KR", system-ui, -apple-system, "Apple SD Gothic Neo", sans-serif;
+  --font-mono: var(--font-plex-mono), "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --color-canvas: #ffffff;
+  --color-background: #ffffff;
+  --color-foreground: #18181b;
+  --color-surface: #ffffff;
   --color-surface-elevated: #ffffff;
-  --color-card: #fdfdfb;
-  --color-card-foreground: #292925;
+  --color-card: #ffffff;
+  --color-card-foreground: #18181b;
+  --color-sidebar: #f7f7f6;
 
-  --color-primary: #934825;
-  --color-primary-foreground: #fffaf6;
-  --color-secondary: #e9e9e3;
-  --color-secondary-foreground: #292925;
-  --color-accent: #efe3dc;
-  --color-accent-foreground: #6d331d;
+  /* 주 버튼은 먹색, 보조 글자(글자 2)는 secondary-foreground, 날짜·메타(글자 3)는 muted-foreground. */
+  --color-primary: #18181b;
+  --color-primary-foreground: #ffffff;
+  --color-secondary: #f1f1ef;
+  --color-secondary-foreground: #52525b;
+  --color-muted: #f1f1ef;
+  --color-muted-foreground: #6b6b73;
+  --color-selected: #eaeae8;
+  --color-faint: #b4b4bb;
 
-  --color-muted: #edede8;
-  --color-muted-foreground: #66665f;
-  --color-border: #d8d8d0;
-  --color-input: #c8c8bf;
-  --color-ring: #934825;
+  /* 강조: 오늘·선택·초점. accent는 강조 옅게(선택 면), accent-foreground는 그 위의 파랑 글자. */
+  --color-highlight: #2d5bff;
+  --color-highlight-foreground: #ffffff;
+  --color-accent: #eef2ff;
+  --color-accent-foreground: #2d4bcc;
 
-  --color-success: #2f6b4f;
-  --color-success-muted: #e4f0e9;
-  --color-warning: #875918;
-  --color-warning-muted: #f5ecd8;
-  --color-destructive: #a13d46;
-  --color-destructive-foreground: #fffaf6;
-  --color-destructive-muted: #f5e4e6;
-  --color-info: #3e6278;
-  --color-info-muted: #e3edf1;
+  --color-border: #e8e8e6;
+  --color-input: #e8e8e6;
+  --color-ring: #2d5bff;
+  /* 시트·서랍 뒤 화면을 32% 어둡게 */
+  --color-scrim: rgb(24 24 27 / 0.32);
 
-  --color-event-lesson: #3e6278;
-  --color-event-practice: #2f6b4f;
-  --color-event-gig: #a13d46;
-  --color-event-note: #875918;
-  --color-item-note: #705b85;
-  --color-item-digging: #8b4e68;
-  --color-item-qna: #934825;
-  --color-item-assignment: #356c70;
+  --color-success: #0b7a6e;
+  --color-success-muted: #e7f5f3;
+  --color-warning: #b54708;
+  --color-warning-muted: #fffaeb;
+  --color-warning-border: #fedf89;
+  --color-destructive: #b42318;
+  --color-destructive-foreground: #ffffff;
+  --color-destructive-muted: #fef3f2;
+  --color-destructive-border: #f3c7c2;
+  --color-info: #2d4bcc;
+  --color-info-muted: #eef2ff;
 
-  --radius-sm: 0.375rem;
-  --radius-md: 0.5rem;
-  --radius-lg: 0.75rem;
-  --radius-xl: 1rem;
+  /* 항목 유형 점. 노트는 일정 노트와 통합 노트가 같은 점을 쓴다. */
+  --color-event-lesson: #2d5bff;
+  --color-event-practice: #0e9384;
+  --color-event-gig: #e8590c;
+  --color-event-note: #8a8a93;
+  --color-item-note: #8a8a93;
+  --color-item-digging: #7a5af8;
+  --color-item-qna: #ca8a04;
+  --color-item-assignment: #dd2590;
 
-  --shadow-floating: 0 12px 32px rgb(75 64 55 / 0.12);
-  --shadow-overlay: 0 24px 72px rgb(75 64 55 / 0.2);
+  /* r4 칩·세그먼트 칸, r6 컨트롤, r8 모바일 컨트롤, r10 패널, r16 시트 위 모서리. */
+  --radius-xs: 4px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-touch: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 16px;
+
+  /* 떠 있는 창만 그림자를 쓴다. */
+  --shadow-segment: 0 1px 2px rgb(24 24 27 / 0.08);
+  --shadow-floating: 0 12px 32px rgb(24 24 27 / 0.12);
+  --shadow-overlay: 0 12px 32px rgb(24 24 27 / 0.12);
+  --shadow-sheet: 0 -12px 32px rgb(24 24 27 / 0.08);
+  --shadow-drawer: 12px 0 32px rgb(24 24 27 / 0.12);
+
+  /* 글자 단계(캔버스 Tokens·MobileSpec). Caption 12/16은 text-xs, Title 20/28은 text-xl을 그대로 쓴다. */
+  --text-ui: 13px;
+  --text-ui--line-height: 20px;
+  --text-body: 14px;
+  --text-body--line-height: 22px;
+  --text-md: 15px;
+  --text-md--line-height: 22px;
+  --text-dialog: 17px;
+  --text-dialog--line-height: 24px;
+  --text-mobile-title: 22px;
+  --text-mobile-title--line-height: 30px;
+  --text-display: 28px;
+  --text-display--line-height: 36px;
+  --tracking-display: -0.02em;
+  --tracking-title: -0.01em;
 
   --ease-studio: cubic-bezier(0.16, 1, 0.3, 1);
 }
@@ -70,44 +109,55 @@
 @media (prefers-color-scheme: dark) {
   :root {
     color-scheme: dark;
-    --color-canvas: #1d1d1a;
-    --color-background: #1d1d1a;
-    --color-foreground: #eeeeea;
-    --color-surface: #242420;
-    --color-surface-elevated: #2b2b26;
-    --color-card: #242420;
-    --color-card-foreground: #eeeeea;
-    --color-primary: #d78b63;
-    --color-primary-foreground: #21130d;
-    --color-secondary: #33332e;
-    --color-secondary-foreground: #eeeeea;
-    --color-accent: #463126;
-    --color-accent-foreground: #f1c5ae;
-    --color-muted: #30302b;
-    --color-muted-foreground: #b8b8af;
-    --color-border: #41413a;
-    --color-input: #56564d;
-    --color-ring: #d78b63;
-    --color-success: #82c6a3;
-    --color-success-muted: #233c30;
-    --color-warning: #e0b364;
-    --color-warning-muted: #42351f;
-    --color-destructive: #e78c94;
-    --color-destructive-foreground: #21130d;
-    --color-destructive-muted: #48282c;
-    --color-info: #8eb9cf;
-    --color-info-muted: #263b46;
-    /* 어두운 면 위의 아이콘·일정 블록이 보이도록 밝힌 값. 블록 글자색은 unified-calendar.css가 맞춘다. */
-    --color-event-lesson: #8eb9cf;
-    --color-event-practice: #82c6a3;
-    --color-event-gig: #e78c94;
-    --color-event-note: #e0b364;
-    --color-item-note: #b9a6cf;
-    --color-item-digging: #d39ab3;
-    --color-item-qna: #d78b63;
-    --color-item-assignment: #86c2c6;
-    --shadow-floating: 0 12px 32px rgb(0 0 0 / 0.3);
-    --shadow-overlay: 0 24px 72px rgb(0 0 0 / 0.46);
+    --color-canvas: #0f0f11;
+    --color-background: #0f0f11;
+    --color-foreground: #ececee;
+    --color-surface: #0f0f11;
+    --color-surface-elevated: #151517;
+    --color-card: #0f0f11;
+    --color-card-foreground: #ececee;
+    --color-sidebar: #151517;
+    --color-primary: #ececee;
+    --color-primary-foreground: #0f0f11;
+    --color-secondary: #1e1e21;
+    --color-secondary-foreground: #b4b4bb;
+    --color-muted: #1e1e21;
+    --color-muted-foreground: #8e8e96;
+    --color-selected: #26262a;
+    --color-faint: #52525b;
+    --color-highlight: #7b95ff;
+    --color-highlight-foreground: #0f0f11;
+    --color-accent: #1c2240;
+    --color-accent-foreground: #a5b4fc;
+    --color-border: #2a2a2e;
+    --color-input: #2a2a2e;
+    --color-ring: #7b95ff;
+    --color-scrim: rgb(0 0 0 / 0.5);
+    --color-success: #34c3b0;
+    --color-success-muted: #10302c;
+    --color-warning: #f5a65b;
+    --color-warning-muted: #2e2110;
+    --color-warning-border: #5c3d14;
+    --color-destructive: #f97066;
+    --color-destructive-foreground: #0f0f11;
+    --color-destructive-muted: #2d1513;
+    --color-destructive-border: #5f2420;
+    --color-info: #a5b4fc;
+    --color-info-muted: #1c2240;
+    /* 어두운 면에서 3:1 이상이 되도록 밝힌 유형 점(HomeDark 보드의 레슨·연습·공연·노트 값). */
+    --color-event-lesson: #7b95ff;
+    --color-event-practice: #34c3b0;
+    --color-event-gig: #f2884b;
+    --color-event-note: #a1a1aa;
+    --color-item-note: #a1a1aa;
+    --color-item-digging: #a48bfa;
+    --color-item-qna: #eab308;
+    --color-item-assignment: #f472b6;
+    --shadow-segment: 0 1px 2px rgb(0 0 0 / 0.4);
+    --shadow-floating: 0 12px 32px rgb(0 0 0 / 0.4);
+    --shadow-overlay: 0 12px 32px rgb(0 0 0 / 0.4);
+    --shadow-sheet: 0 -12px 32px rgb(0 0 0 / 0.32);
+    --shadow-drawer: 12px 0 32px rgb(0 0 0 / 0.4);
   }
 }
 
@@ -162,26 +212,26 @@
 
 /* 인라인 코드 */
 :where(.ProseMirror, .rich-text) code:not(pre code) {
-  background: var(--color-accent);
+  background: var(--color-muted);
   border: 1px solid var(--color-border);
   border-radius: 4px;
   padding: 0.1em 0.35em;
   font-size: 0.875em;
-  font-family: ui-monospace, monospace;
+  font-family: var(--font-mono);
 }
 
 /* 코드 블록 */
 :where(.ProseMirror, .rich-text) pre {
-  background: var(--color-accent);
+  background: var(--color-muted);
   border: 1px solid var(--color-border);
-  border-radius: 8px;
+  border-radius: 6px;
   padding: 1rem;
   overflow-x: auto;
   margin: 0.75rem 0;
 }
 :where(.ProseMirror, .rich-text) pre code {
   font-size: 0.875rem;
-  font-family: ui-monospace, monospace;
+  font-family: var(--font-mono);
   color: var(--color-foreground);
   background: none;
   border: none;
@@ -244,7 +294,7 @@
   min-width: 80px;
 }
 :where(.ProseMirror, .rich-text) table th {
-  background: var(--color-accent);
+  background: var(--color-muted);
   font-weight: 600;
   font-size: 0.875rem;
 }
@@ -277,9 +327,9 @@
 /* 최상위 포커스 아웃라인 제거 */
 .ProseMirror:focus { outline: none; }
 
-/* 좁은 화면에서만 사이드바 대신 위쪽 메뉴 막대(48px)가 있다. 화면 높이를 쓰는 영역은 이 높이를 뺀다. */
+/* 좁은 화면에서만 사이드바 대신 위쪽 막대(52px, MobileSpec)가 있다. 화면 높이를 쓰는 영역은 이 높이를 뺀다. */
 :root {
-  --app-topbar-height: 3rem;
+  --app-topbar-height: 3.25rem;
 }
 @media (min-width: 48rem) {
   :root {

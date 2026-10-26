@@ -1,5 +1,20 @@
 import type { Metadata } from "next";
+import { IBM_Plex_Mono, IBM_Plex_Sans_KR } from "next/font/google";
 import "./globals.css";
+
+// Quiet Ledger 글자: 본문 IBM Plex Sans KR, 시간·숫자 IBM Plex Mono. 빌드 때 받아 자체 호스팅한다.
+const plexSans = IBM_Plex_Sans_KR({
+  weight: ["400", "500", "600"],
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-plex-sans",
+});
+const plexMono = IBM_Plex_Mono({
+  weight: ["400", "500"],
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-plex-mono",
+});
 
 // 인증 기반 앱: 정적 생성 없이 모든 페이지를 동적 렌더링으로 처리
 export const dynamic = "force-dynamic";
@@ -19,7 +34,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="ko">
+    <html lang="ko" className={`${plexSans.variable} ${plexMono.variable}`}>
       <body
         className="font-sans antialiased bg-background text-foreground"
       >

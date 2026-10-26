@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, useTransition } from "react";
+import { useEffect, useId, useImperativeHandle, useRef, useState, useTransition, type Ref } from "react";
+import type { AccountDialogHandle } from "@/components/auth/LocalDraftManager";
 import { UserX } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -64,11 +65,21 @@ const DEFAULT_ACCOUNT_DELETION_DEPENDENCIES: AccountDeletionControlDependencies 
   createOperationId,
 };
 
-export function AccountDeletionControl({ ownerId }: { ownerId: string }) {
+export function AccountDeletionControl({
+  ownerId,
+  controlRef,
+  hideTrigger,
+}: {
+  ownerId: string;
+  controlRef?: Ref<AccountDialogHandle>;
+  hideTrigger?: boolean;
+}) {
   return (
     <AccountDeletionControlImpl
       ownerId={ownerId}
       dependencies={DEFAULT_ACCOUNT_DELETION_DEPENDENCIES}
+      controlRef={controlRef}
+      hideTrigger={hideTrigger}
     />
   );
 }
@@ -77,9 +88,13 @@ export function AccountDeletionControlImpl({
   ownerId,
   dependencies,
   initialFormValues,
+  controlRef,
+  hideTrigger = false,
 }: {
   ownerId: string;
   dependencies: AccountDeletionControlDependencies;
+  controlRef?: Ref<AccountDialogHandle>;
+  hideTrigger?: boolean;
   /** DOM 격리 테스트에서만 초기 controlled value를 주입한다. */
   initialFormValues?: { password: string; confirmation: string };
 }) {
@@ -221,21 +236,21 @@ export function AccountDeletionControlImpl({
 
   const ready = registration.status === "ready";
 
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (isPending) return;
+    setOpen(nextOpen);
+    if (nextOpen) {
+      setRegistration({ status: "pending" });
+      setMessage("이 기기의 계정 삭제 정리 신호를 등록하고 있습니다.");
+    } else {
+      reset();
+    }
+  };
+  useImperativeHandle(controlRef, () => ({ open: () => handleOpenChange(true) }));
+
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(nextOpen) => {
-        if (isPending) return;
-        setOpen(nextOpen);
-        if (nextOpen) {
-          setRegistration({ status: "pending" });
-          setMessage("이 기기의 계정 삭제 정리 신호를 등록하고 있습니다.");
-        } else {
-          reset();
-        }
-      }}
-    >
-      <DialogTrigger asChild>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      {hideTrigger ? null : <DialogTrigger asChild>
         <button
           type="button"
           className="flex size-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
@@ -244,7 +259,7 @@ export function AccountDeletionControlImpl({
         >
           <UserX className="size-4" aria-hidden="true" />
         </button>
-      </DialogTrigger>
+      </DialogTrigger>}
       <DialogContent dismissible={!isPending} className="max-w-md">
         <DialogHeader>
           <DialogTitle>계정을 삭제할까요?</DialogTitle>

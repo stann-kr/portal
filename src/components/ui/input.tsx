@@ -9,7 +9,8 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
       <input
         type={type}
         className={cn(
-          "flex h-9 w-full rounded-md border border-input bg-surface px-3 py-1 text-sm text-foreground transition-[border-color,box-shadow] file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50",
+          // 캔버스 입력: 높이 36 · r 6 · 1px 선, 초점은 강조 파랑 2px 안쪽 선. 좁은 화면은 44 · r 8 · 16px(확대 방지).
+          "flex h-11 w-full rounded-touch border border-input bg-background px-3 py-1 text-base text-foreground transition-[border-color,box-shadow] file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-2 focus-visible:outline-ring focus-visible:-outline-offset-1 disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive-border md:h-9 md:rounded-md md:text-sm",
           className,
         )}
         ref={ref}
