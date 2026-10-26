@@ -13,14 +13,12 @@ import {
 import {
   MEDIA_PURPOSE_POLICIES,
   mediaDeliveryPath,
+  mediaUploadPath,
   parseMediaUuidV4,
   prepareMediaUploadIntent,
   type MediaUploadInput,
 } from "@/lib/media-lifecycle";
-import {
-  generatePresignedUploadUrl,
-  getMediaObjectStorage,
-} from "@/lib/r2";
+import { getMediaObjectStorage } from "@/lib/r2";
 
 export type RequestMediaUploadResult =
   | {
@@ -32,7 +30,7 @@ export type RequestMediaUploadResult =
     }
   | { success: false; error: string };
 
-/** 서버 고정 purpose 정책으로 D1 upload intent와 R2 PUT URL을 만든다. */
+/** 서버 고정 purpose 정책으로 D1 upload intent를 만들고 same-origin 업로드 경로를 돌려준다. */
 export async function requestMediaUpload(
   input: MediaUploadInput,
 ): Promise<RequestMediaUploadResult> {
@@ -62,30 +60,13 @@ export async function requestMediaUpload(
     return { success: false, error: "업로드 의도를 안전하게 등록하지 못했습니다." };
   }
 
-  try {
-    const presigned = await generatePresignedUploadUrl({
-      uploadObjectKey: prepared.intent.uploadObjectKey,
-      mimeType: prepared.intent.canonicalMimeType,
-      fileSize: prepared.intent.expectedSizeBytes,
-      expiresIn: policy.uploadUrlTtlSeconds,
-    });
-    return {
-      success: true,
-      uploadUrl: presigned.uploadUrl,
-      uploadContentType: prepared.intent.canonicalMimeType,
-      mediaObjectId: prepared.intent.mediaObjectId,
-      deliveryUrl: mediaDeliveryPath(prepared.intent.mediaObjectId),
-    };
-  } catch {
-    await queueOwnedMediaDeletion(context, {
-      ownerId: session.user.id,
-      mediaObjectId: prepared.intent.mediaObjectId,
-      reason: "UPLOAD_VERIFICATION_FAILED",
-      now: new Date(),
-    });
-    await processMediaDeletionOutboxBestEffort(context, { limit: 1 });
-    return { success: false, error: "업로드 URL을 만들지 못했습니다." };
-  }
+  return {
+    success: true,
+    uploadUrl: mediaUploadPath(prepared.intent.mediaObjectId),
+    uploadContentType: prepared.intent.canonicalMimeType,
+    mediaObjectId: prepared.intent.mediaObjectId,
+    deliveryUrl: mediaDeliveryPath(prepared.intent.mediaObjectId),
+  };
 }
 
 export type CompleteMediaUploadActionResult =

@@ -14,6 +14,7 @@ import {
   queueOwnedMediaDeletion,
 } from "./media-lifecycle-atomic";
 import {
+  MEDIA_OWNER_UNATTACHED_OBJECT_LIMIT,
   MEDIA_SEAL_RECOVERY_GRACE_SECONDS,
   MEDIA_UPLOAD_STAGING_GRACE_SECONDS,
   createMediaObjectKey,
@@ -73,6 +74,9 @@ function verifiedStorage(
   overrides: Partial<MediaObjectStorage> = {},
 ): MediaObjectStorage {
   return {
+    async putUpload() {
+      return true;
+    },
     async head() {
       return { size: 1_024, contentType: "audio/mpeg", etag: "etag-1" };
     },
@@ -1281,7 +1285,7 @@ test("owner별 미귀속 object 수와 byte quota를 원자적으로 제한한�
   seedProfile(sqlite, "quota-bytes-owner");
   const now = new Date("2026-01-01T00:00:00.000Z");
 
-  for (let index = 1; index <= 8; index += 1) {
+  for (let index = 1; index <= MEDIA_OWNER_UNATTACHED_OBJECT_LIMIT; index += 1) {
     const id = `40000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
     assert.equal(
       await createMediaUploadIntent(dbContext, {
@@ -1299,7 +1303,9 @@ test("owner별 미귀속 object 수와 byte quota를 원자적으로 제한한�
       true,
     );
   }
-  const overCountId = "40000000-0000-4000-8000-000000000009";
+  const overCountId = `40000000-0000-4000-8000-${String(
+    MEDIA_OWNER_UNATTACHED_OBJECT_LIMIT + 1,
+  ).padStart(12, "0")}`;
   assert.equal(
     await createMediaUploadIntent(dbContext, {
       id: overCountId,
@@ -1315,7 +1321,7 @@ test("owner별 미귀속 object 수와 byte quota를 원자적으로 제한한�
       ),
       expectedContentType: "audio/mpeg",
       expectedSizeBytes: 1_024,
-      draftOperationId: "count-operation-9",
+      draftOperationId: "count-operation-over",
       uploadExpiresAt: new Date(now.getTime() + 3_600_000),
       now,
     }),

@@ -23,6 +23,10 @@ import {
   type PrivateNoteCanonicalRequest,
   type PrivateNoteCanonicalSnapshot,
 } from "@/lib/private-note-continuity";
+import {
+  documentImageClaimStatements,
+  privateNoteMediaPurgeStatements,
+} from "@/lib/media-lifecycle-atomic";
 
 type AtomicActor = {
   id: string;
@@ -615,6 +619,13 @@ export async function createPrivateNoteAtomically(
         ],
       },
       CONDITIONAL_WRITE_SENTINEL,
+      ...documentImageClaimStatements({
+        contentHtml: write.contentHtml,
+        ownerId: write.actor.id,
+        resourceType: "PRIVATE_NOTE",
+        resourceId: write.noteId,
+        now: write.now,
+      }),
       revisionInsertStatement({
         revisionId,
         noteId: write.noteId,
@@ -831,6 +842,13 @@ export async function updatePrivateNoteAtomically(
         ],
       },
       CONDITIONAL_WRITE_SENTINEL,
+      ...documentImageClaimStatements({
+        contentHtml: write.contentHtml,
+        ownerId: write.actor.id,
+        resourceType: "PRIVATE_NOTE",
+        resourceId: write.noteId,
+        now: write.now,
+      }),
       revisionInsertStatement({
         revisionId,
         noteId: write.noteId,
@@ -1371,6 +1389,7 @@ export async function purgePrivateNoteAtomically(
           write.actor.id,
         ],
       },
+      ...privateNoteMediaPurgeStatements({ noteId: write.noteId, now: write.now }),
       {
         query: `
           DELETE FROM private_notes

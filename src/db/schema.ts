@@ -674,7 +674,10 @@ export const privateNoteRevisions = sqliteTable(
  */
 export type BoardType = "ANNOUNCEMENT" | "GENERAL" | "FEEDBACK";
 
-export type MediaPurpose = "COMMUNITY_POST_AUDIO" | "QNA_ATTACHMENT";
+export type MediaPurpose =
+  | "COMMUNITY_POST_AUDIO"
+  | "QNA_ATTACHMENT"
+  | "DOCUMENT_IMAGE";
 export type MediaObjectState =
   | "PENDING_UPLOAD"
   | "SEALING"
@@ -682,7 +685,7 @@ export type MediaObjectState =
   | "ATTACHED"
   | "PENDING_DELETE"
   | "DELETED";
-export type MediaResourceType = "COMMUNITY_POST" | "QNA_REPLY";
+export type MediaResourceType = "COMMUNITY_POST" | "QNA_REPLY" | "PRIVATE_NOTE";
 export type MediaDeletionReason =
   | "ABANDONED_UPLOAD"
   | "EXPIRED_UNATTACHED"
@@ -736,7 +739,7 @@ export const mediaObjects = sqliteTable(
     index("media_objects_resource_idx").on(table.resourceType, table.resourceId),
     check(
       "media_objects_purpose_check",
-      sql`${table.purpose} IN ('COMMUNITY_POST_AUDIO', 'QNA_ATTACHMENT')`,
+      sql`${table.purpose} IN ('COMMUNITY_POST_AUDIO', 'QNA_ATTACHMENT', 'DOCUMENT_IMAGE')`,
     ),
     check(
       "media_objects_state_check",
@@ -776,6 +779,20 @@ export const mediaObjects = sqliteTable(
         AND substr(${table.objectKey}, 36, 1) = '4'
         AND substr(${table.objectKey}, 41, 1) GLOB '[89ab]'
         AND ${table.objectKey} <> 'media/qna-attachment/' || ${table.id}
+      ) OR (
+        ${table.purpose} = 'DOCUMENT_IMAGE'
+        AND ${table.uploadObjectKey} = 'media-upload/document-image/' || ${table.id}
+        AND length(${table.objectKey}) = 57
+        AND substr(${table.objectKey}, 1, 21) = 'media/document-image/'
+        AND substr(${table.objectKey}, 30, 1) = '-'
+        AND substr(${table.objectKey}, 35, 1) = '-'
+        AND substr(${table.objectKey}, 40, 1) = '-'
+        AND substr(${table.objectKey}, 45, 1) = '-'
+        AND length(replace(substr(${table.objectKey}, 22), '-', '')) = 32
+        AND replace(substr(${table.objectKey}, 22), '-', '') NOT GLOB '*[^0-9a-f]*'
+        AND substr(${table.objectKey}, 36, 1) = '4'
+        AND substr(${table.objectKey}, 41, 1) GLOB '[89ab]'
+        AND ${table.objectKey} <> 'media/document-image/' || ${table.id}
       )`,
     ),
     check(
@@ -784,7 +801,7 @@ export const mediaObjects = sqliteTable(
     ),
     check(
       "media_objects_resource_type_check",
-      sql`${table.resourceType} IS NULL OR ${table.resourceType} IN ('COMMUNITY_POST', 'QNA_REPLY')`,
+      sql`${table.resourceType} IS NULL OR ${table.resourceType} IN ('COMMUNITY_POST', 'QNA_REPLY', 'PRIVATE_NOTE')`,
     ),
     check(
       "media_objects_resource_pair_check",

@@ -1,7 +1,13 @@
 import { and, eq } from "drizzle-orm";
 import { getActiveAuthSession } from "@/lib/auth-guard";
 import { createDb } from "@/db/client";
-import { mediaObjects, posts, qnaReplies, qnaThreads } from "@/db/schema";
+import {
+  mediaObjects,
+  posts,
+  privateNotes,
+  qnaReplies,
+  qnaThreads,
+} from "@/db/schema";
 import {
   INVALID_MEDIA_BYTE_RANGE,
   canAccessMediaDelivery,
@@ -22,6 +28,42 @@ function unavailable(status = 404): Response {
     status,
     headers: PRIVATE_NO_STORE_HEADERS,
   });
+}
+
+/** 본문 이미지가 연결된 문서의 열람 범위를 읽는다. 문서가 없으면 null이다. */
+async function loadDocumentImageResource(
+  db: ReturnType<typeof createDb>,
+  resourceType: string | null,
+  resourceId: string,
+): Promise<MediaDeliveryResourceContext> {
+  if (resourceType === "PRIVATE_NOTE") {
+    const [note] = await db
+      .select({ studentId: privateNotes.studentId })
+      .from(privateNotes)
+      .where(eq(privateNotes.id, resourceId))
+      .limit(1);
+    return note ? { kind: "PRIVATE_NOTE", studentId: note.studentId } : null;
+  }
+  if (resourceType === "COMMUNITY_POST") {
+    const [post] = await db
+      .select({ authorId: posts.authorId, deletedAt: posts.deletedAt })
+      .from(posts)
+      .where(eq(posts.id, resourceId))
+      .limit(1);
+    return post
+      ? { kind: "COMMUNITY_POST", authorId: post.authorId, deleted: post.deletedAt !== null }
+      : null;
+  }
+  if (resourceType === "QNA_REPLY") {
+    const [thread] = await db
+      .select({ studentId: qnaThreads.studentId })
+      .from(qnaReplies)
+      .innerJoin(qnaThreads, eq(qnaReplies.threadId, qnaThreads.id))
+      .where(eq(qnaReplies.id, resourceId))
+      .limit(1);
+    return thread ? { kind: "QNA_REPLY", studentId: thread.studentId } : null;
+  }
+  return null;
 }
 
 export async function GET(
@@ -93,6 +135,13 @@ export async function GET(
       )
       .limit(1);
     if (thread) resource = { kind: "QNA_REPLY", studentId: thread.studentId };
+  } else if (media.state === "ATTACHED" && media.purpose === "DOCUMENT_IMAGE") {
+    if (!media.resourceId) return unavailable();
+    resource = await loadDocumentImageResource(
+      db,
+      media.resourceType,
+      media.resourceId,
+    );
   }
   if (
     !canAccessMediaDelivery(

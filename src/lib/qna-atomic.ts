@@ -31,6 +31,7 @@ import {
 } from "@/lib/qna-continuity";
 import { deriveDocumentOperationRecordId } from "@/lib/private-note-continuity";
 import {
+  documentImageClaimStatements,
   mediaClaimStatements,
   qnaMediaPurgeStatements,
 } from "@/lib/media-lifecycle-atomic";
@@ -547,6 +548,13 @@ export async function createQnaThreadAtomically(
         resourceId: write.replyId,
         now: write.now,
       }),
+      ...documentImageClaimStatements({
+        contentHtml: write.contentHtml,
+        ownerId: write.actor.id,
+        resourceType: "QNA_REPLY",
+        resourceId: write.replyId,
+        now: write.now,
+      }),
       {
         query: `
           INSERT INTO qna_threads (
@@ -716,6 +724,13 @@ export async function createQnaReplyAtomically(
           ownerId: write.actor.id,
           purpose: "QNA_ATTACHMENT",
           draftOperationId: write.operationId,
+          resourceType: "QNA_REPLY",
+          resourceId: write.replyId,
+          now: write.now,
+        }),
+        ...documentImageClaimStatements({
+          contentHtml: write.contentHtml,
+          ownerId: write.actor.id,
           resourceType: "QNA_REPLY",
           resourceId: write.replyId,
           now: write.now,

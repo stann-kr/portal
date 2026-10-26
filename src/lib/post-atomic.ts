@@ -32,6 +32,7 @@ import {
 } from "@/lib/post-continuity";
 import { deriveDocumentOperationRecordId } from "@/lib/private-note-continuity";
 import {
+  documentImageClaimStatements,
   mediaClaimStatements,
   postMediaPurgeStatements,
 } from "@/lib/media-lifecycle-atomic";
@@ -504,6 +505,13 @@ export async function createPostAtomically(
         resourceId: write.postId,
         now: write.now,
       }),
+      ...documentImageClaimStatements({
+        contentHtml: snapshot.contentHtml,
+        ownerId: write.actor.id,
+        resourceType: "COMMUNITY_POST",
+        resourceId: write.postId,
+        now: write.now,
+      }),
       {
         query: `
           INSERT INTO posts (
@@ -701,6 +709,13 @@ export async function updatePostAtomically(
         ],
       },
       DOCUMENT_CONDITIONAL_WRITE_SENTINEL,
+      ...documentImageClaimStatements({
+        contentHtml: write.contentHtml,
+        ownerId: write.actor.id,
+        resourceType: "COMMUNITY_POST",
+        resourceId: write.postId,
+        now: write.now,
+      }),
       postRevisionInsertStatement({
         revisionId: derivePostRevisionId(write.actor.id, write.operationId),
         postId: write.postId,
