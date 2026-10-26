@@ -14,7 +14,9 @@ export function useHasPassed(timestampMilliseconds: number | null): boolean {
 
   useEffect(() => {
     if (timestampMilliseconds === null || timestampMilliseconds <= now) return;
-    const delay = Math.min(timestampMilliseconds - now, MAX_TIMEOUT_MILLISECONDS);
+    // 기한이 바뀌었을 수 있으므로 남은 시간은 마지막으로 읽은 시각이 아니라 지금 시각으로 계산한다.
+    // 이미 지났다면 0ms 뒤 바로 다시 읽는다.
+    const delay = Math.min(Math.max(timestampMilliseconds - Date.now(), 0), MAX_TIMEOUT_MILLISECONDS);
     const timer = setTimeout(() => setNow(Date.now()), delay);
     return () => clearTimeout(timer);
   }, [now, timestampMilliseconds]);

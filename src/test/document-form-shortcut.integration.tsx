@@ -281,6 +281,7 @@ let DeleteNoteButton: typeof import("@/components/notes/DeleteNoteButton").Delet
 let NoteTrashActions: typeof import("@/components/notes/NoteTrashActions").NoteTrashActions;
 let RestorePostRevisionButton: typeof import("@/components/community/RestorePostRevisionButton").RestorePostRevisionButton;
 let PostTrashActions: typeof import("@/components/community/PostTrashActions").PostTrashActions;
+let QnaThreadLifecycleActions: typeof import("@/components/qna/QnaThreadLifecycleActions").QnaThreadLifecycleActions;
 let NoteFullForm: typeof import("@/components/notes/NoteFullForm").NoteFullForm;
 let StudentNotesPage: typeof import("@/app/dashboard/student/notes/page").default;
 let AdminStudentNotesPage: typeof import("@/app/dashboard/admin/students/[id]/notes/page").default;
@@ -294,6 +295,7 @@ before(async () => {
   ({ NoteTrashActions } = await import("@/components/notes/NoteTrashActions"));
   ({ RestorePostRevisionButton } = await import("@/components/community/RestorePostRevisionButton"));
   ({ PostTrashActions } = await import("@/components/community/PostTrashActions"));
+  ({ QnaThreadLifecycleActions } = await import("@/components/qna/QnaThreadLifecycleActions"));
   ({ default: QnaTrashPage } = await import("@/app/dashboard/qna/trash/page"));
   [
     { NewPostForm },
@@ -716,6 +718,18 @@ test("게시물 휴지통 화면을 연 채 보관 기간이 지나면 영구 �
   await harness.rerender(screen(true));
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 150)); });
   assert.deepEqual(labels(), ["영구 삭제"]);
+});
+
+test("Q&A 휴지통 화면은 기한이 이미 지난 값으로 바뀌면 오래 기다리지 않고 영구 삭제 버튼을 보인다", { concurrency: false }, async (context) => {
+  const retentionMilliseconds = 30 * 24 * 60 * 60 * 1000;
+  const screen = (deletedAt: string | null, expiredOnServer: boolean) => <QnaThreadLifecycleActions threadId="qna-expiry" version={2} deletedAt={deletedAt} canRestore={!expiredOnServer} canPurge={expiredOnServer} returnTo="/dashboard/qna" />;
+  const mountedAt = Date.now();
+  const harness = await renderForm(context, screen(null, false));
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 400)); });
+  // 화면을 연 뒤 시간이 흐른 다음, 그 사이(이미 지난 시각)에 보관 기간이 끝나는 삭제 시각으로 바뀐다.
+  await harness.rerender(screen(new Date(mountedAt + 300 - retentionMilliseconds).toISOString(), true));
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 50)); });
+  assert.ok([...harness.container.querySelectorAll("button")].some((button) => button.textContent?.includes("영구 삭제")));
 });
 
 for (const busyKind of ["upload", "reply", "lifecycle"] as const) {
