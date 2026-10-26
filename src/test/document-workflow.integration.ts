@@ -1064,6 +1064,50 @@ test("노트 휴지통 이동과 복원은 기본 조회를 분리하고 각각 
   assert.equal(head?.deletedAt, null);
 });
 
+test("학생 상세 노트 탭 요약은 해당 학생의 active note 수와 최근 note의 본문 앞부분만 읽는다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context, createSession("admin-1", "admin"));
+  await seedProfile(db, "admin-1", "admin");
+  await seedProfile(db, "student-1");
+  await seedProfile(db, "student-2");
+  const longBody = `<p>${"가".repeat(5_000)}</p>`;
+  const createdIds: string[] = [];
+  for (const [index, contentHtml] of [longBody, "<p>둘째</p>", "<p>셋째</p>"].entries()) {
+    const created = await privateNoteActions.createPrivateNote(
+      "student-1",
+      {},
+      createNoteForm(crypto.randomUUID(), `노트 ${index + 1}`, contentHtml),
+    );
+    assert.ok(created.note?.id);
+    createdIds.push(created.note.id);
+    // createdAt 정렬이 같은 초에 겹치지 않게 한다.
+    await db
+      .update(privateNotes)
+      .set({ createdAt: new Date(Date.UTC(2026, 7, 1 + index)) })
+      .where(eq(privateNotes.id, created.note.id));
+  }
+  await privateNoteActions.trashPrivateNote(createdIds[2], crypto.randomUUID(), 1);
+  const other = await privateNoteActions.createPrivateNote(
+    "student-2",
+    {},
+    createNoteForm(crypto.randomUUID(), "다른 학생", "<p>다른 학생 본문</p>"),
+  );
+  assert.ok(other.note?.id);
+
+  const overview = await privateNoteActions.getRecentPrivateNotesOverview("student-1", 1);
+  assert.equal(overview.total, 2);
+  assert.deepEqual(overview.notes.map((note) => note.title), ["노트 2"]);
+  const all = await privateNoteActions.getRecentPrivateNotesOverview("student-1", 20);
+  assert.deepEqual(all.notes.map((note) => note.title), ["노트 2", "노트 1"]);
+  const truncated = all.notes[1].contentHtml;
+  assert.equal(truncated.length, 4_096);
+  assert.ok(longBody.startsWith(truncated));
+
+  activeSession = createSession("student-2", "student");
+  await assert.rejects(privateNoteActions.getRecentPrivateNotesOverview("student-1", 20));
+  activeSession = createSession("student-1", "student");
+  assert.equal((await privateNoteActions.getRecentPrivateNotesOverview("student-1", 20)).total, 2);
+});
+
 test("과거 revision 복원은 기존 이력을 바꾸지 않고 새 head revision을 추가한다", { concurrency: false }, async (context) => {
   const { db } = await setupDatabase(context);
   await seedProfile(db, "student-1");

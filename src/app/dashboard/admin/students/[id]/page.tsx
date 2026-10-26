@@ -13,7 +13,7 @@ import { getLessonsByStudent } from "@/lib/actions/lessons";
 import { getOrSeedColumns, getDiggingTracks } from "@/lib/actions/digging";
 import { getQnaThreadsByStudent } from "@/lib/actions/qna";
 import { getAssignmentSummariesByStudent } from "@/lib/actions/assignments";
-import { getPrivateNotes } from "@/lib/actions/privateNotes";
+import { getRecentPrivateNotesOverview } from "@/lib/actions/privateNotes";
 import { PrivateNoteList } from "@/components/notes/PrivateNoteList";
 import { getStudentCalendarFeedIssuedAt } from "@/lib/actions/calendarFeed";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -106,16 +106,15 @@ const NOTES_TAB_PREVIEW_COUNT = 20;
 
 /** 학생 상세에서 바로 최근 노트를 훑고 열 수 있게 한다. 검색·전체 목록은 노트 페이지가 맡는다. */
 async function NotesTabContent({ studentId }: { studentId: string }) {
-  const notes = await getPrivateNotes(studentId);
+  const { notes: visibleNotes, total } = await getRecentPrivateNotesOverview(studentId, NOTES_TAB_PREVIEW_COUNT);
   const returnTo = buildAdminStudentDetailHref(studentId, "notes");
   const notesPageHref = `/dashboard/admin/students/${encodeURIComponent(studentId)}/notes`;
-  const visibleNotes = notes.slice(0, NOTES_TAB_PREVIEW_COUNT);
 
   return (
     <section className="space-y-3" aria-label="학생 노트">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-muted-foreground">
-          노트 {notes.length}개{notes.length > visibleNotes.length ? ` 중 최근 ${visibleNotes.length}개` : ""}
+          노트 {total}개{total > visibleNotes.length ? ` 중 최근 ${visibleNotes.length}개` : ""}
         </p>
         <div className="flex flex-wrap items-center gap-2">
           <Link
