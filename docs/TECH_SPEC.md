@@ -13,7 +13,7 @@ Browser
       ├─ server actions
       └─ calendar feed API
           ├─ Drizzle ORM → Cloudflare D1 / local SQLite
-          └─ presigned upload → Cloudflare R2
+          └─ Worker upload route → R2 binding
 
 OpenNext → Cloudflare Worker
 ```
@@ -34,7 +34,7 @@ OpenNext → Cloudflare Worker
 | Local draft account boundary | `src/components/auth/`, `src/lib/account-cleanup-client.ts`, `src/lib/account-terminal-lock.ts`, `src/lib/local-draft-continuity-client.ts` | 기기 초안 목록·명시 폐기, 로그아웃·계정 전환·삭제 신호 정리 |
 | Server draft continuity | `src/lib/actions/documentDrafts.ts`, `src/lib/hooks/useSyncedFormDraft.ts`, `src/components/editor/ServerDraftStatus.tsx` | 사용자·문서별 최신본, CAS·재전송, 오프라인 queue와 명시적 다중 기기 선택 |
 | Document lifecycle | `src/lib/document-lifecycle-atomic.ts`, `src/lib/post-atomic.ts`, `src/lib/qna-atomic.ts` | 게시물·Q&A version CAS, 불변 이력·receipt, 휴지통·복원·purge·tombstone 원자 경계 |
-| Storage | `src/lib/r2.ts`, `src/lib/media-lifecycle-atomic.ts`, `src/lib/actions/upload.ts`, `src/app/api/media/` | staging presigned upload, D1 registry·삭제 outbox, 인증 delivery |
+| Storage | `src/lib/r2.ts`, `src/lib/media-lifecycle-atomic.ts`, `src/lib/actions/upload.ts`, `src/app/api/media/` | Worker 경유 staging upload(`PUT /api/media/upload/[id]`)·binding seal, D1 registry·삭제 outbox, 본문 이미지 연결(`src/lib/document-image-references.ts`), 인증 delivery |
 | Account privacy | `src/lib/account-privacy-atomic.ts`, `src/lib/actions/accountPrivacy.ts`, `src/app/api/account-cleanup/` | 학생 본인 원자 삭제, 기기 cleanup digest, 30일 raw-ID alias |
 | Calendar feed | `src/app/api/calendar/feed/route.ts`, `src/app/api/calendar/[studentId]/route.ts`, `src/lib/calendar-feed.ts` | opaque v2 token과 legacy v1 접근 |
 | Scheduled maintenance | `worker.ts`, `src/lib/scheduled-maintenance.ts`, `src/db/d1-context.ts` | request context 없는 Cron에서 bounded account alias·media outbox 수렴 |
@@ -132,7 +132,7 @@ Cloudflare binding:
 | `BUCKET` | R2 bucket | 미디어 저장 |
 | `ASSETS` | OpenNext assets | 정적 asset |
 
-Migration SQL은 `drizzle/`, Drizzle metadata는 `drizzle/meta/`에 둔다. Wrangler는 SQL 파일명과 D1의 적용 이력을 기준으로 migration을 실행하고, Drizzle metadata는 다음 schema diff 생성 기준으로 사용한다. SQL·journal·snapshot은 `0000~0013`까지 대응한다. `npm run db:check`는 empty replay와 current schema/latest snapshot의 column·FK·index뿐 아니라 문서·미디어·개인정보·외부 캘린더 구독 CHECK·FK·unique index, 불변·부활·교체 우회 방지 probe, `0007` fixture upgrade·inbound FK preflight, `0008→0009` account cascade, 기존 게시물·Q&A의 `0009→0010`, 기존 URL을 보존하는 `0010→0011`, populated `0011→0012` 개인정보 및 `0012→0013` 외부 캘린더 upgrade를 검사한다. 이 체인은 저장소의 schema 계약이며 persistent local·remote D1의 현재 적용 이력을 뜻하지 않는다. 환경별 실제 적용 목록과 pending 범위는 [운영 상태 확인 기준](./DEPLOYMENT.md#운영-상태-확인-기준)으로 확인한다. 외부 캘린더 코드의 promotion에는 대상 D1의 `0013`이 필요하다.
+Migration SQL은 `drizzle/`, Drizzle metadata는 `drizzle/meta/`에 둔다. Wrangler는 SQL 파일명과 D1의 적용 이력을 기준으로 migration을 실행하고, Drizzle metadata는 다음 schema diff 생성 기준으로 사용한다. SQL·journal·snapshot은 `0000~0014`까지 대응한다. `npm run db:check`는 empty replay와 current schema/latest snapshot의 column·FK·index뿐 아니라 문서·미디어·개인정보·외부 캘린더 구독 CHECK·FK·unique index, 불변·부활·교체 우회 방지 probe, `0007` fixture upgrade·inbound FK preflight, `0008→0009` account cascade, 기존 게시물·Q&A의 `0009→0010`, 기존 URL을 보존하는 `0010→0011`, populated `0011→0012` 개인정보, `0012→0013` 외부 캘린더 및 `0013→0014` 본문 이미지 upgrade를 검사한다. 이 체인은 저장소의 schema 계약이며 persistent local·remote D1의 현재 적용 이력을 뜻하지 않는다. 환경별 실제 적용 목록과 pending 범위는 [운영 상태 확인 기준](./DEPLOYMENT.md#운영-상태-확인-기준)으로 확인한다. 외부 캘린더 코드의 promotion에는 대상 D1의 `0013`, 본문 이미지·Worker 업로드 코드에는 `0014`가 필요하다.
 
 신규 업로드는 사용자에게 노출된 `media-upload/` staging key로만 PUT하고, 서버가 size·Content-Type metadata·ETag를 확인한 뒤 사용자에게 공개되지 않은 별도 `media/` final key로 봉인한다. D1의 `SEALING` lease가 봉인과 삭제를 직렬화하며, 결과를 잃은 Copy는 복구 유예 뒤 final 삭제 outbox가 다시 정리한다. 문서에는 object ID와 `/api/media/{id}`만 저장하고, 게시물과 Q&A의 원자 생성·purge transaction이 registry claim과 R2 삭제 의도를 함께 commit한다. R2 삭제는 lease·지수 backoff를 사용하는 durable outbox로 재시도한다.
 
@@ -207,9 +207,9 @@ Migration SQL은 `drizzle/`, Drizzle metadata는 `drizzle/meta/`에 둔다. Wran
 | `DEV_ADMIN_EMAIL` | 로컬 관리자 계정 식별자 | 개발 환경 전용 |
 | `DEV_ADMIN_PASSWORD` | 로컬 관리자 비밀번호 | 로컬 secret |
 | `DEV_ADMIN_DISPLAY_NAME` | 로컬 관리자 표시 이름 | 개발 환경 전용 |
-| `R2_ENDPOINT` | R2 S3-compatible endpoint | 환경별 설정 |
-| `R2_ACCESS_KEY_ID` | R2 access key | secret |
-| `R2_SECRET_ACCESS_KEY` | R2 secret key | secret |
+| `R2_ENDPOINT` | 로컬 `next dev`에서 BUCKET binding 없이 R2를 쓸 때만 쓰는 S3-compatible endpoint | 개발 환경 전용 |
+| `R2_ACCESS_KEY_ID` | 위와 같은 로컬 개발용 access key | 로컬 secret |
+| `R2_SECRET_ACCESS_KEY` | 위와 같은 로컬 개발용 secret key | 로컬 secret |
 | `EXTERNAL_CALENDAR_ENCRYPTION_KEY` | 공개 iCal URL AES-256-GCM용 32-byte base64/base64url key | Worker/local secret, 운영 미설정 |
 | `R2_BUCKET_NAME` | upload bucket 이름 | 환경별 설정 |
 

@@ -30,10 +30,11 @@
 
 | 항목 | 저장소에서 확인할 수 있는 것 | 운영 적용을 확인하는 증거 |
 |---|---|---|
-| D1 migration | SQL·journal·snapshot `0000~0013`, 메모리 DB에서 체인·schema 검증 | 대상 D1의 적용 목록과 실제 schema·FK, 그 목록에서 계산한 pending 범위 |
+| D1 migration | SQL·journal·snapshot `0000~0014`, 메모리 DB에서 체인·schema 검증 | 대상 D1의 적용 목록과 실제 schema·FK, 그 목록에서 계산한 pending 범위 |
 | 계정 삭제 | `0012`와 삭제·정리 구현, application 설정의 `ACCOUNT_DELETION_ENABLED="false"` 기본값 | 활성 Worker의 유효 flag, 기기 adoption, 승인된 삭제·정리 smoke |
 | 예약 정리 | `worker.ts`의 `scheduled` handler, Workers Logs 설정, source에 없는 Cron trigger | 원격 trigger 주기, 대상 version의 실제 scheduled invocation, backlog·실패·alert 증거 |
 | 외부 캘린더 | `0013` 구독 테이블과 `EXTERNAL_CALENDAR_ENCRYPTION_KEY` 요구 조건 | 대상 schema, secret 설정 확인, 승인된 연결·읽기·교체·해제 smoke |
+| 본문 이미지·업로드 | `0014`의 `DOCUMENT_IMAGE`·`PRIVATE_NOTE` 허용, `PUT /api/media/upload/[id]`와 `BUCKET` binding 사용(R2 S3 secret 불필요) | 대상 D1의 `0014` 적용, 활성 Worker의 `BUCKET` binding, 승인된 업로드·표시·권한 smoke |
 | 배포 환경 분리 | 현재 tracked 설정의 Worker는 `portal` | development/production Worker·D1·R2·route·secret·branch trigger 각각의 inventory |
 
 운영 확인은 기존 상태 조회, migration·secret·trigger 변경, 데이터 쓰기 smoke를 구분해 승인된
@@ -53,6 +54,8 @@
 - trigger branch, required release gate, 예상 commit SHA, Active Deployment와 대상 URL smoke를 확인하기 전에는 배포 성공을 보고하지 않는다.
 - 현재 저장소에는 development 설정이 없으므로 feature/fix branch를 `dev`에 통합해도 development 자동 배포를 가정하지 않는다. remote trigger와 resource 분리가 확인될 때까지 `BLOCKED`로 다룬다.
 - 비호환 migration 작업 창에는 자동 promotion을 중지하거나 upload-only 절차로 전환한다.
+- 2026-10-21 이후 OpenNext Cloudflare 빌드가 Next.js 15.5.22를 지원 종료 버전으로 보고 거부한다. 운영 빌드 전에 Next.js 업그레이드 또는 `--dangerouslyUseUnsupportedNextVersion` 사용 여부를 먼저 결정한다(2026-10-26 확인, 로컬 검증 빌드만 플래그 사용).
+- 본문 이미지·Worker 업로드 코드는 `0014`가 필요하다. `0014`는 `media_objects`의 허용 값을 넓히는 table rebuild라 기존 코드와 호환되므로 promotion 전에 먼저 적용한다.
 
 ### 외부 캘린더 전환 gate
 
