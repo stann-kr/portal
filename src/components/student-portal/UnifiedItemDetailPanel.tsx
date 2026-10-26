@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { getUnifiedItemKey, type UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 import { UnifiedItemSpaceBadge, UnifiedItemTypeBadge } from "@/components/ui/unified-item-type";
 import { SlidePanel } from "./SlidePanel";
@@ -47,6 +47,12 @@ export function UnifiedItemDetailPanel({
   showSpaceContext?: boolean;
 } & UnifiedItemChangeHandlers) {
   const [busy, setBusy] = useState(false);
+  // 저장이 끝났을 때 사용자가 그사이 고른 항목(최신 item)을 덮어쓰지 않도록 마지막 요청을 기억한다.
+  const requestedKey = item ? getUnifiedItemKey(item) : null;
+  const requestedKeyRef = useRef<string | null>(requestedKey);
+  useEffect(() => {
+    requestedKeyRef.current = requestedKey;
+  }, [requestedKey]);
   // 넓은 화면 패널은 비모달이라 저장·삭제 중에도 캘린더의 다른 항목·보기를 누를 수 있다.
   // 그동안은 지금 항목과 열림을 붙잡아 두고(같은 항목의 저장 결과만 반영), 끝나면 마지막 요청을 따른다.
   const [shown, setShown] = useState({ item, open });
@@ -75,6 +81,9 @@ export function UnifiedItemDetailPanel({
     >
       {current ? (
         <UnifiedItemDetail
+          // 항목마다 편집·삭제 확인 상태를 새로 시작한다. 다른 칩으로 바꿨을 때 이전 항목의 편집값이 남아
+          // 새 항목 이름으로 저장되지 않게 한다.
+          key={getUnifiedItemKey(current)}
           item={current}
           onClose={() => onOpenChange(false)}
           returnTo={returnTo}
@@ -83,7 +92,8 @@ export function UnifiedItemDetailPanel({
           viewer={viewer}
           onBusyChange={setBusy}
           onItemUpdated={(updated) => {
-            onItemChange(updated);
+            const requestedKey = requestedKeyRef.current;
+            if (requestedKey === null || requestedKey === getUnifiedItemKey(updated)) onItemChange(updated);
             onItemUpdated?.(updated);
           }}
           onItemRemoved={(removed) => {

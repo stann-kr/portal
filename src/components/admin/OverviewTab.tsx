@@ -8,6 +8,7 @@
 
 import { useActionState, useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { Pencil, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -64,7 +65,10 @@ interface OverviewTabProps {
   referenceTime?: Date;
 }
 
-/** 목록 행 끝의 수정·삭제 아이콘 버튼: 좁은 화면 44px·항상 보임, 넓은 화면 32px·행 hover/focus 때 보임. */
+/**
+ * 목록 행 끝의 수정·삭제 아이콘 버튼: 넓은 화면 32px·행 hover/focus 때 보임, 좁은 화면 44px·위쪽 막대
+ * 더 보기의 "레슨·커리큘럼 편집"(`?edit=1`)일 때만 보임(MobileAdminStudentDetail 보드는 행에 아이콘이 없다).
+ */
 const ROW_ICON_BUTTON_CLASS =
   "size-11 shrink-0 rounded-touch opacity-100 transition-opacity md:size-8 md:rounded-md md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 aria-expanded:opacity-100";
 
@@ -271,6 +275,9 @@ export function OverviewTab({
   account = { kind: "active" },
   referenceTime,
 }: OverviewTabProps) {
+  const searchParams = useSearchParams();
+  const rowEditing = searchParams?.get("edit") === "1";
+  const rowIconClass = cn(ROW_ICON_BUTTON_CLASS, !rowEditing && "max-md:hidden");
   const [openedAt] = useState(() => Date.now());
   const now = referenceTime?.getTime() ?? openedAt;
   const reference = new Date(now);
@@ -317,6 +324,18 @@ export function OverviewTab({
   return (
     <div className="flex flex-col gap-6 md:flex-row md:flex-wrap md:items-start md:gap-x-14 md:gap-y-10">
       {mutationError ? <p className="basis-full text-body text-destructive" role="alert">{mutationError}</p> : null}
+      {rowEditing ? (
+        <div className="flex items-center justify-between gap-3 rounded-lg bg-sidebar py-1 pl-4 pr-1 md:hidden">
+          <p className="text-ui text-secondary-foreground">레슨·커리큘럼을 고치거나 지울 수 있습니다.</p>
+          <Link
+            href={`/dashboard/admin/students/${encodeURIComponent(studentId)}?tab=overview`}
+            replace
+            className="flex h-11 shrink-0 items-center rounded-touch px-3 text-ui font-medium text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            편집 완료
+          </Link>
+        </div>
+      ) : null}
 
       <div className="flex min-w-0 flex-col gap-6 md:flex-[2_1_480px] md:gap-10">
         {/* 커리큘럼 */}
@@ -358,7 +377,7 @@ export function OverviewTab({
                       onClick={() => setEditingModuleId(m.id)}
                       disabled={isPending}
                       aria-label={`${m.title} 모듈 수정`}
-                      className={ROW_ICON_BUTTON_CLASS}
+                      className={rowIconClass}
                     >
                       <Pencil className="size-4" strokeWidth={1.6} aria-hidden="true" />
                     </Button>
@@ -369,7 +388,7 @@ export function OverviewTab({
                       disabled={isPending}
                       aria-expanded={moduleDeleteConfirm.value === m.id}
                       aria-label={`${m.title} 모듈 삭제`}
-                      className={cn(ROW_ICON_BUTTON_CLASS, "text-destructive hover:text-destructive")}
+                      className={cn(rowIconClass, "text-destructive hover:text-destructive")}
                     >
                       <Trash2 className="size-4" strokeWidth={1.6} aria-hidden="true" />
                     </Button>
@@ -439,7 +458,7 @@ export function OverviewTab({
                         disabled={isPending}
                         aria-expanded={lessonDeleteConfirm.value === l.id}
                         aria-label={`${lessonLabel} 레슨 삭제`}
-                        className={cn(ROW_ICON_BUTTON_CLASS, "text-destructive hover:text-destructive")}
+                        className={cn(rowIconClass, "text-destructive hover:text-destructive")}
                       >
                         <Trash2 className="size-4" strokeWidth={1.6} aria-hidden="true" />
                       </Button>

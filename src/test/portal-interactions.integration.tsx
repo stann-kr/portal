@@ -84,7 +84,11 @@ let LoginForm: typeof import("@/components/auth/LoginForm").LoginForm;
 const previousGlobals = new Map<string, PropertyDescriptor | undefined>();
 
 const routerReplacements: string[] = [];
-mock.module("next/navigation", { namedExports: { useRouter: () => ({ push() {}, refresh() {}, replace(href: string) { routerReplacements.push(href); } }) } });
+mock.module("next/navigation", { namedExports: {
+  useRouter: () => ({ push() {}, refresh() {}, replace(href: string) { routerReplacements.push(href); } }),
+  // 관리자 학생 상세의 좁은 화면 편집 모드(`?edit=1`)처럼 주소 값을 읽는 화면용. 테스트 창의 현재 주소를 준다.
+  useSearchParams: () => new URLSearchParams(globalThis.location?.search ?? ""),
+} });
 // Browser/provider loading is exercised separately; this boundary exposes v3's HTML media API.
 const HtmlMediaBoundary = React.forwardRef<HTMLVideoElement, ReactPlayerProps>((props, ref) => (
   <video ref={ref} src={props.src} controls={props.controls} onLoadedMetadata={props.onLoadedMetadata} onCanPlay={props.onCanPlay} onError={props.onError} />
@@ -732,6 +736,31 @@ test("controlled panel restores its opener focus and preserves busy dismissal pr
   assert.equal(browser.document.activeElement, button("패널 열기"));
 });
 
+test("docked panel keeps its presentation while busy when the dock is switched off, then follows the viewport", async (context) => {
+  function Panel() {
+    const [enabled, setEnabled] = useState(true);
+    const [busy, setBusy] = useState(false);
+    return (
+      <SlidePanelDock enabled={enabled}>
+        <button onClick={() => setEnabled(!enabled)}>폭 바꾸기</button>
+        <SlidePanel open onOpenChange={() => {}} title="상세" dismissible={!busy} docked>
+          <button onClick={() => setBusy(!busy)}>{busy ? "저장 완료" : "저장 시작"}</button>
+        </SlidePanel>
+      </SlidePanelDock>
+    );
+  }
+  const docked = () => browser.document.querySelector('aside[aria-label="상세"]');
+  await render(context, <Panel />);
+  assert.ok(docked());
+  await press("저장 시작");
+  await press("폭 바꾸기");
+  assert.ok(docked(), "저장 중에는 붙는 패널을 유지해 본문을 다시 마운트하지 않는다");
+  assert.equal(browser.document.querySelector('[role="dialog"]'), null);
+  await press("저장 완료");
+  assert.equal(docked(), null, "작업이 끝나면 지금 폭에 맞는 모달로 옮긴다");
+  assert.ok(browser.document.querySelector('[role="dialog"]'));
+});
+
 test("docked panel opens beside the page without a modal, keeps busy protection and returns focus only from inside", async (context) => {
   function Panel() {
     const [open, setOpen] = useState(false);
@@ -1051,8 +1080,11 @@ test("월·주 tabs control the always-mounted calendar panel without remounting
   assert.equal(panel.getAttribute("aria-labelledby"), button("월").id);
   const calendarRoot = panel.querySelector(".fc");
   assert.ok(calendarRoot, "월 패널 안에 달력이 있다");
+  assert.equal(controlled("주"), panel, "월이 활성일 때도 주 탭이 같은 패널을 가리킨다");
   await press("주");
   assert.equal(controlled("주"), panel, "주 탭도 같은 자리의 패널을 가리킨다");
+  assert.equal(controlled("월"), panel, "주가 활성일 때도 월 탭이 같은 패널을 가리킨다");
+  assert.equal(panel.getAttribute("aria-labelledby"), button("주").id, "패널 이름은 활성 탭을 따른다");
   assert.equal(panel.querySelector(".fc"), calendarRoot, "보기를 바꿔도 달력을 다시 마운트하지 않는다");
   await press("일별");
   assert.ok(panel.hasAttribute("hidden"), "다른 보기에서는 달력 패널을 숨긴다");

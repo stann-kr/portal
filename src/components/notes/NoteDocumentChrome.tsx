@@ -82,7 +82,11 @@ export function NoteDocumentTitle({ children }: { children: ReactNode }) {
 
 /** 제목 입력(textarea)의 글자. 읽기 화면 제목과 같은 크기다. */
 export const NOTE_TITLE_FIELD_CLASS =
-  "w-full resize-none overflow-hidden border-0 bg-transparent p-0 text-[26px] font-semibold leading-[34px] tracking-display text-foreground placeholder:text-faint focus:outline-none md:text-4xl md:leading-[44px] md:tracking-[-0.025em]";
+  "w-full resize-none overflow-hidden border-0 bg-transparent p-0 text-[26px] font-semibold leading-[34px] tracking-display text-foreground placeholder:text-muted-foreground focus:outline-none md:text-4xl md:leading-[44px] md:tracking-[-0.025em]";
+
+/** 새 노트의 날짜 입력(NoteNew 보드는 native 날짜 칸, 노트 문서는 `NoteDateField` 글자 표시). */
+export const NOTE_DATE_INPUT_CLASS =
+  "h-9 rounded-md border border-input bg-background px-2 font-mono text-base text-foreground focus-visible:outline-2 focus-visible:-outline-offset-1 focus-visible:outline-ring disabled:opacity-50 md:h-[30px] md:text-xs";
 
 /** 속성 줄 묶음과 아래 구분선. */
 export function NoteProperties({ children }: { children: ReactNode }) {

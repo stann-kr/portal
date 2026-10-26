@@ -2,8 +2,9 @@
 
 import { useMemo } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { CalendarDays, Ellipsis, FilePlus } from "lucide-react";
+import { CalendarDays, Ellipsis, FilePlus, Pencil } from "lucide-react";
 import { MobileTopBar } from "@/components/app-shell/AppSidebar";
 import { buildAdminStudentNotesHref } from "@/components/admin/StudentDetailTabs";
 
@@ -15,6 +16,9 @@ const ITEM_CLASS =
  * 더 보기에는 탭 막대에 없는 이 학생의 바로가기(레슨 캘린더, 노트 작성)를 둔다.
  */
 export function StudentDetailTopBar({ studentId, returnTo }: { studentId: string; returnTo: string }) {
+  const searchParams = useSearchParams();
+  const onOverview = (searchParams?.get("tab") ?? "overview") === "overview";
+  const editing = searchParams?.get("edit") === "1";
   const actions = useMemo(() => (
     <DropdownMenu.Root>
       <DropdownMenu.Trigger asChild>
@@ -34,6 +38,17 @@ export function StudentDetailTopBar({ studentId, returnTo }: { studentId: string
           style={{ zIndex: "var(--z-dropdown)" }}
           className="portal-menu w-56 rounded-lg border border-border bg-background p-1 shadow-floating"
         >
+          {onOverview ? (
+            <DropdownMenu.Item asChild className={ITEM_CLASS}>
+              <Link
+                href={`/dashboard/admin/students/${encodeURIComponent(studentId)}?tab=overview${editing ? "" : "&edit=1"}`}
+                replace
+              >
+                <Pencil className="size-4 text-secondary-foreground" strokeWidth={1.6} aria-hidden="true" />
+                {editing ? "편집 완료" : "레슨·커리큘럼 편집"}
+              </Link>
+            </DropdownMenu.Item>
+          ) : null}
           <DropdownMenu.Item asChild className={ITEM_CLASS}>
             <Link href={`/dashboard/admin?section=schedule&student=${encodeURIComponent(studentId)}`}>
               <CalendarDays className="size-4 text-secondary-foreground" strokeWidth={1.6} aria-hidden="true" />
@@ -49,7 +64,7 @@ export function StudentDetailTopBar({ studentId, returnTo }: { studentId: string
         </DropdownMenu.Content>
       </DropdownMenu.Portal>
     </DropdownMenu.Root>
-  ), [returnTo, studentId]);
+  ), [editing, onOverview, returnTo, studentId]);
 
   return (
     <MobileTopBar

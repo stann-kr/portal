@@ -12,10 +12,12 @@ import { useRouter } from "next/navigation";
 import { CalendarDays, ChevronLeft, Trash2, UserRound } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
+  NOTE_DATE_INPUT_CLASS,
   NOTE_TITLE_FIELD_CLASS,
   NoteDocumentBody,
   NoteProperties,
   NoteProperty,
+  resolveNoteParent,
 } from "./NoteDocumentChrome";
 import type { CreateNoteState } from "@/lib/actions/privateNotes";
 import { AutosaveStatus } from "@/components/editor/AutosaveStatus";
@@ -38,8 +40,6 @@ import {
 } from "@/lib/creation-operation";
 import { CreationConflictActions } from "@/components/editor/CreationConflictActions";
 import { resolveNoteCreateDefaultDate } from "@/lib/note-create-route";
-import { NoteDateField } from "./NoteDateField";
-import { resolveNoteParent } from "./NoteDocumentChrome";
 import { MobileTopBar } from "@/components/app-shell/AppSidebar";
 
 const FullEditor = dynamic(
@@ -362,12 +362,14 @@ function NoteFullFormContent({ action, actorId, studentId, returnTo, defaultDate
           />
           <NoteProperties>
             <NoteProperty icon={CalendarDays} label="날짜" htmlFor="note-date" tall>
-              <NoteDateField
+              <input
                 id="note-date"
                 name="noteDate"
+                type="date"
                 value={noteDate}
-                onChange={setNoteDate}
+                onChange={(event) => setNoteDate(event.target.value)}
                 disabled={!loaded || isPending}
+                className={NOTE_DATE_INPUT_CLASS}
               />
             </NoteProperty>
             {authorName ? <NoteProperty icon={UserRound} label="작성자" tall>{authorName}</NoteProperty> : null}

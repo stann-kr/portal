@@ -21,7 +21,7 @@ import {
 import { getMyFeedbacksMap } from "@/lib/actions/feedbacks";
 import { EmptyState } from "@/components/ui/empty-state";
 import { describeAssignmentMedia } from "@/lib/unified-item-normalization";
-import { formatKst } from "@/lib/kst-format";
+import { formatKstDot } from "@/components/student-portal/today/format";
 import { getPortalStatus } from "@/lib/portal-status";
 import { STUDENT_LEGACY_REDIRECTS } from "@/lib/legacy-dashboard-routes";
 import { mediaSourceLabel } from "@/components/player/media-source";
@@ -57,7 +57,8 @@ function assignmentDetailHref(id: string): string {
 
 /** 목록의 제출 시각(Mono): 월·일과 24시간 시각. */
 function formatSubmittedAt(date: Date | null): string {
-  return formatKst(date, { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }, "제출일 미정");
+  // 캔버스 목록의 점 날짜 "10.23 21:40"(올해가 아니면 연도를 붙인다).
+  return date ? formatKstDot(date, { time: true, referenceTime: new Date() }) || "제출일 미정" : "제출일 미정";
 }
 
 // ── 제출 폼 ──────────────────────────────────────

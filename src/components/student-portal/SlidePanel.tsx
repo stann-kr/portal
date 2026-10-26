@@ -9,7 +9,7 @@
  */
 "use client";
 
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode, useMemo } from "react";
 import { createPortal } from "react-dom";
 import * as Dialog from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
@@ -25,8 +25,8 @@ export function useSlidePanelHeaderSlots(): HeaderSlots {
   return useContext(SlidePanelHeaderSlotContext);
 }
 
-/** 비모달 패널을 붙일 자리. `SlidePanelDock`이 준다. null이면 docked 패널도 모달로 연다. */
-const SlidePanelDockContext = createContext<HTMLElement | null>(null);
+/** 비모달 패널을 붙일 자리와 지금 붙일 수 있는지. `SlidePanelDock`이 준다. host가 없거나 enabled가 false면 모달로 연다. */
+const SlidePanelDockContext = createContext<{ host: HTMLElement | null; enabled: boolean }>({ host: null, enabled: false });
 
 /**
  * 화면 내용과 그 옆의 비모달 상세 패널 자리를 한 줄로 놓는다. 패널 자리는 `display: contents`라
@@ -44,7 +44,7 @@ export function SlidePanelDock({
 } & Omit<React.HTMLAttributes<HTMLDivElement>, "className" | "children">) {
   const [host, setHost] = useState<HTMLElement | null>(null);
   return (
-    <SlidePanelDockContext.Provider value={enabled ? host : null}>
+    <SlidePanelDockContext.Provider value={useMemo(() => ({ host, enabled }), [host, enabled])}>
       <div className={className} {...props}>
         {children}
         <div ref={setHost} className="contents" data-slide-panel-dock="" />
@@ -113,8 +113,13 @@ function PanelHeader({
 const BODY = "min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 pb-10 pt-6 md:px-8 md:pt-8";
 
 export function SlidePanel(props: SlidePanelProps) {
-  const host = useContext(SlidePanelDockContext);
-  return props.docked && host ? <DockedPanel {...props} host={host} /> : <ModalPanel {...props} />;
+  const { host, enabled } = useContext(SlidePanelDockContext);
+  const wantDocked = Boolean(props.docked && host && enabled);
+  // 저장·삭제 중(dismissible=false)에 화면 폭이 1280px 경계를 넘어도 표현을 바꾸지 않는다. 바꾸면 본문이 다시
+  // 마운트되어 진행 중 잠금과 편집 상태가 사라진다. 작업이 끝나면 지금 폭에 맞는 표현으로 옮긴다.
+  const [docked, setDocked] = useState(wantDocked);
+  if (props.dismissible !== false && docked !== wantDocked) setDocked(wantDocked);
+  return docked && host ? <DockedPanel {...props} host={host} /> : <ModalPanel {...props} />;
 }
 
 function ModalPanel({

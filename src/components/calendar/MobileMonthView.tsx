@@ -28,7 +28,7 @@ import {
 const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
 
 /** 여러 날에 걸친 일정을 그 기간의 날마다 놓는다(월 보기 점·고른 날 목록). 노트·과제 등은 한 날짜다. */
-const MAX_SPAN_DAYS = 62;
+const MAX_SPAN_DAYS = 366;
 export function groupItemsBySpannedDay(items: readonly UnifiedItem[]): Map<string, UnifiedItem[]> {
   const groups = new Map<string, UnifiedItem[]>();
   const push = (key: string, item: UnifiedItem) => {

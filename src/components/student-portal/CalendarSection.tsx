@@ -8,7 +8,7 @@
  */
 "use client";
 
-import { useState, useEffect, useRef, useSyncExternalStore } from "react";
+import { useState, useEffect, useRef, useSyncExternalStore, useId } from "react";
 import Link from "next/link";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Ellipsis, FileText, Music, NotebookPen, TriangleAlert, X } from "lucide-react";
@@ -222,6 +222,8 @@ export function CalendarSection({
   const lessonFocusFrameRef = useRef(0);
   const narrow = useNarrowViewport();
   const dockable = useDockableViewport();
+  // 월·주 탭이 함께 가리키는 달력 패널 id(두 값이 같은 FullCalendar를 쓴다).
+  const calendarPanelId = `${useId().replace(/:/gu, "")}-calendar-grid`;
   const calendarTabStorageKey = createAccountCalendarTabStorageKey(actorId);
   const isStudentWorkspace = actorId === studentId;
   const diggingColumns =
@@ -496,7 +498,14 @@ export function CalendarSection({
                   <h1 className="sr-only text-2xl font-semibold tracking-display md:not-sr-only">{pageTitle}</h1>
                   <TabsList aria-label="보기" className="flex w-full md:inline-flex md:w-auto">
                     {SEGMENTS.map(({ value, label }) => (
-                      <TabsTrigger key={value} value={value} className={value === "week" ? "hidden md:inline-flex" : undefined}>
+                      <TabsTrigger
+                        key={value}
+                        value={value}
+                        className={value === "week" ? "hidden md:inline-flex" : undefined}
+                        {...(value === "month" || value === "week"
+                          ? { id: `${calendarPanelId}-tab-${value}`, "aria-controls": calendarPanelId }
+                          : {})}
+                      >
                         {label}
                       </TabsTrigger>
                     ))}
@@ -581,11 +590,13 @@ export function CalendarSection({
 
               {/* 월·주: FullCalendar(넓은 화면)·작은 월 달력(좁은 화면). 날짜와 보기를 지키려고 늘 마운트해 둔다.
                   월·주 탭이 가리키는 패널이 되도록 같은 자리의 TabsContent 값만 바꾼다(다시 마운트하지 않는다). */}
-              <TabsContent
-                value={segmentValue === "week" ? "week" : "month"}
-                forceMount
+              <div
+                role="tabpanel"
+                id={calendarPanelId}
+                aria-labelledby={`${calendarPanelId}-tab-${segmentValue === "week" ? "week" : "month"}`}
+                tabIndex={0}
                 hidden={activeTab !== "calendar"}
-                className="m-0"
+                className="m-0 focus-visible:outline-none"
               >
                 <UnifiedCalendar
                   isActive={isActive && activeTab === "calendar"}
@@ -604,7 +615,7 @@ export function CalendarSection({
                   onItemUpdated={onAddItem}
                   onItemRemoved={onRemoveItem}
                 />
-              </TabsContent>
+              </div>
 
               <TabsContent value="daily" className="m-0">
                 <DailyListView
