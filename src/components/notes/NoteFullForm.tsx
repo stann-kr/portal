@@ -45,6 +45,8 @@ interface NoteFullFormProps {
   returnTo: string;
   /** 캘린더에서 선택한 날짜. 복구된 초안이 있으면 그 날짜가 우선한다. */
   defaultDate?: string;
+  /** 캘린더 빠른 입력에서 넘어온 제목. 복구된 초안에 제목이 있으면 그 제목이 우선한다. */
+  defaultTitle?: string;
   /** 작성 대상 학생 스페이스를 composer 상단에 명시한다. */
   spaceLabel?: string;
 }
@@ -60,9 +62,9 @@ export function NoteFullForm(props: NoteFullFormProps) {
   return <NoteFullFormContent key={`${props.actorId}:${props.studentId}`} {...props} />;
 }
 
-function NoteFullFormContent({ action, actorId, studentId, returnTo, defaultDate, spaceLabel }: NoteFullFormProps) {
+function NoteFullFormContent({ action, actorId, studentId, returnTo, defaultDate, defaultTitle = "", spaceLabel }: NoteFullFormProps) {
   const initialDefaultDate = resolveNoteCreateDefaultDate(defaultDate, new Date());
-  const [title, setTitle] = useState("");
+  const [title, setTitle] = useState(defaultTitle);
   const [noteDate, setNoteDate] = useState(initialDefaultDate);
   const {
     contentHtml,
@@ -114,7 +116,7 @@ function NoteFullFormContent({ action, actorId, studentId, returnTo, defaultDate
       setOperationId(
         parseCreationOperationId(draft.operationId) ?? createCreationOperationId(),
       );
-      setTitle(draft.title ?? "");
+      setTitle(draft.title || defaultTitle);
       setNoteDate(
         resolveRestoredCreateNoteDate(
           draft.noteDate,

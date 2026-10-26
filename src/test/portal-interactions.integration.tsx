@@ -763,12 +763,12 @@ test("calendar preserves its date, view and filters across view tabs and admin s
     adminId="admin" qnaThreads={[]} pendingAssignments={[]} referenceTime={new Date()}
     students={[{ id: "student", email: "student@example.test", displayName: "학생", createdAt: null, currentModule: null, nextLessonDate: null, pendingFeedbackCount: 0 }]}
   />);
-  const next = [...browser.document.querySelectorAll("button")].find((element) => element.classList.contains("fc-next-button"));
-  assert.ok(next);
-  const initialTitle = browser.document.querySelector(".fc-toolbar-title")?.textContent;
+  const next = browser.document.querySelector('[data-calendar-title] ~ button[aria-label="다음"]');
+  assert.ok(next instanceof browser.HTMLElement);
+  const initialTitle = browser.document.querySelector("[data-calendar-title]")?.textContent;
   await act(async () => next.click());
   await settle();
-  const nextTitle = browser.document.querySelector(".fc-toolbar-title")?.textContent;
+  const nextTitle = browser.document.querySelector("[data-calendar-title]")?.textContent;
   assert.notEqual(nextTitle, initialTitle);
   assert.equal(button("월").getAttribute("aria-pressed"), "true");
   await press("노트 숨기기");
@@ -782,17 +782,17 @@ test("calendar preserves its date, view and filters across view tabs and admin s
   assert.equal(button("일별 목록").getAttribute("aria-selected"), "true");
   await press("캘린더");
   assert.equal(button("월").getAttribute("aria-pressed"), "true");
-  assert.equal(browser.document.querySelector(".fc-toolbar-title")?.textContent, nextTitle);
+  assert.equal(browser.document.querySelector("[data-calendar-title]")?.textContent, nextTitle);
   assert.equal(button("노트 표시하기").getAttribute("aria-pressed"), "false");
   await press("주");
-  const weekTitle = browser.document.querySelector(".fc-toolbar-title")?.textContent;
+  const weekTitle = browser.document.querySelector("[data-calendar-title]")?.textContent;
   assert.equal(button("주").getAttribute("aria-pressed"), "true");
   await act(async () => { navigateWithinPage("/dashboard/admin?section=work&student=student"); });
   await settle();
   await act(async () => { navigateWithinPage("/dashboard/admin?section=schedule&view=calendar&student=student"); });
   await settle();
   assert.equal(button("주").getAttribute("aria-pressed"), "true");
-  assert.equal(browser.document.querySelector(".fc-toolbar-title")?.textContent, weekTitle);
+  assert.equal(browser.document.querySelector("[data-calendar-title]")?.textContent, weekTitle);
   assert.equal(button("노트 표시하기").getAttribute("aria-pressed"), "false");
 });
 

@@ -739,6 +739,52 @@ test("일정 update는 rogue field, type, 시간 역전과 다른 owner 행을 �
   );
 });
 
+test("캘린더 끌어 옮기기는 본인 일정·관리자 레슨만 바꾸고 실패를 상태로 돌려준다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("student-1", "student"));
+  await seedProfile(db, "student-1");
+  await seedProfile(db, "student-2");
+  await seedProfile(db, "admin-1", "admin");
+  const original = {
+    id: "event-1",
+    userId: "student-1",
+    eventType: "PRACTICE" as const,
+    title: "연습",
+    startTime: new Date("2026-10-27T01:00:00.000Z"),
+    endTime: new Date("2026-10-27T02:00:00.000Z"),
+  };
+  await db.insert(calendarEvents).values([original, { ...original, id: "event-2", userId: "student-2" }]);
+  await db.insert(lessons).values({ id: "lesson-1", studentId: "student-1", scheduledAt: new Date("2026-10-28T10:00:00.000Z") });
+
+  const moved = await calendarActions.moveCalendarEvent("event-1", "2026-10-29T03:00:00.000Z", "2026-10-29T04:30:00.000Z");
+  assert.equal(moved.ok, true);
+  assert.equal(moved.ok && moved.event.startTime, "2026-10-29T03:00:00.000Z");
+  assert.equal(moved.ok && moved.event.title, "연습");
+  assert.equal((await calendarActions.moveCalendarEvent("event-2", "2026-10-29T03:00:00.000Z", null)).ok, false);
+  const reversed = await calendarActions.moveCalendarEvent("event-1", "2026-10-29T05:00:00.000Z", "2026-10-29T04:00:00.000Z");
+  assert.equal(reversed.ok, false);
+  assert.match(!reversed.ok ? reversed.error : "", /종료 시간/u);
+
+  const rows = await db.select().from(calendarEvents).orderBy(calendarEvents.id);
+  assert.deepEqual(
+    rows.map((row) => [row.id, row.startTime.toISOString(), row.endTime?.toISOString() ?? null]),
+    [
+      ["event-1", "2026-10-29T03:00:00.000Z", "2026-10-29T04:30:00.000Z"],
+      ["event-2", "2026-10-27T01:00:00.000Z", "2026-10-27T02:00:00.000Z"],
+    ],
+  );
+
+  await assert.rejects(lessonActions.moveLesson("lesson-1", "student-1", "2026-10-30T10:00:00.000Z"), /Admin only/u);
+  activeSession = createSession("admin-1", "admin");
+  assert.match(
+    (await lessonActions.moveLesson("lesson-1", "student-2", "2026-10-30T10:00:00.000Z")).error ?? "",
+    /찾을 수 없습니다/u,
+    "다른 학생 ID로 보내면 레슨이 바뀌지 않는다",
+  );
+  const lessonMoved = await lessonActions.moveLesson("lesson-1", "student-1", "2026-10-30T10:00:00.000Z");
+  assert.equal(lessonMoved.lesson?.scheduledAt, "2026-10-30T10:00:00.000Z");
+  assert.equal((await calendarActions.moveCalendarEvent("event-1", "2026-10-31T03:00:00.000Z", null)).ok, false, "관리자도 학생 개인 일정은 옮기지 못한다");
+});
+
 test("일정 상세 수정 form은 본인 일정만 바꾸고 검증 실패를 상태로 돌려준다", { concurrency: false }, async (context) => {
   const db = await setupDatabase(context, createSession("student-1", "student"));
   await seedProfile(db, "student-1");

@@ -161,6 +161,19 @@ export async function rescheduleLesson(
   return { success: true, lesson: { id: lessonId, scheduledAt: parsed.value.toISOString() } };
 }
 
+/**
+ * 캘린더에서 끌어 옮긴 레슨 시간을 저장한다 (Admin 전용). 실패는 상태로 돌려 화면이 원위치하게 한다.
+ */
+export async function moveLesson(
+  lessonId: string,
+  studentId: string,
+  scheduledAt: string,
+): Promise<CreateLessonState> {
+  const formData = new FormData();
+  formData.set("scheduledAt", scheduledAt);
+  return rescheduleLesson(lessonId, studentId, {}, formData);
+}
+
 // ───────────────────────────────────────────────
 // Admin: 레슨 삭제
 // ───────────────────────────────────────────────

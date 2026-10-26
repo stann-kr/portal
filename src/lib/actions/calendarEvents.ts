@@ -176,6 +176,26 @@ export async function updateCalendarEvent(
   if (!result.ok) throw new Error(result.error);
 }
 
+export type MoveCalendarEventResult =
+  | { ok: true; event: CreatedCalendarEvent }
+  | { ok: false; error: string };
+
+/**
+ * 캘린더에서 끌어 옮기거나 길이를 바꾼 본인 일정의 시간만 저장한다. 실패는 상태로 돌려 화면이 원위치하게 한다.
+ */
+export async function moveCalendarEvent(
+  eventId: string,
+  startTime: string,
+  endTime: string | null,
+): Promise<MoveCalendarEventResult> {
+  const session = await requireAuth();
+  if (typeof eventId !== "string" || !eventId) {
+    return { ok: false, error: "옮길 일정을 찾을 수 없습니다." };
+  }
+  const result = await writeOwnCalendarEventPatch(session.user.id!, eventId, { startTime, endTime });
+  return result.ok ? { ok: true, event: result.value } : result;
+}
+
 /**
  * 상세 패널의 일정 수정 form action. 검증 실패를 throw 대신 상태로 돌려 입력을 유지한다.
  */

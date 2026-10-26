@@ -8,7 +8,7 @@ import { getActiveAuthSession } from "@/lib/auth-guard";
 import { createPrivateNote } from "@/lib/actions/privateNotes";
 import { NoteFullForm } from "@/components/notes/NoteFullForm";
 import { safeReturnPath } from "@/lib/safe-return-path";
-import { resolveNoteCreateDefaultDate } from "@/lib/note-create-route";
+import { resolveNoteCreateDefaultDate, resolveNoteCreateDefaultTitle } from "@/lib/note-create-route";
 
 export const metadata = {
   title: "노트 작성",
@@ -17,7 +17,7 @@ export const metadata = {
 export default async function NewNotePage({
   searchParams,
 }: {
-  searchParams: Promise<{ returnTo?: string; date?: string }>;
+  searchParams: Promise<{ returnTo?: string; date?: string; title?: string }>;
 }) {
   const session = await getActiveAuthSession();
   if (!session?.user?.id) redirect("/login");
@@ -35,6 +35,7 @@ export default async function NewNotePage({
       studentId={studentId}
       returnTo={returnTo}
       defaultDate={resolveNoteCreateDefaultDate(query.date)}
+      defaultTitle={resolveNoteCreateDefaultTitle(query.title)}
       spaceLabel={session.user.name?.trim() || session.user.email || "내 스페이스"}
     />
   );

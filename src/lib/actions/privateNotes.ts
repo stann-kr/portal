@@ -516,6 +516,67 @@ export async function updatePrivateNote(
   };
 }
 
+export type MovePrivateNoteDateState =
+  | { ok: true; noteDate: Date; version: number }
+  | { ok: false; error: string; conflictKind?: PrivateNoteMutationFailureReason };
+
+/**
+ * 캘린더에서 끌어 옮긴 노트의 날짜만 바꾼다. 본문·제목은 서버 최신본 그대로 두고,
+ * 읽은 revision을 기준으로 저장해 그 사이 다른 화면의 변경은 충돌로 돌려준다.
+ */
+export async function movePrivateNoteDate(
+  noteId: string,
+  noteDate: string,
+  operationIdValue: string,
+): Promise<MovePrivateNoteDateState> {
+  const session = await requireAuth();
+  const operationId = resolveCreationOperationId(operationIdValue);
+  if (!operationId) {
+    return { ok: false, error: "작업 기준을 확인할 수 없습니다. 페이지를 새로고침해 주세요." };
+  }
+  let parsedDate: Date | null;
+  try {
+    parsedDate = parseDocumentNoteDateInput(noteDate);
+  } catch {
+    parsedDate = null;
+  }
+  if (!parsedDate) return { ok: false, error: "올바른 날짜를 입력해 주세요." };
+
+  const current = await getPrivateNoteForMutation(noteId);
+  if (!current || current.deletedAt) {
+    return {
+      ok: false,
+      error: mutationErrorMessage(current ? "TRASHED" : "NOT_FOUND_OR_FORBIDDEN"),
+      conflictKind: current ? "TRASHED" : "NOT_FOUND_OR_FORBIDDEN",
+    };
+  }
+  const result = await updatePrivateNoteAtomically(createDbContext(), {
+    actor: { id: session.user.id!, isAdmin: session.user.role === "admin" },
+    noteId,
+    operationId,
+    baseRevision: current.version,
+    title: current.title,
+    contentHtml: current.contentHtml,
+    noteDate: parsedDate,
+    now: new Date(),
+  });
+  if (!result.ok) {
+    return {
+      ok: false,
+      error: result.reason === "VERSION_CONFLICT"
+        ? "방금 다른 화면에서 이 노트가 바뀌었습니다. 다시 옮겨 주세요."
+        : mutationErrorMessage(result.reason),
+      conflictKind: result.reason,
+    };
+  }
+  revalidatePrivateNotePaths(current.studentId, noteId);
+  return {
+    ok: true,
+    noteDate: parsedDate,
+    version: result.currentRevision ?? result.operationResultRevision,
+  };
+}
+
 export type PrivateNoteLifecycleState = {
   error?: string;
   success?: boolean;

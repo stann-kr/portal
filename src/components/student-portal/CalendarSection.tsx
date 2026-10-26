@@ -7,7 +7,6 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { X } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import type { UnifiedItem, UnifiedItemType } from "@/lib/utils/unifiedItemUtils";
@@ -36,11 +35,7 @@ import {
   type CalendarPreset,
   type CalendarTabValue,
 } from "@/lib/calendar-section-contract";
-import {
-  calendarSelectionToKstDateKey,
-  calendarSelectionToKstDateTimeInput,
-  formatKstDateLabel,
-} from "@/lib/date-input";
+import type { CalendarQuickCreateOptions } from "@/components/calendar/CalendarQuickCreate";
 
 // ── 타입 ──────────────────────────────────────────
 
@@ -122,8 +117,6 @@ export function CalendarSection({
   loadError = null,
   onRetry,
 }: CalendarSectionProps) {
-  const [createDefaultDate, setCreateDefaultDate] = useState<string | undefined>(undefined);
-  const [createDefaultStart, setCreateDefaultStart] = useState<string | undefined>(undefined);
   const [createMenuOpen, setCreateMenuOpen] = useState(false);
   // 불러온 컬럼은 어느 학생 것인지 함께 둔다. 지금 학생 본인의 스페이스가 아니면 렌더에서 빈 목록으로 본다.
   const [loadedDiggingColumns, setLoadedDiggingColumns] = useState<{
@@ -154,14 +147,15 @@ export function CalendarSection({
       ? "/dashboard/student/notes"
       : `/dashboard/admin/students/${studentId}/notes`
     : undefined;
+  const noteCreatePathname = workspaceRole === "student"
+    ? "/dashboard/student/notes/new"
+    : `/dashboard/admin/students/${studentId}/notes/new`;
+  const noteReturnFallback = workspaceRole === "student" ? "/dashboard/student" : "/dashboard/admin";
   const noteCreateHref = hasNoteTarget
     ? buildNoteCreateHref({
-      pathname: workspaceRole === "student"
-        ? "/dashboard/student/notes/new"
-        : `/dashboard/admin/students/${studentId}/notes/new`,
-      defaultDate: createDefaultDate,
+      pathname: noteCreatePathname,
       returnTo: workspaceReturnTo,
-      returnFallback: workspaceRole === "student" ? "/dashboard/student" : "/dashboard/admin",
+      returnFallback: noteReturnFallback,
     })
     : undefined;
   const diggingBoardHref = workspaceRole === "student"
@@ -265,20 +259,21 @@ export function CalendarSection({
     };
   }, [isStudentWorkspace, studentId]);
 
-  // 날짜 클릭 시 기본 날짜 설정
-  const handleCreateRequest = (date: string) => {
-    const dateKey = calendarSelectionToKstDateKey(date);
-    const startValue = calendarSelectionToKstDateTimeInput(date);
-    if (!dateKey || !startValue || !canShowCreateMenu) return;
-    setCreateDefaultDate(dateKey);
-    setCreateDefaultStart(startValue);
-    setCreateMenuOpen(true);
-  };
-
-  const clearCreateSelection = () => {
-    setCreateMenuOpen(false);
-    setCreateDefaultDate(undefined);
-    setCreateDefaultStart(undefined);
+  // 캘린더 칸에서 바로 만들기. 노트는 그 날짜의 작성 페이지로, 일정·레슨은 그 자리에서 저장한다.
+  const quickCreate: CalendarQuickCreateOptions = {
+    buildNoteHref: hasNoteTarget
+      ? (dateKey, title) => buildNoteCreateHref({
+        pathname: noteCreatePathname,
+        defaultDate: dateKey,
+        defaultTitle: title,
+        returnTo: workspaceReturnTo,
+        returnFallback: noteReturnFallback,
+      })
+      : undefined,
+    canCreateEvent: isStudentWorkspace,
+    canCreateLesson: canManageLessons,
+    studentId,
+    spaceLabel,
   };
 
   const handlePresetChange = (preset: CalendarPreset | null) => {
@@ -333,7 +328,6 @@ export function CalendarSection({
                 studentId={studentId}
                 diggingColumns={diggingColumns}
                 spaceLabel={spaceLabel}
-                defaultDate={createDefaultStart}
                 open={createMenuOpen}
                 onOpenChange={setCreateMenuOpen}
                 noteCreateHref={noteCreateHref}
@@ -344,7 +338,7 @@ export function CalendarSection({
                 canCreateLesson={canManageLessons}
                 onSuccess={(item) => {
                   onAddItem?.(item);
-                  clearCreateSelection();
+                  setCreateMenuOpen(false);
                 }}
               />
             ) : null}
@@ -367,23 +361,6 @@ export function CalendarSection({
             {onRetry ? <Button type="button" size="sm" variant="outline" onClick={onRetry}>다시 시도</Button> : null}
           </div>
         ) : null}
-        {createDefaultDate ? (
-          <div className="flex min-h-10 shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border bg-muted/20 px-3 py-2 text-xs sm:px-6" role="status">
-            <span>
-              선택한 날짜 · <strong className="font-medium text-foreground">{formatKstDateLabel(createDefaultDate)}</strong>
-              <span className="ml-2 text-muted-foreground">추가 메뉴에서 만들 항목을 선택하세요.</span>
-            </span>
-            <button
-              type="button"
-              onClick={clearCreateSelection}
-              aria-label="선택한 날짜 취소"
-              className="inline-flex min-h-7 items-center gap-1 rounded-md px-2 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-            >
-              <X className="size-3.5" aria-hidden="true" />
-              취소
-            </button>
-          </div>
-        ) : null}
         {workspaceRole === "student" && externalCalendarConnection && isCalendarFamily ? (
           <ExternalCalendarConnection
             key={`${externalCalendarConnection.connected}:${externalCalendarConnection.provider ?? "NONE"}`}
@@ -398,7 +375,8 @@ export function CalendarSection({
               <UnifiedCalendar
                 isActive={isActive && activeTab === "calendar"}
                 items={unifiedItems}
-                onCreateRequest={handleCreateRequest}
+                editContext={{ actorId, role: workspaceRole }}
+                quickCreate={quickCreate}
                 returnTo={workspaceReturnTo}
                 showSpaceContext={showSpaceContext}
                 preset={calendarPreset}
