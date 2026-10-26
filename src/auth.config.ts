@@ -15,7 +15,7 @@ type CoarseAuthorizationInput = {
 };
 
 /**
- * Edge middleware는 DB profile 상태를 판정하지 않는다. 여기서는 보호 UI의
+ * proxy는 DB profile 상태를 판정하지 않는다. 여기서는 보호 UI의
  * token 존재만 빠르게 거르고, 실제 인증·role은 server active-profile gate가
  * 매 요청 다시 확인한다.
  */
@@ -62,7 +62,7 @@ export const authConfig: NextAuthConfig = {
   },
   callbacks: {
     /**
-     * Edge의 coarse 페이지 접근 제어 콜백.
+     * proxy의 coarse 페이지 접근 제어 콜백.
      * 로그인 페이지는 stale JWT와 server active-profile gate 사이 redirect loop를
      * 피하려고 항상 통과시킨다. calendar feed는 route의 session/token gate가 담당한다.
      */

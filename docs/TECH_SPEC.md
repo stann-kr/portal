@@ -23,7 +23,7 @@ OpenNext → Cloudflare Worker
 | 영역 | 파일/경로 | 확인 내용 |
 |---|---|---|
 | Root·dashboard redirect | `src/app/page.tsx`, `src/app/dashboard/page.tsx` | session role별 시작 경로 |
-| Auth | `src/auth.ts`, `src/auth.config.ts`, `src/middleware.ts` | credentials, session, route access |
+| Auth | `src/auth.ts`, `src/auth.config.ts`, `src/proxy.ts` | credentials, session, route access |
 | Student portal | `src/app/dashboard/student/page.tsx`, `src/components/student-portal/` | 오늘 요약·통합 워크스페이스·커뮤니티 |
 | Admin portal | `src/app/dashboard/admin/page.tsx`, `src/components/admin-portal/` | 업무함·학생·일정·공지·커뮤니티 |
 | Shared flows | `src/app/community/`, `src/app/dashboard/qna/` | 게시판·Q&A |
@@ -148,7 +148,7 @@ Migration SQL은 `drizzle/`, Drizzle metadata는 `drizzle/meta/`에 둔다. Wran
 - 로그인 token은 비밀번호 hash의 SHA-256 지문(`credential-fingerprint`)에 결합한다. Node JWT callback은 매 갱신에서 profile의 현재 지문과 대조해 비밀번호가 바뀐 뒤 남은 다른 기기의 token을 거부하고, 지문 결합 이전에 발급된 token은 기존 최대 수명까지 허용한다. 지문과 hash는 session 응답에 노출하지 않는다.
 - `changeOwnPassword`는 현재 비밀번호를 bcrypt로 확인하고 읽은 hash가 그대로일 때만 새 hash를 저장한 뒤, 새 비밀번호로 현재 기기의 session을 다시 발급한다. 재발급에 실패하면 변경 성공과 재로그인 필요를 함께 알린다.
 - 관리자는 학생 비밀번호를 원하는 값으로 바꾸지 못하고 `resetStudentPassword`로 서버가 만든 60-bit 임시 비밀번호(`xxxx-xxxx-xxxx`)만 발급한다. `password_hash`에는 `temporary:` 표시를 붙인 bcrypt hash만 저장해(`src/lib/password-storage.ts`) schema 변경 없이 "변경 필요" 상태가 hash와 함께 바뀐다. 모든 비밀번호 확인은 `verifyStoredPassword`를 거친다.
-- 임시 비밀번호 상태는 Node JWT callback이 매 갱신에서 현재 hash로 다시 판단해 `passwordChangeRequired` claim으로 싣는다. `getActiveAuthSession`·`requireAuth`는 이 session을 인증으로 승격하지 않아 모든 page·action·route가 거부하고, `/account/password` 화면과 `changeOwnPassword`만 `getSignedInSession`·`requireSignedInSession`으로 받는다. Edge middleware는 같은 claim으로 화면 이동만 `/account/password`로 돌리고 login·API는 server gate에 맡긴다. 관리자가 임시 비밀번호로 학생 계정을 조용히 쓰려면 새 비밀번호를 정해야 하고, 그러면 학생 본인이 로그인하지 못해 드러난다.
+- 임시 비밀번호 상태는 Node JWT callback이 매 갱신에서 현재 hash로 다시 판단해 `passwordChangeRequired` claim으로 싣는다. `getActiveAuthSession`·`requireAuth`는 이 session을 인증으로 승격하지 않아 모든 page·action·route가 거부하고, `/account/password` 화면과 `changeOwnPassword`만 `getSignedInSession`·`requireSignedInSession`으로 받는다. proxy는 같은 claim으로 화면 이동만 `/account/password`로 돌리고 login·API는 server gate에 맡긴다. 관리자가 임시 비밀번호로 학생 계정을 조용히 쓰려면 새 비밀번호를 정해야 하고, 그러면 학생 본인이 로그인하지 못해 드러난다.
 - 학생 계정 생성은 비밀번호 대신 `invite:<만료 epoch 초>:<bcrypt>` 형식의 가입 링크 secret hash를 저장한다(`createStudent`, 7일). 링크는 `/invite#<학생 id>.<256-bit secret>`이고, `/invite` 화면이 `#` 뒤 token을 읽어 `getInviteStatus`·`completeInvite` server action 본문으로만 보낸다. `verifyStoredPassword`는 invite hash를 항상 거부해 링크 secret으로 로그인할 수 없다. `completeInvite`는 읽은 invite hash가 그대로일 때만 새 bcrypt hash로 바꿔 한 번만 쓰이게 하고, 새 비밀번호로 로그인을 발급한다. `reissueStudentInvite`는 아직 invite 상태인 학생만 다시 발급한다. 다른 계정으로 로그인한 상태의 `/invite`는 그 로그인을 덮어쓰지 않도록 로그아웃을 안내한다.
 - 비밀번호를 확인하는 경계(credentials `authorize`, `changeOwnPassword`, 가입 링크 action, 계정 삭제)는 `isPasswordAttemptAllowed`로 `PASSWORD_ATTEMPT_RATE_LIMITER` binding(`<용도>:<CF-Connecting-IP>` key, 분당 10회)을 먼저 호출한다. 로그인은 `code=rate_limited`인 `CredentialsSignin`으로 거부하고 login form·`?error=…&code=` 화면이 같은 안내를 보인다. binding이 없는 local·test는 제한하지 않고, binding 호출 오류는 로그인 장애를 피하려고 통과시킨 뒤 오류만 기록한다.
 - session의 `user.id`는 profile 조회의 시작점으로만 사용한다. Node auth의 JWT callback, `/api/auth/session`과 모든 server 인증 경계가 profile 존재와 DB의 최신 role을 다시 확인해 삭제된 JWT를 즉시 거부한다. JWT/session 최대 수명은 7일로 고정해 raw subject ID의 30일 보존 경계보다 먼저 만료시킨다.
@@ -251,7 +251,7 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 
 | 변경 영역 | 함께 확인할 파일 |
 |---|---|
-| auth·role | `src/auth.ts`, `src/auth.config.ts`, `src/middleware.ts`, `src/lib/active-profile.ts`, `src/lib/auth-guard.ts`, `src/lib/credential-fingerprint.ts`, `src/lib/password-storage.ts`, `src/lib/actions/password.ts`, `docs/REQUIREMENTS.md` |
+| auth·role | `src/auth.ts`, `src/auth.config.ts`, `src/proxy.ts`, `src/lib/active-profile.ts`, `src/lib/auth-guard.ts`, `src/lib/credential-fingerprint.ts`, `src/lib/password-storage.ts`, `src/lib/actions/password.ts`, `docs/REQUIREMENTS.md` |
 | schema·migration | `src/db/schema.ts`, `drizzle/**`, 관련 action, `docs/TECH_SPEC.md` |
 | student portal | `src/app/dashboard/student/page.tsx`, `src/components/student-portal/**` |
 | admin portal | `src/app/dashboard/admin/page.tsx`, `src/components/admin-portal/**`, `src/lib/actions/students.ts` |
