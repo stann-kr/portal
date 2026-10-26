@@ -303,6 +303,11 @@
   background: transparent;
 }
 
+/* FullCalendar가 종일 칸 일정 아래에 두는 1em 여백을 없애 종일 줄을 보드 높이(36)로 맞춘다. */
+.fc-notion .fc-timeGridWeek-view .fc-daygrid-body .fc-daygrid-day-events {
+  margin-bottom: 0;
+}
+
 /* 종일 줄: 칸 높이 36 이상, 칩은 사이드바 면 */
 /* 주 보기 종일 줄은 날짜 숫자가 머리에 있으므로 칸 안 날짜 줄(빈 링크·오늘 원)을 그리지 않는다. */
 .fc-notion .fc-timeGridWeek-view .fc-daygrid-body .fc-daygrid-day-top {
