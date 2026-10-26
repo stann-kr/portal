@@ -31,6 +31,7 @@ let removeComment: typeof import("@/lib/actions/comments").deleteComment = async
 let trashPost: typeof import("@/lib/actions/posts").deletePost = async () => ({ success: true });
 let AssignmentView: typeof import("@/components/student-portal/AssignmentView").AssignmentView;
 let FileUploader: typeof import("@/components/upload/FileUploader").FileUploader;
+let FullEditor: typeof import("@/components/editor/FullEditor").FullEditor;
 let requestUpload: typeof import("@/lib/actions/upload").requestMediaUpload = async () => ({ success: false, error: "업로드 테스트 미설정" });
 let completeUpload: typeof import("@/lib/actions/upload").completeMediaUploadAction = async () => ({ success: false, error: "업로드 테스트 미설정" });
 let abandonUpload: typeof import("@/lib/actions/upload").abandonMediaUpload = async () => {};
@@ -235,6 +236,7 @@ before(async () => {
   ({ PostDetailClient } = await import("@/app/community/[postId]/PostDetailClient"));
   ({ AssignmentView } = await import("@/components/student-portal/AssignmentView"));
   ({ FileUploader } = await import("@/components/upload/FileUploader"));
+  ({ FullEditor } = await import("@/components/editor/FullEditor"));
   ({ CreateEntryDropdown } = await import("@/components/student-portal/CreateEntryDropdown"));
   ({ AdminPortalClient } = await import("@/components/admin-portal/AdminPortalClient"));
   ({ StudentPortalClient } = await import("@/components/student-portal/StudentPortalClient"));
@@ -352,6 +354,56 @@ async function chooseUploadFile() {
   Object.defineProperty(input, "files", { configurable: true, value: [new browser.File(["fixture"], "fixture.png", { type: "image/png" })] });
   await act(async () => input.dispatchEvent(new browser.Event("change", { bubbles: true })));
 }
+
+test("FullEditor는 고른 이미지를 Worker 경로로 올린 뒤 본문에 업로드 주소로 넣고 형식·크기 문제를 알린다", { concurrency: false }, async (context) => {
+  const imageId = "30000000-0000-4000-8000-000000000001";
+  const changes: string[] = [];
+  const requests: { purpose: string; mimeType: string; fileSize: number }[] = [];
+  const puts: { url: string; method?: string; contentType?: string }[] = [];
+  requestUpload = async (input) => {
+    requests.push({ purpose: input.purpose, mimeType: input.mimeType, fileSize: input.fileSize });
+    return { success: true, mediaObjectId: imageId, deliveryUrl: `/api/media/${imageId}`, uploadUrl: `/api/media/upload/${imageId}`, uploadContentType: input.mimeType };
+  };
+  completeUpload = async (id) => ({ success: true, mediaObjectId: id, deliveryUrl: `/api/media/${id}` });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (url: string, init?: RequestInit) => {
+    puts.push({ url: String(url), method: init?.method, contentType: new Headers(init?.headers).get("content-type") ?? undefined });
+    return new Response(null, { status: 200 });
+  }) as typeof fetch;
+  context.after(() => {
+    globalThis.fetch = originalFetch;
+    requestUpload = async () => ({ success: false, error: "업로드 테스트 미설정" });
+    completeUpload = async () => ({ success: false, error: "업로드 테스트 미설정" });
+  });
+
+  await render(context, <FullEditor initialContent="<p>본문</p>" ariaLabel="본문" onChange={(html) => changes.push(html)} />);
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  const input = browser.document.querySelector('input[type="file"]');
+  assert.ok(input, "이미지 파일 선택 입력이 있다");
+  assert.equal(input.getAttribute("accept"), "image/gif,image/jpeg,image/png,image/webp");
+  const choose = async (files: File[]) => {
+    Object.defineProperty(input, "files", { configurable: true, value: files });
+    await act(async () => {
+      input.dispatchEvent(new browser.Event("change", { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 260));
+    });
+  };
+
+  await choose([new browser.File(["png"], "무대 사진.png", { type: "image/png" }) as unknown as File]);
+  assert.deepEqual(requests, [{ purpose: "DOCUMENT_IMAGE", mimeType: "image/png", fileSize: 3 }]);
+  assert.deepEqual(puts, [{ url: `/api/media/upload/${imageId}`, method: "PUT", contentType: "image/png" }]);
+  assert.match(changes.at(-1) ?? "", new RegExp(`<img[^>]+src="/api/media/${imageId}"[^>]*alt="무대 사진"|<img[^>]+alt="무대 사진"[^>]*src="/api/media/${imageId}"`, "u"));
+
+  await choose([new browser.File(["<svg/>"], "vector.svg", { type: "image/svg+xml" }) as unknown as File]);
+  assert.equal(requests.length, 1, "허용하지 않는 형식은 서버에 요청하지 않는다");
+  assert.match(browser.document.querySelector('[role="status"]')?.textContent ?? "", /JPG, PNG, GIF, WebP/u);
+
+  const oversized = new browser.File(["x"], "big.png", { type: "image/png" }) as unknown as File;
+  Object.defineProperty(oversized, "size", { value: 10 * 1024 * 1024 + 1 });
+  await choose([oversized]);
+  assert.equal(requests.length, 1, "10MB를 넘는 이미지는 서버에 요청하지 않는다");
+  assert.match(browser.document.querySelector('[role="status"]')?.textContent ?? "", /10MB/u);
+});
 
 for (const waitingAt of ["intent", "complete"] as const) {
   test(`FileUploader는 ${waitingAt} 응답 대기 중 초안을 바꿨다가 돌아와도 이전 응답을 격리한다`, { concurrency: false }, async (context) => {

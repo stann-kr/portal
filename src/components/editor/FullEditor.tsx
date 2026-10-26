@@ -31,7 +31,7 @@ import { useState, useCallback, useEffect, useMemo, useRef, type ReactNode } fro
 import {
   Bold, Italic, Underline as UnderlineIcon, Strikethrough, Highlighter,
   Heading1, Heading2, Heading3, List, ListOrdered, ListTodo,
-  Quote, Code2, Link as LinkIcon, Image as ImageIcon, Video,
+  Quote, Code2, Link as LinkIcon, Image as ImageIcon, ImagePlus, Video,
   Table as TableIcon, AlignLeft, AlignCenter, AlignRight,
   Minus, Undo2, Redo2, FileText, Eye, Unlink,
 } from "lucide-react";
@@ -43,6 +43,11 @@ import {
   type EditorSelection,
 } from "./EditorInsertPanel";
 import { createDeferredDocumentSerializer } from "@/lib/deferred-document-serializer";
+import {
+  EDITOR_IMAGE_ACCEPT,
+  isEditorImageFile,
+  useEditorImageUpload,
+} from "./useEditorImageUpload";
 
 // ── 타입 ──────────────────────────────────────────
 
@@ -211,6 +216,29 @@ export function FullEditor({
     if (changeTimerRef.current) clearTimeout(changeTimerRef.current);
     changeTimerRef.current = setTimeout(publishLatestHtml, 200);
   }, [publishLatestHtml, readLatestHtml]);
+
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const insertUploadedImage = useCallback(
+    (deliveryUrl: string, file: File) => {
+      const alt = file.name.replace(/\.[^.]+$/u, "");
+      if (markdownModeRef.current) {
+        // 마크다운 모드에서는 textarea가 원본이므로 그 끝에 이미지를 붙인다.
+        const nextMarkdown = `${markdownTextRef.current.trimEnd()}\n\n![${alt}](${deliveryUrl})\n`;
+        markdownTextRef.current = nextMarkdown;
+        setMarkdownText(nextMarkdown);
+        markContentDirty();
+        return;
+      }
+      editorInstanceRef.current
+        ?.chain()
+        .focus()
+        .setImage({ src: deliveryUrl, alt: alt || undefined })
+        .run();
+    },
+    [markContentDirty],
+  );
+  const imageUpload = useEditorImageUpload(insertUploadedImage);
+  const { uploadImages } = imageUpload;
   const editorExtensions = useMemo(
     () => [
       StarterKit.configure({
@@ -281,8 +309,33 @@ export function FullEditor({
         "aria-label": ariaLabel,
         "aria-multiline": "true",
       },
+      // 붙여넣거나 끌어 놓은 이미지 파일은 data URL 대신 업로드한 주소로 넣는다.
+      handlePaste: (_view: unknown, event: ClipboardEvent) => {
+        const files = Array.from(event.clipboardData?.files ?? []);
+        if (!files.some(isEditorImageFile)) return false;
+        event.preventDefault();
+        uploadImages(files);
+        return true;
+      },
+      handleDrop: (
+        view: { posAtCoords: (coords: { left: number; top: number }) => { pos: number } | null },
+        event: DragEvent,
+        _slice: unknown,
+        moved: boolean,
+      ) => {
+        if (moved) return false;
+        const files = Array.from(event.dataTransfer?.files ?? []);
+        if (!files.some(isEditorImageFile)) return false;
+        event.preventDefault();
+        const dropPosition = view.posAtCoords({ left: event.clientX, top: event.clientY });
+        if (dropPosition) {
+          editorInstanceRef.current?.commands.setTextSelection(dropPosition.pos);
+        }
+        uploadImages(files);
+        return true;
+      },
     }),
-    [ariaLabel, isPage],
+    [ariaLabel, isPage, uploadImages],
   );
 
   const editor = useEditor({
@@ -666,8 +719,14 @@ export function FullEditor({
           <LinkIcon className="w-4 h-4" />
         </ToolbarButton>
         <ToolbarButton
+          onClick={() => imageInputRef.current?.click()}
+          title="이미지 올리기 (붙여넣기·끌어 놓기도 가능)"
+        >
+          <ImagePlus className="w-4 h-4" />
+        </ToolbarButton>
+        <ToolbarButton
           onClick={() => openInsertPanel("image")}
-          title="이미지 삽입"
+          title="이미지 주소로 넣기"
         >
           <ImageIcon className="w-4 h-4" />
         </ToolbarButton>
@@ -713,6 +772,21 @@ export function FullEditor({
         </div>
       </fieldset>
 
+      <input
+        ref={imageInputRef}
+        type="file"
+        accept={EDITOR_IMAGE_ACCEPT}
+        multiple
+        hidden
+        tabIndex={-1}
+        aria-hidden="true"
+        onChange={(event) => {
+          const files = Array.from(event.target.files ?? []);
+          event.target.value = "";
+          uploadImages(files);
+        }}
+      />
+
       {insertPanel ? (
         <EditorInsertPanel
           key={`${insertPanel.kind}:${insertPanel.selection.from}:${insertPanel.selection.to}`}
@@ -751,7 +825,27 @@ export function FullEditor({
             : "flex min-h-9 items-center justify-between gap-3 border-t border-border bg-muted/20 px-3 py-2"
         }
       >
-        <div className="min-w-0">{footer}</div>
+        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+          {footer}
+          <span role="status" aria-live="polite" className="text-xs">
+            {imageUpload.pendingCount > 0 ? (
+              <span className="text-muted-foreground">
+                이미지 {imageUpload.pendingCount}장 올리는 중…
+              </span>
+            ) : imageUpload.error ? (
+              <span className="inline-flex items-center gap-1.5 text-destructive">
+                {imageUpload.error}
+                <button
+                  type="button"
+                  onClick={imageUpload.clearError}
+                  className="rounded px-1 text-muted-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  닫기
+                </button>
+              </span>
+            ) : null}
+          </span>
+        </div>
         {!disabled ? (
           <span className="shrink-0 text-[11px] text-muted-foreground">
             <kbd className="font-sans">/</kbd> 블록
