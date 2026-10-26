@@ -31,7 +31,7 @@ export function getCalendarItemEditing(
     case "LESSON":
       return ownsSpace ? { kind: "lesson", movable: true, resizable: false } : READ_ONLY;
     case "PRIVATE_NOTE":
-      return context.role === "admin" || item.metadata.authorId === context.actorId
+      return context.role === "admin" || (ownsSpace && item.metadata.authorId === context.actorId)
         ? { kind: "note", movable: true, resizable: false }
         : READ_ONLY;
     default:

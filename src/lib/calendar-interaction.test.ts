@@ -52,6 +52,11 @@ test("학생은 자기 스페이스의 일정·레슨과 본인이 쓴 노트를
   );
   assert.equal(getCalendarItemEditing(item("CALENDAR_EVENT"), otherStudent).movable, false);
   assert.equal(getCalendarItemEditing(item("LESSON"), otherStudent).movable, false);
+  assert.equal(
+    getCalendarItemEditing(item("PRIVATE_NOTE", { metadata: { authorId: "student-2" } }), otherStudent).movable,
+    false,
+    "작성자여도 다른 학생 스페이스의 노트는 옮기지 못한다",
+  );
 });
 
 test("관리자는 학생 스페이스의 일정·레슨·노트를 모두 옮긴다", () => {

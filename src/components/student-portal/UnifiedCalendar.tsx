@@ -285,7 +285,7 @@ export function UnifiedCalendar({
 
   const context: CalendarEditContext | null = editContext ?? null;
   // 잠긴 칩을 끌려고 하면 이유를 알려 준다(끌기는 FullCalendar가 시작하지 않음).
-  const lockedPressRef = useRef<{ x: number; y: number; reason: string } | null>(null);
+  const lockedPressRef = useRef<{ pointerId: number; x: number; y: number; reason: string } | null>(null);
   const withPendingMove = (item: UnifiedItem) => {
     const pending = pendingMoves.get(getUnifiedItemKey(item));
     return pending ? applyCalendarMoveToItem(item, pending.request) : item;
@@ -472,15 +472,21 @@ export function UnifiedCalendar({
       onPointerDownCapture={(event) => {
         const locked = (event.target as Element).closest<HTMLElement>(".calendar-event-locked");
         const reason = locked?.dataset.lockReason;
-        lockedPressRef.current = reason ? { x: event.clientX, y: event.clientY, reason } : null;
+        lockedPressRef.current = reason
+          ? { pointerId: event.pointerId, x: event.clientX, y: event.clientY, reason }
+          : null;
       }}
       onPointerMoveCapture={(event) => {
         const press = lockedPressRef.current;
-        if (!press || Math.hypot(event.clientX - press.x, event.clientY - press.y) < 6) return;
+        if (!press || press.pointerId !== event.pointerId) return;
+        if (Math.hypot(event.clientX - press.x, event.clientY - press.y) < 6) return;
         lockedPressRef.current = null;
         setNotice({ tone: "status", message: press.reason });
       }}
       onPointerUpCapture={() => {
+        lockedPressRef.current = null;
+      }}
+      onPointerCancelCapture={() => {
         lockedPressRef.current = null;
       }}
     >
