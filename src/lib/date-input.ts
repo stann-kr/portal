@@ -29,6 +29,11 @@ export function toKstDateTimeInputValue(value: Date): string {
   return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
 }
 
+/** 지금 이후 첫 정시(레슨 예약 대화상자의 기본 시작 시각). 정각이면 다음 정시다. */
+export function nextFullHour(now = Date.now()): Date {
+  return new Date(Math.ceil((now + 1) / 3_600_000) * 3_600_000);
+}
+
 /**
  * timezone 정보가 없는 datetime-local 값을 실행 환경의 timezone과 무관하게 KST로 해석한다.
  * ISO offset/Z가 있는 값은 이 함수가 아니라 일반 Date parser를 사용한다.

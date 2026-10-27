@@ -84,7 +84,7 @@
 | 사용자 저장공간 | 사용자별 active/trash head와 내용 변경 revision을 합쳐 100 MiB를 허용한다. `TRASH`·`RESTORE_TRASH` 상태 snapshot은 사용자 quota에서 제외하되 실제 DB 사용량에는 포함해 별도 관측한다. 한도 초과 시 내용 저장·과거 revision 복원을 막고 휴지통 이동·영구 삭제는 허용한다. | 개인 노트 적용, 운영 경보 미구현 |
 | 서버 초안 | 사용자·문서별 최신 서버 초안은 마지막 저장 뒤 30일 보존한다. 게시 완료와 명시적 폐기는 즉시 삭제를 요청하고 실패 시 같은 operation으로 재시도하며, profile 삭제는 payload와 receipt를 cascade한다. | 노트·게시물·Q&A 작성·편집 적용 |
 | 충돌 처리 | revision/version 기반 충돌을 감지하며 자동 병합하지 않는다. 현재 초안은 유지하고 서버 최신본을 확인·복사한 뒤 서버본 사용 또는 내 초안으로 계속을 명시적으로 선택한다. | 문서 저장 충돌과 다중 기기 서버 초안 비교 적용 |
-| 로그아웃·계정 전환 | 해당 계정의 canonical·recovery·future·legacy 로컬 초안과 서버 재시도 queue를 즉시 지운다. 삭제 신호를 사전 등록한 오프라인 기기는 익명 상태 동기화 뒤 해당 owner 데이터만 정리한다. | 로그아웃·계정 전환·삭제 신호 정리 적용 |
+| 로그아웃·계정 전환 | 로그아웃은 먼저 해당 계정의 서버 초안 폐기(DISCARD) 대기 요청만 최대 3초 보내고(실패·오프라인이어도 계속), 해당 계정의 canonical·recovery·future·legacy 로컬 초안과 서버 재시도 queue를 즉시 지운다. 삭제 신호를 사전 등록한 오프라인 기기는 익명 상태 동기화 뒤 해당 owner 데이터만 정리한다. | 로그아웃·계정 전환·삭제 신호 정리 적용 |
 | 계정 삭제 | 학생 본인, 현재 비밀번호, persistent 또는 memory-only 기기 digest와 단일 operation을 요구한다. persistent token은 모두 deletion job에 결합하고 memory-only digest는 token quota와 분리된 initiating receipt로 같은 transaction에 기록하며, 실패하면 job과 함께 rollback한다. profile·credential·문서 본문·revision·event·서버 초안은 즉시 제거하고 managed media는 durable outbox로 삭제한다. anti-replay용 raw 계정 식별자는 30일 보존 경계 뒤 alias 수렴 대상이 된다. | 전용 삭제·현재 기기 정리·bounded alias runner 구현, 대상 환경의 schema·flag·예약 실행은 운영 gate로 확인 |
 
 ## 향후 결정 사항

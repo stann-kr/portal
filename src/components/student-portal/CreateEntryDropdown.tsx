@@ -15,6 +15,7 @@ import { EventFormDialog } from "@/components/calendar/EventFormDialog";
 import { AddTrackDialog } from "@/components/digging/AddTrackDialog";
 import { LessonScheduleDialog } from "@/components/calendar/LessonScheduleDialog";
 import type { DiggingColumnType } from "@/db/schema";
+import { nextFullHour, toKstDateTimeInputValue } from "@/lib/date-input";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 
 // ── 타입 ──────────────────────────────────────────
@@ -105,6 +106,9 @@ export function CreateEntryDropdown({
   const [eventDialogOpen, setEventDialogOpen] = useState(false);
   const [diggingDialogOpen, setDiggingDialogOpen] = useState(false);
   const [lessonDialogOpen, setLessonDialogOpen] = useState(false);
+  // 일정·레슨은 날짜가 정해지지 않았으면 열 때의 다음 정시로 시작 시각을 채운다(위쪽 막대 +의 레슨 예약과 같다).
+  const [dialogStart, setDialogStart] = useState<string | undefined>(defaultDate);
+  const resolveDialogStart = () => defaultDate ?? toKstDateTimeInputValue(nextFullHour());
   const [internalDropdownOpen, setInternalDropdownOpen] = useState(false);
   const dropdownOpen = open ?? internalDropdownOpen;
   const setDropdownOpen = onOpenChange ?? setInternalDropdownOpen;
@@ -133,12 +137,14 @@ export function CreateEntryDropdown({
         }
         break;
       case "event":
+        setDialogStart(resolveDialogStart());
         setEventDialogOpen(true);
         break;
       case "digging":
         setDiggingDialogOpen(true);
         break;
       case "lesson":
+        setDialogStart(resolveDialogStart());
         setLessonDialogOpen(true);
         break;
     }
@@ -207,7 +213,7 @@ export function CreateEntryDropdown({
       <EventFormDialog
         open={eventDialogOpen}
         onOpenChange={setEventDialogOpen}
-        defaultStart={defaultDate}
+        defaultStart={dialogStart}
         studentId={studentId}
         spaceLabel={spaceLabel}
         onSuccess={onSuccess}
@@ -219,7 +225,7 @@ export function CreateEntryDropdown({
           onOpenChange={setLessonDialogOpen}
           studentId={studentId}
           spaceLabel={spaceLabel}
-          defaultStart={defaultDate}
+          defaultStart={dialogStart}
           onSuccess={onSuccess}
         />
       ) : null}

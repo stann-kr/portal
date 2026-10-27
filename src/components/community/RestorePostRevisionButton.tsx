@@ -62,7 +62,8 @@ export function RestorePostRevisionButton({
         size="sm"
         className={cn(
           RECORD_ACTION_CELL,
-          "aria-expanded:bg-muted max-md:h-11",
+          // 좁은 화면은 터치 버튼 규격(44px, 좌우 14, r8, 14px 글자).
+          "aria-expanded:bg-muted max-md:h-11 max-md:rounded-touch max-md:px-3.5 max-md:text-body",
           isCurrent && "font-normal text-muted-foreground disabled:opacity-100",
         )}
         disabled={isPending || isCurrent}

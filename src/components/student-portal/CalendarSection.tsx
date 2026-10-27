@@ -45,7 +45,7 @@ import {
 } from "@/lib/calendar-section-contract";
 import type { CalendarQuickCreateSelection } from "@/lib/calendar-quick-create";
 import { createDaySelection } from "@/lib/unified-item-views";
-import { toKstDateInputValue, toKstDateTimeInputValue } from "@/lib/date-input";
+import { nextFullHour, toKstDateInputValue, toKstDateTimeInputValue } from "@/lib/date-input";
 import { cn } from "@/lib/utils";
 
 // ── 타입 ──────────────────────────────────────────
@@ -293,9 +293,8 @@ export function CalendarSection({
       };
       if (section === workspaceSection && create === "lesson" && canManageLessons) {
         // 다음 정시로 시작 시각을 채운다(AdminSchedule 빠른 만들기처럼 시작 시각이 보이게).
-        const nextHour = new Date(Math.ceil((Date.now() + 1) / 3_600_000) * 3_600_000);
         rememberCreateOpener(create);
-        setLessonDefaultStart(toKstDateTimeInputValue(nextHour));
+        setLessonDefaultStart(toKstDateTimeInputValue(nextFullHour()));
         setLessonDialogOpen(true);
         setCreateRequest({ kind: create });
       } else if (section === workspaceSection && create === "today" && canQuickCreateToday) {
