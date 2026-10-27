@@ -121,7 +121,7 @@ pill 형태는 오늘 날짜 표시와 개수처럼 모양 자체가 의미를 �
 | `Input` | label과 조합되는 입력 surface, focus, disabled |
 | `AppSidebar`·`MobileTopBar` | 240px 사이드바, 좁은 화면 52px 위쪽 막대(주소 기본값 `resolveMobileTopBar`, 화면이 제목·뒤로·행동을 덮어쓰고 `action: null`로 숨김)와 280px 메뉴 서랍 |
 | `PortalShell` | 역할별 section 상태, URL·section별 스크롤 복원, viewport 안의 공통 content frame |
-| `CalendarSection` | 캘린더 머리(제목·"월·주·일별·전체" 세그먼트·새로 만들기/레슨 예약), 보기 기억(계정별, 없으면 좁은 화면 일별·넓은 화면 달력), 주소 `create=today|lesson`으로 빠른 만들기·레슨 예약 열기 뒤 값 지우기, 과제·커리큘럼 보기 연결 |
+| `CalendarSection` | 캘린더 머리(제목·"월·주·일별·전체" 세그먼트·새로 만들기/레슨 예약), 보기 기억(계정별, 없으면 좁은 화면 일별·넓은 화면 달력), 주소 `create=today|lesson`으로 빠른 만들기·레슨 예약 열기 뒤 값 지우기, 과제 보기 연결(커리큘럼 보기는 숨김 스위치) |
 | `UnifiedCalendar` | 이전·오늘·다음과 기간 제목, 타입 필터, KST 벽시계 칸(UTC 모드), 월(오늘 원)·주(48px 시간 칸·현재 시각 선·옅은 유형 면 블록) 보기, 권한 있는 일정·레슨·노트 끌어 옮기기와 저장 전 반영·실패 원위치·되돌리기, 잠긴 항목 끌기 시 이유 안내, 칸 클릭·끌어 선택·터치 탭으로 빠른 만들기. 좁은 화면 월은 `MobileMonthView`(점 표시 + 선택 날짜 목록) |
 | `CalendarQuickCreate` | 캘린더·일별·전체 보기가 공유하는 빠른 만들기 창(좁은 화면은 아래 시트). 노트는 제목·날짜를 채운 작성 화면으로, 일정·레슨은 그 자리에서 저장. 라디오 키보드 규칙, Esc 닫기, 제목이 있으면 바깥 클릭에도 유지 |
 | `CalendarEventChip`·`CalendarAgendaRow` | 유형 점·Mono 시각·제목의 캘린더 칩(r4)과 일별·모바일 목록 행 |
@@ -161,7 +161,7 @@ pill 형태는 오늘 날짜 표시와 개수처럼 모양 자체가 의미를 �
 | `DiggingBoard` | 날짜별 트랙 표(넓은 화면)와 카드 목록(좁은 화면), 바뀐 칸만 저장, 한 줄 프롬프트로 여는 인라인 추가, 컬럼 관리·기간 필터, 읽기 전용 모드(관리자, 별점 `role="img"`). `heading`(화면 h1·설명), `mobileTopBar`(위쪽 막대 트랙 추가), `mobileBack`(다른 화면에서 열었을 때 뒤로) |
 | `StarRating`·`CamelotPicker` | 1–5점 radio 묶음(같은 별 다시 누르면 지움)과 카멜롯 키 선택. 별점 `size` sm(표 칸)·md(대화상자, 좁은 화면 누르는 곳 44×44)·touch(카드 44×44), 키 선택 `variant` |
 | `VideoPlayer`·`OriginalLink` | 과제 미디어 재생(구간 이동 요청)과 원본 새 창 열기 링크 |
-| `AssignmentView`·`CurriculumView` | 과제 목록(행 = 상세 링크)과 커리큘럼 진도(주차 단위 완료), `pageHeader`로 화면 제목·여백을 직접 그린다 |
+| `AssignmentView`·`CurriculumView` | 과제 목록(행 = 상세 링크)과 커리큘럼 진도(주차 단위 완료, 현재 숨김), `pageHeader`로 화면 제목·여백을 직접 그린다 |
 | `ThreadList` | Q&A 목록. `variant="tabs"`(Q&A 화면 상태 탭)·`"chips"`(관리자 학생 상세) |
 | `AnnouncementList` | 공지 목록. 고정 공지는 본문 미리보기 + 상세 보기, 나머지는 한 줄 링크(`layout`) |
 | `CommunityPostRow`·`ui/choice-group` `ChoiceGroup`·`ui/mobile-more-menu` `MobileMoreMenu` | 게시물 목록 행, 화살표·Home·End로 움직이는 라디오 칩 그룹, 좁은 화면 위쪽 막대 … 메뉴 |
@@ -244,3 +244,9 @@ pill 형태는 오늘 날짜 표시와 개수처럼 모양 자체가 의미를 �
 - 실제 데이터가 없는 상태를 추정한 문구가 없는가
 - 보이는 문구가 짧고 구체적인 한국어로 통일되었는가
 - 날짜·시각을 `src/lib/kst-format.ts`의 `formatKst`·`formatKstShortDate`로만 표시하는가. Worker SSR은 UTC로 실행되므로 `toLocale*String`·`Intl.DateTimeFormat`·`date-fns` 직접 호출은 `npm run check:ui`가 거부한다.
+
+## 응답 대기 표시(캔버스 States "응답을 기다리는 중")
+
+- 화면 이동은 위쪽 가장자리 2px 먹색 막대(`NavigationProgress`, 120ms 지연, 움직임을 줄이면 멈춘 막대). 사이드바 메뉴는 누른 메뉴의 아이콘 자리가 회전 표시로 바뀐다.
+- 버튼은 `Button pending`으로 비활성화와 글자 앞 회전 표시(`ButtonSpinner`, 14px). 아이콘 버튼은 아이콘 자리를 회전 표시로 바꾸고 이름은 sr-only로 남긴다.
+- 커뮤니티 게시판 줄은 공지 · 믹스셋 | # 채널을 한 줄에 두고(좁은 화면은 가로 스크롤), 활성 항목은 아래 2px 선이다. 목록 줄 메타는 작성자 · 날짜 · 댓글 N.

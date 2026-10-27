@@ -25,7 +25,7 @@ OpenNext → Cloudflare Worker
 | Root·dashboard redirect | `src/app/page.tsx`, `src/app/dashboard/page.tsx` | session role별 시작 경로 |
 | Auth | `src/auth.ts`, `src/auth.config.ts`, `src/proxy.ts` | credentials, session, route access |
 | Student portal | `src/app/dashboard/student/page.tsx`, `src/components/student-portal/` | 오늘 요약·통합 워크스페이스·커뮤니티 |
-| Admin portal | `src/app/dashboard/admin/page.tsx`, `src/components/admin-portal/` | 업무함·학생·일정·공지·커뮤니티 |
+| Admin portal | `src/app/dashboard/admin/page.tsx`, `src/components/admin-portal/` | 업무함·학생·일정(공지·커뮤니티는 `/community`) |
 | Shared flows | `src/app/community/`, `src/app/dashboard/qna/` | 게시판·Q&A |
 | Data aggregation | `src/lib/actions/unifiedItems.ts`, `src/lib/unified-item-normalization.ts`, `src/lib/utils/unifiedItemUtils.ts` | 학생 스페이스·포털 출처를 포함한 레슨·일정·노트·디깅·Q&A·과제 통합 |
 | DB schema·client | `src/db/schema.ts`, `src/db/client.ts` | table, D1/local SQLite 선택 |
@@ -75,7 +75,7 @@ OpenNext → Cloudflare Worker
 | `/community/[postId]/history` | 커뮤니티 게시물 불변 full-snapshot revision 조회·선택 복원 |
 | `/community/trash` | 권한 범위의 게시물 휴지통·복원·관리자 영구 삭제 |
 | `/dashboard/admin/students/new` | 학생 추가 |
-| `/dashboard/admin/students/[id]` | 학생 상세: 개요·과제·디깅·노트·Q&A 탭. 개요 탭은 커리큘럼 모듈 추가·주차/제목 수정·삭제와 레슨을 관리하며 완료 여부는 학생이 바꾼다. 과제 탭은 제출 최신순과 과제별 피드백 수를 보여 준다 |
+| `/dashboard/admin/students/[id]` | 학생 상세: 개요·과제·디깅·노트·Q&A 탭. 개요 탭은 레슨을 관리한다. 커리큘럼 모듈 관리는 코드에 남아 있지만 `src/lib/curriculum-visibility.ts` 스위치로 숨겨져 있다. 과제 탭은 제출 최신순과 과제별 피드백 수를 보여 준다 |
 | `/dashboard/admin/categories` | 자유 게시판 채널 추가·수정·삭제. 게시물이 참조하는 주소 식별자(slug)는 생성 뒤 바꾸지 않고 이름·설명·정렬 순서만 수정한다. 관리자 커뮤니티 section과 `/community`에서 진입 |
 | `/dashboard/qna/**` | Q&A 목록·작성·상세·불변 event 이력·휴지통 |
 | `/community/**` | 커뮤니티 목록·작성·상세 |
@@ -88,11 +88,11 @@ OpenNext → Cloudflare Worker
 
 `/dashboard/student/assignments`, `curriculum` 목록 경로는 원페이지 포털로, 예전 `/dashboard/admin/students/[id]/digging`은 학생 상세 디깅 탭으로 redirect한다. 노트 목록과 디깅 보드는 별도 route를 사용한다.
 
-`/community`는 URL의 게시판·채널을 서버에서 확정해 채널 목록과 첫 페이지(30개)를 함께 렌더하고, 이후 탭·채널 전환과 "게시물 더 보기"만 client에서 읽는다. `getCommunityPostPage`는 공지·믹스셋을 고정 우선, 자유 게시판을 채널별 최신순으로 정렬하고 (고정 여부, 작성 시각, ID) keyset cursor로 겹침 없이 이어 읽으며, 자유·믹스셋 목록에는 미리보기에 필요한 본문 앞 4,096자만 보낸다. 받은 목록과 현재 위치가 다르면 빈 상태 대신 skeleton을 보이며, 자유 게시판 채널이 없으면 관리자에게는 채널 추가 경로를, 학생에게는 대기 안내를 보인다.
+`/community`는 URL의 게시판·채널을 서버에서 확정해 채널 목록과 첫 페이지(30개)를 함께 렌더하고, 이후 게시판·채널 전환과 "게시물 더 보기"만 client에서 읽는다. 게시판 줄은 공지·믹스셋과 자유 게시판 채널(#)을 한 줄로 둔다. `getCommunityPostPage`는 공지·믹스셋을 고정 우선, 자유 게시판을 채널별 최신순으로 정렬하고 (고정 여부, 작성 시각, ID) keyset cursor로 겹침 없이 이어 읽으며, 모든 게시판 목록에 미리보기에 필요한 본문 앞 4,096자와 댓글 수(`comments` 집계 서브쿼리)만 보낸다. 받은 목록과 현재 위치가 다르면 빈 상태 대신 skeleton을 보이며, 자유 게시판 채널이 없으면 관리자에게는 채널 추가 경로를, 학생에게는 대기 안내를 보인다.
 
-학생·관리자 대시보드는 게시물 본문 없이 최근 자유·피드백 게시물 20개와(학생) 공지 3개의 요약만 개수 제한해 읽는다. 통합 일정의 노트는 본문 앞 4,096자만 읽어 240자 평문 미리보기로 전달하고, 상세 패널을 열 때 해당 노트 본문만 권한을 다시 확인해 불러온다.
+학생 홈은 게시물 본문 없이 공지 3개의 요약만 읽는다. 예전 포털 구역 주소 `?section=community`(학생·관리자)와 `?section=announcements`(관리자)는 `/community`(공지는 `boardType=ANNOUNCEMENT`)로 redirect한다. 통합 일정의 노트는 본문 앞 4,096자만 읽어 240자 평문 미리보기로 전달하고, 상세 패널을 열 때 해당 노트 본문만 권한을 다시 확인해 불러온다.
 
-학생 포털의 기본 section은 `오늘`이다. 통합 item에서 다음 일정, 피드백이 있는 제출, Q&A 상태를 순수 selector로 분류하고 최근 공지와 실제 작성 경로를 함께 제공한다. `lessons` 행은 `EVENT`/`LESSON` 항목으로 포함하므로 다음 일정 selector와 워크스페이스에서 같은 계약을 사용한다. 현재 schema에 없는 과제 배정·마감·읽음 상태는 추정하지 않는다. 캘린더(월·주·일별·전체 하나의 세그먼트, 좁은 화면은 주 없음·기본 일별), 커리큘럼, 과제는 `워크스페이스` section에서 기존 기능을 유지한다. 주소 `create=today`(학생)·`create=lesson`(관리자)은 빠른 만들기·레슨 예약을 한 번 열고 `replaceState`로 지운다. view 없이 들어오면 기기에 저장된 캘린더 계열 보기(달력·일별·전체)만 복원한다.
+학생 포털의 기본 section은 `오늘`이다. 통합 item에서 다음 일정, 피드백이 있는 제출, Q&A 상태를 순수 selector로 분류하고 최근 공지와 실제 작성 경로를 함께 제공한다. `lessons` 행은 `EVENT`/`LESSON` 항목으로 포함하므로 다음 일정 selector와 워크스페이스에서 같은 계약을 사용한다. 현재 schema에 없는 과제 배정·마감·읽음 상태는 추정하지 않는다. 캘린더(월·주·일별·전체 하나의 세그먼트, 좁은 화면은 주 없음·기본 일별)와 과제는(커리큘럼은 숨김 스위치가 켜졌을 때만) `워크스페이스` section에서 기존 기능을 유지한다. 주소 `create=today`(학생)·`create=lesson`(관리자)은 빠른 만들기·레슨 예약을 한 번 열고 `replaceState`로 지운다. view 없이 들어오면 기기에 저장된 캘린더 계열 보기(달력·일별·전체)만 복원한다.
 
 캘린더(`UnifiedCalendar`)는 FullCalendar를 `timeZone="UTC"`로 두고 KST 벽시계 시각(실제 시각 + 9시간, 한국은 일광절약시간 없음)을 넣어 기기 시간대와 무관하게 칸을 KST로 맞춘다(`src/lib/calendar-interaction.ts`). 끌어 옮기기는 클라이언트 판정(일정·레슨은 그 학생 본인과 관리자 — 2026-10-26 사용자 결정, 노트는 관리자 또는 작성자)과 같은 규칙을 서버가 다시 검사한다: `moveCalendarEvent`(학생 본인 또는 관리자가 대상 학생 ID로, 기존 patch 검증), `moveLesson`(학생 본인 또는 관리자, 대상 학생 레슨), `movePrivateNoteDate`(현재 revision의 제목·본문을 그대로 두고 날짜만 바꾸는 새 revision, 이미 그 날짜면 쓰기 없는 성공으로 재전송을 흡수). 화면은 저장 전 이동을 먼저 보여 주고, 저장된 이동은 다시 받은 목록이 반영할 때까지 유지하며, 같은 항목의 겹친 이동은 마지막 요청만 반영한다. 끌 수 없는 항목(다른 작성자 노트·디깅·Q&A·과제·외부 캘린더)은 끌려고 하면 이유를 알린다. 상세 패널은 수정 권한(관리자 또는 작성자)이 있는 노트를 문서 페이지와 같은 `NoteEditorForm`으로 바로 편집하고(자동 저장·초안·충돌 보호 동일, 저장·업로드 중 닫힘 잠금), 저장 결과를 캘린더 항목에 반영한다. 칸 선택·터치 탭은 `CalendarQuickCreate`를 열어 노트(작성 화면 `?title=&date=`), 일정(`createCalendarEvent`), 레슨(`createLesson`)을 만든다. 관리자 일정 section은 선택한 학생의 캘린더에서 레슨을 예약·이동하고, 레슨 상세에서 시간 변경과 취소 우선 2단계 삭제를 제공한다. 결과는 현재 학생의 캘린더 상태에 즉시 반영하고, 학생을 바꾼 뒤 도착한 늦은 결과는 다른 학생 캘린더에 섞지 않는다.
 
@@ -284,3 +284,9 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 - 운영 D1의 read-only inventory와 full export 격리 restore rehearsal은 통과했다. 실제 migration rollback anchor는 maintenance write fence 뒤 새 export/checksum과 Time Travel bookmark로 다시 확보해야 한다.
 - 일부 대형 client component는 상태 hook, domain view와 presentation 경계가 한 파일에 남아 있다.
 - 소셜 공유 이미지는 승인된 브랜드 asset이 준비된 뒤 metadata에 연결해야 한다.
+
+## 응답 대기 표시와 로그아웃 잠금(2026-10-27)
+
+- 화면 이동: `src/components/app-shell/NavigationProgress.tsx`가 다른 앱 주소로 가는 링크 클릭, `useProgressRouter()`의 `push`·`replace`, GET form 제출에서 위쪽 2px 막대를 켜고 주소가 바뀌면 끈다. 120ms 안에 끝나는 이동은 그리지 않고, 주소가 끝내 바뀌지 않으면 15초 뒤 끈다. 제출 중 이동 막기(`useBusyNavigationGuard`)가 끊은 클릭은 bubble 단계의 window까지 오지 않아 막대가 켜지지 않는다. 사이드바 메뉴는 `useLinkStatus`로 아이콘 자리에 회전 표시를 둔다.
+- 버튼: `Button`의 `pending`은 비활성화·`aria-busy`·회전 표시를 함께 준다(움직임을 줄이면 멈춘 모양). 새 질문·새 글은 등록에 성공한 뒤 상세로 넘어갈 때까지 계속 잠근다. 디깅 칸 저장, 캘린더 끌어 옮기기 저장, 링크 정보 가져오기, 새 글 채널 불러오기도 진행 표시를 보인다.
+- 로그아웃: `src/lib/account-logout-lock.ts`가 계정별(sha256 키) localStorage 잠금(15초 만료)을 폐기 전송 전에 기록하고 같은 탭 이벤트·다른 탭 `storage` 이벤트로 알린다. `useDocumentServerDraftSync`는 잠금 동안 서버 초안 저장 타이머를 멈추고 전송 직전에도 다시 확인해 막는다. 로그아웃 action이 실패하면 자기 잠금만 풀고 오류를 보이며 다시 누를 수 있다. redirect는 실패로 보지 않는다. 폐기 API는 다른 출처 403(Origin protocol·host 비교) → 미인증 401 → 415 → 400 순서로 판정한다.
