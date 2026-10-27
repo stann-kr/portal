@@ -6,6 +6,7 @@ import {
   listGuideBlockIds,
   normalizeGuideQuote,
   prepareGuideHtml,
+  stripGuideBlockIds,
 } from "./guide-content";
 import { sanitizeHtml } from "./sanitize-html";
 
@@ -74,4 +75,14 @@ test("질문 인용은 공백을 줄이고 500자로 자르며 빈 값은 거부
   assert.equal(normalizeGuideQuote("   "), null);
   assert.equal(normalizeGuideQuote(42), null);
   assert.equal(Array.from(normalizeGuideQuote("가".repeat(800)) ?? "").length, 500);
+});
+
+test("재전송 비교는 태그의 블록 식별자만 지우고 본문 텍스트의 같은 글자는 남긴다", () => {
+  const first = prepareGuideHtml('<p>Example data-block-id="first"</p>', sequence("a"));
+  const second = prepareGuideHtml('<p>Example data-block-id="second"</p>', sequence("b"));
+  assert.notEqual(stripGuideBlockIds(first), stripGuideBlockIds(second));
+  const sameA = prepareGuideHtml("<h2>제목</h2><p>본문</p>", sequence("a"));
+  const sameB = prepareGuideHtml("<h2>제목</h2><p>본문</p>", sequence("b"));
+  assert.notEqual(sameA, sameB);
+  assert.equal(stripGuideBlockIds(sameA), stripGuideBlockIds(sameB));
 });

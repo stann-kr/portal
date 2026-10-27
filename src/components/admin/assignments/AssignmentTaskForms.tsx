@@ -2,10 +2,13 @@
  * @file src/components/admin/assignments/AssignmentTaskForms.tsx
  * @description 관리자 과제 내기(한 번)·정기 과제 폼. 학생 상세 과제 탭의 패널이 열고 닫는다.
  * 저장 중에는 링크 이동·문서 이탈을 막고, 만들기는 operationId로 재전송을 한 번만 저장한다.
+ * React 19는 form action이 끝나면 결과와 관계없이 uncontrolled 입력을 기본값으로 되돌리므로,
+ * 저장 실패(요일 누락·버전 충돌 등) 뒤에도 쓴 내용이 남도록 모든 입력을 state로 둔다.
+ * 저장에 성공하면 패널이 폼을 닫고, 고치기 폼은 `id:version` key로 새로 그려진다.
  */
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ChoiceGroup } from "@/components/ui/choice-group";
 import { Input } from "@/components/ui/input";
@@ -71,13 +74,17 @@ function useSubmitAction(
 
 function TitleAndDescription({
   idPrefix,
-  defaultTitle,
-  defaultDescription,
+  title,
+  onTitleChange,
+  description,
+  onDescriptionChange,
   disabled,
 }: {
   idPrefix: string;
-  defaultTitle: string;
-  defaultDescription: string;
+  title: string;
+  onTitleChange: (value: string) => void;
+  description: string;
+  onDescriptionChange: (value: string) => void;
   disabled: boolean;
 }) {
   return (
@@ -87,7 +94,8 @@ function TitleAndDescription({
         <Input
           id={`${idPrefix}-title`}
           name="title"
-          defaultValue={defaultTitle}
+          value={title}
+          onChange={(event) => onTitleChange(event.target.value)}
           maxLength={ASSIGNMENT_TITLE_MAX_LENGTH}
           placeholder="예: 이번 주 믹스셋 녹음"
           required
@@ -99,7 +107,8 @@ function TitleAndDescription({
         <textarea
           id={`${idPrefix}-description`}
           name="description"
-          defaultValue={defaultDescription}
+          value={description}
+          onChange={(event) => onDescriptionChange(event.target.value)}
           rows={3}
           maxLength={ASSIGNMENT_DESCRIPTION_MAX_LENGTH}
           placeholder="연습할 내용이나 제출 방법을 적어 주세요."
@@ -157,6 +166,10 @@ export function AssignmentTaskForm({
   onCancel: () => void;
 }) {
   const [format, setFormat] = useState<AssignmentSubmissionFormatValue>(task?.submissionFormat ?? "MIX");
+  const [title, setTitle] = useState(task?.title ?? "");
+  const [description, setDescription] = useState(() => htmlToPlainText(task?.descriptionHtml));
+  const [dueDate, setDueDate] = useState(() => splitDue(task?.dueAt ?? null).date);
+  const [dueTime, setDueTime] = useState(() => splitDue(task?.dueAt ?? null).time);
   const [operationId] = useState(createCreationOperationId);
   const { state, action, isPending } = useSubmitAction(
     (previous, data) => (task
@@ -165,7 +178,6 @@ export function AssignmentTaskForm({
     onDone,
   );
   const idPrefix = task ? `task-edit-${task.id}` : "task-new";
-  const due = splitDue(task?.dueAt ?? null);
   const formatLocked = Boolean(task?.submission);
 
   return (
@@ -175,8 +187,10 @@ export function AssignmentTaskForm({
       )}
       <TitleAndDescription
         idPrefix={idPrefix}
-        defaultTitle={task?.title ?? ""}
-        defaultDescription={htmlToPlainText(task?.descriptionHtml)}
+        title={title}
+        onTitleChange={setTitle}
+        description={description}
+        onDescriptionChange={setDescription}
         disabled={isPending}
       />
       <FormatField
@@ -188,11 +202,11 @@ export function AssignmentTaskForm({
       <div className="grid gap-3 sm:grid-cols-2">
         <label htmlFor={`${idPrefix}-due-date`} className={FIELD_LABEL}>
           마감 날짜 (선택)
-          <Input id={`${idPrefix}-due-date`} name="dueDate" type="date" defaultValue={due.date} disabled={isPending} className="font-mono" />
+          <Input id={`${idPrefix}-due-date`} name="dueDate" type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} disabled={isPending} className="font-mono" />
         </label>
         <label htmlFor={`${idPrefix}-due-time`} className={FIELD_LABEL}>
           마감 시각 (선택, 비우면 23:59)
-          <Input id={`${idPrefix}-due-time`} name="dueTime" type="time" defaultValue={due.time} disabled={isPending} className="font-mono" />
+          <Input id={`${idPrefix}-due-time`} name="dueTime" type="time" value={dueTime} onChange={(event) => setDueTime(event.target.value)} disabled={isPending} className="font-mono" />
         </label>
       </div>
       {state.error ? <p role="alert" className="text-ui text-destructive">{state.error}</p> : null}
@@ -217,6 +231,14 @@ export function AssignmentRecurrenceForm({
 }) {
   const [format, setFormat] = useState<AssignmentSubmissionFormatValue>(recurrence?.submissionFormat ?? "MIX");
   const [days, setDays] = useState<number[]>(() => (recurrence ? weekdayListFromMask(recurrence.weekdays) : []));
+  const [title, setTitle] = useState(recurrence?.title ?? "");
+  const [description, setDescription] = useState(() => htmlToPlainText(recurrence?.descriptionHtml));
+  const [intervalWeeks, setIntervalWeeks] = useState(String(recurrence?.intervalWeeks ?? 1));
+  const intervalRef = useRef<HTMLSelectElement>(null);
+  const [startDate, setStartDate] = useState(() => recurrence?.startDate ?? toKstDateInputValue(referenceTime));
+  const [dueTime, setDueTime] = useState(recurrence?.dueTime ?? "21:00");
+  const [endDate, setEndDate] = useState(recurrence?.endDate ?? "");
+  const [maxOccurrences, setMaxOccurrences] = useState(recurrence?.maxOccurrences == null ? "" : String(recurrence.maxOccurrences));
   const [operationId] = useState(createCreationOperationId);
   const { state, action, isPending } = useSubmitAction(
     (previous, data) => (recurrence
@@ -225,6 +247,11 @@ export function AssignmentRecurrenceForm({
     onDone,
   );
   const idPrefix = recurrence ? `recurrence-edit-${recurrence.id}` : "recurrence-new";
+  // React는 controlled input·textarea의 기본값만 value에 맞추고 select option의 selected 속성(defaultSelected)은
+  // 맞추지 않아, form action 뒤 form.reset()이 반복 주기를 첫 option으로 되돌린다. 고른 값을 기본 선택으로 맞춰 둔다.
+  useEffect(() => {
+    for (const option of intervalRef.current?.options ?? []) option.toggleAttribute("selected", option.value === intervalWeeks);
+  }, [intervalWeeks]);
   const toggleDay = (day: number) => setDays((current) => (current.includes(day) ? current.filter((value) => value !== day) : [...current, day]));
 
   return (
@@ -234,8 +261,10 @@ export function AssignmentRecurrenceForm({
       )}
       <TitleAndDescription
         idPrefix={idPrefix}
-        defaultTitle={recurrence?.title ?? ""}
-        defaultDescription={htmlToPlainText(recurrence?.descriptionHtml)}
+        title={title}
+        onTitleChange={setTitle}
+        description={description}
+        onDescriptionChange={setDescription}
         disabled={isPending}
       />
       <FormatField value={format} onChange={setFormat} disabled={isPending} />
@@ -271,8 +300,10 @@ export function AssignmentRecurrenceForm({
           반복
           <select
             id={`${idPrefix}-interval`}
+            ref={intervalRef}
             name="intervalWeeks"
-            defaultValue={String(recurrence?.intervalWeeks ?? 1)}
+            value={intervalWeeks}
+            onChange={(event) => setIntervalWeeks(event.target.value)}
             disabled={isPending}
             className="h-11 rounded-touch border border-input bg-background px-3 text-base text-foreground focus-visible:outline-2 focus-visible:-outline-offset-1 focus-visible:outline-ring md:h-8 md:rounded-md md:text-ui"
           >
@@ -287,7 +318,8 @@ export function AssignmentRecurrenceForm({
             id={`${idPrefix}-start`}
             name="startDate"
             type="date"
-            defaultValue={recurrence?.startDate ?? toKstDateInputValue(referenceTime)}
+            value={startDate}
+            onChange={(event) => setStartDate(event.target.value)}
             required
             disabled={isPending}
             className="font-mono"
@@ -299,7 +331,8 @@ export function AssignmentRecurrenceForm({
             id={`${idPrefix}-due-time`}
             name="dueTime"
             type="time"
-            defaultValue={recurrence?.dueTime ?? "21:00"}
+            value={dueTime}
+            onChange={(event) => setDueTime(event.target.value)}
             required
             disabled={isPending}
             className="font-mono"
@@ -307,7 +340,7 @@ export function AssignmentRecurrenceForm({
         </label>
         <label htmlFor={`${idPrefix}-end`} className={FIELD_LABEL}>
           종료일 (선택)
-          <Input id={`${idPrefix}-end`} name="endDate" type="date" defaultValue={recurrence?.endDate ?? ""} disabled={isPending} className="font-mono" />
+          <Input id={`${idPrefix}-end`} name="endDate" type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} disabled={isPending} className="font-mono" />
         </label>
         <label htmlFor={`${idPrefix}-max`} className={FIELD_LABEL}>
           횟수 (선택)
@@ -317,7 +350,8 @@ export function AssignmentRecurrenceForm({
             type="number"
             min={1}
             max={RECURRENCE_MAX_OCCURRENCES}
-            defaultValue={recurrence?.maxOccurrences ?? ""}
+            value={maxOccurrences}
+            onChange={(event) => setMaxOccurrences(event.target.value)}
             disabled={isPending}
             className="font-mono"
           />

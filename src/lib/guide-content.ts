@@ -181,5 +181,6 @@ export function parseGuidePageId(value: unknown): string | null {
  * 재전송이 같은 요청인지 비교할 때 쓴다(입력은 prepareGuideHtml을 거친 HTML).
  */
 export function stripGuideBlockIds(preparedHtml: string): string {
-  return preparedHtml.replace(/ data-block-id="[A-Za-z0-9_-]{1,64}"/gu, "");
+  // 본문 텍스트에 같은 글자가 있어도 지우지 않도록 시작 태그 안의 속성만 지운다(sanitize 뒤라 텍스트의 `<`는 escape되어 있다).
+  return preparedHtml.replace(/<[A-Za-z][^<>]*>/gu, (tag) => tag.replace(/ data-block-id="[A-Za-z0-9_-]{1,64}"/gu, ""));
 }
