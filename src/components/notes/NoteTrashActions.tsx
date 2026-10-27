@@ -1,8 +1,7 @@
 "use client";
 
 import { useRef, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
-import { RotateCcw, Trash2 } from "lucide-react";
+import { useProgressRouter } from "@/components/app-shell/NavigationProgress";
 import { Button } from "@/components/ui/button";
 import { ConfirmPanel, useConfirmAction } from "@/components/ui/confirm-action";
 import {
@@ -24,7 +23,7 @@ export function NoteTrashActions({
   canPurge: boolean;
   returnTo: string;
 }) {
-  const router = useRouter();
+  const router = useProgressRouter();
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const requestKey = JSON.stringify([noteId, version]);
@@ -58,29 +57,29 @@ export function NoteTrashActions({
   };
 
   return (
-    <div className="space-y-3">
+    <div className="flex min-w-0 max-w-md flex-col items-start gap-3">
       <div className="flex flex-wrap gap-2">
         {canRestore ? (
           <Button
             type="button"
             variant="outline"
-            className="gap-2"
+            className="max-md:h-11"
             disabled={isPending}
+            pending={isPending && !purgeConfirm.isOpen}
             onClick={() => run("restore")}
           >
-            <RotateCcw className="h-4 w-4" aria-hidden="true" />
             노트 복원
           </Button>
         ) : null}
         {canPurge ? (
           <Button
             type="button"
-            className="gap-2 bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            variant="destructive"
+            className="max-md:h-11"
             disabled={isPending}
             aria-expanded={purgeConfirm.isOpen}
             onClick={(event) => purgeConfirm.request(event.currentTarget)}
           >
-            <Trash2 className="h-4 w-4" aria-hidden="true" />
             영구 삭제
           </Button>
         ) : null}
@@ -93,11 +92,11 @@ export function NoteTrashActions({
           pendingLabel="삭제 중..."
           pending={isPending}
           onConfirm={() => run("purge")}
-          className="max-w-md"
+          className="w-full"
         />
       ) : null}
       {error ? (
-        <p role="alert" className="text-sm text-destructive">
+        <p role="alert" className="text-xs text-destructive">
           {error}
         </p>
       ) : null}

@@ -104,6 +104,8 @@ const router = {
 };
 let restoreNote: typeof import("@/lib/actions/privateNotes").restorePrivateNoteRevision = async () => ({ success: true });
 let changeNoteLifecycle: typeof import("@/lib/actions/privateNotes").trashPrivateNote = async () => ({ success: true });
+let loadPanelNote: typeof import("@/lib/actions/privateNotes").getPrivateNote = async () => null;
+let savePanelNote: typeof import("@/lib/actions/privateNotes").updatePrivateNote = async () => ({});
 let restorePost: typeof import("@/lib/actions/posts").restorePostRevision = async () => ({ success: true });
 let changePostLifecycle: typeof import("@/lib/actions/posts").restorePost = async () => ({ success: true, purged: false });
 let saveQnaReply: typeof import("@/lib/actions/qna").createQnaReply = async () => ({});
@@ -133,6 +135,8 @@ mock.module("@/lib/actions/privateNotes", { namedExports: {
   restorePrivateNote: (...args: Parameters<typeof changeNoteLifecycle>) => changeNoteLifecycle(...args),
   purgePrivateNote: (...args: Parameters<typeof changeNoteLifecycle>) => changeNoteLifecycle(...args),
   getPrivateNotes: async (studentId: string) => { notePageTargets.push(studentId); return notePageData; },
+  getPrivateNote: (...args: Parameters<typeof loadPanelNote>) => loadPanelNote(...args),
+  updatePrivateNote: (...args: Parameters<typeof savePanelNote>) => savePanelNote(...args),
 } });
 
 mock.module("next/dynamic", {
@@ -283,6 +287,7 @@ let RestorePostRevisionButton: typeof import("@/components/community/RestorePost
 let PostTrashActions: typeof import("@/components/community/PostTrashActions").PostTrashActions;
 let QnaThreadLifecycleActions: typeof import("@/components/qna/QnaThreadLifecycleActions").QnaThreadLifecycleActions;
 let NoteFullForm: typeof import("@/components/notes/NoteFullForm").NoteFullForm;
+let UnifiedNoteDetail: typeof import("@/components/student-portal/UnifiedNoteDetail").UnifiedNoteDetail;
 let StudentNotesPage: typeof import("@/app/dashboard/student/notes/page").default;
 let AdminStudentNotesPage: typeof import("@/app/dashboard/admin/students/[id]/notes/page").default;
 let QnaPage: typeof import("@/app/dashboard/qna/page").default;
@@ -297,6 +302,7 @@ before(async () => {
   ({ PostTrashActions } = await import("@/components/community/PostTrashActions"));
   ({ QnaThreadLifecycleActions } = await import("@/components/qna/QnaThreadLifecycleActions"));
   ({ default: QnaTrashPage } = await import("@/app/dashboard/qna/trash/page"));
+  ({ UnifiedNoteDetail } = await import("@/components/student-portal/UnifiedNoteDetail"));
   [
     { NewPostForm },
     { NewQnaForm },
@@ -749,7 +755,7 @@ for (const busyKind of ["upload", "reply", "lifecycle"] as const) {
     const harness = await renderForm(context, <ThreadDetailClient actorId="student-busy" threadId="thread-busy" title="질문" status="OPEN" version={1} isAdmin={false} replies={[]} deletedAt={null} studentName="학생" createdAt={null} returnTo="/dashboard/qna" />,
       (storage) => storage.setItem(key, serializeFormDraft({ operationId: "012c1894-ea20-46b2-960f-35b01d873570", contentHtml: "<p>전송할 답변</p>", attachmentUrl: "", attachmentObjectId: "" })));
     const form = harness.container.querySelector<HTMLFormElement>("form")!;
-    const trash = [...harness.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "휴지통 이동")!;
+    const trash = [...harness.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.getAttribute("aria-label") === "휴지통으로 이동")!;
     const upload = harness.container.querySelector<HTMLButtonElement>('[data-testid="upload-start"]')!;
     const submit = submitControl(harness.container);
     await waitForCondition(() => !submit.disabled, "답변 초안 준비");
@@ -827,23 +833,23 @@ test("Q&A 휴지통 충돌은 오래된 요청을 잠그고 전체 snapshot 재�
   const key = createDocumentDraftKey("qna-reply", "admin-lifecycle", "thread-lifecycle");
   const screen = (version: number, isAdmin = true) => <ThreadDetailClient actorId="admin-lifecycle" threadId="thread-lifecycle" title="질문" status={version === 1 ? "OPEN" : "CLOSED"} version={version} isAdmin={isAdmin} replies={[]} deletedAt={null} studentName="학생" createdAt={null} returnTo="/dashboard/qna" />;
   const harness = await renderForm(context, screen(1), (storage) => storage.setItem(key, serializeFormDraft({ operationId: "012c1894-ea20-46b2-960f-35b01d873570", contentHtml: "<p>보관 중인 답변</p>", attachmentUrl: "", attachmentObjectId: "" })));
-  const find = (label: string) => [...harness.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === label)!;
+  const find = (label: string) => [...harness.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => (button.getAttribute("aria-label") ?? button.textContent) === label)!;
   const trashAndConfirm = async () => {
-    await act(async () => find("휴지통 이동").click());
+    await act(async () => find("휴지통으로 이동").click());
     await confirmAction(harness, "휴지통 이동 확인");
   };
   await trashAndConfirm();
-  assert.equal(find("휴지통 이동").disabled, true);
-  await act(async () => find("휴지통 이동").click());
+  assert.equal(find("휴지통으로 이동").disabled, true);
+  await act(async () => find("휴지통으로 이동").click());
   assert.equal(requests.length, 1);
   await act(async () => find("최신 상태 확인").click());
   assert.match(harness.container.textContent ?? "", /최신 상태를 불러오지 못했습니다/u);
   refresh.mock.mockImplementation(() => undefined);
   await act(async () => find("최신 상태 확인").click());
   assert.equal(refresh.mock.callCount(), 2);
-  assert.equal(find("휴지통 이동").disabled, true, "현재 revision 숫자만으로 mutation을 열지 않는다");
+  assert.equal(find("휴지통으로 이동").disabled, true, "현재 revision 숫자만으로 mutation을 열지 않는다");
   await harness.rerender(screen(2));
-  assert.equal(find("휴지통 이동").disabled, false);
+  assert.equal(find("휴지통으로 이동").disabled, false);
   assert.match(harness.container.querySelector("textarea")?.value ?? "", /보관 중인 답변/u);
   await trashAndConfirm();
   await trashAndConfirm();
@@ -1128,6 +1134,121 @@ for (const kind of ["new-note", "edit-note", "new-post", "edit-post", "new-qna",
   });
 }
 
+const noteTitleValue = (container: HTMLElement) => container.querySelector<HTMLTextAreaElement>("textarea[name=title]")?.value;
+
+test("캘린더 빠른 입력 제목은 저장된 초안이 없으면 새 노트 작성 화면에 채워진다", { concurrency: false }, async (context) => {
+  const fresh = await renderForm(context, <NoteFullForm action={async () => ({})} actorId="quick-title" studentId="quick-title" returnTo="/dashboard/student" defaultTitle="레슨 복습" defaultDate="2026-10-30" />);
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+  assert.equal(noteTitleValue(fresh.container), "레슨 복습");
+  assert.equal(fresh.container.querySelector<HTMLInputElement>("input[name=noteDate]")?.value, "2026-10-30");
+});
+
+test("캘린더 빠른 입력 제목은 쓰던 새 노트 초안의 제목을 덮어쓰지 않는다", { concurrency: false }, async (context) => {
+  const restored = await renderForm(context, <NoteFullForm action={async () => ({})} actorId="quick-draft" studentId="quick-draft" returnTo="/dashboard/student" defaultTitle="새 제목" />, (storage) => storage.setItem(
+    createDocumentDraftKey("note", "quick-draft", "new:quick-draft"),
+    serializeFormDraft({ operationId: crypto.randomUUID(), title: "쓰던 초안", contentHtml: "<p>보존할 본문</p>", noteDate: "" }),
+  ));
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+  assert.equal(noteTitleValue(restored.container), "쓰던 초안");
+});
+
+test("빠른 입력 제목은 제목 없이 본문만 쓴 초안의 빈 제목을 채우지 않는다", { concurrency: false }, async (context) => {
+  const restored = await renderForm(context, <NoteFullForm action={async () => ({})} actorId="quick-empty" studentId="quick-empty" returnTo="/dashboard/student" defaultTitle="빠른 제목" />, (storage) => storage.setItem(
+    createDocumentDraftKey("note", "quick-empty", "new:quick-empty"),
+    serializeFormDraft({ operationId: crypto.randomUUID(), title: "", contentHtml: "<p>본문만 쓴 초안</p>", noteDate: "" }),
+  ));
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+  assert.equal(noteTitleValue(restored.container), "");
+});
+
+test("주소 제목·날짜와 같은 제목만 있는 복원 초안도 지우지 않는다", { concurrency: false }, async (context) => {
+  const key = createDocumentDraftKey("note", "quick-same", "new:quick-same");
+  const restored = await renderForm(context, <NoteFullForm action={async () => ({})} actorId="quick-same" studentId="quick-same" returnTo="/dashboard/student" defaultTitle="같은 제목" defaultDate="2026-10-30" />, (storage) => storage.setItem(
+    key,
+    serializeFormDraft({ operationId: crypto.randomUUID(), title: "같은 제목", contentHtml: "", noteDate: "2026-10-30" }),
+  ));
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 700)); });
+  assert.equal(noteTitleValue(restored.container), "같은 제목");
+  assert.notEqual(restored.browserWindow.localStorage.getItem(key), null, "복원한 초안은 기본값과 같아도 남긴다");
+});
+
+const panelNoteRecord = (authorId: string) => ({
+  id: "panel-note",
+  studentId: "student-1",
+  authorId,
+  title: "패널 노트",
+  contentHtml: "<p>처음 본문</p>",
+  noteDate: new Date("2026-10-30T00:00:00.000Z"),
+  createdAt: new Date("2026-10-20T00:00:00.000Z"),
+  updatedAt: new Date("2026-10-20T00:00:00.000Z"),
+  version: 3,
+  deletedAt: null,
+  authorName: "학생",
+});
+const panelNoteItem = {
+  id: "panel-note",
+  type: "NOTE" as const,
+  title: "패널 노트",
+  date: new Date("2026-10-30T00:00:00.000Z"),
+  metadata: { preview: "처음 본문", authorId: "student-1", noteDate: new Date("2026-10-30T00:00:00.000Z") },
+  space: { studentId: "student-1", label: "학생" },
+  source: { kind: "PORTAL" as const, entity: "PRIVATE_NOTE" as const, label: "포털" },
+};
+
+test("캘린더 패널에서 작성자는 노트를 바로 고치고 저장 결과가 캘린더 항목에 반영된다", { concurrency: false }, async (context) => {
+  const saved: Array<{ noteId: string; baseRevision: FormDataEntryValue | null; contentHtml: FormDataEntryValue | null }> = [];
+  const updates: Array<{ title: string; preview: unknown }> = [];
+  const busy: boolean[] = [];
+  loadPanelNote = async () => panelNoteRecord("student-1");
+  savePanelNote = async (noteId, _previous, formData) => {
+    saved.push({ noteId, baseRevision: formData.get("baseRevision"), contentHtml: formData.get("contentHtml") });
+    return { success: true, note: { id: noteId, title: "패널 노트", contentHtml: "<p>패널에서 고친 본문</p>", noteDate: new Date("2026-10-30T00:00:00.000Z"), version: 4 } };
+  };
+  context.after(() => {
+    loadPanelNote = async () => null;
+    savePanelNote = async () => ({});
+  });
+  const harness = await renderForm(context, <UnifiedNoteDetail
+    item={panelNoteItem}
+    returnTo="/dashboard/student"
+    viewer={{ actorId: "student-1", role: "student" }}
+    onItemUpdated={(item) => updates.push({ title: item.title, preview: item.metadata.preview })}
+    onBusyChange={(value) => busy.push(value)}
+  />);
+  await waitForCondition(
+    () => (harness.container.querySelector('[name="title"]') as unknown as HTMLTextAreaElement | null)?.value === "패널 노트",
+    "패널이 노트 편집기를 연다.",
+  );
+  const editor = harness.container.querySelector(BODY_FIELD) as unknown as HTMLTextAreaElement;
+  const setter = Object.getOwnPropertyDescriptor(harness.browserWindow.HTMLTextAreaElement.prototype, "value")?.set;
+  await act(async () => {
+    setter?.call(editor, "<p>패널에서 고친 본문</p>");
+    editor.dispatchEvent(new harness.browserWindow.Event("input", { bubbles: true }) as unknown as Event);
+  });
+  await act(async () => { submitControl(harness.container).click(); });
+  await waitForCondition(() => updates.length > 0, "저장 결과가 캘린더 항목으로 전달된다.");
+  assert.equal(saved[0]?.noteId, "panel-note");
+  assert.equal(saved[0]?.baseRevision, "3", "불러온 revision을 기준으로 저장한다");
+  assert.equal(saved[0]?.contentHtml, "<p>패널에서 고친 본문</p>");
+  assert.deepEqual(updates.at(-1), { title: "패널 노트", preview: "패널에서 고친 본문" });
+  assert.ok(busy.includes(true), "저장하는 동안 패널을 닫지 못하게 알린다");
+  assert.equal(busy.at(-1), false);
+  assert.match(harness.container.textContent ?? "", /전체 화면으로 열기/u);
+});
+
+test("캘린더 패널에서 다른 작성자의 노트는 읽기 전용으로 보인다", { concurrency: false }, async (context) => {
+  loadPanelNote = async () => panelNoteRecord("admin-1");
+  context.after(() => { loadPanelNote = async () => null; });
+  const harness = await renderForm(context, <UnifiedNoteDetail
+    item={panelNoteItem}
+    returnTo="/dashboard/student"
+    viewer={{ actorId: "student-1", role: "student" }}
+  />);
+  await waitForCondition(() => /읽기 전용/u.test(harness.container.textContent ?? ""), "읽기 전용 안내가 보인다.");
+  assert.equal(harness.container.querySelector('[name="title"]'), null);
+  assert.match(harness.container.textContent ?? "", /처음 본문/u);
+});
+
 test("노트 저장 실패가 폼 밖으로 옮긴 포커스를 가로채지 않는다", { concurrency: false }, async (context) => {
   let rejectSave!: (reason: Error) => void;
   const action = () => new Promise<never>((_resolve, reject) => { rejectSave = reject; });
@@ -1159,7 +1280,7 @@ for (const moveFocusElsewhere of [false, true]) {
     harness.browserWindow.document.body.append(elsewhere);
     if (moveFocusElsewhere) elsewhere.focus();
     await harness.rerender(screen(true));
-    const currentButton = [...harness.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "휴지통 이동")!;
+    const currentButton = [...harness.container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.getAttribute("aria-label") === "휴지통으로 이동")!;
     assert.ok(harness.browserWindow.document.activeElement === (moveFocusElsewhere ? elsewhere : currentButton), "복원 결과가 현재 키보드 작업 위치를 잃거나 가로채면 안 됩니다.");
   });
 }
@@ -1485,6 +1606,35 @@ test("Q&A 답변 Cmd/Ctrl+S는 최신 본문을 로컬 저장하고 등록하지
     attachmentUrl: "",
     attachmentObjectId: "",
   });
+});
+
+test("Q&A 답글 상자는 짧은 초안 상태만 보이고, 누르면 이 기기·계정 초안 줄과 저장 단축키를 펼친다", { concurrency: false }, async (context) => {
+  const actorId = "qna-reply-summary-actor";
+  const threadId = "thread-reply-summary";
+  const harness = await renderForm(
+    context,
+    <ThreadDetailClient actorId={actorId} createdAt={null} isAdmin={false} replies={[]} returnTo="/dashboard/qna" status="OPEN" version={1} deletedAt={null} studentName="학생" threadId={threadId} title="초안 상태 스레드" />,
+    (storage) => storage.setItem(createDocumentDraftKey("qna-reply", actorId, threadId), serializeFormDraft({ operationId: "6f3c1d2a-5b4e-4c3d-8a2b-1c0d9e8f7a6b", contentHtml: "<p>이어 쓸 질문</p>", attachmentUrl: "", attachmentObjectId: "" })),
+  );
+  const form = harness.container.querySelector("form")!;
+  const submit = submitControl(harness.container);
+  await waitForCondition(() => !submit.disabled, "답글 초안 준비");
+  const submits = form.querySelectorAll('button[type="submit"]');
+  assert.equal(submits.length, 1, "좁은 화면과 넓은 화면이 같은 등록 버튼 하나를 쓴다");
+  assert.equal(submits[0]!.getAttribute("aria-label"), "질문 추가");
+  assert.ok(form.querySelector('[data-testid="upload-start"]'), "첨부 버튼은 같은 상자 안에 있다");
+  const toggle = form.querySelector<HTMLButtonElement>("button[aria-controls]")!;
+  assert.ok(toggle, "초안 상태 문구는 자세히 보기 버튼이다");
+  assert.equal(toggle.getAttribute("aria-expanded"), "false");
+  assert.match(toggle.textContent ?? "", /^초안 (복원됨|저장됨)$|^저장 중…$/u);
+  const details = () => harness.container.querySelector(`[id="${toggle.getAttribute("aria-controls")}"]`)!;
+  assert.equal(details().querySelector('[aria-label="계정 초안 동기화 상태"]'), null, "평소에는 계정 초안 줄을 접어 둔다");
+  await act(async () => toggle.click());
+  assert.equal(toggle.getAttribute("aria-expanded"), "true");
+  assert.ok(details().querySelector('[aria-label="계정 초안 동기화 상태"]'), "펼치면 계정 초안 줄이 보인다");
+  assert.match(details().textContent ?? "", /초안 저장 (⌘S|Ctrl\+S)/u);
+  await act(async () => toggle.click());
+  assert.equal(details().querySelector('[aria-label="계정 초안 동기화 상태"]'), null);
 });
 
 const FRESH_META_SHORTCUT_CASES: ReadonlyArray<{

@@ -1,14 +1,16 @@
 /**
  * @file src/app/dashboard/student/notes/page.tsx
- * @description 학생 전용 노트 목록. 작성은 별도 full-page composer로 이동한다.
+ * @description 학생 전용 노트 목록(Notes·MobileNotes 보드). 작성은 별도 full-page composer로 이동한다.
  */
 import { redirect } from "next/navigation";
 import { getActiveAuthSession } from "@/lib/auth-guard";
 import { getPrivateNotes } from "@/lib/actions/privateNotes";
-import { NotesPageHeader } from "@/components/notes/NotesPageHeader";
-import { PrivateNoteList } from "@/components/notes/PrivateNoteList";
-import { getNoteSearchQuery, NoteSearch, searchPrivateNotes } from "@/components/notes/NoteSearch";
+import { NotesMobileLinks, NotesPageHeader } from "@/components/notes/NotesPageHeader";
+import { NotesDatabase } from "@/components/notes/NotesDatabase";
+import { toNotesDatabaseRows } from "@/lib/notes-database";
+import { getNoteSearchQuery, searchPrivateNotes } from "@/components/notes/NoteSearch";
 import { buildNotesLessonsTimelineHref } from "@/lib/calendar-section-contract";
+import { getRequestNow } from "@/lib/request-time";
 
 export const metadata = { title: "내 노트" };
 
@@ -20,20 +22,34 @@ export default async function StudentNotesPage({ searchParams }: {
   if (session.user.role !== "student") redirect("/dashboard/admin");
 
   const listPath = "/dashboard/student/notes";
+  const composerPath = `${listPath}/new`;
   const query = getNoteSearchQuery((await searchParams).q);
   const returnTo = query ? `${listPath}?q=${encodeURIComponent(query)}` : listPath;
   const notes = await getPrivateNotes(session.user.id);
   const matchingNotes = searchPrivateNotes(notes, query);
+  const timelineHref = buildNotesLessonsTimelineHref({ role: "student" });
+  const trashHref = `/dashboard/notes/trash?returnTo=${encodeURIComponent(returnTo)}`;
   return (
-    <div className="mx-auto max-w-4xl space-y-5 px-4 py-6 sm:px-6 sm:py-8">
+    <div className="flex max-w-[1080px] flex-col gap-6 px-5 pb-8 pt-4 md:box-content md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-14">
       <NotesPageHeader
         eyebrow="내 스페이스"
-        timelineHref={buildNotesLessonsTimelineHref({ role: "student" })}
-        trashHref={`/dashboard/notes/trash?returnTo=${encodeURIComponent(returnTo)}`}
-        newNoteHref={`/dashboard/student/notes/new?returnTo=${encodeURIComponent(returnTo)}`}
+        timelineHref={timelineHref}
+        trashHref={trashHref}
+        newNoteHref={`${composerPath}?returnTo=${encodeURIComponent(returnTo)}`}
       />
-      <NoteSearch action={listPath} query={query} totalCount={notes.length} resultCount={matchingNotes.length} />
-      <PrivateNoteList notes={matchingNotes} returnTo={returnTo} emptyMessage={query ? "검색 결과가 없습니다. 다른 단어로 검색하거나 검색을 초기화해 주세요." : undefined} />
+      <NotesDatabase
+        rows={toNotesDatabaseRows(matchingNotes)}
+        ownerId={session.user.id}
+        returnTo={returnTo}
+        returnFallback={listPath}
+        composerPath={composerPath}
+        searchAction={listPath}
+        query={query}
+        totalCount={notes.length}
+        now={getRequestNow()}
+        emptyMessage={query ? "검색 결과가 없습니다. 다른 단어로 검색하거나 검색을 초기화해 주세요." : "아직 작성된 노트가 없습니다."}
+      />
+      <NotesMobileLinks timelineHref={timelineHref} trashHref={trashHref} />
     </div>
   );
 }

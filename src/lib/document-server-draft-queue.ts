@@ -3,6 +3,7 @@ import { assertAccountOwnerMayPersist } from "@/lib/account-terminal-lock";
 import {
   createDocumentServerDraftQueueKey,
   parseDocumentDraftKey,
+  readDocumentServerDraftQueueSourceKey,
   type FormDraftStorage,
 } from "@/lib/form-draft";
 import {
@@ -291,6 +292,31 @@ export function enqueueDocumentServerDraftDiscard(
     conflictCount,
     ...(targetPayloadHashes ? { targetPayloadHashes } : {}),
   });
+}
+
+export type StoredQueuedDocumentServerDraftDiscard = StoredQueuedDocumentServerDraft & {
+  entry: QueuedDocumentServerDraftDiscard;
+};
+
+/** 로그아웃 정리로 지워지기 전에 보낼 수 있도록 이 계정의 서버 초안 폐기 요청만 모은다. */
+export function listQueuedDocumentServerDraftDiscardsForOwner(
+  storage: Pick<FormDraftStorage, "length" | "key" | "getItem">,
+  ownerId: string,
+  now = Date.now(),
+): StoredQueuedDocumentServerDraftDiscard[] {
+  const sourceKeys: string[] = [];
+  for (let index = 0; index < storage.length; index += 1) {
+    const storageKey = storage.key(index);
+    const sourceKey = storageKey === null ? null : readDocumentServerDraftQueueSourceKey(storageKey);
+    if (sourceKey && parseDocumentDraftKey(sourceKey)?.ownerId === ownerId) sourceKeys.push(sourceKey);
+  }
+  const discards: StoredQueuedDocumentServerDraftDiscard[] = [];
+  for (const sourceKey of sourceKeys) {
+    const queued = readQueuedDocumentServerDraft(storage, sourceKey, now);
+    const entry = queued?.entry;
+    if (queued && entry?.operationType === "DISCARD") discards.push({ entry, raw: queued.raw });
+  }
+  return discards;
 }
 
 /** 응답을 받은 요청과 localStorage의 현재 요청이 같은 경우에만 제거한다. */

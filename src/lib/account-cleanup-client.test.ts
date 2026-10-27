@@ -30,7 +30,7 @@ import {
   getOrCreateDocumentServerDraftDeviceId,
 } from "./document-server-draft-queue";
 import { createAccountTerminalLockStorageKey } from "./account-terminal-lock";
-import { createAccountCalendarTabStorageKey } from "./local-owner-keys";
+import { createAccountCalendarTabStorageKey, createAccountNotesViewStorageKey } from "./local-owner-keys";
 import {
   listOwnerlessLegacyDocumentDrafts,
   removeOwnerlessLegacyDocumentDrafts,
@@ -404,11 +404,13 @@ test("DELETED sweep는 확인된 owner의 모든 표현과 token만 지우고 �
     createDocumentServerDraftQueueKey(deletedSource),
     createDocumentServerDraftDeviceStorageKey(deletedOwner),
     createAccountCalendarTabStorageKey(deletedOwner),
+    createAccountNotesViewStorageKey(deletedOwner),
   ];
   for (const key of deletedKeys) storage.setItem(key, "future-or-legacy-value");
   storage.setItem(retainedSource, "other-owner-value");
   storage.setItem(createDocumentServerDraftDeviceStorageKey(retainedOwner), "other-device");
   storage.setItem(createAccountCalendarTabStorageKey(retainedOwner), "calendar");
+  storage.setItem(createAccountNotesViewStorageKey(retainedOwner), "list");
   const deletedToken = ensureStoredAccountCleanupToken(storage, deletedOwner);
   const retainedToken = ensureStoredAccountCleanupToken(storage, retainedOwner);
   const requestedDigests: string[] = [];
@@ -448,6 +450,7 @@ test("DELETED sweep는 확인된 owner의 모든 표현과 token만 지우고 �
     storage.getItem(createAccountCalendarTabStorageKey(retainedOwner)),
     "calendar",
   );
+  assert.equal(storage.getItem(createAccountNotesViewStorageKey(retainedOwner)), "list");
 
   assert.throws(
     () => persistFormDraftRawSnapshot(storage, {

@@ -1,15 +1,17 @@
 /**
  * @file src/components/qna/ThreadDetailClient.tsx
- * @description Q&A 스레드 상세 클라이언트 컴포넌트.
- * 답변 작성 폼(TiptapEditor) + 어드민 상태 변경 버튼.
+ * @description Q&A 스레드 상세 클라이언트 컴포넌트(캔버스 QnaThread·MobileQnaThread 보드).
+ * 위치·제목·상태 머리, 대화 목록, 추가 질문(관리자는 답변) 작성 폼과 관리자 상태 변경.
+ * 좁은 화면에서는 이력·휴지통을 위쪽 막대의 더 보기 메뉴로 옮긴다.
  */
 "use client";
 
-import { useActionState, useState, useEffect, useRef, useTransition } from "react";
+import { useActionState, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, History } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { ArrowUp, History, RotateCcw, Trash2 } from "lucide-react";
+import { Button, buttonClassName } from "@/components/ui/button";
+import { MobileTopBar } from "@/components/app-shell/AppSidebar";
 import dynamic from "next/dynamic";
 
 const FullEditor = dynamic(
@@ -18,16 +20,17 @@ const FullEditor = dynamic(
 );
 import { ReplyCard } from "./ReplyCard";
 import { AttachmentField } from "./AttachmentField";
+import { MobileMoreMenu, type MobileMoreMenuItem } from "@/components/ui/mobile-more-menu";
+import { QnaStatusLabel } from "./qna-display";
 import { useSyncedFormDraft } from "@/lib/hooks/useSyncedFormDraft";
 import { useDeferredEditorContent } from "@/lib/hooks/useDeferredEditorContent";
 import { createQnaReply, updateThreadStatus, type CreateReplyState } from "@/lib/actions/qna";
 import { QNA_STATUS_LABELS } from "@/lib/qna-status";
-import { STATUS_TONE_CLASS_NAMES } from "@/lib/portal-status";
 import type { QnaStatus } from "@/db/schema";
 import { DraftStatus } from "@/components/editor/DraftStatus";
-import { createDocumentDraftKey } from "@/lib/form-draft";
+import { createDocumentDraftKey, type FormDraftStatus } from "@/lib/form-draft";
+import type { DocumentServerDraftSyncResult } from "@/lib/hooks/useDocumentServerDraftSync";
 import { isRichTextEmpty } from "@/lib/rich-text";
-import { StatusBadge } from "@/components/ui/status-badge";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
 import { useDocumentSaveShortcut } from "@/lib/hooks/useDocumentSaveShortcut";
 import { persistLocalDraftOnShortcut } from "@/lib/local-draft-shortcut";
@@ -37,9 +40,39 @@ import {
   parseCreationOperationId,
 } from "@/lib/creation-operation";
 import { CreationConflictActions } from "@/components/editor/CreationConflictActions";
-import { QnaThreadLifecycleActions } from "@/components/qna/QnaThreadLifecycleActions";
+import { QNA_LIFECYCLE_LABELS, useQnaThreadLifecycle, type QnaLifecycleKind } from "@/components/qna/QnaThreadLifecycleActions";
 import { abandonMediaUpload } from "@/lib/actions/upload";
-import { formatKst } from "@/lib/kst-format";
+import { formatKst, formatKstShortDate } from "@/lib/kst-format";
+import { cn } from "@/lib/utils";
+
+/** 넓은 화면 머리와 좁은 화면 메뉴가 같은 이름을 쓴다. 휴지통 이동은 캔버스대로 아이콘 버튼의 이름이다. */
+const LIFECYCLE_TRIGGER_LABELS: Record<QnaLifecycleKind, string> = {
+  trash: "휴지통으로 이동",
+  restore: QNA_LIFECYCLE_LABELS.restore,
+  purge: QNA_LIFECYCLE_LABELS.purge,
+};
+
+const STATUS_OPTIONS: readonly QnaStatus[] = ["OPEN", "ANSWERED", "CLOSED"];
+
+/**
+ * 답글 상자 바닥 줄의 짧은 초안 상태(QnaThread "초안 저장됨"). 이 기기 초안과 계정 동기화를 함께 본다.
+ * 자세한 줄·복구본·계정 초안 관리는 이 문구를 눌러 펼치고, 판단할 일이 생기면 저절로 펼쳐 보인다.
+ */
+function replyDraftSummary(
+  status: FormDraftStatus,
+  restored: boolean,
+  sync: DocumentServerDraftSyncResult | undefined,
+): string {
+  if (status === "error" || status === "incompatible" || status === "conflict") return "초안 확인 필요";
+  if (status === "saving" || sync?.status === "queued" || sync?.status === "syncing") return "저장 중…";
+  if (status === "saved") return restored ? "초안 복원됨" : "초안 저장됨";
+  return "초안 자동 저장";
+}
+
+function readSaveShortcutKey(): string {
+  if (typeof navigator === "undefined") return "Ctrl+S";
+  return /Mac|iPhone|iPad|iPod/u.test(navigator.platform || navigator.userAgent) ? "⌘S" : "Ctrl+S";
+}
 
 type Reply = {
   id: string;
@@ -105,6 +138,12 @@ function ThreadDetailContent({
   // 본문 이미지가 올라가는 동안에는 제출하지 않는다. 편집기는 계속 쓸 수 있다.
   const [isEditorUploading, setIsEditorUploading] = useState(false);
   const [editorKey, setEditorKey] = useState(0);
+  // 바닥 줄에 둘 자리가 없는 첨부 업로드 실패 안내는 입력란 위 안내 자리에 그린다.
+  const [attachmentError, setAttachmentError] = useState("");
+  const [draftDetailsOpen, setDraftDetailsOpen] = useState(false);
+  const draftDetailsId = useId();
+  // 편집기의 이미지 업로드 상태·마크다운 전환을 바닥 줄(좁은 화면은 초안 상태 줄)에 넣는 자리.
+  const [editorToolsElement, setEditorToolsElement] = useState<HTMLSpanElement | null>(null);
   const [isPending, startTransition] = useTransition();
   // 상태와 CAS 기준은 같은 서버 snapshot에서 가져온다.
   const currentStatus = status;
@@ -160,6 +199,7 @@ function ThreadDetailContent({
         setContentHtml("");
         setAttachmentUrl("");
         setAttachmentObjectId("");
+        setAttachmentError("");
         setEditorKey((key) => key + 1);
       },
     },
@@ -228,6 +268,7 @@ function ThreadDetailContent({
       setContentHtml("");
       setAttachmentUrl("");
       setAttachmentObjectId("");
+      setAttachmentError("");
       setEditorKey((k) => k + 1);
       router.refresh();
     }
@@ -276,120 +317,202 @@ function ThreadDetailContent({
     });
   };
 
+  const lifecycleButtonRef = useRef<HTMLButtonElement>(null);
+  const titleRef = useRef<HTMLHeadingElement>(null);
+  const lifecycle = useQnaThreadLifecycle({
+    actionButtonRef: lifecycleButtonRef,
+    fallbackFocusRef: titleRef,
+    disabled: isReplyFormBusy,
+    transition: { isPending, start: startTransition },
+    threadId,
+    version: currentVersion,
+    deletedAt,
+    canRestore: true,
+    canPurge: isAdmin,
+    returnTo,
+  });
+  // 위쪽 막대 메뉴는 셸이 그리므로 최신 요청 함수를 ref로 넘겨 메뉴 요소를 매 입력마다 새로 만들지 않는다.
+  const lifecycleRequestRef = useRef(lifecycle.request);
+  useLayoutEffect(() => {
+    lifecycleRequestRef.current = lifecycle.request;
+  });
+  const requestLifecycle = useCallback((trigger: HTMLElement | null) => lifecycleRequestRef.current(trigger), []);
+
+  const historyHref = `/dashboard/qna/${threadId}/history?returnTo=${encodeURIComponent(returnTo)}`;
+  const lifecycleKind = lifecycle.actionKind;
+  const lifecycleDisabled = lifecycle.triggerDisabled;
+  const mobileActions = useMemo(() => {
+    const historyItem: MobileMoreMenuItem = { key: "history", label: "변경 이력", Icon: History, href: historyHref };
+    const items: MobileMoreMenuItem[] = lifecycleKind
+      ? [historyItem, {
+        key: lifecycleKind,
+        label: LIFECYCLE_TRIGGER_LABELS[lifecycleKind],
+        Icon: lifecycleKind === "restore" ? RotateCcw : Trash2,
+        destructive: lifecycleKind !== "restore",
+        disabled: lifecycleDisabled,
+        onSelect: requestLifecycle,
+      }]
+      : [historyItem];
+    return <MobileMoreMenu label="더 보기" items={items} disabled={isReplyFormBusy} />;
+  }, [historyHref, isReplyFormBusy, lifecycleDisabled, lifecycleKind, requestLifecycle]);
+
+  const longDate = formatKst(createdAt, { year: "numeric", month: "long", day: "numeric" }, "");
+  const shortDate = formatKstShortDate(createdAt, "");
+  const submitLabel = isUploading || isEditorUploading
+    ? "업로드 완료 대기..."
+    : isReplying
+      ? "등록 중..."
+      : isAdmin
+        ? "답변 등록"
+        : "질문 추가";
+  const backLabel = returnTo.startsWith("/dashboard/qna") ? "Q&A 목록으로" : "이전 화면으로";
+  const isClosed = currentStatus === "CLOSED";
+  const draftSummary = replyDraftSummary(draftStatus, restored, serverSync);
+  // 좁은 화면 입력 막대 grid 자리(MobileQnaThread). 넓은 화면 상자는 flex라 이 자리 class가 쓰이지 않는다.
+  // 고른 첨부 칩은 클립 버튼 자리 대신 초안 상태 아래 한 줄을 쓰고, 입력란이 그 칸까지 넓어진다.
+  const hasAttachment = Boolean(attachmentUrl);
+  const composerCells = {
+    attachment: hasAttachment ? "col-span-3 row-start-2 min-w-0" : "col-start-1 row-start-2",
+    editor: cn(
+      hasAttachment ? "row-start-3" : "row-start-2",
+      hasAttachment
+        ? (isClosed ? "col-span-3 col-start-1" : "col-span-2 col-start-1")
+        : (isClosed ? "col-span-2 col-start-2" : "col-start-2"),
+    ),
+    submit: cn("col-start-3", hasAttachment ? "row-start-3" : "row-start-2"),
+  };
+
   return (
-    <div className="space-y-6">
-      <div className="space-y-2">
+    <div className="flex flex-1 flex-col gap-4 md:gap-7">
+      <MobileTopBar title="Q&A" back={{ href: returnTo, label: backLabel }} actions={mobileActions} />
+
+      <nav aria-label="위치" className="hidden min-w-0 items-center gap-1.5 text-ui md:flex">
         <Link
           href={returnTo}
           aria-disabled={isReplyFormBusy}
           tabIndex={isReplyFormBusy ? -1 : undefined}
-          className={`inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground ${
-            isReplyFormBusy ? "pointer-events-none opacity-50" : ""
-          }`}
+          className={cn(
+            "shrink-0 text-secondary-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+            isReplyFormBusy && "pointer-events-none opacity-50",
+          )}
           onClick={(event) => {
             if (isReplyFormBusy) event.preventDefault();
           }}
         >
-          <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-          Q&amp;A 목록
+          Q&amp;A
         </Link>
+        <span aria-hidden="true" className="text-faint">/</span>
+        <span aria-current="page" className="min-w-0 truncate text-foreground">{title}</span>
+      </nav>
 
-        <div className="flex items-start gap-3">
-          <div className="min-w-0 flex-1">
-            <h1 className="break-words text-xl font-semibold text-foreground">{title}</h1>
-            <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
-              {isAdmin ? <span>{studentName} /</span> : null}
-              <span>
-                {formatKst(createdAt, { year: "numeric", month: "long", day: "numeric" }, "작성일 미정")}
-              </span>
-            </div>
-          </div>
-          <StatusBadge
-            status={
-              currentStatus === "OPEN"
-                ? "qnaOpen"
-                : currentStatus === "ANSWERED"
-                  ? "qnaAnswered"
-                  : "qnaClosed"
-            }
-          />
+      <header className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex min-w-0 flex-col gap-1.5">
+          <h1 ref={titleRef} tabIndex={-1} className="break-words text-xl font-semibold tracking-title focus:outline-none md:text-2xl md:tracking-display">{title}</h1>
+          <p className="flex flex-wrap items-center gap-2 text-ui text-muted-foreground">
+            <QnaStatusLabel status={currentStatus} />
+            <span>
+              {"· "}
+              {isAdmin ? `${studentName} · ` : null}
+              {longDate ? (
+                <>
+                  <span className="md:hidden">{shortDate} 질문</span>
+                  <span className="hidden md:inline">{longDate} 질문</span>
+                </>
+              ) : "작성일 미정"}
+            </span>
+          </p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Button asChild variant="outline" size="sm" className="gap-1.5">
-            <Link
-              href={`/dashboard/qna/${threadId}/history?returnTo=${encodeURIComponent(returnTo)}`}
+        <div className="hidden shrink-0 items-center gap-1 md:flex">
+          <Link href={historyHref} className={buttonClassName({ variant: "ghost" })}>
+            변경 이력
+          </Link>
+          {lifecycleKind === "trash" ? (
+            <Button
+              ref={lifecycleButtonRef}
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label={LIFECYCLE_TRIGGER_LABELS.trash}
+              aria-expanded={lifecycle.confirmOpen}
+              disabled={lifecycleDisabled}
+              onClick={(event) => lifecycle.request(event.currentTarget)}
             >
-              <History className="h-4 w-4" aria-hidden="true" />
-              변경 이력
-            </Link>
-          </Button>
-          <QnaThreadLifecycleActions
-            disabled={isReplyFormBusy}
-            transition={{ isPending, start: startTransition }}
-            threadId={threadId}
-            version={currentVersion}
-            deletedAt={deletedAt}
-            canRestore
-            canPurge={isAdmin}
-            returnTo={returnTo}
-          />
+              <Trash2 className="size-4" strokeWidth={1.6} aria-hidden="true" />
+            </Button>
+          ) : lifecycleKind ? (
+            <Button
+              ref={lifecycleButtonRef}
+              type="button"
+              variant={lifecycleKind === "purge" ? "destructive" : "outline"}
+              aria-expanded={lifecycleKind === "purge" ? lifecycle.confirmOpen : undefined}
+              disabled={lifecycleDisabled}
+              onClick={(event) => lifecycle.request(event.currentTarget)}
+            >
+              {lifecycleKind === "restore"
+                ? <RotateCcw className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
+                : <Trash2 className="size-3.5" strokeWidth={1.6} aria-hidden="true" />}
+              {LIFECYCLE_TRIGGER_LABELS[lifecycleKind]}
+            </Button>
+          ) : null}
         </div>
-      </div>
+      </header>
+
+      <div className="flex flex-col items-start gap-1 empty:hidden">{lifecycle.feedback}</div>
 
       {isTrashed ? (
-        <p role="status" className="rounded-xl border border-warning/30 bg-warning-muted p-4 text-sm">
+        <p role="status" className="rounded-lg border border-warning-border bg-warning-muted p-4 text-body text-foreground">
           휴지통에 있는 Q&amp;A입니다. 답변과 상태 변경 이력은 함께 보존되며 복원 전에는 새 답변을 등록할 수 없습니다.
         </p>
       ) : null}
 
-      <div className="border-t border-border" />
+      {/* 관리자 상태 변경 */}
+      {isAdmin && !isTrashed ? (
+        <div role="group" aria-label="스레드 상태 변경" className="flex flex-wrap items-center gap-3">
+          <span aria-hidden="true" className="text-ui text-secondary-foreground">상태 변경</span>
+          <div className="inline-flex h-8 items-center gap-0.5 rounded-md bg-muted p-0.5">
+            {STATUS_OPTIONS.map((option) => {
+              const isCurrent = currentStatus === option;
+              return (
+                <button
+                  key={option}
+                  onClick={() => handleStatusChange(option)}
+                  type="button"
+                  disabled={!loaded || isCurrent || isPending || isReplyFormBusy}
+                  aria-pressed={isCurrent}
+                  className={cn(
+                    "h-7 rounded-sm px-3 text-ui transition-colors duration-[var(--duration-fast)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none disabled:cursor-default",
+                    isCurrent
+                      ? "bg-background font-medium text-foreground shadow-segment"
+                      : "text-secondary-foreground hover:text-foreground disabled:opacity-50",
+                  )}
+                >
+                  {QNA_STATUS_LABELS[option]}
+                </button>
+              );
+            })}
+          </div>
+          {isPending ? <span role="status" className="text-xs text-muted-foreground">변경 중...</span> : null}
+        </div>
+      ) : null}
+      {statusError ? <p role="alert" className="text-ui text-destructive">{statusError}</p> : null}
 
-      {/* 답변 목록 */}
-      <div className="space-y-4">
+      {/* 대화 */}
+      <ol className="flex flex-col border-t border-border">
         {initialReplies.map((reply) => (
           <ReplyCard key={reply.id} reply={reply} />
         ))}
-      </div>
+      </ol>
 
-      {/* 구분선 */}
-      <div className="border-t border-border" />
-
-      {/* 어드민 상태 변경 */}
-      {isAdmin && !isTrashed && (
-        <div className="flex items-center gap-2" aria-label="스레드 상태 변경">
-          <span className="text-xs text-muted-foreground">상태 변경:</span>
-          {(["OPEN", "ANSWERED", "CLOSED"] as QnaStatus[]).map((s) => (
-            <button
-              key={s}
-              onClick={() => handleStatusChange(s)}
-              type="button"
-              disabled={!loaded || currentStatus === s || isPending || isReplyFormBusy}
-              aria-pressed={currentStatus === s}
-              className={`rounded-md border px-3 py-1 text-xs font-semibold transition-colors ${
-                currentStatus === s
-                  ? s === "OPEN"
-                    ? STATUS_TONE_CLASS_NAMES.warning
-                    : s === "ANSWERED"
-                      ? STATUS_TONE_CLASS_NAMES.success
-                      : STATUS_TONE_CLASS_NAMES.neutral
-                  : "border border-border text-muted-foreground hover:bg-accent"
-              } disabled:cursor-default`}
-            >
-              {QNA_STATUS_LABELS[s]}
-            </button>
-          ))}
-          {isPending ? <span className="text-xs text-muted-foreground">변경 중...</span> : null}
-        </div>
-      )}
-      {statusError ? <p role="alert" className="text-sm text-destructive">{statusError}</p> : null}
-
-      {/* 답변 작성 폼 */}
+      {/* 답변 작성 폼: 넓은 화면은 r10 상자 하나(QnaThread), 좁은 화면은 화면 아래 입력 막대(MobileQnaThread) */}
       {showReplyComposer && !isTrashed && (
         <form
           ref={formRef}
           action={replyAction}
           aria-busy={!loaded || isReplyFormBusy}
-          className="space-y-3"
+          className={cn(
+            "sticky bottom-0 z-10 -mx-5 -mb-8 mt-auto flex flex-col gap-2 border-t border-border bg-background px-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2",
+            "md:static md:z-auto md:mx-0 md:mb-0 md:border-0 md:bg-transparent md:p-0",
+          )}
           onKeyDownCapture={handleReplySaveShortcut}
           onSubmit={(event) => {
             if (!loaded || !canSubmit || currentStatus === "CLOSED" || isReplyFormBusy || isEditorUploading || !operationId) {
@@ -415,108 +538,182 @@ function ThreadDetailContent({
         >
           <input type="hidden" name={CREATION_OPERATION_FIELD} value={operationId} />
           <input ref={contentInputRef} type="hidden" name="contentHtml" value={contentHtml} />
-          <p className="text-sm font-medium text-foreground">
-            {currentStatus === "CLOSED"
+          <p className={cn("text-ui font-semibold text-secondary-foreground", !isClosed && "sr-only")}>
+            {isClosed
               ? "미전송 초안"
               : isAdmin
                 ? "답변 작성"
                 : "추가 질문"}
           </p>
-          {currentStatus === "CLOSED" ? (
-            <p role="status" className="rounded-md border border-warning/25 bg-warning-muted px-3 py-2 text-sm text-foreground">
-              스레드가 종료되어 등록할 수 없지만, 작성 중이던 내용은 이 기기에 보존되어 있습니다. 내용을 복사하거나 관리자가 다시 열 때 이어서 등록할 수 있습니다.
-            </p>
-          ) : null}
-          {replyState.error && (!replyState.operationConflict || hasOperationConflict) && (
-            <p role="alert" className="text-sm text-destructive">{replyState.error}</p>
-          )}
-          {hasOperationConflict ? (
-            <CreationConflictActions
-              existingLabel="현재 답변 새로고침"
-              separateLabel="별도 답변으로 등록"
-              onOpenExisting={() => router.refresh()}
-              onSeparate={() => {
-                if (attachmentObjectId) {
-                  void abandonMediaUpload(attachmentObjectId).catch(() => undefined);
-                }
-                setAttachmentUrl("");
-                setAttachmentObjectId("");
-                setOperationId(createCreationOperationId());
-              }}
-              disabled={isReplyFormBusy}
-            />
-          ) : null}
-          {replyState.success && !hasReplyDraft ? (
-            <p role="status" className="text-sm text-success">등록했습니다.</p>
-          ) : null}
-          {loaded && (
-            <FullEditor
-              onUploadingChange={setIsEditorUploading}
-              key={editorKey}
-              initialContent={contentHtml}
-              contentVersion={contentVersion}
-              onChange={handleEditorChange}
-              onDirty={(reader) => {
-                handleEditorDirty(reader);
-                if (!operationId) return;
-                save({
-                  operationId,
-                  attachmentUrl,
-                  attachmentObjectId,
-                  get contentHtml() {
-                    return reader();
-                  },
-                });
-              }}
-              placeholder={isAdmin ? "답변을 작성하세요..." : "추가 질문을 입력하세요..."}
-              disabled={currentStatus === "CLOSED" || isReplyFormBusy}
-              minHeight="200px"
-              ariaLabel={isAdmin ? "Q&A 답변 내용" : "Q&A 추가 질문 내용"}
-              footer={
-                <DraftStatus
-                  status={draftStatus}
-                  canSubmit={canSubmit}
-                  savedAt={savedAt}
-                  restored={restored}
-                  recoveries={recoveries}
-                  onRestoreRecovery={restoreRecovery}
-                  onDiscardRecovery={discardRecovery}
-                  serverSync={serverSync}
-                  disabled={isReplyFormBusy}
+          {/* 안내·오류·충돌 선택은 입력란 위에 둔다(좁은 화면에서는 입력 막대 안에서 길어지면 스크롤). */}
+          <div className="flex max-h-[40dvh] flex-col gap-2 overflow-y-auto empty:hidden md:max-h-none md:overflow-visible">
+            {isClosed ? (
+              <p role="status" className="rounded-lg border border-warning-border bg-warning-muted px-3 py-2 text-ui text-foreground">
+                스레드가 종료되어 등록할 수 없지만, 작성 중이던 내용은 이 기기에 보존되어 있습니다. 내용을 복사하거나 관리자가 다시 열 때 이어서 등록할 수 있습니다.
+              </p>
+            ) : null}
+            {replyState.error && (!replyState.operationConflict || hasOperationConflict) && (
+              <p role="alert" className="text-ui text-destructive">{replyState.error}</p>
+            )}
+            {attachmentError ? (
+              <p role="alert" className="text-ui text-destructive">파일을 업로드하지 못했습니다. {attachmentError}</p>
+            ) : null}
+            {hasOperationConflict ? (
+              <CreationConflictActions
+                existingLabel="현재 답변 새로고침"
+                separateLabel="별도 답변으로 등록"
+                onOpenExisting={() => router.refresh()}
+                onSeparate={() => {
+                  if (attachmentObjectId) {
+                    void abandonMediaUpload(attachmentObjectId).catch(() => undefined);
+                  }
+                  setAttachmentUrl("");
+                  setAttachmentObjectId("");
+                  setOperationId(createCreationOperationId());
+                }}
+                disabled={isReplyFormBusy}
+              />
+            ) : null}
+            {replyState.success && !hasReplyDraft ? (
+              <p role="status" className="text-ui text-success">등록했습니다.</p>
+            ) : null}
+          </div>
+
+          {/*
+            넓은 화면: [본문][바닥 줄: 파일 첨부 · (도구·초안 상태·등록)] 세로 상자.
+            좁은 화면: 바닥 줄을 풀어(contents) 한 grid에 놓는다. 1행 초안 상태, (첨부 칩), 마지막 행 클립·입력란·등록.
+          */}
+          <div
+            className={cn(
+              "grid grid-cols-[auto_minmax(0,1fr)_auto] items-end gap-x-2 gap-y-1",
+              "md:flex md:flex-col md:items-stretch md:gap-0 md:rounded-lg md:border md:border-border md:bg-background md:transition-[border-color,box-shadow] md:duration-[var(--duration-fast)] md:focus-within:border-ring md:focus-within:ring-1 md:focus-within:ring-ring md:motion-reduce:transition-none",
+            )}
+          >
+            <div
+              className={cn(
+                composerCells.editor,
+                // MobileQnaThread 입력란: 44px부터 자라는 선 있는 r8 칸. QnaThread는 상자 안의 선 없는 글 칸(최소 96 + 위아래 14).
+                "flex max-h-[40dvh] min-h-11 flex-col rounded-touch border border-border bg-background transition-[border-color,box-shadow] duration-[var(--duration-fast)] focus-within:border-ring focus-within:ring-1 focus-within:ring-ring motion-reduce:transition-none",
+                "md:max-h-none md:min-h-[124px] md:rounded-none md:border-0 md:bg-transparent md:focus-within:ring-0",
+              )}
+            >
+              {loaded && (
+                <FullEditor
+                  onUploadingChange={setIsEditorUploading}
+                  key={editorKey}
+                  variant="bare"
+                  toolbar="none"
+                  toolsContainer={editorToolsElement}
+                  contentClassName="px-3 py-2.5 text-base leading-[22px] md:px-4 md:py-3.5 md:text-md md:leading-6"
+                  initialContent={contentHtml}
+                  contentVersion={contentVersion}
+                  onChange={handleEditorChange}
+                  onDirty={(reader) => {
+                    handleEditorDirty(reader);
+                    if (!operationId) return;
+                    save({
+                      operationId,
+                      attachmentUrl,
+                      attachmentObjectId,
+                      get contentHtml() {
+                        return reader();
+                      },
+                    });
+                  }}
+                  placeholder={isAdmin ? "답변을 입력하세요" : "추가 질문을 입력하세요"}
+                  disabled={isClosed || isReplyFormBusy}
+                  ariaLabel={isAdmin ? "Q&A 답변 내용" : "Q&A 추가 질문 내용"}
                 />
-              }
-              saveShortcutLabel={
-                canSubmit && currentStatus !== "CLOSED" ? "초안 저장" : undefined
-              }
-            />
-          )}
-          <AttachmentField
-            value={attachmentUrl}
-            mediaObjectId={attachmentObjectId}
-            draftOperationId={operationId}
-            onChange={(upload) => {
-              setAttachmentUrl(upload?.deliveryUrl ?? "");
-              setAttachmentObjectId(upload?.mediaObjectId ?? "");
-            }}
-            disabled={!loaded || currentStatus === "CLOSED" || isReplyFormBusy}
-            onUploadingChange={setIsUploading}
-          />
-          {currentStatus !== "CLOSED" ? (
-            <Button type="submit" disabled={!loaded || !canSubmit || isReplyFormBusy || isEditorUploading || !operationId || isRichTextEmpty(contentHtml)} className="gap-2">
-              {isUploading || isEditorUploading
-                ? "업로드 완료 대기..."
-                : isReplying
-                  ? "등록 중..."
-                  : isAdmin
-                    ? "답변 등록"
-                    : "질문 추가"}
-            </Button>
-          ) : null}
+              )}
+            </div>
+
+            <div className="contents md:flex md:min-h-12 md:items-center md:justify-between md:gap-3 md:border-t md:border-muted md:py-2 md:pl-3 md:pr-2">
+              <div className={composerCells.attachment}>
+                <AttachmentField
+                  value={attachmentUrl}
+                  mediaObjectId={attachmentObjectId}
+                  draftOperationId={operationId}
+                  onChange={(upload) => {
+                    setAttachmentUrl(upload?.deliveryUrl ?? "");
+                    setAttachmentObjectId(upload?.mediaObjectId ?? "");
+                  }}
+                  disabled={!loaded || isClosed || isReplyFormBusy}
+                  onUploadingChange={setIsUploading}
+                  onErrorChange={setAttachmentError}
+                  trigger="composer"
+                />
+              </div>
+              <div className="contents md:flex md:shrink-0 md:items-center md:gap-3">
+                <div className="col-span-3 row-start-1 flex min-w-0 items-center justify-between gap-3 px-1 md:px-0">
+                  {/* 편집기의 이미지 업로드 상태·마크다운 전환이 들어오는 자리 */}
+                  <span
+                    ref={setEditorToolsElement}
+                    className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground empty:hidden"
+                  />
+                  {loaded ? (
+                    <span role="status" aria-live="polite" className="ml-auto shrink-0">
+                      <button
+                        type="button"
+                        aria-expanded={draftDetailsOpen}
+                        aria-controls={draftDetailsId}
+                        title="임시 저장 상태 자세히 보기"
+                        onClick={() => setDraftDetailsOpen((open) => !open)}
+                        // 좁은 화면 입력 막대에서도 누르는 곳은 44px(줄 높이는 바꾸지 않는다).
+                        className="-my-3 inline-flex h-11 items-center rounded-sm text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:my-0 md:h-auto"
+                      >
+                        {draftSummary}
+                      </button>
+                    </span>
+                  ) : null}
+                </div>
+                {!isClosed ? (
+                  <Button
+                    type="submit"
+                    aria-label={submitLabel}
+                    disabled={!loaded || !canSubmit || isReplyFormBusy || isEditorUploading || !operationId || isRichTextEmpty(contentHtml)}
+                    className={cn(composerCells.submit, "size-11 shrink-0 rounded-touch p-0 md:h-8 md:w-auto md:rounded-md md:px-3.5")}
+                  >
+                    <ArrowUp className="size-[18px] md:hidden" strokeWidth={1.8} aria-hidden="true" />
+                    <span className="hidden md:inline">{submitLabel}</span>
+                  </Button>
+                ) : null}
+              </div>
+            </div>
+          </div>
+
+          {/*
+            초안 상태 자세히: 평소에는 접혀 있고(비어 있는 묶음은 자리를 차지하지 않는다), 복원·충돌·오류·다른 기기 작성본은 바로 보인다.
+            펼치면 묶음이 비지 않으므로 단축키 줄만 따로 남는 일은 없다. 좁은 화면 입력 막대 안에서는 길어지면 스크롤한다.
+          */}
+          <div
+            id={draftDetailsId}
+            className="flex flex-col gap-2 empty:hidden has-[>[role=group]:empty]:hidden max-md:max-h-[40dvh] max-md:overflow-y-auto"
+          >
+            {loaded ? (
+              <DraftStatus
+                quiet={!draftDetailsOpen}
+                status={draftStatus}
+                canSubmit={canSubmit}
+                savedAt={savedAt}
+                restored={restored}
+                recoveries={recoveries}
+                onRestoreRecovery={restoreRecovery}
+                onDiscardRecovery={discardRecovery}
+                serverSync={serverSync}
+                disabled={isReplyFormBusy}
+              />
+            ) : null}
+            {draftDetailsOpen && canSubmit && !isClosed ? (
+              <p className="text-xs text-muted-foreground">
+                초안 저장 <kbd className="font-mono">{readSaveShortcutKey()}</kbd>
+              </p>
+            ) : null}
+          </div>
         </form>
       )}
 
       {currentStatus === "CLOSED" && !hasReplyDraft && !isTrashed && (
-        <p className="text-sm text-muted-foreground text-center py-4">
+        <p className="py-4 text-center text-body text-muted-foreground">
           종료된 스레드입니다.
         </p>
       )}

@@ -5,7 +5,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { and, count, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull } from "drizzle-orm";
 import { createDb, createDbContext } from "@/db/client";
 import { privateNoteRevisions, privateNotes, profiles } from "@/db/schema";
 import { requireAuth, requireStudentOwnerOrAdmin } from "@/lib/auth-guard";
@@ -140,42 +140,6 @@ export async function getPrivateNotes(targetStudentId: string) {
       ),
     )
     .orderBy(desc(privateNotes.createdAt));
-}
-
-/** 목록 미리보기(평문 앞부분)에 필요한 만큼만 본문 앞부분을 읽는다. 미리보기도 앞 4,096자만 본다. */
-const PRIVATE_NOTE_PREVIEW_SOURCE_CHARS = 4_096;
-
-/**
- * 학생 상세 노트 탭용: 전체 본문 대신 최근 note 몇 개의 본문 앞부분과 active note 수만 읽는다.
- * 권한 검사는 getPrivateNotes와 같다.
- */
-export async function getRecentPrivateNotesOverview(targetStudentId: string, limit: number) {
-  const session = await requireAuth();
-  await requireStudentOwnerOrAdmin(session, targetStudentId);
-  const db = createDb();
-  const activeNotesOfStudent = and(
-    eq(privateNotes.studentId, targetStudentId),
-    isNull(privateNotes.deletedAt),
-  );
-  const [notes, [totals]] = await Promise.all([
-    db
-      .select({
-        id: privateNotes.id,
-        title: privateNotes.title,
-        contentHtml: sql<string>`substr(${privateNotes.contentHtml}, 1, ${PRIVATE_NOTE_PREVIEW_SOURCE_CHARS})`,
-        noteDate: privateNotes.noteDate,
-        createdAt: privateNotes.createdAt,
-        updatedAt: privateNotes.updatedAt,
-        authorName: profiles.displayName,
-      })
-      .from(privateNotes)
-      .leftJoin(profiles, eq(privateNotes.authorId, profiles.id))
-      .where(activeNotesOfStudent)
-      .orderBy(desc(privateNotes.createdAt))
-      .limit(limit),
-    db.select({ value: count() }).from(privateNotes).where(activeNotesOfStudent),
-  ]);
-  return { notes, total: totals?.value ?? 0 };
 }
 
 /** active 단일 note를 권한 범위 안에서 반환한다. */
@@ -513,6 +477,75 @@ export async function updatePrivateNote(
       noteDate: note.noteDate,
       version: currentRevision,
     },
+  };
+}
+
+export type MovePrivateNoteDateState =
+  | { ok: true; noteDate: Date; version: number }
+  | { ok: false; error: string; conflictKind?: PrivateNoteMutationFailureReason };
+
+/**
+ * 캘린더에서 끌어 옮긴 노트의 날짜만 바꾼다. 본문·제목은 서버 최신본 그대로 두고,
+ * 읽은 revision을 기준으로 저장해 그 사이 다른 화면의 변경은 충돌로 돌려준다.
+ */
+export async function movePrivateNoteDate(
+  noteId: string,
+  noteDate: string,
+  operationIdValue: string,
+): Promise<MovePrivateNoteDateState> {
+  const session = await requireAuth();
+  const operationId = resolveCreationOperationId(operationIdValue);
+  if (!operationId) {
+    return { ok: false, error: "작업 기준을 확인할 수 없습니다. 페이지를 새로고침해 주세요." };
+  }
+  let parsedDate: Date | null;
+  try {
+    parsedDate = parseDocumentNoteDateInput(noteDate);
+  } catch {
+    parsedDate = null;
+  }
+  if (!parsedDate) return { ok: false, error: "올바른 날짜를 입력해 주세요." };
+
+  const current = await getPrivateNoteForMutation(noteId);
+  const isAdmin = session.user.role === "admin";
+  if (!current || (!isAdmin && current.authorId !== session.user.id)) {
+    return {
+      ok: false,
+      error: mutationErrorMessage("NOT_FOUND_OR_FORBIDDEN"),
+      conflictKind: "NOT_FOUND_OR_FORBIDDEN",
+    };
+  }
+  if (current.deletedAt) {
+    return { ok: false, error: mutationErrorMessage("TRASHED"), conflictKind: "TRASHED" };
+  }
+  // 이미 그 날짜면 쓰지 않고 성공으로 돌려준다. 응답을 잃은 같은 이동을 다시 보내도 같은 결과가 된다.
+  if (current.noteDate?.getTime() === parsedDate.getTime()) {
+    return { ok: true, noteDate: parsedDate, version: current.version };
+  }
+  const result = await updatePrivateNoteAtomically(createDbContext(), {
+    actor: { id: session.user.id!, isAdmin },
+    noteId,
+    operationId,
+    baseRevision: current.version,
+    title: current.title,
+    contentHtml: current.contentHtml,
+    noteDate: parsedDate,
+    now: new Date(),
+  });
+  if (!result.ok) {
+    return {
+      ok: false,
+      error: result.reason === "VERSION_CONFLICT"
+        ? "방금 다른 화면에서 이 노트가 바뀌었습니다. 다시 옮겨 주세요."
+        : mutationErrorMessage(result.reason),
+      conflictKind: result.reason,
+    };
+  }
+  revalidatePrivateNotePaths(current.studentId, noteId);
+  return {
+    ok: true,
+    noteDate: parsedDate,
+    version: result.currentRevision ?? result.operationResultRevision,
   };
 }
 

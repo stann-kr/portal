@@ -1,56 +1,98 @@
 @import "tailwindcss";
 @import "../components/ui/overlay-motion.css";
+@import "../components/app-shell/navigation-progress.css";
 @import "../components/student-portal/unified-calendar.css";
 
 @theme {
-  /* Quiet studio console: warm graphite + one copper signal accent. */
-  --color-canvas: #f6f6f3;
-  --color-background: #f6f6f3;
-  --color-foreground: #292925;
-  --color-surface: #fdfdfb;
+  /* Quiet Ledger: 흰 바탕·먹색 글자·1px 선. 강조 파랑은 오늘·선택·초점에만 쓴다(캔버스 Tokens 보드). */
+  --font-sans: var(--font-plex-sans), "IBM Plex Sans KR", system-ui, -apple-system, "Apple SD Gothic Neo", sans-serif;
+  --font-mono: var(--font-plex-mono), "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --color-canvas: #ffffff;
+  --color-background: #ffffff;
+  --color-foreground: #18181b;
+  --color-surface: #ffffff;
   --color-surface-elevated: #ffffff;
-  --color-card: #fdfdfb;
-  --color-card-foreground: #292925;
+  --color-card: #ffffff;
+  --color-card-foreground: #18181b;
+  --color-sidebar: #f7f7f6;
 
-  --color-primary: #934825;
-  --color-primary-foreground: #fffaf6;
-  --color-secondary: #e9e9e3;
-  --color-secondary-foreground: #292925;
-  --color-accent: #efe3dc;
-  --color-accent-foreground: #6d331d;
+  /* 주 버튼은 먹색, 보조 글자(글자 2)는 secondary-foreground, 날짜·메타(글자 3)는 muted-foreground. */
+  --color-primary: #18181b;
+  --color-primary-foreground: #ffffff;
+  --color-secondary: #f1f1ef;
+  --color-secondary-foreground: #52525b;
+  --color-muted: #f1f1ef;
+  --color-muted-foreground: #6b6b73;
+  --color-selected: #eaeae8;
+  --color-faint: #b4b4bb;
 
-  --color-muted: #edede8;
-  --color-muted-foreground: #66665f;
-  --color-border: #d8d8d0;
-  --color-input: #c8c8bf;
-  --color-ring: #934825;
+  /* 강조: 오늘·선택·초점. accent는 강조 옅게(선택 면), accent-foreground는 그 위의 파랑 글자. */
+  --color-highlight: #2d5bff;
+  --color-highlight-foreground: #ffffff;
+  --color-accent: #eef2ff;
+  --color-accent-foreground: #2d4bcc;
 
-  --color-success: #2f6b4f;
-  --color-success-muted: #e4f0e9;
-  --color-warning: #875918;
-  --color-warning-muted: #f5ecd8;
-  --color-destructive: #a13d46;
-  --color-destructive-foreground: #fffaf6;
-  --color-destructive-muted: #f5e4e6;
-  --color-info: #3e6278;
-  --color-info-muted: #e3edf1;
+  --color-border: #e8e8e6;
+  --color-input: #e8e8e6;
+  --color-ring: #2d5bff;
+  /* 시트·서랍 뒤 화면을 32% 어둡게 */
+  --color-scrim: rgb(24 24 27 / 0.32);
 
-  --color-event-lesson: #3e6278;
-  --color-event-practice: #2f6b4f;
-  --color-event-gig: #a13d46;
-  --color-event-note: #875918;
-  --color-item-note: #705b85;
-  --color-item-digging: #8b4e68;
-  --color-item-qna: #934825;
-  --color-item-assignment: #356c70;
+  --color-success: #0b7a6e;
+  --color-success-muted: #e7f5f3;
+  --color-warning: #b54708;
+  --color-warning-muted: #fffaeb;
+  --color-warning-border: #fedf89;
+  --color-destructive: #b42318;
+  --color-destructive-foreground: #ffffff;
+  --color-destructive-muted: #fef3f2;
+  --color-destructive-border: #f3c7c2;
+  --color-info: #2d4bcc;
+  --color-info-muted: #eef2ff;
 
-  --radius-sm: 0.375rem;
-  --radius-md: 0.5rem;
-  --radius-lg: 0.75rem;
-  --radius-xl: 1rem;
+  /* 항목 유형 점. 노트는 일정 노트와 통합 노트가 같은 점을 쓴다. */
+  --color-event-lesson: #2d5bff;
+  --color-event-practice: #0e9384;
+  --color-event-gig: #e8590c;
+  --color-event-note: #8a8a93;
+  --color-item-note: #8a8a93;
+  --color-item-digging: #7a5af8;
+  --color-item-qna: #ca8a04;
+  --color-item-assignment: #dd2590;
 
-  --shadow-floating: 0 12px 32px rgb(75 64 55 / 0.12);
-  --shadow-overlay: 0 24px 72px rgb(75 64 55 / 0.2);
+  /* r4 칩·세그먼트 칸, r6 컨트롤, r8 모바일 컨트롤, r10 패널, r16 시트 위 모서리. */
+  --radius-xs: 4px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-touch: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 16px;
+
+  /* 떠 있는 창만 그림자를 쓴다. */
+  --shadow-segment: 0 1px 2px rgb(24 24 27 / 0.08);
+  --shadow-floating: 0 12px 32px rgb(24 24 27 / 0.12);
+  --shadow-overlay: 0 12px 32px rgb(24 24 27 / 0.12);
+  --shadow-sheet: 0 -12px 32px rgb(24 24 27 / 0.08);
+  --shadow-drawer: 12px 0 32px rgb(24 24 27 / 0.12);
+
+  /* 글자 단계(캔버스 Tokens·MobileSpec). Caption 12/16은 text-xs, Title 20/28은 text-xl을 그대로 쓴다. */
+  --text-ui: 13px;
+  --text-ui--line-height: 20px;
+  --text-body: 14px;
+  --text-body--line-height: 22px;
+  --text-md: 15px;
+  --text-md--line-height: 22px;
+  --text-dialog: 17px;
+  --text-dialog--line-height: 24px;
+  --text-mobile-title: 22px;
+  --text-mobile-title--line-height: 30px;
+  --text-mobile-title--font-weight: 600;
+  --text-display: 28px;
+  --text-display--line-height: 36px;
+  --text-display--font-weight: 600;
+  --tracking-display: -0.02em;
+  --tracking-title: -0.01em;
 
   --ease-studio: cubic-bezier(0.16, 1, 0.3, 1);
 }
@@ -62,52 +104,64 @@
   --duration-slow: 280ms;
   --z-base: 0;
   --z-sticky: 20;
-  --z-dropdown: 40;
+  /* 메뉴·선택 창은 시트·서랍·대화상자 안에서도 열리므로 overlay 위, toast 아래에 둔다. */
   --z-overlay: 50;
+  --z-dropdown: 55;
   --z-toast: 60;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
     color-scheme: dark;
-    --color-canvas: #1d1d1a;
-    --color-background: #1d1d1a;
-    --color-foreground: #eeeeea;
-    --color-surface: #242420;
-    --color-surface-elevated: #2b2b26;
-    --color-card: #242420;
-    --color-card-foreground: #eeeeea;
-    --color-primary: #d78b63;
-    --color-primary-foreground: #21130d;
-    --color-secondary: #33332e;
-    --color-secondary-foreground: #eeeeea;
-    --color-accent: #463126;
-    --color-accent-foreground: #f1c5ae;
-    --color-muted: #30302b;
-    --color-muted-foreground: #b8b8af;
-    --color-border: #41413a;
-    --color-input: #56564d;
-    --color-ring: #d78b63;
-    --color-success: #82c6a3;
-    --color-success-muted: #233c30;
-    --color-warning: #e0b364;
-    --color-warning-muted: #42351f;
-    --color-destructive: #e78c94;
-    --color-destructive-foreground: #21130d;
-    --color-destructive-muted: #48282c;
-    --color-info: #8eb9cf;
-    --color-info-muted: #263b46;
-    /* 어두운 면 위의 아이콘·일정 블록이 보이도록 밝힌 값. 블록 글자색은 unified-calendar.css가 맞춘다. */
-    --color-event-lesson: #8eb9cf;
-    --color-event-practice: #82c6a3;
-    --color-event-gig: #e78c94;
-    --color-event-note: #e0b364;
-    --color-item-note: #b9a6cf;
-    --color-item-digging: #d39ab3;
-    --color-item-qna: #d78b63;
-    --color-item-assignment: #86c2c6;
-    --shadow-floating: 0 12px 32px rgb(0 0 0 / 0.3);
-    --shadow-overlay: 0 24px 72px rgb(0 0 0 / 0.46);
+    --color-canvas: #0f0f11;
+    --color-background: #0f0f11;
+    --color-foreground: #ececee;
+    --color-surface: #0f0f11;
+    --color-surface-elevated: #151517;
+    --color-card: #0f0f11;
+    --color-card-foreground: #ececee;
+    --color-sidebar: #151517;
+    --color-primary: #ececee;
+    --color-primary-foreground: #0f0f11;
+    --color-secondary: #1e1e21;
+    --color-secondary-foreground: #b4b4bb;
+    --color-muted: #1e1e21;
+    --color-muted-foreground: #8e8e96;
+    --color-selected: #26262a;
+    --color-faint: #52525b;
+    --color-highlight: #7b95ff;
+    --color-highlight-foreground: #0f0f11;
+    --color-accent: #1c2240;
+    --color-accent-foreground: #a5b4fc;
+    --color-border: #2a2a2e;
+    --color-input: #2a2a2e;
+    --color-ring: #7b95ff;
+    --color-scrim: rgb(0 0 0 / 0.5);
+    --color-success: #34c3b0;
+    --color-success-muted: #10302c;
+    --color-warning: #f5a65b;
+    --color-warning-muted: #2e2110;
+    --color-warning-border: #5c3d14;
+    --color-destructive: #f97066;
+    --color-destructive-foreground: #0f0f11;
+    --color-destructive-muted: #2d1513;
+    --color-destructive-border: #5f2420;
+    --color-info: #a5b4fc;
+    --color-info-muted: #1c2240;
+    /* 어두운 면에서 3:1 이상이 되도록 밝힌 유형 점(HomeDark 보드의 레슨·연습·공연·노트 값). */
+    --color-event-lesson: #7b95ff;
+    --color-event-practice: #34c3b0;
+    --color-event-gig: #f2884b;
+    --color-event-note: #a1a1aa;
+    --color-item-note: #a1a1aa;
+    --color-item-digging: #a48bfa;
+    --color-item-qna: #eab308;
+    --color-item-assignment: #f472b6;
+    --shadow-segment: 0 1px 2px rgb(0 0 0 / 0.4);
+    --shadow-floating: 0 12px 32px rgb(0 0 0 / 0.4);
+    --shadow-overlay: 0 12px 32px rgb(0 0 0 / 0.4);
+    --shadow-sheet: 0 -12px 32px rgb(0 0 0 / 0.32);
+    --shadow-drawer: 12px 0 32px rgb(0 0 0 / 0.4);
   }
 }
 
@@ -129,37 +183,14 @@
 .animate-accordion-down { animation: accordion-down 0.2s ease-out; }
 .animate-accordion-up { animation: accordion-up 0.2s ease-out; }
 
-/* ─── FullCalendar 테마 오버라이드 ──────────────── */
-.fc-custom .fc-toolbar-title { font-size: 1rem; font-weight: 600; }
-.fc-custom .fc-button {
-  background-color: var(--color-background) !important;
-  border-color: var(--color-border) !important;
-  color: var(--color-foreground) !important;
-  font-size: 0.75rem !important;
-  padding: 0.25rem 0.625rem !important;
-  box-shadow: none !important;
-}
-.fc-custom .fc-button:hover { background-color: var(--color-accent) !important; }
-.fc-custom .fc-button-active,
-.fc-custom .fc-button-primary:not(:disabled):active {
-  background-color: var(--color-primary) !important;
-  color: var(--color-primary-foreground) !important;
-  border-color: var(--color-primary) !important;
-}
-.fc-custom .fc-col-header-cell { font-size: 0.7rem; font-weight: 700; color: var(--color-muted-foreground); text-transform: uppercase; letter-spacing: 0.05em; }
-.fc-custom .fc-daygrid-day-number { font-size: 0.8rem; color: var(--color-muted-foreground); }
-.fc-custom .fc-day-today { background-color: color-mix(in srgb, var(--color-primary) 5%, transparent) !important; }
-.fc-custom .fc-day-today .fc-daygrid-day-number { color: var(--color-primary); font-weight: 700; }
-.fc-custom .fc-event { border-radius: 4px; font-size: 0.72rem; padding: 1px 4px; }
-/* 제목이 길어도 시간은 줄이지 않고 제목만 말줄임한다. */
-.fc-custom .fc-h-event .fc-event-time { flex-shrink: 0; overflow: visible; }
-.fc-custom .fc-h-event .fc-event-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.fc-custom th, .fc-custom td { border-color: var(--color-border) !important; }
+/* FullCalendar 화면은 components/student-portal/unified-calendar.css가 맡는다. */
 
 /* ─── FullEditor / ProseMirror 스타일 ───────────── */
+/* 편집 화면(.ProseMirror)과 읽기 화면(.rich-text)이 같은 hierarchy를 쓴다(NoteDoc·MobileNoteDoc 보드).
+   글자 크기·줄 높이는 바깥 container(문서 16/28, 상자 15/26)가 정하고 여기서는 em으로만 맞춘다. */
 
-/* Placeholder */
-.ProseMirror p.is-editor-empty:first-child::before {
+/* Placeholder: 빈 문서는 화면 안내, 내용이 있는 문서의 빈 줄(커서 위치)은 `/` 블록 안내 */
+.ProseMirror > .is-empty::before {
   content: attr(data-placeholder);
   color: var(--color-muted-foreground);
   pointer-events: none;
@@ -170,15 +201,26 @@
 /* 선택 영역 */
 :where(.ProseMirror, .rich-text) .selection,
 :where(.ProseMirror, .rich-text) *::selection {
-  background-color: color-mix(in srgb, var(--color-primary) 15%, transparent);
+  background-color: var(--color-accent);
+}
+
+/* 블록 간격: 문단 사이 14px(좁은 화면 12px) */
+:where(.ProseMirror, .rich-text) > * + * { margin-top: 0.875em; }
+@media (max-width: 47.999rem) {
+  :where(.ProseMirror, .rich-text) > * + * { margin-top: 0.75em; }
 }
 
 /* 헤딩 */
-:where(.ProseMirror, .rich-text) h1 { font-size: 1.75rem; font-weight: 700; line-height: 1.2; margin: 1.5rem 0 0.75rem; letter-spacing: -0.025em; }
-:where(.ProseMirror, .rich-text) h2 { font-size: 1.375rem; font-weight: 600; line-height: 1.3; margin: 1.25rem 0 0.5rem; letter-spacing: -0.02em; }
-:where(.ProseMirror, .rich-text) h3 { font-size: 1.125rem; font-weight: 600; line-height: 1.4; margin: 1rem 0 0.5rem; }
-:where(.ProseMirror, .rich-text) p { margin: 0.4rem 0; line-height: 1.7; }
-:where(.ProseMirror, .rich-text) p:first-child { margin-top: 0; }
+:where(.ProseMirror, .rich-text) h1 { font-size: 1.5em; line-height: 1.333; font-weight: 600; letter-spacing: -0.02em; }
+:where(.ProseMirror, .rich-text) h2 { font-size: 1.25em; line-height: 1.4; font-weight: 600; letter-spacing: -0.01em; }
+:where(.ProseMirror, .rich-text) h3 { font-size: 1.0625em; line-height: 1.5; font-weight: 600; }
+:where(.ProseMirror, .rich-text) > :is(h1, h2, h3):not(:first-child) { margin-top: 1.375em; }
+@media (max-width: 47.999rem) {
+  :where(.ProseMirror, .rich-text) h1 { font-size: 1.375em; line-height: 1.364; }
+  :where(.ProseMirror, .rich-text) h2 { font-size: 1.125em; line-height: 1.444; }
+  :where(.ProseMirror, .rich-text) > :is(h1, h2, h3):not(:first-child) { margin-top: 1em; }
+}
+:where(.ProseMirror, .rich-text) p { margin: 0; }
 .rich-text { overflow-wrap: anywhere; }
 :where(.ProseMirror, .rich-text) [data-text-align="left"] { text-align: left; }
 :where(.ProseMirror, .rich-text) [data-text-align="center"] { text-align: center; }
@@ -187,124 +229,158 @@
 
 /* 인라인 코드 */
 :where(.ProseMirror, .rich-text) code:not(pre code) {
-  background: var(--color-accent);
-  border: 1px solid var(--color-border);
+  background: var(--color-muted);
   border-radius: 4px;
   padding: 0.1em 0.35em;
   font-size: 0.875em;
-  font-family: ui-monospace, monospace;
+  font-family: var(--font-mono);
 }
 
 /* 코드 블록 */
 :where(.ProseMirror, .rich-text) pre {
-  background: var(--color-accent);
-  border: 1px solid var(--color-border);
+  background: var(--color-sidebar);
+  border: 1px solid var(--color-muted);
   border-radius: 8px;
-  padding: 1rem;
+  padding: 14px 16px;
   overflow-x: auto;
-  margin: 0.75rem 0;
 }
 :where(.ProseMirror, .rich-text) pre code {
-  font-size: 0.875rem;
-  font-family: ui-monospace, monospace;
+  font-size: 0.8125em;
+  line-height: 1.7;
+  font-family: var(--font-mono);
   color: var(--color-foreground);
   background: none;
   border: none;
   padding: 0;
 }
 
-/* 인용구 */
+/* 인용구: 먹색 2px 선, 글자 2 */
 :where(.ProseMirror, .rich-text) blockquote {
-  border-left: 3px solid var(--color-border);
-  margin: 0.75rem 0;
-  padding: 0.5rem 0 0.5rem 1rem;
-  color: var(--color-muted-foreground);
-  font-style: italic;
+  border-left: 2px solid var(--color-foreground);
+  margin-block: 4px;
+  padding: 2px 0 2px 16px;
+  color: var(--color-secondary-foreground);
 }
+:where(.ProseMirror, .rich-text) blockquote > * + * { margin-top: 0.5em; }
 
 /* 리스트 */
 :where(.ProseMirror, .rich-text) ul,
-:where(.ProseMirror, .rich-text) ol { padding-left: 1.5rem; margin: 0.5rem 0; }
-:where(.ProseMirror, .rich-text) li { margin: 0.2rem 0; }
+:where(.ProseMirror, .rich-text) ol { padding-left: 1.5em; }
+:where(.ProseMirror, .rich-text) li + li { margin-top: 0.25em; }
+:where(.ProseMirror, .rich-text) li > * + * { margin-top: 0.25em; }
 :where(.ProseMirror, .rich-text) ul { list-style-type: disc; }
 :where(.ProseMirror, .rich-text) ol { list-style-type: decimal; }
+:where(.ProseMirror, .rich-text) li::marker { color: var(--color-muted-foreground); }
 
-/* Task List (체크리스트) */
-:where(.ProseMirror, .rich-text) ul[data-type="taskList"] { list-style: none; padding-left: 0.25rem; }
-:where(.ProseMirror, .rich-text) ul[data-type="taskList"] li { display: flex; align-items: flex-start; gap: 0.5rem; margin: 0.35rem 0; }
-:where(.ProseMirror, .rich-text) ul[data-type="taskList"] li > label { flex-shrink: 0; margin-top: 2px; cursor: pointer; }
-:where(.ProseMirror, .rich-text) ul[data-type="taskList"] li > div { flex: 1; min-width: 0; }
-:where(.ProseMirror, .rich-text) ul[data-type="taskList"] li[data-checked="true"] > div { text-decoration: line-through; color: var(--color-muted-foreground); }
-:where(.ProseMirror, .rich-text) ul[data-type="taskList"] input[type="checkbox"] { accent-color: var(--color-primary); width: 14px; height: 14px; }
-.rich-text ul[data-type="taskList"] li > label { cursor: default; }
-.rich-text ul[data-type="taskList"] li > label::before {
-  content: "";
-  display: grid;
-  width: 14px;
-  height: 14px;
-  place-items: center;
-  border: 1px solid var(--color-border);
-  border-radius: 3px;
-  color: var(--color-primary-foreground);
-  font-size: 10px;
-  line-height: 1;
+/* 할 일 목록: 16px 칸(좁은 화면 18px), 완료는 먹색 면과 흰 체크, 글자는 글자 3과 취소선 */
+:where(.ProseMirror, .rich-text) ul[data-type="taskList"] { list-style: none; padding-left: 0; }
+:where(.ProseMirror, .rich-text) ul[data-type="taskList"] li { display: flex; align-items: flex-start; gap: 10px; }
+:where(.ProseMirror, .rich-text) ul[data-type="taskList"] li + li { margin-top: 6px; }
+:where(.ProseMirror, .rich-text) ul[data-type="taskList"] li > label {
+  position: relative;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  width: 16px;
+  height: 16px;
+  margin-top: calc((1lh - 16px) / 2);
+  border: 1.5px solid var(--color-faint);
+  border-radius: 4px;
 }
-.rich-text ul[data-type="taskList"] li[data-checked="true"] > label::before {
-  content: "✓";
-  border-color: var(--color-primary);
-  background: var(--color-primary);
+:where(.ProseMirror, .rich-text) ul[data-type="taskList"] li[data-checked="true"] > label {
+  border-color: var(--color-foreground);
+  background: var(--color-foreground);
+}
+:where(.ProseMirror, .rich-text) ul[data-type="taskList"] li[data-checked="true"] > label::after {
+  content: "";
+  position: absolute;
+  inset: -1.5px;
+  background: var(--color-background);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m5 12 5 5L20 7'/%3E%3C/svg%3E") center / 11px no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m5 12 5 5L20 7'/%3E%3C/svg%3E") center / 11px no-repeat;
+}
+/* 편집 화면의 checkbox는 칸 전체를 덮는 투명 입력으로 두어 누르기·키보드가 그대로 동작한다. */
+:where(.ProseMirror, .rich-text) ul[data-type="taskList"] li > label > input[type="checkbox"] {
+  position: absolute;
+  inset: -1.5px;
+  width: calc(100% + 3px);
+  height: calc(100% + 3px);
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+:where(.ProseMirror, .rich-text) ul[data-type="taskList"] li > label > span { display: none; }
+.ProseMirror ul[data-type="taskList"] li > label:has(input:focus-visible) {
+  outline: 2px solid var(--color-ring);
+  outline-offset: 2px;
+}
+:where(.ProseMirror, .rich-text) ul[data-type="taskList"] li > div { flex: 1; min-width: 0; }
+:where(.ProseMirror, .rich-text) ul[data-type="taskList"] li[data-checked="true"] > div {
+  text-decoration: line-through;
+  color: var(--color-muted-foreground);
+}
+@media (max-width: 47.999rem) {
+  :where(.ProseMirror, .rich-text) ul[data-type="taskList"] li { gap: 12px; }
+  :where(.ProseMirror, .rich-text) ul[data-type="taskList"] li + li { margin-top: 4px; }
+  :where(.ProseMirror, .rich-text) ul[data-type="taskList"] li > label {
+    width: 18px;
+    height: 18px;
+    margin-top: calc((1lh - 18px) / 2);
+  }
 }
 
 /* 구분선 */
-:where(.ProseMirror, .rich-text) hr { border: none; border-top: 1px solid var(--color-border); margin: 1.5rem 0; }
+:where(.ProseMirror, .rich-text) hr { border: none; border-top: 1px solid var(--color-border); margin-block: 1.5em; }
 
 /* 테이블 */
-:where(.ProseMirror, .rich-text) table { border-collapse: collapse; width: 100%; margin: 0.75rem 0; table-layout: auto; }
+:where(.ProseMirror, .rich-text) table { border-collapse: collapse; width: 100%; table-layout: auto; }
 :where(.ProseMirror, .rich-text) table td,
 :where(.ProseMirror, .rich-text) table th {
   border: 1px solid var(--color-border);
-  padding: 0.5rem 0.75rem;
+  padding: 8px 12px;
   text-align: left;
   vertical-align: top;
   min-width: 80px;
 }
 :where(.ProseMirror, .rich-text) table th {
-  background: var(--color-accent);
+  background: var(--color-sidebar);
   font-weight: 600;
-  font-size: 0.875rem;
+  font-size: 0.875em;
 }
-.ProseMirror table .selectedCell { background: color-mix(in srgb, var(--color-primary) 8%, transparent); }
+:where(.ProseMirror, .rich-text) table :is(td, th) > * + * { margin-top: 0.5em; }
+.ProseMirror table .selectedCell { background: var(--color-accent); }
 .ProseMirror table .column-resize-handle {
   position: absolute;
   right: -2px;
   top: 0;
   bottom: 0;
   width: 4px;
-  background: var(--color-primary);
+  background: var(--color-highlight);
   pointer-events: none;
 }
 
-/* 링크 */
-:where(.ProseMirror, .rich-text) a { color: var(--color-primary); text-decoration: underline; text-underline-offset: 2px; }
-:where(.ProseMirror, .rich-text) a:hover { opacity: 0.75; }
+/* 링크: 먹색 글자와 밑줄 */
+:where(.ProseMirror, .rich-text) a { color: var(--color-foreground); text-decoration: underline; text-decoration-color: var(--color-faint); text-underline-offset: 3px; }
+:where(.ProseMirror, .rich-text) a:hover { text-decoration-color: currentColor; }
 
-/* 이미지 */
-:where(.ProseMirror, .rich-text) img { max-width: 100%; height: auto; border-radius: 8px; margin: 0.5rem 0; display: block; }
-:where(.ProseMirror, .rich-text) iframe { display: block; width: min(100%, 42rem); aspect-ratio: 16 / 9; height: auto; margin: 0.75rem 0; border: 0; border-radius: 8px; }
+/* 이미지·영상: r10 */
+:where(.ProseMirror, .rich-text) img { max-width: 100%; height: auto; border-radius: 10px; display: block; }
+:where(.ProseMirror, .rich-text) iframe { display: block; width: min(100%, 42rem); aspect-ratio: 16 / 9; height: auto; border: 0; border-radius: 10px; }
+.ProseMirror img.ProseMirror-selectednode { outline: 2px solid var(--color-ring); outline-offset: 2px; }
 
-/* 형광펜 */
+/* 형광펜: 강조 옅게 면 */
 :where(.ProseMirror, .rich-text) mark {
-  background-color: color-mix(in srgb, var(--color-warning) 35%, transparent);
+  background-color: var(--color-accent);
+  color: inherit;
+  box-shadow: 0 0 0 2px var(--color-accent);
   border-radius: 2px;
-  padding: 0 2px;
 }
 
 /* 최상위 포커스 아웃라인 제거 */
 .ProseMirror:focus { outline: none; }
 
-/* 좁은 화면에서만 사이드바 대신 위쪽 메뉴 막대(48px)가 있다. 화면 높이를 쓰는 영역은 이 높이를 뺀다. */
+/* 좁은 화면에서만 사이드바 대신 위쪽 막대(52px, MobileSpec)가 있다. 화면 높이를 쓰는 영역은 이 높이를 뺀다. */
 :root {
-  --app-topbar-height: 3rem;
+  --app-topbar-height: 3.25rem;
 }
 @media (min-width: 48rem) {
   :root {

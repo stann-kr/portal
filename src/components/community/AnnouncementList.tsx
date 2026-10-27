@@ -1,25 +1,21 @@
 /**
  * @file src/components/community/AnnouncementList.tsx
- * @description 공지 게시판 — Radix UI Accordion 기반 아코디언 목록.
- * isPinned 공지는 핀 아이콘 표시. Admin은 고정/해제 토글 버튼 표시.
+ * @description 커뮤니티 공지 목록(캔버스 AdminAnnouncements·MobileAdminAnnouncements 보드: 관리자가 보는 커뮤니티 공지).
+ * 고정 공지는 본문 미리보기와 상세 보기·고정 해제를 펼친 줄로, 나머지는 제목·작성자·날짜 한 줄 링크로 보인다.
+ * 관리자만 고정·고정 해제를 바꾼다.
  */
 "use client";
 
 import { useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Pin, PinOff, Megaphone } from "lucide-react";
-import {
-  Accordion,
-  AccordionItem,
-  AccordionTrigger,
-  AccordionContent,
-} from "@/components/ui/accordion";
-import { Button } from "@/components/ui/button";
-import { RichTextContent } from "@/components/editor/RichTextContent";
+import { Megaphone, Pin } from "lucide-react";
+import { ButtonSpinner, buttonClassName } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
 import { togglePinPost } from "@/lib/actions/posts";
 import { createCreationOperationId } from "@/lib/creation-operation";
-import { formatKst } from "@/lib/kst-format";
+import { cn } from "@/lib/utils";
+import { communityPreview, communityRowMeta } from "./CommunityPostRow";
 
 type Post = {
   id: string;
@@ -30,6 +26,7 @@ type Post = {
   authorEmail: string | null;
   createdAt: Date | null;
   version: number;
+  commentCount?: number;
 };
 
 interface AnnouncementListProps {
@@ -38,22 +35,29 @@ interface AnnouncementListProps {
   returnTo?: string;
 }
 
+const PIN_BUTTON_CLASS =
+  "h-11 shrink-0 rounded-touch px-3 text-body font-normal text-secondary-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 md:h-7 md:rounded-md md:px-2.5 md:text-xs";
+
 export function AnnouncementList({ posts, isAdmin, returnTo = "/community" }: AnnouncementListProps) {
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [pendingPostId, setPendingPostId] = useState<string | null>(null);
   const operationIdsRef = useRef(new Map<string, string>());
   const router = useRouter();
 
   if (posts.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center py-16 text-muted-foreground gap-3">
-        <Megaphone className="w-10 h-10 opacity-20" />
-        <p className="text-sm">등록된 공지가 없습니다.</p>
-      </div>
+      <EmptyState
+        className="mt-4 md:mt-0"
+        icon={<Megaphone className="size-4" strokeWidth={1.6} aria-hidden="true" />}
+        title="등록된 공지가 없습니다"
+        description={isAdmin ? "공지 작성으로 첫 공지를 올려 보세요." : "강사가 공지를 올리면 여기에 보입니다."}
+      />
     );
   }
 
   const handleTogglePin = (postId: string, currentPinned: boolean, version: number) => {
+    setPendingPostId(postId);
     startTransition(async () => {
       const operationId =
         operationIdsRef.current.get(postId) ?? createCreationOperationId();
@@ -79,71 +83,76 @@ export function AnnouncementList({ posts, isAdmin, returnTo = "/community" }: An
   };
 
   return (
-    <div className="space-y-2">
-      {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
-      <Accordion type="multiple" className="space-y-2">
-      {posts.map((post) => {
-        const author =
-          post.authorName ?? post.authorEmail?.split("@")[0] ?? "관리자";
-        const date = formatKst(post.createdAt, { year: "numeric", month: "short", day: "numeric" }, "날짜 정보 없음");
+    <div className="flex flex-col gap-3">
+      {error ? <p role="alert" className="text-ui text-destructive">{error}</p> : null}
+      <ul className="flex flex-col">
+        {posts.map((post) => {
+          const meta = communityRowMeta(post, "관리자");
+          const detailHref = `/community/${post.id}?returnTo=${encodeURIComponent(returnTo)}`;
+          const pinButton = isAdmin ? (
+            <button
+              type="button"
+              className={PIN_BUTTON_CLASS}
+              onClick={() => handleTogglePin(post.id, post.isPinned, post.version)}
+              disabled={isPending}
+              aria-busy={isPending && pendingPostId === post.id ? true : undefined}
+            >
+              {isPending && pendingPostId === post.id ? <ButtonSpinner className="mr-1.5 inline-block align-[-2px]" /> : null}
+              {post.isPinned ? "고정 해제" : "고정"}
+              <span className="sr-only">: {post.title}</span>
+            </button>
+          ) : null;
 
-        return (
-          <AccordionItem
-            key={post.id}
-            value={post.id}
-            className={`rounded-xl border px-4 ${
-              post.isPinned
-                ? "border-primary/30 bg-primary/5"
-                : "border-border bg-card"
-            }`}
-          >
-            <AccordionTrigger className="hover:no-underline">
-              <div className="flex items-center gap-3 flex-1 min-w-0 pr-2">
-                {post.isPinned && (
-                  <Pin className="w-3.5 h-3.5 text-primary flex-shrink-0" />
-                )}
-                <span className="font-medium text-foreground truncate text-sm">
-                  {post.title}
-                </span>
-                <span className="text-xs text-muted-foreground flex-shrink-0 hidden sm:block">
-                  {author} · {date}
-                </span>
-              </div>
-            </AccordionTrigger>
-            <AccordionContent>
-              <RichTextContent html={post.contentHtml} className="mb-4" />
-              <div className="flex items-center justify-between pt-2 border-t border-border/50">
-                <Link
-                  href={`/community/${post.id}?returnTo=${encodeURIComponent(returnTo)}`}
-                  className="text-xs text-primary hover:underline"
-                >
-                  상세 보기 →
-                </Link>
-                {isAdmin && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 px-2 text-xs gap-1.5"
-                    onClick={() => handleTogglePin(post.id, post.isPinned, post.version)}
-                    disabled={isPending}
+          if (post.isPinned) {
+            const preview = communityPreview(post.contentHtml, 240);
+            return (
+              <li key={post.id} className="flex flex-col gap-2.5 border-b border-muted py-4 md:gap-3 md:px-1 md:py-[18px]">
+                <div className="flex items-start gap-2.5 md:items-center">
+                  <Pin
+                    role="img"
+                    aria-label="고정됨"
+                    className="mt-1 size-3.5 shrink-0 fill-current text-foreground md:mt-0"
+                    strokeWidth={1.4}
+                  />
+                  <span className="flex min-w-0 flex-1 flex-col gap-0.5 md:flex-row md:items-center md:gap-2.5">
+                    <span className="break-words text-md font-medium md:flex-1">{post.title}</span>
+                    <span className="shrink-0 text-xs text-muted-foreground">{meta}</span>
+                  </span>
+                </div>
+                {preview ? <p className="ml-6 line-clamp-3 text-body text-secondary-foreground">{preview}</p> : null}
+                <div className="ml-6 flex flex-wrap gap-2">
+                  <Link
+                    href={detailHref}
+                    className={buttonClassName({
+                      variant: "outline",
+                      className: "h-11 rounded-touch px-3.5 text-body md:h-7 md:rounded-md md:px-2.5 md:text-xs",
+                    })}
                   >
-                    {post.isPinned ? (
-                      <>
-                        <PinOff className="w-3 h-3" /> 고정 해제
-                      </>
-                    ) : (
-                      <>
-                        <Pin className="w-3 h-3" /> 고정
-                      </>
-                    )}
-                  </Button>
+                    상세 보기<span className="sr-only">: {post.title}</span>
+                  </Link>
+                  {pinButton}
+                </div>
+              </li>
+            );
+          }
+
+          return (
+            <li key={post.id} className="flex items-center gap-2 border-b border-muted md:h-14 md:gap-2.5 md:px-1">
+              <Link
+                href={detailHref}
+                className={cn(
+                  "flex min-w-0 flex-1 flex-col gap-0.5 py-3 pl-6 text-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                  "md:flex-row md:items-center md:gap-2.5 md:py-0",
                 )}
-              </div>
-            </AccordionContent>
-          </AccordionItem>
-        );
-      })}
-      </Accordion>
+              >
+                <span className="text-md md:min-w-0 md:flex-1 md:truncate">{post.title}</span>
+                <span className="shrink-0 text-xs text-muted-foreground">{meta}</span>
+              </Link>
+              {pinButton}
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }

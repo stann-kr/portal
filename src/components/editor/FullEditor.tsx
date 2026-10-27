@@ -3,6 +3,7 @@
  * @description 풀 사양 리치텍스트 에디터.
  * Tiptap v3 기반. 헤딩/리스트/코드블록/테이블/링크/이미지/유튜브/마크다운 지원.
  * WYSIWYG ↔ 마크다운 모드 토글 포함.
+ * 고정 서식 줄은 `toolbar`(full·compact·none)로 줄이고, 줄이 없거나 줄어도 선택 서식 메뉴와 `/` 블록 메뉴는 그대로 쓴다.
  */
 "use client";
 
@@ -28,15 +29,18 @@ import { Markdown, type MarkdownStorage } from "tiptap-markdown";
 import type { Editor } from "@tiptap/core";
 import { common, createLowlight } from "lowlight";
 import { useState, useCallback, useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import {
-  Bold, Italic, Underline as UnderlineIcon, Strikethrough, Highlighter,
+  Underline as UnderlineIcon, Strikethrough, Highlighter,
   Heading1, Heading2, Heading3, List, ListOrdered, ListTodo,
   Quote, Code2, Link as LinkIcon, Image as ImageIcon, ImagePlus, Video,
   Table as TableIcon, AlignLeft, AlignCenter, AlignRight,
-  Minus, Undo2, Redo2, FileText, Eye, Unlink,
+  Minus, Undo2, Redo2, FileText, Eye, Unlink, Plus,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { BlockCommandMenu } from "./BlockCommandMenu";
+import type { EditorBlockCommandContext } from "./editor-block-commands";
 import {
   EditorInsertPanel,
   type EditorInsertKind,
@@ -75,10 +79,23 @@ interface FullEditorProps {
   /** 상위 form이 제공하는 Cmd/Ctrl+S 동작의 정확한 사용자-facing 이름 */
   saveShortcutLabel?: string;
   /**
-   * boxed: 테두리 상자 안의 편집기(댓글·작은 form).
-   * page: 문서 페이지 본문. 테두리 없이 쓰고 편집 도구 줄은 스크롤해도 위에 남는다.
+   * boxed: 테두리 상자 안의 편집기(Q&A·게시물 form). 위에 서식 도구 줄(`toolbar`), 아래에 상태 줄이 있다.
+   * page: 노트 문서 본문(NoteDoc·MobileNoteDoc 보드). 테두리·고정 도구 줄 없이 선택 시 떠 있는 서식 메뉴와 `/` 블록 메뉴를 쓰고,
+   * 좁은 화면에서는 본문을 편집하는 동안 아래쪽 서식 줄을 띄운다.
+   * bare: 상위 화면이 상자와 바닥 줄을 그리는 입력란(QnaThread·MobileQnaThread 답글 상자). 테두리·고정 도구 줄·상태 줄 없이
+   * 본문만 그리고, 이미지 업로드 상태와 마크다운 전환은 `toolsContainer`에 넣는다.
    */
-  variant?: "boxed" | "page";
+  variant?: "boxed" | "page" | "bare";
+  /**
+   * boxed 편집기 위 고정 서식 줄. 선택 영역 서식 메뉴와 `/` 블록 메뉴는 어느 값이든 그대로 쓴다.
+   * full(기본): 모든 서식 버튼. compact: 굵게·기울임·목록·이미지 네 칸(QnaNew 보드, 좁은 화면은 MobileQnaNew 보드대로 숨김).
+   * none: 고정 줄 없음(CommunityNew 보드).
+   */
+  toolbar?: "full" | "compact" | "none";
+  /** bare 본문의 글자·안쪽 여백 class(편집 영역과 마크다운 입력란에 함께 적용) */
+  contentClassName?: string;
+  /** bare 편집기의 이미지 업로드 상태와 마크다운 전환을 넣을 상위 화면 요소. 없으면 본문 아래 한 줄에 둔다. */
+  toolsContainer?: HTMLElement | null;
   /** 본문 이미지가 올라가는 중이거나 넣기를 기다리는 동안 true. 상위 form은 제출·자동 저장을 미룬다. */
   onUploadingChange?: (uploading: boolean) => void;
 }
@@ -122,17 +139,24 @@ const SafeTextAlign = TextAlign.extend({
 
 // ── 툴바 버튼 헬퍼 ───────────────────────────────
 
+const ICON = "size-4";
+
+/** 상자 편집기 위 서식 줄(QnaNew 보드): 30px 칸, 글자 2, 켜진 서식은 선택 채움. */
 function ToolbarButton({
   onClick,
   active,
   disabled,
   title,
+  label = title,
   children,
 }: {
   onClick: () => void;
   active?: boolean;
   disabled?: boolean;
+  /** 마우스를 올렸을 때 보이는 설명(단축키 포함) */
   title: string;
+  /** 접근 가능한 이름. 없으면 title을 쓴다. */
+  label?: string;
   children: React.ReactNode;
 }) {
   return (
@@ -141,15 +165,13 @@ function ToolbarButton({
       onClick={onClick}
       disabled={disabled}
       title={title}
-      aria-label={title}
+      aria-label={label}
       aria-pressed={active}
-      className={[
-        "p-1.5 rounded text-sm transition-colors",
-        active
-          ? "bg-foreground text-background"
-          : "text-muted-foreground hover:text-foreground hover:bg-accent",
-        disabled ? "opacity-40 cursor-not-allowed" : "cursor-pointer",
-      ].join(" ")}
+      className={cn(
+        "inline-flex size-[30px] shrink-0 items-center justify-center rounded-md text-ui transition-colors duration-[var(--duration-fast)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none",
+        active ? "bg-selected text-foreground" : "text-secondary-foreground hover:bg-muted hover:text-foreground",
+        disabled && "cursor-not-allowed opacity-40 hover:bg-transparent",
+      )}
     >
       {children}
     </button>
@@ -157,7 +179,79 @@ function ToolbarButton({
 }
 
 function Divider() {
-  return <span className="w-px h-5 bg-border mx-0.5 flex-shrink-0" />;
+  return <span aria-hidden="true" className="mx-1 h-4 w-px shrink-0 bg-border" />;
+}
+
+/** 선택 영역 위에 떠 있는 서식 메뉴(NoteDoc 보드): 먹색 면, 28px 칸. 누르는 동안 본문 선택을 유지한다. */
+function BubbleButton({
+  onClick,
+  active,
+  label,
+  children,
+  className,
+}: {
+  onClick: () => void;
+  active?: boolean;
+  label: string;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      title={label}
+      aria-label={label}
+      aria-pressed={active}
+      onMouseDown={(event) => event.preventDefault()}
+      onClick={onClick}
+      className={cn(
+        "inline-flex size-7 items-center justify-center rounded-sm text-ui text-primary-foreground transition-colors duration-[var(--duration-fast)] hover:bg-primary-foreground/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none",
+        active && "bg-primary-foreground/20",
+        className,
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+/** 좁은 화면 아래쪽 서식 줄(MobileNoteDoc 보드): 44px 칸. 누르는 동안 본문 초점을 유지한다. */
+function MobileToolbarButton({
+  onClick,
+  active,
+  label,
+  children,
+  className,
+}: {
+  onClick: () => void;
+  active?: boolean;
+  label: string;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      aria-pressed={active}
+      onMouseDown={(event) => event.preventDefault()}
+      onClick={onClick}
+      className={cn(
+        "inline-flex size-11 shrink-0 items-center justify-center rounded-touch text-md text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        active && "bg-muted",
+        className,
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+const SLASH_HINT = "'/'를 눌러 블록 추가";
+
+function readSaveShortcutKey(): string {
+  if (typeof navigator === "undefined") return "Ctrl+S";
+  return /Mac|iPhone|iPad|iPod/u.test(navigator.platform || navigator.userAgent) ? "⌘S" : "Ctrl+S";
 }
 
 // ── 메인 컴포넌트 ─────────────────────────────────
@@ -168,15 +262,23 @@ export function FullEditor({
   onDirty,
   contentVersion = 0,
   placeholder = "내용을 입력하세요... (/ 로 블록 삽입)",
-  minHeight = "calc(100vh - 320px)",
+  minHeight: minHeightProp,
   disabled = false,
   ariaLabel = "문서 내용",
   footer,
   saveShortcutLabel,
   variant = "boxed",
+  toolbar = "full",
+  contentClassName,
+  toolsContainer,
   onUploadingChange,
 }: FullEditorProps) {
   const isPage = variant === "page";
+  const isBare = variant === "bare";
+  // 고정 서식 줄은 상자 편집기만 가진다. 문서 페이지와 bare 입력란은 선택 메뉴·`/` 메뉴로 서식을 고른다.
+  const fixedToolbar = variant === "boxed" ? toolbar : "none";
+  // bare 입력란의 높이는 상위 화면이 class로 정한다(좁은 화면 44px·넓은 화면 96px처럼 반응형).
+  const minHeight = minHeightProp ?? (isBare ? undefined : "calc(100vh - 320px)");
   const [isMarkdownMode, setIsMarkdownMode] = useState(false);
   const [markdownText, setMarkdownText] = useState("");
   const [insertPanel, setInsertPanel] = useState<{
@@ -352,7 +454,10 @@ export function FullEditor({
           class: "not-prose",
         },
       }),
-      Placeholder.configure({ placeholder }),
+      // 빈 문서는 화면이 정한 안내를, 내용이 있는 문서의 빈 줄(커서 위치)은 `/` 블록 안내를 보인다.
+      Placeholder.configure({
+        placeholder: ({ editor: currentEditor }) => (currentEditor.isEmpty ? placeholder : SLASH_HINT),
+      }),
       TaskList,
       TaskItem.configure({ nested: true }),
       Typography,
@@ -370,9 +475,12 @@ export function FullEditor({
   const editorProps = useMemo(
     () => ({
       attributes: {
+        // 본문 글자: 문서 16/28, 상자 15/26(QnaNew 보드)·좁은 화면 16/26(MobileQnaNew 보드), bare는 상위 화면이 정한다(QnaThread 15/24).
         class: isPage
-          ? "max-w-none py-5 text-foreground focus:outline-none"
-          : "max-w-none p-5 text-foreground focus:outline-none sm:p-6",
+          ? "max-w-none text-base leading-7 text-foreground focus:outline-none"
+          : isBare
+            ? cn("max-w-none text-foreground focus:outline-none", contentClassName)
+            : "max-w-none px-3.5 py-3 text-base leading-[26px] text-foreground focus:outline-none md:px-4 md:py-3.5 md:text-md",
         role: "textbox",
         "aria-label": ariaLabel,
         "aria-multiline": "true",
@@ -404,7 +512,7 @@ export function FullEditor({
         return true;
       },
     }),
-    [ariaLabel, isPage, uploadImages],
+    [ariaLabel, contentClassName, isBare, isPage, uploadImages],
   );
 
   const handleEditorUpdate = useCallback(
@@ -569,14 +677,81 @@ export function FullEditor({
     editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run();
   }, [disabled, editor]);
 
+  const pickImages = useCallback(() => {
+    if (disabled) return;
+    imageInputRef.current?.click();
+  }, [disabled]);
+  // 고정 도구 줄이 없는 문서 페이지는 이미지·동영상·링크를 `/` 메뉴에서 연다.
+  const commandContext = useMemo<EditorBlockCommandContext>(
+    () => ({ pickImages, openInsertPanel }),
+    [openInsertPanel, pickImages],
+  );
+
   if (!editor) return null;
+
+  const saveShortcutKey = readSaveShortcutKey();
+  const isCompactToolbar = fixedToolbar === "compact";
+  const markdownToggleLabel = isMarkdownMode ? "미리보기" : "마크다운";
+  const MarkdownToggleIcon = isMarkdownMode ? Eye : FileText;
+
+  // 알림 자리는 늘 두되(나중에 넣은 글이 읽히도록), 비어 있으면 화면에서 빼 도구 줄에 빈 간격을 만들지 않는다.
+  const imageStatus = (
+    <span role="status" aria-live="polite" className="text-xs empty:sr-only">
+      {imageUpload.pendingCount > 0 ? (
+        <span className="text-muted-foreground">
+          이미지 {imageUpload.pendingCount}장 올리는 중…
+        </span>
+      ) : imageUpload.error ? (
+        <span className="inline-flex items-center gap-1.5 text-destructive">
+          {imageUpload.error}
+          <button
+            type="button"
+            onClick={imageUpload.clearError}
+            className="rounded-sm px-1 text-muted-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            닫기
+          </button>
+        </span>
+      ) : null}
+    </span>
+  );
+
+  const shortcutHint = !disabled && saveShortcutLabel ? (
+    <span className="shrink-0 font-mono text-xs text-muted-foreground">
+      {saveShortcutLabel} <kbd className="font-mono">{saveShortcutKey}</kbd>
+    </span>
+  ) : null;
+
+  // 전체 서식 줄이 없는 편집기는 마크다운 전환을 상태 줄(bare는 상위 화면의 도구 자리)에 둔다.
+  const markdownToggle = !disabled ? (
+    <button
+      type="button"
+      onClick={handleMarkdownToggle}
+      title="마크다운 / WYSIWYG 전환"
+      className="inline-flex items-center gap-1 rounded-sm text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      <MarkdownToggleIcon className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
+      {markdownToggleLabel}
+    </button>
+  ) : null;
+
+  const bareTools = isBare ? (
+    <>
+      {footer}
+      {imageStatus}
+      {markdownToggle}
+      {shortcutHint}
+    </>
+  ) : null;
 
   return (
     <div
       className={
         isPage
-          ? "relative flex flex-col bg-background"
-          : "relative flex flex-col overflow-hidden rounded-xl border border-border bg-background transition-[border-color,box-shadow] focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/15"
+          ? "group/editor relative flex flex-col bg-background"
+          : isBare
+            ? "relative flex min-h-0 min-w-0 flex-1 flex-col"
+            : "relative flex flex-col overflow-hidden rounded-lg border border-border bg-background transition-[border-color,box-shadow] duration-[var(--duration-fast)] focus-within:border-ring focus-within:ring-1 focus-within:ring-ring motion-reduce:transition-none"
       }
     >
 
@@ -587,284 +762,298 @@ export function FullEditor({
             pluginKey="editor-inline-format-menu"
             updateDelay={80}
             options={{ placement: "top", offset: 8 }}
-            className="flex items-center gap-0.5 rounded-lg border border-border bg-surface-elevated p-1 shadow-floating"
+            className="flex items-center gap-0.5 rounded-touch bg-primary p-1 shadow-floating"
           >
-            <ToolbarButton
+            <BubbleButton
               onClick={() => editor.chain().focus().toggleBold().run()}
               active={toolbarState?.bold}
-              title="굵게"
+              label="굵게"
+              className="font-semibold"
             >
-              <Bold className="h-4 w-4" />
-            </ToolbarButton>
-            <ToolbarButton
+              B
+            </BubbleButton>
+            <BubbleButton
               onClick={() => editor.chain().focus().toggleItalic().run()}
               active={toolbarState?.italic}
-              title="기울임"
+              label="기울임"
+              className="italic"
             >
-              <Italic className="h-4 w-4" />
-            </ToolbarButton>
-            <ToolbarButton
+              I
+            </BubbleButton>
+            <BubbleButton
               onClick={() => editor.chain().focus().toggleUnderline().run()}
               active={toolbarState?.underline}
-              title="밑줄"
+              label="밑줄"
+              className="underline underline-offset-2"
             >
-              <UnderlineIcon className="h-4 w-4" />
-            </ToolbarButton>
-            <ToolbarButton
+              U
+            </BubbleButton>
+            <BubbleButton
+              onClick={() => editor.chain().focus().toggleStrike().run()}
+              active={toolbarState?.strike}
+              label="취소선"
+              className="line-through"
+            >
+              S
+            </BubbleButton>
+            <BubbleButton
+              onClick={() => editor.chain().focus().toggleHighlight().run()}
+              active={toolbarState?.highlight}
+              label="형광펜"
+            >
+              H
+            </BubbleButton>
+            <span aria-hidden="true" className="mx-1 h-4 w-px bg-primary-foreground/20" />
+            <BubbleButton
               onClick={() => openInsertPanel("link")}
               active={toolbarState?.link}
-              title="링크"
+              label="링크"
             >
-              <LinkIcon className="h-4 w-4" />
-            </ToolbarButton>
+              <LinkIcon className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
+            </BubbleButton>
             {toolbarState?.link ? (
-              <ToolbarButton
+              <BubbleButton
                 onClick={() => editor.chain().focus().unsetLink().run()}
-                title="링크 제거"
+                label="링크 제거"
               >
-                <Unlink className="h-4 w-4" />
-              </ToolbarButton>
+                <Unlink className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
+              </BubbleButton>
             ) : null}
           </BubbleMenu>
-          <BlockCommandMenu editor={editor} />
+          <BlockCommandMenu editor={editor} context={commandContext} />
         </>
       ) : null}
 
-      {/* ── 툴바 ──────────────────────────────────── */}
-      <fieldset
-        disabled={disabled}
-        role="toolbar"
-        aria-label="편집 도구"
-        className={
-          isPage
-            ? "sticky top-[var(--app-topbar-height)] z-10 flex min-w-0 flex-nowrap items-center gap-0.5 overflow-x-auto overflow-y-hidden rounded-lg border border-border bg-background/95 px-1.5 py-1 backdrop-blur-sm disabled:opacity-60"
-            : "flex min-w-0 flex-nowrap items-center gap-0.5 overflow-x-auto overflow-y-hidden border-b border-border bg-muted/40 px-2 py-2 disabled:opacity-60 sm:px-3"
-        }
-      >
-        {/* 실행 취소 / 다시 실행 */}
-        <ToolbarButton
-          onClick={() => editor.chain().focus().undo().run()}
-          disabled={!toolbarState?.canUndo}
-          title="실행 취소 (Ctrl+Z)"
+      {/* ── 상자 편집기 서식 줄: full은 전체, compact는 QnaNew 보드의 네 칸 ── */}
+      {fixedToolbar !== "none" ? (
+        <fieldset
+          disabled={disabled}
+          role="toolbar"
+          aria-label={isCompactToolbar ? "서식" : "편집 도구"}
+          className={cn(
+            "scroll-row flex h-10 min-w-0 shrink-0 flex-nowrap items-center gap-0.5 border-b border-muted px-1.5 disabled:opacity-60",
+            // MobileQnaNew 보드는 고정 줄 없이 본문만 둔다. 서식은 선택 메뉴·`/` 메뉴로 고른다.
+            isCompactToolbar && "hidden md:flex",
+          )}
         >
-          <Undo2 className="w-4 h-4" />
-        </ToolbarButton>
-        <ToolbarButton
-          onClick={() => editor.chain().focus().redo().run()}
-          disabled={!toolbarState?.canRedo}
-          title="다시 실행 (Ctrl+Shift+Z)"
-        >
-          <Redo2 className="w-4 h-4" />
-        </ToolbarButton>
-
-        <Divider />
-
-        {/* 헤딩 */}
-        <ToolbarButton
-          onClick={() => editor.chain().focus().setParagraph().run()}
-          active={toolbarState?.paragraph}
-          title="본문"
-        >
-          <span className="text-xs font-medium w-4 text-center">P</span>
-        </ToolbarButton>
-        <ToolbarButton
-          onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
-          active={toolbarState?.heading1}
-          title="제목 1 (H1)"
-        >
-          <Heading1 className="w-4 h-4" />
-        </ToolbarButton>
-        <ToolbarButton
-          onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
-          active={toolbarState?.heading2}
-          title="제목 2 (H2)"
-        >
-          <Heading2 className="w-4 h-4" />
-        </ToolbarButton>
-        <ToolbarButton
-          onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}
-          active={toolbarState?.heading3}
-          title="제목 3 (H3)"
-        >
-          <Heading3 className="w-4 h-4" />
-        </ToolbarButton>
-
-        <Divider />
-
-        {/* 인라인 서식 */}
-        <ToolbarButton
-          onClick={() => editor.chain().focus().toggleBold().run()}
-          active={toolbarState?.bold}
-          title="굵게 (Ctrl+B)"
-        >
-          <Bold className="w-4 h-4" />
-        </ToolbarButton>
-        <ToolbarButton
-          onClick={() => editor.chain().focus().toggleItalic().run()}
-          active={toolbarState?.italic}
-          title="기울임 (Ctrl+I)"
-        >
-          <Italic className="w-4 h-4" />
-        </ToolbarButton>
-        <ToolbarButton
-          onClick={() => editor.chain().focus().toggleUnderline().run()}
-          active={toolbarState?.underline}
-          title="밑줄 (Ctrl+U)"
-        >
-          <UnderlineIcon className="w-4 h-4" />
-        </ToolbarButton>
-        <ToolbarButton
-          onClick={() => editor.chain().focus().toggleStrike().run()}
-          active={toolbarState?.strike}
-          title="취소선"
-        >
-          <Strikethrough className="w-4 h-4" />
-        </ToolbarButton>
-        <ToolbarButton
-          onClick={() => editor.chain().focus().toggleHighlight().run()}
-          active={toolbarState?.highlight}
-          title="형광펜"
-        >
-          <Highlighter className="w-4 h-4" />
-        </ToolbarButton>
-
-        <Divider />
-
-        {/* 정렬 */}
-        <ToolbarButton
-          onClick={() => editor.chain().focus().setTextAlign("left").run()}
-          active={toolbarState?.textAlignLeft}
-          title="왼쪽 정렬"
-        >
-          <AlignLeft className="w-4 h-4" />
-        </ToolbarButton>
-        <ToolbarButton
-          onClick={() => editor.chain().focus().setTextAlign("center").run()}
-          active={toolbarState?.textAlignCenter}
-          title="가운데 정렬"
-        >
-          <AlignCenter className="w-4 h-4" />
-        </ToolbarButton>
-        <ToolbarButton
-          onClick={() => editor.chain().focus().setTextAlign("right").run()}
-          active={toolbarState?.textAlignRight}
-          title="오른쪽 정렬"
-        >
-          <AlignRight className="w-4 h-4" />
-        </ToolbarButton>
-
-        <Divider />
-
-        {/* 리스트 */}
-        <ToolbarButton
-          onClick={() => editor.chain().focus().toggleBulletList().run()}
-          active={toolbarState?.bulletList}
-          title="글머리 기호 목록"
-        >
-          <List className="w-4 h-4" />
-        </ToolbarButton>
-        <ToolbarButton
-          onClick={() => editor.chain().focus().toggleOrderedList().run()}
-          active={toolbarState?.orderedList}
-          title="번호 매기기 목록"
-        >
-          <ListOrdered className="w-4 h-4" />
-        </ToolbarButton>
-        <ToolbarButton
-          onClick={() => editor.chain().focus().toggleTaskList().run()}
-          active={toolbarState?.taskList}
-          title="체크리스트"
-        >
-          <ListTodo className="w-4 h-4" />
-        </ToolbarButton>
-
-        <Divider />
-
-        {/* 블록 요소 */}
-        <ToolbarButton
-          onClick={() => editor.chain().focus().toggleBlockquote().run()}
-          active={toolbarState?.blockquote}
-          title="인용구"
-        >
-          <Quote className="w-4 h-4" />
-        </ToolbarButton>
-        <ToolbarButton
-          onClick={() => editor.chain().focus().toggleCodeBlock().run()}
-          active={toolbarState?.codeBlock}
-          title="코드 블록"
-        >
-          <Code2 className="w-4 h-4" />
-        </ToolbarButton>
-        <ToolbarButton
-          onClick={() => editor.chain().focus().setHorizontalRule().run()}
-          title="구분선"
-        >
-          <Minus className="w-4 h-4" />
-        </ToolbarButton>
-
-        <Divider />
-
-        {/* 미디어 / 링크 */}
-        <ToolbarButton
-          onClick={() => openInsertPanel("link")}
-          active={toolbarState?.link}
-          title="링크 삽입"
-        >
-          <LinkIcon className="w-4 h-4" />
-        </ToolbarButton>
-        <ToolbarButton
-          onClick={() => imageInputRef.current?.click()}
-          title="이미지 올리기 (붙여넣기·끌어 놓기도 가능)"
-        >
-          <ImagePlus className="w-4 h-4" />
-        </ToolbarButton>
-        <ToolbarButton
-          onClick={() => openInsertPanel("image")}
-          title="이미지 주소로 넣기"
-        >
-          <ImageIcon className="w-4 h-4" />
-        </ToolbarButton>
-        <ToolbarButton
-          onClick={() => openInsertPanel("youtube")}
-          title="유튜브 동영상 삽입"
-        >
-          <Video className="w-4 h-4" />
-        </ToolbarButton>
-        <ToolbarButton
-          onClick={addTable}
-          active={toolbarState?.table}
-          title="표 삽입"
-        >
-          <TableIcon className="w-4 h-4" />
-        </ToolbarButton>
-
-        {/* 마크다운 모드 토글 */}
-        <div className="ml-auto">
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={handleMarkdownToggle}
-            className={[
-              "h-7 gap-1.5 text-xs",
-              isMarkdownMode ? "text-primary" : "text-muted-foreground",
-            ].join(" ")}
-            title="마크다운 / WYSIWYG 전환"
+          <ToolbarButton
+            onClick={() => editor.chain().focus().toggleBold().run()}
+            active={toolbarState?.bold}
+            title="굵게 (Ctrl+B)"
+            label={isCompactToolbar ? "굵게" : undefined}
           >
-            {isMarkdownMode ? (
-              <>
-                <Eye className="w-3.5 h-3.5" />
-                미리보기
-              </>
+            <span className="font-semibold">B</span>
+          </ToolbarButton>
+          <ToolbarButton
+            onClick={() => editor.chain().focus().toggleItalic().run()}
+            active={toolbarState?.italic}
+            title="기울임 (Ctrl+I)"
+            label={isCompactToolbar ? "기울임" : undefined}
+          >
+            <span className="italic">I</span>
+          </ToolbarButton>
+          <ToolbarButton
+            onClick={() => editor.chain().focus().toggleBulletList().run()}
+            active={toolbarState?.bulletList}
+            title="글머리 기호 목록"
+            label={isCompactToolbar ? "목록" : undefined}
+          >
+            <List className={isCompactToolbar ? "size-3.5" : ICON} strokeWidth={1.6} aria-hidden="true" />
+          </ToolbarButton>
+          <ToolbarButton
+            onClick={pickImages}
+            title="이미지 올리기 (붙여넣기·끌어 놓기도 가능)"
+            label={isCompactToolbar ? "이미지" : undefined}
+          >
+            {isCompactToolbar ? (
+              <ImageIcon className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
             ) : (
-              <>
-                <FileText className="w-3.5 h-3.5" />
-                마크다운
-              </>
+              <ImagePlus className={ICON} strokeWidth={1.6} aria-hidden="true" />
             )}
-          </Button>
-        </div>
-      </fieldset>
+          </ToolbarButton>
+
+          {fixedToolbar === "full" ? (
+            <>
+              <Divider />
+
+              <ToolbarButton
+                onClick={() => editor.chain().focus().toggleUnderline().run()}
+                active={toolbarState?.underline}
+                title="밑줄 (Ctrl+U)"
+              >
+                <UnderlineIcon className={ICON} strokeWidth={1.6} aria-hidden="true" />
+              </ToolbarButton>
+              <ToolbarButton
+                onClick={() => editor.chain().focus().toggleStrike().run()}
+                active={toolbarState?.strike}
+                title="취소선"
+              >
+                <Strikethrough className={ICON} strokeWidth={1.6} aria-hidden="true" />
+              </ToolbarButton>
+              <ToolbarButton
+                onClick={() => editor.chain().focus().toggleHighlight().run()}
+                active={toolbarState?.highlight}
+                title="형광펜"
+              >
+                <Highlighter className={ICON} strokeWidth={1.6} aria-hidden="true" />
+              </ToolbarButton>
+
+              <Divider />
+
+              <ToolbarButton
+                onClick={() => editor.chain().focus().setParagraph().run()}
+                active={toolbarState?.paragraph}
+                title="본문"
+              >
+                <span className="w-4 text-center text-xs font-medium">P</span>
+              </ToolbarButton>
+              <ToolbarButton
+                onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
+                active={toolbarState?.heading1}
+                title="제목 1 (H1)"
+              >
+                <Heading1 className={ICON} strokeWidth={1.6} aria-hidden="true" />
+              </ToolbarButton>
+              <ToolbarButton
+                onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
+                active={toolbarState?.heading2}
+                title="제목 2 (H2)"
+              >
+                <Heading2 className={ICON} strokeWidth={1.6} aria-hidden="true" />
+              </ToolbarButton>
+              <ToolbarButton
+                onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}
+                active={toolbarState?.heading3}
+                title="제목 3 (H3)"
+              >
+                <Heading3 className={ICON} strokeWidth={1.6} aria-hidden="true" />
+              </ToolbarButton>
+
+              <Divider />
+
+              <ToolbarButton
+                onClick={() => editor.chain().focus().toggleOrderedList().run()}
+                active={toolbarState?.orderedList}
+                title="번호 매기기 목록"
+              >
+                <ListOrdered className={ICON} strokeWidth={1.6} aria-hidden="true" />
+              </ToolbarButton>
+              <ToolbarButton
+                onClick={() => editor.chain().focus().toggleTaskList().run()}
+                active={toolbarState?.taskList}
+                title="체크리스트"
+              >
+                <ListTodo className={ICON} strokeWidth={1.6} aria-hidden="true" />
+              </ToolbarButton>
+              <ToolbarButton
+                onClick={() => editor.chain().focus().toggleBlockquote().run()}
+                active={toolbarState?.blockquote}
+                title="인용구"
+              >
+                <Quote className={ICON} strokeWidth={1.6} aria-hidden="true" />
+              </ToolbarButton>
+              <ToolbarButton
+                onClick={() => editor.chain().focus().toggleCodeBlock().run()}
+                active={toolbarState?.codeBlock}
+                title="코드 블록"
+              >
+                <Code2 className={ICON} strokeWidth={1.6} aria-hidden="true" />
+              </ToolbarButton>
+              <ToolbarButton
+                onClick={() => editor.chain().focus().setHorizontalRule().run()}
+                title="구분선"
+              >
+                <Minus className={ICON} strokeWidth={1.6} aria-hidden="true" />
+              </ToolbarButton>
+
+              <Divider />
+
+              <ToolbarButton
+                onClick={() => openInsertPanel("link")}
+                active={toolbarState?.link}
+                title="링크 삽입"
+              >
+                <LinkIcon className={ICON} strokeWidth={1.6} aria-hidden="true" />
+              </ToolbarButton>
+              <ToolbarButton
+                onClick={() => openInsertPanel("image")}
+                title="이미지 주소로 넣기"
+              >
+                <ImageIcon className={ICON} strokeWidth={1.6} aria-hidden="true" />
+              </ToolbarButton>
+              <ToolbarButton
+                onClick={() => openInsertPanel("youtube")}
+                title="유튜브 동영상 삽입"
+              >
+                <Video className={ICON} strokeWidth={1.6} aria-hidden="true" />
+              </ToolbarButton>
+              <ToolbarButton
+                onClick={addTable}
+                active={toolbarState?.table}
+                title="표 삽입"
+              >
+                <TableIcon className={ICON} strokeWidth={1.6} aria-hidden="true" />
+              </ToolbarButton>
+
+              <Divider />
+
+              <ToolbarButton
+                onClick={() => editor.chain().focus().setTextAlign("left").run()}
+                active={toolbarState?.textAlignLeft}
+                title="왼쪽 정렬"
+              >
+                <AlignLeft className={ICON} strokeWidth={1.6} aria-hidden="true" />
+              </ToolbarButton>
+              <ToolbarButton
+                onClick={() => editor.chain().focus().setTextAlign("center").run()}
+                active={toolbarState?.textAlignCenter}
+                title="가운데 정렬"
+              >
+                <AlignCenter className={ICON} strokeWidth={1.6} aria-hidden="true" />
+              </ToolbarButton>
+              <ToolbarButton
+                onClick={() => editor.chain().focus().setTextAlign("right").run()}
+                active={toolbarState?.textAlignRight}
+                title="오른쪽 정렬"
+              >
+                <AlignRight className={ICON} strokeWidth={1.6} aria-hidden="true" />
+              </ToolbarButton>
+
+              <Divider />
+
+              <ToolbarButton
+                onClick={() => editor.chain().focus().undo().run()}
+                disabled={!toolbarState?.canUndo}
+                title="실행 취소 (Ctrl+Z)"
+              >
+                <Undo2 className={ICON} strokeWidth={1.6} aria-hidden="true" />
+              </ToolbarButton>
+              <ToolbarButton
+                onClick={() => editor.chain().focus().redo().run()}
+                disabled={!toolbarState?.canRedo}
+                title="다시 실행 (Ctrl+Shift+Z)"
+              >
+                <Redo2 className={ICON} strokeWidth={1.6} aria-hidden="true" />
+              </ToolbarButton>
+
+              {/* 마크다운 모드 토글 */}
+              <div className="ml-auto shrink-0 pl-1">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleMarkdownToggle}
+                  className={cn("gap-1.5", isMarkdownMode && "text-foreground")}
+                  title="마크다운 / WYSIWYG 전환"
+                >
+                  <MarkdownToggleIcon className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
+                  {markdownToggleLabel}
+                </Button>
+              </div>
+            </>
+          ) : null}
+        </fieldset>
+      ) : null}
 
       <input
         ref={imageInputRef}
@@ -889,6 +1078,15 @@ export function FullEditor({
           selection={insertPanel.selection}
           disabled={disabled}
           onClose={() => setInsertPanel(null)}
+          // 문서 페이지는 도구 줄이 없으므로 스크롤해도 보이는 떠 있는 패널로 연다.
+          // bare 입력란은 좁은 바닥 막대에도 놓이므로 입력란 위에 떠 있는 패널로 연다.
+          className={
+            isPage
+              ? "sticky top-[var(--editor-sticky-top,var(--app-topbar-height))] z-20 mb-3 rounded-lg border border-border shadow-floating"
+              : isBare
+                ? "absolute inset-x-0 bottom-full z-20 mb-2 rounded-lg border border-border shadow-floating"
+                : undefined
+          }
         />
       ) : null}
 
@@ -899,59 +1097,152 @@ export function FullEditor({
           onChange={handleMarkdownChange}
           disabled={disabled}
           aria-label={`${ariaLabel} 마크다운`}
-          className={`${isPage ? "py-5" : "p-6"} flex-1 w-full font-mono text-sm text-foreground bg-background resize-none focus:outline-none leading-relaxed`}
-          style={{ minHeight }}
+          className={cn(
+            "w-full flex-1 resize-none bg-background font-mono text-sm leading-relaxed text-foreground focus:outline-none",
+            isPage ? "py-1" : isBare ? contentClassName : "px-3.5 py-3 md:px-4 md:py-3.5",
+          )}
+          style={minHeight ? { minHeight } : undefined}
           placeholder="마크다운으로 작성하세요..."
         />
       ) : (
         <div
-          className="flex-1 overflow-auto cursor-text"
-          style={{ minHeight }}
+          className={cn("flex-1 cursor-text overflow-auto", isBare && "min-h-0")}
+          style={minHeight ? { minHeight } : undefined}
           onClick={() => editor.commands.focus()}
         >
           <EditorContent editor={editor} />
         </div>
       )}
-      <div
-        className={
-          isPage
-            ? "flex min-h-9 items-center justify-between gap-3 border-t border-border py-2"
-            : "flex min-h-9 items-center justify-between gap-3 border-t border-border bg-muted/20 px-3 py-2"
-        }
-      >
-        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
-          {footer}
-          <span role="status" aria-live="polite" className="text-xs">
-            {imageUpload.pendingCount > 0 ? (
-              <span className="text-muted-foreground">
-                이미지 {imageUpload.pendingCount}장 올리는 중…
-              </span>
-            ) : imageUpload.error ? (
-              <span className="inline-flex items-center gap-1.5 text-destructive">
-                {imageUpload.error}
-                <button
-                  type="button"
-                  onClick={imageUpload.clearError}
-                  className="rounded px-1 text-muted-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                >
-                  닫기
-                </button>
-              </span>
-            ) : null}
-          </span>
+
+      {/* ── bare: 업로드 상태·마크다운 전환은 상위 화면이 정한 자리에 둔다 ── */}
+      {bareTools ? (
+        toolsContainer ? (
+          createPortal(bareTools, toolsContainer)
+        ) : (
+          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-3 pb-2 text-xs text-muted-foreground">
+            {bareTools}
+          </div>
+        )
+      ) : null}
+
+      {/* ── 상태 줄: 초안 상태·업로드·단축키 ───────────── */}
+      {!isBare ? (
+        <div
+          className={
+            isPage
+              ? "mt-6 flex min-h-9 flex-wrap items-center justify-between gap-x-3 gap-y-2 border-t border-muted pt-3 text-xs text-muted-foreground"
+              : "flex min-h-9 flex-wrap items-center justify-between gap-x-3 gap-y-2 border-t border-muted px-3 py-2 text-xs text-muted-foreground"
+          }
+        >
+          <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+            {footer}
+            {imageStatus}
+          </div>
+          {fixedToolbar !== "full" ? (
+            <div className="flex shrink-0 items-center gap-3">
+              {markdownToggle}
+              {shortcutHint}
+            </div>
+          ) : shortcutHint}
         </div>
-        {!disabled ? (
-          <span className="shrink-0 text-[11px] text-muted-foreground">
-            <kbd className="font-sans">/</kbd> 블록
-            {saveShortcutLabel ? (
-              <>
-                <span aria-hidden="true"> · </span>
-                <kbd className="font-sans">⌘/Ctrl S</kbd> {saveShortcutLabel}
-              </>
-            ) : null}
-          </span>
-        ) : null}
-      </div>
+      ) : null}
+
+      {/* ── 좁은 화면 문서 편집 서식 줄: 본문(또는 이 줄)에 초점이 있는 동안만 보인다 ── */}
+      {isPage && !isMarkdownMode ? (
+        <fieldset
+          disabled={disabled}
+          role="toolbar"
+          aria-label="서식"
+          className="sticky bottom-0 z-10 -mx-[var(--editor-bleed,0px)] hidden items-center gap-0.5 border-t border-border bg-background px-2 pb-[max(0.25rem,env(safe-area-inset-bottom))] pt-1 max-md:group-focus-within/editor:flex disabled:opacity-60"
+        >
+          <div className="scroll-row flex min-w-0 flex-1 items-center gap-0.5">
+            <MobileToolbarButton
+              label="블록 추가"
+              onClick={() => {
+                // `/` 메뉴는 줄 처음이나 공백 뒤에서만 열린다. 낱말 바로 뒤라면 공백을 함께 넣는다.
+                const { $from } = editor.state.selection;
+                const before = $from.parent.textBetween(Math.max(0, $from.parentOffset - 1), $from.parentOffset, undefined, "\ufffc");
+                editor.chain().focus().insertContent(before && !/\s/u.test(before) ? " /" : "/").run();
+              }}
+            >
+              <Plus className="size-[18px]" strokeWidth={1.8} aria-hidden="true" />
+            </MobileToolbarButton>
+            <MobileToolbarButton
+              label="굵게"
+              active={Boolean(toolbarState?.bold)}
+              onClick={() => editor.chain().focus().toggleBold().run()}
+              className="font-semibold"
+            >
+              B
+            </MobileToolbarButton>
+            <MobileToolbarButton
+              label="기울임"
+              active={Boolean(toolbarState?.italic)}
+              onClick={() => editor.chain().focus().toggleItalic().run()}
+              className="italic"
+            >
+              I
+            </MobileToolbarButton>
+            <MobileToolbarButton
+              label="형광펜"
+              active={Boolean(toolbarState?.highlight)}
+              onClick={() => editor.chain().focus().toggleHighlight().run()}
+            >
+              H
+            </MobileToolbarButton>
+            <MobileToolbarButton
+              label="할 일 목록"
+              active={Boolean(toolbarState?.taskList)}
+              onClick={() => editor.chain().focus().toggleTaskList().run()}
+            >
+              <ListTodo className="size-[18px]" strokeWidth={1.6} aria-hidden="true" />
+            </MobileToolbarButton>
+            <MobileToolbarButton
+              label="링크"
+              active={Boolean(toolbarState?.link)}
+              onClick={() => openInsertPanel("link")}
+            >
+              <LinkIcon className="size-[18px]" strokeWidth={1.8} aria-hidden="true" />
+            </MobileToolbarButton>
+            <MobileToolbarButton
+              label="밑줄"
+              active={Boolean(toolbarState?.underline)}
+              onClick={() => editor.chain().focus().toggleUnderline().run()}
+              className="underline underline-offset-2"
+            >
+              U
+            </MobileToolbarButton>
+            <MobileToolbarButton
+              label="취소선"
+              active={Boolean(toolbarState?.strike)}
+              onClick={() => editor.chain().focus().toggleStrike().run()}
+              className="line-through"
+            >
+              S
+            </MobileToolbarButton>
+            <MobileToolbarButton label="이미지 올리기" onClick={pickImages}>
+              <ImagePlus className="size-[18px]" strokeWidth={1.6} aria-hidden="true" />
+            </MobileToolbarButton>
+            <MobileToolbarButton label="실행 취소" onClick={() => editor.chain().focus().undo().run()}>
+              <Undo2 className="size-[18px]" strokeWidth={1.6} aria-hidden="true" />
+            </MobileToolbarButton>
+            <MobileToolbarButton label="다시 실행" onClick={() => editor.chain().focus().redo().run()}>
+              <Redo2 className="size-[18px]" strokeWidth={1.6} aria-hidden="true" />
+            </MobileToolbarButton>
+          </div>
+          <button
+            type="button"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => {
+              editor.commands.blur();
+              if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+            }}
+            className="h-11 shrink-0 rounded-touch px-3 text-md font-medium text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            완료
+          </button>
+        </fieldset>
+      ) : null}
     </div>
   );
 }

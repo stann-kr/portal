@@ -1,7 +1,10 @@
 const LOCAL_ORIGIN = "https://portal.local";
 
-export function safeReturnPath(value: string | null | undefined, fallback: string): string {
-  if (!value || !value.startsWith("/") || value.startsWith("//") || value.includes("\\")) {
+/**
+ * 같은 출처 경로만 돌려준다. 주소 query는 같은 이름이 반복되면 배열로 오므로 문자열이 아니면 fallback이다.
+ */
+export function safeReturnPath(value: unknown, fallback: string): string {
+  if (typeof value !== "string" || !value || !value.startsWith("/") || value.startsWith("//") || value.includes("\\")) {
     return fallback;
   }
 

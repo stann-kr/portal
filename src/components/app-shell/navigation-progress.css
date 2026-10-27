@@ -1,0 +1,33 @@
+/* 화면 이동을 기다리는 동안 위쪽 가장자리에 흐르는 2px 막대(NavigationProgress). */
+.portal-nav-progress {
+  position: fixed;
+  inset: 0 0 auto 0;
+  z-index: 60;
+  height: 2px;
+  overflow: hidden;
+  pointer-events: none;
+  animation: portal-fade-in var(--duration-standard) var(--ease-studio) both;
+}
+
+.portal-nav-progress::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 40%;
+  background: var(--color-foreground);
+  animation: portal-nav-progress-slide 1.1s var(--ease-studio) infinite;
+}
+
+@keyframes portal-nav-progress-slide {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(250%); }
+}
+
+/* 움직임을 줄인 환경에서는 흐르지 않는 막대로 기다림만 알린다. */
+@media (prefers-reduced-motion: reduce) {
+  .portal-nav-progress::before {
+    width: 100%;
+    opacity: 0.5;
+    animation: none;
+  }
+}

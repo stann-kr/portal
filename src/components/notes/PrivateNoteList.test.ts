@@ -63,7 +63,8 @@ test("노트 목록은 노트마다 행 전체가 하나의 링크이고 제목�
     "/dashboard/notes/note-a?returnTo=%2Fdashboard%2Fstudent%2Fnotes%3Fq%3D%EB%B9%84%ED%8A%B8",
     "/dashboard/notes/note-b?returnTo=%2Fdashboard%2Fstudent%2Fnotes%3Fq%3D%EB%B9%84%ED%8A%B8",
   ]);
-  assert.match(markup, /비트 매칭[\s\S]*템포를 맞춘다[\s\S]*2026년 10월 20일[\s\S]*강사/u);
+  // 목록 행(MobileNotes 보드): 제목·Mono 날짜, 미리보기, 작성자·수정 줄 순서.
+  assert.match(markup, /비트 매칭[\s\S]*2026\.10\.20[\s\S]*템포를 맞춘다[\s\S]*강사 · 2020년 1월 1일 수정/u);
   assert.equal(markup.includes("노트 열기"), false);
   assert.match(renderToStaticMarkup(createElement(PrivateNoteList, { notes: [], returnTo: "/x", emptyMessage: "비어 있음" })), /비어 있음/u);
 });

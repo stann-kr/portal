@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
-import { AlertCircle, Check, CloudCog, RotateCcw, Trash2 } from "lucide-react";
+import { AlertTriangle, Check, Loader2, RotateCcw, Trash2 } from "lucide-react";
 import { ServerDraftStatus } from "@/components/editor/ServerDraftStatus";
+import { buttonClassName } from "@/components/ui/button";
 import type { FormDraftRecoverySummary, FormDraftStatus } from "@/lib/form-draft";
 import type {
   DocumentServerDraftSyncResult,
@@ -48,7 +49,7 @@ function DraftStateLine({
   if (status === "error") {
     return (
       <p role="alert" className="inline-flex items-start gap-1.5 text-xs text-destructive">
-        <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+        <AlertTriangle className="mt-px size-3.5 shrink-0" strokeWidth={1.8} aria-hidden="true" />
         <span>
           {canSubmit
             ? "이 기기에 임시 저장할 수 없습니다. 입력 내용을 복사해 보관하거나 화면의 저장 버튼으로 직접 저장해 주세요."
@@ -64,7 +65,7 @@ function DraftStateLine({
         role="alert"
         className="inline-flex items-start gap-1.5 text-xs text-warning"
       >
-        <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+        <AlertTriangle className="mt-px size-3.5 shrink-0" strokeWidth={1.8} aria-hidden="true" />
         <span>
           더 최신 앱 버전에서 만든 이 기기 초안이 있어 덮어쓰지 않았습니다.
           최신 앱으로 새로고침하거나 새 탭에서 열어 주세요. 중복 저장을 막기
@@ -78,7 +79,7 @@ function DraftStateLine({
   if (status === "conflict") {
     return (
       <p role="alert" className="inline-flex items-center gap-1.5 text-xs text-warning">
-        <AlertCircle className="h-3.5 w-3.5" aria-hidden="true" />
+        <AlertTriangle className="size-3.5 shrink-0" strokeWidth={1.8} aria-hidden="true" />
         다른 작성 흐름을 감지했습니다. 현재 입력은 별도 안전본으로 보관했습니다.
       </p>
     );
@@ -87,7 +88,7 @@ function DraftStateLine({
   if (status === "saving") {
     return (
       <p role="status" aria-live="polite" className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-        <CloudCog className="h-3.5 w-3.5" aria-hidden="true" />
+        <Loader2 className="size-3.5 shrink-0 animate-spin motion-reduce:animate-none" strokeWidth={1.8} aria-hidden="true" />
         이 기기에 임시 저장 중…
       </p>
     );
@@ -96,9 +97,13 @@ function DraftStateLine({
   if (status === "saved") {
     return (
       <p role="status" aria-live="polite" className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-        <Check className="h-3.5 w-3.5 text-success" aria-hidden="true" />
+        {restored ? (
+          <RotateCcw className="size-3.5 shrink-0" strokeWidth={1.8} aria-hidden="true" />
+        ) : (
+          <Check className="size-3.5 shrink-0" strokeWidth={1.8} aria-hidden="true" />
+        )}
         {restored ? "저장되지 않은 작성 내용을 복원했습니다" : "이 기기에 임시 저장됨"}
-        {time ? <span className="tabular-nums">· {time}</span> : null}
+        {time ? <span className="font-mono">· {time}</span> : null}
       </p>
     );
   }
@@ -161,17 +166,17 @@ function DraftRecoveryItem({
   };
 
   return (
-    <li className="space-y-2 rounded-md border border-warning/20 bg-background/70 p-2 text-xs">
+    <li className="flex flex-col gap-2 rounded-md border border-warning-border bg-background p-2.5 text-xs">
       <div className="min-w-0 space-y-1">
         <div className="flex flex-wrap items-center gap-1.5">
           <time
             dateTime={recoveryIsoTime}
-            className="tabular-nums text-muted-foreground"
+            className="font-mono text-muted-foreground"
           >
             {recoveryTime} · 이 기기에 최대 30일 보관
           </time>
           {recovery.isCurrent ? (
-            <span className="rounded-full bg-warning/15 px-1.5 py-0.5 font-medium text-foreground">
+            <span className="rounded-sm bg-warning-muted px-1.5 py-px text-[11px] font-medium text-warning">
               현재 화면본
             </span>
           ) : null}
@@ -199,7 +204,7 @@ function DraftRecoveryItem({
         <div
           role="group"
           aria-labelledby={confirmationId}
-          className="space-y-2 rounded-md border border-destructive/25 bg-destructive/10 p-2"
+          className="flex flex-col gap-2 rounded-md border border-destructive-border bg-destructive-muted p-2.5"
           onKeyDown={(event) => {
             if (event.key !== "Escape") return;
             event.preventDefault();
@@ -207,7 +212,7 @@ function DraftRecoveryItem({
             cancelDiscard();
           }}
         >
-          <p id={confirmationId} role="alert" className="text-destructive">
+          <p id={confirmationId} role="alert" className="text-ui text-destructive">
             {recovery.isCurrent
               ? "현재 화면에 보이는 복구본을 삭제하면 다른 작성본으로 바뀔 수 있고 되돌릴 수 없습니다. 삭제할까요?"
               : "이 복구본을 삭제하면 되돌릴 수 없습니다. 삭제할까요?"}
@@ -218,7 +223,7 @@ function DraftRecoveryItem({
               type="button"
               disabled={disabled}
               onClick={cancelDiscard}
-              className="font-medium text-foreground hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+              className={buttonClassName({ variant: "outline", size: "sm" })}
             >
               취소
             </button>
@@ -226,7 +231,7 @@ function DraftRecoveryItem({
               type="button"
               disabled={disabled}
               onClick={confirmDiscard}
-              className="font-medium text-destructive hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+              className={buttonClassName({ variant: "destructive", size: "sm" })}
               aria-describedby={confirmationId}
               aria-label={`${recoveryAccessibleName} 복구본 삭제 확인`}
             >
@@ -235,16 +240,16 @@ function DraftRecoveryItem({
           </div>
         </div>
       ) : (
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2">
           {onRestoreRecovery ? (
             <button
               type="button"
               disabled={disabled}
               onClick={() => onRestoreRecovery(recovery.storageKey)}
-              className="inline-flex items-center gap-1 font-medium text-foreground hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+              className={buttonClassName({ variant: "outline", size: "sm" })}
               aria-label={`${recoveryAccessibleName} 충돌 복구본 복원`}
             >
-              <RotateCcw className="h-3 w-3" aria-hidden="true" />
+              <RotateCcw className="size-3" strokeWidth={1.8} aria-hidden="true" />
               복원
             </button>
           ) : null}
@@ -254,10 +259,10 @@ function DraftRecoveryItem({
               type="button"
               disabled={disabled}
               onClick={() => setIsConfirmingDiscard(true)}
-              className="inline-flex items-center gap-1 text-muted-foreground hover:text-destructive disabled:cursor-not-allowed disabled:opacity-50"
+              className={buttonClassName({ variant: "ghost", size: "sm", className: "hover:text-destructive" })}
               aria-label={`${recoveryAccessibleName} 충돌 복구본 삭제 확인 열기`}
             >
-              <Trash2 className="h-3 w-3" aria-hidden="true" />
+              <Trash2 className="size-3" strokeWidth={1.8} aria-hidden="true" />
               삭제
             </button>
           ) : null}
@@ -309,7 +314,7 @@ export function DraftStatus({
       role="group"
       aria-label="임시 저장 상태"
       tabIndex={-1}
-      className="space-y-2"
+      className="flex flex-col gap-2"
     >
       {!quiet || restored || QUIET_VISIBLE_LOCAL_STATUSES.has(status) ? (
         <DraftStateLine
@@ -323,7 +328,7 @@ export function DraftStatus({
         <ServerDraftStatus sync={serverSync} disabled={disabled} />
       ) : null}
       {recoveries.length > 0 ? (
-        <div className="space-y-1.5 rounded-md border border-warning/25 bg-warning-muted px-2.5 py-2">
+        <div className="flex flex-col gap-2 rounded-lg border border-warning-border bg-warning-muted p-3">
           <p
             role="status"
             aria-live="polite"
@@ -331,7 +336,7 @@ export function DraftStatus({
           >
             복구 가능한 작성본 {recoveries.length}개
           </p>
-          <ul id={recoveryListId} className="space-y-2">
+          <ul id={recoveryListId} className="flex flex-col gap-2">
             {visibleRecoveries.map((recovery) => (
               <DraftRecoveryItem
                 key={recovery.storageKey}
@@ -344,7 +349,7 @@ export function DraftStatus({
             ))}
           </ul>
           {hasHiddenRecoveries ? (
-            <div className="space-y-1 text-xs text-muted-foreground">
+            <div className="flex flex-col items-start gap-1 text-xs text-secondary-foreground">
               <p>
                 {showAllRecoveries
                   ? `복구본 ${recoveries.length}개를 모두 표시합니다.`
@@ -356,7 +361,7 @@ export function DraftStatus({
                 aria-expanded={showAllRecoveries}
                 aria-controls={recoveryListId}
                 onClick={() => setShowAllRecoveries((current) => !current)}
-                className="font-medium text-foreground hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded-sm font-medium text-foreground underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {showAllRecoveries ? "최신 5개만 보기" : "모든 복구본 보기"}
               </button>

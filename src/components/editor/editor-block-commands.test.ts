@@ -4,6 +4,7 @@ import {
   EDITOR_SLASH_COMMAND_MAX_QUERY_LENGTH,
   filterEditorBlockCommands,
   findSlashCommandMatch,
+  type EditorBlockCommand,
 } from "./editor-block-commands";
 
 type SlashMatcherEditor = Parameters<typeof findSlashCommandMatch>[0];
@@ -38,6 +39,23 @@ function createSlashMatcherEditor({
 test("슬래시 명령은 한글·영문 별칭으로 검색된다", () => {
   assert.deepEqual(filterEditorBlockCommands("체크").map((item) => item.id), ["task-list"]);
   assert.deepEqual(filterEditorBlockCommands("h2").map((item) => item.id), ["heading-2"]);
+});
+
+test("이미지·동영상·링크 명령은 편집기 밖 패널을 열 수 있는 편집기에서만 보인다", () => {
+  const ids = (withContext: boolean) => filterEditorBlockCommands("", { withContext }).map((item) => item.id);
+  for (const id of ["image-upload", "image-url", "youtube", "link"]) {
+    assert.equal(ids(false).includes(id), false, `${id}는 context 없이 숨긴다`);
+    assert.equal(ids(true).includes(id), true, `${id}는 문서 페이지 편집기에서 보인다`);
+  }
+  assert.deepEqual(filterEditorBlockCommands("유튜브", { withContext: true }).map((item) => item.id), ["youtube"]);
+  assert.deepEqual(filterEditorBlockCommands("가운데").map((item) => item.id), ["align-center"]);
+  const opened: string[] = [];
+  const context = { pickImages: () => opened.push("pick"), openInsertPanel: (kind: string) => opened.push(kind) };
+  const editor = {} as Parameters<EditorBlockCommand["run"]>[0];
+  for (const id of ["image-upload", "image-url", "youtube", "link"]) {
+    filterEditorBlockCommands("", { withContext: true }).find((item) => item.id === id)!.run(editor, context);
+  }
+  assert.deepEqual(opened, ["pick", "image", "youtube", "link"]);
 });
 
 test("빈 검색어는 모든 블록 명령을 유지한다", () => {

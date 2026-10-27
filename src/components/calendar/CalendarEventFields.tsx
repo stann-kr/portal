@@ -2,6 +2,7 @@
 
 import { Input } from "@/components/ui/input";
 import type { CalendarEventType } from "@/db/schema";
+import { cn } from "@/lib/utils";
 
 export type CalendarEventFieldValues = {
   eventType: CalendarEventType;
@@ -12,13 +13,18 @@ export type CalendarEventFieldValues = {
 };
 
 export const CALENDAR_EVENT_TYPE_OPTIONS: { value: CalendarEventType; label: string; color: string }[] = [
-  { value: "LESSON", label: "수업", color: "bg-event-lesson" },
+  { value: "LESSON", label: "레슨", color: "bg-event-lesson" },
   { value: "PRACTICE", label: "연습", color: "bg-event-practice" },
   { value: "GIG", label: "공연", color: "bg-event-gig" },
   { value: "NOTE", label: "메모", color: "bg-event-note" },
 ];
 
-/** 일정 생성 dialog와 상세 패널 수정 form이 같은 입력 계약을 사용한다. */
+const FIELD_LABEL = "flex flex-col gap-1.5 text-xs text-secondary-foreground";
+
+/**
+ * 일정 생성 dialog와 상세 패널 수정 form이 같은 입력 계약을 사용한다(캔버스 CalendarDialogs "새 일정 추가").
+ * 유형은 세그먼트 모양의 native radio 묶음이라 화살표 키와 form 값이 그대로 동작한다.
+ */
 export function CalendarEventFields({
   idPrefix,
   values,
@@ -38,22 +44,27 @@ export function CalendarEventFields({
 
   return (
     <>
-      <fieldset className="space-y-1.5">
-        <legend className="text-sm font-medium">유형</legend>
-        <div className="flex flex-wrap gap-2">
-          {CALENDAR_EVENT_TYPE_OPTIONS.map(({ value, label, color }) => (
-            <label key={value} className="cursor-pointer">
+      <fieldset className="m-0 flex flex-col gap-1.5 border-0 p-0">
+        <legend className="mb-1.5 p-0 text-xs text-secondary-foreground">유형</legend>
+        <div className="flex h-12 gap-0.5 rounded-lg bg-muted p-0.5 md:h-8 md:rounded-md">
+          {CALENDAR_EVENT_TYPE_OPTIONS.map(({ value, label }) => (
+            <label key={value} className="flex flex-1 cursor-pointer">
               <input
                 type="radio"
                 name="eventType"
                 value={value}
                 checked={values.eventType === value}
                 onChange={() => update("eventType", value)}
-                className="sr-only peer"
+                className="peer sr-only"
                 disabled={disabled}
               />
-              <span className="flex min-h-9 items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-sm text-muted-foreground peer-checked:border-foreground peer-checked:text-foreground peer-focus-visible:ring-2 peer-focus-visible:ring-ring transition-colors">
-                <span className={`w-2 h-2 rounded-full ${color}`} aria-hidden="true" />
+              <span
+                className={cn(
+                  "flex flex-1 items-center justify-center rounded-touch text-md text-secondary-foreground transition-colors duration-[var(--duration-fast)] motion-reduce:transition-none md:rounded-sm md:text-xs",
+                  "peer-checked:bg-background peer-checked:font-medium peer-checked:text-foreground peer-checked:shadow-segment",
+                  "peer-focus-visible:ring-2 peer-focus-visible:ring-ring peer-disabled:opacity-50",
+                )}
+              >
                 {label}
               </span>
             </label>
@@ -61,10 +72,8 @@ export function CalendarEventFields({
         </div>
       </fieldset>
 
-      <div className="space-y-1.5">
-        <label htmlFor={`${idPrefix}-title`} className="text-sm font-medium">
-          제목 <span className="text-destructive" aria-hidden="true">*</span>
-        </label>
+      <label htmlFor={`${idPrefix}-title`} className={FIELD_LABEL}>
+        제목
         <Input
           id={`${idPrefix}-title`}
           name="title"
@@ -76,42 +85,40 @@ export function CalendarEventFields({
           disabled={disabled}
           aria-describedby={errorId}
         />
+      </label>
+
+      <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+        <label htmlFor={`${idPrefix}-start`} className={FIELD_LABEL}>
+          시작
+          <Input
+            id={`${idPrefix}-start`}
+            name="startTime"
+            type="datetime-local"
+            value={values.startTime}
+            onChange={(event) => update("startTime", event.target.value)}
+            required
+            disabled={disabled}
+            aria-describedby={errorId}
+            className="font-mono md:px-2.5 md:text-xs"
+          />
+        </label>
+
+        <label htmlFor={`${idPrefix}-end`} className={FIELD_LABEL}>
+          종료 (선택)
+          <Input
+            id={`${idPrefix}-end`}
+            name="endTime"
+            type="datetime-local"
+            value={values.endTime}
+            onChange={(event) => update("endTime", event.target.value)}
+            disabled={disabled}
+            className="font-mono md:px-2.5 md:text-xs"
+          />
+        </label>
       </div>
 
-      <div className="space-y-1.5">
-        <label htmlFor={`${idPrefix}-start`} className="text-sm font-medium">
-          시작 <span className="text-destructive" aria-hidden="true">*</span>
-        </label>
-        <Input
-          id={`${idPrefix}-start`}
-          name="startTime"
-          type="datetime-local"
-          value={values.startTime}
-          onChange={(event) => update("startTime", event.target.value)}
-          required
-          disabled={disabled}
-          aria-describedby={errorId}
-        />
-      </div>
-
-      <div className="space-y-1.5">
-        <label htmlFor={`${idPrefix}-end`} className="text-sm font-medium">
-          종료 <span className="text-muted-foreground text-xs">(선택)</span>
-        </label>
-        <Input
-          id={`${idPrefix}-end`}
-          name="endTime"
-          type="datetime-local"
-          value={values.endTime}
-          onChange={(event) => update("endTime", event.target.value)}
-          disabled={disabled}
-        />
-      </div>
-
-      <div className="space-y-1.5">
-        <label htmlFor={`${idPrefix}-desc`} className="text-sm font-medium">
-          메모 <span className="text-muted-foreground text-xs">(선택)</span>
-        </label>
+      <label htmlFor={`${idPrefix}-desc`} className={FIELD_LABEL}>
+        메모 (선택)
         <textarea
           id={`${idPrefix}-desc`}
           name="description"
@@ -121,9 +128,9 @@ export function CalendarEventFields({
           maxLength={2000}
           placeholder="추가 메모..."
           disabled={disabled}
-          className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring resize-none disabled:opacity-50"
+          className="min-h-16 w-full resize-none rounded-touch border border-input bg-background px-3 py-2 text-base text-foreground placeholder:text-muted-foreground focus-visible:outline-2 focus-visible:-outline-offset-1 focus-visible:outline-ring disabled:opacity-50 md:rounded-md md:text-body"
         />
-      </div>
+      </label>
     </>
   );
 }

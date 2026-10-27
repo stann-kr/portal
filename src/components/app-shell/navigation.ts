@@ -1,18 +1,18 @@
 import {
   BookOpen,
   CalendarDays,
-  FileVideo,
+  CircleHelp,
+  FilePlay,
+  FileText,
   House,
   Inbox,
   type LucideIcon,
-  Megaphone,
-  MessageCircleQuestion,
-  MessagesSquare,
-  Music2,
-  NotebookPen,
-  Settings2,
+  MessageSquare,
+  Music,
+  SlidersVertical,
   Users,
 } from "lucide-react";
+import { isCurriculumVisible } from "@/lib/curriculum-visibility";
 
 export type AppRole = "admin" | "student";
 
@@ -30,22 +30,25 @@ export type AppNavItem = {
 export const APP_NAV_ITEMS: Record<AppRole, readonly AppNavItem[]> = {
   student: [
     { id: "today", label: "홈", href: "/dashboard/student?section=today", Icon: House },
-    { id: "calendar", label: "캘린더", href: "/dashboard/student?section=workspace&view=calendar", Icon: CalendarDays },
-    { id: "notes", label: "노트", href: "/dashboard/student/notes", Icon: NotebookPen },
-    { id: "assignments", label: "과제", href: "/dashboard/student?section=workspace&view=assignments", Icon: FileVideo },
-    { id: "curriculum", label: "커리큘럼", href: "/dashboard/student?section=workspace&view=curriculum", Icon: BookOpen },
-    { id: "digging", label: "디깅", href: "/dashboard/student/digging", Icon: Music2 },
-    { id: "qna", label: "Q&A", href: "/dashboard/qna", Icon: MessageCircleQuestion },
-    { id: "community", label: "커뮤니티", href: "/community", Icon: MessagesSquare },
+    // 보기는 고정하지 않는다. 캘린더가 기기의 직전 보기(없으면 좁은 화면 일별·넓은 화면 달력)를 고른다.
+    { id: "calendar", label: "캘린더", href: "/dashboard/student?section=workspace", Icon: CalendarDays },
+    { id: "notes", label: "노트", href: "/dashboard/student/notes", Icon: FileText },
+    { id: "assignments", label: "과제", href: "/dashboard/student?section=workspace&view=assignments", Icon: FilePlay },
+    // 커리큘럼은 스위치가 켜졌을 때만 메뉴에 둔다(src/lib/curriculum-visibility.ts).
+    ...(isCurriculumVisible()
+      ? [{ id: "curriculum", label: "커리큘럼", href: "/dashboard/student?section=workspace&view=curriculum", Icon: BookOpen }]
+      : []),
+    { id: "digging", label: "디깅", href: "/dashboard/student/digging", Icon: Music },
+    { id: "qna", label: "Q&A", href: "/dashboard/qna", Icon: CircleHelp },
+    { id: "community", label: "커뮤니티", href: "/community", Icon: MessageSquare },
   ],
   admin: [
     { id: "work", label: "업무함", href: "/dashboard/admin?section=work", Icon: Inbox },
     { id: "students", label: "학생", href: "/dashboard/admin?section=students", Icon: Users },
     { id: "schedule", label: "일정", href: "/dashboard/admin?section=schedule", Icon: CalendarDays },
-    { id: "announcements", label: "공지", href: "/dashboard/admin?section=announcements", Icon: Megaphone },
-    { id: "qna", label: "Q&A", href: "/dashboard/qna", Icon: MessageCircleQuestion },
-    { id: "community", label: "커뮤니티", href: "/community", Icon: MessagesSquare },
-    { id: "operations", label: "운영 도구", href: "/dashboard/admin/operations", Icon: Settings2 },
+    { id: "qna", label: "Q&A", href: "/dashboard/qna", Icon: CircleHelp },
+    { id: "community", label: "커뮤니티", href: "/community", Icon: MessageSquare },
+    { id: "operations", label: "운영 도구", href: "/dashboard/admin/operations", Icon: SlidersVertical },
   ],
 };
 
@@ -58,10 +61,10 @@ export function resolveActiveNavItem(role: AppRole, { pathname, searchParams }: 
     if (pathname === "/dashboard/student") {
       if (section === "workspace") {
         const view = searchParams.get("view") ?? "calendar";
-        // 달력·일별·전체 보기는 모두 캘린더 메뉴다.
-        return view === "assignments" || view === "curriculum" ? view : "calendar";
+        // 달력·일별·전체 보기는 모두 캘린더 메뉴다. 숨긴 커리큘럼 주소는 화면처럼 캘린더로 본다.
+        if (view === "curriculum") return isCurriculumVisible() ? view : "calendar";
+        return view === "assignments" ? view : "calendar";
       }
-      if (section === "community") return "community";
       return "today";
     }
     if (pathname.startsWith("/dashboard/student/notes") || pathname.startsWith("/dashboard/notes")) return "notes";
@@ -69,9 +72,8 @@ export function resolveActiveNavItem(role: AppRole, { pathname, searchParams }: 
     if (pathname.startsWith("/dashboard/student/digging")) return "digging";
   } else {
     if (pathname === "/dashboard/admin") {
-      const ids = ["work", "students", "schedule", "announcements"];
+      const ids = ["work", "students", "schedule"];
       if (section && ids.includes(section)) return section;
-      if (section === "community") return "community";
       return "work";
     }
     if (pathname.startsWith("/dashboard/admin/students") || pathname.startsWith("/dashboard/notes")) return "students";
@@ -82,6 +84,90 @@ export function resolveActiveNavItem(role: AppRole, { pathname, searchParams }: 
   if (pathname.startsWith("/dashboard/qna")) return "qna";
   if (pathname.startsWith("/community")) return "community";
   return null;
+}
+
+/** 좁은 화면 위쪽 막대(MobileSpec): 왼쪽은 메뉴 또는 뒤로, 가운데 제목, 오른쪽은 화면의 주 행동. */
+export type MobileTopBarConfig = {
+  title: string;
+  back?: { href: string; label: string };
+  action?: { href: string; label: string };
+};
+
+const STUDENT_NOTES_HREF = "/dashboard/student/notes";
+const STUDENT_CALENDAR_HREF = "/dashboard/student?section=workspace";
+const ADMIN_STUDENTS_HREF = "/dashboard/admin?section=students";
+
+/**
+ * 빠른 만들기(학생 `create=today`)·레슨 예약(관리자 `create=lesson`)을 여는 주소. 캘린더가 `create` 값을 읽고 지운다.
+ * 지금 보는 보기·학생 같은 주소 값은 그대로 두어 +를 눌러도 화면 문맥이 바뀌지 않는다.
+ */
+export function quickCreateHref(base: string, create: "today" | "lesson", keep?: URLSearchParams): string {
+  const url = new URL(base, "http://portal.local");
+  keep?.forEach((value, key) => {
+    if (key !== "create") url.searchParams.set(key, value);
+  });
+  url.searchParams.set("create", create);
+  return `${url.pathname}${url.search}`;
+}
+
+/** 주소에서 위쪽 막대의 기본값을 정한다. 화면이 더 정확한 제목·행동을 가지면 MobileTopBar로 덮어쓴다. */
+export function resolveMobileTopBar(role: AppRole, location: Location): MobileTopBarConfig {
+  const { pathname, searchParams } = location;
+  const navLabel = (id: string | null) => APP_NAV_ITEMS[role].find((item) => item.id === id)?.label ?? "Stann Lumo";
+
+  if (pathname.startsWith("/dashboard/qna")) {
+    const back = { href: "/dashboard/qna", label: "Q&A 목록으로" };
+    if (pathname === "/dashboard/qna") return { title: "Q&A", action: role === "student" ? { href: "/dashboard/qna/new", label: "새 질문" } : undefined };
+    if (pathname === "/dashboard/qna/new") return { title: "새 질문 작성", back };
+    if (pathname === "/dashboard/qna/trash") return { title: "휴지통", back };
+    return { title: "Q&A", back };
+  }
+  if (pathname.startsWith("/community")) {
+    const back = { href: "/community", label: "커뮤니티 목록으로" };
+    if (pathname === "/community") return { title: "커뮤니티", action: { href: "/community/new", label: "새 글" } };
+    if (pathname === "/community/new") return { title: "새 게시물", back };
+    if (pathname === "/community/trash") return { title: "휴지통", back };
+    return { title: "커뮤니티", back };
+  }
+
+  if (role === "student") {
+    if (pathname === "/dashboard/student") {
+      const active = resolveActiveNavItem(role, location);
+      if (active === "calendar") {
+        return { title: "캘린더", action: { href: quickCreateHref(STUDENT_CALENDAR_HREF, "today", searchParams), label: "새로 만들기" } };
+      }
+      if (active === "today") return { title: "홈", action: { href: quickCreateHref(STUDENT_CALENDAR_HREF, "today"), label: "새로 만들기" } };
+      return { title: navLabel(active) };
+    }
+    if (pathname === STUDENT_NOTES_HREF) return { title: "노트", action: { href: `${STUDENT_NOTES_HREF}/new`, label: "새 노트" } };
+    if (pathname.startsWith("/dashboard/student/notes") || pathname.startsWith("/dashboard/notes")) {
+      return { title: "노트", back: { href: STUDENT_NOTES_HREF, label: "노트 목록으로" } };
+    }
+    if (pathname.startsWith("/dashboard/student/assignments/")) {
+      return { title: "과제", back: { href: "/dashboard/student?section=workspace&view=assignments", label: "과제 목록으로" } };
+    }
+    if (pathname.startsWith("/dashboard/student/digging")) return { title: "디깅 보드" };
+    return { title: navLabel(resolveActiveNavItem(role, location)) };
+  }
+
+  if (pathname === "/dashboard/admin") {
+    const active = resolveActiveNavItem(role, location);
+    if (active === "work" || active === "schedule") {
+      const student = searchParams.get("student");
+      const keep = new URLSearchParams(student ? { student } : {});
+      return { title: navLabel(active), action: { href: quickCreateHref("/dashboard/admin?section=schedule", "lesson", keep), label: "레슨 예약" } };
+    }
+    if (active === "students") return { title: "학생", action: { href: "/dashboard/admin/students/new", label: "수강생 추가" } };
+    return { title: navLabel(active) };
+  }
+  if (pathname === "/dashboard/admin/students/new") return { title: "수강생 추가", back: { href: ADMIN_STUDENTS_HREF, label: "학생 목록으로" } };
+  if (pathname.startsWith("/dashboard/admin/students/") || pathname.startsWith("/dashboard/notes")) {
+    return { title: "학생", back: { href: ADMIN_STUDENTS_HREF, label: "학생 목록으로" } };
+  }
+  if (pathname.startsWith("/dashboard/admin/categories")) {
+    return { title: "커뮤니티 채널", back: { href: "/community", label: "커뮤니티로 돌아가기" } };
+  }
+  return { title: navLabel(resolveActiveNavItem(role, location)) };
 }
 
 /**

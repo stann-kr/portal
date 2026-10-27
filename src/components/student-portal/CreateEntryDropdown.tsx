@@ -1,12 +1,13 @@
 /**
  * @file src/components/student-portal/CreateEntryDropdown.tsx
- * @description 콘텐츠 추가 드롭다운 메뉴.
- * 노트/QnA → 풀 페이지로 이동. 일정/디깅 → 기존 다이얼로그 열기.
+ * @description 화면 머리의 "새로 만들기"(캔버스 Calendar 보드의 먹색 주 버튼)와 그 메뉴.
+ * 노트/QnA → 작성 화면, 일정/디깅/레슨 → 대화상자. 만들 수 있는 항목이 하나뿐이면(관리자 "레슨 예약")
+ * 메뉴 없이 그 버튼 하나로 바로 연다.
  */
 "use client";
 
 import { useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useProgressRouter } from "@/components/app-shell/NavigationProgress";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Plus, CalendarPlus, CalendarClock, FileText, Music, HelpCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -14,6 +15,7 @@ import { EventFormDialog } from "@/components/calendar/EventFormDialog";
 import { AddTrackDialog } from "@/components/digging/AddTrackDialog";
 import { LessonScheduleDialog } from "@/components/calendar/LessonScheduleDialog";
 import type { DiggingColumnType } from "@/db/schema";
+import { nextFullHour, toKstDateTimeInputValue } from "@/lib/date-input";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 
 // ── 타입 ──────────────────────────────────────────
@@ -81,6 +83,8 @@ const MENU_ITEMS = [
   },
 ] as const;
 
+type MenuItemId = (typeof MENU_ITEMS)[number]["id"];
+
 // ── 컴포넌트 ─────────────────────────────────────
 
 export function CreateEntryDropdown({
@@ -98,29 +102,29 @@ export function CreateEntryDropdown({
   canCreateDigging = true,
   canCreateLesson = false,
 }: CreateEntryDropdownProps) {
-  const router = useRouter();
+  const router = useProgressRouter();
   const [eventDialogOpen, setEventDialogOpen] = useState(false);
   const [diggingDialogOpen, setDiggingDialogOpen] = useState(false);
   const [lessonDialogOpen, setLessonDialogOpen] = useState(false);
+  // 일정·레슨은 날짜가 정해지지 않았으면 열 때의 다음 정시로 시작 시각을 채운다(위쪽 막대 +의 레슨 예약과 같다).
+  const [dialogStart, setDialogStart] = useState<string | undefined>(defaultDate);
+  const resolveDialogStart = () => defaultDate ?? toKstDateTimeInputValue(nextFullHour());
   const [internalDropdownOpen, setInternalDropdownOpen] = useState(false);
   const dropdownOpen = open ?? internalDropdownOpen;
   const setDropdownOpen = onOpenChange ?? setInternalDropdownOpen;
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const pendingSelection = useRef<(typeof MENU_ITEMS)[number]["id"] | null>(null);
+  const pendingSelection = useRef<MenuItemId | null>(null);
 
-  const handleSelect = (id: (typeof MENU_ITEMS)[number]["id"]) => {
-    pendingSelection.current = id;
-    setDropdownOpen(false);
-  };
+  const available = MENU_ITEMS.filter(({ id }) => {
+    if (id === "note") return Boolean(noteCreateHref);
+    if (id === "qna") return canCreateQna;
+    if (id === "event") return canCreateEvent;
+    if (id === "digging") return canCreateDigging;
+    if (id === "lesson") return canCreateLesson;
+    return true;
+  });
 
-  const handleCloseAutoFocus = (event: Event) => {
-    const id = pendingSelection.current;
-    pendingSelection.current = null;
-    if (!id) return;
-
-    // Finish the menu's focus scope before opening the next dialog's scope.
-    event.preventDefault();
-    triggerRef.current?.focus({ preventScroll: true });
+  const run = (id: MenuItemId) => {
     switch (id) {
       case "note":
         if (noteCreateHref) router.push(noteCreateHref);
@@ -133,69 +137,83 @@ export function CreateEntryDropdown({
         }
         break;
       case "event":
+        setDialogStart(resolveDialogStart());
         setEventDialogOpen(true);
         break;
       case "digging":
         setDiggingDialogOpen(true);
         break;
       case "lesson":
+        setDialogStart(resolveDialogStart());
         setLessonDialogOpen(true);
         break;
     }
   };
 
+  const handleSelect = (id: MenuItemId) => {
+    pendingSelection.current = id;
+    setDropdownOpen(false);
+  };
+
+  const handleCloseAutoFocus = (event: Event) => {
+    const id = pendingSelection.current;
+    pendingSelection.current = null;
+    if (!id) return;
+
+    // Finish the menu's focus scope before opening the next dialog's scope.
+    event.preventDefault();
+    triggerRef.current?.focus({ preventScroll: true });
+    run(id);
+  };
+
+  const single = available.length === 1 ? available[0] : null;
+
   return (
     <>
-      <DropdownMenu.Root open={dropdownOpen} onOpenChange={setDropdownOpen}>
-        <DropdownMenu.Trigger asChild>
-          <Button
-            ref={triggerRef}
-            size="sm"
-            variant="outline"
-            className="gap-1.5 h-9 text-xs flex-shrink-0"
-            aria-label="새 항목 추가"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            추가
-          </Button>
-        </DropdownMenu.Trigger>
+      {single ? (
+        <Button ref={triggerRef} type="button" className="shrink-0" onClick={() => run(single.id)}>
+          <Plus className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
+          {single.label}
+        </Button>
+      ) : available.length > 1 ? (
+        <DropdownMenu.Root open={dropdownOpen} onOpenChange={setDropdownOpen}>
+          <DropdownMenu.Trigger asChild>
+            <Button ref={triggerRef} type="button" className="shrink-0">
+              <Plus className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
+              새로 만들기
+            </Button>
+          </DropdownMenu.Trigger>
 
-        <DropdownMenu.Portal>
-          <DropdownMenu.Content
-            align="end"
-            sideOffset={6}
-            onCloseAutoFocus={handleCloseAutoFocus}
-            className="portal-menu z-50 min-w-[200px] max-h-[var(--radix-dropdown-menu-content-available-height)] overflow-y-auto bg-background border border-border rounded-xl shadow-lg p-1.5"
-          >
-            {MENU_ITEMS.filter(({ id }) => {
-              if (id === "note") return Boolean(noteCreateHref);
-              if (id === "qna") return canCreateQna;
-              if (id === "event") return canCreateEvent;
-              if (id === "digging") return canCreateDigging;
-              if (id === "lesson") return canCreateLesson;
-              return true;
-            }).map(({ id, label, description, Icon }) => (
-              <DropdownMenu.Item
-                key={id}
-                onSelect={() => handleSelect(id)}
-                className="flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer data-[highlighted]:bg-accent outline-none transition-colors duration-[var(--duration-fast)] motion-reduce:transition-none"
-              >
-                <Icon className="h-4 w-4 flex-shrink-0 text-primary" aria-hidden="true" />
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-foreground">{label}</p>
-                  <p className="text-xs text-muted-foreground">{description}</p>
-                </div>
-              </DropdownMenu.Item>
-            ))}
-          </DropdownMenu.Content>
-        </DropdownMenu.Portal>
-      </DropdownMenu.Root>
+          <DropdownMenu.Portal>
+            <DropdownMenu.Content
+              align="end"
+              sideOffset={6}
+              onCloseAutoFocus={handleCloseAutoFocus}
+              className="portal-menu z-50 w-60 max-h-[var(--radix-dropdown-menu-content-available-height)] overflow-y-auto rounded-lg border border-border bg-background p-1 shadow-floating"
+            >
+              {available.map(({ id, label, description, Icon }) => (
+                <DropdownMenu.Item
+                  key={id}
+                  onSelect={() => handleSelect(id)}
+                  className="flex min-h-11 cursor-default select-none items-center gap-2.5 rounded-md px-2.5 py-1.5 outline-none data-[highlighted]:bg-muted"
+                >
+                  <Icon className="size-4 shrink-0 text-secondary-foreground" strokeWidth={1.6} aria-hidden="true" />
+                  <span className="flex min-w-0 flex-col">
+                    <span className="text-ui text-foreground">{label}</span>
+                    <span className="text-xs text-muted-foreground">{description}</span>
+                  </span>
+                </DropdownMenu.Item>
+              ))}
+            </DropdownMenu.Content>
+          </DropdownMenu.Portal>
+        </DropdownMenu.Root>
+      ) : null}
 
       {/* 일정 다이얼로그 */}
       <EventFormDialog
         open={eventDialogOpen}
         onOpenChange={setEventDialogOpen}
-        defaultStart={defaultDate}
+        defaultStart={dialogStart}
         studentId={studentId}
         spaceLabel={spaceLabel}
         onSuccess={onSuccess}
@@ -207,7 +225,7 @@ export function CreateEntryDropdown({
           onOpenChange={setLessonDialogOpen}
           studentId={studentId}
           spaceLabel={spaceLabel}
-          defaultStart={defaultDate}
+          defaultStart={dialogStart}
           onSuccess={onSuccess}
         />
       ) : null}

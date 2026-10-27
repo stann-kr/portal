@@ -8,8 +8,17 @@
 import { useActionState, useEffect, useLayoutEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { ArrowLeft, Trash2 } from "lucide-react";
+import { useProgressRouter } from "@/components/app-shell/NavigationProgress";
+import { CalendarDays, ChevronLeft, Trash2, UserRound } from "lucide-react";
+import { cn } from "@/lib/utils";
+import {
+  NOTE_DATE_INPUT_CLASS,
+  NOTE_TITLE_FIELD_CLASS,
+  NoteDocumentBody,
+  NoteProperties,
+  NoteProperty,
+  resolveNoteParent,
+} from "./NoteDocumentChrome";
 import type { CreateNoteState } from "@/lib/actions/privateNotes";
 import { AutosaveStatus } from "@/components/editor/AutosaveStatus";
 import { DraftStatus } from "@/components/editor/DraftStatus";
@@ -31,6 +40,7 @@ import {
 } from "@/lib/creation-operation";
 import { CreationConflictActions } from "@/components/editor/CreationConflictActions";
 import { resolveNoteCreateDefaultDate } from "@/lib/note-create-route";
+import { MobileTopBar } from "@/components/app-shell/AppSidebar";
 
 const FullEditor = dynamic(
   () => import("@/components/editor/FullEditor").then((m) => ({ default: m.FullEditor })),
@@ -45,8 +55,12 @@ interface NoteFullFormProps {
   returnTo: string;
   /** 캘린더에서 선택한 날짜. 복구된 초안이 있으면 그 날짜가 우선한다. */
   defaultDate?: string;
+  /** 캘린더 빠른 입력에서 넘어온 제목. 복구된 초안에 제목이 있으면 그 제목이 우선한다. */
+  defaultTitle?: string;
   /** 작성 대상 학생 스페이스를 composer 상단에 명시한다. */
   spaceLabel?: string;
+  /** 작성자(현재 계정) 이름. 주면 속성 줄에 보인다. */
+  authorName?: string;
 }
 
 type CreateNoteDraft = {
@@ -60,9 +74,9 @@ export function NoteFullForm(props: NoteFullFormProps) {
   return <NoteFullFormContent key={`${props.actorId}:${props.studentId}`} {...props} />;
 }
 
-function NoteFullFormContent({ action, actorId, studentId, returnTo, defaultDate, spaceLabel }: NoteFullFormProps) {
+function NoteFullFormContent({ action, actorId, studentId, returnTo, defaultDate, defaultTitle = "", spaceLabel, authorName }: NoteFullFormProps) {
   const initialDefaultDate = resolveNoteCreateDefaultDate(defaultDate, new Date());
-  const [title, setTitle] = useState("");
+  const [title, setTitle] = useState(defaultTitle);
   const [noteDate, setNoteDate] = useState(initialDefaultDate);
   const {
     contentHtml,
@@ -75,6 +89,8 @@ function NoteFullFormContent({ action, actorId, studentId, returnTo, defaultDate
   } = useDeferredEditorContent("");
   const [operationId, setOperationId] = useState("");
   const defaultNoteDateRef = useRef(initialDefaultDate);
+  // 주소에서 받은 기본 제목이 지금 화면의 출발점인지. 복원한 초안의 제목은 기본값으로 보지 않는다.
+  const defaultTitleRef = useRef("");
   const [state, formAction, isPending] = useActionState<CreateNoteState, FormData>(
     async (previous, data) => {
       try {
@@ -90,7 +106,7 @@ function NoteFullFormContent({ action, actorId, studentId, returnTo, defaultDate
   const contentHtmlInputRef = useRef<HTMLInputElement>(null);
   const submittedDraftRef = useRef<CreateNoteDraft | null>(null);
   const handledNoteIdRef = useRef<string | null>(null);
-  const router = useRouter();
+  const router = useProgressRouter();
   useBusyNavigationGuard(isPending);
   // 본문 이미지가 올라가는 동안 새 노트를 만들면 문서 페이지로 넘어가며 남은 이미지가 빠진다.
   const [isEditorUploading, setIsEditorUploading] = useState(false);
@@ -114,6 +130,7 @@ function NoteFullFormContent({ action, actorId, studentId, returnTo, defaultDate
       setOperationId(
         parseCreationOperationId(draft.operationId) ?? createCreationOperationId(),
       );
+      defaultTitleRef.current = "";
       setTitle(draft.title ?? "");
       setNoteDate(
         resolveRestoredCreateNoteDate(
@@ -127,7 +144,9 @@ function NoteFullFormContent({ action, actorId, studentId, returnTo, defaultDate
       onReset: () => {
         defaultNoteDateRef.current = initialDefaultDate;
         setOperationId(createCreationOperationId());
-        setTitle("");
+        // 저장된 초안이 없을 때도 이 경로로 시작하므로 주소의 제목·날짜를 기본값으로 둔다.
+        defaultTitleRef.current = defaultTitle;
+        setTitle(defaultTitle);
         setNoteDate(initialDefaultDate);
         setContentHtml("");
       },
@@ -146,6 +165,7 @@ function NoteFullFormContent({ action, actorId, studentId, returnTo, defaultDate
       isCreateNoteDraftEmpty(
         { title, noteDate, contentHtml: latestContentHtml },
         defaultNoteDateRef.current,
+        defaultTitleRef.current,
       )
     ) {
       clear();
@@ -232,32 +252,50 @@ function NoteFullFormContent({ action, actorId, studentId, returnTo, defaultDate
     }
   }, [autosaveStatus, state]);
 
+  const trashHref = `/dashboard/notes/trash?studentId=${encodeURIComponent(studentId)}&returnTo=${encodeURIComponent(returnTo)}`;
+  const autosaveMessage = autosaveStatus === "error" ? state.error : "제목과 내용을 입력하면 자동으로 저장됩니다.";
+
+  const parent = resolveNoteParent(returnTo);
+
   return (
-    <div className="mx-auto max-w-3xl space-y-6 px-4 py-6 sm:px-8 sm:py-10">
-      <div className="flex items-center justify-between gap-3">
+    <div>
+      {/* 좁은 화면 위쪽 막대의 뒤로도 노트를 연 화면(returnTo)으로 돌아간다. */}
+      <MobileTopBar title="새 노트" back={{ href: returnTo, label: parent.backLabel }} />
+      {/* 위쪽 줄(NoteNew 보드): 넓은 화면은 돌아가기·저장 상태·스페이스·휴지통, 좁은 화면은 셸 위쪽 막대가 뒤로를 맡아 상태·휴지통만 둔다. */}
+      <div className="flex h-11 items-center justify-between gap-3 border-b border-muted px-5 md:sticky md:top-0 md:z-20 md:h-[52px] md:bg-background md:px-6">
         <Link
           href={returnTo}
           aria-disabled={isPending}
           tabIndex={isPending ? -1 : undefined}
-          className={`inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground ${
-            isPending ? "pointer-events-none opacity-50" : ""
-          }`}
+          className={cn(
+            "-ml-1 hidden h-8 shrink-0 items-center gap-1.5 rounded-md pl-1 pr-2 text-ui text-secondary-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:inline-flex",
+            isPending && "pointer-events-none opacity-50",
+          )}
           onClick={(event) => {
             if (isPending) event.preventDefault();
           }}
         >
-          <ArrowLeft className="w-4 h-4" aria-hidden="true" />
+          <ChevronLeft className="size-4" strokeWidth={1.8} aria-hidden="true" />
           돌아가기
         </Link>
-        <div className="flex items-center gap-3">
-          {spaceLabel ? <p className="hidden text-xs text-muted-foreground sm:block">{spaceLabel}</p> : null}
-          <Link
-            href={`/dashboard/notes/trash?studentId=${encodeURIComponent(studentId)}&returnTo=${encodeURIComponent(returnTo)}`}
-            className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
-          >
-            <Trash2 className="h-4 w-4" aria-hidden="true" />
-            휴지통
-          </Link>
+        <div className="flex min-w-0 flex-1 items-center justify-between gap-3 md:flex-none md:justify-end">
+          <AutosaveStatus
+            variant="bar"
+            status={autosaveStatus}
+            message={autosaveMessage}
+            shortMessage="저장 대기"
+          />
+          <div className="flex shrink-0 items-center gap-3">
+            {spaceLabel ? <p className="hidden text-xs text-muted-foreground md:block">{spaceLabel}</p> : null}
+            <Link
+              href={trashHref}
+              aria-label="휴지통"
+              className="-mr-2 inline-flex size-11 items-center justify-center gap-1.5 rounded-touch text-ui text-secondary-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:mr-0 md:h-8 md:w-auto md:rounded-md md:px-2.5"
+            >
+              <Trash2 className="size-[18px] md:size-3.5" strokeWidth={1.6} aria-hidden="true" />
+              <span className="hidden md:inline">휴지통</span>
+            </Link>
+          </div>
         </div>
       </div>
 
@@ -265,7 +303,6 @@ function NoteFullFormContent({ action, actorId, studentId, returnTo, defaultDate
         ref={formRef}
         action={formAction}
         aria-busy={!loaded || isPending}
-        className="space-y-5"
         onKeyDownCapture={handleSaveShortcut}
         onSubmit={(event) => {
           if (!loaded || !canSubmit || isPending || !operationId || isEditorUploading) {
@@ -302,26 +339,7 @@ function NoteFullFormContent({ action, actorId, studentId, returnTo, defaultDate
         <input type="hidden" name={CREATION_OPERATION_FIELD} value={operationId} />
         <input ref={contentHtmlInputRef} type="hidden" name="contentHtml" value={contentHtml} />
 
-        <div className="flex justify-end">
-          <AutosaveStatus
-            alertRef={errorRef}
-            status={autosaveStatus}
-            message={autosaveStatus === "error" ? state.error : "제목과 내용을 입력하면 자동으로 저장됩니다."}
-            onRetry={() => formRef.current?.requestSubmit()}
-          />
-        </div>
-
-        {hasOperationConflict && state.existingId ? (
-          <CreationConflictActions
-            existingHref={`/dashboard/notes/${state.existingId}?returnTo=${encodeURIComponent(returnTo)}`}
-            existingLabel="기존 노트 열기"
-            separateLabel="별도 노트로 저장"
-            onSeparate={() => setOperationId(createCreationOperationId())}
-            disabled={isPending}
-          />
-        ) : null}
-
-        <div className="space-y-2">
+        <NoteDocumentBody>
           <h1 className="sr-only">새 노트</h1>
           <textarea
             ref={titleRef}
@@ -340,24 +358,42 @@ function NoteFullFormContent({ action, actorId, studentId, returnTo, defaultDate
               event.preventDefault();
               formRef.current?.querySelector<HTMLElement>('[contenteditable="true"]')?.focus();
             }}
-            className="w-full resize-none overflow-hidden border-0 bg-transparent p-0 text-3xl font-bold leading-tight tracking-[-0.02em] text-foreground placeholder:text-muted-foreground/60 focus:outline-none sm:text-4xl"
+            className={NOTE_TITLE_FIELD_CLASS}
           />
-          <label className="inline-flex items-center gap-2 text-sm text-muted-foreground">
-            <span>날짜</span>
-            <input
-              id="note-date"
-              name="noteDate"
-              type="date"
-              value={noteDate}
-              onChange={(event) => setNoteDate(event.target.value)}
-              disabled={!loaded || isPending}
-              className="rounded-md bg-transparent px-1.5 py-0.5 text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            />
-          </label>
-        </div>
+          <NoteProperties>
+            <NoteProperty icon={CalendarDays} label="날짜" htmlFor="note-date" tall>
+              <input
+                id="note-date"
+                name="noteDate"
+                type="date"
+                value={noteDate}
+                onChange={(event) => setNoteDate(event.target.value)}
+                disabled={!loaded || isPending}
+                className={NOTE_DATE_INPUT_CLASS}
+              />
+            </NoteProperty>
+            {authorName ? <NoteProperty icon={UserRound} label="작성자" tall>{authorName}</NoteProperty> : null}
+          </NoteProperties>
 
-        {/* 에디터 */}
-        <div>
+          {autosaveStatus === "error" ? (
+            <AutosaveStatus
+              alertRef={errorRef}
+              status="error"
+              message={autosaveMessage}
+              onRetry={() => formRef.current?.requestSubmit()}
+            />
+          ) : null}
+
+          {hasOperationConflict && state.existingId ? (
+            <CreationConflictActions
+              existingHref={`/dashboard/notes/${state.existingId}?returnTo=${encodeURIComponent(returnTo)}`}
+              existingLabel="기존 노트 열기"
+              separateLabel="별도 노트로 저장"
+              onSeparate={() => setOperationId(createCreationOperationId())}
+              disabled={isPending}
+            />
+          ) : null}
+
           {loaded ? (
             <FullEditor
               initialContent={contentHtml}
@@ -380,7 +416,7 @@ function NoteFullFormContent({ action, actorId, studentId, returnTo, defaultDate
               disabled={isPending}
               ariaLabel="노트 내용"
               variant="page"
-              minHeight="50dvh"
+              minHeight="320px"
               footer={
                 <DraftStatus
                   status={status}
@@ -392,14 +428,12 @@ function NoteFullFormContent({ action, actorId, studentId, returnTo, defaultDate
                   onDiscardRecovery={discardRecovery}
                   serverSync={serverSync}
                   disabled={isPending}
-                  quiet
                 />
               }
               saveShortcutLabel={canSubmit ? "바로 저장" : undefined}
             />
           ) : null}
-        </div>
-
+        </NoteDocumentBody>
       </form>
     </div>
   );
