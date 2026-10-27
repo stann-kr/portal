@@ -2,10 +2,12 @@
  * @file src/app/dashboard/student/digging/page.tsx
  * @description 학생 본인의 디깅 보드(Digging·MobileDigging 보드). 트랙 값 편집·삭제와 컬럼 관리를 전체 화면에서 제공한다.
  * 이동은 사이드바(좁은 화면은 메뉴 서랍)가 맡고, 좁은 화면 위쪽 막대 오른쪽에 트랙 추가를 둔다.
+ * 캘린더·홈 등에서 `returnTo`와 함께 열면 좁은 화면 위쪽 막대 왼쪽이 그 화면으로 돌아가는 뒤로가 된다.
  */
 import { redirect } from "next/navigation";
 import { getActiveAuthSession } from "@/lib/auth-guard";
 import { getDiggingTracks, getOrSeedColumns } from "@/lib/actions/digging";
+import { safeReturnPath } from "@/lib/safe-return-path";
 import { DiggingBoard } from "@/components/digging/DiggingBoard";
 import type { DiggingColumnType } from "@/db/schema";
 
@@ -13,12 +15,17 @@ export const metadata = { title: "디깅 보드" };
 
 type RawColumn = Awaited<ReturnType<typeof getOrSeedColumns>>[number];
 
-export default async function StudentDiggingPage() {
+export default async function StudentDiggingPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ returnTo?: string }>;
+}) {
   const session = await getActiveAuthSession();
   if (!session?.user?.id) redirect("/login");
   if (session.user.role !== "student") redirect("/dashboard/admin");
 
   const studentId = session.user.id;
+  const returnTo = safeReturnPath((await searchParams).returnTo, "");
   const [columns, tracks] = await Promise.all([
     getOrSeedColumns(studentId),
     getDiggingTracks(studentId),
@@ -35,6 +42,7 @@ export default async function StudentDiggingPage() {
             </>
           )}
           mobileTopBar
+          mobileBack={returnTo ? { href: returnTo, label: "이전 화면으로" } : undefined}
           initialColumns={columns.map((c: RawColumn) => ({
             id: c.id,
             name: c.name,

@@ -44,9 +44,12 @@ const ANNOUNCEMENTS_HREF = "/community?boardType=ANNOUNCEMENT";
 
 /**
  * 좁은 화면은 한 줄(오늘 → 할 일 → 최근 노트 → 다가오는 일정 → 공지), 넓은 화면은 두 열(Main·MobileHome 보드).
- * 좁은 화면에서 두 열 묶음을 풀고(`contents`) 구역 순서만 바꾼다.
+ * 좁은 화면에서는 두 열 묶음을 풀어(`contents`) 문서 순서 그대로 한 줄로 놓는다.
  */
 const COLUMN_CLASS = "contents md:flex md:min-w-0 md:flex-col md:gap-10";
+
+type Layout = "narrow" | "wide";
+const LAYOUT_ONLY_CLASS: Record<Layout, string> = { narrow: "md:hidden", wide: "max-md:hidden" };
 
 function formatDay(date: Date) {
   return formatKst(date, { month: "long", day: "numeric", weekday: "long" });
@@ -103,6 +106,76 @@ export function TodaySection({
     ? `${formatKst(nextLesson.date, { month: "long", day: "numeric", weekday: "short" })} ${formatHomeTime(nextLesson.date)}`
     : null;
 
+  // 좁은 화면 순서(오늘 → 할 일 → 최근 노트 → 다가오는 일정 → 공지)가 넓은 화면의 두 열을 오가므로,
+  // 할 일·다가오는 일정은 폭마다 한 벌만 보이게 두 번 둔다. 숨은 벌은 display:none이라 읽기·Tab 순서에 들어가지 않는다.
+  const renderUpcoming = (layout: Layout) => (
+    <LedgerSection labelledBy={`upcoming-heading-${layout}`} className={LAYOUT_ONLY_CLASS[layout]}>
+      <LedgerSectionHeader
+        id={`upcoming-heading-${layout}`}
+        title="다가오는 일정"
+        aside={<span className={LEDGER_HEADER_NOTE_CLASS}>7일</span>}
+      />
+      {upcoming.groups.length === 0 ? (
+        <LedgerEmptyRow>앞으로 7일 동안 예정된 일정이 없습니다.</LedgerEmptyRow>
+      ) : (
+        <>
+          {upcoming.groups.map((group) => {
+            const headingId = `upcoming-day-${layout}-${group.dayKey}`;
+            return (
+              <div key={group.dayKey} className="flex flex-col pt-3">
+                <h3 id={headingId} className="mb-0.5 text-xs font-normal text-muted-foreground md:px-1">
+                  {formatUpcomingDay(group.dayKey, group.offset)}
+                </h3>
+                <ol aria-labelledby={headingId}>
+                  {group.entries.map((entry) => (
+                    <li key={`${entry.item.source.kind}:${entry.item.source.entity}:${entry.item.id}`}>
+                      <AgendaRow
+                        entry={entry}
+                        when={formatAgendaWhen(entry)}
+                        calendarHref={CALENDAR_HREF}
+                        returnTo={TODAY_PATH}
+                        variant="upcoming"
+                      />
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            );
+          })}
+          {upcoming.totalCount > upcoming.shownCount ? (
+            <p className="pt-2 text-xs text-muted-foreground md:px-1">
+              외 {upcoming.totalCount - upcoming.shownCount}개 일정은{" "}
+              <WithinPageLink href={CALENDAR_HREF} className="underline underline-offset-4 hover:text-foreground">
+                캘린더
+              </WithinPageLink>
+              에서 확인할 수 있습니다.
+            </p>
+          ) : null}
+        </>
+      )}
+    </LedgerSection>
+  );
+
+  const renderTodo = (layout: Layout) => (
+    <LedgerSection labelledBy={`todo-heading-${layout}`} className={LAYOUT_ONLY_CLASS[layout]}>
+      <LedgerSectionHeader
+        id={`todo-heading-${layout}`}
+        title="할 일"
+        count={todoEntries.length > 0 ? todoEntries.length : undefined}
+        aside={
+          <Link href={buildQnaListHref(TODAY_PATH)} className={cn(LEDGER_HEADER_LINK_CLASS, "hidden md:flex")}>
+            전체 Q&A
+          </Link>
+        }
+      />
+      {todoEntries.length === 0 ? (
+        <LedgerEmptyRow>지금 확인할 피드백이나 질문이 없습니다.</LedgerEmptyRow>
+      ) : (
+        <TodoList entries={todoEntries} referenceTime={referenceTime} returnTo={TODAY_PATH} />
+      )}
+    </LedgerSection>
+  );
+
   return (
     <div className="px-5 pb-8 pt-6 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-14">
       <div className="flex max-w-[1040px] flex-col gap-7 md:gap-10">
@@ -129,7 +202,7 @@ export function TodaySection({
 
         <div className="flex flex-col gap-7 md:flex-row md:flex-wrap md:items-start md:gap-x-14 md:gap-y-12">
           <div className={cn(COLUMN_CLASS, "md:flex-[2_1_480px]")}>
-            <LedgerSection labelledBy="today-agenda-heading" className="order-1 md:order-none">
+            <LedgerSection labelledBy="today-agenda-heading">
               <LedgerSectionHeader
                 id="today-agenda-heading"
                 title="오늘"
@@ -163,53 +236,10 @@ export function TodaySection({
               )}
             </LedgerSection>
 
-            <LedgerSection labelledBy="upcoming-heading" className="order-4 md:order-none">
-              <LedgerSectionHeader
-                id="upcoming-heading"
-                title="다가오는 일정"
-                aside={<span className={LEDGER_HEADER_NOTE_CLASS}>7일</span>}
-              />
-              {upcoming.groups.length === 0 ? (
-                <LedgerEmptyRow>앞으로 7일 동안 예정된 일정이 없습니다.</LedgerEmptyRow>
-              ) : (
-                <>
-                  {upcoming.groups.map((group) => {
-                    const headingId = `upcoming-day-${group.dayKey}`;
-                    return (
-                      <div key={group.dayKey} className="flex flex-col pt-3">
-                        <h3 id={headingId} className="mb-0.5 text-xs font-normal text-muted-foreground md:px-1">
-                          {formatUpcomingDay(group.dayKey, group.offset)}
-                        </h3>
-                        <ol aria-labelledby={headingId}>
-                          {group.entries.map((entry) => (
-                            <li key={`${entry.item.source.kind}:${entry.item.source.entity}:${entry.item.id}`}>
-                              <AgendaRow
-                                entry={entry}
-                                when={formatAgendaWhen(entry)}
-                                calendarHref={CALENDAR_HREF}
-                                returnTo={TODAY_PATH}
-                                variant="upcoming"
-                              />
-                            </li>
-                          ))}
-                        </ol>
-                      </div>
-                    );
-                  })}
-                  {upcoming.totalCount > upcoming.shownCount ? (
-                    <p className="pt-2 text-xs text-muted-foreground md:px-1">
-                      외 {upcoming.totalCount - upcoming.shownCount}개 일정은{" "}
-                      <WithinPageLink href={CALENDAR_HREF} className="underline underline-offset-4 hover:text-foreground">
-                        캘린더
-                      </WithinPageLink>
-                      에서 확인할 수 있습니다.
-                    </p>
-                  ) : null}
-                </>
-              )}
-            </LedgerSection>
+            {renderTodo("narrow")}
+            {renderUpcoming("wide")}
 
-            <LedgerSection labelledBy="recent-notes-heading" className="order-3 md:order-none">
+            <LedgerSection labelledBy="recent-notes-heading">
               <LedgerSectionHeader
                 id="recent-notes-heading"
                 title="최근 노트"
@@ -226,25 +256,10 @@ export function TodaySection({
           </div>
 
           <div className={cn(COLUMN_CLASS, "md:flex-[1_1_280px]")}>
-            <LedgerSection labelledBy="todo-heading" className="order-2 md:order-none">
-              <LedgerSectionHeader
-                id="todo-heading"
-                title="할 일"
-                count={todoEntries.length > 0 ? todoEntries.length : undefined}
-                aside={
-                  <Link href={buildQnaListHref(TODAY_PATH)} className={cn(LEDGER_HEADER_LINK_CLASS, "hidden md:flex")}>
-                    전체 Q&A
-                  </Link>
-                }
-              />
-              {todoEntries.length === 0 ? (
-                <LedgerEmptyRow>지금 확인할 피드백이나 질문이 없습니다.</LedgerEmptyRow>
-              ) : (
-                <TodoList entries={todoEntries} referenceTime={referenceTime} returnTo={TODAY_PATH} />
-              )}
-            </LedgerSection>
+            {renderTodo("wide")}
+            {renderUpcoming("narrow")}
 
-            <LedgerSection labelledBy="announcement-heading" className="order-5 md:order-none">
+            <LedgerSection labelledBy="announcement-heading">
               <LedgerSectionHeader
                 id="announcement-heading"
                 title="공지"

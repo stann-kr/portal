@@ -9,7 +9,7 @@ import { MobileTopBar } from "@/components/app-shell/AppSidebar";
 import { getActiveAuthSession } from "@/lib/auth-guard";
 import { getStudentById } from "@/lib/actions/students";
 import { getPrivateNotes } from "@/lib/actions/privateNotes";
-import { NotesPageHeader } from "@/components/notes/NotesPageHeader";
+import { NotesMobileLinks, NotesPageHeader } from "@/components/notes/NotesPageHeader";
 import { NotesDatabase } from "@/components/notes/NotesDatabase";
 import { toNotesDatabaseRows } from "@/lib/notes-database";
 import { buildAdminStudentDetailHref } from "@/lib/student-space-routes";
@@ -41,6 +41,8 @@ export default async function AdminStudentNotesPage({
   const notes = await getPrivateNotes(studentId);
   const matchingNotes = searchPrivateNotes(notes, query);
   const detailHref = buildAdminStudentDetailHref(studentId, "overview");
+  const timelineHref = buildNotesLessonsTimelineHref({ role: "admin", studentId });
+  const trashHref = `/dashboard/notes/trash?studentId=${encodeURIComponent(studentId)}&returnTo=${encodeURIComponent(returnTo)}`;
   return (
     <div className="px-5 pb-8 pt-6 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-10">
       <MobileTopBar title="노트" back={{ href: detailHref, label: "학생 상세로" }} />
@@ -55,8 +57,8 @@ export default async function AdminStudentNotesPage({
               <ChevronLeft className="size-4" strokeWidth={1.8} aria-hidden="true" />학생 상세로 돌아가기
             </Link>
           }
-          timelineHref={buildNotesLessonsTimelineHref({ role: "admin", studentId })}
-          trashHref={`/dashboard/notes/trash?studentId=${encodeURIComponent(studentId)}&returnTo=${encodeURIComponent(returnTo)}`}
+          timelineHref={timelineHref}
+          trashHref={trashHref}
           newNoteHref={`${composerPath}?returnTo=${encodeURIComponent(returnTo)}`}
         />
         <NotesDatabase
@@ -71,6 +73,7 @@ export default async function AdminStudentNotesPage({
           now={getRequestNow()}
           emptyMessage={query ? "검색 결과가 없습니다. 다른 단어로 검색하거나 검색을 초기화해 주세요." : "아직 이 학생 스페이스에 작성된 노트가 없습니다."}
         />
+        <NotesMobileLinks timelineHref={timelineHref} trashHref={trashHref} />
       </div>
     </div>
   );

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useTransition, type ReactNode, type RefObj
 import { useRouter } from "next/navigation";
 import { RotateCcw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { ConfirmPanel, useConfirmAction } from "@/components/ui/confirm-action";
 import {
   purgeQnaThread,
@@ -206,7 +207,7 @@ export function QnaThreadLifecycleActions(props: QnaThreadLifecycleOptions) {
           type="button"
           variant={actionKind === "purge" ? "destructive" : "outline"}
           size="sm"
-          className={actionKind === "trash" ? "text-destructive" : undefined}
+          className={cn("max-md:h-11", actionKind === "trash" && "text-destructive")}
           disabled={lifecycle.triggerDisabled}
           aria-expanded={actionKind === "restore" ? undefined : lifecycle.confirmOpen}
           onClick={(event) => lifecycle.request(event.currentTarget)}

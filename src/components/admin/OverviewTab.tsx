@@ -337,7 +337,9 @@ export function OverviewTab({
         </div>
       ) : null}
 
-      <div className="flex min-w-0 flex-col gap-6 md:flex-[2_1_480px] md:gap-10">
+      {/* 좁은 화면은 레슨 일정을 맨 위로 올린다. 레슨 구역은 추가 폼·삭제 확인 상태를 가져 두 벌로 둘 수 없으므로
+          order로 옮기고, reading-flow로 지원 브라우저의 Tab·읽기 순서를 화면 순서에 맞춘다. */}
+      <div className="flex min-w-0 flex-col gap-6 max-md:[reading-flow:flex-visual] md:flex-[2_1_480px] md:gap-10">
         {/* 커리큘럼 */}
         <LedgerSection labelledBy="curriculum-heading">
           <LedgerSectionHeader
@@ -426,7 +428,7 @@ export function OverviewTab({
           )}
         </LedgerSection>
 
-        {/* 레슨 일정: 좁은 화면에서는 맨 위 */}
+        {/* 레슨 일정 */}
         <LedgerSection labelledBy="lessons-heading" className="max-md:order-first">
           <LedgerSectionHeader
             id="lessons-heading"

@@ -348,7 +348,8 @@ export function UnifiedCalendar({
     const timeLabel = allDay ? null : formatKst(item.date, KST_TIME);
     return {
       id: key,
-      title: showSpaceContext ? `${title} · ${item.space.label}` : title,
+      // 관리자 일정은 늘 학생 한 명만 보이므로 칩에는 제목만 둔다(학생은 상세 패널 머리의 칩이 보인다).
+      title,
       start: allDay && allDayStartDate ? allDayStartDate : toCalendarWallTime(item.date),
       end: allDay
         ? allDayEndDate ?? undefined

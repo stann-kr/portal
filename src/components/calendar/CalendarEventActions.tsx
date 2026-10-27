@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useRef, useState, useTransition } from "react";
+import { useActionState, useEffect, useId, useRef, useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import type { CalendarEventType } from "@/db/schema";
 import {
@@ -49,6 +49,7 @@ export function CalendarEventActions({
   const [fields, setFields] = useState(() => fieldsFromItem(item));
   const [notice, setNotice] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const deleteMessageId = useId();
   const [isDeleting, startDelete] = useTransition();
   const cancelDeleteRef = useRef<HTMLButtonElement>(null);
   const editButtonRef = useRef<HTMLButtonElement>(null);
@@ -145,8 +146,8 @@ export function CalendarEventActions({
     <div className="flex flex-col gap-3 pt-1">
       {notice ? <p role="status" className="text-ui text-success">{notice}</p> : null}
       {mode === "confirm-delete" ? (
-        <div role="alertdialog" aria-label="일정 삭제 확인" className="flex flex-col gap-2.5 rounded-touch bg-destructive-muted px-3.5 py-3">
-          <p className="text-ui text-destructive">이 일정을 삭제할까요? 삭제한 일정은 복구할 수 없습니다.</p>
+        <div role="group" aria-labelledby={deleteMessageId} className="flex flex-col gap-2.5 rounded-touch bg-destructive-muted px-3.5 py-3">
+          <p id={deleteMessageId} className="text-ui text-destructive">이 일정을 삭제할까요? 삭제한 일정은 복구할 수 없습니다.</p>
           {deleteError ? <p role="alert" className="text-ui font-medium text-destructive">{deleteError}</p> : null}
           <div className="flex justify-end gap-1.5">
             <Button ref={cancelDeleteRef} type="button" variant="outline" className="h-11 rounded-touch md:h-[30px] md:rounded-md md:px-2.5 md:text-xs" onClick={() => setMode("view")} disabled={isDeleting}>

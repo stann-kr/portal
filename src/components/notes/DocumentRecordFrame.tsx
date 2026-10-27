@@ -11,9 +11,9 @@ import { cn } from "@/lib/utils";
 export const RECORD_ACTION_CELL = "col-start-2 row-start-1 justify-self-end";
 /** 이력 행의 전체 폭 칸(복원 확인·오류·저장된 내용). */
 export const RECORD_FULL_ROW = "col-span-2";
-/** 이력 복원 확인(NoteHistory 보드): 옅은 사이드바 면 r8, 문구 왼쪽·버튼 오른쪽 한 줄. */
+/** 이력 복원 확인(NoteHistory 보드): 옅은 사이드바 면 r8. 넓은 화면은 문구 왼쪽·버튼 오른쪽 한 줄, 좁은 화면은 ConfirmPanel대로 버튼이 줄을 채운다. */
 export const RESTORE_CONFIRM_CLASS =
-  "flex flex-wrap items-center justify-between gap-2.5 space-y-0 rounded-touch border-0 bg-sidebar px-3.5 py-3 [&>p]:text-ui";
+  "space-y-0 rounded-touch border-0 bg-sidebar px-3.5 py-3 md:flex-wrap md:items-center md:justify-between md:gap-2.5 [&>p]:text-ui";
 
 /**
  * 돌아가기·제목·설명과 목록. 돌아가기 링크도 머리말(`<header>`) 안에 둔다.
@@ -46,7 +46,7 @@ export function RecordPageFrame({
       <header className="flex flex-col gap-7">
         <Link
           href={back.href}
-          className="-ml-1 inline-flex h-8 items-center gap-1.5 self-start rounded-md pl-1 pr-2 text-ui text-secondary-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="-ml-1 inline-flex h-11 items-center gap-1.5 self-start rounded-md pl-1 pr-2 text-ui text-secondary-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:h-8"
         >
           <ChevronLeft className="size-4" strokeWidth={1.8} aria-hidden="true" />
           {back.label}

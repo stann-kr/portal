@@ -59,6 +59,8 @@ Token은 `src/app/globals.css`의 Tailwind theme layer에 정의한다. 화면 �
 | Caption | `text-xs` | 12/16 | 400, 글자 3 |
 | Mono | `font-mono text-xs` | 12/16 | 시간·날짜·BPM·개수 |
 | 모바일 제목 | `text-mobile-title` | 22/30 | 600 |
+| 인증·학생 상세 제목 | `text-2xl` | 24/32 | 600 |
+| 문서 본문 | `text-base leading-7` | 16/28 | 400 |
 
 모바일 본문은 15/24(`text-md leading-6`), 보조 13/20, 입력 글자는 16px(확대 방지)이다.
 
@@ -83,7 +85,8 @@ pill 형태는 오늘 날짜 표시와 개수처럼 모양 자체가 의미를 �
 
 - 넓은 화면(≥768px): 240px 사이드바(`sidebar` 면, 오른쪽 1px 선, 위아래 16·좌우 12 여백, 묶음 간격 24). 로고 24px, 메뉴 행 32px·r6·14px, 현재 메뉴는 `selected` 면+먹색 500, 나머지는 글자 2. 아래 계정 줄은 위 1px 선, 28px 아바타, 이름 13/500, 역할 12, … 계정 메뉴(이 기기의 초안·비밀번호 변경·(학생) 계정 삭제·구분선·로그아웃).
 - 좁은 화면: 52px 위쪽 막대(아래 `border-muted` 선, 44×44 버튼). 왼쪽은 메뉴 또는 뒤로, 가운데 제목, 오른쪽은 화면의 주 행동이다. 기본값은 `resolveMobileTopBar`가 주소에서 정하고 화면은 `MobileTopBar`로 덮어쓴다. 메뉴 서랍은 왼쪽에서 열리는 280px, 메뉴 행 44px·r8·15px, 현재 메뉴 `muted` 면.
-- 대화상자는 좁은 화면에서 아래 시트(위 모서리 16, 손잡이 36×4, 뒤 화면 32% 어둡게, 홈 표시줄 위 34), 넓은 화면에서 가운데 r10 패널이다.
+- 대화상자는 좁은 화면에서 아래 시트(위 모서리 16, 손잡이 36×4, 뒤 화면 32% 어둡게, 홈 표시줄 위 34), 넓은 화면에서 가운데 r10 패널이다. 모든 대화상자 오른쪽 위에 32px X 닫기(`닫기`)를 두고, 본문의 취소·닫기 버튼도 유지한다(터치에는 Esc가 없다).
+- 인증 화면(로그인·가입·새 비밀번호, `(auth)/layout.tsx`)은 카드 없는 360px 가운데 열에 SL 로고(36·좁은 화면 32)와 24/32 제목, 40px 입력·버튼을 쓴다.
 
 ### Motion과 layer
 
@@ -139,13 +142,14 @@ pill 형태는 오늘 날짜 표시와 개수처럼 모양 자체가 의미를 �
 | `NoteFullForm`·`NoteDocEditor`·`NoteDocumentChrome` | 노트 새로 쓰기·문서 편집 화면의 공통 틀(위치 줄·저장 상태·변경 이력·더 보기, 날짜·작성자·수정 속성 줄). 날짜는 글자로 보이고 누르면 native 날짜 선택(`NoteDateField`) |
 | `SectionHeader` | section 제목(13/20 글자 2)·Mono 개수(`count`)·설명·단일 보조 action |
 | `EmptyState` | 비어 있는 이유와 가능한 다음 행동(States 보드), 제목 단계 `titleAs` |
-| `FullEditor` | rich text·Markdown 작성, block command, inline 삽입, keyboard save 경계 |
+| `FullEditor` | rich text·Markdown 작성, block command, inline 삽입, keyboard save 경계. `variant`(boxed·page·bare)와 `toolbar`(full·compact·none): 노트 문서는 고정 도구 줄 없이 선택 서식 메뉴와 `/` 메뉴, 좁은 화면 편집 중 아래 서식 줄. bare는 마크다운 전환·이미지 상태·⌘S 안내를 상위 화면의 도구 자리로 보낸다(Q&A·댓글 입력 막대) |
 | `BlockCommandMenu` | `/` 검색과 keyboard로 실행하는 block 삽입 목록 |
 | `EditorInsertPanel` | 링크·이미지·YouTube URL을 검증하고 selection에 삽입하는 panel |
 | `DraftStatus` | 로컬·계정 초안 저장 상태, 복구본과 다중 기기 충돌의 명시적 선택 |
 | `ServerDraftStatus` | 오프라인 재시도·서버 저장 시각·다른 기기 비교·원문 복사·2단계 서버본 폐기 |
 | `LocalDraftManager` | 현재 계정의 기기 초안 목록, 안전한 미리보기와 문서별·전체 2단계 폐기 |
-| `AccountMenu` | 사이드바·메뉴 서랍 계정 줄의 … 메뉴. 메뉴 focus scope가 끝난 뒤 초안·비밀번호·계정 삭제 대화상자를 열고, 로그아웃은 로컬 초안을 먼저 정리한 뒤 세션을 종료한다 |
+| `AccountMenu` | 사이드바·메뉴 서랍 계정 줄의 … 메뉴. 메뉴 focus scope가 끝난 뒤 초안·비밀번호·계정 삭제 대화상자를 열고, 로그아웃은 `useLogoutSubmit`을 쓴다 |
+| `useLogoutSubmit`·`LogoutTextButton` | 로그아웃 form의 제출. 첫 제출을 멈추고 이 계정의 서버 초안 폐기 요청만 최대 3초 보낸 뒤(실패·오프라인이어도 계속) 로컬 초안을 지우고 세션을 끝낸다. 글자형 버튼은 그동안 비활성 |
 | `PasswordChangeControl` | 계정 메뉴의 본인 비밀번호 변경 dialog. 거부된 필드로 초점과 `aria-invalid`를 옮기고 성공 화면에는 입력값을 남기지 않으며 다음 행동 버튼으로 초점을 옮긴다. 같은 `PasswordChangeForm`의 `required` variant가 임시 비밀번호 로그인 뒤 `/account/password` 화면을 맡고, 저장되면 결과 버튼 없이 바로 포털로 이동한다 |
 | `StudentPasswordResetControl` | 관리자 학생 상세 계정 구역(가입·캘린더 구독 줄 아래)의 임시 비밀번호 발급. 항상 취소 우선 확인을 거치고 원문은 발급 직후 한 번만 복사 버튼과 함께 보이며, 학생이 아직 바꾸지 않은 상태만 다시 알린다 |
 | `StudentInviteControl` | 가입 전 학생의 가입 링크 재발급. 쓸 수 있는 링크가 남아 있으면 취소 우선 확인을 거치고, 만료된 링크는 바로 다시 발급한다 |
@@ -154,11 +158,15 @@ pill 형태는 오늘 날짜 표시와 개수처럼 모양 자체가 의미를 �
 | `CreationConflictActions` | 같은 생성 초안의 payload 충돌에서 기존 문서 열기와 별도 문서 분리 선택 |
 | `RichTextContent` | 저장된 rich text의 공통 typography·embed 렌더 경계 |
 | `DocumentRecordFrame` | 노트·Q&A·게시물의 변경 이력과 휴지통 6화면 공통 틀(NoteHistory·NotesTrash 보드) |
-| `DiggingBoard` | 날짜별 트랙 표(넓은 화면)와 카드 목록(좁은 화면), 바뀐 칸만 저장, 한 줄 프롬프트로 여는 인라인 추가, 컬럼 관리·기간 필터, 읽기 전용 모드(관리자, 별점 `role="img"`) |
+| `DiggingBoard` | 날짜별 트랙 표(넓은 화면)와 카드 목록(좁은 화면), 바뀐 칸만 저장, 한 줄 프롬프트로 여는 인라인 추가, 컬럼 관리·기간 필터, 읽기 전용 모드(관리자, 별점 `role="img"`). `heading`(화면 h1·설명), `mobileTopBar`(위쪽 막대 트랙 추가), `mobileBack`(다른 화면에서 열었을 때 뒤로) |
+| `StarRating`·`CamelotPicker` | 1–5점 radio 묶음(같은 별 다시 누르면 지움)과 카멜롯 키 선택. 별점 `size` sm(표 칸)·md(대화상자, 좁은 화면 누르는 곳 44×44)·touch(카드 44×44), 키 선택 `variant` |
+| `VideoPlayer`·`OriginalLink` | 과제 미디어 재생(구간 이동 요청)과 원본 새 창 열기 링크 |
 | `AssignmentView`·`CurriculumView` | 과제 목록(행 = 상세 링크)과 커리큘럼 진도(주차 단위 완료), `pageHeader`로 화면 제목·여백을 직접 그린다 |
 | `ThreadList` | Q&A 목록. `variant="tabs"`(Q&A 화면 상태 탭)·`"chips"`(관리자 학생 상세) |
 | `AnnouncementList` | 공지 목록. 고정 공지는 본문 미리보기 + 상세 보기, 나머지는 한 줄 링크(`layout`) |
 | `CommunityPostRow`·`ChoiceGroup`·`MobileMoreMenu` | 게시물 목록 행, 화살표·Home·End로 움직이는 라디오 칩 그룹, 좁은 화면 위쪽 막대 … 메뉴 |
+| `useQnaThreadLifecycle` | Q&A 질문의 종료·다시 열기·휴지통 이동과 확인 상태, 끝난 뒤 초점(`fallbackFocusRef`) |
+| `note-display.ts` | 노트 목록·이력·휴지통이 같이 쓰는 날짜·작성자·기한 표기(휴지통 기한은 날짜만) |
 
 공통 component를 우회해 같은 패턴을 다시 만들지 않는다. 의미나 책임이 다른 경우에는 억지로 variant에 합치지 않는다.
 
@@ -206,6 +214,8 @@ pill 형태는 오늘 날짜 표시와 개수처럼 모양 자체가 의미를 �
 - 데스크톱 본문은 보드 여백(`56px clamp(20px, 4.5vw, 64px) 80px`)과 보드별 최대 폭을 따른다.
 - 독립 route(`/community` 등)는 모바일에서도 포털 복귀·휴지통 같은 상위 이동 경로를 숨기지 않는다.
 - 넓은 표는 mobile에서 핵심 label-value list로 대체한다.
+- 폭마다 구역 순서가 다르면 문서 순서를 화면 순서와 같게 둔다. 상태 없는 구역은 폭마다 한 벌만 보이게(`md:hidden`·`max-md:hidden`) 두 번 렌더한다(학생 홈의 할 일·다가오는 일정). 입력 폼이나 확인 상태를 가진 구역은 두 벌로 둘 수 없으므로 `order`로 옮기고 컨테이너에 `reading-flow: flex-visual`을 더한다(관리자 학생 상세 레슨 일정, 과제 상세). 지원 브라우저에서는 Tab·읽기 순서도 화면 순서를 따른다.
+- 768–1279px 캘린더 상세는 오른쪽 서랍(CalendarTablet 보드), 1280px 이상은 달력 옆 비모달 패널이다.
 - CTA 문구는 desktop에서 줄바꿈되지 않게 짧고 구체적으로 작성한다.
 - 문서 페이지는 `100dvh` 기반 최소 높이를 사용한다. 포털 shell은 `100dvh`(좁은 화면은 52px 위쪽 막대를 뺀 `h-app`) 안에 스크롤 영역을 두고, 캘린더는 헤더를 제외한 남은 공간을 사용한다.
 - 공개 캘린더 연결 설정은 캘린더 아래 접힌 disclosure 안에 둔다. 관리자 학생 선택은 캘린더 머리의 보기 세그먼트 옆에 둔다. 캘린더 보기는 넓은 화면 월·주·일별·전체, 좁은 화면 월·일별·전체다.

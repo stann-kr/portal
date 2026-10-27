@@ -63,6 +63,7 @@ export function NoteTrashActions({
           <Button
             type="button"
             variant="outline"
+            className="max-md:h-11"
             disabled={isPending}
             onClick={() => run("restore")}
           >
@@ -73,6 +74,7 @@ export function NoteTrashActions({
           <Button
             type="button"
             variant="destructive"
+            className="max-md:h-11"
             disabled={isPending}
             aria-expanded={purgeConfirm.isOpen}
             onClick={(event) => purgeConfirm.request(event.currentTarget)}

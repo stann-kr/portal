@@ -61,7 +61,7 @@ export function RestoreNoteRevisionButton({
         size="sm"
         className={cn(
           RECORD_ACTION_CELL,
-          "aria-expanded:bg-muted",
+          "aria-expanded:bg-muted max-md:h-11",
           isCurrent && "font-normal text-muted-foreground disabled:opacity-100",
         )}
         disabled={isPending || isCurrent}

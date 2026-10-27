@@ -694,8 +694,9 @@ export function FullEditor({
   const markdownToggleLabel = isMarkdownMode ? "미리보기" : "마크다운";
   const MarkdownToggleIcon = isMarkdownMode ? Eye : FileText;
 
+  // 알림 자리는 늘 두되(나중에 넣은 글이 읽히도록), 비어 있으면 화면에서 빼 도구 줄에 빈 간격을 만들지 않는다.
   const imageStatus = (
-    <span role="status" aria-live="polite" className="text-xs">
+    <span role="status" aria-live="polite" className="text-xs empty:sr-only">
       {imageUpload.pendingCount > 0 ? (
         <span className="text-muted-foreground">
           이미지 {imageUpload.pendingCount}장 올리는 중…

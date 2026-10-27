@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useRef, useState, useTransition } from "react";
+import { useActionState, useEffect, useId, useRef, useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { deleteLesson, rescheduleLesson, type CreateLessonState } from "@/lib/actions/lessons";
@@ -30,6 +30,7 @@ export function LessonActions({
   const [scheduledAt, setScheduledAt] = useState(() => toKstDateTimeInputValue(item.date));
   const [notice, setNotice] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const deleteMessageId = useId();
   const [isDeleting, startDelete] = useTransition();
   const cancelDeleteRef = useRef<HTMLButtonElement>(null);
   const inputId = `lesson-reschedule-${item.id}`;
@@ -129,8 +130,8 @@ export function LessonActions({
       ) : null}
       <p className="text-xs/[18px] text-muted-foreground">학생의 일정과 구독 캘린더에도 반영됩니다.</p>
       {mode === "confirm-delete" ? (
-        <div role="alertdialog" aria-label="레슨 삭제 확인" className="flex flex-col gap-2.5 rounded-touch bg-destructive-muted px-3.5 py-3">
-          <p className="text-ui text-destructive">이 레슨을 삭제할까요? 학생의 일정과 구독 캘린더에서도 사라집니다.</p>
+        <div role="group" aria-labelledby={deleteMessageId} className="flex flex-col gap-2.5 rounded-touch bg-destructive-muted px-3.5 py-3">
+          <p id={deleteMessageId} className="text-ui text-destructive">이 레슨을 삭제할까요? 학생의 일정과 구독 캘린더에서도 사라집니다.</p>
           {deleteError ? <p role="alert" className="text-ui font-medium text-destructive">{deleteError}</p> : null}
           <div className="flex justify-end gap-1.5">
             <Button ref={cancelDeleteRef} type="button" variant="outline" className={cn(smallButton, "md:px-2.5")} onClick={() => setMode("view")} disabled={isDeleting}>

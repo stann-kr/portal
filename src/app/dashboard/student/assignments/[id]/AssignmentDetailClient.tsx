@@ -144,7 +144,8 @@ export function AssignmentDetailClient({
   };
 
   return (
-    <div className="flex flex-col pb-8 md:gap-7 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-10">
+    // 좁은 화면은 플레이어 → 머리 → 피드백 순서로 order를 바꾼다. 지원 브라우저는 reading-flow로 Tab·읽기 순서도 같게 한다.
+    <div className="flex flex-col pb-8 max-md:[reading-flow:flex-visual] md:gap-7 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-10">
       <MobileTopBar
         title="과제"
         back={{ href: returnTo, label: returnTo === STUDENT_LEGACY_REDIRECTS.assignments ? "과제 목록으로" : "이전 화면으로" }}

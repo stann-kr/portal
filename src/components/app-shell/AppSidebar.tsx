@@ -89,7 +89,7 @@ function SidebarNav({ role, variant, onNavigate }: { role: AppRole; variant: "de
                 : "text-secondary-foreground hover:bg-muted hover:text-foreground",
             )}
           >
-            <Icon className="size-4 shrink-0" strokeWidth={1.6} aria-hidden="true" />
+            <Icon className={cn("shrink-0", variant === "desktop" ? "size-4" : "size-[18px]")} strokeWidth={1.6} aria-hidden="true" />
             <span className="truncate">{label}</span>
           </Link>
         );

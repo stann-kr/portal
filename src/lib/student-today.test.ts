@@ -221,6 +221,6 @@ test("일정 유형 이름은 외부 캘린더 출처를 레슨으로 오인하�
   const external = item("ext", "EVENT", "2026-08-05T00:00:00.000Z", { subType: "LESSON" });
   external.source = { kind: "GOOGLE_CALENDAR", entity: "EXTERNAL_CALENDAR_EVENT", label: "Google 캘린더" };
   assert.equal(describeAgendaKind(external), "Google 캘린더");
-  assert.equal(describeAgendaKind(item("gig", "EVENT", "2026-08-05T00:00:00.000Z", { subType: "GIG" })), "공연·행사");
+  assert.equal(describeAgendaKind(item("gig", "EVENT", "2026-08-05T00:00:00.000Z", { subType: "GIG" })), "공연");
   assert.equal(describeAgendaKind(item("n", "NOTE", "2026-08-05T00:00:00.000Z")), "노트");
 });

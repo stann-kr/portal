@@ -658,7 +658,8 @@ function ThreadDetailContent({
                         aria-controls={draftDetailsId}
                         title="임시 저장 상태 자세히 보기"
                         onClick={() => setDraftDetailsOpen((open) => !open)}
-                        className="rounded-sm text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        // 좁은 화면 입력 막대에서도 누르는 곳은 44px(줄 높이는 바꾸지 않는다).
+                        className="-my-3 inline-flex h-11 items-center rounded-sm text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:my-0 md:h-auto"
                       >
                         {draftSummary}
                       </button>

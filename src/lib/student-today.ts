@@ -241,7 +241,7 @@ export function getStudentTodoEntries(summary: StudentTodaySummary, limit = 5): 
 const EVENT_KIND_LABELS: Record<string, string> = {
   LESSON: "레슨",
   PRACTICE: "연습",
-  GIG: "공연·행사",
+  GIG: "공연",
   NOTE: "메모",
 };
 

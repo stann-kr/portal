@@ -10,7 +10,7 @@ const MOBILE_LINK =
 /**
  * 학생·관리자 노트 목록이 같은 머리말과 행동(시간으로 보기·휴지통·작성)을 쓴다(Notes·MobileNotes 보드).
  * 넓은 화면은 제목 오른쪽에 행동을 두고, 좁은 화면은 위쪽 막대가 제목·새 노트를, 목록 맨 아래 새 노트 줄이 작성을 맡으므로
- * 시간으로 보기·휴지통을 목록 아래 줄로 보낸다(부모가 `flex flex-col`이면 `order-last`로 맨 아래에 놓인다).
+ * 시간으로 보기·휴지통은 목록 뒤에 렌더하는 `NotesMobileLinks`가 맡는다(화면 순서와 읽기·Tab 순서를 같게 둔다).
  */
 export function NotesPageHeader({
   eyebrow,
@@ -50,14 +50,20 @@ export function NotesPageHeader({
           </div>
         </div>
       </header>
-      <nav aria-label="노트 바로 가기" className="order-last -mt-5 flex flex-col md:hidden">
-        <Link href={timelineHref} className={MOBILE_LINK}>
-          <Clock3 className="size-4" strokeWidth={1.6} aria-hidden="true" />시간으로 보기
-        </Link>
-        <Link href={trashHref} className={MOBILE_LINK}>
-          <Trash2 className="size-4" strokeWidth={1.6} aria-hidden="true" />휴지통
-        </Link>
-      </nav>
     </>
+  );
+}
+
+/** 좁은 화면에서 노트 목록 바로 뒤에 두는 시간으로 보기·휴지통 줄(MobileNotes 보드). */
+export function NotesMobileLinks({ timelineHref, trashHref }: { timelineHref: string; trashHref: string }) {
+  return (
+    <nav aria-label="노트 바로 가기" className="-mt-5 flex flex-col md:hidden">
+      <Link href={timelineHref} className={MOBILE_LINK}>
+        <Clock3 className="size-4" strokeWidth={1.6} aria-hidden="true" />시간으로 보기
+      </Link>
+      <Link href={trashHref} className={MOBILE_LINK}>
+        <Trash2 className="size-4" strokeWidth={1.6} aria-hidden="true" />휴지통
+      </Link>
+    </nav>
   );
 }

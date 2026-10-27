@@ -53,9 +53,16 @@ interface DiggingBoardProps {
   heading?: ReactNode;
   /** 좁은 화면 위쪽 막대 오른쪽에 트랙 추가를 둔다(학생 디깅 화면). readonly에서는 무시한다. */
   mobileTopBar?: boolean;
+  /** 다른 화면(캘린더·홈 등)에서 열었을 때 위쪽 막대 왼쪽의 뒤로. 없으면 메뉴를 둔다. */
+  mobileBack?: { href: string; label: string };
 }
 
 type CellVariant = "table" | "card";
+
+/** 링크 열기 버튼 이름. 기본 컬럼 이름이 "링크"라 "링크 링크"로 겹치지 않게 한다. */
+function linkName(columnName: string): string {
+  return columnName.endsWith("링크") ? columnName : `${columnName} 링크`;
+}
 
 /** 카드에서 반 칸을 쓰는 짧은 값(선호도·별점처럼 나란히 놓는다). */
 const COMPACT_TYPES: ReadonlySet<DiggingColumnType> = new Set(["select", "rating", "number", "camelot_key"]);
@@ -180,7 +187,7 @@ function EditableCell({
           href={text}
           target="_blank"
           rel="noreferrer"
-          aria-label={`${columnName} 링크 열기`}
+          aria-label={`${linkName(columnName)} 열기`}
           className="text-ui text-secondary-foreground underline underline-offset-[3px] hover:text-foreground"
         >
           링크
@@ -287,7 +294,7 @@ function EditableCell({
             href={text}
             target="_blank"
             rel="noreferrer"
-            aria-label={`${columnName} 링크 새 창에서 열기`}
+            aria-label={`${linkName(columnName)} 새 창에서 열기`}
             className="flex size-6 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             <ExternalLink className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
@@ -370,6 +377,7 @@ export function DiggingBoard({
   readonly = false,
   heading,
   mobileTopBar = false,
+  mobileBack,
 }: DiggingBoardProps) {
   // 컬럼은 서버가 소유하고 변경 뒤 router.refresh로 다시 받는다. 트랙은 편집 중 상태를 유지한다.
   const columns = initialColumns;
@@ -575,7 +583,7 @@ export function DiggingBoard({
 
   return (
     <div className="flex flex-col gap-3 md:gap-6">
-      {mobileTopBar && !readonly ? <MobileTopBar title="디깅 보드" actions={topBarActions} /> : null}
+      {mobileTopBar && !readonly ? <MobileTopBar title="디깅 보드" back={mobileBack} actions={topBarActions} /> : null}
 
       {/* 머리: 넓은 화면은 제목(왼쪽)과 기간·컬럼·트랙 추가(오른쪽)가 한 줄, 좁은 화면은 기간 입력만 보인다. */}
       <div className="relative flex flex-col gap-3 md:flex-row md:flex-wrap md:items-end md:justify-between md:gap-4">

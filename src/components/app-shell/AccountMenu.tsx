@@ -75,7 +75,7 @@ export function AccountMenu({
               size === "touch" ? "size-11 rounded-touch" : "size-8 rounded-md",
             )}
           >
-            <Ellipsis className="size-4" aria-hidden="true" />
+            <Ellipsis className={size === "touch" ? "size-[18px]" : "size-4"} aria-hidden="true" />
           </button>
         </DropdownMenu.Trigger>
         <DropdownMenu.Portal>
