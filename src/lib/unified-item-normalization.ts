@@ -1,5 +1,5 @@
 import type { CalendarEventType, QnaStatus } from "@/db/schema";
-import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
+import { ASSIGNMENT_TASK_SUBTYPE, type UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 import { getSearchableDocumentText } from "@/lib/document-search";
 
 const NOTE_PREVIEW_MAX_CHARS = 240;
@@ -69,9 +69,21 @@ type QnaThreadRow = {
 
 type AssignmentRow = {
   id: string;
-  mediaUrl: string;
+  mediaUrl: string | null;
   submittedAt: Date | null;
+  /** 관리자가 낸 과제에 대한 제출이면 그 과제 제목 */
+  taskTitle?: string | null;
 };
+
+/** 아직 제출하지 않은 관리자 과제(마감일에 놓인다). */
+type AssignmentTaskRow = {
+  id: string;
+  title: string;
+  dueAt: Date | null;
+  createdAt: Date;
+  submissionFormat: string;
+};
+
 
 export type UnifiedItemNormalizationInput = {
   profile: ProfileContext;
@@ -83,10 +95,12 @@ export type UnifiedItemNormalizationInput = {
   threads: QnaThreadRow[];
   assignments: AssignmentRow[];
   feedbackCounts: Record<string, number>;
+  tasks?: AssignmentTaskRow[];
 };
 
-/** 목록·캘린더에 원본 URL 대신 제출 플랫폼을 보여 주는 과제 제목. */
-export function describeAssignmentMedia(mediaUrl: string): string {
+/** 목록·캘린더에 원본 URL 대신 제출 플랫폼을 보여 주는 과제 제목. 링크가 없으면 글 제출이다. */
+export function describeAssignmentMedia(mediaUrl: string | null): string {
+  if (!mediaUrl) return "글 제출";
   let hostname = "";
   try {
     hostname = new URL(mediaUrl).hostname.toLowerCase();
@@ -100,6 +114,17 @@ export function describeAssignmentMedia(mediaUrl: string): string {
     return "SoundCloud 믹스셋";
   }
   return "제출한 믹스셋";
+}
+
+/** 제출 목록의 제목: 관리자 과제 제출이면 과제 제목, 자유 제출이면 플랫폼 이름(글이면 "글 제출"). */
+export function describeAssignmentSubmission({
+  mediaUrl,
+  taskTitle,
+}: {
+  mediaUrl: string | null;
+  taskTitle?: string | null;
+}): string {
+  return taskTitle?.trim() || describeAssignmentMedia(mediaUrl);
 }
 
 /** 학생 스페이스의 단일 표시명 규칙. */
@@ -226,6 +251,7 @@ export function normalizeUnifiedItems({
   threads,
   assignments,
   feedbackCounts,
+  tasks = [],
 }: UnifiedItemNormalizationInput): UnifiedItem[] {
   const space = createSpace(profile);
   const source = createSource;
@@ -276,7 +302,7 @@ export function normalizeUnifiedItems({
     items.push({
       id: assignment.id,
       type: "ASSIGNMENT",
-      title: describeAssignmentMedia(assignment.mediaUrl),
+      title: describeAssignmentSubmission(assignment),
       date: new Date(assignment.submittedAt ?? Date.now()),
       metadata: {
         mediaUrl: assignment.mediaUrl,
@@ -284,6 +310,23 @@ export function normalizeUnifiedItems({
       },
       space,
       source: source("ASSIGNMENT"),
+    });
+  }
+
+  for (const task of tasks) {
+    items.push({
+      id: task.id,
+      type: "ASSIGNMENT",
+      subType: ASSIGNMENT_TASK_SUBTYPE,
+      title: task.title,
+      date: new Date(task.dueAt ?? task.createdAt),
+      metadata: {
+        taskId: task.id,
+        dueAt: task.dueAt ? task.dueAt.toISOString() : null,
+        submissionFormat: task.submissionFormat,
+      },
+      space,
+      source: source("ASSIGNMENT_TASK"),
     });
   }
 

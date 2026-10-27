@@ -55,6 +55,7 @@ export default async function QnaThreadPage({
           studentName={studentName}
           createdAt={thread.createdAt?.toISOString() ?? null}
           returnTo={returnTo}
+          guideAnchor={thread.guideAnchor}
         />
       </div>
     </div>

@@ -110,12 +110,28 @@ async function uploadOne(
 }
 
 /**
+ * 본문 이미지를 어디에 올릴지 정한다. 기본은 학생 문서 이미지(media_objects) 흐름이고,
+ * 공용 가이드처럼 다른 저장 경로를 쓰는 편집기는 자기 uploader를 넘긴다.
+ */
+export type EditorImageUploader = {
+  upload: (file: File, draftOperationId: string) => Promise<{ deliveryUrl: string; mediaObjectId: string }>;
+  /** 본문에 넣지 않기로 한 업로드를 정리한다. */
+  abandon: (uploadId: string) => void;
+};
+
+export const DOCUMENT_IMAGE_UPLOADER: EditorImageUploader = {
+  upload: uploadOne,
+  abandon: abandonEditorImage,
+};
+
+/**
  * 편집기 본문 이미지 업로드를 맡는다. 편집기 하나가 한 draft 작업 ID를 쓰고,
  * 업로드가 끝난 이미지만 넘긴다. 넣을지·미룰지·버릴지는 편집기가 `context`로 판단한다.
  * 문서 저장 때 서버가 이미지를 문서에 연결한다.
  */
 export function useEditorImageUpload<Context>(
   onUploaded: (upload: EditorUploadedImage, context: Context) => void,
+  uploader: EditorImageUploader = DOCUMENT_IMAGE_UPLOADER,
 ) {
   const [state, setState] = useState<EditorImageUploadState>({
     pendingCount: 0,
@@ -124,6 +140,8 @@ export function useEditorImageUpload<Context>(
   const draftOperationIdRef = useRef<string | null>(null);
   const onUploadedRef = useRef(onUploaded);
   onUploadedRef.current = onUploaded;
+  const uploaderRef = useRef(uploader);
+  uploaderRef.current = uploader;
 
   const uploadImages = useCallback((files: readonly File[], context: Context) => {
     const images = files.filter(isEditorImageFile);
@@ -141,7 +159,7 @@ export function useEditorImageUpload<Context>(
     void (async () => {
       for (const file of valid) {
         try {
-          const uploaded = await uploadOne(file, draftOperationId);
+          const uploaded = await uploaderRef.current.upload(file, draftOperationId);
           onUploadedRef.current({ ...uploaded, file }, context);
           setState((current) => ({ ...current, pendingCount: current.pendingCount - 1 }));
         } catch (error) {

@@ -90,6 +90,23 @@ const SAFE_SPAN = /^\d{1,4}$/u;
 const SAFE_LIST_START = /^-?\d{1,7}$/u;
 const SAFE_COLWIDTH = /^\d{1,7}(?:,\d{1,7})*$/u;
 const MAX_ATTRIBUTES_PER_ELEMENT = 64;
+/** 가이드 질문 위치를 가리키는 블록 식별자. 노트·게시물도 값만 허용하고 만들지는 않는다. */
+export const SAFE_BLOCK_ID = /^[A-Za-z0-9_-]{1,64}$/u;
+export const BLOCK_ID_TAGS: ReadonlySet<string> = new Set([
+  "blockquote",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "hr",
+  "img",
+  "li",
+  "p",
+  "pre",
+  "table",
+]);
 const MAX_RICH_TEXT_DEPTH = 128;
 const HTML_VOID_TAGS = new Set([
   "area",
@@ -398,6 +415,10 @@ function sanitizeAttribute(tagName: string, attribute: HtmlAttribute): HtmlAttri
     (tagName === "p" || /^h[1-6]$/u.test(tagName)) &&
     SAFE_TEXT_ALIGNMENTS.has(value)
   ) {
+    return { name, value };
+  }
+
+  if (name === "data-block-id" && BLOCK_ID_TAGS.has(tagName) && SAFE_BLOCK_ID.test(value)) {
     return { name, value };
   }
 

@@ -48,25 +48,37 @@ const OUTPUT_TAGS = new Set([
   "u",
   "ul",
 ]);
-const OUTPUT_ATTRIBUTES = new Map<string, ReadonlySet<string>>([
-  ["a", new Set(["href", "title"])],
-  ["col", new Set(["title", "width"])],
-  ["div", new Set(["data-youtube-video", "title"])],
-  ["h1", new Set(["data-text-align", "title"])],
-  ["h2", new Set(["data-text-align", "title"])],
-  ["h3", new Set(["data-text-align", "title"])],
-  ["h4", new Set(["data-text-align", "title"])],
-  ["h5", new Set(["data-text-align", "title"])],
-  ["h6", new Set(["data-text-align", "title"])],
-  ["iframe", new Set(["allowfullscreen", "loading", "src", "title"])],
-  ["img", new Set(["alt", "height", "src", "title", "width"])],
-  ["li", new Set(["data-checked", "data-type", "title"])],
-  ["ol", new Set(["start", "title"])],
-  ["p", new Set(["data-text-align", "title"])],
-  ["td", new Set(["colspan", "colwidth", "rowspan", "title"])],
-  ["th", new Set(["colspan", "colwidth", "rowspan", "title"])],
-  ["ul", new Set(["data-type", "title"])],
+const BLOCK_ID_OUTPUT_TAGS = new Set([
+  "blockquote", "h1", "h2", "h3", "h4", "h5", "h6", "hr", "img", "li", "p", "pre", "table",
 ]);
+const OUTPUT_ATTRIBUTES = new Map<string, ReadonlySet<string>>(
+  ([
+    ["a", ["href", "title"]],
+    ["col", ["title", "width"]],
+    ["div", ["data-youtube-video", "title"]],
+    ["h1", ["data-text-align", "title"]],
+    ["h2", ["data-text-align", "title"]],
+    ["h3", ["data-text-align", "title"]],
+    ["h4", ["data-text-align", "title"]],
+    ["h5", ["data-text-align", "title"]],
+    ["h6", ["data-text-align", "title"]],
+    ["iframe", ["allowfullscreen", "loading", "src", "title"]],
+    ["img", ["alt", "height", "src", "title", "width"]],
+    ["li", ["data-checked", "data-type", "title"]],
+    ["ol", ["start", "title"]],
+    ["p", ["data-text-align", "title"]],
+    ["td", ["colspan", "colwidth", "rowspan", "title"]],
+    ["th", ["colspan", "colwidth", "rowspan", "title"]],
+    ["ul", ["data-type", "title"]],
+    ["blockquote", ["title"]],
+    ["hr", ["title"]],
+    ["pre", ["title"]],
+    ["table", ["title"]],
+  ] as const).map(([tag, names]) => [
+    tag,
+    new Set<string>([...names, ...(BLOCK_ID_OUTPUT_TAGS.has(tag) ? ["data-block-id"] : [])]),
+  ]),
+);
 
 function assertOutputPolicy(htmlValue: string): void {
   const context = defaultTreeAdapter.createElement("div", html.NS.HTML, []);
@@ -388,4 +400,37 @@ test("브라우저 DOM global이 없는 Node 환경에서 동작한다", () => {
   assert.equal("document" in globalThis, false);
   assert.equal("DOMParser" in globalThis, false);
   assert.equal(sanitizeHtml('<p onclick="alert(1)">서버 본문</p>'), "<p>서버 본문</p>");
+});
+
+test("가이드 블록 식별자 data-block-id는 블록 태그와 안전한 값만 허용한다", () => {
+  const sanitized = sanitizeHtml(
+    '<p data-block-id="b_1-A">문단</p>' +
+      '<h2 data-block-id="h2id">제목</h2>' +
+      '<ul><li data-block-id="li1"><p data-block-id="lp1">항목</p></li></ul>' +
+      '<blockquote data-block-id="q1"><p>인용</p></blockquote>' +
+      '<pre data-block-id="pre1"><code>x</code></pre>' +
+      '<table data-block-id="t1"><tbody><tr><td data-block-id="cell">셀</td></tr></tbody></table>' +
+      '<img src="/api/guide-assets/a" data-block-id="img1">' +
+      '<hr data-block-id="hr1">' +
+      '<p data-block-id="bad id">공백</p>' +
+      '<p data-block-id="">빈 값</p>' +
+      `<p data-block-id="${"a".repeat(65)}">너무 김</p>` +
+      '<p data-block-id="&quot;onload=x">따옴표</p>' +
+      '<span data-block-id="s1">인라인</span>' +
+      '<strong data-block-id="s2">강조</strong>',
+  );
+
+  for (const id of ["b_1-A", "h2id", "li1", "lp1", "q1", "pre1", "t1", "img1", "hr1"]) {
+    assert.match(sanitized, new RegExp(`data-block-id="${id}"`, "u"));
+  }
+  assert.doesNotMatch(sanitized, /data-block-id="(?:bad id|cell|s1|s2|)"/u);
+  assert.doesNotMatch(sanitized, /data-block-id="a{65}"/u);
+  assert.doesNotMatch(sanitized, /onload/u);
+  assert.equal(sanitizeHtml(sanitized), sanitized);
+  assertOutputPolicy(sanitized);
+});
+
+test("data-block-id가 없는 노트·게시물 HTML은 그대로다", () => {
+  const note = '<p data-text-align="center">본문</p><ul data-type="taskList"><li data-type="taskItem" data-checked="false"><p>할 일</p></li></ul>';
+  assert.equal(sanitizeHtml(note), note);
 });

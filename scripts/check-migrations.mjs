@@ -38,6 +38,14 @@ import {
   validateExternalCalendarSubscriptionUpgrade,
 } from "./migration-check/external-calendar.mjs";
 import {
+  validateAssignmentTaskSchema,
+  validateAssignmentTaskUpgrade,
+} from "./migration-check/assignment-tasks.mjs";
+import {
+  validateGuidePageSchema,
+  validateGuidePageUpgrade,
+} from "./migration-check/guide-pages.mjs";
+import {
   validateAccountPrivacyAtomicSource,
   validateAccountPrivacySemantics,
   validateAccountPrivacyUpgrade,
@@ -116,6 +124,8 @@ async function main() {
     validateServerDraftTriggers(migrationDatabase);
     validateMediaLifecycleTriggers(migrationDatabase);
     validateExternalCalendarSubscriptionSchema(migrationDatabase);
+    validateAssignmentTaskSchema(migrationDatabase);
+    validateGuidePageSchema(migrationDatabase);
     console.log("PASS document, server draft, media lifecycle CHECK/trigger signatures");
 
     validateContinuitySemantics(migrationDatabase);
@@ -156,6 +166,10 @@ async function main() {
   console.log("PASS populated 0012 → 0013 external calendar upgrade, constraints and owner cascade");
   await validateDocumentImageUpgrade(migrationFiles);
   console.log("PASS populated 0013 → 0014 document image upgrade, trigger rebuild and purpose constraints");
+  await validateAssignmentTaskUpgrade(migrationFiles);
+  console.log("PASS populated 0014 → 0015 assignment task upgrade, feedback preservation and occurrence uniqueness");
+  await validateGuidePageUpgrade(migrationFiles);
+  console.log("PASS populated 0015 → 0016 guide page upgrade, server draft rebuild and anchor preservation");
 }
 
 try {

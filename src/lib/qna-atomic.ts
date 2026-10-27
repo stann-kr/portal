@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import type { DbContext } from "@/db/client";
 import {
+  qnaGuideAnchors,
   qnaReplies,
   qnaThreads,
   type QnaStatus,
@@ -79,6 +80,14 @@ export type QnaMutationResult =
       currentRevision?: number;
     };
 
+/** 가이드 구간 질문 위치. page_title은 생성 시점의 제목 snapshot이다. */
+export type QnaGuideAnchorWrite = {
+  guidePageId: string;
+  pageTitle: string;
+  blockId: string | null;
+  quote: string;
+};
+
 export type CreateQnaThreadWrite = {
   actor: DocumentAtomicActor;
   threadId: string;
@@ -88,6 +97,7 @@ export type CreateQnaThreadWrite = {
   contentHtml: string;
   attachmentUrl: string | null;
   attachmentObjectId: string | null;
+  guideAnchor?: QnaGuideAnchorWrite | null;
   now: Date;
 };
 
@@ -303,7 +313,41 @@ function createQnaThreadCreateRequest(
     contentHtml: write.contentHtml,
     attachmentUrl: write.attachmentUrl,
     attachmentObjectId: write.attachmentObjectId,
+    guideAnchor: write.guideAnchor
+      ? {
+          guidePageId: write.guideAnchor.guidePageId,
+          blockId: write.guideAnchor.blockId,
+          quote: write.guideAnchor.quote,
+        }
+      : null,
   };
+}
+
+async function findGuideAnchor(context: DbContext, threadId: string) {
+  const [anchor] = await asDocumentReadDb(context)
+    .select({
+      guidePageId: qnaGuideAnchors.guidePageId,
+      blockId: qnaGuideAnchors.anchorBlockId,
+      quote: qnaGuideAnchors.anchorQuote,
+    })
+    .from(qnaGuideAnchors)
+    .where(eq(qnaGuideAnchors.threadId, threadId))
+    .limit(1);
+  return anchor ?? null;
+}
+
+/** 이미 있는 질문의 위치가 이번 요청과 같은지 본다. 페이지가 지워져 연결이 끊긴 위치도 같은 위치로 본다. */
+function sameGuideAnchor(
+  existing: Awaited<ReturnType<typeof findGuideAnchor>> | null,
+  requested: QnaGuideAnchorWrite | null | undefined,
+): boolean {
+  if (!requested) return existing === null;
+  return Boolean(
+    existing &&
+      (existing.guidePageId === null || existing.guidePageId === requested.guidePageId) &&
+      existing.blockId === requested.blockId &&
+      existing.quote === requested.quote,
+  );
 }
 
 async function createQnaReplyRequest(
@@ -438,7 +482,9 @@ export async function createQnaThreadAtomically(
   const existingReply = await findReply(context, write.replyId);
   const recordId = deriveDocumentOperationRecordId(write.actor.id, write.operationId);
   if (existingThread || existingReply) {
+    const existingAnchor = existingThread ? await findGuideAnchor(context, existingThread.id) : null;
     const sameSubmission = Boolean(
+      sameGuideAnchor(existingAnchor, write.guideAnchor) &&
       existingThread &&
         existingReply &&
         !existingThread.deletedAt &&
@@ -592,6 +638,24 @@ export async function createQnaThreadAtomically(
           documentEpochSeconds(write.now),
         ],
       },
+      ...(write.guideAnchor
+        ? [{
+            // 페이지가 그 사이 지워졌으면 연결 없이 제목·인용만 남긴다(FK 실패로 질문을 잃지 않는다).
+            query: `
+              INSERT INTO qna_guide_anchors (
+                thread_id, guide_page_id, page_title, anchor_block_id, anchor_quote, created_at
+              ) VALUES (?, (SELECT id FROM guide_pages WHERE id = ?), ?, ?, ?, ?)
+            `,
+            params: [
+              write.threadId,
+              write.guideAnchor.guidePageId,
+              write.guideAnchor.pageTitle,
+              write.guideAnchor.blockId,
+              write.guideAnchor.quote,
+              documentEpochSeconds(write.now),
+            ],
+          }]
+        : []),
       qnaEventInsertStatement({
         eventId: deriveQnaEventId(write.actor.id, write.operationId),
         threadId: write.threadId,

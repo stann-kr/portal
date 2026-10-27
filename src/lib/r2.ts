@@ -419,3 +419,76 @@ export async function headR2Object(objectKey: string): Promise<MediaObjectHead |
 export async function deleteR2Object(objectKey: string): Promise<void> {
   await (await getMediaObjectStorage()).delete(objectKey);
 }
+
+const GUIDE_ASSET_OBJECT_KEY_PATTERN =
+  /^guide\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
+
+function assertGuideAssetObjectKey(objectKey: string): void {
+  if (!GUIDE_ASSET_OBJECT_KEY_PATTERN.test(objectKey)) {
+    throw new Error("가이드 이미지 R2 object key가 올바르지 않습니다.");
+  }
+}
+
+/** 공용 가이드 이미지 저장소. 학생 media 수명주기와 분리된 `guide/<id>` key만 다룬다. */
+export interface GuideAssetObjectStorage {
+  put(objectKey: string, bytes: Uint8Array, contentType: string): Promise<void>;
+  get(objectKey: string): Promise<{ body: ReadableStream<Uint8Array>; size: number; contentType: string | null } | null>;
+}
+
+export async function getGuideAssetStorage(): Promise<GuideAssetObjectStorage> {
+  const bucket = await getR2BucketBinding();
+  if (bucket) {
+    return {
+      async put(objectKey, bytes, contentType) {
+        assertGuideAssetObjectKey(objectKey);
+        const stream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(bytes);
+            controller.close();
+          },
+        });
+        const stored = await bucket.put(objectKey, withKnownLength(stream, bytes.byteLength), {
+          httpMetadata: { contentType },
+        });
+        if (!stored) throw new Error("가이드 이미지를 저장하지 못했습니다.");
+      },
+      async get(objectKey) {
+        assertGuideAssetObjectKey(objectKey);
+        const object = await bucket.get(objectKey);
+        if (!object?.body) return null;
+        return { body: object.body, size: object.size, contentType: object.httpMetadata?.contentType ?? null };
+      },
+    };
+  }
+
+  const client = createR2Client();
+  return {
+    async put(objectKey, bytes, contentType) {
+      assertGuideAssetObjectKey(objectKey);
+      await client.send(
+        new PutObjectCommand({
+          Bucket: BUCKET_NAME,
+          Key: objectKey,
+          Body: bytes,
+          ContentType: contentType,
+          ContentLength: bytes.byteLength,
+        }),
+      );
+    },
+    async get(objectKey) {
+      assertGuideAssetObjectKey(objectKey);
+      try {
+        const result = await client.send(new GetObjectCommand({ Bucket: BUCKET_NAME, Key: objectKey }));
+        if (!result.Body) return null;
+        return {
+          body: toWebReadableStream(result.Body),
+          size: result.ContentLength ?? 0,
+          contentType: result.ContentType ?? null,
+        };
+      } catch (error: unknown) {
+        if (isNotFoundStorageError(error)) return null;
+        throw error;
+      }
+    },
+  };
+}

@@ -8,6 +8,8 @@
  */
 "use client";
 
+import type { StudentAssignmentSummary } from "@/lib/assignment-summary";
+import type { AssignmentTaskItem } from "@/lib/actions/assignmentTasks";
 import { useState, useEffect, useRef, useSyncExternalStore, useId } from "react";
 import Link from "next/link";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
@@ -59,12 +61,6 @@ type CurriculumModule = {
   isCompleted: boolean;
 };
 
-type Assignment = {
-  id: string;
-  mediaUrl: string;
-  submittedAt: Date | null;
-  feedbackCount: number;
-};
 
 type DiggingColumn = {
   id: string;
@@ -144,11 +140,15 @@ function focusFirstAvailable(candidates: ReadonlyArray<HTMLElement | null | unde
   return null;
 }
 
+const EMPTY_ASSIGNMENT_TASKS: AssignmentTaskItem[] = [];
+
 interface CalendarSectionProps {
   initialLocation?: WorkspaceLocation;
   unifiedItems: UnifiedItem[];
   curriculumModules: CurriculumModule[];
-  assignments: Assignment[];
+  assignments: StudentAssignmentSummary[];
+  /** 학생 과제 보기의 받은 과제(관리자는 쓰지 않는다) */
+  assignmentTasks?: AssignmentTaskItem[];
   studentId: string;
   /** 현재 작성자의 ID. draft를 계정별로 격리한다. */
   actorId: string;
@@ -179,6 +179,7 @@ export function CalendarSection({
   unifiedItems,
   curriculumModules,
   assignments,
+  assignmentTasks = EMPTY_ASSIGNMENT_TASKS,
   studentId,
   actorId,
   spaceLabel,
@@ -671,7 +672,7 @@ export function CalendarSection({
             <CurriculumView pageHeader initialModules={curriculumModules} />
           ) : null}
           {workspaceRole === "student" && activeTab === "assignments" ? (
-            <AssignmentView pageHeader initialAssignments={assignments} />
+            <AssignmentView pageHeader actorId={actorId} initialAssignments={assignments} initialTasks={assignmentTasks} />
           ) : null}
         </Tabs>
 

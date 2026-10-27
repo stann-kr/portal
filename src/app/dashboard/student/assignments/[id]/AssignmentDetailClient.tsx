@@ -15,18 +15,29 @@ import { mediaSourceLabel } from "@/components/player/media-source";
 import { TimelineFeedback, type FeedbackItem } from "@/components/feedback/TimelineFeedback";
 import { AssignmentDeleteAction } from "@/components/student-portal/AssignmentDeleteAction";
 import { useConfirmAction } from "@/components/ui/confirm-action";
+import { RichTextContent } from "@/components/editor/RichTextContent";
 import { STUDENT_LEGACY_REDIRECTS } from "@/lib/legacy-dashboard-routes";
 import { cn } from "@/lib/utils";
 
 interface AssignmentDetailClientProps {
   assignmentId: string;
   actorId: string;
-  mediaUrl: string;
+  /** 글만 제출하면 null. 링크가 있을 때만 플레이어를 보인다. */
+  mediaUrl: string | null;
+  textHtml: string | null;
+  /** 관리자가 낸 과제에 대한 제출이면 과제 정보 */
+  task: {
+    title: string;
+    descriptionHtml: string;
+    formatLabel: string;
+    dueLabel: string | null;
+    late: boolean;
+  } | null;
   feedbackList: FeedbackItem[];
   isAdmin: boolean;
   /** 피드백 전 본인 제출을 삭제할 수 있을 때 삭제 뒤 돌아갈 경로. */
   deleteReturnTo?: string;
-  /** 머리 제목(제출 이름이 없어 제공처 이름) */
+  /** 머리 제목(과제 제목, 자유 제출은 제공처 이름) */
   title: string;
   /** 넓은 화면 제출 시각(연도 포함)과 좁은 화면 제출 시각 */
   submittedLabel: string;
@@ -42,12 +53,12 @@ interface AssignmentDetailClientProps {
 const MENU_ITEM_CLASS =
   "flex h-11 w-full cursor-default select-none items-center gap-2.5 rounded-touch px-3 text-md text-foreground outline-none data-[highlighted]:bg-muted";
 
-/** 좁은 화면 위쪽 막대 오른쪽의 더 보기: 원본 열기와 (피드백 전 본인 제출이면) 제출 삭제. */
+/** 좁은 화면 위쪽 막대 오른쪽의 더 보기: (링크 제출이면) 원본 열기와 (피드백 전 본인 제출이면) 제출 삭제. */
 function AssignmentMoreMenu({
   mediaUrl,
   onRequestDelete,
 }: {
-  mediaUrl: string;
+  mediaUrl: string | null;
   onRequestDelete?: (trigger: HTMLElement | null) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -81,12 +92,14 @@ function AssignmentMoreMenu({
           style={{ zIndex: "var(--z-dropdown)" }}
           className="portal-menu w-56 rounded-lg border border-border bg-background p-1 shadow-floating"
         >
-          <DropdownMenu.Item asChild className={MENU_ITEM_CLASS}>
-            <a href={mediaUrl} target="_blank" rel="noopener noreferrer">
-              <ExternalLink className="size-4 text-secondary-foreground" strokeWidth={1.6} aria-hidden="true" />
-              원본 열기
-            </a>
-          </DropdownMenu.Item>
+          {mediaUrl ? (
+            <DropdownMenu.Item asChild className={MENU_ITEM_CLASS}>
+              <a href={mediaUrl} target="_blank" rel="noopener noreferrer">
+                <ExternalLink className="size-4 text-secondary-foreground" strokeWidth={1.6} aria-hidden="true" />
+                원본 열기
+              </a>
+            </DropdownMenu.Item>
+          ) : null}
           {onRequestDelete ? (
             <DropdownMenu.Item
               className={cn(MENU_ITEM_CLASS, "text-destructive")}
@@ -110,6 +123,8 @@ export function AssignmentDetailClient({
   assignmentId,
   actorId,
   mediaUrl,
+  textHtml,
+  task,
   feedbackList,
   isAdmin,
   deleteReturnTo,
@@ -135,7 +150,9 @@ export function AssignmentDetailClient({
   const requestDelete = deleteConfirm.request;
 
   const topBarActions = useMemo(
-    () => <AssignmentMoreMenu mediaUrl={mediaUrl} onRequestDelete={canDelete ? requestDelete : undefined} />,
+    () => (mediaUrl || canDelete
+      ? <AssignmentMoreMenu mediaUrl={mediaUrl} onRequestDelete={canDelete ? requestDelete : undefined} />
+      : null),
     [canDelete, mediaUrl, requestDelete],
   );
 
@@ -160,21 +177,57 @@ export function AssignmentDetailClient({
         <span>
           <span className="md:hidden">{submittedLabelShort}</span>
           <span className="hidden md:inline">{submittedLabel}</span>
-          {` · ${mediaSourceLabel(mediaUrl)}`}
+          {task?.late ? " · 늦은 제출" : ""}
+          {mediaUrl ? ` · ${mediaSourceLabel(mediaUrl)}` : ""}
         </span>
-        <span aria-hidden="true" className="hidden md:inline">&nbsp;·&nbsp;</span>
-        <a
-          href={mediaUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex h-11 items-center gap-1 rounded-sm text-secondary-foreground underline underline-offset-[3px] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:h-auto"
-        >
-          원본 열기
-          <ExternalLink className="size-3 md:hidden" strokeWidth={1.8} aria-hidden="true" />
-        </a>
+        {mediaUrl ? (
+          <>
+            <span aria-hidden="true" className="hidden md:inline">&nbsp;·&nbsp;</span>
+            <a
+              href={mediaUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex h-11 items-center gap-1 rounded-sm text-secondary-foreground underline underline-offset-[3px] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:h-auto"
+            >
+              원본 열기
+              <ExternalLink className="size-3 md:hidden" strokeWidth={1.8} aria-hidden="true" />
+            </a>
+          </>
+        ) : null}
       </p>
     </header>
   );
+
+  // 과제 설명(관리자가 낸 과제)과 학생이 쓴 글. 둘 다 없으면 그리지 않는다.
+  const taskBrief = task ? (
+    <section aria-label="과제 내용" className="flex flex-col gap-2 rounded-lg border border-border p-4">
+      <p className="text-xs text-muted-foreground">
+        {[`제출 형식: ${task.formatLabel}`, task.dueLabel].filter(Boolean).join(" · ")}
+      </p>
+      {task.descriptionHtml ? (
+        <RichTextContent html={task.descriptionHtml} className="text-body leading-6 text-secondary-foreground" />
+      ) : (
+        <p className="text-body text-muted-foreground">과제 설명이 없습니다.</p>
+      )}
+    </section>
+  ) : null;
+  const submittedText = textHtml ? (
+    <section aria-labelledby="assignment-text-heading" className="flex flex-col gap-2">
+      <h2 id="assignment-text-heading" className="border-b border-border pb-2 text-ui font-semibold text-secondary-foreground">
+        제출한 글
+      </h2>
+      <RichTextContent html={textHtml} className="text-md leading-7 md:text-body" />
+    </section>
+  ) : null;
+  const editHint = !isAdmin && task && feedbackList.length === 0 ? (
+    <p className="text-xs text-muted-foreground">
+      피드백이 달리기 전에는{" "}
+      <Link href={STUDENT_LEGACY_REDIRECTS.assignments} className="underline underline-offset-[3px] hover:text-foreground">
+        과제 화면
+      </Link>
+      에서 제출을 고칠 수 있습니다.
+    </p>
+  ) : null;
   return (
     <div className="flex flex-col pb-8 md:gap-7 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-10">
       <MobileTopBar
@@ -196,20 +249,27 @@ export function AssignmentDetailClient({
 
       {renderHeader("wide")}
 
-      {/* 좁은 화면에서는 이 묶음이 사라져(contents) 플레이어·머리·피드백이 문서 순서대로 놓인다. */}
-      <div className="contents md:flex md:flex-wrap md:items-start md:gap-10">
-        <div className="flex min-w-0 flex-col gap-3 md:sticky md:top-6 md:flex-[3_1_520px]">
-          <VideoPlayer url={mediaUrl} seekRequest={seekRequest} onPositionReaderChange={handlePositionReaderChange} />
-        </div>
+      {/* 좁은 화면에서는 이 묶음이 사라져(contents) 플레이어·머리·피드백이 문서 순서대로 놓인다.
+          글만 제출했으면 플레이어 없이 과제·글·피드백을 한 열로 놓는다. */}
+      <div className={mediaUrl ? "contents md:flex md:flex-wrap md:items-start md:gap-10" : "contents md:flex md:max-w-[720px] md:flex-col md:gap-7"}>
+        {mediaUrl ? (
+          <div className="flex min-w-0 flex-col gap-3 md:sticky md:top-6 md:flex-[3_1_520px]">
+            <VideoPlayer url={mediaUrl} seekRequest={seekRequest} onPositionReaderChange={handlePositionReaderChange} />
+          </div>
+        ) : null}
         {renderHeader("narrow")}
-        <div className="flex min-w-0 flex-col gap-6 px-5 pt-4 md:flex-[2_1_340px] md:px-0 md:pt-0">
+        <div className={cn("flex min-w-0 flex-col gap-6 px-5 pt-4 md:px-0 md:pt-0", mediaUrl && "md:flex-[2_1_340px]")}>
+          {taskBrief}
+          {submittedText}
+          {editHint}
           <TimelineFeedback
             assignmentId={assignmentId}
             actorId={actorId}
             feedbackList={feedbackList}
             isAdmin={isAdmin}
-            onSeek={handleSeek}
-            readPlaybackPosition={isAdmin ? readPlaybackPosition : undefined}
+            onSeek={mediaUrl ? handleSeek : undefined}
+            readPlaybackPosition={isAdmin && mediaUrl ? readPlaybackPosition : undefined}
+            allowTimeMarker={Boolean(mediaUrl)}
           />
           {canDelete && deleteReturnTo ? (
             <div className="flex flex-col gap-1">

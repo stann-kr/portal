@@ -5,6 +5,8 @@ import * as bcrypt from "bcryptjs";
 import { credentialFingerprint } from "@/lib/credential-fingerprint";
 import type { AuthSession } from "@/lib/auth-guard";
 import {
+  assignmentRecurrences,
+  assignmentTasks,
   assignments,
   calendarEvents,
   categories,
@@ -21,6 +23,7 @@ import {
   createIsolatedPortalD1,
   type IsolatedPortalD1,
 } from "@/test/isolated-d1";
+import { dayKeyFromNumber, dayNumberFromKey, kstTodayKey } from "@/lib/assignment-recurrence";
 
 type PortalTestDb = IsolatedPortalD1["db"];
 
@@ -33,6 +36,7 @@ let lessonActions: typeof import("@/lib/actions/lessons");
 let commentActions: typeof import("@/lib/actions/comments");
 let feedbackActions: typeof import("@/lib/actions/feedbacks");
 let assignmentActions: typeof import("@/lib/actions/assignments");
+let assignmentTaskActions: typeof import("@/lib/actions/assignmentTasks");
 let studentActions: typeof import("@/lib/actions/students");
 let activeProfileModule: typeof import("@/lib/active-profile");
 let postActions: typeof import("@/lib/actions/posts");
@@ -79,7 +83,7 @@ mock.module("next/cache", {
 });
 
 before(async () => {
-  [calendarActions, curriculumActions, diggingActions, lessonActions, commentActions, feedbackActions, assignmentActions, studentActions, activeProfileModule, postActions, categoryActions, passwordActions] =
+  [calendarActions, curriculumActions, diggingActions, lessonActions, commentActions, feedbackActions, assignmentActions, studentActions, activeProfileModule, postActions, categoryActions, passwordActions, assignmentTaskActions] =
     await Promise.all([
       import("@/lib/actions/calendarEvents"),
       import("@/lib/actions/curriculum"),
@@ -93,6 +97,7 @@ before(async () => {
       import("@/lib/actions/posts"),
       import("@/lib/actions/categories"),
       import("@/lib/actions/password"),
+      import("@/lib/actions/assignmentTasks"),
     ]);
 });
 
@@ -424,16 +429,17 @@ test("피드백은 잘못된 재생 시점을 저장하지 않고 긴 믹스셋�
     data.set("content", "전환 지점에서 저음을 교환해 주세요.");
     return data;
   };
-  for (const value of ["", "abc", "-1", "01:99", "01:30:00", "1.5", "9007199254740992"]) {
+  for (const value of ["abc", "-1", "01:99", "01:30:00", "1.5", "9007199254740992"]) {
     const result = await feedbackActions.createFeedback("assignment-1", {}, form(value));
     assert.ok(result.error, value);
   }
   assert.equal((await db.select().from(feedbacks)).length, 0);
   assert.ok((await feedbackActions.createFeedback("missing", {}, form("01:30"))).error);
-  for (const value of ["100:30", "90", "00:00"]) {
+  for (const value of ["100:30", "90", "00:00", " "]) {
     assert.equal((await feedbackActions.createFeedback("assignment-1", {}, form(value))).success, true);
   }
-  assert.deepEqual((await feedbackActions.getFeedbacksByAssignment("assignment-1")).map((item) => item.timeMarker), [0, 90, 6030]);
+  // 시점을 비우면 전체 피드백(null)이고 시점 피드백보다 앞에 놓인다.
+  assert.deepEqual((await feedbackActions.getFeedbacksByAssignment("assignment-1")).map((item) => item.timeMarker), [null, 0, 90, 6030]);
 });
 
 test("댓글·피드백은 응답 유실 후 같은 제출을 한 번만 저장하고 다른 원문 재사용을 거부한다", { concurrency: false }, async (context) => {
@@ -892,4 +898,205 @@ test("digging write는 student session과 소유 column/type을 요구하고 거
     (await db.select({ value: count() }).from(diggingTracks))[0]?.value,
     1,
   );
+});
+
+
+function taskForm(fields: Record<string, string | string[]>): FormData {
+  const data = new FormData();
+  for (const [key, value] of Object.entries(fields)) {
+    for (const item of Array.isArray(value) ? value : [value]) data.append(key, item);
+  }
+  return data;
+}
+
+function shiftDayKey(key: string, days: number): string {
+  return dayKeyFromNumber(dayNumberFromKey(key)! + days);
+}
+
+test("관리자 과제는 대상 학생에게만 쓰이고 학생은 자기 과제에만 형식대로 제출·수정한다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("admin-1", "admin"));
+  await seedProfile(db, "admin-1", "admin");
+  await seedProfile(db, "student-1");
+  await seedProfile(db, "student-2");
+  const link = "https://youtu.be/aqz-KE-bpKQ";
+
+  await assert.rejects(
+    assignmentTaskActions.createAssignmentTask("admin-1", {}, taskForm({ title: "x", submissionFormat: "MIX", operationId: crypto.randomUUID() })),
+    /Student not found/u,
+  );
+  const operationId = crypto.randomUUID();
+  const mixForm = () => taskForm({ title: "이번 주 믹스셋", description: "30분 <세트>", submissionFormat: "MIX", dueDate: "2026-11-02", dueTime: "21:00", operationId });
+  const created = await assignmentTaskActions.createAssignmentTask("student-1", {}, mixForm());
+  assert.equal(created.success, true);
+  assert.equal((await assignmentTaskActions.createAssignmentTask("student-1", {}, mixForm())).id, created.id, "재전송은 같은 과제");
+  const [stored] = await db.select().from(assignmentTasks);
+  assert.equal(stored?.studentId, "student-1");
+  assert.equal(stored?.descriptionHtml, "<p>30분 &lt;세트&gt;</p>");
+  assert.equal(stored?.dueAt?.toISOString(), "2026-11-02T12:00:00.000Z");
+  const taskId = created.id!;
+
+  // 다른 학생 id로 고치거나 지우면 아무것도 바뀌지 않는다.
+  const wrongUpdate = await assignmentTaskActions.updateAssignmentTask("student-2", taskId, {}, taskForm({ title: "바뀐 제목", submissionFormat: "MIX", version: "1" }));
+  assert.ok(wrongUpdate.error);
+  assert.equal((await assignmentTaskActions.deleteAssignmentTask("student-2", taskId)).success, false);
+  assert.equal((await db.select().from(assignmentTasks).where(eq(assignmentTasks.id, taskId)))[0]?.title, "이번 주 믹스셋");
+
+  activeSession = createSession("student-2", "student");
+  assert.deepEqual(await assignmentTaskActions.getMyAssignmentTasks(), []);
+  assert.ok((await assignmentTaskActions.submitAssignmentTask(taskId, {}, taskForm({ mediaUrl: link }))).error);
+  assert.equal((await db.select().from(assignments)).length, 0);
+
+  activeSession = createSession("student-1", "student");
+  assert.equal((await assignmentTaskActions.getMyAssignmentTasks()).length, 1);
+  assert.ok((await assignmentTaskActions.submitAssignmentTask(taskId, {}, taskForm({ text: "링크 없이 글만" }))).error, "MIX는 링크가 필요하다");
+  const submitted = await assignmentTaskActions.submitAssignmentTask(taskId, {}, taskForm({ mediaUrl: link, text: "무시" }));
+  assert.equal(submitted.success, true);
+  assert.equal((await assignmentTaskActions.submitAssignmentTask(taskId, {}, taskForm({ mediaUrl: link }))).id, submitted.id, "같은 내용 재전송");
+  assert.match((await assignmentTaskActions.submitAssignmentTask(taskId, {}, taskForm({ mediaUrl: "https://soundcloud.com/dj/other" }))).error ?? "", /이미 제출/u);
+  const [submission] = await db.select().from(assignments);
+  assert.equal(submission?.taskId, taskId);
+  assert.equal(submission?.textHtml, null);
+  // 늦게 냈으므로(마감 2026-11-02 이후) 상세에 늦은 제출이 보인다. 상태는 피드백 대기.
+  const [mine] = await assignmentTaskActions.getMyAssignmentTasks();
+  assert.equal(mine?.submission?.id, submitted.id);
+
+  activeSession = createSession("student-2", "student");
+  assert.ok((await assignmentTaskActions.updateMyTaskSubmission(submitted.id!, {}, taskForm({ mediaUrl: "https://soundcloud.com/dj/x" }))).error);
+  activeSession = createSession("student-1", "student");
+  assert.equal((await assignmentTaskActions.updateMyTaskSubmission(submitted.id!, {}, taskForm({ mediaUrl: "https://soundcloud.com/dj/fixed" }))).success, true);
+  assert.equal((await db.select().from(assignments))[0]?.mediaUrl, "https://soundcloud.com/dj/fixed");
+
+  // 제출이 있으면 형식은 바꿀 수 없고 제목·마감은 고칠 수 있다.
+  activeSession = createSession("admin-1", "admin");
+  assert.match((await assignmentTaskActions.updateAssignmentTask("student-1", taskId, {}, taskForm({ title: "고친 제목", submissionFormat: "TEXT", version: "1" }))).error ?? "", /형식/u);
+  assert.equal((await assignmentTaskActions.updateAssignmentTask("student-1", taskId, {}, taskForm({ title: "고친 제목", submissionFormat: "MIX", version: "1" }))).success, true);
+  assert.match((await assignmentTaskActions.updateAssignmentTask("student-1", taskId, {}, taskForm({ title: "옛 버전", submissionFormat: "MIX", version: "1" }))).error ?? "", /먼저 고쳤/u);
+
+  // 피드백이 달리면 학생은 제출을 고칠 수 없다.
+  assert.equal((await feedbackActions.createFeedback(submitted.id!, {}, taskForm({ operationId: crypto.randomUUID(), timeMarker: "00:30", content: "좋아요" }))).success, true);
+  activeSession = createSession("student-1", "student");
+  assert.match((await assignmentTaskActions.updateMyTaskSubmission(submitted.id!, {}, taskForm({ mediaUrl: link }))).error ?? "", /피드백이 등록된/u);
+  assert.equal((await db.select().from(assignments))[0]?.mediaUrl, "https://soundcloud.com/dj/fixed");
+
+  // 글 과제: 글만 받고, 시점 없는 전체 피드백을 남긴다.
+  activeSession = createSession("admin-1", "admin");
+  const textTask = await assignmentTaskActions.createAssignmentTask("student-1", {}, taskForm({ title: "연습 일지", submissionFormat: "TEXT", operationId: crypto.randomUUID() }));
+  activeSession = createSession("student-1", "student");
+  assert.ok((await assignmentTaskActions.submitAssignmentTask(textTask.id!, {}, taskForm({ mediaUrl: link, text: " " }))).error);
+  const textSubmission = await assignmentTaskActions.submitAssignmentTask(textTask.id!, {}, taskForm({ mediaUrl: link, text: "BPM 맞추기\n\n다음 주 질문" }));
+  assert.equal(textSubmission.success, true);
+  const [textRow] = await db.select().from(assignments).where(eq(assignments.id, textSubmission.id!));
+  assert.equal(textRow?.mediaUrl, null);
+  assert.equal(textRow?.textHtml, "<p>BPM 맞추기</p><p>다음 주 질문</p>");
+  activeSession = createSession("admin-1", "admin");
+  assert.ok((await feedbackActions.createFeedback(textSubmission.id!, {}, taskForm({ operationId: crypto.randomUUID(), timeMarker: "01:30", content: "시점" }))).error, "글 제출에는 시점 피드백을 받지 않는다");
+  assert.equal((await feedbackActions.createFeedback(textSubmission.id!, {}, taskForm({ operationId: crypto.randomUUID(), timeMarker: "", content: "잘 정리했어요" }))).success, true);
+  const [textFeedback] = await db.select().from(feedbacks).where(eq(feedbacks.assignmentId, textSubmission.id!));
+  assert.equal(textFeedback?.timeMarker, null);
+  const pending = await assignmentActions.getPendingFeedbackAssignments();
+  assert.deepEqual(pending.map((row) => row.id), [], "피드백이 달린 제출은 업무함에서 빠진다");
+
+  // 과제를 지워도 제출과 피드백은 자유 제출로 남는다.
+  assert.equal((await assignmentTaskActions.deleteAssignmentTask("student-1", taskId)).success, true);
+  const [orphan] = await db.select().from(assignments).where(eq(assignments.id, submitted.id!));
+  assert.equal(orphan?.taskId, null);
+  assert.equal((await db.select().from(feedbacks).where(eq(feedbacks.assignmentId, submitted.id!))).length, 1);
+});
+
+test("정기 과제 회차는 동시 조회에도 한 번만 생기고 수정·멈춤·삭제는 제출된 회차와 지난 회차를 보존한다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("student-1", "student"));
+  await seedProfile(db, "admin-1", "admin");
+  await seedProfile(db, "student-1");
+  await seedProfile(db, "student-2");
+  const today = kstTodayKey(new Date());
+  const tenDaysAgo = new Date(Date.now() - 10 * 86_400_000);
+  await db.insert(assignmentRecurrences).values({
+    id: "rule-1",
+    studentId: "student-1",
+    title: "매일 연습 기록",
+    submissionFormat: "TEXT",
+    startDate: shiftDayKey(today, -7),
+    intervalWeeks: 1,
+    weekdays: 127,
+    dueTime: "21:00",
+    createdById: "admin-1",
+    createdAt: tenDaysAgo,
+    updatedAt: tenDaysAgo,
+  });
+  const ruleTasks = () => db.select().from(assignmentTasks).where(eq(assignmentTasks.recurrenceId, "rule-1"));
+  const expectedDates = Array.from({ length: 9 }, (_, index) => shiftDayKey(today, index - 7));
+
+  await Promise.all([assignmentTaskActions.getMyAssignmentTasks(), assignmentTaskActions.getMyAssignmentTasks()]);
+  await assignmentTaskActions.getMyAssignmentTasks();
+  activeSession = createSession("admin-1", "admin");
+  await assignmentTaskActions.getAssignmentTasksForStudent("student-1");
+  const generated = await ruleTasks();
+  assert.deepEqual(generated.map((task) => task.occurrenceDate).sort(), expectedDates, "오늘까지 + 다음 회차 하나, 날짜마다 한 행");
+  assert.equal((await db.select({ value: count() }).from(assignmentTasks))[0]?.value, 9);
+  assert.equal(generated.find((task) => task.occurrenceDate === today)?.dueAt?.getTime(), Date.parse(`${today}T12:00:00.000Z`));
+
+  activeSession = createSession("student-2", "student");
+  assert.deepEqual(await assignmentTaskActions.getMyAssignmentTasks(), [], "다른 학생은 회차를 보지 않는다");
+
+  // 지난 회차 하나와 다음 회차(내일)에 제출한다.
+  activeSession = createSession("student-1", "student");
+  const byDate = (date: string) => generated.find((task) => task.occurrenceDate === date)!.id;
+  const tomorrow = shiftDayKey(today, 1);
+  assert.equal((await assignmentTaskActions.submitAssignmentTask(byDate(shiftDayKey(today, -3)), {}, taskForm({ text: "지난 회차" }))).success, true);
+  assert.equal((await assignmentTaskActions.submitAssignmentTask(byDate(tomorrow), {}, taskForm({ text: "미리 낸 회차" }))).success, true);
+
+  const ruleForm = (version: string, overrides: Record<string, string | string[]> = {}) => taskForm({
+    title: "바뀐 연습 기록",
+    submissionFormat: "TEXT",
+    startDate: shiftDayKey(today, -7),
+    intervalWeeks: "1",
+    weekdays: ["0", "1", "2", "3", "4", "5", "6"],
+    dueTime: "21:00",
+    version,
+    ...overrides,
+  });
+
+  activeSession = createSession("admin-1", "admin");
+  // 다른 학생 범위로는 규칙을 바꾸거나 멈추거나 지우지 못한다.
+  assert.ok((await assignmentTaskActions.updateAssignmentRecurrence("student-2", "rule-1", {}, ruleForm("1"))).error);
+  assert.equal((await assignmentTaskActions.setAssignmentRecurrencePaused("student-2", "rule-1", true, 1)).success, false);
+  assert.equal((await assignmentTaskActions.deleteAssignmentRecurrence("student-2", "rule-1")).success, false);
+  assert.equal((await db.select().from(assignmentRecurrences))[0]?.version, 1);
+
+  const now = Date.now();
+  const isOpenUnsubmitted = async (task: typeof generated[number]) =>
+    (task.dueAt?.getTime() ?? 0) > now
+    && (await db.select().from(assignments).where(eq(assignments.taskId, task.id))).length === 0;
+
+  assert.equal((await assignmentTaskActions.updateAssignmentRecurrence("student-1", "rule-1", {}, ruleForm("1"))).success, true);
+  assert.match((await assignmentTaskActions.updateAssignmentRecurrence("student-1", "rule-1", {}, ruleForm("1"))).error ?? "", /먼저 바꿨/u);
+  const afterEdit = await ruleTasks();
+  for (const task of afterEdit) {
+    const expected = (await isOpenUnsubmitted(task)) ? "바뀐 연습 기록" : "매일 연습 기록";
+    assert.equal(task.title, expected, `${task.occurrenceDate} 제목`);
+  }
+  assert.equal(afterEdit.length, 9, "지난 회차는 남고 마감 전 미제출 회차만 다시 만든다");
+
+  // 멈추면 마감 전·미제출 회차만 지우고 다시 만들지 않는다.
+  assert.equal((await assignmentTaskActions.setAssignmentRecurrencePaused("student-1", "rule-1", true, 2)).success, true);
+  await assignmentTaskActions.getAssignmentTasksForStudent("student-1");
+  const paused = await ruleTasks();
+  assert.equal(paused.some((task) => task.occurrenceDate === tomorrow), true, "제출된 다음 회차는 남는다");
+  for (const task of paused) assert.equal(await isOpenUnsubmitted(task), false);
+  assert.equal(paused.filter((task) => task.occurrenceDate! < today).length, 7, "지난 회차는 그대로");
+
+  // 다시 시작하면 지금부터의 회차를 만든다(멈춘 동안 지난 날짜는 만들지 않는다).
+  assert.equal((await assignmentTaskActions.setAssignmentRecurrencePaused("student-1", "rule-1", false, 3)).success, true);
+  const resumed = await ruleTasks();
+  assert.ok(resumed.some((task) => task.occurrenceDate === shiftDayKey(today, 2)) || resumed.some((task) => task.occurrenceDate === tomorrow));
+
+  // 삭제: 마감 전·미제출 회차는 지우고 나머지는 일반 과제로 남긴다.
+  assert.equal((await assignmentTaskActions.deleteAssignmentRecurrence("student-1", "rule-1")).success, true);
+  assert.equal((await db.select().from(assignmentRecurrences)).length, 0);
+  const remaining = await db.select().from(assignmentTasks);
+  assert.ok(remaining.every((task) => task.recurrenceId === null));
+  assert.equal(remaining.some((task) => task.occurrenceDate === tomorrow), true);
+  assert.equal(remaining.some((task) => task.occurrenceDate === shiftDayKey(today, -3)), true);
+  for (const task of remaining) assert.equal(await isOpenUnsubmitted(task), false);
+  assert.equal((await db.select().from(assignments)).length, 2);
 });

@@ -19,7 +19,7 @@
     "build:scheduled": "npm run build:worker && wrangler versions upload --config wrangler.scheduled.toml --dry-run --outdir .wrangler/scheduled-dry-run",
     "start": "next start",
     "test": "tsx --test \"src/**/*.test.ts\"",
-    "test:integration": "tsx --experimental-test-module-mocks --test --test-concurrency=1 src/test/student-action-boundary.integration.ts src/test/document-workflow.integration.ts src/test/form-draft-hook.integration.tsx src/test/document-form-shortcut.integration.tsx src/test/server-draft-sync.integration.tsx src/test/portal-interactions.integration.tsx",
+    "test:integration": "tsx --experimental-test-module-mocks --test --test-concurrency=1 src/test/student-action-boundary.integration.ts src/test/document-workflow.integration.ts src/test/form-draft-hook.integration.tsx src/test/document-form-shortcut.integration.tsx src/test/server-draft-sync.integration.tsx src/test/portal-interactions.integration.tsx src/test/guide-boundary.integration.ts",
     "lint": "eslint src scripts eslint.config.mjs",
     "typecheck": "tsc --noEmit",
     "check:ui": "node scripts/check-ui-contracts.mjs",

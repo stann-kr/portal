@@ -6,6 +6,8 @@
  */
 "use client";
 
+import type { StudentAssignmentSummary } from "@/lib/assignment-summary";
+import type { AssignmentTaskItem } from "@/lib/actions/assignmentTasks";
 import { useState, useCallback, useEffect, useMemo } from "react";
 import {
   upsertUnifiedItem,
@@ -41,19 +43,15 @@ type CurriculumModule = {
   isCompleted: boolean;
 };
 
-type Assignment = {
-  id: string;
-  mediaUrl: string;
-  submittedAt: Date | null;
-  feedbackCount: number;
-};
 
 export interface StudentPortalClientProps {
   initialLocation?: PortalLocation<"student">;
   announcements: Post[];
   unifiedItems: UnifiedItem[];
   curriculumModules: CurriculumModule[];
-  assignments: Assignment[];
+  assignments: StudentAssignmentSummary[];
+  /** 관리자가 낸 받은 과제(정기 과제 회차 포함) */
+  assignmentTasks?: AssignmentTaskItem[];
   studentId: string;
   displayName: string;
   spaceLabel: string;
@@ -85,6 +83,7 @@ export function StudentPortalClient({
   unifiedItems: initialUnifiedItems,
   curriculumModules,
   assignments,
+  assignmentTasks = [],
   studentId,
   displayName,
   spaceLabel,
@@ -177,6 +176,7 @@ export function StudentPortalClient({
               unifiedItems={items}
               curriculumModules={curriculumModules}
               assignments={assignments}
+              assignmentTasks={assignmentTasks}
               studentId={studentId}
               actorId={studentId}
               spaceLabel={spaceLabel}

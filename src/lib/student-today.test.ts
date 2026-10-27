@@ -224,3 +224,28 @@ test("일정 유형 이름은 외부 캘린더 출처를 레슨으로 오인하�
   assert.equal(describeAgendaKind(item("gig", "EVENT", "2026-08-05T00:00:00.000Z", { subType: "GIG" })), "공연");
   assert.equal(describeAgendaKind(item("n", "NOTE", "2026-08-05T00:00:00.000Z")), "노트");
 });
+
+test("미제출 과제는 피드백 대기로 섞이지 않고 마감 지남 → 다가오는 순으로 할 일 앞에 온다", () => {
+  const task = (id: string, dueAt: string | null) => {
+    const entry = item(id, "ASSIGNMENT", dueAt ?? "2026-08-01T00:00:00.000Z", { subType: "TASK" });
+    entry.metadata = { taskId: id, dueAt };
+    entry.source = { kind: "PORTAL", entity: "ASSIGNMENT_TASK", label: "포털" };
+    return entry;
+  };
+  const result = summary([
+    task("overdue", "2026-08-04T12:00:00.000Z"),
+    task("soon", "2026-08-06T12:00:00.000Z"),
+    task("far", "2026-08-20T12:00:00.000Z"),
+    task("no-due", null),
+    item("waiting", "ASSIGNMENT", "2026-08-02T00:00:00.000Z", { feedbackCount: 0 }),
+  ]);
+  assert.equal(result.waitingAssignment?.id, "waiting");
+  assert.deepEqual(result.overdueTasks.map((entry) => entry.id), ["overdue"]);
+  assert.deepEqual(result.upcomingTasks.map((entry) => entry.id), ["soon", "no-due"]);
+  assert.deepEqual(getStudentTodoEntries(result).map((entry) => [entry.item.id, entry.status]), [
+    ["overdue", "taskOverdue"],
+    ["soon", "taskDue"],
+    ["no-due", "taskDue"],
+    ["waiting", "feedbackWaiting"],
+  ]);
+});

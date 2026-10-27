@@ -15,6 +15,7 @@ export type UnifiedItemSourceEntity =
   | "DIGGING_TRACK"
   | "QNA_THREAD"
   | "ASSIGNMENT"
+  | "ASSIGNMENT_TASK"
   | "EXTERNAL_CALENDAR_EVENT";
 
 export type UnifiedItemSourceKind =
@@ -45,6 +46,9 @@ export type UnifiedItem = {
     label: string;
   };
 };
+
+/** 아직 제출하지 않은 관리자 과제 항목의 subType(source.entity는 ASSIGNMENT_TASK). 제출 항목은 subType이 없다. */
+export const ASSIGNMENT_TASK_SUBTYPE = "TASK";
 
 /** 서로 다른 엔티티가 같은 raw ID를 가질 때도 안전한 UI 식별 키. */
 export function getUnifiedItemKey(item: UnifiedItem): string {

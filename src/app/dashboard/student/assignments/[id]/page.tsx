@@ -1,6 +1,6 @@
 /**
  * @file src/app/dashboard/student/assignments/[id]/page.tsx
- * @description 과제 상세 페이지(AssignmentDetail·MobileAssignment 보드). 플레이어 + 타임라인 피드백 (Server Component).
+ * @description 과제 상세 페이지(AssignmentDetail·MobileAssignment 보드). 과제 설명·제출(플레이어·글) + 피드백 (Server Component).
  * 데이터 패칭과 소유권 확인은 서버에서 처리하고, 화면 배치와 상호작용은 클라이언트 컴포넌트로 위임합니다.
  */
 import Link from "next/link";
@@ -12,7 +12,9 @@ import { getActiveAuthSession } from "@/lib/auth-guard";
 import { AssignmentDetailClient } from "./AssignmentDetailClient";
 import { formatKst } from "@/lib/kst-format";
 import { safeReturnPath } from "@/lib/safe-return-path";
-import { describeAssignmentMedia, getUnifiedItemSpaceLabel } from "@/lib/unified-item-normalization";
+import { describeAssignmentSubmission, getUnifiedItemSpaceLabel } from "@/lib/unified-item-normalization";
+import { isLateSubmission } from "@/lib/assignment-submission";
+import { ASSIGNMENT_FORMAT_LABELS } from "@/lib/assignment-recurrence";
 import { buildAdminStudentDetailHref } from "@/lib/student-space-routes";
 
 export type AssignmentFeedback = Awaited<
@@ -73,6 +75,10 @@ export default async function AssignmentDetailPage({
   const submittedLabelShort = assignment.submittedAt
     ? `${formatKst(assignment.submittedAt, { month: "long", day: "numeric", ...time })} 제출`
     : "제출일 미정";
+  const task = assignment.task;
+  const dueLabel = task?.dueAt
+    ? `${formatKst(task.dueAt, { month: "long", day: "numeric", weekday: "short", ...time })} 마감`
+    : null;
   const spaceLink = student
     ? { href: buildAdminStudentDetailHref(student.id, "assignments"), label: getUnifiedItemSpaceLabel(student) }
     : undefined;
@@ -83,10 +89,18 @@ export default async function AssignmentDetailPage({
       assignmentId={assignmentId}
       actorId={session.user.id}
       mediaUrl={assignment.mediaUrl}
+      textHtml={assignment.textHtml}
+      task={task ? {
+        title: task.title,
+        descriptionHtml: task.descriptionHtml,
+        formatLabel: ASSIGNMENT_FORMAT_LABELS[task.submissionFormat],
+        dueLabel,
+        late: isLateSubmission(task.dueAt, assignment.submittedAt),
+      } : null}
       feedbackList={feedbackList}
       isAdmin={isAdmin}
       deleteReturnTo={!isAdmin && assignment.studentId === session.user.id ? returnTo : undefined}
-      title={describeAssignmentMedia(assignment.mediaUrl)}
+      title={describeAssignmentSubmission({ mediaUrl: assignment.mediaUrl, taskTitle: task?.title })}
       submittedLabel={submittedLabel}
       submittedLabelShort={submittedLabelShort}
       // 위치 표시는 계층(학생: 과제 목록), 위쪽 막대의 뒤로는 들어온 화면(returnTo)이다.

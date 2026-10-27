@@ -1,8 +1,12 @@
 import { toKstDateInputValue } from "@/lib/date-input";
-import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
+import { ASSIGNMENT_TASK_SUBTYPE, type UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 
 export type StudentTodaySummary = {
   nextCue: UnifiedItem | null;
+  /** 아직 제출하지 않았는데 마감이 지난 관리자 과제(마감이 가까웠던 순). */
+  overdueTasks: UnifiedItem[];
+  /** 아직 제출하지 않은 과제 중 7일 안에 마감되거나 마감이 없는 것(마감이 가까운 순). */
+  upcomingTasks: UnifiedItem[];
   feedbackItems: UnifiedItem[];
   answeredQnaItems: UnifiedItem[];
   waitingAssignment: UnifiedItem | null;
@@ -15,6 +19,20 @@ function newestFirst(a: UnifiedItem, b: UnifiedItem) {
 
 function oldestFirst(a: UnifiedItem, b: UnifiedItem) {
   return a.date.getTime() - b.date.getTime();
+}
+
+const DUE_TASK_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** 미제출 과제 항목의 마감 시각. 마감이 없으면 null. */
+export function getAssignmentTaskDueAt(item: UnifiedItem): Date | null {
+  const raw = item.metadata.dueAt;
+  if (typeof raw !== "string" && !(raw instanceof Date)) return null;
+  const date = new Date(raw);
+  return Number.isFinite(date.getTime()) ? date : null;
+}
+
+export function isAssignmentTaskItem(item: UnifiedItem): boolean {
+  return item.type === "ASSIGNMENT" && item.subType === ASSIGNMENT_TASK_SUBTYPE;
 }
 
 function feedbackCount(item: UnifiedItem): number {
@@ -38,12 +56,27 @@ export function getStudentTodaySummary(
     null;
 
   const assignments = items
-    .filter((item) => item.type === "ASSIGNMENT")
+    .filter((item) => item.type === "ASSIGNMENT" && !isAssignmentTaskItem(item))
     .sort(newestFirst);
+  const now = referenceTime.getTime();
+  const tasks = items
+    .filter(isAssignmentTaskItem)
+    .map((item) => ({ item, due: getAssignmentTaskDueAt(item)?.getTime() ?? null }))
+    .sort((a, b) => (a.due ?? Number.MAX_SAFE_INTEGER) - (b.due ?? Number.MAX_SAFE_INTEGER));
+  const overdueTasks = tasks
+    .filter(({ due }) => due !== null && due < now)
+    .slice(-3)
+    .map(({ item }) => item);
+  const upcomingTasks = tasks
+    .filter(({ due }) => due === null || (due >= now && due <= now + DUE_TASK_WINDOW_MS))
+    .slice(0, 3)
+    .map(({ item }) => item);
   const qnaItems = items.filter((item) => item.type === "QNA").sort(newestFirst);
 
   return {
     nextCue,
+    overdueTasks,
+    upcomingTasks,
     feedbackItems: assignments.filter((item) => feedbackCount(item) > 0).slice(0, 3),
     answeredQnaItems: qnaItems
       .filter((item) => item.subType === "ANSWERED")
@@ -219,16 +252,24 @@ export function getStudentRecentNotes(
     }));
 }
 
-export type StudentTodoStatus = "feedbackReady" | "qnaAnswered" | "feedbackWaiting" | "qnaOpen";
+export type StudentTodoStatus =
+  | "taskOverdue"
+  | "taskDue"
+  | "feedbackReady"
+  | "qnaAnswered"
+  | "feedbackWaiting"
+  | "qnaOpen";
 
 export type StudentTodoEntry = {
   item: UnifiedItem;
   status: StudentTodoStatus;
 };
 
-/** 확인할 항목: 도착한 피드백 → 답변된 질문 → 피드백 대기 과제 → 답변 대기 질문 순서. */
+/** 확인할 항목: 낼 과제(마감 지남 → 다가옴) → 도착한 피드백 → 답변된 질문 → 피드백 대기 과제 → 답변 대기 질문 순서. */
 export function getStudentTodoEntries(summary: StudentTodaySummary, limit = 5): StudentTodoEntry[] {
   return [
+    ...(summary.overdueTasks ?? []).map((item) => ({ item, status: "taskOverdue" as const })),
+    ...(summary.upcomingTasks ?? []).map((item) => ({ item, status: "taskDue" as const })),
     ...summary.feedbackItems.map((item) => ({ item, status: "feedbackReady" as const })),
     ...summary.answeredQnaItems.map((item) => ({ item, status: "qnaAnswered" as const })),
     ...(summary.waitingAssignment

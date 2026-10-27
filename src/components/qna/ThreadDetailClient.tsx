@@ -6,6 +6,7 @@
  */
 "use client";
 
+import { GuideAnchorNote, type QnaGuideAnchorView } from "@/components/qna/GuideAnchorNote";
 import { useActionState, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -103,6 +104,8 @@ interface ThreadDetailClientProps {
   studentName: string;
   createdAt: string | null;
   returnTo: string;
+  /** 가이드 구간에서 시작한 질문이면 그 위치. */
+  guideAnchor?: QnaGuideAnchorView | null;
 }
 
 export function ThreadDetailClient(props: ThreadDetailClientProps) {
@@ -121,6 +124,7 @@ function ThreadDetailContent({
   studentName,
   createdAt,
   returnTo,
+  guideAnchor,
 }: ThreadDetailClientProps) {
   const {
     contentHtml,
@@ -421,6 +425,7 @@ function ThreadDetailContent({
               ) : "작성일 미정"}
             </span>
           </p>
+          {guideAnchor ? <GuideAnchorNote anchor={guideAnchor} /> : null}
         </div>
         <div className="hidden shrink-0 items-center gap-1 md:flex">
           <Link href={historyHref} className={buttonClassName({ variant: "ghost" })}>

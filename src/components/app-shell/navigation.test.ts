@@ -52,3 +52,19 @@ test("좁은 화면 위쪽 막대는 목록 화면에 메뉴와 주 행동, 상�
   assert.equal(resolveMobileTopBar("admin", at("/dashboard/admin?section=students")).action?.href, "/dashboard/admin/students/new");
   assert.equal(resolveMobileTopBar("admin", at("/dashboard/admin/students/s1")).back?.label, "학생 목록으로");
 });
+
+test("가이드는 학생·관리자 메뉴에 같은 주소로 있고 페이지·편집 화면도 가이드 메뉴로 표시한다", () => {
+  for (const role of ["student", "admin"] as const) {
+    const guide = APP_NAV_ITEMS[role].find((item) => item.id === "guide");
+    assert.equal(guide?.label, "가이드");
+    assert.equal(guide?.href, "/dashboard/guide");
+    assert.equal(resolveActiveNavItem(role, at("/dashboard/guide")), "guide");
+    assert.equal(resolveActiveNavItem(role, at("/dashboard/guide/guide-1")), "guide");
+    assert.equal(resolveMobileTopBar(role, at("/dashboard/guide/guide-1")).title, "가이드");
+  }
+  assert.equal(resolveActiveNavItem("student", at("/dashboard/guidebook")), null);
+  assert.deepEqual(resolveMobileTopBar("admin", at("/dashboard/guide/guide-1/edit")), {
+    title: "가이드 편집",
+    back: { href: "/dashboard/guide/guide-1", label: "가이드로 돌아가기" },
+  });
+});

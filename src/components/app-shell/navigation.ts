@@ -1,5 +1,6 @@
 import {
   BookOpen,
+  BookOpenText,
   CalendarDays,
   CircleHelp,
   FilePlay,
@@ -15,6 +16,9 @@ import {
 import { isCurriculumVisible } from "@/lib/curriculum-visibility";
 
 export type AppRole = "admin" | "student";
+
+/** 학생·관리자가 같은 주소로 여는 공용 가이드. */
+const GUIDE_HREF = "/dashboard/guide";
 
 export type AppNavItem = {
   id: string;
@@ -39,6 +43,7 @@ export const APP_NAV_ITEMS: Record<AppRole, readonly AppNavItem[]> = {
       ? [{ id: "curriculum", label: "커리큘럼", href: "/dashboard/student?section=workspace&view=curriculum", Icon: BookOpen }]
       : []),
     { id: "digging", label: "디깅", href: "/dashboard/student/digging", Icon: Music },
+    { id: "guide", label: "가이드", href: GUIDE_HREF, Icon: BookOpenText },
     { id: "qna", label: "Q&A", href: "/dashboard/qna", Icon: CircleHelp },
     { id: "community", label: "커뮤니티", href: "/community", Icon: MessageSquare },
   ],
@@ -46,6 +51,7 @@ export const APP_NAV_ITEMS: Record<AppRole, readonly AppNavItem[]> = {
     { id: "work", label: "업무함", href: "/dashboard/admin?section=work", Icon: Inbox },
     { id: "students", label: "학생", href: "/dashboard/admin?section=students", Icon: Users },
     { id: "schedule", label: "일정", href: "/dashboard/admin?section=schedule", Icon: CalendarDays },
+    { id: "guide", label: "가이드", href: GUIDE_HREF, Icon: BookOpenText },
     { id: "qna", label: "Q&A", href: "/dashboard/qna", Icon: CircleHelp },
     { id: "community", label: "커뮤니티", href: "/community", Icon: MessageSquare },
     { id: "operations", label: "운영 도구", href: "/dashboard/admin/operations", Icon: SlidersVertical },
@@ -81,6 +87,7 @@ export function resolveActiveNavItem(role: AppRole, { pathname, searchParams }: 
       return "operations";
     }
   }
+  if (pathname === GUIDE_HREF || pathname.startsWith(`${GUIDE_HREF}/`)) return "guide";
   if (pathname.startsWith("/dashboard/qna")) return "qna";
   if (pathname.startsWith("/community")) return "community";
   return null;
@@ -121,6 +128,11 @@ export function resolveMobileTopBar(role: AppRole, location: Location): MobileTo
     if (pathname === "/dashboard/qna/new") return { title: "새 질문 작성", back };
     if (pathname === "/dashboard/qna/trash") return { title: "휴지통", back };
     return { title: "Q&A", back };
+  }
+  if (pathname === GUIDE_HREF || pathname.startsWith(`${GUIDE_HREF}/`)) {
+    const editMatch = /^\/dashboard\/guide\/([^/]+)\/edit$/u.exec(pathname);
+    if (editMatch) return { title: "가이드 편집", back: { href: `${GUIDE_HREF}/${editMatch[1]}`, label: "가이드로 돌아가기" } };
+    return { title: "가이드" };
   }
   if (pathname.startsWith("/community")) {
     const back = { href: "/community", label: "커뮤니티 목록으로" };

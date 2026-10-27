@@ -2,6 +2,8 @@ import { assert, assertRowsEqual, assertSqlFails } from "./assertions.mjs";
 import {
   accountPrivacyMigrationFile,
   documentImageMigrationFile,
+  assignmentTaskMigrationFile,
+  guidePageMigrationFile,
   applyMigration,
   applyMigrations,
   continuityMigrationFile,
@@ -115,6 +117,8 @@ export function validateContinuityTriggers(database) {
     mediaLifecycleMigrationFile,
     accountPrivacyMigrationFile,
     documentImageMigrationFile,
+    assignmentTaskMigrationFile,
+    guidePageMigrationFile,
   ]) {
     const migrationStatements = readFileSync(
       join(migrationsDirectory, migrationFile),

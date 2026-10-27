@@ -44,6 +44,8 @@ let saveAssignment: typeof import("@/lib/actions/assignments").submitAssignment 
 let loadAssignments: typeof import("@/lib/actions/assignments").getMyAssignments = async () => [];
 let removeAssignment: typeof import("@/lib/actions/assignments").deleteMyAssignment = async () => ({ success: true });
 let saveFeedback: typeof import("@/lib/actions/feedbacks").createFeedback = async () => ({});
+let saveTaskSubmission: typeof import("@/lib/actions/assignmentTasks").submitAssignmentTask = async () => ({});
+let loadTasks: typeof import("@/lib/actions/assignmentTasks").getMyAssignmentTasks = async () => [];
 let saveEvent: typeof import("@/lib/actions/calendarEvents").createCalendarEvent = async () => ({});
 let editEvent: typeof import("@/lib/actions/calendarEvents").updateCalendarEventDetails = async () => ({});
 let removeEvent: typeof import("@/lib/actions/calendarEvents").deleteCalendarEvent = async () => {};
@@ -104,6 +106,11 @@ mock.module("@/lib/actions/assignments", { namedExports: {
   submitAssignment: (...args: Parameters<typeof saveAssignment>) => saveAssignment(...args),
   getMyAssignments: () => loadAssignments(),
   deleteMyAssignment: (...args: Parameters<typeof removeAssignment>) => removeAssignment(...args),
+} });
+mock.module("@/lib/actions/assignmentTasks", { namedExports: {
+  getMyAssignmentTasks: () => loadTasks(),
+  submitAssignmentTask: (...args: Parameters<typeof saveTaskSubmission>) => saveTaskSubmission(...args),
+  updateMyTaskSubmission: async () => ({ error: "테스트 미설정" }),
 } });
 mock.module("@/lib/actions/feedbacks", { namedExports: {
   createFeedback: (...args: Parameters<typeof saveFeedback>) => saveFeedback(...args),
@@ -1847,7 +1854,7 @@ test("assignment errors retain the URL and a failed refresh retries without resu
   let submissions = 0;
   saveAssignment = async () => ({ error: "지원하지 않는 링크입니다." });
   context.after(() => { saveAssignment = async () => ({}); loadAssignments = async () => []; });
-  await render(context, <AssignmentView initialAssignments={[]} />);
+  await render(context, <AssignmentView actorId="student-1" initialAssignments={[]} />);
   await fill("assignment-media-url", "https://example.test/mix");
   await press("제출");
   assert.equal((browser.document.getElementById("assignment-media-url") as unknown as HTMLInputElement).value, "https://example.test/mix");
@@ -1861,6 +1868,48 @@ test("assignment errors retain the URL and a failed refresh retries without resu
   await press("목록 다시 불러오기");
   assert.equal(submissions, 1);
   assert.equal(browser.document.querySelector('[role="alert"]'), null);
+});
+
+test("a received text task submits only the text field, keeps the draft on failure, and refreshes the task list", async (context) => {
+  const task = {
+    id: "task-text", title: "연습 일지", descriptionHtml: "<p>이번 주 연습</p>", submissionFormat: "TEXT" as const,
+    dueAt: new Date(Date.now() + 86_400_000), occurrenceDate: null, recurrenceId: null, version: 1, createdAt: new Date(), submission: null,
+  };
+  const submissions: { taskId: string; text: string; mediaUrl: unknown }[] = [];
+  saveTaskSubmission = async (taskId, _previous, data) => {
+    submissions.push({ taskId, text: String(data.get("text")), mediaUrl: data.get("mediaUrl") });
+    return submissions.length === 1 ? { error: "제출하지 못했습니다." } : { success: true, id: "submission-1" };
+  };
+  let taskLoads = 0;
+  loadTasks = async () => {
+    taskLoads++;
+    return [{ ...task, submission: { id: "submission-1", mediaUrl: null, textHtml: "<p>BPM 맞추기</p>", submittedAt: new Date(), updatedAt: null, feedbackCount: 0 } }];
+  };
+  context.after(() => { saveTaskSubmission = async () => ({}); loadTasks = async () => []; });
+  await render(context, <AssignmentView actorId="student-task" initialAssignments={[]} initialTasks={[task]} />);
+  assert.match(browser.document.body.textContent ?? "", /받은 과제/);
+  assert.match(browser.document.body.textContent ?? "", /미제출/);
+  await press("제출하기");
+  assert.equal(browser.document.querySelector('input[name="mediaUrl"][type="url"]:not(#assignment-media-url)'), null, "글 과제는 링크 칸이 없다");
+  const textarea = browser.document.getElementById("task-task-text-text");
+  assert.ok(textarea instanceof browser.HTMLTextAreaElement);
+  const setter = Object.getOwnPropertyDescriptor(browser.HTMLTextAreaElement.prototype, "value")?.set;
+  await act(async () => {
+    textarea.focus();
+    setter?.call(textarea, "BPM 맞추기");
+    textarea.dispatchEvent(new browser.Event("input", { bubbles: true }));
+  });
+  await settle();
+  await act(async () => { (textarea.form as unknown as HTMLFormElement).requestSubmit(); });
+  await settle();
+  assert.match(browser.document.querySelector('[role="alert"]')?.textContent ?? "", /제출하지 못했습니다/);
+  assert.equal((browser.document.getElementById("task-task-text-text") as unknown as HTMLTextAreaElement).value, "BPM 맞추기", "실패하면 쓴 글을 지우지 않는다");
+  await act(async () => { (textarea.form as unknown as HTMLFormElement).requestSubmit(); });
+  await settle();
+  assert.deepEqual(submissions.map(({ taskId, text, mediaUrl }) => [taskId, text, mediaUrl]), [["task-text", "BPM 맞추기", null], ["task-text", "BPM 맞추기", null]]);
+  assert.equal(taskLoads, 1);
+  assert.match(browser.document.body.textContent ?? "", /피드백 대기/);
+  assert.equal(browser.document.getElementById("task-task-text-text"), null, "제출 뒤 폼을 닫는다");
 });
 
 test("failed login keeps the email and return target and moves focus to the password", async (context) => {
@@ -1978,12 +2027,12 @@ test("a submission without feedback is deleted only after a cancel-first confirm
   context.after(() => { removeAssignment = async () => ({ success: true }); routerReplacements.length = 0; });
   const listHref = "/dashboard/student?section=workspace&view=assignments";
   // 목록 행은 상세(타임라인 피드백) 화면으로 이동하고, 삭제는 상세 화면에서 한다.
-  const root = await render(context, <AssignmentView initialAssignments={[{ id: "mistake", mediaUrl: "https://youtu.be/aqz-KE-bpKQ", submittedAt: new Date(), feedbackCount: 0 }]} />);
+  const root = await render(context, <AssignmentView actorId="student-1" initialAssignments={[{ id: "mistake", taskId: null, taskTitle: null, mediaUrl: "https://youtu.be/aqz-KE-bpKQ", hasText: false, submittedAt: new Date(), feedbackCount: 0 }]} />);
   const listItem = [...browser.document.querySelectorAll("a")].find((element) => element.textContent?.includes("YouTube 믹스셋"));
   assert.equal(listItem?.getAttribute("href"), `/dashboard/student/assignments/mistake?returnTo=${encodeURIComponent(listHref)}`);
   const detail = (feedbackList: { id: string; timeMarker: number; content: string; createdAt: Date | null }[]) => (
     <AssignmentDetailClient
-      assignmentId="mistake" actorId="student-1" mediaUrl="https://youtu.be/aqz-KE-bpKQ" feedbackList={feedbackList}
+      assignmentId="mistake" actorId="student-1" mediaUrl="https://youtu.be/aqz-KE-bpKQ" textHtml={null} task={null} feedbackList={feedbackList}
       isAdmin={false} deleteReturnTo={listHref} title="YouTube 믹스셋" submittedLabel="2026년 10월 18일 19:05 제출"
       submittedLabelShort="10월 18일 19:05 제출" breadcrumb={{ href: listHref, label: "과제" }} returnTo={listHref}
     />

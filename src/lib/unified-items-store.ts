@@ -1,8 +1,9 @@
 import type { InferSelectModel } from "drizzle-orm";
-import { and, desc, eq, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lte, notExists, or, sql } from "drizzle-orm";
 import type { DrizzleDb } from "@/db/client";
 import {
   assignments,
+  assignmentTasks,
   calendarEvents,
   diggingColumns,
   diggingTracks,
@@ -35,7 +36,19 @@ export const UNIFIED_NOTE_PREVIEW_SOURCE_CHARS = 4_096;
 type DiggingTrackRow = InferSelectModel<typeof diggingTracks>;
 type DiggingColumnRow = InferSelectModel<typeof diggingColumns>;
 type QnaThreadRow = InferSelectModel<typeof qnaThreads>;
-type AssignmentRow = InferSelectModel<typeof assignments>;
+type AssignmentRow = {
+  id: string;
+  mediaUrl: string | null;
+  submittedAt: Date | null;
+  taskTitle: string | null;
+};
+type AssignmentTaskRow = {
+  id: string;
+  title: string;
+  dueAt: Date | null;
+  createdAt: Date;
+  submissionFormat: string;
+};
 
 function wants(types: ReadonlySet<UnifiedItemType>, type: UnifiedItemType): boolean {
   return types.has(type);
@@ -141,8 +154,14 @@ export async function queryInternalUnifiedItems(
     : Promise.resolve([] as QnaThreadRow[]);
   const assignmentRows = wants(requestedTypes, "ASSIGNMENT")
     ? db
-        .select()
+        .select({
+          id: assignments.id,
+          mediaUrl: assignments.mediaUrl,
+          submittedAt: assignments.submittedAt,
+          taskTitle: assignmentTasks.title,
+        })
         .from(assignments)
+        .leftJoin(assignmentTasks, eq(assignmentTasks.id, assignments.taskId))
         .where(and(
           eq(assignments.studentId, userId),
           or(
@@ -156,8 +175,30 @@ export async function queryInternalUnifiedItems(
         .orderBy(desc(assignments.submittedAt))
         .limit(limit) as Promise<AssignmentRow[]>
     : Promise.resolve([] as AssignmentRow[]);
+  // 아직 제출하지 않은 관리자 과제는 마감 시각(마감이 없으면 낸 시각)에 놓는다. 회차 생성은 과제 화면 조회가 맡는다.
+  const taskPlacement = sql`coalesce(${assignmentTasks.dueAt}, ${assignmentTasks.createdAt})`;
+  const taskRows = wants(requestedTypes, "ASSIGNMENT")
+    ? db
+        .select({
+          id: assignmentTasks.id,
+          title: assignmentTasks.title,
+          dueAt: assignmentTasks.dueAt,
+          createdAt: assignmentTasks.createdAt,
+          submissionFormat: assignmentTasks.submissionFormat,
+        })
+        .from(assignmentTasks)
+        .where(and(
+          eq(assignmentTasks.studentId, userId),
+          sql<boolean>`${taskPlacement} BETWEEN ${startEpoch} AND ${endEpoch}`,
+          notExists(
+            db.select({ id: assignments.id }).from(assignments).where(eq(assignments.taskId, assignmentTasks.id)),
+          ),
+        ))
+        .orderBy(desc(taskPlacement))
+        .limit(limit) as Promise<AssignmentTaskRow[]>
+    : Promise.resolve([] as AssignmentTaskRow[]);
 
-  const [profileRows, events, studentLessons, notes, tracks, columns, threads, myAssignments] =
+  const [profileRows, events, studentLessons, notes, tracks, columns, threads, myAssignments, openTasks] =
     await Promise.all([
       db
         .select({
@@ -175,6 +216,7 @@ export async function queryInternalUnifiedItems(
       columnRows,
       threadRows,
       assignmentRows,
+      taskRows,
     ]);
 
   const profile = profileRows[0];
@@ -206,5 +248,6 @@ export async function queryInternalUnifiedItems(
     threads,
     assignments: myAssignments,
     feedbackCounts,
+    tasks: openTasks,
   }), query);
 }

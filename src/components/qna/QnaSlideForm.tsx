@@ -43,6 +43,14 @@ interface QnaDraft {
   attachmentObjectId?: string;
 }
 
+/** 가이드의 특정 구간에 남기는 질문 위치. 있으면 질문과 함께 저장되고 초안도 그 위치별로 따로 둔다. */
+export type QnaGuideAnchorInput = {
+  pageId: string;
+  pageTitle: string;
+  blockId: string | null;
+  quote: string;
+};
+
 interface QnaSlideFormProps {
   actorId: string;
   spaceLabel: string;
@@ -50,10 +58,17 @@ interface QnaSlideFormProps {
   onClose: () => void;
   returnTo: string;
   onBusyChange?: (isBusy: boolean) => void;
+  guideAnchor?: QnaGuideAnchorInput;
+  /** false면 등록 뒤 질문 화면으로 옮기지 않고 지금 화면에 남는다(가이드 질문). */
+  navigateOnSuccess?: boolean;
+}
+
+function draftContextId(anchor: QnaGuideAnchorInput | undefined): string {
+  return anchor ? `guide:${anchor.pageId}:${anchor.blockId ?? "page"}` : "new";
 }
 
 export function QnaSlideForm(props: QnaSlideFormProps) {
-  return <QnaSlideFormContent key={props.actorId} {...props} />;
+  return <QnaSlideFormContent key={`${props.actorId}:${draftContextId(props.guideAnchor)}`} {...props} />;
 }
 
 function QnaSlideFormContent({
@@ -63,6 +78,8 @@ function QnaSlideFormContent({
   onClose,
   returnTo,
   onBusyChange,
+  guideAnchor,
+  navigateOnSuccess = true,
 }: QnaSlideFormProps) {
   const [title, setTitle] = useState("");
   const {
@@ -119,7 +136,7 @@ function QnaSlideFormContent({
     discardRecovery,
     serverSync,
   } = useSyncedFormDraft<QnaDraft>(
-    createDocumentDraftKey("qna-thread", actorId),
+    createDocumentDraftKey("qna-thread", actorId, draftContextId(guideAnchor)),
     (d) => {
       setOperationId(
         parseCreationOperationId(d.operationId) ?? createCreationOperationId(),
@@ -215,7 +232,11 @@ function QnaSlideFormContent({
         source: { kind: "PORTAL", entity: "QNA_THREAD", label: "포털" },
       };
       onSuccess(newItem);
-      router.push(`/dashboard/qna/${id}?returnTo=${encodeURIComponent(returnTo)}`);
+      if (navigateOnSuccess) {
+        router.push(`/dashboard/qna/${id}?returnTo=${encodeURIComponent(returnTo)}`);
+      } else {
+        router.refresh();
+      }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.thread?.id]);
@@ -262,6 +283,17 @@ function QnaSlideFormContent({
     >
       <input type="hidden" name={CREATION_OPERATION_FIELD} value={operationId} />
       <input ref={contentInputRef} type="hidden" name="contentHtml" value={contentHtml} />
+      {guideAnchor ? (
+        <>
+          <input type="hidden" name="guidePageId" value={guideAnchor.pageId} />
+          <input type="hidden" name="guideBlockId" value={guideAnchor.blockId ?? ""} />
+          <input type="hidden" name="guideQuote" value={guideAnchor.quote} />
+          <figure className="flex flex-col gap-1 border-l-2 border-highlight pl-3">
+            <figcaption className="text-xs text-muted-foreground">가이드: {guideAnchor.pageTitle}</figcaption>
+            <blockquote className="line-clamp-4 text-body text-secondary-foreground">“{guideAnchor.quote}”</blockquote>
+          </figure>
+        </>
+      ) : null}
 
       {state.error && (!state.operationConflict || hasOperationConflict) && (
         <p role="alert" className="rounded-lg border border-destructive-border bg-destructive-muted p-3 text-ui text-destructive">{state.error}</p>

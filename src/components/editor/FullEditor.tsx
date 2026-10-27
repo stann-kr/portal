@@ -48,13 +48,15 @@ import {
 } from "./EditorInsertPanel";
 import { createDeferredDocumentSerializer } from "@/lib/deferred-document-serializer";
 import {
+  DOCUMENT_IMAGE_UPLOADER,
   EDITOR_IMAGE_ACCEPT,
-  abandonEditorImage,
   isEditorImageFile,
   pastedEditorImageFiles,
   useEditorImageUpload,
+  type EditorImageUploader,
   type EditorUploadedImage,
 } from "./useEditorImageUpload";
+import { GuideBlockId } from "./guide-block-id-extension";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
 
 // ── 타입 ──────────────────────────────────────────
@@ -98,6 +100,10 @@ interface FullEditorProps {
   toolsContainer?: HTMLElement | null;
   /** 본문 이미지가 올라가는 중이거나 넣기를 기다리는 동안 true. 상위 form은 제출·자동 저장을 미룬다. */
   onUploadingChange?: (uploading: boolean) => void;
+  /** 본문 이미지를 올릴 곳. 없으면 학생 문서 이미지(media) 흐름을 쓴다. 공용 가이드는 가이드 이미지 저장소를 넘긴다. */
+  imageUploader?: EditorImageUploader;
+  /** 가이드 편집: 블록의 data-block-id(질문 위치)를 보존한다. 노트·게시물은 쓰지 않는다. */
+  preserveBlockIds?: boolean;
 }
 
 /** 마크다운 이미지 문법을 깨지 않도록 대체 텍스트의 특수 문자를 정리한다. */
@@ -272,6 +278,8 @@ export function FullEditor({
   contentClassName,
   toolsContainer,
   onUploadingChange,
+  imageUploader = DOCUMENT_IMAGE_UPLOADER,
+  preserveBlockIds = false,
 }: FullEditorProps) {
   const isPage = variant === "page";
   const isBare = variant === "bare";
@@ -372,8 +380,12 @@ export function FullEditor({
     [markContentDirty],
   );
 
+  const imageUploaderRef = useRef(imageUploader);
+  useEffect(() => {
+    imageUploaderRef.current = imageUploader;
+  }, [imageUploader]);
   const discardDeferredImages = useCallback(() => {
-    for (const upload of deferredImagesRef.current) abandonEditorImage(upload.mediaObjectId);
+    for (const upload of deferredImagesRef.current) imageUploaderRef.current.abandon(upload.mediaObjectId);
     deferredImagesRef.current = [];
     setDeferredImageCount(0);
   }, []);
@@ -381,7 +393,7 @@ export function FullEditor({
   const handleUploadedImage = useCallback(
     (upload: EditorUploadedImage, generation: number) => {
       if (generation !== contentGenerationRef.current || !editorInstanceRef.current) {
-        abandonEditorImage(upload.mediaObjectId);
+        imageUploaderRef.current.abandon(upload.mediaObjectId);
         return;
       }
       if (disabledRef.current) {
@@ -393,7 +405,7 @@ export function FullEditor({
     },
     [insertImageNow],
   );
-  const imageUpload = useEditorImageUpload<number>(handleUploadedImage);
+  const imageUpload = useEditorImageUpload<number>(handleUploadedImage, imageUploader);
   const uploadImagesForCurrentContent = imageUpload.uploadImages;
   const uploadImages = useCallback(
     (files: readonly File[]) => uploadImagesForCurrentContent(files, contentGenerationRef.current),
@@ -469,8 +481,9 @@ export function FullEditor({
         transformPastedText: true,
         transformCopiedText: false,
       }),
+      ...(preserveBlockIds ? [GuideBlockId] : []),
     ],
-    [placeholder],
+    [placeholder, preserveBlockIds],
   );
   const editorProps = useMemo(
     () => ({
@@ -618,7 +631,7 @@ export function FullEditor({
   useEffect(
     () => () => {
       contentGenerationRef.current += 1;
-      for (const upload of deferredImagesRef.current) abandonEditorImage(upload.mediaObjectId);
+      for (const upload of deferredImagesRef.current) imageUploaderRef.current.abandon(upload.mediaObjectId);
       deferredImagesRef.current = [];
     },
     [],
@@ -723,7 +736,8 @@ export function FullEditor({
   ) : null;
 
   // 전체 서식 줄이 없는 편집기는 마크다운 전환을 상태 줄(bare는 상위 화면의 도구 자리)에 둔다.
-  const markdownToggle = !disabled ? (
+  // 가이드 편집(preserveBlockIds)은 마크다운으로 오가면 블록 식별자(질문 위치)가 사라지므로 전환을 두지 않는다.
+  const markdownToggle = !disabled && !preserveBlockIds ? (
     <button
       type="button"
       onClick={handleMarkdownToggle}
@@ -1036,8 +1050,8 @@ export function FullEditor({
                 <Redo2 className={ICON} strokeWidth={1.6} aria-hidden="true" />
               </ToolbarButton>
 
-              {/* 마크다운 모드 토글 */}
-              <div className="ml-auto shrink-0 pl-1">
+              {/* 마크다운 모드 토글(가이드 편집은 블록 식별자를 지키려고 숨긴다) */}
+              <div className={cn("ml-auto shrink-0 pl-1", preserveBlockIds && "hidden")}>
                 <Button
                   type="button"
                   variant="ghost"

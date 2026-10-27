@@ -257,28 +257,161 @@ export const externalCalendarSubscriptions = sqliteTable(
   ],
 );
 
-export const assignments = sqliteTable("assignments", {
-  id: text("id").primaryKey(),
-  studentId: text("student_id")
-    .references(() => profiles.id, { onDelete: "cascade" })
-    .notNull(),
-  mediaUrl: text("media_url").notNull(),
-  submittedAt: integer("submitted_at", { mode: "timestamp" }).default(
-    sql`(strftime('%s', 'now'))`,
-  ),
-});
+/** 과제 제출 형식. MIX는 믹스셋 링크, TEXT는 글, BOTH는 둘 다 받는다. */
+export type AssignmentSubmissionFormat = "MIX" | "TEXT" | "BOTH";
 
-export const feedbacks = sqliteTable("feedbacks", {
-  id: text("id").primaryKey(),
-  assignmentId: text("assignment_id")
-    .references(() => assignments.id, { onDelete: "cascade" })
-    .notNull(),
-  timeMarker: integer("time_marker").notNull(),
-  content: text("content").notNull(),
-  createdAt: integer("created_at", { mode: "timestamp" }).default(
-    sql`(strftime('%s', 'now'))`,
-  ),
-});
+/**
+ * 관리자가 학생 한 명에게 지정한 정기 과제 규칙.
+ * 회차(assignment_tasks)는 예약 작업 없이 조회할 때 만들어진다.
+ * 날짜·시각은 KST 기준 문자열(YYYY-MM-DD, HH:MM)로 보관한다.
+ */
+export const assignmentRecurrences = sqliteTable(
+  "assignment_recurrences",
+  {
+    id: text("id").primaryKey(),
+    studentId: text("student_id")
+      .references(() => profiles.id, { onDelete: "cascade" })
+      .notNull(),
+    title: text("title").notNull(),
+    descriptionHtml: text("description_html").default("").notNull(),
+    submissionFormat: text("submission_format")
+      .$type<AssignmentSubmissionFormat>()
+      .notNull(),
+    startDate: text("start_date").notNull(),
+    intervalWeeks: integer("interval_weeks").default(1).notNull(),
+    /** 요일 bit mask. bit 0이 일요일, bit 6이 토요일이다. */
+    weekdays: integer("weekdays").notNull(),
+    dueTime: text("due_time").notNull(),
+    endDate: text("end_date"),
+    maxOccurrences: integer("max_occurrences"),
+    pausedAt: integer("paused_at", { mode: "timestamp" }),
+    createdById: text("created_by_id").references(() => profiles.id, {
+      onDelete: "set null",
+    }),
+    version: integer("version").default(1).notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .default(sql`(strftime('%s', 'now'))`)
+      .notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .default(sql`(strftime('%s', 'now'))`)
+      .notNull(),
+  },
+  (table) => [
+    index("assignment_recurrences_student_idx").on(table.studentId),
+    check(
+      "assignment_recurrences_format_check",
+      sql`${table.submissionFormat} IN ('MIX', 'TEXT', 'BOTH')`,
+    ),
+    check(
+      "assignment_recurrences_schedule_check",
+      sql`length(${table.title}) > 0 AND length(${table.startDate}) = 10 AND length(${table.dueTime}) = 5 AND ${table.intervalWeeks} BETWEEN 1 AND 12 AND ${table.weekdays} BETWEEN 1 AND 127 AND (${table.endDate} IS NULL OR (length(${table.endDate}) = 10 AND ${table.endDate} >= ${table.startDate})) AND (${table.maxOccurrences} IS NULL OR ${table.maxOccurrences} BETWEEN 1 AND 520) AND ${table.version} >= 1`,
+    ),
+  ],
+);
+
+/** 관리자가 낸 과제. 정기 과제 회차는 recurrence_id와 occurrence_date로 한 번만 만든다. */
+export const assignmentTasks = sqliteTable(
+  "assignment_tasks",
+  {
+    id: text("id").primaryKey(),
+    studentId: text("student_id")
+      .references(() => profiles.id, { onDelete: "cascade" })
+      .notNull(),
+    recurrenceId: text("recurrence_id").references(
+      () => assignmentRecurrences.id,
+      { onDelete: "set null" },
+    ),
+    occurrenceDate: text("occurrence_date"),
+    title: text("title").notNull(),
+    descriptionHtml: text("description_html").default("").notNull(),
+    submissionFormat: text("submission_format")
+      .$type<AssignmentSubmissionFormat>()
+      .notNull(),
+    dueAt: integer("due_at", { mode: "timestamp" }),
+    createdById: text("created_by_id").references(() => profiles.id, {
+      onDelete: "set null",
+    }),
+    version: integer("version").default(1).notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .default(sql`(strftime('%s', 'now'))`)
+      .notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .default(sql`(strftime('%s', 'now'))`)
+      .notNull(),
+  },
+  (table) => [
+    index("assignment_tasks_student_due_idx").on(table.studentId, table.dueAt),
+    uniqueIndex("assignment_tasks_occurrence_unique").on(
+      table.recurrenceId,
+      table.occurrenceDate,
+    ),
+    check(
+      "assignment_tasks_format_check",
+      sql`${table.submissionFormat} IN ('MIX', 'TEXT', 'BOTH')`,
+    ),
+    check(
+      "assignment_tasks_payload_check",
+      sql`length(${table.title}) > 0 AND ${table.version} >= 1 AND (${table.occurrenceDate} IS NULL OR length(${table.occurrenceDate}) = 10)`,
+    ),
+  ],
+);
+
+/**
+ * 학생 제출. task_id가 없으면 기존 자유 제출이다.
+ * 믹스셋 링크(media_url)와 글(text_html) 중 하나 이상이 있어야 한다.
+ */
+export const assignments = sqliteTable(
+  "assignments",
+  {
+    id: text("id").primaryKey(),
+    studentId: text("student_id")
+      .references(() => profiles.id, { onDelete: "cascade" })
+      .notNull(),
+    taskId: text("task_id").references(() => assignmentTasks.id, {
+      onDelete: "set null",
+    }),
+    mediaUrl: text("media_url"),
+    textHtml: text("text_html"),
+    submittedAt: integer("submitted_at", { mode: "timestamp" }).default(
+      sql`(strftime('%s', 'now'))`,
+    ),
+    updatedAt: integer("updated_at", { mode: "timestamp" }),
+  },
+  (table) => [
+    uniqueIndex("assignments_task_unique").on(table.taskId),
+    index("assignments_student_submitted_idx").on(
+      table.studentId,
+      table.submittedAt,
+    ),
+    check(
+      "assignments_content_check",
+      sql`(${table.mediaUrl} IS NOT NULL AND length(${table.mediaUrl}) > 0) OR (${table.textHtml} IS NOT NULL AND length(${table.textHtml}) > 0)`,
+    ),
+  ],
+);
+
+/** time_marker가 없으면 글 제출이나 과제 전체에 대한 피드백이다. */
+export const feedbacks = sqliteTable(
+  "feedbacks",
+  {
+    id: text("id").primaryKey(),
+    assignmentId: text("assignment_id")
+      .references(() => assignments.id, { onDelete: "cascade" })
+      .notNull(),
+    timeMarker: integer("time_marker"),
+    content: text("content").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).default(
+      sql`(strftime('%s', 'now'))`,
+    ),
+  },
+  (table) => [
+    index("feedbacks_assignment_idx").on(table.assignmentId),
+    check(
+      "feedbacks_time_marker_check",
+      sql`${table.timeMarker} IS NULL OR ${table.timeMarker} >= 0`,
+    ),
+  ],
+);
 
 export const categories = sqliteTable("categories", {
   id: text("id").primaryKey(),
@@ -415,7 +548,8 @@ export type DocumentServerDraftKind =
   | "note"
   | "community-post"
   | "qna-thread"
-  | "qna-reply";
+  | "qna-reply"
+  | "guide-page";
 
 /** 계정·문서 namespace별 최신 서버 초안. 계정 삭제 시 원문을 즉시 cascade한다. */
 export const documentServerDrafts = sqliteTable(
@@ -445,7 +579,7 @@ export const documentServerDrafts = sqliteTable(
     index("document_server_drafts_expires_idx").on(table.expiresAt),
     check(
       "document_server_drafts_kind_check",
-      sql`${table.documentKind} IN ('note', 'community-post', 'qna-thread', 'qna-reply')`,
+      sql`${table.documentKind} IN ('note', 'community-post', 'qna-thread', 'qna-reply', 'guide-page')`,
     ),
     check(
       "document_server_drafts_identity_check",
@@ -1338,3 +1472,103 @@ export const calendarEvents = sqliteTable("calendar_events", {
     sql`(strftime('%s', 'now'))`,
   ),
 });
+
+/**
+ * 모든 학생이 같은 내용을 보는 공용 가이드 페이지. 관리자만 쓴다.
+ * 본문 블록에는 질문 위치를 가리키는 data-block-id가 붙는다.
+ */
+export const guidePages = sqliteTable(
+  "guide_pages",
+  {
+    id: text("id").primaryKey(),
+    title: text("title").notNull(),
+    sortOrder: integer("sort_order").default(0).notNull(),
+    contentHtml: text("content_html").default("").notNull(),
+    version: integer("version").default(1).notNull(),
+    createdById: text("created_by_id").references(() => profiles.id, {
+      onDelete: "set null",
+    }),
+    updatedById: text("updated_by_id").references(() => profiles.id, {
+      onDelete: "set null",
+    }),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .default(sql`(strftime('%s', 'now'))`)
+      .notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .default(sql`(strftime('%s', 'now'))`)
+      .notNull(),
+  },
+  (table) => [
+    index("guide_pages_sort_idx").on(table.sortOrder),
+    check(
+      "guide_pages_payload_check",
+      sql`length(${table.id}) > 0 AND length(${table.title}) > 0 AND ${table.version} >= 1 AND ${table.createdAt} <= ${table.updatedAt}`,
+    ),
+  ],
+);
+
+export type GuideAssetContentType =
+  | "image/gif"
+  | "image/jpeg"
+  | "image/png"
+  | "image/webp";
+
+/**
+ * 가이드 본문 이미지. 학생 개인 자료가 아니라 공용 자료라 media_objects 수명주기와 분리한다.
+ * R2 object_key는 guide/ 아래에만 둔다.
+ */
+export const guideAssets = sqliteTable(
+  "guide_assets",
+  {
+    id: text("id").primaryKey(),
+    objectKey: text("object_key").notNull(),
+    contentType: text("content_type").$type<GuideAssetContentType>().notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    guidePageId: text("guide_page_id").references(() => guidePages.id, {
+      onDelete: "set null",
+    }),
+    uploadedById: text("uploaded_by_id").references(() => profiles.id, {
+      onDelete: "set null",
+    }),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .default(sql`(strftime('%s', 'now'))`)
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("guide_assets_object_key_unique").on(table.objectKey),
+    index("guide_assets_page_idx").on(table.guidePageId),
+    check(
+      "guide_assets_payload_check",
+      sql`${table.contentType} IN ('image/gif', 'image/jpeg', 'image/png', 'image/webp') AND ${table.objectKey} = 'guide/' || ${table.id} AND ${table.sizeBytes} BETWEEN 1 AND 10485760`,
+    ),
+  ],
+);
+
+/**
+ * 가이드의 특정 구간에 남긴 Q&A 질문 위치. thread가 지워지면 함께 지운다.
+ * 가이드 페이지나 블록이 사라져도 page_title·anchor_quote로 위치를 보여 준다.
+ */
+export const qnaGuideAnchors = sqliteTable(
+  "qna_guide_anchors",
+  {
+    threadId: text("thread_id")
+      .primaryKey()
+      .references(() => qnaThreads.id, { onDelete: "cascade" }),
+    guidePageId: text("guide_page_id").references(() => guidePages.id, {
+      onDelete: "set null",
+    }),
+    pageTitle: text("page_title").notNull(),
+    anchorBlockId: text("anchor_block_id"),
+    anchorQuote: text("anchor_quote").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .default(sql`(strftime('%s', 'now'))`)
+      .notNull(),
+  },
+  (table) => [
+    index("qna_guide_anchors_page_idx").on(table.guidePageId),
+    check(
+      "qna_guide_anchors_payload_check",
+      sql`length(${table.pageTitle}) > 0 AND length(${table.anchorQuote}) BETWEEN 1 AND 500 AND (${table.anchorBlockId} IS NULL OR length(${table.anchorBlockId}) BETWEEN 1 AND 64)`,
+    ),
+  ],
+);

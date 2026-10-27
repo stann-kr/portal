@@ -7,7 +7,7 @@
 import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { Play, Radio } from "lucide-react";
+import { FileText, Play } from "lucide-react";
 import { getActiveAuthSession } from "@/lib/auth-guard";
 import { getStudentAccountState, getStudentById } from "@/lib/actions/students";
 import { getCurriculumByStudent } from "@/lib/actions/curriculum";
@@ -16,11 +16,12 @@ import { getLessonsByStudent } from "@/lib/actions/lessons";
 import { getOrSeedColumns, getDiggingTracks } from "@/lib/actions/digging";
 import { getQnaThreadsByStudent } from "@/lib/actions/qna";
 import { getAssignmentSummariesByStudent } from "@/lib/actions/assignments";
+import { getAssignmentTasksForStudent } from "@/lib/actions/assignmentTasks";
+import { AdminAssignmentsPanel } from "@/components/admin/assignments/AdminAssignmentsPanel";
 import { getStudentCalendarFeedIssuedAt } from "@/lib/actions/calendarFeed";
-import { EmptyState } from "@/components/ui/empty-state";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { formatKstShortDate } from "@/lib/kst-format";
-import { describeAssignmentMedia } from "@/lib/unified-item-normalization";
+import { describeAssignmentSubmission } from "@/lib/unified-item-normalization";
 import { buildAdminStudentNotesHref, StudentDetailTabs } from "@/components/admin/StudentDetailTabs";
 import { OverviewTab } from "@/components/admin/OverviewTab";
 import { DiggingBoard } from "@/components/digging/DiggingBoard";
@@ -73,53 +74,61 @@ async function DiggingTabContent({ studentId }: { studentId: string }) {
 }
 
 async function AssignmentsTabContent({ studentId, referenceTime }: { studentId: string; referenceTime: Date }) {
+  // 정기 과제 회차를 먼저 만든 뒤 제출 목록을 읽는다.
+  const { tasks, recurrences } = await getAssignmentTasksForStudent(studentId);
   const summaries = await getAssignmentSummariesByStudent(studentId);
   const returnTo = buildAdminStudentDetailHref(studentId, "assignments");
 
-  if (summaries.length === 0) {
-    return (
-      <EmptyState
-        className="max-w-[880px]"
-        title="제출한 믹스셋이 없습니다"
-        description="학생이 과제 화면에서 YouTube나 SoundCloud 링크를 제출하면 이곳에 표시됩니다."
-        icon={<Radio strokeWidth={1.6} aria-hidden="true" />}
-      />
-    );
-  }
-
   return (
-    <LedgerSection labelledBy="assignments-heading" className="max-w-[880px]">
-      <LedgerSectionHeader
-        id="assignments-heading"
-        title="제출한 믹스셋"
-        count={summaries.length}
-        aside={<span className={LEDGER_HEADER_NOTE_CLASS}>최신순</span>}
+    <div className="flex flex-col gap-8">
+      <AdminAssignmentsPanel
+        studentId={studentId}
+        tasks={tasks}
+        recurrences={recurrences}
+        referenceTime={referenceTime}
+        returnTo={returnTo}
       />
-      <ul>
-        {summaries.map((assignment) => {
-          const submitted = formatKstShortDate(assignment.submittedAt, "", referenceTime);
-          return (
-            <li key={assignment.id}>
-              <Link
-                href={`/dashboard/student/assignments/${encodeURIComponent(assignment.id)}?returnTo=${encodeURIComponent(returnTo)}`}
-                className={cn(LEDGER_ROW_CLASS, "flex min-h-15 items-center gap-3.5 py-2 md:px-1")}
-              >
-                <span aria-hidden="true" className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-secondary-foreground">
-                  <Play className="size-3.5 fill-current" strokeWidth={1.6} />
-                </span>
-                <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                  <span className="truncate text-body font-medium">{describeAssignmentMedia(assignment.mediaUrl)}</span>
-                  <span className="text-xs text-muted-foreground">
-                    {submitted ? `${submitted} 제출` : "제출일 미정"} · 피드백 {assignment.feedbackCount}건
-                  </span>
-                </span>
-                <StatusBadge status={assignment.feedbackCount > 0 ? "feedbackReady" : "feedbackWaiting"} />
-              </Link>
-            </li>
-          );
-        })}
-      </ul>
-    </LedgerSection>
+      <LedgerSection labelledBy="assignments-heading" className="max-w-[880px]">
+        <LedgerSectionHeader
+          id="assignments-heading"
+          title="제출 기록"
+          count={summaries.length}
+          aside={<span className={LEDGER_HEADER_NOTE_CLASS}>최신순</span>}
+        />
+        {summaries.length === 0 ? (
+          <p className="py-6 text-body text-muted-foreground">
+            아직 제출이 없습니다. 학생이 받은 과제를 내거나 과제 화면에서 믹스셋 링크를 제출하면 이곳에 표시됩니다.
+          </p>
+        ) : (
+          <ul>
+            {summaries.map((assignment) => {
+              const submitted = formatKstShortDate(assignment.submittedAt, "", referenceTime);
+              return (
+                <li key={assignment.id}>
+                  <Link
+                    href={`/dashboard/student/assignments/${encodeURIComponent(assignment.id)}?returnTo=${encodeURIComponent(returnTo)}`}
+                    className={cn(LEDGER_ROW_CLASS, "flex min-h-15 items-center gap-3.5 py-2 md:px-1")}
+                  >
+                    <span aria-hidden="true" className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-secondary-foreground">
+                      {assignment.mediaUrl
+                        ? <Play className="size-3.5 fill-current" strokeWidth={1.6} />
+                        : <FileText className="size-3.5" strokeWidth={1.6} />}
+                    </span>
+                    <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                      <span className="truncate text-body font-medium">{describeAssignmentSubmission(assignment)}</span>
+                      <span className="text-xs text-muted-foreground">
+                        {submitted ? `${submitted} 제출` : "제출일 미정"} · 피드백 {assignment.feedbackCount}건
+                      </span>
+                    </span>
+                    <StatusBadge status={assignment.feedbackCount > 0 ? "feedbackReady" : "feedbackWaiting"} />
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </LedgerSection>
+    </div>
   );
 }
 

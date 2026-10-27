@@ -24,6 +24,7 @@ import { isManagedLessonItem, LessonActions } from "@/components/calendar/Lesson
 import { formatDetailDate, formatDetailMoment, shiftDateKey } from "@/components/calendar/calendar-dates";
 import { toKstDateInputValue } from "@/lib/date-input";
 import { buildAdminStudentDetailHref, buildStudentDiggingBoardHref } from "@/lib/student-space-routes";
+import { STUDENT_LEGACY_REDIRECTS } from "@/lib/legacy-dashboard-routes";
 
 // ── 타입 라벨 ────────────────────────────────────
 
@@ -107,6 +108,8 @@ export function UnifiedItemDetail({
   const isAllDay = item.metadata.allDay === true;
   const description = item.description ?? metaDescription;
   const isLesson = item.type === "EVENT" && item.subType === "LESSON";
+  // 아직 제출하지 않은 관리자 과제는 마감 시각에 놓이고, 제출은 과제 화면에서 한다.
+  const isOpenTask = item.source.entity === "ASSIGNMENT_TASK";
 
   // 종일 일정은 날짜만. 끝 날짜는 포함하지 않는 값으로 저장되므로 하루 앞을 보인다.
   const allDayStartKey = allDayStartDate && DATE_ONLY.test(allDayStartDate) ? allDayStartDate : toKstDateInputValue(item.date);
@@ -133,6 +136,8 @@ export function UnifiedItemDetail({
               {item.endDate ? <DetailRow label="종료" mono>{formatDetailMoment(new Date(item.endDate))}</DetailRow> : null}
             </>
           )
+        ) : isOpenTask ? (
+          <DetailRow label="마감" mono>{metaStr(item.metadata, "dueAt") ? formatDetailMoment(item.date) : "마감 없음"}</DetailRow>
         ) : (
           <DetailRow label="날짜" mono>{formatDetailMoment(item.date)}</DetailRow>
         )}
@@ -225,13 +230,23 @@ export function UnifiedItemDetail({
         </Link>
       ) : null}
 
-      {item.type === "ASSIGNMENT" ? (
+      {isOpenTask ? (
+        <Link
+          // canManageEvents는 학생 본인 스페이스다.
+          href={canManageEvents ? STUDENT_LEGACY_REDIRECTS.assignments : buildAdminStudentDetailHref(item.space.studentId, "assignments")}
+          className={linkButton}
+        >
+          {canManageEvents ? "과제 화면에서 제출하기" : "학생 과제 관리"}
+        </Link>
+      ) : item.type === "ASSIGNMENT" ? (
         <Link
           href={`/dashboard/student/assignments/${encodeURIComponent(item.id)}?returnTo=${encodeURIComponent(returnTo)}`}
           className={linkButton}
         >
           <MessageSquareText className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
-          {canManageEvents ? "재생하며 피드백 보기" : "재생하며 피드백 작성"}
+          {metaMediaUrl === null
+            ? canManageEvents ? "제출과 피드백 보기" : "제출 보고 피드백 작성"
+            : canManageEvents ? "재생하며 피드백 보기" : "재생하며 피드백 작성"}
         </Link>
       ) : null}
     </div>

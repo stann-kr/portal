@@ -9,7 +9,7 @@ import {
   type PendingFeedbackAssignment,
 } from "@/lib/admin-work-queue";
 import type { StudentRosterStat } from "@/lib/actions/students";
-import { describeAssignmentMedia } from "@/lib/unified-item-normalization";
+import { describeAssignmentSubmission } from "@/lib/unified-item-normalization";
 import { formatKst } from "@/lib/kst-format";
 import { buildQnaListHref } from "@/lib/qna-routes";
 import { cn } from "@/lib/utils";
@@ -190,7 +190,7 @@ export function AdminWorkQueueSection({
                         href={`/dashboard/student/assignments/${encodeURIComponent(assignment.id)}?returnTo=${encodeURIComponent(WORK_QUEUE_PATH)}`}
                         className={QUEUE_ROW_CLASS}
                       >
-                        <QueueRowTitle>{describeAssignmentMedia(assignment.mediaUrl)}</QueueRowTitle>
+                        <QueueRowTitle>{describeAssignmentSubmission(assignment)}</QueueRowTitle>
                         <QueueRowStudent>{displayStudent(assignment)}</QueueRowStudent>
                         <span className="shrink-0 font-mono text-xs text-muted-foreground">
                           {submitted || "제출일 미정"}
