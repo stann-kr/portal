@@ -63,7 +63,12 @@ for (const file of tsxFiles.filter((path) => !/\.test\.tsx$|\/src\/test\//u.test
 }
 
 // Worker SSR runs in UTC: display dates must go through the explicit KST formatter.
-const dateFormatOwners = new Set(["src/lib/kst-format.ts", "src/lib/date-input.ts"]);
+// calendar-sync/types.ts는 화면 표시가 아니라 외부 캘린더 TZID 시각을 UTC로 바꾸는 계산에만 Intl을 쓴다.
+const dateFormatOwners = new Set([
+  "src/lib/kst-format.ts",
+  "src/lib/date-input.ts",
+  "src/lib/calendar-sync/types.ts",
+]);
 const rawDateFormatPattern = /\.toLocale(?:Date|Time)String\(|\.toLocaleString\(\s*["']ko-KR["']|new Intl\.DateTimeFormat\(|from ["']date-fns["']/gu;
 const sourceFiles = [...tsxFiles, ...await collectFiles(sourceRoot, ".ts")]
   .filter((file) => !/\.test\.tsx?$|\/src\/test\//u.test(file.replaceAll("\\", "/")));
