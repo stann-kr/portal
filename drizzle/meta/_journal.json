@@ -120,6 +120,13 @@
       "when": 1793092018020,
       "tag": "0016_guide_pages",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1793094658716,
+      "tag": "0017_calendar_sync",
+      "breakpoints": true
     }
   ]
 }

@@ -1572,3 +1572,172 @@ export const qnaGuideAnchors = sqliteTable(
     ),
   ],
 );
+
+export type CalendarConnectionStatus = "ACTIVE" | "NEEDS_REAUTH";
+
+/**
+ * 관리자가 연결한 Google(OAuth refresh token) 또는 iCloud(Apple ID + 앱 전용 암호) 계정.
+ * 자격 증명 JSON은 AES-GCM으로만 보관하고 원문을 화면에 돌려주지 않는다.
+ */
+export const calendarConnections = sqliteTable(
+  "calendar_connections",
+  {
+    id: text("id").primaryKey(),
+    ownerId: text("owner_id")
+      .references(() => profiles.id, { onDelete: "cascade" })
+      .notNull(),
+    provider: text("provider").$type<ExternalCalendarProvider>().notNull(),
+    accountLabel: text("account_label").notNull(),
+    encryptedCredentials: text("encrypted_credentials").notNull(),
+    credentialsIv: text("credentials_iv").notNull(),
+    status: text("status")
+      .$type<CalendarConnectionStatus>()
+      .default("ACTIVE")
+      .notNull(),
+    lastError: text("last_error"),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .default(sql`(strftime('%s', 'now'))`)
+      .notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .default(sql`(strftime('%s', 'now'))`)
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("calendar_connections_owner_provider_unique").on(
+      table.ownerId,
+      table.provider,
+    ),
+    check(
+      "calendar_connections_provider_check",
+      sql`${table.provider} IN ('GOOGLE', 'ICLOUD')`,
+    ),
+    check(
+      "calendar_connections_status_check",
+      sql`${table.status} IN ('ACTIVE', 'NEEDS_REAUTH')`,
+    ),
+    check(
+      "calendar_connections_payload_check",
+      sql`length(${table.id}) > 0 AND length(${table.accountLabel}) > 0 AND length(${table.encryptedCredentials}) > 0 AND length(${table.credentialsIv}) > 0 AND ${table.createdAt} <= ${table.updatedAt}`,
+    ),
+  ],
+);
+
+/** 학생 한 명과 연결 계정의 공유 캘린더 하나를 잇는다. cursor는 provider 증분 동기화 위치다. */
+export const calendarMappings = sqliteTable(
+  "calendar_mappings",
+  {
+    id: text("id").primaryKey(),
+    connectionId: text("connection_id")
+      .references(() => calendarConnections.id, { onDelete: "cascade" })
+      .notNull(),
+    studentId: text("student_id")
+      .references(() => profiles.id, { onDelete: "cascade" })
+      .notNull(),
+    remoteCalendarId: text("remote_calendar_id").notNull(),
+    remoteCalendarName: text("remote_calendar_name").notNull(),
+    cursor: text("cursor"),
+    lastSyncedAt: integer("last_synced_at", { mode: "timestamp" }),
+    lastError: text("last_error"),
+    /** 동시에 두 요청이 같은 캘린더를 동기화하지 않도록 잡는 짧은 임대 만료 시각. */
+    syncLeaseUntil: integer("sync_lease_until", { mode: "timestamp" }),
+    syncLeaseId: text("sync_lease_id"),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .default(sql`(strftime('%s', 'now'))`)
+      .notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .default(sql`(strftime('%s', 'now'))`)
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("calendar_mappings_connection_student_unique").on(
+      table.connectionId,
+      table.studentId,
+    ),
+    uniqueIndex("calendar_mappings_connection_calendar_unique").on(
+      table.connectionId,
+      table.remoteCalendarId,
+    ),
+    index("calendar_mappings_student_idx").on(table.studentId),
+    check(
+      "calendar_mappings_payload_check",
+      sql`length(${table.id}) > 0 AND length(${table.remoteCalendarId}) > 0 AND length(${table.remoteCalendarName}) > 0 AND ${table.createdAt} <= ${table.updatedAt}`,
+    ),
+  ],
+);
+
+export type CalendarSyncLocalKind = "LESSON" | "EVENT";
+
+/**
+ * 포털 레슨·일정과 원격 일정의 1:1 연결. remote_id가 없으면 아직 원격에 만들지 못한 항목이다.
+ * etag와 local_fingerprint는 마지막으로 맞춘 상태라, 둘 다 같으면 다시 보내거나 가져오지 않는다.
+ */
+export const calendarSyncLinks = sqliteTable(
+  "calendar_sync_links",
+  {
+    id: text("id").primaryKey(),
+    mappingId: text("mapping_id")
+      .references(() => calendarMappings.id, { onDelete: "cascade" })
+      .notNull(),
+    localKind: text("local_kind").$type<CalendarSyncLocalKind>().notNull(),
+    localId: text("local_id").notNull(),
+    remoteId: text("remote_id"),
+    etag: text("etag"),
+    localFingerprint: text("local_fingerprint").notNull(),
+    lastError: text("last_error"),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .default(sql`(strftime('%s', 'now'))`)
+      .notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .default(sql`(strftime('%s', 'now'))`)
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("calendar_sync_links_local_unique").on(
+      table.mappingId,
+      table.localKind,
+      table.localId,
+    ),
+    uniqueIndex("calendar_sync_links_remote_unique").on(
+      table.mappingId,
+      table.remoteId,
+    ),
+    check(
+      "calendar_sync_links_kind_check",
+      sql`${table.localKind} IN ('LESSON', 'EVENT')`,
+    ),
+    check(
+      "calendar_sync_links_payload_check",
+      sql`length(${table.localId}) > 0 AND length(${table.localFingerprint}) > 0 AND (${table.remoteId} IS NULL OR length(${table.remoteId}) > 0)`,
+    ),
+  ],
+);
+
+/**
+ * 원격 반복 일정(master·예외)의 읽기 전용 사본. 포털 항목으로 가져오지 않고 ICS로 펼쳐 보여 준다.
+ */
+export const calendarRemoteSeries = sqliteTable(
+  "calendar_remote_series",
+  {
+    mappingId: text("mapping_id")
+      .references(() => calendarMappings.id, { onDelete: "cascade" })
+      .notNull(),
+    remoteId: text("remote_id").notNull(),
+    seriesKey: text("series_key").notNull(),
+    etag: text("etag"),
+    icsText: text("ics_text").notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .default(sql`(strftime('%s', 'now'))`)
+      .notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.mappingId, table.remoteId] }),
+    index("calendar_remote_series_series_idx").on(
+      table.mappingId,
+      table.seriesKey,
+    ),
+    check(
+      "calendar_remote_series_payload_check",
+      sql`length(${table.remoteId}) > 0 AND length(${table.seriesKey}) > 0 AND length(${table.icsText}) BETWEEN 1 AND 262144`,
+    ),
+  ],
+);

@@ -45,6 +45,7 @@ import {
   validateGuidePageSchema,
   validateGuidePageUpgrade,
 } from "./migration-check/guide-pages.mjs";
+import { validateCalendarSyncUpgrade } from "./migration-check/calendar-sync.mjs";
 import {
   validateAccountPrivacyAtomicSource,
   validateAccountPrivacySemantics,
@@ -170,6 +171,8 @@ async function main() {
   console.log("PASS populated 0014 → 0015 assignment task upgrade, feedback preservation and occurrence uniqueness");
   await validateGuidePageUpgrade(migrationFiles);
   console.log("PASS populated 0015 → 0016 guide page upgrade, server draft rebuild and anchor preservation");
+  await validateCalendarSyncUpgrade(migrationFiles);
+  console.log("PASS populated 0016 → 0017 calendar sync tables, constraints and connection cascade");
 }
 
 try {
