@@ -555,7 +555,7 @@ export function UnifiedCalendar({
         {filters}
       </div>
 
-      {!notice && savingMove ? (
+      {savingMove ? (
         <div role="status" className="mx-5 mb-3 flex min-h-10 items-center gap-2 rounded-touch bg-sidebar px-3.5 py-1.5 text-ui text-secondary-foreground md:mx-0 md:mb-0">
           <ButtonSpinner />
           옮긴 자리를 저장하는 중…

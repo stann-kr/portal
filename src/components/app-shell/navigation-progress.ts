@@ -10,7 +10,7 @@ export function isProgressNavigationClick(event: ClickLike, location: LocationLi
   const target = event.target as { closest?: (selector: string) => unknown } | null;
   const anchor = target?.closest?.("a[href]") as HTMLAnchorElement | null | undefined;
   if (!anchor) return false;
-  if ((anchor.target && anchor.target !== "_self") || anchor.hasAttribute("download")) return false;
+  if ((anchor.target && anchor.target !== "_self") || anchor.hasAttribute("download") || anchor.hasAttribute("data-progress-skip")) return false;
   let url: URL;
   try {
     url = new URL(anchor.getAttribute("href") ?? "", `${location.origin}${location.pathname}${location.search}`);

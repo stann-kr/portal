@@ -58,6 +58,8 @@ function BoardLink({ href, active, onSelect, children }: { href: string; active:
   return (
     <a
       href={href}
+      // 클릭은 서버 이동 없이 화면 안에서 바꾸므로 위쪽 진행 막대를 켜지 않는다(목록 skeleton이 대신 보인다).
+      data-progress-skip=""
       aria-current={active ? "page" : undefined}
       onClick={(event) => {
         if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;

@@ -62,6 +62,8 @@ export function NavigationProgress() {
     let nextId = 0;
     const start = () => setStartedAt({ key: locationKeyRef.current, id: ++nextId });
     // bubble 단계의 window에서 듣는다. 제출 중 이동 막기(useBusyNavigationGuard)가 전파를 끊은 클릭은 여기 오지 않는다.
+    // 화면 안에서 직접 처리하는 링크(커뮤니티 게시판 줄 등)는 preventDefault 뒤 주소를 스스로 바꾸거나 그대로 둔다.
+    // Next Link도 preventDefault하므로, 그런 링크는 a[data-progress-skip]으로 막대를 켜지 않게 표시한다.
     const onClick = (event: MouseEvent) => {
       if (isProgressNavigationClick(event, window.location)) start();
     };

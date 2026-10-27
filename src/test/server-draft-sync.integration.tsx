@@ -618,7 +618,10 @@ test("로그아웃 action이 실패하면 잠금을 풀고 오류를 보이며 �
   const ownerId = "student-logout-retry";
   const sourceKey = createDocumentDraftKey("note", ownerId, "logout-retry");
   const lockKey = createAccountLogoutLockStorageKey(ownerId);
-  const harness = await createHarness(context, sourceKey);
+  // 아직 등록하지 않은 이 기기의 초안. 로그아웃이 실패하면 남아 있어야 한다.
+  const harness = await createHarness(context, sourceKey, (storage) => {
+    storage.setItem(sourceKey, serializeFormDraft({ title: "쓰던 노트", contentHtml: "<p>지우면 안 된다</p>" }));
+  });
   logoutFailures = 1;
 
   const logout = await renderLogoutButton(harness.browserWindow, ownerId);
@@ -631,6 +634,8 @@ test("로그아웃 action이 실패하면 잠금을 풀고 오류를 보이며 �
     const alert = form?.querySelector("[role='alert']");
     assert.match(alert?.textContent ?? "", /로그아웃하지 못했습니다/u);
     assert.equal(harness.browserWindow.localStorage.getItem(lockKey), null, "실패하면 로그아웃 잠금을 풀어야 합니다.");
+    // 로그아웃이 확인되지 않았으므로 이 기기의 초안과 열린 편집기를 그대로 둔다.
+    assert.notEqual(harness.browserWindow.localStorage.getItem(sourceKey), null, "실패하면 로컬 초안을 지우지 않아야 합니다.");
 
     await act(async () => logout.button.click());
     await waitFor(() => logoutCalls.length === 2, "다시 누르면 로그아웃 action을 다시 보내야 합니다.");

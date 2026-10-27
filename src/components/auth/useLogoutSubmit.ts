@@ -56,8 +56,8 @@ function isNavigationSignal(error: unknown): boolean {
 
 /**
  * 로그아웃 form의 onSubmit. 먼저 같은 계정의 모든 탭에 로그아웃 잠금을 알려 서버 초안 저장을 멈추고,
- * 이 계정의 서버 초안 폐기 요청을 보낸 뒤(최대 3초) 로컬 초안을 지우고 로그아웃 action을 직접 부른다.
- * action이 실패하면 잠금을 풀고(다른 탭이 다시 저장한다) 버튼을 다시 누를 수 있게 하며 오류를 보인다.
+ * 이 계정의 서버 초안 폐기 요청을 보낸 뒤(최대 3초) 로그아웃 action을 직접 부르고, 로그아웃이 확인되면 로컬 초안을 지운다.
+ * action이 실패하면 로컬 초안은 그대로 두고 잠금을 풀며(다른 탭이 다시 저장한다) 버튼을 다시 누를 수 있게 하고 오류를 보인다.
  * form의 action은 JavaScript 없이 제출할 때만 쓰인다.
  */
 export function useLogoutSubmit(ownerId: string) {
@@ -75,10 +75,14 @@ export function useLogoutSubmit(ownerId: string) {
       const lock = acquireLock(ownerId);
       await flushServerDraftDiscards(ownerId);
       try {
-        clearLocalDocumentDraftsForLogout(ownerId);
         await logoutCurrentUser();
+        clearLocalDocumentDraftsForLogout(ownerId);
       } catch (failure) {
-        if (isNavigationSignal(failure)) return;
+        // 로그아웃이 확인된 뒤(redirect 신호)에만 이 기기의 초안을 지운다. 실패하면 초안과 열린 편집기를 그대로 둔다.
+        if (isNavigationSignal(failure)) {
+          clearLocalDocumentDraftsForLogout(ownerId);
+          return;
+        }
         releaseLock(ownerId, lock);
         pendingRef.current = false;
         setPending(false);

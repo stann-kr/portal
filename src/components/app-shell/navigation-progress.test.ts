@@ -34,6 +34,7 @@ test("다른 앱 주소로 가는 왼쪽 클릭만 위쪽 진행 막대를 켠�
   assert.equal(isProgressNavigationClick(click("/community", { button: 1 }), location), false, "가운데 버튼");
   assert.equal(isProgressNavigationClick(click("/community", { attrs: { target: "_blank" } }), location), false);
   assert.equal(isProgressNavigationClick(click("/files/a.pdf", { attrs: { download: "" } }), location), false);
+  assert.equal(isProgressNavigationClick(click("/community?boardType=GENERAL", { attrs: { "data-progress-skip": "" } }), location), false, "화면 안에서 처리하는 링크");
   assert.equal(
     isProgressNavigationClick({ ...click("/community"), target: { closest: () => null } as unknown as EventTarget }, location),
     false,
