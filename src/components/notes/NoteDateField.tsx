@@ -42,11 +42,11 @@ export function NoteDateField({
           }
         }}
         disabled={disabled}
-        className="peer absolute inset-0 size-full cursor-pointer opacity-0 disabled:cursor-default [&::-webkit-calendar-picker-indicator]:absolute [&::-webkit-calendar-picker-indicator]:inset-0 [&::-webkit-calendar-picker-indicator]:size-full [&::-webkit-calendar-picker-indicator]:cursor-pointer"
+        className="peer absolute inset-0 size-full cursor-pointer text-base opacity-0 disabled:cursor-default [&::-webkit-calendar-picker-indicator]:absolute [&::-webkit-calendar-picker-indicator]:inset-0 [&::-webkit-calendar-picker-indicator]:size-full [&::-webkit-calendar-picker-indicator]:cursor-pointer"
       />
       <span
         aria-hidden="true"
-        className="pointer-events-none rounded-md px-1.5 py-0.5 text-md text-foreground transition-colors peer-hover:bg-muted peer-focus-visible:outline-2 peer-focus-visible:outline-ring peer-disabled:opacity-50 md:text-body"
+        className="pointer-events-none rounded-md px-1.5 py-0.5 text-md text-foreground transition-colors peer-hover:bg-muted peer-focus:outline-2 peer-focus:outline-ring peer-disabled:opacity-50 md:text-body"
       >
         {formatNoteLongDate(kstDayStart(value))}
       </span>

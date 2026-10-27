@@ -46,7 +46,8 @@ export default function RootLayout({
           본문으로 건너뛰기
         </a>
         <div className="flex min-h-[100dvh] bg-background text-foreground">
-          <main id="main-content" tabIndex={-1} className="flex-1 overflow-x-hidden">
+          {/* clip은 스크롤 영역을 만들지 않아 안쪽 sticky(휴대폰 작성 화면 아래 막대)가 화면에 붙는다. */}
+          <main id="main-content" tabIndex={-1} className="min-w-0 flex-1 overflow-x-clip">
             {children}
           </main>
         </div>

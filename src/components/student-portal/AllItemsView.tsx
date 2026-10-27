@@ -63,7 +63,7 @@ function SortSelect({ sort, onChange, variant }: { sort: UnifiedItemSort; onChan
         className={cn(
           "appearance-none bg-background text-secondary-foreground field-sizing-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
           variant === "touch"
-            ? "h-11 rounded-touch pl-7 pr-2 text-ui"
+            ? "h-11 rounded-touch pl-7 pr-2 text-base"
             : "h-8 rounded-md border border-border pl-2.5 pr-7 text-ui",
         )}
       >
