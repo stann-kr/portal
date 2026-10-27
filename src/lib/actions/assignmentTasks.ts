@@ -16,7 +16,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { and, asc, count, desc, eq, inArray, isNull, notExists } from "drizzle-orm";
+import { and, asc, count, desc, eq, exists, isNull, notExists, sql } from "drizzle-orm";
 import { createDbContext, type DbContext, type DrizzleDb } from "@/db/client";
 import { assignmentRecurrences, assignmentTasks, assignments, feedbacks } from "@/db/schema";
 import { requireAuth, requireStudentTarget, type AuthSession } from "@/lib/auth-guard";
@@ -99,6 +99,12 @@ function readDb(context: DbContext): DrizzleDb {
 function epochSeconds(value: Date): number {
   return Math.floor(value.getTime() / 1000);
 }
+
+function sameSecond(a: Date | null, b: Date | null): boolean {
+  return (a === null ? null : epochSeconds(a)) === (b === null ? null : epochSeconds(b));
+}
+
+const TASK_CHANGED_MESSAGE = "과제가 바뀌었습니다. 목록을 새로고침해 바뀐 제출 형식을 확인한 뒤 다시 제출해 주세요.";
 
 function revalidateAssignmentViews(studentId: string) {
   revalidatePath("/dashboard/student");
@@ -211,8 +217,10 @@ async function loadTasksWithSubmissions(db: DrizzleDb, studentId: string): Promi
       feedbackCount: count(feedbacks.id),
     })
     .from(assignments)
+    // 과제 id 목록을 bind하지 않고 join으로 좁힌다(D1은 statement당 bind 100개 제한).
+    .innerJoin(assignmentTasks, and(eq(assignmentTasks.id, assignments.taskId), eq(assignmentTasks.studentId, studentId)))
     .leftJoin(feedbacks, eq(feedbacks.assignmentId, assignments.id))
-    .where(and(eq(assignments.studentId, studentId), inArray(assignments.taskId, tasks.map((task) => task.id))))
+    .where(eq(assignments.studentId, studentId))
     .groupBy(assignments.id);
   const byTask = new Map(submissionRows.map((row) => [row.taskId, row]));
 
@@ -338,8 +346,16 @@ export async function createAssignmentTask(
       .returning({ id: assignmentTasks.id });
     if (inserted.length === 0) {
       const [existing] = await db.select().from(assignmentTasks).where(eq(assignmentTasks.id, id)).limit(1);
-      if (!existing || existing.studentId !== studentId || existing.title !== content.value.title) {
-        return { error: "이 과제는 이미 다른 내용으로 저장되었습니다. 목록을 확인해 주세요." };
+      // 같은 operationId 재전송은 정규화한 내용 전체가 같을 때만 성공으로 본다.
+      const same = existing
+        && existing.studentId === studentId
+        && existing.recurrenceId === null
+        && existing.title === content.value.title
+        && existing.descriptionHtml === content.value.descriptionHtml
+        && existing.submissionFormat === content.value.submissionFormat
+        && sameSecond(existing.dueAt, due.value);
+      if (!same) {
+        return { error: "이 과제는 수정 전 내용으로 이미 저장되었습니다. 목록을 확인한 뒤 새 과제로 다시 내 주세요." };
       }
     }
   } catch {
@@ -446,8 +462,20 @@ export async function createAssignmentRecurrence(
       .returning({ id: assignmentRecurrences.id });
     if (inserted.length === 0) {
       const [existing] = await db.select().from(assignmentRecurrences).where(eq(assignmentRecurrences.id, id)).limit(1);
-      if (!existing || existing.studentId !== studentId || existing.title !== parsed.value.title) {
-        return { error: "이 정기 과제는 이미 다른 내용으로 저장되었습니다. 목록을 확인해 주세요." };
+      const value = parsed.value;
+      const same = existing
+        && existing.studentId === studentId
+        && existing.title === value.title
+        && existing.descriptionHtml === value.descriptionHtml
+        && existing.submissionFormat === value.submissionFormat
+        && existing.startDate === value.startDate
+        && existing.intervalWeeks === value.intervalWeeks
+        && existing.weekdays === value.weekdays
+        && existing.dueTime === value.dueTime
+        && existing.endDate === value.endDate
+        && existing.maxOccurrences === value.maxOccurrences;
+      if (!same) {
+        return { error: "이 정기 과제는 수정 전 내용으로 이미 저장되었습니다. 목록을 확인한 뒤 고쳐 주세요." };
       }
     }
     await ensureRecurringAssignmentTasks(context, studentId, new Date(), id);
@@ -606,18 +634,24 @@ export async function submitAssignmentTask(
   if (!payload.ok) return { error: payload.error };
 
   try {
-    const inserted = await db
-      .insert(assignments)
-      .values({ id: crypto.randomUUID(), studentId, taskId, mediaUrl: payload.mediaUrl, textHtml: payload.textHtml })
-      .onConflictDoNothing({ target: assignments.taskId })
-      .returning({ id: assignments.id });
+    // 읽은 뒤 관리자가 형식을 바꾸거나 과제를 지웠을 수 있으므로, INSERT 자체가 과제 소유와 읽은 형식을 다시 확인한다.
+    const inserted = await db.all<{ id: string }>(sql`
+      INSERT INTO assignments (id, student_id, task_id, media_url, text_html)
+      SELECT ${crypto.randomUUID()}, ${studentId}, ${taskId}, ${payload.mediaUrl}, ${payload.textHtml}
+      WHERE EXISTS (
+        SELECT 1 FROM assignment_tasks
+        WHERE id = ${taskId} AND student_id = ${studentId} AND submission_format = ${task.submissionFormat}
+      )
+      ON CONFLICT (task_id) DO NOTHING
+      RETURNING id`);
     if (inserted.length === 0) {
       const [existing] = await db
         .select({ id: assignments.id, studentId: assignments.studentId, mediaUrl: assignments.mediaUrl, textHtml: assignments.textHtml })
         .from(assignments)
         .where(eq(assignments.taskId, taskId))
         .limit(1);
-      if (existing?.studentId === studentId && existing.mediaUrl === payload.mediaUrl && existing.textHtml === payload.textHtml) {
+      if (!existing) return { error: TASK_CHANGED_MESSAGE };
+      if (existing.studentId === studentId && existing.mediaUrl === payload.mediaUrl && existing.textHtml === payload.textHtml) {
         return { success: true, id: existing.id };
       }
       return { error: "이 과제는 이미 제출했습니다. 내용을 바꾸려면 제출 수정을 눌러 주세요." };
@@ -659,10 +693,25 @@ export async function updateMyTaskSubmission(
     .where(and(
       own,
       notExists(db.select({ id: feedbacks.id }).from(feedbacks).where(eq(feedbacks.assignmentId, assignments.id))),
+      // 검증한 형식이 그대로일 때만 고친다(그 사이 관리자가 형식을 바꿨으면 0행).
+      exists(db.select({ id: assignmentTasks.id }).from(assignmentTasks).where(and(
+        eq(assignmentTasks.id, assignments.taskId),
+        eq(assignmentTasks.studentId, studentId),
+        eq(assignmentTasks.submissionFormat, row.submissionFormat),
+      ))),
     ))
     .returning({ id: assignments.id });
   if (updated.length === 0) {
-    return { error: "피드백이 등록된 제출은 고칠 수 없습니다. 필요하면 강사에게 문의해 주세요." };
+    const [feedback] = await db
+      .select({ id: feedbacks.id })
+      .from(feedbacks)
+      .where(eq(feedbacks.assignmentId, assignmentId))
+      .limit(1);
+    return {
+      error: feedback
+        ? "피드백이 등록된 제출은 고칠 수 없습니다. 필요하면 강사에게 문의해 주세요."
+        : TASK_CHANGED_MESSAGE,
+    };
   }
   revalidateAssignmentViews(studentId);
   revalidatePath(`/dashboard/student/assignments/${assignmentId}`);

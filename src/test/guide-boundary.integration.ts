@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { after, before, mock, test, type TestContext } from "node:test";
 import type { AuthSession } from "@/lib/auth-guard";
-import { guidePages, profiles, qnaGuideAnchors } from "@/db/schema";
+import { guideAssets, guidePages, profiles, qnaGuideAnchors } from "@/db/schema";
 import { createIsolatedPortalD1, type IsolatedPortalD1 } from "@/test/isolated-d1";
 
 type PortalTestDb = IsolatedPortalD1["db"];
@@ -234,4 +234,37 @@ test("가이드 서버 초안은 관리자만 가질 수 있다", { concurrency:
   assert.equal(adminSave.ok, true);
   const read = await draftActions.readDocumentServerDraft(adminKey);
   assert.equal(read.ok && read.draft?.kind, "guide-page");
+});
+
+test("같은 생성 작업 ID로 다른 내용을 보내면 거부하고, 같은 내용의 재전송만 같은 페이지로 돌려준다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("admin-1", "admin"));
+  const op = operationId();
+  const first = await guideActions.createGuidePage({}, form({ operationId: op, title: "새 페이지", contentHtml: "<p>처음 본문</p>" }));
+  assert.equal(first.success, true);
+  const replay = await guideActions.createGuidePage({}, form({ operationId: op, title: "새 페이지", contentHtml: "<p>처음 본문</p>" }));
+  assert.deepEqual(replay, { success: true, pageId: first.pageId });
+  const differentBody = await guideActions.createGuidePage({}, form({ operationId: op, title: "새 페이지", contentHtml: "<p>다른 본문</p>" }));
+  assert.equal(differentBody.success, undefined);
+  assert.match(differentBody.error ?? "", /다른 내용으로 이미 처리/u);
+  const differentTitle = await guideActions.createGuidePage({}, form({ operationId: op, title: "다른 제목", contentHtml: "<p>처음 본문</p>" }));
+  assert.ok(differentTitle.error);
+  const page = await guideActions.getGuidePage(first.pageId!);
+  assert.match(page?.contentHtml ?? "", /처음 본문/u);
+  assert.equal((await db.select().from(guidePages)).length, 3);
+});
+
+test("이미지 150개를 참조하는 저장도 D1 bind 제한 없이 모두 페이지에 연결한다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("admin-1", "admin"));
+  const ids = Array.from({ length: 150 }, (_, index) => `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`);
+  for (let start = 0; start < ids.length; start += 10) {
+    await db.insert(guideAssets).values(ids.slice(start, start + 10).map((id) => ({
+      id, objectKey: `guide/${id}`, contentType: "image/png" as const, sizeBytes: 1,
+    })));
+  }
+  const contentHtml = ids.map((id) => `<img src="/api/guide-assets/${id}" alt="">`).join("");
+  const saved = await guideActions.updateGuidePage("guide-1", {}, form({ baseRevision: 1, title: "장비 소개", contentHtml }));
+  assert.equal(saved.success, true, saved.error);
+  const rows = await db.select({ pageId: guideAssets.guidePageId }).from(guideAssets);
+  assert.equal(rows.length, 150);
+  assert.ok(rows.every((row) => row.pageId === "guide-1"));
 });

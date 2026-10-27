@@ -90,9 +90,14 @@ export async function handleGuideAssetUpload(
   const id = (deps.createId ?? (() => crypto.randomUUID()))();
   if (!parseGuideAssetId(id)) return reply(500);
   const objectKey = `guide/${id}`;
+  let storage: GuideAssetObjectStorage;
   try {
-    const storage = await deps.getStorage();
+    storage = await deps.getStorage();
     await storage.put(objectKey, bytes, sniffed);
+  } catch {
+    return reply(502);
+  }
+  try {
     await asDocumentReadDb(deps.getContext()).insert(guideAssets).values({
       id,
       objectKey,
@@ -102,6 +107,8 @@ export async function handleGuideAssetUpload(
       uploadedById: session.user.id,
     });
   } catch {
+    // 행을 남기지 못했으면 방금 올린 객체를 지워 연결 없는 R2 객체를 남기지 않는다(실패해도 응답은 같다).
+    await storage.delete(objectKey).catch(() => undefined);
     return reply(502);
   }
   return reply(201, { id, url: guideAssetPath(id), contentType: sniffed });

@@ -433,6 +433,7 @@ function assertGuideAssetObjectKey(objectKey: string): void {
 export interface GuideAssetObjectStorage {
   put(objectKey: string, bytes: Uint8Array, contentType: string): Promise<void>;
   get(objectKey: string): Promise<{ body: ReadableStream<Uint8Array>; size: number; contentType: string | null } | null>;
+  delete(objectKey: string): Promise<void>;
 }
 
 export async function getGuideAssetStorage(): Promise<GuideAssetObjectStorage> {
@@ -457,6 +458,10 @@ export async function getGuideAssetStorage(): Promise<GuideAssetObjectStorage> {
         const object = await bucket.get(objectKey);
         if (!object?.body) return null;
         return { body: object.body, size: object.size, contentType: object.httpMetadata?.contentType ?? null };
+      },
+      async delete(objectKey) {
+        assertGuideAssetObjectKey(objectKey);
+        await bucket.delete(objectKey);
       },
     };
   }
@@ -489,6 +494,10 @@ export async function getGuideAssetStorage(): Promise<GuideAssetObjectStorage> {
         if (isNotFoundStorageError(error)) return null;
         throw error;
       }
+    },
+    async delete(objectKey) {
+      assertGuideAssetObjectKey(objectKey);
+      await client.send(new DeleteObjectCommand({ Bucket: BUCKET_NAME, Key: objectKey }));
     },
   };
 }

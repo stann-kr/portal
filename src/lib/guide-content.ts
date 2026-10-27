@@ -175,3 +175,11 @@ const GUIDE_PAGE_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/u;
 export function parseGuidePageId(value: unknown): string | null {
   return typeof value === "string" && GUIDE_PAGE_ID_PATTERN.test(value) ? value : null;
 }
+
+/**
+ * 블록 식별자를 뺀 본문. 같은 원문을 다시 보내면 새 블록의 식별자만 무작위로 달라지므로,
+ * 재전송이 같은 요청인지 비교할 때 쓴다(입력은 prepareGuideHtml을 거친 HTML).
+ */
+export function stripGuideBlockIds(preparedHtml: string): string {
+  return preparedHtml.replace(/ data-block-id="[A-Za-z0-9_-]{1,64}"/gu, "");
+}

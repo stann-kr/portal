@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { after, before, mock, test, type TestContext } from "node:test";
-import { count, eq } from "drizzle-orm";
+import { count, eq, inArray } from "drizzle-orm";
+import { drizzle, type AnyD1Database } from "drizzle-orm/d1";
+import * as portalSchema from "@/db/schema";
 import * as bcrypt from "bcryptjs";
 import { credentialFingerprint } from "@/lib/credential-fingerprint";
 import type { AuthSession } from "@/lib/auth-guard";
@@ -1099,4 +1101,166 @@ test("정기 과제 회차는 동시 조회에도 한 번만 생기고 수정·�
   assert.equal(remaining.some((task) => task.occurrenceDate === shiftDayKey(today, -3)), true);
   for (const task of remaining) assert.equal(await isOpenUnsubmitted(task), false);
   assert.equal((await db.select().from(assignments)).length, 2);
+});
+
+
+/**
+ * 학생 요청이 과제를 읽은 뒤 쓰기 직전에 관리자 변경이 끼어드는 상황을 재현한다.
+ * assignments INSERT·UPDATE statement가 실행되기 직전에 한 번 `beforeWrite`를 실행한다.
+ */
+async function setupRacingDatabase(context: TestContext, session: AuthSession) {
+  const isolated = await createIsolatedPortalD1();
+  let beforeWrite: (() => Promise<void>) | null = null;
+  let maxBind = { count: 0, query: "" };
+  const binding = isolated.binding;
+  type Prepared = ReturnType<typeof binding.prepare>;
+  const originals = new WeakMap<object, Prepared>();
+  const wrap = (prepared: Prepared, query: string): Prepared => {
+    const racingWrite = /^\s*(?:insert into|update) "?assignments"?\s/iu.test(query);
+    const wrapper = new Proxy(prepared, {
+      get(inner, key) {
+        const value = Reflect.get(inner, key);
+        if (key === "bind") {
+          return (...args: unknown[]) => {
+            if (args.length > maxBind.count) maxBind = { count: args.length, query };
+            return wrap(value.apply(inner, args), query);
+          };
+        }
+        if (racingWrite && (key === "all" || key === "run" || key === "raw" || key === "first")) {
+          return async (...args: unknown[]) => {
+            const hook = beforeWrite;
+            beforeWrite = null;
+            if (hook) await hook();
+            return value.apply(inner, args);
+          };
+        }
+        return typeof value === "function" ? value.bind(inner) : value;
+      },
+    });
+    originals.set(wrapper, prepared);
+    return wrapper;
+  };
+  const racing = new Proxy(binding, {
+    get(target, prop) {
+      if (prop === "prepare") return (query: string) => wrap(target.prepare(query), query);
+      if (prop === "batch") {
+        return (statements: Prepared[]) => target.batch(statements.map((statement) => originals.get(statement) ?? statement));
+      }
+      const value = Reflect.get(target, prop);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  }) as AnyD1Database;
+  activeDb = drizzle(racing, { schema: portalSchema }) as unknown as PortalTestDb;
+  activeSession = session;
+  context.after(async () => {
+    activeDb = null;
+    await isolated.dispose();
+  });
+  return {
+    db: isolated.db,
+    setBeforeWrite: (hook: () => Promise<void>) => { beforeWrite = hook; },
+    /** action이 실행한 statement 중 가장 많은 bind 수(D1 제한은 100). */
+    maxBind: () => maxBind,
+  };
+}
+
+test("학생 제출·수정은 읽은 뒤 관리자가 형식을 바꾸면 저장하지 않고 과제가 바뀌었다고 알린다", { concurrency: false }, async (context) => {
+  const { db, setBeforeWrite } = await setupRacingDatabase(context, createSession("student-1", "student"));
+  await seedProfile(db, "admin-1", "admin");
+  await seedProfile(db, "student-1");
+  await db.insert(assignmentTasks).values([
+    { id: "race-task", studentId: "student-1", title: "믹스셋", submissionFormat: "MIX" },
+    { id: "edit-task", studentId: "student-1", title: "믹스셋 2", submissionFormat: "MIX" },
+  ]);
+  const link = "https://youtu.be/aqz-KE-bpKQ";
+  const switchToText = (taskId: string) => async () => {
+    await db.update(assignmentTasks).set({ submissionFormat: "TEXT" }).where(eq(assignmentTasks.id, taskId));
+  };
+
+  setBeforeWrite(switchToText("race-task"));
+  const raced = await assignmentTaskActions.submitAssignmentTask("race-task", {}, taskForm({ mediaUrl: link }));
+  assert.match(raced.error ?? "", /과제가 바뀌었습니다/u);
+  assert.equal((await db.select().from(assignments)).length, 0, "잘못된 형식 제출을 저장하지 않는다");
+  // 바뀐 형식으로는 정상 제출된다.
+  assert.equal((await assignmentTaskActions.submitAssignmentTask("race-task", {}, taskForm({ text: "글로 냅니다" }))).success, true);
+
+  const submitted = await assignmentTaskActions.submitAssignmentTask("edit-task", {}, taskForm({ mediaUrl: link }));
+  assert.equal(submitted.success, true);
+  setBeforeWrite(switchToText("edit-task"));
+  const editRace = await assignmentTaskActions.updateMyTaskSubmission(submitted.id!, {}, taskForm({ mediaUrl: "https://soundcloud.com/dj/fixed" }));
+  assert.match(editRace.error ?? "", /과제가 바뀌었습니다/u);
+  assert.equal((await db.select().from(assignments).where(eq(assignments.id, submitted.id!)))[0]?.mediaUrl, link);
+});
+
+test("같은 operationId 재전송은 정규화한 생성 내용이 모두 같을 때만 성공한다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("admin-1", "admin"));
+  await seedProfile(db, "admin-1", "admin");
+  await seedProfile(db, "student-1");
+  const operationId = crypto.randomUUID();
+  const base = { title: "믹스셋", description: "설명", submissionFormat: "MIX", dueDate: "2026-11-02", dueTime: "21:00", operationId };
+  assert.equal((await assignmentTaskActions.createAssignmentTask("student-1", {}, taskForm(base))).success, true);
+  assert.equal((await assignmentTaskActions.createAssignmentTask("student-1", {}, taskForm({ ...base, title: " 믹스셋 " }))).success, true, "공백만 다른 재전송은 같은 내용");
+  const taskChanges: Record<string, string>[] = [{ description: "다른 설명" }, { submissionFormat: "TEXT" }, { dueTime: "22:00" }, { dueDate: "", dueTime: "" }];
+  for (const change of taskChanges) {
+    assert.ok((await assignmentTaskActions.createAssignmentTask("student-1", {}, taskForm({ ...base, ...change }))).error, JSON.stringify(change));
+  }
+  assert.equal((await db.select().from(assignmentTasks)).length, 1);
+  assert.equal((await db.select().from(assignmentTasks))[0]?.descriptionHtml, "<p>설명</p>");
+
+  const ruleOperation = crypto.randomUUID();
+  const rule = {
+    title: "정기", submissionFormat: "TEXT", startDate: "2026-11-02", intervalWeeks: "1",
+    weekdays: ["1", "3"], dueTime: "21:00", operationId: ruleOperation,
+  };
+  assert.equal((await assignmentTaskActions.createAssignmentRecurrence("student-1", {}, taskForm(rule))).success, true);
+  assert.equal((await assignmentTaskActions.createAssignmentRecurrence("student-1", {}, taskForm(rule))).success, true);
+  const ruleChanges: Record<string, string | string[]>[] = [{ weekdays: ["1"] }, { intervalWeeks: "2" }, { startDate: "2026-11-03" }, { dueTime: "20:00" }, { endDate: "2026-12-31" }, { maxOccurrences: "4" }, { description: "추가" }];
+  for (const change of ruleChanges) {
+    assert.ok((await assignmentTaskActions.createAssignmentRecurrence("student-1", {}, taskForm({ ...rule, ...change }))).error, JSON.stringify(change));
+  }
+  assert.equal((await db.select().from(assignmentRecurrences)).length, 1);
+  assert.equal((await db.select().from(assignmentRecurrences))[0]?.weekdays, 0b1010);
+});
+
+test("과제·제출·규칙이 100개를 넘어도 id 목록을 bind하지 않고 조회·생성한다", { concurrency: false }, async (context) => {
+  const { db, maxBind } = await setupRacingDatabase(context, createSession("student-1", "student"));
+  await seedProfile(db, "admin-1", "admin");
+  await seedProfile(db, "student-1");
+  const ids = Array.from({ length: 150 }, (_, index) => `bulk-${String(index).padStart(3, "0")}`);
+  // 격리 D1이 실제 bind 제한을 재현하는지 먼저 확인한다(재현되지 않으면 아래 검사는 결과 정확성만 본다).
+  const limitReproduced = await db.select({ id: assignmentTasks.id }).from(assignmentTasks).where(inArray(assignmentTasks.id, ids))
+    .then(() => false, (error: unknown) => /too many SQL variables|variable/iu.test(String(error)));
+  context.diagnostic(`isolated D1 bind limit reproduced: ${limitReproduced}`);
+  for (let index = 0; index < ids.length; index += 10) {
+    const chunk = ids.slice(index, index + 10);
+    await db.insert(assignmentTasks).values(chunk.map((id) => ({ id, studentId: "student-1", title: id, submissionFormat: "TEXT" as const })));
+    await db.insert(assignments).values(chunk.map((id) => ({ id: `sub-${id}`, studentId: "student-1", taskId: id, textHtml: "<p>글</p>" })));
+    await db.insert(feedbacks).values(chunk.map((id) => ({ id: `fb-${id}`, assignmentId: `sub-${id}`, content: "좋아요" })));
+  }
+  const today = kstTodayKey(new Date());
+  const old = new Date(Date.now() - 10 * 86_400_000);
+  const ruleIds = Array.from({ length: 105 }, (_, index) => `rule-${index}`);
+  for (let index = 0; index < ruleIds.length; index += 5) {
+    await db.insert(assignmentRecurrences).values(ruleIds.slice(index, index + 5).map((id) => ({
+      id, studentId: "student-1", title: id, submissionFormat: "TEXT" as const, startDate: today,
+      intervalWeeks: 1, weekdays: 127, dueTime: "21:00", createdAt: old, updatedAt: old,
+    })));
+  }
+
+  const tasks = await assignmentTaskActions.getMyAssignmentTasks();
+  const bulk = tasks.filter((task) => task.id.startsWith("bulk-"));
+  assert.equal(bulk.length, 150);
+  assert.ok(bulk.every((task) => task.submission?.feedbackCount === 1));
+  await assignmentTaskActions.getMyAssignmentTasks();
+  await assignmentTaskActions.getMyAssignmentTasks();
+  // 규칙 105개 × (오늘 + 다음 회차) = 210회차. 한 번에 120개씩 나눠 만들고 중복은 없다.
+  const generated = await db.select({ value: count() }).from(assignmentTasks).where(inArray(assignmentTasks.recurrenceId, ruleIds.slice(0, 90)));
+  assert.equal(generated[0]?.value, 180);
+  assert.equal((await db.select({ value: count() }).from(assignmentTasks))[0]?.value, 150 + 210);
+  const feedbackMap = await feedbackActions.getMyFeedbacksMap();
+  assert.equal(Object.keys(feedbackMap).length, 150);
+  // 격리 D1(miniflare)은 bind 100개 제한을 재현하지 않으므로, action이 보낸 statement의 bind 수를 직접 검사한다.
+  const widest = maxBind();
+  context.diagnostic(`max bind per statement: ${widest.count}`);
+  assert.ok(widest.count <= 100, `bind ${widest.count}개: ${widest.query.slice(0, 120)}`);
 });

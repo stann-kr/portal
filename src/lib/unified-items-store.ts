@@ -33,6 +33,8 @@ type NoteRow = {
 
 /** 통합 일정은 노트 미리보기만 쓰므로 본문 앞부분만 읽는다. 전체 본문은 상세에서 따로 불러온다. */
 export const UNIFIED_NOTE_PREVIEW_SOURCE_CHARS = 4_096;
+/** 피드백 수 조회 한 번에 bind하는 제출 id 수(D1 bind 100개 제한 아래). */
+export const FEEDBACK_COUNT_CHUNK = 90;
 type DiggingTrackRow = InferSelectModel<typeof diggingTracks>;
 type DiggingColumnRow = InferSelectModel<typeof diggingColumns>;
 type QnaThreadRow = InferSelectModel<typeof qnaThreads>;
@@ -223,16 +225,19 @@ export async function queryInternalUnifiedItems(
   if (!profile) throw new Error("Student profile not found");
 
   const assignmentIds = myAssignments.map((assignment) => assignment.id);
-  const scopedFeedbacks = assignmentIds.length
-    ? await db
-        .select({
-          assignmentId: feedbacks.assignmentId,
-          count: sql<number>`count(*)`,
-        })
-        .from(feedbacks)
-        .where(inArray(feedbacks.assignmentId, assignmentIds))
-        .groupBy(feedbacks.assignmentId)
-    : [];
+  // D1은 statement당 bind 100개까지라 제출 id를 나눠 센다(소스 상한 200개).
+  const idChunks: string[][] = [];
+  for (let index = 0; index < assignmentIds.length; index += FEEDBACK_COUNT_CHUNK) {
+    idChunks.push(assignmentIds.slice(index, index + FEEDBACK_COUNT_CHUNK));
+  }
+  const scopedFeedbacks = (await Promise.all(idChunks.map((ids) => db
+    .select({
+      assignmentId: feedbacks.assignmentId,
+      count: sql<number>`count(*)`,
+    })
+    .from(feedbacks)
+    .where(inArray(feedbacks.assignmentId, ids))
+    .groupBy(feedbacks.assignmentId)))).flat();
   const feedbackCounts: Record<string, number> = {};
   for (const row of scopedFeedbacks) {
     feedbackCounts[row.assignmentId] = Number(row.count);

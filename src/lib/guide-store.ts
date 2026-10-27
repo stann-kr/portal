@@ -18,6 +18,7 @@ import {
   executeDocumentStatementsAtomically,
   type DocumentAtomicStatement,
 } from "@/lib/document-lifecycle-atomic";
+import { stripGuideBlockIds } from "@/lib/guide-content";
 
 export type GuidePageSummary = {
   id: string;
@@ -47,7 +48,17 @@ export type GuideQuestionAnchor = {
   createdAt: Date;
 };
 
-export type GuideWriteFailureReason = "VERSION_CONFLICT" | "NOT_FOUND" | "STALE_ORDER" | "INTERNAL";
+export type GuideWriteFailureReason =
+  | "VERSION_CONFLICT"
+  | "OPERATION_PAYLOAD_CONFLICT"
+  | "NOT_FOUND"
+  | "STALE_ORDER"
+  | "INTERNAL";
+
+/** 재전송 비교: 제목과 블록 식별자를 뺀 본문이 모두 같아야 같은 요청이다. */
+function samePayload(page: GuidePageRecord, title: string, contentHtml: string): boolean {
+  return page.title === title && stripGuideBlockIds(page.contentHtml) === stripGuideBlockIds(contentHtml);
+}
 
 export type GuideWriteResult =
   | { ok: true; page: GuidePageRecord; replayed: boolean }
@@ -90,9 +101,10 @@ export async function findGuidePage(
 function claimAssetsStatement(pageId: string, assetIds: readonly string[]): DocumentAtomicStatement | null {
   if (assetIds.length === 0) return null;
   // 아직 어느 페이지에도 연결되지 않은 이미지만 이 페이지로 연결한다(다른 페이지로 복사한 이미지는 그대로 둔다).
+  // D1은 statement당 bind 100개 제한이 있으므로 id 목록은 JSON 하나로 넘긴다.
   return {
-    query: `UPDATE guide_assets SET guide_page_id = ? WHERE guide_page_id IS NULL AND id IN (${assetIds.map(() => "?").join(", ")})`,
-    params: [pageId, ...assetIds],
+    query: "UPDATE guide_assets SET guide_page_id = ? WHERE guide_page_id IS NULL AND id IN (SELECT value FROM json_each(?))",
+    params: [pageId, JSON.stringify(assetIds)],
   };
 }
 
@@ -109,10 +121,10 @@ export async function createGuidePageRecord(
 ): Promise<GuideWriteResult> {
   const existing = await findGuidePage(context, input.pageId);
   if (existing) {
-    // 같은 생성 요청의 재전송이면 그대로 돌려준다.
-    return existing.title === input.title && existing.version === 1
+    // 같은 생성 요청(제목·본문 모두 같음)의 재전송이면 그대로 돌려준다. 내용이 다르면 거부한다.
+    return existing.version === 1 && samePayload(existing, input.title, input.contentHtml)
       ? { ok: true, page: existing, replayed: true }
-      : { ok: false, reason: "VERSION_CONFLICT", current: existing };
+      : { ok: false, reason: "OPERATION_PAYLOAD_CONFLICT", current: existing };
   }
   const epoch = documentEpochSeconds(input.now);
   const claim = claimAssetsStatement(input.pageId, input.assetIds);
@@ -144,10 +156,10 @@ export async function createGuidePageRecord(
     ]);
   } catch {
     const raced = await findGuidePage(context, input.pageId);
-    if (raced && raced.title === input.title && raced.version === 1) {
+    if (raced && raced.version === 1 && samePayload(raced, input.title, input.contentHtml)) {
       return { ok: true, page: raced, replayed: true };
     }
-    return { ok: false, reason: raced ? "VERSION_CONFLICT" : "INTERNAL", current: raced };
+    return { ok: false, reason: raced ? "OPERATION_PAYLOAD_CONFLICT" : "INTERNAL", current: raced };
   }
   const page = await findGuidePage(context, input.pageId);
   return page
@@ -171,11 +183,7 @@ export async function updateGuidePageRecord(
   if (!before) return { ok: false, reason: "NOT_FOUND", current: null };
   if (before.version !== input.baseVersion) {
     // 저장 응답을 잃고 같은 내용을 다시 보낸 경우는 이미 반영된 저장으로 본다.
-    if (
-      before.version === input.baseVersion + 1 &&
-      before.title === input.title &&
-      before.contentHtml === input.contentHtml
-    ) {
+    if (before.version === input.baseVersion + 1 && samePayload(before, input.title, input.contentHtml)) {
       return { ok: true, page: before, replayed: true };
     }
     return { ok: false, reason: "VERSION_CONFLICT", current: before };

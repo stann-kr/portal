@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -48,10 +48,42 @@ test("탭 변환은 byline·mention을 지우고 내부 참조·blob 이미지·
   assert.equal(warnings.length, 1);
 });
 
-test("위험한 식별자가 든 다이어그램 코드는 실행하지 않고, 정상 코드는 포털 색으로 렌더한다", () => {
-  assert.throws(() => renderGuideWidgetSvg("export default () => { process.exit(1); return null; };"), /허용하지 않는/u);
-  assert.throws(() => renderGuideWidgetSvg("export default () => require('fs');"), /허용하지 않는/u);
-  const svg = renderGuideWidgetSvg(
+test("다이어그램 코드가 Function 생성자로 process를 얻어도 파일·자식 process·비밀 env에 닿지 못한다", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "portal-widget-boundary-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const secretPath = join(directory, "secret.txt");
+  writeFileSync(secretPath, "top-secret");
+  const writePath = join(directory, "written.txt");
+  process.env.GUIDE_WIDGET_TEST_SECRET = "env-secret";
+  context.after(() => delete process.env.GUIDE_WIDGET_TEST_SECRET);
+
+  // Sol 교차 검증 재현 코드: 금지어 검사를 문자열 분할로 우회해 host process를 얻는다.
+  const bypass = `export default () => {
+    const p = React.createElement["con"+"structor"]("return pro"+"cess")();
+    const kind = React.createElement["con"+"structor"]("return typeof pro"+"cess")();
+    const attempt = (run) => { try { run(); return "ok"; } catch (error) { return String(error && error.code); } };
+    const fs = p.getBuiltinModule("fs");
+    const results = [
+      kind,
+      attempt(() => fs.writeFileSync(${JSON.stringify(writePath)}, "x")),
+      attempt(() => fs.readFileSync(${JSON.stringify(secretPath)}, "utf8")),
+      attempt(() => p.getBuiltinModule("child_process").execSync("true")),
+      String(p.env.GUIDE_WIDGET_TEST_SECRET),
+    ];
+    return <svg viewBox="0 0 10 10"><text>{results.join("|")}</text></svg>;
+  };`;
+  const svg = await renderGuideWidgetSvg(bypass);
+  assert.equal(svg, "<svg viewBox=\"0 0 10 10\"><text>object|ERR_ACCESS_DENIED|ERR_ACCESS_DENIED|ERR_ACCESS_DENIED|undefined</text></svg>");
+  assert.equal(existsSync(writePath), false);
+  assert.doesNotMatch(svg, /top-secret|env-secret/u);
+});
+
+test("다이어그램 렌더는 무한 루프·과대 출력·SVG 아닌 출력을 거부하고, 정상 코드는 포털 색으로 바꾼다", async () => {
+  await assert.rejects(renderGuideWidgetSvg("export default () => { for (;;) {} };"), /시간이 초과/u);
+  await assert.rejects(renderGuideWidgetSvg('export default () => <svg>{"x".repeat(3 * 1024 * 1024)}</svg>;'), /너무 큽니다|실패/u);
+  await assert.rejects(renderGuideWidgetSvg("export default () => <div>x</div>;"), /SVG가 아닙니다/u);
+  await assert.rejects(renderGuideWidgetSvg("const x = 1;"), /export default/u);
+  const svg = await renderGuideWidgetSvg(
     "export default () => <svg viewBox='10 0 200 100' data-claude-x='1'><text fill='var(--cds-text-primary)'>가</text></svg>;",
   );
   const finalized = finalizeGuideDiagramSvg(svg);
@@ -60,6 +92,8 @@ test("위험한 식별자가 든 다이어그램 코드는 실행하지 않고, 
   assert.doesNotMatch(finalized.svg, /var\(|data-claude/u);
   assert.match(finalized.svg, /fill="#18181b"/u);
   assert.throws(() => finalizeGuideDiagramSvg("<svg viewBox=\"0 0 1 1\"><rect fill=\"var(--cds-unknown)\"/></svg>"), /--cds-unknown/u);
+  assert.throws(() => finalizeGuideDiagramSvg('<svg viewBox="0 0 1 1"><image href="file:///etc/hosts"/></svg>'), /외부 참조/u);
+  assert.throws(() => finalizeGuideDiagramSvg('<svg viewBox="0 0 1 1"><rect fill="url(https://evil.test/x)"/></svg>'), /외부 참조/u);
 });
 
 test("export 전체를 seed로 만들고, 마이그레이션한 DB에 두 번 적용해도 7페이지·이미지 참조·블록 식별자가 유지된다", { skip: !existsSync(EXPORT_DIR) }, async (context) => {

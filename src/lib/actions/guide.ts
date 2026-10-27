@@ -42,6 +42,8 @@ function failureMessage(reason: GuideWriteFailureReason): string {
   switch (reason) {
     case "VERSION_CONFLICT":
       return "다른 화면에서 이 가이드가 먼저 바뀌었습니다. 현재 초안과 서버 최신본을 비교해 골라 주세요.";
+    case "OPERATION_PAYLOAD_CONFLICT":
+      return "같은 생성 요청이 다른 내용으로 이미 처리되었습니다. 새로고침한 뒤 다시 만들어 주세요.";
     case "NOT_FOUND":
       return "가이드 페이지를 찾을 수 없습니다. 이미 삭제되었을 수 있습니다.";
     case "STALE_ORDER":

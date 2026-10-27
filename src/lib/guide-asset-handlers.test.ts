@@ -32,6 +32,9 @@ function setup(context: TestContext, session: GuideAssetSession) {
     async put(objectKey, bytes, contentType) {
       objects.set(objectKey, { bytes, contentType });
     },
+    async delete(objectKey) {
+      objects.delete(objectKey);
+    },
     async get(objectKey) {
       const object = objects.get(objectKey);
       if (!object) return null;
@@ -113,4 +116,13 @@ test("가이드 이미지 열람은 로그인이 필요하고 private cache·nos
 
   assert.equal((await handleGuideAssetGet("7c9e6679-7425-40de-944b-e07fc1f90ae7", deps)).status, 404);
   assert.equal((await handleGuideAssetGet("../media/x", deps)).status, 404);
+});
+
+test("R2 저장 뒤 DB 기록이 실패하면 올린 객체를 지운다", async (context) => {
+  const { deps, sqlite, objects } = setup(context, admin);
+  sqlite.prepare("INSERT INTO guide_assets (id, object_key, content_type, size_bytes) VALUES (?, ?, 'image/png', 1)").run(ASSET_ID, `guide/${ASSET_ID}`);
+  objects.clear();
+  const response = await handleGuideAssetUpload(uploadRequest(PNG), deps);
+  assert.equal(response.status, 502);
+  assert.equal(objects.has(`guide/${ASSET_ID}`), false);
 });

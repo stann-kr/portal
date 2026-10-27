@@ -2,13 +2,15 @@
  * Claude 문서 "DJ 레슨 공용 가이드" export를 포털 가이드 seed로 바꾼다(로컬 도구 전용, 앱 번들에 넣지 않는다).
  * 원격·실제 bucket에는 쓰지 않는다. 결과는 seed.sql·objects/guide/<id>·apply-local.sh를 출력 폴더에 만든다.
  * export 내용은 다른 사용자가 쓸 수 있는 문서이므로 데이터로만 다룬다: 포털 sanitizer와 블록 식별자를 거친다.
- * 다이어그램(widgets/*.jsx)은 코드이므로 위험 토큰을 거부한 뒤 최소 global의 vm에서 정적 SVG로 렌더하고 PNG로 바꾼다.
+ * 다이어그램(widgets/*.jsx)은 신뢰할 수 없는 코드다. 이 process 안에서는 실행하지 않고, 별도 node child process를
+ * `--permission`(fs 읽기·쓰기, child_process, worker, addon 모두 불허)·빈 env·짧은 timeout·출력 크기 제한으로 띄워
+ * SVG 문자열만 받는다. 받은 SVG는 외부 참조 요소를 거부한 뒤 PNG로 바꾼다.
  */
 import { createHash } from "node:crypto";
 import { copyFile, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import vm from "node:vm";
-import { transformSync } from "esbuild";
+import { spawn } from "node:child_process";
+import { buildSync, transformSync } from "esbuild";
 import {
   defaultTreeAdapter,
   html,
@@ -16,8 +18,6 @@ import {
   serialize,
   type DefaultTreeAdapterTypes,
 } from "parse5";
-import { createElement, Fragment, type ComponentType } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
 import sharp from "sharp";
 import {
   GUIDE_ASSET_MAX_BYTES,
@@ -45,7 +45,9 @@ export const GUIDE_DIAGRAM_COLORS: Readonly<Record<string, string>> = {
 };
 
 const DIAGRAM_FONT_FAMILY = "'IBM Plex Sans KR', 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif";
-const FORBIDDEN_WIDGET_TOKENS = /\b(?:import|require|process|globalThis|global|window|document|fetch|eval|Function|constructor|prototype|__proto__|setTimeout|setInterval|XMLHttpRequest|WebSocket)\b/u;
+const WIDGET_RENDER_TIMEOUT_MS = 5_000;
+const WIDGET_OUTPUT_MAX_BYTES = 2 * 1024 * 1024;
+const WIDGET_SOURCE_MAX_BYTES = 256 * 1024;
 
 export type GuideImportTab = { title: string; tabId: string; fileName: string };
 
@@ -263,12 +265,49 @@ export function transformGuideTabHtml(rawHtml: string, context: GuideTabTransfor
   return prepareGuideHtml(serialize(fragment), context.createBlockId);
 }
 
-/** widget JSX를 정적 SVG 문자열로 렌더한다. 위험 토큰이 있으면 실행하지 않는다. */
-export function renderGuideWidgetSvg(source: string): string {
-  if (FORBIDDEN_WIDGET_TOKENS.test(source)) {
-    throw new Error("다이어그램 코드에 허용하지 않는 식별자가 있어 실행하지 않았습니다.");
-  }
+/**
+ * 신뢰하는 고정 entry(React + renderToStaticMarkup)만 묶은 harness. 위젯 코드는 여기에 넣지 않고
+ * 문자열로 넘겨 child process 안에서만 실행한다. 한 번 만들어 재사용한다.
+ */
+let widgetHarness: string | null = null;
+function getWidgetHarness(): string {
+  if (widgetHarness) return widgetHarness;
+  const result = buildSync({
+    stdin: {
+      contents: [
+        'import * as React from "react";',
+        'import { renderToStaticMarkup } from "react-dom/server";',
+        "globalThis.__renderGuideWidget = (code) => {",
+        "  const module = { exports: {} };",
+        '  new Function("React", "module", "exports", code)(React, module, module.exports);',
+        "  const Component = module.exports.default;",
+        '  if (typeof Component !== "function") throw new Error("default export is not a function");',
+        "  return renderToStaticMarkup(React.createElement(Component));",
+        "};",
+      ].join("\n"),
+      resolveDir: process.cwd(),
+      loader: "js",
+    },
+    bundle: true,
+    platform: "node",
+    format: "cjs",
+    write: false,
+    define: { "process.env.NODE_ENV": '"production"' },
+    logLevel: "silent",
+  });
+  widgetHarness = result.outputFiles[0]!.text;
+  return widgetHarness;
+}
+
+/**
+ * widget JSX를 격리한 child process에서 정적 SVG 문자열로 렌더한다.
+ * 보안 경계는 Node permission model(fs 읽기·쓰기·child_process·worker·addon 불허)과 빈 env다.
+ * Node 24 permission model은 네트워크를 막지 않는다: child가 읽을 수 있는 파일·비밀값이 없으므로 내보낼 것이 없다.
+ */
+export async function renderGuideWidgetSvg(source: string): Promise<string> {
+  if (Buffer.byteLength(source) > WIDGET_SOURCE_MAX_BYTES) throw new Error("다이어그램 코드가 너무 큽니다.");
   if (!/^\s*export\s+default\s/u.test(source)) throw new Error("다이어그램은 export default 하나여야 합니다.");
+  // 문법 변환만 한다(실행하지 않는다).
   const { code } = transformSync(source, {
     loader: "jsx",
     jsx: "transform",
@@ -276,20 +315,59 @@ export function renderGuideWidgetSvg(source: string): string {
     jsxFragment: "React.Fragment",
     format: "cjs",
   });
-  const sandboxModule: { exports: { default?: unknown } } = { exports: {} };
-  const sandbox = vm.createContext({
-    React: Object.freeze({ createElement, Fragment }),
-    module: sandboxModule,
-    exports: sandboxModule.exports,
+  const script = `${getWidgetHarness()}\nprocess.stdout.write(globalThis.__renderGuideWidget(${JSON.stringify(code)}));\n`;
+
+  return new Promise<string>((resolvePromise, rejectPromise) => {
+    // fs 읽기 허용 없이 stdin의 script만 실행한다. env는 비워 비밀값을 넘기지 않는다.
+    const child = spawn(process.execPath, ["--permission", "-"], {
+      env: {} as NodeJS.ProcessEnv,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    const chunks: Buffer[] = [];
+    let size = 0;
+    let settled = false;
+    const finish = (error: Error | null, value?: string) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) {
+        child.kill("SIGKILL");
+        rejectPromise(error);
+      } else {
+        resolvePromise(value!);
+      }
+    };
+    const timer = setTimeout(() => finish(new Error("다이어그램 렌더 시간이 초과되었습니다.")), WIDGET_RENDER_TIMEOUT_MS);
+    let stderr = "";
+    child.stdout.on("data", (chunk: Buffer) => {
+      size += chunk.byteLength;
+      if (size > WIDGET_OUTPUT_MAX_BYTES) finish(new Error("다이어그램 렌더 결과가 너무 큽니다."));
+      else chunks.push(chunk);
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      if (stderr.length < 2_000) stderr += chunk.toString("utf8");
+    });
+    child.on("error", (error) => finish(error));
+    child.on("close", (exitCode) => {
+      if (exitCode !== 0) {
+        finish(new Error(`다이어그램 렌더에 실패했습니다(exit ${exitCode}): ${stderr.split("\n").find((line) => /Error/u.test(line))?.trim() ?? ""}`));
+        return;
+      }
+      const svg = Buffer.concat(chunks).toString("utf8");
+      if (!/^<svg\b/u.test(svg)) finish(new Error("다이어그램 렌더 결과가 SVG가 아닙니다."));
+      else finish(null, svg);
+    });
+    child.stdin.on("error", () => undefined);
+    child.stdin.end(script);
   });
-  new vm.Script(code, { filename: "guide-widget.js" }).runInContext(sandbox, { timeout: 1000 });
-  const Component = sandboxModule.exports.default;
-  if (typeof Component !== "function") throw new Error("다이어그램 기본 export가 함수가 아닙니다.");
-  return renderToStaticMarkup(createElement(Component as ComponentType));
 }
 
 /** 렌더한 SVG의 CSS 변수를 포털 색으로 바꾸고 export 전용 속성을 지운 뒤, 크기·글꼴을 명시한다. */
 export function finalizeGuideDiagramSvg(svg: string): { svg: string; width: number; height: number } {
+  // rasterizer가 외부·로컬 파일을 읽지 않도록 참조 요소와 내부(#) 밖 href·url()을 거부한다.
+  if (/<(?:image|use|foreignObject|script|style|iframe|a)\b/iu.test(svg) || /\bhref=|url\((?!#)/iu.test(svg)) {
+    throw new Error("다이어그램 SVG에 외부 참조 요소가 있어 쓰지 않았습니다.");
+  }
   const unknown = new Set<string>();
   let output = svg.replace(/var\((--[a-z0-9-]+)\)/giu, (_match, name: string) => {
     const color = GUIDE_DIAGRAM_COLORS[name];
@@ -432,7 +510,7 @@ export async function buildGuideImport(exportDir: string, outDir: string): Promi
       if (!assetsById.has(id)) {
         try {
           const source = await readFile(join(widgetDir, `${nodeId}.jsx`), "utf8");
-          const { svg } = finalizeGuideDiagramSvg(renderGuideWidgetSvg(source));
+          const { svg } = finalizeGuideDiagramSvg(await renderGuideWidgetSvg(source));
           const png = await rasterizeGuideDiagram(svg);
           if (png.byteLength > GUIDE_ASSET_MAX_BYTES) throw new Error("PNG가 10MiB를 넘습니다.");
           await writeFile(join(objectsDir, id), png);

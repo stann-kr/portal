@@ -10,7 +10,7 @@
  *   batch는 왕복을 줄이기 위한 것이고 중복 방지는 unique index가 맡는다.
  * - 렌더 중에도 부르므로 revalidatePath를 부르지 않는다.
  */
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, eq, isNotNull, isNull } from "drizzle-orm";
 import type { DbContext, DrizzleDb } from "@/db/client";
 import { assignmentRecurrences, assignmentTasks } from "@/db/schema";
 import {
@@ -99,7 +99,8 @@ export async function ensureRecurringAssignmentTasks(
     .from(assignmentTasks)
     .where(and(
       eq(assignmentTasks.studentId, studentId),
-      inArray(assignmentTasks.recurrenceId, rules.map((rule) => rule.id)),
+      // 규칙 id 목록을 bind하지 않는다(D1 bind 100개 제한). 학생의 정기 회차 전체를 읽고 아래에서 규칙별로 나눈다.
+      recurrenceId ? eq(assignmentTasks.recurrenceId, recurrenceId) : isNotNull(assignmentTasks.recurrenceId),
     ));
   const existingByRule = new Map<string, Set<string>>();
   for (const row of existing) {
