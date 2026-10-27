@@ -110,7 +110,8 @@ test("두 client가 동시에 token을 갱신해도 늦게 끝난 쪽이 회전�
   google.tokenCalls[1].respond({ access_token: "access-b", expires_in: 3600 });
   await listB;
   assert.equal(await storedRefreshToken(db), "refresh-2", "늦게 끝난 갱신이 이전 refresh token으로 덮지 않는다");
-  assert.deepEqual(google.bearers, ["Bearer access-a", "Bearer access-b"]);
+  // B는 저장 경합에서 A의 저장값을 채택했으므로 그 access token으로 요청한다(인증 실패 판정이 같은 저장값을 가리킨다).
+  assert.deepEqual(google.bearers, ["Bearer access-a", "Bearer access-a"]);
 
   // 오래된 저장값으로 만든 다른 client도 갱신 전에 저장값을 다시 읽어 유효한 token을 재사용한다.
   const clientC = await createCalendarClientForConnection(db.ctx, stale);

@@ -212,7 +212,10 @@ async function createGoogleAccessTokenProvider(
       // 인증 오류가 아닌 provider 오류로 멈춘다(매핑 last_error만 남고 다음 실행이 다시 갱신한다). token은 담지 않는다.
       throw new CalendarProviderError("Could not persist rotated Google refresh token");
     }
-    return tokens.accessToken;
+    // 다른 client의 저장값을 채택했으면 그 access token을 쓴다. 인증 실패 판정(NEEDS_REAUTH의 자격 증명 일치 조건)이
+    // 실제 요청에 쓴 token과 같은 저장값을 가리키게 한다.
+    if (credentials === next) return tokens.accessToken;
+    return usable(credentials) ? credentials.accessToken! : tokens.accessToken;
   };
 }
 
