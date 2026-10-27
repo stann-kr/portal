@@ -6,6 +6,8 @@
  *   로컬 내용으로 덮거나(update) 지운다(remove). portalRef 조회는 create 응답이 유실된 claim(remoteId 없음)에만 쓴다.
  * - 원격 → 로컬 반영은 읽은 로컬 값을 조건으로 UPDATE·DELETE한다. 그 사이 웹 수정이 있으면 다시 읽어 웹 우선으로 판단한다.
  * - 원격 create는 portalRef에서 나온 결정적 id로 멱등이다. lease는 원격 쓰기마다 조건부로 갱신하고 잃으면 멈춘다.
+ * - 로컬 쓰기(원격 반영·가져오기·link·series)는 모두 lease 소유 조건을 첫 문장으로 둔 같은 batch에서 실행한다(fencing).
+ *   lease를 잃어 되돌려지면 다시 시도하지 않고 멈춘다. 소유 중 웹 수정 경합이면 현재 원격·로컬로 다시 판단한다.
  * - 루프 방지는 calendar_sync_links + portalRef. 로컬 → 원격은 link(remote_id NULL)를 먼저 claim한 뒤 만든다.
  * - 로컬 삭제는 link local_fingerprint를 DELETED로 남기고, 원격 remove 성공 뒤 link를 지운다.
  * - 원격 새 일정(portalRef 없음)은 학생 calendar_events(NOTE)로 가져온다. 반복 일정은 calendar_remote_series 사본만 둔다.
@@ -306,15 +308,60 @@ async function loadLinks(state: RunState): Promise<void> {
   state.links = await state.db.select().from(calendarSyncLinks).where(eq(calendarSyncLinks.mappingId, state.mappingId));
 }
 
+/** drizzle 쿼리를 원자적 batch 문장으로 바꾼다(Date 등은 drizzle이 저장 값으로 변환한다). */
+function toStatement(query: { toSQL(): { sql: string; params: unknown[] } }): DocumentAtomicStatement {
+  const { sql, params } = query.toSQL();
+  return { query: sql, params };
+}
+
+/**
+ * lease fencing: batch 첫 문장으로 내 lease id일 때만 lease를 연장한다. 다른 실행이 lease를 이어받았으면 0행 →
+ * sentinel이 batch 전체(로컬 행·link·series 쓰기)를 되돌린다.
+ */
+function leaseGuardStatements(state: RunState): DocumentAtomicStatement[] {
+  return [
+    {
+      query: "UPDATE calendar_mappings SET sync_lease_until = ? WHERE id = ? AND sync_lease_id = ?",
+      params: [epochSeconds(new Date(state.now().getTime() + CALENDAR_SYNC_LEASE_MS)), state.mappingId, state.leaseId],
+    },
+    DOCUMENT_CONDITIONAL_WRITE_SENTINEL,
+  ];
+}
+
+async function stillOwnsLease(state: RunState): Promise<boolean> {
+  const [row] = await state.db
+    .select({ leaseId: calendarMappings.syncLeaseId })
+    .from(calendarMappings)
+    .where(eq(calendarMappings.id, state.mappingId))
+    .limit(1);
+  return row?.leaseId === state.leaseId;
+}
+
+/**
+ * 동기화 중 모든 로컬 쓰기는 이 함수로 lease 소유 조건과 같은 batch에서 실행한다.
+ * 되돌려지면 먼저 소유권을 확인한다: 잃었으면 LeaseLost(더 쓰지 않고 멈춤), 아직 소유자면 원래 오류를 올린다.
+ */
+async function executeFenced(state: RunState, statements: DocumentAtomicStatement[]): Promise<void> {
+  if (state.leaseLost) throw new LeaseLost();
+  try {
+    await executeDocumentStatementsAtomically(state.ctx, [...leaseGuardStatements(state), ...statements]);
+  } catch (error) {
+    if (!(await stillOwnsLease(state))) {
+      state.leaseLost = true;
+      throw new LeaseLost();
+    }
+    throw error;
+  }
+}
+
 async function updateLink(state: RunState, linkId: string, values: Partial<Pick<LinkRow, "remoteId" | "etag" | "localFingerprint" | "lastError">>): Promise<void> {
-  await state.db
-    .update(calendarSyncLinks)
-    .set({ ...values, updatedAt: state.now() })
-    .where(eq(calendarSyncLinks.id, linkId));
+  await executeFenced(state, [
+    toStatement(state.db.update(calendarSyncLinks).set({ ...values, updatedAt: state.now() }).where(eq(calendarSyncLinks.id, linkId))),
+  ]);
 }
 
 async function deleteLink(state: RunState, linkId: string): Promise<void> {
-  await state.db.delete(calendarSyncLinks).where(eq(calendarSyncLinks.id, linkId));
+  await executeFenced(state, [toStatement(state.db.delete(calendarSyncLinks).where(eq(calendarSyncLinks.id, linkId)))]);
 }
 
 async function loadLink(state: RunState, linkId: string): Promise<LinkRow | null> {
@@ -358,7 +405,7 @@ async function importRemoteEvent(state: RunState, remote: RemoteEvent): Promise<
   const id = crypto.randomUUID();
   const fingerprint = await localFingerprint({ kind: "EVENT", id, ...values });
   const nowSeconds = epochSeconds(state.now());
-  await executeDocumentStatementsAtomically(state.ctx, [
+  await executeFenced(state, [
     {
       query:
         "INSERT INTO calendar_events (id, user_id, event_type, title, start_time, end_time, description, created_at) VALUES (?, ?, 'NOTE', ?, ?, ?, ?, ?)",
@@ -375,6 +422,22 @@ async function importRemoteEvent(state: RunState, remote: RemoteEvent): Promise<
 
 /** 조건부 batch가 0행(웹 수정 경합)으로 되돌려지면 한 번 다시 읽어 판단한다. 그래도 실패하면 오류를 올린다. */
 const MAX_CONDITIONAL_ATTEMPTS = 2;
+
+/**
+ * 조건부 batch가 되돌려졌고 lease는 아직 내 것이다(웹 수정 경합). 이전 pull 결과를 다시 쓰지 않고,
+ * 최신 link와 remoteId로 다시 읽은 현재 원격 상태로 처음부터 판단한다.
+ */
+async function reevaluateLinked(state: RunState, link: LinkRow, attempt: number): Promise<void> {
+  const fresh = await loadLink(state, link.id);
+  if (!fresh || !fresh.remoteId || fresh.remoteId !== link.remoteId) return;
+  const current = await state.client.get(state.calendarId, fresh.remoteId);
+  if (!current || current.status === "cancelled") {
+    await applyRemoteDeletion(state, fresh, attempt);
+    return;
+  }
+  if (current.recurring) return; // 반복으로 바뀐 리소스는 건드리지 않는다.
+  await applyRemoteToLinked(state, fresh, current, attempt);
+}
 
 /** 원격 변경을 연결된 로컬 행에 반영한다(로컬이 마지막 동기화 뒤 그대로일 때만). */
 async function applyRemoteToLinked(state: RunState, link: LinkRow, remote: RemoteEvent, attempt = 1): Promise<void> {
@@ -418,13 +481,13 @@ async function applyRemoteToLinked(state: RunState, link: LinkRow, remote: Remot
     DOCUMENT_CONDITIONAL_WRITE_SENTINEL,
   );
   try {
-    await executeDocumentStatementsAtomically(state.ctx, statements);
+    await executeFenced(state, statements);
   } catch (error) {
-    // 웹 수정·삭제와 겹쳤다. 다시 읽어 웹 우선으로 판단한다(로컬이 바뀌었으면 push 단계가 로컬 내용을 보낸다).
+    // lease를 잃었으면 다시 시도하지 않고 멈춘다(이어받은 실행의 반영을 덮지 않는다).
+    if (error instanceof LeaseLost) throw error;
+    // 웹 수정·삭제와 겹쳤다. 현재 원격·로컬로 다시 판단한다(로컬이 바뀌었으면 push 단계가 로컬 내용을 보낸다).
     if (attempt >= MAX_CONDITIONAL_ATTEMPTS) throw error;
-    const fresh = await loadLink(state, link.id);
-    if (!fresh || fresh.remoteId !== link.remoteId) return;
-    await applyRemoteToLinked(state, fresh, remote, attempt + 1);
+    await reevaluateLinked(state, link, attempt + 1);
     return;
   }
   if (nextFingerprint !== current) state.localChanged = true;
@@ -447,18 +510,17 @@ async function applyRemoteDeletion(state: RunState, link: LinkRow, attempt = 1):
     return;
   }
   try {
-    await executeDocumentStatementsAtomically(state.ctx, [
+    await executeFenced(state, [
       deleteLocalRowStatement(local, state.studentId),
       DOCUMENT_CONDITIONAL_WRITE_SENTINEL,
       { query: "DELETE FROM calendar_sync_links WHERE id = ? AND local_fingerprint = ?", params: [link.id, link.localFingerprint] },
       DOCUMENT_CONDITIONAL_WRITE_SENTINEL,
     ]);
   } catch (error) {
-    // 읽은 뒤 웹에서 바뀌었다. 다시 읽어 판단한다(바뀌었으면 지우지 않고 원격에 다시 만든다).
+    if (error instanceof LeaseLost) throw error;
+    // 읽은 뒤 웹에서 바뀌었다. 현재 원격·로컬로 다시 판단한다(바뀌었으면 지우지 않고 원격에 다시 만든다).
     if (attempt >= MAX_CONDITIONAL_ATTEMPTS) throw error;
-    const fresh = await loadLink(state, link.id);
-    if (!fresh || fresh.remoteId !== link.remoteId) return;
-    await applyRemoteDeletion(state, fresh, attempt + 1);
+    await reevaluateLinked(state, link, attempt + 1);
     return;
   }
   state.localChanged = true;
@@ -474,19 +536,23 @@ async function upsertSeries(state: RunState, remote: RemoteEvent): Promise<void>
     icsText: remote.seriesIcs,
     updatedAt: state.now(),
   };
-  await state.db
-    .insert(calendarRemoteSeries)
-    .values(values)
-    .onConflictDoUpdate({
-      target: [calendarRemoteSeries.mappingId, calendarRemoteSeries.remoteId],
-      set: { seriesKey: values.seriesKey, etag: values.etag, icsText: values.icsText, updatedAt: values.updatedAt },
-    });
+  await executeFenced(state, [
+    toStatement(state.db
+      .insert(calendarRemoteSeries)
+      .values(values)
+      .onConflictDoUpdate({
+        target: [calendarRemoteSeries.mappingId, calendarRemoteSeries.remoteId],
+        set: { seriesKey: values.seriesKey, etag: values.etag, icsText: values.icsText, updatedAt: values.updatedAt },
+      })),
+  ]);
 }
 
 async function deleteSeries(state: RunState, remoteId: string): Promise<void> {
-  await state.db
-    .delete(calendarRemoteSeries)
-    .where(and(eq(calendarRemoteSeries.mappingId, state.mappingId), eq(calendarRemoteSeries.remoteId, remoteId)));
+  await executeFenced(state, [
+    toStatement(state.db
+      .delete(calendarRemoteSeries)
+      .where(and(eq(calendarRemoteSeries.mappingId, state.mappingId), eq(calendarRemoteSeries.remoteId, remoteId)))),
+  ]);
 }
 
 async function applyPull(state: RunState, result: PullResult, full: boolean, window: PullWindow): Promise<void> {
@@ -526,17 +592,19 @@ async function applyPull(state: RunState, result: PullResult, full: boolean, win
       }
       const local = await loadLocalRow(state.db, state.studentId, ref.kind, ref.id);
       if (!local) continue; // 다른 학생·이미 지운 포털 항목의 원격 사본은 가져오지 않는다.
-      await state.db.insert(calendarSyncLinks).values({
-        id: crypto.randomUUID(),
-        mappingId: state.mappingId,
-        localKind: ref.kind,
-        localId: ref.id,
-        remoteId: remote.remoteId,
-        etag: remote.etag,
-        localFingerprint: RELINKED_FINGERPRINT,
-        createdAt: state.now(),
-        updatedAt: state.now(),
-      }).onConflictDoNothing();
+      await executeFenced(state, [
+        toStatement(state.db.insert(calendarSyncLinks).values({
+          id: crypto.randomUUID(),
+          mappingId: state.mappingId,
+          localKind: ref.kind,
+          localId: ref.id,
+          remoteId: remote.remoteId,
+          etag: remote.etag,
+          localFingerprint: RELINKED_FINGERPRINT,
+          createdAt: state.now(),
+          updatedAt: state.now(),
+        }).onConflictDoNothing()),
+      ]);
       await loadLinks(state);
       ({ byRemote, byLocal } = indexLinks(state.links));
       continue;
@@ -681,19 +749,23 @@ async function pushRow(state: RunState, row: LocalCalendarRow, link: LinkRow | u
   const input = localRowToRemoteInput(row);
   let target = link;
   if (!target) {
-    const claimed = await state.db.insert(calendarSyncLinks).values({
-      id: crypto.randomUUID(),
-      mappingId: state.mappingId,
-      localKind: row.kind,
-      localId: row.id,
-      remoteId: null,
-      etag: null,
-      localFingerprint: fingerprint,
-      createdAt: state.now(),
-      updatedAt: state.now(),
-    }).onConflictDoNothing().returning();
-    if (claimed.length === 0) return; // 다른 실행이 먼저 claim했다.
-    target = claimed[0];
+    const claimId = crypto.randomUUID();
+    await executeFenced(state, [
+      toStatement(state.db.insert(calendarSyncLinks).values({
+        id: claimId,
+        mappingId: state.mappingId,
+        localKind: row.kind,
+        localId: row.id,
+        remoteId: null,
+        etag: null,
+        localFingerprint: fingerprint,
+        createdAt: state.now(),
+        updatedAt: state.now(),
+      }).onConflictDoNothing()),
+    ]);
+    const claimed = await loadLink(state, claimId);
+    if (!claimed) return; // 다른 실행이 먼저 claim했다.
+    target = claimed;
     const created = await createRemote(state, input);
     await saveWrite(state, target, created, fingerprint);
     return;
@@ -705,7 +777,9 @@ async function pushRow(state: RunState, row: LocalCalendarRow, link: LinkRow | u
 async function saveWrite(state: RunState, link: LinkRow, written: WriteResult, fingerprint: string): Promise<void> {
   try {
     await updateLink(state, link.id, { remoteId: written.remoteId, etag: written.etag, localFingerprint: fingerprint, lastError: null });
-  } catch {
+  } catch (error) {
+    // 원격 응답 뒤라도 lease를 잃었으면 link를 쓰지 않는다(이어받은 실행이 portalRef·fingerprint로 다시 맞춘다).
+    if (error instanceof LeaseLost) throw error;
     // 같은 원격 id가 다른 link에 이미 있으면(드문 재연결) 이 link는 다음 동기화가 portalRef로 다시 맞춘다.
     await updateLink(state, link.id, { lastError: CALENDAR_SYNC_MESSAGES.partial });
   }

@@ -35,8 +35,11 @@ type Harness = {
   clock: { now: Date };
   sync: (options?: { force?: boolean; mode?: SyncEngineMode; deadline?: number; client?: CalendarProviderClient }) => ReturnType<typeof runCalendarMappingSync>;
   rows: <T>(query: string, ...params: unknown[]) => T[];
-  /** 엔진이 로컬 값을 읽은 뒤 다음 원자적 쓰기(batch) 직전에 한 번 실행한다(웹 수정 경합 재현). */
-  beforeNextAtomicWrite: (hook: () => void) => void;
+  /**
+   * 엔진이 로컬 값을 읽은 뒤 다음 원자적 쓰기(batch) 직전에 한 번 실행한다(웹 수정 경합 재현).
+   * skip만큼의 원자적 쓰기(예: 원격 삭제 앞의 series 정리)는 건너뛴다.
+   */
+  beforeNextAtomicWrite: (hook: () => void, skip?: number) => void;
 };
 
 function setup(context: TestContext): Harness {
@@ -59,11 +62,16 @@ function setup(context: TestContext): Harness {
     .run(MAPPING, CONNECTION, STUDENT, CALENDAR, past, past);
   const db = drizzle(sqlite, { schema });
   let pendingHook: (() => void) | null = null;
+  let pendingSkip = 0;
   // executeDocumentStatementsAtomically만 $client.transaction을 쓴다. 조회는 drizzle session이 원래 client로 한다.
   db.$client = new Proxy(sqlite, {
     get(target, property) {
       if (property === "transaction") {
         return (fn: () => void) => {
+          if (pendingHook && pendingSkip > 0) {
+            pendingSkip -= 1;
+            return target.transaction(fn);
+          }
           const hook = pendingHook;
           pendingHook = null;
           hook?.();
@@ -92,8 +100,9 @@ function setup(context: TestContext): Harness {
       deadline: options.deadline,
     }),
     rows: <T,>(query: string, ...params: unknown[]) => sqlite.prepare(query).all(...params) as T[],
-    beforeNextAtomicWrite: (hook) => {
+    beforeNextAtomicWrite: (hook, skip = 0) => {
       pendingHook = hook;
+      pendingSkip = skip;
     },
   };
 }
@@ -539,9 +548,10 @@ test("원격 삭제를 반영하는 사이 웹에서 일정을 고치면 지우�
   insertEvent(harness, "event-1", { title: "연습", start: at("2026-11-05T11:00:00Z"), end: at("2026-11-05T12:00:00Z") });
   await harness.sync();
   harness.remote.remoteDelete(links(harness)[0].remote_id!);
+  // 첫 원자적 쓰기는 원격 삭제 앞의 series 정리다. 그다음(로컬 삭제 batch) 직전에 웹 수정이 들어온다.
   harness.beforeNextAtomicWrite(() => {
     harness.sqlite.prepare("UPDATE calendar_events SET title = '웹에서 고침' WHERE id = 'event-1'").run();
-  });
+  }, 1);
 
   const result = await harness.sync();
   assert.equal(result.status, "synced");
@@ -698,4 +708,100 @@ test("create 도중 lease가 만료되어 두 실행이 같은 레슨을 만들�
   assert.equal(copies.length, 1, "같은 portalRef 원격 사본은 하나");
   assert.equal(copies[0].remoteId, FakeCalendar.portalRemoteId("lesson:lesson-l"));
   assert.deepEqual(links(harness).map((link) => link.remote_id), [copies[0].remoteId]);
+});
+
+// ── 교차 검토(Sol 4) 필수 지적 회귀 테스트: lease를 잃은 실행의 로컬 쓰기 fencing ──
+
+/** 실행 B가 만료된 lease를 이어받은 상태를 만든다(B는 아직 실행 중). */
+function takeOverLease(harness: Harness): void {
+  harness.sqlite
+    .prepare("UPDATE calendar_mappings SET sync_lease_id = 'run-b', sync_lease_until = ? WHERE id = ?")
+    .run(seconds(harness.clock.now) + 60, MAPPING);
+}
+
+function finishRunB(harness: Harness): void {
+  harness.sqlite.prepare("UPDATE calendar_mappings SET sync_lease_id = NULL, sync_lease_until = NULL WHERE sync_lease_id = 'run-b'").run();
+}
+
+test("로컬 batch 직전에 멈춘 실행 A는 lease를 이어받은 실행 B가 반영한 더 새 원격 값을 덮지 않고 멈춘다", async (context) => {
+  const harness = setup(context);
+  insertLesson(harness, "lesson-1", at("2026-11-03T09:00:00Z"));
+  await harness.sync();
+  const [remoteLesson] = [...harness.remote.events.values()];
+  const staleTime = at("2026-11-04T10:00:00Z");
+  const newestTime = at("2026-11-06T15:00:00Z");
+  const newestFingerprint = await localFingerprint({ kind: "LESSON", id: "lesson-1", start: newestTime });
+  harness.remote.remoteEdit(remoteLesson.remoteId, { start: staleTime, end: new Date(staleTime.getTime() + 3_600_000) });
+
+  // A가 원격 v2를 pull해 로컬 값을 읽은 뒤 batch 직전에 멈춘 사이: 시계 +61초, B가 lease를 잡고 원격 v3를 반영해 cursor까지 저장.
+  harness.beforeNextAtomicWrite(() => {
+    harness.clock.now = new Date(BASE_NOW.getTime() + 61_000);
+    takeOverLease(harness);
+    harness.remote.remoteEdit(remoteLesson.remoteId, { start: newestTime, end: new Date(newestTime.getTime() + 3_600_000) });
+    const newest = harness.remote.events.get(remoteLesson.remoteId)!;
+    harness.sqlite.prepare("UPDATE lessons SET scheduled_at = ? WHERE id = 'lesson-1'").run(seconds(newestTime));
+    harness.sqlite
+      .prepare("UPDATE calendar_sync_links SET etag = ?, local_fingerprint = ? WHERE local_id = 'lesson-1'")
+      .run(newest.etag, newestFingerprint);
+    harness.sqlite.prepare("UPDATE calendar_mappings SET cursor = ? WHERE id = ?").run(harness.remote.currentCursor(), MAPPING);
+  });
+
+  harness.remote.calls = [];
+  const stale = await harness.sync();
+  assert.ok(stale.status === "synced" && stale.partial, "소유권을 잃은 실행은 partial로 멈춘다");
+  assert.equal(stale.localChanged, false);
+  assert.equal(harness.rows<{ scheduled_at: number }>("SELECT scheduled_at FROM lessons")[0].scheduled_at, seconds(newestTime), "B가 반영한 최신 값이 남는다");
+  assert.equal(links(harness)[0].local_fingerprint, newestFingerprint, "A가 link를 이전 값으로 되돌리지 않는다");
+  assert.deepEqual(harness.remote.calls, ["pull"], "A는 다시 읽거나 원격에 쓰지 않고 멈춘다");
+  assert.equal(harness.rows<{ cursor: string }>("SELECT cursor FROM calendar_mappings")[0].cursor, harness.remote.currentCursor(), "A가 cursor를 덮지 않는다");
+  finishRunB(harness);
+
+  harness.clock.now = new Date(BASE_NOW.getTime() + 200_000);
+  const next = await harness.sync();
+  assert.equal(next.status, "synced");
+  assert.equal(harness.rows<{ scheduled_at: number }>("SELECT scheduled_at FROM lessons")[0].scheduled_at, seconds(newestTime), "다음 증분 동기화도 최신 값을 유지한다");
+  assert.equal(harness.remote.events.get(remoteLesson.remoteId)!.start.getTime(), newestTime.getTime());
+});
+
+test("lease를 잃은 실행 A의 원격 삭제 반영은 그 사이 웹 수정을 지우지 않고, 다음 동기화가 웹 값을 원격에 다시 만든다", async (context) => {
+  const harness = setup(context);
+  insertEvent(harness, "event-1", { title: "연습", start: at("2026-11-05T11:00:00Z"), end: at("2026-11-05T12:00:00Z") });
+  await harness.sync();
+  harness.remote.remoteDelete(links(harness)[0].remote_id!);
+  harness.beforeNextAtomicWrite(() => {
+    harness.clock.now = new Date(BASE_NOW.getTime() + 61_000);
+    takeOverLease(harness);
+    harness.sqlite.prepare("UPDATE calendar_events SET title = '웹에서 고침' WHERE id = 'event-1'").run();
+  }, 1);
+
+  const stale = await harness.sync();
+  assert.ok(stale.status === "synced" && stale.partial);
+  assert.deepEqual(harness.rows<{ title: string }>("SELECT title FROM calendar_events"), [{ title: "웹에서 고침" }], "웹 수정이 남는다");
+  assert.equal(links(harness).length, 1, "A는 link를 지우지 않는다");
+  finishRunB(harness);
+
+  harness.clock.now = new Date(BASE_NOW.getTime() + 200_000);
+  await harness.sync();
+  const recreated = [...harness.remote.events.values()].filter((event) => event.portalRef === "event:event-1");
+  assert.equal(recreated.length, 1);
+  assert.equal(recreated[0].title, "웹에서 고침");
+  assert.deepEqual(harness.rows<{ title: string }>("SELECT title FROM calendar_events"), [{ title: "웹에서 고침" }]);
+});
+
+test("원격 응답 뒤 link 저장도 lease 소유권으로 막혀 이어받은 실행의 link를 덮지 않는다", async (context) => {
+  const harness = setup(context);
+  insertLesson(harness, "lesson-1", at("2026-11-03T09:00:00Z"));
+  await harness.sync();
+  harness.sqlite.prepare("UPDATE lessons SET scheduled_at = ? WHERE id = 'lesson-1'").run(seconds(at("2026-11-07T09:00:00Z")));
+  const before = links(harness)[0];
+  // push의 원격 update가 끝난 뒤 link 저장 batch 직전에 lease를 잃는다.
+  harness.beforeNextAtomicWrite(() => {
+    harness.clock.now = new Date(BASE_NOW.getTime() + 61_000);
+    takeOverLease(harness);
+  });
+
+  const stale = await harness.sync({ mode: "push" });
+  assert.ok(stale.status === "synced" && stale.partial);
+  assert.equal(harness.remote.writeCount(), 2, "원격 update는 lease 갱신 뒤 한 번 보냈다");
+  assert.deepEqual(links(harness)[0], before, "lease를 잃은 뒤에는 link를 쓰지 않는다");
 });

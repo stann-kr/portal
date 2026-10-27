@@ -124,3 +124,38 @@ test("두 client가 동시에 token을 갱신해도 늦게 끝난 쪽이 회전�
   assert.equal(google.bearers[2], "Bearer access-a");
   assert.equal(await storedRefreshToken(db), "refresh-2");
 });
+
+test("먼저 끝난 갱신에 회전이 없고 늦게 끝난 갱신에 새 refresh token이 오면 새 refresh token을 보존한다(CAS 병합)", async (context) => {
+  const google = installGoogleFetch(context);
+  const db = createSqliteTestDb(context);
+  const stale = await storeGoogleConnection(db);
+  const clientA = await createCalendarClientForConnection(db.ctx, stale);
+  const clientB = await createCalendarClientForConnection(db.ctx, stale);
+
+  const listA = clientA.listCalendars();
+  await waitFor(() => google.tokenCalls.length === 1);
+  const listB = clientB.listCalendars();
+  await waitFor(() => google.tokenCalls.length === 2);
+  assert.deepEqual(google.tokenCalls.map((call) => call.refreshToken), ["refresh-1", "refresh-1"]);
+
+  // 먼저 끝난 A에는 회전이 없고, 늦게 끝난 B에 회전된 refresh token이 온다.
+  google.tokenCalls[0].respond({ access_token: "access-a", expires_in: 3600 });
+  await listA;
+  assert.equal(await storedRefreshToken(db), "refresh-1");
+  google.tokenCalls[1].respond({ access_token: "access-b", expires_in: 3600, refresh_token: "refresh-2" });
+  await listB;
+  assert.equal(await storedRefreshToken(db), "refresh-2", "늦게 도착한 회전 응답의 새 refresh token을 버리지 않는다");
+  assert.deepEqual(google.bearers, ["Bearer access-a", "Bearer access-b"]);
+
+  // 병합 저장값에는 유효한 access token도 남아 다른 client가 refresh 없이 재사용한다.
+  const clientC = await createCalendarClientForConnection(db.ctx, stale);
+  const listC = clientC.listCalendars();
+  await waitFor(() => {
+    for (const call of google.tokenCalls.slice(2)) call.respond({ access_token: "access-c", expires_in: 3600 });
+    return google.bearers.length === 3;
+  });
+  await listC;
+  assert.equal(google.tokenCalls.length, 2, "병합 저장 뒤에는 다시 refresh하지 않는다");
+  assert.ok(["Bearer access-a", "Bearer access-b"].includes(google.bearers[2]));
+  assert.equal(await storedRefreshToken(db), "refresh-2");
+});

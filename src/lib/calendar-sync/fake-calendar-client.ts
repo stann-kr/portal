@@ -76,6 +76,11 @@ export class FakeCalendar implements CalendarProviderClient {
     this.changeSeq.delete(remoteId);
   }
 
+  /** 지금까지의 모든 변경 뒤를 가리키는 증분 cursor(다른 실행이 pull·저장한 상태 재현용). */
+  currentCursor(): string {
+    return String(this.seq);
+  }
+
   writeCount(): number {
     return this.calls.filter((call) => call === "create" || call === "update" || call === "remove").length;
   }

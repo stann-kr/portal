@@ -30,6 +30,8 @@ import { getGoogleCalendarOAuthConfig } from "./oauth-config";
 import { CalendarAuthError, type CalendarProviderClient } from "./types";
 
 const ACCESS_TOKEN_SKEW_MS = 60_000;
+/** 갱신 결과 저장 CAS를 다시 시도하는 최대 횟수(회전된 refresh token 병합용). */
+const CREDENTIALS_CAS_ATTEMPTS = 3;
 
 export type StoredCalendarConnection = {
   id: string;
@@ -87,8 +89,10 @@ async function defaultFactory({ ctx, connection }: { ctx: DbContext; connection:
 /**
  * 저장된 Google 자격 증명으로 access token을 준다. 만료 1분 전까지 가진 token을 쓴다.
  * 갱신이 필요하면 먼저 저장값을 다시 읽어 다른 client가 이미 받은 유효한 token을 재사용하고,
- * 직접 갱신한 결과는 읽었던 ciphertext가 그대로일 때만 저장한다(compare-and-swap). CAS가 실패하면
- * 다른 client가 더 새 자격 증명(회전된 refresh token)을 저장한 것이므로 덮지 않고 저장값을 따른다.
+ * 직접 갱신한 결과는 읽었던 ciphertext가 그대로일 때만 저장한다(compare-and-swap). CAS가 실패하면 저장값을 다시 읽어:
+ * - 다른 client가 refresh token을 회전했으면(저장값 ≠ 이번 갱신에 쓴 값) 저장값을 따른다.
+ * - 회전 없이 access token만 바꿨고 이번 응답에 새 refresh token이 있으면, 새 refresh token과 더 늦게 만료되는
+ *   access token을 합쳐 다시 CAS로 저장한다(늦게 끝난 회전 응답을 버리지 않는다).
  */
 async function createGoogleAccessTokenProvider(
   ctx: DbContext,
@@ -131,8 +135,9 @@ async function createGoogleAccessTokenProvider(
     await adoptStored();
     if (usable(credentials) && credentials.accessToken !== rejected) return credentials.accessToken!;
     let tokens;
+    let usedRefreshToken = credentials.refreshToken;
     try {
-      tokens = await refresh(credentials.refreshToken);
+      tokens = await refresh(usedRefreshToken);
     } catch (error) {
       // 그 사이 다른 client가 refresh token을 회전했으면 저장된 새 값으로 한 번 더 시도한다.
       if (!(error instanceof CalendarAuthError)) throw error;
@@ -140,25 +145,41 @@ async function createGoogleAccessTokenProvider(
       await adoptStored();
       if (sealed.encryptedCredentials === before) throw error;
       if (usable(credentials) && credentials.accessToken !== rejected) return credentials.accessToken!;
-      tokens = await refresh(credentials.refreshToken);
+      usedRefreshToken = credentials.refreshToken;
+      tokens = await refresh(usedRefreshToken);
     }
-    const next: GoogleConnectionCredentials = {
-      refreshToken: tokens.refreshToken ?? credentials.refreshToken,
+    const rotatedRefreshToken = tokens.refreshToken;
+    let next: GoogleConnectionCredentials = {
+      refreshToken: rotatedRefreshToken ?? credentials.refreshToken,
       accessToken: tokens.accessToken,
       accessTokenExpiresAt: tokens.expiresAt.getTime(),
     };
-    const encrypted = await encryptConnectionCredentials({ connectionId: connection.id, provider: "GOOGLE", credentials: next, key });
-    const swapped = await db
-      .update(calendarConnections)
-      .set({ ...encrypted, updatedAt: new Date() })
-      .where(and(eq(calendarConnections.id, connection.id), eq(calendarConnections.encryptedCredentials, sealed.encryptedCredentials)))
-      .returning({ id: calendarConnections.id });
-    if (swapped.length > 0) {
-      credentials = next;
-      sealed = encrypted;
-    } else {
-      // CAS 실패: 더 새 자격 증명이 저장되어 있다. 덮지 않고 따른다. 방금 받은 access token은 이번 요청에만 쓴다.
+    for (let attempt = 1; attempt <= CREDENTIALS_CAS_ATTEMPTS; attempt += 1) {
+      const encrypted = await encryptConnectionCredentials({ connectionId: connection.id, provider: "GOOGLE", credentials: next, key });
+      const swapped = await db
+        .update(calendarConnections)
+        .set({ ...encrypted, updatedAt: new Date() })
+        .where(and(eq(calendarConnections.id, connection.id), eq(calendarConnections.encryptedCredentials, sealed.encryptedCredentials)))
+        .returning({ id: calendarConnections.id });
+      if (swapped.length > 0) {
+        credentials = next;
+        sealed = encrypted;
+        break;
+      }
+      // CAS 실패: 다른 client가 먼저 저장했다. 최신 저장값을 읽는다.
       await adoptStored();
+      // 이번 응답에 회전이 없거나, 다른 client가 refresh token을 이미 바꿨으면(회전) 저장값을 따른다.
+      // 방금 받은 access token은 이번 요청에만 쓴다.
+      if (!rotatedRefreshToken || credentials.refreshToken !== usedRefreshToken) break;
+      // 먼저 저장한 쪽은 회전 없이 access token만 바꿨다. 이번 응답의 새 refresh token을 보존하고
+      // access token은 더 늦게 만료되는 쪽을 둔다.
+      const storedFresher = Boolean(credentials.accessToken)
+        && (credentials.accessTokenExpiresAt ?? 0) > tokens.expiresAt.getTime();
+      next = {
+        refreshToken: rotatedRefreshToken,
+        accessToken: storedFresher ? credentials.accessToken : tokens.accessToken,
+        accessTokenExpiresAt: storedFresher ? credentials.accessTokenExpiresAt : tokens.expiresAt.getTime(),
+      };
     }
     return tokens.accessToken;
   };
