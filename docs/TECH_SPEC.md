@@ -11,9 +11,11 @@ Browser
       ├─ student/admin portal shell
       ├─ shared community·Q&A routes
       ├─ server actions
-      └─ calendar feed API
+      ├─ calendar feed API
+      └─ calendar connection API(Google OAuth)
           ├─ Drizzle ORM → Cloudflare D1 / local SQLite
-          └─ Worker upload route → R2 binding
+          ├─ Worker upload route → R2 binding
+          └─ calendar sync engine → Google Calendar API / iCloud CalDAV
 
 OpenNext → Cloudflare Worker
 ```
@@ -37,6 +39,9 @@ OpenNext → Cloudflare Worker
 | Storage | `src/lib/r2.ts`, `src/lib/media-lifecycle-atomic.ts`, `src/lib/actions/upload.ts`, `src/app/api/media/` | Worker 경유 staging upload(`PUT /api/media/upload/[id]`)·binding seal, D1 registry·삭제 outbox, 본문 이미지 연결(`src/lib/document-image-references.ts`), 인증 delivery |
 | Account privacy | `src/lib/account-privacy-atomic.ts`, `src/lib/actions/accountPrivacy.ts`, `src/app/api/account-cleanup/` | 학생 본인 원자 삭제, 기기 cleanup digest, 30일 raw-ID alias |
 | Calendar feed | `src/app/api/calendar/feed/route.ts`, `src/app/api/calendar/[studentId]/route.ts`, `src/lib/calendar-feed.ts` | opaque v2 token과 legacy v1 접근 |
+| Assignment tasks | `src/lib/actions/assignmentTasks.ts`, `src/lib/assignment-recurrence.ts`, `src/lib/assignment-task-generation.ts`, `src/lib/assignment-submission.ts`, `src/components/admin/assignments/` | 관리자 출제·정기 과제 규칙, 조회 시 회차 생성, 형식별 제출 검증 |
+| Guide | `src/lib/actions/guide.ts`, `src/lib/guide-store.ts`, `src/lib/guide-content.ts`, `src/lib/guide-asset-handlers.ts`, `src/lib/guide-import.ts`, `scripts/guide-import/build.ts`, `src/components/guide/` | 공용 가이드 CRUD·순서·이미지, 블록 앵커, 구간 질문 위치, Claude 문서 export 가져오기 |
+| Calendar sync | `src/lib/calendar-sync/`, `src/lib/actions/calendarSync.ts`, `src/app/api/calendar-connections/`, `src/components/admin/calendar-sync/` | provider client(Google·CalDAV), 양방향 엔진, 자격 증명 암호화, OAuth route, 관리자 연결·매핑 화면 |
 | Scheduled maintenance | `worker.ts`, `src/lib/scheduled-maintenance.ts`, `src/db/d1-context.ts` | request context 없는 Cron에서 bounded account alias·media outbox 수렴 |
 | Deploy | `open-next.config.ts`, `wrangler.toml`, `wrangler.scheduled.toml`, `wrangler.maintenance.toml` | application·예약 정리·점검용 Worker artifact와 binding 경계 |
 
@@ -66,6 +71,10 @@ OpenNext → Cloudflare Worker
 | `/dashboard/student/notes` | 학생 노트 목록 |
 | `/dashboard/student/assignments/[id]` | 과제 재생·타임라인 피드백. 학생 본인과 관리자만 열고, 검증된 `returnTo`로 직전 화면에 복귀한다. 관리자에게는 제출 학생을 표시한다 |
 | `/dashboard/student/notes/new` | 학생 본인 노트 전체 화면 작성 |
+| `/dashboard/guide` | 공용 가이드 페이지 목록(학생·관리자 공통, 사이드바 "가이드"). 관리자는 페이지 추가·순서 변경 |
+| `/dashboard/guide/[pageId]` | 가이드 페이지 읽기. 학생은 문단을 골라 질문하고 본인 질문 위치를, 관리자는 모든 학생의 질문 위치를 본다 |
+| `/dashboard/guide/[pageId]/edit` | 관리자 전용 가이드 편집(초안·version 충돌·이탈 보호, 삭제) |
+| `/dashboard/admin/calendar-sync` | 관리자 캘린더 동기화 설정(운영 도구에서 진입): 서버 설정 안내, Google·iCloud 계정 연결·해제, 학생별 캘린더 매핑·지금 동기화·오류 표시 |
 | `/dashboard/student/digging` | 학생 본인 디깅 보드: 트랙 값 편집·삭제, 컬럼 관리. 검증된 `returnTo`로 복귀 |
 | `/dashboard/admin/students/[id]/notes` | 관리자 대상 학생 노트 목록 |
 | `/dashboard/admin/students/[id]/notes/new` | 관리자 대상 학생 노트 전체 화면 작성 |
@@ -75,7 +84,7 @@ OpenNext → Cloudflare Worker
 | `/community/[postId]/history` | 커뮤니티 게시물 불변 full-snapshot revision 조회·선택 복원 |
 | `/community/trash` | 권한 범위의 게시물 휴지통·복원·관리자 영구 삭제 |
 | `/dashboard/admin/students/new` | 학생 추가 |
-| `/dashboard/admin/students/[id]` | 학생 상세: 개요·과제·디깅·노트·Q&A 탭. 개요 탭은 레슨을 관리한다. 커리큘럼 모듈 관리는 코드에 남아 있지만 `src/lib/curriculum-visibility.ts` 스위치로 숨겨져 있다. 과제 탭은 제출 최신순과 과제별 피드백 수를 보여 준다 |
+| `/dashboard/admin/students/[id]` | 학생 상세: 개요·과제·디깅·노트·Q&A 탭. 개요 탭은 레슨을 관리한다. 커리큘럼 모듈 관리는 코드에 남아 있지만 `src/lib/curriculum-visibility.ts` 스위치로 숨겨져 있다. 과제 탭은 출제 과제·정기 과제 관리(`AdminAssignmentsPanel`)와 제출 최신순·과제별 피드백 수를 보여 준다 |
 | `/dashboard/admin/categories` | 자유 게시판 채널 추가·수정·삭제. 게시물이 참조하는 주소 식별자(slug)는 생성 뒤 바꾸지 않고 이름·설명·정렬 순서만 수정한다. 관리자 커뮤니티 section과 `/community`에서 진입 |
 | `/dashboard/qna/**` | Q&A 목록·작성·상세·불변 event 이력·휴지통 |
 | `/community/**` | 커뮤니티 목록·작성·상세 |
@@ -85,6 +94,11 @@ OpenNext → Cloudflare Worker
 | `/api/media/[mediaObjectId]` | owner·게시물 audience·Q&A 참여자 권한을 재검증하는 private media delivery |
 | `/api/account-cleanup/register` | 인증된 학생 기기의 cleanup token digest 등록 |
 | `/api/account-cleanup/status` | 삭제 신호만 반환하는 익명·same-origin·no-store 상태 조회 |
+| `/api/guide-assets` | 관리자 전용 가이드 이미지 업로드(JPG·PNG·GIF·WebP, 10MB, R2 `guide/<uuid>`) |
+| `/api/guide-assets/[assetId]` | 로그인 사용자에게 가이드 이미지 전달 |
+| `/api/calendar-connections/google/start` | 관리자 Google 연결 시작: state·PKCE를 봉인 cookie에 담고 Google 동의 화면으로 이동 |
+| `/api/calendar-connections/google/callback` | Google OAuth redirect URI. cookie의 state·관리자·만료를 확인하고 code를 token으로 바꿔 연결을 저장한 뒤 설정 화면으로 돌아간다 |
+| `/api/calendar-connections/google/notify` | (구현 진행 중) Google 변경 알림 수신. 로그인 없이 channel id·token으로만 검증한다 |
 
 `/dashboard/student/assignments`, `curriculum` 목록 경로는 원페이지 포털로, 예전 `/dashboard/admin/students/[id]/digging`은 학생 상세 디깅 탭으로 redirect한다. 노트 목록과 디깅 보드는 별도 route를 사용한다.
 
@@ -92,7 +106,7 @@ OpenNext → Cloudflare Worker
 
 학생 홈은 게시물 본문 없이 공지 3개의 요약만 읽는다. 예전 포털 구역 주소 `?section=community`(학생·관리자)와 `?section=announcements`(관리자)는 `/community`(공지는 `boardType=ANNOUNCEMENT`)로 redirect한다. 통합 일정의 노트는 본문 앞 4,096자만 읽어 240자 평문 미리보기로 전달하고, 상세 패널을 열 때 해당 노트 본문만 권한을 다시 확인해 불러온다.
 
-학생 포털의 기본 section은 `오늘`이다. 통합 item에서 다음 일정, 피드백이 있는 제출, Q&A 상태를 순수 selector로 분류하고 최근 공지와 실제 작성 경로를 함께 제공한다. `lessons` 행은 `EVENT`/`LESSON` 항목으로 포함하므로 다음 일정 selector와 워크스페이스에서 같은 계약을 사용한다. 현재 schema에 없는 과제 배정·마감·읽음 상태는 추정하지 않는다. 캘린더(월·주·일별·전체 하나의 세그먼트, 좁은 화면은 주 없음·기본 일별)와 과제는(커리큘럼은 숨김 스위치가 켜졌을 때만) `워크스페이스` section에서 기존 기능을 유지한다. 주소 `create=today`(학생)·`create=lesson`(관리자)은 빠른 만들기·레슨 예약을 한 번 열고 `replaceState`로 지운다. view 없이 들어오면 기기에 저장된 캘린더 계열 보기(달력·일별·전체)만 복원한다.
+학생 포털의 기본 section은 `오늘`이다. 통합 item에서 다음 일정, 피드백이 있는 제출, Q&A 상태를 순수 selector로 분류하고 최근 공지와 실제 작성 경로를 함께 제공한다. `lessons` 행은 `EVENT`/`LESSON` 항목으로 포함하므로 다음 일정 selector와 워크스페이스에서 같은 계약을 사용한다. 관리자 출제 과제는 마감·제출 상태를 갖지만, 읽음 상태는 schema에 없으므로 추정하지 않는다. 캘린더(월·주·일별·전체 하나의 세그먼트, 좁은 화면은 주 없음·기본 일별)와 과제는(커리큘럼은 숨김 스위치가 켜졌을 때만) `워크스페이스` section에서 기존 기능을 유지한다. 주소 `create=today`(학생)·`create=lesson`(관리자)은 빠른 만들기·레슨 예약을 한 번 열고 `replaceState`로 지운다. view 없이 들어오면 기기에 저장된 캘린더 계열 보기(달력·일별·전체)만 복원한다.
 
 캘린더(`UnifiedCalendar`)는 FullCalendar를 `timeZone="UTC"`로 두고 KST 벽시계 시각(실제 시각 + 9시간, 한국은 일광절약시간 없음)을 넣어 기기 시간대와 무관하게 칸을 KST로 맞춘다(`src/lib/calendar-interaction.ts`). 끌어 옮기기는 클라이언트 판정(일정·레슨은 그 학생 본인과 관리자 — 2026-10-26 사용자 결정, 노트는 관리자 또는 작성자)과 같은 규칙을 서버가 다시 검사한다: `moveCalendarEvent`(학생 본인 또는 관리자가 대상 학생 ID로, 기존 patch 검증), `moveLesson`(학생 본인 또는 관리자, 대상 학생 레슨), `movePrivateNoteDate`(현재 revision의 제목·본문을 그대로 두고 날짜만 바꾸는 새 revision, 이미 그 날짜면 쓰기 없는 성공으로 재전송을 흡수). 화면은 저장 전 이동을 먼저 보여 주고, 저장된 이동은 다시 받은 목록이 반영할 때까지 유지하며, 같은 항목의 겹친 이동은 마지막 요청만 반영한다. 끌 수 없는 항목(다른 작성자 노트·디깅·Q&A·과제·외부 캘린더)은 끌려고 하면 이유를 알린다. 상세 패널은 수정 권한(관리자 또는 작성자)이 있는 노트를 문서 페이지와 같은 `NoteEditorForm`으로 바로 편집하고(자동 저장·초안·충돌 보호 동일, 저장·업로드 중 닫힘 잠금), 저장 결과를 캘린더 항목에 반영한다. 칸 선택·터치 탭은 `CalendarQuickCreate`를 열어 노트(작성 화면 `?title=&date=`), 일정(`createCalendarEvent`), 레슨(`createLesson`)을 만든다. 관리자 일정 section은 선택한 학생의 캘린더에서 레슨을 예약·이동하고, 레슨 상세에서 시간 변경과 취소 우선 2단계 삭제를 제공한다. 결과는 현재 학생의 캘린더 상태에 즉시 반영하고, 학생을 바꾼 뒤 도착한 늦은 결과는 다른 학생 캘린더에 섞지 않는다.
 
@@ -102,7 +116,7 @@ OpenNext → Cloudflare Worker
 
 통합 항목은 raw `id`를 route 진입에 유지하면서 `<source kind>:<entity>:<id>` 형식의 UI key를 별도로 사용한다. `calendar_events`와 `lessons`, 외부 공개 캘린더 사이에는 안정적인 연결 키가 없으므로 같은 시각이나 제목만으로 dedupe하지 않으며, 서로 다른 행을 모두 표시한다. source kind는 `PORTAL`, `GOOGLE_CALENDAR`, `ICLOUD_CALENDAR`이고 entity는 내부 항목 또는 `EXTERNAL_CALENDAR_EVENT`다. 학생 스페이스 label은 display name을 trim해 우선 사용하고 비어 있으면 email을 사용한다.
 
-학생은 하나의 전용 공개 Google 또는 iCloud iCal 레슨 캘린더를 연결할 수 있다. 제공자는 별도 선택 없이 붙여 넣은 주소의 host로 판별하고, 주소 형식 위반은 구체적인 안내로, 읽기·파싱 실패와 암호화 key 미설정은 원문 없는 고정 안내로 구분해 돌려준다. 거부된 주소는 form에 남아 바로 고칠 수 있다. 구독 URL은 `external_calendar_subscriptions`에 AES-256-GCM과 학생·provider AAD로 암호화해 저장하며, 조회 action과 UI에는 provider·label·연결 여부만 반환한다. fetch는 허용 host/path, HTTPS, redirect 거부, 5초 timeout, 1 MiB streaming 상한과 VCALENDAR 검증을 거친다. 파서는 `ical.js`로 반복·EXDATE·override·취소·all-day를 bounded window의 read-only `EVENT`/`LESSON`으로 정규화한다. 외부 fetch 또는 복호화가 실패해도 내부 일정만 반환한다.
+학생은 하나의 전용 Google 또는 iCloud iCal 레슨 캘린더를 읽기 전용으로 연결할 수 있다. Google은 공개 주소(`/calendar/ical/<id>/public/basic.ics`)와 비공개 Secret 주소(`/private-<token>/basic.ics`)를 모두 받고, 비공개 주소는 이름만 "Google 비공개 레슨 캘린더"로 나눌 뿐 같은 암호화 저장·원문 비반환을 따른다. 그 밖의 경로·query·hash는 거부한다. iCloud는 `p<N>-caldav.icloud.com/published/2/…` 공개 주소만 받는다. 학생의 외부 일정은 관리자의 그 학생 캘린더에도 보인다. 제공자는 별도 선택 없이 붙여 넣은 주소의 host로 판별하고, 주소 형식 위반은 구체적인 안내로, 읽기·파싱 실패와 암호화 key 미설정은 원문 없는 고정 안내로 구분해 돌려준다. 거부된 주소는 form에 남아 바로 고칠 수 있다. 구독 URL은 `external_calendar_subscriptions`에 AES-256-GCM과 학생·provider AAD로 암호화해 저장하며, 조회 action과 UI에는 provider·label·연결 여부만 반환한다. fetch는 허용 host/path, HTTPS, redirect 거부, 5초 timeout, 1 MiB streaming 상한과 VCALENDAR 검증을 거친다. 파서는 `ical.js`로 반복·EXDATE·override·취소·all-day를 bounded window의 read-only `EVENT`/`LESSON`으로 정규화한다. 외부 fetch 또는 복호화가 실패해도 내부 일정만 반환한다.
 
 학생과 관리자 포털은 공통 앱 셸(`AppShell`·`AppSidebar`: 넓은 화면 240px 사이드바, 좁은 화면 52px 위쪽 막대와 메뉴 서랍, 계정 … 메뉴)과 `PortalShell`을 사용한다. 위쪽 막대의 제목·뒤로·주 행동은 `resolveMobileTopBar`가 주소에서 정하고 화면이 `MobileTopBar`로 덮어쓴다. section 선택은 역할별 local storage key에 편의 상태로 저장한다. root skip link와 main landmark, dashboard loading/error boundary를 공통 shell 경계로 둔다. 학생 roster는 mobile label-value list와 desktop table을 분리하고 desktop 확장은 실제 button으로 조작한다.
 
@@ -115,7 +129,9 @@ OpenNext → Cloudflare Worker
 `src/db/schema.ts`의 주요 table:
 
 - 사용자·수업: `profiles`, `curriculums`, `lessons`, `external_calendar_subscriptions`
-- 과제·피드백: `assignments`, `feedbacks`
+- 과제·피드백: `assignment_tasks`, `assignment_recurrences`, `assignments`, `feedbacks`
+- 공용 가이드: `guide_pages`, `guide_assets`, `qna_guide_anchors`
+- 캘린더 양방향 동기화: `calendar_connections`, `calendar_mappings`, `calendar_sync_links`, `calendar_remote_series`(예정: `calendar_push_channels`)
 - 콘텐츠: `categories`, `posts`, `post_revisions`, `comments`
 - 개인 학습 기록: `private_notes`, `private_note_revisions`, `calendar_events`
 - 문서 연속성: `document_operation_ledger`, `document_tombstones`, `document_batch_abort_guard`, `document_server_drafts`, `document_server_draft_operations`
@@ -132,7 +148,7 @@ Cloudflare binding:
 | `BUCKET` | R2 bucket | 미디어 저장 |
 | `ASSETS` | OpenNext assets | 정적 asset |
 
-Migration SQL은 `drizzle/`, Drizzle metadata는 `drizzle/meta/`에 둔다. Wrangler는 SQL 파일명과 D1의 적용 이력을 기준으로 migration을 실행하고, Drizzle metadata는 다음 schema diff 생성 기준으로 사용한다. SQL·journal·snapshot은 `0000~0014`까지 대응한다. `npm run db:check`는 empty replay와 current schema/latest snapshot의 column·FK·index뿐 아니라 문서·미디어·개인정보·외부 캘린더 구독 CHECK·FK·unique index, 불변·부활·교체 우회 방지 probe, `0007` fixture upgrade·inbound FK preflight, `0008→0009` account cascade, 기존 게시물·Q&A의 `0009→0010`, 기존 URL을 보존하는 `0010→0011`, populated `0011→0012` 개인정보, `0012→0013` 외부 캘린더 및 `0013→0014` 본문 이미지 upgrade를 검사한다. 이 체인은 저장소의 schema 계약이며 persistent local·remote D1의 현재 적용 이력을 뜻하지 않는다. 환경별 실제 적용 목록과 pending 범위는 [운영 상태 확인 기준](./DEPLOYMENT.md#운영-상태-확인-기준)으로 확인한다. 외부 캘린더 코드의 promotion에는 대상 D1의 `0013`, 본문 이미지·Worker 업로드 코드에는 `0014`가 필요하다.
+Migration SQL은 `drizzle/`, Drizzle metadata는 `drizzle/meta/`에 둔다. Wrangler는 SQL 파일명과 D1의 적용 이력을 기준으로 migration을 실행하고, Drizzle metadata는 다음 schema diff 생성 기준으로 사용한다. SQL·journal·snapshot은 `0000~0017`까지 대응한다(Google 변경 알림용 `0018_calendar_push_channels`는 구현 진행 중). `npm run db:check`는 empty replay와 current schema/latest snapshot의 column·FK·index뿐 아니라 문서·미디어·개인정보·외부 캘린더 구독 CHECK·FK·unique index, 불변·부활·교체 우회 방지 probe, `0007` fixture upgrade·inbound FK preflight, `0008→0009` account cascade, 기존 게시물·Q&A의 `0009→0010`, 기존 URL을 보존하는 `0010→0011`, populated `0011→0012` 개인정보, `0012→0013` 외부 캘린더, `0013→0014` 본문 이미지, 기존 제출·피드백을 보존하는 `0014→0015` 과제 출제, 서버 초안 trigger를 다시 만드는 `0015→0016` 가이드, 추가만 하는 `0016→0017` 캘린더 동기화 upgrade를 검사한다. 이 체인은 저장소의 schema 계약이며 persistent local·remote D1의 현재 적용 이력을 뜻하지 않는다. 환경별 실제 적용 목록과 pending 범위는 [운영 상태 확인 기준](./DEPLOYMENT.md#운영-상태-확인-기준)으로 확인한다. 외부 캘린더 코드의 promotion에는 대상 D1의 `0013`, 본문 이미지·Worker 업로드 코드에는 `0014`, 과제 출제·정기 과제에는 `0015`, 가이드에는 `0016`, 캘린더 양방향 동기화에는 `0017`이 필요하다.
 
 신규 업로드는 사용자에게 노출된 `media-upload/` staging key로만 PUT하고, 서버가 size·Content-Type metadata·ETag를 확인한 뒤 사용자에게 공개되지 않은 별도 `media/` final key로 봉인한다. D1의 `SEALING` lease가 봉인과 삭제를 직렬화하며, 결과를 잃은 Copy는 복구 유예 뒤 final 삭제 outbox가 다시 정리한다. 문서에는 object ID와 `/api/media/{id}`만 저장하고, 게시물과 Q&A의 원자 생성·purge transaction이 registry claim과 R2 삭제 의도를 함께 commit한다. R2 삭제는 lease·지수 backoff를 사용하는 durable outbox로 재시도한다.
 
@@ -210,10 +226,12 @@ Migration SQL은 `drizzle/`, Drizzle metadata는 `drizzle/meta/`에 둔다. Wran
 | `R2_ENDPOINT` | 로컬 `next dev`에서 BUCKET binding 없이 R2를 쓸 때만 쓰는 S3-compatible endpoint | 개발 환경 전용 |
 | `R2_ACCESS_KEY_ID` | 위와 같은 로컬 개발용 access key | 로컬 secret |
 | `R2_SECRET_ACCESS_KEY` | 위와 같은 로컬 개발용 secret key | 로컬 secret |
-| `EXTERNAL_CALENDAR_ENCRYPTION_KEY` | 공개 iCal URL AES-256-GCM용 32-byte base64/base64url key | Worker/local secret, 운영 미설정 |
+| `EXTERNAL_CALENDAR_ENCRYPTION_KEY` | 32-byte base64/base64url key. iCal 구독 URL, 캘린더 연결 자격 증명(Google token·iCloud 앱 암호)의 AES-256-GCM 암호화와 Google OAuth 흐름 cookie 봉인 key(HKDF 파생)에 함께 쓴다 | Worker/local secret, 운영 미설정 |
+| `GOOGLE_CALENDAR_CLIENT_ID` | Google Calendar 연동 OAuth 웹 client ID(로그인용 Google provider와 별개) | Worker/local secret, 운영 미설정 |
+| `GOOGLE_CALENDAR_CLIENT_SECRET` | 위 client의 secret | Worker/local secret, 운영 미설정 |
 | `R2_BUCKET_NAME` | upload bucket 이름 | 환경별 설정 |
 
-샘플 계약은 `.env.example`에 두고 실제 값은 commit하지 않는다. 신규 managed media는 public bucket URL을 runtime 설정으로 사용하지 않는다. 기존 URL의 trusted base는 배포 전 inventory·backfill 입력으로만 별도 관리한다.
+Google 연동은 `GOOGLE_CALENDAR_CLIENT_ID`·`GOOGLE_CALENDAR_CLIENT_SECRET`·`AUTH_URL` 가운데 하나라도 없으면 꺼지고(`src/lib/calendar-sync/oauth-config.ts`), redirect URI는 `AUTH_URL`의 origin + `/api/calendar-connections/google/callback`이다. 암호화 key가 없으면 Google·iCloud 연결 모두 꺼지며 설정 화면이 "설정 필요"를 안내한다. 샘플 계약은 `.env.example`에 두고 실제 값은 commit하지 않는다. 신규 managed media는 public bucket URL을 runtime 설정으로 사용하지 않는다. 기존 URL의 trusted base는 배포 전 inventory·backfill 입력으로만 별도 관리한다.
 
 ## 테스트와 검증
 
@@ -238,13 +256,15 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 
 | 품질 경계 | 현재 자동화 | 다음 보강 |
 |---|---|---|
-| Migration | SQL·journal·snapshot·current schema empty replay, CHECK·trigger, `0007` upgrade·inbound FK preflight, `0008→0009` cascade, `0009→0010` 게시물·Q&A, `0010→0011` media, `0011→0012` privacy, `0012→0013` 기존 데이터 보존·구독 제약·owner cascade | persistent local·remote의 실제 적용 목록에서 pending 범위를 계산하고 승인된 작업 창에서 점검 |
+| Migration | SQL·journal·snapshot·current schema empty replay, CHECK·trigger, `0007` upgrade·inbound FK preflight, `0008→0009` cascade, `0009→0010` 게시물·Q&A, `0010→0011` media, `0011→0012` privacy, `0012→0013` 기존 데이터 보존·구독 제약·owner cascade, `0014→0015` 제출·피드백 보존, `0015→0016` 서버 초안 trigger, `0016→0017` 연결·매핑 제약·cascade | persistent local·remote의 실제 적용 목록에서 pending 범위를 계산하고 승인된 작업 창에서 점검 |
 | 개발 credential | development/opt-in/env/input binding 단위 테스트 | 실제 local seed는 데이터 변경 작업으로 분리 |
 | 인증·권한 | 미인증·role·ownership 허용/거부 단위 테스트, Q&A 격리 D1 권한 회귀 | 다른 주요 server action의 실제 query·mutation 경계 테스트 |
 | 입력·콘텐츠 | HTML5 AST tag·속성·URL allowlist, malformed·foreign-content XSS, 멱등성, upload MIME·size·quota·opaque key 정책 | 실제 R2 CORS·대용량 PUT smoke |
 | 미디어 | staging/final key 분리, SEALING lease·late Copy 복구, claim/purge rollback, bounded 만료 enqueue, outbox 재시도·final prefix cursor reconciliation·private RBAC·Range 자동 테스트 | 원격 trigger·실행 상태와 실제 R2 PUT·inventory 운영 검증 |
 | 문서 연속성 | local shadow·5초 checkpoint·복구·제출 경쟁, 사용자·문서별 서버 최신본·CAS·offline queue·다중 기기 명시 선택 DOM 통합, 노트·게시물·Q&A revision/event·trash·purge·anti-replay 격리 D1 통합 | 실제 브라우저 reload·offline·navigation·강제 종료·대형 문서 E2E |
 | 계정 개인정보 | student-only 원자 삭제, old JWT 거부, cleanup digest·terminal lock, ownerless snapshot 확인, 30일 alias·second-run no-op·poison job 격리, edge-local status rate limit·rollout flag | 유효 삭제 flag, Cron/alert·오프라인 adoption 확인과 승인된 삭제 smoke |
+| 과제·가이드 | 정기 회차 계산·결정적 ID·동시 생성, 형식별 제출·형식 변경 경쟁 거부, 가이드 sanitize·블록 앵커·재전송 비교, 이미지 저장 실패 시 R2 정리, 가이드 질문 권한 격리 D1 통합 | 실제 브라우저의 가이드 구간 선택·편집기 앵커 보존 E2E |
+| 외부 캘린더 동기화 | Google·CalDAV client fixture(PKCE·syncToken·sync-collection·etag 충돌·XML·ICS), 실제 SQLite와 가짜 provider로 엔진(웹 우선·루프 방지·tombstone·반복 일정·종일), OAuth route 봉인 cookie, 자격 증명 AAD, 학생·관리자 경계 격리 D1 통합 | 실제 Google·iCloud 계정 연동, 운영 Cron·Google 변경 알림 |
 | UI 상태 | status registry 단위 테스트, loading/error route, semantic landmark·control 정적 검토 | keyboard interaction component 테스트 |
 
 ## 변경 시 같이 볼 파일
@@ -259,6 +279,9 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 | 문서 draft·재진입 | `src/lib/form-draft.ts`, `src/lib/hooks/useFormDraft.ts`, `src/lib/hooks/useSyncedFormDraft.ts`, `src/lib/actions/documentDrafts.ts`, 안정 문서 route |
 | upload·media | `src/lib/r2.ts`, `src/lib/actions/upload.ts`, `.env.example`, `docs/DEPLOYMENT.md` |
 | Cloudflare binding | `wrangler.toml`, `open-next.config.ts`, `docs/DEPLOYMENT.md` |
+| 과제 출제·정기 과제 | `src/lib/actions/assignmentTasks.ts`, `src/lib/assignment-recurrence.ts`, `src/lib/assignment-task-generation.ts`, `src/lib/actions/feedbacks.ts`, `scripts/migration-check/assignment-tasks.mjs` |
+| 공용 가이드 | `src/lib/guide-content.ts`, `src/lib/guide-store.ts`, `src/lib/sanitize-html.ts`(`data-block-id`), `src/lib/actions/qna.ts`, `src/lib/guide-import.ts`, `scripts/guide-import/build.ts` |
+| 캘린더 동기화 | `src/lib/calendar-sync/**`, `src/lib/actions/calendarSync.ts`, `src/lib/actions/lessons.ts`, `src/lib/actions/calendarEvents.ts`, `wrangler.scheduled.toml`, `docs/DEPLOYMENT.md` |
 
 ## 문서 최신성 기준
 
@@ -274,7 +297,7 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 
 - runtime dependency audit은 현재 0건이다. 상위 의존성이 보안 패치 전 하위 의존성을 고정하는 구간은 `package.json` override로 제한하며, upstream stable이 해당 버전을 채택하면 override를 제거해야 한다.
 - 개발 도구 전체 audit에는 Drizzle Kit의 구형 esbuild loader 체인에서 발생하는 moderate 권고가 남아 있다. 현재 npm 제안은 호환되지 않는 구버전 downgrade이므로 upstream 패치를 추적한다.
-- migration SQL과 `drizzle/meta` 생성 이력은 `0012`까지 대응하고 격리 D1에서 전체 replay, `0009→0010`, populated `0010→0011→0012` upgrade를 검사한다. persistent local D1은 `0009`까지 적용됐으며 `0010~0012`와 remote 적용 이력은 승인된 운영 점검 전 추정하지 않는다.
+- migration SQL과 `drizzle/meta` 생성 이력은 `0017`까지 대응하고 `db:check`가 전체 replay와 단계별 upgrade를 검사한다. persistent local D1과 remote의 실제 적용 이력은 승인된 운영 점검 전 추정하지 않는다(마지막 기록: persistent local D1 `0009`까지).
 - 대표 문서 server action과 draft 생명주기의 격리 integration test는 있으나 실제 브라우저 reload·offline·navigation·delete/restore E2E는 없다.
 - 신규 managed media의 registry·문서 claim·purge 삭제 outbox와 인증 delivery, bounded 예약 정리·final prefix cursor reconciliation source를 구현했다. Copy timeout·lease·recovery grace 뒤 발견된 registry 없는 final object와 삭제 상태 object는 다음 inventory page에서 재삭제한다. production에서는 private R2 CORS·staging lifecycle·Cron과 알림을 검증해야 하며, 기존 외부 URL과 managed 형식이 아닌 legacy R2 object는 자동 삭제 대상으로 추정하지 않는다.
 - 큰 문서의 전체 HTML·payload 서명은 매 입력이 아니라 지연된 flush·submit 경계에서 revision당 한 번만 만들고, 연속 입력은 최대 5초마다 최신본을 checkpoint한다. 개인 노트는 저장 HTML 800 KiB와 logical history 100 MiB 정책을 적용한다. 다만 실제 브라우저의 100 KiB·500 KiB·1 MiB frame budget과 autosave·복구 latency를 측정하지 않아 제품급 입력 부드러움은 아직 검증되지 않았다.
@@ -290,3 +313,47 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 - 화면 이동: `src/components/app-shell/NavigationProgress.tsx`가 다른 앱 주소로 가는 링크 클릭, `useProgressRouter()`의 `push`·`replace`, GET form 제출에서 위쪽 2px 막대를 켜고 주소가 바뀌면 끈다. 120ms 안에 끝나는 이동은 그리지 않고, 주소가 끝내 바뀌지 않으면 15초 뒤 끈다. 제출 중 이동 막기(`useBusyNavigationGuard`)가 끊은 클릭은 bubble 단계의 window까지 오지 않아 막대가 켜지지 않는다. 사이드바 메뉴는 `useLinkStatus`로 아이콘 자리에 회전 표시를 둔다.
 - 버튼: `Button`의 `pending`은 비활성화·`aria-busy`·회전 표시를 함께 준다(움직임을 줄이면 멈춘 모양). 새 질문·새 글은 등록에 성공한 뒤 상세로 넘어갈 때까지 계속 잠근다. 디깅 칸 저장, 캘린더 끌어 옮기기 저장, 링크 정보 가져오기, 새 글 채널 불러오기도 진행 표시를 보인다.
 - 로그아웃: `src/lib/account-logout-lock.ts`가 계정별(sha256 키) localStorage 잠금(15초 만료)을 폐기 전송 전에 기록하고 같은 탭 이벤트·다른 탭 `storage` 이벤트로 알린다. `useDocumentServerDraftSync`는 잠금 동안 서버 초안 저장 타이머를 멈추고 전송 직전에도 다시 확인해 막는다. 로그아웃 action이 실패하면 자기 잠금만 풀고 오류를 보이며 다시 누를 수 있다. redirect는 실패로 보지 않는다. 폐기 API는 다른 출처 403(Origin protocol·host 비교) → 미인증 401 → 415 → 400 순서로 판정한다.
+
+## 과제 출제·공용 가이드·캘린더 양방향 동기화(2026-10-27)
+
+### 과제 출제와 정기 과제
+
+- `assignment_tasks`(학생·제목·sanitize된 설명·제출 형식 `MIX`/`TEXT`/`BOTH`·마감·version)는 관리자 출제 과제다. `assignments`에 nullable `task_id`(UNIQUE, 과제 삭제 시 SET NULL)·`text_html`을 더하고 `media_url`을 nullable로 바꿨다(링크 또는 글 중 하나는 CHECK로 필수). `feedbacks.time_marker`는 nullable이 되어 재생 시점 없는 피드백이 글 제출을 포함한 과제 전체에 대한 피드백이 된다. `0015`는 이를 위해 기존 `assignments`·`feedbacks`를 행 보존 table rebuild한다.
+- 관리자 action은 `requireStudentTarget`으로 대상 학생을 확인한다. 학생 제출(`submitAssignmentTask`)은 `INSERT … SELECT … WHERE`로 과제 소유와 읽은 제출 형식을 다시 확인해, 그 사이 관리자가 형식을 바꾸거나 과제를 지운 경우를 거부한다. 학생 수정은 피드백이 없을 때만 허용한다. 글은 평문 5,000자, 제목 120자, 설명 2,000자까지다. 한 번 과제를 지워도 제출은 자유 제출로 남고, 정기 회차는 따로 지울 수 없다.
+- `assignment_recurrences`(시작일·간격 1~12주·요일 bitmask(bit 0 = 일요일)·KST 마감 `HH:MM`·종료일 또는 최대 520회·멈춤·version)가 정기 과제 규칙이다. 주는 일요일에 시작하고, 시작일이 든 주를 0주차로 간격마다 선택 요일의 날짜가 회차다.
+- 회차는 예약 실행 없이 조회할 때 만든다(`ensureRecurringAssignmentTasks`). 오늘(KST)까지와 다음 회차 하나만, 규칙당 최대 60개·호출당 120개를 만들고, 규칙이 마지막으로 바뀐 시각(`updated_at`) 전에 이미 마감된 날짜는 새로 만들지 않는다. 회차 ID는 (규칙, 날짜)의 SHA-256에서 결정되고 UNIQUE(`recurrence_id`, `occurrence_date`)와 `ON CONFLICT DO NOTHING`이 동시 요청의 중복을 막는다. 각 INSERT는 읽은 규칙 version이 그대로이고 멈추지 않았을 때만 행을 만들어, 관리자가 규칙을 바꾸는 사이 옛 규칙으로 읽은 요청이 지운 회차를 되살리지 않는다. 렌더 중에도 부르므로 `revalidatePath`를 호출하지 않는다.
+- 규칙 수정·멈춤·삭제는 먼저 옛 규칙으로 밀린 회차를 만든 뒤, 마감 전이고 제출이 없는 회차만 지운다(수정·재개 뒤에는 새 규칙으로 다시 만든다). 제출된 회차와 마감이 지난 회차는 남는다(규칙 삭제 시 `recurrence_id`는 SET NULL).
+
+### 공용 가이드
+
+- `guide_pages`(제목 120자·정렬 순서·sanitize된 본문 800 KiB·version)는 모든 학생이 같은 내용을 본다. 쓰기는 관리자만, 읽기는 로그인 사용자 전부다. 편집은 노트와 같은 로컬·서버 초안(`document_server_drafts` 종류 `guide-page`, `0016`에서 CHECK 확장)과 version CAS·충돌 선택·이탈 보호를 따른다. 삭제도 기준 version을 확인한다.
+- 저장할 때 모든 블록 요소에 `data-block-id`를 부여·보존한다(`prepareGuideHtml`). sanitize allowlist는 형식이 제한된 `data-block-id`만 허용한다. 생성 재전송은 블록 ID를 뺀 본문 전체를 비교해 같은 내용이면 기존 결과로 수렴하고, 비교는 본문 텍스트에 들어 있는 `data-block-id` 글자를 지우지 않는다.
+- `guide_assets`는 학생 media 수명주기와 분리된 R2 `guide/<uuid>` key의 가이드 이미지다(JPG·PNG·GIF·WebP, 10MB). 업로드는 관리자만, 전달은 로그인 사용자만 받는다. D1 기록에 실패하면 올린 R2 객체를 지운다.
+- 가이드 구간 질문은 기존 1:1 Q&A 스레드에 `qna_guide_anchors`(스레드 PK·페이지 ID(SET NULL)·페이지 제목·블록 ID·인용문 500자)를 붙인다. 질문은 스레드 생성과 같은 원자 쓰기에서 저장되고 기존 Q&A 권한을 그대로 따른다: 학생은 본인 질문만, 관리자는 모든 질문의 위치를 가이드 화면에서 본다. 블록이나 페이지가 사라져도 인용문과 페이지 제목으로 질문을 표시한다.
+- 가져오기: `npx tsx scripts/guide-import/build.ts [exportDir] [outDir]`가 Claude 문서 export(탭 7개 HTML·사진 23개·다이어그램 JSX)를 읽어 `outDir`(기본 `.wrangler/guide-import`)에 `seed.sql`, 이미지 객체, 로컬 적용 명령을 출력하는 `apply-local.sh`를 만든다. 스크립트는 local·remote D1·R2에 직접 쓰지 않는다. 내부 링크는 포털 가이드 경로로 바꾸고 mention·byline은 지운다. seed는 `INSERT OR IGNORE`라 다시 실행해도 포털에서 고친 내용을 덮어쓰지 않지만, 포털에서 지운 페이지는 되살아나므로 처음 한 번만 적용한다.
+- 다이어그램 JSX는 export 원본(다른 사용자가 쓸 수 있는 문서)이라 실행 코드로 신뢰하지 않는다. esbuild로 문법 변환만 한 뒤 `node --permission -` child process에 stdin으로 넘겨 렌더한다. fs 읽기·쓰기·child_process·worker·addon이 막히고 env가 비어 있어 읽거나 내보낼 비밀값이 없다(Node permission model은 네트워크를 막지 않는다). 결과 SVG는 포털 token 색으로 정리한 뒤 이미지로 넣는다.
+
+### 캘린더 양방향 동기화
+
+- 연결 구조: 관리자가 Google 계정(OAuth)과 Apple ID(앱 전용 암호, CalDAV)를 각각 한 번 연결한다(`calendar_connections`, (owner, provider) UNIQUE). 학생마다 연결별로 원격 캘린더 하나를 매핑한다(`calendar_mappings`, (connection, student)·(connection, remote calendar) UNIQUE). 학생마다 provider가 달라도 되고 한 학생에 Google·iCloud를 둘 다 매핑할 수도 있다. 학생은 외부 계정 없이 공유받은 캘린더를 기존 앱에서 본다. 학생 계정 삭제 transaction은 그 학생의 매핑을 지우고 link·반복 일정 사본은 cascade로 함께 지운다.
+- 포털이 중심(hub)이다. 레슨·일정 action은 commit 뒤 `schedulePushStudentCalendarChanges`로 응답을 보낸 다음(Next `after`, OpenNext에서는 Workers `waitUntil`) 그 학생 매핑에 push한다(전체 4초 예산). 원격 실패는 포털 저장을 실패시키지 않고 `last_error`에 남으며, 놓친 변경은 다음 동기화가 fingerprint 차이로 보낸다. 캘린더 조회(`syncAndGetExternalItems`)는 표시 전에 매핑별 증분 pull을 실행한다(20초 예산, 매핑별 60초 throttle). 원격 실패는 화면 표시를 막지 않는다.
+- 루프 방지: `calendar_sync_links`(매핑·로컬 종류 `LESSON`/`EVENT`·로컬 ID·원격 ID·etag·로컬 fingerprint)와 원격 일정에 숨겨 붙이는 portalRef. 로컬 → 원격은 link(원격 ID NULL)를 먼저 claim하고 원격을 만든 뒤 ID·etag를 기록한다. create 응답이 유실되면 다음 동기화가 `findByPortalRef`로 복구한다. 원격에서 온 일정이 link나 portalRef를 가지면 새로 만들지 않는다. portalRef가 있는데 link가 없으면 같은 학생의 로컬 행이 있을 때만 link를 복구한다(`RELINKED`, 다음 push가 로컬 내용으로 원격을 맞춘다).
+- 충돌은 웹 우선이다. 원격 쓰기는 If-Match(etag)로 하고, 412이면 portalRef로 현재 etag를 다시 읽는다. 마지막 동기화 뒤 로컬이 바뀌었으면 로컬 내용으로 다시 쓰고, 그대로면 원격 내용을 받아들인다.
+- 삭제: 레슨·일정은 hard delete이므로 같은 원자 쓰기에서 link fingerprint를 `DELETED` tombstone으로 바꾸고(`markLinksDeletedStatement`), 원격 remove 성공 뒤 link를 지운다. 원격 삭제는 link가 있는 로컬 행을 지우되, 로컬이 마지막 동기화 뒤 바뀌었으면 원격에 다시 만든다. 전체 재동기화(Google 410, CalDAV token 만료)에서 window 안 로컬 항목의 원격 사본이 보이지 않으면 지우기 전에 portalRef로 먼저 찾아 window 밖으로 옮겨진 사본은 다시 잇는다(실행당 20건, 나머지는 지우지 않고 다음으로 미룬다).
+- 원격에서 새로 생긴 일정(portalRef 없음)은 그 학생의 `calendar_events`(NOTE)로 가져온다. 원격 반복 일정은 로컬 행을 만들지 않고 `calendar_remote_series`에 ICS 사본(256 KiB 이하)으로 두어 읽기 전용 외부 항목으로 펼친다. Google은 `singleEvents=false`로 master·예외 instance를 받는다.
+- 종일: `calendar_events`에 종일 열이 없으므로 원격 종일 일정은 KST 00:00 ~ 배타적 끝으로 저장하고, 시작·끝이 모두 KST 자정이고 길이가 24시간의 배수면 종일로 보낸다. 레슨은 원격 제목 "레슨", 60분이며 원격에서 옮긴 경우 `scheduledAt`만 반영한다. 끝 시각 없는 포털 일정은 60분으로 보낸다.
+- 범위·빈도: window는 지금 -90일 ~ +365일, 실행당 원격 쓰기 60건. 모든 동기화는 조건부 UPDATE lease(`sync_lease_until`, 60초)로 같은 매핑을 동시에 돌리지 않는다. 쓰기 뒤 push는 throttle을 건너뛰지만 lease는 지킨다.
+- provider client는 SDK 없이 fetch만 쓴다. Google은 `calendar.events`·`calendar.calendarlist.readonly` scope, `syncToken` 증분(410이면 전체 재동기화), iCloud는 `sync-collection`·`calendar-multiget`(50개씩)과 etag를 쓴다. 허용 host(Google API·OAuth host, `caldav.icloud.com`·`p<N>-caldav.icloud.com`), HTTPS, credential·port 없는 URL만 요청하고 Google redirect는 거부, CalDAV redirect는 같은 허용 host 안에서 3회까지 따른다.
+- 보안: 연결·매핑·지금 동기화는 `requireAdmin`(매핑 대상은 `requireStudentTarget`), 학생은 자기 상태와 외부 항목만 본다. Google refresh·access token과 iCloud 앱 암호는 `EXTERNAL_CALENDAR_ENCRYPTION_KEY`로 AES-GCM 암호화하고 AAD `calendar-connection:v1:<연결 ID>:<provider>`로 다른 행·provider로 옮긴 ciphertext를 거부한다(`credentials.ts`). 원문은 응답·화면·로그에 돌려주지 않고 `last_error`에는 짧은 한국어 분류만 남긴다. 인증 실패는 연결을 `NEEDS_REAUTH`로 바꾸고 내부 일정은 그대로 둔다.
+- Google OAuth는 PKCE(S256)·`access_type=offline`·`prompt=consent`다. state·code verifier·시작한 관리자·만료(10분)를 서버 저장소 없이 HttpOnly cookie(`portal_google_calendar_oauth`, path `/api/calendar-connections/google`)에 담고, 암호화 key에서 HKDF로 파생한 별도 AES-GCM key로 봉인한다. callback은 봉인 해제·state 상수 시간 비교·같은 관리자·만료를 확인한 뒤 code를 교환하고, code·token·verifier를 log·응답·주소에 남기지 않는다. `calendar.events` scope가 빠지면 연결하지 않는다.
+
+### 캘린더 실시간 반영(2026-10-27 사용자 결정, 구현 진행 중)
+
+이 절은 확정된 설계다. 이 문서를 쓴 시점에 `0018`·알림 route·채널 관리 코드는 작업 중(검증·commit 전)이고 `worker.ts` 예약 동기화는 아직 연결되지 않았다. 운영 Cron 활성화·Google 알림 주소 운영 등록·deploy는 별도 승인 범위다.
+
+- 외부 캘린더를 하나만 연결한 학생: 포털 → 외부는 위의 저장 직후 push(구현 완료). Google → 포털은 Google 변경 알림(`events.watch`, type `web_hook`)으로 포털을 열지 않아도 반영한다. iCloud는 알림 기능이 없어 포털 조회와 예약 동기화 때 반영한다.
+- 둘 다 연결한 학생: 포털이 중심이 되어 Worker 예약 실행의 캘린더 동기화가 Google ↔ iCloud 변경을 전달한다. 학생별 연결 수 제한은 두지 않는다.
+- `0018_calendar_push_channels`: 매핑 PK(매핑 삭제 시 cascade)·channel ID(UNIQUE)·resource ID·token SHA-256 hex(원문은 Google에만 보낸다)·만료 시각. 채널 수명은 7일로 요청한다.
+- 채널 관리: 알림 주소는 Google OAuth redirect URI의 origin + `/api/calendar-connections/google/notify`이고 https일 때만 등록한다(로컬 http는 건너뜀). 채널이 없거나 24시간 안에 만료되면 새 채널을 등록하고 이전 채널은 best-effort로 중지한다. 매핑 저장 뒤 등록, 매핑 해제·연결 해제 전에 중지한다.
+- 알림 route는 로그인 없이 `X-Goog-Channel-ID`·`X-Goog-Channel-Token`을 저장된 digest와 상수 시간 비교한다. 실패는 정보 없는 404, `sync` 상태는 200, 그 밖에는 200 응답 뒤 해당 매핑만 lease를 지키며 강제 pull한다. 본문·헤더는 로그에 남기지 않는다.
+- 예약 동기화: `worker.ts` `scheduled`가 기존 예약 정리와 독립적으로 모든 활성 매핑을 동기화하고(60초 throttle·lease 동일, 매핑 하나의 실패는 나머지를 막지 않음, 시간 상한 안에서만 새 매핑 시작) Google 채널을 갱신한다. request context가 없으므로 event env를 calendar 설정·암호화 key 읽기에 넘긴다. `wrangler.toml`·`wrangler.scheduled.toml`의 `[triggers]`는 바꾸지 않는다.

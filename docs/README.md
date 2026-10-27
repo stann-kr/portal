@@ -2,7 +2,7 @@
 
 ## 개요
 
-`portal`은 Stann Lumo DJ 레슨 운영을 위한 Next.js 기반 웹 애플리케이션이다. 학생과 관리자가 과제·피드백, 일정, 개인 노트, 디깅 기록, 커뮤니티와 1:1 Q&A를 한 곳에서 관리한다.
+`portal`은 Stann Lumo DJ 레슨 운영을 위한 Next.js 기반 웹 애플리케이션이다. 학생과 관리자가 과제·피드백, 일정, 공용 가이드, 개인 노트, 디깅 기록, 커뮤니티와 1:1 Q&A를 한 곳에서 관리하고, 관리자가 연결한 Google·iCloud 캘린더와 일정을 양방향으로 맞춘다.
 
 ## 현재 상태
 
@@ -80,7 +80,7 @@ docs/                       # 프로젝트 문서
 
 ## 현재 개발 우선순위
 
-1. 대상 환경의 실제 migration 목록과 Worker version을 대조하고, 외부 캘린더 코드의 `0013`·암호화 secret 조건을 포함한 배포 gate를 확인한다.
+1. 대상 환경의 실제 migration 목록과 Worker version을 대조하고, 외부 캘린더 코드의 `0013`·암호화 secret, 과제·가이드·캘린더 동기화의 `0015~0017`·Google OAuth secret 조건을 포함한 배포 gate를 확인한다.
 2. development/production 자원 분리, private managed media 설정, 예약 정리의 실제 실행·alert와 복구 rehearsal을 승인된 범위에서 검증한다.
 3. 실제 브라우저의 reload·offline·Back/Forward·다중 탭·대용량 입력 성능과 강제 종료 복구를 측정한다.
 

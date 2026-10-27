@@ -30,11 +30,15 @@
 
 | 항목 | 저장소에서 확인할 수 있는 것 | 운영 적용을 확인하는 증거 |
 |---|---|---|
-| D1 migration | SQL·journal·snapshot `0000~0014`, 메모리 DB에서 체인·schema 검증 | 대상 D1의 적용 목록과 실제 schema·FK, 그 목록에서 계산한 pending 범위 |
+| D1 migration | SQL·journal·snapshot `0000~0017`(`0018` 구현 진행 중), 메모리 DB에서 체인·schema 검증 | 대상 D1의 적용 목록과 실제 schema·FK, 그 목록에서 계산한 pending 범위 |
 | 계정 삭제 | `0012`와 삭제·정리 구현, application 설정의 `ACCOUNT_DELETION_ENABLED="false"` 기본값 | 활성 Worker의 유효 flag, 기기 adoption, 승인된 삭제·정리 smoke |
 | 예약 정리 | `worker.ts`의 `scheduled` handler, Workers Logs 설정, source에 없는 Cron trigger | 원격 trigger 주기, 대상 version의 실제 scheduled invocation, backlog·실패·alert 증거 |
 | 외부 캘린더 | `0013` 구독 테이블과 `EXTERNAL_CALENDAR_ENCRYPTION_KEY` 요구 조건 | 대상 schema, secret 설정 확인, 승인된 연결·읽기·교체·해제 smoke |
 | 본문 이미지·업로드 | `0014`의 `DOCUMENT_IMAGE`·`PRIVATE_NOTE` 허용, `PUT /api/media/upload/[id]`와 `BUCKET` binding 사용(R2 S3 secret 불필요) | 대상 D1의 `0014` 적용, 활성 Worker의 `BUCKET` binding, 승인된 업로드·표시·권한 smoke |
+| 과제 출제·정기 과제 | `0015`의 `assignment_tasks`·`assignment_recurrences`와 `assignments`·`feedbacks` 행 보존 rebuild, 조회 시 회차 생성(Cron 불필요) | 대상 D1의 `0015` 적용과 기존 제출·피드백 row count, 승인된 출제·제출·피드백 smoke |
+| 공용 가이드 | `0016`의 `guide_pages`·`guide_assets`·`qna_guide_anchors`, `scripts/guide-import/build.ts` seed 출력 | 대상 D1의 `0016` 적용, 승인된 seed 적용(D1 행·R2 `guide/` 객체), 학생·관리자 열람·편집·질문 smoke |
+| 캘린더 양방향 동기화 | `0017` 연결·매핑·link·반복 일정 table, `GOOGLE_CALENDAR_CLIENT_ID`·`GOOGLE_CALENDAR_CLIENT_SECRET`·`EXTERNAL_CALENDAR_ENCRYPTION_KEY` 요구 조건, `AUTH_URL` 기준 redirect URI | 대상 schema, secret 설정 확인, Google Cloud OAuth client의 redirect URI, 승인된 연결·매핑·양방향 반영·해제 smoke |
+| 캘린더 실시간 반영 | (구현 진행 중) `0018` 알림 채널 table, `/api/calendar-connections/google/notify`, `worker.ts` `scheduled`의 캘린더 동기화. source에 없는 Cron trigger | 원격 Cron 주기, 대상 version의 실제 scheduled invocation, Google 채널 등록·갱신과 알림 수신 로그 |
 | 배포 환경 분리 | 현재 tracked 설정의 Worker는 `portal` | development/production Worker·D1·R2·route·secret·branch trigger 각각의 inventory |
 
 운영 확인은 기존 상태 조회, migration·secret·trigger 변경, 데이터 쓰기 smoke를 구분해 승인된
@@ -56,6 +60,7 @@
 - 비호환 migration 작업 창에는 자동 promotion을 중지하거나 upload-only 절차로 전환한다.
 - OpenNext Cloudflare 빌드는 지원 기간이 끝난 Next.js major를 거부한다. 2026-10-26에 Next.js 15.5.22 → 16.4.3, OpenNext 1.20, wrangler 4.152로 올렸고 플래그 없이 빌드한다. 인증 관문은 `src/proxy.ts`(Next 16 proxy, Node.js runtime)로 옮겼다. OpenNext Cloudflare 1.20은 이를 Node.js middleware로 묶으며 빌드 때 "experimental, not officially maintained" 경고를 낸다. 운영 동형 로컬(wrangler dev)에서 비로그인 차단·로그인·역할 이동·세션 갱신·mutation 요청의 갱신 cookie 제거·로그아웃을 확인했다(2026-10-26). 출시 뒤 운영 smoke에서 같은 흐름을 다시 확인하고, 문제가 생기면 `src/middleware.ts`로 되돌리는 commit 하나로 복구한다.
 - 본문 이미지·Worker 업로드 코드는 `0014`가 필요하다. `0014`는 `media_objects`의 허용 값을 넓히는 table rebuild라 기존 코드와 호환되므로 promotion 전에 먼저 적용한다.
+- 과제 출제·가이드·캘린더 양방향 동기화 코드는 `0015`·`0016`·`0017`이 필요하다. 세 migration은 열을 지우거나 CHECK를 좁히지 않아(열 추가·nullable 전환·허용 값 확장·새 table) 이전 Worker와 schema가 호환되므로 promotion 전에 먼저 적용한다. 다만 `0015`는 실제 제출이 있는 `assignments`·`feedbacks`를, `0016`은 `document_server_drafts`를 행 보존 table rebuild하므로 적용 직전 export·checksum·Time Travel bookmark를 확보한다. 이전 Worker 코드는 링크 없는 제출(글 제출)을 고려하지 않으므로, 새 Worker에서 글 제출이 생긴 뒤 이전 Worker로 되돌리는 경우 과제 화면을 다시 확인한다.
 
 ### 외부 캘린더 전환 gate
 
@@ -67,6 +72,47 @@
 2. pending이 있으면 승인된 작업 창에서 호환성·백업·복구 조건을 확인하고 적용한 뒤 schema·FK를 검증한다.
 3. 대상 환경의 안정적인 암호화 key를 확인한다. 기존 구독의 복호화에 쓰이는 key는 임의 교체하지 않는다.
 4. schema와 secret 조건을 갖춘 target version을 전환하고, 승인된 fixture로 학생·관리자 조회와 연결·교체·해제를 검증한다.
+
+### 캘린더 양방향 동기화 전환 gate
+
+연결 설정 화면(`/dashboard/admin/calendar-sync`)과 레슨·일정 저장 뒤 push는 `0017`의 table을 사용한다.
+매핑이 없어도 조회·쓰기 경로가 table을 읽으므로, 이 코드를 포함한 Worker를 promotion하기 전에
+대상 D1에 `0015~0017`이 적용됐는지 확인한다.
+
+1. 대상 D1의 실제 적용 목록을 확인하고 pending 범위를 확정한다(`0015 → 0016 → 0017` 순서, 실시간 반영 코드가 들어오면 `0018`까지).
+2. 승인된 작업 창에서 full export·checksum과 D1 Time Travel bookmark를 확보한 뒤 pending을 순서대로 적용하고 schema·FK·`assignments`·`feedbacks`·`document_server_drafts` row count를 검증한다.
+3. 대상 환경의 `EXTERNAL_CALENDAR_ENCRYPTION_KEY`, `GOOGLE_CALENDAR_CLIENT_ID`, `GOOGLE_CALENDAR_CLIENT_SECRET`과 `AUTH_URL`을 확인한다. secret이 없으면 해당 연결 기능만 꺼지고 설정 화면이 "설정 필요"를 안내한다.
+4. target version을 전환하고 관리자 연결·학생 매핑·포털 → 외부 반영·외부 → 포털 반영·연결 해제를 승인된 테스트 캘린더로 확인한다. 실제 학생 캘린더로 시험하지 않는다.
+
+### 사용자가 할 클라우드 작업
+
+2026-10-27 기준 아래 항목은 하나도 실행하지 않았다. 각 항목은 별도 승인 범위이며 값은 저장소·문서·로그에 남기지 않는다.
+
+Google Calendar 연동:
+
+- [ ] Google Cloud Console에서 포털용 프로젝트를 만들거나 고른다.
+- [ ] 그 프로젝트에서 Google Calendar API를 사용 설정한다.
+- [ ] OAuth 동의 화면(Google Auth Platform)을 구성한다. scope는 `https://www.googleapis.com/auth/calendar.events`와 `https://www.googleapis.com/auth/calendar.calendarlist.readonly` 두 개다(`src/lib/calendar-sync/google.ts` `GOOGLE_CALENDAR_SCOPES`). email·profile scope는 쓰지 않는다.
+- [ ] 확인 항목: 게시 상태가 "테스트"이면 테스트 사용자로 관리자 Google 계정을 추가해야 하고, 이 상태에서 받은 refresh token은 짧게(약 7일) 만료될 수 있다. calendar scope는 민감한 scope라 "프로덕션" 게시에는 Google 검증이 필요할 수 있다. 연결 계정이 관리자 한 명뿐이므로 어느 상태로 둘지 콘솔 안내를 확인해 결정한다.
+- [ ] OAuth client ID를 "웹 애플리케이션" 유형으로 만들고 승인된 redirect URI에 `https://portal.stann.kr/api/calendar-connections/google/callback`을 정확히 넣는다(`wrangler.toml`의 `AUTH_URL` origin + 고정 경로). 로그인용 Google provider client와 섞지 않는다.
+- [ ] Worker secret을 등록한다: `npx wrangler secret put GOOGLE_CALENDAR_CLIENT_ID`, `npx wrangler secret put GOOGLE_CALENDAR_CLIENT_SECRET`(값은 프롬프트로만 입력).
+- [ ] `EXTERNAL_CALENDAR_ENCRYPTION_KEY`는 위 사전 체크리스트의 기존 항목과 같은 secret이다. 아직 없으면 32-byte 무작위 key를 base64url로 만들어 한 번 등록한다. 이 key는 iCal 구독 URL과 함께 캘린더 연결 token·앱 암호도 복호화하므로, 교체하면 기존 구독이 끊기고 모든 연결이 "다시 연결 필요"가 된다.
+
+iCloud 연동:
+
+- [ ] 연결할 Apple ID에 2단계 인증을 켠다.
+- [ ] appleid.apple.com → 로그인 및 보안 → 앱 암호에서 포털용 앱 전용 암호를 만든다. 이 값은 Worker secret이 아니라 관리자 캘린더 동기화 화면에 Apple ID와 함께 입력하며, 포털은 암호화해 저장한다. 앱 암호를 폐기하면 연결이 "다시 연결 필요"가 된다.
+
+데이터베이스와 가이드:
+
+- [ ] 승인된 작업 창에서 export·checksum·Time Travel bookmark를 확보한 뒤 remote D1에 `0015 → 0016 → 0017`을 적용한다(`npm run db:migrate:remote`, 위 전환 gate). 실시간 반영 코드가 들어오면 `0018`도 같은 절차로 적용한다.
+- [ ] 공용 가이드 seed를 만든다: `npx tsx scripts/guide-import/build.ts`(기본 입력 `.docs/goals/assignments-guide-calendar/guide-export`, 출력 `.wrangler/guide-import`). 스크립트는 D1·R2에 쓰지 않고 `seed.sql`·이미지 객체와 명령만 출력하는 `apply-local.sh`를 만든다. 로컬은 `sh .wrangler/guide-import/apply-local.sh`가 출력한 `--local` 명령을 확인한 뒤 직접 실행한다.
+- [ ] remote seed(`wrangler d1 execute portal-db --remote --file=…/seed.sql`과 `wrangler r2 object put portal-storage/guide/<id> --remote …`)는 별도 승인 뒤 `0016` 적용 다음에 한 번만 실행한다. seed는 `INSERT OR IGNORE`라 포털에서 고친 내용을 덮어쓰지 않지만, 포털에서 지운 페이지는 다시 실행하면 되살아난다.
+
+예약 동기화와 Google 변경 알림(실시간 반영 코드가 들어온 뒤):
+
+- [ ] Cron Trigger: `wrangler.scheduled.toml`은 의도적으로 `[triggers]`를 두지 않는다. 승인된 전환 뒤 원격에서 주기(예: 10분)를 정해 `wrangler triggers deploy`로 적용한다. 같은 `scheduled` handler가 기존 예약 정리도 실행하므로 아래 "점검·예약 정리 Worker artifact"의 Cron 전제(`0011`·`0012`, private R2·staging lifecycle, legacy inventory, plan 한도·alert)를 함께 확인한다.
+- [ ] Google 변경 알림 주소: 코드는 `AUTH_URL` origin + `/api/calendar-connections/google/notify`(https만)로 채널을 등록한다. 운영에서 이 주소로 채널이 등록되는 것은 매핑 저장·예약 동기화가 실행될 때이므로, 실시간 반영 Worker의 production 전환 자체를 별도 승인 항목으로 둔다. 확인 항목: Google 콘솔이 알림 받을 도메인의 소유 확인·등록을 요구하는지 전환 전에 확인한다.
 
 ### 비호환 migration 전환 gate
 
@@ -209,6 +255,9 @@ npx opennextjs-cloudflare deploy
 - 게시물 오디오와 Q&A 첨부의 staging PUT, 완료 검증, owner preview와 문서 첨부 확인.
 - 다른 학생이 Q&A media ID와 direct object key를 알아도 읽지 못하는지 확인.
 - `Range`, ETag 불일치, 휴지통 audience, purge 뒤 outbox·R2 삭제와 실패 재시도 확인.
+- 관리자 과제 출제(믹스셋·글·둘 다)와 학생 제출·수정, 글 제출 피드백, 정기 과제 회차 생성과 다른 학생 과제 접근 거부 확인.
+- 가이드 목록·페이지·이미지 표시, 관리자 편집·순서 변경, 학생 구간 질문이 그 학생과 관리자에게만 보이는지 확인.
+- 테스트용 Google·iCloud 캘린더로 연결, 학생 매핑, 포털 레슨·일정 생성·이동·삭제의 외부 반영, 외부 생성·이동·삭제의 포털 반영, 연결 해제 확인.
 
 ## D1 백업과 복구 rehearsal
 
