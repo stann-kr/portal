@@ -141,6 +141,8 @@ let logoutProbeKeys: { queueKey: string; sourceKey: string } | null = null;
 let logoutFailures = 0;
 // 실제 Next.js처럼 직접 부른 action의 redirect를 redirect 오류(reject)로 돌려줄지.
 let logoutRedirects = false;
+// 로그아웃 응답을 이 promise가 풀릴 때까지 붙잡는다(느린 로그아웃).
+let logoutHold: Promise<void> | null = null;
 // 폐기 요청이 나갈 때 로그아웃 잠금이 이미 기록돼 있었는지.
 let lockAtDiscard: (string | null)[] = [];
 let logoutLockProbeKey: string | null = null;
@@ -153,6 +155,7 @@ mock.module("@/lib/actions/session", {
         queueRaw: logoutProbeKeys ? storage.getItem(logoutProbeKeys.queueKey) : null,
         localDraft: logoutProbeKeys ? storage.getItem(logoutProbeKeys.sourceKey) : null,
       });
+      if (logoutHold) await logoutHold;
       if (logoutFailures > 0) {
         logoutFailures -= 1;
         throw new Error("Failed to fetch");
@@ -333,6 +336,7 @@ function resetServerMock(): void {
   logoutProbeKeys = null;
   logoutFailures = 0;
   logoutRedirects = false;
+  logoutHold = null;
   lockAtDiscard = [];
   logoutLockProbeKey = null;
 }
@@ -1112,6 +1116,33 @@ test("로그아웃 action의 redirect 응답은 실패가 아니므로 잠금과
     assert.equal(logout.button.closest("form")?.querySelector("[role='alert']") ?? null, null);
     assert.notEqual(harness.browserWindow.localStorage.getItem(lockKey), null, "이동 중에는 잠금을 풀지 않아야 합니다.");
   } finally {
+    await logout.unmount();
+  }
+});
+
+test("로그아웃 응답이 늦어지면 잠금을 만료 전에 다시 기록해 다른 탭 저장을 계속 막는다", { concurrency: false }, async (context) => {
+  resetServerMock();
+  const ownerId = "student-logout-slow";
+  const sourceKey = createDocumentDraftKey("note", ownerId, "logout-slow");
+  const lockKey = createAccountLogoutLockStorageKey(ownerId);
+  const harness = await createHarness(context, sourceKey);
+  const hold = Promise.withResolvers<void>();
+  logoutHold = hold.promise;
+  logoutRedirects = true;
+
+  const logout = await renderLogoutButton(harness.browserWindow, ownerId);
+  try {
+    await act(async () => logout.button.click());
+    await waitFor(() => logoutCalls.length === 1, "로그아웃 action이 실행되어야 합니다.");
+    const expiresAt = () => JSON.parse(harness.browserWindow.localStorage.getItem(lockKey) ?? "null")?.expiresAt as number | undefined;
+    const first = expiresAt();
+    assert.ok(first);
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 5_300)));
+    const renewed = expiresAt();
+    assert.ok(renewed && renewed > first, "응답을 기다리는 동안 잠금 만료가 뒤로 밀려야 합니다.");
+    hold.resolve();
+  } finally {
+    hold.resolve();
     await logout.unmount();
   }
 });

@@ -28,6 +28,8 @@ export function isCoarseRequestAuthorized({
   if (pathname === "/invite") return true;
   if (pathname.startsWith("/api/calendar/")) return true;
   if (pathname === "/api/account-cleanup/status") return true;
+  // 서버 초안 폐기는 fetch로 부른다. login redirect(307) 대신 route가 출처·인증을 판정해 403·401 JSON을 준다.
+  if (pathname === "/api/document-drafts/discard") return true;
   return isLoggedIn;
 }
 

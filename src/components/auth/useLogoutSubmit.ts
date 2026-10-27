@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { unstable_rethrow } from "next/navigation";
 import { logoutCurrentUser } from "@/lib/actions/session";
 import {
@@ -11,6 +11,9 @@ import {
 import { postDocumentServerDraftDiscard } from "@/lib/document-server-draft-discard-api";
 import { flushQueuedDocumentServerDraftDiscards } from "@/lib/document-server-draft-logout";
 import { clearLocalDocumentDraftsForLogout } from "@/lib/local-draft-continuity-client";
+
+/** 로그아웃 요청이 길어져도 잠금이 먼저 만료되지 않게 이 간격으로 다시 기록한다(만료 15초보다 짧게). */
+const LOGOUT_LOCK_RENEW_MS = 5_000;
 
 export const LOGOUT_FAILED_MESSAGE = "로그아웃하지 못했습니다. 연결을 확인하고 다시 시도해 주세요.";
 
@@ -64,6 +67,13 @@ export function useLogoutSubmit(ownerId: string) {
   const pendingRef = useRef(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const renewTimerRef = useRef<number | null>(null);
+  const stopRenewing = () => {
+    if (renewTimerRef.current !== null) window.clearInterval(renewTimerRef.current);
+    renewTimerRef.current = null;
+  };
+  // 화면을 떠나면(로그아웃 뒤 로그인 화면 등) 갱신을 멈춘다. 남은 잠금은 만료로 풀린다.
+  useEffect(() => stopRenewing, []);
 
   const start = () => {
     if (pendingRef.current) return;
@@ -72,7 +82,12 @@ export function useLogoutSubmit(ownerId: string) {
     setError(null);
     void (async () => {
       // 폐기를 계산·전송하기 전에 잠근다. 그래야 다른 탭이 폐기 직후 초안을 다시 저장하지 못한다.
-      const lock = acquireLock(ownerId);
+      let lock = acquireLock(ownerId);
+      // 로그아웃이 끝날 때까지 잠금 수명을 이어 간다. 도중에 만료되면 다른 탭이 다시 저장한다.
+      stopRenewing();
+      renewTimerRef.current = window.setInterval(() => {
+        lock = acquireLock(ownerId) ?? lock;
+      }, LOGOUT_LOCK_RENEW_MS);
       await flushServerDraftDiscards(ownerId);
       try {
         await logoutCurrentUser();
@@ -83,6 +98,7 @@ export function useLogoutSubmit(ownerId: string) {
           clearLocalDocumentDraftsForLogout(ownerId);
           return;
         }
+        stopRenewing();
         releaseLock(ownerId, lock);
         pendingRef.current = false;
         setPending(false);
