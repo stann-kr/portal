@@ -6,7 +6,8 @@
 import { Paperclip } from "lucide-react";
 import { RichTextContent } from "@/components/editor/RichTextContent";
 import { cn } from "@/lib/utils";
-import { formatKstMonthDayTime, initialOf } from "./qna-display";
+import { formatKstMonthDayTime } from "@/lib/kst-format";
+import { initialOf } from "./qna-display";
 
 type Reply = {
   id: string;

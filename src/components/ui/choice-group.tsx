@@ -1,5 +1,5 @@
 /**
- * @file src/components/community/ChoiceGroup.tsx
+ * @file src/components/ui/choice-group.tsx
  * @description 하나만 고르는 선택 줄(캔버스 CommunityNew의 게시판 유형 세그먼트·채널 칩).
  * radiogroup 키보드 규칙: 선택된 항목만 Tab으로 들어오고, 화살표·Home·End가 선택과 초점을 함께 옮긴다.
  */

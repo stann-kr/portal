@@ -2,7 +2,7 @@ import Link from "next/link";
 import { Plus } from "lucide-react";
 import type { RecentNote } from "@/lib/student-today";
 import { cn } from "@/lib/utils";
-import { formatKstDot } from "./format";
+import { formatKstDot } from "@/lib/kst-format";
 import { LEDGER_ADD_ROW_CLASS, LEDGER_ROW_CLASS } from "./HomeSection";
 
 /**

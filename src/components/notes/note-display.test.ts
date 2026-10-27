@@ -4,7 +4,6 @@ import {
   formatListUpdatedLabel,
   formatNoteLongDate,
   formatNoteUpdated,
-  formatRecordTime,
   formatTrashDeadline,
   formatTrashTime,
   toLedgerDateLabel,
@@ -33,11 +32,9 @@ test("수정 시각은 하루 안이면 상대 시각, 그보다 오래되면 �
   assert.equal(formatNoteUpdated(null, NOW), "—");
 });
 
-test("문서 날짜·이력·휴지통 시각은 KST로 표시하고 다른 해에는 연도를 붙인다", () => {
+test("문서 날짜·휴지통 시각은 KST로 표시하고 다른 해에는 연도를 붙인다", () => {
   assert.equal(formatNoteLongDate(new Date(NOW)), "2026년 10월 26일 (월)");
   assert.equal(formatNoteLongDate(null), "날짜 없음");
-  assert.equal(formatRecordTime(new Date(NOW), NOW), "10.26 18:40");
-  assert.equal(formatRecordTime(Date.UTC(2025, 0, 2, 0, 5), NOW), "2025.01.02 09:05");
   assert.equal(formatTrashTime(Date.UTC(2026, 9, 25, 12, 14), NOW), "10월 25일 21:14");
   assert.equal(formatTrashDeadline(Date.UTC(2026, 10, 24, 12, 14), NOW), "11월 24일");
 });

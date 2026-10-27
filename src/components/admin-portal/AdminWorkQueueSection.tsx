@@ -13,7 +13,7 @@ import { describeAssignmentMedia } from "@/lib/unified-item-normalization";
 import { formatKst } from "@/lib/kst-format";
 import { buildQnaListHref } from "@/lib/qna-routes";
 import { cn } from "@/lib/utils";
-import { formatKstDot } from "@/components/student-portal/today/format";
+import { formatKstDot } from "@/lib/kst-format";
 import {
   LEDGER_ADD_ROW_CLASS,
   LEDGER_HEADER_LINK_CLASS,

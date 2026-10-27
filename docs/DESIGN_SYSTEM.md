@@ -164,7 +164,7 @@ pill 형태는 오늘 날짜 표시와 개수처럼 모양 자체가 의미를 �
 | `AssignmentView`·`CurriculumView` | 과제 목록(행 = 상세 링크)과 커리큘럼 진도(주차 단위 완료), `pageHeader`로 화면 제목·여백을 직접 그린다 |
 | `ThreadList` | Q&A 목록. `variant="tabs"`(Q&A 화면 상태 탭)·`"chips"`(관리자 학생 상세) |
 | `AnnouncementList` | 공지 목록. 고정 공지는 본문 미리보기 + 상세 보기, 나머지는 한 줄 링크(`layout`) |
-| `CommunityPostRow`·`ChoiceGroup`·`MobileMoreMenu` | 게시물 목록 행, 화살표·Home·End로 움직이는 라디오 칩 그룹, 좁은 화면 위쪽 막대 … 메뉴 |
+| `CommunityPostRow`·`ui/choice-group` `ChoiceGroup`·`ui/mobile-more-menu` `MobileMoreMenu` | 게시물 목록 행, 화살표·Home·End로 움직이는 라디오 칩 그룹, 좁은 화면 위쪽 막대 … 메뉴 |
 | `useQnaThreadLifecycle` | Q&A 질문의 종료·다시 열기·휴지통 이동과 확인 상태, 끝난 뒤 초점(`fallbackFocusRef`) |
 | `note-display.ts` | 노트 목록·이력·휴지통이 같이 쓰는 날짜·작성자·기한 표기(휴지통 기한은 날짜만) |
 

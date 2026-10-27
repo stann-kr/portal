@@ -5,7 +5,6 @@
  */
 import type { QnaStatus } from "@/db/schema";
 import { QNA_STATUS_LABELS } from "@/lib/qna-status";
-import { formatKst, type KstDateInput } from "@/lib/kst-format";
 import { cn } from "@/lib/utils";
 
 /** 캔버스 Qna 보드: 답변 대기 Q&A 점, 답변 완료 강조 파랑, 종료 비활성 점. */
@@ -23,19 +22,6 @@ export function QnaStatusLabel({ status, className }: { status: QnaStatus; class
       {QNA_STATUS_LABELS[status]}
     </span>
   );
-}
-
-/** "10.24"처럼 월.일 숫자 날짜(KST). 값이 없으면 fallback. */
-export function formatKstMonthDay(value: KstDateInput, fallback = ""): string {
-  const text = formatKst(value, { month: "2-digit", day: "2-digit" }, "");
-  return text ? text.replace(/\.\s*/gu, ".").replace(/\.$/u, "") : fallback;
-}
-
-/** "10.24 14:20"처럼 월.일과 24시간 시각(KST). 값이 없으면 fallback. */
-export function formatKstMonthDayTime(value: KstDateInput, fallback = ""): string {
-  const day = formatKstMonthDay(value);
-  if (!day) return fallback;
-  return `${day} ${formatKst(value, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" })}`;
 }
 
 /** 아바타 원 안의 첫 글자. */

@@ -13,7 +13,7 @@ import { Music2, X } from "lucide-react";
 import { Button, buttonClassName } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { MobileTopBar } from "@/components/app-shell/AppSidebar";
-import { ChoiceGroup, type ChoiceOption } from "@/components/community/ChoiceGroup";
+import { ChoiceGroup, type ChoiceOption } from "@/components/ui/choice-group";
 import { cn } from "@/lib/utils";
 import { FileUploader } from "@/components/upload/FileUploader";
 import { DraftStatus } from "@/components/editor/DraftStatus";

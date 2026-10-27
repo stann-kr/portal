@@ -5,7 +5,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { and, count, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull } from "drizzle-orm";
 import { createDb, createDbContext } from "@/db/client";
 import { privateNoteRevisions, privateNotes, profiles } from "@/db/schema";
 import { requireAuth, requireStudentOwnerOrAdmin } from "@/lib/auth-guard";
@@ -140,42 +140,6 @@ export async function getPrivateNotes(targetStudentId: string) {
       ),
     )
     .orderBy(desc(privateNotes.createdAt));
-}
-
-/** 목록 미리보기(평문 앞부분)에 필요한 만큼만 본문 앞부분을 읽는다. 미리보기도 앞 4,096자만 본다. */
-const PRIVATE_NOTE_PREVIEW_SOURCE_CHARS = 4_096;
-
-/**
- * 학생 상세 노트 탭용: 전체 본문 대신 최근 note 몇 개의 본문 앞부분과 active note 수만 읽는다.
- * 권한 검사는 getPrivateNotes와 같다.
- */
-export async function getRecentPrivateNotesOverview(targetStudentId: string, limit: number) {
-  const session = await requireAuth();
-  await requireStudentOwnerOrAdmin(session, targetStudentId);
-  const db = createDb();
-  const activeNotesOfStudent = and(
-    eq(privateNotes.studentId, targetStudentId),
-    isNull(privateNotes.deletedAt),
-  );
-  const [notes, [totals]] = await Promise.all([
-    db
-      .select({
-        id: privateNotes.id,
-        title: privateNotes.title,
-        contentHtml: sql<string>`substr(${privateNotes.contentHtml}, 1, ${PRIVATE_NOTE_PREVIEW_SOURCE_CHARS})`,
-        noteDate: privateNotes.noteDate,
-        createdAt: privateNotes.createdAt,
-        updatedAt: privateNotes.updatedAt,
-        authorName: profiles.displayName,
-      })
-      .from(privateNotes)
-      .leftJoin(profiles, eq(privateNotes.authorId, profiles.id))
-      .where(activeNotesOfStudent)
-      .orderBy(desc(privateNotes.createdAt))
-      .limit(limit),
-    db.select({ value: count() }).from(privateNotes).where(activeNotesOfStudent),
-  ]);
-  return { notes, total: totals?.value ?? 0 };
 }
 
 /** active 단일 note를 권한 범위 안에서 반환한다. */

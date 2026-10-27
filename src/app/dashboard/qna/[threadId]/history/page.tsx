@@ -15,7 +15,7 @@ import {
   RecordMeta,
   RecordPageFrame,
 } from "@/components/notes/DocumentRecordFrame";
-import { formatRecordTime } from "@/components/notes/note-display";
+import { formatRecordTime } from "@/lib/kst-format";
 import { QNA_STATUS_LABELS } from "@/lib/qna-status";
 import { getRequestNow } from "@/lib/request-time";
 import { cn } from "@/lib/utils";

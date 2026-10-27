@@ -15,7 +15,7 @@ import { Input } from "@/components/ui/input";
 import type { StudentRosterStat } from "@/lib/actions/students";
 import { buildAdminStudentDetailHref, type StudentDetailTab } from "@/lib/student-space-routes";
 import { cn } from "@/lib/utils";
-import { formatKstDot } from "@/components/student-portal/today/format";
+import { formatKstDot } from "@/lib/kst-format";
 
 const NEW_STUDENT_HREF = "/dashboard/admin/students/new";
 

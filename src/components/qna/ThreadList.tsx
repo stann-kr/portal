@@ -12,7 +12,8 @@ import { DOCUMENT_SEARCH_MAX_QUERY_LENGTH } from "@/lib/document-search";
 import { Input } from "@/components/ui/input";
 import { EmptyState } from "@/components/ui/empty-state";
 import { cn } from "@/lib/utils";
-import { QnaStatusLabel, formatKstMonthDay } from "./qna-display";
+import { formatKstMonthDay } from "@/lib/kst-format";
+import { QnaStatusLabel } from "./qna-display";
 
 type Thread = {
   id: string;

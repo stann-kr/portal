@@ -20,7 +20,7 @@ const FullEditor = dynamic(
 );
 import { ReplyCard } from "./ReplyCard";
 import { AttachmentField } from "./AttachmentField";
-import { MobileMoreMenu, type MobileMoreMenuItem } from "./MobileMoreMenu";
+import { MobileMoreMenu, type MobileMoreMenuItem } from "@/components/ui/mobile-more-menu";
 import { QnaStatusLabel } from "./qna-display";
 import { useSyncedFormDraft } from "@/lib/hooks/useSyncedFormDraft";
 import { useDeferredEditorContent } from "@/lib/hooks/useDeferredEditorContent";

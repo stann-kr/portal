@@ -29,7 +29,7 @@ import { StudentPasswordResetControl } from "@/components/admin/StudentPasswordR
 import { ConfirmPanel, useConfirmAction } from "@/components/ui/confirm-action";
 import { formatKst } from "@/lib/kst-format";
 import { cn } from "@/lib/utils";
-import { formatKstDot } from "@/components/student-portal/today/format";
+import { formatKstDot } from "@/lib/kst-format";
 import {
   LEDGER_ADD_ROW_CLASS,
   LEDGER_HEADER_LINK_CLASS,

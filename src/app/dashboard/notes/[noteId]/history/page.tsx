@@ -14,7 +14,7 @@ import {
   RecordMeta,
   RecordPageFrame,
 } from "@/components/notes/DocumentRecordFrame";
-import { formatRecordTime } from "@/components/notes/note-display";
+import { formatRecordTime } from "@/lib/kst-format";
 import { getRequestNow } from "@/lib/request-time";
 
 export const metadata = { title: "노트 변경 이력" };

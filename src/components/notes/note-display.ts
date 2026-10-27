@@ -81,19 +81,6 @@ export function formatNoteLongDate(value: DateValue, fallback = "날짜 없음")
 
 const CLOCK_OPTIONS: Intl.DateTimeFormatOptions = { hour: "2-digit", minute: "2-digit", hourCycle: "h23" };
 
-/** 변경 이력 시각(Mono): "10.26 18:40", 다른 해는 "2025.10.26 18:40". */
-export function formatRecordTime(value: DateValue, now: number): string {
-  const time = toTime(value);
-  if (time === null) return "시각 없음";
-  const [year, month, day] = [
-    String(kstYear(time)),
-    formatKst(time, { month: "2-digit" }).replace(/\D/gu, "").padStart(2, "0"),
-    formatKst(time, { day: "2-digit" }).replace(/\D/gu, "").padStart(2, "0"),
-  ];
-  const date = kstYear(time) === kstYear(now) ? `${month}.${day}` : `${year}.${month}.${day}`;
-  return `${date} ${formatKst(time, CLOCK_OPTIONS)}`;
-}
-
 /** 휴지통 삭제 시각: "10월 25일 21:14", 다른 해는 연도 포함. */
 export function formatTrashTime(value: DateValue, now: number): string {
   const time = toTime(value);

@@ -15,7 +15,8 @@ import {
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 import { cn } from "@/lib/utils";
 import { AgendaRow } from "./today/AgendaRow";
-import { formatAgendaWhen, formatHomeTime, formatKstDot, formatUpcomingDay } from "./today/format";
+import { formatKstDot } from "@/lib/kst-format";
+import { formatAgendaWhen, formatHomeTime, formatUpcomingDay } from "./today/format";
 import {
   LEDGER_HEADER_LINK_CLASS,
   LEDGER_HEADER_NOTE_CLASS,

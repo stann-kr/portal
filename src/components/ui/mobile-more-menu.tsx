@@ -1,5 +1,5 @@
 /**
- * @file src/components/qna/MobileMoreMenu.tsx
+ * @file src/components/ui/mobile-more-menu.tsx
  * @description 좁은 화면 위쪽 막대 오른쪽의 … 메뉴(MobileQnaThread "더 보기", MobileCommunityPost "게시물 메뉴").
  * 넓은 화면 머리에 있던 이력·수정·휴지통 같은 조작을 44×44 버튼 하나로 모은다.
  * 고른 동작은 메뉴의 focus scope가 끝난 뒤 실행해, 이어서 열리는 확인 영역이 초점을 받게 한다.
