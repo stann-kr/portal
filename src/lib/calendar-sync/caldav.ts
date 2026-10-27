@@ -514,8 +514,16 @@ export function createICloudCalendarClient(options: {
       const input = normalizeRemoteEventInput(rawInput);
       const url = assertICloudUrl(`${await derivePortalResourceName(input.portalRef)}.ics`, collection.toString());
       const ics = buildIcsEvent(input, { uid: await derivePortalUid(input.portalRef), now: now() });
-      // 같은 portalRef의 리소스가 이미 있으면 412 → CalendarConflictError(findByPortalRef로 복구).
-      return put(url, ics, { "if-none-match": "*" });
+      try {
+        return await put(url, ics, { "if-none-match": "*" });
+      } catch (error) {
+        if (!(error instanceof CalendarConflictError)) throw error;
+      }
+      // 412: 같은 portalRef의 리소스가 이미 있다(다른 실행이 먼저 만들었거나 응답이 유실됨).
+      // 새 사본을 만들지 않고 기존 리소스를 이 입력으로 맞춘다(If-Match로 그 사이 변경은 다시 충돌).
+      const current = await getResource(url);
+      if (!current) throw new CalendarConflictError("iCloud event changed remotely", { status: 412 });
+      return put(url, patchIcsEvent(current.ics, rawInput, { now: now() }), { "if-match": assertEtag(current.etag) });
     },
 
     async update(calendarId: string, remoteId: string, rawInput: RemoteEventInput, ifMatchEtag: string): Promise<WriteResult> {
@@ -536,6 +544,15 @@ export function createICloudCalendarClient(options: {
       const result = await request("DELETE", url.toString(), { headers: { "if-match": assertEtag(ifMatchEtag) } });
       if (result.status === 200 || result.status === 204) return;
       throw statusError(result, "event");
+    },
+
+    async get(calendarId: string, remoteId: string): Promise<RemoteEvent | null> {
+      const collection = collectionUrl(calendarId);
+      const url = resourceUrl(collection, remoteId);
+      const current = await getResource(url);
+      if (!current) return null;
+      const event = parseIcsEvent(current.ics, { remoteId: url.pathname, etag: current.etag });
+      return event && event.status !== "cancelled" ? event : null;
     },
 
     async findByPortalRef(calendarId: string, portalRef: string): Promise<RemoteEvent | null> {

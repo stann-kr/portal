@@ -9,6 +9,7 @@ import {
   createGoogleCalendarClient,
   createPkcePair,
   decodeGoogleCursor,
+  deriveGoogleEventId,
   exchangeGoogleCode,
   fetchGoogleAccountLabel,
   refreshGoogleAccessToken,
@@ -305,6 +306,51 @@ test("create는 portalRef를 private extended property로, 시간은 UTC dateTim
   assert.deepEqual(body.start, { dateTime: "2026-11-01T10:00:00.000Z" });
   assert.deepEqual(body.extendedProperties, { private: { portalRef: "lesson:42" } });
   assert.equal(fake.calls[0].headers["if-match"], undefined);
+  // 클라이언트 지정 id: portalRef에서 결정적, Google 규칙(base32hex a-v·0-9, 5~1024자).
+  assert.equal(body.id, await deriveGoogleEventId("lesson:42"));
+  assert.match(body.id, /^[a-v0-9]{5,1024}$/u);
+  assert.notEqual(await deriveGoogleEventId("lesson:43"), body.id);
+});
+
+test("create 409(같은 결정적 id가 이미 있음)는 사본을 만들지 않고 그 id를 읽어 If-Match PATCH로 맞추며 삭제된 일정은 confirmed로 되살린다", async () => {
+  const id = await deriveGoogleEventId("lesson:42");
+  const fake = createFakeFetch([
+    () => googleError(409, "duplicate"),
+    () => jsonResponse({ ...timed, id, etag: '"9"', status: "cancelled" }),
+    () => jsonResponse({ id, etag: '"10"' }),
+  ]);
+  const client = createGoogleCalendarClient({ ...tokenProvider(), fetchImpl: fake.fetchImpl });
+  const result = await client.create(CAL, { title: "레슨", start: new Date("2026-11-01T10:00:00Z"), end: new Date("2026-11-01T11:00:00Z"), portalRef: "lesson:42" });
+  assert.deepEqual(result, { remoteId: id, etag: '"10"' });
+  assert.deepEqual(fake.calls.map((call) => call.method), ["POST", "GET", "PATCH"]);
+  assert.equal(new URL(fake.calls[1].url).pathname.endsWith(`/events/${id}`), true);
+  assert.equal(fake.calls[2].headers["if-match"], '"9"');
+  const body = JSON.parse(fake.calls[2].body);
+  assert.equal(body.status, "confirmed");
+  assert.equal(body.id, undefined);
+  assert.deepEqual(body.extendedProperties, { private: { portalRef: "lesson:42" } });
+});
+
+test("get은 events/{id}를 읽고 404·410·취소된 일정은 null, 그 밖 오류는 throw한다", async () => {
+  const fake = createFakeFetch([
+    () => jsonResponse(timed),
+    () => googleError(404, "notFound"),
+    () => googleError(410, "deleted"),
+    () => jsonResponse({ ...timed, status: "cancelled" }),
+    () => googleError(500, "backendError"),
+  ]);
+  const client = createGoogleCalendarClient({ ...tokenProvider(), fetchImpl: fake.fetchImpl });
+  const found = await client.get(CAL, "evt1");
+  assert.equal(found?.remoteId, "evt1");
+  assert.equal(found?.etag, '"3401"');
+  assert.equal(fake.calls[0].method, "GET");
+  assert.equal(new URL(fake.calls[0].url).pathname, `/calendar/v3/calendars/${encodeURIComponent(CAL)}/events/evt1`);
+  assert.equal(await client.get(CAL, "evt1"), null);
+  assert.equal(await client.get(CAL, "evt1"), null);
+  assert.equal(await client.get(CAL, "evt1"), null);
+  await assert.rejects(client.get(CAL, "evt1"), CalendarProviderError);
+  await assert.rejects(client.get(CAL, "../x"), CalendarProviderError);
+  assert.equal(fake.calls.length, 5);
 });
 
 test("update는 PATCH + If-Match(따옴표 원문)를 보내고 종일 전환 때 dateTime을 비운다. 412는 CalendarConflictError", async () => {

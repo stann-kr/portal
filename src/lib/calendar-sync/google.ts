@@ -32,6 +32,7 @@ import {
   fullResyncResult,
   normalizeRemoteEventInput,
   parseRetryAfter,
+  sha256Hex,
   type CalendarProviderClient,
   type FetchedText,
   type PullResult,
@@ -428,6 +429,14 @@ function eventBody(rawInput: RemoteEventInput, forPatch: boolean): Record<string
   };
 }
 
+/**
+ * portalRef에서 결정적 Google event id를 만든다(클라이언트 지정 id 규칙: base32hex 소문자 a-v·0-9, 5~1024자).
+ * sha256 hex(0-9a-f)는 base32hex 부분집합이다. 같은 portalRef의 동시 create는 같은 id라 409로 중복을 막는다.
+ */
+export async function deriveGoogleEventId(portalRef: string): Promise<string> {
+  return sha256Hex(`portal-google-event:v1:${portalRef}`);
+}
+
 function assertEtag(etag: string): string {
   if (typeof etag !== "string" || !etag || /[\r\n]/u.test(etag)) throw new CalendarProviderError("ETag is invalid");
   return etag;
@@ -678,7 +687,28 @@ export function createGoogleCalendarClient(options: {
     async create(calendarId: string, input: RemoteEventInput): Promise<WriteResult> {
       const url = eventsUrl(calendarId);
       url.searchParams.set("sendUpdates", "none");
-      return writeResult(await sendOk("POST", url.toString(), { body: eventBody(input, false) }));
+      const id = await deriveGoogleEventId(normalizeRemoteEventInput(input).portalRef);
+      const result = await send("POST", url.toString(), { body: { id, ...eventBody(input, false) } });
+      if (result.status !== 409) {
+        const body = parseJson(result.text);
+        if (result.status < 200 || result.status >= 300) throw apiError(result, body);
+        return writeResult(body);
+      }
+      // 409 duplicate: 같은 portalRef를 다른 실행이 먼저 만들었거나, 삭제(cancelled)된 같은 id가 남아 있다.
+      // 새 사본을 만들지 않고 그 id를 읽어 이 입력으로 맞춘다(cancelled면 status confirmed로 되살린다).
+      const existing = await send("GET", eventUrl(calendarId, id).toString());
+      const existingBody = parseJson(existing.text);
+      if (existing.status !== 200) throw apiError(existing, existingBody);
+      const etag = str(existingBody?.etag);
+      if (!etag) throw new CalendarProviderError("Google Calendar event response is invalid");
+      const patchUrl = eventUrl(calendarId, id);
+      patchUrl.searchParams.set("sendUpdates", "none");
+      return writeResult(
+        await sendOk("PATCH", patchUrl.toString(), {
+          body: { ...eventBody(input, true), status: "confirmed" },
+          headers: { "if-match": assertEtag(etag) },
+        }),
+      );
     },
 
     async update(calendarId: string, remoteId: string, input: RemoteEventInput, ifMatchEtag: string): Promise<WriteResult> {
@@ -693,6 +723,15 @@ export function createGoogleCalendarClient(options: {
       const url = eventUrl(calendarId, remoteId);
       url.searchParams.set("sendUpdates", "none");
       await sendOk("DELETE", url.toString(), { headers: { "if-match": assertEtag(ifMatchEtag) } });
+    },
+
+    async get(calendarId: string, remoteId: string): Promise<RemoteEvent | null> {
+      const result = await send("GET", eventUrl(calendarId, remoteId).toString());
+      if (result.status === 404 || result.status === 410) return null;
+      const body = parseJson(result.text);
+      if (result.status !== 200) throw apiError(result, body);
+      if (!body || body.status === "cancelled") return null;
+      return mapGoogleEvent(body);
     },
 
     async findByPortalRef(calendarId: string, portalRef: string): Promise<RemoteEvent | null> {

@@ -10,6 +10,7 @@ import { executeDocumentStatementsAtomically } from "@/lib/document-lifecycle-at
 import {
   CALENDAR_SYNC_MESSAGES,
   DELETED_FINGERPRINT,
+  FULL_RESYNC_MISSING_LOOKUP_CAP,
   localFingerprint,
   localRowToRemoteInput,
   runCalendarMappingSync,
@@ -34,6 +35,8 @@ type Harness = {
   clock: { now: Date };
   sync: (options?: { force?: boolean; mode?: SyncEngineMode; deadline?: number; client?: CalendarProviderClient }) => ReturnType<typeof runCalendarMappingSync>;
   rows: <T>(query: string, ...params: unknown[]) => T[];
+  /** 엔진이 로컬 값을 읽은 뒤 다음 원자적 쓰기(batch) 직전에 한 번 실행한다(웹 수정 경합 재현). */
+  beforeNextAtomicWrite: (hook: () => void) => void;
 };
 
 function setup(context: TestContext): Harness {
@@ -54,7 +57,24 @@ function setup(context: TestContext): Harness {
   sqlite
     .prepare("INSERT INTO calendar_mappings (id, connection_id, student_id, remote_calendar_id, remote_calendar_name, created_at, updated_at) VALUES (?, ?, ?, ?, '학생 캘린더', ?, ?)")
     .run(MAPPING, CONNECTION, STUDENT, CALENDAR, past, past);
-  const ctx: Extract<DbContext, { kind: "local" }> = { kind: "local", db: drizzle(sqlite, { schema }) };
+  const db = drizzle(sqlite, { schema });
+  let pendingHook: (() => void) | null = null;
+  // executeDocumentStatementsAtomically만 $client.transaction을 쓴다. 조회는 drizzle session이 원래 client로 한다.
+  db.$client = new Proxy(sqlite, {
+    get(target, property) {
+      if (property === "transaction") {
+        return (fn: () => void) => {
+          const hook = pendingHook;
+          pendingHook = null;
+          hook?.();
+          return target.transaction(fn);
+        };
+      }
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  const ctx: Extract<DbContext, { kind: "local" }> = { kind: "local", db };
   const remote = new FakeCalendar();
   const clock = { now: new Date(BASE_NOW) };
   return {
@@ -72,6 +92,9 @@ function setup(context: TestContext): Harness {
       deadline: options.deadline,
     }),
     rows: <T,>(query: string, ...params: unknown[]) => sqlite.prepare(query).all(...params) as T[],
+    beforeNextAtomicWrite: (hook) => {
+      pendingHook = hook;
+    },
   };
 }
 
@@ -249,7 +272,7 @@ test("로컬 삭제는 DELETED tombstone link로 원격 사본을 지우고 link
   assert.deepEqual(links(harness), []);
 });
 
-test("412 충돌에서 로컬이 바뀌었으면 portalRef로 현재 etag를 다시 읽고 로컬 내용으로 덮는다(웹 우선)", async (context) => {
+test("412 충돌에서 로컬이 바뀌었으면 remoteId로 현재 etag를 다시 읽고 로컬 내용으로 덮는다(웹 우선)", async (context) => {
   const harness = setup(context);
   insertEvent(harness, "event-1", { title: "연습", start: at("2026-11-05T11:00:00Z"), end: at("2026-11-05T12:00:00Z") });
   await harness.sync();
@@ -260,7 +283,7 @@ test("412 충돌에서 로컬이 바뀌었으면 portalRef로 현재 etag를 다
   harness.remote.calls = [];
   const result = await harness.sync({ mode: "push" });
   assert.equal(result.status, "synced");
-  assert.deepEqual(harness.remote.calls, ["update", "findByPortalRef", "update"]);
+  assert.deepEqual(harness.remote.calls, ["update", "get", "update"]);
   assert.equal(harness.remote.events.get(remoteId)!.title, "포털에서 바꾼 제목");
   assert.equal(harness.rows<{ title: string }>("SELECT title FROM calendar_events")[0].title, "포털에서 바꾼 제목");
 
@@ -409,7 +432,7 @@ test("lease가 잡혀 있으면 동시 실행을 건너뛰고 throttle은 조회
     release = resolve;
   });
   const slowClient: CalendarProviderClient = {
-    ...Object.fromEntries((["listCalendars", "pull", "create", "update", "remove", "findByPortalRef"] as const).map((name) => [name, (...args: unknown[]) => (harness.remote[name] as (...rest: unknown[]) => unknown)(...args)])),
+    ...Object.fromEntries((["listCalendars", "pull", "create", "update", "remove", "findByPortalRef", "get"] as const).map((name) => [name, (...args: unknown[]) => (harness.remote[name] as (...rest: unknown[]) => unknown)(...args)])),
     kind: "GOOGLE",
     pull: async (...args: Parameters<CalendarProviderClient["pull"]>) => {
       await gate;
@@ -460,19 +483,219 @@ test("deadline이 지나면 새 원격 쓰기를 시작하지 않고 남은 항�
   assert.equal(harness.remote.events.size, 2);
 });
 
-test("전체 재동기화에서 원격이 window 밖으로 옮긴 포털 사본은 지우지 않고 portalRef로 다시 잇는다", async (context) => {
+test("전체 재동기화에서 원격이 window 밖으로 옮긴 포털 레슨은 지우지 않고 remoteId로 확인해 옮긴 날짜를 반영한다", async (context) => {
   const harness = setup(context);
   insertLesson(harness, "lesson-far", at("2026-11-10T09:00:00Z"));
   await harness.sync();
   const [created] = [...harness.remote.events.values()];
   const farStart = new Date(BASE_NOW.getTime() + 500 * 86_400_000);
-  harness.remote.events.set(created.remoteId, { ...created, start: farStart, end: new Date(farStart.getTime() + 3_600_000) });
+  harness.remote.remoteEdit(created.remoteId, { start: farStart, end: new Date(farStart.getTime() + 3_600_000) });
   harness.sqlite.prepare("UPDATE calendar_mappings SET cursor = NULL WHERE id = ?").run(MAPPING);
+
+  harness.remote.calls = [];
+  const result = await harness.sync();
+  assert.equal(result.status, "synced");
+  assert.ok(harness.remote.calls.includes("get"), "remoteId로 존재를 확인한다");
+  const lesson = harness.rows<{ scheduled_at: number }>("SELECT scheduled_at FROM lessons WHERE id = 'lesson-far'");
+  assert.equal(lesson.length, 1, "로컬 레슨이 남는다");
+  assert.equal(lesson[0].scheduled_at, seconds(farStart), "원격에서 옮긴 날짜가 포털에 보인다");
+  const [link] = links(harness);
+  assert.equal(link.remote_id, created.remoteId);
+  assert.equal(link.etag, harness.remote.events.get(created.remoteId)!.etag);
+  assert.equal(harness.remote.events.size, 1, "원격 사본을 새로 만들지 않는다");
+  assert.equal(harness.remote.writeCount(), 0, "옮긴 내용을 받은 뒤 다시 보내지 않는다");
+});
+
+// ── 교차 검토(Sol 3) 필수 지적 회귀 테스트 ──
+
+async function waitFor(condition: () => boolean, label: string): Promise<void> {
+  for (let tick = 0; tick < 200; tick += 1) {
+    if (condition()) return;
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.fail(`기다린 상태가 오지 않았다: ${label}`);
+}
+
+test("원격 레슨 이동을 반영하는 사이 웹에서 레슨을 옮기면 웹 값을 덮지 않고 원격에 웹 값을 보낸다", async (context) => {
+  const harness = setup(context);
+  insertLesson(harness, "lesson-1", at("2026-11-03T09:00:00Z"));
+  await harness.sync();
+  const [remoteLesson] = [...harness.remote.events.values()];
+  harness.remote.remoteEdit(remoteLesson.remoteId, { start: at("2026-11-04T10:00:00Z"), end: at("2026-11-04T11:00:00Z") });
+  const webTime = at("2026-11-05T12:00:00Z");
+  harness.beforeNextAtomicWrite(() => {
+    harness.sqlite.prepare("UPDATE lessons SET scheduled_at = ? WHERE id = 'lesson-1'").run(seconds(webTime));
+  });
 
   const result = await harness.sync();
   assert.equal(result.status, "synced");
-  assert.equal(harness.rows("SELECT id FROM lessons WHERE id = 'lesson-far'").length, 1, "로컬 레슨이 남는다");
-  const [link] = links(harness);
-  assert.equal(link.remote_id, created.remoteId);
+  assert.equal(harness.rows<{ scheduled_at: number }>("SELECT scheduled_at FROM lessons")[0].scheduled_at, seconds(webTime), "웹 수정이 남는다");
+  assert.equal(harness.remote.events.get(remoteLesson.remoteId)!.start.getTime(), webTime.getTime(), "웹 우선: 원격을 웹 값으로 맞춘다");
+  assert.equal(links(harness)[0].local_fingerprint, await localFingerprint({ kind: "LESSON", id: "lesson-1", start: webTime }));
+});
+
+test("원격 삭제를 반영하는 사이 웹에서 일정을 고치면 지우지 않고 원격에 다시 만든다", async (context) => {
+  const harness = setup(context);
+  insertEvent(harness, "event-1", { title: "연습", start: at("2026-11-05T11:00:00Z"), end: at("2026-11-05T12:00:00Z") });
+  await harness.sync();
+  harness.remote.remoteDelete(links(harness)[0].remote_id!);
+  harness.beforeNextAtomicWrite(() => {
+    harness.sqlite.prepare("UPDATE calendar_events SET title = '웹에서 고침' WHERE id = 'event-1'").run();
+  });
+
+  const result = await harness.sync();
+  assert.equal(result.status, "synced");
+  assert.deepEqual(harness.rows<{ title: string }>("SELECT title FROM calendar_events"), [{ title: "웹에서 고침" }]);
+  const recreated = [...harness.remote.events.values()].filter((event) => event.portalRef === "event:event-1");
+  assert.equal(recreated.length, 1);
+  assert.equal(recreated[0].title, "웹에서 고침");
+  assert.equal(links(harness)[0].remote_id, recreated[0].remoteId);
+});
+
+test("가져온 일정의 412 충돌은 같은 remoteId를 최신 etag로 덮고 원격·웹에 사본을 만들지 않는다", async (context) => {
+  const harness = setup(context);
+  const imported = harness.remote.remoteAdd({ title: "합주", start: at("2026-11-02T10:00:00Z"), end: at("2026-11-02T12:00:00Z") });
+  await harness.sync();
+  harness.remote.remoteEdit(imported.remoteId, { title: "원격에서 고침" });
+  harness.sqlite.prepare("UPDATE calendar_events SET title = '웹에서 고침'").run();
+
+  harness.remote.calls = [];
+  const pushed = await harness.sync({ mode: "push" });
+  assert.equal(pushed.status, "synced");
+  assert.deepEqual(harness.remote.calls, ["update", "get", "update"]);
   assert.equal(harness.remote.events.size, 1, "원격 사본을 새로 만들지 않는다");
+  assert.equal(harness.remote.events.get(imported.remoteId)!.title, "웹에서 고침");
+
+  await harness.sync();
+  assert.equal(harness.rows("SELECT id FROM calendar_events").length, 1, "다음 pull이 원래 원격 일정을 다시 가져오지 않는다");
+  assert.equal(harness.remote.events.size, 1);
+});
+
+test("가져온 일정을 웹에서 지웠는데 원격이 바뀌었으면(412) 최신 etag로 원격을 지우고 다시 살아나지 않는다", async (context) => {
+  const harness = setup(context);
+  const imported = harness.remote.remoteAdd({ title: "합주", start: at("2026-11-02T10:00:00Z"), end: at("2026-11-02T12:00:00Z") });
+  await harness.sync();
+  const [{ id: localId }] = harness.rows<{ id: string }>("SELECT id FROM calendar_events");
+  harness.remote.remoteEdit(imported.remoteId, { title: "원격에서 고침" });
+  await executeDocumentStatementsAtomically(harness.ctx, [
+    markLinksDeletedStatement("EVENT", localId, STUDENT),
+    { query: "DELETE FROM calendar_events WHERE id = ?", params: [localId] },
+  ]);
+
+  harness.remote.calls = [];
+  const pushed = await harness.sync({ mode: "push" });
+  assert.equal(pushed.status, "synced");
+  assert.deepEqual(harness.remote.calls, ["remove", "get", "remove"]);
+  assert.equal(harness.remote.events.size, 0, "웹 삭제가 우선한다");
+  assert.deepEqual(links(harness), []);
+
+  await harness.sync();
+  assert.equal(harness.rows("SELECT id FROM calendar_events").length, 0, "지운 일정이 다시 살아나지 않는다");
+});
+
+test("전체 재동기화에서 window 밖으로 옮긴 가져온 일정은 지우지 않고 옮긴 날짜로 반영한다", async (context) => {
+  const harness = setup(context);
+  const imported = harness.remote.remoteAdd({ title: "합주", start: at("2026-11-02T10:00:00Z"), end: at("2026-11-02T12:00:00Z") });
+  await harness.sync();
+  const farStart = at("2028-03-02T10:00:00Z");
+  harness.remote.remoteEdit(imported.remoteId, { start: farStart, end: new Date(farStart.getTime() + 2 * 3_600_000) });
+  harness.sqlite.prepare("UPDATE calendar_mappings SET cursor = NULL").run();
+
+  const result = await harness.sync();
+  assert.equal(result.status, "synced");
+  const events = harness.rows<{ start_time: number }>("SELECT start_time FROM calendar_events");
+  assert.equal(events.length, 1, "원격에 있는 일정을 지우지 않는다");
+  assert.equal(events[0].start_time, seconds(farStart));
+  assert.deepEqual(links(harness).map((link) => link.remote_id), [imported.remoteId]);
+  assert.equal(harness.remote.events.size, 1);
+});
+
+test("전체 재동기화 누락 확인이 상한을 넘으면 남은 항목은 지우지 않고 cursor를 비워 다음 실행이 이어서 확인한다", async (context) => {
+  const harness = setup(context);
+  const total = FULL_RESYNC_MISSING_LOOKUP_CAP + 2;
+  const remoteIds: string[] = [];
+  for (let index = 0; index < total; index += 1) {
+    const start = new Date(at("2026-11-02T10:00:00Z").getTime() + index * 86_400_000);
+    remoteIds.push(harness.remote.remoteAdd({ title: `일정 ${index}`, start, end: new Date(start.getTime() + 3_600_000) }).remoteId);
+  }
+  await harness.sync();
+  assert.equal(links(harness).length, total);
+  // 증분 변경 기록 없이 원격에서 사라진 상태(전체 재동기화로만 알 수 있음).
+  for (const remoteId of remoteIds) harness.remote.events.delete(remoteId);
+  harness.sqlite.prepare("UPDATE calendar_mappings SET cursor = NULL").run();
+
+  const first = await harness.sync();
+  assert.ok(first.status === "synced" && first.partial, "남은 확인이 있으면 partial");
+  assert.equal(links(harness).length, total - FULL_RESYNC_MISSING_LOOKUP_CAP, "상한을 넘은 항목은 지우지 않는다");
+  assert.equal(harness.rows<{ cursor: string | null }>("SELECT cursor FROM calendar_mappings")[0].cursor, null, "증분 cursor로 넘어가지 않는다");
+
+  const second = await harness.sync();
+  assert.ok(second.status === "synced" && !second.partial);
+  assert.equal(links(harness).length, 0);
+  assert.equal(harness.rows("SELECT id FROM calendar_events").length, 0);
+  assert.notEqual(harness.rows<{ cursor: string | null }>("SELECT cursor FROM calendar_mappings")[0].cursor, null);
+});
+
+test("lease가 만료된 뒤 다른 실행이 이어받으면 이전 실행은 lease 갱신에 실패해 원격에 쓰지 않는다", async (context) => {
+  const harness = setup(context);
+  insertLesson(harness, "lesson-1", at("2026-11-03T09:00:00Z"));
+  let releasePull!: () => void;
+  const pullGate = new Promise<void>((resolve) => {
+    releasePull = resolve;
+  });
+  const remote = harness.remote;
+  const stalled: CalendarProviderClient = {
+    kind: "GOOGLE",
+    listCalendars: () => remote.listCalendars(),
+    pull: async (...args) => {
+      await pullGate;
+      return remote.pull(...args);
+    },
+    create: (...args) => remote.create(...args),
+    update: (...args) => remote.update(...args),
+    remove: (...args) => remote.remove(...args),
+    findByPortalRef: (...args) => remote.findByPortalRef(...args),
+    get: (...args) => remote.get(...args),
+  };
+  const first = harness.sync({ client: stalled });
+  await waitFor(() => harness.rows<{ id: string | null }>("SELECT sync_lease_id AS id FROM calendar_mappings")[0].id !== null, "첫 실행 lease");
+
+  harness.clock.now = new Date(BASE_NOW.getTime() + 61_000);
+  const second = await harness.sync();
+  assert.equal(second.status, "synced", "만료된 lease는 다른 실행이 잡는다");
+  assert.equal(harness.remote.events.size, 1);
+  insertLesson(harness, "lesson-2", at("2026-11-04T09:00:00Z"));
+
+  harness.remote.calls = [];
+  releasePull();
+  const stale = await first;
+  assert.ok(stale.status === "synced" && stale.partial, "소유권을 잃은 실행은 partial로 멈춘다");
+  assert.equal(harness.remote.writeCount(), 0, "이전 실행은 원격에 쓰지 않는다");
+  assert.equal(harness.remote.events.size, 1);
+});
+
+test("create 도중 lease가 만료되어 두 실행이 같은 레슨을 만들어도 결정적 원격 id라 사본은 하나다", async (context) => {
+  const harness = setup(context);
+  insertLesson(harness, "lesson-l", at("2026-11-03T09:00:00Z"));
+  let releaseCreate!: () => void;
+  const createGate = new Promise<void>((resolve) => {
+    releaseCreate = resolve;
+  });
+  harness.remote.beforeCreate = async () => {
+    harness.remote.beforeCreate = null;
+    await createGate;
+  };
+  const first = harness.sync();
+  await waitFor(() => harness.remote.calls.includes("create"), "첫 실행 create");
+
+  harness.clock.now = new Date(BASE_NOW.getTime() + 61_000);
+  const second = await harness.sync();
+  assert.equal(second.status, "synced");
+  releaseCreate();
+  assert.equal((await first).status, "synced");
+
+  const copies = [...harness.remote.events.values()].filter((event) => event.portalRef === "lesson:lesson-l");
+  assert.equal(copies.length, 1, "같은 portalRef 원격 사본은 하나");
+  assert.equal(copies[0].remoteId, FakeCalendar.portalRemoteId("lesson:lesson-l"));
+  assert.deepEqual(links(harness).map((link) => link.remote_id), [copies[0].remoteId]);
 });

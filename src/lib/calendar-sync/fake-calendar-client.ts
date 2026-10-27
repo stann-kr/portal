@@ -27,6 +27,8 @@ export class FakeCalendar implements CalendarProviderClient {
   calls: string[] = [];
   loseNextCreateResponse = false;
   failAll: Error | null = null;
+  /** 테스트용: create가 원격 상태를 바꾸기 직전에 기다릴 promise(동시 실행 재현). */
+  beforeCreate: (() => Promise<void>) | null = null;
 
   private touch(id: string): void {
     this.seq += 1;
@@ -114,10 +116,18 @@ export class FakeCalendar implements CalendarProviderClient {
     };
   }
 
+  /** 실제 provider처럼 portalRef에서 결정적 원격 id를 만든다(원격 사용자 일정 `remote-N`과 겹치지 않는다). */
+  static portalRemoteId(portalRef: string): string {
+    return `portal-${portalRef}`;
+  }
+
   async create(calendarId: string, input: RemoteEventInput): Promise<WriteResult> {
     this.guard("create");
-    this.nextId += 1;
-    const remoteId = `created-${this.nextId}`;
+    if (this.beforeCreate) await this.beforeCreate();
+    const remoteId = FakeCalendar.portalRemoteId(input.portalRef);
+    const existing = this.events.get(remoteId);
+    // 결정적 id가 이미 있으면(Google 409 / iCloud If-None-Match 412) 새 사본 없이 기존 리소스를 돌려준다.
+    if (existing) return { remoteId, etag: existing.etag };
     const etag = this.newEtag();
     this.events.set(remoteId, this.toEvent(remoteId, etag, input));
     this.touch(remoteId);
@@ -145,6 +155,12 @@ export class FakeCalendar implements CalendarProviderClient {
     if (!current) throw new CalendarNotFoundError("missing", { status: 404 });
     if (ifMatchEtag !== "*" && current.etag !== ifMatchEtag) throw new CalendarConflictError("conflict", { status: 412 });
     this.remoteDelete(remoteId);
+  }
+
+  async get(calendarId: string, remoteId: string): Promise<RemoteEvent | null> {
+    this.guard("get");
+    const event = this.events.get(remoteId);
+    return event && event.status !== "cancelled" ? event : null;
   }
 
   async findByPortalRef(calendarId: string, portalRef: string): Promise<RemoteEvent | null> {

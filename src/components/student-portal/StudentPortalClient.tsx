@@ -70,6 +70,8 @@ const SECTIONS: readonly { id: Section }[] = [
 
 /** 마지막으로 연 구역을 기억하는 localStorage 키 */
 const SECTION_STORAGE_KEY = "studentPortal:section";
+/** 창 복귀 시 외부 캘린더 재동기화 최소 간격(서버 조회 동기화 throttle과 같다). */
+const EXTERNAL_RESYNC_MIN_INTERVAL_MS = 60_000;
 
 const SECTION_ALIASES: Readonly<Record<string, Section>> = {
   announcements: "today",
@@ -142,15 +144,35 @@ export function StudentPortalClient({
   useEffect(() => {
     routerRef.current = router;
   }, [router]);
+  // 창으로 돌아오면(focus·visible) 외부 변경을 다시 받는다. 서버 throttle(60초)에 맞춰 client도 60초에 한 번만 부른다.
   useEffect(() => {
     let cancelled = false;
-    void syncAndGetExternalItems({}).then((result) => {
-      if (cancelled) return;
-      setExternalItems(result.items);
-      if (result.localChanged) routerRef.current.refresh();
-    }).catch(() => undefined);
+    let inFlight = false;
+    let lastStartedAt = 0;
+    const run = () => {
+      if (inFlight) return;
+      inFlight = true;
+      lastStartedAt = Date.now();
+      void syncAndGetExternalItems({}).then((result) => {
+        if (cancelled) return;
+        setExternalItems(result.items);
+        if (result.localChanged) routerRef.current.refresh();
+      }).catch(() => undefined).finally(() => {
+        inFlight = false;
+      });
+    };
+    const onReturn = () => {
+      if (document.visibilityState !== "visible") return;
+      if (Date.now() - lastStartedAt < EXTERNAL_RESYNC_MIN_INTERVAL_MS) return;
+      run();
+    };
+    run();
+    window.addEventListener("focus", onReturn);
+    document.addEventListener("visibilitychange", onReturn);
     return () => {
       cancelled = true;
+      window.removeEventListener("focus", onReturn);
+      document.removeEventListener("visibilitychange", onReturn);
     };
   }, [externalCalendarConnection.connected, externalCalendarConnection.provider]);
 

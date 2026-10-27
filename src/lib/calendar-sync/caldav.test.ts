@@ -258,23 +258,65 @@ test("PUT 응답에 ETag가 없으면 PROPFIND getetag로 보충한다", async (
   assert.match(fake.calls[1].body, /getetag/u);
 });
 
-test("create 412(이미 있음)와 update·remove 412는 CalendarConflictError", async () => {
-  const path = `${COLLECTION_PATH}a.ics`;
+test("create 412(같은 결정적 리소스가 이미 있음)는 사본을 만들지 않고 기존 리소스를 If-Match PUT으로 맞춘다", async () => {
+  const name = await derivePortalResourceName("lesson:1");
   const { fake, client: icloud } = client([
     () => new Response(null, { status: 412 }),
+    () => new Response(ICS_A, { status: 200, headers: { etag: '"e-a"' } }),
+    () => new Response(null, { status: 204, headers: { etag: '"e-a2"' } }),
+  ]);
+  const input = { title: "옮긴 레슨", start: new Date("2026-11-03T10:00:00Z"), end: new Date("2026-11-03T11:00:00Z"), portalRef: "lesson:1" };
+  assert.deepEqual(await icloud.create(COLLECTION, input), { remoteId: `${COLLECTION_PATH}${name}.ics`, etag: '"e-a2"' });
+  assert.deepEqual(fake.calls.map((call) => [call.method, call.url]), [
+    ["PUT", `${COLLECTION}${name}.ics`],
+    ["GET", `${COLLECTION}${name}.ics`],
+    ["PUT", `${COLLECTION}${name}.ics`],
+  ]);
+  assert.equal(fake.calls[2].headers["if-match"], '"e-a"');
+  assert.equal(fake.calls[2].headers["if-none-match"], undefined);
+  assert.equal(readIcsUid(fake.calls[2].body), "uid-a", "기존 UID를 유지한다");
+  assert.match(fake.calls[2].body, /SUMMARY:옮긴 레슨/u);
+
+  // 412 뒤 리소스가 그 사이 사라졌으면 충돌로 올려 다음 실행이 다시 만든다.
+  const gone = client([() => new Response(null, { status: 412 }), () => new Response(null, { status: 404 })]);
+  await assert.rejects(gone.client.create(COLLECTION, input), CalendarConflictError);
+});
+
+test("update·remove 412는 CalendarConflictError", async () => {
+  const path = `${COLLECTION_PATH}a.ics`;
+  const { fake, client: icloud } = client([
     () => new Response(ICS_A, { status: 200, headers: { etag: '"e-a"' } }),
     () => new Response(null, { status: 412 }),
     () => new Response(null, { status: 412 }),
   ]);
   const input = { title: "x", start: new Date("2026-11-03T10:00:00Z"), end: new Date("2026-11-03T11:00:00Z"), portalRef: "lesson:1" };
-  await assert.rejects(icloud.create(COLLECTION, input), CalendarConflictError);
   await assert.rejects(icloud.update(COLLECTION, path, input, '"e-a"'), CalendarConflictError);
-  assert.equal(fake.calls[2].method, "PUT");
-  assert.equal(fake.calls[2].headers["if-match"], '"e-a"');
-  assert.equal(readIcsUid(fake.calls[2].body), "uid-a");
+  assert.equal(fake.calls[1].method, "PUT");
+  assert.equal(fake.calls[1].headers["if-match"], '"e-a"');
+  assert.equal(readIcsUid(fake.calls[1].body), "uid-a");
   await assert.rejects(icloud.remove(COLLECTION, path, '"e-a"'), CalendarConflictError);
-  assert.equal(fake.calls[3].method, "DELETE");
-  assert.equal(fake.calls[3].headers["if-match"], '"e-a"');
+  assert.equal(fake.calls[2].method, "DELETE");
+  assert.equal(fake.calls[2].headers["if-match"], '"e-a"');
+});
+
+test("get은 remoteId href를 GET해 최신 etag와 내용을 주고 404·취소된 리소스는 null, collection 밖 id는 요청 전에 거부", async () => {
+  const path = `${COLLECTION_PATH}imported-b.ics`;
+  const cancelled = ICS_B.replace("SUMMARY:", "STATUS:CANCELLED\r\nSUMMARY:");
+  const { fake, client: icloud } = client([
+    () => new Response(ICS_B, { status: 200, headers: { etag: '"e-b"' } }),
+    () => new Response(null, { status: 404 }),
+    () => new Response(cancelled, { status: 200, headers: { etag: '"e-c"' } }),
+  ]);
+  const found = await icloud.get(COLLECTION, path);
+  assert.equal(found?.remoteId, path);
+  assert.equal(found?.etag, '"e-b"');
+  assert.equal(found?.portalRef, undefined, "portalRef가 없는 가져온 일정도 찾는다");
+  assert.equal(fake.calls[0].method, "GET");
+  assert.equal(fake.calls[0].url, `${COLLECTION}imported-b.ics`);
+  assert.equal(await icloud.get(COLLECTION, path), null);
+  assert.equal(await icloud.get(COLLECTION, path), null);
+  await assert.rejects(icloud.get(COLLECTION, "/1234567890/calendars/other/a.ics"), CalendarProviderError);
+  assert.equal(fake.calls.length, 3);
 });
 
 test("update는 GET etag가 이미 다르면 PUT 없이 충돌, 성공하면 기존 UID로 PUT한다", async () => {

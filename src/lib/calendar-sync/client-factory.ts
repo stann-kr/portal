@@ -1,11 +1,11 @@
 /**
  * 저장된 연결(calendar_connections)에서 provider client를 만든다.
  * - Google: 저장된 access token을 만료 1분 전까지 쓰고, 이후 refresh token으로 갱신해 다시 암호화 저장한다
- *   (refresh token rotation이 오면 새 값을 저장).
+ *   (refresh token rotation이 오면 새 값을 저장). 저장은 읽었던 ciphertext 기준 CAS라 동시 갱신이 새 값을 덮지 않는다.
  * - iCloud: Apple ID + 앱 전용 암호 + discovery로 찾은 calendar home.
  * 테스트는 setCalendarClientFactoryForTests로 가짜 client를 주입한다.
  */
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { DbContext, DrizzleDb } from "@/db/client";
 import { calendarConnections, type ExternalCalendarProvider } from "@/db/schema";
 import { getExternalCalendarEncryptionKey } from "@/lib/external-calendar-key";
@@ -27,7 +27,7 @@ import {
   type GoogleWatchResult,
 } from "./google";
 import { getGoogleCalendarOAuthConfig } from "./oauth-config";
-import type { CalendarProviderClient } from "./types";
+import { CalendarAuthError, type CalendarProviderClient } from "./types";
 
 const ACCESS_TOKEN_SKEW_MS = 60_000;
 
@@ -85,50 +85,82 @@ async function defaultFactory({ ctx, connection }: { ctx: DbContext; connection:
 }
 
 /**
- * 저장된 Google 자격 증명으로 access token을 준다. 만료 1분 전까지 저장된 token을 쓰고,
- * 이후 refresh token으로 갱신해 다시 암호화 저장한다(rotation이 오면 새 값 저장).
+ * 저장된 Google 자격 증명으로 access token을 준다. 만료 1분 전까지 가진 token을 쓴다.
+ * 갱신이 필요하면 먼저 저장값을 다시 읽어 다른 client가 이미 받은 유효한 token을 재사용하고,
+ * 직접 갱신한 결과는 읽었던 ciphertext가 그대로일 때만 저장한다(compare-and-swap). CAS가 실패하면
+ * 다른 client가 더 새 자격 증명(회전된 refresh token)을 저장한 것이므로 덮지 않고 저장값을 따른다.
  */
 async function createGoogleAccessTokenProvider(
   ctx: DbContext,
   connection: StoredCalendarConnection,
   key: Uint8Array,
 ): Promise<GoogleAccessTokenProvider> {
-  let credentials: GoogleConnectionCredentials = await decryptConnectionCredentials({
-    connectionId: connection.id,
-    provider: "GOOGLE",
-    encryptedCredentials: connection.encryptedCredentials,
-    credentialsIv: connection.credentialsIv,
-    key,
-  });
   const db = ctx.db as unknown as DrizzleDb;
-  return async ({ forceRefresh }) => {
-    const now = Date.now();
-    if (!forceRefresh && credentials.accessToken && (credentials.accessTokenExpiresAt ?? 0) > now + ACCESS_TOKEN_SKEW_MS) {
-      return credentials.accessToken;
-    }
+  type Sealed = { encryptedCredentials: string; credentialsIv: string };
+  const decrypt = (sealed: Sealed) =>
+    decryptConnectionCredentials({ connectionId: connection.id, provider: "GOOGLE", ...sealed, key });
+  let sealed: Sealed = { encryptedCredentials: connection.encryptedCredentials, credentialsIv: connection.credentialsIv };
+  let credentials: GoogleConnectionCredentials = await decrypt(sealed);
+
+  const usable = (value: GoogleConnectionCredentials) =>
+    Boolean(value.accessToken) && (value.accessTokenExpiresAt ?? 0) > Date.now() + ACCESS_TOKEN_SKEW_MS;
+
+  /** 저장된 최신 자격 증명으로 바꾼다. 연결이 지워졌으면 인증 오류로 멈춘다. */
+  async function adoptStored(): Promise<void> {
+    const [row] = await db
+      .select({ encryptedCredentials: calendarConnections.encryptedCredentials, credentialsIv: calendarConnections.credentialsIv })
+      .from(calendarConnections)
+      .where(eq(calendarConnections.id, connection.id))
+      .limit(1);
+    if (!row) throw new CalendarAuthError("Google connection was removed");
+    if (row.encryptedCredentials === sealed.encryptedCredentials && row.credentialsIv === sealed.credentialsIv) return;
+    credentials = await decrypt(row);
+    sealed = row;
+  }
+
+  async function refresh(refreshToken: string) {
     const config = getGoogleCalendarOAuthConfig();
     if (!config) throw new CalendarSyncConfigError(CALENDAR_SYNC_MESSAGES.googleNotConfigured);
-    const tokens = await refreshGoogleAccessToken({
-      clientId: config.clientId,
-      clientSecret: config.clientSecret,
-      refreshToken: credentials.refreshToken,
-    });
-    credentials = {
+    return refreshGoogleAccessToken({ clientId: config.clientId, clientSecret: config.clientSecret, refreshToken });
+  }
+
+  return async ({ forceRefresh }) => {
+    if (!forceRefresh && usable(credentials)) return credentials.accessToken!;
+    const rejected = forceRefresh ? credentials.accessToken : undefined;
+    // 다른 client(다른 매핑·요청)가 이미 갱신했으면 그 token을 쓴다.
+    await adoptStored();
+    if (usable(credentials) && credentials.accessToken !== rejected) return credentials.accessToken!;
+    let tokens;
+    try {
+      tokens = await refresh(credentials.refreshToken);
+    } catch (error) {
+      // 그 사이 다른 client가 refresh token을 회전했으면 저장된 새 값으로 한 번 더 시도한다.
+      if (!(error instanceof CalendarAuthError)) throw error;
+      const before = sealed.encryptedCredentials;
+      await adoptStored();
+      if (sealed.encryptedCredentials === before) throw error;
+      if (usable(credentials) && credentials.accessToken !== rejected) return credentials.accessToken!;
+      tokens = await refresh(credentials.refreshToken);
+    }
+    const next: GoogleConnectionCredentials = {
       refreshToken: tokens.refreshToken ?? credentials.refreshToken,
       accessToken: tokens.accessToken,
       accessTokenExpiresAt: tokens.expiresAt.getTime(),
     };
-    const encrypted = await encryptConnectionCredentials({
-      connectionId: connection.id,
-      provider: "GOOGLE",
-      credentials,
-      key,
-    });
-    await db
+    const encrypted = await encryptConnectionCredentials({ connectionId: connection.id, provider: "GOOGLE", credentials: next, key });
+    const swapped = await db
       .update(calendarConnections)
       .set({ ...encrypted, updatedAt: new Date() })
-      .where(eq(calendarConnections.id, connection.id));
-    return credentials.accessToken!;
+      .where(and(eq(calendarConnections.id, connection.id), eq(calendarConnections.encryptedCredentials, sealed.encryptedCredentials)))
+      .returning({ id: calendarConnections.id });
+    if (swapped.length > 0) {
+      credentials = next;
+      sealed = encrypted;
+    } else {
+      // CAS 실패: 더 새 자격 증명이 저장되어 있다. 덮지 않고 따른다. 방금 받은 access token은 이번 요청에만 쓴다.
+      await adoptStored();
+    }
+    return tokens.accessToken;
   };
 }
 

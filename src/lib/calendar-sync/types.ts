@@ -84,6 +84,10 @@ export type CalendarProviderClient = {
    * 증분 결과는 window로 거르지 않는다(이동해 window 밖으로 나간 연결 항목도 보고된다).
    */
   pull(calendarId: string, cursor: string | null, window: PullWindow): Promise<PullResult>;
+  /**
+   * 멱등 create: 같은 portalRef는 결정적 원격 id(Google 클라이언트 지정 id, iCloud 결정적 리소스 이름)로 만든다.
+   * 이미 있으면 새 사본을 만들지 않고 기존 리소스를 이 입력으로 맞춘 결과를 돌려준다(동시 실행 중복 방지).
+   */
   create(calendarId: string, input: RemoteEventInput): Promise<WriteResult>;
   /** 412/etag 불일치 → CalendarConflictError. */
   update(calendarId: string, remoteId: string, input: RemoteEventInput, ifMatchEtag: string): Promise<WriteResult>;
@@ -91,6 +95,11 @@ export type CalendarProviderClient = {
   remove(calendarId: string, remoteId: string, ifMatchEtag: string): Promise<void>;
   /** create 응답 유실 등 복구용: portalRef로 기존 원격 일정을 찾는다. */
   findByPortalRef(calendarId: string, portalRef: string): Promise<RemoteEvent | null>;
+  /**
+   * remoteId로 현재 원격 리소스(최신 etag 포함)를 읽는다. 없거나 취소(삭제)된 일정이면 null.
+   * 412 충돌 복구·전체 재동기화의 존재 확인에 쓴다(portalRef가 없는 가져온 일정도 찾을 수 있다).
+   */
+  get(calendarId: string, remoteId: string): Promise<RemoteEvent | null>;
 };
 
 type CalendarErrorOptions = { status?: number; reason?: string };

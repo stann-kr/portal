@@ -285,6 +285,7 @@ export async function resolveGoogleNotification(
     .limit(1);
   const matches = constantTimeEqual(tokenHash, row?.tokenHash ?? "0".repeat(64));
   if (!row || !matches) return null;
-  if (input.resourceId && input.resourceId !== row.resourceId) return null;
+  // Google은 항상 X-Goog-Resource-ID를 보낸다. 없거나 다르면 거부한다.
+  if (input.resourceId !== row.resourceId) return null;
   return row.mappingId;
 }

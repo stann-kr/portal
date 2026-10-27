@@ -29,6 +29,6 @@ export const config = {
    * route가 channel token으로 직접 검증한다(같은 경로의 start·callback은 계속 보호한다).
    */
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|api/auth|api/calendar-connections/google/notify|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    "/((?!_next/static|_next/image|favicon.ico|api/auth|api/calendar-connections/google/notify(?:/?$)|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };

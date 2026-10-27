@@ -28,6 +28,7 @@ let syncActions: typeof import("@/lib/actions/calendarSync");
 let lessonActions: typeof import("@/lib/actions/lessons");
 let calendarEventActions: typeof import("@/lib/actions/calendarEvents");
 let clientFactory: typeof import("@/lib/calendar-sync/client-factory");
+let googleConnection: typeof import("@/lib/calendar-sync/google-connection");
 let scheduledSync: typeof import("@/lib/calendar-sync/scheduled-sync");
 let notifyRoute: typeof import("@/app/api/calendar-connections/google/notify/route");
 const previousKey = process.env.EXTERNAL_CALENDAR_ENCRYPTION_KEY;
@@ -61,13 +62,14 @@ before(async () => {
   globalThis.fetch = (async () => {
     throw new Error("network is disabled in calendar sync tests");
   }) as typeof fetch;
-  [syncActions, lessonActions, calendarEventActions, clientFactory, scheduledSync, notifyRoute] = await Promise.all([
+  [syncActions, lessonActions, calendarEventActions, clientFactory, scheduledSync, notifyRoute, googleConnection] = await Promise.all([
     import("@/lib/actions/calendarSync"),
     import("@/lib/actions/lessons"),
     import("@/lib/actions/calendarEvents"),
     import("@/lib/calendar-sync/client-factory"),
     import("@/lib/calendar-sync/scheduled-sync"),
     import("@/app/api/calendar-connections/google/notify/route"),
+    import("@/lib/calendar-sync/google-connection"),
   ]);
 });
 
@@ -131,7 +133,7 @@ test("학생은 연결·매핑·동기화 관리자 action을 부를 수 없다"
     ["overview", () => syncActions.getCalendarSyncOverview()],
     ["list", () => syncActions.listRemoteCalendars("any")],
     ["icloud", () => syncActions.connectICloudCalendar({}, form({ appleId: "x@icloud.com", appPassword: APP_PASSWORD }))],
-    ["google", () => syncActions.completeGoogleCalendarConnection({ code: "code", codeVerifier: "verifier" })],
+    ["google", () => googleConnection.completeGoogleCalendarConnection({ code: "code", codeVerifier: "verifier" })],
     ["disconnect", () => syncActions.disconnectCalendarConnection("any")],
     ["save", () => syncActions.saveCalendarMapping({}, form({ connectionId: "c", studentId: "student-1", remoteCalendarId: "cal-1" }))],
     ["remove", () => syncActions.removeCalendarMapping("any")],
@@ -141,6 +143,19 @@ test("학생은 연결·매핑·동기화 관리자 action을 부를 수 없다"
     await assert.rejects(call(), /Admin only/u, `${name}는 관리자 전용`);
   }
   assert.equal((await requireActiveDb().select().from(calendarConnections)).length, 0);
+});
+
+test("Google 연결 완료는 공개 server action으로 노출하지 않고 callback route 전용 module에서만 부른다", { concurrency: false }, async (context) => {
+  await setup(context, createSession("admin-1", "admin"));
+  // "use server" 파일의 export는 모두 공개 action이다. 임의 code·verifier로 callback의 state·만료·관리자 결속을 우회할 수 없어야 한다.
+  assert.equal((syncActions as Record<string, unknown>).completeGoogleCalendarConnection, undefined);
+  assert.equal(typeof googleConnection.completeGoogleCalendarConnection, "function");
+  const { readFileSync } = await import("node:fs");
+  const route = readFileSync("src/app/api/calendar-connections/google/callback/route.ts", "utf8");
+  assert.match(route, /from "@\/lib\/calendar-sync\/google-connection"/u);
+  assert.doesNotMatch(readFileSync("src/lib/calendar-sync/google-connection.ts", "utf8"), /^["']use server["']/mu);
+  activeSession = createSession("student-1", "student");
+  await assert.rejects(googleConnection.completeGoogleCalendarConnection({ code: "code", codeVerifier: "verifier" }), /Admin only/u);
 });
 
 test("학생 조회는 다른 studentId를 무시하고 본인 동기화 항목만, 관리자는 실제 학생만 대상으로 한다", { concurrency: false }, async (context) => {
@@ -362,6 +377,7 @@ function routeByCalendar(calendars: Map<string, FakeCalendar>): CalendarProvider
     update: (calendarId, remoteId, input, etag) => pick(calendarId).update(calendarId, remoteId, input, etag),
     remove: (calendarId, remoteId, etag) => pick(calendarId).remove(calendarId, remoteId, etag),
     findByPortalRef: (calendarId, portalRef) => pick(calendarId).findByPortalRef(calendarId, portalRef),
+    get: (calendarId, remoteId) => pick(calendarId).get(calendarId, remoteId),
   };
 }
 
@@ -431,7 +447,7 @@ test("Google 알림은 검증된 channel의 매핑만 동기화하고 다른 학
     assert.equal(response.status, 404);
     assert.equal(await response.text(), "");
   }
-  const sync = await notifyRoute.POST(notifyRequest({ "X-Goog-Channel-ID": watch1.channelId, "X-Goog-Channel-Token": watch1.token, "X-Goog-Resource-State": "sync" }));
+  const sync = await notifyRoute.POST(notifyRequest({ "X-Goog-Channel-ID": watch1.channelId, "X-Goog-Channel-Token": watch1.token, "X-Goog-Resource-ID": watch1.resourceId, "X-Goog-Resource-State": "sync" }));
   assert.equal(sync.status, 200);
   assert.equal((await db.select().from(calendarEvents)).length, 0, "등록 확인 알림은 동기화하지 않는다");
 

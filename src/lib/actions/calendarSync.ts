@@ -23,17 +23,14 @@ import {
   isCalendarEncryptionConfigured,
   requireCalendarEncryptionKey,
 } from "@/lib/calendar-sync/client-factory";
-import {
-  encryptConnectionCredentials,
-  decryptConnectionCredentials,
-  type ConnectionCredentials,
-} from "@/lib/calendar-sync/credentials";
+import { upsertCalendarConnection } from "@/lib/calendar-sync/connection-store";
+import { decryptConnectionCredentials, type ConnectionCredentials } from "@/lib/calendar-sync/credentials";
 import {
   CALENDAR_SYNC_MESSAGES,
   CalendarSyncConfigError,
   calendarSyncErrorMessage,
 } from "@/lib/calendar-sync/engine";
-import { exchangeGoogleCode, fetchGoogleAccountLabel, revokeGoogleToken } from "@/lib/calendar-sync/google";
+import { revokeGoogleToken } from "@/lib/calendar-sync/google";
 import { getGoogleCalendarOAuthConfig } from "@/lib/calendar-sync/oauth-config";
 import { loadRemoteSeriesItems } from "@/lib/calendar-sync/remote-series-items";
 import { ensureGoogleWatchChannel, stopGoogleWatchChannelsFor } from "@/lib/calendar-sync/push-channels";
@@ -117,9 +114,6 @@ const MESSAGES = {
   iCloudInput: "Apple ID와 앱 전용 암호를 입력해 주세요.",
   iCloudRejected: "Apple ID 또는 앱 전용 암호가 맞지 않습니다. appleid.apple.com에서 만든 앱 전용 암호인지 확인해 주세요.",
   iCloudFailed: "iCloud에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.",
-  googleFailed: "Google 계정을 연결하지 못했습니다. 다시 시도해 주세요.",
-  googleNoRefresh: "Google이 장기 사용 권한을 주지 않았습니다. 연결을 다시 시도해 주세요.",
-  googleScope: "Google 캘린더 권한이 허용되지 않았습니다. 권한을 모두 허용하고 다시 연결해 주세요.",
   calendarListFailed: "원격 캘린더 목록을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.",
   mappingInput: "연결 계정, 학생, 캘린더를 모두 골라 주세요.",
   calendarNotFound: "고른 캘린더를 연결 계정에서 찾을 수 없습니다. 목록을 다시 불러와 주세요.",
@@ -184,35 +178,7 @@ async function upsertConnection<P extends ExternalCalendarProvider>(input: {
   credentials: ConnectionCredentials<P>;
   key: Uint8Array;
 }): Promise<void> {
-  const db = readDb();
-  const [existing] = await db
-    .select({ id: calendarConnections.id })
-    .from(calendarConnections)
-    .where(and(eq(calendarConnections.ownerId, input.ownerId), eq(calendarConnections.provider, input.provider)))
-    .limit(1);
-  const id = existing?.id ?? crypto.randomUUID();
-  const encrypted = await encryptConnectionCredentials({
-    connectionId: id,
-    provider: input.provider,
-    credentials: input.credentials,
-    key: input.key,
-  });
-  const accountLabel = input.accountLabel.slice(0, MAX_LABEL_LENGTH);
-  if (existing) {
-    await db
-      .update(calendarConnections)
-      .set({ ...encrypted, accountLabel, status: "ACTIVE", lastError: null, updatedAt: new Date() })
-      .where(eq(calendarConnections.id, id));
-    return;
-  }
-  await db.insert(calendarConnections).values({
-    id,
-    ownerId: input.ownerId,
-    provider: input.provider,
-    accountLabel,
-    ...encrypted,
-    status: "ACTIVE",
-  });
+  await upsertCalendarConnection(readDb(), input);
 }
 
 // ─── 관리자 설정 ────────────────────────────────────────
@@ -333,47 +299,7 @@ export async function connectICloudCalendar(
   return { success: "iCloud 계정을 연결했습니다. 학생마다 캘린더를 지정해 주세요." };
 }
 
-/** OAuth callback route가 부른다. state·PKCE 검증은 route가 끝낸 뒤 code와 verifier만 넘긴다. */
-export async function completeGoogleCalendarConnection(input: {
-  code: string;
-  codeVerifier: string;
-}): Promise<CalendarSyncFormState> {
-  const session = await requireAdmin();
-  const config = getGoogleCalendarOAuthConfig();
-  if (!config) return { error: CALENDAR_SYNC_MESSAGES.googleNotConfigured };
-  if (!isCalendarEncryptionConfigured()) return { error: CALENDAR_SYNC_MESSAGES.encryptionMissing };
-  const code = typeof input?.code === "string" ? input.code : "";
-  const codeVerifier = typeof input?.codeVerifier === "string" ? input.codeVerifier : "";
-  if (!code || !codeVerifier) return { error: MESSAGES.googleFailed };
-  try {
-    const tokens = await exchangeGoogleCode({
-      clientId: config.clientId,
-      clientSecret: config.clientSecret,
-      redirectUri: config.redirectUri,
-      code,
-      codeVerifier,
-    });
-    if (!tokens.refreshToken) return { error: MESSAGES.googleNoRefresh };
-    const label = await fetchGoogleAccountLabel({ accessToken: tokens.accessToken }).catch(() => null);
-    await upsertConnection({
-      ownerId: session.user.id,
-      provider: "GOOGLE",
-      accountLabel: label?.trim() || "Google 계정",
-      credentials: {
-        refreshToken: tokens.refreshToken,
-        accessToken: tokens.accessToken,
-        accessTokenExpiresAt: tokens.expiresAt.getTime(),
-      },
-      key: requireCalendarEncryptionKey(),
-    });
-  } catch (error) {
-    if (error instanceof CalendarAuthError && error.reason === "insufficient_scope") return { error: MESSAGES.googleScope };
-    if (error instanceof CalendarSyncConfigError) return { error: error.message };
-    return { error: MESSAGES.googleFailed };
-  }
-  revalidatePath(SETTINGS_PATH);
-  return { success: "Google 계정을 연결했습니다. 학생마다 캘린더를 지정해 주세요." };
-}
+// Google 연결 완료는 공개 server action이 아니다. OAuth callback route만 `@/lib/calendar-sync/google-connection`을 부른다.
 
 /** 연결 해제: Google token은 가능하면 revoke, 매핑·연결 기록 삭제. 포털 레슨·일정은 남긴다. */
 export async function disconnectCalendarConnection(

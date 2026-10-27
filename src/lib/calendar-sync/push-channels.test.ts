@@ -149,10 +149,10 @@ test("알림 검증은 channel id·token·resource id가 모두 맞을 때만 �
   await withEnv(HTTPS_ENV, () => ensureGoogleWatchChannels(db.ctx, { now }));
   const watchA = channels.lastWatchFor("cal-a");
   const watchB = channels.lastWatchFor("cal-b");
-  assert.equal(await resolveGoogleNotification(db.ctx, { channelId: watchA.channelId, token: watchA.token }), "map-google-a");
+  assert.equal(await resolveGoogleNotification(db.ctx, { channelId: watchA.channelId, token: watchA.token }), null, "resource id header 없음");
   assert.equal(await resolveGoogleNotification(db.ctx, { channelId: watchA.channelId, token: watchA.token, resourceId: watchA.resourceId }), "map-google-a");
-  assert.equal(await resolveGoogleNotification(db.ctx, { channelId: watchA.channelId, token: watchB.token }), null, "다른 channel token");
-  assert.equal(await resolveGoogleNotification(db.ctx, { channelId: watchA.channelId, token: `${watchA.token}x` }), null);
+  assert.equal(await resolveGoogleNotification(db.ctx, { channelId: watchA.channelId, token: watchB.token, resourceId: watchA.resourceId }), null, "다른 channel token");
+  assert.equal(await resolveGoogleNotification(db.ctx, { channelId: watchA.channelId, token: `${watchA.token}x`, resourceId: watchA.resourceId }), null);
   assert.equal(await resolveGoogleNotification(db.ctx, { channelId: watchA.channelId, token: watchA.token, resourceId: watchB.resourceId }), null);
   assert.equal(await resolveGoogleNotification(db.ctx, { channelId: "unknown", token: watchA.token }), null);
   assert.equal(await resolveGoogleNotification(db.ctx, { channelId: watchA.channelId, token: null }), null);
