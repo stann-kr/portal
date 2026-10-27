@@ -8,8 +8,13 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createDb } from "@/db/client";
+import { createDb, createDbContext } from "@/db/client";
 import { lessons } from "@/db/schema";
+import {
+  markLinksDeletedStatement,
+  schedulePushStudentCalendarChanges,
+} from "@/lib/calendar-sync/sync-runner";
+import { executeDocumentStatementsAtomically } from "@/lib/document-lifecycle-atomic";
 import { and, eq, gte, asc, desc } from "drizzle-orm";
 import {
   requireAdmin,
@@ -131,6 +136,8 @@ export async function createLesson(
     scheduledAt: parsed.value,
   });
 
+  // 연결된 원격 캘린더에 best-effort로 보낸다(실패해도 레슨 생성은 성공).
+  await schedulePushStudentCalendarChanges(studentId);
   revalidateLessonPaths(studentId);
   return { success: true, lesson: { id, scheduledAt: parsed.value.toISOString() } };
 }
@@ -165,6 +172,7 @@ async function writeLessonSchedule(
     .returning({ id: lessons.id });
   if (updated.length === 0) return { error: "레슨을 찾을 수 없습니다. 목록을 새로고침해 주세요." };
 
+  await schedulePushStudentCalendarChanges(studentId);
   revalidateLessonPaths(studentId);
   return { success: true, lesson: { id: lessonId, scheduledAt: parsed.value.toISOString() } };
 }
@@ -198,9 +206,11 @@ export async function moveLesson(
  */
 export async function deleteLesson(lessonId: string, studentId: string) {
   await requireStudentTarget(studentId);
-  const db = createDb();
-  await db
-    .delete(lessons)
-    .where(and(eq(lessons.id, lessonId), eq(lessons.studentId, studentId)));
+  // 원격 사본을 지울 수 있게 link를 DELETED로 남기는 것과 레슨 삭제를 함께 commit한다.
+  await executeDocumentStatementsAtomically(createDbContext(), [
+    markLinksDeletedStatement("LESSON", lessonId, studentId),
+    { query: "DELETE FROM lessons WHERE id = ? AND student_id = ?", params: [lessonId, studentId] },
+  ]);
+  await schedulePushStudentCalendarChanges(studentId);
   revalidateLessonPaths(studentId);
 }

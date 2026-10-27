@@ -317,3 +317,44 @@ test("저장된 calendarHomeUrl이 있으면 discovery를 생략한다", async (
   assert.equal((await icloud.listCalendars()).length, 2);
   assert.equal(fake.calls.length, 1);
 });
+
+test("반복 리소스는 calendar-data 원문을 seriesIcs로, UID를 seriesKey로 준다", async () => {
+  const recurringIcs = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "BEGIN:VEVENT",
+    "UID:series-uid-1",
+    "DTSTART:20261102T100000Z",
+    "DTEND:20261102T110000Z",
+    "RRULE:FREQ=WEEKLY;COUNT=3",
+    "SUMMARY:주간",
+    "END:VEVENT",
+    "BEGIN:VEVENT",
+    "UID:series-uid-1",
+    "RECURRENCE-ID:20261109T100000Z",
+    "DTSTART:20261109T100000Z",
+    "STATUS:CANCELLED",
+    "END:VEVENT",
+    "END:VCALENDAR",
+    "",
+  ].join("\r\n");
+  const query = `<?xml version="1.0"?><multistatus xmlns="DAV:">${dataResponse(`${COLLECTION_PATH}r.ics`, '"e-r"', recurringIcs, true)}${dataResponse(`${COLLECTION_PATH}a.ics`, '"e-a"', ICS_A)}</multistatus>`;
+  const { client: icloud } = client([() => xmlResponse(stateXml("tok-1", "c")), () => xmlResponse(query)]);
+  const { changed } = await icloud.pull(COLLECTION, null, WINDOW);
+  const [series, single] = changed;
+  assert.equal(series.recurring, true);
+  assert.equal(series.seriesKey, "series-uid-1");
+  assert.equal(series.seriesIcs, recurringIcs);
+  assert.equal(single.recurring, false);
+  assert.equal(single.seriesIcs, undefined);
+  const { parseExternalCalendarItems } = await import("../external-calendar");
+  const items = await parseExternalCalendarItems({
+    ics: series.seriesIcs ?? "",
+    subscriptionId: "s",
+    studentId: "s",
+    provider: "ICLOUD",
+    spaceLabel: "학생",
+    window: { start: new Date("2026-10-01T00:00:00Z"), end: new Date("2027-01-01T00:00:00Z") },
+  });
+  assert.deepEqual(items.map((item) => item.date.toISOString()), ["2026-11-02T10:00:00.000Z", "2026-11-16T10:00:00.000Z"]);
+});

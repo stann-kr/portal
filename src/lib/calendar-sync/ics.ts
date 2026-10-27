@@ -8,6 +8,7 @@ import {
   isValidTimeZone,
   normalizeRemoteEventInput,
   sha256Hex,
+  wallTimeInZone,
   zonedWallTimeToDate,
   type RemoteEvent,
   type RemoteEventInput,
@@ -217,6 +218,8 @@ export function parseIcsEvent(
   const lastModified = resolveTime(master.getFirstProperty("last-modified"), "UTC");
   const portalRef = stringProperty(master, PORTAL_REF_PROPERTY.toLowerCase()).trim();
   const status = stringProperty(master, "status").toUpperCase() === "CANCELLED" ? "cancelled" : "confirmed";
+  const recurring = isRecurringSet(master, events);
+  const uid = stringProperty(master, "uid").trim();
   return {
     remoteId: meta.remoteId,
     etag: meta.etag,
@@ -229,7 +232,7 @@ export function parseIcsEvent(
     status,
     ...(lastModified ? { updatedAt: lastModified.date } : {}),
     ...(portalRef ? { portalRef } : {}),
-    recurring: isRecurringSet(master, events),
+    ...(recurring ? { recurring: true, seriesIcs: normalizeIcsLines(ics), ...(uid ? { seriesKey: uid } : {}) } : { recurring: false }),
   };
 }
 
@@ -272,4 +275,136 @@ export function patchIcsEvent(existingIcs: string, rawInput: RemoteEventInput, o
   const sequence = master.getFirstPropertyValue("sequence");
   master.updatePropertyWithValue("sequence", (typeof sequence === "number" && Number.isFinite(sequence) ? sequence : 0) + 1);
   return normalizeIcsLines(calendar.toString());
+}
+
+// ── 반복 시리즈 합성(Google → VCALENDAR) ─────────────────────
+
+/** 시리즈 VEVENT의 시간 값. dateTime은 timeZone(IANA)이 있으면 TZID+VTIMEZONE으로, 없으면 UTC로 쓴다. */
+export type SeriesTime = { kind: "date"; date: string } | { kind: "dateTime"; instant: Date; timeZone?: string };
+
+export type SeriesComponentInput = {
+  uid: string;
+  start: SeriesTime;
+  end?: SeriesTime;
+  /** master만: RRULE/EXRULE/RDATE/EXDATE content line 원문. 그 밖의 줄은 버린다. */
+  recurrenceLines?: string[];
+  /** 예외만: 원래 회차 시작. */
+  recurrenceId?: SeriesTime;
+  status?: "confirmed" | "cancelled";
+  summary?: string;
+  description?: string;
+  dtstamp?: Date;
+};
+
+const RECURRENCE_LINE = /^(RRULE|EXRULE|RDATE|EXDATE)[;:]/iu;
+const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/u;
+
+function formatWall(date: Date, timeZone: string): string {
+  const wall = wallTimeInZone(date, timeZone);
+  return `${pad(wall.year, 4)}${pad(wall.month)}${pad(wall.day)}T${pad(wall.hour)}${pad(wall.minute)}${pad(wall.second)}`;
+}
+
+function offsetMinutes(date: Date, timeZone: string): number {
+  const wall = wallTimeInZone(date, timeZone);
+  return Math.round((Date.UTC(wall.year, wall.month - 1, wall.day, wall.hour, wall.minute, wall.second) - Math.floor(date.getTime() / 1_000) * 1_000) / 60_000);
+}
+
+function formatOffset(minutes: number): string {
+  const sign = minutes < 0 ? "-" : "+";
+  const absolute = Math.abs(minutes);
+  return `${sign}${pad(Math.floor(absolute / 60))}${pad(absolute % 60)}`;
+}
+
+const vtimezoneCache = new Map<string, string[]>();
+
+/**
+ * Intl 시간대 정보로 VTIMEZONE을 만든다(ical.js에는 tz database가 없다).
+ * 고정 offset(예: Asia/Seoul)은 STANDARD 하나, DST 시간대는 [fromYear, toYear] 구간의 실제 전환을 개별 observance로 쓴다.
+ */
+export function buildVTimezoneLines(timeZone: string, fromYear: number, toYear: number): string[] {
+  const key = `${timeZone}|${fromYear}|${toYear}`;
+  const cached = vtimezoneCache.get(key);
+  if (cached) return cached;
+  const rangeStart = Date.UTC(fromYear, 0, 1);
+  const rangeEnd = Date.UTC(toYear + 1, 0, 1);
+  const week = 7 * 86_400_000;
+  const initial = offsetMinutes(new Date(rangeStart), timeZone);
+  const transitions: Array<{ at: number; from: number; to: number }> = [];
+  let previousTime = rangeStart;
+  let previousOffset = initial;
+  for (let time = rangeStart + week; time <= rangeEnd; time += week) {
+    const offset = offsetMinutes(new Date(time), timeZone);
+    if (offset !== previousOffset) {
+      let low = previousTime;
+      let high = time;
+      while (high - low > 60_000) {
+        const middle = low + Math.floor((high - low) / 2 / 60_000) * 60_000;
+        if (offsetMinutes(new Date(middle), timeZone) === previousOffset) low = middle;
+        else high = middle;
+      }
+      transitions.push({ at: high, from: previousOffset, to: offset });
+      previousOffset = offset;
+    }
+    previousTime = time;
+  }
+  const minimum = Math.min(initial, ...transitions.map((transition) => transition.to));
+  const lines = ["BEGIN:VTIMEZONE", `TZID:${timeZone}`];
+  const kindOf = (offset: number) => (offset > minimum ? "DAYLIGHT" : "STANDARD");
+  lines.push(`BEGIN:${kindOf(initial)}`, "DTSTART:19700101T000000", `TZOFFSETFROM:${formatOffset(initial)}`, `TZOFFSETTO:${formatOffset(initial)}`, `END:${kindOf(initial)}`);
+  for (const transition of transitions) {
+    const kind = kindOf(transition.to);
+    const localStart = formatIcsUtc(new Date(transition.at + transition.from * 60_000)).slice(0, 15);
+    lines.push(`BEGIN:${kind}`, `DTSTART:${localStart}`, `TZOFFSETFROM:${formatOffset(transition.from)}`, `TZOFFSETTO:${formatOffset(transition.to)}`, `END:${kind}`);
+  }
+  lines.push("END:VTIMEZONE");
+  vtimezoneCache.set(key, lines);
+  return lines;
+}
+
+function seriesTimeLine(name: string, time: SeriesTime, timeZones: Set<string>): string {
+  if (time.kind === "date") {
+    if (!DATE_ONLY_PATTERN.test(time.date)) throw new CalendarProviderError("Series date is invalid");
+    return `${name};VALUE=DATE:${time.date.replaceAll("-", "")}`;
+  }
+  if (!Number.isFinite(time.instant.getTime())) throw new CalendarProviderError("Series time is invalid");
+  if (time.timeZone && time.timeZone !== "UTC" && time.timeZone !== "Etc/UTC" && /^[A-Za-z0-9_+\-/]+$/u.test(time.timeZone) && isValidTimeZone(time.timeZone)) {
+    timeZones.add(time.timeZone);
+    return `${name};TZID=${time.timeZone}:${formatWall(time.instant, time.timeZone)}`;
+  }
+  return `${name}:${formatIcsUtc(time.instant)}`;
+}
+
+/** 반복 시리즈 구성 요소(master 또는 RECURRENCE-ID 예외)를 독립 VCALENDAR로 만든다. 같은 UID끼리 합쳐 펼칠 수 있다. */
+export function buildSeriesIcs(input: SeriesComponentInput, options: { now?: Date } = {}): string {
+  const uid = assertUid(input.uid);
+  const now = options.now ?? new Date();
+  const timeZones = new Set<string>();
+  const body = [
+    "BEGIN:VEVENT",
+    `UID:${escapeIcsText(uid)}`,
+    `DTSTAMP:${formatIcsUtc(input.dtstamp && Number.isFinite(input.dtstamp.getTime()) ? input.dtstamp : now)}`,
+  ];
+  if (input.recurrenceId) body.push(seriesTimeLine("RECURRENCE-ID", input.recurrenceId, timeZones));
+  body.push(seriesTimeLine("DTSTART", input.start, timeZones));
+  if (input.end) body.push(seriesTimeLine("DTEND", input.end, timeZones));
+  for (const raw of input.recurrenceLines ?? []) {
+    const line = String(raw).trim();
+    if (!RECURRENCE_LINE.test(line) || /[\u0000-\u001F\u007F]/u.test(line)) continue;
+    const tzid = /;TZID=([^;:]+)/iu.exec(line)?.[1];
+    if (tzid && isValidTimeZone(tzid)) timeZones.add(tzid);
+    body.push(line);
+  }
+  if (input.status === "cancelled") body.push("STATUS:CANCELLED");
+  body.push(`SUMMARY:${escapeIcsText(input.summary ?? "")}`);
+  if (input.description) body.push(`DESCRIPTION:${escapeIcsText(input.description)}`);
+  body.push("END:VEVENT");
+
+  const years = [input.start, input.recurrenceId]
+    .filter((time): time is SeriesTime => Boolean(time))
+    .map((time) => (time.kind === "date" ? Number(time.date.slice(0, 4)) : time.instant.getUTCFullYear()));
+  const fromYear = Math.min(...years) - 1;
+  const toYear = Math.max(Math.max(...years), now.getUTCFullYear()) + 3;
+  const zones = [...timeZones].sort().flatMap((zone) => buildVTimezoneLines(zone, Math.max(fromYear, toYear - 20), toYear));
+  const lines = ["BEGIN:VCALENDAR", "VERSION:2.0", `PRODID:${ICS_PRODID}`, "CALSCALE:GREGORIAN", ...zones, ...body, "END:VCALENDAR"];
+  return `${lines.map(foldIcsLine).join("\r\n")}\r\n`;
 }

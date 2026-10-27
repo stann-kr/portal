@@ -7,7 +7,8 @@
  *
  * 동기화 방식:
  * - `singleEvents=false`: 반복 일정은 master(`recurrence[]`) + 예외 instance(`recurringEventId`)로만 온다.
- *   둘 다 `recurring: true`로 표시하며 engine은 읽기 전용으로 다룬다. 확장 instance를 만들지 않으므로
+ *   둘 다 `recurring: true` + `seriesIcs`(합성 VCALENDAR, timeZone은 TZID+Intl 기반 VTIMEZONE) + `seriesKey`(iCalUID)로
+ *   표시하며 engine은 읽기 전용으로 다룬다. 취소된 예외는 changed에 cancelled로, 취소된 master는 deletedRemoteIds로 온다. 확장 instance를 만들지 않으므로
  *   syncToken과 같은 parameter 조합을 그대로 유지할 수 있다.
  * - 초기(cursor null): `timeMin`/`timeMax` window + `showDeleted=true` + `singleEvents=false`를 page 끝까지 읽고
  *   마지막 page의 `nextSyncToken`을 cursor로 저장한다.
@@ -40,6 +41,7 @@ import {
   type RemoteEventInput,
   type WriteResult,
 } from "./types";
+import { buildSeriesIcs, type SeriesTime } from "./ics";
 
 export const GOOGLE_CALENDAR_SCOPES = [
   "https://www.googleapis.com/auth/calendar.events",
@@ -313,19 +315,73 @@ function readEventTime(value: unknown): { date: Date; allDay: boolean; dateOnly?
   return null;
 }
 
-/** Google event resource → RemoteEvent. 시간 정보가 없는 비취소 항목은 null. */
+function seriesTime(value: unknown): SeriesTime | null {
+  const time = obj(value);
+  if (!time) return null;
+  if (typeof time.dateTime === "string") {
+    const ms = Date.parse(time.dateTime);
+    if (!Number.isFinite(ms)) return null;
+    return { kind: "dateTime", instant: new Date(ms), ...(typeof time.timeZone === "string" ? { timeZone: time.timeZone } : {}) };
+  }
+  if (typeof time.date === "string") return { kind: "date", date: time.date };
+  return null;
+}
+
+/** 시리즈 key(iCalUID). 취소된 예외처럼 iCalUID가 빠지면 Google 기본 형식 `<masterId>@google.com`으로 대신한다. */
+function googleSeriesKey(raw: Record<string, unknown>): string | null {
+  const iCalUID = str(raw.iCalUID);
+  if (iCalUID) return iCalUID;
+  const masterId = str(raw.recurringEventId) ?? (Array.isArray(raw.recurrence) ? str(raw.id) : undefined);
+  return masterId ? `${masterId}@google.com` : null;
+}
+
+function googleSeries(raw: Record<string, unknown>, cancelled: boolean): { seriesIcs: string; seriesKey: string } | null {
+  const seriesKey = googleSeriesKey(raw);
+  const isException = typeof raw.recurringEventId === "string";
+  const recurrenceId = isException ? seriesTime(raw.originalStartTime) : null;
+  const start = seriesTime(raw.start) ?? recurrenceId;
+  if (!seriesKey || !start || (isException && !recurrenceId)) return null;
+  const end = seriesTime(raw.end) ?? undefined;
+  const updated = str(raw.updated);
+  try {
+    const seriesIcs = buildSeriesIcs({
+      uid: seriesKey,
+      start,
+      ...(end ? { end } : {}),
+      ...(recurrenceId ? { recurrenceId } : {}),
+      ...(!isException && Array.isArray(raw.recurrence) ? { recurrenceLines: raw.recurrence.filter((line): line is string => typeof line === "string") } : {}),
+      status: cancelled ? "cancelled" : "confirmed",
+      summary: str(raw.summary) ?? "",
+      description: str(raw.description) ?? "",
+      ...(updated && Number.isFinite(Date.parse(updated)) ? { dtstamp: new Date(updated) } : {}),
+    });
+    return { seriesIcs, seriesKey };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Google event resource → RemoteEvent. 시간 정보가 없는 비취소 항목은 null.
+ * 반복 master·예외는 `seriesIcs`(합성 VCALENDAR)와 `seriesKey`(iCalUID)를 함께 준다.
+ * 취소된 예외 instance(cancelled + recurringEventId)는 originalStartTime을 시간으로 쓰는 cancelled 항목이 된다.
+ */
 export function mapGoogleEvent(raw: Record<string, unknown>): RemoteEvent | null {
   const remoteId = str(raw.id);
-  const etag = str(raw.etag);
-  if (!remoteId || !etag) return null;
-  const status = raw.status === "cancelled" ? "cancelled" : "confirmed";
-  const start = readEventTime(raw.start);
+  if (!remoteId) return null;
+  const cancelled = raw.status === "cancelled";
+  const isException = typeof raw.recurringEventId === "string";
+  if (cancelled && !isException) return null;
+  const etag = str(raw.etag) ?? "";
+  if (!etag && !cancelled) return null;
+  const start = readEventTime(raw.start) ?? (cancelled ? readEventTime(raw.originalStartTime) : null);
   const end = readEventTime(raw.end) ?? start;
   if (!start || !end) return null;
   const updated = str(raw.updated);
   const updatedMs = updated ? Date.parse(updated) : Number.NaN;
   const portalRef = str(obj(obj(raw.extendedProperties)?.private)?.portalRef);
-  const recurring = Array.isArray(raw.recurrence) || typeof raw.recurringEventId === "string";
+  const recurring = Array.isArray(raw.recurrence) || isException;
+  const series = recurring ? googleSeries(raw, cancelled) : null;
   return {
     remoteId,
     etag,
@@ -335,10 +391,11 @@ export function mapGoogleEvent(raw: Record<string, unknown>): RemoteEvent | null
     end: end.date,
     allDay: start.allDay,
     ...(start.allDay ? { allDayStartDate: start.dateOnly, allDayEndDate: end.dateOnly } : {}),
-    status,
+    status: cancelled ? "cancelled" : "confirmed",
     ...(Number.isFinite(updatedMs) ? { updatedAt: new Date(updatedMs) } : {}),
     ...(portalRef ? { portalRef } : {}),
     recurring,
+    ...(series ?? {}),
   };
 }
 
@@ -504,7 +561,9 @@ export function createGoogleCalendarClient(options: {
           const id = str(raw.id);
           if (!id) continue;
           if (raw.status === "cancelled") {
-            state.set(id, "deleted");
+            // 취소된 반복 예외는 펼칠 때 그 회차를 빼야 하므로 changed(cancelled + seriesIcs)로 보고한다.
+            const cancelledException = typeof raw.recurringEventId === "string" ? mapGoogleEvent(raw) : null;
+            state.set(id, cancelledException ?? "deleted");
             continue;
           }
           if (typeof raw.eventType === "string" && SKIPPED_EVENT_TYPES.has(raw.eventType)) continue;

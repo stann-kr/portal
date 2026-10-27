@@ -6,11 +6,16 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createDb } from "@/db/client";
+import { createDb, createDbContext } from "@/db/client";
 import { calendarEvents } from "@/db/schema";
 import type { CalendarEventType } from "@/db/schema";
 import { and, eq, gte, lte } from "drizzle-orm";
 import { requireAuth, requireStudentOwnerOrAdmin } from "@/lib/auth-guard";
+import {
+  markLinksDeletedStatement,
+  schedulePushStudentCalendarChanges,
+} from "@/lib/calendar-sync/sync-runner";
+import { executeDocumentStatementsAtomically } from "@/lib/document-lifecycle-atomic";
 import {
   parseCalendarEventCreateInput,
   parseCalendarEventUpdateInput,
@@ -83,6 +88,8 @@ export async function createCalendarEvent(
     endTime: parsed.value.endTime ?? undefined,
   });
 
+  // 일정 주인 학생에게 원격 캘린더 매핑이 있으면 best-effort로 보낸다(실패해도 생성은 성공).
+  await schedulePushStudentCalendarChanges(session.user.id!);
   revalidatePath("/dashboard/calendar");
   revalidatePath("/dashboard/student");
   return {
@@ -142,6 +149,7 @@ async function writeOwnCalendarEventPatch(
       ),
     );
 
+  await schedulePushStudentCalendarChanges(userId);
   revalidatePath("/dashboard/calendar");
   revalidatePath("/dashboard/student");
   const next = { ...current, ...parsed.value };
@@ -238,17 +246,14 @@ export async function updateCalendarEventDetails(
  */
 export async function deleteCalendarEvent(eventId: string) {
   const session = await requireAuth();
-  const db = createDb();
+  const userId = session.user.id!;
+  // 원격 사본을 지울 수 있게 link를 DELETED로 남기는 것과 일정 삭제를 함께 commit한다.
+  await executeDocumentStatementsAtomically(createDbContext(), [
+    markLinksDeletedStatement("EVENT", eventId, userId),
+    { query: "DELETE FROM calendar_events WHERE id = ? AND user_id = ?", params: [eventId, userId] },
+  ]);
 
-  await db
-    .delete(calendarEvents)
-    .where(
-      and(
-        eq(calendarEvents.id, eventId),
-        eq(calendarEvents.userId, session.user.id!),
-      ),
-    );
-
+  await schedulePushStudentCalendarChanges(userId);
   revalidatePath("/dashboard/calendar");
   revalidatePath("/dashboard/student");
 }

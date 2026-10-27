@@ -60,6 +60,7 @@ export type RemoteEvent = {
 };
 
 export type PullResult = {
+  /** 취소되지 않은 일정. 예외: 취소된 반복 예외 회차는 status "cancelled" + seriesIcs/seriesKey로 여기 온다(취소된 master·단일 일정은 deletedRemoteIds). */
   changed: RemoteEvent[];
   deletedRemoteIds: string[];
   /** 다음 pull에 넘길 cursor. `fullResync: true`면 항상 "". */
@@ -219,9 +220,10 @@ export function isValidTimeZone(timeZone: string): boolean {
   }
 }
 
-type WallTime = { year: number; month: number; day: number; hour: number; minute: number; second: number };
+export type WallTime = { year: number; month: number; day: number; hour: number; minute: number; second: number };
 
-function wallTimeInZone(date: Date, timeZone: string): WallTime {
+/** Date를 IANA 시간대의 벽시계 시각(초 단위)으로 나눈다. */
+export function wallTimeInZone(date: Date, timeZone: string): WallTime {
   const parts: Record<string, number> = {};
   for (const part of zoneFormatter(timeZone).formatToParts(date)) {
     if (part.type !== "literal") parts[part.type] = Number(part.value);

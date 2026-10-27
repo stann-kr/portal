@@ -345,3 +345,127 @@ test("Google 응답의 redirect는 따라가지 않는다", async () => {
   await assert.rejects(client.listCalendars(), CalendarProviderError);
   assert.equal(fake.calls.length, 1);
 });
+
+// ── 반복 시리즈 합성 ───────────────────────────────────────
+
+function mergeSeries(parts: string[]): string {
+  const zones = new Map<string, string>();
+  const events: string[] = [];
+  for (const part of parts) {
+    const unfolded = part.replace(/\r\n[ \t]/gu, "");
+    for (const match of unfolded.matchAll(/BEGIN:VTIMEZONE\r\nTZID:([^\r\n]+)[\s\S]*?END:VTIMEZONE\r\n/gu)) zones.set(match[1], match[0]);
+    for (const match of unfolded.matchAll(/BEGIN:VEVENT\r\n[\s\S]*?END:VEVENT\r\n/gu)) events.push(match[0]);
+  }
+  return `BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//test//EN\r\n${[...zones.values()].join("")}${events.join("")}END:VCALENDAR\r\n`;
+}
+
+async function expand(ics: string, window = { start: new Date("2026-10-01T00:00:00Z"), end: new Date("2027-01-01T00:00:00Z") }) {
+  const { parseExternalCalendarItems } = await import("../external-calendar");
+  return parseExternalCalendarItems({ ics, subscriptionId: "sub", studentId: "s", provider: "GOOGLE", spaceLabel: "학생", window });
+}
+
+test("반복 master·수정 예외·취소 예외를 seriesIcs로 합성하면 펼칠 때 취소 회차는 빠지고 수정 회차가 반영된다", async () => {
+  // 매주 월요일 08:00 KST(= 일요일 23:00Z) — BYDAY가 UTC 날짜 경계를 넘어도 TZID로 정확해야 한다.
+  const master = {
+    id: "wk1",
+    etag: '"m1"',
+    status: "confirmed",
+    iCalUID: "wk1@google.com",
+    summary: "주간 레슨",
+    description: "반복, 설명; 포함",
+    updated: "2026-10-20T00:00:00.000Z",
+    recurrence: ["RRULE:FREQ=WEEKLY;BYDAY=MO;COUNT=4", "EXDATE;TZID=Asia/Seoul:20261123T080000"],
+    start: { dateTime: "2026-11-02T08:00:00+09:00", timeZone: "Asia/Seoul" },
+    end: { dateTime: "2026-11-02T09:00:00+09:00", timeZone: "Asia/Seoul" },
+  };
+  const moved = {
+    id: "wk1_20261108T230000Z",
+    etag: '"x1"',
+    status: "confirmed",
+    iCalUID: "wk1@google.com",
+    recurringEventId: "wk1",
+    summary: "이동된 레슨",
+    originalStartTime: { dateTime: "2026-11-09T08:00:00+09:00", timeZone: "Asia/Seoul" },
+    start: { dateTime: "2026-11-09T10:00:00+09:00", timeZone: "Asia/Seoul" },
+    end: { dateTime: "2026-11-09T11:00:00+09:00", timeZone: "Asia/Seoul" },
+  };
+  // 증분 sync의 취소 예외는 iCalUID·etag 없이 올 수 있다.
+  const cancelled = {
+    id: "wk1_20261115T230000Z",
+    status: "cancelled",
+    recurringEventId: "wk1",
+    originalStartTime: { dateTime: "2026-11-16T08:00:00+09:00", timeZone: "Asia/Seoul" },
+  };
+  const cancelledMaster = { id: "gone-series", status: "cancelled" };
+  const fake = createFakeFetch([() => jsonResponse({ items: [master, moved, cancelled, cancelledMaster], nextSyncToken: "S" })]);
+  const client = createGoogleCalendarClient({ ...tokenProvider(), fetchImpl: fake.fetchImpl });
+  const result = await client.pull(CAL, null, WINDOW);
+
+  assert.deepEqual(result.deletedRemoteIds, ["gone-series"]);
+  assert.deepEqual(result.changed.map((event) => [event.remoteId, event.status, event.seriesKey, event.recurring]), [
+    ["wk1", "confirmed", "wk1@google.com", true],
+    ["wk1_20261108T230000Z", "confirmed", "wk1@google.com", true],
+    ["wk1_20261115T230000Z", "cancelled", "wk1@google.com", true],
+  ]);
+  const cancelledEvent = result.changed[2];
+  assert.equal(cancelledEvent.start.toISOString(), "2026-11-15T23:00:00.000Z");
+  assert.match(cancelledEvent.seriesIcs ?? "", /RECURRENCE-ID;TZID=Asia\/Seoul:20261116T080000\r\n/u);
+  assert.match(cancelledEvent.seriesIcs ?? "", /STATUS:CANCELLED/u);
+  const masterIcs = result.changed[0].seriesIcs ?? "";
+  assert.match(masterIcs, /DTSTART;TZID=Asia\/Seoul:20261102T080000\r\n/u);
+  assert.match(masterIcs, /RRULE:FREQ=WEEKLY;BYDAY=MO;COUNT=4\r\n/u);
+  assert.match(masterIcs, /EXDATE;TZID=Asia\/Seoul:20261123T080000\r\n/u);
+  assert.match(masterIcs, /BEGIN:VTIMEZONE\r\nTZID:Asia\/Seoul\r\n/u);
+
+  const items = await expand(mergeSeries(result.changed.map((event) => event.seriesIcs ?? "")));
+  assert.deepEqual(items.map((item) => [item.date.toISOString(), item.title]), [
+    ["2026-11-01T23:00:00.000Z", "주간 레슨"],
+    ["2026-11-09T01:00:00.000Z", "이동된 레슨"],
+  ]);
+});
+
+test("DST 시간대 반복은 합성 VTIMEZONE으로 전환 뒤에도 같은 현지 시각을 유지한다", async () => {
+  const fake = createFakeFetch([
+    () =>
+      jsonResponse({
+        items: [
+          {
+            id: "ny",
+            etag: '"n"',
+            status: "confirmed",
+            iCalUID: "ny@google.com",
+            summary: "NY",
+            recurrence: ["RRULE:FREQ=WEEKLY;COUNT=2"],
+            start: { dateTime: "2026-10-26T09:00:00-04:00", timeZone: "America/New_York" },
+            end: { dateTime: "2026-10-26T10:00:00-04:00", timeZone: "America/New_York" },
+          },
+        ],
+        nextSyncToken: "S",
+      }),
+  ]);
+  const client = createGoogleCalendarClient({ ...tokenProvider(), fetchImpl: fake.fetchImpl });
+  const [event] = (await client.pull(CAL, null, WINDOW)).changed;
+  const items = await expand(event.seriesIcs ?? "");
+  assert.deepEqual(items.map((item) => item.date.toISOString()), ["2026-10-26T13:00:00.000Z", "2026-11-02T14:00:00.000Z"]);
+});
+
+test("종일 반복 master는 VALUE=DATE로 합성한다", async () => {
+  const fake = createFakeFetch([
+    () =>
+      jsonResponse({
+        items: [
+          { id: "ad", etag: '"a"', status: "confirmed", iCalUID: "ad@google.com", summary: "종일", recurrence: ["RRULE:FREQ=DAILY;COUNT=2"], start: { date: "2026-11-05" }, end: { date: "2026-11-06" } },
+          { id: "ad_20261106", status: "cancelled", recurringEventId: "ad", originalStartTime: { date: "2026-11-06" } },
+        ],
+        nextSyncToken: "S",
+      }),
+  ]);
+  const client = createGoogleCalendarClient({ ...tokenProvider(), fetchImpl: fake.fetchImpl });
+  const { changed } = await client.pull(CAL, null, WINDOW);
+  assert.match(changed[0].seriesIcs ?? "", /DTSTART;VALUE=DATE:20261105\r\n/u);
+  assert.match(changed[1].seriesIcs ?? "", /RECURRENCE-ID;VALUE=DATE:20261106\r\n/u);
+  assert.equal(changed[1].seriesKey, "ad@google.com");
+  const items = await expand(mergeSeries(changed.map((event) => event.seriesIcs ?? "")));
+  assert.equal(items.length, 1);
+  assert.equal(items[0].metadata?.allDayStartDate, "2026-11-05");
+});

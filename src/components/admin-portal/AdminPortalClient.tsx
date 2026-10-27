@@ -12,10 +12,8 @@ import type {
   AdminQueueThread,
   PendingFeedbackAssignment,
 } from "@/lib/admin-work-queue";
-import {
-  getExternalUnifiedItemsForStudent,
-  getUnifiedItemsForStudent,
-} from "@/lib/actions/unifiedItems";
+import { getUnifiedItemsForStudent } from "@/lib/actions/unifiedItems";
+import { syncAndGetExternalItems } from "@/lib/actions/calendarSync";
 import { getUnifiedItemSpaceLabel } from "@/lib/unified-item-normalization";
 import { PortalShell } from "@/components/ui/portal-shell";
 import type { PortalLocation, PortalSection } from "@/lib/portal-location";
@@ -111,16 +109,24 @@ export function AdminPortalClient({
     });
   }, [students]);
 
-  // 내부 일정이 준비된 뒤에만 외부 provider를 별도 요청해 느린 feed가 첫 표시를 막지 않는다.
+  // 내부 일정이 준비된 뒤에만 외부 provider·캘린더 동기화를 별도 요청해 느린 feed가 첫 표시를 막지 않는다.
   useEffect(() => {
     if (!calendarLoadedStudentId || calendarLoadedStudentId !== selectedStudentId) return;
     const requestId = calendarRequestRef.current;
     let cancelled = false;
-    void getExternalUnifiedItemsForStudent(calendarLoadedStudentId).then((externalItems) => {
-      if (!cancelled && calendarRequestRef.current === requestId) {
+    const studentId = calendarLoadedStudentId;
+    const isCurrent = () => !cancelled && calendarRequestRef.current === requestId;
+    void (async () => {
+      // 동기화(throttle·lease) 뒤 읽기 전용 외부 항목을 받고, 동기화가 포털 레슨·일정을 바꿨으면 내부 항목도 다시 받는다.
+      const { items: externalItems, localChanged } = await syncAndGetExternalItems({ studentId });
+      if (!isCurrent()) return;
+      if (!localChanged) {
         setCalendarItems((current) => upsertUnifiedItems(current, externalItems));
+        return;
       }
-    }).catch(() => undefined);
+      const internalItems = await getUnifiedItemsForStudent(studentId);
+      if (isCurrent()) setCalendarItems(upsertUnifiedItems(internalItems, externalItems));
+    })().catch(() => undefined);
     return () => {
       cancelled = true;
     };

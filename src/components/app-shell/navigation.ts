@@ -13,9 +13,13 @@ import {
   SlidersVertical,
   Users,
 } from "lucide-react";
+import { CALENDAR_SYNC_ADMIN_PATH } from "@/lib/calendar-sync/google-oauth-result";
 import { isCurriculumVisible } from "@/lib/curriculum-visibility";
 
 export type AppRole = "admin" | "student";
+
+/** 운영 도구. 캘린더 동기화 설정(CALENDAR_SYNC_ADMIN_PATH)은 운영 도구에서 들어가는 하위 화면이다. */
+const ADMIN_OPERATIONS_HREF = "/dashboard/admin/operations";
 
 /** 학생·관리자가 같은 주소로 여는 공용 가이드. */
 const GUIDE_HREF = "/dashboard/guide";
@@ -54,7 +58,7 @@ export const APP_NAV_ITEMS: Record<AppRole, readonly AppNavItem[]> = {
     { id: "guide", label: "가이드", href: GUIDE_HREF, Icon: BookOpenText },
     { id: "qna", label: "Q&A", href: "/dashboard/qna", Icon: CircleHelp },
     { id: "community", label: "커뮤니티", href: "/community", Icon: MessageSquare },
-    { id: "operations", label: "운영 도구", href: "/dashboard/admin/operations", Icon: SlidersVertical },
+    { id: "operations", label: "운영 도구", href: ADMIN_OPERATIONS_HREF, Icon: SlidersVertical },
   ],
 };
 
@@ -83,7 +87,11 @@ export function resolveActiveNavItem(role: AppRole, { pathname, searchParams }: 
       return "work";
     }
     if (pathname.startsWith("/dashboard/admin/students") || pathname.startsWith("/dashboard/notes")) return "students";
-    if (pathname.startsWith("/dashboard/admin/operations") || pathname.startsWith("/dashboard/admin/categories")) {
+    if (
+      pathname.startsWith(ADMIN_OPERATIONS_HREF) ||
+      pathname.startsWith("/dashboard/admin/categories") ||
+      pathname.startsWith(CALENDAR_SYNC_ADMIN_PATH)
+    ) {
       return "operations";
     }
   }
@@ -175,6 +183,9 @@ export function resolveMobileTopBar(role: AppRole, location: Location): MobileTo
   if (pathname === "/dashboard/admin/students/new") return { title: "수강생 추가", back: { href: ADMIN_STUDENTS_HREF, label: "학생 목록으로" } };
   if (pathname.startsWith("/dashboard/admin/students/") || pathname.startsWith("/dashboard/notes")) {
     return { title: "학생", back: { href: ADMIN_STUDENTS_HREF, label: "학생 목록으로" } };
+  }
+  if (pathname.startsWith(CALENDAR_SYNC_ADMIN_PATH)) {
+    return { title: "캘린더 동기화", back: { href: ADMIN_OPERATIONS_HREF, label: "운영 도구로 돌아가기" } };
   }
   if (pathname.startsWith("/dashboard/admin/categories")) {
     return { title: "커뮤니티 채널", back: { href: "/community", label: "커뮤니티로 돌아가기" } };

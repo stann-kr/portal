@@ -187,6 +187,9 @@ mock.module("@/lib/actions/session", { namedExports: {
   loginWithCredentials: (...args: Parameters<typeof login>) => login(...args),
   logoutCurrentUser: async () => {},
 } });
+mock.module("@/lib/actions/calendarSync", { namedExports: {
+  syncAndGetExternalItems: async () => ({ items: [], localChanged: false }),
+} });
 mock.module("@/lib/actions/unifiedItems", { namedExports: {
   getUnifiedItemsForStudent: (...args: Parameters<typeof loadStudentCalendar>) => loadStudentCalendar(...args),
   getExternalUnifiedItemsForStudent: async () => [],

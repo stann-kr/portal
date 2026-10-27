@@ -29,6 +29,17 @@ test("관리자 사이드바는 학생별 화면을 학생 메뉴로, 분류 관
   assert.equal(resolveActiveNavItem("admin", at("/dashboard/admin/categories")), "operations");
 });
 
+test("캘린더 동기화 설정은 운영 도구 메뉴 아래 화면이고 좁은 화면에서 운영 도구로 돌아간다", () => {
+  const settings = at("/dashboard/admin/calendar-sync?google=connected");
+  assert.equal(resolveActiveNavItem("admin", settings), "operations");
+  assert.equal(APP_NAV_ITEMS.admin.some((item) => item.href.startsWith("/dashboard/admin/calendar-sync")), false);
+  assert.deepEqual(resolveMobileTopBar("admin", settings), {
+    title: "캘린더 동기화",
+    back: { href: "/dashboard/admin/operations", label: "운영 도구로 돌아가기" },
+  });
+  assert.equal(resolveMobileTopBar("admin", at("/dashboard/admin/operations")).title, "운영 도구");
+});
+
 test("좁은 화면 위쪽 막대는 목록 화면에 메뉴와 주 행동, 상세 화면에 뒤로 가기를 둔다", () => {
   assert.deepEqual(resolveMobileTopBar("student", at("/dashboard/student/notes")), {
     title: "노트",

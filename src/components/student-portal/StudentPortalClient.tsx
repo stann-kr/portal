@@ -8,14 +8,15 @@
 
 import type { StudentAssignmentSummary } from "@/lib/assignment-summary";
 import type { AssignmentTaskItem } from "@/lib/actions/assignmentTasks";
-import { useState, useCallback, useEffect, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import {
   upsertUnifiedItem,
   upsertUnifiedItems,
   getUnifiedItemKey,
   type UnifiedItem,
 } from "@/lib/utils/unifiedItemUtils";
-import { getExternalUnifiedItems } from "@/lib/actions/unifiedItems";
+import { useRouter } from "next/navigation";
+import { syncAndGetExternalItems } from "@/lib/actions/calendarSync";
 import { PortalShell } from "@/components/ui/portal-shell";
 
 // ── 섹션 컴포넌트
@@ -96,8 +97,8 @@ export function StudentPortalClient({
   const serverItemKeys = useMemo(() => new Set(initialUnifiedItems.map(getUnifiedItemKey)), [initialUnifiedItems]);
   const items = useMemo(() => upsertUnifiedItems(
     upsertUnifiedItems(initialUnifiedItems, createdItems.filter((item) => !serverItemKeys.has(getUnifiedItemKey(item)))),
-    externalCalendarConnection.connected ? externalItems : [],
-  ).filter((item) => !removedKeys.has(getUnifiedItemKey(item))), [createdItems, externalCalendarConnection.connected, externalItems, initialUnifiedItems, removedKeys, serverItemKeys]);
+    externalItems,
+  ).filter((item) => !removedKeys.has(getUnifiedItemKey(item))), [createdItems, externalItems, initialUnifiedItems, removedKeys, serverItemKeys]);
 
   // Retire confirmed additions so a later server deletion cannot resurrect them.
   // 서버 목록이 바뀐 렌더에서 바로 정리한다(이전 서버 목록과 비교).
@@ -127,20 +128,26 @@ export function StudentPortalClient({
   }, []);
 
   // 내부 일정은 RSC에서 먼저 표시하고 외부 provider는 hydration 뒤 fail-soft로 병합한다.
-  // 연결이 끊기면 렌더 중 바로 외부 일정을 비운다(이전 연결 상태와 비교).
+  // iCal 연결이 끊기면 렌더 중 바로 외부 일정을 비우고, 아래 effect가 남은 동기화 항목을 다시 받는다.
   const [externalConnected, setExternalConnected] = useState(externalCalendarConnection.connected);
   if (externalConnected !== externalCalendarConnection.connected) {
     setExternalConnected(externalCalendarConnection.connected);
     if (!externalCalendarConnection.connected) setExternalItems([]);
   }
 
+  // iCal 구독이 없어도 관리자가 Google·iCloud 캘린더를 매핑했을 수 있으므로 항상 부른다(설정이 없으면 바로 끝난다).
+  // 동기화가 포털 레슨·일정을 바꿨으면 서버 목록을 다시 받는다.
+  const router = useRouter();
+  const routerRef = useRef(router);
   useEffect(() => {
-    if (!externalCalendarConnection.connected) return;
+    routerRef.current = router;
+  }, [router]);
+  useEffect(() => {
     let cancelled = false;
-    void getExternalUnifiedItems().then((loadedItems) => {
-      if (!cancelled) {
-        setExternalItems(loadedItems);
-      }
+    void syncAndGetExternalItems({}).then((result) => {
+      if (cancelled) return;
+      setExternalItems(result.items);
+      if (result.localChanged) routerRef.current.refresh();
     }).catch(() => undefined);
     return () => {
       cancelled = true;
