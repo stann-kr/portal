@@ -30,7 +30,7 @@
 
 | 항목 | 저장소에서 확인할 수 있는 것 | 운영 적용을 확인하는 증거 |
 |---|---|---|
-| D1 migration | SQL·journal·snapshot `0000~0017`(`0018` 구현 진행 중), 메모리 DB에서 체인·schema 검증 | 대상 D1의 적용 목록과 실제 schema·FK, 그 목록에서 계산한 pending 범위 |
+| D1 migration | SQL·journal·snapshot `0000~0018`, 메모리 DB에서 체인·schema 검증 | 대상 D1의 적용 목록과 실제 schema·FK, 그 목록에서 계산한 pending 범위 |
 | 계정 삭제 | `0012`와 삭제·정리 구현, application 설정의 `ACCOUNT_DELETION_ENABLED="false"` 기본값 | 활성 Worker의 유효 flag, 기기 adoption, 승인된 삭제·정리 smoke |
 | 예약 정리 | `worker.ts`의 `scheduled` handler, Workers Logs 설정, source에 없는 Cron trigger | 원격 trigger 주기, 대상 version의 실제 scheduled invocation, backlog·실패·alert 증거 |
 | 외부 캘린더 | `0013` 구독 테이블과 `EXTERNAL_CALENDAR_ENCRYPTION_KEY` 요구 조건 | 대상 schema, secret 설정 확인, 승인된 연결·읽기·교체·해제 smoke |
@@ -38,7 +38,7 @@
 | 과제 출제·정기 과제 | `0015`의 `assignment_tasks`·`assignment_recurrences`와 `assignments`·`feedbacks` 행 보존 rebuild, 조회 시 회차 생성(Cron 불필요) | 대상 D1의 `0015` 적용과 기존 제출·피드백 row count, 승인된 출제·제출·피드백 smoke |
 | 공용 가이드 | `0016`의 `guide_pages`·`guide_assets`·`qna_guide_anchors`, `scripts/guide-import/build.ts` seed 출력 | 대상 D1의 `0016` 적용, 승인된 seed 적용(D1 행·R2 `guide/` 객체), 학생·관리자 열람·편집·질문 smoke |
 | 캘린더 양방향 동기화 | `0017` 연결·매핑·link·반복 일정 table, `GOOGLE_CALENDAR_CLIENT_ID`·`GOOGLE_CALENDAR_CLIENT_SECRET`·`EXTERNAL_CALENDAR_ENCRYPTION_KEY` 요구 조건, `AUTH_URL` 기준 redirect URI | 대상 schema, secret 설정 확인, Google Cloud OAuth client의 redirect URI, 승인된 연결·매핑·양방향 반영·해제 smoke |
-| 캘린더 실시간 반영 | (구현 진행 중) `0018` 알림 채널 table, `/api/calendar-connections/google/notify`, `worker.ts` `scheduled`의 캘린더 동기화. source에 없는 Cron trigger | 원격 Cron 주기, 대상 version의 실제 scheduled invocation, Google 채널 등록·갱신과 알림 수신 로그 |
+| 캘린더 실시간 반영 | `0018` 알림 채널 table, `/api/calendar-connections/google/notify`, `worker.ts` `scheduled`의 캘린더 동기화. source에 없는 Cron trigger | 원격 Cron 주기, 대상 version의 실제 scheduled invocation, Google 채널 등록·갱신과 알림 수신 로그 |
 | 배포 환경 분리 | 현재 tracked 설정의 Worker는 `portal` | development/production Worker·D1·R2·route·secret·branch trigger 각각의 inventory |
 
 운영 확인은 기존 상태 조회, migration·secret·trigger 변경, 데이터 쓰기 smoke를 구분해 승인된
@@ -79,7 +79,7 @@
 매핑이 없어도 조회·쓰기 경로가 table을 읽으므로, 이 코드를 포함한 Worker를 promotion하기 전에
 대상 D1에 `0015~0017`이 적용됐는지 확인한다.
 
-1. 대상 D1의 실제 적용 목록을 확인하고 pending 범위를 확정한다(`0015 → 0016 → 0017` 순서, 실시간 반영 코드가 들어오면 `0018`까지).
+1. 대상 D1의 실제 적용 목록을 확인하고 pending 범위를 확정한다(`0015 → 0016 → 0017 → 0018` 순서).
 2. 승인된 작업 창에서 full export·checksum과 D1 Time Travel bookmark를 확보한 뒤 pending을 순서대로 적용하고 schema·FK·`assignments`·`feedbacks`·`document_server_drafts` row count를 검증한다.
 3. 대상 환경의 `EXTERNAL_CALENDAR_ENCRYPTION_KEY`, `GOOGLE_CALENDAR_CLIENT_ID`, `GOOGLE_CALENDAR_CLIENT_SECRET`과 `AUTH_URL`을 확인한다. secret이 없으면 해당 연결 기능만 꺼지고 설정 화면이 "설정 필요"를 안내한다.
 4. target version을 전환하고 관리자 연결·학생 매핑·포털 → 외부 반영·외부 → 포털 반영·연결 해제를 승인된 테스트 캘린더로 확인한다. 실제 학생 캘린더로 시험하지 않는다.
@@ -105,11 +105,11 @@ iCloud 연동:
 
 데이터베이스와 가이드:
 
-- [ ] 승인된 작업 창에서 export·checksum·Time Travel bookmark를 확보한 뒤 remote D1에 `0015 → 0016 → 0017`을 적용한다(`npm run db:migrate:remote`, 위 전환 gate). 실시간 반영 코드가 들어오면 `0018`도 같은 절차로 적용한다.
+- [ ] 승인된 작업 창에서 export·checksum·Time Travel bookmark를 확보한 뒤 remote D1에 `0015 → 0016 → 0017 → 0018`을 적용한다(`npm run db:migrate:remote`, 위 전환 gate).
 - [ ] 공용 가이드 seed를 만든다: `npx tsx scripts/guide-import/build.ts`(기본 입력 `.docs/goals/assignments-guide-calendar/guide-export`, 출력 `.wrangler/guide-import`). 스크립트는 D1·R2에 쓰지 않고 `seed.sql`·이미지 객체와 명령만 출력하는 `apply-local.sh`를 만든다. 로컬은 `sh .wrangler/guide-import/apply-local.sh`가 출력한 `--local` 명령을 확인한 뒤 직접 실행한다.
 - [ ] remote seed(`wrangler d1 execute portal-db --remote --file=…/seed.sql`과 `wrangler r2 object put portal-storage/guide/<id> --remote …`)는 별도 승인 뒤 `0016` 적용 다음에 한 번만 실행한다. seed는 `INSERT OR IGNORE`라 포털에서 고친 내용을 덮어쓰지 않지만, 포털에서 지운 페이지는 다시 실행하면 되살아난다.
 
-예약 동기화와 Google 변경 알림(실시간 반영 코드가 들어온 뒤):
+예약 동기화와 Google 변경 알림:
 
 - [ ] Cron Trigger: `wrangler.scheduled.toml`은 의도적으로 `[triggers]`를 두지 않는다. 승인된 전환 뒤 원격에서 주기(예: 10분)를 정해 `wrangler triggers deploy`로 적용한다. 같은 `scheduled` handler가 기존 예약 정리도 실행하므로 아래 "점검·예약 정리 Worker artifact"의 Cron 전제(`0011`·`0012`, private R2·staging lifecycle, legacy inventory, plan 한도·alert)를 함께 확인한다.
 - [ ] Google 변경 알림 주소: 코드는 `AUTH_URL` origin + `/api/calendar-connections/google/notify`(https만)로 채널을 등록한다. 운영에서 이 주소로 채널이 등록되는 것은 매핑 저장·예약 동기화가 실행될 때이므로, 실시간 반영 Worker의 production 전환 자체를 별도 승인 항목으로 둔다. 확인 항목: Google 콘솔이 알림 받을 도메인의 소유 확인·등록을 요구하는지 전환 전에 확인한다.

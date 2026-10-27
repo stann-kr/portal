@@ -98,7 +98,7 @@ OpenNext → Cloudflare Worker
 | `/api/guide-assets/[assetId]` | 로그인 사용자에게 가이드 이미지 전달 |
 | `/api/calendar-connections/google/start` | 관리자 Google 연결 시작: state·PKCE를 봉인 cookie에 담고 Google 동의 화면으로 이동 |
 | `/api/calendar-connections/google/callback` | Google OAuth redirect URI. cookie의 state·관리자·만료를 확인하고 code를 token으로 바꿔 연결을 저장한 뒤 설정 화면으로 돌아간다 |
-| `/api/calendar-connections/google/notify` | (구현 진행 중) Google 변경 알림 수신. 로그인 없이 channel id·token으로만 검증한다 |
+| `/api/calendar-connections/google/notify` | Google 변경 알림 수신. 로그인 없이 channel id·token으로만 검증한다 |
 
 `/dashboard/student/assignments`, `curriculum` 목록 경로는 원페이지 포털로, 예전 `/dashboard/admin/students/[id]/digging`은 학생 상세 디깅 탭으로 redirect한다. 노트 목록과 디깅 보드는 별도 route를 사용한다.
 
@@ -148,7 +148,7 @@ Cloudflare binding:
 | `BUCKET` | R2 bucket | 미디어 저장 |
 | `ASSETS` | OpenNext assets | 정적 asset |
 
-Migration SQL은 `drizzle/`, Drizzle metadata는 `drizzle/meta/`에 둔다. Wrangler는 SQL 파일명과 D1의 적용 이력을 기준으로 migration을 실행하고, Drizzle metadata는 다음 schema diff 생성 기준으로 사용한다. SQL·journal·snapshot은 `0000~0017`까지 대응한다(Google 변경 알림용 `0018_calendar_push_channels`는 구현 진행 중). `npm run db:check`는 empty replay와 current schema/latest snapshot의 column·FK·index뿐 아니라 문서·미디어·개인정보·외부 캘린더 구독 CHECK·FK·unique index, 불변·부활·교체 우회 방지 probe, `0007` fixture upgrade·inbound FK preflight, `0008→0009` account cascade, 기존 게시물·Q&A의 `0009→0010`, 기존 URL을 보존하는 `0010→0011`, populated `0011→0012` 개인정보, `0012→0013` 외부 캘린더, `0013→0014` 본문 이미지, 기존 제출·피드백을 보존하는 `0014→0015` 과제 출제, 서버 초안 trigger를 다시 만드는 `0015→0016` 가이드, 추가만 하는 `0016→0017` 캘린더 동기화 upgrade를 검사한다. 이 체인은 저장소의 schema 계약이며 persistent local·remote D1의 현재 적용 이력을 뜻하지 않는다. 환경별 실제 적용 목록과 pending 범위는 [운영 상태 확인 기준](./DEPLOYMENT.md#운영-상태-확인-기준)으로 확인한다. 외부 캘린더 코드의 promotion에는 대상 D1의 `0013`, 본문 이미지·Worker 업로드 코드에는 `0014`, 과제 출제·정기 과제에는 `0015`, 가이드에는 `0016`, 캘린더 양방향 동기화에는 `0017`이 필요하다.
+Migration SQL은 `drizzle/`, Drizzle metadata는 `drizzle/meta/`에 둔다. Wrangler는 SQL 파일명과 D1의 적용 이력을 기준으로 migration을 실행하고, Drizzle metadata는 다음 schema diff 생성 기준으로 사용한다. SQL·journal·snapshot은 `0000~0018`까지 대응한다. `npm run db:check`는 empty replay와 current schema/latest snapshot의 column·FK·index뿐 아니라 문서·미디어·개인정보·외부 캘린더 구독 CHECK·FK·unique index, 불변·부활·교체 우회 방지 probe, `0007` fixture upgrade·inbound FK preflight, `0008→0009` account cascade, 기존 게시물·Q&A의 `0009→0010`, 기존 URL을 보존하는 `0010→0011`, populated `0011→0012` 개인정보, `0012→0013` 외부 캘린더, `0013→0014` 본문 이미지, 기존 제출·피드백을 보존하는 `0014→0015` 과제 출제, 서버 초안 trigger를 다시 만드는 `0015→0016` 가이드, 추가만 하는 `0016→0017` 캘린더 동기화, 알림 채널을 더하는 `0017→0018` upgrade를 검사한다. 이 체인은 저장소의 schema 계약이며 persistent local·remote D1의 현재 적용 이력을 뜻하지 않는다. 환경별 실제 적용 목록과 pending 범위는 [운영 상태 확인 기준](./DEPLOYMENT.md#운영-상태-확인-기준)으로 확인한다. 외부 캘린더 코드의 promotion에는 대상 D1의 `0013`, 본문 이미지·Worker 업로드 코드에는 `0014`, 과제 출제·정기 과제에는 `0015`, 가이드에는 `0016`, 캘린더 양방향 동기화에는 `0017`, Google 변경 알림에는 `0018`이 필요하다.
 
 신규 업로드는 사용자에게 노출된 `media-upload/` staging key로만 PUT하고, 서버가 size·Content-Type metadata·ETag를 확인한 뒤 사용자에게 공개되지 않은 별도 `media/` final key로 봉인한다. D1의 `SEALING` lease가 봉인과 삭제를 직렬화하며, 결과를 잃은 Copy는 복구 유예 뒤 final 삭제 outbox가 다시 정리한다. 문서에는 object ID와 `/api/media/{id}`만 저장하고, 게시물과 Q&A의 원자 생성·purge transaction이 registry claim과 R2 삭제 의도를 함께 commit한다. R2 삭제는 lease·지수 backoff를 사용하는 durable outbox로 재시도한다.
 
@@ -337,8 +337,8 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 
 - 연결 구조: 관리자가 Google 계정(OAuth)과 Apple ID(앱 전용 암호, CalDAV)를 각각 한 번 연결한다(`calendar_connections`, (owner, provider) UNIQUE). 학생마다 연결별로 원격 캘린더 하나를 매핑한다(`calendar_mappings`, (connection, student)·(connection, remote calendar) UNIQUE). 학생마다 provider가 달라도 되고 한 학생에 Google·iCloud를 둘 다 매핑할 수도 있다. 학생은 외부 계정 없이 공유받은 캘린더를 기존 앱에서 본다. 학생 계정 삭제 transaction은 그 학생의 매핑을 지우고 link·반복 일정 사본은 cascade로 함께 지운다.
 - 포털이 중심(hub)이다. 레슨·일정 action은 commit 뒤 `schedulePushStudentCalendarChanges`로 응답을 보낸 다음(Next `after`, OpenNext에서는 Workers `waitUntil`) 그 학생 매핑에 push한다(전체 4초 예산). 원격 실패는 포털 저장을 실패시키지 않고 `last_error`에 남으며, 놓친 변경은 다음 동기화가 fingerprint 차이로 보낸다. 캘린더 조회(`syncAndGetExternalItems`)는 표시 전에 매핑별 증분 pull을 실행한다(20초 예산, 매핑별 60초 throttle). 원격 실패는 화면 표시를 막지 않는다.
-- 루프 방지: `calendar_sync_links`(매핑·로컬 종류 `LESSON`/`EVENT`·로컬 ID·원격 ID·etag·로컬 fingerprint)와 원격 일정에 숨겨 붙이는 portalRef. 로컬 → 원격은 link(원격 ID NULL)를 먼저 claim하고 원격을 만든 뒤 ID·etag를 기록한다. create 응답이 유실되면 다음 동기화가 `findByPortalRef`로 복구한다. 원격에서 온 일정이 link나 portalRef를 가지면 새로 만들지 않는다. portalRef가 있는데 link가 없으면 같은 학생의 로컬 행이 있을 때만 link를 복구한다(`RELINKED`, 다음 push가 로컬 내용으로 원격을 맞춘다).
-- 충돌은 웹 우선이다. 원격 쓰기는 If-Match(etag)로 하고, 412이면 portalRef로 현재 etag를 다시 읽는다. 마지막 동기화 뒤 로컬이 바뀌었으면 로컬 내용으로 다시 쓰고, 그대로면 원격 내용을 받아들인다.
+- 루프 방지: `calendar_sync_links`(매핑·로컬 종류 `LESSON`/`EVENT`·로컬 ID·원격 ID·etag·로컬 fingerprint)와 원격 일정에 숨겨 붙이는 portalRef. 로컬 → 원격은 link(원격 ID NULL)를 먼저 claim하고 원격을 만든 뒤 ID·etag를 기록한다. 원격 생성은 portalRef에서 만든 결정적 ID(Google event id, iCloud 리소스 이름)로 하므로 응답이 유실되거나 lease가 만료된 두 실행이 겹쳐도 사본이 하나다(Google 409·iCloud 412는 기존 리소스를 읽어 덮는다). 남은 NULL link는 다음 동기화가 `findByPortalRef`로 복구한다. 원격에서 온 일정이 link나 portalRef를 가지면 새로 만들지 않는다. portalRef가 있는데 link가 없으면 같은 학생의 로컬 행이 있을 때만 link를 복구한다(`RELINKED`, 다음 push가 로컬 내용으로 원격을 맞춘다).
+- 충돌은 웹 우선이다. 원격 쓰기는 If-Match(etag)로 하고, 412이면 link의 원격 ID로 최신 리소스를 다시 읽는다(`get`, 가져온 일정에도 동작). 마지막 동기화 뒤 로컬이 바뀌었으면 로컬 내용으로 다시 쓰고(웹에서 지운 일정은 최신 etag로 다시 지운다), 그대로면 원격 내용을 받아들인다. 원격 값을 로컬 행에 반영·삭제할 때는 읽은 값이 그대로일 때만 쓰는 조건부 문장이라, 그 사이 웹 수정이 있으면 되돌리고 웹 우선으로 다시 판단한다. 전체 재동기화에서 원격 목록에 없는 연결 항목은 `get`으로 확인해 window 밖으로 옮겨졌으면 옮긴 날짜를 반영하고, 없을 때만 삭제한다(실행당 20건, 넘으면 cursor를 저장하지 않고 다음 실행이 이어서 확인). 실행은 원격 쓰기마다 lease를 연장하고 소유를 잃으면 멈춘다. Google token 갱신 결과는 읽었던 암호문이 그대로일 때만 저장(CAS)해 회전된 refresh token을 덮지 않는다. Google 연결 완료는 server action이 아닌 일반 모듈(`google-connection.ts`)이라 봉인된 state를 검증한 callback만 부른다.
 - 삭제: 레슨·일정은 hard delete이므로 같은 원자 쓰기에서 link fingerprint를 `DELETED` tombstone으로 바꾸고(`markLinksDeletedStatement`), 원격 remove 성공 뒤 link를 지운다. 원격 삭제는 link가 있는 로컬 행을 지우되, 로컬이 마지막 동기화 뒤 바뀌었으면 원격에 다시 만든다. 전체 재동기화(Google 410, CalDAV token 만료)에서 window 안 로컬 항목의 원격 사본이 보이지 않으면 지우기 전에 portalRef로 먼저 찾아 window 밖으로 옮겨진 사본은 다시 잇는다(실행당 20건, 나머지는 지우지 않고 다음으로 미룬다).
 - 원격에서 새로 생긴 일정(portalRef 없음)은 그 학생의 `calendar_events`(NOTE)로 가져온다. 원격 반복 일정은 로컬 행을 만들지 않고 `calendar_remote_series`에 ICS 사본(256 KiB 이하)으로 두어 읽기 전용 외부 항목으로 펼친다. Google은 `singleEvents=false`로 master·예외 instance를 받는다.
 - 종일: `calendar_events`에 종일 열이 없으므로 원격 종일 일정은 KST 00:00 ~ 배타적 끝으로 저장하고, 시작·끝이 모두 KST 자정이고 길이가 24시간의 배수면 종일로 보낸다. 레슨은 원격 제목 "레슨", 60분이며 원격에서 옮긴 경우 `scheduledAt`만 반영한다. 끝 시각 없는 포털 일정은 60분으로 보낸다.
@@ -347,9 +347,9 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 - 보안: 연결·매핑·지금 동기화는 `requireAdmin`(매핑 대상은 `requireStudentTarget`), 학생은 자기 상태와 외부 항목만 본다. Google refresh·access token과 iCloud 앱 암호는 `EXTERNAL_CALENDAR_ENCRYPTION_KEY`로 AES-GCM 암호화하고 AAD `calendar-connection:v1:<연결 ID>:<provider>`로 다른 행·provider로 옮긴 ciphertext를 거부한다(`credentials.ts`). 원문은 응답·화면·로그에 돌려주지 않고 `last_error`에는 짧은 한국어 분류만 남긴다. 인증 실패는 연결을 `NEEDS_REAUTH`로 바꾸고 내부 일정은 그대로 둔다.
 - Google OAuth는 PKCE(S256)·`access_type=offline`·`prompt=consent`다. state·code verifier·시작한 관리자·만료(10분)를 서버 저장소 없이 HttpOnly cookie(`portal_google_calendar_oauth`, path `/api/calendar-connections/google`)에 담고, 암호화 key에서 HKDF로 파생한 별도 AES-GCM key로 봉인한다. callback은 봉인 해제·state 상수 시간 비교·같은 관리자·만료를 확인한 뒤 code를 교환하고, code·token·verifier를 log·응답·주소에 남기지 않는다. `calendar.events` scope가 빠지면 연결하지 않는다.
 
-### 캘린더 실시간 반영(2026-10-27 사용자 결정, 구현 진행 중)
+### 캘린더 실시간 반영(2026-10-27 사용자 결정)
 
-이 절은 확정된 설계다. 이 문서를 쓴 시점에 `0018`·알림 route·채널 관리 코드는 작업 중(검증·commit 전)이고 `worker.ts` 예약 동기화는 아직 연결되지 않았다. 운영 Cron 활성화·Google 알림 주소 운영 등록·deploy는 별도 승인 범위다.
+`0018`·알림 route(channel id·token·resource id 검증, 실패는 빈 404)·채널 등록·갱신·중지와 `worker.ts` `scheduled`의 캘린더 동기화(유지보수와 `Promise.allSettled`로 분리, 50초 상한, Worker env는 `runWithCalendarSyncEnv`로 전달)는 코드와 fixture·격리 D1 테스트로 구현했다. 운영 Cron 활성화·Google 알림 주소 운영 등록·deploy는 별도 승인 범위이고, Cron이 켜지기 전에는 캘린더 조회 때만 채널이 갱신되어 7일 동안 조회가 없으면 알림이 끊긴다.
 
 - 외부 캘린더를 하나만 연결한 학생: 포털 → 외부는 위의 저장 직후 push(구현 완료). Google → 포털은 Google 변경 알림(`events.watch`, type `web_hook`)으로 포털을 열지 않아도 반영한다. iCloud는 알림 기능이 없어 포털 조회와 예약 동기화 때 반영한다.
 - 둘 다 연결한 학생: 포털이 중심이 되어 Worker 예약 실행의 캘린더 동기화가 Google ↔ iCloud 변경을 전달한다. 학생별 연결 수 제한은 두지 않는다.
