@@ -13,11 +13,13 @@
  * - 원격 새 일정(portalRef 없음)은 학생 calendar_events(NOTE)로 가져온다. 반복 일정은 calendar_remote_series 사본만 둔다.
  * - 레슨은 원격 제목 "레슨", 60분. 원격 변경은 scheduledAt만 반영한다.
  * - window = 지금 -90일 ~ +365일. 조회 동기화는 60초 throttle, 모든 동기화는 60초 lease.
+ * - 전체 모드는 push 뒤 lease를 풀기 전 마지막 cursor로 꼬리 pull을 한 번 더 해 실행 중 원격 변경(알림이 lease에 막힌 변경)을 반영한다.
+ * - 오류·NEEDS_REAUTH 기록도 lease 소유 조건으로만 한다. NEEDS_REAUTH는 이 실행이 쓴 자격 증명이 여전히 저장값일 때만 기록한다.
  *
  * DB·client·시계는 주입받아 단위 테스트에서 실제 SQLite와 가짜 provider로 검증한다.
  * 오류 메시지·lastError에는 token·암호·원격 본문을 넣지 않고 짧은 한국어 분류만 남긴다.
  */
-import { and, eq, gte, inArray, isNull, lt, lte, or } from "drizzle-orm";
+import { and, eq, exists, gte, inArray, isNull, lt, lte, or, sql, type SQL } from "drizzle-orm";
 import type { DbContext, DrizzleDb } from "@/db/client";
 import {
   calendarConnections,
@@ -100,6 +102,11 @@ export type SyncEngineOptions = {
   mappingId: string;
   /** lease를 잡은 뒤에만 부른다(token refresh·복호화 오류도 같은 오류 처리로 모은다). */
   getClient: () => Promise<CalendarProviderClient>;
+  /**
+   * 이 실행의 client가 지금 쓰는 연결 encrypted_credentials(갱신·저장값 채택으로 바뀔 수 있어 함수로 받는다).
+   * 인증 실패는 연결의 저장값이 이 값과 같을 때만 NEEDS_REAUTH로 기록한다(재연결·다른 client의 더 새 갱신을 덮지 않는다).
+   */
+  credentialsCiphertext: () => string;
   now?: () => Date;
   /** true면 60초 throttle을 건너뛴다(lease는 항상 지킨다). */
   force?: boolean;
@@ -846,6 +853,29 @@ async function pushLocal(state: RunState, window: PullWindow): Promise<void> {
   }
 }
 
+// ── 꼬리 pull ──
+
+/**
+ * push 뒤 lease를 풀기 전에 마지막 cursor로 증분 pull을 한 번 더 해 실행 중에 원격에 생긴 변경을 반영한다.
+ * 이 실행이 lease를 쥔 동안 온 Google 알림은 lease에 막히므로(sync-runner가 lease 해제를 기다려 다시 돌지만
+ * 시간 상한이 있다) 그 변경이 여기서 들어온다. 한 번만 한다(상한: provider pull 한 번의 page 상한).
+ * 남는 틈: 꼬리 pull 뒤 lease 해제 전에 생긴 변경 + 알림 쪽 시간 상한 소진이 겹치면 다음 조회·예약 동기화가 반영한다.
+ */
+async function tailPull(state: RunState, cursor: string | null, window: PullWindow, ownsLease: SQL): Promise<void> {
+  if (state.leaseLost || state.stopped || cursor === null) return;
+  if (state.deadline !== undefined && state.now().getTime() >= state.deadline) return;
+  await renewLease(state);
+  const result = await state.client.pull(state.calendarId, cursor, window);
+  // cursor 재설정(410 등)은 다음 실행이 전체 재동기화로 처리한다. cursor는 그대로 둔다.
+  if (result.fullResync) return;
+  // push가 link를 바꿨다. 다시 읽어야 이번 실행이 쓴 원격 변경(같은 etag)을 원격 변경으로 오인하지 않는다.
+  await loadLinks(state);
+  await applyPull(state, result, false, window);
+  const nextCursor = result.nextCursor || cursor;
+  const saved = await state.db.update(calendarMappings).set({ cursor: nextCursor }).where(ownsLease).returning({ id: calendarMappings.id });
+  if (saved.length === 0) throw new LeaseLost();
+}
+
 // ── lease ──
 
 async function acquireLease(ctx: DbContext, mappingId: string, now: Date, force: boolean): Promise<string | null> {
@@ -920,7 +950,7 @@ export async function runCalendarMappingSync(options: SyncEngineOptions): Promis
     leaseLost: false,
     fullVerificationIncomplete: false,
   };
-  const ownsLease = and(eq(calendarMappings.id, mapping.id), eq(calendarMappings.syncLeaseId, leaseId));
+  const ownsLease = and(eq(calendarMappings.id, mapping.id), eq(calendarMappings.syncLeaseId, leaseId))!;
   try {
     state.client = await options.getClient();
     const window = syncWindow(startedAt);
@@ -942,6 +972,7 @@ export async function runCalendarMappingSync(options: SyncEngineOptions): Promis
       if (saved.length === 0) throw new LeaseLost();
     }
     await pushLocal(state, window);
+    if (mode === "full") await tailPull(state, nextCursor, window, ownsLease);
     const finishedAt = now();
     const lastError = state.itemFailures > 0 ? CALENDAR_SYNC_MESSAGES.partial : null;
     if (state.leaseLost) {
@@ -967,16 +998,27 @@ export async function runCalendarMappingSync(options: SyncEngineOptions): Promis
     const message = calendarSyncErrorMessage(error);
     const authFailed = isAuthFailure(error);
     const finishedAt = now();
-    await db
+    // 오류 기록도 lease를 아직 가진 실행만 한다. 만료 뒤 다른 실행이 이어받았으면 그 실행의 상태·연결을 덮지 않는다.
+    const recorded = await db
       .update(calendarMappings)
       .set({ lastError: message, updatedAt: finishedAt })
-      .where(eq(calendarMappings.id, mapping.id))
-      .catch(() => undefined);
+      .where(ownsLease)
+      .returning({ id: calendarMappings.id })
+      .catch(() => null);
+    if (recorded && recorded.length === 0) {
+      return { status: "synced", localChanged: state.localChanged, partial: true };
+    }
     if (authFailed) {
+      // 연결 비활성화는 lease 소유 + 이 실행이 쓴 자격 증명이 여전히 저장값일 때만(한 문장으로 원자적 판단).
+      // 그 사이 재연결·다른 client의 갱신 저장이 있었으면 새 자격 증명은 다음 실행이 다시 판단한다.
       await db
         .update(calendarConnections)
         .set({ status: "NEEDS_REAUTH", lastError: message, updatedAt: finishedAt })
-        .where(eq(calendarConnections.id, mapping.connectionId))
+        .where(and(
+          eq(calendarConnections.id, mapping.connectionId),
+          eq(calendarConnections.encryptedCredentials, options.credentialsCiphertext()),
+          exists(db.select({ one: sql`1` }).from(calendarMappings).where(ownsLease)),
+        ))
         .catch(() => undefined);
     }
     return { status: "failed", localChanged: state.localChanged, error: message, authFailed };

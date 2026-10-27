@@ -33,7 +33,7 @@ type Harness = {
   ctx: Extract<DbContext, { kind: "local" }>;
   remote: FakeCalendar;
   clock: { now: Date };
-  sync: (options?: { force?: boolean; mode?: SyncEngineMode; deadline?: number; client?: CalendarProviderClient }) => ReturnType<typeof runCalendarMappingSync>;
+  sync: (options?: { force?: boolean; mode?: SyncEngineMode; deadline?: number; client?: CalendarProviderClient; credentialsCiphertext?: string }) => ReturnType<typeof runCalendarMappingSync>;
   rows: <T>(query: string, ...params: unknown[]) => T[];
   /**
    * 엔진이 로컬 값을 읽은 뒤 다음 원자적 쓰기(batch) 직전에 한 번 실행한다(웹 수정 경합 재현).
@@ -94,6 +94,7 @@ function setup(context: TestContext): Harness {
       ctx,
       mappingId: MAPPING,
       getClient: async () => options.client ?? remote,
+      credentialsCiphertext: () => options.credentialsCiphertext ?? "x",
       now: () => clock.now,
       force: options.force ?? true,
       mode: options.mode,
@@ -316,14 +317,15 @@ test("pull에서 원격·로컬이 함께 바뀌었으면 원격 내용을 버�
   assert.equal(harness.remote.events.get(remoteId)!.title, "로컬 제목");
 });
 
-test("create 응답이 유실되면 다음 동기화가 portalRef로 link를 복구하고 중복을 만들지 않는다", async (context) => {
+test("create 응답이 유실되면 portalRef로 link를 복구하고 중복을 만들지 않는다", async (context) => {
   const harness = setup(context);
   insertLesson(harness, "lesson-1", at("2026-11-03T09:00:00Z"));
   harness.remote.loseNextCreateResponse = true;
   const first = await harness.sync();
   assert.equal(first.status, "synced");
   assert.equal(harness.remote.events.size, 1);
-  assert.equal(links(harness)[0].remote_id, null, "claim한 link는 remote_id 없이 남는다");
+  // 같은 실행의 꼬리 pull이 이번에 만든 원격 사본을 portalRef로 찾아 claim한 link에 원격 id를 채운다.
+  assert.equal(links(harness)[0].remote_id, FakeCalendar.portalRemoteId("lesson:lesson-1"), "꼬리 pull이 link를 복구한다");
   assert.equal(harness.rows<{ last_error: string }>("SELECT last_error FROM calendar_mappings")[0].last_error, CALENDAR_SYNC_MESSAGES.partial);
 
   const second = await harness.sync();
@@ -804,4 +806,93 @@ test("원격 응답 뒤 link 저장도 lease 소유권으로 막혀 이어받은
   assert.ok(stale.status === "synced" && stale.partial);
   assert.equal(harness.remote.writeCount(), 2, "원격 update는 lease 갱신 뒤 한 번 보냈다");
   assert.deepEqual(links(harness)[0], before, "lease를 잃은 뒤에는 link를 쓰지 않는다");
+});
+
+// ── 교차 검토(Sol 5) 필수 지적 회귀 테스트 ──
+
+/** pull만 바꾼 가짜 client(나머지는 harness.remote로 보낸다). */
+function withPull(harness: Harness, pull: CalendarProviderClient["pull"]): CalendarProviderClient {
+  const remote = harness.remote;
+  return {
+    kind: "GOOGLE",
+    listCalendars: () => remote.listCalendars(),
+    pull,
+    create: (...args) => remote.create(...args),
+    update: (...args) => remote.update(...args),
+    remove: (...args) => remote.remove(...args),
+    findByPortalRef: (...args) => remote.findByPortalRef(...args),
+    get: (...args) => remote.get(...args),
+  };
+}
+
+type MappingState = { last_error: string | null; last_synced_at: number | null; updated_at: number; cursor: string | null };
+
+function mappingState(harness: Harness): MappingState {
+  return harness.rows<MappingState>("SELECT last_error, last_synced_at, updated_at, cursor FROM calendar_mappings")[0];
+}
+
+test("lease를 잃은 실행 A의 늦은 인증 실패는 연결을 NEEDS_REAUTH로 바꾸지 않고 이어받은 실행 B의 상태를 덮지 않는다", async (context) => {
+  const harness = setup(context);
+  insertLesson(harness, "lesson-1", at("2026-11-03T09:00:00Z"));
+  let releasePull!: () => void;
+  const pullGate = new Promise<void>((resolve) => {
+    releasePull = resolve;
+  });
+  const stalled = withPull(harness, async () => {
+    await pullGate;
+    throw new CalendarAuthError("revoked", { status: 401 });
+  });
+  const first = harness.sync({ client: stalled });
+  await waitFor(() => harness.rows<{ id: string | null }>("SELECT sync_lease_id AS id FROM calendar_mappings")[0].id !== null, "첫 실행 lease");
+
+  harness.clock.now = new Date(BASE_NOW.getTime() + 61_000);
+  const second = await harness.sync();
+  assert.equal(second.status, "synced", "만료된 lease는 B가 이어받아 성공한다");
+  const afterB = mappingState(harness);
+  assert.equal(afterB.last_error, null);
+
+  releasePull();
+  await first;
+  const connection = harness.rows<{ status: string; last_error: string | null }>("SELECT status, last_error FROM calendar_connections")[0];
+  assert.deepEqual(connection, { status: "ACTIVE", last_error: null }, "lease를 잃은 실행은 연결을 비활성화하지 않는다");
+  assert.deepEqual(mappingState(harness), afterB, "B의 매핑 상태를 덮지 않는다");
+
+  harness.clock.now = new Date(BASE_NOW.getTime() + 200_000);
+  assert.equal((await harness.sync()).status, "synced", "다음 실행도 inactive로 건너뛰지 않는다");
+});
+
+test("인증 실패 중 연결 자격 증명이 바뀌었으면(재연결·다른 갱신) 연결을 NEEDS_REAUTH로 바꾸지 않는다", async (context) => {
+  const harness = setup(context);
+  const reconnecting = withPull(harness, async () => {
+    harness.sqlite.prepare("UPDATE calendar_connections SET encrypted_credentials = 'reconnected' WHERE id = ?").run(CONNECTION);
+    throw new CalendarAuthError("revoked", { status: 401 });
+  });
+  const result = await harness.sync({ client: reconnecting });
+  assert.ok(result.status === "failed" && result.authFailed);
+  assert.equal(harness.rows<{ status: string }>("SELECT status FROM calendar_connections")[0].status, "ACTIVE");
+  assert.equal(mappingState(harness).last_error, CALENDAR_SYNC_MESSAGES.auth, "lease 소유 중이면 매핑 오류는 남긴다");
+});
+
+test("실행의 pull 이후 원격에 생긴 변경은 같은 실행이 lease를 풀기 전 꼬리 pull로 반영하고 cursor를 옮긴다", async (context) => {
+  const harness = setup(context);
+  await harness.sync();
+  const start = at("2026-11-08T10:00:00Z");
+  let pulls = 0;
+  const racing = withPull(harness, async (...args) => {
+    pulls += 1;
+    const result = await harness.remote.pull(...args);
+    // 첫 pull의 snapshot 뒤에 원격 일정이 생기고 알림이 온다(알림 동기화는 lease에 막힌다).
+    if (pulls === 1) harness.remote.remoteAdd({ title: "실행 중 추가", start, end: new Date(start.getTime() + 3_600_000) });
+    return result;
+  });
+  const result = await harness.sync({ client: racing });
+  assert.equal(result.status, "synced");
+  assert.equal(pulls, 2, "push 뒤 꼬리 pull을 한 번 한다");
+  assert.deepEqual(harness.rows<{ title: string }>("SELECT title FROM calendar_events"), [{ title: "실행 중 추가" }]);
+  assert.equal(mappingState(harness).cursor, harness.remote.currentCursor(), "cursor가 꼬리 pull 뒤로 옮겨진다");
+
+  // push 모드는 pull하지 않는다(꼬리 pull도 없다).
+  harness.remote.calls = [];
+  await harness.sync({ mode: "push" });
+  assert.ok(!harness.remote.calls.includes("pull"));
 });

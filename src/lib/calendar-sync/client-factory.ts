@@ -27,11 +27,14 @@ import {
   type GoogleWatchResult,
 } from "./google";
 import { getGoogleCalendarOAuthConfig } from "./oauth-config";
-import { CalendarAuthError, type CalendarProviderClient } from "./types";
+import { CalendarAuthError, CalendarProviderError, type CalendarProviderClient } from "./types";
 
 const ACCESS_TOKEN_SKEW_MS = 60_000;
-/** 갱신 결과 저장 CAS를 다시 시도하는 최대 횟수(회전된 refresh token 병합용). */
-const CREDENTIALS_CAS_ATTEMPTS = 3;
+/**
+ * 갱신 결과 저장 CAS를 다시 시도하는 최대 횟수(회전된 refresh token 병합용). 저장에 성공하거나 다른 client가
+ * refresh token을 회전해 둔 것을 확인할 때까지 다시 읽어 병합한다. 다 쓰면 회전을 잃은 채 성공하지 않고 오류로 멈춘다.
+ */
+const CREDENTIALS_CAS_ATTEMPTS = 10;
 
 export type StoredCalendarConnection = {
   id: string;
@@ -40,7 +43,19 @@ export type StoredCalendarConnection = {
   credentialsIv: string;
 };
 
-export type CalendarClientFactory = (input: { ctx: DbContext; connection: StoredCalendarConnection }) => Promise<CalendarProviderClient>;
+/**
+ * client가 지금 쓰는 자격 증명 ciphertext가 바뀔 때(직접 갱신 저장·다른 client의 저장값 채택) 알린다.
+ * 동기화 엔진은 인증 실패를 이 ciphertext가 여전히 저장값일 때만 연결에 기록한다(재연결·더 새 갱신을 덮지 않는다).
+ */
+export type CalendarCredentialsObserver = (encryptedCredentials: string) => void;
+
+export type CalendarClientFactoryInput = {
+  ctx: DbContext;
+  connection: StoredCalendarConnection;
+  onCredentialsChange?: CalendarCredentialsObserver;
+};
+
+export type CalendarClientFactory = (input: CalendarClientFactoryInput) => Promise<CalendarProviderClient>;
 
 let factoryOverride: CalendarClientFactory | null = null;
 
@@ -67,7 +82,7 @@ export function isCalendarEncryptionConfigured(): boolean {
   }
 }
 
-async function defaultFactory({ ctx, connection }: { ctx: DbContext; connection: StoredCalendarConnection }): Promise<CalendarProviderClient> {
+async function defaultFactory({ ctx, connection, onCredentialsChange }: CalendarClientFactoryInput): Promise<CalendarProviderClient> {
   const key = requireCalendarEncryptionKey();
   if (connection.provider === "ICLOUD") {
     const credentials = await decryptConnectionCredentials({
@@ -83,7 +98,7 @@ async function defaultFactory({ ctx, connection }: { ctx: DbContext; connection:
       calendarHomeUrl: credentials.calendarHomeUrl,
     });
   }
-  return createGoogleCalendarClient({ getAccessToken: await createGoogleAccessTokenProvider(ctx, connection, key) });
+  return createGoogleCalendarClient({ getAccessToken: await createGoogleAccessTokenProvider(ctx, connection, key, onCredentialsChange) });
 }
 
 /**
@@ -98,6 +113,7 @@ async function createGoogleAccessTokenProvider(
   ctx: DbContext,
   connection: StoredCalendarConnection,
   key: Uint8Array,
+  onCredentialsChange?: CalendarCredentialsObserver,
 ): Promise<GoogleAccessTokenProvider> {
   const db = ctx.db as unknown as DrizzleDb;
   type Sealed = { encryptedCredentials: string; credentialsIv: string };
@@ -105,6 +121,10 @@ async function createGoogleAccessTokenProvider(
     decryptConnectionCredentials({ connectionId: connection.id, provider: "GOOGLE", ...sealed, key });
   let sealed: Sealed = { encryptedCredentials: connection.encryptedCredentials, credentialsIv: connection.credentialsIv };
   let credentials: GoogleConnectionCredentials = await decrypt(sealed);
+  const adopt = (next: Sealed) => {
+    sealed = next;
+    onCredentialsChange?.(next.encryptedCredentials);
+  };
 
   const usable = (value: GoogleConnectionCredentials) =>
     Boolean(value.accessToken) && (value.accessTokenExpiresAt ?? 0) > Date.now() + ACCESS_TOKEN_SKEW_MS;
@@ -119,7 +139,7 @@ async function createGoogleAccessTokenProvider(
     if (!row) throw new CalendarAuthError("Google connection was removed");
     if (row.encryptedCredentials === sealed.encryptedCredentials && row.credentialsIv === sealed.credentialsIv) return;
     credentials = await decrypt(row);
-    sealed = row;
+    adopt(row);
   }
 
   async function refresh(refreshToken: string) {
@@ -154,6 +174,7 @@ async function createGoogleAccessTokenProvider(
       accessToken: tokens.accessToken,
       accessTokenExpiresAt: tokens.expiresAt.getTime(),
     };
+    let settled = false;
     for (let attempt = 1; attempt <= CREDENTIALS_CAS_ATTEMPTS; attempt += 1) {
       const encrypted = await encryptConnectionCredentials({ connectionId: connection.id, provider: "GOOGLE", credentials: next, key });
       const swapped = await db
@@ -163,14 +184,18 @@ async function createGoogleAccessTokenProvider(
         .returning({ id: calendarConnections.id });
       if (swapped.length > 0) {
         credentials = next;
-        sealed = encrypted;
+        adopt(encrypted);
+        settled = true;
         break;
       }
       // CAS 실패: 다른 client가 먼저 저장했다. 최신 저장값을 읽는다.
       await adoptStored();
       // 이번 응답에 회전이 없거나, 다른 client가 refresh token을 이미 바꿨으면(회전) 저장값을 따른다.
       // 방금 받은 access token은 이번 요청에만 쓴다.
-      if (!rotatedRefreshToken || credentials.refreshToken !== usedRefreshToken) break;
+      if (!rotatedRefreshToken || credentials.refreshToken !== usedRefreshToken) {
+        settled = true;
+        break;
+      }
       // 먼저 저장한 쪽은 회전 없이 access token만 바꿨다. 이번 응답의 새 refresh token을 보존하고
       // access token은 더 늦게 만료되는 쪽을 둔다.
       const storedFresher = Boolean(credentials.accessToken)
@@ -181,12 +206,22 @@ async function createGoogleAccessTokenProvider(
         accessTokenExpiresAt: storedFresher ? credentials.accessTokenExpiresAt : tokens.expiresAt.getTime(),
       };
     }
+    if (!settled) {
+      // 회전된 refresh token을 저장하지 못했다. 회전 뒤 저장된 이전 refresh token은 Google에서 이미 무효일 수 있어,
+      // 여기서 access token을 돌려주면 이번 요청은 성공해도 다음 갱신이 실패해 정상 연결이 재인증 필요로 보인다.
+      // 인증 오류가 아닌 provider 오류로 멈춘다(매핑 last_error만 남고 다음 실행이 다시 갱신한다). token은 담지 않는다.
+      throw new CalendarProviderError("Could not persist rotated Google refresh token");
+    }
     return tokens.accessToken;
   };
 }
 
-export async function createCalendarClientForConnection(ctx: DbContext, connection: StoredCalendarConnection): Promise<CalendarProviderClient> {
-  return (factoryOverride ?? defaultFactory)({ ctx, connection });
+export async function createCalendarClientForConnection(
+  ctx: DbContext,
+  connection: StoredCalendarConnection,
+  options: { onCredentialsChange?: CalendarCredentialsObserver } = {},
+): Promise<CalendarProviderClient> {
+  return (factoryOverride ?? defaultFactory)({ ctx, connection, onCredentialsChange: options.onCredentialsChange });
 }
 
 export type ICloudDiscovery = (input: { appleId: string; appPassword: string }) => Promise<{ calendarHomeUrl: string }>;

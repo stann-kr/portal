@@ -80,13 +80,17 @@ async function runAfterResponse(task: () => Promise<unknown>): Promise<void> {
   await task();
 }
 
-/** 알림 동기화 시간 상한. lease가 잡혀 있으면 이 안에서 잠시 뒤 한 번 더 시도한다. */
+/** 알림 동기화 시간 상한(응답 뒤 after/waitUntil 안). lease가 잡혀 있으면 이 안에서 해제를 기다렸다가 다시 돈다. */
 export const CALENDAR_SYNC_NOTIFY_BUDGET_MS = 20_000;
-const NOTIFY_LEASE_RETRY_DELAY_MS = 5_000;
+/** lease 해제를 확인하는 간격. 확인은 lease 획득 시도(UPDATE 한 문장)라 짧게 둔다. */
+const NOTIFY_LEASE_POLL_MS = 1_000;
 
 /**
  * Google 변경 알림을 받은 매핑을 응답 뒤 동기화한다(throttle 무시, lease 존중).
- * 다른 동기화가 lease를 잡고 있으면 상한 안에서 한 번 더 시도하고, 그래도 안 되면 다음 동기화가 처리한다.
+ * 다른 동기화가 lease를 잡고 있으면 알림을 버리지 않고 시간 상한 안에서 짧은 간격으로 lease 획득을 다시 시도해,
+ * 진행 중 실행이 끝나면 강제 동기화를 한 번 돈다. 진행 중 실행도 lease를 풀기 전 꼬리 pull로 그 사이 변경을 반영한다(engine).
+ * 남는 틈: 진행 중 실행의 꼬리 pull 뒤·lease 해제 전에 생긴 변경이면서 이 시간 상한도 다 쓴 경우만 남고,
+ * 그 변경은 다음 조회·예약 동기화가 cursor로 반영한다.
  */
 export async function runGoogleNotificationSync(
   mappingId: string,
@@ -95,12 +99,12 @@ export async function runGoogleNotificationSync(
   try {
     const ctx = options.ctx ?? createDbContext();
     const deadline = Date.now() + (options.budgetMs ?? CALENDAR_SYNC_NOTIFY_BUDGET_MS);
-    const retryDelayMs = options.retryDelayMs ?? NOTIFY_LEASE_RETRY_DELAY_MS;
-    for (let attempt = 0; attempt < 2; attempt += 1) {
+    const pollMs = options.retryDelayMs ?? NOTIFY_LEASE_POLL_MS;
+    for (;;) {
       const result = await syncCalendarMapping(ctx, mappingId, { force: true, deadline });
       if (result.status !== "skipped" || result.reason !== "lease") return;
-      if (Date.now() + retryDelayMs >= deadline) return;
-      await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+      if (Date.now() + pollMs >= deadline) return;
+      await new Promise((resolve) => setTimeout(resolve, pollMs));
     }
   } catch {
     // 알림 처리 실패는 다음 조회·예약 동기화가 이어 간다.

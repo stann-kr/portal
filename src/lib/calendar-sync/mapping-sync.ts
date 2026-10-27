@@ -27,10 +27,17 @@ export async function syncCalendarMapping(ctx: DbContext, mappingId: string, opt
     .where(eq(calendarMappings.id, mappingId))
     .limit(1);
   if (!row) return { status: "skipped", localChanged: false, reason: "missing" };
+  // 이 실행의 client가 지금 쓰는 자격 증명 ciphertext(직접 갱신·다른 client 저장값 채택 때 바뀐다).
+  let credentialsCiphertext = row.encryptedCredentials;
   return runCalendarMappingSync({
     ctx,
     mappingId,
-    getClient: () => createCalendarClientForConnection(ctx, row),
+    getClient: () => createCalendarClientForConnection(ctx, row, {
+      onCredentialsChange: (encryptedCredentials) => {
+        credentialsCiphertext = encryptedCredentials;
+      },
+    }),
+    credentialsCiphertext: () => credentialsCiphertext,
     force: options.force,
     mode: options.mode,
     deadline: options.deadline,

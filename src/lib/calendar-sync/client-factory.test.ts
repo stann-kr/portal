@@ -5,6 +5,7 @@ import { decryptConnectionCredentials, encryptConnectionCredentials } from "./cr
 import { jsonResponse } from "./fake-fetch";
 import { GOOGLE_TOKEN_ENDPOINT } from "./google";
 import { createSqliteTestDb, insertProfile, type SqliteTestDb } from "./sqlite-test-db";
+import { CalendarAuthError, CalendarProviderError } from "./types";
 
 const KEY = new Uint8Array(32).fill(9);
 const CONNECTION_ID = "conn-google";
@@ -158,4 +159,93 @@ test("먼저 끝난 갱신에 회전이 없고 늦게 끝난 갱신에 새 refre
   assert.equal(google.tokenCalls.length, 2, "병합 저장 뒤에는 다시 refresh하지 않는다");
   assert.ok(["Bearer access-a", "Bearer access-b"].includes(google.bearers[2]));
   assert.equal(await storedRefreshToken(db), "refresh-2");
+});
+
+// ── 교차 검토(Sol 5) 필수 지적 회귀 테스트: CAS 재시도 소진 ──
+
+/**
+ * 갱신 결과 저장(CAS) 문장이 실행되기 직전마다 다른 client가 access token만 바꿔 저장한 상태를 만든다(contentions번).
+ * 경쟁 저장값은 같은 refresh-1이라 회전이 아니고, 매번 다른 ciphertext라 CAS가 실패한다.
+ */
+async function contendCredentialSaves(db: SqliteTestDb, contentions: number): Promise<{ count: () => number }> {
+  const competing = await Promise.all(Array.from({ length: contentions }, (_, index) => encryptConnectionCredentials({
+    connectionId: CONNECTION_ID,
+    provider: "GOOGLE",
+    credentials: { refreshToken: "refresh-1", accessToken: `access-other-${index}`, accessTokenExpiresAt: Date.now() + 600_000 },
+    key: KEY,
+  })));
+  let used = 0;
+  const sqlite = db.sqlite;
+  const client = new Proxy(sqlite, {
+    get(target, property) {
+      if (property === "prepare") {
+        return (source: string) => {
+          if (/^update "calendar_connections"/iu.test(source) && used < competing.length) {
+            const sealed = competing[used];
+            used += 1;
+            target
+              .prepare("UPDATE calendar_connections SET encrypted_credentials = ?, credentials_iv = ? WHERE id = ?")
+              .run(sealed.encryptedCredentials, sealed.credentialsIv, CONNECTION_ID);
+          }
+          return target.prepare(source);
+        };
+      }
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  (db.ctx.db as unknown as { session: { client: unknown } }).session.client = client;
+  return { count: () => used };
+}
+
+test("갱신 저장이 여러 번 경합해도 회전된 refresh token을 다시 병합해 끝내 저장한다", async (context) => {
+  const google = installGoogleFetch(context);
+  const db = createSqliteTestDb(context);
+  const stale = await storeGoogleConnection(db);
+  const contention = await contendCredentialSaves(db, 3);
+  const client = await createCalendarClientForConnection(db.ctx, stale);
+
+  const list = client.listCalendars();
+  await waitFor(() => google.tokenCalls.length === 1);
+  google.tokenCalls[0].respond({ access_token: "access-a", expires_in: 3600, refresh_token: "refresh-2" });
+  await list;
+  assert.equal(contention.count(), 3, "저장 경합이 세 번 일어났다");
+  assert.equal(await storedRefreshToken(db), "refresh-2", "경합이 반복돼도 회전된 refresh token을 잃지 않는다");
+  assert.equal(google.tokenCalls.length, 1);
+});
+
+test("갱신 저장 경합이 상한을 넘으면 회전된 refresh token을 잃은 채 성공하지 않고 provider 오류로 멈춘다", async (context) => {
+  const google = installGoogleFetch(context);
+  const db = createSqliteTestDb(context);
+  const stale = await storeGoogleConnection(db);
+  await contendCredentialSaves(db, 50);
+  const client = await createCalendarClientForConnection(db.ctx, stale);
+
+  const list = client.listCalendars();
+  await waitFor(() => google.tokenCalls.length === 1);
+  google.tokenCalls[0].respond({ access_token: "access-a", expires_in: 3600, refresh_token: "refresh-2" });
+  await assert.rejects(list, (error: unknown) => {
+    assert.ok(error instanceof CalendarProviderError);
+    assert.ok(!(error instanceof CalendarAuthError), "연결을 NEEDS_REAUTH로 바꾸는 인증 오류가 아니다");
+    assert.doesNotMatch(String((error as Error).message), /refresh-|access-/u, "token을 오류에 담지 않는다");
+    return true;
+  });
+  assert.equal(await storedRefreshToken(db), "refresh-1", "저장값은 경쟁 client가 둔 값 그대로다");
+  assert.deepEqual(google.bearers, [], "회전을 잃은 access token으로 요청하지 않는다");
+});
+
+test("직접 갱신해 저장한 자격 증명 ciphertext를 동기화 엔진에 알린다(인증 실패 기록 조건)", async (context) => {
+  const google = installGoogleFetch(context);
+  const db = createSqliteTestDb(context);
+  const stale = await storeGoogleConnection(db);
+  const seen: string[] = [];
+  const client = await createCalendarClientForConnection(db.ctx, stale, { onCredentialsChange: (value) => seen.push(value) });
+
+  const list = client.listCalendars();
+  await waitFor(() => google.tokenCalls.length === 1);
+  google.tokenCalls[0].respond({ access_token: "access-a", expires_in: 3600, refresh_token: "refresh-2" });
+  await list;
+  const [row] = db.rows<{ encrypted_credentials: string }>("SELECT encrypted_credentials FROM calendar_connections WHERE id = ?", CONNECTION_ID);
+  assert.notEqual(row.encrypted_credentials, stale.encryptedCredentials);
+  assert.equal(seen.at(-1), row.encrypted_credentials, "마지막으로 알린 값이 지금 저장된 ciphertext다");
 });
