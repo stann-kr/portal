@@ -1,12 +1,14 @@
 "use client";
 
 import { createContext, useContext, useLayoutEffect, useState, type ReactNode } from "react";
-import Link from "next/link";
+import Link, { useLinkStatus } from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import * as Dialog from "@radix-ui/react-dialog";
-import { ChevronLeft, Menu, Plus, X } from "lucide-react";
+import { ChevronLeft, Menu, Plus, X, type LucideIcon } from "lucide-react";
+import { ButtonSpinner } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { AccountMenu } from "./AccountMenu";
+import { NavigationProgress } from "./NavigationProgress";
 import {
   APP_NAV_ITEMS,
   navigateWithinPage,
@@ -65,6 +67,13 @@ function handleWithinPageClick(event: React.MouseEvent<HTMLAnchorElement>, href:
   if (navigateWithinPage(href)) event.preventDefault();
 }
 
+/** 메뉴 아이콘. 그 메뉴로 이동을 기다리는 동안 같은 자리에 회전 표시를 둔다. */
+function NavIcon({ Icon, className }: { Icon: LucideIcon; className: string }) {
+  const { pending } = useLinkStatus();
+  if (pending) return <ButtonSpinner className={className} />;
+  return <Icon className={cn("shrink-0", className)} strokeWidth={1.6} aria-hidden="true" />;
+}
+
 function SidebarNav({ role, variant, onNavigate }: { role: AppRole; variant: "desktop" | "drawer"; onNavigate?: () => void }) {
   const location = useLocation();
   const activeId = resolveActiveNavItem(role, location);
@@ -89,7 +98,7 @@ function SidebarNav({ role, variant, onNavigate }: { role: AppRole; variant: "de
                 : "text-secondary-foreground hover:bg-muted hover:text-foreground",
             )}
           >
-            <Icon className={cn("shrink-0", variant === "desktop" ? "size-4" : "size-[18px]")} strokeWidth={1.6} aria-hidden="true" />
+            <NavIcon Icon={Icon} className={variant === "desktop" ? "size-4" : "size-[18px]"} />
             <span className="truncate">{label}</span>
           </Link>
         );
@@ -200,6 +209,7 @@ export function AppSidebar({
 
   return (
     <TopBarContext.Provider value={setOverride}>
+      <NavigationProgress />
       <aside
         aria-label="사이드바"
         className="sticky top-0 hidden h-[100dvh] w-60 shrink-0 flex-col gap-6 border-r border-border bg-sidebar px-3 py-4 md:flex"

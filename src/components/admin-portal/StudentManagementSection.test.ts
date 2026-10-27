@@ -53,32 +53,33 @@ test("roster 행은 요약 열과 더 보기 메뉴의 canonical 학생 링크�
     }
   });
 
+  const renderedStudents = [{
+    id: "student-1",
+    email: "student@example.test",
+    displayName: "학생",
+    createdAt: new Date("2026-08-01T00:00:00.000Z"),
+    currentModule: "WEEK 01 · 기초",
+    nextLessonDate: new Date("2026-08-14T10:00:00.000Z"),
+    pendingFeedbackCount: 2,
+  }, {
+    id: "student-2",
+    email: "minji@example.test",
+    displayName: "민지",
+    createdAt: new Date("2026-08-02T00:00:00.000Z"),
+    currentModule: null,
+    nextLessonDate: null,
+    pendingFeedbackCount: 0,
+  }];
   await act(async () => {
-    root.render(React.createElement(StudentManagementSection, {
-      students: [{
-        id: "student-1",
-        email: "student@example.test",
-        displayName: "학생",
-        createdAt: new Date("2026-08-01T00:00:00.000Z"),
-        currentModule: "WEEK 01 · 기초",
-        nextLessonDate: new Date("2026-08-14T10:00:00.000Z"),
-        pendingFeedbackCount: 2,
-      }, {
-        id: "student-2",
-        email: "minji@example.test",
-        displayName: "민지",
-        createdAt: new Date("2026-08-02T00:00:00.000Z"),
-        currentModule: null,
-        nextLessonDate: null,
-        pendingFeedbackCount: 0,
-      }],
-    }));
+    root.render(React.createElement(StudentManagementSection, { students: renderedStudents }));
   });
 
   const rows = () => [...container.querySelectorAll("tbody tr")];
   assert.equal(rows().length, 2);
   const [first] = rows();
-  assert.match(first.textContent ?? "", /WEEK 01 · 기초/u);
+  // 커리큘럼 숨김(기본값): 현재 진도 열과 진도 문구가 없다.
+  assert.deepEqual([...container.querySelectorAll("thead th")].map((th) => th.textContent), ["수강생", "다음 레슨", "피드백 대기", "메뉴"]);
+  assert.doesNotMatch(container.textContent ?? "", /WEEK 01|현재 진도|진도 미지정/u);
   assert.match(first.textContent ?? "", /08\.14 19:00/u, "다음 레슨은 KST 점 날짜와 시각");
   assert.match(first.textContent ?? "", /2건/u, "피드백 대기 수를 함께 읽는다");
   assert.equal(
@@ -118,7 +119,7 @@ test("roster 행은 요약 열과 더 보기 메뉴의 canonical 학생 링크�
     search.dispatchEvent(new browserWindow.Event("input", { bubbles: true }) as unknown as Event);
   });
   assert.deepEqual(rows().map((row) => row.querySelector("a")?.getAttribute("href")), ["/dashboard/admin/students/student-2?tab=overview"]);
-  assert.match(rows()[0].textContent ?? "", /진도 미지정.*미정/u);
+  assert.match(rows()[0].textContent ?? "", /minji@example\.test.*미정/u);
 
   await act(async () => {
     setter.call(search, "없는 학생");
@@ -126,4 +127,16 @@ test("roster 행은 요약 열과 더 보기 메뉴의 canonical 학생 링크�
   });
   assert.equal(rows().length, 0);
   assert.match(container.querySelector('[role="status"]')?.textContent ?? "", /맞는 수강생이 없습니다/u);
+
+  // 스위치를 켜면 현재 진도 열이 돌아온다.
+  await act(async () => {
+    setter.call(search, "");
+    search.dispatchEvent(new browserWindow.Event("input", { bubbles: true }) as unknown as Event);
+  });
+  await act(async () => {
+    root.render(React.createElement(StudentManagementSection, { students: renderedStudents, showCurriculum: true }));
+  });
+  assert.ok([...container.querySelectorAll("thead th")].some((th) => th.textContent === "현재 진도"));
+  assert.match(rows()[0].textContent ?? "", /WEEK 01 · 기초/u);
+  assert.match(rows()[1].textContent ?? "", /진도 미지정/u);
 });

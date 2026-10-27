@@ -1,6 +1,6 @@
 /**
  * @file src/components/community/AnnouncementList.tsx
- * @description 공지 목록(캔버스 AdminAnnouncements·MobileAdminAnnouncements 보드, 커뮤니티 공지 탭).
+ * @description 커뮤니티 공지 목록(캔버스 AdminAnnouncements·MobileAdminAnnouncements 보드: 관리자가 보는 커뮤니티 공지).
  * 고정 공지는 본문 미리보기와 상세 보기·고정 해제를 펼친 줄로, 나머지는 제목·작성자·날짜 한 줄 링크로 보인다.
  * 관리자만 고정·고정 해제를 바꾼다.
  */
@@ -10,13 +10,12 @@ import { useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Megaphone, Pin } from "lucide-react";
-import { buttonClassName } from "@/components/ui/button";
+import { ButtonSpinner, buttonClassName } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { togglePinPost } from "@/lib/actions/posts";
 import { createCreationOperationId } from "@/lib/creation-operation";
-import { formatKstShortDate } from "@/lib/kst-format";
 import { cn } from "@/lib/utils";
-import { communityAuthorName, communityPreview } from "./CommunityPostRow";
+import { communityPreview, communityRowMeta } from "./CommunityPostRow";
 
 type Post = {
   id: string;
@@ -27,32 +26,29 @@ type Post = {
   authorEmail: string | null;
   createdAt: Date | null;
   version: number;
+  commentCount?: number;
 };
 
 interface AnnouncementListProps {
   posts: Post[];
   isAdmin: boolean;
   returnTo?: string;
-  /**
-   * page: 공지 화면(머리 바로 아래 위쪽 선).
-   * board: 커뮤니티 공지 탭(넓은 화면은 게시판 탭 줄의 선을 함께 쓴다).
-   */
-  layout?: "page" | "board";
 }
 
 const PIN_BUTTON_CLASS =
   "h-11 shrink-0 rounded-touch px-3 text-body font-normal text-secondary-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 md:h-7 md:rounded-md md:px-2.5 md:text-xs";
 
-export function AnnouncementList({ posts, isAdmin, returnTo = "/community", layout = "page" }: AnnouncementListProps) {
+export function AnnouncementList({ posts, isAdmin, returnTo = "/community" }: AnnouncementListProps) {
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [pendingPostId, setPendingPostId] = useState<string | null>(null);
   const operationIdsRef = useRef(new Map<string, string>());
   const router = useRouter();
 
   if (posts.length === 0) {
     return (
       <EmptyState
-        className={layout === "board" ? "mt-4 md:mt-0" : undefined}
+        className="mt-4 md:mt-0"
         icon={<Megaphone className="size-4" strokeWidth={1.6} aria-hidden="true" />}
         title="등록된 공지가 없습니다"
         description={isAdmin ? "공지 작성으로 첫 공지를 올려 보세요." : "강사가 공지를 올리면 여기에 보입니다."}
@@ -61,6 +57,7 @@ export function AnnouncementList({ posts, isAdmin, returnTo = "/community", layo
   }
 
   const handleTogglePin = (postId: string, currentPinned: boolean, version: number) => {
+    setPendingPostId(postId);
     startTransition(async () => {
       const operationId =
         operationIdsRef.current.get(postId) ?? createCreationOperationId();
@@ -88,10 +85,9 @@ export function AnnouncementList({ posts, isAdmin, returnTo = "/community", layo
   return (
     <div className="flex flex-col gap-3">
       {error ? <p role="alert" className="text-ui text-destructive">{error}</p> : null}
-      <ul className={cn("flex flex-col border-t border-border", layout === "board" && "md:border-t-0")}>
+      <ul className="flex flex-col">
         {posts.map((post) => {
-          const author = communityAuthorName(post, "관리자");
-          const meta = `${author} · ${formatKstShortDate(post.createdAt, "날짜 정보 없음")}`;
+          const meta = communityRowMeta(post, "관리자");
           const detailHref = `/community/${post.id}?returnTo=${encodeURIComponent(returnTo)}`;
           const pinButton = isAdmin ? (
             <button
@@ -99,7 +95,9 @@ export function AnnouncementList({ posts, isAdmin, returnTo = "/community", layo
               className={PIN_BUTTON_CLASS}
               onClick={() => handleTogglePin(post.id, post.isPinned, post.version)}
               disabled={isPending}
+              aria-busy={isPending && pendingPostId === post.id ? true : undefined}
             >
+              {isPending && pendingPostId === post.id ? <ButtonSpinner className="mr-1.5 inline-block align-[-2px]" /> : null}
               {post.isPinned ? "고정 해제" : "고정"}
               <span className="sr-only">: {post.title}</span>
             </button>

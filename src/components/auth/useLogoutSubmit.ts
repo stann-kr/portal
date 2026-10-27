@@ -1,9 +1,18 @@
 "use client";
 
 import { useRef, useState, type FormEvent } from "react";
+import { unstable_rethrow } from "next/navigation";
+import { logoutCurrentUser } from "@/lib/actions/session";
+import {
+  acquireAccountLogoutLock,
+  releaseAccountLogoutLock,
+  type AccountLogoutLockHandle,
+} from "@/lib/account-logout-lock";
 import { postDocumentServerDraftDiscard } from "@/lib/document-server-draft-discard-api";
 import { flushQueuedDocumentServerDraftDiscards } from "@/lib/document-server-draft-logout";
 import { clearLocalDocumentDraftsForLogout } from "@/lib/local-draft-continuity-client";
+
+export const LOGOUT_FAILED_MESSAGE = "로그아웃하지 못했습니다. 연결을 확인하고 다시 시도해 주세요.";
 
 async function flushServerDraftDiscards(ownerId: string): Promise<void> {
   try {
@@ -19,32 +28,69 @@ async function flushServerDraftDiscards(ownerId: string): Promise<void> {
   }
 }
 
+function acquireLock(ownerId: string): AccountLogoutLockHandle | null {
+  try {
+    return acquireAccountLogoutLock(window.localStorage, ownerId);
+  } catch {
+    return null;
+  }
+}
+
+function releaseLock(ownerId: string, handle: AccountLogoutLockHandle | null): void {
+  try {
+    releaseAccountLogoutLock(window.localStorage, ownerId, handle);
+  } catch {
+    // 풀지 못한 잠금은 만료로 풀린다.
+  }
+}
+
+/** 로그아웃 action의 redirect 같은 Next.js 이동 신호면 true(실패가 아니라 이동 중이다). */
+function isNavigationSignal(error: unknown): boolean {
+  try {
+    unstable_rethrow(error);
+    return false;
+  } catch {
+    return true;
+  }
+}
+
 /**
- * 로그아웃 form의 onSubmit. 첫 제출은 멈추고 이 계정의 서버 초안 폐기 요청을 보낸 뒤(최대 3초)
- * 다시 제출한다. 다시 제출할 때 로컬 초안을 지우고 server action이 로그아웃한다.
- * 등록 직후 로그아웃해도 이미 게시한 글의 계정 작성본이 남지 않는다.
+ * 로그아웃 form의 onSubmit. 먼저 같은 계정의 모든 탭에 로그아웃 잠금을 알려 서버 초안 저장을 멈추고,
+ * 이 계정의 서버 초안 폐기 요청을 보낸 뒤(최대 3초) 로컬 초안을 지우고 로그아웃 action을 직접 부른다.
+ * action이 실패하면 잠금을 풀고(다른 탭이 다시 저장한다) 버튼을 다시 누를 수 있게 하며 오류를 보인다.
+ * form의 action은 JavaScript 없이 제출할 때만 쓰인다.
  */
 export function useLogoutSubmit(ownerId: string) {
-  const flushedRef = useRef(false);
   const pendingRef = useRef(false);
   const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const onSubmit = (event: FormEvent<HTMLFormElement>) => {
-    if (flushedRef.current) {
-      flushedRef.current = false;
-      clearLocalDocumentDraftsForLogout(ownerId);
-      return;
-    }
-    event.preventDefault();
+  const start = () => {
     if (pendingRef.current) return;
     pendingRef.current = true;
     setPending(true);
-    const form = event.currentTarget;
-    void flushServerDraftDiscards(ownerId).then(() => {
-      flushedRef.current = true;
-      form.requestSubmit();
-    });
+    setError(null);
+    void (async () => {
+      // 폐기를 계산·전송하기 전에 잠근다. 그래야 다른 탭이 폐기 직후 초안을 다시 저장하지 못한다.
+      const lock = acquireLock(ownerId);
+      await flushServerDraftDiscards(ownerId);
+      try {
+        clearLocalDocumentDraftsForLogout(ownerId);
+        await logoutCurrentUser();
+      } catch (failure) {
+        if (isNavigationSignal(failure)) return;
+        releaseLock(ownerId, lock);
+        pendingRef.current = false;
+        setPending(false);
+        setError(LOGOUT_FAILED_MESSAGE);
+      }
+    })();
   };
 
-  return { onSubmit, pending };
+  const onSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    start();
+  };
+
+  return { onSubmit, start, pending, error, clearError: () => setError(null) };
 }

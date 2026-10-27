@@ -21,7 +21,10 @@ function request(headers: Record<string, string>, body: string = JSON.stringify(
 
 test("폐기 경로는 같은 출처 JSON 요청만 server action에 넘긴다", async () => {
   const received: DiscardDocumentServerDraftInput[] = [];
-  const handler = createDocumentServerDraftDiscardHandler({ discard: async (input) => { received.push(input); return OK; } });
+  const handler = createDocumentServerDraftDiscardHandler({
+    discard: async (input) => { received.push(input); return OK; },
+    isAuthenticated: async () => true,
+  });
 
   const ok = await handler(request({ "content-type": "application/json", "sec-fetch-site": "same-origin" }));
   assert.equal(ok.status, 200);
@@ -35,6 +38,9 @@ test("폐기 경로는 같은 출처 JSON 요청만 server action에 넘긴다",
   for (const [headers, status] of [
     [{ "content-type": "application/json", "sec-fetch-site": "cross-site" }, 403],
     [{ "content-type": "application/json", origin: "https://evil.test", host: "portal.test" }, 403],
+    // Origin 대체 비교는 protocol도 맞아야 한다(https 경로에 http 출처).
+    [{ "content-type": "application/json", origin: "http://portal.test", host: "portal.test" }, 403],
+    [{ "content-type": "application/json", origin: "https://portal.test:8443", host: "portal.test" }, 403],
     [{ "content-type": "application/json" }, 403],
     [{ "content-type": "text/plain", "sec-fetch-site": "same-origin" }, 415],
   ] as const) {
@@ -69,4 +75,24 @@ test("브라우저 요청은 같은 출처 POST JSON이고, 실패 응답과 끊
   await assert.rejects(postDocumentServerDraftDiscard(INPUT, {
     fetcher: (async () => Response.json({ nope: true })) as unknown as typeof fetch,
   }));
+});
+
+test("로그인하지 않은 폐기 요청은 401이고 server action에 넘기지 않는다", async () => {
+  let discardCalls = 0;
+  let authChecks = 0;
+  const handler = createDocumentServerDraftDiscardHandler({
+    discard: async () => { discardCalls += 1; return OK; },
+    isAuthenticated: async () => { authChecks += 1; return false; },
+  });
+
+  const unauthenticated = await handler(request({ "content-type": "application/json", "sec-fetch-site": "same-origin" }));
+  assert.equal(unauthenticated.status, 401);
+  assert.equal(unauthenticated.headers.get("cache-control"), "no-store");
+  assert.equal((await unauthenticated.json()).ok, false);
+
+  // 다른 사이트 요청은 로그인 확인 전에 403으로 끊는다.
+  const crossSite = await handler(request({ "content-type": "application/json", "sec-fetch-site": "cross-site" }));
+  assert.equal(crossSite.status, 403);
+  assert.equal(authChecks, 1);
+  assert.equal(discardCalls, 0);
 });

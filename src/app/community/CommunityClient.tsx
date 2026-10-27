@@ -8,7 +8,7 @@
  */
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { Hash, MessageSquare, Music2, Plus, RotateCcw, Settings2, Trash2 } from "lucide-react";
 import { Button, buttonClassName } from "@/components/ui/button";
@@ -50,8 +50,31 @@ function listKey(boardType: CommunityBoardType, category: string): string | null
   return category ? `GENERAL:${category}` : null;
 }
 
-/** 캔버스 순서: 공지 · 자유 · 믹스셋 */
-const BOARD_TABS: readonly CommunityBoardType[] = ["ANNOUNCEMENT", "GENERAL", "FEEDBACK"];
+/** 채널이 아닌 게시판. 자유 게시판은 채널(#)로 바로 고른다. */
+const BOARD_LINKS: readonly CommunityBoardType[] = ["ANNOUNCEMENT", "FEEDBACK"];
+
+/** 게시판 한 줄의 항목. 새로고침·새 탭에서도 같은 위치를 여는 주소를 갖고, 클릭은 화면 안에서 바꾼다. */
+function BoardLink({ href, active, onSelect, children }: { href: string; active: boolean; onSelect: () => void; children: ReactNode }) {
+  return (
+    <a
+      href={href}
+      aria-current={active ? "page" : undefined}
+      onClick={(event) => {
+        if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        event.preventDefault();
+        if (!active) onSelect();
+      }}
+      className={cn(
+        "flex h-11 shrink-0 items-center whitespace-nowrap transition-colors duration-[var(--duration-fast)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none md:h-9",
+        active
+          ? "font-medium text-foreground shadow-[inset_0_-2px_0_currentColor]"
+          : "text-secondary-foreground hover:text-foreground",
+      )}
+    >
+      {children}
+    </a>
+  );
+}
 
 function communityHref(boardType: CommunityBoardType, category: string): string {
   const params = new URLSearchParams({ boardType });
@@ -227,63 +250,38 @@ export default function CommunityClient({ isAdmin, initial }: CommunityClientPro
           </div>
         </header>
 
-        <div className="flex flex-col md:gap-3 md:border-b md:border-border md:pb-3">
-          <nav aria-label="게시판" className="-mx-5 flex gap-6 border-b border-muted px-5 text-body md:mx-0 md:gap-5 md:border-0 md:px-0">
-            {BOARD_TABS.map((tab) => {
-              const isActive = tab === activeTab;
-              return (
-                <a
-                  key={tab}
-                  href={communityHref(tab, activeCategory)}
-                  aria-current={isActive ? "page" : undefined}
-                  onClick={(event) => {
-                    if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-                    event.preventDefault();
-                    if (!isActive) changeLocation(tab);
-                  }}
-                  className={cn(
-                    "flex h-11 items-center transition-colors duration-[var(--duration-fast)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none md:h-8",
-                    isActive
-                      ? "font-medium text-foreground shadow-[inset_0_-2px_0_currentColor]"
-                      : "text-secondary-foreground hover:text-foreground",
-                  )}
-                >
-                  {COMMUNITY_BOARD_LABELS[tab]}
-                </a>
-              );
-            })}
-          </nav>
-          {activeTab === "GENERAL" && categories.length > 0 ? (
-            <div role="group" aria-label="채널" className="scroll-row -mx-5 flex gap-1.5 px-5 py-1 md:mx-0 md:flex-wrap md:gap-1 md:overflow-visible md:p-0">
-              {categories.map((cat) => {
-                const isActive = cat.slug === activeCategory;
-                return (
-                  <button
-                    key={cat.id}
-                    type="button"
-                    onClick={() => changeLocation("GENERAL", cat.slug)}
-                    aria-pressed={isActive}
-                    className="group flex h-11 shrink-0 items-center focus-visible:outline-none md:h-7"
-                  >
-                    <span
-                      className={cn(
-                        "inline-flex h-8 items-center whitespace-nowrap rounded-full px-3 text-ui transition-colors duration-[var(--duration-fast)] group-focus-visible:ring-2 group-focus-visible:ring-ring motion-reduce:transition-none md:h-7 md:px-2.5 md:text-xs",
-                        isActive ? "bg-primary text-primary-foreground" : "bg-muted text-secondary-foreground group-hover:text-foreground",
-                      )}
-                    >
-                      # {cat.name}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
+        {/* 게시판 한 줄: 공지 · 믹스셋 | # 채널(자유 게시판). 탭과 채널 칩을 두 단으로 나누지 않는다. */}
+        <nav aria-label="게시판" className="scroll-row -mx-5 flex items-center gap-5 border-b border-muted px-5 text-body md:mx-0 md:flex-wrap md:gap-x-5 md:gap-y-1 md:overflow-visible md:border-border md:px-0">
+          {BOARD_LINKS.map((tab) => (
+            <BoardLink
+              key={tab}
+              href={communityHref(tab, activeCategory)}
+              active={tab === activeTab}
+              onSelect={() => changeLocation(tab)}
+            >
+              {COMMUNITY_BOARD_LABELS[tab]}
+            </BoardLink>
+          ))}
+          {categories.length > 0 ? <span aria-hidden="true" className="h-4 w-px shrink-0 bg-border" /> : null}
+          {categories.map((cat) => (
+            <BoardLink
+              key={cat.id}
+              href={communityHref("GENERAL", cat.slug)}
+              active={activeTab === "GENERAL" && cat.slug === activeCategory}
+              onSelect={() => changeLocation("GENERAL", cat.slug)}
+            >
+              <span aria-hidden="true" className="mr-0.5 text-muted-foreground">#</span>{cat.name}
+            </BoardLink>
+          ))}
+          {categories.length === 0 && activeTab === "GENERAL" ? (
+            <BoardLink href={communityHref("GENERAL", "")} active onSelect={() => undefined}>자유</BoardLink>
           ) : null}
-        </div>
+        </nav>
 
         {/* 게시물 목록 */}
         <div className="flex flex-col">
           {awaitingList ? (
-            <div role="status" aria-label="게시물을 불러오는 중" className="flex flex-col border-t border-border md:border-t-0">
+            <div role="status" aria-label="게시물을 불러오는 중" className="flex flex-col">
               {[0, 1, 2, 3].map((index) => (
                 <div key={index} className="flex flex-col gap-2 border-b border-muted py-4 md:px-1">
                   <span className="h-4 w-2/5 rounded-sm bg-muted" />
@@ -311,7 +309,6 @@ export default function CommunityClient({ isAdmin, initial }: CommunityClientPro
                   }))}
                   isAdmin={isAdmin}
                   returnTo={returnTo}
-                  layout="board"
                 />
               ) : null}
 
@@ -337,7 +334,7 @@ export default function CommunityClient({ isAdmin, initial }: CommunityClientPro
                     action={<Link href={newPostHref} className={buttonClassName({ variant: "outline" })}>첫 게시물 작성하기</Link>}
                   />
                 ) : (
-                  <ul className="flex flex-col border-t border-border md:border-t-0">
+                  <ul className="flex flex-col">
                     {generalPosts.map((post) => (
                       <CommunityPostRow key={post.id} post={post} returnTo={returnTo} />
                     ))}
@@ -355,7 +352,7 @@ export default function CommunityClient({ isAdmin, initial }: CommunityClientPro
                     action={<Link href={newPostHref} className={buttonClassName({ variant: "outline" })}>첫 믹스셋 공유하기</Link>}
                   />
                 ) : (
-                  <ul className="flex flex-col border-t border-border md:border-t-0">
+                  <ul className="flex flex-col">
                     {feedbackPosts.map((post) => (
                       <MixsetFeedbackCard
                         key={post.id}
@@ -376,11 +373,11 @@ export default function CommunityClient({ isAdmin, initial }: CommunityClientPro
                     type="button"
                     variant="outline"
                     onClick={loadMore}
-                    disabled={loadingMore}
+                    pending={loadingMore}
                     aria-describedby="community-list-count"
                     className="text-secondary-foreground"
                   >
-                    {loadingMore ? "불러오는 중..." : "게시물 더 보기"}
+                    {loadingMore ? "불러오는 중" : "게시물 더 보기"}
                   </Button>
                   <p id="community-list-count" role="status" className="sr-only">
                     최근 {visibleCount}개 표시 중

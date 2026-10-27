@@ -298,7 +298,7 @@ test("레슨 예약·시간 변경은 관리자와 대상 학생 레슨으로 �
   await assert.rejects(lessonActions.rescheduleLesson(lessonId, "student-1", {}, form("2026-10-13T20:00")), /Admin only/u);
 });
 
-test("대시보드 게시물 요약은 본문 없이 범위·정렬·개수를 제한한다", { concurrency: false }, async (context) => {
+test("홈 공지 요약은 본문 없이 범위·정렬·개수를 제한한다", { concurrency: false }, async (context) => {
   const db = await setupDatabase(context, createSession("student-1", "student"));
   await seedProfile(db, "student-1");
   const base = { authorId: "student-1", category: "general", contentHtml: "<p>긴 본문</p>" };
@@ -310,10 +310,8 @@ test("대시보드 게시물 요약은 본문 없이 범위·정렬·개수를 �
     { ...base, id: "notice-new", boardType: "ANNOUNCEMENT", title: "새 공지", createdAt: new Date("2026-08-06T00:00:00.000Z") },
   ]);
 
-  const community = await postActions.getRecentCommunityPostSummaries(20);
-  assert.deepEqual(community.map((post) => post.id), ["feedback-new", "general-old"]);
-  assert.equal("contentHtml" in community[0]!, false, "대시보드 목록은 게시물 본문을 싣지 않는다");
-  assert.deepEqual((await postActions.getRecentCommunityPostSummaries(1)).map((post) => post.id), ["feedback-new"]);
+  const announcements = await postActions.getAnnouncementSummaries(2);
+  assert.equal("contentHtml" in announcements[0]!, false, "홈 공지 요약은 게시물 본문을 싣지 않는다");
   assert.deepEqual((await postActions.getAnnouncementSummaries(2)).map((post) => post.id), ["notice-pinned", "notice-new"]);
   assert.equal((await postActions.getAnnouncementSummaries(Number.NaN)).length, 1, "잘못된 limit은 최소 1개로 닫힌다");
 });

@@ -6,7 +6,7 @@
  */
 import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent, type KeyboardEvent } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useProgressRouter } from "@/components/app-shell/NavigationProgress";
 import { ArrowDown, ArrowUp, ArrowUpDown, FileText, List, Plus, Table2 } from "lucide-react";
 import { assertAccountOwnerMayPersist } from "@/lib/account-terminal-lock";
 import { toKstDateInputValue } from "@/lib/date-input";
@@ -179,7 +179,7 @@ export function NotesDatabase({
   /** 서버 기준 시각(`getRequestNow()`). 주면 하루 안 수정은 "2시간 전"처럼, 같은 해 날짜는 좁은 화면에서 월·일로 줄인다. */
   now?: number;
 }) {
-  const router = useRouter();
+  const router = useProgressRouter();
   const [view, setView] = useNotesViewMode(ownerId);
   const [sort, setSort] = useState<NotesSort>(DEFAULT_NOTES_SORT);
   const [adding, setAdding] = useState(false);

@@ -182,10 +182,11 @@ export function ColumnManager({
             type="button"
             onClick={handleAdd}
             disabled={!newName.trim() || isPending}
+            pending={isPending}
             size="touch"
             className="w-full md:h-8 md:rounded-md md:text-ui"
           >
-            <Plus className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
+            {isPending ? null : <Plus className="size-3.5" strokeWidth={1.8} aria-hidden="true" />}
             추가
           </Button>
         </div>

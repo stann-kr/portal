@@ -6,8 +6,9 @@
  */
 "use client";
 
-import { useEffect, useRef, useState, useTransition, useCallback } from "react";
+import { useEffect, useId, useRef, useState, useTransition, useCallback } from "react";
 import { Plus, X } from "lucide-react";
+import { ButtonSpinner } from "@/components/ui/button";
 import { createDiggingTrack, fetchLinkMeta } from "@/lib/actions/digging";
 import { parseStoredDiggingOptions } from "@/lib/digging-contract";
 import { StarRating } from "./StarRating";
@@ -44,6 +45,7 @@ export function InlineAddRow({ columns, onTrackCreated }: InlineAddRowProps) {
   const [isFetching, setIsFetching] = useState(false);
   const [submitError, setSubmitError] = useState("");
   const [isPending, startTransition] = useTransition();
+  const rowId = useId();
   const promptRef = useRef<HTMLButtonElement>(null);
   const rowRef = useRef<HTMLTableRowElement>(null);
   const restorePromptFocus = useRef(false);
@@ -193,6 +195,7 @@ export function InlineAddRow({ columns, onTrackCreated }: InlineAddRowProps) {
                 className={`${CELL_INPUT} resize-none py-[11px] text-ui leading-[22px]`}
               />
             ) : col.columnType === "link" ? (
+              <>
               <input
                 {...first}
                 aria-label={col.name}
@@ -202,9 +205,16 @@ export function InlineAddRow({ columns, onTrackCreated }: InlineAddRowProps) {
                 onBlur={(e) => handleLinkBlur(e.target.value)}
                 onKeyDown={handleKeyDown}
                 disabled={isPending}
-                placeholder={isFetching ? "추출 중..." : "https://..."}
+                placeholder="https://..."
+                aria-describedby={isFetching ? `${rowId}-link-status` : undefined}
                 className={`${CELL_INPUT} text-ui`}
               />
+              {isFetching ? (
+                <span id={`${rowId}-link-status`} role="status" className="flex items-center gap-1 px-2 pb-1 text-xs text-muted-foreground">
+                  <ButtonSpinner className="size-3" />링크 정보를 가져오는 중
+                </span>
+              ) : null}
+              </>
             ) : (
               <input
                 {...first}
@@ -237,9 +247,10 @@ export function InlineAddRow({ columns, onTrackCreated }: InlineAddRowProps) {
             disabled={isPending}
             title="트랙 추가 (Enter)"
             aria-label="디깅 트랙 추가"
+            aria-busy={isPending || undefined}
             className="flex size-6 items-center justify-center rounded-sm text-secondary-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
           >
-            <Plus className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
+            {isPending ? <ButtonSpinner /> : <Plus className="size-3.5" strokeWidth={1.8} aria-hidden="true" />}
           </button>
           <button
             type="button"

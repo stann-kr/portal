@@ -8,7 +8,7 @@
 import { useActionState, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useProgressRouter } from "@/components/app-shell/NavigationProgress";
 import { Button, buttonClassName } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { MobileTopBar } from "@/components/app-shell/AppSidebar";
@@ -79,8 +79,10 @@ function NewQnaFormContent({ actorId, returnTo }: { actorId: string; returnTo: s
   const contentInputRef = useRef<HTMLInputElement>(null);
   const submittedDraftRef = useRef<QnaDraft | null>(null);
   const handledThreadIdRef = useRef<string | null>(null);
-  const router = useRouter();
-  const isFormBusy = isPending || isUploading;
+  const router = useProgressRouter();
+  // 등록에 성공하면 상세 화면으로 넘어갈 때까지 계속 막아 두 번 등록하지 않게 한다.
+  const isRedirecting = Boolean(state.thread?.id);
+  const isFormBusy = isPending || isUploading || isRedirecting;
   useBusyNavigationGuard(isFormBusy);
 
   const {
@@ -361,9 +363,10 @@ function NewQnaFormContent({ actorId, returnTo }: { actorId: string; returnTo: s
               type="submit"
               size="touch"
               disabled={!loaded || !canSubmit || isFormBusy || isEditorUploading || !operationId || !title.trim() || isRichTextEmpty(contentHtml)}
+              pending={isPending || isRedirecting}
               className="w-full md:h-9 md:w-auto md:rounded-md md:px-4 md:text-ui"
             >
-              {isUploading || isEditorUploading ? "업로드 완료 대기…" : isPending ? "등록 중…" : "질문 등록"}
+              {isUploading || isEditorUploading ? "업로드 완료 대기…" : isPending || isRedirecting ? "등록 중…" : "질문 등록"}
             </Button>
           </div>
         </form>

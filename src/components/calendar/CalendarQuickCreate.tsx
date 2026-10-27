@@ -6,7 +6,7 @@
 "use client";
 
 import { useId, useLayoutEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useProgressRouter } from "@/components/app-shell/NavigationProgress";
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { createCalendarEvent } from "@/lib/actions/calendarEvents";
@@ -64,7 +64,7 @@ const VIEWPORT_GUTTER = 12;
 const SHEET_QUERY = "(max-width: 47.99rem)";
 
 export function CalendarQuickCreate({ selection, anchor, options, onCreated, onClose }: Props) {
-  const router = useRouter();
+  const router = useProgressRouter();
   const titleId = useId();
   const errorId = useId();
   const panelRef = useRef<HTMLDivElement>(null);

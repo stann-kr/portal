@@ -17,7 +17,10 @@ function json(body: unknown, status = 200): Response {
   return Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
 }
 
-/** 다른 사이트의 요청을 거부한다. 브라우저가 보내는 Sec-Fetch-Site를 먼저 보고, 없으면 Origin과 Host를 비교한다. */
+/**
+ * 다른 사이트의 요청을 거부한다. 브라우저가 보내는 Sec-Fetch-Site를 먼저 보고, 없으면 Origin을
+ * 요청 주소의 protocol과 Host로 만든 출처와 비교한다(http 출처가 https 경로로 보내는 요청도 거부).
+ */
 function isSameSiteRequest(request: Request): boolean {
   const fetchSite = request.headers.get("sec-fetch-site");
   if (fetchSite) return fetchSite === "same-origin";
@@ -25,7 +28,9 @@ function isSameSiteRequest(request: Request): boolean {
   const host = request.headers.get("host");
   if (!origin || !host) return false;
   try {
-    return new URL(origin).host === host;
+    const source = new URL(origin);
+    const protocol = new URL(request.url).protocol;
+    return source.protocol === protocol && source.host === host;
   } catch {
     return false;
   }
@@ -35,14 +40,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** 입력 검증·계정 확인·CAS는 server action(`discardDocumentServerDraft`)이 그대로 맡는다. */
+/**
+ * 로그인하지 않은 요청은 401로 답한다(다른 API 경로와 같이). 입력 검증·계정 소유 확인·CAS는
+ * server action(`discardDocumentServerDraft`)이 그대로 다시 맡는다.
+ */
 export function createDocumentServerDraftDiscardHandler({
   discard,
+  isAuthenticated,
 }: {
   discard: DiscardServerDraft;
+  isAuthenticated: () => Promise<boolean>;
 }): (request: Request) => Promise<Response> {
   return async (request) => {
     if (!isSameSiteRequest(request)) return json({ ok: false, reason: "INVALID_INPUT", current: null }, 403);
+    if (!(await isAuthenticated())) return json({ ok: false, reason: "UNAUTHORIZED", current: null }, 401);
     const contentType = request.headers.get("content-type")?.toLowerCase() ?? "";
     if (!contentType.startsWith("application/json")) {
       return json({ ok: false, reason: "INVALID_INPUT", current: null }, 415);

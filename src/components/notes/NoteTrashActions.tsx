@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useProgressRouter } from "@/components/app-shell/NavigationProgress";
 import { Button } from "@/components/ui/button";
 import { ConfirmPanel, useConfirmAction } from "@/components/ui/confirm-action";
 import {
@@ -23,7 +23,7 @@ export function NoteTrashActions({
   canPurge: boolean;
   returnTo: string;
 }) {
-  const router = useRouter();
+  const router = useProgressRouter();
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const requestKey = JSON.stringify([noteId, version]);
@@ -65,6 +65,7 @@ export function NoteTrashActions({
             variant="outline"
             className="max-md:h-11"
             disabled={isPending}
+            pending={isPending && !purgeConfirm.isOpen}
             onClick={() => run("restore")}
           >
             노트 복원

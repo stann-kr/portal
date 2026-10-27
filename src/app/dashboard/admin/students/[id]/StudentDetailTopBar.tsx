@@ -7,6 +7,7 @@ import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { CalendarDays, Ellipsis, FilePlus, Pencil } from "lucide-react";
 import { MobileTopBar } from "@/components/app-shell/AppSidebar";
 import { buildAdminStudentNotesHref } from "@/components/admin/StudentDetailTabs";
+import { isCurriculumVisible } from "@/lib/curriculum-visibility";
 
 const ITEM_CLASS =
   "flex h-11 w-full cursor-default select-none items-center gap-2.5 rounded-touch px-3 text-md text-foreground outline-none data-[highlighted]:bg-muted";
@@ -45,7 +46,7 @@ export function StudentDetailTopBar({ studentId, returnTo }: { studentId: string
                 replace
               >
                 <Pencil className="size-4 text-secondary-foreground" strokeWidth={1.6} aria-hidden="true" />
-                {editing ? "편집 완료" : "레슨·커리큘럼 편집"}
+                {editing ? "편집 완료" : isCurriculumVisible() ? "레슨·커리큘럼 편집" : "레슨 편집"}
               </Link>
             </DropdownMenu.Item>
           ) : null}

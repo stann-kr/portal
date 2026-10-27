@@ -24,7 +24,7 @@ export const metadata: Metadata = {
     default: "Stann Lumo DJ 레슨 포털",
     template: "%s | Stann Lumo",
   },
-  description: "DJ 레슨 일정, 과제·피드백, 커리큘럼과 연습 기록을 관리하는 학생·강사 포털입니다.",
+  description: "DJ 레슨 일정, 과제·피드백과 연습 기록을 관리하는 학생·강사 포털입니다.",
   applicationName: "Stann Lumo DJ 레슨 포털",
 };
 

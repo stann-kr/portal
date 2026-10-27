@@ -11,6 +11,7 @@ import { Play, Radio } from "lucide-react";
 import { getActiveAuthSession } from "@/lib/auth-guard";
 import { getStudentAccountState, getStudentById } from "@/lib/actions/students";
 import { getCurriculumByStudent } from "@/lib/actions/curriculum";
+import { isCurriculumVisible } from "@/lib/curriculum-visibility";
 import { getLessonsByStudent } from "@/lib/actions/lessons";
 import { getOrSeedColumns, getDiggingTracks } from "@/lib/actions/digging";
 import { getQnaThreadsByStudent } from "@/lib/actions/qna";
@@ -170,7 +171,8 @@ export default async function StudentDetailPage({
   // Overview 탭 데이터는 미리 병렬 fetch
   const [modules, lessons, calendarFeedIssuedAt, accountState] = await (activeTab === "overview"
     ? Promise.all([
-        getCurriculumByStudent(studentId),
+        // 커리큘럼이 숨겨져 있으면 읽지 않는다(src/lib/curriculum-visibility.ts).
+        isCurriculumVisible() ? getCurriculumByStudent(studentId) : Promise.resolve([]),
         getLessonsByStudent(studentId),
         getStudentCalendarFeedIssuedAt(studentId),
         getStudentAccountState(studentId),

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { resolveActiveNavItem, resolveMobileTopBar } from "./navigation";
+import { APP_NAV_ITEMS, resolveActiveNavItem, resolveMobileTopBar } from "./navigation";
 
 const at = (url: string) => {
   const parsed = new URL(url, "http://portal.test");
@@ -14,6 +14,13 @@ test("학생 사이드바는 워크스페이스 보기와 상세 화면을 상�
   assert.equal(resolveActiveNavItem("student", at("/dashboard/notes/n1")), "notes");
   assert.equal(resolveActiveNavItem("student", at("/dashboard/qna/t1/history")), "qna");
   assert.equal(resolveActiveNavItem("student", at("/community/p1")), "community");
+});
+
+test("커리큘럼이 숨겨져 있으면 학생 메뉴에 없고 예전 커리큘럼 주소는 캘린더로 표시한다", () => {
+  assert.equal(APP_NAV_ITEMS.student.some((item) => item.id === "curriculum"), false);
+  const curriculumUrl = at("/dashboard/student?section=workspace&view=curriculum");
+  assert.equal(resolveActiveNavItem("student", curriculumUrl), "calendar");
+  assert.equal(resolveMobileTopBar("student", curriculumUrl).title, "캘린더");
 });
 
 test("관리자 사이드바는 학생별 화면을 학생 메뉴로, 분류 관리를 운영 도구로 표시한다", () => {

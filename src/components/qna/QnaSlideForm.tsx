@@ -18,7 +18,7 @@ import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 import { DraftStatus } from "@/components/editor/DraftStatus";
 import { createDocumentDraftKey } from "@/lib/form-draft";
 import { isRichTextEmpty } from "@/lib/rich-text";
-import { useRouter } from "next/navigation";
+import { useProgressRouter } from "@/components/app-shell/NavigationProgress";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
 import { useDocumentSaveShortcut } from "@/lib/hooks/useDocumentSaveShortcut";
 import { persistLocalDraftOnShortcut } from "@/lib/local-draft-shortcut";
@@ -94,7 +94,7 @@ function QnaSlideFormContent({
   const contentInputRef = useRef<HTMLInputElement>(null);
   const submittedDraftRef = useRef<QnaDraft | null>(null);
   const handledThreadIdRef = useRef<string | null>(null);
-  const router = useRouter();
+  const router = useProgressRouter();
   const isFormBusy = isPending || isUploading;
   useBusyNavigationGuard(isFormBusy);
 

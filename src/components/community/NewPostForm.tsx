@@ -8,9 +8,9 @@
 import { useActionState, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useProgressRouter } from "@/components/app-shell/NavigationProgress";
 import { Music2, X } from "lucide-react";
-import { Button, buttonClassName } from "@/components/ui/button";
+import { Button, ButtonSpinner, buttonClassName } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { MobileTopBar } from "@/components/app-shell/AppSidebar";
 import { ChoiceGroup, type ChoiceOption } from "@/components/ui/choice-group";
@@ -110,8 +110,10 @@ function NewPostFormContent({
   const contentInputRef = useRef<HTMLInputElement>(null);
   const submittedDraftRef = useRef<PostDraft | null>(null);
   const handledPostIdRef = useRef<string | null>(null);
-  const router = useRouter();
-  const isFormBusy = isPending || isUploading;
+  const router = useProgressRouter();
+  // 등록에 성공하면 상세 화면으로 넘어갈 때까지 계속 막아 두 번 등록하지 않게 한다.
+  const isRedirecting = Boolean(state.postId);
+  const isFormBusy = isPending || isUploading || isRedirecting;
   useBusyNavigationGuard(isFormBusy);
 
   const {
@@ -183,8 +185,12 @@ function NewPostFormContent({
     }),
   });
 
+  const [categoriesLoading, setCategoriesLoading] = useState(true);
   useEffect(() => {
-    getCategories().then(setCategories);
+    getCategories()
+      .then(setCategories)
+      .catch(() => undefined)
+      .finally(() => setCategoriesLoading(false));
   }, []);
 
   useEffect(() => {
@@ -360,6 +366,11 @@ function NewPostFormContent({
             disabled={!loaded || isFormBusy}
           />
 
+          {boardType === "GENERAL" && categoriesLoading ? (
+            <p role="status" className="flex items-center gap-1.5 text-ui text-muted-foreground">
+              <ButtonSpinner />채널을 불러오는 중
+            </p>
+          ) : null}
           {boardType === "GENERAL" && categories.length > 0 ? (
             <ChoiceGroup
               label="채널"
@@ -516,9 +527,10 @@ function NewPostFormContent({
               type="submit"
               size="touch"
               disabled={isSubmitDisabled}
+              pending={isPending || isRedirecting}
               className="w-full md:h-9 md:w-auto md:rounded-md md:px-4 md:text-ui"
             >
-              {isUploading || isEditorUploading ? "업로드 완료 대기…" : isPending ? "게시 중…" : "게시하기"}
+              {isUploading || isEditorUploading ? "업로드 완료 대기…" : isPending || isRedirecting ? "게시 중…" : "게시하기"}
             </Button>
           </div>
         </form>

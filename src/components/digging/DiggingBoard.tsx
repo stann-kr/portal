@@ -11,7 +11,7 @@ import { Fragment, useState, useMemo, useCallback, useEffect, useId, useRef, use
 import { useRouter } from "next/navigation";
 import { CalendarRange, ExternalLink, Pencil, Plus, Trash2 } from "lucide-react";
 import { MobileTopBar } from "@/components/app-shell/AppSidebar";
-import { Button } from "@/components/ui/button";
+import { Button, ButtonSpinner } from "@/components/ui/button";
 import { ConfirmPanel, useConfirmAction } from "@/components/ui/confirm-action";
 import { Input } from "@/components/ui/input";
 import { AddTrackDialog } from "./AddTrackDialog";
@@ -162,8 +162,10 @@ function EditableCell({
   const text = typeof value === "string" ? value : value === null || value === undefined ? "" : String(value);
   const table = variant === "table";
   const withStatus = (control: ReactNode) => (
-    <div aria-busy={isPending} className="min-w-0">
+    <div aria-busy={isPending} className="relative min-w-0">
       {control}
+      {/* 저장을 기다리는 동안 칸 오른쪽 위에 작은 회전 표시를 둔다. */}
+      {isPending ? <ButtonSpinner className="pointer-events-none absolute right-1 top-1 size-3 text-muted-foreground" /> : null}
       {saveStatus ? (
         <p
           className={saveStatus.kind === "error" ? "mt-1 text-xs text-destructive" : "sr-only"}

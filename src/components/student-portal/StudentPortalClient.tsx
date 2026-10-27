@@ -1,7 +1,7 @@
 /**
  * @file src/components/student-portal/StudentPortalClient.tsx
  * @description 학생 포털 메인 오케스트레이터.
- * 구역(오늘 / 워크스페이스 / 커뮤니티)은 공통 사이드바가 주소로 전환하고,
+ * 구역(오늘 / 워크스페이스)은 공통 사이드바가 주소로 전환하고(커뮤니티는 /community),
  * PortalShell은 주소 기반 구역 상태만 관리한다.
  */
 "use client";
@@ -18,7 +18,6 @@ import { PortalShell } from "@/components/ui/portal-shell";
 
 // ── 섹션 컴포넌트
 import { CalendarSection } from "./CalendarSection";
-import { CommunitySection } from "./CommunitySection";
 import { TodaySection } from "./TodaySection";
 import type { ExternalCalendarConnectionSummary } from "@/lib/external-calendar";
 import type { PortalLocation, PortalSection } from "@/lib/portal-location";
@@ -49,23 +48,12 @@ type Assignment = {
   feedbackCount: number;
 };
 
-type CommunityPost = {
-  id: string;
-  title: string;
-  boardType: string;
-  isPinned: boolean;
-  authorName: string | null;
-  authorEmail: string | null;
-  createdAt: Date | null;
-};
-
 export interface StudentPortalClientProps {
   initialLocation?: PortalLocation<"student">;
   announcements: Post[];
   unifiedItems: UnifiedItem[];
   curriculumModules: CurriculumModule[];
   assignments: Assignment[];
-  communityPosts: CommunityPost[];
   studentId: string;
   displayName: string;
   spaceLabel: string;
@@ -79,7 +67,6 @@ export interface StudentPortalClientProps {
 const SECTIONS: readonly { id: Section }[] = [
   { id: "today" },
   { id: "workspace" },
-  { id: "community" },
 ];
 
 /** 마지막으로 연 구역을 기억하는 localStorage 키 */
@@ -98,7 +85,6 @@ export function StudentPortalClient({
   unifiedItems: initialUnifiedItems,
   curriculumModules,
   assignments,
-  communityPosts,
   studentId,
   displayName,
   spaceLabel,
@@ -201,15 +187,6 @@ export function StudentPortalClient({
               onRemoveItem={removeItem}
             />
           </div>
-
-          {activeSection === "community" && (
-            <div className="mx-auto max-w-4xl p-4 sm:p-6">
-              <CommunitySection
-                initialPosts={communityPosts}
-                returnTo="/dashboard/student?section=community"
-              />
-            </div>
-          )}
         </>
       )}
     </PortalShell>

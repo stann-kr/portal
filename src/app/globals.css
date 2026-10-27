@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "../components/ui/overlay-motion.css";
+@import "../components/app-shell/navigation-progress.css";
 @import "../components/student-portal/unified-calendar.css";
 
 @theme {

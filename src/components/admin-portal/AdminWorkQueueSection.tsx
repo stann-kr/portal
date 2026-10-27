@@ -14,6 +14,7 @@ import { formatKst } from "@/lib/kst-format";
 import { buildQnaListHref } from "@/lib/qna-routes";
 import { cn } from "@/lib/utils";
 import { formatKstDot } from "@/lib/kst-format";
+import { isCurriculumVisible } from "@/lib/curriculum-visibility";
 import {
   LEDGER_ADD_ROW_CLASS,
   LEDGER_HEADER_LINK_CLASS,
@@ -240,9 +241,12 @@ export function AdminWorkQueueSection({
                     <span className="shrink-0 text-md font-medium md:text-body">
                       {student.displayName?.trim() || student.email}
                     </span>
-                    <span className="min-w-0 truncate text-ui text-muted-foreground">
-                      {student.currentModule || "진도 미지정"}
-                    </span>
+                    {/* 현재 진도는 커리큘럼 숨김 스위치가 켜졌을 때만 보인다. */}
+                    {isCurriculumVisible() ? (
+                      <span className="min-w-0 truncate text-ui text-muted-foreground">
+                        {student.currentModule || "진도 미지정"}
+                      </span>
+                    ) : null}
                   </Link>
                 </li>
               ))}

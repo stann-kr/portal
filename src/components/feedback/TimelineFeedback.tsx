@@ -256,7 +256,7 @@ export function TimelineFeedback({
       {error && <p role="alert" className="mb-3 text-ui text-destructive">{error}</p>}
       {refreshError && <div role="alert" className="mb-3 flex flex-col items-start gap-2 text-ui">
         <p>변경은 저장됐지만 피드백 목록을 새로 불러오지 못했습니다.</p>
-        <Button type="button" variant="outline" onClick={() => startTransition(refreshAfterChange)} disabled={isPending}>목록 다시 불러오기</Button>
+        <Button type="button" variant="outline" onClick={() => startTransition(refreshAfterChange)} pending={isPending}>목록 다시 불러오기</Button>
       </div>}
       <div className="flex items-baseline justify-between gap-3 border-b border-border pb-2">
         <h2 id={headingId} className="text-ui font-semibold text-secondary-foreground">

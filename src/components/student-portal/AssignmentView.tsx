@@ -205,7 +205,7 @@ export function AssignmentView({ initialAssignments, pageHeader = false }: Assig
       <SubmitForm inputRef={inputRef} onSuccess={refresh} />
       {refreshError && <div role="alert" className="flex flex-wrap items-center gap-3 rounded-lg border border-border p-3 text-ui">
         <p>제출은 완료됐지만 목록을 새로 불러오지 못했습니다.</p>
-        <Button type="button" variant="outline" onClick={refresh} disabled={isRefreshing}>목록 다시 불러오기</Button>
+        <Button type="button" variant="outline" onClick={refresh} pending={isRefreshing}>목록 다시 불러오기</Button>
       </div>}
 
       {assignments.length === 0 ? (

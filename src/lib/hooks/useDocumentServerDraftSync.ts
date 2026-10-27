@@ -36,6 +36,12 @@ import {
   isAccountOwnerTerminallyLocked,
   isAccountTerminalLockEventForOwner,
 } from "@/lib/account-terminal-lock";
+import {
+  ACCOUNT_LOGOUT_LOCK_EVENT,
+  createAccountLogoutLockStorageKey,
+  isAccountLogoutLockEventForOwner,
+  isAccountOwnerLogoutLocked,
+} from "@/lib/account-logout-lock";
 import { getDocumentServerDraftPollDelay } from "@/lib/document-server-draft-polling";
 
 const SERVER_DRAFT_DEBOUNCE_MS = 1_200;
@@ -226,6 +232,17 @@ export function useDocumentServerDraftSync<T>(
     }
   }, [clearTimers, ownerId]);
 
+  // 같은 계정이 로그아웃하는 동안에는 서버 초안 저장(UPSERT)만 멈춘다. 로컬 초안과 대기열은 그대로 두고,
+  // 로그아웃이 실패해 잠금이 풀리면 이어서 보낸다.
+  const isOwnerLogoutLocked = useCallback(() => {
+    if (!ownerId) return false;
+    try {
+      return isAccountOwnerLogoutLocked(window.localStorage, ownerId);
+    } catch {
+      return false;
+    }
+  }, [ownerId]);
+
   const allowOwnerPersistence = useCallback(() => {
     if (!isOwnerTerminallyLocked()) return true;
     purgeTerminallyLockedOwner();
@@ -342,7 +359,7 @@ export function useDocumentServerDraftSync<T>(
     }
     if (
       queued.entry.operationType === "UPSERT" &&
-      (choiceRequiredRef.current || requiresLegacyDraftChoice(queued.entry))
+      (choiceRequiredRef.current || requiresLegacyDraftChoice(queued.entry) || isOwnerLogoutLocked())
     ) {
       evaluateState(remoteDraftRef.current, queued.entry);
       return;
@@ -462,6 +479,7 @@ export function useDocumentServerDraftSync<T>(
     allowOwnerPersistence,
     clearTimers,
     evaluateState,
+    isOwnerLogoutLocked,
     rebaseNewerQueue,
     sourceKey,
     updateRemote,
@@ -472,6 +490,11 @@ export function useDocumentServerDraftSync<T>(
 
   const scheduleDrain = useCallback(() => {
     if (!readyRef.current || !allowOwnerPersistence()) return;
+    if (isOwnerLogoutLocked()) {
+      clearTimers();
+      if (mountedRef.current) setStatus("queued");
+      return;
+    }
     if (isBrowserOffline()) {
       if (mountedRef.current) setStatus("offline");
       return;
@@ -485,7 +508,7 @@ export function useDocumentServerDraftSync<T>(
       );
     }
     if (mountedRef.current) setStatus("queued");
-  }, [allowOwnerPersistence]);
+  }, [allowOwnerPersistence, clearTimers, isOwnerLogoutLocked]);
 
   const refresh = useCallback(async () => {
     if (!allowOwnerPersistence()) return;
@@ -842,6 +865,7 @@ export function useDocumentServerDraftSync<T>(
 
     const queueKey = createDocumentServerDraftQueueKey(sourceKey);
     const terminalLockKey = createAccountTerminalLockStorageKey(ownerId);
+    const logoutLockKey = ownerId ? createAccountLogoutLockStorageKey(ownerId) : null;
     let active = true;
     let pollTimer: ReturnType<typeof setTimeout> | null = null;
     let unchangedPolls = 0;
@@ -909,9 +933,32 @@ export function useDocumentServerDraftSync<T>(
       if (document.visibilityState === "hidden") clearPollTimer();
       else resumeActiveSync();
     };
+    // 로그아웃 잠금이 걸리면 기다리던 저장 타이머를 멈추고, 풀리면 남은 대기열을 이어서 보낸다.
+    const handleLogoutLockChange = () => {
+      if (isOwnerLogoutLocked()) {
+        clearTimers();
+        return;
+      }
+      if (!allowOwnerPersistence() || !readyRef.current) return;
+      let queued: ReturnType<typeof readQueuedDocumentServerDraft>;
+      try {
+        queued = readQueuedDocumentServerDraft(window.localStorage, sourceKey);
+      } catch {
+        return;
+      }
+      if (queued && !isBrowserOffline()) void drainRef.current().finally(schedulePoll);
+    };
+    const handleLogoutLock = (event: Event) => {
+      if (!isAccountLogoutLockEventForOwner(event, ownerId)) return;
+      handleLogoutLockChange();
+    };
     const handleStorage = (event: StorageEvent) => {
       if (event.key === terminalLockKey) {
         if (!allowOwnerPersistence()) return;
+      }
+      if (logoutLockKey !== null && event.key === logoutLockKey) {
+        handleLogoutLockChange();
+        return;
       }
       if (event.key !== queueKey) return;
       if (!allowOwnerPersistence()) return;
@@ -945,6 +992,7 @@ export function useDocumentServerDraftSync<T>(
     window.addEventListener("storage", handleStorage);
     document.addEventListener("visibilitychange", handleVisibilityChange);
     window.addEventListener(ACCOUNT_TERMINAL_LOCK_EVENT, handleTerminalLock);
+    window.addEventListener(ACCOUNT_LOGOUT_LOCK_EVENT, handleLogoutLock);
     window.addEventListener(DOCUMENT_SERVER_DRAFT_QUEUE_CHANGE_EVENT, handleQueueChange);
     if (mayPersist) void refresh().finally(schedulePoll);
 
@@ -960,6 +1008,7 @@ export function useDocumentServerDraftSync<T>(
       window.removeEventListener("storage", handleStorage);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       window.removeEventListener(ACCOUNT_TERMINAL_LOCK_EVENT, handleTerminalLock);
+      window.removeEventListener(ACCOUNT_LOGOUT_LOCK_EVENT, handleLogoutLock);
       window.removeEventListener(
         DOCUMENT_SERVER_DRAFT_QUEUE_CHANGE_EVENT,
         handleQueueChange,
@@ -969,6 +1018,7 @@ export function useDocumentServerDraftSync<T>(
     allowOwnerPersistence,
     clearTimers,
     evaluateState,
+    isOwnerLogoutLocked,
     ownerId,
     purgeTerminallyLockedOwner,
     refresh,

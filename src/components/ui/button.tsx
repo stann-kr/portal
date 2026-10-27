@@ -5,12 +5,15 @@
  */
 import * as React from "react";
 import { Slot } from "@radix-ui/react-slot";
+import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   asChild?: boolean;
   variant?: "default" | "secondary" | "outline" | "ghost" | "destructive" | "destructive-solid";
   size?: "default" | "sm" | "lg" | "icon" | "touch";
+  /** 응답을 기다리는 중: 누를 수 없게 하고 회전 표시를 앞에 둔다. 아이콘 버튼은 아이콘 자리를 회전 표시로 바꾼다. */
+  pending?: boolean;
 }
 
 /** 링크처럼 버튼 모양만 필요한 곳(`<Link>`)도 같은 값을 쓰도록 class 이름을 따로 연다. */
@@ -56,14 +59,43 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
       variant = "default",
       size = "default",
       asChild = false,
+      pending = false,
+      disabled,
+      children,
       ...props
     },
     ref,
   ) => {
     const Comp = asChild ? Slot : "button";
-    return <Comp className={buttonClassName({ variant, size, className })} ref={ref} {...props} />;
+    const busy = pending && !asChild;
+    return (
+      <Comp
+        className={buttonClassName({ variant, size, className })}
+        ref={ref}
+        disabled={disabled || busy}
+        aria-busy={busy || undefined}
+        {...props}
+      >
+        {!busy ? children : size === "icon" ? (
+          <>
+            <ButtonSpinner />
+            <span className="sr-only">{children}</span>
+          </>
+        ) : (
+          <>
+            <ButtonSpinner />
+            {children}
+          </>
+        )}
+      </Comp>
+    );
   },
 );
 Button.displayName = "Button";
+
+/** 버튼 안 회전 표시. 움직임을 줄인 환경에서는 멈춘 모양으로 기다림만 알린다. */
+export function ButtonSpinner({ className }: { className?: string }) {
+  return <Loader2 className={cn("size-3.5 shrink-0 animate-spin motion-reduce:animate-none", className)} strokeWidth={1.8} aria-hidden="true" />;
+}
 
 export { Button };

@@ -8,7 +8,7 @@
 import { useActionState, useEffect, useLayoutEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useProgressRouter } from "@/components/app-shell/NavigationProgress";
 import { CalendarDays, ChevronLeft, Trash2, UserRound } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -106,7 +106,7 @@ function NoteFullFormContent({ action, actorId, studentId, returnTo, defaultDate
   const contentHtmlInputRef = useRef<HTMLInputElement>(null);
   const submittedDraftRef = useRef<CreateNoteDraft | null>(null);
   const handledNoteIdRef = useRef<string | null>(null);
-  const router = useRouter();
+  const router = useProgressRouter();
   useBusyNavigationGuard(isPending);
   // 본문 이미지가 올라가는 동안 새 노트를 만들면 문서 페이지로 넘어가며 남은 이미지가 빠진다.
   const [isEditorUploading, setIsEditorUploading] = useState(false);

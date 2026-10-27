@@ -39,7 +39,7 @@ import {
   canUseQuickCreate,
   type CalendarQuickCreateOptions,
 } from "@/components/calendar/CalendarQuickCreate";
-import { Button } from "@/components/ui/button";
+import { Button, ButtonSpinner } from "@/components/ui/button";
 import {
   matchesCalendarPreset,
   type CalendarPreset,
@@ -327,6 +327,8 @@ export function UnifiedCalendar({
     return pending ? applyCalendarMoveToItem(item, pending.request) : item;
   };
   const displayedItems = pendingMoves.size === 0 ? items : items.map(withPendingMove);
+  // 저장 응답을 기다리는 이동이 있으면 달력 위 알림 자리에 저장 중을 보인다.
+  const savingMove = [...pendingMoves.values()].some((pending) => !pending.saved);
   const visibleItems = displayedItems.filter((item) => matchesCalendarPreset(item, preset) && visibleTypes.has(item.type));
   const selectedKey = panelOpen && selectedItem ? getUnifiedItemKey(selectedItem) : null;
 
@@ -553,6 +555,12 @@ export function UnifiedCalendar({
         {filters}
       </div>
 
+      {!notice && savingMove ? (
+        <div role="status" className="mx-5 mb-3 flex min-h-10 items-center gap-2 rounded-touch bg-sidebar px-3.5 py-1.5 text-ui text-secondary-foreground md:mx-0 md:mb-0">
+          <ButtonSpinner />
+          옮긴 자리를 저장하는 중…
+        </div>
+      ) : null}
       {notice ? (
         <div
           role={notice.tone === "error" ? "alert" : "status"}

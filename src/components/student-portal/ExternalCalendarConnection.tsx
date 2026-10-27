@@ -65,7 +65,7 @@ export function ExternalCalendarConnection({
             <Button
               type="button"
               variant="outline"
-              disabled={disconnecting}
+              pending={disconnecting}
               onClick={() => startDisconnect(async () => {
                 setDisconnectError(null);
                 try {

@@ -189,7 +189,6 @@ mock.module("@/lib/actions/unifiedItems", { namedExports: {
 for (const [folder, name] of [
   ["student-portal", "UnifiedItemDetail"], ["student-portal", "DailyListView"],
   ["student-portal", "AllItemsView"],
-  ["student-portal", "AnnouncementSection"], ["student-portal", "CommunitySection"],
   ["admin-portal", "StudentManagementSection"], ["admin-portal", "AdminWorkQueueSection"],
   ["qna", "QnaSlideForm"],
 ]) {
@@ -888,7 +887,7 @@ test("admin lesson detail reschedules and deletes only after a cancel-first conf
 test("calendar preserves its date, view and filters across view tabs and admin sections", async (context) => {
   browser.history.replaceState({}, "", "/dashboard/admin?section=schedule&view=calendar&student=student");
   await render(context, <AdminPortalClient
-    announcements={[]} initialUnifiedItems={[]} communityPosts={[]}
+    initialUnifiedItems={[]}
     adminId="admin" qnaThreads={[]} pendingAssignments={[]} referenceTime={new Date()}
     students={[{ id: "student", email: "student@example.test", displayName: "학생", createdAt: null, currentModule: null, nextLessonDate: null, pendingFeedbackCount: 0 }]}
   />);
@@ -938,7 +937,7 @@ test("top bar + opens today's quick create or lesson booking once and clears the
   browser.history.replaceState({}, "", "/dashboard/student?section=workspace&view=calendar&create=today");
   const student = await render(context, <StudentPortalClient
     initialLocation={resolvePortalLocation("student", { section: "workspace", view: "calendar" })}
-    announcements={[]} unifiedItems={[]} communityPosts={[]} curriculumModules={[]} assignments={[]}
+    announcements={[]} unifiedItems={[]} curriculumModules={[]} assignments={[]}
     studentId="student" displayName="학생" spaceLabel="학생" externalCalendarConnection={{ connected: false }} referenceTime={new Date()}
   />);
   const sheet = browser.document.querySelector('[role="dialog"]');
@@ -973,7 +972,7 @@ test("top bar + opens today's quick create or lesson booking once and clears the
 
   browser.history.replaceState({}, "", "/dashboard/admin?section=work&student=student");
   await render(context, <AdminPortalClient
-    announcements={[]} initialUnifiedItems={[]} communityPosts={[]}
+    initialUnifiedItems={[]}
     adminId="admin" qnaThreads={[]} pendingAssignments={[]} referenceTime={new Date()}
     students={[{ id: "student", email: "student@example.test", displayName: "학생", createdAt: null, currentModule: null, nextLessonDate: null, pendingFeedbackCount: 0 }]}
   />);
@@ -1016,7 +1015,7 @@ test("student calendar docks item detail beside the calendar column instead of a
   browser.history.replaceState({}, "", "/dashboard/student?section=workspace&view=calendar");
   await render(context, <StudentPortalClient
     initialLocation={resolvePortalLocation("student", { section: "workspace", view: "calendar" })}
-    announcements={[]} communityPosts={[]} curriculumModules={[]} assignments={[]}
+    announcements={[]} curriculumModules={[]} assignments={[]}
     unifiedItems={[{
       id: "practice", type: "EVENT", subType: "PRACTICE", title: "리듬 연습", date: new Date(), metadata: {},
       space: { studentId: "student", label: "학생" }, source: { kind: "PORTAL", entity: "CALENDAR_EVENT", label: "포털" },
@@ -1046,7 +1045,7 @@ test("student calendar docks item detail beside the calendar column instead of a
 
 test("calendar menu without a view ignores a stale assignments tab while an explicit view still opens it", async (context) => {
   const props = {
-    announcements: [], unifiedItems: [], communityPosts: [], curriculumModules: [], assignments: [],
+    announcements: [], unifiedItems: [], curriculumModules: [], assignments: [],
     studentId: "student", displayName: "학생", spaceLabel: "학생", externalCalendarConnection: { connected: false }, referenceTime: new Date(),
   };
   const headings = () => [...browser.document.querySelectorAll("h1")].map((heading) => heading.textContent);
@@ -1070,7 +1069,7 @@ test("월·주 tabs control the always-mounted calendar panel without remounting
   browser.history.replaceState({}, "", "/dashboard/student?section=workspace&view=calendar");
   await render(context, <StudentPortalClient
     initialLocation={resolvePortalLocation("student", { section: "workspace", view: "calendar" })}
-    announcements={[]} unifiedItems={[]} communityPosts={[]} curriculumModules={[]} assignments={[]}
+    announcements={[]} unifiedItems={[]} curriculumModules={[]} assignments={[]}
     studentId="student" displayName="학생" spaceLabel="학생" externalCalendarConnection={{ connected: false }} referenceTime={new Date()}
   />);
   const controlled = (label: string) => browser.document.getElementById(button(label).getAttribute("aria-controls") ?? "");
@@ -1094,7 +1093,7 @@ test("월·주 tabs control the always-mounted calendar panel without remounting
 test("top bar lesson booking without any student clears the create address and explains why", async (context) => {
   browser.history.replaceState({}, "", "/dashboard/admin?section=work");
   await render(context, <AdminPortalClient
-    announcements={[]} initialUnifiedItems={[]} communityPosts={[]}
+    initialUnifiedItems={[]}
     adminId="admin" qnaThreads={[]} pendingAssignments={[]} referenceTime={new Date()} students={[]}
   />);
   await act(async () => { navigateWithinPage("/dashboard/admin?section=schedule&create=lesson"); });
@@ -1113,17 +1112,19 @@ test("portal deep links render their section, view and selected student before h
   const markup = document.createElement("div");
   markup.innerHTML = renderToString(<StudentPortalClient
     initialLocation={resolvePortalLocation("student", { section: "workspace", view: "curriculum" })}
-    announcements={[]} unifiedItems={[]} communityPosts={[]} curriculumModules={[]} assignments={[]}
+    announcements={[]} unifiedItems={[]} curriculumModules={[]} assignments={[]}
     studentId="student" displayName="학생" spaceLabel="학생" externalCalendarConnection={{ connected: false }} referenceTime={new Date()}
   />);
   // 구역 이동은 사이드바가 맡고, 화면은 주소의 보기를 제목으로 바로 그린다.
-  assert.equal(markup.querySelector("h1")?.textContent, "커리큘럼");
+  // 커리큘럼은 숨겨져 있어(src/lib/curriculum-visibility.ts) 예전 커리큘럼 주소도 캘린더로 그린다.
+  assert.equal(markup.querySelector("h1")?.textContent, "캘린더");
+  assert.doesNotMatch(markup.textContent ?? "", /커리큘럼/u);
 
   const students = ["first", "requested"].map((id) => ({ id, email: `${id}@example.test`, displayName: id, createdAt: null, currentModule: null, nextLessonDate: null, pendingFeedbackCount: 0 }));
   const admin = <AdminPortalClient
     initialLocation={resolvePortalLocation("admin", { section: "schedule", view: "all", type: "NOTE" })}
     initialStudentId="requested" students={students} initialUnifiedItems={[]}
-    announcements={[]} communityPosts={[]} adminId="admin" qnaThreads={[]} pendingAssignments={[]} referenceTime={new Date()}
+    adminId="admin" qnaThreads={[]} pendingAssignments={[]} referenceTime={new Date()}
   />;
   markup.innerHTML = renderToString(admin);
   assert.equal(markup.querySelector("h1")?.textContent, "일정");
@@ -1165,7 +1166,7 @@ test("calendar views share one 월·주·일별·전체 segment on the server an
   const markup = browser.document.createElement("div");
   markup.innerHTML = renderToString(<StudentPortalClient
     initialLocation={resolvePortalLocation("student", { section: "workspace", view: "calendar" })}
-    announcements={[]} unifiedItems={[]} communityPosts={[]} curriculumModules={[]} assignments={[]}
+    announcements={[]} unifiedItems={[]} curriculumModules={[]} assignments={[]}
     studentId="student" displayName="학생" spaceLabel="학생" externalCalendarConnection={{ connected: false }} referenceTime={new Date()}
   />);
   const tabs = [...markup.querySelectorAll('[role="tablist"][aria-label="보기"] [role="tab"]')];
@@ -1349,7 +1350,7 @@ test("student portal reflects new server records and removals without a full rel
     space: { studentId: "student", label: "학생" }, source: { kind: "PORTAL", entity: "ASSIGNMENT", label: "포털" } };
   const portal = (items: UnifiedItem[]) => <StudentPortalClient
     initialLocation={resolvePortalLocation("student", { section: "today" })}
-    announcements={[]} unifiedItems={items} communityPosts={[]} curriculumModules={[]} assignments={[]}
+    announcements={[]} unifiedItems={items} curriculumModules={[]} assignments={[]}
     studentId="student" displayName="학생" spaceLabel="학생" externalCalendarConnection={{ connected: false }} referenceTime={new Date()}
   />;
   const assignmentLink = (id: string) => browser.document.querySelector(`a[href="/dashboard/student/assignments/${id}?returnTo=%2Fdashboard%2Fstudent%3Fsection%3Dtoday"]`);
@@ -1891,7 +1892,7 @@ test("community shows the server-loaded list first and explains a board without 
     id: "post-1", authorId: "student-1", category: "general", boardType: "GENERAL" as const, isPinned: false,
     mediaUrl: null, mediaObjectId: null, title: "레슨 후기", contentHtml: "<p>오늘 배운 것</p>",
     createdAt: new Date(), updatedAt: new Date(), deletedAt: null, version: 1,
-    authorName: "학생", authorEmail: null,
+    authorName: "학생", authorEmail: null, commentCount: 2,
   };
   const previousUrl = browser.location.href;
   context.after(() => browser.history.replaceState({}, "", previousUrl));
@@ -1900,6 +1901,13 @@ test("community shows the server-loaded list first and explains a board without 
   assert.match(browser.document.body.textContent ?? "", /레슨 후기/u);
   assert.doesNotMatch(browser.document.body.textContent ?? "", /아직 게시물이 없습니다/u);
   assert.equal(requests.length, 0, "server list is not fetched again on mount");
+  assert.match(browser.document.body.textContent ?? "", /댓글 2/u, "the list row shows the comment count");
+  // 게시판과 자유 게시판 채널은 한 줄(nav)에 있다. 채널 칩 줄을 따로 두지 않는다.
+  assert.equal(browser.document.querySelector('[role="group"][aria-label="채널"]'), null);
+  assert.equal(
+    [...browser.document.querySelectorAll('nav[aria-label="게시판"] a')].find((anchor) => anchor.textContent === "#자유")?.getAttribute("aria-current"),
+    "page",
+  );
 
   // 게시판 탭은 주소를 가진 링크다. 같은 화면에서 주소만 바꾸고 목록을 다시 읽는다.
   const openBoard = async (label: string) => {
@@ -1938,7 +1946,7 @@ test("community load-more appends the next page once and stops at the last page"
   const makePost = (index: number) => ({
     id: `post-${index}`, authorId: "student-1", category: "general", boardType: "GENERAL" as const, isPinned: false,
     mediaUrl: null, mediaObjectId: null, title: `기록 ${index}`, contentHtml: "<p>본문</p>",
-    createdAt: new Date(), updatedAt: new Date(), deletedAt: null, version: 1, authorName: "학생", authorEmail: null,
+    createdAt: new Date(), updatedAt: new Date(), deletedAt: null, version: 1, authorName: "학생", authorEmail: null, commentCount: 0,
   });
   loadCommunityPage = async ({ cursor }) => {
     cursors.push(cursor);
@@ -2006,7 +2014,7 @@ test("admin module edit keeps input on refusal and returns focus to the row afte
     return requests.length === 1 ? { error: "주차는 1부터 520 사이의 정수로 입력해 주세요." } : { success: true };
   };
   context.after(() => { editModule = async () => ({ success: true }); });
-  await render(context, <OverviewTab studentId="student-1" lessons={[]} modules={[{ id: "module-1", weekNum: 1, title: "비트 매칭", isCompleted: true }]} />);
+  await render(context, <OverviewTab studentId="student-1" showCurriculum lessons={[]} modules={[{ id: "module-1", weekNum: 1, title: "비트 매칭", isCompleted: true }]} />);
   await press("비트 매칭 모듈 수정");
   assert.equal(browser.document.activeElement, browser.document.getElementById("module-edit-module-1-title"));
   await fill("module-edit-module-1-title", "EQ 전환");
@@ -2257,6 +2265,20 @@ test("calendar feed replacement asks before expiring the student's existing subs
   assert.equal(browser.document.querySelector("code")?.textContent, "https://portal.test/api/calendar/feed?token=token-2");
 });
 
+test("admin overview shows the curriculum ledger with its progress count only when the switch is on", async (context) => {
+  await render(context, <OverviewTab
+    studentId="student-1"
+    showCurriculum
+    modules={[
+      { id: "module-1", weekNum: 1, title: "장비와 신호 흐름", isCompleted: true },
+      { id: "module-2", weekNum: 2, title: "BPM 매칭", isCompleted: false },
+    ]}
+    lessons={[]}
+  />);
+  const heading = browser.document.getElementById("curriculum-heading");
+  assert.match(heading?.textContent ?? "", /커리큘럼\s*1 \/ 2/u);
+});
+
 test("admin overview gathers account rows first, keeps each issue button in order, and orders lessons next → later → past", async (context) => {
   const referenceTime = new Date("2026-10-26T03:00:00.000Z");
   await render(context, <OverviewTab
@@ -2274,8 +2296,9 @@ test("admin overview gathers account rows first, keeps each issue button in orde
     calendarFeedIssuedAt={new Date("2026-10-14T01:00:00.000Z")}
     account={{ kind: "temporary" }}
   />);
-  const heading = browser.document.getElementById("curriculum-heading");
-  assert.match(heading?.textContent ?? "", /커리큘럼\s*1 \/ 2/u);
+  // 커리큘럼은 숨김 스위치가 꺼져 있으면 그리지 않는다. 켠 상태는 아래 테스트가 확인한다.
+  assert.equal(browser.document.getElementById("curriculum-heading"), null);
+  assert.doesNotMatch(browser.document.body.textContent ?? "", /커리큘럼|모듈 추가|장비와 신호 흐름/u);
   const lessonRows = [...browser.document.querySelectorAll('[aria-labelledby="lessons-heading"] li')].map((row) => row.textContent ?? "");
   assert.deepEqual(lessonRows.map((text) => text.slice(0, 15)), ["10.28 (수) 19:00", "11.04 (수) 19:00", "10.21 (수) 19:00"]);
   assert.match(lessonRows[0], /다음 레슨/u);

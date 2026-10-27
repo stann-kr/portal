@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useProgressRouter } from "@/components/app-shell/NavigationProgress";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Ellipsis, ExternalLink, Trash2 } from "lucide-react";
 import { MobileTopBar } from "@/components/app-shell/AppSidebar";
@@ -120,7 +120,7 @@ export function AssignmentDetailClient({
   returnTo,
   spaceLink,
 }: AssignmentDetailClientProps) {
-  const router = useRouter();
+  const router = useProgressRouter();
   const [seekRequest, setSeekRequest] = useState<MediaSeekRequest>();
   const positionReaderRef = useRef<PlaybackPositionReader | null>(null);
   const handlePositionReaderChange = useCallback((reader: PlaybackPositionReader | null) => {

@@ -1,7 +1,7 @@
 /**
  * @file src/components/community/CommunityPostRow.tsx
  * @description 커뮤니티 목록의 게시물 한 줄(캔버스 Community·MobileCommunity 보드).
- * 제목, 본문 첫 줄 미리보기, 작성자·날짜. 줄 전체가 상세로 가는 링크다.
+ * 제목, 본문 첫 줄 미리보기, 작성자·날짜·댓글 수. 줄 전체가 상세로 가는 링크다.
  */
 import Link from "next/link";
 import type { CommunityBoardType } from "@/lib/community-location";
@@ -21,7 +21,16 @@ type CommunityPostSummary = {
   authorName: string | null;
   authorEmail: string | null;
   createdAt: Date | null;
+  /** 목록 응답이 함께 보내는 댓글 수. 상세·다른 목록처럼 값이 없으면 표시하지 않는다. */
+  commentCount?: number;
 };
+
+/** 목록 줄 아래 메타: 작성자 · 날짜 · 댓글 N(캔버스 Community 보드). */
+export function communityRowMeta(post: Pick<CommunityPostSummary, "authorName" | "authorEmail" | "createdAt" | "commentCount">, authorFallback?: string): string {
+  const parts = [communityAuthorName(post, authorFallback), formatKstShortDate(post.createdAt, "날짜 정보 없음")];
+  if (typeof post.commentCount === "number") parts.push(`댓글 ${post.commentCount}`);
+  return parts.join(" · ");
+}
 
 export function communityAuthorName(post: Pick<CommunityPostSummary, "authorName" | "authorEmail">, fallback = "작성자 미상"): string {
   return post.authorName ?? post.authorEmail?.split("@")[0] ?? fallback;
@@ -34,7 +43,7 @@ export function communityPreview(contentHtml: string, length = 100): string {
 
 export function CommunityPostRow({ post, returnTo }: { post: CommunityPostSummary; returnTo: string }) {
   const preview = communityPreview(post.contentHtml);
-  const meta = [communityAuthorName(post), formatKstShortDate(post.createdAt, "날짜 정보 없음")].join(" · ");
+  const meta = communityRowMeta(post);
 
   return (
     <li>

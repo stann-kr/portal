@@ -20,6 +20,7 @@ import { UnifiedCalendar, type CalendarGridView } from "./UnifiedCalendar";
 import { DailyListView } from "./DailyListView";
 import { AllItemsView } from "./AllItemsView";
 import { CurriculumView } from "./CurriculumView";
+import { isCurriculumVisible } from "@/lib/curriculum-visibility";
 import { AssignmentView } from "./AssignmentView";
 import { CreateEntryDropdown } from "./CreateEntryDropdown";
 import { SlidePanel, SlidePanelDock } from "./SlidePanel";
@@ -664,8 +665,9 @@ export function CalendarSection({
             </>
           ) : null}
 
-          {/* 같은 워크스페이스의 커리큘럼·과제. 두 보기가 캔버스(Curriculum·Assignments)의 제목·여백·최대 폭을 직접 그린다. */}
-          {workspaceRole === "student" && activeTab === "curriculum" ? (
+          {/* 같은 워크스페이스의 커리큘럼·과제. 두 보기가 캔버스(Curriculum·Assignments)의 제목·여백·최대 폭을 직접 그린다.
+              커리큘럼은 숨김 스위치가 꺼져 있으면 resolveCalendarTab이 캘린더로 돌려 이 보기가 열리지 않는다. */}
+          {workspaceRole === "student" && activeTab === "curriculum" && isCurriculumVisible() ? (
             <CurriculumView pageHeader initialModules={curriculumModules} />
           ) : null}
           {workspaceRole === "student" && activeTab === "assignments" ? (

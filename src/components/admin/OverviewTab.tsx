@@ -1,7 +1,8 @@
 /**
  * @file src/components/admin/OverviewTab.tsx
  * @description 학생 상세 — 개요 탭(AdminStudentDetail·MobileAdminStudentDetail 보드).
- * 넓은 화면은 왼쪽 커리큘럼·레슨 일정, 오른쪽 계정. 좁은 화면은 레슨 일정 → 커리큘럼 → 계정 순서다.
+ * 넓은 화면은 왼쪽 레슨 일정·커리큘럼, 오른쪽 계정. 좁은 화면은 레슨 일정 → 커리큘럼 → 계정 순서다.
+ * 커리큘럼은 src/lib/curriculum-visibility.ts 스위치가 켜졌을 때만 그린다.
  * 데이터는 RSC 부모(page.tsx)에서 props로 전달받음.
  */
 "use client";
@@ -28,6 +29,7 @@ import { StudentInviteControl } from "@/components/admin/StudentInviteControl";
 import { StudentPasswordResetControl } from "@/components/admin/StudentPasswordResetControl";
 import { ConfirmPanel, useConfirmAction } from "@/components/ui/confirm-action";
 import { formatKst } from "@/lib/kst-format";
+import { isCurriculumVisible } from "@/lib/curriculum-visibility";
 import { cn } from "@/lib/utils";
 import { formatKstDot } from "@/lib/kst-format";
 import {
@@ -63,6 +65,8 @@ interface OverviewTabProps {
     | { kind: "invite"; expiresAt: Date; expired: boolean };
   /** 지난 레슨·다음 레슨을 가르는 서버 기준 시각. 없으면 화면을 연 시각을 쓴다. */
   referenceTime?: Date;
+  /** 커리큘럼 구역을 그릴지. 기본값은 숨김 스위치를 따른다. */
+  showCurriculum?: boolean;
 }
 
 /**
@@ -274,6 +278,7 @@ export function OverviewTab({
   calendarFeedIssuedAt = null,
   account = { kind: "active" },
   referenceTime,
+  showCurriculum = isCurriculumVisible(),
 }: OverviewTabProps) {
   const searchParams = useSearchParams();
   const rowEditing = searchParams?.get("edit") === "1";
@@ -326,7 +331,7 @@ export function OverviewTab({
       {mutationError ? <p className="basis-full text-body text-destructive" role="alert">{mutationError}</p> : null}
       {rowEditing ? (
         <div className="flex items-center justify-between gap-3 rounded-lg bg-sidebar py-1 pl-4 pr-1 md:hidden">
-          <p className="text-ui text-secondary-foreground">레슨·커리큘럼을 고치거나 지울 수 있습니다.</p>
+          <p className="text-ui text-secondary-foreground">{showCurriculum ? "레슨·커리큘럼을" : "레슨을"} 고치거나 지울 수 있습니다.</p>
           <Link
             href={`/dashboard/admin/students/${encodeURIComponent(studentId)}?tab=overview`}
             replace
@@ -409,71 +414,72 @@ export function OverviewTab({
           )}
         </LedgerSection>
 
-        {/* 커리큘럼 */}
-        <LedgerSection labelledBy="curriculum-heading">
-          <LedgerSectionHeader
-            id="curriculum-heading"
-            title="커리큘럼"
-            count={modules.length > 0 ? `${completedCount} / ${modules.length}` : undefined}
-          />
-          {modules.length === 0 ? (
-            <LedgerEmptyRow>등록된 모듈이 없습니다.</LedgerEmptyRow>
-          ) : (
-            <ul>
-              {modules.map((m) => editingModuleId === m.id ? (
-                <li key={m.id} className="border-b border-muted py-3 md:px-1">
-                  <EditModuleForm studentId={studentId} curriculumModule={m} onClose={() => closeModuleEdit(m.id)} />
-                </li>
-              ) : (
-                <li key={m.id} className="group border-b border-muted">
-                  <div className="flex min-h-12 items-center gap-3 md:min-h-11 md:gap-3.5 md:px-1">
-                    <span
-                      aria-hidden="true"
-                      className={cn(
-                        "size-[18px] shrink-0 rounded-full md:size-4",
-                        m.isCompleted ? "bg-foreground" : "border-[1.5px] border-faint",
-                      )}
-                    />
-                    <span className="sr-only">{m.isCompleted ? "완료" : "진행 전"}</span>
-                    <span className="w-16 shrink-0 font-mono text-xs text-muted-foreground">
-                      WEEK {String(m.weekNum ?? 0).padStart(2, "0")}
-                    </span>
-                    <span className={cn("min-w-0 flex-1 break-words py-2 text-md md:text-body", m.isCompleted && "text-muted-foreground line-through")}>
-                      {m.title}
-                    </span>
-                    <Button
-                      id={`module-edit-trigger-${m.id}`}
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => setEditingModuleId(m.id)}
-                      disabled={isPending}
-                      aria-label={`${m.title} 모듈 수정`}
-                      className={rowIconClass}
-                    >
-                      <Pencil className="size-4" strokeWidth={1.6} aria-hidden="true" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={(event) => moduleDeleteConfirm.request(event.currentTarget, m.id)}
-                      disabled={isPending}
-                      aria-expanded={moduleDeleteConfirm.value === m.id}
-                      aria-label={`${m.title} 모듈 삭제`}
-                      className={cn(rowIconClass, "text-destructive hover:text-destructive")}
-                    >
-                      <Trash2 className="size-4" strokeWidth={1.6} aria-hidden="true" />
-                    </Button>
-                  </div>
-                  {moduleDeleteConfirm.value === m.id ? (
-                    <ConfirmPanel
-                      confirm={moduleDeleteConfirm}
-                      message={`${m.title} 모듈을 삭제할까요? 학생의 진도 표시에서도 사라집니다.`}
-                      confirmLabel="모듈 삭제 확인"
-                      pendingLabel="삭제 중..."
-                      pending={isPending}
-                      onConfirm={() => handleDeleteModule(m.id)}
-                      className="mb-3"
-                    />
+        {/* 커리큘럼(숨김 스위치가 켜졌을 때만) */}
+        {showCurriculum ? (
+          <LedgerSection labelledBy="curriculum-heading">
+            <LedgerSectionHeader
+              id="curriculum-heading"
+              title="커리큘럼"
+              count={modules.length > 0 ? `${completedCount} / ${modules.length}` : undefined}
+            />
+            {modules.length === 0 ? (
+              <LedgerEmptyRow>등록된 모듈이 없습니다.</LedgerEmptyRow>
+            ) : (
+              <ul>
+                {modules.map((m) => editingModuleId === m.id ? (
+                  <li key={m.id} className="border-b border-muted py-3 md:px-1">
+                    <EditModuleForm studentId={studentId} curriculumModule={m} onClose={() => closeModuleEdit(m.id)} />
+                  </li>
+                ) : (
+                  <li key={m.id} className="group border-b border-muted">
+                    <div className="flex min-h-12 items-center gap-3 md:min-h-11 md:gap-3.5 md:px-1">
+                      <span
+                        aria-hidden="true"
+                        className={cn(
+                          "size-[18px] shrink-0 rounded-full md:size-4",
+                          m.isCompleted ? "bg-foreground" : "border-[1.5px] border-faint",
+                        )}
+                      />
+                      <span className="sr-only">{m.isCompleted ? "완료" : "진행 전"}</span>
+                      <span className="w-16 shrink-0 font-mono text-xs text-muted-foreground">
+                        WEEK {String(m.weekNum ?? 0).padStart(2, "0")}
+                      </span>
+                      <span className={cn("min-w-0 flex-1 break-words py-2 text-md md:text-body", m.isCompleted && "text-muted-foreground line-through")}>
+                        {m.title}
+                      </span>
+                      <Button
+                        id={`module-edit-trigger-${m.id}`}
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => setEditingModuleId(m.id)}
+                        disabled={isPending}
+                        aria-label={`${m.title} 모듈 수정`}
+                        className={rowIconClass}
+                      >
+                        <Pencil className="size-4" strokeWidth={1.6} aria-hidden="true" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={(event) => moduleDeleteConfirm.request(event.currentTarget, m.id)}
+                        disabled={isPending}
+                        aria-expanded={moduleDeleteConfirm.value === m.id}
+                        aria-label={`${m.title} 모듈 삭제`}
+                        className={cn(rowIconClass, "text-destructive hover:text-destructive")}
+                      >
+                        <Trash2 className="size-4" strokeWidth={1.6} aria-hidden="true" />
+                      </Button>
+                    </div>
+                    {moduleDeleteConfirm.value === m.id ? (
+                      <ConfirmPanel
+                        confirm={moduleDeleteConfirm}
+                        message={`${m.title} 모듈을 삭제할까요? 학생의 진도 표시에서도 사라집니다.`}
+                        confirmLabel="모듈 삭제 확인"
+                        pendingLabel="삭제 중..."
+                        pending={isPending}
+                        onConfirm={() => handleDeleteModule(m.id)}
+                        className="mb-3"
+                      />
                   ) : null}
                 </li>
               ))}
@@ -496,6 +502,7 @@ export function OverviewTab({
             </button>
           )}
         </LedgerSection>
+        ) : null}
       </div>
 
       {/* 계정: 상태 줄을 먼저 모으고(order 1·2) 조작은 버튼 순서대로(order 3·4) 둔다. DOM은 조작마다 자기 상태 줄과 붙어 있다. */}

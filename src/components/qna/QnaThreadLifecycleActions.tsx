@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useTransition, type ReactNode, type RefObject, type TransitionStartFunction } from "react";
-import { useRouter } from "next/navigation";
+import { useProgressRouter } from "@/components/app-shell/NavigationProgress";
 import { RotateCcw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -46,6 +46,8 @@ export type QnaThreadLifecycle = {
   /** 지금 가능한 한 가지 동작. 없으면 null. */
   actionKind: QnaLifecycleKind | null;
   triggerDisabled: boolean;
+  /** 확인 없이 바로 실행하는 복원이 진행 중이다. */
+  restorePending: boolean;
   confirmOpen: boolean;
   /** 복원은 바로 실행하고, 휴지통 이동·영구 삭제는 취소 우선 확인을 연다. trigger는 확인을 닫을 때 초점이 돌아갈 곳이다. */
   request: (trigger: HTMLElement | null) => void;
@@ -70,7 +72,7 @@ export function useQnaThreadLifecycle({
   actionButtonRef,
   fallbackFocusRef,
 }: QnaThreadLifecycleHookOptions): QnaThreadLifecycle {
-  const router = useRouter();
+  const router = useProgressRouter();
   const [ownPending, startOwnTransition] = useTransition();
   const isPending = transition?.isPending ?? ownPending;
   const startTransition = transition?.start ?? startOwnTransition;
@@ -173,7 +175,7 @@ export function useQnaThreadLifecycle({
         </span>
       ) : null}
       {failure?.refreshRequired ? (
-        <Button type="button" variant="outline" size="sm" disabled={disabled || isPending} onClick={() => startTransition(() => {
+        <Button type="button" variant="outline" size="sm" disabled={disabled} pending={isPending} onClick={() => startTransition(() => {
           try {
             router.refresh();
           } catch {
@@ -187,6 +189,7 @@ export function useQnaThreadLifecycle({
   return {
     actionKind,
     triggerDisabled,
+    restorePending: isPending && actionKind === "restore",
     confirmOpen: lifecycleConfirm.isOpen,
     request,
     feedback,
@@ -209,6 +212,7 @@ export function QnaThreadLifecycleActions(props: QnaThreadLifecycleOptions) {
           size="sm"
           className={cn("max-md:h-11", actionKind === "trash" && "text-destructive")}
           disabled={lifecycle.triggerDisabled}
+          pending={lifecycle.restorePending}
           aria-expanded={actionKind === "restore" ? undefined : lifecycle.confirmOpen}
           onClick={(event) => lifecycle.request(event.currentTarget)}
         >

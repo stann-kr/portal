@@ -2,12 +2,12 @@
 
 import { useRef, useState } from "react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { Ellipsis, FileText, KeyRound, LogOut, Trash2 } from "lucide-react";
+import { AlertCircle, Ellipsis, FileText, KeyRound, LogOut, Trash2, X } from "lucide-react";
 import { AccountDeletionControl } from "@/components/auth/AccountDeletionControl";
 import { LocalDraftManager, type AccountDialogHandle } from "@/components/auth/LocalDraftManager";
 import { PasswordChangeControl } from "@/components/auth/PasswordChangeControl";
 import { useLogoutSubmit } from "@/components/auth/useLogoutSubmit";
-import { logoutCurrentUser } from "@/lib/actions/session";
+import { ButtonSpinner } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 type MenuChoice = "drafts" | "password" | "delete" | "logout";
@@ -31,16 +31,14 @@ export function AccountMenu({
   size?: "md" | "touch";
 }) {
   const [open, setOpen] = useState(false);
-  // 로그아웃 요청을 한 번만 보낸다(이전 로그아웃 버튼의 제출 중 비활성과 같은 역할).
-  const [loggingOut, setLoggingOut] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const pendingChoice = useRef<MenuChoice | null>(null);
   const draftsRef = useRef<AccountDialogHandle>(null);
   const passwordRef = useRef<AccountDialogHandle>(null);
   const deleteRef = useRef<AccountDialogHandle>(null);
-  const logoutFormRef = useRef<HTMLFormElement>(null);
-  // 서버 초안 폐기 요청을 먼저 보낸 뒤(최대 3초) 로컬 초안을 지우고 로그아웃한다.
-  const { onSubmit: onLogoutSubmit } = useLogoutSubmit(ownerId);
+  // 다른 탭의 서버 초안 저장을 잠그고 폐기 요청을 먼저 보낸 뒤(최대 3초) 로컬 초안을 지우고 로그아웃한다.
+  // 기다리는 동안 한 번만 보내고(pending), 실패하면 다시 고를 수 있게 풀고 오류를 보인다.
+  const logout = useLogoutSubmit(ownerId);
 
   const choose = (choice: MenuChoice) => {
     pendingChoice.current = choice;
@@ -56,10 +54,7 @@ export function AccountMenu({
     if (choice === "drafts") draftsRef.current?.open();
     if (choice === "password") passwordRef.current?.open();
     if (choice === "delete") deleteRef.current?.open();
-    if (choice === "logout" && !loggingOut) {
-      setLoggingOut(true);
-      logoutFormRef.current?.requestSubmit();
-    }
+    if (choice === "logout") logout.start();
   };
 
   return (
@@ -69,13 +64,19 @@ export function AccountMenu({
           <button
             ref={triggerRef}
             type="button"
-            aria-label="계정 메뉴"
+            aria-label={logout.pending ? "계정 메뉴, 로그아웃 중" : "계정 메뉴"}
+            aria-busy={logout.pending || undefined}
             className={cn(
               "flex shrink-0 items-center justify-center text-muted-foreground transition-colors hover:bg-selected hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:bg-selected data-[state=open]:text-foreground",
               size === "touch" ? "size-11 rounded-touch" : "size-8 rounded-md",
             )}
           >
-            <Ellipsis className={size === "touch" ? "size-[18px]" : "size-4"} aria-hidden="true" />
+            {/* 메뉴가 닫힌 뒤에도 로그아웃을 기다리는 중임을 같은 자리의 회전 표시로 보인다. */}
+            {logout.pending ? (
+              <ButtonSpinner className={size === "touch" ? "size-[18px]" : "size-4"} />
+            ) : (
+              <Ellipsis className={size === "touch" ? "size-[18px]" : "size-4"} aria-hidden="true" />
+            )}
           </button>
         </DropdownMenu.Trigger>
         <DropdownMenu.Portal>
@@ -103,9 +104,13 @@ export function AccountMenu({
               </DropdownMenu.Item>
             ) : null}
             <DropdownMenu.Separator className="mx-0 my-1 h-px bg-muted" />
-            <DropdownMenu.Item className={cn(ITEM_CLASS, "data-[disabled]:opacity-50")} disabled={loggingOut} onSelect={() => choose("logout")}>
-              <LogOut className="size-4 text-secondary-foreground" strokeWidth={1.6} aria-hidden="true" />
-              {loggingOut ? "로그아웃 중" : "로그아웃"}
+            <DropdownMenu.Item className={cn(ITEM_CLASS, "data-[disabled]:opacity-50")} disabled={logout.pending} onSelect={() => choose("logout")}>
+              {logout.pending ? (
+                <ButtonSpinner className="size-4 text-secondary-foreground" />
+              ) : (
+                <LogOut className="size-4 text-secondary-foreground" strokeWidth={1.6} aria-hidden="true" />
+              )}
+              {logout.pending ? "로그아웃 중" : "로그아웃"}
             </DropdownMenu.Item>
           </DropdownMenu.Content>
         </DropdownMenu.Portal>
@@ -114,7 +119,24 @@ export function AccountMenu({
       <LocalDraftManager ownerId={ownerId} controlRef={draftsRef} hideTrigger />
       <PasswordChangeControl controlRef={passwordRef} hideTrigger />
       {canDeleteAccount ? <AccountDeletionControl ownerId={ownerId} controlRef={deleteRef} hideTrigger /> : null}
-      <form ref={logoutFormRef} action={logoutCurrentUser} onSubmit={onLogoutSubmit} hidden />
+      {logout.error ? (
+        <div
+          role="alert"
+          style={{ zIndex: "var(--z-toast)" }}
+          className="fixed inset-x-4 bottom-4 flex items-start gap-2 rounded-md bg-destructive-muted px-3 py-2.5 text-ui text-destructive shadow-floating md:inset-x-auto md:left-4 md:max-w-xs"
+        >
+          <AlertCircle className="mt-0.5 size-4 shrink-0" strokeWidth={1.6} aria-hidden="true" />
+          <span className="min-w-0 flex-1">{logout.error}</span>
+          <button
+            type="button"
+            aria-label="로그아웃 오류 닫기"
+            onClick={logout.clearError}
+            className="-my-1 -mr-1 flex size-11 shrink-0 items-center justify-center rounded-md hover:bg-destructive/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:size-7"
+          >
+            <X className="size-4" strokeWidth={1.6} aria-hidden="true" />
+          </button>
+        </div>
+      ) : null}
     </>
   );
 }

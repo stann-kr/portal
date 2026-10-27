@@ -9,8 +9,7 @@
 import { useRef, useState } from "react";
 import Link from "next/link";
 import { Music2, Pause, Play } from "lucide-react";
-import { formatKstShortDate } from "@/lib/kst-format";
-import { communityAuthorName, communityPreview } from "./CommunityPostRow";
+import { communityPreview, communityRowMeta } from "./CommunityPostRow";
 
 type FeedbackPost = {
   id: string;
@@ -20,6 +19,7 @@ type FeedbackPost = {
   authorName: string | null;
   authorEmail: string | null;
   createdAt: Date | null;
+  commentCount?: number;
 };
 
 interface MixsetFeedbackCardProps {
@@ -32,8 +32,7 @@ export function MixsetFeedbackCard({ post, returnTo = "/community" }: MixsetFeed
   const [playError, setPlayError] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
 
-  const author = communityAuthorName(post);
-  const date = formatKstShortDate(post.createdAt, "날짜 정보 없음");
+  const meta = communityRowMeta(post);
   const preview = communityPreview(post.contentHtml, 80);
 
   // 재생 상태는 실제 media event로만 바꿔 실패한 play()가 재생 중으로 보이지 않게 한다.
@@ -91,7 +90,7 @@ export function MixsetFeedbackCard({ post, returnTo = "/community" }: MixsetFeed
         </Link>
         {preview ? <p className="truncate text-ui text-secondary-foreground">{preview}</p> : null}
         <p className="text-xs text-muted-foreground">
-          {author} · {date}
+          {meta}
           {post.mediaUrl ? null : " · 오디오 파일 없음"}
         </p>
         {playError ? (

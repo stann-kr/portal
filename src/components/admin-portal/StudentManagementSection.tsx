@@ -16,6 +16,7 @@ import type { StudentRosterStat } from "@/lib/actions/students";
 import { buildAdminStudentDetailHref, type StudentDetailTab } from "@/lib/student-space-routes";
 import { cn } from "@/lib/utils";
 import { formatKstDot } from "@/lib/kst-format";
+import { isCurriculumVisible } from "@/lib/curriculum-visibility";
 
 const NEW_STUDENT_HREF = "/dashboard/admin/students/new";
 
@@ -96,7 +97,14 @@ function PendingFeedback({ count }: { count: number }) {
   );
 }
 
-export function StudentManagementSection({ students }: { students: StudentRosterStat[] }) {
+export function StudentManagementSection({
+  students,
+  showCurriculum = isCurriculumVisible(),
+}: {
+  students: StudentRosterStat[];
+  /** 현재 진도(커리큘럼) 열을 그릴지. 기본값은 숨김 스위치를 따른다. */
+  showCurriculum?: boolean;
+}) {
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query.trim());
   const visibleStudents = students.filter((student) => matchesQuery(student, deferredQuery));
@@ -176,8 +184,9 @@ export function StudentManagementSection({ students }: { students: StudentRoster
                               </span>
                             ) : null}
                           </span>
+                          {/* 커리큘럼을 숨기면 진도 대신 넓은 화면 표처럼 이메일을 둘째 줄에 둔다. */}
                           <span className="truncate text-ui leading-[18px] text-muted-foreground">
-                            {student.currentModule || "진도 미지정"}
+                            {showCurriculum ? student.currentModule || "진도 미지정" : student.email}
                           </span>
                         </span>
                         <span className="flex shrink-0 flex-col items-end gap-0.5">
@@ -190,11 +199,13 @@ export function StudentManagementSection({ students }: { students: StudentRoster
                 </ul>
 
                 <div className="hidden overflow-x-auto md:block">
-                  <table className="w-full min-w-[760px] table-fixed border-collapse text-left text-body">
+                  <table className={cn("w-full table-fixed border-collapse text-left text-body", showCurriculum ? "min-w-[760px]" : "min-w-[600px]")}>
                     <thead>
                       <tr className="border-b border-border">
                         <th scope="col" className="h-9 px-2 text-xs font-normal text-muted-foreground">수강생</th>
-                        <th scope="col" className="w-[22%] px-2 text-xs font-normal text-muted-foreground">현재 진도</th>
+                        {showCurriculum ? (
+                          <th scope="col" className="w-[22%] px-2 text-xs font-normal text-muted-foreground">현재 진도</th>
+                        ) : null}
                         <th scope="col" className="w-40 px-2 text-xs font-normal text-muted-foreground">다음 레슨</th>
                         <th scope="col" className="w-26 px-2 text-xs font-normal text-muted-foreground">피드백 대기</th>
                         <th scope="col" className="w-12 px-2"><span className="sr-only">메뉴</span></th>
@@ -220,7 +231,9 @@ export function StudentManagementSection({ students }: { students: StudentRoster
                               </span>
                             </Link>
                           </td>
-                          <td className="truncate px-2 text-ui text-secondary-foreground">{student.currentModule || "진도 미지정"}</td>
+                          {showCurriculum ? (
+                            <td className="truncate px-2 text-ui text-secondary-foreground">{student.currentModule || "진도 미지정"}</td>
+                          ) : null}
                           <td className="px-2 font-mono text-xs tabular-nums text-secondary-foreground">{nextLessonLabel(student)}</td>
                           <td className="px-2"><PendingFeedback count={student.pendingFeedbackCount} /></td>
                           <td className="px-2"><StudentRowMenu student={student} /></td>

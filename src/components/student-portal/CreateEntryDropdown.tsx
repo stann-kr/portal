@@ -7,7 +7,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useProgressRouter } from "@/components/app-shell/NavigationProgress";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Plus, CalendarPlus, CalendarClock, FileText, Music, HelpCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -102,7 +102,7 @@ export function CreateEntryDropdown({
   canCreateDigging = true,
   canCreateLesson = false,
 }: CreateEntryDropdownProps) {
-  const router = useRouter();
+  const router = useProgressRouter();
   const [eventDialogOpen, setEventDialogOpen] = useState(false);
   const [diggingDialogOpen, setDiggingDialogOpen] = useState(false);
   const [lessonDialogOpen, setLessonDialogOpen] = useState(false);
