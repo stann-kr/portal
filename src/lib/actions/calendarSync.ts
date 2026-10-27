@@ -36,8 +36,10 @@ import {
 import { exchangeGoogleCode, fetchGoogleAccountLabel, revokeGoogleToken } from "@/lib/calendar-sync/google";
 import { getGoogleCalendarOAuthConfig } from "@/lib/calendar-sync/oauth-config";
 import { loadRemoteSeriesItems } from "@/lib/calendar-sync/remote-series-items";
+import { ensureGoogleWatchChannel, stopGoogleWatchChannelsFor } from "@/lib/calendar-sync/push-channels";
 import {
   CALENDAR_SYNC_READ_BUDGET_MS,
+  scheduleEnsureStudentGoogleChannels,
   syncCalendarMapping,
   syncStudentCalendarMappings,
 } from "@/lib/calendar-sync/sync-runner";
@@ -380,6 +382,8 @@ export async function disconnectCalendarConnection(
   const session = await requireAdmin();
   const connection = await findOwnedConnection(session.user.id, connectionId);
   if (!connection) return { error: MESSAGES.connectionMissing };
+  // 변경 알림 channel은 token 폐기 전에 중지한다(폐기 뒤에는 stop을 부를 수 없다). 실패는 해제를 막지 않는다.
+  await stopGoogleWatchChannelsFor(createDbContext(), { connectionId: connection.id }).catch(() => undefined);
   if (connection.provider === "GOOGLE") {
     try {
       const credentials = await decryptConnectionCredentials({
@@ -461,6 +465,8 @@ export async function saveCalendarMapping(
   }
 
   const result = await syncCalendarMapping(ctx, mappingId, { force: true }).catch(() => null);
+  // Google 매핑은 변경 알림 channel을 등록한다(https 주소일 때만, 실패는 저장 결과에 영향 없음).
+  await ensureGoogleWatchChannel(ctx, mappingId).catch(() => undefined);
   revalidatePath(SETTINGS_PATH);
   if (!result || result.status === "failed") {
     return { success: `캘린더를 연결했습니다. 첫 동기화는 실패했습니다: ${result?.error ?? CALENDAR_SYNC_MESSAGES.provider}` };
@@ -472,6 +478,8 @@ export async function removeCalendarMapping(mappingId: string): Promise<Calendar
   const session = await requireAdmin();
   const mapping = await findOwnedMapping(session.user.id, mappingId);
   if (!mapping) return { error: MESSAGES.mappingMissing };
+  // 변경 알림 channel을 먼저 중지한다(best-effort). 행은 매핑 삭제 cascade로도 지워진다.
+  await stopGoogleWatchChannelsFor(createDbContext(), { mappingId: mapping.id }).catch(() => undefined);
   await readDb().delete(calendarMappings).where(eq(calendarMappings.id, mapping.id));
   revalidatePath(SETTINGS_PATH);
   return { success: "캘린더 연결을 해제했습니다. 포털과 원격 캘린더의 일정은 그대로 남습니다." };
@@ -554,6 +562,8 @@ export async function syncAndGetExternalItems(input: {
   } catch {
     // 원격 실패는 화면 표시를 막지 않는다.
   }
+  // 변경 알림 channel이 없거나 곧 만료되면 응답 뒤 갱신한다(best-effort, 매핑 last_error를 바꾸지 않음).
+  await scheduleEnsureStudentGoogleChannels(targetId, ctx).catch(() => undefined);
 
   const [subscriptionItems, seriesItems] = await Promise.all([
     fetchExternalItemsForUser(targetId, input?.query).catch(() => [] as UnifiedItem[]),

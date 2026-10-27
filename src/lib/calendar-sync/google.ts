@@ -440,20 +440,18 @@ function writeResult(body: Record<string, unknown> | null): WriteResult {
   return { remoteId, etag };
 }
 
-export function createGoogleCalendarClient(options: {
+export type GoogleRequestInit = { body?: unknown; headers?: Record<string, string> };
+
+/** access token을 붙여 Google API를 부르는 함수. 401이면 token을 한 번 새로 받아 다시 보낸다. */
+export type GoogleSender = (method: string, url: string, init?: GoogleRequestInit) => Promise<FetchedText>;
+
+export function createGoogleSender(options: {
   getAccessToken: GoogleAccessTokenProvider;
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
-  now?: () => Date;
-}): CalendarProviderClient {
+}): GoogleSender {
   const fetchImpl = options.fetchImpl ?? fetch;
-  const now = options.now ?? (() => new Date());
-
-  async function send(
-    method: string,
-    url: string,
-    init: { body?: unknown; headers?: Record<string, string> } = {},
-  ): Promise<FetchedText> {
+  return async (method, url, init = {}) => {
     const attempt = async (forceRefresh: boolean) => {
       const token = await options.getAccessToken({ forceRefresh });
       return googleFetch(
@@ -475,7 +473,89 @@ export function createGoogleCalendarClient(options: {
     let result = await attempt(false);
     if (result.status === 401) result = await attempt(true);
     return result;
+  };
+}
+
+// ── 변경 알림(push notification channel) ───────────────────
+
+/** Google channel id·token 형식(문서: id는 64자 이하 [A-Za-z0-9-_+/=], token은 256자 이하). */
+const GOOGLE_CHANNEL_ID_PATTERN = /^[A-Za-z0-9_+/=-]{1,64}$/u;
+const GOOGLE_CHANNEL_TOKEN_MAX_LENGTH = 256;
+
+export type GoogleWatchInput = {
+  calendarId: string;
+  channelId: string;
+  /** Google이 알림마다 X-Goog-Channel-Token으로 돌려주는 값. 응답·오류에 넣지 않는다. */
+  token: string;
+  /** https 알림 주소. */
+  address: string;
+  ttlSeconds: number;
+};
+
+export type GoogleWatchResult = { resourceId: string; expiresAt: Date };
+
+/** `calendars/{id}/events/watch`로 web_hook channel을 등록한다. */
+export async function watchGoogleCalendar(
+  input: GoogleWatchInput & ({ send: GoogleSender } | { getAccessToken: GoogleAccessTokenProvider; fetchImpl?: typeof fetch }),
+  now: Date = new Date(),
+): Promise<GoogleWatchResult> {
+  const send = "send" in input ? input.send : createGoogleSender({ getAccessToken: input.getAccessToken, fetchImpl: input.fetchImpl });
+  if (!input.calendarId) throw new CalendarProviderError("Calendar id is missing");
+  if (!GOOGLE_CHANNEL_ID_PATTERN.test(input.channelId)) throw new CalendarProviderError("Channel id is invalid");
+  if (!input.token || input.token.length > GOOGLE_CHANNEL_TOKEN_MAX_LENGTH || /[\r\n]/u.test(input.token)) {
+    throw new CalendarProviderError("Channel token is invalid");
   }
+  let address: URL;
+  try {
+    address = new URL(input.address);
+  } catch {
+    throw new CalendarProviderError("Channel address is invalid");
+  }
+  if (address.protocol !== "https:" || address.username || address.password) throw new CalendarProviderError("Channel address must be https");
+  const ttlSeconds = Math.floor(input.ttlSeconds);
+  if (!Number.isFinite(ttlSeconds) || ttlSeconds <= 0) throw new CalendarProviderError("Channel ttl is invalid");
+  const url = `${GOOGLE_CALENDAR_API}/calendars/${encodeURIComponent(input.calendarId)}/events/watch`;
+  const result = await send("POST", url, {
+    body: { id: input.channelId, type: "web_hook", address: address.toString(), token: input.token, params: { ttl: String(ttlSeconds) } },
+  });
+  const body = parseJson(result.text);
+  if (result.status < 200 || result.status >= 300) throw apiError(result, body);
+  const resourceId = str(body?.resourceId);
+  if (!resourceId || str(body?.id) !== input.channelId) throw new CalendarProviderError("Google channel response is invalid");
+  // expiration은 epoch ms 문자열(int64)이다. 없으면 요청한 ttl을 쓴다.
+  const expiration = Number(str(body?.expiration) ?? body?.expiration);
+  const expiresAt = Number.isFinite(expiration) && expiration > 0
+    ? new Date(expiration)
+    : new Date(now.getTime() + ttlSeconds * 1_000);
+  return { resourceId, expiresAt };
+}
+
+/** `channels/stop`. 이미 없거나 만료된 channel(404)은 성공으로 본다. */
+export async function stopGoogleChannel(
+  input: { channelId: string; resourceId: string } & ({ send: GoogleSender } | { getAccessToken: GoogleAccessTokenProvider; fetchImpl?: typeof fetch }),
+): Promise<void> {
+  const send = "send" in input ? input.send : createGoogleSender({ getAccessToken: input.getAccessToken, fetchImpl: input.fetchImpl });
+  if (!input.channelId || !input.resourceId) throw new CalendarProviderError("Channel is invalid");
+  const result = await send("POST", `${GOOGLE_CALENDAR_API}/channels/stop`, {
+    body: { id: input.channelId, resourceId: input.resourceId },
+  });
+  if (result.status === 404) return;
+  if (result.status < 200 || result.status >= 300) throw apiError(result, parseJson(result.text));
+}
+
+export type GoogleCalendarClient = CalendarProviderClient & {
+  watch(input: GoogleWatchInput): Promise<GoogleWatchResult>;
+  stopChannel(input: { channelId: string; resourceId: string }): Promise<void>;
+};
+
+export function createGoogleCalendarClient(options: {
+  getAccessToken: GoogleAccessTokenProvider;
+  fetchImpl?: typeof fetch;
+  timeoutMs?: number;
+  now?: () => Date;
+}): GoogleCalendarClient {
+  const now = options.now ?? (() => new Date());
+  const send = createGoogleSender(options);
 
   async function sendOk(method: string, url: string, init?: { body?: unknown; headers?: Record<string, string> }): Promise<Record<string, unknown> | null> {
     const result = await send(method, url, init);
@@ -495,6 +575,14 @@ export function createGoogleCalendarClient(options: {
 
   return {
     kind: "GOOGLE",
+
+    watch(input: GoogleWatchInput): Promise<GoogleWatchResult> {
+      return watchGoogleCalendar({ ...input, send }, now());
+    },
+
+    stopChannel(input: { channelId: string; resourceId: string }): Promise<void> {
+      return stopGoogleChannel({ ...input, send });
+    },
 
     async listCalendars(): Promise<RemoteCalendar[]> {
       const calendars: RemoteCalendar[] = [];

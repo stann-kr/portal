@@ -30,6 +30,7 @@ export const documentImageMigrationFile = "0014_document_images.sql";
 export const assignmentTaskMigrationFile = "0015_assignment_tasks.sql";
 export const guidePageMigrationFile = "0016_guide_pages.sql";
 export const calendarSyncMigrationFile = "0017_calendar_sync.sql";
+export const calendarPushChannelMigrationFile = "0018_calendar_push_channels.sql";
 
 export function readJson(path) {
   return JSON.parse(readFileSync(path, "utf8"));

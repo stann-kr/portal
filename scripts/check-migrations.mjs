@@ -46,6 +46,7 @@ import {
   validateGuidePageUpgrade,
 } from "./migration-check/guide-pages.mjs";
 import { validateCalendarSyncUpgrade } from "./migration-check/calendar-sync.mjs";
+import { validateCalendarPushChannelUpgrade } from "./migration-check/calendar-push-channels.mjs";
 import {
   validateAccountPrivacyAtomicSource,
   validateAccountPrivacySemantics,
@@ -173,6 +174,8 @@ async function main() {
   console.log("PASS populated 0015 → 0016 guide page upgrade, server draft rebuild and anchor preservation");
   await validateCalendarSyncUpgrade(migrationFiles);
   console.log("PASS populated 0016 → 0017 calendar sync tables, constraints and connection cascade");
+  await validateCalendarPushChannelUpgrade(migrationFiles);
+  console.log("PASS populated 0017 → 0018 calendar push channel table, constraints and mapping cascade");
 }
 
 try {

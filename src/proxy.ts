@@ -25,8 +25,10 @@ export const config = {
    * 정적 파일, 이미지 최적화 경로, favicon 제외.
    * /api/auth/** 는 NextAuth 인증 콜백 경로이므로 반드시 proxy에서 제외.
    * 미포함 시 /api/auth/callback/credentials 가 보호 대상이 되어 redirect loop 발생.
+   * /api/calendar-connections/google/notify 는 Google이 로그인 없이 POST하는 변경 알림이다.
+   * route가 channel token으로 직접 검증한다(같은 경로의 start·callback은 계속 보호한다).
    */
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|api/auth|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    "/((?!_next/static|_next/image|favicon.ico|api/auth|api/calendar-connections/google/notify|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };

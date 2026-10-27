@@ -1,7 +1,13 @@
 /* eslint-disable @typescript-eslint/no-require-imports */
+import { readCalendarSyncEnvOverride } from "./runtime-env";
 
-/** OpenNext Worker binding과 Node development 환경 모두에서 문자열 설정값을 읽는다. */
+/**
+ * OpenNext Worker binding과 Node development 환경 모두에서 문자열 설정값을 읽는다.
+ * 예약 실행처럼 `runWithCalendarSyncEnv`로 Worker env를 넘긴 경우 그 값을 먼저 쓴다.
+ */
 export function readCalendarSyncEnv(name: string): string | undefined {
+  const override = readCalendarSyncEnvOverride(name)?.trim();
+  if (override) return override;
   let value = process.env[name];
   try {
     const { getCloudflareContext } = require("@opennextjs/cloudflare") as {

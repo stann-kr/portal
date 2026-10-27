@@ -13,6 +13,8 @@ import {
   fetchGoogleAccountLabel,
   refreshGoogleAccessToken,
   revokeGoogleToken,
+  stopGoogleChannel,
+  watchGoogleCalendar,
 } from "./google";
 import {
   CalendarAuthError,
@@ -468,4 +470,75 @@ test("종일 반복 master는 VALUE=DATE로 합성한다", async () => {
   const items = await expand(mergeSeries(changed.map((event) => event.seriesIcs ?? "")));
   assert.equal(items.length, 1);
   assert.equal(items[0].metadata?.allDayStartDate, "2026-11-05");
+});
+
+const WATCH_TOKEN = "channel-token-secret-value";
+const NOTIFY_ADDRESS = "https://portal.example.com/api/calendar-connections/google/notify";
+
+test("watch는 events/watch에 web_hook·주소·token·ttl을 보내고 expiration(epoch ms 문자열)을 돌려준다", async () => {
+  const fake = createFakeFetch([
+    () => jsonResponse({ kind: "api#channel", id: "channel-1", resourceId: "res-1", resourceUri: "https://x", token: WATCH_TOKEN, expiration: "1793700000000" }),
+  ]);
+  const result = await createGoogleCalendarClient({ ...tokenProvider(), fetchImpl: fake.fetchImpl }).watch({
+    calendarId: CAL,
+    channelId: "channel-1",
+    token: WATCH_TOKEN,
+    address: NOTIFY_ADDRESS,
+    ttlSeconds: 604_800,
+  });
+  assert.deepEqual(result, { resourceId: "res-1", expiresAt: new Date(1_793_700_000_000) });
+  const [call] = fake.calls;
+  assert.equal(call.method, "POST");
+  assert.equal(call.url, `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(CAL)}/events/watch`);
+  assert.equal(call.headers.authorization, "Bearer stale-token");
+  assert.deepEqual(JSON.parse(call.body), {
+    id: "channel-1",
+    type: "web_hook",
+    address: NOTIFY_ADDRESS,
+    token: WATCH_TOKEN,
+    params: { ttl: "604800" },
+  });
+});
+
+test("watch는 expiration이 없으면 ttl로 만료를 정하고 401이면 token을 새로 받아 한 번 재시도한다", async () => {
+  const tokens = tokenProvider();
+  const fake = createFakeFetch([
+    () => jsonResponse({ error: { code: 401 } }, 401),
+    () => jsonResponse({ id: "channel-1", resourceId: "res-1" }),
+  ]);
+  const now = new Date("2026-10-27T00:00:00Z");
+  const result = await watchGoogleCalendar(
+    { ...tokens, fetchImpl: fake.fetchImpl, calendarId: CAL, channelId: "channel-1", token: WATCH_TOKEN, address: NOTIFY_ADDRESS, ttlSeconds: 3_600 },
+    now,
+  );
+  assert.deepEqual(tokens.requests, [false, true]);
+  assert.equal(result.expiresAt.getTime(), now.getTime() + 3_600_000);
+});
+
+test("watch는 https가 아닌 주소·잘못된 channel id를 요청 전에 거부하고 오류에 token을 넣지 않는다", async () => {
+  const fake = createFakeFetch([() => googleError(403, "push.webhookUrlNotHttps"), () => jsonResponse({ id: "other", resourceId: "r" })]);
+  const base = { ...tokenProvider(), fetchImpl: fake.fetchImpl, calendarId: CAL, channelId: "channel-1", token: WATCH_TOKEN, ttlSeconds: 60 };
+  await assert.rejects(watchGoogleCalendar({ ...base, address: "http://localhost:3004/api/calendar-connections/google/notify" }), CalendarProviderError);
+  await assert.rejects(watchGoogleCalendar({ ...base, address: NOTIFY_ADDRESS, channelId: "bad id!" }), CalendarProviderError);
+  assert.equal(fake.calls.length, 0);
+  const failure = await watchGoogleCalendar({ ...base, address: NOTIFY_ADDRESS }).catch((error: unknown) => error);
+  assert.ok(failure instanceof CalendarProviderError);
+  assert.doesNotMatch(String((failure as Error).message), new RegExp(WATCH_TOKEN, "u"));
+  // 응답 channel id가 요청과 다르면 신뢰하지 않는다.
+  await assert.rejects(watchGoogleCalendar({ ...base, address: NOTIFY_ADDRESS }), /response is invalid/u);
+});
+
+test("channels/stop은 id·resourceId를 보내고 404는 성공, 그 밖의 오류는 throw한다", async () => {
+  const fake = createFakeFetch([
+    () => new Response(null, { status: 204 }),
+    () => googleError(404, "notFound"),
+    () => googleError(500, "backendError"),
+  ]);
+  const input = { ...tokenProvider(), fetchImpl: fake.fetchImpl, channelId: "channel-1", resourceId: "res-1" };
+  await stopGoogleChannel(input);
+  assert.equal(fake.calls[0].url, "https://www.googleapis.com/calendar/v3/channels/stop");
+  assert.equal(fake.calls[0].method, "POST");
+  assert.deepEqual(JSON.parse(fake.calls[0].body), { id: "channel-1", resourceId: "res-1" });
+  await stopGoogleChannel(input);
+  await assert.rejects(stopGoogleChannel(input), CalendarProviderError);
 });

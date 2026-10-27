@@ -127,6 +127,13 @@
       "when": 1793094658716,
       "tag": "0017_calendar_sync",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1793100711083,
+      "tag": "0018_calendar_push_channels",
+      "breakpoints": true
     }
   ]
 }

@@ -1741,3 +1741,33 @@ export const calendarRemoteSeries = sqliteTable(
     ),
   ],
 );
+
+/**
+ * Google 매핑의 변경 알림(watch) channel. token 원문은 Google에만 보내고 여기에는 sha256 hex만 둔다.
+ * 매핑이 지워지면 함께 지워진다(Google 쪽 stop은 앱이 삭제 전에 best-effort로 부른다).
+ */
+export const calendarPushChannels = sqliteTable(
+  "calendar_push_channels",
+  {
+    mappingId: text("mapping_id")
+      .primaryKey()
+      .references(() => calendarMappings.id, { onDelete: "cascade" }),
+    channelId: text("channel_id").notNull(),
+    resourceId: text("resource_id").notNull(),
+    tokenHash: text("token_hash").notNull(),
+    expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .default(sql`(strftime('%s', 'now'))`)
+      .notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .default(sql`(strftime('%s', 'now'))`)
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("calendar_push_channels_channel_unique").on(table.channelId),
+    check(
+      "calendar_push_channels_payload_check",
+      sql`length(${table.mappingId}) > 0 AND length(${table.channelId}) > 0 AND length(${table.resourceId}) > 0 AND length(${table.tokenHash}) = 64 AND ${table.createdAt} <= ${table.updatedAt}`,
+    ),
+  ],
+);
