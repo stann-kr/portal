@@ -77,6 +77,22 @@ function createSnapshot(
   };
 }
 
+async function mockDiscard(input: DiscardInput) {
+  discardCalls.push(input);
+  if ((remoteDraft?.draftVersion ?? 0) !== input.expectedDraftVersion ||
+    (remoteDraft && input.targetPayloadHashes && !input.targetPayloadHashes.includes(remoteDraft.payloadHash))) {
+    return { ok: false, reason: "VERSION_CONFLICT", current: remoteDraft };
+  }
+  remoteDraft = null;
+  await afterDiscardCommit?.();
+  return {
+    ok: true,
+    replayed: false,
+    operationResultVersion: input.expectedDraftVersion,
+    current: null,
+  };
+}
+
 mock.module("@/lib/actions/documentDrafts", {
   namedExports: {
     readDocumentServerDraft: async () => {
@@ -109,21 +125,7 @@ mock.module("@/lib/actions/documentDrafts", {
         current: remoteDraft,
       };
     },
-    discardDocumentServerDraft: async (input: DiscardInput) => {
-      discardCalls.push(input);
-      if ((remoteDraft?.draftVersion ?? 0) !== input.expectedDraftVersion ||
-        (remoteDraft && input.targetPayloadHashes && !input.targetPayloadHashes.includes(remoteDraft.payloadHash))) {
-        return { ok: false, reason: "VERSION_CONFLICT", current: remoteDraft };
-      }
-      remoteDraft = null;
-      await afterDiscardCommit?.();
-      return {
-        ok: true,
-        replayed: false,
-        operationResultVersion: input.expectedDraftVersion,
-        current: null,
-      };
-    },
+    discardDocumentServerDraft: (input: DiscardInput) => mockDiscard(input),
   },
 });
 
@@ -281,10 +283,20 @@ async function renderLogoutButton(browserWindow: Window, ownerId: string) {
   const container = browserWindow.document.createElement("div");
   browserWindow.document.body.append(container);
   const root = createRoot(container as unknown as Element);
+  // 로그아웃 전 폐기는 server action이 아니라 fetch(`/api/document-drafts/discard`)로 간다.
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = (async (_url: unknown, init?: RequestInit) =>
+    Response.json(await mockDiscard(JSON.parse(String(init?.body))))) as typeof fetch;
   await act(async () => root.render(<LogoutTextButton ownerId={ownerId} label="로그아웃" />));
   const button = container.querySelector("button");
   assert.ok(button, "로그아웃 버튼이 있어야 합니다.");
-  return { button, unmount: () => act(async () => root.unmount()) };
+  return {
+    button,
+    unmount: async () => {
+      await act(async () => root.unmount());
+      globalThis.fetch = previousFetch;
+    },
+  };
 }
 
 function resetServerMock(): void {

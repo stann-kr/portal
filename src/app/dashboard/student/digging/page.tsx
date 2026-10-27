@@ -18,7 +18,7 @@ type RawColumn = Awaited<ReturnType<typeof getOrSeedColumns>>[number];
 export default async function StudentDiggingPage({
   searchParams,
 }: {
-  searchParams: Promise<{ returnTo?: string }>;
+  searchParams: Promise<{ returnTo?: string | string[] }>;
 }) {
   const session = await getActiveAuthSession();
   if (!session?.user?.id) redirect("/login");

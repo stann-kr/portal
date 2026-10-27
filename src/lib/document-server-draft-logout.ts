@@ -22,17 +22,20 @@ export type ServerDraftLogoutFlushResult = {
 
 type DiscardServerDraft = (
   input: DiscardDocumentServerDraftInput,
+  signal: AbortSignal,
 ) => Promise<DocumentServerDraftMutationResult>;
 
 /**
- * 폐기 요청 하나를 보낸다. 다른 기기가 같은 본문을 다시 저장해 version만 앞섰으면 그 version으로
- * 다시 보내고(편집기의 rebase 규칙과 같은 횟수), 서버본이 없거나 다른 본문이면 건드리지 않는다.
+ * 폐기 요청 하나를 보낸다. 같은 본문이 다른 version으로 남아 있으면(충돌, 또는 앞선 요청의 재실행 응답 뒤
+ * 다시 저장됨) 그 version으로 다시 보내고(편집기의 rebase 규칙과 같은 횟수), 서버본이 없거나 다른 본문이면
+ * 건드리지 않는다.
  */
 async function sendQueuedDiscard(
   storage: Pick<FormDraftStorage, "getItem" | "removeItem">,
   stored: StoredQueuedDocumentServerDraftDiscard,
   discard: DiscardServerDraft,
   createOperationId: () => string,
+  signal: AbortSignal,
 ): Promise<boolean> {
   const { entry } = stored;
   let request: DiscardDocumentServerDraftInput = {
@@ -45,18 +48,14 @@ async function sendQueuedDiscard(
   for (;;) {
     let result: DocumentServerDraftMutationResult;
     try {
-      result = await discard(request);
+      result = await discard(request, signal);
     } catch {
       return false;
     }
-    if (result.ok) {
-      removeQueuedDocumentServerDraftIfUnchanged(storage, entry.sourceKey, stored.raw);
-      return true;
-    }
-    if (result.reason !== "VERSION_CONFLICT") return false;
+    if (!result.ok && result.reason !== "VERSION_CONFLICT") return false;
     const current = result.current;
     if (
-      current &&
+      current !== null &&
       entry.targetPayloadHashes?.includes(current.payloadHash) &&
       conflictCount < SERVER_DRAFT_LOGOUT_MAX_DISCARD_REBASES
     ) {
@@ -90,8 +89,10 @@ export async function flushQueuedDocumentServerDraftDiscards({
   const queued = listQueuedDocumentServerDraftDiscardsForOwner(storage, ownerId);
   if (queued.length === 0) return { attempted: 0, discarded: 0, timedOut: false };
   let discarded = 0;
+  // 시간 상한에 닿으면 보내던 요청을 끊는다(남은 요청이 뒤의 로그아웃을 붙잡지 않게).
+  const controller = new AbortController();
   const work = Promise.all(queued.map(async (stored) => {
-    if (await sendQueuedDiscard(storage, stored, discard, createOperationId)) discarded += 1;
+    if (await sendQueuedDiscard(storage, stored, discard, createOperationId, controller.signal)) discarded += 1;
   }));
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timedOut = await Promise.race([
@@ -101,5 +102,6 @@ export async function flushQueuedDocumentServerDraftDiscards({
     }),
   ]);
   clearTimeout(timer);
+  if (timedOut) controller.abort();
   return { attempted: queued.length, discarded, timedOut };
 }

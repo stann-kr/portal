@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState, type FormEvent } from "react";
-import { discardDocumentServerDraft } from "@/lib/actions/documentDrafts";
+import { postDocumentServerDraftDiscard } from "@/lib/document-server-draft-discard-api";
 import { flushQueuedDocumentServerDraftDiscards } from "@/lib/document-server-draft-logout";
 import { clearLocalDocumentDraftsForLogout } from "@/lib/local-draft-continuity-client";
 
@@ -11,7 +11,8 @@ async function flushServerDraftDiscards(ownerId: string): Promise<void> {
     await flushQueuedDocumentServerDraftDiscards({
       storage: window.localStorage,
       ownerId,
-      discard: discardDocumentServerDraft,
+      // server action은 한 줄로 차례를 기다리므로, 응답 없는 폐기가 뒤의 로그아웃을 막지 않게 fetch로 보낸다.
+      discard: (input, signal) => postDocumentServerDraftDiscard(input, { signal }),
     });
   } catch {
     // 저장소를 읽을 수 없거나 요청이 실패해도 로그아웃은 계속한다.

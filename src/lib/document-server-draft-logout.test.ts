@@ -144,6 +144,32 @@ test("같은 본문이 다른 version으로 남았으면 그 version으로 다�
   assert.equal(storage.getItem(createDocumentServerDraftQueueKey(sourceKey)), null);
 });
 
+test("앞선 요청의 재실행 성공 뒤 같은 본문이 다시 저장돼 있으면 그 version으로 다시 지운다", async () => {
+  const storage = new MemoryStorage();
+  const sourceKey = seedSubmittedDiscard(storage);
+  let server: DocumentServerDraftSnapshot | null = snapshot(sourceKey, SUBMITTED_HASH, 4);
+  const calls: DiscardDocumentServerDraftInput[] = [];
+
+  const result = await flushQueuedDocumentServerDraftDiscards({
+    storage,
+    ownerId: "student-1",
+    createOperationId: () => REBASE_OPERATION_ID,
+    discard: async (input): Promise<DocumentServerDraftMutationResult> => {
+      calls.push(input);
+      if (input.operationId !== REBASE_OPERATION_ID) {
+        // 이전 시도가 이미 지웠고, 그 뒤 다른 기기가 같은 본문을 version 4로 다시 저장했다.
+        return { ok: true, replayed: true, operationResultVersion: 2, current: server };
+      }
+      server = null;
+      return { ok: true, replayed: false, operationResultVersion: 4, current: null };
+    },
+  });
+
+  assert.deepEqual(result, { attempted: 1, discarded: 1, timedOut: false });
+  assert.deepEqual(calls.map((call) => call.expectedDraftVersion), [2, 4]);
+  assert.equal(server, null);
+});
+
 test("요청 실패는 로그아웃을 막지 않고, 응답이 없으면 시간 상한에서 멈춘다", async () => {
   const failedStorage = new MemoryStorage();
   const failedSource = seedSubmittedDiscard(failedStorage);
@@ -160,14 +186,19 @@ test("요청 실패는 로그아웃을 막지 않고, 응답이 없으면 시간
   const hangingStorage = new MemoryStorage();
   seedSubmittedDiscard(hangingStorage);
   const startedAt = Date.now();
+  let hangingSignal: AbortSignal | undefined;
   const hanging = await flushQueuedDocumentServerDraftDiscards({
     storage: hangingStorage,
     ownerId: "student-1",
     timeoutMs: 30,
-    discard: () => new Promise(() => {}),
+    discard: (_input, signal) => {
+      hangingSignal = signal;
+      return new Promise(() => {});
+    },
   });
   assert.deepEqual(hanging, { attempted: 1, discarded: 0, timedOut: true });
   assert.ok(Date.now() - startedAt < 1_000);
+  assert.equal(hangingSignal?.aborted, true, "시간 상한에서 보내던 요청을 끊어야 합니다.");
 
   const empty = await flushQueuedDocumentServerDraftDiscards({
     storage: new MemoryStorage(),
