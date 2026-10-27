@@ -65,11 +65,18 @@ export function normalizeExternalCalendarUrl(value: string): {
   }
 
   if (url.hostname === "calendar.google.com") {
-    const match = /^\/calendar\/ical\/([^/]+)\/public\/basic\.ics$/u.exec(url.pathname);
-    if (!match || /private-/iu.test(url.pathname)) {
-      throw new ExternalCalendarError("Google 공개 iCal 기본 주소만 사용할 수 있습니다.");
+    // 공개 주소와 비공개(Secret) 주소 모두 읽기 전용으로 받는다. 비공개 주소는 그 자체가 열쇠라
+    // 다른 URL처럼 AES-GCM으로만 저장하고 화면·로그에 원문을 돌려주지 않는다.
+    const match = /^\/calendar\/ical\/([^/]+)\/(public|private-[A-Za-z0-9]+)\/basic\.ics$/u.exec(url.pathname);
+    if (!match) {
+      throw new ExternalCalendarError("Google iCal 주소(공개 또는 비공개 basic.ics)만 사용할 수 있습니다.");
     }
-    return { provider: "GOOGLE", url: url.toString(), label: "Google 공개 레슨 캘린더" };
+    const isPrivate = match[2] !== "public";
+    return {
+      provider: "GOOGLE",
+      url: url.toString(),
+      label: isPrivate ? "Google 비공개 레슨 캘린더" : "Google 공개 레슨 캘린더",
+    };
   }
 
   if (/^p\d+-caldav\.icloud\.com$/iu.test(url.hostname) && /^\/published\/2\/[^/]+$/u.test(url.pathname)) {

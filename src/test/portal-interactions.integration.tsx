@@ -2380,16 +2380,16 @@ test("public lesson calendar keeps a refused address for correction and sends on
   connectCalendar = async (_previous, data) => {
     submitted.push([String(data.get("url")), data.get("provider") as string | null]);
     return submitted.length === 1
-      ? { error: "Google 공개 iCal 기본 주소만 사용할 수 있습니다." }
+      ? { error: "Google 또는 iCloud의 전용 공개 레슨 캘린더 주소만 사용할 수 있습니다." }
       : { success: "공개 레슨 캘린더를 연결했습니다." };
   };
   context.after(() => { connectCalendar = async () => ({}); });
   await render(context, <ExternalCalendarConnection connection={{ connected: false }} />);
   assert.equal(browser.document.querySelector("select"), null, "the provider follows the pasted address");
-  const privateUrl = "https://calendar.google.com/calendar/ical/abc/private-123/basic.ics";
+  const privateUrl = "https://example.com/calendar.ics";
   await fill("external-calendar-url", privateUrl);
   await press("연결");
-  assert.match(browser.document.getElementById("external-calendar-error")?.textContent ?? "", /공개 iCal 기본 주소/u);
+  assert.match(browser.document.getElementById("external-calendar-error")?.textContent ?? "", /전용 공개 레슨 캘린더 주소/u);
   assert.equal(inputValue("url"), privateUrl, "the refused address stays for correction");
   const publicUrl = "https://calendar.google.com/calendar/ical/abc/public/basic.ics";
   await fill("external-calendar-url", publicUrl);

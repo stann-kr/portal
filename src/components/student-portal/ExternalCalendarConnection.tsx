@@ -57,7 +57,7 @@ export function ExternalCalendarConnection({
       </summary>
       <div className="flex flex-col gap-3 px-4 pb-4 pt-1">
         <p id="external-calendar-help" className="text-ui text-secondary-foreground">
-          전용 공개 Google iCal 또는 iCloud 공개 캘린더 주소를 붙여 넣으면 제공자를 자동으로 확인합니다. Google 비공개 Secret iCal 주소는 사용할 수 없습니다.
+          Google iCal 주소(공개 또는 비공개) 또는 iCloud 공개 캘린더 주소를 붙여 넣으면 제공자를 자동으로 확인합니다. 읽기 전용으로 보이며, 비공개 주소는 암호화해 저장하고 다시 보여 주지 않습니다.
         </p>
 
         {connection.connected ? (
@@ -92,7 +92,7 @@ export function ExternalCalendarConnection({
         <form action={formAction} className="flex gap-2" aria-describedby="external-calendar-help" aria-busy={pending}>
           <div className="min-w-0 flex-1">
             <label className="sr-only" htmlFor="external-calendar-url">공개 캘린더 주소</label>
-            <Input id="external-calendar-url" name="url" type="url" required aria-required="true" disabled={pending} value={url} onChange={(event) => setUrl(event.target.value)} aria-invalid={Boolean(state.error) && !pending} aria-describedby={state.error ? "external-calendar-help external-calendar-error" : "external-calendar-help"} placeholder="https://…/public/basic.ics" className="font-mono md:text-xs" />
+            <Input id="external-calendar-url" name="url" type="url" required aria-required="true" disabled={pending} value={url} onChange={(event) => setUrl(event.target.value)} aria-invalid={Boolean(state.error) && !pending} aria-describedby={state.error ? "external-calendar-help external-calendar-error" : "external-calendar-help"} placeholder="https://…/basic.ics" className="font-mono md:text-xs" />
           </div>
           <Button type="submit" className="h-11 shrink-0 rounded-touch px-3.5 md:h-9 md:rounded-md" disabled={pending}>
             {pending ? "확인 중" : connection.connected ? "교체" : "연결"}
