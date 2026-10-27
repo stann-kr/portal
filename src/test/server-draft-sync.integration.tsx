@@ -1104,7 +1104,10 @@ test("로그아웃 action의 redirect 응답은 실패가 아니므로 잠금과
   const ownerId = "student-logout-redirect";
   const sourceKey = createDocumentDraftKey("note", ownerId, "logout-redirect");
   const lockKey = createAccountLogoutLockStorageKey(ownerId);
-  const harness = await createHarness(context, sourceKey);
+  // 로그아웃이 확인되면(redirect 신호) 이 기기의 초안을 지워야 한다(공유 기기 보호).
+  const harness = await createHarness(context, sourceKey, (storage) => {
+    storage.setItem(sourceKey, serializeFormDraft({ title: "남기면 안 되는 초안", contentHtml: "<p>x</p>" }));
+  });
   logoutRedirects = true;
 
   const logout = await renderLogoutButton(harness.browserWindow, ownerId);
@@ -1115,6 +1118,7 @@ test("로그아웃 action의 redirect 응답은 실패가 아니므로 잠금과
     assert.equal(logout.button.disabled, true, "이동하는 동안 버튼은 계속 기다림 상태여야 합니다.");
     assert.equal(logout.button.closest("form")?.querySelector("[role='alert']") ?? null, null);
     assert.notEqual(harness.browserWindow.localStorage.getItem(lockKey), null, "이동 중에는 잠금을 풀지 않아야 합니다.");
+    assert.equal(harness.browserWindow.localStorage.getItem(sourceKey), null, "로그아웃이 확인되면 이 기기의 초안을 지워야 합니다.");
   } finally {
     await logout.unmount();
   }

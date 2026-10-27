@@ -114,7 +114,8 @@ function NewPostFormContent({
   // 등록에 성공하면 상세 화면으로 넘어갈 때까지 계속 막아 두 번 등록하지 않게 한다.
   const isRedirecting = Boolean(state.postId);
   const isFormBusy = isPending || isUploading || isRedirecting;
-  useBusyNavigationGuard(isFormBusy);
+  // 등록에 성공한 뒤에는 이탈 막기를 풀어, 하드 이동(배포 버전 차이 등)에서 나가기 확인이 뜨거나 링크가 막히지 않게 한다.
+  useBusyNavigationGuard(isPending || isUploading);
 
   const {
     loaded,
