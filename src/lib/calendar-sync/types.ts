@@ -50,6 +50,13 @@ export type RemoteEvent = {
   portalRef?: string;
   /** 반복 master 또는 반복 instance/예외. engine은 읽기 전용으로 다룬다. master DTSTART를 start로 준다. */
   recurring?: boolean;
+  /**
+   * recurring일 때만: 이 원격 리소스를 펼쳐 볼 수 있는 VCALENDAR 텍스트(VEVENT master 또는
+   * RECURRENCE-ID 예외, 취소된 예외는 STATUS:CANCELLED). 같은 seriesKey의 VEVENT를 합쳐 펼친다.
+   */
+  seriesIcs?: string;
+  /** recurring일 때만: master와 예외를 묶는 키(iCalUID). */
+  seriesKey?: string;
 };
 
 export type PullResult = {
