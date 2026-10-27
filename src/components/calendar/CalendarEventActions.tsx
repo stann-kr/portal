@@ -1,7 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useRef, useState, useTransition } from "react";
-import { PencilLine, Trash2 } from "lucide-react";
+import { useActionState, useEffect, useId, useRef, useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import type { CalendarEventType } from "@/db/schema";
 import {
@@ -50,6 +49,7 @@ export function CalendarEventActions({
   const [fields, setFields] = useState(() => fieldsFromItem(item));
   const [notice, setNotice] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const deleteMessageId = useId();
   const [isDeleting, startDelete] = useTransition();
   const cancelDeleteRef = useRef<HTMLButtonElement>(null);
   const editButtonRef = useRef<HTMLButtonElement>(null);
@@ -116,10 +116,10 @@ export function CalendarEventActions({
 
   if (mode === "edit") {
     return (
-      <form action={saveAction} className="space-y-4 rounded-lg border border-border p-4" aria-busy={isSaving} aria-label="일정 수정">
+      <form action={saveAction} className="flex flex-col gap-4 rounded-touch border border-border p-3.5" aria-busy={isSaving} aria-label="일정 수정">
         <input type="hidden" name="eventId" value={item.id} />
         {formError ? (
-          <p id={`${titleInputId}-error`} role="alert" className="rounded-md bg-destructive-muted px-3 py-2 text-sm text-destructive">
+          <p id={`${titleInputId}-error`} role="alert" className="rounded-touch bg-destructive-muted px-3.5 py-2 text-ui text-destructive">
             {formError}
           </p>
         ) : null}
@@ -130,12 +130,12 @@ export function CalendarEventActions({
           disabled={isSaving}
           errorId={formError ? `${titleInputId}-error` : undefined}
         />
-        <div className="flex gap-2">
-          <Button type="submit" disabled={isSaving} className="flex-1">
-            {isSaving ? "저장 중..." : "저장"}
-          </Button>
-          <Button type="button" variant="outline" onClick={finishEdit} disabled={isSaving}>
+        <div className="flex justify-end gap-1.5">
+          <Button type="button" variant="ghost" className="h-11 rounded-touch md:h-[30px] md:rounded-md md:text-xs" onClick={finishEdit} disabled={isSaving}>
             취소
+          </Button>
+          <Button type="submit" className="h-11 rounded-touch px-4 md:h-[30px] md:rounded-md md:px-3 md:text-xs" disabled={isSaving}>
+            {isSaving ? "저장 중..." : "저장"}
           </Button>
         </div>
       </form>
@@ -143,35 +143,32 @@ export function CalendarEventActions({
   }
 
   return (
-    <div className="space-y-3 border-t border-border pt-4">
-      {notice ? <p role="status" className="text-sm text-success">{notice}</p> : null}
+    <div className="flex flex-col gap-3 pt-1">
+      {notice ? <p role="status" className="text-ui text-success">{notice}</p> : null}
       {mode === "confirm-delete" ? (
-        <div role="group" aria-label="일정 삭제 확인" className="space-y-3 rounded-lg border border-destructive/30 bg-destructive-muted p-3">
-          <p className="text-sm text-foreground">이 일정을 삭제할까요? 삭제한 일정은 복구할 수 없습니다.</p>
-          {deleteError ? <p role="alert" className="text-sm text-destructive">{deleteError}</p> : null}
-          <div className="flex gap-2">
-            <Button ref={cancelDeleteRef} type="button" variant="outline" size="sm" onClick={() => setMode("view")} disabled={isDeleting}>
+        <div role="group" aria-labelledby={deleteMessageId} className="flex flex-col gap-2.5 rounded-touch bg-destructive-muted px-3.5 py-3">
+          <p id={deleteMessageId} className="text-ui text-destructive">이 일정을 삭제할까요? 삭제한 일정은 복구할 수 없습니다.</p>
+          {deleteError ? <p role="alert" className="text-ui font-medium text-destructive">{deleteError}</p> : null}
+          <div className="flex justify-end gap-1.5">
+            <Button ref={cancelDeleteRef} type="button" variant="outline" className="h-11 rounded-touch md:h-[30px] md:rounded-md md:px-2.5 md:text-xs" onClick={() => setMode("view")} disabled={isDeleting}>
               취소
             </Button>
-            <Button type="button" variant="outline" size="sm" className="border-destructive/40 text-destructive hover:bg-destructive/10" onClick={confirmDelete} disabled={isDeleting}>
+            <Button type="button" variant="destructive-solid" className="h-11 rounded-touch md:h-[30px] md:rounded-md md:px-3 md:text-xs" onClick={confirmDelete} disabled={isDeleting}>
               {isDeleting ? "삭제 중..." : "삭제"}
             </Button>
           </div>
         </div>
       ) : (
         <div className="flex flex-wrap gap-2">
-          <Button ref={editButtonRef} type="button" variant="outline" size="sm" className="gap-1.5" onClick={startEdit}>
-            <PencilLine className="size-3.5" aria-hidden="true" />
+          <Button ref={editButtonRef} type="button" variant="outline" className="h-11 rounded-touch px-3 md:h-8 md:rounded-md" onClick={startEdit}>
             일정 수정
           </Button>
           <Button
             type="button"
-            variant="ghost"
-            size="sm"
-            className="gap-1.5 text-destructive hover:bg-destructive/10"
+            variant="destructive"
+            className="h-11 rounded-touch px-3 md:h-8 md:rounded-md"
             onClick={() => { setNotice(null); setMode("confirm-delete"); }}
           >
-            <Trash2 className="size-3.5" aria-hidden="true" />
             일정 삭제
           </Button>
         </div>

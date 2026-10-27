@@ -1,3 +1,4 @@
+import { isCurriculumVisible } from "@/lib/curriculum-visibility";
 import type { UnifiedItem, UnifiedItemType } from "@/lib/utils/unifiedItemUtils";
 
 export type CalendarWorkspaceRole = "admin" | "student";
@@ -16,12 +17,17 @@ export const CALENDAR_TABS: ReadonlyArray<{
   { value: "assignments", label: "과제", roles: ["student"] },
 ];
 
-export function getCalendarTabs(role: CalendarWorkspaceRole) {
-  return CALENDAR_TABS.filter((tab) => tab.roles.includes(role));
+/** 커리큘럼이 숨겨져 있으면 그 보기를 목록에서 빼서 `view=curriculum` 주소도 캘린더로 돌아가게 한다. */
+export function getCalendarTabs(role: CalendarWorkspaceRole, curriculumVisible = isCurriculumVisible()) {
+  return CALENDAR_TABS.filter((tab) => tab.roles.includes(role) && (curriculumVisible || tab.value !== "curriculum"));
 }
 
-export function resolveCalendarTab(value: string | null, role: CalendarWorkspaceRole): CalendarTabValue {
-  return getCalendarTabs(role).some((tab) => tab.value === value)
+export function resolveCalendarTab(
+  value: string | null,
+  role: CalendarWorkspaceRole,
+  curriculumVisible = isCurriculumVisible(),
+): CalendarTabValue {
+  return getCalendarTabs(role, curriculumVisible).some((tab) => tab.value === value)
     ? value as CalendarTabValue
     : "calendar";
 }

@@ -1,6 +1,7 @@
 import { assert, assertRowsEqual, assertSqlFails } from "./assertions.mjs";
 import {
   accountPrivacyMigrationFile,
+  documentImageMigrationFile,
   applyMigration,
   applyMigrations,
   createMemoryDatabase,
@@ -45,6 +46,7 @@ export function validateMediaLifecycleTriggers(database) {
   for (const migrationFile of [
     mediaLifecycleMigrationFile,
     accountPrivacyMigrationFile,
+    documentImageMigrationFile,
   ]) {
     const migrationStatements = readFileSync(
       join(migrationsDirectory, migrationFile),

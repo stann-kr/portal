@@ -4,7 +4,7 @@
  */
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useInsertionEffect, useRef, useState } from "react";
 import {
   discardDocumentServerDraft,
   readDocumentServerDraft,
@@ -36,6 +36,12 @@ import {
   isAccountOwnerTerminallyLocked,
   isAccountTerminalLockEventForOwner,
 } from "@/lib/account-terminal-lock";
+import {
+  ACCOUNT_LOGOUT_LOCK_EVENT,
+  createAccountLogoutLockStorageKey,
+  isAccountLogoutLockEventForOwner,
+  isAccountOwnerLogoutLocked,
+} from "@/lib/account-logout-lock";
 import { getDocumentServerDraftPollDelay } from "@/lib/document-server-draft-polling";
 
 const SERVER_DRAFT_DEBOUNCE_MS = 1_200;
@@ -141,8 +147,11 @@ export function useDocumentServerDraftSync<T>(
   const [status, setStatus] = useState<DocumentServerDraftSyncStatus>("loading");
   const [remoteDraft, setRemoteDraft] =
     useState<DocumentServerDraftSnapshot | null>(null);
-  const [localPreview, setLocalPreview] =
-    useState<FormDraftRecoveryPreview | null>(null);
+  // 화면에 쓰는 로컬 초안 정보는 localDraftRef와 같은 시점에 state로 반영한다.
+  const [localDraftView, setLocalDraftView] = useState<{
+    preview: FormDraftRecoveryPreview;
+    payloadHash: string;
+  } | null>(null);
   const [queuedRecovery, setQueuedRecovery] = useState<QueuedDocumentServerDraft | null>(null);
   const [deviceId, setDeviceId] = useState<string | null>(null);
   const ownerId = parseDocumentDraftKey(sourceKey)?.ownerId ?? "";
@@ -164,7 +173,19 @@ export function useDocumentServerDraftSync<T>(
   const mutationEpochRef = useRef(0);
   const refreshRequestedRef = useRef(false);
   const refreshRef = useRef<() => Promise<void>>(async () => undefined);
-  onApplyRemoteRef.current = onApplyRemote;
+  // insertion effect는 같은 commit의 모든 layout/passive effect·이벤트보다 먼저 실행된다.
+  useInsertionEffect(() => {
+    onApplyRemoteRef.current = onApplyRemote;
+  }, [onApplyRemote]);
+
+  const updateLocalDraftView = useCallback((local: LocalDraftState<T> | null) => {
+    setLocalDraftView(local
+      ? {
+          preview: createFormDraftRecoveryPreview(local.data),
+          payloadHash: local.payloadHash,
+        }
+      : null);
+  }, []);
 
   const clearTimers = useCallback(() => {
     if (debounceTimerRef.current !== null) clearTimeout(debounceTimerRef.current);
@@ -204,12 +225,23 @@ export function useDocumentServerDraftSync<T>(
     deviceIdRef.current = null;
     if (mountedRef.current) {
       setRemoteDraft(null);
-      setLocalPreview(null);
+      setLocalDraftView(null);
       setQueuedRecovery(null);
       setDeviceId(null);
       setStatus("idle");
     }
   }, [clearTimers, ownerId]);
+
+  // 같은 계정이 로그아웃하는 동안에는 서버 초안 저장(UPSERT)만 멈춘다. 로컬 초안과 대기열은 그대로 두고,
+  // 로그아웃이 실패해 잠금이 풀리면 이어서 보낸다.
+  const isOwnerLogoutLocked = useCallback(() => {
+    if (!ownerId) return false;
+    try {
+      return isAccountOwnerLogoutLocked(window.localStorage, ownerId);
+    } catch {
+      return false;
+    }
+  }, [ownerId]);
 
   const allowOwnerPersistence = useCallback(() => {
     if (!isOwnerTerminallyLocked()) return true;
@@ -327,7 +359,7 @@ export function useDocumentServerDraftSync<T>(
     }
     if (
       queued.entry.operationType === "UPSERT" &&
-      (choiceRequiredRef.current || requiresLegacyDraftChoice(queued.entry))
+      (choiceRequiredRef.current || requiresLegacyDraftChoice(queued.entry) || isOwnerLogoutLocked())
     ) {
       evaluateState(remoteDraftRef.current, queued.entry);
       return;
@@ -447,14 +479,22 @@ export function useDocumentServerDraftSync<T>(
     allowOwnerPersistence,
     clearTimers,
     evaluateState,
+    isOwnerLogoutLocked,
     rebaseNewerQueue,
     sourceKey,
     updateRemote,
   ]);
-  drainRef.current = drain;
+  useInsertionEffect(() => {
+    drainRef.current = drain;
+  }, [drain]);
 
   const scheduleDrain = useCallback(() => {
     if (!readyRef.current || !allowOwnerPersistence()) return;
+    if (isOwnerLogoutLocked()) {
+      clearTimers();
+      if (mountedRef.current) setStatus("queued");
+      return;
+    }
     if (isBrowserOffline()) {
       if (mountedRef.current) setStatus("offline");
       return;
@@ -468,7 +508,7 @@ export function useDocumentServerDraftSync<T>(
       );
     }
     if (mountedRef.current) setStatus("queued");
-  }, [allowOwnerPersistence]);
+  }, [allowOwnerPersistence, clearTimers, isOwnerLogoutLocked]);
 
   const refresh = useCallback(async () => {
     if (!allowOwnerPersistence()) return;
@@ -543,7 +583,9 @@ export function useDocumentServerDraftSync<T>(
       }
     }
   }, [allowOwnerPersistence, evaluateState, sourceKey, updateQueuedRecovery, updateRemote]);
-  refreshRef.current = refresh;
+  useInsertionEffect(() => {
+    refreshRef.current = refresh;
+  }, [refresh]);
 
   const observeLocalDraft = useCallback(
     (data: T) => {
@@ -552,7 +594,7 @@ export function useDocumentServerDraftSync<T>(
         const local = createLocalDraftState(data);
         localDraftRef.current = local;
         localDraftSourceRef.current = sourceKey;
-        if (mountedRef.current) setLocalPreview(createFormDraftRecoveryPreview(data));
+        if (mountedRef.current) updateLocalDraftView(local);
         const current = remoteDraftRef.current;
         const queued = readQueuedDocumentServerDraft(window.localStorage, sourceKey);
         // canonical 복원본과 다른 고유 원문도 명시적 선택 전에는 교체하지 않는다.
@@ -596,7 +638,7 @@ export function useDocumentServerDraftSync<T>(
         if (mountedRef.current) setStatus("error");
       }
     },
-    [allowOwnerPersistence, evaluateState, ownerId, scheduleDrain, sourceKey],
+    [allowOwnerPersistence, evaluateState, ownerId, scheduleDrain, sourceKey, updateLocalDraftView],
   );
 
   const clearLocalDraft = useCallback(
@@ -618,7 +660,7 @@ export function useDocumentServerDraftSync<T>(
       if (reason === "submitted" && local && !targetPayloadHashes.includes(local.payloadHash)) return;
       localDraftRef.current = null;
       localDraftSourceRef.current = null;
-      if (mountedRef.current) setLocalPreview(null);
+      if (mountedRef.current) setLocalDraftView(null);
       clearTimers();
       try {
         const queued = readQueuedDocumentServerDraft(window.localStorage, sourceKey);
@@ -690,15 +732,16 @@ export function useDocumentServerDraftSync<T>(
       const data = parsePayloadData<T>(current.entry.payloadJson);
       if (!data) return;
       clearTimers();
-      localDraftRef.current = createLocalDraftState(data);
+      const local = createLocalDraftState(data);
+      localDraftRef.current = local;
       localDraftSourceRef.current = sourceKey;
-      setLocalPreview(createFormDraftRecoveryPreview(data));
+      updateLocalDraftView(local);
       onApplyRemoteRef.current(data);
       evaluateState(remoteDraftRef.current, current.entry);
     } catch {
       setStatus("error");
     }
-  }, [allowOwnerPersistence, clearTimers, evaluateState, queuedRecovery, sourceKey]);
+  }, [allowOwnerPersistence, clearTimers, evaluateState, queuedRecovery, sourceKey, updateLocalDraftView]);
 
   const useRemoteDraft = useCallback(() => {
     if (!allowOwnerPersistence()) return;
@@ -721,15 +764,16 @@ export function useDocumentServerDraftSync<T>(
         );
         notifyQueueChange(sourceKey);
       }
-      localDraftRef.current = createLocalDraftState(data);
+      const local = createLocalDraftState(data);
+      localDraftRef.current = local;
       localDraftSourceRef.current = sourceKey;
-      setLocalPreview(createFormDraftRecoveryPreview(data));
+      updateLocalDraftView(local);
       onApplyRemoteRef.current(data);
       setStatus("synced");
     } catch {
       setStatus("error");
     }
-  }, [allowOwnerPersistence, clearTimers, sourceKey]);
+  }, [allowOwnerPersistence, clearTimers, sourceKey, updateLocalDraftView]);
 
   const keepLocalDraft = useCallback(() => {
     if (!allowOwnerPersistence()) return;
@@ -789,14 +833,18 @@ export function useDocumentServerDraftSync<T>(
     readyRef.current = false;
     choiceRequiredRef.current = false;
     remoteDraftRef.current = null;
+    // 이 effect는 sourceKey별 서버 초안 구독과 localStorage(device id·queue) 읽기를 시작하는
+    // 외부 시스템 동기화다. ref 초기화와 같은 시점에 state도 되돌려야 remount·source 전환에서
+    // ref/state가 어긋나지 않으므로 render 단계로 옮길 수 없다.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 서버 초안 구독·localStorage 동기화 effect의 source별 초기화
     setRemoteDraft(null);
     setQueuedRecovery(null);
     if (localDraftSourceRef.current !== sourceKey) {
       localDraftRef.current = null;
       localDraftSourceRef.current = null;
-      setLocalPreview(null);
+      setLocalDraftView(null);
     } else if (localDraftRef.current) {
-      setLocalPreview(createFormDraftRecoveryPreview(localDraftRef.current.data));
+      updateLocalDraftView(localDraftRef.current);
     }
     setStatus("loading");
     const mayPersist = allowOwnerPersistence();
@@ -817,6 +865,7 @@ export function useDocumentServerDraftSync<T>(
 
     const queueKey = createDocumentServerDraftQueueKey(sourceKey);
     const terminalLockKey = createAccountTerminalLockStorageKey(ownerId);
+    const logoutLockKey = ownerId ? createAccountLogoutLockStorageKey(ownerId) : null;
     let active = true;
     let pollTimer: ReturnType<typeof setTimeout> | null = null;
     let unchangedPolls = 0;
@@ -884,9 +933,32 @@ export function useDocumentServerDraftSync<T>(
       if (document.visibilityState === "hidden") clearPollTimer();
       else resumeActiveSync();
     };
+    // 로그아웃 잠금이 걸리면 기다리던 저장 타이머를 멈추고, 풀리면 남은 대기열을 이어서 보낸다.
+    const handleLogoutLockChange = () => {
+      if (isOwnerLogoutLocked()) {
+        clearTimers();
+        return;
+      }
+      if (!allowOwnerPersistence() || !readyRef.current) return;
+      let queued: ReturnType<typeof readQueuedDocumentServerDraft>;
+      try {
+        queued = readQueuedDocumentServerDraft(window.localStorage, sourceKey);
+      } catch {
+        return;
+      }
+      if (queued && !isBrowserOffline()) void drainRef.current().finally(schedulePoll);
+    };
+    const handleLogoutLock = (event: Event) => {
+      if (!isAccountLogoutLockEventForOwner(event, ownerId)) return;
+      handleLogoutLockChange();
+    };
     const handleStorage = (event: StorageEvent) => {
       if (event.key === terminalLockKey) {
         if (!allowOwnerPersistence()) return;
+      }
+      if (logoutLockKey !== null && event.key === logoutLockKey) {
+        handleLogoutLockChange();
+        return;
       }
       if (event.key !== queueKey) return;
       if (!allowOwnerPersistence()) return;
@@ -920,6 +992,7 @@ export function useDocumentServerDraftSync<T>(
     window.addEventListener("storage", handleStorage);
     document.addEventListener("visibilitychange", handleVisibilityChange);
     window.addEventListener(ACCOUNT_TERMINAL_LOCK_EVENT, handleTerminalLock);
+    window.addEventListener(ACCOUNT_LOGOUT_LOCK_EVENT, handleLogoutLock);
     window.addEventListener(DOCUMENT_SERVER_DRAFT_QUEUE_CHANGE_EVENT, handleQueueChange);
     if (mayPersist) void refresh().finally(schedulePoll);
 
@@ -935,6 +1008,7 @@ export function useDocumentServerDraftSync<T>(
       window.removeEventListener("storage", handleStorage);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       window.removeEventListener(ACCOUNT_TERMINAL_LOCK_EVENT, handleTerminalLock);
+      window.removeEventListener(ACCOUNT_LOGOUT_LOCK_EVENT, handleLogoutLock);
       window.removeEventListener(
         DOCUMENT_SERVER_DRAFT_QUEUE_CHANGE_EVENT,
         handleQueueChange,
@@ -944,19 +1018,22 @@ export function useDocumentServerDraftSync<T>(
     allowOwnerPersistence,
     clearTimers,
     evaluateState,
+    isOwnerLogoutLocked,
     ownerId,
     purgeTerminallyLockedOwner,
     refresh,
     sourceKey,
+    updateLocalDraftView,
     updateQueuedRecovery,
   ]);
 
+  const localPreview = localDraftView?.preview ?? null;
   const remotePreview = remoteDraft
     ? createFormDraftRecoveryPreview(parsePayloadData<unknown>(remoteDraft.payloadJson))
     : null;
   const queuedPreview = queuedRecovery?.operationType === "UPSERT" &&
     queuedRecovery.sourceKey === sourceKey &&
-    queuedRecovery.payloadHash !== localDraftRef.current?.payloadHash
+    queuedRecovery.payloadHash !== localDraftView?.payloadHash
     ? createFormDraftRecoveryPreview(parsePayloadData<unknown>(queuedRecovery.payloadJson))
     : null;
 

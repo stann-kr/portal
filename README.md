@@ -4,7 +4,7 @@ Stann Lumo의 DJ 레슨 운영을 위한 웹 포털이다. 학생과 관리자�
 
 ## 현재 상태
 
-- Next.js 15 App Router와 React 19 기반
+- Next.js 16 App Router와 React 19 기반
 - NextAuth credentials 인증과 student/admin 역할 분리
 - Drizzle ORM, Cloudflare D1/R2, OpenNext 배포 구조
 - 학생·관리자 원페이지 포털과 기존 상세 라우트 병행

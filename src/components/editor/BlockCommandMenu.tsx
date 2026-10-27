@@ -1,11 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Editor } from "@tiptap/react";
 import {
   filterEditorBlockCommands,
   findSlashCommandMatch,
+  type EditorBlockCommandContext,
   type SlashCommandMatch,
 } from "./editor-block-commands";
 
@@ -17,19 +18,29 @@ type CommandMenuState = SlashCommandMatch & {
   activeIndex: number;
 };
 
-export function BlockCommandMenu({ editor }: { editor: Editor }) {
+/**
+ * `/` 검색과 키보드로 실행하는 블록 삽입 목록. `context`를 주면 이미지·동영상·링크처럼
+ * 편집기 밖 패널을 여는 명령도 보인다(고정 도구 줄이 없는 문서 페이지).
+ */
+export function BlockCommandMenu({ editor, context }: { editor: Editor; context?: EditorBlockCommandContext }) {
   const menuId = useId();
   const [menu, setMenu] = useState<CommandMenuState | null>(null);
   const menuRef = useRef<CommandMenuState | null>(null);
   const dismissedMatchRef = useRef<SlashCommandMatch | null>(null);
-  menuRef.current = menu;
 
+  const hasContext = Boolean(context);
   const commands = useMemo(
-    () => filterEditorBlockCommands(menu?.query ?? ""),
-    [menu?.query],
+    () => filterEditorBlockCommands(menu?.query ?? "", { withContext: hasContext }),
+    [hasContext, menu?.query],
   );
+  const contextRef = useRef(context);
   const commandsRef = useRef(commands);
-  commandsRef.current = commands;
+  // 키보드·스크롤 핸들러가 읽는 최신 메뉴를 커밋 직후, 다음 입력 전에 반영한다.
+  useLayoutEffect(() => {
+    menuRef.current = menu;
+    commandsRef.current = commands;
+    contextRef.current = context;
+  }, [menu, commands, context]);
 
   const close = useCallback(() => setMenu(null), []);
 
@@ -85,7 +96,7 @@ export function BlockCommandMenu({ editor }: { editor: Editor }) {
       if (!current || !command) return;
 
       editor.chain().focus().deleteRange({ from: current.from, to: current.to }).run();
-      command.run(editor);
+      command.run(editor, contextRef.current);
       close();
     },
     [close, editor],
@@ -145,6 +156,8 @@ export function BlockCommandMenu({ editor }: { editor: Editor }) {
     editor.on("transaction", handleTransaction);
     editor.on("blur", handleBlur);
     editor.on("focus", handleFocus);
+    // 구독 직전에 이미 있던 편집기 포커스·슬래시 입력·DOM 위치(외부 상태)를 한 번 읽어 맞춘다.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 이후 갱신은 위 편집기 이벤트 콜백이 맡는 외부 구독의 초기 동기화다.
     syncMenu();
     // Window capture precedes the parent dialog's document-level Escape handler.
     window.addEventListener("keydown", handleKeyDown, true);
@@ -189,17 +202,17 @@ export function BlockCommandMenu({ editor }: { editor: Editor }) {
       id={menuId}
       role="listbox"
       aria-label="블록 삽입"
-      className="z-[var(--z-dropdown)] flex flex-col overflow-hidden rounded-xl border border-border bg-surface-elevated shadow-floating"
+      className="z-[var(--z-dropdown)] flex flex-col overflow-hidden rounded-lg border border-border bg-background shadow-floating"
       style={{ position: portalOwner ? "absolute" : "fixed", left: menu.left, top: menu.top, width: menu.width, maxHeight: menu.maxHeight }}
       onMouseDown={(event) => event.preventDefault()}
     >
-      <div className="shrink-0 border-b border-border px-3 py-2">
-        <p className="text-[11px] font-semibold tracking-wide text-muted-foreground">블록 삽입</p>
+      <div className="shrink-0 border-b border-muted px-3 py-2">
+        <p className="text-[11px] font-semibold text-secondary-foreground">블록 삽입</p>
         <p className="mt-0.5 text-xs text-muted-foreground">
           {menu.query ? `“${menu.query}” 검색 결과` : "입력하거나 ↑↓ 키로 선택하세요"}
         </p>
       </div>
-      <div className="min-h-0 overflow-y-auto p-1.5">
+      <div className="min-h-0 overflow-y-auto p-1">
         {commands.length === 0 ? (
           <p className="px-3 py-6 text-center text-xs text-muted-foreground">
             일치하는 블록이 없습니다.
@@ -217,15 +230,15 @@ export function BlockCommandMenu({ editor }: { editor: Editor }) {
                 aria-selected={active}
                 onMouseEnter={() => setMenu((value) => (value ? { ...value, activeIndex: index } : null))}
                 onClick={() => execute(index)}
-                className={`flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left transition-colors ${
-                  active ? "bg-accent text-accent-foreground" : "text-foreground hover:bg-muted"
+                className={`flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-foreground ${
+                  active ? "bg-muted" : ""
                 }`}
               >
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border bg-background">
-                  <Icon className="h-4 w-4" aria-hidden="true" />
+                <span className="flex size-8 shrink-0 items-center justify-center rounded-md border border-border bg-background text-secondary-foreground">
+                  <Icon className="size-4" strokeWidth={1.6} aria-hidden="true" />
                 </span>
                 <span className="min-w-0">
-                  <span className="block text-sm font-medium">{label}</span>
+                  <span className="block text-ui font-medium">{label}</span>
                   <span className="block truncate text-xs text-muted-foreground">{description}</span>
                 </span>
               </button>

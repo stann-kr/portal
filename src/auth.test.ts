@@ -219,7 +219,7 @@ test("credentials 로그인은 검증한 비밀번호 hash의 지문을 session 
   assert.equal(token?.credentialFingerprint, credentialFingerprint(passwordHash));
 });
 
-test("edge middleware는 임시 비밀번호 token의 화면 이동을 새 비밀번호 설정으로 돌린다", async () => {
+test("proxy는 임시 비밀번호 token의 화면 이동을 새 비밀번호 설정으로 돌린다", async () => {
   const middleware = NextAuth({ ...authConfig, secret: AUTH_SECRET }).auth as unknown as (
     request: NextRequest,
     event: unknown,

@@ -12,7 +12,10 @@ import {
 import {
   readDocumentServerDraftDeviceStorageOwnerId,
 } from "@/lib/document-server-draft-queue";
-import { readAccountCalendarTabStorageOwnerId } from "@/lib/local-owner-keys";
+import {
+  readAccountCalendarTabStorageOwnerId,
+  readAccountNotesViewStorageOwnerId,
+} from "@/lib/local-owner-keys";
 
 export type LocalDocumentDraftSummary = {
   sourceKey: string;
@@ -243,9 +246,11 @@ function removeMatchingLocalDocumentDraftArtifacts(
         if (!storageKey) continue;
         const deviceOwnerId = readDocumentServerDraftDeviceStorageOwnerId(storageKey);
         const calendarOwnerId = readAccountCalendarTabStorageOwnerId(storageKey);
+        const notesViewOwnerId = readAccountNotesViewStorageOwnerId(storageKey);
         if (
           (deviceOwnerId && localOwnerPredicate(deviceOwnerId)) ||
-          (calendarOwnerId && localOwnerPredicate(calendarOwnerId))
+          (calendarOwnerId && localOwnerPredicate(calendarOwnerId)) ||
+          (notesViewOwnerId && localOwnerPredicate(notesViewOwnerId))
         ) {
           storageKeys.add(storageKey);
         }
@@ -297,7 +302,10 @@ export function inspectLocalDocumentDraftsForOwner(
       if (readDocumentServerDraftDeviceStorageOwnerId(storageKey) === ownerId) {
         storageKeys.add(storageKey);
       }
-      if (readAccountCalendarTabStorageOwnerId(storageKey) === ownerId) {
+      if (
+        readAccountCalendarTabStorageOwnerId(storageKey) === ownerId ||
+        readAccountNotesViewStorageOwnerId(storageKey) === ownerId
+      ) {
         storageKeys.add(storageKey);
       }
     }

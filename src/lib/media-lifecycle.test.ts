@@ -54,9 +54,24 @@ test("purpose별 MIME, 크기, 서명 만료 정책은 서버 상수로 고정�
       "audio/wav",
     ],
   );
+  // Worker가 body를 받으므로 Cloudflare 요청 한도(100MB) 아래로 둔다.
   assert.equal(
     MEDIA_PURPOSE_POLICIES.COMMUNITY_POST_AUDIO.maxFileSizeBytes,
-    2 * 1024 * 1024 * 1024,
+    95 * 1024 * 1024,
+  );
+  assert.equal(
+    MEDIA_PURPOSE_POLICIES.QNA_ATTACHMENT.maxFileSizeBytes,
+    95 * 1024 * 1024,
+  );
+  assert.deepEqual(MEDIA_PURPOSE_POLICIES.DOCUMENT_IMAGE.allowedMimeTypes, [
+    "image/gif",
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+  ]);
+  assert.equal(
+    MEDIA_PURPOSE_POLICIES.DOCUMENT_IMAGE.maxFileSizeBytes,
+    10 * 1024 * 1024,
   );
   assert.equal(
     MEDIA_PURPOSE_POLICIES.QNA_ATTACHMENT.allowedMimeTypes.includes("image/png"),

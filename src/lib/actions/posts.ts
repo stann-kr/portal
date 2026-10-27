@@ -1,11 +1,11 @@
 /** Community post query와 revision/trash lifecycle server action. */
 "use server";
 
-import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createDb, createDbContext } from "@/db/client";
-import { categories, postRevisions, posts, profiles, type BoardType } from "@/db/schema";
+import { categories, comments, postRevisions, posts, profiles, type BoardType } from "@/db/schema";
 import { assertOwnerOrAdmin, requireAuth } from "@/lib/auth-guard";
 import {
   CREATION_OPERATION_FIELD,
@@ -110,16 +110,6 @@ function revalidatePostPaths(postId?: string) {
   revalidatePath("/dashboard/admin");
 }
 
-export async function getPostsByBoardType(boardType: BoardType) {
-  await requireAuth();
-  return createDb()
-    .select(POST_SELECT)
-    .from(posts)
-    .leftJoin(profiles, eq(posts.authorId, profiles.id))
-    .where(and(eq(posts.boardType, boardType), isNull(posts.deletedAt)))
-    .orderBy(desc(posts.isPinned), desc(posts.createdAt));
-}
-
 const POST_SUMMARY_SELECT = {
   id: posts.id,
   title: posts.title,
@@ -136,18 +126,6 @@ function clampSummaryLimit(limit: number): number {
   return Number.isSafeInteger(limit) ? Math.min(Math.max(limit, 1), POST_SUMMARY_MAX_LIMIT) : 1;
 }
 
-/** 대시보드 미리보기용: 본문 없이 최근 자유·피드백 게시물만 개수 제한해 읽는다. */
-export async function getRecentCommunityPostSummaries(limit = 20) {
-  await requireAuth();
-  return createDb()
-    .select(POST_SUMMARY_SELECT)
-    .from(posts)
-    .leftJoin(profiles, eq(posts.authorId, profiles.id))
-    .where(and(inArray(posts.boardType, ["GENERAL", "FEEDBACK"]), isNull(posts.deletedAt)))
-    .orderBy(desc(posts.createdAt))
-    .limit(clampSummaryLimit(limit));
-}
-
 /** 학생 오늘 화면용: 고정 공지 우선·최신순 공지 제목만 개수 제한해 읽는다. */
 export async function getAnnouncementSummaries(limit = 3) {
   await requireAuth();
@@ -162,8 +140,8 @@ export async function getAnnouncementSummaries(limit = 3) {
 
 /**
  * 커뮤니티 목록 한 페이지. 공지·믹스셋은 고정 우선, 자유 게시판은 채널별 최신순이며
- * (고정 여부, 작성 시각, ID) keyset으로 다음 페이지를 이어 읽는다. 공지는 펼쳐 읽는 본문 전체를,
- * 자유·믹스셋은 미리보기에 필요한 본문 앞부분만 보낸다.
+ * (고정 여부, 작성 시각, ID) keyset으로 다음 페이지를 이어 읽는다. 본문은 미리보기에 필요한 앞부분만,
+ * 댓글은 개수만 보낸다(고정 공지 미리보기도 앞 3줄이라 본문 전체가 필요 없다).
  */
 export async function getCommunityPostPage(input: {
   boardType: BoardType;
@@ -191,9 +169,8 @@ export async function getCommunityPostPage(input: {
   const rows = await createDb()
     .select({
       ...POST_SELECT,
-      contentHtml: boardType === "ANNOUNCEMENT"
-        ? posts.contentHtml
-        : sql<string>`substr(${posts.contentHtml}, 1, ${COMMUNITY_PREVIEW_SOURCE_CHARS})`,
+      contentHtml: sql<string>`substr(${posts.contentHtml}, 1, ${COMMUNITY_PREVIEW_SOURCE_CHARS})`,
+      commentCount: sql<number>`(SELECT count(*) FROM ${comments} WHERE ${comments.postId} = ${posts.id})`.mapWith(Number),
       pinnedKey,
       createdKey,
     })

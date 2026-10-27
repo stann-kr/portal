@@ -1,6 +1,7 @@
 import { assert, assertRowsEqual, assertSqlFails } from "./assertions.mjs";
 import {
   accountPrivacyMigrationFile,
+  documentImageMigrationFile,
   applyMigration,
   applyMigrations,
   continuityMigrationFile,
@@ -37,6 +38,7 @@ const continuityTriggerNames = [
   "private_note_revisions_before_insert_receipt_match",
   "private_note_revisions_guard_delete",
   "private_note_revisions_immutable_update",
+  "private_notes_before_delete_media_pending",
   "private_notes_before_delete_tombstone",
   "private_notes_before_insert_tombstone",
   "post_revisions_before_insert_baseline",
@@ -112,6 +114,7 @@ export function validateContinuityTriggers(database) {
     lifecycleExpansionMigrationFile,
     mediaLifecycleMigrationFile,
     accountPrivacyMigrationFile,
+    documentImageMigrationFile,
   ]) {
     const migrationStatements = readFileSync(
       join(migrationsDirectory, migrationFile),

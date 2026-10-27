@@ -7,7 +7,7 @@
 import {
   useCallback,
   useEffect,
-  useMemo,
+  useInsertionEffect,
   useRef,
   type KeyboardEventHandler,
 } from "react";
@@ -145,22 +145,25 @@ export function useDocumentSaveShortcut({
 }: UseDocumentSaveShortcutOptions): KeyboardEventHandler<HTMLElement> {
   const disabledRef = useRef(disabled);
   const onSaveRef = useRef(onSave);
-  disabledRef.current = disabled;
-  onSaveRef.current = onSave;
+  const controllerRef = useRef<DocumentSaveShortcutController | null>(null);
+  // insertion effect는 모든 layout/passive effect와 이후 입력 이벤트보다 먼저 실행되므로
+  // render 중 대입하던 것과 같은 시점의 최신 값을 handler에 제공한다.
+  useInsertionEffect(() => {
+    disabledRef.current = disabled;
+    onSaveRef.current = onSave;
+  }, [disabled, onSave]);
 
-  const controller = useMemo(
-    () =>
-      createDocumentSaveShortcutController({
-        isDisabled: () => disabledRef.current,
-        onSave: () => onSaveRef.current(),
-      }),
-    [],
-  );
+  useEffect(() => () => {
+    controllerRef.current?.dispose();
+    controllerRef.current = null;
+  }, []);
 
-  useEffect(() => () => controller.dispose(), [controller]);
-
-  return useCallback(
-    (event) => controller.handleKeyDown(event),
-    [controller],
-  );
+  return useCallback((event) => {
+    // controller는 첫 키 입력에서 만들고 mount 동안 잠금 상태를 유지한다.
+    controllerRef.current ??= createDocumentSaveShortcutController({
+      isDisabled: () => disabledRef.current,
+      onSave: () => onSaveRef.current(),
+    });
+    controllerRef.current.handleKeyDown(event);
+  }, []);
 }

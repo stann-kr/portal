@@ -1,6 +1,6 @@
 import Link from "next/link";
+import { Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
 import type { PrivateNoteListItem } from "./PrivateNoteList";
 
 import {
@@ -23,24 +23,32 @@ export function searchPrivateNotes<T extends PrivateNoteListItem>(notes: T[], qu
   });
 }
 
-export function NoteSearch({ action, query, totalCount, resultCount }: {
-  action: string;
-  query: string;
-  totalCount: number;
-  resultCount: number;
-}) {
+/**
+ * database toolbar 안의 서버 검색. 제출(Enter)하면 `?q=`로 전체 기간의 제목·본문을 다시 찾는다.
+ * 넓은 화면은 260px·32px, 좁은 화면은 전체 폭 44px 입력(Notes·MobileNotes 보드).
+ */
+export function NoteSearch({ action, query }: { action: string; query: string }) {
   return (
-    <section className="space-y-2" aria-label="노트 검색">
-      <form key={query} action={action} method="get" role="search" className="space-y-2">
-        <label htmlFor="note-search" className="text-sm font-medium">제목·본문 검색</label>
-        <div className="flex flex-wrap items-center gap-2">
-          <Input id="note-search" name="q" type="search" defaultValue={query} maxLength={DOCUMENT_SEARCH_MAX_QUERY_LENGTH} placeholder="기억나는 제목이나 내용을 입력하세요" aria-describedby="note-search-scope" className="min-w-0 flex-1 basis-48" />
-          <Button type="submit" variant="outline">검색</Button>
-          {query && <Link href={action} className="text-sm text-muted-foreground underline underline-offset-4">검색 초기화</Link>}
-        </div>
-        <p id="note-search-scope" className="text-xs text-muted-foreground">전체 기간의 노트를 검색합니다. 띄어 쓴 단어를 모두 포함한 기록을 찾습니다.</p>
-      </form>
-      <p role="status" className="text-sm text-muted-foreground">{query ? `전체 ${totalCount}개 중 ${resultCount}개` : `전체 ${totalCount}개`}</p>
-    </section>
+    <form key={query} action={action} method="get" role="search" aria-label="노트 검색" className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 max-md:w-full">
+      <label htmlFor="note-search" className="sr-only">제목·본문 검색</label>
+      <div className="relative flex min-w-0 flex-1 items-center md:w-[260px] md:flex-none">
+        <Search className="pointer-events-none absolute left-3.5 size-4 text-muted-foreground md:left-2.5 md:size-3.5" strokeWidth={1.8} aria-hidden="true" />
+        <Input
+          id="note-search"
+          name="q"
+          type="search"
+          defaultValue={query}
+          maxLength={DOCUMENT_SEARCH_MAX_QUERY_LENGTH}
+          placeholder="제목·본문 검색"
+          aria-describedby="note-search-scope"
+          className="pl-10 pr-3.5 md:h-8 md:pl-8 md:pr-3 md:text-ui"
+        />
+      </div>
+      {query ? (
+        <Link href={action} className="shrink-0 whitespace-nowrap rounded-sm text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          검색 초기화
+        </Link>
+      ) : null}
+    </form>
   );
 }

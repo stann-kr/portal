@@ -7,12 +7,31 @@
   animation: portal-fade-out var(--duration-fast) ease-out both;
 }
 
+/* 좁은 화면의 대화상자는 아래에서 올라오는 시트다. */
 .portal-dialog[data-state="open"] {
-  animation: portal-dialog-in var(--duration-standard) var(--ease-studio) both;
+  animation: portal-sheet-in var(--duration-slow) var(--ease-studio) both;
 }
 
 .portal-dialog[data-state="closed"] {
-  animation: portal-dialog-out var(--duration-fast) ease-out both;
+  animation: portal-sheet-out var(--duration-standard) ease-out both;
+}
+
+@media (min-width: 48rem) {
+  .portal-dialog[data-state="open"] {
+    animation: portal-dialog-in var(--duration-standard) var(--ease-studio) both;
+  }
+
+  .portal-dialog[data-state="closed"] {
+    animation: portal-dialog-out var(--duration-fast) ease-out both;
+  }
+}
+
+.portal-drawer[data-state="open"] {
+  animation: portal-drawer-in var(--duration-slow) var(--ease-studio) both;
+}
+
+.portal-drawer[data-state="closed"] {
+  animation: portal-drawer-out var(--duration-standard) ease-out both;
 }
 
 .portal-panel[data-state="open"] {
@@ -56,6 +75,26 @@
   to { opacity: 0; transform: scale(0.98); }
 }
 
+@keyframes portal-sheet-in {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+@keyframes portal-sheet-out {
+  from { transform: translateY(0); }
+  to { transform: translateY(100%); }
+}
+
+@keyframes portal-drawer-in {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+
+@keyframes portal-drawer-out {
+  from { transform: translateX(0); }
+  to { transform: translateX(-100%); }
+}
+
 @keyframes portal-panel-in {
   from { opacity: 0; transform: translateX(24px); }
   to { opacity: 1; transform: translateX(0); }
@@ -69,6 +108,7 @@
 @media (prefers-reduced-motion: reduce) {
   .portal-backdrop[data-state],
   .portal-dialog[data-state],
+  .portal-drawer[data-state],
   .portal-panel[data-state],
   .portal-menu[data-state] {
     animation: none;

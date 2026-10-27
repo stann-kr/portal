@@ -13,7 +13,7 @@ Browser
       ├─ server actions
       └─ calendar feed API
           ├─ Drizzle ORM → Cloudflare D1 / local SQLite
-          └─ presigned upload → Cloudflare R2
+          └─ Worker upload route → R2 binding
 
 OpenNext → Cloudflare Worker
 ```
@@ -23,18 +23,18 @@ OpenNext → Cloudflare Worker
 | 영역 | 파일/경로 | 확인 내용 |
 |---|---|---|
 | Root·dashboard redirect | `src/app/page.tsx`, `src/app/dashboard/page.tsx` | session role별 시작 경로 |
-| Auth | `src/auth.ts`, `src/auth.config.ts`, `src/middleware.ts` | credentials, session, route access |
+| Auth | `src/auth.ts`, `src/auth.config.ts`, `src/proxy.ts` | credentials, session, route access |
 | Student portal | `src/app/dashboard/student/page.tsx`, `src/components/student-portal/` | 오늘 요약·통합 워크스페이스·커뮤니티 |
-| Admin portal | `src/app/dashboard/admin/page.tsx`, `src/components/admin-portal/` | 업무함·학생·일정·공지·커뮤니티 |
+| Admin portal | `src/app/dashboard/admin/page.tsx`, `src/components/admin-portal/` | 업무함·학생·일정(공지·커뮤니티는 `/community`) |
 | Shared flows | `src/app/community/`, `src/app/dashboard/qna/` | 게시판·Q&A |
 | Data aggregation | `src/lib/actions/unifiedItems.ts`, `src/lib/unified-item-normalization.ts`, `src/lib/utils/unifiedItemUtils.ts` | 학생 스페이스·포털 출처를 포함한 레슨·일정·노트·디깅·Q&A·과제 통합 |
 | DB schema·client | `src/db/schema.ts`, `src/db/client.ts` | table, D1/local SQLite 선택 |
 | Server actions | `src/lib/actions/` | query, mutation, revalidation |
 | Security helpers | `src/lib/auth-guard.ts`, `src/lib/active-profile.ts`, `src/lib/sanitize-html.ts` | active profile·DB role·ownership, AST allowlist rich text sanitize |
-| Local draft account boundary | `src/components/auth/`, `src/lib/account-cleanup-client.ts`, `src/lib/account-terminal-lock.ts`, `src/lib/local-draft-continuity-client.ts` | 기기 초안 목록·명시 폐기, 로그아웃·계정 전환·삭제 신호 정리 |
+| Local draft account boundary | `src/components/auth/`, `src/lib/account-cleanup-client.ts`, `src/lib/account-terminal-lock.ts`, `src/lib/local-draft-continuity-client.ts`, `src/lib/document-server-draft-logout.ts`, `src/lib/document-server-draft-discard-api.ts`, `src/app/api/document-drafts/discard/route.ts` | 기기 초안 목록·명시 폐기, 로그아웃·계정 전환·삭제 신호 정리 |
 | Server draft continuity | `src/lib/actions/documentDrafts.ts`, `src/lib/hooks/useSyncedFormDraft.ts`, `src/components/editor/ServerDraftStatus.tsx` | 사용자·문서별 최신본, CAS·재전송, 오프라인 queue와 명시적 다중 기기 선택 |
 | Document lifecycle | `src/lib/document-lifecycle-atomic.ts`, `src/lib/post-atomic.ts`, `src/lib/qna-atomic.ts` | 게시물·Q&A version CAS, 불변 이력·receipt, 휴지통·복원·purge·tombstone 원자 경계 |
-| Storage | `src/lib/r2.ts`, `src/lib/media-lifecycle-atomic.ts`, `src/lib/actions/upload.ts`, `src/app/api/media/` | staging presigned upload, D1 registry·삭제 outbox, 인증 delivery |
+| Storage | `src/lib/r2.ts`, `src/lib/media-lifecycle-atomic.ts`, `src/lib/actions/upload.ts`, `src/app/api/media/` | Worker 경유 staging upload(`PUT /api/media/upload/[id]`)·binding seal, D1 registry·삭제 outbox, 본문 이미지 연결(`src/lib/document-image-references.ts`), 인증 delivery |
 | Account privacy | `src/lib/account-privacy-atomic.ts`, `src/lib/actions/accountPrivacy.ts`, `src/app/api/account-cleanup/` | 학생 본인 원자 삭제, 기기 cleanup digest, 30일 raw-ID alias |
 | Calendar feed | `src/app/api/calendar/feed/route.ts`, `src/app/api/calendar/[studentId]/route.ts`, `src/lib/calendar-feed.ts` | opaque v2 token과 legacy v1 접근 |
 | Scheduled maintenance | `worker.ts`, `src/lib/scheduled-maintenance.ts`, `src/db/d1-context.ts` | request context 없는 Cron에서 bounded account alias·media outbox 수렴 |
@@ -45,7 +45,7 @@ OpenNext → Cloudflare Worker
 | 영역 | 값 |
 |---|---|
 | Runtime | Node.js 22 이상, Cloudflare Workers |
-| Framework | Next.js 15.5 App Router, React 19 |
+| Framework | Next.js 16.4 App Router(Turbopack), React 19, OpenNext Cloudflare 1.20 |
 | Language | TypeScript |
 | Styling | Tailwind CSS 4 |
 | UI | Radix UI, FullCalendar, Recharts, Lucide |
@@ -75,7 +75,7 @@ OpenNext → Cloudflare Worker
 | `/community/[postId]/history` | 커뮤니티 게시물 불변 full-snapshot revision 조회·선택 복원 |
 | `/community/trash` | 권한 범위의 게시물 휴지통·복원·관리자 영구 삭제 |
 | `/dashboard/admin/students/new` | 학생 추가 |
-| `/dashboard/admin/students/[id]` | 학생 상세: 개요·과제·디깅·노트·Q&A 탭. 개요 탭은 커리큘럼 모듈 추가·주차/제목 수정·삭제와 레슨을 관리하며 완료 여부는 학생이 바꾼다. 과제 탭은 제출 최신순과 과제별 피드백 수를 보여 준다 |
+| `/dashboard/admin/students/[id]` | 학생 상세: 개요·과제·디깅·노트·Q&A 탭. 개요 탭은 레슨을 관리한다. 커리큘럼 모듈 관리는 코드에 남아 있지만 `src/lib/curriculum-visibility.ts` 스위치로 숨겨져 있다. 과제 탭은 제출 최신순과 과제별 피드백 수를 보여 준다 |
 | `/dashboard/admin/categories` | 자유 게시판 채널 추가·수정·삭제. 게시물이 참조하는 주소 식별자(slug)는 생성 뒤 바꾸지 않고 이름·설명·정렬 순서만 수정한다. 관리자 커뮤니티 section과 `/community`에서 진입 |
 | `/dashboard/qna/**` | Q&A 목록·작성·상세·불변 event 이력·휴지통 |
 | `/community/**` | 커뮤니티 목록·작성·상세 |
@@ -88,13 +88,13 @@ OpenNext → Cloudflare Worker
 
 `/dashboard/student/assignments`, `curriculum` 목록 경로는 원페이지 포털로, 예전 `/dashboard/admin/students/[id]/digging`은 학생 상세 디깅 탭으로 redirect한다. 노트 목록과 디깅 보드는 별도 route를 사용한다.
 
-`/community`는 URL의 게시판·채널을 서버에서 확정해 채널 목록과 첫 페이지(30개)를 함께 렌더하고, 이후 탭·채널 전환과 "게시물 더 보기"만 client에서 읽는다. `getCommunityPostPage`는 공지·믹스셋을 고정 우선, 자유 게시판을 채널별 최신순으로 정렬하고 (고정 여부, 작성 시각, ID) keyset cursor로 겹침 없이 이어 읽으며, 자유·믹스셋 목록에는 미리보기에 필요한 본문 앞 4,096자만 보낸다. 받은 목록과 현재 위치가 다르면 빈 상태 대신 skeleton을 보이며, 자유 게시판 채널이 없으면 관리자에게는 채널 추가 경로를, 학생에게는 대기 안내를 보인다.
+`/community`는 URL의 게시판·채널을 서버에서 확정해 채널 목록과 첫 페이지(30개)를 함께 렌더하고, 이후 게시판·채널 전환과 "게시물 더 보기"만 client에서 읽는다. 게시판 줄은 공지·믹스셋과 자유 게시판 채널(#)을 한 줄로 둔다. `getCommunityPostPage`는 공지·믹스셋을 고정 우선, 자유 게시판을 채널별 최신순으로 정렬하고 (고정 여부, 작성 시각, ID) keyset cursor로 겹침 없이 이어 읽으며, 모든 게시판 목록에 미리보기에 필요한 본문 앞 4,096자와 댓글 수(`comments` 집계 서브쿼리)만 보낸다. 받은 목록과 현재 위치가 다르면 빈 상태 대신 skeleton을 보이며, 자유 게시판 채널이 없으면 관리자에게는 채널 추가 경로를, 학생에게는 대기 안내를 보인다.
 
-학생·관리자 대시보드는 게시물 본문 없이 최근 자유·피드백 게시물 20개와(학생) 공지 3개의 요약만 개수 제한해 읽는다. 통합 일정의 노트는 본문 앞 4,096자만 읽어 240자 평문 미리보기로 전달하고, 상세 패널을 열 때 해당 노트 본문만 권한을 다시 확인해 불러온다.
+학생 홈은 게시물 본문 없이 공지 3개의 요약만 읽는다. 예전 포털 구역 주소 `?section=community`(학생·관리자)와 `?section=announcements`(관리자)는 `/community`(공지는 `boardType=ANNOUNCEMENT`)로 redirect한다. 통합 일정의 노트는 본문 앞 4,096자만 읽어 240자 평문 미리보기로 전달하고, 상세 패널을 열 때 해당 노트 본문만 권한을 다시 확인해 불러온다.
 
-학생 포털의 기본 section은 `오늘`이다. 통합 item에서 다음 일정, 피드백이 있는 제출, Q&A 상태를 순수 selector로 분류하고 최근 공지와 실제 작성 경로를 함께 제공한다. `lessons` 행은 `EVENT`/`LESSON` 항목으로 포함하므로 다음 일정 selector와 워크스페이스에서 같은 계약을 사용한다. 현재 schema에 없는 과제 배정·마감·읽음 상태는 추정하지 않는다. 캘린더, 일별 기록, 전체 항목, 커리큘럼, 과제는 `워크스페이스` section에서 기존 기능을 유지한다.
+학생 포털의 기본 section은 `오늘`이다. 통합 item에서 다음 일정, 피드백이 있는 제출, Q&A 상태를 순수 selector로 분류하고 최근 공지와 실제 작성 경로를 함께 제공한다. `lessons` 행은 `EVENT`/`LESSON` 항목으로 포함하므로 다음 일정 selector와 워크스페이스에서 같은 계약을 사용한다. 현재 schema에 없는 과제 배정·마감·읽음 상태는 추정하지 않는다. 캘린더(월·주·일별·전체 하나의 세그먼트, 좁은 화면은 주 없음·기본 일별)와 과제는(커리큘럼은 숨김 스위치가 켜졌을 때만) `워크스페이스` section에서 기존 기능을 유지한다. 주소 `create=today`(학생)·`create=lesson`(관리자)은 빠른 만들기·레슨 예약을 한 번 열고 `replaceState`로 지운다. view 없이 들어오면 기기에 저장된 캘린더 계열 보기(달력·일별·전체)만 복원한다.
 
-관리자 일정 section은 선택한 학생의 캘린더에서 날짜를 눌러 레슨을 예약하고, 레슨 상세에서 시간 변경과 취소 우선 2단계 삭제를 제공한다. 결과는 현재 학생의 캘린더 상태에 즉시 반영하고, 학생을 바꾼 뒤 도착한 늦은 결과는 다른 학생 캘린더에 섞지 않는다.
+캘린더(`UnifiedCalendar`)는 FullCalendar를 `timeZone="UTC"`로 두고 KST 벽시계 시각(실제 시각 + 9시간, 한국은 일광절약시간 없음)을 넣어 기기 시간대와 무관하게 칸을 KST로 맞춘다(`src/lib/calendar-interaction.ts`). 끌어 옮기기는 클라이언트 판정(일정·레슨은 그 학생 본인과 관리자 — 2026-10-26 사용자 결정, 노트는 관리자 또는 작성자)과 같은 규칙을 서버가 다시 검사한다: `moveCalendarEvent`(학생 본인 또는 관리자가 대상 학생 ID로, 기존 patch 검증), `moveLesson`(학생 본인 또는 관리자, 대상 학생 레슨), `movePrivateNoteDate`(현재 revision의 제목·본문을 그대로 두고 날짜만 바꾸는 새 revision, 이미 그 날짜면 쓰기 없는 성공으로 재전송을 흡수). 화면은 저장 전 이동을 먼저 보여 주고, 저장된 이동은 다시 받은 목록이 반영할 때까지 유지하며, 같은 항목의 겹친 이동은 마지막 요청만 반영한다. 끌 수 없는 항목(다른 작성자 노트·디깅·Q&A·과제·외부 캘린더)은 끌려고 하면 이유를 알린다. 상세 패널은 수정 권한(관리자 또는 작성자)이 있는 노트를 문서 페이지와 같은 `NoteEditorForm`으로 바로 편집하고(자동 저장·초안·충돌 보호 동일, 저장·업로드 중 닫힘 잠금), 저장 결과를 캘린더 항목에 반영한다. 칸 선택·터치 탭은 `CalendarQuickCreate`를 열어 노트(작성 화면 `?title=&date=`), 일정(`createCalendarEvent`), 레슨(`createLesson`)을 만든다. 관리자 일정 section은 선택한 학생의 캘린더에서 레슨을 예약·이동하고, 레슨 상세에서 시간 변경과 취소 우선 2단계 삭제를 제공한다. 결과는 현재 학생의 캘린더 상태에 즉시 반영하고, 학생을 바꾼 뒤 도착한 늦은 결과는 다른 학생 캘린더에 섞지 않는다.
 
 관리자 포털의 기본 section은 `업무함`이다. 전체 Q&A 중 미답변 항목, feedback이 없는 assignment, 앞으로 7일 이내의 학생별 다음 레슨을 조회한다. 질문과 과제는 오래 기다린 항목부터 보여주고 실제 Q&A·과제 상세로 연결한다. 일정 section은 선택한 학생 스페이스를 상시 표시하고 각 통합 항목의 스페이스·출처를 식별한다.
 
@@ -104,9 +104,9 @@ OpenNext → Cloudflare Worker
 
 학생은 하나의 전용 공개 Google 또는 iCloud iCal 레슨 캘린더를 연결할 수 있다. 제공자는 별도 선택 없이 붙여 넣은 주소의 host로 판별하고, 주소 형식 위반은 구체적인 안내로, 읽기·파싱 실패와 암호화 key 미설정은 원문 없는 고정 안내로 구분해 돌려준다. 거부된 주소는 form에 남아 바로 고칠 수 있다. 구독 URL은 `external_calendar_subscriptions`에 AES-256-GCM과 학생·provider AAD로 암호화해 저장하며, 조회 action과 UI에는 provider·label·연결 여부만 반환한다. fetch는 허용 host/path, HTTPS, redirect 거부, 5초 timeout, 1 MiB streaming 상한과 VCALENDAR 검증을 거친다. 파서는 `ical.js`로 반복·EXDATE·override·취소·all-day를 bounded window의 read-only `EVENT`/`LESSON`으로 정규화한다. 외부 fetch 또는 복호화가 실패해도 내부 일정만 반환한다.
 
-학생과 관리자 포털은 공통 `PortalShell`과 `PortalNavigation`을 사용한다. section 선택은 역할별 local storage key에 편의 상태로 저장한다. root skip link와 main landmark, 이름이 있는 side rail control, dashboard loading/error boundary를 공통 shell 경계로 둔다. 학생 roster는 mobile label-value list와 desktop table을 분리하고 desktop 확장은 실제 button으로 조작한다.
+학생과 관리자 포털은 공통 앱 셸(`AppShell`·`AppSidebar`: 넓은 화면 240px 사이드바, 좁은 화면 52px 위쪽 막대와 메뉴 서랍, 계정 … 메뉴)과 `PortalShell`을 사용한다. 위쪽 막대의 제목·뒤로·주 행동은 `resolveMobileTopBar`가 주소에서 정하고 화면이 `MobileTopBar`로 덮어쓴다. section 선택은 역할별 local storage key에 편의 상태로 저장한다. root skip link와 main landmark, dashboard loading/error boundary를 공통 shell 경계로 둔다. 학생 roster는 mobile label-value list와 desktop table을 분리하고 desktop 확장은 실제 button으로 조작한다.
 
-노트 탐색과 작성은 분리한다. 학생은 `/dashboard/student/notes`, 관리자는 학생별 `/dashboard/admin/students/[id]/notes`에서 제목·노트 날짜·작성자·평문 미리보기·최근 변경 시각과 노트 열기 링크를 확인한다. 목록은 저장 HTML을 직접 렌더하지 않는다. 캘린더의 노트 추가는 역할별 전체 화면 작성 URL에 선택한 엄격한 `YYYY-MM-DD`와 내부 `returnTo`만 전달한다. 잘못된 날짜는 KST 오늘로 대체하고, 기존 초안이 있으면 초안 날짜가 URL 기본값보다 우선한다.
+노트 탐색과 작성은 분리한다. 학생은 `/dashboard/student/notes`, 관리자는 학생별 `/dashboard/admin/students/[id]/notes`에서 제목·노트 날짜·작성자·평문 미리보기·최근 변경 시각과 노트 열기 링크를 확인한다. 목록은 저장 HTML을 직접 렌더하지 않는다. 캘린더의 노트 추가는 역할별 전체 화면 작성 URL에 선택한 엄격한 `YYYY-MM-DD`, 빠른 입력 제목(노트 제목 한도까지)과 내부 `returnTo`만 전달한다. 잘못된 날짜는 KST 오늘로 대체하고, 복원한 초안이 있으면 초안의 제목·날짜가 URL 기본값보다 우선한다. URL 기본값만 채워진 화면은 초안으로 저장하지 않는다. 노트 목록(`NotesDatabase`)은 표/목록 보기 선택을 계정별 `portal:notesView:<id>`에 저장하고 계정 정리에서 함께 지운다.
 
 디깅 보드는 같은 column·track 데이터를 768px 미만에서 label-value record list로, 그 이상에서 TanStack Table 기반 data grid로 표시한다. 두 표현은 같은 edit cell과 server action을 사용한다. 학생은 `/dashboard/student/digging`에서 편집하고 관리자는 학생 상세의 디깅 탭에서 읽기 전용으로 본다. 셀은 값이 바뀐 경우에만 저장하고, 비운 숫자·별점은 0이 아닌 빈 값으로 저장한다. 컬럼 변경 뒤에는 전체 새로고침 대신 server component만 다시 받는다.
 
@@ -132,7 +132,7 @@ Cloudflare binding:
 | `BUCKET` | R2 bucket | 미디어 저장 |
 | `ASSETS` | OpenNext assets | 정적 asset |
 
-Migration SQL은 `drizzle/`, Drizzle metadata는 `drizzle/meta/`에 둔다. Wrangler는 SQL 파일명과 D1의 적용 이력을 기준으로 migration을 실행하고, Drizzle metadata는 다음 schema diff 생성 기준으로 사용한다. SQL·journal·snapshot은 `0000~0013`까지 대응한다. `npm run db:check`는 empty replay와 current schema/latest snapshot의 column·FK·index뿐 아니라 문서·미디어·개인정보·외부 캘린더 구독 CHECK·FK·unique index, 불변·부활·교체 우회 방지 probe, `0007` fixture upgrade·inbound FK preflight, `0008→0009` account cascade, 기존 게시물·Q&A의 `0009→0010`, 기존 URL을 보존하는 `0010→0011`, populated `0011→0012` 개인정보 및 `0012→0013` 외부 캘린더 upgrade를 검사한다. 이 체인은 저장소의 schema 계약이며 persistent local·remote D1의 현재 적용 이력을 뜻하지 않는다. 환경별 실제 적용 목록과 pending 범위는 [운영 상태 확인 기준](./DEPLOYMENT.md#운영-상태-확인-기준)으로 확인한다. 외부 캘린더 코드의 promotion에는 대상 D1의 `0013`이 필요하다.
+Migration SQL은 `drizzle/`, Drizzle metadata는 `drizzle/meta/`에 둔다. Wrangler는 SQL 파일명과 D1의 적용 이력을 기준으로 migration을 실행하고, Drizzle metadata는 다음 schema diff 생성 기준으로 사용한다. SQL·journal·snapshot은 `0000~0014`까지 대응한다. `npm run db:check`는 empty replay와 current schema/latest snapshot의 column·FK·index뿐 아니라 문서·미디어·개인정보·외부 캘린더 구독 CHECK·FK·unique index, 불변·부활·교체 우회 방지 probe, `0007` fixture upgrade·inbound FK preflight, `0008→0009` account cascade, 기존 게시물·Q&A의 `0009→0010`, 기존 URL을 보존하는 `0010→0011`, populated `0011→0012` 개인정보, `0012→0013` 외부 캘린더 및 `0013→0014` 본문 이미지 upgrade를 검사한다. 이 체인은 저장소의 schema 계약이며 persistent local·remote D1의 현재 적용 이력을 뜻하지 않는다. 환경별 실제 적용 목록과 pending 범위는 [운영 상태 확인 기준](./DEPLOYMENT.md#운영-상태-확인-기준)으로 확인한다. 외부 캘린더 코드의 promotion에는 대상 D1의 `0013`, 본문 이미지·Worker 업로드 코드에는 `0014`가 필요하다.
 
 신규 업로드는 사용자에게 노출된 `media-upload/` staging key로만 PUT하고, 서버가 size·Content-Type metadata·ETag를 확인한 뒤 사용자에게 공개되지 않은 별도 `media/` final key로 봉인한다. D1의 `SEALING` lease가 봉인과 삭제를 직렬화하며, 결과를 잃은 Copy는 복구 유예 뒤 final 삭제 outbox가 다시 정리한다. 문서에는 object ID와 `/api/media/{id}`만 저장하고, 게시물과 Q&A의 원자 생성·purge transaction이 registry claim과 R2 삭제 의도를 함께 commit한다. R2 삭제는 lease·지수 backoff를 사용하는 durable outbox로 재시도한다.
 
@@ -148,7 +148,7 @@ Migration SQL은 `drizzle/`, Drizzle metadata는 `drizzle/meta/`에 둔다. Wran
 - 로그인 token은 비밀번호 hash의 SHA-256 지문(`credential-fingerprint`)에 결합한다. Node JWT callback은 매 갱신에서 profile의 현재 지문과 대조해 비밀번호가 바뀐 뒤 남은 다른 기기의 token을 거부하고, 지문 결합 이전에 발급된 token은 기존 최대 수명까지 허용한다. 지문과 hash는 session 응답에 노출하지 않는다.
 - `changeOwnPassword`는 현재 비밀번호를 bcrypt로 확인하고 읽은 hash가 그대로일 때만 새 hash를 저장한 뒤, 새 비밀번호로 현재 기기의 session을 다시 발급한다. 재발급에 실패하면 변경 성공과 재로그인 필요를 함께 알린다.
 - 관리자는 학생 비밀번호를 원하는 값으로 바꾸지 못하고 `resetStudentPassword`로 서버가 만든 60-bit 임시 비밀번호(`xxxx-xxxx-xxxx`)만 발급한다. `password_hash`에는 `temporary:` 표시를 붙인 bcrypt hash만 저장해(`src/lib/password-storage.ts`) schema 변경 없이 "변경 필요" 상태가 hash와 함께 바뀐다. 모든 비밀번호 확인은 `verifyStoredPassword`를 거친다.
-- 임시 비밀번호 상태는 Node JWT callback이 매 갱신에서 현재 hash로 다시 판단해 `passwordChangeRequired` claim으로 싣는다. `getActiveAuthSession`·`requireAuth`는 이 session을 인증으로 승격하지 않아 모든 page·action·route가 거부하고, `/account/password` 화면과 `changeOwnPassword`만 `getSignedInSession`·`requireSignedInSession`으로 받는다. Edge middleware는 같은 claim으로 화면 이동만 `/account/password`로 돌리고 login·API는 server gate에 맡긴다. 관리자가 임시 비밀번호로 학생 계정을 조용히 쓰려면 새 비밀번호를 정해야 하고, 그러면 학생 본인이 로그인하지 못해 드러난다.
+- 임시 비밀번호 상태는 Node JWT callback이 매 갱신에서 현재 hash로 다시 판단해 `passwordChangeRequired` claim으로 싣는다. `getActiveAuthSession`·`requireAuth`는 이 session을 인증으로 승격하지 않아 모든 page·action·route가 거부하고, `/account/password` 화면과 `changeOwnPassword`만 `getSignedInSession`·`requireSignedInSession`으로 받는다. proxy는 같은 claim으로 화면 이동만 `/account/password`로 돌리고 login·API는 server gate에 맡긴다. 관리자가 임시 비밀번호로 학생 계정을 조용히 쓰려면 새 비밀번호를 정해야 하고, 그러면 학생 본인이 로그인하지 못해 드러난다.
 - 학생 계정 생성은 비밀번호 대신 `invite:<만료 epoch 초>:<bcrypt>` 형식의 가입 링크 secret hash를 저장한다(`createStudent`, 7일). 링크는 `/invite#<학생 id>.<256-bit secret>`이고, `/invite` 화면이 `#` 뒤 token을 읽어 `getInviteStatus`·`completeInvite` server action 본문으로만 보낸다. `verifyStoredPassword`는 invite hash를 항상 거부해 링크 secret으로 로그인할 수 없다. `completeInvite`는 읽은 invite hash가 그대로일 때만 새 bcrypt hash로 바꿔 한 번만 쓰이게 하고, 새 비밀번호로 로그인을 발급한다. `reissueStudentInvite`는 아직 invite 상태인 학생만 다시 발급한다. 다른 계정으로 로그인한 상태의 `/invite`는 그 로그인을 덮어쓰지 않도록 로그아웃을 안내한다.
 - 비밀번호를 확인하는 경계(credentials `authorize`, `changeOwnPassword`, 가입 링크 action, 계정 삭제)는 `isPasswordAttemptAllowed`로 `PASSWORD_ATTEMPT_RATE_LIMITER` binding(`<용도>:<CF-Connecting-IP>` key, 분당 10회)을 먼저 호출한다. 로그인은 `code=rate_limited`인 `CredentialsSignin`으로 거부하고 login form·`?error=…&code=` 화면이 같은 안내를 보인다. binding이 없는 local·test는 제한하지 않고, binding 호출 오류는 로그인 장애를 피하려고 통과시킨 뒤 오류만 기록한다.
 - session의 `user.id`는 profile 조회의 시작점으로만 사용한다. Node auth의 JWT callback, `/api/auth/session`과 모든 server 인증 경계가 profile 존재와 DB의 최신 role을 다시 확인해 삭제된 JWT를 즉시 거부한다. JWT/session 최대 수명은 7일로 고정해 raw subject ID의 30일 보존 경계보다 먼저 만료시킨다.
@@ -169,7 +169,7 @@ Migration SQL은 `drizzle/`, Drizzle metadata는 `drizzle/meta/`에 둔다. Wran
 - editor 입력 transaction은 문서 revision만 증가시키고 전체 HTML 직렬화는 200ms 정지, draft flush 또는 submit 경계까지 늦춘다. 연속 입력이 멈추지 않아도 첫 pending 뒤 최대 5초에 최신 snapshot을 checkpoint한다. 최신 HTML reader를 draft pending에 즉시 연결하고 revision별 결과를 cache해 마지막 입력을 잃지 않으면서 매 키 입력의 전체 문서 순회를 피한다. Markdown 전체 parse와 draft payload signature 계산도 같은 지연 경계를 사용한다.
 - slash command 탐색은 커서 앞 검색어 최대 64자와 경계 문자만 읽어 단일 문단 전체를 매 transaction마다 순회하지 않는다.
 - page hide·탭 숨김·unmount 전에 pending 값을 flush하며, 저장공간 재시도도 실패하면 writer별 메모리 안전본을 유지하고 브라우저 이탈을 경고한다. 저장소가 회복되면 canonical보다 최신인 안전본만 현재 입력으로 채택하고 나머지는 durable recovery로 승격한다. 제출 cutoff용 원래 작성 시각과 recovery 보존 시작 시각을 분리하며, 같은 문서의 열린 탭에는 `BroadcastChannel`과 동일 문서 event로 제출 완료를 전달한다. 제출 완료 시 저장소 읽기·쓰기·삭제가 모두 막혀도 page-session marker로 cutoff 이전 초안을 숨기고, durable tombstone과 정리가 확인될 때까지 이탈을 경고한다. 같은 내용의 cutoff는 새 벽시계와 이미 관측한 causal 저장 시각 중 큰 값을 사용해 최초 제출 직전 시계 역행에도 낮아지지 않는다.
-- 충돌·중단 복구본은 최대 30일 보존하며 최근 20개 기준으로 정리하고, UI에서 전체 저장 시각·제한된 제목/본문 미리보기·현재 화면본을 확인한 뒤 선택 복원하거나 2단계 확인으로 삭제할 수 있다. 같은 내용의 안전본은 causal 저장 시각이 가장 최신인 사본을 남기며, canonical과 같은 사본도 별도 key 사이의 교체 경합 때문에 화면에서만 숨기고 자동 물리 삭제하지 않는다. 복구본 목록 정리는 compaction에서 한 번 해석한 recovery·marker·canonical·causal raw 상태를 재사용하고, namespace가 달라지면 만료 marker를 보수적으로 유지한다. 여러 제출 표현의 cutoff 계산·삭제 후보 관측과 marker 기록도 각각 batch 처리해 같은 대형 원문과 marker namespace를 alias마다 다시 순회하지 않는다. 제출 이력은 내용 서명별 append-only tombstone을 같은 30일 동안 개수 제한 없이 유지해 연속 제출 뒤 잠든 탭의 ghost 복원을 차단한다. 복원·채택 시점에도 tombstone과 원래 저장 시각을 다시 검증하며, tombstone이 가리는 causal snapshot이 남아 있으면 기본 보존 기간을 넘겨도 먼저 제거하지 않는다. 작성 폼이 활성인 동안의 선제 정리는 브라우저 유휴 시간이 남으면 최대 4개, 시간 제한으로 실행될 때는 1개 key씩 나눠 현재 열리지 않은 문서의 current-version 불변 recovery만 정리한다. 큰 key·원문과 causal 전역 확인이 필요한 marker는 이 경로에서 보존하고, marker는 해당 source 정리에서, 큰 recovery와 marker를 포함한 전역 정리는 quota 재시도에서 수행한다. future·legacy·손상 데이터와 active source는 전역 정리에서 보수적으로 보존한다. 사이드 레일의 기기 초안 관리에서는 현재 계정의 문서 namespace를 안전한 미리보기와 함께 모아 보고 문서별 또는 전체 폐기할 수 있다. 제출 tombstone이 가린 ghost는 목록에서 제외한다. 로그아웃 직전에는 해당 계정의 canonical·recovery·future·legacy·marker와 메모리 pending을 지우고 열린 작성 흐름의 재저장을 잠근다. 다음 계정 인증 시에는 다른 계정의 잔여 namespace를 다시 정리한다.
+- 충돌·중단 복구본은 최대 30일 보존하며 최근 20개 기준으로 정리하고, UI에서 전체 저장 시각·제한된 제목/본문 미리보기·현재 화면본을 확인한 뒤 선택 복원하거나 2단계 확인으로 삭제할 수 있다. 같은 내용의 안전본은 causal 저장 시각이 가장 최신인 사본을 남기며, canonical과 같은 사본도 별도 key 사이의 교체 경합 때문에 화면에서만 숨기고 자동 물리 삭제하지 않는다. 복구본 목록 정리는 compaction에서 한 번 해석한 recovery·marker·canonical·causal raw 상태를 재사용하고, namespace가 달라지면 만료 marker를 보수적으로 유지한다. 여러 제출 표현의 cutoff 계산·삭제 후보 관측과 marker 기록도 각각 batch 처리해 같은 대형 원문과 marker namespace를 alias마다 다시 순회하지 않는다. 제출 이력은 내용 서명별 append-only tombstone을 같은 30일 동안 개수 제한 없이 유지해 연속 제출 뒤 잠든 탭의 ghost 복원을 차단한다. 복원·채택 시점에도 tombstone과 원래 저장 시각을 다시 검증하며, tombstone이 가리는 causal snapshot이 남아 있으면 기본 보존 기간을 넘겨도 먼저 제거하지 않는다. 작성 폼이 활성인 동안의 선제 정리는 브라우저 유휴 시간이 남으면 최대 4개, 시간 제한으로 실행될 때는 1개 key씩 나눠 현재 열리지 않은 문서의 current-version 불변 recovery만 정리한다. 큰 key·원문과 causal 전역 확인이 필요한 marker는 이 경로에서 보존하고, marker는 해당 source 정리에서, 큰 recovery와 marker를 포함한 전역 정리는 quota 재시도에서 수행한다. future·legacy·손상 데이터와 active source는 전역 정리에서 보수적으로 보존한다. 계정 메뉴의 기기 초안 관리에서는 현재 계정의 문서 namespace를 안전한 미리보기와 함께 모아 보고 문서별 또는 전체 폐기할 수 있다. 제출 tombstone이 가린 ghost는 목록에서 제외한다. 로그아웃 직전에는 먼저 `useLogoutSubmit`이 해당 계정의 서버 초안 폐기 대기열만 원래 operation ID·CAS 기준으로 보낸다(`flushQueuedDocumentServerDraftDiscards`). 같은 본문이 다른 version으로 남은 충돌이나 재실행 응답은 최대 3회 rebase하고, 실패·오프라인이면 건너뛴다. 전송은 server action 줄을 피하려고 `fetch`로 `POST /api/document-drafts/discard`(`document-server-draft-discard-api.ts`, Sec-Fetch-Site 또는 Origin·Host 같은 출처·JSON만 받고 검증·계정 확인·CAS는 `discardDocumentServerDraft`)에 보내며, 전체 3초 상한에서 abort한다. 그래서 그 사이 로컬 초안 정리는 최대 3초 늦어진다. 그 뒤 해당 계정의 canonical·recovery·future·legacy·marker·서버 queue와 메모리 pending을 지우고 열린 작성 흐름의 재저장을 잠근다. 저장(UPSERT) 대기열은 공유 기기 보호에 따라 보내지 않고 지운다. 다음 계정 인증 시에는 다른 계정의 잔여 namespace를 다시 정리한다.
 - 포털 section, workspace view와 관리자 학생 선택은 URL에 기록한다. 작성 화면과 저장된 문서는 검증된 내부 `returnTo`를 전달해 직전 작업 문맥으로 돌아간다.
 - 첨부 업로드·서버 제출 중에는 제목·분류·첨부·editor mutation, submit, 화면 내 SPA link, 상위 상태 전환과 slide panel dismiss를 잠근다. hard navigation에는 이탈 경고를 제공하고 진행 중 업로드가 unmount되면 전송을 중단한다. 브라우저 Back/Forward와 임의의 programmatic route 전환은 client만으로 완전히 취소할 수 없으므로 실제 브라우저 E2E가 별도로 필요하다.
 - 새 노트·게시물·Q&A 질문·답변의 draft에는 UUIDv4 생성 작업 nonce를 저장하고 submit 직전에 전체 snapshot을 flush한다. 서버는 인증된 작성자·대상·문서 종류를 함께 영역 분리한 결정적 UUIDv8을 실제 resource ID로 사용한다. 같은 nonce와 정규화 payload의 순차·동시 재전송은 기존 결과를 반환하며, 같은 작성 흐름의 다른 payload는 초안을 유지한 채 기존 문서 열기 또는 별도 문서 분리를 선택하게 한다.
@@ -207,9 +207,9 @@ Migration SQL은 `drizzle/`, Drizzle metadata는 `drizzle/meta/`에 둔다. Wran
 | `DEV_ADMIN_EMAIL` | 로컬 관리자 계정 식별자 | 개발 환경 전용 |
 | `DEV_ADMIN_PASSWORD` | 로컬 관리자 비밀번호 | 로컬 secret |
 | `DEV_ADMIN_DISPLAY_NAME` | 로컬 관리자 표시 이름 | 개발 환경 전용 |
-| `R2_ENDPOINT` | R2 S3-compatible endpoint | 환경별 설정 |
-| `R2_ACCESS_KEY_ID` | R2 access key | secret |
-| `R2_SECRET_ACCESS_KEY` | R2 secret key | secret |
+| `R2_ENDPOINT` | 로컬 `next dev`에서 BUCKET binding 없이 R2를 쓸 때만 쓰는 S3-compatible endpoint | 개발 환경 전용 |
+| `R2_ACCESS_KEY_ID` | 위와 같은 로컬 개발용 access key | 로컬 secret |
+| `R2_SECRET_ACCESS_KEY` | 위와 같은 로컬 개발용 secret key | 로컬 secret |
 | `EXTERNAL_CALENDAR_ENCRYPTION_KEY` | 공개 iCal URL AES-256-GCM용 32-byte base64/base64url key | Worker/local secret, 운영 미설정 |
 | `R2_BUCKET_NAME` | upload bucket 이름 | 환경별 설정 |
 
@@ -251,7 +251,7 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 
 | 변경 영역 | 함께 확인할 파일 |
 |---|---|
-| auth·role | `src/auth.ts`, `src/auth.config.ts`, `src/middleware.ts`, `src/lib/active-profile.ts`, `src/lib/auth-guard.ts`, `src/lib/credential-fingerprint.ts`, `src/lib/password-storage.ts`, `src/lib/actions/password.ts`, `docs/REQUIREMENTS.md` |
+| auth·role | `src/auth.ts`, `src/auth.config.ts`, `src/proxy.ts`, `src/lib/active-profile.ts`, `src/lib/auth-guard.ts`, `src/lib/credential-fingerprint.ts`, `src/lib/password-storage.ts`, `src/lib/actions/password.ts`, `docs/REQUIREMENTS.md` |
 | schema·migration | `src/db/schema.ts`, `drizzle/**`, 관련 action, `docs/TECH_SPEC.md` |
 | student portal | `src/app/dashboard/student/page.tsx`, `src/components/student-portal/**` |
 | admin portal | `src/app/dashboard/admin/page.tsx`, `src/components/admin-portal/**`, `src/lib/actions/students.ts` |
@@ -284,3 +284,9 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 - 운영 D1의 read-only inventory와 full export 격리 restore rehearsal은 통과했다. 실제 migration rollback anchor는 maintenance write fence 뒤 새 export/checksum과 Time Travel bookmark로 다시 확보해야 한다.
 - 일부 대형 client component는 상태 hook, domain view와 presentation 경계가 한 파일에 남아 있다.
 - 소셜 공유 이미지는 승인된 브랜드 asset이 준비된 뒤 metadata에 연결해야 한다.
+
+## 응답 대기 표시와 로그아웃 잠금(2026-10-27)
+
+- 화면 이동: `src/components/app-shell/NavigationProgress.tsx`가 다른 앱 주소로 가는 링크 클릭, `useProgressRouter()`의 `push`·`replace`, GET form 제출에서 위쪽 2px 막대를 켜고 주소가 바뀌면 끈다. 120ms 안에 끝나는 이동은 그리지 않고, 주소가 끝내 바뀌지 않으면 15초 뒤 끈다. 제출 중 이동 막기(`useBusyNavigationGuard`)가 끊은 클릭은 bubble 단계의 window까지 오지 않아 막대가 켜지지 않는다. 사이드바 메뉴는 `useLinkStatus`로 아이콘 자리에 회전 표시를 둔다.
+- 버튼: `Button`의 `pending`은 비활성화·`aria-busy`·회전 표시를 함께 준다(움직임을 줄이면 멈춘 모양). 새 질문·새 글은 등록에 성공한 뒤 상세로 넘어갈 때까지 계속 잠근다. 디깅 칸 저장, 캘린더 끌어 옮기기 저장, 링크 정보 가져오기, 새 글 채널 불러오기도 진행 표시를 보인다.
+- 로그아웃: `src/lib/account-logout-lock.ts`가 계정별(sha256 키) localStorage 잠금(15초 만료)을 폐기 전송 전에 기록하고 같은 탭 이벤트·다른 탭 `storage` 이벤트로 알린다. `useDocumentServerDraftSync`는 잠금 동안 서버 초안 저장 타이머를 멈추고 전송 직전에도 다시 확인해 막는다. 로그아웃 action이 실패하면 자기 잠금만 풀고 오류를 보이며 다시 누를 수 있다. redirect는 실패로 보지 않는다. 폐기 API는 다른 출처 403(Origin protocol·host 비교) → 미인증 401 → 415 → 400 순서로 판정한다.

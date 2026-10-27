@@ -1,12 +1,20 @@
+/**
+ * @file src/components/community/NewPostForm.tsx
+ * @description 새 게시물 작성(캔버스 CommunityNew 보드). 게시판 유형·채널·제목·본문(믹스셋은 오디오)을
+ * 한 초안으로 보존하고, 게시는 "게시하기" 버튼으로만 한다.
+ */
 "use client";
 
 import { useActionState, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { ArrowLeft, Megaphone, MessageSquare, Music2, Send } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { useProgressRouter } from "@/components/app-shell/NavigationProgress";
+import { Music2, X } from "lucide-react";
+import { Button, ButtonSpinner, buttonClassName } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { MobileTopBar } from "@/components/app-shell/AppSidebar";
+import { ChoiceGroup, type ChoiceOption } from "@/components/ui/choice-group";
+import { cn } from "@/lib/utils";
 import { FileUploader } from "@/components/upload/FileUploader";
 import { DraftStatus } from "@/components/editor/DraftStatus";
 import { createPost, type CreatePostState } from "@/lib/actions/posts";
@@ -34,11 +42,11 @@ const FullEditor = dynamic(
 
 export type PostBoardType = "ANNOUNCEMENT" | "GENERAL" | "FEEDBACK";
 
-const BOARD_TYPES = [
-  { value: "GENERAL" as const, label: "자유", icon: MessageSquare },
-  { value: "ANNOUNCEMENT" as const, label: "공지", icon: Megaphone },
-  { value: "FEEDBACK" as const, label: "믹스셋", icon: Music2 },
-] as const;
+const BOARD_TYPES: readonly ChoiceOption<PostBoardType>[] = [
+  { value: "GENERAL", label: "자유" },
+  { value: "FEEDBACK", label: "믹스셋" },
+  { value: "ANNOUNCEMENT", label: "공지" },
+];
 
 type PostDraft = {
   operationId?: string;
@@ -89,6 +97,8 @@ function NewPostFormContent({
   const [operationId, setOperationId] = useState("");
   const [uploadError, setUploadError] = useState("");
   const [isUploading, setIsUploading] = useState(false);
+  // 본문 이미지가 올라가는 동안에는 제출하지 않는다. 편집기는 계속 쓸 수 있다.
+  const [isEditorUploading, setIsEditorUploading] = useState(false);
   const [state, formAction, isPending] = useActionState<CreatePostState, FormData>(async (previous, data) => {
     try {
       return await createPost(previous, data);
@@ -100,9 +110,12 @@ function NewPostFormContent({
   const contentInputRef = useRef<HTMLInputElement>(null);
   const submittedDraftRef = useRef<PostDraft | null>(null);
   const handledPostIdRef = useRef<string | null>(null);
-  const router = useRouter();
-  const isFormBusy = isPending || isUploading;
-  useBusyNavigationGuard(isFormBusy);
+  const router = useProgressRouter();
+  // 등록에 성공하면 상세 화면으로 넘어갈 때까지 계속 막아 두 번 등록하지 않게 한다.
+  const isRedirecting = Boolean(state.postId);
+  const isFormBusy = isPending || isUploading || isRedirecting;
+  // 등록에 성공한 뒤에는 이탈 막기를 풀어, 하드 이동(배포 버전 차이 등)에서 나가기 확인이 뜨거나 링크가 막히지 않게 한다.
+  useBusyNavigationGuard(isPending || isUploading);
 
   const {
     loaded,
@@ -144,7 +157,7 @@ function NewPostFormContent({
       },
     },
   );
-  const isSubmitBlocked = !loaded || !canSubmit || isFormBusy || !operationId;
+  const isSubmitBlocked = !loaded || !canSubmit || isFormBusy || isEditorUploading || !operationId;
   const isSubmitDisabled =
     isSubmitBlocked ||
     !title.trim() ||
@@ -173,8 +186,12 @@ function NewPostFormContent({
     }),
   });
 
+  const [categoriesLoading, setCategoriesLoading] = useState(true);
   useEffect(() => {
-    getCategories().then(setCategories);
+    getCategories()
+      .then(setCategories)
+      .catch(() => undefined)
+      .finally(() => setCategoriesLoading(false));
   }, []);
 
   useEffect(() => {
@@ -239,293 +256,286 @@ function NewPostFormContent({
     state.existingId,
   );
 
+  const backLabel = returnTo.startsWith("/community") ? "커뮤니티 목록으로" : "이전 화면으로";
+  const changeBoardType = (value: PostBoardType) => {
+    if (value !== "FEEDBACK" && mediaObjectId) {
+      void abandonMediaUpload(mediaObjectId).catch(() => undefined);
+      setMediaUrl("");
+      setMediaObjectId("");
+    }
+    setBoardType(value);
+  };
+
   return (
-    <div className="mx-auto max-w-3xl space-y-6 px-4 py-6 sm:px-6">
-      <div className="space-y-1">
-        <Link
-          href={returnTo}
-          aria-disabled={isFormBusy}
-          tabIndex={isFormBusy ? -1 : undefined}
-          className={`inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground ${
-            isFormBusy ? "pointer-events-none opacity-50" : ""
-          }`}
-          onClick={(event) => {
-            if (isFormBusy) event.preventDefault();
+    <div className="px-5 pt-5 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-10">
+      <MobileTopBar title="새 게시물" back={{ href: returnTo, label: backLabel }} />
+      <div className="flex max-w-[760px] flex-col gap-5 md:gap-7">
+        <nav aria-label="위치" className="hidden items-center gap-1.5 text-ui md:flex">
+          <Link
+            href={returnTo}
+            aria-disabled={isFormBusy}
+            tabIndex={isFormBusy ? -1 : undefined}
+            className={cn(
+              "text-secondary-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              isFormBusy && "pointer-events-none opacity-50",
+            )}
+            onClick={(event) => {
+              if (isFormBusy) event.preventDefault();
+            }}
+          >
+            커뮤니티
+          </Link>
+          <span aria-hidden="true" className="text-faint">/</span>
+          <span aria-current="page" className="text-foreground">새 게시물</span>
+        </nav>
+        <h1 className="sr-only md:not-sr-only md:text-display md:font-semibold md:tracking-display">새 게시물</h1>
+
+        <form
+          ref={formRef}
+          action={formAction}
+          aria-busy={!loaded || isFormBusy}
+          className="flex flex-col gap-5"
+          onKeyDownCapture={handleSaveShortcut}
+          onSubmit={(event) => {
+            if (!loaded || !canSubmit || isFormBusy || isEditorUploading) {
+              event.preventDefault();
+              return;
+            }
+            if (!operationId) {
+              event.preventDefault();
+              return;
+            }
+            const latestContentHtml = commitLatestContentHtml();
+            if (!title.trim() || isRichTextEmpty(latestContentHtml)) {
+              event.preventDefault();
+              return;
+            }
+            if (contentInputRef.current) contentInputRef.current.value = latestContentHtml;
+            const submittedDraft = {
+              operationId,
+              boardType,
+              category,
+              isPinned,
+              title,
+              contentHtml: latestContentHtml,
+              mediaUrl,
+              mediaObjectId,
+            };
+            save(submittedDraft);
+            flush();
+            submittedDraftRef.current = submittedDraft;
           }}
         >
-          <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-          커뮤니티
-        </Link>
-        <h1 className="mt-2 text-2xl font-semibold">새 게시물</h1>
-      </div>
+          <input type="hidden" name={CREATION_OPERATION_FIELD} value={operationId} />
+          <input type="hidden" name="returnTo" value="community-editor" />
+          <input type="hidden" name="boardType" value={boardType} />
+          <input type="hidden" name="category" value={category} />
+          <input ref={contentInputRef} type="hidden" name="contentHtml" value={contentHtml} />
+          <input type="hidden" name="mediaUrl" value={mediaUrl} />
+          <input type="hidden" name="mediaObjectId" value={mediaObjectId} />
+          {isPinned ? <input type="hidden" name="isPinned" value="true" /> : null}
 
-      <form
-        ref={formRef}
-        action={formAction}
-        aria-busy={!loaded || isFormBusy}
-        className="space-y-5"
-        onKeyDownCapture={handleSaveShortcut}
-        onSubmit={(event) => {
-          if (!loaded || !canSubmit || isFormBusy) {
-            event.preventDefault();
-            return;
-          }
-          if (!operationId) {
-            event.preventDefault();
-            return;
-          }
-          const latestContentHtml = commitLatestContentHtml();
-          if (!title.trim() || isRichTextEmpty(latestContentHtml)) {
-            event.preventDefault();
-            return;
-          }
-          if (contentInputRef.current) contentInputRef.current.value = latestContentHtml;
-          const submittedDraft = {
-            operationId,
-            boardType,
-            category,
-            isPinned,
-            title,
-            contentHtml: latestContentHtml,
-            mediaUrl,
-            mediaObjectId,
-          };
-          save(submittedDraft);
-          flush();
-          submittedDraftRef.current = submittedDraft;
-        }}
-      >
-        <input type="hidden" name={CREATION_OPERATION_FIELD} value={operationId} />
-        <input type="hidden" name="returnTo" value="community-editor" />
-        <input type="hidden" name="boardType" value={boardType} />
-        <input type="hidden" name="category" value={category} />
-        <input ref={contentInputRef} type="hidden" name="contentHtml" value={contentHtml} />
-        <input type="hidden" name="mediaUrl" value={mediaUrl} />
-        <input type="hidden" name="mediaObjectId" value={mediaObjectId} />
-        {isPinned ? <input type="hidden" name="isPinned" value="true" /> : null}
-
-        {state.error && (!state.operationConflict || hasOperationConflict) ? (
-          <p role="alert" className="rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">
-            {state.error}
-          </p>
-        ) : null}
-
-        {hasOperationConflict && state.existingId ? (
-          <CreationConflictActions
-            existingHref={`/community/${state.existingId}?returnTo=${encodeURIComponent(returnTo)}`}
-            existingLabel="기존 게시물 열기"
-            separateLabel="별도 게시물로 저장"
-            onSeparate={() => {
-              if (mediaObjectId) {
-                void abandonMediaUpload(mediaObjectId).catch(() => undefined);
-              }
-              setMediaUrl("");
-              setMediaObjectId("");
-              setOperationId(createCreationOperationId());
-            }}
-            disabled={isFormBusy}
-          />
-        ) : null}
-
-        <fieldset className="space-y-1.5" disabled={!loaded || isFormBusy}>
-          <legend className="text-sm font-medium">게시판 유형</legend>
-          <div className="flex flex-wrap gap-2">
-            {BOARD_TYPES.filter(({ value }) => value !== "ANNOUNCEMENT" || isAdmin).map(
-              ({ value, label, icon: Icon }) => (
-                <button
-                  key={value}
-                  type="button"
-                  aria-pressed={boardType === value}
-                  onClick={() => {
-                    if (value !== "FEEDBACK" && mediaObjectId) {
-                      void abandonMediaUpload(mediaObjectId).catch(() => undefined);
-                      setMediaUrl("");
-                      setMediaObjectId("");
-                    }
-                    setBoardType(value);
-                  }}
-                  className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm transition-colors ${
-                    boardType === value
-                      ? "border-foreground font-medium text-foreground"
-                      : "border-border text-muted-foreground hover:border-foreground/50"
-                  }`}
-                >
-                  <Icon className="h-3.5 w-3.5" aria-hidden="true" />
-                  {label}
-                </button>
-              ),
-            )}
-          </div>
-        </fieldset>
-
-        {boardType === "GENERAL" ? (
-          <fieldset className="space-y-1.5" disabled={!loaded || isFormBusy}>
-            <legend className="text-sm font-medium">채널</legend>
-            <div className="flex flex-wrap gap-2">
-              {categories.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  aria-pressed={category === item.slug}
-                  onClick={() => setCategory(item.slug)}
-                  className={`rounded-lg border px-3 py-1.5 text-sm transition-colors ${
-                    category === item.slug
-                      ? "border-foreground font-medium text-foreground"
-                      : "border-border text-muted-foreground hover:border-foreground/50"
-                  }`}
-                >
-                  # {item.name}
-                </button>
-              ))}
-            </div>
-          </fieldset>
-        ) : null}
-
-        {boardType === "ANNOUNCEMENT" ? (
-          <label className="flex cursor-pointer items-center gap-2 text-sm font-medium">
-            <input
-              type="checkbox"
-              checked={isPinned}
-              onChange={(event) => setIsPinned(event.target.checked)}
-              className="h-4 w-4 rounded border-border accent-primary"
-              disabled={!loaded || isFormBusy}
-            />
-            공지 상단 고정
-          </label>
-        ) : null}
-
-        {boardType === "FEEDBACK" ? (
-          <div className="space-y-1.5">
-            <p className="text-sm font-medium">
-              오디오 파일 <span className="text-muted-foreground">(선택)</span>
+          {state.error && (!state.operationConflict || hasOperationConflict) ? (
+            <p role="alert" className="rounded-lg border border-destructive-border bg-destructive-muted p-3 text-ui text-destructive">
+              {state.error}
             </p>
-            {mediaUrl ? (
-              <div className="flex items-center gap-3 rounded-lg border border-border bg-muted/30 p-3">
-                <Music2 className="h-4 w-4 flex-shrink-0 text-muted-foreground" aria-hidden="true" />
-                <span className="flex-1 truncate text-sm text-foreground">업로드 완료</span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const abandonedId = mediaObjectId;
-                    setMediaUrl("");
-                    setMediaObjectId("");
-                    if (abandonedId) {
-                      void abandonMediaUpload(abandonedId).catch(() => undefined);
-                    }
-                  }}
-                  disabled={isFormBusy}
-                  className="text-xs text-muted-foreground transition-colors hover:text-destructive disabled:pointer-events-none disabled:opacity-50"
-                >
-                  제거
-                </button>
-              </div>
-            ) : (
-              <FileUploader
-                accept="audio/*"
-                purpose="COMMUNITY_POST_AUDIO"
-                draftOperationId={operationId}
-                label="오디오 파일 선택 (MP3, WAV, FLAC)"
-                onUploadComplete={(upload) => {
-                  setMediaUrl(upload.deliveryUrl);
-                  setMediaObjectId(upload.mediaObjectId);
-                  setUploadError("");
-                }}
-                onError={setUploadError}
-                onUploadingChange={(uploading) => {
-                  if (uploading) setUploadError("");
-                  setIsUploading(uploading);
-                }}
-                disabled={!loaded || isFormBusy}
-              />
-            )}
-            {uploadError ? <p role="alert" className="text-sm text-destructive">{uploadError}</p> : null}
-          </div>
-        ) : null}
+          ) : null}
 
-        <label className="block space-y-1.5" htmlFor="post-title">
-          <span className="text-sm font-medium">
-            제목 <span className="text-destructive">*</span>
-          </span>
-          <Input
-            id="post-title"
-            name="title"
-            value={title}
-            onChange={(event) => setTitle(event.target.value)}
-            placeholder="게시물 제목"
-            required
-            disabled={!loaded || isFormBusy}
-          />
-        </label>
-
-        <div className="space-y-1.5">
-          <p className="text-sm font-medium">
-            내용 <span className="text-destructive">*</span>
-          </p>
-          {loaded ? (
-            <FullEditor
-              initialContent={contentHtml}
-              contentVersion={contentVersion}
-              onChange={handleEditorChange}
-              onDirty={(reader) => {
-                handleEditorDirty(reader);
-                if (!operationId) return;
-                save({
-                  operationId,
-                  boardType,
-                  category,
-                  isPinned,
-                  title,
-                  mediaUrl,
-                  get contentHtml() {
-                    return reader();
-                  },
-                });
+          {hasOperationConflict && state.existingId ? (
+            <CreationConflictActions
+              existingHref={`/community/${state.existingId}?returnTo=${encodeURIComponent(returnTo)}`}
+              existingLabel="기존 게시물 열기"
+              separateLabel="별도 게시물로 저장"
+              onSeparate={() => {
+                if (mediaObjectId) {
+                  void abandonMediaUpload(mediaObjectId).catch(() => undefined);
+                }
+                setMediaUrl("");
+                setMediaObjectId("");
+                setOperationId(createCreationOperationId());
               }}
-              placeholder="게시물 내용을 작성하세요…"
               disabled={isFormBusy}
-              ariaLabel="커뮤니티 게시물 내용"
-              footer={
-                <DraftStatus
-                  status={status}
-                  canSubmit={canSubmit}
-                  savedAt={savedAt}
-                  restored={restored}
-                  recoveries={recoveries}
-                  onRestoreRecovery={restoreRecovery}
-                  onDiscardRecovery={discardRecovery}
-                  serverSync={serverSync}
-                  disabled={isFormBusy}
-                />
-              }
-              saveShortcutLabel={canSubmit ? "초안 저장" : undefined}
             />
           ) : null}
-        </div>
 
-        <div className="flex gap-3">
-          <Button
-            type="submit"
-            disabled={isSubmitDisabled}
-            className="flex-1 gap-2"
-          >
-            <Send className="h-4 w-4" aria-hidden="true" />
-            {isUploading ? "업로드 완료 대기…" : isPending ? "게시 중…" : "게시하기"}
-          </Button>
-          <Button variant="outline" asChild>
+          <ChoiceGroup
+            label="게시판 유형"
+            variant="segment"
+            options={BOARD_TYPES.filter(({ value }) => value !== "ANNOUNCEMENT" || isAdmin)}
+            value={boardType}
+            onChange={changeBoardType}
+            disabled={!loaded || isFormBusy}
+          />
+
+          {boardType === "GENERAL" && categoriesLoading ? (
+            <p role="status" className="flex items-center gap-1.5 text-ui text-muted-foreground">
+              <ButtonSpinner />채널을 불러오는 중
+            </p>
+          ) : null}
+          {boardType === "GENERAL" && categories.length > 0 ? (
+            <ChoiceGroup
+              label="채널"
+              variant="chips"
+              options={categories.map((item) => ({ value: item.slug, label: `# ${item.name}` }))}
+              value={category}
+              onChange={setCategory}
+              disabled={!loaded || isFormBusy}
+            />
+          ) : null}
+
+          {boardType === "ANNOUNCEMENT" ? (
+            <label className="flex min-h-11 cursor-pointer items-center gap-2 self-start text-body text-foreground md:min-h-0 md:text-ui">
+              <input
+                type="checkbox"
+                checked={isPinned}
+                onChange={(event) => setIsPinned(event.target.checked)}
+                className="size-4 rounded-sm border-faint accent-primary"
+                disabled={!loaded || isFormBusy}
+              />
+              공지 상단 고정
+            </label>
+          ) : null}
+
+          {boardType === "FEEDBACK" ? (
+            <div className="flex flex-col gap-2">
+              <span className="text-body font-medium text-secondary-foreground md:text-ui">
+                오디오 파일 <span className="font-normal text-muted-foreground">(선택)</span>
+              </span>
+              {mediaUrl ? (
+                <div role="status" className="flex flex-wrap items-center gap-2">
+                  <span className="inline-flex h-11 items-center gap-1 rounded-touch bg-muted pl-3 text-ui md:h-8 md:rounded-md md:pl-2.5 md:pr-1 md:text-xs">
+                    <Music2 className="size-3.5 shrink-0 text-secondary-foreground" strokeWidth={1.6} aria-hidden="true" />
+                    <span className="ml-1 text-foreground">업로드 완료</span>
+                    <button
+                      type="button"
+                      aria-label="오디오 파일 제거"
+                      onClick={() => {
+                        const abandonedId = mediaObjectId;
+                        setMediaUrl("");
+                        setMediaObjectId("");
+                        if (abandonedId) {
+                          void abandonMediaUpload(abandonedId).catch(() => undefined);
+                        }
+                      }}
+                      disabled={isFormBusy}
+                      className="flex size-11 shrink-0 items-center justify-center rounded-touch text-secondary-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 md:size-6 md:rounded-sm"
+                    >
+                      <X className="size-3.5 md:size-3" strokeWidth={1.8} aria-hidden="true" />
+                    </button>
+                  </span>
+                </div>
+              ) : (
+                <FileUploader
+                  accept="audio/*"
+                  purpose="COMMUNITY_POST_AUDIO"
+                  draftOperationId={operationId}
+                  label="오디오 파일 선택 (MP3, WAV, FLAC)"
+                  onUploadComplete={(upload) => {
+                    setMediaUrl(upload.deliveryUrl);
+                    setMediaObjectId(upload.mediaObjectId);
+                    setUploadError("");
+                  }}
+                  onError={setUploadError}
+                  onUploadingChange={(uploading) => {
+                    if (uploading) setUploadError("");
+                    setIsUploading(uploading);
+                  }}
+                  disabled={!loaded || isFormBusy}
+                />
+              )}
+              {uploadError ? <p role="alert" className="text-ui text-destructive">{uploadError}</p> : null}
+            </div>
+          ) : null}
+
+          <label className="flex flex-col gap-1.5 text-body font-medium text-secondary-foreground md:text-ui" htmlFor="post-title">
+            <span>
+              제목 <span className="sr-only">필수</span>
+            </span>
+            <Input
+              id="post-title"
+              name="title"
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+              placeholder="게시물 제목"
+              required
+              disabled={!loaded || isFormBusy}
+              className="h-12 px-3.5 font-normal md:h-10 md:px-3 md:text-md"
+            />
+          </label>
+
+          <div className="flex flex-col gap-1.5">
+            <span className="text-body font-medium text-secondary-foreground md:text-ui">
+              내용 <span className="sr-only">필수</span>
+            </span>
+            {loaded ? (
+              <FullEditor
+                onUploadingChange={setIsEditorUploading}
+                initialContent={contentHtml}
+                contentVersion={contentVersion}
+                onChange={handleEditorChange}
+                onDirty={(reader) => {
+                  handleEditorDirty(reader);
+                  if (!operationId) return;
+                  save({
+                    operationId,
+                    boardType,
+                    category,
+                    isPinned,
+                    title,
+                    mediaUrl,
+                    get contentHtml() {
+                      return reader();
+                    },
+                  });
+                }}
+                placeholder="게시물 내용을 작성하세요…"
+                disabled={isFormBusy}
+                minHeight="15rem"
+                ariaLabel="커뮤니티 게시물 내용"
+                toolbar="none"
+                footer={
+                  <DraftStatus
+                    status={status}
+                    canSubmit={canSubmit}
+                    savedAt={savedAt}
+                    restored={restored}
+                    recoveries={recoveries}
+                    onRestoreRecovery={restoreRecovery}
+                    onDiscardRecovery={discardRecovery}
+                    serverSync={serverSync}
+                    disabled={isFormBusy}
+                  />
+                }
+                saveShortcutLabel={canSubmit ? "초안 저장" : undefined}
+              />
+            ) : null}
+          </div>
+
+          {/* 좁은 화면은 아래 고정 막대의 48px 주 버튼, 넓은 화면은 오른쪽 정렬 취소·게시 */}
+          <div className="sticky bottom-0 -mx-5 border-t border-border bg-background px-5 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-3 md:static md:mx-0 md:flex md:justify-end md:gap-2 md:border-muted md:px-0 md:pb-0 md:pt-2">
             <Link
               href={returnTo}
               aria-disabled={isFormBusy}
               tabIndex={isFormBusy ? -1 : undefined}
-              className={isFormBusy ? "pointer-events-none opacity-50" : undefined}
+              className={cn(buttonClassName({ variant: "outline", className: "hidden h-9 md:inline-flex" }), isFormBusy && "pointer-events-none opacity-50")}
               onClick={(event) => {
                 if (isFormBusy) event.preventDefault();
               }}
             >
               취소
             </Link>
-          </Button>
-        </div>
-      </form>
+            <Button
+              type="submit"
+              size="touch"
+              disabled={isSubmitDisabled}
+              pending={isPending || isRedirecting}
+              className="w-full md:h-9 md:w-auto md:rounded-md md:px-4 md:text-ui"
+            >
+              {isUploading || isEditorUploading ? "업로드 완료 대기…" : isPending || isRedirecting ? "게시 중…" : "게시하기"}
+            </Button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }

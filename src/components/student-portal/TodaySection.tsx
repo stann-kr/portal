@@ -1,24 +1,35 @@
 "use client";
 
 import Link from "next/link";
-import {
-  ArrowRight,
-  CalendarDays,
-  FileText,
-  HelpCircle,
-  ListMusic,
-  MessageSquareText,
-  MessagesSquare,
-} from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { EmptyState } from "@/components/ui/empty-state";
-import { SectionHeader } from "@/components/ui/section-header";
-import { StatusBadge } from "@/components/ui/status-badge";
-import { getStudentTodaySummary } from "@/lib/student-today";
-import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
+import { formatKst } from "@/lib/kst-format";
+import { buildNoteCreateHref } from "@/lib/note-create-route";
 import { buildQnaListHref } from "@/lib/qna-routes";
-import { buildStudentDiggingBoardHref } from "@/lib/student-space-routes";
-import { formatKst, formatKstShortDate } from "@/lib/kst-format";
+import {
+  getStudentRecentNotes,
+  getStudentTodayAgenda,
+  getStudentTodaySummary,
+  getStudentTodoEntries,
+  getStudentUpcomingSchedule,
+  toKstDayKey,
+} from "@/lib/student-today";
+import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
+import { cn } from "@/lib/utils";
+import { AgendaRow } from "./today/AgendaRow";
+import { formatKstDot } from "@/lib/kst-format";
+import { formatAgendaWhen, formatHomeTime, formatUpcomingDay } from "./today/format";
+import {
+  LEDGER_HEADER_LINK_CLASS,
+  LEDGER_HEADER_NOTE_CLASS,
+  LEDGER_INLINE_LINK_CLASS,
+  LEDGER_ROW_CLASS,
+  LedgerEmptyRow,
+  LedgerSection,
+  LedgerSectionHeader,
+} from "./today/HomeSection";
+import { QuickActions } from "./today/QuickActions";
+import { RecentNotesList } from "./today/RecentNotesList";
+import { TodoList } from "./today/TodoList";
+import { WithinPageLink } from "./today/WithinPageLink";
 
 type Post = {
   id: string;
@@ -27,25 +38,22 @@ type Post = {
   createdAt: Date | null;
 };
 
+const TODAY_PATH = "/dashboard/student?section=today";
+const CALENDAR_HREF = "/dashboard/student?section=workspace";
+const NOTES_HREF = "/dashboard/student/notes";
+const ANNOUNCEMENTS_HREF = "/community?boardType=ANNOUNCEMENT";
+
+/**
+ * 좁은 화면은 한 줄(오늘 → 할 일 → 최근 노트 → 다가오는 일정 → 공지), 넓은 화면은 두 열(Main·MobileHome 보드).
+ * 좁은 화면에서는 두 열 묶음을 풀어(`contents`) 문서 순서 그대로 한 줄로 놓는다.
+ */
+const COLUMN_CLASS = "contents md:flex md:min-w-0 md:flex-col md:gap-10";
+
+type Layout = "narrow" | "wide";
+const LAYOUT_ONLY_CLASS: Record<Layout, string> = { narrow: "md:hidden", wide: "max-md:hidden" };
+
 function formatDay(date: Date) {
   return formatKst(date, { month: "long", day: "numeric", weekday: "long" });
-}
-
-function formatCueDate(date: Date) {
-  return formatKst(date, {
-    month: "long",
-    day: "numeric",
-    weekday: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-function cueTypeLabel(item: UnifiedItem) {
-  if (item.subType === "LESSON") return "다음 레슨";
-  if (item.subType === "PRACTICE") return "다음 연습";
-  if (item.subType === "GIG") return "다음 공연·행사";
-  return "다음 일정";
 }
 
 export function TodaySection({
@@ -53,23 +61,18 @@ export function TodaySection({
   unifiedItems,
   displayName,
   referenceTime,
-  onOpenWorkspace,
 }: {
   announcements: Post[];
   unifiedItems: UnifiedItem[];
   displayName: string;
   referenceTime: Date;
-  onOpenWorkspace: () => void;
 }) {
+  const todayKey = toKstDayKey(referenceTime);
   const summary = getStudentTodaySummary(unifiedItems, referenceTime);
-  const priorityItems = [
-    ...summary.feedbackItems.map((item) => ({ item, status: "feedbackReady" as const })),
-    ...summary.answeredQnaItems.map((item) => ({ item, status: "qnaAnswered" as const })),
-    ...(summary.waitingAssignment
-      ? [{ item: summary.waitingAssignment, status: "feedbackWaiting" as const }]
-      : []),
-    ...summary.openQnaItems.map((item) => ({ item, status: "qnaOpen" as const })),
-  ].slice(0, 5);
+  const agenda = getStudentTodayAgenda(unifiedItems, referenceTime);
+  const upcoming = getStudentUpcomingSchedule(unifiedItems, referenceTime);
+  const recentNotes = getStudentRecentNotes(unifiedItems, referenceTime, 5);
+  const todoEntries = getStudentTodoEntries(summary);
   const recentAnnouncements = [...announcements]
     .sort((a, b) => {
       if (a.isPinned !== b.isPinned) return a.isPinned ? -1 : 1;
@@ -77,174 +80,219 @@ export function TodaySection({
     })
     .slice(0, 3);
   const safeName = displayName.trim() || "학생";
+  const todayNoteHref = buildNoteCreateHref({
+    pathname: "/dashboard/student/notes/new",
+    defaultDate: todayKey,
+    returnTo: TODAY_PATH,
+    returnFallback: TODAY_PATH,
+  });
+  const newNoteHref = buildNoteCreateHref({
+    pathname: "/dashboard/student/notes/new",
+    returnTo: TODAY_PATH,
+    returnFallback: TODAY_PATH,
+  });
+  // 오늘 레슨은 이미 오늘 목록에 있으므로 요약에는 오늘 이후의 다음 레슨만 덧붙인다.
+  // 외부 캘린더 일정은 subType이 LESSON으로 들어오므로 포털 레슨만 레슨으로 부른다.
+  const nextLesson =
+    summary.nextCue?.subType === "LESSON"
+    && summary.nextCue.source.kind === "PORTAL"
+    && toKstDayKey(summary.nextCue.date) !== todayKey
+      ? summary.nextCue
+      : null;
+  const summaryParts = [
+    agenda.length > 0 ? `오늘 항목 ${agenda.length}개` : "오늘은 예정된 항목이 없습니다",
+    todoEntries.length > 0 ? `확인할 일 ${todoEntries.length}개` : null,
+  ].filter(Boolean);
+  const nextLessonLong = nextLesson
+    ? `${formatKst(nextLesson.date, { month: "long", day: "numeric", weekday: "short" })} ${formatHomeTime(nextLesson.date)}`
+    : null;
+
+  // 좁은 화면 순서(오늘 → 할 일 → 최근 노트 → 다가오는 일정 → 공지)가 넓은 화면의 두 열을 오가므로,
+  // 할 일·다가오는 일정은 폭마다 한 벌만 보이게 두 번 둔다. 숨은 벌은 display:none이라 읽기·Tab 순서에 들어가지 않는다.
+  const renderUpcoming = (layout: Layout) => (
+    <LedgerSection labelledBy={`upcoming-heading-${layout}`} className={LAYOUT_ONLY_CLASS[layout]}>
+      <LedgerSectionHeader
+        id={`upcoming-heading-${layout}`}
+        title="다가오는 일정"
+        aside={<span className={LEDGER_HEADER_NOTE_CLASS}>7일</span>}
+      />
+      {upcoming.groups.length === 0 ? (
+        <LedgerEmptyRow>앞으로 7일 동안 예정된 일정이 없습니다.</LedgerEmptyRow>
+      ) : (
+        <>
+          {upcoming.groups.map((group) => {
+            const headingId = `upcoming-day-${layout}-${group.dayKey}`;
+            return (
+              <div key={group.dayKey} className="flex flex-col pt-3">
+                <h3 id={headingId} className="mb-0.5 text-xs font-normal text-muted-foreground md:px-1">
+                  {formatUpcomingDay(group.dayKey, group.offset)}
+                </h3>
+                <ol aria-labelledby={headingId}>
+                  {group.entries.map((entry) => (
+                    <li key={`${entry.item.source.kind}:${entry.item.source.entity}:${entry.item.id}`}>
+                      <AgendaRow
+                        entry={entry}
+                        when={formatAgendaWhen(entry)}
+                        calendarHref={CALENDAR_HREF}
+                        returnTo={TODAY_PATH}
+                        variant="upcoming"
+                      />
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            );
+          })}
+          {upcoming.totalCount > upcoming.shownCount ? (
+            <p className="pt-2 text-xs text-muted-foreground md:px-1">
+              외 {upcoming.totalCount - upcoming.shownCount}개 일정은{" "}
+              <WithinPageLink href={CALENDAR_HREF} className="underline underline-offset-4 hover:text-foreground">
+                캘린더
+              </WithinPageLink>
+              에서 확인할 수 있습니다.
+            </p>
+          ) : null}
+        </>
+      )}
+    </LedgerSection>
+  );
+
+  const renderTodo = (layout: Layout) => (
+    <LedgerSection labelledBy={`todo-heading-${layout}`} className={LAYOUT_ONLY_CLASS[layout]}>
+      <LedgerSectionHeader
+        id={`todo-heading-${layout}`}
+        title="할 일"
+        count={todoEntries.length > 0 ? todoEntries.length : undefined}
+        aside={
+          <Link href={buildQnaListHref(TODAY_PATH)} className={cn(LEDGER_HEADER_LINK_CLASS, "hidden md:flex")}>
+            전체 Q&A
+          </Link>
+        }
+      />
+      {todoEntries.length === 0 ? (
+        <LedgerEmptyRow>지금 확인할 피드백이나 질문이 없습니다.</LedgerEmptyRow>
+      ) : (
+        <TodoList entries={todoEntries} referenceTime={referenceTime} returnTo={TODAY_PATH} />
+      )}
+    </LedgerSection>
+  );
 
   return (
-    <div className="mx-auto w-full max-w-[1180px] space-y-8 px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
-      <div>
-        <p className="text-sm text-muted-foreground">{formatDay(referenceTime)}</p>
-        <h1 className="mt-1 break-words text-2xl font-semibold tracking-[-0.03em] text-foreground sm:text-3xl">
-          {safeName}님, 오늘의 흐름입니다.
-        </h1>
-      </div>
-
-      <section aria-label="다음 일정">
-        {summary.nextCue ? (
-          <div className="grid gap-6 rounded-lg border border-primary/25 bg-surface p-5 sm:p-6 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
-            <div className="min-w-0">
-              <p className="text-sm font-semibold text-primary" id="next-cue-heading">
-                {cueTypeLabel(summary.nextCue)}
-              </p>
-              <p className="mt-3 text-xl font-semibold leading-snug tracking-[-0.02em] text-foreground sm:text-2xl">
-                {summary.nextCue.title}
-              </p>
-              <p className="mt-2 font-mono text-sm tabular-nums text-muted-foreground">
-                {formatCueDate(summary.nextCue.date)}
-              </p>
-              {summary.nextCue.description ? (
-                <p className="mt-3 max-w-[60ch] text-sm leading-6 text-muted-foreground">
-                  {summary.nextCue.description}
-                </p>
-              ) : null}
-            </div>
-            <Button type="button" variant="outline" onClick={onOpenWorkspace}>
-              워크스페이스 열기
-              <ArrowRight className="ml-1.5 size-4" aria-hidden="true" />
-            </Button>
-          </div>
-        ) : (
-          <EmptyState
-            title="예정된 일정이 없습니다"
-            description="워크스페이스에서 다음 레슨이나 연습 일정을 기록할 수 있습니다."
-            action={
-              <Button type="button" variant="outline" onClick={onOpenWorkspace}>
-                일정 추가하기
-              </Button>
-            }
-            icon={<CalendarDays className="size-4" aria-hidden="true" />}
-          />
-        )}
-      </section>
-
-      <div className="grid gap-8 md:grid-cols-[minmax(0,1.35fr)_minmax(17rem,0.65fr)]">
-        <section aria-labelledby="priority-heading" className="min-w-0">
-          <SectionHeader
-            titleId="priority-heading"
-            title="확인할 항목"
-            description="현재 기록된 피드백과 질문 상태만 보여줍니다."
-            className="mb-4"
-          />
-          {priorityItems.length === 0 ? (
-            <EmptyState
-              title="지금 확인할 항목이 없습니다"
-              description="피드백이 등록되거나 질문 상태가 바뀌면 이곳에 표시됩니다."
-              icon={<MessageSquareText className="size-4" aria-hidden="true" />}
-            />
-          ) : (
-            <div className="overflow-hidden rounded-lg border border-border bg-surface">
-              {priorityItems.map(({ item, status }, index) => {
-                const isAssignment = item.type === "ASSIGNMENT";
-                const href = isAssignment
-                  ? `/dashboard/student/assignments/${encodeURIComponent(item.id)}?returnTo=%2Fdashboard%2Fstudent%3Fsection%3Dtoday`
-                  : `/dashboard/qna/${item.id}?returnTo=%2Fdashboard%2Fstudent%3Fsection%3Dtoday`;
-                const title = item.title;
-
-                return (
-                  <Link
-                    key={`${item.type}-${item.id}`}
-                    href={href}
-                    className={`grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2 px-4 py-4 transition-colors hover:bg-muted focus-visible:bg-muted sm:flex sm:gap-3 sm:px-5 ${
-                      index > 0 ? "border-t border-border" : ""
-                    }`}
-                  >
-                    <div className="min-w-0 flex-1">
-                      <p className="line-clamp-2 break-words text-sm font-semibold text-foreground sm:line-clamp-1">{title}</p>
-                      <p className="mt-1 truncate text-xs text-muted-foreground">
-                        {formatKstShortDate(item.date)}{isAssignment ? " 제출" : ""}
-                      </p>
-                    </div>
-                    <div className="col-start-1 row-start-2 sm:contents"><StatusBadge status={status} /></div>
-                    <ArrowRight className="col-start-2 row-start-1 row-span-2 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-                  </Link>
-                );
-              })}
-            </div>
-          )}
-        </section>
-
-        <section aria-labelledby="quick-record-heading" className="min-w-0">
-          <SectionHeader
-            titleId="quick-record-heading"
-            title="빠른 기록"
-            description="생각이 사라지기 전에 바로 남겨보세요."
-            className="mb-4"
-          />
-          <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-1">
-            <Button asChild variant="outline" className="h-auto justify-start px-4 py-3">
-              <Link href="/dashboard/student/notes/new?returnTo=%2Fdashboard%2Fstudent%3Fsection%3Dtoday">
-                <FileText className="mr-2 size-4 text-primary" aria-hidden="true" />
-                노트 작성
-              </Link>
-            </Button>
-            <Button asChild variant="outline" className="h-auto justify-start px-4 py-3">
-              <Link href="/dashboard/qna/new?returnTo=%2Fdashboard%2Fstudent%3Fsection%3Dtoday">
-                <HelpCircle className="mr-2 size-4 text-primary" aria-hidden="true" />
-                질문 작성
-              </Link>
-            </Button>
-            <Button asChild variant="outline" className="h-auto justify-start px-4 py-3">
-              <Link href={buildStudentDiggingBoardHref("/dashboard/student?section=today")}>
-                <ListMusic className="mr-2 size-4 text-primary" aria-hidden="true" />
-                디깅 보드
-              </Link>
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              className="h-auto justify-start px-4 py-3"
-              onClick={onOpenWorkspace}
-            >
-              <CalendarDays className="mr-2 size-4 text-primary" aria-hidden="true" />
-              일정 열기
-            </Button>
-            <Button asChild variant="ghost" className="h-auto justify-start px-4 py-3 text-muted-foreground sm:col-span-2 md:col-span-1">
-              <Link href={buildQnaListHref("/dashboard/student?section=today")}>
-                <MessagesSquare className="mr-2 size-4" aria-hidden="true" />
-                Q&A 전체 보기
-              </Link>
-            </Button>
-          </div>
-        </section>
-      </div>
-
-      <section aria-labelledby="announcement-heading">
-        <SectionHeader titleId="announcement-heading" title="최근 공지" className="mb-4" />
-        {recentAnnouncements.length === 0 ? (
-          <p className="rounded-lg border border-dashed border-border px-5 py-6 text-sm text-muted-foreground">
-            등록된 공지가 없습니다.
+    <div className="px-5 pb-8 pt-6 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-14">
+      <div className="flex max-w-[1040px] flex-col gap-7 md:gap-10">
+        <header className="flex flex-col gap-1.5 md:gap-2">
+          <p className="font-mono text-xs text-muted-foreground">{formatDay(referenceTime)}</p>
+          <h1 className="break-words text-mobile-title font-semibold tracking-display text-foreground md:text-display">
+            {safeName}님, 오늘의 흐름입니다.
+          </h1>
+          <p className="text-body text-secondary-foreground">
+            {summaryParts.join(" · ")}
+            {nextLessonLong ? <span className="hidden md:inline"> · 다음 레슨 {nextLessonLong}</span> : null}
           </p>
-        ) : (
-          <div className="grid gap-3 md:grid-cols-3">
-            {recentAnnouncements.map((post) => (
-              <Link
-                key={post.id}
-                href={`/community/${post.id}?returnTo=%2Fdashboard%2Fstudent%3Fsection%3Dtoday`}
-                className="group min-w-0 rounded-lg border border-border bg-surface px-4 py-4 transition-[border-color,background-color,transform] hover:border-primary/30 hover:bg-accent/40 active:translate-y-px"
-              >
-                <p className="line-clamp-2 text-sm font-semibold leading-6 text-foreground">
-                  {post.title}
-                </p>
-                <div className="mt-3 flex items-center justify-between gap-3 text-xs text-muted-foreground">
-                  <span>{post.isPinned ? "고정 공지" : formatKstShortDate(post.createdAt)}</span>
-                  <ArrowRight
-                    className="size-3.5 transition-transform group-hover:translate-x-0.5"
-                    aria-hidden="true"
-                  />
-                </div>
-              </Link>
-            ))}
+          {nextLesson ? (
+            <p className="mt-1 flex items-center gap-2 text-ui text-secondary-foreground md:hidden">
+              <span className="size-1.5 shrink-0 rounded-full bg-event-lesson" aria-hidden="true" />
+              다음 레슨
+              <span className="font-mono text-xs text-foreground">
+                {formatKstDot(nextLesson.date, { weekday: true, time: true, referenceTime })}
+              </span>
+            </p>
+          ) : null}
+          <QuickActions newNoteHref={newNoteHref} returnTo={TODAY_PATH} />
+        </header>
+
+        <div className="flex flex-col gap-7 md:flex-row md:flex-wrap md:items-start md:gap-x-14 md:gap-y-12">
+          <div className={cn(COLUMN_CLASS, "md:flex-[2_1_480px]")}>
+            <LedgerSection labelledBy="today-agenda-heading">
+              <LedgerSectionHeader
+                id="today-agenda-heading"
+                title="오늘"
+                count={agenda.length > 0 ? agenda.length : undefined}
+                aside={
+                  <WithinPageLink href={CALENDAR_HREF} className={LEDGER_HEADER_LINK_CLASS}>
+                    <span className="md:hidden">캘린더</span>
+                    <span className="hidden md:inline">캘린더 열기</span>
+                  </WithinPageLink>
+                }
+              />
+              {agenda.length === 0 ? (
+                <LedgerEmptyRow
+                  actions={<Link href={todayNoteHref} className={LEDGER_INLINE_LINK_CLASS}>오늘 노트 쓰기</Link>}
+                >
+                  오늘 예정된 일정이나 노트가 없습니다.
+                </LedgerEmptyRow>
+              ) : (
+                <ol>
+                  {agenda.map((entry) => (
+                    <li key={`${entry.item.source.kind}:${entry.item.source.entity}:${entry.item.id}`}>
+                      <AgendaRow
+                        entry={entry}
+                        when={formatAgendaWhen(entry)}
+                        calendarHref={CALENDAR_HREF}
+                        returnTo={TODAY_PATH}
+                      />
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </LedgerSection>
+
+            {renderTodo("narrow")}
+            {renderUpcoming("wide")}
+
+            <LedgerSection labelledBy="recent-notes-heading">
+              <LedgerSectionHeader
+                id="recent-notes-heading"
+                title="최근 노트"
+                aside={<Link href={NOTES_HREF} className={LEDGER_HEADER_LINK_CLASS}>모든 노트</Link>}
+              />
+              {recentNotes.length === 0 ? <LedgerEmptyRow>아직 작성한 노트가 없습니다.</LedgerEmptyRow> : null}
+              <RecentNotesList
+                notes={recentNotes}
+                referenceTime={referenceTime}
+                returnTo={TODAY_PATH}
+                newNoteHref={newNoteHref}
+              />
+            </LedgerSection>
           </div>
-        )}
-      </section>
+
+          <div className={cn(COLUMN_CLASS, "md:flex-[1_1_280px]")}>
+            {renderTodo("wide")}
+            {renderUpcoming("narrow")}
+
+            <LedgerSection labelledBy="announcement-heading">
+              <LedgerSectionHeader
+                id="announcement-heading"
+                title="공지"
+                aside={<Link href={ANNOUNCEMENTS_HREF} className={LEDGER_HEADER_LINK_CLASS}>전체</Link>}
+              />
+              {recentAnnouncements.length === 0 ? (
+                <LedgerEmptyRow>등록된 공지가 없습니다.</LedgerEmptyRow>
+              ) : (
+                <ul>
+                  {recentAnnouncements.map((post) => {
+                    const date = formatKstDot(post.createdAt, { referenceTime });
+                    return (
+                      <li key={post.id}>
+                        <Link
+                          href={`/community/${post.id}?returnTo=${encodeURIComponent(TODAY_PATH)}`}
+                          className={cn(LEDGER_ROW_CLASS, "flex flex-col gap-0.5 py-3 md:px-1")}
+                        >
+                          <span className="line-clamp-2 break-words text-md md:text-body">{post.title}</span>
+                          <span className="text-xs text-muted-foreground">
+                            {post.isPinned ? `고정${date ? " · " : ""}` : null}
+                            <span className="font-mono">{date}</span>
+                          </span>
+                        </Link>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </LedgerSection>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

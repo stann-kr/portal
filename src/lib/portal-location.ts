@@ -8,9 +8,20 @@ import {
 export type PortalSearchParams = Record<string, string | string[] | undefined>;
 
 const SECTIONS = {
-  student: ["today", "workspace", "community"],
-  admin: ["work", "students", "schedule", "announcements", "community"],
+  student: ["today", "workspace"],
+  admin: ["work", "students", "schedule"],
 } as const;
+
+/**
+ * 커뮤니티·공지는 `/community` 한 곳에 있다. 예전 포털 구역 주소(`?section=community`, 관리자 `?section=announcements`)는
+ * 같은 내용을 여는 커뮤니티 주소로 보낸다. 해당하지 않으면 null.
+ */
+export function legacyPortalSectionRedirect(params: PortalSearchParams): string | null {
+  const section = firstSearchValue(params.section);
+  if (section === "community") return "/community";
+  if (section === "announcements") return "/community?boardType=ANNOUNCEMENT";
+  return null;
+}
 
 export type PortalSection<Role extends CalendarWorkspaceRole> = (typeof SECTIONS)[Role][number];
 

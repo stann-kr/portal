@@ -64,7 +64,7 @@ test("roster 통계는 large fixture도 학생별 반복 scan 없이 고정 4개
   assert.equal(rows.length, 123);
   assert.equal(byId.get("student-none")?.currentModule, "진도 미지정");
   assert.equal(byId.get("student-complete")?.currentModule, "모든 과정 완료");
-  assert.equal(byId.get("student-open")?.currentModule, "1주차: 기초");
+  assert.equal(byId.get("student-open")?.currentModule, "WEEK 01 · 기초");
   assert.equal(byId.get("student-open")?.nextLessonDate?.getTime(), (nowEpoch + 100) * 1_000);
   assert.equal(byId.get("student-open")?.pendingFeedbackCount, 1);
   assert.equal(selectStatements.length, 4);

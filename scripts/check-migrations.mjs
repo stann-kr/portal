@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { validateDocumentImageUpgrade } from "./migration-check/document-images.mjs";
 import { readdirSync } from "node:fs";
 import {
   applyMigrations,
@@ -153,6 +154,8 @@ async function main() {
   console.log("PASS populated 0011 → 0012 account privacy upgrade and rollback probes");
   await validateExternalCalendarSubscriptionUpgrade(migrationFiles);
   console.log("PASS populated 0012 → 0013 external calendar upgrade, constraints and owner cascade");
+  await validateDocumentImageUpgrade(migrationFiles);
+  console.log("PASS populated 0013 → 0014 document image upgrade, trigger rebuild and purpose constraints");
 }
 
 try {

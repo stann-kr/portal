@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import Script from "next/script";
 import { Button } from "@/components/ui/button";
+import { OriginalLink } from "./OriginalLink";
 import type { MediaSeekRequest, PlaybackPositionReader } from "./VideoPlayer";
 
 type SoundCloudWidget = {
@@ -25,6 +26,10 @@ type SoundCloudPlayerProps = {
   seekRequest?: MediaSeekRequest;
   onPositionReaderChange?: (reader: PlaybackPositionReader | null) => void;
 };
+
+function readSoundCloudApi(): SoundCloudApi | undefined {
+  return (window as Window & { SC?: SoundCloudApi }).SC;
+}
 
 // widget이 응답하지 않으면 피드백 입력을 막지 않도록 짧게 포기한다.
 const POSITION_READ_TIMEOUT_MS = 1_500;
@@ -49,8 +54,9 @@ function SoundCloudEmbed({ url, seekRequest, onPositionReaderChange, onRetry }: 
   // The SDK posts to the iframe during unbind. Dispose before React removes it.
   useLayoutEffect(() => {
     if (!sdkReady || !iframeRef.current) return;
-    const api = (window as Window & { SC?: SoundCloudApi }).SC;
-    if (!api) { setError(true); return; }
+    const api = readSoundCloudApi();
+    // SDK가 준비됐는데 전역 API가 없으면 onReady에서 이미 오류로 표시했다.
+    if (!api) return;
     let active = true;
     const widget = api.Widget(iframeRef.current);
     widgetRef.current = widget;
@@ -104,17 +110,20 @@ function SoundCloudEmbed({ url, seekRequest, onPositionReaderChange, onRetry }: 
   }, [applySeek, seekRequest]);
 
   return <>
-    <Script src="https://w.soundcloud.com/player/api.js" onReady={() => setSdkReady(true)} onError={() => setError(true)} />
+    <Script src="https://w.soundcloud.com/player/api.js" onReady={() => {
+      if (readSoundCloudApi()) setSdkReady(true);
+      else setError(true);
+    }} onError={() => setError(true)} />
     <iframe
       ref={iframeRef}
       title="SoundCloud 믹스셋 플레이어"
       src={`https://w.soundcloud.com/player/?${new URLSearchParams({ url, auto_play: "false", show_artwork: "true", visual: "false" })}`}
       allow="autoplay"
       hidden={error}
-      className="h-[166px] w-full rounded-xl border border-border"
+      className="h-[166px] w-full md:rounded-lg"
     />
-    {error && <div role="alert" className="flex min-h-[166px] flex-col items-start justify-center gap-3 rounded-xl border border-border bg-muted/20 p-4 text-sm">
-      <p>SoundCloud에 연결하지 못했습니다. 다시 불러오거나 원본 링크에서 재생해 주세요.</p>
+    {error && <div role="alert" className="flex min-h-[166px] flex-col items-start justify-center gap-3 bg-sidebar px-5 py-4 text-ui md:rounded-lg md:border md:border-border md:px-4">
+      <p>SoundCloud에 연결하지 못했습니다. 다시 불러오거나 <OriginalLink url={url} />에서 재생해 주세요.</p>
       <Button type="button" variant="outline" onClick={onRetry}>플레이어 다시 불러오기</Button>
     </div>}
   </>;

@@ -1,12 +1,11 @@
 /**
  * @file src/components/admin-portal/AdminPortalClient.tsx
  * @description 어드민 원페이지 포털 오케스트레이터.
- * 5개 섹션(업무함 / 학생 / 일정 / 공지 / 커뮤니티)을 navigation으로 전환.
+ * 3개 섹션(업무함 / 학생 / 일정)을 navigation으로 전환. 공지·커뮤니티는 /community가 맡는다.
  */
 "use client";
 
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
-import { CalendarDays, Inbox, Megaphone, MessagesSquare, Users } from "lucide-react";
 import { getUnifiedItemKey, upsertUnifiedItems, type UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 import type { StudentRosterStat } from "@/lib/actions/students";
 import type {
@@ -22,9 +21,7 @@ import { PortalShell } from "@/components/ui/portal-shell";
 import type { PortalLocation, PortalSection } from "@/lib/portal-location";
 
 // ── 섹션 컴포넌트
-import { AnnouncementSection } from "@/components/student-portal/AnnouncementSection";
 import { CalendarSection } from "@/components/student-portal/CalendarSection";
-import { CommunitySection } from "@/components/student-portal/CommunitySection";
 import { StudentManagementSection } from "./StudentManagementSection";
 import { StudentFilterDropdown } from "./StudentFilterDropdown";
 import { AdminWorkQueueSection } from "./AdminWorkQueueSection";
@@ -33,59 +30,33 @@ import { AdminWorkQueueSection } from "./AdminWorkQueueSection";
 
 type Section = PortalSection<"admin">;
 
-type Post = {
-  id: string;
-  title: string;
-  contentHtml: string;
-  isPinned: boolean;
-  authorName: string | null;
-  authorEmail: string | null;
-  createdAt: Date | null;
-  version: number;
-};
-
-type CommunityPost = {
-  id: string;
-  title: string;
-  boardType: string;
-  isPinned: boolean;
-  authorName: string | null;
-  authorEmail: string | null;
-  createdAt: Date | null;
-};
-
 export interface AdminPortalClientProps {
   initialLocation?: PortalLocation<"admin">;
   initialStudentId?: string;
-  announcements: Post[];
   initialUnifiedItems: UnifiedItem[];
   students: StudentRosterStat[];
-  communityPosts: CommunityPost[];
   adminId: string;
   qnaThreads: AdminQueueThread[];
   pendingAssignments: PendingFeedbackAssignment[];
   referenceTime: Date;
 }
 
-// ── 탭 정의 ──────────────────────────────────────
+// ── 구역 정의 ────────────────────────────────────
 
-const TABS: { id: Section; label: string; Icon: React.ElementType }[] = [
-  { id: "work", label: "업무함", Icon: Inbox },
-  { id: "students", label: "학생", Icon: Users },
-  { id: "schedule", label: "일정", Icon: CalendarDays },
-  { id: "announcements", label: "공지", Icon: Megaphone },
-  { id: "community", label: "커뮤니티", Icon: MessagesSquare },
+/** 사이드바가 이동을 맡고, 여기서는 주소로 열 수 있는 구역만 정한다. */
+const SECTIONS: readonly { id: Section }[] = [
+  { id: "work" },
+  { id: "students" },
+  { id: "schedule" },
 ];
 
 // ── 컴포넌트 ─────────────────────────────────────
 
 export function AdminPortalClient({
   initialLocation,
-  announcements,
   initialUnifiedItems,
   students,
   initialStudentId = students[0]?.id ?? "",
-  communityPosts,
   adminId,
   qnaThreads,
   pendingAssignments,
@@ -196,12 +167,11 @@ export function AdminPortalClient({
 
   return (
     <PortalShell
-      items={TABS}
+      items={SECTIONS}
       initialItem={initialLocation?.section ?? "work"}
       storageKey="adminPortal:section"
       urlParamKey="section"
       ariaLabel="관리자 포털"
-      endSlot={<p className="hidden text-xs font-medium text-foreground sm:block">관리자</p>}
     >
       {(activeSection, changeSection) => (
         <>
@@ -211,19 +181,8 @@ export function AdminPortalClient({
               threads={qnaThreads}
               pendingAssignments={pendingAssignments}
               referenceTime={referenceTime}
-              onOpenStudents={() => changeSection("students")}
               onOpenSchedule={() => changeSection("schedule")}
             />
-          )}
-
-          {activeSection === "announcements" && (
-            <div className="mx-auto max-w-3xl p-4 sm:p-6">
-              <AnnouncementSection
-                posts={announcements}
-                returnTo="/dashboard/admin?section=announcements"
-                isAdmin
-              />
-            </div>
           )}
 
           <div hidden={activeSection !== "schedule"} className="h-full">
@@ -260,16 +219,6 @@ export function AdminPortalClient({
               }
             />
           </div>
-
-          {activeSection === "community" && (
-            <div className="mx-auto max-w-4xl p-4 sm:p-6">
-              <CommunitySection
-                initialPosts={communityPosts}
-                returnTo="/dashboard/admin?section=community"
-                manageHref="/dashboard/admin/categories"
-              />
-            </div>
-          )}
 
           {activeSection === "students" && (
             <StudentManagementSection
