@@ -337,9 +337,78 @@ export function OverviewTab({
         </div>
       ) : null}
 
-      {/* 좁은 화면은 레슨 일정을 맨 위로 올린다. 레슨 구역은 추가 폼·삭제 확인 상태를 가져 두 벌로 둘 수 없으므로
-          order로 옮기고, reading-flow로 지원 브라우저의 Tab·읽기 순서를 화면 순서에 맞춘다. */}
-      <div className="flex min-w-0 flex-col gap-6 max-md:[reading-flow:flex-visual] md:flex-[2_1_480px] md:gap-10">
+      {/* 레슨 일정 → 커리큘럼(두 폭 모두 같은 순서라 문서 순서가 화면 순서다). */}
+      <div className="flex min-w-0 flex-col gap-6 md:flex-[2_1_480px] md:gap-10">
+        {/* 레슨 일정 */}
+        <LedgerSection labelledBy="lessons-heading">
+          <LedgerSectionHeader
+            id="lessons-heading"
+            title="레슨 일정"
+            aside={<Link href={scheduleHref} className={cn(LEDGER_HEADER_LINK_CLASS, "hidden md:flex")}>캘린더에서 보기</Link>}
+          />
+          {orderedLessons.length === 0 ? (
+            <LedgerEmptyRow>등록된 레슨이 없습니다.</LedgerEmptyRow>
+          ) : (
+            <ul>
+              {orderedLessons.map((l) => {
+                const lessonLabel = formatKst(l.scheduledAt, { year: "numeric", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" });
+                return (
+                  <li key={l.id} className="group border-b border-muted">
+                    <div className="flex h-12 items-center gap-3 md:h-11 md:gap-3.5 md:px-1">
+                      <span
+                        className={cn(
+                          "min-w-35 shrink-0 font-mono text-ui md:min-w-40",
+                          l.past ? "text-muted-foreground" : "text-foreground",
+                        )}
+                      >
+                        {formatKstDot(l.scheduledAt, { weekday: true, time: true, referenceTime: reference })}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{l.note}</span>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={(event) => lessonDeleteConfirm.request(event.currentTarget, l.id)}
+                        disabled={isPending}
+                        aria-expanded={lessonDeleteConfirm.value === l.id}
+                        aria-label={`${lessonLabel} 레슨 삭제`}
+                        className={cn(rowIconClass, "text-destructive hover:text-destructive")}
+                      >
+                        <Trash2 className="size-4" strokeWidth={1.6} aria-hidden="true" />
+                      </Button>
+                    </div>
+                    {lessonDeleteConfirm.value === l.id ? (
+                      <ConfirmPanel
+                        confirm={lessonDeleteConfirm}
+                        message={`${lessonLabel} 레슨을 삭제할까요? 학생의 일정과 구독 캘린더에서도 사라집니다.`}
+                        confirmLabel="레슨 삭제 확인"
+                        pendingLabel="삭제 중..."
+                        pending={isPending}
+                        onConfirm={() => handleDeleteLesson(l.id)}
+                        className="mb-3"
+                      />
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+
+          {addingLesson ? (
+            <AddLessonForm
+              studentId={studentId}
+              onClose={() => {
+                setAddingLesson(false);
+                focusAfterClose("lesson-add-trigger");
+              }}
+            />
+          ) : (
+            <button id="lesson-add-trigger" type="button" className={LEDGER_ADD_ROW_CLASS} onClick={() => setAddingLesson(true)}>
+              <Plus className="size-4 md:size-3.5" strokeWidth={1.8} aria-hidden="true" />
+              레슨 추가
+            </button>
+          )}
+        </LedgerSection>
+
         {/* 커리큘럼 */}
         <LedgerSection labelledBy="curriculum-heading">
           <LedgerSectionHeader
@@ -424,76 +493,6 @@ export function OverviewTab({
             <button id="module-add-trigger" type="button" className={LEDGER_ADD_ROW_CLASS} onClick={() => setAddingModule(true)}>
               <Plus className="size-4 md:size-3.5" strokeWidth={1.8} aria-hidden="true" />
               모듈 추가
-            </button>
-          )}
-        </LedgerSection>
-
-        {/* 레슨 일정 */}
-        <LedgerSection labelledBy="lessons-heading" className="max-md:order-first">
-          <LedgerSectionHeader
-            id="lessons-heading"
-            title="레슨 일정"
-            aside={<Link href={scheduleHref} className={cn(LEDGER_HEADER_LINK_CLASS, "hidden md:flex")}>캘린더에서 보기</Link>}
-          />
-          {orderedLessons.length === 0 ? (
-            <LedgerEmptyRow>등록된 레슨이 없습니다.</LedgerEmptyRow>
-          ) : (
-            <ul>
-              {orderedLessons.map((l) => {
-                const lessonLabel = formatKst(l.scheduledAt, { year: "numeric", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" });
-                return (
-                  <li key={l.id} className="group border-b border-muted">
-                    <div className="flex h-12 items-center gap-3 md:h-11 md:gap-3.5 md:px-1">
-                      <span
-                        className={cn(
-                          "min-w-35 shrink-0 font-mono text-ui md:min-w-40",
-                          l.past ? "text-muted-foreground" : "text-foreground",
-                        )}
-                      >
-                        {formatKstDot(l.scheduledAt, { weekday: true, time: true, referenceTime: reference })}
-                      </span>
-                      <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{l.note}</span>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={(event) => lessonDeleteConfirm.request(event.currentTarget, l.id)}
-                        disabled={isPending}
-                        aria-expanded={lessonDeleteConfirm.value === l.id}
-                        aria-label={`${lessonLabel} 레슨 삭제`}
-                        className={cn(rowIconClass, "text-destructive hover:text-destructive")}
-                      >
-                        <Trash2 className="size-4" strokeWidth={1.6} aria-hidden="true" />
-                      </Button>
-                    </div>
-                    {lessonDeleteConfirm.value === l.id ? (
-                      <ConfirmPanel
-                        confirm={lessonDeleteConfirm}
-                        message={`${lessonLabel} 레슨을 삭제할까요? 학생의 일정과 구독 캘린더에서도 사라집니다.`}
-                        confirmLabel="레슨 삭제 확인"
-                        pendingLabel="삭제 중..."
-                        pending={isPending}
-                        onConfirm={() => handleDeleteLesson(l.id)}
-                        className="mb-3"
-                      />
-                    ) : null}
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-
-          {addingLesson ? (
-            <AddLessonForm
-              studentId={studentId}
-              onClose={() => {
-                setAddingLesson(false);
-                focusAfterClose("lesson-add-trigger");
-              }}
-            />
-          ) : (
-            <button id="lesson-add-trigger" type="button" className={LEDGER_ADD_ROW_CLASS} onClick={() => setAddingLesson(true)}>
-              <Plus className="size-4 md:size-3.5" strokeWidth={1.8} aria-hidden="true" />
-              레슨 추가
             </button>
           )}
         </LedgerSection>
