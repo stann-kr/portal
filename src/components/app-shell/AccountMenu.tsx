@@ -6,8 +6,8 @@ import { Ellipsis, FileText, KeyRound, LogOut, Trash2 } from "lucide-react";
 import { AccountDeletionControl } from "@/components/auth/AccountDeletionControl";
 import { LocalDraftManager, type AccountDialogHandle } from "@/components/auth/LocalDraftManager";
 import { PasswordChangeControl } from "@/components/auth/PasswordChangeControl";
+import { useLogoutSubmit } from "@/components/auth/useLogoutSubmit";
 import { logoutCurrentUser } from "@/lib/actions/session";
-import { clearLocalDocumentDraftsForLogout } from "@/lib/local-draft-continuity-client";
 import { cn } from "@/lib/utils";
 
 type MenuChoice = "drafts" | "password" | "delete" | "logout";
@@ -39,6 +39,8 @@ export function AccountMenu({
   const passwordRef = useRef<AccountDialogHandle>(null);
   const deleteRef = useRef<AccountDialogHandle>(null);
   const logoutFormRef = useRef<HTMLFormElement>(null);
+  // 서버 초안 폐기 요청을 먼저 보낸 뒤(최대 3초) 로컬 초안을 지우고 로그아웃한다.
+  const { onSubmit: onLogoutSubmit } = useLogoutSubmit(ownerId);
 
   const choose = (choice: MenuChoice) => {
     pendingChoice.current = choice;
@@ -112,14 +114,7 @@ export function AccountMenu({
       <LocalDraftManager ownerId={ownerId} controlRef={draftsRef} hideTrigger />
       <PasswordChangeControl controlRef={passwordRef} hideTrigger />
       {canDeleteAccount ? <AccountDeletionControl ownerId={ownerId} controlRef={deleteRef} hideTrigger /> : null}
-      <form
-        ref={logoutFormRef}
-        action={logoutCurrentUser}
-        onSubmit={() => {
-          clearLocalDocumentDraftsForLogout(ownerId);
-        }}
-        hidden
-      />
+      <form ref={logoutFormRef} action={logoutCurrentUser} onSubmit={onLogoutSubmit} hidden />
     </>
   );
 }

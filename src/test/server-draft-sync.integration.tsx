@@ -127,12 +127,30 @@ mock.module("@/lib/actions/documentDrafts", {
   },
 });
 
+// 로그아웃 action이 불릴 때 이 기기의 초안·대기열이 이미 지워졌는지 기록한다.
+let logoutCalls: { queueRaw: string | null; localDraft: string | null }[] = [];
+let logoutProbeKeys: { queueKey: string; sourceKey: string } | null = null;
+
+mock.module("@/lib/actions/session", {
+  namedExports: {
+    logoutCurrentUser: async () => {
+      const storage = globalThis.window.localStorage;
+      logoutCalls.push({
+        queueRaw: logoutProbeKeys ? storage.getItem(logoutProbeKeys.queueKey) : null,
+        localDraft: logoutProbeKeys ? storage.getItem(logoutProbeKeys.sourceKey) : null,
+      });
+    },
+  },
+});
+
 let useSyncedFormDraft: typeof import("@/lib/hooks/useSyncedFormDraft").useSyncedFormDraft;
 let DraftStatus: typeof import("@/components/editor/DraftStatus").DraftStatus;
+let LogoutTextButton: typeof import("@/components/auth/LogoutTextButton").LogoutTextButton;
 
 before(async () => {
   ({ useSyncedFormDraft } = await import("@/lib/hooks/useSyncedFormDraft"));
   ({ DraftStatus } = await import("@/components/editor/DraftStatus"));
+  ({ LogoutTextButton } = await import("@/components/auth/LogoutTextButton"));
 });
 
 after(() => mock.restoreAll());
@@ -148,6 +166,7 @@ const GLOBAL_BINDINGS = [
   "HTMLElement",
   "MutationObserver",
   "getComputedStyle",
+  "FormData",
   "IS_REACT_ACT_ENVIRONMENT",
   "React",
 ] as const;
@@ -168,6 +187,7 @@ function installBrowserGlobals(browserWindow: Window): () => void {
     HTMLElement: browserWindow.HTMLElement,
     MutationObserver: browserWindow.MutationObserver,
     getComputedStyle: browserWindow.getComputedStyle.bind(browserWindow),
+    FormData: browserWindow.FormData,
     IS_REACT_ACT_ENVIRONMENT: true,
     React,
   };
@@ -256,6 +276,17 @@ async function createHarness(context: TestContext, sourceKey: string, seed?: (st
   };
 }
 
+/** harness 정리(전역 해제)보다 먼저 내려야 하므로 테스트 안에서 unmount한다. */
+async function renderLogoutButton(browserWindow: Window, ownerId: string) {
+  const container = browserWindow.document.createElement("div");
+  browserWindow.document.body.append(container);
+  const root = createRoot(container as unknown as Element);
+  await act(async () => root.render(<LogoutTextButton ownerId={ownerId} label="로그아웃" />));
+  const button = container.querySelector("button");
+  assert.ok(button, "로그아웃 버튼이 있어야 합니다.");
+  return { button, unmount: () => act(async () => root.unmount()) };
+}
+
 function resetServerMock(): void {
   remoteDraft = null;
   saveMode = "success";
@@ -265,6 +296,8 @@ function resetServerMock(): void {
   readFails = false;
   beforeSaveCommit = null;
   afterDiscardCommit = null;
+  logoutCalls = [];
+  logoutProbeKeys = null;
 }
 
 test("terminal owner lock은 late peer draft write와 server action을 막고 hook refs를 비운다", { concurrency: false }, async (context) => {
@@ -456,6 +489,60 @@ test("제출 성공 clear는 대기 중 UPSERT를 DISCARD로 바꿔 서버본을
     harness.browserWindow.localStorage.getItem(createDocumentServerDraftQueueKey(sourceKey)),
     null,
   );
+});
+
+test("제출 직후 로그아웃하면 폐기 대기열을 먼저 보내 계정 작성본을 지운 뒤 로컬 초안을 정리한다", { concurrency: false }, async (context) => {
+  resetServerMock();
+  const ownerId = "student-logout-flush";
+  const sourceKey = createDocumentDraftKey("note", ownerId, "submitted-then-logout");
+  const queueKey = createDocumentServerDraftQueueKey(sourceKey);
+  const submitted = { title: "등록한 글", contentHtml: "<p>본문</p>" };
+  remoteDraft = createSnapshot(sourceKey, submitted, 1);
+  const harness = await createHarness(context, sourceKey);
+  await act(async () => harness.getResult().serverSync.useRemoteDraft());
+  // 등록 직후 화면이 바뀌어 편집기가 폐기 요청을 보내지 못한 상태.
+  setOnline(harness.browserWindow, false);
+  await act(async () => harness.getResult().clear({ reason: "submitted", submittedData: submitted }));
+  assert.equal(parseQueuedDocumentServerDraft(harness.browserWindow.localStorage.getItem(queueKey) ?? "")?.operationType, "DISCARD");
+  assert.equal(discardCalls.length, 0);
+  setOnline(harness.browserWindow, true);
+
+  logoutProbeKeys = { queueKey, sourceKey };
+  const logout = await renderLogoutButton(harness.browserWindow, ownerId);
+  try {
+    await act(async () => logout.button.click());
+    await waitFor(() => logoutCalls.length === 1, "폐기 요청 뒤 로그아웃 action이 한 번 실행되어야 합니다.");
+  } finally {
+    await logout.unmount();
+  }
+
+  assert.equal(discardCalls.length, 1);
+  assert.equal(discardCalls[0]?.expectedDraftVersion, 1);
+  assert.equal(remoteDraft, null);
+  assert.deepEqual(logoutCalls, [{ queueRaw: null, localDraft: null }]);
+});
+
+test("로그아웃 전 폐기 요청이 실패해도 로컬 초안을 정리하고 로그아웃한다", { concurrency: false }, async (context) => {
+  resetServerMock();
+  const ownerId = "student-logout-offline";
+  const sourceKey = createDocumentDraftKey("note", ownerId, "offline-logout");
+  const queueKey = createDocumentServerDraftQueueKey(sourceKey);
+  const harness = await createHarness(context, sourceKey, (storage) => {
+    enqueueDocumentServerDraftDiscard(storage, { sourceKey, expectedDraftVersion: 1 });
+  });
+  setOnline(harness.browserWindow, false);
+
+  logoutProbeKeys = { queueKey, sourceKey };
+  const logout = await renderLogoutButton(harness.browserWindow, ownerId);
+  try {
+    await act(async () => logout.button.click());
+    await waitFor(() => logoutCalls.length === 1, "오프라인이어도 로그아웃 action이 실행되어야 합니다.");
+  } finally {
+    await logout.unmount();
+  }
+
+  assert.equal(discardCalls.length, 0);
+  assert.deepEqual(logoutCalls, [{ queueRaw: null, localDraft: null }]);
 });
 
 test("제출된 A 초안 정리는 CAS 충돌 뒤 다른 기기의 미전송 B를 삭제하지 않는다", { concurrency: false }, async (context) => {
