@@ -124,3 +124,33 @@ export async function fetchDiggingLinkMetadata(
     return {};
   }
 }
+
+/**
+ * SoundCloud 세트(플레이리스트) 제목을 oEmbed로 읽는다. 트랙 메타와 달리 제목을 "아티스트 - 곡"으로 가르지 않고
+ * oEmbed가 붙이는 " by <작성자>"만 뗀다. 실패하면 null을 돌려 호출한 쪽이 기본 이름을 쓰게 한다.
+ * Beatport처럼 다른 host의 링크는 요청하지 않는다.
+ */
+export async function fetchSoundCloudPlaylistTitle(
+  url: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<string | null> {
+  try {
+    if (!isAllowedDiggingLinkUrl(url)) return null;
+    const hostname = new URL(url).hostname.toLowerCase();
+    if (hostname !== "soundcloud.com") return null;
+    const payload = await fetchBoundedText(
+      `https://soundcloud.com/oembed?url=${encodeURIComponent(url)}&format=json`,
+      "application/json",
+      fetchImpl,
+    );
+    if (!payload) return null;
+    const data = JSON.parse(payload) as Record<string, unknown>;
+    const title = typeof data.title === "string" ? data.title.trim() : "";
+    const author = typeof data.author_name === "string" ? data.author_name.trim() : "";
+    const suffix = author ? ` by ${author}` : "";
+    const stripped = suffix && title.endsWith(suffix) ? title.slice(0, -suffix.length).trim() : title;
+    return stripped || null;
+  } catch {
+    return null;
+  }
+}
