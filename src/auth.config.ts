@@ -26,6 +26,8 @@ export function isCoarseRequestAuthorized({
   if (pathname.startsWith("/login")) return true;
   // 가입 링크는 아직 로그인할 수 없는 학생이 연다. token 확인은 server action이 맡는다.
   if (pathname === "/invite") return true;
+  // 개인정보처리방침은 Google OAuth 동의 화면이 로그인 전 사용자에게 링크한다.
+  if (pathname === "/privacy") return true;
   if (pathname.startsWith("/api/calendar/")) return true;
   if (pathname === "/api/account-cleanup/status") return true;
   // 서버 초안 폐기는 fetch로 부른다. login redirect(307) 대신 route가 출처·인증을 판정해 403·401 JSON을 준다.
