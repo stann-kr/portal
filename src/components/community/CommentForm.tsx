@@ -44,6 +44,8 @@ export function CommentForm({
   const timeErrorId = useId();
   const contentRef = useRef<HTMLInputElement>(null);
   const timeRef = useRef<HTMLInputElement>(null);
+  // 시점 입력·제출·초기화가 일어나면 진행 중인 ‘현재 위치’ 읽기 결과를 버린다.
+  const positionReadGeneration = useRef(0);
   const [content, setContent] = useState("");
   const [timeMarker, setTimeMarker] = useState("");
   const [timeError, setTimeError] = useState<string | null>(null);
@@ -60,7 +62,7 @@ export function CommentForm({
       setTimeError(null);
       setShowResult(false);
     },
-    { onReset: () => { setContent(""); setTimeMarker(""); setTimeError(null); setOperationId(createCreationOperationId()); setShowResult(false); } },
+    { onReset: () => { positionReadGeneration.current += 1; setContent(""); setTimeMarker(""); setTimeError(null); setOperationId(createCreationOperationId()); setShowResult(false); } },
   );
   const [state, action, pending] = useActionState<CreateCommentState, FormData>(async (previous, data) => {
     let result: CreateCommentState;
@@ -78,6 +80,7 @@ export function CommentForm({
         submittedAliases: [{ content: submittedContent }, { content: submittedContent, timeMarker: submittedTimeMarker }],
       });
       setContent("");
+      positionReadGeneration.current += 1;
       setTimeMarker("");
       setPositionStatus(null);
       setOperationId(createCreationOperationId());
@@ -97,6 +100,7 @@ export function CommentForm({
   };
 
   const changeTimeMarker = (value: string) => {
+    positionReadGeneration.current += 1;
     setTimeMarker(value);
     setTimeError(null);
     setPositionStatus(null);
@@ -107,8 +111,10 @@ export function CommentForm({
   const fillCurrentPosition = async () => {
     setPositionStatus(null);
     setReadingPosition(true);
+    const generation = ++positionReadGeneration.current;
     try {
       const seconds = readPlaybackPosition ? await readPlaybackPosition() : null;
+      if (generation !== positionReadGeneration.current) return;
       if (seconds === null) {
         setPositionStatus("재생 위치를 읽지 못했습니다. 플레이어를 재생한 뒤 다시 눌러 주세요.");
         return;
@@ -120,6 +126,7 @@ export function CommentForm({
       saveDraft({ content: contentRef.current?.value ?? content, timeMarker: marker });
       contentRef.current?.focus();
     } catch {
+      if (generation !== positionReadGeneration.current) return;
       setPositionStatus("재생 위치를 읽지 못했습니다. 시점을 직접 입력해 주세요.");
     } finally {
       setReadingPosition(false);

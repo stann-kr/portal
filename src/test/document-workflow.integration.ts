@@ -3876,6 +3876,79 @@ test("request hash v2로 저장된 게시물 update 영수증은 v3 전환 뒤�
   );
 });
 
+test("request hash v1·v2 update 영수증의 작업 ID를 링크 변경 수정에 다시 쓰면 payload 충돌로 거절하고 쓰지 않는다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context);
+  await seedProfile(db, "student-1");
+  const postId = "post-v2-link-receipt";
+  const operationId = crypto.randomUUID();
+  const before = { title: "링크 믹스셋", contentHtml: "<p>처음 본문</p>" };
+  const after = { title: "링크 믹스셋 수정", contentHtml: "<p>고친 본문</p>" };
+  await db.insert(posts).values({
+    id: postId,
+    authorId: "student-1",
+    category: "feedback",
+    boardType: "FEEDBACK",
+    mediaUrl: MIXSET_YOUTUBE_URL,
+    mediaObjectId: null,
+    ...after,
+    version: 2,
+  });
+  const request: PostCanonicalRequest = {
+    operationType: "UPDATE",
+    resourceId: postId,
+    subjectId: "student-1",
+    baseRevision: 1,
+    title: after.title,
+    contentHtml: after.contentHtml,
+  };
+  // 링크를 바꾸는 요청은 V1·V2에서도 hash를 내되 링크 없는 같은 요청의 영수증과는 맞지 않는다.
+  for (const version of [1, 2]) {
+    const textHash = createPostRequestHashForVersion(request, version);
+    const linkHash = createPostRequestHashForVersion({ ...request, mediaLinkUrl: MIXSET_YOUTUBE_URL }, version);
+    assert.ok(textHash);
+    assert.ok(linkHash, `v${version}도 링크 요청을 미지원 버전으로 돌리지 않는다`);
+    assert.notEqual(linkHash, textHash);
+  }
+  await db.insert(documentOperationLedger).values({
+    id: crypto.randomUUID(),
+    operationId,
+    actorId: "student-1",
+    subjectId: "student-1",
+    resourceType: "COMMUNITY_POST",
+    operationType: "UPDATE",
+    resourceId: postId,
+    requestHash: createPostRequestHashForVersion(request, 2)!,
+    requestHashVersion: 2,
+    resultRevision: 2,
+    createdAt: new Date("2026-08-01T00:00:00.000Z"),
+  });
+
+  const linkForm = createPostUpdateForm(postId, after, before, operationId, 1);
+  linkForm.set(MIXSET_LINK_FIELD, MIXSET_YOUTUBE_URL);
+  const linkReplay = await postActions.updatePostContent(postId, {}, linkForm);
+  assert.equal(linkReplay.success, undefined);
+  assert.equal(linkReplay.conflictKind, "OPERATION_PAYLOAD_CONFLICT");
+
+  // 링크 칸 없는 같은 재전송은 여전히 V2 영수증으로 회수한다.
+  const textReplay = await postActions.updatePostContent(
+    postId,
+    {},
+    createPostUpdateForm(postId, after, before, operationId, 1),
+  );
+  assert.equal(textReplay.success, true);
+  assert.equal(textReplay.replayed, true);
+
+  assert.deepEqual(await readPostMedia(db, postId), {
+    mediaUrl: MIXSET_YOUTUBE_URL,
+    mediaObjectId: null,
+    version: 2,
+  });
+  const [head] = await db.select({ title: posts.title }).from(posts).where(eq(posts.id, postId));
+  assert.equal(head?.title, after.title);
+  assert.equal((await db.select().from(documentOperationLedger)).length, 1);
+  assert.equal((await db.select().from(postRevisions).where(eq(postRevisions.postId, postId))).length, 0);
+});
+
 test("재생 시점 댓글은 매체 있는 믹스셋 게시물에만 저장하고 같은 작업 재전송은 같은 시점만 회수한다", { concurrency: false }, async (context) => {
   const { db } = await setupDatabase(context);
   await seedProfile(db, "student-1");

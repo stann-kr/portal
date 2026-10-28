@@ -1592,7 +1592,7 @@
       "checkConstraints": {
         "comments_time_marker_check": {
           "name": "comments_time_marker_check",
-          "value": "\"comments\".\"time_marker_seconds\" IS NULL OR (\"comments\".\"time_marker_seconds\" >= 0 AND \"comments\".\"time_marker_seconds\" <= 86399)"
+          "value": "\"comments\".\"time_marker_seconds\" IS NULL OR (typeof(\"comments\".\"time_marker_seconds\") = 'integer' AND \"comments\".\"time_marker_seconds\" >= 0 AND \"comments\".\"time_marker_seconds\" <= 86399)"
         }
       }
     },

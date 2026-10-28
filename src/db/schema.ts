@@ -1240,7 +1240,7 @@ export const comments = sqliteTable(
     index("comments_post_created_idx").on(table.postId, table.createdAt),
     check(
       "comments_time_marker_check",
-      sql`${table.timeMarkerSeconds} IS NULL OR (${table.timeMarkerSeconds} >= 0 AND ${table.timeMarkerSeconds} <= 86399)`,
+      sql`${table.timeMarkerSeconds} IS NULL OR (typeof(${table.timeMarkerSeconds}) = 'integer' AND ${table.timeMarkerSeconds} >= 0 AND ${table.timeMarkerSeconds} <= 86399)`,
     ),
   ],
 );

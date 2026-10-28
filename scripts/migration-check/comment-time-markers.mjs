@@ -94,6 +94,8 @@ export async function validateCommentTimeMarkerUpgrade(migrationFiles) {
       [insert("ctm-negative", -1), "음수 시점"],
       [insert("ctm-day", 86400), "86400초 시점"],
       ["UPDATE comments SET time_marker_seconds = 86400 WHERE id = 'ctm-comment-1';", "86400초로 수정"],
+      [insert("ctm-real", 1.5), "소수 시점"],
+      [insert("ctm-text", "'abc'"), "문자열 시점"],
     ]) {
       assertSqlFails(database, sql, `0020 ${label}`, "comments_time_marker_check");
     }

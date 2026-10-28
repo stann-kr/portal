@@ -30,6 +30,7 @@ let VideoPlayer: typeof import("@/components/player/VideoPlayer").VideoPlayer;
 let TimelineFeedback: typeof import("@/components/feedback/TimelineFeedback").TimelineFeedback;
 let PostDetailClient: typeof import("@/app/community/[postId]/PostDetailClient").PostDetailClient;
 let MixsetFeedbackCard: typeof import("@/components/community/MixsetFeedbackCard").MixsetFeedbackCard;
+let CommentForm: typeof import("@/components/community/CommentForm").CommentForm;
 let saveComment: typeof import("@/lib/actions/comments").createComment = async () => ({});
 let removeComment: typeof import("@/lib/actions/comments").deleteComment = async () => {};
 let trashPost: typeof import("@/lib/actions/posts").deletePost = async () => ({ success: true });
@@ -261,6 +262,7 @@ before(async () => {
   ({ TimelineFeedback } = await import("@/components/feedback/TimelineFeedback"));
   ({ PostDetailClient } = await import("@/app/community/[postId]/PostDetailClient"));
   ({ MixsetFeedbackCard } = await import("@/components/community/MixsetFeedbackCard"));
+  ({ CommentForm } = await import("@/components/community/CommentForm"));
   ({ AssignmentView } = await import("@/components/student-portal/AssignmentView"));
   ({ AssignmentDetailClient } = await import("@/app/dashboard/student/assignments/[id]/AssignmentDetailClient"));
   ({ FileUploader } = await import("@/components/upload/FileUploader"));
@@ -1970,6 +1972,44 @@ test("댓글 시점 칸은 매체가 있는 믹스셋에만 보이고 시점·�
   await settle();
   assert.equal(inputValue("timeMarker"), "");
   assert.equal(inputValue("content"), "");
+});
+
+test("늦게 끝난 현재 위치 읽기는 그 사이 직접 입력한 시점이나 저장 뒤 비운 칸을 덮지 않는다", async (context) => {
+  browser.localStorage.clear();
+  const reads: ((seconds: number | null) => void)[] = [];
+  const readPlaybackPosition = () => new Promise<number | null>((resolve) => { reads.push(resolve); });
+  saveComment = async () => ({ success: true, commentId: "late-read-comment" });
+  context.after(() => { saveComment = async () => ({}); });
+  const screen = () => <CommentForm postId="late-read-post" actorId="student-1" onSaved={() => {}} allowTimeMarker readPlaybackPosition={readPlaybackPosition} />;
+  const root = await render(context, screen());
+
+  // 읽기가 끝나기 전에 직접 입력하면 입력값이 이긴다.
+  await press("현재 위치");
+  assert.equal(reads.length, 1);
+  await fill("timeMarker", "2:00");
+  await act(async () => { reads[0](754); });
+  await settle();
+  assert.equal(inputValue("timeMarker"), "2:00", "늦게 도착한 12:34로 덮지 않는다");
+  assert.equal(browser.document.querySelector('form [role="status"]'), null);
+  await act(async () => root.render(<div />));
+  await act(async () => root.render(screen()));
+  await settle();
+  assert.equal(inputValue("timeMarker"), "2:00", "초안도 직접 입력한 시점을 유지한다");
+
+  // 저장이 확인되어 칸을 비운 뒤 도착한 읽기 결과도 버린다.
+  await fill("content", "브레이크 다음이 좋아요");
+  await press("현재 위치");
+  assert.equal(reads.length, 2);
+  await press("등록");
+  assert.equal(inputValue("content"), "");
+  assert.equal(inputValue("timeMarker"), "");
+  await act(async () => { reads[1](754); });
+  await settle();
+  assert.equal(inputValue("timeMarker"), "", "저장 뒤 비운 칸을 다시 채우지 않는다");
+  await act(async () => root.render(<div />));
+  await act(async () => root.render(screen()));
+  await settle();
+  assert.equal(inputValue("timeMarker"), "", "초안에도 늦은 읽기 결과를 남기지 않는다");
 });
 
 test("믹스셋 목록 줄은 링크 플레이어를 누른 줄에만 열고 오디오·매체 없음 줄은 그대로 둔다", async (context) => {

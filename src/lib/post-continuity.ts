@@ -146,8 +146,11 @@ export function createPostRequestHashForVersion(
   request: PostCanonicalRequest,
   version: number,
 ): string | null {
-  // V1·V2 영수증은 링크 변경을 기록하지 않았으므로 링크를 바꾸는 요청과 같은 작업으로 확인하지 않는다.
-  if ((version === 1 || version === 2) && request.mediaLinkUrl !== undefined) return null;
+  // V1·V2 영수증은 링크 변경을 기록하지 않았으므로 링크를 바꾸는 요청은 어떤 V1·V2 영수증과도
+  // 일치하지 않는 hash로 계산해 같은 작업이 아닌 payload 충돌로 분류한다.
+  if ((version === 1 || version === 2) && request.mediaLinkUrl !== undefined) {
+    return sha256Hex(JSON.stringify(["portal-community-post-request", version, "media-link-not-recordable", request.mediaLinkUrl]));
+  }
   if (version === 1) return createPostRequestHashV1(request);
   if (version === 2) return createPostRequestHashV2(request);
   if (version === 3) return createPostRequestHashV3(request);
