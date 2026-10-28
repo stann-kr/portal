@@ -133,7 +133,7 @@ test("ownerless legacy UI는 2단계 확인·취소 focus·allowlist 삭제·liv
   await act(async () => {
     root.render(React.createElement(OwnerlessLegacyDraftCleanup));
   });
-  const trigger = findButton(container, "이 기기의 이전 포털 초안 모두 지우기");
+  const trigger = findButton(container, "이 기기의 이전 포탈 초안 모두 지우기");
   assert.equal(trigger.getAttribute("aria-expanded"), "false");
   assert.ok(trigger.className.includes("motion-reduce:transition-none"));
 
@@ -160,7 +160,7 @@ test("ownerless legacy UI는 2단계 확인·취소 focus·allowlist 삭제·liv
   await click(browserWindow, findButton(container, "이전 초안 모두 삭제 확인"));
   const status = container.querySelector("#ownerless-draft-cleanup-status");
   assert.ok(status);
-  assert.match(status.textContent ?? "", /이전 포털 초안 4개를 지웠습니다/u);
+  assert.match(status.textContent ?? "", /이전 포탈 초안 4개를 지웠습니다/u);
   assert.equal(status.getAttribute("role"), "status");
   assert.equal(status.getAttribute("aria-live"), "polite");
   assert.equal(browserWindow.document.activeElement, status);

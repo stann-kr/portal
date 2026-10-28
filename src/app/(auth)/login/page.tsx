@@ -47,7 +47,7 @@ export default async function LoginPage({
     <div className="flex flex-col gap-8">
       <AccountCleanupBootstrap />
       <div className="flex flex-col gap-1.5">
-        <h1 className="text-2xl font-semibold tracking-display text-foreground">DJ 레슨 포털</h1>
+        <h1 className="text-2xl font-semibold tracking-display text-foreground">DJ 레슨 포탈</h1>
         <p className="text-md leading-6 text-secondary-foreground md:text-body md:leading-[22px]">
           수업 일정과 학습 기록을 계속하려면 로그인하세요.
         </p>
@@ -65,7 +65,7 @@ export default async function LoginPage({
       />
 
       <div className="border-t border-muted pt-4 text-ui text-muted-foreground">
-        <p>계정이 필요하면 담당 강사에게 문의하세요.</p>
+        <p>계정이 필요하면 Stann에게 문의하세요.</p>
         <OwnerlessLegacyDraftCleanup />
       </div>
     </div>

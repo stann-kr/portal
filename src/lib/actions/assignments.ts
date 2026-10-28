@@ -100,7 +100,7 @@ export async function deleteMyAssignment(assignmentId: string): Promise<DeleteAs
     return {
       success: false,
       error: remaining
-        ? "피드백이 등록된 제출은 삭제할 수 없습니다. 필요하면 강사에게 문의해 주세요."
+        ? "피드백이 등록된 제출은 삭제할 수 없습니다. 필요하면 Stann에게 문의해 주세요."
         : "이미 삭제됐거나 찾을 수 없는 제출입니다. 목록을 새로고침해 주세요.",
     };
   }

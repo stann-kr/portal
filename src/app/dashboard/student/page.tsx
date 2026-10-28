@@ -1,6 +1,6 @@
 /**
  * @file src/app/dashboard/student/page.tsx
- * @description 학생 원페이지 포털 — RSC 데이터 프리패치 셸.
+ * @description 학생 원페이지 포탈 — RSC 데이터 프리패치 셸.
  * 모든 조회를 한 번에 병렬로 실행한 뒤 StudentPortalClient에 props 전달.
  */
 import { redirect } from "next/navigation";
@@ -18,7 +18,7 @@ import { getUnifiedItemSpaceLabel } from "@/lib/unified-item-normalization";
 import { getExternalCalendarConnectionSummary } from "@/lib/actions/externalCalendars";
 import { legacyPortalSectionRedirect, resolvePortalLocation, type PortalSearchParams } from "@/lib/portal-location";
 
-export const metadata = { title: "학생 포털" };
+export const metadata = { title: "학생 포탈" };
 
 export default async function StudentPortalPage({ searchParams }: { searchParams: Promise<PortalSearchParams> }) {
   const session = await getActiveAuthSession();

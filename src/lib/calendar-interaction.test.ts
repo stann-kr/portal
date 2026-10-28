@@ -25,7 +25,7 @@ function item(entity: UnifiedItemSourceEntity, overrides: Partial<UnifiedItem> =
     endDate: null,
     metadata: {},
     space: { studentId: "student-1", label: "학생" },
-    source: { kind: "PORTAL", entity, label: "포털" },
+    source: { kind: "PORTAL", entity, label: "포탈" },
     ...overrides,
   };
 }

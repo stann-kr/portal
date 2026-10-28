@@ -25,7 +25,7 @@ export default async function AdminCalendarSyncPage({
         <header className="flex flex-col gap-1">
           <h1 className="text-mobile-title font-semibold tracking-display text-foreground md:text-display">캘린더 동기화</h1>
           <p className="text-body text-secondary-foreground">
-            Google·iCloud 캘린더를 학생별로 연결해 포털 레슨·일정과 양쪽으로 맞춥니다.
+            Google·iCloud 캘린더를 학생별로 연결해 포탈 레슨·일정과 양쪽으로 맞춥니다.
           </p>
         </header>
         <CalendarSyncSettings overview={overview} result={result} />

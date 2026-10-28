@@ -709,7 +709,7 @@ export async function updateMyTaskSubmission(
       .limit(1);
     return {
       error: feedback
-        ? "피드백이 등록된 제출은 고칠 수 없습니다. 필요하면 강사에게 문의해 주세요."
+        ? "피드백이 등록된 제출은 고칠 수 없습니다. 필요하면 Stann에게 문의해 주세요."
         : TASK_CHANGED_MESSAGE,
     };
   }

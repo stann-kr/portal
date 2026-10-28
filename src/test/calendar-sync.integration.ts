@@ -468,7 +468,7 @@ test("Google 알림은 검증된 channel의 매핑만 동기화하고 다른 학
   assert.equal(after2.cursor, before2.cursor);
 });
 
-test("Google·iCloud 둘 다 연결한 학생은 Google 변경이 예약 동기화로 포털과 iCloud까지 전달된다", { concurrency: false }, async (context) => {
+test("Google·iCloud 둘 다 연결한 학생은 Google 변경이 예약 동기화로 포탈과 iCloud까지 전달된다", { concurrency: false }, async (context) => {
   const { db } = await setup(context, createSession("admin-1", "admin"));
   const channels = enableGoogleChannels(context);
   const googleRemote = new FakeCalendar();
@@ -502,7 +502,7 @@ test("Google·iCloud 둘 다 연결한 학생은 Google 변경이 예약 동기�
   assert.ok(runs <= 2);
   const [portalEvent] = await db.select().from(calendarEvents).where(eq(calendarEvents.userId, "student-1"));
   assert.equal(portalEvent.title, "Google에서 잡은 합주");
-  assert.equal(reflected!.portalRef, `event:${portalEvent.id}`, "포털 일정이 iCloud 사본의 원본이다");
+  assert.equal(reflected!.portalRef, `event:${portalEvent.id}`, "포탈 일정이 iCloud 사본의 원본이다");
   assert.equal(reflected!.start.getTime(), start.getTime());
   assert.equal([...googleRemote.events.values()].length, 1, "Google에는 중복을 만들지 않는다");
 });

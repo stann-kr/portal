@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 /**
- * 포털 화면의 구역 상태. 구역 이동 메뉴는 사이드바가 맡고, 이 컴포넌트는 주소·기기 저장값에서
+ * 포탈 화면의 구역 상태. 구역 이동 메뉴는 사이드바가 맡고, 이 컴포넌트는 주소·기기 저장값에서
  * 현재 구역을 정해 그리며 구역별 스크롤 위치를 기억한다.
  */
 export function PortalShell<T extends string>({

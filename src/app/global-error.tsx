@@ -10,8 +10,8 @@ export default function GlobalError({ reset }: { reset: () => void }) {
       <body className="bg-background font-sans text-foreground antialiased">
         <main id="main-content">
           <RouteErrorState
-            title="포털을 열지 못했습니다"
-            description="잠시 후 다시 시도해 주세요. 문제가 계속되면 담당 강사에게 알려 주세요."
+            title="포탈을 열지 못했습니다"
+            description="잠시 후 다시 시도해 주세요. 문제가 계속되면 Stann에게 알려 주세요."
             onRetry={reset}
           />
         </main>

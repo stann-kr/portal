@@ -32,7 +32,7 @@ export type AppNavItem = {
 };
 
 /**
- * 사이드바 메뉴. 같은 포털 화면의 구역은 `?section=`·`?view=` 주소로 표현해
+ * 사이드바 메뉴. 같은 포탈 화면의 구역은 `?section=`·`?view=` 주소로 표현해
  * 새로고침·뒤로가기·공유가 같은 위치를 연다.
  */
 export const APP_NAV_ITEMS: Record<AppRole, readonly AppNavItem[]> = {
@@ -194,8 +194,8 @@ export function resolveMobileTopBar(role: AppRole, location: Location): MobileTo
 }
 
 /**
- * 같은 포털 화면 안의 구역 이동은 서버를 다시 부르지 않는다. 주소만 바꾸고 popstate를 보내면
- * 포털 구역과 워크스페이스 보기가 각자 주소를 다시 읽는다.
+ * 같은 포탈 화면 안의 구역 이동은 서버를 다시 부르지 않는다. 주소만 바꾸고 popstate를 보내면
+ * 포탈 구역과 워크스페이스 보기가 각자 주소를 다시 읽는다.
  */
 export function navigateWithinPage(href: string): boolean {
   const target = new URL(href, window.location.href);

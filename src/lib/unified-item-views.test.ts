@@ -19,7 +19,7 @@ function item(id: string, type: UnifiedItemType, iso: string, title = id): Unifi
     date: new Date(iso),
     metadata: {},
     space: { studentId: "s", label: "학생" },
-    source: { kind: "PORTAL", entity: type === "NOTE" ? "PRIVATE_NOTE" : "CALENDAR_EVENT", label: "포털" },
+    source: { kind: "PORTAL", entity: type === "NOTE" ? "PRIVATE_NOTE" : "CALENDAR_EVENT", label: "포탈" },
   };
 }
 

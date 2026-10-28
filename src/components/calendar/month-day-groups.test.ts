@@ -5,7 +5,7 @@ import { groupItemsBySpannedDay } from "./MobileMonthView";
 
 const base = {
   space: { studentId: "s1", label: "김학생" },
-  source: { kind: "PORTAL", entity: "CALENDAR_EVENT", label: "포털" },
+  source: { kind: "PORTAL", entity: "CALENDAR_EVENT", label: "포탈" },
 } as unknown as Pick<UnifiedItem, "space" | "source">;
 
 test("좁은 화면 월 보기는 여러 날 일정을 기간의 날마다 놓고 종일 종료일은 포함하지 않는다", () => {

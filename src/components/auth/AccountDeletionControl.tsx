@@ -194,10 +194,10 @@ export function AccountDeletionControlImpl({
             : "/login?accountDeleted=1&deviceCleanup=manual";
         setMessage(
           localCleanupSucceeded
-            ? "포털 원문과 이 기기에 확인된 계정 데이터를 삭제했습니다. 관리되는 첨부 파일 정리는 백그라운드에서 재시도하며 로그아웃합니다."
+            ? "포탈 원문과 이 기기에 확인된 계정 데이터를 삭제했습니다. 관리되는 첨부 파일 정리는 백그라운드에서 재시도하며 로그아웃합니다."
             : registration.persistent
-              ? "포털 원문을 삭제했습니다. 이 기기 정리는 로그인 화면에서 다시 시도하며 로그아웃합니다."
-              : "포털 원문을 삭제했습니다. 브라우저 저장소에 접근할 수 없어 로그인 화면에서 수동 기기 정리를 안내합니다.",
+              ? "포탈 원문을 삭제했습니다. 이 기기 정리는 로그인 화면에서 다시 시도하며 로그아웃합니다."
+              : "포탈 원문을 삭제했습니다. 브라우저 저장소에 접근할 수 없어 로그인 화면에서 수동 기기 정리를 안내합니다.",
         );
         await dependencies.finishSession(target);
       };
@@ -272,7 +272,7 @@ export function AccountDeletionControlImpl({
           <DialogTitle>계정을 삭제할까요?</DialogTitle>
           {/* 2단계(캔버스 "계정 삭제 · 2단계")는 제목만 보이고, 설명은 보조기기에만 남긴다. */}
           <DialogDescription className={confirming ? "sr-only" : undefined}>
-            계정과 포털의 학습 기록, 문서, 댓글과 Q&A 원문은 복구할 수 없습니다.
+            계정과 포탈의 학습 기록, 문서, 댓글과 Q&A 원문은 복구할 수 없습니다.
             관리되는 첨부 파일은 비동기 저장소 정리 작업에 등록됩니다.
           </DialogDescription>
         </DialogHeader>

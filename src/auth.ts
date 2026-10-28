@@ -84,7 +84,7 @@ export function createNodeAuthConfig(
         token.email = profile.email;
         token.role = profile.role;
         // 임시 비밀번호 여부는 매 요청 현재 hash에서 다시 판단한다. 지문 없는 이전 token도
-        // 관리자가 비밀번호를 초기화한 뒤에는 포털 기능을 쓰지 못한다.
+        // 관리자가 비밀번호를 초기화한 뒤에는 포탈 기능을 쓰지 못한다.
         if (profile.passwordChangeRequired) token.passwordChangeRequired = true;
         else delete token.passwordChangeRequired;
         return token;

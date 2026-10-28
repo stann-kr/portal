@@ -13,7 +13,7 @@ const SECTIONS = {
 } as const;
 
 /**
- * 커뮤니티·공지는 `/community` 한 곳에 있다. 예전 포털 구역 주소(`?section=community`, 관리자 `?section=announcements`)는
+ * 커뮤니티·공지는 `/community` 한 곳에 있다. 예전 포탈 구역 주소(`?section=community`, 관리자 `?section=announcements`)는
  * 같은 내용을 여는 커뮤니티 주소로 보낸다. 해당하지 않으면 null.
  */
 export function legacyPortalSectionRedirect(params: PortalSearchParams): string | null {

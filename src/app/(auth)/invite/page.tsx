@@ -25,7 +25,7 @@ export default async function InvitePage() {
       </div>
       <div className="flex flex-col gap-2 md:gap-4">
         <Button asChild size="touch" className="mt-2 w-full md:h-10 md:rounded-md md:text-body">
-          <Link href="/dashboard">포털로 돌아가기</Link>
+          <Link href="/dashboard">포탈로 돌아가기</Link>
         </Button>
         <LogoutTextButton ownerId={session.user.id} label="로그아웃" />
       </div>

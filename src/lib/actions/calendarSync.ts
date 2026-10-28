@@ -98,7 +98,7 @@ export type StudentCalendarSyncStatus = {
 export type SyncedExternalItems = {
   /** 읽기 전용 외부 항목(iCal 구독 + 원격 반복 일정). */
   items: UnifiedItem[];
-  /** 동기화가 포털 레슨·일정을 만들거나 바꾸거나 지웠다. 화면은 내부 항목을 다시 불러온다. */
+  /** 동기화가 포탈 레슨·일정을 만들거나 바꾸거나 지웠다. 화면은 내부 항목을 다시 불러온다. */
   localChanged: boolean;
 };
 
@@ -301,7 +301,7 @@ export async function connectICloudCalendar(
 
 // Google 연결 완료는 공개 server action이 아니다. OAuth callback route만 `@/lib/calendar-sync/google-connection`을 부른다.
 
-/** 연결 해제: Google token은 가능하면 revoke, 매핑·연결 기록 삭제. 포털 레슨·일정은 남긴다. */
+/** 연결 해제: Google token은 가능하면 revoke, 매핑·연결 기록 삭제. 포탈 레슨·일정은 남긴다. */
 export async function disconnectCalendarConnection(
   connectionId: string,
 ): Promise<CalendarSyncFormState> {
@@ -328,7 +328,7 @@ export async function disconnectCalendarConnection(
     .delete(calendarConnections)
     .where(and(eq(calendarConnections.id, connection.id), eq(calendarConnections.ownerId, session.user.id)));
   revalidatePath(SETTINGS_PATH);
-  return { success: "연결을 해제했습니다. 포털의 레슨·일정은 그대로 남습니다." };
+  return { success: "연결을 해제했습니다. 포탈의 레슨·일정은 그대로 남습니다." };
 }
 
 /** form fields: connectionId, studentId, remoteCalendarId. 저장 뒤 첫 전체 동기화를 실행한다. */
@@ -408,7 +408,7 @@ export async function removeCalendarMapping(mappingId: string): Promise<Calendar
   await stopGoogleWatchChannelsFor(createDbContext(), { mappingId: mapping.id }).catch(() => undefined);
   await readDb().delete(calendarMappings).where(eq(calendarMappings.id, mapping.id));
   revalidatePath(SETTINGS_PATH);
-  return { success: "캘린더 연결을 해제했습니다. 포털과 원격 캘린더의 일정은 그대로 남습니다." };
+  return { success: "캘린더 연결을 해제했습니다. 포탈과 원격 캘린더의 일정은 그대로 남습니다." };
 }
 
 export async function syncCalendarMappingNow(mappingId: string): Promise<CalendarSyncFormState> {

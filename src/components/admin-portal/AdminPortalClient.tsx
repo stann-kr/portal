@@ -1,6 +1,6 @@
 /**
  * @file src/components/admin-portal/AdminPortalClient.tsx
- * @description 어드민 원페이지 포털 오케스트레이터.
+ * @description 어드민 원페이지 포탈 오케스트레이터.
  * 3개 섹션(업무함 / 학생 / 일정)을 navigation으로 전환. 공지·커뮤니티는 /community가 맡는다.
  */
 "use client";
@@ -117,7 +117,7 @@ export function AdminPortalClient({
     const studentId = calendarLoadedStudentId;
     const isCurrent = () => !cancelled && calendarRequestRef.current === requestId;
     void (async () => {
-      // 동기화(throttle·lease) 뒤 읽기 전용 외부 항목을 받고, 동기화가 포털 레슨·일정을 바꿨으면 내부 항목도 다시 받는다.
+      // 동기화(throttle·lease) 뒤 읽기 전용 외부 항목을 받고, 동기화가 포탈 레슨·일정을 바꿨으면 내부 항목도 다시 받는다.
       const { items: externalItems, localChanged } = await syncAndGetExternalItems({ studentId });
       if (!isCurrent()) return;
       if (!localChanged) {
@@ -177,7 +177,7 @@ export function AdminPortalClient({
       initialItem={initialLocation?.section ?? "work"}
       storageKey="adminPortal:section"
       urlParamKey="section"
-      ariaLabel="관리자 포털"
+      ariaLabel="관리자 포탈"
     >
       {(activeSection, changeSection) => (
         <>

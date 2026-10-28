@@ -7,7 +7,7 @@ export default function RootError({ reset }: { reset: () => void }) {
   return (
     <RouteErrorState
       title="화면을 불러오지 못했습니다"
-      description="잠시 후 다시 시도해 주세요. 문제가 계속되면 담당 강사에게 알려 주세요."
+      description="잠시 후 다시 시도해 주세요. 문제가 계속되면 Stann에게 알려 주세요."
       onRetry={reset}
     />
   );

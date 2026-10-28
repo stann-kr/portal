@@ -1,6 +1,6 @@
 /**
  * @file src/app/dashboard/admin/page.tsx
- * @description 관리자 원페이지 포털. RSC 데이터 프리패치 셸.
+ * @description 관리자 원페이지 포탈. RSC 데이터 프리패치 셸.
  * AdminPortalClient에 병렬 패치한 데이터를 props로 전달.
  */
 import { redirect } from "next/navigation";
@@ -12,7 +12,7 @@ import { getPendingFeedbackAssignments } from "@/lib/actions/assignments";
 import { AdminPortalClient } from "@/components/admin-portal/AdminPortalClient";
 import { firstSearchValue, legacyPortalSectionRedirect, resolvePortalLocation, type PortalSearchParams } from "@/lib/portal-location";
 
-export const metadata = { title: "관리자 포털" };
+export const metadata = { title: "관리자 포탈" };
 
 export default async function AdminPortalPage({ searchParams }: { searchParams: Promise<PortalSearchParams> }) {
   const session = await getActiveAuthSession();

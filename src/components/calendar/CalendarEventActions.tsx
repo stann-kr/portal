@@ -15,7 +15,7 @@ import { CalendarEventFields, type CalendarEventFieldValues } from "./CalendarEv
 
 const EVENT_TYPES = new Set<CalendarEventType>(["LESSON", "PRACTICE", "GIG", "NOTE"]);
 
-/** 포털에서 학생이 직접 만든 일정만 수정·삭제 대상이다. 레슨·외부 일정은 읽기 전용이다. */
+/** 포탈에서 학생이 직접 만든 일정만 수정·삭제 대상이다. 레슨·외부 일정은 읽기 전용이다. */
 export function isEditableCalendarEventItem(item: UnifiedItem): boolean {
   return item.type === "EVENT"
     && item.source.kind === "PORTAL"

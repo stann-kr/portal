@@ -114,8 +114,8 @@ export function MappingForm({
           : writableCount === 0
             ? "쓰기 권한이 있는 캘린더가 없습니다. 원격 캘린더에서 편집 권한을 준 뒤 다시 불러와 주세요."
             : hasReadOnly
-              ? "읽기 전용 캘린더는 포털 일정을 쓸 수 없어 고를 수 없습니다."
-              : "고른 캘린더와 이 학생의 포털 레슨·일정을 양쪽으로 맞춥니다.";
+              ? "읽기 전용 캘린더는 포탈 일정을 쓸 수 없어 고를 수 없습니다."
+              : "고른 캘린더와 이 학생의 포탈 레슨·일정을 양쪽으로 맞춥니다.";
 
   return (
     <form onSubmit={submit} aria-labelledby={headingId} className="flex flex-col gap-3 border-t border-border pt-4">

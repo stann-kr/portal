@@ -160,7 +160,7 @@ function findNamedColumnId(
 }
 
 function createSource(entity: UnifiedItem["source"]["entity"]): UnifiedItem["source"] {
-  return { kind: "PORTAL", entity, label: "포털" };
+  return { kind: "PORTAL", entity, label: "포탈" };
 }
 
 function createSpace(profile: ProfileContext): UnifiedItem["space"] {

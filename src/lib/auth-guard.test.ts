@@ -165,7 +165,7 @@ test("JWT role 대신 현재 DB role과 profile 값을 사용한다", async () =
   assert.equal(resolved?.user.name, "DB admin");
 });
 
-test("임시 비밀번호 session은 새 비밀번호를 정하기 전까지 포털 인증으로 승격하지 않는다", async () => {
+test("임시 비밀번호 session은 새 비밀번호를 정하기 전까지 포탈 인증으로 승격하지 않는다", async () => {
   const session = createSession("student-1", "student");
   session.user.passwordChangeRequired = true;
   const loadProfile = async () => createProfile("student-1", "student");

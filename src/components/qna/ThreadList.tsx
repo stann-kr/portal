@@ -176,7 +176,7 @@ export function ThreadList({
               ? "다른 상태를 선택해 주세요."
               : isAdmin
                 ? "학생이 질문을 남기면 여기에 보입니다."
-                : "궁금한 점을 강사에게 질문해 보세요."}
+                : "궁금한 점을 Stann에게 질문해 보세요."}
         />
       ) : (
         <ul className={cn("flex flex-col", isTabs ? "mt-4 border-t border-border md:mt-6 md:border-t-0" : "mt-4 border-t border-border")}>

@@ -28,7 +28,7 @@ const MAINTENANCE_HTML = `<!doctype html>
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>포털 점검 중</title>
+    <title>포탈 점검 중</title>
     <style>
       :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
       body { display: grid; min-height: 100vh; margin: 0; place-items: center; }
@@ -39,7 +39,7 @@ const MAINTENANCE_HTML = `<!doctype html>
   </head>
   <body>
     <main>
-      <h1>포털을 점검하고 있습니다</h1>
+      <h1>포탈을 점검하고 있습니다</h1>
       <p>데이터를 안전하게 전환하는 동안 읽기와 쓰기를 잠시 중단했습니다. 잠시 뒤 다시 시도해 주세요.</p>
     </main>
   </body>

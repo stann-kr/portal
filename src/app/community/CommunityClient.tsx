@@ -322,7 +322,7 @@ export default function CommunityClient({ isAdmin, initial }: CommunityClientPro
                     title={isAdmin ? "채널이 아직 없습니다" : "아직 열린 채널이 없습니다"}
                     description={isAdmin
                       ? "자유 게시판에 글을 쓰려면 채널이 하나 이상 필요합니다."
-                      : "강사가 채널을 추가하면 글을 쓸 수 있습니다."}
+                      : "Stann이 채널을 추가하면 글을 쓸 수 있습니다."}
                     action={isAdmin ? (
                       <Link href="/dashboard/admin/categories" className={buttonClassName({ variant: "outline" })}>채널 추가하기</Link>
                     ) : undefined}

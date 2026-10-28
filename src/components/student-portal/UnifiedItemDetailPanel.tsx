@@ -8,7 +8,7 @@ import { UnifiedItemDetail } from "./UnifiedItemDetail";
 import type { NoteDetailViewer } from "./UnifiedNoteDetail";
 
 export type UnifiedItemChangeHandlers = {
-  /** 학생 본인 스페이스에서만 포털 일정을 수정·삭제할 수 있다. */
+  /** 학생 본인 스페이스에서만 포탈 일정을 수정·삭제할 수 있다. */
   canManageEvents?: boolean;
   /** 관리자 일정에서 선택 학생의 레슨 시간을 바꾸거나 삭제할 수 있다. */
   canManageLessons?: boolean;
