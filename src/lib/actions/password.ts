@@ -10,6 +10,7 @@ import { newPasswordPolicyError } from "@/lib/password-policy";
 import { verifyStoredPassword } from "@/lib/password-storage";
 import { headers } from "next/headers";
 import { isPasswordAttemptAllowed, PASSWORD_ATTEMPT_LIMITED_MESSAGE } from "@/lib/password-attempt-limit";
+import { applySessionPersistence, isRememberedSession } from "@/lib/session-persistence-server";
 
 export type ChangePasswordField = "currentPassword" | "newPassword" | "confirmPassword";
 
@@ -75,7 +76,10 @@ export async function changeOwnPassword(
   }
 
   try {
+    // 새 session도 처음 로그인할 때 고른 '로그인 유지' 선택을 잇는다.
+    const remember = await isRememberedSession();
     await signIn("credentials", { email: account.email, password: newPassword, redirect: false });
+    await applySessionPersistence(remember);
   } catch {
     return { success: true, signInRequired: true };
   }

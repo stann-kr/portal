@@ -74,6 +74,19 @@ mock.module("@/auth", {
     },
   },
 });
+let sessionPersistenceCalls: boolean[] = [];
+let rememberedSession = true;
+mock.module("@/lib/session-persistence-server", {
+  namedExports: {
+    applySessionPersistence: async (remember: boolean) => { sessionPersistenceCalls.push(remember); },
+    clearSessionPersistence: async () => undefined,
+    isRememberedSession: async () => rememberedSession,
+  },
+});
+let redirectCalls: string[] = [];
+mock.module("next/navigation", {
+  namedExports: { redirect: (url: string) => { redirectCalls.push(url); } },
+});
 mock.module("@/db/client", {
   namedExports: {
     createDb: () => requireActiveDb(),
@@ -608,17 +621,27 @@ test("관리자 임시 비밀번호 발급은 학생만 대상으로 기존 로�
 
   // 임시 비밀번호 계정의 로그인은 다른 주소를 거치지 않고 새 비밀번호 설정으로 이동한다.
   const { loginWithCredentials } = await import("@/lib/actions/session");
-  const login = (email: string) => {
+  const login = (email: string, remember: boolean) => {
     const data = new FormData();
     data.set("email", email);
     data.set("password", "entered-password");
     data.set("callbackUrl", "/dashboard/student?tab=notes");
+    if (remember) data.set("remember", "on");
     return loginWithCredentials({}, data);
   };
-  await login("Student-1@Example.com");
-  await login("admin-1@example.com");
+  sessionPersistenceCalls = [];
+  redirectCalls = [];
+  signInImpl = async (...args) => `https://portal.test${(args[1] as { redirectTo: string }).redirectTo}`;
+  await login("Student-1@Example.com", true);
+  await login("admin-1@example.com", false);
   assert.deepEqual(signInCalls.map((call) => (call[1] as { redirectTo?: string }).redirectTo), ["/account/password", "/dashboard/student?tab=notes"]);
+  assert.ok(signInCalls.every((call) => (call[1] as { redirect?: boolean }).redirect === false), "cookie를 고친 뒤 직접 이동한다");
+  // '로그인 유지' 선택이 session cookie 수명에 반영되고, Auth.js가 확인한 주소로 이동한다.
+  assert.deepEqual(sessionPersistenceCalls, [true, false]);
+  assert.deepEqual(redirectCalls, ["https://portal.test/account/password", "https://portal.test/dashboard/student?tab=notes"]);
+  signInImpl = async () => "/dashboard";
   signInCalls = [];
+  sessionPersistenceCalls = [];
 
   // 임시 비밀번호 session은 포탈 기능에 쓸 수 없고 새 비밀번호 설정만 할 수 있다.
   activeSession = createSession("student-1", "student");
@@ -633,11 +656,14 @@ test("관리자 임시 비밀번호 발급은 학생만 대상으로 기존 로�
   };
   assert.deepEqual(await passwordActions.changeOwnPassword({}, form("wrong-temporary", "my-new-password")), { error: "임시 비밀번호가 올바르지 않습니다.", field: "currentPassword" });
   assert.equal((await passwordActions.changeOwnPassword({}, form(temporaryPassword, temporaryPassword))).field, "newPassword");
+  rememberedSession = false;
+  context.after(() => { rememberedSession = true; });
   assert.deepEqual(await passwordActions.changeOwnPassword({}, form(temporaryPassword, "my-new-password")), { success: true });
   const ownHash = await storedHash("student-1");
   assert.equal(isTemporaryPasswordHash(ownHash), false);
   assert.ok(await verifyStoredPassword("my-new-password", ownHash));
   assert.deepEqual(signInCalls, [["credentials", { email: "student-1@example.com", password: "my-new-password", redirect: false }]]);
+  assert.deepEqual(sessionPersistenceCalls, [false], "새 session도 처음 고른 '로그인 유지' 선택을 잇는다");
 
   activeSession = createSession("admin-1", "admin");
   assert.equal((await studentActions.getStudentAccountState("student-1")).kind, "active");

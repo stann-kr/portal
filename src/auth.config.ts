@@ -5,7 +5,12 @@
  */
 import type { NextAuthConfig } from "next-auth";
 
-export const AUTH_SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
+/**
+ * 마지막 사용부터 session이 유지되는 기간. 포탈을 열 때마다 다시 늘어난다.
+ * '로그인 유지'를 끈 로그인은 cookie가 브라우저 session으로만 남는다(`session-persistence.ts`).
+ * 삭제된 계정의 원 ID 보관 기간(30일)보다 짧아야 남은 token이 그 안에 만료된다.
+ */
+export const AUTH_SESSION_MAX_AGE_SECONDS = 28 * 24 * 60 * 60;
 /** 임시 비밀번호로 로그인한 사용자가 포탈을 쓰기 전에 새 비밀번호를 정하는 화면. */
 export const PASSWORD_CHANGE_PATH = "/account/password";
 

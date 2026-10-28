@@ -10,6 +10,7 @@ import { parseInviteToken } from "@/lib/invite-token";
 import { isPasswordAttemptAllowed, PASSWORD_ATTEMPT_LIMITED_MESSAGE } from "@/lib/password-attempt-limit";
 import { newPasswordPolicyError } from "@/lib/password-policy";
 import { verifyInviteSecret } from "@/lib/password-storage";
+import { applySessionPersistence } from "@/lib/session-persistence-server";
 
 export type InviteStatus =
   | { status: "valid"; displayName: string | null; email: string }
@@ -97,6 +98,7 @@ export async function completeInvite(
 
   try {
     await signIn("credentials", { email: invite.account.email, password: newPassword, redirect: false });
+    await applySessionPersistence(true);
   } catch {
     return { success: true, signInRequired: true };
   }
