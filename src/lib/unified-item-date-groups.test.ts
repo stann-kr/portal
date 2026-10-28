@@ -11,7 +11,7 @@ function note(id: string, date: string): UnifiedItem {
     date: new Date(date),
     metadata: {},
     space: { studentId: "student-1", label: "학생" },
-    source: { kind: "PORTAL", entity: "PRIVATE_NOTE", label: "포털" },
+    source: { kind: "PORTAL", entity: "PRIVATE_NOTE", label: "포탈" },
   };
 }
 

@@ -22,7 +22,7 @@ function migratedDatabase() {
   return sqlite;
 }
 
-test("탭 변환은 byline·mention을 지우고 내부 참조·blob 이미지·다이어그램·체크 목록을 포털 형식으로 바꾼다", () => {
+test("탭 변환은 byline·mention을 지우고 내부 참조·blob 이미지·다이어그램·체크 목록을 포탈 형식으로 바꾼다", () => {
   const warnings: string[] = [];
   let sequence = 0;
   const output = transformGuideTabHtml(
@@ -78,7 +78,7 @@ test("다이어그램 코드가 Function 생성자로 process를 얻어도 파�
   assert.doesNotMatch(svg, /top-secret|env-secret/u);
 });
 
-test("다이어그램 렌더는 무한 루프·과대 출력·SVG 아닌 출력을 거부하고, 정상 코드는 포털 색으로 바꾼다", async () => {
+test("다이어그램 렌더는 무한 루프·과대 출력·SVG 아닌 출력을 거부하고, 정상 코드는 포탈 색으로 바꾼다", async () => {
   await assert.rejects(renderGuideWidgetSvg("export default () => { for (;;) {} };"), /시간이 초과/u);
   await assert.rejects(renderGuideWidgetSvg('export default () => <svg>{"x".repeat(3 * 1024 * 1024)}</svg>;'), /너무 큽니다|실패/u);
   await assert.rejects(renderGuideWidgetSvg("export default () => <div>x</div>;"), /SVG가 아닙니다/u);
@@ -116,14 +116,14 @@ test("export 전체를 seed로 만들고, 마이그레이션한 DB에 두 번 �
   context.after(() => sqlite.close());
   const seed = readFileSync(join(outDir, "seed.sql"), "utf8");
   sqlite.exec(seed);
-  sqlite.prepare("UPDATE guide_pages SET content_html = ?, version = 2 WHERE id = ?").run("<p>포털에서 고침</p>", result.pages[0]!.id);
+  sqlite.prepare("UPDATE guide_pages SET content_html = ?, version = 2 WHERE id = ?").run("<p>포탈에서 고침</p>", result.pages[0]!.id);
   sqlite.exec(seed);
 
   const pages = sqlite.prepare("SELECT id, title, sort_order, content_html, version FROM guide_pages ORDER BY sort_order").all() as Array<{
     id: string; title: string; sort_order: number; content_html: string; version: number;
   }>;
   assert.deepEqual(pages.map((page) => page.title), EXPECTED_TITLES);
-  assert.equal(pages[0]!.content_html, "<p>포털에서 고침</p>", "재실행이 포털 수정본을 덮어쓰지 않는다");
+  assert.equal(pages[0]!.content_html, "<p>포탈에서 고침</p>", "재실행이 포탈 수정본을 덮어쓰지 않는다");
 
   const assetRows = sqlite.prepare("SELECT id, guide_page_id FROM guide_assets").all() as Array<{ id: string; guide_page_id: string }>;
   assert.equal(assetRows.length, 29);

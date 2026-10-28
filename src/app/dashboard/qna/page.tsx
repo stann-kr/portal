@@ -70,7 +70,7 @@ export default async function QnaPage({
           <div className="flex flex-col gap-1">
             <h1 className="sr-only md:not-sr-only md:text-display md:font-semibold md:tracking-display">Q&amp;A</h1>
             <p className="hidden text-body text-secondary-foreground md:block">
-              {isAdmin ? "전체 학생의 질문을 관리합니다." : "강사에게 질문을 남기고 답변을 받으세요."}
+              {isAdmin ? "전체 학생의 질문을 관리합니다." : "Stann에게 질문을 남기고 답변을 받으세요."}
             </p>
           </div>
           <div className="hidden gap-2 md:flex">

@@ -39,7 +39,7 @@ export type UnifiedItem = {
     studentId: string;
     label: string;
   };
-  /** 항목을 제공한 포털 또는 외부 캘린더 출처. */
+  /** 항목을 제공한 포탈 또는 외부 캘린더 출처. */
   source: {
     kind: UnifiedItemSourceKind;
     entity: UnifiedItemSourceEntity;

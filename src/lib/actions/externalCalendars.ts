@@ -66,7 +66,7 @@ export async function connectExternalCalendar(
   try {
     encryptionKey = getExternalCalendarEncryptionKey();
   } catch {
-    return { error: "지금은 공개 레슨 캘린더를 연결할 수 없습니다. 강사에게 문의해 주세요." };
+    return { error: "지금은 공개 레슨 캘린더를 연결할 수 없습니다. Stann에게 문의해 주세요." };
   }
   try {
     const normalized = await validateExternalCalendarConnection({

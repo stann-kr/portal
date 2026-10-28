@@ -21,11 +21,11 @@ type InviteView =
 const UNUSABLE_COPY: Record<"invalid" | "expired" | "limited" | "failed", { title: string; body: string }> = {
   invalid: {
     title: "가입 링크를 열 수 없습니다",
-    body: "링크가 올바르지 않거나 이미 사용됐습니다. 이미 가입했다면 로그인해 주세요. 새 링크가 필요하면 강사에게 요청해 주세요.",
+    body: "링크가 올바르지 않거나 이미 사용됐습니다. 이미 가입했다면 로그인해 주세요. 새 링크가 필요하면 Stann에게 요청해 주세요.",
   },
   expired: {
     title: "가입 링크가 만료됐습니다",
-    body: "가입 링크는 발급 뒤 7일 동안 쓸 수 있습니다. 강사에게 새 링크를 요청해 주세요.",
+    body: "가입 링크는 발급 뒤 7일 동안 쓸 수 있습니다. Stann에게 새 링크를 요청해 주세요.",
   },
   limited: { title: "잠시 뒤 다시 열어 주세요", body: "" },
   failed: { title: "가입 링크를 확인하지 못했습니다", body: "네트워크 연결을 확인한 뒤 이 페이지를 새로고침해 주세요." },
@@ -93,7 +93,7 @@ function InviteForm({
       </div>
     ) : (
       <p role="status" className="rounded-md bg-success-muted px-3 py-2.5 text-ui text-success">
-        가입을 마쳤습니다. 포털로 이동합니다.
+        가입을 마쳤습니다. 포탈로 이동합니다.
       </p>
     );
   }
@@ -228,7 +228,7 @@ export function InviteSignup({
         <h1 ref={headingRef} tabIndex={-1} className={AUTH_HEADING_CLASS}>
           {view.displayName ? `${view.displayName}님, 환영합니다` : "가입을 환영합니다"}
         </h1>
-        <p className={AUTH_LEAD_CLASS}>로그인에 쓸 비밀번호를 정하면 바로 포털을 쓸 수 있습니다.</p>
+        <p className={AUTH_LEAD_CLASS}>로그인에 쓸 비밀번호를 정하면 바로 포탈을 쓸 수 있습니다.</p>
       </div>
       <InviteForm
         view={view}

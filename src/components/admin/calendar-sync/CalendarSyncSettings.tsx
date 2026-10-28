@@ -81,7 +81,7 @@ export function CalendarSyncSettings({
         <div className="flex flex-col gap-1">
           <h2 id="calendar-sync-connect-heading" className="text-md font-semibold text-foreground">계정 연결</h2>
           <p className="text-body text-secondary-foreground md:text-ui">
-            선생님 계정의 공유 캘린더를 연결하면 학생별로 고른 캘린더와 포털 레슨·일정을 양쪽으로 맞춥니다.
+            선생님 계정의 공유 캘린더를 연결하면 학생별로 고른 캘린더와 포탈 레슨·일정을 양쪽으로 맞춥니다.
           </p>
         </div>
         <div className="flex flex-col gap-3 border-t border-border pt-4">

@@ -102,7 +102,7 @@ test("maintenance 응답은 request query·cookie·body를 반사하지 않는�
   );
   const body = await response.text();
   assert.doesNotMatch(body, new RegExp(marker, "u"));
-  assert.match(body, /포털을 점검하고 있습니다/u);
+  assert.match(body, /포탈을 점검하고 있습니다/u);
 });
 
 test("maintenance upload config는 application asset·D1·R2·route를 포함하지 않는다", () => {

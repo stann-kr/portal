@@ -288,14 +288,14 @@ test("412 충돌에서 로컬이 바뀌었으면 remoteId로 현재 etag를 다�
   await harness.sync();
   const remoteId = links(harness)[0].remote_id!;
   harness.remote.remoteEdit(remoteId, { title: "원격에서 바꾼 제목" });
-  harness.sqlite.prepare("UPDATE calendar_events SET title = '포털에서 바꾼 제목' WHERE id = 'event-1'").run();
+  harness.sqlite.prepare("UPDATE calendar_events SET title = '포탈에서 바꾼 제목' WHERE id = 'event-1'").run();
 
   harness.remote.calls = [];
   const result = await harness.sync({ mode: "push" });
   assert.equal(result.status, "synced");
   assert.deepEqual(harness.remote.calls, ["update", "get", "update"]);
-  assert.equal(harness.remote.events.get(remoteId)!.title, "포털에서 바꾼 제목");
-  assert.equal(harness.rows<{ title: string }>("SELECT title FROM calendar_events")[0].title, "포털에서 바꾼 제목");
+  assert.equal(harness.remote.events.get(remoteId)!.title, "포탈에서 바꾼 제목");
+  assert.equal(harness.rows<{ title: string }>("SELECT title FROM calendar_events")[0].title, "포탈에서 바꾼 제목");
 
   // 다음 전체 동기화에서 원격의 같은 내용을 다시 가져오거나 보내지 않는다.
   harness.remote.calls = [];
@@ -494,7 +494,7 @@ test("deadline이 지나면 새 원격 쓰기를 시작하지 않고 남은 항�
   assert.equal(harness.remote.events.size, 2);
 });
 
-test("전체 재동기화에서 원격이 window 밖으로 옮긴 포털 레슨은 지우지 않고 remoteId로 확인해 옮긴 날짜를 반영한다", async (context) => {
+test("전체 재동기화에서 원격이 window 밖으로 옮긴 포탈 레슨은 지우지 않고 remoteId로 확인해 옮긴 날짜를 반영한다", async (context) => {
   const harness = setup(context);
   insertLesson(harness, "lesson-far", at("2026-11-10T09:00:00Z"));
   await harness.sync();
@@ -509,7 +509,7 @@ test("전체 재동기화에서 원격이 window 밖으로 옮긴 포털 레슨�
   assert.ok(harness.remote.calls.includes("get"), "remoteId로 존재를 확인한다");
   const lesson = harness.rows<{ scheduled_at: number }>("SELECT scheduled_at FROM lessons WHERE id = 'lesson-far'");
   assert.equal(lesson.length, 1, "로컬 레슨이 남는다");
-  assert.equal(lesson[0].scheduled_at, seconds(farStart), "원격에서 옮긴 날짜가 포털에 보인다");
+  assert.equal(lesson[0].scheduled_at, seconds(farStart), "원격에서 옮긴 날짜가 포탈에 보인다");
   const [link] = links(harness);
   assert.equal(link.remote_id, created.remoteId);
   assert.equal(link.etag, harness.remote.events.get(created.remoteId)!.etag);

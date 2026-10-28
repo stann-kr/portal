@@ -37,7 +37,7 @@ function item(
     source: {
       kind: "PORTAL",
       entity: type === "EVENT" ? "CALENDAR_EVENT" : type === "NOTE" ? "PRIVATE_NOTE" : type === "DIGGING" ? "DIGGING_TRACK" : type === "QNA" ? "QNA_THREAD" : "ASSIGNMENT",
-      label: "포털",
+      label: "포탈",
     },
   };
 }
@@ -229,7 +229,7 @@ test("미제출 과제는 피드백 대기로 섞이지 않고 마감 지남 →
   const task = (id: string, dueAt: string | null) => {
     const entry = item(id, "ASSIGNMENT", dueAt ?? "2026-08-01T00:00:00.000Z", { subType: "TASK" });
     entry.metadata = { taskId: id, dueAt };
-    entry.source = { kind: "PORTAL", entity: "ASSIGNMENT_TASK", label: "포털" };
+    entry.source = { kind: "PORTAL", entity: "ASSIGNMENT_TASK", label: "포탈" };
     return entry;
   };
   const result = summary([

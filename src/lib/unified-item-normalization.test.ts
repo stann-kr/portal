@@ -56,7 +56,7 @@ function createInput(): UnifiedItemNormalizationInput {
   };
 }
 
-test("모든 통합 유형에 학생 스페이스와 포털 출처를 제공한다", () => {
+test("모든 통합 유형에 학생 스페이스와 포탈 출처를 제공한다", () => {
   const items = normalizeUnifiedItems(createInput());
   assert.equal(items.length, 6);
   assert.deepEqual(items.map((item) => item.source.entity), [
@@ -65,7 +65,7 @@ test("모든 통합 유형에 학생 스페이스와 포털 출처를 제공한�
   for (const item of items) {
     assert.deepEqual(item.space, { studentId: "student-1", label: "Mina" });
     assert.deepEqual(item.source.kind, "PORTAL");
-    assert.equal(item.source.label, "포털");
+    assert.equal(item.source.label, "포탈");
   }
 });
 

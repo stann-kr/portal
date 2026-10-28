@@ -6,7 +6,7 @@ export const metadata = { title: "새 비밀번호 설정" };
 
 /**
  * 관리자가 발급한 임시 비밀번호로 로그인한 사용자는 이 화면에서 새 비밀번호를 정하기 전까지
- * 포털의 다른 화면과 기능을 쓸 수 없다(캔버스 AccountPassword·MobileAccountPassword).
+ * 포탈의 다른 화면과 기능을 쓸 수 없다(캔버스 AccountPassword·MobileAccountPassword).
  */
 export default async function RequiredPasswordChangePage() {
   const session = await getSignedInSession();

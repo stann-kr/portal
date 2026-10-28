@@ -186,7 +186,7 @@ export function UnifiedItemDetail({
       {item.type === "EVENT" ? (
         <>
           {canManageEvents && item.source.entity === "LESSON" ? (
-            <p className="text-xs/[18px] text-muted-foreground">레슨 일정은 강사가 관리합니다.</p>
+            <p className="text-xs/[18px] text-muted-foreground">레슨 일정은 Stann이 관리합니다.</p>
           ) : canManageEvents && item.source.kind !== "PORTAL" ? (
             <p className="text-xs/[18px] text-muted-foreground">연결한 외부 캘린더의 일정은 읽기 전용입니다.</p>
           ) : null}

@@ -83,7 +83,7 @@ export function CurriculumView({ initialModules, pageHeader = false }: Curriculu
         {title}
         <EmptyState
           title="아직 등록된 커리큘럼이 없습니다"
-          description="강사가 주차별 학습 모듈을 등록하면 이곳에서 진도를 체크할 수 있습니다."
+          description="Stann이 주차별 학습 모듈을 등록하면 이곳에서 진도를 체크할 수 있습니다."
           icon={<BookOpen className="size-4.5" strokeWidth={1.6} aria-hidden="true" />}
         />
       </>,

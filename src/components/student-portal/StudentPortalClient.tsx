@@ -1,6 +1,6 @@
 /**
  * @file src/components/student-portal/StudentPortalClient.tsx
- * @description 학생 포털 메인 오케스트레이터.
+ * @description 학생 포탈 메인 오케스트레이터.
  * 구역(오늘 / 워크스페이스)은 공통 사이드바가 주소로 전환하고(커뮤니티는 /community),
  * PortalShell은 주소 기반 구역 상태만 관리한다.
  */
@@ -138,7 +138,7 @@ export function StudentPortalClient({
   }
 
   // iCal 구독이 없어도 관리자가 Google·iCloud 캘린더를 매핑했을 수 있으므로 항상 부른다(설정이 없으면 바로 끝난다).
-  // 동기화가 포털 레슨·일정을 바꿨으면 서버 목록을 다시 받는다.
+  // 동기화가 포탈 레슨·일정을 바꿨으면 서버 목록을 다시 받는다.
   const router = useRouter();
   const routerRef = useRef(router);
   useEffect(() => {
@@ -183,7 +183,7 @@ export function StudentPortalClient({
       storageKey={SECTION_STORAGE_KEY}
       storageAliases={SECTION_ALIASES}
       urlParamKey="section"
-      ariaLabel="학생 포털"
+      ariaLabel="학생 포탈"
     >
       {(activeSection) => (
         <>

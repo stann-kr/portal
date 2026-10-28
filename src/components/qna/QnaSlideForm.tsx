@@ -229,7 +229,7 @@ function QnaSlideFormContent({
         date: new Date(createdAt),
         metadata: { status: "OPEN" },
         space: { studentId: actorId, label: spaceLabel },
-        source: { kind: "PORTAL", entity: "QNA_THREAD", label: "포털" },
+        source: { kind: "PORTAL", entity: "QNA_THREAD", label: "포탈" },
       };
       onSuccess(newItem);
       if (navigateOnSuccess) {

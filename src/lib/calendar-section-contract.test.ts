@@ -18,7 +18,7 @@ function item(type: UnifiedItem["type"], subType?: string): UnifiedItem {
     date: new Date("2026-08-13T00:00:00.000Z"),
     metadata: {},
     space: { studentId: "student-1", label: "학생" },
-    source: { kind: "PORTAL", entity: type === "NOTE" ? "PRIVATE_NOTE" : "CALENDAR_EVENT", label: "포털" },
+    source: { kind: "PORTAL", entity: type === "NOTE" ? "PRIVATE_NOTE" : "CALENDAR_EVENT", label: "포탈" },
   };
 }
 

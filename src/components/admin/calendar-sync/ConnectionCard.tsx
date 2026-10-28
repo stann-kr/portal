@@ -147,7 +147,7 @@ export function ConnectionCard({
         {disconnectConfirm.isOpen ? (
           <ConfirmPanel
             confirm={disconnectConfirm}
-            message={`${connection.accountLabel} 연결을 해제합니다. 포털 레슨·일정은 남고 동기화만 멈춥니다.`}
+            message={`${connection.accountLabel} 연결을 해제합니다. 포탈 레슨·일정은 남고 동기화만 멈춥니다.`}
             confirmLabel="연결 해제 확인"
             pendingLabel="해제 중"
             pending={isPending && pendingAction === "disconnect"}
@@ -227,7 +227,7 @@ function MappingRow({
       {confirming ? (
         <ConfirmPanel
           confirm={confirm}
-          message={`${mapping.studentName} 학생의 동기화를 멈춥니다. 포털 레슨·일정과 원격 캘린더 일정은 남습니다.`}
+          message={`${mapping.studentName} 학생의 동기화를 멈춥니다. 포탈 레슨·일정과 원격 캘린더 일정은 남습니다.`}
           confirmLabel="매핑 해제 확인"
           pendingLabel="해제 중"
           pending={removing}

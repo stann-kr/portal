@@ -694,7 +694,7 @@ test("portal sections follow the URL from sidebar navigation and keep each secti
   browser.localStorage.setItem("test:section", "community");
   const items = ["today", "workspace", "community"].map((id) => ({ id }));
   await render(context, (
-    <PortalShell items={items} initialItem="today" storageKey="test:section" urlParamKey="section" ariaLabel="포털">
+    <PortalShell items={items} initialItem="today" storageKey="test:section" urlParamKey="section" ariaLabel="포탈">
       {(active) => <p data-testid="section">{active}</p>}
     </PortalShell>
   ));
@@ -866,7 +866,7 @@ test("admin lesson booking from the calendar keeps the chosen time on failure an
 test("admin lesson detail reschedules and deletes only after a cancel-first confirmation", async (context) => {
   const lesson: UnifiedItem = {
     id: "lesson-1", type: "EVENT", subType: "LESSON", title: "레슨", date: new Date("2026-10-09T10:00:00.000Z"), endDate: null, metadata: {},
-    space: { studentId: "student-1", label: "민지" }, source: { kind: "PORTAL", entity: "LESSON", label: "포털" },
+    space: { studentId: "student-1", label: "민지" }, source: { kind: "PORTAL", entity: "LESSON", label: "포탈" },
   };
   const updates: UnifiedItem[] = [];
   const removals: string[] = [];
@@ -1028,7 +1028,7 @@ test("student calendar docks item detail beside the calendar column instead of a
     announcements={[]} curriculumModules={[]} assignments={[]}
     unifiedItems={[{
       id: "practice", type: "EVENT", subType: "PRACTICE", title: "리듬 연습", date: new Date(), metadata: {},
-      space: { studentId: "student", label: "학생" }, source: { kind: "PORTAL", entity: "CALENDAR_EVENT", label: "포털" },
+      space: { studentId: "student", label: "학생" }, source: { kind: "PORTAL", entity: "CALENDAR_EVENT", label: "포탈" },
     }]}
     studentId="student" displayName="학생" spaceLabel="학생" externalCalendarConnection={{ connected: false }} referenceTime={new Date()}
   />);
@@ -1191,7 +1191,7 @@ test("calendar views share one 월·주·일별·전체 segment on the server an
 test("calendar detail returns focus to the month chip that opened it", async (context) => {
   await render(context, <UnifiedCalendar returnTo="/dashboard/student" showSpaceContext={false} items={[{
     id: "practice", type: "EVENT", subType: "PRACTICE", title: "리듬 연습", date: new Date(), metadata: {},
-    space: { studentId: "student", label: "학생" }, source: { kind: "PORTAL", entity: "CALENDAR_EVENT", label: "포털" },
+    space: { studentId: "student", label: "학생" }, source: { kind: "PORTAL", entity: "CALENDAR_EVENT", label: "포탈" },
   }]} />);
   const chip = browser.document.querySelector(".fc-daygrid-event");
   assert.ok(chip instanceof browser.HTMLElement);
@@ -1209,7 +1209,7 @@ test("calendar detail returns focus to the month chip that opened it", async (co
 test("wide calendar opens item detail beside the grid, switches items in place and returns focus to the chip", async (context) => {
   const item = (id: string, title: string): UnifiedItem => ({
     id, type: "EVENT", subType: "PRACTICE", title, date: new Date(), metadata: {},
-    space: { studentId: "student", label: "학생" }, source: { kind: "PORTAL", entity: "CALENDAR_EVENT", label: "포털" },
+    space: { studentId: "student", label: "학생" }, source: { kind: "PORTAL", entity: "CALENDAR_EVENT", label: "포탈" },
   });
   await render(context, <SlidePanelDock className="flex">
     <div><UnifiedCalendar returnTo="/dashboard/student" showSpaceContext={false} items={[item("practice", "리듬 연습"), item("gig", "합주")]} /></div>
@@ -1357,7 +1357,7 @@ test("calendar quick create closes with Escape and on an outside click while emp
 test("student portal reflects new server records and removals without a full reload", async (context) => {
   browser.history.replaceState({}, "", "/dashboard/student?section=today");
   const item: UnifiedItem = { id: "before", type: "ASSIGNMENT", title: "믹스셋", date: new Date(), metadata: {},
-    space: { studentId: "student", label: "학생" }, source: { kind: "PORTAL", entity: "ASSIGNMENT", label: "포털" } };
+    space: { studentId: "student", label: "학생" }, source: { kind: "PORTAL", entity: "ASSIGNMENT", label: "포탈" } };
   const portal = (items: UnifiedItem[]) => <StudentPortalClient
     initialLocation={resolvePortalLocation("student", { section: "today" })}
     announcements={[]} unifiedItems={items} curriculumModules={[]} assignments={[]}
@@ -1402,7 +1402,7 @@ test("own calendar event edit keeps input on failure and delete confirms before 
   const item: UnifiedItem = {
     id: "event-1", type: "EVENT", subType: "PRACTICE", title: "리듬 연습", description: "기존 메모",
     date: new Date("2026-10-09T01:00:00.000Z"), endDate: new Date("2026-10-09T02:00:00.000Z"), metadata: {},
-    space: { studentId: "student", label: "학생" }, source: { kind: "PORTAL", entity: "CALENDAR_EVENT", label: "포털" },
+    space: { studentId: "student", label: "학생" }, source: { kind: "PORTAL", entity: "CALENDAR_EVENT", label: "포탈" },
   };
   const updates: UnifiedItem[] = [];
   const removals: UnifiedItem[] = [];
@@ -2024,7 +2024,7 @@ test("a submission without feedback is deleted only after a cancel-first confirm
   removeAssignment = async (assignmentId) => {
     requests.push(assignmentId);
     return requests.length === 1
-      ? { success: false, error: "피드백이 등록된 제출은 삭제할 수 없습니다. 필요하면 강사에게 문의해 주세요." }
+      ? { success: false, error: "피드백이 등록된 제출은 삭제할 수 없습니다. 필요하면 Stann에게 문의해 주세요." }
       : { success: true };
   };
   context.after(() => { removeAssignment = async () => ({ success: true }); routerReplacements.length = 0; });
@@ -2136,7 +2136,7 @@ test("required password change asks for the temporary password and enters the po
   }
   await press("새 비밀번호 저장");
   assert.deepEqual(submitted, [["abcd-efgh-jkmn", "my-new-password", "my-new-password"]]);
-  assert.match(browser.document.querySelector('[role="status"]')?.textContent ?? "", /새 비밀번호를 저장했습니다\. 포털로 이동합니다/u);
+  assert.match(browser.document.querySelector('[role="status"]')?.textContent ?? "", /새 비밀번호를 저장했습니다\. 포탈로 이동합니다/u);
   assert.equal(browser.document.querySelectorAll('input[type="password"]').length, 0);
   assert.equal(entered, 1, "the saved login opens the portal without another click");
   await settle();

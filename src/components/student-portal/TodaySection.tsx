@@ -92,7 +92,7 @@ export function TodaySection({
     returnFallback: TODAY_PATH,
   });
   // 오늘 레슨은 이미 오늘 목록에 있으므로 요약에는 오늘 이후의 다음 레슨만 덧붙인다.
-  // 외부 캘린더 일정은 subType이 LESSON으로 들어오므로 포털 레슨만 레슨으로 부른다.
+  // 외부 캘린더 일정은 subType이 LESSON으로 들어오므로 포탈 레슨만 레슨으로 부른다.
   const nextLesson =
     summary.nextCue?.subType === "LESSON"
     && summary.nextCue.source.kind === "PORTAL"

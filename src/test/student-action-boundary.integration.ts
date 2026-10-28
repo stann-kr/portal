@@ -577,7 +577,7 @@ test("비밀번호 변경은 현재 비밀번호를 확인하고 새 hash로 현
   assert.ok(await bcrypt.compare("third-password", (await storedHash())!));
 });
 
-test("관리자 임시 비밀번호 발급은 학생만 대상으로 기존 로그인을 만료시키고 학생이 새 비밀번호를 정해야 포털을 쓴다", { concurrency: false }, async (context) => {
+test("관리자 임시 비밀번호 발급은 학생만 대상으로 기존 로그인을 만료시키고 학생이 새 비밀번호를 정해야 포탈을 쓴다", { concurrency: false }, async (context) => {
   const db = await setupDatabase(context, createSession("admin-1", "admin"));
   const originalHash = await bcrypt.hash("forgotten-password", 4);
   await db.insert(profiles).values([
@@ -620,7 +620,7 @@ test("관리자 임시 비밀번호 발급은 학생만 대상으로 기존 로�
   assert.deepEqual(signInCalls.map((call) => (call[1] as { redirectTo?: string }).redirectTo), ["/account/password", "/dashboard/student?tab=notes"]);
   signInCalls = [];
 
-  // 임시 비밀번호 session은 포털 기능에 쓸 수 없고 새 비밀번호 설정만 할 수 있다.
+  // 임시 비밀번호 session은 포탈 기능에 쓸 수 없고 새 비밀번호 설정만 할 수 있다.
   activeSession = createSession("student-1", "student");
   activeSession.user.passwordChangeRequired = true;
   await assert.rejects(curriculumActions.getMyCurriculum(), /Unauthorized/u);

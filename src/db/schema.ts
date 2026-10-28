@@ -1668,7 +1668,7 @@ export const calendarMappings = sqliteTable(
 export type CalendarSyncLocalKind = "LESSON" | "EVENT";
 
 /**
- * 포털 레슨·일정과 원격 일정의 1:1 연결. remote_id가 없으면 아직 원격에 만들지 못한 항목이다.
+ * 포탈 레슨·일정과 원격 일정의 1:1 연결. remote_id가 없으면 아직 원격에 만들지 못한 항목이다.
  * etag와 local_fingerprint는 마지막으로 맞춘 상태라, 둘 다 같으면 다시 보내거나 가져오지 않는다.
  */
 export const calendarSyncLinks = sqliteTable(
@@ -1713,7 +1713,7 @@ export const calendarSyncLinks = sqliteTable(
 );
 
 /**
- * 원격 반복 일정(master·예외)의 읽기 전용 사본. 포털 항목으로 가져오지 않고 ICS로 펼쳐 보여 준다.
+ * 원격 반복 일정(master·예외)의 읽기 전용 사본. 포탈 항목으로 가져오지 않고 ICS로 펼쳐 보여 준다.
  */
 export const calendarRemoteSeries = sqliteTable(
   "calendar_remote_series",

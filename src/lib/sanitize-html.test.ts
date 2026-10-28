@@ -141,7 +141,7 @@ test("에디터가 사용하는 안전한 서식은 유지한다", () => {
   assert.doesNotMatch(sanitized, /<input\b/i);
 });
 
-test("본문이 포털 UI를 덮거나 입력을 위장할 수 있는 속성과 control을 제거한다", () => {
+test("본문이 포탈 UI를 덮거나 입력을 위장할 수 있는 속성과 control을 제거한다", () => {
   const sanitized = sanitizeHtml(
     '<div title=">" class="fixed inset-0 z-50" style="position:fixed;inset:0">덮개</div>' +
       '<form><input type="password" name="password"><button type="submit">로그인</button></form>' +

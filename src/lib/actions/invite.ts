@@ -82,8 +82,8 @@ export async function completeInvite(
   const invite = await loadInvite(token);
   if (!invite || invite.result !== "valid") {
     return invite?.result === "expired"
-      ? { error: "가입 링크가 만료됐습니다. 강사에게 새 링크를 요청해 주세요.", linkUnusable: "expired" }
-      : { error: "가입 링크가 올바르지 않거나 이미 사용됐습니다. 강사에게 새 링크를 요청해 주세요.", linkUnusable: "invalid" };
+      ? { error: "가입 링크가 만료됐습니다. Stann에게 새 링크를 요청해 주세요.", linkUnusable: "expired" }
+      : { error: "가입 링크가 올바르지 않거나 이미 사용됐습니다. Stann에게 새 링크를 요청해 주세요.", linkUnusable: "invalid" };
   }
 
   const updated = await createDb()

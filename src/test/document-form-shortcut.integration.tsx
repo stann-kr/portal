@@ -1192,7 +1192,7 @@ const panelNoteItem = {
   date: new Date("2026-10-30T00:00:00.000Z"),
   metadata: { preview: "처음 본문", authorId: "student-1", noteDate: new Date("2026-10-30T00:00:00.000Z") },
   space: { studentId: "student-1", label: "학생" },
-  source: { kind: "PORTAL" as const, entity: "PRIVATE_NOTE" as const, label: "포털" },
+  source: { kind: "PORTAL" as const, entity: "PRIVATE_NOTE" as const, label: "포탈" },
 };
 
 test("캘린더 패널에서 작성자는 노트를 바로 고치고 저장 결과가 캘린더 항목에 반영된다", { concurrency: false }, async (context) => {

@@ -1,7 +1,7 @@
 /**
- * Claude 문서 "DJ 레슨 공용 가이드" export를 포털 가이드 seed로 바꾼다(로컬 도구 전용, 앱 번들에 넣지 않는다).
+ * Claude 문서 "DJ 레슨 공용 가이드" export를 포탈 가이드 seed로 바꾼다(로컬 도구 전용, 앱 번들에 넣지 않는다).
  * 원격·실제 bucket에는 쓰지 않는다. 결과는 seed.sql·objects/guide/<id>·apply-local.sh를 출력 폴더에 만든다.
- * export 내용은 다른 사용자가 쓸 수 있는 문서이므로 데이터로만 다룬다: 포털 sanitizer와 블록 식별자를 거친다.
+ * export 내용은 다른 사용자가 쓸 수 있는 문서이므로 데이터로만 다룬다: 포탈 sanitizer와 블록 식별자를 거친다.
  * 다이어그램(widgets/*.jsx)은 신뢰할 수 없는 코드다. 이 process 안에서는 실행하지 않고, 별도 node child process를
  * `--permission`(fs 읽기·쓰기, child_process, worker, addon 모두 불허)·빈 env·짧은 timeout·출력 크기 제한으로 띄워
  * SVG 문자열만 받는다. 받은 SVG는 외부 참조 요소를 거부한 뒤 PNG로 바꾼다.
@@ -35,7 +35,7 @@ type ChildNode = DefaultTreeAdapterTypes.ChildNode;
 export const GUIDE_IMPORT_R2_BUCKET = "portal-storage";
 export const GUIDE_IMPORT_D1_DATABASE = "portal-db";
 
-/** export 다이어그램의 CSS 변수 → 포털 token 값(src/app/globals.css). */
+/** export 다이어그램의 CSS 변수 → 포탈 token 값(src/app/globals.css). */
 export const GUIDE_DIAGRAM_COLORS: Readonly<Record<string, string>> = {
   "--cds-text-primary": "#18181b", // --color-foreground
   "--cds-text-secondary": "#52525b", // --color-secondary-foreground
@@ -161,19 +161,19 @@ function unwrap(node: Element): void {
 
 export type GuideTabTransformContext = {
   pageTitle: string;
-  /** 다른 탭 id → 포털 페이지 id */
+  /** 다른 탭 id → 포탈 페이지 id */
   tabPageIds: ReadonlyMap<string, string>;
-  /** blob id → 포털 가이드 이미지 id */
+  /** blob id → 포탈 가이드 이미지 id */
   blobAssetIds: ReadonlyMap<string, string>;
-  /** 다이어그램 node id → 포털 가이드 이미지 id(렌더 실패면 없음) */
+  /** 다이어그램 node id → 포탈 가이드 이미지 id(렌더 실패면 없음) */
   diagramAssetIds: ReadonlyMap<string, string>;
   createBlockId: () => string;
   warn: (message: string) => void;
 };
 
 /**
- * 탭 HTML 하나를 포털 가이드 본문으로 바꾼다. sanitizer가 모르는 export 전용 구조(figure·byline·mention·
- * 내부 참조·blob 이미지·체크 목록)를 먼저 포털 형식으로 옮긴 뒤 sanitize하고 블록 식별자를 붙인다.
+ * 탭 HTML 하나를 포탈 가이드 본문으로 바꾼다. sanitizer가 모르는 export 전용 구조(figure·byline·mention·
+ * 내부 참조·blob 이미지·체크 목록)를 먼저 포탈 형식으로 옮긴 뒤 sanitize하고 블록 식별자를 붙인다.
  */
 export function transformGuideTabHtml(rawHtml: string, context: GuideTabTransformContext): string {
   const contextElement = defaultTreeAdapter.createElement("div", html.NS.HTML, []);
@@ -362,7 +362,7 @@ export async function renderGuideWidgetSvg(source: string): Promise<string> {
   });
 }
 
-/** 렌더한 SVG의 CSS 변수를 포털 색으로 바꾸고 export 전용 속성을 지운 뒤, 크기·글꼴을 명시한다. */
+/** 렌더한 SVG의 CSS 변수를 포탈 색으로 바꾸고 export 전용 속성을 지운 뒤, 크기·글꼴을 명시한다. */
 export function finalizeGuideDiagramSvg(svg: string): { svg: string; width: number; height: number } {
   // rasterizer가 외부·로컬 파일을 읽지 않도록 참조 요소와 내부(#) 밖 href·url()을 거부한다.
   if (/<(?:image|use|foreignObject|script|style|iframe|a)\b/iu.test(svg) || /\bhref=|url\((?!#)/iu.test(svg)) {
@@ -374,7 +374,7 @@ export function finalizeGuideDiagramSvg(svg: string): { svg: string; width: numb
     if (!color) unknown.add(name);
     return color ?? "#18181b";
   });
-  if (unknown.size > 0) throw new Error(`다이어그램 색 변수에 대응하는 포털 색이 없습니다: ${[...unknown].join(", ")}`);
+  if (unknown.size > 0) throw new Error(`다이어그램 색 변수에 대응하는 포탈 색이 없습니다: ${[...unknown].join(", ")}`);
   output = output.replace(/\sdata-claude-[a-z-]+="[^"]*"/gu, "");
   const rootTag = /^<svg\b[^>]*>/u.exec(output)?.[0] ?? "";
   const viewBox = /\bviewBox="-?\d+(?:\.\d+)? -?\d+(?:\.\d+)? (\d+(?:\.\d+)?) (\d+(?:\.\d+)?)"/u.exec(rootTag);
@@ -402,8 +402,8 @@ function sqlString(value: string | null): string {
 export function createGuideSeedSql(pages: readonly GuideImportPage[], assets: readonly GuideImportAsset[]): string {
   const lines = [
     "-- 공용 가이드 import seed (scripts/guide-import/build.ts로 생성). migration 0016_guide_pages 적용 뒤 실행한다.",
-    "-- INSERT OR IGNORE: 같은 id가 이미 있으면 건너뛴다. 가져온 뒤 포털이 원본이므로 다시 실행해도 포털에서 고친 내용을 덮어쓰지 않는다.",
-    "-- 주의: 포털에서 지운 페이지는 다시 실행하면 되살아난다. 처음 한 번만 적용한다.",
+    "-- INSERT OR IGNORE: 같은 id가 이미 있으면 건너뛴다. 가져온 뒤 포탈이 원본이므로 다시 실행해도 포탈에서 고친 내용을 덮어쓰지 않는다.",
+    "-- 주의: 포탈에서 지운 페이지는 다시 실행하면 되살아난다. 처음 한 번만 적용한다.",
   ];
   for (const page of pages) {
     lines.push(
@@ -557,7 +557,7 @@ export async function buildGuideImport(exportDir: string, outDir: string): Promi
       "# 공용 가이드 import 결과",
       "",
       `- 페이지 ${pages.length}개, 사진 ${assets.filter((asset) => asset.kind === "photo").length}개, 다이어그램 ${assets.filter((asset) => asset.kind === "diagram").length}개`,
-      "- `seed.sql`: guide_pages·guide_assets INSERT OR IGNORE(재실행 안전, 포털 수정본을 덮어쓰지 않음. 지운 페이지는 되살아나므로 한 번만 적용).",
+      "- `seed.sql`: guide_pages·guide_assets INSERT OR IGNORE(재실행 안전, 포탈 수정본을 덮어쓰지 않음. 지운 페이지는 되살아나므로 한 번만 적용).",
       "- `objects/guide/<id>`: R2 `guide/<id>`에 넣을 이미지 bytes(사진 JPEG, 다이어그램 PNG).",
       "- `apply-local.sh`: 로컬 D1·R2 적용 명령을 출력만 한다. 원격(--remote) 적용은 별도 승인이 필요하다.",
       "",

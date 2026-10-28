@@ -156,7 +156,7 @@ export async function reissueStudentInvite(studentId: string): Promise<string> {
 /**
  * 비밀번호를 잊은 학생에게 임시 비밀번호를 발급한다. 원문은 이 응답으로 한 번만 돌려주고
  * hash만 저장한다. 저장 hash가 바뀌어 학생의 기존 로그인은 모두 만료되고, 임시 비밀번호로
- * 로그인한 session은 학생이 새 비밀번호를 정하기 전까지 포털 기능을 쓸 수 없다.
+ * 로그인한 session은 학생이 새 비밀번호를 정하기 전까지 포탈 기능을 쓸 수 없다.
  * 관리자가 학생 계정으로 조용히 활동하지 못하게 하는 경계다.
  */
 export async function resetStudentPassword(studentId: string): Promise<string> {

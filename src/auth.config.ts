@@ -6,7 +6,7 @@
 import type { NextAuthConfig } from "next-auth";
 
 export const AUTH_SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
-/** 임시 비밀번호로 로그인한 사용자가 포털을 쓰기 전에 새 비밀번호를 정하는 화면. */
+/** 임시 비밀번호로 로그인한 사용자가 포탈을 쓰기 전에 새 비밀번호를 정하는 화면. */
 export const PASSWORD_CHANGE_PATH = "/account/password";
 
 type CoarseAuthorizationInput = {

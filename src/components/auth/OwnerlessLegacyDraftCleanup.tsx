@@ -33,19 +33,19 @@ export function OwnerlessLegacyDraftCleanup() {
     const result = readOwnerlessLegacyLocalDocumentDrafts();
     if (result.storageUnavailable || result.enumerationFailed) {
       setAnnouncement(
-        "브라우저 저장소에 접근할 수 없어 이전 포털 초안을 확인하지 못했습니다.",
+        "브라우저 저장소에 접근할 수 없어 이전 포탈 초안을 확인하지 못했습니다.",
       );
       setPhase("error");
       return;
     }
     if (result.snapshots.length === 0) {
-      setAnnouncement("이 기기에 남아 있는 이전 포털 초안이 없습니다.");
+      setAnnouncement("이 기기에 남아 있는 이전 포탈 초안이 없습니다.");
       setPhase("success");
       return;
     }
     setCandidates(result.snapshots);
     setAnnouncement(
-      `현재 계정과 연결되지 않은 이전 포털 초안 ${result.snapshots.length}개를 지우려면 삭제 확인을 누르세요.`,
+      `현재 계정과 연결되지 않은 이전 포탈 초안 ${result.snapshots.length}개를 지우려면 삭제 확인을 누르세요.`,
     );
     setPhase("confirm");
   };
@@ -56,12 +56,12 @@ export function OwnerlessLegacyDraftCleanup() {
       setCandidates(result.currentSnapshots);
       if (result.currentSnapshots.length === 0) {
         setAnnouncement(
-          "확인하는 동안 이전 포털 초안 목록이 바뀌었으며, 현재 남은 초안은 없습니다.",
+          "확인하는 동안 이전 포탈 초안 목록이 바뀌었으며, 현재 남은 초안은 없습니다.",
         );
         setPhase("success");
       } else {
         setAnnouncement(
-          `확인하는 동안 이전 포털 초안이 바뀌었습니다. 현재 ${result.currentSnapshots.length}개를 다시 확인한 뒤 삭제 확인을 누르세요.`,
+          `확인하는 동안 이전 포탈 초안이 바뀌었습니다. 현재 ${result.currentSnapshots.length}개를 다시 확인한 뒤 삭제 확인을 누르세요.`,
         );
       }
       return;
@@ -72,12 +72,12 @@ export function OwnerlessLegacyDraftCleanup() {
       result.failedKeys.length > 0
     ) {
       setAnnouncement(
-        "이전 포털 초안을 모두 지우지 못했습니다. 저장소 권한을 확인하고 다시 시도해 주세요.",
+        "이전 포탈 초안을 모두 지우지 못했습니다. 저장소 권한을 확인하고 다시 시도해 주세요.",
       );
       setPhase("error");
       return;
     }
-    setAnnouncement(`이전 포털 초안 ${result.removedKeys.length}개를 지웠습니다.`);
+    setAnnouncement(`이전 포탈 초안 ${result.removedKeys.length}개를 지웠습니다.`);
     setCandidates([]);
     setPhase("success");
   };
@@ -85,7 +85,7 @@ export function OwnerlessLegacyDraftCleanup() {
   const cancelCleanup = () => {
     setPhase("idle");
     setCandidates([]);
-    setAnnouncement("이전 포털 초안 삭제를 취소했습니다.");
+    setAnnouncement("이전 포탈 초안 삭제를 취소했습니다.");
     triggerRef.current?.focus();
   };
 
@@ -110,7 +110,7 @@ export function OwnerlessLegacyDraftCleanup() {
         aria-expanded={phase === "confirm"}
         aria-controls="ownerless-draft-cleanup-confirmation"
       >
-        이 기기의 이전 포털 초안 모두 지우기
+        이 기기의 이전 포탈 초안 모두 지우기
       </Button>
 
       {phase === "confirm" ? (
@@ -119,7 +119,7 @@ export function OwnerlessLegacyDraftCleanup() {
           className="mt-3 rounded-md border border-destructive/20 bg-destructive-muted p-3"
         >
           <p className="text-xs leading-5 text-destructive">
-            현재 계정과 연결되지 않은 이전 포털 초안 {candidates.length}개를 이 기기에서만 삭제합니다.
+            현재 계정과 연결되지 않은 이전 포탈 초안 {candidates.length}개를 이 기기에서만 삭제합니다.
             삭제한 내용은 복구할 수 없습니다.
           </p>
           <div className="mt-3 flex justify-end gap-2">

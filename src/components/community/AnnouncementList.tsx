@@ -51,7 +51,7 @@ export function AnnouncementList({ posts, isAdmin, returnTo = "/community" }: An
         className="mt-4 md:mt-0"
         icon={<Megaphone className="size-4" strokeWidth={1.6} aria-hidden="true" />}
         title="등록된 공지가 없습니다"
-        description={isAdmin ? "공지 작성으로 첫 공지를 올려 보세요." : "강사가 공지를 올리면 여기에 보입니다."}
+        description={isAdmin ? "공지 작성으로 첫 공지를 올려 보세요." : "Stann이 공지를 올리면 여기에 보입니다."}
       />
     );
   }

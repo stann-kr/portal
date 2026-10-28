@@ -96,13 +96,13 @@ export async function resolveSignedInSession(
 
 /**
  * 관리자가 발급한 임시 비밀번호로 로그인한 session은 새 비밀번호를 정하기 전까지
- * 어떤 page·action·route에서도 포털 인증으로 승격하지 않는다.
+ * 어떤 page·action·route에서도 포탈 인증으로 승격하지 않는다.
  */
 function withoutPendingPasswordChange(session: AuthSession | null): AuthSession | null {
   return session?.user.passwordChangeRequired ? null : session;
 }
 
-/** 포털 기능용 active session. */
+/** 포탈 기능용 active session. */
 export async function resolveActiveSession(
   session: Session | null | undefined,
   loadProfile: ActiveProfileLoader = findActiveProfileById,

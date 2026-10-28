@@ -78,7 +78,7 @@ const MENU_ITEMS = [
   {
     id: "qna" as const,
     label: "Q&A 질문",
-    description: "강사에게 질문",
+    description: "Stann에게 질문",
     Icon: HelpCircle,
   },
 ] as const;

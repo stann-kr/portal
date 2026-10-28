@@ -1,5 +1,5 @@
 /**
- * 포털(hub) ↔ 원격 캘린더 한 매핑의 양방향 동기화 알고리즘.
+ * 포탈(hub) ↔ 원격 캘린더 한 매핑의 양방향 동기화 알고리즘.
  *
  * 결정(.docs/goals/assignments-guide-calendar/design.md "동기화 엔진 결정"):
  * - 충돌은 웹 우선. 원격 쓰기는 If-Match(etag)로 하고 412면 link의 remoteId로 현재 리소스(etag)를 다시 읽어
@@ -76,7 +76,7 @@ export const FULL_RESYNC_MISSING_LOOKUP_CAP = 20;
 /** portalRef로 link를 다시 이은 직후 표시. 실제 fingerprint와 달라 다음 push가 로컬 내용으로 원격을 맞춘다. */
 export const RELINKED_FINGERPRINT = "RELINKED";
 export const LESSON_REMOTE_TITLE = "레슨";
-/** 종료 시각이 없는 포털 일정을 원격에 보낼 때의 길이. */
+/** 종료 시각이 없는 포탈 일정을 원격에 보낼 때의 길이. */
 export const OPEN_EVENT_REMOTE_MINUTES = 60;
 const MAX_SERIES_ICS_LENGTH = 262_144;
 const DAY_MS = 24 * 60 * 60 * 1_000;
@@ -183,7 +183,7 @@ export async function localFingerprint(row: LocalCalendarRow): Promise<string> {
   ].join("|"));
 }
 
-/** 원격 일정을 calendar_events 값으로 바꾼다(포털 일정 입력 제한 안으로 자른다). */
+/** 원격 일정을 calendar_events 값으로 바꾼다(포탈 일정 입력 제한 안으로 자른다). */
 export function remoteEventToLocalValues(remote: RemoteEvent): { title: string; description: string | null; start: Date; end: Date | null } {
   const title = remote.title.replace(/\s+/gu, " ").trim().slice(0, CALENDAR_EVENT_TITLE_MAX_LENGTH) || "일정";
   const description = remote.description.trim().slice(0, CALENDAR_EVENT_DESCRIPTION_MAX_LENGTH) || null;
@@ -571,7 +571,7 @@ async function applyPull(state: RunState, result: PullResult, full: boolean, win
     seen.add(remote.remoteId);
     const linked = byRemote.get(remote.remoteId);
     if (remote.recurring) {
-      // 반복 일정은 읽기 전용 사본만. 이미 포털 항목과 이어진 원격 일정이 반복으로 바뀐 경우는 건드리지 않는다.
+      // 반복 일정은 읽기 전용 사본만. 이미 포탈 항목과 이어진 원격 일정이 반복으로 바뀐 경우는 건드리지 않는다.
       if (!linked) await upsertSeries(state, remote);
       continue;
     }
@@ -598,7 +598,7 @@ async function applyPull(state: RunState, result: PullResult, full: boolean, win
         continue; // 다른 원격 id에 이미 이어진 사본은 가져오지 않는다.
       }
       const local = await loadLocalRow(state.db, state.studentId, ref.kind, ref.id);
-      if (!local) continue; // 다른 학생·이미 지운 포털 항목의 원격 사본은 가져오지 않는다.
+      if (!local) continue; // 다른 학생·이미 지운 포탈 항목의 원격 사본은 가져오지 않는다.
       await executeFenced(state, [
         toStatement(state.db.insert(calendarSyncLinks).values({
           id: crypto.randomUUID(),
@@ -729,7 +729,7 @@ async function getLinkedRemote(state: RunState, remoteId: string): Promise<Remot
 /** 로컬 내용으로 원격을 맞춘다(웹 우선). */
 async function writeLocalToRemote(state: RunState, link: LinkRow, input: RemoteEventInput): Promise<WriteResult> {
   if (!link.remoteId) {
-    // create 응답이 유실된 claim: 포털이 만든 사본은 portalRef로 찾는다(create 자체도 결정적 id라 멱등).
+    // create 응답이 유실된 claim: 포탈이 만든 사본은 portalRef로 찾는다(create 자체도 결정적 id라 멱등).
     const found = await findLive(state, input.portalRef);
     if (found) return remoteCall(state, () => state.client.update(state.calendarId, found.remoteId, input, found.etag));
     return createRemote(state, input);

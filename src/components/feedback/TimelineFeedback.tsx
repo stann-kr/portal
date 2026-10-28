@@ -273,7 +273,7 @@ export function TimelineFeedback({
       </div>}
       <div className="flex items-baseline justify-between gap-3 border-b border-border pb-2">
         <h2 id={headingId} className="text-ui font-semibold text-secondary-foreground">
-          강사 피드백{" "}
+          Stann의 피드백{" "}
           <span className="font-mono font-normal text-muted-foreground">{feedbackList.length}</span>
         </h2>
         {onSeek && feedbackList.some((fb) => fb.timeMarker !== null) ? (
