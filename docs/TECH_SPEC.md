@@ -122,7 +122,7 @@ OpenNext → Cloudflare Worker
 
 노트 탐색과 작성은 분리한다. 학생은 `/dashboard/student/notes`, 관리자는 학생별 `/dashboard/admin/students/[id]/notes`에서 제목·노트 날짜·작성자·평문 미리보기·최근 변경 시각과 노트 열기 링크를 확인한다. 목록은 저장 HTML을 직접 렌더하지 않는다. 캘린더의 노트 추가는 역할별 전체 화면 작성 URL에 선택한 엄격한 `YYYY-MM-DD`, 빠른 입력 제목(노트 제목 한도까지)과 내부 `returnTo`만 전달한다. 잘못된 날짜는 KST 오늘로 대체하고, 복원한 초안이 있으면 초안의 제목·날짜가 URL 기본값보다 우선한다. URL 기본값만 채워진 화면은 초안으로 저장하지 않는다. 노트 목록(`NotesDatabase`)은 표/목록 보기 선택을 계정별 `portal:notesView:<id>`에 저장하고 계정 정리에서 함께 지운다.
 
-디깅 보드는 같은 column·track 데이터를 768px 미만에서 label-value record list로, 그 이상에서 TanStack Table 기반 data grid로 표시한다. 두 표현은 같은 edit cell과 server action을 사용한다. 학생은 `/dashboard/student/digging`에서 편집하고 관리자는 학생 상세의 디깅 탭에서 읽기 전용으로 본다. 셀은 값이 바뀐 경우에만 저장하고, 비운 숫자·별점은 0이 아닌 빈 값으로 저장한다. 컬럼 변경 뒤에는 전체 새로고침 대신 server component만 다시 받는다.
+디깅 보드는 같은 column·track 데이터를 768px 미만에서 label-value record list로, 그 이상에서 TanStack Table 기반 data grid로 표시한다. 두 표현은 같은 edit cell과 server action을 사용한다. 학생은 `/dashboard/student/digging`에서 편집하고 관리자는 학생 상세의 디깅 탭에서 읽기 전용으로 본다. 보드 위 플레이리스트 목록(`PlaylistSection`, `src/lib/actions/digging-playlists.ts`)은 `digging_playlists`를 쓴다. 링크는 `normalizeDiggingPlaylistUrl`(`src/lib/digging-contract.ts`)이 파싱 전 원본 authority의 포트·제어 문자까지 거부하고 Beatport 공유·SoundCloud 세트만 query·hash 없이 정규화한다(host만 소문자, 비공개 `s-` 토큰 보존). 읽기는 `requireStudentOwnerOrAdmin`, 쓰기(등록·링크/제목/메모 수정·삭제)는 DB role이 student인 본인만이며 모든 UPDATE·DELETE WHERE에 session user id를 둔다. 수정은 `returning()` 0행이면 찾을 수 없음으로 돌려준다. 학생당 100개 상한은 조건부 `INSERT … SELECT … WHERE count < 100`, 중복은 UNIQUE(`user_id`, `url`) 위반을 같은 안내로 바꾼다. SoundCloud는 제목이 비었을 때만 `fetchSoundCloudPlaylistTitle`(고정 oEmbed 주소, 5초·256KB·허용 host redirect)로 제목을 채우고 실패해도 저장한다. Beatport는 외부 요청을 하지 않는다. 폼은 입력이 바뀐 채 Esc·취소하면 확인 패널, 새로고침·탭 닫기는 `beforeunload`로 묻는다(앱 안 링크 이동은 막지 않는다). 셀은 값이 바뀐 경우에만 저장하고, 비운 숫자·별점은 0이 아닌 빈 값으로 저장한다. 컬럼 변경 뒤에는 전체 새로고침 대신 server component만 다시 받는다.
 
 ## 데이터 모델과 저장소
 
@@ -137,7 +137,7 @@ OpenNext → Cloudflare Worker
 - 문서 연속성: `document_operation_ledger`, `document_tombstones`, `document_batch_abort_guard`, `document_server_drafts`, `document_server_draft_operations`
 - 미디어 수명주기: `media_objects`, `media_deletion_outbox`
 - 개인정보 수명주기: `account_deletion_jobs`, `account_cleanup_tokens`, `calendar_feed_tokens`
-- 디깅: `digging_columns`, `digging_tracks`
+- 디깅: `digging_columns`, `digging_tracks`, `digging_playlists`
 - Q&A: `qna_threads`, `qna_thread_events`, `qna_replies`
 
 Cloudflare binding:
@@ -320,6 +320,7 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 
 - `assignment_tasks`(학생·제목·sanitize된 설명·제출 형식 `MIX`/`TEXT`/`BOTH`·마감·version)는 관리자 출제 과제다. `assignments`에 nullable `task_id`(UNIQUE, 과제 삭제 시 SET NULL)·`text_html`을 더하고 `media_url`을 nullable로 바꿨다(링크 또는 글 중 하나는 CHECK로 필수). `feedbacks.time_marker`는 nullable이 되어 재생 시점 없는 피드백이 글 제출을 포함한 과제 전체에 대한 피드백이 된다. `0015`는 이를 위해 기존 `assignments`·`feedbacks`를 행 보존 table rebuild한다.
 - 관리자 action은 `requireStudentTarget`으로 대상 학생을 확인한다. 학생 제출(`submitAssignmentTask`)은 `INSERT … SELECT … WHERE`로 과제 소유와 읽은 제출 형식을 다시 확인해, 그 사이 관리자가 형식을 바꾸거나 과제를 지운 경우를 거부한다. 학생 수정은 피드백이 없을 때만 허용한다. 글은 평문 5,000자, 제목 120자, 설명 2,000자까지다. 한 번 과제를 지워도 제출은 자유 제출로 남고, 정기 회차는 따로 지울 수 없다.
+- 자유 제출(`task_id` NULL, `submitAssignment`)은 `validateFreeSubmissionPayload`로 링크(선택, `normalizeAssignmentMediaUrl`)와 글(선택, escape 뒤 문단 HTML·sanitize) 중 하나 이상을 받는다. 학생 수정(`updateMyFreeSubmission`)은 본인·`task_id IS NULL`·피드백 없음을 한 UPDATE의 WHERE로 확인하고, 0행이면 피드백 여부만 구분해 안내한다(다른 학생·과제 제출은 찾을 수 없음). 생성·수정 폼(`FreeSubmissionForm`)은 계정별 초안 key `free-submission:new`·`free-submission:<id>`와 진행 중 이탈 guard를 쓴다. 목록·오늘·캘린더·상세 제목은 `describeAssignmentMedia`의 형식 중립 이름("YouTube 링크"·"SoundCloud 링크"·"링크 제출"·"글 제출")이다.
 - `assignment_recurrences`(시작일·간격 1~12주·요일 bitmask(bit 0 = 일요일)·KST 마감 `HH:MM`·종료일 또는 최대 520회·멈춤·version)가 정기 과제 규칙이다. 주는 일요일에 시작하고, 시작일이 든 주를 0주차로 간격마다 선택 요일의 날짜가 회차다.
 - 회차는 예약 실행 없이 조회할 때 만든다(`ensureRecurringAssignmentTasks`). 오늘(KST)까지와 다음 회차 하나만, 규칙당 최대 60개·호출당 120개를 만들고, 규칙이 마지막으로 바뀐 시각(`updated_at`) 전에 이미 마감된 날짜는 새로 만들지 않는다. 회차 ID는 (규칙, 날짜)의 SHA-256에서 결정되고 UNIQUE(`recurrence_id`, `occurrence_date`)와 `ON CONFLICT DO NOTHING`이 동시 요청의 중복을 막는다. 각 INSERT는 읽은 규칙 version이 그대로이고 멈추지 않았을 때만 행을 만들어, 관리자가 규칙을 바꾸는 사이 옛 규칙으로 읽은 요청이 지운 회차를 되살리지 않는다. 렌더 중에도 부르므로 `revalidatePath`를 호출하지 않는다.
 - 규칙 수정·멈춤·삭제는 먼저 옛 규칙으로 밀린 회차를 만든 뒤, 마감 전이고 제출이 없는 회차만 지운다(수정·재개 뒤에는 새 규칙으로 다시 만든다). 제출된 회차와 마감이 지난 회차는 남는다(규칙 삭제 시 `recurrence_id`는 SET NULL).
@@ -353,6 +354,7 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 
 - 외부 캘린더를 하나만 연결한 학생: 포털 → 외부는 위의 저장 직후 push(구현 완료). Google → 포털은 Google 변경 알림(`events.watch`, type `web_hook`)으로 포털을 열지 않아도 반영한다. iCloud는 알림 기능이 없어 포털 조회와 예약 동기화 때 반영한다.
 - 둘 다 연결한 학생: 포털이 중심이 되어 Worker 예약 실행의 캘린더 동기화가 Google ↔ iCloud 변경을 전달한다. 학생별 연결 수 제한은 두지 않는다.
+- `0019_digging_playlists`: 학생(profiles cascade)·provider(`beatport`/`soundcloud`)·정규화 url·nullable 제목(200자)·메모(2,000자)·생성/수정 시각. CHECK가 provider와 url 앞부분 일치·길이를 막고 UNIQUE(`user_id`, `url`)가 중복과 학생별 조회를 맡는다. 계정 삭제 문장 목록에도 포함한다. `db:check`가 채워진 0018 DB에서 0019 upgrade·제약·cascade를 검사한다.
 - `0018_calendar_push_channels`: 매핑 PK(매핑 삭제 시 cascade)·channel ID(UNIQUE)·resource ID·token SHA-256 hex(원문은 Google에만 보낸다)·만료 시각. 채널 수명은 7일로 요청한다.
 - 채널 관리: 알림 주소는 Google OAuth redirect URI의 origin + `/api/calendar-connections/google/notify`이고 https일 때만 등록한다(로컬 http는 건너뜀). 채널이 없거나 24시간 안에 만료되면 새 채널을 등록하고 이전 채널은 best-effort로 중지한다. 매핑 저장 뒤 등록, 매핑 해제·연결 해제 전에 중지한다.
 - 알림 route는 로그인 없이 `X-Goog-Channel-ID`·`X-Goog-Channel-Token`을 저장된 digest와 상수 시간 비교한다. 실패는 정보 없는 404, `sync` 상태는 200, 그 밖에는 200 응답 뒤 해당 매핑만 lease를 지키며 강제 pull한다. 본문·헤더는 로그에 남기지 않는다.
