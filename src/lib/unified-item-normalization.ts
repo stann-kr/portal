@@ -98,22 +98,25 @@ export type UnifiedItemNormalizationInput = {
   tasks?: AssignmentTaskRow[];
 };
 
-/** 목록·캘린더에 원본 URL 대신 제출 플랫폼을 보여 주는 과제 제목. 링크가 없으면 글 제출이다. */
+/**
+ * 목록·캘린더에 원본 URL 대신 제출 플랫폼을 보여 주는 과제 제목. 링크가 없으면 글 제출이다.
+ * 링크와 글을 함께 낸 자유 제출도 링크 플랫폼 이름("YouTube 링크")을 쓰고, 글은 상세에서 보인다.
+ */
 export function describeAssignmentMedia(mediaUrl: string | null): string {
   if (!mediaUrl) return "글 제출";
   let hostname = "";
   try {
     hostname = new URL(mediaUrl).hostname.toLowerCase();
   } catch {
-    return "제출한 믹스셋";
+    return "링크 제출";
   }
   if (hostname === "youtu.be" || hostname === "youtube.com" || hostname.endsWith(".youtube.com")) {
-    return "YouTube 믹스셋";
+    return "YouTube 링크";
   }
   if (hostname === "soundcloud.com" || hostname.endsWith(".soundcloud.com")) {
-    return "SoundCloud 믹스셋";
+    return "SoundCloud 링크";
   }
-  return "제출한 믹스셋";
+  return "링크 제출";
 }
 
 /** 제출 목록의 제목: 관리자 과제 제출이면 과제 제목, 자유 제출이면 플랫폼 이름(글이면 "글 제출"). */

@@ -71,6 +71,21 @@ export function LoginForm({
         />
       </div>
 
+      <label className="flex min-h-11 cursor-pointer items-center gap-2 self-start text-body text-foreground md:min-h-0 md:text-ui">
+        <input
+          type="checkbox"
+          name="remember"
+          value="on"
+          defaultChecked
+          className="size-4 rounded-sm border-faint accent-primary"
+          aria-describedby="login-remember-hint"
+        />
+        로그인 유지
+      </label>
+      <p id="login-remember-hint" className="-mt-2 text-xs text-muted-foreground">
+        끄면 브라우저를 닫을 때 로그아웃됩니다. 함께 쓰는 기기에서는 꺼 주세요.
+      </p>
+
       <LoginSubmitButton />
     </form>
   );

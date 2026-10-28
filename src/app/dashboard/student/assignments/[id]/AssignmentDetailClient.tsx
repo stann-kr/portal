@@ -14,6 +14,8 @@ import {
 import { mediaSourceLabel } from "@/components/player/media-source";
 import { TimelineFeedback, type FeedbackItem } from "@/components/feedback/TimelineFeedback";
 import { AssignmentDeleteAction } from "@/components/student-portal/AssignmentDeleteAction";
+import { FreeSubmissionForm } from "@/components/student-portal/FreeSubmissionForm";
+import { Button } from "@/components/ui/button";
 import { useConfirmAction } from "@/components/ui/confirm-action";
 import { RichTextContent } from "@/components/editor/RichTextContent";
 import { STUDENT_LEGACY_REDIRECTS } from "@/lib/legacy-dashboard-routes";
@@ -148,6 +150,23 @@ export function AssignmentDetailClient({
   const deleteConfirm = useConfirmAction();
   const canDelete = Boolean(deleteReturnTo) && feedbackList.length === 0;
   const requestDelete = deleteConfirm.request;
+  // 본인 자유 제출(관리자 과제가 아닌 제출)은 피드백 전에 이 화면에서 바로 고친다.
+  const canEditFree = canDelete && !task;
+  const [editingFree, setEditingFree] = useState(false);
+  const editTriggerRef = useRef<HTMLButtonElement>(null);
+  const editInputRef = useRef<HTMLInputElement>(null);
+  const openFreeEdit = () => {
+    setEditingFree(true);
+    // 버튼이 폼으로 바뀌므로 첫 칸으로 focus를 옮긴다(초안 확인 전 잠시 비활성이면 다음 frame에 한 번 더).
+    requestAnimationFrame(() => {
+      if (editInputRef.current && !editInputRef.current.disabled) editInputRef.current.focus();
+      else requestAnimationFrame(() => editInputRef.current?.focus());
+    });
+  };
+  const closeFreeEdit = () => {
+    setEditingFree(false);
+    requestAnimationFrame(() => editTriggerRef.current?.focus());
+  };
 
   const topBarActions = useMemo(
     () => (mediaUrl || canDelete
@@ -227,6 +246,28 @@ export function AssignmentDetailClient({
       </Link>
       에서 제출을 고칠 수 있습니다.
     </p>
+  ) : canEditFree ? (
+    editingFree ? (
+      <FreeSubmissionForm
+        actorId={actorId}
+        submission={{ id: assignmentId, mediaUrl, textHtml }}
+        idPrefix={`free-submission-${assignmentId}`}
+        inputRef={editInputRef}
+        className="rounded-lg border border-border p-4"
+        onDone={() => {
+          closeFreeEdit();
+          router.refresh();
+        }}
+        onCancel={closeFreeEdit}
+      />
+    ) : (
+      <div className="flex flex-col items-start gap-1">
+        <p className="text-xs text-muted-foreground">피드백이 달리기 전에는 링크와 글을 고칠 수 있습니다.</p>
+        <Button ref={editTriggerRef} type="button" variant="outline" className="max-md:h-11" onClick={openFreeEdit}>
+          제출 수정
+        </Button>
+      </div>
+    )
   ) : null;
   return (
     <div className="flex flex-col pb-8 md:gap-7 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-10">

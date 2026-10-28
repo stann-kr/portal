@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import Script from "next/script";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { OriginalLink } from "./OriginalLink";
 import type { MediaSeekRequest, PlaybackPositionReader } from "./VideoPlayer";
 
@@ -25,6 +26,10 @@ type SoundCloudPlayerProps = {
   url: string;
   seekRequest?: MediaSeekRequest;
   onPositionReaderChange?: (reader: PlaybackPositionReader | null) => void;
+  /** iframe 이름. 기본은 ‘SoundCloud 플레이어’(과제·커뮤니티 트랙 공용). */
+  title?: string;
+  /** playlist는 세트의 곡 목록이 보이도록 위젯을 높게 연다. */
+  variant?: "track" | "playlist";
 };
 
 function readSoundCloudApi(): SoundCloudApi | undefined {
@@ -34,7 +39,7 @@ function readSoundCloudApi(): SoundCloudApi | undefined {
 // widget이 응답하지 않으면 피드백 입력을 막지 않도록 짧게 포기한다.
 const POSITION_READ_TIMEOUT_MS = 1_500;
 
-function SoundCloudEmbed({ url, seekRequest, onPositionReaderChange, onRetry }: SoundCloudPlayerProps & { onRetry: () => void }) {
+function SoundCloudEmbed({ url, seekRequest, onPositionReaderChange, title = "SoundCloud 플레이어", variant = "track", onRetry }: SoundCloudPlayerProps & { onRetry: () => void }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const widgetRef = useRef<SoundCloudWidget | null>(null);
   const readyRef = useRef(false);
@@ -116,11 +121,11 @@ function SoundCloudEmbed({ url, seekRequest, onPositionReaderChange, onRetry }: 
     }} onError={() => setError(true)} />
     <iframe
       ref={iframeRef}
-      title="SoundCloud 믹스셋 플레이어"
+      title={title}
       src={`https://w.soundcloud.com/player/?${new URLSearchParams({ url, auto_play: "false", show_artwork: "true", visual: "false" })}`}
       allow="autoplay"
       hidden={error}
-      className="h-[166px] w-full md:rounded-lg"
+      className={cn(variant === "playlist" ? "h-[352px]" : "h-[166px]", "w-full md:rounded-lg")}
     />
     {error && <div role="alert" className="flex min-h-[166px] flex-col items-start justify-center gap-3 bg-sidebar px-5 py-4 text-ui md:rounded-lg md:border md:border-border md:px-4">
       <p>SoundCloud에 연결하지 못했습니다. 다시 불러오거나 <OriginalLink url={url} />에서 재생해 주세요.</p>

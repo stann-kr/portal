@@ -7,6 +7,7 @@ import {
   isLateSubmission,
   normalizePlainTextField,
   plainTextToHtml,
+  validateFreeSubmissionPayload,
   validateSubmissionPayload,
 } from "./assignment-submission";
 
@@ -31,6 +32,24 @@ test("제출 형식마다 필요한 칸만 받고 나머지는 저장하지 않�
   assert.equal(validateSubmissionPayload("BOTH", { mediaUrl: "", text: "글" }).ok, false);
   assert.equal(validateSubmissionPayload("BOTH", { mediaUrl: link, text: "글" }).ok, true);
   assert.equal(normalizePlainTextField("가".repeat(ASSIGNMENT_TEXT_MAX_LENGTH + 1), { maxLength: ASSIGNMENT_TEXT_MAX_LENGTH, label: "글" }).ok, false);
+});
+
+test("자유 제출은 링크·글 중 하나 이상을 받고 빈 칸은 null로 저장한다", () => {
+  const link = "https://youtu.be/aqz-KE-bpKQ";
+  assert.deepEqual(validateFreeSubmissionPayload({ mediaUrl: link, text: "" }), { ok: true, mediaUrl: link, textHtml: null });
+  assert.deepEqual(validateFreeSubmissionPayload({ mediaUrl: "  ", text: "연습 기록" }), { ok: true, mediaUrl: null, textHtml: "<p>연습 기록</p>" });
+  assert.deepEqual(validateFreeSubmissionPayload({ mediaUrl: link, text: "둘 다" }), { ok: true, mediaUrl: link, textHtml: "<p>둘 다</p>" });
+  assert.deepEqual(validateFreeSubmissionPayload({ mediaUrl: "", text: " \n " }), { ok: false, error: "링크나 글 중 하나 이상을 입력해 주세요." });
+  assert.deepEqual(validateFreeSubmissionPayload({ mediaUrl: null, text: null }), { ok: false, error: "링크나 글 중 하나 이상을 입력해 주세요." });
+  const invalid = validateFreeSubmissionPayload({ mediaUrl: "https://example.test/mix", text: "글은 있음" });
+  assert.equal(invalid.ok, false);
+  assert.match(invalid.ok ? "" : invalid.error, /YouTube|SoundCloud/u);
+  const escaped = validateFreeSubmissionPayload({ mediaUrl: "", text: "<script>alert(1)</script> & <b>굵게</b>" });
+  assert.equal(escaped.ok, true);
+  const html = escaped.ok ? escaped.textHtml ?? "" : "";
+  assert.doesNotMatch(html, /<script|<b>/u);
+  assert.match(html, /&lt;script&gt;/u);
+  assert.equal(validateFreeSubmissionPayload({ mediaUrl: "", text: "가".repeat(ASSIGNMENT_TEXT_MAX_LENGTH + 1) }).ok, false);
 });
 
 test("과제 상태는 제출·피드백·마감으로 정하고 마감 뒤 제출은 늦은 제출이다", () => {

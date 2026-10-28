@@ -30,7 +30,7 @@
 
 | 항목 | 저장소에서 확인할 수 있는 것 | 운영 적용을 확인하는 증거 |
 |---|---|---|
-| D1 migration | SQL·journal·snapshot `0000~0018`, 메모리 DB에서 체인·schema 검증 | 대상 D1의 적용 목록과 실제 schema·FK, 그 목록에서 계산한 pending 범위 |
+| D1 migration | SQL·journal·snapshot `0000~0019`, 메모리 DB에서 체인·schema 검증 | 대상 D1의 적용 목록과 실제 schema·FK, 그 목록에서 계산한 pending 범위 |
 | 계정 삭제 | `0012`와 삭제·정리 구현, application 설정의 `ACCOUNT_DELETION_ENABLED="false"` 기본값 | 활성 Worker의 유효 flag, 기기 adoption, 승인된 삭제·정리 smoke |
 | 예약 정리 | `worker.ts`의 `scheduled` handler, Workers Logs 설정, source에 없는 Cron trigger | 원격 trigger 주기, 대상 version의 실제 scheduled invocation, backlog·실패·alert 증거 |
 | 외부 캘린더 | `0013` 구독 테이블과 `EXTERNAL_CALENDAR_ENCRYPTION_KEY` 요구 조건 | 대상 schema, secret 설정 확인, 승인된 연결·읽기·교체·해제 smoke |
@@ -106,6 +106,7 @@ iCloud 연동:
 데이터베이스와 가이드:
 
 - [ ] 승인된 작업 창에서 export·checksum·Time Travel bookmark를 확보한 뒤 remote D1에 `0015 → 0016 → 0017 → 0018`을 적용한다(`npm run db:migrate:remote`, 위 전환 gate).
+- [ ] 디깅 보드 플레이리스트(`0019_digging_playlists`, 새 table만 추가)를 포함한 version을 promotion하기 전에, 승인된 작업 창에서 export·checksum·Time Travel bookmark를 확보하고 remote D1에 `0019`를 적용한 뒤 `digging_playlists` schema·UNIQUE·FK와 기존 table row count를 확인한다. 디깅 화면이 이 table을 읽으므로 적용 전 코드를 올리면 디깅 화면이 실패한다. 기존 행은 바꾸지 않는다.
 - [ ] 공용 가이드 seed를 만든다: `npx tsx scripts/guide-import/build.ts`(기본 입력 `.docs/goals/assignments-guide-calendar/guide-export`, 출력 `.wrangler/guide-import`). 스크립트는 D1·R2에 쓰지 않고 `seed.sql`·이미지 객체와 명령만 출력하는 `apply-local.sh`를 만든다. 로컬은 `sh .wrangler/guide-import/apply-local.sh`가 출력한 `--local` 명령을 확인한 뒤 직접 실행한다.
 - [ ] remote seed(`wrangler d1 execute portal-db --remote --file=…/seed.sql`과 `wrangler r2 object put portal-storage/guide/<id> --remote …`)는 별도 승인 뒤 `0016` 적용 다음에 한 번만 실행한다. seed는 `INSERT OR IGNORE`라 포털에서 고친 내용을 덮어쓰지 않지만, 포털에서 지운 페이지는 다시 실행하면 되살아난다.
 
@@ -255,7 +256,8 @@ npx opennextjs-cloudflare deploy
 - 게시물 오디오와 Q&A 첨부의 staging PUT, 완료 검증, owner preview와 문서 첨부 확인.
 - 다른 학생이 Q&A media ID와 direct object key를 알아도 읽지 못하는지 확인.
 - `Range`, ETag 불일치, 휴지통 audience, purge 뒤 outbox·R2 삭제와 실패 재시도 확인.
-- 관리자 과제 출제(믹스셋·글·둘 다)와 학생 제출·수정, 글 제출 피드백, 정기 과제 회차 생성과 다른 학생 과제 접근 거부 확인.
+- 관리자 과제 출제(믹스셋·글·둘 다)와 학생 제출·수정, 학생 자유 제출(링크·글·둘 다)의 제출·피드백 전 수정·삭제, 글 제출 피드백, 정기 과제 회차 생성과 다른 학생 과제 접근 거부 확인.
+- 디깅 보드 플레이리스트: Beatport 공유 링크 등록(새 탭 열기)·SoundCloud 세트 등록(제목 자동·페이지 안 재생)·링크/제목/메모 수정·삭제, 다른 학생 목록 접근 거부와 관리자 읽기 전용 확인.
 - 가이드 목록·페이지·이미지 표시, 관리자 편집·순서 변경, 학생 구간 질문이 그 학생과 관리자에게만 보이는지 확인.
 - 테스트용 Google·iCloud 캘린더로 연결, 학생 매핑, 포털 레슨·일정 생성·이동·삭제의 외부 반영, 외부 생성·이동·삭제의 포털 반영, 연결 해제 확인.
 

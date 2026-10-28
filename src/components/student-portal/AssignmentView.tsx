@@ -1,7 +1,7 @@
 /**
  * @file src/components/student-portal/AssignmentView.tsx
  * @description 과제 뷰(Assignments·MobileAssignments 보드).
- * 위: 관리자가 낸 받은 과제(상태·마감과 형식별 제출·수정 폼). 아래: 기존 자유 믹스셋 제출 폼과 자유 제출 목록.
+ * 위: 관리자가 낸 받은 과제(상태·마감과 형식별 제출·수정 폼). 아래: 자유 제출 폼(링크·글·둘 다)과 자유 제출 목록.
  * 목록 행은 과제 상세(피드백) 화면으로 이동한다. RSC에서 받은 초기 목록을 클라이언트 상태로 관리한다.
  */
 "use client";
@@ -12,11 +12,7 @@ import { useRouter } from "next/navigation";
 import { FileText, FilePlay, Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  submitAssignment,
-  getMyAssignments,
-  type SubmitAssignmentState,
-} from "@/lib/actions/assignments";
+import { getMyAssignments } from "@/lib/actions/assignments";
 import {
   getMyAssignmentTasks,
   submitAssignmentTask,
@@ -28,6 +24,7 @@ import { getMyFeedbacksMap } from "@/lib/actions/feedbacks";
 import { EmptyState } from "@/components/ui/empty-state";
 import { RichTextContent } from "@/components/editor/RichTextContent";
 import { DraftStatus } from "@/components/editor/DraftStatus";
+import { FreeSubmissionForm } from "@/components/student-portal/FreeSubmissionForm";
 import { describeAssignmentSubmission } from "@/lib/unified-item-normalization";
 import { toStudentAssignmentSummaries, type StudentAssignmentSummary } from "@/lib/assignment-summary";
 import { ASSIGNMENT_FORMAT_LABELS } from "@/lib/assignment-recurrence";
@@ -96,69 +93,6 @@ function StatusDot({ tone, label }: { tone: PortalStatusTone; label: string }) {
       <span aria-hidden="true" className={cn("size-1.5 shrink-0 rounded-full", STATUS_TONE_DOT_CLASS_NAMES[tone])} />
       {label}
     </span>
-  );
-}
-
-// ── 자유 제출 폼 ─────────────────────────────────
-
-function SubmitForm({
-  inputRef,
-  onSuccess,
-}: {
-  inputRef: React.RefObject<HTMLInputElement | null>;
-  onSuccess: () => Promise<void>;
-}) {
-  const [mediaUrl, setMediaUrl] = useState("");
-  const [state, action, isPending] = useActionState<SubmitAssignmentState, FormData>(
-    async (previous, data) => {
-      let result: SubmitAssignmentState;
-      try {
-        result = await submitAssignment(previous, data);
-      } catch {
-        return { error: "제출 결과를 확인하지 못했습니다. 목록을 확인한 뒤 다시 시도해 주세요." };
-      }
-      if (result.success) {
-        setMediaUrl("");
-        await onSuccess();
-      }
-      return result;
-    },
-    {},
-  );
-
-  return (
-    // 좁은 화면: 입력 → 안내 → 폭 가득 제출(48). 넓은 화면: 입력과 제출이 한 줄(40), 안내는 그 아래.
-    <form action={action} className="flex flex-col gap-2 md:grid md:grid-cols-[minmax(0,1fr)_auto]">
-      <label htmlFor="assignment-media-url" className="text-ui font-semibold text-secondary-foreground md:col-span-2">
-        새 믹스셋 제출
-      </label>
-      <Input
-        ref={inputRef}
-        id="assignment-media-url"
-        name="mediaUrl"
-        type="url"
-        placeholder="YouTube 또는 SoundCloud 링크 붙여넣기"
-        value={mediaUrl}
-        onChange={(event) => setMediaUrl(event.target.value)}
-        required
-        disabled={isPending}
-        aria-describedby="assignment-media-url-help"
-        className="h-12 px-3.5 md:h-10 md:px-3"
-      />
-      <p id="assignment-media-url-help" className="text-xs leading-[18px] text-muted-foreground md:order-1 md:col-span-2 md:leading-4">
-        YouTube 영상·Shorts·라이브와 SoundCloud 트랙·세트 링크를 지원합니다. 받은 과제와 별도로 자유롭게 제출합니다.
-      </p>
-      <Button
-        type="submit"
-        size="touch"
-        disabled={isPending}
-        className="mt-1 md:mt-0 md:h-10 md:rounded-md md:px-[18px] md:text-body"
-      >
-        {isPending ? "제출 중..." : "제출"}
-      </Button>
-      {state.error && <p role="alert" className="text-ui text-destructive md:order-2 md:col-span-2">{state.error}</p>}
-      {state.success && <p role="status" className="text-ui text-success md:order-2 md:col-span-2">믹스셋을 제출했습니다.</p>}
-    </form>
   );
 }
 
@@ -390,7 +324,8 @@ function AssignmentRow({ assignment }: { assignment: StudentAssignmentSummary })
   const waiting = assignment.feedbackCount === 0;
   const status = waiting ? getPortalStatus("feedbackWaiting").label : `피드백 ${assignment.feedbackCount}개`;
   const submittedAt = formatSubmittedAt(assignment.submittedAt);
-  const source = assignment.mediaUrl ? mediaSourceLabel(assignment.mediaUrl) : "글";
+  const source = [assignment.mediaUrl ? mediaSourceLabel(assignment.mediaUrl) : null, assignment.hasText ? "글" : null]
+    .filter(Boolean).join(" · ") || "글";
   const Icon = assignment.mediaUrl ? Play : FileText;
 
   return (
@@ -453,7 +388,7 @@ export function AssignmentView({ actorId, initialAssignments, initialTasks = [],
   const unsubmittedTaskCount = tasks.filter((task) => task.submission === null).length;
   const summary = [
     tasks.length > 0 ? `받은 과제 ${tasks.length}개 · 미제출 ${unsubmittedTaskCount}개` : null,
-    freeAssignments.length > 0 ? `믹스셋 ${freeAssignments.length}개 · ${getPortalStatus("feedbackWaiting").label} ${waitingCount}개` : null,
+    freeAssignments.length > 0 ? `자유 제출 ${freeAssignments.length}개 · ${getPortalStatus("feedbackWaiting").label} ${waitingCount}개` : null,
   ].filter(Boolean).join(" · ") || null;
 
   const body = (
@@ -493,17 +428,17 @@ export function AssignmentView({ actorId, initialAssignments, initialTasks = [],
         </section>
       ) : null}
 
-      <SubmitForm inputRef={inputRef} onSuccess={refresh} />
+      <FreeSubmissionForm actorId={actorId} idPrefix="assignment" inputRef={inputRef} onDone={refresh} />
 
       {freeAssignments.length === 0 ? (
         tasks.length === 0 ? (
           <EmptyState
-            title="제출한 믹스셋이 없습니다"
-            description="위 입력란에 YouTube 또는 SoundCloud 링크를 붙여넣어 첫 믹스셋을 제출하세요."
+            title="자유 제출이 없습니다"
+            description="위 칸에 YouTube·SoundCloud 링크나 연습 기록 글을 넣어 첫 제출을 해 보세요."
             icon={<FilePlay className="size-4.5" strokeWidth={1.6} aria-hidden="true" />}
             action={(
               <Button type="button" variant="outline" onClick={() => inputRef.current?.focus()}>
-                링크 붙여넣기
+                제출 칸으로 이동
               </Button>
             )}
           />
@@ -511,7 +446,7 @@ export function AssignmentView({ actorId, initialAssignments, initialTasks = [],
       ) : (
         <section aria-labelledby="assignment-list-heading" className="flex flex-col">
           <div className="flex h-11 items-center justify-between border-b border-border md:h-auto md:items-baseline md:pb-2">
-            <h2 id="assignment-list-heading" className="text-ui font-semibold text-secondary-foreground">제출한 믹스셋</h2>
+            <h2 id="assignment-list-heading" className="text-ui font-semibold text-secondary-foreground">자유 제출</h2>
             <span className="text-xs text-muted-foreground">최신순</span>
           </div>
           <ul>

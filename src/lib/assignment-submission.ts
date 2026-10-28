@@ -101,6 +101,28 @@ export function validateSubmissionPayload(
   return { ok: true, mediaUrl: normalizedUrl, textHtml };
 }
 
+export const FREE_SUBMISSION_EMPTY_ERROR = "링크나 글 중 하나 이상을 입력해 주세요.";
+
+/**
+ * 자유 제출(관리자 과제 없이 내는 제출) 입력 검증. 링크·글은 각각 선택이고 하나 이상 있어야 한다.
+ * 빈 칸은 null로 저장하며, 둘 다 비면 DB CHECK에 맡기지 않고 안내 문구를 돌려준다.
+ */
+export function validateFreeSubmissionPayload(
+  { mediaUrl, text }: { mediaUrl: unknown; text: unknown },
+): SubmissionPayloadResult {
+  let normalizedUrl: string | null = null;
+  if (typeof mediaUrl === "string" && mediaUrl.trim()) {
+    const media = normalizeAssignmentMediaUrl(mediaUrl);
+    if (!media.ok) return { ok: false, error: media.error };
+    normalizedUrl = media.url;
+  }
+  const textResult = normalizePlainTextField(text, { maxLength: ASSIGNMENT_TEXT_MAX_LENGTH, label: "글" });
+  if (!textResult.ok) return textResult;
+  const textHtml = textResult.html || null;
+  if (!normalizedUrl && !textHtml) return { ok: false, error: FREE_SUBMISSION_EMPTY_ERROR };
+  return { ok: true, mediaUrl: normalizedUrl, textHtml };
+}
+
 export function parseSubmissionFormat(raw: unknown): AssignmentSubmissionFormatValue | null {
   return raw === "MIX" || raw === "TEXT" || raw === "BOTH" ? raw : null;
 }

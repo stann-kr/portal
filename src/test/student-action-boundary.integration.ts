@@ -74,6 +74,19 @@ mock.module("@/auth", {
     },
   },
 });
+let sessionPersistenceCalls: boolean[] = [];
+let rememberedSession = true;
+mock.module("@/lib/session-persistence-server", {
+  namedExports: {
+    applySessionPersistence: async (remember: boolean) => { sessionPersistenceCalls.push(remember); },
+    clearSessionPersistence: async () => undefined,
+    isRememberedSession: async () => rememberedSession,
+  },
+});
+let redirectCalls: string[] = [];
+mock.module("next/navigation", {
+  namedExports: { redirect: (url: string) => { redirectCalls.push(url); } },
+});
 mock.module("@/db/client", {
   namedExports: {
     createDb: () => requireActiveDb(),
@@ -419,6 +432,69 @@ test("학생은 피드백 전 본인 제출만 삭제하고 관리자·다른 �
   assert.match(repeated.success ? "" : repeated.error, /찾을 수 없는 제출/u);
 });
 
+test("자유 제출은 링크·글·둘 다를 받고 피드백 전 본인 자유 제출만 한 문장 조건으로 고친다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("student-1", "student"));
+  await seedProfile(db, "admin-1", "admin");
+  await seedProfile(db, "student-1");
+  await seedProfile(db, "student-2");
+  const link = "https://youtu.be/aqz-KE-bpKQ";
+  const freeForm = (fields: Record<string, string>) => taskForm(fields);
+  const rowOf = async (id: string) => (await db.select().from(assignments).where(eq(assignments.id, id)))[0];
+
+  const textOnly = await assignmentActions.submitAssignment({}, freeForm({ mediaUrl: "", text: "<script>alert(1)</script>\n오늘 연습 & 질문" }));
+  assert.equal(textOnly.success, true);
+  const storedText = await rowOf(textOnly.id!);
+  assert.equal(storedText?.mediaUrl, null);
+  assert.equal(storedText?.taskId, null);
+  assert.equal(storedText?.textHtml, "<p>&lt;script&gt;alert(1)&lt;/script&gt;<br>오늘 연습 &amp; 질문</p>", "글은 escape·sanitize해 저장한다");
+
+  const linkOnly = await assignmentActions.submitAssignment({}, freeForm({ mediaUrl: link }));
+  assert.equal(linkOnly.success, true);
+  assert.deepEqual([(await rowOf(linkOnly.id!))?.mediaUrl, (await rowOf(linkOnly.id!))?.textHtml], [link, null]);
+
+  const both = await assignmentActions.submitAssignment({}, freeForm({ mediaUrl: link, text: "세트 설명" }));
+  assert.equal(both.success, true);
+  assert.deepEqual([(await rowOf(both.id!))?.mediaUrl, (await rowOf(both.id!))?.textHtml], [link, "<p>세트 설명</p>"]);
+
+  const countBefore = (await db.select().from(assignments)).length;
+  assert.match((await assignmentActions.submitAssignment({}, freeForm({ mediaUrl: " ", text: " " }))).error ?? "", /하나 이상/u);
+  assert.ok((await assignmentActions.submitAssignment({}, freeForm({ mediaUrl: "https://example.test/mix", text: "글" }))).error, "잘못된 링크는 글이 있어도 거부");
+  activeSession = createSession("admin-1", "admin");
+  assert.ok((await assignmentActions.submitAssignment({}, freeForm({ text: "관리자" }))).error);
+  assert.equal((await db.select().from(assignments)).length, countBefore, "거부된 제출은 저장하지 않는다");
+
+  // 수정: 본인 자유 제출을 글만 → 링크와 글로 바꾼다.
+  activeSession = createSession("student-1", "student");
+  const updated = await assignmentActions.updateMyFreeSubmission(textOnly.id!, {}, freeForm({ mediaUrl: link, text: "고친 <b>글</b>" }));
+  assert.deepEqual(updated, { success: true, id: textOnly.id });
+  const afterUpdate = await rowOf(textOnly.id!);
+  assert.equal(afterUpdate?.mediaUrl, link);
+  assert.equal(afterUpdate?.textHtml, "<p>고친 &lt;b&gt;글&lt;/b&gt;</p>");
+  assert.ok(afterUpdate?.updatedAt, "수정 시각을 남긴다");
+  assert.match((await assignmentActions.updateMyFreeSubmission(textOnly.id!, {}, freeForm({ mediaUrl: "", text: "" }))).error ?? "", /하나 이상/u);
+  assert.equal((await rowOf(textOnly.id!))?.textHtml, "<p>고친 &lt;b&gt;글&lt;/b&gt;</p>", "빈 수정은 내용을 바꾸지 않는다");
+
+  // 다른 학생·관리자는 고치지 못하고 내용이 그대로다.
+  activeSession = createSession("student-2", "student");
+  assert.match((await assignmentActions.updateMyFreeSubmission(linkOnly.id!, {}, freeForm({ text: "남의 제출" }))).error ?? "", /찾을 수 없습니다/u);
+  activeSession = createSession("admin-1", "admin");
+  assert.ok((await assignmentActions.updateMyFreeSubmission(linkOnly.id!, {}, freeForm({ text: "관리자 수정" }))).error);
+  assert.deepEqual([(await rowOf(linkOnly.id!))?.mediaUrl, (await rowOf(linkOnly.id!))?.textHtml], [link, null]);
+
+  // 관리자 과제에 대한 제출(task_id 있음)은 자유 제출 수정으로 고치지 못한다.
+  await db.insert(assignmentTasks).values({ id: "free-guard-task", studentId: "student-1", title: "글 과제", submissionFormat: "TEXT" });
+  await db.insert(assignments).values({ id: "task-submission", studentId: "student-1", taskId: "free-guard-task", textHtml: "<p>과제 글</p>" });
+  activeSession = createSession("student-1", "student");
+  assert.match((await assignmentActions.updateMyFreeSubmission("task-submission", {}, freeForm({ mediaUrl: link }))).error ?? "", /찾을 수 없습니다/u);
+  assert.deepEqual([(await rowOf("task-submission"))?.mediaUrl, (await rowOf("task-submission"))?.textHtml], [null, "<p>과제 글</p>"]);
+
+  // 피드백이 달린 뒤에는 고치지 못한다.
+  await db.insert(feedbacks).values({ id: "free-feedback", assignmentId: both.id!, timeMarker: null, content: "좋아요" });
+  const reviewed = await assignmentActions.updateMyFreeSubmission(both.id!, {}, freeForm({ text: "피드백 뒤 수정" }));
+  assert.match(reviewed.error ?? "", /피드백이 등록된 제출은 고칠 수 없습니다/u);
+  assert.deepEqual([(await rowOf(both.id!))?.mediaUrl, (await rowOf(both.id!))?.textHtml], [link, "<p>세트 설명</p>"]);
+});
+
 test("피드백은 잘못된 재생 시점을 저장하지 않고 긴 믹스셋의 시점을 정확히 보존한다", { concurrency: false }, async (context) => {
   const db = await setupDatabase(context, createSession("admin-1", "admin"));
   await seedProfile(db, "admin-1", "admin");
@@ -608,17 +684,27 @@ test("관리자 임시 비밀번호 발급은 학생만 대상으로 기존 로�
 
   // 임시 비밀번호 계정의 로그인은 다른 주소를 거치지 않고 새 비밀번호 설정으로 이동한다.
   const { loginWithCredentials } = await import("@/lib/actions/session");
-  const login = (email: string) => {
+  const login = (email: string, remember: boolean) => {
     const data = new FormData();
     data.set("email", email);
     data.set("password", "entered-password");
     data.set("callbackUrl", "/dashboard/student?tab=notes");
+    if (remember) data.set("remember", "on");
     return loginWithCredentials({}, data);
   };
-  await login("Student-1@Example.com");
-  await login("admin-1@example.com");
+  sessionPersistenceCalls = [];
+  redirectCalls = [];
+  signInImpl = async (...args) => `https://portal.test${(args[1] as { redirectTo: string }).redirectTo}`;
+  await login("Student-1@Example.com", true);
+  await login("admin-1@example.com", false);
   assert.deepEqual(signInCalls.map((call) => (call[1] as { redirectTo?: string }).redirectTo), ["/account/password", "/dashboard/student?tab=notes"]);
+  assert.ok(signInCalls.every((call) => (call[1] as { redirect?: boolean }).redirect === false), "cookie를 고친 뒤 직접 이동한다");
+  // '로그인 유지' 선택이 session cookie 수명에 반영되고, Auth.js가 확인한 주소로 이동한다.
+  assert.deepEqual(sessionPersistenceCalls, [true, false]);
+  assert.deepEqual(redirectCalls, ["https://portal.test/account/password", "https://portal.test/dashboard/student?tab=notes"]);
+  signInImpl = async () => "/dashboard";
   signInCalls = [];
+  sessionPersistenceCalls = [];
 
   // 임시 비밀번호 session은 포탈 기능에 쓸 수 없고 새 비밀번호 설정만 할 수 있다.
   activeSession = createSession("student-1", "student");
@@ -633,11 +719,14 @@ test("관리자 임시 비밀번호 발급은 학생만 대상으로 기존 로�
   };
   assert.deepEqual(await passwordActions.changeOwnPassword({}, form("wrong-temporary", "my-new-password")), { error: "임시 비밀번호가 올바르지 않습니다.", field: "currentPassword" });
   assert.equal((await passwordActions.changeOwnPassword({}, form(temporaryPassword, temporaryPassword))).field, "newPassword");
+  rememberedSession = false;
+  context.after(() => { rememberedSession = true; });
   assert.deepEqual(await passwordActions.changeOwnPassword({}, form(temporaryPassword, "my-new-password")), { success: true });
   const ownHash = await storedHash("student-1");
   assert.equal(isTemporaryPasswordHash(ownHash), false);
   assert.ok(await verifyStoredPassword("my-new-password", ownHash));
   assert.deepEqual(signInCalls, [["credentials", { email: "student-1@example.com", password: "my-new-password", redirect: false }]]);
+  assert.deepEqual(sessionPersistenceCalls, [false], "새 session도 처음 고른 '로그인 유지' 선택을 잇는다");
 
   activeSession = createSession("admin-1", "admin");
   assert.equal((await studentActions.getStudentAccountState("student-1")).kind, "active");

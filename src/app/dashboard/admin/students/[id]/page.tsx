@@ -14,6 +14,7 @@ import { getCurriculumByStudent } from "@/lib/actions/curriculum";
 import { isCurriculumVisible } from "@/lib/curriculum-visibility";
 import { getLessonsByStudent } from "@/lib/actions/lessons";
 import { getOrSeedColumns, getDiggingTracks } from "@/lib/actions/digging";
+import { getDiggingPlaylists } from "@/lib/actions/digging-playlists";
 import { getQnaThreadsByStudent } from "@/lib/actions/qna";
 import { getAssignmentSummariesByStudent } from "@/lib/actions/assignments";
 import { getAssignmentTasksForStudent } from "@/lib/actions/assignmentTasks";
@@ -25,6 +26,7 @@ import { describeAssignmentSubmission } from "@/lib/unified-item-normalization";
 import { buildAdminStudentNotesHref, StudentDetailTabs } from "@/components/admin/StudentDetailTabs";
 import { OverviewTab } from "@/components/admin/OverviewTab";
 import { DiggingBoard } from "@/components/digging/DiggingBoard";
+import { PlaylistSection } from "@/components/digging/PlaylistSection";
 import { ThreadList } from "@/components/qna/ThreadList";
 import {
   LEDGER_HEADER_NOTE_CLASS,
@@ -52,24 +54,29 @@ const TAB_FALLBACK_CLASS = "rounded-lg bg-muted animate-pulse motion-reduce:anim
 // ─── 탭별 콘텐츠 ───────────────────────────────────
 
 async function DiggingTabContent({ studentId }: { studentId: string }) {
-  const [columns, tracks] = await Promise.all([
+  const [columns, tracks, playlists] = await Promise.all([
     getOrSeedColumns(studentId),
     getDiggingTracks(studentId),
+    getDiggingPlaylists(studentId),
   ]);
 
   return (
-    <DiggingBoard
-      initialColumns={columns.map((c: RawColumn) => ({
-        id: c.id,
-        name: c.name,
-        columnType: c.columnType as DiggingColumnType,
-        options: c.options,
-        isDefault: c.isDefault ?? false,
-        sortOrder: c.sortOrder ?? 0,
-      }))}
-      initialTracks={tracks}
-      readonly
-    />
+    <div className="flex flex-col gap-8">
+      <PlaylistSection initialPlaylists={playlists} readonly />
+      <DiggingBoard
+        heading={<h2 className="text-ui font-semibold text-secondary-foreground">트랙</h2>}
+        initialColumns={columns.map((c: RawColumn) => ({
+          id: c.id,
+          name: c.name,
+          columnType: c.columnType as DiggingColumnType,
+          options: c.options,
+          isDefault: c.isDefault ?? false,
+          sortOrder: c.sortOrder ?? 0,
+        }))}
+        initialTracks={tracks}
+        readonly
+      />
+    </div>
   );
 }
 
@@ -97,7 +104,7 @@ async function AssignmentsTabContent({ studentId, referenceTime }: { studentId: 
         />
         {summaries.length === 0 ? (
           <p className="py-6 text-body text-muted-foreground">
-            아직 제출이 없습니다. 학생이 받은 과제를 내거나 과제 화면에서 믹스셋 링크를 제출하면 이곳에 표시됩니다.
+            아직 제출이 없습니다. 학생이 받은 과제를 내거나 과제 화면에서 링크·글을 자유롭게 제출하면 이곳에 표시됩니다.
           </p>
         ) : (
           <ul>

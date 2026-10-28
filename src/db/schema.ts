@@ -1284,6 +1284,49 @@ export const diggingTracks = sqliteTable("digging_tracks", {
 });
 
 /**
+ * 디깅 보드 위 플레이리스트 목록 — 학생이 등록한 Beatport 공유·SoundCloud 세트 링크.
+ * url은 src/lib/digging-contract.ts `normalizeDiggingPlaylistUrl`의 정규화 결과만 저장한다.
+ * 길이 상한(2048·200·2000)은 같은 파일의 DIGGING_PLAYLIST_* 상수와 맞춘다.
+ * title이 없으면 화면이 provider 기본 이름을 보인다.
+ */
+export type DiggingPlaylistProvider = "beatport" | "soundcloud";
+
+export const diggingPlaylists = sqliteTable(
+  "digging_playlists",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .references(() => profiles.id, { onDelete: "cascade" })
+      .notNull(),
+    provider: text("provider").$type<DiggingPlaylistProvider>().notNull(),
+    url: text("url").notNull(),
+    title: text("title"),
+    note: text("note"),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .default(sql`(strftime('%s', 'now'))`)
+      .notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .default(sql`(strftime('%s', 'now'))`)
+      .notNull(),
+  },
+  (table) => [
+    // user_id로 시작하므로 학생별 목록 조회도 이 index가 맡는다.
+    uniqueIndex("digging_playlists_user_url_unique").on(table.userId, table.url),
+    check(
+      "digging_playlists_payload_check",
+      sql`length(${table.url}) BETWEEN 1 AND 2048
+        AND (
+          (${table.provider} = 'beatport' AND ${table.url} LIKE 'https://www.beatport.com/playlists/share/%')
+          OR (${table.provider} = 'soundcloud' AND ${table.url} LIKE 'https://soundcloud.com/%/sets/%')
+        )
+        AND (${table.title} IS NULL OR length(${table.title}) BETWEEN 1 AND 200)
+        AND (${table.note} IS NULL OR length(${table.note}) BETWEEN 1 AND 2000)
+        AND ${table.createdAt} <= ${table.updatedAt}`,
+    ),
+  ],
+);
+
+/**
  * Phase 6: 1:1 Q&A 게시판.
  * - OPEN: 미답변
  * - ANSWERED: 답변 완료

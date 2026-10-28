@@ -10,7 +10,7 @@ import {
 import { ACCOUNT_RAW_ID_RETENTION_SECONDS } from "./lib/account-privacy-atomic";
 
 test("JWT와 session 수명은 raw subject ID 보존 기간보다 짧다", () => {
-  assert.equal(AUTH_SESSION_MAX_AGE_SECONDS, 7 * 24 * 60 * 60);
+  assert.equal(AUTH_SESSION_MAX_AGE_SECONDS, 28 * 24 * 60 * 60);
   assert.equal(authConfig.session?.maxAge, AUTH_SESSION_MAX_AGE_SECONDS);
   assert.equal(authConfig.jwt?.maxAge, AUTH_SESSION_MAX_AGE_SECONDS);
   assert.ok(AUTH_SESSION_MAX_AGE_SECONDS < ACCOUNT_RAW_ID_RETENTION_SECONDS);

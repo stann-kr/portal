@@ -293,6 +293,8 @@ test("계정 삭제는 owned/cross-resource payload와 media를 한 transaction�
     VALUES ('delete-column', 'delete-student', 'Title', 'text');
     INSERT INTO digging_tracks (id, user_id, "values")
     VALUES ('delete-track', 'delete-student', '{}');
+    INSERT INTO digging_playlists (id, user_id, provider, url)
+    VALUES ('delete-playlist', 'delete-student', 'beatport', 'https://www.beatport.com/playlists/share/11018932');
     INSERT INTO calendar_events (id, user_id, title, start_time)
     VALUES ('delete-event', 'delete-student', 'Delete', 1767225600);
 
@@ -503,6 +505,7 @@ test("계정 삭제는 owned/cross-resource payload와 media를 한 transaction�
     "feedbacks",
     "digging_columns",
     "digging_tracks",
+    "digging_playlists",
     "calendar_events",
     "private_notes",
   ]) {

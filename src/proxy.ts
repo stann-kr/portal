@@ -9,6 +9,7 @@ import NextAuth from "next-auth";
 import type { NextFetchEvent, NextRequest } from "next/server";
 import { authConfig } from "./auth.config";
 import { withoutSessionRefreshOnMutation } from "./lib/middleware-session-cookie";
+import { SESSION_SCOPE_COOKIE, withBrowserScopedSessionCookies } from "./lib/session-persistence";
 
 // `export default auth`로 쓰던 middleware 형태다. auth overload 타입은 이 호출 형태를 표현하지 않는다.
 const authProxy = NextAuth(authConfig).auth as unknown as (
@@ -17,7 +18,9 @@ const authProxy = NextAuth(authConfig).auth as unknown as (
 ) => Promise<Response>;
 
 export default async function proxy(request: NextRequest, event: NextFetchEvent) {
-  return withoutSessionRefreshOnMutation(request.method, await authProxy(request, event));
+  const response = withoutSessionRefreshOnMutation(request.method, await authProxy(request, event));
+  // '로그인 유지'를 끈 session은 만료를 늘린 갱신 cookie도 브라우저 session cookie로 둔다.
+  return withBrowserScopedSessionCookies(request.cookies.get(SESSION_SCOPE_COOKIE)?.value, response);
 }
 
 export const config = {

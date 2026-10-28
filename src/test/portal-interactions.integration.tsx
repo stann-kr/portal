@@ -43,6 +43,7 @@ let abandonUpload: typeof import("@/lib/actions/upload").abandonMediaUpload = as
 let saveAssignment: typeof import("@/lib/actions/assignments").submitAssignment = async () => ({});
 let loadAssignments: typeof import("@/lib/actions/assignments").getMyAssignments = async () => [];
 let removeAssignment: typeof import("@/lib/actions/assignments").deleteMyAssignment = async () => ({ success: true });
+let editFreeSubmission: typeof import("@/lib/actions/assignments").updateMyFreeSubmission = async () => ({ error: "테스트 미설정" });
 let saveFeedback: typeof import("@/lib/actions/feedbacks").createFeedback = async () => ({});
 let saveTaskSubmission: typeof import("@/lib/actions/assignmentTasks").submitAssignmentTask = async () => ({});
 let loadTasks: typeof import("@/lib/actions/assignmentTasks").getMyAssignmentTasks = async () => [];
@@ -106,6 +107,7 @@ mock.module("@/lib/actions/assignments", { namedExports: {
   submitAssignment: (...args: Parameters<typeof saveAssignment>) => saveAssignment(...args),
   getMyAssignments: () => loadAssignments(),
   deleteMyAssignment: (...args: Parameters<typeof removeAssignment>) => removeAssignment(...args),
+  updateMyFreeSubmission: (...args: Parameters<typeof editFreeSubmission>) => editFreeSubmission(...args),
 } });
 mock.module("@/lib/actions/assignmentTasks", { namedExports: {
   getMyAssignmentTasks: () => loadTasks(),
@@ -1873,6 +1875,36 @@ test("assignment errors retain the URL and a failed refresh retries without resu
   assert.equal(browser.document.querySelector('[role="alert"]'), null);
 });
 
+test("a free submission sends text without a link, refuses an empty form locally, and clears after success", async (context) => {
+  const submissions: { mediaUrl: string; text: string }[] = [];
+  saveAssignment = async (_previous, data) => {
+    submissions.push({ mediaUrl: String(data.get("mediaUrl")), text: String(data.get("text")) });
+    return { success: true, id: "free-text" };
+  };
+  context.after(() => { saveAssignment = async () => ({}); loadAssignments = async () => []; });
+  await render(context, <AssignmentView actorId="student-free" initialAssignments={[]} />);
+  const textarea = browser.document.getElementById("assignment-text");
+  assert.ok(textarea instanceof browser.HTMLTextAreaElement);
+  assert.equal(browser.document.querySelector('label[for="assignment-text"]')?.textContent, "글 (선택)");
+  await act(async () => { (textarea.form as unknown as HTMLFormElement).requestSubmit(); });
+  await settle();
+  assert.match(browser.document.querySelector('[role="alert"]')?.textContent ?? "", /링크나 글 중 하나 이상/u);
+  assert.deepEqual(submissions, [], "빈 폼은 서버로 보내지 않는다");
+  const setter = Object.getOwnPropertyDescriptor(browser.HTMLTextAreaElement.prototype, "value")?.set;
+  await act(async () => {
+    textarea.focus();
+    setter?.call(textarea, "오늘 연습 기록");
+    textarea.dispatchEvent(new browser.Event("input", { bubbles: true }));
+  });
+  await settle();
+  assert.equal(browser.document.querySelector('[role="alert"]'), null, "입력하면 안내를 지운다");
+  await act(async () => { (textarea.form as unknown as HTMLFormElement).requestSubmit(); });
+  await settle();
+  assert.deepEqual(submissions, [{ mediaUrl: "", text: "오늘 연습 기록" }]);
+  assert.equal((browser.document.getElementById("assignment-text") as unknown as HTMLTextAreaElement).value, "");
+  assert.match(browser.document.querySelector('[role="status"]')?.textContent ?? "", /제출했습니다/u);
+});
+
 test("a received text task submits only the text field, keeps the draft on failure, and refreshes the task list", async (context) => {
   const task = {
     id: "task-text", title: "연습 일지", descriptionHtml: "<p>이번 주 연습</p>", submissionFormat: "TEXT" as const,
@@ -2031,12 +2063,12 @@ test("a submission without feedback is deleted only after a cancel-first confirm
   const listHref = "/dashboard/student?section=workspace&view=assignments";
   // 목록 행은 상세(타임라인 피드백) 화면으로 이동하고, 삭제는 상세 화면에서 한다.
   const root = await render(context, <AssignmentView actorId="student-1" initialAssignments={[{ id: "mistake", taskId: null, taskTitle: null, mediaUrl: "https://youtu.be/aqz-KE-bpKQ", hasText: false, submittedAt: new Date(), feedbackCount: 0 }]} />);
-  const listItem = [...browser.document.querySelectorAll("a")].find((element) => element.textContent?.includes("YouTube 믹스셋"));
+  const listItem = [...browser.document.querySelectorAll("a")].find((element) => element.textContent?.includes("YouTube 링크"));
   assert.equal(listItem?.getAttribute("href"), `/dashboard/student/assignments/mistake?returnTo=${encodeURIComponent(listHref)}`);
   const detail = (feedbackList: { id: string; timeMarker: number; content: string; createdAt: Date | null }[]) => (
     <AssignmentDetailClient
       assignmentId="mistake" actorId="student-1" mediaUrl="https://youtu.be/aqz-KE-bpKQ" textHtml={null} task={null} feedbackList={feedbackList}
-      isAdmin={false} deleteReturnTo={listHref} title="YouTube 믹스셋" submittedLabel="2026년 10월 18일 19:05 제출"
+      isAdmin={false} deleteReturnTo={listHref} title="YouTube 링크" submittedLabel="2026년 10월 18일 19:05 제출"
       submittedLabelShort="10월 18일 19:05 제출" breadcrumb={{ href: listHref, label: "과제" }} returnTo={listHref}
     />
   );
@@ -2057,6 +2089,39 @@ test("a submission without feedback is deleted only after a cancel-first confirm
   await press("삭제");
   assert.deepEqual(requests, ["mistake", "mistake"]);
   assert.deepEqual(routerReplacements, [listHref], "a confirmed deletion returns to the list, which reloads without the submission");
+});
+
+test("a free submission without feedback is edited in place from the detail view with its current link and text", async (context) => {
+  const requests: { id: string; mediaUrl: string; text: string }[] = [];
+  editFreeSubmission = async (assignmentId, _previous, data) => {
+    requests.push({ id: assignmentId, mediaUrl: String(data.get("mediaUrl")), text: String(data.get("text")) });
+    return { success: true, id: assignmentId };
+  };
+  context.after(() => { editFreeSubmission = async () => ({ error: "테스트 미설정" }); });
+  const listHref = "/dashboard/student?section=workspace&view=assignments";
+  const detail = (feedbackList: { id: string; timeMarker: number | null; content: string; createdAt: Date | null }[], task: null | { title: string; descriptionHtml: string; formatLabel: string; dueLabel: string | null; late: boolean } = null) => (
+    <AssignmentDetailClient
+      assignmentId="free-1" actorId="student-edit" mediaUrl={null} textHtml={"<p>첫 문단</p><p>둘째 &lt;문단&gt;</p>"} task={task} feedbackList={feedbackList}
+      isAdmin={false} deleteReturnTo={listHref} title="글 제출" submittedLabel="2026년 10월 18일 19:05 제출"
+      submittedLabelShort="10월 18일 19:05 제출" breadcrumb={{ href: listHref, label: "과제" }} returnTo={listHref}
+    />
+  );
+  const root = await render(context, detail([{ id: "reviewed", timeMarker: null, content: "좋아요", createdAt: null }]));
+  const hasEditButton = () => [...browser.document.querySelectorAll("button")].some((element) => element.textContent === "제출 수정");
+  assert.equal(hasEditButton(), false, "피드백이 달린 제출은 고칠 수 없다");
+  await act(async () => root.render(detail([], { title: "글 과제", descriptionHtml: "", formatLabel: "글", dueLabel: null, late: false })));
+  assert.equal(hasEditButton(), false, "과제 제출은 과제 화면에서 고친다");
+  await act(async () => root.render(detail([])));
+  await press("제출 수정");
+  await settle();
+  const textarea = browser.document.getElementById("free-submission-free-1-text") as unknown as HTMLTextAreaElement;
+  assert.equal(textarea.value, "첫 문단\n\n둘째 <문단>");
+  assert.equal((browser.document.getElementById("free-submission-free-1-media-url") as unknown as HTMLInputElement).value, "");
+  await press("수정 저장");
+  await settle();
+  assert.deepEqual(requests, [{ id: "free-1", mediaUrl: "", text: "첫 문단\n\n둘째 <문단>" }]);
+  assert.equal(browser.document.getElementById("free-submission-free-1-text"), null, "저장 뒤 폼을 닫는다");
+  assert.ok(hasEditButton());
 });
 
 test("admin module edit keeps input on refusal and returns focus to the row after saving", async (context) => {

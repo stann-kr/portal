@@ -1,12 +1,14 @@
 "use server";
 
 import { AuthError } from "next-auth";
+import { redirect } from "next/navigation";
 import { signIn, signOut } from "@/auth";
 import { PASSWORD_CHANGE_PATH } from "@/auth.config";
 import { findActiveProfileByEmail } from "@/lib/active-profile";
 import { loginCallbackUrl, loginErrorMessage } from "@/lib/login-messages";
 import { isTemporaryPasswordHash } from "@/lib/password-storage";
 import { PASSWORD_ATTEMPT_LIMITED_MESSAGE } from "@/lib/password-attempt-limit";
+import { applySessionPersistence, clearSessionPersistence } from "@/lib/session-persistence-server";
 
 /** class 사본이 둘 이상 load돼도 같은 판정을 하도록 Auth.js 오류의 type·code로 구분한다. */
 function isLoginAttemptLimited(error: unknown): boolean {
@@ -34,7 +36,7 @@ export type LoginState = { error?: string; email?: string };
 
 /**
  * 로그인 실패를 redirect 대신 form 상태로 돌려 입력한 이메일과 원래 이동할 주소를 유지한다.
- * 성공 시 NextAuth redirect는 그대로 다시 던져 router가 처리한다.
+ * 성공하면 '로그인 유지' 선택을 session cookie에 반영한 뒤 Auth.js가 확인한 주소로 이동한다.
  */
 export async function loginWithCredentials(
   _previous: LoginState,
@@ -44,10 +46,12 @@ export async function loginWithCredentials(
   const password = String(formData.get("password") ?? "");
   if (!email || !password) return { error: "이메일과 비밀번호를 입력해 주세요.", email };
 
+  let destination: string;
   try {
-    await signIn("credentials", {
+    destination = await signIn("credentials", {
       email,
       password,
+      redirect: false,
       redirectTo: await loginRedirectTarget(email, formData.get("callbackUrl")),
     });
   } catch (error) {
@@ -59,10 +63,12 @@ export async function loginWithCredentials(
     }
     throw error;
   }
-  return { email };
+  await applySessionPersistence(formData.get("remember") === "on");
+  redirect(destination);
 }
 
 /** 루트를 거치면 그 redirect가 주소 표시줄에 남으므로 로그인 화면으로 바로 보낸다. */
 export async function logoutCurrentUser(): Promise<void> {
+  await clearSessionPersistence();
   await signOut({ redirectTo: "/login" });
 }
