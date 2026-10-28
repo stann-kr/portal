@@ -534,25 +534,27 @@ test("댓글·피드백은 응답 유실 후 같은 제출을 한 번만 저장�
     data.set("timeMarker", timeMarker);
     return data;
   };
+  // GENERAL 게시물 댓글에는 재생 시점을 남길 수 없으므로 댓글은 시점 칸을 비워 보낸다.
+  const commentForm = (operationId: string, content?: string) => form(operationId, content, "");
   const commentId = crypto.randomUUID();
-  assert.ok((await commentActions.createComment("retry-post", {}, form("invalid"))).error);
+  assert.ok((await commentActions.createComment("retry-post", {}, commentForm("invalid"))).error);
   await assert.rejects(async () => {
-    assert.equal((await commentActions.createComment("retry-post", {}, form(commentId))).success, true);
+    assert.equal((await commentActions.createComment("retry-post", {}, commentForm(commentId))).success, true);
     throw new Error("response lost after commit");
   }, /response lost/);
-  const retries = await Promise.all([1, 2].map(() => commentActions.createComment("retry-post", {}, form(commentId))));
+  const retries = await Promise.all([1, 2].map(() => commentActions.createComment("retry-post", {}, commentForm(commentId))));
   assert.ok(retries.every((result) => result.success));
   assert.equal(retries[0].commentId, retries[1].commentId);
   assert.equal((await db.select().from(comments)).length, 1);
-  assert.ok((await commentActions.createComment("retry-post", {}, form(commentId, "다른 본문"))).error);
+  assert.ok((await commentActions.createComment("retry-post", {}, commentForm(commentId, "다른 본문"))).error);
   assert.match((await db.select().from(comments))[0].contentHtml, /다시 연습/u);
   activeSession = createSession("student-2", "student");
-  const anotherActor = await commentActions.createComment("retry-post", {}, form(commentId));
+  const anotherActor = await commentActions.createComment("retry-post", {}, commentForm(commentId));
   assert.equal(anotherActor.success, true);
   assert.notEqual(anotherActor.commentId, retries[0].commentId);
-  assert.equal((await commentActions.createComment("retry-post", {}, form(crypto.randomUUID()))).success, true, "같은 내용의 의도적인 새 댓글은 허용한다");
+  assert.equal((await commentActions.createComment("retry-post", {}, commentForm(crypto.randomUUID()))).success, true, "같은 내용의 의도적인 새 댓글은 허용한다");
   await db.update(posts).set({ deletedAt: new Date() }).where(eq(posts.id, "retry-post"));
-  assert.ok((await commentActions.createComment("retry-post", {}, form(commentId))).error);
+  assert.ok((await commentActions.createComment("retry-post", {}, commentForm(commentId))).error);
   assert.equal((await db.select().from(comments)).length, 3);
 
   activeSession = createSession("admin-1", "admin");

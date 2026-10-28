@@ -55,6 +55,10 @@ import {
   type PostCanonicalRequest,
 } from "@/lib/post-continuity";
 import {
+  COMMENT_TIME_MARKER_FIELD,
+  MIXSET_LINK_FIELD,
+} from "@/lib/community-mixset-media";
+import {
   createQnaRequestHashForVersion,
   type QnaCanonicalRequest,
 } from "@/lib/qna-continuity";
@@ -1450,7 +1454,7 @@ test("게시물 CAS에서 늦은 저장이 먼저 저장된 내용을 덮어쓰�
 
   assert.equal(first.success, true);
   assert.match(late.error ?? "", /먼저 변경/u);
-  assert.deepEqual(late.conflictPost, { id: "post-1", title: "먼저 저장", contentHtml: "<p>첫 내용</p>", version: 2 });
+  assert.deepEqual(late.conflictPost, { id: "post-1", title: "먼저 저장", contentHtml: "<p>첫 내용</p>", version: 2, mediaUrl: null });
   const [post] = await db
     .select({ title: posts.title, contentHtml: posts.contentHtml })
     .from(posts)
@@ -1493,7 +1497,7 @@ test("게시물 편집 성공 응답이 유실돼도 같은 저장 재전송은 
 
   assert.equal(lostResponseRetry.success, true);
   assert.equal(lostResponseRetry.replayed, true);
-  assert.deepEqual(lostResponseRetry.post, { id: "post-update-retry", title: "저장된 제목", contentHtml: "<p>저장된 본문</p>", version: 2 });
+  assert.deepEqual(lostResponseRetry.post, { id: "post-update-retry", title: "저장된 제목", contentHtml: "<p>저장된 본문</p>", version: 2, mediaUrl: null });
   assert.equal((await db.select().from(documentOperationLedger).where(eq(documentOperationLedger.resourceId, "post-update-retry"))).length, 1);
   const [stored] = await db
     .select({
@@ -2058,7 +2062,7 @@ test("다른 리소스의 올바른 fingerprint를 이식해도 게시물을 변
   );
 
   assert.match(result.error ?? "", /다른 기준본|먼저 변경/u);
-  assert.deepEqual(result.conflictPost, { id: "post-fingerprint-target", title: "기준 제목", contentHtml: "<p>기준 본문</p>", version: 1 });
+  assert.deepEqual(result.conflictPost, { id: "post-fingerprint-target", title: "기준 제목", contentHtml: "<p>기준 본문</p>", version: 1, mediaUrl: null });
   const [stored] = await db
     .select({ title: posts.title, contentHtml: posts.contentHtml })
     .from(posts)
@@ -3459,4 +3463,559 @@ test("예약 정리는 실제 D1 batch와 R2 binding adapter에서 account alias
   assert.equal(second.media.completed, 0);
   assert.equal(deletedKeys.length, 2);
   assert.equal((await db.select().from(mediaDeletionOutbox)).length, 2);
+});
+
+const MIXSET_YOUTUBE_URL = "https://www.youtube.com/watch?v=aqz-KE-bpKQ";
+const MIXSET_SOUNDCLOUD_SET_URL = "https://soundcloud.com/artist/sets/name";
+const MIXSET_YOUTUBE_ALT_URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ";
+
+function createMixsetLinkPostForm(
+  operationId: string,
+  title: string,
+  contentHtml: string,
+  linkUrl: string,
+): FormData {
+  const formData = createPostForm(operationId, title, contentHtml);
+  formData.delete("mediaUrl");
+  formData.set(MIXSET_LINK_FIELD, linkUrl);
+  return formData;
+}
+
+function createCommentForm(
+  operationId: string,
+  content: string,
+  timeMarker?: string,
+): FormData {
+  const formData = new FormData();
+  formData.set(CREATION_OPERATION_FIELD, operationId);
+  formData.set("content", content);
+  if (timeMarker !== undefined) formData.set(COMMENT_TIME_MARKER_FIELD, timeMarker);
+  return formData;
+}
+
+async function readPostMedia(db: PortalTestDb, postId: string) {
+  const [row] = await db
+    .select({ mediaUrl: posts.mediaUrl, mediaObjectId: posts.mediaObjectId, version: posts.version })
+    .from(posts)
+    .where(eq(posts.id, postId));
+  return row;
+}
+
+test("믹스셋 링크 게시물은 FEEDBACK에서만 정규화된 링크로 만들고 오디오 칸과 섞이면 거부한다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context);
+  await seedProfile(db, "student-1");
+  await db.insert(categories).values({ id: "category-1", slug: "practice", name: "연습" });
+
+  const created = await postActions.createPost(
+    {},
+    createMixsetLinkPostForm(
+      crypto.randomUUID(),
+      "링크 믹스셋",
+      "<p>링크 본문</p>",
+      " https://m.youtube.com/watch?v=aqz-KE-bpKQ ",
+    ),
+  );
+  assert.equal(created.success, true);
+  assert.ok(created.postId);
+  assert.deepEqual(await readPostMedia(db, created.postId), {
+    mediaUrl: MIXSET_YOUTUBE_URL,
+    mediaObjectId: null,
+    version: 1,
+  });
+  const [createRevision] = await db
+    .select({ mediaUrl: postRevisions.mediaUrl, changeType: postRevisions.changeType })
+    .from(postRevisions)
+    .where(eq(postRevisions.postId, created.postId));
+  assert.deepEqual(createRevision, { mediaUrl: MIXSET_YOUTUBE_URL, changeType: "CREATE" });
+
+  const generalForm = createDocumentForm("채널 글", "<p>채널 본문</p>");
+  generalForm.set("boardType", "GENERAL");
+  generalForm.set("category", "practice");
+  generalForm.set("returnTo", "community-editor");
+  generalForm.set(MIXSET_LINK_FIELD, MIXSET_YOUTUBE_URL);
+  const general = await postActions.createPost({}, generalForm);
+  assert.equal(general.success, undefined);
+  assert.match(general.error ?? "", /믹스셋 게시물에서만/u);
+
+  const withLegacyUrl = createMixsetLinkPostForm(
+    crypto.randomUUID(),
+    "섞인 첨부",
+    "<p>본문</p>",
+    MIXSET_YOUTUBE_URL,
+  );
+  withLegacyUrl.set("mediaUrl", "https://cdn.example.com/legacy.mp3");
+  const legacyMixed = await postActions.createPost({}, withLegacyUrl);
+  assert.match(legacyMixed.error ?? "", /하나만 첨부/u);
+
+  const withMediaObject = createMixsetLinkPostForm(
+    crypto.randomUUID(),
+    "섞인 첨부",
+    "<p>본문</p>",
+    MIXSET_YOUTUBE_URL,
+  );
+  withMediaObject.set("mediaObjectId", crypto.randomUUID());
+  const objectMixed = await postActions.createPost({}, withMediaObject);
+  assert.match(objectMixed.error ?? "", /하나만 첨부/u);
+
+  const unsupported = await postActions.createPost(
+    {},
+    createMixsetLinkPostForm(
+      crypto.randomUUID(),
+      "채널 링크",
+      "<p>본문</p>",
+      "https://www.youtube.com/channel/abc",
+    ),
+  );
+  assert.equal(unsupported.success, undefined);
+  assert.ok(unsupported.error);
+
+  assert.equal((await db.select().from(posts)).length, 1);
+});
+
+test("믹스셋 링크 수정은 작성자·관리자만 하고 revision 복원과 같은 작업 재전송은 링크까지 구분한다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context);
+  await seedProfile(db, "student-1");
+  await seedProfile(db, "student-2");
+  await seedProfile(db, "admin-1", "admin");
+  const base = { title: "링크 믹스셋", contentHtml: "<p>링크 본문</p>" };
+  const created = await postActions.createPost(
+    {},
+    createMixsetLinkPostForm(crypto.randomUUID(), base.title, base.contentHtml, MIXSET_YOUTUBE_URL),
+  );
+  const postId = created.postId;
+  assert.ok(postId);
+
+  const linkUpdateForm = (
+    linkUrl: string,
+    operationId: string,
+    baseRevision: number,
+  ) => {
+    const form = createPostUpdateForm(postId, base, base, operationId, baseRevision);
+    form.set(MIXSET_LINK_FIELD, linkUrl);
+    return form;
+  };
+
+  // 다른 학생은 링크를 바꿀 수 없다.
+  activeSession = createSession("student-2", "student");
+  await assert.rejects(
+    postActions.updatePostContent(postId, {}, linkUpdateForm(MIXSET_SOUNDCLOUD_SET_URL, crypto.randomUUID(), 1)),
+    /Unauthorized/u,
+  );
+  assert.deepEqual(await readPostMedia(db, postId), {
+    mediaUrl: MIXSET_YOUTUBE_URL,
+    mediaObjectId: null,
+    version: 1,
+  });
+
+  // 작성자는 링크를 바꾸고 revision에 새 링크가 남는다.
+  activeSession = createSession("student-1", "student");
+  const ownerOperationId = crypto.randomUUID();
+  const ownerUpdate = await postActions.updatePostContent(
+    postId,
+    {},
+    linkUpdateForm("https://soundcloud.com/artist/sets/name", ownerOperationId, 1),
+  );
+  assert.equal(ownerUpdate.success, true);
+  assert.equal(ownerUpdate.post?.mediaUrl, MIXSET_SOUNDCLOUD_SET_URL);
+  assert.deepEqual(await readPostMedia(db, postId), {
+    mediaUrl: MIXSET_SOUNDCLOUD_SET_URL,
+    mediaObjectId: null,
+    version: 2,
+  });
+
+  // 잘못된 링크는 쓰기 없이 거부한다.
+  const invalid = await postActions.updatePostContent(
+    postId,
+    {},
+    linkUpdateForm("https://soundcloud.com/artist", crypto.randomUUID(), 2),
+  );
+  assert.equal(invalid.success, undefined);
+  assert.ok(invalid.error);
+  assert.equal((await readPostMedia(db, postId))?.version, 2);
+
+  // 관리자는 다른 학생의 링크를 바꿀 수 있다.
+  activeSession = createSession("admin-1", "admin");
+  const adminUpdate = await postActions.updatePostContent(
+    postId,
+    {},
+    linkUpdateForm(MIXSET_YOUTUBE_ALT_URL, crypto.randomUUID(), 2),
+  );
+  assert.equal(adminUpdate.success, true);
+  assert.deepEqual(await readPostMedia(db, postId), {
+    mediaUrl: MIXSET_YOUTUBE_ALT_URL,
+    mediaObjectId: null,
+    version: 3,
+  });
+
+  // 링크 칸이 없으면 본문만 바꾸고 링크는 그대로 둔다.
+  activeSession = createSession("student-1", "student");
+  const textOnly = await postActions.updatePostContent(
+    postId,
+    {},
+    createPostUpdateForm(
+      postId,
+      { title: "제목만 수정", contentHtml: base.contentHtml },
+      base,
+      crypto.randomUUID(),
+      3,
+    ),
+  );
+  assert.equal(textOnly.success, true);
+  assert.equal(textOnly.post?.mediaUrl, MIXSET_YOUTUBE_ALT_URL);
+  assert.deepEqual(await readPostMedia(db, postId), {
+    mediaUrl: MIXSET_YOUTUBE_ALT_URL,
+    mediaObjectId: null,
+    version: 4,
+  });
+
+  // 과거 revision 복원은 그때의 링크를 되돌린다.
+  const restored = await postActions.restorePostRevision(postId, crypto.randomUUID(), 4, 1);
+  assert.equal(restored.success, true);
+  const [restoredHead] = await db
+    .select({ title: posts.title, mediaUrl: posts.mediaUrl, version: posts.version })
+    .from(posts)
+    .where(eq(posts.id, postId));
+  assert.deepEqual(restoredHead, { title: base.title, mediaUrl: MIXSET_YOUTUBE_URL, version: 5 });
+
+  // 같은 작업 ID를 같은 링크로 재전송하면 historical 성공으로 회수하고 head는 그대로다.
+  const exactReplay = await postActions.updatePostContent(
+    postId,
+    {},
+    linkUpdateForm(MIXSET_SOUNDCLOUD_SET_URL, ownerOperationId, 1),
+  );
+  assert.equal(exactReplay.success, true);
+  assert.equal(exactReplay.replayed, true);
+
+  // 같은 작업 ID를 다른 링크로 재전송하면 조용히 성공시키지 않는다.
+  const changedReplay = await postActions.updatePostContent(
+    postId,
+    {},
+    linkUpdateForm(MIXSET_YOUTUBE_ALT_URL, ownerOperationId, 1),
+  );
+  assert.equal(changedReplay.success, undefined);
+  assert.equal(changedReplay.conflictKind, "OPERATION_PAYLOAD_CONFLICT");
+
+  // 같은 작업 ID에서 링크 칸을 빼고 재전송해도 링크 변경 요청과 다른 payload다.
+  const droppedLinkReplay = await postActions.updatePostContent(
+    postId,
+    {},
+    createPostUpdateForm(postId, base, base, ownerOperationId, 1),
+  );
+  assert.equal(droppedLinkReplay.conflictKind, "OPERATION_PAYLOAD_CONFLICT");
+
+  assert.deepEqual(await readPostMedia(db, postId), {
+    mediaUrl: MIXSET_YOUTUBE_URL,
+    mediaObjectId: null,
+    version: 5,
+  });
+  assert.deepEqual(
+    (
+      await db
+        .select({ changeType: postRevisions.changeType, mediaUrl: postRevisions.mediaUrl })
+        .from(postRevisions)
+        .where(eq(postRevisions.postId, postId))
+        .orderBy(postRevisions.revisionNumber)
+    ),
+    [
+      { changeType: "CREATE", mediaUrl: MIXSET_YOUTUBE_URL },
+      { changeType: "UPDATE", mediaUrl: MIXSET_SOUNDCLOUD_SET_URL },
+      { changeType: "UPDATE", mediaUrl: MIXSET_YOUTUBE_ALT_URL },
+      { changeType: "UPDATE", mediaUrl: MIXSET_YOUTUBE_ALT_URL },
+      { changeType: "RESTORE_REVISION", mediaUrl: MIXSET_YOUTUBE_URL },
+    ],
+  );
+});
+
+test("오디오·매체 없는 믹스셋·GENERAL 게시물은 링크 칸이 오면 매체를 바꾸지 않고 거부한다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context);
+  await seedProfile(db, "student-1");
+  const base = { title: "원본", contentHtml: "<p>원본 본문</p>" };
+  const legacyAudioUrl = "https://cdn.example.com/legacy/mix.mp3";
+  await db.insert(posts).values([
+    {
+      id: "post-legacy-audio",
+      authorId: "student-1",
+      category: "feedback",
+      boardType: "FEEDBACK",
+      mediaUrl: legacyAudioUrl,
+      ...base,
+      version: 1,
+    },
+    {
+      id: "post-feedback-no-media",
+      authorId: "student-1",
+      category: "feedback",
+      boardType: "FEEDBACK",
+      mediaUrl: null,
+      ...base,
+      version: 1,
+    },
+    {
+      id: "post-general",
+      authorId: "student-1",
+      category: "practice",
+      boardType: "GENERAL",
+      mediaUrl: null,
+      ...base,
+      version: 1,
+    },
+  ]);
+
+  for (const [postId, expectedMediaUrl] of [
+    ["post-legacy-audio", legacyAudioUrl],
+    ["post-feedback-no-media", null],
+    ["post-general", null],
+  ] as const) {
+    const form = createPostUpdateForm(
+      postId,
+      { title: "바뀌면 안 됨", contentHtml: base.contentHtml },
+      base,
+      crypto.randomUUID(),
+      1,
+    );
+    form.set(MIXSET_LINK_FIELD, MIXSET_YOUTUBE_URL);
+    const result = await postActions.updatePostContent(postId, {}, form);
+    assert.equal(result.success, undefined, postId);
+    assert.match(result.error ?? "", /링크로 올린 믹스셋 게시물에서만/u, postId);
+    const [head] = await db
+      .select({ title: posts.title, mediaUrl: posts.mediaUrl, version: posts.version })
+      .from(posts)
+      .where(eq(posts.id, postId));
+    assert.deepEqual(head, { title: base.title, mediaUrl: expectedMediaUrl, version: 1 }, postId);
+  }
+  assert.equal((await db.select().from(documentOperationLedger)).length, 0);
+
+  // 링크 칸이 없으면 오디오 게시물도 본문만 바꾸고 오디오는 그대로 둔다.
+  const textOnly = await postActions.updatePostContent(
+    "post-legacy-audio",
+    {},
+    createPostUpdateForm(
+      "post-legacy-audio",
+      { title: "오디오 제목 수정", contentHtml: base.contentHtml },
+      base,
+      crypto.randomUUID(),
+      1,
+    ),
+  );
+  assert.equal(textOnly.success, true);
+  assert.deepEqual(await readPostMedia(db, "post-legacy-audio"), {
+    mediaUrl: legacyAudioUrl,
+    mediaObjectId: null,
+    version: 2,
+  });
+});
+
+test("request hash v2로 저장된 게시물 update 영수증은 v3 전환 뒤에도 같은 재전송을 회수한다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context);
+  await seedProfile(db, "student-1");
+  const postId = "post-v2-update-receipt";
+  const operationId = crypto.randomUUID();
+  const before = { title: "v1 제목", contentHtml: "<p>v1 본문</p>" };
+  const after = { title: "v2 제목", contentHtml: "<p>v2 본문</p>" };
+  await db.insert(posts).values({
+    id: postId,
+    authorId: "student-1",
+    category: "feedback",
+    boardType: "FEEDBACK",
+    mediaUrl: null,
+    ...after,
+    version: 2,
+  });
+  const request: PostCanonicalRequest = {
+    operationType: "UPDATE",
+    resourceId: postId,
+    subjectId: "student-1",
+    baseRevision: 1,
+    title: after.title,
+    contentHtml: after.contentHtml,
+  };
+  const v2Hash = createPostRequestHashForVersion(request, 2);
+  assert.ok(v2Hash);
+  assert.notEqual(createPostRequestHashForVersion(request, 3), v2Hash);
+  assert.notEqual(
+    createPostRequestHashForVersion({ ...request, mediaLinkUrl: MIXSET_YOUTUBE_URL }, 3),
+    createPostRequestHashForVersion(request, 3),
+  );
+  await db.insert(documentOperationLedger).values({
+    id: crypto.randomUUID(),
+    operationId,
+    actorId: "student-1",
+    subjectId: "student-1",
+    resourceType: "COMMUNITY_POST",
+    operationType: "UPDATE",
+    resourceId: postId,
+    requestHash: v2Hash,
+    requestHashVersion: 2,
+    resultRevision: 2,
+    createdAt: new Date("2026-08-01T00:00:00.000Z"),
+  });
+
+  const replay = await postActions.updatePostContent(
+    postId,
+    {},
+    createPostUpdateForm(postId, after, before, operationId, 1),
+  );
+  assert.equal(replay.success, true);
+  assert.equal(replay.replayed, true);
+  assert.equal(replay.currentRevision, 2);
+
+  const changed = await postActions.updatePostContent(
+    postId,
+    {},
+    createPostUpdateForm(postId, { ...after, title: "다른 제목" }, before, operationId, 1),
+  );
+  assert.equal(changed.conflictKind, "OPERATION_PAYLOAD_CONFLICT");
+  const [head] = await db
+    .select({ title: posts.title, version: posts.version })
+    .from(posts)
+    .where(eq(posts.id, postId));
+  assert.deepEqual(head, { title: after.title, version: 2 });
+  assert.equal(
+    (await db.select().from(documentOperationLedger)).length,
+    1,
+  );
+});
+
+test("재생 시점 댓글은 매체 있는 믹스셋 게시물에만 저장하고 같은 작업 재전송은 같은 시점만 회수한다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context);
+  await seedProfile(db, "student-1");
+  await seedProfile(db, "student-2");
+  const linkPost = await postActions.createPost(
+    {},
+    createMixsetLinkPostForm(crypto.randomUUID(), "링크 믹스셋", "<p>본문</p>", MIXSET_YOUTUBE_URL),
+  );
+  const linkPostId = linkPost.postId;
+  assert.ok(linkPostId);
+  const base = { title: "원본", contentHtml: "<p>원본 본문</p>" };
+  await db.insert(posts).values([
+    {
+      id: "post-audio",
+      authorId: "student-1",
+      category: "feedback",
+      boardType: "FEEDBACK",
+      mediaUrl: "https://cdn.example.com/legacy/mix.mp3",
+      ...base,
+      version: 1,
+    },
+    {
+      id: "post-feedback-no-media",
+      authorId: "student-1",
+      category: "feedback",
+      boardType: "FEEDBACK",
+      mediaUrl: null,
+      ...base,
+      version: 1,
+    },
+    {
+      id: "post-general",
+      authorId: "student-1",
+      category: "practice",
+      boardType: "GENERAL",
+      mediaUrl: null,
+      ...base,
+      version: 1,
+    },
+  ]);
+
+  // 다른 학생도 링크·오디오 믹스셋에 시점 댓글을 남길 수 있다.
+  activeSession = createSession("student-2", "student");
+  const markerOperationId = crypto.randomUUID();
+  const onLink = await commentActions.createComment(
+    linkPostId,
+    {},
+    createCommentForm(markerOperationId, "드롭 좋아요", "1:05:30"),
+  );
+  assert.equal(onLink.success, true);
+  const onAudio = await commentActions.createComment(
+    "post-audio",
+    {},
+    createCommentForm(crypto.randomUUID(), "여기 전환", "12:34"),
+  );
+  assert.equal(onAudio.success, true);
+  for (const [marker, seconds] of [["0", 0], ["754", 754], ["23:59:59", 86_399]] as const) {
+    const boundary = await commentActions.createComment(
+      "post-audio",
+      {},
+      createCommentForm(crypto.randomUUID(), `경계 ${marker}`, marker),
+    );
+    assert.equal(boundary.success, true, marker);
+    const [stored] = await db
+      .select({ seconds: comments.timeMarkerSeconds })
+      .from(comments)
+      .where(eq(comments.id, boundary.commentId!));
+    assert.equal(stored?.seconds, seconds, marker);
+  }
+
+  const linkComments = await commentActions.getCommentsByPost(linkPostId);
+  assert.deepEqual(
+    linkComments.map((comment) => [comment.id, comment.timeMarkerSeconds]),
+    [[onLink.commentId, 3930]],
+  );
+  const [audioFirst] = await db
+    .select({ seconds: comments.timeMarkerSeconds })
+    .from(comments)
+    .where(eq(comments.id, onAudio.commentId!));
+  assert.equal(audioFirst?.seconds, 754);
+
+  // 형식·범위를 벗어난 시점은 쓰기 전에 거부한다.
+  for (const marker of ["-5", "86400", "24:00:00", "1:60", "abc", "1.5"]) {
+    const invalid = await commentActions.createComment(
+      linkPostId,
+      {},
+      createCommentForm(crypto.randomUUID(), "잘못된 시점", marker),
+    );
+    assert.equal(invalid.success, undefined, marker);
+    assert.match(invalid.error ?? "", /재생 시점/u, marker);
+  }
+
+  // 매체 없는 믹스셋과 GENERAL 게시물에는 시점을 남길 수 없다.
+  for (const postId of ["post-feedback-no-media", "post-general"]) {
+    const rejected = await commentActions.createComment(
+      postId,
+      {},
+      createCommentForm(crypto.randomUUID(), "시점 댓글", "1:00"),
+    );
+    assert.equal(rejected.success, undefined, postId);
+    assert.match(rejected.error ?? "", /재생 시점은 오디오나 링크가 있는 믹스셋/u, postId);
+  }
+
+  // 시점 없는 일반 댓글은 모든 게시판에서 그대로 동작한다.
+  for (const postId of ["post-feedback-no-media", "post-general", linkPostId]) {
+    const plain = await commentActions.createComment(
+      postId,
+      {},
+      createCommentForm(crypto.randomUUID(), "일반 댓글", ""),
+    );
+    assert.equal(plain.success, true, postId);
+    const [stored] = await db
+      .select({ seconds: comments.timeMarkerSeconds })
+      .from(comments)
+      .where(eq(comments.id, plain.commentId!));
+    assert.equal(stored?.seconds, null, postId);
+  }
+
+  // 같은 작업 ID 재전송: 같은 시점은 같은 댓글로 회수하고, 다른 시점·시점 제거는 거부한다.
+  const commentCountBefore = (await db.select().from(comments)).length;
+  const exactReplay = await commentActions.createComment(
+    linkPostId,
+    {},
+    createCommentForm(markerOperationId, "드롭 좋아요", "3930"),
+  );
+  assert.equal(exactReplay.success, true);
+  assert.equal(exactReplay.commentId, onLink.commentId);
+  for (const marker of ["1:05:31", ""]) {
+    const changedReplay = await commentActions.createComment(
+      linkPostId,
+      {},
+      createCommentForm(markerOperationId, "드롭 좋아요", marker),
+    );
+    assert.equal(changedReplay.success, undefined, marker);
+    assert.ok(changedReplay.error, marker);
+  }
+  assert.equal((await db.select().from(comments)).length, commentCountBefore);
+  const [unchanged] = await db
+    .select({ seconds: comments.timeMarkerSeconds })
+    .from(comments)
+    .where(eq(comments.id, onLink.commentId!));
+  assert.equal(unchanged?.seconds, 3930);
 });

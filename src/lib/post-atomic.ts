@@ -31,6 +31,7 @@ import {
   type PostCanonicalSnapshot,
 } from "@/lib/post-continuity";
 import { deriveDocumentOperationRecordId } from "@/lib/private-note-continuity";
+import { isMixsetLinkUrl } from "@/lib/community-mixset-media";
 import {
   documentImageClaimStatements,
   mediaClaimStatements,
@@ -98,6 +99,8 @@ export type UpdatePostWrite = {
   baseRevision: number;
   title: string;
   contentHtml: string;
+  /** 링크 믹스셋 게시물의 새 링크(정규화된 값). 없으면 매체를 바꾸지 않는다. */
+  mediaLinkUrl?: string;
   now: Date;
 };
 
@@ -590,7 +593,12 @@ export async function updatePostAtomically(
     : await findDocumentTombstone(context, "COMMUNITY_POST", write.postId);
   const subjectId = existing?.authorId ?? tombstone?.subjectId ?? "unknown";
   const nextSnapshot = existing
-    ? { ...postSnapshot(existing, null), title: write.title, contentHtml: write.contentHtml }
+    ? {
+        ...postSnapshot(existing, null),
+        title: write.title,
+        contentHtml: write.contentHtml,
+        mediaUrl: write.mediaLinkUrl ?? existing.mediaUrl,
+      }
     : undefined;
   const request: PostCanonicalRequest = {
     operationType: "UPDATE",
@@ -599,6 +607,7 @@ export async function updatePostAtomically(
     baseRevision: write.baseRevision,
     title: write.title,
     contentHtml: write.contentHtml,
+    ...(write.mediaLinkUrl === undefined ? {} : { mediaLinkUrl: write.mediaLinkUrl }),
   };
   const requestHash = createPostRequestHash(request);
   const replay = await resolvePostReceiptReplay(context, {
@@ -620,6 +629,13 @@ export async function updatePostAtomically(
   if (existing.version !== write.baseRevision) {
     return { ok: false, reason: "VERSION_CONFLICT", postId: write.postId, currentRevision: existing.version };
   }
+  // 링크는 업로드 파일이 없는 믹스셋 링크 게시물에서만 바꾼다(오디오↔링크 전환 없음).
+  if (
+    write.mediaLinkUrl !== undefined &&
+    (existing.boardType !== "FEEDBACK" || existing.mediaObjectId !== null || !isMixsetLinkUrl(existing.mediaUrl))
+  ) {
+    return { ok: false, reason: "INTERNAL_INVARIANT_FAILURE", postId: write.postId, currentRevision: existing.version };
+  }
 
   const recordId = deriveDocumentOperationRecordId(write.actor.id, write.operationId);
   if (snapshotsEqual(postSnapshot(existing, null), nextSnapshot)) {
@@ -635,7 +651,7 @@ export async function updatePostAtomically(
             SELECT ?, ?, ?, author_id, 'COMMUNITY_POST', 'UPDATE', id, ?, ?, version, ?
             FROM posts
             WHERE id = ? AND version = ? AND deleted_at IS NULL
-              AND (author_id = ? OR ? = 1) AND title = ? AND content_html = ?
+              AND (author_id = ? OR ? = 1) AND title = ? AND content_html = ? AND media_url IS ?
           `,
           params: [
             recordId,
@@ -650,6 +666,7 @@ export async function updatePostAtomically(
             Number(write.actor.isAdmin),
             write.title,
             write.contentHtml,
+            nextSnapshot.mediaUrl,
           ],
         },
         DOCUMENT_CONDITIONAL_WRITE_SENTINEL,
@@ -694,13 +711,14 @@ export async function updatePostAtomically(
       {
         query: `
           UPDATE posts
-          SET title = ?, content_html = ?, updated_at = ?, version = version + 1
+          SET title = ?, content_html = ?, media_url = ?, updated_at = ?, version = version + 1
           WHERE id = ? AND version = ? AND deleted_at IS NULL
             AND (author_id = ? OR ? = 1)
         `,
         params: [
           write.title,
           write.contentHtml,
+          nextSnapshot.mediaUrl,
           documentEpochSeconds(write.now),
           write.postId,
           write.baseRevision,

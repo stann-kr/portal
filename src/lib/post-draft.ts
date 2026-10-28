@@ -8,6 +8,8 @@ type CreatePostDraftFields = {
   contentHtml: string;
   mediaUrl: string;
   mediaObjectId?: string;
+  /** 믹스셋 링크 칸 값. 이전 초안에는 없다. 오디오·링크 선택(mode)만 바뀐 상태는 빈 초안으로 본다. */
+  mixsetLinkUrl?: string;
 };
 
 type CreatePostDraftDefaults = Pick<
@@ -25,6 +27,7 @@ export function isCreatePostDraftEmpty(
     isRichTextEmpty(draft.contentHtml) &&
     !draft.mediaUrl &&
     !draft.mediaObjectId &&
+    !draft.mixsetLinkUrl?.trim() &&
     draft.boardType === defaults.boardType &&
     draft.category === defaults.category &&
     !draft.isPinned

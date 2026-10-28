@@ -29,6 +29,7 @@ let renderCalendarEventContent: typeof import("@/components/calendar/CalendarEve
 let VideoPlayer: typeof import("@/components/player/VideoPlayer").VideoPlayer;
 let TimelineFeedback: typeof import("@/components/feedback/TimelineFeedback").TimelineFeedback;
 let PostDetailClient: typeof import("@/app/community/[postId]/PostDetailClient").PostDetailClient;
+let MixsetFeedbackCard: typeof import("@/components/community/MixsetFeedbackCard").MixsetFeedbackCard;
 let saveComment: typeof import("@/lib/actions/comments").createComment = async () => ({});
 let removeComment: typeof import("@/lib/actions/comments").deleteComment = async () => {};
 let trashPost: typeof import("@/lib/actions/posts").deletePost = async () => ({ success: true });
@@ -259,6 +260,7 @@ before(async () => {
   ({ VideoPlayer } = await import("@/components/player/VideoPlayer"));
   ({ TimelineFeedback } = await import("@/components/feedback/TimelineFeedback"));
   ({ PostDetailClient } = await import("@/app/community/[postId]/PostDetailClient"));
+  ({ MixsetFeedbackCard } = await import("@/components/community/MixsetFeedbackCard"));
   ({ AssignmentView } = await import("@/components/student-portal/AssignmentView"));
   ({ AssignmentDetailClient } = await import("@/app/dashboard/student/assignments/[id]/AssignmentDetailClient"));
   ({ FileUploader } = await import("@/components/upload/FileUploader"));
@@ -1843,7 +1845,7 @@ test("failed comment deletion keeps the conversation and unfinished reply visibl
     mediaObjectId: null, createdAt: new Date(), updatedAt: new Date(), deletedAt: null,
     deletedById: null, version: 1, authorName: "학생", authorEmail: null,
   };
-  const comment = { id: "comment-1", postId: post.id, authorId: "student-1", contentHtml: "<p>기존 대화</p>", createdAt: new Date(), authorName: "학생", authorEmail: null };
+  const comment = { id: "comment-1", postId: post.id, authorId: "student-1", contentHtml: "<p>기존 대화</p>", createdAt: new Date(), timeMarkerSeconds: null, authorName: "학생", authorEmail: null };
   await render(context, <PostDetailClient postId={post.id} post={post} initialCommentList={[comment]} currentUserId="student-1" isAdmin={false} returnTo="/community" />);
   await fill("content", "아직 작성 중인 답글");
   await press("학생 댓글 삭제");
@@ -1853,6 +1855,145 @@ test("failed comment deletion keeps the conversation and unfinished reply visibl
   assert.equal(browser.document.activeElement?.getAttribute("aria-label"), "학생 댓글 삭제", "실패 뒤 확인을 연 버튼으로 돌아간다");
   assert.match(browser.document.body.textContent, /기존 대화/);
   assert.equal(inputValue("content"), "아직 작성 중인 답글");
+});
+
+function mixsetPost(id: string, media: { mediaUrl: string | null; mediaObjectId: string | null }, boardType: "FEEDBACK" | "GENERAL" = "FEEDBACK") {
+  return {
+    id, authorId: "student-1", title: "금요일 믹스셋", contentHtml: "<p>본문</p>",
+    category: "general", boardType, isPinned: false, ...media,
+    createdAt: new Date(), updatedAt: new Date(), deletedAt: null as Date | null,
+    deletedById: null, version: 1, authorName: "학생", authorEmail: null,
+  };
+}
+
+function mixsetComment(id: string, postId: string, text: string, timeMarkerSeconds: number | null) {
+  return { id, postId, authorId: "student-2", contentHtml: `<p>${text}</p>`, createdAt: new Date(), timeMarkerSeconds, authorName: "다른 학생", authorEmail: null };
+}
+
+test("믹스셋 링크 상세는 본문 위에 플레이어를 두고 댓글 시점을 누를 때마다 그 위치로 이동한다", async (context) => {
+  browser.localStorage.clear();
+  const post = mixsetPost("mixset-link", { mediaUrl: "https://www.youtube.com/watch?v=aqz-KE-bpKQ", mediaObjectId: null });
+  const comments = [mixsetComment("c-1", post.id, "여기 전환이 좋아요", 754), mixsetComment("c-2", post.id, "전체적으로 좋았어요", null)];
+  await render(context, <PostDetailClient postId={post.id} post={post} initialCommentList={comments} currentUserId="student-1" isAdmin={false} returnTo="/community" />);
+  const region = browser.document.querySelector('section[aria-label="믹스셋 재생"]');
+  assert.ok(region);
+  const video = region.querySelector("video");
+  assert.ok(video);
+  assert.ok(region.compareDocumentPosition(browser.document.querySelector(".border-b.pb-5")!) & browser.Node.DOCUMENT_POSITION_FOLLOWING, "플레이어는 본문 위에 놓인다");
+  const chips = [...browser.document.querySelectorAll("button")].filter((element) => element.getAttribute("aria-label")?.endsWith("위치로 이동"));
+  assert.deepEqual(chips.map((element) => element.textContent), ["12:34"], "시점 없는 댓글에는 시점 표시가 없다");
+  await act(async () => { video.dispatchEvent(new browser.Event("loadedmetadata")); });
+  await press("12:34 위치로 이동");
+  assert.equal(video.currentTime, 754);
+  assert.match(region.querySelector('[role="status"]')?.textContent ?? "", /12:34 위치부터 재생/u);
+  video.currentTime = 800;
+  await press("12:34 위치로 이동");
+  assert.equal(video.currentTime, 754, "같은 시점을 다시 눌러도 다시 이동한다");
+});
+
+test("믹스셋 오디오 상세는 metadata 뒤에 시점으로 이동해 재생하고 현재 위치로 댓글 시점을 채운다", async (context) => {
+  browser.localStorage.clear();
+  const post = mixsetPost("mixset-audio", { mediaUrl: "/api/media/audio-1", mediaObjectId: "audio-1" });
+  await render(context, <PostDetailClient postId={post.id} post={post} initialCommentList={[mixsetComment("c-1", post.id, "드롭", 3930)]} currentUserId="student-1" isAdmin={false} returnTo="/community" />);
+  const audio = browser.document.querySelector("audio");
+  assert.ok(audio);
+  assert.equal(audio.getAttribute("preload"), "metadata");
+  assert.equal(audio.controls, true);
+  await press("현재 위치");
+  assert.match(browser.document.querySelector('form [role="status"]')?.textContent ?? "", /재생 위치를 읽지 못했습니다/u);
+  assert.equal(inputValue("timeMarker"), "");
+  await press("1:05:30 위치로 이동");
+  assert.equal(audio.currentTime, 0, "metadata 전에는 이동을 미룬다");
+  await act(async () => { audio.dispatchEvent(new browser.Event("loadedmetadata")); });
+  assert.equal(audio.currentTime, 3930);
+  assert.equal(audio.paused, false, "이동한 위치부터 재생한다");
+  audio.currentTime = 754.9;
+  await press("현재 위치");
+  assert.equal(inputValue("timeMarker"), "12:34", "초 단위 내림으로 채운다");
+  assert.equal(browser.document.activeElement?.getAttribute("name"), "content", "이어서 댓글 내용을 입력한다");
+  await press("시점 비우기");
+  assert.equal(inputValue("timeMarker"), "");
+});
+
+test("댓글 시점 칸은 매체가 있는 믹스셋에만 보이고 시점·작업 식별자·초안을 함께 다룬다", async (context) => {
+  browser.localStorage.clear();
+  const submissions: { content: unknown; timeMarker: unknown; operationId: unknown }[] = [];
+  saveComment = async (_id, _previous, data) => {
+    submissions.push({ content: data.get("content"), timeMarker: data.get("timeMarker"), operationId: data.get("operationId") });
+    return { error: "댓글을 저장하지 못했습니다." };
+  };
+  context.after(() => { saveComment = async () => ({}); });
+  const screen = (post: ReturnType<typeof mixsetPost>) => <PostDetailClient postId={post.id} post={post} initialCommentList={[]} currentUserId="student-1" isAdmin={false} returnTo="/community" />;
+  const root = await render(context, screen(mixsetPost("general-post", { mediaUrl: null, mediaObjectId: null }, "GENERAL")));
+  assert.equal(browser.document.querySelector('input[name="timeMarker"]'), null, "일반 게시물에는 시점 칸이 없다");
+  assert.equal(browser.document.querySelector('section[aria-label="믹스셋 재생"]'), null);
+  await act(async () => root.render(screen(mixsetPost("no-media", { mediaUrl: null, mediaObjectId: null }))));
+  await settle();
+  assert.equal(browser.document.querySelector('input[name="timeMarker"]'), null, "매체 없는 믹스셋에도 시점 칸이 없다");
+
+  const post = mixsetPost("with-media", { mediaUrl: "https://youtu.be/aqz-KE-bpKQ", mediaObjectId: null });
+  await act(async () => root.render(screen(post)));
+  await settle();
+  const timeInput = browser.document.querySelector('input[name="timeMarker"]');
+  assert.ok(timeInput instanceof browser.HTMLInputElement);
+  assert.equal(browser.document.querySelector(`label[for="${timeInput.id}"]`)?.textContent, "시점");
+  await fill("content", "브레이크 다음이 좋아요");
+  await fill("timeMarker", "abc");
+  await press("등록");
+  assert.equal(submissions.length, 0, "형식이 틀린 시점은 보내지 않는다");
+  assert.equal(timeInput.getAttribute("aria-invalid"), "true");
+  assert.match(browser.document.querySelector('[role="alert"]')?.textContent ?? "", /재생 시점은/u);
+  await fill("timeMarker", "1:05:30");
+  assert.equal(timeInput.getAttribute("aria-invalid"), null);
+  await press("등록");
+  await fill("timeMarker", "1:05:31");
+  await press("등록");
+  assert.deepEqual(submissions.map(({ content, timeMarker }) => [content, timeMarker]), [["브레이크 다음이 좋아요", "1:05:30"], ["브레이크 다음이 좋아요", "1:05:31"]]);
+  assert.notEqual(submissions[0].operationId, submissions[1].operationId, "시점이 바뀌면 다른 제출이다");
+
+  // 이탈 뒤 돌아오면 시점까지 초안으로 복원하고, 확인된 저장 뒤에는 둘 다 비운다.
+  await act(async () => root.render(<div />));
+  await act(async () => root.render(screen(post)));
+  await settle();
+  assert.equal(inputValue("timeMarker"), "1:05:31");
+  assert.equal(inputValue("content"), "브레이크 다음이 좋아요");
+  saveComment = async (_id, _previous, data) => {
+    submissions.push({ content: data.get("content"), timeMarker: data.get("timeMarker"), operationId: data.get("operationId") });
+    return { success: true, commentId: "saved-comment" };
+  };
+  await press("등록");
+  assert.equal(submissions.at(-1)?.operationId, submissions[1].operationId, "복원한 초안의 재시도는 같은 제출이다");
+  assert.equal(inputValue("timeMarker"), "");
+  assert.equal(inputValue("content"), "");
+  await act(async () => root.render(<div />));
+  await act(async () => root.render(screen(post)));
+  await settle();
+  assert.equal(inputValue("timeMarker"), "");
+  assert.equal(inputValue("content"), "");
+});
+
+test("믹스셋 목록 줄은 링크 플레이어를 누른 줄에만 열고 오디오·매체 없음 줄은 그대로 둔다", async (context) => {
+  const base = { contentHtml: "<p>미리보기</p>", authorName: "학생", authorEmail: null, createdAt: new Date() };
+  await render(context, <ul>
+    <MixsetFeedbackCard post={{ ...base, id: "link", title: "링크 믹스셋", mediaUrl: "https://www.youtube.com/watch?v=aqz-KE-bpKQ", mediaObjectId: null }} />
+    <MixsetFeedbackCard post={{ ...base, id: "audio", title: "오디오 믹스셋", mediaUrl: "/api/media/audio-1", mediaObjectId: "audio-1" }} />
+    <MixsetFeedbackCard post={{ ...base, id: "none", title: "빈 믹스셋", mediaUrl: null, mediaObjectId: null }} />
+  </ul>);
+  assert.equal(browser.document.querySelectorAll("video, iframe").length, 0, "목록을 열 때 외부 플레이어를 만들지 않는다");
+  assert.equal(browser.document.querySelectorAll("audio").length, 1);
+  assert.equal(button("오디오 믹스셋 재생").getAttribute("aria-pressed"), "false");
+  const toggle = button("링크 믹스셋 플레이어");
+  assert.equal(toggle.getAttribute("aria-expanded"), "false");
+  await press("링크 믹스셋 플레이어");
+  assert.equal(toggle.getAttribute("aria-expanded"), "true");
+  const panel = browser.document.getElementById(toggle.getAttribute("aria-controls") ?? "");
+  assert.ok(panel?.querySelector("video"));
+  assert.equal(browser.document.querySelectorAll("video").length, 1);
+  await press("링크 믹스셋 플레이어");
+  assert.equal(toggle.getAttribute("aria-expanded"), "false");
+  assert.equal(browser.document.querySelectorAll("video").length, 0);
+  assert.match(browser.document.body.textContent ?? "", /재생할 매체 없음/u);
+  assert.equal((browser.document.body.textContent?.match(/재생할 매체 없음/gu) ?? []).length, 1);
 });
 
 test("assignment errors retain the URL and a failed refresh retries without resubmission", async (context) => {

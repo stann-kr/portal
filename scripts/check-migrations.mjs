@@ -48,6 +48,7 @@ import {
 import { validateCalendarSyncUpgrade } from "./migration-check/calendar-sync.mjs";
 import { validateCalendarPushChannelUpgrade } from "./migration-check/calendar-push-channels.mjs";
 import { validateDiggingPlaylistUpgrade } from "./migration-check/digging-playlists.mjs";
+import { validateCommentTimeMarkerUpgrade } from "./migration-check/comment-time-markers.mjs";
 import {
   validateAccountPrivacyAtomicSource,
   validateAccountPrivacySemantics,
@@ -179,6 +180,8 @@ async function main() {
   console.log("PASS populated 0017 → 0018 calendar push channel table, constraints and mapping cascade");
   await validateDiggingPlaylistUpgrade(migrationFiles);
   console.log("PASS populated 0018 → 0019 digging playlist table, constraints and student cascade");
+  await validateCommentTimeMarkerUpgrade(migrationFiles);
+  console.log("PASS populated 0019 → 0020 comment time marker column, CHECK bounds and index without table rebuild");
 }
 
 try {

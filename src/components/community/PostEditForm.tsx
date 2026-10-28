@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useActionState, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -30,6 +30,7 @@ import {
   parseCreationOperationId,
 } from "@/lib/creation-operation";
 import { POST_BASE_REVISION_FIELD, parsePostRevision } from "@/lib/post-continuity";
+import { MIXSET_LINK_FIELD, normalizeMixsetLinkUrl } from "@/lib/community-mixset-media";
 
 const FullEditor = dynamic(
   () => import("@/components/editor/FullEditor").then((module) => ({ default: module.FullEditor })),
@@ -42,9 +43,15 @@ type PostEditFormProps = {
   onCancel: () => void;
   onSaved: () => void;
   onBusyChange?: (isBusy: boolean) => void;
+  /**
+   * 링크로 올린 믹스셋 게시물의 현재 링크. 있으면 필수 링크 칸을 보이고 `mixsetLinkUrl`로 함께 저장한다.
+   * 없으면(일반·오디오 게시물) 매체 칸 없이 예전과 같이 동작한다.
+   */
+  mixsetLinkUrl?: string | null;
 };
 
-type PostEditSnapshot = { title: string; contentHtml: string };
+/** `mixsetLinkUrl`은 링크 칸이 있는 수정 form의 초안에만 들어간다. */
+type PostEditSnapshot = { title: string; contentHtml: string; mixsetLinkUrl?: string };
 type PostOperationDraftFields = { operationId?: string; baseRevision?: number };
 type PostEditDraft = PostEditSnapshot & DocumentEditDraftBaseFields & PostOperationDraftFields;
 type CompactPostEditDraft = PostEditSnapshot & CompactDocumentEditDraftMetadata & PostOperationDraftFields;
@@ -59,8 +66,15 @@ function PostEditFormContent({
   onCancel,
   onSaved,
   onBusyChange,
+  mixsetLinkUrl: serverLinkProp,
 }: PostEditFormProps) {
+  const serverLinkUrl = serverLinkProp || "";
+  const hasLinkField = serverLinkUrl !== "";
   const [title, setTitle] = useState(post.title);
+  const [linkUrl, setLinkUrl] = useState(serverLinkUrl);
+  const [linkError, setLinkError] = useState("");
+  const linkInputRef = useRef<HTMLInputElement>(null);
+  const linkFieldId = useId();
   // 본문 이미지가 올라가는 동안에는 제출하지 않는다. 편집기는 계속 쓸 수 있다.
   const [isEditorUploading, setIsEditorUploading] = useState(false);
   const [operationId, setOperationId] = useState("");
@@ -98,7 +112,7 @@ function PostEditFormContent({
   const submittedDraftRef = useRef<CompactPostEditDraft | null>(null);
   const submittedDraftAliasesRef = useRef<readonly PostEditDraft[] | null>(null);
   const restoredDraftRef = useRef<PostEditDraft | null>(null);
-  const baseRef = useRef({ title: post.title, contentHtml: post.contentHtml });
+  const baseRef = useRef({ title: post.title, contentHtml: post.contentHtml, mixsetLinkUrl: serverLinkUrl });
   const [baseFingerprint, setBaseFingerprint] = useState(() =>
     createDocumentSnapshotFingerprint({
       kind: "community-post",
@@ -112,7 +126,12 @@ function PostEditFormContent({
   const draftBaseFingerprintRef = useRef(baseFingerprint);
   const adoptBaseSnapshot = useCallback(
     (snapshot: PostEditSnapshot) => {
-      baseRef.current = { title: snapshot.title, contentHtml: snapshot.contentHtml };
+      baseRef.current = {
+        title: snapshot.title,
+        contentHtml: snapshot.contentHtml,
+        mixsetLinkUrl: snapshot.mixsetLinkUrl ?? "",
+      };
+      // 서버 기준 지문은 제목·본문만으로 만든다(서버 updatePostContent와 같은 입력). 링크 변경은 revision으로 충돌을 가린다.
       const fingerprint = createDocumentSnapshotFingerprint({
         kind: "community-post",
         id: post.id,
@@ -126,8 +145,23 @@ function PostEditFormContent({
     [post.id],
   );
   const serverSnapshot = useMemo(
-    () => ({ title: post.title, contentHtml: post.contentHtml, version: post.version }),
-    [post.contentHtml, post.title, post.version],
+    () => ({ title: post.title, contentHtml: post.contentHtml, version: post.version, mixsetLinkUrl: serverLinkUrl }),
+    [post.contentHtml, post.title, post.version, serverLinkUrl],
+  );
+  /** 충돌 응답의 게시물을 이 form의 snapshot 모양으로 맞춘다. 링크 칸이 없으면 링크는 비교하지 않는다. */
+  const toConflictSnapshot = useCallback(
+    (latest: NonNullable<UpdatePostState["conflictPost"]>) => ({
+      title: latest.title,
+      contentHtml: latest.contentHtml,
+      version: latest.version,
+      mixsetLinkUrl: hasLinkField ? (latest.mediaUrl || serverLinkUrl) : "",
+    }),
+    [hasLinkField, serverLinkUrl],
+  );
+  /** 초안에 넣을 링크 칸. 링크 칸이 없는 form의 초안 모양은 예전과 같다. */
+  const linkDraftField = useCallback(
+    (value: string): Pick<PostEditSnapshot, "mixsetLinkUrl"> => (hasLinkField ? { mixsetLinkUrl: value } : {}),
+    [hasLinkField],
   );
   const previousServerSnapshotRef = useRef(serverSnapshot);
   const createSubmittedDraftAliases = useCallback(
@@ -140,7 +174,8 @@ function PostEditFormContent({
       if (
         restoredDraft &&
         restoredDraft.title === snapshot.title &&
-        restoredDraft.contentHtml === snapshot.contentHtml
+        restoredDraft.contentHtml === snapshot.contentHtml &&
+        (restoredDraft.mixsetLinkUrl ?? "") === (snapshot.mixsetLinkUrl ?? "")
       ) {
         aliases.push(restoredDraft);
       }
@@ -171,10 +206,15 @@ function PostEditFormContent({
       const restoredSnapshot = {
         title: draft.title ?? post.title,
         contentHtml: draft.contentHtml ?? post.contentHtml,
+        // 링크 칸이 없는 게시물이면 초안의 링크는 쓰지 않는다. 이전 초안에 링크가 없으면 현재 링크를 쓴다.
+        mixsetLinkUrl: hasLinkField
+          ? (typeof draft.mixsetLinkUrl === "string" ? draft.mixsetLinkUrl : serverSnapshot.mixsetLinkUrl)
+          : "",
       };
       const draftMatchesCurrentServer =
         restoredSnapshot.title === serverSnapshot.title &&
-        restoredSnapshot.contentHtml === serverSnapshot.contentHtml;
+        restoredSnapshot.contentHtml === serverSnapshot.contentHtml &&
+        restoredSnapshot.mixsetLinkUrl === serverSnapshot.mixsetLinkUrl;
       const resolvedBase = resolveDocumentEditDraftBase(
         draft,
         {
@@ -193,6 +233,8 @@ function PostEditFormContent({
       }
       setTitle(restoredSnapshot.title);
       setContentHtml(restoredSnapshot.contentHtml);
+      setLinkUrl(restoredSnapshot.mixsetLinkUrl);
+      setLinkError("");
     },
     {
       onReset: () => {
@@ -205,6 +247,8 @@ function PostEditFormContent({
         setHasStaleDraftBase(false);
         setTitle(serverSnapshot.title);
         setContentHtml(serverSnapshot.contentHtml);
+        setLinkUrl(serverSnapshot.mixsetLinkUrl);
+        setLinkError("");
       },
     },
   );
@@ -224,7 +268,8 @@ function PostEditFormContent({
     const latestContentHtml = readLatestContentHtml();
     const unchanged =
       title === baseRef.current.title &&
-      latestContentHtml === baseRef.current.contentHtml;
+      latestContentHtml === baseRef.current.contentHtml &&
+      linkUrl === baseRef.current.mixsetLinkUrl;
     if (!hasStaleDraftBase && unchanged) {
       restoredDraftRef.current = null;
       clear();
@@ -232,6 +277,7 @@ function PostEditFormContent({
     }
     save({
       title,
+      ...linkDraftField(linkUrl),
       operationId,
       baseRevision,
       ...createDocumentEditDraftMetadata(
@@ -243,7 +289,7 @@ function PostEditFormContent({
         return readLatestContentHtml();
       },
     });
-  }, [baseRevision, clear, contentHtml, hasStaleDraftBase, loaded, operationId, readLatestContentHtml, save, title]);
+  }, [baseRevision, clear, contentHtml, hasStaleDraftBase, linkDraftField, linkUrl, loaded, operationId, readLatestContentHtml, save, title]);
 
   useEffect(() => {
     if (!loaded) return;
@@ -251,6 +297,7 @@ function PostEditFormContent({
     const serverChanged =
       previousServer.title !== serverSnapshot.title ||
       previousServer.contentHtml !== serverSnapshot.contentHtml ||
+      previousServer.mixsetLinkUrl !== serverSnapshot.mixsetLinkUrl ||
       previousServer.version !== serverSnapshot.version;
     if (!serverChanged) return;
 
@@ -264,10 +311,12 @@ function PostEditFormContent({
     const latestContentHtml = readLatestContentHtml();
     const localMatchesPrevious =
       title === previousServer.title &&
-      latestContentHtml === previousServer.contentHtml;
+      latestContentHtml === previousServer.contentHtml &&
+      linkUrl === previousServer.mixsetLinkUrl;
     const localMatchesCurrent =
       title === serverSnapshot.title &&
-      latestContentHtml === serverSnapshot.contentHtml;
+      latestContentHtml === serverSnapshot.contentHtml &&
+      linkUrl === serverSnapshot.mixsetLinkUrl;
 
     if (localMatchesCurrent || (!hasStaleDraftBase && localMatchesPrevious)) {
       restoredDraftRef.current = null;
@@ -278,6 +327,7 @@ function PostEditFormContent({
       draftBaseFingerprintRef.current = baseFingerprintRef.current;
       setTitle(serverSnapshot.title);
       setContentHtml(serverSnapshot.contentHtml);
+      setLinkUrl(serverSnapshot.mixsetLinkUrl);
       setHasStaleDraftBase(false);
       return;
     }
@@ -292,6 +342,7 @@ function PostEditFormContent({
     clear,
     conflictPost,
     hasStaleDraftBase,
+    linkUrl,
     loaded,
     readLatestContentHtml,
     serverSnapshot,
@@ -315,25 +366,31 @@ function PostEditFormContent({
       submittedData: submittedDraftRef.current ?? {
         title,
         contentHtml,
+        ...linkDraftField(linkUrl),
         operationId,
         baseRevision,
         ...createDocumentEditDraftMetadata(baseFingerprintRef.current),
       },
       submittedAliases:
         submittedDraftAliasesRef.current ??
-        createSubmittedDraftAliases({ title, contentHtml }),
+        createSubmittedDraftAliases({ title, contentHtml, ...linkDraftField(linkUrl) }),
     });
     submittedDraftRef.current = null;
     submittedDraftAliasesRef.current = null;
     restoredDraftRef.current = null;
     onSaved();
-  }, [baseRevision, clear, contentHtml, createSubmittedDraftAliases, onSaved, operationId, state.post, title]);
+  }, [baseRevision, clear, contentHtml, createSubmittedDraftAliases, linkDraftField, linkUrl, onSaved, operationId, state.post, title]);
+
+  const linkHintId = `${linkFieldId}-hint`;
+  const linkErrorId = `${linkFieldId}-error`;
+  const latestServerForDisplay = conflictPost ? toConflictSnapshot(conflictPost) : serverSnapshot;
 
   return (
     <form
       ref={formRef}
       action={formAction}
       aria-busy={!loaded || isPending}
+      noValidate={hasLinkField || undefined}
       className="flex flex-col gap-5"
       onKeyDownCapture={handleSaveShortcut}
       onSubmit={(event) => {
@@ -346,10 +403,20 @@ function PostEditFormContent({
           event.preventDefault();
           return;
         }
+        if (hasLinkField) {
+          const normalizedLink = normalizeMixsetLinkUrl(linkUrl);
+          if (!normalizedLink.ok) {
+            event.preventDefault();
+            setLinkError(normalizedLink.error);
+            linkInputRef.current?.focus();
+            return;
+          }
+        }
         if (contentInputRef.current) contentInputRef.current.value = latestContentHtml;
         const submittedDraft: CompactPostEditDraft = {
           title,
           contentHtml: latestContentHtml,
+          ...linkDraftField(linkUrl),
           operationId,
           baseRevision,
           ...createDocumentEditDraftMetadata(baseFingerprintRef.current),
@@ -360,6 +427,7 @@ function PostEditFormContent({
         submittedDraftAliasesRef.current = createSubmittedDraftAliases({
           title,
           contentHtml: latestContentHtml,
+          ...linkDraftField(linkUrl),
         });
       }}
     >
@@ -382,7 +450,7 @@ function PostEditFormContent({
           <DraftConflictRecovery
             documentLabel="게시물"
             onUseServer={() => {
-              const latest = conflictPost ?? serverSnapshot;
+              const latest = conflictPost ? toConflictSnapshot(conflictPost) : serverSnapshot;
               restoredDraftRef.current = null;
               clear();
               adoptBaseSnapshot(latest);
@@ -391,12 +459,14 @@ function PostEditFormContent({
               draftBaseFingerprintRef.current = baseFingerprintRef.current;
               setTitle(latest.title);
               setContentHtml(latest.contentHtml);
+              setLinkUrl(latest.mixsetLinkUrl);
+              setLinkError("");
               setConflictPost(undefined);
               setHasStaleDraftBase(false);
               formRef.current?.querySelector<HTMLInputElement>('input[name="title"]')?.focus();
             }}
             onKeepDraft={() => {
-              const latest = conflictPost ?? serverSnapshot;
+              const latest = conflictPost ? toConflictSnapshot(conflictPost) : serverSnapshot;
               adoptBaseSnapshot(latest);
               setBaseRevision(latest.version);
               setOperationId(createCreationOperationId());
@@ -411,8 +481,13 @@ function PostEditFormContent({
               서버 최신본 {conflictPost?.version ?? serverSnapshot.version}번 확인·복사
             </summary>
             <div className="mt-3 flex flex-col gap-2 border-t border-muted pt-3">
-              <p className="font-medium">{conflictPost?.title ?? serverSnapshot.title}</p>
-              <RichTextContent html={conflictPost?.contentHtml ?? serverSnapshot.contentHtml} />
+              <p className="font-medium">{latestServerForDisplay.title}</p>
+              {hasLinkField ? (
+                <p className="break-all text-ui text-secondary-foreground">
+                  믹스셋 링크: {latestServerForDisplay.mixsetLinkUrl}
+                </p>
+              ) : null}
+              <RichTextContent html={latestServerForDisplay.contentHtml} />
             </div>
           </details>
         </div>
@@ -434,6 +509,43 @@ function PostEditFormContent({
         />
       </label>
 
+      {hasLinkField ? (
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor={linkFieldId} className="text-body font-medium text-secondary-foreground md:text-ui">
+            믹스셋 링크 <span className="sr-only">필수</span>
+          </label>
+          <Input
+            ref={linkInputRef}
+            id={linkFieldId}
+            name={MIXSET_LINK_FIELD}
+            type="url"
+            inputMode="url"
+            autoComplete="off"
+            required
+            value={linkUrl}
+            onChange={(event) => {
+              setOperationId(createCreationOperationId());
+              setLinkUrl(event.target.value);
+              setLinkError("");
+            }}
+            onBlur={() => {
+              const normalizedLink = normalizeMixsetLinkUrl(linkUrl);
+              setLinkError(normalizedLink.ok ? "" : normalizedLink.error);
+            }}
+            disabled={!loaded || isPending}
+            aria-invalid={linkError ? true : undefined}
+            aria-describedby={linkError ? `${linkHintId} ${linkErrorId}` : linkHintId}
+            className="h-12 px-3.5 font-normal md:h-10 md:px-3"
+          />
+          <p id={linkHintId} className="text-xs leading-[18px] text-muted-foreground md:leading-4">
+            YouTube 영상·Shorts·라이브와 SoundCloud 트랙·세트 링크로 바꿀 수 있습니다.
+          </p>
+          {linkError ? (
+            <p id={linkErrorId} role="alert" className="text-ui text-destructive">{linkError}</p>
+          ) : null}
+        </div>
+      ) : null}
+
       {loaded ? (
         <FullEditor
           onUploadingChange={setIsEditorUploading}
@@ -446,6 +558,7 @@ function PostEditFormContent({
             handleEditorDirty(reader);
             save({
               title,
+              ...linkDraftField(linkUrl),
               operationId: nextOperationId,
               baseRevision,
               ...createDocumentEditDraftMetadata(
