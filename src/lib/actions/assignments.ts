@@ -1,15 +1,17 @@
 /**
  * @file src/lib/actions/assignments.ts
  * @description 과제 제출 관련 서버 액션.
- * Student: 과제 제출(YouTube/SoundCloud URL), 본인 과제 조회.
- * Admin: 전체 학생 과제 조회, 미피드백 과제 수 조회.
+ * Student: 자유 제출(YouTube/SoundCloud URL), 본인 제출 조회·삭제.
+ * Admin: 전체 학생 제출 조회, 미피드백 제출 수 조회.
+ * 관리자가 낸 과제와 과제별 제출은 assignmentTasks.ts가 맡는다. 이 파일의 조회는 두 제출을 함께 돌려주고
+ * 과제 제출이면 과제 제목(taskTitle)을 붙인다. 글만 있는 제출은 mediaUrl이 null이다.
  */
 "use server";
 
 import { revalidatePath } from "next/cache";
 import { createDb } from "@/db/client";
-import { assignments, feedbacks, profiles } from "@/db/schema";
-import { and, asc, count, desc, eq, notExists } from "drizzle-orm";
+import { assignments, assignmentTasks, feedbacks, profiles } from "@/db/schema";
+import { and, asc, count, desc, eq, notExists, sql } from "drizzle-orm";
 import {
   requireAuth,
   requireAdmin,
@@ -119,8 +121,16 @@ export async function getMyAssignments() {
   const session = await requireAuth();
   const db = createDb();
   return db
-    .select()
+    .select({
+      id: assignments.id,
+      taskId: assignments.taskId,
+      mediaUrl: assignments.mediaUrl,
+      textHtml: assignments.textHtml,
+      submittedAt: assignments.submittedAt,
+      taskTitle: assignmentTasks.title,
+    })
     .from(assignments)
+    .leftJoin(assignmentTasks, eq(assignmentTasks.id, assignments.taskId))
     .where(eq(assignments.studentId, session.user.id!))
     .orderBy(desc(assignments.submittedAt));
 }
@@ -148,15 +158,18 @@ export async function getAssignmentSummariesByStudent(studentId: string) {
     .select({
       id: assignments.id,
       mediaUrl: assignments.mediaUrl,
+      hasText: sql<number>`${assignments.textHtml} IS NOT NULL AND length(${assignments.textHtml}) > 0`,
+      taskTitle: assignmentTasks.title,
       submittedAt: assignments.submittedAt,
       feedbackCount: count(feedbacks.id),
     })
     .from(assignments)
+    .leftJoin(assignmentTasks, eq(assignmentTasks.id, assignments.taskId))
     .leftJoin(feedbacks, eq(feedbacks.assignmentId, assignments.id))
     .where(eq(assignments.studentId, studentId))
     .groupBy(assignments.id)
     .orderBy(desc(assignments.submittedAt));
-  return rows.map((row) => ({ ...row, feedbackCount: Number(row.feedbackCount) }));
+  return rows.map((row) => ({ ...row, hasText: Boolean(row.hasText), feedbackCount: Number(row.feedbackCount) }));
 }
 
 /**
@@ -166,17 +179,27 @@ export async function getAssignmentById(assignmentId: string) {
   const session = await requireAuth();
   const db = createDb();
   const rows = await db
-    .select()
+    .select({
+      assignment: assignments,
+      task: {
+        id: assignmentTasks.id,
+        title: assignmentTasks.title,
+        descriptionHtml: assignmentTasks.descriptionHtml,
+        submissionFormat: assignmentTasks.submissionFormat,
+        dueAt: assignmentTasks.dueAt,
+      },
+    })
     .from(assignments)
+    .leftJoin(assignmentTasks, eq(assignmentTasks.id, assignments.taskId))
     .where(eq(assignments.id, assignmentId))
     .limit(1);
 
-  const assignment = rows[0] ?? null;
-  if (!assignment) return null;
+  const row = rows[0] ?? null;
+  if (!row) return null;
 
-  assertOwnerOrAdmin(session, assignment.studentId);
+  assertOwnerOrAdmin(session, row.assignment.studentId);
 
-  return assignment;
+  return { ...row.assignment, task: row.task?.id ? row.task : null };
 }
 
 /**
@@ -201,7 +224,7 @@ export async function getPendingFeedbackCount(): Promise<number> {
 }
 
 /**
- * Admin 업무함: 피드백이 아직 없는 과제를 오래된 제출 순으로 조회합니다.
+ * Admin 업무함: 피드백이 아직 없는 제출(링크·글 모두)을 오래된 제출 순으로 조회합니다.
  */
 export async function getPendingFeedbackAssignments() {
   await requireAdmin();
@@ -211,6 +234,7 @@ export async function getPendingFeedbackAssignments() {
     .select({
       id: assignments.id,
       mediaUrl: assignments.mediaUrl,
+      taskTitle: assignmentTasks.title,
       submittedAt: assignments.submittedAt,
       studentId: assignments.studentId,
       studentName: profiles.displayName,
@@ -218,6 +242,7 @@ export async function getPendingFeedbackAssignments() {
     })
     .from(assignments)
     .innerJoin(profiles, eq(assignments.studentId, profiles.id))
+    .leftJoin(assignmentTasks, eq(assignmentTasks.id, assignments.taskId))
     .where(
       notExists(
         db

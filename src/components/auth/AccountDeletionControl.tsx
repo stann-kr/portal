@@ -1,10 +1,12 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, useTransition } from "react";
-import { UserX } from "lucide-react";
+import { useEffect, useId, useImperativeHandle, useRef, useState, useTransition, type Ref } from "react";
+import type { AccountDialogHandle } from "@/components/auth/LocalDraftManager";
+import { Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogDescription,
   DialogHeader,
@@ -64,11 +66,27 @@ const DEFAULT_ACCOUNT_DELETION_DEPENDENCIES: AccountDeletionControlDependencies 
   createOperationId,
 };
 
-export function AccountDeletionControl({ ownerId }: { ownerId: string }) {
+// 캔버스 AccountDialogs "계정 삭제 · 학생"·"2단계": 12px 라벨, 오른쪽 정렬 32px 버튼.
+// 좁은 화면 시트는 긴 버튼 문구가 잘리지 않게 전체 폭 44px 버튼을 쌓고, 위험 행동을 위에 둔다.
+const LABEL_CLASS = "text-body text-secondary-foreground md:text-xs";
+const FOOTER_CLASS = "flex flex-col-reverse gap-2 md:flex-row md:justify-end";
+const FOOTER_BUTTON_CLASS = "h-11 w-full rounded-touch text-body md:h-8 md:w-auto md:rounded-md md:text-ui";
+
+export function AccountDeletionControl({
+  ownerId,
+  controlRef,
+  hideTrigger,
+}: {
+  ownerId: string;
+  controlRef?: Ref<AccountDialogHandle>;
+  hideTrigger?: boolean;
+}) {
   return (
     <AccountDeletionControlImpl
       ownerId={ownerId}
       dependencies={DEFAULT_ACCOUNT_DELETION_DEPENDENCIES}
+      controlRef={controlRef}
+      hideTrigger={hideTrigger}
     />
   );
 }
@@ -77,9 +95,13 @@ export function AccountDeletionControlImpl({
   ownerId,
   dependencies,
   initialFormValues,
+  controlRef,
+  hideTrigger = false,
 }: {
   ownerId: string;
   dependencies: AccountDeletionControlDependencies;
+  controlRef?: Ref<AccountDialogHandle>;
+  hideTrigger?: boolean;
   /** DOM 격리 테스트에서만 초기 controlled value를 주입한다. */
   initialFormValues?: { password: string; confirmation: string };
 }) {
@@ -101,8 +123,7 @@ export function AccountDeletionControlImpl({
   useEffect(() => {
     if (!open) return;
     let active = true;
-    setRegistration({ status: "pending" });
-    setMessage("이 기기의 계정 삭제 정리 신호를 등록하고 있습니다.");
+    // pending 상태와 안내 문구는 대화상자를 여는 이벤트에서 함께 설정한다.
     void dependencies.registerPersistentToken(ownerId).then(async (persistentResult) => {
       if (!active) return;
       const persistent = persistentResult.ok;
@@ -222,92 +243,107 @@ export function AccountDeletionControlImpl({
 
   const ready = registration.status === "ready";
 
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (isPending) return;
+    setOpen(nextOpen);
+    if (nextOpen) {
+      setRegistration({ status: "pending" });
+      setMessage("이 기기의 계정 삭제 정리 신호를 등록하고 있습니다.");
+    } else {
+      reset();
+    }
+  };
+  useImperativeHandle(controlRef, () => ({ open: () => handleOpenChange(true) }));
+
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(nextOpen) => {
-        if (isPending) return;
-        setOpen(nextOpen);
-        if (!nextOpen) reset();
-      }}
-    >
-      <DialogTrigger asChild>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      {hideTrigger ? null : <DialogTrigger asChild>
         <button
           type="button"
-          className="flex size-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+          className="flex size-11 items-center justify-center rounded-touch text-destructive transition-colors hover:bg-destructive-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none md:size-8 md:rounded-md"
           aria-label="계정 삭제"
           title="계정 삭제"
         >
-          <UserX className="size-4" aria-hidden="true" />
+          <Trash2 className="size-4" strokeWidth={1.6} aria-hidden="true" />
         </button>
-      </DialogTrigger>
-      <DialogContent dismissible={!isPending} className="max-w-md">
+      </DialogTrigger>}
+      <DialogContent dismissible={!isPending}>
         <DialogHeader>
           <DialogTitle>계정을 삭제할까요?</DialogTitle>
-          <DialogDescription>
+          {/* 2단계(캔버스 "계정 삭제 · 2단계")는 제목만 보이고, 설명은 보조기기에만 남긴다. */}
+          <DialogDescription className={confirming ? "sr-only" : undefined}>
             계정과 포털의 학습 기록, 문서, 댓글과 Q&A 원문은 복구할 수 없습니다.
             관리되는 첨부 파일은 비동기 저장소 정리 작업에 등록됩니다.
           </DialogDescription>
         </DialogHeader>
 
         {!confirming ? (
-          <div className="space-y-4">
-            <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
+          <div className="flex flex-col gap-4">
+            <ul className="flex list-disc flex-col gap-1 pl-[18px] text-ui text-secondary-foreground">
               <li>현재 세션과 이후의 모든 요청이 즉시 차단됩니다.</li>
               <li>정리 신호가 등록된 다른 기기는 다음 온라인 연결 때 해당 계정 초안을 삭제합니다.</li>
               <li>부활 방지 식별자는 최대 30일 보존 대상으로 분류됩니다.</li>
             </ul>
-            <Button
-              type="button"
-              variant="outline"
-              className="w-full text-destructive"
-              disabled={!ready}
-              aria-describedby={statusId}
-              onClick={beginConfirmation}
-            >
-              {registration.status === "pending" ? "기기 확인 중" : "삭제 확인 단계로 이동"}
-            </Button>
+            <div className={FOOTER_CLASS}>
+              <DialogClose asChild>
+                <Button type="button" variant="outline" className={FOOTER_BUTTON_CLASS}>
+                  취소
+                </Button>
+              </DialogClose>
+              <Button
+                type="button"
+                variant="destructive"
+                className={FOOTER_BUTTON_CLASS}
+                disabled={!ready}
+                aria-describedby={statusId}
+                onClick={beginConfirmation}
+              >
+                {registration.status === "pending" ? "기기 확인 중" : "삭제 확인 단계로 이동"}
+              </Button>
+            </div>
           </div>
         ) : (
           <form
-            className="space-y-4"
+            className="flex flex-col gap-4"
             onSubmit={(event) => {
               event.preventDefault();
               submit();
             }}
           >
-            <div className="space-y-2">
-              <label htmlFor={`${statusId}-password`} className="text-sm font-medium">
-                현재 비밀번호
-              </label>
-              <Input
-                ref={passwordRef}
-                id={`${statusId}-password`}
-                type="password"
-                autoComplete="current-password"
-                value={password}
-                disabled={isPending}
-                onChange={(event) => setPassword(event.target.value)}
-              />
+            <div className="flex flex-col gap-3">
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor={`${statusId}-password`} className={LABEL_CLASS}>
+                  현재 비밀번호
+                </label>
+                <Input
+                  ref={passwordRef}
+                  id={`${statusId}-password`}
+                  type="password"
+                  autoComplete="current-password"
+                  value={password}
+                  disabled={isPending}
+                  onChange={(event) => setPassword(event.target.value)}
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor={`${statusId}-confirmation`} className={LABEL_CLASS}>
+                  확인을 위해 “{ACCOUNT_DELETION_CONFIRMATION}” 입력
+                </label>
+                <Input
+                  id={`${statusId}-confirmation`}
+                  type="text"
+                  autoComplete="off"
+                  value={confirmation}
+                  disabled={isPending}
+                  onChange={(event) => setConfirmation(event.target.value)}
+                />
+              </div>
             </div>
-            <div className="space-y-2">
-              <label htmlFor={`${statusId}-confirmation`} className="text-sm font-medium">
-                확인을 위해 “{ACCOUNT_DELETION_CONFIRMATION}” 입력
-              </label>
-              <Input
-                id={`${statusId}-confirmation`}
-                type="text"
-                autoComplete="off"
-                value={confirmation}
-                disabled={isPending}
-                onChange={(event) => setConfirmation(event.target.value)}
-              />
-            </div>
-            <div className="flex gap-2">
+            <div className={FOOTER_CLASS}>
               <Button
                 type="button"
                 variant="outline"
-                className="flex-1"
+                className={FOOTER_BUTTON_CLASS}
                 disabled={isPending}
                 onClick={() => setConfirming(false)}
               >
@@ -315,7 +351,8 @@ export function AccountDeletionControlImpl({
               </Button>
               <Button
                 type="submit"
-                className="flex-1 bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                variant="destructive-solid"
+                className={FOOTER_BUTTON_CLASS}
                 disabled={
                   isPending ||
                   !password ||
@@ -334,7 +371,7 @@ export function AccountDeletionControlImpl({
           role="status"
           aria-live="polite"
           aria-atomic="true"
-          className="text-xs text-muted-foreground"
+          className="mt-3 text-xs text-muted-foreground empty:mt-0"
         >
           {message}
         </p>

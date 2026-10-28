@@ -1,11 +1,13 @@
 /**
  * @file src/components/qna/ReplyCard.tsx
- * @description Q&A 개별 답변 카드.
- * 작성자 역할별 스타일 구분: 어드민(우측/강조) vs 학생(좌측/기본).
+ * @description Q&A 대화의 한 줄(캔버스 QnaThread·MobileQnaThread 보드).
+ * 28px 이니셜 원(강사는 먹색 면), 이름·강사 표시·시각, 본문, 첨부 파일 칩.
  */
-import { ExternalLink } from "lucide-react";
+import { Paperclip } from "lucide-react";
 import { RichTextContent } from "@/components/editor/RichTextContent";
-import { formatKst } from "@/lib/kst-format";
+import { cn } from "@/lib/utils";
+import { formatKstMonthDayTime } from "@/lib/kst-format";
+import { initialOf } from "./qna-display";
 
 type Reply = {
   id: string;
@@ -22,61 +24,45 @@ interface ReplyCardProps {
 }
 
 export function ReplyCard({ reply }: ReplyCardProps) {
-  const isAdmin = reply.authorRole === "admin";
+  const isTeacher = reply.authorRole === "admin";
   const author =
     reply.authorName ?? reply.authorEmail?.split("@")[0] ?? "이름 미등록";
-  const date = formatKst(reply.createdAt, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }, "작성일 미정");
+  const time = formatKstMonthDayTime(reply.createdAt, "작성 시각 미정");
+  const attachmentName = reply.attachmentUrl?.split("/").pop() || "첨부 파일";
 
   return (
-    <div className={`flex gap-3 ${isAdmin ? "flex-row-reverse" : "flex-row"}`}>
-      {/* 아바타 */}
-      <div
-        className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold flex-shrink-0 mt-1 ${
-          isAdmin
-            ? "bg-primary text-primary-foreground"
-            : "bg-muted border border-border text-foreground"
-        }`}
+    <li className="flex gap-3 border-b border-muted py-4 md:gap-3.5 md:py-5">
+      <span
+        aria-hidden="true"
+        className={cn(
+          "flex size-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold",
+          isTeacher ? "bg-primary text-primary-foreground" : "bg-selected text-secondary-foreground",
+        )}
       >
-        {author.slice(0, 2).toUpperCase()}
-      </div>
-
-      {/* 말풍선 */}
-      <div className={`flex-1 max-w-[80%] ${isAdmin ? "items-end" : "items-start"} flex flex-col gap-1`}>
-        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <span className="font-medium text-foreground">{author}</span>
-          {isAdmin && (
-            <span className="px-1.5 py-0.5 rounded bg-primary/10 text-primary text-xs font-semibold">
-              강사
-            </span>
-          )}
-          <span>{date}</span>
-        </div>
-
-        <div
-          className={`rounded-2xl px-4 py-3 text-sm ${
-            isAdmin
-              ? "bg-primary text-primary-foreground rounded-tr-sm"
-              : "bg-muted border border-border rounded-tl-sm"
-          }`}
-        >
-          <RichTextContent
-            html={reply.contentHtml}
-            className={isAdmin ? "text-primary-foreground" : "text-foreground"}
-          />
-        </div>
-
-        {reply.attachmentUrl && (
+        {initialOf(author)}
+      </span>
+      <div className="flex min-w-0 flex-1 flex-col gap-1 md:gap-1.5">
+        <p className="flex flex-wrap items-center gap-2 text-ui">
+          <span className="font-semibold">{author}</span>
+          {isTeacher ? (
+            <span className="inline-flex h-5 items-center rounded-sm bg-accent px-1.5 text-[11px] text-accent-foreground">강사</span>
+          ) : null}
+          <span className="font-mono text-xs text-muted-foreground">{time}</span>
+        </p>
+        <RichTextContent html={reply.contentHtml} className="text-md leading-6 md:leading-[26px]" />
+        {reply.attachmentUrl ? (
           <a
             href={reply.attachmentUrl}
             target="_blank"
             rel="noreferrer"
-            className="flex items-center gap-1.5 text-xs text-primary hover:underline"
+            className="mt-1 inline-flex h-9 max-w-full items-center gap-1.5 self-start rounded-touch border border-border px-3 text-ui text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:mt-0 md:h-7 md:rounded-md md:px-2.5 md:text-xs md:text-secondary-foreground md:hover:text-foreground"
           >
-            <ExternalLink className="w-3 h-3" />
-            첨부 파일
+            <Paperclip className="size-3.5 shrink-0 md:size-[13px]" strokeWidth={1.6} aria-hidden="true" />
+            <span className="truncate">{attachmentName}</span>
+            <span className="sr-only">(새 창에서 열기)</span>
           </a>
-        )}
+        ) : null}
       </div>
-    </div>
+    </li>
   );
 }

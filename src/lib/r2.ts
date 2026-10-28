@@ -6,12 +6,10 @@ import {
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import {
   isManagedFinalMediaObjectKey,
   isManagedMediaObjectKey,
   isManagedUploadMediaObjectKey,
-  MEDIA_UPLOAD_IF_NONE_MATCH,
 } from "@/lib/media-lifecycle";
 import type { MediaObjectDeletionStorage } from "@/lib/r2-deletion-storage";
 
@@ -52,47 +50,12 @@ function assertManagedObjectKey(objectKey: string): void {
   }
 }
 
-export type PresignedUploadRequest = {
-  uploadObjectKey: string;
-  mimeType: string;
-  fileSize: number;
-  expiresIn: number;
+export type MediaUploadBody = {
+  /** 검증된 요청 body. binding은 길이가 정해진 stream을, S3 fallback은 bytes를 쓴다. */
+  stream: ReadableStream<Uint8Array>;
+  contentType: string;
+  size: number;
 };
-
-export type PresignedUploadResult = {
-  uploadUrl: string;
-  key: string;
-};
-
-/** 검증된 서버 정책과 opaque key만 받아 PUT presign을 생성한다. */
-export async function generatePresignedUploadUrl(
-  request: PresignedUploadRequest,
-): Promise<PresignedUploadResult> {
-  assertManagedUploadObjectKey(request.uploadObjectKey);
-  if (!Number.isSafeInteger(request.fileSize) || request.fileSize <= 0) {
-    throw new Error("파일 크기가 올바르지 않습니다.");
-  }
-  if (!Number.isSafeInteger(request.expiresIn) || request.expiresIn <= 0) {
-    throw new Error("업로드 URL 만료 시간이 올바르지 않습니다.");
-  }
-
-  const command = new PutObjectCommand({
-    Bucket: BUCKET_NAME,
-    Key: request.uploadObjectKey,
-    ContentType: request.mimeType,
-    ContentLength: request.fileSize,
-    // 같은 presigned URL로 이미 검증·첨부된 object를 덮어쓰지 못하게 한다.
-    IfNoneMatch: MEDIA_UPLOAD_IF_NONE_MATCH,
-  });
-  const uploadUrl = await getSignedUrl(createR2Client(), command, {
-    expiresIn: request.expiresIn,
-  });
-
-  return {
-    uploadUrl,
-    key: request.uploadObjectKey,
-  };
-}
 
 export type MediaObjectHead = {
   size: number;
@@ -101,6 +64,12 @@ export type MediaObjectHead = {
 };
 
 export interface MediaObjectStorage extends MediaObjectDeletionStorage {
+  /** 아직 없는 staging key에만 browser가 보낸 body를 저장한다. 이미 있으면 false. */
+  putUpload(
+    uploadObjectKey: string,
+    body: MediaUploadBody,
+    signal?: AbortSignal,
+  ): Promise<boolean>;
   head(objectKey: string, signal?: AbortSignal): Promise<MediaObjectHead | null>;
   seal(
     uploadObjectKey: string,
@@ -129,8 +98,45 @@ type RuntimeR2Bucket = {
     httpMetadata?: { contentType?: string };
     httpEtag?: string;
   } | null>;
+  put(
+    objectKey: string,
+    value: ReadableStream<Uint8Array>,
+    options?: {
+      httpMetadata?: { contentType?: string };
+      onlyIf?: Headers;
+    },
+  ): Promise<{
+    size: number;
+    httpMetadata?: { contentType?: string };
+    httpEtag?: string;
+  } | null>;
   delete(objectKey: string): Promise<void>;
 };
+
+declare const FixedLengthStream:
+  | (new (length: number) => TransformStream<Uint8Array, Uint8Array>)
+  | undefined;
+
+/** R2 binding put은 길이를 아는 stream을 요구한다. Workers 밖에서는 그대로 둔다. */
+function withKnownLength(
+  stream: ReadableStream<Uint8Array>,
+  size: number,
+): ReadableStream<Uint8Array> {
+  if (typeof FixedLengthStream === "undefined") return stream;
+  return stream.pipeThrough(new FixedLengthStream(size));
+}
+
+function toMediaObjectHead(object: {
+  size: number;
+  httpMetadata?: { contentType?: string };
+  httpEtag?: string;
+}): MediaObjectHead {
+  return {
+    size: object.size,
+    contentType: object.httpMetadata?.contentType ?? null,
+    etag: object.httpEtag?.replace(/^"|"$/gu, "") ?? null,
+  };
+}
 
 export type MediaObjectByteRange = {
   offset: number;
@@ -190,24 +196,51 @@ async function createBoundOrS3Storage(): Promise<MediaObjectStorage> {
   const bucket = await getR2BucketBinding();
   if (bucket) {
     return {
+      async putUpload(uploadObjectKey, body) {
+        assertManagedUploadObjectKey(uploadObjectKey);
+        // 같은 staging key를 다시 덮어쓰지 못하게 한다. HEAD는 빠른 거절이고,
+        // 동시에 들어온 PUT 사이의 원자성은 R2 조건부 쓰기(If-None-Match: *)가 맡는다.
+        if (await bucket.head(uploadObjectKey)) return false;
+        const stored = await bucket.put(
+          uploadObjectKey,
+          withKnownLength(body.stream, body.size),
+          {
+            httpMetadata: { contentType: body.contentType },
+            onlyIf: new Headers({ "If-None-Match": "*" }),
+          },
+        );
+        return stored !== null;
+      },
       async head(objectKey) {
         assertManagedObjectKey(objectKey);
         const object = await bucket.head(objectKey);
-        if (!object) return null;
-        return {
-          size: object.size,
-          contentType: object.httpMetadata?.contentType ?? null,
-          etag: object.httpEtag?.replace(/^"|"$/gu, "") ?? null,
-        };
+        return object ? toMediaObjectHead(object) : null;
       },
-      async seal(uploadObjectKey, finalObjectKey, source, signal) {
-        return sealR2Object(
-          uploadObjectKey,
+      async seal(uploadObjectKey, finalObjectKey, source) {
+        assertManagedUploadObjectKey(uploadObjectKey);
+        assertManagedFinalObjectKey(finalObjectKey);
+        if (!source.etag) {
+          throw new Error("검증할 R2 upload ETag가 없습니다.");
+        }
+        const uploaded = await bucket.get(uploadObjectKey, {
+          onlyIf: { etagMatches: source.etag },
+        });
+        if (!uploaded?.body) {
+          throw new Error("검증한 R2 upload object를 다시 읽지 못했습니다.");
+        }
+        const sealed = await bucket.put(
           finalObjectKey,
-          source,
-          createR2Client(),
-          signal,
+          withKnownLength(uploaded.body, uploaded.size),
+          {
+            httpMetadata: {
+              contentType: source.contentType ?? undefined,
+            },
+          },
         );
+        if (!sealed) {
+          throw new Error("R2 final object를 저장하지 못했습니다.");
+        }
+        return toMediaObjectHead(sealed);
       },
       async delete(objectKey) {
         assertManagedObjectKey(objectKey);
@@ -218,6 +251,30 @@ async function createBoundOrS3Storage(): Promise<MediaObjectStorage> {
 
   const client = createR2Client();
   return {
+    async putUpload(uploadObjectKey, body, signal) {
+      assertManagedUploadObjectKey(uploadObjectKey);
+      const bytes = new Uint8Array(await new Response(body.stream).arrayBuffer());
+      if (bytes.byteLength !== body.size) {
+        throw new Error("업로드 body 크기가 요청과 다릅니다.");
+      }
+      try {
+        await client.send(
+          new PutObjectCommand({
+            Bucket: BUCKET_NAME,
+            Key: uploadObjectKey,
+            Body: bytes,
+            ContentType: body.contentType,
+            ContentLength: body.size,
+            IfNoneMatch: "*",
+          }),
+          { abortSignal: signal },
+        );
+        return true;
+      } catch (error: unknown) {
+        if (isPreconditionStorageError(error)) return false;
+        throw error;
+      }
+    },
     async head(objectKey, signal) {
       assertManagedObjectKey(objectKey);
       try {
@@ -361,4 +418,86 @@ export async function headR2Object(objectKey: string): Promise<MediaObjectHead |
 
 export async function deleteR2Object(objectKey: string): Promise<void> {
   await (await getMediaObjectStorage()).delete(objectKey);
+}
+
+const GUIDE_ASSET_OBJECT_KEY_PATTERN =
+  /^guide\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
+
+function assertGuideAssetObjectKey(objectKey: string): void {
+  if (!GUIDE_ASSET_OBJECT_KEY_PATTERN.test(objectKey)) {
+    throw new Error("가이드 이미지 R2 object key가 올바르지 않습니다.");
+  }
+}
+
+/** 공용 가이드 이미지 저장소. 학생 media 수명주기와 분리된 `guide/<id>` key만 다룬다. */
+export interface GuideAssetObjectStorage {
+  put(objectKey: string, bytes: Uint8Array, contentType: string): Promise<void>;
+  get(objectKey: string): Promise<{ body: ReadableStream<Uint8Array>; size: number; contentType: string | null } | null>;
+  delete(objectKey: string): Promise<void>;
+}
+
+export async function getGuideAssetStorage(): Promise<GuideAssetObjectStorage> {
+  const bucket = await getR2BucketBinding();
+  if (bucket) {
+    return {
+      async put(objectKey, bytes, contentType) {
+        assertGuideAssetObjectKey(objectKey);
+        const stream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(bytes);
+            controller.close();
+          },
+        });
+        const stored = await bucket.put(objectKey, withKnownLength(stream, bytes.byteLength), {
+          httpMetadata: { contentType },
+        });
+        if (!stored) throw new Error("가이드 이미지를 저장하지 못했습니다.");
+      },
+      async get(objectKey) {
+        assertGuideAssetObjectKey(objectKey);
+        const object = await bucket.get(objectKey);
+        if (!object?.body) return null;
+        return { body: object.body, size: object.size, contentType: object.httpMetadata?.contentType ?? null };
+      },
+      async delete(objectKey) {
+        assertGuideAssetObjectKey(objectKey);
+        await bucket.delete(objectKey);
+      },
+    };
+  }
+
+  const client = createR2Client();
+  return {
+    async put(objectKey, bytes, contentType) {
+      assertGuideAssetObjectKey(objectKey);
+      await client.send(
+        new PutObjectCommand({
+          Bucket: BUCKET_NAME,
+          Key: objectKey,
+          Body: bytes,
+          ContentType: contentType,
+          ContentLength: bytes.byteLength,
+        }),
+      );
+    },
+    async get(objectKey) {
+      assertGuideAssetObjectKey(objectKey);
+      try {
+        const result = await client.send(new GetObjectCommand({ Bucket: BUCKET_NAME, Key: objectKey }));
+        if (!result.Body) return null;
+        return {
+          body: toWebReadableStream(result.Body),
+          size: result.ContentLength ?? 0,
+          contentType: result.ContentType ?? null,
+        };
+      } catch (error: unknown) {
+        if (isNotFoundStorageError(error)) return null;
+        throw error;
+      }
+    },
+    async delete(objectKey) {
+      assertGuideAssetObjectKey(objectKey);
+      await client.send(new DeleteObjectCommand({ Bucket: BUCKET_NAME, Key: objectKey }));
+    },
+  };
 }

@@ -105,7 +105,7 @@ export function OwnerlessLegacyDraftCleanup() {
         type="button"
         variant="ghost"
         size="sm"
-        className={`mt-2 h-auto whitespace-normal px-0 py-1 text-left text-destructive hover:bg-transparent ${REDUCED_MOTION_BUTTON_CLASS}`}
+        className={`mt-2 h-auto whitespace-normal px-0 py-1 text-left text-destructive hover:bg-transparent max-md:min-h-11 ${REDUCED_MOTION_BUTTON_CLASS}`}
         onClick={beginCleanup}
         aria-expanded={phase === "confirm"}
         aria-controls="ownerless-draft-cleanup-confirmation"
@@ -127,7 +127,7 @@ export function OwnerlessLegacyDraftCleanup() {
               type="button"
               variant="ghost"
               size="sm"
-              className={REDUCED_MOTION_BUTTON_CLASS}
+              className={`max-md:h-11 ${REDUCED_MOTION_BUTTON_CLASS}`}
               onClick={cancelCleanup}
             >
               취소
@@ -136,7 +136,7 @@ export function OwnerlessLegacyDraftCleanup() {
               ref={confirmRef}
               type="button"
               size="sm"
-              className={`bg-destructive text-destructive-foreground hover:bg-destructive/90 ${REDUCED_MOTION_BUTTON_CLASS}`}
+              className={`bg-destructive text-destructive-foreground hover:bg-destructive/90 max-md:h-11 ${REDUCED_MOTION_BUTTON_CLASS}`}
               onClick={confirmCleanup}
               aria-describedby="ownerless-draft-cleanup-status"
             >

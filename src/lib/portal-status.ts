@@ -38,6 +38,20 @@ export const PORTAL_STATUS: Record<PortalStatusKey, PortalStatusDefinition> = {
   complete: { label: "완료", tone: "success", icon: "check" },
 };
 
+/**
+ * 상태 점(6px) 색. 캔버스는 대기를 Q&A 노란 점, 완료·도착·예정을 강조 파랑 점, 종료를 비활성 회색 점으로 그린다.
+ * 글자는 점 옆에서 먹색 계열을 유지한다.
+ */
+export const STATUS_TONE_DOT_CLASS_NAMES: Record<PortalStatusTone, string> = {
+  neutral: "bg-faint",
+  accent: "bg-highlight",
+  success: "bg-highlight",
+  warning: "bg-item-qna",
+  destructive: "bg-destructive",
+  info: "bg-highlight",
+};
+
+/** 면·선·글자를 모두 칠하는 이전 칩 모양. 상태 전환 버튼처럼 눌린 상태를 면으로 보여야 하는 곳에서만 쓴다. */
 export const STATUS_TONE_CLASS_NAMES: Record<PortalStatusTone, string> = {
   neutral: "border-border bg-muted text-muted-foreground",
   accent: "border-primary/20 bg-accent text-accent-foreground",

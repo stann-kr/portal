@@ -1,20 +1,28 @@
 "use client";
 
 import { useId, useState, useTransition } from "react";
-import { RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ConfirmPanel, useConfirmAction } from "@/components/ui/confirm-action";
 import { processPendingMediaDeletions } from "@/lib/actions/upload";
+import {
+  OPERATION_CONFIRM_CLASS,
+  OPERATION_DESCRIPTION_CLASS,
+  OPERATION_ROW_CLASS,
+  OPERATION_STATUS_CLASS,
+  OPERATION_TEXT_CLASS,
+  OPERATION_TITLE_CLASS,
+  OPERATION_TRIGGER_CLASS,
+} from "@/components/admin-portal/AccountErasureCleanupControl";
 
+/** 운영 도구의 미디어 저장소 정리(캔버스 AdminOps 첫 줄). 실행 전 취소 우선 확인을 거친다. */
 export function MediaCleanupControl() {
+  const descriptionId = useId();
   const statusId = useId();
-  const [status, setStatus] = useState(
-    "만료된 미제출 파일과 실패한 삭제 작업을 최대 10건씩 정리합니다.",
-  );
+  const [status, setStatus] = useState("");
   const [isPending, startTransition] = useTransition();
-  const [confirming, setConfirming] = useState(false);
+  const confirm = useConfirmAction();
 
   function runCleanup() {
-    setConfirming(false);
     startTransition(async () => {
       try {
         const result = await processPendingMediaDeletions(10);
@@ -28,36 +36,41 @@ export function MediaCleanupControl() {
   }
 
   return (
-    <section
-      aria-labelledby="media-cleanup-heading"
-      className="flex flex-col items-start justify-between gap-3 rounded-lg border border-border bg-surface px-5 py-4 sm:flex-row sm:items-center"
-    >
-      <div>
-        <h2 id="media-cleanup-heading" className="text-sm font-semibold text-foreground">
+    <section aria-labelledby="media-cleanup-heading" className={OPERATION_ROW_CLASS}>
+      <div className={OPERATION_TEXT_CLASS}>
+        <h2 id="media-cleanup-heading" className={OPERATION_TITLE_CLASS}>
           미디어 저장소 정리
         </h2>
-        <p
-          id={statusId}
-          role="status"
-          aria-live="polite"
-          aria-atomic="true"
-          className="mt-1 text-xs text-muted-foreground"
-        >
+        <p id={descriptionId} className={OPERATION_DESCRIPTION_CLASS}>
+          만료된 미제출 파일과 실패한 삭제 작업을 최대 10건씩 정리합니다.
+        </p>
+        <p id={statusId} role="status" aria-live="polite" aria-atomic="true" className={OPERATION_STATUS_CLASS}>
           {status}
         </p>
       </div>
-      {confirming ? (
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          <span className="text-xs font-medium text-warning" role="alert">삭제 대기 파일을 실제로 정리합니다.</span>
-          <Button type="button" variant="ghost" size="sm" onClick={() => setConfirming(false)}>취소</Button>
-          <Button type="button" variant="outline" size="sm" disabled={isPending} aria-describedby={statusId} onClick={runCleanup}>정리 확인</Button>
-        </div>
-      ) : (
-        <Button type="button" variant="outline" disabled={isPending} aria-describedby={statusId} onClick={() => setConfirming(true)}>
-          <RefreshCw className={isPending ? "motion-safe:animate-spin" : ""} aria-hidden="true" />
-          {isPending ? "정리 중" : "지금 정리"}
-        </Button>
-      )}
+      <Button
+        type="button"
+        variant="outline"
+        className={OPERATION_TRIGGER_CLASS}
+        hidden={confirm.isOpen}
+        disabled={isPending}
+        aria-expanded={confirm.isOpen}
+        aria-describedby={`${descriptionId} ${statusId}`}
+        onClick={(event) => confirm.request(event.currentTarget)}
+      >
+        지금 정리
+      </Button>
+      {confirm.isOpen ? (
+        <ConfirmPanel
+          confirm={confirm}
+          message="삭제 대기 파일을 실제로 정리합니다."
+          confirmLabel="정리 확인"
+          pendingLabel="정리 중"
+          pending={isPending}
+          onConfirm={runCleanup}
+          className={OPERATION_CONFIRM_CLASS}
+        />
+      ) : null}
     </section>
   );
 }

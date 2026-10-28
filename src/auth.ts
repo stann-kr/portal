@@ -38,7 +38,7 @@ const allowLoginAttempt: AllowLoginAttempt = (request) =>
   isPasswordAttemptAllowed("login", () => request.headers);
 
 /**
- * Node runtime 전용 auth 설정을 만든다. Edge middleware가 import하는 authConfig에는
+ * Node runtime 전용 auth 설정을 만든다. proxy가 import하는 authConfig에는
  * DB 의존성을 넣지 않고, JWT를 session으로 공개하기 직전에 profile 생존 여부와
  * 발급 당시 비밀번호에 결합된 지문을 다시 확인한다.
  */

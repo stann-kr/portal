@@ -5,13 +5,12 @@
  */
 import { redirect } from "next/navigation";
 import { getActiveAuthSession } from "@/lib/auth-guard";
-import { getPostsByBoardType, getRecentCommunityPostSummaries } from "@/lib/actions/posts";
 import { getStudentRosterStats } from "@/lib/actions/students";
 import { getUnifiedItemsForStudent } from "@/lib/actions/unifiedItems";
 import { getQnaThreads } from "@/lib/actions/qna";
 import { getPendingFeedbackAssignments } from "@/lib/actions/assignments";
 import { AdminPortalClient } from "@/components/admin-portal/AdminPortalClient";
-import { firstSearchValue, resolvePortalLocation, type PortalSearchParams } from "@/lib/portal-location";
+import { firstSearchValue, legacyPortalSectionRedirect, resolvePortalLocation, type PortalSearchParams } from "@/lib/portal-location";
 
 export const metadata = { title: "관리자 포털" };
 
@@ -21,6 +20,8 @@ export default async function AdminPortalPage({ searchParams }: { searchParams: 
 
   const adminId = session.user.id!;
   const params = await searchParams;
+  const legacyRedirect = legacyPortalSectionRedirect(params);
+  if (legacyRedirect) redirect(legacyRedirect);
   const initialLocation = resolvePortalLocation("admin", params);
 
   // 학생 목록 먼저 패치
@@ -30,9 +31,7 @@ export default async function AdminPortalPage({ searchParams }: { searchParams: 
 
   // 병렬 데이터 패치
   const referenceTime = new Date();
-  const [announcements, communityPostsRaw, initialStudentItems, qnaThreads, pendingAssignments] = await Promise.all([
-    getPostsByBoardType("ANNOUNCEMENT"),
-    getRecentCommunityPostSummaries(20),
+  const [initialStudentItems, qnaThreads, pendingAssignments] = await Promise.all([
     initialStudentId ? getUnifiedItemsForStudent(initialStudentId) : Promise.resolve([]),
     getQnaThreads(),
     getPendingFeedbackAssignments(),
@@ -42,10 +41,8 @@ export default async function AdminPortalPage({ searchParams }: { searchParams: 
     <AdminPortalClient
       initialLocation={initialLocation}
       initialStudentId={initialStudentId}
-      announcements={announcements}
       initialUnifiedItems={initialStudentItems}
       students={students}
-      communityPosts={communityPostsRaw}
       adminId={adminId}
       qnaThreads={qnaThreads}
       pendingAssignments={pendingAssignments}

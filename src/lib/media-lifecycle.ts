@@ -3,6 +3,7 @@ import { parseCreationOperationId } from "./creation-operation";
 export const MEDIA_PURPOSES = [
   "COMMUNITY_POST_AUDIO",
   "QNA_ATTACHMENT",
+  "DOCUMENT_IMAGE",
 ] as const;
 
 export type MediaUploadPurpose = (typeof MEDIA_PURPOSES)[number];
@@ -31,7 +32,9 @@ export const MEDIA_DELETION_REASONS = [
 
 export type MediaDeletionReason = (typeof MEDIA_DELETION_REASONS)[number];
 
-const TWO_GIBIBYTES = 2 * 1024 * 1024 * 1024;
+/** Worker가 요청 body를 받아 R2 binding에 저장하므로 Cloudflare 요청 한도(100MB) 아래로 둔다. */
+export const MEDIA_WORKER_UPLOAD_MAX_BYTES = 95 * 1024 * 1024;
+export const DOCUMENT_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 
 export const MEDIA_UPLOAD_URL_TTL_SECONDS = 60 * 60;
 /** URL 만료 전에 browser PUT을 중단해 staging cleanup 경계를 유한하게 유지한다. */
@@ -48,7 +51,8 @@ export const MEDIA_SEAL_REQUEST_TIMEOUT_MS = 10 * 60 * 1_000;
 /** 사용자 요청 안의 best-effort delete가 outbox lease와 응답을 붙잡지 않게 한다. */
 export const MEDIA_DELETE_REQUEST_TIMEOUT_MS = 2_000;
 export const MEDIA_DRAFT_RETENTION_SECONDS = 30 * 24 * 60 * 60;
-export const MEDIA_OWNER_UNATTACHED_OBJECT_LIMIT = 8;
+/** 저장 전 본문 이미지 여러 장을 허용하되 orphan 누적은 유한하게 둔다. */
+export const MEDIA_OWNER_UNATTACHED_OBJECT_LIMIT = 24;
 export const MEDIA_OWNER_UNATTACHED_BYTES_LIMIT = 4 * 1024 * 1024 * 1024;
 
 export function mediaUploadRequestHeaders(contentType: string) {
@@ -56,6 +60,11 @@ export function mediaUploadRequestHeaders(contentType: string) {
     "Content-Type": contentType,
     "If-None-Match": MEDIA_UPLOAD_IF_NONE_MATCH,
   } as const;
+}
+
+/** 업로드 body는 same-origin Worker route가 받는다. 외부 storage 주소를 노출하지 않는다. */
+export function mediaUploadPath(mediaObjectId: string): string {
+  return `/api/media/upload/${assertUuidV4(mediaObjectId)}`;
 }
 
 const AUDIO_MIME_TYPES = [
@@ -67,12 +76,16 @@ const AUDIO_MIME_TYPES = [
   "audio/wav",
 ] as const;
 
-const QNA_ATTACHMENT_MIME_TYPES = [
-  ...AUDIO_MIME_TYPES,
+export const DOCUMENT_IMAGE_MIME_TYPES = [
   "image/gif",
   "image/jpeg",
   "image/png",
   "image/webp",
+] as const;
+
+const QNA_ATTACHMENT_MIME_TYPES = [
+  ...AUDIO_MIME_TYPES,
+  ...DOCUMENT_IMAGE_MIME_TYPES,
   "video/mp4",
   "video/webm",
 ] as const;
@@ -93,14 +106,21 @@ export const MEDIA_PURPOSE_POLICIES = {
     keyPrefix: "media/community-post-audio/",
     uploadKeyPrefix: "media-upload/community-post-audio/",
     allowedMimeTypes: AUDIO_MIME_TYPES,
-    maxFileSizeBytes: TWO_GIBIBYTES,
+    maxFileSizeBytes: MEDIA_WORKER_UPLOAD_MAX_BYTES,
     uploadUrlTtlSeconds: MEDIA_UPLOAD_URL_TTL_SECONDS,
   },
   QNA_ATTACHMENT: {
     keyPrefix: "media/qna-attachment/",
     uploadKeyPrefix: "media-upload/qna-attachment/",
     allowedMimeTypes: QNA_ATTACHMENT_MIME_TYPES,
-    maxFileSizeBytes: TWO_GIBIBYTES,
+    maxFileSizeBytes: MEDIA_WORKER_UPLOAD_MAX_BYTES,
+    uploadUrlTtlSeconds: MEDIA_UPLOAD_URL_TTL_SECONDS,
+  },
+  DOCUMENT_IMAGE: {
+    keyPrefix: "media/document-image/",
+    uploadKeyPrefix: "media-upload/document-image/",
+    allowedMimeTypes: DOCUMENT_IMAGE_MIME_TYPES,
+    maxFileSizeBytes: DOCUMENT_IMAGE_MAX_BYTES,
     uploadUrlTtlSeconds: MEDIA_UPLOAD_URL_TTL_SECONDS,
   },
 } as const satisfies Record<MediaUploadPurpose, MediaUploadPolicy>;
@@ -323,6 +343,9 @@ export function isManagedMediaObjectKey(value: string): boolean {
     isManagedUploadMediaObjectKey(value)
   );
 }
+
+/** 한 UPDATE에 묶을 본문 이미지 ID 수(D1 bound parameter 100개 한도 아래). */
+export const DOCUMENT_IMAGE_CLAIM_BATCH_SIZE = 50;
 
 /** 원본 R2 주소를 노출하지 않는 인증형 애플리케이션 전달 경로다. */
 export function mediaDeliveryPath(mediaObjectId: string): string {

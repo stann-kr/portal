@@ -1,6 +1,7 @@
 import { AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
+/** 저장 충돌(States 보드): 내 초안을 화면에 둔 채 서버 최신본 사용 또는 현재 초안으로 계속을 고르게 한다. */
 export function DraftConflictRecovery({
   documentLabel,
   onUseServer,
@@ -13,22 +14,22 @@ export function DraftConflictRecovery({
   return (
     <div
       role="alert"
-      className="space-y-3 rounded-lg border border-warning/30 bg-warning-muted p-3 text-sm"
+      className="flex flex-col gap-3.5 rounded-lg border border-warning-border bg-warning-muted p-4"
     >
-      <div className="flex items-start gap-2">
-        <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-warning" aria-hidden="true" />
-        <div className="space-y-1">
-          <p className="font-medium text-foreground">더 최신 서버 {documentLabel}이 있습니다.</p>
-          <p className="text-muted-foreground">
+      <div className="flex items-start gap-2.5">
+        <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" strokeWidth={1.8} aria-hidden="true" />
+        <div className="flex flex-col gap-1">
+          <p className="text-sm font-semibold leading-5 text-foreground">더 최신 서버 {documentLabel}이 있습니다.</p>
+          <p className="text-ui text-secondary-foreground">
             현재 초안은 화면에 유지했습니다. 서버본을 사용하거나, 서버본의 변경을 덮어쓸 수 있음을 확인하고 현재 초안으로 계속해 주세요.
           </p>
         </div>
       </div>
-      <div className="flex flex-wrap gap-2">
-        <Button type="button" size="sm" variant="outline" onClick={onUseServer}>
+      <div className="flex flex-wrap gap-2 pl-[26px]">
+        <Button type="button" variant="outline" onClick={onUseServer}>
           서버 최신본 사용
         </Button>
-        <Button type="button" size="sm" onClick={onKeepDraft}>
+        <Button type="button" onClick={onKeepDraft}>
           현재 초안으로 계속
         </Button>
       </div>

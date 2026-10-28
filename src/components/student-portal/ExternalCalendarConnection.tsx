@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useEffect, useState, useTransition } from "react";
-import { ChevronDown, Link2, Unlink } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -11,8 +11,16 @@ import {
 } from "@/lib/actions/externalCalendars";
 import type { ExternalCalendarConnectionSummary } from "@/lib/external-calendar";
 import { useRouter } from "next/navigation";
+import { cn } from "@/lib/utils";
 
-export function ExternalCalendarConnection({ connection }: { connection: ExternalCalendarConnectionSummary }) {
+/** 공개 레슨 캘린더 연결(캔버스 CalendarDialogs): r10 접는 상자, 48px 머리, 주소 입력과 연결 버튼. */
+export function ExternalCalendarConnection({
+  connection,
+  className,
+}: {
+  connection: ExternalCalendarConnectionSummary;
+  className?: string;
+}) {
   const router = useRouter();
   // form action은 결과와 무관하게 uncontrolled 입력을 비우므로, 거부된 주소를 고쳐 다시 시도할 수 있게 값을 제어한다.
   const [url, setUrl] = useState("");
@@ -37,30 +45,27 @@ export function ExternalCalendarConnection({ connection }: { connection: Externa
   }, [router, state.success]);
 
   return (
-    <details className="group shrink-0 border-b border-border px-3 sm:px-6">
-      <summary className="flex min-h-11 cursor-pointer list-none flex-wrap items-center justify-between gap-2 py-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
-        <span className="text-sm font-medium text-foreground">공개 레슨 캘린더</span>
-        <span className="flex items-center gap-2 text-xs text-muted-foreground">
+    <details className={cn("group rounded-lg border border-border", className)}>
+      <summary className="flex h-12 cursor-pointer list-none items-center justify-between gap-2 rounded-lg px-4 text-body font-medium text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+        공개 레슨 캘린더
+        <span className="flex items-center gap-1.5 text-xs font-normal text-muted-foreground">
           {connection.connected ? (
-            <span className="rounded-md border border-border bg-muted px-2 py-1 text-xs text-muted-foreground" aria-label={`${connection.label} 연결됨`}>
-              {connection.label} 연결됨
-            </span>
+            <span aria-label={`${connection.label} 연결됨`}>{connection.label} 연결됨</span>
           ) : <span>연결 설정</span>}
-          <ChevronDown className="size-4 transition-transform duration-[var(--duration-fast)] group-open:rotate-180 motion-reduce:transition-none" aria-hidden="true" />
+          <ChevronDown className="size-3.5 transition-transform duration-[var(--duration-fast)] group-open:rotate-180 motion-reduce:transition-none" strokeWidth={1.6} aria-hidden="true" />
         </span>
       </summary>
-      <div className="pb-3">
-        <p id="external-calendar-help" className="text-xs text-muted-foreground">
-          전용 공개 Google iCal 또는 iCloud 공개 캘린더 주소를 붙여 넣으면 제공자를 자동으로 확인합니다. Google 비공개 Secret iCal 주소는 사용할 수 없습니다.
+      <div className="flex flex-col gap-3 px-4 pb-4 pt-1">
+        <p id="external-calendar-help" className="text-ui text-secondary-foreground">
+          Google iCal 주소(공개 또는 비공개) 또는 iCloud 공개 캘린더 주소를 붙여 넣으면 제공자를 자동으로 확인합니다. 읽기 전용으로 보이며, 비공개 주소는 암호화해 저장하고 다시 보여 주지 않습니다.
         </p>
 
         {connection.connected ? (
-          <div className="mt-3 flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Button
               type="button"
-              size="sm"
               variant="outline"
-              disabled={disconnecting}
+              pending={disconnecting}
               onClick={() => startDisconnect(async () => {
                 setDisconnectError(null);
                 try {
@@ -71,7 +76,6 @@ export function ExternalCalendarConnection({ connection }: { connection: Externa
                 }
               })}
             >
-              <Unlink className="size-3.5" aria-hidden="true" />
               연결 해제
             </Button>
             <span className="text-xs text-muted-foreground" role="status" aria-live="polite">
@@ -80,23 +84,22 @@ export function ExternalCalendarConnection({ connection }: { connection: Externa
           </div>
         ) : null}
         {disconnectError ? (
-          <p className="mt-2 text-xs text-destructive" role="alert" aria-live="assertive" aria-atomic="true">
+          <p className="text-xs text-destructive" role="alert" aria-live="assertive" aria-atomic="true">
             {disconnectError}
           </p>
         ) : null}
 
-        <form action={formAction} className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]" aria-describedby="external-calendar-help" aria-busy={pending}>
-          <div>
-            <label className="sr-only" htmlFor="external-calendar-url">공개 iCal 주소</label>
-            <Input id="external-calendar-url" name="url" type="url" required aria-required="true" disabled={pending} value={url} onChange={(event) => setUrl(event.target.value)} aria-invalid={Boolean(state.error) && !pending} aria-describedby={state.error ? "external-calendar-help external-calendar-error" : "external-calendar-help"} placeholder="https://…/public/basic.ics 또는 https://p…-caldav.icloud.com/published/2/…" />
+        <form action={formAction} className="flex gap-2" aria-describedby="external-calendar-help" aria-busy={pending}>
+          <div className="min-w-0 flex-1">
+            <label className="sr-only" htmlFor="external-calendar-url">공개 캘린더 주소</label>
+            <Input id="external-calendar-url" name="url" type="url" required aria-required="true" disabled={pending} value={url} onChange={(event) => setUrl(event.target.value)} aria-invalid={Boolean(state.error) && !pending} aria-describedby={state.error ? "external-calendar-help external-calendar-error" : "external-calendar-help"} placeholder="https://…/basic.ics" className="font-mono md:text-xs" />
           </div>
-          <Button type="submit" size="sm" disabled={pending}>
-            <Link2 className="size-3.5" aria-hidden="true" />
+          <Button type="submit" className="h-11 shrink-0 rounded-touch px-3.5 md:h-9 md:rounded-md" disabled={pending}>
             {pending ? "확인 중" : connection.connected ? "교체" : "연결"}
           </Button>
         </form>
-        {state.error ? <p id="external-calendar-error" className="mt-2 text-xs text-destructive" role="alert" aria-live="assertive" aria-atomic="true">{state.error}</p> : null}
-        {state.success ? <p className="mt-2 text-xs text-success" role="status" aria-live="polite" aria-atomic="true">{state.success}</p> : null}
+        {state.error ? <p id="external-calendar-error" className="text-xs text-destructive" role="alert" aria-live="assertive" aria-atomic="true">{state.error}</p> : null}
+        {state.success ? <p className="text-xs text-success" role="status" aria-live="polite" aria-atomic="true">{state.success}</p> : null}
       </div>
     </details>
   );

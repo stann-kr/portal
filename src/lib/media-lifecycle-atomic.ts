@@ -24,8 +24,10 @@ import {
   MEDIA_SEAL_RECOVERY_GRACE_SECONDS,
   MEDIA_SEAL_REQUEST_TIMEOUT_MS,
   MEDIA_UPLOAD_STAGING_GRACE_SECONDS,
+  DOCUMENT_IMAGE_CLAIM_BATCH_SIZE,
   mediaDeletionBackoffSeconds,
 } from "@/lib/media-lifecycle";
+import { extractDocumentImageMediaIds } from "@/lib/document-image-references";
 import {
   getMediaObjectStorage,
   type MediaObjectHead,
@@ -629,6 +631,50 @@ export function mediaClaimStatements(input: {
   ];
 }
 
+/**
+ * 본문이 참조하는 저장자 소유 READY 본문 이미지를 이 문서에 연결한다.
+ * 다른 사람 이미지·이미 연결된 이미지·없는 ID는 건드리지 않으므로 저장을 막지 않는다.
+ */
+export function documentImageClaimStatements(input: {
+  contentHtml: string;
+  ownerId: string;
+  resourceType: MediaResourceType;
+  resourceId: string;
+  now: Date;
+}): DocumentAtomicStatement[] {
+  const mediaIds = extractDocumentImageMediaIds(input.contentHtml);
+  const now = documentEpochSeconds(input.now)!;
+  const statements: DocumentAtomicStatement[] = [];
+  for (
+    let offset = 0;
+    offset < mediaIds.length;
+    offset += DOCUMENT_IMAGE_CLAIM_BATCH_SIZE
+  ) {
+    const batch = mediaIds.slice(offset, offset + DOCUMENT_IMAGE_CLAIM_BATCH_SIZE);
+    statements.push({
+      query: `
+        UPDATE media_objects
+        SET state = 'ATTACHED', resource_type = ?, resource_id = ?,
+            attached_at = ?, updated_at = ?
+        WHERE purpose = 'DOCUMENT_IMAGE' AND owner_id = ? AND state = 'READY'
+          AND resource_type IS NULL AND resource_id IS NULL
+          AND ready_at >= ?
+          AND id IN (${batch.map(() => "?").join(", ")})
+      `,
+      params: [
+        input.resourceType,
+        input.resourceId,
+        now,
+        now,
+        input.ownerId,
+        now - MEDIA_DRAFT_RETENTION_SECONDS,
+        ...batch,
+      ],
+    });
+  }
+  return statements;
+}
+
 export function postMediaPurgeStatements(input: {
   postId: string;
   now: Date;
@@ -659,6 +705,41 @@ export function postMediaPurgeStatements(input: {
           AND state = 'ATTACHED'
       `,
       params: [now, now, input.postId],
+    },
+  ];
+}
+
+/** 노트를 완전히 지울 때 본문 이미지를 durable 삭제 outbox로 넘긴다. */
+export function privateNoteMediaPurgeStatements(input: {
+  noteId: string;
+  now: Date;
+}): DocumentAtomicStatement[] {
+  const now = documentEpochSeconds(input.now);
+  return [
+    {
+      query: `
+        INSERT INTO media_deletion_outbox (
+          id, media_object_id, object_key, reason, not_before,
+          attempt_count, next_attempt_at, lease_id, lease_expires_at,
+          last_error_code, completed_at, created_at, updated_at
+        )
+        SELECT 'media-delete-final:' || id, id, object_key, 'RESOURCE_PURGED',
+               ?, 0, ?,
+               NULL, NULL, NULL, NULL, ?, ?
+        FROM media_objects
+        WHERE resource_type = 'PRIVATE_NOTE' AND resource_id = ?
+          AND state = 'ATTACHED'
+      `,
+      params: [now, now, now, now, input.noteId],
+    },
+    {
+      query: `
+        UPDATE media_objects
+        SET state = 'PENDING_DELETE', delete_requested_at = ?, updated_at = ?
+        WHERE resource_type = 'PRIVATE_NOTE' AND resource_id = ?
+          AND state = 'ATTACHED'
+      `,
+      params: [now, now, input.noteId],
     },
   ];
 }

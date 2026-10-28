@@ -19,6 +19,7 @@ export const DOCUMENT_DRAFT_KINDS = [
   "community-post",
   "community-comment",
   "assignment-feedback",
+  "guide-page",
 ] as const;
 
 export type DocumentDraftKind = (typeof DOCUMENT_DRAFT_KINDS)[number];

@@ -21,11 +21,22 @@ import {
   reconcileManagedFinalMediaObjects,
   type RuntimeR2InventoryBucket,
 } from "./src/lib/media-inventory-reconciliation";
+import { runWithCalendarSyncEnv } from "./src/lib/calendar-sync/runtime-env";
+import {
+  CALENDAR_SCHEDULED_SYNC_BUDGET_MS,
+  runScheduledCalendarSync,
+  serializeScheduledCalendarSyncSummary,
+} from "./src/lib/calendar-sync/scheduled-sync";
 
 type PortalWorkerEnv = {
   DB: AnyD1Database;
   BUCKET: RuntimeR2DeletionBucket & RuntimeR2InventoryBucket;
   ACCOUNT_CLEANUP_RATE_LIMITER: AccountCleanupRateLimiter;
+  /** 캘린더 동기화 설정(vars·secrets). 예약 실행에서는 runWithCalendarSyncEnv로 reader에 넘긴다. */
+  AUTH_URL?: string;
+  GOOGLE_CALENDAR_CLIENT_ID?: string;
+  GOOGLE_CALENDAR_CLIENT_SECRET?: string;
+  EXTERNAL_CALENDAR_ENCRYPTION_KEY?: string;
 };
 
 type PortalExecutionContext = {
@@ -85,6 +96,26 @@ async function runScheduledEvent(
   }
 }
 
+/**
+ * 캘린더 예약 동기화. 유지보수 작업과 독립적으로 돌며 실패는 log만 남긴다(유지보수 결과를 바꾸지 않는다).
+ * OpenNext request context가 없으므로 Worker env를 캘린더 설정·암호화 key reader에 직접 넘긴다.
+ */
+async function runScheduledCalendarSyncEvent(env: PortalWorkerEnv): Promise<void> {
+  try {
+    const summary = await runWithCalendarSyncEnv(env as unknown as Record<string, unknown>, () =>
+      runScheduledCalendarSync({
+        ctx: createD1DbContext(env.DB),
+        deadlineMs: Date.now() + CALENDAR_SCHEDULED_SYNC_BUDGET_MS,
+      }),
+    );
+    const serialized = serializeScheduledCalendarSyncSummary(summary);
+    if (summary.failed > 0 || summary.listFailed || summary.channels.failed > 0) console.warn(serialized);
+    else console.log(serialized);
+  } catch {
+    console.error(JSON.stringify({ event: "scheduled_calendar_sync", outcome: "error" }));
+  }
+}
+
 const portalWorker = {
   async fetch(
     request: Request,
@@ -104,7 +135,12 @@ const portalWorker = {
     _context: PortalExecutionContext,
   ) {
     void _context;
-    await runScheduledEvent(controller, env);
+    // 두 작업은 서로의 실패와 무관하게 끝까지 돈다. 유지보수 실패만 기존처럼 예약 실행 실패로 알린다.
+    const [maintenance] = await Promise.allSettled([
+      runScheduledEvent(controller, env),
+      runScheduledCalendarSyncEvent(env),
+    ]);
+    if (maintenance.status === "rejected") throw maintenance.reason;
   },
 };
 

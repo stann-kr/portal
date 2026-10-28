@@ -14,3 +14,9 @@ test("외부·protocol-relative·backslash 경로를 거부한다", () => {
     assert.equal(safeReturnPath(value, "/dashboard"), "/dashboard");
   }
 });
+
+test("같은 이름이 반복된 query(배열)처럼 문자열이 아닌 값은 fallback이다", () => {
+  for (const value of [["/a", "/b"], 42, undefined, {}]) {
+    assert.equal(safeReturnPath(value, "/dashboard"), "/dashboard");
+  }
+});

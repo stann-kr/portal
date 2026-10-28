@@ -24,12 +24,21 @@ function item(type: UnifiedItem["type"], subType?: string): UnifiedItem {
 
 test("관리자 일정은 학생 전용 커리큘럼과 과제 탭을 제공하지 않는다", () => {
   assert.deepEqual(getCalendarTabs("admin").map((tab) => tab.value), ["calendar", "daily", "all"]);
-  assert.deepEqual(getCalendarTabs("student").map((tab) => tab.value), [
+  assert.deepEqual(getCalendarTabs("student", true).map((tab) => tab.value), [
     "calendar", "daily", "all", "curriculum", "assignments",
   ]);
-  assert.equal(resolveCalendarTab("curriculum", "admin"), "calendar");
+  assert.equal(resolveCalendarTab("curriculum", "admin", true), "calendar");
   assert.equal(resolveUnifiedItemType("DIGGING"), "DIGGING");
   assert.equal(resolveUnifiedItemType("ADMIN"), null);
+});
+
+test("커리큘럼을 숨기면 학생 워크스페이스도 커리큘럼 보기를 열지 않고 캘린더로 돌아간다", () => {
+  assert.deepEqual(getCalendarTabs("student", false).map((tab) => tab.value), ["calendar", "daily", "all", "assignments"]);
+  assert.equal(resolveCalendarTab("curriculum", "student", false), "calendar");
+  assert.equal(resolveCalendarTab("curriculum", "student", true), "curriculum");
+  assert.equal(resolveCalendarTab("assignments", "student", false), "assignments");
+  // 기본값은 스위치(현재 숨김)를 따른다.
+  assert.equal(resolveCalendarTab("curriculum", "student"), "calendar");
 });
 
 test("노트와 레슨 preset은 다른 일정 유형을 섞지 않는다", () => {

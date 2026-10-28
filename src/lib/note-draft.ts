@@ -14,13 +14,17 @@ export function resolveRestoredCreateNoteDate(
   return typeof storedNoteDate === "string" ? storedNoteDate : defaultNoteDate;
 }
 
-/** 기본 날짜만 채워진 새 노트와 사용자가 날짜를 바꾼 초안을 구분한다. */
+/**
+ * 기본 날짜(와 캘린더 빠른 입력으로 넘어온 기본 제목)만 채워진 새 노트와 사용자가 바꾼 초안을 구분한다.
+ * 기본값뿐인 화면은 초안으로 남기지 않아, 다음 빠른 입력 제목을 옛 제목이 가로채지 않게 한다.
+ */
 export function isCreateNoteDraftEmpty(
   draft: CreateNoteDraftFields,
   defaultNoteDate: string,
+  defaultTitle = "",
 ): boolean {
   return (
-    !draft.title &&
+    (!draft.title || draft.title === defaultTitle) &&
     isRichTextEmpty(draft.contentHtml) &&
     draft.noteDate === defaultNoteDate
   );

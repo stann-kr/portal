@@ -1,7 +1,7 @@
 /** 로컬 복구 안전성과 계정 귀속 서버 동기화를 하나의 form draft API로 묶는다. */
 "use client";
 
-import { useCallback, useRef } from "react";
+import { useCallback, useInsertionEffect, useRef } from "react";
 import {
   useDocumentServerDraftSync,
   type DocumentServerDraftSyncResult,
@@ -27,7 +27,6 @@ export function useSyncedFormDraft<T>(
   const serverObserverRef = useRef<(draft: T) => void>(() => undefined);
   const localRef = useRef<UseFormDraftResult<T> | null>(null);
   const onRestoreRef = useRef(onRestore);
-  onRestoreRef.current = onRestore;
 
   const local = useFormDraft<T>(
     key,
@@ -38,7 +37,6 @@ export function useSyncedFormDraft<T>(
     },
     options,
   );
-  localRef.current = local;
 
   const server = useDocumentServerDraftSync<T>(key, (draft) => {
     onRestoreRef.current(draft);
@@ -46,7 +44,14 @@ export function useSyncedFormDraft<T>(
     localRef.current?.save(draft);
     localRef.current?.flush();
   });
-  serverObserverRef.current = server.observeLocalDraft;
+  const observeLocalDraft = server.observeLocalDraft;
+  // 자식의 layout/passive effect와 하위 hook의 mount effect가 save·restore를 부르기 전에
+  // 최신 callback과 결과가 보이도록 insertion effect에서 갱신한다.
+  useInsertionEffect(() => {
+    onRestoreRef.current = onRestore;
+    localRef.current = local;
+    serverObserverRef.current = observeLocalDraft;
+  }, [local, observeLocalDraft, onRestore]);
 
   const save = useCallback((data: T) => {
     localRef.current?.save(data);

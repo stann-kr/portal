@@ -1,25 +1,26 @@
 /**
  * @file src/components/student-portal/StudentPortalClient.tsx
- * @description 학생 원페이지 포털 메인 오케스트레이터.
- * 3개 섹션(오늘 / 워크스페이스 / 커뮤니티)을 상단 navigation으로 전환.
- * 공통 PortalShell로 navigation과 section 상태를 관리.
+ * @description 학생 포털 메인 오케스트레이터.
+ * 구역(오늘 / 워크스페이스)은 공통 사이드바가 주소로 전환하고(커뮤니티는 /community),
+ * PortalShell은 주소 기반 구역 상태만 관리한다.
  */
 "use client";
 
-import { useState, useCallback, useEffect, useMemo } from "react";
-import { CalendarRange, House, Users } from "lucide-react";
+import type { StudentAssignmentSummary } from "@/lib/assignment-summary";
+import type { AssignmentTaskItem } from "@/lib/actions/assignmentTasks";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import {
   upsertUnifiedItem,
   upsertUnifiedItems,
   getUnifiedItemKey,
   type UnifiedItem,
 } from "@/lib/utils/unifiedItemUtils";
-import { getExternalUnifiedItems } from "@/lib/actions/unifiedItems";
+import { useRouter } from "next/navigation";
+import { syncAndGetExternalItems } from "@/lib/actions/calendarSync";
 import { PortalShell } from "@/components/ui/portal-shell";
 
 // ── 섹션 컴포넌트
 import { CalendarSection } from "./CalendarSection";
-import { CommunitySection } from "./CommunitySection";
 import { TodaySection } from "./TodaySection";
 import type { ExternalCalendarConnectionSummary } from "@/lib/external-calendar";
 import type { PortalLocation, PortalSection } from "@/lib/portal-location";
@@ -43,30 +44,15 @@ type CurriculumModule = {
   isCompleted: boolean;
 };
 
-type Assignment = {
-  id: string;
-  mediaUrl: string;
-  submittedAt: Date | null;
-  feedbackCount: number;
-};
-
-type CommunityPost = {
-  id: string;
-  title: string;
-  boardType: string;
-  isPinned: boolean;
-  authorName: string | null;
-  authorEmail: string | null;
-  createdAt: Date | null;
-};
 
 export interface StudentPortalClientProps {
   initialLocation?: PortalLocation<"student">;
   announcements: Post[];
   unifiedItems: UnifiedItem[];
   curriculumModules: CurriculumModule[];
-  assignments: Assignment[];
-  communityPosts: CommunityPost[];
+  assignments: StudentAssignmentSummary[];
+  /** 관리자가 낸 받은 과제(정기 과제 회차 포함) */
+  assignmentTasks?: AssignmentTaskItem[];
   studentId: string;
   displayName: string;
   spaceLabel: string;
@@ -74,16 +60,18 @@ export interface StudentPortalClientProps {
   referenceTime: Date;
 }
 
-// ── 탭 정의 ──────────────────────────────────────────
+// ── 구역 정의 ──────────────────────────────────────────
 
-const TABS: { id: Section; label: string; Icon: React.ElementType }[] = [
-  { id: "today", label: "오늘", Icon: House },
-  { id: "workspace", label: "워크스페이스", Icon: CalendarRange },
-  { id: "community", label: "커뮤니티", Icon: Users },
+/** 사이드바가 이동을 맡고, 여기서는 주소로 열 수 있는 구역만 정한다. */
+const SECTIONS: readonly { id: Section }[] = [
+  { id: "today" },
+  { id: "workspace" },
 ];
 
-/** 상단 섹션 탭 영속화 localStorage 키 */
+/** 마지막으로 연 구역을 기억하는 localStorage 키 */
 const SECTION_STORAGE_KEY = "studentPortal:section";
+/** 창 복귀 시 외부 캘린더 재동기화 최소 간격(서버 조회 동기화 throttle과 같다). */
+const EXTERNAL_RESYNC_MIN_INTERVAL_MS = 60_000;
 
 const SECTION_ALIASES: Readonly<Record<string, Section>> = {
   announcements: "today",
@@ -98,7 +86,7 @@ export function StudentPortalClient({
   unifiedItems: initialUnifiedItems,
   curriculumModules,
   assignments,
-  communityPosts,
+  assignmentTasks = [],
   studentId,
   displayName,
   spaceLabel,
@@ -111,11 +99,14 @@ export function StudentPortalClient({
   const serverItemKeys = useMemo(() => new Set(initialUnifiedItems.map(getUnifiedItemKey)), [initialUnifiedItems]);
   const items = useMemo(() => upsertUnifiedItems(
     upsertUnifiedItems(initialUnifiedItems, createdItems.filter((item) => !serverItemKeys.has(getUnifiedItemKey(item)))),
-    externalCalendarConnection.connected ? externalItems : [],
-  ).filter((item) => !removedKeys.has(getUnifiedItemKey(item))), [createdItems, externalCalendarConnection.connected, externalItems, initialUnifiedItems, removedKeys, serverItemKeys]);
+    externalItems,
+  ).filter((item) => !removedKeys.has(getUnifiedItemKey(item))), [createdItems, externalItems, initialUnifiedItems, removedKeys, serverItemKeys]);
 
   // Retire confirmed additions so a later server deletion cannot resurrect them.
-  useEffect(() => {
+  // 서버 목록이 바뀐 렌더에서 바로 정리한다(이전 서버 목록과 비교).
+  const [reconciledServerItemKeys, setReconciledServerItemKeys] = useState(serverItemKeys);
+  if (reconciledServerItemKeys !== serverItemKeys) {
+    setReconciledServerItemKeys(serverItemKeys);
     setCreatedItems((current) => {
       const remaining = current.filter((item) => !serverItemKeys.has(getUnifiedItemKey(item)));
       return remaining.length === current.length ? current : remaining;
@@ -126,7 +117,7 @@ export function StudentPortalClient({
       const remaining = new Set([...current].filter((key) => serverItemKeys.has(key)));
       return remaining.size === current.size ? current : remaining;
     });
-  }, [serverItemKeys]);
+  }
 
   const addItem = useCallback((item: UnifiedItem) => {
     setCreatedItems((prev) => upsertUnifiedItem(prev, item));
@@ -139,37 +130,62 @@ export function StudentPortalClient({
   }, []);
 
   // 내부 일정은 RSC에서 먼저 표시하고 외부 provider는 hydration 뒤 fail-soft로 병합한다.
+  // iCal 연결이 끊기면 렌더 중 바로 외부 일정을 비우고, 아래 effect가 남은 동기화 항목을 다시 받는다.
+  const [externalConnected, setExternalConnected] = useState(externalCalendarConnection.connected);
+  if (externalConnected !== externalCalendarConnection.connected) {
+    setExternalConnected(externalCalendarConnection.connected);
+    if (!externalCalendarConnection.connected) setExternalItems([]);
+  }
+
+  // iCal 구독이 없어도 관리자가 Google·iCloud 캘린더를 매핑했을 수 있으므로 항상 부른다(설정이 없으면 바로 끝난다).
+  // 동기화가 포털 레슨·일정을 바꿨으면 서버 목록을 다시 받는다.
+  const router = useRouter();
+  const routerRef = useRef(router);
   useEffect(() => {
-    if (!externalCalendarConnection.connected) {
-      setExternalItems([]);
-      return;
-    }
+    routerRef.current = router;
+  }, [router]);
+  // 창으로 돌아오면(focus·visible) 외부 변경을 다시 받는다. 서버 throttle(60초)에 맞춰 client도 60초에 한 번만 부른다.
+  useEffect(() => {
     let cancelled = false;
-    void getExternalUnifiedItems().then((loadedItems) => {
-      if (!cancelled) {
-        setExternalItems(loadedItems);
-      }
-    }).catch(() => undefined);
+    let inFlight = false;
+    let lastStartedAt = 0;
+    const run = () => {
+      if (inFlight) return;
+      inFlight = true;
+      lastStartedAt = Date.now();
+      void syncAndGetExternalItems({}).then((result) => {
+        if (cancelled) return;
+        setExternalItems(result.items);
+        if (result.localChanged) routerRef.current.refresh();
+      }).catch(() => undefined).finally(() => {
+        inFlight = false;
+      });
+    };
+    const onReturn = () => {
+      if (document.visibilityState !== "visible") return;
+      if (Date.now() - lastStartedAt < EXTERNAL_RESYNC_MIN_INTERVAL_MS) return;
+      run();
+    };
+    run();
+    window.addEventListener("focus", onReturn);
+    document.addEventListener("visibilitychange", onReturn);
     return () => {
       cancelled = true;
+      window.removeEventListener("focus", onReturn);
+      document.removeEventListener("visibilitychange", onReturn);
     };
   }, [externalCalendarConnection.connected, externalCalendarConnection.provider]);
 
   return (
     <PortalShell
-      items={TABS}
+      items={SECTIONS}
       initialItem={initialLocation?.section ?? "today"}
       storageKey={SECTION_STORAGE_KEY}
       storageAliases={SECTION_ALIASES}
       urlParamKey="section"
       ariaLabel="학생 포털"
-      endSlot={
-        <p className="hidden text-xs text-muted-foreground sm:block">
-          <span className="font-medium text-foreground">{displayName || "학생"}</span>님
-        </p>
-      }
     >
-      {(activeSection, changeSection) => (
+      {(activeSection) => (
         <>
           {activeSection === "today" && (
             <TodaySection
@@ -177,7 +193,6 @@ export function StudentPortalClient({
               unifiedItems={items}
               displayName={displayName}
               referenceTime={referenceTime}
-              onOpenWorkspace={() => changeSection("workspace")}
             />
           )}
 
@@ -190,6 +205,7 @@ export function StudentPortalClient({
               unifiedItems={items}
               curriculumModules={curriculumModules}
               assignments={assignments}
+              assignmentTasks={assignmentTasks}
               studentId={studentId}
               actorId={studentId}
               spaceLabel={spaceLabel}
@@ -200,15 +216,6 @@ export function StudentPortalClient({
               onRemoveItem={removeItem}
             />
           </div>
-
-          {activeSection === "community" && (
-            <div className="mx-auto max-w-4xl p-4 sm:p-6">
-              <CommunitySection
-                initialPosts={communityPosts}
-                returnTo="/dashboard/student?section=community"
-              />
-            </div>
-          )}
         </>
       )}
     </PortalShell>

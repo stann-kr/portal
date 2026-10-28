@@ -4,7 +4,7 @@ import type { DocumentOperationType, QnaStatus } from "@/db/schema";
 import { deriveCreationResourceId } from "@/lib/creation-operation";
 
 export const QNA_BASE_REVISION_FIELD = "baseRevision";
-export const QNA_REQUEST_HASH_VERSION = 2;
+export const QNA_REQUEST_HASH_VERSION = 3;
 export const QNA_EVENT_HASH_VERSION = 1;
 export const QNA_TRASH_RETENTION_SECONDS = 30 * 24 * 60 * 60;
 export const QNA_MAX_CONTENT_BYTES = 800 * 1024;
@@ -38,6 +38,12 @@ export type QnaCanonicalRequest = {
   contentHtml?: string | null;
   attachmentUrl?: string | null;
   attachmentObjectId?: string | null;
+  /** 가이드 구간 질문 위치(생성 요청만). v3부터 요청 hash에 포함한다. */
+  guideAnchor?: {
+    guidePageId: string;
+    blockId: string | null;
+    quote: string;
+  } | null;
 };
 
 function sha256Hex(value: string): string {
@@ -89,12 +95,38 @@ function createQnaRequestHashV2(request: QnaCanonicalRequest): string {
   );
 }
 
+/** v2 필드에 가이드 질문 위치를 더한다. 같은 작업 ID로 다른 위치를 보내면 다른 요청이 된다. */
+function createQnaRequestHashV3(request: QnaCanonicalRequest): string {
+  return sha256Hex(
+    JSON.stringify([
+      "portal-qna-thread-request",
+      3,
+      request.operationType,
+      "QNA_THREAD",
+      request.resourceId,
+      request.subjectId,
+      request.baseRevision,
+      request.title ?? null,
+      request.status ?? null,
+      request.replyId ?? null,
+      request.replyAuthorId ?? null,
+      request.contentHtml ?? null,
+      request.attachmentObjectId ? null : (request.attachmentUrl ?? null),
+      request.attachmentObjectId ?? null,
+      request.guideAnchor
+        ? [request.guideAnchor.guidePageId, request.guideAnchor.blockId, request.guideAnchor.quote]
+        : null,
+    ]),
+  );
+}
+
 export function createQnaRequestHashForVersion(
   request: QnaCanonicalRequest,
   version: number,
 ): string | null {
   if (version === 1) return createQnaRequestHashV1(request);
   if (version === 2) return createQnaRequestHashV2(request);
+  if (version === 3) return createQnaRequestHashV3(request);
   return null;
 }
 

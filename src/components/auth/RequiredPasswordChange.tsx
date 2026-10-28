@@ -9,10 +9,12 @@ import { PasswordChangeForm } from "@/components/auth/PasswordChangeControl";
  */
 export function RequiredPasswordChange({ ownerId }: { ownerId: string }) {
   return (
-    <div className="space-y-5">
-      {/* 전체 이동으로 middleware와 layout이 새 session cookie를 처음부터 읽게 한다. */}
-      <PasswordChangeForm variant="required" onDone={() => window.location.assign("/dashboard")} />
-      <LogoutTextButton ownerId={ownerId} label="다른 계정으로 로그인" />
+    <div className="flex flex-col gap-7">
+      {/* 전체 이동으로 proxy와 layout이 새 session cookie를 처음부터 읽게 한다. */}
+      <PasswordChangeForm variant="required" onDone={() => window.location.assign(new URL("/dashboard", window.location.origin))} />
+      <div className="md:pt-4">
+        <LogoutTextButton ownerId={ownerId} label="다른 계정으로 로그인" />
+      </div>
     </div>
   );
 }

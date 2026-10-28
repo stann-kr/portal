@@ -1,6 +1,7 @@
 import { desc, eq, gte, sql } from "drizzle-orm";
 import type { DrizzleDb } from "@/db/client";
 import { assignments, curriculums, feedbacks, lessons, profiles } from "@/db/schema";
+import { formatModuleProgressLabel } from "./student-progress";
 
 export type StudentRosterStat = {
   id: string;
@@ -28,7 +29,7 @@ function currentModuleFromAggregate(row: CurriculumAggregate | undefined): strin
   const weekNum = Number.parseInt(row.nextIncompleteDescriptor.slice(0, separatorIndex), 10);
   const title = row.nextIncompleteDescriptor.slice(separatorIndex + 1);
   return Number.isSafeInteger(weekNum) && title
-    ? `${weekNum}주차: ${title}`
+    ? formatModuleProgressLabel(weekNum, title)
     : "진도 미지정";
 }
 

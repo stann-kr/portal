@@ -5,16 +5,24 @@ import { createCategory, type CategoryState } from "@/lib/actions/categories";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
-const EMPTY_FIELDS = { name: "", slug: "", description: "", sortOrder: "0" };
+type CategoryFields = { name: string; slug: string; description: string; sortOrder: string };
 
-export function CategoryForm() {
+const LABEL_CLASS = "flex flex-col gap-1.5 text-ui text-secondary-foreground md:text-xs";
+
+/** 새 채널 추가(캔버스 AdminCategories 왼쪽 열). */
+export function CategoryForm({ defaultSortOrder = 0 }: { defaultSortOrder?: number }) {
+  const emptyFields = (): CategoryFields => ({ name: "", slug: "", description: "", sortOrder: String(defaultSortOrder) });
   // 서버 검증이 실패해도 입력이 사라지지 않도록 controlled field를 사용한다.
-  const [fields, setFields] = useState(EMPTY_FIELDS);
+  const [fields, setFields] = useState<CategoryFields>(emptyFields);
   const [state, formAction, pending] = useActionState<CategoryState, FormData>(
     async (previous, data) => {
       try {
         const result = await createCategory(previous, data);
-        if (result.success) setFields(EMPTY_FIELDS);
+        if (result.success) {
+          // 방금 추가한 채널 뒤의 순서를 다음 기본값으로 둔다.
+          const added = Number(data.get("sortOrder"));
+          setFields({ name: "", slug: "", description: "", sortOrder: String(Number.isSafeInteger(added) ? Math.max(added + 1, defaultSortOrder) : defaultSortOrder) });
+        }
         return result;
       } catch {
         return { error: "채널을 추가하지 못했습니다. 다시 시도해 주세요." };
@@ -22,14 +30,14 @@ export function CategoryForm() {
     },
     {},
   );
-  const update = (key: keyof typeof EMPTY_FIELDS) =>
+  const update = (key: keyof CategoryFields) =>
     (event: React.ChangeEvent<HTMLInputElement>) =>
       setFields((current) => ({ ...current, [key]: event.target.value }));
 
   return (
-    <form action={formAction} className="space-y-4" aria-busy={pending}>
-      <div className="space-y-2">
-        <label htmlFor="name" className="text-sm font-medium">채널 이름</label>
+    <form action={formAction} className="flex flex-col gap-4" aria-busy={pending}>
+      <label htmlFor="name" className={LABEL_CLASS}>
+        채널 이름
         <Input
           id="name"
           name="name"
@@ -41,10 +49,10 @@ export function CategoryForm() {
           onChange={update("name")}
           disabled={pending}
         />
-      </div>
+      </label>
 
-      <div className="space-y-2">
-        <label htmlFor="slug" className="text-sm font-medium">주소 식별자</label>
+      <div className={LABEL_CLASS}>
+        <label htmlFor="slug">주소 식별자</label>
         <Input
           id="slug"
           name="slug"
@@ -56,26 +64,26 @@ export function CategoryForm() {
           value={fields.slug}
           onChange={update("slug")}
           disabled={pending}
+          className="font-mono md:text-ui"
         />
-        <p id="slug-help" className="text-xs text-muted-foreground">영문 소문자, 숫자와 하이픈만 사용할 수 있습니다.</p>
+        <span id="slug-help" className="text-xs text-muted-foreground">영문 소문자, 숫자와 하이픈만 사용할 수 있습니다.</span>
       </div>
 
-      <div className="space-y-2">
-        <label htmlFor="description" className="text-sm font-medium">설명 (선택)</label>
+      <label htmlFor="description" className={LABEL_CLASS}>
+        설명 (선택)
         <Input
           id="description"
           name="description"
           type="text"
           maxLength={200}
-          placeholder="장비 및 셋업에 관한 이야기"
           value={fields.description}
           onChange={update("description")}
           disabled={pending}
         />
-      </div>
+      </label>
 
-      <div className="space-y-2">
-        <label htmlFor="sortOrder" className="text-sm font-medium">정렬 순서(숫자)</label>
+      <label htmlFor="sortOrder" className={LABEL_CLASS}>
+        정렬 순서(숫자)
         <Input
           id="sortOrder"
           name="sortOrder"
@@ -83,17 +91,18 @@ export function CategoryForm() {
           value={fields.sortOrder}
           onChange={update("sortOrder")}
           disabled={pending}
+          className="w-30 font-mono md:text-ui"
         />
-      </div>
+      </label>
 
       {state.error && (
-        <p role="alert" className="text-sm text-destructive">{state.error}</p>
+        <p role="alert" className="text-ui text-destructive">{state.error}</p>
       )}
       {state.success && (
-        <p role="status" className="text-sm text-success">채널을 추가했습니다.</p>
+        <p role="status" className="text-ui text-success">채널을 추가했습니다.</p>
       )}
 
-      <Button type="submit" disabled={pending} className="w-full">
+      <Button type="submit" disabled={pending} size="touch" className="w-full md:h-8 md:w-auto md:self-start md:rounded-md md:px-3.5 md:text-ui">
         {pending ? "추가 중..." : "채널 추가"}
       </Button>
     </form>

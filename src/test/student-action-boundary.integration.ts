@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
 import { after, before, mock, test, type TestContext } from "node:test";
-import { count, eq } from "drizzle-orm";
+import { count, eq, inArray } from "drizzle-orm";
+import { drizzle, type AnyD1Database } from "drizzle-orm/d1";
+import * as portalSchema from "@/db/schema";
 import * as bcrypt from "bcryptjs";
 import { credentialFingerprint } from "@/lib/credential-fingerprint";
 import type { AuthSession } from "@/lib/auth-guard";
 import {
+  assignmentRecurrences,
+  assignmentTasks,
   assignments,
   calendarEvents,
   categories,
@@ -21,6 +25,7 @@ import {
   createIsolatedPortalD1,
   type IsolatedPortalD1,
 } from "@/test/isolated-d1";
+import { dayKeyFromNumber, dayNumberFromKey, kstTodayKey } from "@/lib/assignment-recurrence";
 
 type PortalTestDb = IsolatedPortalD1["db"];
 
@@ -33,6 +38,7 @@ let lessonActions: typeof import("@/lib/actions/lessons");
 let commentActions: typeof import("@/lib/actions/comments");
 let feedbackActions: typeof import("@/lib/actions/feedbacks");
 let assignmentActions: typeof import("@/lib/actions/assignments");
+let assignmentTaskActions: typeof import("@/lib/actions/assignmentTasks");
 let studentActions: typeof import("@/lib/actions/students");
 let activeProfileModule: typeof import("@/lib/active-profile");
 let postActions: typeof import("@/lib/actions/posts");
@@ -79,7 +85,7 @@ mock.module("next/cache", {
 });
 
 before(async () => {
-  [calendarActions, curriculumActions, diggingActions, lessonActions, commentActions, feedbackActions, assignmentActions, studentActions, activeProfileModule, postActions, categoryActions, passwordActions] =
+  [calendarActions, curriculumActions, diggingActions, lessonActions, commentActions, feedbackActions, assignmentActions, studentActions, activeProfileModule, postActions, categoryActions, passwordActions, assignmentTaskActions] =
     await Promise.all([
       import("@/lib/actions/calendarEvents"),
       import("@/lib/actions/curriculum"),
@@ -93,6 +99,7 @@ before(async () => {
       import("@/lib/actions/posts"),
       import("@/lib/actions/categories"),
       import("@/lib/actions/password"),
+      import("@/lib/actions/assignmentTasks"),
     ]);
 });
 
@@ -298,7 +305,7 @@ test("레슨 예약·시간 변경은 관리자와 대상 학생 레슨으로 �
   await assert.rejects(lessonActions.rescheduleLesson(lessonId, "student-1", {}, form("2026-10-13T20:00")), /Admin only/u);
 });
 
-test("대시보드 게시물 요약은 본문 없이 범위·정렬·개수를 제한한다", { concurrency: false }, async (context) => {
+test("홈 공지 요약은 본문 없이 범위·정렬·개수를 제한한다", { concurrency: false }, async (context) => {
   const db = await setupDatabase(context, createSession("student-1", "student"));
   await seedProfile(db, "student-1");
   const base = { authorId: "student-1", category: "general", contentHtml: "<p>긴 본문</p>" };
@@ -310,10 +317,8 @@ test("대시보드 게시물 요약은 본문 없이 범위·정렬·개수를 �
     { ...base, id: "notice-new", boardType: "ANNOUNCEMENT", title: "새 공지", createdAt: new Date("2026-08-06T00:00:00.000Z") },
   ]);
 
-  const community = await postActions.getRecentCommunityPostSummaries(20);
-  assert.deepEqual(community.map((post) => post.id), ["feedback-new", "general-old"]);
-  assert.equal("contentHtml" in community[0]!, false, "대시보드 목록은 게시물 본문을 싣지 않는다");
-  assert.deepEqual((await postActions.getRecentCommunityPostSummaries(1)).map((post) => post.id), ["feedback-new"]);
+  const announcements = await postActions.getAnnouncementSummaries(2);
+  assert.equal("contentHtml" in announcements[0]!, false, "홈 공지 요약은 게시물 본문을 싣지 않는다");
   assert.deepEqual((await postActions.getAnnouncementSummaries(2)).map((post) => post.id), ["notice-pinned", "notice-new"]);
   assert.equal((await postActions.getAnnouncementSummaries(Number.NaN)).length, 1, "잘못된 limit은 최소 1개로 닫힌다");
 });
@@ -426,16 +431,17 @@ test("피드백은 잘못된 재생 시점을 저장하지 않고 긴 믹스셋�
     data.set("content", "전환 지점에서 저음을 교환해 주세요.");
     return data;
   };
-  for (const value of ["", "abc", "-1", "01:99", "01:30:00", "1.5", "9007199254740992"]) {
+  for (const value of ["abc", "-1", "01:99", "01:30:00", "1.5", "9007199254740992"]) {
     const result = await feedbackActions.createFeedback("assignment-1", {}, form(value));
     assert.ok(result.error, value);
   }
   assert.equal((await db.select().from(feedbacks)).length, 0);
   assert.ok((await feedbackActions.createFeedback("missing", {}, form("01:30"))).error);
-  for (const value of ["100:30", "90", "00:00"]) {
+  for (const value of ["100:30", "90", "00:00", " "]) {
     assert.equal((await feedbackActions.createFeedback("assignment-1", {}, form(value))).success, true);
   }
-  assert.deepEqual((await feedbackActions.getFeedbacksByAssignment("assignment-1")).map((item) => item.timeMarker), [0, 90, 6030]);
+  // 시점을 비우면 전체 피드백(null)이고 시점 피드백보다 앞에 놓인다.
+  assert.deepEqual((await feedbackActions.getFeedbacksByAssignment("assignment-1")).map((item) => item.timeMarker), [null, 0, 90, 6030]);
 });
 
 test("댓글·피드백은 응답 유실 후 같은 제출을 한 번만 저장하고 다른 원문 재사용을 거부한다", { concurrency: false }, async (context) => {
@@ -739,6 +745,59 @@ test("일정 update는 rogue field, type, 시간 역전과 다른 owner 행을 �
   );
 });
 
+test("캘린더 끌어 옮기기는 학생 본인과 관리자만 그 학생의 일정·레슨을 바꾸고 실패를 상태로 돌려준다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("student-1", "student"));
+  await seedProfile(db, "student-1");
+  await seedProfile(db, "student-2");
+  await seedProfile(db, "admin-1", "admin");
+  const original = {
+    id: "event-1",
+    userId: "student-1",
+    eventType: "PRACTICE" as const,
+    title: "연습",
+    startTime: new Date("2026-10-27T01:00:00.000Z"),
+    endTime: new Date("2026-10-27T02:00:00.000Z"),
+  };
+  await db.insert(calendarEvents).values([original, { ...original, id: "event-2", userId: "student-2" }]);
+  await db.insert(lessons).values([
+    { id: "lesson-1", studentId: "student-1", scheduledAt: new Date("2026-10-28T10:00:00.000Z") },
+    { id: "lesson-2", studentId: "student-2", scheduledAt: new Date("2026-10-28T11:00:00.000Z") },
+  ]);
+  const eventRows = async () => (await db.select().from(calendarEvents).orderBy(calendarEvents.id))
+    .map((row) => [row.id, row.startTime.toISOString(), row.endTime?.toISOString() ?? null]);
+  const lessonRows = async () => (await db.select().from(lessons).orderBy(lessons.id))
+    .map((row) => [row.id, row.scheduledAt.toISOString()]);
+
+  // 학생: 본인 일정·레슨만.
+  const moved = await calendarActions.moveCalendarEvent("event-1", "2026-10-29T03:00:00.000Z", "2026-10-29T04:30:00.000Z");
+  assert.equal(moved.ok, true);
+  assert.equal(moved.ok && moved.event.title, "연습");
+  assert.equal((await calendarActions.moveCalendarEvent("event-2", "2026-10-29T03:00:00.000Z", null)).ok, false);
+  assert.equal((await calendarActions.moveCalendarEvent("event-2", "2026-10-29T03:00:00.000Z", null, "student-2")).ok, false, "학생은 다른 학생 ID를 보내도 옮기지 못한다");
+  const reversed = await calendarActions.moveCalendarEvent("event-1", "2026-10-29T05:00:00.000Z", "2026-10-29T04:00:00.000Z");
+  assert.match(!reversed.ok ? reversed.error : "", /종료 시간/u);
+  assert.equal((await lessonActions.moveLesson("lesson-1", "student-1", "2026-10-30T10:00:00.000Z")).lesson?.scheduledAt, "2026-10-30T10:00:00.000Z");
+  assert.match((await lessonActions.moveLesson("lesson-2", "student-2", "2026-10-30T10:00:00.000Z")).error ?? "", /권한/u);
+  assert.match((await lessonActions.moveLesson("lesson-2", "student-1", "2026-10-30T10:00:00.000Z")).error ?? "", /찾을 수 없습니다/u, "자기 학생 ID에 다른 학생 레슨을 섞어도 바뀌지 않는다");
+
+  // 관리자: 대상 학생의 일정·레슨.
+  activeSession = createSession("admin-1", "admin");
+  const adminMoved = await calendarActions.moveCalendarEvent("event-2", "2026-10-31T03:00:00.000Z", null, "student-2");
+  assert.equal(adminMoved.ok, true, "관리자는 학생 일정을 옮긴다");
+  assert.equal((await calendarActions.moveCalendarEvent("event-2", "2026-10-31T05:00:00.000Z", null, "student-1")).ok, false, "학생 ID가 일정 주인과 다르면 바뀌지 않는다");
+  assert.equal((await calendarActions.moveCalendarEvent("event-2", "2026-10-31T05:00:00.000Z", null)).ok, false, "학생 ID가 없으면 관리자 본인 일정으로만 본다");
+  assert.equal((await lessonActions.moveLesson("lesson-2", "student-2", "2026-11-01T10:00:00.000Z")).lesson?.scheduledAt, "2026-11-01T10:00:00.000Z");
+
+  assert.deepEqual(await eventRows(), [
+    ["event-1", "2026-10-29T03:00:00.000Z", "2026-10-29T04:30:00.000Z"],
+    ["event-2", "2026-10-31T03:00:00.000Z", null],
+  ]);
+  assert.deepEqual(await lessonRows(), [
+    ["lesson-1", "2026-10-30T10:00:00.000Z"],
+    ["lesson-2", "2026-11-01T10:00:00.000Z"],
+  ]);
+});
+
 test("일정 상세 수정 form은 본인 일정만 바꾸고 검증 실패를 상태로 돌려준다", { concurrency: false }, async (context) => {
   const db = await setupDatabase(context, createSession("student-1", "student"));
   await seedProfile(db, "student-1");
@@ -841,4 +900,367 @@ test("digging write는 student session과 소유 column/type을 요구하고 거
     (await db.select({ value: count() }).from(diggingTracks))[0]?.value,
     1,
   );
+});
+
+
+function taskForm(fields: Record<string, string | string[]>): FormData {
+  const data = new FormData();
+  for (const [key, value] of Object.entries(fields)) {
+    for (const item of Array.isArray(value) ? value : [value]) data.append(key, item);
+  }
+  return data;
+}
+
+function shiftDayKey(key: string, days: number): string {
+  return dayKeyFromNumber(dayNumberFromKey(key)! + days);
+}
+
+test("관리자 과제는 대상 학생에게만 쓰이고 학생은 자기 과제에만 형식대로 제출·수정한다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("admin-1", "admin"));
+  await seedProfile(db, "admin-1", "admin");
+  await seedProfile(db, "student-1");
+  await seedProfile(db, "student-2");
+  const link = "https://youtu.be/aqz-KE-bpKQ";
+
+  await assert.rejects(
+    assignmentTaskActions.createAssignmentTask("admin-1", {}, taskForm({ title: "x", submissionFormat: "MIX", operationId: crypto.randomUUID() })),
+    /Student not found/u,
+  );
+  const operationId = crypto.randomUUID();
+  const mixForm = () => taskForm({ title: "이번 주 믹스셋", description: "30분 <세트>", submissionFormat: "MIX", dueDate: "2026-11-02", dueTime: "21:00", operationId });
+  const created = await assignmentTaskActions.createAssignmentTask("student-1", {}, mixForm());
+  assert.equal(created.success, true);
+  assert.equal((await assignmentTaskActions.createAssignmentTask("student-1", {}, mixForm())).id, created.id, "재전송은 같은 과제");
+  const [stored] = await db.select().from(assignmentTasks);
+  assert.equal(stored?.studentId, "student-1");
+  assert.equal(stored?.descriptionHtml, "<p>30분 &lt;세트&gt;</p>");
+  assert.equal(stored?.dueAt?.toISOString(), "2026-11-02T12:00:00.000Z");
+  const taskId = created.id!;
+
+  // 다른 학생 id로 고치거나 지우면 아무것도 바뀌지 않는다.
+  const wrongUpdate = await assignmentTaskActions.updateAssignmentTask("student-2", taskId, {}, taskForm({ title: "바뀐 제목", submissionFormat: "MIX", version: "1" }));
+  assert.ok(wrongUpdate.error);
+  assert.equal((await assignmentTaskActions.deleteAssignmentTask("student-2", taskId)).success, false);
+  assert.equal((await db.select().from(assignmentTasks).where(eq(assignmentTasks.id, taskId)))[0]?.title, "이번 주 믹스셋");
+
+  activeSession = createSession("student-2", "student");
+  assert.deepEqual(await assignmentTaskActions.getMyAssignmentTasks(), []);
+  assert.ok((await assignmentTaskActions.submitAssignmentTask(taskId, {}, taskForm({ mediaUrl: link }))).error);
+  assert.equal((await db.select().from(assignments)).length, 0);
+
+  activeSession = createSession("student-1", "student");
+  assert.equal((await assignmentTaskActions.getMyAssignmentTasks()).length, 1);
+  assert.ok((await assignmentTaskActions.submitAssignmentTask(taskId, {}, taskForm({ text: "링크 없이 글만" }))).error, "MIX는 링크가 필요하다");
+  const submitted = await assignmentTaskActions.submitAssignmentTask(taskId, {}, taskForm({ mediaUrl: link, text: "무시" }));
+  assert.equal(submitted.success, true);
+  assert.equal((await assignmentTaskActions.submitAssignmentTask(taskId, {}, taskForm({ mediaUrl: link }))).id, submitted.id, "같은 내용 재전송");
+  assert.match((await assignmentTaskActions.submitAssignmentTask(taskId, {}, taskForm({ mediaUrl: "https://soundcloud.com/dj/other" }))).error ?? "", /이미 제출/u);
+  const [submission] = await db.select().from(assignments);
+  assert.equal(submission?.taskId, taskId);
+  assert.equal(submission?.textHtml, null);
+  // 늦게 냈으므로(마감 2026-11-02 이후) 상세에 늦은 제출이 보인다. 상태는 피드백 대기.
+  const [mine] = await assignmentTaskActions.getMyAssignmentTasks();
+  assert.equal(mine?.submission?.id, submitted.id);
+
+  activeSession = createSession("student-2", "student");
+  assert.ok((await assignmentTaskActions.updateMyTaskSubmission(submitted.id!, {}, taskForm({ mediaUrl: "https://soundcloud.com/dj/x" }))).error);
+  activeSession = createSession("student-1", "student");
+  assert.equal((await assignmentTaskActions.updateMyTaskSubmission(submitted.id!, {}, taskForm({ mediaUrl: "https://soundcloud.com/dj/fixed" }))).success, true);
+  assert.equal((await db.select().from(assignments))[0]?.mediaUrl, "https://soundcloud.com/dj/fixed");
+
+  // 제출이 있으면 형식은 바꿀 수 없고 제목·마감은 고칠 수 있다.
+  activeSession = createSession("admin-1", "admin");
+  assert.match((await assignmentTaskActions.updateAssignmentTask("student-1", taskId, {}, taskForm({ title: "고친 제목", submissionFormat: "TEXT", version: "1" }))).error ?? "", /형식/u);
+  assert.equal((await assignmentTaskActions.updateAssignmentTask("student-1", taskId, {}, taskForm({ title: "고친 제목", submissionFormat: "MIX", version: "1" }))).success, true);
+  assert.match((await assignmentTaskActions.updateAssignmentTask("student-1", taskId, {}, taskForm({ title: "옛 버전", submissionFormat: "MIX", version: "1" }))).error ?? "", /먼저 고쳤/u);
+
+  // 피드백이 달리면 학생은 제출을 고칠 수 없다.
+  assert.equal((await feedbackActions.createFeedback(submitted.id!, {}, taskForm({ operationId: crypto.randomUUID(), timeMarker: "00:30", content: "좋아요" }))).success, true);
+  activeSession = createSession("student-1", "student");
+  assert.match((await assignmentTaskActions.updateMyTaskSubmission(submitted.id!, {}, taskForm({ mediaUrl: link }))).error ?? "", /피드백이 등록된/u);
+  assert.equal((await db.select().from(assignments))[0]?.mediaUrl, "https://soundcloud.com/dj/fixed");
+
+  // 글 과제: 글만 받고, 시점 없는 전체 피드백을 남긴다.
+  activeSession = createSession("admin-1", "admin");
+  const textTask = await assignmentTaskActions.createAssignmentTask("student-1", {}, taskForm({ title: "연습 일지", submissionFormat: "TEXT", operationId: crypto.randomUUID() }));
+  activeSession = createSession("student-1", "student");
+  assert.ok((await assignmentTaskActions.submitAssignmentTask(textTask.id!, {}, taskForm({ mediaUrl: link, text: " " }))).error);
+  const textSubmission = await assignmentTaskActions.submitAssignmentTask(textTask.id!, {}, taskForm({ mediaUrl: link, text: "BPM 맞추기\n\n다음 주 질문" }));
+  assert.equal(textSubmission.success, true);
+  const [textRow] = await db.select().from(assignments).where(eq(assignments.id, textSubmission.id!));
+  assert.equal(textRow?.mediaUrl, null);
+  assert.equal(textRow?.textHtml, "<p>BPM 맞추기</p><p>다음 주 질문</p>");
+  activeSession = createSession("admin-1", "admin");
+  assert.ok((await feedbackActions.createFeedback(textSubmission.id!, {}, taskForm({ operationId: crypto.randomUUID(), timeMarker: "01:30", content: "시점" }))).error, "글 제출에는 시점 피드백을 받지 않는다");
+  assert.equal((await feedbackActions.createFeedback(textSubmission.id!, {}, taskForm({ operationId: crypto.randomUUID(), timeMarker: "", content: "잘 정리했어요" }))).success, true);
+  const [textFeedback] = await db.select().from(feedbacks).where(eq(feedbacks.assignmentId, textSubmission.id!));
+  assert.equal(textFeedback?.timeMarker, null);
+  const pending = await assignmentActions.getPendingFeedbackAssignments();
+  assert.deepEqual(pending.map((row) => row.id), [], "피드백이 달린 제출은 업무함에서 빠진다");
+
+  // 과제를 지워도 제출과 피드백은 자유 제출로 남는다.
+  assert.equal((await assignmentTaskActions.deleteAssignmentTask("student-1", taskId)).success, true);
+  const [orphan] = await db.select().from(assignments).where(eq(assignments.id, submitted.id!));
+  assert.equal(orphan?.taskId, null);
+  assert.equal((await db.select().from(feedbacks).where(eq(feedbacks.assignmentId, submitted.id!))).length, 1);
+});
+
+test("정기 과제 회차는 동시 조회에도 한 번만 생기고 수정·멈춤·삭제는 제출된 회차와 지난 회차를 보존한다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("student-1", "student"));
+  await seedProfile(db, "admin-1", "admin");
+  await seedProfile(db, "student-1");
+  await seedProfile(db, "student-2");
+  const today = kstTodayKey(new Date());
+  const tenDaysAgo = new Date(Date.now() - 10 * 86_400_000);
+  await db.insert(assignmentRecurrences).values({
+    id: "rule-1",
+    studentId: "student-1",
+    title: "매일 연습 기록",
+    submissionFormat: "TEXT",
+    startDate: shiftDayKey(today, -7),
+    intervalWeeks: 1,
+    weekdays: 127,
+    dueTime: "21:00",
+    createdById: "admin-1",
+    createdAt: tenDaysAgo,
+    updatedAt: tenDaysAgo,
+  });
+  const ruleTasks = () => db.select().from(assignmentTasks).where(eq(assignmentTasks.recurrenceId, "rule-1"));
+  const expectedDates = Array.from({ length: 9 }, (_, index) => shiftDayKey(today, index - 7));
+
+  await Promise.all([assignmentTaskActions.getMyAssignmentTasks(), assignmentTaskActions.getMyAssignmentTasks()]);
+  await assignmentTaskActions.getMyAssignmentTasks();
+  activeSession = createSession("admin-1", "admin");
+  await assignmentTaskActions.getAssignmentTasksForStudent("student-1");
+  const generated = await ruleTasks();
+  assert.deepEqual(generated.map((task) => task.occurrenceDate).sort(), expectedDates, "오늘까지 + 다음 회차 하나, 날짜마다 한 행");
+  assert.equal((await db.select({ value: count() }).from(assignmentTasks))[0]?.value, 9);
+  assert.equal(generated.find((task) => task.occurrenceDate === today)?.dueAt?.getTime(), Date.parse(`${today}T12:00:00.000Z`));
+
+  activeSession = createSession("student-2", "student");
+  assert.deepEqual(await assignmentTaskActions.getMyAssignmentTasks(), [], "다른 학생은 회차를 보지 않는다");
+
+  // 지난 회차 하나와 다음 회차(내일)에 제출한다.
+  activeSession = createSession("student-1", "student");
+  const byDate = (date: string) => generated.find((task) => task.occurrenceDate === date)!.id;
+  const tomorrow = shiftDayKey(today, 1);
+  assert.equal((await assignmentTaskActions.submitAssignmentTask(byDate(shiftDayKey(today, -3)), {}, taskForm({ text: "지난 회차" }))).success, true);
+  assert.equal((await assignmentTaskActions.submitAssignmentTask(byDate(tomorrow), {}, taskForm({ text: "미리 낸 회차" }))).success, true);
+
+  const ruleForm = (version: string, overrides: Record<string, string | string[]> = {}) => taskForm({
+    title: "바뀐 연습 기록",
+    submissionFormat: "TEXT",
+    startDate: shiftDayKey(today, -7),
+    intervalWeeks: "1",
+    weekdays: ["0", "1", "2", "3", "4", "5", "6"],
+    dueTime: "21:00",
+    version,
+    ...overrides,
+  });
+
+  activeSession = createSession("admin-1", "admin");
+  // 다른 학생 범위로는 규칙을 바꾸거나 멈추거나 지우지 못한다.
+  assert.ok((await assignmentTaskActions.updateAssignmentRecurrence("student-2", "rule-1", {}, ruleForm("1"))).error);
+  assert.equal((await assignmentTaskActions.setAssignmentRecurrencePaused("student-2", "rule-1", true, 1)).success, false);
+  assert.equal((await assignmentTaskActions.deleteAssignmentRecurrence("student-2", "rule-1")).success, false);
+  assert.equal((await db.select().from(assignmentRecurrences))[0]?.version, 1);
+
+  const now = Date.now();
+  const isOpenUnsubmitted = async (task: typeof generated[number]) =>
+    (task.dueAt?.getTime() ?? 0) > now
+    && (await db.select().from(assignments).where(eq(assignments.taskId, task.id))).length === 0;
+
+  assert.equal((await assignmentTaskActions.updateAssignmentRecurrence("student-1", "rule-1", {}, ruleForm("1"))).success, true);
+  assert.match((await assignmentTaskActions.updateAssignmentRecurrence("student-1", "rule-1", {}, ruleForm("1"))).error ?? "", /먼저 바꿨/u);
+  const afterEdit = await ruleTasks();
+  for (const task of afterEdit) {
+    const expected = (await isOpenUnsubmitted(task)) ? "바뀐 연습 기록" : "매일 연습 기록";
+    assert.equal(task.title, expected, `${task.occurrenceDate} 제목`);
+  }
+  assert.equal(afterEdit.length, 9, "지난 회차는 남고 마감 전 미제출 회차만 다시 만든다");
+
+  // 멈추면 마감 전·미제출 회차만 지우고 다시 만들지 않는다.
+  assert.equal((await assignmentTaskActions.setAssignmentRecurrencePaused("student-1", "rule-1", true, 2)).success, true);
+  await assignmentTaskActions.getAssignmentTasksForStudent("student-1");
+  const paused = await ruleTasks();
+  assert.equal(paused.some((task) => task.occurrenceDate === tomorrow), true, "제출된 다음 회차는 남는다");
+  for (const task of paused) assert.equal(await isOpenUnsubmitted(task), false);
+  assert.equal(paused.filter((task) => task.occurrenceDate! < today).length, 7, "지난 회차는 그대로");
+
+  // 다시 시작하면 지금부터의 회차를 만든다(멈춘 동안 지난 날짜는 만들지 않는다).
+  assert.equal((await assignmentTaskActions.setAssignmentRecurrencePaused("student-1", "rule-1", false, 3)).success, true);
+  const resumed = await ruleTasks();
+  assert.ok(resumed.some((task) => task.occurrenceDate === shiftDayKey(today, 2)) || resumed.some((task) => task.occurrenceDate === tomorrow));
+
+  // 삭제: 마감 전·미제출 회차는 지우고 나머지는 일반 과제로 남긴다.
+  assert.equal((await assignmentTaskActions.deleteAssignmentRecurrence("student-1", "rule-1")).success, true);
+  assert.equal((await db.select().from(assignmentRecurrences)).length, 0);
+  const remaining = await db.select().from(assignmentTasks);
+  assert.ok(remaining.every((task) => task.recurrenceId === null));
+  assert.equal(remaining.some((task) => task.occurrenceDate === tomorrow), true);
+  assert.equal(remaining.some((task) => task.occurrenceDate === shiftDayKey(today, -3)), true);
+  for (const task of remaining) assert.equal(await isOpenUnsubmitted(task), false);
+  assert.equal((await db.select().from(assignments)).length, 2);
+});
+
+
+/**
+ * 학생 요청이 과제를 읽은 뒤 쓰기 직전에 관리자 변경이 끼어드는 상황을 재현한다.
+ * assignments INSERT·UPDATE statement가 실행되기 직전에 한 번 `beforeWrite`를 실행한다.
+ */
+async function setupRacingDatabase(context: TestContext, session: AuthSession) {
+  const isolated = await createIsolatedPortalD1();
+  let beforeWrite: (() => Promise<void>) | null = null;
+  let maxBind = { count: 0, query: "" };
+  const binding = isolated.binding;
+  type Prepared = ReturnType<typeof binding.prepare>;
+  const originals = new WeakMap<object, Prepared>();
+  const wrap = (prepared: Prepared, query: string): Prepared => {
+    const racingWrite = /^\s*(?:insert into|update) "?assignments"?\s/iu.test(query);
+    const wrapper = new Proxy(prepared, {
+      get(inner, key) {
+        const value = Reflect.get(inner, key);
+        if (key === "bind") {
+          return (...args: unknown[]) => {
+            if (args.length > maxBind.count) maxBind = { count: args.length, query };
+            return wrap(value.apply(inner, args), query);
+          };
+        }
+        if (racingWrite && (key === "all" || key === "run" || key === "raw" || key === "first")) {
+          return async (...args: unknown[]) => {
+            const hook = beforeWrite;
+            beforeWrite = null;
+            if (hook) await hook();
+            return value.apply(inner, args);
+          };
+        }
+        return typeof value === "function" ? value.bind(inner) : value;
+      },
+    });
+    originals.set(wrapper, prepared);
+    return wrapper;
+  };
+  const racing = new Proxy(binding, {
+    get(target, prop) {
+      if (prop === "prepare") return (query: string) => wrap(target.prepare(query), query);
+      if (prop === "batch") {
+        return (statements: Prepared[]) => target.batch(statements.map((statement) => originals.get(statement) ?? statement));
+      }
+      const value = Reflect.get(target, prop);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  }) as AnyD1Database;
+  activeDb = drizzle(racing, { schema: portalSchema }) as unknown as PortalTestDb;
+  activeSession = session;
+  context.after(async () => {
+    activeDb = null;
+    await isolated.dispose();
+  });
+  return {
+    db: isolated.db,
+    setBeforeWrite: (hook: () => Promise<void>) => { beforeWrite = hook; },
+    /** action이 실행한 statement 중 가장 많은 bind 수(D1 제한은 100). */
+    maxBind: () => maxBind,
+  };
+}
+
+test("학생 제출·수정은 읽은 뒤 관리자가 형식을 바꾸면 저장하지 않고 과제가 바뀌었다고 알린다", { concurrency: false }, async (context) => {
+  const { db, setBeforeWrite } = await setupRacingDatabase(context, createSession("student-1", "student"));
+  await seedProfile(db, "admin-1", "admin");
+  await seedProfile(db, "student-1");
+  await db.insert(assignmentTasks).values([
+    { id: "race-task", studentId: "student-1", title: "믹스셋", submissionFormat: "MIX" },
+    { id: "edit-task", studentId: "student-1", title: "믹스셋 2", submissionFormat: "MIX" },
+  ]);
+  const link = "https://youtu.be/aqz-KE-bpKQ";
+  const switchToText = (taskId: string) => async () => {
+    await db.update(assignmentTasks).set({ submissionFormat: "TEXT" }).where(eq(assignmentTasks.id, taskId));
+  };
+
+  setBeforeWrite(switchToText("race-task"));
+  const raced = await assignmentTaskActions.submitAssignmentTask("race-task", {}, taskForm({ mediaUrl: link }));
+  assert.match(raced.error ?? "", /과제가 바뀌었습니다/u);
+  assert.equal((await db.select().from(assignments)).length, 0, "잘못된 형식 제출을 저장하지 않는다");
+  // 바뀐 형식으로는 정상 제출된다.
+  assert.equal((await assignmentTaskActions.submitAssignmentTask("race-task", {}, taskForm({ text: "글로 냅니다" }))).success, true);
+
+  const submitted = await assignmentTaskActions.submitAssignmentTask("edit-task", {}, taskForm({ mediaUrl: link }));
+  assert.equal(submitted.success, true);
+  setBeforeWrite(switchToText("edit-task"));
+  const editRace = await assignmentTaskActions.updateMyTaskSubmission(submitted.id!, {}, taskForm({ mediaUrl: "https://soundcloud.com/dj/fixed" }));
+  assert.match(editRace.error ?? "", /과제가 바뀌었습니다/u);
+  assert.equal((await db.select().from(assignments).where(eq(assignments.id, submitted.id!)))[0]?.mediaUrl, link);
+});
+
+test("같은 operationId 재전송은 정규화한 생성 내용이 모두 같을 때만 성공한다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("admin-1", "admin"));
+  await seedProfile(db, "admin-1", "admin");
+  await seedProfile(db, "student-1");
+  const operationId = crypto.randomUUID();
+  const base = { title: "믹스셋", description: "설명", submissionFormat: "MIX", dueDate: "2026-11-02", dueTime: "21:00", operationId };
+  assert.equal((await assignmentTaskActions.createAssignmentTask("student-1", {}, taskForm(base))).success, true);
+  assert.equal((await assignmentTaskActions.createAssignmentTask("student-1", {}, taskForm({ ...base, title: " 믹스셋 " }))).success, true, "공백만 다른 재전송은 같은 내용");
+  const taskChanges: Record<string, string>[] = [{ description: "다른 설명" }, { submissionFormat: "TEXT" }, { dueTime: "22:00" }, { dueDate: "", dueTime: "" }];
+  for (const change of taskChanges) {
+    assert.ok((await assignmentTaskActions.createAssignmentTask("student-1", {}, taskForm({ ...base, ...change }))).error, JSON.stringify(change));
+  }
+  assert.equal((await db.select().from(assignmentTasks)).length, 1);
+  assert.equal((await db.select().from(assignmentTasks))[0]?.descriptionHtml, "<p>설명</p>");
+
+  const ruleOperation = crypto.randomUUID();
+  const rule = {
+    title: "정기", submissionFormat: "TEXT", startDate: "2026-11-02", intervalWeeks: "1",
+    weekdays: ["1", "3"], dueTime: "21:00", operationId: ruleOperation,
+  };
+  assert.equal((await assignmentTaskActions.createAssignmentRecurrence("student-1", {}, taskForm(rule))).success, true);
+  assert.equal((await assignmentTaskActions.createAssignmentRecurrence("student-1", {}, taskForm(rule))).success, true);
+  const ruleChanges: Record<string, string | string[]>[] = [{ weekdays: ["1"] }, { intervalWeeks: "2" }, { startDate: "2026-11-03" }, { dueTime: "20:00" }, { endDate: "2026-12-31" }, { maxOccurrences: "4" }, { description: "추가" }];
+  for (const change of ruleChanges) {
+    assert.ok((await assignmentTaskActions.createAssignmentRecurrence("student-1", {}, taskForm({ ...rule, ...change }))).error, JSON.stringify(change));
+  }
+  assert.equal((await db.select().from(assignmentRecurrences)).length, 1);
+  assert.equal((await db.select().from(assignmentRecurrences))[0]?.weekdays, 0b1010);
+});
+
+test("과제·제출·규칙이 100개를 넘어도 id 목록을 bind하지 않고 조회·생성한다", { concurrency: false }, async (context) => {
+  const { db, maxBind } = await setupRacingDatabase(context, createSession("student-1", "student"));
+  await seedProfile(db, "admin-1", "admin");
+  await seedProfile(db, "student-1");
+  const ids = Array.from({ length: 150 }, (_, index) => `bulk-${String(index).padStart(3, "0")}`);
+  // 격리 D1이 실제 bind 제한을 재현하는지 먼저 확인한다(재현되지 않으면 아래 검사는 결과 정확성만 본다).
+  const limitReproduced = await db.select({ id: assignmentTasks.id }).from(assignmentTasks).where(inArray(assignmentTasks.id, ids))
+    .then(() => false, (error: unknown) => /too many SQL variables|variable/iu.test(String(error)));
+  context.diagnostic(`isolated D1 bind limit reproduced: ${limitReproduced}`);
+  for (let index = 0; index < ids.length; index += 10) {
+    const chunk = ids.slice(index, index + 10);
+    await db.insert(assignmentTasks).values(chunk.map((id) => ({ id, studentId: "student-1", title: id, submissionFormat: "TEXT" as const })));
+    await db.insert(assignments).values(chunk.map((id) => ({ id: `sub-${id}`, studentId: "student-1", taskId: id, textHtml: "<p>글</p>" })));
+    await db.insert(feedbacks).values(chunk.map((id) => ({ id: `fb-${id}`, assignmentId: `sub-${id}`, content: "좋아요" })));
+  }
+  const today = kstTodayKey(new Date());
+  const old = new Date(Date.now() - 10 * 86_400_000);
+  const ruleIds = Array.from({ length: 105 }, (_, index) => `rule-${index}`);
+  for (let index = 0; index < ruleIds.length; index += 5) {
+    await db.insert(assignmentRecurrences).values(ruleIds.slice(index, index + 5).map((id) => ({
+      id, studentId: "student-1", title: id, submissionFormat: "TEXT" as const, startDate: today,
+      intervalWeeks: 1, weekdays: 127, dueTime: "21:00", createdAt: old, updatedAt: old,
+    })));
+  }
+
+  const tasks = await assignmentTaskActions.getMyAssignmentTasks();
+  const bulk = tasks.filter((task) => task.id.startsWith("bulk-"));
+  assert.equal(bulk.length, 150);
+  assert.ok(bulk.every((task) => task.submission?.feedbackCount === 1));
+  await assignmentTaskActions.getMyAssignmentTasks();
+  await assignmentTaskActions.getMyAssignmentTasks();
+  // 규칙 105개 × (오늘 + 다음 회차) = 210회차. 한 번에 120개씩 나눠 만들고 중복은 없다.
+  const generated = await db.select({ value: count() }).from(assignmentTasks).where(inArray(assignmentTasks.recurrenceId, ruleIds.slice(0, 90)));
+  assert.equal(generated[0]?.value, 180);
+  assert.equal((await db.select({ value: count() }).from(assignmentTasks))[0]?.value, 150 + 210);
+  const feedbackMap = await feedbackActions.getMyFeedbacksMap();
+  assert.equal(Object.keys(feedbackMap).length, 150);
+  // 격리 D1(miniflare)은 bind 100개 제한을 재현하지 않으므로, action이 보낸 statement의 bind 수를 직접 검사한다.
+  const widest = maxBind();
+  context.diagnostic(`max bind per statement: ${widest.count}`);
+  assert.ok(widest.count <= 100, `bind ${widest.count}개: ${widest.query.slice(0, 120)}`);
 });

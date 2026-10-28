@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { Button } from "@/components/ui/button";
+import { Button, buttonClassName } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 type CreationConflictActionsProps = {
   existingHref?: string;
@@ -24,23 +25,20 @@ export function CreationConflictActions({
   return (
     <div className="flex flex-wrap gap-2">
       {existingHref ? (
-        <Button asChild size="sm" variant="outline">
-          <Link
-            href={existingHref}
-            aria-disabled={disabled}
-            tabIndex={disabled ? -1 : undefined}
-            className={disabled ? "pointer-events-none opacity-50" : undefined}
-            onClick={(event) => {
-              if (disabled) event.preventDefault();
-            }}
-          >
-            {existingLabel}
-          </Link>
-        </Button>
+        <Link
+          href={existingHref}
+          aria-disabled={disabled}
+          tabIndex={disabled ? -1 : undefined}
+          className={cn(buttonClassName({ variant: "outline" }), disabled && "pointer-events-none opacity-50")}
+          onClick={(event) => {
+            if (disabled) event.preventDefault();
+          }}
+        >
+          {existingLabel}
+        </Link>
       ) : (
         <Button
           type="button"
-          size="sm"
           variant="outline"
           onClick={onOpenExisting}
           disabled={disabled || !onOpenExisting}
@@ -48,13 +46,7 @@ export function CreationConflictActions({
           {existingLabel}
         </Button>
       )}
-      <Button
-        type="button"
-        size="sm"
-        variant="secondary"
-        onClick={onSeparate}
-        disabled={disabled}
-      >
+      <Button type="button" onClick={onSeparate} disabled={disabled}>
         {separateLabel}
       </Button>
     </div>

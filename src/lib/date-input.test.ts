@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   calendarSelectionToKstDateKey,
   calendarSelectionToKstDateTimeInput,
+  nextFullHour,
   parseKstDateTimeInput,
   toKstDateInputValue,
   toKstDateTimeInputValue,
@@ -34,4 +35,10 @@ test("캘린더 날짜와 시간 선택을 KST 입력값으로 정규화한다",
     calendarSelectionToKstDateTimeInput("2026-08-13T00:30:00+09:00"),
     "2026-08-13T00:30",
   );
+});
+
+test("레슨·일정 기본 시작 시각은 지금 이후 첫 정시이고 정각이면 다음 정시다", () => {
+  assert.equal(toKstDateTimeInputValue(nextFullHour(Date.parse("2026-10-27T01:28:17.000Z"))), "2026-10-27T11:00");
+  assert.equal(toKstDateTimeInputValue(nextFullHour(Date.parse("2026-10-27T02:00:00.000Z"))), "2026-10-27T12:00");
+  assert.equal(toKstDateTimeInputValue(nextFullHour(Date.parse("2026-10-27T14:59:59.999Z"))), "2026-10-28T00:00");
 });

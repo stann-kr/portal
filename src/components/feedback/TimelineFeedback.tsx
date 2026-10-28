@@ -1,14 +1,15 @@
 /**
  * @file src/components/feedback/TimelineFeedback.tsx
- * @description 타임스탬프 기반 피드백 UI 컴포넌트.
+ * @description 과제 피드백 UI 컴포넌트.
  * - 타임스탬프 클릭 시 VideoPlayer의 해당 시점으로 이동
- * - Admin: 피드백 작성 폼 노출
+ * - 재생 시점이 없는 피드백은 "전체" 표시로 구분한다(글 제출·과제 전체에 대한 피드백)
+ * - Admin: 피드백 작성 폼 노출(재생 시점은 비워 둘 수 있다)
  * - Student: 조회만 가능
  */
 "use client";
 
-import { useActionState, useState, useTransition } from "react";
-import { MessageSquare, Trash2, Clock } from "lucide-react";
+import { useActionState, useId, useState, useTransition } from "react";
+import { Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ConfirmPanel, useConfirmAction } from "@/components/ui/confirm-action";
 import { Input } from "@/components/ui/input";
@@ -26,7 +27,8 @@ import { CREATION_OPERATION_FIELD, createCreationOperationId, parseCreationOpera
 
 export interface FeedbackItem {
   id: string;
-  timeMarker: number;
+  /** 없으면 과제 전체에 대한 피드백 */
+  timeMarker: number | null;
   content: string;
   createdAt: Date | null;
 }
@@ -41,6 +43,12 @@ interface TimelineFeedbackProps {
   onRefresh?: () => void | Promise<void>;
   /** 관리자 작성 폼이 현재 재생 위치로 시점을 채울 때 사용한다. */
   readPlaybackPosition?: () => Promise<number | null>;
+  /** 재생할 링크가 없는 글 제출이면 false: 시점 입력을 숨기고 전체 피드백만 남긴다. */
+  allowTimeMarker?: boolean;
+}
+
+function feedbackLabel(fb: FeedbackItem): string {
+  return fb.timeMarker === null ? "전체" : formatTimestamp(fb.timeMarker);
 }
 
 // ─── 관리자 피드백 작성 폼 ────────────────────────
@@ -50,11 +58,13 @@ function FeedbackForm({
   actorId,
   onSuccess,
   readPlaybackPosition,
+  allowTimeMarker,
 }: {
   assignmentId: string;
   actorId: string;
   onSuccess: () => Promise<void>;
   readPlaybackPosition?: () => Promise<number | null>;
+  allowTimeMarker: boolean;
 }) {
   const [timeMarker, setTimeMarker] = useState("");
   const [positionError, setPositionError] = useState<string | null>(null);
@@ -130,7 +140,7 @@ function FeedbackForm({
   return (
     <form
       action={action}
-      className="space-y-2 p-4 rounded-xl border border-dashed border-border bg-muted/20"
+      className="flex flex-col gap-3 border-t border-border pt-4"
       onBlur={draft.flush}
       onSubmit={(event) => {
         if (!draft.loaded || !draft.canSubmit || isPending || !operationId) {
@@ -143,21 +153,21 @@ function FeedbackForm({
       }}
     >
       <input type="hidden" name={CREATION_OPERATION_FIELD} value={operationId} />
-      <p className="text-sm font-semibold text-foreground">
+      <p className="text-ui font-semibold text-secondary-foreground">
         새 피드백 추가
       </p>
-      <div className="grid gap-3 sm:grid-cols-[7rem_minmax(0,1fr)_auto] sm:items-end">
-        <div className="space-y-1.5">
+      <div className={allowTimeMarker ? "grid gap-3 sm:grid-cols-[7rem_minmax(0,1fr)_auto] sm:items-end" : "grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end"}>
+        {allowTimeMarker ? <div className="flex flex-col gap-1.5">
           <div className="flex items-center justify-between gap-2">
-            <label htmlFor="feedback-time-marker" className="text-xs font-medium text-muted-foreground">
-              재생 시점
+            <label htmlFor="feedback-time-marker" className="text-xs text-muted-foreground">
+              재생 시점 (선택)
             </label>
             {readPlaybackPosition ? (
               <button
                 type="button"
                 onClick={fillCurrentPosition}
                 disabled={!draft.loaded || isPending || readingPosition}
-                className="text-xs font-medium text-primary underline-offset-4 hover:underline disabled:opacity-50"
+                className="-my-3 inline-flex h-11 items-center rounded-sm text-xs text-secondary-foreground underline underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 md:my-0 md:h-auto"
               >
                 현재 위치
               </button>
@@ -175,14 +185,13 @@ function FeedbackForm({
             }}
             className="font-mono"
             pattern="[0-9]+:[0-5][0-9]"
-            title="예: 01:30 (분:초)"
-            required
+            title="예: 01:30 (분:초). 비우면 전체 피드백"
             disabled={!draft.loaded || isPending}
-            aria-describedby={showResult && state.error ? "feedback-error" : undefined}
+            aria-describedby={showResult && state.error ? "feedback-error feedback-time-help" : "feedback-time-help"}
           />
-        </div>
-        <div className="space-y-1.5">
-          <label htmlFor="feedback-content" className="text-xs font-medium text-muted-foreground">
+        </div> : <input type="hidden" name="timeMarker" value="" />}
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor="feedback-content" className="text-xs text-muted-foreground">
             피드백 내용
           </label>
           <Input
@@ -200,11 +209,13 @@ function FeedbackForm({
             aria-describedby={showResult && state.error ? "feedback-error" : undefined}
           />
         </div>
-        <Button type="submit" size="sm" disabled={!draft.loaded || !draft.canSubmit || isPending || !operationId} className="gap-1 sm:mb-0.5">
-          <MessageSquare className="w-4 h-4" />
+        <Button type="submit" size="touch" disabled={!draft.loaded || !draft.canSubmit || isPending || !operationId} className="sm:h-11 md:h-9 md:rounded-md md:text-ui">
           {isPending ? "추가 중..." : "추가"}
         </Button>
       </div>
+      <p id="feedback-time-help" className="text-xs text-muted-foreground">
+        {allowTimeMarker ? "재생 시점을 비우면 과제 전체에 대한 피드백으로 남습니다." : "글 제출에는 전체 피드백으로 남깁니다."}
+      </p>
       {positionError ? <p role="alert" className="text-xs text-destructive">{positionError}</p> : null}
       {showResult && state.error && <p id="feedback-error" role="alert" className="text-xs text-destructive">{state.error}</p>}
       {showResult && state.success && <p role="status" className="text-xs text-success">피드백을 추가했습니다.</p>}
@@ -223,10 +234,12 @@ export function TimelineFeedback({
   onSeek,
   onRefresh,
   readPlaybackPosition,
+  allowTimeMarker = true,
 }: TimelineFeedbackProps) {
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [refreshError, setRefreshError] = useState(false);
+  const headingId = useId();
 
   const refreshAfterChange = async () => {
     try {
@@ -252,69 +265,68 @@ export function TimelineFeedback({
   };
 
   return (
-    <div className="space-y-4">
-      {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-      {refreshError && <div role="alert" className="space-y-2 text-sm">
+    <section aria-labelledby={headingId} className="flex flex-col">
+      {error && <p role="alert" className="mb-3 text-ui text-destructive">{error}</p>}
+      {refreshError && <div role="alert" className="mb-3 flex flex-col items-start gap-2 text-ui">
         <p>변경은 저장됐지만 피드백 목록을 새로 불러오지 못했습니다.</p>
-        <Button type="button" variant="outline" onClick={() => startTransition(refreshAfterChange)} disabled={isPending}>목록 다시 불러오기</Button>
+        <Button type="button" variant="outline" onClick={() => startTransition(refreshAfterChange)} pending={isPending}>목록 다시 불러오기</Button>
       </div>}
-      <div className="flex items-center justify-between border-b pb-3">
-        <h3 className="font-semibold flex items-center gap-2">
-          <MessageSquare className="w-4 h-4 text-muted-foreground" />
-          피드백
-          <span className="text-sm font-normal text-muted-foreground">
-            ({feedbackList.length})
-          </span>
-        </h3>
+      <div className="flex items-baseline justify-between gap-3 border-b border-border pb-2">
+        <h2 id={headingId} className="text-ui font-semibold text-secondary-foreground">
+          강사 피드백{" "}
+          <span className="font-mono font-normal text-muted-foreground">{feedbackList.length}</span>
+        </h2>
+        {onSeek && feedbackList.some((fb) => fb.timeMarker !== null) ? (
+          <span className="text-xs text-muted-foreground md:hidden">누르면 그 위치부터 재생</span>
+        ) : null}
       </div>
 
       {/* 피드백 목록 */}
       {feedbackList.length === 0 ? (
-        <div className="text-center py-8 text-muted-foreground">
-          <Clock className="w-8 h-8 mx-auto mb-2 opacity-30" />
-          <p className="text-sm">아직 피드백이 없습니다.</p>
-        </div>
+        <p className="py-6 text-body text-muted-foreground">아직 피드백이 없습니다.</p>
       ) : (
-        <ul className="space-y-2">
+        <ul>
           {feedbackList.map((fb) => (
-            <li
-              key={fb.id}
-              className="space-y-3 p-3 rounded-lg border border-border bg-card group hover:bg-accent/5 transition-colors"
-            >
+            <li key={fb.id} className="group flex flex-col gap-3 border-b border-muted py-3.5">
               <div className="flex items-start gap-3">
-              {/* 타임스탬프 버튼 */}
-              <button
-                type="button"
-                onClick={() => onSeek?.(fb.timeMarker)}
-                className="flex-shrink-0 px-2 py-1 rounded-md bg-primary/10 hover:bg-primary/20 text-primary font-mono text-xs font-bold transition-colors"
-                title="이 시점으로 이동"
-                aria-label={`${formatTimestamp(fb.timeMarker)} 시점으로 이동`}
-              >
-                {formatTimestamp(fb.timeMarker)}
-              </button>
+                {/* 타임스탬프: 누르면 그 위치부터 재생. 좁은 화면은 위아래로 터치 영역을 넓힌다.
+                    시점이 없는 전체 피드백은 누를 수 없는 "전체" 표시로 둔다. */}
+                {fb.timeMarker === null ? (
+                  <span className="inline-flex h-6 shrink-0 items-center rounded-sm bg-muted px-2 text-xs font-medium text-secondary-foreground">
+                    전체
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => { if (fb.timeMarker !== null) onSeek?.(fb.timeMarker); }}
+                    aria-label={`${formatTimestamp(fb.timeMarker)} 위치로 이동`}
+                    className="relative inline-flex h-6 shrink-0 items-center rounded-sm bg-accent px-2 font-mono text-xs font-medium text-highlight transition-colors duration-[var(--duration-fast)] after:absolute after:inset-x-0 after:-inset-y-2.5 after:content-[''] hover:bg-highlight/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none md:after:hidden"
+                  >
+                    {formatTimestamp(fb.timeMarker)}
+                  </button>
+                )}
 
-              {/* 피드백 내용 */}
-              <p className="min-w-0 flex-1 break-words text-sm leading-relaxed">{fb.content}</p>
+                <p className="min-w-0 flex-1 break-words text-md leading-6 md:text-body">{fb.content}</p>
 
-              {/* 삭제 버튼 (Admin only) */}
-              {isAdmin && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={(event) => deleteConfirm.request(event.currentTarget, fb.id)}
-                  disabled={isPending}
-                  aria-expanded={deleteConfirm.value === fb.id}
-                  aria-label={`${formatTimestamp(fb.timeMarker)} 피드백 삭제`}
-                  className="-mt-1 flex-shrink-0 text-destructive opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 focus:opacity-100 aria-expanded:opacity-100"
-                >
-                  <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
-                </Button>
-              )}
+                {/* 삭제 버튼 (Admin only) */}
+                {isAdmin && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={(event) => deleteConfirm.request(event.currentTarget, fb.id)}
+                    disabled={isPending}
+                    aria-expanded={deleteConfirm.value === fb.id}
+                    aria-label={`${feedbackLabel(fb)} 피드백 삭제`}
+                    className="-my-1 shrink-0 text-destructive opacity-100 transition-opacity hover:bg-destructive-muted hover:text-destructive md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 focus:opacity-100 aria-expanded:opacity-100"
+                  >
+                    <Trash2 className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
+                  </Button>
+                )}
               </div>
               {isAdmin && deleteConfirm.value === fb.id ? (
                 <ConfirmPanel
                   confirm={deleteConfirm}
-                  message={`${formatTimestamp(fb.timeMarker)} 피드백을 삭제할까요? 학생 화면에서도 사라지며 되돌릴 수 없습니다.`}
+                  message={`${feedbackLabel(fb)} 피드백을 삭제할까요? 학생 화면에서도 사라지며 되돌릴 수 없습니다.`}
                   confirmLabel="피드백 삭제 확인"
                   pendingLabel="삭제 중..."
                   pending={isPending}
@@ -328,14 +340,17 @@ export function TimelineFeedback({
 
       {/* 관리자 피드백 작성 폼 */}
       {isAdmin && (
-        <FeedbackForm
-          key={`${actorId}:${assignmentId}`}
-          assignmentId={assignmentId}
-          actorId={actorId}
-          onSuccess={refreshAfterChange}
-          readPlaybackPosition={readPlaybackPosition}
-        />
+        <div className="mt-6">
+          <FeedbackForm
+            key={`${actorId}:${assignmentId}`}
+            assignmentId={assignmentId}
+            actorId={actorId}
+            onSuccess={refreshAfterChange}
+            readPlaybackPosition={allowTimeMarker ? readPlaybackPosition : undefined}
+            allowTimeMarker={allowTimeMarker}
+          />
+        </div>
       )}
-    </div>
+    </section>
   );
 }

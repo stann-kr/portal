@@ -51,7 +51,7 @@ export async function readDocumentServerDraft(
   if (
     typeof sourceKey !== "string" ||
     !hasValidSourceKeyLength(sourceKey) ||
-    !validateDocumentServerDraftSource(sourceKey, session.user.id)
+    !validateDocumentServerDraftSource(sourceKey, session.user.id, session.user.role)
   ) {
     return { ok: false, reason: "INVALID_INPUT" };
   }
@@ -81,7 +81,7 @@ export async function saveDocumentServerDraft(
   const session = await requireAuth();
   const identity = typeof input?.sourceKey === "string" &&
     hasValidSourceKeyLength(input.sourceKey)
-    ? validateDocumentServerDraftSource(input.sourceKey, session.user.id)
+    ? validateDocumentServerDraftSource(input.sourceKey, session.user.id, session.user.role)
     : null;
   const operationId = parseCreationOperationId(input?.operationId);
   const expectedDraftVersion = parseDocumentServerDraftVersion(
@@ -151,7 +151,7 @@ export async function discardDocumentServerDraft(
   const session = await requireAuth();
   const identity = typeof input?.sourceKey === "string" &&
     hasValidSourceKeyLength(input.sourceKey)
-    ? validateDocumentServerDraftSource(input.sourceKey, session.user.id)
+    ? validateDocumentServerDraftSource(input.sourceKey, session.user.id, session.user.role)
     : null;
   const operationId = parseCreationOperationId(input?.operationId);
   const expectedDraftVersion = parseDocumentServerDraftVersion(

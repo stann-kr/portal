@@ -49,7 +49,7 @@ export function AddTrackDialog({
 
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => { if (!busy) onOpenChange(nextOpen); }}>
-      <DialogContent dismissible={!busy} className="max-w-lg">
+      <DialogContent dismissible={!busy} className="md:max-w-lg">
         <DialogHeader>
           <DialogTitle>트랙 추가</DialogTitle>
           <DialogDescription>참고할 트랙의 링크와 정보를 기록하세요.</DialogDescription>

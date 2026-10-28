@@ -1,161 +1,249 @@
 /**
  * @file src/components/admin-portal/StudentManagementSection.tsx
- * @description 관리자 학생 roster. 인라인 영역은 요약만 제공하고 상세 작업은 canonical 학생 route로 연결한다.
+ * @description 관리자 학생 roster(AdminStudents·MobileAdminStudents 보드). 목록은 요약만 보여 주고,
+ * 행의 더 보기 메뉴와 링크가 canonical 학생 상세 route로 연결한다.
  */
 "use client";
 
-import { Fragment, useState } from "react";
+import { useDeferredValue, useState } from "react";
 import Link from "next/link";
-import {
-  BookOpen,
-  ChevronDown,
-  ChevronRight,
-  Disc3,
-  HelpCircle,
-  Settings,
-  UserPlus,
-} from "lucide-react";
-import { Button } from "@/components/ui/button";
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
+import { Ellipsis, Plus, Search, UserPlus } from "lucide-react";
+import { buttonClassName } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Input } from "@/components/ui/input";
 import type { StudentRosterStat } from "@/lib/actions/students";
-import { buildAdminStudentDetailHref } from "@/lib/student-space-routes";
-import { formatKst } from "@/lib/kst-format";
+import { buildAdminStudentDetailHref, type StudentDetailTab } from "@/lib/student-space-routes";
+import { cn } from "@/lib/utils";
+import { formatKstDot } from "@/lib/kst-format";
+import { isCurriculumVisible } from "@/lib/curriculum-visibility";
 
-const LESSON_DATE_LONG: Intl.DateTimeFormatOptions = { month: "long", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" };
-const LESSON_DATE_SHORT: Intl.DateTimeFormatOptions = { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" };
+const NEW_STUDENT_HREF = "/dashboard/admin/students/new";
 
-function StudentSummaryInline({ student }: { student: StudentRosterStat }) {
-  const displayName = student.displayName?.trim() || student.email;
+const MENU_ITEM_CLASS =
+  "flex h-9 w-full cursor-default select-none items-center rounded-md px-2.5 text-ui text-foreground outline-none data-[highlighted]:bg-muted";
+
+function studentName(student: StudentRosterStat): string {
+  return student.displayName?.trim() || "이름 미등록";
+}
+
+function studentInitial(student: StudentRosterStat): string {
+  return Array.from(student.displayName?.trim() || student.email)[0]?.toUpperCase() ?? "학";
+}
+
+function nextLessonLabel(student: StudentRosterStat): string {
+  // 올해가 아닌 레슨은 연도까지 보인다.
+  return student.nextLessonDate ? formatKstDot(student.nextLessonDate, { time: true, referenceTime: new Date() }) : "미정";
+}
+
+/** 학생 이름과 이메일에 검색어가 들어 있는지(대소문자 무시). */
+function matchesQuery(student: StudentRosterStat, query: string): boolean {
+  if (!query) return true;
+  const needle = query.toLocaleLowerCase("ko-KR");
+  return [student.displayName ?? "", student.email].some((value) => value.toLocaleLowerCase("ko-KR").includes(needle));
+}
+
+/** 행의 더 보기 메뉴: 학생 상세의 각 기록으로 바로 간다. 노트는 학생 스페이스 노트 화면이 canonical이다. */
+function StudentRowMenu({ student }: { student: StudentRosterStat }) {
+  const name = studentName(student);
+  const detailHref = (tab: StudentDetailTab) => buildAdminStudentDetailHref(student.id, tab);
+  const links = [
+    { label: "학생 상세", href: detailHref("overview") },
+    { label: "과제", href: detailHref("assignments") },
+    { label: "디깅", href: detailHref("digging") },
+    { label: "노트", href: `/dashboard/admin/students/${encodeURIComponent(student.id)}/notes` },
+    { label: "Q&A", href: detailHref("qna") },
+  ];
   return (
-    <tr id={`student-detail-${student.id}`}>
-      <td colSpan={5} className="px-0 pb-4">
-        <section
-          aria-label={`${displayName} 요약`}
-          className="mx-4 rounded-xl border border-border bg-muted/20 p-4"
+    <DropdownMenu.Root>
+      <DropdownMenu.Trigger asChild>
+        <button
+          type="button"
+          aria-label={`${name} 메뉴`}
+          className="flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:bg-muted data-[state=open]:text-foreground"
         >
-          <dl className="grid gap-4 text-sm sm:grid-cols-3">
-            <div>
-              <dt className="text-xs font-medium text-muted-foreground">현재 진도</dt>
-              <dd className="mt-1 font-medium text-foreground">{student.currentModule || "진도 미지정"}</dd>
-            </div>
-            <div>
-              <dt className="text-xs font-medium text-muted-foreground">다음 레슨</dt>
-              <dd className="mt-1 font-medium text-foreground">
-                {student.nextLessonDate ? formatKst(student.nextLessonDate, LESSON_DATE_LONG) : "미정"}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-xs font-medium text-muted-foreground">피드백 대기</dt>
-              <dd className="mt-1 font-medium text-foreground">{student.pendingFeedbackCount}건</dd>
-            </div>
-          </dl>
-          <nav aria-label={`${displayName} 기록 바로가기`} className="mt-4 flex flex-wrap gap-2 border-t border-border pt-3">
-            <Button asChild variant="outline" size="sm" className="gap-1.5">
-              <Link href={buildAdminStudentDetailHref(student.id, "overview")}><Settings className="size-3.5" aria-hidden="true" />학생 상세</Link>
-            </Button>
-            <Button asChild variant="outline" size="sm" className="gap-1.5">
-              <Link href={`/dashboard/admin/students/${encodeURIComponent(student.id)}/notes`}><BookOpen className="size-3.5" aria-hidden="true" />노트</Link>
-            </Button>
-            <Button asChild variant="outline" size="sm" className="gap-1.5">
-              <Link href={buildAdminStudentDetailHref(student.id, "qna")}><HelpCircle className="size-3.5" aria-hidden="true" />Q&A</Link>
-            </Button>
-            <Button asChild variant="outline" size="sm" className="gap-1.5">
-              <Link href={buildAdminStudentDetailHref(student.id, "digging")}><Disc3 className="size-3.5" aria-hidden="true" />디깅</Link>
-            </Button>
-          </nav>
-        </section>
-      </td>
-    </tr>
+          <Ellipsis className="size-4" strokeWidth={1.6} aria-hidden="true" />
+        </button>
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Portal>
+        <DropdownMenu.Content
+          align="end"
+          sideOffset={4}
+          collisionPadding={12}
+          style={{ zIndex: "var(--z-dropdown)" }}
+          className="portal-menu w-44 rounded-lg border border-border bg-background p-1 shadow-floating"
+        >
+          {links.map(({ label, href }) => (
+            <DropdownMenu.Item key={href} asChild className={MENU_ITEM_CLASS}>
+              <Link href={href}>{label}</Link>
+            </DropdownMenu.Item>
+          ))}
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+    </DropdownMenu.Root>
   );
 }
 
-export function StudentManagementSection({ students }: { students: StudentRosterStat[] }) {
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+function PendingFeedback({ count }: { count: number }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 font-mono text-xs tabular-nums text-foreground">
+      <span
+        aria-hidden="true"
+        className={cn("size-1.5 shrink-0 rounded-full", count > 0 ? "bg-item-qna" : "bg-transparent")}
+      />
+      {count}
+      <span className="sr-only">건</span>
+    </span>
+  );
+}
+
+export function StudentManagementSection({
+  students,
+  showCurriculum = isCurriculumVisible(),
+}: {
+  students: StudentRosterStat[];
+  /** 현재 진도(커리큘럼) 열을 그릴지. 기본값은 숨김 스위치를 따른다. */
+  showCurriculum?: boolean;
+}) {
+  const [query, setQuery] = useState("");
+  const deferredQuery = useDeferredValue(query.trim());
+  const visibleStudents = students.filter((student) => matchesQuery(student, deferredQuery));
+  const countLabel = `수강생 ${students.length}명`;
 
   return (
-    <div className="space-y-6 p-4 sm:p-6">
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-foreground">수강생 ({students.length}명)</h2>
-          <Button asChild size="sm" variant="outline" className="h-7 gap-1 text-xs">
-            <Link href="/dashboard/admin/students/new"><UserPlus className="size-3.5" aria-hidden="true" />수강생 추가</Link>
-          </Button>
-        </div>
+    <div className="px-5 pb-8 pt-4 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-14">
+      <div className="flex max-w-[1080px] flex-col gap-1 md:gap-6">
+        <header className="flex flex-wrap items-end justify-between gap-4">
+          <div className="sr-only md:not-sr-only md:flex md:flex-col md:gap-1">
+            <h1 className="text-display font-semibold tracking-display text-foreground">학생</h1>
+            <p className="text-body text-secondary-foreground">{countLabel}</p>
+          </div>
+          {students.length > 0 ? (
+            <div className="flex w-full items-center gap-2 md:w-auto">
+              <label className="relative flex w-full items-center md:w-[220px]">
+                <span className="sr-only">이름·이메일 검색</span>
+                <Search
+                  className="pointer-events-none absolute left-3.5 size-4 text-muted-foreground md:left-2.5 md:size-3.5"
+                  strokeWidth={1.8}
+                  aria-hidden="true"
+                />
+                <Input
+                  type="search"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="이름·이메일 검색"
+                  className="pl-10 md:h-8 md:pl-8 md:text-ui"
+                />
+              </label>
+              <Link href={NEW_STUDENT_HREF} className={buttonClassName({ className: "hidden shrink-0 md:inline-flex" })}>
+                <Plus className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
+                수강생 추가
+              </Link>
+            </div>
+          ) : null}
+        </header>
 
         {students.length === 0 ? (
-          <div className="flex flex-col items-center justify-center space-y-3 rounded-xl border border-dashed bg-muted/30 p-12 text-muted-foreground">
-            <p className="text-sm">등록된 수강생이 없습니다.</p>
-            <Button asChild size="sm" variant="outline"><Link href="/dashboard/admin/students/new">첫 수강생 추가하기</Link></Button>
-          </div>
+          <EmptyState
+            className="mt-4 md:mt-0"
+            icon={<UserPlus strokeWidth={1.6} aria-hidden="true" />}
+            title="등록된 수강생이 없습니다"
+            description="학생 계정을 만들면 가입 링크가 발급되고, 학생이 직접 비밀번호를 정해 로그인합니다."
+            action={<Link href={NEW_STUDENT_HREF} className={buttonClassName({ variant: "outline" })}>첫 수강생 추가하기</Link>}
+          />
         ) : (
           <>
-            <div className="space-y-3 md:hidden">
-              {students.map((student) => (
-                <Link
-                  key={student.id}
-                  href={buildAdminStudentDetailHref(student.id, "overview")}
-                  className="block rounded-lg border border-border bg-surface p-4 transition-colors hover:bg-muted"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-foreground">{student.displayName || "이름 미등록"}</p>
-                      <p className="mt-0.5 truncate text-xs text-muted-foreground">{student.email}</p>
-                    </div>
-                    {student.pendingFeedbackCount > 0 ? (
-                      <span className="rounded-md bg-warning-muted px-2 py-1 text-xs font-semibold text-warning">피드백 {student.pendingFeedbackCount}건</span>
-                    ) : null}
-                  </div>
-                  <dl className="mt-4 grid grid-cols-2 gap-3 text-xs">
-                    <div><dt className="text-muted-foreground">현재 진도</dt><dd className="mt-1 line-clamp-2 font-medium text-foreground">{student.currentModule || "진도 미지정"}</dd></div>
-                    <div><dt className="text-muted-foreground">다음 레슨</dt><dd className="mt-1 font-mono font-medium tabular-nums text-foreground">{student.nextLessonDate ? formatKst(student.nextLessonDate, LESSON_DATE_SHORT) : "미정"}</dd></div>
-                  </dl>
-                </Link>
-              ))}
-            </div>
+            <p className="flex h-11 items-center text-ui text-muted-foreground md:hidden" aria-hidden="true">{countLabel}</p>
 
-            <div className="hidden overflow-hidden rounded-lg border border-border bg-surface md:block">
-              <table className="w-full text-left text-sm">
-                <thead className="bg-muted/40 text-xs font-medium text-muted-foreground">
-                  <tr>
-                    <th scope="col" className="px-4 py-3">수강생</th>
-                    <th scope="col" className="px-4 py-3">현재 진도</th>
-                    <th scope="col" className="px-4 py-3">다음 레슨</th>
-                    <th scope="col" className="px-4 py-3 text-center">피드백 대기</th>
-                    <th scope="col" className="w-12 px-4 py-3"><span className="sr-only">학생 상세</span></th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {students.map((student) => {
-                    const displayName = student.displayName?.trim() || student.email;
-                    const expanded = expandedId === student.id;
-                    return (
-                      <Fragment key={student.id}>
-                        <tr className="transition-colors hover:bg-muted/30">
-                          <td className="px-4 py-3">
-                            <button
-                              type="button"
-                              onClick={() => setExpandedId(expanded ? null : student.id)}
-                              aria-expanded={expanded}
-                              aria-controls={`student-detail-${student.id}`}
-                              className="flex w-full items-center gap-3 rounded-md text-left"
+            {visibleStudents.length === 0 ? (
+              <p role="status" className="border-t border-border py-4 text-body text-muted-foreground md:border-0 md:py-2">
+                “{deferredQuery}”와 맞는 수강생이 없습니다. 다른 이름이나 이메일로 검색해 주세요.
+              </p>
+            ) : (
+              <>
+                <ul className="flex flex-col border-t border-border md:hidden" aria-label="수강생 목록">
+                  {visibleStudents.map((student) => (
+                    <li key={student.id}>
+                      <Link
+                        href={buildAdminStudentDetailHref(student.id, "overview")}
+                        className="flex items-center gap-3 border-b border-muted py-3 text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                      >
+                        <span
+                          aria-hidden="true"
+                          className="flex size-9 shrink-0 items-center justify-center rounded-full bg-selected text-ui font-semibold text-secondary-foreground"
+                        >
+                          {studentInitial(student)}
+                        </span>
+                        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                          <span className="flex items-center gap-2">
+                            <span className="truncate text-md font-medium">{studentName(student)}</span>
+                            {student.pendingFeedbackCount > 0 ? (
+                              <span className="inline-flex shrink-0 items-center gap-1 text-xs text-secondary-foreground">
+                                <span className="size-1.5 rounded-full bg-item-qna" aria-hidden="true" />
+                                피드백 대기
+                              </span>
+                            ) : null}
+                          </span>
+                          {/* 커리큘럼을 숨기면 진도 대신 넓은 화면 표처럼 이메일을 둘째 줄에 둔다. */}
+                          <span className="truncate text-ui leading-[18px] text-muted-foreground">
+                            {showCurriculum ? student.currentModule || "진도 미지정" : student.email}
+                          </span>
+                        </span>
+                        <span className="flex shrink-0 flex-col items-end gap-0.5">
+                          <span className="text-[11px] text-muted-foreground">다음 레슨</span>
+                          <span className="font-mono text-xs tabular-nums">{nextLessonLabel(student)}</span>
+                        </span>
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+
+                <div className="hidden overflow-x-auto md:block">
+                  <table className={cn("w-full table-fixed border-collapse text-left text-body", showCurriculum ? "min-w-[760px]" : "min-w-[600px]")}>
+                    <thead>
+                      <tr className="border-b border-border">
+                        <th scope="col" className="h-9 px-2 text-xs font-normal text-muted-foreground">수강생</th>
+                        {showCurriculum ? (
+                          <th scope="col" className="w-[22%] px-2 text-xs font-normal text-muted-foreground">현재 진도</th>
+                        ) : null}
+                        <th scope="col" className="w-40 px-2 text-xs font-normal text-muted-foreground">다음 레슨</th>
+                        <th scope="col" className="w-26 px-2 text-xs font-normal text-muted-foreground">피드백 대기</th>
+                        <th scope="col" className="w-12 px-2"><span className="sr-only">메뉴</span></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {visibleStudents.map((student) => (
+                        <tr key={student.id} className="border-b border-muted">
+                          <td className="h-14 px-2">
+                            <Link
+                              href={buildAdminStudentDetailHref(student.id, "overview")}
+                              className="flex min-w-0 items-center gap-3 rounded-md text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                             >
-                              <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-sm font-bold text-primary" aria-hidden="true">{student.displayName?.[0]?.toUpperCase() || "S"}</span>
-                              <span className="min-w-0"><span className="block truncate font-medium text-foreground">{student.displayName || "이름 미등록"}</span><span className="block max-w-[150px] truncate text-xs text-muted-foreground">{student.email}</span></span>
-                              {expanded ? <ChevronDown className="ml-auto size-4 shrink-0 text-muted-foreground" aria-hidden="true" /> : <ChevronRight className="ml-auto size-4 shrink-0 text-muted-foreground" aria-hidden="true" />}
-                              <span className="sr-only">{displayName} 요약 {expanded ? "닫기" : "열기"}</span>
-                            </button>
+                              <span
+                                aria-hidden="true"
+                                className="flex size-7 shrink-0 items-center justify-center rounded-full bg-selected text-xs font-semibold text-secondary-foreground"
+                              >
+                                {studentInitial(student)}
+                              </span>
+                              <span className="flex min-w-0 flex-col">
+                                <span className="truncate font-medium">{studentName(student)}</span>
+                                <span className="truncate text-xs text-muted-foreground">{student.email}</span>
+                              </span>
+                            </Link>
                           </td>
-                          <td className="px-4 py-3 text-xs text-muted-foreground">{student.currentModule || "진도 미지정"}</td>
-                          <td className="px-4 py-3 text-xs text-muted-foreground">{student.nextLessonDate ? formatKst(student.nextLessonDate, LESSON_DATE_SHORT) : "미정"}</td>
-                          <td className="px-4 py-3 text-center">{student.pendingFeedbackCount > 0 ? <span className="inline-flex min-w-5 items-center justify-center rounded-md bg-warning-muted px-1.5 py-0.5 text-xs font-bold text-warning">{student.pendingFeedbackCount}</span> : <span className="text-muted-foreground">0</span>}</td>
-                          <td className="px-4 py-3"><Button asChild variant="ghost" size="icon"><Link href={buildAdminStudentDetailHref(student.id, "overview")} aria-label={`${displayName} 상세 열기`}><Settings className="size-4" aria-hidden="true" /></Link></Button></td>
+                          {showCurriculum ? (
+                            <td className="truncate px-2 text-ui text-secondary-foreground">{student.currentModule || "진도 미지정"}</td>
+                          ) : null}
+                          <td className="px-2 font-mono text-xs tabular-nums text-secondary-foreground">{nextLessonLabel(student)}</td>
+                          <td className="px-2"><PendingFeedback count={student.pendingFeedbackCount} /></td>
+                          <td className="px-2"><StudentRowMenu student={student} /></td>
                         </tr>
-                        {expanded ? <StudentSummaryInline student={student} /> : null}
-                      </Fragment>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
           </>
         )}
       </div>

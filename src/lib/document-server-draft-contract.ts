@@ -153,12 +153,15 @@ export function isDocumentServerDraftPayloadTooLarge(payloadJson: string): boole
 export function validateDocumentServerDraftSource(
   sourceKey: string,
   ownerId: string,
+  ownerRole?: string | null,
 ) {
   const identity = parseDocumentDraftKey(sourceKey);
   if (!identity || identity.ownerId !== ownerId) return null;
   const { kind } = identity;
   // 댓글·피드백은 이 기기 초안이다. 기존 서버 schema의 문서 종류만 허용한다.
   if (kind === "community-comment" || kind === "assignment-feedback") return null;
+  // 공용 가이드는 관리자만 편집하므로 서버 초안도 관리자만 가진다.
+  if (kind === "guide-page" && ownerRole !== "admin") return null;
   return { ...identity, kind };
 }
 

@@ -44,6 +44,32 @@ import {
   processMediaDeletionOutboxBestEffort,
 } from "@/lib/media-lifecycle-atomic";
 import { mediaDeliveryPath, parseMediaUuidV4 } from "@/lib/media-lifecycle";
+import {
+  isGuideBlockId,
+  normalizeGuideQuote,
+  parseGuidePageId,
+} from "@/lib/guide-content";
+import { findGuideAnchorForThread, findGuidePage } from "@/lib/guide-store";
+import type { QnaGuideAnchorWrite } from "@/lib/qna-atomic";
+
+/** 가이드 구간 질문의 위치 입력. 없으면 일반 질문이다. */
+async function resolveGuideAnchor(
+  context: DbContext,
+  formData: FormData,
+): Promise<{ ok: true; anchor: QnaGuideAnchorWrite | null } | { ok: false; error: string }> {
+  const rawPageId = formData.get("guidePageId");
+  if (rawPageId === null || rawPageId === "") return { ok: true, anchor: null };
+  const pageId = parseGuidePageId(rawPageId);
+  const rawBlockId = String(formData.get("guideBlockId") ?? "");
+  const blockId = rawBlockId ? (isGuideBlockId(rawBlockId) ? rawBlockId : undefined) : null;
+  const quote = normalizeGuideQuote(formData.get("guideQuote"));
+  if (!pageId || blockId === undefined || !quote) {
+    return { ok: false, error: "질문할 가이드 위치를 확인할 수 없습니다. 가이드에서 다시 골라 주세요." };
+  }
+  const page = await findGuidePage(context, pageId);
+  if (!page) return { ok: false, error: "가이드 페이지를 찾을 수 없습니다. 이미 삭제되었을 수 있습니다." };
+  return { ok: true, anchor: { guidePageId: page.id, pageTitle: page.title, blockId, quote } };
+}
 
 type ResolvedQnaAttachment =
   | { ok: true; attachmentUrl: string | null; attachmentObjectId: string | null }
@@ -231,7 +257,8 @@ async function readQnaThread(threadId: string, includeTrash: boolean) {
     .leftJoin(profiles, eq(qnaReplies.authorId, profiles.id))
     .where(eq(qnaReplies.threadId, threadId))
     .orderBy(qnaReplies.createdAt);
-  return { ...thread, replies };
+  const guideAnchor = await findGuideAnchorForThread(createDbContext(), threadId);
+  return { ...thread, replies, guideAnchor };
 }
 
 export async function getQnaThread(threadId: string) {
@@ -357,6 +384,8 @@ async function createQnaThreadRecord(
     JSON.stringify(["qna-initial-reply", studentId]),
   );
   const context = createDbContext();
+  const guideAnchor = await resolveGuideAnchor(context, formData);
+  if (!guideAnchor.ok) return { error: guideAnchor.error };
   const threadActor = actor(session);
   const submittedLegacyUrl = String(formData.get("attachmentUrl") ?? "").trim();
   const rawAttachmentObjectId = String(
@@ -393,6 +422,7 @@ async function createQnaThreadRecord(
     contentHtml,
     attachmentUrl: attachment.attachmentUrl,
     attachmentObjectId: attachment.attachmentObjectId,
+    guideAnchor: guideAnchor.anchor,
     now: new Date(),
   });
   if (!result.ok) {

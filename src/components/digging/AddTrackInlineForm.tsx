@@ -12,6 +12,9 @@ import { createDiggingTrack, fetchLinkMeta } from "@/lib/actions/digging";
 import { StarRating } from "./StarRating";
 import { CamelotPicker } from "./CamelotPicker";
 import type { DiggingColumnType } from "@/db/schema";
+import { parseStoredDiggingOptions } from "@/lib/digging-contract";
+
+const LABEL_CLASS = "text-ui font-semibold text-secondary-foreground";
 
 type Column = {
   id: string;
@@ -99,16 +102,16 @@ export function AddTrackInlineForm({
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4" aria-busy={isPending}>
+    <form onSubmit={handleSubmit} className="flex flex-col gap-4" aria-busy={isPending}>
       {submitError ? (
-        <p id="digging-form-error" role="alert" className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">
+        <p id="digging-form-error" role="alert" className="rounded-md bg-destructive-muted px-3 py-2 text-ui text-destructive">
           {submitError}
         </p>
       ) : null}
       {/* 링크 (최상단 — 자동 추출 트리거) */}
       {linkColId && (
-        <div className="space-y-1.5">
-          <label htmlFor="digging-link" className="text-sm font-medium">링크</label>
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor="digging-link" className={LABEL_CLASS}>링크</label>
           <div className="flex gap-2">
             <Input
               id="digging-link"
@@ -126,7 +129,7 @@ export function AddTrackInlineForm({
               aria-describedby={submitError ? "digging-form-error" : undefined}
             />
             {isFetching && (
-              <span role="status" className="text-xs text-muted-foreground self-center whitespace-nowrap">
+              <span role="status" className="self-center whitespace-nowrap text-xs text-muted-foreground">
                 추출 중...
               </span>
             )}
@@ -142,11 +145,11 @@ export function AddTrackInlineForm({
         .filter((col) => col.columnType !== "link")
         .map((col) => {
           const val = values[col.id];
-          const options: string[] = col.options ? JSON.parse(col.options) : [];
+          const options = parseStoredDiggingOptions(col.options ?? null) ?? [];
 
           return (
-            <div key={col.id} className="space-y-1.5">
-              <label htmlFor={`digging-column-${col.id}`} className="text-sm font-medium">{col.name}</label>
+            <div key={col.id} className="flex flex-col gap-1.5">
+              <label htmlFor={`digging-column-${col.id}`} className={LABEL_CLASS}>{col.name}</label>
 
               {col.columnType === "text" && (
                 <Input
@@ -164,7 +167,7 @@ export function AddTrackInlineForm({
                   onChange={(e) => setValue(col.id, e.target.value)}
                   rows={3}
                   disabled={isPending}
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring resize-none"
+                  className="w-full resize-none rounded-touch border border-input bg-background px-3 py-2.5 text-base text-foreground placeholder:text-muted-foreground focus-visible:outline-2 focus-visible:-outline-offset-1 focus-visible:outline-ring disabled:opacity-50 md:rounded-md md:py-2 md:text-sm"
                 />
               )}
 
@@ -175,6 +178,7 @@ export function AddTrackInlineForm({
                   value={(val as string) ?? ""}
                   onChange={(e) => setValue(col.id, e.target.value)}
                   disabled={isPending}
+                  className="font-mono"
                 />
               )}
 
@@ -184,7 +188,7 @@ export function AddTrackInlineForm({
                   value={(val as string) ?? ""}
                   onChange={(e) => setValue(col.id, e.target.value)}
                   disabled={isPending}
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="h-11 w-full rounded-touch border border-input bg-background px-3 text-base text-foreground focus-visible:outline-2 focus-visible:-outline-offset-1 focus-visible:outline-ring disabled:opacity-50 md:h-9 md:rounded-md md:text-sm"
                 >
                   <option value="">선택</option>
                   {options.map((o) => (
@@ -214,15 +218,18 @@ export function AddTrackInlineForm({
           );
         })}
 
+      {/* 좁은 화면(시트)은 48px 주 버튼, 넓은 화면은 32px */}
       <div className="flex gap-2 pt-2">
-        <Button type="submit" disabled={isPending} className="flex-1">
+        <Button type="submit" disabled={isPending} size="touch" className="flex-1 md:h-8 md:rounded-md md:text-ui">
           {isPending ? "추가 중..." : "추가"}
         </Button>
         <Button
           type="button"
           variant="outline"
+          size="touch"
           onClick={onCancel}
           disabled={isPending}
+          className="md:h-8 md:rounded-md md:text-ui"
         >
           취소
         </Button>

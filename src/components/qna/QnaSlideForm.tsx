@@ -18,7 +18,7 @@ import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 import { DraftStatus } from "@/components/editor/DraftStatus";
 import { createDocumentDraftKey } from "@/lib/form-draft";
 import { isRichTextEmpty } from "@/lib/rich-text";
-import { useRouter } from "next/navigation";
+import { useProgressRouter } from "@/components/app-shell/NavigationProgress";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
 import { useDocumentSaveShortcut } from "@/lib/hooks/useDocumentSaveShortcut";
 import { persistLocalDraftOnShortcut } from "@/lib/local-draft-shortcut";
@@ -43,6 +43,14 @@ interface QnaDraft {
   attachmentObjectId?: string;
 }
 
+/** 가이드의 특정 구간에 남기는 질문 위치. 있으면 질문과 함께 저장되고 초안도 그 위치별로 따로 둔다. */
+export type QnaGuideAnchorInput = {
+  pageId: string;
+  pageTitle: string;
+  blockId: string | null;
+  quote: string;
+};
+
 interface QnaSlideFormProps {
   actorId: string;
   spaceLabel: string;
@@ -50,10 +58,17 @@ interface QnaSlideFormProps {
   onClose: () => void;
   returnTo: string;
   onBusyChange?: (isBusy: boolean) => void;
+  guideAnchor?: QnaGuideAnchorInput;
+  /** false면 등록 뒤 질문 화면으로 옮기지 않고 지금 화면에 남는다(가이드 질문). */
+  navigateOnSuccess?: boolean;
+}
+
+function draftContextId(anchor: QnaGuideAnchorInput | undefined): string {
+  return anchor ? `guide:${anchor.pageId}:${anchor.blockId ?? "page"}` : "new";
 }
 
 export function QnaSlideForm(props: QnaSlideFormProps) {
-  return <QnaSlideFormContent key={props.actorId} {...props} />;
+  return <QnaSlideFormContent key={`${props.actorId}:${draftContextId(props.guideAnchor)}`} {...props} />;
 }
 
 function QnaSlideFormContent({
@@ -63,6 +78,8 @@ function QnaSlideFormContent({
   onClose,
   returnTo,
   onBusyChange,
+  guideAnchor,
+  navigateOnSuccess = true,
 }: QnaSlideFormProps) {
   const [title, setTitle] = useState("");
   const {
@@ -78,6 +95,8 @@ function QnaSlideFormContent({
   const [attachmentObjectId, setAttachmentObjectId] = useState("");
   const [operationId, setOperationId] = useState("");
   const [isUploading, setIsUploading] = useState(false);
+  // 본문 이미지가 올라가는 동안에는 제출하지 않는다. 편집기는 계속 쓸 수 있다.
+  const [isEditorUploading, setIsEditorUploading] = useState(false);
   const [state, formAction, isPending] = useActionState<CreateThreadInlineState, FormData>(
     async (previous, data) => {
       try {
@@ -92,13 +111,13 @@ function QnaSlideFormContent({
   const contentInputRef = useRef<HTMLInputElement>(null);
   const submittedDraftRef = useRef<QnaDraft | null>(null);
   const handledThreadIdRef = useRef<string | null>(null);
-  const router = useRouter();
+  const router = useProgressRouter();
   const isFormBusy = isPending || isUploading;
   useBusyNavigationGuard(isFormBusy);
 
   useEffect(() => {
-    onBusyChange?.(isFormBusy);
-  }, [isFormBusy, onBusyChange]);
+    onBusyChange?.(isFormBusy || isEditorUploading);
+  }, [isEditorUploading, isFormBusy, onBusyChange]);
 
   useEffect(() => () => onBusyChange?.(false), [onBusyChange]);
 
@@ -117,7 +136,7 @@ function QnaSlideFormContent({
     discardRecovery,
     serverSync,
   } = useSyncedFormDraft<QnaDraft>(
-    createDocumentDraftKey("qna-thread", actorId),
+    createDocumentDraftKey("qna-thread", actorId, draftContextId(guideAnchor)),
     (d) => {
       setOperationId(
         parseCreationOperationId(d.operationId) ?? createCreationOperationId(),
@@ -138,7 +157,7 @@ function QnaSlideFormContent({
     },
   );
   const handleSaveShortcut = useDocumentSaveShortcut({
-    disabled: !loaded || !canSubmit || isFormBusy || !operationId,
+    disabled: !loaded || !canSubmit || isFormBusy || isEditorUploading || !operationId,
     onSave: () => persistLocalDraftOnShortcut({
       createSnapshot: () => ({
         operationId,
@@ -213,7 +232,11 @@ function QnaSlideFormContent({
         source: { kind: "PORTAL", entity: "QNA_THREAD", label: "포털" },
       };
       onSuccess(newItem);
-      router.push(`/dashboard/qna/${id}?returnTo=${encodeURIComponent(returnTo)}`);
+      if (navigateOnSuccess) {
+        router.push(`/dashboard/qna/${id}?returnTo=${encodeURIComponent(returnTo)}`);
+      } else {
+        router.refresh();
+      }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.thread?.id]);
@@ -229,10 +252,10 @@ function QnaSlideFormContent({
       ref={formRef}
       action={formAction}
       aria-busy={!loaded || isFormBusy}
-      className="space-y-4"
+      className="flex flex-col gap-5"
       onKeyDownCapture={handleSaveShortcut}
       onSubmit={(event) => {
-        if (!loaded || !canSubmit || isFormBusy) {
+        if (!loaded || !canSubmit || isFormBusy || isEditorUploading) {
           event.preventDefault();
           return;
         }
@@ -260,9 +283,20 @@ function QnaSlideFormContent({
     >
       <input type="hidden" name={CREATION_OPERATION_FIELD} value={operationId} />
       <input ref={contentInputRef} type="hidden" name="contentHtml" value={contentHtml} />
+      {guideAnchor ? (
+        <>
+          <input type="hidden" name="guidePageId" value={guideAnchor.pageId} />
+          <input type="hidden" name="guideBlockId" value={guideAnchor.blockId ?? ""} />
+          <input type="hidden" name="guideQuote" value={guideAnchor.quote} />
+          <figure className="flex flex-col gap-1 border-l-2 border-highlight pl-3">
+            <figcaption className="text-xs text-muted-foreground">가이드: {guideAnchor.pageTitle}</figcaption>
+            <blockquote className="line-clamp-4 text-body text-secondary-foreground">“{guideAnchor.quote}”</blockquote>
+          </figure>
+        </>
+      ) : null}
 
       {state.error && (!state.operationConflict || hasOperationConflict) && (
-        <p role="alert" className="text-sm text-destructive">{state.error}</p>
+        <p role="alert" className="rounded-lg border border-destructive-border bg-destructive-muted p-3 text-ui text-destructive">{state.error}</p>
       )}
 
       {hasOperationConflict && state.existingId ? (
@@ -283,9 +317,9 @@ function QnaSlideFormContent({
       ) : null}
 
       {/* 제목 */}
-      <div className="space-y-1.5">
-        <label htmlFor="qna-slide-title" className="text-sm font-medium">
-          질문 제목 <span className="text-destructive">*</span>
+      <div className="flex flex-col gap-1.5">
+        <label htmlFor="qna-slide-title" className="text-body font-medium text-secondary-foreground md:text-ui">
+          제목 <span className="sr-only">필수</span>
         </label>
         <Input
           id="qna-slide-title"
@@ -295,16 +329,18 @@ function QnaSlideFormContent({
           onChange={(e) => setTitle(e.target.value)}
           required
           disabled={!loaded || isFormBusy}
+          className="h-12 px-3.5 md:h-10 md:px-3 md:text-md"
         />
       </div>
 
       {/* 에디터 */}
-      <div className="space-y-1.5">
-        <label className="text-sm font-medium">
-          내용 <span className="text-destructive">*</span>
-        </label>
+      <div className="flex flex-col gap-1.5">
+        <span className="text-body font-medium text-secondary-foreground md:text-ui">
+          내용 <span className="sr-only">필수</span>
+        </span>
         {loaded && (
           <FullEditor
+            onUploadingChange={setIsEditorUploading}
             initialContent={contentHtml}
             contentVersion={contentVersion}
             onChange={handleEditorChange}
@@ -323,8 +359,9 @@ function QnaSlideFormContent({
             }}
             placeholder="질문 내용을 자세히 작성하세요..."
             disabled={isFormBusy}
-            minHeight="300px"
+            minHeight="12.5rem"
             ariaLabel="Q&A 질문 내용"
+            toolbar="compact"
             footer={
               <DraftStatus
                 status={status}
@@ -344,8 +381,8 @@ function QnaSlideFormContent({
       </div>
 
       {/* 첨부 파일 */}
-      <div className="space-y-1.5">
-        <label className="text-sm font-medium">첨부 파일</label>
+      <div className="flex flex-col gap-2">
+        <span className="text-body font-medium text-secondary-foreground md:text-ui">첨부 파일</span>
         <AttachmentField
           value={attachmentUrl}
           mediaObjectId={attachmentObjectId}
@@ -356,15 +393,16 @@ function QnaSlideFormContent({
           }}
           disabled={!loaded || isFormBusy}
           onUploadingChange={setIsUploading}
+          trigger="inline"
         />
       </div>
 
-      <div className="flex gap-3 pt-2">
-        <Button type="submit" disabled={!loaded || !canSubmit || isFormBusy || !operationId || !title.trim() || isRichTextEmpty(contentHtml)} className="flex-1">
-          {isUploading ? "업로드 완료 대기..." : isPending ? "전송 중..." : "질문 등록"}
-        </Button>
-        <Button type="button" variant="outline" onClick={onClose} disabled={isFormBusy}>
+      <div className="flex justify-end gap-2 border-t border-muted pt-3">
+        <Button type="button" variant="outline" size="touch" onClick={onClose} disabled={isFormBusy || isEditorUploading} className="md:h-9 md:rounded-md md:px-3.5 md:text-ui">
           취소
+        </Button>
+        <Button type="submit" size="touch" disabled={!loaded || !canSubmit || isFormBusy || isEditorUploading || !operationId || !title.trim() || isRichTextEmpty(contentHtml)} className="flex-1 md:h-9 md:flex-none md:rounded-md md:px-4 md:text-ui">
+          {isUploading || isEditorUploading ? "업로드 완료 대기..." : isPending ? "전송 중..." : "질문 등록"}
         </Button>
       </div>
     </form>

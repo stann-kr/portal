@@ -255,6 +255,7 @@ test("계정 삭제는 owned/cross-resource payload와 media를 한 transaction�
   const mediaId = "10000000-0000-4000-8000-000000000001";
   const expiredSealingMediaId = "10000000-0000-4000-8000-000000000002";
   const crossOwnerMediaId = "10000000-0000-4000-8000-000000000003";
+  const noteImageMediaId = "10000000-0000-4000-8000-000000000004";
 
   assert.equal(
     (
@@ -422,6 +423,41 @@ test("계정 삭제는 owned/cross-resource payload와 media를 한 transaction�
       expected_content_type, expected_size_bytes, draft_operation_id,
       upload_expires_at, created_at, updated_at
     ) VALUES (
+      '${noteImageMediaId}', 'admin-owner', 'DOCUMENT_IMAGE',
+      'media/document-image/11000000-0000-4000-8000-000000000004',
+      'media-upload/document-image/${noteImageMediaId}', 'PENDING_UPLOAD',
+      'image/png', 1024, '${operationId(16)}',
+      1767229200, 1767225600, 1767225600
+    );
+    UPDATE media_objects
+    SET state = 'SEALING', seal_lease_id = 'note-image-seal',
+        seal_lease_expires_at = 1767225700, updated_at = 1767225601
+    WHERE id = '${noteImageMediaId}';
+    INSERT INTO media_deletion_outbox (
+      id, media_object_id, object_key, reason, not_before,
+      attempt_count, next_attempt_at, created_at, updated_at
+    ) VALUES (
+      'note-image-staging', '${noteImageMediaId}',
+      'media-upload/document-image/${noteImageMediaId}',
+      'UPLOAD_STAGING_EXPIRED', 1767225700, 0, 1767225700,
+      1767225602, 1767225602
+    );
+    UPDATE media_objects
+    SET state = 'READY', seal_lease_id = NULL, seal_lease_expires_at = NULL,
+        actual_size_bytes = 1024, etag = 'note-image-etag',
+        ready_at = 1767225602, updated_at = 1767225602
+    WHERE id = '${noteImageMediaId}';
+    UPDATE media_objects
+    SET state = 'ATTACHED', resource_type = 'PRIVATE_NOTE',
+        resource_id = 'delete-note', attached_at = 1767225603,
+        updated_at = 1767225603
+    WHERE id = '${noteImageMediaId}';
+
+    INSERT INTO media_objects (
+      id, owner_id, purpose, object_key, upload_object_key, state,
+      expected_content_type, expected_size_bytes, draft_operation_id,
+      upload_expires_at, created_at, updated_at
+    ) VALUES (
       '${mediaId}', 'delete-student', 'COMMUNITY_POST_AUDIO',
       'media/community-post-audio/11000000-0000-4000-8000-000000000001',
       'media-upload/community-post-audio/${mediaId}', 'PENDING_UPLOAD',
@@ -528,6 +564,15 @@ test("계정 삭제는 owned/cross-resource payload와 media를 한 transaction�
         "SELECT owner_id, state FROM media_objects WHERE id = ?",
       )
       .get(crossOwnerMediaId),
+    { owner_id: "admin-owner", state: "PENDING_DELETE" },
+  );
+  // 관리자가 학생 노트에 넣은 본문 이미지도 노트와 함께 삭제 대상이 된다.
+  assert.deepEqual(
+    sqlite
+      .prepare<[string], { owner_id: string | null; state: string }>(
+        "SELECT owner_id, state FROM media_objects WHERE id = ?",
+      )
+      .get(noteImageMediaId),
     { owner_id: "admin-owner", state: "PENDING_DELETE" },
   );
   assert.equal(

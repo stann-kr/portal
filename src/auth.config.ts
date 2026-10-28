@@ -15,7 +15,7 @@ type CoarseAuthorizationInput = {
 };
 
 /**
- * Edge middleware는 DB profile 상태를 판정하지 않는다. 여기서는 보호 UI의
+ * proxy는 DB profile 상태를 판정하지 않는다. 여기서는 보호 UI의
  * token 존재만 빠르게 거르고, 실제 인증·role은 server active-profile gate가
  * 매 요청 다시 확인한다.
  */
@@ -26,8 +26,12 @@ export function isCoarseRequestAuthorized({
   if (pathname.startsWith("/login")) return true;
   // 가입 링크는 아직 로그인할 수 없는 학생이 연다. token 확인은 server action이 맡는다.
   if (pathname === "/invite") return true;
+  // 개인정보처리방침은 Google OAuth 동의 화면이 로그인 전 사용자에게 링크한다.
+  if (pathname === "/privacy") return true;
   if (pathname.startsWith("/api/calendar/")) return true;
   if (pathname === "/api/account-cleanup/status") return true;
+  // 서버 초안 폐기는 fetch로 부른다. login redirect(307) 대신 route가 출처·인증을 판정해 403·401 JSON을 준다.
+  if (pathname === "/api/document-drafts/discard") return true;
   return isLoggedIn;
 }
 
@@ -62,7 +66,7 @@ export const authConfig: NextAuthConfig = {
   },
   callbacks: {
     /**
-     * Edge의 coarse 페이지 접근 제어 콜백.
+     * proxy의 coarse 페이지 접근 제어 콜백.
      * 로그인 페이지는 stale JWT와 server active-profile gate 사이 redirect loop를
      * 피하려고 항상 통과시킨다. calendar feed는 route의 session/token gate가 담당한다.
      */

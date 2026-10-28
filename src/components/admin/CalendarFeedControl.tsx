@@ -1,36 +1,36 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { Check, Copy, Link2 } from "lucide-react";
+import { AccountStatusRow, ACCOUNT_ACTION_BUTTON_CLASS, OneTimeSecret } from "@/components/admin/OneTimeSecret";
 import { Button } from "@/components/ui/button";
 import { ConfirmPanel, useConfirmAction } from "@/components/ui/confirm-action";
 import { issueStudentCalendarFeedUrl } from "@/lib/actions/calendarFeed";
-import { formatKst } from "@/lib/kst-format";
-
-const ISSUED_AT_FORMAT: Intl.DateTimeFormatOptions = {
-  year: "numeric",
-  month: "long",
-  day: "numeric",
-  hour: "2-digit",
-  minute: "2-digit",
-};
+import { formatKstShortDate } from "@/lib/kst-format";
+import { cn } from "@/lib/utils";
 
 /**
  * 학생 레슨 캘린더 구독 URL 발급·교체. URL 원문은 발급 직후 한 번만 보여 준다.
  * 이미 발급한 URL이 있으면 교체가 학생의 기존 구독을 끊으므로 취소 우선 확인을 거친다.
+ * 계정 구역에서 상태 줄(캘린더 구독)과 조작(버튼·확인·발급 값)을 따로 배치할 수 있게 둘을 형제로 그린다.
  */
 export function CalendarFeedControl({
   studentId,
   issuedAt = null,
+  referenceTime,
+  statusClassName,
+  actionsClassName,
 }: {
   studentId: string;
   /** 현재 유효한 구독 URL을 마지막으로 발급한 시각. 없으면 null. */
   issuedAt?: Date | null;
+  /** 발급 날짜에 연도를 붙일지 정하는 서버 기준 시각. */
+  referenceTime?: Date;
+  statusClassName?: string;
+  actionsClassName?: string;
 }) {
   const [relativeUrl, setRelativeUrl] = useState<string | null>(null);
   const [lastIssuedAt, setLastIssuedAt] = useState<Date | null>(issuedAt);
   const [error, setError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
   const [isPending, startTransition] = useTransition();
   const rotateConfirm = useConfirmAction();
   const hasActiveUrl = lastIssuedAt !== null || relativeUrl !== null;
@@ -42,7 +42,6 @@ export function CalendarFeedControl({
 
   const issue = () => {
     setError(null);
-    setCopied(false);
     startTransition(async () => {
       try {
         setRelativeUrl(await issueStudentCalendarFeedUrl(studentId));
@@ -53,28 +52,17 @@ export function CalendarFeedControl({
     });
   };
 
-  const copy = async () => {
-    if (!absoluteUrl) return;
-    try {
-      await navigator.clipboard.writeText(absoluteUrl);
-      setCopied(true);
-    } catch {
-      setError("자동 복사에 실패했습니다. URL을 직접 선택해 복사해 주세요.");
-    }
-  };
-
   return (
-    <div className="space-y-2 rounded-lg border border-dashed border-border bg-muted/20 p-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <Link2 className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
-        <p className="min-w-48 flex-1 text-xs text-muted-foreground">
-          {lastIssuedAt && !relativeUrl
-            ? `${formatKst(lastIssuedAt, ISSUED_AT_FORMAT)}에 발급한 구독 URL이 사용 중입니다. 보안을 위해 다시 표시하지 않습니다.`
-            : "캘린더 구독 URL은 발급 직후 한 번만 표시됩니다."}
-        </p>
+    <>
+      <AccountStatusRow label="캘린더 구독" className={statusClassName}>
+        {lastIssuedAt ? `${formatKstShortDate(lastIssuedAt, "", referenceTime)} 발급 · 사용 중` : "발급 전"}
+      </AccountStatusRow>
+
+      <div className={cn("flex flex-col", actionsClassName)}>
         <Button
           type="button"
-          size="sm"
+          variant="outline"
+          className={ACCOUNT_ACTION_BUTTON_CLASS}
           disabled={isPending}
           aria-expanded={hasActiveUrl ? rotateConfirm.isOpen : undefined}
           onClick={(event) => {
@@ -82,54 +70,39 @@ export function CalendarFeedControl({
             else issue();
           }}
         >
-          {isPending
-            ? "발급 중…"
-            : hasActiveUrl
-              ? "새 URL로 교체"
-              : "구독 URL 발급"}
+          {isPending ? "발급 중…" : hasActiveUrl ? "구독 URL 다시 발급" : "구독 URL 발급"}
         </Button>
-      </div>
 
-      {rotateConfirm.isOpen ? (
-        <ConfirmPanel
-          confirm={rotateConfirm}
-          message="새 URL을 발급하면 학생이 캘린더 앱에 등록한 기존 구독 URL이 즉시 만료됩니다. 교체할까요?"
-          confirmLabel="URL 교체 확인"
-          pendingLabel="발급 중…"
-          pending={isPending}
-          onConfirm={issue}
-        />
-      ) : null}
+        {rotateConfirm.isOpen ? (
+          <ConfirmPanel
+            confirm={rotateConfirm}
+            message="새 URL을 발급하면 학생이 캘린더 앱에 등록한 기존 구독 URL이 즉시 만료됩니다. 다시 발급할까요?"
+            confirmLabel="구독 URL 다시 발급 확인"
+            pendingLabel="발급 중…"
+            pending={isPending}
+            onConfirm={issue}
+            className="mt-2"
+          />
+        ) : null}
 
-      {absoluteUrl && (
-        <div className="space-y-2" aria-live="polite" aria-atomic="true">
-          <p className="text-xs text-destructive">
-            다시 발급하면 이전 URL은 즉시 만료됩니다. 지금 안전하게 전달해 주세요.
-          </p>
-          <div className="flex items-center gap-2">
-            <a
+        <div aria-live="polite" aria-atomic="true" className="[&:not(:empty)]:mt-3">
+          {absoluteUrl ? (
+            <OneTimeSecret
+              key={absoluteUrl}
+              label="구독 URL"
+              value={absoluteUrl}
               href={relativeUrl ?? undefined}
-              className="min-w-0 flex-1 break-all font-mono text-xs text-primary hover:underline"
-            >
-              {absoluteUrl}
-            </a>
-            <Button type="button" size="sm" variant="outline" onClick={copy}>
-              {copied ? (
-                <Check className="h-4 w-4" aria-hidden="true" />
-              ) : (
-                <Copy className="h-4 w-4" aria-hidden="true" />
-              )}
-              {copied ? "복사됨" : "복사"}
-            </Button>
-          </div>
+              notice="다시 발급하면 이전 URL은 즉시 만료됩니다. 지금 안전하게 전달해 주세요."
+            />
+          ) : null}
         </div>
-      )}
 
-      {error && (
-        <p role="alert" className="text-xs text-destructive">
-          {error}
-        </p>
-      )}
-    </div>
+        {error ? (
+          <p role="alert" className="mt-2 text-xs text-destructive">
+            {error}
+          </p>
+        ) : null}
+      </div>
+    </>
   );
 }

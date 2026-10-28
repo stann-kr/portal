@@ -35,6 +35,11 @@ test("가입 링크 화면은 로그인 전에도 열린다", () => {
   assert.equal(isCoarseRequestAuthorized({ isLoggedIn: false, pathname: "/invite/other" }), false);
 });
 
+test("개인정보처리방침은 로그인 전에도 열린다", () => {
+  assert.equal(isCoarseRequestAuthorized({ isLoggedIn: false, pathname: "/privacy" }), true);
+  assert.equal(isCoarseRequestAuthorized({ isLoggedIn: false, pathname: "/privacy/other" }), false);
+});
+
 test("calendar feed는 route token gate에 도달할 수 있다", () => {
   assert.equal(
     isCoarseRequestAuthorized({
@@ -84,4 +89,9 @@ test("임시 비밀번호 session의 화면 이동만 새 비밀번호 설정으
   assert.equal(redirect("/login"), false);
   assert.equal(redirect("/api/media/media-1"), false);
   assert.equal(redirect("/dashboard/student", false), false);
+});
+
+test("서버 초안 폐기 API는 login redirect 대신 route의 403·401 판정을 받는다", () => {
+  assert.equal(isCoarseRequestAuthorized({ isLoggedIn: false, pathname: "/api/document-drafts/discard" }), true);
+  assert.equal(isCoarseRequestAuthorized({ isLoggedIn: false, pathname: "/api/document-drafts/other" }), false);
 });

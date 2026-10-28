@@ -1,6 +1,6 @@
 /**
  * @file src/app/dashboard/student/notes/new/page.tsx
- * @description 학생 노트 작성 풀 페이지.
+ * @description 학생 노트 작성 풀 페이지(NoteNew 보드).
  * 세션에서 studentId를 가져와 createPrivateNote에 바인딩 후 클라이언트 폼에 전달.
  */
 import { redirect } from "next/navigation";
@@ -8,7 +8,7 @@ import { getActiveAuthSession } from "@/lib/auth-guard";
 import { createPrivateNote } from "@/lib/actions/privateNotes";
 import { NoteFullForm } from "@/components/notes/NoteFullForm";
 import { safeReturnPath } from "@/lib/safe-return-path";
-import { resolveNoteCreateDefaultDate } from "@/lib/note-create-route";
+import { resolveNoteCreateDefaultDate, resolveNoteCreateDefaultTitle } from "@/lib/note-create-route";
 
 export const metadata = {
   title: "노트 작성",
@@ -17,7 +17,7 @@ export const metadata = {
 export default async function NewNotePage({
   searchParams,
 }: {
-  searchParams: Promise<{ returnTo?: string; date?: string }>;
+  searchParams: Promise<{ returnTo?: string; date?: string; title?: string }>;
 }) {
   const session = await getActiveAuthSession();
   if (!session?.user?.id) redirect("/login");
@@ -35,7 +35,9 @@ export default async function NewNotePage({
       studentId={studentId}
       returnTo={returnTo}
       defaultDate={resolveNoteCreateDefaultDate(query.date)}
-      spaceLabel={session.user.name?.trim() || session.user.email || "내 스페이스"}
+      defaultTitle={resolveNoteCreateDefaultTitle(query.title)}
+      spaceLabel="내 스페이스"
+      authorName={session.user.name?.trim() || session.user.email || undefined}
     />
   );
 }

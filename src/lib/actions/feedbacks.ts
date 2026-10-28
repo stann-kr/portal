@@ -1,6 +1,6 @@
 /**
  * @file src/lib/actions/feedbacks.ts
- * @description 타임스탬프 피드백 관련 서버 액션.
+ * @description 과제 피드백 서버 액션. 재생 시점(타임스탬프) 피드백과 시점 없는 전체 피드백.
  * Admin: 피드백 작성/삭제.
  * 공통: 과제별 피드백 목록 조회.
  */
@@ -9,8 +9,7 @@
 import { revalidatePath } from "next/cache";
 import { createDb } from "@/db/client";
 import { feedbacks, assignments } from "@/db/schema";
-import { and, eq, asc, inArray } from "drizzle-orm";
-import type { InferSelectModel } from "drizzle-orm";
+import { and, eq, asc, count } from "drizzle-orm";
 import { CREATION_OPERATION_FIELD, deriveCreationResourceId, resolveCreationOperationId } from "@/lib/creation-operation";
 import {
   assertOwnerOrAdmin,
@@ -55,7 +54,7 @@ export type CreateFeedbackState = { error?: string; success?: boolean };
  * 타임스탬프 피드백 작성 (Admin 전용).
  * @param assignmentId - 대상 과제 ID
  * @param _prev - useActionState 이전 상태
- * @param formData - { timeMarker(분:초 또는 정수 초), content, operationId (UUID v4) }
+ * @param formData - { timeMarker(분:초·정수 초, 비우면 전체 피드백), content, operationId (UUID v4) }
  */
 export async function createFeedback(
   assignmentId: string,
@@ -71,11 +70,14 @@ export async function createFeedback(
 
   if (!content) return { error: "피드백 내용을 입력해주세요." };
 
+  // 재생 시점을 비우면 과제 전체(글 제출 포함)에 대한 피드백이다.
   const minutesAndSeconds = /^(\d+):([0-5]\d)$/.exec(timeMarkerStr);
-  const timeMarker = minutesAndSeconds
-    ? Number(minutesAndSeconds[1]) * 60 + Number(minutesAndSeconds[2])
-    : /^\d+$/.test(timeMarkerStr) ? Number(timeMarkerStr) : NaN;
-  if (!Number.isSafeInteger(timeMarker) || timeMarker < 0) {
+  const timeMarker: number | null = !timeMarkerStr
+    ? null
+    : minutesAndSeconds
+      ? Number(minutesAndSeconds[1]) * 60 + Number(minutesAndSeconds[2])
+      : /^\d+$/.test(timeMarkerStr) ? Number(timeMarkerStr) : NaN;
+  if (timeMarker !== null && (!Number.isSafeInteger(timeMarker) || timeMarker < 0)) {
     return { error: "재생 시점은 01:30 같은 분:초 형식이나 0 이상의 정수 초로 입력해 주세요. 초는 00~59입니다." };
   }
   const operationId = resolveCreationOperationId(formData.get(CREATION_OPERATION_FIELD));
@@ -84,9 +86,12 @@ export async function createFeedback(
 
   const db = createDb();
   try {
-    const [assignment] = await db.select({ id: assignments.id })
+    const [assignment] = await db.select({ id: assignments.id, mediaUrl: assignments.mediaUrl })
       .from(assignments).where(eq(assignments.id, assignmentId)).limit(1);
     if (!assignment) return { error: "과제를 찾을 수 없습니다. 목록에서 다시 확인해 주세요." };
+    if (timeMarker !== null && !assignment.mediaUrl) {
+      return { error: "글 제출에는 재생 시점 없이 전체 피드백으로 남겨 주세요." };
+    }
     const inserted = await db.insert(feedbacks).values({
       id: feedbackId,
       assignmentId,
@@ -136,24 +141,17 @@ export async function getMyFeedbacksMap(): Promise<Record<string, number>> {
   const session = await requireAuth();
   const db = createDb();
 
-  const myAssignments: Pick<InferSelectModel<typeof assignments>, "id">[] =
-    await db
-      .select({ id: assignments.id })
-      .from(assignments)
-      .where(eq(assignments.studentId, session.user.id!));
-
-  if (!myAssignments.length) return {};
-
-  const ids = myAssignments.map((a) => a.id);
-  const rows: Pick<InferSelectModel<typeof feedbacks>, "assignmentId">[] =
-    await db
-      .select({ assignmentId: feedbacks.assignmentId })
-      .from(feedbacks)
-      .where(inArray(feedbacks.assignmentId, ids));
+  // 제출 id 목록을 bind하지 않고 join으로 센다(D1은 statement당 bind 100개 제한).
+  const rows = await db
+    .select({ assignmentId: feedbacks.assignmentId, count: count(feedbacks.id) })
+    .from(feedbacks)
+    .innerJoin(assignments, eq(assignments.id, feedbacks.assignmentId))
+    .where(eq(assignments.studentId, session.user.id!))
+    .groupBy(feedbacks.assignmentId);
 
   const map: Record<string, number> = {};
   for (const row of rows) {
-    map[row.assignmentId] = (map[row.assignmentId] ?? 0) + 1;
+    map[row.assignmentId] = Number(row.count);
   }
   return map;
 }

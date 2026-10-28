@@ -93,15 +93,21 @@ test("과제 피드백 개수는 학생·기간 범위를 유지하고 과제 �
   context.after(() => sqlite.close());
   sqlite.exec(`
     CREATE TABLE profiles (id TEXT PRIMARY KEY, email TEXT NOT NULL, display_name TEXT);
-    CREATE TABLE assignments (id TEXT PRIMARY KEY, student_id TEXT NOT NULL, media_url TEXT NOT NULL, submitted_at INTEGER);
-    CREATE TABLE feedbacks (id TEXT PRIMARY KEY, assignment_id TEXT NOT NULL, time_marker INTEGER NOT NULL, content TEXT NOT NULL);
+    CREATE TABLE assignment_tasks (id TEXT PRIMARY KEY, student_id TEXT NOT NULL, title TEXT NOT NULL, submission_format TEXT NOT NULL, due_at INTEGER, created_at INTEGER NOT NULL);
+    CREATE TABLE assignments (id TEXT PRIMARY KEY, student_id TEXT NOT NULL, task_id TEXT, media_url TEXT, text_html TEXT, submitted_at INTEGER);
+    CREATE TABLE feedbacks (id TEXT PRIMARY KEY, assignment_id TEXT NOT NULL, time_marker INTEGER, content TEXT NOT NULL);
     INSERT INTO profiles VALUES ('student-1', 'student@example.com', '학생');
+    INSERT INTO assignment_tasks VALUES
+      ('task-open', 'student-1', '연습 일지', 'TEXT', 1778100000, 1777000000),
+      ('task-submitted', 'student-1', '믹스셋 과제', 'MIX', 1778100000, 1777000000),
+      ('task-outside', 'student-1', '지난 과제', 'MIX', 1600000000, 1600000000),
+      ('task-other', 'student-2', '다른 학생 과제', 'MIX', 1778100000, 1777000000);
     INSERT INTO assignments VALUES
-      ('first', 'student-1', 'first.mp3', 1778000000),
-      ('second', 'student-1', 'second.mp3', 1778000100),
-      ('no-feedback', 'student-1', 'empty.mp3', 1778000200),
-      ('outside-period', 'student-1', 'old.mp3', 1600000000),
-      ('other-student', 'student-2', 'other.mp3', 1778000000);
+      ('first', 'student-1', NULL, 'first.mp3', NULL, 1778000000),
+      ('second', 'student-1', 'task-submitted', 'second.mp3', NULL, 1778000100),
+      ('no-feedback', 'student-1', NULL, NULL, '<p>글</p>', 1778000200),
+      ('outside-period', 'student-1', NULL, 'old.mp3', NULL, 1600000000),
+      ('other-student', 'student-2', NULL, 'other.mp3', NULL, 1778000000);
   `);
   const insertFeedback = sqlite.prepare(
     "INSERT INTO feedbacks (id, assignment_id, time_marker, content) VALUES (?, ?, 0, '피드백')",
@@ -122,15 +128,22 @@ test("과제 피드백 개수는 학생·기간 범위를 유지하고 과제 �
     resolveUnifiedItemsQuery({ start: "2026-05-01", end: "2026-05-31", types: ["ASSIGNMENT"] }),
   );
 
+  const submissions = items.filter((item) => item.source.entity === "ASSIGNMENT");
   assert.deepEqual(
-    Object.fromEntries(items.map((item) => [item.id, item.metadata.feedbackCount])),
+    Object.fromEntries(submissions.map((item) => [item.id, item.metadata.feedbackCount])),
     { first: 700, second: 300, "no-feedback": 0 },
   );
+  // 과제 제출은 과제 제목, 글만 낸 자유 제출은 "글 제출"로 보인다.
+  assert.equal(submissions.find((item) => item.id === "second")?.title, "믹스셋 과제");
+  assert.equal(submissions.find((item) => item.id === "no-feedback")?.title, "글 제출");
+  // 아직 내지 않은 본인 과제만 마감 시각에 놓인다.
+  const openTasks = items.filter((item) => item.source.entity === "ASSIGNMENT_TASK");
+  assert.deepEqual(openTasks.map((item) => [item.id, item.subType, item.date.getTime()]), [["task-open", "TASK", 1778100000 * 1000]]);
   assert.ok(feedbackSelect, "피드백 조회가 실행되어야 한다");
   const returnedRows = sqlite.prepare(feedbackSelect).all();
   assert.ok(
-    returnedRows.length <= items.length,
-    `피드백 ${returnedRows.length}행을 전송하지 않고 조회 과제 ${items.length}개 이내로 집계해야 한다`,
+    returnedRows.length <= submissions.length,
+    `피드백 ${returnedRows.length}행을 전송하지 않고 조회 과제 ${submissions.length}개 이내로 집계해야 한다`,
   );
 });
 

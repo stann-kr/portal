@@ -13,7 +13,10 @@ export type AdminQueueThread = {
 
 export type PendingFeedbackAssignment = {
   id: string;
-  mediaUrl: string;
+  /** 글만 제출하면 null이다. 업무함은 글 제출도 피드백 대기로 함께 센다. */
+  mediaUrl: string | null;
+  /** 관리자가 낸 과제에 대한 제출이면 과제 제목 */
+  taskTitle?: string | null;
   submittedAt: Date | null;
   studentId: string;
   studentName: string | null;

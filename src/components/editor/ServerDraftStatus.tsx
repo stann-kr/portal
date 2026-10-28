@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import {
-  AlertCircle,
+  AlertTriangle,
   Check,
   Cloud,
   CloudOff,
@@ -14,6 +14,11 @@ import {
 import type { DocumentServerDraftSyncResult } from "@/lib/hooks/useDocumentServerDraftSync";
 import type { FormDraftRecoveryPreview } from "@/lib/form-draft";
 import { formatKst } from "@/lib/kst-format";
+import { buttonClassName } from "@/components/ui/button";
+
+const ICON = "size-3.5 shrink-0";
+const LINK_BUTTON =
+  "inline-flex items-center gap-1 rounded-sm font-medium text-foreground underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
 
 function formatServerDraftTime(value: number): string | null {
   return formatKst(value, {
@@ -32,7 +37,7 @@ function DraftPreview({
   preview: FormDraftRecoveryPreview | null;
 }) {
   return (
-    <div className="min-w-0 space-y-1 rounded-md border border-border/70 bg-background/75 p-2">
+    <div className="flex min-w-0 flex-col gap-1 rounded-md border border-border bg-background p-2.5">
       <p className="text-xs font-medium text-foreground">{label}</p>
       {preview?.title ? (
         <p className="break-words text-xs text-foreground">
@@ -63,7 +68,7 @@ function ServerDraftStateLine({ sync }: { sync: DocumentServerDraftSyncResult })
   if (sync.status === "error") {
     return (
       <p role="alert" className="inline-flex items-start gap-1.5 text-xs text-destructive">
-        <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+        <AlertTriangle className={`mt-px ${ICON}`} strokeWidth={1.8} aria-hidden="true" />
         <span>
           계정 초안을 동기화하지 못했습니다. 이 기기 초안과 재시도 요청은
           그대로 보존됩니다.
@@ -73,8 +78,8 @@ function ServerDraftStateLine({ sync }: { sync: DocumentServerDraftSyncResult })
   }
   if (sync.status === "offline") {
     return (
-      <p role="status" aria-live="polite" className="inline-flex items-center gap-1.5 text-xs text-warning">
-        <CloudOff className="h-3.5 w-3.5" aria-hidden="true" />
+      <p role="status" aria-live="polite" className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+        <CloudOff className={ICON} strokeWidth={1.8} aria-hidden="true" />
         오프라인 · 연결되면 계정 초안을 다시 저장합니다.
       </p>
     );
@@ -82,7 +87,7 @@ function ServerDraftStateLine({ sync }: { sync: DocumentServerDraftSyncResult })
   if (sync.status === "loading") {
     return (
       <p role="status" aria-live="polite" className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-        <RefreshCw className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+        <RefreshCw className={`${ICON} animate-spin motion-reduce:animate-none`} strokeWidth={1.8} aria-hidden="true" />
         계정 초안 확인 중…
       </p>
     );
@@ -90,7 +95,7 @@ function ServerDraftStateLine({ sync }: { sync: DocumentServerDraftSyncResult })
   if (sync.status === "queued" || sync.status === "syncing") {
     return (
       <p role="status" aria-live="polite" className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-        <Cloud className="h-3.5 w-3.5" aria-hidden="true" />
+        <Cloud className={ICON} strokeWidth={1.8} aria-hidden="true" />
         {sync.status === "syncing" ? "계정에 임시 저장 중…" : "계정 저장 대기 중…"}
       </p>
     );
@@ -98,16 +103,16 @@ function ServerDraftStateLine({ sync }: { sync: DocumentServerDraftSyncResult })
   if (sync.status === "synced") {
     return (
       <p role="status" aria-live="polite" className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-        <Check className="h-3.5 w-3.5 text-success" aria-hidden="true" />
+        <Check className={ICON} strokeWidth={1.8} aria-hidden="true" />
         계정에 임시 저장됨
-        {savedTime ? <span className="tabular-nums">· {savedTime}</span> : null}
+        {savedTime ? <span className="font-mono">· {savedTime}</span> : null}
       </p>
     );
   }
   if (sync.status === "idle") {
     return (
       <p className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-        <Cloud className="h-3.5 w-3.5" aria-hidden="true" />
+        <Cloud className={ICON} strokeWidth={1.8} aria-hidden="true" />
         입력하면 계정에도 최대 30일 임시 저장됩니다.
       </p>
     );
@@ -142,10 +147,21 @@ export function ServerDraftStatus({
     }
   }, [isConfirmingDiscard]);
 
-  useEffect(() => {
+  // 다른 서버 초안이 오면 버리기 확인과 복사 결과를 그 렌더에서 바로 초기화한다.
+  const remoteDraftVersion = sync.remoteDraft?.draftVersion;
+  const remotePayloadHash = sync.remoteDraft?.payloadHash;
+  const [shownRemoteDraft, setShownRemoteDraft] = useState({
+    draftVersion: remoteDraftVersion,
+    payloadHash: remotePayloadHash,
+  });
+  if (
+    shownRemoteDraft.draftVersion !== remoteDraftVersion ||
+    shownRemoteDraft.payloadHash !== remotePayloadHash
+  ) {
+    setShownRemoteDraft({ draftVersion: remoteDraftVersion, payloadHash: remotePayloadHash });
     setIsConfirmingDiscard(false);
     setCopyState("idle");
-  }, [sync.remoteDraft?.draftVersion, sync.remoteDraft?.payloadHash]);
+  }
 
   const copyRemote = async () => {
     if (!sync.remoteDraft) return;
@@ -175,24 +191,24 @@ export function ServerDraftStatus({
       role="group"
       aria-label="계정 초안 동기화 상태"
       tabIndex={-1}
-      className="space-y-2"
+      className="flex flex-col items-start gap-2"
     >
       <ServerDraftStateLine sync={sync} />
 
       {isChoosing ? (
         <div
           role="alert"
-          className="space-y-2 rounded-md border border-warning/30 bg-warning-muted px-2.5 py-2"
+          className="flex w-full flex-col gap-2.5 rounded-lg border border-warning-border bg-warning-muted p-3"
         >
-          <div className="space-y-0.5 text-xs">
-            <p className="font-medium text-foreground">
+          <div className="flex flex-col gap-0.5 text-xs">
+            <p className="text-ui font-semibold text-foreground">
               {sync.queuedPreview
                 ? "이전에 보관한 작성본이 있습니다."
                 : sync.status === "remote-available"
                 ? "계정에 저장된 작성본이 있습니다."
                 : "이 기기와 계정의 작성본이 다릅니다."}
             </p>
-            <p className="text-muted-foreground">
+            <p className="text-secondary-foreground">
               자동으로 합치거나 덮어쓰지 않습니다. 사용할 작성본을 직접 선택해
               주세요.
               {sync.isDifferentDevice ? " 다른 기기에서 저장된 계정본입니다." : ""}
@@ -214,11 +230,11 @@ export function ServerDraftStatus({
           </div>
 
           {sync.queuedPreview ? (
-            <p id={recoveryDescriptionId} className="text-xs text-muted-foreground">
+            <p id={recoveryDescriptionId} className="text-xs text-secondary-foreground">
               복원하면 현재 입력란의 내용을 바꿉니다. 계정 작성본은 변경하지 않습니다.
             </p>
           ) : null}
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
             {sync.queuedPreview ? (
               <button
                 type="button"
@@ -228,9 +244,9 @@ export function ServerDraftStatus({
                   stableFocusRef.current?.focus();
                   sync.restoreQueuedDraft();
                 }}
-                className="inline-flex items-center gap-1 font-medium text-foreground hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+                className={buttonClassName({ variant: "outline", size: "sm" })}
               >
-                <RotateCcw className="h-3 w-3" aria-hidden="true" />
+                <RotateCcw className="size-3" strokeWidth={1.8} aria-hidden="true" />
                 보관된 작성본 복원
               </button>
             ) : null}
@@ -242,9 +258,9 @@ export function ServerDraftStatus({
                   stableFocusRef.current?.focus();
                   sync.useRemoteDraft();
                 }}
-                className="inline-flex items-center gap-1 font-medium text-foreground hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+                className={buttonClassName({ variant: "outline", size: "sm" })}
               >
-                <RotateCcw className="h-3 w-3" aria-hidden="true" />
+                <RotateCcw className="size-3" strokeWidth={1.8} aria-hidden="true" />
                 계정 작성본 사용
               </button>
             ) : null}
@@ -256,7 +272,7 @@ export function ServerDraftStatus({
                   stableFocusRef.current?.focus();
                   sync.keepLocalDraft();
                 }}
-                className="font-medium text-foreground hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+                className={buttonClassName({ size: "sm" })}
               >
                 내 초안으로 계속
               </button>
@@ -266,9 +282,9 @@ export function ServerDraftStatus({
                 type="button"
                 disabled={actionsDisabled}
                 onClick={() => void copyRemote()}
-                className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                className={buttonClassName({ variant: "ghost", size: "sm" })}
               >
-                <Copy className="h-3 w-3" aria-hidden="true" />
+                <Copy className="size-3" strokeWidth={1.8} aria-hidden="true" />
                 계정 초안 원문 복사
               </button>
             ) : null}
@@ -277,7 +293,7 @@ export function ServerDraftStatus({
             <p
               role={copyState === "error" ? "alert" : "status"}
               aria-live="polite"
-              className={copyState === "error" ? "text-xs text-destructive" : "text-xs text-success"}
+              className={copyState === "error" ? "text-xs text-destructive" : "text-xs text-secondary-foreground"}
             >
               {copyState === "copied"
                 ? "계정 초안 원문을 복사했습니다."
@@ -292,7 +308,7 @@ export function ServerDraftStatus({
           <div
             role="group"
             aria-labelledby={confirmationId}
-            className="space-y-2 rounded-md border border-destructive/25 bg-destructive/10 p-2 text-xs"
+            className="flex w-full flex-col gap-2 rounded-md border border-destructive-border bg-destructive-muted p-2.5 text-xs"
             onKeyDown={(event) => {
               if (event.key !== "Escape") return;
               event.preventDefault();
@@ -300,7 +316,7 @@ export function ServerDraftStatus({
               cancelDiscard();
             }}
           >
-            <p id={confirmationId} role="alert" className="text-destructive">
+            <p id={confirmationId} role="alert" className="text-ui text-destructive">
               계정에 저장된 초안만 삭제합니다. 이 기기 작성본은 남지만 삭제한
               계정본은 되돌릴 수 없습니다.
             </p>
@@ -310,7 +326,7 @@ export function ServerDraftStatus({
                 type="button"
                 disabled={actionsDisabled}
                 onClick={cancelDiscard}
-                className="font-medium text-foreground hover:underline disabled:opacity-50"
+                className={buttonClassName({ variant: "outline", size: "sm" })}
               >
                 취소
               </button>
@@ -319,7 +335,7 @@ export function ServerDraftStatus({
                 disabled={actionsDisabled}
                 aria-describedby={confirmationId}
                 onClick={confirmDiscard}
-                className="font-medium text-destructive hover:underline disabled:opacity-50"
+                className={buttonClassName({ variant: "destructive", size: "sm" })}
               >
                 계정 초안 삭제 확인
               </button>
@@ -331,9 +347,9 @@ export function ServerDraftStatus({
             type="button"
             disabled={actionsDisabled}
             onClick={() => setIsConfirmingDiscard(true)}
-            className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-destructive disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex items-center gap-1 rounded-sm text-xs text-muted-foreground hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
           >
-            <Trash2 className="h-3 w-3" aria-hidden="true" />
+            <Trash2 className="size-3" strokeWidth={1.8} aria-hidden="true" />
             계정 초안 삭제
           </button>
         )
@@ -344,9 +360,9 @@ export function ServerDraftStatus({
           type="button"
           disabled={actionsDisabled || sync.status === "offline"}
           onClick={() => void sync.refresh()}
-          className="inline-flex items-center gap-1 text-xs font-medium text-foreground hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+          className={`${LINK_BUTTON} text-xs`}
         >
-          <RefreshCw className="h-3 w-3" aria-hidden="true" />
+          <RefreshCw className="size-3" strokeWidth={1.8} aria-hidden="true" />
           다시 확인
         </button>
       ) : null}

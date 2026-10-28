@@ -1,11 +1,10 @@
 /**
  * @file src/app/dashboard/student/assignments/[id]/page.tsx
- * @description 과제 상세 페이지. VideoPlayer + 타임라인 피드백 (Server Component).
- * 데이터 패칭을 서버에서 처리하고, 복잡한 UI 상태는 클라이언트 컴포넌트로 위임합니다.
+ * @description 과제 상세 페이지(AssignmentDetail·MobileAssignment 보드). 과제 설명·제출(플레이어·글) + 피드백 (Server Component).
+ * 데이터 패칭과 소유권 확인은 서버에서 처리하고, 화면 배치와 상호작용은 클라이언트 컴포넌트로 위임합니다.
  */
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { ArrowLeft } from "lucide-react";
 import { getAssignmentById } from "@/lib/actions/assignments";
 import { getFeedbacksByAssignment } from "@/lib/actions/feedbacks";
 import { getStudentById } from "@/lib/actions/students";
@@ -13,7 +12,9 @@ import { getActiveAuthSession } from "@/lib/auth-guard";
 import { AssignmentDetailClient } from "./AssignmentDetailClient";
 import { formatKst } from "@/lib/kst-format";
 import { safeReturnPath } from "@/lib/safe-return-path";
-import { describeAssignmentMedia, getUnifiedItemSpaceLabel } from "@/lib/unified-item-normalization";
+import { describeAssignmentSubmission, getUnifiedItemSpaceLabel } from "@/lib/unified-item-normalization";
+import { isLateSubmission } from "@/lib/assignment-submission";
+import { ASSIGNMENT_FORMAT_LABELS } from "@/lib/assignment-recurrence";
 import { buildAdminStudentDetailHref } from "@/lib/student-space-routes";
 
 export type AssignmentFeedback = Awaited<
@@ -41,11 +42,16 @@ export default async function AssignmentDetailPage({
   const assignment = await getAssignmentById(assignmentId).catch(() => null);
   if (!assignment) {
     return (
-      <div className="mx-auto max-w-4xl px-4 py-6 text-center text-muted-foreground sm:px-6">
-        <p>과제를 찾을 수 없습니다.</p>
-        <Link href={returnTo} className="text-sm underline mt-2 block">
-          이전 화면으로 돌아가기
-        </Link>
+      <div className="px-5 pb-8 pt-6 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-14">
+        <div className="flex max-w-[880px] flex-col items-start gap-2">
+          <p className="text-body text-secondary-foreground">과제를 찾을 수 없습니다.</p>
+          <Link
+            href={returnTo}
+            className="inline-flex min-h-11 items-center text-ui text-secondary-foreground underline underline-offset-[3px] hover:text-foreground md:min-h-0"
+          >
+            이전 화면으로 돌아가기
+          </Link>
+        </div>
       </div>
     );
   }
@@ -62,51 +68,45 @@ export default async function AssignmentDetailPage({
     createdAt: f.createdAt,
   }));
 
-  const submittedDate = formatKst(
-    assignment.submittedAt,
-    { year: "numeric", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" },
-    "제출일 미정",
-  );
+  const time = { hour: "2-digit", minute: "2-digit", hourCycle: "h23" } as const;
+  const submittedLabel = assignment.submittedAt
+    ? `${formatKst(assignment.submittedAt, { year: "numeric", month: "long", day: "numeric", ...time })} 제출`
+    : "제출일 미정";
+  const submittedLabelShort = assignment.submittedAt
+    ? `${formatKst(assignment.submittedAt, { month: "long", day: "numeric", ...time })} 제출`
+    : "제출일 미정";
+  const task = assignment.task;
+  const dueLabel = task?.dueAt
+    ? `${formatKst(task.dueAt, { month: "long", day: "numeric", weekday: "short", ...time })} 마감`
+    : null;
+  const spaceLink = student
+    ? { href: buildAdminStudentDetailHref(student.id, "assignments"), label: getUnifiedItemSpaceLabel(student) }
+    : undefined;
 
   return (
-    <div className="mx-auto max-w-4xl space-y-6 px-4 py-6 sm:space-y-8 sm:px-6">
-      {/* 헤더 */}
-      <div className="space-y-1">
-        <Link
-          href={returnTo}
-          className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
-        >
-          <ArrowLeft className="w-4 h-4" aria-hidden="true" />
-          이전 화면으로 돌아가기
-        </Link>
-        <h1 className="mt-2 text-xl font-semibold">
-          {describeAssignmentMedia(assignment.mediaUrl)} 피드백
-        </h1>
-        <p className="text-sm text-muted-foreground">
-          {student ? (
-            <>
-              <Link
-                href={buildAdminStudentDetailHref(student.id, "overview")}
-                className="font-medium text-foreground underline-offset-4 hover:underline"
-              >
-                {getUnifiedItemSpaceLabel(student)}
-              </Link>
-              {" · "}
-            </>
-          ) : null}
-          제출 {submittedDate}
-        </p>
-      </div>
-
-      <AssignmentDetailClient
-        key={assignmentId}
-        assignmentId={assignmentId}
-        actorId={session.user.id}
-        mediaUrl={assignment.mediaUrl}
-        feedbackList={feedbackList}
-        isAdmin={isAdmin}
-        deleteReturnTo={!isAdmin && assignment.studentId === session.user.id ? returnTo : undefined}
-      />
-    </div>
+    <AssignmentDetailClient
+      key={assignmentId}
+      assignmentId={assignmentId}
+      actorId={session.user.id}
+      mediaUrl={assignment.mediaUrl}
+      textHtml={assignment.textHtml}
+      task={task ? {
+        title: task.title,
+        descriptionHtml: task.descriptionHtml,
+        formatLabel: ASSIGNMENT_FORMAT_LABELS[task.submissionFormat],
+        dueLabel,
+        late: isLateSubmission(task.dueAt, assignment.submittedAt),
+      } : null}
+      feedbackList={feedbackList}
+      isAdmin={isAdmin}
+      deleteReturnTo={!isAdmin && assignment.studentId === session.user.id ? returnTo : undefined}
+      title={describeAssignmentSubmission({ mediaUrl: assignment.mediaUrl, taskTitle: task?.title })}
+      submittedLabel={submittedLabel}
+      submittedLabelShort={submittedLabelShort}
+      // 위치 표시는 계층(학생: 과제 목록), 위쪽 막대의 뒤로는 들어온 화면(returnTo)이다.
+      breadcrumb={isAdmin ? { href: returnTo, label: "이전 화면" } : { href: fallback, label: "과제" }}
+      returnTo={returnTo}
+      spaceLink={spaceLink}
+    />
   );
 }

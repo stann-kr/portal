@@ -7,7 +7,7 @@ const DOCUMENT_SNAPSHOT_FINGERPRINT_DOMAIN = "portal-document-snapshot/v1";
 const DOCUMENT_SNAPSHOT_FINGERPRINT_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 const DATE_ONLY_PATTERN = /^\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])$/u;
 
-export type DocumentSnapshotKind = "private-note" | "community-post";
+export type DocumentSnapshotKind = "private-note" | "community-post" | "guide-page";
 
 export type DocumentSnapshotFingerprintInput = {
   kind: DocumentSnapshotKind;

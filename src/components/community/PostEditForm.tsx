@@ -2,7 +2,6 @@
 
 import { useActionState, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
-import { Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DraftStatus } from "@/components/editor/DraftStatus";
@@ -62,6 +61,8 @@ function PostEditFormContent({
   onBusyChange,
 }: PostEditFormProps) {
   const [title, setTitle] = useState(post.title);
+  // 본문 이미지가 올라가는 동안에는 제출하지 않는다. 편집기는 계속 쓸 수 있다.
+  const [isEditorUploading, setIsEditorUploading] = useState(false);
   const [operationId, setOperationId] = useState("");
   const [baseRevision, setBaseRevision] = useState(post.version);
   const {
@@ -86,8 +87,8 @@ function PostEditFormContent({
   );
   useBusyNavigationGuard(isPending);
   useEffect(() => {
-    onBusyChange?.(isPending);
-  }, [isPending, onBusyChange]);
+    onBusyChange?.(isPending || isEditorUploading);
+  }, [isEditorUploading, isPending, onBusyChange]);
   useEffect(() => () => onBusyChange?.(false), [onBusyChange]);
   const formRef = useRef<HTMLFormElement>(null);
   const contentInputRef = useRef<HTMLInputElement>(null);
@@ -207,7 +208,8 @@ function PostEditFormContent({
       },
     },
   );
-  const isSubmitBlocked = !loaded || !canSubmit || isPending || hasStaleDraftBase || !operationId;
+  const isSubmitBlocked =
+    !loaded || !canSubmit || isPending || isEditorUploading || hasStaleDraftBase || !operationId;
   const isSubmitDisabled =
     isSubmitBlocked ||
     !title.trim() ||
@@ -254,6 +256,9 @@ function PostEditFormContent({
 
     previousServerSnapshotRef.current = serverSnapshot;
     if (serverSnapshot.version < Math.max(baseRevision, conflictPost?.version ?? 0)) return;
+    // 서버 prop이 충돌 사본 이상으로 따라잡으면 편집기의 최신 본문(React state보다 앞설 수 있는 외부 값)과
+    // 함께 한 번에 재조정한다. 렌더 중에는 편집기·ref를 읽을 수 없어 이 동기화는 effect에 남긴다.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 외부 편집기 본문과의 서버 snapshot 재조정
     setConflictPost(undefined);
     // React 표시값은 editor보다 최대 200ms 늦을 수 있으므로 충돌 판정은 최신 reader를 사용한다.
     const latestContentHtml = readLatestContentHtml();
@@ -329,7 +334,7 @@ function PostEditFormContent({
       ref={formRef}
       action={formAction}
       aria-busy={!loaded || isPending}
-      className="space-y-5"
+      className="flex flex-col gap-5"
       onKeyDownCapture={handleSaveShortcut}
       onSubmit={(event) => {
         if (isSubmitBlocked) {
@@ -368,12 +373,12 @@ function PostEditFormContent({
       />
 
       {state.error ? (
-        <p role="alert" className="rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">
+        <p role="alert" className="rounded-lg border border-destructive-border bg-destructive-muted p-3 text-ui text-destructive">
           {state.error}
         </p>
       ) : null}
       {hasStaleDraftBase ? (
-        <div className="space-y-3">
+        <div className="flex flex-col gap-3">
           <DraftConflictRecovery
             documentLabel="게시물"
             onUseServer={() => {
@@ -401,11 +406,11 @@ function PostEditFormContent({
               formRef.current?.querySelector<HTMLInputElement>('input[name="title"]')?.focus();
             }}
           />
-          <details className="rounded-lg border border-border bg-card p-3">
-            <summary className="cursor-pointer text-sm font-medium">
+          <details className="rounded-lg border border-border bg-background p-3">
+            <summary className="cursor-pointer text-ui font-medium">
               서버 최신본 {conflictPost?.version ?? serverSnapshot.version}번 확인·복사
             </summary>
-            <div className="mt-3 space-y-2 border-t border-border pt-3">
+            <div className="mt-3 flex flex-col gap-2 border-t border-muted pt-3">
               <p className="font-medium">{conflictPost?.title ?? serverSnapshot.title}</p>
               <RichTextContent html={conflictPost?.contentHtml ?? serverSnapshot.contentHtml} />
             </div>
@@ -413,8 +418,8 @@ function PostEditFormContent({
         </div>
       ) : null}
 
-      <label className="block space-y-1.5" htmlFor="edit-post-title">
-        <span className="text-sm font-medium">제목</span>
+      <label className="flex flex-col gap-1.5 text-body font-medium text-secondary-foreground md:text-ui" htmlFor="edit-post-title">
+        <span>제목</span>
         <Input
           id="edit-post-title"
           name="title"
@@ -425,11 +430,13 @@ function PostEditFormContent({
           }}
           required
           disabled={!loaded || isPending}
+          className="h-12 px-3.5 font-normal md:h-10 md:px-3 md:text-md"
         />
       </label>
 
       {loaded ? (
         <FullEditor
+          onUploadingChange={setIsEditorUploading}
           initialContent={contentHtml}
           contentVersion={contentVersion}
           onChange={handleEditorChange}
@@ -454,6 +461,7 @@ function PostEditFormContent({
           minHeight="min(60dvh, 42rem)"
           placeholder="게시물 내용을 이어서 작성하세요…"
           ariaLabel="커뮤니티 게시물 내용"
+          toolbar="none"
           disabled={isPending}
           footer={
             <DraftStatus
@@ -472,17 +480,17 @@ function PostEditFormContent({
         />
       ) : null}
 
-      <div className="flex justify-end gap-2">
-        <Button type="button" variant="outline" onClick={onCancel} disabled={isPending}>
+      <div className="flex justify-end gap-2 border-t border-muted pt-3 md:pt-2">
+        <Button type="button" variant="outline" size="touch" onClick={onCancel} disabled={isPending || isEditorUploading} className="md:h-9 md:rounded-md md:px-3.5 md:text-ui">
           취소
         </Button>
         <Button
           type="submit"
+          size="touch"
           disabled={isSubmitDisabled}
-          className="gap-2"
+          className="flex-1 md:h-9 md:flex-none md:rounded-md md:px-4 md:text-ui"
         >
-          <Save className="h-4 w-4" aria-hidden="true" />
-          {isPending ? "저장 중…" : "변경사항 저장"}
+          {isEditorUploading ? "업로드 완료 대기…" : isPending ? "저장 중…" : "변경사항 저장"}
         </Button>
       </div>
     </form>

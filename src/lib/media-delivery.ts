@@ -9,7 +9,7 @@ export type MediaDeliveryPrincipal = {
 
 export type MediaDeliveryRecord = {
   ownerId: string | null;
-  purpose: "COMMUNITY_POST_AUDIO" | "QNA_ATTACHMENT";
+  purpose: "COMMUNITY_POST_AUDIO" | "QNA_ATTACHMENT" | "DOCUMENT_IMAGE";
   state:
     | "PENDING_UPLOAD"
     | "SEALING"
@@ -17,12 +17,13 @@ export type MediaDeliveryRecord = {
     | "ATTACHED"
     | "PENDING_DELETE"
     | "DELETED";
-  resourceType: "COMMUNITY_POST" | "QNA_REPLY" | null;
+  resourceType: "COMMUNITY_POST" | "QNA_REPLY" | "PRIVATE_NOTE" | null;
 };
 
 export type MediaDeliveryResourceContext =
   | { kind: "COMMUNITY_POST"; authorId: string; deleted: boolean }
   | { kind: "QNA_REPLY"; studentId: string }
+  | { kind: "PRIVATE_NOTE"; studentId: string }
   | null;
 
 /** READY preview는 owner만, ATTACHED object는 문서 audience만 읽을 수 있다. */
@@ -33,6 +34,24 @@ export function canAccessMediaDelivery(
 ): boolean {
   if (media.state === "READY") return media.ownerId === principal.id;
   if (media.state !== "ATTACHED") return false;
+
+  if (media.purpose === "DOCUMENT_IMAGE") {
+    // 본문 이미지는 연결된 문서를 볼 수 있는 사람에게만 보인다.
+    if (media.resourceType === "COMMUNITY_POST" && resource?.kind === "COMMUNITY_POST") {
+      return (
+        !resource.deleted ||
+        principal.role === "admin" ||
+        resource.authorId === principal.id
+      );
+    }
+    if (
+      (media.resourceType === "QNA_REPLY" && resource?.kind === "QNA_REPLY") ||
+      (media.resourceType === "PRIVATE_NOTE" && resource?.kind === "PRIVATE_NOTE")
+    ) {
+      return principal.role === "admin" || resource.studentId === principal.id;
+    }
+    return false;
+  }
 
   if (
     media.purpose === "COMMUNITY_POST_AUDIO" &&

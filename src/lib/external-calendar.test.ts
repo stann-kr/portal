@@ -15,10 +15,17 @@ const GOOGLE_URL = "https://calendar.google.com/calendar/ical/lesson%40example.c
 const ICLOUD_URL = "https://p42-caldav.icloud.com/published/2/opaque-calendar-id";
 const KEY = Uint8Array.from({ length: 32 }, (_, index) => index + 1);
 
-test("공개 Google/iCloud URL만 정규화하고 Secret·credential·query 주소를 거부한다", () => {
+test("Google 공개·비공개 iCal과 iCloud 공개 URL만 정규화하고 credential·query 주소를 거부한다", () => {
   assert.equal(normalizeExternalCalendarUrl(`webcal:${GOOGLE_URL.slice("https:".length)}`).provider, "GOOGLE");
   assert.equal(normalizeExternalCalendarUrl(ICLOUD_URL).provider, "ICLOUD");
-  assert.throws(() => normalizeExternalCalendarUrl("https://calendar.google.com/calendar/ical/a/private-secret/basic.ics"));
+  const privateGoogle = normalizeExternalCalendarUrl("https://calendar.google.com/calendar/ical/a%40example.com/private-0123abcdef/basic.ics");
+  assert.equal(privateGoogle.provider, "GOOGLE");
+  assert.equal(privateGoogle.label, "Google 비공개 레슨 캘린더");
+  assert.equal(normalizeExternalCalendarUrl(GOOGLE_URL).label, "Google 공개 레슨 캘린더");
+  assert.throws(() => normalizeExternalCalendarUrl("https://calendar.google.com/calendar/ical/a/private-/basic.ics"));
+  assert.throws(() => normalizeExternalCalendarUrl("https://calendar.google.com/calendar/ical/a/private-x/full.ics"));
+  assert.throws(() => normalizeExternalCalendarUrl("https://calendar.google.com/calendar/ical/a/b/private-x/basic.ics"));
+  assert.throws(() => normalizeExternalCalendarUrl("https://calendar.google.com/calendar/ical/a/private-x%2F..%2Fy/basic.ics"));
   assert.throws(() => normalizeExternalCalendarUrl(`${GOOGLE_URL}?token=secret`));
   assert.throws(() => normalizeExternalCalendarUrl("https://user:pass@calendar.google.com/calendar/ical/a/public/basic.ics"));
   assert.throws(() => normalizeExternalCalendarUrl(`${GOOGLE_URL}${"a".repeat(4_096)}`));

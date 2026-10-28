@@ -1,6 +1,6 @@
 /**
  * @file src/app/dashboard/qna/[threadId]/page.tsx
- * @description Q&A 스레드 상세 페이지. 답변 목록 + 작성 폼.
+ * @description Q&A 스레드 상세 페이지(캔버스 QnaThread·MobileQnaThread 보드). 답변 목록 + 작성 폼.
  */
 export const dynamic = "force-dynamic";
 
@@ -38,23 +38,26 @@ export default async function QnaThreadPage({
     thread.studentName ?? thread.studentEmail?.split("@")[0] ?? "학생";
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6 px-4 py-6 sm:px-6">
-      <ThreadDetailClient
-        threadId={threadId}
-        status={status}
-        version={thread.version}
-        deletedAt={thread.deletedAt?.toISOString() ?? null}
-        replies={thread.replies.map((r: QnaReply) => ({
-          ...r,
-          authorRole: r.authorRole ?? null,
-        }))}
-        isAdmin={isAdmin}
-        actorId={session.user.id!}
-        title={thread.title}
-        studentName={studentName}
-        createdAt={thread.createdAt?.toISOString() ?? null}
-        returnTo={returnTo}
-      />
+    <div className="flex min-h-[calc(100dvh-var(--app-topbar-height))] flex-col md:block md:min-h-0 px-5 pb-8 pt-5 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-10">
+      <div className="flex max-w-[760px] flex-1 flex-col md:block">
+        <ThreadDetailClient
+          threadId={threadId}
+          status={status}
+          version={thread.version}
+          deletedAt={thread.deletedAt?.toISOString() ?? null}
+          replies={thread.replies.map((r: QnaReply) => ({
+            ...r,
+            authorRole: r.authorRole ?? null,
+          }))}
+          isAdmin={isAdmin}
+          actorId={session.user.id!}
+          title={thread.title}
+          studentName={studentName}
+          createdAt={thread.createdAt?.toISOString() ?? null}
+          returnTo={returnTo}
+          guideAnchor={thread.guideAnchor}
+        />
+      </div>
     </div>
   );
 }

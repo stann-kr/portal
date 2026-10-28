@@ -1,84 +1,79 @@
 import Link from "next/link";
-import { BookOpen, CalendarDays, UserRound } from "lucide-react";
-import { createFormDraftRecoveryPreview } from "@/lib/form-draft";
-import { formatKst } from "@/lib/kst-format";
+import type { ReactNode } from "react";
+import { FileText } from "lucide-react";
+import {
+  getPrivateNotePreview,
+  toNotesDatabaseRows,
+  type NotesDatabaseRow,
+  type NotesDatabaseSource,
+} from "@/lib/notes-database";
+import { formatListUpdatedLabel, toLedgerDateLabel } from "./note-display";
 
-export type PrivateNoteListItem = {
-  id: string;
-  title: string;
-  contentHtml: string;
-  noteDate: Date | null;
-  createdAt: Date | null;
-  updatedAt: Date | null;
-  authorName: string | null;
-  searchPreview?: string;
-};
+export { getPrivateNotePreview };
 
-function formatDate(value: Date | null): string {
-  return formatKst(value, { year: "numeric", month: "short", day: "numeric" }, "날짜 정보 없음");
+export type PrivateNoteListItem = NotesDatabaseSource;
+
+export function buildPrivateNoteHref(noteId: string, returnTo: string): string {
+  return `/dashboard/notes/${noteId}?returnTo=${encodeURIComponent(returnTo)}`;
 }
 
-function formatUpdated(value: Date | null): string {
-  return formatKst(
-    value,
-    { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" },
-    "날짜 정보 없음",
+/** 표·목록 보기가 공유하는 빈 상태(States 보드 빈 화면). 의미(메시지)는 호출한 화면이 정한다. */
+export function NotesEmptyState({ message, children }: { message: string; children?: ReactNode }) {
+  return (
+    <div className="flex flex-col items-start gap-3 rounded-lg border border-muted px-6 py-10 md:px-8 md:py-12">
+      <span className="flex size-9 items-center justify-center rounded-touch bg-sidebar text-muted-foreground">
+        <FileText className="size-[18px]" strokeWidth={1.6} aria-hidden="true" />
+      </span>
+      <p className="max-w-[300px] text-body text-secondary-foreground">{message}</p>
+      {children}
+    </div>
   );
 }
 
-/** 노트 HTML은 목록에서 렌더하지 않고 안전한 짧은 평문 preview로만 표시한다. */
-export function getPrivateNotePreview(contentHtml: string): string {
-  return createFormDraftRecoveryPreview({ contentHtml }).body ?? "본문 미리보기 없음";
+/**
+ * 목록 보기(MobileNotes 보드): 노트마다 행 전체가 하나의 링크다. 제목·날짜, 미리보기, 작성자·수정 줄.
+ * `now`(서버 기준 시각)를 주면 하루 안 수정은 상대 시각으로, 같은 해 날짜는 월·일로 줄여 보인다.
+ */
+export function NoteRowList({ rows, returnTo, now }: { rows: NotesDatabaseRow[]; returnTo: string; now?: number }) {
+  return (
+    <ul aria-label="노트 목록" className="flex flex-col border-t border-border">
+      {rows.map((row) => (
+        <li key={row.id}>
+          <Link
+            href={buildPrivateNoteHref(row.id, returnTo)}
+            className="flex flex-col gap-0.5 border-b border-muted py-[11px] text-foreground transition-colors hover:bg-sidebar focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring md:px-2"
+          >
+            <span className="flex items-baseline justify-between gap-3">
+              <h2 className="min-w-0 truncate text-md font-medium">{row.title}</h2>
+              <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                {toLedgerDateLabel(row.dateLabel, { now, omitSameYear: true })}
+              </span>
+            </span>
+            <span className="truncate text-ui text-secondary-foreground">{row.preview}</span>
+            <span className="text-xs text-muted-foreground">
+              {row.authorName ?? "작성자 미상"} · {formatListUpdatedLabel(row, now)} 수정
+            </span>
+          </Link>
+        </li>
+      ))}
+    </ul>
+  );
 }
 
+/** 서버 화면(학생 상세 노트 탭 등)에서 쓰는 단순 목록. */
 export function PrivateNoteList({
   notes,
   returnTo,
   emptyMessage = "아직 작성된 노트가 없습니다.",
+  now,
 }: {
   notes: PrivateNoteListItem[];
   returnTo: string;
   emptyMessage?: string;
+  /** 서버 기준 시각. 주면 최근 수정을 상대 시각으로 보인다. */
+  now?: number;
 }) {
-  if (notes.length === 0) {
-    return (
-      <div className="rounded-xl border border-dashed border-border bg-muted/10 p-12 text-center text-sm text-muted-foreground">
-        {emptyMessage}
-      </div>
-    );
-  }
-
-  return (
-    <ul className="space-y-3" aria-label="노트 목록">
-      {notes.map((note) => {
-        const noteDate = note.noteDate ?? note.createdAt;
-        const status = note.updatedAt?.getTime() !== note.createdAt?.getTime() ? "수정됨" : "작성됨";
-        return (
-          <li key={note.id}>
-            <article className="rounded-xl border border-border bg-card p-5 shadow-sm transition-colors hover:bg-accent/5">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0 space-y-2">
-                  <h2 className="truncate text-base font-semibold text-foreground">{note.title}</h2>
-                  <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                    <span className="inline-flex items-center gap-1"><CalendarDays className="size-3.5" aria-hidden="true" />노트 날짜 {formatDate(noteDate)}</span>
-                    <span className="inline-flex items-center gap-1"><UserRound className="size-3.5" aria-hidden="true" />{note.authorName ?? "작성자 미상"}</span>
-                    <span>상태 · {status}</span>
-                    <span>최근 변경 {formatUpdated(note.updatedAt ?? note.createdAt)}</span>
-                  </div>
-                </div>
-                <Link
-                  href={`/dashboard/notes/${note.id}?returnTo=${encodeURIComponent(returnTo)}`}
-                  className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-border px-3 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                >
-                  <BookOpen className="size-3.5" aria-hidden="true" />
-                  노트 열기
-                </Link>
-              </div>
-              <p className="mt-3 line-clamp-2 text-sm text-muted-foreground">{note.searchPreview ?? getPrivateNotePreview(note.contentHtml)}</p>
-            </article>
-          </li>
-        );
-      })}
-    </ul>
-  );
+  return notes.length === 0
+    ? <NotesEmptyState message={emptyMessage} />
+    : <NoteRowList rows={toNotesDatabaseRows(notes)} returnTo={returnTo} now={now} />;
 }

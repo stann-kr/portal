@@ -408,6 +408,14 @@ function accountDeletionStatements(input: {
                       AND thread.student_id = ?
                   )
                 )
+                OR (
+                  resource_type = 'PRIVATE_NOTE'
+                  AND EXISTS (
+                    SELECT 1 FROM private_notes AS note
+                    WHERE note.id = media_objects.resource_id
+                      AND (note.student_id = ? OR note.author_id = ?)
+                  )
+                )
               )
           )
       `,
@@ -431,6 +439,8 @@ function accountDeletionStatements(input: {
         input.initiatingTokenMode,
         input.initiatingCleanupTokenDigest,
         now,
+        actorId,
+        actorId,
         actorId,
         actorId,
         actorId,
@@ -510,6 +520,14 @@ function accountDeletionStatements(input: {
                 WHERE reply.id = media.resource_id AND thread.student_id = ?
               )
             )
+            OR (
+              media.resource_type = 'PRIVATE_NOTE'
+              AND EXISTS (
+                SELECT 1 FROM private_notes AS note
+                WHERE note.id = media.resource_id
+                  AND (note.student_id = ? OR note.author_id = ?)
+              )
+            )
           )
           AND media.state IN ('PENDING_UPLOAD', 'SEALING', 'READY', 'ATTACHED')
           AND NOT EXISTS (
@@ -526,6 +544,8 @@ function accountDeletionStatements(input: {
         now,
         now,
         now,
+        actorId,
+        actorId,
         actorId,
         actorId,
         actorId,
@@ -561,6 +581,14 @@ function accountDeletionStatements(input: {
                 WHERE reply.id = media.resource_id AND thread.student_id = ?
               )
             )
+            OR (
+              media.resource_type = 'PRIVATE_NOTE'
+              AND EXISTS (
+                SELECT 1 FROM private_notes AS note
+                WHERE note.id = media.resource_id
+                  AND (note.student_id = ? OR note.author_id = ?)
+              )
+            )
           )
           AND media.state IN ('PENDING_UPLOAD', 'SEALING', 'READY', 'ATTACHED')
           AND NOT EXISTS (
@@ -577,6 +605,8 @@ function accountDeletionStatements(input: {
         MEDIA_UPLOAD_STAGING_GRACE_SECONDS,
         now,
         now,
+        actorId,
+        actorId,
         actorId,
         actorId,
         actorId,
@@ -605,10 +635,18 @@ function accountDeletionStatements(input: {
                 WHERE reply.id = media_objects.resource_id AND thread.student_id = ?
               )
             )
+            OR (
+              resource_type = 'PRIVATE_NOTE'
+              AND EXISTS (
+                SELECT 1 FROM private_notes AS note
+                WHERE note.id = media_objects.resource_id
+                  AND (note.student_id = ? OR note.author_id = ?)
+              )
+            )
           )
           AND state IN ('PENDING_UPLOAD', 'SEALING', 'READY', 'ATTACHED')
       `,
-      params: [now, now, actorId, actorId, actorId],
+      params: [now, now, actorId, actorId, actorId, actorId, actorId],
     },
     {
       query: `
@@ -643,10 +681,13 @@ function accountDeletionStatements(input: {
     { query: "DELETE FROM curriculums WHERE student_id = ?", params: [actorId] },
     { query: "DELETE FROM lessons WHERE student_id = ?", params: [actorId] },
     { query: "DELETE FROM assignments WHERE student_id = ?", params: [actorId] },
+    { query: "DELETE FROM assignment_tasks WHERE student_id = ?", params: [actorId] },
+    { query: "DELETE FROM assignment_recurrences WHERE student_id = ?", params: [actorId] },
     { query: "DELETE FROM digging_columns WHERE user_id = ?", params: [actorId] },
     { query: "DELETE FROM digging_tracks WHERE user_id = ?", params: [actorId] },
     { query: "DELETE FROM calendar_events WHERE user_id = ?", params: [actorId] },
     { query: "DELETE FROM external_calendar_subscriptions WHERE student_id = ?", params: [actorId] },
+    { query: "DELETE FROM calendar_mappings WHERE student_id = ?", params: [actorId] },
     {
       query: "DELETE FROM profiles WHERE id = ? AND role = 'student'",
       params: [actorId],

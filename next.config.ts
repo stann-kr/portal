@@ -12,9 +12,6 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   serverExternalPackages: ["better-sqlite3", "bcryptjs"],
-  // ESLint flat config(eslint.config.mjs) 설정 문제로 빌드 시 임시 비활성화
-  // 별도 `npm run lint` 스크립트로 로컬에서 수동 실행
-  eslint: { ignoreDuringBuilds: true },
 };
 
 export default nextConfig;

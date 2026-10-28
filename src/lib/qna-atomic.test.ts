@@ -352,3 +352,64 @@ test("Q&A trash/restore/만료 purge는 답변과 event를 보존한 뒤 tombsto
     1,
   );
 });
+
+test("가이드 구간 질문은 같은 batch에서 위치를 남기고 다른 위치의 재전송을 거부한다", async (context) => {
+  const { sqlite, dbContext } = setupDatabase(context);
+  seedProfile(sqlite, "student-1");
+  sqlite
+    .prepare("INSERT INTO guide_pages (id, title, content_html) VALUES (?, ?, ?)")
+    .run("guide-1", "장비 소개", '<p data-block-id="b1">CDJ</p>');
+  const write = {
+    actor: actor("student-1"),
+    threadId: "guide-thread",
+    replyId: "guide-thread-question",
+    operationId: operationId(9001),
+    title: "CDJ 질문",
+    contentHtml: "<p>질문</p>",
+    attachmentUrl: null,
+    attachmentObjectId: null,
+    guideAnchor: { guidePageId: "guide-1", pageTitle: "장비 소개", blockId: "b1", quote: "CDJ" },
+    now: new Date("2026-01-01T00:00:00.000Z"),
+  };
+
+  const created = await createQnaThreadAtomically(dbContext, write);
+  assert.equal(created.ok, true);
+  assert.deepEqual(
+    sqlite.prepare("SELECT guide_page_id, page_title, anchor_block_id, anchor_quote FROM qna_guide_anchors").all(),
+    [{ guide_page_id: "guide-1", page_title: "장비 소개", anchor_block_id: "b1", anchor_quote: "CDJ" }],
+  );
+
+  const replayed = await createQnaThreadAtomically(dbContext, write);
+  assert.equal(replayed.ok && replayed.replayed, true);
+
+  const moved = await createQnaThreadAtomically(dbContext, {
+    ...write,
+    guideAnchor: { ...write.guideAnchor, blockId: "b2" },
+  });
+  assert.deepEqual(moved.ok ? null : moved.reason, "OPERATION_PAYLOAD_CONFLICT");
+
+  const withoutAnchor = await createQnaThreadAtomically(dbContext, { ...write, guideAnchor: null });
+  assert.deepEqual(withoutAnchor.ok ? null : withoutAnchor.reason, "OPERATION_PAYLOAD_CONFLICT");
+});
+
+test("질문 작성 중 가이드 페이지가 지워져도 질문과 인용은 남는다", async (context) => {
+  const { sqlite, dbContext } = setupDatabase(context);
+  seedProfile(sqlite, "student-1");
+  const created = await createQnaThreadAtomically(dbContext, {
+    actor: actor("student-1"),
+    threadId: "orphan-thread",
+    replyId: "orphan-thread-question",
+    operationId: operationId(9002),
+    title: "지워진 페이지 질문",
+    contentHtml: "<p>질문</p>",
+    attachmentUrl: null,
+    attachmentObjectId: null,
+    guideAnchor: { guidePageId: "deleted-page", pageTitle: "음원 관리", blockId: null, quote: "폴더 정리" },
+    now: new Date("2026-01-01T00:00:00.000Z"),
+  });
+  assert.equal(created.ok, true);
+  assert.deepEqual(
+    sqlite.prepare("SELECT guide_page_id, page_title, anchor_quote FROM qna_guide_anchors").all(),
+    [{ guide_page_id: null, page_title: "음원 관리", anchor_quote: "폴더 정리" }],
+  );
+});

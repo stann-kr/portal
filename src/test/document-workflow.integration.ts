@@ -1064,6 +1064,86 @@ test("노트 휴지통 이동과 복원은 기본 조회를 분리하고 각각 
   assert.equal(head?.deletedAt, null);
 });
 
+test("캘린더 노트 날짜 이동은 수정 권한자만 날짜만 바꾸고 본문을 보존한 새 revision을 남긴다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context);
+  await seedProfile(db, "student-1");
+  await seedProfile(db, "student-2");
+  await seedProfile(db, "admin-1", "admin");
+  const created = await privateNoteActions.createPrivateNote(
+    "student-1",
+    {},
+    createNoteForm(crypto.randomUUID(), "레슨 복습", "<p>보존할 본문</p>", "2026-08-01"),
+  );
+  const noteId = created.note?.id;
+  assert.ok(noteId);
+
+  const moveOperationId = crypto.randomUUID();
+  const moved = await privateNoteActions.movePrivateNoteDate(noteId, "2026-08-05", moveOperationId);
+  assert.equal(moved.ok, true);
+  assert.equal(moved.ok && moved.version, 2);
+  const replayed = await privateNoteActions.movePrivateNoteDate(noteId, "2026-08-05", moveOperationId);
+  assert.deepEqual(replayed, moved, "응답을 잃은 같은 이동을 다시 보내도 같은 결과로 끝난다");
+  const readHead = async () => {
+    const [head] = await db
+      .select({
+        title: privateNotes.title,
+        contentHtml: privateNotes.contentHtml,
+        noteDate: privateNotes.noteDate,
+        version: privateNotes.version,
+      })
+      .from(privateNotes)
+      .where(eq(privateNotes.id, noteId));
+    return head;
+  };
+  assert.deepEqual(await readHead(), {
+    title: "레슨 복습",
+    contentHtml: "<p>보존할 본문</p>",
+    noteDate: new Date("2026-08-05T00:00:00.000Z"),
+    version: 2,
+  });
+  const history = await privateNoteActions.getPrivateNoteRevisions(noteId);
+  assert.equal(history.length, 2);
+  assert.equal(history[0].contentHtml, "<p>보존할 본문</p>");
+
+  const invalid = await privateNoteActions.movePrivateNoteDate(noteId, "2026-02-30", crypto.randomUUID());
+  assert.equal(invalid.ok, false);
+
+  activeSession = createSession("student-2", "student");
+  const otherStudent = await privateNoteActions.movePrivateNoteDate(noteId, "2026-08-09", crypto.randomUUID());
+  assert.equal(otherStudent.ok, false);
+  assert.equal(!otherStudent.ok && otherStudent.conflictKind, "NOT_FOUND_OR_FORBIDDEN");
+
+  activeSession = createSession("admin-1", "admin");
+  const adminNote = await privateNoteActions.createPrivateNote(
+    "student-1",
+    {},
+    createNoteForm(crypto.randomUUID(), "관리자 피드백", "<p>관리자 본문</p>", "2026-08-02"),
+  );
+  assert.ok(adminNote.note?.id);
+  const adminMove = await privateNoteActions.movePrivateNoteDate(noteId, "2026-08-06", crypto.randomUUID());
+  assert.equal(adminMove.ok, true, "관리자는 학생 노트 날짜를 옮길 수 있다");
+
+  activeSession = createSession("student-1", "student");
+  const notAuthor = await privateNoteActions.movePrivateNoteDate(adminNote.note.id, "2026-08-07", crypto.randomUUID());
+  assert.equal(notAuthor.ok, false, "학생은 관리자가 쓴 노트를 옮기지 못한다");
+  assert.equal(!notAuthor.ok && notAuthor.conflictKind, "NOT_FOUND_OR_FORBIDDEN");
+  const sameDay = await privateNoteActions.movePrivateNoteDate(adminNote.note.id, "2026-08-02", crypto.randomUUID());
+  assert.equal(!sameDay.ok && sameDay.conflictKind, "NOT_FOUND_OR_FORBIDDEN", "이미 같은 날짜여도 권한 없는 이동은 성공으로 돌려주지 않는다");
+
+  const trashed = await privateNoteActions.trashPrivateNote(noteId, crypto.randomUUID(), 3);
+  assert.equal(trashed.success, true);
+  const afterTrash = await privateNoteActions.movePrivateNoteDate(noteId, "2026-08-08", crypto.randomUUID());
+  assert.equal(!afterTrash.ok && afterTrash.conflictKind, "TRASHED");
+
+  const head = await readHead();
+  assert.equal(head?.noteDate?.toISOString(), "2026-08-06T00:00:00.000Z");
+  const [adminHead] = await db
+    .select({ noteDate: privateNotes.noteDate, version: privateNotes.version })
+    .from(privateNotes)
+    .where(eq(privateNotes.id, adminNote.note.id));
+  assert.deepEqual(adminHead, { noteDate: new Date("2026-08-02T00:00:00.000Z"), version: 1 });
+});
+
 test("과거 revision 복원은 기존 이력을 바꾸지 않고 새 head revision을 추가한다", { concurrency: false }, async (context) => {
   const { db } = await setupDatabase(context);
   await seedProfile(db, "student-1");
