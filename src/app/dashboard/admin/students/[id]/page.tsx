@@ -104,7 +104,7 @@ async function AssignmentsTabContent({ studentId, referenceTime }: { studentId: 
         />
         {summaries.length === 0 ? (
           <p className="py-6 text-body text-muted-foreground">
-            아직 제출이 없습니다. 학생이 받은 과제를 내거나 과제 화면에서 믹스셋 링크를 제출하면 이곳에 표시됩니다.
+            아직 제출이 없습니다. 학생이 받은 과제를 내거나 과제 화면에서 링크·글을 자유롭게 제출하면 이곳에 표시됩니다.
           </p>
         ) : (
           <ul>

@@ -54,7 +54,7 @@ function AssignmentDeleteConfirm({
       }}
     >
       <p className="text-body text-foreground">
-        이 믹스셋 제출을 삭제할까요? Stann의 피드백 대기 목록에서도 빠지며 되돌릴 수 없습니다.
+        이 제출을 삭제할까요? Stann의 피드백 대기 목록에서도 빠지며 되돌릴 수 없습니다.
       </p>
       {error ? <p role="alert" className="text-ui text-destructive">{error}</p> : null}
       <div className="flex gap-2">
