@@ -12,6 +12,8 @@ let activeSession = createSession("student-1", "student");
 let playlistActions: typeof import("@/lib/actions/digging-playlists");
 let soundCloudTitleCalls: string[] = [];
 let soundCloudTitle: string | null = "Warmup Picks";
+// oEmbed 요청 도중 다른 탭이 행을 지우거나 추가하는 경합을 흉내 낸다.
+let duringSoundCloudTitle: (() => Promise<void>) | null = null;
 
 function createSession(id: string, role: "admin" | "student"): AuthSession {
   return {
@@ -40,6 +42,9 @@ mock.module("@/lib/digging-link-metadata", {
   namedExports: {
     fetchSoundCloudPlaylistTitle: async (url: string) => {
       soundCloudTitleCalls.push(url);
+      const hook = duringSoundCloudTitle;
+      duringSoundCloudTitle = null;
+      if (hook) await hook();
       return soundCloudTitle;
     },
     fetchDiggingLinkMetadata: async () => ({}),
@@ -66,6 +71,7 @@ async function setupDatabase(context: TestContext, session: AuthSession): Promis
   activeSession = session;
   soundCloudTitleCalls = [];
   soundCloudTitle = "Warmup Picks";
+  duringSoundCloudTitle = null;
   context.after(async () => {
     activeDb = null;
     await isolated.dispose();
@@ -165,6 +171,11 @@ test("학생은 자기 플레이리스트만 고치고 지우며 다른 학생 �
 
   activeSession = createSession("student-1", "student");
   assert.equal((await playlistActions.updateDiggingPlaylist(others.playlist.id, { title: "탈취", note: null })).ok, false);
+  assert.equal((await playlistActions.updateDiggingPlaylist(others.playlist.id, {
+    url: "https://soundcloud.com/stann/sets/stolen",
+    title: null,
+    note: null,
+  })).ok, false);
   assert.equal((await playlistActions.deleteDiggingPlaylist(others.playlist.id)).ok, false);
   assert.deepEqual(
     (await db.select().from(diggingPlaylists).where(eq(diggingPlaylists.id, others.playlist.id)))[0],
@@ -205,4 +216,147 @@ test("관리자는 학생 플레이리스트를 읽기만 하고 등록·수정�
   assert.deepEqual(await readPlaylists(db), before);
   // 관리자 계정 id로는 학생 대상 목록이 아니므로 읽을 수 없다.
   await assert.rejects(playlistActions.getDiggingPlaylists("admin-1"));
+});
+
+test("링크를 바꾸면 provider를 다시 정하고, SoundCloud로 바꾸며 제목을 비우면 oEmbed 제목을 채운다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("student-1", "student"));
+  const created = await playlistActions.createDiggingPlaylist({ url: "https://www.beatport.com/playlists/share/1", note: "메모" });
+  assert.ok(created.ok);
+  assert.deepEqual(soundCloudTitleCalls, []);
+
+  const toSoundCloud = await playlistActions.updateDiggingPlaylist(created.playlist.id, {
+    url: "https://m.soundcloud.com/stann/sets/warmup?si=x",
+    title: " ",
+    note: "메모",
+  });
+  assert.ok(toSoundCloud.ok, JSON.stringify(toSoundCloud));
+  assert.equal(toSoundCloud.playlist.provider, "soundcloud");
+  assert.equal(toSoundCloud.playlist.url, "https://soundcloud.com/stann/sets/warmup");
+  assert.equal(toSoundCloud.playlist.title, "Warmup Picks");
+  assert.deepEqual(soundCloudTitleCalls, ["https://soundcloud.com/stann/sets/warmup"]);
+  const stored = (await db.select().from(diggingPlaylists).where(eq(diggingPlaylists.id, created.playlist.id)))[0];
+  assert.equal(stored?.provider, "soundcloud");
+  assert.equal(stored?.url, "https://soundcloud.com/stann/sets/warmup");
+  assert.equal(stored?.title, "Warmup Picks");
+  assert.equal(stored?.createdAt.getTime(), created.playlist.createdAt.getTime());
+
+  // 링크가 그대로면 제목을 비워도 외부 요청을 하지 않는다.
+  const sameUrl = await playlistActions.updateDiggingPlaylist(created.playlist.id, {
+    url: "https://soundcloud.com/stann/sets/warmup",
+    title: null,
+    note: null,
+  });
+  assert.ok(sameUrl.ok && sameUrl.playlist.title === null);
+  assert.equal(soundCloudTitleCalls.length, 1);
+
+  // Beatport로 바꾸면 요청하지 않고 기본 이름을 쓴다.
+  const toBeatport = await playlistActions.updateDiggingPlaylist(created.playlist.id, {
+    url: "https://beatport.com/playlists/share/77/",
+    title: null,
+    note: null,
+  });
+  assert.ok(toBeatport.ok);
+  assert.equal(toBeatport.playlist.provider, "beatport");
+  assert.equal(toBeatport.playlist.url, "https://www.beatport.com/playlists/share/77");
+  assert.equal(toBeatport.playlist.title, null);
+  assert.equal(soundCloudTitleCalls.length, 1);
+});
+
+test("링크 수정은 중복·잘못된 링크를 거부하고 행을 바꾸지 않는다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("student-1", "student"));
+  const first = await playlistActions.createDiggingPlaylist({ url: "https://www.beatport.com/playlists/share/1" });
+  const second = await playlistActions.createDiggingPlaylist({ url: "https://www.beatport.com/playlists/share/2", title: "둘째" });
+  assert.ok(first.ok && second.ok);
+  const before = await readPlaylists(db);
+
+  assert.deepEqual(
+    await playlistActions.updateDiggingPlaylist(second.playlist.id, { url: "https://beatport.com/playlists/share/1?x=1", title: "둘째" }),
+    { ok: false, error: "이미 등록한 플레이리스트입니다." },
+  );
+  for (const url of [
+    "",
+    "https://soundcloud.com/stann/some-track",
+    "https://www.beatport.com:443/playlists/share/3",
+    "https://soundcloud.com:443/stann/sets/warmup",
+    "http://www.beatport.com/playlists/share/3",
+  ]) {
+    const result = await playlistActions.updateDiggingPlaylist(second.playlist.id, { url, title: "둘째" });
+    assert.equal(result.ok, false, url);
+  }
+
+  // 수정 도중 다른 탭이 같은 링크를 등록하면 unique index 위반도 같은 중복 안내로 돌려준다.
+  duringSoundCloudTitle = async () => {
+    await db.insert(diggingPlaylists).values({
+      id: "race-dup",
+      userId: "student-1",
+      provider: "soundcloud",
+      url: "https://soundcloud.com/stann/sets/race",
+    });
+  };
+  assert.deepEqual(
+    await playlistActions.updateDiggingPlaylist(second.playlist.id, { url: "https://soundcloud.com/stann/sets/race", title: null }),
+    { ok: false, error: "이미 등록한 플레이리스트입니다." },
+  );
+  assert.deepEqual((await readPlaylists(db)).filter((row) => row.id !== "race-dup"), before);
+});
+
+test("지워진 행을 고치면 성공으로 보고하지 않고 찾을 수 없음 안내를 돌려준다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("student-1", "student"));
+  const created = await playlistActions.createDiggingPlaylist({ url: "https://www.beatport.com/playlists/share/1" });
+  assert.ok(created.ok);
+  const notFound = { ok: false, error: "플레이리스트를 찾을 수 없습니다. 새로고침 후 다시 시도해 주세요." };
+
+  // 조회 뒤 UPDATE 전에 다른 탭이 지운 경합: oEmbed 요청 중 행을 지운다.
+  duringSoundCloudTitle = async () => {
+    await db.delete(diggingPlaylists).where(eq(diggingPlaylists.id, created.playlist.id));
+  };
+  assert.deepEqual(
+    await playlistActions.updateDiggingPlaylist(created.playlist.id, { url: "https://soundcloud.com/stann/sets/warmup", title: null }),
+    notFound,
+  );
+  assert.deepEqual(await readPlaylists(db), []);
+  assert.deepEqual(await playlistActions.updateDiggingPlaylist(created.playlist.id, { title: "다시" }), notFound);
+});
+
+test("100개 상한은 INSERT가 다시 확인해 동시 등록에도 넘지 않는다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("student-1", "student"));
+  const limitError = { ok: false, error: "플레이리스트는 최대 100개까지 등록할 수 있습니다." };
+  const seeds = Array.from({ length: 99 }, (_, index) => ({
+    id: `seed-${String(index).padStart(3, "0")}`,
+    userId: "student-1",
+    provider: "beatport" as const,
+    url: `https://www.beatport.com/playlists/share/${1000 + index}`,
+  }));
+  // D1은 한 문장의 bind 변수 수를 제한하므로 나눠 넣는다.
+  for (let index = 0; index < seeds.length; index += 10) {
+    await db.insert(diggingPlaylists).values(seeds.slice(index, index + 10));
+  }
+  // 다른 학생의 행은 상한에 세지 않는다.
+  await db.insert(diggingPlaylists).values({
+    id: "other-1",
+    userId: "student-2",
+    provider: "beatport",
+    url: "https://www.beatport.com/playlists/share/1",
+  });
+
+  // 개수 선검사(99개)를 지난 뒤 oEmbed 요청 중 다른 탭이 100번째를 등록한 경합.
+  duringSoundCloudTitle = async () => {
+    await db.insert(diggingPlaylists).values({
+      id: "race-100",
+      userId: "student-1",
+      provider: "beatport",
+      url: "https://www.beatport.com/playlists/share/9999",
+    });
+  };
+  assert.deepEqual(await playlistActions.createDiggingPlaylist({ url: "https://soundcloud.com/stann/sets/late" }), limitError);
+  assert.equal(soundCloudTitleCalls.length, 1);
+  const owned = (await readPlaylists(db)).filter((row) => row.userId === "student-1");
+  assert.equal(owned.length, 100);
+  assert.ok(!owned.some((row) => row.url === "https://soundcloud.com/stann/sets/late"));
+
+  // 100개가 찬 뒤에는 선검사가 바로 막는다.
+  assert.deepEqual(await playlistActions.createDiggingPlaylist({ url: "https://www.beatport.com/playlists/share/5" }), limitError);
+  await db.delete(diggingPlaylists).where(eq(diggingPlaylists.id, "race-100"));
+  const fits = await playlistActions.createDiggingPlaylist({ url: "https://www.beatport.com/playlists/share/5" });
+  assert.ok(fits.ok, JSON.stringify(fits));
 });

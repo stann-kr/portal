@@ -264,6 +264,7 @@ const BEATPORT_SHARE_PATH = /^\/playlists\/share\/(\d{1,20})\/?$/u;
 // permalink는 영문·숫자·_·- 만 쓴다. 비공개 세트는 마지막에 `s-<토큰>` 세그먼트가 붙는다.
 const SOUNDCLOUD_SET_PATH = /^\/([A-Za-z0-9_-]{1,100})\/sets\/([A-Za-z0-9_-]{1,200})(\/s-[A-Za-z0-9]{1,64})?\/?$/u;
 
+const PLAYLIST_HTTPS_MESSAGE = "https로 시작하는 공유 링크를 그대로 붙여 넣어 주세요.";
 const PLAYLIST_UNSUPPORTED_MESSAGE =
   "Beatport 플레이리스트 공유 링크 또는 SoundCloud 플레이리스트 링크만 등록할 수 있습니다.";
 const SOUNDCLOUD_SHORT_LINK_MESSAGE =
@@ -283,6 +284,14 @@ export function normalizeDiggingPlaylistUrl(raw: unknown): DiggingPlaylistUrlRes
   if (value.length > DIGGING_PLAYLIST_URL_MAX_LENGTH) {
     return { ok: false, error: "링크가 너무 깁니다. 공유 링크를 다시 복사해 주세요." };
   }
+  // URL 파서가 조용히 지우는 제어 문자(탭·줄바꿈 등)가 섞이면 아래 원본 검사를 우회할 수 있으므로 거부한다.
+  if ([...value].some((character) => character.charCodeAt(0) < 0x20 || character.charCodeAt(0) === 0x7f)) {
+    return { ok: false, error: PLAYLIST_HTTPS_MESSAGE };
+  }
+  // `new URL()`은 기본 포트(:443)를 지워 버리므로, 파싱 전에 원본 authority에 적힌 포트를 먼저 거부한다.
+  const authority = value.match(/^[A-Za-z][A-Za-z0-9+.-]*:[/\\]*([^/?#\\]*)/u)?.[1] ?? "";
+  const hostPort = authority.slice(authority.lastIndexOf("@") + 1);
+  if (hostPort.includes(":")) return { ok: false, error: PLAYLIST_HTTPS_MESSAGE };
   let url: URL;
   try {
     url = new URL(value);
@@ -290,7 +299,7 @@ export function normalizeDiggingPlaylistUrl(raw: unknown): DiggingPlaylistUrlRes
     return { ok: false, error: PLAYLIST_UNSUPPORTED_MESSAGE };
   }
   if (url.protocol !== "https:" || url.username || url.password || url.port) {
-    return { ok: false, error: "https로 시작하는 공유 링크를 그대로 붙여 넣어 주세요." };
+    return { ok: false, error: PLAYLIST_HTTPS_MESSAGE };
   }
   const host = url.hostname.toLowerCase();
 

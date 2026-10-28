@@ -26,7 +26,7 @@ type SoundCloudPlayerProps = {
   url: string;
   seekRequest?: MediaSeekRequest;
   onPositionReaderChange?: (reader: PlaybackPositionReader | null) => void;
-  /** iframe 이름. 기본은 과제 믹스셋 플레이어. */
+  /** iframe 이름. 기본은 ‘SoundCloud 플레이어’(과제·커뮤니티 트랙 공용). */
   title?: string;
   /** playlist는 세트의 곡 목록이 보이도록 위젯을 높게 연다. */
   variant?: "track" | "playlist";
@@ -39,7 +39,7 @@ function readSoundCloudApi(): SoundCloudApi | undefined {
 // widget이 응답하지 않으면 피드백 입력을 막지 않도록 짧게 포기한다.
 const POSITION_READ_TIMEOUT_MS = 1_500;
 
-function SoundCloudEmbed({ url, seekRequest, onPositionReaderChange, title = "SoundCloud 믹스셋 플레이어", variant = "track", onRetry }: SoundCloudPlayerProps & { onRetry: () => void }) {
+function SoundCloudEmbed({ url, seekRequest, onPositionReaderChange, title = "SoundCloud 플레이어", variant = "track", onRetry }: SoundCloudPlayerProps & { onRetry: () => void }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const widgetRef = useRef<SoundCloudWidget | null>(null);
   const readyRef = useRef(false);

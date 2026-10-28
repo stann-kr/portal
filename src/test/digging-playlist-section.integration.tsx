@@ -20,7 +20,7 @@ mock.module("@/lib/actions/digging-playlists", {
       createCalls.push(input);
       return createImpl(input);
     },
-    updateDiggingPlaylist: async (id: string, input: { title: string | null; note: string | null }) => {
+    updateDiggingPlaylist: async (id: string, input: { url?: string; title: string | null; note: string | null }) => {
       updateCalls.push([id, input]);
       return { ok: true, playlist: { ...playlists()[0], ...input, id } };
     },
@@ -139,6 +139,15 @@ async function fill(labelText: string, value: string) {
   });
 }
 
+async function pressEscape() {
+  const target = browser.document.activeElement;
+  assert.ok(target);
+  await act(async () => {
+    target.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+  });
+  await settle();
+}
+
 async function submit(form: unknown) {
   assert.ok(form instanceof browser.HTMLFormElement);
   await act(async () => {
@@ -216,13 +225,19 @@ test("서버가 돌려준 중복 오류를 폼에 보이고, 수정·삭제 확�
   await submit(container.querySelector('form[aria-label="플레이리스트 추가"]')!);
   assert.equal(container.querySelector('[role="alert"]')?.textContent, "이미 등록한 플레이리스트입니다.");
   await press("취소");
+  await press("저장하지 않고 닫기");
 
   await press("‘Warmup’ 수정");
   const editForm = container.querySelector('form[aria-label="‘Warmup’ 수정"]');
   assert.ok(editForm);
+  assert.equal(editForm.hasAttribute("novalidate"), true);
+  // 링크 칸은 현재 링크로 시작하고 첫 초점을 받는다. 링크 변경을 막는 안내는 없다.
+  assert.equal(field("플레이리스트 링크").value, "https://soundcloud.com/stann/sets/warmup");
+  assert.equal(browser.document.activeElement?.id, field("플레이리스트 링크").id);
+  assert.doesNotMatch(container.textContent ?? "", /삭제한 뒤 다시 추가/u);
   await fill("제목", " Warmup v2 ");
   await submit(editForm);
-  assert.deepEqual(updateCalls, [["sc-1", { title: "Warmup v2", note: "오프닝\n후보" }]]);
+  assert.deepEqual(updateCalls, [["sc-1", { url: "https://soundcloud.com/stann/sets/warmup", title: "Warmup v2", note: "오프닝\n후보" }]]);
   assert.ok(findButton("‘Warmup v2’ 수정"));
 
   await press("‘Beatport 플레이리스트’ 삭제");
@@ -232,4 +247,61 @@ test("서버가 돌려준 중복 오류를 폼에 보이고, 수정·삭제 확�
   assert.deepEqual(deleteCalls, ["bp-1"]);
   assert.equal(container.querySelector('a[href="https://www.beatport.com/playlists/share/11018932"]'), null);
   assert.equal(container.querySelector("h2")?.textContent, "플레이리스트1");
+  // 지운 행의 버튼 대신 추가 버튼으로 초점이 간다.
+  assert.equal(browser.document.activeElement?.textContent?.trim(), "플레이리스트 추가");
+});
+
+test("수정 폼에서 링크를 바꾸면 provider 안내가 바뀌고, 잘못된 링크는 서버 요청 없이 칸에 안내한다", { concurrency: false }, async (context) => {
+  const container = await render(context, <PlaylistSection initialPlaylists={playlists()} />);
+  await press("‘Beatport 플레이리스트’ 수정");
+  const editForm = container.querySelector('form[aria-label="‘Beatport 플레이리스트’ 수정"]');
+  assert.ok(editForm);
+
+  await fill("플레이리스트 링크", "https://soundcloud.com:443/stann/sets/peak");
+  await submit(editForm);
+  assert.equal(updateCalls.length, 0);
+  assert.equal(field("플레이리스트 링크").getAttribute("aria-invalid"), "true");
+  assert.match(container.textContent ?? "", /https로 시작하는 공유 링크/u);
+
+  await fill("플레이리스트 링크", "https://m.soundcloud.com/stann/sets/peak?si=1");
+  assert.match(editForm.textContent ?? "", /SoundCloud/u);
+  assert.match(container.textContent ?? "", /비워 두면 SoundCloud에서 제목을 가져옵니다/u);
+  await submit(editForm);
+  assert.deepEqual(updateCalls, [["bp-1", { url: "https://soundcloud.com/stann/sets/peak", title: null, note: null }]]);
+});
+
+test("바뀐 내용이 있는 폼은 Esc·취소에 버림 확인을 거치고, 바뀐 내용이 없으면 바로 닫는다", { concurrency: false }, async (context) => {
+  const container = await render(context, <PlaylistSection initialPlaylists={playlists()} />);
+
+  await press("플레이리스트 추가");
+  assert.equal(container.querySelector('form[aria-label="플레이리스트 추가"]')?.hasAttribute("novalidate"), true);
+  await pressEscape();
+  assert.equal(container.querySelector('form[aria-label="플레이리스트 추가"]'), null, "빈 추가 폼은 Esc로 바로 닫힌다");
+
+  await press("플레이리스트 추가");
+  await fill("메모", "적던 메모");
+  field("메모").focus();
+  await pressEscape();
+  assert.ok(container.querySelector('form[aria-label="플레이리스트 추가"]'), "입력이 있으면 Esc로 닫지 않는다");
+  assert.match(container.textContent ?? "", /작성 중인 내용이 있습니다/u);
+  assert.equal(browser.document.activeElement?.textContent?.trim(), "취소");
+  // 확인의 취소(초점 위치)는 확인만 닫고 내용을 남긴다.
+  await act(async () => { (browser.document.activeElement as unknown as HTMLButtonElement).click(); });
+  await settle();
+  assert.doesNotMatch(container.textContent ?? "", /작성 중인 내용이 있습니다/u);
+  assert.equal(field("메모").value, "적던 메모");
+  await press("취소");
+  await press("저장하지 않고 닫기");
+  assert.equal(container.querySelector('form[aria-label="플레이리스트 추가"]'), null);
+
+  await press("‘Warmup’ 수정");
+  await press("취소");
+  assert.equal(container.querySelector('form[aria-label="‘Warmup’ 수정"]'), null, "바뀐 내용이 없으면 바로 닫는다");
+  await press("‘Warmup’ 수정");
+  await fill("플레이리스트 링크", "https://www.beatport.com/playlists/share/5");
+  await pressEscape();
+  assert.ok(container.querySelector('form[aria-label="‘Warmup’ 수정"]'));
+  await press("저장하지 않고 닫기");
+  assert.equal(container.querySelector('form[aria-label="‘Warmup’ 수정"]'), null);
+  assert.equal(updateCalls.length, 0);
 });

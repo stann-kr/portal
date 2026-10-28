@@ -113,6 +113,7 @@ export function FreeSubmissionForm({
   return (
     <form
       action={action}
+      noValidate
       aria-labelledby={headingId}
       className={cn("flex flex-col gap-3", className)}
       onBlur={draft.flush}

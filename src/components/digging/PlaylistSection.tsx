@@ -3,14 +3,15 @@
  * @description 디깅 보드 위 플레이리스트 목록(Beatport 공유·SoundCloud 세트 링크 카드).
  * - SoundCloud: "재생"으로 페이지 안 SoundCloud 위젯을 연다(한 번에 하나).
  * - Beatport: 외부 요청 없이 링크만 저장하고, 누르면 Beatport를 새 탭으로 연다.
- * - 학생: 추가·제목/메모 수정·삭제(취소 우선 확인). readonly(관리자 보기)는 목록과 재생만.
+ * - 학생: 추가·링크/제목/메모 수정·삭제(취소 우선 확인). readonly(관리자 보기)는 목록과 재생만.
+ * - 추가·수정 폼은 바뀐 내용이 있으면 Esc·취소에 버림 확인을 두고, 새로고침·탭 닫기는 브라우저 확인으로 막는다.
  */
 "use client";
 
 import { useEffect, useId, useRef, useState, useTransition } from "react";
 import { ExternalLink, Pencil, Play, Plus, Square, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { ConfirmPanel, useConfirmAction } from "@/components/ui/confirm-action";
+import { ConfirmPanel, useConfirmAction, type ConfirmActionState } from "@/components/ui/confirm-action";
 import { Input } from "@/components/ui/input";
 import { SectionHeader } from "@/components/ui/section-header";
 import { SoundCloudPlayer } from "@/components/player/SoundCloudPlayer";
@@ -63,6 +64,7 @@ export function PlaylistSection({ initialPlaylists, readonly = false }: Playlist
   const [isDeleting, startDelete] = useTransition();
   const deleteConfirm = useConfirmAction<string>();
   const addButtonRef = useRef<HTMLButtonElement>(null);
+  const sectionRef = useRef<HTMLElement>(null);
 
   useBusyNavigationGuard(isDeleting);
 
@@ -87,6 +89,8 @@ export function PlaylistSection({ initialPlaylists, readonly = false }: Playlist
         }
         setPlaylists((current) => current.filter((item) => item.id !== playlist.id));
         if (playingId === playlist.id) setPlayingId(null);
+        // 지운 행의 버튼이 사라져 초점이 body로 떨어지지 않게 추가 버튼(폼이 열려 있으면 섹션)으로 옮긴다.
+        requestAnimationFrame(() => (addButtonRef.current ?? sectionRef.current)?.focus());
       } catch {
         setMutationError("플레이리스트를 삭제하지 못했습니다. 다시 시도해 주세요.");
       }
@@ -94,7 +98,7 @@ export function PlaylistSection({ initialPlaylists, readonly = false }: Playlist
   };
 
   return (
-    <section aria-labelledby={headingId} className="flex flex-col gap-3">
+    <section ref={sectionRef} tabIndex={-1} aria-labelledby={headingId} className="flex flex-col gap-3 outline-none">
       <SectionHeader
         title="플레이리스트"
         titleId={headingId}
@@ -263,9 +267,17 @@ function PlaylistCreateForm({
   const [formError, setFormError] = useState("");
   const [isPending, startTransition] = useTransition();
   const urlRef = useRef<HTMLInputElement>(null);
+  const discardConfirm = useConfirmAction();
+  const dirty = url !== "" || title !== "" || note !== "";
   useBusyNavigationGuard(isPending);
+  useUnsavedUnloadGuard(dirty && !isPending);
 
   useEffect(() => { urlRef.current?.focus(); }, []);
+
+  const requestClose = (trigger: HTMLElement | null) => {
+    if (dirty) discardConfirm.request(trigger);
+    else onCancel();
+  };
 
   const detected = normalizeDiggingPlaylistUrl(url);
   const titleHint = detected.ok && detected.provider === "soundcloud"
@@ -308,12 +320,13 @@ function PlaylistCreateForm({
   return (
     <form
       onSubmit={submit}
+      noValidate
       aria-busy={isPending}
       aria-label="플레이리스트 추가"
       onKeyDown={(event) => {
         if (event.key === "Escape" && !isPending) {
           event.preventDefault();
-          onCancel();
+          requestClose(event.target instanceof HTMLElement ? event.target : null);
         }
       }}
       className="flex flex-col gap-4 rounded-lg border border-border px-4 py-4 md:px-5"
@@ -367,8 +380,9 @@ function PlaylistCreateForm({
           className={TEXTAREA_CLASS}
         />
       </div>
+      {discardConfirm.isOpen ? <DiscardConfirmPanel confirm={discardConfirm} onConfirm={onCancel} /> : null}
       <div className="flex flex-wrap justify-end gap-2">
-        <Button type="button" variant="outline" onClick={onCancel} disabled={isPending} className="h-11 md:h-8">
+        <Button type="button" variant="outline" onClick={(event) => requestClose(event.currentTarget)} disabled={isPending} className="h-11 md:h-8">
           취소
         </Button>
         <Button type="submit" pending={isPending} className="h-11 md:h-8">
@@ -389,28 +403,59 @@ function PlaylistEditForm({
   onCancel: () => void;
 }) {
   const formId = useId();
-  const [title, setTitle] = useState(playlist.title ?? "");
-  const [note, setNote] = useState(playlist.note ?? "");
+  const initialTitle = playlist.title ?? "";
+  const initialNote = playlist.note ?? "";
+  const [url, setUrl] = useState(playlist.url);
+  const [title, setTitle] = useState(initialTitle);
+  const [note, setNote] = useState(initialNote);
+  const [urlError, setUrlError] = useState("");
   const [formError, setFormError] = useState("");
   const [isPending, startTransition] = useTransition();
-  const titleRef = useRef<HTMLInputElement>(null);
+  const urlRef = useRef<HTMLInputElement>(null);
+  const discardConfirm = useConfirmAction();
+  const dirty = url !== playlist.url || title !== initialTitle || note !== initialNote;
   useBusyNavigationGuard(isPending);
+  useUnsavedUnloadGuard(dirty && !isPending);
 
-  useEffect(() => { titleRef.current?.focus(); }, []);
+  useEffect(() => { urlRef.current?.focus(); }, []);
+
+  const requestClose = (trigger: HTMLElement | null) => {
+    if (dirty) discardConfirm.request(trigger);
+    else onCancel();
+  };
+
+  const detected = normalizeDiggingPlaylistUrl(url);
+  const provider = detected.ok ? detected.provider : playlist.provider;
+  const defaultTitle = diggingPlaylistDisplayTitle({ provider, title: null });
+  const urlChanged = detected.ok && detected.url !== playlist.url;
+  const titleHint = urlChanged && provider === "soundcloud"
+    ? "비워 두면 SoundCloud에서 제목을 가져옵니다."
+    : `비워 두면 ‘${defaultTitle}’로 표시합니다.`;
 
   const submit = (event: React.FormEvent) => {
     event.preventDefault();
     if (isPending) return;
+    setFormError("");
+    const normalized = normalizeDiggingPlaylistUrl(url);
+    if (!normalized.ok) {
+      setUrlError(normalized.error);
+      urlRef.current?.focus();
+      return;
+    }
     const parsedTitle = parseDiggingPlaylistTitle(title);
     const parsedNote = parseDiggingPlaylistNote(note);
     if (!parsedTitle.ok || !parsedNote.ok) {
       setFormError(!parsedTitle.ok ? parsedTitle.error : !parsedNote.ok ? parsedNote.error : "");
       return;
     }
-    setFormError("");
+    setUrlError("");
     startTransition(async () => {
       try {
-        const result = await updateDiggingPlaylist(playlist.id, { title: parsedTitle.value, note: parsedNote.value });
+        const result = await updateDiggingPlaylist(playlist.id, {
+          url: normalized.url,
+          title: parsedTitle.value,
+          note: parsedNote.value,
+        });
         if (!result.ok) {
           setFormError(result.error);
           return;
@@ -425,35 +470,54 @@ function PlaylistEditForm({
   return (
     <form
       onSubmit={submit}
+      noValidate
       aria-busy={isPending}
       aria-label={`‘${diggingPlaylistDisplayTitle(playlist)}’ 수정`}
       onKeyDown={(event) => {
         if (event.key === "Escape" && !isPending) {
           event.preventDefault();
-          onCancel();
+          requestClose(event.target instanceof HTMLElement ? event.target : null);
         }
       }}
       className="flex flex-col gap-4"
     >
-      <p className="break-all font-mono text-xs text-muted-foreground">
-        {PROVIDER_LABEL[playlist.provider]} · {playlist.url}
-      </p>
+      <p className="font-mono text-xs text-muted-foreground">{PROVIDER_LABEL[provider]}</p>
       {formError ? (
         <p role="alert" className="rounded-md bg-destructive-muted px-3 py-2 text-ui text-destructive">{formError}</p>
       ) : null}
       <div className="flex flex-col gap-1.5">
+        <label htmlFor={`${formId}-url`} className={LABEL_CLASS}>플레이리스트 링크</label>
+        <Input
+          ref={urlRef}
+          id={`${formId}-url`}
+          type="url"
+          inputMode="url"
+          autoComplete="off"
+          required
+          maxLength={DIGGING_PLAYLIST_URL_MAX_LENGTH}
+          value={url}
+          onChange={(event) => { setUrl(event.target.value); setUrlError(""); }}
+          disabled={isPending}
+          aria-invalid={urlError ? true : undefined}
+          aria-describedby={`${formId}-url-hint${urlError ? ` ${formId}-url-error` : ""}`}
+        />
+        <p id={`${formId}-url-hint`} className={HINT_CLASS}>
+          Beatport 공유 링크(beatport.com/playlists/share/…) 또는 SoundCloud 플레이리스트 링크(soundcloud.com/…/sets/…)
+        </p>
+        {urlError ? <p id={`${formId}-url-error`} className="text-xs text-destructive">{urlError}</p> : null}
+      </div>
+      <div className="flex flex-col gap-1.5">
         <label htmlFor={`${formId}-title`} className={LABEL_CLASS}>제목</label>
         <Input
-          ref={titleRef}
           id={`${formId}-title`}
           maxLength={DIGGING_PLAYLIST_TITLE_MAX_LENGTH}
           value={title}
           onChange={(event) => setTitle(event.target.value)}
-          placeholder={diggingPlaylistDisplayTitle({ provider: playlist.provider, title: null })}
+          placeholder={defaultTitle}
           disabled={isPending}
           aria-describedby={`${formId}-title-hint`}
         />
-        <p id={`${formId}-title-hint`} className={HINT_CLASS}>비워 두면 ‘{diggingPlaylistDisplayTitle({ provider: playlist.provider, title: null })}’로 표시합니다. 링크를 바꾸려면 삭제한 뒤 다시 추가해 주세요.</p>
+        <p id={`${formId}-title-hint`} className={HINT_CLASS}>{titleHint}</p>
       </div>
       <div className="flex flex-col gap-1.5">
         <label htmlFor={`${formId}-note`} className={LABEL_CLASS}>메모</label>
@@ -467,8 +531,9 @@ function PlaylistEditForm({
           className={TEXTAREA_CLASS}
         />
       </div>
+      {discardConfirm.isOpen ? <DiscardConfirmPanel confirm={discardConfirm} onConfirm={onCancel} /> : null}
       <div className="flex flex-wrap justify-end gap-2">
-        <Button type="button" variant="outline" onClick={onCancel} disabled={isPending} className="h-11 md:h-8">
+        <Button type="button" variant="outline" onClick={(event) => requestClose(event.currentTarget)} disabled={isPending} className="h-11 md:h-8">
           취소
         </Button>
         <Button type="submit" pending={isPending} className="h-11 md:h-8">
@@ -477,4 +542,35 @@ function PlaylistEditForm({
       </div>
     </form>
   );
+}
+
+/** 바뀐 내용이 있는 폼을 닫기 전 확인(취소 우선). */
+function DiscardConfirmPanel({
+  confirm,
+  onConfirm,
+}: {
+  confirm: Pick<ConfirmActionState<unknown>, "close">;
+  onConfirm: () => void;
+}) {
+  return (
+    <ConfirmPanel
+      confirm={confirm}
+      message="작성 중인 내용이 있습니다. 저장하지 않고 닫을까요?"
+      confirmLabel="저장하지 않고 닫기"
+      onConfirm={onConfirm}
+    />
+  );
+}
+
+/** 저장하지 않은 입력이 있으면 새로고침·탭 닫기·외부 이동에 브라우저 확인을 띄운다. */
+function useUnsavedUnloadGuard(dirty: boolean): void {
+  useEffect(() => {
+    if (!dirty) return;
+    const preventUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", preventUnload);
+    return () => window.removeEventListener("beforeunload", preventUnload);
+  }, [dirty]);
 }
