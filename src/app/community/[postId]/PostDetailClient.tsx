@@ -2,7 +2,8 @@
  * @file src/app/community/[postId]/PostDetailClient.tsx
  * @description 게시물 상세(캔버스 CommunityPost·MobileCommunityPost 보드): 위치·제목·채널·작성자 머리,
  * 본문(수정 시 PostEditForm), 댓글 목록과 댓글 입력. 좁은 화면에서는 수정·이력·삭제를 위쪽 막대의
- * 게시물 메뉴로 옮기고 댓글 입력을 화면 아래에 붙인다.
+ * 게시물 메뉴로 옮기고 댓글 입력을 화면 아래에 붙인다. 매체가 있는 믹스셋 게시물은 본문 위에 플레이어를 두고,
+ * 재생 시점이 있는 댓글의 시점을 누르면 그 위치부터 재생한다.
  */
 "use client";
 
@@ -20,6 +21,9 @@ import {
   getCommentsByPost,
 } from "@/lib/actions/comments";
 import { CommentForm } from "@/components/community/CommentForm";
+import { MixsetPlayer } from "@/components/community/MixsetPlayer";
+import type { MediaSeekRequest, PlaybackPositionReader } from "@/components/player/VideoPlayer";
+import { classifyMixsetMedia, formatTimeMarker } from "@/lib/community-mixset-media";
 import { PostEditForm } from "@/components/community/PostEditForm";
 import { PostTrashActions } from "@/components/community/PostTrashActions";
 import { COMMUNITY_BOARD_LABELS, communityAuthorName } from "@/components/community/CommunityPostRow";
@@ -63,6 +67,19 @@ export function PostDetailClient({
   const router = useRouter();
   const postDeleteConfirm = useConfirmAction();
   const commentDeleteConfirm = useConfirmAction<string>();
+  // 시점 요청은 그 요청을 만든 매체 주소에 묶는다. 링크를 바꿔 저장하면 새 플레이어가 예전 시점으로 재생하지 않는다.
+  const [seekState, setSeekState] = useState<{ url: string; request: MediaSeekRequest }>();
+  const [seekAnnouncement, setSeekAnnouncement] = useState("");
+  const playerRegionRef = useRef<HTMLElement>(null);
+  const positionReaderRef = useRef<PlaybackPositionReader | null>(null);
+  // 플레이어는 reader 콜백이 바뀔 때마다 다시 연결하므로 안정된 참조를 넘긴다.
+  const handlePositionReaderChange = useCallback((reader: PlaybackPositionReader | null) => {
+    positionReaderRef.current = reader;
+  }, []);
+  const readPlaybackPosition = useCallback(
+    async () => (positionReaderRef.current ? positionReaderRef.current() : null),
+    [],
+  );
 
   const handleDeletePost = () => {
     if (isPending || isEditPending || post.deletedAt) return;
@@ -96,6 +113,18 @@ export function PostDetailClient({
 
   const boardType = resolveCommunityBoardType(post.boardType);
   const boardLabel = COMMUNITY_BOARD_LABELS[boardType];
+  const mixsetMedia = boardType === "FEEDBACK" ? classifyMixsetMedia(post) : null;
+
+  // 같은 시점을 다시 눌러도 새 요청이 되도록 매번 새 객체를 만든다. focus는 누른 시점에 두고
+  // 플레이어가 화면 밖이면 보이는 곳까지만 옮긴다.
+  const seekRequest = mixsetMedia && seekState?.url === mixsetMedia.url ? seekState.request : undefined;
+  const seekTo = (seconds: number) => {
+    if (!mixsetMedia) return;
+    setSeekState({ url: mixsetMedia.url, request: { seconds } });
+    setSeekAnnouncement(`${formatTimeMarker(seconds)} 위치부터 재생합니다.`);
+    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+    playerRegionRef.current?.scrollIntoView?.({ block: "nearest", behavior: reduceMotion ? "auto" : "smooth" });
+  };
   const longDate = formatKst(post.createdAt, { year: "numeric", month: "long", day: "numeric" }, "날짜 정보 없음");
   const shortDate = formatKstShortDate(post.createdAt, "날짜 정보 없음");
   const author = communityAuthorName(post);
@@ -218,6 +247,23 @@ export function PostDetailClient({
         </section>
       ) : null}
 
+      {/* 믹스셋 재생: 링크 플레이어는 좁은 화면에서 화면 폭 가득 놓는다. */}
+      {mixsetMedia ? (
+        <section
+          ref={playerRegionRef}
+          aria-label="믹스셋 재생"
+          className={cn("scroll-mt-4", mixsetMedia.kind === "link" && "-mx-5 md:mx-0")}
+        >
+          <MixsetPlayer
+            media={mixsetMedia}
+            title={post.title}
+            seekRequest={seekRequest}
+            onPositionReaderChange={handlePositionReaderChange}
+          />
+          <p role="status" className="sr-only">{seekAnnouncement}</p>
+        </section>
+      ) : null}
+
       {/* 본문 */}
       {isEditing && currentUserId ? (
         <PostEditForm
@@ -231,6 +277,7 @@ export function PostDetailClient({
           onCancel={() => setIsEditing(false)}
           onSaved={handleSaved}
           onBusyChange={setIsEditPending}
+          mixsetLinkUrl={mixsetMedia?.kind === "link" ? mixsetMedia.url : null}
         />
       ) : (
         <RichTextContent html={post.contentHtml} className="border-b border-border pb-5 text-base leading-7 md:pb-8" />
@@ -265,7 +312,14 @@ export function PostDetailClient({
                         <span className="font-semibold">{cAuthor}</span>
                         <span className="font-mono text-xs text-muted-foreground">{cDate}</span>
                       </p>
-                      <RichTextContent html={c.contentHtml} className="text-md leading-6 md:text-body" />
+                      {c.timeMarkerSeconds === null ? (
+                        <RichTextContent html={c.contentHtml} className="text-md leading-6 md:text-body" />
+                      ) : (
+                        <div className="flex items-start gap-2">
+                          <CommentTimeMarker seconds={c.timeMarkerSeconds} onSeek={mixsetMedia ? seekTo : undefined} />
+                          <RichTextContent html={c.contentHtml} className="min-w-0 flex-1 text-md leading-6 md:text-body" />
+                        </div>
+                      )}
                     </div>
                     {canDelete ? (
                       <Button
@@ -306,6 +360,8 @@ export function PostDetailClient({
           postId={postId}
           actorId={currentUserId}
           onSaved={() => router.refresh()}
+          allowTimeMarker={Boolean(mixsetMedia)}
+          readPlaybackPosition={mixsetMedia ? readPlaybackPosition : undefined}
           className={cn(
             "sticky bottom-0 -mx-5 mt-auto border-t border-border bg-background px-3 pb-[calc(0.5rem+env(safe-area-inset-bottom))] pt-2",
             "md:static md:mx-0 md:-mt-3 md:border-0 md:p-0",
@@ -313,5 +369,28 @@ export function PostDetailClient({
         />
       ) : null}
     </article>
+  );
+}
+
+/** 댓글 재생 시점. 플레이어가 있으면 누르면 그 위치부터 재생하고, 매체가 사라졌으면 시점만 보인다. */
+function CommentTimeMarker({ seconds, onSeek }: { seconds: number; onSeek?: (seconds: number) => void }) {
+  const label = formatTimeMarker(seconds);
+  const chip = "inline-flex h-6 shrink-0 items-center rounded-sm px-2 font-mono text-xs font-medium";
+  if (!onSeek) {
+    return <span className={cn(chip, "bg-muted text-secondary-foreground")}>{label}</span>;
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => onSeek(seconds)}
+      aria-label={`${label} 위치로 이동`}
+      // 좁은 화면은 위아래로 터치 영역을 넓힌다.
+      className={cn(
+        chip,
+        "relative bg-accent text-highlight transition-colors duration-[var(--duration-fast)] after:absolute after:inset-x-0 after:-inset-y-2.5 after:content-[''] hover:bg-highlight/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none md:after:hidden",
+      )}
+    >
+      {label}
+    </button>
   );
 }

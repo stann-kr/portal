@@ -256,7 +256,7 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 
 | 품질 경계 | 현재 자동화 | 다음 보강 |
 |---|---|---|
-| Migration | SQL·journal·snapshot·current schema empty replay, CHECK·trigger, `0007` upgrade·inbound FK preflight, `0008→0009` cascade, `0009→0010` 게시물·Q&A, `0010→0011` media, `0011→0012` privacy, `0012→0013` 기존 데이터 보존·구독 제약·owner cascade, `0014→0015` 제출·피드백 보존, `0015→0016` 서버 초안 trigger, `0016→0017` 연결·매핑 제약·cascade | persistent local·remote의 실제 적용 목록에서 pending 범위를 계산하고 승인된 작업 창에서 점검 |
+| Migration | SQL·journal·snapshot·current schema empty replay, CHECK·trigger, `0007` upgrade·inbound FK preflight, `0008→0009` cascade, `0009→0010` 게시물·Q&A, `0010→0011` media, `0011→0012` privacy, `0012→0013` 기존 데이터 보존·구독 제약·owner cascade, `0014→0015` 제출·피드백 보존, `0015→0016` 서버 초안 trigger, `0016→0017` 연결·매핑 제약·cascade, `0018→0019` 플레이리스트 제약·cascade, `0019→0020` 댓글 시점 CHECK·index와 기존 행·trigger 보존 | persistent local·remote의 실제 적용 목록에서 pending 범위를 계산하고 승인된 작업 창에서 점검 |
 | 개발 credential | development/opt-in/env/input binding 단위 테스트 | 실제 local seed는 데이터 변경 작업으로 분리 |
 | 인증·권한 | 미인증·role·ownership 허용/거부 단위 테스트, Q&A 격리 D1 권한 회귀 | 다른 주요 server action의 실제 query·mutation 경계 테스트 |
 | 입력·콘텐츠 | HTML5 AST tag·속성·URL allowlist, malformed·foreign-content XSS, 멱등성, upload MIME·size·quota·opaque key 정책 | 실제 R2 CORS·대용량 PUT smoke |
@@ -279,6 +279,7 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 | 문서 draft·재진입 | `src/lib/form-draft.ts`, `src/lib/hooks/useFormDraft.ts`, `src/lib/hooks/useSyncedFormDraft.ts`, `src/lib/actions/documentDrafts.ts`, 안정 문서 route |
 | upload·media | `src/lib/r2.ts`, `src/lib/actions/upload.ts`, `.env.example`, `docs/DEPLOYMENT.md` |
 | Cloudflare binding | `wrangler.toml`, `open-next.config.ts`, `docs/DEPLOYMENT.md` |
+| 커뮤니티 믹스셋 링크·댓글 시점 | `src/lib/community-mixset-media.ts`, `src/lib/assignment-media-url.ts`, `src/lib/actions/posts.ts`, `src/lib/post-atomic.ts`, `src/lib/post-continuity.ts`, `src/lib/actions/comments.ts`, `src/components/community/MixsetPlayer.tsx`, `scripts/migration-check/comment-time-markers.mjs` |
 | 과제 출제·정기 과제 | `src/lib/actions/assignmentTasks.ts`, `src/lib/assignment-recurrence.ts`, `src/lib/assignment-task-generation.ts`, `src/lib/actions/feedbacks.ts`, `scripts/migration-check/assignment-tasks.mjs` |
 | 공용 가이드 | `src/lib/guide-content.ts`, `src/lib/guide-store.ts`, `src/lib/sanitize-html.ts`(`data-block-id`), `src/lib/actions/qna.ts`, `src/lib/guide-import.ts`, `scripts/guide-import/build.ts` |
 | 캘린더 동기화 | `src/lib/calendar-sync/**`, `src/lib/actions/calendarSync.ts`, `src/lib/actions/lessons.ts`, `src/lib/actions/calendarEvents.ts`, `wrangler.scheduled.toml`, `docs/DEPLOYMENT.md` |
@@ -297,7 +298,7 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 
 - runtime dependency audit은 현재 0건이다. 상위 의존성이 보안 패치 전 하위 의존성을 고정하는 구간은 `package.json` override로 제한하며, upstream stable이 해당 버전을 채택하면 override를 제거해야 한다.
 - 개발 도구 전체 audit에는 Drizzle Kit의 구형 esbuild loader 체인에서 발생하는 moderate 권고가 남아 있다. 현재 npm 제안은 호환되지 않는 구버전 downgrade이므로 upstream 패치를 추적한다.
-- migration SQL과 `drizzle/meta` 생성 이력은 `0017`까지 대응하고 `db:check`가 전체 replay와 단계별 upgrade를 검사한다. persistent local D1과 remote의 실제 적용 이력은 승인된 운영 점검 전 추정하지 않는다(마지막 기록: persistent local D1 `0009`까지).
+- migration SQL과 `drizzle/meta` 생성 이력은 `0020`까지 대응하고 `db:check`가 전체 replay와 단계별 upgrade를 검사한다. persistent local D1과 remote의 실제 적용 이력은 승인된 운영 점검 전 추정하지 않는다(마지막 기록: persistent local D1 `0009`까지).
 - 대표 문서 server action과 draft 생명주기의 격리 integration test는 있으나 실제 브라우저 reload·offline·navigation·delete/restore E2E는 없다.
 - 신규 managed media의 registry·문서 claim·purge 삭제 outbox와 인증 delivery, bounded 예약 정리·final prefix cursor reconciliation source를 구현했다. Copy timeout·lease·recovery grace 뒤 발견된 registry 없는 final object와 삭제 상태 object는 다음 inventory page에서 재삭제한다. production에서는 private R2 CORS·staging lifecycle·Cron과 알림을 검증해야 하며, 기존 외부 URL과 managed 형식이 아닌 legacy R2 object는 자동 삭제 대상으로 추정하지 않는다.
 - 큰 문서의 전체 HTML·payload 서명은 매 입력이 아니라 지연된 flush·submit 경계에서 revision당 한 번만 만들고, 연속 입력은 최대 5초마다 최신본을 checkpoint한다. 개인 노트는 저장 HTML 800 KiB와 logical history 100 MiB 정책을 적용한다. 다만 실제 브라우저의 100 KiB·500 KiB·1 MiB frame budget과 autosave·복구 latency를 측정하지 않아 제품급 입력 부드러움은 아직 검증되지 않았다.
@@ -359,3 +360,14 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 - 채널 관리: 알림 주소는 Google OAuth redirect URI의 origin + `/api/calendar-connections/google/notify`이고 https일 때만 등록한다(로컬 http는 건너뜀). 채널이 없거나 24시간 안에 만료되면 새 채널을 등록하고 이전 채널은 best-effort로 중지한다. 매핑 저장 뒤 등록, 매핑 해제·연결 해제 전에 중지한다.
 - 알림 route는 로그인 없이 `X-Goog-Channel-ID`·`X-Goog-Channel-Token`을 저장된 digest와 상수 시간 비교한다. 실패는 정보 없는 404, `sync` 상태는 200, 그 밖에는 200 응답 뒤 해당 매핑만 lease를 지키며 강제 pull한다. 본문·헤더는 로그에 남기지 않는다.
 - 예약 동기화: `worker.ts` `scheduled`가 기존 예약 정리와 독립적으로 모든 활성 매핑을 동기화하고(60초 throttle·lease 동일, 매핑 하나의 실패는 나머지를 막지 않음, 시간 상한 안에서만 새 매핑 시작) Google 채널을 갱신한다. request context가 없으므로 event env를 calendar 설정·암호화 key 읽기에 넘긴다. `wrangler.toml`·`wrangler.scheduled.toml`의 `[triggers]`는 바꾸지 않는다.
+
+## 커뮤니티 믹스셋 링크와 재생 시점 댓글(2026-10-29)
+
+- 매체 저장과 판별: 링크 게시물은 별도 column 없이 정규화된 주소를 `posts.media_url`에 두고 `media_object_id`를 비운다. `classifyMixsetMedia`(`src/lib/community-mixset-media.ts`)는 `media_object_id`가 없고 https이며 host가 `www.youtube.com`·`youtu.be`·`soundcloud.com`인 주소만 링크로, 나머지 `media_url`(업로드 오디오·legacy 주소)은 오디오로 본다. 판별을 host로만 해 정규화 규칙이 나중에 바뀌어도 저장된 링크를 오디오로 잘못 읽지 않는다.
+- 링크 입력: `normalizeMixsetLinkUrl`은 과제 제출의 `normalizeAssignmentMediaUrl`을 그대로 써서(YouTube 영상·Shorts·라이브·embed, SoundCloud 트랙·세트, `on.soundcloud.com` 거부) 안내 문구만 게시물 기준으로 바꾼다. form 칸은 legacy `mediaUrl`과 섞이지 않게 `mixsetLinkUrl`이다. `createPost`는 FEEDBACK이 아닌 게시판의 오디오·링크와 오디오·링크 동시 전송을 거부한다. 새 글 form(`NewPostForm`)은 파일·링크 값을 둘 다 초안에 보관하고 고른 방식(`mixsetMediaMode`)의 값만 보내며, 링크로 게시에 성공하면 보관하던 업로드 파일을 `abandonMediaUpload`로 정리한다.
+- 링크 수정: `updatePostContent`는 form에 링크 칸이 있을 때만 링크를 바꾸고, FEEDBACK·`media_object_id` NULL·저장값이 링크인 게시물이 아니면 거부한다(비우기·오디오↔링크 전환 없음). `updatePostAtomically`가 같은 조건을 원자 쓰기 안에서 다시 확인하고 `media_url`을 함께 UPDATE하며, no-op 판정에도 `media_url`을 넣는다. full-snapshot revision에 `media_url`이 들어 있어 이력 복원 시 링크도 돌아온다.
+- request hash: `POST_REQUEST_HASH_VERSION`은 3이다. V3는 V2 항목에 링크 변경 여부(`["unchanged"]` 또는 `["set", url]`)를 더한다. 기존 V1·V2 영수증은 그대로 검증하되, 링크를 바꾸는 요청은 V1·V2 영수증과 같은 작업으로 확인하지 않는다. snapshot hash version은 2 그대로다.
+- 플레이어: `MixsetPlayer`는 링크를 과제와 같은 `VideoPlayer`(YouTube 플레이어, SoundCloud 위젯 — 세트는 곡 목록 높이)로, 오디오를 브라우저 기본 `<audio>` 조작부로 재생한다. 둘 다 `seekRequest`(누를 때마다 새 객체)와 `onPositionReaderChange` 계약을 따르고, 오디오는 metadata가 읽히기 전의 이동 요청을 보류했다가 적용한다. 상세는 매체가 있는 믹스셋 글의 본문 위에 플레이어를 두고, 목록(`MixsetFeedbackCard`)의 링크 글은 재생 버튼을 누른 줄에만 iframe을 만든다. 오디오 글은 기존 인라인 재생이고, 매체 없는 글은 "재생할 매체 없음"이다.
+- 댓글 시점: `comments.time_marker_seconds`(nullable 정수 초). `parseTimeMarker`는 빈 값을 시점 없음으로, `h:mm:ss`·`m:ss`·정수 초를 0~86399(23:59:59)로 받는다. `createComment`는 시점이 있으면 FEEDBACK이고 `media_url`이 있는 글인지 먼저 확인하고, INSERT의 `post_id` 서브쿼리에서 휴지통 여부와 함께 다시 확인한다. 재전송 비교에도 시점을 넣는다. 댓글 form은 매체가 있는 믹스셋 글에서만 "시점" 칸(현재 위치·직접 입력·비우기)을 보이고, 초안에 시점을 함께 저장하며 내용이나 시점이 바뀌면 operation ID를 새로 만든다. 시점 댓글의 시점 버튼은 플레이어를 그 위치로 옮겨 재생한다. 댓글은 작성 순으로 읽는다.
+- `0020_comment_time_markers`: `comments`에 `time_marker_seconds`와 CHECK `comments_time_marker_check`(NULL 또는 정수 0~86399)를 ADD COLUMN으로 더하고 index `comments_post_created_idx`(`post_id`, `created_at`)를 만든다. table을 다시 만들지 않아 기존 행과 `comments` trigger가 그대로다. 이 index는 게시물별 댓글을 작성 순으로 읽는 조회를 받친다. `db:check`가 채워진 0019 DB에서 0020 upgrade·CHECK·기존 행 보존을 검사한다. 댓글 조회·작성이 이 column을 읽으므로 운영에서는 코드 promotion 전에 적용한다([배포 가이드](./DEPLOYMENT.md)).
+- 미검증: 실제 YouTube·SoundCloud 재생·이동·위치 읽기, iOS 오디오 로드, 브라우저 화면(모바일 하단 댓글 막대 높이), remote D1 적용.

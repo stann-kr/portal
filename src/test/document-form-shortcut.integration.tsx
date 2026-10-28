@@ -225,23 +225,48 @@ mock.module("@/lib/actions/qna", {
     purgeQnaThread: (...args: Parameters<typeof changeQnaLifecycle>) => changeQnaLifecycle(...args),
   },
 });
+const MOCK_UPLOADED_MEDIA_ID = "5b0c2f0e-3c1d-4d8e-9a51-6f0a1c2b3d4e";
+const abandonedUploads: string[] = [];
+mock.module("@/lib/actions/upload", {
+  namedExports: {
+    requestMediaUpload: async () => ({ success: false, error: "업로드 테스트 미설정" }),
+    completeMediaUploadAction: async () => ({ success: false, error: "업로드 테스트 미설정" }),
+    abandonMediaUpload: async (mediaObjectId: string) => { abandonedUploads.push(mediaObjectId); },
+    processPendingMediaDeletions: async () => undefined,
+  },
+});
 mock.module("@/components/upload/FileUploader", {
   namedExports: {
     FileUploader: ({
       disabled,
       onUploadingChange,
+      onUploadComplete,
     }: {
       disabled?: boolean;
       onUploadingChange?: (isUploading: boolean) => void;
+      onUploadComplete?: (upload: { deliveryUrl: string; mediaObjectId: string }) => void;
     }) => (
-      <button
-        data-testid="upload-start"
-        disabled={disabled}
-        onClick={() => onUploadingChange?.(true)}
-        type="button"
-      >
-        업로드 시작
-      </button>
+      <>
+        <button
+          data-testid="upload-start"
+          disabled={disabled}
+          onClick={() => onUploadingChange?.(true)}
+          type="button"
+        >
+          업로드 시작
+        </button>
+        <button
+          data-testid="upload-complete"
+          disabled={disabled}
+          onClick={() => onUploadComplete?.({
+            deliveryUrl: `/api/media/${MOCK_UPLOADED_MEDIA_ID}`,
+            mediaObjectId: MOCK_UPLOADED_MEDIA_ID,
+          })}
+          type="button"
+        >
+          업로드 완료 흉내
+        </button>
+      </>
     ),
   },
 });
@@ -1458,6 +1483,8 @@ test("새 게시물 Cmd/Ctrl+S는 최신 본문을 로컬 저장하고 게시하
     contentHtml: "<p>publish 전 최신 게시물 본문</p>",
     mediaUrl: "",
     mediaObjectId: "",
+    mixsetMediaMode: "audio",
+    mixsetLinkUrl: "",
   });
 });
 
@@ -2328,4 +2355,289 @@ test("stale compact S0 노트를 S1 기준으로 유지·제출하면 exact fing
     exactCompactSignature,
     "S0 exact compact representation이 마지막 marker head에 남아야 합니다.",
   );
+});
+
+/** React 제어 input에 값을 넣고 change 흐름을 일으킨다. */
+async function typeIntoInput(harness: FormHarness, input: HTMLInputElement, value: string): Promise<void> {
+  // 초안 hook의 비동기 서버 동기화가 끝나기 전에 입력하면 복원이 입력을 덮을 수 있어 먼저 한 바퀴 기다린다.
+  for (let tick = 0; tick < 3; tick += 1) {
+    await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 0)); });
+  }
+  const setter = Object.getOwnPropertyDescriptor(harness.browserWindow.HTMLInputElement.prototype, "value")?.set;
+  assert.ok(setter);
+  await act(async () => {
+    input.focus();
+    setter.call(input, value);
+    input.dispatchEvent(new harness.browserWindow.Event("input", { bubbles: true }) as unknown as Event);
+    input.dispatchEvent(new harness.browserWindow.Event("change", { bubbles: true }) as unknown as Event);
+    // react-dom이 DOM 전역보다 먼저 load되면 input 대신 keyup에서 값 변화를 읽는다.
+    input.dispatchEvent(new harness.browserWindow.KeyboardEvent("keyup", { bubbles: true }) as unknown as Event);
+  });
+}
+
+/** 초안 저장은 500ms debounce라 실제 시간으로 기다린다. */
+async function waitForStoredDraft<T>(
+  harness: FormHarness,
+  key: string,
+  predicate: (data: T | undefined) => boolean,
+  message: string,
+): Promise<void> {
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    if (predicate(parseFormDraft<T>(harness.browserWindow.localStorage.getItem(key) ?? "")?.data)) return;
+    await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 50)); });
+  }
+  assert.fail(message);
+}
+
+function findRadio(container: ParentNode, label: string): HTMLButtonElement {
+  const radio = [...container.querySelectorAll<HTMLButtonElement>('[role="radio"]')].find((candidate) => candidate.textContent === label);
+  assert.ok(radio, `선택지: ${label}`);
+  return radio;
+}
+
+const MIXSET_LINK_LABEL = "링크 (YouTube·SoundCloud)";
+const MIXSET_LINK_SELECTOR = 'input[name="mixsetLinkUrl"]';
+
+function seedFeedbackPostDraft(actorId: string, extra: Record<string, unknown> = {}): string {
+  return serializeFormDraft({
+    operationId: "7a4f1d2e-8b3c-4e5f-9a6b-1c2d3e4f5a6b",
+    boardType: "FEEDBACK",
+    category: "feedback",
+    isPinned: false,
+    title: `${actorId} 믹스셋`,
+    contentHtml: "<p>믹스셋 소개</p>",
+    mediaUrl: "",
+    mediaObjectId: "",
+    ...extra,
+  });
+}
+
+test("새 믹스셋은 업로드 파일을 보관한 채 링크 방식으로 바꾸고, 형식 오류를 알린 뒤 고른 방식의 값만 보낸다", { concurrency: false }, async (context) => {
+  resetActionCalls();
+  abandonedUploads.length = 0;
+  const requests: Record<string, FormDataEntryValue>[] = [];
+  saveNewPost = async (_previous, data) => {
+    requests.push(Object.fromEntries(data));
+    return { error: "테스트에서 등록하지 않습니다." };
+  };
+  context.after(() => { saveNewPost = async () => ({}); });
+  const actorId = "mixset-mode-switch-actor";
+  const draftKey = createDocumentDraftKey("community-post", actorId);
+  const harness = await renderForm(
+    context,
+    <NewPostForm actorId={actorId} defaultBoardType="FEEDBACK" defaultCategory="feedback" isAdmin={false} returnTo="/community" />,
+    (storage) => storage.setItem(draftKey, seedFeedbackPostDraft(actorId)),
+  );
+  const { container } = harness;
+  assert.equal(findRadio(container, "오디오 파일").getAttribute("aria-checked"), "true", "이전 초안은 오디오 방식으로 연다.");
+  assert.equal(container.querySelector(MIXSET_LINK_SELECTOR), null);
+
+  await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="upload-complete"]')!.click());
+  assert.match(container.textContent ?? "", /업로드 완료/u);
+
+  await act(async () => findRadio(container, MIXSET_LINK_LABEL).click());
+  const linkInput = container.querySelector<HTMLInputElement>(MIXSET_LINK_SELECTOR);
+  assert.ok(linkInput, "링크 방식에서는 링크 칸을 보인다.");
+  assert.equal(linkInput.required, true);
+  assert.equal(container.querySelector('input[name="mediaObjectId"]'), null, "링크 방식에서는 업로드 식별자를 보내지 않는다.");
+  assert.equal(container.querySelector('input[name="mediaUrl"]'), null);
+  assert.equal(container.querySelector("form")?.noValidate, true);
+  assert.match(container.textContent ?? "", /업로드한 오디오 파일은 보관 중입니다/u);
+
+  await typeIntoInput(harness, linkInput, "https://vimeo.com/123");
+  await act(async () => submitControl(container).click());
+  assert.equal(requests.length, 0, "형식이 틀린 링크는 보내지 않는다.");
+  const alert = container.querySelector<HTMLElement>('[role="alert"]');
+  assert.equal(alert?.textContent, "YouTube 영상 또는 SoundCloud 트랙·세트 링크만 올릴 수 있습니다.");
+  assert.equal(linkInput.getAttribute("aria-invalid"), "true");
+  assert.ok(linkInput.getAttribute("aria-describedby")?.split(" ").includes(alert!.id), "오류 문구를 링크 칸 설명에 연결한다.");
+  assert.equal(harness.browserWindow.document.activeElement, linkInput, "오류가 난 링크 칸으로 초점을 옮긴다.");
+
+  await typeIntoInput(harness, linkInput, "https://soundcloud.com/stann/sets/lesson-mix");
+  assert.equal(container.querySelector('[role="alert"]'), null, "고치기 시작하면 오류를 지운다.");
+  await waitForStoredDraft<{ mixsetMediaMode?: string; mixsetLinkUrl?: string; mediaObjectId?: string }>(
+    harness,
+    draftKey,
+    (stored) => stored?.mixsetMediaMode === "link" &&
+      stored.mixsetLinkUrl === "https://soundcloud.com/stann/sets/lesson-mix" &&
+      stored.mediaObjectId === MOCK_UPLOADED_MEDIA_ID,
+    "초안에 방식·링크와 보관 중인 업로드를 함께 남긴다.",
+  );
+
+  await act(async () => submitControl(container).click());
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0]!.mixsetLinkUrl, "https://soundcloud.com/stann/sets/lesson-mix");
+  assert.equal("mediaObjectId" in requests[0]!, false);
+  assert.equal("mediaUrl" in requests[0]!, false, "링크를 legacy mediaUrl 칸으로 보내지 않는다.");
+
+  await act(async () => findRadio(container, "오디오 파일").click());
+  assert.match(container.textContent ?? "", /업로드 완료/u, "오디오로 돌아오면 업로드한 파일이 그대로 있다.");
+  assert.equal(container.querySelector(MIXSET_LINK_SELECTOR), null);
+  assert.equal(container.querySelector<HTMLInputElement>('input[name="mediaObjectId"]')?.value, MOCK_UPLOADED_MEDIA_ID);
+  assert.equal(container.querySelector("form")?.noValidate, false);
+  await act(async () => submitControl(container).click());
+  assert.equal(requests.length, 2);
+  assert.equal(requests[1]!.mediaObjectId, MOCK_UPLOADED_MEDIA_ID);
+  assert.equal("mixsetLinkUrl" in requests[1]!, false, "오디오 방식에서는 링크를 보내지 않는다.");
+  assert.deepEqual(abandonedUploads, [], "방식 전환만으로 업로드 파일을 버리지 않는다.");
+});
+
+test("새 믹스셋 링크 초안을 복원해 그대로 게시하고, 보관만 하던 업로드 파일은 게시 뒤 정리한다", { concurrency: false }, async (context) => {
+  resetActionCalls();
+  abandonedUploads.length = 0;
+  const requests: Record<string, FormDataEntryValue>[] = [];
+  saveNewPost = async (_previous, data) => {
+    requests.push(Object.fromEntries(data));
+    return { postId: "mixset-link-post" };
+  };
+  context.after(() => { saveNewPost = async () => ({}); });
+  const actorId = "mixset-link-restore-actor";
+  const draftKey = createDocumentDraftKey("community-post", actorId);
+  const harness = await renderForm(
+    context,
+    <NewPostForm actorId={actorId} defaultBoardType="GENERAL" defaultCategory="general" isAdmin={false} returnTo="/community" />,
+    (storage) => storage.setItem(draftKey, seedFeedbackPostDraft(actorId, {
+      mediaUrl: `/api/media/${MOCK_UPLOADED_MEDIA_ID}`,
+      mediaObjectId: MOCK_UPLOADED_MEDIA_ID,
+      mixsetMediaMode: "link",
+      mixsetLinkUrl: "https://youtu.be/aqz-KE-bpKQ",
+    })),
+  );
+  const { container } = harness;
+  assert.equal(findRadio(container, "믹스셋").getAttribute("aria-checked"), "true");
+  assert.equal(findRadio(container, MIXSET_LINK_LABEL).getAttribute("aria-checked"), "true");
+  assert.equal(container.querySelector<HTMLInputElement>(MIXSET_LINK_SELECTOR)?.value, "https://youtu.be/aqz-KE-bpKQ");
+
+  await act(async () => submitControl(container).click());
+  await waitForCondition(() => abandonedUploads.length > 0, "링크로 게시하면 붙지 않은 업로드를 정리한다.");
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0]!.mixsetLinkUrl, "https://youtu.be/aqz-KE-bpKQ");
+  assert.equal(requests[0]!.boardType, "FEEDBACK");
+  assert.equal("mediaObjectId" in requests[0]!, false);
+  assert.deepEqual(abandonedUploads, [MOCK_UPLOADED_MEDIA_ID]);
+  assert.equal(harness.browserWindow.localStorage.getItem(draftKey), null);
+});
+
+test("새 게시물에서 믹스셋이 아닌 게시판으로 바꾸면 링크 칸과 링크 값을 함께 비운다", { concurrency: false }, async (context) => {
+  resetActionCalls();
+  const actorId = "mixset-board-switch-actor";
+  const draftKey = createDocumentDraftKey("community-post", actorId);
+  const harness = await renderForm(
+    context,
+    <NewPostForm actorId={actorId} defaultBoardType="FEEDBACK" defaultCategory="feedback" isAdmin={false} returnTo="/community" />,
+    (storage) => storage.setItem(draftKey, seedFeedbackPostDraft(actorId, {
+      mixsetMediaMode: "link",
+      mixsetLinkUrl: "https://youtu.be/aqz-KE-bpKQ",
+    })),
+  );
+  const { container } = harness;
+  assert.ok(container.querySelector(MIXSET_LINK_SELECTOR));
+  await act(async () => findRadio(container, "자유").click());
+  assert.equal(container.querySelector(MIXSET_LINK_SELECTOR), null);
+  assert.equal(container.querySelector('[role="radiogroup"] [role="radio"][aria-checked="true"]')?.textContent, "자유");
+  await act(async () => findRadio(container, "믹스셋").click());
+  assert.equal(findRadio(container, "오디오 파일").getAttribute("aria-checked"), "true");
+  assert.equal(container.querySelector(MIXSET_LINK_SELECTOR), null);
+});
+
+test("게시물 수정 form은 mixsetLinkUrl prop이 없으면 링크 칸 없이 예전처럼 저장한다", { concurrency: false }, async (context) => {
+  const post = { id: "post-plain", title: "일반 게시물", contentHtml: "<p>일반 본문</p>", version: 1 };
+  const requests: Record<string, FormDataEntryValue>[] = [];
+  savePostEdit = async (_id, _previous, data) => {
+    requests.push(Object.fromEntries(data));
+    return { success: true, post: { ...post, version: 2 } };
+  };
+  context.after(() => { savePostEdit = async () => ({}); });
+  const harness = await renderForm(context, <PostEditForm actorId="post-plain-actor" post={post} mixsetLinkUrl={null} onCancel={() => undefined} onSaved={() => undefined} />);
+  assert.equal(harness.container.querySelector(MIXSET_LINK_SELECTOR), null);
+  assert.equal(harness.container.querySelector("form")?.noValidate, false);
+  await act(async () => submitControl(harness.container).click());
+  assert.equal(requests.length, 1);
+  assert.equal("mixsetLinkUrl" in requests[0]!, false, "링크 칸이 없으면 매체를 바꾸지 않도록 칸을 보내지 않는다.");
+});
+
+test("게시물 수정 form은 링크 게시물에 링크 칸을 두고 초안 복원·검증·제출에 포함한다", { concurrency: false }, async (context) => {
+  const post = { id: "post-mixset-link", title: "링크 믹스셋", contentHtml: "<p>링크 본문</p>", version: 1 };
+  const requests: Record<string, FormDataEntryValue>[] = [];
+  savePostEdit = async (_id, _previous, data) => {
+    requests.push(Object.fromEntries(data));
+    return { success: true, post: { ...post, title: String(data.get("title")), contentHtml: String(data.get("contentHtml")), version: 2, mediaUrl: String(data.get("mixsetLinkUrl") ?? "") } };
+  };
+  context.after(() => { savePostEdit = async () => ({}); });
+
+  const actorId = "post-mixset-link-actor";
+  const draftKey = createDocumentDraftKey("community-post", actorId, post.id);
+  const harness = await renderForm(
+    context,
+    <PostEditForm actorId={actorId} post={post} mixsetLinkUrl="https://www.youtube.com/watch?v=aqz-KE-bpKQ" onCancel={() => undefined} onSaved={() => undefined} />,
+    (storage) => storage.setItem(draftKey, serializeFormDraft({
+      title: post.title,
+      contentHtml: post.contentHtml,
+      mixsetLinkUrl: "https://soundcloud.com/stann/draft-track",
+      baseFingerprint: createDocumentSnapshotFingerprint({ kind: "community-post", ...post, noteDate: null }),
+    })),
+  );
+  const { container } = harness;
+  const linkInput = container.querySelector<HTMLInputElement>(MIXSET_LINK_SELECTOR);
+  assert.ok(linkInput);
+  assert.equal(linkInput.value, "https://soundcloud.com/stann/draft-track", "초안의 링크를 복원한다.");
+  assert.equal(linkInput.required, true);
+  assert.equal(container.querySelector(`label[for="${linkInput.id}"]`)?.textContent?.includes("믹스셋 링크"), true);
+  assert.equal(container.querySelector("form")?.noValidate, true);
+
+  await typeIntoInput(harness, linkInput, "");
+  await act(async () => submitControl(container).click());
+  assert.equal(requests.length, 0, "빈 링크는 저장하지 않는다.");
+  const alert = container.querySelector<HTMLElement>('[role="alert"]');
+  assert.equal(alert?.textContent, "믹스셋 링크를 입력해 주세요.");
+  assert.ok(linkInput.getAttribute("aria-describedby")?.split(" ").includes(alert!.id));
+  assert.equal(harness.browserWindow.document.activeElement, linkInput);
+
+  await typeIntoInput(harness, linkInput, "https://soundcloud.com/stann/new-track");
+  await waitForStoredDraft<{ mixsetLinkUrl?: string }>(
+    harness,
+    draftKey,
+    (stored) => stored?.mixsetLinkUrl === "https://soundcloud.com/stann/new-track",
+    "수정 초안에 링크를 남긴다.",
+  );
+  await act(async () => submitControl(container).click());
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0]!.mixsetLinkUrl, "https://soundcloud.com/stann/new-track");
+  assert.equal(requests[0]!.title, post.title);
+  assert.equal(harness.browserWindow.localStorage.getItem(draftKey), null);
+});
+
+test("링크 게시물 충돌에서 서버 최신본을 고르면 최신 링크를 함께 가져온다", { concurrency: false }, async (context) => {
+  const post = { id: "post-mixset-link-conflict", title: "기준 제목", contentHtml: "<p>기준 본문</p>", version: 1 };
+  const latest = { ...post, title: "다른 화면 제목", contentHtml: "<p>다른 화면 본문</p>", version: 2, mediaUrl: "https://soundcloud.com/stann/latest-set" };
+  const requests: Record<string, FormDataEntryValue>[] = [];
+  savePostEdit = async (_id, _previous, data) => {
+    requests.push(Object.fromEntries(data));
+    return requests.length === 1
+      ? { error: "다른 화면에서 먼저 변경되었습니다.", conflictKind: "VERSION_CONFLICT", currentRevision: 2, conflictPost: latest }
+      : { success: true, post: { ...latest, version: 3 } };
+  };
+  context.after(() => { savePostEdit = async () => ({}); });
+  const actorId = "post-mixset-link-conflict-actor";
+  const harness = await renderForm(
+    context,
+    <PostEditForm actorId={actorId} post={post} mixsetLinkUrl="https://youtu.be/aqz-KE-bpKQ" onCancel={() => undefined} onSaved={() => undefined} />,
+  );
+  const { container } = harness;
+  await typeIntoInput(harness, container.querySelector<HTMLInputElement>(MIXSET_LINK_SELECTOR)!, "https://soundcloud.com/stann/my-set");
+  await act(async () => submitControl(container).click());
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0]!.mixsetLinkUrl, "https://soundcloud.com/stann/my-set");
+  assert.match(container.querySelector("details")?.textContent ?? "", /믹스셋 링크: https:\/\/soundcloud\.com\/stann\/latest-set/u);
+  // 선택 전에는 내 링크 초안을 그대로 둔다(DOM 값은 action 뒤 happy-dom form reset의 영향을 받아 초안으로 확인한다).
+  assert.equal(parseFormDraft<{ mixsetLinkUrl?: string }>(
+    harness.browserWindow.localStorage.getItem(createDocumentDraftKey("community-post", actorId, post.id)) ?? "",
+  )?.data.mixsetLinkUrl, "https://soundcloud.com/stann/my-set");
+  const useServer = [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.includes("서버 최신본 사용"));
+  assert.ok(useServer);
+  await act(async () => useServer.click());
+  assert.equal(container.querySelector<HTMLInputElement>(MIXSET_LINK_SELECTOR)?.value, latest.mediaUrl);
+  await act(async () => submitControl(container).click());
+  assert.equal(requests[1]!.mixsetLinkUrl, latest.mediaUrl);
+  assert.equal(requests[1]!.baseRevision, "2");
 });

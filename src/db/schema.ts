@@ -1219,19 +1219,31 @@ export const postRevisions = sqliteTable(
   ],
 );
 
-export const comments = sqliteTable("comments", {
-  id: text("id").primaryKey(),
-  postId: text("post_id")
-    .references(() => posts.id, { onDelete: "cascade" })
-    .notNull(),
-  authorId: text("author_id")
-    .references(() => profiles.id, { onDelete: "cascade" })
-    .notNull(),
-  contentHtml: text("content_html").notNull(),
-  createdAt: integer("created_at", { mode: "timestamp" }).default(
-    sql`(strftime('%s', 'now'))`,
-  ),
-});
+/** time_marker_seconds가 있으면 믹스셋 게시물 재생 시점(초)에 단 댓글이다. 없으면 일반 댓글이다. */
+export const comments = sqliteTable(
+  "comments",
+  {
+    id: text("id").primaryKey(),
+    postId: text("post_id")
+      .references(() => posts.id, { onDelete: "cascade" })
+      .notNull(),
+    authorId: text("author_id")
+      .references(() => profiles.id, { onDelete: "cascade" })
+      .notNull(),
+    contentHtml: text("content_html").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).default(
+      sql`(strftime('%s', 'now'))`,
+    ),
+    timeMarkerSeconds: integer("time_marker_seconds"),
+  },
+  (table) => [
+    index("comments_post_created_idx").on(table.postId, table.createdAt),
+    check(
+      "comments_time_marker_check",
+      sql`${table.timeMarkerSeconds} IS NULL OR (typeof(${table.timeMarkerSeconds}) = 'integer' AND ${table.timeMarkerSeconds} >= 0 AND ${table.timeMarkerSeconds} <= 86399)`,
+    ),
+  ],
+);
 
 /**
  * Phase 5: 디깅 게시판 — 컬럼 정의 (유저별 커스텀).

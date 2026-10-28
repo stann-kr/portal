@@ -43,6 +43,7 @@ import {
   decodeCommunityPostCursor,
   encodeCommunityPostCursor,
 } from "@/lib/community-post-page";
+import { isMixsetLinkUrl, MIXSET_LINK_FIELD, normalizeMixsetLinkUrl } from "@/lib/community-mixset-media";
 import { isRichTextEmpty } from "@/lib/rich-text";
 import { safeReturnPath } from "@/lib/safe-return-path";
 import { sanitizeHtml } from "@/lib/sanitize-html";
@@ -338,8 +339,19 @@ export async function createPost(
   );
   const rawMediaObjectId = String(formData.get("mediaObjectId") ?? "").trim();
   const submittedLegacyUrl = String(formData.get("mediaUrl") ?? "").trim();
-  if (boardType !== "FEEDBACK" && (rawMediaObjectId || submittedLegacyUrl)) {
-    return { error: "믹스셋 게시물에서만 오디오를 첨부할 수 있습니다." };
+  const rawLinkUrl = formData.get(MIXSET_LINK_FIELD);
+  const submittedLinkUrl = typeof rawLinkUrl === "string" ? rawLinkUrl.trim() : "";
+  if (boardType !== "FEEDBACK" && (rawMediaObjectId || submittedLegacyUrl || submittedLinkUrl)) {
+    return { error: "믹스셋 게시물에서만 오디오나 링크를 첨부할 수 있습니다." };
+  }
+  if (submittedLinkUrl && (rawMediaObjectId || submittedLegacyUrl)) {
+    return { error: "오디오 파일과 링크 중 하나만 첨부할 수 있습니다." };
+  }
+  let linkUrl: string | null = null;
+  if (submittedLinkUrl) {
+    const normalized = normalizeMixsetLinkUrl(submittedLinkUrl);
+    if (!normalized.ok) return { error: normalized.error };
+    linkUrl = normalized.url;
   }
 
   const mediaObjectId = rawMediaObjectId
@@ -351,7 +363,7 @@ export async function createPost(
 
   const context = createDbContext();
   const postActor = actor(session);
-  let mediaUrl: string | null = null;
+  let mediaUrl: string | null = linkUrl;
   if (submittedLegacyUrl && !mediaObjectId) {
     const isExactLegacyReplay = await preflightLegacyPostCreateReplay(context, {
       actor: postActor,
@@ -430,8 +442,8 @@ export type UpdatePostState = {
   conflictKind?: PostMutationFailureReason;
   currentRevision?: number;
   replayed?: boolean;
-  post?: { id: string; title: string; contentHtml: string; version: number };
-  conflictPost?: { id: string; title: string; contentHtml: string; version: number };
+  post?: { id: string; title: string; contentHtml: string; version: number; mediaUrl?: string | null };
+  conflictPost?: { id: string; title: string; contentHtml: string; version: number; mediaUrl?: string | null };
 };
 
 export async function updatePostContent(
@@ -448,6 +460,9 @@ export async function updatePostContent(
       contentHtml: posts.contentHtml,
       version: posts.version,
       deletedAt: posts.deletedAt,
+      boardType: posts.boardType,
+      mediaUrl: posts.mediaUrl,
+      mediaObjectId: posts.mediaObjectId,
     })
     .from(posts)
     .where(eq(posts.id, postId))
@@ -485,6 +500,7 @@ export async function updatePostContent(
         title: existing.title,
         contentHtml: existing.contentHtml,
         version: existing.version,
+        mediaUrl: existing.mediaUrl,
       },
     };
   }
@@ -500,6 +516,16 @@ export async function updatePostContent(
   if (!isPostContentWithinLimit(contentHtml)) {
     return { error: `게시물 본문은 ${POST_MAX_CONTENT_LABEL} 이하로 저장할 수 있습니다.` };
   }
+  // 링크 칸은 링크 믹스셋 게시물의 수정 form에만 있다. 칸이 없으면 매체를 바꾸지 않는다.
+  let mediaLinkUrl: string | undefined;
+  if (formData.has(MIXSET_LINK_FIELD)) {
+    if (existing.boardType !== "FEEDBACK" || existing.mediaObjectId || !isMixsetLinkUrl(existing.mediaUrl)) {
+      return { error: "링크로 올린 믹스셋 게시물에서만 링크를 바꿀 수 있습니다." };
+    }
+    const normalized = normalizeMixsetLinkUrl(formData.get(MIXSET_LINK_FIELD));
+    if (!normalized.ok) return { error: normalized.error };
+    mediaLinkUrl = normalized.url;
+  }
 
   const result = await updatePostAtomically(createDbContext(), {
     actor: actor(session),
@@ -508,13 +534,14 @@ export async function updatePostContent(
     baseRevision,
     title,
     contentHtml,
+    ...(mediaLinkUrl === undefined ? {} : { mediaLinkUrl }),
     now: new Date(),
   });
   if (!result.ok) {
     let conflictPost: UpdatePostState["conflictPost"];
     if (result.reason === "VERSION_CONFLICT") {
       [conflictPost] = await createDb()
-        .select({ id: posts.id, title: posts.title, contentHtml: posts.contentHtml, version: posts.version })
+        .select({ id: posts.id, title: posts.title, contentHtml: posts.contentHtml, version: posts.version, mediaUrl: posts.mediaUrl })
         .from(posts)
         .where(and(
           eq(posts.id, postId),
@@ -540,6 +567,7 @@ export async function updatePostContent(
       title,
       contentHtml,
       version: result.currentRevision ?? baseRevision,
+      mediaUrl: mediaLinkUrl ?? existing.mediaUrl,
     },
   };
 }
