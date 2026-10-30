@@ -41,6 +41,7 @@ export type DiggingPlaylistMutationResult =
 const DUPLICATE_MESSAGE = "이미 등록한 플레이리스트입니다.";
 const LIMIT_MESSAGE = `플레이리스트는 최대 ${DIGGING_PLAYLISTS_MAX_COUNT}개까지 등록할 수 있습니다.`;
 const NOT_FOUND_MESSAGE = "플레이리스트를 찾을 수 없습니다. 새로고침 후 다시 시도해 주세요.";
+const CONFLICT_MESSAGE = "다른 곳에서 먼저 고친 플레이리스트입니다. 새로고침해 바뀐 내용을 확인한 뒤 다시 고쳐 주세요.";
 
 const playlistColumns = {
   id: diggingPlaylists.id,
@@ -129,11 +130,12 @@ export async function createDiggingPlaylist(studentId: string, input: {
  * 링크·제목·메모를 고친다. `url`을 빼면 링크는 그대로 둔다.
  * 링크가 바뀌면 provider를 새 링크로 다시 정하고, 같은 학생의 다른 행과 겹치면 중복 안내를 돌려준다.
  * 새 링크가 SoundCloud이고 제목이 비었으면 등록처럼 oEmbed로 제목을 채운다(실패해도 저장).
+ * `expectedUpdatedAt`(화면이 읽은 updatedAt, ms)을 주면 그 사이 학생·Stann 중 다른 쪽이 고친 행은 덮지 않고 충돌로 돌려준다.
  */
 export async function updateDiggingPlaylist(
   studentId: string,
   playlistId: string,
-  input: { url?: string | null; title?: string | null; note?: string | null },
+  input: { url?: string | null; title?: string | null; note?: string | null; expectedUpdatedAt?: number | null },
 ): Promise<DiggingPlaylistMutationResult> {
   const userId = await requirePlaylistWriter(studentId);
   if (typeof playlistId !== "string" || !playlistId) return { ok: false, error: NOT_FOUND_MESSAGE };
@@ -151,6 +153,10 @@ export async function updateDiggingPlaylist(
     .where(and(eq(diggingPlaylists.id, playlistId), eq(diggingPlaylists.userId, userId)))
     .limit(1);
   if (!current) return { ok: false, error: NOT_FOUND_MESSAGE };
+  const expectedUpdatedAt = parseExpectedUpdatedAt(input?.expectedUpdatedAt);
+  if (expectedUpdatedAt !== null && current.updatedAt.getTime() !== expectedUpdatedAt) {
+    return { ok: false, error: CONFLICT_MESSAGE };
+  }
 
   const urlChanged = nextUrl !== null && nextUrl.url !== current.url;
   const provider = urlChanged ? nextUrl.provider : current.provider;
@@ -173,9 +179,10 @@ export async function updateDiggingPlaylist(
       ? clampDiggingPlaylistTitle(await fetchSoundCloudPlaylistTitle(url))
       : null);
 
-  // 초 단위 저장이라 같은 초에 만든 뒤 고쳐도 created_at <= updated_at을 지킨다.
+  // 초 단위 저장이라 같은 초에 고쳐도 updated_at이 늘 커지게 해(충돌 비교가 같은 값을 보지 않게) created_at <= updated_at도 지킨다.
   const updatedAt = new Date(Math.max(
     Math.floor(Date.now() / 1000) * 1000,
+    current.updatedAt.getTime() + 1000,
     current.createdAt.getTime(),
   ));
   let updated: DiggingPlaylist[];
@@ -183,16 +190,28 @@ export async function updateDiggingPlaylist(
     updated = await db
       .update(diggingPlaylists)
       .set({ provider, url, title: resolvedTitle, note: note.value, updatedAt })
-      .where(and(eq(diggingPlaylists.id, playlistId), eq(diggingPlaylists.userId, userId)))
+      // 읽은 뒤(oEmbed 대기 포함) 다른 쪽이 고쳤으면 updated_at이 달라 0행이 된다.
+      .where(and(
+        eq(diggingPlaylists.id, playlistId),
+        eq(diggingPlaylists.userId, userId),
+        eq(diggingPlaylists.updatedAt, current.updatedAt),
+      ))
       .returning(playlistColumns);
   } catch (error) {
     // 동시에 같은 링크로 등록·수정하면 선검사를 지나도 unique index가 막는다.
     if (isUniqueViolation(error)) return { ok: false, error: DUPLICATE_MESSAGE };
     throw error;
   }
-  // 읽은 뒤 다른 탭에서 지웠으면 바뀐 행이 없다. 성공으로 보고하지 않는다.
+  // 읽은 뒤 다른 탭에서 지웠거나 고쳤으면 바뀐 행이 없다. 성공으로 보고하지 않는다.
   const [saved] = updated;
-  if (!saved) return { ok: false, error: NOT_FOUND_MESSAGE };
+  if (!saved) {
+    const [stillThere] = await db
+      .select({ id: diggingPlaylists.id })
+      .from(diggingPlaylists)
+      .where(and(eq(diggingPlaylists.id, playlistId), eq(diggingPlaylists.userId, userId)))
+      .limit(1);
+    return { ok: false, error: stillThere ? CONFLICT_MESSAGE : NOT_FOUND_MESSAGE };
+  }
   revalidateDigging(userId);
   return { ok: true, playlist: saved };
 }
@@ -219,6 +238,10 @@ async function requirePlaylistWriter(studentId: string): Promise<string> {
   if (typeof studentId !== "string" || !studentId) throw new Error("Student not found");
   const student = await requireStudentOwnerOrAdmin(session, studentId);
   return student.id;
+}
+
+function parseExpectedUpdatedAt(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function isUniqueViolation(error: unknown): boolean {

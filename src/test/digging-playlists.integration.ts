@@ -370,6 +370,51 @@ test("지워진 행을 고치면 성공으로 보고하지 않고 찾을 수 없
   assert.deepEqual(await playlistActions.updateDiggingPlaylist(activeSession.user.id, created.playlist.id, { title: "다시" }), notFound);
 });
 
+test("학생과 관리자가 같은 행을 동시에 고치면 나중 저장은 덮지 않고 충돌 안내를 받는다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("student-1", "student"));
+  const created = await playlistActions.createDiggingPlaylist("student-1", { url: "https://www.beatport.com/playlists/share/1", note: "원래 메모" });
+  assert.ok(created.ok);
+  const readByBoth = created.playlist.updatedAt.getTime();
+  const conflict = { ok: false, error: "다른 곳에서 먼저 고친 플레이리스트입니다. 새로고침해 바뀐 내용을 확인한 뒤 다시 고쳐 주세요." };
+
+  // 학생이 먼저 저장한다(같은 초여도 updatedAt이 늘어난다).
+  const studentSave = await playlistActions.updateDiggingPlaylist("student-1", created.playlist.id, { note: "학생 메모", expectedUpdatedAt: readByBoth });
+  assert.ok(studentSave.ok, JSON.stringify(studentSave));
+  assert.ok(studentSave.playlist.updatedAt.getTime() > readByBoth);
+
+  // 같은 행을 먼저 읽어 둔 Stann의 저장은 학생 메모를 덮지 않는다.
+  activeSession = createSession("admin-1", "admin");
+  assert.deepEqual(
+    await playlistActions.updateDiggingPlaylist("student-1", created.playlist.id, { note: "Stann 메모", expectedUpdatedAt: readByBoth }),
+    conflict,
+  );
+  assert.equal((await readPlaylists(db))[0]?.note, "학생 메모");
+
+  // 새로 읽은 값으로는 저장된다.
+  const adminSave = await playlistActions.updateDiggingPlaylist("student-1", created.playlist.id, {
+    note: "Stann 메모",
+    expectedUpdatedAt: studentSave.playlist.updatedAt.getTime(),
+  });
+  assert.ok(adminSave.ok && adminSave.playlist.note === "Stann 메모");
+
+  // SoundCloud 제목을 가져오는 사이 다른 쪽이 고쳐도 조건부 UPDATE가 덮지 않는다.
+  duringSoundCloudTitle = async () => {
+    await db.update(diggingPlaylists).set({ note: "그사이 저장", updatedAt: new Date(adminSave.playlist.updatedAt.getTime() + 5000) })
+      .where(eq(diggingPlaylists.id, created.playlist.id));
+  };
+  assert.deepEqual(
+    await playlistActions.updateDiggingPlaylist("student-1", created.playlist.id, {
+      url: "https://soundcloud.com/stann/sets/race",
+      title: null,
+      expectedUpdatedAt: adminSave.playlist.updatedAt.getTime(),
+    }),
+    conflict,
+  );
+  const stored = (await readPlaylists(db))[0];
+  assert.equal(stored?.note, "그사이 저장");
+  assert.equal(stored?.url, "https://www.beatport.com/playlists/share/1");
+});
+
 test("100개 상한은 INSERT가 다시 확인해 동시 등록에도 넘지 않는다", { concurrency: false }, async (context) => {
   const db = await setupDatabase(context, createSession("student-1", "student"));
   const limitError = { ok: false, error: "플레이리스트는 최대 100개까지 등록할 수 있습니다." };

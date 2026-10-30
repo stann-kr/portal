@@ -461,6 +461,8 @@ function PlaylistEditForm({
           url: normalized.url,
           title: parsedTitle.value,
           note: parsedNote.value,
+          // 폼을 연 시점의 행과 비교해, 그 사이 학생·Stann 중 다른 쪽이 고쳤으면 덮지 않는다.
+          expectedUpdatedAt: new Date(playlist.updatedAt).getTime(),
         });
         if (!result.ok) {
           setFormError(result.error);

@@ -256,7 +256,7 @@ test("서버가 돌려준 중복 오류를 폼에 보이고, 수정·삭제 확�
   assert.doesNotMatch(container.textContent ?? "", /삭제한 뒤 다시 추가/u);
   await fill("제목", " Warmup v2 ");
   await submit(editForm);
-  assert.deepEqual(updateCalls, [["sc-1", { url: "https://soundcloud.com/stann/sets/warmup", title: "Warmup v2", note: "오프닝\n후보" }]]);
+  assert.deepEqual(updateCalls, [["sc-1", { url: "https://soundcloud.com/stann/sets/warmup", title: "Warmup v2", note: "오프닝\n후보", expectedUpdatedAt: Date.parse("2026-10-20T00:00:00.000Z") }]]);
   assert.ok(findButton("‘Warmup v2’ 수정"));
 
   await press("‘Beatport 플레이리스트’ 삭제");
@@ -287,7 +287,7 @@ test("수정 폼에서 링크를 바꾸면 provider 안내가 바뀌고, 잘못�
   assert.match(editForm.textContent ?? "", /SoundCloud/u);
   assert.match(container.textContent ?? "", /비워 두면 SoundCloud에서 제목을 가져옵니다/u);
   await submit(editForm);
-  assert.deepEqual(updateCalls, [["bp-1", { url: "https://soundcloud.com/stann/sets/peak", title: null, note: null }]]);
+  assert.deepEqual(updateCalls, [["bp-1", { url: "https://soundcloud.com/stann/sets/peak", title: null, note: null, expectedUpdatedAt: Date.parse("2026-10-20T00:00:00.000Z") }]]);
 });
 
 test("바뀐 내용이 있는 폼은 Esc·취소에 버림 확인을 거치고, 바뀐 내용이 없으면 바로 닫는다", { concurrency: false }, async (context) => {
