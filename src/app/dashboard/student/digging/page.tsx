@@ -42,7 +42,7 @@ export default async function StudentDiggingPage({
           <h1 className="text-display font-semibold tracking-display">디깅 보드</h1>
           <p className="text-body text-secondary-foreground">플레이리스트를 모아 두고, 찾은 트랙에 평가와 메모를 남깁니다. 칸을 눌러 바로 고칩니다.</p>
         </header>
-        <PlaylistSection initialPlaylists={playlists} />
+        <PlaylistSection studentId={studentId} initialPlaylists={playlists} />
         <DiggingBoard
           heading={<h2 className="text-ui font-semibold text-secondary-foreground">트랙</h2>}
           mobileTopBar

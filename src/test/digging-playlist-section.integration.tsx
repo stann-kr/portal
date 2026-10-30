@@ -12,19 +12,24 @@ const previousGlobals = new Map<string, PropertyDescriptor | undefined>();
 let createCalls: unknown[] = [];
 let updateCalls: unknown[][] = [];
 let deleteCalls: string[] = [];
+// 모든 쓰기 action이 받은 대상 학생 id. 화면이 넘긴 studentId가 그대로 가야 한다.
+let targetCalls: string[] = [];
 let createImpl: (input: { url: string; title?: string | null; note?: string | null }) => Promise<unknown>;
 
 mock.module("@/lib/actions/digging-playlists", {
   namedExports: {
-    createDiggingPlaylist: async (input: { url: string; title?: string | null; note?: string | null }) => {
+    createDiggingPlaylist: async (studentId: string, input: { url: string; title?: string | null; note?: string | null }) => {
+      targetCalls.push(studentId);
       createCalls.push(input);
       return createImpl(input);
     },
-    updateDiggingPlaylist: async (id: string, input: { url?: string; title: string | null; note: string | null }) => {
+    updateDiggingPlaylist: async (studentId: string, id: string, input: { url?: string; title: string | null; note: string | null }) => {
+      targetCalls.push(studentId);
       updateCalls.push([id, input]);
       return { ok: true, playlist: { ...playlists()[0], ...input, id } };
     },
-    deleteDiggingPlaylist: async (id: string) => {
+    deleteDiggingPlaylist: async (studentId: string, id: string) => {
+      targetCalls.push(studentId);
       deleteCalls.push(id);
       return { ok: true };
     },
@@ -93,6 +98,7 @@ async function render(context: TestContext, element: React.ReactElement) {
   createCalls = [];
   updateCalls = [];
   deleteCalls = [];
+  targetCalls = [];
   const container = browser.document.createElement("div");
   browser.document.body.append(container);
   const root = createRoot(container as unknown as Element);
@@ -156,13 +162,13 @@ async function submit(form: unknown) {
   await settle();
 }
 
-test("관리자 보기는 편집 없이 Beatport 새 탭 링크와 SoundCloud 재생 토글만 보인다", { concurrency: false }, async (context) => {
-  const container = await render(context, <PlaylistSection initialPlaylists={playlists()} readonly />);
+test("관리자 보기도 추가·수정·삭제를 보이고 Beatport 새 탭 링크와 SoundCloud 재생 토글을 둔다", { concurrency: false }, async (context) => {
+  const container = await render(context, <PlaylistSection studentId="student-1" initialPlaylists={playlists()} viewer="admin" />);
 
   assert.equal(container.querySelector("h2")?.textContent, "플레이리스트2");
-  assert.equal(findButton("플레이리스트 추가"), undefined);
-  assert.equal(findButton("‘Warmup’ 수정"), undefined);
-  assert.equal(findButton("‘Beatport 플레이리스트’ 삭제"), undefined);
+  assert.ok(findButton("플레이리스트 추가"));
+  assert.ok(findButton("‘Warmup’ 수정"));
+  assert.ok(findButton("‘Beatport 플레이리스트’ 삭제"));
 
   const beatport = container.querySelector('a[href="https://www.beatport.com/playlists/share/11018932"]');
   assert.ok(beatport);
@@ -185,6 +191,19 @@ test("관리자 보기는 편집 없이 Beatport 새 탭 링크와 SoundCloud �
   await act(async () => { play.click(); });
   await settle();
   assert.equal(container.querySelector("[data-player]"), null);
+
+  // 삭제는 화면이 받은 대상 학생 id와 함께 보낸다.
+  await press("‘Beatport 플레이리스트’ 삭제");
+  await press("플레이리스트 삭제");
+  assert.deepEqual(deleteCalls, ["bp-1"]);
+  assert.deepEqual(targetCalls, ["student-1"]);
+});
+
+test("관리자 보기의 빈 목록은 학생에게 하는 말 대신 추가할 수 있다고 안내한다", { concurrency: false }, async (context) => {
+  const container = await render(context, <PlaylistSection studentId="student-9" initialPlaylists={[]} viewer="admin" />);
+  assert.match(container.textContent ?? "", /학생과 함께 들을/u);
+  assert.doesNotMatch(container.textContent ?? "", /Stann과 함께/u);
+  assert.ok(findButton("플레이리스트 추가"));
 });
 
 test("학생 추가 폼은 단축 링크를 서버 요청 없이 안내하고 정규화한 링크로 등록한다", { concurrency: false }, async (context) => {
@@ -192,7 +211,7 @@ test("학생 추가 폼은 단축 링크를 서버 요청 없이 안내하고 �
     ok: true,
     playlist: { id: "new-1", provider: "beatport", url: input.url, title: input.title ?? null, note: input.note ?? null, createdAt: new Date(), updatedAt: new Date() },
   });
-  const container = await render(context, <PlaylistSection initialPlaylists={[]} />);
+  const container = await render(context, <PlaylistSection studentId="student-1" initialPlaylists={[]} />);
   assert.match(container.textContent ?? "", /아직 등록한 플레이리스트가 없습니다/u);
 
   await press("플레이리스트 추가");
@@ -218,7 +237,7 @@ test("학생 추가 폼은 단축 링크를 서버 요청 없이 안내하고 �
 
 test("서버가 돌려준 중복 오류를 폼에 보이고, 수정·삭제 확인을 거쳐 목록을 갱신한다", { concurrency: false }, async (context) => {
   createImpl = async () => ({ ok: false, error: "이미 등록한 플레이리스트입니다." });
-  const container = await render(context, <PlaylistSection initialPlaylists={playlists()} />);
+  const container = await render(context, <PlaylistSection studentId="student-1" initialPlaylists={playlists()} />);
 
   await press("플레이리스트 추가");
   await fill("플레이리스트 링크", "https://soundcloud.com/stann/sets/warmup");
@@ -245,6 +264,7 @@ test("서버가 돌려준 중복 오류를 폼에 보이고, 수정·삭제 확�
   assert.equal(deleteCalls.length, 0);
   await press("플레이리스트 삭제");
   assert.deepEqual(deleteCalls, ["bp-1"]);
+  assert.deepEqual(targetCalls, ["student-1", "student-1", "student-1"]);
   assert.equal(container.querySelector('a[href="https://www.beatport.com/playlists/share/11018932"]'), null);
   assert.equal(container.querySelector("h2")?.textContent, "플레이리스트1");
   // 지운 행의 버튼 대신 추가 버튼으로 초점이 간다.
@@ -252,7 +272,7 @@ test("서버가 돌려준 중복 오류를 폼에 보이고, 수정·삭제 확�
 });
 
 test("수정 폼에서 링크를 바꾸면 provider 안내가 바뀌고, 잘못된 링크는 서버 요청 없이 칸에 안내한다", { concurrency: false }, async (context) => {
-  const container = await render(context, <PlaylistSection initialPlaylists={playlists()} />);
+  const container = await render(context, <PlaylistSection studentId="student-1" initialPlaylists={playlists()} />);
   await press("‘Beatport 플레이리스트’ 수정");
   const editForm = container.querySelector('form[aria-label="‘Beatport 플레이리스트’ 수정"]');
   assert.ok(editForm);
@@ -271,7 +291,7 @@ test("수정 폼에서 링크를 바꾸면 provider 안내가 바뀌고, 잘못�
 });
 
 test("바뀐 내용이 있는 폼은 Esc·취소에 버림 확인을 거치고, 바뀐 내용이 없으면 바로 닫는다", { concurrency: false }, async (context) => {
-  const container = await render(context, <PlaylistSection initialPlaylists={playlists()} />);
+  const container = await render(context, <PlaylistSection studentId="student-1" initialPlaylists={playlists()} />);
 
   await press("플레이리스트 추가");
   assert.equal(container.querySelector('form[aria-label="플레이리스트 추가"]')?.hasAttribute("novalidate"), true);

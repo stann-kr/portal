@@ -1,7 +1,9 @@
 /**
  * @file src/lib/actions/digging-playlists.ts
  * @description 디깅 보드 위 플레이리스트(Beatport 공유·SoundCloud 세트 링크) 조회·등록·수정·삭제 서버 액션.
- * 읽기는 학생 본인 또는 관리자, 쓰기는 학생 본인만 하며 모든 쓰기 WHERE에 session user_id를 둔다.
+ * 읽기·쓰기 모두 학생 본인 또는 관리자(Stann)가 하며, 대상 학생 id를 명시로 받아 활성 학생인지 확인한다.
+ * 관리자 쓰기는 2026-10-30 사용자 결정에 따른 소유권 예외이며 플레이리스트에만 해당한다(트랙 보드는 학생 본인만).
+ * 모든 쓰기 WHERE에 대상 학생 user_id를 둬 다른 학생 행에 닿지 않게 한다.
  * Beatport는 어떤 외부 요청도 하지 않고, SoundCloud는 새 링크의 제목이 비었을 때만 oEmbed로 제목을 채운다.
  * 입력 오류(잘못된 링크·중복·길이)는 화면이 문구를 보일 수 있게 결과 객체로, 권한 오류는 throw로 돌려준다.
  */
@@ -62,12 +64,12 @@ export async function getDiggingPlaylists(userId: string): Promise<DiggingPlayli
     .orderBy(desc(diggingPlaylists.createdAt), desc(diggingPlaylists.id));
 }
 
-export async function createDiggingPlaylist(input: {
+export async function createDiggingPlaylist(studentId: string, input: {
   url: string;
   title?: string | null;
   note?: string | null;
 }): Promise<DiggingPlaylistMutationResult> {
-  const userId = await requireStudentWriter();
+  const userId = await requirePlaylistWriter(studentId);
   const normalized = normalizeDiggingPlaylistUrl(input?.url);
   if (!normalized.ok) return normalized;
   const title = parseDiggingPlaylistTitle(input?.title);
@@ -119,7 +121,7 @@ export async function createDiggingPlaylist(input: {
     throw error;
   }
   if (inserted.length === 0) return { ok: false, error: LIMIT_MESSAGE };
-  revalidateDigging();
+  revalidateDigging(userId);
   return { ok: true, playlist };
 }
 
@@ -129,10 +131,11 @@ export async function createDiggingPlaylist(input: {
  * 새 링크가 SoundCloud이고 제목이 비었으면 등록처럼 oEmbed로 제목을 채운다(실패해도 저장).
  */
 export async function updateDiggingPlaylist(
+  studentId: string,
   playlistId: string,
   input: { url?: string | null; title?: string | null; note?: string | null },
 ): Promise<DiggingPlaylistMutationResult> {
-  const userId = await requireStudentWriter();
+  const userId = await requirePlaylistWriter(studentId);
   if (typeof playlistId !== "string" || !playlistId) return { ok: false, error: NOT_FOUND_MESSAGE };
   const nextUrl = input?.url === undefined || input?.url === null ? null : normalizeDiggingPlaylistUrl(input.url);
   if (nextUrl && !nextUrl.ok) return nextUrl;
@@ -190,14 +193,15 @@ export async function updateDiggingPlaylist(
   // 읽은 뒤 다른 탭에서 지웠으면 바뀐 행이 없다. 성공으로 보고하지 않는다.
   const [saved] = updated;
   if (!saved) return { ok: false, error: NOT_FOUND_MESSAGE };
-  revalidateDigging();
+  revalidateDigging(userId);
   return { ok: true, playlist: saved };
 }
 
 export async function deleteDiggingPlaylist(
+  studentId: string,
   playlistId: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const userId = await requireStudentWriter();
+  const userId = await requirePlaylistWriter(studentId);
   if (typeof playlistId !== "string" || !playlistId) return { ok: false, error: NOT_FOUND_MESSAGE };
   const db = createDb();
   const deleted = await db
@@ -205,16 +209,16 @@ export async function deleteDiggingPlaylist(
     .where(and(eq(diggingPlaylists.id, playlistId), eq(diggingPlaylists.userId, userId)))
     .returning({ id: diggingPlaylists.id });
   if (deleted.length === 0) return { ok: false, error: NOT_FOUND_MESSAGE };
-  revalidateDigging();
+  revalidateDigging(userId);
   return { ok: true };
 }
 
-async function requireStudentWriter(): Promise<string> {
+/** 쓰기 대상은 활성 학생이어야 하고, 요청자는 그 학생 본인 또는 관리자여야 한다. 반환값이 모든 쓰기의 user_id다. */
+async function requirePlaylistWriter(studentId: string): Promise<string> {
   const session = await requireAuth();
-  if (session.user.role !== "student" || !session.user.id) {
-    throw new Error("학생만 플레이리스트를 변경할 수 있습니다.");
-  }
-  return session.user.id;
+  if (typeof studentId !== "string" || !studentId) throw new Error("Student not found");
+  const student = await requireStudentOwnerOrAdmin(session, studentId);
+  return student.id;
 }
 
 function isUniqueViolation(error: unknown): boolean {
@@ -227,7 +231,8 @@ function isUniqueViolation(error: unknown): boolean {
   return false;
 }
 
-function revalidateDigging(): void {
+function revalidateDigging(studentId: string): void {
   revalidatePath("/dashboard/student/digging");
   revalidatePath("/dashboard/student");
+  revalidatePath(`/dashboard/admin/students/${studentId}`);
 }

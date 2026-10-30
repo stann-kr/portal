@@ -62,7 +62,7 @@ async function DiggingTabContent({ studentId }: { studentId: string }) {
 
   return (
     <div className="flex flex-col gap-8">
-      <PlaylistSection initialPlaylists={playlists} readonly />
+      <PlaylistSection studentId={studentId} initialPlaylists={playlists} viewer="admin" />
       <DiggingBoard
         heading={<h2 className="text-ui font-semibold text-secondary-foreground">트랙</h2>}
         initialColumns={columns.map((c: RawColumn) => ({
