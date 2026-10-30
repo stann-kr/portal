@@ -17,6 +17,7 @@ import {
 import { formatRecordTime } from "@/lib/kst-format";
 import { getRequestNow } from "@/lib/request-time";
 import { describeRevisionLinkChange } from "@/lib/community-mixset-media";
+import { describeCommunityBoardLocation } from "@/lib/community-location";
 
 export const metadata = { title: "게시물 변경 이력" };
 
@@ -93,7 +94,7 @@ export default async function PostHistoryPage({
             >
               <RecordDetails summary={`저장된 내용 보기 — ${revision.title}`}>
                 <p className="text-xs text-muted-foreground">
-                  {revision.boardType} · {revision.category}
+                  {describeCommunityBoardLocation(revision.boardType, revision.category)}
                   {revision.isPinned ? " · 고정" : ""}
                 </p>
                 {linkChange ? (

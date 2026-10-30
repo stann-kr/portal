@@ -4,15 +4,12 @@
  * 제목, 본문 첫 줄 미리보기, 작성자·날짜·댓글 수. 줄 전체가 상세로 가는 링크다.
  */
 import Link from "next/link";
-import type { CommunityBoardType } from "@/lib/community-location";
+import { COMMUNITY_BOARD_LABELS } from "@/lib/community-location";
 import { formatKstShortDate } from "@/lib/kst-format";
 import { getSearchableDocumentText } from "@/lib/document-search";
 
-export const COMMUNITY_BOARD_LABELS: Record<CommunityBoardType, string> = {
-  ANNOUNCEMENT: "공지",
-  GENERAL: "자유",
-  FEEDBACK: "믹스셋",
-};
+// 게시판 이름은 이력 화면과 같은 원본(lib)을 쓴다. 기존 import 경로를 위해 다시 내보낸다.
+export { COMMUNITY_BOARD_LABELS };
 
 type CommunityPostSummary = {
   id: string;
