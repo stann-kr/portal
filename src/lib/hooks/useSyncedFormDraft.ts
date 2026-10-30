@@ -4,12 +4,15 @@
 import { useCallback, useInsertionEffect, useRef } from "react";
 import {
   useDocumentServerDraftSync,
+  type DocumentServerDraftSyncOptions,
   type DocumentServerDraftSyncResult,
 } from "@/lib/hooks/useDocumentServerDraftSync";
 import {
   useFormDraft,
   type UseFormDraftResult,
 } from "@/lib/hooks/useFormDraft";
+
+const EMPTY_SERVER_OPTIONS: DocumentServerDraftSyncOptions<unknown> = {};
 
 export type UseSyncedFormDraftResult<T> = UseFormDraftResult<T> & {
   serverSync: DocumentServerDraftSyncResult;
@@ -22,6 +25,8 @@ export function useSyncedFormDraft<T>(
     debounceMs?: number;
     maxWaitMs?: number;
     onReset?: () => void;
+    /** 서버 초안 비교·폐기 규칙. 로컬 초안 계약에는 영향이 없다. */
+    server?: DocumentServerDraftSyncOptions<T>;
   } = {},
 ): UseSyncedFormDraftResult<T> {
   const serverObserverRef = useRef<(draft: T) => void>(() => undefined);
@@ -38,12 +43,13 @@ export function useSyncedFormDraft<T>(
     options,
   );
 
+  // 비교·폐기 규칙은 hook 안에서 ref로 최신값을 읽으므로 매 render의 객체를 그대로 넘겨도 된다.
   const server = useDocumentServerDraftSync<T>(key, (draft) => {
     onRestoreRef.current(draft);
     // 서버본을 고른 경우에만 local canonical도 같은 데이터로 명시적으로 맞춘다.
     localRef.current?.save(draft);
     localRef.current?.flush();
-  });
+  }, options.server ?? (EMPTY_SERVER_OPTIONS as DocumentServerDraftSyncOptions<T>));
   const observeLocalDraft = server.observeLocalDraft;
   // 자식의 layout/passive effect와 하위 hook의 mount effect가 save·restore를 부르기 전에
   // 최신 callback과 결과가 보이도록 insertion effect에서 갱신한다.

@@ -88,6 +88,7 @@ let privateNoteActions: typeof import("@/lib/actions/privateNotes");
 let postActions: typeof import("@/lib/actions/posts");
 let commentActions: typeof import("@/lib/actions/comments");
 let revalidationFailure: Error | null = null;
+let revalidateCalls = 0;
 
 function requireActiveDb(): PortalTestDb {
   if (!activeDb) throw new Error("격리 D1 테스트 DB가 준비되지 않았습니다.");
@@ -108,6 +109,7 @@ mock.module("@/db/client", {
 mock.module("next/cache", {
   namedExports: {
     revalidatePath: () => {
+      revalidateCalls += 1;
       if (revalidationFailure) {
         const failure = revalidationFailure;
         revalidationFailure = null;
@@ -867,6 +869,38 @@ test("노트 CAS 중 소유자 변경 시도도 원장과 함께 rollback한다"
     authorId: "student-1",
     title: "경쟁 전 제목",
   });
+});
+
+test("노트 생성·자동 저장은 revalidatePath를 호출하지 않아 입력 중 route가 다시 렌더되지 않는다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context);
+  await seedProfile(db, "student-1");
+  revalidateCalls = 0;
+  const created = await privateNoteActions.createPrivateNote(
+    "student-1",
+    {},
+    createNoteForm(crypto.randomUUID(), "입력 중 제목", "<p>입력 중 본문</p>", "2026-10-31"),
+  );
+  const noteId = created.note?.id;
+  assert.ok(noteId);
+  const updated = await privateNoteActions.updatePrivateNote(
+    noteId,
+    {},
+    createNoteUpdateForm(
+      noteId,
+      { title: "입력 중 제목", contentHtml: "<p>입력 중 본문 이어서</p>", noteDate: "2026-10-31" },
+      { title: "입력 중 제목", contentHtml: "<p>입력 중 본문</p>", noteDate: "2026-10-31" },
+      crypto.randomUUID(),
+      1,
+    ),
+  );
+  assert.equal(updated.success, true);
+  assert.ok(updated.updatedAt instanceof Date, "저장 응답은 화면이 수정 시각을 맞출 updatedAt을 돌려준다.");
+  assert.equal(revalidateCalls, 0, "생성·자동 저장은 어떤 경로도 revalidate하지 않는다.");
+
+  // 휴지통처럼 입력 중이 아닌 작업은 목록을 다시 받게 한다.
+  const trashed = await privateNoteActions.trashPrivateNote(noteId, crypto.randomUUID(), updated.note?.version ?? 2);
+  assert.equal(trashed.success, true);
+  assert.ok(revalidateCalls > 0, "휴지통 이동은 목록 경로를 revalidate한다.");
 });
 
 test("노트 생성·수정 재전송은 immutable revision과 historical receipt를 한 번만 남긴다", { concurrency: false }, async (context) => {

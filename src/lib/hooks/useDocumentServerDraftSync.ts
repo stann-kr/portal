@@ -86,6 +86,24 @@ type LocalDraftState<T> = {
 
 type ClearServerDraftReason = "empty" | "discard" | "submitted";
 
+/**
+ * 문서 form이 서버 초안 비교·폐기 규칙을 넘기는 옵션(2026-10-31 노트 편집기 안정화).
+ * 구현은 이 hook이 맡고, form은 "무엇이 휘발 값인지"와 "어떤 서버본이 더 이상 의미 없는지"만 알려 준다.
+ */
+export type DocumentServerDraftSyncOptions<T> = {
+  /**
+   * 서버 payload와 비교 hash에서 제외하는 휘발 필드(예: `operationId`). 로컬 저장본(useFormDraft)에는 그대로 남아
+   * 재진입 replay가 유지되고, 서버본을 적용할 때 이 필드는 비어 있으므로 form이 새 값을 만든다.
+   */
+  volatileKeys?: readonly string[];
+  /**
+   * 관찰된 서버본(다른 기기 포함)을 사용자 선택 없이 조용히 폐기할지 판정한다. `"discard"`면 그 version·hash를
+   * 대상으로 DISCARD를 큐에 넣어 보내고 선택창을 띄우지 않는다. 노트 편집은 서버본이 현재 저장된 head와 같거나
+   * `baseRevision`이 head보다 오래된 경우 폐기한다. 로컬과 같은 본문은 이 판정 전에 `synced`로 처리된다.
+   */
+  classifyRemoteDraft?: (remote: T, snapshot: DocumentServerDraftSnapshot) => "keep" | "discard";
+};
+
 export type DocumentServerDraftSyncController<T> =
   DocumentServerDraftSyncResult & {
     observeLocalDraft: (data: T) => void;
@@ -143,7 +161,10 @@ function notifyQueueChange(sourceKey: string): void {
 export function useDocumentServerDraftSync<T>(
   sourceKey: string,
   onApplyRemote: (draft: T) => void,
+  options: DocumentServerDraftSyncOptions<T> = {},
 ): DocumentServerDraftSyncController<T> {
+  // TODO(note-editor-stability B): volatileKeys·classifyRemoteDraft 구현. 시그니처만 먼저 고정한다.
+  void options;
   const [status, setStatus] = useState<DocumentServerDraftSyncStatus>("loading");
   const [remoteDraft, setRemoteDraft] =
     useState<DocumentServerDraftSnapshot | null>(null);
