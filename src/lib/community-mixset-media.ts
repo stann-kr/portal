@@ -91,3 +91,42 @@ export function formatTimeMarker(seconds: number): string {
   const ss = String(s).padStart(2, "0");
   return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
 }
+
+type RevisionLinkSnapshot = {
+  title: string;
+  contentHtml: string;
+  mediaUrl: string | null;
+  mediaObjectId?: string | null;
+};
+
+export type RevisionLinkChange = {
+  /** 이전 버전의 믹스셋 링크. 없었으면 null. */
+  from: string | null;
+  /** 이 버전의 믹스셋 링크. 비웠으면 null. */
+  to: string | null;
+  /** 제목·본문은 그대로이고 링크만 바뀌었다. */
+  linkOnly: boolean;
+};
+
+/**
+ * 게시물 이력에서 바로 앞 버전과 비교해 믹스셋 링크가 바뀌었는지 판별한다. 업로드 오디오는 링크로 보지 않는다.
+ * 앞 버전이 없거나(첫 기록) 링크가 같으면 null이다.
+ */
+export function describeRevisionLinkChange(
+  current: RevisionLinkSnapshot,
+  previous: RevisionLinkSnapshot | undefined,
+): RevisionLinkChange | null {
+  if (!previous) return null;
+  const linkOf = (snapshot: RevisionLinkSnapshot) => {
+    const media = classifyMixsetMedia({ mediaUrl: snapshot.mediaUrl, mediaObjectId: snapshot.mediaObjectId ?? null });
+    return media?.kind === "link" ? media.url : null;
+  };
+  const from = linkOf(previous);
+  const to = linkOf(current);
+  if (from === to) return null;
+  return {
+    from,
+    to,
+    linkOnly: current.title === previous.title && current.contentHtml === previous.contentHtml,
+  };
+}

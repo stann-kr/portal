@@ -2607,6 +2607,79 @@ test("게시물 수정 form은 링크 게시물에 링크 칸을 두고 초안 �
   assert.equal(harness.browserWindow.localStorage.getItem(draftKey), null);
 });
 
+test("링크 게시물 수정에서 제목을 비우고 Cmd/Ctrl+S로 저장하면 버튼 저장처럼 빈 제목을 알린다", { concurrency: false }, async (context) => {
+  const post = { id: "post-mixset-link-empty-title", title: "링크 믹스셋", contentHtml: "<p>링크 본문</p>", version: 1 };
+  const requests: Record<string, FormDataEntryValue>[] = [];
+  savePostEdit = async (_id, _previous, data) => {
+    requests.push(Object.fromEntries(data));
+    return { success: true, post: { ...post, title: String(data.get("title")), version: 2, mediaUrl: String(data.get("mixsetLinkUrl") ?? "") } };
+  };
+  context.after(() => { savePostEdit = async () => ({}); });
+  const harness = await renderForm(
+    context,
+    <PostEditForm actorId="post-mixset-link-empty-title-actor" post={post} mixsetLinkUrl="https://youtu.be/aqz-KE-bpKQ" onCancel={() => undefined} onSaved={() => undefined} />,
+  );
+  const { container } = harness;
+  assert.equal(container.querySelector("form")?.noValidate, true, "링크 칸이 있으면 브라우저 필수 안내가 뜨지 않는다.");
+  const titleInput = container.querySelector<HTMLInputElement>('input[name="title"]');
+  assert.ok(titleInput);
+  await typeIntoInput(harness, titleInput, "   ");
+  const shortcut = new harness.browserWindow.KeyboardEvent("keydown", { bubbles: true, cancelable: true, ctrlKey: true, key: "s" });
+  await act(async () => { titleInput.dispatchEvent(shortcut as unknown as Event); });
+  assert.equal(shortcut.defaultPrevented, true);
+  assert.equal(requests.length, 0, "빈 제목은 저장하지 않는다.");
+  const alert = container.querySelector<HTMLElement>('[role="alert"]');
+  assert.equal(alert?.textContent, "제목을 입력해 주세요.");
+  assert.equal(titleInput.getAttribute("aria-invalid"), "true");
+  assert.equal(titleInput.getAttribute("aria-describedby"), alert!.id);
+  assert.equal(harness.browserWindow.document.activeElement, titleInput, "빈 제목 칸으로 초점을 옮긴다.");
+
+  await typeIntoInput(harness, titleInput, "고친 제목");
+  assert.equal(container.querySelector('[role="alert"]'), null, "제목을 쓰기 시작하면 안내를 지운다.");
+  assert.equal(titleInput.getAttribute("aria-invalid"), null);
+});
+
+test("새 믹스셋 링크 방식에서 제목 없이 키보드로 제출하면 빈 제목을 알리고 게시하지 않는다", { concurrency: false }, async (context) => {
+  resetActionCalls();
+  const requests: Record<string, FormDataEntryValue>[] = [];
+  saveNewPost = async (_previous, data) => {
+    requests.push(Object.fromEntries(data));
+    return { error: "테스트에서 등록하지 않습니다." };
+  };
+  context.after(() => { saveNewPost = async () => ({}); });
+  const actorId = "mixset-link-empty-title-actor";
+  const draftKey = createDocumentDraftKey("community-post", actorId);
+  const harness = await renderForm(
+    context,
+    <NewPostForm actorId={actorId} defaultBoardType="FEEDBACK" defaultCategory="feedback" isAdmin={false} returnTo="/community" />,
+    (storage) => storage.setItem(draftKey, seedFeedbackPostDraft(actorId, {
+      title: "",
+      mixsetMediaMode: "link",
+      mixsetLinkUrl: "https://youtu.be/aqz-KE-bpKQ",
+    })),
+  );
+  const { container } = harness;
+  const form = container.querySelector("form");
+  assert.equal(form?.noValidate, true);
+  const titleInput = container.querySelector<HTMLInputElement>('input[name="title"]');
+  assert.ok(titleInput);
+  assert.equal(titleInput.value, "");
+  // 버튼은 빈 제목에서 잠기므로 Enter·requestSubmit 같은 키보드 제출 경로를 직접 연다.
+  await act(async () => { form!.requestSubmit(); });
+  assert.equal(requests.length, 0, "빈 제목은 게시하지 않는다.");
+  const alert = container.querySelector<HTMLElement>('[role="alert"]');
+  assert.equal(alert?.textContent, "제목을 입력해 주세요.");
+  assert.equal(titleInput.getAttribute("aria-invalid"), "true");
+  assert.equal(titleInput.getAttribute("aria-describedby"), alert!.id);
+  assert.equal(harness.browserWindow.document.activeElement, titleInput);
+
+  await typeIntoInput(harness, titleInput, "금요일 믹스셋");
+  assert.equal(container.querySelector('[role="alert"]'), null);
+  await act(async () => submitControl(container).click());
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0]!.title, "금요일 믹스셋");
+});
+
 test("링크 게시물 충돌에서 서버 최신본을 고르면 최신 링크를 함께 가져온다", { concurrency: false }, async (context) => {
   const post = { id: "post-mixset-link-conflict", title: "기준 제목", contentHtml: "<p>기준 본문</p>", version: 1 };
   const latest = { ...post, title: "다른 화면 제목", contentHtml: "<p>다른 화면 본문</p>", version: 2, mediaUrl: "https://soundcloud.com/stann/latest-set" };

@@ -207,7 +207,10 @@ export function CommentForm({
         </div>
       ) : null}
       {timeError ? <p id={timeErrorId} role="alert" className="text-xs text-destructive">{timeError}</p> : null}
-      {positionStatus ? <p role="status" className="text-xs text-muted-foreground">{positionStatus}</p> : null}
+      {/* 첫 안내 전에 화면 낭독기가 영역을 알도록 시점 칸이 있으면 늘 둔다. 비어 있으면 줄 간격을 만들지 않게 감춘다. */}
+      {allowTimeMarker ? (
+        <p role="status" className={positionStatus ? "text-xs text-muted-foreground" : "sr-only"}>{positionStatus ?? ""}</p>
+      ) : null}
       <label htmlFor={contentId} className="sr-only">댓글 내용</label>
       <div className="flex gap-2">
         <Input

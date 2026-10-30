@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   classifyMixsetMedia,
+  describeRevisionLinkChange,
   COMMENT_TIME_MARKER_MAX_SECONDS,
   formatTimeMarker,
   isMixsetLinkUrl,
@@ -121,4 +122,35 @@ test("normalizeMixsetLinkUrl은 링크를 정규화하고 게시물 기준 안�
     ok: false,
     error: "링크가 너무 깁니다. 공유 링크를 다시 복사해 주세요.",
   });
+});
+
+test("이력의 링크 변경은 앞 버전과 비교해 링크만 바뀐 버전을 구분한다", () => {
+  const base = { title: "금요일 믹스셋", contentHtml: "<p>본문</p>", mediaObjectId: null };
+  const oldLink = { ...base, mediaUrl: "https://www.youtube.com/watch?v=aqz-KE-bpKQ" };
+  const newLink = { ...base, mediaUrl: "https://soundcloud.com/stann/friday-set" };
+  assert.deepEqual(describeRevisionLinkChange(newLink, oldLink), {
+    from: oldLink.mediaUrl,
+    to: newLink.mediaUrl,
+    linkOnly: true,
+  });
+  assert.equal(describeRevisionLinkChange(newLink, undefined), null, "첫 기록은 비교 대상이 없다");
+  assert.equal(describeRevisionLinkChange(oldLink, { ...oldLink }), null, "링크가 같으면 변경이 아니다");
+  assert.equal(
+    describeRevisionLinkChange({ ...oldLink, title: "새 제목" }, oldLink),
+    null,
+    "제목만 바뀐 버전은 링크 변경이 아니다",
+  );
+  assert.deepEqual(
+    describeRevisionLinkChange({ ...newLink, title: "새 제목" }, oldLink),
+    { from: oldLink.mediaUrl, to: newLink.mediaUrl, linkOnly: false },
+    "제목과 링크가 함께 바뀌면 링크만의 변경이 아니다",
+  );
+  assert.equal(
+    describeRevisionLinkChange(
+      { ...base, mediaUrl: "/api/media/audio-2", mediaObjectId: "audio-2" },
+      { ...base, mediaUrl: "/api/media/audio-1", mediaObjectId: "audio-1" },
+    ),
+    null,
+    "업로드 오디오 교체는 링크 변경으로 보지 않는다",
+  );
 });
