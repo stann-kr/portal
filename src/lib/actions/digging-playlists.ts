@@ -130,12 +130,12 @@ export async function createDiggingPlaylist(studentId: string, input: {
  * 링크·제목·메모를 고친다. `url`을 빼면 링크는 그대로 둔다.
  * 링크가 바뀌면 provider를 새 링크로 다시 정하고, 같은 학생의 다른 행과 겹치면 중복 안내를 돌려준다.
  * 새 링크가 SoundCloud이고 제목이 비었으면 등록처럼 oEmbed로 제목을 채운다(실패해도 저장).
- * `expectedUpdatedAt`(화면이 읽은 updatedAt, ms)을 주면 그 사이 학생·Stann 중 다른 쪽이 고친 행은 덮지 않고 충돌로 돌려준다.
+ * `expectedUpdatedAt`(화면이 읽은 updatedAt, ms)은 필수다. 그 사이 학생·Stann 중 다른 쪽이 고쳤거나 값이 없으면 덮지 않고 충돌로 돌려준다.
  */
 export async function updateDiggingPlaylist(
   studentId: string,
   playlistId: string,
-  input: { url?: string | null; title?: string | null; note?: string | null; expectedUpdatedAt?: number | null },
+  input: { url?: string | null; title?: string | null; note?: string | null; expectedUpdatedAt: number },
 ): Promise<DiggingPlaylistMutationResult> {
   const userId = await requirePlaylistWriter(studentId);
   if (typeof playlistId !== "string" || !playlistId) return { ok: false, error: NOT_FOUND_MESSAGE };
@@ -153,8 +153,9 @@ export async function updateDiggingPlaylist(
     .where(and(eq(diggingPlaylists.id, playlistId), eq(diggingPlaylists.userId, userId)))
     .limit(1);
   if (!current) return { ok: false, error: NOT_FOUND_MESSAGE };
+  // 화면이 읽은 버전 없이 오는 요청은 비교할 기준이 없어 저장하지 않는다(덮어쓰기 우회 방지).
   const expectedUpdatedAt = parseExpectedUpdatedAt(input?.expectedUpdatedAt);
-  if (expectedUpdatedAt !== null && current.updatedAt.getTime() !== expectedUpdatedAt) {
+  if (expectedUpdatedAt === null || current.updatedAt.getTime() !== expectedUpdatedAt) {
     return { ok: false, error: CONFLICT_MESSAGE };
   }
 

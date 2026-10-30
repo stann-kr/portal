@@ -37,6 +37,7 @@ import {
 import { CreationConflictActions } from "@/components/editor/CreationConflictActions";
 import { abandonMediaUpload } from "@/lib/actions/upload";
 import { MIXSET_LINK_FIELD, normalizeMixsetLinkUrl } from "@/lib/community-mixset-media";
+import { isImplicitSubmitEnter } from "@/components/community/empty-title-enter";
 
 const EMPTY_TITLE_ERROR = "제목을 입력해 주세요.";
 
@@ -363,6 +364,13 @@ function NewPostFormContent({
           noValidate={isLinkMode || undefined}
           className="flex flex-col gap-5"
           onKeyDownCapture={handleSaveShortcut}
+          onKeyDown={(event) => {
+            // 빈 제목이면 제출 버튼이 disabled라 Enter가 아무 일도 하지 않는다. 버튼 제출과 같은 안내를 보인다.
+            if (isFormBusy || title.trim() || !isImplicitSubmitEnter(event)) return;
+            event.preventDefault();
+            setTitleError(EMPTY_TITLE_ERROR);
+            titleInputRef.current?.focus();
+          }}
           onSubmit={(event) => {
             if (!loaded || !canSubmit || isFormBusy || isEditorUploading) {
               event.preventDefault();

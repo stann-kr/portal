@@ -2664,8 +2664,12 @@ test("새 믹스셋 링크 방식에서 제목 없이 키보드로 제출하면 
   const titleInput = container.querySelector<HTMLInputElement>('input[name="title"]');
   assert.ok(titleInput);
   assert.equal(titleInput.value, "");
-  // 버튼은 빈 제목에서 잠기므로 Enter·requestSubmit 같은 키보드 제출 경로를 직접 연다.
-  await act(async () => { form!.requestSubmit(); });
+  // 버튼은 빈 제목에서 잠겨 브라우저가 암묵 제출을 하지 않는다. 링크 칸의 실제 Enter가 form에서 안내로 이어져야 한다.
+  const linkInput = container.querySelector<HTMLInputElement>(MIXSET_LINK_SELECTOR);
+  assert.ok(linkInput);
+  const enter = new harness.browserWindow.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+  await act(async () => { linkInput.dispatchEvent(enter as unknown as Event); });
+  assert.equal(enter.defaultPrevented, true);
   assert.equal(requests.length, 0, "빈 제목은 게시하지 않는다.");
   const alert = container.querySelector<HTMLElement>('[role="alert"]');
   assert.equal(alert?.textContent, "제목을 입력해 주세요.");
@@ -2678,6 +2682,38 @@ test("새 믹스셋 링크 방식에서 제목 없이 키보드로 제출하면 
   await act(async () => submitControl(container).click());
   assert.equal(requests.length, 1);
   assert.equal(requests[0]!.title, "금요일 믹스셋");
+});
+
+test("링크 게시물 수정에서 제목을 비우고 링크 칸에서 Enter를 누르면 빈 제목을 알리고 저장하지 않는다", { concurrency: false }, async (context) => {
+  const post = { id: "post-mixset-link-enter", title: "기준 제목", contentHtml: "<p>기준 본문</p>", version: 1 };
+  const requests: Record<string, FormDataEntryValue>[] = [];
+  savePostEdit = async (_id, _previous, data) => {
+    requests.push(Object.fromEntries(data));
+    return {};
+  };
+  context.after(() => { savePostEdit = async () => ({}); });
+  const harness = await renderForm(
+    context,
+    <PostEditForm actorId="post-mixset-link-enter-actor" post={post} mixsetLinkUrl="https://youtu.be/aqz-KE-bpKQ" onCancel={() => undefined} onSaved={() => undefined} />,
+  );
+  const { container } = harness;
+  const titleInput = container.querySelector<HTMLInputElement>('input[name="title"]');
+  assert.ok(titleInput);
+  await typeIntoInput(harness, titleInput, "");
+  const linkInput = container.querySelector<HTMLInputElement>(MIXSET_LINK_SELECTOR);
+  assert.ok(linkInput);
+  const enter = new harness.browserWindow.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+  await act(async () => { linkInput.dispatchEvent(enter as unknown as Event); });
+  assert.equal(enter.defaultPrevented, true);
+  assert.equal(requests.length, 0);
+  assert.equal(container.querySelector('[role="alert"]')?.textContent, "제목을 입력해 주세요.");
+  assert.equal(harness.browserWindow.document.activeElement, titleInput);
+
+  // 제목이 있으면 Enter를 가로채지 않는다(기존 암묵 제출 그대로).
+  await typeIntoInput(harness, titleInput, "새 제목");
+  const enterWithTitle = new harness.browserWindow.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+  await act(async () => { linkInput.dispatchEvent(enterWithTitle as unknown as Event); });
+  assert.equal(enterWithTitle.defaultPrevented, false);
 });
 
 test("링크 게시물 충돌에서 서버 최신본을 고르면 최신 링크를 함께 가져온다", { concurrency: false }, async (context) => {
