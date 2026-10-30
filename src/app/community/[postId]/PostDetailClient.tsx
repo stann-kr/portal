@@ -69,7 +69,8 @@ export function PostDetailClient({
   const commentDeleteConfirm = useConfirmAction<string>();
   // 시점 요청은 그 요청을 만든 매체 주소에 묶는다. 링크를 바꿔 저장하면 새 플레이어가 예전 시점으로 재생하지 않는다.
   const [seekState, setSeekState] = useState<{ url: string; request: MediaSeekRequest }>();
-  const [seekAnnouncement, setSeekAnnouncement] = useState("");
+  // 같은 시점을 다시 눌러도 화면 낭독기가 다시 읽도록 매번 새 노드(nonce key)로 알린다.
+  const [seekAnnouncement, setSeekAnnouncement] = useState({ text: "", nonce: 0 });
   const playerRegionRef = useRef<HTMLElement>(null);
   const positionReaderRef = useRef<PlaybackPositionReader | null>(null);
   // 플레이어는 reader 콜백이 바뀔 때마다 다시 연결하므로 안정된 참조를 넘긴다.
@@ -121,7 +122,7 @@ export function PostDetailClient({
   const seekTo = (seconds: number) => {
     if (!mixsetMedia) return;
     setSeekState({ url: mixsetMedia.url, request: { seconds } });
-    setSeekAnnouncement(`${formatTimeMarker(seconds)} 위치부터 재생합니다.`);
+    setSeekAnnouncement((previous) => ({ text: `${formatTimeMarker(seconds)} 위치부터 재생합니다.`, nonce: previous.nonce + 1 }));
     const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
     playerRegionRef.current?.scrollIntoView?.({ block: "nearest", behavior: reduceMotion ? "auto" : "smooth" });
   };
@@ -260,7 +261,9 @@ export function PostDetailClient({
             seekRequest={seekRequest}
             onPositionReaderChange={handlePositionReaderChange}
           />
-          <p role="status" className="sr-only">{seekAnnouncement}</p>
+          <p role="status" className="sr-only">
+            {seekAnnouncement.text ? <span key={seekAnnouncement.nonce}>{seekAnnouncement.text}</span> : null}
+          </p>
         </section>
       ) : null}
 

@@ -37,6 +37,9 @@ import {
 import { CreationConflictActions } from "@/components/editor/CreationConflictActions";
 import { abandonMediaUpload } from "@/lib/actions/upload";
 import { MIXSET_LINK_FIELD, normalizeMixsetLinkUrl } from "@/lib/community-mixset-media";
+import { isImplicitSubmitEnter } from "@/components/community/empty-title-enter";
+
+const EMPTY_TITLE_ERROR = "제목을 입력해 주세요.";
 
 const FullEditor = dynamic(
   () => import("@/components/editor/FullEditor").then((module) => ({ default: module.FullEditor })),
@@ -115,6 +118,11 @@ function NewPostFormContent({
   const [mixsetMediaMode, setMixsetMediaMode] = useState<MixsetMediaMode>("audio");
   const [mixsetLinkUrl, setMixsetLinkUrl] = useState("");
   const [linkError, setLinkError] = useState("");
+  // 링크 방식이면 form이 noValidate라 브라우저 필수 안내가 뜨지 않으므로 빈 제목은 직접 알린다.
+  const [titleError, setTitleError] = useState("");
+  const titleInputRef = useRef<HTMLInputElement>(null);
+  const titleErrorId = useId();
+  const visibleTitleError = title.trim() ? "" : titleError;
   const linkInputRef = useRef<HTMLInputElement>(null);
   const linkFieldId = useId();
   const [operationId, setOperationId] = useState("");
@@ -356,6 +364,13 @@ function NewPostFormContent({
           noValidate={isLinkMode || undefined}
           className="flex flex-col gap-5"
           onKeyDownCapture={handleSaveShortcut}
+          onKeyDown={(event) => {
+            // 빈 제목이면 제출 버튼이 disabled라 Enter가 아무 일도 하지 않는다. 버튼 제출과 같은 안내를 보인다.
+            if (isFormBusy || isEditorUploading || title.trim() || !isImplicitSubmitEnter(event)) return;
+            event.preventDefault();
+            setTitleError(EMPTY_TITLE_ERROR);
+            titleInputRef.current?.focus();
+          }}
           onSubmit={(event) => {
             if (!loaded || !canSubmit || isFormBusy || isEditorUploading) {
               event.preventDefault();
@@ -366,7 +381,13 @@ function NewPostFormContent({
               return;
             }
             const latestContentHtml = commitLatestContentHtml();
-            if (!title.trim() || isRichTextEmpty(latestContentHtml)) {
+            if (!title.trim()) {
+              event.preventDefault();
+              setTitleError(EMPTY_TITLE_ERROR);
+              titleInputRef.current?.focus();
+              return;
+            }
+            if (isRichTextEmpty(latestContentHtml)) {
               event.preventDefault();
               return;
             }
@@ -578,21 +599,30 @@ function NewPostFormContent({
             </div>
           ) : null}
 
-          <label className="flex flex-col gap-1.5 text-body font-medium text-secondary-foreground md:text-ui" htmlFor="post-title">
-            <span>
-              제목 <span className="sr-only">필수</span>
-            </span>
-            <Input
-              id="post-title"
-              name="title"
-              value={title}
-              onChange={(event) => setTitle(event.target.value)}
-              placeholder="게시물 제목"
-              required
-              disabled={!loaded || isFormBusy}
-              className="h-12 px-3.5 font-normal md:h-10 md:px-3 md:text-md"
-            />
-          </label>
+          <div className="flex flex-col gap-1.5">
+            <label className="flex flex-col gap-1.5 text-body font-medium text-secondary-foreground md:text-ui" htmlFor="post-title">
+              <span>
+                제목 <span className="sr-only">필수</span>
+              </span>
+              <Input
+                ref={titleInputRef}
+                id="post-title"
+                name="title"
+                value={title}
+                onChange={(event) => {
+                  setTitle(event.target.value);
+                  setTitleError("");
+                }}
+                placeholder="게시물 제목"
+                required
+                disabled={!loaded || isFormBusy}
+                aria-invalid={visibleTitleError ? true : undefined}
+                aria-describedby={visibleTitleError ? titleErrorId : undefined}
+                className="h-12 px-3.5 font-normal md:h-10 md:px-3 md:text-md"
+              />
+            </label>
+            {visibleTitleError ? <p id={titleErrorId} role="alert" className="text-ui text-destructive">{visibleTitleError}</p> : null}
+          </div>
 
           <div className="flex flex-col gap-1.5">
             <span className="text-body font-medium text-secondary-foreground md:text-ui">

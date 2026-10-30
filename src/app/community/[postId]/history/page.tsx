@@ -16,6 +16,8 @@ import {
 } from "@/components/notes/DocumentRecordFrame";
 import { formatRecordTime } from "@/lib/kst-format";
 import { getRequestNow } from "@/lib/request-time";
+import { describeRevisionLinkChange } from "@/lib/community-mixset-media";
+import { describeCommunityBoardLocation } from "@/lib/community-location";
 
 export const metadata = { title: "게시물 변경 이력" };
 
@@ -60,35 +62,53 @@ export default async function PostHistoryPage({
       description="과거 버전을 복원해도 기존 기록은 유지되고 새 현재 버전이 추가됩니다."
     >
       <RecordList ordered label="게시물 변경 이력">
-        {revisions.map((revision) => (
-          <HistoryRecordItem
-            key={revision.id}
-            number={revision.revisionNumber}
-            changeLabel={CHANGE_LABELS[revision.changeType]}
-            meta={
-              <RecordMeta
-                time={formatRecordTime(revision.createdAt, now)}
-                actor={revision.actorName ?? "시스템"}
-                extra={revision.restoredFromRevision ? `${revision.restoredFromRevision}번에서 복원` : undefined}
-              />
-            }
-            action={canRestore ? (
-              <RestorePostRevisionButton
-                postId={post.id}
-                baseRevision={post.version}
-                revisionNumber={revision.revisionNumber}
-              />
-            ) : null}
-          >
-            <RecordDetails summary={`저장된 내용 보기 — ${revision.title}`}>
-              <p className="text-xs text-muted-foreground">
-                {revision.boardType} · {revision.category}
-                {revision.isPinned ? " · 고정" : ""}
-              </p>
-              <RichTextContent html={revision.contentHtml} className="text-body text-secondary-foreground" />
-            </RecordDetails>
-          </HistoryRecordItem>
-        ))}
+        {revisions.map((revision, index) => {
+          // 이력은 최신순이므로 바로 앞 버전은 다음 행이다. 제목·본문이 같고 링크만 바뀐 수정도 구분해 보인다.
+          const linkChange = describeRevisionLinkChange(revision, revisions[index + 1]);
+          const changeLabel = linkChange?.linkOnly && revision.changeType === "UPDATE"
+            ? "링크 변경"
+            : CHANGE_LABELS[revision.changeType];
+          const extra = [
+            revision.restoredFromRevision ? `${revision.restoredFromRevision}번에서 복원` : null,
+            linkChange && changeLabel !== "링크 변경" ? "링크 변경" : null,
+          ].filter(Boolean).join(" · ");
+          return (
+            <HistoryRecordItem
+              key={revision.id}
+              number={revision.revisionNumber}
+              changeLabel={changeLabel}
+              meta={
+                <RecordMeta
+                  time={formatRecordTime(revision.createdAt, now)}
+                  actor={revision.actorName ?? "시스템"}
+                  extra={extra || undefined}
+                />
+              }
+              action={canRestore ? (
+                <RestorePostRevisionButton
+                  postId={post.id}
+                  baseRevision={post.version}
+                  revisionNumber={revision.revisionNumber}
+                />
+              ) : null}
+            >
+              <RecordDetails summary={`저장된 내용 보기 — ${revision.title}`}>
+                <p className="text-xs text-muted-foreground">
+                  {describeCommunityBoardLocation(revision.boardType, revision.category)}
+                  {revision.isPinned ? " · 고정" : ""}
+                </p>
+                {linkChange ? (
+                  <p className="text-xs text-muted-foreground">
+                    링크 변경: <span className="break-all">{linkChange.from ?? "없음"}</span>
+                    {" → "}
+                    <span className="break-all">{linkChange.to ?? "없음"}</span>
+                  </p>
+                ) : null}
+                <RichTextContent html={revision.contentHtml} className="text-body text-secondary-foreground" />
+              </RecordDetails>
+            </HistoryRecordItem>
+          );
+        })}
       </RecordList>
     </RecordPageFrame>
   );

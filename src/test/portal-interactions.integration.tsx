@@ -1884,13 +1884,21 @@ test("믹스셋 링크 상세는 본문 위에 플레이어를 두고 댓글 시
   assert.ok(region.compareDocumentPosition(browser.document.querySelector(".border-b.pb-5")!) & browser.Node.DOCUMENT_POSITION_FOLLOWING, "플레이어는 본문 위에 놓인다");
   const chips = [...browser.document.querySelectorAll("button")].filter((element) => element.getAttribute("aria-label")?.endsWith("위치로 이동"));
   assert.deepEqual(chips.map((element) => element.textContent), ["12:34"], "시점 없는 댓글에는 시점 표시가 없다");
+  const seekStatus = region.querySelector('[role="status"]');
+  assert.ok(seekStatus, "이동 안내 영역은 첫 안내 전부터 있다");
+  assert.equal(seekStatus.textContent, "");
   await act(async () => { video.dispatchEvent(new browser.Event("loadedmetadata")); });
   await press("12:34 위치로 이동");
   assert.equal(video.currentTime, 754);
-  assert.match(region.querySelector('[role="status"]')?.textContent ?? "", /12:34 위치부터 재생/u);
+  assert.match(seekStatus.textContent ?? "", /12:34 위치부터 재생/u);
+  const firstAnnouncement = seekStatus.firstElementChild;
+  assert.ok(firstAnnouncement);
   video.currentTime = 800;
   await press("12:34 위치로 이동");
   assert.equal(video.currentTime, 754, "같은 시점을 다시 눌러도 다시 이동한다");
+  assert.equal(region.querySelector('[role="status"]'), seekStatus, "안내 영역은 다시 만들지 않는다");
+  assert.match(seekStatus.textContent ?? "", /12:34 위치부터 재생/u);
+  assert.notEqual(seekStatus.firstElementChild, firstAnnouncement, "같은 시점을 다시 눌러도 새 안내 노드로 다시 읽힌다");
 });
 
 test("믹스셋 오디오 상세는 metadata 뒤에 시점으로 이동해 재생하고 현재 위치로 댓글 시점을 채운다", async (context) => {
@@ -1901,8 +1909,12 @@ test("믹스셋 오디오 상세는 metadata 뒤에 시점으로 이동해 재�
   assert.ok(audio);
   assert.equal(audio.getAttribute("preload"), "metadata");
   assert.equal(audio.controls, true);
+  const positionStatus = browser.document.querySelector('form [role="status"]');
+  assert.ok(positionStatus, "현재 위치 안내 영역은 첫 안내 전부터 있다");
+  assert.equal(positionStatus.textContent, "");
   await press("현재 위치");
-  assert.match(browser.document.querySelector('form [role="status"]')?.textContent ?? "", /재생 위치를 읽지 못했습니다/u);
+  assert.equal(browser.document.querySelector('form [role="status"]'), positionStatus, "안내 영역은 다시 만들지 않는다");
+  assert.match(positionStatus.textContent ?? "", /재생 위치를 읽지 못했습니다/u);
   assert.equal(inputValue("timeMarker"), "");
   await press("1:05:30 위치로 이동");
   assert.equal(audio.currentTime, 0, "metadata 전에는 이동을 미룬다");
@@ -1990,7 +2002,7 @@ test("늦게 끝난 현재 위치 읽기는 그 사이 직접 입력한 시점�
   await act(async () => { reads[0](754); });
   await settle();
   assert.equal(inputValue("timeMarker"), "2:00", "늦게 도착한 12:34로 덮지 않는다");
-  assert.equal(browser.document.querySelector('form [role="status"]'), null);
+  assert.equal(browser.document.querySelector('form [role="status"]')?.textContent, "", "늦은 읽기 결과를 안내하지 않는다");
   await act(async () => root.render(<div />));
   await act(async () => root.render(screen()));
   await settle();

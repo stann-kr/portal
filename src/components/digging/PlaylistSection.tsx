@@ -3,7 +3,7 @@
  * @description 디깅 보드 위 플레이리스트 목록(Beatport 공유·SoundCloud 세트 링크 카드).
  * - SoundCloud: "재생"으로 페이지 안 SoundCloud 위젯을 연다(한 번에 하나).
  * - Beatport: 외부 요청 없이 링크만 저장하고, 누르면 Beatport를 새 탭으로 연다.
- * - 학생: 추가·링크/제목/메모 수정·삭제(취소 우선 확인). readonly(관리자 보기)는 목록과 재생만.
+ * - 학생 본인과 Stann(관리자, 학생 상세 디깅 탭): 추가·링크/제목/메모 수정·삭제(취소 우선 확인). 서버가 대상 학생을 다시 확인한다.
  * - 추가·수정 폼은 바뀐 내용이 있으면 Esc·취소에 버림 확인을 두고, 새로고침·탭 닫기는 브라우저 확인으로 막는다.
  */
 "use client";
@@ -49,12 +49,14 @@ const TEXT_ACTION_CLASS =
   "inline-flex h-11 items-center gap-1.5 rounded-touch px-2 text-ui text-secondary-foreground transition-colors duration-[var(--duration-fast)] hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none md:h-8 md:rounded-md";
 
 interface PlaylistSectionProps {
+  /** 플레이리스트 주인 학생. 모든 쓰기 action에 대상으로 넘긴다. */
+  studentId: string;
   initialPlaylists: DiggingPlaylist[];
-  /** 관리자 보기: 편집 없이 목록과 재생만. */
-  readonly?: boolean;
+  /** 보는 사람에 따라 빈 목록 안내만 바꾼다. 편집 권한은 서버가 정한다. */
+  viewer?: "student" | "admin";
 }
 
-export function PlaylistSection({ initialPlaylists, readonly = false }: PlaylistSectionProps) {
+export function PlaylistSection({ studentId, initialPlaylists, viewer = "student" }: PlaylistSectionProps) {
   const headingId = useId();
   const [playlists, setPlaylists] = useState<DiggingPlaylist[]>(initialPlaylists);
   const [adding, setAdding] = useState(false);
@@ -82,7 +84,7 @@ export function PlaylistSection({ initialPlaylists, readonly = false }: Playlist
     setMutationError("");
     startDelete(async () => {
       try {
-        const result = await deleteDiggingPlaylist(playlist.id);
+        const result = await deleteDiggingPlaylist(studentId, playlist.id);
         if (!result.ok) {
           setMutationError(result.error);
           return;
@@ -104,7 +106,7 @@ export function PlaylistSection({ initialPlaylists, readonly = false }: Playlist
         titleId={headingId}
         count={playlists.length}
         className="max-md:min-h-11 max-md:justify-center max-md:pb-0"
-        action={!readonly && !adding ? (
+        action={!adding ? (
           <button
             ref={addButtonRef}
             type="button"
@@ -117,8 +119,9 @@ export function PlaylistSection({ initialPlaylists, readonly = false }: Playlist
         ) : null}
       />
 
-      {!readonly && adding ? (
+      {adding ? (
         <PlaylistCreateForm
+          studentId={studentId}
           onCancel={closeAddForm}
           onCreated={(playlist) => {
             setPlaylists((current) => [playlist, ...current]);
@@ -131,8 +134,8 @@ export function PlaylistSection({ initialPlaylists, readonly = false }: Playlist
 
       {playlists.length === 0 ? (
         <p className="rounded-lg border border-muted px-4 py-8 text-center text-ui text-muted-foreground">
-          {readonly
-            ? "아직 등록한 플레이리스트가 없습니다."
+          {viewer === "admin"
+            ? "아직 등록한 플레이리스트가 없습니다. 학생과 함께 들을 Beatport·SoundCloud 플레이리스트 링크를 추가할 수 있습니다."
             : "아직 등록한 플레이리스트가 없습니다. Beatport·SoundCloud 플레이리스트 링크를 추가해 Stann과 함께 들어 보세요."}
         </p>
       ) : (
@@ -141,11 +144,12 @@ export function PlaylistSection({ initialPlaylists, readonly = false }: Playlist
             const name = diggingPlaylistDisplayTitle(playlist);
             const playerId = `${headingId}-player-${playlist.id}`;
             const playing = playingId === playlist.id;
-            const editing = !readonly && editingId === playlist.id;
+            const editing = editingId === playlist.id;
             return (
               <li key={playlist.id} className="flex flex-col gap-3 border-b border-muted py-3">
                 {editing ? (
                   <PlaylistEditForm
+                    studentId={studentId}
                     playlist={playlist}
                     onCancel={() => { setEditingId(null); focusEditButton(playlist.id); }}
                     onSaved={(saved) => {
@@ -203,32 +207,30 @@ export function PlaylistSection({ initialPlaylists, readonly = false }: Playlist
                         </div>
                       ) : null}
                     </div>
-                    {!readonly ? (
-                      <div className="flex shrink-0 items-center">
-                        <button
-                          id={`${headingId}-edit-${playlist.id}`}
-                          type="button"
-                          aria-label={`‘${name}’ 수정`}
-                          onClick={() => { setEditingId(playlist.id); setMutationError(""); }}
-                          disabled={isDeleting}
-                          className={ROW_ACTION_CLASS}
-                        >
-                          <Pencil className="size-4 md:size-3.5" strokeWidth={1.6} aria-hidden="true" />
-                        </button>
-                        <button
-                          type="button"
-                          aria-label={`‘${name}’ 삭제`}
-                          onClick={(event) => deleteConfirm.request(event.currentTarget, playlist.id)}
-                          disabled={isDeleting}
-                          className={cn(ROW_ACTION_CLASS, "hover:text-destructive")}
-                        >
-                          <Trash2 className="size-4 md:size-3.5" strokeWidth={1.6} aria-hidden="true" />
-                        </button>
-                      </div>
-                    ) : null}
+                    <div className="flex shrink-0 items-center">
+                      <button
+                        id={`${headingId}-edit-${playlist.id}`}
+                        type="button"
+                        aria-label={`‘${name}’ 수정`}
+                        onClick={() => { setEditingId(playlist.id); setMutationError(""); }}
+                        disabled={isDeleting}
+                        className={ROW_ACTION_CLASS}
+                      >
+                        <Pencil className="size-4 md:size-3.5" strokeWidth={1.6} aria-hidden="true" />
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`‘${name}’ 삭제`}
+                        onClick={(event) => deleteConfirm.request(event.currentTarget, playlist.id)}
+                        disabled={isDeleting}
+                        className={cn(ROW_ACTION_CLASS, "hover:text-destructive")}
+                      >
+                        <Trash2 className="size-4 md:size-3.5" strokeWidth={1.6} aria-hidden="true" />
+                      </button>
+                    </div>
                   </div>
                 )}
-                {!readonly && deleteConfirm.value === playlist.id ? (
+                {deleteConfirm.value === playlist.id ? (
                   <ConfirmPanel
                     confirm={deleteConfirm}
                     message={`‘${name}’ 플레이리스트를 목록에서 삭제할까요? ${PROVIDER_LABEL[playlist.provider]}의 원래 플레이리스트는 그대로 남습니다.`}
@@ -253,9 +255,11 @@ export function PlaylistSection({ initialPlaylists, readonly = false }: Playlist
 }
 
 function PlaylistCreateForm({
+  studentId,
   onCreated,
   onCancel,
 }: {
+  studentId: string;
   onCreated: (playlist: DiggingPlaylist) => void;
   onCancel: () => void;
 }) {
@@ -305,7 +309,7 @@ function PlaylistCreateForm({
     setUrlError("");
     startTransition(async () => {
       try {
-        const result = await createDiggingPlaylist({ url: normalized.url, title: parsedTitle.value, note: parsedNote.value });
+        const result = await createDiggingPlaylist(studentId, { url: normalized.url, title: parsedTitle.value, note: parsedNote.value });
         if (!result.ok) {
           setFormError(result.error);
           return;
@@ -394,10 +398,12 @@ function PlaylistCreateForm({
 }
 
 function PlaylistEditForm({
+  studentId,
   playlist,
   onSaved,
   onCancel,
 }: {
+  studentId: string;
   playlist: DiggingPlaylist;
   onSaved: (playlist: DiggingPlaylist) => void;
   onCancel: () => void;
@@ -451,10 +457,12 @@ function PlaylistEditForm({
     setUrlError("");
     startTransition(async () => {
       try {
-        const result = await updateDiggingPlaylist(playlist.id, {
+        const result = await updateDiggingPlaylist(studentId, playlist.id, {
           url: normalized.url,
           title: parsedTitle.value,
           note: parsedNote.value,
+          // 폼을 연 시점의 행과 비교해, 그 사이 학생·Stann 중 다른 쪽이 고쳤으면 덮지 않는다.
+          expectedUpdatedAt: new Date(playlist.updatedAt).getTime(),
         });
         if (!result.ok) {
           setFormError(result.error);

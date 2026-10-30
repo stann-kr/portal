@@ -84,6 +84,12 @@ async function setupDatabase(context: TestContext, session: AuthSession): Promis
   return isolated.db;
 }
 
+/** 화면이 방금 읽은 것처럼 현재 행의 updatedAt(ms)을 수정 토큰으로 쓴다. 없는 행은 0. */
+async function tokenOf(playlistId: string): Promise<number> {
+  const [row] = await requireActiveDb().select({ updatedAt: diggingPlaylists.updatedAt }).from(diggingPlaylists).where(eq(diggingPlaylists.id, playlistId));
+  return row?.updatedAt.getTime() ?? 0;
+}
+
 async function readPlaylists(db: PortalTestDb) {
   return db.select().from(diggingPlaylists).orderBy(asc(diggingPlaylists.id));
 }
@@ -91,7 +97,7 @@ async function readPlaylists(db: PortalTestDb) {
 test("학생은 Beatport를 외부 요청 없이 정규화해 등록하고 SoundCloud는 빈 제목을 oEmbed로 채운다", { concurrency: false }, async (context) => {
   const db = await setupDatabase(context, createSession("student-1", "student"));
 
-  const beatport = await playlistActions.createDiggingPlaylist({
+  const beatport = await playlistActions.createDiggingPlaylist(activeSession.user.id, {
     url: " https://beatport.com/playlists/share/11018932/?utm_source=share ",
     title: "  ",
     note: " 오프닝 후보 ",
@@ -103,7 +109,7 @@ test("학생은 Beatport를 외부 요청 없이 정규화해 등록하고 Sound
   assert.equal(beatport.playlist.note, "오프닝 후보");
   assert.deepEqual(soundCloudTitleCalls, []);
 
-  const soundcloud = await playlistActions.createDiggingPlaylist({
+  const soundcloud = await playlistActions.createDiggingPlaylist(activeSession.user.id, {
     url: "https://m.soundcloud.com/stann/sets/warmup?si=abc",
   });
   assert.ok(soundcloud.ok, JSON.stringify(soundcloud));
@@ -112,13 +118,13 @@ test("학생은 Beatport를 외부 요청 없이 정규화해 등록하고 Sound
   assert.deepEqual(soundCloudTitleCalls, ["https://soundcloud.com/stann/sets/warmup"]);
 
   // 사용자가 제목을 적으면 oEmbed를 부르지 않는다. oEmbed가 실패해도 등록은 성공한다.
-  const titled = await playlistActions.createDiggingPlaylist({
+  const titled = await playlistActions.createDiggingPlaylist(activeSession.user.id, {
     url: "https://soundcloud.com/stann/sets/closing",
     title: "마감 세트",
   });
   assert.ok(titled.ok && titled.playlist.title === "마감 세트");
   soundCloudTitle = null;
-  const untitled = await playlistActions.createDiggingPlaylist({
+  const untitled = await playlistActions.createDiggingPlaylist(activeSession.user.id, {
     url: "https://soundcloud.com/stann/sets/private/s-AbC123",
   });
   assert.ok(untitled.ok && untitled.playlist.title === null);
@@ -134,11 +140,11 @@ test("학생은 Beatport를 외부 요청 없이 정규화해 등록하고 Sound
 
 test("중복·잘못된 링크·길이 초과는 결과 오류로 돌려주고 DB를 바꾸지 않는다", { concurrency: false }, async (context) => {
   const db = await setupDatabase(context, createSession("student-1", "student"));
-  const created = await playlistActions.createDiggingPlaylist({ url: "https://www.beatport.com/playlists/share/11018932" });
+  const created = await playlistActions.createDiggingPlaylist(activeSession.user.id, { url: "https://www.beatport.com/playlists/share/11018932" });
   assert.ok(created.ok);
   const before = await readPlaylists(db);
 
-  const duplicate = await playlistActions.createDiggingPlaylist({ url: "https://beatport.com/playlists/share/11018932/#x" });
+  const duplicate = await playlistActions.createDiggingPlaylist(activeSession.user.id, { url: "https://beatport.com/playlists/share/11018932/#x" });
   assert.deepEqual(duplicate, { ok: false, error: "이미 등록한 플레이리스트입니다." });
   for (const url of [
     "http://www.beatport.com/playlists/share/1",
@@ -148,10 +154,10 @@ test("중복·잘못된 링크·길이 초과는 결과 오류로 돌려주고 D
     "https://user:pass@soundcloud.com/stann/sets/warmup",
     "https://example.com/playlists/share/1",
   ]) {
-    const result = await playlistActions.createDiggingPlaylist({ url });
+    const result = await playlistActions.createDiggingPlaylist(activeSession.user.id, { url });
     assert.equal(result.ok, false, url);
   }
-  const longTitle = await playlistActions.createDiggingPlaylist({
+  const longTitle = await playlistActions.createDiggingPlaylist(activeSession.user.id, {
     url: "https://www.beatport.com/playlists/share/2",
     title: "가".repeat(201),
   });
@@ -162,27 +168,31 @@ test("중복·잘못된 링크·길이 초과는 결과 오류로 돌려주고 D
 
 test("학생은 자기 플레이리스트만 고치고 지우며 다른 학생 행은 그대로 남는다", { concurrency: false }, async (context) => {
   const db = await setupDatabase(context, createSession("student-1", "student"));
-  const own = await playlistActions.createDiggingPlaylist({ url: "https://www.beatport.com/playlists/share/1", title: "내 목록" });
+  const own = await playlistActions.createDiggingPlaylist(activeSession.user.id, { url: "https://www.beatport.com/playlists/share/1", title: "내 목록" });
   assert.ok(own.ok);
   activeSession = createSession("student-2", "student");
-  const others = await playlistActions.createDiggingPlaylist({ url: "https://www.beatport.com/playlists/share/1", title: "남의 목록", note: "메모" });
+  const others = await playlistActions.createDiggingPlaylist(activeSession.user.id, { url: "https://www.beatport.com/playlists/share/1", title: "남의 목록", note: "메모" });
   assert.ok(others.ok, "다른 학생은 같은 링크를 따로 등록할 수 있다");
   const othersBefore = (await db.select().from(diggingPlaylists).where(eq(diggingPlaylists.id, others.playlist.id)))[0];
 
   activeSession = createSession("student-1", "student");
-  assert.equal((await playlistActions.updateDiggingPlaylist(others.playlist.id, { title: "탈취", note: null })).ok, false);
-  assert.equal((await playlistActions.updateDiggingPlaylist(others.playlist.id, {
+  assert.equal((await playlistActions.updateDiggingPlaylist(activeSession.user.id, others.playlist.id, { expectedUpdatedAt: await tokenOf(others.playlist.id), title: "탈취", note: null })).ok, false);
+  assert.equal((await playlistActions.updateDiggingPlaylist(activeSession.user.id, others.playlist.id, { expectedUpdatedAt: await tokenOf(others.playlist.id),
     url: "https://soundcloud.com/stann/sets/stolen",
     title: null,
     note: null,
   })).ok, false);
-  assert.equal((await playlistActions.deleteDiggingPlaylist(others.playlist.id)).ok, false);
+  assert.equal((await playlistActions.deleteDiggingPlaylist(activeSession.user.id, others.playlist.id)).ok, false);
+  // 대상 학생을 다른 학생으로 바꿔 보내도 학생 세션은 본인만 대상으로 삼을 수 있다.
+  await assert.rejects(playlistActions.createDiggingPlaylist("student-2", { url: "https://www.beatport.com/playlists/share/7" }), /Unauthorized/u);
+  await assert.rejects(playlistActions.updateDiggingPlaylist("student-2", others.playlist.id, { expectedUpdatedAt: await tokenOf(others.playlist.id), title: "탈취" }), /Unauthorized/u);
+  await assert.rejects(playlistActions.deleteDiggingPlaylist("student-2", others.playlist.id), /Unauthorized/u);
   assert.deepEqual(
     (await db.select().from(diggingPlaylists).where(eq(diggingPlaylists.id, others.playlist.id)))[0],
     othersBefore,
   );
 
-  const updated = await playlistActions.updateDiggingPlaylist(own.playlist.id, { title: "  ", note: " 새 메모 " });
+  const updated = await playlistActions.updateDiggingPlaylist(activeSession.user.id, own.playlist.id, { expectedUpdatedAt: await tokenOf(own.playlist.id), title: "  ", note: " 새 메모 " });
   assert.ok(updated.ok);
   assert.equal(updated.playlist.title, null);
   assert.equal(updated.playlist.note, "새 메모");
@@ -192,39 +202,87 @@ test("학생은 자기 플레이리스트만 고치고 지우며 다른 학생 �
   assert.equal(stored?.url, "https://www.beatport.com/playlists/share/1");
   assert.ok(stored && stored.updatedAt.getTime() >= stored.createdAt.getTime());
 
-  assert.deepEqual(await playlistActions.deleteDiggingPlaylist(own.playlist.id), { ok: true });
+  assert.deepEqual(await playlistActions.deleteDiggingPlaylist(activeSession.user.id, own.playlist.id), { ok: true });
   assert.deepEqual((await readPlaylists(db)).map((row) => row.id), [others.playlist.id]);
 
   await assert.rejects(playlistActions.getDiggingPlaylists("student-2"));
 });
 
-test("관리자는 학생 플레이리스트를 읽기만 하고 등록·수정·삭제는 거부된다", { concurrency: false }, async (context) => {
+test("관리자(Stann)는 대상 학생을 명시해 플레이리스트를 등록·수정·삭제하고 다른 학생 행에는 닿지 않는다", { concurrency: false }, async (context) => {
   const db = await setupDatabase(context, createSession("student-1", "student"));
-  const own = await playlistActions.createDiggingPlaylist({ url: "https://soundcloud.com/stann/sets/warmup", title: "Warmup" });
+  const own = await playlistActions.createDiggingPlaylist("student-1", { url: "https://soundcloud.com/stann/sets/warmup", title: "Warmup" });
   assert.ok(own.ok);
-  const before = await readPlaylists(db);
+  activeSession = createSession("student-2", "student");
+  const others = await playlistActions.createDiggingPlaylist("student-2", { url: "https://www.beatport.com/playlists/share/2", title: "남의 목록" });
+  assert.ok(others.ok);
+  const othersBefore = (await db.select().from(diggingPlaylists).where(eq(diggingPlaylists.id, others.playlist.id)))[0];
 
   activeSession = createSession("admin-1", "admin");
   const listed = await playlistActions.getDiggingPlaylists("student-1");
   assert.deepEqual(listed.map((row) => row.id), [own.playlist.id]);
-  await assert.rejects(
-    playlistActions.createDiggingPlaylist({ url: "https://www.beatport.com/playlists/share/9" }),
-    /학생만/u,
+
+  // 등록: 대상 학생 행으로 저장하고, 링크 검증·중복 안내는 학생과 같다.
+  const created = await playlistActions.createDiggingPlaylist("student-1", { url: "https://beatport.com/playlists/share/9?utm=x", note: " Stann 추천 " });
+  assert.ok(created.ok, JSON.stringify(created));
+  assert.equal(created.playlist.url, "https://www.beatport.com/playlists/share/9");
+  const createdRow = (await db.select().from(diggingPlaylists).where(eq(diggingPlaylists.id, created.playlist.id)))[0];
+  assert.equal(createdRow?.userId, "student-1");
+  assert.equal(createdRow?.note, "Stann 추천");
+  assert.deepEqual(
+    await playlistActions.createDiggingPlaylist("student-1", { url: "https://www.beatport.com/playlists/share/9" }),
+    { ok: false, error: "이미 등록한 플레이리스트입니다." },
   );
-  await assert.rejects(playlistActions.updateDiggingPlaylist(own.playlist.id, { title: "관리자 수정" }), /학생만/u);
-  await assert.rejects(playlistActions.deleteDiggingPlaylist(own.playlist.id), /학생만/u);
-  assert.deepEqual(await readPlaylists(db), before);
-  // 관리자 계정 id로는 학생 대상 목록이 아니므로 읽을 수 없다.
+  assert.equal((await playlistActions.createDiggingPlaylist("student-1", { url: "https://example.com/list" })).ok, false);
+
+  // 수정·삭제: 대상 학생의 행만 바뀐다.
+  const updated = await playlistActions.updateDiggingPlaylist("student-1", own.playlist.id, { expectedUpdatedAt: await tokenOf(own.playlist.id), title: "Stann 수정", note: null });
+  assert.ok(updated.ok && updated.playlist.title === "Stann 수정");
+  assert.deepEqual(await playlistActions.deleteDiggingPlaylist("student-1", created.playlist.id), { ok: true });
+
+  // 대상 학생과 다른 학생의 행 id를 섞어 보내면 찾을 수 없음으로 끝나고 그 행은 그대로다.
+  assert.equal((await playlistActions.updateDiggingPlaylist("student-1", others.playlist.id, { expectedUpdatedAt: await tokenOf(others.playlist.id), title: "섞기" })).ok, false);
+  assert.equal((await playlistActions.deleteDiggingPlaylist("student-1", others.playlist.id)).ok, false);
+  assert.deepEqual(
+    (await db.select().from(diggingPlaylists).where(eq(diggingPlaylists.id, others.playlist.id)))[0],
+    othersBefore,
+  );
+
+  // 학생이 아닌 대상(관리자 자신·없는 id·빈 값)은 거부하고 행을 만들지 않는다.
+  const rowsBefore = await readPlaylists(db);
+  for (const target of ["admin-1", "missing-student", ""]) {
+    await assert.rejects(playlistActions.createDiggingPlaylist(target, { url: "https://www.beatport.com/playlists/share/10" }), /Student not found/u);
+    await assert.rejects(playlistActions.updateDiggingPlaylist(target, own.playlist.id, { expectedUpdatedAt: await tokenOf(own.playlist.id), title: "x" }), /Student not found/u);
+    await assert.rejects(playlistActions.deleteDiggingPlaylist(target, own.playlist.id), /Student not found/u);
+  }
+  assert.deepEqual(await readPlaylists(db), rowsBefore);
   await assert.rejects(playlistActions.getDiggingPlaylists("admin-1"));
+});
+
+test("관리자 등록도 학생별 100개 상한을 지킨다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("admin-1", "admin"));
+  const seeds = Array.from({ length: 100 }, (_, index) => ({
+    id: `seed-${String(index).padStart(3, "0")}`,
+    userId: "student-1",
+    provider: "beatport" as const,
+    url: `https://www.beatport.com/playlists/share/${1000 + index}`,
+  }));
+  for (let index = 0; index < seeds.length; index += 10) {
+    await db.insert(diggingPlaylists).values(seeds.slice(index, index + 10));
+  }
+  assert.deepEqual(
+    await playlistActions.createDiggingPlaylist("student-1", { url: "https://www.beatport.com/playlists/share/5" }),
+    { ok: false, error: "플레이리스트는 최대 100개까지 등록할 수 있습니다." },
+  );
+  assert.ok((await playlistActions.createDiggingPlaylist("student-2", { url: "https://www.beatport.com/playlists/share/5" })).ok);
 });
 
 test("링크를 바꾸면 provider를 다시 정하고, SoundCloud로 바꾸며 제목을 비우면 oEmbed 제목을 채운다", { concurrency: false }, async (context) => {
   const db = await setupDatabase(context, createSession("student-1", "student"));
-  const created = await playlistActions.createDiggingPlaylist({ url: "https://www.beatport.com/playlists/share/1", note: "메모" });
+  const created = await playlistActions.createDiggingPlaylist(activeSession.user.id, { url: "https://www.beatport.com/playlists/share/1", note: "메모" });
   assert.ok(created.ok);
   assert.deepEqual(soundCloudTitleCalls, []);
 
-  const toSoundCloud = await playlistActions.updateDiggingPlaylist(created.playlist.id, {
+  const toSoundCloud = await playlistActions.updateDiggingPlaylist(activeSession.user.id, created.playlist.id, { expectedUpdatedAt: await tokenOf(created.playlist.id),
     url: "https://m.soundcloud.com/stann/sets/warmup?si=x",
     title: " ",
     note: "메모",
@@ -241,7 +299,7 @@ test("링크를 바꾸면 provider를 다시 정하고, SoundCloud로 바꾸며 
   assert.equal(stored?.createdAt.getTime(), created.playlist.createdAt.getTime());
 
   // 링크가 그대로면 제목을 비워도 외부 요청을 하지 않는다.
-  const sameUrl = await playlistActions.updateDiggingPlaylist(created.playlist.id, {
+  const sameUrl = await playlistActions.updateDiggingPlaylist(activeSession.user.id, created.playlist.id, { expectedUpdatedAt: await tokenOf(created.playlist.id),
     url: "https://soundcloud.com/stann/sets/warmup",
     title: null,
     note: null,
@@ -250,7 +308,7 @@ test("링크를 바꾸면 provider를 다시 정하고, SoundCloud로 바꾸며 
   assert.equal(soundCloudTitleCalls.length, 1);
 
   // Beatport로 바꾸면 요청하지 않고 기본 이름을 쓴다.
-  const toBeatport = await playlistActions.updateDiggingPlaylist(created.playlist.id, {
+  const toBeatport = await playlistActions.updateDiggingPlaylist(activeSession.user.id, created.playlist.id, { expectedUpdatedAt: await tokenOf(created.playlist.id),
     url: "https://beatport.com/playlists/share/77/",
     title: null,
     note: null,
@@ -264,13 +322,13 @@ test("링크를 바꾸면 provider를 다시 정하고, SoundCloud로 바꾸며 
 
 test("링크 수정은 중복·잘못된 링크를 거부하고 행을 바꾸지 않는다", { concurrency: false }, async (context) => {
   const db = await setupDatabase(context, createSession("student-1", "student"));
-  const first = await playlistActions.createDiggingPlaylist({ url: "https://www.beatport.com/playlists/share/1" });
-  const second = await playlistActions.createDiggingPlaylist({ url: "https://www.beatport.com/playlists/share/2", title: "둘째" });
+  const first = await playlistActions.createDiggingPlaylist(activeSession.user.id, { url: "https://www.beatport.com/playlists/share/1" });
+  const second = await playlistActions.createDiggingPlaylist(activeSession.user.id, { url: "https://www.beatport.com/playlists/share/2", title: "둘째" });
   assert.ok(first.ok && second.ok);
   const before = await readPlaylists(db);
 
   assert.deepEqual(
-    await playlistActions.updateDiggingPlaylist(second.playlist.id, { url: "https://beatport.com/playlists/share/1?x=1", title: "둘째" }),
+    await playlistActions.updateDiggingPlaylist(activeSession.user.id, second.playlist.id, { expectedUpdatedAt: await tokenOf(second.playlist.id), url: "https://beatport.com/playlists/share/1?x=1", title: "둘째" }),
     { ok: false, error: "이미 등록한 플레이리스트입니다." },
   );
   for (const url of [
@@ -280,7 +338,7 @@ test("링크 수정은 중복·잘못된 링크를 거부하고 행을 바꾸지
     "https://soundcloud.com:443/stann/sets/warmup",
     "http://www.beatport.com/playlists/share/3",
   ]) {
-    const result = await playlistActions.updateDiggingPlaylist(second.playlist.id, { url, title: "둘째" });
+    const result = await playlistActions.updateDiggingPlaylist(activeSession.user.id, second.playlist.id, { expectedUpdatedAt: await tokenOf(second.playlist.id), url, title: "둘째" });
     assert.equal(result.ok, false, url);
   }
 
@@ -294,7 +352,7 @@ test("링크 수정은 중복·잘못된 링크를 거부하고 행을 바꾸지
     });
   };
   assert.deepEqual(
-    await playlistActions.updateDiggingPlaylist(second.playlist.id, { url: "https://soundcloud.com/stann/sets/race", title: null }),
+    await playlistActions.updateDiggingPlaylist(activeSession.user.id, second.playlist.id, { expectedUpdatedAt: await tokenOf(second.playlist.id), url: "https://soundcloud.com/stann/sets/race", title: null }),
     { ok: false, error: "이미 등록한 플레이리스트입니다." },
   );
   assert.deepEqual((await readPlaylists(db)).filter((row) => row.id !== "race-dup"), before);
@@ -302,7 +360,7 @@ test("링크 수정은 중복·잘못된 링크를 거부하고 행을 바꾸지
 
 test("지워진 행을 고치면 성공으로 보고하지 않고 찾을 수 없음 안내를 돌려준다", { concurrency: false }, async (context) => {
   const db = await setupDatabase(context, createSession("student-1", "student"));
-  const created = await playlistActions.createDiggingPlaylist({ url: "https://www.beatport.com/playlists/share/1" });
+  const created = await playlistActions.createDiggingPlaylist(activeSession.user.id, { url: "https://www.beatport.com/playlists/share/1" });
   assert.ok(created.ok);
   const notFound = { ok: false, error: "플레이리스트를 찾을 수 없습니다. 새로고침 후 다시 시도해 주세요." };
 
@@ -311,11 +369,70 @@ test("지워진 행을 고치면 성공으로 보고하지 않고 찾을 수 없
     await db.delete(diggingPlaylists).where(eq(diggingPlaylists.id, created.playlist.id));
   };
   assert.deepEqual(
-    await playlistActions.updateDiggingPlaylist(created.playlist.id, { url: "https://soundcloud.com/stann/sets/warmup", title: null }),
+    await playlistActions.updateDiggingPlaylist(activeSession.user.id, created.playlist.id, { expectedUpdatedAt: await tokenOf(created.playlist.id), url: "https://soundcloud.com/stann/sets/warmup", title: null }),
     notFound,
   );
   assert.deepEqual(await readPlaylists(db), []);
-  assert.deepEqual(await playlistActions.updateDiggingPlaylist(created.playlist.id, { title: "다시" }), notFound);
+  assert.deepEqual(await playlistActions.updateDiggingPlaylist(activeSession.user.id, created.playlist.id, { expectedUpdatedAt: await tokenOf(created.playlist.id), title: "다시" }), notFound);
+});
+
+test("학생과 관리자가 같은 행을 동시에 고치면 나중 저장은 덮지 않고 충돌 안내를 받는다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("student-1", "student"));
+  const created = await playlistActions.createDiggingPlaylist("student-1", { url: "https://www.beatport.com/playlists/share/1", note: "원래 메모" });
+  assert.ok(created.ok);
+  const readByBoth = created.playlist.updatedAt.getTime();
+  const conflict = { ok: false, error: "다른 곳에서 먼저 고친 플레이리스트입니다. 새로고침해 바뀐 내용을 확인한 뒤 다시 고쳐 주세요." };
+
+  // 학생이 먼저 저장한다(같은 초여도 updatedAt이 늘어난다).
+  const studentSave = await playlistActions.updateDiggingPlaylist("student-1", created.playlist.id, { note: "학생 메모", expectedUpdatedAt: readByBoth });
+  assert.ok(studentSave.ok, JSON.stringify(studentSave));
+  assert.ok(studentSave.playlist.updatedAt.getTime() > readByBoth);
+
+  // 같은 행을 먼저 읽어 둔 Stann의 저장은 학생 메모를 덮지 않는다.
+  activeSession = createSession("admin-1", "admin");
+  assert.deepEqual(
+    await playlistActions.updateDiggingPlaylist("student-1", created.playlist.id, { note: "Stann 메모", expectedUpdatedAt: readByBoth }),
+    conflict,
+  );
+  assert.equal((await readPlaylists(db))[0]?.note, "학생 메모");
+
+  // 새로 읽은 값으로는 저장된다.
+  const adminSave = await playlistActions.updateDiggingPlaylist("student-1", created.playlist.id, {
+    note: "Stann 메모",
+    expectedUpdatedAt: studentSave.playlist.updatedAt.getTime(),
+  });
+  assert.ok(adminSave.ok && adminSave.playlist.note === "Stann 메모");
+
+  // SoundCloud 제목을 가져오는 사이 다른 쪽이 고쳐도 조건부 UPDATE가 덮지 않는다.
+  duringSoundCloudTitle = async () => {
+    await db.update(diggingPlaylists).set({ note: "그사이 저장", updatedAt: new Date(adminSave.playlist.updatedAt.getTime() + 5000) })
+      .where(eq(diggingPlaylists.id, created.playlist.id));
+  };
+  assert.deepEqual(
+    await playlistActions.updateDiggingPlaylist("student-1", created.playlist.id, {
+      url: "https://soundcloud.com/stann/sets/race",
+      title: null,
+      expectedUpdatedAt: adminSave.playlist.updatedAt.getTime(),
+    }),
+    conflict,
+  );
+  const stored = (await readPlaylists(db))[0];
+  assert.equal(stored?.note, "그사이 저장");
+  assert.equal(stored?.url, "https://www.beatport.com/playlists/share/1");
+});
+
+test("수정 토큰이 없거나 숫자가 아니면 저장하지 않는다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("admin-1", "admin"));
+  const created = await playlistActions.createDiggingPlaylist("student-1", { url: "https://www.beatport.com/playlists/share/1", note: "원래" });
+  assert.ok(created.ok);
+  const conflict = { ok: false, error: "다른 곳에서 먼저 고친 플레이리스트입니다. 새로고침해 바뀐 내용을 확인한 뒤 다시 고쳐 주세요." };
+  for (const token of [undefined, null, "1", Number.NaN, Number.POSITIVE_INFINITY]) {
+    assert.deepEqual(
+      await playlistActions.updateDiggingPlaylist("student-1", created.playlist.id, { note: "덮기", expectedUpdatedAt: token as unknown as number }),
+      conflict,
+    );
+  }
+  assert.equal((await readPlaylists(db))[0]?.note, "원래");
 });
 
 test("100개 상한은 INSERT가 다시 확인해 동시 등록에도 넘지 않는다", { concurrency: false }, async (context) => {
@@ -348,15 +465,15 @@ test("100개 상한은 INSERT가 다시 확인해 동시 등록에도 넘지 않
       url: "https://www.beatport.com/playlists/share/9999",
     });
   };
-  assert.deepEqual(await playlistActions.createDiggingPlaylist({ url: "https://soundcloud.com/stann/sets/late" }), limitError);
+  assert.deepEqual(await playlistActions.createDiggingPlaylist(activeSession.user.id, { url: "https://soundcloud.com/stann/sets/late" }), limitError);
   assert.equal(soundCloudTitleCalls.length, 1);
   const owned = (await readPlaylists(db)).filter((row) => row.userId === "student-1");
   assert.equal(owned.length, 100);
   assert.ok(!owned.some((row) => row.url === "https://soundcloud.com/stann/sets/late"));
 
   // 100개가 찬 뒤에는 선검사가 바로 막는다.
-  assert.deepEqual(await playlistActions.createDiggingPlaylist({ url: "https://www.beatport.com/playlists/share/5" }), limitError);
+  assert.deepEqual(await playlistActions.createDiggingPlaylist(activeSession.user.id, { url: "https://www.beatport.com/playlists/share/5" }), limitError);
   await db.delete(diggingPlaylists).where(eq(diggingPlaylists.id, "race-100"));
-  const fits = await playlistActions.createDiggingPlaylist({ url: "https://www.beatport.com/playlists/share/5" });
+  const fits = await playlistActions.createDiggingPlaylist(activeSession.user.id, { url: "https://www.beatport.com/playlists/share/5" });
   assert.ok(fits.ok, JSON.stringify(fits));
 });

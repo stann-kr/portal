@@ -31,6 +31,9 @@ import {
 } from "@/lib/creation-operation";
 import { POST_BASE_REVISION_FIELD, parsePostRevision } from "@/lib/post-continuity";
 import { MIXSET_LINK_FIELD, normalizeMixsetLinkUrl } from "@/lib/community-mixset-media";
+import { isImplicitSubmitEnter } from "@/components/community/empty-title-enter";
+
+const EMPTY_TITLE_ERROR = "제목을 입력해 주세요.";
 
 const FullEditor = dynamic(
   () => import("@/components/editor/FullEditor").then((module) => ({ default: module.FullEditor })),
@@ -73,6 +76,11 @@ function PostEditFormContent({
   const [title, setTitle] = useState(post.title);
   const [linkUrl, setLinkUrl] = useState(serverLinkUrl);
   const [linkError, setLinkError] = useState("");
+  // 링크 칸이 있으면 form이 noValidate라 브라우저 필수 안내가 뜨지 않으므로 빈 제목은 직접 알린다.
+  const [titleError, setTitleError] = useState("");
+  const titleInputRef = useRef<HTMLInputElement>(null);
+  const titleErrorId = useId();
+  const visibleTitleError = title.trim() ? "" : titleError;
   const linkInputRef = useRef<HTMLInputElement>(null);
   const linkFieldId = useId();
   // 본문 이미지가 올라가는 동안에는 제출하지 않는다. 편집기는 계속 쓸 수 있다.
@@ -393,13 +401,26 @@ function PostEditFormContent({
       noValidate={hasLinkField || undefined}
       className="flex flex-col gap-5"
       onKeyDownCapture={handleSaveShortcut}
+      onKeyDown={(event) => {
+        // 빈 제목이면 제출 버튼이 disabled라 Enter가 아무 일도 하지 않는다. 버튼 제출과 같은 안내를 보인다.
+        if (isPending || isEditorUploading || title.trim() || !isImplicitSubmitEnter(event)) return;
+        event.preventDefault();
+        setTitleError(EMPTY_TITLE_ERROR);
+        titleInputRef.current?.focus();
+      }}
       onSubmit={(event) => {
         if (isSubmitBlocked) {
           event.preventDefault();
           return;
         }
         const latestContentHtml = commitLatestContentHtml();
-        if (!title.trim() || isRichTextEmpty(latestContentHtml)) {
+        if (!title.trim()) {
+          event.preventDefault();
+          setTitleError(EMPTY_TITLE_ERROR);
+          titleInputRef.current?.focus();
+          return;
+        }
+        if (isRichTextEmpty(latestContentHtml)) {
           event.preventDefault();
           return;
         }
@@ -493,21 +514,28 @@ function PostEditFormContent({
         </div>
       ) : null}
 
-      <label className="flex flex-col gap-1.5 text-body font-medium text-secondary-foreground md:text-ui" htmlFor="edit-post-title">
-        <span>제목</span>
-        <Input
-          id="edit-post-title"
-          name="title"
-          value={title}
-          onChange={(event) => {
-            setOperationId(createCreationOperationId());
-            setTitle(event.target.value);
-          }}
-          required
-          disabled={!loaded || isPending}
-          className="h-12 px-3.5 font-normal md:h-10 md:px-3 md:text-md"
-        />
-      </label>
+      <div className="flex flex-col gap-1.5">
+        <label className="flex flex-col gap-1.5 text-body font-medium text-secondary-foreground md:text-ui" htmlFor="edit-post-title">
+          <span>제목</span>
+          <Input
+            ref={titleInputRef}
+            id="edit-post-title"
+            name="title"
+            value={title}
+            onChange={(event) => {
+              setOperationId(createCreationOperationId());
+              setTitle(event.target.value);
+              setTitleError("");
+            }}
+            required
+            disabled={!loaded || isPending}
+            aria-invalid={visibleTitleError ? true : undefined}
+            aria-describedby={visibleTitleError ? titleErrorId : undefined}
+            className="h-12 px-3.5 font-normal md:h-10 md:px-3 md:text-md"
+          />
+        </label>
+        {visibleTitleError ? <p id={titleErrorId} role="alert" className="text-ui text-destructive">{visibleTitleError}</p> : null}
+      </div>
 
       {hasLinkField ? (
         <div className="flex flex-col gap-1.5">
