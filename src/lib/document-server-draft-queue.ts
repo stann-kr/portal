@@ -12,6 +12,7 @@ import {
   parseDocumentServerDraftDeviceId,
   parseDocumentServerDraftVersion,
   parseDocumentServerDraftExpectedHash,
+  parseDocumentServerDraftSupersededOperationIds as parseSupersededOperationIds,
   parseDocumentServerDraftTargetHashes as parseTargetPayloadHashes,
   serializeDocumentServerDraftPayload,
 } from "@/lib/document-server-draft-contract";
@@ -47,6 +48,13 @@ export type QueuedDocumentServerDraftDiscard = QueuedDocumentServerDraftBase & {
   operationType: "DISCARD";
   /** 삭제 의도를 이 본문에 한정한다. 생략된 이전 요청은 원 version만 대상으로 한다. */
   targetPayloadHashes?: string[];
+  /**
+   * 제출 정리가 남긴 의도: 이 기기(writerDeviceId)가 쓴 서버본은 본문 hash와 무관하게 폐기 대상이다.
+   * 전송 중이던 UPSERT가 제출 뒤 늦게 반영돼도 다른 기기의 서버본처럼 보존하지 않는다.
+   */
+  ownWriterDeviceId?: string;
+  /** 서버 fence 대상 UPSERT operation ID(`DiscardDocumentServerDraftInput.supersededOperationIds`). */
+  supersededOperationIds?: string[];
 };
 
 export type QueuedDocumentServerDraft =
@@ -118,8 +126,18 @@ export function parseQueuedDocumentServerDraft(
     } as const;
     if (value.operationType === "DISCARD") {
       const targetPayloadHashes = parseTargetPayloadHashes(value.targetPayloadHashes);
-      if (targetPayloadHashes === null) return null;
-      return { ...base, operationType: "DISCARD", ...(targetPayloadHashes ? { targetPayloadHashes } : {}) };
+      const ownWriterDeviceId = value.ownWriterDeviceId === undefined
+        ? undefined
+        : parseDocumentServerDraftDeviceId(value.ownWriterDeviceId);
+      const supersededOperationIds = parseSupersededOperationIds(value.supersededOperationIds);
+      if (targetPayloadHashes === null || ownWriterDeviceId === null || supersededOperationIds === null) return null;
+      return {
+        ...base,
+        operationType: "DISCARD",
+        ...(targetPayloadHashes ? { targetPayloadHashes } : {}),
+        ...(ownWriterDeviceId ? { ownWriterDeviceId } : {}),
+        ...(supersededOperationIds ? { supersededOperationIds } : {}),
+      };
     }
     if (
       value.operationType !== "UPSERT" ||
@@ -260,6 +278,8 @@ export function enqueueDocumentServerDraftDiscard(
     now?: number;
     conflictCount?: number;
     targetPayloadHashes?: readonly string[];
+    ownWriterDeviceId?: string;
+    supersededOperationIds?: readonly string[];
   },
 ): StoredQueuedDocumentServerDraft {
   if (!parseDocumentDraftKey(input.sourceKey)) {
@@ -270,7 +290,14 @@ export function enqueueDocumentServerDraftDiscard(
   );
   const conflictCount = parseConflictCount(input.conflictCount ?? 0);
   const targetPayloadHashes = parseTargetPayloadHashes(input.targetPayloadHashes);
-  if (expectedDraftVersion === null || conflictCount === null || targetPayloadHashes === null) {
+  const ownWriterDeviceId = input.ownWriterDeviceId === undefined
+    ? undefined
+    : parseDocumentServerDraftDeviceId(input.ownWriterDeviceId);
+  const supersededOperationIds = parseSupersededOperationIds(input.supersededOperationIds);
+  if (
+    expectedDraftVersion === null || conflictCount === null || targetPayloadHashes === null ||
+    ownWriterDeviceId === null || supersededOperationIds === null
+  ) {
     throw new TypeError("유효한 서버 초안 queue metadata가 필요합니다.");
   }
   const current = readQueuedDocumentServerDraft(storage, input.sourceKey);
@@ -278,7 +305,9 @@ export function enqueueDocumentServerDraftDiscard(
     current?.entry.operationType === "DISCARD" &&
     current.entry.expectedDraftVersion === expectedDraftVersion &&
     current.entry.conflictCount === conflictCount &&
-    JSON.stringify(current.entry.targetPayloadHashes) === JSON.stringify(targetPayloadHashes)
+    JSON.stringify(current.entry.targetPayloadHashes) === JSON.stringify(targetPayloadHashes) &&
+    current.entry.ownWriterDeviceId === ownWriterDeviceId &&
+    JSON.stringify(current.entry.supersededOperationIds) === JSON.stringify(supersededOperationIds)
   ) {
     return current;
   }
@@ -291,6 +320,8 @@ export function enqueueDocumentServerDraftDiscard(
     queuedAt: input.now ?? Date.now(),
     conflictCount,
     ...(targetPayloadHashes ? { targetPayloadHashes } : {}),
+    ...(ownWriterDeviceId ? { ownWriterDeviceId } : {}),
+    ...(supersededOperationIds ? { supersededOperationIds } : {}),
   });
 }
 

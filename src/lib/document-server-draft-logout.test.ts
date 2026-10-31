@@ -207,3 +207,55 @@ test("요청 실패는 로그아웃을 막지 않고, 응답이 없으면 시간
   });
   assert.deepEqual(empty, { attempted: 0, discarded: 0, timedOut: false });
 });
+
+test("제출 정리의 폐기는 이 기기가 쓴 다른 본문도 그 version·본문으로 다시 지우고 fence 대상을 그대로 보낸다", async () => {
+  const storage = new MemoryStorage();
+  const sourceKey = createDocumentDraftKey("qna-thread", "student-1", "new");
+  const superseded = ["2b1d6c7e-1a2b-4c3d-8e9f-0a1b2c3d4e5f"];
+  enqueueDocumentServerDraftDiscard(storage, {
+    sourceKey,
+    expectedDraftVersion: 0,
+    targetPayloadHashes: [SUBMITTED_HASH],
+    ownWriterDeviceId: DEVICE_ID,
+    supersededOperationIds: superseded,
+  });
+  // 전송 중이던 이전 입력이 제출 뒤 늦게 반영돼 이 기기 이름으로 다른 본문이 남았다.
+  let server: DocumentServerDraftSnapshot | null = snapshot(sourceKey, OTHER_HASH, 1);
+  const calls: DiscardDocumentServerDraftInput[] = [];
+
+  const result = await flushQueuedDocumentServerDraftDiscards({
+    storage,
+    ownerId: "student-1",
+    createOperationId: () => REBASE_OPERATION_ID,
+    discard: async (input): Promise<DocumentServerDraftMutationResult> => {
+      calls.push(input);
+      if (server && (server.draftVersion !== input.expectedDraftVersion ||
+        (input.targetPayloadHashes && !input.targetPayloadHashes.includes(server.payloadHash)))) {
+        return { ok: false, reason: "VERSION_CONFLICT", current: server };
+      }
+      server = null;
+      return { ok: true, replayed: false, operationResultVersion: input.expectedDraftVersion, current: null };
+    },
+  });
+
+  assert.deepEqual(result, { attempted: 1, discarded: 1, timedOut: false });
+  assert.deepEqual(calls.map((call) => call.expectedDraftVersion), [0, 1]);
+  assert.deepEqual(calls[1]?.targetPayloadHashes, [SUBMITTED_HASH, OTHER_HASH]);
+  assert.deepEqual(calls.map((call) => call.supersededOperationIds), [superseded, superseded]);
+  assert.equal(server, null);
+
+  // 다른 기기가 쓴 다른 본문은 그대로 둔다.
+  enqueueDocumentServerDraftDiscard(storage, {
+    sourceKey,
+    expectedDraftVersion: 0,
+    targetPayloadHashes: [SUBMITTED_HASH],
+    ownWriterDeviceId: DEVICE_ID,
+  });
+  const peer = { ...snapshot(sourceKey, OTHER_HASH, 1), writerDeviceId: "7971deed-89f6-48a4-8bbd-5f0ec63488e0" };
+  const kept = await flushQueuedDocumentServerDraftDiscards({
+    storage,
+    ownerId: "student-1",
+    discard: async () => ({ ok: false, reason: "VERSION_CONFLICT", current: peer }),
+  });
+  assert.deepEqual(kept, { attempted: 1, discarded: 0, timedOut: false });
+});

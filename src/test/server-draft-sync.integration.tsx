@@ -30,6 +30,8 @@ type DraftData = {
   title: string;
   contentHtml: string;
   baseRevision?: number;
+  /** 노트 form처럼 입력마다 바뀌는 휘발 값(서버 payload·비교 hash에서 제외하는 대상). */
+  operationId?: string;
 };
 
 type SaveInput = {
@@ -47,10 +49,14 @@ type DiscardInput = {
   operationId: string;
   expectedDraftVersion: number;
   targetPayloadHashes?: readonly string[];
+  supersededOperationIds?: readonly string[];
 };
 
 let remoteDraft: DocumentServerDraftSnapshot | null = null;
-let saveMode: "success" | "network-error" | "conflict" = "success";
+let saveMode: "success" | "network-error" | "conflict" | "operation-conflict" = "success";
+// 서버 fence 모사: 폐기가 superseded로 선점한 UPSERT operation ID와, 현재 서버본을 만든 UPSERT operation ID.
+let fencedOperationIds = new Set<string>();
+let remoteProducerOperationId: string | null = null;
 let saveCalls: SaveInput[] = [];
 let discardCalls: DiscardInput[] = [];
 let readCalls = 0;
@@ -84,11 +90,16 @@ function createSnapshot(
 
 async function mockDiscard(input: DiscardInput) {
   discardCalls.push(input);
-  if ((remoteDraft?.draftVersion ?? 0) !== input.expectedDraftVersion ||
-    (remoteDraft && input.targetPayloadHashes && !input.targetPayloadHashes.includes(remoteDraft.payloadHash))) {
+  // 실제 서버처럼 superseded receipt 선점은 CAS 판정과 무관하게 먼저 남는다.
+  for (const operationId of input.supersededOperationIds ?? []) fencedOperationIds.add(operationId);
+  const producedBySuperseded = remoteDraft !== null && remoteProducerOperationId !== null &&
+    (input.supersededOperationIds ?? []).includes(remoteProducerOperationId);
+  if (!producedBySuperseded && ((remoteDraft?.draftVersion ?? 0) !== input.expectedDraftVersion ||
+    (remoteDraft && input.targetPayloadHashes && !input.targetPayloadHashes.includes(remoteDraft.payloadHash)))) {
     return { ok: false, reason: "VERSION_CONFLICT", current: remoteDraft };
   }
   remoteDraft = null;
+  remoteProducerOperationId = null;
   await afterDiscardCommit?.();
   return {
     ok: true,
@@ -109,6 +120,9 @@ mock.module("@/lib/actions/documentDrafts", {
       saveCalls.push(input);
       if (saveMode === "network-error") throw new Error("network unavailable");
       await beforeSaveCommit?.();
+      if (saveMode === "operation-conflict" || fencedOperationIds.has(input.operationId)) {
+        return { ok: false, reason: "OPERATION_PAYLOAD_CONFLICT", current: remoteDraft };
+      }
       if (saveMode === "conflict" || (remoteDraft?.draftVersion ?? 0) !== input.expectedDraftVersion ||
         (remoteDraft && remoteDraft.payloadHash !== input.expectedPayloadHash)) {
         return { ok: false, reason: "VERSION_CONFLICT", current: remoteDraft };
@@ -123,6 +137,7 @@ mock.module("@/lib/actions/documentDrafts", {
         input.expectedDraftVersion + 1,
         input.writerDeviceId,
       );
+      remoteProducerOperationId = input.operationId;
       return {
         ok: true,
         replayed: false,
@@ -168,6 +183,7 @@ mock.module("@/lib/actions/session", {
 });
 
 let useSyncedFormDraft: typeof import("@/lib/hooks/useSyncedFormDraft").useSyncedFormDraft;
+type ServerSyncOptions = import("@/lib/hooks/useDocumentServerDraftSync").DocumentServerDraftSyncOptions<DraftData>;
 let DraftStatus: typeof import("@/components/editor/DraftStatus").DraftStatus;
 let LogoutTextButton: typeof import("@/components/auth/LogoutTextButton").LogoutTextButton;
 
@@ -254,22 +270,31 @@ async function waitFor(predicate: () => boolean, message: string): Promise<void>
   assert.fail(message);
 }
 
-async function createHarness(context: TestContext, sourceKey: string, seed?: (storage: Storage) => void) {
+async function createHarness(
+  context: TestContext,
+  sourceKey: string,
+  seed?: (storage: Storage) => void,
+  options: { server?: ServerSyncOptions } = {},
+) {
   const browserWindow = new Window({ url: "https://portal.test/dashboard" });
   seed?.(browserWindow.localStorage as unknown as Storage);
   setOnline(browserWindow, true);
   const restoreGlobals = installBrowserGlobals(browserWindow);
   const container = browserWindow.document.createElement("div");
   browserWindow.document.body.append(container);
-  const root = createRoot(container as unknown as Element);
+  let root = createRoot(container as unknown as Element);
+  let mounted = false;
   let result: HookResult | null = null;
   const restored: DraftData[] = [];
+  // 선택창이 "한 번도" 뜨지 않았는지는 최종 상태가 아니라 상태 이력으로 확인한다(remount 뒤에도 이어 쌓는다).
+  const statusHistory: string[] = [];
 
   function Probe() {
     const hook = useSyncedFormDraft<DraftData>(sourceKey, (draft) => {
       restored.push(draft);
-    }, { debounceMs: 60_000 });
+    }, { debounceMs: 60_000, server: options.server });
     result = hook;
+    if (statusHistory.at(-1) !== hook.serverSync.status) statusHistory.push(hook.serverSync.status);
     return (
       <DraftStatus
         status={hook.status}
@@ -281,21 +306,42 @@ async function createHarness(context: TestContext, sourceKey: string, seed?: (st
     );
   }
 
-  context.after(async () => {
+  const unmount = async () => {
+    if (!mounted) return;
+    mounted = false;
     await act(async () => root.unmount());
+  };
+  const mount = async () => {
+    if (mounted) return;
+    root = createRoot(container as unknown as Element);
+    mounted = true;
+    result = null;
+    await act(async () => root.render(<Probe />));
+    await waitFor(() => result?.serverSync.status !== "loading", "초기 서버 초안 확인이 끝나야 합니다.");
+  };
+
+  context.after(async () => {
+    await unmount();
     browserWindow.close();
     restoreGlobals();
   });
-  await act(async () => root.render(<Probe />));
-  await waitFor(() => result?.serverSync.status !== "loading", "초기 서버 초안 확인이 끝나야 합니다.");
+  await mount();
 
   return {
     browserWindow,
     container,
     restored,
+    statusHistory,
     getResult: () => {
       if (!result) throw new Error("server draft hook이 준비되지 않았습니다.");
       return result;
+    },
+    /** 편집기가 내려가는 상황(route 이동·key 전환)을 모사한다. localStorage·기기 ID는 그대로 남는다. */
+    unmount,
+    /** 같은 창·localStorage에서 새 hook 인스턴스를 올린다(다음 `new:` 작성 화면 진입 모사). */
+    remount: async () => {
+      await unmount();
+      await mount();
     },
   };
 }
@@ -326,6 +372,8 @@ async function renderLogoutButton(browserWindow: Window, ownerId: string) {
 function resetServerMock(): void {
   remoteDraft = null;
   saveMode = "success";
+  fencedOperationIds = new Set();
+  remoteProducerOperationId = null;
   saveCalls = [];
   discardCalls = [];
   readCalls = 0;
@@ -1149,4 +1197,318 @@ test("로그아웃 응답이 늦어지면 잠금을 만료 전에 다시 기록�
     hold.resolve();
     await logout.unmount();
   }
+});
+
+// ---- 2026-10-31 노트 편집기 안정화: 서버 초안 비교·폐기 규칙 ----
+
+/** 새 노트 자동 생성 시퀀스: P1 UPSERT 전송 중에 P2까지 입력하고 P2로 제출 성공해 정리한다. */
+async function startInflightThenSubmit(
+  harness: Awaited<ReturnType<typeof createHarness>>,
+  first: DraftData,
+  submitted: DraftData,
+) {
+  await act(async () => harness.getResult().save(first));
+  await act(async () => harness.browserWindow.dispatchEvent(new harness.browserWindow.Event("online")));
+  await waitFor(() => saveCalls.length === 1, "P1 UPSERT 전송이 시작돼야 합니다.");
+  await act(async () => harness.getResult().save(submitted));
+  await act(async () => harness.getResult().clear({ reason: "submitted", submittedData: submitted }));
+}
+
+test("제출 정리는 전송 중이던 이 기기의 서버본을 hash와 무관하게 현재 version으로 다시 겨냥해 지운다", { concurrency: false }, async (context) => {
+  resetServerMock();
+  const sourceKey = createDocumentDraftKey("note", "student-1", "new:student-1");
+  const queueKey = createDocumentServerDraftQueueKey(sourceKey);
+  const first = { title: "첫 입력 P1", contentHtml: "<p>P1</p>" };
+  const submitted = { title: "제출한 P2", contentHtml: "<p>P2</p>" };
+  let release: () => void = () => {};
+  beforeSaveCommit = () => new Promise<void>((resolve) => { release = resolve; });
+  const harness = await createHarness(context, sourceKey);
+  await startInflightThenSubmit(harness, first, submitted);
+  const queued = parseQueuedDocumentServerDraft(harness.browserWindow.localStorage.getItem(queueKey) ?? "");
+  assert.equal(queued?.operationType, "DISCARD");
+  assert.equal(queued?.expectedDraftVersion, 0);
+
+  await act(async () => release());
+  await waitFor(() => harness.getResult().serverSync.status === "idle", "이 기기가 쓴 P1 서버본은 제출 정리로 지워져야 합니다.");
+  assert.equal(remoteDraft, null);
+  assert.equal(harness.browserWindow.localStorage.getItem(queueKey), null);
+  assert.equal(discardCalls.length, 1);
+  assert.equal(discardCalls[0]?.expectedDraftVersion, 1, "UPSERT 응답의 version으로 rebase한 뒤 보내야 합니다.");
+  assert.equal(harness.statusHistory.includes("remote-available"), false, "선택창이 뜨면 안 됩니다.");
+  assert.equal(harness.statusHistory.includes("conflict"), false);
+});
+
+test("전송 중 편집기가 내려가 응답이 버려져도 다음 진입의 refresh→drain이 이 기기의 서버본을 지운다", { concurrency: false }, async (context) => {
+  resetServerMock();
+  const sourceKey = createDocumentDraftKey("note", "student-1", "new:student-1");
+  const queueKey = createDocumentServerDraftQueueKey(sourceKey);
+  const first = { title: "첫 입력 P1", contentHtml: "<p>P1</p>" };
+  const submitted = { title: "제출한 P2", contentHtml: "<p>P2</p>" };
+  let release: () => void = () => {};
+  beforeSaveCommit = () => new Promise<void>((resolve) => { release = resolve; });
+  const harness = await createHarness(context, sourceKey);
+  await startInflightThenSubmit(harness, first, submitted);
+
+  // 새 노트 생성 직후 route·key 전환: 응답을 받을 hook이 없고 큐의 DISCARD만 남는다.
+  await harness.unmount();
+  await act(async () => release());
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 10)));
+  assert.equal(remoteDraft?.draftVersion, 1, "버려진 응답과 무관하게 서버에는 P1이 남는다.");
+  assert.equal(parseQueuedDocumentServerDraft(harness.browserWindow.localStorage.getItem(queueKey) ?? "")?.operationType, "DISCARD");
+
+  await harness.remount();
+  await waitFor(() => harness.getResult().serverSync.status === "idle", "다음 진입에서 이 기기의 서버본을 조용히 지워야 합니다.");
+  assert.equal(remoteDraft, null);
+  assert.equal(harness.browserWindow.localStorage.getItem(queueKey), null);
+  assert.equal(discardCalls.at(-1)?.expectedDraftVersion, 1);
+  assert.equal(harness.statusHistory.includes("remote-available"), false, "다음 진입에서 선택창이 뜨면 안 됩니다.");
+  assert.equal(harness.statusHistory.includes("conflict"), false);
+});
+
+const VOLATILE_SERVER_OPTIONS: ServerSyncOptions = { volatileKeys: ["operationId"] };
+const OTHER_DEVICE_ID = "7971deed-89f6-48a4-8bbd-5f0ec63488e0";
+const opId = (digit: string) => `${digit.repeat(8)}-${digit.repeat(4)}-4${digit.repeat(3)}-8${digit.repeat(3)}-${digit.repeat(12)}`;
+
+test("volatileKeys는 서버 payload와 비교에서 operationId를 빼 같은 내용의 다른 기기·legacy 서버본을 synced로 본다", { concurrency: false }, async (context) => {
+  resetServerMock();
+  const sourceKey = createDocumentDraftKey("note", "student-1", "volatile-note");
+  const queueKey = createDocumentServerDraftQueueKey(sourceKey);
+  const same = { title: "같은 내용", contentHtml: "<p>같음</p>" };
+  // 배포 전 저장된 legacy 서버본: operationId가 payload에 들어 있고 다른 기기가 썼다.
+  remoteDraft = createSnapshot(sourceKey, { ...same, operationId: opId("a") }, 3, OTHER_DEVICE_ID);
+  const legacyHash = remoteDraft.payloadHash;
+  const harness = await createHarness(context, sourceKey, undefined, { server: VOLATILE_SERVER_OPTIONS });
+  assert.equal(harness.getResult().serverSync.status, "remote-available");
+
+  // 다른 내용은 여전히 명시적 충돌이다.
+  await act(async () => harness.getResult().save({ title: "다른 내용", contentHtml: "<p>다름</p>", operationId: opId("b") }));
+  await act(async () => harness.browserWindow.dispatchEvent(new harness.browserWindow.Event("online")));
+  assert.equal(harness.getResult().serverSync.status, "conflict");
+  assert.equal(saveCalls.length, 0);
+
+  // 같은 내용(다른 operationId)은 선택 없이 synced.
+  await act(async () => harness.getResult().save({ ...same, operationId: opId("c") }));
+  assert.equal(harness.getResult().serverSync.status, "synced");
+  assert.equal(saveCalls.length, 0);
+  assert.equal(harness.browserWindow.localStorage.getItem(queueKey), null);
+  assert.equal(harness.getResult().serverSync.localPreview?.title, same.title);
+
+  // 이어서 입력하면 legacy 서버본 위에 CAS 저장하되 payload에는 operationId를 싣지 않는다.
+  const next = { title: "이어서 입력", contentHtml: "<p>다음</p>" };
+  await act(async () => harness.getResult().save({ ...next, operationId: opId("c") }));
+  await act(async () => harness.browserWindow.dispatchEvent(new harness.browserWindow.Event("online")));
+  await waitFor(() => harness.getResult().serverSync.status === "synced" && saveCalls.length === 1, "legacy 서버본 위에 저장돼야 합니다.");
+  assert.equal(saveCalls[0]?.expectedDraftVersion, 3);
+  assert.equal(saveCalls[0]?.expectedPayloadHash, legacyHash, "CAS 기준은 서버가 저장한 hash 그대로다.");
+  const sentPayload = canonicalizeDocumentServerDraftPayload(saveCalls[0]?.payloadJson ?? "");
+  assert.deepEqual(sentPayload?.data, next);
+  assert.equal(remoteDraft?.draftVersion, 4);
+
+  // 다른 기기가 같은 내용을 다른 operationId로(legacy 형식) 저장해도 synced.
+  remoteDraft = createSnapshot(sourceKey, { ...next, operationId: opId("d") }, 5, OTHER_DEVICE_ID);
+  await act(async () => harness.getResult().serverSync.refresh());
+  assert.equal(harness.getResult().serverSync.status, "synced");
+  assert.equal(harness.getResult().serverSync.isDifferentDevice, true);
+  assert.equal(harness.getResult().serverSync.remoteDraft?.draftVersion, 5);
+
+  // 다른 내용이면 충돌을 유지한다.
+  remoteDraft = createSnapshot(sourceKey, { title: "다른 기기 수정", contentHtml: "<p>수정</p>", operationId: opId("e") }, 6, OTHER_DEVICE_ID);
+  await act(async () => harness.getResult().serverSync.refresh());
+  assert.equal(harness.getResult().serverSync.status, "conflict");
+  assert.equal(saveCalls.length, 1);
+});
+
+test("volatileKeys 아래 제출 정리는 operationId만 다른 legacy 서버본도 서버 hash로 겨냥해 지운다", { concurrency: false }, async (context) => {
+  resetServerMock();
+  const sourceKey = createDocumentDraftKey("note", "student-1", "volatile-submit");
+  const same = { title: "제출할 내용", contentHtml: "<p>제출</p>" };
+  remoteDraft = createSnapshot(sourceKey, { ...same, operationId: opId("a") }, 2, OTHER_DEVICE_ID);
+  const legacyHash = remoteDraft.payloadHash;
+  const harness = await createHarness(context, sourceKey, undefined, { server: VOLATILE_SERVER_OPTIONS });
+  await act(async () => harness.getResult().save({ ...same, operationId: opId("b") }));
+  assert.equal(harness.getResult().serverSync.status, "synced");
+  await act(async () => harness.getResult().clear({ reason: "submitted", submittedData: { ...same, operationId: opId("f") } }));
+  await waitFor(() => harness.getResult().serverSync.status === "idle", "같은 내용의 legacy 서버본은 제출 정리로 지워져야 합니다.");
+  assert.equal(remoteDraft, null);
+  assert.equal(discardCalls.length, 1);
+  assert.ok(discardCalls[0]?.targetPayloadHashes?.includes(legacyHash));
+  assert.equal(discardCalls[0]?.expectedDraftVersion, 2);
+});
+
+test("classifyRemoteDraft가 discard면 선택창 없이 서버본을 조용히 폐기하거나 로컬을 그 위에 저장한다", { concurrency: false }, async (context) => {
+  await context.test("서버본이 현재 head와 같으면 조용히 폐기한다", async (subcontext) => {
+    resetServerMock();
+    const sourceKey = createDocumentDraftKey("note", "student-1", "classify-head");
+    const head = { title: "head", contentHtml: "<p>head</p>", baseRevision: 5 };
+    remoteDraft = createSnapshot(sourceKey, head, 2, OTHER_DEVICE_ID);
+    const remoteHash = remoteDraft.payloadHash;
+    const classified: DraftData[] = [];
+    const harness = await createHarness(subcontext, sourceKey, undefined, {
+      server: {
+        classifyRemoteDraft: (remote) => {
+          classified.push(remote);
+          return remote.contentHtml === head.contentHtml ? "discard" : "keep";
+        },
+      },
+    });
+    await waitFor(() => harness.getResult().serverSync.status === "idle", "head와 같은 서버본은 조용히 지워야 합니다.");
+    assert.equal(discardCalls.length, 1);
+    assert.equal(discardCalls[0]?.expectedDraftVersion, 2);
+    assert.deepEqual(discardCalls[0]?.targetPayloadHashes, [remoteHash]);
+    assert.equal(remoteDraft, null);
+    assert.equal(classified.length, 1, "같은 version·hash를 반복 판정하지 않는다");
+    assert.equal(harness.statusHistory.includes("remote-available"), false, "선택창이 뜨면 안 됩니다.");
+    assert.equal(harness.statusHistory.includes("conflict"), false);
+  });
+
+  await context.test("baseRevision이 head보다 오래된 서버본은 복구된 로컬 초안을 그 위에 저장한다", async (subcontext) => {
+    resetServerMock();
+    const sourceKey = createDocumentDraftKey("note", "student-1", "classify-stale-base");
+    const stale = { title: "오래된 서버본", contentHtml: "<p>stale</p>", baseRevision: 3 };
+    const local = { title: "새로고침 전 입력", contentHtml: "<p>local</p>", baseRevision: 5 };
+    remoteDraft = createSnapshot(sourceKey, stale, 2, OTHER_DEVICE_ID);
+    const staleHash = remoteDraft.payloadHash;
+    const harness = await createHarness(subcontext, sourceKey, (storage) => {
+      storage.setItem(sourceKey, serializeFormDraft(local));
+    }, {
+      server: { classifyRemoteDraft: (remote) => ((remote.baseRevision ?? 0) < 5 ? "discard" : "keep") },
+    });
+    await waitFor(() => harness.getResult().serverSync.status === "synced", "로컬 초안이 오래된 서버본 위에 저장돼야 합니다.");
+    assert.equal(saveCalls.length, 1);
+    assert.equal(saveCalls[0]?.expectedDraftVersion, 2);
+    assert.equal(saveCalls[0]?.expectedPayloadHash, staleHash);
+    assert.match(remoteDraft?.payloadJson ?? "", /새로고침 전 입력/u);
+    assert.equal(discardCalls.length, 0);
+    assert.deepEqual(harness.restored.at(-1), local);
+    assert.equal(harness.statusHistory.includes("remote-available"), false);
+    assert.equal(harness.statusHistory.includes("conflict"), false, "선택창이 뜨면 안 됩니다.");
+  });
+
+  await context.test("base가 head와 같고 내용이 다르면 선택창을 유지한다", async (subcontext) => {
+    resetServerMock();
+    const sourceKey = createDocumentDraftKey("note", "student-1", "classify-keep");
+    remoteDraft = createSnapshot(sourceKey, { title: "다른 기기 수정", contentHtml: "<p>other</p>", baseRevision: 5 }, 2, OTHER_DEVICE_ID);
+    const harness = await createHarness(subcontext, sourceKey, undefined, {
+      server: { classifyRemoteDraft: (remote) => ((remote.baseRevision ?? 0) < 5 ? "discard" : "keep") },
+    });
+    assert.equal(harness.getResult().serverSync.status, "remote-available");
+    await act(async () => harness.getResult().save({ title: "이 기기", contentHtml: "<p>mine</p>", baseRevision: 5 }));
+    await act(async () => harness.browserWindow.dispatchEvent(new harness.browserWindow.Event("online")));
+    assert.equal(harness.getResult().serverSync.status, "conflict");
+    assert.equal(discardCalls.length, 0);
+    assert.equal(saveCalls.length, 0);
+  });
+});
+
+test("같은 서버본(version·hash)에 대한 선택은 기억해 늦은 관찰에서 선택창 없이 다시 적용한다", { concurrency: false }, async (context) => {
+  await context.test("discard 선택", async (subcontext) => {
+    resetServerMock();
+    const sourceKey = createDocumentDraftKey("note", "student-1", "remember-discard");
+    const stale = createSnapshot(sourceKey, { title: "지운 서버본", contentHtml: "<p>X</p>" }, 1, OTHER_DEVICE_ID);
+    remoteDraft = stale;
+    const harness = await createHarness(subcontext, sourceKey);
+    assert.equal(harness.getResult().serverSync.status, "remote-available");
+    await act(async () => harness.getResult().serverSync.discardRemoteDraft());
+    await waitFor(() => harness.getResult().serverSync.status === "idle", "명시적 폐기가 끝나야 합니다.");
+    // 늦은 조회가 같은 version·hash를 다시 돌려준다.
+    remoteDraft = stale;
+    await act(async () => harness.getResult().serverSync.refresh());
+    await waitFor(() => harness.getResult().serverSync.status === "idle" && discardCalls.length === 2, "같은 결정을 다시 적용해야 합니다.");
+    assert.equal(remoteDraft, null);
+    assert.equal(harness.statusHistory.filter((status) => status === "remote-available").length, 1);
+  });
+
+  await context.test("keep 선택", async (subcontext) => {
+    resetServerMock();
+    const sourceKey = createDocumentDraftKey("note", "student-1", "remember-keep");
+    const peer = createSnapshot(sourceKey, { title: "다른 기기", contentHtml: "<p>X</p>" }, 4, OTHER_DEVICE_ID);
+    remoteDraft = peer;
+    const harness = await createHarness(subcontext, sourceKey);
+    const local = { title: "내 초안", contentHtml: "<p>P</p>" };
+    await act(async () => harness.getResult().save(local));
+    await act(async () => harness.browserWindow.dispatchEvent(new harness.browserWindow.Event("online")));
+    assert.equal(harness.getResult().serverSync.status, "conflict");
+    await act(async () => harness.getResult().serverSync.keepLocalDraft());
+    await waitFor(() => harness.getResult().serverSync.status === "synced", "선택한 로컬본이 저장돼야 합니다.");
+    assert.equal(remoteDraft?.draftVersion, 5);
+    remoteDraft = peer;
+    await act(async () => harness.getResult().serverSync.refresh());
+    await waitFor(() => harness.getResult().serverSync.status === "synced" && saveCalls.length === 2, "같은 결정을 다시 적용해야 합니다.");
+    assert.equal(saveCalls[1]?.expectedDraftVersion, 4);
+    assert.equal(saveCalls[1]?.expectedPayloadHash, peer.payloadHash);
+    assert.match(remoteDraft?.payloadJson ?? "", /내 초안/u);
+    assert.equal(harness.statusHistory.filter((status) => status === "conflict").length, 1);
+  });
+});
+
+test("제출 정리 DISCARD는 전송 중·큐의 UPSERT를 fence 대상으로 보내 늦은 저장이 서버본을 되살리지 못하게 한다", { concurrency: false }, async (context) => {
+  resetServerMock();
+  const sourceKey = createDocumentDraftKey("note", "student-1", "new:student-1");
+  const queueKey = createDocumentServerDraftQueueKey(sourceKey);
+  const first = { title: "첫 입력 P1", contentHtml: "<p>P1</p>" };
+  const submitted = { title: "제출한 P2", contentHtml: "<p>P2</p>" };
+  let release: () => void = () => {};
+  beforeSaveCommit = () => new Promise<void>((resolve) => { release = resolve; });
+  const harness = await createHarness(context, sourceKey);
+  await act(async () => harness.getResult().save(first));
+  await act(async () => harness.browserWindow.dispatchEvent(new harness.browserWindow.Event("online")));
+  await waitFor(() => saveCalls.length === 1, "P1 UPSERT 전송이 시작돼야 합니다.");
+  const inflightOperationId = saveCalls[0]!.operationId;
+  await act(async () => harness.getResult().save(submitted));
+  const queuedUpsert = parseQueuedDocumentServerDraft(harness.browserWindow.localStorage.getItem(queueKey) ?? "");
+  assert.equal(queuedUpsert?.operationType, "UPSERT");
+  await act(async () => harness.getResult().clear({ reason: "submitted", submittedData: submitted }));
+  const discard = parseQueuedDocumentServerDraft(harness.browserWindow.localStorage.getItem(queueKey) ?? "");
+  assert.equal(discard?.operationType, "DISCARD");
+  if (discard?.operationType !== "DISCARD") return;
+  assert.deepEqual(discard.supersededOperationIds, [inflightOperationId, queuedUpsert!.operationId].sort());
+
+  // 화면 전환으로 응답을 받을 hook이 없어진 뒤, 다음 진입이 폐기를 먼저 보낸다(서버가 fence receipt를 선점).
+  await harness.remount();
+  await waitFor(() => harness.getResult().serverSync.status === "idle" && discardCalls.length === 1, "폐기가 먼저 반영돼야 합니다.");
+  assert.deepEqual(discardCalls[0]?.supersededOperationIds, discard.supersededOperationIds);
+  assert.equal(harness.browserWindow.localStorage.getItem(queueKey), null);
+
+  // 늦게 커밋을 시도한 P1 UPSERT는 fence에 걸려 서버본을 만들지 못한다.
+  await act(async () => release());
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 20)));
+  assert.equal(remoteDraft, null, "fence가 늦은 저장의 부활을 막아야 합니다.");
+  await act(async () => harness.getResult().serverSync.refresh());
+  assert.equal(harness.getResult().serverSync.status, "idle");
+  assert.equal(harness.statusHistory.includes("remote-available"), false);
+  assert.equal(harness.statusHistory.includes("conflict"), false);
+});
+
+test("큐가 이미 DISCARD로 바뀐 뒤 받은 UPSERT의 OPERATION_PAYLOAD_CONFLICT는 선택창 없이 흡수된다", { concurrency: false }, async (context) => {
+  resetServerMock();
+  const sourceKey = createDocumentDraftKey("note", "student-1", "absorb-fenced-upsert");
+  const queueKey = createDocumentServerDraftQueueKey(sourceKey);
+  const data = { title: "제출 A", contentHtml: "<p>A</p>" };
+  let release: () => void = () => {};
+  beforeSaveCommit = () => new Promise<void>((resolve) => { release = resolve; });
+  const harness = await createHarness(context, sourceKey);
+  await act(async () => harness.getResult().save(data));
+  await act(async () => harness.browserWindow.dispatchEvent(new harness.browserWindow.Event("online")));
+  await waitFor(() => saveCalls.length === 1, "UPSERT 전송이 시작돼야 합니다.");
+  await act(async () => harness.getResult().clear({ reason: "submitted", submittedData: data }));
+  const discard = parseQueuedDocumentServerDraft(harness.browserWindow.localStorage.getItem(queueKey) ?? "");
+  assert.equal(discard?.operationType, "DISCARD");
+  if (discard?.operationType !== "DISCARD") return;
+  // 다른 탭(또는 로그아웃 정리)이 같은 큐 항목을 먼저 보내 서버가 전송 중 UPSERT를 fence했다.
+  await mockDiscard({
+    sourceKey,
+    operationId: discard.operationId,
+    expectedDraftVersion: discard.expectedDraftVersion,
+    targetPayloadHashes: discard.targetPayloadHashes,
+    supersededOperationIds: discard.supersededOperationIds,
+  });
+  assert.equal(fencedOperationIds.has(saveCalls[0]!.operationId), true);
+
+  await act(async () => release());
+  await waitFor(() => harness.getResult().serverSync.status === "idle", "거절된 UPSERT는 선택창 없이 끝나야 합니다.");
+  assert.equal(remoteDraft, null);
+  assert.equal(saveCalls.length, 1);
+  assert.equal(harness.browserWindow.localStorage.getItem(queueKey), null);
+  assert.equal(harness.statusHistory.includes("remote-available"), false);
+  assert.equal(harness.statusHistory.includes("conflict"), false);
 });

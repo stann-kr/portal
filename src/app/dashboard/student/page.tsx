@@ -17,6 +17,7 @@ import { StudentPortalClient } from "@/components/student-portal/StudentPortalCl
 import { getUnifiedItemSpaceLabel } from "@/lib/unified-item-normalization";
 import { getExternalCalendarConnectionSummary } from "@/lib/actions/externalCalendars";
 import { legacyPortalSectionRedirect, resolvePortalLocation, type PortalSearchParams } from "@/lib/portal-location";
+import { RouteAutoRefresh } from "@/components/app-shell/RouteAutoRefresh";
 
 export const metadata = { title: "학생 포탈" };
 
@@ -54,21 +55,25 @@ export default async function StudentPortalPage({ searchParams }: { searchParams
   const assignmentList = toStudentAssignmentSummaries(rawAssignments, feedbacksMap);
 
   return (
-    <StudentPortalClient
-      initialLocation={initialLocation}
-      announcements={announcements}
-      unifiedItems={unifiedItems}
-      curriculumModules={curriculumModules.map((module) => ({
-        ...module,
-        description: null,
-      }))}
-      assignments={assignmentList}
-      assignmentTasks={assignmentTasks}
-      studentId={studentId}
-      displayName={displayName}
-      spaceLabel={spaceLabel}
-      externalCalendarConnection={externalCalendarConnection}
-      referenceTime={new Date()}
-    />
+    <>
+      {/* Stann이 만든 새 노트·일정이 캘린더·목록에 새로고침 없이 나타나게 한다. 입력 중(패널 편집)에는 건너뛴다. */}
+      <RouteAutoRefresh />
+      <StudentPortalClient
+        initialLocation={initialLocation}
+        announcements={announcements}
+        unifiedItems={unifiedItems}
+        curriculumModules={curriculumModules.map((module) => ({
+          ...module,
+          description: null,
+        }))}
+        assignments={assignmentList}
+        assignmentTasks={assignmentTasks}
+        studentId={studentId}
+        displayName={displayName}
+        spaceLabel={spaceLabel}
+        externalCalendarConnection={externalCalendarConnection}
+        referenceTime={new Date()}
+      />
+    </>
   );
 }

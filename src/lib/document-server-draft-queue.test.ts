@@ -226,3 +226,44 @@ test("계정 경계 정리는 해당 owner queue와 계정별 기기 ID만 지�
   assert.notEqual(regenerated, DEVICE_ID);
   assert.equal(storage.getItem(ownerDeviceKey), regenerated);
 });
+
+test("제출 정리 DISCARD는 이 기기 ID와 fence 대상 operation ID를 보존하고 그 차이도 새 의도로 본다", () => {
+  const storage = new MemoryStorage();
+  const sourceKey = createDocumentDraftKey("note", "student-1", "new:student-1");
+  const superseded = ["2b1d6c7e-1a2b-4c3d-8e9f-0a1b2c3d4e5f", "0c3f1d2e-5a6b-4c7d-8e9f-0a1b2c3d4e5f"];
+  const plain = enqueueDocumentServerDraftDiscard(storage, {
+    sourceKey,
+    expectedDraftVersion: 0,
+    targetPayloadHashes: ["a".repeat(64)],
+  });
+  const own = enqueueDocumentServerDraftDiscard(storage, {
+    sourceKey,
+    expectedDraftVersion: 0,
+    targetPayloadHashes: ["a".repeat(64)],
+    ownWriterDeviceId: DEVICE_ID,
+    supersededOperationIds: superseded,
+  });
+  assert.notEqual(own.raw, plain.raw);
+  const parsed = parseQueuedDocumentServerDraft(own.raw, sourceKey);
+  assert.equal(parsed?.operationType, "DISCARD");
+  if (parsed?.operationType !== "DISCARD") return;
+  assert.equal(parsed.ownWriterDeviceId, DEVICE_ID);
+  assert.deepEqual(parsed.supersededOperationIds, [...superseded].sort());
+
+  const same = enqueueDocumentServerDraftDiscard(storage, {
+    sourceKey,
+    expectedDraftVersion: 0,
+    targetPayloadHashes: ["a".repeat(64)],
+    ownWriterDeviceId: DEVICE_ID,
+    supersededOperationIds: [...superseded].reverse(),
+  });
+  assert.equal(same.raw, own.raw, "같은 의도는 operation ID를 돌리지 않는다");
+
+  assert.throws(() => enqueueDocumentServerDraftDiscard(storage, {
+    sourceKey,
+    expectedDraftVersion: 0,
+    supersededOperationIds: Array.from({ length: 9 }, (_, index) => `2b1d6c7e-1a2b-4c3d-8e9f-0a1b2c3d4e${index}0`),
+  }));
+  assert.equal(parseQueuedDocumentServerDraft(JSON.stringify({ ...parsed, ownWriterDeviceId: "not-a-device" }), sourceKey), null);
+  assert.equal(parseQueuedDocumentServerDraft(JSON.stringify({ ...parsed, supersededOperationIds: [] }), sourceKey), null);
+});

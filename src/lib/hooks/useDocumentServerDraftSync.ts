@@ -23,6 +23,7 @@ import {
   readQueuedDocumentServerDraft,
   removeQueuedDocumentServerDraftIfUnchanged,
   type QueuedDocumentServerDraft,
+  type QueuedDocumentServerDraftDiscard,
 } from "@/lib/document-server-draft-queue";
 import {
   createDocumentServerDraftQueueKey,
@@ -126,15 +127,29 @@ function readBaseResourceVersion(data: unknown): number | null {
     : null;
 }
 
-function createLocalDraftState<T>(data: T): LocalDraftState<T> {
-  const payloadJson = serializeDocumentServerDraftPayload(data);
+/** 서버 payload·비교 hash에서 휘발 필드를 뺀 객체. 휘발 필드가 없으면 같은 객체를 돌려준다. */
+function stripVolatileKeys<T>(data: T, volatileKeys: readonly string[] | undefined): T {
+  if (!volatileKeys?.length || typeof data !== "object" || data === null || Array.isArray(data)) return data;
+  const record = data as Record<string, unknown>;
+  if (!volatileKeys.some((key) => key in record)) return data;
+  const stripped: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(record)) {
+    if (!volatileKeys.includes(key)) stripped[key] = value;
+  }
+  return stripped as T;
+}
+
+/** 로컬 초안 상태는 휘발 필드를 뺀 데이터로 만든다. 큐·제출 정리·선택 저장이 모두 같은 본문을 보게 된다. */
+function createLocalDraftState<T>(data: T, volatileKeys?: readonly string[]): LocalDraftState<T> {
+  const stripped = stripVolatileKeys(data, volatileKeys);
+  const payloadJson = serializeDocumentServerDraftPayload(stripped);
   const payload = canonicalizeDocumentServerDraftPayload(payloadJson);
   if (!payload) throw new TypeError("서버 초안 payload를 직렬화할 수 없습니다.");
   return {
-    data,
+    data: stripped,
     payloadJson,
     payloadHash: payload.payloadHash,
-    baseResourceVersion: readBaseResourceVersion(data),
+    baseResourceVersion: readBaseResourceVersion(stripped),
   };
 }
 
@@ -144,6 +159,40 @@ function isBrowserOffline(): boolean {
 
 function requiresLegacyDraftChoice(queue: QueuedDocumentServerDraft | null | undefined): boolean {
   return queue?.operationType === "UPSERT" && queue.expectedDraftVersion > 0 && !queue.expectedPayloadHash;
+}
+
+/**
+ * 큐의 DISCARD가 관찰된 서버본을 겨냥하는지 판정하고, 겨냥한다면 그 version·hash로 다시 겨냥한 입력을 만든다.
+ * 본문 hash가 대상에 있거나(기존 규칙) 이 기기가 쓴 서버본(제출 정리의 ownWriterDeviceId)이면 대상이다.
+ * 다른 기기가 쓴 다른 본문은 대상이 아니므로 null을 돌려 보존한다.
+ */
+function rebaseDiscardEntry(
+  entry: QueuedDocumentServerDraftDiscard,
+  remote: DocumentServerDraftSnapshot,
+): {
+  expectedDraftVersion: number;
+  targetPayloadHashes: string[];
+  ownWriterDeviceId?: string;
+  supersededOperationIds?: string[];
+} | null {
+  const targeted = Boolean(entry.targetPayloadHashes?.includes(remote.payloadHash));
+  const ownWrite = entry.ownWriterDeviceId !== undefined && remote.writerDeviceId === entry.ownWriterDeviceId;
+  if (!targeted && !ownWrite) return null;
+  return {
+    expectedDraftVersion: remote.draftVersion,
+    targetPayloadHashes: [...new Set([...(entry.targetPayloadHashes ?? []), remote.payloadHash])],
+    ...(entry.ownWriterDeviceId ? { ownWriterDeviceId: entry.ownWriterDeviceId } : {}),
+    ...(entry.supersededOperationIds ? { supersededOperationIds: entry.supersededOperationIds } : {}),
+  };
+}
+
+/** 큐의 DISCARD가 이미 이 서버본의 version·hash를 정확히 겨냥하고 있는지. */
+function discardAlreadyTargets(
+  entry: QueuedDocumentServerDraftDiscard,
+  remote: DocumentServerDraftSnapshot,
+): boolean {
+  return entry.expectedDraftVersion === remote.draftVersion &&
+    Boolean(entry.targetPayloadHashes?.includes(remote.payloadHash));
 }
 
 function notifyQueueChange(sourceKey: string): void {
@@ -163,8 +212,6 @@ export function useDocumentServerDraftSync<T>(
   onApplyRemote: (draft: T) => void,
   options: DocumentServerDraftSyncOptions<T> = {},
 ): DocumentServerDraftSyncController<T> {
-  // TODO(note-editor-stability B): volatileKeys·classifyRemoteDraft 구현. 시그니처만 먼저 고정한다.
-  void options;
   const [status, setStatus] = useState<DocumentServerDraftSyncStatus>("loading");
   const [remoteDraft, setRemoteDraft] =
     useState<DocumentServerDraftSnapshot | null>(null);
@@ -194,10 +241,46 @@ export function useDocumentServerDraftSync<T>(
   const mutationEpochRef = useRef(0);
   const refreshRequestedRef = useRef(false);
   const refreshRef = useRef<() => Promise<void>>(async () => undefined);
+  // 서버 응답을 기다리는 요청. 제출 정리·명시 폐기가 "이 UPSERT는 더 이상 유효하지 않다"(서버 fence)를 담을 때 읽는다.
+  const inFlightRef = useRef<QueuedDocumentServerDraft | null>(null);
+  // 옵션 객체는 매 render 새로 올 수 있으므로 ref로 최신값을 읽는다.
+  const optionsRef = useRef(options);
+  // 서버본의 canonical hash(휘발 필드 제외) memo. 서버 hash가 같으면 다시 계산하지 않는다.
+  const remoteCanonicalRef = useRef<{ payloadHash: string; canonicalHash: string } | null>(null);
+  // 서버본(draftVersion:payloadHash)별 결정. 사용자 선택은 늦은 관찰에서 다시 적용하고, 자동 판정은 한 번만 한다.
+  const remoteDecisionRef = useRef(new Map<string, "use" | "keep" | "discard" | "auto-keep" | "auto-discard">());
   // insertion effect는 같은 commit의 모든 layout/passive effect·이벤트보다 먼저 실행된다.
   useInsertionEffect(() => {
     onApplyRemoteRef.current = onApplyRemote;
-  }, [onApplyRemote]);
+    optionsRef.current = options;
+  }, [onApplyRemote, options]);
+
+  const toLocalDraftState = useCallback(
+    (data: T) => createLocalDraftState(data, optionsRef.current.volatileKeys),
+    [],
+  );
+
+  /**
+   * 서버본을 로컬과 같은 기준(휘발 필드 제외)으로 비교하기 위한 hash. legacy 서버본(operationId 포함)도
+   * 내용이 같으면 로컬과 같은 hash가 된다. CAS·DISCARD 대상에는 서버가 돌려준 `payloadHash`를 그대로 쓴다.
+   */
+  const canonicalRemoteHash = useCallback((remote: DocumentServerDraftSnapshot): string => {
+    const volatileKeys = optionsRef.current.volatileKeys;
+    if (!volatileKeys?.length) return remote.payloadHash;
+    const memo = remoteCanonicalRef.current;
+    if (memo?.payloadHash === remote.payloadHash) return memo.canonicalHash;
+    const data = parsePayloadData<T>(remote.payloadJson);
+    let canonicalHash = remote.payloadHash;
+    if (data) {
+      try {
+        canonicalHash = createLocalDraftState(data, volatileKeys).payloadHash;
+      } catch {
+        canonicalHash = remote.payloadHash;
+      }
+    }
+    remoteCanonicalRef.current = { payloadHash: remote.payloadHash, canonicalHash };
+    return canonicalHash;
+  }, []);
 
   const updateLocalDraftView = useCallback((local: LocalDraftState<T> | null) => {
     setLocalDraftView(local
@@ -270,20 +353,95 @@ export function useDocumentServerDraftSync<T>(
     return false;
   }, [isOwnerTerminallyLocked, purgeTerminallyLockedOwner]);
 
+  const remoteDecisionKey = (draft: DocumentServerDraftSnapshot) => `${draft.draftVersion}:${draft.payloadHash}`;
+
+  /**
+   * 선택창으로 가기 직전에 서버본을 자동으로 처리할 수 있는지 본다. 순서는 사용자가 같은 서버본에 이미 내린
+   * 선택 → form의 `classifyRemoteDraft` 판정. 처리했으면 큐에 넣고 drain을 예약한 뒤 true를 돌려준다.
+   * - 로컬이 없으면 그 서버본(version·hash)만 겨냥한 DISCARD.
+   * - 로컬이 있으면 로컬을 그 서버본 위에 CAS 저장(`keepLocalDraft`와 같은 의미). 로컬 입력은 잃지 않는다.
+   */
+  const autoResolveRemote = useCallback(
+    (draft: DocumentServerDraftSnapshot, local: LocalDraftState<T> | null, conflictCount = 0): boolean => {
+      const key = remoteDecisionKey(draft);
+      const decisions = remoteDecisionRef.current;
+      let decision = decisions.get(key);
+      if (decision === undefined) {
+        const classify = optionsRef.current.classifyRemoteDraft;
+        if (!classify) return false;
+        const data = parsePayloadData<T>(draft.payloadJson);
+        if (!data) return false;
+        let verdict: "keep" | "discard";
+        try {
+          verdict = classify(data, draft);
+        } catch {
+          return false;
+        }
+        decision = verdict === "discard" ? "auto-discard" : "auto-keep";
+        decisions.set(key, decision);
+      } else if (decision === "auto-keep" || decision === "auto-discard") {
+        // 같은 서버본을 다시 판정하지 않는다. 자동 폐기를 이미 시도한 서버본이 또 보이면 사용자 선택으로 넘긴다.
+        return false;
+      }
+      if (decision === "auto-keep") return false;
+      if (conflictCount >= SERVER_DRAFT_MAX_DISCARD_REBASES) return false;
+      if ((decision === "use" || decision === "keep") && !local) return false;
+      try {
+        if (local) {
+          const writerDeviceId = deviceIdRef.current ??
+            getOrCreateDocumentServerDraftDeviceId(window.localStorage, ownerId);
+          deviceIdRef.current = writerDeviceId;
+          enqueueDocumentServerDraftUpsert(window.localStorage, {
+            sourceKey,
+            data: local.data,
+            expectedDraftVersion: draft.draftVersion,
+            expectedPayloadHash: draft.payloadHash,
+            baseResourceVersion: local.baseResourceVersion,
+            writerDeviceId,
+            conflictCount,
+          });
+        } else {
+          enqueueDocumentServerDraftDiscard(window.localStorage, {
+            sourceKey,
+            expectedDraftVersion: draft.draftVersion,
+            targetPayloadHashes: [draft.payloadHash],
+            conflictCount,
+          });
+        }
+      } catch {
+        return false;
+      }
+      choiceRequiredRef.current = false;
+      notifyQueueChange(sourceKey);
+      if (mountedRef.current) setStatus(isBrowserOffline() ? "offline" : "queued");
+      if (!isBrowserOffline()) setTimeout(() => void drainRef.current(), 0);
+      return true;
+    },
+    [ownerId, sourceKey],
+  );
+
   const evaluateState = useCallback(
     (draft: DocumentServerDraftSnapshot | null, queue?: QueuedDocumentServerDraft | null) => {
       if (!mountedRef.current) return;
       updateQueuedRecovery(queue);
       const local = localDraftRef.current;
       if (queue) {
+        const mismatch = Boolean(
+          draft && queue.operationType === "UPSERT" &&
+            draft.payloadHash !== queue.payloadHash &&
+            (queue.expectedDraftVersion !== draft.draftVersion || queue.expectedPayloadHash !== draft.payloadHash),
+        );
+        // 큐의 UPSERT가 현재 로컬 그대로이고 서버본만 다르면(예: 새로고침 복구 뒤 오래된 서버본) 자동 처리를 먼저 본다.
+        if (
+          draft && mismatch && local && queue.operationType === "UPSERT" &&
+          !choiceRequiredRef.current && !requiresLegacyDraftChoice(queue) &&
+          queue.payloadHash === local.payloadHash &&
+          autoResolveRemote(draft, local, queue.conflictCount)
+        ) return;
         const requiresChoice = queue.operationType === "UPSERT" && (
           choiceRequiredRef.current ||
           requiresLegacyDraftChoice(queue) ||
-          Boolean(
-            draft &&
-              draft.payloadHash !== queue.payloadHash &&
-              (queue.expectedDraftVersion !== draft.draftVersion || queue.expectedPayloadHash !== draft.payloadHash),
-          )
+          mismatch
         );
         choiceRequiredRef.current = requiresChoice;
         if (isBrowserOffline()) {
@@ -299,15 +457,17 @@ export function useDocumentServerDraftSync<T>(
         return;
       }
       if (!local) {
+        if (autoResolveRemote(draft, null)) return;
         choiceRequiredRef.current = true;
         setStatus("remote-available");
         return;
       }
-      const isSynced = draft.payloadHash === local.payloadHash;
+      const isSynced = canonicalRemoteHash(draft) === local.payloadHash;
+      if (!isSynced && autoResolveRemote(draft, local)) return;
       choiceRequiredRef.current = !isSynced;
       setStatus(isSynced ? "synced" : "conflict");
     },
-    [updateQueuedRecovery],
+    [autoResolveRemote, canonicalRemoteHash, updateQueuedRecovery],
   );
 
   const rebaseNewerQueue = useCallback(
@@ -332,13 +492,13 @@ export function useDocumentServerDraftSync<T>(
       const expectedDraftVersion = serverDraft?.draftVersion ?? 0;
       if (current.entry.operationType === "DISCARD") {
         // 이전 요청의 응답은 이후에 생긴 삭제 의도를 완료한 증거가 아니다.
-        if (!serverDraft || !current.entry.targetPayloadHashes?.includes(serverDraft.payloadHash)) return;
-        if (current.entry.expectedDraftVersion === expectedDraftVersion) return;
+        if (!serverDraft) return;
+        const rebased = rebaseDiscardEntry(current.entry, serverDraft);
+        if (!rebased || discardAlreadyTargets(current.entry, serverDraft)) return;
         enqueueDocumentServerDraftDiscard(window.localStorage, {
           sourceKey,
-          expectedDraftVersion,
+          ...rebased,
           conflictCount: current.entry.conflictCount,
-          targetPayloadHashes: current.entry.targetPayloadHashes,
         });
       } else {
         if (!mayRebaseUpsert || current.entry.expectedDraftVersion === expectedDraftVersion ||
@@ -392,6 +552,7 @@ export function useDocumentServerDraftSync<T>(
 
     drainingGenerationRef.current = generation;
     mutationEpochRef.current += 1;
+    inFlightRef.current = queued.entry;
     setStatus("syncing");
     try {
       if (!allowOwnerPersistence()) return;
@@ -410,6 +571,7 @@ export function useDocumentServerDraftSync<T>(
             operationId: queued.entry.operationId,
             expectedDraftVersion: queued.entry.expectedDraftVersion,
             targetPayloadHashes: queued.entry.targetPayloadHashes,
+            supersededOperationIds: queued.entry.supersededOperationIds,
           });
       if (
         !mountedRef.current ||
@@ -434,6 +596,21 @@ export function useDocumentServerDraftSync<T>(
           const rebased = readQueuedDocumentServerDraft(window.localStorage, sourceKey);
           evaluateState(result.current, rebased?.entry ?? null);
           if (rebased) setTimeout(() => void drainRef.current(), 0);
+        } else if (
+          queued.entry.operationType === "DISCARD" &&
+          result.current &&
+          queued.entry.conflictCount < SERVER_DRAFT_MAX_DISCARD_REBASES &&
+          rebaseDiscardEntry(queued.entry, result.current)
+        ) {
+          // 폐기 뒤 조회에 이 기기가 쓴 서버본이 다시 잡혔다(지연 반영·재실행 응답). 같은 의도로 다시 겨냥한다.
+          enqueueDocumentServerDraftDiscard(window.localStorage, {
+            sourceKey,
+            ...rebaseDiscardEntry(queued.entry, result.current)!,
+            conflictCount: queued.entry.conflictCount + 1,
+          });
+          notifyQueueChange(sourceKey);
+          setStatus("queued");
+          setTimeout(() => void drainRef.current(), 0);
         } else {
           evaluateState(result.current, null);
         }
@@ -453,14 +630,13 @@ export function useDocumentServerDraftSync<T>(
         result.reason === "VERSION_CONFLICT" &&
         queued.entry.operationType === "DISCARD" &&
         result.current &&
-        queued.entry.targetPayloadHashes?.includes(result.current.payloadHash) &&
-        queued.entry.conflictCount < SERVER_DRAFT_MAX_DISCARD_REBASES
+        queued.entry.conflictCount < SERVER_DRAFT_MAX_DISCARD_REBASES &&
+        rebaseDiscardEntry(queued.entry, result.current)
       ) {
         enqueueDocumentServerDraftDiscard(window.localStorage, {
           sourceKey,
-          expectedDraftVersion: result.current?.draftVersion ?? 0,
+          ...rebaseDiscardEntry(queued.entry, result.current)!,
           conflictCount: queued.entry.conflictCount + 1,
-          targetPayloadHashes: queued.entry.targetPayloadHashes,
         });
         notifyQueueChange(sourceKey);
         setStatus("queued");
@@ -473,6 +649,13 @@ export function useDocumentServerDraftSync<T>(
         evaluateState(result.current, null);
         return;
       }
+      if (
+        result.reason === "VERSION_CONFLICT" &&
+        queued.entry.operationType === "UPSERT" &&
+        result.current &&
+        localDraftRef.current?.payloadHash === queued.entry.payloadHash &&
+        autoResolveRemote(result.current, localDraftRef.current, queued.entry.conflictCount + 1)
+      ) return;
       if (
         result.reason === "VERSION_CONFLICT" ||
         result.reason === "OPERATION_PAYLOAD_CONFLICT"
@@ -490,6 +673,7 @@ export function useDocumentServerDraftSync<T>(
       if (!mountedRef.current || generation !== sourceGenerationRef.current) return;
       setStatus(isBrowserOffline() ? "offline" : "error");
     } finally {
+      if (inFlightRef.current === queued.entry) inFlightRef.current = null;
       if (drainingGenerationRef.current === generation) drainingGenerationRef.current = null;
       if (mountedRef.current && generation === sourceGenerationRef.current && refreshRequestedRef.current) {
         refreshRequestedRef.current = false;
@@ -498,6 +682,7 @@ export function useDocumentServerDraftSync<T>(
     }
   }, [
     allowOwnerPersistence,
+    autoResolveRemote,
     clearTimers,
     evaluateState,
     isOwnerLogoutLocked,
@@ -572,12 +757,30 @@ export function useDocumentServerDraftSync<T>(
             queued.raw,
           );
           notifyQueueChange(sourceKey);
-        } else if (queued?.entry.operationType === "DISCARD" && !result.draft) {
+        } else if (
+          queued?.entry.operationType === "DISCARD" && !result.draft &&
+          // fence 대상이 있는 폐기는 서버본이 없어도 보내야 늦은 저장을 막는다(서버는 receipt만 선점하고 ok).
+          !queued.entry.supersededOperationIds?.length
+        ) {
           removeQueuedDocumentServerDraftIfUnchanged(
             window.localStorage,
             sourceKey,
             queued.raw,
           );
+          notifyQueueChange(sourceKey);
+        } else if (
+          queued?.entry.operationType === "DISCARD" &&
+          result.draft &&
+          !discardAlreadyTargets(queued.entry, result.draft) &&
+          queued.entry.conflictCount < SERVER_DRAFT_MAX_DISCARD_REBASES &&
+          rebaseDiscardEntry(queued.entry, result.draft)
+        ) {
+          // 응답을 받지 못한 채 남은 폐기 의도(예: 새 노트 생성 직후 화면 전환)를 지금 관찰한 서버본으로 다시 겨냥한다.
+          enqueueDocumentServerDraftDiscard(window.localStorage, {
+            sourceKey,
+            ...rebaseDiscardEntry(queued.entry, result.draft)!,
+            conflictCount: queued.entry.conflictCount + 1,
+          });
           notifyQueueChange(sourceKey);
         }
         const remaining = readQueuedDocumentServerDraft(window.localStorage, sourceKey);
@@ -612,7 +815,7 @@ export function useDocumentServerDraftSync<T>(
     (data: T) => {
       if (!allowOwnerPersistence()) return;
       try {
-        const local = createLocalDraftState(data);
+        const local = toLocalDraftState(data);
         localDraftRef.current = local;
         localDraftSourceRef.current = sourceKey;
         if (mountedRef.current) updateLocalDraftView(local);
@@ -623,7 +826,7 @@ export function useDocumentServerDraftSync<T>(
           evaluateState(current, queued?.entry);
           return;
         }
-        if (current?.payloadHash === local.payloadHash) {
+        if (current && canonicalRemoteHash(current) === local.payloadHash) {
           choiceRequiredRef.current = false;
           if (queued?.entry.operationType === "UPSERT" && queued.entry.payloadHash === local.payloadHash) {
             removeQueuedDocumentServerDraftIfUnchanged(
@@ -646,7 +849,7 @@ export function useDocumentServerDraftSync<T>(
         if (mountedRef.current) setDeviceId(writerDeviceId);
         enqueueDocumentServerDraftUpsert(window.localStorage, {
           sourceKey,
-          data,
+          data: local.data,
           expectedDraftVersion:
             current?.draftVersion ?? queued?.entry.expectedDraftVersion ?? 0,
           expectedPayloadHash: current?.payloadHash ?? (queued?.entry.operationType === "UPSERT" ? queued.entry.expectedPayloadHash : undefined),
@@ -659,7 +862,22 @@ export function useDocumentServerDraftSync<T>(
         if (mountedRef.current) setStatus("error");
       }
     },
-    [allowOwnerPersistence, evaluateState, ownerId, scheduleDrain, sourceKey, updateLocalDraftView],
+    [allowOwnerPersistence, canonicalRemoteHash, evaluateState, ownerId, scheduleDrain, sourceKey, toLocalDraftState, updateLocalDraftView],
+  );
+
+  /**
+   * 폐기 의도를 만드는 시점에 같은 sourceKey로 전송 중이거나 큐에 있던 UPSERT의 operation ID. 서버가 이 ID의
+   * receipt를 DISCARD로 선점해, 늦게 도착한 저장이 폐기한 서버본을 되살리지 못하게 한다(서버 fence).
+   */
+  const collectSupersededOperationIds = useCallback(
+    (queued: QueuedDocumentServerDraft | null | undefined): string[] | undefined => {
+      const ids = new Set<string>();
+      const inFlight = inFlightRef.current;
+      if (inFlight?.operationType === "UPSERT" && inFlight.sourceKey === sourceKey) ids.add(inFlight.operationId);
+      if (queued?.operationType === "UPSERT" && queued.sourceKey === sourceKey) ids.add(queued.operationId);
+      return ids.size > 0 ? [...ids] : undefined;
+    },
+    [sourceKey],
   );
 
   const clearLocalDraft = useCallback(
@@ -668,11 +886,17 @@ export function useDocumentServerDraftSync<T>(
       const local = localDraftRef.current;
       const hadLocalDraft = local !== null;
       let targetPayloadHashes: string[];
+      const remote = remoteDraftRef.current;
       try {
         const data = submitted?.submittedData ?? local?.data;
         targetPayloadHashes = data === undefined ? [] : [...new Set(
-          [data, ...(submitted?.submittedAliases ?? [])].map((value) => createLocalDraftState(value).payloadHash),
+          [data, ...(submitted?.submittedAliases ?? [])].map((value) => toLocalDraftState(value).payloadHash),
         )];
+        // 서버본이 휘발 필드만 다른 같은 본문이면(legacy 포함) 서버가 저장한 hash도 대상에 넣어 서버 CAS가 맞게 한다.
+        if (remote && targetPayloadHashes.includes(canonicalRemoteHash(remote)) &&
+          !targetPayloadHashes.includes(remote.payloadHash)) {
+          targetPayloadHashes.push(remote.payloadHash);
+        }
       } catch {
         if (mountedRef.current) setStatus("error");
         return;
@@ -710,7 +934,6 @@ export function useDocumentServerDraftSync<T>(
           evaluateState(remoteDraftRef.current, queued.entry);
           return;
         }
-        const remote = remoteDraftRef.current;
         if (targetPayloadHashes.length === 0 || (remote && !targetPayloadHashes.includes(remote.payloadHash) &&
           drainingGenerationRef.current !== sourceGenerationRef.current)) {
           if (queued?.entry.operationType === "UPSERT") {
@@ -720,6 +943,11 @@ export function useDocumentServerDraftSync<T>(
           evaluateState(remote, readQueuedDocumentServerDraft(window.localStorage, sourceKey)?.entry);
           return;
         }
+        const supersededOperationIds = collectSupersededOperationIds(queued?.entry);
+        // 제출 성공 정리: 이 기기가 쓴 서버본은 전송 중이던 이전 입력이 늦게 반영된 것이라 본문과 무관하게 폐기한다.
+        const ownWriterDeviceId = reason === "submitted"
+          ? deviceIdRef.current ?? getOrCreateDocumentServerDraftDeviceId(window.localStorage, ownerId)
+          : undefined;
         enqueueDocumentServerDraftDiscard(window.localStorage, {
           sourceKey,
           targetPayloadHashes,
@@ -727,6 +955,8 @@ export function useDocumentServerDraftSync<T>(
             remoteDraftRef.current?.draftVersion ??
             queued?.entry.expectedDraftVersion ??
             0,
+          ...(ownWriterDeviceId ? { ownWriterDeviceId } : {}),
+          ...(supersededOperationIds ? { supersededOperationIds } : {}),
         });
         notifyQueueChange(sourceKey);
         if (mountedRef.current) setStatus(isBrowserOffline() ? "offline" : "queued");
@@ -735,7 +965,7 @@ export function useDocumentServerDraftSync<T>(
         if (mountedRef.current) setStatus("error");
       }
     },
-    [allowOwnerPersistence, clearTimers, evaluateState, sourceKey],
+    [allowOwnerPersistence, canonicalRemoteHash, clearTimers, collectSupersededOperationIds, evaluateState, ownerId, sourceKey, toLocalDraftState],
   );
 
   const restoreQueuedDraft = useCallback(() => {
@@ -753,7 +983,7 @@ export function useDocumentServerDraftSync<T>(
       const data = parsePayloadData<T>(current.entry.payloadJson);
       if (!data) return;
       clearTimers();
-      const local = createLocalDraftState(data);
+      const local = toLocalDraftState(data);
       localDraftRef.current = local;
       localDraftSourceRef.current = sourceKey;
       updateLocalDraftView(local);
@@ -762,7 +992,7 @@ export function useDocumentServerDraftSync<T>(
     } catch {
       setStatus("error");
     }
-  }, [allowOwnerPersistence, clearTimers, evaluateState, queuedRecovery, sourceKey, updateLocalDraftView]);
+  }, [allowOwnerPersistence, clearTimers, evaluateState, queuedRecovery, sourceKey, toLocalDraftState, updateLocalDraftView]);
 
   const useRemoteDraft = useCallback(() => {
     if (!allowOwnerPersistence()) return;
@@ -775,6 +1005,7 @@ export function useDocumentServerDraftSync<T>(
     }
     clearTimers();
     choiceRequiredRef.current = false;
+    remoteDecisionRef.current.set(remoteDecisionKey(remote), "use");
     try {
       const queued = readQueuedDocumentServerDraft(window.localStorage, sourceKey);
       if (queued) {
@@ -785,7 +1016,7 @@ export function useDocumentServerDraftSync<T>(
         );
         notifyQueueChange(sourceKey);
       }
-      const local = createLocalDraftState(data);
+      const local = toLocalDraftState(data);
       localDraftRef.current = local;
       localDraftSourceRef.current = sourceKey;
       updateLocalDraftView(local);
@@ -794,13 +1025,14 @@ export function useDocumentServerDraftSync<T>(
     } catch {
       setStatus("error");
     }
-  }, [allowOwnerPersistence, clearTimers, sourceKey, updateLocalDraftView]);
+  }, [allowOwnerPersistence, clearTimers, sourceKey, toLocalDraftState, updateLocalDraftView]);
 
   const keepLocalDraft = useCallback(() => {
     if (!allowOwnerPersistence()) return;
     const local = localDraftRef.current;
     if (!local) return;
     choiceRequiredRef.current = false;
+    if (remoteDraftRef.current) remoteDecisionRef.current.set(remoteDecisionKey(remoteDraftRef.current), "keep");
     try {
       const writerDeviceId = deviceIdRef.current ??
         getOrCreateDocumentServerDraftDeviceId(window.localStorage, ownerId);
@@ -825,8 +1057,10 @@ export function useDocumentServerDraftSync<T>(
   const discardRemoteDraft = useCallback(() => {
     if (!allowOwnerPersistence()) return;
     choiceRequiredRef.current = false;
+    if (remoteDraftRef.current) remoteDecisionRef.current.set(remoteDecisionKey(remoteDraftRef.current), "discard");
     try {
       const queued = readQueuedDocumentServerDraft(window.localStorage, sourceKey);
+      const supersededOperationIds = collectSupersededOperationIds(queued?.entry);
       enqueueDocumentServerDraftDiscard(window.localStorage, {
         sourceKey,
         targetPayloadHashes: remoteDraftRef.current ? [remoteDraftRef.current.payloadHash] : undefined,
@@ -834,6 +1068,7 @@ export function useDocumentServerDraftSync<T>(
           remoteDraftRef.current?.draftVersion ??
           queued?.entry.expectedDraftVersion ??
           0,
+        ...(supersededOperationIds ? { supersededOperationIds } : {}),
       });
       notifyQueueChange(sourceKey);
       setStatus(isBrowserOffline() ? "offline" : "queued");
@@ -841,7 +1076,7 @@ export function useDocumentServerDraftSync<T>(
     } catch {
       setStatus("error");
     }
-  }, [allowOwnerPersistence, sourceKey]);
+  }, [allowOwnerPersistence, collectSupersededOperationIds, sourceKey]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -854,6 +1089,8 @@ export function useDocumentServerDraftSync<T>(
     readyRef.current = false;
     choiceRequiredRef.current = false;
     remoteDraftRef.current = null;
+    remoteCanonicalRef.current = null;
+    remoteDecisionRef.current = new Map();
     // 이 effect는 sourceKey별 서버 초안 구독과 localStorage(device id·queue) 읽기를 시작하는
     // 외부 시스템 동기화다. ref 초기화와 같은 시점에 state도 되돌려야 remount·source 전환에서
     // ref/state가 어긋나지 않으므로 render 단계로 옮길 수 없다.

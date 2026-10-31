@@ -158,6 +158,30 @@ export async function getPrivateNoteIncludingTrash(noteId: string) {
   return getPrivateNoteRecord(noteId, true);
 }
 
+export type PrivateNoteHead = { id: string; version: number; updatedAt: Date | null };
+
+/**
+ * 읽기 전용 실시간 보기(live view)의 가벼운 head 조회: 본문 없이 id·version·updatedAt만.
+ * 권한 경계는 `getPrivateNote`와 같다(본인 학생 또는 관리자, 그 밖은 throw). 휴지통·없는 노트는 null.
+ */
+export async function getPrivateNoteHead(noteId: string): Promise<PrivateNoteHead | null> {
+  const session = await requireAuth();
+  const db = createDb();
+  const [head] = await db
+    .select({
+      id: privateNotes.id,
+      studentId: privateNotes.studentId,
+      version: privateNotes.version,
+      updatedAt: privateNotes.updatedAt,
+    })
+    .from(privateNotes)
+    .where(and(eq(privateNotes.id, noteId), isNull(privateNotes.deletedAt)))
+    .limit(1);
+  if (!head) return null;
+  await requireStudentOwnerOrAdmin(session, head.studentId);
+  return { id: head.id, version: head.version, updatedAt: head.updatedAt };
+}
+
 /**
  * Form action은 target guard의 거부를 throw가 아닌 기존 안전한 action state로 수렴시킨다.
  */

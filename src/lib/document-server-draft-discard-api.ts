@@ -72,6 +72,9 @@ export function createDocumentServerDraftDiscardHandler({
       ...(value.targetPayloadHashes !== undefined
         ? { targetPayloadHashes: value.targetPayloadHashes as string[] }
         : {}),
+      ...(value.supersededOperationIds !== undefined
+        ? { supersededOperationIds: value.supersededOperationIds as string[] }
+        : {}),
     });
     return json(result);
   };

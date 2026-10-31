@@ -1,10 +1,12 @@
 "use client";
 
+import { useState } from "react";
 import { MobileTopBar } from "@/components/app-shell/AppSidebar";
 import type { UpdateNoteState } from "@/lib/actions/privateNotes";
 import { DeleteNoteButton } from "./DeleteNoteButton";
 import { NoteBreadcrumb, NoteDocumentStrip, NoteHistoryLink, type NoteParent } from "./NoteDocumentChrome";
 import { NoteEditorForm } from "./NoteEditorForm";
+import { formatNoteUpdated } from "./note-display";
 
 /**
  * 노트 문서 편집 화면(NoteDoc·MobileNoteDoc 보드). 넓은 화면은 위치·저장 상태·변경 이력·더 보기 줄을,
@@ -19,7 +21,7 @@ export function NoteDocEditor({
   parent,
   historyHref,
   authorName,
-  updatedLabel,
+  updatedLabel: initialUpdatedLabel,
 }: {
   note: { id: string; title: string; contentHtml: string; noteDate: Date | null; version: number };
   actorId: string;
@@ -31,12 +33,17 @@ export function NoteDocEditor({
   authorName: string;
   updatedLabel: string;
 }) {
+  // 자동 저장은 route를 다시 렌더하지 않으므로 "수정" 줄은 저장 응답의 시각으로 여기서 맞춘다.
+  const [updatedLabel, setUpdatedLabel] = useState(initialUpdatedLabel);
   return (
     <NoteEditorForm
       note={note}
       actorId={actorId}
       action={action}
       focusBodyEnd={focusBodyEnd}
+      onSaved={(saved) => {
+        if (saved.updatedAt) setUpdatedLabel(formatNoteUpdated(saved.updatedAt, Date.now()));
+      }}
       document={{
         authorName,
         updatedLabel,

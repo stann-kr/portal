@@ -51,6 +51,14 @@ function MockFullEditor({
   onDirty,
 }: MockEditorProps) {
   const latestHtmlRef = React.useRef(initialContent);
+  // 실제 편집기처럼 본문을 스스로 들고 있어, form action이 끝난 뒤 React의 form reset에 지워지지 않는다.
+  // 명시적 교체(contentVersion·initialContent 변경)만 표시값을 바꾼다.
+  const [value, setValue] = React.useState(initialContent);
+  const [applied, setApplied] = React.useState({ contentVersion, initialContent });
+  if (applied.contentVersion !== contentVersion || applied.initialContent !== initialContent) {
+    setApplied({ contentVersion, initialContent });
+    setValue(initialContent);
+  }
 
   React.useEffect(() => {
     latestHtmlRef.current = initialContent;
@@ -60,10 +68,13 @@ function MockFullEditor({
     <div>
       <textarea
         aria-label={ariaLabel}
-        defaultValue={initialContent}
+        data-content-version={contentVersion}
+        value={value}
         disabled={disabled}
+        onChange={() => undefined}
         onInput={(event) => {
           latestHtmlRef.current = event.currentTarget.value;
+          setValue(event.currentTarget.value);
           onDirty?.(() => latestHtmlRef.current);
         }}
       />
@@ -136,6 +147,7 @@ mock.module("@/lib/actions/privateNotes", { namedExports: {
   purgePrivateNote: (...args: Parameters<typeof changeNoteLifecycle>) => changeNoteLifecycle(...args),
   getPrivateNotes: async (studentId: string) => { notePageTargets.push(studentId); return notePageData; },
   getPrivateNote: (...args: Parameters<typeof loadPanelNote>) => loadPanelNote(...args),
+  getPrivateNoteHead: async () => null,
   updatePrivateNote: (...args: Parameters<typeof savePanelNote>) => savePanelNote(...args),
 } });
 
@@ -1091,7 +1103,13 @@ for (const kind of ["new-note", "edit-note", "new-post", "edit-post"] as const) 
       assert.equal(submit().disabled, true, "이전 문맥 완료가 새 요청의 진행 잠금을 해제하면 안 됩니다.");
       await act(async () => requests[1]!.resolve(response(1, resourceB)));
       assert.equal(harness.browserWindow.localStorage.getItem(key(actorB, resourceB)), null);
-      if (!isEdit) assert.equal(navigation.mock.callCount(), 1);
+      if (kind === "new-note") {
+        // 새 노트는 제자리에서 만들어지고 주소만 문서 주소로 바뀐다(페이지 이동 없음).
+        assert.equal(navigation.mock.callCount(), 0);
+        assert.equal(harness.browserWindow.location.pathname, `/dashboard/notes/${resourceB}`);
+        assert.match(harness.container.textContent ?? "", /저장됨/u);
+      }
+      else if (!isEdit) assert.equal(navigation.mock.callCount(), 1);
       else if (!isNote) assert.equal(saves, 1);
       else assert.match(harness.container.textContent ?? "", /저장됨/u);
     });
@@ -2006,6 +2024,8 @@ test("노트 자체 저장의 정규화 결과와 서버 prop이 먼저 반영�
     noteDate: null,
   };
   let submittedContentHtml: string | null = null;
+  /** 서버(sanitizeHtml)는 편집기 출력과 다른 HTML을 돌려줄 수 있다. */
+  const normalize = (html: string) => html.replace(/<\/p>/gu, "</p>\n");
 
   function NormalizedNoteSaveHarness() {
     const [note, setNote] = React.useState(initialNote);
@@ -2015,10 +2035,11 @@ test("노트 자체 저장의 정규화 결과와 서버 prop이 먼저 반영�
         const savedNote = {
           id: noteId,
           title: String(formData.get("title") ?? "").trim(),
-          contentHtml: submittedContentHtml,
+          contentHtml: normalize(submittedContentHtml),
           noteDate: null,
+          version: 2,
         };
-        // revalidatePath 결과가 action state보다 먼저 보이는 순서를 재현한다.
+        // 바깥 prop(패널 재조회 등)이 action state보다 먼저 바뀌는 순서를 재현한다.
         setNote(savedNote);
         await Promise.resolve();
         return { success: true, note: savedNote };
@@ -2057,6 +2078,7 @@ test("노트 자체 저장의 정규화 결과와 서버 prop이 먼저 반영�
       }) as unknown as Event,
     );
   });
+  const contentVersionBeforeSave = editorElement.getAttribute("data-content-version");
 
   const submitButton = submitControl(harness.container);
   assert.equal(
@@ -2100,6 +2122,17 @@ test("노트 자체 저장의 정규화 결과와 서버 prop이 먼저 반영�
     "지연 editor reader의 최신 본문이 실제 FormData에 반영되어야 합니다.",
   );
   assert.equal(
+    editorElement.getAttribute("data-content-version"),
+    contentVersionBeforeSave,
+    "서버가 정리한 HTML이 달라도 자기 저장 응답으로 편집기를 다시 채우지 않는다(커서·undo 유지).",
+  );
+  assert.equal(editorElement.value, latestContentHtml);
+  assert.equal(
+    (harness.container.querySelector('input[name="baseRevision"]') as unknown as HTMLInputElement).value,
+    "2",
+    "먼저 바뀐 서버 prop과 응답이 같은 자기 저장이면 새 version을 기준으로 잇는다.",
+  );
+  assert.equal(
     readFormDraftClearMarkers(
       harness.browserWindow.localStorage,
       createDocumentDraftKey("note", actorId, noteId),
@@ -2107,6 +2140,163 @@ test("노트 자체 저장의 정규화 결과와 서버 prop이 먼저 반영�
     3,
     "compact·legacy full-base·bare 표현을 모두 제출 tombstone으로 남겨야 합니다.",
   );
+});
+
+/** 실제 시간이 걸리는 자동 저장(1.5초 idle)을 기다린다. */
+async function waitForRealTime(ms: number): Promise<void> {
+  await act(async () => {
+    await new Promise<void>((resolve) => setTimeout(resolve, ms));
+  });
+}
+
+async function waitUntil(condition: () => boolean, timeoutMs: number, message: string): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (condition()) return;
+    await waitForRealTime(50);
+  }
+  assert.fail(message);
+}
+
+/** 제어 textarea(제목)·mock 편집기(onInput) 모두에 값을 넣고 변경 흐름을 일으킨다. */
+function typeInto(harness: FormHarness, element: HTMLTextAreaElement, value: string): void {
+  const setter = Object.getOwnPropertyDescriptor(harness.browserWindow.HTMLTextAreaElement.prototype, "value")?.set;
+  assert.ok(setter);
+  // keyup 경로는 초점이 있는 요소의 값 변화만 읽는다.
+  element.focus();
+  setter.call(element, value);
+  element.dispatchEvent(new harness.browserWindow.Event("input", { bubbles: true, cancelable: true }) as unknown as Event);
+  element.dispatchEvent(new harness.browserWindow.Event("change", { bubbles: true }) as unknown as Event);
+  // react-dom이 DOM 전역보다 먼저 load되면 input 대신 keyup에서 값 변화를 읽는다.
+  element.dispatchEvent(new harness.browserWindow.KeyboardEvent("keyup", { bubbles: true }) as unknown as Event);
+}
+
+test("노트 자동 저장이 돌려준 정규화 HTML로 편집기를 다시 채우지 않고, 입력이 없으면 다시 저장하지 않는다", { concurrency: false }, async (context) => {
+  const noteId = "note-normalized-keep-editor";
+  const actorId = "normalized-keep-editor-actor";
+  const requests: Record<string, FormDataEntryValue>[] = [];
+  const normalize = (html: string) => html.replace(/<\/p>/gu, "</p>\n");
+  const action = async (_previous: object, formData: FormData) => {
+    const data = Object.fromEntries(formData);
+    requests.push(data);
+    return {
+      success: true,
+      updatedAt: new Date(),
+      note: { id: noteId, title: String(data.title).trim(), contentHtml: normalize(String(data.contentHtml)), noteDate: null, version: requests.length + 1 },
+    };
+  };
+  const harness = await renderForm(
+    context,
+    <NoteEditorForm action={action} actorId={actorId} note={{ id: noteId, title: "제목", contentHtml: "<p>본문</p>", noteDate: null, version: 1 }} />,
+  );
+  const editor = harness.container.querySelector(BODY_FIELD) as unknown as HTMLTextAreaElement;
+  const firstHtml = "<p>본문</p><p>이어서</p>";
+  await act(async () => typeInto(harness, editor, firstHtml));
+  const contentVersion = editor.getAttribute("data-content-version");
+  await act(async () => submitControl(harness.container).click());
+  await waitForCondition(() => /저장됨/u.test(harness.container.textContent ?? ""), "첫 저장이 끝난다.");
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0]!.contentHtml, firstHtml);
+
+  // 서버 HTML(개행 포함)과 편집기 HTML이 달라도 편집기는 그대로이고, 자동 저장 간격(1.5초)이 두 번 지나도 다시 저장하지 않는다.
+  await waitForRealTime(4_000);
+  assert.equal(requests.length, 1, "정규화 차이만으로 revision이 쌓이면 안 됩니다.");
+  assert.equal(editor.value, firstHtml);
+  assert.equal(editor.getAttribute("data-content-version"), contentVersion, "자기 저장 응답으로 편집기를 교체하지 않는다.");
+  assert.match(harness.container.textContent ?? "", /저장됨/u);
+
+  // 이어서 입력하면 서버가 돌려준 HTML 기준의 새 fingerprint·version으로 다시 저장한다.
+  const secondHtml = "<p>본문</p><p>이어서</p><p>더 씀</p>";
+  await act(async () => typeInto(harness, editor, secondHtml));
+  await act(async () => submitControl(harness.container).click());
+  await waitUntil(() => requests.length === 2, 4_000, "입력 뒤 저장이 다시 요청된다.");
+  assert.equal(requests[1]!.contentHtml, secondHtml);
+  assert.equal(requests[1]!.baseRevision, "2");
+  assert.equal(
+    requests[1]!.baseFingerprint,
+    createDocumentSnapshotFingerprint({ kind: "private-note", id: noteId, title: "제목", contentHtml: normalize(firstHtml), noteDate: "" }),
+    "fingerprint는 서버가 돌려준 HTML로 만든다.",
+  );
+});
+
+test("새 노트는 첫 자동 저장으로 제자리에서 만들어지고 같은 편집기가 수정 모드로 이어진다", { concurrency: false }, async (context) => {
+  type CreateResult = import("@/lib/actions/privateNotes").CreateNoteState;
+  const actorId = "inplace-create-actor";
+  const studentId = "inplace-create-student";
+  const createRequests: { data: Record<string, FormDataEntryValue>; resolve: (result: CreateResult) => void }[] = [];
+  const action = (_previous: object, formData: FormData) =>
+    new Promise<CreateResult>((resolve) => { createRequests.push({ data: Object.fromEntries(formData), resolve }); });
+  const updates: { noteId: string; data: Record<string, FormDataEntryValue> }[] = [];
+  savePanelNote = async (noteId, _previous, formData) => {
+    const data = Object.fromEntries(formData);
+    updates.push({ noteId, data });
+    return { success: true, updatedAt: new Date(), note: { id: noteId, title: String(data.title), contentHtml: String(data.contentHtml), noteDate: null, version: 2 } };
+  };
+  context.after(() => { savePanelNote = async () => ({}); });
+  const navigation = context.mock.method(router, "replace");
+  const harness = await renderForm(
+    context,
+    <NoteFullForm action={action} actorId={actorId} studentId={studentId} returnTo="/dashboard/student/notes" authorName="학생" />,
+  );
+  await waitForCondition(() => harness.container.querySelector(BODY_FIELD) !== null, "편집기가 열린다.");
+  // 초안 hook의 비동기 서버 동기화가 끝나기 전에 입력하면 복원이 입력을 덮을 수 있어 먼저 한 바퀴 기다린다.
+  for (let tick = 0; tick < 3; tick += 1) await waitForRealTime(0);
+  const titleField = harness.container.querySelector('textarea[name="title"]') as unknown as HTMLTextAreaElement;
+  const editor = harness.container.querySelector(BODY_FIELD) as unknown as HTMLTextAreaElement;
+  await act(async () => typeInto(harness, titleField, "새 노트 제목"));
+  await act(async () => typeInto(harness, editor, "<p>첫 문장</p>"));
+  assert.equal(titleField.value, "새 노트 제목");
+  assert.notEqual((harness.container.querySelector('input[name="operationId"]') as unknown as HTMLInputElement).value, "");
+  assert.equal(harness.container.querySelector("form")?.getAttribute("aria-busy"), "false");
+  assert.equal(harness.container.querySelector('input[name="baseRevision"]'), null, "생성 전에는 기준 revision을 보내지 않는다.");
+  await act(async () => submitControl(harness.container).click());
+  assert.equal(createRequests.length, 1);
+  assert.equal(createRequests[0]!.data.title, "새 노트 제목");
+  assert.equal(createRequests[0]!.data.contentHtml, "<p>첫 문장</p>");
+  // 생성 응답을 기다리는 동안에도 제목·편집기는 잠기지 않고 이어서 쓸 수 있다.
+  assert.equal(titleField.disabled, false);
+  assert.equal(editor.disabled, false);
+  assert.equal(submitControl(harness.container).disabled, true, "응답을 기다리는 동안 다시 제출하지 않는다.");
+  const typedWhilePending = "<p>첫 문장</p><p>생성 중에 쓴 문장</p>";
+  await act(async () => typeInto(harness, editor, typedWhilePending));
+
+  await act(async () => createRequests[0]!.resolve({
+    success: true,
+    note: { id: "created-note", title: "새 노트 제목", contentHtml: "<p>첫 문장</p>\n", noteDate: null, createdAt: new Date(), version: 1 },
+  }));
+  assert.equal(navigation.mock.callCount(), 0, "router.replace로 페이지를 바꾸지 않는다.");
+  assert.equal(harness.browserWindow.location.pathname, "/dashboard/notes/created-note");
+  assert.equal(new URL(harness.browserWindow.location.href).searchParams.get("returnTo"), "/dashboard/student/notes");
+  assert.equal(new URL(harness.browserWindow.location.href).searchParams.get("focus"), null);
+  assert.equal(harness.container.querySelector(BODY_FIELD), editor, "같은 편집기 노드가 그대로 남는다.");
+  assert.equal(harness.container.querySelector('textarea[name="title"]'), titleField);
+  assert.equal(editor.value, typedWhilePending, "생성 대기 중 쓴 내용을 지운다거나 서버 HTML로 바꾸지 않는다.");
+  assert.equal(titleField.disabled, false);
+  assert.equal(editor.disabled, false);
+  assert.equal(
+    harness.browserWindow.localStorage.getItem(createDocumentDraftKey("note", actorId, `new:${studentId}`)),
+    null,
+    "만든 노트가 이어받은 `new:` 초안은 남기지 않는다.",
+  );
+  assert.match(harness.container.textContent ?? "", /변경 이력/u, "위쪽 막대가 문서 배치로 바뀐다.");
+  assert.doesNotMatch(harness.container.textContent ?? "", /돌아가기/u);
+
+  // 생성 대기 중 쓴 내용은 만들어진 노트의 첫 저장(update)에 들어간다. mock 편집기는 onChange를 올리지 않아
+  // idle 자동 저장 대신 같은 경로(requestSubmit)로 저장을 일으킨다.
+  await waitUntil(() => submitControl(harness.container).disabled === false, 2_000, "초안 key 전환이 끝나면 다시 저장할 수 있다.");
+  await act(async () => submitControl(harness.container).click());
+  await waitUntil(() => updates.length > 0, 2_000, "생성 뒤 이어 쓴 내용이 수정 저장으로 간다.");
+  assert.equal(updates[0]!.noteId, "created-note");
+  assert.equal(updates[0]!.data.contentHtml, typedWhilePending);
+  assert.equal(updates[0]!.data.title, "새 노트 제목");
+  assert.equal(updates[0]!.data.baseRevision, "1", "생성 응답의 version을 기준으로 수정한다.");
+  assert.equal(
+    updates[0]!.data.baseFingerprint,
+    createDocumentSnapshotFingerprint({ kind: "private-note", id: "created-note", title: "새 노트 제목", contentHtml: "<p>첫 문장</p>\n", noteDate: "" }),
+  );
+  await waitForCondition(() => /저장됨/u.test(harness.container.textContent ?? ""), "수정 저장이 끝난다.");
+  assert.equal(harness.container.querySelector(BODY_FIELD), editor);
+  assert.equal(updates.length, 1);
 });
 
 test("노트 version 충돌은 내 초안을 보존하고 서버 최신본 확인·선택 뒤 새 operation으로 재시도한다", { concurrency: false }, async (context) => {

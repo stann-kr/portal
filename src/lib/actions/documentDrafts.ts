@@ -12,6 +12,7 @@ import {
   parseDocumentServerDraftVersion,
   parseDocumentServerDraftTargetHashes,
   parseDocumentServerDraftExpectedHash,
+  parseDocumentServerDraftSupersededOperationIds,
   validateDocumentServerDraftSource,
   type DiscardDocumentServerDraftInput,
   type DocumentServerDraftMutationResult,
@@ -158,7 +159,13 @@ export async function discardDocumentServerDraft(
     input?.expectedDraftVersion,
   );
   const targetPayloadHashes = parseDocumentServerDraftTargetHashes(input?.targetPayloadHashes);
-  if (!identity || !operationId || expectedDraftVersion === null || targetPayloadHashes === null) {
+  const supersededOperationIds = parseDocumentServerDraftSupersededOperationIds(input?.supersededOperationIds);
+  if (
+    !identity || !operationId || expectedDraftVersion === null || targetPayloadHashes === null ||
+    supersededOperationIds === null ||
+    // 자기 operation ID를 fence 대상으로 지목하면 receipt가 충돌하므로 거부한다.
+    supersededOperationIds?.includes(operationId)
+  ) {
     return { ok: false, reason: "INVALID_INPUT", current: null };
   }
 
@@ -175,9 +182,11 @@ export async function discardDocumentServerDraft(
         sourceKey: input.sourceKey,
         expectedDraftVersion,
         targetPayloadHashes,
+        supersededOperationIds,
       }),
       expectedDraftVersion,
       targetPayloadHashes,
+      supersededOperationIds,
       now,
     });
   } catch {
