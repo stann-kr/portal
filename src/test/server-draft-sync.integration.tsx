@@ -1007,6 +1007,31 @@ test("명시적 계정 초안 삭제도 충돌 뒤 다른 본문까지 자동 �
   assert.equal(discardCalls.length, 1);
 });
 
+test("명시적 계정 초안 삭제는 공유 큐에 있는 다른 탭의 UPSERT를 이 탭의 이전 입력으로 겨냥하지 않는다", { concurrency: false }, async (context) => {
+  resetServerMock();
+  const sourceKey = createDocumentDraftKey("note", "student-1", "explicit-discard-other-tab");
+  remoteDraft = createSnapshot(sourceKey, { title: "확인한 A", contentHtml: "<p>A</p>" }, 1);
+  const seenHash = remoteDraft.payloadHash;
+  const harness = await createHarness(context, sourceKey);
+  // 같은 브라우저의 탭 B가 다른 본문을 v2로 저장했고 응답 대기 중이라 공유 큐에 B의 UPSERT가 남아 있다.
+  const tabB = { title: "탭 B의 후속 작업", contentHtml: "<p>B</p>" };
+  const tabBEntry = enqueueDocumentServerDraftUpsert(harness.browserWindow.localStorage, {
+    sourceKey, data: tabB, expectedDraftVersion: 1, baseResourceVersion: null,
+    writerDeviceId: "7971deed-89f6-48a4-8bbd-5f0ec63488e0",
+  }).entry;
+  remoteDraft = createSnapshot(sourceKey, tabB, 2);
+  const tabBHash = remoteDraft.payloadHash;
+
+  await act(async () => harness.getResult().serverSync.discardRemoteDraft());
+  await waitFor(() => discardCalls.length >= 1, "폐기 요청이 전송돼야 합니다.");
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 20)));
+  assert.deepEqual(discardCalls[0]?.targetPayloadHashes, [seenHash], "확인했던 서버본만 겨냥한다");
+  assert.equal(discardCalls.some((call) => call.supersededOperationIds?.includes(tabBEntry.operationId)), false,
+    "다른 탭의 operation을 fence 대상으로 보내지 않는다");
+  assert.equal(discardCalls.some((call) => call.targetPayloadHashes?.includes(tabBHash)), false);
+  assert.equal(remoteDraft?.payloadHash, tabBHash, "탭 B의 v2는 보존된다");
+});
+
 test("전송 중인 UPSERT 뒤 제출 정리는 같은 본문만 지우고 다른 기기 변경은 보존한다", { concurrency: false }, async (context) => {
   for (const peerChanged of [false, true]) {
     await context.test(peerChanged ? "다른 기기 변경" : "같은 제출 본문", async (subcontext) => {

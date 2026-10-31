@@ -23,32 +23,43 @@ export const ROUTE_AUTO_REFRESH_HISTORY_RETURN_WINDOW_MS = 5_000;
 
 const NON_TEXT_INPUT_TYPES = new Set(["button", "checkbox", "color", "file", "image", "radio", "range", "reset", "submit"]);
 
+/** popstate 직전 이 시간 안에 mount된 구독자는 그 popstate의 복귀 대상으로 본다(아래 순서 문제). */
+export const ROUTE_AUTO_REFRESH_HISTORY_MOUNT_LEAD_MS = 1_000;
+
 /**
- * 마지막 popstate 시각(ms). app router가 popstate를 받아 이전 트리를 되살리면 그 commit 뒤에 이 컴포넌트가 mount되므로
- * 리스너는 모듈 수준에서 한 번만 두고, mount 때 최근 값을 읽는다. 다시 받고 나면 0으로 돌려 StrictMode의 두 번째 effect나
- * 같은 화면의 두 번째 인스턴스가 또 받지 않게 한다.
+ * history 복귀 감지. 두 순서를 모두 다룬다.
+ * - popstate가 먼저 처리되고 나중에 mount되는 경우: 모듈 수준 리스너가 남긴 시각을 mount 때 읽는다.
+ * - mount가 먼저인 경우: React 19는 popstate 중 시작된 transition을 동기로 렌더해(eager transition), Next app router의
+ *   popstate 리스너(우리보다 먼저 등록) 안에서 되살린 트리가 commit되고 effect까지 끝난다. 그 뒤에야 우리 리스너가
+ *   불리므로, 리스너는 직전에 mount된 구독자에게 바로 알린다.
+ * 한 번 알리면 소비해 StrictMode의 두 번째 effect나 같은 화면의 두 번째 인스턴스가 또 받지 않게 한다.
  */
 let lastHistoryReturnAt = 0;
-/** 리스너를 설치한 window. 테스트가 Window를 바꿔 끼우면 새 window에 다시 설치하고 이전 시각은 버린다. */
+/** 리스너를 설치한 window. 테스트가 Window를 바꿔 끼우면 새 window에 다시 설치하고 이전 상태는 버린다. */
 let historyListenerWindow: Window | null = null;
+type HistoryReturnSubscriber = { mountedAt: number; notify: () => void };
+const historyReturnSubscribers = new Set<HistoryReturnSubscriber>();
 
 function installHistoryReturnListener() {
   if (typeof window === "undefined" || historyListenerWindow === window) return;
   historyListenerWindow = window;
   lastHistoryReturnAt = 0;
+  historyReturnSubscribers.clear();
   window.addEventListener("popstate", () => {
-    lastHistoryReturnAt = Date.now();
-  });
-}
-
-/** popstate가 방금 있었으면(history 복귀 직후 mount) true를 돌려주고 소비한다. */
-function consumeRecentHistoryReturn(): boolean {
-  installHistoryReturnListener();
-  if (lastHistoryReturnAt > 0 && Date.now() - lastHistoryReturnAt < ROUTE_AUTO_REFRESH_HISTORY_RETURN_WINDOW_MS) {
+    const now = Date.now();
+    const justMounted = [...historyReturnSubscribers].filter(
+      (subscriber) => now - subscriber.mountedAt < ROUTE_AUTO_REFRESH_HISTORY_MOUNT_LEAD_MS,
+    );
+    if (justMounted.length === 0) {
+      lastHistoryReturnAt = now;
+      return;
+    }
     lastHistoryReturnAt = 0;
-    return true;
-  }
-  return false;
+    for (const subscriber of justMounted) {
+      historyReturnSubscribers.delete(subscriber);
+      subscriber.notify();
+    }
+  });
 }
 
 /**
@@ -62,13 +73,23 @@ export function useHistoryReturn(onReturn: () => void) {
   }, [onReturn]);
 
   useEffect(() => {
+    installHistoryReturnListener();
     // bfcache 복원은 컴포넌트를 다시 mount하지 않으므로 pageshow에서 직접 받는다.
     const onPageShow = (event: PageTransitionEvent) => {
       if (event.persisted) onReturnRef.current();
     };
     window.addEventListener("pageshow", onPageShow);
-    if (consumeRecentHistoryReturn()) onReturnRef.current();
-    return () => window.removeEventListener("pageshow", onPageShow);
+    const subscriber: HistoryReturnSubscriber = { mountedAt: Date.now(), notify: () => onReturnRef.current() };
+    if (lastHistoryReturnAt > 0 && Date.now() - lastHistoryReturnAt < ROUTE_AUTO_REFRESH_HISTORY_RETURN_WINDOW_MS) {
+      lastHistoryReturnAt = 0;
+      onReturnRef.current();
+    } else {
+      historyReturnSubscribers.add(subscriber);
+    }
+    return () => {
+      historyReturnSubscribers.delete(subscriber);
+      window.removeEventListener("pageshow", onPageShow);
+    };
   }, []);
 }
 

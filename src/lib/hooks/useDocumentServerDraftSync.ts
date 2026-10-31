@@ -239,6 +239,17 @@ export function useDocumentServerDraftSync<T>(
   const refreshRef = useRef<() => Promise<void>>(async () => undefined);
   // 서버 응답을 기다리는 요청. 제출 정리·명시 폐기가 "이 UPSERT는 더 이상 유효하지 않다"(서버 fence)를 담을 때 읽는다.
   const inFlightRef = useRef<QueuedDocumentServerDraft | null>(null);
+  // 이 탭(hook 인스턴스)이 큐에 넣은 UPSERT의 operation ID. 큐는 같은 브라우저의 탭이 localStorage로 공유하므로,
+  // 폐기 의도가 "이 탭의 이전 입력"으로 겨냥할 큐 항목을 고를 때 다른 탭의 후속 작업을 섞지 않게 한다.
+  const ownUpsertOperationIdsRef = useRef(new Set<string>());
+  const enqueueOwnUpsert = useCallback(
+    (input: Parameters<typeof enqueueDocumentServerDraftUpsert>[1]) => {
+      const stored = enqueueDocumentServerDraftUpsert(window.localStorage, input);
+      ownUpsertOperationIdsRef.current.add(stored.entry.operationId);
+      return stored;
+    },
+    [],
+  );
   // 옵션 객체는 매 render 새로 올 수 있으므로 ref로 최신값을 읽는다.
   const optionsRef = useRef(options);
   // 서버본의 canonical hash(휘발 필드 제외) memo. 서버 hash가 같으면 다시 계산하지 않는다.
@@ -390,7 +401,7 @@ export function useDocumentServerDraftSync<T>(
           const writerDeviceId = deviceIdRef.current ??
             getOrCreateDocumentServerDraftDeviceId(window.localStorage, ownerId);
           deviceIdRef.current = writerDeviceId;
-          enqueueDocumentServerDraftUpsert(window.localStorage, {
+          enqueueOwnUpsert({
             sourceKey,
             data: local.data,
             expectedDraftVersion: draft.draftVersion,
@@ -416,7 +427,7 @@ export function useDocumentServerDraftSync<T>(
       if (!isBrowserOffline()) setTimeout(() => void drainRef.current(), 0);
       return true;
     },
-    [ownerId, sourceKey],
+    [enqueueOwnUpsert, ownerId, sourceKey],
   );
 
   const evaluateState = useCallback(
@@ -504,7 +515,7 @@ export function useDocumentServerDraftSync<T>(
           localDraftRef.current?.payloadHash !== current.entry.payloadHash) return;
         const data = parsePayloadData<unknown>(current.entry.payloadJson);
         if (!data) return;
-        enqueueDocumentServerDraftUpsert(window.localStorage, {
+        enqueueOwnUpsert({
           sourceKey,
           data,
           expectedDraftVersion,
@@ -516,7 +527,7 @@ export function useDocumentServerDraftSync<T>(
       }
       notifyQueueChange(sourceKey);
     },
-    [sourceKey],
+    [enqueueOwnUpsert, sourceKey],
   );
 
   const drain = useCallback(async () => {
@@ -846,7 +857,7 @@ export function useDocumentServerDraftSync<T>(
           getOrCreateDocumentServerDraftDeviceId(window.localStorage, ownerId);
         deviceIdRef.current = writerDeviceId;
         if (mountedRef.current) setDeviceId(writerDeviceId);
-        enqueueDocumentServerDraftUpsert(window.localStorage, {
+        enqueueOwnUpsert({
           sourceKey,
           data: local.data,
           expectedDraftVersion:
@@ -861,7 +872,7 @@ export function useDocumentServerDraftSync<T>(
         if (mountedRef.current) setStatus("error");
       }
     },
-    [allowOwnerPersistence, canonicalRemoteHash, evaluateState, ownerId, scheduleDrain, sourceKey, toLocalDraftState, updateLocalDraftView],
+    [allowOwnerPersistence, canonicalRemoteHash, enqueueOwnUpsert, evaluateState, ownerId, scheduleDrain, sourceKey, toLocalDraftState, updateLocalDraftView],
   );
 
   /**
@@ -877,7 +888,8 @@ export function useDocumentServerDraftSync<T>(
       if (inFlight?.operationType === "UPSERT" && inFlight.sourceKey === sourceKey) {
         upserts.set(inFlight.operationId, { operationId: inFlight.operationId, payloadHash: inFlight.payloadHash });
       }
-      if (queued?.operationType === "UPSERT" && queued.sourceKey === sourceKey) {
+      if (queued?.operationType === "UPSERT" && queued.sourceKey === sourceKey &&
+        ownUpsertOperationIdsRef.current.has(queued.operationId)) {
         upserts.set(queued.operationId, { operationId: queued.operationId, payloadHash: queued.payloadHash });
       }
       return [...upserts.values()];
@@ -1041,7 +1053,7 @@ export function useDocumentServerDraftSync<T>(
         getOrCreateDocumentServerDraftDeviceId(window.localStorage, ownerId);
       deviceIdRef.current = writerDeviceId;
       setDeviceId(writerDeviceId);
-      enqueueDocumentServerDraftUpsert(window.localStorage, {
+      enqueueOwnUpsert({
         sourceKey,
         data: local.data,
         expectedDraftVersion: remoteDraftRef.current?.draftVersion ?? 0,
@@ -1055,7 +1067,7 @@ export function useDocumentServerDraftSync<T>(
     } catch {
       setStatus("error");
     }
-  }, [allowOwnerPersistence, ownerId, sourceKey]);
+  }, [allowOwnerPersistence, enqueueOwnUpsert, ownerId, sourceKey]);
 
   const discardRemoteDraft = useCallback(() => {
     if (!allowOwnerPersistence()) return;

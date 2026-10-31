@@ -445,4 +445,13 @@ test("history 복귀 hook은 props를 state로 쓰는 화면(관리자 홈 캘�
     harness.browserWindow.dispatchEvent(pageShow);
   });
   assert.equal(returns, 2, "bfcache 복원에서 알린다");
+
+  // React 19 eager transition: Next의 popstate 리스너 안에서 되살린 트리가 먼저 mount되고 우리 리스너는 그 뒤에 불린다.
+  await harness.rerender(<div />);
+  await harness.rerender(<div><Probe /></div>);
+  assert.equal(returns, 2, "popstate 전 mount 시점에는 아직 알리지 않는다");
+  await act(async () => { harness.browserWindow.dispatchEvent(new harness.browserWindow.PopStateEvent("popstate")); });
+  assert.equal(returns, 3, "mount 직후 도착한 popstate에서 그 mount를 복귀로 보고 알린다");
+  await act(async () => { harness.browserWindow.dispatchEvent(new harness.browserWindow.PopStateEvent("popstate")); });
+  assert.equal(returns, 3, "이미 알린 mount는 같은 화면 안의 다음 popstate로 다시 알리지 않는다");
 });
