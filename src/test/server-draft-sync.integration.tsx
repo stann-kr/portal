@@ -1274,7 +1274,40 @@ test("제출 정리는 전송 중이던 이전 입력의 서버본을 본문 has
   assert.equal(harness.statusHistory.includes("conflict"), false);
 });
 
-test("전송 중 편집기가 내려가 응답이 버려져도 다음 진입의 refresh→drain이 이 기기의 서버본을 지운다", { concurrency: false }, async (context) => {
+test("제출 응답을 기다리는 동안 같은 탭에서 이어 쓴 입력은 제출 정리가 폐기하지 않고 서버에 저장된다", { concurrency: false }, async (context) => {
+  resetServerMock();
+  const sourceKey = createDocumentDraftKey("note", "student-1", "new:student-1");
+  const queueKey = createDocumentServerDraftQueueKey(sourceKey);
+  const first = { title: "첫 입력 P1", contentHtml: "<p>P1</p>" };
+  const submitted = { title: "제출한 P2", contentHtml: "<p>P2</p>" };
+  const continued = { title: "제출한 P2", contentHtml: "<p>P2 이어 쓴 P3</p>" };
+  let release: () => void = () => {};
+  beforeSaveCommit = () => new Promise<void>((resolve) => { release = resolve; });
+  const harness = await createHarness(context, sourceKey);
+  await act(async () => harness.getResult().save(first));
+  await act(async () => harness.browserWindow.dispatchEvent(new harness.browserWindow.Event("online")));
+  await waitFor(() => saveCalls.length === 1, "P1 UPSERT 전송이 시작돼야 합니다.");
+  await act(async () => harness.getResult().save(submitted));
+  // 새 노트 제자리 생성: 생성 응답 전 같은 편집기에서 계속 입력한다. 정리는 그 뒤 제출 본문(P2)으로 도착한다.
+  await act(async () => harness.getResult().save(continued));
+  await act(async () => harness.getResult().clear({ reason: "submitted", submittedData: submitted }));
+
+  const queued = parseQueuedDocumentServerDraft(harness.browserWindow.localStorage.getItem(queueKey) ?? "");
+  assert.notEqual(queued?.operationType, "DISCARD", "이어 쓴 로컬 작성본이 있으면 제출 정리는 폐기를 큐에 넣지 않는다.");
+  assert.notEqual(harness.browserWindow.localStorage.getItem(sourceKey), null, "이어 쓴 로컬 작성본은 보존한다.");
+
+  beforeSaveCommit = null;
+  await act(async () => release());
+  await waitFor(
+    () => remoteDraft?.payloadHash === createSnapshot(sourceKey, continued, 1).payloadHash,
+    "이어 쓴 P3가 서버본으로 저장돼야 합니다.",
+  );
+  assert.equal(discardCalls.length, 0, "제출 정리가 이어 쓴 입력을 폐기하면 안 됩니다.");
+  assert.equal(harness.statusHistory.includes("remote-available"), false);
+  assert.equal(harness.statusHistory.includes("conflict"), false);
+});
+
+test("전송 중 편집기가 내려가 응답이 버려져도 다음 진입의 refresh→drain이 이 기기의 서버본을 지운다",{ concurrency: false }, async (context) => {
   resetServerMock();
   const sourceKey = createDocumentDraftKey("note", "student-1", "new:student-1");
   const queueKey = createDocumentServerDraftQueueKey(sourceKey);
