@@ -35,6 +35,8 @@ export const ROUTE_AUTO_REFRESH_HISTORY_MOUNT_LEAD_MS = 1_000;
  * 한 번 알리면 소비해 StrictMode의 두 번째 effect나 같은 화면의 두 번째 인스턴스가 또 받지 않게 한다.
  */
 let lastHistoryReturnAt = 0;
+/** 그 popstate가 도착한 주소. 복귀 직후 다른 링크로 이동한 화면이 5초 안에 mount돼도 복귀로 오인하지 않게 한다. */
+let lastHistoryReturnHref = "";
 /** 리스너를 설치한 window. 테스트가 Window를 바꿔 끼우면 새 window에 다시 설치하고 이전 상태는 버린다. */
 let historyListenerWindow: Window | null = null;
 type HistoryReturnSubscriber = { mountedAt: number; notify: () => void };
@@ -52,6 +54,7 @@ function installHistoryReturnListener() {
     );
     if (justMounted.length === 0) {
       lastHistoryReturnAt = now;
+      lastHistoryReturnHref = window.location.href;
       return;
     }
     lastHistoryReturnAt = 0;
@@ -80,7 +83,10 @@ export function useHistoryReturn(onReturn: () => void) {
     };
     window.addEventListener("pageshow", onPageShow);
     const subscriber: HistoryReturnSubscriber = { mountedAt: Date.now(), notify: () => onReturnRef.current() };
-    if (lastHistoryReturnAt > 0 && Date.now() - lastHistoryReturnAt < ROUTE_AUTO_REFRESH_HISTORY_RETURN_WINDOW_MS) {
+    if (
+      lastHistoryReturnAt > 0 && Date.now() - lastHistoryReturnAt < ROUTE_AUTO_REFRESH_HISTORY_RETURN_WINDOW_MS &&
+      lastHistoryReturnHref === window.location.href
+    ) {
       lastHistoryReturnAt = 0;
       onReturnRef.current();
     } else {

@@ -454,4 +454,13 @@ test("history 복귀 hook은 props를 state로 쓰는 화면(관리자 홈 캘�
   assert.equal(returns, 3, "mount 직후 도착한 popstate에서 그 mount를 복귀로 보고 알린다");
   await act(async () => { harness.browserWindow.dispatchEvent(new harness.browserWindow.PopStateEvent("popstate")); });
   assert.equal(returns, 3, "이미 알린 mount는 같은 화면 안의 다음 popstate로 다시 알리지 않는다");
+
+  // 뒤로 간 직후 다른 링크로 이동해 mount된 화면은 복귀가 아니다(popstate가 도착한 주소와 다르다).
+  await harness.rerender(<div />);
+  await sleep(1_050);
+  await act(async () => { harness.browserWindow.dispatchEvent(new harness.browserWindow.PopStateEvent("popstate")); });
+  harness.browserWindow.history.pushState({}, "", "/dashboard/admin?section=schedule");
+  await harness.rerender(<div><Probe /></div>);
+  await sleep(10);
+  assert.equal(returns, 3, "다른 주소에서의 mount는 history 복귀로 보지 않는다");
 });
