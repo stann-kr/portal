@@ -47,7 +47,7 @@ export function NoteDocEditor({
       document={{
         authorName,
         updatedLabel,
-        renderBars: ({ status, title }) => (
+        renderBars: ({ status, title, version }) => (
           <>
             <MobileTopBar
               hideTitle
@@ -56,14 +56,14 @@ export function NoteDocEditor({
                 <>
                   {status}
                   <NoteHistoryLink href={historyHref} compact />
-                  <DeleteNoteButton noteId={note.id} version={note.version} presentation="menu" size="touch" />
+                  <DeleteNoteButton noteId={note.id} version={version ?? note.version} presentation="menu" size="touch" />
                 </>
               }
             />
             <NoteDocumentStrip start={<NoteBreadcrumb parent={parent} current={title} />}>
               {status}
               <NoteHistoryLink href={historyHref} />
-              <DeleteNoteButton noteId={note.id} version={note.version} presentation="menu" />
+              <DeleteNoteButton noteId={note.id} version={version ?? note.version} presentation="menu" />
             </NoteDocumentStrip>
           </>
         ),

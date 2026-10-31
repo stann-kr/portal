@@ -208,18 +208,18 @@ test("요청 실패는 로그아웃을 막지 않고, 응답이 없으면 시간
   assert.deepEqual(empty, { attempted: 0, discarded: 0, timedOut: false });
 });
 
-test("제출 정리의 폐기는 이 기기가 쓴 다른 본문도 그 version·본문으로 다시 지우고 fence 대상을 그대로 보낸다", async () => {
+test("제출 정리의 폐기는 전송 중이던 이전 입력의 서버본을 hash로 겨냥해 그 version으로 다시 지우고 fence 대상을 그대로 보낸다", async () => {
   const storage = new MemoryStorage();
   const sourceKey = createDocumentDraftKey("qna-thread", "student-1", "new");
   const superseded = ["2b1d6c7e-1a2b-4c3d-8e9f-0a1b2c3d4e5f"];
+  // 제출 정리는 제출 본문과 전송 중이던 이전 입력(OTHER_HASH)의 본문 hash를 함께 대상에 넣는다.
   enqueueDocumentServerDraftDiscard(storage, {
     sourceKey,
     expectedDraftVersion: 0,
-    targetPayloadHashes: [SUBMITTED_HASH],
-    ownWriterDeviceId: DEVICE_ID,
+    targetPayloadHashes: [SUBMITTED_HASH, OTHER_HASH],
     supersededOperationIds: superseded,
   });
-  // 전송 중이던 이전 입력이 제출 뒤 늦게 반영돼 이 기기 이름으로 다른 본문이 남았다.
+  // 전송 중이던 이전 입력이 제출 뒤 늦게 반영돼 이 기기 이름으로 v1이 남았다.
   let server: DocumentServerDraftSnapshot | null = snapshot(sourceKey, OTHER_HASH, 1);
   const calls: DiscardDocumentServerDraftInput[] = [];
 
@@ -243,19 +243,44 @@ test("제출 정리의 폐기는 이 기기가 쓴 다른 본문도 그 version�
   assert.deepEqual(calls[1]?.targetPayloadHashes, [SUBMITTED_HASH, OTHER_HASH]);
   assert.deepEqual(calls.map((call) => call.supersededOperationIds), [superseded, superseded]);
   assert.equal(server, null);
+});
 
-  // 다른 기기가 쓴 다른 본문은 그대로 둔다.
+test("제출 정리의 폐기는 같은 기기 ID를 쓰는 다른 탭의 후속 작업(v2·다른 hash)을 폐기하지 않는다", async () => {
+  const storage = new MemoryStorage();
+  const sourceKey = createDocumentDraftKey("qna-thread", "student-1", "new");
+  enqueueDocumentServerDraftDiscard(storage, {
+    sourceKey,
+    expectedDraftVersion: 1,
+    targetPayloadHashes: [SUBMITTED_HASH, OTHER_HASH],
+    supersededOperationIds: ["2b1d6c7e-1a2b-4c3d-8e9f-0a1b2c3d4e5f"],
+  });
+  // 같은 브라우저의 탭 B가 그 사이 새 본문을 v2로 저장했다(writerDeviceId는 탭 A와 같다).
+  const tabB = snapshot(sourceKey, "c".repeat(64), 2);
+  assert.equal(tabB.writerDeviceId, DEVICE_ID);
+  const calls: DiscardDocumentServerDraftInput[] = [];
+  const kept = await flushQueuedDocumentServerDraftDiscards({
+    storage,
+    ownerId: "student-1",
+    discard: async (input) => {
+      calls.push(input);
+      return { ok: false, reason: "VERSION_CONFLICT", current: tabB };
+    },
+  });
+  assert.deepEqual(kept, { attempted: 1, discarded: 0, timedOut: false });
+  assert.equal(calls.length, 1, "기기 ID가 같다는 이유로 v2·다른 본문을 다시 겨냥하지 않는다");
+  assert.equal(storage.getItem(createDocumentServerDraftQueueKey(sourceKey)), null);
+
+  // 다른 기기가 쓴 다른 본문도 그대로 둔다.
   enqueueDocumentServerDraftDiscard(storage, {
     sourceKey,
     expectedDraftVersion: 0,
     targetPayloadHashes: [SUBMITTED_HASH],
-    ownWriterDeviceId: DEVICE_ID,
   });
   const peer = { ...snapshot(sourceKey, OTHER_HASH, 1), writerDeviceId: "7971deed-89f6-48a4-8bbd-5f0ec63488e0" };
-  const kept = await flushQueuedDocumentServerDraftDiscards({
+  const peerKept = await flushQueuedDocumentServerDraftDiscards({
     storage,
     ownerId: "student-1",
     discard: async () => ({ ok: false, reason: "VERSION_CONFLICT", current: peer }),
   });
-  assert.deepEqual(kept, { attempted: 1, discarded: 0, timedOut: false });
+  assert.deepEqual(peerKept, { attempted: 1, discarded: 0, timedOut: false });
 });

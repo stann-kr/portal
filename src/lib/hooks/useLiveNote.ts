@@ -4,6 +4,7 @@
  * 탭이 보이고 온라인일 때 head(version)를 가볍게 폴링하고, version이 올라갔을 때만 본문을 다시 받아 교체한다.
  * SSE·Durable Object 없이 Workers+D1 server action만 쓴다. 숨김·오프라인이면 타이머를 멈추고,
  * 다시 보이거나(focus·visibilitychange) 온라인이 되면 즉시 한 번 조회하고 backoff를 초기화한다.
+ * 조회 오류도 변화 없음과 같이 backoff를 쌓는다(세션 만료·지속 오류에서 기본 간격으로 계속 두드리지 않는다).
  */
 "use client";
 
@@ -169,15 +170,19 @@ export function useLiveNote({
           unchangedPolls += 1;
         }
       } catch {
-        // 일시 오류는 조용히 다음 폴링으로. 간격은 그대로 둔다.
+        // 일시 오류는 조용히 다음 폴링으로. 세션 만료·지속 네트워크 오류에서 기본 간격으로 계속 두드리지 않게
+        // 변화 없음과 같은 backoff를 쌓는다(wake가 다시 0으로 돌린다).
+        unchangedPolls += 1;
       } finally {
         inFlight = false;
         if (!disposed) {
-          if (pollAgain) {
+          // 진행 중에 wake가 왔어도 그 사이 숨김·오프라인이 됐으면 바로 다시 조회하지 않는다(schedule이 타이머를 두지 않는다).
+          if (pollAgain && isDocumentVisible() && isOnline()) {
             pollAgain = false;
             unchangedPolls = 0;
             void poll();
           } else {
+            pollAgain = false;
             schedule();
           }
         }

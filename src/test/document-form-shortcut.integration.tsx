@@ -5,6 +5,7 @@ import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import {
   createDocumentDraftKey,
+  createDocumentServerDraftQueueKey,
   createFormDraftDataSignature,
   createFormDraftRecoveryKey,
   createFormDraftRecoveryPrefix,
@@ -14,6 +15,13 @@ import {
   serializeFormDraft,
 } from "@/lib/form-draft";
 import { createDocumentSnapshotFingerprint } from "@/lib/document-snapshot-fingerprint";
+import { createDocumentEditDraftMetadata } from "@/lib/document-edit-draft";
+import {
+  canonicalizeDocumentServerDraftPayload,
+  serializeDocumentServerDraftPayload,
+  type DocumentServerDraftSnapshot,
+} from "@/lib/document-server-draft-contract";
+import { createDocumentServerDraftDeviceStorageKey } from "@/lib/document-server-draft-queue";
 
 type MockEditorProps = {
   ariaLabel?: string;
@@ -151,6 +159,11 @@ mock.module("@/lib/actions/privateNotes", { namedExports: {
   updatePrivateNote: (...args: Parameters<typeof savePanelNote>) => savePanelNote(...args),
 } });
 
+// Radix는 import 시점에 `globalThis.document`가 있어야 layout effect(Portal mount·Presence)를 켠다. 이 suite는
+// 컴포넌트를 먼저 import하고 test마다 DOM 전역을 설치하므로 실제 브라우저처럼 layout effect를 쓰게 고정한다.
+mock.module("@radix-ui/react-use-layout-effect", {
+  namedExports: { useLayoutEffect: React.useLayoutEffect },
+});
 mock.module("next/dynamic", {
   defaultExport: () => MockFullEditor,
 });
@@ -180,39 +193,51 @@ mock.module("@/lib/actions/categories", {
     getCategories: async () => [],
   },
 });
+type ServerDraftSaveInput = import("@/lib/document-server-draft-contract").SaveDocumentServerDraftInput;
+type ServerDraftDiscardInput = import("@/lib/document-server-draft-contract").DiscardDocumentServerDraftInput;
+/** 기본 서버 초안 mock: 읽기는 없음, 저장은 항상 성공. 서버본을 둔 시나리오는 test 안에서 다시 묶고 끝나면 이 기본값으로 되돌린다. */
+const defaultReadServerDraft: typeof import("@/lib/actions/documentDrafts").readDocumentServerDraft = async () => ({ ok: true, draft: null });
+const defaultSaveServerDraft: typeof import("@/lib/actions/documentDrafts").saveDocumentServerDraft = async (input) => ({
+  ok: true,
+  replayed: false,
+  operationResultVersion: input.expectedDraftVersion + 1,
+  current: {
+    sourceKey: input.sourceKey,
+    kind: "community-post",
+    contextId: "new",
+    payloadJson: input.payloadJson,
+    payloadHash: createFormDraftDataSignature(JSON.parse(input.payloadJson)).slice(
+      "sha256:".length,
+    ),
+    draftVersion: input.expectedDraftVersion + 1,
+    baseResourceVersion: null,
+    writerDeviceId: input.writerDeviceId,
+    updatedAt: Date.now(),
+    expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1_000,
+  },
+});
+const defaultDiscardServerDraft: typeof import("@/lib/actions/documentDrafts").discardDocumentServerDraft = async () => ({
+  ok: true,
+  replayed: false,
+  operationResultVersion: 0,
+  current: null,
+});
+let readServerDraft = defaultReadServerDraft;
+let saveServerDraft = defaultSaveServerDraft;
+let discardServerDraft = defaultDiscardServerDraft;
+const serverDraftSaves: ServerDraftSaveInput[] = [];
+const serverDraftDiscards: ServerDraftDiscardInput[] = [];
 mock.module("@/lib/actions/documentDrafts", {
   namedExports: {
-    readDocumentServerDraft: async () => ({ ok: true, draft: null }),
-    saveDocumentServerDraft: async (input: {
-      sourceKey: string;
-      expectedDraftVersion: number;
-      payloadJson: string;
-      writerDeviceId: string;
-    }) => ({
-      ok: true,
-      replayed: false,
-      operationResultVersion: input.expectedDraftVersion + 1,
-      current: {
-        sourceKey: input.sourceKey,
-        kind: "community-post",
-        contextId: "new",
-        payloadJson: input.payloadJson,
-        payloadHash: createFormDraftDataSignature(JSON.parse(input.payloadJson)).slice(
-          "sha256:".length,
-        ),
-        draftVersion: input.expectedDraftVersion + 1,
-        baseResourceVersion: null,
-        writerDeviceId: input.writerDeviceId,
-        updatedAt: Date.now(),
-        expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1_000,
-      },
-    }),
-    discardDocumentServerDraft: async () => ({
-      ok: true,
-      replayed: false,
-      operationResultVersion: 0,
-      current: null,
-    }),
+    readDocumentServerDraft: (...args: Parameters<typeof readServerDraft>) => readServerDraft(...args),
+    saveDocumentServerDraft: (input: ServerDraftSaveInput) => {
+      serverDraftSaves.push(input);
+      return saveServerDraft(input);
+    },
+    discardDocumentServerDraft: (input: ServerDraftDiscardInput) => {
+      serverDraftDiscards.push(input);
+      return discardServerDraft(input);
+    },
   },
 });
 mock.module("@/lib/actions/qna", {
@@ -324,6 +349,7 @@ let RestorePostRevisionButton: typeof import("@/components/community/RestorePost
 let PostTrashActions: typeof import("@/components/community/PostTrashActions").PostTrashActions;
 let QnaThreadLifecycleActions: typeof import("@/components/qna/QnaThreadLifecycleActions").QnaThreadLifecycleActions;
 let NoteFullForm: typeof import("@/components/notes/NoteFullForm").NoteFullForm;
+let NoteDocEditor: typeof import("@/components/notes/NoteDocEditor").NoteDocEditor;
 let UnifiedNoteDetail: typeof import("@/components/student-portal/UnifiedNoteDetail").UnifiedNoteDetail;
 let StudentNotesPage: typeof import("@/app/dashboard/student/notes/page").default;
 let AdminStudentNotesPage: typeof import("@/app/dashboard/admin/students/[id]/notes/page").default;
@@ -340,6 +366,7 @@ before(async () => {
   ({ QnaThreadLifecycleActions } = await import("@/components/qna/QnaThreadLifecycleActions"));
   ({ default: QnaTrashPage } = await import("@/app/dashboard/qna/trash/page"));
   ({ UnifiedNoteDetail } = await import("@/components/student-portal/UnifiedNoteDetail"));
+  ({ NoteDocEditor } = await import("@/components/notes/NoteDocEditor"));
   [
     { NewPostForm },
     { NewQnaForm },
@@ -2392,6 +2419,269 @@ test("노트 version 충돌은 내 초안을 보존하고 서버 최신본 확�
     firstOperationId,
   );
   assert.doesNotMatch(harness.container.textContent ?? "", /더 최신 서버 노트가 있습니다/u);
+});
+
+/** 서버 초안 fixture: 실제 서버처럼 canonical payload hash를 쓴다(휘발 필드는 호출자가 미리 뺀다). */
+function createNoteServerDraft(
+  sourceKey: string,
+  noteId: string,
+  data: Record<string, unknown>,
+  draftVersion: number,
+  writerDeviceId: string,
+): DocumentServerDraftSnapshot {
+  const payloadJson = serializeDocumentServerDraftPayload(data);
+  const payload = canonicalizeDocumentServerDraftPayload(payloadJson);
+  assert.ok(payload, "서버 초안 fixture payload가 유효해야 합니다.");
+  return {
+    sourceKey,
+    kind: "note",
+    contextId: noteId,
+    payloadJson,
+    payloadHash: payload.payloadHash,
+    draftVersion,
+    baseResourceVersion: typeof data.baseRevision === "number" ? data.baseRevision : null,
+    writerDeviceId,
+    updatedAt: Date.now() - 1_000,
+    expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1_000,
+  };
+}
+
+/** 서버 초안 선택창(계정·이 기기 작성본 고르기)과 동기화 오류 안내. quiet 문서 배치에서는 이때만 그 영역이 그려진다. */
+const SERVER_DRAFT_CHOOSER_PATTERN = /작성본이 (있습니다|다릅니다)|동기화하지 못했습니다|다른 기기에서 저장된/u;
+function assertNoServerDraftChooser(container: HTMLElement, when: string): void {
+  assert.doesNotMatch(container.textContent ?? "", SERVER_DRAFT_CHOOSER_PATTERN, `${when}: 서버 초안 선택창이 보이면 안 됩니다.`);
+  assert.equal(container.querySelector('[aria-label="계정 초안 동기화 상태"]'), null, `${when}: 계정 초안 상태 영역이 그려지면 안 됩니다.`);
+}
+
+/** 조건을 기다리는 동안 매 tick 선택창이 없음을 함께 확인한다. */
+async function waitUntilWithoutChooser(harness: FormHarness, condition: () => boolean, timeoutMs: number, message: string): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    assertNoServerDraftChooser(harness.container, message);
+    if (condition()) return;
+    await waitForRealTime(50);
+  }
+  assert.fail(message);
+}
+
+/** 이 기기의 서버 초안 mock: 읽기는 seed된 서버본, 저장·폐기는 version CAS로 서버본을 바꾼다. */
+function installServerDraftFixture(context: TestContext, initial: DocumentServerDraftSnapshot | null): { readonly current: DocumentServerDraftSnapshot | null } {
+  let remote = initial;
+  // 앞선 test들의 호출 기록은 이 시나리오의 단정과 무관하다.
+  serverDraftSaves.length = 0;
+  serverDraftDiscards.length = 0;
+  readServerDraft = async () => ({ ok: true, draft: remote });
+  saveServerDraft = async (input) => {
+    if ((remote?.draftVersion ?? 0) !== input.expectedDraftVersion || (remote && remote.payloadHash !== input.expectedPayloadHash)) {
+      return { ok: false, reason: "VERSION_CONFLICT", current: remote };
+    }
+    const payload = canonicalizeDocumentServerDraftPayload(input.payloadJson);
+    assert.ok(payload);
+    remote = {
+      sourceKey: input.sourceKey,
+      kind: "note",
+      contextId: remote?.contextId ?? "",
+      payloadJson: input.payloadJson,
+      payloadHash: payload.payloadHash,
+      draftVersion: input.expectedDraftVersion + 1,
+      baseResourceVersion: input.baseResourceVersion,
+      writerDeviceId: input.writerDeviceId,
+      updatedAt: Date.now(),
+      expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1_000,
+    };
+    return { ok: true, replayed: false, operationResultVersion: remote.draftVersion, current: remote };
+  };
+  discardServerDraft = async (input) => {
+    if ((remote?.draftVersion ?? 0) !== input.expectedDraftVersion ||
+      (remote && input.targetPayloadHashes && !input.targetPayloadHashes.includes(remote.payloadHash))) {
+      return { ok: false, reason: "VERSION_CONFLICT", current: remote };
+    }
+    remote = null;
+    return { ok: true, replayed: false, operationResultVersion: input.expectedDraftVersion, current: null };
+  };
+  context.after(() => {
+    readServerDraft = defaultReadServerDraft;
+    saveServerDraft = defaultSaveServerDraft;
+    discardServerDraft = defaultDiscardServerDraft;
+    serverDraftSaves.length = 0;
+    serverDraftDiscards.length = 0;
+  });
+  return { get current() { return remote; } };
+}
+
+test("입력 중 새로고침 뒤 로컬 초안을 복구하면 같은 내용의 서버 초안은 선택창 없이 synced로 잇고 자동 저장은 한 번만 간다", { concurrency: false }, async (context) => {
+  const noteId = "note-reload-recover";
+  const actorId = "reload-recover-actor";
+  const deviceId = "3f2c1b0a-9d8e-4f7a-b6c5-d4e3f2a1b0c9";
+  const head = { id: noteId, title: "기준 제목", contentHtml: "<p>기준 본문</p>", noteDate: null, version: 3 };
+  const headFingerprint = createDocumentSnapshotFingerprint({ kind: "private-note", id: noteId, title: head.title, contentHtml: head.contentHtml, noteDate: "" });
+  // 새로고침 직전 useFormDraft가 남긴 로컬 초안(휘발 operationId 포함).
+  const localDraft = {
+    title: "새로고침 전 제목",
+    noteDate: "",
+    contentHtml: "<p>기준 본문</p><p>자동 저장 전에 이어 쓴 문장</p>",
+    operationId: "0b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d",
+    baseRevision: head.version,
+    ...createDocumentEditDraftMetadata(headFingerprint),
+  };
+  // 같은 기기가 같은 내용으로 서버에 둔 초안(서버 payload에는 휘발 operationId가 없다).
+  const serverPayload = Object.fromEntries(Object.entries(localDraft).filter(([key]) => key !== "operationId"));
+  const draftKey = createDocumentDraftKey("note", actorId, noteId);
+  const serverDraft = createNoteServerDraft(draftKey, noteId, serverPayload, 1, deviceId);
+  const fixture = installServerDraftFixture(context, serverDraft);
+  const requests: Record<string, FormDataEntryValue>[] = [];
+  const action = async (_previous: object, formData: FormData) => {
+    const data = Object.fromEntries(formData);
+    requests.push(data);
+    return {
+      success: true,
+      updatedAt: new Date(),
+      note: { id: noteId, title: String(data.title).trim(), contentHtml: String(data.contentHtml), noteDate: null, version: head.version + requests.length },
+    };
+  };
+  const harness = await renderForm(
+    context,
+    <NoteEditorForm action={action} actorId={actorId} note={head} />,
+    (storage) => {
+      storage.setItem(createDocumentServerDraftDeviceStorageKey(actorId), deviceId);
+      storage.setItem(draftKey, serializeFormDraft(localDraft, Date.now() - 1_000));
+    },
+  );
+  const titleField = harness.container.querySelector('textarea[name="title"]') as unknown as HTMLTextAreaElement;
+  const editor = harness.container.querySelector(BODY_FIELD) as unknown as HTMLTextAreaElement;
+  assert.equal(titleField.value, localDraft.title, "제목이 로컬 초안으로 복구된다.");
+  assert.equal(editor.value, localDraft.contentHtml, "본문이 로컬 초안으로 복구된다.");
+  assert.equal((harness.container.querySelector('input[name="baseRevision"]') as unknown as HTMLInputElement).value, String(head.version));
+  assertNoServerDraftChooser(harness.container, "복구 직후");
+
+  // 복구된 내용은 head와 다르므로(dirty) 입력 없이도 1.5초 뒤 자동 저장이 한 번 간다. 그동안 선택창은 한 번도 보이지 않는다.
+  await waitUntilWithoutChooser(harness, () => requests.length === 1, 4_000, "복구 뒤 자동 저장");
+  assert.equal(requests[0]!.title, localDraft.title);
+  assert.equal(requests[0]!.contentHtml, localDraft.contentHtml);
+  assert.equal(requests[0]!.baseRevision, String(head.version), "기준 revision은 복구한 초안의 값(현재 head)을 유지한다.");
+  assert.equal(requests[0]!.baseFingerprint, headFingerprint);
+  await waitUntilWithoutChooser(harness, () => /저장됨/u.test(harness.container.textContent ?? ""), 2_000, "자동 저장 완료");
+  assert.equal((harness.container.querySelector('input[name="baseRevision"]') as unknown as HTMLInputElement).value, String(head.version + 1));
+
+  // 자동 저장 간격이 한 번 더 지나도 다시 저장하지 않고 선택창도 없다.
+  await waitForRealTime(2_000);
+  assertNoServerDraftChooser(harness.container, "저장 뒤 대기");
+  assert.equal(requests.length, 1, "정리 중 서버 초안 변화만으로 다시 저장하지 않는다.");
+  assert.equal(titleField.value, localDraft.title);
+  assert.equal(editor.value, localDraft.contentHtml);
+  assert.equal(
+    serverDraftSaves.length,
+    0,
+    "로컬 초안과 같은 서버본이 이미 있으면(synced) 다시 UPSERT하지 않는다. 호출이 있으면 payload 모양·hash가 어긋난 것이다.",
+  );
+  assert.ok(serverDraftDiscards.length >= 1, "저장 성공 뒤 이 기기의 서버 초안은 정리한다.");
+  assert.ok(serverDraftDiscards.every((call) => call.targetPayloadHashes?.includes(serverDraft.payloadHash)), "정리는 처음 seed한 서버본만 겨냥한다.");
+  assert.equal(fixture.current, null, "저장 뒤 서버 초안은 남지 않는다(다음 새로고침에서 선택창이 또 뜨지 않는다).");
+  assert.equal(harness.browserWindow.localStorage.getItem(draftKey), null, "저장한 내용의 로컬 초안도 남기지 않는다.");
+  assert.equal(
+    harness.browserWindow.localStorage.getItem(createDocumentServerDraftQueueKey(draftKey)),
+    null,
+    "서버 초안 큐가 비어 있다(synced 뒤 남은 UPSERT 없음).",
+  );
+});
+
+test("자동 저장 직후 새로고침하면 head와 같은 서버 초안은 선택창 없이 조용히 폐기되고 다시 저장하지 않는다", { concurrency: false }, async (context) => {
+  const noteId = "note-reload-after-save";
+  const actorId = "reload-after-save-actor";
+  const deviceId = "6a5b4c3d-2e1f-4a0b-9c8d-7e6f5a4b3c2d";
+  const head = { id: noteId, title: "저장된 제목", contentHtml: "<p>저장된 본문</p>", noteDate: null, version: 4 };
+  const headFingerprint = createDocumentSnapshotFingerprint({ kind: "private-note", id: noteId, title: head.title, contentHtml: head.contentHtml, noteDate: "" });
+  const draftKey = createDocumentDraftKey("note", actorId, noteId);
+  // 저장 성공 뒤 정리 응답을 받기 전에 새로고침돼 남은, head와 같은 내용의 서버본.
+  const serverDraft = createNoteServerDraft(
+    draftKey,
+    noteId,
+    { title: head.title, noteDate: "", contentHtml: head.contentHtml, baseRevision: head.version, ...createDocumentEditDraftMetadata(headFingerprint) },
+    2,
+    deviceId,
+  );
+  const fixture = installServerDraftFixture(context, serverDraft);
+  const requests: Record<string, FormDataEntryValue>[] = [];
+  const action = async (_previous: object, formData: FormData) => {
+    requests.push(Object.fromEntries(formData));
+    return { success: true, note: { ...head, version: head.version + 1 } };
+  };
+  const harness = await renderForm(
+    context,
+    <NoteEditorForm action={action} actorId={actorId} note={head} />,
+    (storage) => { storage.setItem(createDocumentServerDraftDeviceStorageKey(actorId), deviceId); },
+  );
+  const titleField = harness.container.querySelector('textarea[name="title"]') as unknown as HTMLTextAreaElement;
+  const editor = harness.container.querySelector(BODY_FIELD) as unknown as HTMLTextAreaElement;
+  assert.equal(titleField.value, head.title);
+  assert.equal(editor.value, head.contentHtml);
+  assertNoServerDraftChooser(harness.container, "열자마자");
+  await waitUntilWithoutChooser(harness, () => fixture.current === null, 3_000, "head와 같은 서버본 자동 폐기");
+  assert.equal(serverDraftDiscards.length, 1);
+  assert.deepEqual([...(serverDraftDiscards[0]!.targetPayloadHashes ?? [])], [serverDraft.payloadHash], "폐기는 관찰한 그 서버본만 겨냥한다.");
+  // 자동 저장 간격이 지나도 입력이 없으니 저장·UPSERT는 없다.
+  await waitForRealTime(2_000);
+  assertNoServerDraftChooser(harness.container, "폐기 뒤 대기");
+  assert.equal(requests.length, 0);
+  assert.equal(serverDraftSaves.length, 0);
+  assert.match(harness.container.textContent ?? "", /저장됨/u);
+  assert.doesNotMatch(harness.container.textContent ?? "", /저장되지 않은 작성 내용을 복원했습니다/u);
+});
+
+test("노트 문서 화면의 휴지통 이동은 자동 저장으로 올라간 version으로 요청한다", { concurrency: false }, async (context) => {
+  const noteId = "note-doc-trash-after-autosave";
+  const actorId = "doc-trash-actor";
+  const trashCalls: { noteId: string; operationId: string; version: number }[] = [];
+  changeNoteLifecycle = async (id, operationId, version) => {
+    trashCalls.push({ noteId: id, operationId, version });
+    return { success: true };
+  };
+  context.after(() => { changeNoteLifecycle = async () => ({ success: true }); });
+  const requests: Record<string, FormDataEntryValue>[] = [];
+  const action = async (_previous: object, formData: FormData) => {
+    const data = Object.fromEntries(formData);
+    requests.push(data);
+    return {
+      success: true,
+      updatedAt: new Date(),
+      note: { id: noteId, title: String(data.title).trim(), contentHtml: String(data.contentHtml), noteDate: null, version: 2 },
+    };
+  };
+  const harness = await renderForm(
+    context,
+    <NoteDocEditor
+      note={{ id: noteId, title: "문서 제목", contentHtml: "<p>본문</p>", noteDate: null, version: 1 }}
+      actorId={actorId}
+      action={action}
+      parent={{ href: "/dashboard/student/notes", label: "노트", backLabel: "노트 목록으로" }}
+      historyHref={`/dashboard/notes/${noteId}/history`}
+      authorName="학생"
+      updatedLabel="방금"
+    />,
+  );
+  const editor = harness.container.querySelector(BODY_FIELD) as unknown as HTMLTextAreaElement;
+  await act(async () => typeInto(harness, editor, "<p>본문</p><p>이어서</p>"));
+  await act(async () => submitControl(harness.container).click());
+  await waitForCondition(() => /저장됨/u.test(harness.container.textContent ?? ""), "자동 저장이 끝난다.");
+  assert.equal(requests.length, 1);
+  assert.equal((harness.container.querySelector('input[name="baseRevision"]') as unknown as HTMLInputElement).value, "2", "저장 응답의 version이 form 기준이 된다.");
+
+  // 더 보기 메뉴(Radix)는 키보드로 연다. 메뉴 항목은 body의 portal에 그려진다.
+  const moreButton = harness.container.querySelector<HTMLButtonElement>('button[aria-label="더 보기"]');
+  assert.ok(moreButton, "넓은 화면 위쪽 막대의 더 보기 버튼");
+  await act(async () => {
+    moreButton.focus();
+    moreButton.dispatchEvent(new harness.browserWindow.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }) as unknown as Event);
+  });
+  const body = harness.browserWindow.document.body as unknown as HTMLElement;
+  await waitForCondition(() => [...body.querySelectorAll('[role="menuitem"]')].some((item) => item.textContent?.includes("휴지통으로 이동")), "메뉴가 열린다.");
+  const trashItem = [...body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((item) => item.textContent?.includes("휴지통으로 이동"))!;
+  await act(async () => trashItem.click());
+  await waitForCondition(() => [...harness.container.querySelectorAll("button")].some((button) => button.textContent === "휴지통 이동 확인"), "확인 영역이 열린다.");
+  await confirmAction(harness, "휴지통 이동 확인");
+  await waitForCondition(() => trashCalls.length === 1, "휴지통 이동 요청");
+  assert.equal(trashCalls[0]!.noteId, noteId);
+  assert.equal(trashCalls[0]!.version, 2, "휴지통 이동은 처음 연 version 1이 아니라 자동 저장 뒤의 version 2로 요청한다.");
 });
 
 test("stale legacy 노트를 유지해 제출하면 canonical을 지우고 old-base recovery ghost를 숨긴다", { concurrency: false }, async (context) => {

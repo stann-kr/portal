@@ -16,6 +16,7 @@ import { buildAdminStudentDetailHref } from "@/lib/student-space-routes";
 import { getNoteSearchQuery, searchPrivateNotes } from "@/components/notes/NoteSearch";
 import { buildNotesLessonsTimelineHref } from "@/lib/calendar-section-contract";
 import { getRequestNow } from "@/lib/request-time";
+import { RouteAutoRefresh } from "@/components/app-shell/RouteAutoRefresh";
 
 export const metadata = { title: "학생 노트" };
 
@@ -46,6 +47,8 @@ export default async function AdminStudentNotesPage({
   return (
     <div className="px-5 pb-8 pt-6 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-10">
       <MobileTopBar title="노트" back={{ href: detailHref, label: "학생 상세로" }} />
+      {/* 자동 저장은 목록을 revalidate하지 않으므로 편집에서 돌아오거나 창으로 돌아올 때 제목·날짜를 다시 받는다. */}
+      <RouteAutoRefresh />
       <div className="flex max-w-[1080px] flex-col gap-5 md:gap-6">
         <NotesPageHeader
           eyebrow={`학생 스페이스 · ${student.displayName?.trim() || student.email}`}

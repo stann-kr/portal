@@ -13,6 +13,8 @@ type HeadResult = Awaited<ReturnType<typeof import("@/lib/actions/privateNotes")
 type NoteResult = Awaited<ReturnType<typeof import("@/lib/actions/privateNotes").getPrivateNote>>;
 
 const headCalls: string[] = [];
+/** head 조회가 시작된 시각(ms). backoff 간격 검사에 쓴다. */
+const headCallTimes: number[] = [];
 const noteCalls: string[] = [];
 let headImpl: (noteId: string) => Promise<HeadResult> = async () => null;
 let noteImpl: (noteId: string) => Promise<NoteResult> = async () => null;
@@ -20,7 +22,7 @@ const refresh = mock.fn();
 
 mock.module("@/lib/actions/privateNotes", {
   namedExports: {
-    getPrivateNoteHead: (noteId: string) => { headCalls.push(noteId); return headImpl(noteId); },
+    getPrivateNoteHead: (noteId: string) => { headCalls.push(noteId); headCallTimes.push(Date.now()); return headImpl(noteId); },
     getPrivateNote: (noteId: string) => { noteCalls.push(noteId); return noteImpl(noteId); },
     updatePrivateNote: async () => ({}),
   },
@@ -102,6 +104,7 @@ async function renderLive(context: TestContext, element: React.ReactElement, opt
   const browserWindow = new Window({ url: "https://portal.test/dashboard/notes/live-note" });
   const restoreGlobals = installBrowserGlobals(browserWindow);
   headCalls.length = 0;
+  headCallTimes.length = 0;
   noteCalls.length = 0;
   refresh.mock.resetCalls();
   let visibility: "visible" | "hidden" = options.visibility ?? "visible";
@@ -293,15 +296,18 @@ test("캘린더 패널의 읽기 전용 노트도 폴링으로 본문을 바꾸�
 });
 
 test("목록 자동 갱신은 보일 때 주기·focus에서 refresh하고 입력 중에는 건너뛴다", { concurrency: false }, async (context) => {
-  const harness = await renderLive(context, (
+  const tree = (intervalMs: number) => (
     <div>
-      <RouteAutoRefresh intervalMs={15} minGapMs={0} />
+      <RouteAutoRefresh intervalMs={intervalMs} minGapMs={0} />
       <textarea aria-label="본문" />
       <div contentEditable="true" data-testid="editor" />
       <form data-testid="form"><input name="title" /></form>
     </div>
-  ));
+  );
+  const harness = await renderLive(context, tree(15));
   await waitFor(() => refresh.mock.callCount() >= 2, "주기적으로 refresh한다");
+  // 이후 단계는 focus·visibilitychange만 세므로 주기 틱이 끼어들지 않게 간격을 길게 바꾼다.
+  await harness.rerender(tree(10_000));
 
   const textarea = harness.container.querySelector("textarea")!;
   await act(async () => { textarea.focus(); });
@@ -331,4 +337,87 @@ test("목록 자동 갱신은 보일 때 주기·focus에서 refresh하고 입�
   assert.equal(refresh.mock.callCount(), 0, "숨김 상태에서는 refresh하지 않는다");
   await harness.setVisibility("visible");
   assert.equal(refresh.mock.callCount(), 1, "다시 보이면 바로 refresh한다");
+});
+
+test("head 조회가 거듭 실패하면 변화 없음과 같이 간격이 늘고, 복구되면 본문을 다시 받는다", { concurrency: false }, async (context) => {
+  headImpl = async () => { throw new Error("session expired"); };
+  const harness = await renderLive(context, article(noteRecord(1, "수업 노트", "<p>처음 본문</p>"), 10));
+  // 10ms 기본에서 실패 3회마다 두 배: 10·10·10·20·20·20·40·40·40·80… 10번째 조회 앞 간격이 80ms쯤이다.
+  await waitFor(() => headCalls.length >= 10, "실패해도 폴링은 이어진다", 160);
+  const firstGap = headCallTimes[1] - headCallTimes[0];
+  const laterGap = headCallTimes[9] - headCallTimes[8];
+  assert.ok(laterGap >= firstGap * 3, `실패가 쌓이면 간격이 늘어난다(처음 ${firstGap}ms, 나중 ${laterGap}ms)`);
+  assert.equal(noteCalls.length, 0);
+  assert.match(harness.container.querySelector(".rich-text")?.innerHTML ?? "", /처음 본문/u, "오류 중에도 마지막 본문을 둔다");
+
+  headImpl = async () => head(2);
+  noteImpl = async () => noteRecord(2, "수업 노트(복구)", "<p>복구 뒤 본문</p>");
+  await waitFor(() => /복구 뒤 본문/u.test(harness.container.querySelector(".rich-text")?.innerHTML ?? ""), "복구되면 다음 조회에서 본문을 받는다", 160);
+});
+
+test("진행 중 조회에 wake가 겹친 뒤 숨겨지면 응답이 와도 바로 다시 조회하지 않는다", { concurrency: false }, async (context) => {
+  const pendingHead = deferred<HeadResult>();
+  headImpl = () => pendingHead.promise;
+  const harness = await renderLive(context, article(noteRecord(1, "수업 노트", "<p>처음 본문</p>"), 10));
+  await waitFor(() => headCalls.length === 1, "첫 조회가 진행 중이다");
+
+  await harness.focusWindow();
+  assert.equal(headCalls.length, 1, "진행 중이면 wake는 다음 조회 예약만 한다");
+  await harness.setVisibility("hidden");
+  headImpl = async () => head(1);
+  await act(async () => { pendingHead.resolve(head(1)); });
+  await sleep(60);
+  assert.equal(headCalls.length, 1, "숨겨진 뒤 도착한 응답은 추가 조회를 만들지 않는다");
+
+  await harness.setVisibility("visible");
+  await waitFor(() => headCalls.length >= 2, "다시 보이면 즉시 조회한다", 4);
+});
+
+test("목록 자동 갱신은 history 복귀(popstate) 직후 mount에서만 한 번 다시 받는다", { concurrency: false }, async (context) => {
+  const autoRefresh = <RouteAutoRefresh intervalMs={10_000} minGapMs={0} />;
+  const editor = <div contentEditable="true" tabIndex={0} data-testid="editor" />;
+  // (b) 일반 진입: 서버가 방금 렌더했으므로 mount 때 받지 않는다.
+  const harness = await renderLive(context, <div>{editor}{autoRefresh}</div>);
+  await sleep(30);
+  assert.equal(refresh.mock.callCount(), 0, "popstate 없는 mount에서는 refresh하지 않는다");
+
+  // (a) 다른 화면으로 갔다가(unmount) 뒤로(popstate) 돌아와 mount되면 한 번 받는다.
+  await harness.rerender(<div>{editor}</div>);
+  await act(async () => { harness.browserWindow.dispatchEvent(new harness.browserWindow.PopStateEvent("popstate")); });
+  await harness.rerender(<div>{editor}{autoRefresh}</div>);
+  await sleep(30);
+  assert.equal(refresh.mock.callCount(), 1, "popstate 직후 mount에서 한 번 refresh한다");
+
+  // 같은 popstate로 다시 mount돼도(StrictMode·두 번째 인스턴스) 더 받지 않는다.
+  await harness.rerender(<div>{editor}</div>);
+  await harness.rerender(<div>{editor}{autoRefresh}</div>);
+  await sleep(30);
+  assert.equal(refresh.mock.callCount(), 1, "소비한 popstate로는 다시 refresh하지 않는다");
+
+  // (c) popstate 뒤 mount이지만 contenteditable에 입력 중이면 건너뛴다.
+  await harness.rerender(<div>{editor}</div>);
+  const editorElement = harness.container.querySelector<HTMLElement>('[data-testid="editor"]')!;
+  await act(async () => { editorElement.focus(); });
+  await act(async () => { harness.browserWindow.dispatchEvent(new harness.browserWindow.PopStateEvent("popstate")); });
+  await harness.rerender(<div>{editor}{autoRefresh}</div>);
+  await sleep(30);
+  assert.equal(refresh.mock.callCount(), 1, "입력 중이면 history 복귀 mount에서도 refresh하지 않는다");
+  await act(async () => { editorElement.blur(); });
+  await harness.focusWindow();
+  assert.equal(refresh.mock.callCount(), 2, "입력이 끝나면 focus에서 받는다(건너뛴 것이지 꺼진 것이 아니다)");
+
+  // bfcache 복원(pageshow persisted)은 mount 없이 그대로 돌아오므로 그 자리에서 한 번 받는다.
+  refresh.mock.resetCalls();
+  await act(async () => {
+    const pageShow = new harness.browserWindow.Event("pageshow");
+    Object.defineProperty(pageShow, "persisted", { value: true });
+    harness.browserWindow.dispatchEvent(pageShow);
+  });
+  assert.equal(refresh.mock.callCount(), 1, "bfcache 복원에서 refresh한다");
+  await act(async () => {
+    const pageShow = new harness.browserWindow.Event("pageshow");
+    Object.defineProperty(pageShow, "persisted", { value: false });
+    harness.browserWindow.dispatchEvent(pageShow);
+  });
+  assert.equal(refresh.mock.callCount(), 1, "일반 pageshow(persisted=false)에서는 refresh하지 않는다");
 });

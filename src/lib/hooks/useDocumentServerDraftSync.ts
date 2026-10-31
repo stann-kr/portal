@@ -162,9 +162,9 @@ function requiresLegacyDraftChoice(queue: QueuedDocumentServerDraft | null | und
 }
 
 /**
- * 큐의 DISCARD가 관찰된 서버본을 겨냥하는지 판정하고, 겨냥한다면 그 version·hash로 다시 겨냥한 입력을 만든다.
- * 본문 hash가 대상에 있거나(기존 규칙) 이 기기가 쓴 서버본(제출 정리의 ownWriterDeviceId)이면 대상이다.
- * 다른 기기가 쓴 다른 본문은 대상이 아니므로 null을 돌려 보존한다.
+ * 큐의 DISCARD가 관찰된 서버본을 겨냥하는지 판정하고, 겨냥한다면 그 version으로 다시 겨냥한 입력을 만든다.
+ * 본문 hash가 대상에 있을 때만 대상이다(제출 정리는 전송 중·큐에 있던 이전 입력의 hash를 대상에 넣어 둔다).
+ * 같은 기기(같은 브라우저의 다른 탭)가 썼더라도 다른 본문은 대상이 아니므로 null을 돌려 보존한다.
  */
 function rebaseDiscardEntry(
   entry: QueuedDocumentServerDraftDiscard,
@@ -172,16 +172,12 @@ function rebaseDiscardEntry(
 ): {
   expectedDraftVersion: number;
   targetPayloadHashes: string[];
-  ownWriterDeviceId?: string;
   supersededOperationIds?: string[];
 } | null {
-  const targeted = Boolean(entry.targetPayloadHashes?.includes(remote.payloadHash));
-  const ownWrite = entry.ownWriterDeviceId !== undefined && remote.writerDeviceId === entry.ownWriterDeviceId;
-  if (!targeted && !ownWrite) return null;
+  if (!entry.targetPayloadHashes?.includes(remote.payloadHash)) return null;
   return {
     expectedDraftVersion: remote.draftVersion,
-    targetPayloadHashes: [...new Set([...(entry.targetPayloadHashes ?? []), remote.payloadHash])],
-    ...(entry.ownWriterDeviceId ? { ownWriterDeviceId: entry.ownWriterDeviceId } : {}),
+    targetPayloadHashes: entry.targetPayloadHashes,
     ...(entry.supersededOperationIds ? { supersededOperationIds: entry.supersededOperationIds } : {}),
   };
 }
@@ -247,8 +243,9 @@ export function useDocumentServerDraftSync<T>(
   const optionsRef = useRef(options);
   // 서버본의 canonical hash(휘발 필드 제외) memo. 서버 hash가 같으면 다시 계산하지 않는다.
   const remoteCanonicalRef = useRef<{ payloadHash: string; canonicalHash: string } | null>(null);
-  // 서버본(draftVersion:payloadHash)별 결정. 사용자 선택은 늦은 관찰에서 다시 적용하고, 자동 판정은 한 번만 한다.
-  const remoteDecisionRef = useRef(new Map<string, "use" | "keep" | "discard" | "auto-keep" | "auto-discard">());
+  // 서버본(draftVersion:payloadHash)별 결정. 사용자 선택은 늦은 관찰에서 다시 적용하고, 자동 폐기는 한 번만 시도한다.
+  // 자동 보존(keep)은 기억하지 않는다: head가 올라가면(제출·자동 저장 성공) 같은 서버본도 다시 판정해야 한다.
+  const remoteDecisionRef = useRef(new Map<string, "use" | "keep" | "discard" | "auto-discard">());
   // insertion effect는 같은 commit의 모든 layout/passive effect·이벤트보다 먼저 실행된다.
   useInsertionEffect(() => {
     onApplyRemoteRef.current = onApplyRemote;
@@ -360,6 +357,8 @@ export function useDocumentServerDraftSync<T>(
    * 선택 → form의 `classifyRemoteDraft` 판정. 처리했으면 큐에 넣고 drain을 예약한 뒤 true를 돌려준다.
    * - 로컬이 없으면 그 서버본(version·hash)만 겨냥한 DISCARD.
    * - 로컬이 있으면 로컬을 그 서버본 위에 CAS 저장(`keepLocalDraft`와 같은 의미). 로컬 입력은 잃지 않는다.
+   * `classifyRemoteDraft`는 매 평가마다 다시 부른다(문자열·숫자 비교라 저렴). 보존 판정을 기억하면 head가
+   * 올라간 뒤(제출·자동 저장 성공) 오래된 서버본이 `remote-available`로 남는다.
    */
   const autoResolveRemote = useCallback(
     (draft: DocumentServerDraftSnapshot, local: LocalDraftState<T> | null, conflictCount = 0): boolean => {
@@ -377,13 +376,13 @@ export function useDocumentServerDraftSync<T>(
         } catch {
           return false;
         }
-        decision = verdict === "discard" ? "auto-discard" : "auto-keep";
+        if (verdict !== "discard") return false;
+        decision = "auto-discard";
         decisions.set(key, decision);
-      } else if (decision === "auto-keep" || decision === "auto-discard") {
-        // 같은 서버본을 다시 판정하지 않는다. 자동 폐기를 이미 시도한 서버본이 또 보이면 사용자 선택으로 넘긴다.
+      } else if (decision === "auto-discard") {
+        // 자동 폐기를 이미 시도한 서버본이 또 보이면 사용자 선택으로 넘긴다.
         return false;
       }
-      if (decision === "auto-keep") return false;
       if (conflictCount >= SERVER_DRAFT_MAX_DISCARD_REBASES) return false;
       if ((decision === "use" || decision === "keep") && !local) return false;
       try {
@@ -866,16 +865,22 @@ export function useDocumentServerDraftSync<T>(
   );
 
   /**
-   * 폐기 의도를 만드는 시점에 같은 sourceKey로 전송 중이거나 큐에 있던 UPSERT의 operation ID. 서버가 이 ID의
-   * receipt를 DISCARD로 선점해, 늦게 도착한 저장이 폐기한 서버본을 되살리지 못하게 한다(서버 fence).
+   * 폐기 의도를 만드는 시점에 같은 sourceKey로 전송 중이거나 큐에 있던 UPSERT(이 기기의 이전 입력).
+   * - `operationId`: 서버가 receipt를 DISCARD로 선점해, 늦게 도착한 저장이 폐기한 서버본을 되살리지 못하게 한다(서버 fence).
+   * - `payloadHash`: 폐기 대상 hash에 넣어, 이전 입력이 늦게 반영된 서버본을 그 version으로 다시 겨냥해 지운다.
+   *   본문으로 겨냥하므로 같은 기기 ID를 쓰는 다른 탭의 다른 본문은 지우지 않는다.
    */
-  const collectSupersededOperationIds = useCallback(
-    (queued: QueuedDocumentServerDraft | null | undefined): string[] | undefined => {
-      const ids = new Set<string>();
+  const collectSupersededUpserts = useCallback(
+    (queued: QueuedDocumentServerDraft | null | undefined): { operationId: string; payloadHash: string }[] => {
+      const upserts = new Map<string, { operationId: string; payloadHash: string }>();
       const inFlight = inFlightRef.current;
-      if (inFlight?.operationType === "UPSERT" && inFlight.sourceKey === sourceKey) ids.add(inFlight.operationId);
-      if (queued?.operationType === "UPSERT" && queued.sourceKey === sourceKey) ids.add(queued.operationId);
-      return ids.size > 0 ? [...ids] : undefined;
+      if (inFlight?.operationType === "UPSERT" && inFlight.sourceKey === sourceKey) {
+        upserts.set(inFlight.operationId, { operationId: inFlight.operationId, payloadHash: inFlight.payloadHash });
+      }
+      if (queued?.operationType === "UPSERT" && queued.sourceKey === sourceKey) {
+        upserts.set(queued.operationId, { operationId: queued.operationId, payloadHash: queued.payloadHash });
+      }
+      return [...upserts.values()];
     },
     [sourceKey],
   );
@@ -943,20 +948,18 @@ export function useDocumentServerDraftSync<T>(
           evaluateState(remote, readQueuedDocumentServerDraft(window.localStorage, sourceKey)?.entry);
           return;
         }
-        const supersededOperationIds = collectSupersededOperationIds(queued?.entry);
-        // 제출 성공 정리: 이 기기가 쓴 서버본은 전송 중이던 이전 입력이 늦게 반영된 것이라 본문과 무관하게 폐기한다.
-        const ownWriterDeviceId = reason === "submitted"
-          ? deviceIdRef.current ?? getOrCreateDocumentServerDraftDeviceId(window.localStorage, ownerId)
-          : undefined;
+        // 전송 중·큐의 이전 입력(이 기기)은 제출 뒤 늦게 반영돼도 본문 hash로 겨냥해 지운다. 위 guard들 뒤에만 넣는다:
+        // 앞에 넣으면 제출 뒤 새로 친 입력(큐의 다른 UPSERT)까지 정리 대상이 된다.
+        const superseded = collectSupersededUpserts(queued?.entry);
+        const supersededOperationIds = superseded.map((upsert) => upsert.operationId);
         enqueueDocumentServerDraftDiscard(window.localStorage, {
           sourceKey,
-          targetPayloadHashes,
+          targetPayloadHashes: [...new Set([...targetPayloadHashes, ...superseded.map((upsert) => upsert.payloadHash)])],
           expectedDraftVersion:
             remoteDraftRef.current?.draftVersion ??
             queued?.entry.expectedDraftVersion ??
             0,
-          ...(ownWriterDeviceId ? { ownWriterDeviceId } : {}),
-          ...(supersededOperationIds ? { supersededOperationIds } : {}),
+          ...(supersededOperationIds.length > 0 ? { supersededOperationIds } : {}),
         });
         notifyQueueChange(sourceKey);
         if (mountedRef.current) setStatus(isBrowserOffline() ? "offline" : "queued");
@@ -965,7 +968,7 @@ export function useDocumentServerDraftSync<T>(
         if (mountedRef.current) setStatus("error");
       }
     },
-    [allowOwnerPersistence, canonicalRemoteHash, clearTimers, collectSupersededOperationIds, evaluateState, ownerId, sourceKey, toLocalDraftState],
+    [allowOwnerPersistence, canonicalRemoteHash, clearTimers, collectSupersededUpserts, evaluateState, sourceKey, toLocalDraftState],
   );
 
   const restoreQueuedDraft = useCallback(() => {
@@ -1060,15 +1063,21 @@ export function useDocumentServerDraftSync<T>(
     if (remoteDraftRef.current) remoteDecisionRef.current.set(remoteDecisionKey(remoteDraftRef.current), "discard");
     try {
       const queued = readQueuedDocumentServerDraft(window.localStorage, sourceKey);
-      const supersededOperationIds = collectSupersededOperationIds(queued?.entry);
+      const superseded = collectSupersededUpserts(queued?.entry);
+      const supersededOperationIds = superseded.map((upsert) => upsert.operationId);
+      // 명시 폐기도 전송 중·큐의 이전 입력이 늦게 반영된 서버본까지 본문 hash로 겨냥한다.
+      const targetPayloadHashes = [...new Set([
+        ...(remoteDraftRef.current ? [remoteDraftRef.current.payloadHash] : []),
+        ...superseded.map((upsert) => upsert.payloadHash),
+      ])];
       enqueueDocumentServerDraftDiscard(window.localStorage, {
         sourceKey,
-        targetPayloadHashes: remoteDraftRef.current ? [remoteDraftRef.current.payloadHash] : undefined,
+        ...(targetPayloadHashes.length > 0 ? { targetPayloadHashes } : {}),
         expectedDraftVersion:
           remoteDraftRef.current?.draftVersion ??
           queued?.entry.expectedDraftVersion ??
           0,
-        ...(supersededOperationIds ? { supersededOperationIds } : {}),
+        ...(supersededOperationIds.length > 0 ? { supersededOperationIds } : {}),
       });
       notifyQueueChange(sourceKey);
       setStatus(isBrowserOffline() ? "offline" : "queued");
@@ -1076,7 +1085,7 @@ export function useDocumentServerDraftSync<T>(
     } catch {
       setStatus("error");
     }
-  }, [allowOwnerPersistence, collectSupersededOperationIds, sourceKey]);
+  }, [allowOwnerPersistence, collectSupersededUpserts, sourceKey]);
 
   useEffect(() => {
     mountedRef.current = true;

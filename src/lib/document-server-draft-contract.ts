@@ -73,7 +73,8 @@ export type DiscardDocumentServerDraftInput = {
   /**
    * 폐기를 큐에 넣는 시점에 같은 sourceKey로 전송 중이거나 큐에 있던 UPSERT의 operation ID(서버 fence).
    * 서버는 이 ID들의 receipt를 DISCARD로 선점해 늦게 도착한 저장이 서버본을 되살리지 못하게 하고,
-   * 현재 서버본이 이 ID가 만든 것이면 version·hash가 달라도 삭제한다.
+   * 현재 서버본이 이 ID가 만든 것이고 그 본문 hash가 `targetPayloadHashes`에 있으면 version이 달라도 삭제한다
+   * (클라이언트는 superseded UPSERT의 본문 hash를 대상에 함께 넣는다. 기기 ID나 version·시각만으로는 범위를 넓히지 않는다).
    */
   supersededOperationIds?: readonly string[];
 };

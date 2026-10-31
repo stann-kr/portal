@@ -142,17 +142,22 @@ function createSupersededFenceStatements(
 /**
  * 서버 fence(b): 현재 서버본이 superseded UPSERT가 만든 것인지. 저장 batch는 receipt `created_at`과 서버본
  * `updated_at`에 같은 초를 쓰고 `result_version`이 그때의 `draft_version`이므로, 같은 sourceKey의 UPSERT receipt가
- * 둘 다 일치하면 그 요청이 만든 행으로 본다(같은 payload 재저장 receipt는 행을 갱신하지 않아 해당하지 않는다).
+ * 둘 다 일치하고 **현재 본문 hash가 폐기 대상(`targetPayloadHashes`)에 있을 때** 그 요청이 만든 행으로 본다
+ * (클라이언트는 superseded UPSERT의 본문 hash를 대상에 넣어 보낸다). version과 초만으로는 생성 operation을
+ * 증명할 수 없다: A 저장(v1)→A 폐기→같은 초에 다른 기기 B가 다른 본문을 저장(새 행 v1)하면 version이 재사용된다.
+ * 남는 한계: 같은 초·같은 version에 **같은 본문**을 다시 쓴 행은 superseded로 보고 지운다(본문이 같으므로
+ * 폐기 의도에 포함된다). 같은 payload 재저장 receipt는 행을 갱신하지 않아 해당하지 않는다.
  */
 function isProducedBySupersededOperation(
   current: StoredDraft,
-  sourceKey: string,
+  write: Pick<DiscardDocumentServerDraftWrite, "sourceKey" | "targetPayloadHashes">,
   operations: readonly StoredOperationWithTime[],
 ): boolean {
+  if (!write.targetPayloadHashes?.includes(current.payloadHash)) return false;
   const updatedAtSeconds = epochSeconds(current.updatedAt);
   return operations.some((operation) =>
     operation.operationType === "UPSERT" &&
-    operation.sourceKey === sourceKey &&
+    operation.sourceKey === write.sourceKey &&
     operation.resultVersion === current.draftVersion &&
     epochSeconds(operation.createdAt) === updatedAtSeconds);
 }
@@ -359,7 +364,7 @@ export async function discardDocumentServerDraftAtomically(
     current && write.supersededOperationIds?.length &&
       isProducedBySupersededOperation(
         current,
-        write.sourceKey,
+        write,
         await findOperationsByIds(context, write.ownerId, write.supersededOperationIds),
       ),
   );
@@ -417,7 +422,7 @@ export async function discardDocumentServerDraftAtomically(
   }
   statements.push(operationStatement);
   if (current && producedBySuperseded) {
-    // superseded 요청이 만든 행은 version·본문이 요청과 달라도 지운다. 그 사이 바뀌었으면 changes()=0으로 중단된다.
+    // superseded 요청이 만든 행(본문 hash가 대상에 있음)은 version이 요청과 달라도 지운다. 그 사이 바뀌었으면 changes()=0으로 중단된다.
     statements.push({
       query:
         "DELETE FROM document_server_drafts " +

@@ -14,7 +14,12 @@ import {
   parseFormDraft,
   serializeFormDraft,
 } from "@/lib/form-draft";
-import { enqueueDocumentServerDraftDiscard, enqueueDocumentServerDraftUpsert, parseQueuedDocumentServerDraft } from "@/lib/document-server-draft-queue";
+import {
+  enqueueDocumentServerDraftDiscard,
+  enqueueDocumentServerDraftUpsert,
+  getOrCreateDocumentServerDraftDeviceId,
+  parseQueuedDocumentServerDraft,
+} from "@/lib/document-server-draft-queue";
 import {
   createAccountTerminalLockStorageKey,
   ensureAccountTerminalDeletionLock,
@@ -92,8 +97,10 @@ async function mockDiscard(input: DiscardInput) {
   discardCalls.push(input);
   // 실제 서버처럼 superseded receipt 선점은 CAS 판정과 무관하게 먼저 남는다.
   for (const operationId of input.supersededOperationIds ?? []) fencedOperationIds.add(operationId);
+  // 서버 fence(b)와 같이, superseded 요청이 만든 서버본은 그 본문 hash가 폐기 대상에 있을 때만 version과 무관하게 지운다.
   const producedBySuperseded = remoteDraft !== null && remoteProducerOperationId !== null &&
-    (input.supersededOperationIds ?? []).includes(remoteProducerOperationId);
+    (input.supersededOperationIds ?? []).includes(remoteProducerOperationId) &&
+    (input.targetPayloadHashes?.includes(remoteDraft.payloadHash) ?? false);
   if (!producedBySuperseded && ((remoteDraft?.draftVersion ?? 0) !== input.expectedDraftVersion ||
     (remoteDraft && input.targetPayloadHashes && !input.targetPayloadHashes.includes(remoteDraft.payloadHash)))) {
     return { ok: false, reason: "VERSION_CONFLICT", current: remoteDraft };
@@ -737,6 +744,27 @@ test("제출된 A 초안 정리는 CAS 충돌 뒤 다른 기기의 미전송 B�
   assert.equal(harness.browserWindow.localStorage.getItem(createDocumentServerDraftQueueKey(sourceKey)), null);
 });
 
+test("제출 정리는 같은 기기 ID를 쓰는 다른 탭의 후속 작업(v2·다른 hash)을 폐기하지 않는다", { concurrency: false }, async (context) => {
+  resetServerMock();
+  const sourceKey = createDocumentDraftKey("note", "student-1", "submitted-same-device-tab");
+  const submitted = { title: "탭 A 제출", contentHtml: "<p>A</p>" };
+  const tabB = { title: "탭 B 새 본문", contentHtml: "<p>B</p>" };
+  remoteDraft = createSnapshot(sourceKey, submitted, 1);
+  const harness = await createHarness(context, sourceKey);
+  await act(async () => harness.getResult().serverSync.useRemoteDraft());
+  // 같은 브라우저의 탭 B는 기기 ID를 공유한다. 탭 A의 정리가 기다리는 동안 탭 B가 다른 본문을 v2로 저장했다.
+  const ownDeviceId = getOrCreateDocumentServerDraftDeviceId(harness.browserWindow.localStorage as unknown as Storage, "student-1");
+  remoteDraft = createSnapshot(sourceKey, tabB, 2, ownDeviceId);
+  const tabBHash = remoteDraft.payloadHash;
+  await act(async () => harness.getResult().clear({ reason: "submitted", submittedData: submitted }));
+  await waitFor(() => harness.getResult().serverSync.status === "remote-available", "탭 B의 작성본을 다시 선택할 수 있어야 합니다.");
+  assert.equal(remoteDraft?.payloadHash, tabBHash, "기기 ID가 같다는 이유로 v2·다른 본문을 지우지 않는다");
+  assert.equal(remoteDraft?.writerDeviceId, ownDeviceId);
+  assert.equal(discardCalls.length, 1, "충돌 뒤 탭 B의 hash로 다시 겨냥하지 않는다");
+  assert.deepEqual(discardCalls[0]?.targetPayloadHashes, [createSnapshot(sourceKey, submitted, 1).payloadHash]);
+  assert.equal(harness.browserWindow.localStorage.getItem(createDocumentServerDraftQueueKey(sourceKey)), null);
+});
+
 test("이미 확인한 다른 서버본은 로컬 문서 제출 성공으로 삭제하지 않는다", { concurrency: false }, async (context) => {
   resetServerMock();
   const sourceKey = createDocumentDraftKey("note", "student-1", "known-peer");
@@ -1214,7 +1242,7 @@ async function startInflightThenSubmit(
   await act(async () => harness.getResult().clear({ reason: "submitted", submittedData: submitted }));
 }
 
-test("제출 정리는 전송 중이던 이 기기의 서버본을 hash와 무관하게 현재 version으로 다시 겨냥해 지운다", { concurrency: false }, async (context) => {
+test("제출 정리는 전송 중이던 이전 입력의 서버본을 본문 hash로 겨냥해 현재 version으로 다시 겨냥해 지운다", { concurrency: false }, async (context) => {
   resetServerMock();
   const sourceKey = createDocumentDraftKey("note", "student-1", "new:student-1");
   const queueKey = createDocumentServerDraftQueueKey(sourceKey);
@@ -1227,6 +1255,14 @@ test("제출 정리는 전송 중이던 이 기기의 서버본을 hash와 무�
   const queued = parseQueuedDocumentServerDraft(harness.browserWindow.localStorage.getItem(queueKey) ?? "");
   assert.equal(queued?.operationType, "DISCARD");
   assert.equal(queued?.expectedDraftVersion, 0);
+
+  if (queued?.operationType === "DISCARD") {
+    assert.deepEqual(
+      queued.targetPayloadHashes,
+      [createSnapshot(sourceKey, submitted, 1).payloadHash, createSnapshot(sourceKey, first, 1).payloadHash].sort(),
+      "전송 중이던 P1의 본문 hash를 제출 본문과 함께 대상에 넣는다",
+    );
+  }
 
   await act(async () => release());
   await waitFor(() => harness.getResult().serverSync.status === "idle", "이 기기가 쓴 P1 서버본은 제출 정리로 지워져야 합니다.");
@@ -1398,6 +1434,50 @@ test("classifyRemoteDraft가 discard면 선택창 없이 서버본을 조용히 
     assert.equal(discardCalls.length, 0);
     assert.equal(saveCalls.length, 0);
   });
+});
+
+test("자동 보존 판정은 기억하지 않아 head가 올라가면 같은 서버본을 다시 판정해 폐기한다", { concurrency: false }, async (context) => {
+  for (const trigger of ["submitted", "refresh"] as const) {
+    await context.test(trigger === "submitted" ? "제출 정리 뒤" : "refresh 뒤", async (subcontext) => {
+      resetServerMock();
+      const sourceKey = createDocumentDraftKey("note", "student-1", `reclassify-${trigger}`);
+      // 다른 기기 서버본의 base(5)가 현재 head(5)와 같아 처음에는 보존한다.
+      const peer = createSnapshot(sourceKey, { title: "다른 기기 수정", contentHtml: "<p>other</p>", baseRevision: 5 }, 2, OTHER_DEVICE_ID);
+      remoteDraft = peer;
+      let headVersion = 5;
+      let classified = 0;
+      const harness = await createHarness(subcontext, sourceKey, undefined, {
+        server: {
+          classifyRemoteDraft: (remote) => {
+            classified += 1;
+            return (remote.baseRevision ?? 0) < headVersion ? "discard" : "keep";
+          },
+        },
+      });
+      assert.equal(harness.getResult().serverSync.status, "remote-available");
+      assert.ok(classified >= 1);
+      assert.equal(discardCalls.length, 0);
+
+      // 사용자가 자동 저장해 head가 6이 됐다(제출 정리 → evaluateState). 같은 서버본은 이제 head보다 오래됐다.
+      headVersion = 6;
+      const classifiedBefore = classified;
+      if (trigger === "submitted") {
+        await act(async () => harness.getResult().clear({
+          reason: "submitted",
+          submittedData: { title: "이 기기", contentHtml: "<p>mine</p>", baseRevision: 6 },
+        }));
+      } else {
+        await act(async () => harness.getResult().serverSync.refresh());
+      }
+      await waitFor(() => harness.getResult().serverSync.status === "idle", "head가 올라간 뒤 오래된 서버본은 조용히 지워야 합니다.");
+      assert.ok(classified > classifiedBefore, "head 갱신 뒤 classifyRemoteDraft를 다시 불러야 합니다.");
+      assert.equal(discardCalls.length, 1);
+      assert.equal(discardCalls[0]?.expectedDraftVersion, 2);
+      assert.deepEqual(discardCalls[0]?.targetPayloadHashes, [peer.payloadHash]);
+      assert.equal(remoteDraft, null);
+      assert.notEqual(harness.getResult().serverSync.status, "remote-available");
+    });
+  }
 });
 
 test("같은 서버본(version·hash)에 대한 선택은 기억해 늦은 관찰에서 선택창 없이 다시 적용한다", { concurrency: false }, async (context) => {
