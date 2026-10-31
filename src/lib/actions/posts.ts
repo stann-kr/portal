@@ -1,6 +1,8 @@
 /** Community post query와 revision/trash lifecycle server action. */
 "use server";
 
+import { formatCollabDocKey } from "@/lib/collab/doc-key";
+import { resetCollabRoomAfterMutation } from "@/lib/collab/server-env";
 import { and, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
@@ -616,6 +618,8 @@ async function runPostLifecycle(
         ? await restoreTrashedPostAtomically(createDbContext(), write)
         : await purgePostAtomically(createDbContext(), write);
   if (result.ok) {
+    // 열린 수정 작업본을 비워 옛 내용이 다시 저장되지 않게 한다.
+    if (!result.replayed) await resetCollabRoomAfterMutation(formatCollabDocKey({ kind: "post", id: postId }));
     revalidatePostPaths(postId);
     if (kind === "purge") {
       await processMediaDeletionOutboxBestEffort(createDbContext(), { limit: 2 });
@@ -668,7 +672,11 @@ export async function restorePostRevision(
     revisionNumber,
     now: new Date(),
   });
-  if (result.ok) revalidatePostPaths(postId);
+  if (result.ok) {
+    // 복원한 게시본으로 수정 작업본을 다시 시작한다.
+    if (!result.replayed) await resetCollabRoomAfterMutation(formatCollabDocKey({ kind: "post", id: postId }));
+    revalidatePostPaths(postId);
+  }
   return lifecycleState(result);
 }
 

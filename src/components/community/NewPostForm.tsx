@@ -18,22 +18,15 @@ import { MobileTopBar } from "@/components/app-shell/AppSidebar";
 import { ChoiceGroup, type ChoiceOption } from "@/components/ui/choice-group";
 import { cn } from "@/lib/utils";
 import { FileUploader } from "@/components/upload/FileUploader";
-import { DraftStatus } from "@/components/editor/DraftStatus";
+import { CollabDraftStatus } from "@/components/editor/CollabDraftStatus";
+import { useEditorExtensions } from "@/components/editor/useEditorExtensions";
 import { createPost, type CreatePostState } from "@/lib/actions/posts";
 import { getCategories } from "@/lib/actions/categories";
-import { createDocumentDraftKey } from "@/lib/form-draft";
-import { useSyncedFormDraft } from "@/lib/hooks/useSyncedFormDraft";
-import { useDeferredEditorContent } from "@/lib/hooks/useDeferredEditorContent";
+import { useCollabFormDraft } from "@/lib/collab/client/useCollabFormDraft";
 import { useDocumentSaveShortcut } from "@/lib/hooks/useDocumentSaveShortcut";
 import { isRichTextEmpty } from "@/lib/rich-text";
-import { isCreatePostDraftEmpty } from "@/lib/post-draft";
-import { persistLocalDraftOnShortcut } from "@/lib/local-draft-shortcut";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
-import {
-  CREATION_OPERATION_FIELD,
-  createCreationOperationId,
-  parseCreationOperationId,
-} from "@/lib/creation-operation";
+import { CREATION_OPERATION_FIELD } from "@/lib/creation-operation";
 import { CreationConflictActions } from "@/components/editor/CreationConflictActions";
 import { abandonMediaUpload } from "@/lib/actions/upload";
 import { MIXSET_LINK_FIELD, normalizeMixsetLinkUrl } from "@/lib/community-mixset-media";
@@ -61,25 +54,6 @@ const MIXSET_MEDIA_MODES: readonly ChoiceOption<MixsetMediaMode>[] = [
   { value: "link", label: "링크 (YouTube·SoundCloud)" },
 ];
 
-/** 이전 초안에는 방식이 없으므로 링크 값이 있을 때만 링크로 본다. */
-function restoreMixsetMediaMode(draft: { mixsetMediaMode?: unknown; mixsetLinkUrl?: unknown }): MixsetMediaMode {
-  if (draft.mixsetMediaMode === "link" || draft.mixsetMediaMode === "audio") return draft.mixsetMediaMode;
-  return typeof draft.mixsetLinkUrl === "string" && draft.mixsetLinkUrl.trim() ? "link" : "audio";
-}
-
-type PostDraft = {
-  operationId?: string;
-  boardType: PostBoardType;
-  category: string;
-  isPinned: boolean;
-  title: string;
-  contentHtml: string;
-  mediaUrl: string;
-  mediaObjectId?: string;
-  mixsetMediaMode?: MixsetMediaMode;
-  mixsetLinkUrl?: string;
-};
-
 type NewPostFormProps = {
   actorId: string;
   isAdmin: boolean;
@@ -99,24 +73,46 @@ function NewPostFormContent({
   defaultCategory,
   returnTo,
 }: NewPostFormProps) {
-  const [boardType, setBoardType] = useState<PostBoardType>(defaultBoardType);
-  const [category, setCategory] = useState(defaultCategory);
-  const [isPinned, setIsPinned] = useState(false);
-  const [title, setTitle] = useState("");
-  const {
-    contentHtml,
-    contentVersion,
-    setContentHtml,
-    handleEditorChange,
-    handleEditorDirty,
-    readLatestContentHtml,
-    commitLatestContentHtml,
-  } = useDeferredEditorContent("");
+  // 같은 사람의 새 게시물 작성본은 기기와 관계없이 하나다(room `draft:post:<본인>:new`).
+  const getExtensions = useEditorExtensions();
+  const draft = useCollabFormDraft({
+    room: { draftKind: "post", ownerId: actorId, scope: "new" },
+    fields: {
+      boardType: defaultBoardType,
+      category: defaultCategory,
+      isPinned: "false",
+      title: "",
+      mediaUrl: "",
+      mediaObjectId: "",
+      mixsetMediaMode: "audio",
+      mixsetLinkUrl: "",
+    },
+    extensions: getExtensions,
+  });
+  const boardType: PostBoardType =
+    draft.fields.boardType === "ANNOUNCEMENT" && !isAdmin
+      ? "GENERAL"
+      : draft.fields.boardType === "ANNOUNCEMENT" || draft.fields.boardType === "FEEDBACK" || draft.fields.boardType === "GENERAL"
+        ? draft.fields.boardType
+        : defaultBoardType;
+  const category = draft.fields.category;
+  const isPinned = draft.fields.isPinned === "true";
+  const title = draft.fields.title;
+  const mediaUrl = draft.fields.mediaUrl;
+  const mediaObjectId = draft.fields.mediaObjectId;
+  const mixsetMediaMode: MixsetMediaMode = draft.fields.mixsetMediaMode === "link" ? "link" : "audio";
+  const mixsetLinkUrl = draft.fields.mixsetLinkUrl;
+  const setBoardType = (value: PostBoardType) => draft.setField("boardType", value);
+  const setCategory = (value: string) => draft.setField("category", value);
+  const setIsPinned = (value: boolean) => draft.setField("isPinned", value ? "true" : "false");
+  const setTitle = (value: string) => draft.setField("title", value);
+  const setMediaUrl = (value: string) => draft.setField("mediaUrl", value);
+  const setMediaObjectId = (value: string) => draft.setField("mediaObjectId", value);
+  const setMixsetMediaMode = (value: MixsetMediaMode) => draft.setField("mixsetMediaMode", value);
+  const setMixsetLinkUrl = (value: string) => draft.setField("mixsetLinkUrl", value);
+  const { contentHtml, operationId } = draft;
+  const loaded = draft.ready && draft.collab.mode === "write";
   const [categories, setCategories] = useState<{ id: string; slug: string; name: string }[]>([]);
-  const [mediaUrl, setMediaUrl] = useState("");
-  const [mediaObjectId, setMediaObjectId] = useState("");
-  const [mixsetMediaMode, setMixsetMediaMode] = useState<MixsetMediaMode>("audio");
-  const [mixsetLinkUrl, setMixsetLinkUrl] = useState("");
   const [linkError, setLinkError] = useState("");
   // 링크 방식이면 form이 noValidate라 브라우저 필수 안내가 뜨지 않으므로 빈 제목은 직접 알린다.
   const [titleError, setTitleError] = useState("");
@@ -125,7 +121,6 @@ function NewPostFormContent({
   const visibleTitleError = title.trim() ? "" : titleError;
   const linkInputRef = useRef<HTMLInputElement>(null);
   const linkFieldId = useId();
-  const [operationId, setOperationId] = useState("");
   const [uploadError, setUploadError] = useState("");
   const [isUploading, setIsUploading] = useState(false);
   // 본문 이미지가 올라가는 동안에는 제출하지 않는다. 편집기는 계속 쓸 수 있다.
@@ -139,7 +134,6 @@ function NewPostFormContent({
   }, {});
   const formRef = useRef<HTMLFormElement>(null);
   const contentInputRef = useRef<HTMLInputElement>(null);
-  const submittedDraftRef = useRef<PostDraft | null>(null);
   const handledPostIdRef = useRef<string | null>(null);
   const router = useProgressRouter();
   // 등록에 성공하면 상세 화면으로 넘어갈 때까지 계속 막아 두 번 등록하지 않게 한다.
@@ -148,83 +142,14 @@ function NewPostFormContent({
   // 등록에 성공한 뒤에는 이탈 막기를 풀어, 하드 이동(배포 버전 차이 등)에서 나가기 확인이 뜨거나 링크가 막히지 않게 한다.
   useBusyNavigationGuard(isPending || isUploading);
 
-  const {
-    loaded,
-    canSubmit,
-    save,
-    clear,
-    flush,
-    status,
-    savedAt,
-    restored,
-    recoveries,
-    restoreRecovery,
-    discardRecovery,
-    serverSync,
-  } = useSyncedFormDraft<PostDraft>(
-    createDocumentDraftKey("community-post", actorId),
-    (draft) => {
-      setOperationId(
-        parseCreationOperationId(draft.operationId) ?? createCreationOperationId(),
-      );
-      setBoardType(draft.boardType === "ANNOUNCEMENT" && !isAdmin ? "GENERAL" : (draft.boardType ?? defaultBoardType));
-      setCategory(draft.category ?? defaultCategory);
-      setIsPinned(draft.isPinned ?? false);
-      setTitle(draft.title ?? "");
-      setContentHtml(draft.contentHtml ?? "");
-      setMediaUrl(draft.mediaUrl ?? "");
-      setMediaObjectId(draft.mediaObjectId ?? "");
-      setMixsetMediaMode(restoreMixsetMediaMode(draft));
-      setMixsetLinkUrl(typeof draft.mixsetLinkUrl === "string" ? draft.mixsetLinkUrl : "");
-      setLinkError("");
-    },
-    {
-      onReset: () => {
-        setOperationId(createCreationOperationId());
-        setBoardType(defaultBoardType);
-        setCategory(defaultCategory);
-        setIsPinned(false);
-        setTitle("");
-        setContentHtml("");
-        setMediaUrl("");
-        setMediaObjectId("");
-        setMixsetMediaMode("audio");
-        setMixsetLinkUrl("");
-        setLinkError("");
-      },
-    },
-  );
   const isLinkMode = boardType === "FEEDBACK" && mixsetMediaMode === "link";
-  const isSubmitBlocked = !loaded || !canSubmit || isFormBusy || isEditorUploading || !operationId;
+  const isSubmitBlocked = !loaded || isFormBusy || isEditorUploading || !operationId;
   const isSubmitDisabled =
     isSubmitBlocked ||
     !title.trim() ||
     isRichTextEmpty(contentHtml);
-  const handleSaveShortcut = useDocumentSaveShortcut({
-    disabled: isSubmitBlocked,
-    onSave: () => persistLocalDraftOnShortcut({
-      createSnapshot: () => ({
-        operationId,
-        boardType,
-        category,
-        isPinned,
-        title,
-        contentHtml: readLatestContentHtml(),
-        mediaUrl,
-        mediaObjectId,
-        mixsetMediaMode,
-        mixsetLinkUrl,
-      }),
-      isEmpty: (draft) =>
-        isCreatePostDraftEmpty(draft, {
-          boardType: defaultBoardType,
-          category: defaultCategory,
-        }),
-      clear,
-      save,
-      flush,
-    }),
-  });
+  // 작성본은 입력하는 대로 실시간 보관되므로 Cmd/Ctrl+S는 따로 할 일이 없다(브라우저 저장 창만 막는다).
+  const handleSaveShortcut = useDocumentSaveShortcut({ disabled: !loaded, onSave: () => undefined });
 
   const [categoriesLoading, setCategoriesLoading] = useState(true);
   useEffect(() => {
@@ -235,73 +160,17 @@ function NewPostFormContent({
   }, []);
 
   useEffect(() => {
-    if (!loaded) return;
-    const latestContentHtml = readLatestContentHtml();
-    if (
-      isCreatePostDraftEmpty(
-        {
-          boardType,
-          category,
-          isPinned,
-          title,
-          contentHtml: latestContentHtml,
-          mediaUrl,
-          mediaObjectId,
-          mixsetLinkUrl,
-        },
-        { boardType: defaultBoardType, category: defaultCategory },
-      )
-    ) {
-      clear();
-      return;
-    }
-    if (!operationId) return;
-    save({
-      operationId,
-      boardType,
-      category,
-      isPinned,
-      title,
-      mediaUrl,
-      mediaObjectId,
-      mixsetMediaMode,
-      mixsetLinkUrl,
-      get contentHtml() {
-        return readLatestContentHtml();
-      },
-    });
-  }, [boardType, category, clear, contentHtml, defaultBoardType, defaultCategory, isPinned, loaded, mediaObjectId, mediaUrl, mixsetLinkUrl, mixsetMediaMode, operationId, readLatestContentHtml, save, title]);
-
-  useEffect(() => {
     if (!state.postId || handledPostIdRef.current === state.postId) return;
     handledPostIdRef.current = state.postId;
-    const submittedDraft = submittedDraftRef.current ?? {
-      operationId,
-      boardType,
-      category,
-      isPinned,
-      title,
-      contentHtml,
-      mediaUrl,
-      mediaObjectId,
-      mixsetMediaMode,
-      mixsetLinkUrl,
-    };
-    clear({
-      reason: "submitted",
-      submittedData: submittedDraft,
-    });
     // 링크로 게시했으면 보관만 하던 업로드 오디오는 게시물에 붙지 않았으므로 정리한다.
-    if (
-      submittedDraft.boardType === "FEEDBACK" &&
-      submittedDraft.mixsetMediaMode === "link" &&
-      submittedDraft.mediaObjectId
-    ) {
-      void abandonMediaUpload(submittedDraft.mediaObjectId).catch(() => undefined);
+    if (boardType === "FEEDBACK" && mixsetMediaMode === "link" && mediaObjectId) {
+      void abandonMediaUpload(mediaObjectId).catch(() => undefined);
     }
-    submittedDraftRef.current = null;
+    // 게시한 작성본은 모든 기기에서 비운다.
+    draft.clear();
     router.replace(`/community/${state.postId}?returnTo=${encodeURIComponent(returnTo)}`);
-  }, [boardType, category, clear, contentHtml, isPinned, mediaObjectId, mediaUrl, mixsetLinkUrl, mixsetMediaMode, operationId, returnTo, router, state.postId, title]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 게시 성공(postId)에만 반응한다.
+  }, [state.postId]);
 
   const hasOperationConflict = Boolean(
     state.operationConflict &&
@@ -372,15 +241,11 @@ function NewPostFormContent({
             titleInputRef.current?.focus();
           }}
           onSubmit={(event) => {
-            if (!loaded || !canSubmit || isFormBusy || isEditorUploading) {
+            if (!loaded || isFormBusy || isEditorUploading || !operationId) {
               event.preventDefault();
               return;
             }
-            if (!operationId) {
-              event.preventDefault();
-              return;
-            }
-            const latestContentHtml = commitLatestContentHtml();
+            const latestContentHtml = draft.readHtml();
             if (!title.trim()) {
               event.preventDefault();
               setTitleError(EMPTY_TITLE_ERROR);
@@ -401,21 +266,6 @@ function NewPostFormContent({
               }
             }
             if (contentInputRef.current) contentInputRef.current.value = latestContentHtml;
-            const submittedDraft = {
-              operationId,
-              boardType,
-              category,
-              isPinned,
-              title,
-              contentHtml: latestContentHtml,
-              mediaUrl,
-              mediaObjectId,
-              mixsetMediaMode,
-              mixsetLinkUrl,
-            };
-            save(submittedDraft);
-            flush();
-            submittedDraftRef.current = submittedDraft;
           }}
         >
           <input type="hidden" name={CREATION_OPERATION_FIELD} value={operationId} />
@@ -449,7 +299,7 @@ function NewPostFormContent({
                 }
                 setMediaUrl("");
                 setMediaObjectId("");
-                setOperationId(createCreationOperationId());
+                draft.rotateOperation();
               }}
               disabled={isFormBusy}
             />
@@ -628,49 +478,17 @@ function NewPostFormContent({
             <span className="text-body font-medium text-secondary-foreground md:text-ui">
               내용 <span className="sr-only">필수</span>
             </span>
-            {loaded ? (
+            {loaded && draft.collaboration ? (
               <FullEditor
+                key={draft.collab.generation}
+                collaboration={draft.collaboration}
                 onUploadingChange={setIsEditorUploading}
-                initialContent={contentHtml}
-                contentVersion={contentVersion}
-                onChange={handleEditorChange}
-                onDirty={(reader) => {
-                  handleEditorDirty(reader);
-                  if (!operationId) return;
-                  save({
-                    operationId,
-                    boardType,
-                    category,
-                    isPinned,
-                    title,
-                    mediaUrl,
-                    mediaObjectId,
-                    mixsetMediaMode,
-                    mixsetLinkUrl,
-                    get contentHtml() {
-                      return reader();
-                    },
-                  });
-                }}
                 placeholder="게시물 내용을 작성하세요…"
                 disabled={isFormBusy}
                 minHeight="15rem"
                 ariaLabel="커뮤니티 게시물 내용"
                 toolbar="none"
-                footer={
-                  <DraftStatus
-                    status={status}
-                    canSubmit={canSubmit}
-                    savedAt={savedAt}
-                    restored={restored}
-                    recoveries={recoveries}
-                    onRestoreRecovery={restoreRecovery}
-                    onDiscardRecovery={discardRecovery}
-                    serverSync={serverSync}
-                    disabled={isFormBusy}
-                  />
-                }
-                saveShortcutLabel={canSubmit ? "초안 저장" : undefined}
+                footer={<CollabDraftStatus draft={draft} />}
               />
             ) : null}
           </div>

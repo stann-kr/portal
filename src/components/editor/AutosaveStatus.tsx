@@ -38,8 +38,14 @@ export function AutosaveStatus({
   alertRef,
   variant = "inline",
   className,
+  label,
 }: {
   status: AutosaveStatusKind;
+  /**
+   * 공동 편집 연결 상태처럼 기본 이름(저장됨·입력 중) 대신 보일 문구. bar에서는 좁은 화면에 `shortMessage`를 쓴다.
+   * error·blocked는 그대로 `message`를 따른다.
+   */
+  label?: string;
   /** blocked·error일 때 보여 줄 이유. */
   message?: string;
   /** bar에서 좁은 화면의 blocked 표시. */
@@ -69,6 +75,11 @@ export function AutosaveStatus({
             <span className="truncate md:hidden">{shortMessage}</span>
             <span className="hidden truncate md:inline">{message ?? shortMessage}</span>
           </>
+        ) : label && !isError ? (
+          <>
+            <span className="truncate md:hidden">{shortMessage}</span>
+            <span className="hidden truncate md:inline">{label}</span>
+          </>
         ) : (
           <span className="truncate">{isError ? "저장 실패" : LABELS[status]}</span>
         )}
@@ -89,7 +100,7 @@ export function AutosaveStatus({
     >
       <span className={cn("inline-flex items-center gap-1.5", isError && "text-destructive")}>
         <StatusIcon status={status} />
-        <span>{status === "error" || status === "blocked" ? message : LABELS[status]}</span>
+        <span>{status === "error" || status === "blocked" ? message : label ?? LABELS[status]}</span>
       </span>
       {isError && onRetry ? (
         <Button type="button" variant="outline" size="sm" onClick={onRetry}>

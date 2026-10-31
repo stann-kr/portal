@@ -9,7 +9,6 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import { LockKeyhole, Maximize2 } from "lucide-react";
-import { RichTextContent } from "@/components/editor/RichTextContent";
 import { NoteEditorForm, type SavedNote } from "@/components/notes/NoteEditorForm";
 import { Button } from "@/components/ui/button";
 import { getPrivateNote, updatePrivateNote, type UpdateNoteState } from "@/lib/actions/privateNotes";
@@ -18,7 +17,7 @@ import { toKstDateInputValue } from "@/lib/date-input";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 import { formatDetailDate } from "@/components/calendar/calendar-dates";
 import { formatNoteUpdated } from "@/components/notes/note-display";
-import { useLiveNote } from "@/lib/hooks/useLiveNote";
+import { useLiveCollabNote } from "@/components/notes/useLiveCollabNote";
 import { UnifiedItemTypeBadge } from "@/components/ui/unified-item-type";
 import { useSlidePanelHeaderSlots } from "./SlidePanel";
 
@@ -62,44 +61,40 @@ function MetaRow({ label, value }: { label: string; value: string }) {
 }
 
 /**
- * 읽기 전용 본문(다른 작성자의 노트). Stann이 쓰는 동안 학생 패널이 따라오게 `useLiveNote`로 head를 폴링해
- * 제목·날짜·수정 줄·본문만 제자리에서 바꾼다. hook 호출 순서를 지키려고 편집 분기와 분리했다.
+ * 읽기 전용 본문(다른 작성자의 노트). Stann이 쓰는 동안 학생 패널이 따라오게 같은 공동 편집 room에 읽기 전용으로 붙어
+ * 제목·날짜·본문을 실시간으로 바꾼다. hook 호출 순서를 지키려고 편집 분기와 분리했다.
  */
 function ReadOnlyNoteBody({
   note,
   loadedAt,
   onUpdated,
-  pollDelay,
 }: {
   note: LoadedNote;
   loadedAt: number;
   onUpdated?: (saved: SavedNote) => void;
-  pollDelay?: number;
 }) {
-  const live = useLiveNote({
-    noteId: note.id,
-    initial: {
-      version: note.version,
-      title: note.title,
-      contentHtml: note.contentHtml,
-      noteDate: note.noteDate,
-      updatedAt: note.updatedAt,
-    },
-    pollDelay,
-    onUpdate: (updated) => onUpdated?.({ id: updated.id, title: updated.title, contentHtml: updated.contentHtml, noteDate: updated.noteDate }),
-  });
-  const current = live.note;
-  const updatedLabel = formatNoteUpdated(current.updatedAt, live.refreshedAt ?? loadedAt);
+  const live = useLiveCollabNote(note, (current) =>
+    onUpdated?.({
+      id: note.id,
+      title: current.title,
+      contentHtml: current.contentHtml,
+      noteDate: current.noteDate ? new Date(`${current.noteDate}T00:00:00.000Z`) : note.noteDate,
+    }),
+  );
+  const noteDate = live.noteDate ? new Date(`${live.noteDate}T00:00:00.000Z`) : note.noteDate;
+  const updatedLabel = live.changedAt !== null
+    ? formatNoteUpdated(new Date(live.changedAt), live.changedAt)
+    : formatNoteUpdated(note.updatedAt, loadedAt);
   return (
     <div className="flex flex-col gap-5">
-      <h2 className="break-words text-2xl font-semibold tracking-display">{current.title}</h2>
+      <h2 className="break-words text-2xl font-semibold tracking-display">{live.title}</h2>
       <dl className="flex flex-col">
-        <MetaRow label="날짜" value={formatDetailDate(noteDateKey({ ...note, noteDate: current.noteDate }))} />
+        <MetaRow label="날짜" value={formatDetailDate(noteDateKey({ ...note, noteDate }))} />
         {note.authorName ? <MetaRow label="작성자" value={note.authorName} /> : null}
         <MetaRow label="수정" value={updatedLabel} />
       </dl>
       <div className="h-px bg-muted" aria-hidden="true" />
-      {live.status === "missing" ? (
+      {live.missing ? (
         <p role="status" className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
           <LockKeyhole className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
           이 노트는 휴지통으로 옮겨졌거나 더 이상 볼 수 없습니다. 마지막으로 본 내용입니다.
@@ -107,13 +102,13 @@ function ReadOnlyNoteBody({
       ) : (
         <p className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
           <LockKeyhole className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
-          다른 작성자의 노트는 읽기 전용입니다. 작성자가 저장하면 자동으로 갱신됩니다.
+          다른 작성자의 노트는 읽기 전용입니다. 작성자가 쓰는 내용이 실시간으로 보입니다.
         </p>
       )}
       <p role="status" aria-live="polite" className="sr-only">
-        {live.refreshedAt !== null ? "노트가 방금 갱신되었습니다." : ""}
+        {live.changedAt !== null ? "노트가 방금 갱신되었습니다." : ""}
       </p>
-      <RichTextContent html={current.contentHtml} />
+      {live.body}
     </div>
   );
 }
@@ -128,15 +123,12 @@ export function UnifiedNoteDetail({
   viewer,
   onItemUpdated,
   onBusyChange,
-  livePollDelay,
 }: {
   item: UnifiedItem;
   returnTo: string;
   viewer?: NoteDetailViewer;
   onItemUpdated?: (item: UnifiedItem) => void;
   onBusyChange?: (busy: boolean) => void;
-  /** 읽기 전용 실시간 보기의 폴링 간격(ms). 테스트에서 짧게 준다. */
-  livePollDelay?: number;
 }) {
   const noteId = item.id;
   const preview = typeof item.metadata.preview === "string" ? item.metadata.preview : null;
@@ -224,7 +216,6 @@ export function UnifiedNoteDetail({
             key={body.note.id}
             note={body.note}
             loadedAt={body.loadedAt}
-            pollDelay={livePollDelay}
             onUpdated={(saved) => onItemUpdated?.(applySavedNote(item, saved, body.note.createdAt))}
           />
         )

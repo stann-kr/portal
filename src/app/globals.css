@@ -437,3 +437,35 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ─── 실시간 공동 편집: 다른 사람의 커서·선택 ───────────── */
+/* 편집기가 DOM으로 만드는 커서라 색은 data 속성 + 기존 token으로만 고른다. */
+.collab-caret,
+.collab-selection { --collab-color: var(--color-event-lesson); }
+:is(.collab-caret, .collab-selection)[data-collab-color="1"] { --collab-color: var(--color-event-practice); }
+:is(.collab-caret, .collab-selection)[data-collab-color="2"] { --collab-color: var(--color-event-gig); }
+:is(.collab-caret, .collab-selection)[data-collab-color="3"] { --collab-color: var(--color-item-digging); }
+:is(.collab-caret, .collab-selection)[data-collab-color="4"] { --collab-color: var(--color-item-qna); }
+:is(.collab-caret, .collab-selection)[data-collab-color="5"] { --collab-color: var(--color-item-assignment); }
+.collab-caret {
+  position: relative;
+  margin-inline: -1px;
+  border-inline: 1px solid var(--collab-color);
+  pointer-events: none;
+  word-break: normal;
+}
+.collab-caret-label {
+  position: absolute;
+  bottom: 100%;
+  left: -1px;
+  padding: 1px 6px;
+  border-radius: var(--radius-xs) var(--radius-xs) var(--radius-xs) 0;
+  background: var(--collab-color);
+  color: var(--color-highlight-foreground);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 16px;
+  white-space: nowrap;
+  user-select: none;
+}
+.collab-selection { background: color-mix(in srgb, var(--collab-color) 18%, transparent); }

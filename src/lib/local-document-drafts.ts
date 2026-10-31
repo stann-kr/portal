@@ -23,6 +23,8 @@ export type LocalDocumentDraftSummary = {
   contextId: string;
   savedAt: Date | null;
   preview: FormDraftRecoveryPreview;
+  /** 이전 초안 보관함이 전체 내용을 읽기 전용으로 보이기 위한 최신 data(읽을 수 없으면 null). */
+  data: unknown;
   artifactCount: number;
   hasIncompatibleArtifact: boolean;
 };
@@ -201,6 +203,7 @@ export function listLocalDocumentDrafts(
       preview: latest
         ? createFormDraftRecoveryPreview(latest.parsed.data)
         : { title: null, body: null },
+      data: latest?.parsed.data ?? null,
       artifactCount: sourceArtifacts.length,
       hasIncompatibleArtifact: incompatibleCandidates.length > 0,
     });

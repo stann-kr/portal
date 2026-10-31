@@ -1,7 +1,7 @@
 /**
  * @file src/components/qna/NewQnaForm.tsx
  * @description 새 Q&A 질문 작성(캔버스 QnaNew·MobileQnaNew 보드).
- * 제목·본문·첨부를 한 초안으로 이 기기와 계정에 보존하고, 등록은 "질문 등록" 버튼으로만 한다.
+ * 제목·본문·첨부는 실시간 작성본(여러 기기에서 같은 작성본, 선택창 없음)에 보관하고, 등록은 "질문 등록" 버튼으로만 한다.
  */
 "use client";
 
@@ -14,20 +14,14 @@ import { Input } from "@/components/ui/input";
 import { MobileTopBar } from "@/components/app-shell/AppSidebar";
 import { cn } from "@/lib/utils";
 import { AttachmentField } from "@/components/qna/AttachmentField";
-import { DraftStatus } from "@/components/editor/DraftStatus";
+import { CollabDraftStatus } from "@/components/editor/CollabDraftStatus";
 import { createQnaThread, type CreateThreadState } from "@/lib/actions/qna";
-import { createDocumentDraftKey } from "@/lib/form-draft";
-import { useSyncedFormDraft } from "@/lib/hooks/useSyncedFormDraft";
-import { useDeferredEditorContent } from "@/lib/hooks/useDeferredEditorContent";
+import { useCollabFormDraft } from "@/lib/collab/client/useCollabFormDraft";
+import { useEditorExtensions } from "@/components/editor/useEditorExtensions";
 import { isRichTextEmpty } from "@/lib/rich-text";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
 import { useDocumentSaveShortcut } from "@/lib/hooks/useDocumentSaveShortcut";
-import { persistLocalDraftOnShortcut } from "@/lib/local-draft-shortcut";
-import {
-  CREATION_OPERATION_FIELD,
-  createCreationOperationId,
-  parseCreationOperationId,
-} from "@/lib/creation-operation";
+import { CREATION_OPERATION_FIELD } from "@/lib/creation-operation";
 import { CreationConflictActions } from "@/components/editor/CreationConflictActions";
 import { abandonMediaUpload } from "@/lib/actions/upload";
 
@@ -36,32 +30,23 @@ const FullEditor = dynamic(
   { ssr: false },
 );
 
-type QnaDraft = {
-  operationId?: string;
-  title: string;
-  contentHtml: string;
-  attachmentUrl: string;
-  attachmentObjectId?: string;
-};
-
 export function NewQnaForm(props: { actorId: string; returnTo: string }) {
   return <NewQnaFormContent key={props.actorId} {...props} />;
 }
 
+const QNA_FIELDS = { title: "", attachmentUrl: "", attachmentObjectId: "" };
+
 function NewQnaFormContent({ actorId, returnTo }: { actorId: string; returnTo: string }) {
-  const [title, setTitle] = useState("");
-  const {
-    contentHtml,
-    contentVersion,
-    setContentHtml,
-    handleEditorChange,
-    handleEditorDirty,
-    readLatestContentHtml,
-    commitLatestContentHtml,
-  } = useDeferredEditorContent("");
-  const [attachmentUrl, setAttachmentUrl] = useState("");
-  const [attachmentObjectId, setAttachmentObjectId] = useState("");
-  const [operationId, setOperationId] = useState("");
+  // 같은 사람의 새 질문 작성본은 기기와 관계없이 하나다(room `draft:qna-thread:<본인>:new`).
+  const getExtensions = useEditorExtensions();
+  const draft = useCollabFormDraft({
+    room: { draftKind: "qna-thread", ownerId: actorId, scope: "new" },
+    fields: QNA_FIELDS,
+    extensions: getExtensions,
+  });
+  const { title, attachmentUrl, attachmentObjectId } = draft.fields;
+  const { contentHtml, operationId } = draft;
+  const loaded = draft.ready && draft.collab.mode === "write";
   const [isUploading, setIsUploading] = useState(false);
   // 본문 이미지가 올라가는 동안에는 제출하지 않는다. 편집기는 계속 쓸 수 있다.
   const [isEditorUploading, setIsEditorUploading] = useState(false);
@@ -77,7 +62,6 @@ function NewQnaFormContent({ actorId, returnTo }: { actorId: string; returnTo: s
   );
   const formRef = useRef<HTMLFormElement>(null);
   const contentInputRef = useRef<HTMLInputElement>(null);
-  const submittedDraftRef = useRef<QnaDraft | null>(null);
   const handledThreadIdRef = useRef<string | null>(null);
   const router = useProgressRouter();
   // 등록에 성공하면 상세 화면으로 넘어갈 때까지 계속 막아 두 번 등록하지 않게 한다.
@@ -85,97 +69,16 @@ function NewQnaFormContent({ actorId, returnTo }: { actorId: string; returnTo: s
   const isFormBusy = isPending || isUploading || isRedirecting;
   // 등록에 성공한 뒤에는 이탈 막기를 풀어, 하드 이동(배포 버전 차이 등)에서 나가기 확인이 뜨거나 링크가 막히지 않게 한다.
   useBusyNavigationGuard(isPending || isUploading);
-
-  const {
-    loaded,
-    canSubmit,
-    save,
-    clear,
-    flush,
-    status,
-    savedAt,
-    restored,
-    recoveries,
-    restoreRecovery,
-    discardRecovery,
-    serverSync,
-  } = useSyncedFormDraft<QnaDraft>(
-    createDocumentDraftKey("qna-thread", actorId),
-    (draft) => {
-      setOperationId(
-        parseCreationOperationId(draft.operationId) ?? createCreationOperationId(),
-      );
-      setTitle(draft.title ?? "");
-      setContentHtml(draft.contentHtml ?? "");
-      setAttachmentUrl(draft.attachmentUrl ?? "");
-      setAttachmentObjectId(draft.attachmentObjectId ?? "");
-    },
-    {
-      onReset: () => {
-        setOperationId(createCreationOperationId());
-        setTitle("");
-        setContentHtml("");
-        setAttachmentUrl("");
-        setAttachmentObjectId("");
-      },
-    },
-  );
-  const handleSaveShortcut = useDocumentSaveShortcut({
-    disabled: !loaded || !canSubmit || isFormBusy || !operationId,
-    onSave: () => persistLocalDraftOnShortcut({
-      createSnapshot: () => ({
-        operationId,
-        title,
-        contentHtml: readLatestContentHtml(),
-        attachmentUrl,
-        attachmentObjectId,
-      }),
-      isEmpty: (draft) =>
-        !draft.title &&
-        isRichTextEmpty(draft.contentHtml) &&
-        !draft.attachmentUrl &&
-        !draft.attachmentObjectId,
-      clear,
-      save,
-      flush,
-    }),
-  });
-
-  useEffect(() => {
-    if (!loaded) return;
-    const latestContentHtml = readLatestContentHtml();
-    if (!title && isRichTextEmpty(latestContentHtml) && !attachmentUrl && !attachmentObjectId) {
-      clear();
-      return;
-    }
-    if (!operationId) return;
-    save({
-      operationId,
-      title,
-      attachmentUrl,
-      attachmentObjectId,
-      get contentHtml() {
-        return readLatestContentHtml();
-      },
-    });
-  }, [attachmentObjectId, attachmentUrl, clear, contentHtml, loaded, operationId, readLatestContentHtml, save, title]);
+  // 작성본은 입력하는 대로 실시간 보관되므로 Cmd/Ctrl+S는 따로 할 일이 없다(브라우저 저장 창만 막는다).
+  const handleSaveShortcut = useDocumentSaveShortcut({ disabled: !loaded, onSave: () => undefined });
 
   useEffect(() => {
     if (!state.thread?.id || handledThreadIdRef.current === state.thread.id) return;
     handledThreadIdRef.current = state.thread.id;
-    clear({
-      reason: "submitted",
-      submittedData: submittedDraftRef.current ?? {
-        operationId,
-        title,
-        contentHtml,
-        attachmentUrl,
-        attachmentObjectId,
-      },
-    });
-    submittedDraftRef.current = null;
+    // 등록한 작성본은 모든 기기에서 비운다.
+    draft.clear();
     router.replace(`/dashboard/qna/${state.thread.id}?returnTo=${encodeURIComponent(returnTo)}`);
-  }, [attachmentObjectId, attachmentUrl, clear, contentHtml, operationId, returnTo, router, state.thread?.id, title]);
+  }, [draft, returnTo, router, state.thread?.id]);
 
   const hasOperationConflict = Boolean(
     state.operationConflict &&
@@ -216,30 +119,16 @@ function NewQnaFormContent({ actorId, returnTo }: { actorId: string; returnTo: s
           className="flex flex-col gap-[18px] md:gap-5"
           onKeyDownCapture={handleSaveShortcut}
           onSubmit={(event) => {
-            if (!loaded || !canSubmit || isFormBusy || isEditorUploading) {
+            if (!loaded || isFormBusy || isEditorUploading || !operationId) {
               event.preventDefault();
               return;
             }
-            if (!operationId) {
-              event.preventDefault();
-              return;
-            }
-            const latestContentHtml = commitLatestContentHtml();
+            const latestContentHtml = draft.readHtml();
             if (!title.trim() || isRichTextEmpty(latestContentHtml)) {
               event.preventDefault();
               return;
             }
             if (contentInputRef.current) contentInputRef.current.value = latestContentHtml;
-            const submittedDraft = {
-              operationId,
-              title,
-              contentHtml: latestContentHtml,
-              attachmentUrl,
-              attachmentObjectId,
-            };
-            save(submittedDraft);
-            flush();
-            submittedDraftRef.current = submittedDraft;
           }}
         >
           <input type="hidden" name={CREATION_OPERATION_FIELD} value={operationId} />
@@ -260,9 +149,9 @@ function NewQnaFormContent({ actorId, returnTo }: { actorId: string; returnTo: s
                 if (attachmentObjectId) {
                   void abandonMediaUpload(attachmentObjectId).catch(() => undefined);
                 }
-                setAttachmentUrl("");
-                setAttachmentObjectId("");
-                setOperationId(createCreationOperationId());
+                draft.setField("attachmentUrl", "");
+                draft.setField("attachmentObjectId", "");
+                draft.rotateOperation();
               }}
               disabled={isFormBusy}
             />
@@ -276,7 +165,7 @@ function NewQnaFormContent({ actorId, returnTo }: { actorId: string; returnTo: s
               id="qna-title"
               name="title"
               value={title}
-              onChange={(event) => setTitle(event.target.value)}
+              onChange={(event) => draft.setField("title", event.target.value)}
               placeholder="질문 제목을 입력하세요"
               required
               disabled={!loaded || isFormBusy}
@@ -289,46 +178,19 @@ function NewQnaFormContent({ actorId, returnTo }: { actorId: string; returnTo: s
             <span className="text-body font-medium text-secondary-foreground md:text-ui">
               내용 <span className="sr-only">필수</span>
             </span>
-            {loaded ? (
+            {loaded && draft.collaboration ? (
               <FullEditor
+                key={draft.collab.generation}
+                collaboration={draft.collaboration}
                 onUploadingChange={setIsEditorUploading}
-                initialContent={contentHtml}
-                contentVersion={contentVersion}
-                onChange={handleEditorChange}
-                onDirty={(reader) => {
-                  handleEditorDirty(reader);
-                  if (!operationId) return;
-                  save({
-                    operationId,
-                    title,
-                    attachmentUrl,
-                    attachmentObjectId,
-                    get contentHtml() {
-                      return reader();
-                    },
-                  });
-                }}
                 placeholder="질문 내용을 자세히 작성하세요. 악보, 코드, 이미지 등을 첨부할 수 있습니다."
                 disabled={isFormBusy}
                 minHeight="var(--qna-body-min-h)"
                 ariaLabel="Q&A 질문 내용"
                 toolbar="compact"
-                footer={
-                  <DraftStatus
-                    status={status}
-                    canSubmit={canSubmit}
-                    savedAt={savedAt}
-                    restored={restored}
-                    recoveries={recoveries}
-                    onRestoreRecovery={restoreRecovery}
-                    onDiscardRecovery={discardRecovery}
-                    serverSync={serverSync}
-                    disabled={isFormBusy}
-                  />
-                }
-                saveShortcutLabel={canSubmit ? "초안 저장" : undefined}
+                footer={<CollabDraftStatus draft={draft} />}
               />
-            ) : null}
+                        ) : null}
           </div>
 
           <div className="flex flex-col gap-2">
@@ -338,8 +200,8 @@ function NewQnaFormContent({ actorId, returnTo }: { actorId: string; returnTo: s
               mediaObjectId={attachmentObjectId}
               draftOperationId={operationId}
               onChange={(upload) => {
-                setAttachmentUrl(upload?.deliveryUrl ?? "");
-                setAttachmentObjectId(upload?.mediaObjectId ?? "");
+                draft.setField("attachmentUrl", upload?.deliveryUrl ?? "");
+                draft.setField("attachmentObjectId", upload?.mediaObjectId ?? "");
               }}
               disabled={!loaded || isFormBusy}
               onUploadingChange={setIsUploading}
@@ -363,7 +225,7 @@ function NewQnaFormContent({ actorId, returnTo }: { actorId: string; returnTo: s
             <Button
               type="submit"
               size="touch"
-              disabled={!loaded || !canSubmit || isFormBusy || isEditorUploading || !operationId || !title.trim() || isRichTextEmpty(contentHtml)}
+              disabled={!loaded || isFormBusy || isEditorUploading || !operationId || !title.trim() || isRichTextEmpty(contentHtml)}
               pending={isPending || isRedirecting}
               className="w-full md:h-9 md:w-auto md:rounded-md md:px-4 md:text-ui"
             >

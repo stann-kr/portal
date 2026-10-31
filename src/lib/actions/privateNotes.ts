@@ -4,6 +4,8 @@
  */
 "use server";
 
+import { formatCollabDocKey } from "@/lib/collab/doc-key";
+import { resetCollabRoomAfterMutation } from "@/lib/collab/server-env";
 import { revalidatePath } from "next/cache";
 import { and, desc, eq, isNotNull, isNull } from "drizzle-orm";
 import { createDb, createDbContext } from "@/db/client";
@@ -625,6 +627,8 @@ async function runLifecycleAction(
             : undefined,
     };
   }
+  // 열린 공동 편집 room을 비워 옛 내용이 다시 저장되지 않게 한다(복원 뒤에는 새 head로 다시 시작).
+  if (!result.replayed) await resetCollabRoomAfterMutation(formatCollabDocKey({ kind: "note", id: noteId }));
   if (noteBefore) revalidatePrivateNotePaths(noteBefore.studentId, noteId);
   return {
     success: true,
@@ -696,6 +700,8 @@ export async function restorePrivateNoteRevision(
             : undefined,
     };
   }
+  // 열린 공동 편집 room을 비워 옛 내용이 다시 저장되지 않게 한다(복원 뒤에는 새 head로 다시 시작).
+  if (!result.replayed) await resetCollabRoomAfterMutation(formatCollabDocKey({ kind: "note", id: noteId }));
   if (noteBefore) revalidatePrivateNotePaths(noteBefore.studentId, noteId);
   return {
     success: true,

@@ -26,7 +26,11 @@ import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
 import Typography from "@tiptap/extension-typography";
 import { Markdown, type MarkdownStorage } from "tiptap-markdown";
-import type { Editor } from "@tiptap/core";
+import Collaboration from "@tiptap/extension-collaboration";
+import CollaborationCaret from "@tiptap/extension-collaboration-caret";
+import type { AnyExtension, Editor } from "@tiptap/core";
+import type * as Y from "yjs";
+import type { Awareness } from "y-protocols/awareness";
 import { common, createLowlight } from "lowlight";
 import { useState, useCallback, useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
@@ -104,7 +108,21 @@ interface FullEditorProps {
   imageUploader?: EditorImageUploader;
   /** 가이드 편집: 블록의 data-block-id(질문 위치)를 보존한다. 노트·게시물은 쓰지 않는다. */
   preserveBlockIds?: boolean;
+  /**
+   * 실시간 공동 편집. 있으면 본문은 Y.Doc이 원본이라 `initialContent`·`contentVersion`을 쓰지 않고,
+   * 실행 취소는 공동 편집 기록(내 입력만)을 쓴다. `awareness`가 있으면 다른 사람의 커서를 그린다.
+   */
+  collaboration?: FullEditorCollaboration;
 }
+
+export type FullEditorCollaborator = { name: string; colorIndex: number };
+
+export type FullEditorCollaboration = {
+  doc: Y.Doc;
+  field?: string;
+  awareness?: Awareness | null;
+  user: FullEditorCollaborator;
+};
 
 /** 마크다운 이미지 문법을 깨지 않도록 대체 텍스트의 특수 문자를 정리한다. */
 function markdownImageAlt(value: string): string {
@@ -255,6 +273,119 @@ function MobileToolbarButton({
 
 const SLASH_HINT = "'/'를 눌러 블록 추가";
 
+const COLLABORATOR_COLOR_COUNT = 6;
+
+function collaboratorColorIndex(value: unknown): number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value % COLLABORATOR_COLOR_COUNT : 0;
+}
+
+/** 다른 사람 커서: 색은 token class(globals.css `.collab-caret`)로만 정한다. */
+function renderCollaboratorCaret(user: Record<string, unknown>): HTMLElement {
+  const caret = document.createElement("span");
+  caret.className = "collab-caret";
+  caret.setAttribute("data-collab-color", String(collaboratorColorIndex(user.colorIndex)));
+  const label = document.createElement("span");
+  label.className = "collab-caret-label";
+  label.textContent = typeof user.name === "string" && user.name ? user.name : "다른 사용자";
+  caret.append(label);
+  return caret;
+}
+
+/**
+ * 편집기 확장 목록. 공동 편집 시드(같은 schema로 HTML → Y.Doc)도 이 목록을 쓴다.
+ */
+export function createFullEditorExtensions({
+  placeholder = "",
+  preserveBlockIds = false,
+  collaboration,
+}: {
+  placeholder?: string;
+  preserveBlockIds?: boolean;
+  collaboration?: FullEditorCollaboration;
+} = {}): AnyExtension[] {
+  return [
+    StarterKit.configure({
+      // CodeBlock은 CodeBlockLowlight로 교체
+      codeBlock: false,
+      // 공동 편집은 Collaboration의 실행 취소(내 입력만 되돌림)를 쓴다.
+      undoRedo: collaboration ? false : undefined,
+      // These extensions have their own configuration below in Tiptap v3.
+      link: false,
+      underline: false,
+    }),
+    Underline,
+    Highlight.configure({ multicolor: false }),
+    SafeTextAlign.configure({ types: ["heading", "paragraph"] }),
+    LinkExtension.configure({
+      openOnClick: false,
+      autolink: true,
+      HTMLAttributes: {
+        class: "text-primary underline underline-offset-2 cursor-pointer",
+      },
+    }),
+    ImageExtension.configure({
+      inline: false,
+      // 기존 문서에 저장된 data URL 이미지를 편집 시 삭제하지 않는다.
+      // 새 이미지 삽입 UI는 http(s) URL만 허용해 신규 base64 생성을 막는다.
+      allowBase64: true,
+      HTMLAttributes: {
+        class: "rounded-lg max-w-full my-2",
+      },
+    }),
+    YoutubeExtension.configure({
+      controls: true,
+      nocookie: true,
+      HTMLAttributes: {
+        class: "rounded-lg my-2",
+      },
+    }),
+    TableExtension.configure({ resizable: false }),
+    TableRow,
+    TableHeader,
+    TableCell,
+    CodeBlockLowlight.configure({
+      lowlight,
+      HTMLAttributes: {
+        class: "not-prose",
+      },
+    }),
+    // 빈 문서는 화면이 정한 안내를, 내용이 있는 문서의 빈 줄(커서 위치)은 `/` 블록 안내를 보인다.
+    Placeholder.configure({
+      placeholder: ({ editor: currentEditor }) => (currentEditor.isEmpty ? placeholder : SLASH_HINT),
+    }),
+    TaskList,
+    TaskItem.configure({ nested: true }),
+    Typography,
+    Markdown.configure({
+      html: true,
+      tightLists: true,
+      linkify: false,
+      breaks: false,
+      transformPastedText: true,
+      transformCopiedText: false,
+    }),
+    ...(preserveBlockIds ? [GuideBlockId] : []),
+    ...(collaboration
+      ? [
+          Collaboration.configure({ document: collaboration.doc, field: collaboration.field ?? "default" }),
+          ...(collaboration.awareness
+            ? [
+                CollaborationCaret.configure({
+                  provider: { awareness: collaboration.awareness },
+                  user: collaboration.user,
+                  render: renderCollaboratorCaret,
+                  selectionRender: (user: Record<string, unknown>) => ({
+                    class: "collab-selection",
+                    "data-collab-color": String(collaboratorColorIndex(user.colorIndex)),
+                  }),
+                }),
+              ]
+            : []),
+        ]
+      : []),
+  ];
+}
+
 function readSaveShortcutKey(): string {
   if (typeof navigator === "undefined") return "Ctrl+S";
   return /Mac|iPhone|iPad|iPod/u.test(navigator.platform || navigator.userAgent) ? "⌘S" : "Ctrl+S";
@@ -280,6 +411,7 @@ export function FullEditor({
   onUploadingChange,
   imageUploader = DOCUMENT_IMAGE_UPLOADER,
   preserveBlockIds = false,
+  collaboration,
 }: FullEditorProps) {
   const isPage = variant === "page";
   const isBare = variant === "bare";
@@ -422,68 +554,8 @@ export function FullEditor({
   }, [imageUploadBusy]);
   useEffect(() => () => onUploadingChangeRef.current?.(false), []);
   const editorExtensions = useMemo(
-    () => [
-      StarterKit.configure({
-        // CodeBlock은 CodeBlockLowlight로 교체
-        codeBlock: false,
-        // These extensions have their own configuration below in Tiptap v3.
-        link: false,
-        underline: false,
-      }),
-      Underline,
-      Highlight.configure({ multicolor: false }),
-      SafeTextAlign.configure({ types: ["heading", "paragraph"] }),
-      LinkExtension.configure({
-        openOnClick: false,
-        autolink: true,
-        HTMLAttributes: {
-          class: "text-primary underline underline-offset-2 cursor-pointer",
-        },
-      }),
-      ImageExtension.configure({
-        inline: false,
-        // 기존 문서에 저장된 data URL 이미지를 편집 시 삭제하지 않는다.
-        // 새 이미지 삽입 UI는 http(s) URL만 허용해 신규 base64 생성을 막는다.
-        allowBase64: true,
-        HTMLAttributes: {
-          class: "rounded-lg max-w-full my-2",
-        },
-      }),
-      YoutubeExtension.configure({
-        controls: true,
-        nocookie: true,
-        HTMLAttributes: {
-          class: "rounded-lg my-2",
-        },
-      }),
-      TableExtension.configure({ resizable: false }),
-      TableRow,
-      TableHeader,
-      TableCell,
-      CodeBlockLowlight.configure({
-        lowlight,
-        HTMLAttributes: {
-          class: "not-prose",
-        },
-      }),
-      // 빈 문서는 화면이 정한 안내를, 내용이 있는 문서의 빈 줄(커서 위치)은 `/` 블록 안내를 보인다.
-      Placeholder.configure({
-        placeholder: ({ editor: currentEditor }) => (currentEditor.isEmpty ? placeholder : SLASH_HINT),
-      }),
-      TaskList,
-      TaskItem.configure({ nested: true }),
-      Typography,
-      Markdown.configure({
-        html: true,
-        tightLists: true,
-        linkify: false,
-        breaks: false,
-        transformPastedText: true,
-        transformCopiedText: false,
-      }),
-      ...(preserveBlockIds ? [GuideBlockId] : []),
-    ],
-    [placeholder, preserveBlockIds],
+    () => createFullEditorExtensions({ placeholder, preserveBlockIds, collaboration }),
+    [placeholder, preserveBlockIds, collaboration],
   );
   const editorProps = useMemo(
     () => ({
@@ -541,7 +613,8 @@ export function FullEditor({
     shouldRerenderOnTransaction: false,
     editable: !disabled,
     extensions: editorExtensions,
-    content: initialEditorContent,
+    // 공동 편집은 Y.Doc이 본문 원본이다. HTML 초기값을 넣으면 room 내용과 겹친다.
+    content: collaboration ? undefined : initialEditorContent,
     editorProps,
     onUpdate: handleEditorUpdate,
   });
@@ -584,7 +657,7 @@ export function FullEditor({
 
   // draft 복원·다른 문서 전환·저장 후 초기화를 모두 동기화한다.
   useEffect(() => {
-    if (!editor) return;
+    if (!editor || collaboration) return;
     const nextContent = initialContent || "";
     const explicitContentReset =
       contentVersion !== appliedContentVersionRef.current;
@@ -612,7 +685,7 @@ export function FullEditor({
       // textarea 표시값은 편집기에서 다시 읽어 ref에 둔 마크다운을 그대로 따른다.
       setMarkdownText(markdownTextRef.current);
     }
-  }, [contentVersion, discardDeferredImages, editor, initialContent, isMarkdownMode]);
+  }, [collaboration, contentVersion, discardDeferredImages, editor, initialContent, isMarkdownMode]);
 
   // 잠기면 열린 삽입 패널을 그 렌더에서 바로 닫는다.
   if (disabled && insertPanel) setInsertPanel(null);
