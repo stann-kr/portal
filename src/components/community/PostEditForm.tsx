@@ -19,7 +19,7 @@ import {
   DOCUMENT_SNAPSHOT_FINGERPRINT_FIELD,
 } from "@/lib/document-snapshot-fingerprint";
 import { POST_BASE_REVISION_FIELD } from "@/lib/post-continuity";
-import { MIXSET_LINK_FIELD, normalizeMixsetLinkUrl } from "@/lib/community-mixset-media";
+import { classifyMixsetMedia, MIXSET_LINK_FIELD, normalizeMixsetLinkUrl } from "@/lib/community-mixset-media";
 import { isImplicitSubmitEnter } from "@/components/community/empty-title-enter";
 import { useCollabFormDraft } from "@/lib/collab/client/useCollabFormDraft";
 import { COLLAB_FRAGMENT, COLLAB_META } from "@/lib/collab/client/seed";
@@ -70,11 +70,20 @@ function PostEditFormContent({ post, onCancel, onSaved, onBusyChange, mixsetLink
       const latest = await getPostById(post.id);
       if (!latest) return null;
       headRef.current = { version: latest.version, title: latest.title, contentHtml: latest.contentHtml };
-      return { html: latest.contentHtml, fields: { title: latest.title }, version: latest.version };
+      const media = hasLinkField ? classifyMixsetMedia(latest) : null;
+      return {
+        html: latest.contentHtml,
+        fields: { title: latest.title, ...(hasLinkField ? { mixsetLinkUrl: media?.kind === "link" ? media.url : "" } : {}) },
+        version: latest.version,
+      };
     },
     extensions: getExtensions,
   });
   const { title, mixsetLinkUrl: linkUrl } = draft.fields;
+  const generationRef = useRef(draft.collab.generation);
+  useEffect(() => {
+    generationRef.current = draft.collab.generation;
+  });
   const { contentHtml } = draft;
   const loaded = draft.ready && draft.collab.mode === "write";
   const [isPending, setIsPending] = useState(false);
@@ -116,8 +125,15 @@ function PostEditFormContent({ post, onCancel, onSaved, onBusyChange, mixsetLink
     }
     setIsPending(true);
     setError(null);
+    // 이 저장의 room epoch·작업본 세대는 시작할 때 고정한다(복원 뒤 옛 내용을 다시 보내지 않게).
+    const epoch = draft.collab.epoch;
+    const generation = draft.collab.generation;
     try {
       for (let attempt = 0; attempt < 2; attempt += 1) {
+        if (attempt > 0 && generationRef.current !== generation) {
+          setError("작업본이 다시 시작되어 이 저장은 보내지 않았습니다. 내용을 확인한 뒤 다시 저장해 주세요.");
+          return;
+        }
         const head = headRef.current;
         const formData = new FormData();
         formData.set("title", title);
@@ -125,7 +141,7 @@ function PostEditFormContent({ post, onCancel, onSaved, onBusyChange, mixsetLink
         if (hasLinkField) formData.set(MIXSET_LINK_FIELD, linkUrl);
         formData.set(CREATION_OPERATION_FIELD, createCreationOperationId());
         formData.set(POST_BASE_REVISION_FIELD, String(head.version));
-        if (typeof draft.collab.epoch === "number") formData.set(COLLAB_EPOCH_FIELD, String(draft.collab.epoch));
+        if (typeof epoch === "number") formData.set(COLLAB_EPOCH_FIELD, String(epoch));
         formData.set(
           DOCUMENT_SNAPSHOT_FINGERPRINT_FIELD,
           createDocumentSnapshotFingerprint({

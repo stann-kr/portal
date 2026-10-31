@@ -449,3 +449,34 @@ test("room epoch 조회: worker env의 room에서 지금 epoch를 읽는다", as
   assert.equal(await readCollabRoomEpoch(env, "note:n1"), 4);
   assert.equal(await readCollabRoomEpoch(undefined, "note:n1"), null);
 });
+
+test("room: 휴면 복귀 뒤에도 소켓 attachment로 awareness 소유권을 되살린다", () => {
+  const storage = new MemoryStorage();
+  const sockets: MemorySocket[] = [];
+  const first = new RoomCore(storage, () => sockets, () => NOW);
+  rooms.push(first);
+  const owner = new MemorySocket();
+  const reader = new MemorySocket();
+  sockets.push(owner, reader);
+  first.connect(owner, { userId: "admin", mode: "write" });
+  first.connect(reader, { userId: "s1", mode: "read" });
+  first.message(owner, awarenessMessage(9, 1, { canSave: true }));
+  // DO가 휴면에서 깨어나면 메모리(RoomCore)는 새로 만들어지고 소켓·attachment만 남는다.
+  const revived = new RoomCore(storage, () => sockets, () => NOW);
+  rooms.push(revived);
+  const before = owner.sent.length;
+  revived.message(reader, awarenessMessage(9, 50, { canSave: false }));
+  assert.equal(owner.sent.length, before, "읽기 소켓이 작성자 client id를 가로채지 못함");
+  revived.message(owner, awarenessMessage(9, 2, { canSave: true }));
+  assert.equal(lastAwarenessStates(reader).at(-1)?.state?.canSave, true, "주인은 계속 갱신");
+});
+
+test("room: 최대 연결 시간이 지난 소켓은 awareness 전달 때도 닫는다", () => {
+  let now = NOW;
+  const { room, join } = createRoom(() => now);
+  const listener = join("read", "s1");
+  now += COLLAB_SOCKET_MAX_AGE_MS + 1;
+  const writer = join("write", "admin");
+  room.message(writer, awarenessMessage(3, 1, { canSave: true }));
+  assert.equal(listener.closed, COLLAB_CLOSE_EXPIRED);
+});

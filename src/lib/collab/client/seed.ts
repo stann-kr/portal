@@ -23,16 +23,25 @@ export type CollabSeedInput = {
 };
 
 /**
- * 시드 clientID는 room key와 내용(본문·칸)으로만 정한다. version이 달라도 내용이 같으면 같은 시드라
- * 합쳐도 한 번만 들어간다. 내용이 다른 head로 따로 시드된 경우만 중복될 수 있어, 서버 연결 없이 시드하는 일은
- * 처음 연 문서를 오프라인으로 열었을 때로 제한한다(useCollabDocument).
+ * 본문 시드 clientID는 room key와 본문으로만 정한다. version·제목이 달라도 본문이 같으면 같은 시드라
+ * 합쳐도 한 번만 들어간다. 칸(제목 등)은 별도 clientID(key·칸 값)로 넣어, 칸이 달라도 본문이 겹치지 않고
+ * 칸은 room `meta`에서 하나로 수렴한다. 본문이 다른 head로 따로 시드된 경우만 중복될 수 있어, 서버 연결 없이
+ * 시드하는 일은 처음 연 문서를 오프라인으로 열었을 때로 제한한다(useCollabDocument).
  */
-export function collabSeedClientId(input: CollabSeedInput): number {
-  const fields = JSON.stringify(Object.entries(input.fields ?? {}).sort(([a], [b]) => a.localeCompare(b)));
-  const digest = sha256(utf8ToBytes(`${input.key}\u0000${fields}\u0000${input.html}`));
+function hashClientId(text: string): number {
+  const digest = sha256(utf8ToBytes(text));
   // Yjs clientID는 uint32. 0은 피한다.
   const value = ((digest[0] << 24) | (digest[1] << 16) | (digest[2] << 8) | digest[3]) >>> 0;
   return value === 0 ? 1 : value;
+}
+
+export function collabSeedClientId(input: CollabSeedInput): number {
+  return hashClientId(`body\u0000${input.key}\u0000${input.html}`);
+}
+
+function collabSeedFieldsClientId(input: CollabSeedInput): number {
+  const fields = JSON.stringify(Object.entries(input.fields ?? {}).sort(([a], [b]) => a.localeCompare(b)));
+  return hashClientId(`fields\u0000${input.key}\u0000${fields}`);
 }
 
 export function isCollabDocSeeded(doc: Y.Doc): boolean {
@@ -42,20 +51,27 @@ export function isCollabDocSeeded(doc: Y.Doc): boolean {
 export function buildCollabSeedUpdate(input: CollabSeedInput, extensions: AnyExtension[]): Uint8Array {
   const schema = getSchema(extensions);
   const json = generateJSON(input.html.trim() ? input.html : "<p></p>", extensions);
-  const seedDoc = new Y.Doc({ gc: false });
-  seedDoc.clientID = collabSeedClientId(input);
-  seedDoc.transact(() => {
-    prosemirrorJSONToYXmlFragment(schema, json, seedDoc.getXmlFragment(COLLAB_FRAGMENT));
-    const meta = seedDoc.getMap(COLLAB_META);
-    for (const [name, value] of Object.entries(input.fields ?? {}).sort(([a], [b]) => a.localeCompare(b))) {
-      meta.set(name, value);
-    }
-    // version은 넣지 않는다(같은 내용의 시드가 바이트까지 같도록).
-    meta.set(COLLAB_META_SEEDED, true);
+  const bodyDoc = new Y.Doc({ gc: false });
+  bodyDoc.clientID = collabSeedClientId(input);
+  bodyDoc.transact(() => {
+    prosemirrorJSONToYXmlFragment(schema, json, bodyDoc.getXmlFragment(COLLAB_FRAGMENT));
+    // version은 넣지 않는다(같은 본문의 시드가 바이트까지 같도록).
+    bodyDoc.getMap(COLLAB_META).set(COLLAB_META_SEEDED, true);
   });
-  const update = Y.encodeStateAsUpdate(seedDoc);
-  seedDoc.destroy();
-  return update;
+  const updates = [Y.encodeStateAsUpdate(bodyDoc)];
+  bodyDoc.destroy();
+  const entries = Object.entries(input.fields ?? {}).sort(([a], [b]) => a.localeCompare(b));
+  if (entries.length > 0) {
+    const fieldsDoc = new Y.Doc({ gc: false });
+    fieldsDoc.clientID = collabSeedFieldsClientId(input);
+    fieldsDoc.transact(() => {
+      const meta = fieldsDoc.getMap(COLLAB_META);
+      for (const [name, value] of entries) meta.set(name, value);
+    });
+    updates.push(Y.encodeStateAsUpdate(fieldsDoc));
+    fieldsDoc.destroy();
+  }
+  return Y.mergeUpdates(updates);
 }
 
 export function seedCollabDoc(doc: Y.Doc, input: CollabSeedInput, extensions: AnyExtension[]): boolean {

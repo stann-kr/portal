@@ -247,8 +247,10 @@ function NoteEditorFormContent({ note, create, actorId, action, focusBodyEnd = f
   });
   const { doc, provider } = collab;
   const epochRef = useRef(collab.epoch);
+  const generationRef = useRef(collab.generation);
   useEffect(() => {
     epochRef.current = collab.epoch;
+    generationRef.current = collab.generation;
   });
   const [title, setTitle] = useCollabMetaField(doc, "title", initialTitle);
   const [noteDate, setNoteDate] = useCollabMetaField(doc, "noteDate", initialDate);
@@ -297,8 +299,14 @@ function NoteEditorFormContent({ note, create, actorId, action, focusBodyEnd = f
     async (targetId: string, snapshot: NoteSnapshot): Promise<CollabSaveResult> => {
       const submit = (formData: FormData) =>
         create ? create.updateAction(targetId, {}, formData) : action ? action({}, formData) : Promise.resolve<UpdateNoteState>({ error: "저장할 노트를 찾지 못했습니다." });
+      // 이 저장의 room epoch·문서 세대는 시작할 때 고정한다. 그 사이 room이 다시 시작되면 옛 내용을 다시 보내지 않는다.
+      const epoch = epochRef.current;
+      const generation = generationRef.current;
       for (let attempt = 0; attempt < 2; attempt += 1) {
-        const state = await submit(buildFormData(snapshot, createCreationOperationId(), headVersionRef.current, epochRef.current));
+        if (attempt > 0 && generationRef.current !== generation) {
+          return { ok: false, error: "문서가 다시 시작되어 이 저장은 보내지 않았습니다." };
+        }
+        const state = await submit(buildFormData(snapshot, createCreationOperationId(), headVersionRef.current, epoch));
         if (state.success) {
           const version = state.note?.version ?? state.currentRevision ?? state.operationResultRevision ?? headVersionRef.current;
           publishHeadVersion(version);

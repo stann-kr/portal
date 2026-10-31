@@ -59,7 +59,7 @@ function recoveredKind(roomKey: string): DocumentDraftKind {
 }
 
 /** 실시간 문서 복구본(useCollabDocument가 남김)을 읽는다. 깨진 항목은 건너뛴다. */
-function readRecoveredItems(): ArchiveItem[] {
+function readRecoveredItems(actorId: string): ArchiveItem[] {
   const items: ArchiveItem[] = [];
   try {
     for (let index = 0; index < window.localStorage.length; index += 1) {
@@ -67,9 +67,10 @@ function readRecoveredItems(): ArchiveItem[] {
       if (!storageKey?.startsWith(COLLAB_RECOVERY_PREFIX)) continue;
       try {
         const copy = JSON.parse(window.localStorage.getItem(storageKey) ?? "null") as
-          | { key?: unknown; savedAt?: unknown; fields?: Record<string, unknown>; html?: unknown }
+          | { key?: unknown; userId?: unknown; savedAt?: unknown; fields?: Record<string, unknown>; html?: unknown }
           | null;
-        if (!copy || typeof copy.key !== "string") continue;
+        // 같은 브라우저의 다른 계정 복구본은 보이지 않는다.
+        if (!copy || typeof copy.key !== "string" || copy.userId !== actorId) continue;
         const savedAt = typeof copy.savedAt === "string" ? new Date(copy.savedAt) : null;
         items.push({
           id: `recovered:${storageKey}`,
@@ -137,7 +138,7 @@ export function LegacyDraftArchive({
     // 저장소 읽기는 mount 직후 한 번 예약해 effect 본문에서 동기 setState를 하지 않는다.
     const load = () => {
       const result = readLocalDocumentDrafts(actorId);
-      setLocalItems([...readRecoveredItems(), ...result.drafts.map((draft) => ({
+      setLocalItems([...readRecoveredItems(actorId), ...result.drafts.map((draft) => ({
         id: `local:${draft.sourceKey}`,
         scope: "local",
         sourceKey: draft.sourceKey,

@@ -62,6 +62,8 @@ export class CollabProvider {
   hasPendingLocalChanges = false;
   /** 이번 provider가 한 번이라도 room의 hello를 받았는지(연결된 적이 있는지). */
   everConnected = false;
+  /** 이번 provider가 한 번이라도 서버와 동기화(step2 수신)를 마쳤는지. */
+  everSynced = false;
   /** hello로 받은 room epoch. */
   epoch: number | null = null;
   private socket: WebSocket | null = null;
@@ -216,6 +218,7 @@ export class CollabProvider {
       }
       if (messageType === syncProtocol.messageYjsSyncStep2 && !this.synced) {
         this.synced = true;
+        this.everSynced = true;
         this.attempts = 0;
         this.setStatus("connected");
       }

@@ -687,6 +687,18 @@ test("같은 head로 만든 시드는 몇 번을 합쳐도 본문이 겹치지 �
   assert.equal(collabDocHtml(deviceB, extensions), "<p>안녕하세요</p><p>둘째 줄</p>");
   assert.deepEqual(Array.from(Y.encodeStateVector(deviceA)), Array.from(Y.encodeStateVector(deviceB)));
 
+  // 제목만 다른 head로 따로 시드해도 본문은 겹치지 않고 제목은 하나로 수렴한다.
+  const titleA = new Y.Doc();
+  const titleB = new Y.Doc();
+  Y.applyUpdate(titleA, buildCollabSeedUpdate({ ...input, fields: { ...input.fields, title: "A 제목" } }, extensions));
+  Y.applyUpdate(titleB, buildCollabSeedUpdate({ ...input, fields: { ...input.fields, title: "B 제목" } }, extensions));
+  Y.applyUpdate(titleA, Y.encodeStateAsUpdate(titleB));
+  Y.applyUpdate(titleB, Y.encodeStateAsUpdate(titleA));
+  assert.equal(collabDocHtml(titleA, extensions), "<p>안녕하세요</p><p>둘째 줄</p>");
+  assert.equal(titleA.getMap("meta").get("title"), titleB.getMap("meta").get("title"));
+  titleA.destroy();
+  titleB.destroy();
+
   // 빈 head는 빈 문단 하나로 시작하고 시드 표시만 남는다.
   const empty = new Y.Doc();
   Y.applyUpdate(empty, buildCollabSeedUpdate({ key: "note:empty", version: 0, html: "" }, extensions));

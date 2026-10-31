@@ -178,6 +178,7 @@ export class RoomCore {
     }
     doc.on("update", (update: Uint8Array, origin: unknown) => this.onDocUpdate(update, origin));
     this.doc = doc;
+    this.restoreAwarenessOwnership();
     return { doc };
   }
 
@@ -185,16 +186,8 @@ export class RoomCore {
     this.storage.appendUpdate(update);
     this.pendingUpdateBytes += update.byteLength;
     this.pendingUpdateCount += 1;
-    const message = encodeSyncUpdate(update);
-    for (const socket of this.sockets()) {
-      if (socket === origin) continue;
-      // 받기만 하는 소켓도 연결 최대 시간이 지나면 닫아 권한을 다시 확인하게 한다.
-      if (this.isExpired(socket)) {
-        safeClose(socket, COLLAB_CLOSE_EXPIRED, "expired");
-        continue;
-      }
-      safeSend(socket, message);
-    }
+    // 반영한 소켓(origin)을 뺀 나머지에 전달한다. 서버에서 update를 만드는 곳은 소켓 메시지뿐이다.
+    this.broadcast(encodeSyncUpdate(update), (origin ?? null) as RoomSocket | null);
     if (
       this.pendingUpdateCount >= ROOM_COMPACT_UPDATE_COUNT ||
       this.pendingUpdateBytes >= ROOM_COMPACT_BYTES
@@ -220,6 +213,30 @@ export class RoomCore {
   get currentEpoch(): number {
     this.load();
     return this.epoch;
+  }
+
+  /**
+   * 휴면 복귀로 메모리가 비면 소켓 attachment에 남은 client id 소유권만 되살린다. 상태는 각 클라이언트가
+   * 주기적으로 다시 알리므로(clock 증가) 그때 채워진다. 그 사이 다른 소켓이 그 id를 가로채지 못한다.
+   */
+  private restoreAwarenessOwnership(): void {
+    for (const socket of this.sockets()) {
+      for (const clientId of socket.getAttachment()?.awarenessClientIds ?? []) {
+        if (!this.awareness.has(clientId)) this.awareness.set(clientId, { clock: 0, state: "null", socket });
+      }
+    }
+  }
+
+  /** 다른 소켓에 전달한다. 최대 연결 시간이 지난 소켓은 받기만 하더라도 닫아 권한을 다시 확인하게 한다. */
+  private broadcast(message: Uint8Array, except: RoomSocket | null): void {
+    for (const socket of this.sockets()) {
+      if (socket === except) continue;
+      if (this.isExpired(socket)) {
+        safeClose(socket, COLLAB_CLOSE_EXPIRED, "expired");
+        continue;
+      }
+      safeSend(socket, message);
+    }
   }
 
   private isExpired(socket: RoomSocket): boolean {
@@ -329,10 +346,7 @@ export class RoomCore {
       socket.setAttachment({ ...attachment, awarenessClientIds: Array.from(owned) });
     }
     if (accepted.length === 0) return;
-    const message = encodeAwarenessMessage(accepted);
-    for (const other of this.sockets()) {
-      if (other !== socket) safeSend(other, message);
-    }
+    this.broadcast(encodeAwarenessMessage(accepted), socket);
   }
 
   /** 소켓이 닫히면 그 소켓의 커서를 다른 사람 화면에서 지운다. 마지막 연결이면 메모리 상태를 내려놓는다. */
@@ -343,12 +357,8 @@ export class RoomCore {
       this.awareness.delete(clientId);
       removed.push({ clientId, clock: entry.clock + 1, state: "null" });
     }
-    const others = this.sockets().filter((other) => other !== socket);
-    if (removed.length > 0) {
-      const message = encodeAwarenessMessage(removed);
-      for (const other of others) safeSend(other, message);
-    }
-    if (others.length === 0) this.destroy();
+    if (removed.length > 0) this.broadcast(encodeAwarenessMessage(removed), socket);
+    if (this.sockets().every((other) => other === socket)) this.destroy();
   }
 
   /** 메모리 상태를 정리한다(다음 연결에서 저장소로부터 다시 읽는다). */

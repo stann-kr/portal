@@ -70,6 +70,8 @@ export function useCollabFormDraft<F extends CollabFormFields>(options: CollabFo
     getSeed: async (reason) => {
       if (!key) return null;
       const latest = reason === "reset" && optionsRef.current.loadLatest ? await optionsRef.current.loadLatest().catch(() => null) : null;
+      // 다시 시작된 작업본을 화면의 옛 내용으로 채우지 않는다. 최신을 못 읽으면 다음 연결 때 다시 시도한다.
+      if (reason === "reset" && optionsRef.current.loadLatest && !latest) return null;
       if (latest) {
         return { key, version: latest.version, html: latest.html, fields: { ...optionsRef.current.fields, ...latest.fields } };
       }
