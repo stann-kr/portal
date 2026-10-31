@@ -16,6 +16,7 @@ import { getUnifiedItemsForStudent } from "@/lib/actions/unifiedItems";
 import { syncAndGetExternalItems } from "@/lib/actions/calendarSync";
 import { getUnifiedItemSpaceLabel } from "@/lib/unified-item-normalization";
 import { PortalShell } from "@/components/ui/portal-shell";
+import { useHistoryReturn } from "@/components/app-shell/RouteAutoRefresh";
 import type { PortalLocation, PortalSection } from "@/lib/portal-location";
 
 // ── 섹션 컴포넌트
@@ -131,6 +132,22 @@ export function AdminPortalClient({
       cancelled = true;
     };
   }, [calendarLoadedStudentId, selectedStudentId]);
+
+  // 노트 자동 저장·생성은 revalidatePath를 부르지 않고, 뒤로/앞으로·bfcache 복원은 옛 서버 props로 mount한다.
+  // 캘린더 항목은 props를 state로 옮겨 쓰므로 router.refresh()로는 바뀌지 않는다 → 내부 항목만 다시 받아 덮는다
+  // (외부 캘린더 항목은 그대로 둔다. 휴지통 이동은 여전히 revalidate하므로 여기서 빠진 항목을 지우지 않는다).
+  const refetchInternalCalendarItems = useCallback(() => {
+    const studentId = calendarLoadedStudentIdRef.current;
+    if (!studentId) return;
+    const requestId = calendarRequestRef.current;
+    void getUnifiedItemsForStudent(studentId)
+      .then((items) => {
+        if (calendarRequestRef.current !== requestId || calendarLoadedStudentIdRef.current !== studentId) return;
+        setCalendarItems((current) => upsertUnifiedItems(current, items));
+      })
+      .catch(() => undefined);
+  }, []);
+  useHistoryReturn(refetchInternalCalendarItems);
 
   // URL의 학생 선택을 복원하고, 뒤로/앞으로 이동도 같은 데이터 문맥으로 맞춘다.
   useEffect(() => {

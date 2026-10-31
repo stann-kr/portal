@@ -45,11 +45,12 @@ mock.module("@/components/notes/NoteEditorForm", {
 let LiveNoteArticle: typeof import("@/components/notes/LiveNoteArticle").LiveNoteArticle;
 let UnifiedNoteDetail: typeof import("@/components/student-portal/UnifiedNoteDetail").UnifiedNoteDetail;
 let RouteAutoRefresh: typeof import("@/components/app-shell/RouteAutoRefresh").RouteAutoRefresh;
+let useHistoryReturn: typeof import("@/components/app-shell/RouteAutoRefresh").useHistoryReturn;
 
 before(async () => {
   ({ LiveNoteArticle } = await import("@/components/notes/LiveNoteArticle"));
   ({ UnifiedNoteDetail } = await import("@/components/student-portal/UnifiedNoteDetail"));
-  ({ RouteAutoRefresh } = await import("@/components/app-shell/RouteAutoRefresh"));
+  ({ RouteAutoRefresh, useHistoryReturn } = await import("@/components/app-shell/RouteAutoRefresh"));
 });
 
 after(() => mock.restoreAll());
@@ -420,4 +421,28 @@ test("목록 자동 갱신은 history 복귀(popstate) 직후 mount에서만 한
     harness.browserWindow.dispatchEvent(pageShow);
   });
   assert.equal(refresh.mock.callCount(), 1, "일반 pageshow(persisted=false)에서는 refresh하지 않는다");
+});
+
+test("history 복귀 hook은 props를 state로 쓰는 화면(관리자 홈 캘린더)에 popstate 직후 mount·bfcache 복원에서만 알린다", { concurrency: false }, async (context) => {
+  let returns = 0;
+  function Probe() {
+    useHistoryReturn(() => { returns += 1; });
+    return null;
+  }
+  const harness = await renderLive(context, <div><Probe /></div>);
+  await sleep(10);
+  assert.equal(returns, 0, "일반 진입 mount에서는 알리지 않는다");
+
+  await harness.rerender(<div />);
+  await act(async () => { harness.browserWindow.dispatchEvent(new harness.browserWindow.PopStateEvent("popstate")); });
+  await harness.rerender(<div><Probe /></div>);
+  await sleep(10);
+  assert.equal(returns, 1, "뒤로/앞으로 직후 mount에서 한 번 알린다");
+
+  await act(async () => {
+    const pageShow = new harness.browserWindow.Event("pageshow");
+    Object.defineProperty(pageShow, "persisted", { value: true });
+    harness.browserWindow.dispatchEvent(pageShow);
+  });
+  assert.equal(returns, 2, "bfcache 복원에서 알린다");
 });

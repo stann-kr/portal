@@ -12,7 +12,7 @@
  */
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 
 export const ROUTE_AUTO_REFRESH_INTERVAL_MS = 30_000;
@@ -41,6 +41,37 @@ function installHistoryReturnListener() {
   });
 }
 
+/** popstate가 방금 있었으면(history 복귀 직후 mount) true를 돌려주고 소비한다. */
+function consumeRecentHistoryReturn(): boolean {
+  installHistoryReturnListener();
+  if (lastHistoryReturnAt > 0 && Date.now() - lastHistoryReturnAt < ROUTE_AUTO_REFRESH_HISTORY_RETURN_WINDOW_MS) {
+    lastHistoryReturnAt = 0;
+    return true;
+  }
+  return false;
+}
+
+/**
+ * history 복귀(뒤로/앞으로 직후 mount)와 bfcache 복원(`pageshow` persisted)에서 `onReturn`을 한 번 부른다.
+ * 서버 props를 state로 옮겨 쓰는 화면(관리자 홈 캘린더)은 `router.refresh()`로 갱신되지 않으므로 직접 다시 받는다.
+ */
+export function useHistoryReturn(onReturn: () => void) {
+  const onReturnRef = useRef(onReturn);
+  useEffect(() => {
+    onReturnRef.current = onReturn;
+  }, [onReturn]);
+
+  useEffect(() => {
+    // bfcache 복원은 컴포넌트를 다시 mount하지 않으므로 pageshow에서 직접 받는다.
+    const onPageShow = (event: PageTransitionEvent) => {
+      if (event.persisted) onReturnRef.current();
+    };
+    window.addEventListener("pageshow", onPageShow);
+    if (consumeRecentHistoryReturn()) onReturnRef.current();
+    return () => window.removeEventListener("pageshow", onPageShow);
+  }, []);
+}
+
 /** 사용자가 글을 쓰고 있거나 form이 제출 중이면 서버 데이터를 다시 받지 않는다. */
 export function shouldSkipRouteRefresh(doc: Document): boolean {
   const active = doc.activeElement;
@@ -66,43 +97,32 @@ export function RouteAutoRefresh({
     routerRef.current = router;
   }, [router]);
 
+  const lastRefreshedAtRef = useRef(0);
+  const refresh = useCallback(() => {
+    if (document.visibilityState === "hidden") return;
+    if (navigator.onLine === false) return;
+    if (shouldSkipRouteRefresh(document)) return;
+    const now = Date.now();
+    if (now - lastRefreshedAtRef.current < minGapMs) return;
+    lastRefreshedAtRef.current = now;
+    routerRef.current.refresh();
+  }, [minGapMs]);
+  // history 복귀(뒤로/앞으로) 직후의 mount와 bfcache 복원이면 되살린 옛 payload 대신 한 번 다시 받는다.
+  useHistoryReturn(refresh);
+
   useEffect(() => {
-    installHistoryReturnListener();
-    let lastRefreshedAt = 0;
-    const refresh = () => {
-      if (document.visibilityState === "hidden") return;
-      if (navigator.onLine === false) return;
-      if (shouldSkipRouteRefresh(document)) return;
-      const now = Date.now();
-      if (now - lastRefreshedAt < minGapMs) return;
-      lastRefreshedAt = now;
-      routerRef.current.refresh();
-    };
     const onVisibilityChange = () => {
       if (document.visibilityState !== "hidden") refresh();
     };
-    // bfcache 복원은 컴포넌트를 다시 mount하지 않으므로 pageshow에서 직접 받는다.
-    const onPageShow = (event: PageTransitionEvent) => {
-      if (event.persisted) refresh();
-    };
     const interval = setInterval(refresh, intervalMs);
     window.addEventListener("focus", refresh);
-    window.addEventListener("pageshow", onPageShow);
     document.addEventListener("visibilitychange", onVisibilityChange);
-
-    // history 복귀(뒤로/앞으로) 직후의 mount면 되살린 옛 payload 대신 한 번 다시 받는다.
-    if (lastHistoryReturnAt > 0 && Date.now() - lastHistoryReturnAt < ROUTE_AUTO_REFRESH_HISTORY_RETURN_WINDOW_MS) {
-      lastHistoryReturnAt = 0;
-      refresh();
-    }
-
     return () => {
       clearInterval(interval);
       window.removeEventListener("focus", refresh);
-      window.removeEventListener("pageshow", onPageShow);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [intervalMs, minGapMs]);
+  }, [intervalMs, refresh]);
 
   return null;
 }
