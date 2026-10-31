@@ -25,6 +25,8 @@ export type CollabFormDraftOptions<F extends CollabFormFields> = {
   /** 시드할 본문(게시물 수정은 게시본). */
   seedHtml?: string;
   seedVersion?: number;
+  /** room이 다시 시작(복원 등)된 뒤 시드할 최신 서버 내용. 없으면 처음 값으로 시드한다. */
+  loadLatest?: () => Promise<{ html: string; fields: Partial<F>; version: number } | null>;
   extensions: () => AnyExtension[];
 };
 
@@ -42,6 +44,10 @@ export type CollabFormDraft<F extends CollabFormFields> = {
   rotateOperation: () => void;
   /** 등록 성공 뒤 모든 기기에서 작성본을 비운다. */
   clear: () => void;
+  /** 등록 직전 내용 표시. `clearSubmitted`가 그 뒤 바뀐 입력을 지키는 기준이다. */
+  markSubmitted: () => void;
+  /** 등록 성공: 제출 뒤 다른 기기·이 기기에서 바뀐 내용이 없으면 비우고, 있으면 남긴 채 요청 id만 새로 만든다. */
+  clearSubmitted: () => void;
   /** 편집기에 넘길 공동 편집 설정. */
   collaboration: { doc: NonNullable<CollabDocumentState["doc"]>; awareness: CollabDocumentState["provider"] extends infer P ? P extends { awareness: infer A } ? A | null : null : null; user: CollabDocumentState["user"] } | undefined;
 };
@@ -61,15 +67,19 @@ export function useCollabFormDraft<F extends CollabFormFields>(options: CollabFo
     storageKey: key,
     user: { name: "", colorIndex: 0 },
     extensions: options.extensions,
-    getSeed: () =>
-      key
-        ? {
-            key,
-            version: optionsRef.current.seedVersion ?? 0,
-            html: optionsRef.current.seedHtml ?? "",
-            fields: optionsRef.current.fields,
-          }
-        : null,
+    getSeed: async (reason) => {
+      if (!key) return null;
+      const latest = reason === "reset" && optionsRef.current.loadLatest ? await optionsRef.current.loadLatest().catch(() => null) : null;
+      if (latest) {
+        return { key, version: latest.version, html: latest.html, fields: { ...optionsRef.current.fields, ...latest.fields } };
+      }
+      return {
+        key,
+        version: optionsRef.current.seedVersion ?? 0,
+        html: optionsRef.current.seedHtml ?? "",
+        fields: optionsRef.current.fields,
+      };
+    },
   });
   const { doc } = collab;
 
@@ -154,6 +164,26 @@ export function useCollabFormDraft<F extends CollabFormFields>(options: CollabFo
     });
   }, [doc]);
 
+  const submittedRef = useRef<string | null>(null);
+  const snapshotKey = useCallback(() => {
+    if (!doc || doc.isDestroyed) return "";
+    const meta = doc.getMap(COLLAB_META);
+    const values = Object.keys(optionsRef.current.fields).map((name) => meta.get(name));
+    return JSON.stringify([values, readHtml()]);
+  }, [doc, readHtml]);
+  const markSubmitted = useCallback(() => {
+    submittedRef.current = snapshotKey();
+  }, [snapshotKey]);
+  const clearSubmitted = useCallback(() => {
+    const submitted = submittedRef.current;
+    submittedRef.current = null;
+    if (submitted !== null && submitted !== snapshotKey()) {
+      rotateOperation();
+      return;
+    }
+    clear();
+  }, [clear, rotateOperation, snapshotKey]);
+
   useCollabLeaveGuard(() => collab.hasUnsentChanges());
 
   const solo = collab.status === "solo";
@@ -173,6 +203,8 @@ export function useCollabFormDraft<F extends CollabFormFields>(options: CollabFo
     operationId,
     rotateOperation,
     clear,
+    markSubmitted,
+    clearSubmitted,
     collaboration,
   };
 }

@@ -662,7 +662,9 @@ test("같은 head로 만든 시드는 몇 번을 합쳐도 본문이 겹치지 �
   const second = buildCollabSeedUpdate(input, extensions);
   assert.deepEqual(Array.from(first), Array.from(second), "같은 입력은 같은 바이트");
   assert.equal(collabSeedClientId(input), collabSeedClientId({ ...input }));
-  assert.notEqual(collabSeedClientId(input), collabSeedClientId({ ...input, version: 4 }));
+  // version만 다르고 내용이 같은 head는 같은 시드다(다른 version으로 시드해도 본문이 겹치지 않는다).
+  assert.equal(collabSeedClientId(input), collabSeedClientId({ ...input, version: 4 }));
+  assert.deepEqual(Array.from(buildCollabSeedUpdate({ ...input, version: 4 }, extensions)), Array.from(first));
   assert.notEqual(collabSeedClientId(input), collabSeedClientId({ ...input, html: "<p>다름</p>" }));
 
   // 같은 시드를 두 번 적용해도 한 번만 들어간다.
@@ -672,7 +674,7 @@ test("같은 head로 만든 시드는 몇 번을 합쳐도 본문이 겹치지 �
   Y.applyUpdate(doc, first);
   assert.equal(collabDocHtml(doc, extensions), "<p>안녕하세요</p><p>둘째 줄</p>");
   assert.equal(doc.getMap("meta").get("title"), "제목");
-  assert.equal(doc.getMap("meta").get("seeded"), 3);
+  assert.equal(doc.getMap("meta").get("seeded"), true);
 
   // 두 기기가 따로 시드한 뒤 서로 합쳐도 겹치지 않는다(어느 쪽이 먼저든).
   const deviceA = new Y.Doc();
@@ -689,6 +691,6 @@ test("같은 head로 만든 시드는 몇 번을 합쳐도 본문이 겹치지 �
   const empty = new Y.Doc();
   Y.applyUpdate(empty, buildCollabSeedUpdate({ key: "note:empty", version: 0, html: "" }, extensions));
   assert.equal(collabDocHtml(empty, extensions), "<p></p>");
-  assert.equal(empty.getMap("meta").get("seeded"), 0);
+  assert.equal(empty.getMap("meta").get("seeded"), true);
   for (const target of [doc, deviceA, deviceB, empty]) target.destroy();
 });

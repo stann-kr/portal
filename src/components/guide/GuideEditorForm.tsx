@@ -6,7 +6,7 @@
  * 선택창 없이 version 충돌은 최신 version으로 다시 저장하고, 저장·업로드 중 이탈을 막는다.
  * 본문 이미지는 가이드 이미지 저장소로 올리고, 블록 data-block-id(질문 위치)를 편집 중에도 보존한다.
  */
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { Eye } from "lucide-react";
@@ -22,7 +22,8 @@ import {
   NoteDocumentStrip,
 } from "@/components/notes/NoteDocumentChrome";
 import { buttonClassName } from "@/components/ui/button";
-import type { UpdateGuidePageState } from "@/lib/actions/guide";
+import { getGuidePage, type UpdateGuidePageState } from "@/lib/actions/guide";
+import { COLLAB_EPOCH_FIELD } from "@/lib/collab/protocol";
 import { useDocumentSaveShortcut } from "@/lib/hooks/useDocumentSaveShortcut";
 import { GUIDE_BASE_REVISION_FIELD, GUIDE_TITLE_MAX_LENGTH, guidePagePath } from "@/lib/guide-content";
 import { formatCollabDocKey } from "@/lib/collab/doc-key";
@@ -69,10 +70,18 @@ export function GuideEditorForm({ page, action }: GuideEditorFormProps) {
     storageKey: roomKey,
     user: { name: "", colorIndex: 0 },
     extensions: getExtensions,
-    // 가이드는 복원 기능이 없어 reset 뒤에도 페이지 prop(서버 head)로 시작한다.
-    getSeed: () => ({ key: roomKey, version: page.version, html: page.contentHtml, fields: { title: page.title } }),
+    // room이 다시 시작되면 화면 prop이 아닌 서버의 최신 페이지로 시드한다.
+    getSeed: async (reason) => {
+      const latest = reason === "reset" ? await getGuidePage(page.id).catch(() => null) : null;
+      const source = latest ?? page;
+      return { key: roomKey, version: source.version, html: source.contentHtml, fields: { title: source.title } };
+    },
   });
   const { doc, provider } = collab;
+  const epochRef = useRef(collab.epoch);
+  useEffect(() => {
+    epochRef.current = collab.epoch;
+  });
   const [title, setTitle] = useCollabMetaField(doc, "title", page.title);
   const head = useCollabHeadVersion(doc, page.version);
   const [isEditorUploading, setIsEditorUploading] = useState(false);
@@ -92,6 +101,7 @@ export function GuideEditorForm({ page, action }: GuideEditorFormProps) {
         formData.set("title", snapshot.title);
         formData.set("contentHtml", snapshot.contentHtml);
         formData.set(GUIDE_BASE_REVISION_FIELD, String(head.current()));
+        if (typeof epochRef.current === "number") formData.set(COLLAB_EPOCH_FIELD, String(epochRef.current));
         const state = await action({}, formData);
         if (state.success) {
           head.publish(state.page?.version ?? state.currentRevision ?? head.current());
@@ -99,7 +109,8 @@ export function GuideEditorForm({ page, action }: GuideEditorFormProps) {
         }
         // room 내용이 이미 합쳐진 결과다. 선택창 없이 최신 version으로 한 번 더 저장한다.
         const latest = state.conflictPage?.version ?? state.currentRevision;
-        if (state.conflictKind !== "VERSION_CONFLICT" || attempt > 0 || typeof latest !== "number") {
+        // room이 비워진 뒤의 옛 저장(collabStale)은 다시 보내지 않는다.
+        if (state.collabStale || state.conflictKind !== "VERSION_CONFLICT" || attempt > 0 || typeof latest !== "number") {
           return { ok: false, error: state.error ?? "저장하지 못했습니다. 입력 내용은 이 기기와 실시간 문서에 남아 있습니다." };
         }
         head.adopt(latest);

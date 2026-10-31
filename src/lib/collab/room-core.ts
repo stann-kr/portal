@@ -1,6 +1,5 @@
 import * as Y from "yjs";
 import * as syncProtocol from "y-protocols/sync";
-import * as awarenessProtocol from "y-protocols/awareness";
 import * as encoding from "lib0/encoding";
 import * as decoding from "lib0/decoding";
 import {
@@ -57,6 +56,59 @@ export interface RoomStorage {
 }
 
 export const ROOM_COMPACT_UPDATE_COUNT = 200;
+
+/**
+ * 서버 쪽 awareness(커서·이름) 보관. y-protocols Awareness는 주기 timer를 돌려 DO hibernation을 막으므로
+ * 인코딩된 상태만 client id별로 들고 있는다. 각 client id는 처음 알린 소켓만 쓸 수 있고,
+ * 서버가 `user.userId`를 토큰의 사용자로 덮어쓰며 읽기 소켓의 `canSave`는 false로 바꾼다.
+ */
+type AwarenessEntry = { clock: number; state: string; socket: RoomSocket };
+
+type AwarenessDecoded = { clientId: number; clock: number; state: string };
+
+export function decodeAwarenessUpdate(update: Uint8Array): AwarenessDecoded[] {
+  const decoder = decoding.createDecoder(update);
+  const count = decoding.readVarUint(decoder);
+  const entries: AwarenessDecoded[] = [];
+  for (let index = 0; index < count; index += 1) {
+    entries.push({
+      clientId: decoding.readVarUint(decoder),
+      clock: decoding.readVarUint(decoder),
+      state: decoding.readVarString(decoder),
+    });
+  }
+  return entries;
+}
+
+export function encodeAwarenessEntries(entries: readonly { clientId: number; clock: number; state: string }[]): Uint8Array {
+  const encoder = encoding.createEncoder();
+  encoding.writeVarUint(encoder, entries.length);
+  for (const entry of entries) {
+    encoding.writeVarUint(encoder, entry.clientId);
+    encoding.writeVarUint(encoder, entry.clock);
+    encoding.writeVarString(encoder, entry.state);
+  }
+  return encoding.toUint8Array(encoder);
+}
+
+/** 서버가 보장하는 awareness 내용: 사용자 id는 토큰 기준, 저장 담당 자격은 쓰기 소켓만. */
+export function sanitizeAwarenessState(state: string, attachment: RoomSocketAttachment): string {
+  if (state === "null") return state;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(state);
+  } catch {
+    return "null";
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return "null";
+  const value = parsed as Record<string, unknown>;
+  const user = value.user && typeof value.user === "object" && !Array.isArray(value.user) ? (value.user as Record<string, unknown>) : {};
+  return JSON.stringify({
+    ...value,
+    user: { ...user, userId: attachment.userId },
+    canSave: attachment.mode === "write" && value.canSave === true,
+  });
+}
 export const ROOM_COMPACT_BYTES = 1024 * 1024;
 
 function encodeControl(message: CollabControlMessage): Uint8Array {
@@ -70,6 +122,13 @@ function encodeSyncUpdate(update: Uint8Array): Uint8Array {
   const encoder = encoding.createEncoder();
   encoding.writeVarUint(encoder, COLLAB_MESSAGE_SYNC);
   syncProtocol.writeUpdate(encoder, update);
+  return encoding.toUint8Array(encoder);
+}
+
+function encodeAwarenessMessage(entries: readonly { clientId: number; clock: number; state: string }[]): Uint8Array {
+  const encoder = encoding.createEncoder();
+  encoding.writeVarUint(encoder, COLLAB_MESSAGE_AWARENESS);
+  encoding.writeVarUint8Array(encoder, encodeAwarenessEntries(entries));
   return encoding.toUint8Array(encoder);
 }
 
@@ -91,7 +150,7 @@ function safeClose(socket: RoomSocket, code: number, reason: string): void {
 
 export class RoomCore {
   private doc: Y.Doc | null = null;
-  private awareness: awarenessProtocol.Awareness | null = null;
+  private readonly awareness = new Map<number, AwarenessEntry>();
   private epoch = 0;
   private snapshotBytes = 0;
   private pendingUpdateBytes = 0;
@@ -103,8 +162,8 @@ export class RoomCore {
     private readonly now: () => number = Date.now,
   ) {}
 
-  private load(): { doc: Y.Doc; awareness: awarenessProtocol.Awareness } {
-    if (this.doc && this.awareness) return { doc: this.doc, awareness: this.awareness };
+  private load(): { doc: Y.Doc } {
+    if (this.doc) return { doc: this.doc };
     const state = this.storage.load();
     const doc = new Y.Doc({ gc: true });
     this.epoch = state.epoch;
@@ -118,11 +177,8 @@ export class RoomCore {
       this.pendingUpdateCount += 1;
     }
     doc.on("update", (update: Uint8Array, origin: unknown) => this.onDocUpdate(update, origin));
-    const awareness = new awarenessProtocol.Awareness(doc);
-    awareness.setLocalState(null);
     this.doc = doc;
-    this.awareness = awareness;
-    return { doc, awareness };
+    return { doc };
   }
 
   private onDocUpdate(update: Uint8Array, origin: unknown): void {
@@ -131,7 +187,13 @@ export class RoomCore {
     this.pendingUpdateCount += 1;
     const message = encodeSyncUpdate(update);
     for (const socket of this.sockets()) {
-      if (socket !== origin) safeSend(socket, message);
+      if (socket === origin) continue;
+      // 받기만 하는 소켓도 연결 최대 시간이 지나면 닫아 권한을 다시 확인하게 한다.
+      if (this.isExpired(socket)) {
+        safeClose(socket, COLLAB_CLOSE_EXPIRED, "expired");
+        continue;
+      }
+      safeSend(socket, message);
     }
     if (
       this.pendingUpdateCount >= ROOM_COMPACT_UPDATE_COUNT ||
@@ -160,8 +222,13 @@ export class RoomCore {
     return this.epoch;
   }
 
+  private isExpired(socket: RoomSocket): boolean {
+    const attachment = socket.getAttachment();
+    return !attachment || this.now() - attachment.connectedAt > COLLAB_SOCKET_MAX_AGE_MS;
+  }
+
   connect(socket: RoomSocket, input: { userId: string; mode: CollabMode }): void {
-    const { doc, awareness } = this.load();
+    const { doc } = this.load();
     socket.setAttachment({
       userId: input.userId,
       mode: input.mode,
@@ -173,16 +240,10 @@ export class RoomCore {
     encoding.writeVarUint(encoder, COLLAB_MESSAGE_SYNC);
     syncProtocol.writeSyncStep1(encoder, doc);
     safeSend(socket, encoding.toUint8Array(encoder));
-    const states = Array.from(awareness.getStates().keys());
-    if (states.length > 0) {
-      const awarenessEncoder = encoding.createEncoder();
-      encoding.writeVarUint(awarenessEncoder, COLLAB_MESSAGE_AWARENESS);
-      encoding.writeVarUint8Array(
-        awarenessEncoder,
-        awarenessProtocol.encodeAwarenessUpdate(awareness, states),
-      );
-      safeSend(socket, encoding.toUint8Array(awarenessEncoder));
-    }
+    const live = Array.from(this.awareness.entries())
+      .filter(([, entry]) => entry.state !== "null")
+      .map(([clientId, entry]) => ({ clientId, clock: entry.clock, state: entry.state }));
+    if (live.length > 0) safeSend(socket, encodeAwarenessMessage(live));
   }
 
   message(socket: RoomSocket, data: Uint8Array): void {
@@ -191,7 +252,7 @@ export class RoomCore {
       safeClose(socket, 1008, "no-session");
       return;
     }
-    if (this.now() - attachment.connectedAt > COLLAB_SOCKET_MAX_AGE_MS) {
+    if (this.isExpired(socket)) {
       safeClose(socket, COLLAB_CLOSE_EXPIRED, "expired");
       return;
     }
@@ -200,14 +261,14 @@ export class RoomCore {
       safeClose(socket, COLLAB_CLOSE_TOO_LARGE, "too-large");
       return;
     }
-    const { doc, awareness } = this.load();
+    const { doc } = this.load();
     try {
       const decoder = decoding.createDecoder(data);
       const type = decoding.readVarUint(decoder);
       if (type === COLLAB_MESSAGE_SYNC) {
         this.handleSync(socket, attachment, decoder, doc);
       } else if (type === COLLAB_MESSAGE_AWARENESS) {
-        this.handleAwareness(socket, attachment, decoder, awareness);
+        this.handleAwareness(socket, attachment, decoder);
       } else {
         throw new Error("unknown message type");
       }
@@ -250,55 +311,51 @@ export class RoomCore {
     Y.applyUpdate(doc, update, socket);
   }
 
-  private handleAwareness(
-    socket: RoomSocket,
-    attachment: RoomSocketAttachment,
-    decoder: decoding.Decoder,
-    awareness: awarenessProtocol.Awareness,
-  ): void {
-    const update = decoding.readVarUint8Array(decoder);
-    const clientIds = readAwarenessClientIds(update);
-    const known = new Set(attachment.awarenessClientIds);
-    let changed = false;
-    for (const clientId of clientIds) {
-      if (!known.has(clientId)) {
-        known.add(clientId);
-        changed = true;
-      }
+  private handleAwareness(socket: RoomSocket, attachment: RoomSocketAttachment, decoder: decoding.Decoder): void {
+    const entries = decodeAwarenessUpdate(decoding.readVarUint8Array(decoder));
+    const accepted: AwarenessDecoded[] = [];
+    const owned = new Set(attachment.awarenessClientIds);
+    for (const entry of entries) {
+      const current = this.awareness.get(entry.clientId);
+      // 다른 소켓이 쓰는 client id는 바꿀 수 없다(커서·저장 담당 위조 방지).
+      if (current && current.socket !== socket) continue;
+      if (current && entry.clock < current.clock) continue;
+      const state = sanitizeAwarenessState(entry.state, attachment);
+      this.awareness.set(entry.clientId, { clock: entry.clock, state, socket });
+      owned.add(entry.clientId);
+      accepted.push({ clientId: entry.clientId, clock: entry.clock, state });
     }
-    if (changed) socket.setAttachment({ ...attachment, awarenessClientIds: Array.from(known) });
-    awarenessProtocol.applyAwarenessUpdate(awareness, update, socket);
-    const encoder = encoding.createEncoder();
-    encoding.writeVarUint(encoder, COLLAB_MESSAGE_AWARENESS);
-    encoding.writeVarUint8Array(encoder, update);
-    const message = encoding.toUint8Array(encoder);
+    if (owned.size !== attachment.awarenessClientIds.length) {
+      socket.setAttachment({ ...attachment, awarenessClientIds: Array.from(owned) });
+    }
+    if (accepted.length === 0) return;
+    const message = encodeAwarenessMessage(accepted);
     for (const other of this.sockets()) {
       if (other !== socket) safeSend(other, message);
     }
   }
 
-  /** 소켓이 닫히면 그 소켓의 커서를 다른 사람 화면에서 지운다. */
+  /** 소켓이 닫히면 그 소켓의 커서를 다른 사람 화면에서 지운다. 마지막 연결이면 메모리 상태를 내려놓는다. */
   disconnect(socket: RoomSocket): void {
-    const attachment = socket.getAttachment();
-    if (!attachment || attachment.awarenessClientIds.length === 0 || !this.awareness) return;
-    const ids = attachment.awarenessClientIds.filter((id) => this.awareness?.getStates().has(id));
-    if (ids.length === 0) return;
-    awarenessProtocol.removeAwarenessStates(this.awareness, ids, "disconnect");
-    const encoder = encoding.createEncoder();
-    encoding.writeVarUint(encoder, COLLAB_MESSAGE_AWARENESS);
-    encoding.writeVarUint8Array(encoder, awarenessProtocol.encodeAwarenessUpdate(this.awareness, ids));
-    const message = encoding.toUint8Array(encoder);
-    for (const other of this.sockets()) {
-      if (other !== socket) safeSend(other, message);
+    const removed: AwarenessDecoded[] = [];
+    for (const [clientId, entry] of this.awareness) {
+      if (entry.socket !== socket) continue;
+      this.awareness.delete(clientId);
+      removed.push({ clientId, clock: entry.clock + 1, state: "null" });
     }
+    const others = this.sockets().filter((other) => other !== socket);
+    if (removed.length > 0) {
+      const message = encodeAwarenessMessage(removed);
+      for (const other of others) safeSend(other, message);
+    }
+    if (others.length === 0) this.destroy();
   }
 
-  /** 메모리 상태(awareness 갱신 timer 포함)를 정리한다. 테스트와 room 종료에서 쓴다. */
+  /** 메모리 상태를 정리한다(다음 연결에서 저장소로부터 다시 읽는다). */
   destroy(): void {
-    this.awareness?.destroy();
     this.doc?.destroy();
-    this.awareness = null;
     this.doc = null;
+    this.awareness.clear();
   }
 
   /** 저장 상태를 지우고 epoch를 올린 뒤 모든 연결에 알리고 닫는다. */
@@ -306,10 +363,7 @@ export class RoomCore {
     this.load();
     const nextEpoch = this.epoch + 1;
     this.storage.reset(nextEpoch);
-    this.doc?.destroy();
-    this.awareness?.destroy();
-    this.doc = null;
-    this.awareness = null;
+    this.destroy();
     this.epoch = nextEpoch;
     this.snapshotBytes = 0;
     this.pendingUpdateBytes = 0;
@@ -321,19 +375,6 @@ export class RoomCore {
     }
     return nextEpoch;
   }
-}
-
-/** awareness update에 담긴 client id 목록만 읽는다(상태 내용은 해석하지 않는다). */
-export function readAwarenessClientIds(update: Uint8Array): number[] {
-  const decoder = decoding.createDecoder(update);
-  const count = decoding.readVarUint(decoder);
-  const ids: number[] = [];
-  for (let index = 0; index < count; index += 1) {
-    ids.push(decoding.readVarUint(decoder));
-    decoding.readVarUint(decoder);
-    decoding.readVarString(decoder);
-  }
-  return ids;
 }
 
 /** WebSocket close 코드는 1005·1006 같은 예약 코드를 다시 보낼 수 없다. */

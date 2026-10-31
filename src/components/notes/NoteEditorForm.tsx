@@ -17,7 +17,8 @@ import {
 import { isRichTextEmpty } from "@/lib/rich-text";
 import { getPrivateNote, getPrivateNoteHead, type CreateNoteState, type UpdateNoteState } from "@/lib/actions/privateNotes";
 import { useDocumentSaveShortcut } from "@/lib/hooks/useDocumentSaveShortcut";
-import { CREATION_OPERATION_FIELD, createCreationOperationId, deriveCreationResourceId } from "@/lib/creation-operation";
+import { CREATION_OPERATION_FIELD, createCreationOperationId, deriveCreationResourceId, parseCreationOperationId } from "@/lib/creation-operation";
+import { COLLAB_EPOCH_FIELD } from "@/lib/collab/protocol";
 import { PRIVATE_NOTE_BASE_REVISION_FIELD } from "@/lib/private-note-continuity";
 import { resolveNoteCreateDefaultDate } from "@/lib/note-create-route";
 import { formatCollabDocKey } from "@/lib/collab/doc-key";
@@ -125,14 +126,43 @@ type NoteSnapshot = { title: string; noteDate: string; contentHtml: string };
 /** 저장 담당이 바뀌어도 이어지도록 room에 남기는 마지막 서버 version. */
 const META_HEAD_VERSION = "headVersion";
 
-function buildFormData(snapshot: NoteSnapshot, operationId: string, baseRevision?: number): FormData {
+function buildFormData(snapshot: NoteSnapshot, operationId: string, baseRevision?: number, epoch?: number | null): FormData {
   const formData = new FormData();
+  if (typeof epoch === "number") formData.set(COLLAB_EPOCH_FIELD, String(epoch));
   formData.set("title", snapshot.title);
   formData.set("noteDate", snapshot.noteDate);
   formData.set("contentHtml", snapshot.contentHtml);
   formData.set(CREATION_OPERATION_FIELD, operationId);
   if (baseRevision !== undefined) formData.set(PRIVATE_NOTE_BASE_REVISION_FIELD, String(baseRevision));
   return formData;
+}
+
+const NEW_NOTE_OPERATION_PREFIX = "portal-new-note-operation:";
+
+function newNoteOperationKey(actorId: string, studentId: string): string {
+  return `${NEW_NOTE_OPERATION_PREFIX}${actorId}:${studentId}`;
+}
+
+function readOrCreateNewNoteOperationId(actorId: string, studentId: string): string {
+  if (typeof window === "undefined") return createCreationOperationId();
+  try {
+    const key = newNoteOperationKey(actorId, studentId);
+    const stored = parseCreationOperationId(window.sessionStorage.getItem(key));
+    if (stored) return stored;
+    const created = createCreationOperationId();
+    window.sessionStorage.setItem(key, created);
+    return created;
+  } catch {
+    return createCreationOperationId();
+  }
+}
+
+function forgetNewNoteOperationId(actorId: string, studentId: string): void {
+  try {
+    window.sessionStorage.removeItem(newNoteOperationKey(actorId, studentId));
+  } catch {
+    // 저장소를 못 쓰면 다음 새 노트가 새 id를 만든다.
+  }
 }
 
 function toDateInputValue(value: Date | null): string {
@@ -157,7 +187,8 @@ function NoteEditorFormContent({ note, create, actorId, action, focusBodyEnd = f
   });
 
   // 새 노트의 생성 요청 id는 화면이 열려 있는 동안 하나다. room도 이 id에서 나온 노트 id로 정한다.
-  const [createOperationId] = useState(() => (create ? createCreationOperationId() : ""));
+  // 첫 저장 전 새로고침해도 같은 작성본(room·기기 보관)으로 돌아오도록 이 탭의 sessionStorage에 둔다.
+  const [createOperationId] = useState(() => (create ? readOrCreateNewNoteOperationId(actorId, create.studentId) : ""));
   const roomNoteId = useMemo(
     () =>
       note?.id ??
@@ -215,6 +246,10 @@ function NoteEditorFormContent({ note, create, actorId, action, focusBodyEnd = f
     },
   });
   const { doc, provider } = collab;
+  const epochRef = useRef(collab.epoch);
+  useEffect(() => {
+    epochRef.current = collab.epoch;
+  });
   const [title, setTitle] = useCollabMetaField(doc, "title", initialTitle);
   const [noteDate, setNoteDate] = useCollabMetaField(doc, "noteDate", initialDate);
   const readOnly = collab.mode === "read";
@@ -263,7 +298,7 @@ function NoteEditorFormContent({ note, create, actorId, action, focusBodyEnd = f
       const submit = (formData: FormData) =>
         create ? create.updateAction(targetId, {}, formData) : action ? action({}, formData) : Promise.resolve<UpdateNoteState>({ error: "저장할 노트를 찾지 못했습니다." });
       for (let attempt = 0; attempt < 2; attempt += 1) {
-        const state = await submit(buildFormData(snapshot, createCreationOperationId(), headVersionRef.current));
+        const state = await submit(buildFormData(snapshot, createCreationOperationId(), headVersionRef.current, epochRef.current));
         if (state.success) {
           const version = state.note?.version ?? state.currentRevision ?? state.operationResultRevision ?? headVersionRef.current;
           publishHeadVersion(version);
@@ -276,7 +311,8 @@ function NoteEditorFormContent({ note, create, actorId, action, focusBodyEnd = f
           });
           return { ok: true };
         }
-        if (state.conflictKind !== "VERSION_CONFLICT" || attempt > 0) {
+        // 복원·휴지통으로 room이 비워진 뒤의 저장이다. 곧 새 head로 다시 시작하므로 다시 보내지 않는다.
+        if (state.collabStale || state.conflictKind !== "VERSION_CONFLICT" || attempt > 0) {
           return { ok: false, error: state.error ?? "저장하지 못했습니다. 입력 내용은 이 기기와 실시간 문서에 남아 있습니다." };
         }
         // room 내용이 이미 합쳐진 결과다. 선택창 없이 서버 최신 version을 기준으로 한 번 더 저장한다.
@@ -297,13 +333,14 @@ function NoteEditorFormContent({ note, create, actorId, action, focusBodyEnd = f
       const currentId = noteIdRef.current;
       if (currentId) return runUpdate(currentId, snapshot);
       if (!create) return { ok: false, error: "저장할 노트를 찾지 못했습니다. 페이지를 새로고침해 주세요." };
-      const state = await create.action({}, buildFormData(snapshot, createOperationId));
+      const state = await create.action({}, buildFormData(snapshot, createOperationId, undefined, epochRef.current));
       const createdId = state.note?.id ?? (state.operationConflict ? state.existingId : undefined);
       if (!createdId) {
         return { ok: false, error: state.error ?? "노트를 만들지 못했습니다. 입력 내용은 이 기기에 남아 있습니다." };
       }
       noteIdRef.current = createdId;
       setNoteId(createdId);
+      forgetNewNoteOperationId(actorId, create.studentId);
       // state를 null로 넘겨야 Next가 내부 상태를 복사하고 router의 현재 주소(usePathname)도 함께 맞춘다.
       window.history.replaceState(null, "", `/dashboard/notes/${createdId}?returnTo=${encodeURIComponent(create.returnTo)}`);
       if (state.note) {
@@ -323,7 +360,7 @@ function NoteEditorFormContent({ note, create, actorId, action, focusBodyEnd = f
       if (head) headVersionRef.current = head.version;
       return runUpdate(createdId, snapshot);
     },
-    [create, createOperationId, publishHeadVersion, runUpdate],
+    [actorId, create, createOperationId, publishHeadVersion, runUpdate],
   );
 
   const writable = !readOnly && collab.ready && (collab.status === "connected" || collab.status === "solo");
@@ -334,7 +371,19 @@ function NoteEditorFormContent({ note, create, actorId, action, focusBodyEnd = f
     readSnapshot,
     save: saveSnapshot,
   });
-  useCollabLeaveGuard(() => autosave.hasPendingSave() || collab.hasUnsentChanges() || isEditorUploading);
+  const hasUnsavedInput = (): boolean => {
+    if (!doc || doc.isDestroyed) return false;
+    const rawTitle = doc.getMap(COLLAB_META).get("title");
+    return (typeof rawTitle === "string" && rawTitle.trim() !== "") || !isRichTextEmpty(collabDocHtml(doc, getExtensions()));
+  };
+  useCollabLeaveGuard(
+    () =>
+      autosave.hasPendingSave() ||
+      collab.hasUnsentChanges() ||
+      isEditorUploading ||
+      // 제목이나 본문이 비어 저장을 기다리는 내용도 서버에는 아직 없다.
+      (autosave.status === "blocked" && hasUnsavedInput()),
+  );
 
   const busy = autosave.status === "saving" || isEditorUploading;
   useEffect(() => {
@@ -421,7 +470,7 @@ function NoteEditorFormContent({ note, create, actorId, action, focusBodyEnd = f
       message={statusView.message}
       label={statusView.message}
       shortMessage={statusView.shortMessage}
-      onRetry={variant === "inline" ? retrySave : undefined}
+      onRetry={variant === "inline" && autosave.status === "error" ? retrySave : undefined}
       alertRef={variant === "inline" ? errorRef : undefined}
       className={variant === "bar" ? "mr-1" : undefined}
     />

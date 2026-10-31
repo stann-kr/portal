@@ -60,8 +60,15 @@ export class CollabProvider {
   synced = false;
   /** 서버에 아직 보내지 못한 이 기기 입력이 있는지. 이탈 보호에 쓴다. */
   hasPendingLocalChanges = false;
+  /** 이번 provider가 한 번이라도 room의 hello를 받았는지(연결된 적이 있는지). */
+  everConnected = false;
+  /** hello로 받은 room epoch. */
+  epoch: number | null = null;
   private socket: WebSocket | null = null;
   private destroyed = false;
+  /** 진행 중인 연결 시도 번호. 겹친 시도(online·화면 복귀)의 늦은 응답은 버린다. */
+  private connectSeq = 0;
+  private connecting = false;
   private attempts = 0;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private helloReceived = false;
@@ -111,8 +118,19 @@ export class CollabProvider {
   }
 
   private async connect(): Promise<void> {
-    if (this.destroyed) return;
+    if (this.destroyed || this.connecting) return;
+    if (this.socket && this.socket.readyState <= 1) return;
     this.clearRetry();
+    this.connecting = true;
+    const seq = ++this.connectSeq;
+    try {
+      await this.openConnection(seq);
+    } finally {
+      if (seq === this.connectSeq) this.connecting = false;
+    }
+  }
+
+  private async openConnection(seq: number): Promise<void> {
     this.setStatus(this.status === "offline" ? "offline" : "connecting");
     let token: CollabTokenResponse;
     try {
@@ -133,7 +151,7 @@ export class CollabProvider {
       this.scheduleRetry();
       return;
     }
-    if (this.destroyed) return;
+    if (this.destroyed || seq !== this.connectSeq) return;
     this.identity = { userId: token.userId, displayName: token.displayName };
     this.setMode(token.mode);
     if (!token.collab) {
@@ -191,11 +209,14 @@ export class CollabProvider {
       encoding.writeVarUint(encoder, COLLAB_MESSAGE_SYNC);
       const messageType = syncProtocol.readSyncMessage(decoder, encoder, this.doc, this);
       // 읽기 전용은 서버 상태 요청(step1)에 이 기기 상태를 돌려주지 않는다.
-      if (encoding.length(encoder) > 1 && this.mode === "write") this.send(encoding.toUint8Array(encoder));
+      if (encoding.length(encoder) > 1 && this.mode === "write") {
+        this.send(encoding.toUint8Array(encoder));
+        // 이 기기 상태(step2)를 보냈으므로 연결 전에 쌓인 입력도 함께 갔다.
+        this.hasPendingLocalChanges = false;
+      }
       if (messageType === syncProtocol.messageYjsSyncStep2 && !this.synced) {
         this.synced = true;
         this.attempts = 0;
-        if (this.mode === "write") this.hasPendingLocalChanges = false;
         this.setStatus("connected");
       }
       return;
@@ -213,6 +234,8 @@ export class CollabProvider {
         return;
       }
       this.helloReceived = true;
+      this.everConnected = true;
+      this.epoch = message.epoch;
       const encoder = encoding.createEncoder();
       encoding.writeVarUint(encoder, COLLAB_MESSAGE_SYNC);
       syncProtocol.writeSyncStep1(encoder, this.doc);
@@ -269,7 +292,7 @@ export class CollabProvider {
   }
 
   private readonly handleWake = () => {
-    if (this.destroyed || this.status !== "offline") return;
+    if (this.destroyed || this.status !== "offline" || this.connecting) return;
     if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
     this.attempts = 0;
     void this.connect();
@@ -277,7 +300,10 @@ export class CollabProvider {
 
   private readonly handleDocUpdate = (update: Uint8Array, origin: unknown) => {
     if (origin === this || this.mode === "read") return;
-    if (!this.synced || !this.socket || this.socket.readyState !== 1) {
+    // 기기 보관(IndexedDB)에서 읽어 온 상태는 새 입력이 아니다. 서버와는 다음 동기화(step2)에서 맞춘다.
+    if (origin && typeof origin === "object" && "whenSynced" in origin) return;
+    // hello 뒤에는 동기화가 끝나기 전이라도 바로 보낸다(room은 빠진 앞부분을 step2가 오면 이어 붙인다).
+    if (!this.helloReceived || !this.socket || this.socket.readyState !== 1) {
       this.hasPendingLocalChanges = true;
       return;
     }
@@ -312,6 +338,7 @@ export class CollabProvider {
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
+    this.connectSeq += 1;
     this.clearRetry();
     this.doc.off("update", this.handleDocUpdate);
     this.awareness.off("update", this.handleAwarenessUpdate);

@@ -146,6 +146,9 @@ export class DocumentRoom {
       const epoch = this.core.reset();
       return Response.json({ epoch });
     }
+    if (url.pathname === "/epoch" && request.method === "GET") {
+      return Response.json({ epoch: this.core.currentEpoch });
+    }
     if (url.pathname !== "/connect" || request.headers.get("Upgrade") !== "websocket") {
       return new Response("Not found", { status: 404 });
     }

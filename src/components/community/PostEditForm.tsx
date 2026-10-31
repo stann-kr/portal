@@ -10,7 +10,8 @@ import { CollabDraftStatus } from "@/components/editor/CollabDraftStatus";
 import { useEditorExtensions } from "@/components/editor/useEditorExtensions";
 import { useDocumentSaveShortcut } from "@/lib/hooks/useDocumentSaveShortcut";
 import { isRichTextEmpty } from "@/lib/rich-text";
-import { updatePostContent } from "@/lib/actions/posts";
+import { getPostById, updatePostContent } from "@/lib/actions/posts";
+import { COLLAB_EPOCH_FIELD } from "@/lib/collab/protocol";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
 import { CREATION_OPERATION_FIELD, createCreationOperationId } from "@/lib/creation-operation";
 import {
@@ -58,11 +59,19 @@ export function PostEditForm(props: PostEditFormProps) {
 function PostEditFormContent({ post, onCancel, onSaved, onBusyChange, mixsetLinkUrl: initialLinkUrl }: PostEditFormProps) {
   const hasLinkField = typeof initialLinkUrl === "string";
   const getExtensions = useEditorExtensions();
+  const headRef = useRef<PostHead>({ version: post.version, title: post.title, contentHtml: post.contentHtml });
   const draft = useCollabFormDraft({
     room: { postId: post.id },
     fields: { title: post.title, mixsetLinkUrl: initialLinkUrl ?? "" },
     seedHtml: post.contentHtml,
     seedVersion: post.version,
+    // 복원 등으로 작업본이 다시 시작되면 서버의 최신 게시본으로 시드한다.
+    loadLatest: async () => {
+      const latest = await getPostById(post.id);
+      if (!latest) return null;
+      headRef.current = { version: latest.version, title: latest.title, contentHtml: latest.contentHtml };
+      return { html: latest.contentHtml, fields: { title: latest.title }, version: latest.version };
+    },
     extensions: getExtensions,
   });
   const { title, mixsetLinkUrl: linkUrl } = draft.fields;
@@ -77,7 +86,6 @@ function PostEditFormContent({ post, onCancel, onSaved, onBusyChange, mixsetLink
   const linkInputRef = useRef<HTMLInputElement>(null);
   const titleErrorId = useId();
   const linkFieldId = useId();
-  const headRef = useRef<PostHead>({ version: post.version, title: post.title, contentHtml: post.contentHtml });
   const visibleTitleError = title.trim() ? "" : titleError;
   useBusyNavigationGuard(isPending);
 
@@ -117,6 +125,7 @@ function PostEditFormContent({ post, onCancel, onSaved, onBusyChange, mixsetLink
         if (hasLinkField) formData.set(MIXSET_LINK_FIELD, linkUrl);
         formData.set(CREATION_OPERATION_FIELD, createCreationOperationId());
         formData.set(POST_BASE_REVISION_FIELD, String(head.version));
+        if (typeof draft.collab.epoch === "number") formData.set(COLLAB_EPOCH_FIELD, String(draft.collab.epoch));
         formData.set(
           DOCUMENT_SNAPSHOT_FINGERPRINT_FIELD,
           createDocumentSnapshotFingerprint({
@@ -134,7 +143,7 @@ function PostEditFormContent({ post, onCancel, onSaved, onBusyChange, mixsetLink
           return;
         }
         // 작업본은 이미 합쳐진 결과다. 선택창 없이 최신 게시본을 기준으로 한 번 더 저장한다.
-        if (state.conflictKind === "VERSION_CONFLICT" && state.conflictPost && attempt === 0) {
+        if (!state.collabStale && state.conflictKind === "VERSION_CONFLICT" && state.conflictPost && attempt === 0) {
           headRef.current = {
             version: state.conflictPost.version,
             title: state.conflictPost.title,

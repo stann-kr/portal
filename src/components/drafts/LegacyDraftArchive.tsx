@@ -20,11 +20,13 @@ import {
 } from "@/lib/local-draft-continuity-client";
 import type { DocumentDraftKind } from "@/lib/form-draft";
 import { sanitizeHtml } from "@/lib/sanitize-html";
+import { COLLAB_RECOVERY_PREFIX } from "@/lib/collab/client/useCollabDocument";
 
 type ArchiveItem = {
   /** 기기·계정 목록 사이에서 겹치지 않는 key. */
   id: string;
-  scope: "local" | "server";
+  /** recovered: 실시간 문서가 다시 시작될 때 서버에 보내지 못한 입력을 남긴 복구본. */
+  scope: "local" | "server" | "recovered";
   sourceKey: string;
   kind: DocumentDraftKind;
   savedAt: Date | null;
@@ -46,6 +48,49 @@ function toServerItem(draft: LegacyServerDraft): ArchiveItem {
     content: { title: draft.title, contentHtml: draft.contentHtml },
     draftVersion: draft.draftVersion,
   };
+}
+
+function recoveredKind(roomKey: string): DocumentDraftKind {
+  if (roomKey.startsWith("guide:")) return "guide-page";
+  if (roomKey.startsWith("post:") || roomKey.startsWith("draft:post:")) return "community-post";
+  if (roomKey.startsWith("draft:qna-thread:")) return "qna-thread";
+  if (roomKey.startsWith("draft:qna-reply:")) return "qna-reply";
+  return "note";
+}
+
+/** 실시간 문서 복구본(useCollabDocument가 남김)을 읽는다. 깨진 항목은 건너뛴다. */
+function readRecoveredItems(): ArchiveItem[] {
+  const items: ArchiveItem[] = [];
+  try {
+    for (let index = 0; index < window.localStorage.length; index += 1) {
+      const storageKey = window.localStorage.key(index);
+      if (!storageKey?.startsWith(COLLAB_RECOVERY_PREFIX)) continue;
+      try {
+        const copy = JSON.parse(window.localStorage.getItem(storageKey) ?? "null") as
+          | { key?: unknown; savedAt?: unknown; fields?: Record<string, unknown>; html?: unknown }
+          | null;
+        if (!copy || typeof copy.key !== "string") continue;
+        const savedAt = typeof copy.savedAt === "string" ? new Date(copy.savedAt) : null;
+        items.push({
+          id: `recovered:${storageKey}`,
+          scope: "recovered",
+          sourceKey: storageKey,
+          kind: recoveredKind(copy.key),
+          savedAt: savedAt && Number.isFinite(savedAt.getTime()) ? savedAt : null,
+          content: {
+            title: typeof copy.fields?.title === "string" ? copy.fields.title : "",
+            contentHtml: sanitizeHtml(typeof copy.html === "string" ? copy.html : ""),
+          },
+          draftVersion: null,
+        });
+      } catch {
+        // 깨진 복구본은 보이지 않는다.
+      }
+    }
+  } catch {
+    return items;
+  }
+  return items;
 }
 
 /** 클립보드에는 평문과 정화한 HTML을 함께 넣고, 지원하지 않으면 평문만 쓴다. */
@@ -92,7 +137,7 @@ export function LegacyDraftArchive({
     // 저장소 읽기는 mount 직후 한 번 예약해 effect 본문에서 동기 setState를 하지 않는다.
     const load = () => {
       const result = readLocalDocumentDrafts(actorId);
-      setLocalItems(result.drafts.map((draft) => ({
+      setLocalItems([...readRecoveredItems(), ...result.drafts.map((draft) => ({
         id: `local:${draft.sourceKey}`,
         scope: "local",
         sourceKey: draft.sourceKey,
@@ -100,7 +145,7 @@ export function LegacyDraftArchive({
         savedAt: draft.savedAt,
         content: readLegacyDraftContent(draft.data),
         draftVersion: null,
-      })));
+      }) satisfies ArchiveItem)]);
       setLocalError(
         result.storageUnavailable || result.enumerationFailed
           ? "브라우저 저장소에 접근할 수 없어 이 기기의 초안을 불러오지 못했습니다."
@@ -127,6 +172,17 @@ export function LegacyDraftArchive({
 
   const discard = async (item: ArchiveItem) => {
     setActionError(null);
+    if (item.scope === "recovered") {
+      try {
+        window.localStorage.removeItem(item.sourceKey);
+      } catch {
+        setActionError("선택한 복구본을 삭제하지 못했습니다. 다시 시도해 주세요.");
+        return;
+      }
+      setLocalItems((items) => items.filter((entry) => entry.id !== item.id));
+      statusRef.current?.focus();
+      return;
+    }
     if (item.scope === "local") {
       const result = discardLocalDocumentDraft(actorId, item.sourceKey);
       if (result.storageUnavailable || result.enumerationFailed || result.failedKeys.length > 0) {

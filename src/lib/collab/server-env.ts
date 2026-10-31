@@ -1,5 +1,6 @@
 import type { CollabWorkerEnv } from "./worker-route";
-import { resetCollabRoom } from "./worker-route";
+import { readCollabRoomEpoch, resetCollabRoom } from "./worker-route";
+import { COLLAB_EPOCH_FIELD } from "./protocol";
 
 /**
  * Next route·server action에서 같은 Worker의 공동 편집 binding을 읽는다.
@@ -33,3 +34,21 @@ export async function resetCollabRoomAfterMutation(key: string): Promise<void> {
   }
   console.error(JSON.stringify({ event: "collab_room_reset", outcome: "failed", kind: key.split(":")[0] }));
 }
+
+/**
+ * 공동 편집 저장 요청이 지금 room과 같은 epoch에서 왔는지 확인한다. 복원·휴지통 이동으로 room이 비워진 뒤
+ * 늦게 도착한(또는 version 충돌로 다시 보낸) 옛 내용이 새 head를 덮지 않게 한다.
+ * epoch 칸이 없는 요청(공동 편집 이전 화면)과 binding이 없는 환경은 확인하지 않는다.
+ */
+export async function isStaleCollabSave(formData: FormData, key: string): Promise<boolean> {
+  const raw = formData.get(COLLAB_EPOCH_FIELD);
+  if (raw === null || raw === "") return false;
+  const epoch = Number(raw);
+  if (!Number.isSafeInteger(epoch) || epoch < 0) return true;
+  const env = readCollabWorkerEnv();
+  if (!env) return false;
+  const current = await readCollabRoomEpoch(env, key);
+  return current !== null && current !== epoch;
+}
+
+export const STALE_COLLAB_SAVE_MESSAGE = "문서가 복원되거나 정리되어 최신 내용으로 다시 불러옵니다. 이 저장은 반영하지 않았습니다.";

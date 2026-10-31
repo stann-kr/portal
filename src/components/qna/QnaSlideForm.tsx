@@ -118,8 +118,8 @@ function QnaSlideFormContent({
       handledThreadIdRef.current !== state.thread.id
     ) {
       handledThreadIdRef.current = state.thread.id;
-      // 등록한 작성본은 모든 기기에서 비운다.
-      draft.clear();
+      // 등록한 작성본은 모든 기기에서 비운다(제출 뒤 바뀐 입력이 있으면 남긴다).
+      draft.clearSubmitted();
       const { id, title: savedTitle, createdAt } = state.thread;
       const newItem: UnifiedItem = {
         id,
@@ -165,6 +165,7 @@ function QnaSlideFormContent({
           return;
         }
         if (contentInputRef.current) contentInputRef.current.value = latestContentHtml;
+            draft.markSubmitted();
       }}
     >
       <input type="hidden" name={CREATION_OPERATION_FIELD} value={operationId} />

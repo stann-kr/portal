@@ -20,12 +20,24 @@ import {
   COLLAB_MESSAGE_CONTROL,
   COLLAB_MESSAGE_SYNC,
   COLLAB_SOCKET_MAX_AGE_MS,
+  COLLAB_EPOCH_FIELD,
   COLLAB_SUBPROTOCOL,
 } from "./protocol";
-import { normalizeCloseCode, RoomCore, ROOM_COMPACT_UPDATE_COUNT, type RoomSocket, type RoomSocketAttachment, type RoomStorage } from "./room-core";
+import { isStaleCollabSave } from "./server-env";
+import {
+  decodeAwarenessUpdate,
+  encodeAwarenessEntries,
+  normalizeCloseCode,
+  RoomCore,
+  ROOM_COMPACT_UPDATE_COUNT,
+  sanitizeAwarenessState,
+  type RoomSocket,
+  type RoomSocketAttachment,
+  type RoomStorage,
+} from "./room-core";
 import { createCollabTokenHandler } from "./token-handler";
 import { signCollabToken, verifyCollabToken } from "./token";
-import { handleCollabWebSocket } from "./worker-route";
+import { handleCollabWebSocket, readCollabRoomEpoch } from "./worker-route";
 
 const SECRET = "test-only-collab-secret";
 const NOW = Date.UTC(2026, 10, 1, 0, 0, 0);
@@ -361,4 +373,79 @@ test("room: 연결이 끊긴 사람의 커서는 다른 사람 화면에서 지�
   awareness.destroy();
   assert.equal(normalizeCloseCode(1005), 1000);
   assert.equal(normalizeCloseCode(4001), 4001);
+});
+
+function awarenessMessage(clientId: number, clock: number, state: Record<string, unknown> | null): Uint8Array {
+  const encoder = encoding.createEncoder();
+  encoding.writeVarUint(encoder, COLLAB_MESSAGE_AWARENESS);
+  encoding.writeVarUint8Array(encoder, encodeAwarenessEntries([{ clientId, clock, state: JSON.stringify(state) }]));
+  return encoding.toUint8Array(encoder);
+}
+
+function lastAwarenessStates(socket: MemorySocket): Array<{ clientId: number; state: Record<string, unknown> | null }> {
+  const out: Array<{ clientId: number; state: Record<string, unknown> | null }> = [];
+  for (const bytes of socket.sent) {
+    const decoder = decoding.createDecoder(bytes);
+    if (decoding.readVarUint(decoder) !== COLLAB_MESSAGE_AWARENESS) continue;
+    for (const entry of decodeAwarenessUpdate(decoding.readVarUint8Array(decoder))) {
+      out.push({ clientId: entry.clientId, state: JSON.parse(entry.state) as Record<string, unknown> | null });
+    }
+  }
+  return out;
+}
+
+test("room: 읽기 소켓은 저장 담당 자격을 알릴 수 없고, 사용자 id는 토큰 기준으로 덮어쓴다", () => {
+  const { room, join } = createRoom();
+  const writer = join("write", "admin");
+  const reader = join("read", "student");
+  room.message(reader, awarenessMessage(1, 1, { canSave: true, user: { name: "Stann", userId: "admin" } }));
+  const seen = lastAwarenessStates(writer).at(-1);
+  assert.equal(seen?.clientId, 1);
+  assert.equal(seen?.state?.canSave, false, "읽기 소켓 canSave 제거");
+  assert.equal((seen?.state?.user as { userId?: string }).userId, "student", "userId 위조 무시");
+  room.message(writer, awarenessMessage(2, 1, { canSave: true, user: { name: "Stann" } }));
+  assert.equal(lastAwarenessStates(reader).at(-1)?.state?.canSave, true, "쓰기 소켓은 유지");
+});
+
+test("room: 다른 소켓이 쓰는 awareness client id는 바꿀 수 없다", () => {
+  const { room, join } = createRoom();
+  const owner = join("write", "admin");
+  const attacker = join("write", "s1");
+  const watcher = join("read", "s2");
+  room.message(owner, awarenessMessage(7, 1, { canSave: true }));
+  const before = watcher.sent.length;
+  room.message(attacker, awarenessMessage(7, 5, null));
+  assert.equal(watcher.sent.length, before, "가로채기 무시");
+  room.disconnect(owner);
+  assert.equal(lastAwarenessStates(watcher).at(-1)?.state, null, "소유 소켓이 닫히면 지움");
+  assert.equal(sanitizeAwarenessState("not json", { userId: "u", mode: "write", connectedAt: 0, awarenessClientIds: [] }), "null");
+});
+
+test("room: 받기만 하는 소켓도 최대 연결 시간이 지나면 다음 전달 때 닫는다", () => {
+  let now = NOW;
+  const { room, join } = createRoom(() => now);
+  const listener = join("read", "s1");
+  now += COLLAB_SOCKET_MAX_AGE_MS + 1;
+  const writer = join("write", "admin");
+  room.message(writer, updateMessage(textUpdate("x")));
+  assert.equal(listener.closed, COLLAB_CLOSE_EXPIRED);
+  assert.equal(writer.closed, null);
+});
+
+test("저장 epoch 확인: binding 없거나 epoch 칸이 없으면 통과, 형식이 틀리면 거부", async () => {
+  const empty = new FormData();
+  assert.equal(await isStaleCollabSave(empty, "note:n1"), false);
+  const bad = new FormData();
+  bad.set(COLLAB_EPOCH_FIELD, "-1");
+  assert.equal(await isStaleCollabSave(bad, "note:n1"), true);
+  const ok = new FormData();
+  ok.set(COLLAB_EPOCH_FIELD, "3");
+  assert.equal(await isStaleCollabSave(ok, "note:n1"), false, "binding 없음(next dev·테스트)");
+});
+
+test("room epoch 조회: worker env의 room에서 지금 epoch를 읽는다", async () => {
+  const stub = { fetch: async () => Response.json({ epoch: 4 }) };
+  const env = { DOC_ROOMS: { idFromName: (name: string) => name, get: () => stub } };
+  assert.equal(await readCollabRoomEpoch(env, "note:n1"), 4);
+  assert.equal(await readCollabRoomEpoch(undefined, "note:n1"), null);
 });

@@ -6,7 +6,7 @@
 "use server";
 
 import { formatCollabDocKey } from "@/lib/collab/doc-key";
-import { resetCollabRoomAfterMutation } from "@/lib/collab/server-env";
+import { isStaleCollabSave, resetCollabRoomAfterMutation, STALE_COLLAB_SAVE_MESSAGE } from "@/lib/collab/server-env";
 import { revalidatePath } from "next/cache";
 import { createDbContext } from "@/db/client";
 import { requireAdmin, requireAuth } from "@/lib/auth-guard";
@@ -142,6 +142,8 @@ export async function createGuidePage(
 
 export type UpdateGuidePageState = {
   error?: string;
+  /** 공동 편집 room이 비워진 뒤의 옛 저장이라 반영하지 않았다. */
+  collabStale?: boolean;
   success?: boolean;
   replayed?: boolean;
   conflictKind?: GuideWriteFailureReason;
@@ -164,6 +166,9 @@ export async function updateGuidePage(
   }
   const payload = readGuidePayload(formData);
   if (!payload.ok) return { error: payload.error };
+  if (await isStaleCollabSave(formData, formatCollabDocKey({ kind: "guide", id }))) {
+    return { error: STALE_COLLAB_SAVE_MESSAGE, collabStale: true };
+  }
   const result = await updateGuidePageRecord(createDbContext(), {
     actorId: session.user.id,
     pageId: id,

@@ -810,7 +810,9 @@ export function FullEditor({
 
   // 전체 서식 줄이 없는 편집기는 마크다운 전환을 상태 줄(bare는 상위 화면의 도구 자리)에 둔다.
   // 가이드 편집(preserveBlockIds)은 마크다운으로 오가면 블록 식별자(질문 위치)가 사라지므로 전환을 두지 않는다.
-  const markdownToggle = !disabled && !preserveBlockIds ? (
+  // 공동 편집도 두지 않는다: 마크다운 칸은 문서 전체를 바꿔 넣으므로 다른 사람의 동시 입력을 덮어쓴다.
+  const markdownToggleAllowed = !preserveBlockIds && !collaboration;
+  const markdownToggle = !disabled && markdownToggleAllowed ? (
     <button
       type="button"
       onClick={handleMarkdownToggle}
@@ -1124,7 +1126,7 @@ export function FullEditor({
               </ToolbarButton>
 
               {/* 마크다운 모드 토글(가이드 편집은 블록 식별자를 지키려고 숨긴다) */}
-              <div className={cn("ml-auto shrink-0 pl-1", preserveBlockIds && "hidden")}>
+              <div className={cn("ml-auto shrink-0 pl-1", !markdownToggleAllowed && "hidden")}>
                 <Button
                   type="button"
                   variant="ghost"

@@ -47,3 +47,6 @@ export const COLLAB_INTERNAL_HEADER_KEY = "x-portal-collab-key";
 /** room 내부 경로. 외부 요청은 worker가 항상 `/connect`로 바꿔 넘기므로 `/reset`에 닿지 못한다. */
 export const COLLAB_ROOM_CONNECT_URL = "https://collab-room/connect";
 export const COLLAB_ROOM_RESET_URL = "https://collab-room/reset";
+export const COLLAB_ROOM_EPOCH_URL = "https://collab-room/epoch";
+/** 저장 요청에 싣는 room epoch. 서버가 지금 room epoch와 다르면(복원·휴지통 뒤) 저장을 거부한다. */
+export const COLLAB_EPOCH_FIELD = "collabEpoch";

@@ -8,6 +8,7 @@ import { formatCollabDocKey } from "@/lib/collab/doc-key";
 import { collabDocHtml } from "@/lib/collab/client/doc-html";
 import { COLLAB_META } from "@/lib/collab/client/seed";
 import { useCollabDocument } from "@/lib/collab/client/useCollabDocument";
+import { getPrivateNote } from "@/lib/actions/privateNotes";
 
 const FullEditor = dynamic(
   () => import("@/components/editor/FullEditor").then((module) => ({ default: module.FullEditor })),
@@ -99,12 +100,32 @@ export function useLiveCollabNote(
     };
   }, [collab.doc, collab.ready, getExtensions]);
 
+  // room이 다시 시작되면(작성자가 복원) room이 다시 채워질 때까지 서버의 새 head를 보여 준다.
+  useEffect(() => {
+    if (collab.generation === 0) return;
+    let cancelled = false;
+    void getPrivateNote(note.id)
+      .then((latest) => {
+        if (cancelled || !latest) return;
+        const next = { title: latest.title, noteDate: toDateInputValue(latest.noteDate), contentHtml: latest.contentHtml };
+        setLastSeen(next);
+        onChangedRef.current?.(next);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [collab.generation, note.id]);
+
   const missing = collab.status === "denied";
-  const live = collab.ready && !missing && collab.doc;
-  const body = live ? (
+  const collaboration = useMemo(
+    () => (collab.doc ? { doc: collab.doc, awareness: collab.provider?.awareness ?? null, user: collab.user } : null),
+    [collab.doc, collab.provider, collab.user],
+  );
+  const body = collab.ready && !missing && collaboration ? (
     <FullEditor
       key={collab.generation}
-      collaboration={{ doc: collab.doc!, awareness: collab.provider?.awareness ?? null, user: collab.user }}
+      collaboration={collaboration}
       disabled
       ariaLabel="노트 내용"
       variant="page"

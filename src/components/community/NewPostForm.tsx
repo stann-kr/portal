@@ -166,8 +166,8 @@ function NewPostFormContent({
     if (boardType === "FEEDBACK" && mixsetMediaMode === "link" && mediaObjectId) {
       void abandonMediaUpload(mediaObjectId).catch(() => undefined);
     }
-    // 게시한 작성본은 모든 기기에서 비운다.
-    draft.clear();
+    // 게시한 작성본은 모든 기기에서 비운다(제출 뒤 바뀐 입력이 있으면 남긴다).
+    draft.clearSubmitted();
     router.replace(`/community/${state.postId}?returnTo=${encodeURIComponent(returnTo)}`);
   // eslint-disable-next-line react-hooks/exhaustive-deps -- 게시 성공(postId)에만 반응한다.
   }, [state.postId]);
@@ -266,6 +266,7 @@ function NewPostFormContent({
               }
             }
             if (contentInputRef.current) contentInputRef.current.value = latestContentHtml;
+            draft.markSubmitted();
           }}
         >
           <input type="hidden" name={CREATION_OPERATION_FIELD} value={operationId} />

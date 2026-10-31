@@ -5,6 +5,7 @@ import * as Y from "yjs";
 import type { AnyExtension } from "@tiptap/core";
 import { CollabProvider, type CollabConnectionStatus, type CollabTokenRequest } from "./provider";
 import { COLLAB_META, isCollabDocSeeded, seedCollabDoc, type CollabSeedInput } from "./seed";
+import { collabDocHtml } from "./doc-html";
 import type { CollabMode } from "../protocol";
 
 /**
@@ -42,6 +43,8 @@ export type CollabDocumentState = {
   user: CollabUser & { userId?: string };
   /** reset·epoch 변경으로 문서를 새로 만들 때마다 오른다(편집기 key). */
   generation: number;
+  /** 이 문서가 속한 room epoch. 저장 요청에 실어 복원 뒤의 옛 저장을 서버가 거부하게 한다. */
+  epoch: number | null;
   hasUnsentChanges: () => boolean;
 };
 
@@ -63,6 +66,25 @@ function writeStoredEpoch(key: string, epoch: number): void {
     window.localStorage.setItem(`${EPOCH_STORAGE_PREFIX}${key}`, String(epoch));
   } catch {
     // 저장소를 못 쓰면 다음 연결에서 다시 맞춘다.
+  }
+}
+
+function readStoredEpochSafe(key: string): number | null {
+  return typeof window === "undefined" ? null : readStoredEpoch(key);
+}
+
+/** 밀려난 기기 보관본(서버에 보내지 못한 입력) 복구 사본. 이전 초안 보관함이 읽는다. */
+export const COLLAB_RECOVERY_PREFIX = "portal-collab-recovered:";
+
+function saveCollabRecoveryCopy(key: string, doc: Y.Doc, extensions: () => AnyExtension[]): void {
+  try {
+    const meta = doc.getMap(COLLAB_META);
+    const fields: Record<string, string> = {};
+    for (const [name, value] of meta.entries()) if (typeof value === "string") fields[name] = value;
+    const copy = { key, savedAt: new Date().toISOString(), fields, html: collabDocHtml(doc, extensions()) };
+    window.localStorage.setItem(`${COLLAB_RECOVERY_PREFIX}${key}:${Date.now()}`, JSON.stringify(copy));
+  } catch {
+    // 저장소를 못 쓰면 복구본을 남기지 못한다.
   }
 }
 
@@ -109,7 +131,7 @@ export function useCollabDocument(options: CollabDocumentOptions): CollabDocumen
     optionsRef.current = options;
   });
   const [generation, setGeneration] = useState(0);
-  const [state, setState] = useState<Omit<CollabDocumentState, "generation" | "hasUnsentChanges">>({
+  const [state, setState] = useState<Omit<CollabDocumentState, "generation" | "hasUnsentChanges" | "epoch">>({
     doc: null,
     provider: null,
     status: "connecting",
@@ -136,13 +158,15 @@ export function useCollabDocument(options: CollabDocumentOptions): CollabDocumen
     let seeding = false;
     const unsubscribers: Array<() => void> = [];
 
-    const update = (patch: Partial<Omit<CollabDocumentState, "generation" | "hasUnsentChanges">>) => {
+    const update = (patch: Partial<Omit<CollabDocumentState, "generation" | "hasUnsentChanges" | "epoch">>) => {
       if (!disposed) setState((previous) => ({ ...previous, ...patch }));
     };
 
-    const restart = async (nextEpoch: number, reason: "reset" | "epoch") => {
+    const restart = async (nextEpoch: number) => {
       if (disposed) return;
       disposed = true;
+      // 서버에 보내지 못한 입력은 room을 새로 시작하기 전에 이 기기에 복구본으로 남긴다(이전 초안 보관함).
+      if (provider?.hasUnsentChanges()) saveCollabRecoveryCopy(storageKey, doc, optionsRef.current.extensions);
       writeStoredEpoch(storageKey, nextEpoch);
       provider?.destroy();
       providerRef.current = null;
@@ -152,7 +176,8 @@ export function useCollabDocument(options: CollabDocumentOptions): CollabDocumen
         // 지우지 못한 옛 보관본은 이름(epoch)이 달라 다시 합쳐지지 않는다.
       }
       doc.destroy();
-      resetReasonRef.current = reason === "reset" ? "reset" : resetReasonRef.current;
+      // reset이든 epoch 불일치든 room이 다시 시작된 것이다. 화면 prop이 아닌 최신 head로 시드한다.
+      resetReasonRef.current = "reset";
       setState((previous) => ({ ...previous, doc: null, provider: null, ready: false, needsStaticFallback: false, isSaver: false }));
       setGeneration((value) => value + 1);
     };
@@ -186,10 +211,11 @@ export function useCollabDocument(options: CollabDocumentOptions): CollabDocumen
         refreshReady();
         return;
       }
+      // 서버와 연결된 적이 없이 오프라인인 경우에만 기기 안에서 먼저 시드한다(느린 연결에서 다른 head로 시드해 본문이 겹치지 않게).
       const canSeedNow =
         (provider.status === "connected" && provider.synced) ||
         (provider.status === "solo" && persistenceLoaded) ||
-        (force && persistenceLoaded);
+        (force && persistenceLoaded && provider.status === "offline" && !provider.everConnected);
       if (!canSeedNow) return;
       seeding = true;
       try {
@@ -227,8 +253,8 @@ export function useCollabDocument(options: CollabDocumentOptions): CollabDocumen
           publishAwareness();
           void trySeed(false);
         }),
-        provider.on("reset", (nextEpoch) => void restart(nextEpoch, "reset")),
-        provider.on("epoch", (nextEpoch) => void restart(nextEpoch, "epoch")),
+        provider.on("reset", (nextEpoch) => void restart(nextEpoch)),
+        provider.on("epoch", (nextEpoch) => void restart(nextEpoch)),
       );
       const handleAwareness = () => update({ isSaver: provider ? computeIsSaver(provider) : false });
       provider.awareness.on("change", handleAwareness);
@@ -263,5 +289,5 @@ export function useCollabDocument(options: CollabDocumentOptions): CollabDocumen
   }, [requestKey, storageKey, generation]);
 
   const hasUnsentChanges = useCallback(() => providerRef.current?.hasUnsentChanges() ?? false, []);
-  return { ...state, generation, hasUnsentChanges };
+  return { ...state, generation, hasUnsentChanges, epoch: storageKey ? readStoredEpochSafe(storageKey) : null };
 }

@@ -4,6 +4,7 @@ import {
   COLLAB_INTERNAL_HEADER_MODE,
   COLLAB_INTERNAL_HEADER_USER,
   COLLAB_ROOM_CONNECT_URL,
+  COLLAB_ROOM_EPOCH_URL,
   COLLAB_ROOM_RESET_URL,
   COLLAB_SUBPROTOCOL,
   COLLAB_WS_PATH_PREFIX,
@@ -87,4 +88,14 @@ export async function resetCollabRoom(env: CollabWorkerEnv | undefined, key: str
   const stub = env.DOC_ROOMS.get(env.DOC_ROOMS.idFromName(key));
   const response = await stub.fetch(COLLAB_ROOM_RESET_URL, { method: "POST" });
   return response.ok;
+}
+
+/** room의 지금 epoch. binding이 없으면 null(확인하지 않음). */
+export async function readCollabRoomEpoch(env: CollabWorkerEnv | undefined, key: string): Promise<number | null> {
+  if (!env?.DOC_ROOMS) return null;
+  const stub = env.DOC_ROOMS.get(env.DOC_ROOMS.idFromName(key));
+  const response = await stub.fetch(COLLAB_ROOM_EPOCH_URL, { method: "GET" });
+  if (!response.ok) throw new Error("COLLAB_ROOM_EPOCH_UNAVAILABLE");
+  const body = (await response.json()) as { epoch?: unknown };
+  return typeof body.epoch === "number" ? body.epoch : null;
 }

@@ -5,7 +5,7 @@
 "use server";
 
 import { formatCollabDocKey } from "@/lib/collab/doc-key";
-import { resetCollabRoomAfterMutation } from "@/lib/collab/server-env";
+import { isStaleCollabSave, resetCollabRoomAfterMutation, STALE_COLLAB_SAVE_MESSAGE } from "@/lib/collab/server-env";
 import { revalidatePath } from "next/cache";
 import { and, desc, eq, isNotNull, isNull } from "drizzle-orm";
 import { createDb, createDbContext } from "@/db/client";
@@ -378,6 +378,8 @@ export async function createPrivateNote(
 
 export type UpdateNoteState = {
   error?: string;
+  /** 공동 편집 room이 복원·휴지통으로 비워진 뒤의 옛 저장이라 반영하지 않았다. 다시 시도하지 않는다. */
+  collabStale?: boolean;
   success?: boolean;
   conflictKind?: PrivateNoteMutationFailureReason;
   replayed?: boolean;
@@ -426,6 +428,9 @@ export async function updatePrivateNote(
   }
   const payload = validateNotePayload(formData);
   if (!payload.ok) return { error: payload.error, conflictKind: payload.reason };
+  if (await isStaleCollabSave(formData, formatCollabDocKey({ kind: "note", id: noteId }))) {
+    return { error: STALE_COLLAB_SAVE_MESSAGE, collabStale: true };
+  }
 
   const result = await updatePrivateNoteAtomically(createDbContext(), {
     actor: {

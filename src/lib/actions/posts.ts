@@ -2,7 +2,7 @@
 "use server";
 
 import { formatCollabDocKey } from "@/lib/collab/doc-key";
-import { resetCollabRoomAfterMutation } from "@/lib/collab/server-env";
+import { isStaleCollabSave, resetCollabRoomAfterMutation, STALE_COLLAB_SAVE_MESSAGE } from "@/lib/collab/server-env";
 import { and, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
@@ -440,6 +440,8 @@ export async function createPost(
 
 export type UpdatePostState = {
   error?: string;
+  /** 수정 작업본 room이 비워진 뒤의 옛 저장이라 반영하지 않았다. */
+  collabStale?: boolean;
   success?: boolean;
   conflictKind?: PostMutationFailureReason;
   currentRevision?: number;
@@ -472,6 +474,9 @@ export async function updatePostContent(
   if (!existing) return { error: "게시물을 찾을 수 없습니다." };
   assertOwnerOrAdmin(session, existing.authorId);
   if (existing.deletedAt) return { error: "휴지통 게시물은 수정할 수 없습니다." };
+  if (await isStaleCollabSave(formData, formatCollabDocKey({ kind: "post", id: existing.id }))) {
+    return { error: STALE_COLLAB_SAVE_MESSAGE, collabStale: true };
+  }
 
   const operationId = resolveCreationOperationId(formData.get(CREATION_OPERATION_FIELD));
   const baseRevision = parsePostRevision(formData.get(POST_BASE_REVISION_FIELD));
