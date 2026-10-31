@@ -26,9 +26,10 @@ type DiscardServerDraft = (
 ) => Promise<DocumentServerDraftMutationResult>;
 
 /**
- * 폐기 요청 하나를 보낸다. 같은 본문이 다른 version으로 남아 있으면(충돌, 또는 앞선 요청의 재실행 응답 뒤
- * 다시 저장됨) 그 version으로 다시 보내고(편집기의 rebase 규칙과 같은 횟수), 서버본이 없거나 다른 본문이면
- * 건드리지 않는다.
+ * 폐기 요청 하나를 보낸다. 겨냥한 본문이 다른 version으로 남아 있으면(충돌, 또는 앞선 요청의 재실행 응답 뒤
+ * 다시 저장됨, 제출 정리가 hash로 겨냥한 이 기기의 이전 입력이 늦게 반영됨) 그 version으로 다시 보내고(편집기의
+ * rebase 규칙과 같은 횟수), 서버본이 없거나 겨냥하지 않은 본문이면 건드리지 않는다. 같은 브라우저의 다른 탭은
+ * 기기 ID를 공유하므로 기기 ID로 삭제 범위를 넓히지 않는다.
  */
 async function sendQueuedDiscard(
   storage: Pick<FormDraftStorage, "getItem" | "removeItem">,
@@ -43,6 +44,7 @@ async function sendQueuedDiscard(
     operationId: entry.operationId,
     expectedDraftVersion: entry.expectedDraftVersion,
     ...(entry.targetPayloadHashes ? { targetPayloadHashes: entry.targetPayloadHashes } : {}),
+    ...(entry.supersededOperationIds ? { supersededOperationIds: entry.supersededOperationIds } : {}),
   };
   let conflictCount = entry.conflictCount;
   for (;;) {
@@ -60,7 +62,11 @@ async function sendQueuedDiscard(
       conflictCount < SERVER_DRAFT_LOGOUT_MAX_DISCARD_REBASES
     ) {
       conflictCount += 1;
-      request = { ...request, operationId: createOperationId(), expectedDraftVersion: current.draftVersion };
+      request = {
+        ...request,
+        operationId: createOperationId(),
+        expectedDraftVersion: current.draftVersion,
+      };
       continue;
     }
     removeQueuedDocumentServerDraftIfUnchanged(storage, entry.sourceKey, stored.raw);

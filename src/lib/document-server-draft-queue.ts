@@ -12,6 +12,7 @@ import {
   parseDocumentServerDraftDeviceId,
   parseDocumentServerDraftVersion,
   parseDocumentServerDraftExpectedHash,
+  parseDocumentServerDraftSupersededOperationIds as parseSupersededOperationIds,
   parseDocumentServerDraftTargetHashes as parseTargetPayloadHashes,
   serializeDocumentServerDraftPayload,
 } from "@/lib/document-server-draft-contract";
@@ -45,8 +46,14 @@ export type QueuedDocumentServerDraftUpsert = QueuedDocumentServerDraftBase & {
 
 export type QueuedDocumentServerDraftDiscard = QueuedDocumentServerDraftBase & {
   operationType: "DISCARD";
-  /** 삭제 의도를 이 본문에 한정한다. 생략된 이전 요청은 원 version만 대상으로 한다. */
+  /**
+   * 삭제 의도를 이 본문에 한정한다. 생략된 이전 요청은 원 version만 대상으로 한다.
+   * 제출 정리는 전송 중·큐에 있던 이전 입력의 본문 hash도 여기에 넣어, 늦게 반영된 이전 입력은 지우되
+   * 같은 기기(같은 브라우저의 다른 탭)의 다른 본문은 보존한다. 기기 ID로 삭제 범위를 넓히지 않는다.
+   */
   targetPayloadHashes?: string[];
+  /** 서버 fence 대상 UPSERT operation ID(`DiscardDocumentServerDraftInput.supersededOperationIds`). */
+  supersededOperationIds?: string[];
 };
 
 export type QueuedDocumentServerDraft =
@@ -118,8 +125,14 @@ export function parseQueuedDocumentServerDraft(
     } as const;
     if (value.operationType === "DISCARD") {
       const targetPayloadHashes = parseTargetPayloadHashes(value.targetPayloadHashes);
-      if (targetPayloadHashes === null) return null;
-      return { ...base, operationType: "DISCARD", ...(targetPayloadHashes ? { targetPayloadHashes } : {}) };
+      const supersededOperationIds = parseSupersededOperationIds(value.supersededOperationIds);
+      if (targetPayloadHashes === null || supersededOperationIds === null) return null;
+      return {
+        ...base,
+        operationType: "DISCARD",
+        ...(targetPayloadHashes ? { targetPayloadHashes } : {}),
+        ...(supersededOperationIds ? { supersededOperationIds } : {}),
+      };
     }
     if (
       value.operationType !== "UPSERT" ||
@@ -260,6 +273,7 @@ export function enqueueDocumentServerDraftDiscard(
     now?: number;
     conflictCount?: number;
     targetPayloadHashes?: readonly string[];
+    supersededOperationIds?: readonly string[];
   },
 ): StoredQueuedDocumentServerDraft {
   if (!parseDocumentDraftKey(input.sourceKey)) {
@@ -270,7 +284,11 @@ export function enqueueDocumentServerDraftDiscard(
   );
   const conflictCount = parseConflictCount(input.conflictCount ?? 0);
   const targetPayloadHashes = parseTargetPayloadHashes(input.targetPayloadHashes);
-  if (expectedDraftVersion === null || conflictCount === null || targetPayloadHashes === null) {
+  const supersededOperationIds = parseSupersededOperationIds(input.supersededOperationIds);
+  if (
+    expectedDraftVersion === null || conflictCount === null || targetPayloadHashes === null ||
+    supersededOperationIds === null
+  ) {
     throw new TypeError("유효한 서버 초안 queue metadata가 필요합니다.");
   }
   const current = readQueuedDocumentServerDraft(storage, input.sourceKey);
@@ -278,7 +296,8 @@ export function enqueueDocumentServerDraftDiscard(
     current?.entry.operationType === "DISCARD" &&
     current.entry.expectedDraftVersion === expectedDraftVersion &&
     current.entry.conflictCount === conflictCount &&
-    JSON.stringify(current.entry.targetPayloadHashes) === JSON.stringify(targetPayloadHashes)
+    JSON.stringify(current.entry.targetPayloadHashes) === JSON.stringify(targetPayloadHashes) &&
+    JSON.stringify(current.entry.supersededOperationIds) === JSON.stringify(supersededOperationIds)
   ) {
     return current;
   }
@@ -291,6 +310,7 @@ export function enqueueDocumentServerDraftDiscard(
     queuedAt: input.now ?? Date.now(),
     conflictCount,
     ...(targetPayloadHashes ? { targetPayloadHashes } : {}),
+    ...(supersededOperationIds ? { supersededOperationIds } : {}),
   });
 }
 

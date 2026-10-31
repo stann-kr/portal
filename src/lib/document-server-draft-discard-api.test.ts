@@ -12,6 +12,8 @@ const INPUT: DiscardDocumentServerDraftInput = {
   operationId: "0c3f1d2e-5a6b-4c7d-8e9f-0a1b2c3d4e5f",
   expectedDraftVersion: 2,
   targetPayloadHashes: ["a".repeat(64)],
+  // 서버 fence 대상도 그대로 server action에 넘어가야 한다.
+  supersededOperationIds: ["2b1d6c7e-1a2b-4c3d-8e9f-0a1b2c3d4e5f"],
 };
 const OK: DocumentServerDraftMutationResult = { ok: true, replayed: false, operationResultVersion: 2, current: null };
 

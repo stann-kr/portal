@@ -70,13 +70,32 @@ export type DiscardDocumentServerDraftInput = {
   operationId: string;
   expectedDraftVersion: number;
   targetPayloadHashes?: readonly string[];
+  /**
+   * 폐기를 큐에 넣는 시점에 같은 sourceKey로 전송 중이거나 큐에 있던 UPSERT의 operation ID(서버 fence).
+   * 서버는 이 ID들의 receipt를 DISCARD로 선점해 늦게 도착한 저장이 서버본을 되살리지 못하게 하고,
+   * 현재 서버본이 이 ID가 만든 것이고 그 본문 hash가 `targetPayloadHashes`에 있으면 version이 달라도 삭제한다
+   * (클라이언트는 superseded UPSERT의 본문 hash를 대상에 함께 넣는다. 기기 ID나 version·시각만으로는 범위를 넓히지 않는다).
+   */
+  supersededOperationIds?: readonly string[];
 };
+
+export const DOCUMENT_SERVER_DRAFT_MAX_SUPERSEDED_OPERATIONS = 8;
 
 export function parseDocumentServerDraftTargetHashes(value: unknown): string[] | undefined | null {
   if (value === undefined) return undefined;
   if (!Array.isArray(value) || value.length === 0 || value.length > 32 ||
     !value.every((hash) => typeof hash === "string" && /^[0-9a-f]{64}$/.test(hash))) return null;
   return [...new Set(value as string[])].sort();
+}
+
+/** 없으면 undefined, 1~8개의 유효한 operation ID면 중복 제거·정렬한 배열, 그 밖에는 null(잘못된 입력). */
+export function parseDocumentServerDraftSupersededOperationIds(value: unknown): string[] | undefined | null {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length === 0 ||
+    value.length > DOCUMENT_SERVER_DRAFT_MAX_SUPERSEDED_OPERATIONS) return null;
+  const parsed = value.map((entry) => parseCreationOperationId(entry));
+  if (parsed.some((entry) => entry === null)) return null;
+  return [...new Set(parsed as string[])].sort();
 }
 
 export type CanonicalDocumentServerDraftPayload = {
@@ -174,6 +193,7 @@ export function createDocumentServerDraftRequestHash(input: {
   writerDeviceId?: string;
   targetPayloadHashes?: readonly string[];
   expectedPayloadHash?: string;
+  supersededOperationIds?: readonly string[];
 }): string {
   const canonical = JSON.stringify([
     "document-server-draft",
@@ -187,6 +207,8 @@ export function createDocumentServerDraftRequestHash(input: {
     // 기존 요청의 canonical bytes는 유지하고, 본문에 한정된 삭제 의도만 추가한다.
     ...(input.targetPayloadHashes ? [input.targetPayloadHashes] : []),
     ...(input.expectedPayloadHash ? [input.expectedPayloadHash] : []),
+    // 서버 fence 대상도 있을 때만 붙인다(배열 위치가 아니라 key로 구분해 targetPayloadHashes와 섞이지 않는다).
+    ...(input.supersededOperationIds ? [{ supersededOperationIds: input.supersededOperationIds }] : []),
   ]);
   return bytesToHex(sha256(utf8ToBytes(canonical)));
 }

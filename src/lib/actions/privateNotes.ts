@@ -102,6 +102,12 @@ function validateNotePayload(formData: FormData):
   }
 }
 
+/**
+ * 목록·상세 경로를 다시 받게 한다. 생성·자동 저장(update)에서는 호출하지 않는다: action 안의 어떤
+ * `revalidatePath`든 Next가 `x-action-revalidated`로 현재 route 전체를 다시 렌더해 입력 중 화면이 새로고침된
+ * 것처럼 바뀐다(2026-10-31 확인). 대상 페이지는 모두 세션 기반 dynamic이라 다음 navigation에서 새로 받고,
+ * 열린 읽기 화면은 revision 폴링(live view)이 맡는다. 휴지통·복원·purge·날짜 이동처럼 입력 중이 아닌 작업만 호출한다.
+ */
 function revalidatePrivateNotePaths(studentId: string, noteId?: string): void {
   if (noteId) {
     revalidatePath(`/dashboard/notes/${noteId}`);
@@ -150,6 +156,30 @@ export async function getPrivateNote(noteId: string) {
 /** 상세 lifecycle UI가 휴지통 상태까지 구분할 때 사용한다. */
 export async function getPrivateNoteIncludingTrash(noteId: string) {
   return getPrivateNoteRecord(noteId, true);
+}
+
+export type PrivateNoteHead = { id: string; version: number; updatedAt: Date | null };
+
+/**
+ * 읽기 전용 실시간 보기(live view)의 가벼운 head 조회: 본문 없이 id·version·updatedAt만.
+ * 권한 경계는 `getPrivateNote`와 같다(본인 학생 또는 관리자, 그 밖은 throw). 휴지통·없는 노트는 null.
+ */
+export async function getPrivateNoteHead(noteId: string): Promise<PrivateNoteHead | null> {
+  const session = await requireAuth();
+  const db = createDb();
+  const [head] = await db
+    .select({
+      id: privateNotes.id,
+      studentId: privateNotes.studentId,
+      version: privateNotes.version,
+      updatedAt: privateNotes.updatedAt,
+    })
+    .from(privateNotes)
+    .where(and(eq(privateNotes.id, noteId), isNull(privateNotes.deletedAt)))
+    .limit(1);
+  if (!head) return null;
+  await requireStudentOwnerOrAdmin(session, head.studentId);
+  return { id: head.id, version: head.version, updatedAt: head.updatedAt };
 }
 
 /**
@@ -322,7 +352,7 @@ export async function createPrivateNote(
     };
   }
 
-  revalidatePrivateNotePaths(targetStudentId, id);
+  // 자동 저장(제자리 생성) 중 route 재렌더를 막기 위해 revalidate하지 않는다(위 주석).
   const currentNote = result.replayed
     ? await getPrivateNoteIncludingTrash(id)
     : null;
@@ -352,6 +382,8 @@ export type UpdateNoteState = {
   resourceState?: PrivateNoteResourceState;
   operationResultRevision?: number;
   currentRevision?: number | null;
+  /** 저장된 서버 수정 시각. 화면은 revalidate 없이 이 값으로 "수정" 줄을 맞춘다. */
+  updatedAt?: Date | null;
   conflictNote?: {
     id: string;
     title: string;
@@ -463,13 +495,14 @@ export async function updatePrivateNote(
       conflictKind: "INTERNAL_INVARIANT_FAILURE",
     };
   }
-  revalidatePrivateNotePaths(note.studentId, noteId);
+  // 자동 저장마다 route가 다시 렌더되지 않도록 revalidate하지 않는다(위 주석).
   return {
     success: true,
     replayed: result.replayed,
     resourceState: result.resourceState,
     operationResultRevision: result.operationResultRevision,
     currentRevision,
+    updatedAt: note.updatedAt,
     note: {
       id: noteId,
       title: note.title,

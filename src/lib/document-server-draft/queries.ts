@@ -1,4 +1,4 @@
-import { and, eq, lte } from "drizzle-orm";
+import { and, eq, inArray, lte } from "drizzle-orm";
 import type { DbContext, DrizzleDb } from "@/db/client";
 import type { DocumentServerDraftKind } from "@/db/schema";
 import type {
@@ -90,6 +90,35 @@ export async function findOperation(
     )
     .limit(1);
   return operation ?? null;
+}
+
+export type StoredOperationWithTime = StoredOperation & { createdAt: Date };
+
+/** 서버 fence(b): 폐기가 superseded로 지목한 operation ID들의 receipt를 한 번에 읽는다. */
+export async function findOperationsByIds(
+  context: DbContext,
+  ownerId: string,
+  operationIds: readonly string[],
+): Promise<StoredOperationWithTime[]> {
+  if (operationIds.length === 0) return [];
+  return asReadDb(context)
+    .select({
+      operationId: documentServerDraftOperations.operationId,
+      sourceKey: documentServerDraftOperations.sourceKey,
+      operationType: documentServerDraftOperations.operationType,
+      requestHash: documentServerDraftOperations.requestHash,
+      requestHashVersion: documentServerDraftOperations.requestHashVersion,
+      resultVersion: documentServerDraftOperations.resultVersion,
+      resultState: documentServerDraftOperations.resultState,
+      createdAt: documentServerDraftOperations.createdAt,
+    })
+    .from(documentServerDraftOperations)
+    .where(
+      and(
+        eq(documentServerDraftOperations.ownerId, ownerId),
+        inArray(documentServerDraftOperations.operationId, [...operationIds]),
+      ),
+    );
 }
 
 export async function pruneExpiredDocumentServerDraftState(

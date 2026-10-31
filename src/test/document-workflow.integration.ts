@@ -65,7 +65,15 @@ import {
 import {
   createDocumentDraftKey,
 } from "@/lib/form-draft";
-import { canonicalizeDocumentServerDraftPayload, serializeDocumentServerDraftPayload } from "@/lib/document-server-draft-contract";
+import {
+  canonicalizeDocumentServerDraftPayload,
+  createDocumentServerDraftRequestHash,
+  serializeDocumentServerDraftPayload,
+} from "@/lib/document-server-draft-contract";
+import {
+  discardDocumentServerDraftAtomically,
+  saveDocumentServerDraftAtomically,
+} from "@/lib/document-server-draft-atomic";
 import {
   DOCUMENT_SERVER_DRAFT_MAX_PAYLOAD_BYTES,
   DOCUMENT_SERVER_DRAFT_RETENTION_SECONDS,
@@ -88,6 +96,7 @@ let privateNoteActions: typeof import("@/lib/actions/privateNotes");
 let postActions: typeof import("@/lib/actions/posts");
 let commentActions: typeof import("@/lib/actions/comments");
 let revalidationFailure: Error | null = null;
+let revalidateCalls = 0;
 
 function requireActiveDb(): PortalTestDb {
   if (!activeDb) throw new Error("격리 D1 테스트 DB가 준비되지 않았습니다.");
@@ -108,6 +117,7 @@ mock.module("@/db/client", {
 mock.module("next/cache", {
   namedExports: {
     revalidatePath: () => {
+      revalidateCalls += 1;
       if (revalidationFailure) {
         const failure = revalidationFailure;
         revalidationFailure = null;
@@ -867,6 +877,38 @@ test("노트 CAS 중 소유자 변경 시도도 원장과 함께 rollback한다"
     authorId: "student-1",
     title: "경쟁 전 제목",
   });
+});
+
+test("노트 생성·자동 저장은 revalidatePath를 호출하지 않아 입력 중 route가 다시 렌더되지 않는다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context);
+  await seedProfile(db, "student-1");
+  revalidateCalls = 0;
+  const created = await privateNoteActions.createPrivateNote(
+    "student-1",
+    {},
+    createNoteForm(crypto.randomUUID(), "입력 중 제목", "<p>입력 중 본문</p>", "2026-10-31"),
+  );
+  const noteId = created.note?.id;
+  assert.ok(noteId);
+  const updated = await privateNoteActions.updatePrivateNote(
+    noteId,
+    {},
+    createNoteUpdateForm(
+      noteId,
+      { title: "입력 중 제목", contentHtml: "<p>입력 중 본문 이어서</p>", noteDate: "2026-10-31" },
+      { title: "입력 중 제목", contentHtml: "<p>입력 중 본문</p>", noteDate: "2026-10-31" },
+      crypto.randomUUID(),
+      1,
+    ),
+  );
+  assert.equal(updated.success, true);
+  assert.ok(updated.updatedAt instanceof Date, "저장 응답은 화면이 수정 시각을 맞출 updatedAt을 돌려준다.");
+  assert.equal(revalidateCalls, 0, "생성·자동 저장은 어떤 경로도 revalidate하지 않는다.");
+
+  // 휴지통처럼 입력 중이 아닌 작업은 목록을 다시 받게 한다.
+  const trashed = await privateNoteActions.trashPrivateNote(noteId, crypto.randomUUID(), updated.note?.version ?? 2);
+  assert.equal(trashed.success, true);
+  assert.ok(revalidateCalls > 0, "휴지통 이동은 목록 경로를 revalidate한다.");
 });
 
 test("노트 생성·수정 재전송은 immutable revision과 historical receipt를 한 번만 남긴다", { concurrency: false }, async (context) => {
@@ -4091,4 +4133,225 @@ test("재생 시점 댓글은 매체 있는 믹스셋 게시물에만 저장하�
     .from(comments)
     .where(eq(comments.id, onLink.commentId!));
   assert.equal(unchanged?.seconds, 3930);
+});
+
+test("폐기가 superseded로 지목한 늦은 UPSERT는 서버본을 되살리지 못하고, 그 요청이 만든 서버본은 본문 hash가 대상에 있으면 version이 달라도 지운다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context);
+  await seedProfile(db, "student-1");
+  const sourceKey = createDocumentDraftKey("note", "student-1", "new:student-1");
+  const submittedHash = canonicalizeDocumentServerDraftPayload(
+    serializeDocumentServerDraftPayload({ title: "제출한 P2", contentHtml: "<p>P2</p>" }),
+  )!.payloadHash;
+
+  // (a) 폐기가 먼저 도착: 아직 없는 서버본의 정리(expected 0)에 전송 중이던 UPSERT를 지목한다.
+  const late = createServerDraftSaveInput("student-1", { title: "늦은 P1", contentHtml: "<p>P1</p>" }, { sourceKey });
+  const fence = {
+    sourceKey,
+    operationId: crypto.randomUUID(),
+    expectedDraftVersion: 0,
+    targetPayloadHashes: [submittedHash],
+    supersededOperationIds: [late.operationId],
+  };
+  const fenced = await documentDraftActions.discardDocumentServerDraft(fence);
+  assert.equal(fenced.ok, true, JSON.stringify(fenced));
+  assert.equal(fenced.current, null);
+  const lateResult = await documentDraftActions.saveDocumentServerDraft(late);
+  assert.equal(lateResult.ok, false, "fence 뒤 도착한 UPSERT는 쓰지 않는다");
+  if (!lateResult.ok) assert.equal(lateResult.reason, "OPERATION_PAYLOAD_CONFLICT");
+  assert.equal((await db.select().from(documentServerDrafts)).length, 0);
+  const replay = await documentDraftActions.discardDocumentServerDraft(fence);
+  assert.ok(replay.ok && replay.replayed, "같은 폐기 재요청은 exact replay");
+  const changedFence = await documentDraftActions.discardDocumentServerDraft({ ...fence, supersededOperationIds: [crypto.randomUUID()] });
+  assert.equal(changedFence.ok, false);
+  if (!changedFence.ok) assert.equal(changedFence.reason, "OPERATION_PAYLOAD_CONFLICT");
+  const fenceReceipts = await db.select().from(documentServerDraftOperations).where(eq(documentServerDraftOperations.operationId, late.operationId));
+  assert.equal(fenceReceipts.length, 1);
+  assert.equal(fenceReceipts[0]?.operationType, "DISCARD");
+  assert.equal(fenceReceipts[0]?.resultVersion, 0);
+
+  // (b) 늦은 UPSERT가 먼저 반영된 뒤 폐기가 도착: 그 요청이 만든 서버본은 version이 달라도 지운다.
+  //     클라이언트는 superseded UPSERT의 본문 hash를 폐기 대상에 함께 넣는다(기기 ID로 범위를 넓히지 않는다).
+  const early = createServerDraftSaveInput("student-1", { title: "먼저 반영된 P1", contentHtml: "<p>P1b</p>" }, { sourceKey });
+  const earlyHash = canonicalizeDocumentServerDraftPayload(early.payloadJson)!.payloadHash;
+  const saved = await documentDraftActions.saveDocumentServerDraft(early);
+  assert.ok(saved.ok && saved.current?.draftVersion === 1);
+  const cleanup = {
+    sourceKey,
+    operationId: crypto.randomUUID(),
+    expectedDraftVersion: 0,
+    targetPayloadHashes: [submittedHash, earlyHash],
+    supersededOperationIds: [early.operationId],
+  };
+  const cleaned = await documentDraftActions.discardDocumentServerDraft(cleanup);
+  assert.equal(cleaned.ok, true, JSON.stringify(cleaned));
+  if (!cleaned.ok) return;
+  assert.equal(cleaned.current, null);
+  assert.equal(cleaned.operationResultVersion, 1);
+  assert.equal((await db.select().from(documentServerDrafts)).length, 0);
+  const earlyReplay = await documentDraftActions.saveDocumentServerDraft(early);
+  assert.ok(earlyReplay.ok && earlyReplay.replayed, "재전송은 receipt를 되돌려 줄 뿐 서버본을 되살리지 않는다");
+  assert.equal(earlyReplay.ok ? earlyReplay.current : undefined, null);
+  // superseded 지목이 없는 같은 요청은 기존 CAS 그대로다.
+  const peerLike = await documentDraftActions.saveDocumentServerDraft(
+    createServerDraftSaveInput("student-1", { title: "다시 쓴 P1", contentHtml: "<p>P1c</p>" }, { sourceKey }),
+  );
+  assert.ok(peerLike.ok);
+  const plain = await documentDraftActions.discardDocumentServerDraft({ ...cleanup, operationId: crypto.randomUUID(), supersededOperationIds: undefined });
+  assert.equal(plain.ok, false);
+  if (!plain.ok) assert.equal(plain.reason, "VERSION_CONFLICT");
+
+  // (b') 본문 hash를 대상에 넣지 않은 superseded 지목만으로는 서버본을 지우지 않는다(version·초만으로는 생성 증명이 아니다).
+  const peerLikeHash = canonicalizeDocumentServerDraftPayload(
+    (await db.select().from(documentServerDrafts))[0]!.payloadJson,
+  )!.payloadHash;
+  const peerLikeOperationId = (await db.select().from(documentServerDraftOperations)
+    .where(eq(documentServerDraftOperations.resultVersion, 1)))
+    .filter((operation) => operation.operationType === "UPSERT" && operation.operationId !== early.operationId)
+    .map((operation) => operation.operationId);
+  assert.equal(peerLikeOperationId.length, 1);
+  const hashless = await documentDraftActions.discardDocumentServerDraft({
+    sourceKey,
+    operationId: crypto.randomUUID(),
+    expectedDraftVersion: 0,
+    targetPayloadHashes: [submittedHash],
+    supersededOperationIds: peerLikeOperationId,
+  });
+  assert.equal(hashless.ok, false);
+  if (!hashless.ok) assert.equal(hashless.reason, "VERSION_CONFLICT");
+  assert.equal(hashless.current?.payloadHash, peerLikeHash);
+
+  // (c) 다른 기기의 서버본은 지목과 무관하게 보존되지만, 지목된 늦은 UPSERT는 그래도 막힌다.
+  const pendingOwn = createServerDraftSaveInput("student-1", { title: "아직 안 보낸 P1", contentHtml: "<p>P1d</p>" }, { sourceKey });
+  const guarded = await documentDraftActions.discardDocumentServerDraft({
+    sourceKey,
+    operationId: crypto.randomUUID(),
+    expectedDraftVersion: 0,
+    targetPayloadHashes: [submittedHash],
+    supersededOperationIds: [pendingOwn.operationId],
+  });
+  assert.equal(guarded.ok, false);
+  if (!guarded.ok) assert.equal(guarded.reason, "VERSION_CONFLICT");
+  assert.match(guarded.current?.payloadJson ?? "", /다시 쓴 P1/u);
+  const lateOwn = await documentDraftActions.saveDocumentServerDraft(pendingOwn);
+  assert.equal(lateOwn.ok, false);
+  if (!lateOwn.ok) assert.equal(lateOwn.reason, "OPERATION_PAYLOAD_CONFLICT");
+  assert.match((await db.select().from(documentServerDrafts))[0]?.payloadJson ?? "", /다시 쓴 P1/u);
+
+  // (d) 입력 검증: 자기 operation ID·개수 초과·형식 오류는 거부한다.
+  const selfId = crypto.randomUUID();
+  for (const supersededOperationIds of [
+    [selfId],
+    Array.from({ length: 9 }, () => crypto.randomUUID()),
+    ["not-an-operation-id"],
+    [],
+  ]) {
+    const invalid = await documentDraftActions.discardDocumentServerDraft({
+      sourceKey, operationId: selfId, expectedDraftVersion: 1, supersededOperationIds,
+    });
+    assert.equal(invalid.ok, false);
+    if (!invalid.ok) assert.equal(invalid.reason, "INVALID_INPUT", JSON.stringify(supersededOperationIds));
+  }
+});
+
+test("서버 fence(b)는 같은 초·같은 version으로 재생성된 다른 기기의 다른 본문을 superseded로 보지 않고, 같은 본문은 폐기 의도에 포함한다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context);
+  await seedProfile(db, "student-1");
+  const dbContext: D1TestContext = { kind: "d1", db };
+  const sourceKey = createDocumentDraftKey("note", "student-1", "fence-same-second");
+  // action은 `new Date()`를 쓰므로 같은 초를 고정하려면 atomic 함수를 직접 부른다.
+  const now = new Date(Math.floor(Date.now() / 1000) * 1000);
+  const deviceA = crypto.randomUUID();
+  const deviceB = crypto.randomUUID();
+
+  function createSave(data: Record<string, unknown>, writerDeviceId: string) {
+    const payloadJson = serializeDocumentServerDraftPayload(data);
+    const payload = canonicalizeDocumentServerDraftPayload(payloadJson)!;
+    const write = {
+      ownerId: "student-1",
+      sourceKey,
+      kind: "note" as const,
+      contextId: "fence-same-second",
+      operationId: crypto.randomUUID(),
+      expectedDraftVersion: 0,
+      payloadJson: payload.payloadJson,
+      payloadHash: payload.payloadHash,
+      baseResourceVersion: null,
+      writerDeviceId,
+      now,
+    };
+    return {
+      ...write,
+      requestHash: createDocumentServerDraftRequestHash({
+        operationType: "UPSERT",
+        sourceKey,
+        expectedDraftVersion: 0,
+        payloadHash: payload.payloadHash,
+        baseResourceVersion: null,
+        writerDeviceId,
+      }),
+    };
+  }
+
+  function createDiscard(targetPayloadHashes: string[], supersededOperationIds?: string[]) {
+    return {
+      ownerId: "student-1",
+      sourceKey,
+      operationId: crypto.randomUUID(),
+      expectedDraftVersion: 1,
+      targetPayloadHashes,
+      ...(supersededOperationIds ? { supersededOperationIds } : {}),
+      requestHash: createDocumentServerDraftRequestHash({
+        operationType: "DISCARD",
+        sourceKey,
+        expectedDraftVersion: 1,
+        targetPayloadHashes,
+        supersededOperationIds,
+      }),
+      now,
+    };
+  }
+
+  for (const sameBody of [false, true]) {
+    await context.test(sameBody ? "B가 A와 같은 본문(한계: superseded로 보고 지운다)" : "B가 다른 본문(보존)", async () => {
+      await db.delete(documentServerDrafts);
+      await db.delete(documentServerDraftOperations);
+      const bodyA = { title: "기기 A", contentHtml: "<p>A</p>" };
+      const saveA = createSave(bodyA, deviceA);
+      const savedA = await saveDocumentServerDraftAtomically(dbContext, saveA);
+      assert.ok(savedA.ok && savedA.current?.draftVersion === 1, JSON.stringify(savedA));
+
+      // A 폐기(제출 정리 1차) → 행 삭제. 같은 초에 기기 B가 저장해 version 1이 재사용된다.
+      const discardedA = await discardDocumentServerDraftAtomically(dbContext, createDiscard([saveA.payloadHash]));
+      assert.ok(discardedA.ok && discardedA.current === null, JSON.stringify(discardedA));
+      const saveB = createSave(sameBody ? bodyA : { title: "기기 B", contentHtml: "<p>B</p>" }, deviceB);
+      const savedB = await saveDocumentServerDraftAtomically(dbContext, saveB);
+      assert.ok(savedB.ok && savedB.current?.draftVersion === 1 && savedB.current.writerDeviceId === deviceB, JSON.stringify(savedB));
+      assert.equal(savedB.current?.payloadHash === saveA.payloadHash, sameBody);
+
+      // A의 지연 정리: v1·A hash를 겨냥하고 A의 UPSERT를 superseded로 지목한다.
+      const lateCleanup = await discardDocumentServerDraftAtomically(
+        dbContext,
+        createDiscard([saveA.payloadHash], [saveA.operationId]),
+      );
+      const rows = await db.select().from(documentServerDrafts);
+      if (sameBody) {
+        // 본문이 같으므로 폐기 의도에 포함된다: 같은 초·같은 version·같은 hash는 superseded로 본다.
+        assert.ok(lateCleanup.ok, JSON.stringify(lateCleanup));
+        assert.equal(lateCleanup.current, null);
+        assert.equal(rows.length, 0);
+      } else {
+        // version·초만으로는 생성 operation을 증명할 수 없다. B의 행은 hash가 대상에 없으므로 보존한다.
+        assert.equal(lateCleanup.ok, false, JSON.stringify(lateCleanup));
+        if (!lateCleanup.ok) assert.equal(lateCleanup.reason, "VERSION_CONFLICT");
+        assert.equal(lateCleanup.current?.writerDeviceId, deviceB);
+        assert.equal(lateCleanup.current?.payloadHash, saveB.payloadHash);
+        assert.equal(rows.length, 1);
+        assert.equal(rows[0]?.writerDeviceId, deviceB);
+        assert.equal(rows[0]?.payloadHash, saveB.payloadHash);
+      }
+      // superseded 지목은 결과와 무관하게 A의 receipt를 남기지 않는다(이미 UPSERT receipt가 있음) — A 재전송은 replay로 끝난다.
+      const replayA = await saveDocumentServerDraftAtomically(dbContext, saveA);
+      assert.ok(replayA.ok && replayA.replayed, JSON.stringify(replayA));
+    });
+  }
 });

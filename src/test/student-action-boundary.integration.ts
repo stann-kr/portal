@@ -1355,3 +1355,35 @@ test("과제·제출·규칙이 100개를 넘어도 id 목록을 bind하지 않�
   context.diagnostic(`max bind per statement: ${widest.count}`);
   assert.ok(widest.count <= 100, `bind ${widest.count}개: ${widest.query.slice(0, 120)}`);
 });
+
+test("노트 head 조회는 본인 학생·관리자만 읽고 본문 없이 version·수정 시각만 돌려주며 휴지통은 null이다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("student-1", "student"));
+  context.after(() => { activeSession = createSession("student-1", "student"); });
+  await seedProfile(db, "admin-1", "admin");
+  await seedProfile(db, "student-1");
+  await seedProfile(db, "student-2");
+  // D1 timestamp는 초 단위로 저장되므로 초 경계 시각을 쓴다.
+  const updatedAt = new Date("2026-10-31T01:00:00.000Z");
+  await db.insert(portalSchema.privateNotes).values([
+    { id: "live-note", studentId: "student-1", authorId: "admin-1", title: "수업 노트", contentHtml: "<p>본문은 head에 실리지 않는다</p>", version: 3, updatedAt },
+    { id: "trashed-note", studentId: "student-1", authorId: "admin-1", title: "지운 노트", contentHtml: "<p>지운 본문</p>", version: 2, updatedAt, deletedAt: updatedAt },
+  ]);
+  const { getPrivateNoteHead } = await import("@/lib/actions/privateNotes");
+
+  // 본인 학생: 본문 없이 id·version·updatedAt만.
+  const own = await getPrivateNoteHead("live-note");
+  assert.deepEqual(own, { id: "live-note", version: 3, updatedAt });
+  assert.deepEqual(Object.keys(own!).sort(), ["id", "updatedAt", "version"], "본문(contentHtml)·제목을 돌려주지 않는다");
+  assert.equal(await getPrivateNoteHead("trashed-note"), null, "휴지통 노트는 null");
+  assert.equal(await getPrivateNoteHead("missing-note"), null);
+
+  // 관리자(Stann)도 같은 결과.
+  activeSession = createSession("admin-1", "admin");
+  assert.deepEqual(await getPrivateNoteHead("live-note"), { id: "live-note", version: 3, updatedAt });
+
+  // 다른 학생·비로그인은 거부(getPrivateNote와 같은 경계).
+  activeSession = createSession("student-2", "student");
+  await assert.rejects(getPrivateNoteHead("live-note"), /Unauthorized/u);
+  activeSession = null as unknown as AuthSession;
+  await assert.rejects(getPrivateNoteHead("live-note"), /Unauthorized/u);
+});
