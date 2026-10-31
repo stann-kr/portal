@@ -129,7 +129,7 @@ iCloud 연동:
 노트·가이드·게시물·Q&A 편집기는 `DOC_ROOMS` 없이도 혼자 모드(기기 보관, 이 탭이 저장)로 열리지만 공동 편집·실시간 보기는 binding이 있어야 동작한다. DO class 생성은 code deploy와 별도 승인 범위다.
 
 1. `wrangler.toml`과 `wrangler.scheduled.toml`이 같은 `DOC_ROOMS` binding과 `v1-document-rooms` migration을 가지는지 확인한다(둘 중 하나에서 빠지면 그 Worker 이름으로 올린 version이 class를 잃는다).
-2. 승인된 배포에서 첫 version upload 때 migration이 적용되는지 확인한다. Workers Paid plan과 DO 요금 한도를 확인한다.
+2. **DO migration은 `wrangler deploy`로만 적용된다.** Cloudflare 문서(Durable Objects migrations: "lifecycle changes can only be applied via `wrangler deploy`", gradual deployments: 대기 중 migration은 `wrangler deploy`로 적용)에 따라 `wrangler versions upload` → `versions deploy`(Workers Builds의 version·점진 배포) 경로로는 `v1-document-rooms`를 만들 수 없다. 로컬 `npm run build:scheduled`(`versions upload --dry-run`)는 통과하지만 이 제한을 검사하지 않는다(2026-11-01 확인). 첫 배포는 승인된 범위에서 `wrangler deploy --config wrangler.scheduled.toml`(100% 즉시, 점진 배포 아님)로 하고, 그 뒤 배포는 기존 version 경로로 돌아온다. Workers Paid plan과 DO 요금 한도를 확인한다.
 3. 롤백: 코드는 이전 version으로 되돌릴 수 있지만 만들어진 DO class를 지우려면 `deleted_classes` migration이 필요하다. room 저장소는 문서의 원본이 아니라 작업본이고 원본은 D1이므로, 문제가 있으면 이전 version으로 되돌리고 class는 남겨 둔다.
 4. 배포 직후 smoke는 아래 "배포 후 확인"의 공동 편집 항목을 따른다.
 
