@@ -59,7 +59,10 @@ export function createCollabTokenHandler(deps: CollabTokenHandlerDeps) {
       };
       return json(response, 200);
     }
-    const token = await signCollabToken({ key: result.key, userId: actor.id, mode: result.mode }, secret);
+    const token = await signCollabToken(
+      { key: result.key, userId: actor.id, mode: result.mode, lifecycle: result.lifecycle },
+      secret,
+    );
     const response: CollabTokenResponse = {
       collab: true,
       key: result.key,

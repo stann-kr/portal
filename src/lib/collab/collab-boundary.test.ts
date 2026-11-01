@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test, { after } from "node:test";
+import test, { after, mock } from "node:test";
 import * as Y from "yjs";
 import * as syncProtocol from "y-protocols/sync";
 import * as awarenessProtocol from "y-protocols/awareness";
@@ -19,7 +19,11 @@ import {
   COLLAB_MESSAGE_AWARENESS,
   COLLAB_MESSAGE_CONTROL,
   COLLAB_MESSAGE_SYNC,
-  COLLAB_SOCKET_MAX_AGE_MS,
+  COLLAB_LEASE_SECONDS,
+  COLLAB_CLOSE_BUSY,
+  COLLAB_CLOSE_FREEZE_TIMEOUT,
+  COLLAB_CLOSE_GONE,
+  COLLAB_CLOSE_STALE,
   COLLAB_EPOCH_FIELD,
   COLLAB_SUBPROTOCOL,
 } from "./protocol";
@@ -40,14 +44,17 @@ import { signCollabToken, verifyCollabToken } from "./token";
 import { handleCollabWebSocket, readCollabRoomEpoch } from "./worker-route";
 
 const SECRET = "test-only-collab-secret";
+const LEASE_MS = COLLAB_LEASE_SECONDS * 1000;
 const NOW = Date.UTC(2026, 10, 1, 0, 0, 0);
 
 test("토큰: 서명·만료·room key가 모두 맞을 때만 통과한다", async () => {
   const token = await signCollabToken({ key: "note:n1", userId: "u1", mode: "write" }, SECRET, NOW);
   assert.deepEqual(
     { ...(await verifyCollabToken(token, "note:n1", SECRET, NOW + 1000)), exp: 0 },
-    { k: "note:n1", u: "u1", m: "write", exp: 0 },
+    { k: "note:n1", u: "u1", m: "write", exp: 0, i: NOW, l: Math.floor(NOW / 1000) + COLLAB_LEASE_SECONDS },
   );
+  const withLifecycle = await signCollabToken({ key: "note:n1", userId: "u1", mode: "write", lifecycle: 4 }, SECRET, NOW);
+  assert.equal((await verifyCollabToken(withLifecycle, "note:n1", SECRET, NOW))?.e, 4, "노트 세대를 싣는다");
   assert.equal(await verifyCollabToken(token, "note:n2", SECRET, NOW), null, "다른 문서");
   assert.equal(await verifyCollabToken(token, "note:n1", "other-secret", NOW), null, "다른 비밀");
   assert.equal(await verifyCollabToken(token, "note:n1", SECRET, NOW + 61_000), null, "만료");
@@ -71,12 +78,12 @@ function loaders(overrides: Partial<CollabDocumentLoaders> = {}): CollabDocument
   return {
     findNote: async (id) =>
       ({
-        mine: { studentId: "s1", authorId: "s1", deletedAt: null },
-        stann: { studentId: "s1", authorId: "admin", deletedAt: null },
-        trashed: { studentId: "s1", authorId: "s1", deletedAt: new Date(NOW) },
+        mine: { studentId: "s1", authorId: "s1", deletedAt: null, lifecycle: 0 },
+        stann: { studentId: "s1", authorId: "admin", deletedAt: null, lifecycle: 7 },
+        trashed: { studentId: "s1", authorId: "s1", deletedAt: new Date(NOW), lifecycle: 0 },
       })[id] ?? null,
     findPost: async (id) =>
-      ({ p1: { authorId: "s1", deletedAt: null }, gone: { authorId: "s1", deletedAt: new Date(NOW) } })[id] ?? null,
+      ({ p1: { authorId: "s1", deletedAt: null, lifecycle: 2 }, gone: { authorId: "s1", deletedAt: new Date(NOW), lifecycle: 0 } })[id] ?? null,
     findGuidePage: async (id) => (id === "g1" ? { id } : null),
     findQnaThread: async (id) => (id === "t1" ? { studentId: "s1", deletedAt: null } : null),
     isActiveStudent: async (id) => id === "s1" || id === "s2",
@@ -88,10 +95,10 @@ const student2 = { id: "s2", isAdmin: false };
 const admin = { id: "admin", isAdmin: true };
 
 test("권한: 노트는 학생 본인·관리자만, 쓰기는 작성자·관리자만", async () => {
-  assert.deepEqual(await authorizeCollabRequest(student1, { key: "note:mine" }, loaders()), { ok: true, key: "note:mine", mode: "write" });
-  assert.deepEqual(await authorizeCollabRequest(student1, { key: "note:stann" }, loaders()), { ok: true, key: "note:stann", mode: "read" });
-  assert.deepEqual(await authorizeCollabRequest(admin, { key: "note:stann" }, loaders()), { ok: true, key: "note:stann", mode: "write" });
-  assert.deepEqual(await authorizeCollabRequest(admin, { key: "note:mine" }, loaders()), { ok: true, key: "note:mine", mode: "write" });
+  assert.deepEqual(await authorizeCollabRequest(student1, { key: "note:mine" }, loaders()), { ok: true, key: "note:mine", mode: "write", lifecycle: 0 });
+  assert.deepEqual(await authorizeCollabRequest(student1, { key: "note:stann" }, loaders()), { ok: true, key: "note:stann", mode: "read", lifecycle: 7 });
+  assert.deepEqual(await authorizeCollabRequest(admin, { key: "note:stann" }, loaders()), { ok: true, key: "note:stann", mode: "write", lifecycle: 7 });
+  assert.deepEqual(await authorizeCollabRequest(admin, { key: "note:mine" }, loaders()), { ok: true, key: "note:mine", mode: "write", lifecycle: 0 });
   for (const key of ["note:mine", "note:stann"]) {
     assert.equal((await authorizeCollabRequest(student2, { key }, loaders())).ok, false, `다른 학생 ${key}`);
   }
@@ -105,7 +112,7 @@ test("권한: 새 노트는 결정적 생성 id의 room을 그 학생 공간 쓰
   const expectedId = deriveCreationResourceId(operationId, JSON.stringify(["private-note", "s1", "s1"]));
   assert.deepEqual(
     await authorizeCollabRequest(student1, { createNote: { operationId, studentId: "s1" } }, loaders()),
-    { ok: true, key: `note:${expectedId}`, mode: "write" },
+    { ok: true, key: `note:${expectedId}`, mode: "write", lifecycle: 0 },
   );
   assert.equal((await authorizeCollabRequest(student2, { createNote: { operationId, studentId: "s1" } }, loaders())).ok, false, "다른 학생 공간");
   const adminResult = await authorizeCollabRequest(admin, { createNote: { operationId, studentId: "s1" } }, loaders());
@@ -113,7 +120,7 @@ test("권한: 새 노트는 결정적 생성 id의 room을 그 학생 공간 쓰
   assert.equal((await authorizeCollabRequest(admin, { createNote: { operationId, studentId: "nobody" } }, loaders())).ok, false, "학생 아님");
   assert.equal((await authorizeCollabRequest(student1, { createNote: { operationId: "x", studentId: "s1" } }, loaders())).ok, false);
   // 이미 만들어진 노트면 일반 노트 규칙: 다른 학생이 같은 id를 노려도 거부된다.
-  const existing = loaders({ findNote: async () => ({ studentId: "s1", authorId: "s1", deletedAt: null }) });
+  const existing = loaders({ findNote: async () => ({ studentId: "s1", authorId: "s1", deletedAt: null, lifecycle: 0 }) });
   assert.equal((await authorizeCollabRequest(student2, { createNote: { operationId, studentId: "s2" } }, existing)).ok, false);
 });
 
@@ -121,7 +128,7 @@ test("권한: 가이드는 관리자만, 게시물은 작성자·관리자, 작�
   assert.equal((await authorizeCollabRequest(student1, { key: "guide:g1" }, loaders())).ok, false);
   assert.deepEqual(await authorizeCollabRequest(admin, { key: "guide:g1" }, loaders()), { ok: true, key: "guide:g1", mode: "write" });
   assert.equal((await authorizeCollabRequest(admin, { key: "guide:nope" }, loaders())).ok, false);
-  assert.deepEqual(await authorizeCollabRequest(student1, { key: "post:p1" }, loaders()), { ok: true, key: "post:p1", mode: "write" });
+  assert.deepEqual(await authorizeCollabRequest(student1, { key: "post:p1" }, loaders()), { ok: true, key: "post:p1", mode: "write", lifecycle: 2 });
   assert.equal((await authorizeCollabRequest(student2, { key: "post:p1" }, loaders())).ok, false);
   assert.equal((await authorizeCollabRequest(admin, { key: "post:p1" }, loaders())).ok, true);
   assert.equal((await authorizeCollabRequest(student1, { key: "post:gone" }, loaders())).ok, false);
@@ -205,8 +212,16 @@ class MemoryStorage implements RoomStorage {
   epoch = 0;
   snapshot: Uint8Array | null = null;
   updates: Uint8Array[] = [];
+  seq = 0;
+  savedSv: Uint8Array | null = null;
   load() {
-    return { epoch: this.epoch, snapshot: this.snapshot, updates: [...this.updates] };
+    return { epoch: this.epoch, snapshot: this.snapshot, updates: [...this.updates], seq: this.seq, savedSv: this.savedSv };
+  }
+  setSeq(seq: number) {
+    this.seq = seq;
+  }
+  setSavedSv(sv: Uint8Array | null) {
+    this.savedSv = sv;
   }
   appendUpdate(update: Uint8Array) {
     this.updates.push(update);
@@ -219,6 +234,7 @@ class MemoryStorage implements RoomStorage {
     this.epoch = nextEpoch;
     this.snapshot = null;
     this.updates = [];
+    this.savedSv = null;
   }
 }
 
@@ -242,7 +258,7 @@ class MemorySocket implements RoomSocket {
     return this.sent
       .map((bytes) => decoding.createDecoder(bytes))
       .filter((decoder) => decoding.readVarUint(decoder) === COLLAB_MESSAGE_CONTROL)
-      .map((decoder) => JSON.parse(decoding.readVarString(decoder)) as { t: string; code?: string; epoch?: number });
+      .map((decoder) => JSON.parse(decoding.readVarString(decoder)) as { t: string; code?: string; epoch?: number; n?: number; id?: string; mode?: string; seq?: number });
   }
 }
 
@@ -272,15 +288,15 @@ after(() => {
   for (const room of rooms) room.destroy();
 });
 
-function createRoom(now = () => NOW) {
+function createRoom(now = () => NOW, verifier: ConstructorParameters<typeof RoomCore>[3] = null) {
   const storage = new MemoryStorage();
   const sockets: MemorySocket[] = [];
-  const room = new RoomCore(storage, () => sockets, now);
+  const room = new RoomCore(storage, () => sockets.filter((socket) => socket.closed === null), now, verifier);
   rooms.push(room);
-  const join = (mode: "read" | "write", userId = "u") => {
+  const join = (mode: "read" | "write", userId = "u", extra: { lifecycle?: number; leaseIat?: number } = {}) => {
     const socket = new MemorySocket();
     sockets.push(socket);
-    room.connect(socket, { userId, mode });
+    room.connect(socket, { userId, mode, key: "note:n1", ...extra });
     return socket;
   };
   return { storage, sockets, room, join };
@@ -291,7 +307,7 @@ test("room: 쓰기 소켓의 update만 저장·전달하고 읽기 소켓의 쓰
   const writer = join("write", "w");
   const reader = join("read", "r");
   const other = join("write", "w2");
-  assert.deepEqual(writer.controls()[0], { t: "hello", epoch: 0, mode: "write" });
+  assert.deepEqual(writer.controls()[0], { t: "hello", epoch: 0, mode: "write", seq: 0 });
   const before = other.sent.length;
   room.message(writer, updateMessage(textUpdate("hello")));
   assert.equal(roomText(storage), "hello");
@@ -347,7 +363,7 @@ test("room: 큰 메시지·오래된 연결·깨진 메시지는 닫는다", () 
   room.message(big, new Uint8Array(COLLAB_MAX_MESSAGE_BYTES + 1));
   assert.equal(big.closed, COLLAB_CLOSE_TOO_LARGE);
   const old = join("write");
-  now += COLLAB_SOCKET_MAX_AGE_MS + 1;
+  now += LEASE_MS + 1;
   room.message(old, updateMessage(textUpdate("late")));
   assert.equal(old.closed, COLLAB_CLOSE_EXPIRED);
   const broken = join("write");
@@ -418,14 +434,17 @@ test("room: 다른 소켓이 쓰는 awareness client id는 바꿀 수 없다", (
   assert.equal(watcher.sent.length, before, "가로채기 무시");
   room.disconnect(owner);
   assert.equal(lastAwarenessStates(watcher).at(-1)?.state, null, "소유 소켓이 닫히면 지움");
-  assert.equal(sanitizeAwarenessState("not json", { userId: "u", mode: "write", connectedAt: 0, awarenessClientIds: [] }), "null");
+  assert.equal(
+    sanitizeAwarenessState("not json", { userId: "u", mode: "write", key: "note:n1", connectedAt: 0, validUntil: 0, leaseIat: 0, applied: 0, awarenessClientIds: [] }),
+    "null",
+  );
 });
 
 test("room: 받기만 하는 소켓도 최대 연결 시간이 지나면 다음 전달 때 닫는다", () => {
   let now = NOW;
   const { room, join } = createRoom(() => now);
   const listener = join("read", "s1");
-  now += COLLAB_SOCKET_MAX_AGE_MS + 1;
+  now += LEASE_MS + 1;
   const writer = join("write", "admin");
   room.message(writer, updateMessage(textUpdate("x")));
   assert.equal(listener.closed, COLLAB_CLOSE_EXPIRED);
@@ -475,8 +494,194 @@ test("room: 최대 연결 시간이 지난 소켓은 awareness 전달 때도 닫
   let now = NOW;
   const { room, join } = createRoom(() => now);
   const listener = join("read", "s1");
-  now += COLLAB_SOCKET_MAX_AGE_MS + 1;
+  now += LEASE_MS + 1;
   const writer = join("write", "admin");
   room.message(writer, awarenessMessage(3, 1, { canSave: true }));
   assert.equal(listener.closed, COLLAB_CLOSE_EXPIRED);
+});
+
+function controlMessage(message: Record<string, unknown>): Uint8Array {
+  const encoder = encoding.createEncoder();
+  encoding.writeVarUint(encoder, COLLAB_MESSAGE_CONTROL);
+  encoding.writeVarString(encoder, JSON.stringify(message));
+  return encoding.toUint8Array(encoder);
+}
+
+function roomStateVector(storage: MemoryStorage): string {
+  const doc = new Y.Doc();
+  const state = storage.load();
+  if (state.snapshot) Y.applyUpdate(doc, state.snapshot);
+  for (const update of state.updates) Y.applyUpdate(doc, update);
+  return Buffer.from(Y.encodeStateVector(doc)).toString("base64");
+}
+
+test("room: 저장한 update 개수를 그 소켓에 ack로 알린다", () => {
+  const { room, join } = createRoom();
+  const writer = join("write");
+  room.message(writer, updateMessage(textUpdate("a")));
+  room.message(writer, updateMessage(textUpdate("b")));
+  assert.deepEqual(writer.controls().filter((c) => c.t === "ack").map((c) => c.n), [1, 2]);
+  const reader = join("read");
+  room.message(reader, updateMessage(textUpdate("x")));
+  assert.equal(reader.controls().some((c) => c.t === "ack"), false, "읽기 소켓 쓰기는 ack 없음");
+});
+
+test("room 세대: 토큰의 lifecycle이 크면 넘어가고, 작으면 stale로 닫고, advance는 더 클 때만 바뀐다", () => {
+  const { storage, room, join } = createRoom();
+  const old = join("write", "u", { lifecycle: 0 });
+  room.message(old, updateMessage(textUpdate("before restore")));
+  const fresh = join("write", "u", { lifecycle: 3 });
+  assert.equal(storage.epoch, 3, "reset 실패 room도 다음 연결에서 D1 세대로 수렴");
+  assert.equal(old.closed, COLLAB_CLOSE_RESET);
+  assert.equal(roomText(storage), "");
+  assert.equal(fresh.controls()[0].epoch, 3);
+  const late = join("write", "u", { lifecycle: 2 });
+  assert.equal(late.closed, COLLAB_CLOSE_STALE, "옛 토큰은 거부");
+  assert.equal(room.advance(3), 3, "같은 target no-op(응답 유실 재시도)");
+  assert.equal(fresh.closed, null);
+  assert.equal(room.advance(2), 3, "작은 target 무시");
+  assert.equal(room.advance(5), 5);
+  assert.equal(fresh.closed, COLLAB_CLOSE_RESET);
+});
+
+test("room prepare: 쓰기 소켓이 없으면 마지막 저장과 같을 때만 성공한다", async () => {
+  const { storage, room, join } = createRoom();
+  assert.deepEqual(await room.prepare("p0", "checkpoint"), { ok: true, checkpoint: null }, "빈 room");
+  const writer = join("write");
+  room.message(writer, updateMessage(textUpdate("unsaved")));
+  room.disconnect(writer);
+  writer.closed = 1000;
+  assert.deepEqual(await room.prepare("p1", "checkpoint"), { ok: false, reason: "unsaved" });
+  const saver = join("write");
+  room.message(saver, controlMessage({ t: "saved", sv: roomStateVector(storage) }));
+  room.disconnect(saver);
+  saver.closed = 1000;
+  assert.deepEqual(await room.prepare("p2", "checkpoint"), { ok: true, checkpoint: null });
+});
+
+test("room prepare: freeze → 모든 쓰기 소켓 응답 → 저장 담당 checkpoint의 state vector가 맞을 때만 성공", async () => {
+  const { storage, room, join } = createRoom();
+  const saver = join("write", "admin");
+  const other = join("write", "s1");
+  room.message(saver, awarenessMessage(5, 1, { canSave: true }));
+  room.message(other, awarenessMessage(9, 1, { canSave: true }));
+  room.message(other, updateMessage(textUpdate("typed on other device")));
+  const pending = room.prepare("prep-1", "checkpoint");
+  assert.equal(saver.controls().at(-1)?.t, "freeze");
+  assert.equal(other.controls().at(-1)?.t, "freeze");
+  const late = join("write", "s2");
+  assert.equal(late.closed, COLLAB_CLOSE_BUSY, "준비 중 새 연결은 거절");
+  room.message(saver, controlMessage({ t: "frozen", id: "prep-1" }));
+  assert.equal(saver.controls().some((c) => c.t === "flush"), false, "모두 응답하기 전에는 flush하지 않음");
+  room.message(other, controlMessage({ t: "frozen", id: "prep-1" }));
+  assert.deepEqual(saver.controls().at(-1), { t: "flush", id: "prep-1", mode: "checkpoint" }, "clientID가 가장 작은 담당");
+  room.message(other, updateMessage(textUpdate("after ack")));
+  assert.equal(other.closed, COLLAB_CLOSE_FREEZE_TIMEOUT, "응답 뒤 입력은 받지 않음");
+  room.message(saver, controlMessage({ t: "flushed", id: "prep-1", ok: true, revision: 12, sv: roomStateVector(storage) }));
+  assert.deepEqual(await pending, { ok: true, checkpoint: 12 });
+  assert.equal(room.isFrozen, true, "복원 commit까지 멈춘 상태 유지");
+  room.advance(13);
+  assert.equal(room.isFrozen, false);
+});
+
+test("room prepare: checkpoint state vector가 다르거나 담당이 없으면 실패하고 thaw로 풀린다", async () => {
+  const { storage, room, join } = createRoom();
+  const saver = join("write");
+  room.message(saver, awarenessMessage(5, 1, { canSave: true }));
+  room.message(saver, updateMessage(textUpdate("x")));
+  const pending = room.prepare("p", "checkpoint");
+  room.message(saver, controlMessage({ t: "frozen", id: "p" }));
+  room.message(saver, controlMessage({ t: "flushed", id: "p", ok: true, revision: 3, sv: Buffer.from(new Uint8Array([0])).toString("base64") }));
+  assert.deepEqual(await pending, { ok: false, reason: "flush-failed" });
+  room.thaw("p");
+  assert.equal(saver.controls().at(-1)?.t, "thaw");
+  assert.equal(room.isFrozen, false);
+  // 담당(canSave)이 없으면 checkpoint를 확인할 수 없다.
+  const second = createRoom();
+  const writer = second.join("write");
+  second.room.message(writer, updateMessage(textUpdate("y")));
+  const noSaver = second.room.prepare("q", "checkpoint");
+  second.room.message(writer, controlMessage({ t: "frozen", id: "q" }));
+  assert.deepEqual(await noSaver, { ok: false, reason: "no-saver" });
+  assert.ok(storage);
+});
+
+test("room prepare: 제때 응답하지 않은 쓰기 소켓은 닫고, 게시물(clean)은 미게시 변경이 있으면 실패", async () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const { room, join } = createRoom();
+    const saver = join("write");
+    const silent = join("write");
+    room.message(saver, awarenessMessage(5, 1, { canSave: true }));
+    room.message(saver, updateMessage(textUpdate("draft")));
+    const pending = room.prepare("c", "clean");
+    room.message(saver, controlMessage({ t: "frozen", id: "c" }));
+    mock.timers.tick(2001);
+    assert.equal(silent.closed, COLLAB_CLOSE_FREEZE_TIMEOUT);
+    assert.deepEqual(saver.controls().at(-1), { t: "flush", id: "c", mode: "clean" });
+    room.message(saver, controlMessage({ t: "flushed", id: "c", ok: true, dirty: true }));
+    assert.deepEqual(await pending, { ok: false, reason: "unpublished" });
+    mock.timers.tick(60_001);
+    assert.equal(room.isFrozen, false, "안전 시간 뒤 스스로 풀림");
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test("room lease: 더 새 토큰의 renew만 lease를 늘리고, 읽기 토큰이면 강등하며, 지나면 닫는다", async () => {
+  let now = NOW;
+  const claims = new Map<string, Awaited<ReturnType<typeof verifyCollabToken>>>();
+  const { room, join } = createRoom(() => now, async (token) => claims.get(token) ?? null);
+  const writer = join("write", "u", { leaseIat: NOW });
+  const watcher = join("read", "w");
+  room.message(writer, awarenessMessage(4, 1, { canSave: true }));
+  const flush = () => new Promise((resolve) => setImmediate(resolve));
+  claims.set("t1", { k: "note:n1", u: "u", m: "write", exp: 0, i: NOW + 60_000, l: Math.floor((NOW + 210_000) / 1000) });
+  now = NOW + 60_000;
+  room.message(writer, controlMessage({ t: "renew", token: "t1" }));
+  await flush();
+  assert.equal(writer.attachment?.validUntil, Math.floor((NOW + 210_000) / 1000) * 1000);
+  claims.set("t-other", { k: "note:n1", u: "someone", m: "write", exp: 0, i: NOW + 70_000, l: Math.floor((NOW + 999_000) / 1000) });
+  room.message(writer, controlMessage({ t: "renew", token: "t-other" }));
+  room.message(writer, controlMessage({ t: "renew", token: "t1" }));
+  await flush();
+  assert.equal(writer.attachment?.validUntil, Math.floor((NOW + 210_000) / 1000) * 1000, "재사용·다른 사용자 토큰은 무시");
+  claims.set("t2", { k: "note:n1", u: "u", m: "read", exp: 0, i: NOW + 120_000, l: Math.floor((NOW + 270_000) / 1000) });
+  room.message(writer, controlMessage({ t: "renew", token: "t2" }));
+  await flush();
+  assert.equal(writer.attachment?.mode, "read");
+  assert.deepEqual(writer.controls().at(-1), { t: "mode", mode: "read" });
+  assert.equal(lastAwarenessStates(watcher).at(-1)?.state?.canSave, false, "저장 담당 자격 회수");
+  room.message(writer, updateMessage(textUpdate("x")));
+  assert.equal(writer.controls().at(-1)?.code, "read-only");
+  claims.set("t3", { k: "note:n1", u: "u", m: "write", exp: 0, i: NOW + 180_000, l: Math.floor((NOW + 330_000) / 1000) });
+  room.message(writer, controlMessage({ t: "renew", token: "t3" }));
+  await flush();
+  assert.equal(writer.attachment?.mode, "read", "같은 연결은 다시 쓰기로 올리지 않음");
+  assert.equal(room.nextDeadline(), NOW + LEASE_MS, "읽기 소켓의 lease가 가장 이르다");
+  now = NOW + LEASE_MS + 1;
+  room.sweepExpired();
+  assert.equal(watcher.closed, COLLAB_CLOSE_EXPIRED, "조용한 소켓도 alarm에서 닫는다");
+  assert.equal(writer.closed, null);
+});
+
+test("room 알림·칸·닫기: notify 순번, 시드된 room만 칸 반영, 휴지통은 상태 보존", () => {
+  const { storage, room, join } = createRoom();
+  const listener = join("read");
+  assert.equal(room.notify(), 1);
+  assert.deepEqual(listener.controls().at(-1), { t: "changed", seq: 1 });
+  const again = join("read");
+  assert.equal(again.controls()[0].seq, 1, "hello에 순번");
+  assert.equal(room.setMeta("noteDate", "2026-11-02"), false, "시드 전에는 건드리지 않음");
+  const writer = join("write");
+  const seedDoc = new Y.Doc();
+  seedDoc.getMap("meta").set("seeded", true);
+  seedDoc.getMap("meta").set("noteDate", "2026-11-01");
+  room.message(writer, updateMessage(Y.encodeStateAsUpdate(seedDoc)));
+  const before = writer.sent.length;
+  assert.equal(room.setMeta("noteDate", "2026-11-02"), true);
+  assert.equal(writer.sent.length, before + 1, "작성자에게도 전달");
+  room.closeAll(true);
+  assert.equal(writer.closed, COLLAB_CLOSE_GONE);
+  assert.ok(storage.updates.length > 0, "휴지통은 상태 보존");
 });

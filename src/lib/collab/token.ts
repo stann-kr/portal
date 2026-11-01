@@ -1,4 +1,4 @@
-import { COLLAB_TOKEN_TTL_SECONDS, type CollabMode } from "./protocol";
+import { COLLAB_LEASE_SECONDS, COLLAB_TOKEN_TTL_SECONDS, type CollabMode } from "./protocol";
 
 /**
  * 공동 편집 연결 토큰. Next route가 세션·문서 권한을 확인한 뒤 발급하고,
@@ -10,8 +10,14 @@ export type CollabTokenClaims = {
   /** 사용자 id. */
   u: string;
   m: CollabMode;
-  /** 만료 시각(초). */
+  /** 만료 시각(초). 이 토큰으로 연결·renew할 수 있는 시한. */
   exp: number;
+  /** 발급 시각(ms). renew는 더 새 토큰만 받는다(재사용으로 lease를 늘리지 못한다). */
+  i: number;
+  /** 권한 lease 끝(초). 발급 시점의 권한 확인이 유효한 마지막 시각. */
+  l: number;
+  /** 노트·게시물의 lifecycle 표지(마지막 복원 revision). 다른 문서는 없다. */
+  e?: number;
 };
 
 const encoder = new TextEncoder();
@@ -47,16 +53,20 @@ async function importKey(secret: string): Promise<CryptoKey> {
 }
 
 export async function signCollabToken(
-  input: { key: string; userId: string; mode: CollabMode },
+  input: { key: string; userId: string; mode: CollabMode; lifecycle?: number },
   secret: string,
   nowMs: number = Date.now(),
 ): Promise<string> {
   if (!secret) throw new Error("COLLAB_SECRET_MISSING");
+  const nowSeconds = Math.floor(nowMs / 1000);
   const claims: CollabTokenClaims = {
     k: input.key,
     u: input.userId,
     m: input.mode,
-    exp: Math.floor(nowMs / 1000) + COLLAB_TOKEN_TTL_SECONDS,
+    exp: nowSeconds + COLLAB_TOKEN_TTL_SECONDS,
+    i: nowMs,
+    l: nowSeconds + COLLAB_LEASE_SECONDS,
+    ...(typeof input.lifecycle === "number" ? { e: input.lifecycle } : {}),
   };
   const payload = toBase64Url(encoder.encode(JSON.stringify(claims)));
   const signature = await crypto.subtle.sign("HMAC", await importKey(secret), encoder.encode(payload));
@@ -73,7 +83,12 @@ function isClaims(value: unknown): value is CollabTokenClaims {
     claims.u.length > 0 &&
     (claims.m === "read" || claims.m === "write") &&
     typeof claims.exp === "number" &&
-    Number.isFinite(claims.exp)
+    Number.isFinite(claims.exp) &&
+    typeof claims.i === "number" &&
+    Number.isFinite(claims.i) &&
+    typeof claims.l === "number" &&
+    Number.isFinite(claims.l) &&
+    (claims.e === undefined || (Number.isSafeInteger(claims.e) && (claims.e as number) >= 0))
   );
 }
 

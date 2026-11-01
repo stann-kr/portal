@@ -8,12 +8,15 @@ import type { CollabMode } from "./protocol";
  * - 새 노트: 결정적 생성 id가 아직 없고 그 학생 공간에 쓸 수 있으면 쓰기.
  * - 가이드: 관리자만. 게시물: 작성자·관리자, 휴지통 제외.
  * - 새 글 작성본(draft): 본인만. Q&A 답글은 thread 접근 권한도 확인한다.
+ * - 알림(notify): 읽기만. Q&A는 thread 접근 권한, 학생 노트는 관리자와 그 학생.
+ *
+ * 노트·게시물은 같은 조회에서 읽은 lifecycle 표지(복원 revision)를 함께 돌려준다. room이 이 값으로 세대를 맞춘다.
  */
 export type CollabActor = { id: string; isAdmin: boolean };
 
 export type CollabDocumentLoaders = {
-  findNote(id: string): Promise<{ studentId: string; authorId: string; deletedAt: Date | null } | null>;
-  findPost(id: string): Promise<{ authorId: string; deletedAt: Date | null } | null>;
+  findNote(id: string): Promise<{ studentId: string; authorId: string; deletedAt: Date | null; lifecycle: number } | null>;
+  findPost(id: string): Promise<{ authorId: string; deletedAt: Date | null; lifecycle: number } | null>;
   findGuidePage(id: string): Promise<{ id: string } | null>;
   findQnaThread(id: string): Promise<{ studentId: string; deletedAt: Date | null } | null>;
   /** 활성 학생 profile인지(관리자가 학생 공간에 새 노트를 만들 때). */
@@ -23,7 +26,7 @@ export type CollabDocumentLoaders = {
 export type CollabNoteCreateRequest = { operationId: string; studentId: string };
 
 export type CollabAuthorization =
-  | { ok: true; key: string; mode: CollabMode }
+  | { ok: true; key: string; mode: CollabMode; lifecycle?: number }
   | { ok: false; reason: "BAD_REQUEST" | "NOT_FOUND_OR_FORBIDDEN" };
 
 const DENIED = { ok: false, reason: "NOT_FOUND_OR_FORBIDDEN" } as const;
@@ -39,22 +42,22 @@ async function authorizeKey(
   actor: CollabActor,
   key: CollabDocKey,
   loaders: CollabDocumentLoaders,
-): Promise<CollabMode | null> {
+): Promise<{ mode: CollabMode; lifecycle?: number } | null> {
   switch (key.kind) {
     case "note": {
       const note = await loaders.findNote(key.id);
       if (!note || note.deletedAt) return null;
       if (!actor.isAdmin && actor.id !== note.studentId) return null;
-      return actor.isAdmin || actor.id === note.authorId ? "write" : "read";
+      return { mode: actor.isAdmin || actor.id === note.authorId ? "write" : "read", lifecycle: note.lifecycle };
     }
     case "guide": {
       if (!actor.isAdmin) return null;
-      return (await loaders.findGuidePage(key.id)) ? "write" : null;
+      return (await loaders.findGuidePage(key.id)) ? { mode: "write" } : null;
     }
     case "post": {
       const post = await loaders.findPost(key.id);
       if (!post || post.deletedAt) return null;
-      return actor.isAdmin || actor.id === post.authorId ? "write" : null;
+      return actor.isAdmin || actor.id === post.authorId ? { mode: "write", lifecycle: post.lifecycle } : null;
     }
     case "draft": {
       if (key.ownerId !== actor.id) return null;
@@ -63,7 +66,16 @@ async function authorizeKey(
         if (!thread || thread.deletedAt) return null;
         if (!actor.isAdmin && actor.id !== thread.studentId) return null;
       }
-      return "write";
+      return { mode: "write" };
+    }
+    case "notify": {
+      if (key.topic === "qna") {
+        const thread = await loaders.findQnaThread(key.id);
+        if (!thread || thread.deletedAt) return null;
+        return actor.isAdmin || actor.id === thread.studentId ? { mode: "read" } : null;
+      }
+      if (actor.isAdmin) return (await loaders.isActiveStudent(key.id)) ? { mode: "read" } : null;
+      return actor.id === key.id ? { mode: "read" } : null;
     }
   }
 }
@@ -85,15 +97,15 @@ export async function authorizeCollabRequest(
     const existing = await loaders.findNote(parsed.id);
     if (existing) {
       // 이미 만들어진 노트면 일반 노트 규칙을 따른다(다른 기기에서 먼저 생성된 경우).
-      const mode = await authorizeKey(actor, parsed, loaders);
-      return mode ? { ok: true, key, mode } : DENIED;
+      const granted = await authorizeKey(actor, parsed, loaders);
+      return granted ? { ok: true, key, ...granted } : DENIED;
     }
     if (!actor.isAdmin && actor.id !== request.studentId) return DENIED;
     if (!(await loaders.isActiveStudent(request.studentId))) return DENIED;
-    return { ok: true, key, mode: "write" };
+    return { ok: true, key, mode: "write", lifecycle: 0 };
   }
   const parsed = parseCollabDocKey(input.key);
   if (!parsed) return { ok: false, reason: "BAD_REQUEST" };
-  const mode = await authorizeKey(actor, parsed, loaders);
-  return mode ? { ok: true, key: formatCollabDocKey(parsed), mode } : DENIED;
+  const granted = await authorizeKey(actor, parsed, loaders);
+  return granted ? { ok: true, key: formatCollabDocKey(parsed), ...granted } : DENIED;
 }
