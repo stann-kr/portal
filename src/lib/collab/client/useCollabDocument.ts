@@ -129,7 +129,7 @@ function writeStoredGeneration(owner: string | null, key: string, value: StoredG
 function readContentFields(doc: Y.Doc): MergeFields {
   const fields: MergeFields = {};
   for (const [name, value] of doc.getMap(COLLAB_META).entries()) {
-    if (INTERNAL_META_FIELDS.has(name)) continue;
+    if (INTERNAL_META_FIELDS.has(name) || name.endsWith("@v")) continue;
     if (typeof value === "string" || typeof value === "number" || value === null) fields[name] = value as string | number | null;
   }
   return fields;
@@ -273,6 +273,7 @@ export function useCollabDocument(options: CollabDocumentOptions): CollabDocumen
     let provider: CollabProvider | null = null;
     let offlineTimer: ReturnType<typeof setTimeout> | null = null;
     let seedRetryTimer: ReturnType<typeof setTimeout> | null = null;
+    let rebaseRetryTimer: ReturnType<typeof setTimeout> | null = null;
     let seedAttempts = 0;
     let persistenceLoaded = false;
     let seeding = false;
@@ -384,9 +385,14 @@ export function useCollabDocument(options: CollabDocumentOptions): CollabDocumen
       let notice: CollabRebaseNotice = null;
       try {
         const lockName = `portal-collab-rebase:${owner ?? "anon"}:${storageKey}`;
+        let retryLater = false;
         await withRebaseLock(lockName, async () => {
           // 잠금을 얻은 뒤 room 상태를 한 번 더 받아, 다른 탭이 방금 다시 적용한 내용까지 theirs에 넣는다.
-          await provider?.resync().catch(() => false);
+          // 받지 못했으면(지연·끊김) 옛 상태 위에 적용하지 않고 나중에 다시 한다(같은 변경을 두 번 넣지 않게).
+          if (provider && provider.status !== "solo" && !(await provider.resync().catch(() => false))) {
+            retryLater = true;
+            return;
+          }
           while (!disposed && !doc.isDestroyed) {
             const job = jobRef.current.find((pending) => pending.storageKey === storageKey);
             if (!job) break;
@@ -412,6 +418,12 @@ export function useCollabDocument(options: CollabDocumentOptions): CollabDocumen
                 }
               }, "collab-rebase");
             }
+            // room에 저장(ack)된 뒤에야 작업을 끝내고 잠금을 푼다(다음 탭이 이 결과를 보고 같은 변경을 다시 넣지 않게).
+            // ack를 못 받았으면 작업을 남겨 두고 나중에 다시 확인한다(다시 할 때는 이미 반영된 변경이라 병합이 no-op이다).
+            if (!(await (provider?.awaitAcked() ?? Promise.resolve(false)))) {
+              retryLater = true;
+              return;
+            }
             // 칸(제목·날짜 등)은 한 값만 남길 수 있다. 내 값이 반영되지 못한 칸이 있으면 보관함 사본을 지우지 않는다.
             const lostField = Object.keys(job.mineFields).some(
               (name) =>
@@ -419,14 +431,19 @@ export function useCollabDocument(options: CollabDocumentOptions): CollabDocumen
                 job.mineFields[name] !== job.baseFields[name] &&
                 merged.fields[name] !== job.mineFields[name],
             );
-            // room에 저장(ack)된 뒤에야 사본을 지우고 잠금을 푼다(다음 탭이 이 결과를 보고 같은 변경을 다시 넣지 않게).
-            const acked = await (provider?.awaitAcked() ?? Promise.resolve(false));
             jobRef.current = jobRef.current.filter((pending) => pending !== job);
-            if (acked && !lostField) removeStorageItem(job.recoveryKey);
+            if (!lostField) removeStorageItem(job.recoveryKey);
             const next: CollabRebaseNotice = lostField ? "kept" : merged.changed ? (merged.conflicts > 0 ? "overlapped" : "applied") : null;
             if (next === "kept" || (next === "overlapped" && notice !== "kept") || (next === "applied" && notice === null)) notice = next;
           }
         });
+        if (retryLater && !disposed) {
+          if (rebaseRetryTimer) clearTimeout(rebaseRetryTimer);
+          rebaseRetryTimer = setTimeout(() => {
+            rebaseRetryTimer = null;
+            void applyJob();
+          }, 2000);
+        }
         if (!disposed && notice) update({ rebaseNotice: notice });
       } catch {
         // 적용하지 못하면 복구본이 남아 있다(보관함).
@@ -608,6 +625,7 @@ export function useCollabDocument(options: CollabDocumentOptions): CollabDocumen
       disposed = true;
       if (offlineTimer) clearTimeout(offlineTimer);
       if (seedRetryTimer) clearTimeout(seedRetryTimer);
+      if (rebaseRetryTimer) clearTimeout(rebaseRetryTimer);
       for (const unsubscribe of unsubscribers) unsubscribe();
       if (wasDisposed) return;
       provider?.destroy();

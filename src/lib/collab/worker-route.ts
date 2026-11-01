@@ -167,8 +167,14 @@ export async function setCollabRoomMeta(
   field: string,
   value: string,
   epoch?: number,
+  version?: number,
 ): Promise<boolean> {
-  const response = await postRoom(env, key, COLLAB_ROOM_SET_META_URL, { field, value, ...(typeof epoch === "number" ? { epoch } : {}) });
+  const response = await postRoom(env, key, COLLAB_ROOM_SET_META_URL, {
+    field,
+    value,
+    ...(typeof epoch === "number" ? { epoch } : {}),
+    ...(typeof version === "number" ? { version } : {}),
+  });
   return Boolean(response?.ok);
 }
 

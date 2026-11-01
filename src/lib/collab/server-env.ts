@@ -101,10 +101,16 @@ export async function closeCollabRoomAfterMutation(key: string, keep: boolean): 
 }
 
 /** room 밖에서 바뀐 칸(캘린더 날짜 이동)을 열린 room에 반영한다. 다음 자동 저장이 옛 값으로 되돌리지 않게 한다. */
-export async function setCollabRoomMetaAfterMutation(key: string, field: string, value: string, epoch?: number): Promise<void> {
+export async function setCollabRoomMetaAfterMutation(
+  key: string,
+  field: string,
+  value: string,
+  epoch?: number,
+  version?: number,
+): Promise<void> {
   const env = readCollabWorkerEnv();
   if (!env) return;
-  await setCollabRoomMeta(env, key, field, value, epoch).catch(() => false);
+  await setCollabRoomMeta(env, key, field, value, epoch, version).catch(() => false);
 }
 
 /** 답글·학생 최근 노트 알림. 저장 응답을 늦추지 않도록 응답 뒤에 보낸다(실패해도 화면은 30초 재조회로 따라온다). */

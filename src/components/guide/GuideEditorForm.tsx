@@ -240,7 +240,7 @@ export function GuideEditorForm({ page, actorId, action }: GuideEditorFormProps)
           <FullEditor
             key={collab.generation}
             collaboration={collaboration}
-            disabled={collab.mode !== "write"}
+            disabled={collab.mode !== "write" || collab.status === "denied" || collab.frozen}
             onUploadingChange={setIsEditorUploading}
             imageUploader={GUIDE_IMAGE_UPLOADER}
             preserveBlockIds

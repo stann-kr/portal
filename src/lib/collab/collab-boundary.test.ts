@@ -744,3 +744,30 @@ test("proxy: 공동 편집 토큰 route는 로그인 redirect 대상이 아니�
   assert.equal(matcher.test("/dashboard/notes/n1"), true, "보호 화면은 proxy 안");
   assert.equal(matcher.test("/api/collab/tokenx"), true, "비슷한 다른 경로는 계속 보호");
 });
+
+test("room: 복원 commit 단계(준비 확인 뒤)는 짧은 안전 시간으로 풀리지 않고, 같은 세대의 늦은 칸 변경은 version 순서로만 반영한다", async () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const { room, join } = createRoom();
+    const writer = join("write");
+    const seed = new Y.Doc();
+    seed.getMap("meta").set("seeded", true);
+    room.message(writer, updateMessage(Y.encodeStateAsUpdate(seed)));
+    room.disconnect(writer);
+    writer.closed = 1000;
+    void room.prepare("commit-1", "checkpoint");
+    assert.equal(room.isPrepared("commit-1"), true);
+    mock.timers.tick(60_001);
+    assert.equal(room.isFrozen, true, "commit 중에는 60초 안전 해제가 없다");
+    const late = join("write");
+    assert.equal(late.closed, COLLAB_CLOSE_BUSY, "commit 중 새 편집기는 붙지 못한다");
+    mock.timers.tick(5 * 60_000);
+    assert.equal(room.isFrozen, false, "action이 죽으면 긴 안전 시간 뒤 풀린다");
+
+    assert.equal(room.setMeta("noteDate", "2026-11-03", 0, 3), true, "B의 이동(v3)");
+    assert.equal(room.setMeta("noteDate", "2026-11-02", 0, 2), false, "늦게 온 A의 이동(v2)은 무시");
+    assert.equal(room.setMeta("noteDate", "2026-11-04", 0, 4), true);
+  } finally {
+    mock.timers.reset();
+  }
+});

@@ -651,8 +651,9 @@ export async function movePrivateNoteDate(
   revalidatePrivateNotePaths(current.studentId, noteId);
   // 열린 편집 room의 날짜도 바꾼다. 그렇지 않으면 다음 자동 저장이 옛 날짜로 되돌린다.
   const markerAfter = await readPrivateNoteLifecycleMarker(createDbContext(), noteId);
+  const movedVersion = result.currentRevision ?? result.operationResultRevision;
   if (markerAfter === markerBefore) {
-    await setCollabRoomMetaAfterMutation(formatCollabDocKey({ kind: "note", id: noteId }), "noteDate", noteDate, markerAfter);
+    await setCollabRoomMetaAfterMutation(formatCollabDocKey({ kind: "note", id: noteId }), "noteDate", noteDate, markerAfter, movedVersion);
   }
   notifyCollabTopic("student-notes", current.studentId);
   return {

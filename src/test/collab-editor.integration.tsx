@@ -289,10 +289,13 @@ let tokenPolicy: { collab: boolean; mode: "read" | "write"; userId: string; disp
 const tokenRequests: unknown[] = [];
 /** true면 토큰 요청이 네트워크 오류로 끝난다(오프라인). */
 let tokenOffline = false;
+/** true면 토큰 요청이 401(로그아웃)으로 끝난다. */
+let tokenDenied = false;
 
 function fakeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   if (!String(input).endsWith("/api/collab/token")) return Promise.reject(new Error(`unexpected fetch ${String(input)}`));
   if (tokenOffline) return Promise.reject(new TypeError("Failed to fetch"));
+  if (tokenDenied) return Promise.resolve(Response.json({ error: "UNAUTHORIZED" }, { status: 401 }));
   const body = JSON.parse(String(init?.body ?? "{}")) as { key?: string; createNote?: { operationId: string; studentId: string } };
   tokenRequests.push(body);
   const key =
@@ -363,6 +366,7 @@ function setupBrowser(context: TestContext): Env {
   editorMounts = 0;
   tokenRequests.length = 0;
   tokenOffline = false;
+  tokenDenied = false;
   seedFailuresLeft = 0;
   refreshCount = 0;
   seedHeads.clear();
@@ -966,4 +970,19 @@ test("다시 연결했을 때 읽기 권한으로 바뀌면 오프라인 입력�
   await waitUntil(() => /보관함에 남겼습니다/u.test(device.container.textContent ?? "") || recoveredKeys(env).length > 0, 8000, "사본을 남겨야 합니다.");
   assert.equal(recoveredKeys(env).length, 1, "읽기로 바뀐 기기의 입력도 사본으로 남는다");
   await waitUntil(() => !/노트를 불러오는 중/u.test(device.container.textContent ?? "") || formOf(device).dataset.collabStatus === "connected", 6000, "읽기 화면이 로딩에 갇히지 않아야 합니다.");
+});
+
+test("권한이 없어지면(로그아웃·회수) 편집기와 칸이 입력을 받지 않고 다시 로그인 안내를 보인다", { concurrency: false }, async (context) => {
+  const env = setupBrowser(context);
+  const note = { id: "note-1", title: "제목", contentHtml: "<p>본문</p>", noteDate: null, version: 1 };
+  seedHeads.set(note.id, note);
+  const device = await env.mount(<NoteEditorForm actorId="student-1" note={note} action={async () => ({})} />);
+  await waitReady(device);
+  await waitUntil(() => formOf(device).dataset.collabStatus === "connected", 3000, "연결돼야 합니다.");
+  tokenDenied = true;
+  for (const socket of [...openSockets]) socket.closeFromServer(1006, "network");
+  await waitUntil(() => formOf(device).dataset.collabStatus === "denied", 6000, "거부 상태가 돼야 합니다.");
+  assert.equal(titleOf(device).disabled, true);
+  assert.equal(bodyOf(device)?.disabled, true, "편집기도 잠긴다");
+  assert.match(device.container.textContent ?? "", /다시 로그인/u);
 });

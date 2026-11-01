@@ -514,7 +514,9 @@ function NoteEditorFormContent({ note, create, actorId, action, focusBodyEnd = f
   }, [title]);
 
   const created = noteId !== null;
-  const fieldsReady = collab.ready && !readOnly && !collab.frozen;
+  // 권한이 없어졌으면(로그아웃·권한 회수) 입력을 받지 않는다(보낼 곳이 없어 사라진다).
+  const denied = collab.status === "denied";
+  const fieldsReady = collab.ready && !readOnly && !collab.frozen && !denied;
   const solo = collab.status === "solo";
   const collaboration = useMemo(
     () =>
@@ -584,7 +586,7 @@ function NoteEditorFormContent({ note, create, actorId, action, focusBodyEnd = f
     <FullEditor
       key={collab.generation}
       collaboration={collaboration}
-      disabled={readOnly || collab.frozen}
+      disabled={readOnly || collab.frozen || denied}
       onUploadingChange={setIsEditorUploading}
       placeholder={create && !created
         ? "수업 내용, 연습 기록, 메모 등을 자유롭게 작성하세요..."

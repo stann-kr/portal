@@ -237,7 +237,8 @@ export class DocumentRoom {
         case "/set-meta": {
           if (typeof body.field !== "string" || typeof body.value !== "string") return new Response("Bad meta", { status: 400 });
           const epoch = typeof body.epoch === "number" && Number.isSafeInteger(body.epoch) ? body.epoch : undefined;
-          return Response.json({ ok: this.core.setMeta(body.field, body.value, epoch) });
+          const version = typeof body.version === "number" && Number.isSafeInteger(body.version) ? body.version : undefined;
+          return Response.json({ ok: this.core.setMeta(body.field, body.value, epoch, version) });
         }
         case "/prepared":
           return Response.json({ prepared: typeof body.id === "string" && this.core.isPrepared(body.id) });

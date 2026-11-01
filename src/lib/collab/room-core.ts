@@ -91,12 +91,19 @@ export interface RoomStorage {
 export type RenewVerifier = (token: string, key: string) => Promise<CollabTokenClaims | null>;
 
 export const ROOM_COMPACT_UPDATE_COUNT = 200;
+/** room 밖에서 바꾼 칸의 D1 version을 남기는 meta key 접미사(`noteDate@v`). 내용 칸이 아니다. */
+export const COLLAB_META_VERSION_SUFFIX = "@v";
 /** freeze에 응답할 시간. 응답하지 않은 쓰기 소켓은 닫는다. */
 export const ROOM_FREEZE_ACK_MS = 2000;
 /** 저장 담당의 checkpoint 응답을 기다리는 시간. */
 export const ROOM_FLUSH_TIMEOUT_MS = 8000;
 /** 준비 뒤 복원이 끝나지 않을 때 스스로 푸는 시간(action이 중간에 실패한 경우). */
 export const ROOM_FREEZE_SAFETY_MS = 60_000;
+/**
+ * action이 준비 유효성을 확인한 뒤(복원 commit 중)에는 commit·advance까지 멈춘 상태를 지킨다.
+ * action이 그 사이 죽는 경우만을 위한 긴 안전 시간이다(그 뒤 토큰 세대가 room을 수렴시킨다).
+ */
+export const ROOM_COMMIT_SAFETY_MS = 5 * 60_000;
 
 /**
  * 서버 쪽 awareness(커서·이름) 보관. y-protocols Awareness는 주기 timer를 돌려 DO hibernation을 막으므로
@@ -694,9 +701,20 @@ export class RoomCore {
     resolve(result);
   }
 
-  /** 이 id의 준비가 아직 유효한지(안전 시간으로 풀리지 않았는지). 복원 commit 직전에 확인한다. */
+  /**
+   * 이 id의 준비가 아직 유효한지(안전 시간으로 풀리지 않았는지). 복원 commit 직전에 확인하고, 유효하면 commit 단계로 넘겨
+   * 짧은 안전 해제를 끈다(확인과 commit 사이에 풀려 새 입력을 받은 뒤 복원이 그 입력을 지우는 일을 막는다).
+   */
   isPrepared(id: string): boolean {
-    return this.frozen?.id === id && this.frozen.resolve === null;
+    const frozen = this.frozen;
+    if (frozen?.id !== id || frozen.resolve !== null) return false;
+    for (const timer of frozen.timers) clearTimeout(timer);
+    frozen.timers = [
+      setTimeout(() => {
+        if (this.frozen === frozen) this.thaw(id);
+      }, ROOM_COMMIT_SAFETY_MS),
+    ];
+    return true;
   }
 
   /** 준비를 풀고 편집을 다시 받는다(복원 실패·취소, 안전 시간 초과). */
@@ -791,15 +809,27 @@ export class RoomCore {
   }
 
   /** room 밖에서 바뀐 칸을 room에 반영한다. 아직 시드되지 않은 room은 건드리지 않는다(시드가 새 head를 읽는다). */
-  setMeta(field: string, value: string, epoch?: number): boolean {
+  setMeta(field: string, value: string, epoch?: number, version?: number): boolean {
     const { doc } = this.load();
     // 늦게 도착한 옛 세대의 변경(복원 전 날짜 이동)은 새 세대에 적용하지 않는다.
     if (typeof epoch === "number" && epoch !== this.epoch) return false;
     const meta = doc.getMap("meta");
     if (!meta.has("seeded")) return false;
-    if (meta.get(field) === value) return true;
+    // 같은 세대 안에서도 늦게 도착한 옛 변경은 무시한다: 그 칸의 마지막 반영 version과 저장 담당이 알린 head version보다 새 것만.
+    const versionKey = `${field}${COLLAB_META_VERSION_SUFFIX}`;
+    if (typeof version === "number") {
+      const fieldVersion = meta.get(versionKey);
+      const headVersion = meta.get("headVersion");
+      if ((typeof fieldVersion === "number" && version <= fieldVersion) || (typeof headVersion === "number" && version < headVersion)) {
+        return false;
+      }
+    }
+    if (meta.get(field) === value && typeof version !== "number") return true;
     const wasClean = this.isClean();
-    doc.transact(() => meta.set(field, value), null);
+    doc.transact(() => {
+      meta.set(field, value);
+      if (typeof version === "number") meta.set(versionKey, version);
+    }, null);
     // D1에 이미 반영된 값이므로, 저장된 상태였다면 그대로 저장된 상태로 둔다.
     if (wasClean) this.setSavedSv(roomSavedMarker(doc));
     return true;

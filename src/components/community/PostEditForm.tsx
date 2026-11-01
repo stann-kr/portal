@@ -344,7 +344,7 @@ function PostEditFormContent({ actorId, post, onCancel, onSaved, onBusyChange, m
           placeholder="게시물 내용을 이어서 작성하세요…"
           ariaLabel="커뮤니티 게시물 내용"
           toolbar="none"
-          disabled={isPending || frozen}
+          disabled={isPending || frozen || draft.collab.status === "denied"}
           footer={<CollabDraftStatus draft={draft} />}
           saveShortcutLabel={isSubmitBlocked ? undefined : "변경 저장"}
         />

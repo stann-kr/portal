@@ -20,7 +20,11 @@ export function describeCollabStatus(input: {
 }): CollabStatusView {
   const { connection, mode, isSaver, autosave } = input;
   if (connection === "denied") {
-    return { kind: "error", message: "이 문서를 열 권한이 없거나 문서가 없습니다.", shortMessage: "열 수 없음" };
+    return {
+      kind: "error",
+      message: "이 문서를 열 권한이 없거나 문서가 없습니다. 로그인이 끝났다면 다시 로그인해 주세요.",
+      shortMessage: "열 수 없음",
+    };
   }
   if (connection === "too-large") {
     return { kind: "error", message: "문서가 너무 커서 실시간 동기화를 멈췄습니다. 일부 내용을 줄여 주세요.", shortMessage: "동기화 멈춤" };
