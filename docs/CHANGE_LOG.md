@@ -14,7 +14,7 @@
 - 첫 내용 불러오기가 실패하면 1·2·4·8·15초 간격으로 다시 시도하고 "다시 시도" 버튼이 나온다. 노트 날짜를 옮기면 열린 편집기의 날짜도 바뀌고, 저장 충돌 재시도는 다른 곳에서 바뀐 칸을 칸별로 보존한다.
 - 기술: 노트·게시물 저장이 lifecycle 표지(복원 revision) = room 세대 조건을 같은 SQL 문 안에서 확인해 어긋나면 `COLLAB_STALE`로 거부한다. 토큰에 lease·발급 시각·lifecycle claims를 더했다. DO는 `room_blob`·`room_meta`(generation·seq·changedAt)를 스스로 만들고 alarm을 쓰며, `/api/collab/token`은 proxy에서 빼 로그아웃 시 401을 돌려준다. D1 migration과 새 secret은 없고 DO class·binding·`v1-document-rooms` migration도 그대로다(첫 배포는 `wrangler deploy`). 단위 731·통합 387, check:ui·db:check·build·build:worker 통과. 로컬 wrangler dev 브라우저 확인(390×844 모바일 화면 포함)은 통과했고, 운영 DO, 실제 hibernation 복귀, 모바일·Safari 실기기는 확인하지 못했다. 복원 준비 중 action이 죽으면 room이 최대 5분 멈출 수 있다.
 
-### 변경 요약
+### 변경 요약 (노션식 실시간 공동 편집)
 
 - 노트·가이드·커뮤니티 글·Q&A를 노션처럼 여러 사람과 여러 기기에서 동시에 고칠 수 있다. 같은 문서를 열면 서로의 커서와 이름이 보이고 입력이 바로 합쳐진다. 새로고침이나 연결이 끊겨도 이 기기에 입력이 남아 다시 연결될 때 이어진다.
 - 계정 초안 선택창과 "더 최신 서버본" 선택창이 없어졌다. 노트·가이드는 열려 있는 탭 한 곳이 알아서 저장하고, 저장 이력(수정 내역)은 지금처럼 저장 한 번에 하나씩 남는다. 동시에 저장이 겹쳐도 묻지 않고 한 번 더 저장한다.
