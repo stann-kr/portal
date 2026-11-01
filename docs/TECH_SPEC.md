@@ -101,7 +101,7 @@ OpenNext → Cloudflare Worker
 | `/api/account-cleanup/status` | 삭제 신호만 반환하는 익명·same-origin·no-store 상태 조회 |
 | `/api/guide-assets` | 관리자 전용 가이드 이미지 업로드(JPG·PNG·GIF·WebP, 10MB, R2 `guide/<uuid>`) |
 | `/api/guide-assets/[assetId]` | 로그인 사용자에게 가이드 이미지 전달 |
-| `/api/collab/token` | `POST`. 세션과 문서 권한을 확인해 60초 HMAC 연결 토큰(`mode` read/write)을 발급한다. 공동 편집 binding이 없으면 `{ collab: false }`(혼자 모드). 같은 origin만 허용, `no-store` |
+| `/api/collab/token` | `POST`. 세션과 문서 권한을 확인해 60초 HMAC 연결 토큰(`mode` read/write, 150초 lease·발급 시각·노트/게시물 lifecycle 표지 포함)을 발급한다. `proxy` 대상에서 빼 로그아웃 상태에는 redirect 대신 401/403을 돌려준다. 공동 편집 binding이 없으면 `{ collab: false }`(혼자 모드). 같은 origin만 허용, `no-store` |
 | `/api/collab/ws/<key>` | WebSocket. Next route가 아니라 `worker.ts`가 먼저 가로채 토큰 서명·만료·key를 확인하고 `DOC_ROOMS`의 `DocumentRoom`으로 넘긴다. 토큰은 `Sec-WebSocket-Protocol: portal-collab, <token>`으로 받아 URL·요청 log에 남지 않는다 |
 | `/dashboard/drafts` | 이전 초안 보관함(읽기 전용). 계정 메뉴에서 진입 |
 | `/api/calendar-connections/google/start` | 관리자 Google 연결 시작: state·PKCE를 봉인 cookie에 담고 Google 동의 화면으로 이동 |
@@ -149,7 +149,7 @@ OpenNext → Cloudflare Worker
 - 개인정보 수명주기: `account_deletion_jobs`, `account_cleanup_tokens`, `calendar_feed_tokens`
 - 디깅: `digging_columns`, `digging_tracks`, `digging_playlists`
 - Q&A: `qna_threads`, `qna_thread_events`, `qna_replies`
-- 공동 편집 room 저장소(D1 아님): Durable Object SQLite의 `room_meta`(epoch·seeded·draft operationId), `room_snapshot`(1MB 이하 chunk), `room_updates`(update log). D1 schema·migration 변경은 없다
+- 공동 편집 room 저장소(D1 아님): Durable Object SQLite의 `room_meta`(generation·seq·changedAt·seeded·draft operationId), `room_blob`(복원 준비 checkpoint 등 큰 값), `room_snapshot`(1MB 이하 chunk), `room_updates`(update log). D1 schema·migration 변경은 없다. 위 표는 DO가 처음 쓸 때 스스로 만들며 별도 migration이 없고, 조용한 소켓 정리와 freeze 안전 해제에 DO alarm을 쓴다
 
 Cloudflare binding:
 
@@ -181,7 +181,7 @@ Migration SQL은 `drizzle/`, Drizzle metadata는 `drizzle/meta/`에 둔다. Wran
 - 비밀번호를 확인하는 경계(credentials `authorize`, `changeOwnPassword`, 가입 링크 action, 계정 삭제)는 `isPasswordAttemptAllowed`로 `PASSWORD_ATTEMPT_RATE_LIMITER` binding(`<용도>:<CF-Connecting-IP>` key, 분당 10회)을 먼저 호출한다. 로그인은 `code=rate_limited`인 `CredentialsSignin`으로 거부하고 login form·`?error=…&code=` 화면이 같은 안내를 보인다. binding이 없는 local·test는 제한하지 않고, binding 호출 오류는 로그인 장애를 피하려고 통과시킨 뒤 오류만 기록한다.
 - session의 `user.id`는 profile 조회의 시작점으로만 사용한다. Node auth의 JWT callback, `/api/auth/session`과 모든 server 인증 경계가 profile 존재와 DB의 최신 role을 다시 확인해 삭제된 JWT를 즉시 거부한다. JWT/session 최대 수명은 7일로 고정해 raw subject ID의 30일 보존 경계보다 먼저 만료시킨다.
 - 데이터 조회·변경 함수는 호출 화면에 의존하지 않고 role과 ownership을 자체 검증해야 한다.
-- 공동 편집 권한은 `POST /api/collab/token` 한 곳에서 기존 규칙으로 판단한다(`src/lib/collab/authorize.ts`). 노트 읽기는 학생 본인·관리자, 쓰기는 작성자·관리자(`canMutateNote`와 같음)이고 휴지통 노트는 거부한다. 새 노트는 `deriveCreationResourceId`로 만든 결정적 id가 아직 없고 actor가 그 학생 공간에 쓸 수 있을 때 쓰기 토큰을 준다. 가이드는 관리자만, 게시물은 작성자·관리자(휴지통 제외), 새 문서 draft(`draft:<post|qna-thread|qna-reply>:<owner>:<scope>`)는 소유자 본인만이며 답변은 스레드 접근 권한도 확인한다. 토큰은 `AUTH_SECRET`에서 파생한 key의 HMAC-SHA256 서명, 만료 60초, `{userId, mode, key}` claims이다. worker는 서명·만료·key만 보고 클라이언트가 보낸 `x-portal-collab-*` header를 버린 새 요청에 검증된 claims를 실어 room에 넘기며, room은 외부에서 `/reset`·`/epoch`에 닿을 수 없다(worker가 항상 `/connect`로 바꿈). Origin header가 있으면 같은 origin만 허용한다.
+- 공동 편집 권한은 `POST /api/collab/token` 한 곳에서 기존 규칙으로 판단한다(`src/lib/collab/authorize.ts`). 노트 읽기는 학생 본인·관리자, 쓰기는 작성자·관리자(`canMutateNote`와 같음)이고 휴지통 노트는 거부한다. 새 노트는 `deriveCreationResourceId`로 만든 결정적 id가 아직 없고 actor가 그 학생 공간에 쓸 수 있을 때 쓰기 토큰을 준다. 가이드는 관리자만, 게시물은 작성자·관리자(휴지통 제외), 새 문서 draft(`draft:<post|qna-thread|qna-reply>:<owner>:<scope>`)는 소유자 본인만이며 답변은 스레드 접근 권한도 확인한다. 토큰은 `AUTH_SECRET`에서 파생한 key의 HMAC-SHA256 서명, 만료 60초, `{userId, mode, key}`에 lease 끝 `l`(150초)·발급 시각 `i`·lifecycle `e` claims를 더한 값이다. worker는 서명·만료·key만 보고 클라이언트가 보낸 `x-portal-collab-*` header를 버린 새 요청에 검증된 claims를 실어 room에 넘기며, room은 외부에서 `/reset`·`/epoch`에 닿을 수 없다(worker가 항상 `/connect`로 바꿈). Origin header가 있으면 같은 origin만 허용한다.
 - 신규 캘린더 feed는 256-bit opaque token의 SHA-256 digest로 owner를 찾고 회전 시 이전 digest를 폐기한다. 관리자 학생 상세는 현재 v2 구독 URL의 마지막 발급 시각만 조회해 보여 주고(원문·digest는 반환하지 않음), 기존 URL이 있으면 교체 전에 취소 우선 확인을 거친다. URL 원문은 발급 직후 한 번만 표시한다. 기존 v1 URL은 active 학생 profile을 먼저 확인한 뒤 서명을 검증한다. `.ics`의 각 레슨은 레슨 ID 기반 고정 UID와 UTC 시작 시각을 사용하고, 예정 레슨이 없으면 일정 없는 빈 캘린더를 반환한다.
 - 학생 계정 삭제는 현재 비밀번호, persistent 또는 memory-only 기기 digest와 UUID operation을 요구한다. persistent token은 삭제 batch에서 모두 job에 결합하고 memory-only digest는 cleanup token quota를 소비하지 않는 job initiating receipt로 기록한다. job·profile 삭제는 함께 commit하거나 rollback하며, admin 삭제는 이 흐름에서 거부한다.
 - rich text는 HTML5 AST를 새 안전 트리로 복사하는 tag·속성·URL allowlist로 서버 저장과 렌더 경계에서 sanitize한다. DOM emulation 없이 Node·browser·Worker에서 같은 동기 결과를 사용한다.
@@ -278,7 +278,7 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 | 입력·콘텐츠 | HTML5 AST tag·속성·URL allowlist, malformed·foreign-content XSS, 멱등성, upload MIME·size·quota·opaque key 정책 | 실제 R2 CORS·대용량 PUT smoke |
 | 미디어 | staging/final key 분리, SEALING lease·late Copy 복구, claim/purge rollback, bounded 만료 enqueue, outbox 재시도·final prefix cursor reconciliation·private RBAC·Range 자동 테스트 | 원격 trigger·실행 상태와 실제 R2 PUT·inventory 운영 검증 |
 | 문서 연속성 | local shadow·5초 checkpoint·복구·제출 경쟁, 사용자·문서별 서버 최신본·CAS·offline queue·다중 기기 명시 선택·휘발 값 제외 비교·조용한 폐기·선택 기억·제자리 생성 DOM 통합, superseded operation fence·Tiptap sanitize round-trip, 읽기 전용 노트 폴링·목록 자동 갱신 DOM 통합, 노트·게시물·Q&A revision/event·trash·purge·anti-replay 격리 D1 통합 | 실제 브라우저 reload·offline·navigation·강제 종료·대형 문서 E2E, Stann 입력·학생 자동 갱신 두 창 E2E |
-| 실시간 공동 편집 | 토큰 서명·만료·key, 권한(읽기/쓰기/새 노트/draft/답글) 단위, room-core(읽기 소켓 쓰기 거부·awareness 정리·압축·상한·reset·epoch), 시드 결정성, 저장 탭 선출·VERSION_CONFLICT 재시도, 읽기 전용 실시간 보기 DOM 통합. 로컬 `wrangler dev`에서 Playwright 노트 흐름 16/16과 Ego Lite 시나리오(76982cf 기준 단위 691·통합 370) | 운영 DO, 실제 hibernation 깨움, 실제 네트워크 단절·online 복귀, 모바일·Safari, 며칠 이어진 room |
+| 실시간 공동 편집 | 토큰 서명·만료·key, 권한(읽기/쓰기/새 노트/draft/답글) 단위, room-core(읽기 소켓 쓰기 거부·awareness 정리·압축·상한·reset·epoch), 시드 결정성, 저장 탭 선출·VERSION_CONFLICT 재시도, 읽기 전용 실시간 보기 DOM 통합. 로컬 `wrangler dev`에서 Playwright 노트 흐름 16/16과 Ego Lite 시나리오(76982cf 기준 단위 691·통합 370). 남은 한계 L1~L10(150ef52): lifecycle 표지 조건부 저장(실제 D1)·세대 수렴·update ack·복원 준비(freeze/checkpoint)·lease renew/강등·알림 room·owner별 보관 정리·3-way 재적용 단위, 마지막 기준 lint·typecheck 0, 단위 731·통합 387, check:ui·db:check·build·build:worker 통과 | 운영 DO, 실제 hibernation 깨움(로컬 관찰 불가), 실제 네트워크 단절·online 복귀, 모바일·Safari 실기기, 며칠 이어진 room, Web Locks 없는 브라우저 |
 | 계정 개인정보 | student-only 원자 삭제, old JWT 거부, cleanup digest·terminal lock, ownerless snapshot 확인, 30일 alias·second-run no-op·poison job 격리, edge-local status rate limit·rollout flag | 유효 삭제 flag, Cron/alert·오프라인 adoption 확인과 승인된 삭제 smoke |
 | 과제·가이드 | 정기 회차 계산·결정적 ID·동시 생성, 형식별 제출·형식 변경 경쟁 거부, 가이드 sanitize·블록 앵커·재전송 비교, 이미지 저장 실패 시 R2 정리, 가이드 질문 권한 격리 D1 통합 | 실제 브라우저의 가이드 구간 선택·편집기 앵커 보존 E2E |
 | 외부 캘린더 동기화 | Google·CalDAV client fixture(PKCE·syncToken·sync-collection·etag 충돌·XML·ICS), 실제 SQLite와 가짜 provider로 엔진(웹 우선·루프 방지·tombstone·반복 일정·종일), OAuth route 봉인 cookie, 자격 증명 AAD, 학생·관리자 경계 격리 D1 통합 | 실제 Google·iCloud 계정 연동, 운영 Cron·Google 변경 알림 |
@@ -404,17 +404,18 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 - `DocumentRoom`(`document-room.ts`, 로직은 `room-core.ts`): WebSocket hibernation을 쓰는 SQLite DO. update는 반영 즉시 저장하고 다른 소켓에 전달하며 200개 또는 1MB마다 snapshot으로 압축한다. 메시지 2 MiB, room 8 MiB를 넘으면 `too-large`로 닫는다. 저장 HTML 상한(800 KiB)은 기존 action이 그대로 지킨다.
 - 읽기 소켓은 sync step2·update를 반영하지 못한다(`error read-only`). awareness는 서버가 정리한다: `userId`는 토큰 값으로 덮고, `canSave`는 쓰기 소켓만 켤 수 있고, 소켓은 자기 client id의 상태만 쓰며, hibernation에서 깨어나면 소켓 attachment에서 복원한다. 소켓이 닫히면 그 커서를 지운다. 1005·1006 close code는 다시 보내지 않는다.
 
-### 저장 탭 선출과 epoch
+### 저장 탭 선출과 room 세대
 
 - 노트·가이드: awareness `canSave`(쓰기 권한 + 서버 동기화 완료)를 알린 연결 중 clientID가 가장 작은 탭 하나가 저장한다(`useCollabAutosave`). 문서가 바뀌면 1.5초 쉼 / 최대 10초마다 기존 action(`updatePrivateNote`·`createPrivateNote`·`updateGuidePage`)으로 저장하며 sanitize·크기·ledger·권한·revision(저장당 하나)은 그대로다. 같은 내용이면 저장하지 않고, 연결이 끊긴 동안에는 저장하지 않는다(오래된 HTML이 head를 덮지 않게). `VERSION_CONFLICT`는 선택창 없이 head를 다시 읽어 한 번 더 저장한다.
-- 저장 요청은 `collabEpoch` 칸으로 room epoch를 싣고, 서버(`isStaleCollabSave`)가 지금 room epoch와 다르면 거부한다(`STALE_COLLAB_SAVE_MESSAGE`). 칸이 없는 요청과 binding이 없는 환경은 확인하지 않는다.
+- room 세대(generation)는 D1의 lifecycle 표지(해당 노트·게시물의 RESTORE_REVISION revision 중 최대 revision, 없으면 0)다. 저장 요청은 `collabEpoch` 칸으로 세대를 싣고, 노트·게시물 저장 UPDATE(`alreadyCurrent` 경로 포함)가 같은 SQL 문 안에서 표지 = `collabEpoch`를 조건으로 건다(원자). 어긋나면 `COLLAB_STALE`로 거부하고 클라이언트가 재연결해 새 세대를 받는다. 칸이 없는 요청과 binding이 없는 환경은 확인하지 않는다. 표지 식은 권한 조회(토큰 claims)와 저장이 같은 SQL을 쓴다.
 - 게시물 수정: room은 작업본이고 "변경사항 저장"이 게시(기존 version·fingerprint 검증 경로)한 뒤 작업본을 게시본과 맞춘다. "취소"는 작업본을 마지막 게시본으로 되돌린다. 새 게시물·Q&A 질문·답변은 등록 버튼이 기존 create action을 부르고, operationId를 room meta에 두어 어느 기기에서 등록해도 한 번만 생성되며 성공 뒤 room을 비워 모든 기기의 draft를 지운다(등록 뒤 다시 고친 내용은 남긴다).
 - 새 노트는 결정적 생성 id(`deriveCreationResourceId`)로 첫 저장 전부터 room에 연결하고, 생성 id를 탭 sessionStorage에 두어 첫 저장 전 새로고침도 같은 room으로 돌아온다. 생성 뒤에도 key가 같아 편집기를 다시 마운트하지 않는다.
 
 ### 시드와 reset
 
 - 빈 room은 클라이언트가 서버 head로 채운다. 본문 Y.Doc의 clientID는 `key+본문`, 칸(`meta` map: 제목·날짜 등)의 clientID는 `key+칸`에서 결정적으로 만들어 같은 head의 시드는 바이트가 같아 몇 번 합쳐도 한 번만 들어가고, 본문과 칸을 따로 시드해 서로 덮지 않는다. "시딩됨" 판단은 본문이 비었는지가 아니라 `meta.seeded`다. 시딩은 서버 동기화가 끝난 뒤에만 하며, 한 번도 연결한 적 없는 문서를 오프라인으로 열었을 때만 같은 결정적 시드로 기기 안에서 시작한다.
-- 복원·휴지통 이동·휴지통 복원·영구 삭제(노트·게시물)와 가이드 삭제는 D1 변경이 성공한 뒤 action이 room을 reset한다(`resetCollabRoomAfterMutation`, 실패하면 한 번 재시도 후 log). reset은 저장 상태를 지우고 epoch를 올리고 모든 소켓에 알린 뒤 닫는다. 열린 편집기는 그 epoch의 기기 보관을 버리고 새 head에서 다시 시작하며, 보내지 못한 입력은 계정별 로컬 복구본(localStorage)으로 보관해 이전 초안 보관함에 보인다.
+- 시드는 서버 head 중 lifecycle 표지가 room 세대와 같은 것만 쓴다(옛 head로 시드하지 않는다). head 조회가 실패하면 1·2·4·8·15초 간격으로 다시 시도하고 "다시 시도" 버튼을 보인다.
+- 이력 복원은 아래 "복원 준비"를 거친다. 휴지통 이동·복원은 표지를 바꾸지 않아 room을 보존하고 연결만 닫는다. 영구 삭제(노트·게시물)·가이드 삭제·학생 계정 삭제는 room 저장 상태를 지우고(계정 삭제는 그 학생의 노트·게시물 room을 닫는다) 모든 소켓을 닫는다(`resetCollabRoomAfterMutation`, 실패하면 한 번 재시도 후 log). room은 더 큰 세대 목표로만 advance하고 옛 세대 토큰은 거부한다(close 4005, 클라이언트 재연결).
 
 ### 이전 초안과 이탈 보호
 
@@ -422,11 +423,20 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 - 저장 대기·저장 중·업로드 중, 연결이 끊긴 동안의 입력이나 입력 차단 상태가 있으면 `beforeunload`로 막는다(`useCollabLeaveGuard`). 공동 편집기에서는 Markdown 전환을 숨긴다.
 - 읽기 전용 학생 노트(노트 페이지·학생 홈 캘린더 패널)는 읽기 토큰으로 같은 room을 보며, 폴링 live view(`useLiveNote`·`live-note-polling`)는 제거했다. 목록·홈은 `RouteAutoRefresh`의 30초 조용한 재조회를 유지한다.
 
+### 복원 준비와 확인 저장(2026-11-01 남은 한계 L1~L10)
+
+- 복원 준비(L3): 이력 복원 action이 먼저 room `/prepare`를 부른다. room이 freeze(새 쓰기·새 연결 잠금) → 모든 쓰기 소켓 응답 대기(2초, 미응답 소켓은 4006으로 종료) → 저장 담당 탭의 checkpoint 저장을 Yjs snapshot(delete set 포함)으로 검증한다. action은 commit 직전에 `/prepared`를 확인해 commit 단계로 들어가고(이때 freeze는 advance까지 유지, action 장애 대비 안전 해제 5분), checkpoint를 base로 원자 복원한 뒤 room을 새 세대로 advance한다. 어느 단계든 실패하면 복원하지 않고 안내만 보인다. 같은 id 재준비의 옛 응답은 무효다. 게시물은 수정 작업본에 게시 전 변경(제목·링크·본문)이 있으면 복원을 거부한다.
+- 확인 저장본(L2·L8·오프라인): 기기마다 서버가 update ack한 확인본(shadow doc)을 따로 둔다. 세대가 바뀌거나 오프라인으로 처음 열 때는 이 기기의 서버 미확인 변경만 새 head 위에 3-way(최상위 블록 LCS + 글자 단위)로 다시 적용한다. 겹친 블록은 양쪽을 남기고 안내하며, 칸(제목·날짜 등) 충돌은 복구본을 남긴다. 같은 기기의 여러 탭은 Web Lock과 resync·ack로 한 번만 적용하며(잠금 안 resync·ack 실패는 적용·삭제 없이 2초 뒤 재시도), 미확인 변경이 없으면 복구본을 만들지 않는다. 복구본은 칸을 다시 적용하지 못했거나 재적용이 금지된 경우(휴지통·권한 거부)에만 남는다.
+- lease(L4): 권한은 150초 서명 lease다. 클라이언트가 60초마다 새 토큰으로 renew하고(더 새 발급 시각 `i`만 lease를 늘린다), 읽기 토큰으로 renew되면 같은 연결을 읽기로 강등한다(다시 올리지 않음). alarm이 renew 없는 조용한 소켓을 닫는다. 로그아웃하면 `/api/collab/token`이 401을 돌려줘 다른 탭의 편집기가 거부 상태로 잠기고 다시 로그인 안내를 보인다. 역할 변경·비활성화·소유권 이전 기능은 없어 lease가 일반 방어선이다.
+- 기기 보관 격리(L5): IndexedDB·localStorage 이름에 owner를 넣고 owner 잠금을 둔다. 로그아웃·계정 전환·계정 삭제에서 해당 owner의 공동 편집 보관을 지우며, 계정 삭제 검증도 이를 포함한다.
+- 알림 room(L6): `notify:qna:<threadId>`, `notify:student-notes:<studentId>` room(문서 본문 없음). 답글·상태 변경·노트 변경 action이 알림을 보내면 클라이언트가 해당 화면을 새로 받는다(입력 중이면 미루고, 재연결 때 seq·changedAt으로 따라잡음). 전달은 best-effort라 `RouteAutoRefresh` 30초 조용한 재조회를 그대로 둔다.
+- 날짜 이동은 열린 room의 `noteDate` 칸을 같은 세대에서 D1 version 순서로 반영한다. 저장 충돌 재시도는 외부에서 바뀐 칸을 칸별 3-way로 보존한다.
+
 ### 알려진 잔여 위험
 
-- epoch 확인과 D1 쓰기는 한 단계(원자 fence)가 아니다. 확인 직후 reset이 일어나면 옛 저장이 복원 결과를 덮을 수 있는 짧은 창이 남는다. revision 이력에서 복원한다.
+- 복원 준비 중 action이 `/prepared` 확인 뒤 죽으면 room이 최대 5분 멈춘 채 남을 수 있다(자동 해제).
+- Web Locks가 없는 브라우저는 같은 IndexedDB를 쓰는 탭 사이 중복 재적용을 resync·ack에만 의존한다.
+- 알림 전달은 best-effort다(30초 fallback).
 - 처음 여는 문서를 오프라인으로 열어 만든 시드가 다른 head 버전의 시드와 합쳐지면 본문이 두 번 보일 수 있다.
-- reset 때 다른 기기에 있던 몇 초치 미전송 입력은 사라질 수 있다. 로컬 복구본은 "보내지 못한" 입력만 보관한다.
-- 권한 회수는 토큰·연결 만료(최대 1시간)까지 늦을 수 있다. 휴지통 이동과 reset은 즉시 닫는다.
-- 기기 IndexedDB는 로그아웃·계정 삭제에서 지우지 않는다.
-- 운영 DO, 실제 hibernation 깨움, 실제 네트워크 단절·online 복귀, 모바일·Safari, 며칠 이어진 room은 미검증이다. 운영 배포는 [배포 가이드](./DEPLOYMENT.md)의 DO migration 승인 항목을 따른다.
+- 권한 회수는 lease(150초)만큼 늦을 수 있다. 휴지통 이동과 영구 삭제는 즉시 닫는다.
+- 운영 DO, 실제 hibernation 깨움(로컬에서 관찰할 수 없음), 실제 네트워크 단절·online 복귀, 모바일·Safari 실기기, 며칠 이어진 room은 미검증이다. 운영 배포는 [배포 가이드](./DEPLOYMENT.md)의 DO migration 승인 항목을 따른다.

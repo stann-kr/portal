@@ -53,7 +53,7 @@
 - D1 database와 R2 bucket이 존재해야 한다.
 - 대상 Worker를 promotion하기 전에는 승인된 작업 창에서 실제 pending migration을 적용·검증해야 한다. 비호환 migration은 maintenance 진입 전에 미리 적용하지 않는다.
 - auth secret과 기타 secret은 배포 환경에만 설정한다.
-- 실시간 공동 편집 코드는 `DOC_ROOMS` Durable Object binding과 첫 배포 때의 `[[migrations]] tag="v1-document-rooms"`(`new_sqlite_classes=["DocumentRoom"]`)가 필요하다. D1 migration은 없다. 연결 토큰 서명은 이미 secret인 `AUTH_SECRET`에서 파생하므로 새 secret은 없다. DO class를 만드는 첫 배포는 되돌리기 어려우므로(class를 나중에 지우려면 `deleted_classes` migration이 필요해 가볍게 제거하지 않는다) 승인된 배포에서만 수행하고, Workers 요금제(DO 사용 가능 여부)와 DO 요금(요청·duration·SQLite 저장)을 사전에 확인한다.
+- 실시간 공동 편집 코드는 `DOC_ROOMS` Durable Object binding과 첫 배포 때의 `[[migrations]] tag="v1-document-rooms"`(`new_sqlite_classes=["DocumentRoom"]`)가 필요하다. D1 migration은 없다. 연결 토큰 서명은 이미 secret인 `AUTH_SECRET`에서 파생하므로 새 secret은 없다. 2026-11-01 남은 한계 보완(L1~L10)도 D1 migration·새 secret 없이 DO class·binding·`v1-document-rooms` migration이 그대로이며, 새 DO 저장 표(`room_blob`, `room_meta`의 generation·seq·changedAt)는 DO가 스스로 만들고 DO alarm을 쓴다. DO class를 만드는 첫 배포는 되돌리기 어려우므로(class를 나중에 지우려면 `deleted_classes` migration이 필요해 가볍게 제거하지 않는다) 승인된 배포에서만 수행하고, Workers 요금제(DO 사용 가능 여부)와 DO 요금(요청·duration·SQLite 저장)을 사전에 확인한다.
 - 외부 공개 레슨 캘린더를 활성화하려면 `EXTERNAL_CALENDAR_ENCRYPTION_KEY`를 32-byte base64 또는 base64url secret으로 환경마다 안정적으로 설정한다. 값 자체는 저장소·문서·로그에 남기지 않으며, 기존 구독이 있으면 key를 임의로 교체하지 않는다. `0013` migration 적용과 key 설정 전에는 연결 기능을 운영에 사용하지 않는다.
 - production deploy 전 admin/student smoke 계정과 test data를 준비한다.
 - Cloudflare Workers Builds를 기본 배포 주체로 사용하고 development는 `dev`, production은 `main` push만 고정 Worker 배포를 시작하도록 분리한다. 두 환경의 Worker, binding, secret, D1, R2와 route를 공유하지 않는다.
@@ -117,7 +117,7 @@ iCloud 연동:
 
 - [ ] Workers Paid plan 여부와 Durable Objects 요금(요청·duration·SQLite 저장) 한도를 확인한다.
 - [ ] 승인된 배포에서 `DOC_ROOMS` binding과 `[[migrations]] tag="v1-document-rooms"`(`new_sqlite_classes=["DocumentRoom"]`)가 `wrangler.toml`·`wrangler.scheduled.toml` 양쪽에 있는 version을 올린다. D1 migration과 새 secret은 없다(`AUTH_SECRET`은 이미 secret). DO class를 나중에 지우려면 `deleted_classes` migration이 필요하므로 가볍게 제거하지 않는다.
-- [ ] 배포 후 smoke: 테스트 노트 하나를 두 창에서 열어 서로의 커서·입력이 보이는지, 학생 계정의 읽기 전용 수업 노트가 Stann 입력을 따라 바뀌고 학생은 고칠 수 없는지, 로그아웃 상태의 `POST /api/collab/token`이 401인지 확인한다. 실제 학생 데이터로 시험하지 않는다.
+- [ ] 배포 후 smoke: 테스트 노트 하나를 두 창에서 열어 서로의 커서·입력이 보이는지, 학생 계정의 읽기 전용 수업 노트가 Stann 입력을 따라 바뀌고 학생은 고칠 수 없는지, 로그아웃 상태의 `POST /api/collab/token`이 401인지 확인한다. 추가로 다른 창이 편집하는 동안 이력 복원을 실행해 그 입력이 revision으로 남고 두 창이 모두 복원된 내용으로 다시 열리는지, 한 탭에서 로그아웃하면 다른 탭 편집기가 약 150초 안에 거부·잠금되는지 확인한다. 실제 학생 데이터로 시험하지 않는다.
 
 예약 동기화와 Google 변경 알림:
 
@@ -278,7 +278,7 @@ npx opennextjs-cloudflare deploy
 - 커뮤니티 믹스셋: 오디오 글의 기존 재생, 링크 글(YouTube·SoundCloud 트랙·세트)의 게시·링크 수정과 상세·목록 플레이어, 재생 시점 댓글의 현재 위치 채우기·직접 입력·누르면 그 위치로 이동, 다른 게시판·매체 없는 글의 시점 거부 확인(쓰기는 별도 승인).
 - 디깅 보드 플레이리스트: Beatport 공유 링크 등록(새 탭 열기)·SoundCloud 세트 등록(제목 자동·페이지 안 재생)·링크/제목/메모 수정·삭제, 다른 학생 목록 접근 거부와 관리자 읽기 전용 확인.
 - 가이드 목록·페이지·이미지 표시, 관리자 편집·순서 변경, 학생 구간 질문이 그 학생과 관리자에게만 보이는지 확인.
-- 공동 편집: 테스트 노트를 두 창에서 열어 커서·입력 동기화와 저장(수정 이력 한 번에 하나), 학생 계정 읽기 전용 실시간 보기(쓰기 불가), 로그아웃 상태 `POST /api/collab/token` 401, 이력 복원·휴지통 뒤 열린 편집기의 새 내용 재시작, 이전 초안 보관함(`/dashboard/drafts`) 표시 확인(쓰기는 별도 승인, 테스트 데이터만).
+- 공동 편집: 테스트 노트를 두 창에서 열어 커서·입력 동기화와 저장(수정 이력 한 번에 하나), 학생 계정 읽기 전용 실시간 보기(쓰기 불가), 로그아웃 상태 `POST /api/collab/token` 401(다른 탭은 약 150초 안에 거부·잠금), 다른 창이 편집 중일 때의 이력 복원(입력은 revision으로 보존, 두 창 모두 복원본으로 재시작), 이력 복원·휴지통 뒤 열린 편집기의 새 내용 재시작, 이전 초안 보관함(`/dashboard/drafts`) 표시 확인(쓰기는 별도 승인, 테스트 데이터만).
 - 테스트용 Google·iCloud 캘린더로 연결, 학생 매핑, 포털 레슨·일정 생성·이동·삭제의 외부 반영, 외부 생성·이동·삭제의 포털 반영, 연결 해제 확인.
 
 ## D1 백업과 복구 rehearsal
