@@ -40,6 +40,7 @@ function NewQnaFormContent({ actorId, returnTo }: { actorId: string; returnTo: s
   // 같은 사람의 새 질문 작성본은 기기와 관계없이 하나다(room `draft:qna-thread:<본인>:new`).
   const getExtensions = useEditorExtensions();
   const draft = useCollabFormDraft({
+    ownerId: actorId,
     room: { draftKind: "qna-thread", ownerId: actorId, scope: "new" },
     fields: QNA_FIELDS,
     extensions: getExtensions,

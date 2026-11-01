@@ -4,17 +4,24 @@ import * as awarenessProtocol from "y-protocols/awareness";
 import * as encoding from "lib0/encoding";
 import * as decoding from "lib0/decoding";
 import {
+  COLLAB_CLOSE_BUSY,
   COLLAB_CLOSE_EXPIRED,
+  COLLAB_CLOSE_FREEZE_TIMEOUT,
+  COLLAB_CLOSE_GONE,
   COLLAB_CLOSE_RESET,
+  COLLAB_CLOSE_STALE,
   COLLAB_CLOSE_TOO_LARGE,
   COLLAB_CLOSE_UNAUTHORIZED,
+  COLLAB_RENEW_INTERVAL_MS,
   COLLAB_MESSAGE_AWARENESS,
   COLLAB_MESSAGE_CONTROL,
   COLLAB_MESSAGE_SYNC,
   COLLAB_SUBPROTOCOL,
   COLLAB_TOKEN_PATH,
+  type CollabClientControlMessage,
   type CollabControlMessage,
   type CollabMode,
+  type CollabPrepareMode,
 } from "../protocol";
 import type { CollabTokenResponse } from "../token-handler";
 
@@ -35,18 +42,39 @@ export type CollabProviderEvents = {
   /** 이 기기 보관본과 room의 epoch가 다르다. */
   epoch: (epoch: number) => void;
   mode: (mode: CollabMode) => void;
+  /** 이 기기 상태를 room에 바로 합치면 안 된다(오프라인 첫 열기 선시드). 서버 상태 위에 다시 적용해야 한다. */
+  hold: (epoch: number) => void;
+  /** 복원 준비로 편집을 잠시 멈춘다. */
+  freeze: (id: string) => void;
+  thaw: () => void;
+  /** 저장 담당에게 checkpoint 요청. 처리한 뒤 `sendFlushed`로 답한다. */
+  flush: (id: string, mode: CollabPrepareMode) => void;
+  /** 알림 room 순번(hello·changed). */
+  seq: (seq: number, reason: "hello" | "changed") => void;
 };
 
 export type CollabProviderOptions = {
   request: CollabTokenRequest;
   /** 이 기기에 보관된 상태의 epoch. room epoch와 다르면 `epoch` 이벤트로 알리고 동기화하지 않는다. */
   localEpoch: number | null;
+  /** room이 확인한 상태만 담는 그림자 doc. room에서 온 update와 ack된 이 기기 update만 들어간다. */
+  confirmed?: Y.Doc | null;
+  /** hello 때 이 기기 상태를 보내지 말아야 하는지(true면 `hold`를 알리고 동기화하지 않는다). */
+  shouldHold?: () => boolean;
   fetchImpl?: typeof fetch;
   WebSocketImpl?: typeof WebSocket;
   location?: { protocol: string; host: string };
 };
 
 const MAX_BACKOFF_MS = 15_000;
+/** room이 freeze를 풀지 못하고 사라져도(휴면·장애) 편집이 멈춘 채로 남지 않게 스스로 푼다. */
+const CLIENT_FREEZE_RELEASE_MS = 65_000;
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
 
 type Listener<K extends keyof CollabProviderEvents> = CollabProviderEvents[K];
 
@@ -66,6 +94,13 @@ export class CollabProvider {
   everSynced = false;
   /** hello로 받은 room epoch. */
   epoch: number | null = null;
+  /** room이 복원을 준비 중이라 편집을 멈췄다. */
+  frozen = false;
+  /** 이번 연결에서 보낸 update 개수와 아직 ack되지 않은 것(확인분 갱신용). */
+  private sentCount = 0;
+  private unacked: Array<{ n: number; update: Uint8Array }> = [];
+  private renewTimer: ReturnType<typeof setInterval> | null = null;
+  private freezeTimer: ReturnType<typeof setTimeout> | null = null;
   private socket: WebSocket | null = null;
   private destroyed = false;
   /** 진행 중인 연결 시도 번호. 겹친 시도(online·화면 복귀)의 늦은 응답은 버린다. */
@@ -179,6 +214,8 @@ export class CollabProvider {
     this.socket = socket;
     this.helloReceived = false;
     this.synced = false;
+    this.sentCount = 0;
+    this.unacked = [];
     socket.onmessage = (event) => this.handleMessage(socket, event.data);
     socket.onclose = (event) => this.handleClose(socket, event.code);
     socket.onerror = () => {
@@ -186,13 +223,132 @@ export class CollabProvider {
     };
   }
 
-  private send(data: Uint8Array): void {
+  private send(data: Uint8Array): boolean {
     const socket = this.socket;
-    if (!socket || socket.readyState !== 1 || !this.helloReceived) return;
+    if (!socket || socket.readyState !== 1 || !this.helloReceived) return false;
     try {
       socket.send(data);
+      return true;
     } catch {
       // close에서 다시 연결한다.
+      return false;
+    }
+  }
+
+  /** 이 기기 update를 보낸다. ack가 오면 확인분(confirmed)에 넣는다. */
+  private sendOwnUpdate(message: Uint8Array, update: Uint8Array): void {
+    if (!this.send(message)) {
+      this.hasPendingLocalChanges = true;
+      return;
+    }
+    this.sentCount += 1;
+    if (this.options.confirmed) this.unacked.push({ n: this.sentCount, update });
+  }
+
+  private sendControl(message: CollabClientControlMessage): void {
+    const encoder = encoding.createEncoder();
+    encoding.writeVarUint(encoder, COLLAB_MESSAGE_CONTROL);
+    encoding.writeVarString(encoder, JSON.stringify(message));
+    this.send(encoding.toUint8Array(encoder));
+  }
+
+  /** 저장 성공(또는 이미 저장된 내용과 같음)을 room에 알린다. room은 이것으로 "밀린 내용 없음"을 안다. */
+  reportSaved(stateVector: Uint8Array): void {
+    if (this.mode !== "write") return;
+    this.sendControl({ t: "saved", sv: bytesToBase64(stateVector) });
+  }
+
+  sendFlushed(message: { id: string; ok: boolean; revision?: number; stateVector?: Uint8Array; dirty?: boolean }): void {
+    this.sendControl({
+      t: "flushed",
+      id: message.id,
+      ok: message.ok,
+      ...(typeof message.revision === "number" ? { revision: message.revision } : {}),
+      ...(message.stateVector ? { sv: bytesToBase64(message.stateVector) } : {}),
+      ...(typeof message.dirty === "boolean" ? { dirty: message.dirty } : {}),
+    });
+  }
+
+  /** 저장이 room 세대 불일치(COLLAB_STALE)로 거부됐을 때 등: 새 토큰으로 다시 연결해 room을 D1 세대에 맞춘다. */
+  reconnect(): void {
+    if (this.destroyed) return;
+    const socket = this.socket;
+    if (socket) {
+      this.socket = null;
+      this.handleClose(socket, 1000, true);
+      try {
+        socket.close(1000, "reconnect");
+      } catch {
+        // 이미 닫혔다.
+      }
+    }
+    this.attempts = 0;
+    void this.connect();
+  }
+
+  private startRenew(): void {
+    this.stopRenew();
+    this.renewTimer = setInterval(() => void this.renew(), COLLAB_RENEW_INTERVAL_MS);
+  }
+
+  private stopRenew(): void {
+    if (this.renewTimer) clearInterval(this.renewTimer);
+    this.renewTimer = null;
+  }
+
+  /** 새 토큰(세션·권한 재확인)으로 lease를 넘겨받는다. 권한이 사라졌으면 연결을 닫는다. */
+  private async renew(): Promise<void> {
+    const socket = this.socket;
+    if (!socket || this.destroyed || !this.helloReceived) return;
+    let response: Response;
+    try {
+      response = await this.fetchImpl(COLLAB_TOKEN_PATH, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(this.options.request),
+        credentials: "same-origin",
+        cache: "no-store",
+      });
+    } catch {
+      return; // 다음 주기에 다시 시도한다. lease가 끝나면 room이 닫는다.
+    }
+    if (socket !== this.socket || this.destroyed) return;
+    if (response.status === 401 || response.status === 403 || response.status === 400) {
+      this.socket = null;
+      this.handleClose(socket, COLLAB_CLOSE_UNAUTHORIZED, true);
+      try {
+        socket.close(1000, "denied");
+      } catch {
+        // 이미 닫혔다.
+      }
+      this.setStatus("denied");
+      return;
+    }
+    if (!response.ok) return;
+    const token = (await response.json().catch(() => null)) as CollabTokenResponse | null;
+    if (!token || !token.collab || socket !== this.socket) return;
+    if (token.mode === "read") this.setMode("read");
+    this.sendControl({ t: "renew", token: token.token });
+  }
+
+  private setFrozen(frozen: boolean): void {
+    if (this.freezeTimer) clearTimeout(this.freezeTimer);
+    this.freezeTimer = null;
+    if (this.frozen === frozen) return;
+    this.frozen = frozen;
+    if (frozen) {
+      this.freezeTimer = setTimeout(() => this.setFrozen(false), CLIENT_FREEZE_RELEASE_MS);
+      return;
+    }
+    this.emit("thaw");
+    // 멈춘 동안의 입력(편집 잠금 전 몇 글자 등)을 보낸다. room은 이미 가진 부분을 무시한다.
+    if (this.hasPendingLocalChanges && this.helloReceived && this.mode === "write") {
+      const update = Y.encodeStateAsUpdate(this.doc);
+      const encoder = encoding.createEncoder();
+      encoding.writeVarUint(encoder, COLLAB_MESSAGE_SYNC);
+      syncProtocol.writeUpdate(encoder, update);
+      this.hasPendingLocalChanges = false;
+      this.sendOwnUpdate(encoding.toUint8Array(encoder), update);
     }
   }
 
@@ -212,8 +368,8 @@ export class CollabProvider {
       const messageType = syncProtocol.readSyncMessage(decoder, encoder, this.doc, this);
       // 읽기 전용은 서버 상태 요청(step1)에 이 기기 상태를 돌려주지 않는다.
       if (encoding.length(encoder) > 1 && this.mode === "write") {
-        this.send(encoding.toUint8Array(encoder));
-        // 이 기기 상태(step2)를 보냈으므로 연결 전에 쌓인 입력도 함께 갔다.
+        // 이 기기 상태(step2)를 보냈으므로 연결 전에 쌓인 입력도 함께 갔다. ack가 오면 지금 상태 전체가 확인분이 된다.
+        this.sendOwnUpdate(encoding.toUint8Array(encoder), Y.encodeStateAsUpdate(this.doc));
         this.hasPendingLocalChanges = false;
       }
       if (messageType === syncProtocol.messageYjsSyncStep2 && !this.synced) {
@@ -236,9 +392,15 @@ export class CollabProvider {
         this.emit("epoch", message.epoch);
         return;
       }
+      if (message.mode === "write" && this.options.shouldHold?.()) {
+        this.emit("hold", message.epoch);
+        return;
+      }
       this.helloReceived = true;
       this.everConnected = true;
       this.epoch = message.epoch;
+      if (typeof message.seq === "number") this.emit("seq", message.seq, "hello");
+      this.startRenew();
       const encoder = encoding.createEncoder();
       encoding.writeVarUint(encoder, COLLAB_MESSAGE_SYNC);
       syncProtocol.writeSyncStep1(encoder, this.doc);
@@ -254,17 +416,67 @@ export class CollabProvider {
     }
     if (message.t === "error" && message.code === "too-large") {
       this.setStatus("too-large");
+      return;
+    }
+    if (message.t === "ack") {
+      const confirmed = this.options.confirmed;
+      while (this.unacked.length > 0 && this.unacked[0].n <= message.n) {
+        const entry = this.unacked.shift()!;
+        if (confirmed && !confirmed.isDestroyed) Y.applyUpdate(confirmed, entry.update, this);
+      }
+      return;
+    }
+    if (message.t === "freeze") {
+      // 듣는 쪽(편집기)이 먼저 편집을 잠근 뒤 응답한다. 그 전에 보낸 입력은 room이 이미 받았다(같은 소켓 순서).
+      this.setFrozen(true);
+      this.emit("freeze", message.id);
+      if (this.mode === "write") this.sendControl({ t: "frozen", id: message.id });
+      return;
+    }
+    if (message.t === "thaw") {
+      this.setFrozen(false);
+      return;
+    }
+    if (message.t === "flush") {
+      this.emit("flush", message.id, message.mode);
+      return;
+    }
+    if (message.t === "mode") {
+      this.setMode(message.mode);
+      return;
+    }
+    if (message.t === "changed") {
+      this.emit("seq", message.seq, "changed");
     }
   }
 
-  private handleClose(socket: WebSocket, code: number): void {
-    if (socket !== this.socket) return;
+  private handleClose(socket: WebSocket, code: number, detached = false): void {
+    if (!detached && socket !== this.socket) return;
     this.socket = null;
     this.helloReceived = false;
     this.synced = false;
+    this.stopRenew();
+    // ack를 못 받은 update는 다음 연결의 step2가 다시 보낸다(그 ack로 확인분이 된다).
+    if (this.unacked.length > 0) this.hasPendingLocalChanges = true;
+    this.unacked = [];
+    if (this.frozen) this.setFrozen(false);
     const others = Array.from(this.awareness.getStates().keys()).filter((id) => id !== this.doc.clientID);
     if (others.length > 0) awarenessProtocol.removeAwarenessStates(this.awareness, others, this);
-    if (this.destroyed || code === COLLAB_CLOSE_RESET) return;
+    if (this.destroyed || detached) return;
+    if (code === COLLAB_CLOSE_RESET) {
+      // reset 알림을 받았으면 이미 다시 시작했다(destroyed). 알림 없이 닫혔으면 다시 붙어 세대 확인(hello)으로 다시 시작한다.
+      void this.connect();
+      return;
+    }
+    if (code === COLLAB_CLOSE_STALE || code === COLLAB_CLOSE_GONE) {
+      // 새 토큰으로 바로 다시 붙는다(세대가 맞춰지거나, 휴지통이면 토큰이 거부돼 denied가 된다).
+      void this.connect();
+      return;
+    }
+    if (code === COLLAB_CLOSE_BUSY || code === COLLAB_CLOSE_FREEZE_TIMEOUT) {
+      this.scheduleRetry();
+      return;
+    }
     if (code === COLLAB_CLOSE_TOO_LARGE) {
       this.setStatus("too-large");
       return;
@@ -302,18 +514,26 @@ export class CollabProvider {
   };
 
   private readonly handleDocUpdate = (update: Uint8Array, origin: unknown) => {
-    if (origin === this || this.mode === "read") return;
+    if (origin === this) {
+      // room에서 온 상태는 room이 이미 가진 것이므로 바로 확인분이다.
+      const confirmed = this.options.confirmed;
+      if (confirmed && !confirmed.isDestroyed) Y.applyUpdate(confirmed, update, this);
+      return;
+    }
+    if (this.mode === "read") return;
     // 기기 보관(IndexedDB)에서 읽어 온 상태는 새 입력이 아니다. 서버와는 다음 동기화(step2)에서 맞춘다.
     if (origin && typeof origin === "object" && "whenSynced" in origin) return;
     // hello 뒤에는 동기화가 끝나기 전이라도 바로 보낸다(room은 빠진 앞부분을 step2가 오면 이어 붙인다).
-    if (!this.helloReceived || !this.socket || this.socket.readyState !== 1) {
+    // freeze 동안에는 입력을 보내지 않는다. 저장 담당의 저장 표시(checkpoint 뒤 savedHash·headVersion)만 보낸다.
+    const frozenHold = this.frozen && origin !== "collab-autosave-meta";
+    if (!this.helloReceived || !this.socket || this.socket.readyState !== 1 || frozenHold) {
       this.hasPendingLocalChanges = true;
       return;
     }
     const encoder = encoding.createEncoder();
     encoding.writeVarUint(encoder, COLLAB_MESSAGE_SYNC);
     syncProtocol.writeUpdate(encoder, update);
-    this.send(encoding.toUint8Array(encoder));
+    this.sendOwnUpdate(encoding.toUint8Array(encoder), update);
   };
 
   private readonly handleAwarenessUpdate = (
@@ -334,7 +554,7 @@ export class CollabProvider {
   /** 서버에 보내지 못한 입력이 남았는지(연결 중이면 전송 대기 바이트까지 본다). */
   hasUnsentChanges(): boolean {
     if (this.status === "solo" || this.mode === "read") return false;
-    if (this.hasPendingLocalChanges) return true;
+    if (this.hasPendingLocalChanges || this.unacked.length > 0) return true;
     return Boolean(this.socket && this.socket.bufferedAmount > 0);
   }
 
@@ -343,6 +563,8 @@ export class CollabProvider {
     this.destroyed = true;
     this.connectSeq += 1;
     this.clearRetry();
+    this.stopRenew();
+    if (this.freezeTimer) clearTimeout(this.freezeTimer);
     this.doc.off("update", this.handleDocUpdate);
     this.awareness.off("update", this.handleAwarenessUpdate);
     if (typeof window !== "undefined") {

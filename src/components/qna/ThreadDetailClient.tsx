@@ -98,6 +98,7 @@ function ThreadDetailContent({
   // 같은 사람의 이 질문 답글 작성본은 기기와 관계없이 하나다(room `draft:qna-reply:<본인>:<질문>`).
   const getExtensions = useEditorExtensions();
   const draft = useCollabFormDraft({
+    ownerId: actorId,
     room: { draftKind: "qna-reply", ownerId: actorId, scope: threadId },
     fields: REPLY_FIELDS,
     extensions: getExtensions,

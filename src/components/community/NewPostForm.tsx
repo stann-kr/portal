@@ -76,6 +76,7 @@ function NewPostFormContent({
   // 같은 사람의 새 게시물 작성본은 기기와 관계없이 하나다(room `draft:post:<본인>:new`).
   const getExtensions = useEditorExtensions();
   const draft = useCollabFormDraft({
+    ownerId: actorId,
     room: { draftKind: "post", ownerId: actorId, scope: "new" },
     fields: {
       boardType: defaultBoardType,

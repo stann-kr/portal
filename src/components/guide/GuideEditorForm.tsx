@@ -55,7 +55,7 @@ function normalizeTitle(value: string): string {
   return value.replace(/\s+/gu, " ").trim();
 }
 
-export function GuideEditorForm({ page, action }: GuideEditorFormProps) {
+export function GuideEditorForm({ page, actorId, action }: GuideEditorFormProps) {
   const formRef = useRef<HTMLFormElement>(null);
   const titleRef = useRef<HTMLTextAreaElement>(null);
   const roomKey = formatCollabDocKey({ kind: "guide", id: page.id });
@@ -66,6 +66,8 @@ export function GuideEditorForm({ page, action }: GuideEditorFormProps) {
     return extensionsRef.current;
   }, []);
   const collab = useCollabDocument({
+    offlineWritable: true,
+    ownerId: actorId,
     request,
     storageKey: roomKey,
     user: { name: "", colorIndex: 0 },

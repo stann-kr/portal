@@ -8,6 +8,7 @@ import { getActiveAuthSession } from "@/lib/auth-guard";
 import { redirect } from "next/navigation";
 import { getQnaThreadIncludingTrash } from "@/lib/actions/qna";
 import { ThreadDetailClient } from "@/components/qna/ThreadDetailClient";
+import { CollabNotifyRefresh } from "@/components/app-shell/CollabNotifyRefresh";
 import type { QnaStatus } from "@/db/schema";
 import { safeReturnPath } from "@/lib/safe-return-path";
 
@@ -40,6 +41,8 @@ export default async function QnaThreadPage({
   return (
     <div className="flex min-h-[calc(100dvh-var(--app-topbar-height))] flex-col md:block md:min-h-0 px-5 pb-8 pt-5 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-10">
       <div className="flex max-w-[760px] flex-1 flex-col md:block">
+        {/* 다른 창의 답글·상태 변경을 새로고침 없이 바로 받는다. */}
+        <CollabNotifyRefresh topic="qna" id={threadId} />
         <ThreadDetailClient
           threadId={threadId}
           status={status}

@@ -1,6 +1,16 @@
 import type { CollabWorkerEnv } from "./worker-route";
-import { readCollabRoomEpoch, resetCollabRoom } from "./worker-route";
-import { COLLAB_EPOCH_FIELD } from "./protocol";
+import {
+  advanceCollabRoom,
+  closeCollabRoom,
+  notifyCollabRoom,
+  prepareCollabRoom,
+  readCollabRoomEpoch,
+  resetCollabRoom,
+  setCollabRoomMeta,
+  thawCollabRoom,
+} from "./worker-route";
+import { COLLAB_EPOCH_FIELD, type CollabPrepareMode, type CollabPrepareResult } from "./protocol";
+import { formatCollabDocKey } from "./doc-key";
 
 /**
  * Next route·server action에서 같은 Worker의 공동 편집 binding을 읽는다.
@@ -15,6 +25,91 @@ export function readCollabWorkerEnv(): CollabWorkerEnv | null {
   } catch {
     return null;
   }
+}
+
+/** 응답 뒤에도 끝까지 보내게 한다(알림처럼 저장 응답을 늦추면 안 되는 일). context가 없으면 그냥 기다리지 않는다. */
+function runAfterResponse(task: Promise<unknown>): void {
+  const settled = task.catch(() => undefined);
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { getCloudflareContext } = require("@opennextjs/cloudflare");
+    const ctx = getCloudflareContext()?.ctx as { waitUntil?: (promise: Promise<unknown>) => void } | undefined;
+    ctx?.waitUntil?.(settled);
+  } catch {
+    // next dev·테스트: 기다리지 않는다.
+  }
+}
+
+async function withRetry(label: string, key: string, task: () => Promise<boolean>): Promise<boolean> {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      if (await task()) return true;
+    } catch {
+      // 다시 시도한다.
+    }
+  }
+  console.error(JSON.stringify({ event: label, outcome: "failed", kind: key.split(":")[0] }));
+  return false;
+}
+
+/**
+ * 복원 전 준비(freeze → checkpoint). binding이 없으면(혼자 모드) 확인할 room이 없어 성공으로 본다.
+ * 실패면 호출한 쪽이 복원하지 않고 `thawCollabRoomAfterAbort`를 부른다.
+ */
+export async function prepareCollabRoomForRestore(
+  key: string,
+  id: string,
+  mode: CollabPrepareMode,
+): Promise<CollabPrepareResult> {
+  const env = readCollabWorkerEnv();
+  if (!env) return { ok: true, checkpoint: null };
+  try {
+    return (await prepareCollabRoom(env, key, { id, mode })) ?? { ok: true, checkpoint: null };
+  } catch {
+    return { ok: false, reason: "timeout" };
+  }
+}
+
+export async function thawCollabRoomAfterAbort(key: string, id: string): Promise<void> {
+  const env = readCollabWorkerEnv();
+  if (!env) return;
+  await thawCollabRoom(env, key, id).catch(() => undefined);
+}
+
+/**
+ * 복원 commit 뒤 room을 그 revision(lifecycle 표지)으로 넘긴다. 실패해도 다음 연결·renew의 토큰 세대가 room을 수렴시킨다.
+ */
+export async function advanceCollabRoomAfterRestore(key: string, target: number): Promise<void> {
+  const env = readCollabWorkerEnv();
+  if (!env) return;
+  await withRetry("collab_room_advance", key, () => advanceCollabRoom(env, key, target));
+}
+
+/** 휴지통 이동(keep: 상태 보존)·영구 삭제(keep 아님) 뒤 열린 연결을 닫는다. */
+export async function closeCollabRoomAfterMutation(key: string, keep: boolean): Promise<void> {
+  const env = readCollabWorkerEnv();
+  if (!env) return;
+  await withRetry("collab_room_close", key, () => closeCollabRoom(env, key, keep));
+}
+
+/** room 밖에서 바뀐 칸(캘린더 날짜 이동)을 열린 room에 반영한다. 다음 자동 저장이 옛 값으로 되돌리지 않게 한다. */
+export async function setCollabRoomMetaAfterMutation(key: string, field: string, value: string): Promise<void> {
+  const env = readCollabWorkerEnv();
+  if (!env) return;
+  await setCollabRoomMeta(env, key, field, value).catch(() => false);
+}
+
+/** 답글·학생 최근 노트 알림. 저장 응답을 늦추지 않도록 응답 뒤에 보낸다(실패해도 화면은 30초 재조회로 따라온다). */
+export function notifyCollabTopic(topic: "qna" | "student-notes", id: string): void {
+  const env = readCollabWorkerEnv();
+  if (!env) return;
+  let key: string;
+  try {
+    key = formatCollabDocKey({ kind: "notify", topic, id });
+  } catch {
+    return;
+  }
+  runAfterResponse(notifyCollabRoom(env, key));
 }
 
 /**

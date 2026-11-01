@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type * as Y from "yjs";
+import * as Y from "yjs";
 import { COLLAB_META } from "./seed";
 
 /**
@@ -23,6 +23,8 @@ export type CollabAutosaveOptions<S> = {
   save: (snapshot: S) => Promise<CollabSaveResult>;
   idleMs?: number;
   maxWaitMs?: number;
+  /** 저장 성공(또는 이미 저장된 내용과 같음) 뒤 room 상태의 state vector. room이 "밀린 내용 없음"을 알게 한다. */
+  onSaved?: (stateVector: Uint8Array) => void;
 };
 
 export const COLLAB_META_SAVED_HASH = "savedHash";
@@ -48,16 +50,19 @@ export function useCollabAutosave<S>({
   save,
   idleMs = 1500,
   maxWaitMs = 10_000,
+  onSaved,
 }: CollabAutosaveOptions<S>) {
   const [status, setStatus] = useState<CollabAutosaveStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<Date | null>(null);
   const readRef = useRef(readSnapshot);
   const saveRef = useRef(save);
+  const onSavedRef = useRef(onSaved);
   const activeRef = useRef(false);
   useEffect(() => {
     readRef.current = readSnapshot;
     saveRef.current = save;
+    onSavedRef.current = onSaved;
     activeRef.current = enabled && isSaver && Boolean(doc);
   });
   const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -65,6 +70,16 @@ export function useCollabAutosave<S>({
   const savingRef = useRef<Promise<void> | null>(null);
   const rerunRef = useRef(false);
   const failedHashRef = useRef<string | null>(null);
+
+  /** 지금 room 내용이 저장한 내용과 같으면 그 state vector를 알린다(저장 중 새 입력이 있었으면 알리지 않는다). */
+  const reportSavedIfCurrent = useCallback(
+    (hash: string) => {
+      if (!doc || doc.isDestroyed) return;
+      const current = readRef.current();
+      if (current !== null && collabSnapshotHash(current) === hash) onSavedRef.current?.(Y.encodeStateVector(doc));
+    },
+    [doc],
+  );
 
   const clearTimer = () => {
     if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
@@ -88,6 +103,7 @@ export function useCollabAutosave<S>({
     const meta = doc.getMap(COLLAB_META);
     if (meta.get(COLLAB_META_SAVED_HASH) === hash) {
       setStatus((previous) => (previous === "idle" ? "idle" : "saved"));
+      reportSavedIfCurrent(hash);
       return;
     }
     setStatus("saving");
@@ -104,6 +120,7 @@ export function useCollabAutosave<S>({
         setSavedAt(new Date());
         setStatus("saved");
         if (!doc.isDestroyed) doc.transact(() => meta.set(COLLAB_META_SAVED_HASH, hash), "collab-autosave-meta");
+        reportSavedIfCurrent(hash);
       } else {
         failedHashRef.current = hash;
         setError(result.error);
@@ -120,7 +137,7 @@ export function useCollabAutosave<S>({
         void runSave();
       }
     }
-  }, [doc]);
+  }, [doc, reportSavedIfCurrent]);
 
   const schedule = useCallback(() => {
     if (!activeRef.current) return;
@@ -173,11 +190,47 @@ export function useCollabAutosave<S>({
     void runSave();
   }, [runSave]);
 
+  /**
+   * 복원 준비(checkpoint): 선출·대기 시간·잠금과 무관하게 지금 내용을 저장한다. 진행 중인 저장이 있으면 끝난 뒤 다시 확인한다.
+   * 이미 저장된 내용과 같으면 저장 없이 성공이다. 저장할 수 없는 상태(필수 칸 비어 있음)·실패는 ok: false.
+   */
+  const checkpoint = useCallback(async (): Promise<{ ok: boolean }> => {
+    clearTimer();
+    firstPendingAtRef.current = null;
+    while (savingRef.current) await savingRef.current.catch(() => undefined);
+    if (!doc || doc.isDestroyed) return { ok: false };
+    const snapshot = readRef.current();
+    if (snapshot === null) return { ok: false };
+    const hash = collabSnapshotHash(snapshot);
+    const meta = doc.getMap(COLLAB_META);
+    if (meta.get(COLLAB_META_SAVED_HASH) === hash) return { ok: true };
+    setStatus("saving");
+    let result: CollabSaveResult;
+    try {
+      result = await saveRef.current(snapshot);
+    } catch {
+      result = { ok: false, error: "저장 결과를 확인하지 못했습니다." };
+    }
+    if (!result.ok) {
+      failedHashRef.current = hash;
+      setError(result.error);
+      setStatus("error");
+      return { ok: false };
+    }
+    failedHashRef.current = null;
+    setError(null);
+    setSavedAt(new Date());
+    setStatus("saved");
+    if (!doc.isDestroyed) doc.transact(() => meta.set(COLLAB_META_SAVED_HASH, hash), "collab-autosave-meta");
+    reportSavedIfCurrent(hash);
+    return { ok: true };
+  }, [doc, reportSavedIfCurrent]);
+
   /** 저장 대기·진행 중인지(이탈 보호). */
   const hasPendingSave = useCallback(
     () => activeRef.current && (Boolean(idleTimerRef.current) || Boolean(savingRef.current)),
     [],
   );
 
-  return { status, error, savedAt, retry, flush: runSave, hasPendingSave };
+  return { status, error, savedAt, retry, flush: runSave, checkpoint, hasPendingSave };
 }

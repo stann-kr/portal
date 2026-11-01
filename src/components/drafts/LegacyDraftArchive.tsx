@@ -20,7 +20,7 @@ import {
 } from "@/lib/local-draft-continuity-client";
 import type { DocumentDraftKind } from "@/lib/form-draft";
 import { sanitizeHtml } from "@/lib/sanitize-html";
-import { COLLAB_RECOVERY_PREFIX } from "@/lib/collab/client/useCollabDocument";
+import { COLLAB_RECOVERED_PREFIX as COLLAB_RECOVERY_PREFIX } from "@/lib/collab/client/local-store";
 
 type ArchiveItem = {
   /** 기기·계정 목록 사이에서 겹치지 않는 key. */

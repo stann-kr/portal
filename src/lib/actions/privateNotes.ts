@@ -5,9 +5,19 @@
 "use server";
 
 import { formatCollabDocKey } from "@/lib/collab/doc-key";
-import { parseCollabSaveEpoch, resetCollabRoomAfterMutation, STALE_COLLAB_SAVE_MESSAGE } from "@/lib/collab/server-env";
+import {
+  advanceCollabRoomAfterRestore,
+  closeCollabRoomAfterMutation,
+  notifyCollabTopic,
+  parseCollabSaveEpoch,
+  prepareCollabRoomForRestore,
+  setCollabRoomMetaAfterMutation,
+  STALE_COLLAB_SAVE_MESSAGE,
+  thawCollabRoomAfterAbort,
+} from "@/lib/collab/server-env";
+import type { CollabPrepareResult } from "@/lib/collab/protocol";
 import { revalidatePath } from "next/cache";
-import { and, desc, eq, isNotNull, isNull } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { createDb, createDbContext } from "@/db/client";
 import { privateNoteRevisions, privateNotes, profiles } from "@/db/schema";
 import { requireAuth, requireStudentOwnerOrAdmin } from "@/lib/auth-guard";
@@ -21,6 +31,7 @@ import {
   createPrivateNoteAtomically,
   purgePrivateNoteAtomically,
   restorePrivateNoteRevisionAtomically,
+  readPrivateNoteLifecycleMarker,
   restoreTrashedPrivateNoteAtomically,
   trashPrivateNoteAtomically,
   updatePrivateNoteAtomically,
@@ -160,6 +171,46 @@ export async function getPrivateNote(noteId: string) {
 /** 상세 lifecycle UI가 휴지통 상태까지 구분할 때 사용한다. */
 export async function getPrivateNoteIncludingTrash(noteId: string) {
   return getPrivateNoteRecord(noteId, true);
+}
+
+/**
+ * 공동 편집 시드용 head. 본문·칸·version과 lifecycle 표지(마지막 복원 revision)를 한 조회에서 읽어
+ * room 세대와 맞는 head로만 시드하게 한다. 휴지통·없음·권한 없음은 상태로 돌려준다(재시도하지 않음).
+ */
+export type PrivateNoteCollabSeed =
+  | { status: "ok"; title: string; contentHtml: string; noteDate: Date | null; version: number; lifecycle: number }
+  | { status: "trashed" | "missing" };
+
+export async function getPrivateNoteCollabSeed(noteId: string): Promise<PrivateNoteCollabSeed> {
+  const session = await requireAuth();
+  const [row] = await createDb()
+    .select({
+      studentId: privateNotes.studentId,
+      title: privateNotes.title,
+      contentHtml: privateNotes.contentHtml,
+      noteDate: privateNotes.noteDate,
+      version: privateNotes.version,
+      deletedAt: privateNotes.deletedAt,
+      lifecycle: sql<number>`coalesce((SELECT max(${privateNoteRevisions.revisionNumber}) FROM ${privateNoteRevisions} WHERE ${privateNoteRevisions.noteId} = ${privateNotes.id} AND ${privateNoteRevisions.changeType} = 'RESTORE_REVISION'), 0)`,
+    })
+    .from(privateNotes)
+    .where(eq(privateNotes.id, noteId))
+    .limit(1);
+  if (!row) return { status: "missing" };
+  try {
+    await requireStudentOwnerOrAdmin(session, row.studentId);
+  } catch {
+    return { status: "missing" };
+  }
+  if (row.deletedAt) return { status: "trashed" };
+  return {
+    status: "ok",
+    title: row.title,
+    contentHtml: row.contentHtml,
+    noteDate: row.noteDate,
+    version: row.version,
+    lifecycle: Number(row.lifecycle),
+  };
 }
 
 export type PrivateNoteHead = { id: string; version: number; updatedAt: Date | null };
@@ -356,7 +407,8 @@ export async function createPrivateNote(
     };
   }
 
-  // 자동 저장(제자리 생성) 중 route 재렌더를 막기 위해 revalidate하지 않는다(위 주석).
+  // 자동 저장(제자리 생성) 중 route 재렌더를 막기 위해 revalidate하지 않는다(위 주석). 학생 홈 최근 노트에는 알린다.
+  notifyCollabTopic("student-notes", targetStudentId);
   const currentNote = result.replayed
     ? await getPrivateNoteIncludingTrash(id)
     : null;
@@ -512,7 +564,8 @@ export async function updatePrivateNote(
       conflictKind: "INTERNAL_INVARIANT_FAILURE",
     };
   }
-  // 자동 저장마다 route가 다시 렌더되지 않도록 revalidate하지 않는다(위 주석).
+  // 자동 저장마다 route가 다시 렌더되지 않도록 revalidate하지 않는다(위 주석). 학생 홈 최근 노트에는 알린다.
+  notifyCollabTopic("student-notes", note.studentId);
   return {
     success: true,
     replayed: result.replayed,
@@ -592,6 +645,9 @@ export async function movePrivateNoteDate(
     };
   }
   revalidatePrivateNotePaths(current.studentId, noteId);
+  // 열린 편집 room의 날짜도 바꾼다. 그렇지 않으면 다음 자동 저장이 옛 날짜로 되돌린다.
+  await setCollabRoomMetaAfterMutation(formatCollabDocKey({ kind: "note", id: noteId }), "noteDate", noteDate);
+  notifyCollabTopic("student-notes", current.studentId);
   return {
     ok: true,
     noteDate: parsedDate,
@@ -642,15 +698,33 @@ async function runLifecycleAction(
             : undefined,
     };
   }
-  // 열린 공동 편집 room을 비워 옛 내용이 다시 저장되지 않게 한다(복원 뒤에는 새 head로 다시 시작).
-  if (!result.replayed) await resetCollabRoomAfterMutation(formatCollabDocKey({ kind: "note", id: noteId }));
-  if (noteBefore) revalidatePrivateNotePaths(noteBefore.studentId, noteId);
+  // 휴지통 이동은 본문을 바꾸지 않으므로 room 상태를 남긴 채 연결만 닫는다(복구하면 그대로 이어진다).
+  // 영구 삭제는 room을 비운다. 휴지통 복구는 room을 건드리지 않는다.
+  const roomKey = formatCollabDocKey({ kind: "note", id: noteId });
+  if (kind === "trash") await closeCollabRoomAfterMutation(roomKey, true);
+  if (kind === "purge") await closeCollabRoomAfterMutation(roomKey, false);
+  if (noteBefore) {
+    revalidatePrivateNotePaths(noteBefore.studentId, noteId);
+    notifyCollabTopic("student-notes", noteBefore.studentId);
+  }
   return {
     success: true,
     replayed: result.replayed,
     resourceState: result.resourceState,
     currentRevision: result.currentRevision,
   };
+}
+
+/** 복원 준비 실패 안내(이때 복원하지 않았고 입력은 실시간 문서에 그대로 있다). */
+function restoreBlockedMessage(result: Extract<CollabPrepareResult, { ok: false }>): string {
+  switch (result.reason) {
+    case "busy":
+      return "다른 화면에서 이미 되돌리는 중입니다. 잠시 뒤 다시 시도해 주세요.";
+    case "unsaved":
+      return "아직 저장되지 않은 실시간 내용이 있어 되돌리지 않았습니다. 노트를 열어 저장된 뒤 다시 시도해 주세요.";
+    default:
+      return "다른 화면의 입력을 저장했는지 확인하지 못해 되돌리지 않았습니다. 잠시 뒤 다시 시도해 주세요.";
+  }
 }
 
 export async function trashPrivateNote(
@@ -694,15 +768,38 @@ export async function restorePrivateNoteRevision(
     return { error: "복원 기준을 확인할 수 없습니다. 페이지를 새로고침해 주세요." };
   }
   const noteBefore = await getPrivateNoteForMutation(noteId);
+  const actor = { id: session.user.id!, isAdmin: session.user.role === "admin" };
+  const roomKey = formatCollabDocKey({ kind: "note", id: noteId });
+  // 되돌리기 전에 열린 편집 화면을 멈추고, 아직 저장되지 않은 입력을 revision으로 남긴다(다른 기기 입력이 사라지지 않게).
+  // 쓸 수 있는 사람의 요청만 준비한다(권한 없는 요청이 편집을 멈추지 못하게).
+  const mayRestore = Boolean(noteBefore && !noteBefore.deletedAt && (actor.isAdmin || noteBefore.authorId === actor.id));
+  let checkpointBase = baseRevision;
+  if (mayRestore) {
+    const prepared = await prepareCollabRoomForRestore(roomKey, operationId, "checkpoint");
+    if (!prepared.ok) {
+      await thawCollabRoomAfterAbort(roomKey, operationId);
+      return { error: restoreBlockedMessage(prepared) };
+    }
+    if (prepared.checkpoint !== null && prepared.checkpoint > baseRevision) {
+      // checkpoint만 기준을 바꿀 수 있다. 사이에 다른 복원이 있었으면(보지 못한 변경) 되돌리지 않는다.
+      const marker = await readPrivateNoteLifecycleMarker(createDbContext(), noteId);
+      if (marker > baseRevision) {
+        await thawCollabRoomAfterAbort(roomKey, operationId);
+        return { error: mutationErrorMessage("VERSION_CONFLICT"), conflictKind: "VERSION_CONFLICT" };
+      }
+      checkpointBase = prepared.checkpoint;
+    }
+  }
   const result = await restorePrivateNoteRevisionAtomically(createDbContext(), {
-    actor: { id: session.user.id!, isAdmin: session.user.role === "admin" },
+    actor,
     noteId,
     operationId,
-    baseRevision,
+    baseRevision: checkpointBase,
     revisionNumber,
     now: new Date(),
   });
   if (!result.ok) {
+    if (mayRestore) await thawCollabRoomAfterAbort(roomKey, operationId);
     return {
       error: mutationErrorMessage(result.reason),
       conflictKind: result.reason,
@@ -715,9 +812,13 @@ export async function restorePrivateNoteRevision(
             : undefined,
     };
   }
-  // 열린 공동 편집 room을 비워 옛 내용이 다시 저장되지 않게 한다(복원 뒤에는 새 head로 다시 시작).
-  if (!result.replayed) await resetCollabRoomAfterMutation(formatCollabDocKey({ kind: "note", id: noteId }));
-  if (noteBefore) revalidatePrivateNotePaths(noteBefore.studentId, noteId);
+  // 복원 revision이 새 lifecycle 표지다. room을 그 세대로 넘기면 열린 편집기는 복원본으로 다시 시작한다.
+  if (typeof result.currentRevision === "number") await advanceCollabRoomAfterRestore(roomKey, result.currentRevision);
+  else if (mayRestore) await thawCollabRoomAfterAbort(roomKey, operationId);
+  if (noteBefore) {
+    revalidatePrivateNotePaths(noteBefore.studentId, noteId);
+    notifyCollabTopic("student-notes", noteBefore.studentId);
+  }
   return {
     success: true,
     replayed: result.replayed,

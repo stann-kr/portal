@@ -10,7 +10,7 @@ import { CollabDraftStatus } from "@/components/editor/CollabDraftStatus";
 import { useEditorExtensions } from "@/components/editor/useEditorExtensions";
 import { useDocumentSaveShortcut } from "@/lib/hooks/useDocumentSaveShortcut";
 import { isRichTextEmpty } from "@/lib/rich-text";
-import { getPostById, updatePostContent } from "@/lib/actions/posts";
+import { getPostCollabSeed, updatePostContent } from "@/lib/actions/posts";
 import { COLLAB_EPOCH_FIELD } from "@/lib/collab/protocol";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
 import { CREATION_OPERATION_FIELD, createCreationOperationId } from "@/lib/creation-operation";
@@ -23,6 +23,8 @@ import { classifyMixsetMedia, MIXSET_LINK_FIELD, normalizeMixsetLinkUrl } from "
 import { isImplicitSubmitEnter } from "@/components/community/empty-title-enter";
 import { useCollabFormDraft } from "@/lib/collab/client/useCollabFormDraft";
 import { COLLAB_FRAGMENT, COLLAB_META } from "@/lib/collab/client/seed";
+import { canonicalCollabHtml, collabDocHtml } from "@/lib/collab/client/doc-html";
+import * as Y from "yjs";
 
 const EMPTY_TITLE_ERROR = "제목을 입력해 주세요.";
 
@@ -56,18 +58,20 @@ export function PostEditForm(props: PostEditFormProps) {
   return <PostEditFormContent key={`${props.actorId}:${props.post.id}`} {...props} />;
 }
 
-function PostEditFormContent({ post, onCancel, onSaved, onBusyChange, mixsetLinkUrl: initialLinkUrl }: PostEditFormProps) {
+function PostEditFormContent({ actorId, post, onCancel, onSaved, onBusyChange, mixsetLinkUrl: initialLinkUrl }: PostEditFormProps) {
   const hasLinkField = typeof initialLinkUrl === "string";
   const getExtensions = useEditorExtensions();
   const headRef = useRef<PostHead>({ version: post.version, title: post.title, contentHtml: post.contentHtml });
+  const docRef = useRef<Y.Doc | null>(null);
   const draft = useCollabFormDraft({
+    ownerId: actorId,
     room: { postId: post.id },
     fields: { title: post.title, mixsetLinkUrl: initialLinkUrl ?? "" },
     seedHtml: post.contentHtml,
     seedVersion: post.version,
-    // 복원 등으로 작업본이 다시 시작되면 서버의 최신 게시본으로 시드한다.
+    // 연결돼 있거나 복원 등으로 작업본이 다시 시작되면 서버의 최신 게시본(lifecycle 포함)으로 시드한다.
     loadLatest: async () => {
-      const latest = await getPostById(post.id);
+      const latest = await getPostCollabSeed(post.id);
       if (!latest) return null;
       headRef.current = { version: latest.version, title: latest.title, contentHtml: latest.contentHtml };
       const media = hasLinkField ? classifyMixsetMedia(latest) : null;
@@ -75,10 +79,26 @@ function PostEditFormContent({ post, onCancel, onSaved, onBusyChange, mixsetLink
         html: latest.contentHtml,
         fields: { title: latest.title, ...(hasLinkField ? { mixsetLinkUrl: media?.kind === "link" ? media.url : "" } : {}) },
         version: latest.version,
+        lifecycle: latest.lifecycle,
       };
     },
     extensions: getExtensions,
+    // 복원 준비: 작업본에 게시하지 않은 수정이 있으면 복원을 막는다(작업본을 저장하면 미게시 편집이 게시되므로 저장하지 않는다).
+    onFlush: async (): Promise<{ ok: boolean; dirty?: boolean }> => {
+      const head = headRef.current;
+      const doc = docRef.current;
+      if (!doc || doc.isDestroyed) return { ok: false };
+      const meta = doc.getMap(COLLAB_META);
+      const workingTitle = typeof meta.get("title") === "string" ? (meta.get("title") as string) : "";
+      const dirty =
+        workingTitle !== head.title || collabDocHtml(doc, getExtensions()) !== canonicalCollabHtml(head.contentHtml, getExtensions());
+      return { ok: true, dirty };
+    },
   });
+  useEffect(() => {
+    docRef.current = draft.collab.doc;
+  });
+  const frozen = draft.collab.frozen;
   const { title, mixsetLinkUrl: linkUrl } = draft.fields;
   const generationRef = useRef(draft.collab.generation);
   useEffect(() => {
@@ -155,7 +175,15 @@ function PostEditFormContent({ post, onCancel, onSaved, onBusyChange, mixsetLink
         const state = await updatePostContent(post.id, {}, formData);
         if (state.success) {
           if (state.post) headRef.current = { version: state.post.version, title: state.post.title, contentHtml: state.post.contentHtml };
+          // 작업본이 게시본과 같아졌음을 room에 알린다(복원 준비 때 "밀린 내용 없음").
+          const doc = draft.collab.doc;
+          if (doc && !doc.isDestroyed) draft.collab.provider?.reportSaved(Y.encodeStateVector(doc));
           onSaved();
+          return;
+        }
+        if (state.collabStale) {
+          draft.collab.reconnect();
+          setError(state.error ?? "게시물이 복원되어 최신 내용으로 다시 불러옵니다.");
           return;
         }
         // 작업본은 이미 합쳐진 결과다. 선택창 없이 최신 게시본을 기준으로 한 번 더 저장한다.
@@ -236,7 +264,7 @@ function PostEditFormContent({ post, onCancel, onSaved, onBusyChange, mixsetLink
               setTitleError("");
             }}
             required
-            disabled={!loaded || isPending}
+            disabled={!loaded || isPending || frozen}
             aria-invalid={visibleTitleError ? true : undefined}
             aria-describedby={visibleTitleError ? titleErrorId : undefined}
             className="h-12 px-3.5 font-normal md:h-10 md:px-3 md:text-md"
@@ -267,7 +295,7 @@ function PostEditFormContent({ post, onCancel, onSaved, onBusyChange, mixsetLink
               const normalizedLink = normalizeMixsetLinkUrl(linkUrl);
               setLinkError(normalizedLink.ok ? "" : normalizedLink.error);
             }}
-            disabled={!loaded || isPending}
+            disabled={!loaded || isPending || frozen}
             aria-invalid={linkError ? true : undefined}
             aria-describedby={linkError ? `${linkHintId} ${linkErrorId}` : linkHintId}
             className="h-12 px-3.5 font-normal md:h-10 md:px-3"
@@ -290,7 +318,7 @@ function PostEditFormContent({ post, onCancel, onSaved, onBusyChange, mixsetLink
           placeholder="게시물 내용을 이어서 작성하세요…"
           ariaLabel="커뮤니티 게시물 내용"
           toolbar="none"
-          disabled={isPending}
+          disabled={isPending || frozen}
           footer={<CollabDraftStatus draft={draft} />}
           saveShortcutLabel={isSubmitBlocked ? undefined : "변경 저장"}
         />

@@ -2,7 +2,14 @@
 "use server";
 
 import { formatCollabDocKey } from "@/lib/collab/doc-key";
-import { parseCollabSaveEpoch, resetCollabRoomAfterMutation, STALE_COLLAB_SAVE_MESSAGE } from "@/lib/collab/server-env";
+import {
+  advanceCollabRoomAfterRestore,
+  closeCollabRoomAfterMutation,
+  parseCollabSaveEpoch,
+  prepareCollabRoomForRestore,
+  STALE_COLLAB_SAVE_MESSAGE,
+  thawCollabRoomAfterAbort,
+} from "@/lib/collab/server-env";
 import { and, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
@@ -218,6 +225,27 @@ export async function getPostById(postId: string) {
     .where(and(eq(posts.id, postId), isNull(posts.deletedAt)))
     .limit(1);
   return post ?? null;
+}
+
+/** 게시물 수정 작업본 시드용 게시본 + lifecycle 표지(한 조회). 작성자·관리자만. 휴지통·없음은 null. */
+export async function getPostCollabSeed(postId: string) {
+  const session = await requireAuth();
+  const [post] = await createDb()
+    .select({
+      ...POST_SELECT,
+      lifecycle: sql<number>`coalesce((SELECT max(${postRevisions.revisionNumber}) FROM ${postRevisions} WHERE ${postRevisions.postId} = ${posts.id} AND ${postRevisions.changeType} = 'RESTORE_REVISION'), 0)`,
+    })
+    .from(posts)
+    .leftJoin(profiles, eq(posts.authorId, profiles.id))
+    .where(and(eq(posts.id, postId), isNull(posts.deletedAt)))
+    .limit(1);
+  if (!post) return null;
+  try {
+    assertOwnerOrAdmin(session, post.authorId);
+  } catch {
+    return null;
+  }
+  return { ...post, lifecycle: Number(post.lifecycle) };
 }
 
 export async function getPostIncludingTrash(postId: string) {
@@ -647,8 +675,10 @@ async function runPostLifecycle(
         ? await restoreTrashedPostAtomically(createDbContext(), write)
         : await purgePostAtomically(createDbContext(), write);
   if (result.ok) {
-    // 열린 수정 작업본을 비워 옛 내용이 다시 저장되지 않게 한다.
-    if (!result.replayed) await resetCollabRoomAfterMutation(formatCollabDocKey({ kind: "post", id: postId }));
+    // 휴지통 이동은 게시본을 바꾸지 않으므로 수정 작업본을 남긴 채 연결만 닫는다(복구하면 이어진다). 영구 삭제는 비운다.
+    const roomKey = formatCollabDocKey({ kind: "post", id: postId });
+    if (kind === "trash") await closeCollabRoomAfterMutation(roomKey, true);
+    if (kind === "purge") await closeCollabRoomAfterMutation(roomKey, false);
     revalidatePostPaths(postId);
     if (kind === "purge") {
       await processMediaDeletionOutboxBestEffort(createDbContext(), { limit: 2 });
@@ -693,6 +723,27 @@ export async function restorePostRevision(
   revisionNumber: number,
 ): Promise<PostLifecycleState> {
   const session = await requireAuth();
+  const roomKey = formatCollabDocKey({ kind: "post", id: postId });
+  const [before] = await createDb()
+    .select({ authorId: posts.authorId, deletedAt: posts.deletedAt })
+    .from(posts)
+    .where(eq(posts.id, postId))
+    .limit(1);
+  // 수정 작업본에 게시하지 않은 편집이 있으면 되돌리지 않는다(작업본을 비우면 그 편집이 사라진다). 쓸 수 있는 사람만 준비한다.
+  const mayRestore = Boolean(before && !before.deletedAt && (session.user.role === "admin" || before.authorId === session.user.id));
+  if (mayRestore) {
+    const prepared = await prepareCollabRoomForRestore(roomKey, operationId, "clean");
+    if (!prepared.ok) {
+      await thawCollabRoomAfterAbort(roomKey, operationId);
+      return {
+        success: false,
+        error:
+          prepared.reason === "unpublished" || prepared.reason === "no-saver"
+            ? "수정 화면에 아직 저장하지 않은 변경이 있어 되돌리지 않았습니다. 그 변경을 저장하거나 취소한 뒤 다시 시도해 주세요."
+            : "열린 수정 화면을 확인하지 못해 되돌리지 않았습니다. 잠시 뒤 다시 시도해 주세요.",
+      };
+    }
+  }
   const result = await restorePostRevisionAtomically(createDbContext(), {
     actor: actor(session),
     postId,
@@ -702,9 +753,12 @@ export async function restorePostRevision(
     now: new Date(),
   });
   if (result.ok) {
-    // 복원한 게시본으로 수정 작업본을 다시 시작한다.
-    if (!result.replayed) await resetCollabRoomAfterMutation(formatCollabDocKey({ kind: "post", id: postId }));
+    // 복원 revision이 새 lifecycle 표지다. 수정 작업본은 복원한 게시본으로 다시 시작한다.
+    if (typeof result.currentRevision === "number") await advanceCollabRoomAfterRestore(roomKey, result.currentRevision);
+    else if (mayRestore) await thawCollabRoomAfterAbort(roomKey, operationId);
     revalidatePostPaths(postId);
+  } else if (mayRestore) {
+    await thawCollabRoomAfterAbort(roomKey, operationId);
   }
   return lifecycleState(result);
 }

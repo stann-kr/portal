@@ -6,7 +6,7 @@
 "use server";
 
 import { formatCollabDocKey } from "@/lib/collab/doc-key";
-import { isStaleCollabSave, resetCollabRoomAfterMutation, STALE_COLLAB_SAVE_MESSAGE } from "@/lib/collab/server-env";
+import { closeCollabRoomAfterMutation, isStaleCollabSave, STALE_COLLAB_SAVE_MESSAGE } from "@/lib/collab/server-env";
 import { revalidatePath } from "next/cache";
 import { createDbContext } from "@/db/client";
 import { requireAdmin, requireAuth } from "@/lib/auth-guard";
@@ -218,7 +218,7 @@ export async function deleteGuidePage(pageId: string, baseVersion: number): Prom
   const result = await deleteGuidePageRecord(createDbContext(), { pageId: id, baseVersion: version });
   if (!result.ok) return { ok: false, error: failureMessage(result.reason) };
   // 열린 편집기가 지운 페이지를 다시 저장하려 하지 않게 room을 비운다.
-  await resetCollabRoomAfterMutation(formatCollabDocKey({ kind: "guide", id }));
+  await closeCollabRoomAfterMutation(formatCollabDocKey({ kind: "guide", id }), false);
   revalidateGuide();
   return { ok: true };
 }

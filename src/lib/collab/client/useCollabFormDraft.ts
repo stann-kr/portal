@@ -7,7 +7,7 @@ import type { CollabDraftKind } from "../doc-key";
 import { formatCollabDocKey } from "../doc-key";
 import { collabDocHtml } from "./doc-html";
 import { COLLAB_FRAGMENT, COLLAB_META } from "./seed";
-import { useCollabDocument, type CollabDocumentState } from "./useCollabDocument";
+import { useCollabDocument, type CollabDocumentOptions, type CollabDocumentState } from "./useCollabDocument";
 import { useCollabLeaveGuard } from "./useCollabLeaveGuard";
 
 /**
@@ -20,14 +20,18 @@ export type CollabFormFields = Record<string, string>;
 export type CollabFormDraftOptions<F extends CollabFormFields> = {
   /** 새 글: `{ draftKind, ownerId, scope }`, 게시물 수정: `{ postId }`. null이면 연결하지 않는다. */
   room: { draftKind: CollabDraftKind; ownerId: string; scope: string } | { postId: string } | null;
+  /** 기기 보관 계정(세션 사용자). */
+  ownerId: string;
   /** 칸 기본값(빈 작성본·시드). */
   fields: F;
   /** 시드할 본문(게시물 수정은 게시본). */
   seedHtml?: string;
   seedVersion?: number;
   /** room이 다시 시작(복원 등)된 뒤 시드할 최신 서버 내용. 없으면 처음 값으로 시드한다. */
-  loadLatest?: () => Promise<{ html: string; fields: Partial<F>; version: number } | null>;
+  loadLatest?: () => Promise<{ html: string; fields: Partial<F>; version: number; lifecycle?: number } | null>;
   extensions: () => AnyExtension[];
+  /** 복원 준비 중 저장 담당에게 오는 확인(게시물: 작업본이 게시본과 같은지). */
+  onFlush?: CollabDocumentOptions["onFlush"];
 };
 
 export type CollabFormDraft<F extends CollabFormFields> = {
@@ -63,17 +67,27 @@ export function useCollabFormDraft<F extends CollabFormFields>(options: CollabFo
     optionsRef.current = options;
   });
   const collab = useCollabDocument({
+    offlineWritable: true,
     request,
     storageKey: key,
+    ownerId: options.ownerId,
     user: { name: "", colorIndex: 0 },
     extensions: options.extensions,
-    getSeed: async (reason) => {
+    onFlush: (mode) => optionsRef.current.onFlush?.(mode) ?? Promise.resolve({ ok: false }),
+    getSeed: async (reason, { online }) => {
       if (!key) return null;
-      const latest = reason === "reset" && optionsRef.current.loadLatest ? await optionsRef.current.loadLatest().catch(() => null) : null;
-      // 다시 시작된 작업본을 화면의 옛 내용으로 채우지 않는다. 최신을 못 읽으면 다음 연결 때 다시 시도한다.
-      if (reason === "reset" && optionsRef.current.loadLatest && !latest) return null;
+      // 연결돼 있으면 최신 서버 내용(lifecycle 포함)으로 시드한다. 복원 뒤에는 화면의 옛 내용으로 채우지 않는다.
+      const loadLatest = optionsRef.current.loadLatest;
+      const latest = loadLatest && online ? await loadLatest().catch(() => null) : null;
+      if (loadLatest && (reason === "reset" || online) && !latest) return null;
       if (latest) {
-        return { key, version: latest.version, html: latest.html, fields: { ...optionsRef.current.fields, ...latest.fields } };
+        return {
+          key,
+          version: latest.version,
+          lifecycle: latest.lifecycle,
+          html: latest.html,
+          fields: { ...optionsRef.current.fields, ...latest.fields },
+        };
       }
       return {
         key,

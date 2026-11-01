@@ -1,8 +1,10 @@
 "use server";
 
-import { eq } from "drizzle-orm";
+import { eq, or } from "drizzle-orm";
 import { createDb, createDbContext } from "@/db/client";
-import { profiles } from "@/db/schema";
+import { posts, privateNotes, profiles } from "@/db/schema";
+import { formatCollabDocKey } from "@/lib/collab/doc-key";
+import { closeCollabRoomAfterMutation } from "@/lib/collab/server-env";
 import {
   deleteStudentAccountAtomically,
   processDueAccountRawIdErasures,
@@ -56,8 +58,27 @@ export async function deleteOwnAccount(
     },
     comparePassword: verifyStoredPassword,
     enqueueExpiredMedia: (now) => enqueueExpiredUnattachedMedia(context, now),
-    deleteAccount: (deletionInput) =>
-      deleteStudentAccountAtomically(context, deletionInput),
+    deleteAccount: async (deletionInput) => {
+      // 지울 문서의 공동 편집 room을 먼저 모은다(삭제 뒤에는 찾을 수 없다). 성공하면 열린 연결을 바로 닫는다.
+      const owner = deletionInput.actorId;
+      const [notes, ownPosts] = await Promise.all([
+        db
+          .select({ id: privateNotes.id })
+          .from(privateNotes)
+          .where(or(eq(privateNotes.studentId, owner), eq(privateNotes.authorId, owner))),
+        db.select({ id: posts.id }).from(posts).where(eq(posts.authorId, owner)),
+      ]);
+      const result = await deleteStudentAccountAtomically(context, deletionInput);
+      if (result.ok) {
+        const keys = [
+          ...notes.map((note) => formatCollabDocKey({ kind: "note", id: note.id })),
+          ...ownPosts.map((post) => formatCollabDocKey({ kind: "post", id: post.id })),
+          formatCollabDocKey({ kind: "notify", topic: "student-notes", id: owner }),
+        ];
+        await Promise.allSettled(keys.map((key) => closeCollabRoomAfterMutation(key, false)));
+      }
+      return result;
+    },
     processStorageCleanup: () =>
       processMediaDeletionOutboxBestEffort(context, { limit: 1 }),
     now: () => new Date(),

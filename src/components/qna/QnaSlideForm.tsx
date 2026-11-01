@@ -74,6 +74,7 @@ function QnaSlideFormContent({
   // 같은 사람의 같은 위치(새 질문·가이드 문단) 작성본은 기기와 관계없이 하나다.
   const getExtensions = useEditorExtensions();
   const draft = useCollabFormDraft({
+    ownerId: actorId,
     room: { draftKind: "qna-thread", ownerId: actorId, scope: draftContextId(guideAnchor) },
     fields: QNA_FIELDS,
     extensions: getExtensions,
