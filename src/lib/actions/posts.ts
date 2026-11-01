@@ -2,7 +2,7 @@
 "use server";
 
 import { formatCollabDocKey } from "@/lib/collab/doc-key";
-import { isStaleCollabSave, resetCollabRoomAfterMutation, STALE_COLLAB_SAVE_MESSAGE } from "@/lib/collab/server-env";
+import { parseCollabSaveEpoch, resetCollabRoomAfterMutation, STALE_COLLAB_SAVE_MESSAGE } from "@/lib/collab/server-env";
 import { and, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
@@ -23,6 +23,7 @@ import {
   createPostAtomically,
   preflightLegacyPostCreateReplay,
   purgePostAtomically,
+  readPostLifecycleMarker,
   restorePostRevisionAtomically,
   restoreTrashedPostAtomically,
   setPostPinAtomically,
@@ -77,6 +78,8 @@ const POST_SELECT = {
 
 function lifecycleError(reason: PostMutationFailureReason): string {
   switch (reason) {
+    case "COLLAB_STALE":
+      return "문서가 복원되어 최신 내용으로 다시 불러옵니다. 이 저장은 반영하지 않았습니다.";
     case "VERSION_CONFLICT":
       return "다른 화면에서 이 게시물이 먼저 변경되었습니다. 현재 초안은 유지됩니다.";
     case "TRASHED":
@@ -474,8 +477,20 @@ export async function updatePostContent(
   if (!existing) return { error: "게시물을 찾을 수 없습니다." };
   assertOwnerOrAdmin(session, existing.authorId);
   if (existing.deletedAt) return { error: "휴지통 게시물은 수정할 수 없습니다." };
-  if (await isStaleCollabSave(formData, formatCollabDocKey({ kind: "post", id: existing.id }))) {
-    return { error: STALE_COLLAB_SAVE_MESSAGE, collabStale: true };
+  const collab = parseCollabSaveEpoch(formData);
+  if (!collab.ok) return { error: STALE_COLLAB_SAVE_MESSAGE, collabStale: true };
+  // 아래 기준본 대조가 VERSION_CONFLICT를 내기 전에, 복원 뒤 옛 generation 저장은 재시도 없는 COLLAB_STALE로 끝낸다.
+  // 최종 판정은 원자 쓰기 조건이 한다.
+  if (
+    collab.collabEpoch !== undefined &&
+    (await readPostLifecycleMarker(createDbContext(), existing.id)) !== collab.collabEpoch
+  ) {
+    return {
+      error: lifecycleError("COLLAB_STALE"),
+      collabStale: true,
+      conflictKind: "COLLAB_STALE",
+      currentRevision: existing.version,
+    };
   }
 
   const operationId = resolveCreationOperationId(formData.get(CREATION_OPERATION_FIELD));
@@ -542,8 +557,17 @@ export async function updatePostContent(
     title,
     contentHtml,
     ...(mediaLinkUrl === undefined ? {} : { mediaLinkUrl }),
+    ...(collab.collabEpoch === undefined ? {} : { collabEpoch: collab.collabEpoch }),
     now: new Date(),
   });
+  if (!result.ok && result.reason === "COLLAB_STALE") {
+    return {
+      error: lifecycleError("COLLAB_STALE"),
+      collabStale: true,
+      conflictKind: "COLLAB_STALE",
+      currentRevision: result.currentRevision,
+    };
+  }
   if (!result.ok) {
     let conflictPost: UpdatePostState["conflictPost"];
     if (result.reason === "VERSION_CONFLICT") {

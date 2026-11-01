@@ -5,7 +5,7 @@
 "use server";
 
 import { formatCollabDocKey } from "@/lib/collab/doc-key";
-import { isStaleCollabSave, resetCollabRoomAfterMutation, STALE_COLLAB_SAVE_MESSAGE } from "@/lib/collab/server-env";
+import { parseCollabSaveEpoch, resetCollabRoomAfterMutation, STALE_COLLAB_SAVE_MESSAGE } from "@/lib/collab/server-env";
 import { revalidatePath } from "next/cache";
 import { and, desc, eq, isNotNull, isNull } from "drizzle-orm";
 import { createDb, createDbContext } from "@/db/client";
@@ -40,6 +40,8 @@ import { sanitizeHtml } from "@/lib/sanitize-html";
 
 function mutationErrorMessage(reason: PrivateNoteMutationFailureReason): string {
   switch (reason) {
+    case "COLLAB_STALE":
+      return "문서가 복원되어 최신 내용으로 다시 불러옵니다. 이 저장은 반영하지 않았습니다.";
     case "VERSION_CONFLICT":
       return "다른 화면에서 이 노트가 먼저 변경되었습니다. 현재 초안과 서버 최신본을 비교해 선택해 주세요.";
     case "TRASHED":
@@ -428,9 +430,8 @@ export async function updatePrivateNote(
   }
   const payload = validateNotePayload(formData);
   if (!payload.ok) return { error: payload.error, conflictKind: payload.reason };
-  if (await isStaleCollabSave(formData, formatCollabDocKey({ kind: "note", id: noteId }))) {
-    return { error: STALE_COLLAB_SAVE_MESSAGE, collabStale: true };
-  }
+  const collab = parseCollabSaveEpoch(formData);
+  if (!collab.ok) return { error: STALE_COLLAB_SAVE_MESSAGE, collabStale: true };
 
   const result = await updatePrivateNoteAtomically(createDbContext(), {
     actor: {
@@ -443,8 +444,17 @@ export async function updatePrivateNote(
     title: payload.title,
     contentHtml: payload.contentHtml,
     noteDate: payload.noteDate,
+    ...(collab.collabEpoch === undefined ? {} : { collabEpoch: collab.collabEpoch }),
     now: new Date(),
   });
+  if (!result.ok && result.reason === "COLLAB_STALE") {
+    return {
+      error: mutationErrorMessage("COLLAB_STALE"),
+      collabStale: true,
+      conflictKind: "COLLAB_STALE",
+      currentRevision: result.currentRevision,
+    };
+  }
   if (!result.ok) {
     let conflictNote: UpdateNoteState["conflictNote"];
     if (result.reason === "VERSION_CONFLICT") {

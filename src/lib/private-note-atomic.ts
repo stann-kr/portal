@@ -54,6 +54,7 @@ type NoteHead = {
 export type PrivateNoteResourceState = "ACTIVE" | "TRASHED" | "PURGED";
 
 export type PrivateNoteMutationFailureReason =
+  | "COLLAB_STALE"
   | "VERSION_CONFLICT"
   | "TRASHED"
   | "PURGED"
@@ -102,6 +103,11 @@ type UpdatePrivateNoteWrite = {
   title: string;
   contentHtml: string;
   noteDate: Date | null;
+  /**
+   * 공동 편집 저장이 시작 시점에 고정한 room generation. 있으면 lifecycle 표지(마지막 revision 복원 번호)가
+   * 같을 때만 같은 원자 쓰기 안에서 반영한다. 없으면(혼자 모드) 확인하지 않는다.
+   */
+  collabEpoch?: number;
   now: Date;
 };
 
@@ -415,11 +421,58 @@ function revisionInsertStatement(input: {
   };
 }
 
+/**
+ * lifecycle 표지(L): 본문을 바꾸는 lifecycle은 revision 복원뿐이므로 마지막 RESTORE_REVISION 번호(없으면 0)다.
+ * 휴지통 이동·복구는 표지를 바꾸지 않는다. 조건부 쓰기는 같은 식을 `private_notes` 행에 상관시켜 쓴다.
+ */
+const PRIVATE_NOTE_LIFECYCLE_MARKER_SQL = `coalesce((
+  SELECT max(marker_revision.revision_number)
+  FROM private_note_revisions AS marker_revision
+  WHERE marker_revision.note_id = private_notes.id
+    AND marker_revision.change_type = 'RESTORE_REVISION'
+), 0)`;
+
+function collabEpochCondition(collabEpoch: number | undefined): {
+  clause: string;
+  params: readonly unknown[];
+} {
+  return collabEpoch === undefined
+    ? { clause: "", params: [] }
+    : { clause: ` AND ${PRIVATE_NOTE_LIFECYCLE_MARKER_SQL} = ?`, params: [collabEpoch] };
+}
+
+export async function readPrivateNoteLifecycleMarker(
+  context: DbContext,
+  noteId: string,
+): Promise<number> {
+  const db = asReadDb(context);
+  const [row] = await db
+    .select({ marker: sql<number>`coalesce(max(${privateNoteRevisions.revisionNumber}), 0)` })
+    .from(privateNoteRevisions)
+    .where(
+      and(
+        eq(privateNoteRevisions.noteId, noteId),
+        eq(privateNoteRevisions.changeType, "RESTORE_REVISION"),
+      ),
+    );
+  return Number(row?.marker ?? 0);
+}
+
+async function isCollabEpochStale(
+  context: DbContext,
+  noteId: string,
+  collabEpoch: number | undefined,
+): Promise<boolean> {
+  if (collabEpoch === undefined) return false;
+  return (await readPrivateNoteLifecycleMarker(context, noteId)) !== collabEpoch;
+}
+
 async function classifyMissingMutation(
   context: DbContext,
   actor: AtomicActor,
   noteId: string,
   baseRevision?: number,
+  collabEpoch?: number,
 ): Promise<PrivateNoteMutationResult> {
   const note = await findNote(context, noteId);
   if (note) {
@@ -428,6 +481,10 @@ async function classifyMissingMutation(
     }
     if (note.deletedAt) {
       return { ok: false, reason: "TRASHED", noteId, currentRevision: note.version };
+    }
+    // 복원이 먼저 commit됐으면 version도 바뀌었지만, 옛 generation 저장은 재시도하지 않도록 먼저 분류한다.
+    if (await isCollabEpochStale(context, noteId, collabEpoch)) {
+      return { ok: false, reason: "COLLAB_STALE", noteId, currentRevision: note.version };
     }
     if (baseRevision !== undefined && note.version !== baseRevision) {
       return {
@@ -696,13 +753,22 @@ export async function updatePrivateNoteAtomically(
   });
   if (replay) return replay;
   if (!existing) {
-    return classifyMissingMutation(context, write.actor, write.noteId, write.baseRevision);
+    return classifyMissingMutation(
+      context,
+      write.actor,
+      write.noteId,
+      write.baseRevision,
+      write.collabEpoch,
+    );
   }
   if (!canReadSubject(write.actor, existing.studentId) || !canMutateNote(write.actor, existing)) {
     return { ok: false, reason: "NOT_FOUND_OR_FORBIDDEN" };
   }
   if (existing.deletedAt) {
     return { ok: false, reason: "TRASHED", noteId: write.noteId, currentRevision: existing.version };
+  }
+  if (await isCollabEpochStale(context, write.noteId, write.collabEpoch)) {
+    return { ok: false, reason: "COLLAB_STALE", noteId: write.noteId, currentRevision: existing.version };
   }
   if (existing.version !== write.baseRevision) {
     return {
@@ -714,6 +780,7 @@ export async function updatePrivateNoteAtomically(
   }
 
   const recordId = deriveDocumentOperationRecordId(write.actor.id, write.operationId);
+  const collabCondition = collabEpochCondition(write.collabEpoch);
   const alreadyCurrent =
     existing.title === write.title &&
     existing.contentHtml === write.contentHtml &&
@@ -733,7 +800,7 @@ export async function updatePrivateNoteAtomically(
             FROM private_notes
             WHERE id = ? AND version = ? AND deleted_at IS NULL
               AND (author_id = ? OR ? = 1)
-              AND title = ? AND content_html = ? AND note_date IS ?
+              AND title = ? AND content_html = ? AND note_date IS ?${collabCondition.clause}
           `,
           params: [
             recordId,
@@ -749,6 +816,7 @@ export async function updatePrivateNoteAtomically(
             write.title,
             write.contentHtml,
             epochSeconds(write.noteDate),
+            ...collabCondition.params,
           ],
         },
         CONDITIONAL_WRITE_SENTINEL,
@@ -775,6 +843,7 @@ export async function updatePrivateNoteAtomically(
           write.actor,
           write.noteId,
           write.baseRevision,
+          write.collabEpoch,
         ))
       );
     }
@@ -826,7 +895,7 @@ export async function updatePrivateNoteAtomically(
               - length(cast(private_notes.title AS blob))
               - length(cast(private_notes.content_html AS blob))
               + (? * 2)
-            ) <= ?
+            ) <= ?${collabCondition.clause}
         `,
         params: [
           write.title,
@@ -839,6 +908,7 @@ export async function updatePrivateNoteAtomically(
           Number(write.actor.isAdmin),
           nextSnapshotBytes,
           PRIVATE_NOTE_STORAGE_QUOTA_BYTES,
+          ...collabCondition.params,
         ],
       },
       CONDITIONAL_WRITE_SENTINEL,
@@ -883,7 +953,8 @@ export async function updatePrivateNoteAtomically(
       current &&
       canMutateNote(write.actor, current) &&
       !current.deletedAt &&
-      current.version === write.baseRevision
+      current.version === write.baseRevision &&
+      !(await isCollabEpochStale(context, write.noteId, write.collabEpoch))
     ) {
       const usage = await getStorageUsageBytes(context, current.studentId);
       const currentBytes = getPrivateNoteSnapshotBytes(current);
@@ -894,7 +965,13 @@ export async function updatePrivateNoteAtomically(
         return { ok: false, reason: "STORAGE_QUOTA_EXCEEDED" };
       }
     }
-    return classifyMissingMutation(context, write.actor, write.noteId, write.baseRevision);
+    return classifyMissingMutation(
+      context,
+      write.actor,
+      write.noteId,
+      write.baseRevision,
+      write.collabEpoch,
+    );
   }
 }
 

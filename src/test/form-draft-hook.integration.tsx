@@ -3729,9 +3729,9 @@ test("로그아웃 정리는 pending timer와 volatile 안전본까지 폐기하
     harness.getResult().save(draft("로그아웃 직전 입력"));
   });
   const resetBeforeLogout = harness.resetCounts[0] ?? 0;
-  let cleanupResult: ReturnType<typeof clearLocalDocumentDraftsForLogout> | undefined;
+  let cleanupResult: Awaited<ReturnType<typeof clearLocalDocumentDraftsForLogout>> | undefined;
   await act(async () => {
-    cleanupResult = clearLocalDocumentDraftsForLogout(ownerId);
+    cleanupResult = await clearLocalDocumentDraftsForLogout(ownerId);
     await new Promise((resolve) => setTimeout(resolve, 60));
   });
   assert.ok(cleanupResult);
@@ -3751,7 +3751,7 @@ test("로그아웃 정리는 pending timer와 volatile 안전본까지 폐기하
     await new Promise((resolve) => setTimeout(resolve, 60));
   });
   await act(async () => {
-    cleanupResult = clearLocalDocumentDraftsForLogout(ownerId);
+    cleanupResult = await clearLocalDocumentDraftsForLogout(ownerId);
   });
   assert.equal(cleanupResult.removedKeys.length, 0);
   assert.equal(harness.browserWindow.localStorage.getItem(draftKey), null);
@@ -3783,9 +3783,9 @@ test("계정 전환과 명시 폐기는 대상 namespace만 정리하고 활성 
     assert.equal(harness.getResult(1).flush(), true);
   });
 
-  let switched: ReturnType<typeof clearLocalDocumentDraftsFromOtherOwners> | undefined;
+  let switched: Awaited<ReturnType<typeof clearLocalDocumentDraftsFromOtherOwners>> | undefined;
   await act(async () => {
-    switched = clearLocalDocumentDraftsFromOtherOwners("student-current");
+    switched = await clearLocalDocumentDraftsFromOtherOwners("student-current");
     await new Promise((resolve) => setTimeout(resolve, 60));
   });
   assert.ok(switched);

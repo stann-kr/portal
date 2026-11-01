@@ -418,7 +418,7 @@ test("terminal owner lock은 late peer draft write와 server action을 막고 ho
       harness.browserWindow.localStorage,
       ownerId,
     );
-    clearLocalDocumentDraftsForDeletedOwner(ownerId);
+    await clearLocalDocumentDraftsForDeletedOwner(ownerId);
   });
 
   assert.equal(harness.getResult().canSubmit, false);

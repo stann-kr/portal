@@ -52,3 +52,20 @@ export async function isStaleCollabSave(formData: FormData, key: string): Promis
 }
 
 export const STALE_COLLAB_SAVE_MESSAGE = "문서가 복원되거나 정리되어 최신 내용으로 다시 불러옵니다. 이 저장은 반영하지 않았습니다.";
+
+/**
+ * 노트·게시물 공동 편집 저장이 실은 room generation(lifecycle 표지와 같은 값)을 읽는다. 값은 원자 쓰기 조건으로 넘긴다.
+ * 칸이 있으면 음이 아닌 safe integer여야 한다. binding이 있는 환경(공동 편집)에서는 칸이 없으면 거부하고,
+ * binding이 없는 혼자 모드(next dev·테스트)에서는 칸 없이 기존대로 저장한다.
+ */
+export function parseCollabSaveEpoch(
+  formData: FormData,
+): { ok: true; collabEpoch: number | undefined } | { ok: false } {
+  const raw = formData.get(COLLAB_EPOCH_FIELD);
+  if (raw === null || raw === "") {
+    return readCollabWorkerEnv() ? { ok: false } : { ok: true, collabEpoch: undefined };
+  }
+  if (typeof raw !== "string" || !/^\d+$/.test(raw)) return { ok: false };
+  const epoch = Number(raw);
+  return Number.isSafeInteger(epoch) ? { ok: true, collabEpoch: epoch } : { ok: false };
+}

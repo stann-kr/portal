@@ -47,6 +47,15 @@ function releaseLock(ownerId: string, handle: AccountLogoutLockHandle | null): v
   }
 }
 
+/** 로그아웃이 확인된 뒤 localStorage 초안(동기)과 공동 편집 기기 보관(IndexedDB, 비동기)을 지운다. */
+async function clearLocalDataAfterLogout(ownerId: string): Promise<void> {
+  try {
+    await clearLocalDocumentDraftsForLogout(ownerId);
+  } catch {
+    // 정리 실패는 다음 계정 전환·로그인 경계 정리에서 다시 수렴한다.
+  }
+}
+
 /** 로그아웃 action의 redirect 같은 Next.js 이동 신호면 true(실패가 아니라 이동 중이다). */
 function isNavigationSignal(error: unknown): boolean {
   try {
@@ -91,11 +100,10 @@ export function useLogoutSubmit(ownerId: string) {
       await flushServerDraftDiscards(ownerId);
       try {
         await logoutCurrentUser();
-        clearLocalDocumentDraftsForLogout(ownerId);
       } catch (failure) {
         // 로그아웃이 확인된 뒤(redirect 신호)에만 이 기기의 초안을 지운다. 실패하면 초안과 열린 편집기를 그대로 둔다.
         if (isNavigationSignal(failure)) {
-          clearLocalDocumentDraftsForLogout(ownerId);
+          await clearLocalDataAfterLogout(ownerId);
           return;
         }
         stopRenewing();
@@ -103,7 +111,9 @@ export function useLogoutSubmit(ownerId: string) {
         pendingRef.current = false;
         setPending(false);
         setError(LOGOUT_FAILED_MESSAGE);
+        return;
       }
+      await clearLocalDataAfterLogout(ownerId);
     })();
   };
 

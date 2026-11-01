@@ -30,14 +30,21 @@ type RegistrationState =
   | { status: "ready"; tokenDigest: string; persistent: boolean }
   | { status: "error" };
 
+type MaybePromise<T> = T | Promise<T>;
+
 type AccountDeletionControlDependencies = {
   registerPersistentToken: typeof registerAccountCleanupToken;
   createEphemeralToken: typeof createEphemeralAccountCleanupTokenDigest;
   requestCleanupStatus: typeof requestAccountCleanupStatus;
   deleteAccount: typeof deleteOwnAccount;
-  clearLocalState: typeof clearDeletedAccountLocalState;
-  clearAuthenticatedLocalState:
-    typeof clearAuthenticatedDeletedAccountLocalState;
+  clearLocalState: (
+    ...args: Parameters<typeof clearDeletedAccountLocalState>
+  ) => MaybePromise<Awaited<ReturnType<typeof clearDeletedAccountLocalState>>>;
+  clearAuthenticatedLocalState: (
+    ...args: Parameters<typeof clearAuthenticatedDeletedAccountLocalState>
+  ) => MaybePromise<
+    Awaited<ReturnType<typeof clearAuthenticatedDeletedAccountLocalState>>
+  >;
   finishSession: (target: string) => Promise<void>;
   createOperationId: () => string;
 };
@@ -183,9 +190,9 @@ export function AccountDeletionControlImpl({
     setMessage("계정 데이터 삭제를 요청하고 있습니다. 창을 닫지 마세요.");
     startTransition(async () => {
       const finishDeletion = async () => {
-        const localCleanup = registration.persistent
+        const localCleanup = await (registration.persistent
           ? dependencies.clearLocalState(ownerId, registration.tokenDigest)
-          : dependencies.clearAuthenticatedLocalState(ownerId);
+          : dependencies.clearAuthenticatedLocalState(ownerId));
         const localCleanupSucceeded = localCleanup.success;
         const target = localCleanupSucceeded
           ? "/login?accountDeleted=1"

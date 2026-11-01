@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type { DbContext } from "@/db/client";
 import {
   postRevisions,
@@ -57,6 +57,7 @@ type PostHead = {
 export type PostResourceState = "ACTIVE" | "TRASHED" | "PURGED";
 
 export type PostMutationFailureReason =
+  | "COLLAB_STALE"
   | "VERSION_CONFLICT"
   | "TRASHED"
   | "PURGED"
@@ -101,6 +102,11 @@ export type UpdatePostWrite = {
   contentHtml: string;
   /** 링크 믹스셋 게시물의 새 링크(정규화된 값). 없으면 매체를 바꾸지 않는다. */
   mediaLinkUrl?: string;
+  /**
+   * 공동 편집 저장이 시작 시점에 고정한 room generation. 있으면 lifecycle 표지(마지막 revision 복원 번호)가
+   * 같을 때만 같은 원자 쓰기 안에서 반영한다. 없으면(혼자 모드) 확인하지 않는다.
+   */
+  collabEpoch?: number;
   now: Date;
 };
 
@@ -347,11 +353,57 @@ export async function preflightLegacyPostCreateReplay(
   return Boolean(replay?.ok && replay.replayed);
 }
 
+/**
+ * lifecycle 표지(L): 본문을 바꾸는 lifecycle은 revision 복원뿐이므로 마지막 RESTORE_REVISION 번호(없으면 0)다.
+ * 휴지통 이동·복구는 표지를 바꾸지 않는다. 조건부 쓰기는 같은 식을 `posts` 행에 상관시켜 쓴다.
+ */
+const POST_LIFECYCLE_MARKER_SQL = `coalesce((
+  SELECT max(marker_revision.revision_number)
+  FROM post_revisions AS marker_revision
+  WHERE marker_revision.post_id = posts.id
+    AND marker_revision.change_type = 'RESTORE_REVISION'
+), 0)`;
+
+function collabEpochCondition(collabEpoch: number | undefined): {
+  clause: string;
+  params: readonly unknown[];
+} {
+  return collabEpoch === undefined
+    ? { clause: "", params: [] }
+    : { clause: ` AND ${POST_LIFECYCLE_MARKER_SQL} = ?`, params: [collabEpoch] };
+}
+
+export async function readPostLifecycleMarker(
+  context: DbContext,
+  postId: string,
+): Promise<number> {
+  const [row] = await asDocumentReadDb(context)
+    .select({ marker: sql<number>`coalesce(max(${postRevisions.revisionNumber}), 0)` })
+    .from(postRevisions)
+    .where(
+      and(
+        eq(postRevisions.postId, postId),
+        eq(postRevisions.changeType, "RESTORE_REVISION"),
+      ),
+    );
+  return Number(row?.marker ?? 0);
+}
+
+async function isCollabEpochStale(
+  context: DbContext,
+  postId: string,
+  collabEpoch: number | undefined,
+): Promise<boolean> {
+  if (collabEpoch === undefined) return false;
+  return (await readPostLifecycleMarker(context, postId)) !== collabEpoch;
+}
+
 async function classifyPostMutation(
   context: DbContext,
   actor: DocumentAtomicActor,
   postId: string,
   baseRevision?: number,
+  collabEpoch?: number,
 ): Promise<PostMutationResult> {
   const post = await findPost(context, postId);
   if (post) {
@@ -360,6 +412,10 @@ async function classifyPostMutation(
     }
     if (post.deletedAt) {
       return { ok: false, reason: "TRASHED", postId, currentRevision: post.version };
+    }
+    // 복원이 먼저 commit됐으면 version도 바뀌었지만, 옛 generation 저장은 재시도하지 않도록 먼저 분류한다.
+    if (await isCollabEpochStale(context, postId, collabEpoch)) {
+      return { ok: false, reason: "COLLAB_STALE", postId, currentRevision: post.version };
     }
     if (baseRevision !== undefined && post.version !== baseRevision) {
       return {
@@ -618,13 +674,16 @@ export async function updatePostAtomically(
   });
   if (replay) return replay;
   if (!existing || !nextSnapshot) {
-    return classifyPostMutation(context, write.actor, write.postId, write.baseRevision);
+    return classifyPostMutation(context, write.actor, write.postId, write.baseRevision, write.collabEpoch);
   }
   if (!canMutatePost(write.actor, existing)) {
     return { ok: false, reason: "NOT_FOUND_OR_FORBIDDEN" };
   }
   if (existing.deletedAt) {
     return { ok: false, reason: "TRASHED", postId: write.postId, currentRevision: existing.version };
+  }
+  if (await isCollabEpochStale(context, write.postId, write.collabEpoch)) {
+    return { ok: false, reason: "COLLAB_STALE", postId: write.postId, currentRevision: existing.version };
   }
   if (existing.version !== write.baseRevision) {
     return { ok: false, reason: "VERSION_CONFLICT", postId: write.postId, currentRevision: existing.version };
@@ -638,6 +697,7 @@ export async function updatePostAtomically(
   }
 
   const recordId = deriveDocumentOperationRecordId(write.actor.id, write.operationId);
+  const collabCondition = collabEpochCondition(write.collabEpoch);
   if (snapshotsEqual(postSnapshot(existing, null), nextSnapshot)) {
     try {
       await executeDocumentStatementsAtomically(context, [
@@ -651,7 +711,7 @@ export async function updatePostAtomically(
             SELECT ?, ?, ?, author_id, 'COMMUNITY_POST', 'UPDATE', id, ?, ?, version, ?
             FROM posts
             WHERE id = ? AND version = ? AND deleted_at IS NULL
-              AND (author_id = ? OR ? = 1) AND title = ? AND content_html = ? AND media_url IS ?
+              AND (author_id = ? OR ? = 1) AND title = ? AND content_html = ? AND media_url IS ?${collabCondition.clause}
           `,
           params: [
             recordId,
@@ -667,6 +727,7 @@ export async function updatePostAtomically(
             write.title,
             write.contentHtml,
             nextSnapshot.mediaUrl,
+            ...collabCondition.params,
           ],
         },
         DOCUMENT_CONDITIONAL_WRITE_SENTINEL,
@@ -687,7 +748,7 @@ export async function updatePostAtomically(
           operationId: write.operationId,
           operationType: "UPDATE",
           request,
-        })) ?? (await classifyPostMutation(context, write.actor, write.postId, write.baseRevision))
+        })) ?? (await classifyPostMutation(context, write.actor, write.postId, write.baseRevision, write.collabEpoch))
       );
     }
   }
@@ -713,7 +774,7 @@ export async function updatePostAtomically(
           UPDATE posts
           SET title = ?, content_html = ?, media_url = ?, updated_at = ?, version = version + 1
           WHERE id = ? AND version = ? AND deleted_at IS NULL
-            AND (author_id = ? OR ? = 1)
+            AND (author_id = ? OR ? = 1)${collabCondition.clause}
         `,
         params: [
           write.title,
@@ -724,6 +785,7 @@ export async function updatePostAtomically(
           write.baseRevision,
           write.actor.id,
           Number(write.actor.isAdmin),
+          ...collabCondition.params,
         ],
       },
       DOCUMENT_CONDITIONAL_WRITE_SENTINEL,
@@ -761,7 +823,7 @@ export async function updatePostAtomically(
         operationId: write.operationId,
         operationType: "UPDATE",
         request,
-      })) ?? (await classifyPostMutation(context, write.actor, write.postId, write.baseRevision))
+      })) ?? (await classifyPostMutation(context, write.actor, write.postId, write.baseRevision, write.collabEpoch))
     );
   }
 }
