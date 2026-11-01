@@ -82,6 +82,7 @@ import { createR2BindingDeletionStorage } from "@/lib/r2-deletion-storage";
 import type { DbContext } from "@/db/client";
 import { COLLAB_EPOCH_FIELD } from "@/lib/collab/protocol";
 import {
+  privateNoteLifecycleSql,
   readPrivateNoteLifecycleMarker,
   restorePrivateNoteRevisionAtomically,
   updatePrivateNoteAtomically,
@@ -4444,6 +4445,51 @@ async function createRestoredNote(db: PortalTestDb): Promise<string> {
   assert.equal(restored.currentRevision, 3);
   return noteId;
 }
+
+test("공동 편집 시드·토큰의 lifecycle 표지 식은 실제 D1에서 마지막 복원 revision을 읽고, 복원 재전송은 처음 만든 revision을 돌려준다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context);
+  const noteId = await createRestoredNote(db);
+  const seed = await privateNoteActions.getPrivateNoteCollabSeed(noteId);
+  assert.equal(seed.status, "ok");
+  assert.equal(seed.status === "ok" && seed.lifecycle, 3, "토큰·시드가 쓰는 같은 식이 복원 revision을 읽는다");
+  const [viaHelper] = await db
+    .select({ lifecycle: privateNoteLifecycleSql })
+    .from(privateNotes)
+    .where(eq(privateNotes.id, noteId));
+  assert.equal(Number(viaHelper?.lifecycle), 3);
+
+  // 복원 뒤 일반 저장으로 head가 4가 돼도, 같은 복원 요청의 재전송은 room 세대로 쓸 revision 3을 돌려준다.
+  const operationId = crypto.randomUUID();
+  const restoreAgain = await privateNoteActions.restorePrivateNoteRevision(noteId, operationId, 3, 1);
+  assert.equal(restoreAgain.success, true, JSON.stringify(restoreAgain));
+  const restoreRevision = restoreAgain.operationResultRevision;
+  const saved = await privateNoteActions.updatePrivateNote(
+    noteId,
+    {},
+    withCollabEpoch(
+      createNoteUpdateForm(
+        noteId,
+        { title: "복원 뒤 저장", contentHtml: "<p>복원 뒤 저장</p>", noteDate: null },
+        { title: "원본", contentHtml: "<p>원본 본문</p>", noteDate: null },
+        crypto.randomUUID(),
+        restoreAgain.currentRevision ?? 0,
+      ),
+      restoreRevision ?? 0,
+    ),
+  );
+  assert.equal(saved.success, true, JSON.stringify(saved));
+  const replay = await privateNoteActions.restorePrivateNoteRevision(noteId, operationId, 3, 1);
+  assert.equal(replay.replayed, true);
+  assert.equal(replay.operationResultRevision, restoreRevision, "재전송도 처음 복원 revision");
+  assert.notEqual(replay.currentRevision, restoreRevision, "head는 그 뒤 저장으로 앞서 있다");
+});
+
+test("게시물 시드의 lifecycle 표지 식도 실제 D1에서 마지막 복원 revision을 읽는다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context);
+  const postId = await createRestoredPost(db);
+  const postSeed = await postActions.getPostCollabSeed(postId);
+  assert.equal(postSeed?.lifecycle, 3);
+});
 
 test("복원 commit 뒤 옛 generation 노트 저장은 새 version으로 재시도해도 COLLAB_STALE로 거부한다", { concurrency: false }, async (context) => {
   const { db } = await setupDatabase(context);

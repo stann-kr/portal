@@ -373,6 +373,9 @@ function collabEpochCondition(collabEpoch: number | undefined): {
     : { clause: ` AND ${POST_LIFECYCLE_MARKER_SQL} = ?`, params: [collabEpoch] };
 }
 
+/** 게시물 select에 넣는 lifecycle 표지 식. `FROM posts` 조회 안에서만 쓴다. */
+export const postLifecycleSql = sql<number>`coalesce((SELECT max(lifecycle_revision.revision_number) FROM post_revisions AS lifecycle_revision WHERE lifecycle_revision.post_id = "posts"."id" AND lifecycle_revision.change_type = 'RESTORE_REVISION'), 0)`;
+
 export async function readPostLifecycleMarker(
   context: DbContext,
   postId: string,

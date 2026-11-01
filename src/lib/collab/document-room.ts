@@ -73,6 +73,7 @@ export function createSqlRoomStorage(state: DurableObjectStateLike): RoomStorage
       // 세대는 'generation' key에 둔다(초기 개발판의 'epoch' 카운터와 섞이지 않게).
       const epochRow = sql.exec("SELECT value FROM room_meta WHERE key = 'generation'").toArray()[0];
       const seqRow = sql.exec("SELECT value FROM room_meta WHERE key = 'seq'").toArray()[0];
+      const changedRow = sql.exec("SELECT value FROM room_meta WHERE key = 'changedAt'").toArray()[0];
       const savedRow = sql.exec("SELECT value FROM room_blob WHERE key = 'savedSv'").toArray()[0];
       const chunks = sql
         .exec("SELECT chunk FROM room_snapshot ORDER BY seq")
@@ -97,6 +98,7 @@ export function createSqlRoomStorage(state: DurableObjectStateLike): RoomStorage
         snapshot,
         updates,
         seq: Number(seqRow?.value ?? 0),
+        changedAt: Number(changedRow?.value ?? 0),
         savedSv: savedRow ? toBytes(savedRow.value) : null,
       };
     },
@@ -127,11 +129,12 @@ export function createSqlRoomStorage(state: DurableObjectStateLike): RoomStorage
         );
       });
     },
-    setSeq(seq) {
-      sql.exec(
-        "INSERT INTO room_meta (key, value) VALUES ('seq', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        seq,
-      );
+    setSeq(seq, changedAt) {
+      state.storage.transactionSync(() => {
+        for (const [key, value] of [["seq", seq], ["changedAt", changedAt]] as const) {
+          sql.exec("INSERT INTO room_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", key, value);
+        }
+      });
     },
     setSavedSv(sv) {
       if (!sv) {
@@ -175,7 +178,9 @@ export class DocumentRoom {
     const storage = this.state.storage;
     if (deadline === null || !storage.setAlarm || !storage.getAlarm) return;
     const current = await storage.getAlarm();
-    if (current === null || current > deadline + 1000 || current < Date.now()) await storage.setAlarm(deadline + 1000);
+    // lease 끝 직후에 깨운다. 닫힌 소켓이 목록에 잠시 남아도 alarm이 연달아 돌지 않게 하한을 둔다.
+    const target = Math.max(deadline + 50, Date.now() + 1000);
+    if (current === null || current > target || current < Date.now()) await storage.setAlarm(target);
   }
 
   async alarm(): Promise<void> {
@@ -231,8 +236,11 @@ export class DocumentRoom {
           return Response.json({ ok: true });
         case "/set-meta": {
           if (typeof body.field !== "string" || typeof body.value !== "string") return new Response("Bad meta", { status: 400 });
-          return Response.json({ ok: this.core.setMeta(body.field, body.value) });
+          const epoch = typeof body.epoch === "number" && Number.isSafeInteger(body.epoch) ? body.epoch : undefined;
+          return Response.json({ ok: this.core.setMeta(body.field, body.value, epoch) });
         }
+        case "/prepared":
+          return Response.json({ prepared: typeof body.id === "string" && this.core.isPrepared(body.id) });
         case "/notify":
           return Response.json({ seq: this.core.notify() });
       }

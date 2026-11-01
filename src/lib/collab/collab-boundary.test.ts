@@ -40,6 +40,7 @@ import {
   type RoomStorage,
 } from "./room-core";
 import { createCollabTokenHandler } from "./token-handler";
+import { collabSavedMarker } from "./saved-marker";
 import { signCollabToken, verifyCollabToken } from "./token";
 import { handleCollabWebSocket, readCollabRoomEpoch } from "./worker-route";
 
@@ -507,12 +508,17 @@ function controlMessage(message: Record<string, unknown>): Uint8Array {
   return encoding.toUint8Array(encoder);
 }
 
-function roomStateVector(storage: MemoryStorage): string {
+function storedDoc(storage: MemoryStorage): Y.Doc {
   const doc = new Y.Doc();
   const state = storage.load();
   if (state.snapshot) Y.applyUpdate(doc, state.snapshot);
   for (const update of state.updates) Y.applyUpdate(doc, update);
-  return Buffer.from(Y.encodeStateVector(doc)).toString("base64");
+  return doc;
+}
+
+/** 클라이언트가 저장 뒤 보고하는 저장 표지(snapshot, base64). */
+function roomStateVector(storage: MemoryStorage): string {
+  return Buffer.from(collabSavedMarker(storedDoc(storage))).toString("base64");
 }
 
 test("room: 저장한 update 개수를 그 소켓에 ack로 알린다", () => {
@@ -547,16 +553,58 @@ test("room 세대: 토큰의 lifecycle이 크면 넘어가고, 작으면 stale�
 test("room prepare: 쓰기 소켓이 없으면 마지막 저장과 같을 때만 성공한다", async () => {
   const { storage, room, join } = createRoom();
   assert.deepEqual(await room.prepare("p0", "checkpoint"), { ok: true, checkpoint: null }, "빈 room");
+  assert.equal(room.isFrozen, true, "쓰기 소켓이 없어도 복원 commit까지 멈춘다");
+  const blocked = join("write");
+  assert.equal(blocked.closed, COLLAB_CLOSE_BUSY, "준비와 복원 사이 새 편집기는 붙지 못한다");
+  assert.equal(room.isPrepared("p0"), true);
+  room.thaw("p0");
+  assert.equal(room.isPrepared("p0"), false);
   const writer = join("write");
   room.message(writer, updateMessage(textUpdate("unsaved")));
   room.disconnect(writer);
   writer.closed = 1000;
   assert.deepEqual(await room.prepare("p1", "checkpoint"), { ok: false, reason: "unsaved" });
+  room.thaw("p1");
   const saver = join("write");
   room.message(saver, controlMessage({ t: "saved", sv: roomStateVector(storage) }));
   room.disconnect(saver);
   saver.closed = 1000;
   assert.deepEqual(await room.prepare("p2", "checkpoint"), { ok: true, checkpoint: null });
+  room.thaw("p2");
+
+  // 저장 뒤 삭제만 한 변경은 state vector가 같아도 "저장 안 됨"이다(delete set까지 비교).
+  const editor = join("write");
+  const local = storedDoc(storage);
+  const text = local.getText("t");
+  const before = Y.encodeStateVector(local);
+  room.message(editor, controlMessage({ t: "saved", sv: roomStateVector(storage) }));
+  text.delete(0, 1);
+  room.message(editor, updateMessage(Y.encodeStateAsUpdate(local, before)));
+  room.disconnect(editor);
+  editor.closed = 1000;
+  assert.deepEqual(await room.prepare("p3", "checkpoint"), { ok: false, reason: "unsaved" }, "미저장 삭제");
+  room.thaw("p3");
+});
+
+test("room: 같은 id로 다시 준비해도 이전 freeze 응답은 새 준비의 응답이 아니다, 칸 반영은 세대가 같을 때만", async () => {
+  const { room, join } = createRoom();
+  const writer = join("write");
+  room.message(writer, awarenessMessage(5, 1, { canSave: true }));
+  room.message(writer, updateMessage(textUpdate("x")));
+  const first = room.prepare("same", "checkpoint");
+  room.message(writer, controlMessage({ t: "frozen", id: "same" }));
+  room.thaw("same");
+  await first;
+  void room.prepare("same", "checkpoint");
+  room.message(writer, updateMessage(textUpdate("typed before second ack")));
+  assert.equal(writer.closed, null, "새 freeze 응답 전 입력은 받는다");
+  room.thaw("same");
+
+  const seed = new Y.Doc();
+  seed.getMap("meta").set("seeded", true);
+  room.message(writer, updateMessage(Y.encodeStateAsUpdate(seed)));
+  assert.equal(room.setMeta("noteDate", "2026-11-03", 7), false, "다른 세대의 늦은 칸 변경은 무시");
+  assert.equal(room.setMeta("noteDate", "2026-11-03", 0), true);
 });
 
 test("room prepare: freeze → 모든 쓰기 소켓 응답 → 저장 담당 checkpoint의 state vector가 맞을 때만 성공", async () => {
@@ -684,4 +732,15 @@ test("room 알림·칸·닫기: notify 순번, 시드된 room만 칸 반영, 휴
   room.closeAll(true);
   assert.equal(writer.closed, COLLAB_CLOSE_GONE);
   assert.ok(storage.updates.length > 0, "휴지통은 상태 보존");
+});
+
+test("proxy: 공동 편집 토큰 route는 로그인 redirect 대상이 아니다(route가 401/403을 직접 돌려준다)", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const source = await readFile(new URL("../../proxy.ts", import.meta.url), "utf8");
+  const pattern = /matcher:\s*\[\s*"([^"]+)"/u.exec(source)?.[1];
+  assert.ok(pattern, "matcher 패턴");
+  const matcher = new RegExp(`^${pattern.replace(/\\\\/gu, "\\")}$`, "u");
+  assert.equal(matcher.test("/api/collab/token"), false, "토큰 route는 proxy 밖");
+  assert.equal(matcher.test("/dashboard/notes/n1"), true, "보호 화면은 proxy 안");
+  assert.equal(matcher.test("/api/collab/tokenx"), true, "비슷한 다른 경로는 계속 보호");
 });

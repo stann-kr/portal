@@ -5,6 +5,7 @@ import { formatCollabDocKey } from "@/lib/collab/doc-key";
 import {
   advanceCollabRoomAfterRestore,
   closeCollabRoomAfterMutation,
+  isCollabRoomStillPrepared,
   parseCollabSaveEpoch,
   prepareCollabRoomForRestore,
   STALE_COLLAB_SAVE_MESSAGE,
@@ -38,6 +39,7 @@ import {
   updatePostAtomically,
   type PostMutationFailureReason,
   type PostMutationResult,
+  postLifecycleSql,
 } from "@/lib/post-atomic";
 import {
   POST_BASE_REVISION_FIELD,
@@ -233,7 +235,7 @@ export async function getPostCollabSeed(postId: string) {
   const [post] = await createDb()
     .select({
       ...POST_SELECT,
-      lifecycle: sql<number>`coalesce((SELECT max(${postRevisions.revisionNumber}) FROM ${postRevisions} WHERE ${postRevisions.postId} = ${posts.id} AND ${postRevisions.changeType} = 'RESTORE_REVISION'), 0)`,
+      lifecycle: postLifecycleSql,
     })
     .from(posts)
     .leftJoin(profiles, eq(posts.authorId, profiles.id))
@@ -743,6 +745,10 @@ export async function restorePostRevision(
             : "열린 수정 화면을 확인하지 못해 되돌리지 않았습니다. 잠시 뒤 다시 시도해 주세요.",
       };
     }
+    if (!(await isCollabRoomStillPrepared(roomKey, operationId))) {
+      await thawCollabRoomAfterAbort(roomKey, operationId);
+      return { success: false, error: "열린 수정 화면을 확인하지 못해 되돌리지 않았습니다. 잠시 뒤 다시 시도해 주세요." };
+    }
   }
   const result = await restorePostRevisionAtomically(createDbContext(), {
     actor: actor(session),
@@ -754,7 +760,8 @@ export async function restorePostRevision(
   });
   if (result.ok) {
     // 복원 revision이 새 lifecycle 표지다. 수정 작업본은 복원한 게시본으로 다시 시작한다.
-    if (typeof result.currentRevision === "number") await advanceCollabRoomAfterRestore(roomKey, result.currentRevision);
+    const restoredRevision = result.operationResultRevision ?? result.currentRevision;
+    if (typeof restoredRevision === "number") await advanceCollabRoomAfterRestore(roomKey, restoredRevision);
     else if (mayRestore) await thawCollabRoomAfterAbort(roomKey, operationId);
     revalidatePostPaths(postId);
   } else if (mayRestore) {

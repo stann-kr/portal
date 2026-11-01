@@ -23,6 +23,7 @@ import {
   type CollabPrepareResult,
 } from "./protocol";
 import type { CollabTokenClaims } from "./token";
+import { collabSavedMarker } from "./saved-marker";
 
 /**
  * 문서 room의 동기화 규칙. Durable Object(document-room.ts)가 저장소와 소켓을 넘겨 쓰고,
@@ -68,8 +69,9 @@ export type StoredRoomState = {
   epoch: number;
   snapshot: Uint8Array | null;
   updates: Uint8Array[];
-  /** 알림 순번. */
+  /** 알림 순번과 마지막 알림 시각(ms). */
   seq?: number;
+  changedAt?: number;
   /** 저장 담당이 마지막으로 저장했다고 알린 state vector. */
   savedSv?: Uint8Array | null;
 };
@@ -81,7 +83,7 @@ export interface RoomStorage {
   replaceWithSnapshot(snapshot: Uint8Array): void;
   /** 저장 상태(문서·savedSv)를 모두 지우고 새 epoch를 기록한다. */
   reset(nextEpoch: number): void;
-  setSeq?(seq: number): void;
+  setSeq?(seq: number, changedAt: number): void;
   setSavedSv?(sv: Uint8Array | null): void;
 }
 
@@ -213,6 +215,12 @@ function base64ToBytes(value: string): Uint8Array | null {
   }
 }
 
+/**
+ * "저장한 내용과 같은가"의 비교 값. state vector만으로는 삭제(같은 clock 안의 delete)를 구분하지 못하므로
+ * delete set까지 포함한 Yjs snapshot을 쓴다. 클라이언트(`collabSavedMarker`)와 같은 식이다.
+ */
+export const roomSavedMarker = collabSavedMarker;
+
 export type RoomConnectInput = {
   userId: string;
   mode: CollabMode;
@@ -229,6 +237,7 @@ export class RoomCore {
   private readonly awareness = new Map<number, AwarenessEntry>();
   private epoch = 0;
   private seq = 0;
+  private changedAt = 0;
   private savedSv: Uint8Array | null = null;
   private snapshotBytes = 0;
   private pendingUpdateBytes = 0;
@@ -250,6 +259,7 @@ export class RoomCore {
     const doc = new Y.Doc({ gc: true });
     this.epoch = state.epoch;
     this.seq = state.seq ?? 0;
+    this.changedAt = state.changedAt ?? 0;
     this.savedSv = state.savedSv ?? null;
     this.snapshotBytes = state.snapshot?.byteLength ?? 0;
     this.pendingUpdateBytes = 0;
@@ -376,7 +386,10 @@ export class RoomCore {
       applied: 0,
       frozenAck: null,
     });
-    safeSend(socket, encodeControl({ t: "hello", epoch: this.epoch, mode: input.mode, seq: this.seq }));
+    safeSend(
+      socket,
+      encodeControl({ t: "hello", epoch: this.epoch, mode: input.mode, seq: this.seq, ...(this.changedAt ? { changedAt: this.changedAt } : {}) }),
+    );
     const encoder = encoding.createEncoder();
     encoding.writeVarUint(encoder, COLLAB_MESSAGE_SYNC);
     syncProtocol.writeSyncStep1(encoder, doc);
@@ -505,7 +518,7 @@ export class RoomCore {
           return;
         }
         const sv = typeof message.sv === "string" ? base64ToBytes(message.sv) : null;
-        const current = Y.encodeStateVector(this.load().doc);
+        const current = roomSavedMarker(this.load().doc);
         if (message.ok && typeof message.revision === "number" && Number.isSafeInteger(message.revision) && bytesEqual(sv, current)) {
           this.setSavedSv(current);
           this.finishPrepare({ ok: true, checkpoint: message.revision });
@@ -518,7 +531,7 @@ export class RoomCore {
         if (attachment.mode !== "write" || typeof message.sv !== "string") return;
         const sv = base64ToBytes(message.sv);
         // 저장한 내용이 지금 room 상태와 같을 때만 "저장됨"으로 기록한다.
-        if (sv && bytesEqual(sv, Y.encodeStateVector(this.load().doc))) this.setSavedSv(sv);
+        if (sv && bytesEqual(sv, roomSavedMarker(this.load().doc))) this.setSavedSv(sv);
         return;
       }
       case "renew": {
@@ -545,6 +558,11 @@ export class RoomCore {
     }
     if (typeof claims.e === "number" && claims.e > this.currentEpoch) {
       this.resetTo(claims.e);
+      return;
+    }
+    if (typeof claims.e === "number" && claims.e < this.currentEpoch) {
+      // D1보다 앞선 room 세대는 생기지 않는다. 옛 토큰이면 닫고 새 토큰으로 다시 붙게 한다.
+      safeClose(socket, COLLAB_CLOSE_STALE, "stale");
       return;
     }
     const downgrade = attachment.mode === "write" && claims.m === "read";
@@ -580,7 +598,7 @@ export class RoomCore {
   private isClean(): boolean {
     const { doc } = this.load();
     if (doc.store.clients.size === 0) return true;
-    return bytesEqual(this.savedSv, Y.encodeStateVector(doc));
+    return bytesEqual(this.savedSv, roomSavedMarker(doc));
   }
 
   private writers(): RoomSocket[] {
@@ -595,14 +613,26 @@ export class RoomCore {
     this.load();
     if (this.frozen) return Promise.resolve({ ok: false, reason: "busy" });
     const writers = this.writers();
-    if (writers.length === 0) {
-      return Promise.resolve(
-        this.isClean() ? { ok: true, checkpoint: null } : { ok: false, reason: mode === "clean" ? "unpublished" : "unsaved" },
-      );
+    // 이전 준비의 응답 표시는 지운다(같은 id로 다시 준비해도 옛 응답이 새 freeze의 응답으로 보이지 않게).
+    for (const socket of this.sockets()) {
+      const attachment = socket.getAttachment();
+      if (attachment?.frozenAck) socket.setAttachment({ ...attachment, frozenAck: null });
     }
     return new Promise((resolve) => {
       const frozen: FrozenState = { id, mode, pending: new Set(writers), flushSocket: null, resolve, timers: [] };
+      // 쓰기 소켓이 없어도 멈춘 상태로 둔다: 복원 commit 전에 새 편집기가 붙어 입력하지 못하게(새 연결은 busy).
       this.frozen = frozen;
+      frozen.timers.push(
+        setTimeout(() => {
+          if (this.frozen === frozen) this.thaw(id);
+        }, ROOM_FREEZE_SAFETY_MS),
+      );
+      if (writers.length === 0) {
+        this.finishPrepare(
+          this.isClean() ? { ok: true, checkpoint: null } : { ok: false, reason: mode === "clean" ? "unpublished" : "unsaved" },
+        );
+        return;
+      }
       this.broadcast(encodeControl({ t: "freeze", id }), null);
       frozen.timers.push(
         setTimeout(() => {
@@ -612,9 +642,6 @@ export class RoomCore {
           frozen.pending.clear();
           this.proceedPrepare();
         }, ROOM_FREEZE_ACK_MS),
-        setTimeout(() => {
-          if (this.frozen === frozen) this.thaw(id);
-        }, ROOM_FREEZE_SAFETY_MS),
       );
     });
   }
@@ -665,6 +692,11 @@ export class RoomCore {
     const resolve = frozen.resolve;
     frozen.resolve = null;
     resolve(result);
+  }
+
+  /** 이 id의 준비가 아직 유효한지(안전 시간으로 풀리지 않았는지). 복원 commit 직전에 확인한다. */
+  isPrepared(id: string): boolean {
+    return this.frozen?.id === id && this.frozen.resolve === null;
   }
 
   /** 준비를 풀고 편집을 다시 받는다(복원 실패·취소, 안전 시간 초과). */
@@ -759,12 +791,17 @@ export class RoomCore {
   }
 
   /** room 밖에서 바뀐 칸을 room에 반영한다. 아직 시드되지 않은 room은 건드리지 않는다(시드가 새 head를 읽는다). */
-  setMeta(field: string, value: string): boolean {
+  setMeta(field: string, value: string, epoch?: number): boolean {
     const { doc } = this.load();
+    // 늦게 도착한 옛 세대의 변경(복원 전 날짜 이동)은 새 세대에 적용하지 않는다.
+    if (typeof epoch === "number" && epoch !== this.epoch) return false;
     const meta = doc.getMap("meta");
     if (!meta.has("seeded")) return false;
     if (meta.get(field) === value) return true;
+    const wasClean = this.isClean();
     doc.transact(() => meta.set(field, value), null);
+    // D1에 이미 반영된 값이므로, 저장된 상태였다면 그대로 저장된 상태로 둔다.
+    if (wasClean) this.setSavedSv(roomSavedMarker(doc));
     return true;
   }
 
@@ -772,7 +809,8 @@ export class RoomCore {
   notify(): number {
     this.load();
     this.seq += 1;
-    this.storage.setSeq?.(this.seq);
+    this.changedAt = this.now();
+    this.storage.setSeq?.(this.seq, this.changedAt);
     this.broadcast(encodeControl({ t: "changed", seq: this.seq }), null);
     return this.seq;
   }

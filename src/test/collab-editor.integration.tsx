@@ -874,7 +874,7 @@ test("알림 room: 답글·최근 노트 알림이 오면 화면을 다시 받�
   tokenPolicy = { collab: true, mode: "read", userId: "student-1", displayName: "김학생" };
   const device = await env.mount(
     <div>
-      <CollabNotifyRefresh topic="qna" id="thread-1" />
+      <CollabNotifyRefresh topic="qna" id="thread-1" since={Date.now()} />
       <input aria-label="답글" />
     </div>,
   );
@@ -899,4 +899,71 @@ test("알림 room: 답글·최근 노트 알림이 오면 화면을 다시 받�
   await act(async () => { socket.closeFromServer(1006, "network"); });
   await act(async () => { core.notify(); });
   await waitUntil(() => refreshCount === 3, 8000, "다시 연결하면 놓친 알림을 따라잡아야 합니다.");
+});
+
+async function goOffline(env: Env, device: Device): Promise<void> {
+  tokenOffline = true;
+  for (const socket of [...openSockets]) socket.closeFromServer(1006, "network");
+  await waitUntil(() => formOf(device).dataset.collabStatus === "offline", 4000, "오프라인이 돼야 합니다.");
+  void env;
+}
+
+test("오프라인 입력은 복원이 두 번 이어지고 head 조회가 실패해도 버려지지 않고, 조회가 되면 새 세대에 다시 반영된다", { concurrency: false }, async (context) => {
+  const env = setupBrowser(context);
+  const note = { id: "note-1", title: "제목", contentHtml: "<p>처음</p>", noteDate: null, version: 1 };
+  seedHeads.set(note.id, note);
+  const okAction = async (_previous: unknown, formData: FormData) => ({
+    success: true,
+    note: { id: "note-1", title: String(formData.get("title")), contentHtml: String(formData.get("contentHtml")), noteDate: null, version: 2 },
+  });
+  const device = await env.mount(<NoteEditorForm actorId="student-1" note={note} action={okAction} />);
+  await waitReady(device);
+  await waitUntil(() => formOf(device).dataset.collabStatus === "connected", 3000, "연결돼야 합니다.");
+  await goOffline(env, device);
+  const doc = mountedDocs[0]!;
+  await act(async () => setFragmentText(doc, "처음 오프라인 입력"));
+
+  // 그사이 다른 화면이 두 번 복원했다(세대 5 → 6). 다시 연결하면 첫 head 조회는 실패한다.
+  const core = roomFor("note:note-1").core;
+  core.advance(5);
+  seedFailuresLeft = 1000;
+  tokenOffline = false;
+  await act(async () => { env.browserWindow.dispatchEvent(new env.browserWindow.Event("online")); });
+  await waitUntil(() => Boolean(retryButtonOf(device)), 8000, `새 세대 head 조회 실패 안내가 보여야 합니다: ${device.container.textContent} ${formOf(device).dataset.collabStatus} req=${tokenRequests.length}`);
+  assert.equal(recoveredKeys(env).length, 1, "재적용 전 안전 사본");
+  await act(async () => { core.advance(6); });
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 300)); });
+
+  seedFailuresLeft = 0;
+  seedHeads.set(note.id, { title: "제목", contentHtml: "<p>복원본</p>", noteDate: null, version: 7, lifecycle: 6 });
+  await waitUntil(
+    () => {
+      const retry = retryButtonOf(device);
+      if (retry) retry.click();
+      return /오프라인 입력/u.test(bodyOf(device)?.value ?? "");
+    },
+    10_000,
+    `오프라인 입력이 새 세대에 반영돼야 합니다: ${bodyOf(device)?.value}`,
+  );
+  assert.match(bodyOf(device)!.value, /복원본/u, "복원본 위에 반영");
+  await waitUntil(() => recoveredKeys(env).length === 0, 4000, "room에 저장된 뒤 안전 사본을 지운다");
+});
+
+test("다시 연결했을 때 읽기 권한으로 바뀌면 오프라인 입력은 보관함 사본으로 남기고, 편집기는 멈추지 않는다", { concurrency: false }, async (context) => {
+  const env = setupBrowser(context);
+  const note = { id: "note-1", title: "제목", contentHtml: "<p>처음</p>", noteDate: null, version: 1 };
+  seedHeads.set(note.id, note);
+  const device = await env.mount(<NoteEditorForm actorId="student-1" note={note} action={async () => ({})} />);
+  await waitReady(device);
+  await waitUntil(() => formOf(device).dataset.collabStatus === "connected", 3000, "연결돼야 합니다.");
+  await goOffline(env, device);
+  await act(async () => setFragmentText(mountedDocs[0]!, "처음 권한 회수 전 입력"));
+  roomFor("note:note-1").core.advance(2);
+  seedHeads.set(note.id, { ...note, lifecycle: 2 });
+  tokenPolicy = { ...tokenPolicy, mode: "read" };
+  tokenOffline = false;
+  await act(async () => { env.browserWindow.dispatchEvent(new env.browserWindow.Event("online")); });
+  await waitUntil(() => /보관함에 남겼습니다/u.test(device.container.textContent ?? "") || recoveredKeys(env).length > 0, 8000, "사본을 남겨야 합니다.");
+  assert.equal(recoveredKeys(env).length, 1, "읽기로 바뀐 기기의 입력도 사본으로 남는다");
+  await waitUntil(() => !/노트를 불러오는 중/u.test(device.container.textContent ?? "") || formOf(device).dataset.collabStatus === "connected", 6000, "읽기 화면이 로딩에 갇히지 않아야 합니다.");
 });

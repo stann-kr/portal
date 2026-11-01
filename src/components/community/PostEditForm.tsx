@@ -24,7 +24,9 @@ import { isImplicitSubmitEnter } from "@/components/community/empty-title-enter"
 import { useCollabFormDraft } from "@/lib/collab/client/useCollabFormDraft";
 import { COLLAB_FRAGMENT, COLLAB_META } from "@/lib/collab/client/seed";
 import { canonicalCollabHtml, collabDocHtml } from "@/lib/collab/client/doc-html";
-import * as Y from "yjs";
+import type * as Y from "yjs";
+import { collabSavedMarker } from "@/lib/collab/saved-marker";
+import { CollabLoadingState } from "@/components/editor/CollabNotices";
 
 const EMPTY_TITLE_ERROR = "제목을 입력해 주세요.";
 
@@ -62,6 +64,8 @@ function PostEditFormContent({ actorId, post, onCancel, onSaved, onBusyChange, m
   const hasLinkField = typeof initialLinkUrl === "string";
   const getExtensions = useEditorExtensions();
   const headRef = useRef<PostHead>({ version: post.version, title: post.title, contentHtml: post.contentHtml });
+  // 게시본의 링크 칸 값(작업본이 게시본과 같은지 볼 때 쓴다).
+  const headLinkRef = useRef(initialLinkUrl ?? "");
   const docRef = useRef<Y.Doc | null>(null);
   const draft = useCollabFormDraft({
     ownerId: actorId,
@@ -75,6 +79,7 @@ function PostEditFormContent({ actorId, post, onCancel, onSaved, onBusyChange, m
       if (!latest) return null;
       headRef.current = { version: latest.version, title: latest.title, contentHtml: latest.contentHtml };
       const media = hasLinkField ? classifyMixsetMedia(latest) : null;
+      headLinkRef.current = media?.kind === "link" ? media.url : "";
       return {
         html: latest.contentHtml,
         fields: { title: latest.title, ...(hasLinkField ? { mixsetLinkUrl: media?.kind === "link" ? media.url : "" } : {}) },
@@ -85,20 +90,33 @@ function PostEditFormContent({ actorId, post, onCancel, onSaved, onBusyChange, m
     extensions: getExtensions,
     // 복원 준비: 작업본에 게시하지 않은 수정이 있으면 복원을 막는다(작업본을 저장하면 미게시 편집이 게시되므로 저장하지 않는다).
     onFlush: async (): Promise<{ ok: boolean; dirty?: boolean }> => {
-      const head = headRef.current;
       const doc = docRef.current;
       if (!doc || doc.isDestroyed) return { ok: false };
-      const meta = doc.getMap(COLLAB_META);
-      const workingTitle = typeof meta.get("title") === "string" ? (meta.get("title") as string) : "";
-      const dirty =
-        workingTitle !== head.title || collabDocHtml(doc, getExtensions()) !== canonicalCollabHtml(head.contentHtml, getExtensions());
-      return { ok: true, dirty };
+      return { ok: true, dirty: isWorkingCopyDirty(doc) };
     },
   });
+  /** 작업본(제목·링크·본문)이 게시본과 다른지. 게시하지 않은 수정이 있으면 복원을 막는 기준이다. */
+  function isWorkingCopyDirty(doc: Y.Doc): boolean {
+    const head = headRef.current;
+    const meta = doc.getMap(COLLAB_META);
+    const read = (name: string) => (typeof meta.get(name) === "string" ? (meta.get(name) as string) : "");
+    if (read("title") !== head.title) return true;
+    if (hasLinkField && read("mixsetLinkUrl") !== headLinkRef.current) return true;
+    return collabDocHtml(doc, getExtensions()) !== canonicalCollabHtml(head.contentHtml, getExtensions());
+  }
   useEffect(() => {
     docRef.current = draft.collab.doc;
   });
   const frozen = draft.collab.frozen;
+  // 작업본이 게시본과 같으면 room에 "밀린 내용 없음"을 알린다(수정 화면을 닫은 뒤에도 복원이 막히지 않게).
+  const reportedCleanRef = useRef<unknown>(null);
+  useEffect(() => {
+    const doc = draft.collab.doc;
+    if (!doc || !draft.ready || draft.collab.mode !== "write" || draft.collab.status !== "connected") return;
+    if (reportedCleanRef.current === doc) return;
+    reportedCleanRef.current = doc;
+    if (!isWorkingCopyDirty(doc)) draft.collab.provider?.reportSaved(collabSavedMarker(doc));
+  });
   const { title, mixsetLinkUrl: linkUrl } = draft.fields;
   const generationRef = useRef(draft.collab.generation);
   useEffect(() => {
@@ -145,6 +163,8 @@ function PostEditFormContent({ actorId, post, onCancel, onSaved, onBusyChange, m
     }
     setIsPending(true);
     setError(null);
+    // 보낸 작업본의 저장 표지. 응답을 기다리는 동안 다른 기기가 고쳤으면 "저장됨"으로 알리지 않는다.
+    const submittedMarker = draft.collab.doc && !draft.collab.doc.isDestroyed ? collabSavedMarker(draft.collab.doc) : null;
     // 이 저장의 room epoch·작업본 세대는 시작할 때 고정한다(복원 뒤 옛 내용을 다시 보내지 않게).
     const epoch = draft.collab.epoch;
     const generation = draft.collab.generation;
@@ -175,9 +195,15 @@ function PostEditFormContent({ actorId, post, onCancel, onSaved, onBusyChange, m
         const state = await updatePostContent(post.id, {}, formData);
         if (state.success) {
           if (state.post) headRef.current = { version: state.post.version, title: state.post.title, contentHtml: state.post.contentHtml };
-          // 작업본이 게시본과 같아졌음을 room에 알린다(복원 준비 때 "밀린 내용 없음").
+          if (hasLinkField) headLinkRef.current = linkUrl;
+          // 작업본이 게시본과 같아졌음을 room에 알린다(복원 준비 때 "밀린 내용 없음"). 그사이 바뀌었으면 알리지 않는다.
           const doc = draft.collab.doc;
-          if (doc && !doc.isDestroyed) draft.collab.provider?.reportSaved(Y.encodeStateVector(doc));
+          if (doc && !doc.isDestroyed && submittedMarker) {
+            const now = collabSavedMarker(doc);
+            if (now.length === submittedMarker.length && now.every((byte, index) => byte === submittedMarker[index])) {
+              draft.collab.provider?.reportSaved(now);
+            }
+          }
           onSaved();
           return;
         }
@@ -323,9 +349,13 @@ function PostEditFormContent({ actorId, post, onCancel, onSaved, onBusyChange, m
           saveShortcutLabel={isSubmitBlocked ? undefined : "변경 저장"}
         />
       ) : (
-        <p className="py-6 text-ui text-muted-foreground" role="status">
-          {draft.collab.status === "denied" ? "이 게시물을 수정할 수 없습니다." : "게시물을 불러오는 중…"}
-        </p>
+        <CollabLoadingState
+          label="게시물을 불러오는 중…"
+          deniedMessage={draft.collab.status === "denied" ? "이 게시물을 수정할 수 없습니다." : null}
+          seedState={draft.collab.seedState}
+          seedMessage={draft.collab.seedMessage}
+          onRetry={draft.collab.retrySeed}
+        />
       )}
 
       <div className="flex justify-end gap-2 border-t border-muted pt-3 md:pt-2">

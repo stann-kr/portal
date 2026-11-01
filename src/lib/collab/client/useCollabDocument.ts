@@ -20,6 +20,7 @@ import {
   subscribeCollabOwnerLock,
 } from "./local-store";
 import type { CollabMode, CollabPrepareMode } from "../protocol";
+import { collabSavedMarker } from "../saved-marker";
 
 /**
  * 문서 하나의 공동 편집 상태: Y.Doc + 서버 확인분(confirmed) + 기기 보관(IndexedDB) + room 연결 + 시드 + 저장 담당 선출.
@@ -139,6 +140,8 @@ function readPmDoc(doc: Y.Doc): PmDoc {
 }
 
 type RebaseJob = {
+  /** 이 작업을 만든 문서(다른 문서에 적용하지 않는다). */
+  storageKey: string;
   base: PmDoc;
   mine: PmDoc;
   baseFields: MergeFields;
@@ -243,7 +246,8 @@ export function useCollabDocument(options: CollabDocumentOptions): CollabDocumen
   const providerRef = useRef<CollabProvider | null>(null);
   const userRef = useRef<CollabUser & { userId?: string }>(options.user);
   const resetReasonRef = useRef<"initial" | "reset">("initial");
-  const jobRef = useRef<RebaseJob | null>(null);
+  /** 다시 적용할 작업들(연속 restart에서도 앞 작업을 버리지 않는다). 순서대로 적용한다. */
+  const jobRef = useRef<RebaseJob[]>([]);
   const retrySeedRef = useRef<() => void>(() => undefined);
   // 로그아웃 정리로 잠겼다가 같은 계정이 다시 로그인하면 기기 보관을 다시 연다.
   const [lockEpoch, setLockEpoch] = useState(0);
@@ -298,10 +302,10 @@ export function useCollabDocument(options: CollabDocumentOptions): CollabDocumen
       const mineFields = readContentFields(doc);
       let job: RebaseJob | null = null;
       let keepOldStore = false;
-      if (provider?.mode !== "read" && hasLocalChanges(base, mine, baseFields, mineFields)) {
-        // 재적용 전 안전 사본. 반영되면 지운다(L8: 변경이 없으면 만들지 않는다).
+      if (hasLocalChanges(base, mine, baseFields, mineFields)) {
+        // 재적용 전 안전 사본. 반영되면 지운다(L8: 변경이 없으면 만들지 않는다). 읽기로 바뀐 기기도 사본은 남긴다.
         const recoveryKey = saveCollabRecoveryCopy(owner, storageKey, doc, optionsRef.current.extensions, provider?.identity?.userId ?? null);
-        job = { base, mine, baseFields, mineFields, recoveryKey };
+        if (provider?.mode !== "read") job = { storageKey, base, mine, baseFields, mineFields, recoveryKey };
         keepOldStore = recoveryKey === null;
       }
       writeStoredGeneration(owner, storageKey, { gen: nextEpoch, synced: false });
@@ -316,7 +320,8 @@ export function useCollabDocument(options: CollabDocumentOptions): CollabDocumen
       }
       doc.destroy();
       confirmed.destroy();
-      jobRef.current = job;
+      // 아직 적용하지 못한 앞 작업은 그대로 두고 새 작업을 뒤에 붙인다(빈 새 세대에서 계산한 "변경 없음"으로 덮지 않는다).
+      jobRef.current = [...jobRef.current.filter((pending) => pending.storageKey === storageKey), ...(job ? [job] : [])];
       resetReasonRef.current = "reset";
       setState((previous) => ({
         ...previous,
@@ -354,7 +359,7 @@ export function useCollabDocument(options: CollabDocumentOptions): CollabDocumen
     const refreshReady = () => {
       const seeded = isCollabDocSeeded(doc);
       update({
-        ready: seeded && !jobRef.current,
+        ready: seeded && !jobRef.current.some((pending) => pending.storageKey === storageKey),
         needsStaticFallback: !seeded && provider?.mode === "read" && (provider.synced || provider.status === "solo" || provider.status === "offline"),
       });
     };
@@ -362,46 +367,72 @@ export function useCollabDocument(options: CollabDocumentOptions): CollabDocumen
     const canWriteNow = () =>
       Boolean(provider) && provider!.mode === "write" && ((provider!.status === "connected" && provider!.synced) || provider!.status === "solo");
 
+    /** 쓸 수 없게 됐으면(읽기 강등·권한 없음) 재적용을 포기하고 보관함 사본을 남긴 채 알린다. */
+    const abandonJobs = () => {
+      const pending = jobRef.current.filter((job) => job.storageKey === storageKey);
+      if (pending.length === 0) return;
+      jobRef.current = jobRef.current.filter((job) => job.storageKey !== storageKey);
+      update({ rebaseNotice: pending.some((job) => job.recoveryKey) ? "kept" : null });
+      refreshReady();
+    };
+
     /** 넘겨받은 재적용 작업을 새 room(시드 뒤)에 적용한다. */
     const applyJob = async () => {
-      const job = jobRef.current;
-      if (!job || applyingJob || disposed || !isCollabDocSeeded(doc) || !canWriteNow()) return;
+      if (applyingJob || disposed || !isCollabDocSeeded(doc) || !canWriteNow()) return;
+      if (!jobRef.current.some((job) => job.storageKey === storageKey)) return;
       applyingJob = true;
+      let notice: CollabRebaseNotice = null;
       try {
         const lockName = `portal-collab-rebase:${owner ?? "anon"}:${storageKey}`;
-        const result = await withRebaseLock(lockName, () => {
-          if (disposed || doc.isDestroyed) return null;
-          // theirs는 적용 직전 같은 tick에 live doc에서 읽는다.
-          const merged = mergeCollabDocuments({
-            base: job.base,
-            mine: job.mine,
-            theirs: readPmDoc(doc),
-            baseFields: job.baseFields,
-            mineFields: job.mineFields,
-            theirsFields: readContentFields(doc),
-          });
-          if (merged.changed) {
-            const schema = getSchema(optionsRef.current.extensions());
-            const node = schema.nodeFromJSON(merged.doc);
-            doc.transact(() => {
-              updateYFragment(doc, doc.getXmlFragment(COLLAB_FRAGMENT), node, { mapping: new Map(), isOMark: new Map() });
-              const meta = doc.getMap(COLLAB_META);
-              for (const [name, value] of Object.entries(merged.fields)) {
-                if (INTERNAL_META_FIELDS.has(name)) continue;
-                if (meta.get(name) !== value) meta.set(name, value);
-              }
-            }, "collab-rebase");
+        await withRebaseLock(lockName, async () => {
+          // 잠금을 얻은 뒤 room 상태를 한 번 더 받아, 다른 탭이 방금 다시 적용한 내용까지 theirs에 넣는다.
+          await provider?.resync().catch(() => false);
+          while (!disposed && !doc.isDestroyed) {
+            const job = jobRef.current.find((pending) => pending.storageKey === storageKey);
+            if (!job) break;
+            // theirs는 적용 직전 같은 tick에 live doc에서 읽는다.
+            const theirsFields = readContentFields(doc);
+            const merged = mergeCollabDocuments({
+              base: job.base,
+              mine: job.mine,
+              theirs: readPmDoc(doc),
+              baseFields: job.baseFields,
+              mineFields: job.mineFields,
+              theirsFields,
+            });
+            if (merged.changed) {
+              const schema = getSchema(optionsRef.current.extensions());
+              const node = schema.nodeFromJSON(merged.doc);
+              doc.transact(() => {
+                updateYFragment(doc, doc.getXmlFragment(COLLAB_FRAGMENT), node, { mapping: new Map(), isOMark: new Map() });
+                const meta = doc.getMap(COLLAB_META);
+                for (const [name, value] of Object.entries(merged.fields)) {
+                  if (INTERNAL_META_FIELDS.has(name)) continue;
+                  if (meta.get(name) !== value) meta.set(name, value);
+                }
+              }, "collab-rebase");
+            }
+            // 칸(제목·날짜 등)은 한 값만 남길 수 있다. 내 값이 반영되지 못한 칸이 있으면 보관함 사본을 지우지 않는다.
+            const lostField = Object.keys(job.mineFields).some(
+              (name) =>
+                !INTERNAL_META_FIELDS.has(name) &&
+                job.mineFields[name] !== job.baseFields[name] &&
+                merged.fields[name] !== job.mineFields[name],
+            );
+            // room에 저장(ack)된 뒤에야 사본을 지우고 잠금을 푼다(다음 탭이 이 결과를 보고 같은 변경을 다시 넣지 않게).
+            const acked = await (provider?.awaitAcked() ?? Promise.resolve(false));
+            jobRef.current = jobRef.current.filter((pending) => pending !== job);
+            if (acked && !lostField) removeStorageItem(job.recoveryKey);
+            const next: CollabRebaseNotice = lostField ? "kept" : merged.changed ? (merged.conflicts > 0 ? "overlapped" : "applied") : null;
+            if (next === "kept" || (next === "overlapped" && notice !== "kept") || (next === "applied" && notice === null)) notice = next;
           }
-          return merged;
         });
-        if (disposed || !result) return;
-        jobRef.current = null;
-        removeStorageItem(job.recoveryKey);
-        update({ rebaseNotice: result.changed ? (result.conflicts > 0 ? "overlapped" : "applied") : null });
+        if (!disposed && notice) update({ rebaseNotice: notice });
       } catch {
         // 적용하지 못하면 복구본이 남아 있다(보관함).
-        jobRef.current = null;
-        update({ rebaseNotice: job.recoveryKey ? "kept" : null });
+        const pending = jobRef.current.filter((job) => job.storageKey === storageKey);
+        jobRef.current = jobRef.current.filter((job) => job.storageKey !== storageKey);
+        if (!disposed) update({ rebaseNotice: pending.some((job) => job.recoveryKey) ? "kept" : null });
       } finally {
         applyingJob = false;
         refreshReady();
@@ -490,6 +521,12 @@ export function useCollabDocument(options: CollabDocumentOptions): CollabDocumen
     void (async () => {
       if (docName && confirmedName && owner && rememberCollabDbName(owner, docName) && rememberCollabDbName(owner, confirmedName)) {
         [persistence, confirmedPersistence] = await Promise.all([openPersistence(docName, doc), openPersistence(confirmedName, confirmed)]);
+        // 여는 사이 로그아웃·계정 정리가 지나갔으면 방금 만든 DB를 닫고 지운다(정리 뒤 다시 생기지 않게).
+        if (persistenceClosed || isCollabOwnerLocked(owner)) {
+          persistenceClosed = false;
+          await closePersistence();
+          await Promise.all([deleteIndexedDb(docName), deleteIndexedDb(confirmedName)]).catch(() => undefined);
+        }
       }
       if (disposed) {
         await closePersistence();
@@ -517,12 +554,14 @@ export function useCollabDocument(options: CollabDocumentOptions): CollabDocumen
             syncedRecorded = true;
             writeStoredGeneration(owner, storageKey, { gen: provider.epoch, synced: true });
           }
+          if (status === "denied" || status === "too-large") abandonJobs();
           // epoch는 room hello로 확인한 값만 쓴다(저장 요청에 실어 복원 뒤의 옛 저장을 막는다).
           update({ status, mode: provider?.mode ?? null, epoch: provider?.epoch ?? null });
           publishAwareness();
           void trySeed(false);
         }),
         provider.on("mode", (mode) => {
+          if (mode === "read") abandonJobs();
           update({ mode });
           publishAwareness();
           void trySeed(false);
@@ -550,7 +589,7 @@ export function useCollabDocument(options: CollabDocumentOptions): CollabDocumen
             .catch((): CollabFlushResult => ({ ok: false }))
             .then((result) => {
               if (disposed || doc.isDestroyed) return;
-              current.sendFlushed({ id, ok: result.ok, revision: result.revision, dirty: result.dirty, stateVector: Y.encodeStateVector(doc) });
+              current.sendFlushed({ id, ok: result.ok, revision: result.revision, dirty: result.dirty, stateVector: collabSavedMarker(doc) });
             });
         }),
       );

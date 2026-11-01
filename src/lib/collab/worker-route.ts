@@ -12,6 +12,7 @@ import {
   COLLAB_ROOM_EPOCH_URL,
   COLLAB_ROOM_NOTIFY_URL,
   COLLAB_ROOM_PREPARE_URL,
+  COLLAB_ROOM_PREPARED_URL,
   COLLAB_ROOM_RESET_URL,
   COLLAB_ROOM_SET_META_URL,
   COLLAB_ROOM_THAW_URL,
@@ -143,6 +144,13 @@ export async function prepareCollabRoom(
   return (await response.json()) as CollabPrepareResult;
 }
 
+/** 준비가 아직 유효한지. 확인하지 못하면 false(복원하지 않는다). */
+export async function isCollabRoomPrepared(env: CollabWorkerEnv | undefined, key: string, id: string): Promise<boolean> {
+  const response = await postRoom(env, key, COLLAB_ROOM_PREPARED_URL, { id });
+  if (!response?.ok) return false;
+  return ((await response.json()) as { prepared?: unknown }).prepared === true;
+}
+
 export async function thawCollabRoom(env: CollabWorkerEnv | undefined, key: string, id: string): Promise<void> {
   await postRoom(env, key, COLLAB_ROOM_THAW_URL, { id });
 }
@@ -158,8 +166,9 @@ export async function setCollabRoomMeta(
   key: string,
   field: string,
   value: string,
+  epoch?: number,
 ): Promise<boolean> {
-  const response = await postRoom(env, key, COLLAB_ROOM_SET_META_URL, { field, value });
+  const response = await postRoom(env, key, COLLAB_ROOM_SET_META_URL, { field, value, ...(typeof epoch === "number" ? { epoch } : {}) });
   return Boolean(response?.ok);
 }
 

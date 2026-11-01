@@ -49,7 +49,7 @@ export type CollabMode = "read" | "write";
 
 /** room → 클라이언트 control. */
 export type CollabControlMessage =
-  | { t: "hello"; epoch: number; mode: CollabMode; frozen?: boolean; seq?: number }
+  | { t: "hello"; epoch: number; mode: CollabMode; frozen?: boolean; seq?: number; changedAt?: number }
   | { t: "reset"; epoch: number }
   | { t: "error"; code: "read-only" | "too-large" | "bad-message" | "stale" | "busy" }
   /** 이 소켓이 보낸 update 중 room이 저장한 누적 개수. */
@@ -68,7 +68,7 @@ export type CollabControlMessage =
 export type CollabClientControlMessage =
   | { t: "frozen"; id: string }
   | { t: "flushed"; id: string; ok: boolean; revision?: number; sv?: string; dirty?: boolean }
-  /** 저장 성공(또는 이미 저장된 내용과 같음). sv는 저장한 내용의 state vector(base64). */
+  /** 저장 성공(또는 이미 저장된 내용과 같음). sv는 저장한 내용의 Yjs snapshot(delete set 포함, base64). */
   | { t: "saved"; sv: string }
   | { t: "renew"; token: string };
 
@@ -98,6 +98,8 @@ export const COLLAB_ROOM_ADVANCE_URL = "https://collab-room/advance";
 /** 복원 전 준비(freeze → checkpoint). body `{ id, mode }`. 응답 `CollabPrepareResult`. */
 export const COLLAB_ROOM_PREPARE_URL = "https://collab-room/prepare";
 export const COLLAB_ROOM_THAW_URL = "https://collab-room/thaw";
+/** 준비가 아직 유효한지(복원 commit 직전 확인). body `{ id }`. */
+export const COLLAB_ROOM_PREPARED_URL = "https://collab-room/prepared";
 /** 연결을 모두 닫는다. body `{ keep }`: true면 상태를 보존(휴지통), false면 비운다(영구 삭제). */
 export const COLLAB_ROOM_CLOSE_URL = "https://collab-room/close";
 /** room 밖에서 바뀐 칸(캘린더 날짜 이동)을 room에 반영한다. body `{ field, value }`. */

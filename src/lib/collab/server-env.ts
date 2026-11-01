@@ -2,6 +2,7 @@ import type { CollabWorkerEnv } from "./worker-route";
 import {
   advanceCollabRoom,
   closeCollabRoom,
+  isCollabRoomPrepared,
   notifyCollabRoom,
   prepareCollabRoom,
   readCollabRoomEpoch,
@@ -70,6 +71,13 @@ export async function prepareCollabRoomForRestore(
   }
 }
 
+/** 복원 commit 직전: 준비가 아직 유효한지(안전 시간으로 풀려 새 입력을 받기 시작했으면 복원하지 않는다). */
+export async function isCollabRoomStillPrepared(key: string, id: string): Promise<boolean> {
+  const env = readCollabWorkerEnv();
+  if (!env) return true;
+  return isCollabRoomPrepared(env, key, id).catch(() => false);
+}
+
 export async function thawCollabRoomAfterAbort(key: string, id: string): Promise<void> {
   const env = readCollabWorkerEnv();
   if (!env) return;
@@ -93,10 +101,10 @@ export async function closeCollabRoomAfterMutation(key: string, keep: boolean): 
 }
 
 /** room 밖에서 바뀐 칸(캘린더 날짜 이동)을 열린 room에 반영한다. 다음 자동 저장이 옛 값으로 되돌리지 않게 한다. */
-export async function setCollabRoomMetaAfterMutation(key: string, field: string, value: string): Promise<void> {
+export async function setCollabRoomMetaAfterMutation(key: string, field: string, value: string, epoch?: number): Promise<void> {
   const env = readCollabWorkerEnv();
   if (!env) return;
-  await setCollabRoomMeta(env, key, field, value).catch(() => false);
+  await setCollabRoomMeta(env, key, field, value, epoch).catch(() => false);
 }
 
 /** 답글·학생 최근 노트 알림. 저장 응답을 늦추지 않도록 응답 뒤에 보낸다(실패해도 화면은 30초 재조회로 따라온다). */

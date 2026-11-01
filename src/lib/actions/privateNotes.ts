@@ -10,6 +10,7 @@ import {
   closeCollabRoomAfterMutation,
   notifyCollabTopic,
   parseCollabSaveEpoch,
+  isCollabRoomStillPrepared,
   prepareCollabRoomForRestore,
   setCollabRoomMetaAfterMutation,
   STALE_COLLAB_SAVE_MESSAGE,
@@ -17,7 +18,7 @@ import {
 } from "@/lib/collab/server-env";
 import type { CollabPrepareResult } from "@/lib/collab/protocol";
 import { revalidatePath } from "next/cache";
-import { and, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull } from "drizzle-orm";
 import { createDb, createDbContext } from "@/db/client";
 import { privateNoteRevisions, privateNotes, profiles } from "@/db/schema";
 import { requireAuth, requireStudentOwnerOrAdmin } from "@/lib/auth-guard";
@@ -32,6 +33,7 @@ import {
   purgePrivateNoteAtomically,
   restorePrivateNoteRevisionAtomically,
   readPrivateNoteLifecycleMarker,
+  privateNoteLifecycleSql,
   restoreTrashedPrivateNoteAtomically,
   trashPrivateNoteAtomically,
   updatePrivateNoteAtomically,
@@ -191,7 +193,7 @@ export async function getPrivateNoteCollabSeed(noteId: string): Promise<PrivateN
       noteDate: privateNotes.noteDate,
       version: privateNotes.version,
       deletedAt: privateNotes.deletedAt,
-      lifecycle: sql<number>`coalesce((SELECT max(${privateNoteRevisions.revisionNumber}) FROM ${privateNoteRevisions} WHERE ${privateNoteRevisions.noteId} = ${privateNotes.id} AND ${privateNoteRevisions.changeType} = 'RESTORE_REVISION'), 0)`,
+      lifecycle: privateNoteLifecycleSql,
     })
     .from(privateNotes)
     .where(eq(privateNotes.id, noteId))
@@ -625,6 +627,8 @@ export async function movePrivateNoteDate(
   if (current.noteDate?.getTime() === parsedDate.getTime()) {
     return { ok: true, noteDate: parsedDate, version: current.version };
   }
+  // 이동 전후 lifecycle 표지가 같을 때만 열린 room에 날짜를 반영한다(사이에 복원이 끼면 새 세대에 옛 날짜를 넣지 않는다).
+  const markerBefore = await readPrivateNoteLifecycleMarker(createDbContext(), noteId);
   const result = await updatePrivateNoteAtomically(createDbContext(), {
     actor: { id: session.user.id!, isAdmin },
     noteId,
@@ -646,7 +650,10 @@ export async function movePrivateNoteDate(
   }
   revalidatePrivateNotePaths(current.studentId, noteId);
   // 열린 편집 room의 날짜도 바꾼다. 그렇지 않으면 다음 자동 저장이 옛 날짜로 되돌린다.
-  await setCollabRoomMetaAfterMutation(formatCollabDocKey({ kind: "note", id: noteId }), "noteDate", noteDate);
+  const markerAfter = await readPrivateNoteLifecycleMarker(createDbContext(), noteId);
+  if (markerAfter === markerBefore) {
+    await setCollabRoomMetaAfterMutation(formatCollabDocKey({ kind: "note", id: noteId }), "noteDate", noteDate, markerAfter);
+  }
   notifyCollabTopic("student-notes", current.studentId);
   return {
     ok: true,
@@ -662,6 +669,8 @@ export type PrivateNoteLifecycleState = {
   replayed?: boolean;
   resourceState?: PrivateNoteResourceState;
   currentRevision?: number | null;
+  /** 이 작업이 만든 revision(재전송이면 처음 만든 revision). */
+  operationResultRevision?: number | null;
 };
 
 async function runLifecycleAction(
@@ -712,6 +721,7 @@ async function runLifecycleAction(
     replayed: result.replayed,
     resourceState: result.resourceState,
     currentRevision: result.currentRevision,
+    operationResultRevision: result.operationResultRevision,
   };
 }
 
@@ -789,6 +799,11 @@ export async function restorePrivateNoteRevision(
       }
       checkpointBase = prepared.checkpoint;
     }
+    // 준비가 안전 시간으로 풀렸으면(그 뒤 새 입력을 받았을 수 있다) 복원하지 않는다.
+    if (!(await isCollabRoomStillPrepared(roomKey, operationId))) {
+      await thawCollabRoomAfterAbort(roomKey, operationId);
+      return { error: restoreBlockedMessage({ ok: false, reason: "timeout" }) };
+    }
   }
   const result = await restorePrivateNoteRevisionAtomically(createDbContext(), {
     actor,
@@ -812,8 +827,9 @@ export async function restorePrivateNoteRevision(
             : undefined,
     };
   }
-  // 복원 revision이 새 lifecycle 표지다. room을 그 세대로 넘기면 열린 편집기는 복원본으로 다시 시작한다.
-  if (typeof result.currentRevision === "number") await advanceCollabRoomAfterRestore(roomKey, result.currentRevision);
+  // 이 복원 작업의 revision이 lifecycle 표지다(재전송이면 그 뒤 일반 저장으로 head가 앞서 있을 수 있어 head가 아니라 작업 결과를 쓴다).
+  const restoredRevision = result.operationResultRevision ?? result.currentRevision;
+  if (typeof restoredRevision === "number") await advanceCollabRoomAfterRestore(roomKey, restoredRevision);
   else if (mayRestore) await thawCollabRoomAfterAbort(roomKey, operationId);
   if (noteBefore) {
     revalidatePrivateNotePaths(noteBefore.studentId, noteId);
@@ -824,5 +840,6 @@ export async function restorePrivateNoteRevision(
     replayed: result.replayed,
     resourceState: result.resourceState,
     currentRevision: result.currentRevision,
+    operationResultRevision: result.operationResultRevision,
   };
 }

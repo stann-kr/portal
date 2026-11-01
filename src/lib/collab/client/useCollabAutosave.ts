@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import * as Y from "yjs";
+import type * as Y from "yjs";
+import { collabSavedMarker } from "../saved-marker";
 import { COLLAB_META } from "./seed";
 
 /**
@@ -23,7 +24,7 @@ export type CollabAutosaveOptions<S> = {
   save: (snapshot: S) => Promise<CollabSaveResult>;
   idleMs?: number;
   maxWaitMs?: number;
-  /** 저장 성공(또는 이미 저장된 내용과 같음) 뒤 room 상태의 state vector. room이 "밀린 내용 없음"을 알게 한다. */
+  /** 저장 성공(또는 이미 저장된 내용과 같음) 뒤 room 상태의 저장 표지(snapshot). room이 "밀린 내용 없음"을 알게 한다. */
   onSaved?: (stateVector: Uint8Array) => void;
 };
 
@@ -76,7 +77,7 @@ export function useCollabAutosave<S>({
     (hash: string) => {
       if (!doc || doc.isDestroyed) return;
       const current = readRef.current();
-      if (current !== null && collabSnapshotHash(current) === hash) onSavedRef.current?.(Y.encodeStateVector(doc));
+      if (current !== null && collabSnapshotHash(current) === hash) onSavedRef.current?.(collabSavedMarker(doc));
     },
     [doc],
   );

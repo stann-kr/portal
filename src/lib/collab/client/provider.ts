@@ -39,7 +39,7 @@ export type CollabProviderEvents = {
   status: (status: CollabConnectionStatus) => void;
   /** room이 비워졌다(복원·휴지통). 새 epoch로 다시 시작해야 한다. */
   reset: (epoch: number) => void;
-  /** 이 기기 보관본과 room의 epoch가 다르다. */
+  /** 이 기기 doc과 room의 epoch가 다르다(보관본의 세대 또는 이번 provider가 처음 맞춘 세대). */
   epoch: (epoch: number) => void;
   mode: (mode: CollabMode) => void;
   /** 이 기기 상태를 room에 바로 합치면 안 된다(오프라인 첫 열기 선시드). 서버 상태 위에 다시 적용해야 한다. */
@@ -49,8 +49,8 @@ export type CollabProviderEvents = {
   thaw: () => void;
   /** 저장 담당에게 checkpoint 요청. 처리한 뒤 `sendFlushed`로 답한다. */
   flush: (id: string, mode: CollabPrepareMode) => void;
-  /** 알림 room 순번(hello·changed). */
-  seq: (seq: number, reason: "hello" | "changed") => void;
+  /** 알림 room 순번(hello·changed). hello에는 마지막 알림 시각(ms)도 온다. */
+  seq: (seq: number, reason: "hello" | "changed", changedAt?: number) => void;
 };
 
 export type CollabProviderOptions = {
@@ -100,6 +100,10 @@ export class CollabProvider {
   private sentCount = 0;
   private unacked: Array<{ n: number; update: Uint8Array }> = [];
   private renewTimer: ReturnType<typeof setInterval> | null = null;
+  /** 저장 담당이 checkpoint 중이다(freeze 중에도 저장 표시 update를 보낸다). */
+  private flushing = false;
+  private readonly syncWaiters = new Set<() => void>();
+  private readonly ackWaiters = new Set<() => void>();
   private freezeTimer: ReturnType<typeof setTimeout> | null = null;
   private socket: WebSocket | null = null;
   private destroyed = false;
@@ -112,12 +116,15 @@ export class CollabProvider {
   private readonly listeners = new Map<keyof CollabProviderEvents, Set<(...args: never[]) => void>>();
   private readonly fetchImpl: typeof fetch;
   private readonly WebSocketImpl: typeof WebSocket | undefined;
+  /** 이 doc이 속한 세대. 보관본이 없으면 첫 hello에서 정하고, 다시 연결했을 때 다르면 다시 시작하게 한다. */
+  private knownEpoch: number | null;
 
   constructor(
     readonly doc: Y.Doc,
     private readonly options: CollabProviderOptions,
   ) {
     this.awareness = new awarenessProtocol.Awareness(doc);
+    this.knownEpoch = options.localEpoch;
     this.fetchImpl = options.fetchImpl ?? ((...args) => fetch(...args));
     this.WebSocketImpl = options.WebSocketImpl ?? (typeof WebSocket === "undefined" ? undefined : WebSocket);
     doc.on("update", this.handleDocUpdate);
@@ -178,7 +185,8 @@ export class CollabProvider {
         credentials: "same-origin",
         cache: "no-store",
       });
-      if (response.status === 401 || response.status === 403 || response.status === 400) {
+      // 로그인 화면으로 돌려보내진 응답(세션 없음)도 권한 없음이다. 오프라인으로 보고 계속 기다리면 안 된다.
+      if (response.status === 401 || response.status === 403 || response.status === 400 || response.redirected) {
         this.setStatus("denied");
         return;
       }
@@ -258,7 +266,54 @@ export class CollabProvider {
     this.sendControl({ t: "saved", sv: bytesToBase64(stateVector) });
   }
 
+  private sendFullState(): void {
+    const update = Y.encodeStateAsUpdate(this.doc);
+    const encoder = encoding.createEncoder();
+    encoding.writeVarUint(encoder, COLLAB_MESSAGE_SYNC);
+    syncProtocol.writeUpdate(encoder, update);
+    this.hasPendingLocalChanges = false;
+    this.sendOwnUpdate(encoding.toUint8Array(encoder), update);
+  }
+
+  /** room 상태를 한 번 더 받아 합친다(다른 탭·기기가 방금 보낸 변경까지 보이게). 연결이 없으면 바로 끝난다. */
+  resync(timeoutMs = 3000): Promise<boolean> {
+    if (!this.helloReceived || !this.socket || this.socket.readyState !== 1) return Promise.resolve(false);
+    return new Promise((resolve) => {
+      const done = (value: boolean) => {
+        clearTimeout(timer);
+        this.syncWaiters.delete(onSync);
+        resolve(value);
+      };
+      const onSync = () => done(true);
+      const timer = setTimeout(() => done(false), timeoutMs);
+      this.syncWaiters.add(onSync);
+      const encoder = encoding.createEncoder();
+      encoding.writeVarUint(encoder, COLLAB_MESSAGE_SYNC);
+      syncProtocol.writeSyncStep1(encoder, this.doc);
+      this.send(encoding.toUint8Array(encoder));
+    });
+  }
+
+  /** 보낸 update가 모두 room에 저장(ack)될 때까지 기다린다. */
+  awaitAcked(timeoutMs = 5000): Promise<boolean> {
+    if (!this.hasUnsentChanges()) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const check = () => {
+        if (this.hasUnsentChanges()) return;
+        done(true);
+      };
+      const done = (value: boolean) => {
+        clearTimeout(timer);
+        this.ackWaiters.delete(check);
+        resolve(value);
+      };
+      const timer = setTimeout(() => done(false), timeoutMs);
+      this.ackWaiters.add(check);
+    });
+  }
+
   sendFlushed(message: { id: string; ok: boolean; revision?: number; stateVector?: Uint8Array; dirty?: boolean }): void {
+    this.flushing = false;
     this.sendControl({
       t: "flushed",
       id: message.id,
@@ -313,7 +368,7 @@ export class CollabProvider {
       return; // 다음 주기에 다시 시도한다. lease가 끝나면 room이 닫는다.
     }
     if (socket !== this.socket || this.destroyed) return;
-    if (response.status === 401 || response.status === 403 || response.status === 400) {
+    if (response.status === 401 || response.status === 403 || response.status === 400 || response.redirected) {
       this.socket = null;
       this.handleClose(socket, COLLAB_CLOSE_UNAUTHORIZED, true);
       try {
@@ -336,20 +391,14 @@ export class CollabProvider {
     this.freezeTimer = null;
     if (this.frozen === frozen) return;
     this.frozen = frozen;
+    if (!frozen) this.flushing = false;
     if (frozen) {
       this.freezeTimer = setTimeout(() => this.setFrozen(false), CLIENT_FREEZE_RELEASE_MS);
       return;
     }
     this.emit("thaw");
     // 멈춘 동안의 입력(편집 잠금 전 몇 글자 등)을 보낸다. room은 이미 가진 부분을 무시한다.
-    if (this.hasPendingLocalChanges && this.helloReceived && this.mode === "write") {
-      const update = Y.encodeStateAsUpdate(this.doc);
-      const encoder = encoding.createEncoder();
-      encoding.writeVarUint(encoder, COLLAB_MESSAGE_SYNC);
-      syncProtocol.writeUpdate(encoder, update);
-      this.hasPendingLocalChanges = false;
-      this.sendOwnUpdate(encoding.toUint8Array(encoder), update);
-    }
+    if (this.hasPendingLocalChanges && this.helloReceived && this.mode === "write") this.sendFullState();
   }
 
   private handleMessage(socket: WebSocket, data: unknown): void {
@@ -372,6 +421,7 @@ export class CollabProvider {
         this.sendOwnUpdate(encoding.toUint8Array(encoder), Y.encodeStateAsUpdate(this.doc));
         this.hasPendingLocalChanges = false;
       }
+      if (messageType === syncProtocol.messageYjsSyncStep2) for (const waiter of [...this.syncWaiters]) waiter();
       if (messageType === syncProtocol.messageYjsSyncStep2 && !this.synced) {
         this.synced = true;
         this.everSynced = true;
@@ -388,7 +438,7 @@ export class CollabProvider {
   private handleControl(message: CollabControlMessage): void {
     if (message.t === "hello") {
       this.setMode(message.mode);
-      if (this.options.localEpoch !== null && this.options.localEpoch !== message.epoch) {
+      if (this.knownEpoch !== null && this.knownEpoch !== message.epoch) {
         this.emit("epoch", message.epoch);
         return;
       }
@@ -399,7 +449,8 @@ export class CollabProvider {
       this.helloReceived = true;
       this.everConnected = true;
       this.epoch = message.epoch;
-      if (typeof message.seq === "number") this.emit("seq", message.seq, "hello");
+      this.knownEpoch = message.epoch;
+      if (typeof message.seq === "number") this.emit("seq", message.seq, "hello", message.changedAt);
       this.startRenew();
       const encoder = encoding.createEncoder();
       encoding.writeVarUint(encoder, COLLAB_MESSAGE_SYNC);
@@ -424,6 +475,7 @@ export class CollabProvider {
         const entry = this.unacked.shift()!;
         if (confirmed && !confirmed.isDestroyed) Y.applyUpdate(confirmed, entry.update, this);
       }
+      for (const waiter of [...this.ackWaiters]) waiter();
       return;
     }
     if (message.t === "freeze") {
@@ -438,6 +490,9 @@ export class CollabProvider {
       return;
     }
     if (message.t === "flush") {
+      this.flushing = true;
+      // freeze 직전에 끝난 저장의 표시(meta)가 보류돼 있으면 먼저 보낸다(room 상태가 저장 내용과 같아지게).
+      if (this.hasPendingLocalChanges && this.mode === "write") this.sendFullState();
       this.emit("flush", message.id, message.mode);
       return;
     }
@@ -525,7 +580,7 @@ export class CollabProvider {
     if (origin && typeof origin === "object" && "whenSynced" in origin) return;
     // hello 뒤에는 동기화가 끝나기 전이라도 바로 보낸다(room은 빠진 앞부분을 step2가 오면 이어 붙인다).
     // freeze 동안에는 입력을 보내지 않는다. 저장 담당의 저장 표시(checkpoint 뒤 savedHash·headVersion)만 보낸다.
-    const frozenHold = this.frozen && origin !== "collab-autosave-meta";
+    const frozenHold = this.frozen && !(this.flushing && origin === "collab-autosave-meta");
     if (!this.helloReceived || !this.socket || this.socket.readyState !== 1 || frozenHold) {
       this.hasPendingLocalChanges = true;
       return;

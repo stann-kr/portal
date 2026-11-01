@@ -20,11 +20,16 @@ export const COLLAB_NOTIFY_MIN_GAP_MS = 1_500;
 /** 입력 중이라 미룬 새로 받기를 다시 확인하는 간격. */
 export const COLLAB_NOTIFY_DEFER_MS = 1_500;
 
-export function CollabNotifyRefresh({ topic, id }: { topic: CollabNotifyTopic; id: string }) {
+/**
+ * `since`: 화면을 서버가 그린 시각(ms). 처음 연결했을 때 room의 마지막 알림이 그보다 늦으면(그리는 사이의 변경) 한 번 다시 받는다.
+ */
+export function CollabNotifyRefresh({ topic, id, since }: { topic: CollabNotifyTopic; id: string; since: number }) {
   const router = useRouter();
   const routerRef = useRef(router);
+  const sinceRef = useRef(since);
   useEffect(() => {
     routerRef.current = router;
+    sinceRef.current = since;
   });
 
   useEffect(() => {
@@ -61,11 +66,14 @@ export function CollabNotifyRefresh({ topic, id }: { topic: CollabNotifyTopic; i
       pending = true;
       if (!timer) timer = setTimeout(run, 0);
     };
-    const unsubscribe = provider.on("seq", (seq, reason) => {
+    const unsubscribe = provider.on("seq", (seq, reason, changedAt) => {
       const previous = lastSeq;
       lastSeq = seq;
-      // 첫 연결의 순번은 기준값이다(화면은 방금 서버가 그렸다). 그 뒤 다른 값이면 놓쳤거나 새 알림이다.
-      if (previous === null && reason === "hello") return;
+      // 첫 연결: 화면을 그린 뒤에 온 알림이 있으면 따라잡는다. 그 뒤로는 순번이 바뀌면(놓친 알림 포함) 다시 받는다.
+      if (previous === null && reason === "hello") {
+        if (typeof changedAt === "number" && changedAt > sinceRef.current) request();
+        return;
+      }
       if (previous !== seq) request();
     });
     const onVisible = () => {

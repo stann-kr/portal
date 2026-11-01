@@ -441,6 +441,12 @@ function collabEpochCondition(collabEpoch: number | undefined): {
     : { clause: ` AND ${PRIVATE_NOTE_LIFECYCLE_MARKER_SQL} = ?`, params: [collabEpoch] };
 }
 
+/**
+ * 노트 select에 넣는 lifecycle 표지 식(마지막 RESTORE_REVISION 번호, 없으면 0). 권한·삭제 상태와 같은 조회에서 읽을 때 쓴다.
+ * 바깥 테이블을 이름으로 가리키므로 `FROM private_notes` 조회 안에서만 쓴다.
+ */
+export const privateNoteLifecycleSql = sql<number>`coalesce((SELECT max(lifecycle_revision.revision_number) FROM private_note_revisions AS lifecycle_revision WHERE lifecycle_revision.note_id = "private_notes"."id" AND lifecycle_revision.change_type = 'RESTORE_REVISION'), 0)`;
+
 export async function readPrivateNoteLifecycleMarker(
   context: DbContext,
   noteId: string,

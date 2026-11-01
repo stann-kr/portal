@@ -1386,7 +1386,7 @@ test("게시물 수정 form은 mixsetLinkUrl prop이 없으면 링크 칸 없이
   };
   context.after(() => { savePostEdit = async () => ({}); });
   const harness = await renderForm(context, <PostEditForm actorId="post-plain-actor" post={post} mixsetLinkUrl={null} onCancel={() => undefined} onSaved={() => undefined} />);
-  await waitUntil(() => !harness.container.querySelector<HTMLTextAreaElement>(BODY_FIELD)?.disabled && Boolean(harness.container.querySelector(BODY_FIELD)), 3000, "수정 작업본이 열려야 합니다.");
+  await waitUntil(() => Boolean(harness.container.querySelector(BODY_FIELD)) && !(submitControl(harness.container) as HTMLButtonElement).disabled, 3000, "수정 작업본이 열리고 저장할 수 있어야 합니다.");
   assert.equal(harness.container.querySelector(MIXSET_LINK_SELECTOR), null);
   assert.equal(harness.container.querySelector("form")?.noValidate, false);
   await act(async () => submitControl(harness.container).click());
