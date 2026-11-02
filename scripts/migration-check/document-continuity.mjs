@@ -11,6 +11,7 @@ import {
   lifecycleExpansionMigrationFile,
   mediaLifecycleMigrationFile,
   migrationsDirectory,
+  noteRevisionPruningMigrationFile,
 } from "./runtime.mjs";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -119,6 +120,7 @@ export function validateContinuityTriggers(database) {
     documentImageMigrationFile,
     assignmentTaskMigrationFile,
     guidePageMigrationFile,
+    noteRevisionPruningMigrationFile,
   ]) {
     const migrationStatements = readFileSync(
       join(migrationsDirectory, migrationFile),

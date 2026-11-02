@@ -122,6 +122,10 @@ before(async () => {
   ({ collabDocHtml } = await import("@/lib/collab/client/doc-html"));
   ({ createFullEditorExtensions } = await import("@/components/editor/FullEditor"));
   ({ buildCollabRestoreUpdate } = await import("@/lib/collab/server-restore"));
+  // 운영 간격(2분/10분)은 테스트에서 기다릴 수 없어 이전 간격으로 줄인다. 간격 자체는 별도 테스트가 본다.
+  const { COLLAB_ROOM_BACKED_SAVE } = await import("@/lib/collab/client/useCollabAutosave");
+  COLLAB_ROOM_BACKED_SAVE.idleMs = 1500;
+  COLLAB_ROOM_BACKED_SAVE.maxWaitMs = 10_000;
 });
 
 after(() => {
@@ -546,6 +550,39 @@ test("같은 노트를 연 두 기기는 제목·본문이 수렴하고 한 기�
   assertNoChooser(deviceA, "충돌 재시도 뒤");
   assertNoChooser(deviceB, "충돌 재시도 뒤");
   await waitUntil(() => /저장됨/u.test(saverDevice.container.textContent ?? ""), 3000, "재시도가 성공하면 저장됨이 보여야 합니다.");
+});
+
+test("room에 연결된 동안 D1 저장(이력)은 바로 하지 않고 기다렸다가, 편집기 밖으로 나가면 그때 한 번 저장한다", { concurrency: false }, async (context) => {
+  const { COLLAB_ROOM_BACKED_SAVE } = await import("@/lib/collab/client/useCollabAutosave");
+  const previous = { ...COLLAB_ROOM_BACKED_SAVE };
+  COLLAB_ROOM_BACKED_SAVE.idleMs = 60_000;
+  COLLAB_ROOM_BACKED_SAVE.maxWaitMs = 600_000;
+  context.after(() => Object.assign(COLLAB_ROOM_BACKED_SAVE, previous));
+  const env = setupBrowser(context);
+  const calls: SaveCall[] = [];
+  const note = { id: "note-interval", title: "원래 제목", contentHtml: "<p>본문</p>", noteDate: null, version: 1 };
+  seedHeads.set(note.id, note);
+  const device = await env.mount(
+    <NoteEditorForm
+      actorId="student-1"
+      note={note}
+      action={async (_previous: object, formData: FormData) => {
+        const call = { device: "A" as const, data: Object.fromEntries(formData) };
+        calls.push(call);
+        return { success: true, note: { ...note, title: String(call.data.title), version: 2 } };
+      }}
+    />,
+  );
+  await waitReady(device);
+  await waitUntil(() => formOf(device).dataset.collabStatus === "connected", 4000, "연결돼야 합니다.");
+  await act(async () => typeInto(env, titleOf(device), "고친 제목"));
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 2500)); });
+  assert.equal(calls.length, 0, "예전 간격(1.5초)이 지나도 저장하지 않는다");
+  const outside = env.browserWindow.document.createElement("button");
+  env.browserWindow.document.body.appendChild(outside);
+  await act(async () => outside.focus());
+  await waitUntil(() => calls.length === 1, 3000, "편집기 밖으로 나가면 기다리던 저장을 보내야 합니다.");
+  assert.equal(calls[0]!.data.title, "고친 제목");
 });
 
 // ---------------------------------------------------------------------------
