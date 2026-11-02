@@ -262,3 +262,22 @@ test("아주 긴 문서끼리 크게 달라도 LCS 표를 만들지 않고 병�
   assert.equal(texts.filter((text) => text === "b0").length, 1, "같은 블록을 중복하지 않는다");
   assert.ok(texts.includes("새 머리") && texts.includes("끝"));
 });
+
+test("큰 문서 병합(선형 메모리 LCS)도 표 기반과 같은 정렬이라 같은 병합을 다시 해도 중복되지 않는다", () => {
+  const paragraph = (text: string) => ({ type: "paragraph", content: [{ type: "text", text }] });
+  const head = Array.from({ length: 1500 }, (_, i) => paragraph(`h${i}`));
+  const tail = ["b0", "b1", "b2", "b3", "b4", "b5"].map(paragraph);
+  const base = { type: "doc" as const, content: [...head, ...tail] };
+  const mine = { type: "doc" as const, content: [...head, paragraph("b0"), paragraph("b1LOCAL"), paragraph("b2"), paragraph("b3"), paragraph("NEW"), paragraph("b4"), paragraph("b5")] };
+  const theirs = {
+    type: "doc" as const,
+    content: [...Array.from({ length: 1500 }, (_, i) => paragraph(`r${i}`)), ...["Rb0", "b2", "b3", "b4", "b1", "b5R"].map(paragraph)],
+  };
+  const once = mergeCollabDocuments({ base, mine, theirs });
+  const twice = mergeCollabDocuments({ base, mine, theirs: once.doc });
+  const count = (doc: { content?: { content?: { text?: string }[] }[] }, text: string) =>
+    (doc.content ?? []).filter((node) => node.content?.[0]?.text === text).length;
+  assert.equal(count(once.doc, "NEW"), 1);
+  assert.equal(count(twice.doc, "NEW"), 1, "다시 병합해도 한 번");
+  assert.equal(count(twice.doc, "b1LOCAL"), count(once.doc, "b1LOCAL"), "다시 병합해도 늘지 않는다");
+});

@@ -159,6 +159,8 @@ type RebaseJob = {
   kind: "restore" | "rebase";
   /** restore 작업: 이 기기 입력 없이 복원이 들어간 문서(제거 선택의 목표). */
   restored?: { doc: PmDoc; fields: MergeFields };
+  /** restore 작업: 처음 되살린 직후 문서(제거 선택의 기준). 재시도에서 바꾸지 않는다. */
+  kept?: { doc: PmDoc; fields: MergeFields };
   base: PmDoc;
   mine: PmDoc;
   baseFields: MergeFields;
@@ -438,7 +440,9 @@ export function useCollabDocument(options: CollabDocumentOptions): CollabDocumen
               }, "collab-rebase");
             }
             // 제거 선택의 기준은 되살린 바로 그 순간의 문서다(ack를 기다리는 동안 들어온 다른 입력은 제거 대상이 아니다).
-            const keptNow = job.kind === "restore" ? { doc: readPmDoc(doc), fields: readContentFields(doc) } : null;
+            // ack 실패 뒤 재시도에서는 다시 계산하지 않는다(그사이 입력이 제거 대상에 들어가지 않게 처음 값을 job에 고정).
+            if (job.kind === "restore" && !job.kept) job.kept = { doc: readPmDoc(doc), fields: readContentFields(doc) };
+            const keptNow = job.kept ?? null;
             // room에 저장(ack)된 뒤에야 작업을 끝내고 잠금을 푼다(다음 탭이 이 결과를 보고 같은 변경을 다시 넣지 않게).
             if (!(await (provider?.awaitAcked() ?? Promise.resolve(false)))) {
               retryLater = true;

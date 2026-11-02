@@ -99,8 +99,11 @@ export class CollabProvider {
   private renewTimer: ReturnType<typeof setInterval> | null = null;
   /** room 상태를 live doc 대신 받는 중(제자리 rebase 준비). */
   private staging: { epoch: number } | null = null;
-  /** 복원 알림을 받았고 그 update(또는 끊긴 사이 복원을 가져올 동기화)를 기다린다. */
-  private pendingRestore: number | null = null;
+  /**
+   * 복원을 기다린다. restored: 알림을 받았고 바로 다음 update가 복원이다. advanced: 끊긴 사이 복원돼 다음 step2(room 전체 상태)가 복원을 싣는다.
+   * 세대(knownEpoch)는 복원이 실제로 들어온 뒤에만 올린다(알림만 받고 끊기면 다시 연결할 때 advanced로 다시 처리한다).
+   */
+  private pendingRestore: { lifecycle: number; kind: "restored" | "advanced" } | null = null;
   private stagingWaiter: ((update: Uint8Array | null) => void) | null = null;
   /** room 계보가 바뀌었다(reset). 다음 hello는 제자리 rebase로 합친다. */
   private lineageChanged = false;
@@ -478,8 +481,10 @@ export class CollabProvider {
       const peekType = decoding.readVarUint(peek);
       const carriesState = peekType === syncProtocol.messageYjsSyncStep2 || peekType === syncProtocol.messageYjsUpdate;
       // 복원을 싣는 메시지를 적용하기 바로 전(같은 동기 구간)에 알린다: 이때 confirmed는 복원 기준이고 doc은 이 기기 입력을 모두 담는다.
-      const restoring = carriesState ? this.pendingRestore : null;
-      if (restoring !== null) this.emit("restoring", restoring, "restored");
+      const pending = this.pendingRestore;
+      const restoring =
+        pending && (pending.kind === "restored" ? carriesState : peekType === syncProtocol.messageYjsSyncStep2) ? pending : null;
+      if (restoring !== null) this.emit("restoring", restoring.lifecycle, restoring.kind);
       if (carriesState && confirmed && !confirmed.isDestroyed) Y.applyUpdate(confirmed, decoding.readVarUint8Array(peek), this);
       const encoder = encoding.createEncoder();
       encoding.writeVarUint(encoder, COLLAB_MESSAGE_SYNC);
@@ -499,7 +504,9 @@ export class CollabProvider {
       }
       if (restoring !== null) {
         this.pendingRestore = null;
-        this.emit("restoreApplied", restoring);
+        this.epoch = restoring.lifecycle;
+        this.knownEpoch = restoring.lifecycle;
+        this.emit("restoreApplied", restoring.lifecycle);
       }
       return;
     }
@@ -541,10 +548,16 @@ export class CollabProvider {
       }
       if (this.knownEpoch !== null && message.epoch > this.knownEpoch) {
         // 연결이 끊긴 사이 복원됐다. 같은 문서이므로 이어서 동기화하면 복원이 들어온다(이 기기 입력은 그 위에 다시 맞춘다).
-        this.pendingRestore = message.epoch;
+        this.pendingRestore = { lifecycle: message.epoch, kind: "advanced" };
       }
       if (typeof message.seq === "number") this.emit("seq", message.seq, "hello", message.changedAt);
+      const previousEpoch = this.knownEpoch;
       this.beginSync(message.epoch);
+      // 끊긴 사이 복원: 복원을 싣는 step2가 들어온 뒤에야 세대를 올린다(그 전에 다시 끊기면 다음 hello가 다시 처리한다).
+      if (this.pendingRestore?.kind === "advanced") {
+        this.knownEpoch = previousEpoch;
+        this.epoch = previousEpoch;
+      }
       return;
     }
     if (message.t === "reset") {
@@ -553,9 +566,7 @@ export class CollabProvider {
       return;
     }
     if (message.t === "restored") {
-      this.pendingRestore = message.lifecycle;
-      this.epoch = message.lifecycle;
-      this.knownEpoch = message.lifecycle;
+      this.pendingRestore = { lifecycle: message.lifecycle, kind: "restored" };
       return;
     }
     if (message.t === "error" && message.code === "too-large") {

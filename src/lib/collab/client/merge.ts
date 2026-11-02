@@ -9,7 +9,7 @@
  * - mine의 변경이 이미 theirs에 들어 있으면 다시 넣지 않는다(같은 병합을 두 번 해도 no-op).
  */
 
-/** LCS 표 상한(칸 수). Uint32 4바이트 × 2백만 = 8MB. 넘으면 탐욕적 정렬로 바꾼다. */
+/** LCS 표 상한(칸 수). Uint32 4바이트 × 2백만 = 8MB. 넘으면 선형 메모리 LCS(Hirschberg)로 바꾼다. */
 const MAX_LCS_CELLS = 2_000_000;
 
 export type PmMark = { type: string; attrs?: Record<string, unknown> };
@@ -91,6 +91,60 @@ function containsRun(haystack: string[], needle: string[]): boolean {
 
 /* ---------- LCS 정렬 ---------- */
 
+/** a[aStart..aEnd)와 b[bStart..bEnd)의 LCS 길이 행(끝 열). 두 줄만 쓴다. reverse면 뒤에서부터 센다. */
+function lcsRow(a: string[], aStart: number, aEnd: number, b: string[], bStart: number, bEnd: number, reverse: boolean): Uint32Array {
+  const width = bEnd - bStart;
+  let previous = new Uint32Array(width + 1);
+  let current = new Uint32Array(width + 1);
+  for (let step = 0; step < aEnd - aStart; step += 1) {
+    const key = reverse ? a[aEnd - 1 - step] : a[aStart + step];
+    for (let k = 1; k <= width; k += 1) {
+      const other = reverse ? b[bEnd - k] : b[bStart + k - 1];
+      current[k] = key === other ? previous[k - 1] + 1 : Math.max(previous[k], current[k - 1]);
+    }
+    [previous, current] = [current, previous];
+    current.fill(0);
+  }
+  return previous;
+}
+
+/** Hirschberg: 선형 메모리로 정확한 LCS 짝(base 번호, side 번호)을 순서대로 모은다. */
+function hirschberg(
+  a: string[],
+  b: string[],
+  aStart: number,
+  aEnd: number,
+  bStart: number,
+  bEnd: number,
+  out: Array<[number, number]>,
+): void {
+  if (aEnd <= aStart || bEnd <= bStart) return;
+  if (aEnd - aStart === 1) {
+    for (let j = bStart; j < bEnd; j += 1) {
+      if (a[aStart] === b[j]) {
+        out.push([aStart, j]);
+        return;
+      }
+    }
+    return;
+  }
+  const mid = aStart + Math.floor((aEnd - aStart) / 2);
+  const left = lcsRow(a, aStart, mid, b, bStart, bEnd, false);
+  const right = lcsRow(a, mid, aEnd, b, bStart, bEnd, true);
+  const width = bEnd - bStart;
+  let best = 0;
+  let split = 0;
+  for (let k = 0; k <= width; k += 1) {
+    const total = left[k] + right[width - k];
+    if (total > best) {
+      best = total;
+      split = k;
+    }
+  }
+  hirschberg(a, b, aStart, mid, bStart, bStart + split, out);
+  hirschberg(a, b, mid, aEnd, bStart + split, bEnd, out);
+}
+
 /** base 각 위치가 side의 어느 위치와 짝인지(-1 = 짝 없음). 반복되는 같은 블록도 LCS로 정렬한다. */
 function lcsMap(baseKeys: string[], sideKeys: string[]): number[] {
   const n = baseKeys.length;
@@ -115,29 +169,11 @@ function lcsMap(baseKeys: string[], sideKeys: string[]): number[] {
   const rows = n - prefix - suffix;
   const cols = m - prefix - suffix;
   if (rows > 0 && cols > 0 && rows * cols > MAX_LCS_CELLS) {
-    // 아주 긴 문서끼리 크게 다르면 LCS 표가 Workers 메모리를 넘는다. 같은 블록을 순서대로 탐욕적으로 짝짓는다
-    // (정확한 최장 정렬은 아니지만 바뀌지 않은 블록 대부분을 그대로 두고, 나머지는 변경 구간으로 병합한다).
-    const positions = new Map<string, number[]>();
-    for (let j = 0; j < cols; j += 1) {
-      const key = sideKeys[prefix + j];
-      const list = positions.get(key);
-      if (list) list.push(j);
-      else positions.set(key, [j]);
-    }
-    const cursor = new Map<string, number>();
-    let last = -1;
-    for (let i = 0; i < rows; i += 1) {
-      const key = baseKeys[prefix + i];
-      const list = positions.get(key);
-      if (!list) continue;
-      let index = cursor.get(key) ?? 0;
-      while (index < list.length && list[index] <= last) index += 1;
-      cursor.set(key, index);
-      if (index >= list.length) continue;
-      last = list[index];
-      map[prefix + i] = prefix + last;
-      cursor.set(key, index + 1);
-    }
+    // 아주 긴 문서끼리 크게 다르면 LCS 표가 Workers 메모리를 넘는다. 같은 최장 정렬을 선형 메모리(Hirschberg)로 구한다
+    // (정확한 LCS라 같은 병합을 다시 해도 결과가 같다).
+    const pairs: Array<[number, number]> = [];
+    hirschberg(baseKeys, sideKeys, prefix, prefix + rows, prefix, prefix + cols, pairs);
+    for (const [i, j] of pairs) map[i] = j;
     return map;
   }
   if (rows > 0 && cols > 0) {
