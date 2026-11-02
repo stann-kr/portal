@@ -144,6 +144,7 @@ OpenNext → Cloudflare Worker
 - 캘린더 양방향 동기화: `calendar_connections`, `calendar_mappings`, `calendar_sync_links`, `calendar_remote_series`(예정: `calendar_push_channels`)
 - 콘텐츠: `categories`, `posts`, `post_revisions`, `comments`
 - 개인 학습 기록: `private_notes`, `private_note_revisions`, `calendar_events`
+- 관리자 수업 메모: `instructor_memos`(학생별 `note_id` NULL 하나·노트별 하나, version), `instructor_memo_revisions`(10분 묶음, 90일·200칸)
 - 문서 연속성: `document_operation_ledger`, `document_tombstones`, `document_batch_abort_guard`, `document_server_drafts`, `document_server_draft_operations`
 - 미디어 수명주기: `media_objects`, `media_deletion_outbox`
 - 개인정보 수명주기: `account_deletion_jobs`, `account_cleanup_tokens`, `calendar_feed_tokens`
@@ -391,6 +392,15 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 - 댓글 시점: `comments.time_marker_seconds`(nullable 정수 초). `parseTimeMarker`는 빈 값을 시점 없음으로, `h:mm:ss`·`m:ss`·정수 초를 0~86399(23:59:59)로 받는다. `createComment`는 시점이 있으면 FEEDBACK이고 `media_url`이 있는 글인지 먼저 확인하고, INSERT의 `post_id` 서브쿼리에서 휴지통 여부와 함께 다시 확인한다. 재전송 비교에도 시점을 넣는다. 댓글 form은 매체가 있는 믹스셋 글에서만 "시점" 칸(현재 위치·직접 입력·비우기)을 보이고, 초안에 시점을 함께 저장하며 내용이나 시점이 바뀌면 operation ID를 새로 만든다. 시점 댓글의 시점 버튼은 플레이어를 그 위치로 옮겨 재생한다. 댓글은 작성 순으로 읽는다.
 - `0020_comment_time_markers`: `comments`에 `time_marker_seconds`와 CHECK `comments_time_marker_check`(NULL 또는 정수 0~86399)를 ADD COLUMN으로 더하고 index `comments_post_created_idx`(`post_id`, `created_at`)를 만든다. table을 다시 만들지 않아 기존 행과 `comments` trigger가 그대로다. 이 index는 게시물별 댓글을 작성 순으로 읽는 조회를 받친다. `db:check`가 채워진 0019 DB에서 0020 upgrade·CHECK·기존 행 보존을 검사한다. 댓글 조회·작성이 이 column을 읽으므로 운영에서는 코드 promotion 전에 적용한다([배포 가이드](./DEPLOYMENT.md)).
 - 미검증: 실제 YouTube·SoundCloud 재생·이동·위치 읽기, iOS 오디오 로드, 브라우저 화면(모바일 하단 댓글 막대 높이), remote D1 적용.
+
+## 수업 도구·비밀 메모·녹음 시점(2026-11-02)
+
+- 비밀 메모: `instructor_memos`·`instructor_memo_revisions`(`0022_instructor_memos`, 새 표만 추가). 학생 메모는 `note_id` NULL(부분 unique index로 학생당 하나), 노트 메모는 `note_id` unique이며 노트 영구 삭제·학생 profile 삭제에 FK cascade, 계정 삭제 batch(`account-privacy-atomic.ts`)가 학생 메모를 명시적으로 지운다. 저장은 `version` 조건부 UPDATE(처음은 `ON CONFLICT DO NOTHING` INSERT)로 다른 기기의 덮어쓰기를 막고 충돌이면 현재 내용을 돌려준다. 이력은 저장마다 쓰되 마지막 칸이 10분 안이면 덮어쓰고, 90일 지난 칸과 200칸을 넘는 칸을 지운다(trigger 없음, 한 사람이 쓰는 메모라 불변 ledger를 두지 않는다). server action(`src/lib/actions/instructorMemos.ts`)은 모두 `requireAdmin` + `requireStudentTarget`이며 노트 메모의 학생은 노트(휴지통 제외)에서 읽는다. HTML은 `sanitizeHtml`, 20만 자 상한. 화면은 공동 편집이 아닌 `FullEditor`(이미지 업로드 거부) + 이 기기 초안(`instructor-memo` kind, 서버 초안 없음) + 1.5초 자동 저장이다. 노트 문서 페이지는 관리자일 때만 메모를 읽어 `NoteDocEditor`의 `instructor`로 넘기고(넓은 화면 옆 칸, 좁은 화면 서랍), 학생 상세 개요 탭에 학생 메모를 둔다.
+- 타이머·시점 넣기: `useLessonTimer`(노트별 localStorage, 시작 시각+누적으로 계산)와 `insertLessonLine`(`insertContentAt`으로 커서 줄 다음에 새 문단). 넣을 편집기는 `data-lesson-target`(note·memo) 중 마지막 focus이고, Tiptap이 `.ProseMirror`에 붙인 `editor`를 쓴다. 단축키 ⌥T·⌥N·⌥P는 `event.code`로 받는다.
+- 시점 꾸밈: `LessonTimestamp` extension(모든 `FullEditor`)이 `[m:ss]`·`[h:mm:ss]`에 decoration(`lesson-timestamp`, `data-lesson-seconds`)만 붙인다. schema·저장 HTML·서버 복원 변환은 그대로다. 공동 편집 room이 비어 정적 HTML로 보이는 읽기 화면에는 꾸밈이 없다.
+- 녹음 재생: `RecordingDock`이 노트 본문 DOM(편집·읽기 화면)에서 첫 YouTube·SoundCloud 링크(`a[href]`·영상 블록 iframe)를 MutationObserver로 찾고, 시작 위치(`t`·`start`·`#t=`)를 offset으로 더해 `VideoPlayer`의 `seekRequest`로 이동한다. 재생 칸은 찾는 범위 밖에 둔다.
+- 과제 피드백 찍어 두기: `useFeedbackMarks`가 관리자·과제별 시점 목록을 localStorage에 두고, 고르면 시점 칸을 채우고 그 위치로 이동한다. 성공 제출한 시점은 목록에서 뺀다. 서버·피드백 초안 계약은 그대로다.
+- 미검증: 실제 YouTube·SoundCloud 이동, 브라우저 화면(넓은 화면 옆 칸·좁은 화면 서랍), remote D1 `0022` 적용.
 
 ## 실시간 공동 편집(2026-11-01)
 

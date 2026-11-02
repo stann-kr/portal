@@ -559,18 +559,21 @@ function NoteEditorFormContent({ note, create, actorId, action, focusBodyEnd = f
   );
 
   const editor = collab.ready && collaboration ? (
-    <FullEditor
-      collaboration={collaboration}
-      disabled={locked}
-      onUploadingChange={setIsEditorUploading}
-      placeholder={create && !created
-        ? "수업 내용, 연습 기록, 메모 등을 자유롭게 작성하세요..."
-        : "수업 내용, 연습 기록, 메모를 이어서 작성하세요..."}
-      minHeight={create ? "320px" : "50dvh"}
-      ariaLabel="노트 내용"
-      variant="page"
-      saveShortcutLabel={writable ? "바로 저장" : undefined}
-    />
+    // 수업 도구(관리자)가 시점·트랙 줄을 넣을 곳으로 찾는다.
+    <div data-lesson-target="note">
+      <FullEditor
+        collaboration={collaboration}
+        disabled={locked}
+        onUploadingChange={setIsEditorUploading}
+        placeholder={create && !created
+          ? "수업 내용, 연습 기록, 메모 등을 자유롭게 작성하세요..."
+          : "수업 내용, 연습 기록, 메모를 이어서 작성하세요..."}
+        minHeight={create ? "320px" : "50dvh"}
+        ariaLabel="노트 내용"
+        variant="page"
+        saveShortcutLabel={writable ? "바로 저장" : undefined}
+      />
+    </div>
   ) : (
     <CollabLoadingState
       label="노트를 불러오는 중…"

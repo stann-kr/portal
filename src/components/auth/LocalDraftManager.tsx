@@ -30,6 +30,7 @@ export const DRAFT_KIND_LABELS: Readonly<Record<DocumentDraftKind, string>> = {
   "qna-thread": "Q&A 질문",
   "qna-reply": "Q&A 답변",
   "guide-page": "가이드 페이지",
+  "instructor-memo": "수업 메모",
 };
 
 function createDraftContextLabel(draft: LocalDocumentDraftSummary): string {

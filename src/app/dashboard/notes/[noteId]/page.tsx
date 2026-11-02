@@ -1,7 +1,8 @@
 import { notFound, redirect } from "next/navigation";
 import { AlertTriangle, CalendarDays, Clock3, UserRound } from "lucide-react";
 import { MobileTopBar } from "@/components/app-shell/AppSidebar";
-import { getActiveAuthSession } from "@/lib/auth-guard";
+import { findStudentTarget, getActiveAuthSession } from "@/lib/auth-guard";
+import { getInstructorMemo } from "@/lib/actions/instructorMemos";
 import {
   getPrivateNoteIncludingTrash,
   updatePrivateNote,
@@ -66,6 +67,22 @@ export default async function NotePage({
   const updatedLabel = formatNoteUpdated(note.updatedAt ?? note.createdAt, now);
 
   if (!note.deletedAt && canEdit) {
+    // 수업 도구·비밀 메모는 관리자 화면에서만 읽어 넘긴다(학생 화면에는 내용이 실리지 않는다).
+    const student = session.user.role === "admin" ? await findStudentTarget(note.studentId) : null;
+    const [noteMemo, studentMemo] = student
+      ? await Promise.all([
+          getInstructorMemo({ kind: "note", noteId: note.id }),
+          getInstructorMemo({ kind: "student", studentId: student.id }),
+        ])
+      : [null, null];
+    const instructor = student && noteMemo && studentMemo
+      ? {
+          studentId: student.id,
+          studentName: student.displayName?.trim() || student.email,
+          noteMemo,
+          studentMemo,
+        }
+      : undefined;
     return (
       <NoteDocEditor
         note={{
@@ -82,6 +99,7 @@ export default async function NotePage({
         historyHref={historyHref}
         authorName={authorName}
         updatedLabel={updatedLabel}
+        instructor={instructor}
       />
     );
   }
