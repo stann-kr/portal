@@ -29,7 +29,8 @@ import type { CollabTokenResponse } from "../token-handler";
  * - `denied`: 권한 없음·문서 없음. `too-large`: room 상한 초과.
  * - `trashed`: 휴지통에 있다. 같은 doc을 들고 기다리다(주기·화면 복귀·online) 되살리면 다시 붙는다.
  */
-export type CollabConnectionStatus = "connecting" | "connected" | "offline" | "solo" | "denied" | "trashed" | "too-large";
+/** `paused`: 안 보거나 오래 입력이 없는 탭이 연결을 잠시 놓은 상태(사용량 절약). 활동이 생기면 바로 다시 붙는다. */
+export type CollabConnectionStatus = "connecting" | "connected" | "offline" | "paused" | "solo" | "denied" | "trashed" | "too-large";
 
 export type CollabTokenRequest = { key: string } | { createNote: { operationId: string; studentId: string } };
 
@@ -63,9 +64,18 @@ export type CollabProviderOptions = {
   fetchImpl?: typeof fetch;
   WebSocketImpl?: typeof WebSocket;
   location?: { protocol: string; host: string };
+  /** 쉬기 기준. false면 쉬지 않는다(테스트). */
+  idlePause?: { idleMs: number; hiddenMs: number } | false;
 };
 
 const MAX_BACKOFF_MS = 15_000;
+/** 화면에 떠 있어도 이만큼 활동이 없으면 연결을 놓는다(room이 잠들어 사용량이 멈춘다). */
+const IDLE_PAUSE_MS = 5 * 60_000;
+/** 탭이 가려진 뒤 이만큼 지나면 연결을 놓는다(잠깐의 탭 전환은 그대로 둔다). */
+const HIDDEN_PAUSE_MS = 60_000;
+/** 보내지 못한 입력·복원 처리 중이라 쉬지 못했을 때 다시 볼 간격. */
+const PAUSE_RECHECK_MS = 30_000;
+const ACTIVITY_EVENTS = ["pointerdown", "pointermove", "keydown", "wheel", "touchstart", "focus"] as const;
 /** 휴지통 문서가 되살아났는지 다시 묻는 간격(늘어나다 이 값에서 멈춘다). */
 const TRASHED_RETRY_MS = [5_000, 10_000, 30_000];
 
@@ -120,6 +130,10 @@ export class CollabProvider {
   private trashedAttempts = 0;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private helloReceived = false;
+  private paused = false;
+  private lastActivity = Date.now();
+  private hiddenAt: number | null = null;
+  private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly listeners = new Map<keyof CollabProviderEvents, Set<(...args: never[]) => void>>();
   private readonly fetchImpl: typeof fetch;
   private readonly WebSocketImpl: typeof WebSocket | undefined;
@@ -139,6 +153,14 @@ export class CollabProvider {
     if (typeof window !== "undefined") {
       window.addEventListener("online", this.handleWake);
       document.addEventListener("visibilitychange", this.handleWake);
+      if (options.idlePause !== false) {
+        for (const type of ACTIVITY_EVENTS) window.addEventListener(type, this.handleActivity, { capture: true, passive: true });
+        document.addEventListener("visibilitychange", this.handleVisibility);
+        if (document.visibilityState === "hidden") this.hiddenAt = Date.now();
+      }
+    }
+    if (options.idlePause !== false) {
+      this.scheduleIdleCheck(this.hiddenAt === null ? this.idleLimits.idleMs : this.idleLimits.hiddenMs);
     }
     void this.connect();
   }
@@ -170,6 +192,10 @@ export class CollabProvider {
 
   private async connect(): Promise<void> {
     if (this.destroyed || this.connecting) return;
+    if (this.paused) {
+      this.paused = false;
+      this.scheduleIdleCheck(this.idleLimits.idleMs);
+    }
     if (this.socket && this.socket.readyState <= 1) return;
     this.clearRetry();
     this.connecting = true;
@@ -666,6 +692,90 @@ export class CollabProvider {
     this.retryTimer = null;
   }
 
+  private get idleLimits(): { idleMs: number; hiddenMs: number } {
+    return this.options.idlePause || { idleMs: IDLE_PAUSE_MS, hiddenMs: HIDDEN_PAUSE_MS };
+  }
+
+  /** 쉬는 중인지(연결을 놓았고 활동이 생기면 다시 붙는다). */
+  get isPaused(): boolean {
+    return this.paused;
+  }
+
+  private scheduleIdleCheck(delay: number): void {
+    if (this.idleTimer) clearTimeout(this.idleTimer);
+    this.idleTimer = setTimeout(() => this.checkIdle(), Math.max(0, delay));
+    (this.idleTimer as { unref?: () => void }).unref?.();
+  }
+
+  private checkIdle(): void {
+    this.idleTimer = null;
+    if (this.destroyed || this.paused || this.options.idlePause === false) return;
+    const { idleMs, hiddenMs } = this.idleLimits;
+    const now = Date.now();
+    const remaining = this.hiddenAt !== null
+      ? Math.min(hiddenMs - (now - this.hiddenAt), idleMs - (now - this.lastActivity))
+      : idleMs - (now - this.lastActivity);
+    if (remaining > 0) {
+      this.scheduleIdleCheck(remaining);
+      return;
+    }
+    if (!this.canPause()) {
+      this.scheduleIdleCheck(PAUSE_RECHECK_MS);
+      return;
+    }
+    this.pause();
+  }
+
+  /** 동기화가 끝난 연결이고 보낼 것·받는 중인 복원이 없을 때만 쉰다(놓아도 잃는 것이 없다). */
+  private canPause(): boolean {
+    return (
+      this.status === "connected" &&
+      this.helloReceived &&
+      this.synced &&
+      !this.connecting &&
+      this.staging === null &&
+      this.pendingRestore === null &&
+      this.stagingWaiter === null &&
+      !this.hasUnsentChanges()
+    );
+  }
+
+  private pause(): void {
+    const socket = this.socket;
+    if (!socket) return;
+    this.paused = true;
+    this.socket = null;
+    this.handleClose(socket, 1000, true);
+    try {
+      socket.close(1000, "idle");
+    } catch {
+      // 이미 닫혔다.
+    }
+    this.clearRetry();
+    this.setStatus("paused");
+  }
+
+  private resume(): void {
+    if (!this.paused || this.destroyed) return;
+    this.attempts = 0;
+    void this.connect();
+  }
+
+  private readonly handleActivity = () => {
+    this.lastActivity = Date.now();
+    if (this.paused) this.resume();
+  };
+
+  private readonly handleVisibility = () => {
+    if (document.visibilityState === "hidden") {
+      this.hiddenAt = Date.now();
+      if (!this.paused) this.scheduleIdleCheck(this.idleLimits.hiddenMs);
+      return;
+    }
+    this.hiddenAt = null;
+    this.handleActivity();
+  };
+
   private readonly handleWake = () => {
     if (this.destroyed || (this.status !== "offline" && this.status !== "trashed") || this.connecting) return;
     if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
@@ -684,6 +794,13 @@ export class CollabProvider {
     }
     // 기기 보관(IndexedDB)에서 읽어 온 상태는 새 입력이 아니다. 서버와는 다음 동기화(step2)에서 맞춘다.
     if (origin && typeof origin === "object" && "whenSynced" in origin) return;
+    // 쉬는 중 들어온 입력(업로드 완료 등)은 미전송으로 남기고 다시 붙는다. 다음 동기화(step2)가 보낸다.
+    if (this.paused) {
+      this.hasPendingLocalChanges = true;
+      this.lastActivity = Date.now();
+      this.resume();
+      return;
+    }
     // hello 뒤에는 동기화가 끝나기 전이라도 바로 보낸다(room은 빠진 앞부분을 step2가 오면 이어 붙인다).
     if (!this.helloReceived || !this.socket || this.socket.readyState !== 1) {
       this.hasPendingLocalChanges = true;
@@ -723,11 +840,15 @@ export class CollabProvider {
     this.connectSeq += 1;
     this.clearRetry();
     this.stopRenew();
+    if (this.idleTimer) clearTimeout(this.idleTimer);
+    this.idleTimer = null;
     this.doc.off("update", this.handleDocUpdate);
     this.awareness.off("update", this.handleAwarenessUpdate);
     if (typeof window !== "undefined") {
       window.removeEventListener("online", this.handleWake);
       document.removeEventListener("visibilitychange", this.handleWake);
+      for (const type of ACTIVITY_EVENTS) window.removeEventListener(type, this.handleActivity, { capture: true });
+      document.removeEventListener("visibilitychange", this.handleVisibility);
     }
     awarenessProtocol.removeAwarenessStates(this.awareness, [this.doc.clientID], "destroy");
     const socket = this.socket;

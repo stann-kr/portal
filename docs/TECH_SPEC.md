@@ -438,6 +438,7 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 ### 확인 저장본·lease·보관 격리·알림(2026-11-01 남은 한계 L1~L10)
 
 - 확인 저장본(L2·L8·오프라인): 기기마다 서버가 update ack한 확인본(shadow doc)을 따로 둔다(room에서 온 sync payload는 live doc에 no-op이어도 확인본에 직접 넣는다). 오프라인으로 처음 열거나 계보가 바뀌면 이 기기의 서버 미확인 변경만 새 head 위에 3-way(최상위 블록 LCS + 글자 단위)로 다시 적용한다. 겹친 블록은 양쪽을 남기고 안내하며, 칸(제목·날짜 등) 충돌은 복구본을 남긴다. 같은 기기의 여러 탭은 Web Lock과 resync·ack로 한 번만 적용하며(잠금 안 resync·ack 실패는 적용·삭제 없이 2초 뒤 재시도), 미확인 변경이 없으면 복구본을 만들지 않는다. 복구본은 칸을 다시 적용하지 못했거나 재적용이 금지된 경우(휴지통·권한 거부)에만 남는다.
+- 연결 쉬기: 탭이 가려진 지 60초, 또는 보이는 채 활동(pointer·key·wheel·touch·focus) 없이 5분이 지나면 provider가 소켓을 놓고 `paused`가 된다(lease renew·재연결 없음 → room이 hibernation). 동기화 완료·미전송/ack 대기 없음·staging·복원 대기 없음일 때만 쉬고, 아니면 30초 뒤 다시 본다. 활동·탭 복귀·이 기기 doc 변경·`reconnect()`가 즉시 다시 연결한다(일반 재연결 경로, step2가 쉬는 동안의 차이를 맞춘다). 쉬는 탭은 `canSave`가 꺼져 저장 탭이 다른 연결 탭으로 넘어간다.
 - lease(L4): 권한은 150초 서명 lease다. 클라이언트가 60초마다 새 토큰으로 renew하고(더 새 발급 시각 `i`만 lease를 늘린다), 읽기 토큰으로 renew되면 같은 연결을 읽기로 강등한다(다시 올리지 않음). alarm이 renew 없는 조용한 소켓을 닫는다. 로그아웃하면 `/api/collab/token`이 401을 돌려줘 다른 탭의 편집기가 거부 상태로 잠기고 다시 로그인 안내를 보인다. 역할 변경·비활성화·소유권 이전 기능은 없어 lease가 일반 방어선이다.
 - 기기 보관 격리(L5): IndexedDB·localStorage 이름에 owner를 넣고 owner 잠금을 둔다. 로그아웃·계정 전환·계정 삭제에서 해당 owner의 공동 편집 보관을 지우며, 계정 삭제 검증도 이를 포함한다.
 - 알림 room(L6): `notify:qna:<threadId>`, `notify:student-notes:<studentId>` room(문서 본문 없음). 답글·상태 변경·노트 변경 action이 알림을 보내면 클라이언트가 해당 화면을 새로 받는다(입력 중이면 미루고, 재연결 때 seq·changedAt으로 따라잡음). 전달은 best-effort라 `RouteAutoRefresh` 30초 조용한 재조회를 그대로 둔다.

@@ -37,6 +37,9 @@ export function describeCollabStatus(input: {
     return { kind: "error", message: "문서가 너무 커서 실시간 동기화를 멈췄습니다. 일부 내용을 줄여 주세요.", shortMessage: "동기화 멈춤" };
   }
   if (mode === "read") {
+    if (connection === "paused") {
+      return { kind: "pending", message: "잠시 쉬는 중 · 화면을 누르거나 움직이면 다시 실시간으로 봅니다.", shortMessage: "쉬는 중" };
+    }
     return connection === "connected"
       ? { kind: "saved", message: "실시간으로 보는 중", shortMessage: "실시간" }
       : { kind: "pending", message: "연결 중… 연결되면 최신 내용이 보입니다.", shortMessage: "연결 중" };
@@ -50,6 +53,10 @@ export function describeCollabStatus(input: {
   }
   if (connection === "connecting") {
     return { kind: "pending", message: "연결 중… 입력은 이 기기에 보관됩니다.", shortMessage: "연결 중" };
+  }
+  if (connection === "paused" && (input.manual || autosave === "idle" || autosave === "saved")) {
+    // 쉬기 전에 room에 모두 보냈다(보낼 것이 있으면 쉬지 않는다). 입력하면 바로 다시 붙는다.
+    return { kind: "saved", message: "보관됨 · 잠시 연결을 쉬는 중이며 입력하면 바로 이어집니다", shortMessage: "쉬는 중" };
   }
   if (input.manual) {
     return {
