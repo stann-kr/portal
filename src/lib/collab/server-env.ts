@@ -135,12 +135,12 @@ export async function applyCollabRestore(
       if (!held) return true;
       if (!held.ok) continue;
       if (held.lifecycle >= target) {
-        await applyCollabRoomRestore(env, key, { id, target, update: "" }).catch(() => null);
+        await applyCollabRoomRestore(env, key, { id, target, update: "", token: held.token }).catch(() => null);
         return true;
       }
       if (!held.seeded) {
         // 시드 전 room: 지울 내용이 없다. lifecycle만 맞추면 시드가 새 head로 채운다.
-        const applied = await applyCollabRoomRestore(env, key, { id, target, update: "" });
+        const applied = await applyCollabRoomRestore(env, key, { id, target, update: "", token: held.token });
         if (applied?.ok) return true;
         continue;
       }
@@ -152,7 +152,7 @@ export async function applyCollabRestore(
         fields: revision.fields,
         lifecycle: target,
       });
-      const applied = await applyCollabRoomRestore(env, key, { id, target, update: bytesToBase64(update) });
+      const applied = await applyCollabRoomRestore(env, key, { id, target, update: bytesToBase64(update), token: held.token });
       if (applied?.ok) return true;
     } catch {
       // 다시 시도한다.

@@ -293,7 +293,8 @@ export class DocumentRoom {
           const target = Number(body.target);
           const update = typeof body.update === "string" ? base64ToBytes(body.update) : null;
           if (!Number.isSafeInteger(target) || target < 0 || !update) return new Response("Bad restore", { status: 400 });
-          return Response.json(this.core.restoreApply(id, target, update));
+          const token = typeof body.token === "string" ? body.token : undefined;
+          return Response.json(this.core.restoreApply(id, target, update, token));
         }
         case "/close":
           this.core.closeAll(body.keep === true);

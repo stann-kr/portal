@@ -473,14 +473,14 @@ export class CollabProvider {
     if (type === COLLAB_MESSAGE_SYNC) {
       // room에서 온 상태는 room이 이미 가진 것이므로 바로 확인분이다. live doc에 이미 있어 이벤트가 없는 update도 넣는다.
       const confirmed = this.options.confirmed;
-      if (confirmed && !confirmed.isDestroyed) {
-        const peek = decoding.createDecoder(new Uint8Array(data as ArrayBuffer));
-        decoding.readVarUint(peek);
-        const peekType = decoding.readVarUint(peek);
-        if (peekType === syncProtocol.messageYjsSyncStep2 || peekType === syncProtocol.messageYjsUpdate) {
-          Y.applyUpdate(confirmed, decoding.readVarUint8Array(peek), this);
-        }
-      }
+      const peek = decoding.createDecoder(new Uint8Array(data as ArrayBuffer));
+      decoding.readVarUint(peek);
+      const peekType = decoding.readVarUint(peek);
+      const carriesState = peekType === syncProtocol.messageYjsSyncStep2 || peekType === syncProtocol.messageYjsUpdate;
+      // 복원을 싣는 메시지를 적용하기 바로 전(같은 동기 구간)에 알린다: 이때 confirmed는 복원 기준이고 doc은 이 기기 입력을 모두 담는다.
+      const restoring = carriesState ? this.pendingRestore : null;
+      if (restoring !== null) this.emit("restoring", restoring, "restored");
+      if (carriesState && confirmed && !confirmed.isDestroyed) Y.applyUpdate(confirmed, decoding.readVarUint8Array(peek), this);
       const encoder = encoding.createEncoder();
       encoding.writeVarUint(encoder, COLLAB_MESSAGE_SYNC);
       const messageType = syncProtocol.readSyncMessage(decoder, encoder, this.doc, this);
@@ -497,10 +497,9 @@ export class CollabProvider {
         this.attempts = 0;
         this.setStatus("connected");
       }
-      if (this.pendingRestore !== null && (messageType === syncProtocol.messageYjsUpdate || messageType === syncProtocol.messageYjsSyncStep2)) {
-        const lifecycle = this.pendingRestore;
+      if (restoring !== null) {
         this.pendingRestore = null;
-        this.emit("restoreApplied", lifecycle);
+        this.emit("restoreApplied", restoring);
       }
       return;
     }
@@ -543,7 +542,6 @@ export class CollabProvider {
       if (this.knownEpoch !== null && message.epoch > this.knownEpoch) {
         // 연결이 끊긴 사이 복원됐다. 같은 문서이므로 이어서 동기화하면 복원이 들어온다(이 기기 입력은 그 위에 다시 맞춘다).
         this.pendingRestore = message.epoch;
-        this.emit("restoring", message.epoch, "advanced");
       }
       if (typeof message.seq === "number") this.emit("seq", message.seq, "hello", message.changedAt);
       this.beginSync(message.epoch);
@@ -556,7 +554,6 @@ export class CollabProvider {
     }
     if (message.t === "restored") {
       this.pendingRestore = message.lifecycle;
-      this.emit("restoring", message.lifecycle, "restored");
       this.epoch = message.lifecycle;
       this.knownEpoch = message.lifecycle;
       return;
@@ -593,6 +590,7 @@ export class CollabProvider {
     if (this.unacked.length > 0) this.hasPendingLocalChanges = true;
     this.unacked = [];
     this.staging = null;
+    this.pendingRestore = null;
     this.stagingWaiter?.(null);
     this.stagingWaiter = null;
     const others = Array.from(this.awareness.getStates().keys()).filter((id) => id !== this.doc.clientID);

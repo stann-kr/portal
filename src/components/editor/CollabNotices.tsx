@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import type { CollabDocumentState } from "@/lib/collab/client/useCollabDocument";
 
 /**
@@ -75,9 +76,29 @@ type NoticeSource = Pick<
  */
 export function CollabNotices({ collab }: { collab: NoticeSource }) {
   const { rebaseNotice, restoreChoice } = collab;
-  if (!rebaseNotice && !restoreChoice) return null;
+  const containerRef = useRef<HTMLDivElement>(null);
+  const visible = Boolean(rebaseNotice || restoreChoice);
+  // 떠 있는 안내가 문서 끝 줄을 가리지 않게, 보이는 동안 그 높이만큼 문서 아래 여백을 둔다(위쪽 내용은 움직이지 않는다).
+  useEffect(() => {
+    const element = containerRef.current;
+    if (!visible || !element) return;
+    const body = document.body;
+    const previous = body.style.paddingBottom;
+    const apply = () => {
+      body.style.paddingBottom = `${Math.ceil(element.getBoundingClientRect().height) + 16}px`;
+    };
+    apply();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(apply);
+    observer?.observe(element);
+    return () => {
+      observer?.disconnect();
+      body.style.paddingBottom = previous;
+    };
+  }, [visible, restoreChoice, rebaseNotice]);
+  if (!visible) return null;
   return (
     <div
+      ref={containerRef}
       className="pointer-events-none fixed inset-x-4 bottom-[calc(1rem+env(safe-area-inset-bottom))] z-[var(--z-overlay)] flex flex-col items-center gap-2 md:inset-x-auto md:left-1/2 md:w-[min(36rem,calc(100%-2rem))] md:-translate-x-1/2"
       data-collab-notices=""
     >
@@ -88,9 +109,12 @@ export function CollabNotices({ collab }: { collab: NoticeSource }) {
           data-restore-choice={restoreChoice.state}
         >
           <span className="min-w-0 flex-1 text-muted-foreground">
-            {restoreChoice.state === "offer"
-              ? "다른 기기에서 이전 버전으로 되돌렸습니다. 이 기기에서 그 사이 입력한 내용은 문서에 남겨 두었습니다."
-              : restoreChoice.partial
+            {restoreChoice.state === "offer" ? (
+              <>
+                <span className="md:hidden">이전 버전으로 되돌려졌고 내 입력은 남겨 두었습니다.</span>
+                <span className="hidden md:inline">다른 기기에서 이전 버전으로 되돌렸습니다. 이 기기에서 그 사이 입력한 내용은 문서에 남겨 두었습니다.</span>
+              </>
+            ) : restoreChoice.partial
                 ? "내 입력을 제거했습니다. 그 뒤에 고친 부분은 남겨 두었습니다."
                 : "내 입력을 제거해 되돌린 버전 그대로입니다."}
           </span>

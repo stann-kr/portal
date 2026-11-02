@@ -9,6 +9,9 @@
  * - mine의 변경이 이미 theirs에 들어 있으면 다시 넣지 않는다(같은 병합을 두 번 해도 no-op).
  */
 
+/** LCS 표 상한(칸 수). Uint32 4바이트 × 2백만 = 8MB. 넘으면 탐욕적 정렬로 바꾼다. */
+const MAX_LCS_CELLS = 2_000_000;
+
 export type PmMark = { type: string; attrs?: Record<string, unknown> };
 export type PmNode = {
   type: string;
@@ -111,6 +114,32 @@ function lcsMap(baseKeys: string[], sideKeys: string[]): number[] {
 
   const rows = n - prefix - suffix;
   const cols = m - prefix - suffix;
+  if (rows > 0 && cols > 0 && rows * cols > MAX_LCS_CELLS) {
+    // 아주 긴 문서끼리 크게 다르면 LCS 표가 Workers 메모리를 넘는다. 같은 블록을 순서대로 탐욕적으로 짝짓는다
+    // (정확한 최장 정렬은 아니지만 바뀌지 않은 블록 대부분을 그대로 두고, 나머지는 변경 구간으로 병합한다).
+    const positions = new Map<string, number[]>();
+    for (let j = 0; j < cols; j += 1) {
+      const key = sideKeys[prefix + j];
+      const list = positions.get(key);
+      if (list) list.push(j);
+      else positions.set(key, [j]);
+    }
+    const cursor = new Map<string, number>();
+    let last = -1;
+    for (let i = 0; i < rows; i += 1) {
+      const key = baseKeys[prefix + i];
+      const list = positions.get(key);
+      if (!list) continue;
+      let index = cursor.get(key) ?? 0;
+      while (index < list.length && list[index] <= last) index += 1;
+      cursor.set(key, index);
+      if (index >= list.length) continue;
+      last = list[index];
+      map[prefix + i] = prefix + last;
+      cursor.set(key, index + 1);
+    }
+    return map;
+  }
   if (rows > 0 && cols > 0) {
     const width = cols + 1;
     const table = new Uint32Array((rows + 1) * width);

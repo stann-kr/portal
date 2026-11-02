@@ -128,7 +128,7 @@ export type CollabRoomRestoreBegin =
   | { ok: true; state: string; clean: boolean; seeded: boolean; lifecycle: number }
   | { ok: false; reason: "busy" };
 export type CollabRoomRestoreHold =
-  | { ok: true; state: string; base: string | null; lifecycle: number; seeded: boolean }
+  | { ok: true; state: string; base: string | null; lifecycle: number; seeded: boolean; token: string }
   | { ok: false; reason: "busy" };
 export type CollabRoomRestoreApply = { ok: true; applied: boolean; lifecycle: number } | { ok: false; reason: "expired" };
 
@@ -148,7 +148,7 @@ export function holdCollabRoomRestore(env: CollabWorkerEnv | undefined, key: str
   return postRoomJson<CollabRoomRestoreHold>(env, key, COLLAB_ROOM_RESTORE_HOLD_URL, { id });
 }
 
-export function applyCollabRoomRestore(env: CollabWorkerEnv | undefined, key: string, input: { id: string; target: number; update: string }) {
+export function applyCollabRoomRestore(env: CollabWorkerEnv | undefined, key: string, input: { id: string; target: number; update: string; token?: string }) {
   return postRoomJson<CollabRoomRestoreApply>(env, key, COLLAB_ROOM_RESTORE_APPLY_URL, input);
 }
 

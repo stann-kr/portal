@@ -156,6 +156,9 @@ export function sanitizeAwarenessState(state: string, attachment: RoomSocketAtta
 }
 export const ROOM_COMPACT_BYTES = 1024 * 1024;
 
+/** restoreApply가 저장을 끝낸 뒤 메모리 doc에 반영할 때의 origin(다시 저장하지 않고 모두에게 전달). */
+const RESTORE_ORIGIN = Symbol("collab-restore");
+
 function encodeStateVectorBase64(doc: Y.Doc): string {
   const bytes = Y.encodeStateVector(doc);
   let binary = "";
@@ -202,6 +205,8 @@ function safeClose(socket: RoomSocket, code: number, reason: string): void {
 
 type RestoreHold = {
   id: string;
+  /** 이 보관의 식별자. 만료된 보관에서 만든 update가 새 보관에 적용되지 않게 apply가 같은 값을 내야 한다. */
+  token: string;
   /** 보관 중 받은 메시지(받은 순서대로 배출한다). */
   queue: Array<{ socket: RoomSocket; data: Uint8Array }>;
   timer: ReturnType<typeof setTimeout>;
@@ -212,7 +217,7 @@ export type RestoreBeginResult =
   | { ok: false; reason: "busy" };
 
 export type RestoreHoldResult =
-  | { ok: true; state: Uint8Array; base: Uint8Array | null; lifecycle: number; seeded: boolean }
+  | { ok: true; state: Uint8Array; base: Uint8Array | null; lifecycle: number; seeded: boolean; token: string }
   | { ok: false; reason: "busy" };
 
 export type RestoreApplyResult = { ok: true; applied: boolean; lifecycle: number } | { ok: false; reason: "expired" };
@@ -262,6 +267,7 @@ export class RoomCore {
   private pendingUpdateBytes = 0;
   private pendingUpdateCount = 0;
   private intent: RestoreIntent | null = null;
+  private holdSeq = 0;
   private hold: RestoreHold | null = null;
 
   constructor(
@@ -298,7 +304,8 @@ export class RoomCore {
   }
 
   private onDocUpdate(update: Uint8Array, origin: unknown): void {
-    this.storage.appendUpdate(update);
+    // 복원 update는 restoreApply가 lifecycle과 같은 transaction에서 이미 저장했다.
+    if (origin !== RESTORE_ORIGIN) this.storage.appendUpdate(update);
     this.pendingUpdateBytes += update.byteLength;
     this.pendingUpdateCount += 1;
     // 반영한 소켓(origin)을 뺀 나머지에 전달한다. 서버가 직접 바꾼 칸(set-meta)은 origin이 없어 모두에게 간다.
@@ -612,6 +619,10 @@ export class RoomCore {
     if ((this.intent && this.intent.id !== id && now - this.intent.at < ROOM_RESTORE_INTENT_MS) || (this.hold && this.hold.id !== id)) {
       return { ok: false, reason: "busy" };
     }
+    // 같은 작업의 재시도는 처음 남긴 기준 S를 그대로 쓴다(그 사이 입력이 기준에 들어가 복원에서 지워지지 않게).
+    if (this.intent?.id === id) {
+      return { ok: true, state: this.intent.base, clean: this.isClean(), seeded: this.isSeeded(), lifecycle: this.epoch };
+    }
     const state = Y.encodeStateAsUpdate(doc);
     this.setIntent({ id, at: now, base: state });
     return { ok: true, state, clean: this.isClean(), seeded: this.isSeeded(), lifecycle: this.epoch };
@@ -626,23 +637,25 @@ export class RoomCore {
 
   /**
    * 복원 update를 만들 지금 상태 C를 돌려주고, 적용할 때까지(최대 ROOM_RESTORE_HOLD_MS) 들어오는 update를 큐에 보관한다.
-   * 준비 기록이 없으면(repair) C가 기준이다.
+   * 기준은 남아 있는 복원 기록(repair는 중단된 action의 기록을 이어받는다), 없으면 C다.
    */
   restoreHold(id: string): RestoreHoldResult {
     const { doc } = this.load();
     if (this.hold && this.hold.id !== id) return { ok: false, reason: "busy" };
     if (this.hold) clearTimeout(this.hold.timer);
     const queue = this.hold?.queue ?? [];
+    this.holdSeq += 1;
     const hold: RestoreHold = {
       id,
+      token: `${this.now()}-${this.holdSeq}`,
       queue,
       timer: setTimeout(() => {
         if (this.hold === hold) this.releaseHold();
       }, ROOM_RESTORE_HOLD_MS),
     };
     this.hold = hold;
-    const base = this.intent?.id === id ? this.intent.base : null;
-    return { ok: true, state: Y.encodeStateAsUpdate(doc), base, lifecycle: this.epoch, seeded: this.isSeeded() };
+    const base = this.intent ? this.intent.base : null;
+    return { ok: true, state: Y.encodeStateAsUpdate(doc), base, lifecycle: this.epoch, seeded: this.isSeeded(), token: hold.token };
   }
 
   /**
@@ -650,23 +663,28 @@ export class RoomCore {
    * 모든 소켓에 `restored`를 알린 뒤 update·lifecycle·기록 삭제를 한 transaction으로 저장·전달하고 큐를 배출한다.
    * target이 같거나 작으면(이미 적용) 적용하지 않고 성공으로 끝낸다.
    */
-  restoreApply(id: string, target: number, update: Uint8Array): RestoreApplyResult {
+  restoreApply(id: string, target: number, update: Uint8Array, token?: string): RestoreApplyResult {
     const { doc } = this.load();
-    if (!this.hold || this.hold.id !== id) return { ok: false, reason: "expired" };
+    if (!this.hold || this.hold.id !== id || (token !== undefined && token !== this.hold.token)) return { ok: false, reason: "expired" };
     if (!Number.isSafeInteger(target) || target <= this.epoch) {
-      if (this.intent?.id === id) this.setIntent(null);
+      this.setIntent(null);
       this.releaseHold();
       return { ok: true, applied: false, lifecycle: this.epoch };
     }
+    // 먼저 저장(update·lifecycle·기록 삭제를 한 transaction)하고, 성공한 뒤에만 메모리·소켓에 반영한다.
+    // 저장이 실패하면 메모리 doc·세대는 그대로라 재시도가 같은 조건으로 다시 적용한다.
+    const persist = () => {
+      if (update.byteLength > 0) this.storage.appendUpdate(update);
+      this.storage.setEpoch?.(target);
+      this.storage.setRestoreIntent?.(null);
+    };
+    if (this.storage.transact) this.storage.transact(persist);
+    else persist();
+    this.epoch = target;
+    this.intent = null;
     const base = encodeStateVectorBase64(doc);
     this.broadcast(encodeControl({ t: "restored", id, lifecycle: target, base }), null);
-    const apply = () => {
-      if (update.byteLength > 0) Y.applyUpdate(doc, update, null);
-      this.setEpoch(target);
-      this.setIntent(null);
-    };
-    if (this.storage.transact) this.storage.transact(apply);
-    else apply();
+    if (update.byteLength > 0) Y.applyUpdate(doc, update, RESTORE_ORIGIN);
     this.releaseHold();
     return { ok: true, applied: true, lifecycle: target };
   }

@@ -45,6 +45,7 @@ import {
   type EditorUploadedImage,
 } from "./useEditorImageUpload";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
+import { COLLAB_REBASE_EVENT } from "@/lib/collab/collab-events";
 
 // ── 타입 ──────────────────────────────────────────
 
@@ -517,6 +518,48 @@ export function FullEditor({
       setMarkdownText(markdownTextRef.current);
     }
   }, [collaboration, contentVersion, discardDeferredImages, editor, initialContent, isMarkdownMode]);
+
+  // 공동 편집 제자리 rebase(오프라인 첫 열기 재접속 등): 이 기기 전용 블록이 room 블록으로 바뀌어도
+  // 커서를 (최상위 블록 순번·블록 안 offset)으로, 화면 스크롤을 그대로 되살린다(편집기는 다시 만들지 않는다).
+  const collabDoc = collaboration?.doc;
+  useEffect(() => {
+    if (!editor || !collabDoc) return;
+    let saved: { block: number; offset: number; scrollY: number } | null = null;
+    const handle = (phase: unknown) => {
+      if (editor.isDestroyed) return;
+      const { state } = editor;
+      if (phase === "before") {
+        const from = state.selection.from;
+        let block = 0;
+        let start = 0;
+        state.doc.forEach((node, offset, index) => {
+          if (from >= offset && from <= offset + node.nodeSize) {
+            block = index;
+            start = offset;
+          }
+        });
+        saved = { block, offset: from - start, scrollY: window.scrollY };
+        return;
+      }
+      if (phase !== "after" || !saved || !editor.isFocused) {
+        saved = null;
+        return;
+      }
+      const target = saved;
+      saved = null;
+      const count = state.doc.childCount;
+      if (count === 0) return;
+      const index = Math.min(target.block, count - 1);
+      let start = 0;
+      for (let i = 0; i < index; i += 1) start += state.doc.child(i).nodeSize;
+      const size = state.doc.child(index).nodeSize;
+      const position = Math.max(1, Math.min(start + target.offset, start + size - 1, state.doc.content.size));
+      editor.commands.setTextSelection(position);
+      window.scrollTo({ top: target.scrollY });
+    };
+    collabDoc.on(COLLAB_REBASE_EVENT as never, handle as never);
+    return () => collabDoc.off(COLLAB_REBASE_EVENT as never, handle as never);
+  }, [collabDoc, editor]);
 
   // 잠기면 열린 삽입 패널을 그 렌더에서 바로 닫는다.
   if (disabled && insertPanel) setInsertPanel(null);

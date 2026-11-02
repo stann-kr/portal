@@ -20,6 +20,7 @@ import {
   subscribeCollabOwnerLock,
 } from "./local-store";
 import type { CollabMode } from "../protocol";
+import { COLLAB_REBASE_EVENT } from "../collab-events";
 
 /**
  * 문서 하나의 공동 편집 상태: Y.Doc + 서버 확인분(confirmed) + 기기 보관(IndexedDB) + room 연결 + 시드 + 저장 담당 선출.
@@ -253,6 +254,11 @@ function readLifecycleFrom(doc: Y.Doc | null, provider: CollabProvider | null): 
   return provider?.epoch ?? null;
 }
 
+
+function emitCollabRebase(doc: Y.Doc, phase: "before" | "after"): void {
+  (doc as unknown as { emit(name: string, args: unknown[]): void }).emit(COLLAB_REBASE_EVENT, [phase]);
+}
+
 /** room 상태(state vector)에 없는 최상위 블록 = 이 기기에서만 만든 블록(서버와 맞추기 전 시드·계보가 다른 옛 블록). */
 function deleteLocalOnlyBlocks(fragment: Y.XmlFragment, roomSv: Map<number, number>): void {
   const children = fragment.toArray();
@@ -431,6 +437,8 @@ export function useCollabDocument(options: CollabDocumentOptions): CollabDocumen
                 }
               }, "collab-rebase");
             }
+            // 제거 선택의 기준은 되살린 바로 그 순간의 문서다(ack를 기다리는 동안 들어온 다른 입력은 제거 대상이 아니다).
+            const keptNow = job.kind === "restore" ? { doc: readPmDoc(doc), fields: readContentFields(doc) } : null;
             // room에 저장(ack)된 뒤에야 작업을 끝내고 잠금을 푼다(다음 탭이 이 결과를 보고 같은 변경을 다시 넣지 않게).
             if (!(await (provider?.awaitAcked() ?? Promise.resolve(false)))) {
               retryLater = true;
@@ -443,8 +451,8 @@ export function useCollabDocument(options: CollabDocumentOptions): CollabDocumen
               );
             jobRef.current = jobRef.current.filter((pending) => pending !== job);
             if (!lostField) removeStorageItem(job.recoveryKey);
-            if (job.kind === "restore" && job.restored) {
-              offerChoice = { kept: { doc: readPmDoc(doc), fields: readContentFields(doc) }, restored: job.restored, undo: null };
+            if (job.kind === "restore" && job.restored && keptNow) {
+              offerChoice = { kept: keptNow, restored: job.restored, undo: null };
               continue;
             }
             const next: CollabRebaseNotice = lostField ? "kept" : merged.changed ? (merged.conflicts > 0 ? "overlapped" : "applied") : null;
@@ -559,6 +567,8 @@ export function useCollabDocument(options: CollabDocumentOptions): CollabDocumen
         const merged = mergeCollabDocuments({ base, mine, theirs, baseFields, mineFields, theirsFields });
         const schema = getSchema(optionsRef.current.extensions());
         const node = schema.nodeFromJSON(merged.doc);
+        // 이 기기 전용 블록을 지우면 그 안의 커서 상대 위치가 사라진다. 편집기가 (블록 순번·offset)과 스크롤을 기억했다가 되살린다.
+        emitCollabRebase(doc, "before");
         doc.transact(() => {
           deleteLocalOnlyBlocks(doc.getXmlFragment(COLLAB_FRAGMENT), roomSv);
           Y.applyUpdate(doc, roomState);
@@ -571,6 +581,7 @@ export function useCollabDocument(options: CollabDocumentOptions): CollabDocumen
           const roomLifecycle = roomDoc.getMap(COLLAB_META).get(COLLAB_META_LIFECYCLE);
           if (typeof roomLifecycle === "number") meta.set(COLLAB_META_LIFECYCLE, roomLifecycle);
         }, "collab-rebase");
+        emitCollabRebase(doc, "after");
         confirmed.transact(() => {
           deleteLocalOnlyBlocks(confirmed.getXmlFragment(COLLAB_FRAGMENT), roomSv);
           Y.applyUpdate(confirmed, roomState);
@@ -735,7 +746,10 @@ export function useCollabDocument(options: CollabDocumentOptions): CollabDocumen
         provider.on("mode", (mode) => {
           if (mode === "read") {
             // 읽기로 바뀐 순간 보내지 못한 입력은 room에 들어갈 수 없다. 보관함 사본으로 남긴다.
-            if (provider?.hasUnsentChanges()) saveCollabRecoveryCopy(owner, storageKey, doc, optionsRef.current.extensions, provider.identity?.userId ?? null);
+            if (provider?.hasUnsentChanges() && saveCollabRecoveryCopy(owner, storageKey, doc, optionsRef.current.extensions, provider.identity?.userId ?? null)) {
+              // 이 기기에 보이는 보내지 못한 입력은 문서에 들어가지 않는다. 보관함에 남겼음을 알린다.
+              update({ rebaseNotice: "kept" });
+            }
             abandonJobs();
             choiceRef.current?.undo?.destroy();
             choiceRef.current = null;

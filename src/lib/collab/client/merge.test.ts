@@ -250,3 +250,15 @@ test("hasLocalChanges", () => {
   assert.equal(hasLocalChanges(base, doc(p("a")), { title: "t" }, { title: "u" }), true);
   assert.equal(hasLocalChanges(base, doc(p("a")), {}, { extra: null }), true);
 });
+
+test("아주 긴 문서끼리 크게 달라도 LCS 표를 만들지 않고 병합하며 바뀌지 않은 블록과 내 변경을 지킨다", () => {
+  const paragraph = (text: string) => ({ type: "paragraph", content: [{ type: "text", text }] });
+  const base = { type: "doc" as const, content: Array.from({ length: 3000 }, (_, i) => paragraph(`b${i}`)) };
+  const theirs = { type: "doc" as const, content: [paragraph("새 머리"), ...Array.from({ length: 3000 }, (_, i) => paragraph(i % 2 === 0 ? `b${i}` : `t${i}`)), paragraph("끝")] };
+  const mine = { type: "doc" as const, content: [...base.content.slice(0, 1500), paragraph("내 입력"), ...base.content.slice(1500)] };
+  const result = mergeCollabDocuments({ base, mine, theirs });
+  const texts = (result.doc.content ?? []).map((node) => node.content?.[0]?.text);
+  assert.ok(texts.includes("내 입력"), "내 입력이 남는다");
+  assert.equal(texts.filter((text) => text === "b0").length, 1, "같은 블록을 중복하지 않는다");
+  assert.ok(texts.includes("새 머리") && texts.includes("끝"));
+});

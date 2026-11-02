@@ -758,3 +758,71 @@ test("room: 같은 세대의 늦은 칸 변경은 version 순서로만, 다른 �
   assert.equal(room.setMeta("noteDate", "2026-11-02", 0, 2), false, "늦게 온 A의 이동(v2)은 무시");
   assert.equal(room.setMeta("noteDate", "2026-11-04", 0, 4), true);
 });
+
+test("room 복원 기록: 같은 작업의 재시도는 처음 기준을 지키고, repair는 남은 기록을 이어받으며, 만료된 보관의 update는 새 보관에 적용되지 않는다", () => {
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const { storage, room, join } = createRoom();
+    const writer = join("write");
+    room.message(writer, updateMessage(seededUpdate("S")));
+    const first = room.restoreBegin("op");
+    room.message(writer, updateMessage(textUpdate("E")));
+    const retry = room.restoreBegin("op");
+    assert.ok(first.ok && retry.ok);
+    assert.deepEqual(retry.ok && retry.state, first.ok && first.state, "재시도는 처음 기준 S를 돌려준다");
+    const repaired = room.restoreHold("repair:5");
+    assert.ok(repaired.ok);
+    assert.deepEqual(repaired.ok && repaired.base, first.ok && first.state, "repair는 중단된 작업의 기준을 이어받는다");
+    room.restoreAbort("repair:5");
+    const stale = room.restoreHold("op");
+    assert.ok(stale.ok);
+    mock.timers.tick(ROOM_RESTORE_HOLD_MS + 1);
+    const fresh = room.restoreHold("op");
+    assert.ok(fresh.ok && stale.ok && fresh.token !== stale.token);
+    assert.deepEqual(room.restoreApply("op", 4, new Uint8Array(), stale.ok ? stale.token : ""), { ok: false, reason: "expired" }, "만료된 보관의 update");
+    assert.equal(storage.epoch, 0);
+    assert.equal(room.restoreApply("op", 4, new Uint8Array(), fresh.ok ? fresh.token : "").ok, true);
+    assert.equal(storage.epoch, 4);
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test("room 복원 적용: 저장 transaction이 실패하면 메모리 doc·세대·알림이 바뀌지 않아 재시도가 같은 조건으로 적용한다", () => {
+  const storage = new MemoryStorage();
+  let failNext = true;
+  const transactional = Object.assign(storage, {
+    transact<T>(task: () => T): T {
+      const snapshot = { epoch: storage.epoch, updates: [...storage.updates], intent: storage.restoreIntent };
+      try {
+        const result = task();
+        if (failNext) {
+          failNext = false;
+          throw new Error("storage failed");
+        }
+        return result;
+      } catch (error) {
+        storage.epoch = snapshot.epoch;
+        storage.updates = snapshot.updates;
+        storage.restoreIntent = snapshot.intent;
+        throw error;
+      }
+    },
+  });
+  const sockets: MemorySocket[] = [];
+  const room = new RoomCore(transactional, () => sockets);
+  const writer = new MemorySocket();
+  sockets.push(writer);
+  room.connect(writer, { userId: "u", mode: "write", key: "note:n1" });
+  room.message(writer, updateMessage(seededUpdate()));
+  const held = room.restoreHold("op");
+  assert.ok(held.ok);
+  const before = writer.kinds().length;
+  assert.throws(() => room.restoreApply("op", 2, textUpdate("restored"), held.token));
+  assert.equal(room.currentEpoch, 0, "메모리 세대는 그대로");
+  assert.equal(writer.kinds().slice(before).includes("restored"), false, "실패하면 알리지 않는다");
+  assert.equal(room.restoreApply("op", 2, textUpdate("restored"), held.token).ok, true, "재시도는 적용된다");
+  assert.equal(room.currentEpoch, 2);
+  assert.ok(writer.kinds().slice(before).includes("restored"));
+  room.destroy();
+});
