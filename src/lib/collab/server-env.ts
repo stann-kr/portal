@@ -1,16 +1,17 @@
 import type { CollabWorkerEnv } from "./worker-route";
 import {
-  advanceCollabRoom,
+  abortCollabRoomRestore,
+  applyCollabRoomRestore,
+  beginCollabRoomRestore,
   closeCollabRoom,
-  isCollabRoomPrepared,
+  holdCollabRoomRestore,
   notifyCollabRoom,
-  prepareCollabRoom,
   readCollabRoomEpoch,
-  resetCollabRoom,
   setCollabRoomMeta,
-  thawCollabRoom,
 } from "./worker-route";
-import { COLLAB_EPOCH_FIELD, type CollabPrepareMode, type CollabPrepareResult } from "./protocol";
+import { COLLAB_EPOCH_FIELD } from "./protocol";
+import { buildCollabRestoreUpdate, readCollabStateContent } from "./server-restore";
+import type { MergeFields } from "./client/merge";
 import { formatCollabDocKey } from "./doc-key";
 
 /**
@@ -53,44 +54,130 @@ async function withRetry(label: string, key: string, task: () => Promise<boolean
   return false;
 }
 
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  for (let index = 0; index < bytes.length; index += 0x8000) binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
+  return btoa(binary);
+}
+
+function base64ToBytes(value: string): Uint8Array {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
+}
+
+/** 복원 준비 결과. none: binding 없음(혼자 모드, room 없음). */
+export type CollabRestorePrepared =
+  | { kind: "none" }
+  | {
+      kind: "ready";
+      /** room 상태가 마지막 저장과 같다(밀린 입력 없음). */
+      clean: boolean;
+      seeded: boolean;
+      lifecycle: number;
+      /** 준비 시점 room 본문·칸(시드되지 않았으면 null). checkpoint·게시본 비교에 쓴다. */
+      content: { html: string; fields: MergeFields } | null;
+    }
+  | { kind: "busy" }
+  | { kind: "failed" };
+
 /**
- * 복원 전 준비(freeze → checkpoint). binding이 없으면(혼자 모드) 확인할 room이 없어 성공으로 본다.
- * 실패면 호출한 쪽이 복원하지 않고 `thawCollabRoomAfterAbort`를 부른다.
+ * 복원 준비: room이 지금 상태(S)를 복원 기준으로 영속화한다. 입력·연결은 막지 않는다.
+ * 실패하면 복원하지 않는다(호출한 쪽이 `abortCollabRestore`).
  */
-export async function prepareCollabRoomForRestore(
-  key: string,
-  id: string,
-  mode: CollabPrepareMode,
-): Promise<CollabPrepareResult> {
+export async function beginCollabRestore(key: string, id: string): Promise<CollabRestorePrepared> {
   const env = readCollabWorkerEnv();
-  if (!env) return { ok: true, checkpoint: null };
+  if (!env) return { kind: "none" };
   try {
-    return (await prepareCollabRoom(env, key, { id, mode })) ?? { ok: true, checkpoint: null };
+    const result = await beginCollabRoomRestore(env, key, id);
+    if (!result) return { kind: "none" };
+    if (!result.ok) return { kind: "busy" };
+    const state = base64ToBytes(result.state);
+    const content = result.seeded ? readCollabStateContent(state) : null;
+    return {
+      kind: "ready",
+      clean: result.clean,
+      seeded: result.seeded,
+      lifecycle: result.lifecycle,
+      content: content ? { html: content.html, fields: content.fields } : null,
+    };
   } catch {
-    return { ok: false, reason: "timeout" };
+    return { kind: "failed" };
   }
 }
 
-/** 복원 commit 직전: 준비가 아직 유효한지(안전 시간으로 풀려 새 입력을 받기 시작했으면 복원하지 않는다). */
-export async function isCollabRoomStillPrepared(key: string, id: string): Promise<boolean> {
-  const env = readCollabWorkerEnv();
-  if (!env) return true;
-  return isCollabRoomPrepared(env, key, id).catch(() => false);
-}
-
-export async function thawCollabRoomAfterAbort(key: string, id: string): Promise<void> {
+export async function abortCollabRestore(key: string, id: string): Promise<void> {
   const env = readCollabWorkerEnv();
   if (!env) return;
-  await thawCollabRoom(env, key, id).catch(() => undefined);
+  await abortCollabRoomRestore(env, key, id).catch(() => undefined);
+}
+
+const RESTORE_APPLY_ATTEMPTS = 3;
+
+/**
+ * 복원 commit 뒤: 같은 live 문서에 복원본을 한 update로 적용한다(room을 비우지 않는다).
+ * room이 잠시 보관하는 동안 지금 상태(C)를 받아 서버에서 update를 만들고, lifecycle이 더 클 때만 적용된다.
+ * 시드되지 않은 room은 지울 내용이 없으므로 lifecycle만 맞춘다(시드가 새 head로 채운다).
+ * 실패해도 D1은 이미 복원됐다: 옛 lifecycle 저장은 거부되고, 다음 토큰 발급의 repair가 다시 적용한다.
+ */
+export async function applyCollabRestore(
+  key: string,
+  id: string,
+  target: number,
+  revision: { html: string; fields: MergeFields },
+): Promise<boolean> {
+  const env = readCollabWorkerEnv();
+  if (!env) return true;
+  for (let attempt = 0; attempt < RESTORE_APPLY_ATTEMPTS; attempt += 1) {
+    try {
+      const held = await holdCollabRoomRestore(env, key, id);
+      if (!held) return true;
+      if (!held.ok) continue;
+      if (held.lifecycle >= target) {
+        await applyCollabRoomRestore(env, key, { id, target, update: "" }).catch(() => null);
+        return true;
+      }
+      if (!held.seeded) {
+        // 시드 전 room: 지울 내용이 없다. lifecycle만 맞추면 시드가 새 head로 채운다.
+        const applied = await applyCollabRoomRestore(env, key, { id, target, update: "" });
+        if (applied?.ok) return true;
+        continue;
+      }
+      const current = base64ToBytes(held.state);
+      const update = buildCollabRestoreUpdate({
+        base: held.base ? base64ToBytes(held.base) : null,
+        current,
+        html: revision.html,
+        fields: revision.fields,
+        lifecycle: target,
+      });
+      const applied = await applyCollabRoomRestore(env, key, { id, target, update: bytesToBase64(update) });
+      if (applied?.ok) return true;
+    } catch {
+      // 다시 시도한다.
+    }
+  }
+  console.error(JSON.stringify({ event: "collab_room_restore", outcome: "failed", kind: key.split(":")[0] }));
+  return false;
 }
 
 /**
- * 복원 commit 뒤 room을 그 revision(lifecycle 표지)으로 넘긴다. 실패해도 다음 연결·renew의 토큰 세대가 room을 수렴시킨다.
+ * room이 D1보다 뒤처졌으면(복원 commit 뒤 적용 전에 action이 끝남) 같은 복원을 다시 적용한다.
+ * 토큰 발급 전에 부른다(읽기 사용자의 요청도 room을 수렴시킨다). 기준은 room에 남은 복원 기록, 없으면 지금 상태.
  */
-export async function advanceCollabRoomAfterRestore(key: string, target: number): Promise<void> {
+export async function repairCollabRoomIfBehind(
+  key: string,
+  lifecycle: number,
+  loadRevision: () => Promise<{ html: string; fields: MergeFields } | null>,
+): Promise<void> {
   const env = readCollabWorkerEnv();
-  if (!env) return;
-  await withRetry("collab_room_advance", key, () => advanceCollabRoom(env, key, target));
+  if (!env || lifecycle <= 0) return;
+  const current = await readCollabRoomEpoch(env, key).catch(() => null);
+  if (current === null || current >= lifecycle) return;
+  const revision = await loadRevision().catch(() => null);
+  if (!revision) return;
+  await applyCollabRestore(key, `repair:${lifecycle}`, lifecycle, revision);
 }
 
 /** 휴지통 이동(keep: 상태 보존)·영구 삭제(keep 아님) 뒤 열린 연결을 닫는다. */
@@ -124,24 +211,6 @@ export function notifyCollabTopic(topic: "qna" | "student-notes", id: string): v
     return;
   }
   runAfterResponse(notifyCollabRoom(env, key));
-}
-
-/**
- * 복원·휴지통 이동·영구 삭제가 D1에 반영된 뒤 room을 비운다. 열린 편집기는 reset을 받고 새 head로 다시 시작한다.
- * 권한 확인은 앞선 원자 쓰기가 끝냈으므로 성공한 경우에만 부른다. 실패하면 한 번 더 시도하고 log만 남긴다
- * (D1 변경은 이미 끝났다. 남은 room 내용이 다시 저장되더라도 revision 이력에서 복원할 수 있다).
- */
-export async function resetCollabRoomAfterMutation(key: string): Promise<void> {
-  const env = readCollabWorkerEnv();
-  if (!env) return;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      if (await resetCollabRoom(env, key)) return;
-    } catch {
-      // 다시 시도한다.
-    }
-  }
-  console.error(JSON.stringify({ event: "collab_room_reset", outcome: "failed", kind: key.split(":")[0] }));
 }
 
 /**

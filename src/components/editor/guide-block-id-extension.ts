@@ -1,4 +1,4 @@
-import { Extension } from "@tiptap/react";
+import { Extension } from "@tiptap/core";
 
 /** 가이드 질문 위치가 가리키는 블록 node. 서버 `ensureGuideBlockIds`와 같은 범위다. */
 export const GUIDE_BLOCK_ID_NODE_TYPES = [

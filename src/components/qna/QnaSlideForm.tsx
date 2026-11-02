@@ -226,13 +226,12 @@ function QnaSlideFormContent({
         <span className="text-body font-medium text-secondary-foreground md:text-ui">
           내용 <span className="sr-only">필수</span>
         </span>
-        {loaded && draft.collaboration ? (
+        {draft.ready && draft.collaboration ? (
           <FullEditor
-            key={draft.collab.generation}
             collaboration={draft.collaboration}
             onUploadingChange={setIsEditorUploading}
             placeholder="질문 내용을 자세히 작성하세요..."
-            disabled={isFormBusy}
+            disabled={!loaded || isFormBusy}
             minHeight="12.5rem"
             ariaLabel="Q&A 질문 내용"
             toolbar="compact"

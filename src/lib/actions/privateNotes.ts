@@ -6,17 +6,17 @@
 
 import { formatCollabDocKey } from "@/lib/collab/doc-key";
 import {
-  advanceCollabRoomAfterRestore,
+  abortCollabRestore,
+  applyCollabRestore,
+  beginCollabRestore,
   closeCollabRoomAfterMutation,
   notifyCollabTopic,
   parseCollabSaveEpoch,
-  isCollabRoomStillPrepared,
-  prepareCollabRoomForRestore,
   setCollabRoomMetaAfterMutation,
   STALE_COLLAB_SAVE_MESSAGE,
-  thawCollabRoomAfterAbort,
 } from "@/lib/collab/server-env";
-import type { CollabPrepareResult } from "@/lib/collab/protocol";
+import { canonicalServerHtml } from "@/lib/collab/server-restore";
+import { noteRoomFields, readNoteRestoreTarget } from "@/lib/collab/restore-targets";
 import { revalidatePath } from "next/cache";
 import { and, desc, eq, isNotNull, isNull } from "drizzle-orm";
 import { createDb, createDbContext } from "@/db/client";
@@ -24,6 +24,7 @@ import { privateNoteRevisions, privateNotes, profiles } from "@/db/schema";
 import { requireAuth, requireStudentOwnerOrAdmin } from "@/lib/auth-guard";
 import {
   CREATION_OPERATION_FIELD,
+  createCreationOperationId,
   deriveCreationResourceId,
   resolveCreationOperationId,
 } from "@/lib/creation-operation";
@@ -726,18 +727,6 @@ async function runLifecycleAction(
   };
 }
 
-/** 복원 준비 실패 안내(이때 복원하지 않았고 입력은 실시간 문서에 그대로 있다). */
-function restoreBlockedMessage(result: Extract<CollabPrepareResult, { ok: false }>): string {
-  switch (result.reason) {
-    case "busy":
-      return "다른 화면에서 이미 되돌리는 중입니다. 잠시 뒤 다시 시도해 주세요.";
-    case "unsaved":
-      return "아직 저장되지 않은 실시간 내용이 있어 되돌리지 않았습니다. 노트를 열어 저장된 뒤 다시 시도해 주세요.";
-    default:
-      return "다른 화면의 입력을 저장했는지 확인하지 못해 되돌리지 않았습니다. 잠시 뒤 다시 시도해 주세요.";
-  }
-}
-
 export async function trashPrivateNote(
   noteId: string,
   operationId: string,
@@ -781,29 +770,39 @@ export async function restorePrivateNoteRevision(
   const noteBefore = await getPrivateNoteForMutation(noteId);
   const actor = { id: session.user.id!, isAdmin: session.user.role === "admin" };
   const roomKey = formatCollabDocKey({ kind: "note", id: noteId });
-  // 되돌리기 전에 열린 편집 화면을 멈추고, 아직 저장되지 않은 입력을 revision으로 남긴다(다른 기기 입력이 사라지지 않게).
-  // 쓸 수 있는 사람의 요청만 준비한다(권한 없는 요청이 편집을 멈추지 못하게).
+  // 되돌리기 전에 열린 실시간 문서의 지금 상태를 복원 기준으로 남기고, 저장되지 않은 내용은 revision으로 남긴다
+  // (다른 기기의 입력이 이력에서 사라지지 않게). 편집은 멈추지 않는다: 준비 뒤 입력은 복원 뒤에도 문서에 남는다.
+  // 쓸 수 있는 사람의 요청만 준비한다(권한 없는 요청이 다른 복원을 막지 못하게).
   const mayRestore = Boolean(noteBefore && !noteBefore.deletedAt && (actor.isAdmin || noteBefore.authorId === actor.id));
   let checkpointBase = baseRevision;
-  if (mayRestore) {
-    const prepared = await prepareCollabRoomForRestore(roomKey, operationId, "checkpoint");
-    if (!prepared.ok) {
-      await thawCollabRoomAfterAbort(roomKey, operationId);
-      return { error: restoreBlockedMessage(prepared) };
+  let checkpointRevision: number | undefined;
+  if (mayRestore && noteBefore) {
+    const prepared = await beginCollabRestore(roomKey, operationId);
+    if (prepared.kind === "busy" || prepared.kind === "failed") {
+      await abortCollabRestore(roomKey, operationId);
+      return {
+        error:
+          prepared.kind === "busy"
+            ? "다른 화면에서 이미 되돌리는 중입니다. 잠시 뒤 다시 시도해 주세요."
+            : "열린 편집 화면의 내용을 확인하지 못해 되돌리지 않았습니다. 잠시 뒤 다시 시도해 주세요.",
+      };
     }
-    if (prepared.checkpoint !== null && prepared.checkpoint > baseRevision) {
-      // checkpoint만 기준을 바꿀 수 있다. 사이에 다른 복원이 있었으면(보지 못한 변경) 되돌리지 않는다.
-      const marker = await readPrivateNoteLifecycleMarker(createDbContext(), noteId);
-      if (marker > baseRevision) {
-        await thawCollabRoomAfterAbort(roomKey, operationId);
-        return { error: mutationErrorMessage("VERSION_CONFLICT"), conflictKind: "VERSION_CONFLICT" };
+    if (prepared.kind === "ready" && !prepared.clean && prepared.content) {
+      const checkpoint = await saveRestoreCheckpoint(noteId, actor, noteBefore, prepared.content, prepared.lifecycle);
+      if (!checkpoint.ok) {
+        await abortCollabRestore(roomKey, operationId);
+        return { error: checkpoint.error };
       }
-      checkpointBase = prepared.checkpoint;
-    }
-    // 준비가 안전 시간으로 풀렸으면(그 뒤 새 입력을 받았을 수 있다) 복원하지 않는다.
-    if (!(await isCollabRoomStillPrepared(roomKey, operationId))) {
-      await thawCollabRoomAfterAbort(roomKey, operationId);
-      return { error: restoreBlockedMessage({ ok: false, reason: "timeout" }) };
+      if (typeof checkpoint.revision === "number" && checkpoint.revision > baseRevision) {
+        // checkpoint만 기준을 바꿀 수 있다. 사이에 다른 복원이 있었으면(보지 못한 변경) 되돌리지 않는다.
+        const marker = await readPrivateNoteLifecycleMarker(createDbContext(), noteId);
+        if (marker > baseRevision) {
+          await abortCollabRestore(roomKey, operationId);
+          return { error: mutationErrorMessage("VERSION_CONFLICT"), conflictKind: "VERSION_CONFLICT" };
+        }
+        checkpointBase = checkpoint.revision;
+        checkpointRevision = checkpoint.revision;
+      }
     }
   }
   const result = await restorePrivateNoteRevisionAtomically(createDbContext(), {
@@ -815,9 +814,12 @@ export async function restorePrivateNoteRevision(
     now: new Date(),
   });
   if (!result.ok) {
-    if (mayRestore) await thawCollabRoomAfterAbort(roomKey, operationId);
+    if (mayRestore) await abortCollabRestore(roomKey, operationId);
     return {
-      error: mutationErrorMessage(result.reason),
+      error:
+        typeof checkpointRevision === "number"
+          ? `${mutationErrorMessage(result.reason)} 되돌리기 전 열린 화면의 내용은 버전 ${checkpointRevision}로 저장해 두었습니다.`
+          : mutationErrorMessage(result.reason),
       conflictKind: result.reason,
       currentRevision: result.currentRevision,
       resourceState:
@@ -829,9 +831,11 @@ export async function restorePrivateNoteRevision(
     };
   }
   // 이 복원 작업의 revision이 lifecycle 표지다(재전송이면 그 뒤 일반 저장으로 head가 앞서 있을 수 있어 head가 아니라 작업 결과를 쓴다).
+  // 열린 편집기에는 복원본을 같은 live 문서의 한 편집으로 적용한다(다시 시작하지 않는다).
   const restoredRevision = result.operationResultRevision ?? result.currentRevision;
-  if (typeof restoredRevision === "number") await advanceCollabRoomAfterRestore(roomKey, restoredRevision);
-  else if (mayRestore) await thawCollabRoomAfterAbort(roomKey, operationId);
+  const target = typeof restoredRevision === "number" ? await readNoteRestoreTarget(noteId) : null;
+  if (typeof restoredRevision === "number" && target) await applyCollabRestore(roomKey, operationId, restoredRevision, target);
+  else if (mayRestore) await abortCollabRestore(roomKey, operationId);
   if (noteBefore) {
     revalidatePrivateNotePaths(noteBefore.studentId, noteId);
     notifyCollabTopic("student-notes", noteBefore.studentId);
@@ -843,4 +847,47 @@ export async function restorePrivateNoteRevision(
     currentRevision: result.currentRevision,
     operationResultRevision: result.operationResultRevision,
   };
+}
+
+/**
+ * 복원 직전 room의 저장되지 않은 내용을 일반 저장 경로(sanitize·CAS·lifecycle 조건)로 revision에 남긴다.
+ * 이미 head와 같으면 저장하지 않는다. 저장할 수 없으면(빈 제목·본문, 충돌) 복원을 멈춘다: 옛 내용을 최신 version으로
+ * 다시 저장하면 그 사이 다른 저장을 되돌리게 된다.
+ */
+async function saveRestoreCheckpoint(
+  noteId: string,
+  actor: { id: string; isAdmin: boolean },
+  head: { title: string; contentHtml: string; noteDate: Date | null; version: number },
+  content: { html: string; fields: Record<string, string | number | null> },
+  lifecycle: number,
+): Promise<{ ok: true; revision?: number } | { ok: false; error: string }> {
+  const fields = noteRoomFields(head);
+  const title = typeof content.fields.title === "string" ? content.fields.title : "";
+  const noteDate = typeof content.fields.noteDate === "string" ? content.fields.noteDate : "";
+  if (title.trim() === fields.title && noteDate === fields.noteDate && content.html === canonicalServerHtml(head.contentHtml)) {
+    return { ok: true };
+  }
+  const formData = new FormData();
+  formData.set("title", title);
+  formData.set("contentHtml", content.html);
+  formData.set("noteDate", noteDate);
+  const payload = validateNotePayload(formData);
+  if (!payload.ok) {
+    return { ok: false, error: "열린 화면에 제목이나 내용이 비어 있는 작성 중 내용이 있어 되돌리지 않았습니다. 내용을 채우거나 정리한 뒤 다시 시도해 주세요." };
+  }
+  const result = await updatePrivateNoteAtomically(createDbContext(), {
+    actor,
+    noteId,
+    operationId: createCreationOperationId(),
+    baseRevision: head.version,
+    title: payload.title,
+    contentHtml: payload.contentHtml,
+    noteDate: payload.noteDate,
+    collabEpoch: lifecycle,
+    now: new Date(),
+  });
+  if (!result.ok) {
+    return { ok: false, error: "되돌리기 전에 열린 화면의 내용을 저장하지 못했습니다(그 사이 다른 저장이 있었을 수 있습니다). 잠시 뒤 다시 시도해 주세요." };
+  }
+  return { ok: true, revision: result.currentRevision ?? result.operationResultRevision };
 }

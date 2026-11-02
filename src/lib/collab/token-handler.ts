@@ -18,6 +18,11 @@ export type CollabTokenHandlerDeps = {
   loaders: CollabDocumentLoaders;
   getSecret(): string | undefined;
   isCollabAvailable(): boolean;
+  /**
+   * 권한 확인 뒤, room이 D1 lifecycle보다 뒤처졌으면(복원 commit 뒤 room 적용 전에 action이 끝남) 같은 문서에 복원을 다시 적용한다.
+   * 실패해도 토큰은 준다(옛 lifecycle 저장은 거부되고 다음 발급이 다시 시도한다).
+   */
+  repairRoom?(key: string, lifecycle: number): Promise<void>;
 };
 
 const MAX_BODY_BYTES = 4096;
@@ -44,9 +49,10 @@ export function createCollabTokenHandler(deps: CollabTokenHandlerDeps) {
     const { key, createNote } = body as { key?: unknown; createNote?: unknown };
     const result = await authorizeCollabRequest(actor, { key, createNote }, deps.loaders);
     if (!result.ok) {
-      return result.reason === "BAD_REQUEST"
-        ? json({ error: "BAD_REQUEST" }, 400)
-        : json({ error: "NOT_FOUND_OR_FORBIDDEN" }, 403);
+      if (result.reason === "BAD_REQUEST") return json({ error: "BAD_REQUEST" }, 400);
+      // 휴지통: 열린 편집기는 그 자리에서 기다렸다가 되살리면 같은 문서로 다시 붙는다.
+      if (result.reason === "TRASHED") return json({ error: "TRASHED" }, 410);
+      return json({ error: "NOT_FOUND_OR_FORBIDDEN" }, 403);
     }
     const secret = deps.getSecret();
     if (!deps.isCollabAvailable() || !secret) {
@@ -58,6 +64,9 @@ export function createCollabTokenHandler(deps: CollabTokenHandlerDeps) {
         displayName: actor.displayName,
       };
       return json(response, 200);
+    }
+    if (typeof result.lifecycle === "number" && result.lifecycle > 0 && deps.repairRoom) {
+      await deps.repairRoom(result.key, result.lifecycle).catch(() => undefined);
     }
     const token = await signCollabToken(
       { key: result.key, userId: actor.id, mode: result.mode, lifecycle: result.lifecycle },

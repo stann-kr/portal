@@ -4,7 +4,9 @@ import { guidePages, posts, privateNotes, qnaThreads } from "@/db/schema";
 import { privateNoteLifecycleSql } from "@/lib/private-note-atomic";
 import { postLifecycleSql } from "@/lib/post-atomic";
 import { findStudentTarget, getActiveAuthSession } from "@/lib/auth-guard";
-import { readCollabWorkerEnv } from "@/lib/collab/server-env";
+import { readCollabWorkerEnv, repairCollabRoomIfBehind } from "@/lib/collab/server-env";
+import { parseCollabDocKey } from "@/lib/collab/doc-key";
+import { readNoteRestoreTarget, readPostRestoreTarget } from "@/lib/collab/restore-targets";
 import { createCollabTokenHandler } from "@/lib/collab/token-handler";
 
 export const dynamic = "force-dynamic";
@@ -59,6 +61,12 @@ export const POST = createCollabTokenHandler({
     async isActiveStudent(id) {
       return (await findStudentTarget(id)) !== null;
     },
+  },
+  async repairRoom(key, lifecycle) {
+    const parsed = parseCollabDocKey(key);
+    if (!parsed || (parsed.kind !== "note" && parsed.kind !== "post")) return;
+    const id = parsed.id;
+    await repairCollabRoomIfBehind(key, lifecycle, () => (parsed.kind === "note" ? readNoteRestoreTarget(id) : readPostRestoreTarget(id)));
   },
   getSecret: () => process.env.AUTH_SECRET,
   isCollabAvailable: () => readCollabWorkerEnv() !== null,

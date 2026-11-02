@@ -28,6 +28,13 @@ type MergeInput = {
   baseFields?: MergeFields;
   mineFields?: MergeFields;
   theirsFields?: MergeFields;
+  /**
+   * 양쪽이 같은 블록을 겹치게 바꿨을 때: both(기본)는 theirs 뒤에 mine을 이어 넣어 둘 다 남기고,
+   * theirs는 theirs만 남긴다(내 입력 제거처럼 중복 블록을 만들면 안 되는 경우).
+   */
+  blockConflict?: "both" | "theirs";
+  /** 같은 칸을 양쪽이 다르게 바꿨을 때 남길 쪽(기본 theirs). */
+  fieldConflict?: "theirs" | "mine";
 };
 
 /* ---------- 정규 JSON ---------- */
@@ -311,7 +318,12 @@ function charMergeBlock(base: PmNode, mine: PmNode, theirs: PmNode): PmNode | nu
 
 /* ---------- 블록 병합 ---------- */
 
-function mergeBlocks(base: PmNode[], mine: PmNode[], theirs: PmNode[]): { blocks: PmNode[]; conflicts: number } {
+function mergeBlocks(
+  base: PmNode[],
+  mine: PmNode[],
+  theirs: PmNode[],
+  onConflict: "both" | "theirs" = "both",
+): { blocks: PmNode[]; conflicts: number } {
   const baseKeys = base.map(canonical);
   const mineKeys = mine.map(canonical);
   const theirsKeys = theirs.map(canonical);
@@ -364,7 +376,12 @@ function mergeBlocks(base: PmNode[], mine: PmNode[], theirs: PmNode[]): { blocks
       continue;
     }
     conflicts += 1;
-    out.push(...theirsSeg, ...mineSeg);
+    out.push(...theirsSeg);
+    // mine 쪽에서 실제로 바뀐 블록만 이어 넣는다(theirs가 지운, mine이 손대지 않은 블록을 되살리지 않는다).
+    if (onConflict === "both") {
+      const baseSegKeys = new Set(baseKeys.slice(group.bs, group.be));
+      out.push(...mineSeg.filter((block, index) => !baseSegKeys.has(mineSegKeys[index]) && !theirsSegKeys.includes(mineSegKeys[index])));
+    }
   }
   while (b < base.length) out.push(theirs[theirsMap[b++]]);
   return { blocks: out, conflicts };
@@ -382,6 +399,7 @@ function mergeFields(
   base: MergeFields | undefined,
   mine: MergeFields | undefined,
   theirs: MergeFields | undefined,
+  onConflict: "theirs" | "mine" = "theirs",
 ): { fields: MergeFields; conflicts: number; changed: boolean } {
   const fields: MergeFields = { ...(theirs ?? {}) };
   let conflicts = 0;
@@ -397,6 +415,11 @@ function mergeFields(
       changed = true;
     } else if (m !== t) {
       conflicts += 1;
+      if (onConflict === "mine") {
+        if (m === undefined) delete fields[key];
+        else fields[key] = m;
+        changed = true;
+      }
     }
   }
   return { fields, conflicts, changed };
@@ -410,8 +433,9 @@ export function mergeCollabDocuments(input: MergeInput): MergeResult {
     blocksOf(input.base),
     blocksOf(input.mine),
     theirsBlocks,
+    input.blockConflict,
   );
-  const fieldResult = mergeFields(input.baseFields, input.mineFields, input.theirsFields);
+  const fieldResult = mergeFields(input.baseFields, input.mineFields, input.theirsFields, input.fieldConflict);
   const docChanged = !sameSequence(blocks.map(canonical), theirsBlocks.map(canonical));
   const doc: PmDoc = docChanged
     ? { ...input.theirs, type: "doc", content: blocks }

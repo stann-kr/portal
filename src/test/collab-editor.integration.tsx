@@ -112,6 +112,7 @@ let buildCollabSeedUpdate: typeof import("@/lib/collab/client/seed").buildCollab
 let collabSeedClientId: typeof import("@/lib/collab/client/seed").collabSeedClientId;
 let collabDocHtml: typeof import("@/lib/collab/client/doc-html").collabDocHtml;
 let createFullEditorExtensions: typeof import("@/components/editor/FullEditor").createFullEditorExtensions;
+let buildCollabRestoreUpdate: typeof import("@/lib/collab/server-restore").buildCollabRestoreUpdate;
 
 before(async () => {
   ({ NoteEditorForm } = await import("@/components/notes/NoteEditorForm"));
@@ -120,6 +121,7 @@ before(async () => {
   ({ buildCollabSeedUpdate, collabSeedClientId } = await import("@/lib/collab/client/seed"));
   ({ collabDocHtml } = await import("@/lib/collab/client/doc-html"));
   ({ createFullEditorExtensions } = await import("@/components/editor/FullEditor"));
+  ({ buildCollabRestoreUpdate } = await import("@/lib/collab/server-restore"));
 });
 
 after(() => {
@@ -148,6 +150,12 @@ class MemoryStorage implements RoomStorage {
     this.epoch = nextEpoch;
     this.snapshot = null;
     this.updates = [];
+  }
+  setEpoch(epoch: number) {
+    this.epoch = epoch;
+  }
+  setRestoreIntent() {
+    // 메모리 room은 기록을 RoomCore 안에만 둔다.
   }
   /** 저장된 상태를 Y.Doc으로 복원한다(서버가 받은 내용 확인용). */
   toDoc(): Y.Doc {
@@ -291,11 +299,14 @@ const tokenRequests: unknown[] = [];
 let tokenOffline = false;
 /** true면 토큰 요청이 401(로그아웃)으로 끝난다. */
 let tokenDenied = false;
+/** true면 토큰 요청이 410(휴지통)으로 끝난다. */
+let tokenTrashed = false;
 
 function fakeFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   if (!String(input).endsWith("/api/collab/token")) return Promise.reject(new Error(`unexpected fetch ${String(input)}`));
   if (tokenOffline) return Promise.reject(new TypeError("Failed to fetch"));
   if (tokenDenied) return Promise.resolve(Response.json({ error: "UNAUTHORIZED" }, { status: 401 }));
+  if (tokenTrashed) return Promise.resolve(Response.json({ error: "TRASHED" }, { status: 410 }));
   const body = JSON.parse(String(init?.body ?? "{}")) as { key?: string; createNote?: { operationId: string; studentId: string } };
   tokenRequests.push(body);
   const key =
@@ -367,6 +378,7 @@ function setupBrowser(context: TestContext): Env {
   tokenRequests.length = 0;
   tokenOffline = false;
   tokenDenied = false;
+  tokenTrashed = false;
   seedFailuresLeft = 0;
   refreshCount = 0;
   seedHeads.clear();
@@ -757,86 +769,198 @@ function recoveredKeys(env: Env): string[] {
 const retryButtonOf = (device: Device) =>
   [...device.container.querySelectorAll("button")].find((button) => button.textContent === "다시 시도") as HTMLButtonElement | undefined;
 
-test("복원 뒤 최신 head 조회가 실패하면 옛 내용으로 시드하지 않고 재시도 안내·버튼을 보이며, room 세대와 같은 head로만 다시 시작한다", { concurrency: false }, async (context) => {
-  const env = setupBrowser(context);
-  const note = { id: "note-1", title: "복원 전 제목", contentHtml: "<p>복원 전 본문</p>", noteDate: null, version: 4 };
-  seedHeads.set(note.id, note);
-  const okAction = async (_previous: unknown, formData: FormData) => ({
-    success: true,
-    note: { id: "note-1", title: String(formData.get("title")), contentHtml: String(formData.get("contentHtml")), noteDate: null, version: 4 },
+/**
+ * 서버 복원 action이 하는 일(준비 → D1 commit → 보관 → 서버가 만든 한 update 적용)을 메모리 room에 그대로 한다.
+ * `beforeApply`는 room이 보관하는 동안(서버가 복원 update를 만드는 사이) 일어나는 일이다. 그 입력은 room이 아직 받지 않았다.
+ */
+async function restoreRoom(
+  key: string,
+  target: number,
+  revision: { html: string; fields: Record<string, string> },
+  beforeApply?: () => Promise<void>,
+): Promise<void> {
+  const core = roomFor(key).core;
+  const id = `restore-${target}`;
+  const begun = core.restoreBegin(id);
+  assert.equal(begun.ok, true, "복원 준비");
+  const held = core.restoreHold(id);
+  assert.ok(held.ok, "복원 보관");
+  const update = buildCollabRestoreUpdate({ base: held.base, current: held.state, html: revision.html, fields: revision.fields, lifecycle: target });
+  if (beforeApply) {
+    await beforeApply();
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 50)); });
+  }
+  await act(async () => {
+    assert.deepEqual(core.restoreApply(id, target, update), { ok: true, applied: true, lifecycle: target });
   });
-  const device = await env.mount(<NoteEditorForm actorId="student-1" note={note} action={okAction} />);
-  await waitReady(device);
-  await waitUntil(() => formOf(device).dataset.collabStatus === "connected", 3000, "연결돼야 합니다.");
+}
 
-  // 다른 화면이 revision 2를 복원했다(lifecycle 표지 5). head 조회는 계속 실패한다.
+const choiceOf = (device: Device) => device.container.querySelector<HTMLElement>("[data-restore-choice]");
+const buttonOf = (device: Device, label: string) =>
+  [...device.container.querySelectorAll("button")].find((button) => button.textContent === label) as HTMLButtonElement | undefined;
+
+test("처음 열 때 최신 head 조회가 실패하면 화면의 옛 내용으로 시드하지 않고 재시도 안내·버튼을 보이며, 조회되면 그 head로 연다", { concurrency: false }, async (context) => {
+  const env = setupBrowser(context);
+  const note = { id: "note-1", title: "화면 제목", contentHtml: "<p>화면 본문</p>", noteDate: null, version: 1 };
   seedFailuresLeft = 1000;
-  await act(async () => { rooms.get("note:note-1")!.core.advance(5); });
-  await waitUntil(() => Boolean(retryButtonOf(device)), 8000, `조회 실패 안내와 다시 시도 버튼이 보여야 합니다: ${device.container.textContent} ${formOf(device).dataset.collabStatus}`);
-  assert.match(device.container.textContent ?? "", /최신 내용을 불러오지 못했습니다/u, device.container.textContent ?? "");
-  assert.equal(bodyOf(device), null, "편집기를 옛 내용으로 열지 않는다");
+  const device = await env.mount(<NoteEditorForm actorId="student-1" note={note} action={async () => ({})} />);
+  await waitUntil(() => Boolean(retryButtonOf(device)), 8000, `조회 실패 안내: ${device.container.textContent}`);
+  assert.match(device.container.textContent ?? "", /최신 내용을 불러오지 못했습니다/u);
   assert.equal(fragmentText(rooms.get("note:note-1")!.storage.toDoc()), "", "room에 옛 내용을 시드하지 않는다");
-
-  // 조회가 되살아났지만 head가 아직 옛 세대(lifecycle 4)면 시드하지 않는다.
   seedFailuresLeft = 0;
-  seedHeads.set(note.id, { ...note, title: "복원 전 제목", lifecycle: 4 });
-  await act(async () => retryButtonOf(device)!.click());
-  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 200)); });
-  assert.equal(bodyOf(device), null, "room 세대와 다른 head로는 시드하지 않는다");
-
-  seedHeads.set(note.id, { title: "복원된 제목", contentHtml: "<p>복원된 본문</p>", noteDate: null, version: 6, lifecycle: 5 });
+  seedHeads.set(note.id, { title: "서버 제목", contentHtml: "<p>서버 본문</p>", noteDate: null, version: 3, lifecycle: 0 });
   await act(async () => retryButtonOf(device)?.click());
-  await waitUntil(() => bodyOf(device)?.value === "복원된 본문", 8000, "복원된 head로 다시 열려야 합니다.");
-  assert.equal(titleOf(device).value, "복원된 제목");
-  assert.deepEqual(recoveredKeys(env), [], "입력이 없던 기기는 복구본을 남기지 않는다");
+  await waitUntil(() => bodyOf(device)?.value === "서버 본문", 8000, "최신 head로 열려야 합니다.");
+  assert.equal(titleOf(device).value, "서버 제목");
 });
 
-test("복원 준비: 다른 기기의 저장 전 입력을 checkpoint로 저장한 뒤에만 성공하고, 준비 동안 편집이 멈추며 복원 뒤에는 복구본 없이 새 head로 다시 시작한다", { concurrency: false }, async (context) => {
+test("복원은 같은 문서의 한 편집: 두 기기 모두 편집기를 다시 만들지 않고 잠기지 않은 채 복원본을 받고, 겹친 입력이 없으면 선택 안내 없이 이어서 입력한다", { concurrency: false }, async (context) => {
   const env = setupBrowser(context);
   const note = { id: "note-1", title: "원래 제목", contentHtml: "<p>원래 본문</p>", noteDate: null, version: 1 };
   seedHeads.set(note.id, note);
+  const okAction = async (_previous: unknown, formData: FormData) => ({
+    success: true,
+    note: { id: "note-1", title: String(formData.get("title")), contentHtml: String(formData.get("contentHtml")), noteDate: null, version: 2 },
+  });
+  const deviceA = await env.mount(<NoteEditorForm actorId="student-1" note={note} action={okAction} />);
+  await waitReady(deviceA);
+  const deviceB = await env.mount(<NoteEditorForm actorId="student-1" note={note} action={okAction} />);
+  await waitReady(deviceB);
+  await waitUntil(() => [deviceA, deviceB].every((device) => formOf(device).dataset.collabStatus === "connected"), 4000, "두 기기 연결");
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 100)); });
+  const mounts = editorMounts;
+  const tokens = tokenRequests.length;
+  let lockedSeen = false;
+  const watch = setInterval(() => {
+    if ([deviceA, deviceB].some((device) => titleOf(device).disabled || bodyOf(device)?.disabled || !bodyOf(device))) lockedSeen = true;
+  }, 5);
+  try {
+    await restoreRoom("note:note-1", 5, { html: "<p>복원한 본문</p>", fields: { title: "복원한 제목", noteDate: "" } });
+    await waitUntil(
+      () => [deviceA, deviceB].every((device) => bodyOf(device)?.value === "복원한 본문" && titleOf(device).value === "복원한 제목"),
+      4000,
+      `두 기기 모두 복원본: ${bodyOf(deviceA)?.value} / ${bodyOf(deviceB)?.value}`,
+    );
+  } finally {
+    clearInterval(watch);
+  }
+  assert.equal(editorMounts, mounts, "편집기를 다시 만들지 않는다(remount 0)");
+  assert.equal(lockedSeen, false, "복원 중 입력이 잠기거나 '불러오는 중'으로 바뀌지 않는다");
+  assert.equal(tokenRequests.length, tokens, "다시 연결하지 않는다");
+  assert.equal(choiceOf(deviceA), null, "겹친 입력이 없으면 선택 안내가 없다");
+  assert.equal(choiceOf(deviceB), null);
+  // 복원 뒤 바로 이어서 입력하면 다른 기기에 그대로 간다.
+  const docA = mountedDocs.find((doc) => doc === mountedDocs[0])!;
+  await act(async () => setFragmentText(docA, "복원한 본문 이어 쓰기"));
+  await waitUntil(() => bodyOf(deviceB)?.value === "복원한 본문 이어 쓰기", 3000, "복원 뒤 입력이 다른 기기에 간다");
+  assert.deepEqual(recoveredKeys(env), [], "복구본을 남기지 않는다");
+});
+
+test("복원과 겹친 이 기기 입력(room이 받기 전): 문서에 남고 비차단 선택 안내가 뜨며, 제거·되돌리기가 되고 고르지 않아도 입력이 이어진다", { concurrency: false }, async (context) => {
+  const env = setupBrowser(context);
+  const note = { id: "note-1", title: "제목", contentHtml: "<p>첫 문단</p>", noteDate: null, version: 1 };
+  seedHeads.set(note.id, note);
+  const device = await env.mount(<NoteEditorForm actorId="student-1" note={note} action={async () => ({ success: true })} />);
+  await waitReady(device);
+  await waitUntil(() => formOf(device).dataset.collabStatus === "connected", 3000, "연결");
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 100)); });
+  const mounts = editorMounts;
+  const doc = mountedDocs[0]!;
+  // room이 복원 update를 만드는 사이(보관 중) 이 기기가 입력한다: room은 아직 받지 않았다(ack 전).
+  await restoreRoom("note:note-1", 7, { html: "<p>되돌린 문단</p>", fields: { title: "제목", noteDate: "" } }, async () => {
+    await act(async () => setFragmentText(doc, "첫 문단 내 입력"));
+  });
+  await waitUntil(() => choiceOf(device)?.dataset.restoreChoice === "offer", 6000, `선택 안내가 떠야 합니다: ${device.container.textContent}`);
+  const kept = bodyOf(device)!.value;
+  assert.match(kept, /되돌린 문단/u, "복원본이 들어간다");
+  assert.match(kept, /내 입력/u, `내 입력이 문서에 남는다: ${kept}`);
+  assert.equal(titleOf(device).disabled, false, "선택을 기다리는 동안에도 입력할 수 있다(모달 아님)");
+  assert.equal(editorMounts, mounts, "remount 없음");
+  assert.equal(choiceOf(device)?.getAttribute("role"), "status");
+  await act(async () => buttonOf(device, "내 입력 제거")!.click());
+  await waitUntil(() => choiceOf(device)?.dataset.restoreChoice === "removed", 3000, "제거 상태");
+  assert.equal(bodyOf(device)!.value, "되돌린 문단", "제거하면 복원본 그대로");
+  await waitUntil(() => fragmentText(rooms.get("note:note-1")!.storage.toDoc()) === "되돌린 문단", 3000, "제거가 room에도 간다");
+  await act(async () => buttonOf(device, "되돌리기")!.click());
+  await waitUntil(() => /내 입력/u.test(bodyOf(device)!.value), 3000, "되돌리기로 내 입력이 돌아온다");
+  assert.equal(choiceOf(device)?.dataset.restoreChoice, "offer");
+  await act(async () => buttonOf(device, "내 입력 유지")!.click());
+  assert.equal(choiceOf(device), null, "유지하면 안내를 닫는다");
+  assert.equal(editorMounts, mounts);
+});
+
+test("오프라인 중 다른 기기가 복원해도 다시 연결하면 같은 편집기에서 복원본 위에 오프라인 입력이 남고 선택할 수 있다", { concurrency: false }, async (context) => {
+  const env = setupBrowser(context);
+  const note = { id: "note-1", title: "제목", contentHtml: "<p>처음</p>", noteDate: null, version: 1 };
+  seedHeads.set(note.id, note);
+  const device = await env.mount(<NoteEditorForm actorId="student-1" note={note} action={async () => ({ success: true })} />);
+  await waitReady(device);
+  await waitUntil(() => formOf(device).dataset.collabStatus === "connected", 3000, "연결");
+  const mounts = editorMounts;
+  await goOffline(env, device);
+  assert.equal(titleOf(device).disabled, false, "오프라인에서도 입력할 수 있다");
+  await act(async () => typeInto(env, titleOf(device), "오프라인 제목"));
+  await act(async () => setFragmentText(mountedDocs[0]!, "처음 오프라인 입력"));
+  await restoreRoom("note:note-1", 4, { html: "<p>복원본</p>", fields: { title: "제목", noteDate: "" } });
+  tokenOffline = false;
+  await act(async () => { env.browserWindow.dispatchEvent(new env.browserWindow.Event("online")); });
+  await waitUntil(() => choiceOf(device)?.dataset.restoreChoice === "offer", 8000, `선택 안내: ${device.container.textContent} ${bodyOf(device)?.value}`);
+  assert.match(bodyOf(device)!.value, /복원본/u);
+  assert.match(bodyOf(device)!.value, /오프라인 입력/u, "오프라인 입력이 문서에 남는다");
+  assert.equal(titleOf(device).value, "오프라인 제목", "칸 입력도 남는다");
+  assert.equal(editorMounts, mounts, "remount 없음");
+  await waitUntil(() => /오프라인 입력/u.test(fragmentText(rooms.get("note:note-1")!.storage.toDoc())), 3000, "연결 뒤 room으로 전송된다");
+});
+
+test("L1: 복원 commit 뒤 room 반영 전 저장은 옛 lifecycle이라 거부되고 다시 연결하지 않으며, 반영 뒤 새 lifecycle로 저장된다", { concurrency: false }, async (context) => {
+  const env = setupBrowser(context);
+  const note = { id: "note-1", title: "제목", contentHtml: "<p>본문</p>", noteDate: null, version: 1 };
+  seedHeads.set(note.id, { ...note, lifecycle: 0 });
+  let d1Lifecycle = 0;
   const saves: Record<string, FormDataEntryValue>[] = [];
-  let version = 1;
   const action = async (_previous: unknown, formData: FormData) => {
     const data = Object.fromEntries(formData);
     saves.push(data);
-    version += 1;
-    return { success: true, note: { id: "note-1", title: String(data.title), contentHtml: String(data.contentHtml), noteDate: null, version } };
+    if (Number(data.collabEpoch ?? 0) !== d1Lifecycle) return { error: "stale", collabStale: true, conflictKind: "COLLAB_STALE" as const };
+    return { success: true, note: { id: "note-1", title: String(data.title), contentHtml: String(data.contentHtml), noteDate: null, version: saves.length + 1 } };
   };
-  const deviceA = await env.mount(<NoteEditorForm actorId="student-1" note={note} action={action} />);
-  await waitReady(deviceA);
-  const deviceB = await env.mount(<NoteEditorForm actorId="student-1" note={note} action={action} />);
-  await waitReady(deviceB);
-  await waitUntil(
-    () => [deviceA, deviceB].every((device) => formOf(device).dataset.collabStatus === "connected") &&
-      [deviceA, deviceB].filter((device) => formOf(device).dataset.collabSaver === "true").length === 1,
-    4000,
-    "두 기기가 연결되고 저장 담당이 정해져야 합니다.",
-  );
-  const other = formOf(deviceA).dataset.collabSaver === "true" ? deviceB : deviceA;
+  const device = await env.mount(<NoteEditorForm actorId="student-1" note={note} action={action} />);
+  await waitReady(device);
+  await waitUntil(() => formOf(device).dataset.collabStatus === "connected" && formOf(device).dataset.collabSaver === "true", 3000, "연결·저장 담당");
+  const tokens = tokenRequests.length;
+  d1Lifecycle = 3; // 다른 화면의 복원 commit(room 반영 전)
+  await act(async () => typeInto(env, titleOf(device), "복원 사이 입력"));
+  await waitUntil(() => saves.some((save) => save.title === "복원 사이 입력"), 4000, "저장 시도");
+  const stale = saves.find((save) => save.title === "복원 사이 입력")!;
+  assert.equal(String(stale.collabEpoch ?? "0"), "0", "옛 스냅샷은 옛 lifecycle을 싣는다");
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 300)); });
+  assert.equal(tokenRequests.length, tokens, "거부돼도 다시 연결하지 않는다");
+  assert.notEqual(formOf(device).dataset.autosave, "error", "오류가 아니라 복원 반영 대기");
+  assert.equal(titleOf(device).disabled, false, "입력은 계속 받는다");
+  await restoreRoom("note:note-1", 3, { html: "<p>본문</p>", fields: { title: "제목", noteDate: "" } });
+  await waitUntil(() => saves.some((save) => String(save.collabEpoch) === "3"), 6000, `반영 뒤 새 lifecycle로 저장: ${JSON.stringify(saves.map((save) => save.collabEpoch))}`);
+});
 
-  // 저장 담당이 아닌 기기가 고친 직후(자동 저장 1.5초 전) 다른 화면이 복원을 준비한다.
-  await act(async () => typeInto(env, titleOf(other), "저장 전 다른 기기 입력"));
-  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 100)); });
-  const core = rooms.get("note:note-1")!.core;
-  let prepared: Awaited<ReturnType<RoomCore["prepare"]>> | null = null;
-  const pending = core.prepare("restore-1", "checkpoint").then((result) => { prepared = result; });
-  await waitUntil(() => titleOf(deviceA).disabled && titleOf(deviceB).disabled, 2000, "준비 동안 두 기기 모두 편집이 멈춰야 합니다.");
-  assert.match(deviceA.container.textContent ?? "", /되돌리는 중/u);
-  await act(async () => { await pending; });
-  assert.deepEqual(prepared, { ok: true, checkpoint: version }, `checkpoint 저장의 revision으로 성공: ${JSON.stringify(prepared)} saves=${saves.length}`);
-  assert.equal(saves.at(-1)?.title, "저장 전 다른 기기 입력", "다른 기기의 저장 전 입력이 서버에 반영됐다");
-
-  // 복원 commit(lifecycle = 새 revision) → room advance → 두 기기 모두 복원본으로 다시 시작.
-  const restoredRevision = version + 1;
-  seedHeads.set(note.id, { title: "복원된 제목", contentHtml: "<p>복원된 본문</p>", noteDate: null, version: restoredRevision, lifecycle: restoredRevision });
-  await act(async () => { core.advance(restoredRevision); });
-  await waitUntil(
-    () => [deviceA, deviceB].every((device) => bodyOf(device)?.value === "복원된 본문" && !titleOf(device).disabled),
-    8000,
-    "두 기기가 복원본으로 다시 열려야 합니다.",
-  );
-  assert.deepEqual(recoveredKeys(env), [], "확인된 입력만 있던 기기는 복구본을 만들지 않는다(L8)");
+test("휴지통으로 옮기면 같은 편집기가 그 자리에서 잠기고 안내하며, 되살리면 다시 연결해 같은 편집기로 이어진다", { concurrency: false }, async (context) => {
+  const env = setupBrowser(context);
+  const note = { id: "note-1", title: "제목", contentHtml: "<p>본문</p>", noteDate: null, version: 1 };
+  seedHeads.set(note.id, note);
+  const device = await env.mount(<NoteEditorForm actorId="student-1" note={note} action={async () => ({ success: true })} />);
+  await waitReady(device);
+  await waitUntil(() => formOf(device).dataset.collabStatus === "connected", 3000, "연결");
+  const mounts = editorMounts;
+  tokenTrashed = true;
+  await act(async () => { rooms.get("note:note-1")!.core.closeAll(true); });
+  await waitUntil(() => formOf(device).dataset.collabStatus === "trashed", 4000, `휴지통 상태: ${formOf(device).dataset.collabStatus}`);
+  assert.equal(titleOf(device).disabled, true, "휴지통 문서는 입력을 받지 않는다");
+  assert.equal(bodyOf(device)?.disabled, true);
+  assert.match(device.container.textContent ?? "", /휴지통/u);
+  assert.equal(editorMounts, mounts, "편집기를 내리지 않는다");
+  tokenTrashed = false;
+  await act(async () => { env.browserWindow.dispatchEvent(new env.browserWindow.Event("online")); });
+  await waitUntil(() => formOf(device).dataset.collabStatus === "connected" && !titleOf(device).disabled, 4000, "되살리면 다시 편집");
+  assert.equal(bodyOf(device)?.value, "본문", "같은 문서로 이어진다");
+  assert.equal(editorMounts, mounts, "remount 없음");
 });
 
 test("처음 연 문서를 오프라인에서 편집한 뒤 다른 기기가 본문을 바꿔도, 다시 연결하면 본문이 겹치지 않고 오프라인 입력이 반영된다", { concurrency: false }, async (context) => {
@@ -855,6 +979,7 @@ test("처음 연 문서를 오프라인에서 편집한 뒤 다른 기기가 본
     <NoteEditorForm actorId="student-1-device-a" note={{ id: "note-1", title: "제목", contentHtml: "<p>옛 본문</p>", noteDate: null, version: 1 }} action={async () => ({})} />,
   );
   await waitUntil(() => bodyOf(deviceA)?.value === "옛 본문", 8000, `A가 오프라인에서 열려야 합니다: ${deviceA.container.textContent} ${formOf(deviceA).dataset.collabStatus}`);
+  const mountsAfterOffline = editorMounts;
   const docA = mountedDocs.find((doc) => fragmentText(doc) === "옛 본문")!;
   await act(async () => setFragmentText(docA, "옛 본문 오프라인 입력"));
 
@@ -870,6 +995,8 @@ test("처음 연 문서를 오프라인에서 편집한 뒤 다른 기기가 본
   assert.equal(roomText, "서버 최신 본문 오프라인 입력");
   assert.doesNotMatch(roomText, /옛 본문/u, "옛 시드가 겹치지 않는다");
   assert.match(deviceA.container.textContent ?? "", /다시 반영했습니다/u);
+  assert.equal(editorMounts, mountsAfterOffline, "다시 연결해도 A의 편집기를 다시 만들지 않는다");
+  assert.ok(mountedDocs.includes(docA), "같은 Y.Doc");
   assert.deepEqual(recoveredKeys(env), [], "반영되면 안전 사본을 지운다");
 });
 
@@ -912,64 +1039,24 @@ async function goOffline(env: Env, device: Device): Promise<void> {
   void env;
 }
 
-test("오프라인 입력은 복원이 두 번 이어지고 head 조회가 실패해도 버려지지 않고, 조회가 되면 새 세대에 다시 반영된다", { concurrency: false }, async (context) => {
-  const env = setupBrowser(context);
-  const note = { id: "note-1", title: "제목", contentHtml: "<p>처음</p>", noteDate: null, version: 1 };
-  seedHeads.set(note.id, note);
-  const okAction = async (_previous: unknown, formData: FormData) => ({
-    success: true,
-    note: { id: "note-1", title: String(formData.get("title")), contentHtml: String(formData.get("contentHtml")), noteDate: null, version: 2 },
-  });
-  const device = await env.mount(<NoteEditorForm actorId="student-1" note={note} action={okAction} />);
-  await waitReady(device);
-  await waitUntil(() => formOf(device).dataset.collabStatus === "connected", 3000, "연결돼야 합니다.");
-  await goOffline(env, device);
-  const doc = mountedDocs[0]!;
-  await act(async () => setFragmentText(doc, "처음 오프라인 입력"));
-
-  // 그사이 다른 화면이 두 번 복원했다(세대 5 → 6). 다시 연결하면 첫 head 조회는 실패한다.
-  const core = roomFor("note:note-1").core;
-  core.advance(5);
-  seedFailuresLeft = 1000;
-  tokenOffline = false;
-  await act(async () => { env.browserWindow.dispatchEvent(new env.browserWindow.Event("online")); });
-  await waitUntil(() => Boolean(retryButtonOf(device)), 8000, `새 세대 head 조회 실패 안내가 보여야 합니다: ${device.container.textContent} ${formOf(device).dataset.collabStatus} req=${tokenRequests.length}`);
-  assert.equal(recoveredKeys(env).length, 1, "재적용 전 안전 사본");
-  await act(async () => { core.advance(6); });
-  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 300)); });
-
-  seedFailuresLeft = 0;
-  seedHeads.set(note.id, { title: "제목", contentHtml: "<p>복원본</p>", noteDate: null, version: 7, lifecycle: 6 });
-  await waitUntil(
-    () => {
-      const retry = retryButtonOf(device);
-      if (retry) retry.click();
-      return /오프라인 입력/u.test(bodyOf(device)?.value ?? "");
-    },
-    10_000,
-    `오프라인 입력이 새 세대에 반영돼야 합니다: ${bodyOf(device)?.value}`,
-  );
-  assert.match(bodyOf(device)!.value, /복원본/u, "복원본 위에 반영");
-  await waitUntil(() => recoveredKeys(env).length === 0, 4000, "room에 저장된 뒤 안전 사본을 지운다");
-});
-
-test("다시 연결했을 때 읽기 권한으로 바뀌면 오프라인 입력은 보관함 사본으로 남기고, 편집기는 멈추지 않는다", { concurrency: false }, async (context) => {
+test("다시 연결했을 때 읽기 권한으로 바뀌면 같은 편집기가 그 자리에서 읽기 전용이 되고, 보내지 못한 오프라인 입력은 보관함 사본으로 남는다", { concurrency: false }, async (context) => {
   const env = setupBrowser(context);
   const note = { id: "note-1", title: "제목", contentHtml: "<p>처음</p>", noteDate: null, version: 1 };
   seedHeads.set(note.id, note);
   const device = await env.mount(<NoteEditorForm actorId="student-1" note={note} action={async () => ({})} />);
   await waitReady(device);
   await waitUntil(() => formOf(device).dataset.collabStatus === "connected", 3000, "연결돼야 합니다.");
+  const mounts = editorMounts;
   await goOffline(env, device);
   await act(async () => setFragmentText(mountedDocs[0]!, "처음 권한 회수 전 입력"));
-  roomFor("note:note-1").core.advance(2);
-  seedHeads.set(note.id, { ...note, lifecycle: 2 });
   tokenPolicy = { ...tokenPolicy, mode: "read" };
   tokenOffline = false;
   await act(async () => { env.browserWindow.dispatchEvent(new env.browserWindow.Event("online")); });
-  await waitUntil(() => /보관함에 남겼습니다/u.test(device.container.textContent ?? "") || recoveredKeys(env).length > 0, 8000, "사본을 남겨야 합니다.");
-  assert.equal(recoveredKeys(env).length, 1, "읽기로 바뀐 기기의 입력도 사본으로 남는다");
-  await waitUntil(() => !/노트를 불러오는 중/u.test(device.container.textContent ?? "") || formOf(device).dataset.collabStatus === "connected", 6000, "읽기 화면이 로딩에 갇히지 않아야 합니다.");
+  await waitUntil(() => recoveredKeys(env).length > 0, 8000, "사본을 남겨야 합니다.");
+  await waitUntil(() => titleOf(device).disabled && bodyOf(device)?.disabled === true, 4000, "읽기 전용으로 잠긴다");
+  assert.equal(editorMounts, mounts, "편집기를 다시 만들지 않는다");
+  assert.doesNotMatch(device.container.textContent ?? "", /노트를 불러오는 중/u, "로딩 화면으로 바뀌지 않는다");
+  assert.doesNotMatch(fragmentText(rooms.get("note:note-1")!.storage.toDoc()), /권한 회수 전 입력/u, "읽기 연결은 room을 바꾸지 못한다");
 });
 
 test("권한이 없어지면(로그아웃·회수) 편집기와 칸이 입력을 받지 않고 다시 로그인 안내를 보인다", { concurrency: false }, async (context) => {

@@ -20,8 +20,6 @@ import {
   COLLAB_MESSAGE_CONTROL,
   COLLAB_MESSAGE_SYNC,
   COLLAB_LEASE_SECONDS,
-  COLLAB_CLOSE_BUSY,
-  COLLAB_CLOSE_FREEZE_TIMEOUT,
   COLLAB_CLOSE_GONE,
   COLLAB_CLOSE_STALE,
   COLLAB_EPOCH_FIELD,
@@ -34,6 +32,9 @@ import {
   normalizeCloseCode,
   RoomCore,
   ROOM_COMPACT_UPDATE_COUNT,
+  ROOM_RESTORE_HOLD_MS,
+  ROOM_RESTORE_INTENT_MS,
+  type RestoreIntent,
   sanitizeAwarenessState,
   type RoomSocket,
   type RoomSocketAttachment,
@@ -103,7 +104,9 @@ test("권한: 노트는 학생 본인·관리자만, 쓰기는 작성자·관리
   for (const key of ["note:mine", "note:stann"]) {
     assert.equal((await authorizeCollabRequest(student2, { key }, loaders())).ok, false, `다른 학생 ${key}`);
   }
-  assert.equal((await authorizeCollabRequest(student1, { key: "note:trashed" }, loaders())).ok, false, "휴지통");
+  // 휴지통은 볼 권한이 있는 사람에게만 TRASHED로 구분한다(열린 편집기가 되살림을 기다린다). 남에게는 없음과 같다.
+  assert.deepEqual(await authorizeCollabRequest(student1, { key: "note:trashed" }, loaders()), { ok: false, reason: "TRASHED" });
+  assert.deepEqual(await authorizeCollabRequest(student2, { key: "note:trashed" }, loaders()), { ok: false, reason: "NOT_FOUND_OR_FORBIDDEN" });
   assert.equal((await authorizeCollabRequest(admin, { key: "note:missing" }, loaders())).ok, false, "없음");
   assert.deepEqual(await authorizeCollabRequest(student1, { key: "bad key" }, loaders()), { ok: false, reason: "BAD_REQUEST" });
 });
@@ -132,7 +135,8 @@ test("권한: 가이드는 관리자만, 게시물은 작성자·관리자, 작�
   assert.deepEqual(await authorizeCollabRequest(student1, { key: "post:p1" }, loaders()), { ok: true, key: "post:p1", mode: "write", lifecycle: 2 });
   assert.equal((await authorizeCollabRequest(student2, { key: "post:p1" }, loaders())).ok, false);
   assert.equal((await authorizeCollabRequest(admin, { key: "post:p1" }, loaders())).ok, true);
-  assert.equal((await authorizeCollabRequest(student1, { key: "post:gone" }, loaders())).ok, false);
+  assert.deepEqual(await authorizeCollabRequest(student1, { key: "post:gone" }, loaders()), { ok: false, reason: "TRASHED" });
+  assert.deepEqual(await authorizeCollabRequest(student2, { key: "post:gone" }, loaders()), { ok: false, reason: "NOT_FOUND_OR_FORBIDDEN" });
   assert.equal((await authorizeCollabRequest(student1, { key: "draft:post:s1:new" }, loaders())).ok, true);
   assert.equal((await authorizeCollabRequest(student2, { key: "draft:post:s1:new" }, loaders())).ok, false, "남의 작성본");
   assert.equal((await authorizeCollabRequest(admin, { key: "draft:post:s1:new" }, loaders())).ok, false, "관리자도 남의 작성본은 거부");
@@ -141,7 +145,7 @@ test("권한: 가이드는 관리자만, 게시물은 작성자·관리자, 작�
   assert.equal((await authorizeCollabRequest(admin, { key: "draft:qna-reply:admin:t1" }, loaders())).ok, true);
 });
 
-test("토큰 route: 비로그인 401, 권한 없음 403, binding 없으면 혼자 모드", async () => {
+test("토큰 route: 비로그인 401, 권한 없음 403, 휴지통 410, binding 없으면 혼자 모드", async () => {
   const base = { loaders: loaders(), getSecret: () => SECRET, isCollabAvailable: () => true };
   const request = (body: unknown, headers: Record<string, string> = {}) =>
     new Request("https://portal.test/api/collab/token", { method: "POST", body: JSON.stringify(body), headers });
@@ -151,6 +155,8 @@ test("토큰 route: 비로그인 401, 권한 없음 403, binding 없으면 혼�
   assert.equal((await asStudent2(request({ key: "note:mine" }))).status, 403);
   const asStudent1 = createCollabTokenHandler({ ...base, getActor: async () => ({ ...student1, displayName: "김학생" }) });
   assert.equal((await asStudent1(request({ key: "note:mine" }, { Origin: "https://evil.test" }))).status, 403, "다른 origin");
+  assert.equal((await asStudent1(request({ key: "note:trashed" }))).status, 410, "휴지통은 410(되살림 대기)");
+  assert.equal((await asStudent2(request({ key: "note:trashed" }))).status, 403, "남의 휴지통 노트는 없음과 같다");
   const ok = (await (await asStudent1(request({ key: "note:mine" }))).json()) as { collab: boolean; token: string; path: string; mode: string };
   assert.equal(ok.collab, true);
   assert.equal(ok.mode, "write");
@@ -216,7 +222,7 @@ class MemoryStorage implements RoomStorage {
   seq = 0;
   savedSv: Uint8Array | null = null;
   load() {
-    return { epoch: this.epoch, snapshot: this.snapshot, updates: [...this.updates], seq: this.seq, savedSv: this.savedSv };
+    return { epoch: this.epoch, snapshot: this.snapshot, updates: [...this.updates], seq: this.seq, savedSv: this.savedSv, restoreIntent: this.restoreIntent };
   }
   setSeq(seq: number) {
     this.seq = seq;
@@ -231,11 +237,19 @@ class MemoryStorage implements RoomStorage {
     this.snapshot = snapshot;
     this.updates = [];
   }
+  restoreIntent: RestoreIntent | null = null;
   reset(nextEpoch: number) {
     this.epoch = nextEpoch;
     this.snapshot = null;
     this.updates = [];
     this.savedSv = null;
+    this.restoreIntent = null;
+  }
+  setEpoch(epoch: number) {
+    this.epoch = epoch;
+  }
+  setRestoreIntent(intent: RestoreIntent | null) {
+    this.restoreIntent = intent;
   }
 }
 
@@ -259,7 +273,16 @@ class MemorySocket implements RoomSocket {
     return this.sent
       .map((bytes) => decoding.createDecoder(bytes))
       .filter((decoder) => decoding.readVarUint(decoder) === COLLAB_MESSAGE_CONTROL)
-      .map((decoder) => JSON.parse(decoding.readVarString(decoder)) as { t: string; code?: string; epoch?: number; n?: number; id?: string; mode?: string; seq?: number });
+      .map((decoder) => JSON.parse(decoding.readVarString(decoder)) as { t: string; code?: string; epoch?: number; n?: number; id?: string; mode?: string; seq?: number; lifecycle?: number; base?: string });
+  }
+  /** 받은 메시지 종류 순서(control은 t, sync는 "sync"). */
+  kinds() {
+    return this.sent.map((bytes) => {
+      const decoder = decoding.createDecoder(bytes);
+      const type = decoding.readVarUint(decoder);
+      if (type === COLLAB_MESSAGE_CONTROL) return (JSON.parse(decoding.readVarString(decoder)) as { t: string }).t;
+      return type === COLLAB_MESSAGE_SYNC ? "sync" : "awareness";
+    });
   }
 }
 
@@ -532,145 +555,126 @@ test("room: 저장한 update 개수를 그 소켓에 ack로 알린다", () => {
   assert.equal(reader.controls().some((c) => c.t === "ack"), false, "읽기 소켓 쓰기는 ack 없음");
 });
 
-test("room 세대: 토큰의 lifecycle이 크면 넘어가고, 작으면 stale로 닫고, advance는 더 클 때만 바뀐다", () => {
+function seededUpdate(text = ""): Uint8Array {
+  const doc = new Y.Doc();
+  doc.transact(() => {
+    doc.getMap("meta").set("seeded", true);
+    if (text) doc.getText("t").insert(0, text);
+  });
+  return Y.encodeStateAsUpdate(doc);
+}
+
+test("room 세대: 시드 전 room만 토큰 lifecycle을 따르고, 시드된 room은 비우거나 닫지 않으며, 옛 토큰은 stale로 닫는다", () => {
+  const empty = createRoom();
+  const first = empty.join("write", "u", { lifecycle: 4 });
+  assert.equal(empty.storage.epoch, 4, "지울 내용이 없는 room은 D1 세대를 따른다");
+  assert.equal(first.controls()[0].epoch, 4);
+
   const { storage, room, join } = createRoom();
-  const old = join("write", "u", { lifecycle: 0 });
-  room.message(old, updateMessage(textUpdate("before restore")));
-  const fresh = join("write", "u", { lifecycle: 3 });
-  assert.equal(storage.epoch, 3, "reset 실패 room도 다음 연결에서 D1 세대로 수렴");
-  assert.equal(old.closed, COLLAB_CLOSE_RESET);
-  assert.equal(roomText(storage), "");
-  assert.equal(fresh.controls()[0].epoch, 3);
-  const late = join("write", "u", { lifecycle: 2 });
-  assert.equal(late.closed, COLLAB_CLOSE_STALE, "옛 토큰은 거부");
-  assert.equal(room.advance(3), 3, "같은 target no-op(응답 유실 재시도)");
-  assert.equal(fresh.closed, null);
-  assert.equal(room.advance(2), 3, "작은 target 무시");
-  assert.equal(room.advance(5), 5);
-  assert.equal(fresh.closed, COLLAB_CLOSE_RESET);
+  const writer = join("write", "u", { lifecycle: 0 });
+  room.message(writer, updateMessage(seededUpdate("편집 중")));
+  const later = join("write", "u", { lifecycle: 3 });
+  assert.equal(storage.epoch, 0, "시드된 room은 복원 적용(restore-apply)으로만 세대가 바뀐다");
+  assert.equal(writer.closed, null, "열린 편집기를 닫지 않는다");
+  assert.equal(roomText(storage), "편집 중", "내용을 비우지 않는다");
+  assert.equal(later.closed, null);
+  storage.epoch = 5;
+  const fresh = createRoom();
+  fresh.storage.epoch = 5;
+  const late = fresh.join("write", "u", { lifecycle: 2 });
+  assert.equal(late.closed, COLLAB_CLOSE_STALE, "room보다 옛 토큰은 거부");
 });
 
-test("room prepare: 쓰기 소켓이 없으면 마지막 저장과 같을 때만 성공한다", async () => {
-  const { storage, room, join } = createRoom();
-  assert.deepEqual(await room.prepare("p0", "checkpoint"), { ok: true, checkpoint: null }, "빈 room");
-  assert.equal(room.isFrozen, true, "쓰기 소켓이 없어도 복원 commit까지 멈춘다");
-  const blocked = join("write");
-  assert.equal(blocked.closed, COLLAB_CLOSE_BUSY, "준비와 복원 사이 새 편집기는 붙지 못한다");
-  assert.equal(room.isPrepared("p0"), true);
-  room.thaw("p0");
-  assert.equal(room.isPrepared("p0"), false);
+test("room 복원: 준비는 기준 상태를 영속화하고 입력·연결을 막지 않으며, 다른 복원은 busy, 삭제만 한 변경도 저장 안 됨으로 본다", () => {
+  let now = NOW;
+  const { storage, room, join } = createRoom(() => now);
   const writer = join("write");
-  room.message(writer, updateMessage(textUpdate("unsaved")));
-  room.disconnect(writer);
-  writer.closed = 1000;
-  assert.deepEqual(await room.prepare("p1", "checkpoint"), { ok: false, reason: "unsaved" });
-  room.thaw("p1");
-  const saver = join("write");
-  room.message(saver, controlMessage({ t: "saved", sv: roomStateVector(storage) }));
-  room.disconnect(saver);
-  saver.closed = 1000;
-  assert.deepEqual(await room.prepare("p2", "checkpoint"), { ok: true, checkpoint: null });
-  room.thaw("p2");
+  room.message(writer, updateMessage(seededUpdate("x")));
+  const begun = room.restoreBegin("r1");
+  assert.equal(begun.ok, true);
+  assert.equal(begun.ok && begun.clean, false, "저장 표시가 없으면 밀린 내용이 있다");
+  assert.equal(begun.ok && begun.seeded, true);
+  assert.ok(storage.restoreIntent && storage.restoreIntent.id === "r1", "기준 S를 저장소에 남긴다");
+  const another = join("write");
+  assert.equal(another.closed, null, "준비 중에도 새 편집기가 붙는다");
+  room.message(writer, updateMessage(textUpdate("typing")));
+  assert.equal(writer.closed, null, "준비 중 입력도 받는다");
+  assert.deepEqual(room.restoreBegin("r2"), { ok: false, reason: "busy" }, "진행 중인 다른 복원");
+  now = NOW + ROOM_RESTORE_INTENT_MS + 1;
+  assert.equal(room.restoreBegin("r2").ok, true, "중단된 복원 기록은 시간이 지나면 바뀐다");
+  room.restoreAbort("r2");
+  assert.equal(storage.restoreIntent, null);
 
   // 저장 뒤 삭제만 한 변경은 state vector가 같아도 "저장 안 됨"이다(delete set까지 비교).
   const editor = join("write");
-  const local = storedDoc(storage);
-  const text = local.getText("t");
-  const before = Y.encodeStateVector(local);
   room.message(editor, controlMessage({ t: "saved", sv: roomStateVector(storage) }));
-  text.delete(0, 1);
+  const savedBegin = room.restoreBegin("r3");
+  assert.equal(savedBegin.ok && savedBegin.clean, true, "마지막 저장과 같다");
+  room.restoreAbort("r3");
+  const local = storedDoc(storage);
+  const before = Y.encodeStateVector(local);
+  local.getText("t").delete(0, 1);
   room.message(editor, updateMessage(Y.encodeStateAsUpdate(local, before)));
-  room.disconnect(editor);
-  editor.closed = 1000;
-  assert.deepEqual(await room.prepare("p3", "checkpoint"), { ok: false, reason: "unsaved" }, "미저장 삭제");
-  room.thaw("p3");
+  const deleted = room.restoreBegin("r4");
+  assert.equal(deleted.ok && deleted.clean, false, "미저장 삭제");
+  room.restoreAbort("r4");
 });
 
-test("room: 같은 id로 다시 준비해도 이전 freeze 응답은 새 준비의 응답이 아니다, 칸 반영은 세대가 같을 때만", async () => {
-  const { room, join } = createRoom();
-  const writer = join("write");
-  room.message(writer, awarenessMessage(5, 1, { canSave: true }));
-  room.message(writer, updateMessage(textUpdate("x")));
-  const first = room.prepare("same", "checkpoint");
-  room.message(writer, controlMessage({ t: "frozen", id: "same" }));
-  room.thaw("same");
-  await first;
-  void room.prepare("same", "checkpoint");
-  room.message(writer, updateMessage(textUpdate("typed before second ack")));
-  assert.equal(writer.closed, null, "새 freeze 응답 전 입력은 받는다");
-  room.thaw("same");
-
-  const seed = new Y.Doc();
-  seed.getMap("meta").set("seeded", true);
-  room.message(writer, updateMessage(Y.encodeStateAsUpdate(seed)));
-  assert.equal(room.setMeta("noteDate", "2026-11-03", 7), false, "다른 세대의 늦은 칸 변경은 무시");
-  assert.equal(room.setMeta("noteDate", "2026-11-03", 0), true);
-});
-
-test("room prepare: freeze → 모든 쓰기 소켓 응답 → 저장 담당 checkpoint의 state vector가 맞을 때만 성공", async () => {
+test("room 복원 적용: 보관 중 입력은 큐에 두었다가 복원 뒤 같은 순서로 반영하고, restored 알림이 복원 update보다 먼저 가며, 한 번만 적용된다", () => {
   const { storage, room, join } = createRoom();
-  const saver = join("write", "admin");
-  const other = join("write", "s1");
-  room.message(saver, awarenessMessage(5, 1, { canSave: true }));
-  room.message(other, awarenessMessage(9, 1, { canSave: true }));
-  room.message(other, updateMessage(textUpdate("typed on other device")));
-  const pending = room.prepare("prep-1", "checkpoint");
-  assert.equal(saver.controls().at(-1)?.t, "freeze");
-  assert.equal(other.controls().at(-1)?.t, "freeze");
-  const late = join("write", "s2");
-  assert.equal(late.closed, COLLAB_CLOSE_BUSY, "준비 중 새 연결은 거절");
-  room.message(saver, controlMessage({ t: "frozen", id: "prep-1" }));
-  assert.equal(saver.controls().some((c) => c.t === "flush"), false, "모두 응답하기 전에는 flush하지 않음");
-  room.message(other, controlMessage({ t: "frozen", id: "prep-1" }));
-  assert.deepEqual(saver.controls().at(-1), { t: "flush", id: "prep-1", mode: "checkpoint" }, "clientID가 가장 작은 담당");
-  room.message(other, updateMessage(textUpdate("after ack")));
-  assert.equal(other.closed, COLLAB_CLOSE_FREEZE_TIMEOUT, "응답 뒤 입력은 받지 않음");
-  room.message(saver, controlMessage({ t: "flushed", id: "prep-1", ok: true, revision: 12, sv: roomStateVector(storage) }));
-  assert.deepEqual(await pending, { ok: true, checkpoint: 12 });
-  assert.equal(room.isFrozen, true, "복원 commit까지 멈춘 상태 유지");
-  room.advance(13);
-  assert.equal(room.isFrozen, false);
+  const typist = join("write", "typist");
+  const watcher = join("read", "watcher");
+  room.message(typist, updateMessage(seededUpdate("base")));
+  assert.equal(room.restoreBegin("op").ok, true);
+  const held = room.restoreHold("op");
+  assert.equal(held.ok, true);
+  assert.ok(held.ok && held.base, "준비 때 기준을 돌려준다");
+  const acksBefore = typist.controls().filter((c) => c.t === "ack").length;
+  // 보관 중 입력: 소켓을 닫지 않고 ack도 미룬다.
+  room.message(typist, updateMessage(textUpdate("during hold")));
+  assert.equal(typist.closed, null);
+  assert.equal(typist.controls().filter((c) => c.t === "ack").length, acksBefore, "적용 전에는 ack하지 않는다");
+  assert.equal(room.isHolding, true);
+
+  const restoreDoc = new Y.Doc();
+  Y.applyUpdate(restoreDoc, held.ok ? held.state : new Uint8Array());
+  const sv = Y.encodeStateVector(restoreDoc);
+  restoreDoc.transact(() => restoreDoc.getMap("meta").set("lifecycle", 9));
+  const update = Y.encodeStateAsUpdate(restoreDoc, sv);
+  const watcherBefore = watcher.kinds().length;
+  assert.deepEqual(room.restoreApply("op", 9, update), { ok: true, applied: true, lifecycle: 9 });
+  assert.deepEqual(watcher.kinds().slice(watcherBefore, watcherBefore + 2), ["restored", "sync"], "알림 뒤 복원 update");
+  assert.equal(watcher.controls().find((c) => c.t === "restored")?.lifecycle, 9);
+  assert.equal(storage.epoch, 9, "lifecycle은 서버가 소유한다");
+  assert.equal(storage.restoreIntent, null, "기록 삭제");
+  assert.equal(room.isHolding, false);
+  assert.ok(typist.controls().filter((c) => c.t === "ack").length > acksBefore, "큐 배출 뒤 ack");
+  assert.ok(roomText(storage).includes("during hold"), "보관 중 입력이 남는다");
+  assert.equal(typist.closed, null, "복원해도 연결을 닫지 않는다(다시 시작 없음)");
+  assert.equal(watcher.closed, null);
+
+  // 같은 target 재시도(응답 유실)·작은 target은 적용하지 않는다.
+  const kindsAfter = watcher.kinds().length;
+  assert.equal(room.restoreHold("op").ok, true);
+  assert.deepEqual(room.restoreApply("op", 9, update), { ok: true, applied: false, lifecycle: 9 });
+  assert.equal(watcher.kinds().length, kindsAfter, "두 번째 적용은 아무것도 보내지 않는다");
+  assert.deepEqual(room.restoreApply("op", 10, update), { ok: false, reason: "expired" }, "hold 없이 적용할 수 없다");
 });
 
-test("room prepare: checkpoint state vector가 다르거나 담당이 없으면 실패하고 thaw로 풀린다", async () => {
-  const { storage, room, join } = createRoom();
-  const saver = join("write");
-  room.message(saver, awarenessMessage(5, 1, { canSave: true }));
-  room.message(saver, updateMessage(textUpdate("x")));
-  const pending = room.prepare("p", "checkpoint");
-  room.message(saver, controlMessage({ t: "frozen", id: "p" }));
-  room.message(saver, controlMessage({ t: "flushed", id: "p", ok: true, revision: 3, sv: Buffer.from(new Uint8Array([0])).toString("base64") }));
-  assert.deepEqual(await pending, { ok: false, reason: "flush-failed" });
-  room.thaw("p");
-  assert.equal(saver.controls().at(-1)?.t, "thaw");
-  assert.equal(room.isFrozen, false);
-  // 담당(canSave)이 없으면 checkpoint를 확인할 수 없다.
-  const second = createRoom();
-  const writer = second.join("write");
-  second.room.message(writer, updateMessage(textUpdate("y")));
-  const noSaver = second.room.prepare("q", "checkpoint");
-  second.room.message(writer, controlMessage({ t: "frozen", id: "q" }));
-  assert.deepEqual(await noSaver, { ok: false, reason: "no-saver" });
-  assert.ok(storage);
-});
-
-test("room prepare: 제때 응답하지 않은 쓰기 소켓은 닫고, 게시물(clean)은 미게시 변경이 있으면 실패", async () => {
+test("room 복원 보관: 시간이 지나면 큐를 배출하고 그 적용은 거부되며, 다른 복원의 보관은 busy", () => {
   mock.timers.enable({ apis: ["setTimeout"] });
   try {
-    const { room, join } = createRoom();
-    const saver = join("write");
-    const silent = join("write");
-    room.message(saver, awarenessMessage(5, 1, { canSave: true }));
-    room.message(saver, updateMessage(textUpdate("draft")));
-    const pending = room.prepare("c", "clean");
-    room.message(saver, controlMessage({ t: "frozen", id: "c" }));
-    mock.timers.tick(2001);
-    assert.equal(silent.closed, COLLAB_CLOSE_FREEZE_TIMEOUT);
-    assert.deepEqual(saver.controls().at(-1), { t: "flush", id: "c", mode: "clean" });
-    room.message(saver, controlMessage({ t: "flushed", id: "c", ok: true, dirty: true }));
-    assert.deepEqual(await pending, { ok: false, reason: "unpublished" });
-    mock.timers.tick(60_001);
-    assert.equal(room.isFrozen, false, "안전 시간 뒤 스스로 풀림");
+    const { storage, room, join } = createRoom();
+    const typist = join("write");
+    room.message(typist, updateMessage(seededUpdate()));
+    assert.equal(room.restoreHold("slow").ok, true);
+    assert.deepEqual(room.restoreHold("other"), { ok: false, reason: "busy" });
+    room.message(typist, updateMessage(textUpdate("queued")));
+    mock.timers.tick(ROOM_RESTORE_HOLD_MS + 1);
+    assert.equal(room.isHolding, false);
+    assert.ok(roomText(storage).includes("queued"), "보관이 끝나면 입력을 반영한다");
+    assert.deepEqual(room.restoreApply("slow", 3, new Uint8Array()), { ok: false, reason: "expired" });
+    assert.equal(storage.epoch, 0);
   } finally {
     mock.timers.reset();
   }
@@ -745,29 +749,12 @@ test("proxy: 공동 편집 토큰 route는 로그인 redirect 대상이 아니�
   assert.equal(matcher.test("/api/collab/tokenx"), true, "비슷한 다른 경로는 계속 보호");
 });
 
-test("room: 복원 commit 단계(준비 확인 뒤)는 짧은 안전 시간으로 풀리지 않고, 같은 세대의 늦은 칸 변경은 version 순서로만 반영한다", async () => {
-  mock.timers.enable({ apis: ["setTimeout"] });
-  try {
-    const { room, join } = createRoom();
-    const writer = join("write");
-    const seed = new Y.Doc();
-    seed.getMap("meta").set("seeded", true);
-    room.message(writer, updateMessage(Y.encodeStateAsUpdate(seed)));
-    room.disconnect(writer);
-    writer.closed = 1000;
-    void room.prepare("commit-1", "checkpoint");
-    assert.equal(room.isPrepared("commit-1"), true);
-    mock.timers.tick(60_001);
-    assert.equal(room.isFrozen, true, "commit 중에는 60초 안전 해제가 없다");
-    const late = join("write");
-    assert.equal(late.closed, COLLAB_CLOSE_BUSY, "commit 중 새 편집기는 붙지 못한다");
-    mock.timers.tick(5 * 60_000);
-    assert.equal(room.isFrozen, false, "action이 죽으면 긴 안전 시간 뒤 풀린다");
-
-    assert.equal(room.setMeta("noteDate", "2026-11-03", 0, 3), true, "B의 이동(v3)");
-    assert.equal(room.setMeta("noteDate", "2026-11-02", 0, 2), false, "늦게 온 A의 이동(v2)은 무시");
-    assert.equal(room.setMeta("noteDate", "2026-11-04", 0, 4), true);
-  } finally {
-    mock.timers.reset();
-  }
+test("room: 같은 세대의 늦은 칸 변경은 version 순서로만, 다른 세대의 칸 변경은 반영하지 않는다", () => {
+  const { room, join } = createRoom();
+  const writer = join("write");
+  room.message(writer, updateMessage(seededUpdate()));
+  assert.equal(room.setMeta("noteDate", "2026-11-03", 7), false, "다른 세대의 늦은 칸 변경은 무시");
+  assert.equal(room.setMeta("noteDate", "2026-11-03", 0, 3), true, "B의 이동(v3)");
+  assert.equal(room.setMeta("noteDate", "2026-11-02", 0, 2), false, "늦게 온 A의 이동(v2)은 무시");
+  assert.equal(room.setMeta("noteDate", "2026-11-04", 0, 4), true);
 });

@@ -3,6 +3,7 @@ import { after, before, mock, test, type TestContext } from "node:test";
 import { Window } from "happy-dom";
 import React, { act, useEffect, useRef, useState, useTransition } from "react";
 import type { Editor } from "@tiptap/core";
+import * as Y from "yjs";
 import type { ReactPlayerProps } from "react-player/types";
 import { resolvePortalLocation } from "@/lib/portal-location";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
@@ -516,6 +517,76 @@ test("FullEditor는 잠긴 동안 끝난 업로드를 잠금이 풀린 뒤 넣�
   assert.match(changes.at(-1) ?? "", /<img[^>]+src="\/api\/media\/30000000-0000-4000-8000-000000000001"/u);
   assert.equal(uploading.at(-1), false);
   assert.deepEqual(abandoned, []);
+});
+
+test("공동 편집 FullEditor: 업로드 도중 다른 기기의 복원이 같은 문서에 들어와도 편집기는 그대로이고 업로드 결과가 문서에 들어간다", { concurrency: false }, async (context) => {
+  const { releases, abandoned } = mockEditorImageUpload(context);
+  const doc = new Y.Doc();
+  const remote = new Y.Doc();
+  const uploading: boolean[] = [];
+  const collaboration = { doc, awareness: null, user: { name: "나", colorIndex: 0 } };
+  await render(context, <FullEditor ariaLabel="본문" collaboration={collaboration} onUploadingChange={(value) => uploading.push(value)} />);
+  await settleEditor();
+  // 처음 내용: 다른 기기(room)에서 온 문단.
+  remote.transact(() => {
+    const paragraph = new Y.XmlElement("paragraph");
+    paragraph.insert(0, [new Y.XmlText("복원 전 본문")]);
+    remote.getXmlFragment("default").insert(0, [paragraph]);
+  });
+  await act(async () => { Y.applyUpdate(doc, Y.encodeStateAsUpdate(remote), "room"); });
+  await settleEditor();
+  const editorElement = browser.document.querySelector(".ProseMirror");
+  assert.ok(editorElement);
+  await chooseEditorImage();
+  assert.equal(uploading.at(-1), true);
+  // 업로드 중 복원: 같은 문서에 한 편집으로 들어온다(문단 내용이 바뀜).
+  const before = Y.encodeStateVector(remote);
+  remote.transact(() => {
+    const fragment = remote.getXmlFragment("default");
+    fragment.delete(0, fragment.length);
+    const paragraph = new Y.XmlElement("paragraph");
+    paragraph.insert(0, [new Y.XmlText("복원한 본문")]);
+    fragment.insert(0, [paragraph]);
+  });
+  await act(async () => { Y.applyUpdate(doc, Y.encodeStateAsUpdate(remote, before), "room"); });
+  await settleEditor();
+  assert.equal(browser.document.querySelector(".ProseMirror"), editorElement, "편집기를 다시 만들지 않는다");
+  await act(async () => { releases[0]?.(undefined as never); await new Promise((resolve) => setTimeout(resolve, 10)); });
+  await settleEditor();
+  const fragmentXml = doc.getXmlFragment("default").toString();
+  assert.match(fragmentXml, /복원한 본문/u, fragmentXml);
+  assert.match(fragmentXml, /<image[^>]+\/api\/media\/30000000-0000-4000-8000-000000000001/u, `업로드 결과가 문서에 들어간다: ${fragmentXml}`);
+  assert.deepEqual(abandoned, []);
+  assert.equal(uploading.at(-1), false);
+});
+
+test("공동 편집 FullEditor: 업로드 도중 읽기 권한으로 바뀌면 이미지를 버리지 않고 보류를 안내하며, 편집 권한이 돌아오면 같은 편집기에 넣는다", { concurrency: false }, async (context) => {
+  const { releases, abandoned } = mockEditorImageUpload(context);
+  const doc = new Y.Doc();
+  const uploading: boolean[] = [];
+  const collaboration = { doc, awareness: null, user: { name: "나", colorIndex: 0 } };
+  const screen = (disabled: boolean) => (
+    <FullEditor ariaLabel="본문" collaboration={collaboration} disabled={disabled} onUploadingChange={(value) => uploading.push(value)} />
+  );
+  const root = await render(context, screen(false));
+  await settleEditor();
+  const editorElement = browser.document.querySelector(".ProseMirror");
+  await chooseEditorImage();
+  await act(async () => root.render(screen(true)));
+  await act(async () => { releases[0]?.(undefined as never); await new Promise((resolve) => setTimeout(resolve, 10)); });
+  await settleEditor();
+  assert.doesNotMatch(doc.getXmlFragment("default").toString(), /<image/u, "읽기 동안에는 문서를 바꾸지 않는다");
+  const notice = browser.document.querySelector("[data-deferred-images]");
+  assert.ok(notice, "보류 안내가 보인다");
+  assert.match(notice.textContent ?? "", /아직 넣지 못했습니다/u);
+  assert.equal(uploading.at(-1), true, "보류 중에는 이탈 보호·제출 차단을 유지한다");
+  await act(async () => root.render(screen(false)));
+  await settleEditor();
+  assert.equal(browser.document.querySelector(".ProseMirror"), editorElement, "같은 편집기");
+  assert.match(doc.getXmlFragment("default").toString(), /<image/u, "권한이 돌아오면 넣는다");
+  assert.equal(browser.document.querySelector("[data-deferred-images]"), null);
+  assert.deepEqual(abandoned, []);
+  assert.equal(uploading.at(-1), false);
 });
 
 test("FullEditor는 빈 본문에 여러 장을 차례로 넣어도 앞 이미지를 바꾸지 않는다", { concurrency: false }, async (context) => {

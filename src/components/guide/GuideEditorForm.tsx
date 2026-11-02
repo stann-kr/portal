@@ -72,21 +72,17 @@ export function GuideEditorForm({ page, actorId, action }: GuideEditorFormProps)
     storageKey: roomKey,
     user: { name: "", colorIndex: 0 },
     extensions: getExtensions,
-    // room이 다시 시작되면 화면 prop이 아닌 서버의 최신 페이지로 시드한다.
-    getSeed: async (reason) => {
-      const latest = reason === "reset" ? await getGuidePage(page.id).catch(() => null) : null;
-      // 다시 시작된 room을 화면의 옛 내용으로 채우지 않는다. 최신 페이지를 못 읽으면 다음 연결 때 다시 시도한다.
-      if (reason === "reset" && !latest) return null;
+    // 연결돼 있으면 서버의 최신 페이지로 시드한다(못 읽으면 화면이 받은 페이지).
+    getSeed: async (_reason, { online }) => {
+      const latest = online ? await getGuidePage(page.id).catch(() => null) : null;
       const source = latest ?? page;
       return { key: roomKey, version: source.version, html: source.contentHtml, fields: { title: source.title } };
     },
   });
   const { doc, provider } = collab;
   const epochRef = useRef(collab.epoch);
-  const generationRef = useRef(collab.generation);
   useEffect(() => {
     epochRef.current = collab.epoch;
-    generationRef.current = collab.generation;
   });
   const [title, setTitle] = useCollabMetaField(doc, "title", page.title);
   const head = useCollabHeadVersion(doc, page.version);
@@ -102,13 +98,9 @@ export function GuideEditorForm({ page, actorId, action }: GuideEditorFormProps)
 
   const save = useCallback(
     async (snapshot: GuideSnapshot): Promise<CollabSaveResult> => {
-      // 이 저장의 room epoch·문서 세대는 시작할 때 고정한다(복원·삭제 뒤 옛 내용을 다시 보내지 않게).
+      // 이 저장의 room 세대는 시작할 때 고정한다(삭제 뒤 옛 내용을 다시 보내지 않게).
       const epoch = epochRef.current;
-      const generation = generationRef.current;
       for (let attempt = 0; attempt < 2; attempt += 1) {
-        if (attempt > 0 && generationRef.current !== generation) {
-          return { ok: false, error: "문서가 다시 시작되어 이 저장은 보내지 않았습니다." };
-        }
         const formData = new FormData();
         formData.set("title", snapshot.title);
         formData.set("contentHtml", snapshot.contentHtml);
@@ -238,9 +230,8 @@ export function GuideEditorForm({ page, actorId, action }: GuideEditorFormProps)
         ) : null}
         {collab.ready && collaboration ? (
           <FullEditor
-            key={collab.generation}
             collaboration={collaboration}
-            disabled={collab.mode !== "write" || collab.status === "denied" || collab.frozen}
+            disabled={collab.mode !== "write" || collab.status === "denied"}
             onUploadingChange={setIsEditorUploading}
             imageUploader={GUIDE_IMAGE_UPLOADER}
             preserveBlockIds

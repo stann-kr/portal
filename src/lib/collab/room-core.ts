@@ -11,16 +11,12 @@ import {
   COLLAB_MESSAGE_AWARENESS,
   COLLAB_MESSAGE_CONTROL,
   COLLAB_MESSAGE_SYNC,
-  COLLAB_CLOSE_BUSY,
-  COLLAB_CLOSE_FREEZE_TIMEOUT,
   COLLAB_CLOSE_GONE,
   COLLAB_CLOSE_STALE,
   COLLAB_LEASE_SECONDS,
   type CollabClientControlMessage,
   type CollabControlMessage,
   type CollabMode,
-  type CollabPrepareMode,
-  type CollabPrepareResult,
 } from "./protocol";
 import type { CollabTokenClaims } from "./token";
 import { collabSavedMarker } from "./saved-marker";
@@ -33,8 +29,9 @@ import { collabSavedMarker } from "./saved-marker";
  * - 반영된 update는 즉시 저장한 뒤 다른 소켓에 전달한다. 저장이 실패하면 전달하지 않는다.
  * - update 로그가 쌓이면 하나의 snapshot으로 압축한다.
  * - 쓰기 소켓이 보낸 update는 저장한 뒤 그 소켓에 누적 개수(ack)를 알린다. 클라이언트는 이것으로 "서버 확인분"을 안다.
- * - 노트·게시물 room의 세대(epoch)는 D1 lifecycle 표지다. `advance(target)`은 더 클 때만 상태를 비우고 넘어간다.
- * - 복원 전 `prepare`: freeze → 모든 쓰기 소켓 응답 → (밀린 내용이 있으면) 저장 담당 checkpoint 확인.
+ * - 노트·게시물 room의 세대(epoch)는 D1 lifecycle 표지(마지막 복원 revision)이고 서버가 소유한다. 복원은 상태를 비우지 않고
+ *   같은 문서에 적용하는 한 update다: `restoreBegin`(기준 S 영속화) → `restoreHold`(지금 상태 C, 잠시 들어오는 update를 큐에 보관)
+ *   → `restoreApply`(lifecycle이 더 클 때만 update·lifecycle을 한 번에 저장하고 알린 뒤 큐 배출). 입력·연결은 막지 않는다.
  * - 연결은 토큰 lease까지만 유효하고, 더 새 토큰의 `renew`로만 연장된다(권한 회수·강등).
  */
 export type RoomSocketAttachment = {
@@ -53,8 +50,6 @@ export type RoomSocketAttachment = {
   awarenessClientIds: number[];
   /** 이 소켓에서 받아 저장한 update 개수(ack). */
   applied: number;
-  /** 이 소켓이 응답한 freeze id. */
-  frozenAck?: string | null;
 };
 
 export interface RoomSocket {
@@ -74,7 +69,11 @@ export type StoredRoomState = {
   changedAt?: number;
   /** 저장 담당이 마지막으로 저장했다고 알린 state vector. */
   savedSv?: Uint8Array | null;
+  /** 진행 중인 복원 기록(준비 때의 기준 상태 S). */
+  restoreIntent?: RestoreIntent | null;
 };
+
+export type RestoreIntent = { id: string; at: number; base: Uint8Array };
 
 export interface RoomStorage {
   load(): StoredRoomState;
@@ -83,6 +82,11 @@ export interface RoomStorage {
   replaceWithSnapshot(snapshot: Uint8Array): void;
   /** 저장 상태(문서·savedSv)를 모두 지우고 새 epoch를 기록한다. */
   reset(nextEpoch: number): void;
+  /** 상태를 지우지 않고 epoch(lifecycle)만 기록한다. */
+  setEpoch?(epoch: number): void;
+  setRestoreIntent?(intent: RestoreIntent | null): void;
+  /** 여러 쓰기를 한 transaction으로 묶는다(없으면 그냥 실행). */
+  transact?<T>(task: () => T): T;
   setSeq?(seq: number, changedAt: number): void;
   setSavedSv?(sv: Uint8Array | null): void;
 }
@@ -93,17 +97,10 @@ export type RenewVerifier = (token: string, key: string) => Promise<CollabTokenC
 export const ROOM_COMPACT_UPDATE_COUNT = 200;
 /** room 밖에서 바꾼 칸의 D1 version을 남기는 meta key 접미사(`noteDate@v`). 내용 칸이 아니다. */
 export const COLLAB_META_VERSION_SUFFIX = "@v";
-/** freeze에 응답할 시간. 응답하지 않은 쓰기 소켓은 닫는다. */
-export const ROOM_FREEZE_ACK_MS = 2000;
-/** 저장 담당의 checkpoint 응답을 기다리는 시간. */
-export const ROOM_FLUSH_TIMEOUT_MS = 8000;
-/** 준비 뒤 복원이 끝나지 않을 때 스스로 푸는 시간(action이 중간에 실패한 경우). */
-export const ROOM_FREEZE_SAFETY_MS = 60_000;
-/**
- * action이 준비 유효성을 확인한 뒤(복원 commit 중)에는 commit·advance까지 멈춘 상태를 지킨다.
- * action이 그 사이 죽는 경우만을 위한 긴 안전 시간이다(그 뒤 토큰 세대가 room을 수렴시킨다).
- */
-export const ROOM_COMMIT_SAFETY_MS = 5 * 60_000;
+/** 진행 중인 복원 기록이 다른 복원을 막는 시간(action이 중간에 죽으면 이 뒤 새 복원이 기록을 바꿀 수 있다). */
+export const ROOM_RESTORE_INTENT_MS = 60_000;
+/** 복원 update를 만드는 동안 들어온 update를 큐에 보관하는 최대 시간. 지나면 큐를 배출하고 이번 적용은 거부한다. */
+export const ROOM_RESTORE_HOLD_MS = 3000;
 
 /**
  * 서버 쪽 awareness(커서·이름) 보관. y-protocols Awareness는 주기 timer를 돌려 DO hibernation을 막으므로
@@ -159,6 +156,13 @@ export function sanitizeAwarenessState(state: string, attachment: RoomSocketAtta
 }
 export const ROOM_COMPACT_BYTES = 1024 * 1024;
 
+function encodeStateVectorBase64(doc: Y.Doc): string {
+  const bytes = Y.encodeStateVector(doc);
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
 function encodeControl(message: CollabControlMessage): Uint8Array {
   const encoder = encoding.createEncoder();
   encoding.writeVarUint(encoder, COLLAB_MESSAGE_CONTROL);
@@ -196,14 +200,22 @@ function safeClose(socket: RoomSocket, code: number, reason: string): void {
   }
 }
 
-type FrozenState = {
+type RestoreHold = {
   id: string;
-  mode: CollabPrepareMode;
-  pending: Set<RoomSocket>;
-  flushSocket: RoomSocket | null;
-  resolve: ((result: CollabPrepareResult) => void) | null;
-  timers: ReturnType<typeof setTimeout>[];
+  /** 보관 중 받은 메시지(받은 순서대로 배출한다). */
+  queue: Array<{ socket: RoomSocket; data: Uint8Array }>;
+  timer: ReturnType<typeof setTimeout>;
 };
+
+export type RestoreBeginResult =
+  | { ok: true; state: Uint8Array; clean: boolean; seeded: boolean; lifecycle: number }
+  | { ok: false; reason: "busy" };
+
+export type RestoreHoldResult =
+  | { ok: true; state: Uint8Array; base: Uint8Array | null; lifecycle: number; seeded: boolean }
+  | { ok: false; reason: "busy" };
+
+export type RestoreApplyResult = { ok: true; applied: boolean; lifecycle: number } | { ok: false; reason: "expired" };
 
 function bytesEqual(a: Uint8Array | null | undefined, b: Uint8Array | null | undefined): boolean {
   if (!a || !b || a.byteLength !== b.byteLength) return false;
@@ -249,7 +261,8 @@ export class RoomCore {
   private snapshotBytes = 0;
   private pendingUpdateBytes = 0;
   private pendingUpdateCount = 0;
-  private frozen: FrozenState | null = null;
+  private intent: RestoreIntent | null = null;
+  private hold: RestoreHold | null = null;
 
   constructor(
     private readonly storage: RoomStorage,
@@ -268,6 +281,7 @@ export class RoomCore {
     this.seq = state.seq ?? 0;
     this.changedAt = state.changedAt ?? 0;
     this.savedSv = state.savedSv ?? null;
+    this.intent = state.restoreIntent ?? null;
     this.snapshotBytes = state.snapshot?.byteLength ?? 0;
     this.pendingUpdateBytes = 0;
     this.pendingUpdateCount = 0;
@@ -317,8 +331,8 @@ export class RoomCore {
     return this.epoch;
   }
 
-  get isFrozen(): boolean {
-    return this.frozen !== null;
+  get isHolding(): boolean {
+    return this.hold !== null;
   }
 
   private restoreAwarenessOwnership(): void {
@@ -366,19 +380,15 @@ export class RoomCore {
 
   connect(socket: RoomSocket, input: RoomConnectInput): void {
     this.load();
-    if (this.frozen) {
-      safeSend(socket, encodeControl({ t: "error", code: "busy" }));
-      safeClose(socket, COLLAB_CLOSE_BUSY, "busy");
-      return;
-    }
     if (typeof input.lifecycle === "number") {
       if (input.lifecycle < this.epoch) {
         safeSend(socket, encodeControl({ t: "error", code: "stale" }));
         safeClose(socket, COLLAB_CLOSE_STALE, "stale");
         return;
       }
-      // reset 호출이 실패했던 room도 다음 연결에서 D1 세대로 수렴한다.
-      if (input.lifecycle > this.epoch) this.resetTo(input.lifecycle, socket);
+      // 아직 시드되지 않은 room은 지울 내용이 없으므로 D1 세대를 그대로 따른다(시드가 그 세대의 head로 채운다).
+      // 시드된 room이 뒤처졌으면(복원 적용 전 action 중단) 토큰 route의 repair가 같은 문서에 복원을 적용한다.
+      if (input.lifecycle > this.epoch && !this.isSeeded()) this.setEpoch(input.lifecycle);
     }
     const { doc } = this.load();
     const now = this.now();
@@ -391,7 +401,6 @@ export class RoomCore {
       leaseIat: input.leaseIat ?? 0,
       awarenessClientIds: [],
       applied: 0,
-      frozenAck: null,
     });
     safeSend(
       socket,
@@ -424,6 +433,11 @@ export class RoomCore {
       return;
     }
     const { doc } = this.load();
+    // 복원 update를 만드는 동안 받은 문서 변경은 큐에 두었다가 적용 뒤 같은 순서로 처리한다(입력·연결은 막지 않는다).
+    if (this.hold && data.byteLength > 0 && data[0] === COLLAB_MESSAGE_SYNC && attachment.mode === "write") {
+      this.hold.queue.push({ socket, data });
+      return;
+    }
     try {
       const decoder = decoding.createDecoder(data);
       const type = decoding.readVarUint(decoder);
@@ -466,11 +480,6 @@ export class RoomCore {
       safeSend(socket, encodeControl({ t: "error", code: "read-only" }));
       return;
     }
-    // freeze에 응답한 뒤의 update는 checkpoint에 들어가지 못한다. 저장 담당의 저장 표시(meta)만 받는다.
-    if (this.frozen && attachment.frozenAck === this.frozen.id && this.frozen.flushSocket !== socket) {
-      safeClose(socket, COLLAB_CLOSE_FREEZE_TIMEOUT, "frozen");
-      return;
-    }
     if (this.storedBytes + update.byteLength > COLLAB_MAX_ROOM_BYTES) {
       this.compact();
       if (this.storedBytes + update.byteLength > COLLAB_MAX_ROOM_BYTES) {
@@ -509,31 +518,6 @@ export class RoomCore {
 
   private handleClientControl(socket: RoomSocket, attachment: RoomSocketAttachment, message: CollabClientControlMessage): void {
     switch (message.t) {
-      case "frozen": {
-        const frozen = this.frozen;
-        if (!frozen || message.id !== frozen.id || !frozen.pending.has(socket)) return;
-        socket.setAttachment({ ...attachment, frozenAck: frozen.id });
-        frozen.pending.delete(socket);
-        if (frozen.pending.size === 0) this.proceedPrepare();
-        return;
-      }
-      case "flushed": {
-        const frozen = this.frozen;
-        if (!frozen || message.id !== frozen.id || frozen.flushSocket !== socket || !frozen.resolve) return;
-        if (frozen.mode === "clean") {
-          this.finishPrepare(message.ok && message.dirty === false ? { ok: true, checkpoint: null } : { ok: false, reason: "unpublished" });
-          return;
-        }
-        const sv = typeof message.sv === "string" ? base64ToBytes(message.sv) : null;
-        const current = roomSavedMarker(this.load().doc);
-        if (message.ok && typeof message.revision === "number" && Number.isSafeInteger(message.revision) && bytesEqual(sv, current)) {
-          this.setSavedSv(current);
-          this.finishPrepare({ ok: true, checkpoint: message.revision });
-        } else {
-          this.finishPrepare({ ok: false, reason: "flush-failed" });
-        }
-        return;
-      }
       case "saved": {
         if (attachment.mode !== "write" || typeof message.sv !== "string") return;
         const sv = base64ToBytes(message.sv);
@@ -561,10 +545,6 @@ export class RoomCore {
     if (claims.i <= attachment.leaseIat) return;
     if (this.isExpired(socket)) {
       safeClose(socket, COLLAB_CLOSE_EXPIRED, "expired");
-      return;
-    }
-    if (typeof claims.e === "number" && claims.e > this.currentEpoch) {
-      this.resetTo(claims.e);
       return;
     }
     if (typeof claims.e === "number" && claims.e < this.currentEpoch) {
@@ -608,131 +588,95 @@ export class RoomCore {
     return bytesEqual(this.savedSv, roomSavedMarker(doc));
   }
 
-  private writers(): RoomSocket[] {
-    return this.sockets().filter((socket) => !this.isExpired(socket) && socket.getAttachment()?.mode === "write");
+  private isSeeded(): boolean {
+    return this.load().doc.getMap("meta").has("seeded");
+  }
+
+  private setEpoch(epoch: number): void {
+    this.epoch = epoch;
+    this.storage.setEpoch?.(epoch);
+  }
+
+  private setIntent(intent: RestoreIntent | null): void {
+    this.intent = intent;
+    this.storage.setRestoreIntent?.(intent);
   }
 
   /**
-   * 복원 전 준비. 모든 쓰기 소켓을 멈추고, room에 저장되지 않은 내용이 있으면 저장 담당의 checkpoint를 확인한다.
-   * 확인하지 못하면 실패를 돌려준다(이때 action은 복원하지 않고 thaw한다).
+   * 복원 준비: 지금 상태를 기준 S로 영속화하고 돌려준다. 입력·연결은 막지 않는다.
+   * 다른 복원이 진행 중이면(기록이 아직 새것) busy.
    */
-  prepare(id: string, mode: CollabPrepareMode): Promise<CollabPrepareResult> {
+  restoreBegin(id: string): RestoreBeginResult {
+    const { doc } = this.load();
+    const now = this.now();
+    if ((this.intent && this.intent.id !== id && now - this.intent.at < ROOM_RESTORE_INTENT_MS) || (this.hold && this.hold.id !== id)) {
+      return { ok: false, reason: "busy" };
+    }
+    const state = Y.encodeStateAsUpdate(doc);
+    this.setIntent({ id, at: now, base: state });
+    return { ok: true, state, clean: this.isClean(), seeded: this.isSeeded(), lifecycle: this.epoch };
+  }
+
+  /** 복원 준비를 취소한다(복원하지 않기로 함). 같은 id일 때만. */
+  restoreAbort(id: string): void {
     this.load();
-    if (this.frozen) return Promise.resolve({ ok: false, reason: "busy" });
-    const writers = this.writers();
-    // 이전 준비의 응답 표시는 지운다(같은 id로 다시 준비해도 옛 응답이 새 freeze의 응답으로 보이지 않게).
-    for (const socket of this.sockets()) {
-      const attachment = socket.getAttachment();
-      if (attachment?.frozenAck) socket.setAttachment({ ...attachment, frozenAck: null });
-    }
-    return new Promise((resolve) => {
-      const frozen: FrozenState = { id, mode, pending: new Set(writers), flushSocket: null, resolve, timers: [] };
-      // 쓰기 소켓이 없어도 멈춘 상태로 둔다: 복원 commit 전에 새 편집기가 붙어 입력하지 못하게(새 연결은 busy).
-      this.frozen = frozen;
-      frozen.timers.push(
-        setTimeout(() => {
-          if (this.frozen === frozen) this.thaw(id);
-        }, ROOM_FREEZE_SAFETY_MS),
-      );
-      if (writers.length === 0) {
-        this.finishPrepare(
-          this.isClean() ? { ok: true, checkpoint: null } : { ok: false, reason: mode === "clean" ? "unpublished" : "unsaved" },
-        );
-        return;
-      }
-      this.broadcast(encodeControl({ t: "freeze", id }), null);
-      frozen.timers.push(
-        setTimeout(() => {
-          if (this.frozen !== frozen || frozen.pending.size === 0) return;
-          // 제때 멈추지 못한 소켓은 닫는다. 그 기기의 미확인 입력은 기기에 남아 다시 연결할 때 재적용된다.
-          for (const socket of frozen.pending) safeClose(socket, COLLAB_CLOSE_FREEZE_TIMEOUT, "freeze-timeout");
-          frozen.pending.clear();
-          this.proceedPrepare();
-        }, ROOM_FREEZE_ACK_MS),
-      );
-    });
-  }
-
-  private proceedPrepare(): void {
-    const frozen = this.frozen;
-    if (!frozen || !frozen.resolve || frozen.flushSocket) return;
-    if (frozen.mode === "checkpoint" && this.isClean()) {
-      this.finishPrepare({ ok: true, checkpoint: null });
-      return;
-    }
-    const saver = this.electSaver();
-    if (!saver) {
-      this.finishPrepare(
-        frozen.mode === "clean" || !this.isClean() ? { ok: false, reason: "no-saver" } : { ok: true, checkpoint: null },
-      );
-      return;
-    }
-    frozen.flushSocket = saver;
-    safeSend(saver, encodeControl({ t: "flush", id: frozen.id, mode: frozen.mode }));
-    frozen.timers.push(
-      setTimeout(() => {
-        if (this.frozen === frozen && frozen.resolve) this.finishPrepare({ ok: false, reason: "timeout" });
-      }, ROOM_FLUSH_TIMEOUT_MS),
-    );
-  }
-
-  /** awareness에 canSave를 알린 쓰기 소켓 중 clientID가 가장 작은 한 명(클라이언트 선출 규칙과 같다). */
-  private electSaver(): RoomSocket | null {
-    const open = new Set(this.writers());
-    let best: { clientId: number; socket: RoomSocket } | null = null;
-    for (const [clientId, entry] of this.awareness) {
-      if (!open.has(entry.socket)) continue;
-      let canSave = false;
-      try {
-        canSave = (JSON.parse(entry.state) as { canSave?: unknown } | null)?.canSave === true;
-      } catch {
-        canSave = false;
-      }
-      if (canSave && (!best || clientId < best.clientId)) best = { clientId, socket: entry.socket };
-    }
-    return best?.socket ?? null;
-  }
-
-  private finishPrepare(result: CollabPrepareResult): void {
-    const frozen = this.frozen;
-    if (!frozen?.resolve) return;
-    const resolve = frozen.resolve;
-    frozen.resolve = null;
-    resolve(result);
+    if (this.intent?.id === id) this.setIntent(null);
+    if (this.hold?.id === id) this.releaseHold();
   }
 
   /**
-   * 이 id의 준비가 아직 유효한지(안전 시간으로 풀리지 않았는지). 복원 commit 직전에 확인하고, 유효하면 commit 단계로 넘겨
-   * 짧은 안전 해제를 끈다(확인과 commit 사이에 풀려 새 입력을 받은 뒤 복원이 그 입력을 지우는 일을 막는다).
+   * 복원 update를 만들 지금 상태 C를 돌려주고, 적용할 때까지(최대 ROOM_RESTORE_HOLD_MS) 들어오는 update를 큐에 보관한다.
+   * 준비 기록이 없으면(repair) C가 기준이다.
    */
-  isPrepared(id: string): boolean {
-    const frozen = this.frozen;
-    if (frozen?.id !== id || frozen.resolve !== null) return false;
-    for (const timer of frozen.timers) clearTimeout(timer);
-    frozen.timers = [
-      setTimeout(() => {
-        if (this.frozen === frozen) this.thaw(id);
-      }, ROOM_COMMIT_SAFETY_MS),
-    ];
-    return true;
+  restoreHold(id: string): RestoreHoldResult {
+    const { doc } = this.load();
+    if (this.hold && this.hold.id !== id) return { ok: false, reason: "busy" };
+    if (this.hold) clearTimeout(this.hold.timer);
+    const queue = this.hold?.queue ?? [];
+    const hold: RestoreHold = {
+      id,
+      queue,
+      timer: setTimeout(() => {
+        if (this.hold === hold) this.releaseHold();
+      }, ROOM_RESTORE_HOLD_MS),
+    };
+    this.hold = hold;
+    const base = this.intent?.id === id ? this.intent.base : null;
+    return { ok: true, state: Y.encodeStateAsUpdate(doc), base, lifecycle: this.epoch, seeded: this.isSeeded() };
   }
 
-  /** 준비를 풀고 편집을 다시 받는다(복원 실패·취소, 안전 시간 초과). */
-  thaw(id?: string): void {
-    const frozen = this.frozen;
-    if (!frozen || (id !== undefined && id !== frozen.id)) return;
-    this.finishPrepare({ ok: false, reason: "timeout" });
-    for (const timer of frozen.timers) clearTimeout(timer);
-    this.frozen = null;
-    this.broadcast(encodeControl({ t: "thaw", id: frozen.id }), null);
+  /**
+   * 복원 update를 적용한다. hold가 이 id로 유효하고 target이 지금 lifecycle보다 클 때만:
+   * 모든 소켓에 `restored`를 알린 뒤 update·lifecycle·기록 삭제를 한 transaction으로 저장·전달하고 큐를 배출한다.
+   * target이 같거나 작으면(이미 적용) 적용하지 않고 성공으로 끝낸다.
+   */
+  restoreApply(id: string, target: number, update: Uint8Array): RestoreApplyResult {
+    const { doc } = this.load();
+    if (!this.hold || this.hold.id !== id) return { ok: false, reason: "expired" };
+    if (!Number.isSafeInteger(target) || target <= this.epoch) {
+      if (this.intent?.id === id) this.setIntent(null);
+      this.releaseHold();
+      return { ok: true, applied: false, lifecycle: this.epoch };
+    }
+    const base = encodeStateVectorBase64(doc);
+    this.broadcast(encodeControl({ t: "restored", id, lifecycle: target, base }), null);
+    const apply = () => {
+      if (update.byteLength > 0) Y.applyUpdate(doc, update, null);
+      this.setEpoch(target);
+      this.setIntent(null);
+    };
+    if (this.storage.transact) this.storage.transact(apply);
+    else apply();
+    this.releaseHold();
+    return { ok: true, applied: true, lifecycle: target };
   }
 
-  private clearFrozen(): void {
-    const frozen = this.frozen;
-    if (!frozen) return;
-    this.finishPrepare({ ok: false, reason: "timeout" });
-    for (const timer of frozen.timers) clearTimeout(timer);
-    this.frozen = null;
+  private releaseHold(): void {
+    const hold = this.hold;
+    if (!hold) return;
+    clearTimeout(hold.timer);
+    this.hold = null;
+    for (const entry of hold.queue) this.message(entry.socket, entry.data);
   }
 
   /** 소켓이 닫히면 그 소켓의 커서를 다른 사람 화면에서 지운다. 마지막 연결이면 메모리 상태를 내려놓는다. */
@@ -744,12 +688,8 @@ export class RoomCore {
       removed.push({ clientId, clock: entry.clock + 1, state: "null" });
     }
     if (removed.length > 0) this.broadcast(encodeAwarenessMessage(removed), socket);
-    const frozen = this.frozen;
-    if (frozen) {
-      if (frozen.flushSocket === socket && frozen.resolve) this.finishPrepare({ ok: false, reason: "flush-failed" });
-      if (frozen.pending.delete(socket) && frozen.pending.size === 0) this.proceedPrepare();
-    }
-    if (this.sockets().every((other) => other === socket) && !this.frozen) this.destroy();
+    if (this.hold) this.hold.queue = this.hold.queue.filter((entry) => entry.socket !== socket);
+    if (this.sockets().every((other) => other === socket) && !this.hold) this.destroy();
   }
 
   /** 메모리 상태를 정리한다(다음 연결에서 저장소로부터 다시 읽는다). */
@@ -760,7 +700,11 @@ export class RoomCore {
   }
 
   private resetTo(nextEpoch: number, except: RoomSocket | null = null): number {
-    this.clearFrozen();
+    if (this.hold) {
+      clearTimeout(this.hold.timer);
+      this.hold = null;
+    }
+    this.intent = null;
     this.storage.reset(nextEpoch);
     this.destroy();
     this.epoch = nextEpoch;
@@ -783,20 +727,6 @@ export class RoomCore {
     return this.resetTo(this.epoch + 1);
   }
 
-  /** 노트·게시물 복원 commit 뒤: target이 지금보다 클 때만 넘어간다(같으면 no-op, 작으면 무시). */
-  advance(target: number): number {
-    this.load();
-    if (!Number.isSafeInteger(target) || target <= this.epoch) {
-      this.clearFrozenWithThaw();
-      return this.epoch;
-    }
-    return this.resetTo(target);
-  }
-
-  private clearFrozenWithThaw(): void {
-    if (this.frozen) this.thaw(this.frozen.id);
-  }
-
   /** 연결을 모두 닫는다. keep이면 상태를 보존한다(휴지통 — 복구하면 그대로 이어진다). */
   closeAll(keep: boolean): void {
     this.load();
@@ -804,7 +734,6 @@ export class RoomCore {
       this.resetTo(this.epoch + 1);
       return;
     }
-    this.clearFrozen();
     for (const socket of this.sockets()) safeClose(socket, COLLAB_CLOSE_GONE, "gone");
   }
 

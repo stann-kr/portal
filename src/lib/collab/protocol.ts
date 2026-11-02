@@ -38,10 +38,6 @@ export const COLLAB_CLOSE_TOO_LARGE = 4003;
 export const COLLAB_CLOSE_UNAUTHORIZED = 4004;
 /** 토큰의 문서 세대가 room보다 옛것이다. 새 토큰으로 다시 연결한다. */
 export const COLLAB_CLOSE_STALE = 4005;
-/** freeze(복원 준비)에 제때 응답하지 않아 닫았다. 이 기기의 미확인 입력은 기기에 남는다. */
-export const COLLAB_CLOSE_FREEZE_TIMEOUT = 4006;
-/** room이 복원을 준비하는 중이라 새 연결을 받지 않는다. 잠시 뒤 다시 연결한다. */
-export const COLLAB_CLOSE_BUSY = 4007;
 /** 문서가 휴지통으로 가거나 지워졌다. 다시 연결해도 토큰이 거부된다. */
 export const COLLAB_CLOSE_GONE = 4008;
 
@@ -51,14 +47,14 @@ export type CollabMode = "read" | "write";
 export type CollabControlMessage =
   | { t: "hello"; epoch: number; mode: CollabMode; frozen?: boolean; seq?: number; changedAt?: number }
   | { t: "reset"; epoch: number }
-  | { t: "error"; code: "read-only" | "too-large" | "bad-message" | "stale" | "busy" }
+  | { t: "error"; code: "read-only" | "too-large" | "bad-message" | "stale" }
   /** 이 소켓이 보낸 update 중 room이 저장한 누적 개수. */
   | { t: "ack"; n: number }
-  /** 복원 준비: 편집을 잠시 멈추고 `frozen`으로 답한다. */
-  | { t: "freeze"; id: string }
-  | { t: "thaw"; id: string }
-  /** 저장 담당에게: 지금 내용을 저장(checkpoint)하거나 작업본이 게시본과 같은지 확인(clean)해 답한다. */
-  | { t: "flush"; id: string; mode: CollabPrepareMode }
+  /**
+   * 바로 다음 sync update가 복원이다(같은 문서에 적용하는 한 편집). base는 room이 복원을 적용하기 직전의 state vector.
+   * 이 소켓의 update 중 이 알림 전에 ack된 것은 복원 기준에 들어갔고, ack되지 않은 것은 들어가지 않았다.
+   */
+  | { t: "restored"; id: string; lifecycle: number; base: string }
   /** 권한이 읽기로 바뀌었다. */
   | { t: "mode"; mode: CollabMode }
   /** 알림 room: 대상이 바뀌었다(seq는 room이 매긴 순번). */
@@ -66,18 +62,10 @@ export type CollabControlMessage =
 
 /** 클라이언트 → room control. */
 export type CollabClientControlMessage =
-  | { t: "frozen"; id: string }
-  | { t: "flushed"; id: string; ok: boolean; revision?: number; sv?: string; dirty?: boolean }
   /** 저장 성공(또는 이미 저장된 내용과 같음). sv는 저장한 내용의 Yjs snapshot(delete set 포함, base64). */
   | { t: "saved"; sv: string }
   | { t: "renew"; token: string };
 
-/** checkpoint: 노트처럼 저장하면 되는 문서. clean: 게시물 작업본처럼 저장하면 안 되고 미게시 변경이 없어야 한다. */
-export type CollabPrepareMode = "checkpoint" | "clean";
-
-export type CollabPrepareResult =
-  | { ok: true; checkpoint: number | null }
-  | { ok: false; reason: "busy" | "unsaved" | "unpublished" | "no-saver" | "flush-failed" | "timeout" };
 
 /** worker가 검증한 토큰 내용을 room에 넘기는 내부 헤더. 클라이언트가 보낸 같은 이름의 헤더는 버린다. */
 export const COLLAB_INTERNAL_HEADER_USER = "x-portal-collab-user";
@@ -93,13 +81,14 @@ export const COLLAB_INTERNAL_HEADER_ISSUED = "x-portal-collab-issued";
 export const COLLAB_ROOM_CONNECT_URL = "https://collab-room/connect";
 export const COLLAB_ROOM_RESET_URL = "https://collab-room/reset";
 export const COLLAB_ROOM_EPOCH_URL = "https://collab-room/epoch";
-/** 복원 commit 뒤 room을 그 세대로 넘긴다(같거나 작으면 no-op). body `{ target }`. */
-export const COLLAB_ROOM_ADVANCE_URL = "https://collab-room/advance";
-/** 복원 전 준비(freeze → checkpoint). body `{ id, mode }`. 응답 `CollabPrepareResult`. */
-export const COLLAB_ROOM_PREPARE_URL = "https://collab-room/prepare";
-export const COLLAB_ROOM_THAW_URL = "https://collab-room/thaw";
-/** 준비가 아직 유효한지(복원 commit 직전 확인). body `{ id }`. */
-export const COLLAB_ROOM_PREPARED_URL = "https://collab-room/prepared";
+/** 복원 준비: 지금 상태를 기준으로 영속화. body `{ id }`. 응답 `{ ok, state(base64), clean, seeded, lifecycle }`. */
+export const COLLAB_ROOM_RESTORE_BEGIN_URL = "https://collab-room/restore-begin";
+/** 복원 update를 만들 지금 상태. body `{ id }`. 적용까지 들어오는 update를 잠시 큐에 보관한다. */
+export const COLLAB_ROOM_RESTORE_HOLD_URL = "https://collab-room/restore-hold";
+/** 복원 update 적용. body `{ id, target, update(base64) }`. lifecycle이 더 클 때만 적용. */
+export const COLLAB_ROOM_RESTORE_APPLY_URL = "https://collab-room/restore-apply";
+/** 복원 준비 취소. body `{ id }`. */
+export const COLLAB_ROOM_RESTORE_ABORT_URL = "https://collab-room/restore-abort";
 /** 연결을 모두 닫는다. body `{ keep }`: true면 상태를 보존(휴지통), false면 비운다(영구 삭제). */
 export const COLLAB_ROOM_CLOSE_URL = "https://collab-room/close";
 /** room 밖에서 바뀐 칸(캘린더 날짜 이동)을 room에 반영한다. body `{ field, value }`. */

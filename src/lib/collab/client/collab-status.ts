@@ -26,6 +26,13 @@ export function describeCollabStatus(input: {
       shortMessage: "열 수 없음",
     };
   }
+  if (connection === "trashed") {
+    return {
+      kind: "blocked",
+      message: "휴지통으로 이동한 문서입니다. 되살리면 이 화면에서 그대로 이어서 편집할 수 있습니다.",
+      shortMessage: "휴지통",
+    };
+  }
   if (connection === "too-large") {
     return { kind: "error", message: "문서가 너무 커서 실시간 동기화를 멈췄습니다. 일부 내용을 줄여 주세요.", shortMessage: "동기화 멈춤" };
   }

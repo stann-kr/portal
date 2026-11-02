@@ -480,13 +480,12 @@ function NewPostFormContent({
             <span className="text-body font-medium text-secondary-foreground md:text-ui">
               내용 <span className="sr-only">필수</span>
             </span>
-            {loaded && draft.collaboration ? (
+            {draft.ready && draft.collaboration ? (
               <FullEditor
-                key={draft.collab.generation}
                 collaboration={draft.collaboration}
                 onUploadingChange={setIsEditorUploading}
                 placeholder="게시물 내용을 작성하세요…"
-                disabled={isFormBusy}
+                disabled={!loaded || isFormBusy}
                 minHeight="15rem"
                 ariaLabel="커뮤니티 게시물 내용"
                 toolbar="none"

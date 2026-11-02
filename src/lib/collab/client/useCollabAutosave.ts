@@ -10,10 +10,14 @@ import { COLLAB_META } from "./seed";
  * - 누가 바꿨든 문서가 바뀌면 1.5초 쉼(최대 10초) 뒤 저장한다. 화면을 떠날 때는 바로 저장한다.
  * - 마지막 저장 내용의 hash를 room `meta.savedHash`에 남겨 담당이 바뀌어도 같은 내용을 다시 저장하지 않는다.
  * - 저장 가능한 상태가 아니면(필수 칸 비어 있음) `blocked`로 기다린다.
+ * - 스냅샷에는 본문·칸·lifecycle이 함께 들어가므로 hash도 lifecycle을 포함한다(복원 뒤 같은 본문도 다시 저장 대상).
  */
 export type CollabAutosaveStatus = "idle" | "pending" | "saving" | "saved" | "error" | "blocked";
 
-export type CollabSaveResult = { ok: true } | { ok: false; error: string };
+/**
+ * deferred: 이 스냅샷은 복원 전 세대라 서버가 받지 않았다(오류가 아니다). 복원이 이 문서에 들어오면(스냅샷이 바뀌면) 다시 저장한다.
+ */
+export type CollabSaveResult = { ok: true } | { ok: false; error: string } | { ok: false; deferred: true };
 
 export type CollabAutosaveOptions<S> = {
   doc: Y.Doc | null;
@@ -122,6 +126,11 @@ export function useCollabAutosave<S>({
         setStatus("saved");
         if (!doc.isDestroyed) doc.transact(() => meta.set(COLLAB_META_SAVED_HASH, hash), "collab-autosave-meta");
         reportSavedIfCurrent(hash);
+      } else if ("deferred" in result) {
+        // 복원 반영을 기다린다: 같은 스냅샷은 다시 보내지 않고, 문서가 바뀌면(복원 적용) 다시 저장한다.
+        failedHashRef.current = hash;
+        setError(null);
+        setStatus("pending");
       } else {
         failedHashRef.current = hash;
         setError(result.error);
@@ -191,47 +200,11 @@ export function useCollabAutosave<S>({
     void runSave();
   }, [runSave]);
 
-  /**
-   * 복원 준비(checkpoint): 선출·대기 시간·잠금과 무관하게 지금 내용을 저장한다. 진행 중인 저장이 있으면 끝난 뒤 다시 확인한다.
-   * 이미 저장된 내용과 같으면 저장 없이 성공이다. 저장할 수 없는 상태(필수 칸 비어 있음)·실패는 ok: false.
-   */
-  const checkpoint = useCallback(async (): Promise<{ ok: boolean }> => {
-    clearTimer();
-    firstPendingAtRef.current = null;
-    while (savingRef.current) await savingRef.current.catch(() => undefined);
-    if (!doc || doc.isDestroyed) return { ok: false };
-    const snapshot = readRef.current();
-    if (snapshot === null) return { ok: false };
-    const hash = collabSnapshotHash(snapshot);
-    const meta = doc.getMap(COLLAB_META);
-    if (meta.get(COLLAB_META_SAVED_HASH) === hash) return { ok: true };
-    setStatus("saving");
-    let result: CollabSaveResult;
-    try {
-      result = await saveRef.current(snapshot);
-    } catch {
-      result = { ok: false, error: "저장 결과를 확인하지 못했습니다." };
-    }
-    if (!result.ok) {
-      failedHashRef.current = hash;
-      setError(result.error);
-      setStatus("error");
-      return { ok: false };
-    }
-    failedHashRef.current = null;
-    setError(null);
-    setSavedAt(new Date());
-    setStatus("saved");
-    if (!doc.isDestroyed) doc.transact(() => meta.set(COLLAB_META_SAVED_HASH, hash), "collab-autosave-meta");
-    reportSavedIfCurrent(hash);
-    return { ok: true };
-  }, [doc, reportSavedIfCurrent]);
-
   /** 저장 대기·진행 중인지(이탈 보호). */
   const hasPendingSave = useCallback(
     () => activeRef.current && (Boolean(idleTimerRef.current) || Boolean(savingRef.current)),
     [],
   );
 
-  return { status, error, savedAt, retry, flush: runSave, checkpoint, hasPendingSave };
+  return { status, error, savedAt, retry, flush: runSave, hasPendingSave };
 }

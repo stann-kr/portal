@@ -473,9 +473,8 @@ function ThreadDetailContent({
                 "md:max-h-none md:min-h-[124px] md:rounded-none md:border-0 md:bg-transparent md:focus-within:ring-0",
               )}
             >
-              {loaded && draft.collaboration ? (
+              {draft.ready && draft.collaboration ? (
                 <FullEditor
-                  key={draft.collab.generation}
                   collaboration={draft.collaboration}
                   onUploadingChange={setIsEditorUploading}
                   variant="bare"
@@ -483,7 +482,7 @@ function ThreadDetailContent({
                   toolsContainer={editorToolsElement}
                   contentClassName="px-3 py-2.5 text-base leading-[22px] md:px-4 md:py-3.5 md:text-md md:leading-6"
                   placeholder={isAdmin ? "답변을 입력하세요" : "추가 질문을 입력하세요"}
-                  disabled={isClosed || isReplyFormBusy}
+                  disabled={!loaded || isClosed || isReplyFormBusy}
                   ariaLabel={isAdmin ? "Q&A 답변 내용" : "Q&A 추가 질문 내용"}
                 />
               ) : null}

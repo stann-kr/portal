@@ -26,7 +26,7 @@ import { COLLAB_FRAGMENT, COLLAB_META } from "@/lib/collab/client/seed";
 import { canonicalCollabHtml, collabDocHtml } from "@/lib/collab/client/doc-html";
 import type * as Y from "yjs";
 import { collabSavedMarker } from "@/lib/collab/saved-marker";
-import { CollabLoadingState } from "@/components/editor/CollabNotices";
+import { CollabLoadingState, CollabNotices } from "@/components/editor/CollabNotices";
 
 const EMPTY_TITLE_ERROR = "제목을 입력해 주세요.";
 
@@ -66,7 +66,6 @@ function PostEditFormContent({ actorId, post, onCancel, onSaved, onBusyChange, m
   const headRef = useRef<PostHead>({ version: post.version, title: post.title, contentHtml: post.contentHtml });
   // 게시본의 링크 칸 값(작업본이 게시본과 같은지 볼 때 쓴다).
   const headLinkRef = useRef(initialLinkUrl ?? "");
-  const docRef = useRef<Y.Doc | null>(null);
   const draft = useCollabFormDraft({
     ownerId: actorId,
     room: { postId: post.id },
@@ -88,12 +87,6 @@ function PostEditFormContent({ actorId, post, onCancel, onSaved, onBusyChange, m
       };
     },
     extensions: getExtensions,
-    // 복원 준비: 작업본에 게시하지 않은 수정이 있으면 복원을 막는다(작업본을 저장하면 미게시 편집이 게시되므로 저장하지 않는다).
-    onFlush: async (): Promise<{ ok: boolean; dirty?: boolean }> => {
-      const doc = docRef.current;
-      if (!doc || doc.isDestroyed) return { ok: false };
-      return { ok: true, dirty: isWorkingCopyDirty(doc) };
-    },
   });
   /** 작업본(제목·링크·본문)이 게시본과 다른지. 게시하지 않은 수정이 있으면 복원을 막는 기준이다. */
   function isWorkingCopyDirty(doc: Y.Doc): boolean {
@@ -104,10 +97,6 @@ function PostEditFormContent({ actorId, post, onCancel, onSaved, onBusyChange, m
     if (hasLinkField && read("mixsetLinkUrl") !== headLinkRef.current) return true;
     return collabDocHtml(doc, getExtensions()) !== canonicalCollabHtml(head.contentHtml, getExtensions());
   }
-  useEffect(() => {
-    docRef.current = draft.collab.doc;
-  });
-  const frozen = draft.collab.frozen;
   // 작업본이 게시본과 같으면 room에 "밀린 내용 없음"을 알린다(수정 화면을 닫은 뒤에도 복원이 막히지 않게).
   const reportedCleanRef = useRef<unknown>(null);
   useEffect(() => {
@@ -118,12 +107,10 @@ function PostEditFormContent({ actorId, post, onCancel, onSaved, onBusyChange, m
     if (!isWorkingCopyDirty(doc)) draft.collab.provider?.reportSaved(collabSavedMarker(doc));
   });
   const { title, mixsetLinkUrl: linkUrl } = draft.fields;
-  const generationRef = useRef(draft.collab.generation);
-  useEffect(() => {
-    generationRef.current = draft.collab.generation;
-  });
   const { contentHtml } = draft;
   const loaded = draft.ready && draft.collab.mode === "write";
+  // 읽기·권한 없음·휴지통이면 같은 편집기를 그 자리에서 잠근다(연결 중·오프라인은 잠그지 않는다).
+  const locked = !loaded || draft.collab.status === "denied" || draft.collab.status === "trashed";
   const [isPending, setIsPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isEditorUploading, setIsEditorUploading] = useState(false);
@@ -146,7 +133,17 @@ function PostEditFormContent({ actorId, post, onCancel, onSaved, onBusyChange, m
 
   const submit = useCallback(async () => {
     if (isSubmitBlocked) return;
+    // 본문·제목·링크·lifecycle은 작업본(doc)에서 같은 동기 구간에 읽고 재시도에서도 그대로 쓴다(복원 전 칸 + 새 lifecycle 조합 방지).
+    const liveDoc = draft.collab.doc;
+    const liveMeta = liveDoc && !liveDoc.isDestroyed ? liveDoc.getMap(COLLAB_META) : null;
+    const readField = (name: string, fallback: string) => {
+      const value = liveMeta?.get(name);
+      return typeof value === "string" ? value : fallback;
+    };
     const latestContentHtml = draft.readHtml();
+    const title = readField("title", draft.fields.title);
+    const linkUrl = readField("mixsetLinkUrl", draft.fields.mixsetLinkUrl ?? "");
+    const lifecycle = draft.collab.readLifecycle();
     if (!title.trim()) {
       setTitleError(EMPTY_TITLE_ERROR);
       titleInputRef.current?.focus();
@@ -165,15 +162,8 @@ function PostEditFormContent({ actorId, post, onCancel, onSaved, onBusyChange, m
     setError(null);
     // 보낸 작업본의 저장 표지. 응답을 기다리는 동안 다른 기기가 고쳤으면 "저장됨"으로 알리지 않는다.
     const submittedMarker = draft.collab.doc && !draft.collab.doc.isDestroyed ? collabSavedMarker(draft.collab.doc) : null;
-    // 이 저장의 room epoch·작업본 세대는 시작할 때 고정한다(복원 뒤 옛 내용을 다시 보내지 않게).
-    const epoch = draft.collab.epoch;
-    const generation = draft.collab.generation;
     try {
       for (let attempt = 0; attempt < 2; attempt += 1) {
-        if (attempt > 0 && generationRef.current !== generation) {
-          setError("작업본이 다시 시작되어 이 저장은 보내지 않았습니다. 내용을 확인한 뒤 다시 저장해 주세요.");
-          return;
-        }
         const head = headRef.current;
         const formData = new FormData();
         formData.set("title", title);
@@ -181,7 +171,7 @@ function PostEditFormContent({ actorId, post, onCancel, onSaved, onBusyChange, m
         if (hasLinkField) formData.set(MIXSET_LINK_FIELD, linkUrl);
         formData.set(CREATION_OPERATION_FIELD, createCreationOperationId());
         formData.set(POST_BASE_REVISION_FIELD, String(head.version));
-        if (typeof epoch === "number") formData.set(COLLAB_EPOCH_FIELD, String(epoch));
+        if (typeof lifecycle === "number") formData.set(COLLAB_EPOCH_FIELD, String(lifecycle));
         formData.set(
           DOCUMENT_SNAPSHOT_FINGERPRINT_FIELD,
           createDocumentSnapshotFingerprint({
@@ -208,8 +198,8 @@ function PostEditFormContent({ actorId, post, onCancel, onSaved, onBusyChange, m
           return;
         }
         if (state.collabStale) {
-          draft.collab.reconnect();
-          setError(state.error ?? "게시물이 복원되어 최신 내용으로 다시 불러옵니다.");
+          // 다른 화면에서 이전 버전으로 되돌렸고 이 작업본에 아직 반영되기 전이다. 작업본은 그대로 두고 다시 저장하게 한다.
+          setError("다른 화면에서 이 게시물을 이전 버전으로 되돌렸습니다. 되돌린 내용이 반영되면 다시 저장해 주세요. 수정 내용은 작업본에 남아 있습니다.");
           return;
         }
         // 작업본은 이미 합쳐진 결과다. 선택창 없이 최신 게시본을 기준으로 한 번 더 저장한다.
@@ -229,7 +219,7 @@ function PostEditFormContent({ actorId, post, onCancel, onSaved, onBusyChange, m
     } finally {
       setIsPending(false);
     }
-  }, [draft, hasLinkField, isSubmitBlocked, linkUrl, onSaved, post.id, title]);
+  }, [draft, hasLinkField, isSubmitBlocked, onSaved, post.id]);
 
   /** 취소: 작업본을 마지막 게시본으로 되돌린 뒤 닫는다(같은 작업본을 연 다른 기기도 함께 되돌아간다). */
   const cancel = useCallback(() => {
@@ -290,7 +280,7 @@ function PostEditFormContent({ actorId, post, onCancel, onSaved, onBusyChange, m
               setTitleError("");
             }}
             required
-            disabled={!loaded || isPending || frozen}
+            disabled={locked || isPending}
             aria-invalid={visibleTitleError ? true : undefined}
             aria-describedby={visibleTitleError ? titleErrorId : undefined}
             className="h-12 px-3.5 font-normal md:h-10 md:px-3 md:text-md"
@@ -321,7 +311,7 @@ function PostEditFormContent({ actorId, post, onCancel, onSaved, onBusyChange, m
               const normalizedLink = normalizeMixsetLinkUrl(linkUrl);
               setLinkError(normalizedLink.ok ? "" : normalizedLink.error);
             }}
-            disabled={!loaded || isPending || frozen}
+            disabled={locked || isPending}
             aria-invalid={linkError ? true : undefined}
             aria-describedby={linkError ? `${linkHintId} ${linkErrorId}` : linkHintId}
             className="h-12 px-3.5 font-normal md:h-10 md:px-3"
@@ -335,16 +325,16 @@ function PostEditFormContent({ actorId, post, onCancel, onSaved, onBusyChange, m
         </div>
       ) : null}
 
-      {loaded && draft.collaboration ? (
+      <CollabNotices collab={draft.collab} />
+      {draft.ready && draft.collaboration ? (
         <FullEditor
-          key={draft.collab.generation}
           collaboration={draft.collaboration}
           onUploadingChange={setIsEditorUploading}
           minHeight="min(60dvh, 42rem)"
           placeholder="게시물 내용을 이어서 작성하세요…"
           ariaLabel="커뮤니티 게시물 내용"
           toolbar="none"
-          disabled={isPending || frozen || draft.collab.status === "denied"}
+          disabled={locked || isPending}
           footer={<CollabDraftStatus draft={draft} />}
           saveShortcutLabel={isSubmitBlocked ? undefined : "변경 저장"}
         />

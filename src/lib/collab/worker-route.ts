@@ -6,20 +6,18 @@ import {
   COLLAB_INTERNAL_HEADER_LIFECYCLE,
   COLLAB_INTERNAL_HEADER_MODE,
   COLLAB_INTERNAL_HEADER_USER,
-  COLLAB_ROOM_ADVANCE_URL,
   COLLAB_ROOM_CLOSE_URL,
   COLLAB_ROOM_CONNECT_URL,
   COLLAB_ROOM_EPOCH_URL,
   COLLAB_ROOM_NOTIFY_URL,
-  COLLAB_ROOM_PREPARE_URL,
-  COLLAB_ROOM_PREPARED_URL,
   COLLAB_ROOM_RESET_URL,
+  COLLAB_ROOM_RESTORE_ABORT_URL,
+  COLLAB_ROOM_RESTORE_APPLY_URL,
+  COLLAB_ROOM_RESTORE_BEGIN_URL,
+  COLLAB_ROOM_RESTORE_HOLD_URL,
   COLLAB_ROOM_SET_META_URL,
-  COLLAB_ROOM_THAW_URL,
   COLLAB_SUBPROTOCOL,
   COLLAB_WS_PATH_PREFIX,
-  type CollabPrepareMode,
-  type CollabPrepareResult,
 } from "./protocol";
 import { verifyCollabToken } from "./token";
 
@@ -126,33 +124,36 @@ async function postRoom(env: CollabWorkerEnv | undefined, key: string, url: stri
   return stub.fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 }
 
-/** 복원 commit 뒤 room을 그 lifecycle 세대로 넘긴다(같거나 작으면 no-op). */
-export async function advanceCollabRoom(env: CollabWorkerEnv | undefined, key: string, target: number): Promise<boolean> {
-  const response = await postRoom(env, key, COLLAB_ROOM_ADVANCE_URL, { target });
-  return Boolean(response?.ok);
-}
+export type CollabRoomRestoreBegin =
+  | { ok: true; state: string; clean: boolean; seeded: boolean; lifecycle: number }
+  | { ok: false; reason: "busy" };
+export type CollabRoomRestoreHold =
+  | { ok: true; state: string; base: string | null; lifecycle: number; seeded: boolean }
+  | { ok: false; reason: "busy" };
+export type CollabRoomRestoreApply = { ok: true; applied: boolean; lifecycle: number } | { ok: false; reason: "expired" };
 
-/** 복원 전 준비. binding이 없으면 null(확인할 room이 없다). */
-export async function prepareCollabRoom(
-  env: CollabWorkerEnv | undefined,
-  key: string,
-  input: { id: string; mode: CollabPrepareMode },
-): Promise<CollabPrepareResult | null> {
-  const response = await postRoom(env, key, COLLAB_ROOM_PREPARE_URL, input);
+async function postRoomJson<T>(env: CollabWorkerEnv | undefined, key: string, url: string, body: unknown): Promise<T | null> {
+  const response = await postRoom(env, key, url, body);
   if (!response) return null;
-  if (!response.ok) return { ok: false, reason: "timeout" };
-  return (await response.json()) as CollabPrepareResult;
+  if (!response.ok) throw new Error(`COLLAB_ROOM_${response.status}`);
+  return (await response.json()) as T;
 }
 
-/** 준비가 아직 유효한지. 확인하지 못하면 false(복원하지 않는다). */
-export async function isCollabRoomPrepared(env: CollabWorkerEnv | undefined, key: string, id: string): Promise<boolean> {
-  const response = await postRoom(env, key, COLLAB_ROOM_PREPARED_URL, { id });
-  if (!response?.ok) return false;
-  return ((await response.json()) as { prepared?: unknown }).prepared === true;
+/** 복원 준비: room이 지금 상태를 기준으로 남기고 돌려준다. binding이 없으면 null. */
+export function beginCollabRoomRestore(env: CollabWorkerEnv | undefined, key: string, id: string) {
+  return postRoomJson<CollabRoomRestoreBegin>(env, key, COLLAB_ROOM_RESTORE_BEGIN_URL, { id });
 }
 
-export async function thawCollabRoom(env: CollabWorkerEnv | undefined, key: string, id: string): Promise<void> {
-  await postRoom(env, key, COLLAB_ROOM_THAW_URL, { id });
+export function holdCollabRoomRestore(env: CollabWorkerEnv | undefined, key: string, id: string) {
+  return postRoomJson<CollabRoomRestoreHold>(env, key, COLLAB_ROOM_RESTORE_HOLD_URL, { id });
+}
+
+export function applyCollabRoomRestore(env: CollabWorkerEnv | undefined, key: string, input: { id: string; target: number; update: string }) {
+  return postRoomJson<CollabRoomRestoreApply>(env, key, COLLAB_ROOM_RESTORE_APPLY_URL, input);
+}
+
+export async function abortCollabRoomRestore(env: CollabWorkerEnv | undefined, key: string, id: string): Promise<void> {
+  await postRoom(env, key, COLLAB_ROOM_RESTORE_ABORT_URL, { id });
 }
 
 /** 연결을 모두 닫는다. keep이면 room 상태를 보존한다(휴지통). */

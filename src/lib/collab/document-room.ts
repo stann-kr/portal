@@ -6,7 +6,6 @@ import {
   COLLAB_INTERNAL_HEADER_MODE,
   COLLAB_INTERNAL_HEADER_USER,
   COLLAB_SUBPROTOCOL,
-  type CollabPrepareMode,
 } from "./protocol";
 import { verifyCollabToken } from "./token";
 import {
@@ -21,7 +20,7 @@ import {
 /**
  * 문서별 Durable Object. WebSocket Hibernation API로 연결을 받고 SQLite storage에 Yjs 상태를 둔다.
  * 연결은 worker(collab-worker-route.ts)가 토큰을 확인한 뒤에만 넘어온다.
- * `/reset`·`/advance`·`/prepare`·`/thaw`·`/close`·`/set-meta`·`/notify`는 같은 Worker의 server action이 binding으로만 부른다
+ * `/reset`·`/restore-*`·`/close`·`/set-meta`·`/notify`는 같은 Worker의 server action이 binding으로만 부른다
  * (외부 요청은 worker가 항상 `/connect`로 바꾼다).
  */
 
@@ -43,6 +42,25 @@ type HibernatableWebSocket = WebSocket & {
 };
 
 const SNAPSHOT_CHUNK_BYTES = 1024 * 1024;
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  for (let index = 0; index < bytes.length; index += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
+  }
+  return btoa(binary);
+}
+
+function base64ToBytes(value: string): Uint8Array | null {
+  try {
+    const binary = atob(value);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+    return bytes;
+  } catch {
+    return null;
+  }
+}
 
 type WebSocketPairConstructor = new () => { 0: WebSocket; 1: WebSocket };
 
@@ -75,6 +93,19 @@ export function createSqlRoomStorage(state: DurableObjectStateLike): RoomStorage
       const seqRow = sql.exec("SELECT value FROM room_meta WHERE key = 'seq'").toArray()[0];
       const changedRow = sql.exec("SELECT value FROM room_meta WHERE key = 'changedAt'").toArray()[0];
       const savedRow = sql.exec("SELECT value FROM room_blob WHERE key = 'savedSv'").toArray()[0];
+      const intentBaseRow = sql.exec("SELECT value FROM room_blob WHERE key = 'restoreBase'").toArray()[0];
+      const intentMetaRow = sql.exec("SELECT value FROM room_blob WHERE key = 'restoreMeta'").toArray()[0];
+      let restoreIntent: StoredRoomState["restoreIntent"] = null;
+      if (intentBaseRow && intentMetaRow) {
+        try {
+          const meta = JSON.parse(new TextDecoder().decode(toBytes(intentMetaRow.value))) as { id?: unknown; at?: unknown };
+          if (typeof meta.id === "string" && typeof meta.at === "number") {
+            restoreIntent = { id: meta.id, at: meta.at, base: toBytes(intentBaseRow.value) };
+          }
+        } catch {
+          restoreIntent = null;
+        }
+      }
       const chunks = sql
         .exec("SELECT chunk FROM room_snapshot ORDER BY seq")
         .toArray()
@@ -100,6 +131,7 @@ export function createSqlRoomStorage(state: DurableObjectStateLike): RoomStorage
         seq: Number(seqRow?.value ?? 0),
         changedAt: Number(changedRow?.value ?? 0),
         savedSv: savedRow ? toBytes(savedRow.value) : null,
+        restoreIntent,
       };
     },
     appendUpdate(update) {
@@ -122,12 +154,33 @@ export function createSqlRoomStorage(state: DurableObjectStateLike): RoomStorage
       state.storage.transactionSync(() => {
         sql.exec("DELETE FROM room_snapshot");
         sql.exec("DELETE FROM room_updates");
-        sql.exec("DELETE FROM room_blob WHERE key = 'savedSv'");
+        sql.exec("DELETE FROM room_blob WHERE key IN ('savedSv', 'restoreBase', 'restoreMeta')");
         sql.exec(
           "INSERT INTO room_meta (key, value) VALUES ('generation', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
           nextEpoch,
         );
       });
+    },
+    setEpoch(epoch) {
+      sql.exec(
+        "INSERT INTO room_meta (key, value) VALUES ('generation', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        epoch,
+      );
+    },
+    setRestoreIntent(intent) {
+      state.storage.transactionSync(() => {
+        if (!intent) {
+          sql.exec("DELETE FROM room_blob WHERE key IN ('restoreBase', 'restoreMeta')");
+          return;
+        }
+        const meta = new TextEncoder().encode(JSON.stringify({ id: intent.id, at: intent.at }));
+        for (const [key, value] of [["restoreBase", intent.base], ["restoreMeta", meta]] as const) {
+          sql.exec("INSERT INTO room_blob (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", key, value);
+        }
+      });
+    },
+    transact(task) {
+      return state.storage.transactionSync(task);
     },
     setSeq(seq, changedAt) {
       state.storage.transactionSync(() => {
@@ -217,20 +270,31 @@ export class DocumentRoom {
     if (request.method === "POST" && url.pathname !== "/connect") {
       const body = await this.readJson(request);
       switch (url.pathname) {
-        case "/advance": {
-          const target = Number(body.target);
-          if (!Number.isSafeInteger(target) || target < 0) return new Response("Bad target", { status: 400 });
-          return Response.json({ epoch: this.core.advance(target) });
-        }
-        case "/prepare": {
-          const id = typeof body.id === "string" ? body.id : "";
-          const mode: CollabPrepareMode = body.mode === "clean" ? "clean" : "checkpoint";
+        case "/restore-begin":
+        case "/restore-hold":
+        case "/restore-abort":
+        case "/restore-apply": {
+          const id = typeof body.id === "string" && body.id.length > 0 && body.id.length <= 200 ? body.id : "";
           if (!id) return new Response("Bad id", { status: 400 });
-          return Response.json(await this.core.prepare(id, mode));
+          if (url.pathname === "/restore-abort") {
+            this.core.restoreAbort(id);
+            return Response.json({ ok: true });
+          }
+          if (url.pathname === "/restore-begin") {
+            const result = this.core.restoreBegin(id);
+            return Response.json(result.ok ? { ...result, state: bytesToBase64(result.state) } : result);
+          }
+          if (url.pathname === "/restore-hold") {
+            const result = this.core.restoreHold(id);
+            return Response.json(
+              result.ok ? { ...result, state: bytesToBase64(result.state), base: result.base ? bytesToBase64(result.base) : null } : result,
+            );
+          }
+          const target = Number(body.target);
+          const update = typeof body.update === "string" ? base64ToBytes(body.update) : null;
+          if (!Number.isSafeInteger(target) || target < 0 || !update) return new Response("Bad restore", { status: 400 });
+          return Response.json(this.core.restoreApply(id, target, update));
         }
-        case "/thaw":
-          this.core.thaw(typeof body.id === "string" ? body.id : undefined);
-          return Response.json({ ok: true });
         case "/close":
           this.core.closeAll(body.keep === true);
           return Response.json({ ok: true });
@@ -240,8 +304,6 @@ export class DocumentRoom {
           const version = typeof body.version === "number" && Number.isSafeInteger(body.version) ? body.version : undefined;
           return Response.json({ ok: this.core.setMeta(body.field, body.value, epoch, version) });
         }
-        case "/prepared":
-          return Response.json({ prepared: typeof body.id === "string" && this.core.isPrepared(body.id) });
         case "/notify":
           return Response.json({ seq: this.core.notify() });
       }
