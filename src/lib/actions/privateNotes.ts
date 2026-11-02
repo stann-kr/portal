@@ -33,6 +33,7 @@ import {
   createPrivateNoteAtomically,
   purgePrivateNoteAtomically,
   restorePrivateNoteRevisionAtomically,
+  prunePrivateNoteRevisions,
   readPrivateNoteLifecycleMarker,
   privateNoteLifecycleSql,
   restoreTrashedPrivateNoteAtomically,
@@ -569,6 +570,12 @@ export async function updatePrivateNote(
   }
   // 자동 저장마다 route가 다시 렌더되지 않도록 revalidate하지 않는다(위 주석). 학생 홈 최근 노트에는 알린다.
   notifyCollabTopic("student-notes", note.studentId);
+  if (!result.replayed) {
+    // 보관 단계를 넘긴 자동 저장 이력을 솎는다. 실패해도 저장 결과는 그대로다(다음 저장이 다시 솎는다).
+    await prunePrivateNoteRevisions(createDbContext(), { noteId, now: new Date() }).catch((error: unknown) => {
+      console.warn("private note revision prune failed", error instanceof Error ? error.message : "unknown");
+    });
+  }
   return {
     success: true,
     replayed: result.replayed,

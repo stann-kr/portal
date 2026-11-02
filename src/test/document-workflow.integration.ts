@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { after, before, mock, test, type TestContext } from "node:test";
-import { count, eq } from "drizzle-orm";
+import { count, eq, sql } from "drizzle-orm";
 import type { AuthSession } from "@/lib/auth-guard";
 import {
   accountCleanupTokens,
@@ -4819,4 +4819,45 @@ test("게시물 조건부 쓰기는 사전 조회 뒤 commit된 복원 표지를
     });
     await db.update(posts).set({ version: head.version + 1 }).where(eq(posts.id, postId));
   }
+});
+
+test("자동 저장 이력은 보관 단계대로 솎이고 최신·복원·생성 이력은 남는다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context);
+  await seedProfile(db, "student-1");
+  await db.insert(privateNotes).values({
+    id: "note-prune",
+    studentId: "student-1",
+    authorId: "student-1",
+    title: "기준",
+    contentHtml: "<p>0</p>",
+  });
+  let base = { title: "기준", contentHtml: "<p>0</p>", noteDate: null as string | null };
+  for (let index = 1; index <= 4; index += 1) {
+    const next = { title: "기준", contentHtml: `<p>${index}</p>`, noteDate: null };
+    const result = await privateNoteActions.updatePrivateNote(
+      "note-prune",
+      {},
+      createNoteUpdateForm("note-prune", next, base, crypto.randomUUID(), index),
+    );
+    assert.equal(result.success, true, `저장 ${index}`);
+    base = next;
+  }
+  const numbers = async () =>
+    (await db
+      .select({ number: privateNoteRevisions.revisionNumber })
+      .from(privateNoteRevisions)
+      .where(eq(privateNoteRevisions.noteId, "note-prune")))
+      .map((row) => row.number)
+      .sort((left, right) => left - right);
+  // 같은 10분 안의 자동 저장은 최신(head 5)과 그 직전 하나만 남는다.
+  assert.deepEqual(await numbers(), [4, 5]);
+
+  const { prunePrivateNoteRevisions } = await import("@/lib/private-note-atomic");
+  const dbContext = { kind: "d1" as const, db };
+  await prunePrivateNoteRevisions(dbContext, { noteId: "note-prune", now: new Date(Date.now() + 91 * 86_400_000) });
+  assert.deepEqual(await numbers(), [5], "90일이 지나면 최신만 남는다");
+
+  // 최신 이력은 DB trigger가 직접 삭제도 막는다.
+  await assert.rejects(db.run(sql`DELETE FROM private_note_revisions WHERE note_id = 'note-prune' AND revision_number = 5`));
+  assert.deepEqual(await numbers(), [5]);
 });

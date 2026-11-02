@@ -734,6 +734,59 @@ export async function createPrivateNoteAtomically(
   }
 }
 
+/** 자동 저장 이력 보관 단계: 최근 7일은 10분마다 하나, 90일까지는 하루(KST)마다 하나, 그 뒤는 지운다. */
+export const PRIVATE_NOTE_REVISION_RETENTION = {
+  fineWindowSeconds: 7 * 86_400,
+  fineBucketSeconds: 600,
+  coarseWindowSeconds: 90 * 86_400,
+  coarseBucketOffsetSeconds: 9 * 3_600,
+  coarseBucketSeconds: 86_400,
+  batchLimit: 500,
+} as const;
+
+/**
+ * 같은 학생 노트들의 UPDATE 이력을 보관 단계에 맞게 솎는다. 각 구간에서는 가장 늦은 이력 하나만 남기고,
+ * 최신 이력(head version)과 CREATE·복원·휴지통 이력은 건드리지 않는다(DB trigger도 같은 범위만 허용한다).
+ * 저장 성공 뒤 best-effort로 부른다.
+ */
+export async function prunePrivateNoteRevisions(
+  context: DbContext,
+  input: { noteId: string; now: Date },
+): Promise<void> {
+  const retention = PRIVATE_NOTE_REVISION_RETENTION;
+  const now = epochSeconds(input.now)!;
+  const fineSince = now - retention.fineWindowSeconds;
+  const coarseSince = now - retention.coarseWindowSeconds;
+  const bucket = `CASE
+        WHEN revision.created_at >= ${fineSince} THEN 'f' || (revision.created_at / ${retention.fineBucketSeconds})
+        WHEN revision.created_at >= ${coarseSince} THEN 'd' || ((revision.created_at + ${retention.coarseBucketOffsetSeconds}) / ${retention.coarseBucketSeconds})
+        ELSE NULL
+      END`;
+  await executeAtomically(context, [
+    {
+      query: `DELETE FROM private_note_revisions
+        WHERE id IN (
+          SELECT ranked.id FROM (
+            SELECT revision.id AS id,
+              ${bucket} AS bucket,
+              ROW_NUMBER() OVER (
+                PARTITION BY revision.note_id, ${bucket}
+                ORDER BY revision.revision_number DESC
+              ) AS bucket_rank
+            FROM private_note_revisions AS revision
+            JOIN private_notes AS note ON note.id = revision.note_id
+            WHERE note.student_id = (SELECT owner.student_id FROM private_notes AS owner WHERE owner.id = ?)
+              AND revision.change_type = 'UPDATE'
+              AND revision.revision_number < note.version
+          ) AS ranked
+          WHERE ranked.bucket IS NULL OR ranked.bucket_rank > 1
+          LIMIT ${retention.batchLimit}
+        )`,
+      params: [input.noteId],
+    },
+  ]);
+}
+
 export async function updatePrivateNoteAtomically(
   context: DbContext,
   write: UpdatePrivateNoteWrite,

@@ -405,6 +405,8 @@ function NoteEditorFormContent({ note, create, actorId, action, focusBodyEnd = f
     // 복원·제자리 합치기가 끝날 때까지 자동 저장만 미룬다(입력은 계속 받는다).
     enabled: writable && !isEditorUploading && !collab.rebasing,
     isSaver: collab.isSaver,
+    // room이 내용을 보관하면 D1 저장(이력)은 드물게 한다. 혼자 모드(room 없음)는 지금처럼 자주 저장한다.
+    roomBacked: collab.status !== "solo",
     readSnapshot,
     save: saveSnapshot,
     onSaved: (stateVector) => provider?.reportSaved(stateVector),
@@ -596,6 +598,12 @@ function NoteEditorFormContent({ note, create, actorId, action, focusBodyEnd = f
       data-autosave={autosave.status}
       className={cn(!documentLayout && "flex flex-col gap-5")}
       onKeyDownCapture={handleSaveShortcut}
+      onBlurCapture={(event) => {
+        // 편집기 밖(다른 메뉴·링크)으로 나가면 기다리던 저장을 바로 보낸다. 이동하기 전에 저장이 출발한다.
+        const next = event.relatedTarget;
+        if (next instanceof Node && event.currentTarget.contains(next)) return;
+        autosave.flushPending();
+      }}
       onSubmit={(event) => {
         event.preventDefault();
         void autosave.flush();

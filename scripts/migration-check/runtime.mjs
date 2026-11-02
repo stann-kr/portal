@@ -31,6 +31,7 @@ export const assignmentTaskMigrationFile = "0015_assignment_tasks.sql";
 export const guidePageMigrationFile = "0016_guide_pages.sql";
 export const calendarSyncMigrationFile = "0017_calendar_sync.sql";
 export const calendarPushChannelMigrationFile = "0018_calendar_push_channels.sql";
+export const noteRevisionPruningMigrationFile = "0021_note_revision_pruning.sql";
 
 export function readJson(path) {
   return JSON.parse(readFileSync(path, "utf8"));

@@ -54,6 +54,7 @@
 - 대상 Worker를 promotion하기 전에는 승인된 작업 창에서 실제 pending migration을 적용·검증해야 한다. 비호환 migration은 maintenance 진입 전에 미리 적용하지 않는다.
 - auth secret과 기타 secret은 배포 환경에만 설정한다.
 - 실시간 공동 편집 코드는 `DOC_ROOMS` Durable Object binding과 첫 배포 때의 `[[migrations]] tag="v1-document-rooms"`(`new_sqlite_classes=["DocumentRoom"]`)가 필요하다. D1 migration은 없다. 연결 토큰 서명은 이미 secret인 `AUTH_SECRET`에서 파생하므로 새 secret은 없다. 2026-11-01 남은 한계 보완(L1~L10)도 D1 migration·새 secret 없이 DO class·binding·`v1-document-rooms` migration이 그대로이며, 새 DO 저장 표(`room_blob`, `room_meta`의 generation·seq·changedAt)는 DO가 스스로 만들고 DO alarm을 쓴다. 2026-11-02 remount 없는 복원도 DO class·binding·migration·D1·secret 변경이 없다(복원 기록은 기존 `room_blob` 행). 런타임 의존성 `linkedom`이 추가돼 서버 action·토큰 route가 HTML을 편집기 schema로 읽는다(`build:worker` 번들에 포함). DO class를 만드는 첫 배포는 되돌리기 어려우므로(class를 나중에 지우려면 `deleted_classes` migration이 필요해 가볍게 제거하지 않는다) 승인된 배포에서만 수행하고, Workers 요금제(DO 사용 가능 여부)와 DO 요금(요청·duration·SQLite 저장)을 사전에 확인한다.
+- 노트 이력 단계 보관(2026-11-02)은 `0021_note_revision_pruning`이 필요하다. `private_note_revisions_guard_delete` trigger만 바꿔, 문서가 남은 노트의 최신보다 앞선 `UPDATE` 이력 삭제를 허용한다(CREATE·복원·휴지통·BASELINE·최신 이력과 tombstone 규칙은 그대로). 이전 Worker는 이력을 지우지 않으므로 schema가 양방향 호환되어 promotion 전에 먼저 적용한다. 적용 직전 export·checksum·Time Travel bookmark를 확보한다. 첫 배포는 2026-11-02에 `wrangler deploy`(wrangler.toml)로 DO migration을 적용했고(version 69b2648a), 이후 배포는 Workers Builds upload + `versions deploy` 경로다.
 - 외부 공개 레슨 캘린더를 활성화하려면 `EXTERNAL_CALENDAR_ENCRYPTION_KEY`를 32-byte base64 또는 base64url secret으로 환경마다 안정적으로 설정한다. 값 자체는 저장소·문서·로그에 남기지 않으며, 기존 구독이 있으면 key를 임의로 교체하지 않는다. `0013` migration 적용과 key 설정 전에는 연결 기능을 운영에 사용하지 않는다.
 - production deploy 전 admin/student smoke 계정과 test data를 준비한다.
 - Cloudflare Workers Builds를 기본 배포 주체로 사용하고 development는 `dev`, production은 `main` push만 고정 Worker 배포를 시작하도록 분리한다. 두 환경의 Worker, binding, secret, D1, R2와 route를 공유하지 않는다.
@@ -113,7 +114,7 @@ iCloud 연동:
 - [ ] 공용 가이드 seed를 만든다: `npx tsx scripts/guide-import/build.ts`(기본 입력 `.docs/goals/assignments-guide-calendar/guide-export`, 출력 `.wrangler/guide-import`). 스크립트는 D1·R2에 쓰지 않고 `seed.sql`·이미지 객체와 명령만 출력하는 `apply-local.sh`를 만든다. 로컬은 `sh .wrangler/guide-import/apply-local.sh`가 출력한 `--local` 명령을 확인한 뒤 직접 실행한다.
 - [ ] remote seed(`wrangler d1 execute portal-db --remote --file=…/seed.sql`과 `wrangler r2 object put portal-storage/guide/<id> --remote …`)는 별도 승인 뒤 `0016` 적용 다음에 한 번만 실행한다. seed는 `INSERT OR IGNORE`라 포털에서 고친 내용을 덮어쓰지 않지만, 포털에서 지운 페이지는 다시 실행하면 되살아난다.
 
-실시간 공동 편집(2026-11-01, 아직 실행하지 않음 — 사용자 승인 필요):
+실시간 공동 편집(2026-11-01 준비, 2026-11-02 첫 배포 완료 — version 69b2648a, 로그인 후 smoke는 미확인):
 
 - [ ] Workers Paid plan 여부와 Durable Objects 요금(요청·duration·SQLite 저장) 한도를 확인한다.
 - [ ] 승인된 배포에서 `DOC_ROOMS` binding과 `[[migrations]] tag="v1-document-rooms"`(`new_sqlite_classes=["DocumentRoom"]`)가 `wrangler.toml`·`wrangler.scheduled.toml` 양쪽에 있는 version을 올린다. D1 migration과 새 secret은 없다(`AUTH_SECRET`은 이미 secret). DO class를 나중에 지우려면 `deleted_classes` migration이 필요하므로 가볍게 제거하지 않는다.
