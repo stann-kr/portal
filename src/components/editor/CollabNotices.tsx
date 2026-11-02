@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { COLLAB_NOTICE_INSET_ATTRIBUTE } from "@/lib/collab/collab-events";
 import type { CollabDocumentState } from "@/lib/collab/client/useCollabDocument";
 
 /**
@@ -78,14 +79,17 @@ export function CollabNotices({ collab }: { collab: NoticeSource }) {
   const { rebaseNotice, restoreChoice } = collab;
   const containerRef = useRef<HTMLDivElement>(null);
   const visible = Boolean(rebaseNotice || restoreChoice);
-  // 떠 있는 안내가 문서 끝 줄을 가리지 않게, 보이는 동안 그 높이만큼 문서 아래 여백을 둔다(위쪽 내용은 움직이지 않는다).
+  // 떠 있는 안내가 입력 줄을 가리지 않게, 보이는 동안 그 높이만큼 문서 아래 여백을 두고 편집기 자동 스크롤 여백으로 알린다
+  // (위쪽 내용은 움직이지 않는다).
   useEffect(() => {
     const element = containerRef.current;
     if (!visible || !element) return;
     const body = document.body;
     const previous = body.style.paddingBottom;
     const apply = () => {
-      body.style.paddingBottom = `${Math.ceil(element.getBoundingClientRect().height) + 16}px`;
+      const inset = Math.ceil(element.getBoundingClientRect().height) + 16;
+      body.style.paddingBottom = `${inset}px`;
+      body.dataset[COLLAB_NOTICE_INSET_ATTRIBUTE] = String(inset);
     };
     apply();
     const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(apply);
@@ -93,6 +97,7 @@ export function CollabNotices({ collab }: { collab: NoticeSource }) {
     return () => {
       observer?.disconnect();
       body.style.paddingBottom = previous;
+      delete body.dataset[COLLAB_NOTICE_INSET_ATTRIBUTE];
     };
   }, [visible, restoreChoice, rebaseNotice]);
   if (!visible) return null;

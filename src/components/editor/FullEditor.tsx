@@ -45,7 +45,7 @@ import {
   type EditorUploadedImage,
 } from "./useEditorImageUpload";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
-import { COLLAB_REBASE_EVENT } from "@/lib/collab/collab-events";
+import { COLLAB_REBASE_EVENT, readCollabNoticeInset } from "@/lib/collab/collab-events";
 
 // ── 타입 ──────────────────────────────────────────
 
@@ -391,6 +391,9 @@ export function FullEditor({
   );
   const editorProps = useMemo(
     () => ({
+      // 화면 아래 떠 있는 공동 편집 안내(CollabNotices)가 있으면 그 높이만큼 위에서 커서를 보이게 자동 스크롤한다.
+      scrollMargin: { top: 5, left: 5, right: 5, get bottom() { return 5 + readCollabNoticeInset(); } },
+      scrollThreshold: { top: 0, left: 0, right: 0, get bottom() { return readCollabNoticeInset(); } },
       attributes: {
         // 본문 글자: 문서 16/28, 상자 15/26(QnaNew 보드)·좁은 화면 16/26(MobileQnaNew 보드), bare는 상위 화면이 정한다(QnaThread 15/24).
         class: isPage
