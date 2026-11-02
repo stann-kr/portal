@@ -8,6 +8,8 @@ import { getActiveAuthSession } from "@/lib/auth-guard";
 import { redirect } from "next/navigation";
 import { getQnaThreadIncludingTrash } from "@/lib/actions/qna";
 import { ThreadDetailClient } from "@/components/qna/ThreadDetailClient";
+import { CollabNotifyRefresh } from "@/components/app-shell/CollabNotifyRefresh";
+import { RouteAutoRefresh } from "@/components/app-shell/RouteAutoRefresh";
 import type { QnaStatus } from "@/db/schema";
 import { safeReturnPath } from "@/lib/safe-return-path";
 
@@ -27,6 +29,8 @@ export default async function QnaThreadPage({
 
   const { threadId } = await params;
   const query = await searchParams;
+  // 알림 room이 "그린 뒤의 변경"을 따라잡는 기준 시각.
+  const renderedAt = new Date().getTime();
   const returnTo = safeReturnPath(query.returnTo, "/dashboard/qna");
   const thread = await getQnaThreadIncludingTrash(threadId);
   if (!thread) redirect("/dashboard/qna");
@@ -40,6 +44,9 @@ export default async function QnaThreadPage({
   return (
     <div className="flex min-h-[calc(100dvh-var(--app-topbar-height))] flex-col md:block md:min-h-0 px-5 pb-8 pt-5 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-10">
       <div className="flex max-w-[760px] flex-1 flex-col md:block">
+        {/* 다른 창의 답글·상태 변경을 새로고침 없이 바로 받는다. 알림이 끊겨도 30초 재조회로 따라온다. */}
+        <CollabNotifyRefresh topic="qna" id={threadId} since={renderedAt} />
+        <RouteAutoRefresh />
         <ThreadDetailClient
           threadId={threadId}
           status={status}

@@ -30,8 +30,10 @@ export const config = {
    * 미포함 시 /api/auth/callback/credentials 가 보호 대상이 되어 redirect loop 발생.
    * /api/calendar-connections/google/notify 는 Google이 로그인 없이 POST하는 변경 알림이다.
    * route가 channel token으로 직접 검증한다(같은 경로의 start·callback은 계속 보호한다).
+   * /api/collab/token 은 route가 세션을 직접 확인해 401/403을 돌려준다. 로그인 화면으로 보내면(307) 열린 편집기가
+   * 로그아웃·권한 회수를 "오프라인"으로 오인해 연결을 닫지 못한다.
    */
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|api/auth|api/calendar-connections/google/notify(?:/?$)|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    "/((?!_next/static|_next/image|favicon.ico|api/auth|api/calendar-connections/google/notify(?:/?$)|api/collab/token(?:/?$)|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };

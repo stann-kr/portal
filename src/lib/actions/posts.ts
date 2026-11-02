@@ -1,6 +1,17 @@
 /** Community post query와 revision/trash lifecycle server action. */
 "use server";
 
+import { formatCollabDocKey } from "@/lib/collab/doc-key";
+import {
+  abortCollabRestore,
+  applyCollabRestore,
+  beginCollabRestore,
+  closeCollabRoomAfterMutation,
+  parseCollabSaveEpoch,
+  STALE_COLLAB_SAVE_MESSAGE,
+} from "@/lib/collab/server-env";
+import { canonicalServerHtml } from "@/lib/collab/server-restore";
+import { postRoomFields, readPostRestoreTarget, type PostHeadRow } from "@/lib/collab/restore-targets";
 import { and, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
@@ -21,6 +32,7 @@ import {
   createPostAtomically,
   preflightLegacyPostCreateReplay,
   purgePostAtomically,
+  readPostLifecycleMarker,
   restorePostRevisionAtomically,
   restoreTrashedPostAtomically,
   setPostPinAtomically,
@@ -28,6 +40,7 @@ import {
   updatePostAtomically,
   type PostMutationFailureReason,
   type PostMutationResult,
+  postLifecycleSql,
 } from "@/lib/post-atomic";
 import {
   POST_BASE_REVISION_FIELD,
@@ -75,6 +88,8 @@ const POST_SELECT = {
 
 function lifecycleError(reason: PostMutationFailureReason): string {
   switch (reason) {
+    case "COLLAB_STALE":
+      return "문서가 복원되어 최신 내용으로 다시 불러옵니다. 이 저장은 반영하지 않았습니다.";
     case "VERSION_CONFLICT":
       return "다른 화면에서 이 게시물이 먼저 변경되었습니다. 현재 초안은 유지됩니다.";
     case "TRASHED":
@@ -213,6 +228,27 @@ export async function getPostById(postId: string) {
     .where(and(eq(posts.id, postId), isNull(posts.deletedAt)))
     .limit(1);
   return post ?? null;
+}
+
+/** 게시물 수정 작업본 시드용 게시본 + lifecycle 표지(한 조회). 작성자·관리자만. 휴지통·없음은 null. */
+export async function getPostCollabSeed(postId: string) {
+  const session = await requireAuth();
+  const [post] = await createDb()
+    .select({
+      ...POST_SELECT,
+      lifecycle: postLifecycleSql,
+    })
+    .from(posts)
+    .leftJoin(profiles, eq(posts.authorId, profiles.id))
+    .where(and(eq(posts.id, postId), isNull(posts.deletedAt)))
+    .limit(1);
+  if (!post) return null;
+  try {
+    assertOwnerOrAdmin(session, post.authorId);
+  } catch {
+    return null;
+  }
+  return { ...post, lifecycle: Number(post.lifecycle) };
 }
 
 export async function getPostIncludingTrash(postId: string) {
@@ -438,6 +474,8 @@ export async function createPost(
 
 export type UpdatePostState = {
   error?: string;
+  /** 수정 작업본 room이 비워진 뒤의 옛 저장이라 반영하지 않았다. */
+  collabStale?: boolean;
   success?: boolean;
   conflictKind?: PostMutationFailureReason;
   currentRevision?: number;
@@ -470,6 +508,21 @@ export async function updatePostContent(
   if (!existing) return { error: "게시물을 찾을 수 없습니다." };
   assertOwnerOrAdmin(session, existing.authorId);
   if (existing.deletedAt) return { error: "휴지통 게시물은 수정할 수 없습니다." };
+  const collab = parseCollabSaveEpoch(formData);
+  if (!collab.ok) return { error: STALE_COLLAB_SAVE_MESSAGE, collabStale: true };
+  // 아래 기준본 대조가 VERSION_CONFLICT를 내기 전에, 복원 뒤 옛 generation 저장은 재시도 없는 COLLAB_STALE로 끝낸다.
+  // 최종 판정은 원자 쓰기 조건이 한다.
+  if (
+    collab.collabEpoch !== undefined &&
+    (await readPostLifecycleMarker(createDbContext(), existing.id)) !== collab.collabEpoch
+  ) {
+    return {
+      error: lifecycleError("COLLAB_STALE"),
+      collabStale: true,
+      conflictKind: "COLLAB_STALE",
+      currentRevision: existing.version,
+    };
+  }
 
   const operationId = resolveCreationOperationId(formData.get(CREATION_OPERATION_FIELD));
   const baseRevision = parsePostRevision(formData.get(POST_BASE_REVISION_FIELD));
@@ -535,8 +588,17 @@ export async function updatePostContent(
     title,
     contentHtml,
     ...(mediaLinkUrl === undefined ? {} : { mediaLinkUrl }),
+    ...(collab.collabEpoch === undefined ? {} : { collabEpoch: collab.collabEpoch }),
     now: new Date(),
   });
+  if (!result.ok && result.reason === "COLLAB_STALE") {
+    return {
+      error: lifecycleError("COLLAB_STALE"),
+      collabStale: true,
+      conflictKind: "COLLAB_STALE",
+      currentRevision: result.currentRevision,
+    };
+  }
   if (!result.ok) {
     let conflictPost: UpdatePostState["conflictPost"];
     if (result.reason === "VERSION_CONFLICT") {
@@ -616,6 +678,10 @@ async function runPostLifecycle(
         ? await restoreTrashedPostAtomically(createDbContext(), write)
         : await purgePostAtomically(createDbContext(), write);
   if (result.ok) {
+    // 휴지통 이동은 게시본을 바꾸지 않으므로 수정 작업본을 남긴 채 연결만 닫는다(복구하면 이어진다). 영구 삭제는 비운다.
+    const roomKey = formatCollabDocKey({ kind: "post", id: postId });
+    if (kind === "trash") await closeCollabRoomAfterMutation(roomKey, true);
+    if (kind === "purge") await closeCollabRoomAfterMutation(roomKey, false);
     revalidatePostPaths(postId);
     if (kind === "purge") {
       await processMediaDeletionOutboxBestEffort(createDbContext(), { limit: 2 });
@@ -660,6 +726,34 @@ export async function restorePostRevision(
   revisionNumber: number,
 ): Promise<PostLifecycleState> {
   const session = await requireAuth();
+  const roomKey = formatCollabDocKey({ kind: "post", id: postId });
+  const [before] = await createDb()
+    .select({ ...POST_SELECT })
+    .from(posts)
+    .leftJoin(profiles, eq(posts.authorId, profiles.id))
+    .where(eq(posts.id, postId))
+    .limit(1);
+  // 쓸 수 있는 사람의 요청만 room에 복원 준비를 남긴다(권한 없는 요청이 다른 복원을 막지 못하게).
+  const mayRestore = Boolean(before && !before.deletedAt && (session.user.role === "admin" || before.authorId === session.user.id));
+  if (mayRestore && before) {
+    // 수정 작업본(room)은 게시하지 않은 편집을 담는다. 준비 시점에 게시본과 다르면 되돌리지 않는다(작업본을 게시로 잇지 않는다).
+    // 준비 뒤 들어온 입력은 복원 뒤에도 작업본에 그대로 남는다. 편집은 막지 않는다.
+    const prepared = await beginCollabRestore(roomKey, operationId);
+    if (prepared.kind === "busy" || prepared.kind === "failed") {
+      await abortCollabRestore(roomKey, operationId);
+      return {
+        success: false,
+        error: prepared.kind === "busy" ? "다른 화면에서 이미 되돌리는 중입니다. 잠시 뒤 다시 시도해 주세요." : "열린 수정 화면을 확인하지 못해 되돌리지 않았습니다. 잠시 뒤 다시 시도해 주세요.",
+      };
+    }
+    if (prepared.kind === "ready" && prepared.content && isPostWorkingCopyDirty(prepared.content, before)) {
+      await abortCollabRestore(roomKey, operationId);
+      return {
+        success: false,
+        error: "수정 화면에 아직 게시하지 않은 변경이 있어 되돌리지 않았습니다. 그 변경을 게시하거나 취소한 뒤 다시 시도해 주세요.",
+      };
+    }
+  }
   const result = await restorePostRevisionAtomically(createDbContext(), {
     actor: actor(session),
     postId,
@@ -668,8 +762,25 @@ export async function restorePostRevision(
     revisionNumber,
     now: new Date(),
   });
-  if (result.ok) revalidatePostPaths(postId);
+  if (result.ok) {
+    // 복원 revision이 새 lifecycle 표지다. 열린 수정 작업본에는 복원한 게시본을 같은 문서의 한 편집으로 적용한다(다시 시작하지 않음).
+    const restoredRevision = result.operationResultRevision ?? result.currentRevision;
+    const head = typeof restoredRevision === "number" ? await readPostRestoreTarget(postId) : null;
+    if (typeof restoredRevision === "number" && head) await applyCollabRestore(roomKey, operationId, restoredRevision, head);
+    else if (mayRestore) await abortCollabRestore(roomKey, operationId);
+    revalidatePostPaths(postId);
+  } else if (mayRestore) {
+    await abortCollabRestore(roomKey, operationId);
+  }
   return lifecycleState(result);
+}
+
+/** 작업본(제목·링크·본문)이 게시본과 다른지. 링크 칸은 작업본에 있을 때만 비교한다. */
+function isPostWorkingCopyDirty(content: { html: string; fields: Record<string, string | number | null> }, head: PostHeadRow): boolean {
+  const withLink = "mixsetLinkUrl" in content.fields;
+  const expected = postRoomFields(head, withLink);
+  for (const [name, value] of Object.entries(expected)) if ((content.fields[name] ?? "") !== value) return true;
+  return content.html !== canonicalServerHtml(head.contentHtml);
 }
 
 export async function togglePinPost(

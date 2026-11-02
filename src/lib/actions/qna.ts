@@ -1,6 +1,7 @@
 /** 1:1 Q&A aggregate query와 append-only event/trash lifecycle server action. */
 "use server";
 
+import { notifyCollabTopic } from "@/lib/collab/server-env";
 import { and, count, desc, eq, isNotNull, isNull } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { searchQnaThreads } from "@/lib/qna-search";
@@ -175,6 +176,8 @@ function revalidateQnaPaths(threadId?: string) {
   if (threadId) {
     revalidatePath(`/dashboard/qna/${threadId}`);
     revalidatePath(`/dashboard/qna/${threadId}/history`);
+    // 같은 질문을 연 다른 창(학생·관리자)이 새로고침 없이 답글·상태를 보게 알린다.
+    notifyCollabTopic("qna", threadId);
   }
   revalidatePath("/dashboard/student");
   revalidatePath("/dashboard/admin");

@@ -27,11 +27,20 @@ import {
   runScheduledCalendarSync,
   serializeScheduledCalendarSyncSummary,
 } from "./src/lib/calendar-sync/scheduled-sync";
+import {
+  handleCollabWebSocket,
+  isCollabWebSocketRequest,
+  type CollabRoomNamespace,
+} from "./src/lib/collab/worker-route";
+import { DocumentRoom } from "./src/lib/collab/document-room";
 
 type PortalWorkerEnv = {
   DB: AnyD1Database;
   BUCKET: RuntimeR2DeletionBucket & RuntimeR2InventoryBucket;
   ACCOUNT_CLEANUP_RATE_LIMITER: AccountCleanupRateLimiter;
+  /** 문서별 공동 편집 room(Durable Object). */
+  DOC_ROOMS?: CollabRoomNamespace;
+  AUTH_SECRET?: string;
   /** 캘린더 동기화 설정(vars·secrets). 예약 실행에서는 runWithCalendarSyncEnv로 reader에 넘긴다. */
   AUTH_URL?: string;
   GOOGLE_CALENDAR_CLIENT_ID?: string;
@@ -63,6 +72,7 @@ const applicationWorker = generatedOpenNextWorker.default as OpenNextWorker;
 export const BucketCachePurge = generatedOpenNextWorker.BucketCachePurge;
 export const DOQueueHandler = generatedOpenNextWorker.DOQueueHandler;
 export const DOShardedTagCache = generatedOpenNextWorker.DOShardedTagCache;
+export { DocumentRoom };
 
 function logScheduledReport(report: ScheduledMaintenanceReport): void {
   const serialized = serializeScheduledMaintenanceReport(report);
@@ -127,6 +137,8 @@ const portalWorker = {
       env.ACCOUNT_CLEANUP_RATE_LIMITER,
     );
     if (rateLimitResponse) return rateLimitResponse;
+    // 공동 편집 WebSocket은 OpenNext를 거치지 않고 토큰 확인 뒤 문서 room으로 바로 넘긴다.
+    if (isCollabWebSocketRequest(request)) return handleCollabWebSocket(request, env);
     return applicationWorker.fetch(request, env, context);
   },
   async scheduled(

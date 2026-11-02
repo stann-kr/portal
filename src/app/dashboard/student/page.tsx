@@ -18,6 +18,7 @@ import { getUnifiedItemSpaceLabel } from "@/lib/unified-item-normalization";
 import { getExternalCalendarConnectionSummary } from "@/lib/actions/externalCalendars";
 import { legacyPortalSectionRedirect, resolvePortalLocation, type PortalSearchParams } from "@/lib/portal-location";
 import { RouteAutoRefresh } from "@/components/app-shell/RouteAutoRefresh";
+import { CollabNotifyRefresh } from "@/components/app-shell/CollabNotifyRefresh";
 
 export const metadata = { title: "학생 포탈" };
 
@@ -30,6 +31,8 @@ export default async function StudentPortalPage({ searchParams }: { searchParams
   const initialLocation = resolvePortalLocation("student", params);
 
   const studentId = session.user.id!;
+  // 알림 room이 "그린 뒤의 변경"을 따라잡는 기준 시각.
+  const renderedAt = new Date().getTime();
   const displayName = session.user.name ?? "";
   const spaceLabel = getUnifiedItemSpaceLabel({
     displayName: session.user.name ?? null,
@@ -58,6 +61,8 @@ export default async function StudentPortalPage({ searchParams }: { searchParams
     <>
       {/* Stann이 만든 새 노트·일정이 캘린더·목록에 새로고침 없이 나타나게 한다. 입력 중(패널 편집)에는 건너뛴다. */}
       <RouteAutoRefresh />
+      {/* 최근 노트가 바뀌면(Stann의 저장·새 노트) 알림 room으로 바로 다시 받는다. */}
+      <CollabNotifyRefresh topic="student-notes" id={studentId} since={renderedAt} />
       <StudentPortalClient
         initialLocation={initialLocation}
         announcements={announcements}

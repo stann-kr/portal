@@ -22,7 +22,7 @@ import type { LocalDocumentDraftSummary } from "@/lib/local-document-drafts";
 import { formatKst, formatKstShortDate } from "@/lib/kst-format";
 
 // 화면 메뉴 이름(노트·커뮤니티·과제·Q&A)과 같은 말로 초안 종류를 보인다(캔버스 "Q&A 질문", "새 노트").
-const DRAFT_KIND_LABELS: Readonly<Record<DocumentDraftKind, string>> = {
+export const DRAFT_KIND_LABELS: Readonly<Record<DocumentDraftKind, string>> = {
   note: "노트",
   "community-post": "커뮤니티 글",
   "community-comment": "커뮤니티 댓글",
@@ -41,7 +41,7 @@ function createDraftContextLabel(draft: LocalDocumentDraftSummary): string {
 }
 
 /** 캔버스 메타 형식 "10월 26일 13:02"(올해가 아니면 연도를 붙인다). */
-function formatSavedAt(savedAt: Date | null): string {
+export function formatSavedAt(savedAt: Date | null): string {
   const date = formatKstShortDate(savedAt);
   if (!date) return "저장 시각을 알 수 없음";
   return `${date} ${formatKst(savedAt, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" })}`;

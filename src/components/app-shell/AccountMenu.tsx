@@ -1,8 +1,9 @@
 "use client";
 
 import { useRef, useState } from "react";
+import Link from "next/link";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { AlertCircle, Ellipsis, FileText, KeyRound, LogOut, Trash2, X } from "lucide-react";
+import { AlertCircle, Archive, Ellipsis, FileText, KeyRound, LogOut, Trash2, X } from "lucide-react";
 import { AccountDeletionControl } from "@/components/auth/AccountDeletionControl";
 import { LocalDraftManager, type AccountDialogHandle } from "@/components/auth/LocalDraftManager";
 import { PasswordChangeControl } from "@/components/auth/PasswordChangeControl";
@@ -92,6 +93,12 @@ export function AccountMenu({
             <DropdownMenu.Item className={ITEM_CLASS} onSelect={() => choose("drafts")}>
               <FileText className="size-4 text-secondary-foreground" strokeWidth={1.6} aria-hidden="true" />
               이 기기의 초안
+            </DropdownMenu.Item>
+            <DropdownMenu.Item asChild className={ITEM_CLASS}>
+              <Link href="/dashboard/drafts">
+                <Archive className="size-4 text-secondary-foreground" strokeWidth={1.6} aria-hidden="true" />
+                이전 초안 보관함
+              </Link>
             </DropdownMenu.Item>
             <DropdownMenu.Item className={ITEM_CLASS} onSelect={() => choose("password")}>
               <KeyRound className="size-4 text-secondary-foreground" strokeWidth={1.6} aria-hidden="true" />

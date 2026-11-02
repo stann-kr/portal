@@ -5,6 +5,8 @@
  */
 "use server";
 
+import { formatCollabDocKey } from "@/lib/collab/doc-key";
+import { closeCollabRoomAfterMutation, isStaleCollabSave, STALE_COLLAB_SAVE_MESSAGE } from "@/lib/collab/server-env";
 import { revalidatePath } from "next/cache";
 import { createDbContext } from "@/db/client";
 import { requireAdmin, requireAuth } from "@/lib/auth-guard";
@@ -140,6 +142,8 @@ export async function createGuidePage(
 
 export type UpdateGuidePageState = {
   error?: string;
+  /** 공동 편집 room이 비워진 뒤의 옛 저장이라 반영하지 않았다. */
+  collabStale?: boolean;
   success?: boolean;
   replayed?: boolean;
   conflictKind?: GuideWriteFailureReason;
@@ -162,6 +166,9 @@ export async function updateGuidePage(
   }
   const payload = readGuidePayload(formData);
   if (!payload.ok) return { error: payload.error };
+  if (await isStaleCollabSave(formData, formatCollabDocKey({ kind: "guide", id }))) {
+    return { error: STALE_COLLAB_SAVE_MESSAGE, collabStale: true };
+  }
   const result = await updateGuidePageRecord(createDbContext(), {
     actorId: session.user.id,
     pageId: id,
@@ -210,6 +217,8 @@ export async function deleteGuidePage(pageId: string, baseVersion: number): Prom
   if (!id || !version) return { ok: false, error: failureMessage("NOT_FOUND") };
   const result = await deleteGuidePageRecord(createDbContext(), { pageId: id, baseVersion: version });
   if (!result.ok) return { ok: false, error: failureMessage(result.reason) };
+  // 열린 편집기가 지운 페이지를 다시 저장하려 하지 않게 room을 비운다.
+  await closeCollabRoomAfterMutation(formatCollabDocKey({ kind: "guide", id }), false);
   revalidateGuide();
   return { ok: true };
 }

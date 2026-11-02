@@ -79,6 +79,19 @@ import {
   DOCUMENT_SERVER_DRAFT_RETENTION_SECONDS,
 } from "@/lib/document-server-draft-constants";
 import { createR2BindingDeletionStorage } from "@/lib/r2-deletion-storage";
+import type { DbContext } from "@/db/client";
+import { COLLAB_EPOCH_FIELD } from "@/lib/collab/protocol";
+import {
+  privateNoteLifecycleSql,
+  readPrivateNoteLifecycleMarker,
+  restorePrivateNoteRevisionAtomically,
+  updatePrivateNoteAtomically,
+} from "@/lib/private-note-atomic";
+import {
+  readPostLifecycleMarker,
+  restorePostRevisionAtomically,
+  updatePostAtomically,
+} from "@/lib/post-atomic";
 import {
   createScheduledMaintenanceOperations,
   runScheduledMaintenance,
@@ -4353,5 +4366,457 @@ test("서버 fence(b)는 같은 초·같은 version으로 재생성된 다른 �
       const replayA = await saveDocumentServerDraftAtomically(dbContext, saveA);
       assert.ok(replayA.ok && replayA.replayed, JSON.stringify(replayA));
     });
+  }
+});
+
+function withCollabEpoch(formData: FormData, collabEpoch: number): FormData {
+  formData.set(COLLAB_EPOCH_FIELD, String(collabEpoch));
+  return formData;
+}
+
+/**
+ * 사전 조회는 통과시키고 원자 쓰기 batch 직전에 경쟁 작업을 끼워 넣는 D1 context.
+ * 조건부 쓰기 자체가 lifecycle 표지를 확인하는지 보려고 쓴다.
+ */
+function createInterleavingContext(
+  db: PortalTestDb,
+  beforeFirstBatch: () => Promise<void>,
+): DbContext {
+  const client = db.$client;
+  let pending = true;
+  const wrappedClient = {
+    prepare: (query: string) => client.prepare(query),
+    batch: async (statements: Parameters<typeof client.batch>[0]) => {
+      if (pending) {
+        pending = false;
+        await beforeFirstBatch();
+      }
+      return client.batch(statements);
+    },
+  };
+  return {
+    kind: "d1",
+    db: Object.create(db, { $client: { value: wrappedClient } }) as PortalTestDb,
+  };
+}
+
+async function readNoteHead(db: PortalTestDb, noteId: string) {
+  const [head] = await db
+    .select({ title: privateNotes.title, contentHtml: privateNotes.contentHtml, version: privateNotes.version })
+    .from(privateNotes)
+    .where(eq(privateNotes.id, noteId));
+  return head;
+}
+
+async function readPostHead(db: PortalTestDb, postId: string) {
+  const [head] = await db
+    .select({ title: posts.title, contentHtml: posts.contentHtml, version: posts.version })
+    .from(posts)
+    .where(eq(posts.id, postId));
+  return head;
+}
+
+async function createRestoredNote(db: PortalTestDb): Promise<string> {
+  await seedProfile(db, "student-1");
+  const created = await privateNoteActions.createPrivateNote(
+    "student-1",
+    {},
+    createNoteForm(crypto.randomUUID(), "원본", "<p>원본 본문</p>"),
+  );
+  const noteId = created.note?.id;
+  assert.ok(noteId);
+  const updated = await privateNoteActions.updatePrivateNote(
+    noteId,
+    {},
+    withCollabEpoch(
+      createNoteUpdateForm(
+        noteId,
+        { title: "수정본", contentHtml: "<p>수정 본문</p>", noteDate: null },
+        { title: "원본", contentHtml: "<p>원본 본문</p>", noteDate: null },
+        crypto.randomUUID(),
+        1,
+      ),
+      0,
+    ),
+  );
+  assert.equal(updated.success, true, JSON.stringify(updated));
+  const restored = await privateNoteActions.restorePrivateNoteRevision(noteId, crypto.randomUUID(), 2, 1);
+  assert.equal(restored.success, true);
+  assert.equal(restored.currentRevision, 3);
+  return noteId;
+}
+
+test("공동 편집 시드·토큰의 lifecycle 표지 식은 실제 D1에서 마지막 복원 revision을 읽고, 복원 재전송은 처음 만든 revision을 돌려준다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context);
+  const noteId = await createRestoredNote(db);
+  const seed = await privateNoteActions.getPrivateNoteCollabSeed(noteId);
+  assert.equal(seed.status, "ok");
+  assert.equal(seed.status === "ok" && seed.lifecycle, 3, "토큰·시드가 쓰는 같은 식이 복원 revision을 읽는다");
+  const [viaHelper] = await db
+    .select({ lifecycle: privateNoteLifecycleSql })
+    .from(privateNotes)
+    .where(eq(privateNotes.id, noteId));
+  assert.equal(Number(viaHelper?.lifecycle), 3);
+
+  // 복원 뒤 일반 저장으로 head가 4가 돼도, 같은 복원 요청의 재전송은 room 세대로 쓸 revision 3을 돌려준다.
+  const operationId = crypto.randomUUID();
+  const restoreAgain = await privateNoteActions.restorePrivateNoteRevision(noteId, operationId, 3, 1);
+  assert.equal(restoreAgain.success, true, JSON.stringify(restoreAgain));
+  const restoreRevision = restoreAgain.operationResultRevision;
+  const saved = await privateNoteActions.updatePrivateNote(
+    noteId,
+    {},
+    withCollabEpoch(
+      createNoteUpdateForm(
+        noteId,
+        { title: "복원 뒤 저장", contentHtml: "<p>복원 뒤 저장</p>", noteDate: null },
+        { title: "원본", contentHtml: "<p>원본 본문</p>", noteDate: null },
+        crypto.randomUUID(),
+        restoreAgain.currentRevision ?? 0,
+      ),
+      restoreRevision ?? 0,
+    ),
+  );
+  assert.equal(saved.success, true, JSON.stringify(saved));
+  const replay = await privateNoteActions.restorePrivateNoteRevision(noteId, operationId, 3, 1);
+  assert.equal(replay.replayed, true);
+  assert.equal(replay.operationResultRevision, restoreRevision, "재전송도 처음 복원 revision");
+  assert.notEqual(replay.currentRevision, restoreRevision, "head는 그 뒤 저장으로 앞서 있다");
+});
+
+test("게시물 시드의 lifecycle 표지 식도 실제 D1에서 마지막 복원 revision을 읽는다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context);
+  const postId = await createRestoredPost(db);
+  const postSeed = await postActions.getPostCollabSeed(postId);
+  assert.equal(postSeed?.lifecycle, 3);
+});
+
+test("복원 commit 뒤 옛 generation 노트 저장은 새 version으로 재시도해도 COLLAB_STALE로 거부한다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context);
+  const noteId = await createRestoredNote(db);
+  const dbContext: DbContext = { kind: "d1", db };
+  assert.equal(await readPrivateNoteLifecycleMarker(dbContext, noteId), 3);
+  const ledgerBefore = (await db.select().from(documentOperationLedger)).length;
+
+  const stale = await privateNoteActions.updatePrivateNote(
+    noteId,
+    {},
+    withCollabEpoch(
+      createNoteUpdateForm(
+        noteId,
+        { title: "옛 세대", contentHtml: "<p>옛 세대 본문</p>", noteDate: null },
+        { title: "원본", contentHtml: "<p>원본 본문</p>", noteDate: null },
+        crypto.randomUUID(),
+        3,
+      ),
+      0,
+    ),
+  );
+  assert.equal(stale.success, undefined);
+  assert.equal(stale.conflictKind, "COLLAB_STALE");
+  assert.equal(stale.collabStale, true);
+  assert.deepEqual(await readNoteHead(db, noteId), { title: "원본", contentHtml: "<p>원본 본문</p>", version: 3 });
+  assert.equal((await db.select().from(documentOperationLedger)).length, ledgerBefore);
+
+  const fresh = await privateNoteActions.updatePrivateNote(
+    noteId,
+    {},
+    withCollabEpoch(
+      createNoteUpdateForm(
+        noteId,
+        { title: "새 세대", contentHtml: "<p>새 세대 본문</p>", noteDate: null },
+        { title: "원본", contentHtml: "<p>원본 본문</p>", noteDate: null },
+        crypto.randomUUID(),
+        3,
+      ),
+      3,
+    ),
+  );
+  assert.equal(fresh.success, true, JSON.stringify(fresh));
+  assert.deepEqual(await readNoteHead(db, noteId), { title: "새 세대", contentHtml: "<p>새 세대 본문</p>", version: 4 });
+  assert.equal(await readPrivateNoteLifecycleMarker(dbContext, noteId), 3, "일반 저장은 표지를 바꾸지 않는다");
+});
+
+test("복원 commit 뒤 옛 generation 노트의 alreadyCurrent 저장도 receipt 없이 COLLAB_STALE로 거부한다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context);
+  const noteId = await createRestoredNote(db);
+  const ledgerBefore = (await db.select().from(documentOperationLedger)).length;
+
+  const stale = await privateNoteActions.updatePrivateNote(
+    noteId,
+    {},
+    withCollabEpoch(
+      createNoteUpdateForm(
+        noteId,
+        { title: "원본", contentHtml: "<p>원본 본문</p>", noteDate: null },
+        { title: "원본", contentHtml: "<p>원본 본문</p>", noteDate: null },
+        crypto.randomUUID(),
+        3,
+      ),
+      0,
+    ),
+  );
+  assert.equal(stale.conflictKind, "COLLAB_STALE");
+  assert.equal(stale.collabStale, true);
+  assert.equal((await db.select().from(documentOperationLedger)).length, ledgerBefore);
+
+  const fresh = await privateNoteActions.updatePrivateNote(
+    noteId,
+    {},
+    withCollabEpoch(
+      createNoteUpdateForm(
+        noteId,
+        { title: "원본", contentHtml: "<p>원본 본문</p>", noteDate: null },
+        { title: "원본", contentHtml: "<p>원본 본문</p>", noteDate: null },
+        crypto.randomUUID(),
+        3,
+      ),
+      3,
+    ),
+  );
+  assert.equal(fresh.success, true, JSON.stringify(fresh));
+  assert.equal(fresh.operationResultRevision, 3);
+  assert.equal((await db.select().from(documentOperationLedger)).length, ledgerBefore + 1);
+});
+
+test("노트 조건부 쓰기는 사전 조회 뒤 commit된 복원 표지를 같은 문장에서 확인한다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context);
+  const noteId = await createRestoredNote(db);
+  const dbContext: DbContext = { kind: "d1", db };
+  const actor = { id: "student-1", isAdmin: false };
+  const ledgerBefore = (await db.select().from(documentOperationLedger)).length;
+
+  for (const contentHtml of ["<p>경쟁 본문</p>", "<p>원본 본문</p>"]) {
+    const marker = await readPrivateNoteLifecycleMarker(dbContext, noteId);
+    const head = await readNoteHead(db, noteId);
+    assert.ok(head);
+    // 사전 조회(표지·version 일치)를 지난 뒤 복원이 commit되고, version CAS만으로는 구분되지 않게 version을 되돌린다.
+    const interleaving = createInterleavingContext(db, async () => {
+      const restored = await restorePrivateNoteRevisionAtomically(dbContext, {
+        actor,
+        noteId,
+        operationId: crypto.randomUUID(),
+        baseRevision: head.version,
+        revisionNumber: 1,
+        now: new Date(),
+      });
+      assert.equal(restored.ok, true, JSON.stringify(restored));
+      await db.update(privateNotes).set({ version: head.version }).where(eq(privateNotes.id, noteId));
+    });
+    const result = await updatePrivateNoteAtomically(interleaving, {
+      actor,
+      noteId,
+      operationId: crypto.randomUUID(),
+      baseRevision: head.version,
+      title: "원본",
+      contentHtml,
+      noteDate: null,
+      collabEpoch: marker,
+      now: new Date(),
+    });
+    assert.equal(result.ok, false);
+    assert.equal(!result.ok && result.reason, "COLLAB_STALE", contentHtml);
+    assert.equal(await readPrivateNoteLifecycleMarker(dbContext, noteId), head.version + 1);
+    assert.deepEqual(await readNoteHead(db, noteId), {
+      title: "원본",
+      contentHtml: "<p>원본 본문</p>",
+      version: head.version,
+    });
+    // 다음 회차를 위해 복원이 남긴 실제 version으로 되돌린다.
+    await db.update(privateNotes).set({ version: head.version + 1 }).where(eq(privateNotes.id, noteId));
+  }
+  // 복원 두 건의 receipt만 남고 거부된 저장의 receipt는 없다.
+  assert.equal((await db.select().from(documentOperationLedger)).length, ledgerBefore + 2);
+});
+
+test("노트 저장 batch 직전에 복원이 commit되면 version 충돌이 아니라 COLLAB_STALE로 분류한다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context);
+  const noteId = await createRestoredNote(db);
+  const dbContext: DbContext = { kind: "d1", db };
+  const actor = { id: "student-1", isAdmin: false };
+  const interleaving = createInterleavingContext(db, async () => {
+    const restored = await restorePrivateNoteRevisionAtomically(dbContext, {
+      actor,
+      noteId,
+      operationId: crypto.randomUUID(),
+      baseRevision: 3,
+      revisionNumber: 2,
+      now: new Date(),
+    });
+    assert.equal(restored.ok, true, JSON.stringify(restored));
+  });
+  const result = await updatePrivateNoteAtomically(interleaving, {
+    actor,
+    noteId,
+    operationId: crypto.randomUUID(),
+    baseRevision: 3,
+    title: "늦은 저장",
+    contentHtml: "<p>늦은 저장</p>",
+    noteDate: null,
+    collabEpoch: 3,
+    now: new Date(),
+  });
+  assert.equal(!result.ok && result.reason, "COLLAB_STALE");
+  assert.deepEqual(await readNoteHead(db, noteId), { title: "수정본", contentHtml: "<p>수정 본문</p>", version: 4 });
+});
+
+test("노트 휴지통 이동·복구는 lifecycle 표지를 바꾸지 않아 이전 generation 저장이 이어진다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context);
+  const noteId = await createRestoredNote(db);
+  const dbContext: DbContext = { kind: "d1", db };
+  assert.equal((await privateNoteActions.trashPrivateNote(noteId, crypto.randomUUID(), 3)).success, true);
+  assert.equal((await privateNoteActions.restorePrivateNote(noteId, crypto.randomUUID(), 4)).success, true);
+  assert.equal(await readPrivateNoteLifecycleMarker(dbContext, noteId), 3);
+
+  const saved = await privateNoteActions.updatePrivateNote(
+    noteId,
+    {},
+    withCollabEpoch(
+      createNoteUpdateForm(
+        noteId,
+        { title: "복구 뒤", contentHtml: "<p>복구 뒤 본문</p>", noteDate: null },
+        { title: "원본", contentHtml: "<p>원본 본문</p>", noteDate: null },
+        crypto.randomUUID(),
+        5,
+      ),
+      3,
+    ),
+  );
+  assert.equal(saved.success, true, JSON.stringify(saved));
+  assert.deepEqual(await readNoteHead(db, noteId), { title: "복구 뒤", contentHtml: "<p>복구 뒤 본문</p>", version: 6 });
+});
+
+test("공동 편집 epoch 칸이 음수·소수·문자면 노트·게시물 저장을 거부하고 칸이 없는 혼자 모드는 저장한다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context);
+  await seedProfile(db, "student-1");
+  const created = await privateNoteActions.createPrivateNote(
+    "student-1",
+    {},
+    createNoteForm(crypto.randomUUID(), "원본", "<p>원본 본문</p>"),
+  );
+  const noteId = created.note?.id;
+  assert.ok(noteId);
+  const base = { title: "원본", contentHtml: "<p>원본 본문</p>", noteDate: null };
+  const next = { title: "수정", contentHtml: "<p>수정</p>", noteDate: null };
+  for (const raw of ["-1", "1.5", "abc", "9007199254740993"]) {
+    const form = createNoteUpdateForm(noteId, next, base);
+    form.set(COLLAB_EPOCH_FIELD, raw);
+    const result = await privateNoteActions.updatePrivateNote(noteId, {}, form);
+    assert.equal(result.collabStale, true, raw);
+    assert.equal(result.success, undefined, raw);
+  }
+  const solo = await privateNoteActions.updatePrivateNote(noteId, {}, createNoteUpdateForm(noteId, next, base));
+  assert.equal(solo.success, true, JSON.stringify(solo));
+
+  const post = await postActions.createPost({}, createPostForm(crypto.randomUUID(), "원본 글", "<p>원본 글 본문</p>"));
+  assert.ok(post.postId);
+  const postForm = createPostUpdateForm(
+    post.postId,
+    { title: "수정 글", contentHtml: "<p>수정 글</p>" },
+    { title: "원본 글", contentHtml: "<p>원본 글 본문</p>" },
+  );
+  postForm.set(COLLAB_EPOCH_FIELD, "-3");
+  const rejected = await postActions.updatePostContent(post.postId, {}, postForm);
+  assert.equal(rejected.collabStale, true);
+  assert.deepEqual(await readPostHead(db, post.postId), { title: "원본 글", contentHtml: "<p>원본 글 본문</p>", version: 1 });
+});
+
+async function createRestoredPost(db: PortalTestDb): Promise<string> {
+  await seedProfile(db, "student-1");
+  const created = await postActions.createPost({}, createPostForm(crypto.randomUUID(), "원본 글", "<p>원본 글 본문</p>"));
+  const postId = created.postId;
+  assert.ok(postId);
+  const updated = await postActions.updatePostContent(
+    postId,
+    {},
+    withCollabEpoch(
+      createPostUpdateForm(
+        postId,
+        { title: "수정 글", contentHtml: "<p>수정 글 본문</p>" },
+        { title: "원본 글", contentHtml: "<p>원본 글 본문</p>" },
+        crypto.randomUUID(),
+        1,
+      ),
+      0,
+    ),
+  );
+  assert.equal(updated.success, true, JSON.stringify(updated));
+  const restored = await postActions.restorePostRevision(postId, crypto.randomUUID(), 2, 1);
+  assert.equal(restored.success, true);
+  return postId;
+}
+
+test("복원 commit 뒤 옛 generation 게시물 저장은 COLLAB_STALE로 거부하고 새 generation 저장은 반영한다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context);
+  const postId = await createRestoredPost(db);
+  const dbContext: DbContext = { kind: "d1", db };
+  assert.equal(await readPostLifecycleMarker(dbContext, postId), 3);
+  const restoredBase = { title: "원본 글", contentHtml: "<p>원본 글 본문</p>" };
+
+  for (const next of [
+    { title: "옛 세대 글", contentHtml: "<p>옛 세대 글</p>" },
+    restoredBase,
+  ]) {
+    const stale = await postActions.updatePostContent(
+      postId,
+      {},
+      withCollabEpoch(createPostUpdateForm(postId, next, restoredBase, crypto.randomUUID(), 3), 0),
+    );
+    assert.equal(stale.conflictKind, "COLLAB_STALE", next.title);
+    assert.equal(stale.collabStale, true);
+    assert.deepEqual(await readPostHead(db, postId), { ...restoredBase, version: 3 });
+  }
+
+  const fresh = await postActions.updatePostContent(
+    postId,
+    {},
+    withCollabEpoch(
+      createPostUpdateForm(postId, { title: "새 세대 글", contentHtml: "<p>새 세대 글</p>" }, restoredBase, crypto.randomUUID(), 3),
+      3,
+    ),
+  );
+  assert.equal(fresh.success, true, JSON.stringify(fresh));
+  assert.deepEqual(await readPostHead(db, postId), { title: "새 세대 글", contentHtml: "<p>새 세대 글</p>", version: 4 });
+});
+
+test("게시물 조건부 쓰기는 사전 조회 뒤 commit된 복원 표지를 같은 문장에서 확인한다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context);
+  const postId = await createRestoredPost(db);
+  const dbContext: DbContext = { kind: "d1", db };
+  const actor = { id: "student-1", isAdmin: false };
+
+  for (const contentHtml of ["<p>경쟁 글</p>", "<p>원본 글 본문</p>"]) {
+    const marker = await readPostLifecycleMarker(dbContext, postId);
+    const head = await readPostHead(db, postId);
+    assert.ok(head);
+    const interleaving = createInterleavingContext(db, async () => {
+      const restored = await restorePostRevisionAtomically(dbContext, {
+        actor,
+        postId,
+        operationId: crypto.randomUUID(),
+        baseRevision: head.version,
+        revisionNumber: 1,
+        now: new Date(),
+      });
+      assert.equal(restored.ok, true, JSON.stringify(restored));
+      await db.update(posts).set({ version: head.version }).where(eq(posts.id, postId));
+    });
+    const result = await updatePostAtomically(interleaving, {
+      actor,
+      postId,
+      operationId: crypto.randomUUID(),
+      baseRevision: head.version,
+      title: "원본 글",
+      contentHtml,
+      collabEpoch: marker,
+      now: new Date(),
+    });
+    assert.equal(!result.ok && result.reason, "COLLAB_STALE", contentHtml);
+    assert.deepEqual(await readPostHead(db, postId), {
+      title: "원본 글",
+      contentHtml: "<p>원본 글 본문</p>",
+      version: head.version,
+    });
+    await db.update(posts).set({ version: head.version + 1 }).where(eq(posts.id, postId));
   }
 });

@@ -36,6 +36,13 @@ import {
   removeOwnerlessLegacyDocumentDrafts,
   snapshotOwnerlessLegacyDocumentDrafts,
 } from "./local-document-drafts";
+import {
+  collabConfirmedDbName,
+  collabDocDbName,
+  collabGenerationStorageKey,
+  collabRecoveryStorageKey,
+  isCollabOwnerLocked,
+} from "./collab/client/local-store";
 
 class MemoryStorage implements Storage {
   private readonly values = new Map<string, string>();
@@ -213,7 +220,7 @@ test("기기 정리 token 원문은 owner별 localStorage에만 두고 register�
   assert.equal(storage.getItem(createAccountCleanupTokenStorageKey(ownerId)), rawToken);
 });
 
-test("terminal lock과 token 신규 write가 교차해도 post-write 검증이 raw owner key를 CAS 제거한다", { concurrency: false }, (context) => {
+test("terminal lock과 token 신규 write가 교차해도 post-write 검증이 raw owner key를 CAS 제거한다", { concurrency: false }, async (context) => {
   const ownerId = "student-token-write-race";
   const tokenKey = createAccountCleanupTokenStorageKey(ownerId);
   const lockKey = createAccountTerminalLockStorageKey(ownerId);
@@ -221,18 +228,22 @@ test("terminal lock과 token 신규 write가 교차해도 post-write 검증이 r
   const initialToken = ensureStoredAccountCleanupToken(storage, ownerId);
   installBrowserStorage(context, storage);
   let cleanupSucceeded = false;
+  let cleanupPromise: ReturnType<typeof clearDeletedAccountLocalState> | undefined;
 
   storage.armReadInterleave(lockKey, () => {
-    cleanupSucceeded = clearDeletedAccountLocalState(
+    cleanupPromise = clearDeletedAccountLocalState(
       ownerId,
       initialToken.tokenDigest,
-    ).success;
+    );
     storage.markCleanupCompleted(tokenKey);
   });
   const ensured = ensureAccountCleanupToken(ownerId);
+  cleanupSucceeded = (await cleanupPromise!).success;
 
   assert.equal(cleanupSucceeded, true);
-  assert.equal(storage.lateTokenWrites, 1);
+  // terminal lock은 cleanup의 첫 await 전에 동기로 걸리므로 교차한 ensure는 새 token을 쓰지 않고
+  // 기존 token을 lock 경로에서 폐기한다. token CAS는 공동 편집 정리 뒤에 "이미 없음"을 제거 완료로 본다.
+  assert.equal(storage.lateTokenWrites, 0);
   assert.deepEqual(ensured, {
     ok: false,
     reason: "OWNER_TERMINALLY_LOCKED",
@@ -242,22 +253,24 @@ test("terminal lock과 token 신규 write가 교차해도 post-write 검증이 r
   assert.equal(lockKey.includes(ownerId), false);
 });
 
-test("기존 token read 뒤 terminal cleanup이 교차하면 post-read 검증이 stale descriptor 반환을 막는다", { concurrency: false }, (context) => {
+test("기존 token read 뒤 terminal cleanup이 교차하면 post-read 검증이 stale descriptor 반환을 막는다", { concurrency: false }, async (context) => {
   const ownerId = "student-token-read-race";
   const tokenKey = createAccountCleanupTokenStorageKey(ownerId);
   const storage = new TerminalLockRaceStorage();
   const initialToken = ensureStoredAccountCleanupToken(storage, ownerId);
   installBrowserStorage(context, storage);
   let cleanupSucceeded = false;
+  let cleanupPromise: ReturnType<typeof clearDeletedAccountLocalState> | undefined;
 
   storage.armReadInterleave(tokenKey, () => {
-    cleanupSucceeded = clearDeletedAccountLocalState(
+    cleanupPromise = clearDeletedAccountLocalState(
       ownerId,
       initialToken.tokenDigest,
-    ).success;
+    );
     storage.markCleanupCompleted(tokenKey);
   });
   const ensured = ensureAccountCleanupToken(ownerId);
+  cleanupSucceeded = (await cleanupPromise!).success;
 
   assert.equal(cleanupSucceeded, true);
   assert.equal(storage.lateTokenWrites, 0);
@@ -280,16 +293,20 @@ test("익명 sweep은 post-write discard 실패 token을 status 조회 없이 �
   storage.setItem(retainedSource, "other-owner-draft");
   installBrowserStorage(context, storage);
   let cleanupSucceeded = false;
+  let cleanupPromise: ReturnType<typeof clearDeletedAccountLocalState> | undefined;
 
+  // ensure의 lock 경로 폐기와 첫 cleanup의 token CAS 제거를 모두 실패시켜 잔여 token을 남긴다.
+  storage.denyNextLateTokenRemoval();
   storage.denyNextLateTokenRemoval();
   storage.armReadInterleave(lockKey, () => {
-    cleanupSucceeded = clearDeletedAccountLocalState(
+    cleanupPromise = clearDeletedAccountLocalState(
       ownerId,
       initialToken.tokenDigest,
-    ).success;
+    );
     storage.markCleanupCompleted(tokenKey);
   });
   const ensured = ensureAccountCleanupToken(ownerId);
+  cleanupSucceeded = (await cleanupPromise!).success;
   const requestedDigests: string[] = [];
   const result = await sweepAccountCleanupStatuses({
     fetcher: (async (_input: RequestInfo | URL, init?: RequestInit) => {
@@ -302,12 +319,12 @@ test("익명 sweep은 post-write discard 실패 token을 status 조회 없이 �
     }) as typeof fetch,
   });
 
-  assert.equal(cleanupSucceeded, true);
+  assert.equal(cleanupSucceeded, false);
   assert.deepEqual(ensured, {
     ok: false,
     reason: "OWNER_TERMINALLY_LOCKED",
   });
-  assert.equal(storage.lateTokenWrites, 1);
+  assert.equal(storage.lateTokenWrites, 0);
   assert.deepEqual(requestedDigests, [retainedToken.tokenDigest]);
   assert.deepEqual(result.cleanedOwners, [ownerId]);
   assert.deepEqual(result.noActionOwners, [retainedOwner]);
@@ -325,17 +342,22 @@ test("현재 owner sweep은 post-write discard 실패 token을 직접 재정리�
   const initialToken = ensureStoredAccountCleanupToken(storage, ownerId);
   installBrowserStorage(context, storage);
   let cleanupSucceeded = false;
+  let cleanupPromise: ReturnType<typeof clearDeletedAccountLocalState> | undefined;
   let statusRequests = 0;
 
+  // ensure의 lock 경로 폐기와 첫 cleanup의 token CAS 제거를 모두 실패시켜 잔여 token을 남긴다.
+  storage.denyNextLateTokenRemoval();
   storage.denyNextLateTokenRemoval();
   storage.armReadInterleave(lockKey, () => {
-    cleanupSucceeded = clearDeletedAccountLocalState(
+    cleanupPromise = clearDeletedAccountLocalState(
       ownerId,
       initialToken.tokenDigest,
-    ).success;
+    );
     storage.markCleanupCompleted(tokenKey);
   });
   const ensured = ensureAccountCleanupToken(ownerId);
+  cleanupSucceeded = (await cleanupPromise!).success;
+  assert.equal(cleanupSucceeded, false);
   assert.notEqual(storage.getItem(tokenKey), null);
 
   const result = await sweepAccountCleanupStatuses({
@@ -349,7 +371,6 @@ test("현재 owner sweep은 post-write discard 실패 token을 직접 재정리�
     }) as typeof fetch,
   });
 
-  assert.equal(cleanupSucceeded, true);
   assert.deepEqual(ensured, {
     ok: false,
     reason: "OWNER_TERMINALLY_LOCKED",
@@ -488,7 +509,7 @@ test("owner durable 삭제가 하나라도 실패하면 cleanup token을 유지�
   storage.setItem(sourceKey, "future-value");
   const token = ensureStoredAccountCleanupToken(storage, ownerId);
 
-  const result = clearDeletedAccountLocalState(ownerId, token.tokenDigest);
+  const result = await clearDeletedAccountLocalState(ownerId, token.tokenDigest);
 
   assert.equal(result.success, false);
   assert.equal(result.reason, "DRAFT_CLEANUP_FAILED");
@@ -507,7 +528,7 @@ test("owner durable 삭제가 하나라도 실패하면 cleanup token을 유지�
   assert.equal(storage.getItem(token.storageKey), token.rawToken);
 });
 
-test("draft 재열거가 성공해도 token CAS 제거가 실패하면 원문 token을 유지한다", { concurrency: false }, (context) => {
+test("draft 재열거가 성공해도 token CAS 제거가 실패하면 원문 token을 유지한다", { concurrency: false }, async (context) => {
   const ownerId = "student-token-retry";
   const tokenKey = createAccountCleanupTokenStorageKey(ownerId);
   const storage = new RemovalDeniedStorage(tokenKey);
@@ -516,7 +537,7 @@ test("draft 재열거가 성공해도 token CAS 제거가 실패하면 원문 to
   storage.setItem(sourceKey, "draft-value");
   const token = ensureStoredAccountCleanupToken(storage, ownerId);
 
-  const result = clearDeletedAccountLocalState(ownerId, token.tokenDigest);
+  const result = await clearDeletedAccountLocalState(ownerId, token.tokenDigest);
 
   assert.equal(result.success, false);
   assert.equal(result.reason, "TOKEN_REMOVE_FAILED");
@@ -575,4 +596,107 @@ test("ownerless legacy 확인 snapshot이 바뀌면 새 값과 key를 삭제하�
     removed.currentSnapshots.map(({ storageKey }) => storageKey),
     ["draft:qna:reply:new", "draft:qna:thread"],
   );
+});
+
+/** deleteDatabase가 이름별로 성공하거나 blocked로 멈추는 최소 IndexedDB(databases() 포함). */
+function installFakeIndexedDb(
+  context: TestContext,
+  names: string[],
+  blockedNames: ReadonlySet<string> = new Set(),
+): Set<string> {
+  const existing = new Set(names);
+  const fake = {
+    databases: async () => [...existing].map((name) => ({ name })),
+    deleteDatabase(name: string) {
+      const request: {
+        onsuccess: (() => void) | null;
+        onerror: (() => void) | null;
+        onblocked: (() => void) | null;
+      } = { onsuccess: null, onerror: null, onblocked: null };
+      setTimeout(() => {
+        if (blockedNames.has(name)) {
+          request.onblocked?.();
+          return;
+        }
+        existing.delete(name);
+        request.onsuccess?.();
+      }, 0);
+      return request;
+    },
+  };
+  const previous = Object.getOwnPropertyDescriptor(globalThis, "indexedDB");
+  Object.defineProperty(globalThis, "indexedDB", { configurable: true, writable: true, value: fake });
+  context.after(() => {
+    if (previous) Object.defineProperty(globalThis, "indexedDB", previous);
+    else Reflect.deleteProperty(globalThis, "indexedDB");
+  });
+  return existing;
+}
+
+test("DELETED sweep는 삭제 owner의 공동 편집 DB·보관 key를 지우고 다른 owner 것은 보존한다", { concurrency: false }, async (context) => {
+  const { storage } = installBrowserStorage(context);
+  const deletedOwner = "student-collab-deleted";
+  const retainedOwner = "student-collab-retained";
+  const deletedDbs = [
+    collabDocDbName(deletedOwner, "note:n1", 0),
+    collabConfirmedDbName(deletedOwner, "note:n1", 0),
+  ];
+  const retainedDb = collabDocDbName(retainedOwner, "note:n2", 1);
+  const existing = installFakeIndexedDb(context, [...deletedDbs, retainedDb]);
+  storage.setItem(collabGenerationStorageKey(deletedOwner, "note:n1"), "0");
+  storage.setItem(
+    collabRecoveryStorageKey(deletedOwner, "note:n1", 1),
+    JSON.stringify({ userId: deletedOwner }),
+  );
+  storage.setItem(collabGenerationStorageKey(retainedOwner, "note:n2"), "1");
+  storage.setItem(
+    collabRecoveryStorageKey(retainedOwner, "note:n2", 1),
+    JSON.stringify({ userId: retainedOwner }),
+  );
+  const deletedToken = ensureStoredAccountCleanupToken(storage, deletedOwner);
+  const retainedToken = ensureStoredAccountCleanupToken(storage, retainedOwner);
+  const fetcher = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const request = JSON.parse(String(init?.body)) as { tokenDigest: string };
+    const status = request.tokenDigest === deletedToken.tokenDigest ? "DELETED" : "NO_ACTION";
+    return new Response(JSON.stringify({ ok: true, status }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }) as typeof fetch;
+
+  const result = await sweepAccountCleanupStatuses({ fetcher, deleteTimeoutMs: 50 });
+
+  assert.deepEqual(result.cleanedOwners, [deletedOwner]);
+  assert.deepEqual([...existing], [retainedDb]);
+  assert.equal(storage.getItem(collabGenerationStorageKey(deletedOwner, "note:n1")), null);
+  assert.equal(storage.getItem(collabRecoveryStorageKey(deletedOwner, "note:n1", 1)), null);
+  assert.notEqual(storage.getItem(collabGenerationStorageKey(retainedOwner, "note:n2")), null);
+  assert.notEqual(storage.getItem(collabRecoveryStorageKey(retainedOwner, "note:n2", 1)), null);
+  assert.equal(storage.getItem(deletedToken.storageKey), null);
+  assert.equal(storage.getItem(retainedToken.storageKey), retainedToken.rawToken);
+  assert.equal(isCollabOwnerLocked(deletedOwner), true);
+  assert.equal(isCollabOwnerLocked(retainedOwner), false);
+});
+
+test("공동 편집 DB 삭제가 blocked면 재검증이 실패하고 cleanup token을 유지한다", { concurrency: false }, async (context) => {
+  const { storage } = installBrowserStorage(context);
+  const ownerId = "student-collab-blocked";
+  const blockedDb = collabDocDbName(ownerId, "post:p1", 0);
+  const existing = installFakeIndexedDb(context, [blockedDb], new Set([blockedDb]));
+  const sourceKey = createDocumentDraftKey("note", ownerId, "n1");
+  storage.setItem(sourceKey, "draft-value");
+  const token = ensureStoredAccountCleanupToken(storage, ownerId);
+
+  const result = await clearDeletedAccountLocalState(ownerId, token.tokenDigest, {
+    deleteTimeoutMs: 20,
+  });
+
+  assert.equal(result.success, false);
+  assert.equal(result.reason, "DRAFT_VERIFICATION_FAILED");
+  assert.deepEqual(result.draftCleanup?.collab.remaining, [blockedDb]);
+  assert.deepEqual(result.verification?.collabKeys, [blockedDb]);
+  assert.deepEqual(result.verification?.storageKeys, []);
+  assert.equal(storage.getItem(sourceKey), null);
+  assert.equal(storage.getItem(token.storageKey), token.rawToken);
+  assert.ok(existing.has(blockedDb));
 });

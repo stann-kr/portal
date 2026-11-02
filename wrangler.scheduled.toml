@@ -19,6 +19,16 @@ migrations_dir = "drizzle"
 binding = "BUCKET"
 bucket_name = "portal-storage"
 
+# 문서별 실시간 공동 편집 room(Yjs). 클래스는 worker.ts가 export한다.
+# 운영 첫 배포 때 v1 migration으로 SQLite 저장소 DO가 만들어진다(DEPLOYMENT 승인 항목).
+[[durable_objects.bindings]]
+name = "DOC_ROOMS"
+class_name = "DocumentRoom"
+
+[[migrations]]
+tag = "v1-document-rooms"
+new_sqlite_classes = ["DocumentRoom"]
+
 [vars]
 AUTH_URL = "https://portal.stann.kr"
 ACCOUNT_DELETION_ENABLED = "false"

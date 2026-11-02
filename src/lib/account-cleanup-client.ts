@@ -18,9 +18,10 @@ import {
 import {
   clearLocalDocumentDraftsForDeletedOwner,
   inspectBrowserLocalDocumentDraftsForOwner,
-  type BrowserLocalDocumentDraftCleanupResult,
+  type BrowserLocalAccountBoundaryCleanupResult,
   type BrowserLocalDocumentDraftOwnerInspectionResult,
 } from "@/lib/local-draft-continuity-client";
+import type { CollabLocalClearOptions } from "@/lib/collab/client/local-store";
 
 export const ACCOUNT_CLEANUP_REGISTER_ENDPOINT = "/api/account-cleanup/register";
 export const ACCOUNT_CLEANUP_STATUS_ENDPOINT = "/api/account-cleanup/status";
@@ -78,7 +79,7 @@ export type DeletedAccountLocalCleanupResult = {
     | "DRAFT_VERIFICATION_FAILED"
     | "TERMINAL_LOCK_FAILED"
     | "TOKEN_REMOVE_FAILED";
-  draftCleanup: BrowserLocalDocumentDraftCleanupResult | null;
+  draftCleanup: BrowserLocalAccountBoundaryCleanupResult | null;
   verification: BrowserLocalDocumentDraftOwnerInspectionResult | null;
 };
 
@@ -91,7 +92,7 @@ export type AuthenticatedDeletedAccountLocalCleanupResult = {
     | "DRAFT_CLEANUP_FAILED"
     | "DRAFT_VERIFICATION_FAILED"
     | "TERMINAL_LOCK_FAILED";
-  draftCleanup: BrowserLocalDocumentDraftCleanupResult | null;
+  draftCleanup: BrowserLocalAccountBoundaryCleanupResult | null;
   verification: BrowserLocalDocumentDraftOwnerInspectionResult | null;
 };
 
@@ -284,10 +285,14 @@ export async function requestAccountCleanupStatus(
   }
 }
 
-/** 인증된 삭제 성공 직후 token 유무와 무관하게 owner lock→삭제→재검증한다. */
-export function clearAuthenticatedDeletedAccountLocalState(
+/**
+ * 인증된 삭제 성공 직후 token 유무와 무관하게 owner lock→삭제→재검증한다.
+ * terminal lock과 localStorage 초안 삭제는 첫 await 전에 동기로 끝나고, 공동 편집 IndexedDB 삭제·재검증을 기다린다.
+ */
+export async function clearAuthenticatedDeletedAccountLocalState(
   ownerId: string,
-): AuthenticatedDeletedAccountLocalCleanupResult {
+  options: CollabLocalClearOptions = {},
+): Promise<AuthenticatedDeletedAccountLocalCleanupResult> {
   const storage = readBrowserStorage();
   if (!storage) {
     return {
@@ -311,7 +316,7 @@ export function clearAuthenticatedDeletedAccountLocalState(
     };
   }
 
-  const draftCleanup = clearLocalDocumentDraftsForDeletedOwner(ownerId);
+  const draftCleanup = await clearLocalDocumentDraftsForDeletedOwner(ownerId, options);
   if (
     draftCleanup.storageUnavailable ||
     draftCleanup.enumerationFailed ||
@@ -326,11 +331,13 @@ export function clearAuthenticatedDeletedAccountLocalState(
     };
   }
 
-  const verification = inspectBrowserLocalDocumentDraftsForOwner(ownerId);
+  // 공동 편집 DB 삭제가 blocked·error면 여기서 남은 이름으로 드러나 token을 유지한다.
+  const verification = await inspectBrowserLocalDocumentDraftsForOwner(ownerId);
   if (
     verification.storageUnavailable ||
     verification.enumerationFailed ||
-    verification.storageKeys.length > 0
+    verification.storageKeys.length > 0 ||
+    verification.collabKeys.length > 0
   ) {
     return {
       ownerId,
@@ -371,10 +378,11 @@ export function clearAuthenticatedDeletedAccountLocalState(
 }
 
 /** DELETED 확인 뒤 owner lock→durable 삭제→재열거→token CAS 순서로 수렴한다. */
-export function clearDeletedAccountLocalState(
+export async function clearDeletedAccountLocalState(
   ownerId: string,
   expectedTokenDigest: string,
-): DeletedAccountLocalCleanupResult {
+  options: CollabLocalClearOptions = {},
+): Promise<DeletedAccountLocalCleanupResult> {
   const storage = readBrowserStorage();
   if (!storage) {
     return {
@@ -404,7 +412,7 @@ export function clearDeletedAccountLocalState(
     };
   }
 
-  const ownerCleanup = clearAuthenticatedDeletedAccountLocalState(ownerId);
+  const ownerCleanup = await clearAuthenticatedDeletedAccountLocalState(ownerId, options);
   if (!ownerCleanup.success) {
     return {
       ...ownerCleanup,
@@ -414,7 +422,10 @@ export function clearDeletedAccountLocalState(
 
   let tokenRemoved = false;
   try {
-    tokenRemoved = removeStoredAccountCleanupTokenIfUnchanged(storage, token);
+    tokenRemoved = removeStoredAccountCleanupTokenIfUnchanged(storage, token) ||
+      // 공동 편집 정리를 기다리는 동안 terminal lock을 본 token 경로가 같은 원문을 먼저 폐기했을 수 있다.
+      (storage.getItem(token.storageKey) === null &&
+        isAccountOwnerTerminallyLocked(storage, ownerId));
   } catch {
     tokenRemoved = false;
   }
@@ -430,7 +441,7 @@ export function clearDeletedAccountLocalState(
 
 /** 로그인 전에는 모든 등록 token을, 로그인 후에는 현재 owner token만 익명 조회한다. */
 export async function sweepAccountCleanupStatuses(
-  options: AccountCleanupRequestOptions & { ownerId?: string } = {},
+  options: AccountCleanupRequestOptions & CollabLocalClearOptions & { ownerId?: string } = {},
 ): Promise<AccountCleanupStatusSweepResult> {
   const result: AccountCleanupStatusSweepResult = {
     checkedOwners: [],
@@ -482,9 +493,10 @@ export async function sweepAccountCleanupStatuses(
       continue;
     }
     if (terminallyLocked) {
-      const cleanup = clearDeletedAccountLocalState(
+      const cleanup = await clearDeletedAccountLocalState(
         token.ownerId,
         token.tokenDigest,
+        { deleteTimeoutMs: options.deleteTimeoutMs },
       );
       if (cleanup.success) result.cleanedOwners.push(token.ownerId);
       else result.failedOwners.push(token.ownerId);
@@ -500,9 +512,10 @@ export async function sweepAccountCleanupStatuses(
       result.noActionOwners.push(token.ownerId);
       continue;
     }
-    const cleanup = clearDeletedAccountLocalState(
+    const cleanup = await clearDeletedAccountLocalState(
       token.ownerId,
       token.tokenDigest,
+      { deleteTimeoutMs: options.deleteTimeoutMs },
     );
     if (cleanup.success) result.cleanedOwners.push(token.ownerId);
     else result.failedOwners.push(token.ownerId);

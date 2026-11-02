@@ -9,25 +9,13 @@
 
 import { useEditor, useEditorState, EditorContent } from "@tiptap/react";
 import { BubbleMenu } from "@tiptap/react/menus";
-import StarterKit from "@tiptap/starter-kit";
-import LinkExtension from "@tiptap/extension-link";
-import ImageExtension from "@tiptap/extension-image";
-import YoutubeExtension from "@tiptap/extension-youtube";
-import { Table as TableExtension } from "@tiptap/extension-table";
-import { TableRow } from "@tiptap/extension-table-row";
-import { TableCell } from "@tiptap/extension-table-cell";
-import { TableHeader } from "@tiptap/extension-table-header";
-import { CodeBlockLowlight } from "@tiptap/extension-code-block-lowlight";
-import Placeholder from "@tiptap/extension-placeholder";
-import Underline from "@tiptap/extension-underline";
-import TextAlign from "@tiptap/extension-text-align";
-import Highlight from "@tiptap/extension-highlight";
-import TaskList from "@tiptap/extension-task-list";
-import TaskItem from "@tiptap/extension-task-item";
-import Typography from "@tiptap/extension-typography";
-import { Markdown, type MarkdownStorage } from "tiptap-markdown";
+import { type MarkdownStorage } from "tiptap-markdown";
 import type { Editor } from "@tiptap/core";
-import { common, createLowlight } from "lowlight";
+import {
+  createFullEditorExtensions,
+  type FullEditorCollaboration,
+  type FullEditorCollaborator,
+} from "./full-editor-extensions";
 import { useState, useCallback, useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -56,8 +44,8 @@ import {
   type EditorImageUploader,
   type EditorUploadedImage,
 } from "./useEditorImageUpload";
-import { GuideBlockId } from "./guide-block-id-extension";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
+import { COLLAB_REBASE_EVENT, readCollabNoticeInset } from "@/lib/collab/collab-events";
 
 // ── 타입 ──────────────────────────────────────────
 
@@ -104,44 +92,18 @@ interface FullEditorProps {
   imageUploader?: EditorImageUploader;
   /** 가이드 편집: 블록의 data-block-id(질문 위치)를 보존한다. 노트·게시물은 쓰지 않는다. */
   preserveBlockIds?: boolean;
+  /**
+   * 실시간 공동 편집. 있으면 본문은 Y.Doc이 원본이라 `initialContent`·`contentVersion`을 쓰지 않고,
+   * 실행 취소는 공동 편집 기록(내 입력만)을 쓴다. `awareness`가 있으면 다른 사람의 커서를 그린다.
+   */
+  collaboration?: FullEditorCollaboration;
 }
+
 
 /** 마크다운 이미지 문법을 깨지 않도록 대체 텍스트의 특수 문자를 정리한다. */
 function markdownImageAlt(value: string): string {
   return value.replace(/[\r\n]+/gu, " ").replace(/([\\[\]()])/gu, "\\$1");
 }
-
-// ── lowlight 인스턴스 ─────────────────────────────
-
-const lowlight = createLowlight(common);
-
-// 저장 HTML에 임의 style을 남기지 않고 allowlist 가능한 semantic attribute만 사용한다.
-const SafeTextAlign = TextAlign.extend({
-  addGlobalAttributes() {
-    return [
-      {
-        types: this.options.types,
-        attributes: {
-          textAlign: {
-            default: this.options.defaultAlignment,
-            parseHTML: (element: HTMLElement) => {
-              const alignment = element.getAttribute("data-text-align") ?? element.style.textAlign;
-              return this.options.alignments.includes(alignment)
-                ? alignment
-                : this.options.defaultAlignment;
-            },
-            renderHTML: (attributes: Record<string, unknown>) => {
-              const alignment = attributes.textAlign;
-              return typeof alignment === "string" && this.options.alignments.includes(alignment)
-                ? { "data-text-align": alignment }
-                : {};
-            },
-          },
-        },
-      },
-    ];
-  },
-});
 
 // ── 툴바 버튼 헬퍼 ───────────────────────────────
 
@@ -253,12 +215,13 @@ function MobileToolbarButton({
   );
 }
 
-const SLASH_HINT = "'/'를 눌러 블록 추가";
 
 function readSaveShortcutKey(): string {
   if (typeof navigator === "undefined") return "Ctrl+S";
   return /Mac|iPhone|iPad|iPod/u.test(navigator.platform || navigator.userAgent) ? "⌘S" : "Ctrl+S";
 }
+
+export { createFullEditorExtensions, type FullEditorCollaboration, type FullEditorCollaborator };
 
 // ── 메인 컴포넌트 ─────────────────────────────────
 
@@ -280,6 +243,7 @@ export function FullEditor({
   onUploadingChange,
   imageUploader = DOCUMENT_IMAGE_UPLOADER,
   preserveBlockIds = false,
+  collaboration,
 }: FullEditorProps) {
   const isPage = variant === "page";
   const isBare = variant === "bare";
@@ -354,8 +318,9 @@ export function FullEditor({
   const deferredImagesRef = useRef<EditorUploadedImage[]>([]);
   const [deferredImageCount, setDeferredImageCount] = useState(0);
 
+  /** 이미지를 넣는다. 넣지 못했으면(편집 잠김·전환 중 실패) false — 부른 쪽이 보류로 되돌린다. */
   const insertImageNow = useCallback(
-    (upload: EditorUploadedImage) => {
+    (upload: EditorUploadedImage): boolean => {
       const alt = upload.file.name.replace(/\.[^.]+$/u, "");
       if (markdownModeRef.current) {
         // 마크다운 모드에서는 textarea가 원본이므로 그 끝에 이미지를 붙인다.
@@ -363,13 +328,13 @@ export function FullEditor({
         markdownTextRef.current = nextMarkdown;
         setMarkdownText(nextMarkdown);
         markContentDirty();
-        return;
+        return true;
       }
       // 다른 입력란의 포커스를 빼앗지 않고 현재 선택의 뒤에 넣는다.
       // 앞서 넣은 이미지가 선택된 채여도 바꾸지 않고 그 뒤에 이어 붙인다.
       const currentEditor = editorInstanceRef.current;
-      if (!currentEditor) return;
-      currentEditor
+      if (!currentEditor || currentEditor.isDestroyed || !currentEditor.isEditable) return false;
+      return currentEditor
         .chain()
         .insertContentAt(currentEditor.state.selection.to, {
           type: "image",
@@ -396,12 +361,11 @@ export function FullEditor({
         imageUploaderRef.current.abandon(upload.mediaObjectId);
         return;
       }
-      if (disabledRef.current) {
+      // 끝난 순간 편집할 수 없으면(읽기 강등·휴지통) 또는 넣기가 실패하면 버리지 않고 보류한 뒤 안내한다.
+      if (disabledRef.current || !insertImageNow(upload)) {
         deferredImagesRef.current.push(upload);
         setDeferredImageCount(deferredImagesRef.current.length);
-        return;
       }
-      insertImageNow(upload);
     },
     [insertImageNow],
   );
@@ -422,71 +386,14 @@ export function FullEditor({
   }, [imageUploadBusy]);
   useEffect(() => () => onUploadingChangeRef.current?.(false), []);
   const editorExtensions = useMemo(
-    () => [
-      StarterKit.configure({
-        // CodeBlock은 CodeBlockLowlight로 교체
-        codeBlock: false,
-        // These extensions have their own configuration below in Tiptap v3.
-        link: false,
-        underline: false,
-      }),
-      Underline,
-      Highlight.configure({ multicolor: false }),
-      SafeTextAlign.configure({ types: ["heading", "paragraph"] }),
-      LinkExtension.configure({
-        openOnClick: false,
-        autolink: true,
-        HTMLAttributes: {
-          class: "text-primary underline underline-offset-2 cursor-pointer",
-        },
-      }),
-      ImageExtension.configure({
-        inline: false,
-        // 기존 문서에 저장된 data URL 이미지를 편집 시 삭제하지 않는다.
-        // 새 이미지 삽입 UI는 http(s) URL만 허용해 신규 base64 생성을 막는다.
-        allowBase64: true,
-        HTMLAttributes: {
-          class: "rounded-lg max-w-full my-2",
-        },
-      }),
-      YoutubeExtension.configure({
-        controls: true,
-        nocookie: true,
-        HTMLAttributes: {
-          class: "rounded-lg my-2",
-        },
-      }),
-      TableExtension.configure({ resizable: false }),
-      TableRow,
-      TableHeader,
-      TableCell,
-      CodeBlockLowlight.configure({
-        lowlight,
-        HTMLAttributes: {
-          class: "not-prose",
-        },
-      }),
-      // 빈 문서는 화면이 정한 안내를, 내용이 있는 문서의 빈 줄(커서 위치)은 `/` 블록 안내를 보인다.
-      Placeholder.configure({
-        placeholder: ({ editor: currentEditor }) => (currentEditor.isEmpty ? placeholder : SLASH_HINT),
-      }),
-      TaskList,
-      TaskItem.configure({ nested: true }),
-      Typography,
-      Markdown.configure({
-        html: true,
-        tightLists: true,
-        linkify: false,
-        breaks: false,
-        transformPastedText: true,
-        transformCopiedText: false,
-      }),
-      ...(preserveBlockIds ? [GuideBlockId] : []),
-    ],
-    [placeholder, preserveBlockIds],
+    () => createFullEditorExtensions({ placeholder, preserveBlockIds, collaboration }),
+    [placeholder, preserveBlockIds, collaboration],
   );
   const editorProps = useMemo(
     () => ({
+      // 화면 아래 떠 있는 공동 편집 안내(CollabNotices)가 있으면 그 높이만큼 위에서 커서를 보이게 자동 스크롤한다.
+      scrollMargin: { top: 5, left: 5, right: 5, get bottom() { return 5 + readCollabNoticeInset(); } },
+      scrollThreshold: { top: 0, left: 0, right: 0, get bottom() { return readCollabNoticeInset(); } },
       attributes: {
         // 본문 글자: 문서 16/28, 상자 15/26(QnaNew 보드)·좁은 화면 16/26(MobileQnaNew 보드), bare는 상위 화면이 정한다(QnaThread 15/24).
         class: isPage
@@ -541,7 +448,8 @@ export function FullEditor({
     shouldRerenderOnTransaction: false,
     editable: !disabled,
     extensions: editorExtensions,
-    content: initialEditorContent,
+    // 공동 편집은 Y.Doc이 본문 원본이다. HTML 초기값을 넣으면 room 내용과 겹친다.
+    content: collaboration ? undefined : initialEditorContent,
     editorProps,
     onUpdate: handleEditorUpdate,
   });
@@ -584,7 +492,7 @@ export function FullEditor({
 
   // draft 복원·다른 문서 전환·저장 후 초기화를 모두 동기화한다.
   useEffect(() => {
-    if (!editor) return;
+    if (!editor || collaboration) return;
     const nextContent = initialContent || "";
     const explicitContentReset =
       contentVersion !== appliedContentVersionRef.current;
@@ -612,7 +520,49 @@ export function FullEditor({
       // textarea 표시값은 편집기에서 다시 읽어 ref에 둔 마크다운을 그대로 따른다.
       setMarkdownText(markdownTextRef.current);
     }
-  }, [contentVersion, discardDeferredImages, editor, initialContent, isMarkdownMode]);
+  }, [collaboration, contentVersion, discardDeferredImages, editor, initialContent, isMarkdownMode]);
+
+  // 공동 편집 제자리 rebase(오프라인 첫 열기 재접속 등): 이 기기 전용 블록이 room 블록으로 바뀌어도
+  // 커서를 (최상위 블록 순번·블록 안 offset)으로, 화면 스크롤을 그대로 되살린다(편집기는 다시 만들지 않는다).
+  const collabDoc = collaboration?.doc;
+  useEffect(() => {
+    if (!editor || !collabDoc) return;
+    let saved: { block: number; offset: number; scrollY: number } | null = null;
+    const handle = (phase: unknown) => {
+      if (editor.isDestroyed) return;
+      const { state } = editor;
+      if (phase === "before") {
+        const from = state.selection.from;
+        let block = 0;
+        let start = 0;
+        state.doc.forEach((node, offset, index) => {
+          if (from >= offset && from <= offset + node.nodeSize) {
+            block = index;
+            start = offset;
+          }
+        });
+        saved = { block, offset: from - start, scrollY: window.scrollY };
+        return;
+      }
+      if (phase !== "after" || !saved || !editor.isFocused) {
+        saved = null;
+        return;
+      }
+      const target = saved;
+      saved = null;
+      const count = state.doc.childCount;
+      if (count === 0) return;
+      const index = Math.min(target.block, count - 1);
+      let start = 0;
+      for (let i = 0; i < index; i += 1) start += state.doc.child(i).nodeSize;
+      const size = state.doc.child(index).nodeSize;
+      const position = Math.max(1, Math.min(start + target.offset, start + size - 1, state.doc.content.size));
+      editor.commands.setTextSelection(position);
+      window.scrollTo({ top: target.scrollY });
+    };
+    collabDoc.on(COLLAB_REBASE_EVENT as never, handle as never);
+    return () => collabDoc.off(COLLAB_REBASE_EVENT as never, handle as never);
+  }, [collabDoc, editor]);
 
   // 잠기면 열린 삽입 패널을 그 렌더에서 바로 닫는다.
   if (disabled && insertPanel) setInsertPanel(null);
@@ -623,9 +573,9 @@ export function FullEditor({
     const deferred = deferredImagesRef.current;
     if (deferred.length === 0) return;
     deferredImagesRef.current = [];
-    // 보류 개수는 방금 비운 ref를 따른다(0). 이미지를 편집기에 넣은 뒤 상위 form이 업로드 끝을 받는 순서는 아래 insert가 지킨다.
+    // 잠금이 풀리면 보류한 이미지를 넣는다. 넣지 못한 것만 다시 보류로 남기고 그 개수를 안내·이탈 보호에 쓴다.
+    for (const upload of deferred) if (!insertImageNow(upload)) deferredImagesRef.current.push(upload);
     setDeferredImageCount(deferredImagesRef.current.length);
-    for (const upload of deferred) insertImageNow(upload);
   }, [disabled, editor, insertImageNow]);
 
   useEffect(
@@ -714,6 +664,11 @@ export function FullEditor({
         <span className="text-muted-foreground">
           이미지 {imageUpload.pendingCount}장 올리는 중…
         </span>
+      ) : deferredImageCount > 0 ? (
+        // 편집이 잠긴 동안(읽기 권한·휴지통) 끝난 업로드: 버리지 않고 기다린다는 것을 알린다.
+        <span className="text-muted-foreground" data-deferred-images={deferredImageCount}>
+          올린 이미지 {deferredImageCount}장을 아직 넣지 못했습니다. 편집할 수 있게 되면 넣습니다.
+        </span>
       ) : imageUpload.error ? (
         <span className="inline-flex items-center gap-1.5 text-destructive">
           {imageUpload.error}
@@ -737,7 +692,9 @@ export function FullEditor({
 
   // 전체 서식 줄이 없는 편집기는 마크다운 전환을 상태 줄(bare는 상위 화면의 도구 자리)에 둔다.
   // 가이드 편집(preserveBlockIds)은 마크다운으로 오가면 블록 식별자(질문 위치)가 사라지므로 전환을 두지 않는다.
-  const markdownToggle = !disabled && !preserveBlockIds ? (
+  // 공동 편집도 두지 않는다: 마크다운 칸은 문서 전체를 바꿔 넣으므로 다른 사람의 동시 입력을 덮어쓴다.
+  const markdownToggleAllowed = !preserveBlockIds && !collaboration;
+  const markdownToggle = !disabled && markdownToggleAllowed ? (
     <button
       type="button"
       onClick={handleMarkdownToggle}
@@ -1051,7 +1008,7 @@ export function FullEditor({
               </ToolbarButton>
 
               {/* 마크다운 모드 토글(가이드 편집은 블록 식별자를 지키려고 숨긴다) */}
-              <div className={cn("ml-auto shrink-0 pl-1", preserveBlockIds && "hidden")}>
+              <div className={cn("ml-auto shrink-0 pl-1", !markdownToggleAllowed && "hidden")}>
                 <Button
                   type="button"
                   variant="ghost"
