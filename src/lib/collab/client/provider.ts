@@ -91,8 +91,10 @@ export class CollabProvider {
   everConnected = false;
   /** 이번 provider가 한 번이라도 서버와 동기화(step2 수신)를 마쳤는지. */
   everSynced = false;
-  /** hello로 받은 room epoch. */
+  /** 이 doc이 흡수한 room 세대(복원이 실제로 들어온 뒤에 오른다). */
   epoch: number | null = null;
+  /** room의 지금 세대(hello·restored 알림 즉시). 시드 대조·lifecycle fallback에 쓴다. */
+  roomLifecycle: number | null = null;
   /** 이번 연결에서 보낸 update 개수와 아직 ack되지 않은 것(확인분 갱신용). */
   private sentCount = 0;
   private unacked: Array<{ n: number; update: Uint8Array }> = [];
@@ -552,6 +554,7 @@ export class CollabProvider {
       }
       if (typeof message.seq === "number") this.emit("seq", message.seq, "hello", message.changedAt);
       const previousEpoch = this.knownEpoch;
+      this.roomLifecycle = message.epoch;
       this.beginSync(message.epoch);
       // 끊긴 사이 복원: 복원을 싣는 step2가 들어온 뒤에야 세대를 올린다(그 전에 다시 끊기면 다음 hello가 다시 처리한다).
       if (this.pendingRestore?.kind === "advanced") {
@@ -566,6 +569,13 @@ export class CollabProvider {
       return;
     }
     if (message.t === "restored") {
+      this.roomLifecycle = message.lifecycle;
+      if (message.empty) {
+        // 시드 전 room: 바뀐 내용이 없어 따를 update도 없다. 세대만 맞춘다.
+        this.epoch = message.lifecycle;
+        this.knownEpoch = message.lifecycle;
+        return;
+      }
       this.pendingRestore = { lifecycle: message.lifecycle, kind: "restored" };
       return;
     }

@@ -54,7 +54,7 @@ export type CollabControlMessage =
    * 바로 다음 sync update가 복원이다(같은 문서에 적용하는 한 편집). base는 room이 복원을 적용하기 직전의 state vector.
    * 이 소켓의 update 중 이 알림 전에 ack된 것은 복원 기준에 들어갔고, ack되지 않은 것은 들어가지 않았다.
    */
-  | { t: "restored"; id: string; lifecycle: number; base: string }
+  | { t: "restored"; id: string; lifecycle: number; base: string; empty?: boolean }
   /** 권한이 읽기로 바뀌었다. */
   | { t: "mode"; mode: CollabMode }
   /** 알림 room: 대상이 바뀌었다(seq는 room이 매긴 순번). */

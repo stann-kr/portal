@@ -104,3 +104,14 @@ test("끊긴 사이 복원(advanced)은 복원과 무관한 다른 기기 update
   assert.equal(provider.epoch, 2);
   provider.destroy();
 });
+
+test("시드 전 room의 복원(빈 update)은 세대만 맞추고 다음 update를 복원으로 오인하지 않는다", async (t) => {
+  const { provider, events } = makeProvider(0);
+  t.after(() => provider.destroy());
+  const socket = await connected(provider, 0);
+  socket.deliver(control({ t: "restored", id: "r", lifecycle: 4, base: "", empty: true }));
+  assert.equal(provider.roomLifecycle, 4, "시드 대조가 새 세대를 본다");
+  assert.equal(provider.epoch, 4);
+  socket.deliver(sync("update", remoteUpdate("seed from another device")));
+  assert.deepEqual(events, [], "복원 처리 없음");
+});

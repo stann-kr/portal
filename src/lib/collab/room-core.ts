@@ -683,7 +683,8 @@ export class RoomCore {
     this.epoch = target;
     this.intent = null;
     const base = encodeStateVectorBase64(doc);
-    this.broadcast(encodeControl({ t: "restored", id, lifecycle: target, base }), null);
+    // 시드 전 room(빈 update)은 문서가 바뀌지 않는다. 세대만 알려(empty) 시드가 새 세대 head로 이어지게 한다.
+    this.broadcast(encodeControl({ t: "restored", id, lifecycle: target, base, ...(update.byteLength === 0 ? { empty: true } : {}) }), null);
     if (update.byteLength > 0) Y.applyUpdate(doc, update, RESTORE_ORIGIN);
     this.releaseHold();
     return { ok: true, applied: true, lifecycle: target };

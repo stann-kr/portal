@@ -253,7 +253,7 @@ function readLifecycleFrom(doc: Y.Doc | null, provider: CollabProvider | null): 
     const value = doc.getMap(COLLAB_META).get(COLLAB_META_LIFECYCLE);
     if (typeof value === "number" && Number.isSafeInteger(value)) return value;
   }
-  return provider?.epoch ?? null;
+  return provider?.roomLifecycle ?? provider?.epoch ?? null;
 }
 
 
@@ -658,7 +658,7 @@ export function useCollabDocument(options: CollabDocumentOptions): CollabDocumen
           return;
         }
         // 다른 세대의 head(복원 전후가 엇갈림)로 시드하지 않는다.
-        const roomEpoch = provider.epoch;
+        const roomEpoch = provider.roomLifecycle ?? provider.epoch;
         if (!seed || (typeof seed.lifecycle === "number" && roomEpoch !== null && seed.lifecycle !== roomEpoch)) {
           update({ seedState: "failed", seedMessage: "최신 내용을 불러오지 못했습니다. 잠시 뒤 다시 시도합니다." });
           scheduleSeedRetry();
