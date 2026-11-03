@@ -406,7 +406,8 @@ function NoteEditorFormContent({ note, create, actorId, action, focusBodyEnd = f
     enabled: writable && !isEditorUploading && !collab.rebasing,
     isSaver: collab.isSaver,
     // room이 내용을 보관하면 D1 저장(이력)은 드물게 한다. 혼자 모드(room 없음)는 지금처럼 자주 저장한다.
-    roomBacked: collab.status !== "solo",
+    // 새 노트를 만드는 첫 저장은 미루지 않는다(주소·수업 메모가 노트 id에 달려 있다).
+    roomBacked: collab.status !== "solo" && noteId !== null,
     readSnapshot,
     save: saveSnapshot,
     onSaved: (stateVector) => provider?.reportSaved(stateVector),

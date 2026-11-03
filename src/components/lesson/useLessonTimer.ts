@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 /**
  * 수업 중 믹스 시간을 재는 스톱워치. 새로고침해도 이어지도록 이 기기 저장소에 노트별로 남긴다.
@@ -16,6 +16,13 @@ export type LessonTimerState = {
 };
 
 const INITIAL: LessonTimerState = { runningSince: null, elapsedMs: 0, nextTrack: 1 };
+
+/** 아직 만들지 않은 새 노트의 타이머 범위. 노트가 만들어지면 그 노트 id로 옮긴다. */
+const NEW_NOTE_SCOPE_PREFIX = "new:";
+
+export function lessonTimerScope(noteId: string | null, studentId: string): string {
+  return noteId ?? `${NEW_NOTE_SCOPE_PREFIX}${studentId}`;
+}
 
 function storageKey(scopeId: string): string {
   return `portal:lesson-timer:${scopeId}`;
@@ -51,11 +58,39 @@ export function lessonElapsedMs(state: LessonTimerState, now: number): number {
   return state.elapsedMs + (state.runningSince === null ? 0 : Math.max(0, now - state.runningSince));
 }
 
+function moveStored(from: string, to: string): void {
+  try {
+    const raw = window.localStorage.getItem(storageKey(from));
+    window.localStorage.removeItem(storageKey(from));
+    if (raw && !window.localStorage.getItem(storageKey(to))) window.localStorage.setItem(storageKey(to), raw);
+  } catch {
+    // 저장소를 쓸 수 없으면 옮길 것도 없다.
+  }
+}
+
+function removeStored(scopeId: string): void {
+  try {
+    window.localStorage.removeItem(storageKey(scopeId));
+  } catch {
+    // 저장소를 쓸 수 없으면 지울 것도 없다.
+  }
+}
+
 export function useLessonTimer(scopeId: string) {
   const [state, setState] = useState<LessonTimerState>(INITIAL);
   const [now, setNow] = useState(() => Date.now());
+  const previousScopeRef = useRef<string | null>(null);
 
   useEffect(() => {
+    const previous = previousScopeRef.current;
+    previousScopeRef.current = scopeId;
+    if (previous !== null && previous !== scopeId && previous.startsWith(NEW_NOTE_SCOPE_PREFIX)) {
+      // 새 노트가 만들어지면 작성 중에 잰 시간을 그 노트로 넘긴다.
+      moveStored(previous, scopeId);
+    } else if (previous === null && scopeId.startsWith(NEW_NOTE_SCOPE_PREFIX)) {
+      // 새 노트는 전에 쓰다 만 작성 화면의 시간을 이어받지 않는다.
+      removeStored(scopeId);
+    }
     // 저장소는 hydration 뒤에만 읽는다.
     // eslint-disable-next-line react-hooks/set-state-in-effect -- 이 기기에 남긴 타이머는 mount 뒤에만 읽을 수 있다.
     setState(readStored(scopeId));

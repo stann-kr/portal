@@ -13,14 +13,16 @@ import {
   type LessonInsertTarget,
 } from "./lesson-insert";
 import { formatLessonClock, lessonTimestampText, lessonTrackText } from "./lesson-timestamps";
-import { useLessonTimer } from "./useLessonTimer";
+import { lessonTimerScope, useLessonTimer } from "./useLessonTimer";
 
 export type InstructorLessonPanelProps = {
-  noteId: string;
+  /** null이면 아직 만들지 않은 새 노트다. 첫 저장으로 id가 생기면 이 수업 메모를 쓸 수 있다. */
+  noteId: string | null;
   studentId: string;
   studentName: string;
   actorId: string;
-  noteMemo: InstructorMemoSnapshot;
+  /** 새 노트는 서버에 메모가 없으므로 null을 넘긴다. */
+  noteMemo: InstructorMemoSnapshot | null;
   studentMemo: InstructorMemoSnapshot;
   /** 좁은 화면에서 서랍으로 열려 있는지(넓은 화면은 늘 옆에 둔다). */
   open: boolean;
@@ -31,6 +33,8 @@ const TARGET_LABEL: Record<LessonInsertTarget, string> = { note: "노트", memo:
 
 /** Alt(Option)와 함께 누르는 키. 입력 중에도 쓰도록 편집기보다 먼저 받는다. */
 const SHORTCUTS = { stamp: "KeyT", track: "KeyN", toggle: "KeyP" } as const;
+
+const EMPTY_MEMO: InstructorMemoSnapshot = { memoId: null, contentHtml: "", version: 0, updatedAt: null };
 
 /**
  * 관리자 수업 도구(노트 옆 패널). 믹스 타이머로 `[12:34]` 시점과 `▸ 트랙 N` 줄을 마지막으로 쓰던 편집기(노트·메모)에 넣고,
@@ -47,15 +51,17 @@ export function InstructorLessonPanel({
   onClose,
 }: InstructorLessonPanelProps) {
   const headingId = useId();
-  const timer = useLessonTimer(noteId);
+  const timer = useLessonTimer(lessonTimerScope(noteId, studentId));
   const [tab, setTab] = useState<"note" | "student">("note");
   const [target, setTarget] = useState<LessonInsertTarget>("note");
   const [notice, setNotice] = useState<string | null>(null);
   const timerRef = useRef(timer);
   const targetRef = useRef(target);
+  const tabRef = useRef(tab);
   useEffect(() => {
     timerRef.current = timer;
     targetRef.current = target;
+    tabRef.current = tab;
   });
 
   // 마지막으로 초점을 둔 편집기를 넣을 곳으로 기억한다.
@@ -70,8 +76,10 @@ export function InstructorLessonPanel({
 
   const insert = (text: string, options?: { bold?: boolean }) => {
     const preferred = targetRef.current;
-    const editor = lessonTargetEditor(document, preferred)
-      ?? lessonTargetEditor(document, preferred === "note" ? "memo" : "note");
+    // 메모는 지금 보이는 탭의 편집기에 넣는다(두 메모가 모두 열려 있다).
+    const rootOf = (kind: LessonInsertTarget) => (kind === "memo" ? document.getElementById(`${headingId}-${tabRef.current}`) : null) ?? document;
+    const fallback = preferred === "note" ? "memo" : "note";
+    const editor = lessonTargetEditor(rootOf(preferred), preferred) ?? lessonTargetEditor(rootOf(fallback), fallback);
     if (!editor) {
       setNotice("넣을 편집기가 아직 준비되지 않았습니다.");
       return;
@@ -188,13 +196,19 @@ export function InstructorLessonPanel({
         </div>
         {/* 두 메모를 모두 열어 두어 탭을 바꿔도 입력·초안이 끊기지 않는다. */}
         <div role="tabpanel" id={`${headingId}-note`} aria-labelledby={`${headingId}-note-tab`} hidden={tab !== "note"}>
-          <InstructorMemoEditor
-            scope={{ kind: "note", noteId }}
-            initial={noteMemo}
-            actorId={actorId}
-            label="이 수업 메모"
-            placeholder="이 수업에서만 볼 메모(학생에게 보이지 않음)"
-          />
+          {noteId ? (
+            <InstructorMemoEditor
+              scope={{ kind: "note", noteId }}
+              initial={noteMemo ?? EMPTY_MEMO}
+              actorId={actorId}
+              label="이 수업 메모"
+              placeholder="이 수업에서만 볼 메모(학생에게 보이지 않음)"
+            />
+          ) : (
+            <p className="rounded-md border border-dashed border-border px-3 py-4 text-xs leading-5 text-muted-foreground">
+              노트에 제목과 본문을 적으면 노트가 만들어지고, 그때부터 이 수업 메모를 쓸 수 있습니다.
+            </p>
+          )}
         </div>
         <div role="tabpanel" id={`${headingId}-student`} aria-labelledby={`${headingId}-student-tab`} hidden={tab !== "student"}>
           <InstructorMemoEditor

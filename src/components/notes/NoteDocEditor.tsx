@@ -1,15 +1,12 @@
 "use client";
 
-import { useRef, useState } from "react";
-import { Lock } from "lucide-react";
+import { useState } from "react";
 import { MobileTopBar } from "@/components/app-shell/AppSidebar";
-import { InstructorLessonPanel, type InstructorLessonPanelProps } from "@/components/lesson/InstructorLessonPanel";
-import { RecordingDock } from "@/components/lesson/RecordingDock";
-import { Button } from "@/components/ui/button";
 import type { UpdateNoteState } from "@/lib/actions/privateNotes";
 import { DeleteNoteButton } from "./DeleteNoteButton";
 import { NoteBreadcrumb, NoteDocumentStrip, NoteHistoryLink, type NoteParent } from "./NoteDocumentChrome";
 import { NoteEditorForm } from "./NoteEditorForm";
+import { NoteLessonFrame, type NoteInstructorTools } from "./NoteLessonFrame";
 import { formatNoteUpdated } from "./note-display";
 
 /**
@@ -39,79 +36,49 @@ export function NoteDocEditor({
   authorName: string;
   updatedLabel: string;
   /** 관리자 화면에서만 서버가 넘긴다. 학생에게는 수업 도구와 메모를 그리지 않는다. */
-  instructor?: Omit<InstructorLessonPanelProps, "noteId" | "actorId" | "open" | "onClose">;
+  instructor?: NoteInstructorTools;
 }) {
   // 자동 저장은 route를 다시 렌더하지 않으므로 "수정" 줄은 저장 응답의 시각으로 여기서 맞춘다.
   const [updatedLabel, setUpdatedLabel] = useState(initialUpdatedLabel);
-  const [toolsOpen, setToolsOpen] = useState(false);
-  const contentRef = useRef<HTMLDivElement>(null);
-  // 넓은 화면은 패널이 늘 옆에 있으므로 여는 버튼은 좁은 화면에만 둔다.
-  const toolsButton = (size: "touch" | "sm") => instructor ? (
-    <Button
-      type="button"
-      variant="ghost"
-      size={size}
-      className="xl:hidden"
-      aria-expanded={toolsOpen}
-      onClick={() => setToolsOpen((open) => !open)}
-    >
-      <Lock className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
-      {/* 좁은 위쪽 막대는 아이콘만 둔다. */}
-      <span className={size === "touch" ? "sr-only" : undefined}>수업 도구</span>
-    </Button>
-  ) : null;
   return (
-    <>
-      <div className="xl:flex xl:items-start">
-        <div ref={contentRef} className="min-w-0 xl:flex-1">
-          <NoteEditorForm
-            note={note}
-            actorId={actorId}
-            action={action}
-            focusBodyEnd={focusBodyEnd}
-            onSaved={(saved) => {
-              if (saved.updatedAt) setUpdatedLabel(formatNoteUpdated(saved.updatedAt, Date.now()));
-            }}
-            document={{
-              authorName,
-              updatedLabel,
-              renderBars: ({ status, title, version }) => (
-                <>
-                  <MobileTopBar
-                    hideTitle
-                    back={{ href: parent.href, label: parent.backLabel }}
-                    actions={
-                      <>
-                        {status}
-                        {toolsButton("touch")}
-                        <NoteHistoryLink href={historyHref} compact />
-                        <DeleteNoteButton noteId={note.id} version={version ?? note.version} presentation="menu" size="touch" />
-                      </>
-                    }
-                  />
-                  <NoteDocumentStrip start={<NoteBreadcrumb parent={parent} current={title} />}>
-                    {status}
-                    {toolsButton("sm")}
-                    <NoteHistoryLink href={historyHref} />
-                    <DeleteNoteButton noteId={note.id} version={version ?? note.version} presentation="menu" />
-                  </NoteDocumentStrip>
-                </>
-              ),
-            }}
-          />
-        </div>
-        {instructor ? (
-          <InstructorLessonPanel
-            {...instructor}
-            noteId={note.id}
-            actorId={actorId}
-            open={toolsOpen}
-            onClose={() => setToolsOpen(false)}
-          />
-        ) : null}
-      </div>
-      {/* 본문의 녹음 링크와 [시점]으로 수업 녹음을 다시 듣는다. 재생 칸은 찾는 범위(contentRef) 밖에 둔다. */}
-      <RecordingDock rootRef={contentRef} />
-    </>
+    <NoteLessonFrame noteId={note.id} actorId={actorId} instructor={instructor}>
+      {(toolsButton) => (
+        <NoteEditorForm
+          note={note}
+          actorId={actorId}
+          action={action}
+          focusBodyEnd={focusBodyEnd}
+          onSaved={(saved) => {
+            if (saved.updatedAt) setUpdatedLabel(formatNoteUpdated(saved.updatedAt, Date.now()));
+          }}
+          document={{
+            authorName,
+            updatedLabel,
+            renderBars: ({ status, title, version }) => (
+              <>
+                <MobileTopBar
+                  hideTitle
+                  back={{ href: parent.href, label: parent.backLabel }}
+                  actions={
+                    <>
+                      {status}
+                      {toolsButton("touch")}
+                      <NoteHistoryLink href={historyHref} compact />
+                      <DeleteNoteButton noteId={note.id} version={version ?? note.version} presentation="menu" size="touch" />
+                    </>
+                  }
+                />
+                <NoteDocumentStrip start={<NoteBreadcrumb parent={parent} current={title} />}>
+                  {status}
+                  {toolsButton("sm")}
+                  <NoteHistoryLink href={historyHref} />
+                  <DeleteNoteButton noteId={note.id} version={version ?? note.version} presentation="menu" />
+                </NoteDocumentStrip>
+              </>
+            ),
+          }}
+        />
+      )}
+    </NoteLessonFrame>
   );
 }
