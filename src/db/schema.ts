@@ -1826,3 +1826,70 @@ export const calendarPushChannels = sqliteTable(
     ),
   ],
 );
+
+/**
+ * 관리자만 보는 수업 메모. note_id가 없으면 학생 전체에 대한 메모(학생당 하나), 있으면 그 노트의 수업 메모(노트당 하나)다.
+ * 학생과 함께 쓰는 노트(공동 편집 room·revision·검색)와 섞지 않으려고 별도 표에 둔다.
+ */
+export const instructorMemos = sqliteTable(
+  "instructor_memos",
+  {
+    id: text("id").primaryKey(),
+    studentId: text("student_id")
+      .references(() => profiles.id, { onDelete: "cascade" })
+      .notNull(),
+    noteId: text("note_id").references(() => privateNotes.id, {
+      onDelete: "cascade",
+    }),
+    contentHtml: text("content_html").notNull(),
+    version: integer("version").default(1).notNull(),
+    updatedById: text("updated_by_id").references(() => profiles.id, {
+      onDelete: "set null",
+    }),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .default(sql`(strftime('%s', 'now'))`)
+      .notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .default(sql`(strftime('%s', 'now'))`)
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("instructor_memos_note_unique").on(table.noteId),
+    uniqueIndex("instructor_memos_student_unique")
+      .on(table.studentId)
+      .where(sql`${table.noteId} IS NULL`),
+    check(
+      "instructor_memos_payload_check",
+      sql`${table.version} >= 1
+        AND length(${table.contentHtml}) <= 200000
+        AND ${table.createdAt} <= ${table.updatedAt}`,
+    ),
+  ],
+);
+
+/** 메모의 저장 이력. 10분 안의 저장은 마지막 이력을 덮어써 한 칸으로 남긴다. */
+export const instructorMemoRevisions = sqliteTable(
+  "instructor_memo_revisions",
+  {
+    id: text("id").primaryKey(),
+    memoId: text("memo_id")
+      .references(() => instructorMemos.id, { onDelete: "cascade" })
+      .notNull(),
+    revisionNumber: integer("revision_number").notNull(),
+    contentHtml: text("content_html").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [
+    index("instructor_memo_revisions_memo_created_idx").on(
+      table.memoId,
+      table.createdAt,
+    ),
+    check(
+      "instructor_memo_revisions_payload_check",
+      sql`${table.revisionNumber} >= 1
+        AND length(${table.contentHtml}) <= 200000
+        AND ${table.createdAt} <= ${table.updatedAt}`,
+    ),
+  ],
+);

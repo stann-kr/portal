@@ -318,6 +318,11 @@ test("계정 삭제는 owned/cross-resource payload와 media를 한 transaction�
       'delete-note-revision', 'delete-note', 1, 'CREATE', 'Delete', '<p>Delete</p>',
       '${snapshotHash}', 1, 'delete-student', 'delete-note-ledger', 1767225600
     );
+    INSERT INTO instructor_memos (id, student_id, note_id, content_html)
+    VALUES ('delete-memo-student', 'delete-student', NULL, '<p>memo</p>'),
+      ('delete-memo-note', 'delete-student', 'delete-note', '<p>memo</p>');
+    INSERT INTO instructor_memo_revisions (id, memo_id, revision_number, content_html, created_at, updated_at)
+    VALUES ('delete-memo-revision', 'delete-memo-student', 1, '<p>memo</p>', 1767225600, 1767225600);
     INSERT INTO document_tombstones (
       resource_type, resource_id, subject_id, owner_id,
       source_version, purged_at, purged_by_id
@@ -508,6 +513,8 @@ test("계정 삭제는 owned/cross-resource payload와 media를 한 transaction�
     "digging_playlists",
     "calendar_events",
     "private_notes",
+    "instructor_memos",
+    "instructor_memo_revisions",
   ]) {
     assert.equal(
       countRows(

@@ -16,6 +16,7 @@ import { updatePrivateNote, type CreateNoteState } from "@/lib/actions/privateNo
 import { MobileTopBar } from "@/components/app-shell/AppSidebar";
 import { DeleteNoteButton } from "./DeleteNoteButton";
 import { NoteEditorForm } from "./NoteEditorForm";
+import { NoteLessonFrame, type NoteInstructorTools } from "./NoteLessonFrame";
 import { formatNoteUpdated } from "./note-display";
 
 interface NoteFullFormProps {
@@ -32,6 +33,8 @@ interface NoteFullFormProps {
   spaceLabel?: string;
   /** 작성자(현재 계정) 이름. 주면 속성 줄에 보인다. */
   authorName?: string;
+  /** 관리자 작성 화면에서만 서버가 넘긴다. 수업 중 새 노트에서도 바로 타이머·메모를 쓴다. */
+  instructor?: NoteInstructorTools;
 }
 
 /** 생성 뒤 `history.replaceState`로 바뀐 문서 주소. 휴지통·작성 주소는 해당하지 않는다. */
@@ -41,7 +44,7 @@ function isRestoredAtNoteDocumentPath(): boolean {
   return typeof window !== "undefined" && NOTE_DOCUMENT_PATH.test(window.location.pathname);
 }
 
-export function NoteFullForm({ action, actorId, studentId, returnTo, defaultDate, defaultTitle = "", spaceLabel, authorName }: NoteFullFormProps) {
+export function NoteFullForm({ action, actorId, studentId, returnTo, defaultDate, defaultTitle = "", spaceLabel, authorName, instructor }: NoteFullFormProps) {
   const router = useRouter();
   // 제자리 생성이 `history.replaceState`로 주소를 바꾸면 Next는 그 history 항목에 작성 화면 트리를 복사해 둔다.
   // 변경 이력 등으로 이동했다가 뒤로 오면 노트 주소에서 작성 화면이 복원되므로, 입력 전에 실제 문서 페이지로 바꾼다
@@ -54,6 +57,8 @@ export function NoteFullForm({ action, actorId, studentId, returnTo, defaultDate
   }, [restoredAtDocumentPath, router]);
   // 생성 전에는 "수정" 줄이 없고, 생성·저장 응답의 시각으로 채운다(revalidate 없이).
   const [updatedLabel, setUpdatedLabel] = useState<string | null>(null);
+  // 첫 자동 저장이 만든 노트 id. 수업 도구의 이 수업 메모가 이때부터 열린다.
+  const [createdId, setCreatedId] = useState<string | null>(null);
   const parent = resolveNoteParent(returnTo);
   const trashHref = `/dashboard/notes/trash?studentId=${encodeURIComponent(studentId)}&returnTo=${encodeURIComponent(returnTo)}`;
 
@@ -62,87 +67,95 @@ export function NoteFullForm({ action, actorId, studentId, returnTo, defaultDate
   }
 
   return (
-    <NoteEditorForm
-      actorId={actorId}
-      create={{
-        studentId,
-        action,
-        updateAction: (noteId, previous, formData) => updatePrivateNote(noteId, previous, formData),
-        defaultTitle,
-        defaultDate,
-        returnTo,
-      }}
-      onSaved={(saved) => {
-        if (saved.updatedAt) setUpdatedLabel(formatNoteUpdated(saved.updatedAt, Date.now()));
-      }}
-      document={{
-        authorName,
-        updatedLabel,
-        renderBars: ({ status, title, noteId, version, busy }) => {
-          if (noteId) {
-            // 만든 뒤에는 문서 페이지(NoteDoc·MobileNoteDoc 보드)와 같은 위치 줄·변경 이력·더 보기.
-            const historyHref = `/dashboard/notes/${noteId}/history?returnTo=${encodeURIComponent(returnTo)}`;
-            return (
-              <>
-                <MobileTopBar
-                  hideTitle
-                  back={{ href: parent.href, label: parent.backLabel }}
-                  actions={
-                    <>
+    <NoteLessonFrame noteId={createdId} actorId={actorId} instructor={instructor}>
+      {(toolsButton) => (
+        <NoteEditorForm
+          actorId={actorId}
+          create={{
+            studentId,
+            action,
+            updateAction: (noteId, previous, formData) => updatePrivateNote(noteId, previous, formData),
+            defaultTitle,
+            defaultDate,
+            returnTo,
+          }}
+          onSaved={(saved) => {
+            setCreatedId(saved.id);
+            if (saved.updatedAt) setUpdatedLabel(formatNoteUpdated(saved.updatedAt, Date.now()));
+          }}
+          document={{
+            authorName,
+            updatedLabel,
+            renderBars: ({ status, title, noteId, version, busy }) => {
+              if (noteId) {
+                // 만든 뒤에는 문서 페이지(NoteDoc·MobileNoteDoc 보드)와 같은 위치 줄·변경 이력·더 보기.
+                const historyHref = `/dashboard/notes/${noteId}/history?returnTo=${encodeURIComponent(returnTo)}`;
+                return (
+                  <>
+                    <MobileTopBar
+                      hideTitle
+                      back={{ href: parent.href, label: parent.backLabel }}
+                      actions={
+                        <>
+                          {status}
+                          {toolsButton("touch")}
+                          <NoteHistoryLink href={historyHref} compact />
+                          <DeleteNoteButton noteId={noteId} version={version} presentation="menu" size="touch" />
+                        </>
+                      }
+                    />
+                    <NoteDocumentStrip start={<NoteBreadcrumb parent={parent} current={title} />}>
                       {status}
-                      <NoteHistoryLink href={historyHref} compact />
-                      <DeleteNoteButton noteId={noteId} version={version} presentation="menu" size="touch" />
-                    </>
-                  }
-                />
-                <NoteDocumentStrip start={<NoteBreadcrumb parent={parent} current={title} />}>
-                  {status}
-                  <NoteHistoryLink href={historyHref} />
-                  <DeleteNoteButton noteId={noteId} version={version} presentation="menu" />
-                </NoteDocumentStrip>
-              </>
-            );
-          }
-          return (
-            <>
-              {/* 좁은 화면 위쪽 막대의 뒤로도 노트를 연 화면(returnTo)으로 돌아간다. */}
-              <MobileTopBar title="새 노트" back={{ href: returnTo, label: parent.backLabel }} />
-              {/* 위쪽 줄(NoteNew 보드): 넓은 화면은 돌아가기·저장 상태·스페이스·휴지통, 좁은 화면은 셸 위쪽 막대가 뒤로를 맡아 상태·휴지통만 둔다. */}
-              <div className="flex h-11 items-center justify-between gap-3 border-b border-muted px-5 md:sticky md:top-0 md:z-20 md:h-[52px] md:bg-background md:px-6">
-                <Link
-                  href={returnTo}
-                  aria-disabled={busy}
-                  tabIndex={busy ? -1 : undefined}
-                  className={cn(
-                    "-ml-1 hidden h-8 shrink-0 items-center gap-1.5 rounded-md pl-1 pr-2 text-ui text-secondary-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:inline-flex",
-                    busy && "pointer-events-none opacity-50",
-                  )}
-                  onClick={(event) => {
-                    if (busy) event.preventDefault();
-                  }}
-                >
-                  <ChevronLeft className="size-4" strokeWidth={1.8} aria-hidden="true" />
-                  돌아가기
-                </Link>
-                <div className="flex min-w-0 flex-1 items-center justify-between gap-3 md:flex-none md:justify-end">
-                  {status}
-                  <div className="flex shrink-0 items-center gap-3">
-                    {spaceLabel ? <p className="hidden text-xs text-muted-foreground md:block">{spaceLabel}</p> : null}
+                      {toolsButton("sm")}
+                      <NoteHistoryLink href={historyHref} />
+                      <DeleteNoteButton noteId={noteId} version={version} presentation="menu" />
+                    </NoteDocumentStrip>
+                  </>
+                );
+              }
+              return (
+                <>
+                  {/* 좁은 화면 위쪽 막대의 뒤로도 노트를 연 화면(returnTo)으로 돌아간다. */}
+                  <MobileTopBar title="새 노트" back={{ href: returnTo, label: parent.backLabel }} actions={toolsButton("touch")} />
+                  {/* 위쪽 줄(NoteNew 보드): 넓은 화면은 돌아가기·저장 상태·스페이스·휴지통, 좁은 화면은 셸 위쪽 막대가 뒤로를 맡아 상태·휴지통만 둔다. */}
+                  <div className="flex h-11 items-center justify-between gap-3 border-b border-muted px-5 md:sticky md:top-0 md:z-20 md:h-[52px] md:bg-background md:px-6">
                     <Link
-                      href={trashHref}
-                      aria-label="휴지통"
-                      className="-mr-2 inline-flex size-11 items-center justify-center gap-1.5 rounded-touch text-ui text-secondary-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:mr-0 md:h-8 md:w-auto md:rounded-md md:px-2.5"
+                      href={returnTo}
+                      aria-disabled={busy}
+                      tabIndex={busy ? -1 : undefined}
+                      className={cn(
+                        "-ml-1 hidden h-8 shrink-0 items-center gap-1.5 rounded-md pl-1 pr-2 text-ui text-secondary-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:inline-flex",
+                        busy && "pointer-events-none opacity-50",
+                      )}
+                      onClick={(event) => {
+                        if (busy) event.preventDefault();
+                      }}
                     >
-                      <Trash2 className="size-[18px] md:size-3.5" strokeWidth={1.6} aria-hidden="true" />
-                      <span className="hidden md:inline">휴지통</span>
+                      <ChevronLeft className="size-4" strokeWidth={1.8} aria-hidden="true" />
+                      돌아가기
                     </Link>
+                    <div className="flex min-w-0 flex-1 items-center justify-between gap-3 md:flex-none md:justify-end">
+                      {status}
+                      <div className="flex shrink-0 items-center gap-3">
+                        {spaceLabel ? <p className="hidden text-xs text-muted-foreground md:block">{spaceLabel}</p> : null}
+                        <span className="hidden md:inline-flex">{toolsButton("sm")}</span>
+                        <Link
+                          href={trashHref}
+                          aria-label="휴지통"
+                          className="-mr-2 inline-flex size-11 items-center justify-center gap-1.5 rounded-touch text-ui text-secondary-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:mr-0 md:h-8 md:w-auto md:rounded-md md:px-2.5"
+                        >
+                          <Trash2 className="size-[18px] md:size-3.5" strokeWidth={1.6} aria-hidden="true" />
+                          <span className="hidden md:inline">휴지통</span>
+                        </Link>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
-            </>
-          );
-        },
-      }}
-    />
+                </>
+              );
+            },
+          }}
+        />
+      )}
+    </NoteLessonFrame>
   );
 }

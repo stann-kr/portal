@@ -17,8 +17,11 @@ import {
   diggingColumns,
   diggingTracks,
   feedbacks,
+  instructorMemoRevisions,
+  instructorMemos,
   lessons,
   posts,
+  privateNotes,
   profiles,
 } from "@/db/schema";
 import {
@@ -44,6 +47,7 @@ let activeProfileModule: typeof import("@/lib/active-profile");
 let postActions: typeof import("@/lib/actions/posts");
 let categoryActions: typeof import("@/lib/actions/categories");
 let passwordActions: typeof import("@/lib/actions/password");
+let memoActions: typeof import("@/lib/actions/instructorMemos");
 
 function createSession(id: string, role: "admin" | "student"): AuthSession {
   return {
@@ -98,7 +102,7 @@ mock.module("next/cache", {
 });
 
 before(async () => {
-  [calendarActions, curriculumActions, diggingActions, lessonActions, commentActions, feedbackActions, assignmentActions, studentActions, activeProfileModule, postActions, categoryActions, passwordActions, assignmentTaskActions] =
+  [calendarActions, curriculumActions, diggingActions, lessonActions, commentActions, feedbackActions, assignmentActions, studentActions, activeProfileModule, postActions, categoryActions, passwordActions, assignmentTaskActions, memoActions] =
     await Promise.all([
       import("@/lib/actions/calendarEvents"),
       import("@/lib/actions/curriculum"),
@@ -113,6 +117,7 @@ before(async () => {
       import("@/lib/actions/categories"),
       import("@/lib/actions/password"),
       import("@/lib/actions/assignmentTasks"),
+      import("@/lib/actions/instructorMemos"),
     ]);
 });
 
@@ -191,6 +196,52 @@ test("피드백 삭제·조회는 과제 대상과 학생 ownership을 보존한
   activeSession = createSession("admin-1", "admin");
   await feedbackActions.deleteFeedback("feedback-1", "assignment-1");
   assert.equal((await db.select().from(feedbacks)).length, 0);
+});
+
+test("수업 메모는 관리자만 읽고 쓰며, 노트 메모의 학생은 노트에서 정한다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("admin-1", "admin"));
+  await seedProfile(db, "admin-1", "admin");
+  await seedProfile(db, "student-1");
+  await seedProfile(db, "student-2");
+  await db.insert(privateNotes).values([
+    { id: "note-1", studentId: "student-1", authorId: "admin-1", title: "1회차", contentHtml: "<p>x</p>" },
+    { id: "note-trash", studentId: "student-1", authorId: "admin-1", title: "지움", contentHtml: "<p>x</p>", deletedAt: new Date(), deletedById: "admin-1" },
+  ]);
+
+  assert.deepEqual(await memoActions.getInstructorMemo({ kind: "note", noteId: "note-1" }), {
+    memoId: null, contentHtml: "", version: 0, updatedAt: null,
+  });
+  const saved = await memoActions.saveInstructorMemoAction({ kind: "note", noteId: "note-1" }, {
+    contentHtml: '<p>손목 긴장<script>alert(1)</script></p>',
+    baseVersion: 0,
+  });
+  assert.equal(saved.ok, true, JSON.stringify(saved));
+  const [row] = await db.select().from(instructorMemos).where(eq(instructorMemos.noteId, "note-1"));
+  assert.equal(row?.studentId, "student-1", "노트 메모의 학생은 노트의 학생이다");
+  assert.doesNotMatch(row?.contentHtml ?? "", /script/u);
+  const studentMemo = await memoActions.saveInstructorMemoAction({ kind: "student", studentId: "student-1" }, { contentHtml: "<p>장기 과제</p>", baseVersion: 0 });
+  assert.equal(studentMemo.ok, true);
+  const stale = await memoActions.saveInstructorMemoAction({ kind: "note", noteId: "note-1" }, { contentHtml: "<p>다른 기기</p>", baseVersion: 0 });
+  assert.equal(!stale.ok && stale.conflict?.version, 1, "낡은 기준으로는 덮어쓰지 않는다");
+  assert.equal((await memoActions.getInstructorMemoRevisions({ kind: "note", noteId: "note-1" })).length, 1);
+  assert.equal((await db.select().from(instructorMemoRevisions)).length, 2);
+
+  // 휴지통 노트·없는 노트·학생이 아닌 대상에는 메모를 붙이지 않는다.
+  assert.equal(await memoActions.getInstructorMemo({ kind: "note", noteId: "note-trash" }), null);
+  assert.equal((await memoActions.saveInstructorMemoAction({ kind: "note", noteId: "missing" }, { contentHtml: "<p>x</p>", baseVersion: 0 })).ok, false);
+  await assert.rejects(memoActions.getInstructorMemo({ kind: "student", studentId: "admin-1" }), /Student not found/);
+
+  // 학생은 자기 노트·자기 학생 메모라도 읽거나 쓸 수 없다.
+  activeSession = createSession("student-1", "student");
+  await assert.rejects(memoActions.getInstructorMemo({ kind: "note", noteId: "note-1" }), /Admin only|Unauthorized/);
+  await assert.rejects(memoActions.getInstructorMemo({ kind: "student", studentId: "student-1" }), /Admin only|Unauthorized/);
+  await assert.rejects(memoActions.getInstructorMemoRevisions({ kind: "note", noteId: "note-1" }), /Admin only|Unauthorized/);
+  await assert.rejects(
+    memoActions.saveInstructorMemoAction({ kind: "student", studentId: "student-1" }, { contentHtml: "<p>덮어쓰기</p>", baseVersion: 1 }),
+    /Admin only|Unauthorized/,
+  );
+  const [kept] = await db.select().from(instructorMemos).where(eq(instructorMemos.studentId, "student-1")).orderBy(instructorMemos.noteId);
+  assert.equal(kept?.contentHtml, "<p>장기 과제</p>");
 });
 
 test("로그인 이메일은 공백·대소문자 차이를 허용하되 모호한 계정은 고르지 않는다", { concurrency: false }, async (context) => {

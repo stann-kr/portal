@@ -406,7 +406,8 @@ function NoteEditorFormContent({ note, create, actorId, action, focusBodyEnd = f
     enabled: writable && !isEditorUploading && !collab.rebasing,
     isSaver: collab.isSaver,
     // room이 내용을 보관하면 D1 저장(이력)은 드물게 한다. 혼자 모드(room 없음)는 지금처럼 자주 저장한다.
-    roomBacked: collab.status !== "solo",
+    // 새 노트를 만드는 첫 저장은 미루지 않는다(주소·수업 메모가 노트 id에 달려 있다).
+    roomBacked: collab.status !== "solo" && noteId !== null,
     readSnapshot,
     save: saveSnapshot,
     onSaved: (stateVector) => provider?.reportSaved(stateVector),
@@ -559,18 +560,21 @@ function NoteEditorFormContent({ note, create, actorId, action, focusBodyEnd = f
   );
 
   const editor = collab.ready && collaboration ? (
-    <FullEditor
-      collaboration={collaboration}
-      disabled={locked}
-      onUploadingChange={setIsEditorUploading}
-      placeholder={create && !created
-        ? "수업 내용, 연습 기록, 메모 등을 자유롭게 작성하세요..."
-        : "수업 내용, 연습 기록, 메모를 이어서 작성하세요..."}
-      minHeight={create ? "320px" : "50dvh"}
-      ariaLabel="노트 내용"
-      variant="page"
-      saveShortcutLabel={writable ? "바로 저장" : undefined}
-    />
+    // 수업 도구(관리자)가 시점·트랙 줄을 넣을 곳으로 찾는다.
+    <div data-lesson-target="note">
+      <FullEditor
+        collaboration={collaboration}
+        disabled={locked}
+        onUploadingChange={setIsEditorUploading}
+        placeholder={create && !created
+          ? "수업 내용, 연습 기록, 메모 등을 자유롭게 작성하세요..."
+          : "수업 내용, 연습 기록, 메모를 이어서 작성하세요..."}
+        minHeight={create ? "320px" : "50dvh"}
+        ariaLabel="노트 내용"
+        variant="page"
+        saveShortcutLabel={writable ? "바로 저장" : undefined}
+      />
+    </div>
   ) : (
     <CollabLoadingState
       label="노트를 불러오는 중…"

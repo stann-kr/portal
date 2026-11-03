@@ -25,6 +25,7 @@ import type * as Y from "yjs";
 import type { Awareness } from "y-protocols/awareness";
 import { common, createLowlight } from "lowlight";
 import { GuideBlockId } from "./guide-block-id-extension";
+import { LessonTimestamp } from "./lesson-timestamp-extension";
 
 export type FullEditorCollaborator = { name: string; colorIndex: number };
 
@@ -160,6 +161,8 @@ export function createFullEditorExtensions({
       transformPastedText: true,
       transformCopiedText: false,
     }),
+    // 수업 시점 `[12:34]` 표시(decoration만, schema 변경 없음)
+    LessonTimestamp,
     ...(preserveBlockIds ? [GuideBlockId] : []),
     ...(collaboration
       ? [

@@ -1806,6 +1806,54 @@ test("feedback time can be filled from the current playback position", async (co
   assert.equal(browser.document.querySelector('[role="alert"]'), null);
 });
 
+test("과제 믹스를 들으며 시점만 찍어 두고, 나중에 고른 시점으로 피드백을 쓰면 그 시점이 목록에서 빠진다", async (context) => {
+  browser.localStorage.clear();
+  let position: number | null = 83.7;
+  const seeks: number[] = [];
+  saveFeedback = async () => ({ success: true });
+  context.after(() => { saveFeedback = async () => ({}); });
+  const screen = () => (
+    <TimelineFeedback
+      assignmentId="marks"
+      actorId="admin-1"
+      feedbackList={[]}
+      isAdmin
+      onSeek={(seconds) => { seeks.push(seconds); }}
+      readPlaybackPosition={async () => position}
+    />
+  );
+  const root = await render(context, screen());
+  await press("시점 찍어 두기");
+  position = 30;
+  // 입력 칸에 있어도 Option+M으로 찍는다.
+  await act(async () => {
+    browser.document.getElementById("feedback-content")!.dispatchEvent(
+      new browser.KeyboardEvent("keydown", { code: "KeyM", key: "µ", altKey: true, bubbles: true }),
+    );
+  });
+  await settle();
+  await press("시점 찍어 두기");
+  const chips = () => [...browser.document.querySelectorAll('ul[aria-label="찍어 둔 시점"] li button:first-child')].map((element) => element.textContent);
+  assert.deepEqual(chips(), ["00:30", "01:23"], "같은 시점은 한 번만, 시간순으로 남는다");
+  assert.equal(inputValue("timeMarker"), "", "찍어 두기는 작성 중인 시점을 바꾸지 않는다");
+
+  // 다시 열어도 이 기기에 남아 있다.
+  await act(async () => root.render(<div />));
+  await act(async () => root.render(screen()));
+  await settle();
+  assert.deepEqual(chips(), ["00:30", "01:23"]);
+
+  await press("01:23 시점으로 피드백 쓰기");
+  assert.equal(inputValue("timeMarker"), "01:23");
+  assert.deepEqual(seeks, [83], "고른 시점부터 다시 들을 수 있다");
+  assert.equal(browser.document.activeElement?.id, "feedback-content");
+  await fill("feedback-content", "여기서 하이를 너무 빨리 열었어요.");
+  await press("추가");
+  assert.deepEqual(chips(), ["00:30"], "쓴 시점은 목록에서 빠진다");
+  await press("00:30 찍어 둔 시점 지우기");
+  assert.equal(browser.document.querySelector('ul[aria-label="찍어 둔 시점"]'), null);
+});
+
 test("community comment failure and remount preserve the author's draft", async (context) => {
   browser.localStorage.clear();
   const operationIds: unknown[] = [];
@@ -2684,6 +2732,39 @@ test("admin overview gathers account rows first, keeps each issue button in orde
   assert.deepEqual(lessonRows.map((text) => text.slice(0, 15)), ["10.28 (수) 19:00", "11.04 (수) 19:00", "10.21 (수) 19:00"]);
   assert.match(lessonRows[0], /다음 레슨/u);
   assert.match(lessonRows[2], /지난 레슨/u);
+});
+
+test("admin overview mixes connected calendar events into upcoming lessons without a delete button", async (context) => {
+  const referenceTime = new Date("2026-10-26T03:00:00.000Z");
+  await render(context, <OverviewTab
+    studentId="student-1"
+    referenceTime={referenceTime}
+    modules={[]}
+    lessons={[
+      { id: "lesson-past", scheduledAt: new Date("2026-10-21T10:00:00.000Z") },
+      { id: "lesson-later", scheduledAt: new Date("2026-11-04T10:00:00.000Z") },
+    ]}
+    connectedLessons={[
+      { id: "GOOGLE:a", title: "정기 수업", scheduledAt: new Date("2026-10-31T05:00:00.000Z"), sourceLabel: "Google Calendar" },
+    ]}
+  />);
+  const rows = [...browser.document.querySelectorAll('[aria-labelledby="lessons-heading"] li')];
+  assert.deepEqual(rows.map((row) => (row.textContent ?? "").slice(0, 15)), ["10.31 (토) 14:00", "11.04 (수) 19:00", "10.21 (수) 19:00"]);
+  assert.match(rows[0].textContent ?? "", /다음 레슨 · 정기 수업 · Google Calendar/u);
+  assert.equal(rows[0].querySelector("button"), null);
+  assert.ok(rows[1].querySelector('button[aria-label$="레슨 삭제"]'));
+});
+
+test("admin overview account rows keep their order", async (context) => {
+  const referenceTime = new Date("2026-10-26T03:00:00.000Z");
+  await render(context, <OverviewTab
+    studentId="student-1"
+    referenceTime={referenceTime}
+    modules={[]}
+    lessons={[]}
+    calendarFeedIssuedAt={new Date("2026-10-14T01:00:00.000Z")}
+    account={{ kind: "temporary" }}
+  />);
 
   const account = browser.document.querySelector('[aria-labelledby="account-heading"] > div:last-of-type');
   assert.ok(account);

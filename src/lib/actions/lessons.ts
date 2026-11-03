@@ -23,6 +23,8 @@ import {
   requireStudentTarget,
 } from "@/lib/auth-guard";
 import { parseKstDateTimeInput } from "@/lib/date-input";
+import { queryConnectedLessonsForStudent, type ConnectedLesson } from "@/lib/connected-next-lesson";
+import { fetchExternalItemsForUser } from "@/lib/external-items";
 
 // ───────────────────────────────────────────────
 // 조회
@@ -40,6 +42,14 @@ export async function getLessonsByStudent(studentId: string) {
     .from(lessons)
     .where(eq(lessons.studentId, studentId))
     .orderBy(desc(lessons.scheduledAt));
+}
+
+/**
+ * 관리자 학생 상세: 학생에게 연결된 바깥 캘린더의 앞으로 일정(레슨으로 센다, 2026-11-03 사용자 결정).
+ */
+export async function getConnectedLessonsForStudent(studentId: string): Promise<ConnectedLesson[]> {
+  await requireStudentTarget(studentId);
+  return queryConnectedLessonsForStudent(createDb(), studentId, new Date(), fetchExternalItemsForUser);
 }
 
 /**

@@ -118,7 +118,7 @@ OpenNext → Cloudflare Worker
 
 캘린더(`UnifiedCalendar`)는 FullCalendar를 `timeZone="UTC"`로 두고 KST 벽시계 시각(실제 시각 + 9시간, 한국은 일광절약시간 없음)을 넣어 기기 시간대와 무관하게 칸을 KST로 맞춘다(`src/lib/calendar-interaction.ts`). 끌어 옮기기는 클라이언트 판정(일정·레슨은 그 학생 본인과 관리자 — 2026-10-26 사용자 결정, 노트는 관리자 또는 작성자)과 같은 규칙을 서버가 다시 검사한다: `moveCalendarEvent`(학생 본인 또는 관리자가 대상 학생 ID로, 기존 patch 검증), `moveLesson`(학생 본인 또는 관리자, 대상 학생 레슨), `movePrivateNoteDate`(현재 revision의 제목·본문을 그대로 두고 날짜만 바꾸는 새 revision, 이미 그 날짜면 쓰기 없는 성공으로 재전송을 흡수). 화면은 저장 전 이동을 먼저 보여 주고, 저장된 이동은 다시 받은 목록이 반영할 때까지 유지하며, 같은 항목의 겹친 이동은 마지막 요청만 반영한다. 끌 수 없는 항목(다른 작성자 노트·디깅·Q&A·과제·외부 캘린더)은 끌려고 하면 이유를 알린다. 상세 패널은 수정 권한(관리자 또는 작성자)이 있는 노트를 문서 페이지와 같은 `NoteEditorForm`으로 바로 편집하고(자동 저장·초안·충돌 보호 동일, 저장·업로드 중 닫힘 잠금), 저장 결과를 캘린더 항목에 반영한다. 수정 권한이 없는 노트(`UnifiedNoteDetail` 읽기 전용 분기)는 `useLiveNote`로 head를 폴링해 바뀐 본문만 바꾸고 같은 `onUpdated`로 캘린더 항목의 제목·날짜를 맞춘다. 칸 선택·터치 탭은 `CalendarQuickCreate`를 열어 노트(작성 화면 `?title=&date=`), 일정(`createCalendarEvent`), 레슨(`createLesson`)을 만든다. 관리자 일정 section은 선택한 학생의 캘린더에서 레슨을 예약·이동하고, 레슨 상세에서 시간 변경과 취소 우선 2단계 삭제를 제공한다. 결과는 현재 학생의 캘린더 상태에 즉시 반영하고, 학생을 바꾼 뒤 도착한 늦은 결과는 다른 학생 캘린더에 섞지 않는다.
 
-관리자 포털의 기본 section은 `업무함`이다. 전체 Q&A 중 미답변 항목, feedback이 없는 assignment, 앞으로 7일 이내의 학생별 다음 레슨을 조회한다. 질문과 과제는 오래 기다린 항목부터 보여주고 실제 Q&A·과제 상세로 연결한다. 일정 section은 선택한 학생 스페이스를 상시 표시하고 각 통합 항목의 스페이스·출처를 식별한다.
+관리자 포털의 기본 section은 `업무함`이다. 전체 Q&A 중 미답변 항목, feedback이 없는 assignment, 앞으로 7일 이내의 학생별 다음 레슨을 조회한다. 학생 목록·업무함의 다음 레슨은 포털 레슨과 그 학생에게 연결한 바깥 캘린더(관리자 양방향 동기화로 연결된 일정·원격 반복 일정 사본, 학생 공개 iCal 구독) 앞으로 90일 일정 중 가장 이른 것이다(2026-11-03 사용자 결정: 연결된 일정은 모두 레슨으로 센다, `src/lib/connected-next-lesson.ts`). 공개 iCal은 저장하지 않아 목록을 열 때 읽고, 읽지 못하면 건너뛴다. 학생 상세 개요의 레슨 일정도 같은 연결된 일정(앞으로 90일)을 앞으로의 레슨에 섞어 제목·출처와 함께 보이며, 여기서는 지울 수 없다. 질문과 과제는 오래 기다린 항목부터 보여주고 실제 Q&A·과제 상세로 연결한다. 일정 section은 선택한 학생 스페이스를 상시 표시하고 각 통합 항목의 스페이스·출처를 식별한다.
 
 학생 본인 워크스페이스의 상세 패널은 `PORTAL`·`CALENDAR_EVENT` 항목에만 수정·삭제를 제공한다. 수정은 form 상태를 반환하는 `updateCalendarEventDetails`가 owner 조건으로 갱신하고, 삭제 성공 항목은 서버 목록 갱신 전에도 화면에서 즉시 제외한다.
 
@@ -144,6 +144,7 @@ OpenNext → Cloudflare Worker
 - 캘린더 양방향 동기화: `calendar_connections`, `calendar_mappings`, `calendar_sync_links`, `calendar_remote_series`(예정: `calendar_push_channels`)
 - 콘텐츠: `categories`, `posts`, `post_revisions`, `comments`
 - 개인 학습 기록: `private_notes`, `private_note_revisions`, `calendar_events`
+- 관리자 수업 메모: `instructor_memos`(학생별 `note_id` NULL 하나·노트별 하나, version), `instructor_memo_revisions`(10분 묶음, 90일·200칸)
 - 문서 연속성: `document_operation_ledger`, `document_tombstones`, `document_batch_abort_guard`, `document_server_drafts`, `document_server_draft_operations`
 - 미디어 수명주기: `media_objects`, `media_deletion_outbox`
 - 개인정보 수명주기: `account_deletion_jobs`, `account_cleanup_tokens`, `calendar_feed_tokens`
@@ -391,6 +392,15 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 - 댓글 시점: `comments.time_marker_seconds`(nullable 정수 초). `parseTimeMarker`는 빈 값을 시점 없음으로, `h:mm:ss`·`m:ss`·정수 초를 0~86399(23:59:59)로 받는다. `createComment`는 시점이 있으면 FEEDBACK이고 `media_url`이 있는 글인지 먼저 확인하고, INSERT의 `post_id` 서브쿼리에서 휴지통 여부와 함께 다시 확인한다. 재전송 비교에도 시점을 넣는다. 댓글 form은 매체가 있는 믹스셋 글에서만 "시점" 칸(현재 위치·직접 입력·비우기)을 보이고, 초안에 시점을 함께 저장하며 내용이나 시점이 바뀌면 operation ID를 새로 만든다. 시점 댓글의 시점 버튼은 플레이어를 그 위치로 옮겨 재생한다. 댓글은 작성 순으로 읽는다.
 - `0020_comment_time_markers`: `comments`에 `time_marker_seconds`와 CHECK `comments_time_marker_check`(NULL 또는 정수 0~86399)를 ADD COLUMN으로 더하고 index `comments_post_created_idx`(`post_id`, `created_at`)를 만든다. table을 다시 만들지 않아 기존 행과 `comments` trigger가 그대로다. 이 index는 게시물별 댓글을 작성 순으로 읽는 조회를 받친다. `db:check`가 채워진 0019 DB에서 0020 upgrade·CHECK·기존 행 보존을 검사한다. 댓글 조회·작성이 이 column을 읽으므로 운영에서는 코드 promotion 전에 적용한다([배포 가이드](./DEPLOYMENT.md)).
 - 미검증: 실제 YouTube·SoundCloud 재생·이동·위치 읽기, iOS 오디오 로드, 브라우저 화면(모바일 하단 댓글 막대 높이), remote D1 적용.
+
+## 수업 도구·비밀 메모·녹음 시점(2026-11-02)
+
+- 비밀 메모: `instructor_memos`·`instructor_memo_revisions`(`0022_instructor_memos`, 새 표만 추가). 학생 메모는 `note_id` NULL(부분 unique index로 학생당 하나), 노트 메모는 `note_id` unique이며 노트 영구 삭제·학생 profile 삭제에 FK cascade, 계정 삭제 batch(`account-privacy-atomic.ts`)가 학생 메모를 명시적으로 지운다. 저장은 `version` 조건부 UPDATE(처음은 `ON CONFLICT DO NOTHING` INSERT)로 다른 기기의 덮어쓰기를 막고 충돌이면 현재 내용을 돌려준다. 이력은 저장마다 쓰되 마지막 칸이 10분 안이면 덮어쓰고, 90일 지난 칸과 200칸을 넘는 칸을 지운다(trigger 없음, 한 사람이 쓰는 메모라 불변 ledger를 두지 않는다). server action(`src/lib/actions/instructorMemos.ts`)은 모두 `requireAdmin` + `requireStudentTarget`이며 노트 메모의 학생은 노트(휴지통 제외)에서 읽는다. HTML은 `sanitizeHtml`, 20만 자 상한. 화면은 공동 편집이 아닌 `FullEditor`(이미지 업로드 거부) + 이 기기 초안(`instructor-memo` kind, 서버 초안 없음) + 1.5초 자동 저장이다. 노트 문서 페이지와 관리자 새 노트 작성 페이지는 관리자일 때만 메모를 읽어 `NoteLessonFrame`(`NoteDocEditor`·`NoteFullForm` 공통)의 `instructor`로 넘기고(넓은 화면 옆 칸, 좁은 화면 서랍), 학생 상세 개요 탭에 학생 메모를 둔다. 새 노트는 첫 저장으로 id가 생기면 이 수업 메모를 열고, 작성 중 잰 타이머(`new:<studentId>` 범위)를 그 노트로 옮긴다. 새 노트를 만드는 첫 저장은 room 보관 중에도 2분 대기 없이 1.5초 쉼 기준으로 한다.
+- 타이머·시점 넣기: `useLessonTimer`(노트별 localStorage, 시작 시각+누적으로 계산)와 `insertLessonLine`(`insertContentAt`으로 커서 줄 다음에 새 문단). 넣을 편집기는 `data-lesson-target`(note·memo) 중 마지막 focus(메모는 지금 보이는 탭)이고, Tiptap이 `.ProseMirror`에 붙인 `editor`를 쓴다. 단축키 ⌥T·⌥N·⌥P는 `event.code`로 받는다.
+- 시점 꾸밈: `LessonTimestamp` extension(모든 `FullEditor`)이 `[m:ss]`·`[h:mm:ss]`에 decoration(`lesson-timestamp`, `data-lesson-seconds`)만 붙인다. schema·저장 HTML·서버 복원 변환은 그대로다. 공동 편집 room이 비어 정적 HTML로 보이는 읽기 화면에는 꾸밈이 없다.
+- 녹음 재생: `RecordingDock`이 노트 본문 DOM(편집·읽기 화면)에서 첫 YouTube·SoundCloud 링크(`a[href]`·영상 블록 iframe)를 MutationObserver로 찾고, 시작 위치(`t`·`start`·`#t=`)를 offset으로 더해 `VideoPlayer`의 `seekRequest`로 이동한다. 재생 칸은 찾는 범위 밖에 둔다.
+- 과제 피드백 찍어 두기: `useFeedbackMarks`가 관리자·과제별 시점 목록을 localStorage에 두고, 고르면 시점 칸을 채우고 그 위치로 이동한다. 성공 제출한 시점은 목록에서 뺀다. 서버·피드백 초안 계약은 그대로다.
+- 미검증: 실제 YouTube·SoundCloud 이동, 브라우저 화면(넓은 화면 옆 칸·좁은 화면 서랍), remote D1 `0022` 적용.
 
 ## 실시간 공동 편집(2026-11-01)
 

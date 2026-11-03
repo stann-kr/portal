@@ -8,8 +8,8 @@
  */
 "use client";
 
-import { useActionState, useId, useState, useTransition } from "react";
-import { Trash2 } from "lucide-react";
+import { useActionState, useEffect, useId, useRef, useState, useTransition } from "react";
+import { Bookmark, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ConfirmPanel, useConfirmAction } from "@/components/ui/confirm-action";
 import { Input } from "@/components/ui/input";
@@ -24,6 +24,7 @@ import { createDocumentDraftKey } from "@/lib/form-draft";
 import { useFormDraft } from "@/lib/hooks/useFormDraft";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
 import { CREATION_OPERATION_FIELD, createCreationOperationId, parseCreationOperationId } from "@/lib/creation-operation";
+import { useFeedbackMarks } from "./useFeedbackMarks";
 
 export interface FeedbackItem {
   id: string;
@@ -47,22 +48,35 @@ interface TimelineFeedbackProps {
   allowTimeMarker?: boolean;
 }
 
+/** 폼의 시점 글자(분:초·초)를 초로 읽는다. 서버(createFeedback)와 같은 형식만 받는다. */
+function parseMarker(value: string): number | null {
+  const trimmed = value.trim();
+  const minutesAndSeconds = /^(\d+):([0-5]\d)$/u.exec(trimmed);
+  if (minutesAndSeconds) return Number(minutesAndSeconds[1]) * 60 + Number(minutesAndSeconds[2]);
+  return /^\d+$/u.test(trimmed) ? Number(trimmed) : null;
+}
+
 function feedbackLabel(fb: FeedbackItem): string {
   return fb.timeMarker === null ? "전체" : formatTimestamp(fb.timeMarker);
 }
 
 // ─── 관리자 피드백 작성 폼 ────────────────────────
 
+/** 찍어 두기 단축키(Alt/Option+M). 입력 칸에서도 듣던 위치를 바로 남긴다. */
+const MARK_SHORTCUT_CODE = "KeyM";
+
 function FeedbackForm({
   assignmentId,
   actorId,
   onSuccess,
+  onSeek,
   readPlaybackPosition,
   allowTimeMarker,
 }: {
   assignmentId: string;
   actorId: string;
   onSuccess: () => Promise<void>;
+  onSeek?: (seconds: number) => void;
   readPlaybackPosition?: () => Promise<number | null>;
   allowTimeMarker: boolean;
 }) {
@@ -72,6 +86,8 @@ function FeedbackForm({
   const [content, setContent] = useState("");
   const [operationId, setOperationId] = useState("");
   const [showResult, setShowResult] = useState(false);
+  const marks = useFeedbackMarks(actorId, assignmentId);
+  const [markNotice, setMarkNotice] = useState<string | null>(null);
   const draft = useFormDraft<{ timeMarker: string; content: string; operationId?: string }>(
     createDocumentDraftKey("assignment-feedback", actorId, assignmentId),
     (saved) => {
@@ -94,6 +110,9 @@ function FeedbackForm({
     }
     if (result.success) {
       const submittedData = { timeMarker: String(data.get("timeMarker") ?? ""), content: String(data.get("content") ?? "") };
+      // 찍어 둔 시점으로 쓴 피드백이면 그 시점을 목록에서 뺀다.
+      const submittedSeconds = parseMarker(submittedData.timeMarker);
+      if (submittedSeconds !== null) marks.remove(submittedSeconds);
       draft.clear({ reason: "submitted", submittedData: {
         ...submittedData,
         operationId: String(data.get(CREATION_OPERATION_FIELD) ?? ""),
@@ -135,6 +154,48 @@ function FeedbackForm({
     } finally {
       setReadingPosition(false);
     }
+  };
+
+  // 들으면서 위치만 남겨 두고 내용은 나중에 쓴다.
+  const markCurrentPosition = async () => {
+    if (!readPlaybackPosition) return;
+    setMarkNotice(null);
+    try {
+      const seconds = await readPlaybackPosition();
+      if (seconds === null) {
+        setMarkNotice("재생 위치를 읽지 못했습니다. 플레이어를 재생한 뒤 다시 시도해 주세요.");
+        return;
+      }
+      const marked = Math.floor(seconds);
+      marks.add(marked);
+      setMarkNotice(`${formatTimestamp(marked)}을 찍어 두었습니다.`);
+    } catch {
+      setMarkNotice("재생 위치를 읽지 못했습니다.");
+    }
+  };
+  const markRef = useRef(markCurrentPosition);
+  useEffect(() => {
+    markRef.current = markCurrentPosition;
+  });
+  const canMark = allowTimeMarker && Boolean(readPlaybackPosition);
+  useEffect(() => {
+    if (!canMark) return;
+    const handle = (event: KeyboardEvent) => {
+      if (!event.altKey || event.metaKey || event.ctrlKey || event.shiftKey || event.isComposing) return;
+      if (event.code !== MARK_SHORTCUT_CODE) return;
+      event.preventDefault();
+      void markRef.current();
+    };
+    window.addEventListener("keydown", handle);
+    return () => window.removeEventListener("keydown", handle);
+  }, [canMark]);
+
+  const pickMark = (seconds: number) => {
+    const marker = formatTimestamp(seconds);
+    setTimeMarker(marker);
+    saveDraft({ timeMarker: marker, content });
+    onSeek?.(seconds);
+    document.getElementById("feedback-content")?.focus();
   };
 
   return (
@@ -213,6 +274,42 @@ function FeedbackForm({
           {isPending ? "추가 중..." : "추가"}
         </Button>
       </div>
+      {canMark ? (
+        <div className="flex flex-col gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button type="button" variant="outline" size="sm" onClick={markCurrentPosition} disabled={isPending} aria-keyshortcuts="Alt+M">
+              <Bookmark className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
+              시점 찍어 두기
+            </Button>
+            <span className="text-xs text-muted-foreground">⌥M · 들으면서 위치만 남기고 내용은 나중에 씁니다</span>
+          </div>
+          {marks.marks.length > 0 ? (
+            <ul aria-label="찍어 둔 시점" className="flex flex-wrap gap-1.5">
+              {marks.marks.map((seconds) => (
+                <li key={seconds} className="inline-flex items-center rounded-sm bg-accent text-highlight">
+                  <button
+                    type="button"
+                    onClick={() => pickMark(seconds)}
+                    aria-label={`${formatTimestamp(seconds)} 시점으로 피드백 쓰기`}
+                    className="inline-flex h-8 items-center px-2 font-mono text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    {formatTimestamp(seconds)}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => marks.remove(seconds)}
+                    aria-label={`${formatTimestamp(seconds)} 찍어 둔 시점 지우기`}
+                    className="inline-flex size-8 items-center justify-center rounded-sm hover:bg-highlight/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <X className="size-3" strokeWidth={1.8} aria-hidden="true" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {markNotice ? <p role="status" className="text-xs text-muted-foreground">{markNotice}</p> : null}
+        </div>
+      ) : null}
       <p id="feedback-time-help" className="text-xs text-muted-foreground">
         {allowTimeMarker ? "재생 시점을 비우면 과제 전체에 대한 피드백으로 남습니다." : "글 제출에는 전체 피드백으로 남깁니다."}
       </p>
@@ -346,6 +443,7 @@ export function TimelineFeedback({
             assignmentId={assignmentId}
             actorId={actorId}
             onSuccess={refreshAfterChange}
+            onSeek={onSeek}
             readPlaybackPosition={allowTimeMarker ? readPlaybackPosition : undefined}
             allowTimeMarker={allowTimeMarker}
           />

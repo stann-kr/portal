@@ -7,12 +7,12 @@
 import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { FileText, Play } from "lucide-react";
+import { FileText, Lock, Play } from "lucide-react";
 import { getActiveAuthSession } from "@/lib/auth-guard";
 import { getStudentAccountState, getStudentById } from "@/lib/actions/students";
 import { getCurriculumByStudent } from "@/lib/actions/curriculum";
 import { isCurriculumVisible } from "@/lib/curriculum-visibility";
-import { getLessonsByStudent } from "@/lib/actions/lessons";
+import { getConnectedLessonsForStudent, getLessonsByStudent } from "@/lib/actions/lessons";
 import { getOrSeedColumns, getDiggingTracks } from "@/lib/actions/digging";
 import { getDiggingPlaylists } from "@/lib/actions/digging-playlists";
 import { getQnaThreadsByStudent } from "@/lib/actions/qna";
@@ -45,6 +45,8 @@ import {
 } from "@/lib/student-space-routes";
 import { getRequestNow } from "@/lib/request-time";
 import { StudentDetailTopBar } from "./StudentDetailTopBar";
+import { InstructorMemoEditor } from "@/components/lesson/InstructorMemoEditor";
+import { getInstructorMemo } from "@/lib/actions/instructorMemos";
 
 type RawColumn = Awaited<ReturnType<typeof getOrSeedColumns>>[number];
 type RawQnaThread = Awaited<ReturnType<typeof getQnaThreadsByStudent>>[number];
@@ -185,19 +187,23 @@ export default async function StudentDetailPage({
   if (activeTab === "notes") redirect(buildAdminStudentNotesHref(studentId));
 
   // Overview 탭 데이터는 미리 병렬 fetch
-  const [modules, lessons, calendarFeedIssuedAt, accountState] = await (activeTab === "overview"
+  const [modules, lessons, calendarFeedIssuedAt, accountState, studentMemo, connectedLessons] = await (activeTab === "overview"
     ? Promise.all([
         // 커리큘럼이 숨겨져 있으면 읽지 않는다(src/lib/curriculum-visibility.ts).
         isCurriculumVisible() ? getCurriculumByStudent(studentId) : Promise.resolve([]),
         getLessonsByStudent(studentId),
         getStudentCalendarFeedIssuedAt(studentId),
         getStudentAccountState(studentId),
+        getInstructorMemo({ kind: "student", studentId }),
+        getConnectedLessonsForStudent(studentId),
       ])
-    : Promise.resolve([[], [], null, { kind: "active" }] as [
+    : Promise.resolve([[], [], null, { kind: "active" }, null, []] as [
         Awaited<ReturnType<typeof getCurriculumByStudent>>,
         Awaited<ReturnType<typeof getLessonsByStudent>>,
         Date | null,
         Awaited<ReturnType<typeof getStudentAccountState>>,
+        Awaited<ReturnType<typeof getInstructorMemo>>,
+        Awaited<ReturnType<typeof getConnectedLessonsForStudent>>,
       ]));
   // 만료·지난 레슨 판단은 서버 시각 하나로 정해 화면 hydration과 어긋나지 않게 한다.
   const referenceTime = new Date(getRequestNow());
@@ -243,11 +249,29 @@ export default async function StudentDetailPage({
               studentId={studentId}
               modules={modules}
               lessons={lessons}
+              connectedLessons={connectedLessons}
               calendarFeedIssuedAt={calendarFeedIssuedAt}
               account={account}
               referenceTime={referenceTime}
             />
           )}
+
+          {activeTab === "overview" && studentMemo ? (
+            <section aria-labelledby="student-memo-heading" className="mt-8 flex max-w-[880px] flex-col gap-3">
+              <h2 id="student-memo-heading" className="inline-flex items-center gap-1.5 text-ui font-semibold text-secondary-foreground">
+                <Lock className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
+                학생 메모
+                <span className="font-normal text-muted-foreground">· 나만 보기</span>
+              </h2>
+              <InstructorMemoEditor
+                scope={{ kind: "student", studentId }}
+                initial={studentMemo}
+                actorId={session.user.id!}
+                label={`${name} 학생 메모`}
+                placeholder="성향, 장기 과제, 주의할 점처럼 계속 볼 메모(학생에게 보이지 않음)"
+              />
+            </section>
+          ) : null}
 
           {activeTab === "assignments" && (
             <Suspense fallback={<div className={cn(TAB_FALLBACK_CLASS, "h-40 max-w-[880px]")} />}>

@@ -6,7 +6,9 @@
  */
 "use client";
 
+import { useRef } from "react";
 import { CalendarDays, Clock3, LockKeyhole, UserRound } from "lucide-react";
+import { RecordingDock } from "@/components/lesson/RecordingDock";
 import {
   NoteBreadcrumb,
   NoteDocumentBody,
@@ -45,6 +47,7 @@ export function LiveNoteArticle({
   historyHref: string;
 }) {
   const live = useLiveCollabNote(note);
+  const contentRef = useRef<HTMLDivElement>(null);
   const updatedLabel = live.changedAt !== null
     ? formatNoteUpdated(new Date(live.changedAt), live.changedAt)
     : formatNoteUpdated(note.updatedAt ?? note.createdAt, now);
@@ -55,32 +58,36 @@ export function LiveNoteArticle({
       <NoteDocumentStrip start={<NoteBreadcrumb parent={parent} current={live.title} />}>
         <NoteHistoryLink href={historyHref} />
       </NoteDocumentStrip>
-      <NoteDocumentBody as="article">
-        <NoteDocumentTitle>{live.title}</NoteDocumentTitle>
-        <NoteProperties>
-          <NoteProperty icon={CalendarDays} label="날짜">{formatNoteLongDate(noteDate ?? note.createdAt, "날짜 정보 없음")}</NoteProperty>
-          <NoteProperty icon={UserRound} label="작성자">{authorName}</NoteProperty>
-          <NoteProperty icon={Clock3} label="수정">{updatedLabel}</NoteProperty>
-        </NoteProperties>
+      <div ref={contentRef}>
+        <NoteDocumentBody as="article">
+          <NoteDocumentTitle>{live.title}</NoteDocumentTitle>
+          <NoteProperties>
+            <NoteProperty icon={CalendarDays} label="날짜">{formatNoteLongDate(noteDate ?? note.createdAt, "날짜 정보 없음")}</NoteProperty>
+            <NoteProperty icon={UserRound} label="작성자">{authorName}</NoteProperty>
+            <NoteProperty icon={Clock3} label="수정">{updatedLabel}</NoteProperty>
+          </NoteProperties>
 
-        {live.missing ? (
-          <p role="status" className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-            <LockKeyhole className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
-            이 노트는 휴지통으로 옮겨졌거나 더 이상 볼 수 없습니다. 마지막으로 본 내용입니다.
-          </p>
-        ) : (
-          <p className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-            <LockKeyhole className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
-            다른 작성자의 노트는 읽기 전용입니다. 작성자가 쓰는 내용이 실시간으로 보입니다.
-          </p>
-        )}
+          {live.missing ? (
+            <p role="status" className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+              <LockKeyhole className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
+              이 노트는 휴지통으로 옮겨졌거나 더 이상 볼 수 없습니다. 마지막으로 본 내용입니다.
+            </p>
+          ) : (
+            <p className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+              <LockKeyhole className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
+              다른 작성자의 노트는 읽기 전용입니다. 작성자가 쓰는 내용이 실시간으로 보입니다.
+            </p>
+          )}
 
-        {/* 본문만 바꿔 스크롤·레이아웃이 튀지 않게 한다. 갱신 사실은 화면 밖 상태 줄로만 알린다. */}
-        <p role="status" aria-live="polite" className="sr-only">
-          {live.changedAt !== null ? "노트가 방금 갱신되었습니다." : ""}
-        </p>
-        {live.body}
-      </NoteDocumentBody>
+          {/* 본문만 바꿔 스크롤·레이아웃이 튀지 않게 한다. 갱신 사실은 화면 밖 상태 줄로만 알린다. */}
+          <p role="status" aria-live="polite" className="sr-only">
+            {live.changedAt !== null ? "노트가 방금 갱신되었습니다." : ""}
+          </p>
+          {live.body}
+        </NoteDocumentBody>
+      </div>
+      {/* 본문의 녹음 링크와 [시점]으로 수업 녹음을 다시 듣는다. 재생 칸은 찾는 범위(contentRef) 밖에 둔다. */}
+      <RecordingDock rootRef={contentRef} />
     </>
   );
 }
