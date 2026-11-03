@@ -27,8 +27,11 @@ import {
 import { buildInvitePath, INVITE_LIFETIME_MS } from "@/lib/invite-token";
 import {
   queryStudentRosterStats,
+  withConnectedNextLessons,
   type StudentRosterStat,
 } from "@/lib/student-roster";
+import { queryConnectedNextEvents } from "@/lib/connected-next-lesson";
+import { fetchExternalItemsForUser } from "@/lib/external-items";
 
 export type { StudentRosterStat } from "@/lib/student-roster";
 
@@ -206,5 +209,12 @@ export async function getStudentById(studentId: string) {
  */
 export async function getStudentRosterStats(): Promise<StudentRosterStat[]> {
   await requireAdmin();
-  return queryStudentRosterStats(createDb());
+  const db = createDb();
+  const referenceTime = new Date();
+  // 연결된 바깥 캘린더의 일정도 다음 레슨으로 센다.
+  const [stats, connected] = await Promise.all([
+    queryStudentRosterStats(db, referenceTime),
+    queryConnectedNextEvents(db, referenceTime, fetchExternalItemsForUser),
+  ]);
+  return withConnectedNextLessons(stats, connected);
 }

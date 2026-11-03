@@ -103,3 +103,18 @@ export async function queryStudentRosterStats(
     pendingFeedbackCount: pendingByStudent.get(student.id) ?? 0,
   }));
 }
+
+/** 포털 레슨과 연결된 바깥 캘린더 일정 중 더 이른 쪽을 다음 레슨으로 삼는다. */
+export function withConnectedNextLessons(
+  stats: StudentRosterStat[],
+  connected: ReadonlyMap<string, Date>,
+): StudentRosterStat[] {
+  return stats.map((student) => {
+    const external = connected.get(student.id);
+    if (!external) return student;
+    const next = student.nextLessonDate && student.nextLessonDate.getTime() <= external.getTime()
+      ? student.nextLessonDate
+      : external;
+    return next === student.nextLessonDate ? student : { ...student, nextLessonDate: next };
+  });
+}
