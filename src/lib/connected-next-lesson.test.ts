@@ -3,7 +3,7 @@ import test from "node:test";
 import type { DrizzleDb } from "@/db/client";
 import { createSqliteTestDb, insertConnection, insertMapping, insertProfile } from "@/lib/calendar-sync/sqlite-test-db";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
-import { queryConnectedNextEvents } from "./connected-next-lesson";
+import { queryConnectedLessonsForStudent, queryConnectedNextEvents } from "./connected-next-lesson";
 import { withConnectedNextLessons, type StudentRosterStat } from "./student-roster";
 
 const NOW = new Date("2026-11-03T03:00:00.000Z");
@@ -98,4 +98,33 @@ test("다음 레슨은 포털 레슨과 연결된 일정 중 이른 쪽이다", 
     null,
   ]);
   assert.equal(merged[3], stats[3]);
+});
+
+test("학생 상세용 연결된 일정은 그 학생 것만 가까운 순서로 출처와 함께 모은다", async (context) => {
+  const db = createSqliteTestDb(context);
+  insertProfile(db, "admin-1", "admin");
+  insertProfile(db, "student", "student");
+  insertProfile(db, "other", "student");
+  insertConnection(db, "conn-1", "ICLOUD");
+  insertMapping(db, "map-1", "conn-1", "student", "cal-1");
+  insertMapping(db, "map-2", "conn-1", "other", "cal-2");
+  db.run("INSERT INTO calendar_events (id, user_id, title, start_time) VALUES ('e-1', 'student', '보충 수업', ?)", epoch("2026-11-10T10:00:00Z"));
+  db.run("INSERT INTO calendar_events (id, user_id, title, start_time) VALUES ('e-2', 'other', '남의 일정', ?)", epoch("2026-11-04T10:00:00Z"));
+  db.run("INSERT INTO calendar_sync_links (id, mapping_id, local_kind, local_id, local_fingerprint) VALUES ('l-1', 'map-1', 'EVENT', 'e-1', 'fp')");
+  db.run("INSERT INTO calendar_sync_links (id, mapping_id, local_kind, local_id, local_fingerprint) VALUES ('l-2', 'map-2', 'EVENT', 'e-2', 'fp')");
+  db.run("INSERT INTO calendar_remote_series (mapping_id, remote_id, series_key, ics_text) VALUES ('map-1', 'r-1', 'weekly-lesson@example.com', ?)", WEEKLY_SERIES);
+
+  let fetched = false;
+  const lessons = await queryConnectedLessonsForStudent(db.ctx.db as unknown as DrizzleDb, "student", NOW, async () => {
+    fetched = true;
+    return [];
+  });
+  assert.equal(fetched, false, "공개 iCal을 연결하지 않은 학생은 읽지 않는다");
+  assert.deepEqual(lessons.slice(0, 3).map((lesson) => [lesson.scheduledAt.toISOString(), lesson.title, lesson.sourceLabel]), [
+    ["2026-11-04T10:00:00.000Z", "정기 수업", "iCloud Calendar"],
+    ["2026-11-10T10:00:00.000Z", "보충 수업", "iCloud Calendar"],
+    ["2026-11-11T10:00:00.000Z", "정기 수업", "iCloud Calendar"],
+  ]);
+  assert.ok(lessons.every((lesson) => lesson.title !== "남의 일정"));
+  assert.ok(lessons.every((lesson) => lesson.scheduledAt.getTime() < NOW.getTime() + 90 * 86_400_000));
 });

@@ -2732,6 +2732,39 @@ test("admin overview gathers account rows first, keeps each issue button in orde
   assert.deepEqual(lessonRows.map((text) => text.slice(0, 15)), ["10.28 (수) 19:00", "11.04 (수) 19:00", "10.21 (수) 19:00"]);
   assert.match(lessonRows[0], /다음 레슨/u);
   assert.match(lessonRows[2], /지난 레슨/u);
+});
+
+test("admin overview mixes connected calendar events into upcoming lessons without a delete button", async (context) => {
+  const referenceTime = new Date("2026-10-26T03:00:00.000Z");
+  await render(context, <OverviewTab
+    studentId="student-1"
+    referenceTime={referenceTime}
+    modules={[]}
+    lessons={[
+      { id: "lesson-past", scheduledAt: new Date("2026-10-21T10:00:00.000Z") },
+      { id: "lesson-later", scheduledAt: new Date("2026-11-04T10:00:00.000Z") },
+    ]}
+    connectedLessons={[
+      { id: "GOOGLE:a", title: "정기 수업", scheduledAt: new Date("2026-10-31T05:00:00.000Z"), sourceLabel: "Google Calendar" },
+    ]}
+  />);
+  const rows = [...browser.document.querySelectorAll('[aria-labelledby="lessons-heading"] li')];
+  assert.deepEqual(rows.map((row) => (row.textContent ?? "").slice(0, 15)), ["10.31 (토) 14:00", "11.04 (수) 19:00", "10.21 (수) 19:00"]);
+  assert.match(rows[0].textContent ?? "", /다음 레슨 · 정기 수업 · Google Calendar/u);
+  assert.equal(rows[0].querySelector("button"), null);
+  assert.ok(rows[1].querySelector('button[aria-label$="레슨 삭제"]'));
+});
+
+test("admin overview account rows keep their order", async (context) => {
+  const referenceTime = new Date("2026-10-26T03:00:00.000Z");
+  await render(context, <OverviewTab
+    studentId="student-1"
+    referenceTime={referenceTime}
+    modules={[]}
+    lessons={[]}
+    calendarFeedIssuedAt={new Date("2026-10-14T01:00:00.000Z")}
+    account={{ kind: "temporary" }}
+  />);
 
   const account = browser.document.querySelector('[aria-labelledby="account-heading"] > div:last-of-type');
   assert.ok(account);

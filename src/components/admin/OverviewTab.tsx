@@ -53,10 +53,20 @@ interface Lesson {
   scheduledAt: Date | null;
 }
 
+/** 학생에게 연결된 바깥 캘린더의 일정. 레슨으로 세지만 여기서 지우지 않는다. */
+interface ConnectedLesson {
+  id: string;
+  title: string;
+  scheduledAt: Date;
+  sourceLabel: string;
+}
+
 interface OverviewTabProps {
   studentId: string;
   modules: Module[];
   lessons: Lesson[];
+  /** 연결된 바깥 캘린더의 앞으로 일정(읽기 전용). */
+  connectedLessons?: ConnectedLesson[];
   /** 현재 레슨 캘린더 구독 URL의 마지막 발급 시각. */
   calendarFeedIssuedAt?: Date | null;
   /** 학생 계정 상태. 가입 대기면 만료 시각과 서버가 판단한 만료 여부를 함께 받는다. */
@@ -260,14 +270,26 @@ function AddLessonForm({ studentId, onClose }: { studentId: string; onClose: () 
 
 // ─── 메인 컴포넌트 ────────────────────────────────
 
-/** 앞으로의 레슨은 가까운 순서, 지난 레슨은 그 뒤에 최근 순서로 둔다(보드의 다음 → 이후 → 지난). */
-function orderLessons(lessons: Lesson[], now: number) {
-  const dated = lessons
-    .filter((lesson): lesson is Lesson & { scheduledAt: Date } => lesson.scheduledAt !== null)
-    .map((lesson) => ({ ...lesson, time: new Date(lesson.scheduledAt).getTime() }));
+/**
+ * 앞으로의 레슨은 가까운 순서, 지난 레슨은 그 뒤에 최근 순서로 둔다(보드의 다음 → 이후 → 지난).
+ * 연결된 캘린더 일정은 앞으로의 레슨에 섞고 제목·출처를 함께 적는다(지울 수 없다).
+ */
+function orderLessons(lessons: Lesson[], connected: ConnectedLesson[], now: number) {
+  const dated = [
+    ...lessons
+      .filter((lesson): lesson is Lesson & { scheduledAt: Date } => lesson.scheduledAt !== null)
+      .map((lesson) => ({ id: lesson.id, scheduledAt: lesson.scheduledAt, detail: "", connected: false })),
+    ...connected.map((lesson) => ({
+      id: `connected:${lesson.id}`,
+      scheduledAt: lesson.scheduledAt,
+      detail: `${lesson.title} · ${lesson.sourceLabel}`,
+      connected: true,
+    })),
+  ].map((lesson) => ({ ...lesson, time: new Date(lesson.scheduledAt).getTime() }));
   const upcoming = dated.filter((lesson) => lesson.time >= now).sort((a, b) => a.time - b.time);
-  const past = dated.filter((lesson) => lesson.time < now).sort((a, b) => b.time - a.time);
-  return [...upcoming.map((lesson, index) => ({ ...lesson, past: false, note: index === 0 ? "다음 레슨" : "" })),
+  const past = dated.filter((lesson) => lesson.time < now && !lesson.connected).sort((a, b) => b.time - a.time);
+  const noteOf = (label: string, detail: string) => [label, detail].filter(Boolean).join(" · ");
+  return [...upcoming.map((lesson, index) => ({ ...lesson, past: false, note: noteOf(index === 0 ? "다음 레슨" : "", lesson.detail) })),
     ...past.map((lesson) => ({ ...lesson, past: true, note: "지난 레슨" }))];
 }
 
@@ -275,6 +297,7 @@ export function OverviewTab({
   studentId,
   modules,
   lessons,
+  connectedLessons = [],
   calendarFeedIssuedAt = null,
   account = { kind: "active" },
   referenceTime,
@@ -323,7 +346,7 @@ export function OverviewTab({
   };
 
   const completedCount = modules.filter((module) => module.isCompleted).length;
-  const orderedLessons = orderLessons(lessons, now);
+  const orderedLessons = orderLessons(lessons, connectedLessons, now);
   const scheduleHref = `/dashboard/admin?section=schedule&student=${encodeURIComponent(studentId)}`;
 
   return (
@@ -369,7 +392,7 @@ export function OverviewTab({
                         {formatKstDot(l.scheduledAt, { weekday: true, time: true, referenceTime: reference })}
                       </span>
                       <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{l.note}</span>
-                      <Button
+                      {l.connected ? null : <Button
                         variant="ghost"
                         size="icon"
                         onClick={(event) => lessonDeleteConfirm.request(event.currentTarget, l.id)}
@@ -379,7 +402,7 @@ export function OverviewTab({
                         className={cn(rowIconClass, "text-destructive hover:text-destructive")}
                       >
                         <Trash2 className="size-4" strokeWidth={1.6} aria-hidden="true" />
-                      </Button>
+                      </Button>}
                     </div>
                     {lessonDeleteConfirm.value === l.id ? (
                       <ConfirmPanel

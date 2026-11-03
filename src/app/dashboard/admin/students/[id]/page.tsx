@@ -12,7 +12,7 @@ import { getActiveAuthSession } from "@/lib/auth-guard";
 import { getStudentAccountState, getStudentById } from "@/lib/actions/students";
 import { getCurriculumByStudent } from "@/lib/actions/curriculum";
 import { isCurriculumVisible } from "@/lib/curriculum-visibility";
-import { getLessonsByStudent } from "@/lib/actions/lessons";
+import { getConnectedLessonsForStudent, getLessonsByStudent } from "@/lib/actions/lessons";
 import { getOrSeedColumns, getDiggingTracks } from "@/lib/actions/digging";
 import { getDiggingPlaylists } from "@/lib/actions/digging-playlists";
 import { getQnaThreadsByStudent } from "@/lib/actions/qna";
@@ -187,7 +187,7 @@ export default async function StudentDetailPage({
   if (activeTab === "notes") redirect(buildAdminStudentNotesHref(studentId));
 
   // Overview 탭 데이터는 미리 병렬 fetch
-  const [modules, lessons, calendarFeedIssuedAt, accountState, studentMemo] = await (activeTab === "overview"
+  const [modules, lessons, calendarFeedIssuedAt, accountState, studentMemo, connectedLessons] = await (activeTab === "overview"
     ? Promise.all([
         // 커리큘럼이 숨겨져 있으면 읽지 않는다(src/lib/curriculum-visibility.ts).
         isCurriculumVisible() ? getCurriculumByStudent(studentId) : Promise.resolve([]),
@@ -195,13 +195,15 @@ export default async function StudentDetailPage({
         getStudentCalendarFeedIssuedAt(studentId),
         getStudentAccountState(studentId),
         getInstructorMemo({ kind: "student", studentId }),
+        getConnectedLessonsForStudent(studentId),
       ])
-    : Promise.resolve([[], [], null, { kind: "active" }, null] as [
+    : Promise.resolve([[], [], null, { kind: "active" }, null, []] as [
         Awaited<ReturnType<typeof getCurriculumByStudent>>,
         Awaited<ReturnType<typeof getLessonsByStudent>>,
         Date | null,
         Awaited<ReturnType<typeof getStudentAccountState>>,
         Awaited<ReturnType<typeof getInstructorMemo>>,
+        Awaited<ReturnType<typeof getConnectedLessonsForStudent>>,
       ]));
   // 만료·지난 레슨 판단은 서버 시각 하나로 정해 화면 hydration과 어긋나지 않게 한다.
   const referenceTime = new Date(getRequestNow());
@@ -247,6 +249,7 @@ export default async function StudentDetailPage({
               studentId={studentId}
               modules={modules}
               lessons={lessons}
+              connectedLessons={connectedLessons}
               calendarFeedIssuedAt={calendarFeedIssuedAt}
               account={account}
               referenceTime={referenceTime}

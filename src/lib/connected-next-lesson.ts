@@ -3,9 +3,10 @@
  * - 관리자 양방향 동기화: 매핑에 연결된 학생 일정(calendar_events)과 원격 반복 일정 사본(calendar_remote_series)
  * - 학생 공개 iCal 구독: 저장하지 않으므로 그때 읽는다(실패하면 건너뛴다)
  */
-import { and, eq, gte, min, ne } from "drizzle-orm";
+import { and, asc, eq, gte, lt, min, ne } from "drizzle-orm";
 import type { DrizzleDb } from "@/db/client";
 import {
+  calendarConnections,
   calendarEvents,
   calendarMappings,
   calendarRemoteSeries,
@@ -95,4 +96,75 @@ export async function queryConnectedNextEvents(
     keepEarliest(earliest, studentId, earliestFrom(items, referenceTime));
   }
   return earliest;
+}
+
+/** 학생 상세 레슨 일정에 함께 보이는 연결된 캘린더 일정(읽기 전용). */
+export type ConnectedLesson = { id: string; title: string; scheduledAt: Date; sourceLabel: string };
+
+const PROVIDER_LABEL = { GOOGLE: "Google Calendar", ICLOUD: "iCloud Calendar" } as const;
+
+/** 한 학생의 연결된 캘린더에서 앞으로 90일 일정을 가까운 순서로 모은다. */
+export async function queryConnectedLessonsForStudent(
+  db: DrizzleDb,
+  studentId: string,
+  referenceTime: Date,
+  fetchSubscribedItems: FetchSubscribedItems,
+): Promise<ConnectedLesson[]> {
+  const windowEnd = new Date(referenceTime.getTime() + CONNECTED_NEXT_LESSON_WINDOW_DAYS * 86_400_000);
+  const [syncedRows, subscriptionRows] = await Promise.all([
+    db
+      .select({
+        id: calendarEvents.id,
+        title: calendarEvents.title,
+        startTime: calendarEvents.startTime,
+        provider: calendarConnections.provider,
+      })
+      .from(calendarSyncLinks)
+      .innerJoin(calendarMappings, eq(calendarMappings.id, calendarSyncLinks.mappingId))
+      .innerJoin(calendarConnections, eq(calendarConnections.id, calendarMappings.connectionId))
+      .innerJoin(
+        calendarEvents,
+        and(eq(calendarEvents.id, calendarSyncLinks.localId), eq(calendarEvents.userId, calendarMappings.studentId)),
+      )
+      .where(and(
+        eq(calendarMappings.studentId, studentId),
+        eq(calendarSyncLinks.localKind, "EVENT"),
+        ne(calendarSyncLinks.localFingerprint, DELETED_FINGERPRINT),
+        gte(calendarEvents.startTime, referenceTime),
+        lt(calendarEvents.startTime, windowEnd),
+      ))
+      .orderBy(asc(calendarEvents.startTime)),
+    db
+      .select({ id: externalCalendarSubscriptions.id })
+      .from(externalCalendarSubscriptions)
+      .where(eq(externalCalendarSubscriptions.studentId, studentId))
+      .limit(1),
+  ]);
+  const window = { start: referenceTime, end: windowEnd };
+  const [seriesItems, subscribedItems] = await Promise.all([
+    loadRemoteSeriesItems(db, { studentId, spaceLabel: "", window }).catch(() => []),
+    subscriptionRows.length > 0
+      ? fetchSubscribedItems(studentId, {
+          start: referenceTime.toISOString(),
+          end: windowEnd.toISOString(),
+          types: ["EVENT"],
+        }).catch(() => [])
+      : Promise.resolve([]),
+  ]);
+
+  const seen = new Set<string>();
+  const lessons: ConnectedLesson[] = [];
+  const add = (lesson: ConnectedLesson) => {
+    if (!Number.isFinite(lesson.scheduledAt.getTime()) || lesson.scheduledAt.getTime() < referenceTime.getTime()) return;
+    if (lesson.scheduledAt.getTime() >= windowEnd.getTime() || seen.has(lesson.id)) return;
+    seen.add(lesson.id);
+    lessons.push(lesson);
+  };
+  for (const row of syncedRows) {
+    add({ id: `event:${row.id}`, title: row.title, scheduledAt: row.startTime, sourceLabel: PROVIDER_LABEL[row.provider] });
+  }
+  for (const item of [...seriesItems, ...subscribedItems]) {
+    add({ id: `${item.source.kind}:${item.id}`, title: item.title, scheduledAt: new Date(item.date), sourceLabel: item.source.label });
+  }
+  return lessons.sort((a, b) => a.scheduledAt.getTime() - b.scheduledAt.getTime());
 }
