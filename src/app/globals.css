@@ -478,7 +478,7 @@
   color: var(--color-muted-foreground);
 }
 [data-lesson-recording] .lesson-timestamp {
-  color: var(--color-primary);
+  color: var(--color-highlight);
   cursor: pointer;
   text-decoration: underline dotted;
   text-underline-offset: 3px;

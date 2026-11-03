@@ -5,13 +5,21 @@ import { ChevronDown, ChevronUp, Headphones } from "lucide-react";
 import { VideoPlayer, type MediaSeekRequest } from "@/components/player/VideoPlayer";
 import { mediaSourceLabel } from "@/components/player/media-source";
 import { formatLessonClock, findLessonRecording, type LessonRecording } from "./lesson-timestamps";
+import { cn } from "@/lib/utils";
 
 /**
  * 수업 녹음 재생 칸. 노트 본문의 첫 YouTube·SoundCloud 링크를 녹음으로 보고, 본문의 `[12:34]`를 누르면 그 시점을 재생한다.
  * 링크에 시작 위치(`t=`)가 있으면 믹스가 녹음의 그 지점부터라는 뜻으로 시점에 더한다.
  * 본문이 바뀔 때(공동 편집 포함) 링크를 다시 찾는다.
  */
-export function RecordingDock({ rootRef }: { rootRef: RefObject<HTMLElement | null> }) {
+export function RecordingDock({
+  rootRef,
+  className,
+}: {
+  rootRef: RefObject<HTMLElement | null>;
+  /** 옆 칸이 있는 화면은 그만큼 비워 본문 가운데에 둔다. */
+  className?: string;
+}) {
   const [recording, setRecording] = useState<LessonRecording | null>(null);
   const [open, setOpen] = useState(false);
   const [seekRequest, setSeekRequest] = useState<MediaSeekRequest | undefined>(undefined);
@@ -64,7 +72,7 @@ export function RecordingDock({ rootRef }: { rootRef: RefObject<HTMLElement | nu
   if (!recording) return null;
 
   return (
-    <div className="pointer-events-none sticky bottom-3 z-30 flex justify-center px-5 md:bottom-5">
+    <div className={cn("pointer-events-none sticky bottom-3 z-30 flex justify-center px-5 md:bottom-5", className)}>
       <section
         aria-label="수업 녹음"
         className="pointer-events-auto flex w-full max-w-[720px] flex-col gap-2 rounded-lg border border-border bg-background/95 p-2 shadow-lg backdrop-blur"

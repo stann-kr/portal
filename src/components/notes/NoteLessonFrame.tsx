@@ -61,7 +61,7 @@ export function NoteLessonFrame({
         ) : null}
       </div>
       {/* 본문의 녹음 링크와 [시점]으로 수업 녹음을 다시 듣는다. 재생 칸은 찾는 범위(contentRef) 밖에 둔다. */}
-      <RecordingDock rootRef={contentRef} />
+      <RecordingDock rootRef={contentRef} className={instructor ? "xl:pr-[360px]" : undefined} />
     </>
   );
 }
