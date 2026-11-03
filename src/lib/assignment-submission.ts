@@ -8,6 +8,7 @@
 import { sanitizeHtml } from "@/lib/sanitize-html";
 import { isRichTextEmpty } from "@/lib/rich-text";
 import { normalizeAssignmentMediaUrl } from "@/lib/assignment-media-url";
+import { validateMixAnalysisInput } from "@/lib/mix-analysis";
 import type { AssignmentSubmissionFormatValue } from "@/lib/assignment-recurrence";
 
 export const ASSIGNMENT_TEXT_MAX_LENGTH = 5_000;
@@ -77,16 +78,23 @@ export function normalizePlainTextField(
 }
 
 export type SubmissionPayloadResult =
-  | { ok: true; mediaUrl: string | null; textHtml: string | null }
+  | { ok: true; mediaUrl: string | null; textHtml: string | null; analysisJson: string | null }
   | { ok: false; error: string };
 
 /** 과제 제출 형식에 맞는 입력만 받는다. 형식에 없는 칸은 저장하지 않는다. */
 export function validateSubmissionPayload(
   format: AssignmentSubmissionFormatValue,
-  { mediaUrl, text }: { mediaUrl: unknown; text: unknown },
+  { mediaUrl, text, analysis }: { mediaUrl: unknown; text: unknown; analysis?: unknown },
 ): SubmissionPayloadResult {
   let normalizedUrl: string | null = null;
   let textHtml: string | null = null;
+  if (format === "ANALYSIS") {
+    const media = normalizeAssignmentMediaUrl(mediaUrl);
+    if (!media.ok) return { ok: false, error: media.error };
+    const result = validateMixAnalysisInput(analysis);
+    if (!result.ok) return result;
+    return { ok: true, mediaUrl: media.url, textHtml: null, analysisJson: result.json };
+  }
   if (format === "MIX" || format === "BOTH") {
     const media = normalizeAssignmentMediaUrl(mediaUrl);
     if (!media.ok) return { ok: false, error: media.error };
@@ -98,7 +106,7 @@ export function validateSubmissionPayload(
     if (!textResult.html) return { ok: false, error: "제출할 글을 입력해 주세요." };
     textHtml = textResult.html;
   }
-  return { ok: true, mediaUrl: normalizedUrl, textHtml };
+  return { ok: true, mediaUrl: normalizedUrl, textHtml, analysisJson: null };
 }
 
 export const FREE_SUBMISSION_EMPTY_ERROR = "링크나 글 중 하나 이상을 입력해 주세요.";
@@ -120,11 +128,11 @@ export function validateFreeSubmissionPayload(
   if (!textResult.ok) return textResult;
   const textHtml = textResult.html || null;
   if (!normalizedUrl && !textHtml) return { ok: false, error: FREE_SUBMISSION_EMPTY_ERROR };
-  return { ok: true, mediaUrl: normalizedUrl, textHtml };
+  return { ok: true, mediaUrl: normalizedUrl, textHtml, analysisJson: null };
 }
 
 export function parseSubmissionFormat(raw: unknown): AssignmentSubmissionFormatValue | null {
-  return raw === "MIX" || raw === "TEXT" || raw === "BOTH" ? raw : null;
+  return raw === "MIX" || raw === "TEXT" || raw === "BOTH" || raw === "ANALYSIS" ? raw : null;
 }
 
 export type AssignmentTaskStatus = "open" | "overdue" | "submitted" | "reviewed";

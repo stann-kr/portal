@@ -1147,6 +1147,76 @@ test("관리자 과제는 대상 학생에게만 쓰이고 학생은 자기 과�
   assert.equal((await db.select().from(feedbacks).where(eq(feedbacks.assignmentId, submitted.id!))).length, 1);
 });
 
+test("믹스셋 분석 과제는 MIX와 분석 표시로 저장하고, 학생은 자기 과제에만 분석을 내며 정기 회차도 양식을 물려받는다", { concurrency: false }, async (context) => {
+  const { db, setBeforeWrite } = await setupRacingDatabase(context, createSession("admin-1", "admin"));
+  await seedProfile(db, "admin-1", "admin");
+  await seedProfile(db, "student-1");
+  await seedProfile(db, "student-2");
+  const link = "https://youtu.be/aqz-KE-bpKQ";
+  const analysis = (entries: { at: string; memo: string }[], extra: Record<string, unknown> = {}) =>
+    JSON.stringify({ rating: 4, recommended: false, oneLiner: "좋은 셋", entries, ...extra });
+
+  const created = await assignmentTaskActions.createAssignmentTask("student-1", {}, taskForm({ title: "주간 믹스셋 분석", submissionFormat: "ANALYSIS", operationId: crypto.randomUUID() }));
+  assert.equal(created.success, true);
+  const [stored] = await db.select().from(assignmentTasks).where(eq(assignmentTasks.id, created.id!));
+  assert.equal(stored?.submissionFormat, "MIX");
+  assert.equal(stored?.analysisForm, true);
+
+  activeSession = createSession("student-2", "student");
+  assert.equal(await assignmentTaskActions.getMyAssignmentTask(created.id!), null, "다른 학생의 분석 과제는 열리지 않는다");
+  assert.ok((await assignmentTaskActions.submitAssignmentTask(created.id!, {}, taskForm({ mediaUrl: link, analysis: analysis([]) }))).error);
+
+  activeSession = createSession("student-1", "student");
+  assert.equal((await assignmentTaskActions.getMyAssignmentTask(created.id!))?.submissionFormat, "ANALYSIS");
+  assert.match((await assignmentTaskActions.submitAssignmentTask(created.id!, {}, taskForm({ mediaUrl: link }))).error ?? "", /읽지 못했습니다/u);
+  assert.ok((await assignmentTaskActions.submitAssignmentTask(created.id!, {}, taskForm({ analysis: analysis([]) }))).error, "링크가 필요하다");
+  const form = taskForm({ mediaUrl: link, text: "무시", analysis: analysis([{ at: "14:30", memo: "필터" }, { at: "0:40", memo: "거친 느낌" }, { at: "", memo: "덧붙임" }]) });
+  const submitted = await assignmentTaskActions.submitAssignmentTask(created.id!, {}, form);
+  assert.equal(submitted.success, true);
+  assert.equal((await assignmentTaskActions.submitAssignmentTask(created.id!, {}, form)).id, submitted.id, "같은 분석 재전송");
+  assert.match((await assignmentTaskActions.submitAssignmentTask(created.id!, {}, taskForm({ mediaUrl: link, analysis: analysis([], { rating: 2 }) }))).error ?? "", /이미 제출/u);
+  const [row] = await db.select().from(assignments).where(eq(assignments.id, submitted.id!));
+  assert.equal(row?.textHtml, null);
+  assert.deepEqual(JSON.parse(row?.analysisJson ?? "null").entries, [
+    { at: 40, memo: "거친 느낌" },
+    { at: null, memo: "덧붙임" },
+    { at: 870, memo: "필터" },
+  ], "시점 없는 줄은 바로 앞 줄(0:40)과 함께 움직인다");
+  assert.equal((await assignmentActions.getAssignmentById(submitted.id!))?.task?.submissionFormat, "ANALYSIS");
+
+  assert.equal((await assignmentTaskActions.updateMyTaskSubmission(submitted.id!, {}, taskForm({ mediaUrl: link, analysis: analysis([{ at: "3:30", memo: "킥" }]) }))).success, true);
+  assert.equal(JSON.parse((await db.select().from(assignments).where(eq(assignments.id, submitted.id!)))[0]?.analysisJson ?? "null").entries[0].at, 210);
+
+  // 줄 피드백은 그 줄의 시점 피드백이다. 피드백이 달리면 분석을 고칠 수 없다.
+  activeSession = createSession("admin-1", "admin");
+  assert.equal((await feedbackActions.createFeedback(submitted.id!, {}, taskForm({ operationId: crypto.randomUUID(), timeMarker: "03:30", content: "롱 믹스" }))).success, true);
+  assert.equal((await db.select().from(feedbacks).where(eq(feedbacks.assignmentId, submitted.id!)))[0]?.timeMarker, 210);
+  activeSession = createSession("student-1", "student");
+  assert.match((await assignmentTaskActions.updateMyTaskSubmission(submitted.id!, {}, taskForm({ mediaUrl: link, analysis: analysis([]) }))).error ?? "", /피드백이 등록된/u);
+
+  // 읽은 뒤 관리자가 분석 양식을 끄면(MIX 링크 과제) 분석 제출을 저장하지 않는다.
+  await db.insert(assignmentTasks).values({ id: "race-analysis", studentId: "student-1", title: "분석", submissionFormat: "MIX", analysisForm: true });
+  setBeforeWrite(async () => {
+    await db.update(assignmentTasks).set({ analysisForm: false }).where(eq(assignmentTasks.id, "race-analysis"));
+  });
+  assert.match((await assignmentTaskActions.submitAssignmentTask("race-analysis", {}, taskForm({ mediaUrl: link, analysis: analysis([]) }))).error ?? "", /과제가 바뀌었습니다/u);
+  assert.equal((await db.select().from(assignments).where(eq(assignments.taskId, "race-analysis"))).length, 0);
+
+  // 정기 과제: 회차는 규칙의 분석 양식을 물려받고, 규칙을 MIX로 바꾸면 마감 전·미제출 회차가 새 형식으로 다시 생긴다.
+  activeSession = createSession("admin-1", "admin");
+  const today = kstTodayKey(new Date());
+  const ruleFields = { title: "매주 분석", startDate: today, intervalWeeks: "1", weekdays: ["0", "1", "2", "3", "4", "5", "6"], dueTime: "23:59" };
+  const rule = await assignmentTaskActions.createAssignmentRecurrence("student-1", {}, taskForm({ ...ruleFields, submissionFormat: "ANALYSIS", operationId: crypto.randomUUID() }));
+  assert.equal(rule.success, true);
+  const ruleTasks = () => db.select().from(assignmentTasks).where(eq(assignmentTasks.recurrenceId, rule.id!));
+  assert.ok((await ruleTasks()).length > 0);
+  assert.ok((await ruleTasks()).every((task) => task.submissionFormat === "MIX" && task.analysisForm));
+  const listed = await assignmentTaskActions.getAssignmentTasksForStudent("student-1");
+  assert.equal(listed.recurrences.find((item) => item.id === rule.id)?.submissionFormat, "ANALYSIS");
+  assert.equal((await assignmentTaskActions.updateAssignmentRecurrence("student-1", rule.id!, {}, taskForm({ ...ruleFields, submissionFormat: "MIX", version: "1" }))).success, true);
+  assert.ok((await ruleTasks()).every((task) => !task.analysisForm), "마감 전 회차는 새 형식으로 다시 생긴다");
+});
+
 test("정기 과제 회차는 동시 조회에도 한 번만 생기고 수정·멈춤·삭제는 제출된 회차와 지난 회차를 보존한다", { concurrency: false }, async (context) => {
   const db = await setupDatabase(context, createSession("student-1", "student"));
   await seedProfile(db, "admin-1", "admin");

@@ -10,7 +10,7 @@ import { useState, useActionState, useCallback, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FileText, FilePlay, Play } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Button, buttonClassName } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { getMyAssignments } from "@/lib/actions/assignments";
 import {
@@ -39,6 +39,7 @@ import {
 import { formatKstDot } from "@/lib/kst-format";
 import { getPortalStatus, STATUS_TONE_DOT_CLASS_NAMES, type PortalStatusTone } from "@/lib/portal-status";
 import { STUDENT_LEGACY_REDIRECTS } from "@/lib/legacy-dashboard-routes";
+import { analysisWriteHref } from "@/lib/student-space-routes";
 import { createDocumentDraftKey } from "@/lib/form-draft";
 import { useFormDraft } from "@/lib/hooks/useFormDraft";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
@@ -283,7 +284,15 @@ function TaskRow({
               {submission.feedbackCount > 0 ? "피드백 보기" : "제출 보기"}
             </Link>
           ) : null}
-          {canEdit ? (
+          {canEdit && task.submissionFormat === "ANALYSIS" ? (
+            // 믹스셋 분석은 플레이어 옆에서 쓰는 전용 화면으로 간다(AnalysisWrite 보드).
+            <Link
+              href={analysisWriteHref(task.id)}
+              className={buttonClassName({ variant: submission ? "outline" : "default", className: "max-md:h-11" })}
+            >
+              {submission ? "분석 고치기" : "분석 쓰기"}
+            </Link>
+          ) : canEdit ? (
             <Button
               type="button"
               variant={submission ? "outline" : "default"}

@@ -17,15 +17,36 @@
 import { sha256 } from "@noble/hashes/sha256";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils";
 
-export type AssignmentSubmissionFormatValue = "MIX" | "TEXT" | "BOTH";
+/**
+ * 화면·action이 다루는 제출 형식. ANALYSIS(믹스셋 분석)는 DB에 submission_format = 'MIX'와
+ * analysis_form = 1로 저장한다(형식 CHECK를 바꾸려면 table을 다시 만들어야 해서 표시 column을 더했다).
+ */
+export type AssignmentSubmissionFormatValue = "MIX" | "TEXT" | "BOTH" | "ANALYSIS";
+/** DB submission_format column 값. */
+export type StoredAssignmentSubmissionFormat = Exclude<AssignmentSubmissionFormatValue, "ANALYSIS">;
 
-export const ASSIGNMENT_SUBMISSION_FORMATS: readonly AssignmentSubmissionFormatValue[] = ["MIX", "TEXT", "BOTH"];
+export const ASSIGNMENT_SUBMISSION_FORMATS: readonly AssignmentSubmissionFormatValue[] = ["MIX", "TEXT", "BOTH", "ANALYSIS"];
 
 export const ASSIGNMENT_FORMAT_LABELS: Record<AssignmentSubmissionFormatValue, string> = {
   MIX: "믹스셋 링크",
   TEXT: "글",
   BOTH: "링크와 글",
+  ANALYSIS: "믹스셋 분석",
 };
+
+export function toStoredAssignmentFormat(format: AssignmentSubmissionFormatValue): {
+  submissionFormat: StoredAssignmentSubmissionFormat;
+  analysisForm: boolean;
+} {
+  return format === "ANALYSIS" ? { submissionFormat: "MIX", analysisForm: true } : { submissionFormat: format, analysisForm: false };
+}
+
+export function fromStoredAssignmentFormat(row: {
+  submissionFormat: StoredAssignmentSubmissionFormat;
+  analysisForm: boolean;
+}): AssignmentSubmissionFormatValue {
+  return row.analysisForm && row.submissionFormat === "MIX" ? "ANALYSIS" : row.submissionFormat;
+}
 
 export type AssignmentRecurrenceSchedule = {
   startDate: string;

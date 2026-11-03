@@ -46,6 +46,11 @@ interface TimelineFeedbackProps {
   readPlaybackPosition?: () => Promise<number | null>;
   /** 재생할 링크가 없는 글 제출이면 false: 시점 입력을 숨기고 전체 피드백만 남긴다. */
   allowTimeMarker?: boolean;
+  /**
+   * overall: 믹스셋 분석 상세의 "전체 피드백". 시점 피드백은 시점 메모 줄에서 쓰므로
+   * 여기서는 시점 없이 한 줄 입력과 추가 버튼만 둔다(AnalysisDetail 보드).
+   */
+  variant?: "timeline" | "overall";
 }
 
 /** 폼의 시점 글자(분:초·초)를 초로 읽는다. 서버(createFeedback)와 같은 형식만 받는다. */
@@ -72,6 +77,7 @@ function FeedbackForm({
   onSeek,
   readPlaybackPosition,
   allowTimeMarker,
+  overall,
 }: {
   assignmentId: string;
   actorId: string;
@@ -79,6 +85,7 @@ function FeedbackForm({
   onSeek?: (seconds: number) => void;
   readPlaybackPosition?: () => Promise<number | null>;
   allowTimeMarker: boolean;
+  overall: boolean;
 }) {
   const [timeMarker, setTimeMarker] = useState("");
   const [positionError, setPositionError] = useState<string | null>(null);
@@ -201,7 +208,7 @@ function FeedbackForm({
   return (
     <form
       action={action}
-      className="flex flex-col gap-3 border-t border-border pt-4"
+      className={overall ? "flex flex-col gap-3" : "flex flex-col gap-3 border-t border-border pt-4"}
       onBlur={draft.flush}
       onSubmit={(event) => {
         if (!draft.loaded || !draft.canSubmit || isPending || !operationId) {
@@ -214,9 +221,11 @@ function FeedbackForm({
       }}
     >
       <input type="hidden" name={CREATION_OPERATION_FIELD} value={operationId} />
-      <p className="text-ui font-semibold text-secondary-foreground">
-        새 피드백 추가
-      </p>
+      {overall ? null : (
+        <p className="text-ui font-semibold text-secondary-foreground">
+          새 피드백 추가
+        </p>
+      )}
       <div className={allowTimeMarker ? "grid gap-3 sm:grid-cols-[7rem_minmax(0,1fr)_auto] sm:items-end" : "grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end"}>
         {allowTimeMarker ? <div className="flex flex-col gap-1.5">
           <div className="flex items-center justify-between gap-2">
@@ -252,14 +261,14 @@ function FeedbackForm({
           />
         </div> : <input type="hidden" name="timeMarker" value="" />}
         <div className="flex flex-col gap-1.5">
-          <label htmlFor="feedback-content" className="text-xs text-muted-foreground">
-            피드백 내용
+          <label htmlFor="feedback-content" className={overall ? "sr-only" : "text-xs text-muted-foreground"}>
+            {overall ? "과제 전체에 남길 피드백" : "피드백 내용"}
           </label>
           <Input
             id="feedback-content"
             name="content"
             type="text"
-            placeholder="구체적인 수정 지점을 입력하세요"
+            placeholder={overall ? "과제 전체에 남길 피드백" : "구체적인 수정 지점을 입력하세요"}
             value={content}
             onChange={(event) => {
               setContent(event.target.value);
@@ -310,9 +319,11 @@ function FeedbackForm({
           {markNotice ? <p role="status" className="text-xs text-muted-foreground">{markNotice}</p> : null}
         </div>
       ) : null}
-      <p id="feedback-time-help" className="text-xs text-muted-foreground">
-        {allowTimeMarker ? "재생 시점을 비우면 과제 전체에 대한 피드백으로 남습니다." : "글 제출에는 전체 피드백으로 남깁니다."}
-      </p>
+      {overall ? null : (
+        <p id="feedback-time-help" className="text-xs text-muted-foreground">
+          {allowTimeMarker ? "재생 시점을 비우면 과제 전체에 대한 피드백으로 남습니다." : "글 제출에는 전체 피드백으로 남깁니다."}
+        </p>
+      )}
       {positionError ? <p role="alert" className="text-xs text-destructive">{positionError}</p> : null}
       {showResult && state.error && <p id="feedback-error" role="alert" className="text-xs text-destructive">{state.error}</p>}
       {showResult && state.success && <p role="status" className="text-xs text-success">피드백을 추가했습니다.</p>}
@@ -332,7 +343,9 @@ export function TimelineFeedback({
   onRefresh,
   readPlaybackPosition,
   allowTimeMarker = true,
+  variant = "timeline",
 }: TimelineFeedbackProps) {
+  const overall = variant === "overall";
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [refreshError, setRefreshError] = useState(false);
@@ -370,7 +383,7 @@ export function TimelineFeedback({
       </div>}
       <div className="flex items-baseline justify-between gap-3 border-b border-border pb-2">
         <h2 id={headingId} className="text-ui font-semibold text-secondary-foreground">
-          Stann의 피드백{" "}
+          {overall ? "전체 피드백" : "Stann의 피드백"}{" "}
           <span className="font-mono font-normal text-muted-foreground">{feedbackList.length}</span>
         </h2>
         {onSeek && feedbackList.some((fb) => fb.timeMarker !== null) ? (
@@ -380,7 +393,7 @@ export function TimelineFeedback({
 
       {/* 피드백 목록 */}
       {feedbackList.length === 0 ? (
-        <p className="py-6 text-body text-muted-foreground">아직 피드백이 없습니다.</p>
+        overall ? null : <p className="py-6 text-body text-muted-foreground">아직 피드백이 없습니다.</p>
       ) : (
         <ul>
           {feedbackList.map((fb) => (
@@ -437,15 +450,16 @@ export function TimelineFeedback({
 
       {/* 관리자 피드백 작성 폼 */}
       {isAdmin && (
-        <div className="mt-6">
+        <div className={overall ? "mt-2.5" : "mt-6"}>
           <FeedbackForm
             key={`${actorId}:${assignmentId}`}
             assignmentId={assignmentId}
             actorId={actorId}
             onSuccess={refreshAfterChange}
             onSeek={onSeek}
-            readPlaybackPosition={allowTimeMarker ? readPlaybackPosition : undefined}
-            allowTimeMarker={allowTimeMarker}
+            readPlaybackPosition={allowTimeMarker && !overall ? readPlaybackPosition : undefined}
+            allowTimeMarker={allowTimeMarker && !overall}
+            overall={overall}
           />
         </div>
       )}

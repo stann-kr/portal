@@ -16,6 +16,7 @@ import { describeAssignmentSubmission, getUnifiedItemSpaceLabel } from "@/lib/un
 import { isLateSubmission } from "@/lib/assignment-submission";
 import { ASSIGNMENT_FORMAT_LABELS } from "@/lib/assignment-recurrence";
 import { buildAdminStudentDetailHref } from "@/lib/student-space-routes";
+import { parseStoredMixAnalysis } from "@/lib/mix-analysis";
 
 export type AssignmentFeedback = Awaited<
   ReturnType<typeof getFeedbacksByAssignment>
@@ -90,7 +91,9 @@ export default async function AssignmentDetailPage({
       actorId={session.user.id}
       mediaUrl={assignment.mediaUrl}
       textHtml={assignment.textHtml}
+      analysis={task?.submissionFormat === "ANALYSIS" ? parseStoredMixAnalysis(assignment.analysisJson) : null}
       task={task ? {
+        id: task.id,
         title: task.title,
         descriptionHtml: task.descriptionHtml,
         formatLabel: ASSIGNMENT_FORMAT_LABELS[task.submissionFormat],

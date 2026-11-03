@@ -19,6 +19,7 @@ import {
   requireStudentTarget,
 } from "@/lib/auth-guard";
 import { validateFreeSubmissionPayload } from "@/lib/assignment-submission";
+import { fromStoredAssignmentFormat } from "@/lib/assignment-recurrence";
 
 // ───────────────────────────────────────────────
 // 학생: 과제 제출
@@ -252,6 +253,7 @@ export async function getAssignmentById(assignmentId: string) {
         title: assignmentTasks.title,
         descriptionHtml: assignmentTasks.descriptionHtml,
         submissionFormat: assignmentTasks.submissionFormat,
+        analysisForm: assignmentTasks.analysisForm,
         dueAt: assignmentTasks.dueAt,
       },
     })
@@ -265,7 +267,16 @@ export async function getAssignmentById(assignmentId: string) {
 
   assertOwnerOrAdmin(session, row.assignment.studentId);
 
-  return { ...row.assignment, task: row.task?.id ? row.task : null };
+  const task = row.task?.id && row.task.submissionFormat
+    ? {
+        id: row.task.id,
+        title: row.task.title!,
+        descriptionHtml: row.task.descriptionHtml!,
+        submissionFormat: fromStoredAssignmentFormat({ submissionFormat: row.task.submissionFormat, analysisForm: Boolean(row.task.analysisForm) }),
+        dueAt: row.task.dueAt,
+      }
+    : null;
+  return { ...row.assignment, task };
 }
 
 /**

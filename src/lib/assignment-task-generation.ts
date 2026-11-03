@@ -38,8 +38,8 @@ function readDb(context: DbContext): DrizzleDb {
 
 const INSERT_OCCURRENCE_SQL =
   "INSERT INTO assignment_tasks " +
-  "(id, student_id, recurrence_id, occurrence_date, title, description_html, submission_format, due_at, created_by_id, version, created_at, updated_at) " +
-  "SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ? " +
+  "(id, student_id, recurrence_id, occurrence_date, title, description_html, submission_format, analysis_form, due_at, created_by_id, version, created_at, updated_at) " +
+  "SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ? " +
   "WHERE EXISTS (SELECT 1 FROM assignment_recurrences WHERE id = ? AND student_id = ? AND version = ? AND paused_at IS NULL) " +
   "ON CONFLICT DO NOTHING";
 
@@ -62,6 +62,7 @@ export function buildOccurrenceInsertStatements(
         rule.title,
         rule.descriptionHtml,
         rule.submissionFormat,
+        rule.analysisForm ? 1 : 0,
         epochSeconds(occurrence.dueAt),
         rule.createdById,
         nowSeconds,

@@ -57,7 +57,7 @@ export function ChoiceGroup<T extends string>({
         aria-labelledby={labelId}
         className={cn(
           variant === "segment"
-            ? "inline-flex h-11 gap-0.5 self-start rounded-touch bg-muted p-0.5 md:h-8 md:rounded-md"
+            ? "inline-flex h-11 max-w-full gap-0.5 self-start rounded-touch bg-muted p-0.5 md:h-8 md:rounded-md"
             : "flex flex-wrap gap-1.5",
         )}
       >
@@ -82,7 +82,7 @@ export function ChoiceGroup<T extends string>({
                 "whitespace-nowrap transition-colors duration-[var(--duration-fast)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none disabled:opacity-50",
                 variant === "segment"
                   ? cn(
-                    "h-10 rounded-md px-4 text-body md:h-7 md:rounded-sm md:px-3.5 md:text-ui",
+                    "h-10 rounded-md px-3 text-body md:h-7 md:rounded-sm md:px-3.5 md:text-ui",
                     checked ? "bg-background font-medium text-foreground shadow-segment" : "text-secondary-foreground hover:text-foreground",
                   )
                   : cn(

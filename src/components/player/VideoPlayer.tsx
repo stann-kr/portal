@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import dynamic from "next/dynamic";
 import { SoundCloudPlayer } from "./SoundCloudPlayer";
 import { isSoundCloudUrl } from "./media-source";
@@ -19,13 +19,17 @@ type VideoPlayerProps = {
   seekRequest?: MediaSeekRequest;
   /** 타임라인 피드백처럼 현재 위치가 필요한 화면에 reader를 연결하고 unmount 때 해제한다. */
   onPositionReaderChange?: (reader: PlaybackPositionReader | null) => void;
+  /** 영상을 재생하지 못했을 때(올린 사람이 다른 사이트 재생을 막은 YouTube 영상 등). 시점을 원본에서 열도록 바꿀 때 쓴다. */
+  onPlaybackError?: () => void;
+  /** 재생 실패 안내를 화면에 맞게 바꾼다. 없으면 기본 안내(원본에서 재생)를 보인다. */
+  errorNotice?: ReactNode;
 };
 
 function finiteSeconds(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
 }
 
-function MediaPlayer({ url, seekRequest, onPositionReaderChange }: VideoPlayerProps) {
+function MediaPlayer({ url, seekRequest, onPositionReaderChange, onPlaybackError, errorNotice }: VideoPlayerProps) {
   const playerRef = useRef<HTMLVideoElement>(null);
   const readyRef = useRef(false);
   const pendingSeekRef = useRef<number | null>(null);
@@ -72,7 +76,7 @@ function MediaPlayer({ url, seekRequest, onPositionReaderChange }: VideoPlayerPr
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}
         onEnded={() => setPlaying(false)}
-        onError={() => { setError(true); setPlaying(false); }}
+        onError={() => { setError(true); setPlaying(false); onPlaybackError?.(); }}
         width="100%"
         height="100%"
         controls
@@ -80,18 +84,18 @@ function MediaPlayer({ url, seekRequest, onPositionReaderChange }: VideoPlayerPr
         className="absolute inset-0"
       />
     </div>
-    {error && <p role="alert" className="px-5 text-ui text-destructive md:px-0">
+    {error && (errorNotice ?? <p role="alert" className="px-5 text-ui text-destructive md:px-0">
       미디어를 불러오지 못했습니다. <OriginalLink url={url} />에서 재생해 주세요.
-    </p>}
+    </p>)}
   </>;
 }
 
-export function VideoPlayer({ url, seekRequest, onPositionReaderChange }: VideoPlayerProps) {
+export function VideoPlayer({ url, seekRequest, onPositionReaderChange, onPlaybackError, errorNotice }: VideoPlayerProps) {
   return (
     <div className="flex flex-col gap-3">
       {isSoundCloudUrl(url)
         ? <SoundCloudPlayer key={url} url={url} seekRequest={seekRequest} onPositionReaderChange={onPositionReaderChange} />
-        : <MediaPlayer key={url} url={url} seekRequest={seekRequest} onPositionReaderChange={onPositionReaderChange} />}
+        : <MediaPlayer key={url} url={url} seekRequest={seekRequest} onPositionReaderChange={onPositionReaderChange} onPlaybackError={onPlaybackError} errorNotice={errorNotice} />}
     </div>
   );
 }

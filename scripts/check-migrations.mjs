@@ -49,6 +49,7 @@ import { validateCalendarSyncUpgrade } from "./migration-check/calendar-sync.mjs
 import { validateCalendarPushChannelUpgrade } from "./migration-check/calendar-push-channels.mjs";
 import { validateDiggingPlaylistUpgrade } from "./migration-check/digging-playlists.mjs";
 import { validateCommentTimeMarkerUpgrade } from "./migration-check/comment-time-markers.mjs";
+import { validateMixAnalysisUpgrade } from "./migration-check/mix-analysis.mjs";
 import {
   validateAccountPrivacyAtomicSource,
   validateAccountPrivacySemantics,
@@ -182,6 +183,8 @@ async function main() {
   console.log("PASS populated 0018 → 0019 digging playlist table, constraints and student cascade");
   await validateCommentTimeMarkerUpgrade(migrationFiles);
   console.log("PASS populated 0019 → 0020 comment time marker column, CHECK bounds and index without table rebuild");
+  await validateMixAnalysisUpgrade(migrationFiles);
+  console.log("PASS populated 0022 → 0023 mix analysis columns, CHECK bounds and row preservation without table rebuild");
 }
 
 try {

@@ -135,6 +135,9 @@ function FormatField({
     <div className="flex flex-col gap-1.5">
       <ChoiceGroup label="제출 형식" options={FORMAT_OPTIONS} value={value} onChange={onChange} variant="segment" disabled={disabled} />
       <input type="hidden" name="submissionFormat" value={value} />
+      {value === "ANALYSIS" ? (
+        <p className="text-xs text-muted-foreground">학생은 믹스셋 링크와 함께 평점·추천 여부·한줄평·시점 메모를 적습니다.</p>
+      ) : null}
       {note ? <p className="text-xs text-muted-foreground">{note}</p> : null}
     </div>
   );
