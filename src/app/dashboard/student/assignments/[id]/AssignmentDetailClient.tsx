@@ -18,7 +18,10 @@ import { FreeSubmissionForm } from "@/components/student-portal/FreeSubmissionFo
 import { Button } from "@/components/ui/button";
 import { useConfirmAction } from "@/components/ui/confirm-action";
 import { RichTextContent } from "@/components/editor/RichTextContent";
+import { MixAnalysisEntries, MixAnalysisRating } from "@/components/feedback/MixAnalysisReview";
 import { STUDENT_LEGACY_REDIRECTS } from "@/lib/legacy-dashboard-routes";
+import { mediaUrlAt, splitFeedbackByEntry, type MixAnalysis } from "@/lib/mix-analysis";
+import { analysisWriteHref } from "@/lib/student-space-routes";
 import { cn } from "@/lib/utils";
 
 interface AssignmentDetailClientProps {
@@ -27,8 +30,11 @@ interface AssignmentDetailClientProps {
   /** 글만 제출하면 null. 링크가 있을 때만 플레이어를 보인다. */
   mediaUrl: string | null;
   textHtml: string | null;
+  /** 믹스셋 분석 과제의 분석. 다른 형식이면 null. */
+  analysis: MixAnalysis | null;
   /** 관리자가 낸 과제에 대한 제출이면 과제 정보 */
   task: {
+    id: string;
     title: string;
     descriptionHtml: string;
     formatLabel: string;
@@ -126,6 +132,7 @@ export function AssignmentDetailClient({
   actorId,
   mediaUrl,
   textHtml,
+  analysis,
   task,
   feedbackList,
   isAdmin,
@@ -175,9 +182,17 @@ export function AssignmentDetailClient({
     [canDelete, mediaUrl, requestDelete],
   );
 
+  // 올린 사람이 다른 사이트 재생을 막은 영상이면, 분석의 시점은 원본 사이트를 그 위치로 연다.
+  const [playbackBlocked, setPlaybackBlocked] = useState(false);
+  const handlePlaybackError = useCallback(() => setPlaybackBlocked(true), []);
   const handleSeek = (seconds: number) => {
+    if (analysis && playbackBlocked && mediaUrl) {
+      window.open(mediaUrlAt(mediaUrl, seconds), "_blank", "noopener,noreferrer");
+      return;
+    }
     setSeekRequest({ seconds });
   };
+  const analysisFeedback = analysis ? splitFeedbackByEntry(analysis.entries, feedbackList) : null;
 
   // 좁은 화면은 플레이어 → 머리 → 피드백, 넓은 화면은 머리가 두 열 위에 놓인다. 머리는 상태가 없어 폭마다 한 벌만
   // 보이게 두 번 둔다(숨은 벌은 display:none이라 읽기·Tab 순서에 들어가지 않는다).
@@ -197,6 +212,7 @@ export function AssignmentDetailClient({
           <span className="md:hidden">{submittedLabelShort}</span>
           <span className="hidden md:inline">{submittedLabel}</span>
           {task?.late ? " · 늦은 제출" : ""}
+          {analysis && task ? ` · ${task.formatLabel}` : ""}
           {mediaUrl ? ` · ${mediaSourceLabel(mediaUrl)}` : ""}
         </span>
         {mediaUrl ? (
@@ -238,7 +254,15 @@ export function AssignmentDetailClient({
       <RichTextContent html={textHtml} className="text-md leading-7 md:text-body" />
     </section>
   ) : null;
-  const editHint = !isAdmin && task && feedbackList.length === 0 ? (
+  const editHint = !isAdmin && task && analysis && feedbackList.length === 0 ? (
+    <p className="text-xs text-muted-foreground">
+      피드백이 달리기 전에는{" "}
+      <Link href={analysisWriteHref(task.id)} className="underline underline-offset-[3px] hover:text-foreground">
+        분석을 고칠 수 있습니다
+      </Link>
+      .
+    </p>
+  ) : !isAdmin && task && feedbackList.length === 0 ? (
     <p className="text-xs text-muted-foreground">
       피드백이 달리기 전에는{" "}
       <Link href={STUDENT_LEGACY_REDIRECTS.assignments} className="underline underline-offset-[3px] hover:text-foreground">
@@ -295,23 +319,63 @@ export function AssignmentDetailClient({
       <div className={mediaUrl ? "contents md:flex md:flex-wrap md:items-start md:gap-10" : "contents md:flex md:max-w-[720px] md:flex-col md:gap-7"}>
         {mediaUrl ? (
           <div className="flex min-w-0 flex-col gap-3 md:sticky md:top-6 md:flex-[3_1_520px]">
-            <VideoPlayer url={mediaUrl} seekRequest={seekRequest} onPositionReaderChange={handlePositionReaderChange} />
+            <VideoPlayer
+              url={mediaUrl}
+              seekRequest={seekRequest}
+              onPositionReaderChange={handlePositionReaderChange}
+              onPlaybackError={analysis ? handlePlaybackError : undefined}
+              errorNotice={analysis ? (
+                <p role="status" className="px-5 text-ui leading-5 text-secondary-foreground md:px-0">
+                  올린 사람이 다른 사이트에서 재생하지 못하게 막아 둔 영상입니다.{" "}
+                  <a href={mediaUrl} target="_blank" rel="noopener noreferrer" className="underline underline-offset-[3px] hover:text-foreground">
+                    {mediaSourceLabel(mediaUrl)}에서 열기
+                  </a>
+                </p>
+              ) : undefined}
+            />
           </div>
         ) : null}
         {renderHeader("narrow")}
         <div className={cn("flex min-w-0 flex-col gap-6 px-5 pt-4 md:px-0 md:pt-0", mediaUrl && "md:flex-[2_1_340px]")}>
-          {taskBrief}
-          {submittedText}
-          {editHint}
-          <TimelineFeedback
-            assignmentId={assignmentId}
-            actorId={actorId}
-            feedbackList={feedbackList}
-            isAdmin={isAdmin}
-            onSeek={mediaUrl ? handleSeek : undefined}
-            readPlaybackPosition={isAdmin && mediaUrl ? readPlaybackPosition : undefined}
-            allowTimeMarker={Boolean(mediaUrl)}
-          />
+          {analysis && analysisFeedback ? (
+            <>
+              <MixAnalysisRating analysis={analysis} />
+              <MixAnalysisEntries
+                assignmentId={assignmentId}
+                actorId={actorId}
+                analysis={analysis}
+                feedbackList={feedbackList}
+                isAdmin={isAdmin}
+                seekMode={mediaUrl ? (playbackBlocked ? "original" : "play") : null}
+                onSeek={mediaUrl ? handleSeek : undefined}
+                onChanged={() => router.refresh()}
+              />
+              {editHint}
+              <TimelineFeedback
+                assignmentId={assignmentId}
+                actorId={actorId}
+                feedbackList={analysisFeedback.rest}
+                isAdmin={isAdmin}
+                onSeek={mediaUrl ? handleSeek : undefined}
+                variant="overall"
+              />
+            </>
+          ) : (
+            <>
+              {taskBrief}
+              {submittedText}
+              {editHint}
+              <TimelineFeedback
+                assignmentId={assignmentId}
+                actorId={actorId}
+                feedbackList={feedbackList}
+                isAdmin={isAdmin}
+                onSeek={mediaUrl ? handleSeek : undefined}
+                readPlaybackPosition={isAdmin && mediaUrl ? readPlaybackPosition : undefined}
+                allowTimeMarker={Boolean(mediaUrl)}
+              />
+            </>
+          )}
           {canDelete && deleteReturnTo ? (
             <div className="flex flex-col gap-1">
               <p className="text-xs text-muted-foreground">잘못 제출했다면 피드백이 달리기 전에 삭제할 수 있습니다.</p>

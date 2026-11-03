@@ -277,6 +277,8 @@ export const assignmentRecurrences = sqliteTable(
     submissionFormat: text("submission_format")
       .$type<AssignmentSubmissionFormat>()
       .notNull(),
+    /** 믹스셋 분석 양식(평점·추천·한줄평·시점 메모). 형식은 MIX로 두고 이 표시만 더한다. */
+    analysisForm: integer("analysis_form", { mode: "boolean" }).default(false).notNull(),
     startDate: text("start_date").notNull(),
     intervalWeeks: integer("interval_weeks").default(1).notNull(),
     /** 요일 bit mask. bit 0이 일요일, bit 6이 토요일이다. */
@@ -303,6 +305,10 @@ export const assignmentRecurrences = sqliteTable(
       sql`${table.submissionFormat} IN ('MIX', 'TEXT', 'BOTH')`,
     ),
     check(
+      "assignment_recurrences_analysis_form_check",
+      sql`${table.analysisForm} IN (0, 1) AND (${table.analysisForm} = 0 OR ${table.submissionFormat} = 'MIX')`,
+    ),
+    check(
       "assignment_recurrences_schedule_check",
       sql`length(${table.title}) > 0 AND length(${table.startDate}) = 10 AND length(${table.dueTime}) = 5 AND ${table.intervalWeeks} BETWEEN 1 AND 12 AND ${table.weekdays} BETWEEN 1 AND 127 AND (${table.endDate} IS NULL OR (length(${table.endDate}) = 10 AND ${table.endDate} >= ${table.startDate})) AND (${table.maxOccurrences} IS NULL OR ${table.maxOccurrences} BETWEEN 1 AND 520) AND ${table.version} >= 1`,
     ),
@@ -327,6 +333,8 @@ export const assignmentTasks = sqliteTable(
     submissionFormat: text("submission_format")
       .$type<AssignmentSubmissionFormat>()
       .notNull(),
+    /** 믹스셋 분석 양식. 정기 과제 회차는 규칙의 값을 그대로 받는다. */
+    analysisForm: integer("analysis_form", { mode: "boolean" }).default(false).notNull(),
     dueAt: integer("due_at", { mode: "timestamp" }),
     createdById: text("created_by_id").references(() => profiles.id, {
       onDelete: "set null",
@@ -348,6 +356,10 @@ export const assignmentTasks = sqliteTable(
     check(
       "assignment_tasks_format_check",
       sql`${table.submissionFormat} IN ('MIX', 'TEXT', 'BOTH')`,
+    ),
+    check(
+      "assignment_tasks_analysis_form_check",
+      sql`${table.analysisForm} IN (0, 1) AND (${table.analysisForm} = 0 OR ${table.submissionFormat} = 'MIX')`,
     ),
     check(
       "assignment_tasks_payload_check",
@@ -372,6 +384,8 @@ export const assignments = sqliteTable(
     }),
     mediaUrl: text("media_url"),
     textHtml: text("text_html"),
+    /** 믹스셋 분석 양식 제출(JSON: 평점·추천·한줄평·시점 메모). 분석 과제가 아니면 null. */
+    analysisJson: text("analysis_json"),
     submittedAt: integer("submitted_at", { mode: "timestamp" }).default(
       sql`(strftime('%s', 'now'))`,
     ),
@@ -386,6 +400,10 @@ export const assignments = sqliteTable(
     check(
       "assignments_content_check",
       sql`(${table.mediaUrl} IS NOT NULL AND length(${table.mediaUrl}) > 0) OR (${table.textHtml} IS NOT NULL AND length(${table.textHtml}) > 0)`,
+    ),
+    check(
+      "assignments_analysis_json_check",
+      sql`${table.analysisJson} IS NULL OR (json_valid(${table.analysisJson}) AND length(${table.analysisJson}) <= 100000)`,
     ),
   ],
 );

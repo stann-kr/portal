@@ -19,3 +19,8 @@ export function buildStudentDiggingBoardHref(returnTo?: string): string {
     ? `/dashboard/student/digging?returnTo=${encodeURIComponent(returnTo)}`
     : "/dashboard/student/digging";
 }
+
+/** 학생 믹스셋 분석 작성·수정 화면(AnalysisWrite·MobileAnalysisWrite 보드). */
+export function analysisWriteHref(taskId: string): string {
+  return `/dashboard/student/assignments/analysis/${encodeURIComponent(taskId)}`;
+}

@@ -27,6 +27,8 @@ import {
 } from "@/lib/creation-operation";
 import { parseKstDateTimeInput } from "@/lib/date-input";
 import {
+  fromStoredAssignmentFormat,
+  toStoredAssignmentFormat,
   validateRecurrenceSchedule,
   weekdayMaskFromList,
   type AssignmentSubmissionFormatValue,
@@ -52,6 +54,8 @@ export type AssignmentTaskSubmission = {
   id: string;
   mediaUrl: string | null;
   textHtml: string | null;
+  /** 믹스셋 분석 과제의 분석(JSON). 다른 형식이면 null. */
+  analysisJson: string | null;
   submittedAt: Date | null;
   updatedAt: Date | null;
   feedbackCount: number;
@@ -134,6 +138,11 @@ type TaskContent = {
   submissionFormat: AssignmentSubmissionFormatValue;
 };
 
+/** 화면 형식(ANALYSIS 포함)을 DB column 두 개로 나눈다. */
+function storedTaskContent({ submissionFormat, ...rest }: TaskContent) {
+  return { ...rest, ...toStoredAssignmentFormat(submissionFormat) };
+}
+
 function parseTaskContent(formData: FormData): { ok: true; value: TaskContent } | { ok: false; error: string } {
   const rawTitle = formData.get("title");
   const title = typeof rawTitle === "string" ? rawTitle.trim() : "";
@@ -198,11 +207,11 @@ function parseRecurrenceForm(formData: FormData) {
   return { ok: true as const, value: { ...content.value, ...schedule.schedule } };
 }
 
-async function loadTasksWithSubmissions(db: DrizzleDb, studentId: string): Promise<AssignmentTaskItem[]> {
+async function loadTasksWithSubmissions(db: DrizzleDb, studentId: string, taskId?: string): Promise<AssignmentTaskItem[]> {
   const tasks = await db
     .select()
     .from(assignmentTasks)
-    .where(eq(assignmentTasks.studentId, studentId))
+    .where(and(eq(assignmentTasks.studentId, studentId), taskId ? eq(assignmentTasks.id, taskId) : undefined))
     .orderBy(desc(assignmentTasks.dueAt), desc(assignmentTasks.createdAt));
   if (tasks.length === 0) return [];
 
@@ -212,6 +221,7 @@ async function loadTasksWithSubmissions(db: DrizzleDb, studentId: string): Promi
       taskId: assignments.taskId,
       mediaUrl: assignments.mediaUrl,
       textHtml: assignments.textHtml,
+      analysisJson: assignments.analysisJson,
       submittedAt: assignments.submittedAt,
       updatedAt: assignments.updatedAt,
       feedbackCount: count(feedbacks.id),
@@ -220,7 +230,7 @@ async function loadTasksWithSubmissions(db: DrizzleDb, studentId: string): Promi
     // 과제 id 목록을 bind하지 않고 join으로 좁힌다(D1은 statement당 bind 100개 제한).
     .innerJoin(assignmentTasks, and(eq(assignmentTasks.id, assignments.taskId), eq(assignmentTasks.studentId, studentId)))
     .leftJoin(feedbacks, eq(feedbacks.assignmentId, assignments.id))
-    .where(eq(assignments.studentId, studentId))
+    .where(and(eq(assignments.studentId, studentId), taskId ? eq(assignments.taskId, taskId) : undefined))
     .groupBy(assignments.id);
   const byTask = new Map(submissionRows.map((row) => [row.taskId, row]));
 
@@ -230,7 +240,7 @@ async function loadTasksWithSubmissions(db: DrizzleDb, studentId: string): Promi
       id: task.id,
       title: task.title,
       descriptionHtml: task.descriptionHtml,
-      submissionFormat: task.submissionFormat,
+      submissionFormat: fromStoredAssignmentFormat(task),
       dueAt: task.dueAt,
       occurrenceDate: task.occurrenceDate,
       recurrenceId: task.recurrenceId,
@@ -241,6 +251,7 @@ async function loadTasksWithSubmissions(db: DrizzleDb, studentId: string): Promi
             id: submission.id,
             mediaUrl: submission.mediaUrl,
             textHtml: submission.textHtml,
+            analysisJson: submission.analysisJson,
             submittedAt: submission.submittedAt,
             updatedAt: submission.updatedAt,
             feedbackCount: Number(submission.feedbackCount),
@@ -272,7 +283,7 @@ function toRecurrenceItem(row: typeof assignmentRecurrences.$inferSelect): Assig
     id: row.id,
     title: row.title,
     descriptionHtml: row.descriptionHtml,
-    submissionFormat: row.submissionFormat,
+    submissionFormat: fromStoredAssignmentFormat(row),
     startDate: row.startDate,
     intervalWeeks: row.intervalWeeks,
     weekdays: row.weekdays,
@@ -318,6 +329,13 @@ export async function getAssignmentTasksForStudent(studentId: string): Promise<{
   return { tasks: sortTasks(tasks, now), recurrences: rules.map(toRecurrenceItem) };
 }
 
+/** 학생 본인의 과제 하나(믹스셋 분석 작성 화면). 남의 과제와 없는 과제는 같은 null이다. */
+export async function getMyAssignmentTask(taskId: string): Promise<AssignmentTaskItem | null> {
+  const session = await requireStudentSession();
+  const tasks = await loadTasksWithSubmissions(readDb(createDbContext()), session.user.id, taskId);
+  return tasks[0] ?? null;
+}
+
 // ───────────────────────────────────────────────
 // 관리자: 한 번 과제
 // ───────────────────────────────────────────────
@@ -341,7 +359,7 @@ export async function createAssignmentTask(
   try {
     const inserted = await db
       .insert(assignmentTasks)
-      .values({ id, studentId, ...content.value, dueAt: due.value, createdById: session.user.id })
+      .values({ id, studentId, ...storedTaskContent(content.value), dueAt: due.value, createdById: session.user.id })
       .onConflictDoNothing({ target: assignmentTasks.id })
       .returning({ id: assignmentTasks.id });
     if (inserted.length === 0) {
@@ -352,7 +370,7 @@ export async function createAssignmentTask(
         && existing.recurrenceId === null
         && existing.title === content.value.title
         && existing.descriptionHtml === content.value.descriptionHtml
-        && existing.submissionFormat === content.value.submissionFormat
+        && fromStoredAssignmentFormat(existing) === content.value.submissionFormat
         && sameSecond(existing.dueAt, due.value);
       if (!same) {
         return { error: "이 과제는 수정 전 내용으로 이미 저장되었습니다. 목록을 확인한 뒤 새 과제로 다시 내 주세요." };
@@ -383,11 +401,11 @@ export async function updateAssignmentTask(
   const scope = and(eq(assignmentTasks.id, taskId), eq(assignmentTasks.studentId, studentId));
   const [current] = await db.select().from(assignmentTasks).where(scope).limit(1);
   if (!current) return { error: "과제를 찾을 수 없습니다. 목록을 새로고침해 주세요." };
-  const formatChanged = current.submissionFormat !== content.value.submissionFormat;
+  const formatChanged = fromStoredAssignmentFormat(current) !== content.value.submissionFormat;
 
   const updated = await db
     .update(assignmentTasks)
-    .set({ ...content.value, dueAt: due.value, version: version + 1, updatedAt: new Date() })
+    .set({ ...storedTaskContent(content.value), dueAt: due.value, version: version + 1, updatedAt: new Date() })
     .where(and(
       scope,
       eq(assignmentTasks.version, version),
@@ -457,7 +475,7 @@ export async function createAssignmentRecurrence(
   try {
     const inserted = await db
       .insert(assignmentRecurrences)
-      .values({ id, studentId, ...parsed.value, createdById: session.user.id })
+      .values({ id, studentId, ...parsed.value, ...toStoredAssignmentFormat(parsed.value.submissionFormat), createdById: session.user.id })
       .onConflictDoNothing({ target: assignmentRecurrences.id })
       .returning({ id: assignmentRecurrences.id });
     if (inserted.length === 0) {
@@ -467,7 +485,7 @@ export async function createAssignmentRecurrence(
         && existing.studentId === studentId
         && existing.title === value.title
         && existing.descriptionHtml === value.descriptionHtml
-        && existing.submissionFormat === value.submissionFormat
+        && fromStoredAssignmentFormat(existing) === value.submissionFormat
         && existing.startDate === value.startDate
         && existing.intervalWeeks === value.intervalWeeks
         && existing.weekdays === value.weekdays
@@ -523,14 +541,15 @@ export async function updateAssignmentRecurrence(
   try {
     await ensureRecurringAssignmentTasks(context, studentId, now, recurrenceId);
     const value = parsed.value;
+    const stored = toStoredAssignmentFormat(value.submissionFormat);
     await executeDocumentStatementsAtomically(context, [
       {
         query:
-          "UPDATE assignment_recurrences SET title = ?, description_html = ?, submission_format = ?, start_date = ?, " +
+          "UPDATE assignment_recurrences SET title = ?, description_html = ?, submission_format = ?, analysis_form = ?, start_date = ?, " +
           "interval_weeks = ?, weekdays = ?, due_time = ?, end_date = ?, max_occurrences = ?, version = version + 1, updated_at = ? " +
           "WHERE id = ? AND student_id = ? AND version = ?",
         params: [
-          value.title, value.descriptionHtml, value.submissionFormat, value.startDate,
+          value.title, value.descriptionHtml, stored.submissionFormat, stored.analysisForm ? 1 : 0, value.startDate,
           value.intervalWeeks, value.weekdays, value.dueTime, value.endDate, value.maxOccurrences, epochSeconds(now),
           recurrenceId, studentId, version,
         ],
@@ -622,36 +641,54 @@ export async function submitAssignmentTask(
   const studentId = session.user.id;
   const db = readDb(createDbContext());
   const [task] = await db
-    .select({ id: assignmentTasks.id, submissionFormat: assignmentTasks.submissionFormat, dueAt: assignmentTasks.dueAt })
+    .select({
+      id: assignmentTasks.id,
+      submissionFormat: assignmentTasks.submissionFormat,
+      analysisForm: assignmentTasks.analysisForm,
+      dueAt: assignmentTasks.dueAt,
+    })
     .from(assignmentTasks)
     .where(and(eq(assignmentTasks.id, taskId), eq(assignmentTasks.studentId, studentId)))
     .limit(1);
   if (!task) return { error: "과제를 찾을 수 없습니다. 목록을 새로고침해 주세요." };
-  const payload = validateSubmissionPayload(task.submissionFormat, {
+  const payload = validateSubmissionPayload(fromStoredAssignmentFormat(task), {
     mediaUrl: formData.get("mediaUrl"),
     text: formData.get("text"),
+    analysis: formData.get("analysis"),
   });
   if (!payload.ok) return { error: payload.error };
 
   try {
     // 읽은 뒤 관리자가 형식을 바꾸거나 과제를 지웠을 수 있으므로, INSERT 자체가 과제 소유와 읽은 형식을 다시 확인한다.
     const inserted = await db.all<{ id: string }>(sql`
-      INSERT INTO assignments (id, student_id, task_id, media_url, text_html)
-      SELECT ${crypto.randomUUID()}, ${studentId}, ${taskId}, ${payload.mediaUrl}, ${payload.textHtml}
+      INSERT INTO assignments (id, student_id, task_id, media_url, text_html, analysis_json)
+      SELECT ${crypto.randomUUID()}, ${studentId}, ${taskId}, ${payload.mediaUrl}, ${payload.textHtml}, ${payload.analysisJson}
       WHERE EXISTS (
         SELECT 1 FROM assignment_tasks
         WHERE id = ${taskId} AND student_id = ${studentId} AND submission_format = ${task.submissionFormat}
+          AND analysis_form = ${task.analysisForm ? 1 : 0}
       )
       ON CONFLICT (task_id) DO NOTHING
       RETURNING id`);
     if (inserted.length === 0) {
       const [existing] = await db
-        .select({ id: assignments.id, studentId: assignments.studentId, mediaUrl: assignments.mediaUrl, textHtml: assignments.textHtml })
+        .select({
+          id: assignments.id,
+          studentId: assignments.studentId,
+          mediaUrl: assignments.mediaUrl,
+          textHtml: assignments.textHtml,
+          analysisJson: assignments.analysisJson,
+        })
         .from(assignments)
         .where(eq(assignments.taskId, taskId))
         .limit(1);
       if (!existing) return { error: TASK_CHANGED_MESSAGE };
-      if (existing.studentId === studentId && existing.mediaUrl === payload.mediaUrl && existing.textHtml === payload.textHtml) {
+      if (
+        existing.studentId === studentId
+        && existing.mediaUrl === payload.mediaUrl
+        && existing.textHtml === payload.textHtml
+        && existing.analysisJson === payload.analysisJson
+      ) {
         return { success: true, id: existing.id };
       }
       return { error: "이 과제는 이미 제출했습니다. 내용을 바꾸려면 제출 수정을 눌러 주세요." };
@@ -675,21 +712,26 @@ export async function updateMyTaskSubmission(
   const db = readDb(createDbContext());
   const own = and(eq(assignments.id, assignmentId), eq(assignments.studentId, studentId));
   const [row] = await db
-    .select({ id: assignments.id, submissionFormat: assignmentTasks.submissionFormat })
+    .select({
+      id: assignments.id,
+      submissionFormat: assignmentTasks.submissionFormat,
+      analysisForm: assignmentTasks.analysisForm,
+    })
     .from(assignments)
     .innerJoin(assignmentTasks, eq(assignmentTasks.id, assignments.taskId))
     .where(and(own, eq(assignmentTasks.studentId, studentId)))
     .limit(1);
   if (!row) return { error: "고칠 제출을 찾을 수 없습니다. 목록을 새로고침해 주세요." };
-  const payload = validateSubmissionPayload(row.submissionFormat, {
+  const payload = validateSubmissionPayload(fromStoredAssignmentFormat(row), {
     mediaUrl: formData.get("mediaUrl"),
     text: formData.get("text"),
+    analysis: formData.get("analysis"),
   });
   if (!payload.ok) return { error: payload.error };
 
   const updated = await db
     .update(assignments)
-    .set({ mediaUrl: payload.mediaUrl, textHtml: payload.textHtml, updatedAt: new Date() })
+    .set({ mediaUrl: payload.mediaUrl, textHtml: payload.textHtml, analysisJson: payload.analysisJson, updatedAt: new Date() })
     .where(and(
       own,
       notExists(db.select({ id: feedbacks.id }).from(feedbacks).where(eq(feedbacks.assignmentId, assignments.id))),
@@ -698,6 +740,7 @@ export async function updateMyTaskSubmission(
         eq(assignmentTasks.id, assignments.taskId),
         eq(assignmentTasks.studentId, studentId),
         eq(assignmentTasks.submissionFormat, row.submissionFormat),
+        eq(assignmentTasks.analysisForm, row.analysisForm),
       ))),
     ))
     .returning({ id: assignments.id });
