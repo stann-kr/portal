@@ -87,7 +87,7 @@ export function AnnouncementList({ posts, isAdmin, returnTo = "/community" }: An
       {error ? <p role="alert" className="text-ui text-destructive">{error}</p> : null}
       <ul className="flex flex-col">
         {posts.map((post) => {
-          const meta = communityRowMeta(post, "관리자");
+          const meta = communityRowMeta(post, "Stann");
           const detailHref = `/community/${post.id}?returnTo=${encodeURIComponent(returnTo)}`;
           const pinButton = isAdmin ? (
             <button

@@ -39,7 +39,7 @@ export default async function AdminStudentNewNotePage({
       defaultDate={resolveNoteCreateDefaultDate(query.date)}
       defaultTitle={resolveNoteCreateDefaultTitle(query.title)}
       spaceLabel={studentName}
-      authorName={session.user.name || "관리자"}
+      authorName={session.user.name || "Stann"}
       instructor={studentMemo ? { studentId, studentName, noteMemo: null, studentMemo } : undefined}
     />
   );

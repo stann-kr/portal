@@ -53,7 +53,7 @@ const SAVE_FAILED = "알림을 켜지 못했습니다. 잠시 뒤 다시 시도�
 
 export async function savePushSubscription(subscription: unknown): Promise<PushMutationResult> {
   const session = await requireAuth();
-  if (!readPushConfig()) return { ok: false, error: "지금은 알림을 켤 수 없습니다. 관리자에게 알려 주세요." };
+  if (!readPushConfig()) return { ok: false, error: "지금은 알림을 켤 수 없습니다. Stann에게 알려 주세요." };
   const target = parsePushSubscriptionInput(subscription);
   if (!target) return { ok: false, error: SAVE_FAILED };
   try {

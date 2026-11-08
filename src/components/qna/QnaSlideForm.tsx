@@ -23,10 +23,12 @@ import { useDocumentSaveShortcut } from "@/lib/hooks/useDocumentSaveShortcut";
 import { CREATION_OPERATION_FIELD } from "@/lib/creation-operation";
 import { CreationConflictActions } from "@/components/editor/CreationConflictActions";
 import { abandonMediaUpload } from "@/lib/actions/upload";
+import { CollabEditorPending } from "@/components/editor/CollabEditorPending";
+import { isCollabEditorPending } from "@/lib/collab/client/collab-status";
 
 const FullEditor = dynamic(
   () => import("@/components/editor/FullEditor").then((m) => ({ default: m.FullEditor })),
-  { ssr: false },
+  { ssr: false, loading: () => <CollabEditorPending minHeight="12.5rem" /> },
 );
 
 /** 가이드의 특정 구간에 남기는 질문 위치. 있으면 질문과 함께 저장되고 초안도 그 위치별로 따로 둔다. */
@@ -226,7 +228,7 @@ function QnaSlideFormContent({
         <span className="text-body font-medium text-secondary-foreground md:text-ui">
           내용 <span className="sr-only">필수</span>
         </span>
-        {draft.ready && draft.collaboration ? (
+        {!isCollabEditorPending(draft.collab) && draft.collaboration ? (
           <FullEditor
             collaboration={draft.collaboration}
             onUploadingChange={setIsEditorUploading}
@@ -237,7 +239,9 @@ function QnaSlideFormContent({
             toolbar="compact"
             footer={<CollabDraftStatus draft={draft} />}
           />
-        ) : null}
+        ) : (
+          <CollabEditorPending collab={draft.collab} minHeight="12.5rem" />
+        )}
       </div>
 
       {/* 첨부 파일 */}

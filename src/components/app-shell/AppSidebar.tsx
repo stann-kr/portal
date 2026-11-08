@@ -120,7 +120,7 @@ function AccountRow({
   canDeleteAccount: boolean;
   variant: "desktop" | "drawer";
 }) {
-  const initial = Array.from(displayName.trim())[0] ?? (role === "admin" ? "관" : "학");
+  const initial = Array.from(displayName.trim())[0] ?? (role === "admin" ? "S" : "학");
   return (
     <div
       className={cn(
@@ -139,7 +139,7 @@ function AccountRow({
       </span>
       <span className="flex min-w-0 flex-1 flex-col">
         <span className={cn("truncate font-medium", variant === "desktop" ? "text-ui" : "text-sm")}>{displayName}</span>
-        <span className="text-xs text-muted-foreground">{role === "admin" ? "관리자" : "학생"}</span>
+        {role === "admin" ? null : <span className="text-xs text-muted-foreground">학생</span>}
       </span>
       <AccountMenu ownerId={ownerId} canDeleteAccount={canDeleteAccount} isAdmin={role === "admin"} size={variant === "desktop" ? "md" : "touch"} />
     </div>

@@ -1,7 +1,7 @@
 /**
  * @file src/components/qna/ReplyCard.tsx
  * @description Q&A 대화의 한 줄(캔버스 QnaThread·MobileQnaThread 보드).
- * 28px 이니셜 원(강사는 먹색 면), 이름·강사 표시·시각, 본문, 첨부 파일 칩.
+ * 28px 이니셜 원(Stann은 먹색 면), 이름(Stann만 semibold, 학생은 regular)·시각, 본문, 첨부 파일 칩. 역할 배지는 두지 않는다.
  */
 import { Paperclip } from "lucide-react";
 import { RichTextContent } from "@/components/editor/RichTextContent";
@@ -24,7 +24,7 @@ interface ReplyCardProps {
 }
 
 export function ReplyCard({ reply }: ReplyCardProps) {
-  const isTeacher = reply.authorRole === "admin";
+  const isStann = reply.authorRole === "admin";
   const author =
     reply.authorName ?? reply.authorEmail?.split("@")[0] ?? "이름 미등록";
   const time = formatKstMonthDayTime(reply.createdAt, "작성 시각 미정");
@@ -36,17 +36,14 @@ export function ReplyCard({ reply }: ReplyCardProps) {
         aria-hidden="true"
         className={cn(
           "flex size-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold",
-          isTeacher ? "bg-primary text-primary-foreground" : "bg-selected text-secondary-foreground",
+          isStann ? "bg-primary text-primary-foreground" : "bg-selected text-secondary-foreground",
         )}
       >
         {initialOf(author)}
       </span>
       <div className="flex min-w-0 flex-1 flex-col gap-1 md:gap-1.5">
         <p className="flex flex-wrap items-center gap-2 text-ui">
-          <span className="font-semibold">{author}</span>
-          {isTeacher ? (
-            <span className="inline-flex h-5 items-center rounded-sm bg-accent px-1.5 text-[11px] text-accent-foreground">강사</span>
-          ) : null}
+          <span className={isStann ? "font-semibold" : "font-normal"}>{author}</span>
           <span className="font-mono text-xs text-muted-foreground">{time}</span>
         </p>
         <RichTextContent html={reply.contentHtml} className="text-md leading-6 md:leading-[26px]" />

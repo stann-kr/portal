@@ -31,12 +31,14 @@ import { CreationConflictActions } from "@/components/editor/CreationConflictAct
 import { abandonMediaUpload } from "@/lib/actions/upload";
 import { MIXSET_LINK_FIELD, normalizeMixsetLinkUrl } from "@/lib/community-mixset-media";
 import { isImplicitSubmitEnter } from "@/components/community/empty-title-enter";
+import { CollabEditorPending } from "@/components/editor/CollabEditorPending";
+import { isCollabEditorPending } from "@/lib/collab/client/collab-status";
 
 const EMPTY_TITLE_ERROR = "제목을 입력해 주세요.";
 
 const FullEditor = dynamic(
   () => import("@/components/editor/FullEditor").then((module) => ({ default: module.FullEditor })),
-  { ssr: false },
+  { ssr: false, loading: () => <CollabEditorPending minHeight="15rem" /> },
 );
 
 export type PostBoardType = "ANNOUNCEMENT" | "GENERAL" | "FEEDBACK";
@@ -480,7 +482,7 @@ function NewPostFormContent({
             <span className="text-body font-medium text-secondary-foreground md:text-ui">
               내용 <span className="sr-only">필수</span>
             </span>
-            {draft.ready && draft.collaboration ? (
+            {!isCollabEditorPending(draft.collab) && draft.collaboration ? (
               <FullEditor
                 collaboration={draft.collaboration}
                 onUploadingChange={setIsEditorUploading}
@@ -491,7 +493,9 @@ function NewPostFormContent({
                 toolbar="none"
                 footer={<CollabDraftStatus draft={draft} />}
               />
-            ) : null}
+            ) : (
+              <CollabEditorPending collab={draft.collab} minHeight="15rem" />
+            )}
           </div>
 
           {/* 좁은 화면은 아래 고정 막대의 48px 주 버튼, 넓은 화면은 오른쪽 정렬 취소·게시 */}

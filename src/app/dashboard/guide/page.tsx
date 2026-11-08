@@ -29,7 +29,7 @@ export default async function GuideIndexPage() {
         <EmptyState
           icon={<BookOpenText strokeWidth={1.6} aria-hidden="true" />}
           title="아직 가이드 페이지가 없습니다"
-          description={session.user.role === "admin" ? "새 페이지를 만들어 레슨 가이드를 시작하세요." : "관리자가 가이드를 올리면 여기에 보입니다."}
+          description={session.user.role === "admin" ? "새 페이지를 만들어 레슨 가이드를 시작하세요." : "Stann이 가이드를 올리면 여기에 보입니다."}
           action={session.user.role === "admin" ? <GuideNewPageButton /> : undefined}
         />
       </div>

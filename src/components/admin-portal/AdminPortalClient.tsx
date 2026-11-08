@@ -194,7 +194,7 @@ export function AdminPortalClient({
       initialItem={initialLocation?.section ?? "work"}
       storageKey="adminPortal:section"
       urlParamKey="section"
-      ariaLabel="관리자 포탈"
+      ariaLabel="Stann 포탈"
     >
       {(activeSection, changeSection) => (
         <>

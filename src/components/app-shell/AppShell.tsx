@@ -15,7 +15,7 @@ export async function AppShell({ children }: { children: ReactNode }) {
   if (!session?.user || !ownerId) redirect("/login");
 
   const role = session.user.role === "admin" ? "admin" : "student";
-  const displayName = session.user.name || (role === "admin" ? "관리자" : "학생");
+  const displayName = session.user.name || (role === "admin" ? "Stann" : "학생");
 
   return (
     <div className="flex min-h-[100dvh] flex-col bg-background text-foreground md:flex-row">

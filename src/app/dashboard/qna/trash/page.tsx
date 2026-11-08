@@ -33,7 +33,7 @@ export default async function QnaTrashPage({ searchParams }: {
       width="trash"
       back={{ href: returnTo, label: "Q&A 목록으로 돌아가기" }}
       title="Q&A 휴지통"
-      description="삭제한 스레드와 답변은 30일 동안 보존되며, 만료 뒤에는 관리자만 영구 삭제할 수 있습니다."
+      description="삭제한 스레드와 답변은 30일 동안 보존되며, 만료 뒤에는 Stann만 영구 삭제할 수 있습니다."
     >
       {threads.length === 0 ? (
         <RecordEmpty icon={Trash2}>휴지통이 비어 있습니다.</RecordEmpty>

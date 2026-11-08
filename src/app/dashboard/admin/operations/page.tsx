@@ -11,7 +11,7 @@ const TITLE_CLASS = "text-md font-semibold text-foreground";
 const DESCRIPTION_CLASS = "text-body text-secondary-foreground md:text-ui";
 const TRIGGER_CLASS = "h-11 w-full rounded-touch text-body md:h-8 md:w-auto md:rounded-md md:text-ui";
 
-export const metadata = { title: "관리자 운영 도구" };
+export const metadata = { title: "Stann 운영 도구" };
 
 /**
  * 관리자 운영 도구(캔버스 AdminOps·MobileAdminOps). 좁은 화면 위쪽 막대(메뉴·"운영 도구")는 셸이 주소로 정한다.

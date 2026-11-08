@@ -15,7 +15,7 @@ import { getRequestNow } from "@/lib/request-time";
 
 export const metadata = { title: "노트 휴지통" };
 
-const DESCRIPTION = "삭제한 노트는 30일 동안 보존되며, 만료 뒤에는 관리자만 영구 삭제할 수 있습니다.";
+const DESCRIPTION = "삭제한 노트는 30일 동안 보존되며, 만료 뒤에는 Stann만 영구 삭제할 수 있습니다.";
 
 /** 노트 휴지통(NotesTrash 보드). */
 export default async function NoteTrashPage({
@@ -38,7 +38,7 @@ export default async function NoteTrashPage({
   if (!studentId) {
     return (
       <RecordPageFrame width="trash" back={back} title="노트 휴지통" description={DESCRIPTION}>
-        <RecordEmpty icon={Trash2}>관리자 휴지통은 학생 노트 화면에서 학생을 선택한 뒤 열어 주세요.</RecordEmpty>
+        <RecordEmpty icon={Trash2}>Stann은 학생 노트 화면에서 학생을 선택한 뒤 휴지통을 열어 주세요.</RecordEmpty>
       </RecordPageFrame>
     );
   }

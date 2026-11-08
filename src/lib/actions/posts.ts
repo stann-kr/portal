@@ -350,7 +350,7 @@ export async function createPost(
     return { error: `게시물 본문은 ${POST_MAX_CONTENT_LABEL} 이하로 저장할 수 있습니다.` };
   }
   if (boardType === "ANNOUNCEMENT" && session.user.role !== "admin") {
-    return { error: "공지 작성은 관리자만 가능합니다." };
+    return { error: "공지 작성은 Stann만 가능합니다." };
   }
   const operationId = resolveCreationOperationId(formData.get(CREATION_OPERATION_FIELD));
   if (!operationId) {
