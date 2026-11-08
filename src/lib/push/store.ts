@@ -1,6 +1,7 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type { DrizzleDb } from "@/db/client";
-import { profiles, pushSubscriptions } from "@/db/schema";
+import { profiles, pushMutedCategories, pushSubscriptions } from "@/db/schema";
+import type { PushCategory } from "./messages";
 import type { PushSendOutcome, PushTarget } from "./send";
 
 export type StoredPushTarget = PushTarget & { id: string; profileId: string };
@@ -84,11 +85,15 @@ export type PushAudience =
   | { kind: "role"; role: "admin" | "student" }
   | { kind: "everyone" };
 
-/** 받는 사람의 구독. 보낸 사람 본인(excludeProfileId)은 빼고, 지금 있는 계정만 고른다. */
+/**
+ * 받는 사람의 구독. 보낸 사람 본인(excludeProfileId)과 이 종류(category)를 끈 계정은 빼고, 지금 있는 계정만 고른다.
+ * category가 없으면(테스트 알림) 끈 종류를 보지 않는다.
+ */
 export async function listPushTargets(
   db: DrizzleDb,
   audience: PushAudience,
   excludeProfileId?: string,
+  category?: PushCategory,
 ): Promise<StoredPushTarget[]> {
   const columns = {
     id: pushSubscriptions.id,
@@ -118,7 +123,43 @@ export async function listPushTargets(
       .from(pushSubscriptions)
       .innerJoin(profiles, eq(profiles.id, pushSubscriptions.profileId));
   }
-  return excludeProfileId ? rows.filter((row) => row.profileId !== excludeProfileId) : rows;
+  const candidates = excludeProfileId ? rows.filter((row) => row.profileId !== excludeProfileId) : rows;
+  if (!category || candidates.length === 0) return candidates;
+  const muted = await db
+    .select({ profileId: pushMutedCategories.profileId })
+    .from(pushMutedCategories)
+    .where(and(
+      eq(pushMutedCategories.category, category),
+      inArray(pushMutedCategories.profileId, [...new Set(candidates.map((row) => row.profileId))]),
+    ));
+  if (muted.length === 0) return candidates;
+  const mutedIds = new Set(muted.map((row) => row.profileId));
+  return candidates.filter((row) => !mutedIds.has(row.profileId));
+}
+
+/** 이 계정이 끈 알림 종류. */
+export async function readMutedPushCategories(db: DrizzleDb, profileId: string): Promise<PushCategory[]> {
+  const rows = await db
+    .select({ category: pushMutedCategories.category })
+    .from(pushMutedCategories)
+    .where(eq(pushMutedCategories.profileId, profileId));
+  return rows.map((row) => row.category as PushCategory);
+}
+
+/** 이 계정의 알림 종류 하나를 켜거나 끈다(여러 번 불러도 같은 결과). */
+export async function setPushCategoryEnabled(
+  db: DrizzleDb,
+  profileId: string,
+  category: PushCategory,
+  enabled: boolean,
+): Promise<void> {
+  if (enabled) {
+    await db
+      .delete(pushMutedCategories)
+      .where(and(eq(pushMutedCategories.profileId, profileId), eq(pushMutedCategories.category, category)));
+    return;
+  }
+  await db.insert(pushMutedCategories).values({ profileId, category }).onConflictDoNothing();
 }
 
 /** 보낸 결과를 남긴다. 사라진 구독과 실패가 계속 쌓인 구독은 지운다. */

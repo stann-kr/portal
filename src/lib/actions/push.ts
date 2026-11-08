@@ -7,13 +7,15 @@
 import { createDb } from "@/db/client";
 import { requireAuth } from "@/lib/auth-guard";
 import { readPushConfig } from "@/lib/push/config";
-import { pushMessages } from "@/lib/push/messages";
+import { PUSH_CATEGORIES, pushMessages, type PushCategory } from "@/lib/push/messages";
 import { sendWebPush } from "@/lib/push/send";
 import {
   deletePushSubscription,
   findOwnPushTarget,
+  readMutedPushCategories,
   readPushSubscriptionState,
   recordPushOutcome,
+  setPushCategoryEnabled,
   upsertPushSubscription,
 } from "@/lib/push/store";
 import { parsePushSubscriptionInput } from "@/lib/push/subscription-input";
@@ -25,6 +27,8 @@ export type PushSetupState = {
   registered: boolean;
   /** 이 계정에 등록된 기기 수. */
   deviceCount: number;
+  /** 이 계정이 끈 알림 종류(모든 기기에 적용). */
+  mutedCategories: PushCategory[];
 };
 
 function readEndpoint(value: unknown): string | null {
@@ -34,9 +38,13 @@ function readEndpoint(value: unknown): string | null {
 export async function getPushSetup(endpoint: string | null): Promise<PushSetupState> {
   const session = await requireAuth();
   const config = readPushConfig();
-  if (!config) return { publicKey: null, registered: false, deviceCount: 0 };
-  const state = await readPushSubscriptionState(createDb(), session.user.id, readEndpoint(endpoint));
-  return { publicKey: config.publicKey, ...state };
+  if (!config) return { publicKey: null, registered: false, deviceCount: 0, mutedCategories: [] };
+  const db = createDb();
+  const [state, mutedCategories] = await Promise.all([
+    readPushSubscriptionState(db, session.user.id, readEndpoint(endpoint)),
+    readMutedPushCategories(db, session.user.id),
+  ]);
+  return { publicKey: config.publicKey, ...state, mutedCategories };
 }
 
 export type PushMutationResult = { ok: true } | { ok: false; error: string };
@@ -84,4 +92,18 @@ export async function sendTestPush(endpoint: string): Promise<TestPushResult> {
   if (outcome === "sent") return { ok: true };
   if (outcome === "gone") return { ok: false, error: "이 기기의 알림 연결이 끊겼습니다. 알림을 다시 켜 주세요.", unregistered: true };
   return { ok: false, error: "테스트 알림을 보내지 못했습니다. 잠시 뒤 다시 시도해 주세요." };
+}
+
+/** 본인 계정의 알림 종류 하나를 켜거나 끈다. 정해진 종류만 받는다. */
+export async function setPushCategory(category: string, enabled: boolean): Promise<PushMutationResult> {
+  const session = await requireAuth();
+  if (!(PUSH_CATEGORIES as readonly string[]).includes(category) || typeof enabled !== "boolean") {
+    return { ok: false, error: "알 수 없는 알림 종류입니다." };
+  }
+  try {
+    await setPushCategoryEnabled(createDb(), session.user.id, category as PushCategory, enabled);
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "설정을 저장하지 못했습니다. 잠시 뒤 다시 시도해 주세요." };
+  }
 }
