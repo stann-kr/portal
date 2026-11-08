@@ -42,6 +42,15 @@
   animation: portal-panel-out var(--duration-standard) var(--ease-studio) both;
 }
 
+/* 전체화면 이미지 뷰어: 120ms 페이드만. */
+.portal-fade[data-state="open"] {
+  animation: portal-fade-in var(--duration-fast) ease-out both;
+}
+
+.portal-fade[data-state="closed"] {
+  animation: portal-fade-out var(--duration-fast) ease-out both;
+}
+
 .portal-menu {
   transform-origin: var(--radix-dropdown-menu-content-transform-origin);
 }
@@ -110,7 +119,8 @@
   .portal-dialog[data-state],
   .portal-drawer[data-state],
   .portal-panel[data-state],
-  .portal-menu[data-state] {
+  .portal-menu[data-state],
+  .portal-fade[data-state] {
     animation: none;
   }
 }
