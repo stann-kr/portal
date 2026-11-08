@@ -193,6 +193,7 @@ export function StudentPortalClient({
               unifiedItems={items}
               displayName={displayName}
               referenceTime={referenceTime}
+              pushOwnerId={studentId}
             />
           )}
 

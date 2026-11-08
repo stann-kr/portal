@@ -10,10 +10,10 @@ import {
   readNotificationPermission,
   readPushOwner,
   readPushSupport,
-  subscribeThisDevice,
   unsubscribeThisDevice,
   writePushOwner,
 } from "./push-client";
+import { enablePushOnThisDevice, OPEN_NOTIFICATION_SETTINGS_EVENT } from "./enable-device";
 
 /**
  * 이 기기 칸의 상태(캔버스 NotificationSettings 보드).
@@ -215,6 +215,18 @@ export function NotificationSettingsControl({
     syncSubscriptionInBackground(ownerId);
   }, [ownerId]);
 
+  // 홈의 "알림 받기" 줄(iPhone 안내)이 여는 요청. 계정 메뉴가 두 곳에 있어도 먼저 받은 한 곳만 연다.
+  const openRef = useRef<() => void>(() => undefined);
+  useEffect(() => {
+    const handle = (event: Event) => {
+      if (event.defaultPrevented) return;
+      event.preventDefault();
+      openRef.current();
+    };
+    window.addEventListener(OPEN_NOTIFICATION_SETTINGS_EVENT, handle);
+    return () => window.removeEventListener(OPEN_NOTIFICATION_SETTINGS_EVENT, handle);
+  }, []);
+
   const refresh = useCallback(async () => {
     const loadId = ++loadIdRef.current;
     setState({ kind: "loading" });
@@ -234,6 +246,9 @@ export function NotificationSettingsControl({
     if (nextOpen) void refresh();
   };
   useImperativeHandle(controlRef, () => ({ open: () => handleOpenChange(true) }));
+  useEffect(() => {
+    openRef.current = () => handleOpenChange(true);
+  });
 
   const enable = () => {
     if (state.kind !== "off" || pending) return;
@@ -241,23 +256,15 @@ export function NotificationSettingsControl({
     setPending("enable");
     setFeedback(null);
     // 권한 요청은 누른 직후 첫 await여야 iPhone이 허용 창을 띄운다.
-    void subscribeThisDevice(publicKey)
-      .then(async (subscription) => {
-        if (subscription === "denied") {
-          setState(readNotificationPermission() === "denied" ? { kind: "blocked" } : { kind: "off", publicKey });
-          return;
+    void enablePushOnThisDevice(publicKey, ownerId)
+      .then(async (result) => {
+        if (result.kind === "blocked") setState({ kind: "blocked" });
+        else if (result.kind === "failed") setFeedback({ tone: "error", text: result.error });
+        else if (result.kind === "enabled") {
+          await refresh();
+          setFeedback({ tone: "status", text: "이 기기에서 알림을 켰습니다." });
         }
-        const saved = await savePushSubscription(subscription.toJSON());
-        if (!saved.ok) {
-          await subscription.unsubscribe().catch(() => false);
-          setFeedback({ tone: "error", text: saved.error });
-          return;
-        }
-        writePushOwner(ownerId);
-        await refresh();
-        setFeedback({ tone: "status", text: "이 기기에서 알림을 켰습니다." });
       })
-      .catch(() => setFeedback({ tone: "error", text: "알림을 켜지 못했습니다. 잠시 뒤 다시 시도해 주세요." }))
       .finally(() => setPending(null));
   };
 

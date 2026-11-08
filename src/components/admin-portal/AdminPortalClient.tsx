@@ -205,6 +205,7 @@ export function AdminPortalClient({
               pendingAssignments={pendingAssignments}
               referenceTime={referenceTime}
               onOpenSchedule={() => changeSection("schedule")}
+              pushOwnerId={adminId}
             />
           )}
 
