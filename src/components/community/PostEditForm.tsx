@@ -26,13 +26,14 @@ import { COLLAB_FRAGMENT, COLLAB_META } from "@/lib/collab/client/seed";
 import { canonicalCollabHtml, collabDocHtml } from "@/lib/collab/client/doc-html";
 import type * as Y from "yjs";
 import { collabSavedMarker } from "@/lib/collab/saved-marker";
-import { CollabLoadingState, CollabNotices } from "@/components/editor/CollabNotices";
+import { CollabNotices } from "@/components/editor/CollabNotices";
+import { CollabEditorPending } from "@/components/editor/CollabEditorPending";
 
 const EMPTY_TITLE_ERROR = "제목을 입력해 주세요.";
 
 const FullEditor = dynamic(
   () => import("@/components/editor/FullEditor").then((module) => ({ default: module.FullEditor })),
-  { ssr: false },
+  { ssr: false, loading: () => <CollabEditorPending minHeight="min(60dvh, 42rem)" /> },
 );
 
 type PostEditFormProps = {
@@ -339,12 +340,11 @@ function PostEditFormContent({ actorId, post, onCancel, onSaved, onBusyChange, m
           saveShortcutLabel={isSubmitBlocked ? undefined : "변경 저장"}
         />
       ) : (
-        <CollabLoadingState
+        <CollabEditorPending
+          collab={draft.collab}
+          minHeight="min(60dvh, 42rem)"
           label="게시물을 불러오는 중…"
-          deniedMessage={draft.collab.status === "denied" ? "이 게시물을 수정할 수 없습니다." : null}
-          seedState={draft.collab.seedState}
-          seedMessage={draft.collab.seedMessage}
-          onRetry={draft.collab.retrySeed}
+          deniedMessage="이 게시물을 수정할 수 없습니다."
         />
       )}
 

@@ -36,10 +36,11 @@ import { useCollabHeadVersion } from "@/lib/collab/client/useCollabHeadVersion";
 import { useCollabLeaveGuard } from "@/lib/collab/client/useCollabLeaveGuard";
 import { useCollabMetaField } from "@/lib/collab/client/useCollabMetaField";
 import { GUIDE_IMAGE_UPLOADER } from "./guide-image-uploader";
+import { CollabEditorPending } from "@/components/editor/CollabEditorPending";
 
 const FullEditor = dynamic(
   () => import("@/components/editor/FullEditor").then((module) => ({ default: module.FullEditor })),
-  { ssr: false },
+  { ssr: false, loading: () => <CollabEditorPending variant="page" minHeight="50dvh" /> },
 );
 
 type GuideSnapshot = { title: string; contentHtml: string };
@@ -242,9 +243,7 @@ export function GuideEditorForm({ page, actorId, action }: GuideEditorFormProps)
             saveShortcutLabel={writable ? "바로 저장" : undefined}
           />
         ) : (
-          <p className="py-6 text-ui text-muted-foreground" role="status">
-            {collab.status === "denied" ? statusView.message : "가이드를 불러오는 중…"}
-          </p>
+          <CollabEditorPending collab={collab} variant="page" minHeight="50dvh" label="가이드를 불러오는 중…" />
         )}
       </NoteDocumentBody>
     </form>

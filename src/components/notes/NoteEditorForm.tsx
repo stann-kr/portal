@@ -6,7 +6,7 @@ import dynamic from "next/dynamic";
 import { CalendarDays, Clock3, UserRound } from "lucide-react";
 import { AutosaveStatus } from "@/components/editor/AutosaveStatus";
 import { CollabPresence } from "@/components/editor/CollabPresence";
-import { CollabLoadingState, CollabNotices } from "@/components/editor/CollabNotices";
+import { CollabNotices } from "@/components/editor/CollabNotices";
 import { createFullEditorExtensions } from "@/components/editor/FullEditor";
 import { cn } from "@/lib/utils";
 import {
@@ -32,10 +32,11 @@ import { useCollabLeaveGuard } from "@/lib/collab/client/useCollabLeaveGuard";
 import { useCollabMetaField } from "@/lib/collab/client/useCollabMetaField";
 import type { CollabTokenRequest } from "@/lib/collab/client/provider";
 import { NoteDateField } from "./NoteDateField";
+import { CollabEditorPending } from "@/components/editor/CollabEditorPending";
 
 const FullEditor = dynamic(
   () => import("@/components/editor/FullEditor").then((module) => ({ default: module.FullEditor })),
-  { ssr: false },
+  { ssr: false, loading: () => <CollabEditorPending variant="page" /> },
 );
 
 /**
@@ -576,13 +577,7 @@ function NoteEditorFormContent({ note, create, actorId, action, focusBodyEnd = f
       />
     </div>
   ) : (
-    <CollabLoadingState
-      label="노트를 불러오는 중…"
-      deniedMessage={collab.status === "denied" ? statusView.message : null}
-      seedState={collab.seedState}
-      seedMessage={collab.seedMessage}
-      onRetry={collab.retrySeed}
-    />
+    <CollabEditorPending collab={collab} variant="page" minHeight={create ? "320px" : "50dvh"} label="노트를 불러오는 중…" />
   );
 
   const notices = <CollabNotices collab={collab} />;

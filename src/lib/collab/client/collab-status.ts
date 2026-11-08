@@ -85,3 +85,61 @@ export function describeCollabStatus(input: {
       };
   }
 }
+
+/**
+ * 편집기가 그려지기 전(room 내용 준비 전) 자리에 보일 안내. 아무것도 없으면 멈춘 것처럼 보이므로
+ * 연결 중·늦어짐·실패를 구분해 알린다(States 보드 "편집기 연결").
+ */
+export type CollabPendingView = {
+  kind: "connecting" | "slow" | "failed";
+  title: string;
+  detail: string | null;
+  canRetry: boolean;
+};
+
+/** 이 시간이 지나도 준비되지 않으면 "늦어지고 있습니다"로 바꾼다. */
+export const COLLAB_PENDING_SLOW_MS = 6000;
+
+export function describeCollabPending(input: {
+  connection: CollabConnectionStatus | null;
+  seedState: "idle" | "loading" | "failed" | "stopped" | null;
+  seedMessage: string | null;
+  slow: boolean;
+  /** 처음 문구(기본 "편집기를 준비하는 중…"). */
+  label?: string;
+  /** 권한 없음일 때 화면별 안내. */
+  deniedMessage?: string;
+}): CollabPendingView {
+  const { connection, seedState } = input;
+  if (connection === "denied") {
+    return {
+      kind: "failed",
+      title: input.deniedMessage ?? "이 문서를 열 수 없습니다",
+      detail: input.deniedMessage ? null : "권한이 없거나 문서가 없습니다. 로그인이 끝났다면 다시 로그인해 주세요.",
+      canRetry: false,
+    };
+  }
+  if (connection === "too-large") {
+    return { kind: "failed", title: "문서가 너무 커서 불러오지 못했습니다", detail: "일부 내용을 줄여야 열 수 있습니다.", canRetry: false };
+  }
+  if (connection === "trashed") {
+    return { kind: "failed", title: "휴지통으로 이동한 문서입니다", detail: "되살리면 이어서 편집할 수 있습니다.", canRetry: false };
+  }
+  if (seedState === "stopped") {
+    // 화면이 정한 멈춤 이유(휴지통·권한 없음)를 그대로 보인다. 다시 해도 같은 결과라 다시 시도는 두지 않는다.
+    return { kind: "failed", title: input.seedMessage ?? "내용을 불러오지 못했습니다", detail: null, canRetry: false };
+  }
+  if (seedState === "failed") {
+    // 잠시 뒤 스스로 다시 시도한다. 바로 다시 하고 싶으면 버튼을 쓴다.
+    return { kind: "failed", title: "최신 내용을 불러오지 못했습니다", detail: "잠시 뒤 자동으로 다시 시도합니다.", canRetry: true };
+  }
+  if (input.slow) {
+    return {
+      kind: "slow",
+      title: "서버 연결이 늦어지고 있습니다",
+      detail: "계속 연결을 시도하는 중입니다. 연결되면 바로 입력할 수 있습니다.",
+      canRetry: false,
+    };
+  }
+  return { kind: "connecting", title: input.label ?? "편집기를 준비하는 중…", detail: null, canRetry: false };
+}
