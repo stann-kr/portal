@@ -71,7 +71,7 @@ test("관리자는 학생 스페이스의 일정·레슨·노트를 모두 옮�
 
 test("끌 수 없는 항목은 이유를 알려 주고 옮길 수 있는 항목은 이유가 없다", () => {
   assert.equal(getCalendarItemLockReason(item("CALENDAR_EVENT"), student), null);
-  assert.match(getCalendarItemLockReason(item("PRIVATE_NOTE", { metadata: { authorId: "admin-1" } }), student) ?? "", /작성자나 관리자/u);
+  assert.match(getCalendarItemLockReason(item("PRIVATE_NOTE", { metadata: { authorId: "admin-1" } }), student) ?? "", /작성자나 Stann/u);
   assert.match(getCalendarItemLockReason(item("QNA_THREAD"), admin) ?? "", /올린 날짜/u);
   assert.match(getCalendarItemLockReason(item("ASSIGNMENT"), admin) ?? "", /제출한 날짜/u);
   assert.match(getCalendarItemLockReason(item("DIGGING_TRACK"), student) ?? "", /추가한 날짜/u);

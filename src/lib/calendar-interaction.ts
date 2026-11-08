@@ -45,7 +45,7 @@ export function getCalendarItemLockReason(item: UnifiedItem, context: CalendarEd
   if (item.source.kind !== "PORTAL") return "연결한 외부 캘린더의 일정은 그 캘린더에서 바꿔 주세요.";
   switch (item.source.entity) {
     case "PRIVATE_NOTE":
-      return "다른 사람이 쓴 노트는 작성자나 관리자만 날짜를 옮길 수 있습니다.";
+      return "다른 사람이 쓴 노트는 작성자나 Stann만 날짜를 옮길 수 있습니다.";
     case "DIGGING_TRACK":
       return "디깅 트랙은 추가한 날짜에 기록되어 옮길 수 없습니다.";
     case "QNA_THREAD":

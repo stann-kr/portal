@@ -17,14 +17,14 @@ import dynamic from "next/dynamic";
 
 const FullEditor = dynamic(
   () => import("@/components/editor/FullEditor").then((m) => ({ default: m.FullEditor })),
-  { ssr: false }
+  { ssr: false, loading: () => <CollabEditorPending variant="bare" /> }
 );
 import { ReplyCard } from "./ReplyCard";
 import { AttachmentField } from "./AttachmentField";
 import { MobileMoreMenu, type MobileMoreMenuItem } from "@/components/ui/mobile-more-menu";
 import { QnaStatusLabel } from "./qna-display";
 import { useCollabFormDraft } from "@/lib/collab/client/useCollabFormDraft";
-import { describeCollabStatus } from "@/lib/collab/client/collab-status";
+import { describeCollabStatus, isCollabEditorPending } from "@/lib/collab/client/collab-status";
 import { useEditorExtensions } from "@/components/editor/useEditorExtensions";
 import { CollabPresence } from "@/components/editor/CollabPresence";
 import { createQnaReply, updateThreadStatus, type CreateReplyState } from "@/lib/actions/qna";
@@ -39,6 +39,7 @@ import { QNA_LIFECYCLE_LABELS, useQnaThreadLifecycle, type QnaLifecycleKind } fr
 import { abandonMediaUpload } from "@/lib/actions/upload";
 import { formatKst, formatKstShortDate } from "@/lib/kst-format";
 import { cn } from "@/lib/utils";
+import { CollabEditorPending } from "@/components/editor/CollabEditorPending";
 
 /** 넓은 화면 머리와 좁은 화면 메뉴가 같은 이름을 쓴다. 휴지통 이동은 캔버스대로 아이콘 버튼의 이름이다. */
 const LIFECYCLE_TRIGGER_LABELS: Record<QnaLifecycleKind, string> = {
@@ -425,7 +426,7 @@ function ThreadDetailContent({
           <div className="flex max-h-[40dvh] flex-col gap-2 overflow-y-auto empty:hidden md:max-h-none md:overflow-visible">
             {isClosed ? (
               <p role="status" className="rounded-lg border border-warning-border bg-warning-muted px-3 py-2 text-ui text-foreground">
-                스레드가 종료되어 등록할 수 없지만, 작성 중이던 내용은 실시간 작성본에 보존되어 있습니다. 내용을 복사하거나 관리자가 다시 열 때 이어서 등록할 수 있습니다.
+                스레드가 종료되어 등록할 수 없지만, 작성 중이던 내용은 실시간 작성본에 보존되어 있습니다. 내용을 복사하거나 Stann이 다시 열 때 이어서 등록할 수 있습니다.
               </p>
             ) : null}
             {replyState.error && (!replyState.operationConflict || hasOperationConflict) && (
@@ -473,7 +474,7 @@ function ThreadDetailContent({
                 "md:max-h-none md:min-h-[124px] md:rounded-none md:border-0 md:bg-transparent md:focus-within:ring-0",
               )}
             >
-              {draft.ready && draft.collaboration ? (
+              {!isCollabEditorPending(draft.collab) && draft.collaboration ? (
                 <FullEditor
                   collaboration={draft.collaboration}
                   onUploadingChange={setIsEditorUploading}
@@ -485,7 +486,9 @@ function ThreadDetailContent({
                   disabled={!loaded || isClosed || isReplyFormBusy}
                   ariaLabel={isAdmin ? "Q&A 답변 내용" : "Q&A 추가 질문 내용"}
                 />
-              ) : null}
+              ) : (
+                <CollabEditorPending collab={draft.collab} variant="bare" />
+              )}
             </div>
 
             <div className="contents md:flex md:min-h-12 md:items-center md:justify-between md:gap-3 md:border-t md:border-muted md:py-2 md:pl-3 md:pr-2">

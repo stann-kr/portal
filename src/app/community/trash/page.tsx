@@ -26,7 +26,7 @@ export default async function CommunityTrashPage() {
       width="trash"
       back={{ href: "/community", label: "커뮤니티로 돌아가기" }}
       title="게시물 휴지통"
-      description="삭제한 게시물과 댓글은 30일 동안 보존되며, 만료 뒤에는 관리자만 영구 삭제할 수 있습니다."
+      description="삭제한 게시물과 댓글은 30일 동안 보존되며, 만료 뒤에는 Stann만 영구 삭제할 수 있습니다."
     >
       {posts.length === 0 ? (
         <RecordEmpty icon={Trash2}>휴지통이 비어 있습니다.</RecordEmpty>

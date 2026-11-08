@@ -70,11 +70,11 @@ function mutationErrorMessage(reason: PrivateNoteMutationFailureReason): string 
     case "RETENTION_NOT_EXPIRED":
       return "휴지통 보존 기간 30일이 지나기 전에는 영구 삭제할 수 없습니다.";
     case "RETENTION_EXPIRED":
-      return "복원 가능 기간 30일이 지났습니다. 관리자에게 문의해 주세요.";
+      return "복원 가능 기간 30일이 지났습니다. Stann에게 문의해 주세요.";
     case "DOCUMENT_TOO_LARGE":
       return `노트 본문은 저장된 HTML 기준 ${PRIVATE_NOTE_MAX_CONTENT_LABEL}까지 저장할 수 있습니다. 내용을 나누어 주세요.`;
     case "STORAGE_QUOTA_EXCEEDED":
-      return "노트 저장공간 100 MiB 한도에 도달했습니다. 오래된 노트를 정리하거나 관리자에게 문의해 주세요.";
+      return "노트 저장공간 100 MiB 한도에 도달했습니다. 오래된 노트를 정리하거나 Stann에게 문의해 주세요.";
     case "NOT_FOUND_OR_FORBIDDEN":
       return "노트를 찾을 수 없거나 이 작업을 수행할 권한이 없습니다.";
     case "INTERNAL_INVARIANT_FAILURE":

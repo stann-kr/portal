@@ -28,7 +28,7 @@ import { useDocumentSaveShortcut } from "@/lib/hooks/useDocumentSaveShortcut";
 import { GUIDE_BASE_REVISION_FIELD, GUIDE_TITLE_MAX_LENGTH, guidePagePath } from "@/lib/guide-content";
 import { formatCollabDocKey } from "@/lib/collab/doc-key";
 import { collabDocHtml } from "@/lib/collab/client/doc-html";
-import { describeCollabStatus } from "@/lib/collab/client/collab-status";
+import { describeCollabStatus, isCollabEditorPending } from "@/lib/collab/client/collab-status";
 import { COLLAB_META } from "@/lib/collab/client/seed";
 import { useCollabAutosave, type CollabSaveResult } from "@/lib/collab/client/useCollabAutosave";
 import { useCollabDocument } from "@/lib/collab/client/useCollabDocument";
@@ -36,10 +36,11 @@ import { useCollabHeadVersion } from "@/lib/collab/client/useCollabHeadVersion";
 import { useCollabLeaveGuard } from "@/lib/collab/client/useCollabLeaveGuard";
 import { useCollabMetaField } from "@/lib/collab/client/useCollabMetaField";
 import { GUIDE_IMAGE_UPLOADER } from "./guide-image-uploader";
+import { CollabEditorPending } from "@/components/editor/CollabEditorPending";
 
 const FullEditor = dynamic(
   () => import("@/components/editor/FullEditor").then((module) => ({ default: module.FullEditor })),
-  { ssr: false },
+  { ssr: false, loading: () => <CollabEditorPending variant="page" minHeight="50dvh" /> },
 );
 
 type GuideSnapshot = { title: string; contentHtml: string };
@@ -228,7 +229,7 @@ export function GuideEditorForm({ page, actorId, action }: GuideEditorFormProps)
         {statusView.kind === "error" ? (
           <AutosaveStatus status="error" message={statusView.message} onRetry={autosave.retry} />
         ) : null}
-        {collab.ready && collaboration ? (
+        {!isCollabEditorPending(collab) && collaboration ? (
           <FullEditor
             collaboration={collaboration}
             disabled={collab.mode !== "write" || collab.status === "denied"}
@@ -242,9 +243,7 @@ export function GuideEditorForm({ page, actorId, action }: GuideEditorFormProps)
             saveShortcutLabel={writable ? "바로 저장" : undefined}
           />
         ) : (
-          <p className="py-6 text-ui text-muted-foreground" role="status">
-            {collab.status === "denied" ? statusView.message : "가이드를 불러오는 중…"}
-          </p>
+          <CollabEditorPending collab={collab} variant="page" minHeight="50dvh" label="가이드를 불러오는 중…" />
         )}
       </NoteDocumentBody>
     </form>

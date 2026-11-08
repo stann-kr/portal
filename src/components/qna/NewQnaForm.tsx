@@ -24,10 +24,12 @@ import { useDocumentSaveShortcut } from "@/lib/hooks/useDocumentSaveShortcut";
 import { CREATION_OPERATION_FIELD } from "@/lib/creation-operation";
 import { CreationConflictActions } from "@/components/editor/CreationConflictActions";
 import { abandonMediaUpload } from "@/lib/actions/upload";
+import { CollabEditorPending } from "@/components/editor/CollabEditorPending";
+import { isCollabEditorPending } from "@/lib/collab/client/collab-status";
 
 const FullEditor = dynamic(
   () => import("@/components/editor/FullEditor").then((module) => ({ default: module.FullEditor })),
-  { ssr: false },
+  { ssr: false, loading: () => <CollabEditorPending minHeight="var(--qna-body-min-h)" /> },
 );
 
 export function NewQnaForm(props: { actorId: string; returnTo: string }) {
@@ -180,7 +182,7 @@ function NewQnaFormContent({ actorId, returnTo }: { actorId: string; returnTo: s
             <span className="text-body font-medium text-secondary-foreground md:text-ui">
               내용 <span className="sr-only">필수</span>
             </span>
-            {draft.ready && draft.collaboration ? (
+            {!isCollabEditorPending(draft.collab) && draft.collaboration ? (
               <FullEditor
                 collaboration={draft.collaboration}
                 onUploadingChange={setIsEditorUploading}
@@ -191,7 +193,9 @@ function NewQnaFormContent({ actorId, returnTo }: { actorId: string; returnTo: s
                 toolbar="compact"
                 footer={<CollabDraftStatus draft={draft} />}
               />
-                        ) : null}
+            ) : (
+              <CollabEditorPending collab={draft.collab} minHeight="var(--qna-body-min-h)" />
+            )}
           </div>
 
           <div className="flex flex-col gap-2">
