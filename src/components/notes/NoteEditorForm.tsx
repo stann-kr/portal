@@ -24,7 +24,7 @@ import { PRIVATE_NOTE_BASE_REVISION_FIELD } from "@/lib/private-note-continuity"
 import { resolveNoteCreateDefaultDate } from "@/lib/note-create-route";
 import { formatCollabDocKey } from "@/lib/collab/doc-key";
 import { collabDocHtml } from "@/lib/collab/client/doc-html";
-import { describeCollabStatus } from "@/lib/collab/client/collab-status";
+import { describeCollabStatus, isCollabEditorPending } from "@/lib/collab/client/collab-status";
 import { COLLAB_META } from "@/lib/collab/client/seed";
 import { useCollabAutosave, type CollabSaveResult } from "@/lib/collab/client/useCollabAutosave";
 import { useCollabDocument } from "@/lib/collab/client/useCollabDocument";
@@ -560,7 +560,7 @@ function NoteEditorFormContent({ note, create, actorId, action, focusBodyEnd = f
     />
   );
 
-  const editor = collab.ready && collaboration ? (
+  const editor = !isCollabEditorPending(collab) && collaboration ? (
     // 수업 도구(관리자)가 시점·트랙 줄을 넣을 곳으로 찾는다.
     <div data-lesson-target="note">
       <FullEditor

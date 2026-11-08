@@ -24,7 +24,7 @@ import { AttachmentField } from "./AttachmentField";
 import { MobileMoreMenu, type MobileMoreMenuItem } from "@/components/ui/mobile-more-menu";
 import { QnaStatusLabel } from "./qna-display";
 import { useCollabFormDraft } from "@/lib/collab/client/useCollabFormDraft";
-import { describeCollabStatus } from "@/lib/collab/client/collab-status";
+import { describeCollabStatus, isCollabEditorPending } from "@/lib/collab/client/collab-status";
 import { useEditorExtensions } from "@/components/editor/useEditorExtensions";
 import { CollabPresence } from "@/components/editor/CollabPresence";
 import { createQnaReply, updateThreadStatus, type CreateReplyState } from "@/lib/actions/qna";
@@ -474,7 +474,7 @@ function ThreadDetailContent({
                 "md:max-h-none md:min-h-[124px] md:rounded-none md:border-0 md:bg-transparent md:focus-within:ring-0",
               )}
             >
-              {draft.ready && draft.collaboration ? (
+              {!isCollabEditorPending(draft.collab) && draft.collaboration ? (
                 <FullEditor
                   collaboration={draft.collaboration}
                   onUploadingChange={setIsEditorUploading}

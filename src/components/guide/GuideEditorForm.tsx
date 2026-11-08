@@ -28,7 +28,7 @@ import { useDocumentSaveShortcut } from "@/lib/hooks/useDocumentSaveShortcut";
 import { GUIDE_BASE_REVISION_FIELD, GUIDE_TITLE_MAX_LENGTH, guidePagePath } from "@/lib/guide-content";
 import { formatCollabDocKey } from "@/lib/collab/doc-key";
 import { collabDocHtml } from "@/lib/collab/client/doc-html";
-import { describeCollabStatus } from "@/lib/collab/client/collab-status";
+import { describeCollabStatus, isCollabEditorPending } from "@/lib/collab/client/collab-status";
 import { COLLAB_META } from "@/lib/collab/client/seed";
 import { useCollabAutosave, type CollabSaveResult } from "@/lib/collab/client/useCollabAutosave";
 import { useCollabDocument } from "@/lib/collab/client/useCollabDocument";
@@ -229,7 +229,7 @@ export function GuideEditorForm({ page, actorId, action }: GuideEditorFormProps)
         {statusView.kind === "error" ? (
           <AutosaveStatus status="error" message={statusView.message} onRetry={autosave.retry} />
         ) : null}
-        {collab.ready && collaboration ? (
+        {!isCollabEditorPending(collab) && collaboration ? (
           <FullEditor
             collaboration={collaboration}
             disabled={collab.mode !== "write" || collab.status === "denied"}

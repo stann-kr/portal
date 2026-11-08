@@ -32,6 +32,7 @@ import { abandonMediaUpload } from "@/lib/actions/upload";
 import { MIXSET_LINK_FIELD, normalizeMixsetLinkUrl } from "@/lib/community-mixset-media";
 import { isImplicitSubmitEnter } from "@/components/community/empty-title-enter";
 import { CollabEditorPending } from "@/components/editor/CollabEditorPending";
+import { isCollabEditorPending } from "@/lib/collab/client/collab-status";
 
 const EMPTY_TITLE_ERROR = "제목을 입력해 주세요.";
 
@@ -481,7 +482,7 @@ function NewPostFormContent({
             <span className="text-body font-medium text-secondary-foreground md:text-ui">
               내용 <span className="sr-only">필수</span>
             </span>
-            {draft.ready && draft.collaboration ? (
+            {!isCollabEditorPending(draft.collab) && draft.collaboration ? (
               <FullEditor
                 collaboration={draft.collaboration}
                 onUploadingChange={setIsEditorUploading}

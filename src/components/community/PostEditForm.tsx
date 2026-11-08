@@ -28,6 +28,7 @@ import type * as Y from "yjs";
 import { collabSavedMarker } from "@/lib/collab/saved-marker";
 import { CollabNotices } from "@/components/editor/CollabNotices";
 import { CollabEditorPending } from "@/components/editor/CollabEditorPending";
+import { isCollabEditorPending } from "@/lib/collab/client/collab-status";
 
 const EMPTY_TITLE_ERROR = "제목을 입력해 주세요.";
 
@@ -327,7 +328,7 @@ function PostEditFormContent({ actorId, post, onCancel, onSaved, onBusyChange, m
       ) : null}
 
       <CollabNotices collab={draft.collab} />
-      {draft.ready && draft.collaboration ? (
+      {!isCollabEditorPending(draft.collab) && draft.collaboration ? (
         <FullEditor
           collaboration={draft.collaboration}
           onUploadingChange={setIsEditorUploading}

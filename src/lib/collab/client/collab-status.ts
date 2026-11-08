@@ -143,3 +143,12 @@ export function describeCollabPending(input: {
   }
   return { kind: "connecting", title: input.label ?? "편집기를 준비하는 중…", detail: null, canRetry: false };
 }
+
+/**
+ * 편집기 대신 대기 안내를 보일지. room 내용이 아직 없거나, 기기 보관본으로 내용은 있어도 서버가 권한(mode)을
+ * 알려 주기 전(연결 중)이면 편집기는 입력을 받지 않는 빈 칸이 되므로 안내를 보인다.
+ * 연결된 적 없는 오프라인은 기기 보관 편집을 이어 가도록 편집기를 그대로 둔다.
+ */
+export function isCollabEditorPending(collab: { ready: boolean; mode: CollabMode | null; status: CollabConnectionStatus }): boolean {
+  return !collab.ready || (collab.mode === null && collab.status === "connecting");
+}
