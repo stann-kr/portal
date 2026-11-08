@@ -32,8 +32,10 @@ export const config = {
    * route가 channel token으로 직접 검증한다(같은 경로의 start·callback은 계속 보호한다).
    * /api/collab/token 은 route가 세션을 직접 확인해 401/403을 돌려준다. 로그인 화면으로 보내면(307) 열린 편집기가
    * 로그아웃·권한 회수를 "오프라인"으로 오인해 연결을 닫지 못한다.
+   * sw.js·manifest.webmanifest 는 홈 화면 추가와 웹 푸시용 공개 파일이다. 로그인 전에도 받아야 하고,
+   * 로그인 화면으로 보내면 Service Worker 등록이 실패한다.
    */
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|api/auth|api/calendar-connections/google/notify(?:/?$)|api/collab/token(?:/?$)|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    "/((?!_next/static|_next/image|favicon.ico|sw\\.js$|manifest\\.webmanifest$|api/auth|api/calendar-connections/google/notify(?:/?$)|api/collab/token(?:/?$)|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };

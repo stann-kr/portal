@@ -1,5 +1,6 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { IBM_Plex_Mono, IBM_Plex_Sans_KR } from "next/font/google";
+import { WEB_APP_BACKGROUND } from "@/lib/web-app-theme";
 import "./globals.css";
 
 // Quiet Ledger 글자: 본문 IBM Plex Sans KR, 시간·숫자 IBM Plex Mono. 빌드 때 받아 자체 호스팅한다.
@@ -28,6 +29,17 @@ export const metadata: Metadata = {
   },
   description: "Stann의 개인 DJ 레슨 일정, 과제·피드백과 연습 기록을 관리하는 포탈입니다.",
   applicationName: "Stann Lumo DJ 레슨 포탈",
+  // iPhone 홈 화면에 추가하면 Safari 막대 없이 앱처럼 열린다(웹 푸시의 전제).
+  appleWebApp: { capable: true, title: "Stann Lumo", statusBarStyle: "default" },
+  icons: { apple: "/icons/apple-touch-icon.png" },
+};
+
+export const viewport: Viewport = {
+  // 홈 화면 앱의 상단 막대 색.
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: WEB_APP_BACKGROUND.light },
+    { media: "(prefers-color-scheme: dark)", color: WEB_APP_BACKGROUND.dark },
+  ],
 };
 
 export default function RootLayout({
