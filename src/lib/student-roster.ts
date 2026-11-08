@@ -1,6 +1,7 @@
 import { desc, eq, gte, sql } from "drizzle-orm";
 import type { DrizzleDb } from "@/db/client";
-import { assignments, curriculums, feedbacks, lessons, profiles } from "@/db/schema";
+import { assignments, curriculums, lessons, profiles } from "@/db/schema";
+import { assignmentAwaitingReview } from "./assignment-review-query";
 import { formatModuleProgressLabel } from "./student-progress";
 
 export type StudentRosterStat = {
@@ -79,10 +80,10 @@ export async function queryStudentRosterStats(
     db
       .select({
         studentId: assignments.studentId,
-        pendingFeedbackCount: sql<number>`count(DISTINCT CASE WHEN ${feedbacks.id} IS NULL THEN ${assignments.id} END)`,
+        pendingFeedbackCount: sql<number>`count(*)`,
       })
       .from(assignments)
-      .leftJoin(feedbacks, eq(feedbacks.assignmentId, assignments.id))
+      .where(assignmentAwaitingReview(db))
       .groupBy(assignments.studentId),
   ]);
 

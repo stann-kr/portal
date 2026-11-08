@@ -21,6 +21,8 @@ import { getAssignmentTasksForStudent } from "@/lib/actions/assignmentTasks";
 import { AdminAssignmentsPanel } from "@/components/admin/assignments/AdminAssignmentsPanel";
 import { getStudentCalendarFeedIssuedAt } from "@/lib/actions/calendarFeed";
 import { StatusBadge } from "@/components/ui/status-badge";
+import { getSubmissionReviewStatus } from "@/lib/assignment-submission";
+import { SUBMISSION_REVIEW_PORTAL_STATUS } from "@/lib/portal-status";
 import { formatKstShortDate } from "@/lib/kst-format";
 import { describeAssignmentSubmission } from "@/lib/unified-item-normalization";
 import { buildAdminStudentNotesHref, StudentDetailTabs } from "@/components/admin/StudentDetailTabs";
@@ -129,7 +131,7 @@ async function AssignmentsTabContent({ studentId, referenceTime }: { studentId: 
                         {submitted ? `${submitted} 제출` : "제출일 미정"} · 피드백 {assignment.feedbackCount}건
                       </span>
                     </span>
-                    <StatusBadge status={assignment.feedbackCount > 0 ? "feedbackReady" : "feedbackWaiting"} />
+                    <StatusBadge status={SUBMISSION_REVIEW_PORTAL_STATUS[getSubmissionReviewStatus(assignment)]} />
                   </Link>
                 </li>
               );

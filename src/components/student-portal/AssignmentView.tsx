@@ -32,8 +32,10 @@ import {
   ASSIGNMENT_TASK_STATUS_LABELS,
   ASSIGNMENT_TEXT_MAX_LENGTH,
   ASSIGNMENT_TEXT_MAX_LENGTH_LABEL,
+  getSubmissionReviewStatus,
   htmlToPlainText,
   isLateSubmission,
+  isSubmissionSettled,
   type AssignmentTaskStatus,
 } from "@/lib/assignment-submission";
 import { formatKstDot } from "@/lib/kst-format";
@@ -71,6 +73,7 @@ const TASK_STATUS_TONE: Record<AssignmentTaskStatus, PortalStatusTone> = {
   open: "neutral",
   overdue: "destructive",
   submitted: "warning",
+  acknowledged: "success",
   reviewed: "success",
 };
 
@@ -253,10 +256,10 @@ function TaskRow({
   const submission = task.submission;
   const duePassed = useHasPassed(task.dueAt ? task.dueAt.getTime() : null);
   const status: AssignmentTaskStatus = submission
-    ? submission.feedbackCount > 0 ? "reviewed" : "submitted"
+    ? getSubmissionReviewStatus(submission)
     : duePassed ? "overdue" : "open";
   const late = submission ? isLateSubmission(task.dueAt, submission.submittedAt) : false;
-  const canEdit = submission ? submission.feedbackCount === 0 : true;
+  const canEdit = submission ? !isSubmissionSettled(submission) : true;
   const panelId = `task-panel-${task.id}`;
   const meta = [
     formatDue(task.dueAt),
@@ -330,8 +333,11 @@ function TaskRow({
 // ── 자유 제출 목록 행 ────────────────────────────
 
 function AssignmentRow({ assignment }: { assignment: StudentAssignmentSummary }) {
-  const waiting = assignment.feedbackCount === 0;
-  const status = waiting ? getPortalStatus("feedbackWaiting").label : `피드백 ${assignment.feedbackCount}개`;
+  const reviewStatus = getSubmissionReviewStatus(assignment);
+  const waiting = reviewStatus === "submitted";
+  const status = waiting
+    ? getPortalStatus("feedbackWaiting").label
+    : reviewStatus === "acknowledged" ? ASSIGNMENT_TASK_STATUS_LABELS.acknowledged : `피드백 ${assignment.feedbackCount}개`;
   const submittedAt = formatSubmittedAt(assignment.submittedAt);
   const source = [assignment.mediaUrl ? mediaSourceLabel(assignment.mediaUrl) : null, assignment.hasText ? "글" : null]
     .filter(Boolean).join(" · ") || "글";
@@ -393,7 +399,7 @@ export function AssignmentView({ actorId, initialAssignments, initialTasks = [],
   }, [router]);
 
   const freeAssignments = assignments.filter((assignment) => assignment.taskId === null);
-  const waitingCount = freeAssignments.filter((assignment) => assignment.feedbackCount === 0).length;
+  const waitingCount = freeAssignments.filter((assignment) => !isSubmissionSettled(assignment)).length;
   const unsubmittedTaskCount = tasks.filter((task) => task.submission === null).length;
   const summary = [
     tasks.length > 0 ? `받은 과제 ${tasks.length}개 · 미제출 ${unsubmittedTaskCount}개` : null,

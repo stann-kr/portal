@@ -8,6 +8,7 @@ import { MobileTopBar } from "@/components/app-shell/AppSidebar";
 import { MixAnalysisWriteForm } from "@/components/student-portal/MixAnalysisWriteForm";
 import { getMyAssignmentTask } from "@/lib/actions/assignmentTasks";
 import { ASSIGNMENT_FORMAT_LABELS } from "@/lib/assignment-recurrence";
+import { isSubmissionSettled } from "@/lib/assignment-submission";
 import { getActiveAuthSession } from "@/lib/auth-guard";
 import { formatKst } from "@/lib/kst-format";
 import { STUDENT_LEGACY_REDIRECTS } from "@/lib/legacy-dashboard-routes";
@@ -28,8 +29,8 @@ export default async function MixAnalysisWritePage({ params }: { params: Promise
   const task = session.user.role === "student" ? await getMyAssignmentTask(taskId).catch(() => null) : null;
   const unavailable = !task || task.submissionFormat !== "ANALYSIS"
     ? "분석을 쓸 과제를 찾을 수 없습니다."
-    : task.submission && task.submission.feedbackCount > 0
-      ? "피드백이 달린 분석은 고칠 수 없습니다."
+    : task.submission && isSubmissionSettled(task.submission)
+      ? task.submission.feedbackCount > 0 ? "피드백이 달린 분석은 고칠 수 없습니다." : "Stann이 확인한 분석은 고칠 수 없습니다."
       : null;
 
   if (!task || unavailable) {

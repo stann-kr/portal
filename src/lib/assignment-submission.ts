@@ -135,22 +135,53 @@ export function parseSubmissionFormat(raw: unknown): AssignmentSubmissionFormatV
   return raw === "MIX" || raw === "TEXT" || raw === "BOTH" || raw === "ANALYSIS" ? raw : null;
 }
 
-export type AssignmentTaskStatus = "open" | "overdue" | "submitted" | "reviewed";
+/**
+ * 제출 하나의 검토 상태. 피드백이 있으면 "reviewed", 피드백 없이 Stann이 확인함으로 표시했으면 "acknowledged",
+ * 둘 다 없으면 "submitted"(피드백 대기). reviewedAt은 Date 또는 ISO 문자열(통합 목록 metadata)로 받는다.
+ */
+export type SubmissionReviewState = {
+  feedbackCount: number;
+  reviewedAt: Date | string | null;
+};
+
+export type SubmissionReviewStatus = "submitted" | "acknowledged" | "reviewed";
+
+export function getSubmissionReviewStatus(submission: SubmissionReviewState): SubmissionReviewStatus {
+  if (submission.feedbackCount > 0) return "reviewed";
+  return submission.reviewedAt ? "acknowledged" : "submitted";
+}
+
+/**
+ * 검토가 끝난(피드백이 있거나 확인함) 제출인지. 끝난 제출은 학생이 수정·삭제할 수 없고 검토 대기열·대기 수에서 빠진다.
+ * 서버 쿼리에서는 같은 규칙을 `assignmentAwaitingReview`(src/lib/assignment-review-query.ts)로 쓴다.
+ */
+export function isSubmissionSettled(submission: SubmissionReviewState): boolean {
+  return getSubmissionReviewStatus(submission) !== "submitted";
+}
+
+/** 검토가 끝나 잠긴 제출을 학생이 고치거나 지우려 할 때의 안내. 피드백이 있으면 피드백 문구를 우선한다. */
+export function settledSubmissionError(verb: "고칠" | "삭제할", submission: SubmissionReviewState): string {
+  const reason = submission.feedbackCount > 0 ? "피드백이 등록된 제출은" : "Stann이 확인한 제출은";
+  return `${reason} ${verb} 수 없습니다. 필요하면 Stann에게 문의해 주세요.`;
+}
+
+export type AssignmentTaskStatus = "open" | "overdue" | SubmissionReviewStatus;
 
 export const ASSIGNMENT_TASK_STATUS_LABELS: Record<AssignmentTaskStatus, string> = {
   open: "미제출",
   overdue: "마감 지남",
   submitted: "피드백 대기",
+  acknowledged: "Stann 확인함",
   reviewed: "피드백 완료",
 };
 
-/** 과제 상태: 제출 여부·피드백 수·마감 시각으로 정한다. */
+/** 과제 상태: 제출 여부·피드백 수·확인함 여부·마감 시각으로 정한다. */
 export function getAssignmentTaskStatus(
   task: { dueAt: Date | null },
-  submission: { feedbackCount: number } | null,
+  submission: SubmissionReviewState | null,
   referenceTime: Date,
 ): AssignmentTaskStatus {
-  if (submission) return submission.feedbackCount > 0 ? "reviewed" : "submitted";
+  if (submission) return getSubmissionReviewStatus(submission);
   return task.dueAt && task.dueAt.getTime() < referenceTime.getTime() ? "overdue" : "open";
 }
 

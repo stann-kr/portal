@@ -117,6 +117,14 @@ test("메시지: 눌렀을 때 열 포털 경로와 같은 대상의 알림을 �
     tag: "feedback:a 1",
   });
   assert.equal(pushMessages.feedbackAdded({ assignmentId: "a", title: null }).body, "제출한 과제에 피드백이 달렸습니다.");
+  const acknowledged = pushMessages.assignmentAcknowledged({ assignmentId: "a 1", title: "6주차 믹스 녹음" });
+  assert.deepEqual(acknowledged, {
+    title: "Stann이 과제를 확인했습니다",
+    body: "‘6주차 믹스 녹음’",
+    url: "/dashboard/student/assignments/a%201",
+    tag: feedback.tag,
+  }, "뒤에 오는 피드백 알림이 확인 알림을 바꾸도록 같은 tag");
+  assert.equal(pushMessages.assignmentAcknowledged({ assignmentId: "a", title: null }).body, "제출한 과제");
   const long = pushMessages.announcementPosted({ postId: "p", title: "가".repeat(60) });
   assert.equal(long.body, `‘${"가".repeat(39)}…’`);
   assert.equal(long.url, "/community/p");

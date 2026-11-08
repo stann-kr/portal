@@ -23,6 +23,7 @@ let assignmentActions: typeof import("@/lib/actions/assignments");
 let lessonActions: typeof import("@/lib/actions/lessons");
 let qnaActions: typeof import("@/lib/actions/qna");
 let postActions: typeof import("@/lib/actions/posts");
+let reviewActions: typeof import("@/lib/actions/assignment-review");
 
 function createSession(id: string, role: "admin" | "student", name = id): AuthSession {
   return {
@@ -66,13 +67,14 @@ mock.module("@/lib/push/notify", {
 });
 
 before(async () => {
-  [feedbackActions, taskActions, assignmentActions, lessonActions, qnaActions, postActions] = await Promise.all([
+  [feedbackActions, taskActions, assignmentActions, lessonActions, qnaActions, postActions, reviewActions] = await Promise.all([
     import("@/lib/actions/feedbacks"),
     import("@/lib/actions/assignmentTasks"),
     import("@/lib/actions/assignments"),
     import("@/lib/actions/lessons"),
     import("@/lib/actions/qna"),
     import("@/lib/actions/posts"),
+    import("@/lib/actions/assignment-review"),
   ]);
 });
 
@@ -113,6 +115,26 @@ test("피드백: 관리자가 남기면 과제 주인 학생에게 과제 제목
 
   assert.deepEqual(await feedbackActions.createFeedback("sub-1", {}, form(fields)), { success: true });
   assert.equal(sent.length, 1, "같은 operationId 재전송");
+});
+
+test("확인함: 표시할 때만 과제 주인 학생에게 피드백 알림과 같은 tag로 한 번 보내고, 재전송·취소는 보내지 않는다", { concurrency: false }, async (context) => {
+  const db = await setup(context);
+  await db.insert(assignmentTasks).values({ id: "task-ack", studentId: "student-1", title: "7주차 믹스", submissionFormat: "TEXT" });
+  await db.insert(assignments).values({ id: "sub-ack", studentId: "student-1", taskId: "task-ack", textHtml: "<p>제출</p>" });
+  activeSession = createSession("admin-1", "admin", "Stann");
+
+  assert.equal((await reviewActions.setAssignmentReviewed("sub-ack", true)).success, true);
+  assert.deepEqual(sent, [{
+    audience: { kind: "profiles", profileIds: ["student-1"] },
+    message: { title: "Stann이 과제를 확인했습니다", body: "‘7주차 믹스’", url: "/dashboard/student/assignments/sub-ack", tag: "feedback:sub-ack" },
+    exclude: "admin-1",
+  }]);
+  assert.equal((await reviewActions.setAssignmentReviewed("sub-ack", true)).success, true);
+  assert.equal(sent.length, 1, "같은 값 재전송");
+  assert.equal((await reviewActions.setAssignmentReviewed("sub-ack", false)).success, true);
+  assert.equal(sent.length, 1, "취소는 알리지 않는다");
+  assert.equal((await reviewActions.setAssignmentReviewed("sub-ack", true)).success, true);
+  assert.equal(sent.length, 2, "취소 뒤 다시 표시하면 다시 알린다");
 });
 
 test("과제: 새 과제는 학생에게, 학생 제출은 관리자에게 보낸다(재전송은 한 번만)", { concurrency: false }, async (context) => {

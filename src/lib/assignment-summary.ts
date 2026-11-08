@@ -8,6 +8,8 @@ export type StudentAssignmentSummary = {
   mediaUrl: string | null;
   hasText: boolean;
   submittedAt: Date | null;
+  /** Stann이 피드백 없이 확인함으로 표시한 시각. 없으면 null */
+  reviewedAt: Date | null;
   feedbackCount: number;
 };
 
@@ -19,6 +21,7 @@ export function toStudentAssignmentSummaries(
     mediaUrl: string | null;
     textHtml: string | null;
     submittedAt: Date | null;
+    reviewedAt: Date | null;
   }[],
   feedbackCounts: Record<string, number>,
 ): StudentAssignmentSummary[] {
@@ -29,6 +32,7 @@ export function toStudentAssignmentSummaries(
     mediaUrl: row.mediaUrl,
     hasText: Boolean(row.textHtml),
     submittedAt: row.submittedAt,
+    reviewedAt: row.reviewedAt,
     feedbackCount: feedbackCounts[row.id] ?? 0,
   }));
 }

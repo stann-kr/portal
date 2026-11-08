@@ -34,6 +34,15 @@ export const pushMessages = {
       tag: `feedback:${input.assignmentId}`,
     };
   },
+  /** 피드백 없이 Stann이 확인함으로 표시했을 때. 같은 제출의 피드백 알림과 tag를 같이 써서 뒤에 오는 피드백 알림이 이 알림을 바꾼다. */
+  assignmentAcknowledged(input: { assignmentId: string; title: string | null }): PushMessage {
+    return {
+      title: "Stann이 과제를 확인했습니다",
+      body: quoted(input.title, "제출한 과제"),
+      url: assignmentHref(input.assignmentId),
+      tag: `feedback:${input.assignmentId}`,
+    };
+  },
   assignmentAssigned(input: { taskId: string; title: string; dueAt: Date | null }): PushMessage {
     const due = input.dueAt ? ` 마감 ${formatKstMonthDayTime(input.dueAt)}` : "";
     return {

@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button";
 import { useConfirmAction } from "@/components/ui/confirm-action";
 import { RichTextContent } from "@/components/editor/RichTextContent";
 import { MixAnalysisEntries, MixAnalysisRating } from "@/components/feedback/MixAnalysisReview";
+import { isSubmissionSettled } from "@/lib/assignment-submission";
 import { STUDENT_LEGACY_REDIRECTS } from "@/lib/legacy-dashboard-routes";
 import { mediaUrlAt, splitFeedbackByEntry, type MixAnalysis } from "@/lib/mix-analysis";
 import { analysisWriteHref } from "@/lib/student-space-routes";
@@ -42,6 +43,8 @@ interface AssignmentDetailClientProps {
     late: boolean;
   } | null;
   feedbackList: FeedbackItem[];
+  /** Stann이 피드백 없이 확인함으로 표시한 시각. 표시되면 학생이 고치거나 지울 수 없다. */
+  reviewedAt?: Date | null;
   isAdmin: boolean;
   /** 피드백 전 본인 제출을 삭제할 수 있을 때 삭제 뒤 돌아갈 경로. */
   deleteReturnTo?: string;
@@ -135,6 +138,7 @@ export function AssignmentDetailClient({
   analysis,
   task,
   feedbackList,
+  reviewedAt = null,
   isAdmin,
   deleteReturnTo,
   title,
@@ -155,7 +159,8 @@ export function AssignmentDetailClient({
     [],
   );
   const deleteConfirm = useConfirmAction();
-  const canDelete = Boolean(deleteReturnTo) && feedbackList.length === 0;
+  const settled = isSubmissionSettled({ feedbackCount: feedbackList.length, reviewedAt });
+  const canDelete = Boolean(deleteReturnTo) && !settled;
   const requestDelete = deleteConfirm.request;
   // 본인 자유 제출(관리자 과제가 아닌 제출)은 피드백 전에 이 화면에서 바로 고친다.
   const canEditFree = canDelete && !task;
@@ -254,7 +259,7 @@ export function AssignmentDetailClient({
       <RichTextContent html={textHtml} className="text-md leading-7 md:text-body" />
     </section>
   ) : null;
-  const editHint = !isAdmin && task && analysis && feedbackList.length === 0 ? (
+  const editHint = !isAdmin && task && analysis && !settled ? (
     <p className="text-xs text-muted-foreground">
       피드백이 달리기 전에는{" "}
       <Link href={analysisWriteHref(task.id)} className="underline underline-offset-[3px] hover:text-foreground">
@@ -262,7 +267,7 @@ export function AssignmentDetailClient({
       </Link>
       .
     </p>
-  ) : !isAdmin && task && feedbackList.length === 0 ? (
+  ) : !isAdmin && task && !settled ? (
     <p className="text-xs text-muted-foreground">
       피드백이 달리기 전에는{" "}
       <Link href={STUDENT_LEGACY_REDIRECTS.assignments} className="underline underline-offset-[3px] hover:text-foreground">

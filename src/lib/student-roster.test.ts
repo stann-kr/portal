@@ -20,7 +20,7 @@ test("roster 통계는 large fixture도 학생별 반복 scan 없이 고정 4개
     CREATE TABLE profiles (id TEXT PRIMARY KEY, email TEXT NOT NULL, display_name TEXT, role TEXT NOT NULL, created_at INTEGER);
     CREATE TABLE curriculums (id TEXT PRIMARY KEY, student_id TEXT NOT NULL, week_num INTEGER NOT NULL, title TEXT NOT NULL, is_completed INTEGER NOT NULL, created_at INTEGER);
     CREATE TABLE lessons (id TEXT PRIMARY KEY, student_id TEXT NOT NULL, scheduled_at INTEGER NOT NULL, google_event_id TEXT, created_at INTEGER);
-    CREATE TABLE assignments (id TEXT PRIMARY KEY, student_id TEXT NOT NULL, media_url TEXT NOT NULL, submitted_at INTEGER);
+    CREATE TABLE assignments (id TEXT PRIMARY KEY, student_id TEXT NOT NULL, media_url TEXT NOT NULL, submitted_at INTEGER, reviewed_at INTEGER);
     CREATE TABLE feedbacks (id TEXT PRIMARY KEY, assignment_id TEXT NOT NULL, time_marker INTEGER NOT NULL, content TEXT NOT NULL, created_at INTEGER);
   `);
   const insertProfile = sqlite.prepare("INSERT INTO profiles (id, email, display_name, role, created_at) VALUES (?, ?, ?, ?, ?)");
@@ -43,6 +43,9 @@ test("roster 통계는 large fixture도 학생별 반복 scan 없이 고정 4개
     insertAssignment.run("pending", "student-open", "pending.mp4", nowEpoch);
     insertAssignment.run("answered", "student-open", "answered.mp4", nowEpoch);
     insertFeedback.run("feedback", "answered");
+    // Stann이 피드백 없이 확인함으로 표시한 제출은 대기 수에서 빠진다.
+    insertAssignment.run("acknowledged", "student-open", "acknowledged.mp4", nowEpoch);
+    sqlite.prepare("UPDATE assignments SET reviewed_at = ? WHERE id = 'acknowledged'").run(nowEpoch);
 
     for (let index = 0; index < 120; index += 1) {
       const studentId = `synthetic-${index}`;

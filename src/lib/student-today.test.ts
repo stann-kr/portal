@@ -21,6 +21,7 @@ function item(
   options: {
     subType?: string;
     feedbackCount?: number;
+    reviewedAt?: string;
   } = {},
 ): UnifiedItem {
   return {
@@ -29,10 +30,10 @@ function item(
     subType: options.subType,
     title: id,
     date: new Date(date),
-    metadata:
-      options.feedbackCount === undefined
-        ? {}
-        : { feedbackCount: options.feedbackCount },
+    metadata: {
+      ...(options.feedbackCount === undefined ? {} : { feedbackCount: options.feedbackCount }),
+      ...(options.reviewedAt === undefined ? {} : { reviewedAt: options.reviewedAt }),
+    },
     space: { studentId: "student-1", label: "학생" },
     source: {
       kind: "PORTAL",
@@ -93,6 +94,20 @@ test("과제를 피드백 있음과 가장 최근 피드백 대기로 구분한�
     "ready-old",
   ]);
   assert.equal(result.waitingAssignment?.id, "waiting-new");
+});
+
+test("Stann이 확인함으로 표시한 제출은 피드백 대기가 아니고 피드백 도착 목록에도 들어가지 않는다", () => {
+  const result = summary([
+    item("waiting-old", "ASSIGNMENT", "2026-08-02T00:00:00.000Z", { feedbackCount: 0 }),
+    item("acknowledged-new", "ASSIGNMENT", "2026-08-04T00:00:00.000Z", { feedbackCount: 0, reviewedAt: "2026-08-04T10:00:00.000Z" }),
+  ]);
+  assert.equal(result.waitingAssignment?.id, "waiting-old");
+  assert.deepEqual(result.feedbackItems, []);
+  const undone = summary([
+    item("waiting-old", "ASSIGNMENT", "2026-08-02T00:00:00.000Z", { feedbackCount: 0 }),
+    item("acknowledged-new", "ASSIGNMENT", "2026-08-04T00:00:00.000Z", { feedbackCount: 0, reviewedAt: "" }),
+  ]);
+  assert.equal(undone.waitingAssignment?.id, "acknowledged-new", "확인 취소(빈 값)는 다시 대기");
 });
 
 test("Q&A를 답변 완료와 답변 대기로 분리하고 종료 항목을 제외한다", () => {

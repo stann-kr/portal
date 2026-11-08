@@ -2217,6 +2217,28 @@ test("a free submission sends text without a link, refuses an empty form locally
   assert.match(browser.document.querySelector('[role="status"]')?.textContent ?? "", /제출했습니다/u);
 });
 
+test("a task submission Stann acknowledged shows 'Stann 확인함' without an edit button, and an unacknowledged one stays editable", async (context) => {
+  const base = {
+    title: "연습 일지", descriptionHtml: "<p>이번 주 연습</p>", submissionFormat: "TEXT" as const,
+    dueAt: new Date(Date.now() + 86_400_000), occurrenceDate: null, recurrenceId: null, version: 1, createdAt: new Date(),
+  };
+  const submission = (id: string, reviewedAt: Date | null) => ({ id, mediaUrl: null, textHtml: "<p>기록</p>", analysisJson: null, submittedAt: new Date(), updatedAt: null, reviewedAt, feedbackCount: 0 });
+  await render(context, <AssignmentView actorId="student-ack" initialAssignments={[
+    { id: "free-ack", taskId: null, taskTitle: null, mediaUrl: "https://youtu.be/aqz-KE-bpKQ", hasText: false, submittedAt: new Date(), reviewedAt: new Date(), feedbackCount: 0 },
+  ]} initialTasks={[
+    { ...base, id: "task-ack", submission: submission("sub-ack", new Date()) },
+    { ...base, id: "task-open", title: "열린 과제", submission: submission("sub-open", null) },
+  ]} />);
+  const rowText = (title: string) => [...browser.document.querySelectorAll("li")].find((li) => li.textContent?.includes(title))?.textContent ?? "";
+  const ackRow = rowText("연습 일지");
+  assert.match(ackRow, /Stann 확인함/u);
+  assert.doesNotMatch(ackRow, /제출 수정/u, "확인한 제출은 고치지 않는다");
+  const openRow = rowText("열린 과제");
+  assert.match(openRow, /피드백 대기/u);
+  assert.match(openRow, /제출 수정/u);
+  assert.match(rowText("YouTube 링크"), /Stann 확인함/u, "자유 제출 목록도 확인함을 보인다");
+});
+
 test("a received text task submits only the text field, keeps the draft on failure, and refreshes the task list", async (context) => {
   const task = {
     id: "task-text", title: "연습 일지", descriptionHtml: "<p>이번 주 연습</p>", submissionFormat: "TEXT" as const,
@@ -2230,7 +2252,7 @@ test("a received text task submits only the text field, keeps the draft on failu
   let taskLoads = 0;
   loadTasks = async () => {
     taskLoads++;
-    return [{ ...task, submission: { id: "submission-1", mediaUrl: null, textHtml: "<p>BPM 맞추기</p>", analysisJson: null, submittedAt: new Date(), updatedAt: null, feedbackCount: 0 } }];
+    return [{ ...task, submission: { id: "submission-1", mediaUrl: null, textHtml: "<p>BPM 맞추기</p>", analysisJson: null, submittedAt: new Date(), updatedAt: null, reviewedAt: null, feedbackCount: 0 } }];
   };
   context.after(() => { saveTaskSubmission = async () => ({}); loadTasks = async () => []; });
   await render(context, <AssignmentView actorId="student-task" initialAssignments={[]} initialTasks={[task]} />);
@@ -2374,18 +2396,20 @@ test("a submission without feedback is deleted only after a cancel-first confirm
   context.after(() => { removeAssignment = async () => ({ success: true }); routerReplacements.length = 0; });
   const listHref = "/dashboard/student?section=workspace&view=assignments";
   // 목록 행은 상세(타임라인 피드백) 화면으로 이동하고, 삭제는 상세 화면에서 한다.
-  const root = await render(context, <AssignmentView actorId="student-1" initialAssignments={[{ id: "mistake", taskId: null, taskTitle: null, mediaUrl: "https://youtu.be/aqz-KE-bpKQ", hasText: false, submittedAt: new Date(), feedbackCount: 0 }]} />);
+  const root = await render(context, <AssignmentView actorId="student-1" initialAssignments={[{ id: "mistake", taskId: null, taskTitle: null, mediaUrl: "https://youtu.be/aqz-KE-bpKQ", hasText: false, submittedAt: new Date(), reviewedAt: null, feedbackCount: 0 }]} />);
   const listItem = [...browser.document.querySelectorAll("a")].find((element) => element.textContent?.includes("YouTube 링크"));
   assert.equal(listItem?.getAttribute("href"), `/dashboard/student/assignments/mistake?returnTo=${encodeURIComponent(listHref)}`);
-  const detail = (feedbackList: { id: string; timeMarker: number; content: string; createdAt: Date | null }[]) => (
+  const detail = (feedbackList: { id: string; timeMarker: number; content: string; createdAt: Date | null }[], reviewedAt: Date | null = null) => (
     <AssignmentDetailClient
-      assignmentId="mistake" actorId="student-1" mediaUrl="https://youtu.be/aqz-KE-bpKQ" textHtml={null} analysis={null} task={null} feedbackList={feedbackList}
+      assignmentId="mistake" actorId="student-1" mediaUrl="https://youtu.be/aqz-KE-bpKQ" textHtml={null} analysis={null} task={null} feedbackList={feedbackList} reviewedAt={reviewedAt}
       isAdmin={false} deleteReturnTo={listHref} title="YouTube 링크" submittedLabel="2026년 10월 18일 19:05 제출"
       submittedLabelShort="10월 18일 19:05 제출" breadcrumb={{ href: listHref, label: "과제" }} returnTo={listHref}
     />
   );
   await act(async () => root.render(detail([{ id: "reviewed", timeMarker: 90, content: "전환을 늦춰 보세요.", createdAt: null }])));
   assert.equal([...browser.document.querySelectorAll("button")].some((element) => element.textContent === "제출 삭제"), false, "a reviewed submission offers no deletion");
+  await act(async () => root.render(detail([], new Date())));
+  assert.equal([...browser.document.querySelectorAll("button")].some((element) => element.textContent === "제출 삭제"), false, "a submission Stann acknowledged offers no deletion");
   await act(async () => root.render(detail([])));
   await press("제출 삭제");
   assert.equal(browser.document.activeElement?.textContent, "취소", "focus starts on the safe choice");
@@ -2411,9 +2435,9 @@ test("a free submission without feedback is edited in place from the detail view
   };
   context.after(() => { editFreeSubmission = async () => ({ error: "테스트 미설정" }); });
   const listHref = "/dashboard/student?section=workspace&view=assignments";
-  const detail = (feedbackList: { id: string; timeMarker: number | null; content: string; createdAt: Date | null }[], task: null | { id: string; title: string; descriptionHtml: string; formatLabel: string; dueLabel: string | null; late: boolean } = null) => (
+  const detail = (feedbackList: { id: string; timeMarker: number | null; content: string; createdAt: Date | null }[], task: null | { id: string; title: string; descriptionHtml: string; formatLabel: string; dueLabel: string | null; late: boolean } = null, reviewedAt: Date | null = null) => (
     <AssignmentDetailClient
-      assignmentId="free-1" actorId="student-edit" mediaUrl={null} textHtml={"<p>첫 문단</p><p>둘째 &lt;문단&gt;</p>"} analysis={null} task={task} feedbackList={feedbackList}
+      assignmentId="free-1" actorId="student-edit" mediaUrl={null} textHtml={"<p>첫 문단</p><p>둘째 &lt;문단&gt;</p>"} analysis={null} task={task} feedbackList={feedbackList} reviewedAt={reviewedAt}
       isAdmin={false} deleteReturnTo={listHref} title="글 제출" submittedLabel="2026년 10월 18일 19:05 제출"
       submittedLabelShort="10월 18일 19:05 제출" breadcrumb={{ href: listHref, label: "과제" }} returnTo={listHref}
     />
@@ -2423,6 +2447,12 @@ test("a free submission without feedback is edited in place from the detail view
   assert.equal(hasEditButton(), false, "피드백이 달린 제출은 고칠 수 없다");
   await act(async () => root.render(detail([], { id: "task-1", title: "글 과제", descriptionHtml: "", formatLabel: "글", dueLabel: null, late: false })));
   assert.equal(hasEditButton(), false, "과제 제출은 과제 화면에서 고친다");
+  await act(async () => root.render(detail([], null, new Date())));
+  assert.equal(hasEditButton(), false, "Stann이 확인한 제출은 고칠 수 없다");
+  await act(async () => root.render(detail([], { id: "task-1", title: "글 과제", descriptionHtml: "", formatLabel: "글", dueLabel: null, late: false }, new Date())));
+  assert.doesNotMatch(browser.document.body.textContent ?? "", /에서 제출을 고칠 수 있습니다/u, "확인한 과제 제출에는 고치기 안내를 두지 않는다");
+  await act(async () => root.render(detail([], { id: "task-1", title: "글 과제", descriptionHtml: "", formatLabel: "글", dueLabel: null, late: false })));
+  assert.match(browser.document.body.textContent ?? "", /에서 제출을 고칠 수 있습니다/u, "확인 취소 뒤에는 다시 고치기 안내");
   await act(async () => root.render(detail([])));
   await press("제출 수정");
   await settle();

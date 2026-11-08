@@ -40,6 +40,7 @@ const TASK_STATUS_TONE: Record<AssignmentTaskStatus, PortalStatusTone> = {
   open: "neutral",
   overdue: "destructive",
   submitted: "warning",
+  acknowledged: "success",
   reviewed: "success",
 };
 

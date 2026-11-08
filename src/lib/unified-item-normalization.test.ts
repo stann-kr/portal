@@ -51,6 +51,7 @@ function createInput(): UnifiedItemNormalizationInput {
       id: "assignment-1",
       mediaUrl: "https://example.com/media",
       submittedAt: new Date("2026-08-06T10:00:00.000Z"),
+      reviewedAt: null,
     }],
     feedbackCounts: { "assignment-1": 2 },
   };
@@ -73,6 +74,16 @@ test("과제 항목 제목은 원본 URL 대신 제출 플랫폼을 표시한다
   const assignment = normalizeUnifiedItems(createInput()).find((item) => item.type === "ASSIGNMENT");
   assert.equal(assignment?.title, "링크 제출");
   assert.equal(assignment?.metadata.mediaUrl, "https://example.com/media");
+  assert.equal(assignment?.metadata.reviewedAt, null);
+  assert.equal(assignment?.metadata.reviewStatus, "reviewed");
+  const input = createInput();
+  const acknowledged = normalizeUnifiedItems({
+    ...input,
+    assignments: [{ ...input.assignments[0]!, reviewedAt: new Date("2026-08-06T11:00:00.000Z") }],
+    feedbackCounts: {},
+  }).find((item) => item.type === "ASSIGNMENT");
+  assert.equal(acknowledged?.metadata.reviewedAt, "2026-08-06T11:00:00.000Z");
+  assert.equal(acknowledged?.metadata.reviewStatus, "acknowledged");
   assert.equal(describeAssignmentMedia("https://m.youtube.com/watch?v=abc"), "YouTube 링크");
   assert.equal(describeAssignmentMedia("https://youtu.be/abc"), "YouTube 링크");
   assert.equal(describeAssignmentMedia("https://soundcloud.com/dj/mix"), "SoundCloud 링크");

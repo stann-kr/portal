@@ -101,6 +101,7 @@ export default async function AssignmentDetailPage({
         late: isLateSubmission(task.dueAt, assignment.submittedAt),
       } : null}
       feedbackList={feedbackList}
+      reviewedAt={assignment.reviewedAt}
       isAdmin={isAdmin}
       deleteReturnTo={!isAdmin && assignment.studentId === session.user.id ? returnTo : undefined}
       title={describeAssignmentSubmission({ mediaUrl: assignment.mediaUrl, taskTitle: task?.title })}

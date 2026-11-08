@@ -36,10 +36,13 @@ import {
 import {
   ASSIGNMENT_DESCRIPTION_MAX_LENGTH,
   ASSIGNMENT_TITLE_MAX_LENGTH,
+  isSubmissionSettled,
   normalizePlainTextField,
   parseSubmissionFormat,
+  settledSubmissionError,
   validateSubmissionPayload,
 } from "@/lib/assignment-submission";
+import { assignmentAwaitingReview } from "@/lib/assignment-review-query";
 import { ensureRecurringAssignmentTasks } from "@/lib/assignment-task-generation";
 import { pushMessages } from "@/lib/push/messages";
 import { notifyPush } from "@/lib/push/notify";
@@ -60,6 +63,8 @@ export type AssignmentTaskSubmission = {
   analysisJson: string | null;
   submittedAt: Date | null;
   updatedAt: Date | null;
+  /** Stann이 피드백 없이 확인함으로 표시한 시각. 없으면 null */
+  reviewedAt: Date | null;
   feedbackCount: number;
 };
 
@@ -226,6 +231,7 @@ async function loadTasksWithSubmissions(db: DrizzleDb, studentId: string, taskId
       analysisJson: assignments.analysisJson,
       submittedAt: assignments.submittedAt,
       updatedAt: assignments.updatedAt,
+      reviewedAt: assignments.reviewedAt,
       feedbackCount: count(feedbacks.id),
     })
     .from(assignments)
@@ -256,6 +262,7 @@ async function loadTasksWithSubmissions(db: DrizzleDb, studentId: string, taskId
             analysisJson: submission.analysisJson,
             submittedAt: submission.submittedAt,
             updatedAt: submission.updatedAt,
+            reviewedAt: submission.reviewedAt,
             feedbackCount: Number(submission.feedbackCount),
           }
         : null,
@@ -748,7 +755,7 @@ export async function updateMyTaskSubmission(
     .set({ mediaUrl: payload.mediaUrl, textHtml: payload.textHtml, analysisJson: payload.analysisJson, updatedAt: new Date() })
     .where(and(
       own,
-      notExists(db.select({ id: feedbacks.id }).from(feedbacks).where(eq(feedbacks.assignmentId, assignments.id))),
+      assignmentAwaitingReview(db),
       // 검증한 형식이 그대로일 때만 고친다(그 사이 관리자가 형식을 바꿨으면 0행).
       exists(db.select({ id: assignmentTasks.id }).from(assignmentTasks).where(and(
         eq(assignmentTasks.id, assignments.taskId),
@@ -764,10 +771,14 @@ export async function updateMyTaskSubmission(
       .from(feedbacks)
       .where(eq(feedbacks.assignmentId, assignmentId))
       .limit(1);
+    const [current] = await db
+      .select({ reviewedAt: assignments.reviewedAt })
+      .from(assignments)
+      .where(own)
+      .limit(1);
+    const review = { feedbackCount: feedback ? 1 : 0, reviewedAt: current?.reviewedAt ?? null };
     return {
-      error: feedback
-        ? "피드백이 등록된 제출은 고칠 수 없습니다. 필요하면 Stann에게 문의해 주세요."
-        : TASK_CHANGED_MESSAGE,
+      error: isSubmissionSettled(review) ? settledSubmissionError("고칠", review) : TASK_CHANGED_MESSAGE,
     };
   }
   revalidateAssignmentViews(studentId);
