@@ -41,6 +41,8 @@ import {
   validateSubmissionPayload,
 } from "@/lib/assignment-submission";
 import { ensureRecurringAssignmentTasks } from "@/lib/assignment-task-generation";
+import { pushMessages } from "@/lib/push/messages";
+import { notifyPush } from "@/lib/push/notify";
 import {
   DOCUMENT_CONDITIONAL_WRITE_SENTINEL,
   executeDocumentStatementsAtomically,
@@ -375,6 +377,12 @@ export async function createAssignmentTask(
       if (!same) {
         return { error: "이 과제는 수정 전 내용으로 이미 저장되었습니다. 목록을 확인한 뒤 새 과제로 다시 내 주세요." };
       }
+    } else {
+      await notifyPush(
+        { kind: "profiles", profileIds: [studentId] },
+        pushMessages.assignmentAssigned({ taskId: id, title: content.value.title, dueAt: due.value }),
+        { excludeProfileId: session.user.id },
+      );
     }
   } catch {
     return { error: "과제를 저장하지 못했습니다. 다시 시도해 주세요." };
@@ -643,6 +651,7 @@ export async function submitAssignmentTask(
   const [task] = await db
     .select({
       id: assignmentTasks.id,
+      title: assignmentTasks.title,
       submissionFormat: assignmentTasks.submissionFormat,
       analysisForm: assignmentTasks.analysisForm,
       dueAt: assignmentTasks.dueAt,
@@ -693,6 +702,11 @@ export async function submitAssignmentTask(
       }
       return { error: "이 과제는 이미 제출했습니다. 내용을 바꾸려면 제출 수정을 눌러 주세요." };
     }
+    await notifyPush(
+      { kind: "role", role: "admin" },
+      pushMessages.assignmentSubmitted({ assignmentId: inserted[0]!.id, studentName: session.user.name ?? null, title: task.title }),
+      { excludeProfileId: studentId },
+    );
     revalidateAssignmentViews(studentId);
     return { success: true, id: inserted[0]!.id };
   } catch {

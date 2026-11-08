@@ -19,6 +19,8 @@ import {
   requireStudentTarget,
 } from "@/lib/auth-guard";
 import { validateFreeSubmissionPayload } from "@/lib/assignment-submission";
+import { pushMessages } from "@/lib/push/messages";
+import { notifyPush } from "@/lib/push/notify";
 import { fromStoredAssignmentFormat } from "@/lib/assignment-recurrence";
 
 // ───────────────────────────────────────────────
@@ -59,6 +61,11 @@ export async function submitAssignment(
     mediaUrl: payload.mediaUrl,
     textHtml: payload.textHtml,
   });
+  await notifyPush(
+    { kind: "role", role: "admin" },
+    pushMessages.assignmentSubmitted({ assignmentId: id, studentName: session.user.name ?? null, title: null }),
+    { excludeProfileId: session.user.id },
+  );
 
   revalidatePath("/dashboard/student/assignments");
   revalidatePath("/dashboard/student");

@@ -8,7 +8,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createDb } from "@/db/client";
-import { feedbacks, assignments } from "@/db/schema";
+import { feedbacks, assignments, assignmentTasks } from "@/db/schema";
 import { and, eq, asc, count } from "drizzle-orm";
 import { CREATION_OPERATION_FIELD, deriveCreationResourceId, resolveCreationOperationId } from "@/lib/creation-operation";
 import {
@@ -16,6 +16,8 @@ import {
   requireAdmin,
   requireAuth,
 } from "@/lib/auth-guard";
+import { pushMessages } from "@/lib/push/messages";
+import { notifyPush } from "@/lib/push/notify";
 
 // ───────────────────────────────────────────────
 // 조회
@@ -86,8 +88,15 @@ export async function createFeedback(
 
   const db = createDb();
   try {
-    const [assignment] = await db.select({ id: assignments.id, mediaUrl: assignments.mediaUrl })
-      .from(assignments).where(eq(assignments.id, assignmentId)).limit(1);
+    const [assignment] = await db.select({
+      id: assignments.id,
+      mediaUrl: assignments.mediaUrl,
+      studentId: assignments.studentId,
+      title: assignmentTasks.title,
+    })
+      .from(assignments)
+      .leftJoin(assignmentTasks, eq(assignmentTasks.id, assignments.taskId))
+      .where(eq(assignments.id, assignmentId)).limit(1);
     if (!assignment) return { error: "과제를 찾을 수 없습니다. 목록에서 다시 확인해 주세요." };
     if (timeMarker !== null && !assignment.mediaUrl) {
       return { error: "글 제출에는 재생 시점 없이 전체 피드백으로 남겨 주세요." };
@@ -103,6 +112,12 @@ export async function createFeedback(
       if (!existing || existing.assignmentId !== assignmentId || existing.timeMarker !== timeMarker || existing.content !== content) {
         return { error: "이 피드백은 수정 전 내용으로 이미 저장되었거나 상태가 바뀌었습니다. 목록을 확인한 뒤 내용을 편집해 새 피드백으로 등록해 주세요." };
       }
+    } else {
+      await notifyPush(
+        { kind: "profiles", profileIds: [assignment.studentId] },
+        pushMessages.feedbackAdded({ assignmentId, title: assignment.title }),
+        { excludeProfileId: session.user.id },
+      );
     }
   } catch {
     return { error: "피드백을 저장하지 못했습니다. 다시 시도해 주세요." };

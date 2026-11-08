@@ -2,7 +2,7 @@
  * 학생·매핑 단위로 동기화 엔진을 부르는 orchestration. server action이 아닌 일반 module이라
  * 여기 함수는 권한을 검사하지 않는다(호출하는 action이 먼저 검증한다).
  */
-import { after } from "next/server";
+import { runAfterResponse } from "@/lib/after-response";
 import { createDbContext, type DbContext } from "@/db/client";
 import { listActiveMappingIdsForStudent, syncCalendarMapping, type RunOptions } from "./mapping-sync";
 import { ensureGoogleWatchChannelsForStudent } from "./push-channels";
@@ -67,17 +67,6 @@ export function markLinksDeletedStatement(kind: "LESSON" | "EVENT", localId: str
       "WHERE local_kind = ? AND local_id = ? AND mapping_id IN (SELECT id FROM calendar_mappings WHERE student_id = ?)",
     params: [Math.floor(now.getTime() / 1_000), kind, localId, studentId],
   };
-}
-
-/** request scope 안이면 응답 뒤(Next `after` → Workers waitUntil), 밖(테스트·스크립트)이면 그 자리에서 실행한다. */
-async function runAfterResponse(task: () => Promise<unknown>): Promise<void> {
-  try {
-    after(task);
-    return;
-  } catch {
-    // request scope 밖
-  }
-  await task();
 }
 
 /** 알림 동기화 시간 상한(응답 뒤 after/waitUntil 안). lease가 잡혀 있으면 이 안에서 해제를 기다렸다가 다시 돈다. */

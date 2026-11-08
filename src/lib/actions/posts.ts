@@ -65,6 +65,8 @@ import {
   processMediaDeletionOutboxBestEffort,
 } from "@/lib/media-lifecycle-atomic";
 import { mediaDeliveryPath, parseMediaUuidV4 } from "@/lib/media-lifecycle";
+import { pushMessages } from "@/lib/push/messages";
+import { notifyPush } from "@/lib/push/notify";
 
 const VALID_BOARD_TYPES: readonly BoardType[] = ["ANNOUNCEMENT", "GENERAL", "FEEDBACK"];
 
@@ -461,6 +463,13 @@ export async function createPost(
     return { error: lifecycleError(result.reason) };
   }
 
+  if (boardType === "ANNOUNCEMENT" && !result.replayed) {
+    await notifyPush(
+      { kind: "role", role: "student" },
+      pushMessages.announcementPosted({ postId: result.postId, title }),
+      { excludeProfileId: authorId },
+    );
+  }
   revalidatePostPaths(result.postId);
   if (returnTo === "student-portal" || returnTo === "community-editor") {
     return {
