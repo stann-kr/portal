@@ -5,7 +5,7 @@ import { Bell } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getPushSetup } from "@/lib/actions/push";
 import { enablePushOnThisDevice, requestOpenNotificationSettings } from "./enable-device";
-import { readCurrentSubscription, readNotificationPermission, readPushSupport } from "./push-client";
+import { readNotificationPermission, readPushSupport } from "./push-client";
 
 const DISMISS_STORAGE_KEY = "portal:push-prompt-dismissed-at";
 /** "나중에"를 누르면 이 기기에서 숨기는 기간. */
@@ -38,8 +38,8 @@ async function readPromptState(): Promise<PromptState> {
   if (dismissedRecently(Date.now())) return { kind: "hidden" };
   const support = readPushSupport();
   if (support === "needs-install") return { kind: "install" };
+  // 권한을 아직 고르지 않았다면 남아 있는 옛 구독이 있어도 알림이 표시되지 않으므로 안내한다.
   if (support !== "supported" || readNotificationPermission() !== "default") return { kind: "hidden" };
-  if (await readCurrentSubscription().catch(() => null)) return { kind: "hidden" };
   const setup = await getPushSetup(null);
   return setup.publicKey ? { kind: "ask", publicKey: setup.publicKey } : { kind: "hidden" };
 }

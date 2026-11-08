@@ -382,7 +382,7 @@ export function NotificationSettingsControl({
     void sendTestPush(endpoint)
       .then(async (result) => {
         if (result.ok) {
-          setFeedback({ tone: "status", text: "테스트 알림을 보냈습니다. 몇 초 안에 도착합니다." });
+          setFeedback({ tone: "status", text: "보냈습니다. 몇 초 안에 도착합니다." });
           return;
         }
         if (result.unregistered) await refresh();
