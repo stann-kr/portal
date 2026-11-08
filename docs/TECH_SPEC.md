@@ -402,6 +402,16 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 - 과제 피드백 찍어 두기: `useFeedbackMarks`가 관리자·과제별 시점 목록을 localStorage에 두고, 고르면 시점 칸을 채우고 그 위치로 이동한다. 성공 제출한 시점은 목록에서 뺀다. 서버·피드백 초안 계약은 그대로다.
 - 미검증: 실제 YouTube·SoundCloud 이동, 브라우저 화면(넓은 화면 옆 칸·좁은 화면 서랍), remote D1 `0022` 적용.
 
+## 웹앱 푸시 알림(2026-11-09)
+
+- 웹앱: `src/app/manifest.ts`(standalone, `/dashboard` 시작, SL 아이콘 `public/icons/` 512·192·apple 180), 루트 layout의 `appleWebApp`·`themeColor`(`src/lib/web-app-theme.ts`). `public/sw.js`는 `push`·`notificationclick`만 다루고 fetch를 가로채거나 캐시하지 않는다. 알림 클릭은 같은 출처 경로만 열고 열린 창을 먼저 쓴다. proxy matcher는 `sw.js`·`manifest.webmanifest`를 로그인 검사에서 뺀다.
+- 저장: `push_subscriptions`(`0024`, endpoint unique·https·2048자, p256dh 65바이트·auth 16바이트 base64url, profile FK cascade, 계정 삭제 batch에서 명시 삭제). 같은 endpoint를 다른 계정이 켜면 그 계정으로 옮긴다.
+- 발송(`src/lib/push/`): `web-push-crypto.ts`가 WebCrypto만으로 RFC 8291 aes128gcm 한 record(4096, 부록 A 벡터와 바이트 일치 테스트)와 RFC 8292 VAPID ES256 JWT(aud=푸시 서비스 출처, 12시간)를 만든다. `send.ts`는 TTL 24시간·Urgency normal로 보내고 2xx=sent, 404·410=gone(행 삭제), 그 밖=failed(`failure_count`+1, 10회면 삭제). `notify.ts`의 `notifyPush(audience, message, { excludeProfileId })`는 `after-response.ts`(Next `after` → Workers waitUntil)로 응답 뒤 보내고 실패는 log만 남긴다. 키(`VAPID_PUBLIC_KEY`·`VAPID_PRIVATE_KEY`, 연락처 `VAPID_SUBJECT` 없으면 `AUTH_URL`)가 없으면 DB를 읽지 않고 끝낸다. 설정값은 `runtime-env.ts`(캘린더 동기화와 공용)로 읽는다.
+- 이벤트: `createFeedback`·`createAssignmentTask`·`submitAssignmentTask`·`submitAssignment`·`createQnaThread*`·`createQnaReply`·`createLesson`·`rescheduleLesson`·`moveLesson`·`createPost(ANNOUNCEMENT)`가 새로 저장했을 때만(재전송·replayed 제외) 부른다. 정기 과제 회차 생성·수정·삭제는 알리지 않는다.
+- 화면: 계정 메뉴 "알림 설정"(`src/components/push/`). 이 기기 상태(지원·iPhone 홈 화면 추가 필요·차단·키 없음·꺼짐·받는 중)를 읽고, 켜기는 권한 요청을 버튼 handler의 첫 await로 둔다. 이 기기 구독의 주인 계정을 localStorage(`portal:push-owner`)에 두고, 화면을 열 때 주인이 다르면 구독을 해제(→ 410으로 서버 행 정리), 같으면 서버에서 빠진 구독을 다시 등록한다. 로그아웃 확인 뒤에도 해제한다.
+- 키 생성: `node scripts/generate-vapid-keys.mjs`(표준 출력만). 키를 바꾸면 기존 기기 구독은 모두 다시 켜야 한다.
+- 미검증: 실제 iPhone(홈 화면 앱)·안드로이드 수신, 운영 푸시 서비스별(Apple·Mozilla) 응답.
+
 ## 실시간 공동 편집(2026-11-01)
 
 2026-11-01 사용자 결정("노션처럼 초안 선택 없이 자동으로")으로 노트·가이드·게시물 수정·새 게시물·새 Q&A 질문(전체 화면·인라인/가이드 슬라이드)·Q&A 답변 편집을 Yjs 공동 편집으로 옮겼다. 편집기는 Tiptap Collaboration·CollaborationCaret이다. 설계 원본은 `.docs/goals/realtime-collab-editing/design.md`다.
