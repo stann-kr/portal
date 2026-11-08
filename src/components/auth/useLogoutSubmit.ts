@@ -11,6 +11,7 @@ import {
 import { postDocumentServerDraftDiscard } from "@/lib/document-server-draft-discard-api";
 import { flushQueuedDocumentServerDraftDiscards } from "@/lib/document-server-draft-logout";
 import { clearLocalDocumentDraftsForLogout } from "@/lib/local-draft-continuity-client";
+import { releaseThisDeviceForLogout } from "@/components/push/push-client";
 
 /** 로그아웃 요청이 길어져도 잠금이 먼저 만료되지 않게 이 간격으로 다시 기록한다(만료 15초보다 짧게). */
 const LOGOUT_LOCK_RENEW_MS = 5_000;
@@ -47,13 +48,17 @@ function releaseLock(ownerId: string, handle: AccountLogoutLockHandle | null): v
   }
 }
 
-/** 로그아웃이 확인된 뒤 localStorage 초안(동기)과 공동 편집 기기 보관(IndexedDB, 비동기)을 지운다. */
+/**
+ * 로그아웃이 확인된 뒤 localStorage 초안(동기)과 공동 편집 기기 보관(IndexedDB, 비동기)을 지우고,
+ * 이 기기의 알림 구독을 해제한다(공유 기기에서 다음 사람에게 앞 계정 알림이 가지 않게).
+ */
 async function clearLocalDataAfterLogout(ownerId: string): Promise<void> {
   try {
     await clearLocalDocumentDraftsForLogout(ownerId);
   } catch {
     // 정리 실패는 다음 계정 전환·로그인 경계 정리에서 다시 수렴한다.
   }
+  await releaseThisDeviceForLogout().catch(() => undefined);
 }
 
 /** 로그아웃 action의 redirect 같은 Next.js 이동 신호면 true(실패가 아니라 이동 중이다). */
