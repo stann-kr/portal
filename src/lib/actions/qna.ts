@@ -2,11 +2,12 @@
 "use server";
 
 import { notifyCollabTopic } from "@/lib/collab/server-env";
-import { and, count, desc, eq, isNotNull, isNull } from "drizzle-orm";
+import { and, count, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { searchQnaThreads } from "@/lib/qna-search";
 import { createDb, createDbContext } from "@/db/client";
 import {
+  mediaObjects,
   profiles,
   qnaReplies,
   qnaThreadEvents,
@@ -44,7 +45,13 @@ import {
   findOwnedMediaObject,
   processMediaDeletionOutboxBestEffort,
 } from "@/lib/media-lifecycle-atomic";
-import { mediaDeliveryPath, parseMediaUuidV4 } from "@/lib/media-lifecycle";
+import {
+  mediaAttachmentKind,
+  mediaDeliveryPath,
+  parseMediaDeliveryPath,
+  parseMediaUuidV4,
+  type MediaAttachmentKind,
+} from "@/lib/media-lifecycle";
 import {
   isGuideBlockId,
   normalizeGuideQuote,
@@ -167,6 +174,8 @@ function lifecycleError(reason: QnaMutationFailureReason): string {
       return "복원 가능 기간이 지났습니다.";
     case "NOT_FOUND_OR_FORBIDDEN":
       return "Q&A를 찾을 수 없거나 권한이 없습니다.";
+    case "STATUS_TRANSITION_FORBIDDEN":
+      return "답변을 받은 질문만 해결됨으로 닫을 수 있습니다.";
     case "INTERNAL_INVARIANT_FAILURE":
       return "Q&A 상태를 안전하게 변경하지 못했습니다. 다시 시도해 주세요.";
   }
@@ -262,8 +271,43 @@ async function readQnaThread(threadId: string, includeTrash: boolean) {
     .leftJoin(profiles, eq(qnaReplies.authorId, profiles.id))
     .where(eq(qnaReplies.threadId, threadId))
     .orderBy(qnaReplies.createdAt);
+  const repliesWithKind = await withQnaAttachmentKinds(replies);
   const guideAnchor = await findGuideAnchorForThread(createDbContext(), threadId);
-  return { ...thread, replies, guideAnchor };
+  return { ...thread, replies: repliesWithKind, guideAnchor };
+}
+
+/**
+ * 답글 첨부의 표시 종류를 media MIME에서 계산한다. 스레드 읽기 권한은 호출자가 이미 확인했고,
+ * 그 스레드 답글이 가리키는 Q&A 첨부 media만 조회하며 MIME 자체는 노출하지 않는다(종류만).
+ */
+async function withQnaAttachmentKinds<
+  T extends { attachmentUrl: string | null; attachmentObjectId: string | null },
+>(replies: T[]): Promise<Array<T & { attachmentKind: MediaAttachmentKind | null }>> {
+  const mediaIdFor = (reply: T) =>
+    reply.attachmentUrl
+      ? (parseMediaUuidV4(reply.attachmentObjectId) ?? parseMediaDeliveryPath(reply.attachmentUrl))
+      : null;
+  const mediaIds = [...new Set(replies.map(mediaIdFor).filter((id): id is string => Boolean(id)))];
+  const mimeById = new Map<string, string>();
+  if (mediaIds.length > 0) {
+    const rows = await createDb()
+      .select({ id: mediaObjects.id, contentType: mediaObjects.expectedContentType })
+      .from(mediaObjects)
+      .where(
+        and(
+          inArray(mediaObjects.id, mediaIds),
+          eq(mediaObjects.purpose, "QNA_ATTACHMENT"),
+        ),
+      );
+    for (const row of rows) mimeById.set(row.id, row.contentType);
+  }
+  return replies.map((reply) => {
+    const mediaId = mediaIdFor(reply);
+    return {
+      ...reply,
+      attachmentKind: mediaId ? mediaAttachmentKind(mimeById.get(mediaId)) : null,
+    };
+  });
 }
 
 export async function getQnaThread(threadId: string) {
@@ -647,6 +691,19 @@ export async function updateThreadStatus(
   });
   if (result.ok) revalidateQnaPaths(threadId);
   return lifecycleState(result);
+}
+
+/**
+ * 학생이 자기 질문을 해결됨(CLOSED)으로 닫는다. 답변을 받은(ANSWERED) 질문만 가능하고,
+ * 권한·전이·version 검증은 setQnaStatusAtomically가 원자적으로 맡는다.
+ * 관리자도 호출할 수 있으며 이때는 updateThreadStatus(…, "CLOSED", …)와 같다.
+ */
+export async function closeMyQnaThread(
+  threadId: string,
+  operationId: string,
+  baseRevision: number,
+): Promise<QnaLifecycleState> {
+  return updateThreadStatus(threadId, "CLOSED", operationId, baseRevision);
 }
 
 async function runQnaLifecycle(

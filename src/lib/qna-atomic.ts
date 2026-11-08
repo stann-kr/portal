@@ -60,7 +60,34 @@ export type QnaMutationFailureReason =
   | "RETENTION_NOT_EXPIRED"
   | "RETENTION_EXPIRED"
   | "NOT_FOUND_OR_FORBIDDEN"
+  | "STATUS_TRANSITION_FORBIDDEN"
   | "INTERNAL_INVARIANT_FAILURE";
+
+/**
+ * Q&A 상태 변경 권한. 관리자(Stann)는 모든 상태를 정할 수 있고,
+ * 학생은 자기 질문을 CLOSED(해결됨)로 닫는 것만 할 수 있다.
+ */
+export function canSetQnaStatus(
+  actor: DocumentAtomicActor,
+  threadStudentId: string,
+  status: QnaStatus,
+): boolean {
+  if (actor.isAdmin) return true;
+  return status === "CLOSED" && actor.id === threadStudentId;
+}
+
+/**
+ * 상태 전이 규칙. 관리자는 제한 없음. 학생은 답변을 받은(ANSWERED) 질문만 닫을 수 있고,
+ * 이미 CLOSED면 같은 상태 재요청(no-op)으로 허용한다. 다시 묻기(새 답글)는 OPEN으로 되돌린다.
+ */
+export function isQnaStatusTransitionAllowed(input: {
+  isAdmin: boolean;
+  from: QnaStatus;
+  to: QnaStatus;
+}): boolean {
+  if (input.isAdmin) return true;
+  return input.to === "CLOSED" && (input.from === "ANSWERED" || input.from === "CLOSED");
+}
 
 export type QnaMutationResult =
   | {
@@ -250,8 +277,12 @@ async function resolveQnaReceiptReplay(
   const tombstone = thread
     ? null
     : await findDocumentTombstone(context, "QNA_THREAD", receipt.resourceId);
+  // 학생은 자기 질문을 CLOSED로 닫는 SET_STATUS만 재생할 수 있다(소유는 아래 canAccessThread가 확인).
+  const authorCloseReplay =
+    input.operationType === "SET_STATUS" && input.request.status === "CLOSED";
   const privilegedOperation =
-    input.operationType === "SET_STATUS" || input.operationType === "PURGE";
+    (input.operationType === "SET_STATUS" && !authorCloseReplay) ||
+    input.operationType === "PURGE";
   if (privilegedOperation && !input.actor.isAdmin) {
     return { ok: false, reason: "NOT_FOUND_OR_FORBIDDEN" };
   }
@@ -887,7 +918,7 @@ export async function setQnaStatusAtomically(
     request,
   });
   if (replay) return replay;
-  if (!write.actor.isAdmin || !thread) {
+  if (!thread || !canSetQnaStatus(write.actor, thread.studentId, write.status)) {
     return { ok: false, reason: "NOT_FOUND_OR_FORBIDDEN" };
   }
   if (thread.deletedAt) {
@@ -896,6 +927,22 @@ export async function setQnaStatusAtomically(
   if (thread.version !== write.baseRevision) {
     return { ok: false, reason: "VERSION_CONFLICT", threadId: thread.id, currentRevision: thread.version };
   }
+  if (
+    !isQnaStatusTransitionAllowed({
+      isAdmin: write.actor.isAdmin,
+      from: thread.status,
+      to: write.status,
+    })
+  ) {
+    return {
+      ok: false,
+      reason: "STATUS_TRANSITION_FORBIDDEN",
+      threadId: thread.id,
+      currentRevision: thread.version,
+    };
+  }
+  // SQL guard: 관리자이거나 질문 작성자 본인일 때만 쓴다. 상태 자체는 version 일치로 고정된다.
+  const statusWriteAllowed = Number(write.actor.isAdmin || thread.studentId === write.actor.id);
 
   const recordId = deriveDocumentOperationRecordId(write.actor.id, write.operationId);
   if (thread.status === write.status) {
@@ -923,7 +970,7 @@ export async function setQnaStatusAtomically(
             write.threadId,
             write.baseRevision,
             write.status,
-            Number(write.actor.isAdmin),
+            statusWriteAllowed,
           ],
         },
         DOCUMENT_CONDITIONAL_WRITE_SENTINEL,
@@ -981,7 +1028,7 @@ export async function setQnaStatusAtomically(
           documentEpochSeconds(write.now),
           write.threadId,
           write.baseRevision,
-          Number(write.actor.isAdmin),
+          statusWriteAllowed,
         ],
       },
       DOCUMENT_CONDITIONAL_WRITE_SENTINEL,

@@ -348,6 +348,29 @@ export function isManagedMediaObjectKey(value: string): boolean {
 export const DOCUMENT_IMAGE_CLAIM_BATCH_SIZE = 50;
 
 /** 원본 R2 주소를 노출하지 않는 인증형 애플리케이션 전달 경로다. */
+/** 첨부 viewer가 고를 표시 종류. 서버가 media MIME에서만 계산해 노출한다. */
+export type MediaAttachmentKind = "image" | "audio" | "video" | "file";
+
+/** MIME → 첨부 종류. MIME이 없으면 null(알 수 없음), 인식하지 못한 MIME은 "file". */
+export function mediaAttachmentKind(
+  mimeType: string | null | undefined,
+): MediaAttachmentKind | null {
+  if (typeof mimeType !== "string") return null;
+  const normalized = mimeType.split(";")[0]!.trim().toLowerCase();
+  if (!normalized) return null;
+  if (normalized.startsWith("image/")) return "image";
+  if (normalized.startsWith("audio/")) return "audio";
+  if (normalized.startsWith("video/")) return "video";
+  return "file";
+}
+
+/** `/api/media/<uuid>` 전달 경로에서 media id를 읽는다. 다른 형태면 null. */
+export function parseMediaDeliveryPath(path: string | null | undefined): string | null {
+  if (typeof path !== "string") return null;
+  const match = /^\/api\/media\/([^/?#]+)$/u.exec(path.trim());
+  return match ? parseMediaUuidV4(match[1]) : null;
+}
+
 export function mediaDeliveryPath(mediaObjectId: string): string {
   return `/api/media/${assertUuidV4(mediaObjectId)}`;
 }

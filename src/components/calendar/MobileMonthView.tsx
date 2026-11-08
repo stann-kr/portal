@@ -111,16 +111,19 @@ export function MobileMonthView({
   showSpaceContext,
   onOpenItem,
   filters,
+  initialDate = null,
 }: {
   /** 필터와 저장 전 이동이 반영된 항목. */
   items: readonly UnifiedItem[];
   showSpaceContext: boolean;
   onOpenItem: (item: UnifiedItem) => void;
   filters?: ReactNode;
+  /** 처음 고를 날짜(YYYY-MM-DD, 딥링크). 없으면 오늘. */
+  initialDate?: string | null;
 }) {
   const [today] = useState(readTodayKey);
-  const [cursor, setCursor] = useState<MonthCursor>(() => monthOf(today));
-  const [selected, setSelected] = useState(today);
+  const [cursor, setCursor] = useState<MonthCursor>(() => monthOf(initialDate ?? today));
+  const [selected, setSelected] = useState(initialDate ?? today);
   const byDay = useMemo(() => groupItemsBySpannedDay(items), [items]);
   const weeks = monthGridWeeks(cursor);
   const selectedItems = sortDayAgenda(byDay.get(selected) ?? []);

@@ -8,11 +8,14 @@ import { RichTextContent } from "@/components/editor/RichTextContent";
 import { cn } from "@/lib/utils";
 import { formatKstMonthDayTime } from "@/lib/kst-format";
 import { initialOf } from "./qna-display";
+import type { MediaAttachmentKind } from "@/lib/media-lifecycle";
 
 type Reply = {
   id: string;
   contentHtml: string;
   attachmentUrl: string | null | undefined;
+  /** 서버가 media MIME에서 계산한 첨부 종류. 이미지 viewer가 쓸 값이며 아직 렌더링에는 쓰지 않는다. */
+  attachmentKind?: MediaAttachmentKind | null;
   createdAt: Date | null | undefined;
   authorName: string | null | undefined;
   authorEmail: string | null | undefined;

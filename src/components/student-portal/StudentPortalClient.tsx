@@ -23,7 +23,7 @@ import { PortalShell } from "@/components/ui/portal-shell";
 import { CalendarSection } from "./CalendarSection";
 import { TodaySection } from "./TodaySection";
 import type { ExternalCalendarConnectionSummary } from "@/lib/external-calendar";
-import type { PortalLocation, PortalSection } from "@/lib/portal-location";
+import type { PortalLocation, PortalSection, StudentDeepLink } from "@/lib/portal-location";
 
 // ── 타입 ──────────────────────────────────────────────
 
@@ -47,6 +47,8 @@ type CurriculumModule = {
 
 export interface StudentPortalClientProps {
   initialLocation?: PortalLocation<"student">;
+  /** 서버가 이 학생의 과제·항목과 대조한 딥링크(?task=, ?date=&item=). */
+  deepLink?: StudentDeepLink;
   announcements: Post[];
   unifiedItems: UnifiedItem[];
   curriculumModules: CurriculumModule[];
@@ -82,6 +84,7 @@ const SECTION_ALIASES: Readonly<Record<string, Section>> = {
 
 export function StudentPortalClient({
   initialLocation,
+  deepLink,
   announcements,
   unifiedItems: initialUnifiedItems,
   curriculumModules,
@@ -202,6 +205,9 @@ export function StudentPortalClient({
           >
             <CalendarSection
               initialLocation={initialLocation}
+              initialOpenTaskId={deepLink?.initialOpenTaskId ?? null}
+              initialCalendarDate={deepLink?.calendarDate ?? null}
+              initialCalendarItemKey={deepLink?.calendarItemKey ?? null}
               unifiedItems={items}
               curriculumModules={curriculumModules}
               assignments={assignments}

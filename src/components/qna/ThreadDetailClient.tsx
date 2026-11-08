@@ -30,6 +30,7 @@ import { CollabPresence } from "@/components/editor/CollabPresence";
 import { createQnaReply, updateThreadStatus, type CreateReplyState } from "@/lib/actions/qna";
 import { QNA_STATUS_LABELS } from "@/lib/qna-status";
 import type { QnaStatus } from "@/db/schema";
+import type { MediaAttachmentKind } from "@/lib/media-lifecycle";
 import { isRichTextEmpty } from "@/lib/rich-text";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
 import { useDocumentSaveShortcut } from "@/lib/hooks/useDocumentSaveShortcut";
@@ -56,6 +57,8 @@ type Reply = {
   id: string;
   contentHtml: string;
   attachmentUrl: string | null | undefined;
+  /** 서버가 media MIME에서 계산한 첨부 종류(이미지 viewer용). */
+  attachmentKind?: MediaAttachmentKind | null;
   createdAt: Date | null | undefined;
   authorName: string | null | undefined;
   authorEmail: string | null | undefined;

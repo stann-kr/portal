@@ -24,3 +24,9 @@ export function buildStudentDiggingBoardHref(returnTo?: string): string {
 export function analysisWriteHref(taskId: string): string {
   return `/dashboard/student/assignments/analysis/${encodeURIComponent(taskId)}`;
 }
+
+/** 학생 과제 목록에서 특정 과제를 펼치는 주소. 분석(믹스셋 분석) 과제는 작성 화면으로 보낸다. */
+export function assignmentTaskHref(taskId: string, options: { analysis?: boolean } = {}): string {
+  if (options.analysis) return analysisWriteHref(taskId);
+  return `/dashboard/student/assignments?task=${encodeURIComponent(taskId)}`;
+}
