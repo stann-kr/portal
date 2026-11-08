@@ -293,7 +293,7 @@ export function GuideReader({
           ) : null}
         </div>
         {canAsk ? (
-          <p className="text-ui text-muted-foreground">본문에서 궁금한 부분을 드래그해 고르면 그 위치에 질문을 남길 수 있습니다. 질문은 나와 관리자만 봅니다.</p>
+          <p className="text-ui text-muted-foreground">본문에서 궁금한 부분을 드래그해 고르면 그 위치에 질문을 남길 수 있습니다. 질문은 나와 Stann만 봅니다.</p>
         ) : null}
         {questions.length === 0 ? (
           <p className="text-ui text-secondary-foreground">아직 이 페이지에 남긴 질문이 없습니다.</p>

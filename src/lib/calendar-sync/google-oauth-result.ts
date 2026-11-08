@@ -27,7 +27,7 @@ const ERROR_MESSAGES: Record<GoogleOAuthErrorCode | "unknown", string> = {
   provider_error: "Google이 연결 요청을 거절했습니다. 잠시 후 다시 시도해 주세요.",
   state_mismatch: "연결 요청을 확인하지 못했습니다. 이 화면에서 Google 연결을 다시 시작해 주세요.",
   expired: "연결 요청 시간이 지났습니다. Google 연결을 다시 시작해 주세요.",
-  wrong_admin: "연결을 시작한 관리자 계정과 지금 로그인한 계정이 다릅니다. 다시 시작해 주세요.",
+  wrong_admin: "연결을 시작한 Stann 계정과 지금 로그인한 계정이 다릅니다. 다시 시작해 주세요.",
   config_missing: "서버에 Google 연동 설정이 없어 연결할 수 없습니다.",
   exchange_failed: "Google 계정을 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.",
   unknown: "Google 계정을 연결하지 못했습니다. 다시 시도해 주세요.",

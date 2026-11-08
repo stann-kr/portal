@@ -11,7 +11,7 @@ export function loginErrorMessage(type: string | null | undefined, code?: string
   if (type === "CredentialsSignin" && code === "rate_limited") return PASSWORD_ATTEMPT_LIMITED_MESSAGE;
   const messages: Record<string, string> = {
     CredentialsSignin: "이메일 또는 비밀번호가 올바르지 않습니다.",
-    Configuration: "서버 설정 오류가 발생했습니다. 관리자에게 문의하세요.",
+    Configuration: "서버 설정 오류가 발생했습니다. Stann에게 문의하세요.",
     AccessDenied: "접근 권한이 없습니다.",
     Verification: "인증 링크가 만료되었습니다.",
   };

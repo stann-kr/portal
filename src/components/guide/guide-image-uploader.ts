@@ -24,7 +24,7 @@ export const GUIDE_IMAGE_UPLOADER: EditorImageUploader = {
           : response.status === 413
             ? "이미지는 한 장에 10MB까지 넣을 수 있습니다."
             : response.status === 401 || response.status === 403
-              ? "가이드 이미지는 관리자만 올릴 수 있습니다."
+              ? "가이드 이미지는 Stann만 올릴 수 있습니다."
               : "이미지를 올리지 못했습니다.",
       );
     }

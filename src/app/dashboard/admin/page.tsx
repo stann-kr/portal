@@ -12,7 +12,7 @@ import { getPendingFeedbackAssignments } from "@/lib/actions/assignments";
 import { AdminPortalClient } from "@/components/admin-portal/AdminPortalClient";
 import { firstSearchValue, legacyPortalSectionRedirect, resolvePortalLocation, type PortalSearchParams } from "@/lib/portal-location";
 
-export const metadata = { title: "관리자 포탈" };
+export const metadata = { title: "Stann 포탈" };
 
 export default async function AdminPortalPage({ searchParams }: { searchParams: Promise<PortalSearchParams> }) {
   const session = await getActiveAuthSession();

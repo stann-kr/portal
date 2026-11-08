@@ -21,7 +21,7 @@ const MAX_COOKIE_LENGTH = 2_048;
 
 export const GOOGLE_OAUTH_MESSAGES = {
   unauthorized: "로그인이 필요합니다.",
-  forbidden: "관리자만 캘린더 계정을 연결할 수 있습니다.",
+  forbidden: "Stann만 캘린더 계정을 연결할 수 있습니다.",
   encryptionMissing: "설정 필요: 서버에 EXTERNAL_CALENDAR_ENCRYPTION_KEY가 없어 외부 캘린더 연결이 꺼져 있습니다.",
   googleMissing: "Google 연동 설정(GOOGLE_CALENDAR_CLIENT_ID/SECRET)이 없어 Google 연결이 꺼져 있습니다.",
 } as const;

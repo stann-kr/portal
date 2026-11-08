@@ -59,7 +59,7 @@ function deletionFailureMessage(reason: DeleteStudentAccountFailureReason): stri
     case "STUDENT_NOT_FOUND":
       return "활성 학생 계정을 찾을 수 없습니다.";
     case "ADMIN_FORBIDDEN":
-      return "관리자 계정은 이 화면에서 삭제할 수 없습니다.";
+      return "Stann 계정은 이 화면에서 삭제할 수 없습니다.";
     case "CLEANUP_TOKEN_NOT_ACTIVE":
       return "이 기기의 정리 신호를 등록하지 못했습니다. 온라인 상태에서 다시 시도해 주세요.";
     case "OPERATION_PAYLOAD_CONFLICT":
