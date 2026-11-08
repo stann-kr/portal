@@ -81,7 +81,8 @@ export async function findOwnPushTarget(db: DrizzleDb, profileId: string, endpoi
 
 export type PushAudience =
   | { kind: "profiles"; profileIds: readonly string[] }
-  | { kind: "role"; role: "admin" | "student" };
+  | { kind: "role"; role: "admin" | "student" }
+  | { kind: "everyone" };
 
 /** 받는 사람의 구독. 보낸 사람 본인(excludeProfileId)은 빼고, 지금 있는 계정만 고른다. */
 export async function listPushTargets(
@@ -105,12 +106,17 @@ export async function listPushTargets(
       .from(pushSubscriptions)
       .innerJoin(profiles, eq(profiles.id, pushSubscriptions.profileId))
       .where(inArray(pushSubscriptions.profileId, ids));
-  } else {
+  } else if (audience.kind === "role") {
     rows = await db
       .select(columns)
       .from(pushSubscriptions)
       .innerJoin(profiles, eq(profiles.id, pushSubscriptions.profileId))
       .where(eq(profiles.role, audience.role));
+  } else {
+    rows = await db
+      .select(columns)
+      .from(pushSubscriptions)
+      .innerJoin(profiles, eq(profiles.id, pushSubscriptions.profileId));
   }
   return excludeProfileId ? rows.filter((row) => row.profileId !== excludeProfileId) : rows;
 }

@@ -13,6 +13,8 @@ import { and, eq, asc, isNull, sql } from "drizzle-orm";
 import { assertOwnerOrAdmin, requireAuth } from "@/lib/auth-guard";
 import { CREATION_OPERATION_FIELD, deriveCreationResourceId, resolveCreationOperationId } from "@/lib/creation-operation";
 import { COMMENT_TIME_MARKER_FIELD, parseTimeMarker } from "@/lib/community-mixset-media";
+import { pushMessages } from "@/lib/push/messages";
+import { notifyPush } from "@/lib/push/notify";
 
 function escapeHtml(text: string): string {
   return text
@@ -68,6 +70,40 @@ export type CreateCommentState = {
 };
 
 /**
+ * 새 댓글 알림: 글쓴이에게 "내 글에 새 댓글", 앞서 댓글을 단 다른 사람에게 "새 댓글". 댓글 쓴 본인은 받지 않는다.
+ * 알림 준비가 실패해도 댓글 저장 결과는 바꾸지 않는다.
+ */
+async function notifyCommentAdded(
+  db: ReturnType<typeof createDb>,
+  postId: string,
+  post: { title: string; authorId: string },
+  session: Awaited<ReturnType<typeof requireAuth>>,
+): Promise<void> {
+  try {
+    const authorName = session.user.name ?? null;
+    await notifyPush(
+      { kind: "profiles", profileIds: [post.authorId] },
+      pushMessages.commentAdded({ postId, authorName, title: post.title, toPostAuthor: true }),
+      { excludeProfileId: session.user.id },
+    );
+    const participants = await db
+      .selectDistinct({ authorId: comments.authorId })
+      .from(comments)
+      .where(eq(comments.postId, postId));
+    const others = participants.map((row) => row.authorId).filter((id) => id !== post.authorId && id !== session.user.id);
+    if (others.length > 0) {
+      await notifyPush(
+        { kind: "profiles", profileIds: others },
+        pushMessages.commentAdded({ postId, authorName, title: post.title, toPostAuthor: false }),
+        { excludeProfileId: session.user.id },
+      );
+    }
+  } catch {
+    // 알림은 댓글 저장 결과를 바꾸지 않는다.
+  }
+}
+
+/**
  * 댓글 작성.
  * @param postId - 대상 게시물 ID
  * @param _prev - useActionState 이전 상태
@@ -95,7 +131,7 @@ export async function createComment(
   const contentHtml = `<p>${escapeHtml(content)}</p>`;
   try {
     const [activePost] = await db
-      .select({ id: posts.id, boardType: posts.boardType, mediaUrl: posts.mediaUrl })
+      .select({ id: posts.id, boardType: posts.boardType, mediaUrl: posts.mediaUrl, title: posts.title, authorId: posts.authorId })
       .from(posts)
       .where(and(eq(posts.id, postId), isNull(posts.deletedAt)))
       .limit(1);
@@ -128,6 +164,8 @@ export async function createComment(
       ) {
         return { error: "이 댓글은 수정 전 내용으로 이미 저장되었거나 상태가 바뀌었습니다. 목록을 확인한 뒤 내용을 편집해 새 댓글로 등록해 주세요." };
       }
+    } else {
+      await notifyCommentAdded(db, postId, activePost, session);
     }
   } catch {
     return { error: "댓글을 저장하지 못했습니다. 다시 시도해 주세요." };
