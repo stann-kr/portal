@@ -59,12 +59,33 @@ export async function subscribeThisDevice(publicKey: string): Promise<PushSubscr
   return registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key as Uint8Array<ArrayBuffer> });
 }
 
+const OWNER_STORAGE_KEY = "portal:push-owner";
+
+/** 이 기기 구독을 켠 계정. 세션이 만료된 뒤 다른 계정이 로그인하면 앞 계정의 구독을 이어 쓰지 않는다. */
+export function readPushOwner(): string | null {
+  try {
+    return window.localStorage.getItem(OWNER_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function writePushOwner(ownerId: string | null): void {
+  try {
+    if (ownerId) window.localStorage.setItem(OWNER_STORAGE_KEY, ownerId);
+    else window.localStorage.removeItem(OWNER_STORAGE_KEY);
+  } catch {
+    // 저장소를 쓸 수 없으면 주인 확인 없이 해제 쪽으로 동작한다(readPushOwner가 null).
+  }
+}
+
 /** 이 기기 구독을 브라우저에서 해제한다. 해제한 endpoint를 돌려준다(서버 행 삭제용). */
 export async function unsubscribeThisDevice(): Promise<string | null> {
   const subscription = await readCurrentSubscription();
   if (!subscription) return null;
   const { endpoint } = subscription;
   await subscription.unsubscribe().catch(() => false);
+  writePushOwner(null);
   return endpoint;
 }
 

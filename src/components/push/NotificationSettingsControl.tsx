@@ -8,9 +8,11 @@ import { getPushSetup, removePushSubscription, savePushSubscription, sendTestPus
 import {
   readCurrentSubscription,
   readNotificationPermission,
+  readPushOwner,
   readPushSupport,
   subscribeThisDevice,
   unsubscribeThisDevice,
+  writePushOwner,
 } from "./push-client";
 
 /**
@@ -36,7 +38,24 @@ const RECEIVED_KINDS = {
   admin: "과제 제출 · 학생이 레슨을 옮길 때 · 새 질문과 학생 답글",
 } as const;
 
-async function loadDeviceState(): Promise<DeviceState> {
+/**
+ * 브라우저에 남은 구독을 지금 계정 기준으로 맞춘다.
+ * 이 계정이 켠 구독이면 서버에서 빠졌을 때 다시 등록하고, 다른 계정이 켜 둔 구독(세션 만료 뒤 다른 계정 로그인)은 해제한다.
+ * 해제된 구독은 푸시 서비스가 410으로 답해 서버 행도 지워진다.
+ */
+async function reconcileSubscription(ownerId: string, subscription: PushSubscription, registered: boolean): Promise<"kept" | "released"> {
+  if (readPushOwner() !== ownerId) {
+    await unsubscribeThisDevice().catch(() => null);
+    return "released";
+  }
+  if (!registered) {
+    const saved = await savePushSubscription(subscription.toJSON());
+    if (!saved.ok) return "released";
+  }
+  return "kept";
+}
+
+async function loadDeviceState(ownerId: string): Promise<DeviceState> {
   const support = readPushSupport();
   if (support !== "supported") return { kind: support };
   if (readNotificationPermission() === "denied") return { kind: "blocked" };
@@ -45,11 +64,12 @@ async function loadDeviceState(): Promise<DeviceState> {
   if (!setup.publicKey) return { kind: "unavailable" };
   if (subscription && readNotificationPermission() === "granted") {
     if (!setup.registered) {
-      // 브라우저에는 구독이 있는데 서버에 없다(연결이 끊겨 지워졌거나 브라우저가 바꿨다): 지금 계정으로 다시 등록한다.
-      const saved = await savePushSubscription(subscription.toJSON());
-      if (!saved.ok) return { kind: "off", publicKey: setup.publicKey };
+      const result = await reconcileSubscription(ownerId, subscription, false);
+      if (result === "released") return { kind: "off", publicKey: setup.publicKey };
       return { kind: "on", publicKey: setup.publicKey, endpoint: subscription.endpoint, deviceCount: setup.deviceCount + 1 };
     }
+    // 서버에 이 계정으로 등록된 기기다: 주인 표시가 비었으면(다른 탭에서 켬 등) 채운다.
+    writePushOwner(ownerId);
     return { kind: "on", publicKey: setup.publicKey, endpoint: subscription.endpoint, deviceCount: setup.deviceCount };
   }
   return { kind: "off", publicKey: setup.publicKey };
@@ -58,10 +78,10 @@ async function loadDeviceState(): Promise<DeviceState> {
 let backgroundSyncStarted = false;
 
 /**
- * 화면을 열 때 한 번: 알림을 켜 둔 기기면 Service Worker를 갱신하고, 브라우저 구독이 서버에서 빠졌으면 다시 등록한다.
+ * 화면을 열 때 한 번: 알림을 켜 둔 기기면 Service Worker를 갱신하고, 구독을 지금 계정 기준으로 맞춘다(reconcileSubscription).
  * 계정 메뉴가 데스크톱·서랍 두 곳에 있어도 한 번만 돈다.
  */
-function syncSubscriptionInBackground(): void {
+function syncSubscriptionInBackground(ownerId: string): void {
   if (backgroundSyncStarted) return;
   backgroundSyncStarted = true;
   if (readPushSupport() !== "supported" || readNotificationPermission() !== "granted") return;
@@ -71,7 +91,9 @@ function syncSubscriptionInBackground(): void {
       const subscription = await readCurrentSubscription();
       if (!subscription) return;
       const setup = await getPushSetup(subscription.endpoint);
-      if (setup.publicKey && !setup.registered) await savePushSubscription(subscription.toJSON());
+      if (!setup.publicKey) return;
+      if (setup.registered) writePushOwner(ownerId);
+      else await reconcileSubscription(ownerId, subscription, false);
     } catch {
       // 다음에 알림 설정을 열 때 다시 맞춘다.
     }
@@ -175,9 +197,12 @@ function DeviceSection({
 /** 계정 메뉴의 알림 설정(캔버스 NotificationSettings·MobileNotificationSheet 보드). */
 export function NotificationSettingsControl({
   controlRef,
+  ownerId,
   isAdmin,
 }: {
   controlRef?: Ref<AccountDialogHandle>;
+  /** 지금 로그인한 계정. 이 기기 구독의 주인과 비교한다. */
+  ownerId: string;
   isAdmin: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -187,20 +212,20 @@ export function NotificationSettingsControl({
   const loadIdRef = useRef(0);
 
   useEffect(() => {
-    syncSubscriptionInBackground();
-  }, []);
+    syncSubscriptionInBackground(ownerId);
+  }, [ownerId]);
 
   const refresh = useCallback(async () => {
     const loadId = ++loadIdRef.current;
     setState({ kind: "loading" });
     let next: DeviceState;
     try {
-      next = await loadDeviceState();
+      next = await loadDeviceState(ownerId);
     } catch {
       next = { kind: "unavailable" };
     }
     if (loadId === loadIdRef.current) setState(next);
-  }, []);
+  }, [ownerId]);
 
   const handleOpenChange = (nextOpen: boolean) => {
     if (pending) return;
@@ -228,6 +253,7 @@ export function NotificationSettingsControl({
           setFeedback({ tone: "error", text: saved.error });
           return;
         }
+        writePushOwner(ownerId);
         await refresh();
         setFeedback({ tone: "status", text: "이 기기에서 알림을 켰습니다." });
       })

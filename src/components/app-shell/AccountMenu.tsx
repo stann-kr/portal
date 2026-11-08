@@ -134,7 +134,7 @@ export function AccountMenu({
       </DropdownMenu.Root>
 
       <LocalDraftManager ownerId={ownerId} controlRef={draftsRef} hideTrigger />
-      <NotificationSettingsControl controlRef={notificationsRef} isAdmin={isAdmin} />
+      <NotificationSettingsControl controlRef={notificationsRef} ownerId={ownerId} isAdmin={isAdmin} />
       <PasswordChangeControl controlRef={passwordRef} hideTrigger />
       {canDeleteAccount ? <AccountDeletionControl ownerId={ownerId} controlRef={deleteRef} hideTrigger /> : null}
       {logout.error ? (
