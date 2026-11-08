@@ -141,7 +141,7 @@ function AccountRow({
         <span className={cn("truncate font-medium", variant === "desktop" ? "text-ui" : "text-sm")}>{displayName}</span>
         <span className="text-xs text-muted-foreground">{role === "admin" ? "관리자" : "학생"}</span>
       </span>
-      <AccountMenu ownerId={ownerId} canDeleteAccount={canDeleteAccount} size={variant === "desktop" ? "md" : "touch"} />
+      <AccountMenu ownerId={ownerId} canDeleteAccount={canDeleteAccount} isAdmin={role === "admin"} size={variant === "desktop" ? "md" : "touch"} />
     </div>
   );
 }

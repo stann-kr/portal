@@ -21,10 +21,13 @@ import {
   requireAuth,
   requireStudentOwnerOrAdmin,
   requireStudentTarget,
+  type AuthSession,
 } from "@/lib/auth-guard";
 import { parseKstDateTimeInput } from "@/lib/date-input";
 import { queryConnectedLessonsForStudent, type ConnectedLesson } from "@/lib/connected-next-lesson";
 import { fetchExternalItemsForUser } from "@/lib/external-items";
+import { pushMessages } from "@/lib/push/messages";
+import { notifyPush } from "@/lib/push/notify";
 
 // ───────────────────────────────────────────────
 // 조회
@@ -134,6 +137,7 @@ export async function createLesson(
   formData: FormData,
 ): Promise<CreateLessonState> {
   await requireStudentTarget(studentId);
+  const session = await requireAuth();
 
   const parsed = parseLessonScheduleInput(formData);
   if (!parsed.ok) return { error: parsed.error };
@@ -145,6 +149,11 @@ export async function createLesson(
     studentId,
     scheduledAt: parsed.value,
   });
+  await notifyPush(
+    { kind: "profiles", profileIds: [studentId] },
+    pushMessages.lessonScheduled({ lessonId: id, scheduledAt: parsed.value, changed: false }),
+    { excludeProfileId: session.user.id },
+  );
 
   // 연결된 원격 캘린더에 best-effort로 보낸다(실패해도 레슨 생성은 성공).
   await schedulePushStudentCalendarChanges(studentId);
@@ -162,7 +171,7 @@ export async function rescheduleLesson(
   formData: FormData,
 ): Promise<CreateLessonState> {
   await requireStudentTarget(studentId);
-  return writeLessonSchedule(lessonId, studentId, formData);
+  return writeLessonSchedule(lessonId, studentId, formData, await requireAuth());
 }
 
 /** 권한 확인을 마친 호출만 쓴다. 대상 학생의 레슨일 때만 시간을 바꾼다. */
@@ -170,6 +179,7 @@ async function writeLessonSchedule(
   lessonId: string,
   studentId: string,
   formData: FormData,
+  actor: AuthSession,
 ): Promise<CreateLessonState> {
   const parsed = parseLessonScheduleInput(formData);
   if (!parsed.ok) return { error: parsed.error };
@@ -181,6 +191,19 @@ async function writeLessonSchedule(
     .where(and(eq(lessons.id, lessonId), eq(lessons.studentId, studentId)))
     .returning({ id: lessons.id });
   if (updated.length === 0) return { error: "레슨을 찾을 수 없습니다. 목록을 새로고침해 주세요." };
+  // 관리자가 옮기면 학생에게, 학생이 옮기면 관리자에게 알린다.
+  const movedByAdmin = actor.user.role === "admin";
+  await notifyPush(
+    movedByAdmin ? { kind: "profiles", profileIds: [studentId] } : { kind: "role", role: "admin" },
+    pushMessages.lessonScheduled({
+      lessonId,
+      scheduledAt: parsed.value,
+      changed: true,
+      toAdmin: !movedByAdmin,
+      studentName: actor.user.name ?? null,
+    }),
+    { excludeProfileId: actor.user.id },
+  );
 
   await schedulePushStudentCalendarChanges(studentId);
   revalidateLessonPaths(studentId);
@@ -204,7 +227,7 @@ export async function moveLesson(
   }
   const formData = new FormData();
   formData.set("scheduledAt", scheduledAt);
-  return writeLessonSchedule(lessonId, studentId, formData);
+  return writeLessonSchedule(lessonId, studentId, formData, session);
 }
 
 // ───────────────────────────────────────────────

@@ -691,6 +691,8 @@ function accountDeletionStatements(input: {
     { query: "DELETE FROM calendar_events WHERE user_id = ?", params: [actorId] },
     { query: "DELETE FROM external_calendar_subscriptions WHERE student_id = ?", params: [actorId] },
     { query: "DELETE FROM calendar_mappings WHERE student_id = ?", params: [actorId] },
+    // 이 계정으로 등록된 기기 알림 구독. 계정이 사라진 뒤 남은 기기로 알림이 가지 않게 함께 지운다.
+    { query: "DELETE FROM push_subscriptions WHERE profile_id = ?", params: [actorId] },
     {
       query: "DELETE FROM profiles WHERE id = ? AND role = 'student'",
       params: [actorId],

@@ -52,6 +52,8 @@ import {
 } from "@/lib/guide-content";
 import { findGuideAnchorForThread, findGuidePage } from "@/lib/guide-store";
 import type { QnaGuideAnchorWrite } from "@/lib/qna-atomic";
+import { pushMessages } from "@/lib/push/messages";
+import { notifyPush } from "@/lib/push/notify";
 
 /** 가이드 구간 질문의 위치 입력. 없으면 일반 질문이다. */
 async function resolveGuideAnchor(
@@ -439,6 +441,13 @@ async function createQnaThreadRecord(
     }
     return { error: lifecycleError(result.reason) };
   }
+  if (!result.replayed) {
+    await notifyPush(
+      { kind: "role", role: "admin" },
+      pushMessages.questionCreated({ threadId: result.threadId, studentName: session.user.name ?? null, title }),
+      { excludeProfileId: studentId },
+    );
+  }
   return {
     thread: {
       id: result.threadId,
@@ -493,6 +502,29 @@ export type CreateReplyState = {
   conflictedOperationId?: string;
   existingId?: string;
 };
+
+/** 관리자 답변은 질문한 학생에게, 학생 답글은 관리자에게 보낸다. 본인은 받지 않는다. */
+async function notifyQnaReply(
+  session: Awaited<ReturnType<typeof requireAuth>>,
+  threadId: string,
+): Promise<void> {
+  try {
+    const [thread] = await createDb()
+      .select({ studentId: qnaThreads.studentId, title: qnaThreads.title })
+      .from(qnaThreads)
+      .where(eq(qnaThreads.id, threadId))
+      .limit(1);
+    if (!thread) return;
+    const toStudent = session.user.role === "admin";
+    await notifyPush(
+      toStudent ? { kind: "profiles", profileIds: [thread.studentId] } : { kind: "role", role: "admin" },
+      pushMessages.replyAdded({ threadId, authorName: session.user.name ?? null, title: thread.title, toStudent }),
+      { excludeProfileId: session.user.id },
+    );
+  } catch {
+    // 알림은 답변 저장 결과를 바꾸지 않는다.
+  }
+}
 
 export async function createQnaReply(
   threadId: string,
@@ -563,6 +595,7 @@ export async function createQnaReply(
     }
     return { error: lifecycleError(result.reason) };
   }
+  if (!result.replayed) await notifyQnaReply(session, threadId);
   revalidateQnaPaths(threadId);
   return {
     success: true,

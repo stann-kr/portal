@@ -1911,3 +1911,42 @@ export const instructorMemoRevisions = sqliteTable(
     ),
   ],
 );
+
+/**
+ * 웹 푸시 구독: 브라우저(기기)마다 하나. endpoint는 브라우저 푸시 서비스가 정한 전송 주소라 기기 단위로 유일하다.
+ * 같은 기기에서 다른 계정이 로그인해 다시 켜면 그 계정으로 옮겨진다(endpoint 기준 upsert).
+ * p256dh·auth는 본문 암호화용 공개 값이며, 404·410 응답을 받으면 행을 지운다.
+ */
+export const pushSubscriptions = sqliteTable(
+  "push_subscriptions",
+  {
+    id: text("id").primaryKey(),
+    profileId: text("profile_id")
+      .references(() => profiles.id, { onDelete: "cascade" })
+      .notNull(),
+    endpoint: text("endpoint").notNull(),
+    p256dh: text("p256dh").notNull(),
+    auth: text("auth").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .default(sql`(strftime('%s', 'now'))`)
+      .notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .default(sql`(strftime('%s', 'now'))`)
+      .notNull(),
+    lastSuccessAt: integer("last_success_at", { mode: "timestamp" }),
+    failureCount: integer("failure_count").default(0).notNull(),
+  },
+  (table) => [
+    uniqueIndex("push_subscriptions_endpoint_unique").on(table.endpoint),
+    index("push_subscriptions_profile_idx").on(table.profileId),
+    check(
+      "push_subscriptions_payload_check",
+      sql`substr(${table.endpoint}, 1, 8) = 'https://'
+        AND length(${table.endpoint}) <= 2048
+        AND length(${table.p256dh}) BETWEEN 80 AND 100
+        AND length(${table.auth}) BETWEEN 16 AND 32
+        AND ${table.failureCount} >= 0
+        AND ${table.createdAt} <= ${table.updatedAt}`,
+    ),
+  ],
+);
