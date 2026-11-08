@@ -325,6 +325,7 @@ test("계정 삭제는 owned/cross-resource payload와 media를 한 transaction�
     VALUES ('delete-memo-revision', 'delete-memo-student', 1, '<p>memo</p>', 1767225600, 1767225600);
     INSERT INTO push_subscriptions (id, profile_id, endpoint, p256dh, auth)
     VALUES ('delete-push', 'delete-student', 'https://push.example.com/send/delete', '${"B".repeat(87)}', '${"a".repeat(22)}');
+    INSERT INTO push_muted_categories (profile_id, category) VALUES ('delete-student', 'community_post');
     INSERT INTO document_tombstones (
       resource_type, resource_id, subject_id, owner_id,
       source_version, purged_at, purged_by_id
@@ -532,6 +533,13 @@ test("계정 삭제는 owned/cross-resource payload와 media를 한 transaction�
     countRows(
       sqlite,
       "SELECT count(*) AS value FROM calendar_feed_tokens WHERE owner_id = 'delete-student'",
+    ),
+    0,
+  );
+  assert.equal(
+    countRows(
+      sqlite,
+      "SELECT count(*) AS value FROM push_muted_categories WHERE profile_id = 'delete-student'",
     ),
     0,
   );

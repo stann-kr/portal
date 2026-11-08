@@ -1,7 +1,7 @@
 import { createDb, type DrizzleDb } from "@/db/client";
 import { runAfterResponse } from "@/lib/after-response";
 import { readPushConfig } from "./config";
-import type { PushMessage } from "./messages";
+import type { PushCategory, PushMessage } from "./messages";
 import { sendWebPush, type PushSendOutcome } from "./send";
 import { listPushTargets, recordPushOutcome, type PushAudience, type StoredPushTarget } from "./store";
 import type { VapidKeys } from "./web-push-crypto";
@@ -10,7 +10,7 @@ export type { PushAudience } from "./store";
 
 export type PushDeliveryDeps = {
   readConfig: () => VapidKeys | null;
-  listTargets: (audience: PushAudience, excludeProfileId?: string) => Promise<StoredPushTarget[]>;
+  listTargets: (audience: PushAudience, excludeProfileId?: string, category?: PushCategory) => Promise<StoredPushTarget[]>;
   send: (target: StoredPushTarget, message: PushMessage, keys: VapidKeys) => Promise<PushSendOutcome>;
   record: (id: string, outcome: PushSendOutcome) => Promise<void>;
 };
@@ -22,7 +22,7 @@ function defaultDeps(): PushDeliveryDeps {
   const database = () => (db ??= createDb());
   return {
     readConfig: () => readPushConfig(),
-    listTargets: (audience, excludeProfileId) => listPushTargets(database(), audience, excludeProfileId),
+    listTargets: (audience, excludeProfileId, category) => listPushTargets(database(), audience, excludeProfileId, category),
     send: (target, message, keys) => sendWebPush(target, message, keys),
     record: (id, outcome) => recordPushOutcome(database(), id, outcome),
   };
@@ -41,7 +41,8 @@ export async function deliverPush(
   const summary: PushDeliverySummary = { sent: 0, gone: 0, failed: 0 };
   const keys = deps.readConfig();
   if (!keys) return summary;
-  const targets = await deps.listTargets(audience, options.excludeProfileId);
+  const category = message.category === "test" ? undefined : message.category;
+  const targets = await deps.listTargets(audience, options.excludeProfileId, category);
   await Promise.all(targets.map(async (target) => {
     const outcome = await deps.send(target, message, keys).catch((): PushSendOutcome => "failed");
     summary[outcome] += 1;
