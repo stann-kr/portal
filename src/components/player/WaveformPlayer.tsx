@@ -202,9 +202,12 @@ function WaveformTrack({
     </span>
   );
 
+  // 파형이 없으면(아직 재생 전·만들 수 없음) 84px 파형 자리 대신 진행 막대 높이만 쓴다.
+  // 시점 댓글 줄은 표시가 있을 때만 막대 바로 아래에 둔다.
+  const lineOnly = !bars && status !== "computing" && status !== "loading";
   return (
     <div className="flex flex-col gap-2" onPointerLeave={(event) => { if (event.pointerType === "mouse") setOpenMarker(null); }}>
-      <div className="relative h-[84px]">
+      <div className={cn("relative", lineOnly ? (placed.length > 0 ? "h-12" : "h-7") : "h-[84px]")}>
         <div
           ref={sliderRef}
           role="slider"
@@ -223,7 +226,7 @@ function WaveformTrack({
           onPointerUp={() => { draggingRef.current = false; }}
           onPointerCancel={() => { draggingRef.current = false; }}
           onKeyDown={handleKeyDown}
-          className="absolute inset-x-0 top-0 h-16 cursor-pointer touch-none rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className={cn("absolute inset-x-0 top-0 cursor-pointer touch-none", lineOnly ? "h-7" : "h-16", "rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring")}
         >
           {bars ? (
             <>
@@ -238,7 +241,7 @@ function WaveformTrack({
             </span>
           ) : (
             // 파형이 없으면(아직 재생 전·만들 수 없음) 같은 자리에 진행 막대만 둔다.
-            <span aria-hidden="true" className="waveform-line"><span style={{ width: `${fraction * 100}%` }} /></span>
+            <span aria-hidden="true" className="waveform-line waveform-line--compact"><span style={{ width: `${fraction * 100}%` }} /></span>
           )}
         </div>
         <div aria-label="시점 댓글" role="group" className="absolute inset-x-0 bottom-0 h-5">

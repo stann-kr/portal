@@ -275,7 +275,7 @@ export function MixAnalysisWriteForm({
       <div className="flex min-w-0 flex-col gap-3 max-md:contents md:sticky md:top-6 md:flex-[3_1_520px]">
         {linkField}
         {playableUrl ? (
-          <div className="max-md:sticky max-md:top-[3.25rem] max-md:z-20 max-md:-order-1 max-md:bg-background">
+          <div className="max-md:sticky max-md:top-[var(--app-topbar-height)] max-md:z-20 max-md:-order-1 max-md:bg-background">
             <VideoPlayer
               url={playableUrl}
               onPositionReaderChange={handlePositionReaderChange}

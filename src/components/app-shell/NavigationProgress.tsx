@@ -60,7 +60,11 @@ export function NavigationProgress() {
 
   useEffect(() => {
     let nextId = 0;
-    const start = () => setStartedAt({ key: locationKeyRef.current, id: ++nextId });
+    const start = () => {
+      // 이 뒤로 mount되는 스켈레톤만 짧은 기다림 뒤 나타난다(skeleton.css). 첫 진입 스켈레톤은 바로 보인다.
+      document.documentElement.dataset.clientNav = "";
+      setStartedAt({ key: locationKeyRef.current, id: ++nextId });
+    };
     // bubble 단계의 window에서 듣는다. 제출 중 이동 막기(useBusyNavigationGuard)가 전파를 끊은 클릭은 여기 오지 않는다.
     // 화면 안에서 직접 처리하는 링크(커뮤니티 게시판 줄 등)는 preventDefault 뒤 주소를 스스로 바꾸거나 그대로 둔다.
     // Next Link도 preventDefault하므로, 그런 링크는 a[data-progress-skip]으로 막대를 켜지 않게 표시한다.

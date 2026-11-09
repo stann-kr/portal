@@ -586,7 +586,7 @@ export function DiggingBoard({
           type="date"
           value={dateFrom}
           onChange={(e) => setDateFrom(e.target.value)}
-          className={cn("px-2.5 font-mono text-foreground", readonly && "md:h-8 md:w-36 md:px-2 md:text-xs")}
+          className={cn("px-2 font-mono text-foreground max-md:font-sans", readonly && "md:h-8 md:w-36 md:px-2 md:text-xs")}
         />
       </label>
       <label htmlFor="digging-date-to" className="flex flex-col gap-1 text-xs text-muted-foreground">
@@ -596,7 +596,7 @@ export function DiggingBoard({
           type="date"
           value={dateTo}
           onChange={(e) => setDateTo(e.target.value)}
-          className={cn("px-2.5 font-mono text-foreground", readonly && "md:h-8 md:w-36 md:px-2 md:text-xs")}
+          className={cn("px-2 font-mono text-foreground max-md:font-sans", readonly && "md:h-8 md:w-36 md:px-2 md:text-xs")}
         />
       </label>
       {(dateFrom || dateTo) && (

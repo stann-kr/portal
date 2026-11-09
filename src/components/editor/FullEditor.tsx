@@ -685,7 +685,7 @@ export function FullEditor({
   );
 
   const shortcutHint = !disabled && saveShortcutLabel ? (
-    <span className="shrink-0 font-mono text-xs text-muted-foreground">
+    <span className="hidden shrink-0 font-mono text-xs text-muted-foreground md:inline">
       {saveShortcutLabel} <kbd className="font-mono">{saveShortcutKey}</kbd>
     </span>
   ) : null;
@@ -1124,7 +1124,7 @@ export function FullEditor({
           disabled={disabled}
           role="toolbar"
           aria-label="서식"
-          className="sticky bottom-0 z-10 -mx-[var(--editor-bleed,0px)] hidden items-center gap-0.5 border-t border-border bg-background px-2 pb-[max(0.25rem,env(safe-area-inset-bottom))] pt-1 max-md:group-focus-within/editor:flex disabled:opacity-60"
+          className="sticky-dock sticky bottom-0 z-10 -mx-[var(--editor-bleed,0px)] hidden min-w-0 items-center gap-0.5 border-t border-border bg-background px-2 pb-[max(0.25rem,env(safe-area-inset-bottom))] pt-1 [--dock-pad:0.25rem] max-md:group-focus-within/editor:flex disabled:opacity-60"
         >
           <div className="scroll-row flex min-w-0 flex-1 items-center gap-0.5">
             <MobileToolbarButton

@@ -75,6 +75,30 @@ export function upsertUnifiedItems(
   ].sort((left, right) => right.date.getTime() - left.date.getTime());
 }
 
+/**
+ * 한 기간을 다시 읽은 결과로 그 기간의 포탈 항목을 교체한다.
+ * 기존 항목 중 `date`(서버가 기간을 거르는 배치 시각)가 [start, end] 안이고 응답에 없는 포탈 항목은 지운다(삭제·기간 밖 이동).
+ * 기간 밖 항목과 외부 캘린더 항목은 그대로 두고, 응답 항목은 기간 밖이더라도 그대로 병합한다.
+ * 응답이 상한에 걸려 잘렸으면(`complete: false`) 빠진 항목이 지워진 것인지 알 수 없으므로 병합만 한다.
+ */
+export function replaceUnifiedItemsInRange(
+  items: readonly UnifiedItem[],
+  incoming: readonly UnifiedItem[],
+  range: { start: Date; end: Date; complete: boolean },
+): UnifiedItem[] {
+  if (!range.complete) return upsertUnifiedItems(items, incoming);
+  const start = range.start.getTime();
+  const end = range.end.getTime();
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return upsertUnifiedItems(items, incoming);
+  const incomingKeys = new Set(incoming.map(getUnifiedItemKey));
+  const kept = items.filter((item) => {
+    if (item.source.kind !== "PORTAL" || incomingKeys.has(getUnifiedItemKey(item))) return true;
+    const time = item.date.getTime();
+    return !(time >= start && time <= end);
+  });
+  return upsertUnifiedItems(kept, incoming);
+}
+
 // ─── 색상 맵 ──────────────────────────────────────
 
 const TYPE_COLORS: Record<string, string> = {

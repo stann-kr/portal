@@ -18,7 +18,7 @@ export function SkeletonBlock({ className }: { className?: string }) {
   return <span aria-hidden="true" className={cn("skeleton-bar rounded-lg", className)} />;
 }
 
-/** 스켈레톤 전체를 감싸 접근 가능한 불러오기 상태로 알린다. 160ms 뒤 서서히 나타난다. */
+/** 스켈레톤 전체를 감싸 접근 가능한 불러오기 상태로 알린다. 앱 안 이동이면 160ms 뒤 서서히, 첫 진입이면 바로 나타난다. */
 export function SkeletonRegion({
   label,
   className,

@@ -222,9 +222,10 @@ mock.module("@/lib/actions/unifiedItems", { namedExports: {
 } });
 // Exercise the actual shell, calendar tabs and FullCalendar without unrelated editors/I/O.
 // 일별 보기는 실제 화면 대신 받은 props만 기록한다(전체 학생 보기의 기간 추가 조회 연결 확인용).
-let lastDailyListProps: { onVisibleRangeChange?: (start: Date, end: Date) => void } | null = null;
+type RecordedDailyListProps = { items?: UnifiedItem[]; onVisibleRangeChange?: (start: Date, end: Date) => void };
+let lastDailyListProps: RecordedDailyListProps | null = null;
 mock.module("@/components/student-portal/DailyListView", { namedExports: {
-  DailyListView: (props: { onVisibleRangeChange?: (start: Date, end: Date) => void }) => { lastDailyListProps = props; return null; },
+  DailyListView: (props: RecordedDailyListProps) => { lastDailyListProps = props; return null; },
 } });
 for (const [folder, name] of [
   ["student-portal", "UnifiedItemDetail"],
@@ -3413,4 +3414,69 @@ test("전체 학생 일별 보기도 읽지 않은 주로 옮기면 그 기간�
   });
   await settle();
   assert.ok(loads.length >= 1, "읽지 않은 주로 옮기면 전체 학생 일정을 더 읽는다");
+});
+
+test("전체 학생 기간을 다시 읽으면 그 기간에서 지워지거나 옮겨진 항목을 지우고 기간 밖 항목은 둔다", async (context) => {
+  const students = [
+    { id: "student-1", email: "minji@example.test", displayName: "민지", createdAt: null, currentModule: null, nextLessonDate: null, pendingFeedbackCount: 0, openQnaCount: 0 },
+  ];
+  const item = (id: string, iso: string, title = id): UnifiedItem => ({
+    id, type: "EVENT", subType: "PRACTICE", title, date: new Date(iso), endDate: null, metadata: {},
+    space: { studentId: "student-1", label: "민지" }, source: { kind: "PORTAL", entity: "CALENDAR_EVENT", label: "포탈" },
+  });
+  const firstWindow = { start: "2026-01-01T00:00:00.000Z", end: "2026-04-30T23:59:59.999Z" };
+  const laterWindow = { start: "2025-07-31T15:00:00.000Z", end: "2025-11-30T14:59:59.999Z" };
+  const deleted = item("deleted", "2026-02-10T01:00:00.000Z");
+  const kept = item("kept", "2026-02-11T01:00:00.000Z");
+  const staleLater = item("stale-later", "2025-09-10T01:00:00.000Z");
+  const outside = item("outside", "2025-06-01T01:00:00.000Z");
+  const freshLater = item("fresh-later", "2025-09-09T01:00:00.000Z");
+  let firstWindowItems = [deleted, kept];
+  let firstWindowTruncated = false;
+  loadAllStudentsCalendar = async (input) => {
+    if (input?.start && input.start < "2026") return { items: [freshLater], ...laterWindow, truncated: false };
+    return { items: firstWindowItems, ...firstWindow, truncated: firstWindowTruncated };
+  };
+  context.after(() => {
+    loadAllStudentsCalendar = async () => ({ items: [], start: "2026-01-01T00:00:00.000Z", end: "2026-04-30T23:59:59.999Z", truncated: false });
+    lastDailyListProps = null;
+  });
+  browser.history.replaceState({}, "", "/dashboard/admin?section=schedule&view=daily&student=all");
+  await render(context, <AdminPortalClient
+    initialLocation={resolvePortalLocation("admin", { section: "schedule", view: "daily", student: "all" })}
+    initialUnifiedItems={[deleted, kept, staleLater, outside]} students={students}
+    initialAllStudentsWindow={{ ...firstWindow, truncated: false }}
+    adminId="admin" qnaThreads={[]} pendingAssignments={[]} referenceTime={new Date("2026-02-01T00:00:00.000Z")}
+  />);
+  const shownIds = () => (lastDailyListProps?.items ?? []).map((shown) => shown.id).sort();
+
+  // 읽지 않은 기간으로 옮기면 그 기간 응답으로 교체한다: 응답에 없는 stale-later는 지우고 다른 기간 항목은 둔다.
+  await act(async () => {
+    lastDailyListProps?.onVisibleRangeChange?.(new Date("2025-09-07T00:00:00+09:00"), new Date("2025-09-13T23:59:59.999+09:00"));
+  });
+  await settle();
+  assert.deepEqual(shownIds(), ["deleted", "fresh-later", "kept", "outside"]);
+
+  // 응답이 상한에 걸려 잘렸으면 빠진 항목을 지우지 않는다.
+  firstWindowItems = [kept];
+  firstWindowTruncated = true;
+  const pageShow = new browser.Event("pageshow");
+  Object.defineProperty(pageShow, "persisted", { value: true });
+  await act(async () => {
+    browser.dispatchEvent(pageShow);
+  });
+  await settle();
+  assert.deepEqual(shownIds(), ["deleted", "fresh-later", "kept", "outside"], "잘린 응답은 병합만 한다");
+
+  // 돌아와 읽은 기간을 다시 받으면 다른 곳에서 지운 항목이 사라지고, 옮겨진 항목은 새 시각으로 바뀐다.
+  firstWindowItems = [item("kept", "2026-03-01T01:00:00.000Z", "옮긴 일정")];
+  firstWindowTruncated = false;
+  const again = new browser.Event("pageshow");
+  Object.defineProperty(again, "persisted", { value: true });
+  await act(async () => {
+    browser.dispatchEvent(again);
+  });
+  await settle();
+  assert.deepEqual(shownIds(), ["fresh-later", "kept", "outside"], "기간 안에서 응답에 없는 항목만 지운다");
+  assert.equal(lastDailyListProps?.items?.find((shown) => shown.id === "kept")?.title, "옮긴 일정");
 });

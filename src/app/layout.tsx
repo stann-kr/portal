@@ -48,7 +48,9 @@ async function readThemeFromRequest() {
 
 export async function generateViewport(): Promise<Viewport> {
   // 홈 화면 앱의 상단 막대 색. 수동 모드면 그 색 하나, 시스템이면 기기 설정별 두 색.
-  return { themeColor: themeColorsFor(await readThemeFromRequest()) };
+  // viewportFit cover: iPhone에서 env(safe-area-inset-*)가 실제 값(홈 표시줄 34px 등)을 갖게 한다.
+  // 없으면 0이라 하단 미니 플레이어·댓글 입력줄·시트가 홈 표시줄에 붙는다.
+  return { themeColor: themeColorsFor(await readThemeFromRequest()), viewportFit: "cover" };
 }
 
 export default async function RootLayout({
