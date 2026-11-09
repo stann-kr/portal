@@ -189,6 +189,10 @@ function MiniPlayer({ state, track }: { state: PlayerState; track: PlayerTrack }
       ) : null}
 
       <section aria-label="이어 듣기 플레이어" className="mini-player">
+        {/* 휴대폰: 위쪽 경계 자리의 2px 진행선(B 묶음 ③). 넓은 화면은 막대 안 탐색 막대가 맡는다. */}
+        <span aria-hidden="true" className="block h-0.5 bg-border md:hidden">
+          <span className="block h-0.5 bg-foreground" style={{ width: `${fraction * 100}%` }} />
+        </span>
         {track.kind === "youtube" ? <YouTubeLeaveNotice /> : null}
         <div className="flex h-14 items-center gap-2.5 px-3 md:h-16 md:gap-4 md:px-4">
           <button
@@ -242,10 +246,6 @@ function MiniPlayer({ state, track }: { state: PlayerState; track: PlayerTrack }
             <X className="size-4" strokeWidth={1.8} aria-hidden="true" />
           </button>
         </div>
-        {/* 휴대폰: 줄 맨 아래 2px 진행선 */}
-        <span aria-hidden="true" className="block h-0.5 bg-border md:hidden">
-          <span className="block h-0.5 bg-foreground" style={{ width: `${fraction * 100}%` }} />
-        </span>
       </section>
     </>
   );

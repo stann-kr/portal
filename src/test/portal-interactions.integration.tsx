@@ -2242,7 +2242,9 @@ test("늦게 끝난 현재 위치 읽기는 그 사이 직접 입력한 시점�
   assert.equal(inputValue("timeMarker"), "", "초안에도 늦은 읽기 결과를 남기지 않는다");
 });
 
-test("믹스셋 목록 줄은 링크 플레이어를 누른 줄에만 열고 오디오·매체 없음 줄은 그대로 둔다", async (context) => {
+test("믹스셋 목록 줄은 링크 플레이어를 누른 줄에만 열고, 오디오 줄은 하단 미니 플레이어(공용 곡)로 재생하며 매체 없음 줄은 그대로 둔다", async (context) => {
+  playerStore.resetPlayerForTests();
+  context.after(() => playerStore.resetPlayerForTests());
   const base = { contentHtml: "<p>미리보기</p>", authorName: "학생", authorEmail: null, createdAt: new Date() };
   await render(context, <ul>
     <MixsetFeedbackCard post={{ ...base, id: "link", title: "링크 믹스셋", mediaUrl: "https://www.youtube.com/watch?v=aqz-KE-bpKQ", mediaObjectId: null }} />
@@ -2250,8 +2252,14 @@ test("믹스셋 목록 줄은 링크 플레이어를 누른 줄에만 열고 오
     <MixsetFeedbackCard post={{ ...base, id: "none", title: "빈 믹스셋", mediaUrl: null, mediaObjectId: null }} />
   </ul>);
   assert.equal(browser.document.querySelectorAll("video, iframe").length, 0, "목록을 열 때 외부 플레이어를 만들지 않는다");
-  assert.equal(browser.document.querySelectorAll("audio").length, 1);
+  assert.equal(browser.document.querySelectorAll("audio").length, 0, "목록 줄은 자체 오디오 요소를 두지 않는다");
   assert.equal(button("오디오 믹스셋 재생").getAttribute("aria-pressed"), "false");
+  await press("오디오 믹스셋 재생");
+  const shared = playerStore.getPlayerState();
+  assert.equal(shared.track?.key, "audio", "누르면 공용 곡(미니 플레이어)으로 시작한다");
+  assert.equal(shared.track?.url, "/api/media/audio-1");
+  assert.equal(shared.track?.mediaObjectId, "audio-1");
+  assert.equal(shared.owner, "persistent");
   const toggle = button("링크 믹스셋 플레이어");
   assert.equal(toggle.getAttribute("aria-expanded"), "false");
   await press("링크 믹스셋 플레이어");

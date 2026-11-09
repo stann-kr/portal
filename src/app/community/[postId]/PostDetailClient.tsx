@@ -342,19 +342,34 @@ export function PostDetailClient({
                     <span aria-hidden="true" className="flex size-7 shrink-0 items-center justify-center rounded-full bg-selected text-xs font-semibold text-secondary-foreground">
                       {initialOf(cAuthor)}
                     </span>
-                    <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                      <p className="flex flex-wrap items-center gap-2 text-ui">
+                    {/*
+                      좁은 화면: 시점 칩을 이름·시각 줄 끝에 두어 본문이 줄 전체를 쓴다(B 묶음 ①).
+                      넓은 화면: 지금처럼 칩이 본문 왼쪽. 칩은 하나만 그리고 grid 자리만 바꾼다.
+                    */}
+                    <div
+                      className={cn(
+                        "grid min-w-0 flex-1 items-center gap-x-2 gap-y-0.5 text-ui",
+                        c.timeMarkerSeconds === null
+                          ? "grid-cols-1"
+                          : "grid-cols-[auto_auto_minmax(0,1fr)] md:grid-cols-[auto_minmax(0,1fr)]",
+                      )}
+                    >
+                      <p className="col-start-1 row-start-1 flex flex-wrap items-center gap-2 md:col-span-full">
                         <span className="font-semibold">{cAuthor}</span>
                         <span className="font-mono text-xs text-muted-foreground">{cDate}</span>
                       </p>
-                      {c.timeMarkerSeconds === null ? (
-                        <RichTextContent html={c.contentHtml} className="text-md leading-6 md:text-body" />
-                      ) : (
-                        <div className="flex items-start gap-2">
+                      {c.timeMarkerSeconds !== null ? (
+                        <span className="col-start-2 row-start-1 flex md:col-start-1 md:row-start-2 md:self-start">
                           <CommentTimeMarker seconds={c.timeMarkerSeconds} onSeek={mixsetMedia ? seekTo : undefined} />
-                          <RichTextContent html={c.contentHtml} className="min-w-0 flex-1 text-md leading-6 md:text-body" />
-                        </div>
-                      )}
+                        </span>
+                      ) : null}
+                      <RichTextContent
+                        html={c.contentHtml}
+                        className={cn(
+                          "col-span-full row-start-2 min-w-0 text-md leading-6 md:text-body",
+                          c.timeMarkerSeconds !== null && "md:col-span-1 md:col-start-2",
+                        )}
+                      />
                     </div>
                     {canDelete ? (
                       <Button
