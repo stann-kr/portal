@@ -34,8 +34,10 @@ export const config = {
    * 로그아웃·권한 회수를 "오프라인"으로 오인해 연결을 닫지 못한다.
    * sw.js·manifest.webmanifest 는 홈 화면 추가와 웹 푸시용 공개 파일이다. 로그인 전에도 받아야 하고,
    * 로그인 화면으로 보내면 Service Worker 등록이 실패한다.
+   * licenses/·vendor/ 는 제3자 구성요소 고지·라이선스 전문과 그 구성요소의 교체 가능한 WebAssembly 파일(LAME)이다.
+   * LGPL 고지는 로그인 없이도 읽을 수 있어야 한다.
    */
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|sw\\.js$|manifest\\.webmanifest$|api/auth|api/calendar-connections/google/notify(?:/?$)|api/collab/token(?:/?$)|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    "/((?!_next/static|_next/image|favicon.ico|sw\\.js$|manifest\\.webmanifest$|licenses/|vendor/|api/auth|api/calendar-connections/google/notify(?:/?$)|api/collab/token(?:/?$)|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };

@@ -1,0 +1,23 @@
+Stann Lumo Portal — 제3자 구성요소 고지 / Third-party notices
+
+오디오 업로드 때 WAV·AIFF·FLAC를 브라우저에서 MP3로 바꾸는 데 아래 구성요소를 쓴다.
+서버에는 포함되지 않고 변환할 때만 브라우저가 내려받는다.
+
+1. LAME 3.100 — MP3 인코더
+   License: GNU Library General Public License v2 or later (LGPL-2.0-or-later)
+   전문: /licenses/LGPL-2.0.txt
+   이 사이트가 쓰는 파일: /vendor/lame/mp3.wasm (수정하지 않은 LAME 3.100을 wasm-media-encoders 0.7.0이 WebAssembly로 빌드한 것)
+   LAME 원본 소스: https://lame.sourceforge.io/ (https://sourceforge.net/projects/lame/files/lame/3.100/)
+   WebAssembly 빌드 스크립트: https://github.com/arseneyr/wasm-media-encoders (v0.7.0)
+   LAME은 별도 파일로 불러오므로, 같은 인터페이스로 빌드한 다른 mp3.wasm으로 바꿔 쓸 수 있다.
+
+2. wasm-media-encoders 0.7.0 — MP3 인코딩 래퍼
+   License: MIT — https://github.com/arseneyr/wasm-media-encoders/blob/master/LICENSE
+
+3. @wasm-audio-decoders/flac 0.2.x — FLAC 디코딩
+   License: MIT — https://github.com/eshaz/wasm-audio-decoders
+
+4. libFLAC (위 3에 포함) — FLAC 디코더
+   License: BSD-3-Clause — https://xiph.org/flac/
+
+이 사이트의 소스: https://github.com/stann-kr/portal
