@@ -160,7 +160,7 @@ function ModalPanel({
             if (!dismissible) event.preventDefault();
           }}
           className={cn(
-            "portal-panel fixed inset-y-0 right-0 z-50 flex h-[100dvh] w-full flex-col bg-background md:border-l md:border-border md:shadow-[-12px_0_32px_rgb(24_24_27/0.06)]",
+            "portal-panel fixed inset-y-0 right-0 z-50 flex h-[100dvh] w-full flex-col bg-background pb-[env(safe-area-inset-bottom)] pt-[env(safe-area-inset-top)] md:border-l md:border-border md:shadow-[-12px_0_32px_rgb(24_24_27/0.06)]",
             WIDTH[size],
           )}
         >

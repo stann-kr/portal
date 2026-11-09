@@ -78,13 +78,16 @@ test("스켈레톤은 status·busy로 한 번 알리고 막대는 화면 읽기�
   }
 });
 
-test("스켈레톤 움직임: 왼쪽→오른쪽 1.4초 빛 띠, 지연 후 나타남, 움직임 줄이기에서는 정지", () => {
+test("스켈레톤 움직임: 왼쪽→오른쪽 1.4초 빛 띠, 앱 안 이동만 지연 후 나타남(첫 진입은 바로), 움직임 줄이기에서는 정지", () => {
   const css = readFileSync(join(root, "src/components/ui/skeleton.css"), "utf8");
   assert.match(css, /animation:\s*skeleton-sweep 1\.4s ease-in-out infinite/u);
   assert.match(css, /@keyframes skeleton-sweep\s*\{\s*from \{ background-position: -100% 0; \}\s*to \{ background-position: 200% 0; \}/u);
-  assert.match(css, /animation:\s*skeleton-appear [^;]* 160ms both/u);
+  assert.match(css, /html\[data-client-nav\] \.skeleton-region \{\s*animation:\s*skeleton-appear [^;]* 160ms both/u);
+  // 첫 진입(표시 없음)에는 기다림 규칙이 걸리지 않는다.
+  assert.doesNotMatch(css, /(^|\n)\.skeleton-region \{/u);
+  assert.match(readFileSync(join(root, "src/components/app-shell/NavigationProgress.tsx"), "utf8"), /dataset\.clientNav = ""/u);
   const reduced = /@media \(prefers-reduced-motion: reduce\) \{([\s\S]*)\}\s*$/u.exec(css)?.[1] ?? "";
-  assert.match(reduced, /\.skeleton-region,\s*\.skeleton-bar\s*\{\s*animation: none;/u);
+  assert.match(reduced, /html\[data-client-nav\] \.skeleton-region,\s*\.skeleton-bar\s*\{\s*animation: none;/u);
   // 다크 값은 시스템 설정과 data-theme 두 곳 모두에 둔다.
   assert.match(css, /:root:not\(\[data-theme="light"\]\)\s*\{\s*--color-skeleton: #232327;/u);
   assert.match(css, /:root\[data-theme="dark"\]\s*\{\s*--color-skeleton: #232327;/u);

@@ -5,6 +5,7 @@ import {
   authConfig,
   isCoarseRequestAuthorized,
   PASSWORD_CHANGE_PATH,
+  roleHomeRedirectPath,
   shouldRedirectToPasswordChange,
 } from "./auth.config";
 import { ACCOUNT_RAW_ID_RETENTION_SECONDS } from "./lib/account-privacy-atomic";
@@ -94,4 +95,31 @@ test("임시 비밀번호 session의 화면 이동만 새 비밀번호 설정으
 test("서버 초안 폐기 API는 login redirect 대신 route의 403·401 판정을 받는다", () => {
   assert.equal(isCoarseRequestAuthorized({ isLoggedIn: false, pathname: "/api/document-drafts/discard" }), true);
   assert.equal(isCoarseRequestAuthorized({ isLoggedIn: false, pathname: "/api/document-drafts/other" }), false);
+});
+
+test("/dashboard 시작 주소는 화면을 그리기 전에 역할별 첫 화면으로 보낸다", async () => {
+  assert.equal(roleHomeRedirectPath({ isLoggedIn: true, role: "admin", pathname: "/dashboard" }), "/dashboard/admin");
+  assert.equal(roleHomeRedirectPath({ isLoggedIn: true, role: "student", pathname: "/dashboard/" }), "/dashboard/student");
+  assert.equal(roleHomeRedirectPath({ isLoggedIn: true, role: undefined, pathname: "/dashboard" }), "/dashboard/student");
+  assert.equal(roleHomeRedirectPath({ isLoggedIn: false, role: "admin", pathname: "/dashboard" }), null);
+  assert.equal(roleHomeRedirectPath({ isLoggedIn: true, role: "admin", pathname: "/dashboard/admin" }), null);
+
+  const authorized = authConfig.callbacks!.authorized! as unknown as (input: {
+    auth: { user: { role?: string; passwordChangeRequired?: boolean } } | null;
+    request: { nextUrl: URL };
+  }) => unknown;
+  const admin = await authorized({
+    auth: { user: { role: "admin" } },
+    request: { nextUrl: new URL("https://portal.example/dashboard?task=t1") },
+  });
+  assert.ok(admin instanceof Response);
+  assert.equal(admin.headers.get("location"), "https://portal.example/dashboard/admin?task=t1");
+  // 임시 비밀번호 session은 새 비밀번호 화면이 먼저다.
+  const pending = await authorized({
+    auth: { user: { role: "student", passwordChangeRequired: true } },
+    request: { nextUrl: new URL("https://portal.example/dashboard") },
+  });
+  assert.ok(pending instanceof Response);
+  assert.equal(pending.headers.get("location"), `https://portal.example${PASSWORD_CHANGE_PATH}`);
+  assert.equal(await authorized({ auth: null, request: { nextUrl: new URL("https://portal.example/dashboard") } }), false);
 });

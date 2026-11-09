@@ -1,7 +1,7 @@
 /*
  * 화면을 불러오는 동안 실제 배치와 같은 모양으로 보이는 스켈레톤(캔버스 '개선 2차 시안' 1번).
  * 막대는 바탕보다 확실히 보이는 면 색을 쓰고, 왼쪽에서 오른쪽으로 빛 띠가 1.4초마다 지나간다.
- * 0.3초 안에 끝나는 이동에서 깜빡이지 않도록 160ms 기다린 뒤 서서히 나타난다.
+ * 앱 안 이동은 0.3초 안에 끝나면 깜빡이지 않도록 160ms 기다린 뒤 서서히 나타난다(첫 진입은 바로).
  */
 @theme {
   --color-skeleton: #e9e9e6;
@@ -21,7 +21,11 @@
   --color-skeleton-shine: rgb(255 255 255 / 0.14);
 }
 
-.skeleton-region {
+/*
+ * 기다림 뒤 나타나기는 앱 안 화면 이동(html[data-client-nav], NavigationProgress가 첫 이동 때 표시)에만 건다.
+ * 첫 진입·새로고침은 이전 화면이 없어 기다리는 동안 빈 화면만 보이므로 바로 그린다.
+ */
+html[data-client-nav] .skeleton-region {
   animation: skeleton-appear var(--duration-standard) ease-out 160ms both;
 }
 
@@ -49,7 +53,7 @@
 
 /* 움직임을 줄인 환경에서는 빛 띠와 나타나기 효과 없이 정지한 막대만 둔다. */
 @media (prefers-reduced-motion: reduce) {
-  .skeleton-region,
+  html[data-client-nav] .skeleton-region,
   .skeleton-bar {
     animation: none;
   }

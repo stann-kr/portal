@@ -60,6 +60,24 @@ export function shouldRedirectToPasswordChange({
   );
 }
 
+/**
+ * 홈 화면 앱의 시작 주소·알림 기본 주소(`/dashboard`)를 화면을 그리기 전에 역할별 첫 화면으로 보낸다.
+ * 서버 page의 redirect는 셸을 먼저 보낸 뒤라 빈 본문 화면과 두 번째 문서 요청이 생긴다.
+ * token의 role이 오래돼도 도착한 화면의 server gate(관리자 layout)가 다시 판정한다. page.tsx의 redirect는 남겨 둔다.
+ */
+export function roleHomeRedirectPath({
+  isLoggedIn,
+  role,
+  pathname,
+}: {
+  isLoggedIn: boolean;
+  role: unknown;
+  pathname: string;
+}): string | null {
+  if (!isLoggedIn || (pathname !== "/dashboard" && pathname !== "/dashboard/")) return null;
+  return role === "admin" ? "/dashboard/admin" : "/dashboard/student";
+}
+
 export const authConfig: NextAuthConfig = {
   providers: [],
   session: {
@@ -85,6 +103,13 @@ export const authConfig: NextAuthConfig = {
         })
       ) {
         return Response.redirect(new URL(PASSWORD_CHANGE_PATH, nextUrl));
+      }
+      const homePath = roleHomeRedirectPath({ isLoggedIn, role: auth?.user?.role, pathname: nextUrl.pathname });
+      if (homePath) {
+        const target = new URL(homePath, nextUrl);
+        // 알림·바로 열기 주소의 query(?task 등)는 그대로 넘긴다.
+        target.search = nextUrl.search;
+        return Response.redirect(target);
       }
       return isCoarseRequestAuthorized({
         isLoggedIn,

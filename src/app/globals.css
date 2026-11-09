@@ -440,9 +440,10 @@
 /* 최상위 포커스 아웃라인 제거 */
 .ProseMirror:focus { outline: none; }
 
-/* 좁은 화면에서만 사이드바 대신 위쪽 막대(52px, MobileSpec)가 있다. 화면 높이를 쓰는 영역은 이 높이를 뺀다. */
+/* 좁은 화면에서만 사이드바 대신 위쪽 막대(52px, MobileSpec)가 있다. 화면 높이를 쓰는 영역은 이 높이를 뺀다.
+   viewport-fit=cover라 상태 막대가 화면 위를 덮는 기기에서는 막대가 그만큼 아래로 늘어난다(보통 0). */
 :root {
-  --app-topbar-height: 3.25rem;
+  --app-topbar-height: calc(3.25rem + env(safe-area-inset-top));
 }
 @media (min-width: 48rem) {
   :root {
