@@ -11,23 +11,21 @@ test("브랜드: src/app/icon.svg는 portal-mark.ts 수치로 만든 그림과 �
   assert.equal(svg, portalMarkSvg({ tile: "rounded" }));
 });
 
-test("브랜드: 고리 다섯은 안쪽일수록 작아지며 아래로 내려가고, 낙차는 목 근처에서 가팔라진다", () => {
-  const rings = PORTAL_MARK.rings;
-  assert.equal(rings.length, 5);
-  const drops: number[] = [];
-  for (let i = 1; i < rings.length; i += 1) {
-    const [r, , , cy] = rings[i];
-    const [pr, , , pcy] = rings[i - 1];
-    assert.ok(r < pr && cy > pcy, `고리 ${i}`);
-    drops.push((cy - pcy) / (pr - r)); // 반지름이 줄어드는 만큼 얼마나 떨어지는지(기울기)
-  }
-  for (let i = 1; i < drops.length; i += 1) assert.ok(drops[i] > drops[i - 1], "안쪽일수록 기울기가 가팔라진다");
+test("브랜드: 구멍은 바깥 타원 안에 있고 같은 비율이며, 위 테두리가 아래보다 두껍다", () => {
+  const { outer, hole } = PORTAL_MARK;
+  assert.equal(Math.round((hole.ry / hole.rx) * 100), Math.round((outer.ry / outer.rx) * 100));
+  const side = outer.rx - hole.rx;
+  const top = hole.cy - hole.ry - (outer.cy - outer.ry);
+  const bottom = outer.cy + outer.ry - (hole.cy + hole.ry);
+  assert.ok(side > 0 && top > 0 && bottom > 0);
+  assert.ok(top > bottom * 2, "구멍이 아래로 내려가 위가 두껍다");
 });
 
-test("브랜드: 중간 고리는 옅어지고 가장 깊은 고리는 다시 밝다(아래쪽 무게)", () => {
-  const opacity = PORTAL_MARK.rings.map((ring) => ring[4]);
-  for (let i = 1; i < opacity.length - 1; i += 1) assert.ok(opacity[i] < opacity[i - 1], `고리 ${i}`);
-  assert.ok(opacity[opacity.length - 1] > opacity[opacity.length - 2]);
+test("브랜드: 바깥 타원은 가로 가운데, 폭은 타일의 76%", () => {
+  const { outer, hole, viewBox } = PORTAL_MARK;
+  assert.equal(outer.cx, viewBox / 2);
+  assert.equal(hole.cx, viewBox / 2);
+  assert.equal(Math.round(((outer.rx * 2) / viewBox) * 100), 76);
 });
 
 test("브랜드: manifest 이름과 아이콘(any 둥근 타일, maskable 따로)", () => {
