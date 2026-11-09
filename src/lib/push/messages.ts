@@ -1,4 +1,7 @@
 import { formatKstMonthDayTime } from "@/lib/kst-format";
+import { toKstDateInputValue } from "@/lib/date-input";
+import { calendarItemHref } from "@/lib/portal-location";
+import { assignmentTaskHref } from "@/lib/student-space-routes";
 
 /** 기기 알림 한 건. url은 알림을 눌렀을 때 열 포털 안 경로다. tag가 같으면 기기에서 앞 알림을 바꾼다. */
 export type PushMessage = {
@@ -43,12 +46,13 @@ export const pushMessages = {
       tag: `feedback:${input.assignmentId}`,
     };
   },
-  assignmentAssigned(input: { taskId: string; title: string; dueAt: Date | null }): PushMessage {
+  /** analysis가 true면(믹스셋 분석 과제) 분석 쓰기 화면, 아니면 그 과제가 펼쳐진 과제 목록을 연다. */
+  assignmentAssigned(input: { taskId: string; title: string; dueAt: Date | null; analysis?: boolean }): PushMessage {
     const due = input.dueAt ? ` 마감 ${formatKstMonthDayTime(input.dueAt)}` : "";
     return {
       title: "새 과제",
       body: `${quoted(input.title, "새 과제")} 과제가 나왔습니다.${due}`,
-      url: "/dashboard/student/assignments",
+      url: assignmentTaskHref(input.taskId, { analysis: input.analysis }),
       tag: `task:${input.taskId}`,
     };
   },
@@ -88,7 +92,10 @@ export const pushMessages = {
     return {
       title: input.changed ? "레슨 일정 변경" : "새 레슨 일정",
       body,
-      url: "/dashboard/calendar",
+      // 학생은 그 날짜로 이동해 레슨 상세를 연다(레슨이 지워졌으면 날짜만). 관리자 캘린더는 아직 날짜 딥링크가 없다.
+      url: input.toAdmin
+        ? "/dashboard/calendar"
+        : calendarItemHref(toKstDateInputValue(input.scheduledAt), `PORTAL:LESSON:${input.lessonId}`),
       tag: `lesson:${input.lessonId}`,
     };
   },

@@ -9,7 +9,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { FileText, Lock, Play } from "lucide-react";
 import { getActiveAuthSession } from "@/lib/auth-guard";
-import { getStudentAccountState, getStudentById } from "@/lib/actions/students";
+import { getStudentAccountState, getStudentById, getStudentOptions, getStudentWorkCounts } from "@/lib/actions/students";
 import { getCurriculumByStudent } from "@/lib/actions/curriculum";
 import { isCurriculumVisible } from "@/lib/curriculum-visibility";
 import { getConnectedLessonsForStudent, getLessonsByStudent } from "@/lib/actions/lessons";
@@ -49,6 +49,7 @@ import { getRequestNow } from "@/lib/request-time";
 import { StudentDetailTopBar } from "./StudentDetailTopBar";
 import { InstructorMemoEditor } from "@/components/lesson/InstructorMemoEditor";
 import { getInstructorMemo } from "@/lib/actions/instructorMemos";
+import { getLessonNoteIdsForStudent } from "@/lib/actions/lesson-notes";
 
 type RawColumn = Awaited<ReturnType<typeof getOrSeedColumns>>[number];
 type RawQnaThread = Awaited<ReturnType<typeof getQnaThreadsByStudent>>[number];
@@ -87,7 +88,10 @@ async function DiggingTabContent({ studentId }: { studentId: string }) {
 async function AssignmentsTabContent({ studentId, referenceTime }: { studentId: string; referenceTime: Date }) {
   // 정기 과제 회차를 먼저 만든 뒤 제출 목록을 읽는다.
   const { tasks, recurrences } = await getAssignmentTasksForStudent(studentId);
-  const summaries = await getAssignmentSummariesByStudent(studentId);
+  const [summaries, studentOptions] = await Promise.all([
+    getAssignmentSummariesByStudent(studentId),
+    getStudentOptions().catch(() => []),
+  ]);
   const returnTo = buildAdminStudentDetailHref(studentId, "assignments");
 
   return (
@@ -98,6 +102,7 @@ async function AssignmentsTabContent({ studentId, referenceTime }: { studentId: 
         recurrences={recurrences}
         referenceTime={referenceTime}
         returnTo={returnTo}
+        studentOptions={studentOptions}
       />
       <LedgerSection labelledBy="assignments-heading" className="max-w-[880px]">
         <LedgerSectionHeader
@@ -187,9 +192,10 @@ export default async function StudentDetailPage({
   if (!student) redirect("/dashboard/admin");
   // 노트 탭은 검색·표/목록을 갖춘 학생 스페이스 노트 화면이 canonical이다(AdminStudentNotes 보드).
   if (activeTab === "notes") redirect(buildAdminStudentNotesHref(studentId));
+  const workCounts = await getStudentWorkCounts(studentId);
 
   // Overview 탭 데이터는 미리 병렬 fetch
-  const [modules, lessons, calendarFeedIssuedAt, accountState, studentMemo, connectedLessons] = await (activeTab === "overview"
+  const [modules, lessons, calendarFeedIssuedAt, accountState, studentMemo, connectedLessons, lessonNoteIds] = await (activeTab === "overview"
     ? Promise.all([
         // 커리큘럼이 숨겨져 있으면 읽지 않는다(src/lib/curriculum-visibility.ts).
         isCurriculumVisible() ? getCurriculumByStudent(studentId) : Promise.resolve([]),
@@ -198,14 +204,16 @@ export default async function StudentDetailPage({
         getStudentAccountState(studentId),
         getInstructorMemo({ kind: "student", studentId }),
         getConnectedLessonsForStudent(studentId),
+        getLessonNoteIdsForStudent(studentId),
       ])
-    : Promise.resolve([[], [], null, { kind: "active" }, null, []] as [
+    : Promise.resolve([[], [], null, { kind: "active" }, null, [], {}] as [
         Awaited<ReturnType<typeof getCurriculumByStudent>>,
         Awaited<ReturnType<typeof getLessonsByStudent>>,
         Date | null,
         Awaited<ReturnType<typeof getStudentAccountState>>,
         Awaited<ReturnType<typeof getInstructorMemo>>,
         Awaited<ReturnType<typeof getConnectedLessonsForStudent>>,
+        Record<string, string>,
       ]));
   // 만료·지난 레슨 판단은 서버 시각 하나로 정해 화면 hydration과 어긋나지 않게 한다.
   const referenceTime = new Date(getRequestNow());
@@ -243,7 +251,12 @@ export default async function StudentDetailPage({
           </div>
         </header>
 
-        <StudentDetailTabs studentId={studentId} activeTab={activeTab} className="-mx-5 px-5 md:mx-0 md:px-0" />
+        <StudentDetailTabs
+          studentId={studentId}
+          activeTab={activeTab}
+          counts={{ assignments: workCounts.pendingFeedbackCount, qna: workCounts.openQnaCount }}
+          className="-mx-5 px-5 md:mx-0 md:px-0"
+        />
 
         <div className="pt-2 md:pt-0">
           {activeTab === "overview" && (
@@ -255,6 +268,7 @@ export default async function StudentDetailPage({
               calendarFeedIssuedAt={calendarFeedIssuedAt}
               account={account}
               referenceTime={referenceTime}
+              lessonNoteIds={lessonNoteIds}
             />
           )}
 

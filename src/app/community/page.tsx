@@ -9,7 +9,9 @@ export const dynamic = "force-dynamic";
 import { getActiveAuthSession } from "@/lib/auth-guard";
 import { redirect } from "next/navigation";
 import { getCategories } from "@/lib/actions/categories";
-import { getCommunityPostPage } from "@/lib/actions/posts";
+import { getCommunityPostPage, searchCommunityPosts } from "@/lib/actions/posts";
+import { normalizeDocumentSearchQuery } from "@/lib/document-search";
+import { resolveCommunitySearchScope } from "@/lib/community-search";
 import { resolveCommunityBoardType } from "@/lib/community-location";
 import { firstSearchValue } from "@/lib/portal-location";
 import CommunityClient from "./CommunityClient";
@@ -19,7 +21,7 @@ export const metadata = { title: "커뮤니티" };
 export default async function CommunityPage({
   searchParams,
 }: {
-  searchParams: Promise<{ boardType?: string | string[]; category?: string | string[] }>;
+  searchParams: Promise<{ boardType?: string | string[]; category?: string | string[]; q?: string | string[]; scope?: string | string[] }>;
 }) {
   const session = await getActiveAuthSession();
   if (!session?.user?.id) redirect("/login");
@@ -32,12 +34,19 @@ export default async function CommunityPage({
   const category = categories.find((item) => item.slug === requestedCategory)?.slug
     ?? categories[0]?.slug
     ?? "";
-  const page = await getCommunityPostPage({ boardType, category });
+  // 검색(?q=)은 Q&A 검색처럼 GET form으로 서버가 읽는다. 지금 게시판·채널 안, scope=all이면 전체에서 찾는다.
+  const query = normalizeDocumentSearchQuery(params.q);
+  const scope = resolveCommunitySearchScope(firstSearchValue(params.scope));
+  const [page, search] = await Promise.all([
+    getCommunityPostPage({ boardType, category }),
+    query ? searchCommunityPosts({ boardType, category, query, scope }) : Promise.resolve(null),
+  ]);
 
   return (
     <CommunityClient
       isAdmin={isAdmin}
       initial={{ boardType, category, categories, posts: page.posts, nextCursor: page.nextCursor }}
+      search={search ? { query, scope, posts: search.posts } : null}
     />
   );
 }

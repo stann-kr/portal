@@ -143,3 +143,19 @@ test("기본 한국어 digging 컬럼으로 생성 직후 제목을 만든다", 
   assert.equal(item.title, "Track — Artist");
   assert.equal(item.source.entity, "DIGGING_TRACK");
 });
+
+test("받은 과제 항목은 저장 형식 MIX + analysisForm을 분석(ANALYSIS)으로 알려 바로 열기 주소가 분석 쓰기 화면으로 간다", () => {
+  const base = { title: "과제", dueAt: null, createdAt: new Date("2026-08-01T00:00:00.000Z") };
+  const items = normalizeUnifiedItems({
+    ...createInput(),
+    tasks: [
+      { id: "analysis", submissionFormat: "MIX", analysisForm: true, ...base },
+      { id: "mix", submissionFormat: "MIX", analysisForm: false, ...base },
+      { id: "text", submissionFormat: "TEXT", ...base },
+    ],
+  });
+  const formatOf = (id: string) => items.find((item) => item.id === id && item.source.entity === "ASSIGNMENT_TASK")?.metadata.submissionFormat;
+  assert.equal(formatOf("analysis"), "ANALYSIS");
+  assert.equal(formatOf("mix"), "MIX");
+  assert.equal(formatOf("text"), "TEXT");
+});

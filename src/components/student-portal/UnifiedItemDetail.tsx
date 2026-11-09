@@ -23,8 +23,7 @@ import {
 import { isManagedLessonItem, LessonActions } from "@/components/calendar/LessonActions";
 import { formatDetailDate, formatDetailMoment, shiftDateKey } from "@/components/calendar/calendar-dates";
 import { toKstDateInputValue } from "@/lib/date-input";
-import { buildAdminStudentDetailHref, buildStudentDiggingBoardHref } from "@/lib/student-space-routes";
-import { STUDENT_LEGACY_REDIRECTS } from "@/lib/legacy-dashboard-routes";
+import { assignmentTaskHref, buildAdminStudentDetailHref, buildStudentDiggingBoardHref } from "@/lib/student-space-routes";
 
 // ── 타입 라벨 ────────────────────────────────────
 
@@ -233,7 +232,9 @@ export function UnifiedItemDetail({
       {isOpenTask ? (
         <Link
           // canManageEvents는 학생 본인 스페이스다.
-          href={canManageEvents ? STUDENT_LEGACY_REDIRECTS.assignments : buildAdminStudentDetailHref(item.space.studentId, "assignments")}
+          href={canManageEvents
+            ? assignmentTaskHref(item.id, { analysis: item.metadata.submissionFormat === "ANALYSIS" })
+            : buildAdminStudentDetailHref(item.space.studentId, "assignments")}
           className={linkButton}
         >
           {canManageEvents ? "과제 화면에서 제출하기" : "학생 과제 관리"}

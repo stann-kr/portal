@@ -6,7 +6,7 @@
  */
 "use client";
 
-import { useState, useActionState, useCallback, useRef } from "react";
+import { useState, useActionState, useCallback, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FileText, FilePlay, Play } from "lucide-react";
@@ -22,7 +22,6 @@ import {
 } from "@/lib/actions/assignmentTasks";
 import { getMyFeedbacksMap } from "@/lib/actions/feedbacks";
 import { EmptyState } from "@/components/ui/empty-state";
-import { RichTextContent } from "@/components/editor/RichTextContent";
 import { DraftStatus } from "@/components/editor/DraftStatus";
 import { FreeSubmissionForm } from "@/components/student-portal/FreeSubmissionForm";
 import { describeAssignmentSubmission } from "@/lib/unified-item-normalization";
@@ -41,7 +40,9 @@ import {
 import { formatKstDot } from "@/lib/kst-format";
 import { getPortalStatus, STATUS_TONE_DOT_CLASS_NAMES, type PortalStatusTone } from "@/lib/portal-status";
 import { STUDENT_LEGACY_REDIRECTS } from "@/lib/legacy-dashboard-routes";
-import { analysisWriteHref } from "@/lib/student-space-routes";
+import { analysisWriteHref, assignmentTaskHref } from "@/lib/student-space-routes";
+import { CopyLinkButton } from "@/components/ui/CopyLinkButton";
+import { AssignmentBrief } from "@/components/student-portal/AssignmentBrief";
 import { createDocumentDraftKey } from "@/lib/form-draft";
 import { useFormDraft } from "@/lib/hooks/useFormDraft";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
@@ -61,7 +62,14 @@ interface AssignmentViewProps {
    * 워크스페이스가 자기 머리(h1)를 그리는 동안은 false로 두어 요약과 본문만 그린다.
    */
   pageHeader?: boolean;
+  /**
+   * 딥링크 `?task=`로 펼칠 과제(서버가 현재 학생 것인지 확인함). 그 행으로 스크롤해 1.5초 테두리로 표시하고,
+   * 제출할 수 있는 과제면 제출 폼을 연다.
+   */
+  initialOpenTaskId?: string | null;
 }
+
+const HIGHLIGHT_MS = 1500;
 
 // ── 헬퍼 ─────────────────────────────────────────
 
@@ -244,12 +252,15 @@ function TaskRow({
   task,
   actorId,
   open,
+  highlighted,
   onToggle,
   onDone,
 }: {
   task: AssignmentTaskItem;
   actorId: string;
   open: boolean;
+  /** 딥링크로 연 과제: 2px 먹색 테두리(움직임 줄이기에서는 전환 없이). */
+  highlighted: boolean;
   onToggle: (taskId: string | null) => void;
   onDone: () => Promise<void>;
 }) {
@@ -268,7 +279,13 @@ function TaskRow({
   ].filter(Boolean).join(" · ");
 
   return (
-    <li className="flex flex-col gap-3 border-b border-muted py-3">
+    <li
+      id={`task-row-${task.id}`}
+      className={cn(
+        "flex scroll-mt-24 flex-col gap-3 border-b border-muted py-3 outline-2 outline-offset-[6px] outline-transparent outline-solid transition-[outline-color] duration-[var(--duration-fast)] motion-reduce:transition-none",
+        highlighted && "rounded-lg outline-foreground",
+      )}
+    >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <span className="flex min-w-0 flex-1 basis-60 flex-col gap-0.5">
           <span className="break-words text-md font-medium md:text-body">{task.title}</span>
@@ -309,11 +326,13 @@ function TaskRow({
           ) : null}
         </span>
       </div>
-      {open ? (
+      {/* 과제 설명은 제출 폼을 열지 않았거나 피드백으로 잠겨도 펼쳐 볼 수 있다. 제출 폼을 열면 함께 펼친다. */}
+      {task.descriptionHtml ? <AssignmentBrief html={task.descriptionHtml} open={open} /> : null}
+      {open && canEdit && task.submissionFormat !== "ANALYSIS" ? (
         <div id={panelId} className="flex flex-col gap-3">
-          {task.descriptionHtml ? (
-            <RichTextContent html={task.descriptionHtml} className="text-body leading-6 text-secondary-foreground" />
-          ) : null}
+          <div className="flex justify-end">
+            <CopyLinkButton path={assignmentTaskHref(task.id)} title={task.title} />
+          </div>
           <TaskSubmitForm
             task={task}
             actorId={actorId}
@@ -374,12 +393,29 @@ function AssignmentRow({ assignment }: { assignment: StudentAssignmentSummary })
 
 // ── 메인 컴포넌트 ─────────────────────────────────
 
-export function AssignmentView({ actorId, initialAssignments, initialTasks = [], pageHeader = false }: AssignmentViewProps) {
+export function AssignmentView({
+  actorId,
+  initialAssignments,
+  initialTasks = [],
+  pageHeader = false,
+  initialOpenTaskId = null,
+}: AssignmentViewProps) {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
   const [assignments, setAssignments] = useState<StudentAssignmentSummary[]>(initialAssignments);
   const [tasks, setTasks] = useState<AssignmentTaskItem[]>(initialTasks);
-  const [openTaskId, setOpenTaskId] = useState<string | null>(null);
+  const [openTaskId, setOpenTaskId] = useState<string | null>(initialOpenTaskId);
+  const [highlightTaskId, setHighlightTaskId] = useState<string | null>(initialOpenTaskId);
+
+  // 딥링크 과제: 처음 한 번 그 행으로 스크롤하고 1.5초 뒤 테두리를 지운다.
+  useEffect(() => {
+    if (!initialOpenTaskId) return;
+    const row = document.getElementById(`task-row-${initialOpenTaskId}`);
+    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+    row?.scrollIntoView({ block: "center", behavior: reduceMotion ? "auto" : "smooth" });
+    const timer = window.setTimeout(() => setHighlightTaskId(null), HIGHLIGHT_MS);
+    return () => window.clearTimeout(timer);
+  }, [initialOpenTaskId]);
   const [refreshError, setRefreshError] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -435,6 +471,7 @@ export function AssignmentView({ actorId, initialAssignments, initialTasks = [],
                 task={task}
                 actorId={actorId}
                 open={openTaskId === task.id}
+                highlighted={highlightTaskId === task.id}
                 onToggle={setOpenTaskId}
                 onDone={refresh}
               />

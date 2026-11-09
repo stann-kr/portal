@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  buildAssignmentQueueHref,
   getAdminWorkQueue,
+  getNextPendingAssignment,
   type AdminQueueThread,
   type PendingFeedbackAssignment,
 } from "./admin-work-queue";
@@ -18,6 +20,7 @@ function student(id: string, nextLessonDate: string | null): StudentRosterStat {
     currentModule: null,
     nextLessonDate: nextLessonDate ? new Date(nextLessonDate) : null,
     pendingFeedbackCount: 0,
+    openQnaCount: 0,
   };
 }
 
@@ -102,4 +105,22 @@ test("현재부터 7일 이내의 레슨만 가까운 순서로 포함한다", (
   assert.deepEqual(queue.upcomingLessons.map((entry) => entry.id), ["next", "later"]);
   assert.equal(queue.metrics.upcomingLessonCount, 2);
   assert.equal(queue.metrics.studentCount, 4);
+});
+
+test("다음 항목은 지금 제출을 빼고 업무함 순서(오래된 제출 먼저, 제출일 없는 제출은 뒤)로 고른다", () => {
+  const row = (id: string, submittedAt: Date | null) => ({
+    id, mediaUrl: null, taskTitle: id, submittedAt, studentId: "s", studentName: "학생", studentEmail: "s@example.test",
+  });
+  const pending = [
+    row("undated", null),
+    row("newer", new Date("2026-11-03T00:00:00.000Z")),
+    row("current", new Date("2026-11-01T00:00:00.000Z")),
+    row("older", new Date("2026-11-02T00:00:00.000Z")),
+  ];
+  const result = getNextPendingAssignment(pending, "current");
+  assert.equal(result.remaining, 3);
+  assert.equal(result.next?.id, "older");
+  assert.equal(getNextPendingAssignment([row("current", null)], "current").next, null);
+  assert.equal(getNextPendingAssignment([], "current").remaining, 0);
+  assert.equal(buildAssignmentQueueHref("a b", "/dashboard/admin?section=work"), "/dashboard/student/assignments/a%20b?from=work&returnTo=%2Fdashboard%2Fadmin%3Fsection%3Dwork");
 });

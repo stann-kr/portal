@@ -38,6 +38,7 @@ import {
 import { CREATION_OPERATION_FIELD, createCreationOperationId } from "@/lib/creation-operation";
 import { toKstDateInputValue, toKstDateTimeInputValue } from "@/lib/date-input";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
+import type { StudentOption } from "@/lib/actions/students";
 import { cn } from "@/lib/utils";
 
 const FIELD_LABEL = "flex flex-col gap-1.5 text-xs text-secondary-foreground";
@@ -143,6 +144,56 @@ function FormatField({
   );
 }
 
+/**
+ * 같은 과제를 다른 학생에게도 내는 체크박스(UsabilityBundle ⑭). 지금 학생은 항상 받으므로 체크된 채 잠근다.
+ * 고른 학생마다 과제(또는 정기 과제 규칙)가 따로 만들어지고 각자 알림을 받는다.
+ */
+function AlsoStudentsField({
+  studentId,
+  options,
+  selected,
+  onChange,
+  disabled,
+  idPrefix,
+}: {
+  studentId: string;
+  options: StudentOption[];
+  selected: readonly string[];
+  onChange: (next: string[]) => void;
+  disabled: boolean;
+  idPrefix: string;
+}) {
+  const current = options.find((option) => option.id === studentId);
+  const others = options.filter((option) => option.id !== studentId);
+  if (others.length === 0) return null;
+  const toggle = (id: string) => onChange(selected.includes(id) ? selected.filter((value) => value !== id) : [...selected, id]);
+  const rowClass = "flex min-h-11 items-center gap-2 text-md md:min-h-7 md:text-body";
+  const boxClass = "size-4 shrink-0 accent-[var(--color-foreground)]";
+  return (
+    <fieldset className="flex flex-col gap-1 rounded-lg border border-border px-3.5 pb-3 pt-1" disabled={disabled}>
+      <legend className="px-1 text-ui font-medium">다른 학생에게도 내기</legend>
+      <label htmlFor={`${idPrefix}-also-current`} className={rowClass}>
+        <input id={`${idPrefix}-also-current`} type="checkbox" checked disabled className={boxClass} />
+        {current?.name ?? "지금 학생"} <span className="text-xs text-muted-foreground">(지금 학생)</span>
+      </label>
+      {others.map((option) => (
+        <label key={option.id} htmlFor={`${idPrefix}-also-${option.id}`} className={rowClass}>
+          <input
+            id={`${idPrefix}-also-${option.id}`}
+            type="checkbox"
+            name="alsoStudentId"
+            value={option.id}
+            checked={selected.includes(option.id)}
+            onChange={() => toggle(option.id)}
+            className={boxClass}
+          />
+          {option.name}
+        </label>
+      ))}
+    </fieldset>
+  );
+}
+
 function FormActions({ isPending, submitLabel, onCancel }: { isPending: boolean; submitLabel: string; onCancel: () => void }) {
   return (
     <div className="flex flex-wrap gap-2">
@@ -160,11 +211,14 @@ function FormActions({ isPending, submitLabel, onCancel }: { isPending: boolean;
 export function AssignmentTaskForm({
   studentId,
   task,
+  studentOptions = [],
   onDone,
   onCancel,
 }: {
   studentId: string;
   task?: AssignmentTaskItem;
+  /** 만들 때만 쓰는 "다른 학생에게도 내기" 학생 목록. */
+  studentOptions?: StudentOption[];
   onDone: () => void;
   onCancel: () => void;
 }) {
@@ -174,6 +228,7 @@ export function AssignmentTaskForm({
   const [dueDate, setDueDate] = useState(() => splitDue(task?.dueAt ?? null).date);
   const [dueTime, setDueTime] = useState(() => splitDue(task?.dueAt ?? null).time);
   const [operationId] = useState(createCreationOperationId);
+  const [alsoStudentIds, setAlsoStudentIds] = useState<string[]>([]);
   const { state, action, isPending } = useSubmitAction(
     (previous, data) => (task
       ? updateAssignmentTask(studentId, task.id, previous, data)
@@ -212,8 +267,11 @@ export function AssignmentTaskForm({
           <Input id={`${idPrefix}-due-time`} name="dueTime" type="time" value={dueTime} onChange={(event) => setDueTime(event.target.value)} disabled={isPending} className="font-mono" />
         </label>
       </div>
+      {task ? null : (
+        <AlsoStudentsField studentId={studentId} options={studentOptions} selected={alsoStudentIds} onChange={setAlsoStudentIds} disabled={isPending} idPrefix={idPrefix} />
+      )}
       {state.error ? <p role="alert" className="text-ui text-destructive">{state.error}</p> : null}
-      <FormActions isPending={isPending} submitLabel={task ? "저장" : "과제 내기"} onCancel={onCancel} />
+      <FormActions isPending={isPending} submitLabel={task ? "저장" : alsoStudentIds.length > 0 ? `${alsoStudentIds.length + 1}명에게 과제 내기` : "과제 내기"} onCancel={onCancel} />
     </form>
   );
 }
@@ -223,11 +281,14 @@ export function AssignmentRecurrenceForm({
   studentId,
   recurrence,
   referenceTime,
+  studentOptions = [],
   onDone,
   onCancel,
 }: {
   studentId: string;
   recurrence?: AssignmentRecurrenceItem;
+  /** 만들 때만 쓰는 "다른 학생에게도 내기" 학생 목록. */
+  studentOptions?: StudentOption[];
   referenceTime: Date;
   onDone: () => void;
   onCancel: () => void;
@@ -243,6 +304,7 @@ export function AssignmentRecurrenceForm({
   const [endDate, setEndDate] = useState(recurrence?.endDate ?? "");
   const [maxOccurrences, setMaxOccurrences] = useState(recurrence?.maxOccurrences == null ? "" : String(recurrence.maxOccurrences));
   const [operationId] = useState(createCreationOperationId);
+  const [alsoStudentIds, setAlsoStudentIds] = useState<string[]>([]);
   const { state, action, isPending } = useSubmitAction(
     (previous, data) => (recurrence
       ? updateAssignmentRecurrence(studentId, recurrence.id, previous, data)
@@ -364,8 +426,11 @@ export function AssignmentRecurrenceForm({
         회차는 마감일 하루 단위로 만들어지고, 다음 회차 하나가 미리 보입니다.
         {recurrence ? " 고치면 아직 마감 전이고 제출이 없는 회차만 새 내용으로 다시 만들고, 지난 회차와 제출된 회차는 그대로 둡니다." : ""}
       </p>
+      {recurrence ? null : (
+        <AlsoStudentsField studentId={studentId} options={studentOptions} selected={alsoStudentIds} onChange={setAlsoStudentIds} disabled={isPending} idPrefix={idPrefix} />
+      )}
       {state.error ? <p role="alert" className="text-ui text-destructive">{state.error}</p> : null}
-      <FormActions isPending={isPending} submitLabel={recurrence ? "저장" : "정기 과제 만들기"} onCancel={onCancel} />
+      <FormActions isPending={isPending} submitLabel={recurrence ? "저장" : alsoStudentIds.length > 0 ? `${alsoStudentIds.length + 1}명에게 정기 과제 만들기` : "정기 과제 만들기"} onCancel={onCancel} />
     </form>
   );
 }

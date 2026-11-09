@@ -5,7 +5,7 @@
  */
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { getAssignmentById } from "@/lib/actions/assignments";
+import { getAssignmentById, getPendingFeedbackAssignments } from "@/lib/actions/assignments";
 import { getFeedbacksByAssignment } from "@/lib/actions/feedbacks";
 import { getStudentById } from "@/lib/actions/students";
 import { getActiveAuthSession } from "@/lib/auth-guard";
@@ -13,7 +13,9 @@ import { AssignmentDetailClient } from "./AssignmentDetailClient";
 import { formatKst } from "@/lib/kst-format";
 import { safeReturnPath } from "@/lib/safe-return-path";
 import { describeAssignmentSubmission, getUnifiedItemSpaceLabel } from "@/lib/unified-item-normalization";
-import { isLateSubmission } from "@/lib/assignment-submission";
+import { isLateSubmission, isSubmissionSettled } from "@/lib/assignment-submission";
+import { buildAssignmentQueueHref, getNextPendingAssignment } from "@/lib/admin-work-queue";
+import type { QueueNext } from "@/components/admin/assignments/AssignmentReviewControls";
 import { ASSIGNMENT_FORMAT_LABELS } from "@/lib/assignment-recurrence";
 import { buildAdminStudentDetailHref } from "@/lib/student-space-routes";
 import { parseStoredMixAnalysis } from "@/lib/mix-analysis";
@@ -29,7 +31,7 @@ export default async function AssignmentDetailPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ returnTo?: string }>;
+  searchParams: Promise<{ returnTo?: string; from?: string }>;
 }) {
   const session = await getActiveAuthSession();
   if (!session?.user?.id) redirect("/login");
@@ -37,7 +39,10 @@ export default async function AssignmentDetailPage({
   const { id: assignmentId } = await params;
   const isAdmin = session.user.role === "admin";
   const fallback = isAdmin ? "/dashboard/admin?section=work" : "/dashboard/student?section=workspace&view=assignments";
-  const returnTo = safeReturnPath((await searchParams).returnTo, fallback);
+  const query = await searchParams;
+  const returnTo = safeReturnPath(query.returnTo, fallback);
+  // 업무함에서 열었으면(from=work) 피드백·확인 뒤 다음 피드백 대기로 이어 준다.
+  const fromWorkQueue = isAdmin && query.from === "work";
 
   // 다른 학생의 과제와 없는 과제를 같은 화면으로 처리해 존재 여부를 드러내지 않는다.
   const assignment = await getAssignmentById(assignmentId).catch(() => null);
@@ -57,9 +62,10 @@ export default async function AssignmentDetailPage({
     );
   }
 
-  const [fb, student] = await Promise.all([
+  const [fb, student, pendingQueue] = await Promise.all([
     getFeedbacksByAssignment(assignmentId),
     isAdmin ? getStudentById(assignment.studentId) : Promise.resolve(null),
+    fromWorkQueue ? getPendingFeedbackAssignments().catch(() => null) : Promise.resolve(null),
   ]);
 
   const feedbackList = fb.map((f: AssignmentFeedback) => ({
@@ -80,6 +86,20 @@ export default async function AssignmentDetailPage({
   const dueLabel = task?.dueAt
     ? `${formatKst(task.dueAt, { month: "long", day: "numeric", weekday: "short", ...time })} 마감`
     : null;
+  let queueNext: QueueNext | undefined;
+  if (pendingQueue && isSubmissionSettled({ feedbackCount: fb.length, reviewedAt: assignment.reviewedAt })) {
+    const { remaining, next } = getNextPendingAssignment(pendingQueue, assignmentId);
+    queueNext = {
+      remaining,
+      queueHref: fallback,
+      next: next
+        ? {
+            href: buildAssignmentQueueHref(next.id, returnTo),
+            label: `${next.studentName?.trim() || next.studentEmail.split("@")[0] || "이름 미등록"} · ${describeAssignmentSubmission(next)}`,
+          }
+        : null,
+    };
+  }
   const spaceLink = student
     ? { href: buildAdminStudentDetailHref(student.id, "assignments"), label: getUnifiedItemSpaceLabel(student) }
     : undefined;
@@ -111,6 +131,7 @@ export default async function AssignmentDetailPage({
       breadcrumb={isAdmin ? { href: returnTo, label: "이전 화면" } : { href: fallback, label: "과제" }}
       returnTo={returnTo}
       spaceLink={spaceLink}
+      queueNext={queueNext}
     />
   );
 }

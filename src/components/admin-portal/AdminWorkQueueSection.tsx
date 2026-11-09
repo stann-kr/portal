@@ -1,8 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { Check, FileText } from "lucide-react";
+import { setAssignmentReviewed } from "@/lib/actions/assignment-review";
+import { buildLessonNoteLink, LESSON_NOTE_LINK_CLASS } from "@/lib/lesson-note-links";
+import { buildAssignmentQueueHref } from "@/lib/admin-work-queue";
+import { UndoToast, type UndoToastMessage } from "./UndoToast";
 import {
   getAdminWorkQueue,
   type AdminQueueThread,
@@ -81,19 +86,81 @@ export function AdminWorkQueueSection({
   pendingAssignments,
   referenceTime,
   onOpenSchedule,
+  lessonNoteIds,
+  setReviewed = setAssignmentReviewed,
 }: {
   students: StudentRosterStat[];
   threads: AdminQueueThread[];
   pendingAssignments: PendingFeedbackAssignment[];
   referenceTime: Date;
   onOpenSchedule: () => void;
+  /** "학생:KST 날짜" → 그 날짜 노트 id. 다가오는 레슨 행의 수업 노트 링크에 쓴다. */
+  lessonNoteIds?: Readonly<Record<string, string>>;
+  /** 확인함 표시·취소 action. 테스트가 바꿔 끼운다. */
+  setReviewed?: typeof setAssignmentReviewed;
 }) {
+  // 확인함으로 표시한 제출은 서버 응답을 기다리지 않고 목록에서 뺀다(되돌리면 다시 보인다).
+  const [acknowledgedIds, setAcknowledgedIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [ackToast, setAckToast] = useState<(UndoToastMessage & { assignmentId: string | null }) | null>(null);
+  const ackChains = useRef(new Map<string, Promise<unknown>>());
+  const ackButtons = useRef(new Map<string, HTMLButtonElement>());
+  const undoButtonRef = useRef<HTMLButtonElement>(null);
+  const toastSeq = useRef(0);
   const queue = getAdminWorkQueue(
     students,
     threads,
-    pendingAssignments,
+    pendingAssignments.filter((assignment) => !acknowledgedIds.has(assignment.id)),
     referenceTime,
   );
+  const setAcknowledged = (assignmentId: string, hidden: boolean) => setAcknowledgedIds((current) => {
+    const next = new Set(current);
+    if (hidden) next.add(assignmentId);
+    else next.delete(assignmentId);
+    return next;
+  });
+  // 같은 제출의 표시·취소 요청은 보낸 순서대로 처리한다.
+  const runReview = (assignmentId: string, reviewed: boolean) => {
+    const previous = ackChains.current.get(assignmentId) ?? Promise.resolve();
+    const request = previous.catch(() => undefined).then(() => setReviewed(assignmentId, reviewed));
+    ackChains.current.set(assignmentId, request);
+    return request;
+  };
+  const acknowledge = (assignment: PendingFeedbackAssignment, title: string) => {
+    // 행이 사라지므로 focus를 다음 행의 확인 버튼(없으면 되돌리기)으로 옮긴다.
+    const rows = queue.pendingAssignments;
+    const index = rows.findIndex((row) => row.id === assignment.id);
+    const nextId = rows[index + 1]?.id ?? rows[index - 1]?.id;
+    setAcknowledged(assignment.id, true);
+    setAckToast({ key: `ack:${assignment.id}:${++toastSeq.current}`, assignmentId: assignment.id, message: `'${title}'를 확인함으로 표시했습니다`, undoLabel: "되돌리기" });
+    requestAnimationFrame(() => {
+      const target = (nextId ? ackButtons.current.get(nextId) : null) ?? undoButtonRef.current;
+      target?.focus();
+    });
+    void runReview(assignment.id, true).then(
+      (result) => {
+        if (result.success) return;
+        setAcknowledged(assignment.id, false);
+        setAckToast({ key: `ack-error:${assignment.id}:${++toastSeq.current}`, assignmentId: null, message: result.error, tone: "error" });
+      },
+      () => {
+        setAcknowledged(assignment.id, false);
+        setAckToast({ key: `ack-error:${assignment.id}:${++toastSeq.current}`, assignmentId: null, message: "확인함으로 표시하지 못했습니다. 다시 시도해 주세요.", tone: "error" });
+      },
+    );
+  };
+  const undoAcknowledge = () => {
+    const assignmentId = ackToast?.assignmentId;
+    if (!assignmentId) return;
+    setAckToast(null);
+    setAcknowledged(assignmentId, false);
+    requestAnimationFrame(() => ackButtons.current.get(assignmentId)?.focus());
+    void runReview(assignmentId, false).then(
+      (result) => {
+        if (!result.success) setAckToast({ key: `undo-error:${assignmentId}:${++toastSeq.current}`, assignmentId: null, message: result.error, tone: "error" });
+      },
+      () => setAckToast({ key: `undo-error:${assignmentId}:${++toastSeq.current}`, assignmentId: null, message: "확인 취소를 저장하지 못했습니다. 과제 화면에서 다시 시도해 주세요.", tone: "error" }),
+    );
+  };
   const [showAllPending, setShowAllPending] = useState(false);
   const visiblePendingAssignments = showAllPending
     ? queue.pendingAssignments
@@ -132,7 +199,7 @@ export function AdminWorkQueueSection({
               title="미답변 Q&A"
               count={<span className="md:hidden">{queue.metrics.openThreadCount}</span>}
               aside={
-                <Link href={buildQnaListHref(WORK_QUEUE_PATH)} className={cn(LEDGER_HEADER_LINK_CLASS, "hidden md:flex")}>
+                <Link href={buildQnaListHref(WORK_QUEUE_PATH)} className={cn(LEDGER_HEADER_LINK_CLASS, "min-w-11 justify-end")}>
                   전체 Q&A
                 </Link>
               }
@@ -184,19 +251,33 @@ export function AdminWorkQueueSection({
               <ul>
                 {visiblePendingAssignments.map((assignment) => {
                   const submitted = formatKstDot(assignment.submittedAt, { referenceTime });
+                  const title = describeAssignmentSubmission(assignment);
                   return (
-                    <li key={assignment.id}>
+                    <li key={assignment.id} className="flex items-center gap-2 border-b border-muted md:gap-3">
                       <Link
-                        href={`/dashboard/student/assignments/${encodeURIComponent(assignment.id)}?returnTo=${encodeURIComponent(WORK_QUEUE_PATH)}`}
-                        className={QUEUE_ROW_CLASS}
+                        href={buildAssignmentQueueHref(assignment.id, WORK_QUEUE_PATH)}
+                        className={cn(QUEUE_ROW_CLASS, "min-w-0 flex-1 border-b-0")}
                       >
-                        <QueueRowTitle>{describeAssignmentSubmission(assignment)}</QueueRowTitle>
+                        <QueueRowTitle>{title}</QueueRowTitle>
                         <QueueRowStudent>{displayStudent(assignment)}</QueueRowStudent>
                         <span className="shrink-0 font-mono text-xs text-muted-foreground">
                           {submitted || "제출일 미정"}
                           {submitted ? <span className="md:sr-only"> 제출</span> : null}
                         </span>
                       </Link>
+                      <button
+                        ref={(node) => {
+                          if (node) ackButtons.current.set(assignment.id, node);
+                          else ackButtons.current.delete(assignment.id);
+                        }}
+                        type="button"
+                        aria-label={`${title} 확인함으로 표시`}
+                        onClick={() => acknowledge(assignment, title)}
+                        className="inline-flex h-11 shrink-0 items-center gap-1.5 rounded-md border border-border bg-background px-2.5 text-xs text-foreground transition-colors duration-[var(--duration-fast)] hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none md:mr-1 md:h-7"
+                      >
+                        <Check className="size-[13px]" strokeWidth={1.8} aria-hidden="true" />
+                        확인
+                      </button>
                     </li>
                   );
                 })}
@@ -220,7 +301,7 @@ export function AdminWorkQueueSection({
             id="upcoming-lesson-heading"
             title="다가오는 레슨"
             aside={
-              <button type="button" className={cn(LEDGER_HEADER_LINK_CLASS, "hidden md:flex")} onClick={onOpenSchedule}>
+              <button type="button" className={cn(LEDGER_HEADER_LINK_CLASS, "min-w-11 justify-end")} onClick={onOpenSchedule}>
                 일정 열기
               </button>
             }
@@ -230,10 +311,10 @@ export function AdminWorkQueueSection({
           ) : (
             <ul className="grid grid-cols-[repeat(auto-fit,minmax(min(400px,100%),1fr))] gap-x-14">
               {queue.upcomingLessons.map((student) => (
-                <li key={student.id} className="min-w-0">
+                <li key={student.id} className="flex min-w-0 items-center gap-2 border-b border-muted">
                   <Link
                     href={`/dashboard/admin/students/${student.id}`}
-                    className={cn(LEDGER_ROW_CLASS, "flex h-12 items-center gap-3 md:h-13 md:px-1")}
+                    className={cn(LEDGER_ROW_CLASS, "flex h-12 min-w-0 flex-1 items-center gap-3 border-b-0 md:h-13 md:px-1")}
                   >
                     <span className="w-29 shrink-0 whitespace-nowrap font-mono text-xs tabular-nums text-secondary-foreground md:w-33">
                       {formatKstDot(student.nextLessonDate, { weekday: true, time: true, referenceTime })}
@@ -248,12 +329,37 @@ export function AdminWorkQueueSection({
                       </span>
                     ) : null}
                   </Link>
+                  {lessonNoteIds && student.nextLessonDate ? (() => {
+                    const link = buildLessonNoteLink({
+                      studentId: student.id,
+                      lessonAt: student.nextLessonDate,
+                      noteIds: lessonNoteIds,
+                      returnTo: WORK_QUEUE_PATH,
+                    });
+                    const name = student.displayName?.trim() || student.email;
+                    return (
+                      <Link
+                        href={link.href}
+                        aria-label={`${name} ${formatKstDot(student.nextLessonDate, { referenceTime })} ${link.existing ? "수업 노트 열기" : "수업 노트 쓰기"}`}
+                        className={cn(LESSON_NOTE_LINK_CLASS, "md:mr-1")}
+                      >
+                        <FileText className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
+                        {link.existing ? "노트 열기" : "수업 노트"}
+                      </Link>
+                    );
+                  })() : null}
                 </li>
               ))}
             </ul>
           )}
         </LedgerSection>
       </div>
+      <UndoToast
+        ref={undoButtonRef}
+        toast={ackToast}
+        onUndo={ackToast?.assignmentId ? undoAcknowledge : undefined}
+        onDismiss={() => setAckToast(null)}
+      />
     </div>
   );
 }

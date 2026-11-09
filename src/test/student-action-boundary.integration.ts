@@ -1599,3 +1599,146 @@ test("Stann 확인함: 관리자만 표시·취소하고, 표시된 제출은 �
   assert.deepEqual(await assignmentActions.deleteMyAssignment("ack-delete"), { success: true });
   assert.equal(await rowOf("ack-delete"), undefined);
 });
+
+test("피드백 고치기는 관리자만, 읽은 값과 같을 때만 바꾸고 글 제출에는 시점을 두지 않는다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("admin-1", "admin"));
+  await seedProfile(db, "admin-1", "admin");
+  await seedProfile(db, "student-1");
+  await db.insert(assignments).values([
+    { id: "edit-media", studentId: "student-1", mediaUrl: "https://example.test/1" },
+    { id: "edit-text", studentId: "student-1", textHtml: "<p>글</p>" },
+  ]);
+  await db.insert(feedbacks).values([
+    { id: "fb-media", assignmentId: "edit-media", timeMarker: 90, content: "처음 내용" },
+    { id: "fb-text", assignmentId: "edit-text", timeMarker: null, content: "글 피드백" },
+  ]);
+  const rowOf = async (id: string) => (await db.select().from(feedbacks).where(eq(feedbacks.id, id)))[0];
+
+  // 학생은 고칠 수 없다.
+  activeSession = createSession("student-1", "student");
+  await assert.rejects(feedbackActions.updateFeedback("fb-media", { content: "학생이 고침", timeMarker: "" }, { content: "처음 내용", timeMarker: 90 }), /Admin only/u);
+  assert.equal((await rowOf("fb-media"))?.content, "처음 내용");
+
+  activeSession = createSession("admin-1", "admin");
+  // 형식이 틀린 시점·빈 내용·없는 피드백은 바꾸지 않는다.
+  for (const timeMarker of ["abc", "01:99", "-1"]) {
+    assert.equal((await feedbackActions.updateFeedback("fb-media", { content: "x", timeMarker }, { content: "처음 내용", timeMarker: 90 })).success, false, timeMarker);
+  }
+  assert.equal((await feedbackActions.updateFeedback("fb-media", { content: "  ", timeMarker: "01:30" }, { content: "처음 내용", timeMarker: 90 })).success, false);
+  assert.equal((await feedbackActions.updateFeedback("missing", { content: "x", timeMarker: "" }, { content: "x", timeMarker: null })).success, false);
+
+  // 내용과 시점을 함께 고친다.
+  const saved = await feedbackActions.updateFeedback("fb-media", { content: " 고친 내용 ", timeMarker: "03:12" }, { content: "처음 내용", timeMarker: 90 });
+  assert.equal(saved.success, true, JSON.stringify(saved));
+  assert.deepEqual(await rowOf("fb-media").then((row) => [row?.content, row?.timeMarker]), ["고친 내용", 192]);
+  // 같은 값 재전송은 성공, 옛 값을 기준으로 다른 내용을 보내면 덮어쓰지 않는다.
+  assert.equal((await feedbackActions.updateFeedback("fb-media", { content: "고친 내용", timeMarker: "03:12" }, { content: "처음 내용", timeMarker: 90 })).success, true);
+  const stale = await feedbackActions.updateFeedback("fb-media", { content: "다른 탭 내용", timeMarker: "01:00" }, { content: "처음 내용", timeMarker: 90 });
+  assert.equal(stale.success, false);
+  assert.deepEqual(await rowOf("fb-media").then((row) => [row?.content, row?.timeMarker]), ["고친 내용", 192]);
+  // 시점을 비우면 전체 피드백이 된다.
+  assert.equal((await feedbackActions.updateFeedback("fb-media", { content: "고친 내용", timeMarker: "" }, { content: "고친 내용", timeMarker: 192 })).success, true);
+  assert.equal((await rowOf("fb-media"))?.timeMarker, null);
+
+  // 글 제출 피드백에는 시점을 붙이지 않는다.
+  assert.equal((await feedbackActions.updateFeedback("fb-text", { content: "글 피드백", timeMarker: "00:10" }, { content: "글 피드백", timeMarker: null })).success, false);
+  assert.equal((await feedbackActions.updateFeedback("fb-text", { content: "고친 글 피드백", timeMarker: "" }, { content: "글 피드백", timeMarker: null })).success, true);
+  assert.equal((await rowOf("fb-text"))?.content, "고친 글 피드백");
+});
+
+test("여러 학생에게 과제 내기: 학생마다 따로 만들고, 받을 수 없는 학생이 섞이면 아무것도 만들지 않으며 재전송은 학생별로 멱등이다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("admin-1", "admin"));
+  await seedProfile(db, "admin-1", "admin");
+  await seedProfile(db, "student-1");
+  await seedProfile(db, "student-2");
+  await seedProfile(db, "student-3");
+  const tasksOf = async () => (await db.select().from(assignmentTasks)).map((row) => row.studentId).sort();
+
+  // 관리자 계정·없는 학생이 섞이면 지금 학생 몫도 만들지 않는다.
+  for (const bad of ["admin-1", "missing-student"]) {
+    const rejected = await assignmentTaskActions.createAssignmentTask("student-1", {}, taskForm({
+      title: "함께 내는 과제", submissionFormat: "MIX", operationId: crypto.randomUUID(), alsoStudentId: ["student-2", bad],
+    }));
+    assert.ok(rejected.error, bad);
+    assert.deepEqual(await tasksOf(), [], bad);
+  }
+  // 학생은 낼 수 없다.
+  activeSession = createSession("student-1", "student");
+  await assert.rejects(assignmentTaskActions.createAssignmentTask("student-1", {}, taskForm({
+    title: "x", submissionFormat: "MIX", operationId: crypto.randomUUID(), alsoStudentId: ["student-2"],
+  })), /Admin only/u);
+  activeSession = createSession("admin-1", "admin");
+
+  // 지금 학생·중복 id는 한 번만 센다.
+  const operationId = crypto.randomUUID();
+  const form = () => taskForm({
+    title: "함께 내는 과제", submissionFormat: "MIX", operationId, alsoStudentId: ["student-2", "student-3", "student-2", "student-1"],
+  });
+  const created = await assignmentTaskActions.createAssignmentTask("student-1", {}, form());
+  assert.equal(created.success, true, JSON.stringify(created));
+  assert.equal(created.alsoCount, 2);
+  assert.deepEqual(await tasksOf(), ["student-1", "student-2", "student-3"]);
+  const rows = await db.select().from(assignmentTasks);
+  assert.equal(new Set(rows.map((row) => row.id)).size, 3, "학생마다 다른 과제 id");
+  assert.equal(rows.find((row) => row.studentId === "student-1")?.id, created.id, "돌려주는 id는 지금 학생 과제");
+  // 재전송은 새로 만들지 않는다.
+  assert.equal((await assignmentTaskActions.createAssignmentTask("student-1", {}, form())).success, true);
+  assert.equal((await db.select().from(assignmentTasks)).length, 3);
+
+  // 일부만 만들어진 뒤(예: student-3 몫 누락) 같은 작성 정보로 다시 내면 남은 학생 몫만 만든다.
+  await db.delete(assignmentTasks).where(eq(assignmentTasks.studentId, "student-3"));
+  assert.equal((await assignmentTaskActions.createAssignmentTask("student-1", {}, form())).success, true);
+  assert.deepEqual(await tasksOf(), ["student-1", "student-2", "student-3"]);
+
+  // 정기 과제도 학생마다 규칙을 만든다.
+  const rule = await assignmentTaskActions.createAssignmentRecurrence("student-1", {}, taskForm({
+    title: "정기", submissionFormat: "TEXT", startDate: "2026-11-02", intervalWeeks: "1",
+    weekdays: ["1", "3"], dueTime: "21:00", operationId: crypto.randomUUID(), alsoStudentId: ["student-2"],
+  }));
+  assert.equal(rule.success, true, JSON.stringify(rule));
+  assert.deepEqual((await db.select().from(assignmentRecurrences)).map((row) => row.studentId).sort(), ["student-1", "student-2"]);
+  const badRule = await assignmentTaskActions.createAssignmentRecurrence("student-1", {}, taskForm({
+    title: "정기 2", submissionFormat: "TEXT", startDate: "2026-11-02", intervalWeeks: "1",
+    weekdays: ["1"], dueTime: "21:00", operationId: crypto.randomUUID(), alsoStudentId: ["admin-1"],
+  }));
+  assert.ok(badRule.error);
+  assert.equal((await db.select().from(assignmentRecurrences)).length, 2);
+});
+
+test("학생 상세 탭 숫자와 레슨 노트 링크는 관리자만 읽고 휴지통 노트·다른 학생 노트를 섞지 않는다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("admin-1", "admin"));
+  await seedProfile(db, "admin-1", "admin");
+  await seedProfile(db, "student-1");
+  await seedProfile(db, "student-2");
+  const lessonDay = new Date("2026-11-12T10:00:00.000Z"); // KST 11월 12일 19:00
+  await db.insert(privateNotes).values([
+    { id: "note-live", studentId: "student-1", authorId: "admin-1", title: "수업", contentHtml: "<p>a</p>", noteDate: new Date("2026-11-12T03:00:00.000Z") },
+    { id: "note-trash", studentId: "student-1", authorId: "admin-1", title: "지움", contentHtml: "<p>b</p>", noteDate: new Date("2026-11-13T03:00:00.000Z"), deletedAt: new Date(), deletedById: "admin-1" },
+    { id: "note-other", studentId: "student-2", authorId: "admin-1", title: "다른 학생", contentHtml: "<p>c</p>", noteDate: new Date("2026-11-12T03:00:00.000Z") },
+  ]);
+  const notesModule = await import("@/lib/actions/lesson-notes");
+  const links = await import("@/lib/lesson-note-links");
+  const own = await notesModule.getLessonNoteIdsForStudent("student-1");
+  assert.equal(own[links.lessonNoteKey("student-1", lessonDay)], "note-live");
+  assert.equal(Object.values(own).includes("note-trash"), false);
+  assert.equal(Object.values(own).includes("note-other"), false);
+  const ranged = await notesModule.getLessonNoteIdsInRange(["student-1", "student-2"], { from: new Date("2026-11-11T00:00:00.000Z"), to: new Date("2026-11-12T12:00:00.000Z") });
+  assert.equal(ranged[links.lessonNoteKey("student-2", lessonDay)], "note-other");
+  assert.equal(links.buildLessonNoteLink({ studentId: "student-1", lessonAt: lessonDay, noteIds: own, returnTo: "/x" }).href, "/dashboard/notes/note-live?returnTo=%2Fx");
+  assert.equal(
+    links.buildLessonNoteLink({ studentId: "student-1", lessonAt: new Date("2026-11-19T10:00:00.000Z"), noteIds: own, returnTo: "/x" }).href,
+    "/dashboard/admin/students/student-1/notes/new?date=2026-11-19&returnTo=%2Fx",
+  );
+
+  await db.insert(assignments).values([
+    { id: "wc-pending", studentId: "student-1", mediaUrl: "https://example.test/1" },
+    { id: "wc-ack", studentId: "student-1", mediaUrl: "https://example.test/2", reviewedAt: new Date() },
+  ]);
+  const counts = await studentActions.getStudentWorkCounts("student-1");
+  assert.deepEqual(counts, { pendingFeedbackCount: 1, openQnaCount: 0 });
+  await assert.rejects(studentActions.getStudentWorkCounts("admin-1"), /Student not found/u);
+  activeSession = createSession("student-1", "student");
+  await assert.rejects(notesModule.getLessonNoteIdsForStudent("student-1"), /Admin only/u);
+  await assert.rejects(notesModule.getLessonNoteIdsInRange(["student-1"], { from: lessonDay, to: lessonDay }), /Admin only/u);
+  await assert.rejects(studentActions.getStudentWorkCounts("student-1"), /Admin only/u);
+});

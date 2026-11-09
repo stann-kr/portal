@@ -30,6 +30,8 @@ let renderCalendarEventContent: typeof import("@/components/calendar/CalendarEve
 let VideoPlayer: typeof import("@/components/player/VideoPlayer").VideoPlayer;
 let TimelineFeedback: typeof import("@/components/feedback/TimelineFeedback").TimelineFeedback;
 let PostDetailClient: typeof import("@/app/community/[postId]/PostDetailClient").PostDetailClient;
+let playerStore: typeof import("@/components/player/player-store");
+let PersistentPlayerHost: typeof import("@/components/player/PersistentPlayerHost").PersistentPlayerHost;
 let MixsetFeedbackCard: typeof import("@/components/community/MixsetFeedbackCard").MixsetFeedbackCard;
 let CommentForm: typeof import("@/components/community/CommentForm").CommentForm;
 let saveComment: typeof import("@/lib/actions/comments").createComment = async () => ({});
@@ -48,6 +50,9 @@ let loadAssignments: typeof import("@/lib/actions/assignments").getMyAssignments
 let removeAssignment: typeof import("@/lib/actions/assignments").deleteMyAssignment = async () => ({ success: true });
 let editFreeSubmission: typeof import("@/lib/actions/assignments").updateMyFreeSubmission = async () => ({ error: "테스트 미설정" });
 let saveFeedback: typeof import("@/lib/actions/feedbacks").createFeedback = async () => ({});
+let editFeedback: typeof import("@/lib/actions/feedbacks").updateFeedback = async () => ({ success: true });
+let markReviewed: typeof import("@/lib/actions/assignment-review").setAssignmentReviewed = async () => ({ success: true, reviewedAt: null });
+let reviewControls: typeof import("@/components/admin/assignments/AssignmentReviewControls");
 let saveTaskSubmission: typeof import("@/lib/actions/assignmentTasks").submitAssignmentTask = async () => ({});
 let loadTasks: typeof import("@/lib/actions/assignmentTasks").getMyAssignmentTasks = async () => [];
 let saveEvent: typeof import("@/lib/actions/calendarEvents").createCalendarEvent = async () => ({});
@@ -119,9 +124,13 @@ mock.module("@/lib/actions/assignmentTasks", { namedExports: {
 } });
 mock.module("@/lib/actions/feedbacks", { namedExports: {
   createFeedback: (...args: Parameters<typeof saveFeedback>) => saveFeedback(...args),
+  updateFeedback: (...args: Parameters<typeof editFeedback>) => editFeedback(...args),
   deleteFeedback: async () => {},
   getMyFeedbacksMap: async () => ({}),
   getFeedbacksByAssignment: async () => [],
+} });
+mock.module("@/lib/actions/assignment-review", { namedExports: {
+  setAssignmentReviewed: (...args: Parameters<typeof markReviewed>) => markReviewed(...args),
 } });
 mock.module("@/lib/actions/comments", { namedExports: {
   createComment: (...args: Parameters<typeof saveComment>) => saveComment(...args),
@@ -261,7 +270,10 @@ before(async () => {
   ({ renderCalendarEventContent } = await import("@/components/calendar/CalendarEventChip"));
   ({ VideoPlayer } = await import("@/components/player/VideoPlayer"));
   ({ TimelineFeedback } = await import("@/components/feedback/TimelineFeedback"));
+  reviewControls = await import("@/components/admin/assignments/AssignmentReviewControls");
   ({ PostDetailClient } = await import("@/app/community/[postId]/PostDetailClient"));
+  playerStore = await import("@/components/player/player-store");
+  ({ PersistentPlayerHost } = await import("@/components/player/PersistentPlayerHost"));
   ({ MixsetFeedbackCard } = await import("@/components/community/MixsetFeedbackCard"));
   ({ CommentForm } = await import("@/components/community/CommentForm"));
   ({ AssignmentView } = await import("@/components/student-portal/AssignmentView"));
@@ -976,7 +988,7 @@ test("calendar preserves its date, view and filters across view tabs and admin s
   await render(context, <AdminPortalClient
     initialUnifiedItems={[]}
     adminId="admin" qnaThreads={[]} pendingAssignments={[]} referenceTime={new Date()}
-    students={[{ id: "student", email: "student@example.test", displayName: "학생", createdAt: null, currentModule: null, nextLessonDate: null, pendingFeedbackCount: 0 }]}
+    students={[{ id: "student", email: "student@example.test", displayName: "학생", createdAt: null, currentModule: null, nextLessonDate: null, pendingFeedbackCount: 0, openQnaCount: 0 }]}
   />);
   // 관리자 일정은 "월·주·일별·전체" 한 세그먼트에서 주 보기로 시작한다(AdminSchedule).
   const tabs = [...browser.document.querySelectorAll('[role="tablist"][aria-label="보기"] [role="tab"]')];
@@ -1061,7 +1073,7 @@ test("top bar + opens today's quick create or lesson booking once and clears the
   await render(context, <AdminPortalClient
     initialUnifiedItems={[]}
     adminId="admin" qnaThreads={[]} pendingAssignments={[]} referenceTime={new Date()}
-    students={[{ id: "student", email: "student@example.test", displayName: "학생", createdAt: null, currentModule: null, nextLessonDate: null, pendingFeedbackCount: 0 }]}
+    students={[{ id: "student", email: "student@example.test", displayName: "학생", createdAt: null, currentModule: null, nextLessonDate: null, pendingFeedbackCount: 0, openQnaCount: 0 }]}
   />);
   assert.equal(browser.document.querySelector('[role="dialog"]'), null);
   // 같은 화면 안의 이동(pushState + popstate)으로도 열린다.
@@ -1207,7 +1219,7 @@ test("portal deep links render their section, view and selected student before h
   assert.equal(markup.querySelector("h1")?.textContent, "캘린더");
   assert.doesNotMatch(markup.textContent ?? "", /커리큘럼/u);
 
-  const students = ["first", "requested"].map((id) => ({ id, email: `${id}@example.test`, displayName: id, createdAt: null, currentModule: null, nextLessonDate: null, pendingFeedbackCount: 0 }));
+  const students = ["first", "requested"].map((id) => ({ id, email: `${id}@example.test`, displayName: id, createdAt: null, currentModule: null, nextLessonDate: null, pendingFeedbackCount: 0, openQnaCount: 0 }));
   const admin = <AdminPortalClient
     initialLocation={resolvePortalLocation("admin", { section: "schedule", view: "all", type: "NOTE" })}
     initialStudentId="requested" students={students} initialUnifiedItems={[]}
@@ -2023,11 +2035,14 @@ test("믹스셋 링크 상세는 본문 위에 플레이어를 두고 댓글 시
 test("믹스셋 오디오 상세는 metadata 뒤에 시점으로 이동해 재생하고 현재 위치로 댓글 시점을 채운다", async (context) => {
   browser.localStorage.clear();
   const post = mixsetPost("mixset-audio", { mediaUrl: "/api/media/audio-1", mediaObjectId: "audio-1" });
+  playerStore.resetPlayerForTests();
+  context.after(() => playerStore.resetPlayerForTests());
   await render(context, <PostDetailClient postId={post.id} post={post} initialCommentList={[mixsetComment("c-1", post.id, "드롭", 3930)]} currentUserId="student-1" isAdmin={false} returnTo="/community" />);
-  const audio = browser.document.querySelector("audio");
-  assert.ok(audio);
-  assert.equal(audio.getAttribute("preload"), "metadata");
-  assert.equal(audio.controls, true);
+  // 업로드 오디오는 파형 플레이어가 앱 공용 오디오 요소(문서에 붙이지 않음)를 조작해 화면을 떠나도 이어 간다.
+  const slider = browser.document.querySelector('section[aria-label="믹스셋 재생"] [role="slider"]');
+  assert.ok(slider, "파형은 재생 위치 slider다");
+  assert.equal(slider.getAttribute("aria-valuetext"), "0초");
+  assert.equal(browser.document.querySelector("audio"), null, "문서 안에 두 번째 오디오 요소를 만들지 않는다");
   const positionStatus = browser.document.querySelector('form [role="status"]');
   assert.ok(positionStatus, "현재 위치 안내 영역은 첫 안내 전부터 있다");
   assert.equal(positionStatus.textContent, "");
@@ -2036,8 +2051,11 @@ test("믹스셋 오디오 상세는 metadata 뒤에 시점으로 이동해 재�
   assert.match(positionStatus.textContent ?? "", /재생 위치를 읽지 못했습니다/u);
   assert.equal(inputValue("timeMarker"), "");
   await press("1:05:30 위치로 이동");
+  const audio = playerStore.getSharedAudio();
+  assert.ok(audio);
+  assert.equal(audio.getAttribute("preload"), "metadata");
   assert.equal(audio.currentTime, 0, "metadata 전에는 이동을 미룬다");
-  await act(async () => { audio.dispatchEvent(new browser.Event("loadedmetadata")); });
+  await act(async () => { audio.dispatchEvent(new browser.Event("loadedmetadata") as unknown as Event); });
   assert.equal(audio.currentTime, 3930);
   assert.equal(audio.paused, false, "이동한 위치부터 재생한다");
   audio.currentTime = 754.9;
@@ -2046,6 +2064,67 @@ test("믹스셋 오디오 상세는 metadata 뒤에 시점으로 이동해 재�
   assert.equal(browser.document.activeElement?.getAttribute("name"), "content", "이어서 댓글 내용을 입력한다");
   await press("시점 비우기");
   assert.equal(inputValue("timeMarker"), "");
+});
+
+test("믹스셋 파형은 시점 댓글 아이콘·말풍선으로 댓글을 찾고, 재생 중에 떠나면 미니 플레이어가 이어 가다 돌아오면 다시 화면이 맡는다", async (context) => {
+  browser.localStorage.clear();
+  playerStore.resetPlayerForTests();
+  context.after(() => playerStore.resetPlayerForTests());
+  const peaks = { version: 1, duration: 3500, peaks: Array.from({ length: 1000 }, (_, index) => (index % 10) / 10) };
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL) => (
+    String(input).endsWith("/peaks") ? new Response(JSON.stringify(peaks), { status: 200 }) : new Response(null, { status: 404 })
+  )) as typeof fetch;
+  context.after(() => { globalThis.fetch = originalFetch; });
+  const post = mixsetPost("mixset-wave", { mediaUrl: "/api/media/audio-2", mediaObjectId: "audio-2" });
+  const comments = [
+    { ...mixsetComment("c-stann", post.id, "여기 전환에서 킥이 겹쳐요.", 845), authorName: "Stann" },
+    mixsetComment("c-student", post.id, "드롭", 280),
+  ];
+  const detail = <PostDetailClient postId={post.id} post={post} initialCommentList={comments} currentUserId="student-1" isAdmin={false} returnTo="/community" />;
+  const root = await render(context, <>{detail}<PersistentPlayerHost /></>);
+  const region = browser.document.querySelector('section[aria-label="믹스셋 재생"]');
+  assert.ok(region);
+  assert.ok(region.querySelectorAll(".waveform-bars--rest > span").length >= 16, "저장된 파형을 막대로 그린다");
+  assert.equal(region.querySelector('[role="slider"]')?.getAttribute("aria-valuemax"), "3500");
+  const stannMarker = button("Stann 14:05 댓글");
+  assert.equal(stannMarker.textContent, "S");
+  assert.match(stannMarker.className, /bg-primary/u, "Stann 댓글은 먹색");
+  assert.match(button("다른 학생 04:40 댓글").className, /bg-selected/u);
+  await press("Stann 14:05 댓글");
+  await press("Stann 14:05 댓글로 이동");
+  assert.equal(browser.document.activeElement?.id, "comment-c-stann", "말풍선을 누르면 그 댓글로 간다");
+
+  // 재생 중에 화면을 떠나면 하단 미니 플레이어가 같은 오디오 요소로 이어 간다.
+  await press("재생");
+  const audio = playerStore.getSharedAudio();
+  assert.ok(audio);
+  await act(async () => { audio.dispatchEvent(new browser.Event("loadedmetadata") as unknown as Event); audio.dispatchEvent(new browser.Event("play") as unknown as Event); });
+  assert.equal(browser.document.querySelector('section[aria-label="이어 듣기 플레이어"]'), null, "게시물 화면이 맡는 동안 미니 플레이어는 없다");
+  await act(async () => root.render(<><div /><PersistentPlayerHost /></>));
+  await settle();
+  const bar = browser.document.querySelector('section[aria-label="이어 듣기 플레이어"]');
+  assert.ok(bar, "떠나면 미니 플레이어가 보인다");
+  assert.equal(audio.paused, false, "소리는 끊기지 않는다");
+  assert.equal(bar.querySelector("a")?.getAttribute("href"), `/community/${post.id}?returnTo=%2Fcommunity`);
+  assert.equal(browser.document.documentElement.dataset.miniPlayer, "on", "화면 끝 내용이 가려지지 않게 여백을 둔다");
+  audio.currentTime = 754;
+  await act(async () => { audio.dispatchEvent(new browser.Event("timeupdate") as unknown as Event); });
+
+  // 돌아오면 미니 플레이어가 사라지고 화면 파형이 같은 위치를 보인다.
+  await act(async () => root.render(<>{detail}<PersistentPlayerHost /></>));
+  await settle();
+  assert.equal(browser.document.querySelector('section[aria-label="이어 듣기 플레이어"]'), null);
+  assert.equal(browser.document.querySelector('section[aria-label="믹스셋 재생"] [role="slider"]')?.getAttribute("aria-valuetext"), "12분 34초");
+  assert.equal(button("일시정지").getAttribute("aria-label"), "일시정지");
+
+  // 멈춘 채로 떠나면 미니 플레이어 없이 끝낸다.
+  await press("일시정지");
+  await act(async () => { audio.dispatchEvent(new browser.Event("pause") as unknown as Event); });
+  await act(async () => root.render(<><div /><PersistentPlayerHost /></>));
+  await settle();
+  assert.equal(browser.document.querySelector('section[aria-label="이어 듣기 플레이어"]'), null);
+  assert.equal(browser.document.documentElement.dataset.miniPlayer, undefined);
 });
 
 test("댓글 시점 칸은 매체가 있는 믹스셋에만 보이고 시점·작업 식별자·초안을 함께 다룬다", async (context) => {
@@ -2839,4 +2918,113 @@ test("public lesson calendar keeps a refused address for correction and sends on
   await press("연결");
   assert.deepEqual(submitted, [[privateUrl, null], [publicUrl, null]]);
   assert.equal(inputValue("url"), "");
+});
+
+test("과제 확인함: 상세 머리는 피드백 대기·확인함·피드백 완료에 맞는 버튼만 두고, 학생 안내와 다음 항목 막대를 보인다", async (context) => {
+  const { AssignmentReviewStatusRow, AssignmentAcknowledgedNotice, QueueNextBar } = reviewControls;
+  const calls: [string, boolean][] = [];
+  markReviewed = async (id, reviewed) => {
+    calls.push([id, reviewed]);
+    return reviewed ? { success: false, error: "피드백이 달린 제출은 확인함으로 표시하지 않습니다." } : { success: true, reviewedAt: null };
+  };
+  context.after(() => { markReviewed = async () => ({ success: true, reviewedAt: null }); });
+  const reviewedAt = new Date("2026-11-08T23:20:00.000Z"); // KST 11월 9일 08:20
+
+  const pending = await render(context, <AssignmentReviewStatusRow assignmentId="a1" feedbackCount={0} reviewedAt={null} />);
+  assert.match(browser.document.body.textContent ?? "", /피드백 대기/u);
+  await press("확인함으로 표시");
+  await settle();
+  assert.deepEqual(calls, [["a1", true]]);
+  assert.match(browser.document.querySelector('[role="alert"]')?.textContent ?? "", /피드백이 달린 제출/u, "실패 이유를 알린다");
+
+  await act(async () => pending.render(<AssignmentReviewStatusRow assignmentId="a1" feedbackCount={0} reviewedAt={reviewedAt} />));
+  assert.match(browser.document.body.textContent ?? "", /확인함 · 11월 9일 08:20/u);
+  assert.equal([...browser.document.querySelectorAll("button")].some((node) => node.textContent?.includes("확인함으로 표시")), false);
+  await press("확인 취소");
+  await settle();
+  assert.deepEqual(calls.at(-1), ["a1", false]);
+
+  await act(async () => pending.render(<AssignmentReviewStatusRow assignmentId="a1" feedbackCount={2} reviewedAt={reviewedAt} />));
+  assert.match(browser.document.body.textContent ?? "", /피드백 완료 · 2/u);
+  assert.equal(browser.document.querySelectorAll("button").length, 0, "피드백이 있으면 확인 버튼을 두지 않는다");
+
+  await act(async () => pending.render(<>
+    <AssignmentAcknowledgedNotice reviewedAt={reviewedAt} />
+    <QueueNextBar queueNext={{ remaining: 3, queueHref: "/dashboard/admin?section=work", next: { href: "/dashboard/student/assignments/a2?from=work", label: "이학생 · 하우스 롱셋" } }} />
+    <QueueNextBar queueNext={{ remaining: 0, queueHref: "/dashboard/admin?section=work", next: null }} />
+  </>));
+  const text = browser.document.body.textContent ?? "";
+  assert.match(text, /Stann이 확인했습니다 · 11월 9일/u);
+  assert.match(text, /따로 남긴 피드백은 없습니다\. 확인된 제출은 고칠 수 없습니다\./u);
+  assert.match(text, /남은 피드백 대기 3건/u);
+  const links = [...browser.document.querySelectorAll("a")].map((link) => [link.textContent, link.getAttribute("href")]);
+  assert.deepEqual(links, [
+    ["다음: 이학생 · 하우스 롱셋", "/dashboard/student/assignments/a2?from=work"],
+    ["업무함으로", "/dashboard/admin?section=work"],
+  ]);
+  assert.match(text, /피드백 대기를 모두 처리했습니다/u);
+});
+
+test("피드백 고치기: 관리자는 그 자리에서 내용·시점을 고치고, 취소하면 원래 줄로 돌아가며 실패는 입력을 남긴 채 알린다", async (context) => {
+  const sent: unknown[][] = [];
+  let reply: Awaited<ReturnType<typeof editFeedback>> = { success: false, error: "다른 화면에서 이 피드백이 먼저 바뀌었습니다. 새로고침한 뒤 다시 고쳐 주세요." };
+  editFeedback = async (...args) => { sent.push(args); return reply; };
+  context.after(() => { editFeedback = async () => ({ success: true }); });
+  browser.localStorage.clear();
+  const list = [{ id: "fb-1", timeMarker: 90, content: "처음 내용", createdAt: null }];
+  await render(context, <TimelineFeedback assignmentId="edit-assignment" actorId="admin-edit" feedbackList={list} isAdmin />);
+
+  await press("01:30 피드백 고치기");
+  await settle();
+  const form = browser.document.querySelector('form[aria-label="01:30 피드백 고치기"]');
+  assert.ok(form, "고치기 줄이 열린다");
+  const [timeInput, contentInput] = [...form.querySelectorAll("input")] as unknown as HTMLInputElement[];
+  assert.equal(timeInput?.value, "01:30");
+  assert.equal(contentInput?.value, "처음 내용");
+  const setValue = (input: HTMLInputElement, value: string) => {
+    const setter = Object.getOwnPropertyDescriptor(browser.HTMLInputElement.prototype, "value")?.set;
+    setter?.call(input, value);
+    input.dispatchEvent(new browser.Event("input", { bubbles: true }) as unknown as Event);
+  };
+  await act(async () => {
+    setValue(timeInput!, "03:12");
+    setValue(contentInput!, "하이햇 패턴이 바뀌는 지점에서 볼륨이 튐");
+  });
+  await press("저장");
+  await settle();
+  assert.deepEqual(sent, [["fb-1", { timeMarker: "03:12", content: "하이햇 패턴이 바뀌는 지점에서 볼륨이 튐" }, { content: "처음 내용", timeMarker: 90 }]]);
+  assert.match(browser.document.querySelector('[role="alert"]')?.textContent ?? "", /먼저 바뀌었습니다/u);
+  const kept = browser.document.querySelectorAll('form[aria-label="01:30 피드백 고치기"] input')[1] as unknown as HTMLInputElement | undefined;
+  assert.equal(kept?.value, "하이햇 패턴이 바뀌는 지점에서 볼륨이 튐", "실패해도 쓴 내용은 남는다");
+
+  await press("취소");
+  await settle();
+  assert.equal(browser.document.querySelector('form[aria-label="01:30 피드백 고치기"]'), null);
+  assert.match(browser.document.body.textContent ?? "", /처음 내용/u);
+
+  reply = { success: true };
+  await press("01:30 피드백 고치기");
+  await settle();
+  await press("저장");
+  await settle();
+  assert.equal(browser.document.querySelector('form[aria-label="01:30 피드백 고치기"]'), null, "저장하면 고치기 줄을 닫는다");
+});
+
+test("학생 상세 레슨 행은 그 날짜 노트가 있으면 노트 열기, 없으면 날짜를 채운 새 노트로 간다", async (context) => {
+  await render(context, <OverviewTab
+    studentId="student-1"
+    referenceTime={new Date("2026-11-09T00:00:00.000Z")}
+    modules={[]}
+    lessons={[
+      { id: "lesson-a", scheduledAt: new Date("2026-11-12T10:00:00.000Z") },
+      { id: "lesson-b", scheduledAt: new Date("2026-11-19T10:00:00.000Z") },
+    ]}
+    lessonNoteIds={{ "student-1:2026-11-12": "note-1" }}
+  />);
+  const links = [...browser.document.querySelectorAll('[aria-labelledby="lessons-heading"] li a')]
+    .map((link) => [link.textContent, link.getAttribute("href")]);
+  assert.deepEqual(links, [
+    ["노트 열기", "/dashboard/notes/note-1?returnTo=%2Fdashboard%2Fadmin%2Fstudents%2Fstudent-1%3Ftab%3Doverview"],
+    ["수업 노트", "/dashboard/admin/students/student-1/notes/new?date=2026-11-19&returnTo=%2Fdashboard%2Fadmin%2Fstudents%2Fstudent-1%3Ftab%3Doverview"],
+  ]);
 });

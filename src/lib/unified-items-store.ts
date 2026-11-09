@@ -189,6 +189,7 @@ export async function queryInternalUnifiedItems(
           dueAt: assignmentTasks.dueAt,
           createdAt: assignmentTasks.createdAt,
           submissionFormat: assignmentTasks.submissionFormat,
+          analysisForm: assignmentTasks.analysisForm,
         })
         .from(assignmentTasks)
         .where(and(

@@ -53,9 +53,7 @@ export function getAdminWorkQueue(
   const openThreads = threads
     .filter((thread) => thread.status === "OPEN")
     .sort((a, b) => threadTime(a) - threadTime(b));
-  const sortedPendingAssignments = [...pendingAssignments].sort(
-    (a, b) => assignmentTime(a) - assignmentTime(b),
-  );
+  const sortedPendingAssignments = sortPendingAssignments(pendingAssignments);
   const upcomingLessons = students
     .filter(
       (student) =>
@@ -81,4 +79,26 @@ export function getAdminWorkQueue(
       studentCount: students.length,
     },
   };
+}
+
+/** 업무함에서 연 과제 상세 주소. `from=work`가 있으면 처리 뒤 다음 피드백 대기로 이어 준다. */
+export function buildAssignmentQueueHref(assignmentId: string, returnTo: string): string {
+  return `/dashboard/student/assignments/${encodeURIComponent(assignmentId)}?from=work&returnTo=${encodeURIComponent(returnTo)}`;
+}
+
+/** 업무함 순서(오래된 제출 먼저, 제출일 없는 제출은 뒤)로 정렬한다. getAdminWorkQueue와 같은 기준. */
+export function sortPendingAssignments<T extends PendingFeedbackAssignment>(assignments: readonly T[]): T[] {
+  return [...assignments].sort((a, b) => assignmentTime(a) - assignmentTime(b));
+}
+
+/**
+ * 지금 연 제출을 뺀 남은 피드백 대기 수와 업무함 순서의 다음 제출(AssignmentAck 보드 "다음 항목").
+ * 남은 것이 없으면 next는 null이다.
+ */
+export function getNextPendingAssignment<T extends PendingFeedbackAssignment>(
+  pending: readonly T[],
+  currentId: string,
+): { remaining: number; next: T | null } {
+  const rest = sortPendingAssignments(pending.filter((assignment) => assignment.id !== currentId));
+  return { remaining: rest.length, next: rest[0] ?? null };
 }

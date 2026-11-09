@@ -61,6 +61,7 @@ test("roster 행은 요약 열과 더 보기 메뉴의 canonical 학생 링크�
     currentModule: "WEEK 01 · 기초",
     nextLessonDate: new Date("2026-08-14T10:00:00.000Z"),
     pendingFeedbackCount: 2,
+    openQnaCount: 3,
   }, {
     id: "student-2",
     email: "minji@example.test",
@@ -69,6 +70,7 @@ test("roster 행은 요약 열과 더 보기 메뉴의 canonical 학생 링크�
     currentModule: null,
     nextLessonDate: null,
     pendingFeedbackCount: 0,
+    openQnaCount: 0,
   }];
   await act(async () => {
     root.render(React.createElement(StudentManagementSection, { students: renderedStudents }));
@@ -78,10 +80,11 @@ test("roster 행은 요약 열과 더 보기 메뉴의 canonical 학생 링크�
   assert.equal(rows().length, 2);
   const [first] = rows();
   // 커리큘럼 숨김(기본값): 현재 진도 열과 진도 문구가 없다.
-  assert.deepEqual([...container.querySelectorAll("thead th")].map((th) => th.textContent), ["수강생", "다음 레슨", "피드백 대기", "메뉴"]);
+  assert.deepEqual([...container.querySelectorAll("thead th")].map((th) => th.textContent), ["수강생", "다음 레슨", "피드백 대기", "미답변 질문", "메뉴"]);
   assert.doesNotMatch(container.textContent ?? "", /WEEK 01|현재 진도|진도 미지정/u);
   assert.match(first.textContent ?? "", /08\.14 19:00/u, "다음 레슨은 KST 점 날짜와 시각");
   assert.match(first.textContent ?? "", /2건/u, "피드백 대기 수를 함께 읽는다");
+  assert.match(first.textContent ?? "", /3건/u, "미답변 질문 수를 함께 읽는다");
   assert.equal(
     first.querySelector("a")?.getAttribute("href"),
     "/dashboard/admin/students/student-1?tab=overview",

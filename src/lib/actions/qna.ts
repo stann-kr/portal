@@ -175,7 +175,7 @@ function lifecycleError(reason: QnaMutationFailureReason): string {
     case "NOT_FOUND_OR_FORBIDDEN":
       return "Q&A를 찾을 수 없거나 권한이 없습니다.";
     case "STATUS_TRANSITION_FORBIDDEN":
-      return "답변을 받은 질문만 해결됨으로 닫을 수 있습니다.";
+      return "지금 상태에서는 바꿀 수 없습니다. 답변을 받은 질문만 해결됨으로 닫고, 닫힌 질문만 다시 열 수 있습니다.";
     case "INTERNAL_INVARIANT_FAILURE":
       return "Q&A 상태를 안전하게 변경하지 못했습니다. 다시 시도해 주세요.";
   }
@@ -704,6 +704,18 @@ export async function closeMyQnaThread(
   baseRevision: number,
 ): Promise<QnaLifecycleState> {
   return updateThreadStatus(threadId, "CLOSED", operationId, baseRevision);
+}
+
+/**
+ * 학생이 닫힌(CLOSED) 자기 질문을 다시 연다(OPEN). 다시 열면 추가 질문을 쓸 수 있다.
+ * 권한(작성자 본인)·전이(CLOSED→OPEN)·version 검증은 setQnaStatusAtomically가 원자적으로 맡는다.
+ */
+export async function reopenMyQnaThread(
+  threadId: string,
+  operationId: string,
+  baseRevision: number,
+): Promise<QnaLifecycleState> {
+  return updateThreadStatus(threadId, "OPEN", operationId, baseRevision);
 }
 
 async function runQnaLifecycle(

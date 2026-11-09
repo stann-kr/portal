@@ -57,6 +57,7 @@ export default async function QnaThreadPage({
             authorRole: r.authorRole ?? null,
           }))}
           isAdmin={isAdmin}
+          isAuthor={!isAdmin && thread.studentId === session.user.id}
           actorId={session.user.id!}
           title={thread.title}
           studentName={studentName}

@@ -10,7 +10,7 @@
 import { useActionState, useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Pencil, Plus, Trash2 } from "lucide-react";
+import { FileText, Pencil, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -32,6 +32,8 @@ import { formatKst } from "@/lib/kst-format";
 import { isCurriculumVisible } from "@/lib/curriculum-visibility";
 import { cn } from "@/lib/utils";
 import { formatKstDot } from "@/lib/kst-format";
+import { buildAdminStudentDetailHref } from "@/lib/student-space-routes";
+import { buildLessonNoteLink, LESSON_NOTE_LINK_CLASS } from "@/lib/lesson-note-links";
 import {
   LEDGER_ADD_ROW_CLASS,
   LEDGER_HEADER_LINK_CLASS,
@@ -77,6 +79,8 @@ interface OverviewTabProps {
   referenceTime?: Date;
   /** 커리큘럼 구역을 그릴지. 기본값은 숨김 스위치를 따른다. */
   showCurriculum?: boolean;
+  /** "학생:KST 날짜" → 그 날짜 노트 id. 레슨 행의 수업 노트 링크가 있으면 열고 없으면 새 노트로 간다. */
+  lessonNoteIds?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -302,6 +306,7 @@ export function OverviewTab({
   account = { kind: "active" },
   referenceTime,
   showCurriculum = isCurriculumVisible(),
+  lessonNoteIds,
 }: OverviewTabProps) {
   const searchParams = useSearchParams();
   const rowEditing = searchParams?.get("edit") === "1";
@@ -392,6 +397,24 @@ export function OverviewTab({
                         {formatKstDot(l.scheduledAt, { weekday: true, time: true, referenceTime: reference })}
                       </span>
                       <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{l.note}</span>
+                      {lessonNoteIds ? (() => {
+                        const link = buildLessonNoteLink({
+                          studentId,
+                          lessonAt: new Date(l.scheduledAt),
+                          noteIds: lessonNoteIds,
+                          returnTo: buildAdminStudentDetailHref(studentId, "overview"),
+                        });
+                        return (
+                          <Link
+                            href={link.href}
+                            aria-label={`${lessonLabel} ${link.existing ? "수업 노트 열기" : "수업 노트 쓰기"}`}
+                            className={LESSON_NOTE_LINK_CLASS}
+                          >
+                            <FileText className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
+                            {link.existing ? "노트 열기" : "수업 노트"}
+                          </Link>
+                        );
+                      })() : null}
                       {l.connected ? null : <Button
                         variant="ghost"
                         size="icon"

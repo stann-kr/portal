@@ -6,7 +6,7 @@ import type { DrizzleDb } from "@/db/client";
 import * as schema from "@/db/schema";
 import { queryStudentRosterStats } from "./student-roster";
 
-test("roster 통계는 large fixture도 학생별 반복 scan 없이 고정 4개 aggregate query로 만든다", async (context) => {
+test("roster 통계는 large fixture도 학생별 반복 scan 없이 고정 5개 aggregate query로 만든다", async (context) => {
   const selectStatements: string[] = [];
   const sqlite = new Database(":memory:", {
     verbose: (statement) => {
@@ -22,7 +22,9 @@ test("roster 통계는 large fixture도 학생별 반복 scan 없이 고정 4개
     CREATE TABLE lessons (id TEXT PRIMARY KEY, student_id TEXT NOT NULL, scheduled_at INTEGER NOT NULL, google_event_id TEXT, created_at INTEGER);
     CREATE TABLE assignments (id TEXT PRIMARY KEY, student_id TEXT NOT NULL, media_url TEXT NOT NULL, submitted_at INTEGER, reviewed_at INTEGER);
     CREATE TABLE feedbacks (id TEXT PRIMARY KEY, assignment_id TEXT NOT NULL, time_marker INTEGER NOT NULL, content TEXT NOT NULL, created_at INTEGER);
+    CREATE TABLE qna_threads (id TEXT PRIMARY KEY, student_id TEXT NOT NULL, title TEXT NOT NULL, status TEXT NOT NULL, created_at INTEGER, updated_at INTEGER, version INTEGER NOT NULL DEFAULT 1, deleted_at INTEGER, deleted_by_id TEXT);
   `);
+  const insertThread = sqlite.prepare("INSERT INTO qna_threads (id, student_id, title, status, deleted_at) VALUES (?, ?, '질문', ?, ?)");
   const insertProfile = sqlite.prepare("INSERT INTO profiles (id, email, display_name, role, created_at) VALUES (?, ?, ?, ?, ?)");
   const insertModule = sqlite.prepare("INSERT INTO curriculums (id, student_id, week_num, title, is_completed) VALUES (?, ?, ?, ?, ?)");
   const insertLesson = sqlite.prepare("INSERT INTO lessons (id, student_id, scheduled_at) VALUES (?, ?, ?)");
@@ -46,6 +48,12 @@ test("roster 통계는 large fixture도 학생별 반복 scan 없이 고정 4개
     // Stann이 피드백 없이 확인함으로 표시한 제출은 대기 수에서 빠진다.
     insertAssignment.run("acknowledged", "student-open", "acknowledged.mp4", nowEpoch);
     sqlite.prepare("UPDATE assignments SET reviewed_at = ? WHERE id = 'acknowledged'").run(nowEpoch);
+    // 미답변 질문은 OPEN이고 휴지통에 없는 질문만 센다.
+    insertThread.run("open-1", "student-open", "OPEN", null);
+    insertThread.run("open-2", "student-open", "OPEN", null);
+    insertThread.run("answered-q", "student-open", "ANSWERED", null);
+    insertThread.run("closed-q", "student-open", "CLOSED", null);
+    insertThread.run("trashed-q", "student-open", "OPEN", nowEpoch);
 
     for (let index = 0; index < 120; index += 1) {
       const studentId = `synthetic-${index}`;
@@ -70,6 +78,8 @@ test("roster 통계는 large fixture도 학생별 반복 scan 없이 고정 4개
   assert.equal(byId.get("student-open")?.currentModule, "WEEK 01 · 기초");
   assert.equal(byId.get("student-open")?.nextLessonDate?.getTime(), (nowEpoch + 100) * 1_000);
   assert.equal(byId.get("student-open")?.pendingFeedbackCount, 1);
-  assert.equal(selectStatements.length, 4);
+  assert.equal(byId.get("student-open")?.openQnaCount, 2);
+  assert.equal(byId.get("student-none")?.openQnaCount, 0);
+  assert.equal(selectStatements.length, 5);
   assert.ok(selectStatements.every((statement) => !/correlated/iu.test(statement)));
 });

@@ -38,6 +38,8 @@ export interface AdminPortalClientProps {
   qnaThreads: AdminQueueThread[];
   pendingAssignments: PendingFeedbackAssignment[];
   referenceTime: Date;
+  /** 업무함 다가오는 레슨 행의 수업 노트 링크용 "학생:KST 날짜" → 노트 id. */
+  lessonNoteIds?: Readonly<Record<string, string>>;
 }
 
 // ── 구역 정의 ────────────────────────────────────
@@ -60,6 +62,7 @@ export function AdminPortalClient({
   qnaThreads,
   pendingAssignments,
   referenceTime,
+  lessonNoteIds,
 }: AdminPortalClientProps) {
   // 캘린더 학생 필터 상태
   const [selectedStudentId, setSelectedStudentId] = useState<string>(
@@ -204,6 +207,7 @@ export function AdminPortalClient({
               threads={qnaThreads}
               pendingAssignments={pendingAssignments}
               referenceTime={referenceTime}
+              lessonNoteIds={lessonNoteIds}
               onOpenSchedule={() => changeSection("schedule")}
             />
           )}

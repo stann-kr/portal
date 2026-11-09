@@ -144,11 +144,7 @@ const EMPTY_ASSIGNMENT_TASKS: AssignmentTaskItem[] = [];
 
 interface CalendarSectionProps {
   initialLocation?: WorkspaceLocation;
-  /**
-   * 딥링크 `?task=`로 과제 목록에서 펼칠 과제(서버가 현재 학생 것인지 확인함).
-   * TODO(AssignmentView 소유 작업): 아래 `<AssignmentView … />`에 `initialOpenTaskId`로 넘겨
-   * `openTaskId`의 초기값으로 쓴다. AssignmentView가 아직 이 prop을 받지 않아 여기서 멈춘다.
-   */
+  /** 딥링크 `?task=`로 과제 목록에서 펼칠 과제(서버가 현재 학생 것인지 확인함). AssignmentView가 펼치고 표시한다. */
   initialOpenTaskId?: string | null;
   /** 딥링크 `?date=`: 월·주 달력이 처음 보여 줄 날짜(YYYY-MM-DD). */
   initialCalendarDate?: string | null;
@@ -186,6 +182,7 @@ interface CalendarSectionProps {
 
 export function CalendarSection({
   initialLocation,
+  initialOpenTaskId = null,
   initialCalendarDate = null,
   initialCalendarItemKey = null,
   unifiedItems,
@@ -686,7 +683,13 @@ export function CalendarSection({
             <CurriculumView pageHeader initialModules={curriculumModules} />
           ) : null}
           {workspaceRole === "student" && activeTab === "assignments" ? (
-            <AssignmentView pageHeader actorId={actorId} initialAssignments={assignments} initialTasks={assignmentTasks} />
+            <AssignmentView
+              pageHeader
+              actorId={actorId}
+              initialAssignments={assignments}
+              initialTasks={assignmentTasks}
+              initialOpenTaskId={initialOpenTaskId}
+            />
           ) : null}
         </Tabs>
 

@@ -65,7 +65,7 @@ export type QnaMutationFailureReason =
 
 /**
  * Q&A 상태 변경 권한. 관리자(Stann)는 모든 상태를 정할 수 있고,
- * 학생은 자기 질문을 CLOSED(해결됨)로 닫는 것만 할 수 있다.
+ * 학생은 자기 질문을 CLOSED(해결됨)로 닫거나 닫힌 질문을 OPEN으로 다시 여는 것만 할 수 있다.
  */
 export function canSetQnaStatus(
   actor: DocumentAtomicActor,
@@ -73,12 +73,13 @@ export function canSetQnaStatus(
   status: QnaStatus,
 ): boolean {
   if (actor.isAdmin) return true;
-  return status === "CLOSED" && actor.id === threadStudentId;
+  return (status === "CLOSED" || status === "OPEN") && actor.id === threadStudentId;
 }
 
 /**
  * 상태 전이 규칙. 관리자는 제한 없음. 학생은 답변을 받은(ANSWERED) 질문만 닫을 수 있고,
- * 이미 CLOSED면 같은 상태 재요청(no-op)으로 허용한다. 다시 묻기(새 답글)는 OPEN으로 되돌린다.
+ * 이미 CLOSED면 같은 상태 재요청(no-op)으로 허용한다. 닫힌(CLOSED) 자기 질문은 '다시 열기'로 OPEN이 되어
+ * 추가 질문을 쓸 수 있다(OPEN·ANSWERED를 학생이 OPEN으로 되돌리지는 못한다).
  */
 export function isQnaStatusTransitionAllowed(input: {
   isAdmin: boolean;
@@ -86,7 +87,9 @@ export function isQnaStatusTransitionAllowed(input: {
   to: QnaStatus;
 }): boolean {
   if (input.isAdmin) return true;
-  return input.to === "CLOSED" && (input.from === "ANSWERED" || input.from === "CLOSED");
+  if (input.to === "CLOSED") return input.from === "ANSWERED" || input.from === "CLOSED";
+  if (input.to === "OPEN") return input.from === "CLOSED";
+  return false;
 }
 
 export type QnaMutationResult =
@@ -277,11 +280,12 @@ async function resolveQnaReceiptReplay(
   const tombstone = thread
     ? null
     : await findDocumentTombstone(context, "QNA_THREAD", receipt.resourceId);
-  // 학생은 자기 질문을 CLOSED로 닫는 SET_STATUS만 재생할 수 있다(소유는 아래 canAccessThread가 확인).
-  const authorCloseReplay =
-    input.operationType === "SET_STATUS" && input.request.status === "CLOSED";
+  // 학생은 자기 질문을 CLOSED로 닫거나 OPEN으로 다시 여는 SET_STATUS만 재생할 수 있다(소유는 아래 canAccessThread가 확인).
+  const authorStatusReplay =
+    input.operationType === "SET_STATUS" &&
+    (input.request.status === "CLOSED" || input.request.status === "OPEN");
   const privilegedOperation =
-    (input.operationType === "SET_STATUS" && !authorCloseReplay) ||
+    (input.operationType === "SET_STATUS" && !authorStatusReplay) ||
     input.operationType === "PURGE";
   if (privilegedOperation && !input.actor.isAdmin) {
     return { ok: false, reason: "NOT_FOUND_OR_FORBIDDEN" };

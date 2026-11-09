@@ -35,6 +35,7 @@ import { formatKstDot } from "@/lib/kst-format";
 import { STATUS_TONE_DOT_CLASS_NAMES, type PortalStatusTone } from "@/lib/portal-status";
 import { cn } from "@/lib/utils";
 import { AssignmentRecurrenceForm, AssignmentTaskForm } from "./AssignmentTaskForms";
+import type { StudentOption } from "@/lib/actions/students";
 
 const TASK_STATUS_TONE: Record<AssignmentTaskStatus, PortalStatusTone> = {
   open: "neutral",
@@ -69,12 +70,15 @@ export function AdminAssignmentsPanel({
   recurrences,
   referenceTime,
   returnTo,
+  studentOptions = [],
 }: {
   studentId: string;
   tasks: AssignmentTaskItem[];
   recurrences: AssignmentRecurrenceItem[];
   referenceTime: Date;
   returnTo: string;
+  /** "다른 학생에게도 내기"에 보일 학생(지금 학생 포함). */
+  studentOptions?: StudentOption[];
 }) {
   const router = useRouter();
   const [editor, setEditor] = useState<Editor>(null);
@@ -114,10 +118,10 @@ export function AdminAssignmentsPanel({
         </Button>
       </div>
       {editor?.kind === "new-task" ? (
-        <AssignmentTaskForm studentId={studentId} onDone={afterSave} onCancel={closeEditor} />
+        <AssignmentTaskForm studentId={studentId} studentOptions={studentOptions} onDone={afterSave} onCancel={closeEditor} />
       ) : null}
       {editor?.kind === "new-recurrence" ? (
-        <AssignmentRecurrenceForm studentId={studentId} referenceTime={referenceTime} onDone={afterSave} onCancel={closeEditor} />
+        <AssignmentRecurrenceForm studentId={studentId} studentOptions={studentOptions} referenceTime={referenceTime} onDone={afterSave} onCancel={closeEditor} />
       ) : null}
       {error ? <p role="alert" className="text-ui text-destructive">{error}</p> : null}
 

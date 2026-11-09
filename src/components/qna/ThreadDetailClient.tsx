@@ -10,8 +10,9 @@ import { GuideAnchorNote, type QnaGuideAnchorView } from "@/components/qna/Guide
 import { useActionState, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowUp, History, RotateCcw, Trash2 } from "lucide-react";
+import { ArrowUp, Check, History, RotateCcw, Trash2 } from "lucide-react";
 import { Button, buttonClassName } from "@/components/ui/button";
+import { CopyLinkButton } from "@/components/ui/CopyLinkButton";
 import { MobileTopBar } from "@/components/app-shell/AppSidebar";
 import dynamic from "next/dynamic";
 
@@ -27,7 +28,13 @@ import { useCollabFormDraft } from "@/lib/collab/client/useCollabFormDraft";
 import { describeCollabStatus, isCollabEditorPending } from "@/lib/collab/client/collab-status";
 import { useEditorExtensions } from "@/components/editor/useEditorExtensions";
 import { CollabPresence } from "@/components/editor/CollabPresence";
-import { createQnaReply, updateThreadStatus, type CreateReplyState } from "@/lib/actions/qna";
+import {
+  closeMyQnaThread,
+  createQnaReply,
+  reopenMyQnaThread,
+  updateThreadStatus,
+  type CreateReplyState,
+} from "@/lib/actions/qna";
 import { QNA_STATUS_LABELS } from "@/lib/qna-status";
 import type { QnaStatus } from "@/db/schema";
 import type { MediaAttachmentKind } from "@/lib/media-lifecycle";
@@ -72,6 +79,8 @@ interface ThreadDetailClientProps {
   deletedAt: string | null;
   replies: Reply[];
   isAdmin: boolean;
+  /** 지금 사람이 이 질문을 쓴 학생이면 true(해결됨으로 닫기·다시 열기). */
+  isAuthor?: boolean;
   actorId: string;
   title: string;
   studentName: string;
@@ -92,6 +101,7 @@ function ThreadDetailContent({
   deletedAt,
   replies: initialReplies,
   isAdmin,
+  isAuthor = false,
   actorId,
   title,
   studentName,
@@ -168,6 +178,7 @@ function ThreadDetailContent({
   const showReplyComposer = currentStatus !== "CLOSED" || hasReplyDraft;
   const isTrashed = Boolean(deletedAt);
 
+  // 관리자는 어떤 상태로든, 질문한 학생은 해결됨으로 닫기(ANSWERED→CLOSED)·다시 열기(CLOSED→OPEN)만 한다.
   const handleStatusChange = (newStatus: QnaStatus) => {
     setStatusError(null);
     startTransition(async () => {
@@ -177,12 +188,11 @@ function ThreadDetailContent({
         createCreationOperationId();
       statusOperationIdsRef.current.set(operationKey, statusOperationId);
       try {
-        const result = await updateThreadStatus(
-          threadId,
-          newStatus,
-          statusOperationId,
-          currentVersion,
-        );
+        const result = isAdmin
+          ? await updateThreadStatus(threadId, newStatus, statusOperationId, currentVersion)
+          : newStatus === "CLOSED"
+            ? await closeMyQnaThread(threadId, statusOperationId, currentVersion)
+            : await reopenMyQnaThread(threadId, statusOperationId, currentVersion);
         if (!result.success) {
           setStatusError(result.error ?? "상태를 변경하지 못했습니다.");
           if (result.currentRevision) router.refresh();
@@ -246,6 +256,8 @@ function ThreadDetailContent({
         : "질문 추가";
   const backLabel = returnTo.startsWith("/dashboard/qna") ? "Q&A 목록으로" : "이전 화면으로";
   const isClosed = currentStatus === "CLOSED";
+  const studentCanClose = !isAdmin && isAuthor && currentStatus === "ANSWERED";
+  const studentCanReopen = !isAdmin && isAuthor && isClosed;
   const draftView = describeCollabStatus({
     connection: draft.collab.status,
     mode: draft.collab.mode,
@@ -311,6 +323,7 @@ function ThreadDetailContent({
           {guideAnchor ? <GuideAnchorNote anchor={guideAnchor} /> : null}
         </div>
         <div className="hidden shrink-0 items-center gap-1 md:flex">
+          <CopyLinkButton path={`/dashboard/qna/${encodeURIComponent(threadId)}`} title={title} />
           <Link href={historyHref} className={buttonClassName({ variant: "ghost" })}>
             변경 이력
           </Link>
@@ -351,6 +364,29 @@ function ThreadDetailContent({
         <p role="status" className="rounded-lg border border-warning-border bg-warning-muted p-4 text-body text-foreground">
           휴지통에 있는 Q&amp;A입니다. 답변과 상태 변경 이력은 함께 보존되며 복원 전에는 새 답변을 등록할 수 없습니다.
         </p>
+      ) : null}
+
+      {/* 질문한 학생: 답변을 받으면 해결됨으로 닫고, 닫은 질문은 다시 열어 추가 질문을 쓴다. 좁은 화면은 링크 복사도 여기 둔다. */}
+      {!isTrashed ? (
+        <div
+          className={cn(
+            "flex flex-wrap items-center justify-end gap-2 md:justify-start",
+            !studentCanClose && !studentCanReopen && "md:hidden",
+          )}
+        >
+          <CopyLinkButton className="md:hidden" path={`/dashboard/qna/${encodeURIComponent(threadId)}`} title={title} />
+          {studentCanClose ? (
+            <Button type="button" variant="outline" pending={isPending} disabled={isPending || isReplyFormBusy} onClick={() => handleStatusChange("CLOSED")}>
+              <Check className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
+              해결됨으로 닫기
+            </Button>
+          ) : studentCanReopen ? (
+            <Button type="button" variant="outline" pending={isPending} disabled={isPending || isReplyFormBusy} onClick={() => handleStatusChange("OPEN")}>
+              <RotateCcw className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
+              다시 열기
+            </Button>
+          ) : null}
+        </div>
       ) : null}
 
       {/* 관리자 상태 변경 */}

@@ -93,11 +93,11 @@ test("과제 피드백 개수는 학생·기간 범위를 유지하고 과제 �
   context.after(() => sqlite.close());
   sqlite.exec(`
     CREATE TABLE profiles (id TEXT PRIMARY KEY, email TEXT NOT NULL, display_name TEXT);
-    CREATE TABLE assignment_tasks (id TEXT PRIMARY KEY, student_id TEXT NOT NULL, title TEXT NOT NULL, submission_format TEXT NOT NULL, due_at INTEGER, created_at INTEGER NOT NULL);
+    CREATE TABLE assignment_tasks (id TEXT PRIMARY KEY, student_id TEXT NOT NULL, title TEXT NOT NULL, submission_format TEXT NOT NULL, due_at INTEGER, created_at INTEGER NOT NULL, analysis_form INTEGER NOT NULL DEFAULT 0);
     CREATE TABLE assignments (id TEXT PRIMARY KEY, student_id TEXT NOT NULL, task_id TEXT, media_url TEXT, text_html TEXT, submitted_at INTEGER, reviewed_at INTEGER);
     CREATE TABLE feedbacks (id TEXT PRIMARY KEY, assignment_id TEXT NOT NULL, time_marker INTEGER, content TEXT NOT NULL);
     INSERT INTO profiles VALUES ('student-1', 'student@example.com', '학생');
-    INSERT INTO assignment_tasks VALUES
+    INSERT INTO assignment_tasks (id, student_id, title, submission_format, due_at, created_at) VALUES
       ('task-open', 'student-1', '연습 일지', 'TEXT', 1778100000, 1777000000),
       ('task-submitted', 'student-1', '믹스셋 과제', 'MIX', 1778100000, 1777000000),
       ('task-outside', 'student-1', '지난 과제', 'MIX', 1600000000, 1600000000),

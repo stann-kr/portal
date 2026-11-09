@@ -5,6 +5,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { MobileTopBar } from "@/components/app-shell/AppSidebar";
+import { AssignmentBrief } from "@/components/student-portal/AssignmentBrief";
 import { MixAnalysisWriteForm } from "@/components/student-portal/MixAnalysisWriteForm";
 import { getMyAssignmentTask } from "@/lib/actions/assignmentTasks";
 import { ASSIGNMENT_FORMAT_LABELS } from "@/lib/assignment-recurrence";
@@ -72,6 +73,8 @@ export default async function MixAnalysisWritePage({ params }: { params: Promise
         <h1 className="text-display font-semibold tracking-display">{task.title}</h1>
         <p className="text-ui text-muted-foreground">{dueLabel} · {ASSIGNMENT_FORMAT_LABELS.ANALYSIS}</p>
       </header>
+      {/* Stann의 과제 설명: 넓은 화면은 머리 아래, 좁은 화면은 폼의 제목 아래(MixAnalysisWriteForm)에 처음부터 펼쳐 둔다. */}
+      {task.descriptionHtml ? <AssignmentBrief html={task.descriptionHtml} open className="hidden max-w-[880px] md:block" /> : null}
       <MixAnalysisWriteForm
         key={task.submission?.id ?? task.id}
         task={task}

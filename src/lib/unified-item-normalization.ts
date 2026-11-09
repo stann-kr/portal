@@ -85,6 +85,8 @@ type AssignmentTaskRow = {
   dueAt: Date | null;
   createdAt: Date;
   submissionFormat: string;
+  /** 저장 형식 MIX + analysisForm이면 믹스셋 분석 과제다(fromStoredAssignmentFormat과 같은 규칙). */
+  analysisForm?: boolean;
 };
 
 
@@ -334,7 +336,7 @@ export function normalizeUnifiedItems({
       metadata: {
         taskId: task.id,
         dueAt: task.dueAt ? task.dueAt.toISOString() : null,
-        submissionFormat: task.submissionFormat,
+        submissionFormat: task.analysisForm && task.submissionFormat === "MIX" ? "ANALYSIS" : task.submissionFormat,
       },
       space,
       source: source("ASSIGNMENT_TASK"),

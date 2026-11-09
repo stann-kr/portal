@@ -9,7 +9,8 @@
 
 import { Fragment, useState, useMemo, useCallback, useEffect, useId, useRef, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { CalendarRange, ExternalLink, Pencil, Plus, Trash2 } from "lucide-react";
+import { CalendarRange, ExternalLink, Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { filterTracksByQuery, formatTrackSearchCount } from "./digging-track-search";
 import { MobileTopBar } from "@/components/app-shell/AppSidebar";
 import { Button, ButtonSpinner } from "@/components/ui/button";
 import { ConfirmPanel, useConfirmAction } from "@/components/ui/confirm-action";
@@ -395,6 +396,7 @@ export function DiggingBoard({
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [rangeOpen, setRangeOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
   const [collapsedDates, setCollapsedDates] = useState<Set<string>>(new Set());
   const [isPending, startTransition] = useTransition();
   const [mutationError, setMutationError] = useState("");
@@ -415,15 +417,17 @@ export function DiggingBoard({
   }, [rangeOpen]);
 
   // 날짜 범위 필터 + 그룹핑
-  const groupedTracks = useMemo(() => {
+  const { groupedTracks, rangeTrackCount, matchedTrackCount } = useMemo(() => {
     // 날짜 입력과 그룹은 모두 KST 날짜 key(YYYY-MM-DD)로 비교한다.
-    const filtered = tracks.filter((t) => {
+    const inRange = tracks.filter((t) => {
       if (!t.createdAt) return true;
       const dateKey = toKstDateInputValue(new Date(t.createdAt));
       if (dateFrom && dateKey < dateFrom) return false;
       if (dateTo && dateKey > dateTo) return false;
       return true;
     });
+    // 글자 검색은 기간 안에서 모든 컬럼 값을 찾는다.
+    const filtered = filterTracksByQuery(inRange, searchQuery);
 
     const groups = new Map<string, { label: string; tracks: Track[] }>();
     filtered.forEach((t) => {
@@ -437,10 +441,12 @@ export function DiggingBoard({
     });
 
     // 최신 날짜 순 정렬, 날짜 없는 트랙은 마지막
-    return [...groups.entries()]
+    const grouped = [...groups.entries()]
       .sort(([a], [b]) => (a && b ? b.localeCompare(a) : a ? -1 : b ? 1 : 0))
       .map(([, group]) => [group.label, group.tracks] as [string, Track[]]);
-  }, [tracks, dateFrom, dateTo]);
+    return { groupedTracks: grouped, rangeTrackCount: inRange.length, matchedTrackCount: filtered.length };
+  }, [tracks, dateFrom, dateTo, searchQuery]);
+  const searching = searchQuery.trim().length > 0;
 
   const toggleDate = (date: string) => {
     setCollapsedDates((prev) => {
@@ -517,7 +523,30 @@ export function DiggingBoard({
 
   const columnCount = columns.length + (readonly ? 0 : 1);
   const tableMinWidth = Math.max(860, columns.length * 120 + (readonly ? 0 : 56));
-  const emptyMessage = tracks.length === 0 ? "아직 추가된 트랙이 없습니다." : "선택한 기간에 트랙이 없습니다.";
+  const emptyMessage = tracks.length === 0
+    ? "아직 추가된 트랙이 없습니다."
+    : searching && rangeTrackCount > 0 ? `‘${searchQuery.trim()}’에 맞는 트랙이 없습니다.` : "선택한 기간에 트랙이 없습니다.";
+
+  // 트랙 글자 검색: 날짜 필터 옆. 입력하는 대로 거르고 "12곡 중 3곡"을 보인다. 좁은 화면은 16px 글자(확대 방지).
+  const trackSearch = (
+    <div className="flex flex-col gap-1 md:flex-row md:items-center md:gap-2">
+      <label className="flex h-11 items-center gap-2 rounded-touch border border-border px-2.5 text-muted-foreground focus-within:outline-2 focus-within:-outline-offset-1 focus-within:outline-ring md:h-8 md:w-60 md:rounded-md">
+        <Search className="size-3.5 shrink-0" strokeWidth={1.8} aria-hidden="true" />
+        <span className="sr-only">트랙 찾기</span>
+        <input
+          type="search"
+          value={searchQuery}
+          onChange={(event) => setSearchQuery(event.target.value)}
+          placeholder="제목·아티스트·메모로 찾기"
+          enterKeyHint="search"
+          className="min-w-0 flex-1 border-0 bg-transparent text-base text-foreground outline-none placeholder:text-muted-foreground md:text-body"
+        />
+      </label>
+      <span role="status" className="text-xs text-muted-foreground empty:hidden md:whitespace-nowrap">
+        {searching ? formatTrackSearchCount(matchedTrackCount, rangeTrackCount) : ""}
+      </span>
+    </div>
+  );
   const rangeLabel = dateFrom && dateTo
     ? `${shortDateInput(dateFrom)} – ${shortDateInput(dateTo)}`
     : dateFrom ? `${shortDateInput(dateFrom)} 이후`
@@ -591,7 +620,8 @@ export function DiggingBoard({
       <div className="relative flex flex-col gap-3 md:flex-row md:flex-wrap md:items-end md:justify-between md:gap-4">
         {heading ? <div className="sr-only md:not-sr-only md:flex md:flex-col md:gap-1">{heading}</div> : null}
         {!readonly ? (
-          <div className="hidden gap-2 md:flex">
+          <div className="hidden gap-2 md:flex md:items-center">
+            {trackSearch}
             <Button
               ref={rangeTriggerRef}
               type="button"
@@ -619,6 +649,8 @@ export function DiggingBoard({
             </Button>
           </div>
         ) : null}
+        {/* 넓은 화면 학생 보기는 도구 줄 안에 검색을 둔다. 좁은 화면·관리자 보기는 기간 입력 앞에 둔다. */}
+        <div className={cn(!readonly && "md:hidden")}>{trackSearch}</div>
         {dateRange}
       </div>
 

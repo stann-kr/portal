@@ -19,7 +19,13 @@ import { Button } from "@/components/ui/button";
 import { useConfirmAction } from "@/components/ui/confirm-action";
 import { RichTextContent } from "@/components/editor/RichTextContent";
 import { MixAnalysisEntries, MixAnalysisRating } from "@/components/feedback/MixAnalysisReview";
-import { isSubmissionSettled } from "@/lib/assignment-submission";
+import { getSubmissionReviewStatus, isSubmissionSettled } from "@/lib/assignment-submission";
+import {
+  AssignmentAcknowledgedNotice,
+  AssignmentReviewStatusRow,
+  QueueNextBar,
+  type QueueNext,
+} from "@/components/admin/assignments/AssignmentReviewControls";
 import { STUDENT_LEGACY_REDIRECTS } from "@/lib/legacy-dashboard-routes";
 import { mediaUrlAt, splitFeedbackByEntry, type MixAnalysis } from "@/lib/mix-analysis";
 import { analysisWriteHref } from "@/lib/student-space-routes";
@@ -59,6 +65,8 @@ interface AssignmentDetailClientProps {
   returnTo: string;
   /** 관리자가 볼 때 학생 스페이스 링크 */
   spaceLink?: { href: string; label: string };
+  /** 업무함에서 들어와 처리를 마쳤을 때 다음 피드백 대기(AssignmentAck 보드). */
+  queueNext?: QueueNext;
 }
 
 const MENU_ITEM_CLASS =
@@ -147,6 +155,7 @@ export function AssignmentDetailClient({
   breadcrumb,
   returnTo,
   spaceLink,
+  queueNext,
 }: AssignmentDetailClientProps) {
   const router = useProgressRouter();
   const [seekRequest, setSeekRequest] = useState<MediaSeekRequest>();
@@ -235,8 +244,16 @@ export function AssignmentDetailClient({
           </>
         ) : null}
       </p>
+      {isAdmin ? (
+        <div className="pt-2.5 md:pt-2">
+          <AssignmentReviewStatusRow assignmentId={assignmentId} feedbackCount={feedbackList.length} reviewedAt={reviewedAt} />
+        </div>
+      ) : null}
     </header>
   );
+  const acknowledgedNotice = !isAdmin && reviewedAt && getSubmissionReviewStatus({ feedbackCount: feedbackList.length, reviewedAt }) === "acknowledged"
+    ? <AssignmentAcknowledgedNotice reviewedAt={reviewedAt} />
+    : null;
 
   // 과제 설명(관리자가 낸 과제)과 학생이 쓴 글. 둘 다 없으면 그리지 않는다.
   const taskBrief = task ? (
@@ -342,8 +359,10 @@ export function AssignmentDetailClient({
         ) : null}
         {renderHeader("narrow")}
         <div className={cn("flex min-w-0 flex-col gap-6 px-5 pt-4 md:px-0 md:pt-0", mediaUrl && "md:flex-[2_1_340px]")}>
+          {queueNext ? <QueueNextBar queueNext={queueNext} /> : null}
           {analysis && analysisFeedback ? (
             <>
+              {acknowledgedNotice}
               <MixAnalysisRating analysis={analysis} />
               <MixAnalysisEntries
                 assignmentId={assignmentId}
@@ -367,6 +386,7 @@ export function AssignmentDetailClient({
             </>
           ) : (
             <>
+              {acknowledgedNotice}
               {taskBrief}
               {submittedText}
               {editHint}
