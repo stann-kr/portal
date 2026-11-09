@@ -11,10 +11,14 @@ import type { RouteSkeletonKind } from "./route-skeleton-kind";
 
 const FRAME_PADDING = "px-5 pb-8 md:px-[clamp(20px,4.5vw,64px)] md:pb-20";
 
+/** 일정 계열 화면(CalendarSection)의 바깥 여백: 좌우가 더 좁고 위 여백이 작다. */
+const CALENDAR_FRAME_PADDING = "px-5 pb-8 md:px-[clamp(20px,3vw,40px)] md:pb-10";
+
 const TOP_PADDING = {
   compact: "pt-4 md:pt-14",
   standard: "pt-6 md:pt-14",
   detail: "pt-6 md:pt-10",
+  calendar: "pt-4 md:pt-8",
 } as const;
 
 const COLUMN_WIDTH = {
@@ -59,16 +63,18 @@ function Frame({
   top,
   width,
   gap = "gap-6 md:gap-8",
+  padding = FRAME_PADDING,
   children,
 }: {
   label: string;
   top: keyof typeof TOP_PADDING;
   width: keyof typeof COLUMN_WIDTH;
   gap?: string;
+  padding?: string;
   children: ReactNode;
 }) {
   return (
-    <SkeletonRegion label={label} className={cn("box-border min-h-[100dvh]", FRAME_PADDING, TOP_PADDING[top])}>
+    <SkeletonRegion label={label} className={cn("box-border min-h-[100dvh]", padding, TOP_PADDING[top])}>
       <div className={cn("flex flex-col", COLUMN_WIDTH[width], gap, "md:mx-auto")}>{children}</div>
     </SkeletonRegion>
   );
@@ -309,7 +315,7 @@ function BoardSkeleton({ label }: { label: string }) {
  */
 function CalendarSkeleton({ label }: { label: string }) {
   return (
-    <Frame label={label} top="compact" width="full" gap="gap-5 md:gap-6">
+    <Frame label={label} top="calendar" width="full" gap="gap-5" padding={CALENDAR_FRAME_PADDING}>
       <div className="hidden items-center gap-3 md:flex">
         <SkeletonBar className="h-8 w-20" />
         <SkeletonBlock className="h-9 w-48 rounded-md" />
@@ -377,8 +383,9 @@ function GuidePageSkeleton({ label }: { label: string }) {
         ))}
       </div>
       <div className="flex min-w-0 max-w-[760px] flex-1 flex-col gap-5">
+        {/* 실제 화면 순서: 제목(44px 줄) → 수정 정보 줄 → 본문 */}
+        <SkeletonBar className="h-8 w-[60%] md:h-11" />
         <SkeletonBar className="h-3 w-28" />
-        <SkeletonBar className="h-8 w-[60%]" />
         <TextLines count={9} />
       </div>
     </Frame>

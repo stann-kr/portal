@@ -6,7 +6,7 @@
  */
 "use client";
 
-import { useState, useCallback, useEffect, useInsertionEffect, useRef, type ReactNode } from "react";
+import { useState, useCallback, useEffect, useInsertionEffect, useLayoutEffect, useRef, type ReactNode } from "react";
 import FullCalendar from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
 import timeGridPlugin from "@fullcalendar/timegrid";
@@ -69,6 +69,7 @@ import { movePrivateNoteDate } from "@/lib/actions/privateNotes";
 import { createCreationOperationId } from "@/lib/creation-operation";
 import { formatKst } from "@/lib/kst-format";
 import { cn } from "@/lib/utils";
+import { SkeletonBar } from "@/components/ui/skeleton";
 
 export type CalendarGridView = "dayGridMonth" | "timeGridWeek";
 
@@ -242,12 +243,22 @@ const CALENDAR_PLUGINS = [dayGridPlugin, timeGridPlugin, interactionPlugin];
 const WEEK_CONTENT_HEIGHT = 680;
 /** 주 보기 전체 높이(머리줄 포함)의 하한. 창이 낮아도 이보다 줄이지 않는다. */
 const WEEK_MIN_HEIGHT = 560;
-/** 달력 아래 안내 한 줄(약 20px)·간격(20px)·화면 아래 여백(80px). */
-const WEEK_BOTTOM_RESERVE = 120;
+/**
+ * 주 보기가 스크롤 영역(화면 영역) 아래 끝까지 채우는 전체 높이(px).
+ * 스크롤 영역의 보이는 높이에서 달력 말고 나머지 내용(머리줄·안내·공개 캘린더 블록·여백) 높이를 뺀다.
+ * 화면마다 달력 위아래에 무엇이 있든 그대로 반영된다.
+ */
+export function weekFillHeight(scrollerClientHeight: number, scrollerScrollHeight: number, calendarHeight: number): number {
+  return Math.max(WEEK_MIN_HEIGHT, Math.floor(scrollerClientHeight - (scrollerScrollHeight - calendarHeight)));
+}
 
-/** 주 보기가 창 아래 끝까지 채우는 전체 높이(px). 달력 위치는 문서 기준이라 스크롤과 무관하다. */
-export function weekFillHeight(viewportHeight: number, calendarTop: number): number {
-  return Math.max(WEEK_MIN_HEIGHT, Math.floor(viewportHeight - calendarTop - WEEK_BOTTOM_RESERVE));
+/** 가장 가까운 세로 스크롤 영역(셸의 화면 영역). 없으면 문서. */
+function nearestScroller(element: HTMLElement): HTMLElement {
+  for (let node = element.parentElement; node; node = node.parentElement) {
+    const overflow = getComputedStyle(node).overflowY;
+    if (overflow === "auto" || overflow === "scroll") return node;
+  }
+  return document.documentElement;
 }
 
 export function UnifiedCalendar({
@@ -534,17 +545,23 @@ export function UnifiedCalendar({
   // 주 보기는 창 높이에 맞춰 아래 끝까지 채운다(고정 680px이면 큰 화면에서 아래가 비었다).
   const gridRef = useRef<HTMLDivElement>(null);
   const [weekHeight, setWeekHeight] = useState<number | null>(null);
-  useEffect(() => {
+  // 그리기 전에 재서 680px로 먼저 그렸다가 늘어나는 깜빡임이 없게 한다. 창 크기·화면 영역 크기가 바뀌면 다시 잰다.
+  useLayoutEffect(() => {
     if (view !== "timeGridWeek" || !isActive) return;
     const element = gridRef.current;
     if (!element) return;
+    const scroller = nearestScroller(element);
     const measure = () => {
-      const top = element.getBoundingClientRect().top + window.scrollY;
-      setWeekHeight(weekFillHeight(window.innerHeight, top));
+      setWeekHeight(weekFillHeight(scroller.clientHeight, scroller.scrollHeight, element.offsetHeight));
     };
     measure();
     window.addEventListener("resize", measure);
-    return () => window.removeEventListener("resize", measure);
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    observer?.observe(scroller);
+    return () => {
+      window.removeEventListener("resize", measure);
+      observer?.disconnect();
+    };
   }, [isActive, view]);
   const canQuickCreate = canUseQuickCreate(quickCreate);
   const isWeek = (period.type ?? view) === "timeGridWeek";
@@ -589,7 +606,7 @@ export function UnifiedCalendar({
       <div className="hidden flex-wrap items-center justify-between gap-3 md:flex">
         <div className="flex min-w-0 items-center gap-1">
           <h2 className="mr-3 min-w-0 truncate text-lg/[26px] font-semibold tracking-title" data-calendar-title aria-live="polite">
-            {period.title}
+            {period.title || <SkeletonBar className="h-5 w-36" />}
           </h2>
           <button type="button" onClick={() => api()?.prev()} aria-label={`이전 ${unit}`} className={iconButton}>
             <ChevronLeft className="size-4" strokeWidth={1.8} aria-hidden="true" />
@@ -652,7 +669,25 @@ export function UnifiedCalendar({
       ) : null}
 
       {/* 넓은 화면: FullCalendar 월·주 */}
-      <div ref={gridRef} className={cn("fc-custom fc-notion hidden md:block", canQuickCreate && "calendar-can-create")} aria-label="통합 일정 달력">
+      {/*
+        FullCalendar는 서버에서 그리지 않고 브라우저에서 붙은 뒤에 그린다. 그 사이(새로고침 때 약 0.4초) 달력 자리가 비고
+        아래 내용이 나중에 밀려 내려가지 않게 같은 높이의 빈 판을 둔다.
+      */}
+      <div
+        ref={gridRef}
+        className={cn("fc-custom fc-notion relative hidden md:block", canQuickCreate && "calendar-can-create")}
+        style={period.type === null ? { minHeight: view === "timeGridWeek" ? (weekHeight ?? WEEK_CONTENT_HEIGHT + 92) : 640 } : undefined}
+        aria-label="통합 일정 달력"
+      >
+        {period.type === null ? (
+          <div aria-hidden="true" className="absolute inset-0 grid grid-cols-7 overflow-hidden rounded-lg border border-border">
+            {Array.from({ length: 7 }, (_, index) => (
+              <div key={index} className="border-r border-border p-2 last:border-r-0">
+                <SkeletonBar className="h-3 w-10" />
+              </div>
+            ))}
+          </div>
+        ) : null}
         <FullCalendar
           ref={calendarRef}
           plugins={CALENDAR_PLUGINS}
