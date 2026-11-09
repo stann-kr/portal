@@ -251,7 +251,7 @@ export function AdminWorkQueueSection({
               aside={<span className={cn(LEDGER_HEADER_NOTE_CLASS, "hidden md:inline")}>오래된 순</span>}
             />
             {queue.pendingAssignments.length === 0 ? (
-              <LedgerEmptyRow>피드백 대기가 없습니다. 현재 모든 제출에 피드백이 등록됐습니다.</LedgerEmptyRow>
+              <LedgerEmptyRow>피드백 대기가 없습니다. 모든 제출을 처리했습니다.</LedgerEmptyRow>
             ) : (
               <ul>
                 {visiblePendingAssignments.map((assignment) => {

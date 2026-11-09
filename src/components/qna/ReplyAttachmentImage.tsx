@@ -9,13 +9,15 @@ import { useState } from "react";
 import { ImageViewer } from "@/components/image-viewer/ImageViewer";
 
 export function ReplyAttachmentImage({ src, name }: { src: string; name: string }) {
+  // 저장 주소의 마지막 조각은 보통 media id(UUID)라 사람이 읽을 이름이 아니다. 확장자가 있는 파일 이름만 보인다.
+  const label = /\.[a-z0-9]{2,5}$/iu.test(name) ? name : null;
   const [index, setIndex] = useState<number | null>(null);
   const [returnFocus, setReturnFocus] = useState<HTMLElement | null>(null);
   return (
     <>
       <button
         type="button"
-        aria-label={`첨부 이미지 크게 보기: ${name}`}
+        aria-label={label ? `첨부 이미지 크게 보기: ${label}` : "첨부 이미지 크게 보기"}
         onClick={(event) => {
           setReturnFocus(event.currentTarget);
           setIndex(0);
@@ -32,7 +34,7 @@ export function ReplyAttachmentImage({ src, name }: { src: string; name: string 
         />
       </button>
       <ImageViewer
-        images={[{ src, alt: name }]}
+        images={[{ src, alt: label ?? "첨부 이미지" }]}
         index={index}
         onIndexChange={setIndex}
         returnFocus={returnFocus}
