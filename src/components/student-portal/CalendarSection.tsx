@@ -675,6 +675,7 @@ export function CalendarSection({
               <TabsContent value="daily" className="m-0">
                 <DailyListView
                   items={unifiedItems}
+                  onVisibleRangeChange={onVisibleRangeChange}
                   quickCreate={quickCreate}
                   visibleTypes={visibleTypes}
                   preset={calendarPreset}

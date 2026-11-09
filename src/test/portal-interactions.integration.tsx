@@ -221,8 +221,13 @@ mock.module("@/lib/actions/unifiedItems", { namedExports: {
   getExternalUnifiedItems: async () => [],
 } });
 // Exercise the actual shell, calendar tabs and FullCalendar without unrelated editors/I/O.
+// 일별 보기는 실제 화면 대신 받은 props만 기록한다(전체 학생 보기의 기간 추가 조회 연결 확인용).
+let lastDailyListProps: { onVisibleRangeChange?: (start: Date, end: Date) => void } | null = null;
+mock.module("@/components/student-portal/DailyListView", { namedExports: {
+  DailyListView: (props: { onVisibleRangeChange?: (start: Date, end: Date) => void }) => { lastDailyListProps = props; return null; },
+} });
 for (const [folder, name] of [
-  ["student-portal", "UnifiedItemDetail"], ["student-portal", "DailyListView"],
+  ["student-portal", "UnifiedItemDetail"],
   ["student-portal", "AllItemsView"],
   ["admin-portal", "StudentManagementSection"], ["admin-portal", "AdminWorkQueueSection"],
   ["qna", "QnaSlideForm"],
@@ -3381,4 +3386,31 @@ test("calendar quick create in 전체 학생 requires a student before a note or
   assert.deepEqual(lessonRequests, ["student-1"]);
   assert.deepEqual(created.map((item) => [item.id, item.space.studentId, item.space.label]), [["lesson-q", "student-1", "민지"]]);
   assert.deepEqual(noteTargets, []);
+});
+
+test("전체 학생 일별 보기도 읽지 않은 주로 옮기면 그 기간을 더 읽는다", async (context) => {
+  const students = [
+    { id: "student-1", email: "minji@example.test", displayName: "민지", createdAt: null, currentModule: null, nextLessonDate: null, pendingFeedbackCount: 0, openQnaCount: 0 },
+  ];
+  const loads: unknown[] = [];
+  loadAllStudentsCalendar = async (input) => {
+    loads.push(input);
+    return { items: [], start: "2025-08-01T00:00:00.000Z", end: "2025-11-30T23:59:59.999Z", truncated: false };
+  };
+  context.after(() => {
+    loadAllStudentsCalendar = async () => ({ items: [], start: "2026-01-01T00:00:00.000Z", end: "2026-04-30T23:59:59.999Z", truncated: false });
+    lastDailyListProps = null;
+  });
+  browser.history.replaceState({}, "", "/dashboard/admin?section=schedule&view=daily&student=all");
+  await render(context, <AdminPortalClient
+    initialLocation={resolvePortalLocation("admin", { section: "schedule", view: "daily", student: "all" })}
+    initialUnifiedItems={[]} students={students}
+    adminId="admin" qnaThreads={[]} pendingAssignments={[]} referenceTime={new Date()}
+  />);
+  assert.equal(typeof lastDailyListProps?.onVisibleRangeChange, "function", "일별 보기에 기간 알림을 연결한다");
+  await act(async () => {
+    lastDailyListProps?.onVisibleRangeChange?.(new Date("2025-09-07T00:00:00+09:00"), new Date("2025-09-13T23:59:59.999+09:00"));
+  });
+  await settle();
+  assert.ok(loads.length >= 1, "읽지 않은 주로 옮기면 전체 학생 일정을 더 읽는다");
 });

@@ -129,3 +129,29 @@ test("AccountMenu는 화면 모드를 첫 항목 앞에 두고 구분선으로 �
   const firstItem = source.indexOf("<DropdownMenu.Item", group);
   assert.ok(group > 0 && separator > group && firstItem > separator);
 });
+
+test("화면 모드: 수동 모드로 연 페이지에서 시스템으로 돌아오면 theme-color가 기기 설정별 두 태그로 복원된다", async () => {
+  const { setThemePreference } = await import("@/components/theme/theme-preference-client");
+  const { WEB_APP_BACKGROUND } = await import("@/lib/web-app-theme");
+  const head = browser.document.head;
+  for (const meta of head.querySelectorAll('meta[name="theme-color"]')) meta.remove();
+  // 다크 쿠키로 연 페이지: media 없는 태그 하나.
+  browser.document.documentElement.dataset.theme = "dark";
+  const single = browser.document.createElement("meta");
+  single.setAttribute("name", "theme-color");
+  single.setAttribute("content", WEB_APP_BACKGROUND.dark);
+  head.append(single);
+
+  setThemePreference("system");
+  const metas = [...head.querySelectorAll('meta[name="theme-color"]')];
+  assert.equal(metas.length, 2);
+  const byMedia = Object.fromEntries(metas.map((meta) => [meta.getAttribute("media"), meta.getAttribute("content")]));
+  assert.equal(byMedia["(prefers-color-scheme: light)"], WEB_APP_BACKGROUND.light);
+  assert.equal(byMedia["(prefers-color-scheme: dark)"], WEB_APP_BACKGROUND.dark);
+  assert.equal(browser.document.documentElement.dataset.theme, undefined);
+
+  setThemePreference("light");
+  for (const meta of head.querySelectorAll('meta[name="theme-color"]')) {
+    assert.equal(meta.getAttribute("content"), WEB_APP_BACKGROUND.light);
+  }
+});

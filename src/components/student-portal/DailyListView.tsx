@@ -5,7 +5,7 @@
  */
 "use client";
 
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useInsertionEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { LocateFixed, Plus } from "lucide-react";
 import {
   getUnifiedItemKey,
@@ -47,6 +47,8 @@ import { cn } from "@/lib/utils";
 const ALL_TYPES: ReadonlySet<UnifiedItemType> = new Set(UNIFIED_ITEM_TYPES);
 
 interface DailyListViewProps extends UnifiedItemChangeHandlers {
+  /** 보이는 주가 바뀌면 그 주의 시작·끝(KST)을 알린다. 전체 학생 보기는 이걸로 읽지 않은 기간을 더 읽는다. */
+  onVisibleRangeChange?: (start: Date, end: Date) => void;
   items: UnifiedItem[];
   returnTo: string;
   showSpaceContext: boolean;
@@ -80,6 +82,7 @@ export function DailyListView({
   onItemUpdated,
   onItemRemoved,
   viewer,
+  onVisibleRangeChange,
 }: DailyListViewProps) {
   const [selectedItem, setSelectedItem] = useState<UnifiedItem | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
@@ -130,6 +133,13 @@ export function DailyListView({
   const weekStart = weekStartKey(selectedDay);
   const week = weekKeys(weekStart);
   const weekEnd = week[6];
+  const rangeChangeRef = useRef(onVisibleRangeChange);
+  useInsertionEffect(() => {
+    rangeChangeRef.current = onVisibleRangeChange;
+  });
+  useEffect(() => {
+    rangeChangeRef.current?.(new Date(`${weekStart}T00:00:00+09:00`), new Date(`${weekEnd}T23:59:59.999+09:00`));
+  }, [weekStart, weekEnd]);
   const mobileDays = week.filter((dateKey) => grouped.has(dateKey) || dateKey === selectedDay);
   const weekLabel = `${formatKst(new Date(`${weekStart}T12:00:00+09:00`), { month: "long", day: "numeric" })}부터 ${
     monthOf(weekEnd).month === monthOf(weekStart).month ? `${Number(weekEnd.slice(8))}일` : formatKst(new Date(`${weekEnd}T12:00:00+09:00`), { month: "long", day: "numeric" })
