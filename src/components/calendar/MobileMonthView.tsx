@@ -5,7 +5,7 @@
  */
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { getUnifiedItemColor, getUnifiedItemKey, type UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 import { eventDayRange } from "@/lib/student-today";
@@ -112,10 +112,16 @@ export function MobileMonthView({
   onOpenItem,
   filters,
   initialDate = null,
+  showStudentChip = false,
+  onVisibleRangeChange,
 }: {
   /** 필터와 저장 전 이동이 반영된 항목. */
   items: readonly UnifiedItem[];
   showSpaceContext: boolean;
+  /** 관리자 일정 "전체 학생": 목록 줄마다 학생 이름 칩. */
+  showStudentChip?: boolean;
+  /** 보이는 달 격자 기간(KST 첫 칸 00:00 ~ 끝 칸 23:59:59.999)이 바뀔 때. */
+  onVisibleRangeChange?: (start: Date, end: Date) => void;
   onOpenItem: (item: UnifiedItem) => void;
   filters?: ReactNode;
   /** 처음 고를 날짜(YYYY-MM-DD, 딥링크). 없으면 오늘. */
@@ -127,6 +133,16 @@ export function MobileMonthView({
   const byDay = useMemo(() => groupItemsBySpannedDay(items), [items]);
   const weeks = monthGridWeeks(cursor);
   const selectedItems = sortDayAgenda(byDay.get(selected) ?? []);
+  const gridStart = weeks[0]?.[0];
+  const gridEnd = weeks.at(-1)?.at(-1);
+  const rangeChangeRef = useRef(onVisibleRangeChange);
+  useEffect(() => {
+    rangeChangeRef.current = onVisibleRangeChange;
+  });
+  useEffect(() => {
+    if (!gridStart || !gridEnd) return;
+    rangeChangeRef.current?.(new Date(`${gridStart}T00:00:00.000+09:00`), new Date(`${gridEnd}T23:59:59.999+09:00`));
+  }, [gridEnd, gridStart]);
 
   const moveMonth = (delta: number) => {
     const next = shiftMonth(cursor, delta);
@@ -206,7 +222,7 @@ export function MobileMonthView({
         {selectedItems.length > 0 ? (
           <ul className="flex flex-col">
             {selectedItems.map((item) => (
-              <CalendarAgendaRow key={getUnifiedItemKey(item)} item={item} showSpaceContext={showSpaceContext} onOpen={onOpenItem} />
+              <CalendarAgendaRow key={getUnifiedItemKey(item)} item={item} showSpaceContext={showSpaceContext} showStudentChip={showStudentChip} onOpen={onOpenItem} />
             ))}
           </ul>
         ) : (

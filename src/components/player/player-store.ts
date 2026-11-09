@@ -263,7 +263,7 @@ function setMediaSession(track: PlayerTrack) {
   if (!session) return;
   try {
     if (typeof MediaMetadata !== "undefined") {
-      session.metadata = new MediaMetadata({ title: track.title, artist: track.subtitle, album: "Stann Lumo 믹스셋" });
+      session.metadata = new MediaMetadata({ title: track.title, artist: track.subtitle, album: "Portal - Stann 믹스셋" });
     }
     session.setActionHandler("play", () => resumeTrack());
     session.setActionHandler("pause", () => pauseTrack());

@@ -1,5 +1,5 @@
-import { RouteLoadingState } from "@/components/ui/route-loading-state";
+import { RouteSkeleton } from "@/components/ui/route-skeletons";
 
 export default function CommunityLoading() {
-  return <RouteLoadingState label="커뮤니티를 불러오고 있습니다." compact />;
+  return <RouteSkeleton kind="thread-list" label="커뮤니티를 불러오는 중" />;
 }

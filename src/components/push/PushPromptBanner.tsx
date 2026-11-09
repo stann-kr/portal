@@ -92,10 +92,10 @@ export function PushPromptBanner({ ownerId, isAdmin }: { ownerId: string; isAdmi
         <Bell className="mt-0.5 size-[18px] shrink-0 text-secondary-foreground md:mt-0" strokeWidth={1.6} aria-hidden="true" />
         <div className="flex min-w-0 flex-col gap-0.5">
           <h2 id="push-prompt-title" className="text-md font-medium text-foreground md:text-body">
-            {install ? "홈 화면에 추가하면 알림을 받을 수 있습니다" : "이 기기에서 포털 알림을 받을까요?"}
+            {install ? "홈 화면에 추가하면 알림을 받을 수 있습니다" : "이 기기에서 포탈 알림을 받을까요?"}
           </h2>
           <p className="text-ui text-muted-foreground">
-            {install ? "iPhone은 홈 화면에 추가한 앱에서만 포털 알림을 받습니다." : isAdmin ? COPY.admin : COPY.student}
+            {install ? "iPhone은 홈 화면에 추가한 앱에서만 포탈 알림을 받습니다." : isAdmin ? COPY.admin : COPY.student}
           </p>
           {error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}
         </div>

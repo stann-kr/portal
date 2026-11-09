@@ -1,0 +1,60 @@
+/*
+ * 화면을 불러오는 동안 실제 배치와 같은 모양으로 보이는 스켈레톤(캔버스 '개선 2차 시안' 1번).
+ * 막대는 바탕보다 확실히 보이는 면 색을 쓰고, 왼쪽에서 오른쪽으로 빛 띠가 1.4초마다 지나간다.
+ * 0.3초 안에 끝나는 이동에서 깜빡이지 않도록 160ms 기다린 뒤 서서히 나타난다.
+ */
+@theme {
+  --color-skeleton: #e9e9e6;
+  --color-skeleton-shine: rgb(255 255 255 / 0.75);
+}
+
+/* 다크 값: data-theme이 없으면 시스템 설정을, 있으면 그 값을 따른다. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --color-skeleton: #232327;
+    --color-skeleton-shine: rgb(255 255 255 / 0.07);
+  }
+}
+
+:root[data-theme="dark"] {
+  --color-skeleton: #232327;
+  --color-skeleton-shine: rgb(255 255 255 / 0.07);
+}
+
+.skeleton-region {
+  animation: skeleton-appear var(--duration-standard) ease-out 160ms both;
+}
+
+.skeleton-bar {
+  display: block;
+  border-radius: var(--radius-sm);
+  background-color: var(--color-skeleton);
+  background-image: linear-gradient(90deg, transparent 0%, var(--color-skeleton-shine) 50%, transparent 100%);
+  background-repeat: no-repeat;
+  background-size: 50% 100%;
+  background-position: -100% 0;
+  animation: skeleton-sweep 1.4s ease-in-out infinite;
+}
+
+@keyframes skeleton-appear {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* 띠 폭이 50%라 -100%(왼쪽 밖)에서 200%(오른쪽 밖)까지 움직여야 끝에서 끝까지 지나간다. */
+@keyframes skeleton-sweep {
+  from { background-position: -100% 0; }
+  to { background-position: 200% 0; }
+}
+
+/* 움직임을 줄인 환경에서는 빛 띠와 나타나기 효과 없이 정지한 막대만 둔다. */
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-region,
+  .skeleton-bar {
+    animation: none;
+  }
+
+  .skeleton-bar {
+    background-image: none;
+  }
+}

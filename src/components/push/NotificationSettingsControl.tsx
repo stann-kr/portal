@@ -172,7 +172,7 @@ function DeviceSection({
           </li>
           <li className="flex gap-2.5">
             <span aria-hidden="true" className="flex size-5 shrink-0 items-center justify-center rounded-full bg-muted font-mono text-[11px]">3</span>
-            <span>홈 화면의 Stann Lumo를 열어 다시 로그인하고, 이 화면에서 알림을 켭니다.</span>
+            <span>홈 화면의 Portal을 열어 다시 로그인하고, 이 화면에서 알림을 켭니다.</span>
           </li>
         </ol>
       </section>
@@ -222,8 +222,8 @@ function DeviceSection({
       : state.kind === "unsupported"
         ? "이 브라우저는 알림을 지원하지 않습니다. 다른 기기에서 켜 주세요."
         : state.kind === "unavailable"
-          ? "지금은 포털 알림을 켤 수 없습니다."
-          : "이 브라우저에서 포털 알림이 차단되어 있습니다. 브라우저의 사이트 설정에서 알림을 허용한 뒤 다시 열어 주세요.";
+          ? "지금은 포탈 알림을 켤 수 없습니다."
+          : "이 브라우저에서 포탈 알림이 차단되어 있습니다. 브라우저의 사이트 설정에서 알림을 허용한 뒤 다시 열어 주세요.";
 
   return (
     <section aria-labelledby="push-device-title" aria-busy={state.kind === "loading" || undefined} className={DEVICE_BOX_CLASS}>
@@ -417,7 +417,7 @@ export function NotificationSettingsControl({
       <DialogContent dismissible={pending === null}>
         <DialogHeader>
           <DialogTitle>알림 설정</DialogTitle>
-          <DialogDescription>포털 소식을 이 기기의 알림으로 받습니다. 기기마다 따로 켭니다.</DialogDescription>
+          <DialogDescription>포탈 소식을 이 기기의 알림으로 받습니다. 기기마다 따로 켭니다.</DialogDescription>
         </DialogHeader>
         <div className="flex flex-col gap-4">
           <DeviceSection state={state} pending={pending} feedback={feedback} onEnable={enable} onDisable={disable} onTest={test} />

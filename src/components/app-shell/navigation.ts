@@ -87,6 +87,8 @@ export function resolveActiveNavItem(role: AppRole, { pathname, searchParams }: 
       return "work";
     }
     if (pathname.startsWith("/dashboard/admin/students") || pathname.startsWith("/dashboard/notes")) return "students";
+    // 전체 노트는 일정 머리줄의 "전체 노트 보기"에서 연다.
+    if (pathname.startsWith("/dashboard/admin/notes")) return "schedule";
     if (
       pathname.startsWith(ADMIN_OPERATIONS_HREF) ||
       pathname.startsWith("/dashboard/admin/categories") ||
@@ -128,7 +130,7 @@ export function quickCreateHref(base: string, create: "today" | "lesson", keep?:
 /** 주소에서 위쪽 막대의 기본값을 정한다. 화면이 더 정확한 제목·행동을 가지면 MobileTopBar로 덮어쓴다. */
 export function resolveMobileTopBar(role: AppRole, location: Location): MobileTopBarConfig {
   const { pathname, searchParams } = location;
-  const navLabel = (id: string | null) => APP_NAV_ITEMS[role].find((item) => item.id === id)?.label ?? "Stann Lumo";
+  const navLabel = (id: string | null) => APP_NAV_ITEMS[role].find((item) => item.id === id)?.label ?? "Portal";
 
   if (pathname.startsWith("/dashboard/qna")) {
     const back = { href: "/dashboard/qna", label: "Q&A 목록으로" };

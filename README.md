@@ -1,13 +1,13 @@
 # Stann Lumo Portal
 
-Stann Lumo의 DJ 레슨 운영을 위한 웹 포털이다. 학생과 관리자가 과제·피드백, 커리큘럼, 일정, 개인 노트, 디깅 기록, 커뮤니티와 1:1 Q&A를 한 곳에서 관리한다.
+Stann Lumo의 DJ 레슨 운영을 위한 웹 포탈이다. 학생과 관리자가 과제·피드백, 커리큘럼, 일정, 개인 노트, 디깅 기록, 커뮤니티와 1:1 Q&A를 한 곳에서 관리한다.
 
 ## 현재 상태
 
 - Next.js 16 App Router와 React 19 기반
 - NextAuth credentials 인증과 student/admin 역할 분리
 - Drizzle ORM, Cloudflare D1/R2, OpenNext 배포 구조
-- 학생·관리자 원페이지 포털과 기존 상세 라우트 병행
+- 학생·관리자 원페이지 포탈과 기존 상세 라우트 병행
 - 문서·migration·runtime dependency·로컬 개발 seed 기반 복구 완료
 - 인증·권한 회귀 테스트를 보강한 뒤 역할별 핵심 UI/UX를 세로 단위로 개선 예정
 

@@ -10,8 +10,8 @@
 - NextAuth credentials 인증으로 student/admin 역할을 분리한다.
 - Drizzle ORM을 통해 Cloudflare D1 또는 로컬 SQLite에 접근한다.
 - 미디어 업로드는 같은 출처의 Worker route가 파일을 받아 Cloudflare R2 binding에 저장한다(파일당 최대 95MiB, 본문 이미지 10MB).
-- 학생 포털은 오늘·워크스페이스·커뮤니티 구조이며 일부 상세·작성 라우트를 병행한다.
-- 관리자 포털은 미답변 Q&A·피드백 대기·다가오는 레슨을 우선하는 업무함에서 시작한다.
+- 학생 포탈은 오늘·워크스페이스·커뮤니티 구조이며 일부 상세·작성 라우트를 병행한다.
+- 관리자 포탈은 미답변 Q&A·피드백 대기·다가오는 레슨을 우선하는 업무함에서 시작한다.
 - migration metadata·empty replay 자동 검사와 lint, TypeScript typecheck, Next.js·Worker build를 기본 검증으로 사용한다.
 - 개발용 관리자 seed, auth guard, calendar token, HTML sanitize, UI 상태 registry와 학생 오늘 selector를 단위 테스트로 보호한다.
 - 문서 draft 생명주기와 Q&A·노트·게시물의 핵심 mutation은 격리 DOM·D1 integration test로 보호한다.

@@ -2,6 +2,7 @@
 @import "../components/ui/overlay-motion.css";
 @import "../components/image-viewer/image-viewer.css";
 @import "../components/app-shell/navigation-progress.css";
+@import "../components/ui/skeleton.css";
 @import "../components/player/player.css";
 @import "../components/student-portal/unified-calendar.css";
 
@@ -113,8 +114,11 @@
   --z-toast: 60;
 }
 
+/* 화면 모드(계정 메뉴): 시스템이면 <html>에 data-theme이 없고 기기 설정을 따른다. 라이트·다크를 고르면 서버 layout이
+   cookie를 읽어 data-theme="light|dark"를 그린다. 어두운 token은 아래 두 블록에 같은 값으로 둔다
+   (미디어 쿼리와 속성 선택자를 한 규칙으로 묶을 수 없다). 두 블록이 같은지는 theme-css-contract.test.ts가 지킨다. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     color-scheme: dark;
     --color-canvas: #0f0f11;
     --color-background: #0f0f11;
@@ -167,6 +171,60 @@
     --shadow-sheet: 0 -12px 32px rgb(0 0 0 / 0.32);
     --shadow-drawer: 12px 0 32px rgb(0 0 0 / 0.4);
   }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --color-canvas: #0f0f11;
+  --color-background: #0f0f11;
+  --color-foreground: #ececee;
+  --color-surface: #0f0f11;
+  --color-surface-elevated: #151517;
+  --color-card: #0f0f11;
+  --color-card-foreground: #ececee;
+  --color-sidebar: #151517;
+  --color-primary: #ececee;
+  --color-primary-foreground: #0f0f11;
+  --color-secondary: #1e1e21;
+  --color-secondary-foreground: #b4b4bb;
+  --color-muted: #1e1e21;
+  --color-muted-foreground: #8e8e96;
+  --color-selected: #26262a;
+  --color-faint: #52525b;
+  --color-highlight: #7b95ff;
+  --color-highlight-foreground: #0f0f11;
+  --color-accent: #1c2240;
+  --color-accent-foreground: #a5b4fc;
+  --color-border: #2a2a2e;
+  --color-input: #2a2a2e;
+  --color-switch-off: #3f3f46;
+  --color-ring: #7b95ff;
+  --color-scrim: rgb(0 0 0 / 0.5);
+  --color-success: #34c3b0;
+  --color-success-muted: #10302c;
+  --color-warning: #f5a65b;
+  --color-warning-muted: #2e2110;
+  --color-warning-border: #5c3d14;
+  --color-destructive: #f97066;
+  --color-destructive-foreground: #0f0f11;
+  --color-destructive-muted: #2d1513;
+  --color-destructive-border: #5f2420;
+  --color-info: #a5b4fc;
+  --color-info-muted: #1c2240;
+  /* 어두운 면에서 3:1 이상이 되도록 밝힌 유형 점(HomeDark 보드의 레슨·연습·공연·노트 값). */
+  --color-event-lesson: #7b95ff;
+  --color-event-practice: #34c3b0;
+  --color-event-gig: #f2884b;
+  --color-event-note: #a1a1aa;
+  --color-item-note: #a1a1aa;
+  --color-item-digging: #a48bfa;
+  --color-item-qna: #eab308;
+  --color-item-assignment: #f472b6;
+  --shadow-segment: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-floating: 0 12px 32px rgb(0 0 0 / 0.4);
+  --shadow-overlay: 0 12px 32px rgb(0 0 0 / 0.4);
+  --shadow-sheet: 0 -12px 32px rgb(0 0 0 / 0.32);
+  --shadow-drawer: 12px 0 32px rgb(0 0 0 / 0.4);
 }
 
 @keyframes section-in {
@@ -429,6 +487,21 @@
     outline: 2px solid var(--color-ring);
     outline-offset: 2px;
   }
+
+  /* 입력 영역은 같은 글꼴의 swap 선언(layout.tsx plexSansInput)을 쓴다. 본문용 block 선언을 앞에 두면 한글 조각을
+     처음 받는 동안 입력 글자가 투명해져 깜빡이므로, 대체 목록에서 block 글꼴을 빼고 기기 한글 글꼴로 먼저 보인다.
+     preflight의 `input { font: inherit }`보다 뒤·같은 specificity라 이긴다. font-mono 등 utility는 layer 순서로 이 규칙보다 우선한다. */
+  input,
+  textarea,
+  select,
+  [contenteditable],
+  .ProseMirror {
+    font-family: var(--font-sans-input);
+  }
+}
+
+:root {
+  --font-sans-input: var(--font-plex-sans-input), system-ui, -apple-system, "Apple SD Gothic Neo", sans-serif;
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -1,7 +1,7 @@
 /**
  * @file src/components/admin-portal/StudentFilterDropdown.tsx
  * @description 관리자 일정의 학생 선택(캔버스 AdminSchedule 머리의 "학생" 선택, MobileAdminSchedule의 44px 선택).
- * 선택된 학생 변경 시 onStudentChange 콜백 호출.
+ * 선택된 학생 변경 시 onStudentChange 콜백 호출. allStudentsValue가 있으면 맨 위에 "전체 학생"을 둔다(개선 2차 시안 3번).
  */
 "use client";
 
@@ -18,6 +18,8 @@ interface StudentFilterDropdownProps {
   selectedStudentId: string;
   onStudentChange: (studentId: string) => void;
   loading?: boolean;
+  /** "전체 학생" 선택지의 값. 없으면 학생만 고른다. */
+  allStudentsValue?: string;
 }
 
 export function StudentFilterDropdown({
@@ -25,6 +27,7 @@ export function StudentFilterDropdown({
   selectedStudentId,
   onStudentChange,
   loading = false,
+  allStudentsValue,
 }: StudentFilterDropdownProps) {
   return (
     <div className="flex min-w-0 items-center gap-2">
@@ -40,6 +43,7 @@ export function StudentFilterDropdown({
             aria-busy={loading}
             className="h-11 w-full min-w-0 appearance-none rounded-touch border border-border bg-background pl-3 pr-8 text-base text-foreground focus-visible:outline-2 focus-visible:-outline-offset-1 focus-visible:outline-ring disabled:opacity-50 md:h-8 md:max-w-56 md:rounded-md md:pl-2.5 md:pr-7 md:text-ui"
           >
+            {allStudentsValue ? <option value={allStudentsValue}>전체 학생</option> : null}
             {students.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.displayName || s.email}

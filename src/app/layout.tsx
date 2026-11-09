@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { IBM_Plex_Mono, IBM_Plex_Sans_KR } from "next/font/google";
-import { WEB_APP_BACKGROUND } from "@/lib/web-app-theme";
+import { cookies } from "next/headers";
+import { parseThemeCookie, THEME_COOKIE, themeColorsFor } from "@/lib/web-app-theme";
 import { PersistentPlayerHost } from "@/components/player/PersistentPlayerHost";
 import "./globals.css";
 
@@ -12,6 +13,15 @@ const plexSans = IBM_Plex_Sans_KR({
   subsets: ["latin"],
   display: "block",
   variable: "--font-plex-sans",
+});
+// 입력칸·편집기 전용 같은 글꼴(swap). 한글 조각을 처음 칠 때 block이면 그 조각을 받는 동안 입력 글자가 투명해져
+// 깜빡이므로, 입력 영역만 대체 글꼴로 먼저 보이고 바뀌게 한다. 옵션을 본문과 같게(subsets·weight·preload) 두어
+// next/font가 같은 내용 hash의 파일(같은 URL)을 내므로 글꼴 파일을 두 번 받지 않는다.
+const plexSansInput = IBM_Plex_Sans_KR({
+  weight: ["400", "500", "600"],
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-plex-sans-input",
 });
 const plexMono = IBM_Plex_Mono({
   weight: ["400", "500"],
@@ -25,31 +35,39 @@ export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: {
-    default: "Stann Lumo DJ 레슨 포탈",
-    template: "%s | Stann Lumo",
+    default: "Portal - Stann",
+    template: "%s | Portal - Stann",
   },
   description: "Stann의 개인 DJ 레슨 일정, 과제·피드백과 연습 기록을 관리하는 포탈입니다.",
-  applicationName: "Stann Lumo DJ 레슨 포탈",
+  applicationName: "Portal - Stann",
   // iPhone 홈 화면에 추가하면 Safari 막대 없이 앱처럼 열린다(웹 푸시의 전제).
-  appleWebApp: { capable: true, title: "Stann Lumo", statusBarStyle: "default" },
+  appleWebApp: { capable: true, title: "Portal", statusBarStyle: "default" },
   icons: { apple: "/icons/apple-touch-icon.png" },
 };
 
-export const viewport: Viewport = {
-  // 홈 화면 앱의 상단 막대 색.
-  themeColor: [
-    { media: "(prefers-color-scheme: light)", color: WEB_APP_BACKGROUND.light },
-    { media: "(prefers-color-scheme: dark)", color: WEB_APP_BACKGROUND.dark },
-  ],
-};
+/** 이 기기에서 고른 화면 모드(cookie). 없으면 null(= 시스템). 루트 layout은 이미 force-dynamic이라 정적 생성에 영향이 없다. */
+async function readThemeFromRequest() {
+  return parseThemeCookie((await cookies()).get(THEME_COOKIE)?.value);
+}
 
-export default function RootLayout({
+export async function generateViewport(): Promise<Viewport> {
+  // 홈 화면 앱의 상단 막대 색. 수동 모드면 그 색 하나, 시스템이면 기기 설정별 두 색.
+  return { themeColor: themeColorsFor(await readThemeFromRequest()) };
+}
+
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // 고른 모드를 첫 HTML부터 그려 다음 접속 때도 다른 모드가 먼저 보이지 않는다(globals.css의 [data-theme]).
+  const theme = await readThemeFromRequest();
   return (
-    <html lang="ko" className={`${plexSans.variable} ${plexMono.variable}`}>
+    <html
+      lang="ko"
+      data-theme={theme ?? undefined}
+      className={`${plexSans.variable} ${plexSansInput.variable} ${plexMono.variable}`}
+    >
       <body
         className="font-sans antialiased bg-background text-foreground"
       >

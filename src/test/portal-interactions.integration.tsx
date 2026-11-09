@@ -91,6 +91,9 @@ let CalendarFeedControl: typeof import("@/components/admin/CalendarFeedControl")
 let connectCalendar: typeof import("@/lib/actions/externalCalendars").connectExternalCalendar = async () => ({});
 let ExternalCalendarConnection: typeof import("@/components/student-portal/ExternalCalendarConnection").ExternalCalendarConnection;
 let loadStudentCalendar: typeof import("@/lib/actions/unifiedItems").getUnifiedItemsForStudent = async () => [];
+let loadAllStudentsCalendar: typeof import("@/lib/actions/unifiedItems").getUnifiedItemsForAllStudents = async () => ({
+  items: [], start: "2026-01-01T00:00:00.000Z", end: "2026-04-30T23:59:59.999Z", truncated: false,
+});
 let login: typeof import("@/lib/actions/session").loginWithCredentials = async () => ({});
 let loadCommunityPage: typeof import("@/lib/actions/posts").getCommunityPostPage = async () => ({ posts: [], nextCursor: null });
 let CommunityClient: typeof import("@/app/community/CommunityClient").default;
@@ -213,6 +216,7 @@ mock.module("@/lib/actions/calendarSync", { namedExports: {
 } });
 mock.module("@/lib/actions/unifiedItems", { namedExports: {
   getUnifiedItemsForStudent: (...args: Parameters<typeof loadStudentCalendar>) => loadStudentCalendar(...args),
+  getUnifiedItemsForAllStudents: (...args: Parameters<typeof loadAllStudentsCalendar>) => loadAllStudentsCalendar(...args),
   getExternalUnifiedItemsForStudent: async () => [],
   getExternalUnifiedItems: async () => [],
 } });
@@ -1236,7 +1240,9 @@ test("portal deep links render their section, view and selected student before h
   markup.innerHTML = renderToString(admin);
   assert.equal(markup.querySelector("h1")?.textContent, "일정");
   assert.equal(markup.querySelector('[role="tab"][aria-selected="true"]')?.textContent, "전체");
-  assert.equal(markup.querySelector("select")?.value, "requested");
+  // happy-dom은 파싱한 select의 value를 selected 속성과 다르게 고를 때가 있어 서버가 표시한 option을 직접 본다.
+  assert.equal(markup.querySelector("select option[selected]")?.getAttribute("value"), "requested");
+  assert.equal(markup.querySelector("select option")?.textContent, "전체 학생", "학생 선택 맨 위에 전체 학생을 둔다");
   const loads: string[] = [];
   loadStudentCalendar = async (id) => { loads.push(id); return []; };
   context.after(() => { loadStudentCalendar = async () => []; });
@@ -3242,4 +3248,137 @@ test("학생 상세 레슨 행은 그 날짜 노트가 있으면 노트 열기, 
     ["노트 열기", "/dashboard/notes/note-1?returnTo=%2Fdashboard%2Fadmin%2Fstudents%2Fstudent-1%3Ftab%3Doverview"],
     ["수업 노트", "/dashboard/admin/students/student-1/notes/new?date=2026-11-19&returnTo=%2Fdashboard%2Fadmin%2Fstudents%2Fstudent-1%3Ftab%3Doverview"],
   ]);
+});
+
+test("admin schedule opens 전체 학생 by default with student chips, an all-notes link and a required student for booking", async (context) => {
+  const students = [
+    { id: "student-1", email: "minji@example.test", displayName: "민지", createdAt: null, currentModule: null, nextLessonDate: null, pendingFeedbackCount: 0, openQnaCount: 0 },
+    { id: "student-2", email: "junho@example.test", displayName: "준호", createdAt: null, currentModule: null, nextLessonDate: null, pendingFeedbackCount: 0, openQnaCount: 0 },
+  ];
+  const today = new Date();
+  const items: UnifiedItem[] = [
+    { id: "lesson-1", type: "EVENT", subType: "LESSON", title: "레슨", date: today, endDate: null, metadata: {},
+      space: { studentId: "student-1", label: "민지" }, source: { kind: "PORTAL", entity: "LESSON", label: "포탈" } },
+    { id: "practice-2", type: "EVENT", subType: "PRACTICE", title: "리듬 연습", date: today, endDate: null, metadata: {},
+      space: { studentId: "student-2", label: "준호" }, source: { kind: "PORTAL", entity: "CALENDAR_EVENT", label: "포탈" } },
+  ];
+  const allLoads: unknown[] = [];
+  const studentLoads: string[] = [];
+  const lessonRequests: string[] = [];
+  loadAllStudentsCalendar = async (input) => {
+    allLoads.push(input);
+    return { items, start: "2026-01-01T00:00:00.000Z", end: "2026-04-30T23:59:59.999Z", truncated: false };
+  };
+  loadStudentCalendar = async (id) => { studentLoads.push(id); return []; };
+  saveLesson = async (studentId) => {
+    lessonRequests.push(studentId);
+    return { success: true, lesson: { id: "lesson-new", scheduledAt: today.toISOString() } };
+  };
+  context.after(() => {
+    loadAllStudentsCalendar = async () => ({ items: [], start: "2026-01-01T00:00:00.000Z", end: "2026-04-30T23:59:59.999Z", truncated: false });
+    loadStudentCalendar = async () => [];
+    saveLesson = async () => ({});
+  });
+  browser.history.replaceState({}, "", "/dashboard/admin?section=schedule&view=calendar");
+  await render(context, <AdminPortalClient
+    initialLocation={resolvePortalLocation("admin", { section: "schedule", view: "calendar" })}
+    initialUnifiedItems={items} students={students}
+    adminId="admin" qnaThreads={[]} pendingAssignments={[]} referenceTime={today}
+  />);
+
+  const studentSelect = browser.document.getElementById("calendar-student-filter");
+  assert.ok(studentSelect instanceof browser.HTMLSelectElement);
+  assert.equal(studentSelect.value, "all", "학생 선택의 기본은 전체 학생");
+  assert.equal(studentSelect.options[0]?.textContent, "전체 학생", "전체 학생은 맨 위에 있다");
+  assert.equal(new URLSearchParams(browser.location.search).get("student"), "all", "주소로 전체 선택을 유지·공유한다");
+  assert.deepEqual(allLoads, [], "서버가 읽은 기간 안이면 다시 읽지 않는다");
+  const chips = [...browser.document.querySelectorAll(".fc [data-student-chip]")].map((chip) => chip.textContent);
+  assert.deepEqual(chips.sort(), ["민지", "준호"], "달력 항목마다 학생 이름 칩이 붙는다");
+  const notesLink = [...browser.document.querySelectorAll("a")].find((link) => link.textContent === "전체 노트 보기");
+  assert.equal(notesLink?.getAttribute("href"), "/dashboard/admin/notes");
+  assert.match(browser.document.body.textContent ?? "", /외부 캘린더 제외/u);
+
+  // 레슨 예약은 학생을 먼저 고른다. 고르지 않으면 저장하지 않는다.
+  await press("레슨 예약");
+  const lessonStudent = browser.document.getElementById("lesson-schedule-student");
+  assert.ok(lessonStudent instanceof browser.HTMLSelectElement, "레슨 예약 대화상자에 학생 선택이 있다");
+  assert.equal(lessonStudent.required, true);
+  const dialogForm = lessonStudent.form;
+  assert.ok(dialogForm);
+  await act(async () => {
+    dialogForm.dispatchEvent(new browser.Event("submit", { bubbles: true, cancelable: true }));
+  });
+  await settle();
+  assert.deepEqual(lessonRequests, [], "학생 없이 저장하지 않는다");
+  await act(async () => {
+    lessonStudent.value = "student-2";
+    lessonStudent.dispatchEvent(new browser.Event("change", { bubbles: true }));
+  });
+  await press("레슨 저장");
+  assert.deepEqual(lessonRequests, ["student-2"], "고른 학생으로 예약한다");
+
+  // 학생 한 명을 고르면 그 학생만 읽고, 다시 전체로 돌아오면 전체를 읽는다.
+  await act(async () => {
+    studentSelect.value = "student-1";
+    studentSelect.dispatchEvent(new browser.Event("change", { bubbles: true }));
+  });
+  await settle();
+  assert.deepEqual(studentLoads, ["student-1"]);
+  assert.equal(new URLSearchParams(browser.location.search).get("student"), "student-1");
+  assert.equal(browser.document.querySelectorAll(".fc [data-student-chip]").length, 0, "학생 한 명 보기에는 칩을 붙이지 않는다");
+  const select = browser.document.getElementById("calendar-student-filter");
+  assert.ok(select instanceof browser.HTMLSelectElement);
+  await act(async () => {
+    select.value = "all";
+    select.dispatchEvent(new browser.Event("change", { bubbles: true }));
+  });
+  await settle();
+  assert.equal(allLoads.length, 1);
+  assert.equal(new URLSearchParams(browser.location.search).get("student"), "all");
+  assert.equal(browser.document.querySelectorAll(".fc [data-student-chip]").length, 2);
+});
+
+test("calendar quick create in 전체 학생 requires a student before a note or lesson", async (context) => {
+  const lessonRequests: string[] = [];
+  const created: UnifiedItem[] = [];
+  const noteTargets: string[] = [];
+  saveLesson = async (studentId) => {
+    lessonRequests.push(studentId);
+    return { success: true, lesson: { id: "lesson-q", scheduledAt: "2026-10-27T01:00:00.000Z" } };
+  };
+  context.after(() => { saveLesson = async () => ({}); });
+  await render(context, <CalendarQuickCreate
+    selection={{ startStr: "2026-10-27T10:00:00+09:00", endStr: "2026-10-27T11:00:00+09:00", allDay: false }}
+    anchor={null}
+    options={{
+      buildNoteHref: (date, _title, studentId) => { noteTargets.push(studentId); return `/notes/new?date=${date}`; },
+      canCreateEvent: false, canCreateLesson: true, studentId: "", spaceLabel: "전체 학생",
+      studentChoices: [{ id: "student-1", label: "민지" }, { id: "student-2", label: "준호" }],
+    }}
+    onCreated={(item) => created.push(item)}
+    onClose={() => undefined}
+  />);
+  const select = browser.document.querySelector('[role="dialog"] select');
+  assert.ok(select instanceof browser.HTMLSelectElement);
+  assert.equal(browser.document.activeElement, select, "학생 선택이 먼저 초점을 받는다");
+  await press("레슨");
+  const form = select.form;
+  assert.ok(form);
+  await act(async () => {
+    form.dispatchEvent(new browser.Event("submit", { bubbles: true, cancelable: true }));
+  });
+  await settle();
+  assert.equal(browser.document.querySelector('[role="dialog"] [role="alert"]')?.textContent, "학생을 골라 주세요.");
+  assert.deepEqual(lessonRequests, []);
+  await act(async () => {
+    select.value = "student-1";
+    select.dispatchEvent(new browser.Event("change", { bubbles: true }));
+  });
+  await act(async () => {
+    form.dispatchEvent(new browser.Event("submit", { bubbles: true, cancelable: true }));
+  });
+  await settle();
+  assert.deepEqual(lessonRequests, ["student-1"]);
+  assert.deepEqual(created.map((item) => [item.id, item.space.studentId, item.space.label]), [["lesson-q", "student-1", "민지"]]);
+  assert.deepEqual(noteTargets, []);
 });

@@ -5,14 +5,20 @@
  */
 "use client";
 
-import { useCallback, useEffect, useRef, useState, useTransition } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { getUnifiedItemKey, upsertUnifiedItems, type UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 import type { StudentRosterStat } from "@/lib/actions/students";
 import type {
   AdminQueueThread,
   PendingFeedbackAssignment,
 } from "@/lib/admin-work-queue";
-import { getUnifiedItemsForStudent } from "@/lib/actions/unifiedItems";
+import { getUnifiedItemsForAllStudents, getUnifiedItemsForStudent } from "@/lib/actions/unifiedItems";
+import { ALL_STUDENTS_SCOPE, resolveAdminScheduleStudent } from "@/lib/admin-schedule-scope";
+import {
+  getAllStudentsItemsWindow,
+  isWindowCovered,
+  type UnifiedItemsWindow,
+} from "@/lib/unified-items-query";
 import { syncAndGetExternalItems } from "@/lib/actions/calendarSync";
 import { getUnifiedItemSpaceLabel } from "@/lib/unified-item-normalization";
 import { PortalShell } from "@/components/ui/portal-shell";
@@ -40,6 +46,8 @@ export interface AdminPortalClientProps {
   referenceTime: Date;
   /** 업무함 다가오는 레슨 행의 수업 노트 링크용 "학생:KST 날짜" → 노트 id. */
   lessonNoteIds?: Readonly<Record<string, string>>;
+  /** "전체 학생"으로 시작할 때 서버가 읽은 기간(ISO)과 상한에 닿았는지. 없으면 기준 시각의 기본 기간으로 본다. */
+  initialAllStudentsWindow?: { start: string; end: string; truncated: boolean };
 }
 
 // ── 구역 정의 ────────────────────────────────────
@@ -57,12 +65,13 @@ export function AdminPortalClient({
   initialLocation,
   initialUnifiedItems,
   students,
-  initialStudentId = students[0]?.id ?? "",
+  initialStudentId = students.length > 0 ? ALL_STUDENTS_SCOPE : "",
   adminId,
   qnaThreads,
   pendingAssignments,
   referenceTime,
   lessonNoteIds,
+  initialAllStudentsWindow,
 }: AdminPortalClientProps) {
   // 캘린더 학생 필터 상태
   const [selectedStudentId, setSelectedStudentId] = useState<string>(
@@ -76,15 +85,34 @@ export function AdminPortalClient({
   const [calendarError, setCalendarError] = useState<string | null>(null);
   const calendarRequestRef = useRef(0);
   const calendarLoadedStudentIdRef = useRef(initialStudentId);
+  // "전체 학생"이 이미 읽은 기간들. 달력이 이 밖으로 넘어가면 그 달 기준 기간을 더 읽어 합친다.
+  const allWindowsRef = useRef<UnifiedItemsWindow[]>(
+    initialStudentId === ALL_STUDENTS_SCOPE
+      ? [initialAllStudentsWindow
+        ? { start: new Date(initialAllStudentsWindow.start), end: new Date(initialAllStudentsWindow.end) }
+        : getAllStudentsItemsWindow(referenceTime)]
+      : [],
+  );
+  const allWindowLoadsRef = useRef(new Set<string>());
+  const [allStudentsTruncated, setAllStudentsTruncated] = useState(
+    initialStudentId === ALL_STUDENTS_SCOPE && initialAllStudentsWindow?.truncated === true,
+  );
+  const [loadingMoreRange, setLoadingMoreRange] = useState(false);
+  const studentIds = useMemo(() => students.map((student) => student.id), [students]);
 
   const selectStudent = useCallback((studentId: string, historyMode: "push" | "replace" | "none") => {
-    if (!students.some((student) => student.id === studentId)) return;
+    const isAll = studentId === ALL_STUDENTS_SCOPE;
+    if (isAll ? students.length === 0 : !students.some((student) => student.id === studentId)) return;
     const requestId = ++calendarRequestRef.current;
     setSelectedStudentId(studentId);
     setCalendarItems([]);
     setCalendarLoadedStudentId("");
     calendarLoadedStudentIdRef.current = "";
     setCalendarError(null);
+    allWindowsRef.current = [];
+    allWindowLoadsRef.current.clear();
+    setAllStudentsTruncated(false);
+    setLoadingMoreRange(false);
 
     if (historyMode !== "none") {
       const url = new URL(window.location.href);
@@ -99,6 +127,16 @@ export function AdminPortalClient({
 
     startCalendarTransition(async () => {
       try {
+        if (isAll) {
+          const result = await getUnifiedItemsForAllStudents();
+          if (calendarRequestRef.current !== requestId) return;
+          allWindowsRef.current = [{ start: new Date(result.start), end: new Date(result.end) }];
+          setAllStudentsTruncated(result.truncated);
+          setCalendarItems(result.items);
+          setCalendarLoadedStudentId(studentId);
+          calendarLoadedStudentIdRef.current = studentId;
+          return;
+        }
         const items = await getUnifiedItemsForStudent(studentId);
         if (calendarRequestRef.current === requestId) {
           setCalendarItems(items);
@@ -113,9 +151,41 @@ export function AdminPortalClient({
     });
   }, [students]);
 
+  // "전체 학생": 달력이 아직 읽지 않은 기간을 보이면 그 기간을 덮는 범위를 더 읽어 합친다.
+  const loadAllStudentsRange = useCallback((start: Date, end: Date) => {
+    if (calendarLoadedStudentIdRef.current !== ALL_STUDENTS_SCOPE) return;
+    if (isWindowCovered(allWindowsRef.current, start, end)) return;
+    const range = getAllStudentsItemsWindow(start);
+    // 보이는 기간이 이 범위 끝을 넘으면(긴 격자) 끝 쪽을 기준으로 한 번 더 읽는다.
+    const windows = range.end.getTime() >= end.getTime() ? [range] : [range, getAllStudentsItemsWindow(end)];
+    const requestId = calendarRequestRef.current;
+    for (const next of windows) {
+      const key = next.start.toISOString();
+      if (allWindowLoadsRef.current.has(key) || isWindowCovered(allWindowsRef.current, next.start, next.end)) continue;
+      allWindowLoadsRef.current.add(key);
+      setLoadingMoreRange(true);
+      void getUnifiedItemsForAllStudents({ start: next.start.toISOString(), end: next.end.toISOString() })
+        .then((result) => {
+          if (calendarRequestRef.current !== requestId) return;
+          allWindowsRef.current = [...allWindowsRef.current, { start: new Date(result.start), end: new Date(result.end) }];
+          if (result.truncated) setAllStudentsTruncated(true);
+          setCalendarItems((current) => upsertUnifiedItems(current, result.items));
+        })
+        .catch(() => {
+          if (calendarRequestRef.current === requestId) setCalendarError("이 기간의 전체 학생 일정을 불러오지 못했습니다. 다시 시도해 주세요.");
+        })
+        .finally(() => {
+          allWindowLoadsRef.current.delete(key);
+          if (calendarRequestRef.current === requestId && allWindowLoadsRef.current.size === 0) setLoadingMoreRange(false);
+        });
+    }
+  }, []);
+
   // 내부 일정이 준비된 뒤에만 외부 provider·캘린더 동기화를 별도 요청해 느린 feed가 첫 표시를 막지 않는다.
+  // "전체 학생"은 포탈 일정만 보이므로(외부 캘린더 제외) 동기화하지 않는다.
   useEffect(() => {
     if (!calendarLoadedStudentId || calendarLoadedStudentId !== selectedStudentId) return;
+    if (calendarLoadedStudentId === ALL_STUDENTS_SCOPE) return;
     const requestId = calendarRequestRef.current;
     let cancelled = false;
     const studentId = calendarLoadedStudentId;
@@ -143,6 +213,17 @@ export function AdminPortalClient({
     const studentId = calendarLoadedStudentIdRef.current;
     if (!studentId) return;
     const requestId = calendarRequestRef.current;
+    if (studentId === ALL_STUDENTS_SCOPE) {
+      for (const loaded of allWindowsRef.current) {
+        void getUnifiedItemsForAllStudents({ start: loaded.start.toISOString(), end: loaded.end.toISOString() })
+          .then((result) => {
+            if (calendarRequestRef.current !== requestId || calendarLoadedStudentIdRef.current !== studentId) return;
+            setCalendarItems((current) => upsertUnifiedItems(current, result.items));
+          })
+          .catch(() => undefined);
+      }
+      return;
+    }
     void getUnifiedItemsForStudent(studentId)
       .then((items) => {
         if (calendarRequestRef.current !== requestId || calendarLoadedStudentIdRef.current !== studentId) return;
@@ -156,12 +237,11 @@ export function AdminPortalClient({
   useEffect(() => {
     const restoreStudent = () => {
       const fromUrl = new URLSearchParams(window.location.search).get("student");
-      const restored = students.find((student) => student.id === fromUrl)?.id;
-      const fallback = students[0]?.id ?? "";
-      const nextStudentId = restored ?? fallback;
+      // 있는 학생 id는 그 학생, 없거나 `all`·지워진 학생이면 전체 학생(기본).
+      const nextStudentId = resolveAdminScheduleStudent(fromUrl, studentIds);
       if (!nextStudentId) return;
 
-      if (!restored) {
+      if (fromUrl !== nextStudentId) {
         const url = new URL(window.location.href);
         url.searchParams.set("student", nextStudentId);
         window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
@@ -173,23 +253,38 @@ export function AdminPortalClient({
     restoreStudent();
     window.addEventListener("popstate", restoreStudent);
     return () => window.removeEventListener("popstate", restoreStudent);
-  }, [selectStudent, selectedStudentId, students]);
+  }, [selectStudent, selectedStudentId, studentIds]);
 
   const handleStudentChange = (studentId: string) => selectStudent(studentId, "push");
   // 레슨 예약·변경·삭제는 현재 학생 캘린더에 즉시 반영한다. 다른 학생으로 바뀐 뒤 늦은 결과는 무시한다.
   const upsertCalendarItem = useCallback((item: UnifiedItem) => {
-    setCalendarItems((current) => item.space.studentId === calendarLoadedStudentIdRef.current
+    const loaded = calendarLoadedStudentIdRef.current;
+    setCalendarItems((current) => item.space.studentId === loaded || (loaded === ALL_STUDENTS_SCOPE && studentIds.includes(item.space.studentId))
       ? upsertUnifiedItems(current, [item])
       : current);
-  }, []);
+  }, [studentIds]);
   const removeCalendarItem = useCallback((item: UnifiedItem) => {
     const key = getUnifiedItemKey(item);
     setCalendarItems((current) => current.filter((candidate) => getUnifiedItemKey(candidate) !== key));
   }, []);
+  const isAllStudents = selectedStudentId === ALL_STUDENTS_SCOPE;
   const selectedStudent = students.find((student) => student.id === selectedStudentId);
-  const selectedSpaceLabel = selectedStudent
-    ? getUnifiedItemSpaceLabel(selectedStudent)
-    : "";
+  const selectedSpaceLabel = isAllStudents
+    ? "전체 학생"
+    : selectedStudent
+      ? getUnifiedItemSpaceLabel(selectedStudent)
+      : "";
+  const studentChoices = useMemo(
+    () => students.map((student) => ({ id: student.id, label: getUnifiedItemSpaceLabel(student) })),
+    [students],
+  );
+  const allStudentsNotice = isAllStudents && !isLoadingCalendar ? (
+    <p role="status">
+      전체 학생의 포탈 일정입니다(외부 캘린더 제외).
+      {loadingMoreRange ? " 이 기간 일정을 더 불러오는 중입니다." : null}
+      {allStudentsTruncated ? " 항목이 많아 일부만 보입니다. 학생을 골라 보면 모두 볼 수 있습니다." : null}
+    </p>
+  ) : null;
 
   return (
     <PortalShell
@@ -221,7 +316,11 @@ export function AdminPortalClient({
               unifiedItems={isLoadingCalendar ? [] : calendarItems}
               curriculumModules={[]}
               assignments={[]}
-              studentId={selectedStudentId}
+              studentId={isAllStudents ? "" : selectedStudentId}
+              studentChoices={isAllStudents ? studentChoices : undefined}
+              onVisibleRangeChange={isAllStudents ? loadAllStudentsRange : undefined}
+              allNotesHref="/dashboard/admin/notes"
+              scopeNotice={allStudentsNotice}
               actorId={adminId}
               spaceLabel={selectedSpaceLabel}
               workspaceRole="admin"
@@ -240,6 +339,7 @@ export function AdminPortalClient({
                       displayName: s.displayName,
                     }))}
                     selectedStudentId={selectedStudentId}
+                    allStudentsValue={ALL_STUDENTS_SCOPE}
                     onStudentChange={handleStudentChange}
                     loading={isLoadingCalendar}
                   />

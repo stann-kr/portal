@@ -94,16 +94,6 @@ export function ImageViewer({ images, index, onIndexChange, returnFocus }: Image
               {total > 1 ? `${current + 1} / ${total}` : null}
             </DialogPrimitive.Title>
             <span className="flex shrink-0 gap-1">
-              {image ? (
-                <a
-                  href={image.src}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="hidden h-10 items-center rounded-touch px-3 text-[13px] text-white no-underline transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white motion-reduce:transition-none md:inline-flex"
-                >
-                  원본 열기
-                </a>
-              ) : null}
               <DialogPrimitive.Close
                 ref={closeRef}
                 type="button"

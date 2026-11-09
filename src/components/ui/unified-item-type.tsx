@@ -92,6 +92,25 @@ export function describeUnifiedItemRow(item: UnifiedItem, when: string, showSpac
   return parts.filter(Boolean).join(", ");
 }
 
+/**
+ * 관리자 일정 "전체 학생"에서 항목마다 붙이는 학생 이름 칩(작은 테두리 라벨, 캔버스 개선 2차 시안 3번).
+ * 색은 항목 종류가 맡으므로 칩은 먹색 글자와 테두리만 쓴다. 이름은 행 button 이름에도 들어 있어 보조기기에는 숨긴다.
+ */
+export function UnifiedItemStudentChip({ label, className }: { label: string; className?: string }) {
+  return (
+    <span
+      aria-hidden="true"
+      data-student-chip=""
+      className={cn(
+        "inline-flex h-[18px] min-w-0 max-w-[8rem] shrink-0 items-center rounded-sm border border-border px-1 text-[11px] leading-none text-secondary-foreground",
+        className,
+      )}
+    >
+      <span className="truncate">{label}</span>
+    </span>
+  );
+}
+
 /** 통합 항목의 학생 스페이스와 외부 출처를 작은 칩으로 표시한다(레슨 상세의 학생 칩). */
 export function UnifiedItemSpaceBadge({ item }: { item: UnifiedItem }) {
   const external = item.source.kind !== "PORTAL";

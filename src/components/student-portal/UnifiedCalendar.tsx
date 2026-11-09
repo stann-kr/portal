@@ -95,6 +95,10 @@ interface UnifiedCalendarProps extends UnifiedItemChangeHandlers {
   editContext?: CalendarEditContext;
   /** 칸을 눌러 바로 만들기. 없으면 칸 선택을 끈다. */
   quickCreate?: CalendarQuickCreateOptions;
+  /** 관리자 일정 "전체 학생": 항목마다 학생 이름 칩을 붙인다. */
+  showStudentChip?: boolean;
+  /** 달력이 보여 주는 기간(실제 시각)이 바뀔 때. "전체 학생"은 이 기간을 아직 읽지 않았으면 더 읽는다. */
+  onVisibleRangeChange?: (start: Date, end: Date) => void;
 }
 
 type PendingMove = { request: CalendarMoveRequest; saved: boolean };
@@ -251,6 +255,8 @@ export function UnifiedCalendar({
   mobileFilters,
   editContext,
   quickCreate,
+  showStudentChip = false,
+  onVisibleRangeChange,
   canManageEvents,
   canManageLessons,
   onItemUpdated,
@@ -359,7 +365,7 @@ export function UnifiedCalendar({
     const timeLabel = allDay ? null : formatKst(item.date, KST_TIME);
     return {
       id: key,
-      // 관리자 일정은 늘 학생 한 명만 보이므로 칩에는 제목만 둔다(학생은 상세 패널 머리의 칩이 보인다).
+      // 학생 한 명 일정은 칩에 제목만 둔다(학생은 상세 패널 머리의 칩이 보인다). "전체 학생"은 학생 이름 칩을 함께 그린다.
       title,
       start: allDay && allDayStartDate ? allDayStartDate : toCalendarWallTime(item.date),
       end: allDay
@@ -384,6 +390,7 @@ export function UnifiedCalendar({
         timeRangeLabel: timeLabel && item.endDate ? `${timeLabel}–${formatKst(item.endDate, KST_TIME)}` : timeLabel,
         lockReason: context ? getCalendarItemLockReason(item, context) : null,
         spaceLabel: item.space.label,
+        studentLabel: showStudentChip ? item.space.label : null,
         sourceLabel: item.source.label,
       },
     };
@@ -500,9 +507,18 @@ export function UnifiedCalendar({
     openItem(found);
   };
 
+  const rangeChangeRef = useRef(onVisibleRangeChange);
+  useInsertionEffect(() => {
+    rangeChangeRef.current = onVisibleRangeChange;
+  });
   const handleDatesSet = useCallback((arg: DatesSetArg) => {
     const next = { type: arg.view.type as CalendarGridView, title: formatPeriodTitle(arg) };
     setPeriod((current) => (current.type === next.type && current.title === next.title ? current : next));
+    // 달력 칸은 UTC에 KST 벽시계를 넣으므로 실제 시각으로 되돌려 알린다. 끝은 다음 칸 시작이라 1ms 앞을 쓴다.
+    rangeChangeRef.current?.(
+      fromCalendarWallTime(arg.view.activeStart),
+      new Date(fromCalendarWallTime(arg.view.activeEnd).getTime() - 1),
+    );
   }, []);
 
   const api = () => calendarRef.current?.getApi();
@@ -659,6 +675,8 @@ export function UnifiedCalendar({
         <MobileMonthView
           items={visibleItems}
           showSpaceContext={showSpaceContext}
+          showStudentChip={showStudentChip}
+          onVisibleRangeChange={onVisibleRangeChange}
           onOpenItem={openItem}
           filters={mobileFilters}
           initialDate={initialDate}

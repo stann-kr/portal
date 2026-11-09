@@ -87,7 +87,7 @@
 1. 대상 D1의 실제 적용 목록을 확인하고 pending 범위를 확정한다(`0015 → 0016 → 0017 → 0018` 순서).
 2. 승인된 작업 창에서 full export·checksum과 D1 Time Travel bookmark를 확보한 뒤 pending을 순서대로 적용하고 schema·FK·`assignments`·`feedbacks`·`document_server_drafts` row count를 검증한다.
 3. 대상 환경의 `EXTERNAL_CALENDAR_ENCRYPTION_KEY`, `GOOGLE_CALENDAR_CLIENT_ID`, `GOOGLE_CALENDAR_CLIENT_SECRET`과 `AUTH_URL`을 확인한다. secret이 없으면 해당 연결 기능만 꺼지고 설정 화면이 "설정 필요"를 안내한다.
-4. target version을 전환하고 관리자 연결·학생 매핑·포털 → 외부 반영·외부 → 포털 반영·연결 해제를 승인된 테스트 캘린더로 확인한다. 실제 학생 캘린더로 시험하지 않는다.
+4. target version을 전환하고 관리자 연결·학생 매핑·포탈 → 외부 반영·외부 → 포탈 반영·연결 해제를 승인된 테스트 캘린더로 확인한다. 실제 학생 캘린더로 시험하지 않는다.
 
 ### 사용자가 할 클라우드 작업
 
@@ -95,7 +95,7 @@
 
 Google Calendar 연동:
 
-- [x] Google Cloud Console에서 포털용 프로젝트를 만들거나 고른다(포털 운영 Google 계정의 "Stann Lumo Portal").
+- [x] Google Cloud Console에서 포탈용 프로젝트를 만들거나 고른다(포탈 운영 Google 계정의 "Stann Lumo Portal").
 - [x] 그 프로젝트에서 Google Calendar API를 사용 설정한다.
 - [x] OAuth 동의 화면(Google Auth Platform)을 구성한다(외부, 홈페이지 `https://portal.stann.kr`, 승인된 도메인 `stann.kr`, 개인정보처리방침 `https://portal.stann.kr/privacy`). scope는 `https://www.googleapis.com/auth/calendar.events`와 `https://www.googleapis.com/auth/calendar.calendarlist.readonly` 두 개다(`src/lib/calendar-sync/google.ts` `GOOGLE_CALENDAR_SCOPES`). email·profile scope는 쓰지 않는다.
 - [ ] 게시 상태: 개인정보처리방침 링크가 없으면 "앱 게시"가 비활성이라 `/privacy`(로그인 없이 열림)를 배포한 뒤 링크를 등록하고 "프로덕션"으로 게시한다. 게시 전에는 관리자 계정을 테스트 사용자로 둔다. 참고: 게시 상태가 "테스트"이면 테스트 사용자로 관리자 Google 계정을 추가해야 하고, 이 상태에서 받은 refresh token은 짧게(약 7일) 만료될 수 있다. calendar scope는 민감한 scope라 "프로덕션" 게시에는 Google 검증이 필요할 수 있다. 연결 계정이 관리자 한 명뿐이므로 어느 상태로 둘지 콘솔 안내를 확인해 결정한다.
@@ -106,7 +106,7 @@ Google Calendar 연동:
 iCloud 연동:
 
 - [ ] 연결할 Apple ID에 2단계 인증을 켠다.
-- [ ] appleid.apple.com → 로그인 및 보안 → 앱 암호에서 포털용 앱 전용 암호를 만든다. 이 값은 Worker secret이 아니라 관리자 캘린더 동기화 화면에 Apple ID와 함께 입력하며, 포털은 암호화해 저장한다. 앱 암호를 폐기하면 연결이 "다시 연결 필요"가 된다.
+- [ ] appleid.apple.com → 로그인 및 보안 → 앱 암호에서 포탈용 앱 전용 암호를 만든다. 이 값은 Worker secret이 아니라 관리자 캘린더 동기화 화면에 Apple ID와 함께 입력하며, 포탈은 암호화해 저장한다. 앱 암호를 폐기하면 연결이 "다시 연결 필요"가 된다.
 
 데이터베이스와 가이드:
 
@@ -114,7 +114,7 @@ iCloud 연동:
 - [x] 디깅 보드 플레이리스트(`0019_digging_playlists`, 새 table만 추가)를 포함한 version을 promotion하기 전에, 승인된 작업 창에서 export·checksum·Time Travel bookmark를 확보하고 remote D1에 `0019`를 적용한 뒤 `digging_playlists` schema·UNIQUE·FK와 기존 table row count를 확인한다. 디깅 화면이 이 table을 읽으므로 적용 전 코드를 올리면 디깅 화면이 실패한다. 기존 행은 바꾸지 않는다. 2026-10-29에 remote D1 `0019`를 적용하고 PR #10을 production에 배포했다(Worker version `172d7dc7`).
 - [ ] 커뮤니티 믹스셋 링크·재생 시점 댓글(`0020_comment_time_markers`, `comments`에 nullable `time_marker_seconds`·CHECK `comments_time_marker_check`(NULL 또는 정수 0~86399)와 index `comments_post_created_idx`(`post_id`, `created_at`)만 추가)을 포함한 version을 promotion하기 전에, 승인된 작업 창에서 export·checksum·Time Travel bookmark를 확보하고 remote D1에 `0020`을 적용한 뒤 `PRAGMA table_info(comments)`·index·CHECK와 `comments` row count 불변을 확인한다. 댓글 조회·작성이 이 column을 읽으므로 적용 전 코드를 올리면 모든 게시물의 댓글 조회·작성이 실패한다. ADD COLUMN이라 table을 다시 만들지 않고 기존 행과 `comments` trigger는 그대로다. promotion 뒤 smoke는 믹스셋 상세 열기 같은 read-only로 하고, 쓰기 smoke는 별도 승인 뒤에 한다.
 - [ ] 공용 가이드 seed를 만든다: `npx tsx scripts/guide-import/build.ts`(기본 입력 `.docs/goals/assignments-guide-calendar/guide-export`, 출력 `.wrangler/guide-import`). 스크립트는 D1·R2에 쓰지 않고 `seed.sql`·이미지 객체와 명령만 출력하는 `apply-local.sh`를 만든다. 로컬은 `sh .wrangler/guide-import/apply-local.sh`가 출력한 `--local` 명령을 확인한 뒤 직접 실행한다.
-- [ ] remote seed(`wrangler d1 execute portal-db --remote --file=…/seed.sql`과 `wrangler r2 object put portal-storage/guide/<id> --remote …`)는 별도 승인 뒤 `0016` 적용 다음에 한 번만 실행한다. seed는 `INSERT OR IGNORE`라 포털에서 고친 내용을 덮어쓰지 않지만, 포털에서 지운 페이지는 다시 실행하면 되살아난다.
+- [ ] remote seed(`wrangler d1 execute portal-db --remote --file=…/seed.sql`과 `wrangler r2 object put portal-storage/guide/<id> --remote …`)는 별도 승인 뒤 `0016` 적용 다음에 한 번만 실행한다. seed는 `INSERT OR IGNORE`라 포탈에서 고친 내용을 덮어쓰지 않지만, 포탈에서 지운 페이지는 다시 실행하면 되살아난다.
 
 실시간 공동 편집(2026-11-01 준비, 2026-11-02 첫 배포 완료 — version 69b2648a, 로그인 후 smoke는 미확인):
 
@@ -288,7 +288,7 @@ npx opennextjs-cloudflare deploy
 - 디깅 보드 플레이리스트: Beatport 공유 링크 등록(새 탭 열기)·SoundCloud 세트 등록(제목 자동·페이지 안 재생)·링크/제목/메모 수정·삭제, 다른 학생 목록 접근 거부와 관리자 읽기 전용 확인.
 - 가이드 목록·페이지·이미지 표시, 관리자 편집·순서 변경, 학생 구간 질문이 그 학생과 관리자에게만 보이는지 확인.
 - 공동 편집: 테스트 노트를 두 창에서 열어 커서·입력 동기화와 저장(수정 이력 한 번에 하나), 학생 계정 읽기 전용 실시간 보기(쓰기 불가), 로그아웃 상태 `POST /api/collab/token` 401(다른 탭은 약 150초 안에 거부·잠금), 다른 창이 편집 중일 때의 이력 복원(저장 전 입력은 revision으로 보존, 두 창 모두 편집기 유지·입력 멈춤 없이 복원본 반영, 겹친 입력은 유지/제거 안내), 휴지통 이동 뒤 열린 편집기의 제자리 잠금과 되살림 뒤 이어서 편집, 이전 초안 보관함(`/dashboard/drafts`) 표시 확인(쓰기는 별도 승인, 테스트 데이터만).
-- 테스트용 Google·iCloud 캘린더로 연결, 학생 매핑, 포털 레슨·일정 생성·이동·삭제의 외부 반영, 외부 생성·이동·삭제의 포털 반영, 연결 해제 확인.
+- 테스트용 Google·iCloud 캘린더로 연결, 학생 매핑, 포탈 레슨·일정 생성·이동·삭제의 외부 반영, 외부 생성·이동·삭제의 포탈 반영, 연결 해제 확인.
 
 ## D1 백업과 복구 rehearsal
 

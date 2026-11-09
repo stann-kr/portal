@@ -13,6 +13,7 @@ import { Plus, CalendarPlus, CalendarClock, FileText, Music, HelpCircle } from "
 import { Button } from "@/components/ui/button";
 import { EventFormDialog } from "@/components/calendar/EventFormDialog";
 import { AddTrackDialog } from "@/components/digging/AddTrackDialog";
+import type { QuickCreateStudentChoice } from "@/components/calendar/CalendarQuickCreate";
 import { LessonScheduleDialog } from "@/components/calendar/LessonScheduleDialog";
 import type { DiggingColumnType } from "@/db/schema";
 import { nextFullHour, toKstDateTimeInputValue } from "@/lib/date-input";
@@ -46,6 +47,8 @@ interface CreateEntryDropdownProps {
   canCreateDigging?: boolean;
   /** 관리자가 선택한 학생의 레슨을 예약할 수 있는지 여부 */
   canCreateLesson?: boolean;
+  /** 관리자 일정 "전체 학생": 레슨 예약 대화상자에서 학생을 먼저 고른다. */
+  lessonStudentChoices?: readonly QuickCreateStudentChoice[];
 }
 
 // ── 메뉴 항목 정의 ────────────────────────────────
@@ -101,6 +104,7 @@ export function CreateEntryDropdown({
   canCreateEvent = true,
   canCreateDigging = true,
   canCreateLesson = false,
+  lessonStudentChoices,
 }: CreateEntryDropdownProps) {
   const router = useProgressRouter();
   const [eventDialogOpen, setEventDialogOpen] = useState(false);
@@ -227,6 +231,7 @@ export function CreateEntryDropdown({
           spaceLabel={spaceLabel}
           defaultStart={dialogStart}
           onSuccess={onSuccess}
+          studentChoices={lessonStudentChoices}
         />
       ) : null}
 

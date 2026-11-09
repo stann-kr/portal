@@ -18,7 +18,7 @@ export const PUSH_CATEGORIES = [
 ] as const;
 export type PushCategory = (typeof PUSH_CATEGORIES)[number];
 
-/** 기기 알림 한 건. url은 알림을 눌렀을 때 열 포털 안 경로다. tag가 같으면 기기에서 앞 알림을 바꾼다. */
+/** 기기 알림 한 건. url은 알림을 눌렀을 때 열 포탈 안 경로다. tag가 같으면 기기에서 앞 알림을 바꾼다. */
 export type PushMessage = {
   category: PushCategory | "test";
   title: string;
@@ -150,6 +150,6 @@ export const pushMessages = {
     };
   },
   test(): PushMessage {
-    return { category: "test", title: "알림 테스트", body: "이 기기에서 포털 알림을 받을 수 있습니다.", url: "/dashboard", tag: "test" };
+    return { category: "test", title: "알림 테스트", body: "이 기기에서 포탈 알림을 받을 수 있습니다.", url: "/dashboard", tag: "test" };
   },
 };

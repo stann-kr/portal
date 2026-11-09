@@ -6,7 +6,12 @@
 import { redirect } from "next/navigation";
 import { getActiveAuthSession } from "@/lib/auth-guard";
 import { getStudentRosterStats } from "@/lib/actions/students";
-import { getUnifiedItemsForStudent } from "@/lib/actions/unifiedItems";
+import {
+  getUnifiedItemsForAllStudents,
+  getUnifiedItemsForStudent,
+  type AllStudentsUnifiedItems,
+} from "@/lib/actions/unifiedItems";
+import { ALL_STUDENTS_SCOPE, resolveAdminScheduleStudent } from "@/lib/admin-schedule-scope";
 import { getQnaThreads } from "@/lib/actions/qna";
 import { getPendingFeedbackAssignments } from "@/lib/actions/assignments";
 import { getLessonNoteIdsInRange } from "@/lib/actions/lesson-notes";
@@ -27,8 +32,11 @@ export default async function AdminPortalPage({ searchParams }: { searchParams: 
 
   // 학생 목록 먼저 패치
   const students = await getStudentRosterStats();
-  const requestedStudentId = firstSearchValue(params.student);
-  const initialStudentId = students.find((student) => student.id === requestedStudentId)?.id ?? students[0]?.id ?? "";
+  // 일정의 학생 선택: `?student=<id>` 딥링크는 그 학생, 없거나 `all`이면 전체 학생(기본).
+  const initialStudentId = resolveAdminScheduleStudent(
+    firstSearchValue(params.student),
+    students.map((student) => student.id),
+  );
 
   // 병렬 데이터 패치
   const referenceTime = new Date();
@@ -39,8 +47,12 @@ export default async function AdminPortalPage({ searchParams }: { searchParams: 
       && student.nextLessonDate.getTime() >= lessonWindow.from.getTime()
       && student.nextLessonDate.getTime() <= lessonWindow.to.getTime())
     .map((student) => student.id);
-  const [initialStudentItems, qnaThreads, pendingAssignments, lessonNoteIds] = await Promise.all([
-    initialStudentId ? getUnifiedItemsForStudent(initialStudentId) : Promise.resolve([]),
+  const [initialCalendar, qnaThreads, pendingAssignments, lessonNoteIds] = await Promise.all([
+    initialStudentId === ALL_STUDENTS_SCOPE
+      ? getUnifiedItemsForAllStudents().then((result: AllStudentsUnifiedItems) => ({ items: result.items, window: result }))
+      : initialStudentId
+        ? getUnifiedItemsForStudent(initialStudentId).then((items) => ({ items, window: null }))
+        : Promise.resolve({ items: [], window: null }),
     getQnaThreads(),
     getPendingFeedbackAssignments(),
     getLessonNoteIdsInRange(upcomingStudentIds, lessonWindow).catch(() => ({})),
@@ -50,7 +62,10 @@ export default async function AdminPortalPage({ searchParams }: { searchParams: 
     <AdminPortalClient
       initialLocation={initialLocation}
       initialStudentId={initialStudentId}
-      initialUnifiedItems={initialStudentItems}
+      initialUnifiedItems={initialCalendar.items}
+      initialAllStudentsWindow={initialCalendar.window
+        ? { start: initialCalendar.window.start, end: initialCalendar.window.end, truncated: initialCalendar.window.truncated }
+        : undefined}
       students={students}
       adminId={adminId}
       qnaThreads={qnaThreads}

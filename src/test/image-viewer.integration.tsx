@@ -131,10 +131,7 @@ test("누르면 같은 글 이미지 중 그 위치로 열고, ←/→로 넘기
   assert.ok(dialog());
   assert.equal(caption(), "셋업 사진 · 3 / 3");
   assert.equal(viewerImage()?.getAttribute("src"), "/api/media/c");
-  const original = [...(dialog()?.querySelectorAll("a") ?? [])].find((element) => element.textContent === "원본 열기");
-  assert.equal(original?.getAttribute("href"), "/api/media/c");
-  assert.equal(original?.getAttribute("target"), "_blank");
-  assert.equal(original?.getAttribute("rel"), "noreferrer");
+  assert.equal(dialog()?.querySelectorAll("a").length, 0, "머리줄에는 닫기만 둔다(원본 열기 없음)");
   assert.equal(browser.document.activeElement?.getAttribute("aria-label"), "닫기");
 
   await key(browser.document.activeElement, "ArrowRight");

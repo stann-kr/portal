@@ -116,3 +116,66 @@ export function selectUnifiedItemsWithinQuery(
     .sort((left, right) => right.date.getTime() - left.date.getTime())
     .slice(0, query.limit);
 }
+
+// ── 관리자 일정 "전체 학생" ─────────────────────────
+// 여러 학생을 한 번에 보므로 한 학생 보기(±365일·300건)처럼 넓게 읽지 않고, 보이는 달 앞뒤만 읽는다.
+// 달력이 이 범위 밖으로 넘어가면 그 달 기준 범위를 더 읽어 합친다.
+
+/** 한 번에 읽는 기간 상한: 앞 달 1일 ~ 두 달 뒤 말일(넉 달, 최대 123일). */
+export const ALL_STUDENTS_ITEMS_MAX_RANGE_DAYS = 124;
+/** 한 번에 돌려주는 항목 상한. 넉 달 동안 학생 여럿의 레슨·노트·과제가 들어갈 만큼. */
+export const ALL_STUDENTS_ITEMS_LIMIT = 1_000;
+/** 학생 묶음(최대 90명) 하나에서 소스별로 읽는 행 상한. */
+export const ALL_STUDENTS_ITEMS_PER_SOURCE_LIMIT = 500;
+
+const KST_OFFSET_MS = 9 * 60 * 60 * 1_000;
+
+export type UnifiedItemsWindow = { start: Date; end: Date };
+
+/**
+ * 기준 날짜(KST)가 속한 달의 앞 달 1일 00:00 ~ 두 달 뒤 말일 23:59:59.999(KST)를 돌려준다.
+ * 월 달력은 앞뒤 달 날짜를 함께 그리므로 앞 달을 넣고, 다음 달로 넘겨도 다시 읽지 않게 두 달 뒤까지 둔다.
+ */
+export function getAllStudentsItemsWindow(reference: Date): UnifiedItemsWindow {
+  if (!Number.isFinite(reference.getTime())) {
+    throw new TypeError("일정 조회 기준 시각이 올바르지 않습니다.");
+  }
+  const kst = new Date(reference.getTime() + KST_OFFSET_MS);
+  const year = kst.getUTCFullYear();
+  const month = kst.getUTCMonth();
+  return {
+    start: new Date(Date.UTC(year, month - 1, 1) - KST_OFFSET_MS),
+    end: new Date(Date.UTC(year, month + 3, 1) - KST_OFFSET_MS - 1),
+  };
+}
+
+/** 이미 읽은 범위들이 [start, end]를 덮는지. */
+export function isWindowCovered(windows: readonly UnifiedItemsWindow[], start: Date, end: Date): boolean {
+  return windows.some((window) => window.start.getTime() <= start.getTime() && window.end.getTime() >= end.getTime());
+}
+
+/** "전체 학생" 조회 범위: ISO start·end(함께, 124일 이하) 또는 기준 시각의 기본 범위. 모든 내부 항목 유형을 읽는다. */
+export function resolveAllStudentsItemsQuery(
+  input: { start?: string; end?: string } | undefined,
+  referenceTime: Date = new Date(),
+): ResolvedUnifiedItemsQuery {
+  if (Boolean(input?.start) !== Boolean(input?.end)) {
+    throw new TypeError("일정 조회의 시작과 끝은 함께 지정해야 합니다.");
+  }
+  const fallback = getAllStudentsItemsWindow(referenceTime);
+  const start = input?.start ? parseBoundary(input.start, false) : fallback.start;
+  const end = input?.end ? parseBoundary(input.end, true) : fallback.end;
+  if (start.getTime() > end.getTime()) {
+    throw new RangeError("일정 조회 시작은 끝보다 늦을 수 없습니다.");
+  }
+  if (end.getTime() - start.getTime() > ALL_STUDENTS_ITEMS_MAX_RANGE_DAYS * DAY_MS) {
+    throw new RangeError(`전체 학생 일정 조회 기간은 ${ALL_STUDENTS_ITEMS_MAX_RANGE_DAYS}일 이하여야 합니다.`);
+  }
+  return {
+    start,
+    end,
+    types: [...UNIFIED_ITEM_TYPES],
+    limit: ALL_STUDENTS_ITEMS_LIMIT,
+    perSourceLimit: ALL_STUDENTS_ITEMS_PER_SOURCE_LIMIT,
+  };
+}

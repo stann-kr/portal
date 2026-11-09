@@ -24,13 +24,23 @@ import {
 import { cn } from "@/lib/utils";
 import { formatDayLong } from "./calendar-dates";
 
+export type QuickCreateStudentChoice = { id: string; label: string };
+
 export type CalendarQuickCreateOptions = {
-  /** 노트 composer 주소. 없으면 노트를 만들 수 없다. */
-  buildNoteHref?: (dateKey: string, title: string) => string;
+  /**
+   * 노트 composer 주소. 없으면 노트를 만들 수 없다.
+   * "전체 학생"(studentChoices)이면 창에서 고른 학생 id를 세 번째 값으로 받는다.
+   */
+  buildNoteHref?: (dateKey: string, title: string, studentId: string) => string;
   canCreateEvent: boolean;
   canCreateLesson: boolean;
   studentId: string;
   spaceLabel: string;
+  /**
+   * 관리자 일정 "전체 학생": 만들 학생을 먼저 고르게 한다(필수). 노트·레슨은 고른 학생 스페이스에 만든다.
+   * 학생 개인 일정(canCreateEvent)은 학생 본인 스페이스에서만 열리므로 함께 쓰지 않는다.
+   */
+  studentChoices?: readonly QuickCreateStudentChoice[];
 };
 
 /** 만들 수 있는 항목이 하나라도 있을 때만 빠른 만들기를 연다. */
@@ -81,6 +91,15 @@ export function CalendarQuickCreate({ selection, anchor, options, onCreated, onC
   const [error, setError] = useState<string | null>(null);
   const [position, setPosition] = useState<{ left: number; top: number } | null>(null);
   const [kindChosen, setKindChosen] = useState(false);
+  const studentChoices = options.studentChoices;
+  const [chosenStudentId, setChosenStudentId] = useState("");
+  const studentSelectRef = useRef<HTMLSelectElement>(null);
+  const studentSelectId = useId();
+  const chosenStudent = studentChoices?.find((student) => student.id === chosenStudentId) ?? null;
+  // 학생을 고르는 창이면 고른 학생, 아니면 지금 학생 스페이스가 대상이다.
+  const target = studentChoices
+    ? chosenStudent ? { id: chosenStudent.id, label: chosenStudent.label } : null
+    : { id: options.studentId, label: options.spaceLabel };
 
   // 창이 열린 채 다른 칸을 고르면 시각을 새 선택으로 옮기고, 입력한 제목과 직접 고른 유형은 그대로 둔다.
   const selectionKey = `${selection.startStr}|${selection.endStr}|${selection.allDay}`;
@@ -121,7 +140,7 @@ export function CalendarQuickCreate({ selection, anchor, options, onCreated, onC
   }, [anchor, kind]);
 
   useLayoutEffect(() => {
-    (titleRef.current ?? panelRef.current)?.focus({ preventScroll: true });
+    (studentSelectRef.current ?? titleRef.current ?? panelRef.current)?.focus({ preventScroll: true });
   }, []);
 
   // 바깥을 누르면 닫되, 입력한 제목이 있으면 실수로 잃지 않게 창을 유지한다.
@@ -142,9 +161,14 @@ export function CalendarQuickCreate({ selection, anchor, options, onCreated, onC
     if (pending) return;
     setError(null);
     const trimmed = title.trim();
+    if (!target) {
+      setError("학생을 골라 주세요.");
+      studentSelectRef.current?.focus();
+      return;
+    }
     if (kind === "note") {
       if (!options.buildNoteHref) return;
-      router.push(options.buildNoteHref(defaults.dateKey, trimmed));
+      router.push(options.buildNoteHref(defaults.dateKey, trimmed, target.id));
       onClose();
       return;
     }
@@ -176,18 +200,18 @@ export function CalendarQuickCreate({ selection, anchor, options, onCreated, onC
           ...result.event,
           startTime: new Date(result.event.startTime),
           endTime: result.event.endTime ? new Date(result.event.endTime) : null,
-        }, { id: options.studentId, email: options.spaceLabel, displayName: options.spaceLabel }));
+        }, { id: target.id, email: target.label, displayName: target.label }));
       } else {
         const formData = new FormData();
         formData.set("scheduledAt", start);
-        const result = await createLesson(options.studentId, {}, formData);
+        const result = await createLesson(target.id, {}, formData);
         if (!result.lesson) {
           setError(result.error ?? "레슨을 예약하지 못했습니다.");
           return;
         }
         onCreated(createLessonUnifiedItem(
           { id: result.lesson.id, scheduledAt: new Date(result.lesson.scheduledAt) },
-          { id: options.studentId, email: options.spaceLabel, displayName: options.spaceLabel },
+          { id: target.id, email: target.label, displayName: target.label },
         ));
       }
       onClose();
@@ -201,7 +225,7 @@ export function CalendarQuickCreate({ selection, anchor, options, onCreated, onC
   const Meta = KIND_META[kind];
   const showTitle = kind !== "lesson";
   const maxTitle = kind === "note" ? PRIVATE_NOTE_MAX_TITLE_LENGTH : CALENDAR_EVENT_TITLE_MAX_LENGTH;
-  const caption = [formatKstDateLabel(defaults.dateKey), defaults.spanLabel, options.canCreateLesson ? options.spaceLabel : null]
+  const caption = [formatKstDateLabel(defaults.dateKey), defaults.spanLabel, options.canCreateLesson && !studentChoices ? options.spaceLabel : null]
     .filter(Boolean)
     .join(" · ");
   const timeInput = "h-11 w-full rounded-touch border border-input bg-background px-3 font-mono text-base text-foreground focus-visible:outline-2 focus-visible:-outline-offset-1 focus-visible:outline-ring md:h-[30px] md:w-[150px] md:rounded-md md:px-2 md:text-xs";
@@ -249,6 +273,30 @@ export function CalendarQuickCreate({ selection, anchor, options, onCreated, onC
               <X className="size-[18px]" strokeWidth={1.6} aria-hidden="true" />
             </button>
           </div>
+
+          {studentChoices ? (
+            <label htmlFor={studentSelectId} className="flex flex-col gap-1.5 text-ui text-secondary-foreground md:flex-row md:items-center md:justify-between md:text-xs md:text-muted-foreground">
+              학생
+              <select
+                ref={studentSelectRef}
+                id={studentSelectId}
+                value={chosenStudentId}
+                onChange={(event) => {
+                  setChosenStudentId(event.target.value);
+                  setError(null);
+                }}
+                required
+                aria-required="true"
+                aria-invalid={error !== null && !target ? true : undefined}
+                className="h-11 w-full rounded-touch border border-input bg-background px-3 text-base text-foreground focus-visible:outline-2 focus-visible:-outline-offset-1 focus-visible:outline-ring md:h-[30px] md:w-[150px] md:rounded-md md:px-2 md:text-xs"
+              >
+                <option value="">학생 고르기</option>
+                {studentChoices.map((student) => (
+                  <option key={student.id} value={student.id}>{student.label}</option>
+                ))}
+              </select>
+            </label>
+          ) : null}
 
           {kinds.length > 1 ? (
             <div

@@ -27,9 +27,19 @@ export function searchPrivateNotes<T extends PrivateNoteListItem>(notes: T[], qu
  * database toolbar 안의 서버 검색. 제출(Enter)하면 `?q=`로 전체 기간의 제목·본문을 다시 찾는다.
  * 넓은 화면은 260px·32px, 좁은 화면은 전체 폭 44px 입력(Notes·MobileNotes 보드).
  */
-export function NoteSearch({ action, query }: { action: string; query: string }) {
+export function NoteSearch({ action, query, hiddenFields, clearHref = action }: {
+  action: string;
+  query: string;
+  /** 검색과 함께 지킬 다른 주소 값(전체 노트의 학생 필터 등). GET form은 action의 query를 버리므로 따로 싣는다. */
+  hiddenFields?: Readonly<Record<string, string>>;
+  /** "검색 초기화" 주소. 다른 필터를 지키려면 넘긴다. */
+  clearHref?: string;
+}) {
   return (
     <form key={query} action={action} method="get" role="search" aria-label="노트 검색" className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 max-md:w-full">
+      {hiddenFields
+        ? Object.entries(hiddenFields).map(([name, value]) => <input key={name} type="hidden" name={name} value={value} />)
+        : null}
       <label htmlFor="note-search" className="sr-only">제목·본문 검색</label>
       <div className="relative flex min-w-0 flex-1 items-center md:w-[260px] md:flex-none">
         <Search className="pointer-events-none absolute left-3.5 size-4 text-muted-foreground md:left-2.5 md:size-3.5" strokeWidth={1.8} aria-hidden="true" />
@@ -45,7 +55,7 @@ export function NoteSearch({ action, query }: { action: string; query: string })
         />
       </div>
       {query ? (
-        <Link href={action} className="shrink-0 whitespace-nowrap rounded-sm text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+        <Link href={clearHref} className="shrink-0 whitespace-nowrap rounded-sm text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
           검색 초기화
         </Link>
       ) : null}

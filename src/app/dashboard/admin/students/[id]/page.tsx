@@ -54,7 +54,7 @@ import { getLessonNoteIdsForStudent } from "@/lib/actions/lesson-notes";
 type RawColumn = Awaited<ReturnType<typeof getOrSeedColumns>>[number];
 type RawQnaThread = Awaited<ReturnType<typeof getQnaThreadsByStudent>>[number];
 
-const TAB_FALLBACK_CLASS = "rounded-lg bg-muted animate-pulse motion-reduce:animate-none";
+const TAB_FALLBACK_CLASS = "skeleton-bar rounded-lg";
 
 // ─── 탭별 콘텐츠 ───────────────────────────────────
 

@@ -15,11 +15,11 @@ export default function PrivacyPage() {
   return (
     <div className="mx-auto min-h-[100dvh] w-full max-w-[680px] bg-background px-5 py-12 text-foreground">
       <h1 className="text-2xl font-semibold tracking-display">개인정보처리방침</h1>
-      <p className="mt-2 text-sm text-muted-foreground">Stann Lumo Portal · 시행일 {EFFECTIVE_DATE}</p>
+      <p className="mt-2 text-sm text-muted-foreground">Portal - Stann · 시행일 {EFFECTIVE_DATE}</p>
 
       <Section title="1. 포탈 소개">
         <p>
-          Stann Lumo Portal(이하 &ldquo;포탈&rdquo;)은 Stann Lumo(이하 &ldquo;Stann&rdquo;)가 직접 진행하는 개인 DJ 레슨을 위한 비공개 학습 관리
+          Portal - Stann(이하 &ldquo;포탈&rdquo;)은 Stann Lumo(이하 &ldquo;Stann&rdquo;)가 직접 진행하는 개인 DJ 레슨을 위한 비공개 학습 관리
           서비스입니다. Stann과 레슨 학생이 레슨 일정, 과제·피드백, 커리큘럼, 노트와 질문을 관리하며, 계정은 Stann이 초대한 학생에게만
           발급됩니다.
         </p>

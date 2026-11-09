@@ -50,6 +50,8 @@ interface DailyListViewProps extends UnifiedItemChangeHandlers {
   items: UnifiedItem[];
   returnTo: string;
   showSpaceContext: boolean;
+  /** 관리자 일정 "전체 학생": 줄마다 학생 이름 칩. */
+  showStudentChip?: boolean;
   /** 캘린더와 같은 빠른 만들기. 없으면 날짜별 추가를 숨긴다. */
   quickCreate?: CalendarQuickCreateOptions;
   /** 캘린더와 함께 쓰는 유형 필터. 없으면 모두 보인다. */
@@ -67,6 +69,7 @@ export function DailyListView({
   items,
   returnTo,
   showSpaceContext,
+  showStudentChip = false,
   quickCreate,
   visibleTypes = ALL_TYPES,
   preset = null,
@@ -224,7 +227,7 @@ export function DailyListView({
                   </div>
                   <ul className="flex flex-col">
                     {dayItems.map((item) => (
-                      <CalendarAgendaRow key={getUnifiedItemKey(item)} item={item} showSpaceContext={showSpaceContext} onOpen={openItem} />
+                      <CalendarAgendaRow key={getUnifiedItemKey(item)} item={item} showSpaceContext={showSpaceContext} showStudentChip={showStudentChip} onOpen={openItem} />
                     ))}
                   </ul>
                 </section>
@@ -286,7 +289,7 @@ export function DailyListView({
                 {dayItems.length > 0 ? (
                   <ul className="flex flex-col">
                     {dayItems.map((item) => (
-                      <CalendarAgendaRow key={getUnifiedItemKey(item)} item={item} showSpaceContext={showSpaceContext} showTimeRange={showSpaceContext} onOpen={openItem} />
+                      <CalendarAgendaRow key={getUnifiedItemKey(item)} item={item} showSpaceContext={showSpaceContext} showStudentChip={showStudentChip} showTimeRange={showSpaceContext} onOpen={openItem} />
                     ))}
                   </ul>
                 ) : (

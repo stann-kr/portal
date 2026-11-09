@@ -9,6 +9,7 @@ import { LocalDraftManager, type AccountDialogHandle } from "@/components/auth/L
 import { PasswordChangeControl } from "@/components/auth/PasswordChangeControl";
 import { useLogoutSubmit } from "@/components/auth/useLogoutSubmit";
 import { NotificationSettingsControl } from "@/components/push/NotificationSettingsControl";
+import { ThemeModeMenuGroup } from "@/components/theme/ThemeModeMenuGroup";
 import { ButtonSpinner } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -19,7 +20,7 @@ const ITEM_CLASS =
   "flex h-11 w-full cursor-default select-none items-center gap-2.5 rounded-md px-2.5 text-ui text-foreground outline-none data-[highlighted]:bg-muted md:h-9";
 
 /**
- * 사이드바 아래 계정 줄의 … 메뉴(AccountDialogs·NotificationSettings 보드): 이 기기의 초안, 이전 초안 보관함, 알림 설정, 비밀번호 변경, (학생) 계정 삭제, 로그아웃.
+ * 사이드바 아래 계정 줄의 … 메뉴(AccountDialogs·NotificationSettings 보드): 맨 위 화면 모드(시스템·라이트·다크), 이 기기의 초안, 이전 초안 보관함, 알림 설정, 비밀번호 변경, (학생) 계정 삭제, 로그아웃.
  * 메뉴의 focus scope가 끝난 뒤 고른 대화상자를 연다. 대화상자는 메뉴 밖에 두어 메뉴가 닫혀도 남는다.
  */
 export function AccountMenu({
@@ -96,6 +97,8 @@ export function AccountMenu({
             style={{ zIndex: "var(--z-dropdown)" }}
             className="portal-menu w-56 rounded-lg border border-border bg-background p-1 shadow-floating"
           >
+            <ThemeModeMenuGroup size={size} />
+            <DropdownMenu.Separator className="mx-0 my-1 h-px bg-muted" />
             <DropdownMenu.Item className={ITEM_CLASS} onSelect={() => choose("drafts")}>
               <FileText className="size-4 text-secondary-foreground" strokeWidth={1.6} aria-hidden="true" />
               이 기기의 초안

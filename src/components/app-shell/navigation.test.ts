@@ -26,6 +26,7 @@ test("커리큘럼이 숨겨져 있으면 학생 메뉴에 없고 예전 커리�
 test("관리자 사이드바는 학생별 화면을 학생 메뉴로, 분류 관리를 운영 도구로 표시한다", () => {
   assert.equal(resolveActiveNavItem("admin", at("/dashboard/admin?section=schedule")), "schedule");
   assert.equal(resolveActiveNavItem("admin", at("/dashboard/admin/students/s1?tab=notes")), "students");
+  assert.equal(resolveActiveNavItem("admin", at("/dashboard/admin/notes?student=s1")), "schedule", "전체 노트는 일정에서 연다");
   assert.equal(resolveActiveNavItem("admin", at("/dashboard/admin/categories")), "operations");
 });
 

@@ -29,13 +29,13 @@ export function buildLessonCalendarIcs(
       startOutputType: "utc",
       duration: { hours: 1 },
       title: `DJ Lesson — ${student.displayName ?? student.email}`,
-      description: "Stann Lumo DJ Lesson",
+      description: "Portal - Stann DJ 레슨",
       organizer: { name: "Stann Lumo", email: "admin@stannlumo.com" },
       status: "CONFIRMED",
       busyStatus: "BUSY",
     };
   });
-  return createEvents(events, { productId: "stannlumo/portal", calName: "Stann Lumo DJ 레슨" });
+  return createEvents(events, { productId: "stannlumo/portal", calName: "Portal - Stann DJ 레슨" });
 }
 
 export async function createCalendarFeedResponse(
