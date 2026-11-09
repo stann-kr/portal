@@ -1,5 +1,5 @@
 import { RouteSkeleton } from "@/components/ui/route-skeletons";
 
 export default function Loading() {
-  return <RouteSkeleton kind="guide-index" />;
+  return <RouteSkeleton kind="guide-page" />;
 }

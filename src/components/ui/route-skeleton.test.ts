@@ -55,6 +55,8 @@ test("내용을 그리는 화면의 loading.tsx 스켈레톤 모양은 첫 진�
     const loading = nearestLoading(page);
     assert.ok(loading, relative(root, page));
     const source = readFileSync(loading, "utf8");
+    // query까지 보고 고르는 loading(SectionRouteSkeleton)은 셸 스켈레톤과 같은 resolver를 그대로 쓴다.
+    if (source.includes("<SectionRouteSkeleton")) continue;
     const declared = /kind="([a-z-]+)"/u.exec(source)?.[1] ?? (source.includes("RouteLoadingState") ? "generic" : null);
     // 셸 밖 화면((auth)·privacy)도 같은 대응을 쓴다.
     assert.equal(resolveRouteSkeletonKind(routePathOf(page)), declared as RouteSkeletonKind, relative(root, page));
@@ -64,7 +66,7 @@ test("내용을 그리는 화면의 loading.tsx 스켈레톤 모양은 첫 진�
 test("스켈레톤은 status·busy로 한 번 알리고 막대는 화면 읽기에서 숨긴다", () => {
   const kinds: RouteSkeletonKind[] = [
     "generic", "work-queue", "today", "student-detail", "record-list", "record-list-narrow", "history", "thread-list",
-    "document", "editor", "form", "form-narrow", "form-wide", "board", "assignment", "guide-index", "guide-page", "auth", "privacy",
+    "document", "editor", "form", "form-narrow", "form-wide", "board", "assignment", "calendar", "guide-index", "guide-page", "auth", "privacy",
   ];
   for (const kind of kinds) {
     const markup = renderToStaticMarkup(React.createElement(RouteSkeleton, { kind }));
@@ -106,4 +108,18 @@ test("주소 대응 대표 사례", () => {
   assert.equal(resolveRouteSkeletonKind("/dashboard/student/assignments"), "today");
   assert.equal(resolveRouteSkeletonKind("/dashboard/qna/"), "thread-list");
   assert.equal(resolveRouteSkeletonKind("/dashboard/calendar"), "generic");
+});
+
+test("포탈 첫 화면은 ?section=·?view=까지 보고 모양을 고른다(다른 화면 스켈레톤이 먼저 보이지 않게)", () => {
+  assert.equal(resolveRouteSkeletonKind("/dashboard/admin"), "work-queue");
+  assert.equal(resolveRouteSkeletonKind("/dashboard/admin", "section=work"), "work-queue");
+  assert.equal(resolveRouteSkeletonKind("/dashboard/admin", "section=schedule"), "calendar");
+  assert.equal(resolveRouteSkeletonKind("/dashboard/admin", "section=students"), "record-list-narrow");
+  assert.equal(resolveRouteSkeletonKind("/dashboard/student", "section=today"), "today");
+  assert.equal(resolveRouteSkeletonKind("/dashboard/student", "section=workspace"), "calendar");
+  assert.equal(resolveRouteSkeletonKind("/dashboard/student", "section=workspace&view=assignments"), "record-list-narrow");
+  assert.equal(resolveRouteSkeletonKind("/dashboard/guide"), "guide-page", "가이드 첫 화면은 첫 페이지를 바로 그린다");
+  for (const path of ["src/app/dashboard/admin/loading.tsx", "src/app/dashboard/student/loading.tsx"]) {
+    assert.match(readFileSync(join(root, path), "utf8"), /<SectionRouteSkeleton \/>/u, path);
+  }
 });

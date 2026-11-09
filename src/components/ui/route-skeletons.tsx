@@ -25,6 +25,7 @@ const COLUMN_WIDTH = {
   1040: "max-w-[1040px]",
   1080: "max-w-[1080px]",
   1120: "max-w-[1120px]",
+  full: "max-w-none",
 } as const;
 
 const ROW_WIDTHS = ["w-[62%]", "w-[48%]", "w-[70%]", "w-[55%]", "w-[40%]", "w-[66%]", "w-[52%]", "w-[58%]"];
@@ -46,6 +47,7 @@ const ROUTE_SKELETON_LABELS: Record<RouteSkeletonKind, string> = {
   "form-wide": "설정을 불러오는 중",
   board: "디깅 보드를 불러오는 중",
   assignment: "과제를 불러오는 중",
+  calendar: "일정을 불러오는 중",
   "guide-index": "가이드 목록을 불러오는 중",
   "guide-page": "가이드를 불러오는 중",
   auth: "불러오는 중",
@@ -301,6 +303,41 @@ function BoardSkeleton({ label }: { label: string }) {
   );
 }
 
+/**
+ * 일정(관리자 일정·학생 캘린더): 제목과 보기 전환, 기간 줄, 넓은 화면은 화면 아래까지 채우는 7칸 달력 판,
+ * 좁은 화면은 날짜 줄과 일정 목록(MobileCalendar).
+ */
+function CalendarSkeleton({ label }: { label: string }) {
+  return (
+    <Frame label={label} top="compact" width="full" gap="gap-5 md:gap-6">
+      <div className="hidden items-center gap-3 md:flex">
+        <SkeletonBar className="h-8 w-20" />
+        <SkeletonBlock className="h-9 w-48 rounded-md" />
+        <SkeletonBlock className="ml-auto h-9 w-28 rounded-md" />
+      </div>
+      <div className="flex items-center gap-3">
+        <SkeletonBar className="h-6 w-40" />
+        <SkeletonBlock className="h-8 w-16 rounded-md" />
+      </div>
+      <div className="hidden h-[calc(100dvh-280px)] min-h-[480px] grid-cols-7 overflow-hidden rounded-lg border border-border md:grid">
+        {Array.from({ length: 7 }, (_, index) => (
+          <div key={index} className="flex flex-col gap-2 border-r border-border p-2 last:border-r-0">
+            <SkeletonBar className="h-3 w-10" />
+          </div>
+        ))}
+      </div>
+      <div className="flex flex-col gap-4 md:hidden">
+        <div className="grid grid-cols-7 gap-2">
+          {Array.from({ length: 7 }, (_, index) => (
+            <SkeletonBlock key={index} className="h-12 rounded-md" />
+          ))}
+        </div>
+        <ListRows count={5} />
+      </div>
+    </Frame>
+  );
+}
+
 /** 과제 상세: 돌아가기, 제목, 정보 줄, 파형 플레이어, 피드백. */
 function AssignmentSkeleton({ label }: { label: string }) {
   return (
@@ -411,6 +448,8 @@ export function RouteSkeleton({ kind, label }: { kind: RouteSkeletonKind; label?
       return <BoardSkeleton label={text} />;
     case "assignment":
       return <AssignmentSkeleton label={text} />;
+    case "calendar":
+      return <CalendarSkeleton label={text} />;
     case "guide-index":
       return <GuideIndexSkeleton label={text} />;
     case "guide-page":

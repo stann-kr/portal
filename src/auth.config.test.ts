@@ -101,6 +101,7 @@ test("/dashboard 시작 주소는 화면을 그리기 전에 역할별 첫 화�
   assert.equal(roleHomeRedirectPath({ isLoggedIn: true, role: "admin", pathname: "/dashboard" }), "/dashboard/admin");
   assert.equal(roleHomeRedirectPath({ isLoggedIn: true, role: "student", pathname: "/dashboard/" }), "/dashboard/student");
   assert.equal(roleHomeRedirectPath({ isLoggedIn: true, role: undefined, pathname: "/dashboard" }), "/dashboard/student");
+  assert.equal(roleHomeRedirectPath({ isLoggedIn: true, role: "admin", pathname: "/" }), "/dashboard/admin");
   assert.equal(roleHomeRedirectPath({ isLoggedIn: false, role: "admin", pathname: "/dashboard" }), null);
   assert.equal(roleHomeRedirectPath({ isLoggedIn: true, role: "admin", pathname: "/dashboard/admin" }), null);
 

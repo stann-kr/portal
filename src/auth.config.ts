@@ -61,7 +61,7 @@ export function shouldRedirectToPasswordChange({
 }
 
 /**
- * 홈 화면 앱의 시작 주소·알림 기본 주소(`/dashboard`)를 화면을 그리기 전에 역할별 첫 화면으로 보낸다.
+ * 홈 화면 앱의 시작 주소·알림 기본 주소(`/dashboard`)와 루트(`/`)를 화면을 그리기 전에 역할별 첫 화면으로 보낸다.
  * 서버 page의 redirect는 셸을 먼저 보낸 뒤라 빈 본문 화면과 두 번째 문서 요청이 생긴다.
  * token의 role이 오래돼도 도착한 화면의 server gate(관리자 layout)가 다시 판정한다. page.tsx의 redirect는 남겨 둔다.
  */
@@ -74,7 +74,7 @@ export function roleHomeRedirectPath({
   role: unknown;
   pathname: string;
 }): string | null {
-  if (!isLoggedIn || (pathname !== "/dashboard" && pathname !== "/dashboard/")) return null;
+  if (!isLoggedIn || (pathname !== "/" && pathname !== "/dashboard" && pathname !== "/dashboard/")) return null;
   return role === "admin" ? "/dashboard/admin" : "/dashboard/student";
 }
 

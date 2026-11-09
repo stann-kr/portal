@@ -238,8 +238,17 @@ function renderSlotLabel(arg: SlotLabelContentArg) {
 
 const DAY_HEADER_FORMAT = { weekday: "short" } as const;
 const CALENDAR_PLUGINS = [dayGridPlugin, timeGridPlugin, interactionPlugin];
-/** 주 보기는 12시간(48px × 12)이 한 화면에 들어오는 높이로 두고 안에서 넘긴다. */
+/** 주 보기는 12시간(48px × 12)이 한 화면에 들어오는 높이로 두고 안에서 넘긴다(창 높이를 재기 전 기본값). */
 const WEEK_CONTENT_HEIGHT = 680;
+/** 주 보기 전체 높이(머리줄 포함)의 하한. 창이 낮아도 이보다 줄이지 않는다. */
+const WEEK_MIN_HEIGHT = 560;
+/** 달력 아래 안내 한 줄(약 20px)·간격(20px)·화면 아래 여백(80px). */
+const WEEK_BOTTOM_RESERVE = 120;
+
+/** 주 보기가 창 아래 끝까지 채우는 전체 높이(px). 달력 위치는 문서 기준이라 스크롤과 무관하다. */
+export function weekFillHeight(viewportHeight: number, calendarTop: number): number {
+  return Math.max(WEEK_MIN_HEIGHT, Math.floor(viewportHeight - calendarTop - WEEK_BOTTOM_RESERVE));
+}
 
 export function UnifiedCalendar({
   isActive = true,
@@ -522,6 +531,21 @@ export function UnifiedCalendar({
   }, []);
 
   const api = () => calendarRef.current?.getApi();
+  // 주 보기는 창 높이에 맞춰 아래 끝까지 채운다(고정 680px이면 큰 화면에서 아래가 비었다).
+  const gridRef = useRef<HTMLDivElement>(null);
+  const [weekHeight, setWeekHeight] = useState<number | null>(null);
+  useEffect(() => {
+    if (view !== "timeGridWeek" || !isActive) return;
+    const element = gridRef.current;
+    if (!element) return;
+    const measure = () => {
+      const top = element.getBoundingClientRect().top + window.scrollY;
+      setWeekHeight(weekFillHeight(window.innerHeight, top));
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [isActive, view]);
   const canQuickCreate = canUseQuickCreate(quickCreate);
   const isWeek = (period.type ?? view) === "timeGridWeek";
   const unit = isWeek ? "주" : "달";
@@ -628,7 +652,7 @@ export function UnifiedCalendar({
       ) : null}
 
       {/* 넓은 화면: FullCalendar 월·주 */}
-      <div className={cn("fc-custom fc-notion hidden md:block", canQuickCreate && "calendar-can-create")} aria-label="통합 일정 달력">
+      <div ref={gridRef} className={cn("fc-custom fc-notion hidden md:block", canQuickCreate && "calendar-can-create")} aria-label="통합 일정 달력">
         <FullCalendar
           ref={calendarRef}
           plugins={CALENDAR_PLUGINS}
@@ -653,8 +677,8 @@ export function UnifiedCalendar({
           unselectAuto={false}
           select={handleSelect}
           dateClick={handleDateClick}
-          height={view === "timeGridWeek" ? undefined : "auto"}
-          contentHeight={view === "timeGridWeek" ? WEEK_CONTENT_HEIGHT : undefined}
+          height={view === "timeGridWeek" ? (weekHeight ?? undefined) : "auto"}
+          contentHeight={view === "timeGridWeek" && weekHeight === null ? WEEK_CONTENT_HEIGHT : undefined}
           eventDisplay="block"
           dayMaxEvents={3}
           moreLinkContent={renderMoreLink}

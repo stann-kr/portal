@@ -3,7 +3,7 @@
 import { PortalLogoMark } from "@/components/brand/PortalLogoMark";
 import { PortalWordmark } from "@/components/brand/PortalWordmark";
 import React from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { SkeletonBar, SkeletonCircle } from "@/components/ui/skeleton";
 import { RouteSkeleton } from "@/components/ui/route-skeletons";
 import { resolveRouteSkeletonKind } from "@/components/ui/route-skeleton-kind";
@@ -14,7 +14,7 @@ import { resolveRouteSkeletonKind } from "@/components/ui/route-skeleton-kind";
  * 화면 읽기 프로그램에는 본문 스켈레톤의 "불러오는 중" 한 번만 알린다.
  */
 export function AppShellSkeleton() {
-  const kind = resolveRouteSkeletonKind(usePathname() ?? "");
+  const kind = resolveRouteSkeletonKind(usePathname() ?? "", useSearchParams()?.toString() ?? "");
   return (
     <>
       <div
