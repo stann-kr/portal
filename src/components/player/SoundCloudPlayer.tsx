@@ -5,20 +5,21 @@ import Script from "next/script";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { OriginalLink } from "./OriginalLink";
-import type { MediaSeekRequest, PlaybackPositionReader } from "./VideoPlayer";
+import type { MediaSeekRequest, PlaybackController, PlaybackPositionReader } from "./VideoPlayer";
 
 type SoundCloudWidget = {
   bind(event: string, handler: () => void): void;
   unbind(event: string): void;
   seekTo(milliseconds: number): void;
   getPosition(callback: (milliseconds: number) => void): void;
+  getDuration(callback: (milliseconds: number) => void): void;
   play(): void;
   pause(): void;
 };
 
 type SoundCloudApi = {
   Widget: ((iframe: HTMLIFrameElement) => SoundCloudWidget) & {
-    Events: { READY: string; ERROR: string };
+    Events: { READY: string; ERROR: string; PLAY?: string; PAUSE?: string; FINISH?: string };
   };
 };
 
@@ -30,6 +31,9 @@ type SoundCloudPlayerProps = {
   title?: string;
   /** playlist는 세트의 곡 목록이 보이도록 위젯을 높게 연다. */
   variant?: "track" | "playlist";
+  /** 재생·멈춤이 바뀔 때(이어 듣기 플레이어용). */
+  onPlayingChange?: (playing: boolean) => void;
+  onControllerChange?: (controller: PlaybackController | null) => void;
 };
 
 function readSoundCloudApi(): SoundCloudApi | undefined {
@@ -39,7 +43,9 @@ function readSoundCloudApi(): SoundCloudApi | undefined {
 // widget이 응답하지 않으면 피드백 입력을 막지 않도록 짧게 포기한다.
 const POSITION_READ_TIMEOUT_MS = 1_500;
 
-function SoundCloudEmbed({ url, seekRequest, onPositionReaderChange, title = "SoundCloud 플레이어", variant = "track", onRetry }: SoundCloudPlayerProps & { onRetry: () => void }) {
+function SoundCloudEmbed({ url, seekRequest, onPositionReaderChange, title = "SoundCloud 플레이어", variant = "track", onRetry, onPlayingChange, onControllerChange }: SoundCloudPlayerProps & { onRetry: () => void }) {
+  const onPlayingChangeRef = useRef(onPlayingChange);
+  useEffect(() => { onPlayingChangeRef.current = onPlayingChange; }, [onPlayingChange]);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const widgetRef = useRef<SoundCloudWidget | null>(null);
   const readyRef = useRef(false);
@@ -74,12 +80,21 @@ function SoundCloudEmbed({ url, seekRequest, onPositionReaderChange, title = "So
     widget.bind(api.Widget.Events.ERROR, () => {
       if (active) setError(true);
     });
+    const playbackEvents = [
+      [api.Widget.Events.PLAY, true],
+      [api.Widget.Events.PAUSE, false],
+      [api.Widget.Events.FINISH, false],
+    ] as const;
+    for (const [event, playing] of playbackEvents) {
+      if (event) widget.bind(event, () => { if (active) onPlayingChangeRef.current?.(playing); });
+    }
     return () => {
       active = false;
       readyRef.current = false;
       widgetRef.current = null;
       widget.unbind(api.Widget.Events.READY);
       widget.unbind(api.Widget.Events.ERROR);
+      for (const [event] of playbackEvents) if (event) widget.unbind(event);
       widget.pause();
     };
   }, [applySeek, sdkReady]);
@@ -107,6 +122,31 @@ function SoundCloudEmbed({ url, seekRequest, onPositionReaderChange, title = "So
     }));
     return () => onPositionReaderChange(null);
   }, [onPositionReaderChange]);
+
+  useEffect(() => {
+    if (!onControllerChange) return;
+    onControllerChange({
+      play: () => widgetRef.current?.play(),
+      pause: () => widgetRef.current?.pause(),
+      seek: (seconds) => {
+        pendingSeekRef.current = seconds;
+        applySeek();
+      },
+      readDuration: () => new Promise<number | null>((resolve) => {
+        const widget = widgetRef.current;
+        if (!widget || !readyRef.current) {
+          resolve(null);
+          return;
+        }
+        const timer = window.setTimeout(() => resolve(null), POSITION_READ_TIMEOUT_MS);
+        widget.getDuration((milliseconds) => {
+          window.clearTimeout(timer);
+          resolve(Number.isFinite(milliseconds) && milliseconds > 0 ? milliseconds / 1000 : null);
+        });
+      }),
+    });
+    return () => onControllerChange(null);
+  }, [applySeek, onControllerChange]);
 
   useEffect(() => {
     if (!seekRequest || !Number.isFinite(seekRequest.seconds) || seekRequest.seconds < 0) return;

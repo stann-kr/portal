@@ -2,6 +2,7 @@
 @import "../components/ui/overlay-motion.css";
 @import "../components/image-viewer/image-viewer.css";
 @import "../components/app-shell/navigation-progress.css";
+@import "../components/player/player.css";
 @import "../components/student-portal/unified-calendar.css";
 
 @theme {

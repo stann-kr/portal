@@ -24,9 +24,10 @@ import { CommentForm } from "@/components/community/CommentForm";
 import { MixsetPlayer } from "@/components/community/MixsetPlayer";
 import type { MediaSeekRequest, PlaybackPositionReader } from "@/components/player/VideoPlayer";
 import { classifyMixsetMedia, formatTimeMarker } from "@/lib/community-mixset-media";
+import type { WaveformMarkerInput } from "@/components/player/waveform";
 import { PostEditForm } from "@/components/community/PostEditForm";
 import { PostTrashActions } from "@/components/community/PostTrashActions";
-import { COMMUNITY_BOARD_LABELS, communityAuthorName } from "@/components/community/CommunityPostRow";
+import { COMMUNITY_BOARD_LABELS, communityAuthorName, communityPreview } from "@/components/community/CommunityPostRow";
 import { MobileMoreMenu, type MobileMoreMenuItem } from "@/components/ui/mobile-more-menu";
 import { initialOf } from "@/components/qna/qna-display";
 import { formatKstMonthDayTime } from "@/lib/kst-format";
@@ -153,6 +154,28 @@ export function PostDetailClient({
     return <MobileMoreMenu label="게시물 메뉴" items={items} />;
   }, [canDeletePost, canEditPost, canManagePost, historyHref, isBusy, isEditing, requestPostDelete, toggleEditing]);
 
+  // 이어 듣기 정보: 미니 플레이어의 제목·작성자·"게시물로 가기"(돌아오면 같은 목록 위치로).
+  const playerTrack = useMemo(() => ({
+    key: post.id,
+    title: post.title,
+    subtitle: author,
+    href: `/community/${post.id}?returnTo=${encodeURIComponent(returnTo)}`,
+    mediaObjectId: post.mediaObjectId ?? null,
+  }), [author, post.id, post.mediaObjectId, post.title, returnTo]);
+  // 파형 아래 시점 댓글(Stann은 먹색).
+  const waveformMarkers = useMemo<WaveformMarkerInput[]>(() => commentList.flatMap((c) => {
+    if (c.timeMarkerSeconds === null) return [];
+    const name = communityAuthorName(c);
+    return [{ id: c.id, seconds: c.timeMarkerSeconds, author: name, isStann: name === "Stann", text: communityPreview(c.contentHtml, 120) }];
+  }), [commentList]);
+  const openMarkerComment = useCallback((commentId: string) => {
+    const target = document.getElementById(`comment-${commentId}`);
+    if (!target) return;
+    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+    target.scrollIntoView?.({ block: "center", behavior: reduceMotion ? "auto" : "smooth" });
+    target.focus({ preventScroll: true });
+  }, []);
+
   const backLabel = returnTo.startsWith("/community") ? "커뮤니티 목록으로" : "이전 화면으로";
   const canComment = !post.deletedAt && Boolean(currentUserId);
 
@@ -260,6 +283,9 @@ export function PostDetailClient({
             title={post.title}
             seekRequest={seekRequest}
             onPositionReaderChange={handlePositionReaderChange}
+            track={playerTrack}
+            markers={waveformMarkers}
+            onMarkerOpen={openMarkerComment}
           />
           <p role="status" className="sr-only">
             {seekAnnouncement.text ? <span key={seekAnnouncement.nonce}>{seekAnnouncement.text}</span> : null}
@@ -305,7 +331,7 @@ export function PostDetailClient({
                 !post.deletedAt && (isAdmin || currentUserId === c.authorId);
 
               return (
-                <li key={c.id} className="flex flex-col gap-2 border-b border-muted py-3 md:py-3.5">
+                <li key={c.id} id={`comment-${c.id}`} tabIndex={-1} className="flex scroll-mt-4 flex-col gap-2 border-b border-muted py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:py-3.5">
                   <div className="flex gap-3">
                     <span aria-hidden="true" className="flex size-7 shrink-0 items-center justify-center rounded-full bg-selected text-xs font-semibold text-secondary-foreground">
                       {initialOf(cAuthor)}
