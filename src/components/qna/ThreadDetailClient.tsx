@@ -501,7 +501,7 @@ function ThreadDetailContent({
           */}
           <div
             className={cn(
-              "grid grid-cols-[auto_minmax(0,1fr)_auto] items-end gap-x-2 gap-y-1",
+              "relative grid grid-cols-[auto_minmax(0,1fr)_auto] items-end gap-x-2 gap-y-1",
               "md:flex md:flex-col md:items-stretch md:gap-0 md:rounded-lg md:border md:border-border md:bg-background md:transition-[border-color,box-shadow] md:duration-[var(--duration-fast)] md:focus-within:border-ring md:focus-within:ring-1 md:focus-within:ring-ring md:motion-reduce:transition-none",
             )}
           >
@@ -520,7 +520,7 @@ function ThreadDetailContent({
                   variant="bare"
                   toolbar="none"
                   toolsContainer={editorToolsElement}
-                  contentClassName="px-3 py-2.5 text-base leading-[22px] md:px-4 md:py-3.5 md:text-md md:leading-6"
+                  contentClassName={cn("px-3 py-2.5 text-base leading-[22px] md:px-4 md:py-3.5 md:text-md md:leading-6", hasReplyDraft && "max-md:pr-16")}
                   placeholder={isAdmin ? "답변을 입력하세요" : "추가 질문을 입력하세요"}
                   disabled={!loaded || isClosed || isReplyFormBusy}
                   ariaLabel={isAdmin ? "Q&A 답변 내용" : "Q&A 추가 질문 내용"}
@@ -547,14 +547,26 @@ function ThreadDetailContent({
                 />
               </div>
               <div className="contents md:flex md:shrink-0 md:items-center md:gap-3">
-                <div className="col-span-3 row-start-1 flex min-w-0 items-center justify-between gap-3 px-1 md:px-0">
+                {/*
+                  좁은 화면(B 묶음 ④): 줄을 풀어(contents) 따로 한 줄을 차지하지 않는다. 편집기 도구 자리는 내용이 있을 때만 1행,
+                  초안 상태는 쓴 내용이 있을 때만 입력란 안 오른쪽 끝에 작게 둔다.
+                */}
+                <div className="contents md:flex md:min-w-0 md:items-center md:justify-between md:gap-3">
                   {/* 편집기의 이미지 업로드 상태·마크다운 전환이 들어오는 자리 */}
                   <span
                     ref={setEditorToolsElement}
-                    className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground empty:hidden"
+                    className="col-span-3 row-start-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 px-1 text-xs text-muted-foreground empty:hidden md:px-0"
                   />
                   {loaded ? (
-                    <span role="status" aria-live="polite" className="ml-auto inline-flex shrink-0 items-center gap-3 text-xs text-muted-foreground">
+                    <span
+                      role="status"
+                      aria-live="polite"
+                      className={cn(
+                        "pointer-events-none absolute bottom-3 right-[3.75rem] inline-flex shrink-0 items-center gap-3 text-[11px] text-muted-foreground",
+                        "md:pointer-events-auto md:static md:ml-auto md:text-xs",
+                        !hasReplyDraft && "max-md:hidden",
+                      )}
+                    >
                       <CollabPresence awareness={draft.collab.status === "solo" ? null : draft.collab.provider?.awareness} />
                       <span title={draftView.message}>{draftView.shortMessage}</span>
                     </span>

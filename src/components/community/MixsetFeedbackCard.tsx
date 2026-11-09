@@ -2,8 +2,8 @@
  * @file src/components/community/MixsetFeedbackCard.tsx
  * @description 믹스셋 게시판의 한 줄 — 인라인 재생 버튼 포함.
  * 캔버스 Community 목록 줄(제목·미리보기·작성자·날짜) 앞에 재생 버튼을 둔다.
- * 업로드 오디오는 HTML5 audio 태그로 바로 재생하고, YouTube·SoundCloud 링크는 버튼을 누른 줄에만
- * 플레이어를 줄 아래에 연다(목록 전체에 iframe을 미리 만들지 않는다).
+ * 업로드 오디오는 하단 미니 플레이어(앱 공용 곡)로 재생해 시간·진행선이 보이고 다른 화면으로 가도 이어진다(B 묶음 ⑤).
+ * YouTube·SoundCloud 링크는 버튼을 누른 줄에만 플레이어를 줄 아래에 연다(목록 전체에 iframe을 미리 만들지 않는다).
  * 줄에서 재생을 시작하면 하단 미니 플레이어(앱 공용 곡)와 다른 줄의 재생을 멈추고, 미니 플레이어가 재생을 시작하면
  * 이 줄의 오디오·링크 플레이어가 멈춘다(player-store `claimLocalPlayback`). 링크 줄은 iframe controller를 손잡이로 맡기고
  * 실제 재생이 시작될 때(onPlayingChange(true)) 맡긴다.
@@ -14,9 +14,17 @@ import { useCallback, useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
 import { Music2, Pause, Play, X } from "lucide-react";
 import type { MediaSeekRequest, PlaybackController } from "@/components/player/VideoPlayer";
-import { claimLocalPlayback, releaseLocalPlayback, type PlaybackStopHandle } from "@/components/player/player-store";
+import {
+  claimLocalPlayback,
+  pauseTrack,
+  releaseLocalPlayback,
+  resumeTrack,
+  startTrack,
+  usePlayerState,
+  type PlaybackStopHandle,
+} from "@/components/player/player-store";
 import { classifyMixsetMedia } from "@/lib/community-mixset-media";
-import { communityPreview, communityRowMeta } from "./CommunityPostRow";
+import { communityAuthorName, communityPreview, communityRowMeta } from "./CommunityPostRow";
 import { MixsetPlayer } from "./MixsetPlayer";
 
 type FeedbackPost = {
@@ -38,9 +46,7 @@ interface MixsetFeedbackCardProps {
 }
 
 export function MixsetFeedbackCard({ post, returnTo = "/community" }: MixsetFeedbackCardProps) {
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [playError, setPlayError] = useState(false);
-  const audioRef = useRef<HTMLAudioElement>(null);
+  const player = usePlayerState();
   const [linkOpen, setLinkOpen] = useState(false);
   const [linkStart, setLinkStart] = useState<MediaSeekRequest>();
   const panelId = useId();
@@ -58,28 +64,32 @@ export function MixsetFeedbackCard({ post, returnTo = "/community" }: MixsetFeed
     else releaseLocalPlayback(linkHandle);
   }, [linkHandle]);
 
-  // 줄이 사라지면 맡긴 오디오 요소·링크 손잡이를 놓는다(언마운트된 요소를 멈추려 하지 않게).
-  useEffect(() => {
-    const element = audioRef.current;
-    return () => {
-      releaseLocalPlayback(element);
-      releaseLocalPlayback(linkHandle);
-    };
-  }, [linkHandle]);
+  // 줄이 사라지면 맡긴 링크 손잡이를 놓는다(언마운트된 플레이어를 멈추려 하지 않게).
+  useEffect(() => () => releaseLocalPlayback(linkHandle), [linkHandle]);
 
   const meta = communityRowMeta(post);
   const preview = communityPreview(post.contentHtml, 80);
 
-  // 재생 상태는 실제 media event로만 바꿔 실패한 play()가 재생 중으로 보이지 않게 한다.
+  // 업로드 오디오: 이 게시물이 지금 곡이면 멈춤·이어 재생, 아니면 미니 플레이어에서 처음부터 시작한다.
+  // 재생 표시는 공용 오디오의 실제 상태(player-store)를 따른다.
+  const isCurrent = media?.kind === "audio" && player.track?.key === post.id && player.track.url === media.url;
+  const isPlaying = isCurrent && player.playing;
   const handleAudioToggle = () => {
-    const audioEl = audioRef.current;
-    if (!audioEl) return;
-    if (!audioEl.paused) {
-      audioEl.pause();
+    if (media?.kind !== "audio") return;
+    if (isCurrent) {
+      if (player.playing) pauseTrack();
+      else resumeTrack();
       return;
     }
-    setPlayError(false);
-    void audioEl.play().catch(() => setPlayError(true));
+    startTrack({
+      key: post.id,
+      kind: "audio",
+      url: media.url,
+      title: post.title,
+      subtitle: communityAuthorName(post),
+      href: `/community/${post.id}?returnTo=${encodeURIComponent(returnTo)}`,
+      mediaObjectId: post.mediaObjectId ?? null,
+    });
   };
 
   // 열 때 처음부터 재생을 요청한다. 브라우저가 자동 재생을 막으면 플레이어 안에서 재생하면 된다.
@@ -109,7 +119,7 @@ export function MixsetFeedbackCard({ post, returnTo = "/community" }: MixsetFeed
           {linkOpen ? (
             <X className="size-4" strokeWidth={1.6} aria-hidden="true" />
           ) : (
-            <Play className="ml-0.5 size-4" strokeWidth={1.6} aria-hidden="true" />
+            <Play className="ml-0.5 size-3.5" fill="currentColor" strokeWidth={0} aria-hidden="true" />
           )}
         </button>
       ) : media ? (
@@ -122,24 +132,11 @@ export function MixsetFeedbackCard({ post, returnTo = "/community" }: MixsetFeed
             className={buttonClass}
           >
             {isPlaying ? (
-              <Pause className="size-4" strokeWidth={1.6} aria-hidden="true" />
+              <Pause className="size-3.5" fill="currentColor" strokeWidth={0} aria-hidden="true" />
             ) : (
-              <Play className="ml-0.5 size-4" strokeWidth={1.6} aria-hidden="true" />
+              <Play className="ml-0.5 size-3.5" fill="currentColor" strokeWidth={0} aria-hidden="true" />
             )}
           </button>
-          <audio
-            ref={audioRef}
-            src={media.url}
-            preload="none"
-            onPlay={(event) => {
-              claimLocalPlayback(event.currentTarget);
-              setIsPlaying(true);
-            }}
-            onPause={() => setIsPlaying(false)}
-            onEnded={() => setIsPlaying(false)}
-            onError={() => { setIsPlaying(false); setPlayError(true); }}
-            className="hidden"
-          />
         </>
       ) : (
         <span aria-hidden="true" className="flex size-11 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground md:size-9">
@@ -159,9 +156,6 @@ export function MixsetFeedbackCard({ post, returnTo = "/community" }: MixsetFeed
           {meta}
           {media ? null : " · 재생할 매체 없음"}
         </p>
-        {playError ? (
-          <p role="alert" className="text-xs text-destructive">오디오를 재생하지 못했습니다. 상세 화면에서 다시 시도해 주세요.</p>
-        ) : null}
       </div>
 
       {media?.kind === "link" && linkOpen ? (

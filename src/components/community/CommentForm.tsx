@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState, useId, useRef, useState } from "react";
+import { ArrowUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
@@ -174,13 +175,13 @@ export function CommentForm({
             inputMode="text"
             autoComplete="off"
             spellCheck={false}
-            placeholder="12:34"
+            placeholder="분:초"
             value={timeMarker}
             onChange={(event) => changeTimeMarker(event.target.value)}
             disabled={controlsDisabled}
             aria-invalid={timeError ? true : undefined}
             aria-describedby={timeDescribedBy}
-            className="w-[5.5rem] font-mono md:h-8"
+            className="w-[5.5rem] font-mono placeholder:text-faint md:h-8"
           />
           {readPlaybackPosition ? (
             <button
@@ -230,13 +231,16 @@ export function CommentForm({
           aria-describedby={showResult && state.error ? errorId : undefined}
           className="min-w-0 flex-1 md:h-10"
         />
+        {/* 좁은 화면은 Q&A 답변 입력줄과 같은 44px 화살표 버튼, 넓은 화면은 글자 버튼(B 묶음 ④). */}
         <Button
           type="submit"
           size="touch"
           disabled={!draft.loaded || !draft.canSubmit || pending || !operationId || !content.trim()}
-          className="h-11 shrink-0 md:h-10 md:rounded-md md:px-4 md:text-ui"
+          aria-label={pending ? "등록 중" : "댓글 등록"}
+          className="size-11 shrink-0 px-0 md:h-10 md:w-auto md:rounded-md md:px-4 md:text-ui"
         >
-          {pending ? "등록 중..." : "등록"}
+          <ArrowUp className="size-4 md:hidden" strokeWidth={1.8} aria-hidden="true" />
+          <span aria-hidden="true" className="hidden md:inline">{pending ? "등록 중..." : "등록"}</span>
         </Button>
       </div>
       {showResult && state.error && <p id={errorId} role="alert" className="text-ui text-destructive">{state.error}</p>}

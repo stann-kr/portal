@@ -41,13 +41,17 @@ export function CalendarAgendaRow({
         type="button"
         aria-label={describeUnifiedItemRow(item, when, showSpaceContext)}
         onClick={() => onOpen(item)}
-        className="flex h-12 w-full items-center gap-3 border-b border-muted text-left text-foreground transition-colors duration-[var(--duration-fast)] hover:bg-sidebar focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring motion-reduce:transition-none md:h-11 md:px-1"
+        className="flex min-h-12 w-full items-start gap-3 border-b py-2.5 md:h-11 md:min-h-0 md:items-center md:py-0 border-muted text-left text-foreground transition-colors duration-[var(--duration-fast)] hover:bg-sidebar focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring motion-reduce:transition-none md:h-11 md:px-1"
       >
-        <span className={cn("shrink-0 font-mono text-xs text-muted-foreground", showTimeRange ? "w-[88px]" : "w-10 md:w-12")}>{when}</span>
-        <UnifiedItemDot item={item} />
+        {/* 좁은 화면(B 묶음 ⑥): 제목 두 줄까지, 종류는 시각 아래로. 넓은 화면은 한 줄 그대로. */}
+        <span className={cn("flex shrink-0 flex-col gap-0.5", showTimeRange ? "w-[88px]" : "w-10 md:w-12")}>
+          <span className="font-mono text-xs leading-[22px] text-muted-foreground md:leading-normal">{when}</span>
+          <span className="truncate text-[11px] leading-4 text-muted-foreground md:hidden">{getUnifiedItemKindLabel(item)}</span>
+        </span>
+        <span className="mt-2 flex shrink-0 md:mt-0"><UnifiedItemDot item={item} /></span>
         {showStudentChip ? <UnifiedItemStudentChip label={item.space.label} /> : null}
-        <span className="min-w-0 flex-1 truncate text-md md:text-body">{item.title}</span>
-        <span className="shrink-0 text-xs text-muted-foreground">
+        <span className="line-clamp-2 min-w-0 flex-1 text-md leading-[22px] md:line-clamp-none md:truncate md:text-body md:leading-normal">{item.title}</span>
+        <span className="hidden shrink-0 text-xs text-muted-foreground md:inline">
           {getUnifiedItemKindLabel(item)}
           {external ? ` · ${item.source.label}` : null}
         </span>

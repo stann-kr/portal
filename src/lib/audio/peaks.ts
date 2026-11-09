@@ -40,6 +40,18 @@ export function parseAudioPeaks(raw: unknown): AudioPeaksParseResult {
   return { ok: true, value: { version: 1, duration, peaks: normalized } };
 }
 
+/** 파형 길이로 본 평균 비트레이트 허용 범위(kbps). 압축 오디오(8~320kbps)부터 무압축 다채널까지 넉넉히 둔다. */
+const MIN_PLAUSIBLE_KBPS = 4;
+const MAX_PLAUSIBLE_KBPS = 10_000;
+
+/** 파형 길이가 파일 크기와 맞는지(크기를 모르면 통과). 남이 엉뚱한 길이를 먼저 저장하지 못하게 한다. */
+export function isPlausiblePeaksDuration(duration: number, sizeBytes: number | null): boolean {
+  if (!Number.isFinite(duration) || duration <= 0) return false;
+  if (!sizeBytes || !Number.isFinite(sizeBytes) || sizeBytes <= 0) return true;
+  const kbps = (sizeBytes * 8) / duration / 1000;
+  return kbps >= MIN_PLAUSIBLE_KBPS && kbps <= MAX_PLAUSIBLE_KBPS;
+}
+
 /**
  * 구간별 최대 진폭을 누적한다. 디코딩한 PCM을 조각 단위로 넣으면(전체를 메모리에 두지 않음)
  * 끝난 뒤 `finish(duration)`이 정규화한 결과를 돌려준다. 전체 샘플 수를 미리 알아야 한다.
@@ -64,10 +76,90 @@ export function createPeaksAccumulator(totalFrames: number) {
       }
     },
     finish(duration: number): AudioPeaks {
-      let max = 0;
-      for (const value of buckets) if (value > max) max = value;
-      const scale = max > 0 ? 1 / max : 0;
-      return { version: 1, duration, peaks: Array.from(buckets, (value) => Math.round(Math.min(1, value * scale) * 1000) / 1000) };
+      return normalizedPeaks(buckets, duration);
+    },
+  };
+}
+
+function normalizedPeaks(buckets: Float32Array, duration: number): AudioPeaks {
+  let max = 0;
+  for (const value of buckets) if (value > max) max = value;
+  const scale = max > 0 ? 1 / max : 0;
+  return { version: 1, duration, peaks: Array.from(buckets, (value) => Math.round(Math.min(1, value * scale) * 1000) / 1000) };
+}
+
+export type TimedPeaksAccumulatorOptions = {
+  /** 처음 시간 칸 폭(초). 기본 0.01초. */
+  initialBucketSeconds?: number;
+  /** 시간 칸 최대 수. 넘으면 이웃 두 칸을 합쳐 폭을 두 배로 한다. 기본 262144(1MB). */
+  maxBuckets?: number;
+};
+
+/**
+ * 전체 길이를 미리 모를 때 쓰는 누적기. 조각마다 시작 시각을 주면 시간 칸에 최대 진폭을 모으고,
+ * `finish(duration)`이 AUDIO_PEAKS_COUNT 구간으로 줄여 정규화한다. 메모리는 maxBuckets개 float로 묶인다.
+ */
+export function createTimedPeaksAccumulator(options: TimedPeaksAccumulatorOptions = {}) {
+  const maxBuckets = Math.max(AUDIO_PEAKS_COUNT * 2, options.maxBuckets ?? 1 << 18);
+  let width = options.initialBucketSeconds ?? 0.01;
+  let buckets = new Float32Array(Math.min(maxBuckets, 4096));
+  let used = 0;
+
+  function ensure(index: number): number {
+    while (index >= maxBuckets) {
+      // 이웃 두 칸을 합쳐 칸 폭을 두 배로 한다.
+      const half = Math.ceil(used / 2);
+      for (let i = 0; i < half; i += 1) buckets[i] = Math.max(buckets[2 * i], buckets[2 * i + 1] ?? 0);
+      buckets.fill(0, half);
+      used = half;
+      width *= 2;
+      index = Math.floor(index / 2);
+    }
+    if (index >= buckets.length) {
+      let size = buckets.length;
+      while (size <= index) size *= 2;
+      const grown = new Float32Array(Math.min(maxBuckets, size));
+      grown.set(buckets);
+      buckets = grown;
+    }
+    return index;
+  }
+
+  return {
+    /**
+     * startSeconds에서 시작하는 표본을 넣는다. [fromSeconds, toSeconds) 밖 표본은 버린다(조각의 lead·꼬리).
+     * channels: 채널별 같은 길이의 표본(-1~1).
+     */
+    push(channels: ArrayLike<number>[], sampleRate: number, startSeconds: number, fromSeconds = 0, toSeconds = Infinity) {
+      const length = channels[0]?.length ?? 0;
+      if (length === 0 || !(sampleRate > 0)) return;
+      const from = Math.max(0, fromSeconds);
+      const end = Math.min(toSeconds, startSeconds + length / sampleRate);
+      if (end <= from) return;
+      ensure(Math.floor(end / width));
+      const first = Math.max(0, Math.ceil((from - startSeconds) * sampleRate));
+      const last = Math.min(length, Math.ceil((end - startSeconds) * sampleRate));
+      for (let i = first; i < last; i += 1) {
+        let amplitude = 0;
+        for (const channel of channels) {
+          const sample = Math.abs(channel[i] ?? 0);
+          if (sample > amplitude) amplitude = sample;
+        }
+        const index = Math.min(buckets.length - 1, Math.floor((startSeconds + i / sampleRate) / width));
+        if (amplitude > buckets[index]) buckets[index] = amplitude;
+        if (index >= used) used = index + 1;
+      }
+    },
+    finish(duration: number): AudioPeaks {
+      const out = new Float32Array(AUDIO_PEAKS_COUNT);
+      for (let j = 0; j < AUDIO_PEAKS_COUNT; j += 1) {
+        const start = Math.floor(((j * duration) / AUDIO_PEAKS_COUNT) / width);
+        const stop = Math.max(start + 1, Math.ceil((((j + 1) * duration) / AUDIO_PEAKS_COUNT) / width));
+        let max = 0;
+        for (let i = start; i < stop && i < used; i += 1) if (buckets[i] > max) max = buckets[i];
+        out[j] = max;
+      }
+      return normalizedPeaks(out, duration);
     },
   };
 }

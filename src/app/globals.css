@@ -450,6 +450,12 @@
     --app-topbar-height: 0px;
   }
 }
+/* 문서 편집 중(좁은 화면): 화면에 고정한 서식 줄(44px)이 본문 끝을 가리지 않게 아래 여백을 둔다. keyboard-inset.ts가 표시한다. */
+@media (max-width: 47.999rem) {
+  html[data-editor-dock] main {
+    padding-bottom: 3.5rem;
+  }
+}
 @utility h-app {
   height: calc(100dvh - var(--app-topbar-height));
 }

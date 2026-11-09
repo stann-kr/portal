@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { IBM_Plex_Mono, IBM_Plex_Sans_KR } from "next/font/google";
 import { cookies } from "next/headers";
 import { parseThemeCookie, THEME_COOKIE, themeColorsFor } from "@/lib/web-app-theme";
+import { appleStartupImages } from "@/lib/apple-splash";
 import { InputFontAlias } from "@/components/fonts/InputFontAlias";
 import { PersistentPlayerHost } from "@/components/player/PersistentPlayerHost";
 import "./globals.css";
@@ -33,7 +34,8 @@ export const metadata: Metadata = {
   description: "Stann의 개인 DJ 레슨 일정, 과제·피드백과 연습 기록을 관리하는 포탈입니다.",
   applicationName: "Portal - Stann",
   // iPhone 홈 화면에 추가하면 Safari 막대 없이 앱처럼 열린다(웹 푸시의 전제).
-  appleWebApp: { capable: true, title: "Portal", statusBarStyle: "default" },
+  // startupImage: 서버 응답 전(Worker 냉시작 등) 검은 화면 대신 바로 보이는 시작 화면.
+  appleWebApp: { capable: true, title: "Portal", statusBarStyle: "default", startupImage: appleStartupImages() },
   // icons를 직접 주면 src/app/icon.svg 파일 규칙 링크가 빠지므로 icon.svg를 적는다(favicon.ico는 파일 규칙이 넣는다).
   icons: {
     icon: [{ url: "/icon.svg", type: "image/svg+xml" }],

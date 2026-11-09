@@ -46,6 +46,7 @@ import {
 } from "./useEditorImageUpload";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
 import { COLLAB_REBASE_EVENT, readCollabNoticeInset } from "@/lib/collab/collab-events";
+import { useKeyboardInset } from "./keyboard-inset";
 
 // ── 타입 ──────────────────────────────────────────
 
@@ -649,6 +650,10 @@ export function FullEditor({
     () => ({ pickImages, openInsertPanel }),
     [openInsertPanel, pickImages],
   );
+  // 좁은 화면 문서 편집 서식 줄을 키보드 바로 위에 붙인다(B 묶음 ⑦).
+  const editorRootRef = useRef<HTMLDivElement>(null);
+  // 편집기는 첫 렌더에 없을 수 있다(immediatelyRender: false → 아래 return null). 루트 div가 생기는 렌더에서 다시 붙도록 editor도 조건에 둔다.
+  useKeyboardInset(editorRootRef, isPage && !isMarkdownMode && !disabled && editor !== null);
 
   if (!editor) return null;
 
@@ -717,6 +722,7 @@ export function FullEditor({
 
   return (
     <div
+      ref={editorRootRef}
       className={
         isPage
           ? "group/editor relative flex flex-col bg-background"
@@ -1124,7 +1130,7 @@ export function FullEditor({
           disabled={disabled}
           role="toolbar"
           aria-label="서식"
-          className="sticky-dock sticky bottom-0 z-10 -mx-[var(--editor-bleed,0px)] hidden min-w-0 items-center gap-0.5 border-t border-border bg-background px-2 pb-[max(0.25rem,env(safe-area-inset-bottom))] pt-1 [--dock-pad:0.25rem] max-md:group-focus-within/editor:flex disabled:opacity-60"
+          className="sticky-dock editor-dock fixed inset-x-0 bottom-[var(--keyboard-inset,0px)] z-30 hidden min-w-0 items-center gap-0.5 border-t border-border bg-background px-2 pb-[max(0.25rem,calc(env(safe-area-inset-bottom)-var(--keyboard-inset,0px)))] pt-1 [--dock-pad:0.25rem] max-md:group-focus-within/editor:flex disabled:opacity-60"
         >
           <div className="scroll-row flex min-w-0 flex-1 items-center gap-0.5">
             <MobileToolbarButton
