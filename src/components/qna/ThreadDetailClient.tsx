@@ -307,10 +307,10 @@ function ThreadDetailContent({
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex min-w-0 flex-col gap-1.5">
           <h1 ref={titleRef} tabIndex={-1} className="break-words text-xl font-semibold tracking-title focus:outline-none md:text-2xl md:tracking-display">{title}</h1>
-          <p className="flex flex-wrap items-center gap-2 text-ui text-muted-foreground">
+          <p className="flex flex-wrap items-center gap-1.5 text-ui text-muted-foreground">
             <QnaStatusLabel status={currentStatus} />
+            <span aria-hidden="true">·</span>
             <span>
-              {"· "}
               {isAdmin ? `${studentName} · ` : null}
               {longDate ? (
                 <>
@@ -393,7 +393,7 @@ function ThreadDetailContent({
       {isAdmin && !isTrashed ? (
         <div role="group" aria-label="스레드 상태 변경" className="flex flex-wrap items-center gap-3">
           <span aria-hidden="true" className="text-ui text-secondary-foreground">상태 변경</span>
-          <div className="inline-flex h-8 items-center gap-0.5 rounded-md bg-muted p-0.5">
+          <div className="inline-flex h-11 items-center gap-0.5 rounded-md bg-muted p-0.5 md:h-8">
             {STATUS_OPTIONS.map((option) => {
               const isCurrent = currentStatus === option;
               return (
@@ -404,7 +404,7 @@ function ThreadDetailContent({
                   disabled={!loaded || isCurrent || isPending || isReplyFormBusy}
                   aria-pressed={isCurrent}
                   className={cn(
-                    "h-7 rounded-sm px-3 text-ui transition-colors duration-[var(--duration-fast)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none disabled:cursor-default",
+                    "h-10 rounded-sm px-3 text-ui transition-colors md:h-7 duration-[var(--duration-fast)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none disabled:cursor-default",
                     isCurrent
                       ? "bg-background font-medium text-foreground shadow-segment"
                       : "text-secondary-foreground hover:text-foreground disabled:opacity-50",
@@ -434,7 +434,7 @@ function ThreadDetailContent({
           action={replyAction}
           aria-busy={!loaded || isReplyFormBusy}
           className={cn(
-            "sticky bottom-0 z-10 -mx-5 -mb-8 mt-auto flex flex-col gap-2 border-t border-border bg-background px-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2",
+            "sticky-dock sticky bottom-0 z-10 -mx-5 -mb-8 mt-auto flex flex-col gap-2 border-t border-border bg-background px-5 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2",
             "md:static md:z-auto md:mx-0 md:mb-0 md:border-0 md:bg-transparent md:p-0",
           )}
           onKeyDownCapture={handleReplySaveShortcut}

@@ -482,11 +482,28 @@ function NoteEditorFormContent({ note, create, actorId, action, focusBodyEnd = f
     return () => window.clearInterval(timer);
   }, [collab.ready, focusBodyEnd]);
   // 긴 제목도 잘리지 않게 내용 높이에 맞춘다(field-sizing을 지원하지 않는 브라우저 포함).
+  // 폭이 바뀔 때(회전·창 크기)와 글꼴이 늦게 도착했을 때도 다시 잰다. 폭만 볼 때 다시 재므로 높이 변경으로 반복되지 않는다.
   useLayoutEffect(() => {
     const element = titleRef.current;
     if (!element) return;
-    element.style.height = "auto";
-    element.style.height = `${element.scrollHeight}px`;
+    const fit = () => {
+      element.style.height = "auto";
+      element.style.height = `${element.scrollHeight}px`;
+    };
+    fit();
+    let width = element.clientWidth;
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => {
+      if (element.clientWidth === width) return;
+      width = element.clientWidth;
+      fit();
+    });
+    observer?.observe(element);
+    let cancelled = false;
+    void document.fonts?.ready.then(() => { if (!cancelled) fit(); });
+    return () => {
+      cancelled = true;
+      observer?.disconnect();
+    };
   }, [title]);
 
   const created = noteId !== null;

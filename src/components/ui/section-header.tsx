@@ -22,14 +22,15 @@ export function SectionHeader({
 }) {
   return (
     <div className={cn("flex flex-col gap-1 border-b border-border pb-2", className)}>
-      <div className="flex items-baseline justify-between gap-4">
+      <div className="flex items-center justify-between gap-4">
         <h2 id={titleId} className="min-w-0 text-ui font-semibold text-secondary-foreground">
           {title}
           {count !== undefined && count !== null ? (
             <span className="ml-1.5 font-mono font-normal text-muted-foreground">{count}</span>
           ) : null}
         </h2>
-        {action ? <div className="shrink-0 text-xs text-secondary-foreground">{action}</div> : null}
+        {/* 링크의 44px 터치 영역이 머리줄 높이를 키우지 않게 위아래로 겹친다(섹션마다 같은 높이). */}
+        {action ? <div className="-my-3 shrink-0 text-xs text-secondary-foreground">{action}</div> : null}
       </div>
       {description ? (
         <p className="max-w-[60ch] text-xs text-muted-foreground">{description}</p>

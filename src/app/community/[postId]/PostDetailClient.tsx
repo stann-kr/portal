@@ -398,7 +398,7 @@ export function PostDetailClient({
           allowTimeMarker={Boolean(mixsetMedia)}
           readPlaybackPosition={mixsetMedia ? readPlaybackPosition : undefined}
           className={cn(
-            "sticky bottom-0 -mx-5 mt-auto border-t border-border bg-background px-3 pb-[calc(0.5rem+env(safe-area-inset-bottom))] pt-2",
+            "sticky-dock sticky bottom-0 -mx-5 mt-auto border-t border-border bg-background px-5 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2",
             "md:static md:mx-0 md:-mt-3 md:border-0 md:p-0",
           )}
         />

@@ -88,7 +88,7 @@ export function CopyLinkButton({
 
   return (
     <span className={cn("relative inline-flex", className)}>
-      <Button type="button" variant="ghost" onClick={handleClick}>
+      <Button type="button" variant="ghost" onClick={handleClick} className="max-md:h-11">
         <Link2 className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
         {label}
       </Button>

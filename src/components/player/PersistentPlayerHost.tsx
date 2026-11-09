@@ -190,7 +190,7 @@ function MiniPlayer({ state, track }: { state: PlayerState; track: PlayerTrack }
 
       <section aria-label="이어 듣기 플레이어" className="mini-player">
         {track.kind === "youtube" ? <YouTubeLeaveNotice /> : null}
-        <div className="flex h-14 items-center gap-2.5 pl-3 pr-2 md:h-16 md:gap-4 md:px-4">
+        <div className="flex h-14 items-center gap-2.5 px-3 md:h-16 md:gap-4 md:px-4">
           <button
             type="button"
             onClick={toggle}
