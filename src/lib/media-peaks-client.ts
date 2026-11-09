@@ -21,11 +21,12 @@ export async function loadAudioPeaks(mediaObjectId: string, signal?: AbortSignal
   }
 }
 
-/** 저장 결과: 저장됨(새로 또는 이미 있음), 권한 없음(소유자·관리자가 아님, 정상), 실패. */
+/** 저장 결과: 저장됨(새로 또는 이미 있음), 권한 없음(예전 서버의 소유자 전용 규칙), 실패. */
 export type SaveAudioPeaksResult = "saved" | "forbidden" | "failed";
 
 /**
- * 파형을 저장하고 결과 종류를 돌려준다. 소유자·관리자만 쓸 수 있어 다른 사람은 "forbidden"이며 오류가 아니다.
+ * 파형을 저장하고 결과 종류를 돌려준다. 오디오를 읽을 수 있으면 누구든 저장할 수 있다(처음 값만 남는다).
+ * 403("forbidden")은 예전 서버의 소유자 전용 규칙에서만 오며 오류로 보지 않는다.
  */
 export async function saveAudioPeaksResult(mediaObjectId: string, peaks: AudioPeaks): Promise<SaveAudioPeaksResult> {
   const parsed = parseAudioPeaks(peaks);

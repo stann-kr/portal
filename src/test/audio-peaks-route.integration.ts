@@ -81,8 +81,8 @@ async function setup(context: TestContext) {
   const now = new Date("2026-11-01T00:00:00.000Z");
   const base = {
     ownerId: "owner",
-    expectedSizeBytes: 1024,
-    actualSizeBytes: 1024,
+    expectedSizeBytes: 84_000_000,
+    actualSizeBytes: 84_000_000,
     etag: "etag",
     uploadExpiresAt: new Date(now.getTime() + 60 * 60 * 1000),
     readyAt: now,
@@ -160,25 +160,36 @@ test("형식이 틀리거나 너무 큰 파형은 400·413으로 거절한다", 
   assert.equal(putCalls.length, 0);
 });
 
-test("읽을 수만 있는 다른 학생은 파형을 쓸 수 없고(403) 저장소에 남기지 못한다", async (t) => {
+test("길이가 파일 크기와 맞지 않는 파형(평균 10,000kbps 초과 등)은 400으로 거절한다", async (t) => {
+  await setup(t);
+  activeSession = session("other");
+  // 파일은 84MB(3500초 × 192kbps). 1초·30초 길이는 이 파일의 파형일 수 없다(평균 22,400kbps 이상).
+  assert.equal((await put(ATTACHED_ID, JSON.stringify(samplePeaks(1, 0.9)))).status, 400);
+  assert.equal((await put(ATTACHED_ID, JSON.stringify(samplePeaks(30, 0.9)))).status, 400);
+  assert.equal(putCalls.length, 0);
+  assert.equal(stored.size, 0);
+});
+
+test("오디오를 읽을 수 있는 다른 학생도 아직 없는 파형을 처음 저장하고, 다른 사람이 모두 불러온다", async (t) => {
   await setup(t);
   activeSession = session("other");
   assert.equal((await get(ATTACHED_ID)).status, 404, "아직 파형이 없다");
-  const denied = await put(ATTACHED_ID, JSON.stringify(samplePeaks(10, 0.9)));
-  assert.equal(denied.status, 403);
-  const deniedPost = await route.POST(new Request(`https://portal.test/api/media/${ATTACHED_ID}/peaks`, { method: "POST", body: JSON.stringify(samplePeaks(10, 0.9)) }), context(ATTACHED_ID));
-  assert.equal(deniedPost.status, 403);
-  assert.equal(putCalls.length, 0, "권한이 없으면 저장소를 건드리지 않는다");
-  assert.equal(stored.size, 0);
+  const saved = await put(ATTACHED_ID, JSON.stringify(samplePeaks(3500, 0.25)));
+  assert.equal(saved.status, 201);
+  assert.deepEqual(await saved.json(), { saved: true });
 
-  // 남이 먼저 쓰지 못했으므로 소유자의 첫 쓰기가 저장된다.
+  // 처음 쓴 값이 이긴다: 그 뒤 소유자의 쓰기는 덮지 않는다(POST도 같다).
   activeSession = session("owner");
-  assert.equal((await put(ATTACHED_ID, JSON.stringify(samplePeaks(3500, 0.25)))).status, 201);
+  const ownerPost = await route.POST(new Request(`https://portal.test/api/media/${ATTACHED_ID}/peaks`, { method: "POST", body: JSON.stringify(samplePeaks(3400, 0.9)) }), context(ATTACHED_ID));
+  assert.equal(ownerPost.status, 200);
+  assert.deepEqual(await ownerPost.json(), { saved: false });
 
-  activeSession = session("other");
-  const loaded = await get(ATTACHED_ID);
-  assert.equal(loaded.status, 200, "읽기 권한이 있으면 여전히 읽는다");
-  assert.equal(((await loaded.json()) as AudioPeaks).peaks[0], 0.25);
+  for (const reader of [session("owner"), session("other"), session("admin", "admin")]) {
+    activeSession = reader;
+    const loaded = await get(ATTACHED_ID);
+    assert.equal(loaded.status, 200, `${reader.user.id}가 서버 파형을 불러온다`);
+    assert.equal(((await loaded.json()) as AudioPeaks).peaks[0], 0.25);
+  }
 });
 
 test("소유자가 처음 쓴 파형만 남고 관리자의 두 번째 쓰기는 덮지 않는다", async (t) => {
@@ -189,7 +200,7 @@ test("소유자가 처음 쓴 파형만 남고 관리자의 두 번째 쓰기는
   assert.deepEqual(await first.json(), { saved: true });
 
   activeSession = session("admin", "admin");
-  const second = await route.POST(new Request(`https://portal.test/api/media/${ATTACHED_ID}/peaks`, { method: "POST", body: JSON.stringify(samplePeaks(10, 0.9)) }), context(ATTACHED_ID));
+  const second = await route.POST(new Request(`https://portal.test/api/media/${ATTACHED_ID}/peaks`, { method: "POST", body: JSON.stringify(samplePeaks(3400, 0.9)) }), context(ATTACHED_ID));
   assert.equal(second.status, 200);
   assert.deepEqual(await second.json(), { saved: false });
 
