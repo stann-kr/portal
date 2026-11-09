@@ -5,7 +5,8 @@
  * 믹스셋은 업로드한 오디오 파일 또는 YouTube·SoundCloud 링크 중 하나를 고른다. 두 값은 각각 보존하고
  * 고른 방식의 값만 전송한다(전환해도 업로드한 파일을 잃지 않는다).
  * WAV·AIFF·FLAC은 브라우저에서 MP3(192kbps, 길면 95MB 안으로 낮춤)로 바꿔 올리고, 변환 중 만든 파형은
- * `onAudioPrepared`(src/lib/audio/on-audio-prepared.ts)로 넘긴다.
+ * `onAudioPrepared`(src/lib/audio/on-audio-prepared.ts)로 넘긴다. 그대로 올린 MP3는 업로드 직후 같은 파일로
+ * 파형을 만들어 저장한다(`savePeaksForUploadedMp3`, 기다리지 않음).
  */
 "use client";
 
@@ -36,6 +37,7 @@ import { isImplicitSubmitEnter } from "@/components/community/empty-title-enter"
 import { CollabEditorPending } from "@/components/editor/CollabEditorPending";
 import { isCollabEditorPending } from "@/lib/collab/client/collab-status";
 import { onAudioPrepared } from "@/lib/audio/on-audio-prepared";
+import { savePeaksForUploadedMp3 } from "@/components/player/compute-audio-peaks";
 import { MP3_DEFAULT_BITRATE_KBPS } from "@/lib/audio/mp3-bitrate";
 
 const EMPTY_TITLE_ERROR = "제목을 입력해 주세요.";
@@ -455,6 +457,8 @@ function NewPostFormContent({
                     const bitrate = upload.audio?.bitrateKbps;
                     setLoweredBitrate(bitrate && bitrate < MP3_DEFAULT_BITRATE_KBPS ? { mediaObjectId: upload.mediaObjectId, kbps: bitrate } : null);
                     if (upload.audio?.peaks) void onAudioPrepared(upload.audio.peaks, upload.mediaObjectId);
+                    // 그대로 올린 MP3는 같은 파일로 파형을 만들어 저장한다(기다리지 않음, 첫 재생 때 다시 만들지 않게).
+                    else if (upload.audio && !upload.audio.converted) void savePeaksForUploadedMp3(upload.audio.file, upload.mediaObjectId);
                   }}
                   onError={setUploadError}
                   onUploadingChange={(uploading) => {
