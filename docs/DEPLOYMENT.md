@@ -31,7 +31,7 @@
 
 | 항목 | 저장소에서 확인할 수 있는 것 | 운영 적용을 확인하는 증거 |
 |---|---|---|
-| D1 migration | SQL·journal·snapshot `0000~0024`, 메모리 DB에서 체인·schema 검증 | 대상 D1의 적용 목록과 실제 schema·FK, 그 목록에서 계산한 pending 범위 |
+| D1 migration | SQL·journal·snapshot `0000~0025`, 메모리 DB에서 체인·schema 검증 | 대상 D1의 적용 목록과 실제 schema·FK, 그 목록에서 계산한 pending 범위 |
 | 계정 삭제 | `0012`와 삭제·정리 구현, application 설정의 `ACCOUNT_DELETION_ENABLED="false"` 기본값 | 활성 Worker의 유효 flag, 기기 adoption, 승인된 삭제·정리 smoke |
 | 예약 정리 | `worker.ts`의 `scheduled` handler, Workers Logs 설정, source에 없는 Cron trigger | 원격 trigger 주기, 대상 version의 실제 scheduled invocation, backlog·실패·alert 증거 |
 | 외부 캘린더 | `0013` 구독 테이블과 `EXTERNAL_CALENDAR_ENCRYPTION_KEY` 요구 조건 | 대상 schema, secret 설정 확인, 승인된 연결·읽기·교체·해제 smoke |
@@ -40,7 +40,7 @@
 | 공용 가이드 | `0016`의 `guide_pages`·`guide_assets`·`qna_guide_anchors`, `scripts/guide-import/build.ts` seed 출력 | 대상 D1의 `0016` 적용, 승인된 seed 적용(D1 행·R2 `guide/` 객체), 학생·관리자 열람·편집·질문 smoke |
 | 캘린더 양방향 동기화 | `0017` 연결·매핑·link·반복 일정 table, `GOOGLE_CALENDAR_CLIENT_ID`·`GOOGLE_CALENDAR_CLIENT_SECRET`·`EXTERNAL_CALENDAR_ENCRYPTION_KEY` 요구 조건, `AUTH_URL` 기준 redirect URI | 대상 schema, secret 설정 확인, Google Cloud OAuth client의 redirect URI, 승인된 연결·매핑·양방향 반영·해제 smoke |
 | 캘린더 실시간 반영 | `0018` 알림 채널 table, `/api/calendar-connections/google/notify`, `worker.ts` `scheduled`의 캘린더 동기화. source에 없는 Cron trigger | 원격 Cron 주기, 대상 version의 실제 scheduled invocation, Google 채널 등록·갱신과 알림 수신 로그 |
-| 웹앱 푸시 알림 | `0024` 구독 table, `VAPID_PUBLIC_KEY`·`VAPID_PRIVATE_KEY`(선택 `VAPID_SUBJECT`) 요구 조건, 없으면 알림만 꺼짐 | 대상 D1의 `0024` 적용, secret 설정 확인, 승인된 기기에서 알림 켜기·테스트 알림 수신 |
+| 웹앱 푸시 알림 | `0024` 구독·`0025` 끈 종류 table, `VAPID_PUBLIC_KEY`·`VAPID_PRIVATE_KEY`(선택 `VAPID_SUBJECT`) 요구 조건, 없으면 알림만 꺼짐 | 대상 D1의 `0024` 적용, secret 설정 확인, 승인된 기기에서 알림 켜기·테스트 알림 수신 |
 | 배포 환경 분리 | 현재 tracked 설정의 Worker는 `portal` | development/production Worker·D1·R2·route·secret·branch trigger 각각의 inventory |
 
 운영 확인은 기존 상태 조회, migration·secret·trigger 변경, 데이터 쓰기 smoke를 구분해 승인된
@@ -129,7 +129,7 @@ iCloud 연동:
 
 ### 웹앱 푸시 알림 전환 gate
 
-1. 원격 D1에 `0024_push_subscriptions`를 적용한다(새 표만 추가, 백업·bookmark 먼저). 코드보다 먼저 적용해도 기존 동작은 그대로다.
+1. 원격 D1에 `0024_push_subscriptions`·`0025_push_muted_categories`를 적용한다(새 표만 추가, 백업·bookmark 먼저). 코드보다 먼저 적용해도 기존 동작은 그대로다.
 2. `node scripts/generate-vapid-keys.mjs`로 만든 키를 `wrangler secret put VAPID_PUBLIC_KEY`·`VAPID_PRIVATE_KEY`로 넣는다(환경마다 다른 키, 값은 기록에 남기지 않는다). secret이 없으면 알림 설정에 "켤 수 없습니다"만 보이고 다른 기능은 그대로다. 키를 바꾸면 모든 기기가 다시 켜야 한다.
 3. 배포 뒤 승인된 기기에서 알림 켜기 → 테스트 알림 수신을 확인한다. iPhone은 홈 화면에 추가한 앱에서 확인한다.
 

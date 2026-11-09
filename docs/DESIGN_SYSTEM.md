@@ -28,6 +28,7 @@ Token은 `src/app/globals.css`의 Tailwind theme layer에 정의한다. 화면 �
 | 채움 | `muted`, `secondary` | #F1F1EF | #1E1E21 | 채움 면, 목록 행 구분선(`border-muted`), 세그먼트 바탕 |
 | 선택 채움 | `selected` | #EAEAE8 | #26262A | 사이드바 현재 메뉴, 아바타 |
 | 선 | `border`, `input` | #E8E8E6 | #2A2A2E | 구획선·입력 테두리 |
+| 꺼진 스위치 | `switch-off` | #D4D4D8 | #3F3F46 | 켜기·끄기 스위치의 꺼진 바탕(켜짐은 `primary`) |
 | 글자 | `foreground`, `primary` | #18181B | #ECECEE | 본문·제목, 주 버튼 면 |
 | 글자 2 | `secondary-foreground` | #52525B | #B4B4BB | 보조 글자, 비활성 메뉴, 섹션 머리 |
 | 글자 3 | `muted-foreground` | #6B6B73 | #8E8E96 | 날짜·메타·캡션. 읽는 글자는 글자 3까지만 쓴다 |

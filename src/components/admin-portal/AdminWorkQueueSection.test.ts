@@ -79,6 +79,7 @@ test("업무함 피드백 대기 행의 확인: 행이 바로 빠지고 되돌�
       pendingAssignments: pending,
       referenceTime,
       onOpenSchedule: () => undefined,
+      pushOwnerId: "admin-1",
       lessonNoteIds: { "s1:2026-11-12": "note-1" },
       setReviewed,
     }));

@@ -1952,3 +1952,27 @@ export const pushSubscriptions = sqliteTable(
     ),
   ],
 );
+
+/**
+ * 계정이 끈 알림 종류(행이 있으면 끔, 없으면 받음). 모든 기기에 함께 적용된다.
+ * category 값은 src/lib/push/messages.ts의 PUSH_CATEGORIES와 같다.
+ */
+export const pushMutedCategories = sqliteTable(
+  "push_muted_categories",
+  {
+    profileId: text("profile_id")
+      .references(() => profiles.id, { onDelete: "cascade" })
+      .notNull(),
+    category: text("category").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .default(sql`(strftime('%s', 'now'))`)
+      .notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.profileId, table.category] }),
+    check(
+      "push_muted_categories_category_check",
+      sql`${table.category} IN ('feedback', 'assignment', 'lesson', 'qna', 'announcement', 'community_post', 'community_comment')`,
+    ),
+  ],
+);

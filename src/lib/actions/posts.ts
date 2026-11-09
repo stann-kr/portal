@@ -531,10 +531,13 @@ export async function createPost(
     return { error: lifecycleError(result.reason) };
   }
 
-  if (boardType === "ANNOUNCEMENT" && !result.replayed) {
+  if (!result.replayed) {
+    // 공지는 학생에게, 그 밖의 커뮤니티 새 글은 글쓴이를 뺀 모든 계정에 알린다.
     await notifyPush(
-      { kind: "role", role: "student" },
-      pushMessages.announcementPosted({ postId: result.postId, title }),
+      boardType === "ANNOUNCEMENT" ? { kind: "role", role: "student" } : { kind: "everyone" },
+      boardType === "ANNOUNCEMENT"
+        ? pushMessages.announcementPosted({ postId: result.postId, title })
+        : pushMessages.communityPostCreated({ postId: result.postId, authorName: session.user.name ?? null, title }),
       { excludeProfileId: authorId },
     );
   }

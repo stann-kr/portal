@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { before, mock, test, type TestContext } from "node:test";
 import type { AuthSession } from "@/lib/auth-guard";
-import { assignmentTasks, assignments, lessons, profiles } from "@/db/schema";
+import { assignmentTasks, assignments, categories, lessons, profiles } from "@/db/schema";
 import { CREATION_OPERATION_FIELD } from "@/lib/creation-operation";
 import type { PushMessage } from "@/lib/push/messages";
 import type { PushAudience } from "@/lib/push/notify";
@@ -24,6 +24,7 @@ let lessonActions: typeof import("@/lib/actions/lessons");
 let qnaActions: typeof import("@/lib/actions/qna");
 let postActions: typeof import("@/lib/actions/posts");
 let reviewActions: typeof import("@/lib/actions/assignment-review");
+let commentActions: typeof import("@/lib/actions/comments");
 
 function createSession(id: string, role: "admin" | "student", name = id): AuthSession {
   return {
@@ -67,7 +68,7 @@ mock.module("@/lib/push/notify", {
 });
 
 before(async () => {
-  [feedbackActions, taskActions, assignmentActions, lessonActions, qnaActions, postActions, reviewActions] = await Promise.all([
+  [feedbackActions, taskActions, assignmentActions, lessonActions, qnaActions, postActions, reviewActions, commentActions] = await Promise.all([
     import("@/lib/actions/feedbacks"),
     import("@/lib/actions/assignmentTasks"),
     import("@/lib/actions/assignments"),
@@ -75,6 +76,7 @@ before(async () => {
     import("@/lib/actions/qna"),
     import("@/lib/actions/posts"),
     import("@/lib/actions/assignment-review"),
+    import("@/lib/actions/comments"),
   ]);
 });
 
@@ -109,7 +111,7 @@ test("피드백: 관리자가 남기면 과제 주인 학생에게 과제 제목
   assert.deepEqual(await feedbackActions.createFeedback("sub-1", {}, form(fields)), { success: true });
   assert.deepEqual(sent, [{
     audience: { kind: "profiles", profileIds: ["student-1"] },
-    message: { title: "새 피드백", body: "‘6주차 믹스 녹음’에 피드백이 달렸습니다.", url: "/dashboard/student/assignments/sub-1", tag: "feedback:sub-1" },
+    message: { category: "feedback", title: "새 피드백", body: "‘6주차 믹스 녹음’에 피드백이 달렸습니다.", url: "/dashboard/student/assignments/sub-1", tag: "feedback:sub-1" },
     exclude: "admin-1",
   }]);
 
@@ -126,7 +128,7 @@ test("확인함: 표시할 때만 과제 주인 학생에게 피드백 알림과
   assert.equal((await reviewActions.setAssignmentReviewed("sub-ack", true)).success, true);
   assert.deepEqual(sent, [{
     audience: { kind: "profiles", profileIds: ["student-1"] },
-    message: { title: "Stann이 과제를 확인했습니다", body: "‘7주차 믹스’", url: "/dashboard/student/assignments/sub-ack", tag: "feedback:sub-ack" },
+    message: { category: "feedback", title: "Stann이 과제를 확인했습니다", body: "‘7주차 믹스’", url: "/dashboard/student/assignments/sub-ack", tag: "feedback:sub-ack" },
     exclude: "admin-1",
   }]);
   assert.equal((await reviewActions.setAssignmentReviewed("sub-ack", true)).success, true);
@@ -156,7 +158,7 @@ test("과제: 새 과제는 학생에게, 학생 제출은 관리자에게 보�
   assert.equal(sent.length, 2, "같은 제출 재전송");
   assert.deepEqual(sent[1], {
     audience: { kind: "role", role: "admin" },
-    message: { title: "과제 제출", body: "김학생님 과제 제출: ‘드랍 연습’", url: `/dashboard/student/assignments/${submitted.id}`, tag: `submission:${submitted.id}` },
+    message: { category: "assignment", title: "과제 제출", body: "김학생님 과제 제출: ‘드랍 연습’", url: `/dashboard/student/assignments/${submitted.id}`, tag: `submission:${submitted.id}` },
     exclude: "student-1",
   });
 
@@ -209,7 +211,7 @@ test("Q&A: 학생 질문은 관리자에게, 관리자 답변은 질문한 학�
   assert.equal(reply.success, true, JSON.stringify(reply));
   assert.deepEqual(sent[1], {
     audience: { kind: "profiles", profileIds: ["student-1"] },
-    message: { title: "Q&A 답변", body: "‘헤드폰 큐 볼륨’에 답이 달렸습니다.", url: `/dashboard/qna/${threadId}`, tag: `qna:${threadId}` },
+    message: { category: "qna", title: "Q&A 답변", body: "‘헤드폰 큐 볼륨’에 답이 달렸습니다.", url: `/dashboard/qna/${threadId}`, tag: `qna:${threadId}` },
     exclude: "admin-1",
   });
 
@@ -235,7 +237,52 @@ test("공지: 관리자가 올린 공지는 학생에게 보내고, 같은 공�
   assert.equal(sent.length, 1, "같은 공지 재전송");
   assert.deepEqual(sent[0], {
     audience: { kind: "role", role: "student" },
-    message: { title: "새 공지", body: "‘11월 레슨 안내’", url: `/community/${created.postId}`, tag: `announcement:${created.postId}` },
+    message: { category: "announcement", title: "새 공지", body: "‘11월 레슨 안내’", url: `/community/${created.postId}`, tag: `announcement:${created.postId}` },
     exclude: "admin-1",
   });
+});
+
+test("커뮤니티: 새 글은 글쓴이를 뺀 모든 계정에, 댓글은 글쓴이와 앞서 댓글 단 사람에게 보낸다", { concurrency: false }, async (context) => {
+  const db = await setup(context);
+  await db.insert(profiles).values({ id: "student-2", email: "s2@example.com", displayName: "이학생", role: "student" });
+  await db.insert(categories).values({ id: "cat-free", slug: "free", name: "자유" });
+  activeSession = createSession("student-1", "student", "김학생");
+  const postForm = form({
+    [CREATION_OPERATION_FIELD]: crypto.randomUUID(),
+    title: "이번 주 믹스 공유",
+    contentHtml: "<p>들어 주세요</p>",
+    boardType: "GENERAL",
+    category: "free",
+    returnTo: "community-editor",
+  });
+  const created = await postActions.createPost({}, postForm);
+  assert.equal(created.success, true, JSON.stringify(created));
+  await postActions.createPost({}, postForm);
+  assert.equal(sent.length, 1, "같은 글 재전송");
+  assert.deepEqual(sent[0], {
+    audience: { kind: "everyone" },
+    message: { category: "community_post", title: "커뮤니티 새 글", body: "김학생님: ‘이번 주 믹스 공유’", url: `/community/${created.postId}`, tag: `post:${created.postId}` },
+    exclude: "student-1",
+  });
+  const postId = created.postId!;
+
+  // 이학생이 첫 댓글: 글쓴이(김학생)에게만 간다.
+  activeSession = createSession("student-2", "student", "이학생");
+  const firstComment = form({ [CREATION_OPERATION_FIELD]: crypto.randomUUID(), content: "좋네요" });
+  assert.equal((await commentActions.createComment(postId, {}, firstComment)).success, true);
+  await commentActions.createComment(postId, {}, firstComment);
+  assert.equal(sent.length, 2, "같은 댓글 재전송");
+  assert.deepEqual(sent[1]!.audience, { kind: "profiles", profileIds: ["student-1"] });
+  assert.equal(sent[1]!.message.title, "내 글에 새 댓글");
+  assert.equal(sent[1]!.message.body, "이학생님 댓글: ‘이번 주 믹스 공유’");
+  assert.equal(sent[1]!.exclude, "student-2");
+
+  // Stann 댓글: 글쓴이에게 "내 글에 새 댓글", 앞서 댓글 단 이학생에게 "새 댓글".
+  activeSession = createSession("admin-1", "admin", "Stann");
+  assert.equal((await commentActions.createComment(postId, {}, form({ [CREATION_OPERATION_FIELD]: crypto.randomUUID(), content: "피드백" }))).success, true);
+  assert.equal(sent.length, 4);
+  assert.deepEqual(sent[2]!.audience, { kind: "profiles", profileIds: ["student-1"] });
+  assert.equal(sent[3]!.message.title, "새 댓글");
+  assert.deepEqual(sent[3]!.audience, { kind: "profiles", profileIds: ["student-2"] }, "댓글 쓴 본인은 참여자에서 빠진다");
+  assert.equal(sent[3]!.exclude, "admin-1");
 });

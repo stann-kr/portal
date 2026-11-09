@@ -209,6 +209,7 @@ export function AdminPortalClient({
               referenceTime={referenceTime}
               lessonNoteIds={lessonNoteIds}
               onOpenSchedule={() => changeSection("schedule")}
+              pushOwnerId={adminId}
             />
           )}
 

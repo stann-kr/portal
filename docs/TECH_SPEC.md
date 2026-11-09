@@ -409,6 +409,9 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 - 발송(`src/lib/push/`): `web-push-crypto.ts`가 WebCrypto만으로 RFC 8291 aes128gcm 한 record(4096, 부록 A 벡터와 바이트 일치 테스트)와 RFC 8292 VAPID ES256 JWT(aud=푸시 서비스 출처, 12시간)를 만든다. `send.ts`는 TTL 24시간·Urgency normal로 보내고 2xx=sent, 404·410=gone(행 삭제), 그 밖=failed(`failure_count`+1, 10회면 삭제). `notify.ts`의 `notifyPush(audience, message, { excludeProfileId })`는 `after-response.ts`(Next `after` → Workers waitUntil)로 응답 뒤 보내고 실패는 log만 남긴다. 키(`VAPID_PUBLIC_KEY`·`VAPID_PRIVATE_KEY`, 연락처 `VAPID_SUBJECT` 없으면 `AUTH_URL`)가 없으면 DB를 읽지 않고 끝낸다. 설정값은 `runtime-env.ts`(캘린더 동기화와 공용)로 읽는다.
 - 이벤트: `createFeedback`·`createAssignmentTask`·`submitAssignmentTask`·`submitAssignment`·`createQnaThread*`·`createQnaReply`·`createLesson`·`rescheduleLesson`·`moveLesson`·`createPost(ANNOUNCEMENT)`가 새로 저장했을 때만(재전송·replayed 제외) 부른다. 정기 과제 회차 생성·수정·삭제는 알리지 않는다.
 - 화면: 계정 메뉴 "알림 설정"(`src/components/push/`). 이 기기 상태(지원·iPhone 홈 화면 추가 필요·차단·키 없음·꺼짐·받는 중)를 읽고, 켜기는 권한 요청을 버튼 handler의 첫 await로 둔다. 이 기기 구독의 주인 계정을 localStorage(`portal:push-owner`)에 두고, 화면을 열 때 주인이 다르면 구독을 해제(→ 410으로 서버 행 정리), 같으면 서버에서 빠진 구독을 다시 등록한다. 로그아웃 확인 뒤에도 해제한다.
+- 종류별 끄기(`0025`): `push_muted_categories(profile_id, category)` 행이 있으면 그 종류를 끈 것이다(CHECK로 `PUSH_CATEGORIES`만, 계정 cascade·계정 삭제 batch 명시 삭제). `PushMessage.category`로 `listPushTargets`가 끈 계정을 빼며 테스트 알림은 보지 않는다. `setPushCategory` action은 본인 계정만 바꾼다.
+- 커뮤니티: `createPost`(공지 외)는 `everyone`(글쓴이 제외), `createComment`는 글쓴이(“내 글에 새 댓글”)와 그 글의 다른 댓글 작성자(“새 댓글”)에게 보낸다.
+- 안내 줄(`PushPromptBanner`): 지원 기기·권한 미선택·14일 안 "나중에" 없음일 때만 보이고, 서버 공개키를 미리 받아 "알림 받기" 클릭의 첫 await를 권한 요청으로 둔다(`enable-device.ts`, 설정 스위치와 공용). iPhone Safari 탭은 `portal:open-notification-settings` 이벤트로 설정 시트를 연다.
 - 키 생성: `node scripts/generate-vapid-keys.mjs`(표준 출력만). 키를 바꾸면 기존 기기 구독은 모두 다시 켜야 한다.
 - 미검증: 실제 iPhone(홈 화면 앱)·안드로이드 수신, 운영 푸시 서비스별(Apple·Mozilla) 응답.
 

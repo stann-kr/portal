@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "8207643c-6387-4123-8ac8-3657e8acc063",
+  "id": "d024f1de-40fe-41f8-a027-ea001f366cc8",
   "prevId": "e5d808f6-cb3e-4d5c-a771-4ff016b676c3",
   "tables": {
     "account_cleanup_tokens": {
@@ -689,13 +689,6 @@
         },
         "updated_at": {
           "name": "updated_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "reviewed_at": {
-          "name": "reviewed_at",
           "type": "integer",
           "primaryKey": false,
           "notNull": false,
@@ -4376,6 +4369,65 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}
+    },
+    "push_muted_categories": {
+      "name": "push_muted_categories",
+      "columns": {
+        "profile_id": {
+          "name": "profile_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "category": {
+          "name": "category",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(strftime('%s', 'now'))"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "push_muted_categories_profile_id_profiles_id_fk": {
+          "name": "push_muted_categories_profile_id_profiles_id_fk",
+          "tableFrom": "push_muted_categories",
+          "tableTo": "profiles",
+          "columnsFrom": [
+            "profile_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "push_muted_categories_profile_id_category_pk": {
+          "columns": [
+            "profile_id",
+            "category"
+          ],
+          "name": "push_muted_categories_profile_id_category_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "push_muted_categories_category_check": {
+          "name": "push_muted_categories_category_check",
+          "value": "\"push_muted_categories\".\"category\" IN ('feedback', 'assignment', 'lesson', 'qna', 'announcement', 'community_post', 'community_comment')"
+        }
+      }
     },
     "push_subscriptions": {
       "name": "push_subscriptions",

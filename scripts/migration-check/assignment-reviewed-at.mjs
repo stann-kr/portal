@@ -1,18 +1,18 @@
 import { applyMigration, applyMigrations, createMemoryDatabase } from "./runtime.mjs";
 import { assertRowsEqual, assert } from "./assertions.mjs";
 
-export const assignmentReviewedAtMigrationFile = "0025_assignment_reviewed_at.sql";
-const previousMigrationFile = "0024_push_subscriptions.sql";
+export const assignmentReviewedAtMigrationFile = "0026_assignment_reviewed_at.sql";
+const previousMigrationFile = "0025_push_muted_categories.sql";
 
 /**
- * 0024 → 0025: 제출에 Stann "확인함" 시각(reviewed_at, nullable) column만 더한다.
+ * 0025 → 0026: 제출에 Stann "확인함" 시각(reviewed_at, nullable) column만 더한다.
  * table을 재생성하지 않으므로 기존 row·FK·index·feedback이 그대로이고 기존 제출은 모두 미확인(NULL)이다.
  */
 export async function validateAssignmentReviewedAtUpgrade(migrationFiles) {
   const migrationIndex = migrationFiles.indexOf(assignmentReviewedAtMigrationFile);
   assert(
     migrationIndex > 0 && migrationFiles[migrationIndex - 1] === previousMigrationFile,
-    "0024 → 0025 assignment reviewed_at migration 순서를 찾지 못했습니다.",
+    "0026 → 0026 assignment reviewed_at migration 순서를 찾지 못했습니다.",
   );
   const database = await createMemoryDatabase();
   try {
@@ -45,7 +45,7 @@ export async function validateAssignmentReviewedAtUpgrade(migrationFiles) {
 
     const isAssignmentsTable = (entry) => entry.type === "table" && entry.name === "assignments";
     assertRowsEqual(
-      "0025 upgrade 기존 table·index·trigger 보존",
+      "0026 upgrade 기존 table·index·trigger 보존",
       readSchema().filter((entry) => !isAssignmentsTable(entry)),
       existingSchema.filter((entry) => !isAssignmentsTable(entry)),
     );
@@ -56,22 +56,22 @@ export async function validateAssignmentReviewedAtUpgrade(migrationFiles) {
         delete rest.reviewed_at;
         return rest;
       });
-      assertRowsEqual(`0025 upgrade 기존 ${tableName} row 보존`, after, rows);
+      assertRowsEqual(`0026 upgrade 기존 ${tableName} row 보존`, after, rows);
     }
     assertRowsEqual(
-      "0025 기존 제출 확인 시각 NULL",
+      "0026 기존 제출 확인 시각 NULL",
       database.all("SELECT id, reviewed_at FROM assignments ORDER BY id;"),
       [{ id: "ra-sub-free", reviewed_at: null }, { id: "ra-sub-task", reviewed_at: null }],
     );
     database.exec("UPDATE assignments SET reviewed_at = 1793000400 WHERE id = 'ra-sub-task';");
     assertRowsEqual(
-      "0025 확인 시각 저장·해제",
+      "0026 확인 시각 저장·해제",
       database.all("SELECT id, reviewed_at FROM assignments WHERE id = 'ra-sub-task';"),
       [{ id: "ra-sub-task", reviewed_at: 1793000400 }],
     );
     database.exec("UPDATE assignments SET reviewed_at = NULL WHERE id = 'ra-sub-task';");
-    assertRowsEqual("0025 populated upgrade FK 무결성", database.all("PRAGMA foreign_key_check;"), []);
-    assertRowsEqual("0025 populated upgrade SQLite 무결성", database.all("PRAGMA integrity_check;"), [{ integrity_check: "ok" }]);
+    assertRowsEqual("0026 populated upgrade FK 무결성", database.all("PRAGMA foreign_key_check;"), []);
+    assertRowsEqual("0026 populated upgrade SQLite 무결성", database.all("PRAGMA integrity_check;"), [{ integrity_check: "ok" }]);
   } finally {
     database.close();
   }

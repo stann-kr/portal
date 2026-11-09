@@ -37,6 +37,7 @@
 
   --color-border: #e8e8e6;
   --color-input: #e8e8e6;
+  --color-switch-off: #d4d4d8;
   --color-ring: #2d5bff;
   /* 시트·서랍 뒤 화면을 32% 어둡게 */
   --color-scrim: rgb(24 24 27 / 0.32);
@@ -137,6 +138,7 @@
     --color-accent-foreground: #a5b4fc;
     --color-border: #2a2a2e;
     --color-input: #2a2a2e;
+    --color-switch-off: #3f3f46;
     --color-ring: #7b95ff;
     --color-scrim: rgb(0 0 0 / 0.5);
     --color-success: #34c3b0;

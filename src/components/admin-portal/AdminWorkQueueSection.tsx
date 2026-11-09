@@ -1,5 +1,6 @@
 "use client";
 
+import { PushPromptBanner } from "@/components/push/PushPromptBanner";
 import { useRef, useState } from "react";
 import Link from "next/link";
 import type { ReactNode } from "react";
@@ -86,6 +87,7 @@ export function AdminWorkQueueSection({
   pendingAssignments,
   referenceTime,
   onOpenSchedule,
+  pushOwnerId,
   lessonNoteIds,
   setReviewed = setAssignmentReviewed,
 }: {
@@ -94,6 +96,8 @@ export function AdminWorkQueueSection({
   pendingAssignments: PendingFeedbackAssignment[];
   referenceTime: Date;
   onOpenSchedule: () => void;
+  /** 업무함 맨 위 "알림 받기" 줄의 계정. */
+  pushOwnerId: string;
   /** "학생:KST 날짜" → 그 날짜 노트 id. 다가오는 레슨 행의 수업 노트 링크에 쓴다. */
   lessonNoteIds?: Readonly<Record<string, string>>;
   /** 확인함 표시·취소 action. 테스트가 바꿔 끼운다. */
@@ -176,6 +180,7 @@ export function AdminWorkQueueSection({
   return (
     <div className="px-5 pb-8 pt-6 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-14">
       <div className="flex max-w-[1040px] flex-col gap-7 md:gap-10">
+        <PushPromptBanner ownerId={pushOwnerId} isAdmin />
         <header className="flex flex-col gap-1.5 md:gap-2">
           <p className="font-mono text-xs text-muted-foreground">{formatDay(referenceTime)}</p>
           <h1 className="text-mobile-title font-semibold tracking-display text-foreground md:text-display">오늘 처리할 일</h1>
