@@ -6,7 +6,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
-import { getUnifiedItemKey, upsertUnifiedItems, type UnifiedItem } from "@/lib/utils/unifiedItemUtils";
+import { getUnifiedItemKey, replaceUnifiedItemsInRange, upsertUnifiedItems, type UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 import type { StudentRosterStat } from "@/lib/actions/students";
 import type {
   AdminQueueThread,
@@ -34,6 +34,11 @@ import { AdminWorkQueueSection } from "./AdminWorkQueueSection";
 // ── 타입 ──────────────────────────────────────────
 
 type Section = PortalSection<"admin">;
+
+/** "전체 학생" 기간 응답이 덮는 범위. 상한에 걸려 잘린 응답은 교체 근거가 되지 못한다. */
+function toResponseRange(result: { start: string; end: string; truncated: boolean }) {
+  return { start: new Date(result.start), end: new Date(result.end), complete: !result.truncated };
+}
 
 export interface AdminPortalClientProps {
   initialLocation?: PortalLocation<"admin">;
@@ -169,7 +174,8 @@ export function AdminPortalClient({
           if (calendarRequestRef.current !== requestId) return;
           allWindowsRef.current = [...allWindowsRef.current, { start: new Date(result.start), end: new Date(result.end) }];
           if (result.truncated) setAllStudentsTruncated(true);
-          setCalendarItems((current) => upsertUnifiedItems(current, result.items));
+          // 이 기간에 이미 있던(겹친 기간·바로 추가한) 항목 중 응답에 없는 것은 지워졌거나 옮겨진 것이다.
+          setCalendarItems((current) => replaceUnifiedItemsInRange(current, result.items, toResponseRange(result)));
         })
         .catch(() => {
           if (calendarRequestRef.current === requestId) setCalendarError("이 기간의 전체 학생 일정을 불러오지 못했습니다. 다시 시도해 주세요.");
@@ -218,7 +224,8 @@ export function AdminPortalClient({
         void getUnifiedItemsForAllStudents({ start: loaded.start.toISOString(), end: loaded.end.toISOString() })
           .then((result) => {
             if (calendarRequestRef.current !== requestId || calendarLoadedStudentIdRef.current !== studentId) return;
-            setCalendarItems((current) => upsertUnifiedItems(current, result.items));
+            // 읽은 기간을 다시 받으면 그 기간 항목을 응답으로 교체한다(다른 곳에서 지우거나 기간 밖으로 옮긴 항목 제거).
+            setCalendarItems((current) => replaceUnifiedItemsInRange(current, result.items, toResponseRange(result)));
           })
           .catch(() => undefined);
       }

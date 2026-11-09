@@ -8,17 +8,17 @@
   --color-skeleton-shine: rgb(255 255 255 / 0.75);
 }
 
-/* 다크 값: data-theme이 없으면 시스템 설정을, 있으면 그 값을 따른다. */
+/* 다크 값: data-theme이 없으면 시스템 설정을, 있으면 그 값을 따른다. 빛 띠는 어두운 막대 위에서 보이도록 14%. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --color-skeleton: #232327;
-    --color-skeleton-shine: rgb(255 255 255 / 0.07);
+    --color-skeleton-shine: rgb(255 255 255 / 0.14);
   }
 }
 
 :root[data-theme="dark"] {
   --color-skeleton: #232327;
-  --color-skeleton-shine: rgb(255 255 255 / 0.07);
+  --color-skeleton-shine: rgb(255 255 255 / 0.14);
 }
 
 .skeleton-region {

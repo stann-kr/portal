@@ -340,6 +340,7 @@
 }
 
 .fc-notion .calendar-chip-block {
+  container-type: inline-size;
   height: 100%;
   flex-direction: column;
   align-items: stretch;
@@ -361,9 +362,26 @@
 }
 
 .fc-notion .calendar-chip-block .calendar-chip-time {
+  min-width: 0;
+  overflow: hidden;
   font-size: 11px;
   color: var(--color-secondary-foreground);
   white-space: nowrap;
+}
+
+/* 같은 시각 일정이 겹쳐 블록이 좁으면 시간 범위를 숨기고 학생 이름 칩에 자리를 준다(이름이 한 글자로 잘리지 않게).
+   그래도 좁으면 칩 안에서 말줄임한다. 시간은 다음 줄 제목과 블록 위치로 알 수 있다. */
+.fc-notion .calendar-chip-block [data-student-chip] {
+  flex-shrink: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@container (max-width: 112px) {
+  .fc-notion .calendar-chip-block .calendar-chip-time {
+    display: none;
+  }
 }
 
 .fc-notion .calendar-chip-block .calendar-chip-title {
