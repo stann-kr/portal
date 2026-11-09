@@ -6,6 +6,7 @@ import type { Editor } from "@tiptap/core";
 import * as Y from "yjs";
 import type { ReactPlayerProps } from "react-player/types";
 import { resolvePortalLocation } from "@/lib/portal-location";
+import { createDocumentDraftKey, serializeFormDraft } from "@/lib/form-draft";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 let createRoot: typeof import("react-dom/client").createRoot;
 let renderToString: typeof import("react-dom/server").renderToString;
@@ -54,6 +55,8 @@ let editFeedback: typeof import("@/lib/actions/feedbacks").updateFeedback = asyn
 let markReviewed: typeof import("@/lib/actions/assignment-review").setAssignmentReviewed = async () => ({ success: true, reviewedAt: null });
 let reviewControls: typeof import("@/components/admin/assignments/AssignmentReviewControls");
 let saveTaskSubmission: typeof import("@/lib/actions/assignmentTasks").submitAssignmentTask = async () => ({});
+let createTask: typeof import("@/lib/actions/assignmentTasks").createAssignmentTask = async () => ({});
+let AssignmentTaskForm: typeof import("@/components/admin/assignments/AssignmentTaskForms").AssignmentTaskForm;
 let loadTasks: typeof import("@/lib/actions/assignmentTasks").getMyAssignmentTasks = async () => [];
 let saveEvent: typeof import("@/lib/actions/calendarEvents").createCalendarEvent = async () => ({});
 let editEvent: typeof import("@/lib/actions/calendarEvents").updateCalendarEventDetails = async () => ({});
@@ -102,7 +105,7 @@ mock.module("next/navigation", { namedExports: {
 } });
 // Browser/provider loading is exercised separately; this boundary exposes v3's HTML media API.
 const HtmlMediaBoundary = React.forwardRef<HTMLVideoElement, ReactPlayerProps>((props, ref) => (
-  <video ref={ref} src={props.src} controls={props.controls} onLoadedMetadata={props.onLoadedMetadata} onCanPlay={props.onCanPlay} onError={props.onError} />
+  <video ref={ref} src={props.src} controls={props.controls} data-playing={props.playing ? "true" : "false"} onLoadedMetadata={props.onLoadedMetadata} onCanPlay={props.onCanPlay} onPlay={props.onPlay} onPause={props.onPause} onError={props.onError} />
 ));
 HtmlMediaBoundary.displayName = "HtmlMediaBoundary";
 mock.module("next/dynamic", { defaultExport: () => HtmlMediaBoundary });
@@ -121,6 +124,10 @@ mock.module("@/lib/actions/assignmentTasks", { namedExports: {
   getMyAssignmentTasks: () => loadTasks(),
   submitAssignmentTask: (...args: Parameters<typeof saveTaskSubmission>) => saveTaskSubmission(...args),
   updateMyTaskSubmission: async () => ({ error: "테스트 미설정" }),
+  createAssignmentTask: (...args: Parameters<typeof createTask>) => createTask(...args),
+  updateAssignmentTask: async () => ({ error: "테스트 미설정" }),
+  createAssignmentRecurrence: async () => ({ error: "테스트 미설정" }),
+  updateAssignmentRecurrence: async () => ({ error: "테스트 미설정" }),
 } });
 mock.module("@/lib/actions/feedbacks", { namedExports: {
   createFeedback: (...args: Parameters<typeof saveFeedback>) => saveFeedback(...args),
@@ -275,6 +282,7 @@ before(async () => {
   playerStore = await import("@/components/player/player-store");
   ({ PersistentPlayerHost } = await import("@/components/player/PersistentPlayerHost"));
   ({ MixsetFeedbackCard } = await import("@/components/community/MixsetFeedbackCard"));
+  ({ AssignmentTaskForm } = await import("@/components/admin/assignments/AssignmentTaskForms"));
   ({ CommentForm } = await import("@/components/community/CommentForm"));
   ({ AssignmentView } = await import("@/components/student-portal/AssignmentView"));
   ({ AssignmentDetailClient } = await import("@/app/dashboard/student/assignments/[id]/AssignmentDetailClient"));
@@ -2246,6 +2254,108 @@ test("믹스셋 목록 줄은 링크 플레이어를 누른 줄에만 열고 오
   assert.equal((browser.document.body.textContent?.match(/재생할 매체 없음/gu) ?? []).length, 1);
 });
 
+test("믹스셋 링크 줄과 하단 미니 플레이어(YouTube)는 실제 재생을 시작한 쪽만 소리를 내고 나머지 iframe을 멈춘다", async (context) => {
+  playerStore.resetPlayerForTests();
+  context.after(() => playerStore.resetPlayerForTests());
+  // 휴대폰 폭: 작은 창은 화면 밖에 있으므로 focus·보조기기에서 빠진다.
+  const originalMatchMedia = browser.matchMedia.bind(browser);
+  browser.matchMedia = ((query: string) => (query === "(max-width: 767.98px)"
+    ? { matches: true, media: query, addEventListener() {}, removeEventListener() {} }
+    : originalMatchMedia(query))) as typeof browser.matchMedia;
+  context.after(() => { browser.matchMedia = originalMatchMedia; });
+  const base = { contentHtml: "<p>미리보기</p>", authorName: "학생", authorEmail: null, createdAt: new Date() };
+  await render(context, <>
+    <ul>
+      <MixsetFeedbackCard post={{ ...base, id: "row-a", title: "줄 A", mediaUrl: "https://www.youtube.com/watch?v=aaaaaaaaaaa", mediaObjectId: null }} />
+      <MixsetFeedbackCard post={{ ...base, id: "row-b", title: "줄 B", mediaUrl: "https://www.youtube.com/watch?v=bbbbbbbbbbb", mediaObjectId: null }} />
+    </ul>
+    <PersistentPlayerHost />
+  </>);
+  const fire = async (video: unknown, type: "play" | "pause" | "loadedmetadata") => {
+    assert.ok(video);
+    await act(async () => { (video as EventTarget).dispatchEvent(new browser.Event(type) as unknown as Event); });
+    await settle();
+  };
+  const miniVideo = () => browser.document.querySelector('[aria-label="YouTube 작은 창"] video');
+  const rowVideo = (title: string) => browser.document.getElementById(button(`${title} 플레이어`).getAttribute("aria-controls") ?? "")?.querySelector("video");
+
+  // 게시물 화면을 떠나 미니 플레이어가 YouTube를 이어 재생하는 상태.
+  await act(async () => playerStore.startTrack({ key: "post-yt", kind: "youtube", url: "https://www.youtube.com/watch?v=ccccccccccc", title: "이어 듣기", subtitle: "학생", href: "/community/post-yt", mediaObjectId: null }));
+  await settle();
+  // metadata가 오면 넘겨받은 위치(resume)로 옮겨 재생한다.
+  await fire(miniVideo(), "loadedmetadata");
+  await fire(miniVideo(), "play");
+  assert.equal(miniVideo()?.getAttribute("data-playing"), "true");
+  assert.ok(button("일시정지"));
+  const smallWindow = browser.document.querySelector('[aria-label="YouTube 작은 창"]');
+  assert.ok(smallWindow?.hasAttribute("inert"), "휴대폰에서 화면 밖 작은 창은 Tab으로 들어가지 않는다");
+  assert.equal(smallWindow?.getAttribute("aria-hidden"), "true");
+
+  // 줄 A를 열기만 하고(자동 재생이 막힘) 재생이 시작되지 않으면 미니 플레이어는 그대로다.
+  await press("줄 A 플레이어");
+  assert.equal(miniVideo()?.getAttribute("data-playing"), "true", "실제 재생 전에는 미니 플레이어를 멈추지 않는다");
+  await fire(rowVideo("줄 A"), "play");
+  assert.equal(miniVideo()?.getAttribute("data-playing"), "false", "줄 A가 재생을 시작하면 미니 플레이어 iframe이 실제로 멈춘다");
+  assert.ok(button("재생"), "미니 버튼도 재생으로 바뀐다");
+
+  // 멈춘 채 위치만 옮기면(키보드 화살표) 재생이 시작되지 않는다.
+  await act(async () => { playerStore.dispatchPlayer({ type: "progress", key: "post-yt", duration: 600 }); });
+  await settle();
+  const slider = browser.document.querySelector('section[aria-label="이어 듣기 플레이어"] [role="slider"]');
+  assert.ok(slider);
+  await act(async () => { slider.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true })); });
+  await settle();
+  assert.ok(Number(slider.getAttribute("aria-valuenow")) > 0, "위치는 옮긴다");
+  assert.equal(miniVideo()?.getAttribute("data-playing"), "false", "멈춘 채 옮기면 재생을 시작하지 않는다");
+  assert.equal(playerStore.getPlayerState().playing, false);
+
+  await press("줄 B 플레이어");
+  await fire(rowVideo("줄 B"), "play");
+  assert.equal(rowVideo("줄 A")?.getAttribute("data-playing"), "false", "줄 B가 시작하면 줄 A가 멈춘다");
+  assert.equal(rowVideo("줄 B")?.getAttribute("data-playing"), "true");
+
+  await press("재생");
+  assert.equal(miniVideo()?.getAttribute("data-playing"), "true");
+  assert.equal(rowVideo("줄 B")?.getAttribute("data-playing"), "false", "미니 플레이어가 다시 재생하면 줄 B가 멈춘다");
+});
+
+test("여러 학생 과제 내기는 고른 학생·작성 정보를 이 기기에 보관해, 일부 실패 뒤 새로고침해 다시 내도 같은 학생·operationId로 보낸다", async (context) => {
+  browser.localStorage.clear();
+  const sent: { operationId: string; alsoStudentIds: string[]; title: string }[] = [];
+  let reply: Awaited<ReturnType<typeof createTask>> = { error: "학생 2 과제를 저장하지 못했습니다. 다시 내 주세요." };
+  createTask = async (_studentId, _previous, data) => {
+    sent.push({ operationId: String(data.get("operationId")), alsoStudentIds: data.getAll("alsoStudentId").map(String), title: String(data.get("title")) });
+    return reply;
+  };
+  context.after(() => { createTask = async () => ({}); });
+  const options = [{ id: "s-1", name: "학생 1" }, { id: "s-2", name: "학생 2" }, { id: "s-3", name: "학생 3" }];
+  const form = () => <AssignmentTaskForm actorId="admin-multi" studentId="s-1" studentOptions={options as never} onDone={() => {}} onCancel={() => {}} />;
+  const root = await render(context, form());
+  await settle();
+  await fill("task-new-title", "킥 정리");
+  await act(async () => { (browser.document.getElementById("task-new-also-s-2") as unknown as HTMLInputElement).click(); });
+  await settle();
+  await press("2명에게 과제 내기");
+  await settle();
+  assert.equal(sent.length, 1);
+  assert.deepEqual(sent[0]?.alsoStudentIds, ["s-2"]);
+  assert.match(browser.document.querySelector('[role="alert"]')?.textContent ?? "", /다시 내 주세요/u);
+
+  // 새로고침: 폼을 다시 그리면 보관본에서 제목·학생·작성 정보를 되살린다.
+  await act(async () => root.render(<></>));
+  await settle();
+  await act(async () => root.render(form()));
+  await settle();
+  assert.equal(inputValue("title"), "킥 정리");
+  assert.equal((browser.document.getElementById("task-new-also-s-2") as unknown as HTMLInputElement).checked, true, "고른 학생이 남는다");
+  assert.equal((browser.document.getElementById("task-new-also-s-3") as unknown as HTMLInputElement).checked, false);
+  reply = { success: true };
+  await press("2명에게 과제 내기");
+  await settle();
+  assert.equal(sent.length, 2);
+  assert.deepEqual(sent[1], sent[0], "같은 학생·같은 operationId로 다시 보내 학생별로 한 번만 저장된다");
+});
+
 test("assignment errors retain the URL and a failed refresh retries without resubmission", async (context) => {
   let submissions = 0;
   saveAssignment = async () => ({ error: "지원하지 않는 링크입니다." });
@@ -3053,6 +3163,66 @@ test("피드백 고치기: 고치는 사이 화면 값이 바뀌어도, 예전 �
   await settle();
   assert.deepEqual(sent.at(-1)?.[2], { content: "A 내용", timeMarker: 90 }, "되살린 보관본은 자기 기준값(A)으로 보내 충돌이 난다");
   assert.equal(sent.length, 2);
+});
+
+test("피드백 고치기: 기준값 없는 예전 보관본은 바로 저장하지 못하고, 지금 값과 비교해 '이 내용으로 바꾸기'를 고른 뒤에만 지금 값을 기준으로 보낸다", async (context) => {
+  const sent: unknown[][] = [];
+  editFeedback = async (...args) => { sent.push(args); return { success: true }; };
+  context.after(() => { editFeedback = async () => ({ success: true }); });
+  browser.localStorage.clear();
+  // 기준값(expected)을 남기기 전 버전이 A를 고치던 보관본. 그 사이 서버 값은 B로 바뀌었다.
+  browser.localStorage.setItem(
+    createDocumentDraftKey("assignment-feedback", "admin-legacy", "edit:fb-legacy"),
+    serializeFormDraft({ timeMarker: "01:30", content: "A를 고친 예전 내용" }),
+  );
+  const listB = [{ id: "fb-legacy", timeMarker: 120, content: "B 내용", createdAt: null }];
+  await render(context, <TimelineFeedback assignmentId="legacy-assignment" actorId="admin-legacy" feedbackList={listB} isAdmin />);
+  await press("02:00 피드백 고치기");
+  await settle();
+
+  const form = browser.document.querySelector('form[aria-label="02:00 피드백 고치기"]');
+  assert.ok(form);
+  const recovered = form.querySelector('section[aria-label="이전에 고치던 내용"]');
+  assert.ok(recovered, "예전 보관본은 따로 보인다");
+  assert.match(recovered.textContent ?? "", /지금 값02:00B 내용/u, "지금 값을 보인다");
+  assert.match(recovered.textContent ?? "", /고치던 내용01:30A를 고친 예전 내용/u, "고치던 내용을 나란히 보인다");
+  const inputs = [...form.querySelectorAll("input")] as unknown as HTMLInputElement[];
+  assert.equal(inputs[1]?.value, "B 내용", "입력 칸은 지금 값 그대로다");
+  const save = button("저장");
+  assert.equal(save.hasAttribute("disabled"), true, "고르기 전에는 저장할 수 없다");
+  await act(async () => { form.dispatchEvent(new browser.Event("submit", { bubbles: true, cancelable: true })); });
+  await settle();
+  assert.equal(sent.length, 0, "submit을 보내도 저장하지 않는다");
+
+  await press("이 내용으로 바꾸기");
+  await settle();
+  assert.equal(form.querySelector('section[aria-label="이전에 고치던 내용"]'), null);
+  const applied = [...form.querySelectorAll("input")] as unknown as HTMLInputElement[];
+  assert.equal(applied[0]?.value, "01:30");
+  assert.equal(applied[1]?.value, "A를 고친 예전 내용");
+  await press("저장");
+  await settle();
+  assert.deepEqual(sent, [["fb-legacy", { timeMarker: "01:30", content: "A를 고친 예전 내용" }, { content: "B 내용", timeMarker: 120 }]], "비교하고 고른 뒤에야 지금 값(B)을 기준으로 보낸다");
+});
+
+test("피드백 고치기: 기준값 없는 예전 보관본을 버리면 지금 값에서 다시 고친다", async (context) => {
+  const sent: unknown[][] = [];
+  editFeedback = async (...args) => { sent.push(args); return { success: true }; };
+  context.after(() => { editFeedback = async () => ({ success: true }); });
+  browser.localStorage.clear();
+  const key = createDocumentDraftKey("assignment-feedback", "admin-legacy-2", "edit:fb-legacy-2");
+  browser.localStorage.setItem(key, serializeFormDraft({ timeMarker: "01:30", content: "예전 내용" }));
+  await render(context, <TimelineFeedback assignmentId="legacy-assignment-2" actorId="admin-legacy-2" feedbackList={[{ id: "fb-legacy-2", timeMarker: 120, content: "B 내용", createdAt: null }]} isAdmin />);
+  await press("02:00 피드백 고치기");
+  await settle();
+  await press("버리기");
+  await settle();
+  const form = browser.document.querySelector('form[aria-label="02:00 피드백 고치기"]');
+  assert.ok(form);
+  assert.equal(form.querySelector('section[aria-label="이전에 고치던 내용"]'), null);
+  assert.equal(browser.localStorage.getItem(key), null, "버린 보관본은 이 기기에서도 지운다");
+  assert.equal(button("저장").hasAttribute("disabled"), false);
+  assert.equal(sent.length, 0);
 });
 
 test("학생 상세 레슨 행은 그 날짜 노트가 있으면 노트 열기, 없으면 날짜를 채운 새 노트로 간다", async (context) => {

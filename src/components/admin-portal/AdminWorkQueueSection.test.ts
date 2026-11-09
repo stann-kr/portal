@@ -119,9 +119,15 @@ test("업무함 피드백 대기 행의 확인: 행이 바로 빠지고 되돌�
   assert.equal(container.querySelector('[role="status"]')?.textContent ?? "", "");
 
   // 서버가 거절하면 행을 되돌리고 이유를 알린다.
+  const alertRegion = container.querySelector('[role="alert"]');
+  assert.ok(alertRegion, "alert 영역은 안내가 없을 때도 붙어 있다");
+  assert.equal(alertRegion.textContent, "");
+  assert.equal(container.querySelector('[role="status"]'), status, "status 영역도 그대로 붙어 있다");
   failNext = true;
   await act(async () => { ackButton("하우스 롱셋")?.click(); });
   await flush();
   assert.ok(ackButton("하우스 롱셋"), "실패하면 행이 돌아온다");
   assert.match(container.querySelector('[role="alert"]')?.textContent ?? "", /피드백이 달린 제출/u);
+  assert.equal(container.querySelector('[role="alert"]'), alertRegion, "role을 바꾸지 않고 같은 alert 영역의 글만 바꾼다");
+  assert.equal(status?.textContent ?? "", "", "오류는 status 영역에서 읽지 않는다");
 });

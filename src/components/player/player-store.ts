@@ -27,10 +27,22 @@ let audio: HTMLAudioElement | null = null;
 let pendingSeek: number | null = null;
 /** 지금 주소의 metadata를 받았는지. hydration·테스트 환경에서 readyState가 늦게 바뀌어도 event로 판단한다. */
 let audioReady = false;
-/** 공용 플레이어 밖에서(믹스셋 목록 줄처럼) 지금 재생을 맡은 media 요소. 한 번에 하나만 소리를 낸다. */
-let localMedia: HTMLMediaElement | null = null;
+/**
+ * 재생을 멈출 수 있는 손잡이. 업로드 오디오 줄은 media 요소(HTMLMediaElement), 링크 줄·미니 플레이어는
+ * iframe 플레이어의 PlaybackController를 넘긴다. `paused`를 알려 주지 않으면 늘 멈춤을 요청한다(이미 멈춘 iframe에는 영향 없음).
+ */
+export type PlaybackStopHandle = { pause(): void; readonly paused?: boolean };
+/** 공용 플레이어 밖에서(믹스셋 목록 줄처럼) 지금 재생을 맡은 손잡이. 한 번에 하나만 소리를 낸다. */
+let localOwner: PlaybackStopHandle | null = null;
+/** 하단 미니 플레이어가 링크 곡(YouTube·SoundCloud)을 재생하는 iframe 손잡이. 상태만 바꾸면 iframe은 멈추지 않는다. */
+let sharedLinkHandle: PlaybackStopHandle | null = null;
 /** 재생 상태를 쓴 로그인 계정. 다른 계정으로 바뀌면 앞 계정의 곡을 닫는다. */
 let playerOwnerId: string | null = null;
+
+function stopHandle(handle: PlaybackStopHandle) {
+  if (handle.paused === true) return;
+  handle.pause();
+}
 
 function emit() {
   for (const listener of listeners) listener();
@@ -42,7 +54,7 @@ export function dispatchPlayer(action: PlayerAction): void {
   if (state !== previous) {
     syncAudio(previous, state);
     // 공용 플레이어가 재생을 시작하면 목록 줄 재생은 멈춘다.
-    if (state.playing && !previous.playing && localMedia && !localMedia.paused) localMedia.pause();
+    if (state.playing && !previous.playing && localOwner) stopHandle(localOwner);
     emit();
   }
 }
@@ -69,7 +81,8 @@ export function resetPlayerForTests(): void {
   audio = null;
   pendingSeek = null;
   audioReady = false;
-  localMedia = null;
+  localOwner = null;
+  sharedLinkHandle = null;
   playerOwnerId = null;
   state = INITIAL_PLAYER_STATE;
   emit();
@@ -168,7 +181,11 @@ export function pauseTrack(): void {
   const track = state.track;
   if (!track) return;
   if (track.kind === "audio") getSharedAudio()?.pause();
-  else dispatchPlayer({ type: "progress", key: track.key, playing: false });
+  else {
+    // 상태만 바꾸면 미니 플레이어의 iframe은 계속 소리를 내므로 손잡이로 직접 멈춘다.
+    sharedLinkHandle?.pause();
+    dispatchPlayer({ type: "progress", key: track.key, playing: false });
+  }
 }
 
 export function resumeTrack(): void {
@@ -202,18 +219,24 @@ export function closePlayer(): void {
 }
 
 /**
- * 공용 플레이어 밖의 media 요소(목록 줄 오디오·링크 플레이어)가 재생을 시작할 때 부른다.
- * 하단 미니 플레이어(공용 곡)와 다른 줄의 재생을 멈춰 소리가 겹치지 않게 한다. 링크 플레이어처럼 요소가 없으면 null.
+ * 공용 플레이어 밖의 재생(목록 줄 오디오 요소·링크 플레이어 controller)이 실제로 재생을 시작할 때 부른다.
+ * 하단 미니 플레이어(공용 곡)와 다른 줄의 재생을 멈춰 소리가 겹치지 않게 한다.
  */
-export function claimLocalPlayback(element: HTMLMediaElement | null): void {
-  if (localMedia && localMedia !== element && !localMedia.paused) localMedia.pause();
-  localMedia = element;
+export function claimLocalPlayback(handle: PlaybackStopHandle): void {
+  if (localOwner && localOwner !== handle) stopHandle(localOwner);
+  localOwner = handle;
   if (state.track && state.playing) pauseTrack();
 }
 
-/** 목록 줄이 사라질 때 맡긴 요소를 놓는다. */
-export function releaseLocalPlayback(element: HTMLMediaElement | null): void {
-  if (element && localMedia === element) localMedia = null;
+/** 목록 줄이 멈추거나 사라질 때 맡긴 손잡이를 놓는다(언마운트된 플레이어를 멈추려 하지 않게). */
+export function releaseLocalPlayback(handle: PlaybackStopHandle | null): void {
+  if (handle && localOwner === handle) localOwner = null;
+}
+
+/** 하단 미니 플레이어가 링크 곡 iframe의 controller를 맡긴다(null이면 놓는다). 앞 손잡이가 다르면 무시한다. */
+export function bindSharedLinkPlayback(handle: PlaybackStopHandle | null, previous: PlaybackStopHandle | null = null): void {
+  if (handle) sharedLinkHandle = handle;
+  else if (previous && sharedLinkHandle === previous) sharedLinkHandle = null;
 }
 
 /**
@@ -224,8 +247,8 @@ export function bindPlayerOwner(ownerId: string | null): void {
   const changed = ownerId === null || (playerOwnerId !== null && playerOwnerId !== ownerId);
   playerOwnerId = ownerId;
   if (!changed) return;
-  if (localMedia && !localMedia.paused) localMedia.pause();
-  localMedia = null;
+  if (localOwner) stopHandle(localOwner);
+  localOwner = null;
   if (state.track) closePlayer();
 }
 

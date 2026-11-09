@@ -46,8 +46,39 @@ export class PrepareAudioError extends Error {
   }
 }
 
-/** 머리글로 읽지 못한 파일을 decodeAudioData로 통째로 푸는 대체 경로의 원본 크기 상한(약 10분 분량). */
-export const DECODE_FALLBACK_MAX_BYTES = 110 * 1024 * 1024;
+/**
+ * 머리글로 읽지 못한 파일(ADPCM·μ-law WAV 등)을 decodeAudioData로 통째로 푸는 대체 경로의 원본 크기 상한.
+ *
+ * 최악의 디코딩 메모리 계산: 이 경로에 오는 형식 중 가장 많이 압축된 것은 4bit ADPCM(표본·채널당 0.5바이트)이고,
+ * 디코더는 표본·채널당 float32(4바이트)로 풀므로 원본의 최대 8배다. 20MB × 8 = 160MB(디코딩 PCM) + 원본 20MB
+ * = 약 180MB. 디코딩한 채널 버퍼는 복사하지 않고 그대로 Worker로 넘기므로(transfer) 이 위에 사본이 더해지지 않는다.
+ * 단, 디코더는 AudioContext 표본율(보통 44.1·48kHz)로 다시 표본화하므로 이보다 낮은 표본율(예: 8kHz 전화 음질)의
+ * 원본은 그만큼 더 커질 수 있다. 그래서 디코딩 뒤 PCM 크기도 DECODE_FALLBACK_MAX_PCM_BYTES로 한 번 더 막는다.
+ * 20MB는 4bit ADPCM 44.1kHz 스테레오로 약 7분, 8bit μ-law로 약 4분 분량이다.
+ */
+export const DECODE_FALLBACK_MAX_BYTES = 20 * 1024 * 1024;
+/** 대체 경로에서 Worker로 넘길 디코딩 PCM(앞 2채널, float32)의 크기 상한. */
+export const DECODE_FALLBACK_MAX_PCM_BYTES = 160 * 1024 * 1024;
+
+/**
+ * 디코딩한 채널을 복사 없이 Worker로 넘길 목록으로 만든다. 채널마다 자기 ArrayBuffer 전체를 쓰면 그대로 넘기고(transfer),
+ * 다른 채널과 버퍼를 나눠 쓰거나 일부만 쓰는 구현이면 그 채널만 복사한다(같은 버퍼를 두 번 넘기면 postMessage가 실패한다).
+ */
+export function transferableChannels(channels: readonly Float32Array[]): { channelData: Float32Array[]; transfer: ArrayBuffer[] } {
+  const transfer: ArrayBuffer[] = [];
+  const channelData = channels.map((channel) => {
+    const buffer = channel.buffer;
+    const whole = buffer instanceof ArrayBuffer && channel.byteOffset === 0 && channel.byteLength === buffer.byteLength;
+    if (whole && !transfer.includes(buffer)) {
+      transfer.push(buffer);
+      return channel;
+    }
+    const copy = channel.slice();
+    transfer.push(copy.buffer);
+    return copy;
+  });
+  return { channelData, transfer };
+}
 
 const LOSSLESS_EXTENSIONS: Record<string, LosslessAudioKind> = {
   wav: "pcm",
@@ -146,15 +177,19 @@ class WorkerFailure extends Error {
   }
 }
 
-/** 머리글을 읽지 못한 짧은 파일만: 브라우저 디코더로 통째로 푼다(Worker에는 AudioContext가 없다). */
+/** 머리글을 읽지 못한 작은 파일만: 브라우저 디코더로 통째로 푼다(Worker에는 AudioContext가 없다). */
 async function decodeWholeFile(file: File) {
   if (file.size > DECODE_FALLBACK_MAX_BYTES || typeof AudioContext === "undefined") throw new PrepareAudioError("unreadable");
   const context = new AudioContext();
   try {
     const buffer = await context.decodeAudioData(await file.arrayBuffer());
-    const channelData = Array.from({ length: Math.min(2, buffer.numberOfChannels) }, (_, index) => buffer.getChannelData(index).slice());
-    return { sampleRate: buffer.sampleRate, channelData };
-  } catch {
+    const channelCount = Math.min(2, buffer.numberOfChannels);
+    if (buffer.length * channelCount * Float32Array.BYTES_PER_ELEMENT > DECODE_FALLBACK_MAX_PCM_BYTES) throw new PrepareAudioError("unreadable");
+    // getChannelData는 AudioBuffer의 버퍼를 그대로 보여 준다. 복사하지 않고 Worker로 넘긴다(이 AudioBuffer는 다시 쓰지 않는다).
+    const { channelData, transfer } = transferableChannels(Array.from({ length: channelCount }, (_, index) => buffer.getChannelData(index)));
+    return { sampleRate: buffer.sampleRate, channelData, transfer };
+  } catch (error) {
+    if (error instanceof PrepareAudioError) throw error;
     throw new PrepareAudioError("unreadable");
   } finally {
     void context.close().catch(() => undefined);
@@ -191,7 +226,7 @@ export async function prepareAudioUpload(file: File, options: PrepareAudioUpload
       done = await runWorker(
         { type: "pcm", sampleRate: decoded.sampleRate, channelData: decoded.channelData, maxBytes },
         options,
-        decoded.channelData.map((channel) => channel.buffer),
+        decoded.transfer,
       );
     } catch (fallbackError) {
       throw toPrepareError(fallbackError);

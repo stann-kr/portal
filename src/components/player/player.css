@@ -92,6 +92,16 @@ html[data-mini-player="on"] body {
   }
 }
 
+/* 되돌리기 안내(UndoToast)는 미니 플레이어 막대 위로 올린다. */
+html[data-mini-player="on"] .undo-toast-dock {
+  bottom: calc(58px + 12px + env(safe-area-inset-bottom));
+}
+@media (min-width: 768px) {
+  html[data-mini-player="on"] .undo-toast-dock {
+    bottom: calc(65px + 16px);
+  }
+}
+
 /* YouTube 작은 창: 넓은 화면 오른쪽 아래(막대 위), 240×135. */
 .mini-video {
   position: fixed;

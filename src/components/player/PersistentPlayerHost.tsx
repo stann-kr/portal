@@ -10,7 +10,7 @@
  */
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent, type PointerEvent } from "react";
 import Link from "next/link";
 import { ChevronDown, ChevronUp, Pause, Play, X } from "lucide-react";
 import { formatTimeMarker } from "@/lib/community-mixset-media";
@@ -18,6 +18,7 @@ import { VideoPlayer, type PlaybackController, type PlaybackPositionReader } fro
 import { SoundCloudPlayer } from "./SoundCloudPlayer";
 import { isMiniPlayerVisible, type PlayerState, type PlayerTrack } from "./player-state";
 import {
+  bindSharedLinkPlayback,
   closePlayer,
   dispatchPlayer,
   pauseTrack,
@@ -28,6 +29,24 @@ import {
 import { fractionFromPointer, playedFraction, seekForKey, spokenTime } from "./waveform";
 
 const YOUTUBE_NOTICE_KEY = "portal:mini-player:youtube-notice";
+/** player.css에서 작은 창을 화면 밖으로 옮기는 폭과 같다. */
+const MOBILE_QUERY = "(max-width: 767.98px)";
+
+function subscribeMobile(listener: () => void): () => void {
+  const query = typeof window !== "undefined" ? window.matchMedia?.(MOBILE_QUERY) : undefined;
+  if (!query) return () => {};
+  query.addEventListener?.("change", listener);
+  return () => query.removeEventListener?.("change", listener);
+}
+
+/** 휴대폰 폭인지(작은 창이 화면 밖에 있는지). matchMedia가 없으면 넓은 화면으로 본다. */
+function useIsMobileViewport(): boolean {
+  return useSyncExternalStore(
+    subscribeMobile,
+    () => (typeof window !== "undefined" && window.matchMedia?.(MOBILE_QUERY).matches) || false,
+    () => false,
+  );
+}
 
 /** 정규화된 YouTube 주소(watch?v= · youtu.be/)에서 영상 ID를 꺼낸다. */
 export function youtubeVideoId(url: string): string | null {
@@ -72,7 +91,9 @@ function MiniPlayer({ state, track }: { state: PlayerState; track: PlayerTrack }
     [resumeNonce],
   );
 
+  // controller를 공용 상태에 맡겨, 목록 줄이 재생을 시작하면(pauseTrack) 이 iframe을 직접 멈추게 한다.
   const handleController = useCallback((controller: PlaybackController | null) => {
+    bindSharedLinkPlayback(controller, controllerRef.current);
     controllerRef.current = controller;
   }, []);
   const handleReader = useCallback((reader: PlaybackPositionReader | null) => {
@@ -81,6 +102,11 @@ function MiniPlayer({ state, track }: { state: PlayerState; track: PlayerTrack }
   const handlePlaying = useCallback((next: boolean) => {
     dispatchPlayer({ type: "progress", key: track.key, playing: next });
   }, [track.key]);
+
+  // 공용 상태가 멈춤이 되면(목록 줄 재생·로그아웃 등 어디서 바뀌었든) iframe도 멈춘다.
+  useEffect(() => {
+    if (isLink && !playing) controllerRef.current?.pause();
+  }, [isLink, playing]);
 
   // 링크 플레이어는 위치를 알려 주지 않으므로 재생 중에 1초마다 읽는다.
   useEffect(() => {
@@ -106,15 +132,16 @@ function MiniPlayer({ state, track }: { state: PlayerState; track: PlayerTrack }
     else resumeTrack();
   };
 
+  // 위치만 옮기고 재생·멈춤은 그대로 둔다(멈춘 채 키보드 화살표로 옮겨도 재생이 시작되지 않게).
   const seekTo = (seconds: number) => {
     if (isLink) {
-      controllerRef.current?.seek(seconds);
+      controllerRef.current?.seek(seconds, { play: false });
       dispatchPlayer({ type: "progress", key: track.key, position: seconds });
     } else {
       seekAudio(seconds);
-      resumeTrack();
     }
   };
+  const mobile = useIsMobileViewport();
 
   const videoId = track.kind === "youtube" ? youtubeVideoId(track.url) : null;
   const fraction = playedFraction(position, duration);
@@ -123,7 +150,15 @@ function MiniPlayer({ state, track }: { state: PlayerState; track: PlayerTrack }
   return (
     <>
       {track.kind === "youtube" ? (
-        <div aria-label="YouTube 작은 창" role="region" className="mini-video" data-collapsed={state.videoCollapsed}>
+        // 휴대폰은 작은 창을 화면 밖에 두므로 focus·보조기기에서 뺀다(재생은 이어 간다).
+        <div
+          aria-label="YouTube 작은 창"
+          role="region"
+          className="mini-video"
+          data-collapsed={state.videoCollapsed}
+          inert={mobile || undefined}
+          aria-hidden={mobile || undefined}
+        >
           <VideoPlayer
             url={track.url}
             seekRequest={resumeRequest}

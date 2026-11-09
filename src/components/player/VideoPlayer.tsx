@@ -16,7 +16,8 @@ export type PlaybackPositionReader = () => Promise<number | null>;
 export type PlaybackController = {
   play(): void;
   pause(): void;
-  seek(seconds: number): void;
+  /** 위치를 옮긴다. 기본은 옮긴 위치부터 재생하고, `play: false`면 재생 여부를 바꾸지 않는다(멈춰 있으면 그대로). */
+  seek(seconds: number, options?: { play?: boolean }): void;
   /** 길이(초). 아직 모르면 null. */
   readDuration(): Promise<number | null>;
 };
@@ -44,6 +45,7 @@ function MediaPlayer({ url, seekRequest, onPositionReaderChange, onPlaybackError
   const playerRef = useRef<HTMLVideoElement>(null);
   const readyRef = useRef(false);
   const pendingSeekRef = useRef<number | null>(null);
+  const pendingPlayRef = useRef(true);
   const [playing, setPlaying] = useState(false);
   const [error, setError] = useState(false);
 
@@ -53,12 +55,13 @@ function MediaPlayer({ url, seekRequest, onPositionReaderChange, onPlaybackError
     if (!player || !readyRef.current || seconds === null) return;
     player.currentTime = seconds;
     pendingSeekRef.current = null;
-    setPlaying(true);
+    if (pendingPlayRef.current) setPlaying(true);
   }, []);
 
   useEffect(() => {
     if (!seekRequest || !Number.isFinite(seekRequest.seconds) || seekRequest.seconds < 0) return;
     pendingSeekRef.current = seekRequest.seconds;
+    pendingPlayRef.current = true;
     applySeek();
   }, [applySeek, seekRequest]);
 
@@ -84,8 +87,9 @@ function MediaPlayer({ url, seekRequest, onPositionReaderChange, onPlaybackError
     onControllerChange({
       play: () => setPlaying(true),
       pause: () => setPlaying(false),
-      seek: (seconds) => {
+      seek: (seconds, options) => {
         pendingSeekRef.current = seconds;
+        pendingPlayRef.current = options?.play !== false;
         applySeek();
       },
       readDuration: async () => finiteSeconds(playerRef.current?.duration) || null,

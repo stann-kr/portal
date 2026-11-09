@@ -18,6 +18,7 @@ import type { WaveformMarkerInput } from "@/components/player/waveform";
 import {
   VideoPlayer,
   type MediaSeekRequest,
+  type PlaybackController,
   type PlaybackPositionReader,
 } from "@/components/player/VideoPlayer";
 import { SoundCloudPlayer } from "@/components/player/SoundCloudPlayer";
@@ -35,6 +36,9 @@ type MixsetPlayerProps = {
   /** 업로드 오디오 파형 아래 시점 댓글. */
   markers?: WaveformMarkerInput[];
   onMarkerOpen?: (id: string) => void;
+  /** 목록 줄 링크 플레이어(track 없음)의 재생·멈춤과 조작 손잡이. 다른 재생과 겹치지 않게 할 때 쓴다. */
+  onPlayingChange?: (playing: boolean) => void;
+  onControllerChange?: (controller: PlaybackController | null) => void;
 };
 
 /** HTMLMediaElement.HAVE_METADATA: 길이를 알아 위치를 옮길 수 있는 상태 */
@@ -188,7 +192,7 @@ function PersistentLinkPlayer({ media, track, title, seekRequest, onPositionRead
   return <VideoPlayer key={media.url} url={media.url} seekRequest={effectiveSeek} onPositionReaderChange={handleReader} onPlayingChange={handlePlaying} />;
 }
 
-export function MixsetPlayer({ media, title, seekRequest, onPositionReaderChange, track, markers, onMarkerOpen }: MixsetPlayerProps) {
+export function MixsetPlayer({ media, title, seekRequest, onPositionReaderChange, track, markers, onMarkerOpen, onPlayingChange, onControllerChange }: MixsetPlayerProps) {
   if (track) {
     const kind = media.kind === "audio" ? "audio" : isSoundCloudUrl(media.url) ? "soundcloud" : "youtube";
     const fullTrack: PlayerTrack = { ...track, kind, url: media.url };
@@ -224,12 +228,14 @@ export function MixsetPlayer({ media, title, seekRequest, onPositionReaderChange
           variant={/^https:\/\/soundcloud\.com\/[^/]+\/sets\//u.test(media.url) ? "playlist" : "track"}
           seekRequest={seekRequest}
           onPositionReaderChange={onPositionReaderChange}
+          onPlayingChange={onPlayingChange}
+          onControllerChange={onControllerChange}
         />
       </div>
     );
   }
   if (media.kind === "link") {
-    return <VideoPlayer key={media.url} url={media.url} seekRequest={seekRequest} onPositionReaderChange={onPositionReaderChange} />;
+    return <VideoPlayer key={media.url} url={media.url} seekRequest={seekRequest} onPositionReaderChange={onPositionReaderChange} onPlayingChange={onPlayingChange} onControllerChange={onControllerChange} />;
   }
   return (
     <MixsetAudio

@@ -85,7 +85,7 @@ async function DiggingTabContent({ studentId }: { studentId: string }) {
   );
 }
 
-async function AssignmentsTabContent({ studentId, referenceTime }: { studentId: string; referenceTime: Date }) {
+async function AssignmentsTabContent({ actorId, studentId, referenceTime }: { actorId: string; studentId: string; referenceTime: Date }) {
   // 정기 과제 회차를 먼저 만든 뒤 제출 목록을 읽는다.
   const { tasks, recurrences } = await getAssignmentTasksForStudent(studentId);
   const [summaries, studentOptions] = await Promise.all([
@@ -97,6 +97,7 @@ async function AssignmentsTabContent({ studentId, referenceTime }: { studentId: 
   return (
     <div className="flex flex-col gap-8">
       <AdminAssignmentsPanel
+        actorId={actorId}
         studentId={studentId}
         tasks={tasks}
         recurrences={recurrences}
@@ -291,7 +292,7 @@ export default async function StudentDetailPage({
 
           {activeTab === "assignments" && (
             <Suspense fallback={<div className={cn(TAB_FALLBACK_CLASS, "h-40 max-w-[880px]")} />}>
-              <AssignmentsTabContent studentId={studentId} referenceTime={referenceTime} />
+              <AssignmentsTabContent actorId={session.user.id!} studentId={studentId} referenceTime={referenceTime} />
             </Suspense>
           )}
 

@@ -7,7 +7,15 @@ import { decodePcmChunk, pcmChunkRanges } from "./pcm-stream";
 import { estimateMp3Bytes, selectMp3Bitrate } from "./mp3-bitrate";
 import { parseFlacStreamInfo } from "./flac-info";
 import { AudioTooLongError, createPcmFileSource, encodeSourceToMp3, maxSourceFrames, MAX_SOURCE_DURATION_SEC, type Mp3EncoderLike, type PcmSource } from "./mp3-encode";
-import { estimateRemainingSeconds, formatRemaining, losslessAudioKind, mp3FileName } from "./prepare-upload";
+import {
+  DECODE_FALLBACK_MAX_BYTES,
+  DECODE_FALLBACK_MAX_PCM_BYTES,
+  estimateRemainingSeconds,
+  formatRemaining,
+  losslessAudioKind,
+  mp3FileName,
+  transferableChannels,
+} from "./prepare-upload";
 
 const MAX = 95 * 1024 * 1024;
 
@@ -314,4 +322,25 @@ test("머리글 길이(+여유)보다 프레임이 많이 나오면 인코딩하
   assert.equal(calls.count, 2, "넘친 조각은 인코딩하지 않는다");
   // 머리글이 아주 길어도 절대 상한을 넘지 않는다.
   assert.equal(maxSourceFrames({ sampleRate: 48000, totalFrames: 48000 * 10 * 60 * 60 }), 48000 * MAX_SOURCE_DURATION_SEC);
+});
+
+test("대체 디코딩 채널은 자기 버퍼 전체를 쓰면 복사 없이 넘기고, 나눠 쓰는 버퍼만 복사한다", () => {
+  const left = new Float32Array([0.1, 0.2]);
+  const right = new Float32Array([0.3, 0.4]);
+  const own = transferableChannels([left, right]);
+  assert.equal(own.channelData[0], left, "복사하지 않는다");
+  assert.equal(own.channelData[1], right);
+  assert.deepEqual(own.transfer, [left.buffer, right.buffer]);
+
+  const shared = new Float32Array(4);
+  const a = shared.subarray(0, 2);
+  const b = shared.subarray(2, 4);
+  const mixed = transferableChannels([a, b]);
+  assert.notEqual(mixed.channelData[0], a, "일부만 쓰는 view는 복사한다");
+  assert.equal(new Set(mixed.transfer).size, mixed.transfer.length, "같은 버퍼를 두 번 넘기지 않는다");
+});
+
+test("대체 디코딩 상한: 4bit ADPCM 최악(원본의 8배) + 원본이 200MB 안에 든다", () => {
+  assert.ok(DECODE_FALLBACK_MAX_BYTES * 8 + DECODE_FALLBACK_MAX_BYTES <= 200 * 1024 * 1024);
+  assert.ok(DECODE_FALLBACK_MAX_PCM_BYTES + DECODE_FALLBACK_MAX_BYTES <= 200 * 1024 * 1024);
 });

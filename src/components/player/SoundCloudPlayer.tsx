@@ -50,6 +50,7 @@ function SoundCloudEmbed({ url, seekRequest, onPositionReaderChange, title = "So
   const widgetRef = useRef<SoundCloudWidget | null>(null);
   const readyRef = useRef(false);
   const pendingSeekRef = useRef<number | null>(null);
+  const pendingPlayRef = useRef(true);
   const [sdkReady, setSdkReady] = useState(false);
   const [error, setError] = useState(false);
 
@@ -58,7 +59,7 @@ function SoundCloudEmbed({ url, seekRequest, onPositionReaderChange, title = "So
     const seconds = pendingSeekRef.current;
     if (!widget || !readyRef.current || seconds === null) return;
     widget.seekTo(seconds * 1000);
-    widget.play();
+    if (pendingPlayRef.current) widget.play();
     pendingSeekRef.current = null;
   }, []);
 
@@ -128,8 +129,9 @@ function SoundCloudEmbed({ url, seekRequest, onPositionReaderChange, title = "So
     onControllerChange({
       play: () => widgetRef.current?.play(),
       pause: () => widgetRef.current?.pause(),
-      seek: (seconds) => {
+      seek: (seconds, options) => {
         pendingSeekRef.current = seconds;
+        pendingPlayRef.current = options?.play !== false;
         applySeek();
       },
       readDuration: () => new Promise<number | null>((resolve) => {
@@ -151,6 +153,7 @@ function SoundCloudEmbed({ url, seekRequest, onPositionReaderChange, title = "So
   useEffect(() => {
     if (!seekRequest || !Number.isFinite(seekRequest.seconds) || seekRequest.seconds < 0) return;
     pendingSeekRef.current = seekRequest.seconds;
+    pendingPlayRef.current = true;
     applySeek();
   }, [applySeek, seekRequest]);
 

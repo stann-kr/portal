@@ -65,6 +65,7 @@ function StatusDot({ tone, label }: { tone: PortalStatusTone; label: string }) {
 }
 
 export function AdminAssignmentsPanel({
+  actorId,
   studentId,
   tasks,
   recurrences,
@@ -72,6 +73,8 @@ export function AdminAssignmentsPanel({
   returnTo,
   studentOptions = [],
 }: {
+  /** 과제 폼 보관본(local draft)의 주인(관리자). */
+  actorId: string;
   studentId: string;
   tasks: AssignmentTaskItem[];
   recurrences: AssignmentRecurrenceItem[];
@@ -118,10 +121,10 @@ export function AdminAssignmentsPanel({
         </Button>
       </div>
       {editor?.kind === "new-task" ? (
-        <AssignmentTaskForm studentId={studentId} studentOptions={studentOptions} onDone={afterSave} onCancel={closeEditor} />
+        <AssignmentTaskForm actorId={actorId} studentId={studentId} studentOptions={studentOptions} onDone={afterSave} onCancel={closeEditor} />
       ) : null}
       {editor?.kind === "new-recurrence" ? (
-        <AssignmentRecurrenceForm studentId={studentId} studentOptions={studentOptions} referenceTime={referenceTime} onDone={afterSave} onCancel={closeEditor} />
+        <AssignmentRecurrenceForm actorId={actorId} studentId={studentId} studentOptions={studentOptions} referenceTime={referenceTime} onDone={afterSave} onCancel={closeEditor} />
       ) : null}
       {error ? <p role="alert" className="text-ui text-destructive">{error}</p> : null}
 
@@ -182,6 +185,7 @@ export function AdminAssignmentsPanel({
                   {editor?.kind === "recurrence" && editor.id === rule.id ? (
                     <AssignmentRecurrenceForm
                       key={`${rule.id}:${rule.version}`}
+                      actorId={actorId}
                       studentId={studentId}
                       recurrence={rule}
                       referenceTime={referenceTime}
@@ -275,7 +279,7 @@ export function AdminAssignmentsPanel({
                     </span>
                   </div>
                   {editor?.kind === "task" && editor.id === task.id ? (
-                    <AssignmentTaskForm key={`${task.id}:${task.version}`} studentId={studentId} task={task} onDone={afterSave} onCancel={closeEditor} />
+                    <AssignmentTaskForm key={`${task.id}:${task.version}`} actorId={actorId} studentId={studentId} task={task} onDone={afterSave} onCancel={closeEditor} />
                   ) : null}
                   {taskConfirm.value === task.id ? (
                     <ConfirmPanel
