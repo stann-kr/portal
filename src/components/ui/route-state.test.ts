@@ -13,7 +13,8 @@ test("route loading state는 status, busy 상태와 reduced-motion fallback을 �
   assert.match(markup, /role="status"/u);
   assert.match(markup, /aria-busy="true"/u);
   assert.match(markup, /커뮤니티 불러오는 중/u);
-  assert.match(markup, /motion-reduce:animate-none/u);
+  assert.match(markup, /class="skeleton-bar[^"]*"/u);
+  assert.match(markup, /aria-hidden="true"/u);
 });
 
 test("route error state는 alert와 이름 있는 retry button을 제공한다", () => {

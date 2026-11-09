@@ -1,5 +1,5 @@
 /*
- * Stann Lumo 포털 Service Worker — 웹 푸시 표시와 알림 클릭만 맡는다.
+ * Portal - Stann Service Worker — 웹 푸시 표시와 알림 클릭만 맡는다.
  * fetch를 가로채거나 캐시하지 않는다(문서 편집의 서버 저장·초안 흐름을 바꾸지 않기 위해).
  */
 const DEFAULT_URL = "/dashboard";
@@ -17,7 +17,7 @@ function readPayload(event) {
   try {
     return event.data.json();
   } catch {
-    return { title: "Stann Lumo", body: event.data.text() };
+    return { title: "Portal - Stann", body: event.data.text() };
   }
 }
 
@@ -29,7 +29,7 @@ function safePath(value) {
 
 self.addEventListener("push", (event) => {
   const payload = readPayload(event) || {};
-  const title = typeof payload.title === "string" && payload.title ? payload.title : "Stann Lumo";
+  const title = typeof payload.title === "string" && payload.title ? payload.title : "Portal - Stann";
   const options = {
     body: typeof payload.body === "string" ? payload.body : "",
     icon: "/icons/icon-192.png",

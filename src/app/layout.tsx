@@ -1,6 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import { IBM_Plex_Mono, IBM_Plex_Sans_KR } from "next/font/google";
-import { WEB_APP_BACKGROUND } from "@/lib/web-app-theme";
+import { cookies } from "next/headers";
+import { parseThemeCookie, THEME_COOKIE, themeColorsFor } from "@/lib/web-app-theme";
+import { InputFontAlias } from "@/components/fonts/InputFontAlias";
 import { PersistentPlayerHost } from "@/components/player/PersistentPlayerHost";
 import "./globals.css";
 
@@ -25,31 +27,43 @@ export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: {
-    default: "Stann Lumo DJ 레슨 포탈",
-    template: "%s | Stann Lumo",
+    default: "Portal - Stann",
+    template: "%s | Portal - Stann",
   },
   description: "Stann의 개인 DJ 레슨 일정, 과제·피드백과 연습 기록을 관리하는 포탈입니다.",
-  applicationName: "Stann Lumo DJ 레슨 포탈",
+  applicationName: "Portal - Stann",
   // iPhone 홈 화면에 추가하면 Safari 막대 없이 앱처럼 열린다(웹 푸시의 전제).
-  appleWebApp: { capable: true, title: "Stann Lumo", statusBarStyle: "default" },
-  icons: { apple: "/icons/apple-touch-icon.png" },
+  appleWebApp: { capable: true, title: "Portal", statusBarStyle: "default" },
+  // icons를 직접 주면 src/app/icon.svg 파일 규칙 링크가 빠지므로 icon.svg를 적는다(favicon.ico는 파일 규칙이 넣는다).
+  icons: {
+    icon: [{ url: "/icon.svg", type: "image/svg+xml" }],
+    apple: "/icons/apple-touch-icon.png",
+  },
 };
 
-export const viewport: Viewport = {
-  // 홈 화면 앱의 상단 막대 색.
-  themeColor: [
-    { media: "(prefers-color-scheme: light)", color: WEB_APP_BACKGROUND.light },
-    { media: "(prefers-color-scheme: dark)", color: WEB_APP_BACKGROUND.dark },
-  ],
-};
+/** 이 기기에서 고른 화면 모드(cookie). 없으면 null(= 시스템). 루트 layout은 이미 force-dynamic이라 정적 생성에 영향이 없다. */
+async function readThemeFromRequest() {
+  return parseThemeCookie((await cookies()).get(THEME_COOKIE)?.value);
+}
 
-export default function RootLayout({
+export async function generateViewport(): Promise<Viewport> {
+  // 홈 화면 앱의 상단 막대 색. 수동 모드면 그 색 하나, 시스템이면 기기 설정별 두 색.
+  return { themeColor: themeColorsFor(await readThemeFromRequest()) };
+}
+
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // 고른 모드를 첫 HTML부터 그려 다음 접속 때도 다른 모드가 먼저 보이지 않는다(globals.css의 [data-theme]).
+  const theme = await readThemeFromRequest();
   return (
-    <html lang="ko" className={`${plexSans.variable} ${plexMono.variable}`}>
+    <html
+      lang="ko"
+      data-theme={theme ?? undefined}
+      className={`${plexSans.variable} ${plexMono.variable}`}
+    >
       <body
         className="font-sans antialiased bg-background text-foreground"
       >
@@ -68,6 +82,7 @@ export default function RootLayout({
         </div>
         {/* 페이지를 옮겨도 이어지는 하단 미니 플레이어. 레이아웃이 바뀌어도 남도록 루트에 한 번만 둔다. */}
         <PersistentPlayerHost />
+        <InputFontAlias />
       </body>
     </html>
   );

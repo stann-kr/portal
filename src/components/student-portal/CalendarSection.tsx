@@ -28,7 +28,11 @@ import { CreateEntryDropdown } from "./CreateEntryDropdown";
 import { SlidePanel, SlidePanelDock } from "./SlidePanel";
 import { QnaSlideForm } from "@/components/qna/QnaSlideForm";
 import { CalendarTypeFilter } from "@/components/calendar/CalendarTypeFilter";
-import { CalendarQuickCreate, type CalendarQuickCreateOptions } from "@/components/calendar/CalendarQuickCreate";
+import {
+  CalendarQuickCreate,
+  type CalendarQuickCreateOptions,
+  type QuickCreateStudentChoice,
+} from "@/components/calendar/CalendarQuickCreate";
 import { LessonScheduleDialog } from "@/components/calendar/LessonScheduleDialog";
 import { UNIFIED_ITEM_TYPES } from "@/components/ui/unified-item-type";
 import type { DiggingColumnType } from "@/db/schema";
@@ -38,6 +42,7 @@ import { ExternalCalendarConnection } from "./ExternalCalendarConnection";
 import type { ExternalCalendarConnectionSummary } from "@/lib/external-calendar";
 import { buildNoteCreateHref } from "@/lib/note-create-route";
 import { buildAdminStudentDetailHref, buildStudentDiggingBoardHref } from "@/lib/student-space-routes";
+import { ALL_STUDENTS_SCOPE } from "@/lib/admin-schedule-scope";
 import type { WorkspaceLocation } from "@/lib/portal-location";
 import {
   resolveCalendarPreset,
@@ -176,6 +181,17 @@ interface CalendarSectionProps {
   loading?: boolean;
   loadError?: string | null;
   onRetry?: () => void;
+  /**
+   * 관리자 일정 "전체 학생": 모든 학생 항목을 한 달력에 모으고 항목마다 학생 이름 칩을 붙인다.
+   * 만들기(칸 선택·레슨 예약)는 이 목록에서 학생을 먼저 고른다. 이때 studentId는 빈 값이다.
+   */
+  studentChoices?: readonly QuickCreateStudentChoice[];
+  /** 달력이 보여 주는 기간이 바뀔 때("전체 학생"은 아직 읽지 않은 기간을 더 읽는다). */
+  onVisibleRangeChange?: (start: Date, end: Date) => void;
+  /** 머리줄 오른쪽 "전체 노트 보기" 링크(관리자). */
+  allNotesHref?: string;
+  /** 머리 아래 범위 안내(전체 학생 보기의 포탈 일정만·일부만 보임 등). */
+  scopeNotice?: React.ReactNode;
 }
 
 // ── 컴포넌트 ─────────────────────────────────────
@@ -202,6 +218,10 @@ export function CalendarSection({
   loading = false,
   loadError = null,
   onRetry,
+  studentChoices,
+  onVisibleRangeChange,
+  allNotesHref,
+  scopeNotice,
 }: CalendarSectionProps) {
   const [createMenuOpen, setCreateMenuOpen] = useState(false);
   // 불러온 컬럼은 어느 학생 것인지 함께 둔다. 지금 학생 본인의 스페이스가 아니면 렌더에서 빈 목록으로 본다.
@@ -242,33 +262,40 @@ export function CalendarSection({
       ? loadedDiggingColumns.columns
       : NO_DIGGING_COLUMNS;
   const showSpaceContext = workspaceRole === "admin";
+  // 관리자 "전체 학생": 항목의 학생은 item.space.studentId가 정하고, 만들 때는 학생을 먼저 고른다.
+  const allStudents = workspaceRole === "admin" && studentChoices !== undefined;
   const workspaceSection = isStudentWorkspace ? "workspace" : "schedule";
   const workspaceReturnTo = isStudentWorkspace
     ? `/dashboard/student?section=${workspaceSection}&view=${encodeURIComponent(activeTab)}`
-    : `/dashboard/admin?section=${workspaceSection}&view=${encodeURIComponent(activeTab)}&student=${encodeURIComponent(studentId)}`;
-  const hasNoteTarget = workspaceRole === "student" || studentId.trim().length > 0;
-  const noteListHref = hasNoteTarget
-    ? workspaceRole === "student"
-      ? "/dashboard/student/notes"
-      : `/dashboard/admin/students/${studentId}/notes`
-    : undefined;
-  const noteCreatePathname = workspaceRole === "student"
+    : `/dashboard/admin?section=${workspaceSection}&view=${encodeURIComponent(activeTab)}&student=${encodeURIComponent(allStudents ? ALL_STUDENTS_SCOPE : studentId)}`;
+  const hasSingleNoteTarget = workspaceRole === "student" || (!allStudents && studentId.trim().length > 0);
+  const hasNoteTarget = hasSingleNoteTarget || (allStudents && (studentChoices?.length ?? 0) > 0);
+  const noteListHref = allStudents
+    ? "/dashboard/admin/notes"
+    : hasSingleNoteTarget
+      ? workspaceRole === "student"
+        ? "/dashboard/student/notes"
+        : `/dashboard/admin/students/${studentId}/notes`
+      : undefined;
+  const noteCreatePathnameFor = (targetStudentId: string) => workspaceRole === "student"
     ? "/dashboard/student/notes/new"
-    : `/dashboard/admin/students/${studentId}/notes/new`;
+    : `/dashboard/admin/students/${targetStudentId}/notes/new`;
   const noteReturnFallback = workspaceRole === "student" ? "/dashboard/student" : "/dashboard/admin";
-  const noteCreateHref = hasNoteTarget
+  // 머리·더 보기의 "새 노트"는 학생 한 명 문맥에서만 연다("전체 학생"은 칸 선택 만들기에서 학생을 고른다).
+  const noteCreateHref = hasSingleNoteTarget
     ? buildNoteCreateHref({
-      pathname: noteCreatePathname,
+      pathname: noteCreatePathnameFor(studentId),
       returnTo: workspaceReturnTo,
       returnFallback: noteReturnFallback,
     })
     : undefined;
   const diggingBoardHref = workspaceRole === "student"
     ? buildStudentDiggingBoardHref(workspaceReturnTo)
-    : hasNoteTarget
+    : hasSingleNoteTarget
       ? buildAdminStudentDetailHref(studentId, "digging")
       : undefined;
-  const canManageLessons = workspaceRole === "admin" && studentId.trim().length > 0;
+  const canManageLessons = workspaceRole === "admin"
+    && (allStudents ? (studentChoices?.length ?? 0) > 0 : studentId.trim().length > 0);
   const canQuickCreateToday = hasNoteTarget || isStudentWorkspace || canManageLessons;
   const isCalendarFamily = CALENDAR_FAMILY_VIEWS.has(activeTab);
   // 캘린더 보기의 제목. 과제·커리큘럼 보기는 그 화면이 제목을 그린다.
@@ -442,8 +469,8 @@ export function CalendarSection({
   // 캘린더 칸에서 바로 만들기. 노트는 그 날짜의 작성 페이지로, 일정·레슨은 그 자리에서 저장한다.
   const quickCreate: CalendarQuickCreateOptions = {
     buildNoteHref: hasNoteTarget
-      ? (dateKey, title) => buildNoteCreateHref({
-        pathname: noteCreatePathname,
+      ? (dateKey, title, targetStudentId) => buildNoteCreateHref({
+        pathname: noteCreatePathnameFor(allStudents ? targetStudentId : studentId),
         defaultDate: dateKey,
         defaultTitle: title,
         returnTo: workspaceReturnTo,
@@ -454,6 +481,7 @@ export function CalendarSection({
     canCreateLesson: canManageLessons,
     studentId,
     spaceLabel,
+    studentChoices: allStudents ? studentChoices : undefined,
   };
 
   const clearPreset = () => {
@@ -523,6 +551,15 @@ export function CalendarSection({
                   {workspaceRole === "admin" && headerSlot ? <div className="-order-1 min-w-0 md:order-none">{headerSlot}</div> : null}
                 </div>
 
+                {allNotesHref ? (
+                  <Link
+                    href={allNotesHref}
+                    className="order-last inline-flex h-11 items-center gap-1.5 rounded-md px-1 text-ui text-secondary-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:order-none md:ml-auto md:h-8"
+                  >
+                    <FileText className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
+                    전체 노트 보기
+                  </Link>
+                ) : null}
                 <div ref={createAreaRef} className="hidden items-center gap-1 md:flex">
                   {canShowCreateMenu ? (
                     <CreateEntryDropdown
@@ -537,6 +574,7 @@ export function CalendarSection({
                       canCreateEvent={isStudentWorkspace}
                       canCreateDigging={isStudentWorkspace}
                       canCreateLesson={canManageLessons}
+                      lessonStudentChoices={allStudents ? studentChoices : undefined}
                       onSuccess={(item) => {
                         onAddItem?.(item);
                         setCreateMenuOpen(false);
@@ -569,6 +607,9 @@ export function CalendarSection({
 
               {loading ? (
                 <p className="mx-5 mt-3 text-xs text-muted-foreground md:mx-0 md:mt-0" role="status">학생 일정을 불러오는 중입니다.</p>
+              ) : null}
+              {scopeNotice ? (
+                <div className="mx-5 mt-3 text-xs text-muted-foreground md:mx-0 md:mt-0">{scopeNotice}</div>
               ) : null}
               {lessonUnavailable && !canManageLessons ? (
                 <div className="mx-5 mt-3 flex min-h-10 flex-wrap items-center justify-between gap-2 rounded-touch bg-sidebar py-1.5 pl-3.5 pr-2 md:mx-0 md:mt-0" role="status">
@@ -622,6 +663,8 @@ export function CalendarSection({
                   quickCreate={quickCreate}
                   returnTo={workspaceReturnTo}
                   showSpaceContext={showSpaceContext}
+                  showStudentChip={allStudents}
+                  onVisibleRangeChange={onVisibleRangeChange}
                   canManageEvents={isStudentWorkspace}
                   canManageLessons={canManageLessons}
                   onItemUpdated={onAddItem}
@@ -632,6 +675,7 @@ export function CalendarSection({
               <TabsContent value="daily" className="m-0">
                 <DailyListView
                   items={unifiedItems}
+                  onVisibleRangeChange={onVisibleRangeChange}
                   quickCreate={quickCreate}
                   visibleTypes={visibleTypes}
                   preset={calendarPreset}
@@ -640,6 +684,7 @@ export function CalendarSection({
                   viewer={viewer}
                   returnTo={workspaceReturnTo}
                   showSpaceContext={showSpaceContext}
+                  showStudentChip={allStudents}
                   canManageEvents={isStudentWorkspace}
                   canManageLessons={canManageLessons}
                   onItemUpdated={onAddItem}
@@ -653,6 +698,7 @@ export function CalendarSection({
                   viewer={viewer}
                   returnTo={workspaceReturnTo}
                   showSpaceContext={showSpaceContext}
+                  showStudentChip={allStudents}
                   initialType={allItemsInitialType}
                   canManageEvents={isStudentWorkspace}
                   canManageLessons={canManageLessons}
@@ -723,6 +769,7 @@ export function CalendarSection({
             spaceLabel={spaceLabel}
             defaultStart={lessonDefaultStart}
             onSuccess={(item) => onAddItem?.(item)}
+            studentChoices={allStudents ? studentChoices : undefined}
           />
         ) : null}
 

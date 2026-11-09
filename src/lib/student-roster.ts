@@ -142,7 +142,7 @@ export async function queryStudentWorkCounts(db: DrizzleDb, studentId: string): 
   return { pendingFeedbackCount: Number(pending?.value ?? 0), openQnaCount: Number(openQna?.value ?? 0) };
 }
 
-/** 포털 레슨과 연결된 바깥 캘린더 일정 중 더 이른 쪽을 다음 레슨으로 삼는다. */
+/** 포탈 레슨과 연결된 바깥 캘린더 일정 중 더 이른 쪽을 다음 레슨으로 삼는다. */
 export function withConnectedNextLessons(
   stats: StudentRosterStat[],
   connected: ReadonlyMap<string, Date>,

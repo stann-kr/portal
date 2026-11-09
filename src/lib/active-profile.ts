@@ -89,6 +89,23 @@ export async function findActiveProfileById(
   return parseActiveProfile(row);
 }
 
+/**
+ * 활성 학생 profile 전체. 학생 대상 action의 findStudentTarget과 같은 규칙(학생 role + 활성 계정)으로 고른다.
+ * 계정 폐기는 profile hard-delete라 지운 학생은 여기 나오지 않는다.
+ */
+export async function listActiveStudentProfiles(
+  db: DrizzleDb = createDb(),
+): Promise<ActiveProfile[]> {
+  const rows = await db
+    .select(activeProfileColumns)
+    .from(profiles)
+    .where(eq(profiles.role, "student"));
+  return rows.flatMap((row) => {
+    const profile = parseActiveProfile(row);
+    return profile?.role === "student" ? [profile] : [];
+  });
+}
+
 export async function findActiveSessionProfileById(
   profileId: string,
   db: DrizzleDb = createDb(),

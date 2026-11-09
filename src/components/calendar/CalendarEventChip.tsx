@@ -4,7 +4,7 @@
  * 점·시간 범위 줄과 제목 줄(캔버스 Calendar·CalendarWeek 보드).
  */
 import type { EventContentArg } from "@fullcalendar/core";
-import { UNIFIED_ITEM_TYPE_LABELS } from "@/components/ui/unified-item-type";
+import { UNIFIED_ITEM_TYPE_LABELS, UnifiedItemStudentChip } from "@/components/ui/unified-item-type";
 import type { UnifiedItemType } from "@/lib/utils/unifiedItemUtils";
 
 type ChipProps = {
@@ -12,6 +12,8 @@ type ChipProps = {
   movable?: unknown;
   timeLabel?: unknown;
   timeRangeLabel?: unknown;
+  /** 관리자 일정 "전체 학생"에서만 채우는 학생 이름. */
+  studentLabel?: unknown;
 };
 
 function isUnifiedItemType(value: unknown): value is UnifiedItemType {
@@ -25,6 +27,9 @@ function CalendarEventChip({ arg }: { arg: EventContentArg }) {
   const timeRange = typeof props.timeRangeLabel === "string" ? props.timeRangeLabel : timeLabel;
   const dot = itemType ? <span className="calendar-chip-dot" aria-hidden="true" /> : null;
   const movable = props.movable === true ? "true" : undefined;
+  const studentChip = typeof props.studentLabel === "string" && props.studentLabel
+    ? <UnifiedItemStudentChip label={props.studentLabel} className="h-4 px-[3px] text-[10px]" />
+    : null;
 
   // 주 보기의 시간 블록: 첫 줄에 점과 시간 범위, 둘째 줄에 제목.
   if (arg.view.type.startsWith("timeGrid") && !arg.event.allDay) {
@@ -33,6 +38,7 @@ function CalendarEventChip({ arg }: { arg: EventContentArg }) {
         <span className="calendar-chip-line">
           {dot}
           {timeRange ? <span className="calendar-chip-time">{timeRange}</span> : null}
+          {studentChip}
         </span>
         <span className="calendar-chip-title">{arg.event.title}</span>
       </span>
@@ -43,6 +49,7 @@ function CalendarEventChip({ arg }: { arg: EventContentArg }) {
     <span className="calendar-chip" data-movable={movable}>
       {dot}
       {timeLabel && !arg.event.allDay ? <span className="calendar-chip-time">{timeLabel}</span> : null}
+      {studentChip}
       <span className="calendar-chip-title">{arg.event.title}</span>
     </span>
   );

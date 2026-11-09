@@ -5,7 +5,7 @@
  */
 "use client";
 
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useInsertionEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { LocateFixed, Plus } from "lucide-react";
 import {
   getUnifiedItemKey,
@@ -47,9 +47,13 @@ import { cn } from "@/lib/utils";
 const ALL_TYPES: ReadonlySet<UnifiedItemType> = new Set(UNIFIED_ITEM_TYPES);
 
 interface DailyListViewProps extends UnifiedItemChangeHandlers {
+  /** 보이는 주가 바뀌면 그 주의 시작·끝(KST)을 알린다. 전체 학생 보기는 이걸로 읽지 않은 기간을 더 읽는다. */
+  onVisibleRangeChange?: (start: Date, end: Date) => void;
   items: UnifiedItem[];
   returnTo: string;
   showSpaceContext: boolean;
+  /** 관리자 일정 "전체 학생": 줄마다 학생 이름 칩. */
+  showStudentChip?: boolean;
   /** 캘린더와 같은 빠른 만들기. 없으면 날짜별 추가를 숨긴다. */
   quickCreate?: CalendarQuickCreateOptions;
   /** 캘린더와 함께 쓰는 유형 필터. 없으면 모두 보인다. */
@@ -67,6 +71,7 @@ export function DailyListView({
   items,
   returnTo,
   showSpaceContext,
+  showStudentChip = false,
   quickCreate,
   visibleTypes = ALL_TYPES,
   preset = null,
@@ -77,6 +82,7 @@ export function DailyListView({
   onItemUpdated,
   onItemRemoved,
   viewer,
+  onVisibleRangeChange,
 }: DailyListViewProps) {
   const [selectedItem, setSelectedItem] = useState<UnifiedItem | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
@@ -127,6 +133,13 @@ export function DailyListView({
   const weekStart = weekStartKey(selectedDay);
   const week = weekKeys(weekStart);
   const weekEnd = week[6];
+  const rangeChangeRef = useRef(onVisibleRangeChange);
+  useInsertionEffect(() => {
+    rangeChangeRef.current = onVisibleRangeChange;
+  });
+  useEffect(() => {
+    rangeChangeRef.current?.(new Date(`${weekStart}T00:00:00+09:00`), new Date(`${weekEnd}T23:59:59.999+09:00`));
+  }, [weekStart, weekEnd]);
   const mobileDays = week.filter((dateKey) => grouped.has(dateKey) || dateKey === selectedDay);
   const weekLabel = `${formatKst(new Date(`${weekStart}T12:00:00+09:00`), { month: "long", day: "numeric" })}부터 ${
     monthOf(weekEnd).month === monthOf(weekStart).month ? `${Number(weekEnd.slice(8))}일` : formatKst(new Date(`${weekEnd}T12:00:00+09:00`), { month: "long", day: "numeric" })
@@ -224,7 +237,7 @@ export function DailyListView({
                   </div>
                   <ul className="flex flex-col">
                     {dayItems.map((item) => (
-                      <CalendarAgendaRow key={getUnifiedItemKey(item)} item={item} showSpaceContext={showSpaceContext} onOpen={openItem} />
+                      <CalendarAgendaRow key={getUnifiedItemKey(item)} item={item} showSpaceContext={showSpaceContext} showStudentChip={showStudentChip} onOpen={openItem} />
                     ))}
                   </ul>
                 </section>
@@ -286,7 +299,7 @@ export function DailyListView({
                 {dayItems.length > 0 ? (
                   <ul className="flex flex-col">
                     {dayItems.map((item) => (
-                      <CalendarAgendaRow key={getUnifiedItemKey(item)} item={item} showSpaceContext={showSpaceContext} showTimeRange={showSpaceContext} onOpen={openItem} />
+                      <CalendarAgendaRow key={getUnifiedItemKey(item)} item={item} showSpaceContext={showSpaceContext} showStudentChip={showStudentChip} showTimeRange={showSpaceContext} onOpen={openItem} />
                     ))}
                   </ul>
                 ) : (

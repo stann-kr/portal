@@ -1,5 +1,7 @@
 "use client";
 
+import { PortalLogoMark } from "@/components/brand/PortalLogoMark";
+import { PortalWordmark } from "@/components/brand/PortalWordmark";
 import { createContext, useContext, useLayoutEffect, useState, type ReactNode } from "react";
 import Link, { useLinkStatus } from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
@@ -178,16 +180,8 @@ function Brand({ size, onNavigate }: { size: "desktop" | "drawer"; onNavigate?: 
         size === "desktop" ? "px-2 py-1" : "h-[3.25rem] pl-2",
       )}
     >
-      <span
-        aria-hidden="true"
-        className={cn(
-          "flex items-center justify-center rounded-md bg-foreground text-[11px] font-semibold tracking-display text-background",
-          size === "desktop" ? "size-6" : "size-7",
-        )}
-      >
-        SL
-      </span>
-      <span className={cn("truncate font-semibold tracking-title", size === "desktop" ? "text-sm" : "text-md")}>Stann Lumo</span>
+      <PortalLogoMark size={size === "desktop" ? 24 : 28} className="shrink-0" />
+      <PortalWordmark className={size === "desktop" ? "text-sm" : "text-md"} />
     </Link>
   );
 }

@@ -77,7 +77,7 @@ test("공개 iCal을 읽지 못한 학생은 건너뛰고 나머지는 그대로
   assert.equal(result.size, 0);
 });
 
-test("다음 레슨은 포털 레슨과 연결된 일정 중 이른 쪽이다", () => {
+test("다음 레슨은 포탈 레슨과 연결된 일정 중 이른 쪽이다", () => {
   const base = { email: "", displayName: null, createdAt: null, currentModule: null, pendingFeedbackCount: 0, openQnaCount: 0 };
   const stats: StudentRosterStat[] = [
     { ...base, id: "none", nextLessonDate: null },

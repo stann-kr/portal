@@ -10,6 +10,7 @@ import {
   describeUnifiedItemRow,
   getUnifiedItemKindLabel,
   UnifiedItemDot,
+  UnifiedItemStudentChip,
 } from "@/components/ui/unified-item-type";
 import { toKstDateTimeInputValue } from "@/lib/date-input";
 import { cn } from "@/lib/utils";
@@ -19,10 +20,13 @@ export function CalendarAgendaRow({
   item,
   showSpaceContext,
   showTimeRange = false,
+  showStudentChip = false,
   onOpen,
 }: {
   item: UnifiedItem;
   showSpaceContext: boolean;
+  /** 관리자 일정 "전체 학생": 제목 앞에 학생 이름 칩. */
+  showStudentChip?: boolean;
   /** 관리자 좁은 화면 일정(MobileAdminSchedule)은 "14:00–15:30"처럼 끝 시각까지 보인다. */
   showTimeRange?: boolean;
   onOpen: (item: UnifiedItem) => void;
@@ -41,6 +45,7 @@ export function CalendarAgendaRow({
       >
         <span className={cn("shrink-0 font-mono text-xs text-muted-foreground", showTimeRange ? "w-[88px]" : "w-10 md:w-12")}>{when}</span>
         <UnifiedItemDot item={item} />
+        {showStudentChip ? <UnifiedItemStudentChip label={item.space.label} /> : null}
         <span className="min-w-0 flex-1 truncate text-md md:text-body">{item.title}</span>
         <span className="shrink-0 text-xs text-muted-foreground">
           {getUnifiedItemKindLabel(item)}

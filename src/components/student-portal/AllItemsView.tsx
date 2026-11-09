@@ -14,6 +14,7 @@ import {
 } from "@/lib/utils/unifiedItemUtils";
 import {
   describeUnifiedItemRow,
+  UnifiedItemStudentChip,
   UNIFIED_ITEM_TYPE_DOT_CLASS,
   UNIFIED_ITEM_TYPE_LABELS,
   UNIFIED_ITEM_TYPES,
@@ -34,6 +35,8 @@ interface AllItemsViewProps extends UnifiedItemChangeHandlers {
   items: UnifiedItem[];
   returnTo: string;
   showSpaceContext: boolean;
+  /** 관리자 일정 "전체 학생": 제목 옆에 학생 이름 칩. */
+  showStudentChip?: boolean;
   initialType?: UnifiedItemType | null;
   onInitialTypeCleared?: () => void;
 }
@@ -82,6 +85,7 @@ export function AllItemsView({
   items,
   returnTo,
   showSpaceContext,
+  showStudentChip = false,
   initialType = null,
   onInitialTypeCleared,
   canManageEvents,
@@ -241,9 +245,17 @@ export function AllItemsView({
                       type="button"
                       aria-label={describeUnifiedItemRow(item, formatLedgerDate(item, { withYear: true }), showSpaceContext)}
                       onClick={() => openItem(item)}
-                      className="block w-full truncate rounded-sm text-left text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      className={cn(
+                        "w-full rounded-sm text-left text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                        showStudentChip ? "flex min-w-0 items-center gap-2" : "block truncate",
+                      )}
                     >
-                      {item.title}
+                      {showStudentChip ? (
+                        <>
+                          <UnifiedItemStudentChip label={item.space.label} />
+                          <span className="min-w-0 truncate">{item.title}</span>
+                        </>
+                      ) : item.title}
                     </button>
                   </td>
                   <td className="px-2 text-ui text-secondary-foreground"><TypeLabel item={item} /></td>
@@ -263,7 +275,10 @@ export function AllItemsView({
                   onClick={() => openItem(item)}
                   className="flex w-full flex-col gap-0.5 border-b border-muted py-[11px] text-left text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                 >
-                  <span className="truncate text-md">{item.title}</span>
+                  <span className="flex min-w-0 items-center gap-2">
+                    {showStudentChip ? <UnifiedItemStudentChip label={item.space.label} /> : null}
+                    <span className="min-w-0 truncate text-md">{item.title}</span>
+                  </span>
                   <span className="flex items-center gap-2 text-xs text-secondary-foreground">
                     <TypeLabel item={item} />
                     <span className="font-mono text-muted-foreground">{formatLedgerDate(item, { withYear: false })}</span>

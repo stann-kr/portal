@@ -108,7 +108,7 @@ test("send: 성공·사라짐(404·410)·일시 실패를 나누고 표준 헤�
   assert.match(headers.Authorization!, /^vapid t=[\w-]+\.[\w-]+\.[\w-]+, k=[\w-]+$/u);
 });
 
-test("메시지: 눌렀을 때 열 포털 경로와 같은 대상의 알림을 바꿔 쓰는 tag를 둔다", () => {
+test("메시지: 눌렀을 때 열 포탈 경로와 같은 대상의 알림을 바꿔 쓰는 tag를 둔다", () => {
   const feedback = pushMessages.feedbackAdded({ assignmentId: "a 1", title: "6주차 믹스 녹음" });
   assert.deepEqual(feedback, {
     category: "feedback",

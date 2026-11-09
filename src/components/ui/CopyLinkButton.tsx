@@ -3,7 +3,7 @@
  * @description 지금 보고 있는 화면(또는 준 경로)의 링크 복사 버튼(UsabilityBundle ⑩).
  * 터치 기기에서 공유 창(navigator.share)을 쓸 수 있으면 같은 자리에서 공유 창을 열고,
  * 아니면 클립보드에 절대 주소를 복사한 뒤 "링크를 복사했습니다"를 2초 보인다.
- * 주소는 로그인한 사람만 열 수 있는 포털 경로다.
+ * 주소는 로그인한 사람만 열 수 있는 포탈 경로다.
  */
 "use client";
 
@@ -58,7 +58,7 @@ export function CopyLinkButton({
   className,
   label = "링크 복사",
 }: {
-  /** 복사할 포털 경로(`/dashboard/qna/…`). 없으면 지금 화면 주소. */
+  /** 복사할 포탈 경로(`/dashboard/qna/…`). 없으면 지금 화면 주소. */
   path?: string;
   /** 공유 창에 함께 넘길 제목. */
   title?: string;
