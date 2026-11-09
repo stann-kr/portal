@@ -11,6 +11,8 @@ import { AccountMenu } from "./AccountMenu";
 import { NavigationProgress } from "./NavigationProgress";
 import {
   APP_NAV_ITEMS,
+  WORK_BADGE_NAV_ID,
+  formatWorkBadge,
   navigateWithinPage,
   resolveActiveNavItem,
   resolveMobileTopBar,
@@ -74,9 +76,20 @@ function NavIcon({ Icon, className }: { Icon: LucideIcon; className: string }) {
   return <Icon className={cn("shrink-0", className)} strokeWidth={1.6} aria-hidden="true" />;
 }
 
-function SidebarNav({ role, variant, onNavigate }: { role: AppRole; variant: "desktop" | "drawer"; onNavigate?: () => void }) {
+function SidebarNav({
+  role,
+  variant,
+  workCount,
+  onNavigate,
+}: {
+  role: AppRole;
+  variant: "desktop" | "drawer";
+  workCount?: number | null;
+  onNavigate?: () => void;
+}) {
   const location = useLocation();
   const activeId = resolveActiveNavItem(role, location);
+  const workBadge = role === "admin" ? formatWorkBadge(workCount) : null;
 
   return (
     <nav aria-label="주요 메뉴" className={cn("flex flex-col gap-0.5", variant === "drawer" && "mt-3")}>
@@ -99,7 +112,16 @@ function SidebarNav({ role, variant, onNavigate }: { role: AppRole; variant: "de
             )}
           >
             <NavIcon Icon={Icon} className={variant === "desktop" ? "size-4" : "size-[18px]"} />
-            <span className="truncate">{label}</span>
+            <span className="flex-1 truncate">{label}</span>
+            {id === WORK_BADGE_NAV_ID && workBadge ? (
+              <span
+                role="img"
+                aria-label={workBadge.label}
+                className="inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-foreground px-1.5 font-mono text-[11px] font-normal text-background"
+              >
+                {workBadge.text}
+              </span>
+            ) : null}
           </Link>
         );
       })}
@@ -182,12 +204,15 @@ export function AppSidebar({
   displayName,
   ownerId,
   canDeleteAccount,
+  workCount = null,
   children,
 }: {
   role: AppRole;
   displayName: string;
   ownerId: string;
   canDeleteAccount: boolean;
+  /** Stann 업무함 처리할 일 수(검토 대기 제출 + 답변 대기 질문). 학생은 null. */
+  workCount?: number | null;
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -215,7 +240,7 @@ export function AppSidebar({
         className="sticky top-0 hidden h-[100dvh] w-60 shrink-0 flex-col gap-6 border-r border-border bg-sidebar px-3 py-4 md:flex"
       >
         <Brand size="desktop" />
-        <SidebarNav role={role} variant="desktop" />
+        <SidebarNav role={role} variant="desktop" workCount={workCount} />
         <AccountRow role={role} displayName={displayName} ownerId={ownerId} canDeleteAccount={canDeleteAccount} variant="desktop" />
       </aside>
 
@@ -266,7 +291,7 @@ export function AppSidebar({
                 <X className="size-[18px]" strokeWidth={1.6} aria-hidden="true" />
               </Dialog.Close>
             </div>
-            <SidebarNav role={role} variant="drawer" onNavigate={() => setOpen(false)} />
+            <SidebarNav role={role} variant="drawer" workCount={workCount} onNavigate={() => setOpen(false)} />
             <AccountRow role={role} displayName={displayName} ownerId={ownerId} canDeleteAccount={canDeleteAccount} variant="drawer" />
           </Dialog.Content>
         </Dialog.Portal>

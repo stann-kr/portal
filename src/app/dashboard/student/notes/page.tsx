@@ -31,7 +31,7 @@ export default async function StudentNotesPage({ searchParams }: {
   const timelineHref = buildNotesLessonsTimelineHref({ role: "student" });
   const trashHref = `/dashboard/notes/trash?returnTo=${encodeURIComponent(returnTo)}`;
   return (
-    <div className="flex max-w-[1080px] flex-col gap-6 px-5 pb-8 pt-4 md:box-content md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-14">
+    <div className="flex max-w-[1080px] flex-col gap-6 px-5 pb-8 pt-4 md:box-content md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-14 md:mx-auto">
       {/* Stann이 이 스페이스에 새 노트를 만들면 새로고침 없이 목록에 나타나게 한다. */}
       <RouteAutoRefresh />
       <NotesPageHeader

@@ -67,7 +67,7 @@ export function CurriculumView({ initialModules, pageHeader = false }: Curriculu
   const frame = (content: React.ReactNode) => (
     pageHeader ? (
       <div className="px-5 pb-8 pt-6 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-14">
-        <div className="flex max-w-[760px] flex-col gap-6 md:gap-8">{content}</div>
+        <div className="flex max-w-[760px] flex-col gap-6 md:gap-8 md:mx-auto">{content}</div>
       </div>
     ) : (
       <div className="flex flex-col gap-6 md:gap-8">{content}</div>

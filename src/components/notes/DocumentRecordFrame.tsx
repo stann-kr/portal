@@ -41,6 +41,7 @@ export function RecordPageFrame({
       className={cn(
         "flex flex-col gap-7 px-5 pb-10 pt-6 md:box-content md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-10",
         width === "history" ? "max-w-[760px]" : "max-w-[880px]",
+        "md:mx-auto",
       )}
     >
       <header className="flex flex-col gap-7">

@@ -1,20 +1,22 @@
 /**
  * @file src/components/qna/ReplyCard.tsx
  * @description Q&A 대화의 한 줄(캔버스 QnaThread·MobileQnaThread 보드).
- * 28px 이니셜 원(Stann은 먹색 면), 이름(Stann만 semibold, 학생은 regular)·시각, 본문, 첨부 파일 칩. 역할 배지는 두지 않는다.
+ * 28px 이니셜 원(Stann은 먹색 면), 이름(Stann만 semibold, 학생은 regular)·시각, 본문, 첨부(이미지면 160×120 미리보기와
+ * 전체화면 뷰어, 그 밖에는 새 창 칩). 역할 배지는 두지 않는다.
  */
 import { Paperclip } from "lucide-react";
 import { RichTextContent } from "@/components/editor/RichTextContent";
 import { cn } from "@/lib/utils";
 import { formatKstMonthDayTime } from "@/lib/kst-format";
 import { initialOf } from "./qna-display";
+import { ReplyAttachmentImage } from "./ReplyAttachmentImage";
 import type { MediaAttachmentKind } from "@/lib/media-lifecycle";
 
 type Reply = {
   id: string;
   contentHtml: string;
   attachmentUrl: string | null | undefined;
-  /** 서버가 media MIME에서 계산한 첨부 종류. 이미지 viewer가 쓸 값이며 아직 렌더링에는 쓰지 않는다. */
+  /** 서버가 media MIME에서 계산한 첨부 종류. image면 미리보기·뷰어, 그 밖에는 칩. */
   attachmentKind?: MediaAttachmentKind | null;
   createdAt: Date | null | undefined;
   authorName: string | null | undefined;
@@ -50,7 +52,9 @@ export function ReplyCard({ reply }: ReplyCardProps) {
           <span className="font-mono text-xs text-muted-foreground">{time}</span>
         </p>
         <RichTextContent html={reply.contentHtml} className="text-md leading-6 md:leading-[26px]" />
-        {reply.attachmentUrl ? (
+        {reply.attachmentUrl && reply.attachmentKind === "image" ? (
+          <ReplyAttachmentImage src={reply.attachmentUrl} name={attachmentName} />
+        ) : reply.attachmentUrl ? (
           <a
             href={reply.attachmentUrl}
             target="_blank"

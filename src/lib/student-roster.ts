@@ -156,3 +156,18 @@ export function withConnectedNextLessons(
     return next === student.nextLessonDate ? student : { ...student, nextLessonDate: next };
   });
 }
+
+/**
+ * Stann 사이드바 업무함 숫자: 검토 대기 제출 + 답변을 기다리는 질문(모든 학생).
+ * 학생 상세 탭·roster와 같은 조건(assignmentAwaitingReview, OPEN이고 지우지 않은 질문)으로 센다.
+ */
+export async function queryAdminWorkCount(db: DrizzleDb): Promise<number> {
+  const [[pending], [openQna]] = await Promise.all([
+    db.select({ value: sql<number>`count(*)` }).from(assignments).where(assignmentAwaitingReview(db)),
+    db
+      .select({ value: sql<number>`count(*)` })
+      .from(qnaThreads)
+      .where(and(eq(qnaThreads.status, "OPEN"), isNull(qnaThreads.deletedAt))),
+  ]);
+  return Number(pending?.value ?? 0) + Number(openQna?.value ?? 0);
+}

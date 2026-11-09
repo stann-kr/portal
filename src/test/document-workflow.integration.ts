@@ -439,6 +439,67 @@ test("Q&A 전체 대화 검색은 여러 답변·읽기 배치·학생 경계를
   assert.deepEqual((await qnaActions.getQnaThreadsByStudent("student-1")).map((thread) => thread.id), ["search-own"]);
 });
 
+test("Q&A 스레드 읽기는 첨부가 100개를 넘어도 D1 bind 상한에 걸리지 않고 첨부 종류를 모두 계산한다", { concurrency: false }, async (context) => {
+  const { db, binding } = await setupDatabase(context);
+  await seedProfile(db, "student-1");
+  // 이 테스트는 읽기 경로만 본다. 쓰기 수명주기(receipt·media 전이)는 다른 테스트가 지키므로
+  // 이 격리 DB에서만 insert guard를 빼고 최종 상태 행을 바로 넣는다.
+  for (const trigger of ["media_objects_before_insert_guard", "qna_replies_before_insert_receipt_match", "qna_replies_media_guard_insert"]) {
+    await binding.prepare(`DROP TRIGGER IF EXISTS \`${trigger}\``).run();
+  }
+  await db.insert(qnaThreads).values({ id: "many-attachments", studentId: "student-1", title: "첨부 많은 질문", status: "OPEN" });
+  const now = new Date("2026-11-01T00:00:00.000Z");
+  const total = 101;
+  const mediaId = (index: number) => `30000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
+  const statements = Array.from({ length: total }, (_, index) => {
+    const id = mediaId(index);
+    const replyId = `many-reply-${String(index).padStart(3, "0")}`;
+    return [
+      db.insert(mediaObjects).values({
+        id,
+        ownerId: "student-1",
+        purpose: "QNA_ATTACHMENT",
+        state: "ATTACHED",
+        objectKey: `media/qna-attachment/40000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+        uploadObjectKey: `media-upload/qna-attachment/${id}`,
+        expectedContentType: index % 2 === 0 ? "image/png" : "audio/mpeg",
+        expectedSizeBytes: 10,
+        actualSizeBytes: 10,
+        etag: "etag",
+        draftOperationId: `${id}-op`,
+        uploadExpiresAt: new Date(now.getTime() + 60 * 60 * 1000),
+        readyAt: now,
+        attachedAt: now,
+        resourceType: "QNA_REPLY",
+        resourceId: replyId,
+        createdAt: now,
+        updatedAt: now,
+      }),
+      db.insert(qnaReplies).values({
+        id: replyId,
+        threadId: "many-attachments",
+        authorId: "student-1",
+        contentHtml: `<p>${index}</p>`,
+        attachmentUrl: `/api/media/${id}`,
+        attachmentObjectId: id,
+        createdAt: new Date(now.getTime() + index * 1000),
+      }),
+    ] as const;
+  }).flat();
+  for (let index = 0; index < statements.length; index += 20) {
+    const [first, ...rest] = statements.slice(index, index + 20);
+    await db.batch([first!, ...rest]);
+  }
+
+  const thread = await qnaActions.getQnaThread("many-attachments");
+  assert.ok(thread);
+  assert.equal(thread.replies.length, total);
+  assert.deepEqual(
+    thread.replies.map((reply) => reply.attachmentKind),
+    Array.from({ length: total }, (_, index) => (index % 2 === 0 ? "image" : "audio")),
+  );
+});
+
 test("관리자 답변과 ANSWERED 상태를 한 번에 반영한다", { concurrency: false }, async (context) => {
   const { db } = await setupDatabase(context, createSession("admin-1", "admin"));
   await seedProfile(db, "student-1");
@@ -3492,7 +3553,8 @@ test("예약 정리는 실제 D1 batch와 R2 binding adapter에서 account alias
   });
   assert.equal(first.media.completed, 2);
   assert.equal(first.media.pendingAfter, 0);
-  assert.deepEqual(deletedKeys.sort(), [finalObjectKey, uploadObjectKey].sort());
+  // 오디오 final 옆 파형 JSON(`.peaks.json`)도 실제 R2 binding adapter로 함께 지운다.
+  assert.deepEqual(deletedKeys.sort(), [finalObjectKey, `${finalObjectKey}.peaks.json`, uploadObjectKey].sort());
   assert.deepEqual(
     await db
       .select({ subjectId: accountDeletionJobs.subjectId, status: accountDeletionJobs.status })
@@ -3516,7 +3578,7 @@ test("예약 정리는 실제 D1 batch와 R2 binding adapter에서 account alias
   assert.equal(second.outcome, "ok");
   assert.equal(second.account.processed, 0);
   assert.equal(second.media.completed, 0);
-  assert.equal(deletedKeys.length, 2);
+  assert.equal(deletedKeys.length, 3);
   assert.equal((await db.select().from(mediaDeletionOutbox)).length, 2);
 });
 

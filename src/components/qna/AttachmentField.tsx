@@ -95,6 +95,8 @@ export function AttachmentField({
       ) : (
         <FileUploader
           purpose="QNA_ATTACHMENT"
+          // WAV·AIFF·FLAC은 브라우저에서 MP3로 바꿔 올린다(커뮤니티 믹스셋과 같은 상태 카드). Q&A 오디오 파형은 저장하지 않는다.
+          convertAudio
           draftOperationId={draftOperationId}
           label="파일 첨부"
           disabled={disabled}

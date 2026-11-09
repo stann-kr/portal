@@ -443,7 +443,7 @@ export function AssignmentView({
   ].filter(Boolean).join(" · ") || null;
 
   const body = (
-    <div className={cn("flex flex-col gap-7 md:gap-8", pageHeader && "max-w-[880px]")}>
+    <div className={cn("flex flex-col gap-7 md:gap-8", pageHeader && "max-w-[880px] md:mx-auto")}>
       {pageHeader ? (
         <header className="flex flex-col gap-1">
           <h1 className="text-mobile-title font-semibold tracking-display md:text-display">과제</h1>

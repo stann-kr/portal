@@ -4,13 +4,16 @@
  * 캔버스 Community 목록 줄(제목·미리보기·작성자·날짜) 앞에 재생 버튼을 둔다.
  * 업로드 오디오는 HTML5 audio 태그로 바로 재생하고, YouTube·SoundCloud 링크는 버튼을 누른 줄에만
  * 플레이어를 줄 아래에 연다(목록 전체에 iframe을 미리 만들지 않는다).
+ * 줄에서 재생을 시작하면 하단 미니 플레이어(앱 공용 곡)와 다른 줄의 재생을 멈추고, 미니 플레이어가 재생을 시작하면
+ * 이 줄의 오디오가 멈춘다(player-store `claimLocalPlayback`).
  */
 "use client";
 
-import { useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
 import { Music2, Pause, Play, X } from "lucide-react";
 import type { MediaSeekRequest } from "@/components/player/VideoPlayer";
+import { claimLocalPlayback, releaseLocalPlayback } from "@/components/player/player-store";
 import { classifyMixsetMedia } from "@/lib/community-mixset-media";
 import { communityPreview, communityRowMeta } from "./CommunityPostRow";
 import { MixsetPlayer } from "./MixsetPlayer";
@@ -42,6 +45,12 @@ export function MixsetFeedbackCard({ post, returnTo = "/community" }: MixsetFeed
   const panelId = useId();
   const media = classifyMixsetMedia({ mediaUrl: post.mediaUrl, mediaObjectId: post.mediaObjectId ?? null });
 
+  // 줄이 사라지면 맡긴 오디오 요소를 놓는다(언마운트된 요소를 멈추려 하지 않게).
+  useEffect(() => {
+    const element = audioRef.current;
+    return () => releaseLocalPlayback(element);
+  }, []);
+
   const meta = communityRowMeta(post);
   const preview = communityPreview(post.contentHtml, 80);
 
@@ -63,6 +72,7 @@ export function MixsetFeedbackCard({ post, returnTo = "/community" }: MixsetFeed
       setLinkOpen(false);
       return;
     }
+    claimLocalPlayback(null);
     setLinkStart({ seconds: 0 });
     setLinkOpen(true);
   };
@@ -105,7 +115,10 @@ export function MixsetFeedbackCard({ post, returnTo = "/community" }: MixsetFeed
             ref={audioRef}
             src={media.url}
             preload="none"
-            onPlay={() => setIsPlaying(true)}
+            onPlay={(event) => {
+              claimLocalPlayback(event.currentTarget);
+              setIsPlaying(true);
+            }}
             onPause={() => setIsPlaying(false)}
             onEnded={() => setIsPlaying(false)}
             onError={() => { setIsPlaying(false); setPlayError(true); }}

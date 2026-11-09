@@ -183,7 +183,7 @@ export function TodaySection({
 
   return (
     <div className="px-5 pb-8 pt-6 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-14">
-      <div className="flex max-w-[1040px] flex-col gap-7 md:gap-10">
+      <div className="flex max-w-[1040px] flex-col gap-7 md:gap-10 md:mx-auto">
         <PushPromptBanner ownerId={pushOwnerId} isAdmin={false} />
         <header className="flex flex-col gap-1.5 md:gap-2">
           <p className="font-mono text-xs text-muted-foreground">{formatDay(referenceTime)}</p>

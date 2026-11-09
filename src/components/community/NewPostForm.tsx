@@ -214,7 +214,7 @@ function NewPostFormContent({
   return (
     <div className="px-5 pt-5 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-10">
       <MobileTopBar title="새 게시물" back={{ href: returnTo, label: backLabel }} />
-      <div className="flex max-w-[760px] flex-col gap-5 md:gap-7">
+      <div className="flex max-w-[760px] flex-col gap-5 md:gap-7 md:mx-auto">
         <nav aria-label="위치" className="hidden items-center gap-1.5 text-ui md:flex">
           <Link
             href={returnTo}
@@ -454,7 +454,7 @@ function NewPostFormContent({
                     setUploadError("");
                     const bitrate = upload.audio?.bitrateKbps;
                     setLoweredBitrate(bitrate && bitrate < MP3_DEFAULT_BITRATE_KBPS ? { mediaObjectId: upload.mediaObjectId, kbps: bitrate } : null);
-                    if (upload.audio?.peaks) onAudioPrepared(upload.audio.peaks, upload.mediaObjectId);
+                    if (upload.audio?.peaks) void onAudioPrepared(upload.audio.peaks, upload.mediaObjectId);
                   }}
                   onError={setUploadError}
                   onUploadingChange={(uploading) => {

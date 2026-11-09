@@ -38,7 +38,7 @@ export default async function GuidePageView({ params }: { params: Promise<{ page
   return (
     <div className="px-5 pb-8 pt-4 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-14">
       <MobileTopBar title="가이드" />
-      <div className="flex max-w-[1120px] flex-col gap-5 md:flex-row md:gap-12">
+      <div className="flex max-w-[1120px] flex-col gap-5 md:flex-row md:gap-12 md:mx-auto">
         <GuidePageNav pages={pages.map(({ id, title }) => ({ id, title }))} currentId={page.id} canManage={isAdmin} />
         <article className="flex min-w-0 max-w-[760px] flex-1 flex-col gap-6">
           <header className="flex flex-col gap-3">

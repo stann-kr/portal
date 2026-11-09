@@ -20,7 +20,7 @@ export const metadata = { title: "Stann 운영 도구" };
 export default function AdminOperationsPage() {
   return (
     <div className="px-5 pb-8 pt-6 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-14">
-      <div className="flex max-w-[760px] flex-col gap-6 md:gap-8">
+      <div className="flex max-w-[760px] flex-col gap-6 md:gap-8 md:mx-auto">
         <header className="flex flex-col gap-1">
           <h1 className="text-mobile-title font-semibold tracking-display text-foreground md:text-display">운영 도구</h1>
           <p className="text-body text-secondary-foreground">

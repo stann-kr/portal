@@ -214,7 +214,7 @@ export function AllItemsView({
       ) : (
         <>
           {/* 넓은 화면: 표 */}
-          <table className="hidden w-full max-w-[1080px] table-fixed border-collapse text-body md:table">
+          <table className="hidden w-full max-w-[1080px] table-fixed border-collapse text-body md:table md:mx-auto">
             <thead>
               <tr className="border-b border-border">
                 <th scope="col" aria-sort={sort === "title" ? "ascending" : undefined} className={cn("h-9 px-2 text-left text-xs", sort === "title" ? "font-medium text-foreground" : "font-normal text-muted-foreground")}>

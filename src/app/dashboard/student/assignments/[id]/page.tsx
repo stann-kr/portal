@@ -49,7 +49,7 @@ export default async function AssignmentDetailPage({
   if (!assignment) {
     return (
       <div className="px-5 pb-8 pt-6 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-14">
-        <div className="flex max-w-[880px] flex-col items-start gap-2">
+        <div className="flex max-w-[880px] flex-col items-start gap-2 md:mx-auto">
           <p className="text-body text-secondary-foreground">과제를 찾을 수 없습니다.</p>
           <Link
             href={returnTo}

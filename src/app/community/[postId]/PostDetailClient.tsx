@@ -12,6 +12,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { BookOpen, History, PencilLine, Trash2 } from "lucide-react";
 import { Button, buttonClassName } from "@/components/ui/button";
+import { CopyLinkButton } from "@/components/ui/CopyLinkButton";
 import { ConfirmPanel, useConfirmAction } from "@/components/ui/confirm-action";
 import { MobileTopBar } from "@/components/app-shell/AppSidebar";
 import { RichTextContent } from "@/components/editor/RichTextContent";
@@ -135,6 +136,7 @@ export function PostDetailClient({
   const canEditPost = canDeletePost;
   const isBusy = isPending || isEditPending;
   const historyHref = `/community/${post.id}/history?returnTo=${encodeURIComponent(returnTo)}`;
+  const postPath = `/community/${encodeURIComponent(post.id)}`;
   const handleSaved = useCallback(() => {
     setIsEditing(false);
     router.refresh();
@@ -205,8 +207,12 @@ export function PostDetailClient({
             <span className="md:hidden">{shortDate}</span>
             <span className="hidden md:inline">{longDate}</span>
           </p>
+          {post.deletedAt ? null : (
+            <CopyLinkButton className="-ml-2.5 self-start md:hidden" path={postPath} title={post.title} />
+          )}
         </div>
         <div className="hidden shrink-0 items-center gap-1 md:flex">
+          {post.deletedAt ? null : <CopyLinkButton path={postPath} title={post.title} />}
           {canEditPost ? (
             <Button
               variant="ghost"

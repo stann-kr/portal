@@ -671,7 +671,7 @@ export function CalendarSection({
                 <ExternalCalendarConnection
                   key={`${externalCalendarConnection.connected}:${externalCalendarConnection.provider ?? "NONE"}`}
                   connection={externalCalendarConnection}
-                  className="mx-5 mt-6 md:mx-0 md:mt-0 md:max-w-[640px]"
+                  className="mx-5 mt-6 md:mx-auto md:mt-0 md:max-w-[640px]"
                 />
               ) : null}
             </>

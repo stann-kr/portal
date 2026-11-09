@@ -25,7 +25,7 @@ export function RouteLoadingState({ label, compact = false }: RouteLoadingStateP
         compact ? "min-h-[60dvh]" : "min-h-[100dvh]",
       )}
     >
-      <div aria-hidden="true" className="flex max-w-[760px] flex-col gap-3.5">
+      <div aria-hidden="true" className="flex max-w-[760px] flex-col gap-3.5 md:mx-auto">
         <span className={cn("h-2.5 w-24 rounded-sm bg-muted", PULSE)} />
         <span className={cn("h-[22px] w-[220px] max-w-full rounded-sm bg-muted", PULSE)} />
         <span className="mb-1 mt-3 h-px bg-muted" />

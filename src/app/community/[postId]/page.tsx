@@ -37,7 +37,7 @@ export default async function PostDetailPage({
   if (!post) {
     return (
       <div className="px-5 pb-8 pt-10 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-14">
-        <div className="flex max-w-[760px] flex-col items-start gap-3">
+        <div className="flex max-w-[760px] flex-col items-start gap-3 md:mx-auto">
           <h1 className="text-xl font-semibold tracking-title">게시물을 찾을 수 없습니다</h1>
           <p className="text-body text-secondary-foreground">삭제되었거나 볼 수 있는 권한이 없는 게시물입니다.</p>
           <Link href={returnTo} className={buttonClassName({ variant: "outline" })}>목록으로</Link>
@@ -53,7 +53,7 @@ export default async function PostDetailPage({
 
   return (
     <div className="flex min-h-[calc(100dvh-var(--app-topbar-height))] flex-col md:block md:min-h-0 px-5 pt-5 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-10">
-      <div className="flex max-w-[760px] flex-1 flex-col md:block">
+      <div className="flex max-w-[760px] flex-1 flex-col md:block md:mx-auto">
         <PostDetailClient
           postId={postId}
           post={post}

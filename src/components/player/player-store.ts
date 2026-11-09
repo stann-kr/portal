@@ -27,6 +27,10 @@ let audio: HTMLAudioElement | null = null;
 let pendingSeek: number | null = null;
 /** 지금 주소의 metadata를 받았는지. hydration·테스트 환경에서 readyState가 늦게 바뀌어도 event로 판단한다. */
 let audioReady = false;
+/** 공용 플레이어 밖에서(믹스셋 목록 줄처럼) 지금 재생을 맡은 media 요소. 한 번에 하나만 소리를 낸다. */
+let localMedia: HTMLMediaElement | null = null;
+/** 재생 상태를 쓴 로그인 계정. 다른 계정으로 바뀌면 앞 계정의 곡을 닫는다. */
+let playerOwnerId: string | null = null;
 
 function emit() {
   for (const listener of listeners) listener();
@@ -37,6 +41,8 @@ export function dispatchPlayer(action: PlayerAction): void {
   state = reducePlayer(state, action);
   if (state !== previous) {
     syncAudio(previous, state);
+    // 공용 플레이어가 재생을 시작하면 목록 줄 재생은 멈춘다.
+    if (state.playing && !previous.playing && localMedia && !localMedia.paused) localMedia.pause();
     emit();
   }
 }
@@ -63,6 +69,8 @@ export function resetPlayerForTests(): void {
   audio = null;
   pendingSeek = null;
   audioReady = false;
+  localMedia = null;
+  playerOwnerId = null;
   state = INITIAL_PLAYER_STATE;
   emit();
 }
@@ -191,6 +199,34 @@ export function readAudioPosition(key: string): number | null {
 
 export function closePlayer(): void {
   dispatchPlayer({ type: "close" });
+}
+
+/**
+ * 공용 플레이어 밖의 media 요소(목록 줄 오디오·링크 플레이어)가 재생을 시작할 때 부른다.
+ * 하단 미니 플레이어(공용 곡)와 다른 줄의 재생을 멈춰 소리가 겹치지 않게 한다. 링크 플레이어처럼 요소가 없으면 null.
+ */
+export function claimLocalPlayback(element: HTMLMediaElement | null): void {
+  if (localMedia && localMedia !== element && !localMedia.paused) localMedia.pause();
+  localMedia = element;
+  if (state.track && state.playing) pauseTrack();
+}
+
+/** 목록 줄이 사라질 때 맡긴 요소를 놓는다. */
+export function releaseLocalPlayback(element: HTMLMediaElement | null): void {
+  if (element && localMedia === element) localMedia = null;
+}
+
+/**
+ * 로그아웃했거나 다른 계정으로 바뀌면 재생 상태(곡·위치·미니 플레이어)를 비운다.
+ * ownerId가 null이면(로그아웃) 무조건 닫고, 다른 계정이면 앞 계정의 곡을 닫는다. 같은 계정이면 그대로 둔다.
+ */
+export function bindPlayerOwner(ownerId: string | null): void {
+  const changed = ownerId === null || (playerOwnerId !== null && playerOwnerId !== ownerId);
+  playerOwnerId = ownerId;
+  if (!changed) return;
+  if (localMedia && !localMedia.paused) localMedia.pause();
+  localMedia = null;
+  if (state.track) closePlayer();
 }
 
 // ── 잠금 화면 조작(Media Session) ──

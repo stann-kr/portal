@@ -121,7 +121,7 @@ export function StudentManagementSection({
 
   return (
     <div className="px-5 pb-8 pt-4 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-14">
-      <div className="flex max-w-[1080px] flex-col gap-1 md:gap-6">
+      <div className="flex max-w-[1080px] flex-col gap-1 md:gap-6 md:mx-auto">
         <header className="flex flex-wrap items-end justify-between gap-4">
           <div className="sr-only md:not-sr-only md:flex md:flex-col md:gap-1">
             <h1 className="text-display font-semibold tracking-display text-foreground">학생</h1>

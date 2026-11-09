@@ -226,7 +226,7 @@ export default async function StudentDetailPage({
   return (
     <div className="px-5 pb-8 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-10">
       <StudentDetailTopBar studentId={studentId} returnTo={buildAdminStudentDetailHref(studentId, activeTab)} />
-      <div className="flex max-w-[1080px] flex-col md:gap-7">
+      <div className="flex max-w-[1080px] flex-col md:gap-7 md:mx-auto">
         <nav aria-label="위치" className="hidden items-center gap-1.5 text-ui md:flex">
           <Link
             href="/dashboard/admin?section=students"

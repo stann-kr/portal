@@ -7,6 +7,7 @@ import {
   S3Client,
 } from "@aws-sdk/client-s3";
 import {
+  isManagedAudioPeaksObjectKey,
   isManagedFinalMediaObjectKey,
   isManagedMediaObjectKey,
   isManagedUploadMediaObjectKey,
@@ -46,6 +47,13 @@ function assertManagedUploadObjectKey(objectKey: string): void {
 
 function assertManagedObjectKey(objectKey: string): void {
   if (!isManagedMediaObjectKey(objectKey)) {
+    throw new Error("관리 대상 R2 object key가 올바르지 않습니다.");
+  }
+}
+
+/** 삭제는 매체 object와 그 옆 파형 JSON(`<audio key>.peaks.json`)만 허용한다. */
+function assertDeletableObjectKey(objectKey: string): void {
+  if (!isManagedMediaObjectKey(objectKey) && !isManagedAudioPeaksObjectKey(objectKey)) {
     throw new Error("관리 대상 R2 object key가 올바르지 않습니다.");
   }
 }
@@ -243,7 +251,7 @@ async function createBoundOrS3Storage(): Promise<MediaObjectStorage> {
         return toMediaObjectHead(sealed);
       },
       async delete(objectKey) {
-        assertManagedObjectKey(objectKey);
+        assertDeletableObjectKey(objectKey);
         await bucket.delete(objectKey);
       },
     };
@@ -302,7 +310,7 @@ async function createBoundOrS3Storage(): Promise<MediaObjectStorage> {
       );
     },
     async delete(objectKey, signal) {
-      assertManagedObjectKey(objectKey);
+      assertDeletableObjectKey(objectKey);
       await client.send(
         new DeleteObjectCommand({ Bucket: BUCKET_NAME, Key: objectKey }),
         { abortSignal: signal },

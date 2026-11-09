@@ -14,7 +14,7 @@ import {
   mediaUploadRequestHeaders,
   type MediaUploadPurpose,
 } from "@/lib/media-lifecycle";
-import { PrepareAudioError, prepareAudioUpload, type PreparedAudioUpload } from "@/lib/audio/prepare-upload";
+import { PrepareAudioError, losslessAudioKind, prepareAudioUpload, type PreparedAudioUpload } from "@/lib/audio/prepare-upload";
 import { AudioConvertFailedCard, AudioConvertingCard, AudioUploadingCard } from "@/components/upload/AudioUploadStatus";
 
 export type CompletedMediaUpload = {
@@ -50,13 +50,15 @@ export interface FileUploaderProps {
   trigger?: "block" | "inline" | "composer";
   /**
    * 오디오 전용: WAV·AIFF·FLAC은 브라우저에서 MP3로 바꾼 뒤 올리고(원본은 올리지 않음) 진행을 상태 카드로 보인다.
-   * 변환하지 못하면 onError 대신 "바꾸지 못했습니다" 카드를 보인다. block 모양에서만 쓴다.
+   * 변환하지 못하면 onError 대신 "바꾸지 못했습니다" 카드를 보인다.
+   * block은 모든 진행을 상태 카드로 보이고, inline·composer는 평소 버튼을 두되 변환하는 오디오의
+   * 변환·업로드·실패만 같은 카드로 보인다(그 밖의 파일은 평소 진행 표시 그대로).
    */
   convertAudio?: boolean;
 }
 
 type UploadRequest = { scope: string; xhr: XMLHttpRequest | null; abort: AbortController };
-type UploadProgressState = { request: UploadRequest; scope: string; progress: number; fileName: string; fileSize: number };
+type UploadProgressState = { request: UploadRequest; scope: string; progress: number; fileName: string; fileSize: number; converted: boolean };
 type ConversionState = { request: UploadRequest; scope: string; fileName: string; fileSize: number; percent: number; etaSec: number | null };
 type FailureState = { scope: string; message: string };
 
@@ -132,7 +134,8 @@ export function FileUploader({
     try {
       // 0) 오디오 변환(WAV·AIFF·FLAC → MP3). 그 밖의 형식은 그대로 둔다.
       if (convertAudio) {
-        setConversion({ request, scope: request.scope, fileName: file.name, fileSize: file.size, percent: 0, etaSec: null });
+        // MP3로 바꿀 파일(WAV·AIFF·FLAC)만 변환 카드를 보인다. 그 밖의 파일은 크기만 확인하고 그대로 올린다.
+        if (losslessAudioKind(file)) setConversion({ request, scope: request.scope, fileName: file.name, fileSize: file.size, percent: 0, etaSec: null });
         try {
           prepared = await prepareAudioUpload(file, {
             signal: request.abort.signal,
@@ -148,7 +151,7 @@ export function FileUploader({
         uploadFile = prepared.file;
         if (!isCurrent()) return;
       }
-      setUpload({ request, scope: request.scope, progress: 0, fileName: uploadFile.name, fileSize: uploadFile.size });
+      setUpload({ request, scope: request.scope, progress: 0, fileName: uploadFile.name, fileSize: uploadFile.size, converted: prepared?.converted ?? false });
 
       // 1) Server Action으로 Presigned URL 요청
       const result = await requestMediaUpload({
@@ -252,6 +255,31 @@ export function FileUploader({
     />
   );
 
+  // inline·composer에서 변환한 오디오의 진행·실패는 block과 같은 상태 카드로 버튼 자리에 보인다.
+  const audioStatusCard = !convertAudio || trigger === "block"
+    ? null
+    : isConverting && conversion ? (
+      <AudioConvertingCard
+        fileName={conversion.fileName}
+        fileSize={conversion.fileSize}
+        percent={conversion.percent}
+        etaSec={conversion.etaSec}
+        onCancel={cancelCurrent}
+      />
+    ) : isUploading && upload?.converted ? (
+      <AudioUploadingCard fileName={upload.fileName} fileSize={upload.fileSize} percent={progress} onCancel={cancelCurrent} />
+    ) : visibleFailure ? (
+      <AudioConvertFailedCard message={visibleFailure} disabled={isTriggerDisabled} onPickAnother={() => inputRef.current?.click()} />
+    ) : null;
+  if (audioStatusCard) {
+    return (
+      <div className={cn("flex min-w-0 flex-col gap-2", trigger === "composer" && "w-full md:w-80")}>
+        {fileInput}
+        {audioStatusCard}
+      </div>
+    );
+  }
+
   if (trigger === "composer") {
     return (
       <div className="relative inline-flex shrink-0">
@@ -290,7 +318,7 @@ export function FileUploader({
     );
   }
 
-  if (convertAudio) {
+  if (convertAudio && trigger === "block") {
     return (
       <div className="flex flex-col gap-2">
         {fileInput}

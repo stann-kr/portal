@@ -152,7 +152,7 @@ export default function NewStudentPage() {
 
   return (
     <div className="px-5 pb-8 pt-6 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-10">
-      <div className="flex max-w-[560px] flex-col gap-7">
+      <div className="flex max-w-[560px] flex-col gap-7 md:mx-auto">
         <Link
           href={STUDENTS_HREF}
           className="-ml-1 hidden h-8 items-center gap-1.5 self-start rounded-md pl-1 pr-2 text-ui text-secondary-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:inline-flex"

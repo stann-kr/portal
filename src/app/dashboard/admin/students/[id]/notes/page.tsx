@@ -49,7 +49,7 @@ export default async function AdminStudentNotesPage({
       <MobileTopBar title="노트" back={{ href: detailHref, label: "학생 상세로" }} />
       {/* 자동 저장은 목록을 revalidate하지 않으므로 편집에서 돌아오거나 창으로 돌아올 때 제목·날짜를 다시 받는다. */}
       <RouteAutoRefresh />
-      <div className="flex max-w-[1080px] flex-col gap-5 md:gap-6">
+      <div className="flex max-w-[1080px] flex-col gap-5 md:gap-6 md:mx-auto">
         <NotesPageHeader
           eyebrow={`학생 스페이스 · ${student.displayName?.trim() || student.email}`}
           backLink={

@@ -344,6 +344,36 @@ export function isManagedMediaObjectKey(value: string): boolean {
   );
 }
 
+/** 오디오 파형 JSON은 오디오 final object 옆 `<audio key>.peaks.json`에 둔다. */
+export const AUDIO_PEAKS_OBJECT_KEY_SUFFIX = ".peaks.json";
+
+/** 오디오를 받을 수 있어 파형 JSON이 생길 수 있는 업로드 목적. */
+const AUDIO_PEAKS_PURPOSES = ["COMMUNITY_POST_AUDIO", "QNA_ATTACHMENT"] as const;
+
+/**
+ * 매체 final key 옆 파형 JSON key. 오디오를 받을 수 없는 목적(본문 이미지)이나 관리 대상이 아닌 key면 null.
+ * 매체를 지울 때 파형도 함께 지우는 데 쓴다.
+ */
+export function audioPeaksSidecarObjectKey(objectKey: string): string | null {
+  if (!isManagedFinalMediaObjectKey(objectKey)) return null;
+  const audioCapable = AUDIO_PEAKS_PURPOSES.some((purpose) =>
+    objectKey.startsWith(MEDIA_PURPOSE_POLICIES[purpose].keyPrefix),
+  );
+  return audioCapable ? `${objectKey}${AUDIO_PEAKS_OBJECT_KEY_SUFFIX}` : null;
+}
+
+/** 파형 JSON key면 그 오디오 final key, 아니면 null. */
+export function audioPeaksBaseObjectKey(value: string): string | null {
+  if (!value.endsWith(AUDIO_PEAKS_OBJECT_KEY_SUFFIX)) return null;
+  const base = value.slice(0, -AUDIO_PEAKS_OBJECT_KEY_SUFFIX.length);
+  return audioPeaksSidecarObjectKey(base) === value ? base : null;
+}
+
+/** 관리 대상 오디오의 파형 JSON key인지. */
+export function isManagedAudioPeaksObjectKey(value: string): boolean {
+  return audioPeaksBaseObjectKey(value) !== null;
+}
+
 /** 한 UPDATE에 묶을 본문 이미지 ID 수(D1 bound parameter 100개 한도 아래). */
 export const DOCUMENT_IMAGE_CLAIM_BATCH_SIZE = 50;
 
