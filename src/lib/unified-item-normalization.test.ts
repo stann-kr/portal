@@ -51,6 +51,7 @@ function createInput(): UnifiedItemNormalizationInput {
       id: "assignment-1",
       mediaUrl: "https://example.com/media",
       submittedAt: new Date("2026-08-06T10:00:00.000Z"),
+      reviewedAt: null,
     }],
     feedbackCounts: { "assignment-1": 2 },
   };
@@ -73,6 +74,16 @@ test("과제 항목 제목은 원본 URL 대신 제출 플랫폼을 표시한다
   const assignment = normalizeUnifiedItems(createInput()).find((item) => item.type === "ASSIGNMENT");
   assert.equal(assignment?.title, "링크 제출");
   assert.equal(assignment?.metadata.mediaUrl, "https://example.com/media");
+  assert.equal(assignment?.metadata.reviewedAt, null);
+  assert.equal(assignment?.metadata.reviewStatus, "reviewed");
+  const input = createInput();
+  const acknowledged = normalizeUnifiedItems({
+    ...input,
+    assignments: [{ ...input.assignments[0]!, reviewedAt: new Date("2026-08-06T11:00:00.000Z") }],
+    feedbackCounts: {},
+  }).find((item) => item.type === "ASSIGNMENT");
+  assert.equal(acknowledged?.metadata.reviewedAt, "2026-08-06T11:00:00.000Z");
+  assert.equal(acknowledged?.metadata.reviewStatus, "acknowledged");
   assert.equal(describeAssignmentMedia("https://m.youtube.com/watch?v=abc"), "YouTube 링크");
   assert.equal(describeAssignmentMedia("https://youtu.be/abc"), "YouTube 링크");
   assert.equal(describeAssignmentMedia("https://soundcloud.com/dj/mix"), "SoundCloud 링크");
@@ -131,4 +142,20 @@ test("기본 한국어 digging 컬럼으로 생성 직후 제목을 만든다", 
   ], profile);
   assert.equal(item.title, "Track — Artist");
   assert.equal(item.source.entity, "DIGGING_TRACK");
+});
+
+test("받은 과제 항목은 저장 형식 MIX + analysisForm을 분석(ANALYSIS)으로 알려 바로 열기 주소가 분석 쓰기 화면으로 간다", () => {
+  const base = { title: "과제", dueAt: null, createdAt: new Date("2026-08-01T00:00:00.000Z") };
+  const items = normalizeUnifiedItems({
+    ...createInput(),
+    tasks: [
+      { id: "analysis", submissionFormat: "MIX", analysisForm: true, ...base },
+      { id: "mix", submissionFormat: "MIX", analysisForm: false, ...base },
+      { id: "text", submissionFormat: "TEXT", ...base },
+    ],
+  });
+  const formatOf = (id: string) => items.find((item) => item.id === id && item.source.entity === "ASSIGNMENT_TASK")?.metadata.submissionFormat;
+  assert.equal(formatOf("analysis"), "ANALYSIS");
+  assert.equal(formatOf("mix"), "MIX");
+  assert.equal(formatOf("text"), "TEXT");
 });

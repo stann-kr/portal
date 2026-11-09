@@ -25,6 +25,8 @@ test("native R2 deletion adapter는 canonical managed key만 binding delete로 �
     createMediaObjectKey("QNA_ATTACHMENT", FINAL_OBJECT_ID),
     createMediaUploadObjectKey("COMMUNITY_POST_AUDIO", UPLOAD_OBJECT_ID),
     createMediaUploadObjectKey("QNA_ATTACHMENT", UPLOAD_OBJECT_ID),
+    // 오디오 final 옆 파형 JSON
+    `${createMediaObjectKey("COMMUNITY_POST_AUDIO", FINAL_OBJECT_ID)}.peaks.json`,
   ];
 
   for (const key of validKeys) {
@@ -39,6 +41,8 @@ test("native R2 deletion adapter는 canonical managed key만 binding delete로 �
     validKeys[0].toUpperCase(),
     "media/qna-attachment/not-a-uuid",
     "../media/qna-attachment/71f9d4e5-dda9-4793-8b23-c1018526e258",
+    `${createMediaObjectKey("DOCUMENT_IMAGE", FINAL_OBJECT_ID)}.peaks.json`,
+    `${createMediaUploadObjectKey("COMMUNITY_POST_AUDIO", UPLOAD_OBJECT_ID)}.peaks.json`,
   ];
   for (const key of rejectedKeys) {
     await assert.rejects(storage.delete(key), /관리 대상 R2 object key/u);

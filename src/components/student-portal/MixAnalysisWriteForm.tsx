@@ -35,6 +35,7 @@ import {
   type MixAnalysisDraft,
 } from "@/lib/mix-analysis";
 import { cn } from "@/lib/utils";
+import { AssignmentBrief } from "@/components/student-portal/AssignmentBrief";
 
 type Entry = { key: string; at: string; memo: string };
 type WriteDraft = { mediaUrl: string; analysis: MixAnalysisDraft };
@@ -267,6 +268,7 @@ export function MixAnalysisWriteForm({
             </>
           ) : null}
         </p>
+        {task.descriptionHtml ? <AssignmentBrief html={task.descriptionHtml} open className="mt-3" /> : null}
       </div>
 
       {/* 왼쪽(좁은 화면은 위): 링크·플레이어·지금 위치 추가. 좁은 화면은 묶음이 사라져(contents) 플레이어가 맨 위로 간다. */}

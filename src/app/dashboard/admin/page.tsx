@@ -9,6 +9,7 @@ import { getStudentRosterStats } from "@/lib/actions/students";
 import { getUnifiedItemsForStudent } from "@/lib/actions/unifiedItems";
 import { getQnaThreads } from "@/lib/actions/qna";
 import { getPendingFeedbackAssignments } from "@/lib/actions/assignments";
+import { getLessonNoteIdsInRange } from "@/lib/actions/lesson-notes";
 import { AdminPortalClient } from "@/components/admin-portal/AdminPortalClient";
 import { firstSearchValue, legacyPortalSectionRedirect, resolvePortalLocation, type PortalSearchParams } from "@/lib/portal-location";
 
@@ -31,10 +32,18 @@ export default async function AdminPortalPage({ searchParams }: { searchParams: 
 
   // 병렬 데이터 패치
   const referenceTime = new Date();
-  const [initialStudentItems, qnaThreads, pendingAssignments] = await Promise.all([
+  // 업무함 다가오는 레슨(7일 안) 행의 수업 노트 링크: 그 날짜 노트가 있으면 열고 없으면 새 노트.
+  const lessonWindow = { from: referenceTime, to: new Date(referenceTime.getTime() + 7 * 24 * 60 * 60 * 1000) };
+  const upcomingStudentIds = students
+    .filter((student) => student.nextLessonDate
+      && student.nextLessonDate.getTime() >= lessonWindow.from.getTime()
+      && student.nextLessonDate.getTime() <= lessonWindow.to.getTime())
+    .map((student) => student.id);
+  const [initialStudentItems, qnaThreads, pendingAssignments, lessonNoteIds] = await Promise.all([
     initialStudentId ? getUnifiedItemsForStudent(initialStudentId) : Promise.resolve([]),
     getQnaThreads(),
     getPendingFeedbackAssignments(),
+    getLessonNoteIdsInRange(upcomingStudentIds, lessonWindow).catch(() => ({})),
   ]);
 
   return (
@@ -46,6 +55,7 @@ export default async function AdminPortalPage({ searchParams }: { searchParams: 
       adminId={adminId}
       qnaThreads={qnaThreads}
       pendingAssignments={pendingAssignments}
+      lessonNoteIds={lessonNoteIds}
       referenceTime={referenceTime}
     />
   );

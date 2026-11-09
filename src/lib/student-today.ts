@@ -1,4 +1,5 @@
 import { toKstDateInputValue } from "@/lib/date-input";
+import { isSubmissionSettled } from "@/lib/assignment-submission";
 import { ASSIGNMENT_TASK_SUBTYPE, type UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 
 export type StudentTodaySummary = {
@@ -38,6 +39,15 @@ export function isAssignmentTaskItem(item: UnifiedItem): boolean {
 function feedbackCount(item: UnifiedItem): number {
   const count = item.metadata.feedbackCount;
   return typeof count === "number" && Number.isFinite(count) ? count : 0;
+}
+
+/** 피드백이 있거나 Stann이 확인함으로 표시한 제출은 더 이상 "피드백 대기"가 아니다. */
+function isSettled(item: UnifiedItem): boolean {
+  const reviewedAt = item.metadata.reviewedAt;
+  return isSubmissionSettled({
+    feedbackCount: feedbackCount(item),
+    reviewedAt: typeof reviewedAt === "string" && reviewedAt ? reviewedAt : null,
+  });
 }
 
 export function getStudentTodaySummary(
@@ -82,7 +92,7 @@ export function getStudentTodaySummary(
       .filter((item) => item.subType === "ANSWERED")
       .slice(0, 3),
     waitingAssignment:
-      assignments.find((item) => feedbackCount(item) === 0) ?? null,
+      assignments.find((item) => !isSettled(item)) ?? null,
     openQnaItems: qnaItems.filter((item) => item.subType === "OPEN").slice(0, 3),
   };
 }

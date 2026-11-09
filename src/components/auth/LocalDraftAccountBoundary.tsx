@@ -2,11 +2,12 @@
 
 import { useEffect } from "react";
 import { AccountCleanupBootstrap } from "@/components/auth/AccountCleanupBootstrap";
+import { bindPlayerOwner } from "@/components/player/player-store";
 import { isBrowserAccountOwnerTerminallyLocked } from "@/lib/account-cleanup-client";
 import { unlockCollabOwner } from "@/lib/collab/client/local-store";
 import { clearLocalDocumentDraftsFromOtherOwners } from "@/lib/local-draft-continuity-client";
 
-/** 인증 계정이 바뀔 때 공유 기기에 남은 다른 계정의 문서 초안을 정리한다. */
+/** 인증 계정이 바뀔 때 공유 기기에 남은 다른 계정의 문서 초안과 앞 계정의 재생 곡을 정리한다. */
 export function LocalDraftAccountBoundary({
   ownerId,
   role,
@@ -15,6 +16,7 @@ export function LocalDraftAccountBoundary({
   role: "admin" | "student";
 }) {
   useEffect(() => {
+    bindPlayerOwner(ownerId);
     // 같은 owner로 새로 로그인하면 로그아웃 때 건 공동 편집 잠금을 푼다(삭제된 계정은 terminal lock으로 계속 막는다).
     try {
       if (!isBrowserAccountOwnerTerminallyLocked(ownerId)) unlockCollabOwner(ownerId);

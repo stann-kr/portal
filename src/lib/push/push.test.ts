@@ -118,14 +118,40 @@ test("메시지: 눌렀을 때 열 포털 경로와 같은 대상의 알림을 �
     tag: "feedback:a 1",
   });
   assert.equal(pushMessages.feedbackAdded({ assignmentId: "a", title: null }).body, "제출한 과제에 피드백이 달렸습니다.");
+  const acknowledged = pushMessages.assignmentAcknowledged({ assignmentId: "a 1", title: "6주차 믹스 녹음" });
+  assert.deepEqual(acknowledged, {
+    category: "feedback",
+    title: "Stann이 과제를 확인했습니다",
+    body: "‘6주차 믹스 녹음’",
+    url: "/dashboard/student/assignments/a%201",
+    tag: feedback.tag,
+  }, "뒤에 오는 피드백 알림이 확인 알림을 바꾸도록 같은 tag");
+  assert.equal(pushMessages.assignmentAcknowledged({ assignmentId: "a", title: null }).body, "제출한 과제");
   const long = pushMessages.announcementPosted({ postId: "p", title: "가".repeat(60) });
   assert.equal(long.body, `‘${"가".repeat(39)}…’`);
   assert.equal(long.url, "/community/p");
   const lesson = pushMessages.lessonScheduled({ lessonId: "l", scheduledAt: new Date("2026-11-10T05:00:00Z"), changed: true });
   assert.equal(lesson.body, "레슨 시간 변경: 11.10 14:00");
-  assert.equal(lesson.url, "/dashboard/calendar");
+  assert.equal(
+    lesson.url,
+    "/dashboard/student?section=workspace&view=calendar&date=2026-11-10&item=PORTAL%3ALESSON%3Al",
+    "학생 레슨 알림은 KST 날짜와 그 레슨 상세로 간다",
+  );
+  const lateNight = pushMessages.lessonScheduled({ lessonId: "l", scheduledAt: new Date("2026-11-10T16:30:00Z"), changed: false });
+  assert.match(lateNight.url, /date=2026-11-11&/u, "UTC 자정 뒤 KST 날짜를 쓴다");
   const moved = pushMessages.lessonScheduled({ lessonId: "l", scheduledAt: new Date("2026-11-10T05:00:00Z"), changed: true, toAdmin: true, studentName: "김학생" });
   assert.equal(moved.body, "김학생님이 레슨을 옮겼습니다: 11.10 14:00");
+  assert.equal(moved.url, "/dashboard/calendar", "관리자 알림은 관리자 캘린더 그대로");
+  assert.equal(
+    pushMessages.assignmentAssigned({ taskId: "t 1", title: "셋", dueAt: null }).url,
+    "/dashboard/student/assignments?task=t%201",
+    "새 과제 알림은 그 과제가 펼쳐진 목록",
+  );
+  assert.equal(
+    pushMessages.assignmentAssigned({ taskId: "t 1", title: "분석", dueAt: null, analysis: true }).url,
+    "/dashboard/student/assignments/analysis/t%201",
+    "분석 과제는 분석 쓰기 화면",
+  );
   assert.equal(pushMessages.replyAdded({ threadId: "t", authorName: "Stann", title: "큐", toStudent: true }).title, "Q&A 답변");
   assert.equal(pushMessages.replyAdded({ threadId: "t", authorName: "김학생", title: "큐", toStudent: false }).body, "김학생님 답글: ‘큐’");
   for (const message of [feedback, long, lesson, moved, pushMessages.test()]) {

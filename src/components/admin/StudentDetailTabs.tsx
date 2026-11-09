@@ -25,10 +25,17 @@ export function buildAdminStudentNotesHref(studentId: string): string {
 interface StudentDetailTabsProps {
   studentId: string;
   activeTab: StudentDetailTab;
+  /** 탭 옆 처리할 일 수(과제: 피드백 대기, Q&A: 미답변 질문). 0이면 숫자를 두지 않는다. */
+  counts?: Partial<Record<StudentDetailTab, number>>;
   className?: string;
 }
 
-export function StudentDetailTabs({ studentId, activeTab, className }: StudentDetailTabsProps) {
+const COUNT_LABELS: Partial<Record<StudentDetailTab, string>> = {
+  assignments: "피드백 대기",
+  qna: "미답변 질문",
+};
+
+export function StudentDetailTabs({ studentId, activeTab, counts, className }: StudentDetailTabsProps) {
   return (
     <nav
       aria-label="학생 상세"
@@ -36,6 +43,7 @@ export function StudentDetailTabs({ studentId, activeTab, className }: StudentDe
     >
       {TABS.map(({ key, label }) => {
         const isActive = activeTab === key;
+        const count = counts?.[key] ?? 0;
         return (
           <Link
             key={key}
@@ -49,6 +57,13 @@ export function StudentDetailTabs({ studentId, activeTab, className }: StudentDe
             )}
           >
             {label}
+            {count > 0 ? (
+              <span className="ml-1.5 font-mono text-ui font-normal tabular-nums text-muted-foreground">
+                <span className="sr-only">, {COUNT_LABELS[key] ?? ""} </span>
+                {count}
+                <span className="sr-only">건</span>
+              </span>
+            ) : null}
           </Link>
         );
       })}

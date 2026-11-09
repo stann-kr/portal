@@ -77,6 +77,10 @@ const ALL_TYPES: ReadonlySet<UnifiedItemType> = new Set(UNIFIED_ITEM_TYPES);
 interface UnifiedCalendarProps extends UnifiedItemChangeHandlers {
   isActive?: boolean;
   items: UnifiedItem[];
+  /** 처음 보여 줄 날짜(YYYY-MM-DD, 딥링크). 없으면 오늘. */
+  initialDate?: string | null;
+  /** 처음 열 항목 키(`kind:entity:id`, 딥링크). 목록에 없으면 열지 않는다. */
+  initialItemKey?: string | null;
   returnTo: string;
   showSpaceContext: boolean;
   /** 월·주 보기. 보기 전환은 CalendarSection의 "월·주·일별·전체" 세그먼트가 맡는다. */
@@ -236,6 +240,8 @@ const WEEK_CONTENT_HEIGHT = 680;
 export function UnifiedCalendar({
   isActive = true,
   items,
+  initialDate = null,
+  initialItemKey = null,
   returnTo,
   showSpaceContext,
   view = "dayGridMonth",
@@ -287,8 +293,11 @@ export function UnifiedCalendar({
   }, [view]);
 
   // 상세 패널 상태
-  const [selectedItem, setSelectedItem] = useState<UnifiedItem | null>(null);
-  const [panelOpen, setPanelOpen] = useState(false);
+  // 딥링크 항목은 첫 렌더부터 열어 둔다(효과에서 setState하지 않는다).
+  const [selectedItem, setSelectedItem] = useState<UnifiedItem | null>(() =>
+    initialItemKey ? (items.find((item) => getUnifiedItemKey(item) === initialItemKey) ?? null) : null,
+  );
+  const [panelOpen, setPanelOpen] = useState(() => selectedItem !== null);
 
   // 저장을 기다리는 이동은 요청만 들고 있다가 최신 항목에 겹쳐 보여 주고, 실패하면 지워 원래 자리로 돌린다.
   // 저장된 이동(saved)은 서버에서 다시 받은 목록이 그 자리를 반영할 때까지 유지해 원위치로 깜빡이지 않게 한다.
@@ -608,6 +617,7 @@ export function UnifiedCalendar({
           ref={calendarRef}
           plugins={CALENDAR_PLUGINS}
           initialView={initialView}
+          initialDate={initialDate ?? undefined}
           headerToolbar={false}
           locale={koLocale}
           timeZone={CALENDAR_TIME_ZONE}
@@ -651,6 +661,7 @@ export function UnifiedCalendar({
           showSpaceContext={showSpaceContext}
           onOpenItem={openItem}
           filters={mobileFilters}
+          initialDate={initialDate}
         />
       </div>
 

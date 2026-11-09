@@ -171,3 +171,25 @@ test("soft budget 종료 전에는 R2 list와 cursor를 변경하지 않는다",
   assert.equal(result.budgetExhausted, true);
   assert.equal(listCalls, 0);
 });
+
+test("오디오 파형 JSON은 그 오디오 final의 상태를 따라 보존하거나 지운다", async (context) => {
+  const { dbContext } = setupDatabase(context);
+  const activeKey = await createPendingMedia(
+    dbContext,
+    "84000000-0000-4000-8000-000000000001",
+    "84000000-0000-4000-8000-000000000002",
+    "84000000-0000-4000-8000-000000000003",
+  );
+  const orphanAudio = createMediaObjectKey("COMMUNITY_POST_AUDIO", "85000000-0000-4000-8000-000000000001");
+  const activePeaks = `${activeKey}.peaks.json`;
+  const orphanPeaks = `${orphanAudio}.peaks.json`;
+  const notPeaks = `${activeKey}.other.json`;
+  const { bucket, values } = inventoryBucket([activeKey, activePeaks, orphanPeaks, notPeaks]);
+  const result = await reconcileManagedFinalMediaObjects(dbContext, bucket);
+  assert.equal(values.has(activeKey), true);
+  assert.equal(values.has(activePeaks), true, "살아 있는 오디오의 파형은 보존한다");
+  assert.equal(values.has(orphanPeaks), false, "오디오가 없는 파형은 지운다");
+  assert.equal(values.has(notPeaks), true, "파형 key가 아니면 건드리지 않는다");
+  assert.equal(result.deleted, 1);
+  assert.equal(result.invalid, 1);
+});

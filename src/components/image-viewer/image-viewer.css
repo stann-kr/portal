@@ -1,0 +1,70 @@
+/* 읽기 화면 이미지 전체화면 뷰어(ImageViewer 보드). 뷰어는 테마와 관계없이 어두운 바탕이다. */
+.image-viewer {
+  --image-viewer-caption: rgb(212 212 216);
+}
+
+.image-viewer-backdrop {
+  background: rgb(12 12 14 / 0.92);
+}
+
+/* 휴대폰은 바탕을 조금 더 짙게(0.96) 둔다. */
+@media (max-width: 47.99rem) {
+  .image-viewer-backdrop {
+    background: rgb(12 12 14 / 0.96);
+  }
+}
+
+.image-viewer-image {
+  transition: transform var(--duration-standard) var(--ease-studio);
+  will-change: transform;
+}
+
+/* 끌거나 집는 동안에는 손가락을 바로 따라간다. */
+.image-viewer-dragging .image-viewer-image {
+  transition: none;
+}
+
+/* 본문 이미지: 확대 커서와 오른쪽 아래 확대 표시(28px, r6). 링크 안 이미지는 감싸지 않는다. */
+.rich-text .rich-text-zoom {
+  position: relative;
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+}
+
+.rich-text .rich-text-zoom > img {
+  cursor: zoom-in;
+}
+
+.rich-text .rich-text-zoom > img:focus-visible {
+  outline: 2px solid var(--color-ring);
+  outline-offset: 2px;
+}
+
+.rich-text .rich-text-zoom::after {
+  content: "";
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-md);
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7'/%3E%3C/svg%3E") center / 14px 14px no-repeat,
+    rgb(24 24 27 / 0.72);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--duration-fast) ease-out;
+}
+
+.rich-text .rich-text-zoom:hover::after,
+.rich-text .rich-text-zoom:focus-within::after {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .image-viewer-image,
+  .rich-text .rich-text-zoom::after {
+    transition: none;
+  }
+}

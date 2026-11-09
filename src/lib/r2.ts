@@ -7,6 +7,7 @@ import {
   S3Client,
 } from "@aws-sdk/client-s3";
 import {
+  isManagedAudioPeaksObjectKey,
   isManagedFinalMediaObjectKey,
   isManagedMediaObjectKey,
   isManagedUploadMediaObjectKey,
@@ -46,6 +47,13 @@ function assertManagedUploadObjectKey(objectKey: string): void {
 
 function assertManagedObjectKey(objectKey: string): void {
   if (!isManagedMediaObjectKey(objectKey)) {
+    throw new Error("관리 대상 R2 object key가 올바르지 않습니다.");
+  }
+}
+
+/** 삭제는 매체 object와 그 옆 파형 JSON(`<audio key>.peaks.json`)만 허용한다. */
+function assertDeletableObjectKey(objectKey: string): void {
+  if (!isManagedMediaObjectKey(objectKey) && !isManagedAudioPeaksObjectKey(objectKey)) {
     throw new Error("관리 대상 R2 object key가 올바르지 않습니다.");
   }
 }
@@ -243,7 +251,7 @@ async function createBoundOrS3Storage(): Promise<MediaObjectStorage> {
         return toMediaObjectHead(sealed);
       },
       async delete(objectKey) {
-        assertManagedObjectKey(objectKey);
+        assertDeletableObjectKey(objectKey);
         await bucket.delete(objectKey);
       },
     };
@@ -302,7 +310,7 @@ async function createBoundOrS3Storage(): Promise<MediaObjectStorage> {
       );
     },
     async delete(objectKey, signal) {
-      assertManagedObjectKey(objectKey);
+      assertDeletableObjectKey(objectKey);
       await client.send(
         new DeleteObjectCommand({ Bucket: BUCKET_NAME, Key: objectKey }),
         { abortSignal: signal },
@@ -498,6 +506,82 @@ export async function getGuideAssetStorage(): Promise<GuideAssetObjectStorage> {
     async delete(objectKey) {
       assertGuideAssetObjectKey(objectKey);
       await client.send(new DeleteObjectCommand({ Bucket: BUCKET_NAME, Key: objectKey }));
+    },
+  };
+}
+
+/** 오디오 파형 JSON은 오디오 final object 옆 `<audio key>.peaks.json`에 둔다(DB 변경 없음). */
+export function audioPeaksObjectKey(audioObjectKey: string): string {
+  assertManagedFinalObjectKey(audioObjectKey);
+  return `${audioObjectKey}.peaks.json`;
+}
+
+/** 파형 JSON 저장소. 처음 쓴 값만 남기고(If-None-Match: *) 이후 쓰기는 false로 무시한다. */
+export interface AudioPeaksStorage {
+  get(audioObjectKey: string): Promise<string | null>;
+  putIfAbsent(audioObjectKey: string, json: string): Promise<boolean>;
+}
+
+export async function getAudioPeaksStorage(): Promise<AudioPeaksStorage> {
+  const bucket = await getR2BucketBinding();
+  if (bucket) {
+    return {
+      async get(audioObjectKey) {
+        const object = await bucket.get(audioPeaksObjectKey(audioObjectKey));
+        if (!object?.body) return null;
+        return new Response(object.body).text();
+      },
+      async putIfAbsent(audioObjectKey, json) {
+        const key = audioPeaksObjectKey(audioObjectKey);
+        if (await bucket.head(key)) return false;
+        const bytes = new TextEncoder().encode(json);
+        const stream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(bytes);
+            controller.close();
+          },
+        });
+        const stored = await bucket.put(key, withKnownLength(stream, bytes.byteLength), {
+          httpMetadata: { contentType: "application/json" },
+          onlyIf: new Headers({ "If-None-Match": "*" }),
+        });
+        return stored !== null;
+      },
+    };
+  }
+
+  const client = createR2Client();
+  return {
+    async get(audioObjectKey) {
+      try {
+        const result = await client.send(
+          new GetObjectCommand({ Bucket: BUCKET_NAME, Key: audioPeaksObjectKey(audioObjectKey) }),
+        );
+        if (!result.Body) return null;
+        return new Response(toWebReadableStream(result.Body)).text();
+      } catch (error: unknown) {
+        if (isNotFoundStorageError(error)) return null;
+        throw error;
+      }
+    },
+    async putIfAbsent(audioObjectKey, json) {
+      const bytes = new TextEncoder().encode(json);
+      try {
+        await client.send(
+          new PutObjectCommand({
+            Bucket: BUCKET_NAME,
+            Key: audioPeaksObjectKey(audioObjectKey),
+            Body: bytes,
+            ContentType: "application/json",
+            ContentLength: bytes.byteLength,
+            IfNoneMatch: "*",
+          }),
+        );
+        return true;
+      } catch (error: unknown) {
+        if (isPreconditionStorageError(error)) return false;
+        throw error;
+      }
     },
   };
 }

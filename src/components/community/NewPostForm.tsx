@@ -4,6 +4,8 @@
  * 한 초안으로 보존하고, 게시는 "게시하기" 버튼으로만 한다.
  * 믹스셋은 업로드한 오디오 파일 또는 YouTube·SoundCloud 링크 중 하나를 고른다. 두 값은 각각 보존하고
  * 고른 방식의 값만 전송한다(전환해도 업로드한 파일을 잃지 않는다).
+ * WAV·AIFF·FLAC은 브라우저에서 MP3(192kbps, 길면 95MB 안으로 낮춤)로 바꿔 올리고, 변환 중 만든 파형은
+ * `onAudioPrepared`(src/lib/audio/on-audio-prepared.ts)로 넘긴다.
  */
 "use client";
 
@@ -33,6 +35,8 @@ import { MIXSET_LINK_FIELD, normalizeMixsetLinkUrl } from "@/lib/community-mixse
 import { isImplicitSubmitEnter } from "@/components/community/empty-title-enter";
 import { CollabEditorPending } from "@/components/editor/CollabEditorPending";
 import { isCollabEditorPending } from "@/lib/collab/client/collab-status";
+import { onAudioPrepared } from "@/lib/audio/on-audio-prepared";
+import { MP3_DEFAULT_BITRATE_KBPS } from "@/lib/audio/mp3-bitrate";
 
 const EMPTY_TITLE_ERROR = "제목을 입력해 주세요.";
 
@@ -125,6 +129,8 @@ function NewPostFormContent({
   const linkInputRef = useRef<HTMLInputElement>(null);
   const linkFieldId = useId();
   const [uploadError, setUploadError] = useState("");
+  // 길이 때문에 비트레이트를 낮춰 변환했으면 그 값을 알린다(이 화면에서 올린 경우만).
+  const [loweredBitrate, setLoweredBitrate] = useState<{ mediaObjectId: string; kbps: number } | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   // 본문 이미지가 올라가는 동안에는 제출하지 않는다. 편집기는 계속 쓸 수 있다.
   const [isEditorUploading, setIsEditorUploading] = useState(false);
@@ -208,7 +214,7 @@ function NewPostFormContent({
   return (
     <div className="px-5 pt-5 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-10">
       <MobileTopBar title="새 게시물" back={{ href: returnTo, label: backLabel }} />
-      <div className="flex max-w-[760px] flex-col gap-5 md:gap-7">
+      <div className="flex max-w-[760px] flex-col gap-5 md:gap-7 md:mx-auto">
         <nav aria-label="위치" className="hidden items-center gap-1.5 text-ui md:flex">
           <Link
             href={returnTo}
@@ -429,17 +435,26 @@ function NewPostFormContent({
                       <X className="size-3.5 md:size-3" strokeWidth={1.8} aria-hidden="true" />
                     </button>
                   </span>
+                  {loweredBitrate && loweredBitrate.mediaObjectId === mediaObjectId ? (
+                    <span className="text-xs leading-[18px] text-muted-foreground md:leading-4">
+                      길이가 길어 95MB 안에 들도록 MP3 {loweredBitrate.kbps}kbps로 바꿔 올렸습니다.
+                    </span>
+                  ) : null}
                 </div>
               ) : (
                 <FileUploader
-                  accept="audio/*"
+                  accept="audio/*,.wav,.wave,.aif,.aiff,.aifc,.flac,.mp3,.m4a,.ogg"
                   purpose="COMMUNITY_POST_AUDIO"
                   draftOperationId={operationId}
                   label="오디오 파일 선택 (MP3, WAV, FLAC)"
+                  convertAudio
                   onUploadComplete={(upload) => {
                     setMediaUrl(upload.deliveryUrl);
                     setMediaObjectId(upload.mediaObjectId);
                     setUploadError("");
+                    const bitrate = upload.audio?.bitrateKbps;
+                    setLoweredBitrate(bitrate && bitrate < MP3_DEFAULT_BITRATE_KBPS ? { mediaObjectId: upload.mediaObjectId, kbps: bitrate } : null);
+                    if (upload.audio?.peaks) void onAudioPrepared(upload.audio.peaks, upload.mediaObjectId);
                   }}
                   onError={setUploadError}
                   onUploadingChange={(uploading) => {

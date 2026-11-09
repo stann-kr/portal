@@ -1,3 +1,5 @@
+import type { SubmissionReviewStatus } from "@/lib/assignment-submission";
+
 export type PortalStatusTone =
   | "neutral"
   | "accent"
@@ -19,6 +21,7 @@ export type PortalStatusKey =
   | "qnaClosed"
   | "feedbackWaiting"
   | "feedbackReady"
+  | "feedbackAcknowledged"
   | "lessonUpcoming"
   | "complete";
 
@@ -34,6 +37,7 @@ export const PORTAL_STATUS: Record<PortalStatusKey, PortalStatusDefinition> = {
   qnaClosed: { label: "종료", tone: "neutral", icon: "close" },
   feedbackWaiting: { label: "피드백 대기", tone: "warning", icon: "clock" },
   feedbackReady: { label: "피드백 도착", tone: "info", icon: "message" },
+  feedbackAcknowledged: { label: "Stann 확인함", tone: "success", icon: "check" },
   lessonUpcoming: { label: "예정", tone: "info", icon: "calendar" },
   complete: { label: "완료", tone: "success", icon: "check" },
 };
@@ -59,6 +63,13 @@ export const STATUS_TONE_CLASS_NAMES: Record<PortalStatusTone, string> = {
   warning: "border-warning/20 bg-warning-muted text-warning",
   destructive: "border-destructive/20 bg-destructive-muted text-destructive",
   info: "border-info/20 bg-info-muted text-info",
+};
+
+/** 제출 검토 상태(getSubmissionReviewStatus)를 상태 배지로 옮긴다. */
+export const SUBMISSION_REVIEW_PORTAL_STATUS: Record<SubmissionReviewStatus, PortalStatusKey> = {
+  submitted: "feedbackWaiting",
+  acknowledged: "feedbackAcknowledged",
+  reviewed: "feedbackReady",
 };
 
 export function getPortalStatus(key: PortalStatusKey): PortalStatusDefinition {

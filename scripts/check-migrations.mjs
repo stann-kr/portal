@@ -52,6 +52,7 @@ import { validateCommentTimeMarkerUpgrade } from "./migration-check/comment-time
 import { validateMixAnalysisUpgrade } from "./migration-check/mix-analysis.mjs";
 import { validatePushSubscriptionsUpgrade } from "./migration-check/push-subscriptions.mjs";
 import { validatePushMutedCategoriesUpgrade } from "./migration-check/push-muted-categories.mjs";
+import { validateAssignmentReviewedAtUpgrade } from "./migration-check/assignment-reviewed-at.mjs";
 import {
   validateAccountPrivacyAtomicSource,
   validateAccountPrivacySemantics,
@@ -191,6 +192,8 @@ async function main() {
   console.log("PASS populated 0023 → 0024 push subscription table, endpoint uniqueness, CHECK bounds and profile cascade");
   await validatePushMutedCategoriesUpgrade(migrationFiles);
   console.log("PASS populated 0024 → 0025 push muted category table, category CHECK, pair uniqueness and profile cascade");
+  await validateAssignmentReviewedAtUpgrade(migrationFiles);
+  console.log("PASS populated 0025 → 0026 assignment reviewed_at nullable column and row preservation without table rebuild");
 }
 
 try {

@@ -24,7 +24,7 @@ export default async function GuideIndexPage() {
   return (
     <div className="px-5 pb-8 pt-4 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-14">
       <MobileTopBar title="가이드" />
-      <div className="flex max-w-[720px] flex-col gap-6">
+      <div className="flex max-w-[720px] flex-col gap-6 md:mx-auto">
         <h1 className="text-display font-semibold tracking-display">가이드</h1>
         <EmptyState
           icon={<BookOpenText strokeWidth={1.6} aria-hidden="true" />}

@@ -10,9 +10,11 @@
 
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { Hash, MessageSquare, Music2, Plus, RotateCcw, Settings2, Trash2 } from "lucide-react";
+import { Hash, MessageSquare, Music2, Plus, RotateCcw, Search, Settings2, Trash2 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { Button, buttonClassName } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
+import { Input } from "@/components/ui/input";
 import { MobileTopBar } from "@/components/app-shell/AppSidebar";
 import { getCategories } from "@/lib/actions/categories";
 import { getCommunityPostPage } from "@/lib/actions/posts";
@@ -20,6 +22,8 @@ import { AnnouncementList } from "@/components/community/AnnouncementList";
 import { MixsetFeedbackCard } from "@/components/community/MixsetFeedbackCard";
 import { COMMUNITY_BOARD_LABELS, CommunityPostRow } from "@/components/community/CommunityPostRow";
 import { resolveCommunityBoardType, type CommunityBoardType } from "@/lib/community-location";
+import { DOCUMENT_SEARCH_MAX_QUERY_LENGTH } from "@/lib/document-search";
+import { communitySearchHref, communitySearchSummary, type CommunitySearchScope } from "@/lib/community-search";
 import { cn } from "@/lib/utils";
 
 type Category = Awaited<ReturnType<typeof getCategories>>[number];
@@ -36,6 +40,8 @@ interface CommunityClientProps {
     posts: Post[];
     nextCursor: string | null;
   };
+  /** 서버가 `?q=`로 찾은 결과. 있으면 목록 대신 검색 결과를 보인다. */
+  search?: { query: string; scope: CommunitySearchScope; posts: Post[] } | null;
 }
 
 /** 이어 읽은 페이지를 붙이되 이미 보이는 게시물은 다시 넣지 않는다. */
@@ -86,7 +92,8 @@ function communityHref(boardType: CommunityBoardType, category: string): string 
 
 // ─── 메인 컴포넌트 ────────────────────────────────
 
-export default function CommunityClient({ isAdmin, initial }: CommunityClientProps) {
+export default function CommunityClient({ isAdmin, initial, search = null }: CommunityClientProps) {
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<CommunityBoardType>(initial.boardType);
   const [activeCategory, setActiveCategory] = useState<string>(initial.category);
   const [categories, setCategories] = useState<Category[]>(initial.categories);
@@ -212,11 +219,21 @@ export default function CommunityClient({ isAdmin, initial }: CommunityClientPro
   const currentCat = categories.find((c) => c.slug === activeCategory);
   const returnTo = `/community?boardType=${activeTab}&category=${encodeURIComponent(activeCategory)}`;
   const trashHref = `/community/trash?returnTo=${encodeURIComponent(returnTo)}`;
+  const searchReturnTo = search
+    ? communitySearchHref({ boardType: activeTab, category: activeCategory, query: search.query, scope: search.scope })
+    : returnTo;
 
   const changeLocation = (
     nextTab: CommunityBoardType,
     nextCategory = activeCategory,
   ) => {
+    // 검색 결과를 보는 중에 게시판·채널을 고르면 검색을 끝내고 그 목록으로 간다.
+    if (search) {
+      setActiveTab(nextTab);
+      setActiveCategory(nextCategory);
+      router.push(communitySearchHref({ boardType: nextTab, category: nextCategory, query: "" }));
+      return;
+    }
     setActiveTab(nextTab);
     setActiveCategory(nextCategory);
     const url = new URL(window.location.href);
@@ -234,7 +251,7 @@ export default function CommunityClient({ isAdmin, initial }: CommunityClientPro
     <div className="px-5 pb-8 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-14">
       {/* 쓸 수 없는 탭(학생의 공지)·채널이 없을 때는 위쪽 막대 + 도 숨긴다. */}
       <MobileTopBar title="커뮤니티" action={canWrite ? { href: newPostHref, label: "새 글" } : null} />
-      <div className="flex max-w-[880px] flex-col md:gap-6">
+      <div className="flex max-w-[880px] flex-col md:gap-6 md:mx-auto">
         <header className="flex flex-wrap items-end justify-between gap-4">
           <h1 className="sr-only md:not-sr-only md:text-display md:font-semibold md:tracking-display">커뮤니티</h1>
           <div className="hidden gap-2 md:flex">
@@ -280,9 +297,69 @@ export default function CommunityClient({ isAdmin, initial }: CommunityClientPro
           ) : null}
         </nav>
 
+        {/* 게시물 찾기: Q&A 검색과 같은 GET form. 지금 게시판·채널 안에서 제목·본문을 찾는다. */}
+        <form
+          key={search?.query ?? ""}
+          action="/community"
+          method="get"
+          role="search"
+          aria-label="게시물 검색"
+          className="mt-3 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 md:mt-0"
+        >
+          <input type="hidden" name="boardType" value={activeTab} />
+          {activeTab === "GENERAL" && activeCategory ? <input type="hidden" name="category" value={activeCategory} /> : null}
+          <label htmlFor="community-search" className="relative flex min-w-0 flex-1 items-center md:flex-none">
+            <span className="sr-only">게시물 찾기</span>
+            <Search className="pointer-events-none absolute left-3.5 size-4 text-muted-foreground md:left-2.5 md:size-3.5" strokeWidth={1.8} aria-hidden="true" />
+            <Input
+              id="community-search"
+              name="q"
+              type="search"
+              enterKeyHint="search"
+              defaultValue={search?.query ?? ""}
+              maxLength={DOCUMENT_SEARCH_MAX_QUERY_LENGTH}
+              placeholder="제목·본문 찾기"
+              aria-describedby="community-search-scope"
+              className="pl-10 md:h-8 md:w-60 md:pl-8 md:text-ui"
+            />
+          </label>
+          <span id="community-search-scope" className="sr-only">
+            {activeTab === "GENERAL" && currentCat ? `# ${currentCat.name} 채널` : COMMUNITY_BOARD_LABELS[activeTab]}에서 띄어 쓴 단어를 제목·본문에서 모두 찾습니다. 입력한 뒤 Enter를 누르세요.
+          </span>
+          {search ? (
+            <a href={communityHref(activeTab, activeCategory)} className="text-ui text-secondary-foreground underline underline-offset-4 hover:text-foreground">
+              검색 초기화
+            </a>
+          ) : null}
+        </form>
+
         {/* 게시물 목록 */}
         <div className="flex flex-col">
-          {awaitingList ? (
+          {search ? (
+            <section aria-label="검색 결과" className="flex flex-col">
+              <p role="status" className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-muted py-3 text-ui text-secondary-foreground">
+                <span>
+                  {search.scope === "all" ? "전체에서 " : ""}
+                  {communitySearchSummary(search.query, search.posts.length)}
+                </span>
+                {search.posts.length === 0 && search.scope !== "all" ? (
+                  <a
+                    href={communitySearchHref({ boardType: activeTab, category: activeCategory, query: search.query, scope: "all" })}
+                    className="text-foreground underline underline-offset-4"
+                  >
+                    전체에서 찾기
+                  </a>
+                ) : null}
+              </p>
+              {search.posts.length > 0 ? (
+                <ul className="flex flex-col">
+                  {search.posts.map((post) => (
+                    <CommunityPostRow key={post.id} post={post} returnTo={searchReturnTo} />
+                  ))}
+                </ul>
+              ) : null}
+            </section>
+          ) : awaitingList ? (
             <div role="status" aria-label="게시물을 불러오는 중" className="flex flex-col">
               {[0, 1, 2, 3].map((index) => (
                 <div key={index} className="flex flex-col gap-2 border-b border-muted py-4 md:px-1">

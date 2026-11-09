@@ -3,13 +3,13 @@
  * @description 과제 피드백 UI 컴포넌트.
  * - 타임스탬프 클릭 시 VideoPlayer의 해당 시점으로 이동
  * - 재생 시점이 없는 피드백은 "전체" 표시로 구분한다(글 제출·과제 전체에 대한 피드백)
- * - Admin: 피드백 작성 폼 노출(재생 시점은 비워 둘 수 있다)
+ * - Admin: 피드백 작성 폼 노출(재생 시점은 비워 둘 수 있다), 남긴 피드백을 그 자리에서 고치기·삭제
  * - Student: 조회만 가능
  */
 "use client";
 
 import { useActionState, useEffect, useId, useRef, useState, useTransition } from "react";
-import { Bookmark, Trash2, X } from "lucide-react";
+import { Bookmark, Pencil, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ConfirmPanel, useConfirmAction } from "@/components/ui/confirm-action";
 import { Input } from "@/components/ui/input";
@@ -25,6 +25,7 @@ import { useFormDraft } from "@/lib/hooks/useFormDraft";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
 import { CREATION_OPERATION_FIELD, createCreationOperationId, parseCreationOperationId } from "@/lib/creation-operation";
 import { useFeedbackMarks } from "./useFeedbackMarks";
+import { FeedbackEditForm } from "./FeedbackEditForm";
 
 export interface FeedbackItem {
   id: string;
@@ -361,6 +362,12 @@ export function TimelineFeedback({
   };
 
   const deleteConfirm = useConfirmAction<string>();
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const editTriggers = useRef(new Map<string, HTMLButtonElement>());
+  const closeEdit = (feedbackId: string) => {
+    setEditingId(null);
+    requestAnimationFrame(() => editTriggers.current.get(feedbackId)?.focus());
+  };
 
   const handleDelete = (feedbackId: string) => {
     setError(null);
@@ -398,6 +405,18 @@ export function TimelineFeedback({
         <ul>
           {feedbackList.map((fb) => (
             <li key={fb.id} className="group flex flex-col gap-3 border-b border-muted py-3.5">
+              {isAdmin && editingId === fb.id ? (
+                <FeedbackEditForm
+                  actorId={actorId}
+                  feedback={fb}
+                  allowTimeMarker={allowTimeMarker && !overall}
+                  onCancel={() => closeEdit(fb.id)}
+                  onSaved={() => {
+                    closeEdit(fb.id);
+                    startTransition(refreshAfterChange);
+                  }}
+                />
+              ) : (
               <div className="flex items-start gap-3">
                 {/* 타임스탬프: 누르면 그 위치부터 재생. 좁은 화면은 위아래로 터치 영역을 넓힌다.
                     시점이 없는 전체 피드백은 누를 수 없는 "전체" 표시로 둔다. */}
@@ -418,7 +437,26 @@ export function TimelineFeedback({
 
                 <p className="min-w-0 flex-1 break-words text-md leading-6 md:text-body">{fb.content}</p>
 
-                {/* 삭제 버튼 (Admin only) */}
+                {/* 고치기·삭제 버튼 (Admin only) */}
+                {isAdmin && (
+                  <Button
+                    ref={(node) => {
+                      if (node) editTriggers.current.set(fb.id, node);
+                      else editTriggers.current.delete(fb.id);
+                    }}
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => {
+                      if (deleteConfirm.isOpen) deleteConfirm.close();
+                      setEditingId(fb.id);
+                    }}
+                    disabled={isPending}
+                    aria-label={`${feedbackLabel(fb)} 피드백 고치기`}
+                    className="-my-1 shrink-0 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 focus:opacity-100"
+                  >
+                    <Pencil className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
+                  </Button>
+                )}
                 {isAdmin && (
                   <Button
                     variant="ghost"
@@ -433,6 +471,7 @@ export function TimelineFeedback({
                   </Button>
                 )}
               </div>
+              )}
               {isAdmin && deleteConfirm.value === fb.id ? (
                 <ConfirmPanel
                   confirm={deleteConfirm}

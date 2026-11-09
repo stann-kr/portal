@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { APP_NAV_ITEMS, resolveActiveNavItem, resolveMobileTopBar } from "./navigation";
+import { APP_NAV_ITEMS, WORK_BADGE_NAV_ID, formatWorkBadge, resolveActiveNavItem, resolveMobileTopBar } from "./navigation";
 
 const at = (url: string) => {
   const parsed = new URL(url, "http://portal.test");
@@ -78,4 +78,14 @@ test("가이드는 학생·관리자 메뉴에 같은 주소로 있고 페이지
     title: "가이드 편집",
     back: { href: "/dashboard/guide/guide-1", label: "가이드로 돌아가기" },
   });
+});
+
+test("업무함 숫자 배지는 0이면 숨기고 99를 넘으면 99+로 줄이며 실제 건수를 읽어 준다", () => {
+  assert.equal(formatWorkBadge(0), null);
+  assert.equal(formatWorkBadge(null), null);
+  assert.equal(formatWorkBadge(undefined), null);
+  assert.deepEqual(formatWorkBadge(4), { text: "4", label: "처리할 일 4건" });
+  assert.deepEqual(formatWorkBadge(99), { text: "99", label: "처리할 일 99건" });
+  assert.deepEqual(formatWorkBadge(130), { text: "99+", label: "처리할 일 130건" });
+  assert.ok(APP_NAV_ITEMS.admin.some((item) => item.id === WORK_BADGE_NAV_ID && item.label === "업무함"));
 });

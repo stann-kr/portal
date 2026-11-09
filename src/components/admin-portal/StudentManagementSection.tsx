@@ -97,6 +97,15 @@ function PendingFeedback({ count }: { count: number }) {
   );
 }
 
+function OpenQnaCount({ count }: { count: number }) {
+  return (
+    <span className="font-mono text-xs tabular-nums text-foreground">
+      {count}
+      <span className="sr-only">건</span>
+    </span>
+  );
+}
+
 export function StudentManagementSection({
   students,
   showCurriculum = isCurriculumVisible(),
@@ -112,7 +121,7 @@ export function StudentManagementSection({
 
   return (
     <div className="px-5 pb-8 pt-4 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-14">
-      <div className="flex max-w-[1080px] flex-col gap-1 md:gap-6">
+      <div className="flex max-w-[1080px] flex-col gap-1 md:gap-6 md:mx-auto">
         <header className="flex flex-wrap items-end justify-between gap-4">
           <div className="sr-only md:not-sr-only md:flex md:flex-col md:gap-1">
             <h1 className="text-display font-semibold tracking-display text-foreground">학생</h1>
@@ -183,6 +192,11 @@ export function StudentManagementSection({
                                 피드백 대기
                               </span>
                             ) : null}
+                            {student.openQnaCount > 0 ? (
+                              <span className="inline-flex shrink-0 items-center gap-1 text-xs text-secondary-foreground">
+                                미답변 질문 <span className="font-mono tabular-nums">{student.openQnaCount}</span>
+                              </span>
+                            ) : null}
                           </span>
                           {/* 커리큘럼을 숨기면 진도 대신 넓은 화면 표처럼 이메일을 둘째 줄에 둔다. */}
                           <span className="truncate text-ui leading-[18px] text-muted-foreground">
@@ -199,7 +213,7 @@ export function StudentManagementSection({
                 </ul>
 
                 <div className="hidden overflow-x-auto md:block">
-                  <table className={cn("w-full table-fixed border-collapse text-left text-body", showCurriculum ? "min-w-[760px]" : "min-w-[600px]")}>
+                  <table className={cn("w-full table-fixed border-collapse text-left text-body", showCurriculum ? "min-w-[860px]" : "min-w-[700px]")}>
                     <thead>
                       <tr className="border-b border-border">
                         <th scope="col" className="h-9 px-2 text-xs font-normal text-muted-foreground">수강생</th>
@@ -208,6 +222,7 @@ export function StudentManagementSection({
                         ) : null}
                         <th scope="col" className="w-40 px-2 text-xs font-normal text-muted-foreground">다음 레슨</th>
                         <th scope="col" className="w-26 px-2 text-xs font-normal text-muted-foreground">피드백 대기</th>
+                        <th scope="col" className="w-26 px-2 text-xs font-normal text-muted-foreground">미답변 질문</th>
                         <th scope="col" className="w-12 px-2"><span className="sr-only">메뉴</span></th>
                       </tr>
                     </thead>
@@ -236,6 +251,7 @@ export function StudentManagementSection({
                           ) : null}
                           <td className="px-2 font-mono text-xs tabular-nums text-secondary-foreground">{nextLessonLabel(student)}</td>
                           <td className="px-2"><PendingFeedback count={student.pendingFeedbackCount} /></td>
+                          <td className="px-2"><OpenQnaCount count={student.openQnaCount} /></td>
                           <td className="px-2"><StudentRowMenu student={student} /></td>
                         </tr>
                       ))}

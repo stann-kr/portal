@@ -1,6 +1,7 @@
 import type { CalendarEventType, QnaStatus } from "@/db/schema";
 import { ASSIGNMENT_TASK_SUBTYPE, type UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 import { getSearchableDocumentText } from "@/lib/document-search";
+import { getSubmissionReviewStatus } from "@/lib/assignment-submission";
 
 const NOTE_PREVIEW_MAX_CHARS = 240;
 
@@ -71,6 +72,8 @@ type AssignmentRow = {
   id: string;
   mediaUrl: string | null;
   submittedAt: Date | null;
+  /** Stann이 피드백 없이 확인함으로 표시한 시각 */
+  reviewedAt: Date | null;
   /** 관리자가 낸 과제에 대한 제출이면 그 과제 제목 */
   taskTitle?: string | null;
 };
@@ -82,6 +85,8 @@ type AssignmentTaskRow = {
   dueAt: Date | null;
   createdAt: Date;
   submissionFormat: string;
+  /** 저장 형식 MIX + analysisForm이면 믹스셋 분석 과제다(fromStoredAssignmentFormat과 같은 규칙). */
+  analysisForm?: boolean;
 };
 
 
@@ -310,6 +315,11 @@ export function normalizeUnifiedItems({
       metadata: {
         mediaUrl: assignment.mediaUrl,
         feedbackCount: feedbackCounts[assignment.id] ?? 0,
+        reviewedAt: assignment.reviewedAt ? assignment.reviewedAt.toISOString() : null,
+        reviewStatus: getSubmissionReviewStatus({
+          feedbackCount: feedbackCounts[assignment.id] ?? 0,
+          reviewedAt: assignment.reviewedAt,
+        }),
       },
       space,
       source: source("ASSIGNMENT"),
@@ -326,7 +336,7 @@ export function normalizeUnifiedItems({
       metadata: {
         taskId: task.id,
         dueAt: task.dueAt ? task.dueAt.toISOString() : null,
-        submissionFormat: task.submissionFormat,
+        submissionFormat: task.analysisForm && task.submissionFormat === "MIX" ? "ANALYSIS" : task.submissionFormat,
       },
       space,
       source: source("ASSIGNMENT_TASK"),

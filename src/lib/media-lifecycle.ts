@@ -344,10 +344,63 @@ export function isManagedMediaObjectKey(value: string): boolean {
   );
 }
 
+/** 오디오 파형 JSON은 오디오 final object 옆 `<audio key>.peaks.json`에 둔다. */
+export const AUDIO_PEAKS_OBJECT_KEY_SUFFIX = ".peaks.json";
+
+/** 오디오를 받을 수 있어 파형 JSON이 생길 수 있는 업로드 목적. */
+const AUDIO_PEAKS_PURPOSES = ["COMMUNITY_POST_AUDIO", "QNA_ATTACHMENT"] as const;
+
+/**
+ * 매체 final key 옆 파형 JSON key. 오디오를 받을 수 없는 목적(본문 이미지)이나 관리 대상이 아닌 key면 null.
+ * 매체를 지울 때 파형도 함께 지우는 데 쓴다.
+ */
+export function audioPeaksSidecarObjectKey(objectKey: string): string | null {
+  if (!isManagedFinalMediaObjectKey(objectKey)) return null;
+  const audioCapable = AUDIO_PEAKS_PURPOSES.some((purpose) =>
+    objectKey.startsWith(MEDIA_PURPOSE_POLICIES[purpose].keyPrefix),
+  );
+  return audioCapable ? `${objectKey}${AUDIO_PEAKS_OBJECT_KEY_SUFFIX}` : null;
+}
+
+/** 파형 JSON key면 그 오디오 final key, 아니면 null. */
+export function audioPeaksBaseObjectKey(value: string): string | null {
+  if (!value.endsWith(AUDIO_PEAKS_OBJECT_KEY_SUFFIX)) return null;
+  const base = value.slice(0, -AUDIO_PEAKS_OBJECT_KEY_SUFFIX.length);
+  return audioPeaksSidecarObjectKey(base) === value ? base : null;
+}
+
+/** 관리 대상 오디오의 파형 JSON key인지. */
+export function isManagedAudioPeaksObjectKey(value: string): boolean {
+  return audioPeaksBaseObjectKey(value) !== null;
+}
+
 /** 한 UPDATE에 묶을 본문 이미지 ID 수(D1 bound parameter 100개 한도 아래). */
 export const DOCUMENT_IMAGE_CLAIM_BATCH_SIZE = 50;
 
 /** 원본 R2 주소를 노출하지 않는 인증형 애플리케이션 전달 경로다. */
+/** 첨부 viewer가 고를 표시 종류. 서버가 media MIME에서만 계산해 노출한다. */
+export type MediaAttachmentKind = "image" | "audio" | "video" | "file";
+
+/** MIME → 첨부 종류. MIME이 없으면 null(알 수 없음), 인식하지 못한 MIME은 "file". */
+export function mediaAttachmentKind(
+  mimeType: string | null | undefined,
+): MediaAttachmentKind | null {
+  if (typeof mimeType !== "string") return null;
+  const normalized = mimeType.split(";")[0]!.trim().toLowerCase();
+  if (!normalized) return null;
+  if (normalized.startsWith("image/")) return "image";
+  if (normalized.startsWith("audio/")) return "audio";
+  if (normalized.startsWith("video/")) return "video";
+  return "file";
+}
+
+/** `/api/media/<uuid>` 전달 경로에서 media id를 읽는다. 다른 형태면 null. */
+export function parseMediaDeliveryPath(path: string | null | undefined): string | null {
+  if (typeof path !== "string") return null;
+  const match = /^\/api\/media\/([^/?#]+)$/u.exec(path.trim());
+  return match ? parseMediaUuidV4(match[1]) : null;
+}
+
 export function mediaDeliveryPath(mediaObjectId: string): string {
   return `/api/media/${assertUuidV4(mediaObjectId)}`;
 }

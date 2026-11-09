@@ -171,7 +171,7 @@ export function DailyListView({
 
         {sortedKeys.length === 0 ? (
           <EmptyState
-            className="max-w-[880px]"
+            className="max-w-[880px] md:mx-auto"
             title={items.length === 0 ? "표시할 기록이 없습니다" : "필터에 맞는 기록이 없습니다"}
             description={items.length === 0
               ? "일정·노트·디깅·질문을 기록하면 날짜별로 모입니다."
@@ -184,7 +184,7 @@ export function DailyListView({
             ) : undefined}
           />
         ) : (
-          <div className="flex max-w-[880px] flex-col gap-3" ref={listRef}>
+          <div className="flex max-w-[880px] flex-col gap-3 md:mx-auto" ref={listRef}>
             {sortedKeys.map((dateKey) => {
               const dayItems = sortDayAgenda(grouped.get(dateKey)!);
               const relative = describeRelativeDay(dateKey, todayKey);

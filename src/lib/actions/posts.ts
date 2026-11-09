@@ -57,6 +57,13 @@ import {
   encodeCommunityPostCursor,
 } from "@/lib/community-post-page";
 import { isMixsetLinkUrl, MIXSET_LINK_FIELD, normalizeMixsetLinkUrl } from "@/lib/community-mixset-media";
+import {
+  COMMUNITY_SEARCH_RESULT_LIMIT,
+  communitySearchFilter,
+  getCommunitySearchWords,
+  matchesCommunityPostSearch,
+  type CommunitySearchScope,
+} from "@/lib/community-search";
 import { isRichTextEmpty } from "@/lib/rich-text";
 import { safeReturnPath } from "@/lib/safe-return-path";
 import { sanitizeHtml } from "@/lib/sanitize-html";
@@ -219,6 +226,67 @@ export async function getCommunityPostPage(input: {
       })
       : null,
   };
+}
+
+/**
+ * 커뮤니티 게시물 검색(Q&A 검색과 같은 규칙). 목록과 같은 보이기 규칙(로그인·휴지통 제외)을 쓰고,
+ * 지금 게시판·채널(scope current) 또는 전체(scope all)에서 최신순으로 최대 50개를 돌려준다.
+ * 긴 본문을 한 번에 메모리에 올리지 않도록 고정된 크기로 나눠 읽는다.
+ */
+export async function searchCommunityPosts(input: {
+  boardType: BoardType;
+  category?: string | null;
+  query: string;
+  scope?: CommunitySearchScope;
+}) {
+  await requireAuth();
+  if (!VALID_BOARD_TYPES.includes(input.boardType)) throw new Error("Invalid board type");
+  const words = getCommunitySearchWords(input.query);
+  if (words.length === 0) return { posts: [] };
+  const filter = communitySearchFilter({
+    scope: input.scope ?? "current",
+    boardType: input.boardType,
+    category: input.category?.trim() ?? "",
+  });
+  if (filter.boardType === "GENERAL" && !filter.category) return { posts: [] };
+
+  const createdKey = sql<number>`coalesce(${posts.createdAt}, 0)`;
+  const batchSize = 64;
+  const matched: Awaited<ReturnType<typeof getCommunityPostPage>>["posts"] = [];
+  const db = createDb();
+  const readBatch = (cursor: { createdAt: number; id: string } | null) => db
+    .select({
+      ...POST_SELECT,
+      commentCount: sql<number>`(SELECT count(*) FROM ${comments} WHERE ${comments.postId} = ${posts.id})`.mapWith(Number),
+      createdKey,
+    })
+    .from(posts)
+    .leftJoin(profiles, eq(posts.authorId, profiles.id))
+    .where(and(
+      isNull(posts.deletedAt),
+      filter.boardType ? eq(posts.boardType, filter.boardType) : undefined,
+      filter.category ? eq(posts.category, filter.category) : undefined,
+      cursor
+        ? sql`(${createdKey} < ${cursor.createdAt} OR (${createdKey} = ${cursor.createdAt} AND ${posts.id} < ${cursor.id}))`
+        : undefined,
+    ))
+    .orderBy(desc(createdKey), desc(posts.id))
+    .limit(batchSize);
+  let cursor: { createdAt: number; id: string } | null = null;
+  while (matched.length < COMMUNITY_SEARCH_RESULT_LIMIT) {
+    const rows = await readBatch(cursor);
+    for (const { createdKey: rowCreatedKey, ...post } of rows) {
+      void rowCreatedKey;
+      if (!matchesCommunityPostSearch(post, words)) continue;
+      // 목록 줄은 앞부분만 쓰므로 목록과 같은 길이로 줄여 보낸다.
+      matched.push({ ...post, contentHtml: post.contentHtml.slice(0, COMMUNITY_PREVIEW_SOURCE_CHARS) });
+      if (matched.length >= COMMUNITY_SEARCH_RESULT_LIMIT) break;
+    }
+    if (rows.length < batchSize) break;
+    const last = rows[rows.length - 1]!;
+    cursor = { createdAt: Number(last.createdKey), id: last.id };
+  }
+  return { posts: matched };
 }
 
 export async function getPostById(postId: string) {

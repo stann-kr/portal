@@ -5,9 +5,11 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { MobileTopBar } from "@/components/app-shell/AppSidebar";
+import { AssignmentBrief } from "@/components/student-portal/AssignmentBrief";
 import { MixAnalysisWriteForm } from "@/components/student-portal/MixAnalysisWriteForm";
 import { getMyAssignmentTask } from "@/lib/actions/assignmentTasks";
 import { ASSIGNMENT_FORMAT_LABELS } from "@/lib/assignment-recurrence";
+import { isSubmissionSettled } from "@/lib/assignment-submission";
 import { getActiveAuthSession } from "@/lib/auth-guard";
 import { formatKst } from "@/lib/kst-format";
 import { STUDENT_LEGACY_REDIRECTS } from "@/lib/legacy-dashboard-routes";
@@ -28,15 +30,15 @@ export default async function MixAnalysisWritePage({ params }: { params: Promise
   const task = session.user.role === "student" ? await getMyAssignmentTask(taskId).catch(() => null) : null;
   const unavailable = !task || task.submissionFormat !== "ANALYSIS"
     ? "분석을 쓸 과제를 찾을 수 없습니다."
-    : task.submission && task.submission.feedbackCount > 0
-      ? "피드백이 달린 분석은 고칠 수 없습니다."
+    : task.submission && isSubmissionSettled(task.submission)
+      ? task.submission.feedbackCount > 0 ? "피드백이 달린 분석은 고칠 수 없습니다." : "Stann이 확인한 분석은 고칠 수 없습니다."
       : null;
 
   if (!task || unavailable) {
     return (
       <div className="px-5 pb-8 pt-6 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-14">
         <MobileTopBar title="믹스셋 분석" back={{ href: LIST_HREF, label: "과제 목록으로" }} />
-        <div className="flex max-w-[880px] flex-col items-start gap-2">
+        <div className="flex max-w-[880px] flex-col items-start gap-2 md:mx-auto">
           <p className="text-body text-secondary-foreground">{unavailable}</p>
           <Link
             href={task?.submission ? detailHref(task.submission.id) : LIST_HREF}
@@ -71,6 +73,8 @@ export default async function MixAnalysisWritePage({ params }: { params: Promise
         <h1 className="text-display font-semibold tracking-display">{task.title}</h1>
         <p className="text-ui text-muted-foreground">{dueLabel} · {ASSIGNMENT_FORMAT_LABELS.ANALYSIS}</p>
       </header>
+      {/* Stann의 과제 설명: 넓은 화면은 머리 아래, 좁은 화면은 폼의 제목 아래(MixAnalysisWriteForm)에 처음부터 펼쳐 둔다. */}
+      {task.descriptionHtml ? <AssignmentBrief html={task.descriptionHtml} open className="hidden max-w-[880px] md:block" /> : null}
       <MixAnalysisWriteForm
         key={task.submission?.id ?? task.id}
         task={task}

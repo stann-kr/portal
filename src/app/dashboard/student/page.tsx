@@ -16,7 +16,14 @@ import { toStudentAssignmentSummaries } from "@/lib/assignment-summary";
 import { StudentPortalClient } from "@/components/student-portal/StudentPortalClient";
 import { getUnifiedItemSpaceLabel } from "@/lib/unified-item-normalization";
 import { getExternalCalendarConnectionSummary } from "@/lib/actions/externalCalendars";
-import { legacyPortalSectionRedirect, resolvePortalLocation, type PortalSearchParams } from "@/lib/portal-location";
+import {
+  legacyPortalSectionRedirect,
+  resolvePortalDeepLink,
+  resolvePortalLocation,
+  resolveStudentDeepLink,
+  type PortalSearchParams,
+} from "@/lib/portal-location";
+import { getUnifiedItemKey } from "@/lib/utils/unifiedItemUtils";
 import { RouteAutoRefresh } from "@/components/app-shell/RouteAutoRefresh";
 import { CollabNotifyRefresh } from "@/components/app-shell/CollabNotifyRefresh";
 
@@ -56,6 +63,12 @@ export default async function StudentPortalPage({ searchParams }: { searchParams
 
   // 과제 피드백 카운트 병합
   const assignmentList = toStudentAssignmentSummaries(rawAssignments, feedbacksMap);
+  // 딥링크(?task=, ?date=&item=)는 이 학생의 과제·항목 목록에 있을 때만 쓴다.
+  const deepLink = resolveStudentDeepLink(resolvePortalDeepLink(params), {
+    taskIds: assignmentTasks.map((task) => task.id),
+    items: unifiedItems,
+    keyOf: getUnifiedItemKey,
+  });
 
   return (
     <>
@@ -65,6 +78,7 @@ export default async function StudentPortalPage({ searchParams }: { searchParams
       <CollabNotifyRefresh topic="student-notes" id={studentId} since={renderedAt} />
       <StudentPortalClient
         initialLocation={initialLocation}
+        deepLink={deepLink}
         announcements={announcements}
         unifiedItems={unifiedItems}
         curriculumModules={curriculumModules.map((module) => ({

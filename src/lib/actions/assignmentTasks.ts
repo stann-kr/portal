@@ -19,7 +19,7 @@ import { revalidatePath } from "next/cache";
 import { and, asc, count, desc, eq, exists, isNull, notExists, sql } from "drizzle-orm";
 import { createDbContext, type DbContext, type DrizzleDb } from "@/db/client";
 import { assignmentRecurrences, assignmentTasks, assignments, feedbacks } from "@/db/schema";
-import { requireAuth, requireStudentTarget, type AuthSession } from "@/lib/auth-guard";
+import { findStudentTarget, requireAuth, requireStudentTarget, type AuthSession } from "@/lib/auth-guard";
 import {
   CREATION_OPERATION_FIELD,
   deriveCreationResourceId,
@@ -36,10 +36,13 @@ import {
 import {
   ASSIGNMENT_DESCRIPTION_MAX_LENGTH,
   ASSIGNMENT_TITLE_MAX_LENGTH,
+  isSubmissionSettled,
   normalizePlainTextField,
   parseSubmissionFormat,
+  settledSubmissionError,
   validateSubmissionPayload,
 } from "@/lib/assignment-submission";
+import { assignmentAwaitingReview } from "@/lib/assignment-review-query";
 import { ensureRecurringAssignmentTasks } from "@/lib/assignment-task-generation";
 import { pushMessages } from "@/lib/push/messages";
 import { notifyPush } from "@/lib/push/notify";
@@ -60,6 +63,8 @@ export type AssignmentTaskSubmission = {
   analysisJson: string | null;
   submittedAt: Date | null;
   updatedAt: Date | null;
+  /** Stann이 피드백 없이 확인함으로 표시한 시각. 없으면 null */
+  reviewedAt: Date | null;
   feedbackCount: number;
 };
 
@@ -91,7 +96,13 @@ export type AssignmentRecurrenceItem = {
   version: number;
 };
 
-export type AssignmentTaskActionState = { error?: string; success?: boolean; id?: string };
+export type AssignmentTaskActionState = {
+  error?: string;
+  success?: boolean;
+  id?: string;
+  /** 같은 과제를 함께 받은 다른 학생 수(지금 학생 제외). */
+  alsoCount?: number;
+};
 export type AssignmentTaskMutationResult = { success: true } | { success: false; error: string };
 
 // ───────────────────────────────────────────────
@@ -226,6 +237,7 @@ async function loadTasksWithSubmissions(db: DrizzleDb, studentId: string, taskId
       analysisJson: assignments.analysisJson,
       submittedAt: assignments.submittedAt,
       updatedAt: assignments.updatedAt,
+      reviewedAt: assignments.reviewedAt,
       feedbackCount: count(feedbacks.id),
     })
     .from(assignments)
@@ -256,6 +268,7 @@ async function loadTasksWithSubmissions(db: DrizzleDb, studentId: string, taskId
             analysisJson: submission.analysisJson,
             submittedAt: submission.submittedAt,
             updatedAt: submission.updatedAt,
+            reviewedAt: submission.reviewedAt,
             feedbackCount: Number(submission.feedbackCount),
           }
         : null,
@@ -295,6 +308,56 @@ function toRecurrenceItem(row: typeof assignmentRecurrences.$inferSelect): Assig
     pausedAt: row.pausedAt,
     version: row.version,
   };
+}
+
+// ───────────────────────────────────────────────
+// 여러 학생에게 내기(UsabilityBundle ⑭)
+// ───────────────────────────────────────────────
+
+/** 과제 만들기 양식의 "다른 학생에게도 내기" 체크박스 이름. */
+const ALSO_STUDENT_FIELD = "alsoStudentId";
+const ALSO_STUDENT_LIMIT = 50;
+
+/**
+ * 함께 받을 학생 id를 읽고 모두 활성 학생인지 확인한다. 지금 학생·중복은 뺀다.
+ * 하나라도 받을 수 없는 학생이면 아무 과제도 만들지 않도록 전체를 거절한다.
+ */
+async function resolveAlsoStudentIds(
+  primaryStudentId: string,
+  formData: FormData,
+): Promise<{ ok: true; ids: string[] } | { ok: false; error: string }> {
+  const ids = [...new Set(
+    formData.getAll(ALSO_STUDENT_FIELD).filter((value): value is string => typeof value === "string" && value.length > 0),
+  )].filter((id) => id !== primaryStudentId);
+  if (ids.length > ALSO_STUDENT_LIMIT) {
+    return { ok: false, error: `한 번에 ${ALSO_STUDENT_LIMIT}명까지 함께 낼 수 있습니다.` };
+  }
+  const targets = await Promise.all(ids.map((id) => findStudentTarget(id)));
+  if (targets.some((target) => !target)) {
+    return { ok: false, error: "선택한 학생 중 과제를 받을 수 없는 학생이 있습니다. 학생 목록을 새로고침한 뒤 다시 골라 주세요." };
+  }
+  return { ok: true, ids };
+}
+
+/** 지금 학생 다음, 함께 고른 학생에게 하나씩 만든다. 앞에서 실패하면 멈추고 몇 명까지 만들었는지 알린다. */
+async function createForEachStudent(
+  studentIds: readonly string[],
+  create: (studentId: string) => Promise<AssignmentTaskActionState>,
+  noun: string,
+): Promise<AssignmentTaskActionState> {
+  let first: AssignmentTaskActionState | null = null;
+  for (const [index, studentId] of studentIds.entries()) {
+    const result = await create(studentId);
+    if (!result.success) {
+      if (index === 0) return result;
+      // 같은 작성 정보로 다시 보내면 이미 만든 학생 몫은 그대로 두고 남은 학생 몫만 만든다(학생별 id가 정해져 있다).
+      return {
+        error: `${studentIds.length}명 중 ${index}명에게 ${noun}를 냈고 나머지는 저장하지 못했습니다. ${result.error ?? ""} 같은 내용으로 다시 내면 남은 학생에게만 만들어집니다.`.trim(),
+      };
+    }
+    first ??= result;
+  }
+  return { ...first, success: true, alsoCount: Math.max(0, studentIds.length - 1) };
 }
 
 // ───────────────────────────────────────────────
@@ -355,13 +418,26 @@ export async function createAssignmentTask(
   if (!due.ok) return { error: due.error };
   const operationId = resolveCreationOperationId(formData.get(CREATION_OPERATION_FIELD));
   if (!operationId) return { error: "작성 정보를 확인하지 못했습니다. 입력 내용을 보관한 뒤 새로고침해 주세요." };
-  const id = deriveCreationResourceId(operationId, JSON.stringify(["assignment-task", session.user.id, studentId]));
-
+  const also = await resolveAlsoStudentIds(studentId, formData);
+  if (!also.ok) return { error: also.error };
   const db = readDb(createDbContext());
+  // 학생마다 id는 같은 작성 정보(operationId)와 학생 id로 정해진다. 재전송은 학생별로 멱등이다.
+  return createForEachStudent([studentId, ...also.ids], (targetId) => createTaskForStudent(db, session, targetId, operationId, content.value, due.value), "과제");
+}
+
+async function createTaskForStudent(
+  db: DrizzleDb,
+  session: AuthSession,
+  studentId: string,
+  operationId: string,
+  content: TaskContent,
+  dueAt: Date | null,
+): Promise<AssignmentTaskActionState> {
+  const id = deriveCreationResourceId(operationId, JSON.stringify(["assignment-task", session.user.id, studentId]));
   try {
     const inserted = await db
       .insert(assignmentTasks)
-      .values({ id, studentId, ...storedTaskContent(content.value), dueAt: due.value, createdById: session.user.id })
+      .values({ id, studentId, ...storedTaskContent(content), dueAt, createdById: session.user.id })
       .onConflictDoNothing({ target: assignmentTasks.id })
       .returning({ id: assignmentTasks.id });
     if (inserted.length === 0) {
@@ -370,17 +446,22 @@ export async function createAssignmentTask(
       const same = existing
         && existing.studentId === studentId
         && existing.recurrenceId === null
-        && existing.title === content.value.title
-        && existing.descriptionHtml === content.value.descriptionHtml
-        && fromStoredAssignmentFormat(existing) === content.value.submissionFormat
-        && sameSecond(existing.dueAt, due.value);
+        && existing.title === content.title
+        && existing.descriptionHtml === content.descriptionHtml
+        && fromStoredAssignmentFormat(existing) === content.submissionFormat
+        && sameSecond(existing.dueAt, dueAt);
       if (!same) {
         return { error: "이 과제는 수정 전 내용으로 이미 저장되었습니다. 목록을 확인한 뒤 새 과제로 다시 내 주세요." };
       }
     } else {
       await notifyPush(
         { kind: "profiles", profileIds: [studentId] },
-        pushMessages.assignmentAssigned({ taskId: id, title: content.value.title, dueAt: due.value }),
+        pushMessages.assignmentAssigned({
+          taskId: id,
+          title: content.title,
+          dueAt,
+          analysis: content.submissionFormat === "ANALYSIS",
+        }),
         { excludeProfileId: session.user.id },
       );
     }
@@ -476,19 +557,34 @@ export async function createAssignmentRecurrence(
   if (!parsed.ok) return { error: parsed.error };
   const operationId = resolveCreationOperationId(formData.get(CREATION_OPERATION_FIELD));
   if (!operationId) return { error: "작성 정보를 확인하지 못했습니다. 입력 내용을 보관한 뒤 새로고침해 주세요." };
-  const id = deriveCreationResourceId(operationId, JSON.stringify(["assignment-recurrence", session.user.id, studentId]));
-
+  const also = await resolveAlsoStudentIds(studentId, formData);
+  if (!also.ok) return { error: also.error };
   const context = createDbContext();
+  // 학생마다 규칙을 따로 만들고 각자 회차·알림을 받는다. 규칙 id는 operationId와 학생 id로 정해진다.
+  return createForEachStudent(
+    [studentId, ...also.ids],
+    (targetId) => createRecurrenceForStudent(context, session, targetId, operationId, parsed.value),
+    "정기 과제",
+  );
+}
+
+async function createRecurrenceForStudent(
+  context: DbContext,
+  session: AuthSession,
+  studentId: string,
+  operationId: string,
+  value: Extract<ReturnType<typeof parseRecurrenceForm>, { ok: true }>["value"],
+): Promise<AssignmentTaskActionState> {
+  const id = deriveCreationResourceId(operationId, JSON.stringify(["assignment-recurrence", session.user.id, studentId]));
   const db = readDb(context);
   try {
     const inserted = await db
       .insert(assignmentRecurrences)
-      .values({ id, studentId, ...parsed.value, ...toStoredAssignmentFormat(parsed.value.submissionFormat), createdById: session.user.id })
+      .values({ id, studentId, ...value, ...toStoredAssignmentFormat(value.submissionFormat), createdById: session.user.id })
       .onConflictDoNothing({ target: assignmentRecurrences.id })
       .returning({ id: assignmentRecurrences.id });
     if (inserted.length === 0) {
       const [existing] = await db.select().from(assignmentRecurrences).where(eq(assignmentRecurrences.id, id)).limit(1);
-      const value = parsed.value;
       const same = existing
         && existing.studentId === studentId
         && existing.title === value.title
@@ -748,7 +844,7 @@ export async function updateMyTaskSubmission(
     .set({ mediaUrl: payload.mediaUrl, textHtml: payload.textHtml, analysisJson: payload.analysisJson, updatedAt: new Date() })
     .where(and(
       own,
-      notExists(db.select({ id: feedbacks.id }).from(feedbacks).where(eq(feedbacks.assignmentId, assignments.id))),
+      assignmentAwaitingReview(db),
       // 검증한 형식이 그대로일 때만 고친다(그 사이 관리자가 형식을 바꿨으면 0행).
       exists(db.select({ id: assignmentTasks.id }).from(assignmentTasks).where(and(
         eq(assignmentTasks.id, assignments.taskId),
@@ -764,10 +860,14 @@ export async function updateMyTaskSubmission(
       .from(feedbacks)
       .where(eq(feedbacks.assignmentId, assignmentId))
       .limit(1);
+    const [current] = await db
+      .select({ reviewedAt: assignments.reviewedAt })
+      .from(assignments)
+      .where(own)
+      .limit(1);
+    const review = { feedbackCount: feedback ? 1 : 0, reviewedAt: current?.reviewedAt ?? null };
     return {
-      error: feedback
-        ? "피드백이 등록된 제출은 고칠 수 없습니다. 필요하면 Stann에게 문의해 주세요."
-        : TASK_CHANGED_MESSAGE,
+      error: isSubmissionSettled(review) ? settledSubmissionError("고칠", review) : TASK_CHANGED_MESSAGE,
     };
   }
   revalidateAssignmentViews(studentId);

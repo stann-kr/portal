@@ -12,6 +12,9 @@ import {
   MEDIA_UPLOAD_CLIENT_TIMEOUT_MS,
   MEDIA_UPLOAD_STAGING_GRACE_SECONDS,
   MEDIA_UPLOAD_URL_TTL_SECONDS,
+  audioPeaksBaseObjectKey,
+  audioPeaksSidecarObjectKey,
+  isManagedAudioPeaksObjectKey,
   calculateMediaDeletionBackoffMs,
   createMediaObjectKey,
   createMediaUploadObjectKey,
@@ -360,4 +363,22 @@ test("legacy URL custom prefix도 canonical 상대 prefix만 허용한다", () =
     ]),
     null,
   );
+});
+
+test("파형 JSON key는 오디오를 받을 수 있는 매체 final 옆에만 만든다", () => {
+  const audio = createMediaObjectKey("COMMUNITY_POST_AUDIO", "86000000-0000-4000-8000-000000000001");
+  const qna = createMediaObjectKey("QNA_ATTACHMENT", "86000000-0000-4000-8000-000000000002");
+  const image = createMediaObjectKey("DOCUMENT_IMAGE", "86000000-0000-4000-8000-000000000003");
+  assert.equal(audioPeaksSidecarObjectKey(audio), `${audio}.peaks.json`);
+  assert.equal(audioPeaksSidecarObjectKey(qna), `${qna}.peaks.json`);
+  assert.equal(audioPeaksSidecarObjectKey(image), null);
+  assert.equal(audioPeaksSidecarObjectKey(createMediaUploadObjectKey("COMMUNITY_POST_AUDIO", "86000000-0000-4000-8000-000000000004")), null);
+  assert.equal(audioPeaksSidecarObjectKey("media/legacy.mp3"), null);
+
+  assert.equal(audioPeaksBaseObjectKey(`${audio}.peaks.json`), audio);
+  assert.equal(isManagedAudioPeaksObjectKey(`${audio}.peaks.json`), true);
+  assert.equal(isManagedAudioPeaksObjectKey(`${image}.peaks.json`), false);
+  assert.equal(isManagedAudioPeaksObjectKey(`${audio}.peaks.json.peaks.json`), false);
+  assert.equal(isManagedAudioPeaksObjectKey(audio), false);
+  assert.equal(isManagedMediaObjectKey(`${audio}.peaks.json`), false, "업로드·발급 경계의 key 검사는 넓히지 않는다");
 });

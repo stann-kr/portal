@@ -36,7 +36,7 @@ export default async function StudentDiggingPage({
 
   return (
     <div className="px-5 pb-8 pt-4 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-14">
-      <div className="flex max-w-[1120px] flex-col gap-8 md:gap-12">
+      <div className="flex max-w-[1120px] flex-col gap-8 md:gap-12 md:mx-auto">
         {/* 좁은 화면은 위쪽 막대가 화면 이름을 맡으므로 제목은 화면 읽기에만 남긴다. */}
         <header className="sr-only md:not-sr-only md:flex md:flex-col md:gap-1">
           <h1 className="text-display font-semibold tracking-display">디깅 보드</h1>

@@ -1,6 +1,7 @@
-import { desc, eq, gte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, isNull, sql } from "drizzle-orm";
 import type { DrizzleDb } from "@/db/client";
-import { assignments, curriculums, feedbacks, lessons, profiles } from "@/db/schema";
+import { assignments, curriculums, lessons, profiles, qnaThreads } from "@/db/schema";
+import { assignmentAwaitingReview } from "./assignment-review-query";
 import { formatModuleProgressLabel } from "./student-progress";
 
 export type StudentRosterStat = {
@@ -11,6 +12,8 @@ export type StudentRosterStat = {
   currentModule: string | null;
   nextLessonDate: Date | null;
   pendingFeedbackCount: number;
+  /** 답변을 기다리는(OPEN, 휴지통 아님) 질문 수. */
+  openQnaCount: number;
 };
 
 type CurriculumAggregate = {
@@ -42,14 +45,14 @@ function epochSecondsToDate(value: unknown): Date | null {
 }
 
 /**
- * 학생 수와 무관하게 4개 조회로 roster 요약을 만든다.
+ * 학생 수와 무관하게 5개 조회로 roster 요약을 만든다.
  * 각 도메인은 DB group aggregate로 한 번만 스캔하고 JS에서는 Map lookup만 수행한다.
  */
 export async function queryStudentRosterStats(
   db: DrizzleDb,
   referenceTime: Date = new Date(),
 ): Promise<StudentRosterStat[]> {
-  const [studentRows, curriculumRows, lessonRows, pendingFeedbackRows] = await Promise.all([
+  const [studentRows, curriculumRows, lessonRows, pendingFeedbackRows, openQnaRows] = await Promise.all([
     db
       .select({
         id: profiles.id,
@@ -79,11 +82,19 @@ export async function queryStudentRosterStats(
     db
       .select({
         studentId: assignments.studentId,
-        pendingFeedbackCount: sql<number>`count(DISTINCT CASE WHEN ${feedbacks.id} IS NULL THEN ${assignments.id} END)`,
+        pendingFeedbackCount: sql<number>`count(*)`,
       })
       .from(assignments)
-      .leftJoin(feedbacks, eq(feedbacks.assignmentId, assignments.id))
+      .where(assignmentAwaitingReview(db))
       .groupBy(assignments.studentId),
+    db
+      .select({
+        studentId: qnaThreads.studentId,
+        openQnaCount: sql<number>`count(*)`,
+      })
+      .from(qnaThreads)
+      .where(and(eq(qnaThreads.status, "OPEN"), isNull(qnaThreads.deletedAt)))
+      .groupBy(qnaThreads.studentId),
   ]);
 
   const curriculumByStudent = new Map(
@@ -96,12 +107,39 @@ export async function queryStudentRosterStats(
     pendingFeedbackRows.map((row) => [row.studentId, Number(row.pendingFeedbackCount)]),
   );
 
+  const openQnaByStudent = new Map(
+    openQnaRows.map((row) => [row.studentId, Number(row.openQnaCount)]),
+  );
+
   return studentRows.map((student) => ({
     ...student,
     currentModule: currentModuleFromAggregate(curriculumByStudent.get(student.id)),
     nextLessonDate: lessonByStudent.get(student.id) ?? null,
     pendingFeedbackCount: pendingByStudent.get(student.id) ?? 0,
+    openQnaCount: openQnaByStudent.get(student.id) ?? 0,
   }));
+}
+
+export type StudentWorkCounts = {
+  /** 검토 대기(피드백 없고 확인함 아님) 제출 수 */
+  pendingFeedbackCount: number;
+  /** 답변을 기다리는 질문 수 */
+  openQnaCount: number;
+};
+
+/** 학생 한 명의 처리할 일 수(학생 상세 탭 숫자). roster와 같은 조건으로 센다. */
+export async function queryStudentWorkCounts(db: DrizzleDb, studentId: string): Promise<StudentWorkCounts> {
+  const [[pending], [openQna]] = await Promise.all([
+    db
+      .select({ value: sql<number>`count(*)` })
+      .from(assignments)
+      .where(and(eq(assignments.studentId, studentId), assignmentAwaitingReview(db))),
+    db
+      .select({ value: sql<number>`count(*)` })
+      .from(qnaThreads)
+      .where(and(eq(qnaThreads.studentId, studentId), eq(qnaThreads.status, "OPEN"), isNull(qnaThreads.deletedAt))),
+  ]);
+  return { pendingFeedbackCount: Number(pending?.value ?? 0), openQnaCount: Number(openQna?.value ?? 0) };
 }
 
 /** 포털 레슨과 연결된 바깥 캘린더 일정 중 더 이른 쪽을 다음 레슨으로 삼는다. */
@@ -117,4 +155,19 @@ export function withConnectedNextLessons(
       : external;
     return next === student.nextLessonDate ? student : { ...student, nextLessonDate: next };
   });
+}
+
+/**
+ * Stann 사이드바 업무함 숫자: 검토 대기 제출 + 답변을 기다리는 질문(모든 학생).
+ * 학생 상세 탭·roster와 같은 조건(assignmentAwaitingReview, OPEN이고 지우지 않은 질문)으로 센다.
+ */
+export async function queryAdminWorkCount(db: DrizzleDb): Promise<number> {
+  const [[pending], [openQna]] = await Promise.all([
+    db.select({ value: sql<number>`count(*)` }).from(assignments).where(assignmentAwaitingReview(db)),
+    db
+      .select({ value: sql<number>`count(*)` })
+      .from(qnaThreads)
+      .where(and(eq(qnaThreads.status, "OPEN"), isNull(qnaThreads.deletedAt))),
+  ]);
+  return Number(pending?.value ?? 0) + Number(openQna?.value ?? 0);
 }

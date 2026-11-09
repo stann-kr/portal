@@ -1,0 +1,149 @@
+/* 파형 플레이어·하단 미니 플레이어 전용 스타일(캔버스 MixsetAudio). 색은 저장소 token에서 만든다. */
+
+.waveform-bars {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.waveform-bars > span {
+  flex: 1 1 0;
+  min-width: 1px;
+  border-radius: 1px;
+}
+/* 남은 부분: 캔버스 #D4D4D8(먹색 20%). 재생한 부분: 먹색. */
+.waveform-bars--rest > span {
+  background: color-mix(in srgb, var(--color-foreground) 20%, var(--color-background));
+}
+.waveform-bars--played > span {
+  background: var(--color-foreground);
+}
+
+.waveform-pending {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 16px;
+  border: 1px dashed var(--color-border);
+  border-radius: 10px;
+  color: var(--color-muted-foreground);
+  font-size: var(--text-ui);
+  overflow: hidden;
+}
+.waveform-pending__progress {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--color-foreground);
+}
+
+.waveform-line {
+  position: absolute;
+  inset-inline: 0;
+  top: 30px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--color-border);
+  overflow: hidden;
+}
+.waveform-line > span {
+  display: block;
+  height: 100%;
+  background: var(--color-foreground);
+}
+
+/* 시점 댓글 아이콘은 20px이지만 누르는 영역은 44px로 넓힌다. */
+.waveform-marker::after {
+  content: "";
+  position: absolute;
+  inset: -12px;
+}
+
+/* ── 하단 미니 플레이어 ── */
+
+.mini-player {
+  position: fixed;
+  inset-inline: 0;
+  bottom: 0;
+  z-index: 30;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-background);
+  box-shadow: 0 -4px 16px rgb(24 24 27 / 0.06);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+@media (min-width: 768px) {
+  /* 사이드바(240px) 오른쪽. */
+  .mini-player {
+    left: 15rem;
+  }
+}
+
+/* 미니 플레이어가 보이는 동안 화면 끝 내용이 가려지지 않게 한다. */
+html[data-mini-player="on"] body {
+  padding-bottom: calc(58px + env(safe-area-inset-bottom));
+}
+@media (min-width: 768px) {
+  html[data-mini-player="on"] body {
+    padding-bottom: 65px;
+  }
+}
+
+/* 되돌리기 안내(UndoToast)는 미니 플레이어 막대 위로 올린다. */
+html[data-mini-player="on"] .undo-toast-dock {
+  bottom: calc(58px + 12px + env(safe-area-inset-bottom));
+}
+@media (min-width: 768px) {
+  html[data-mini-player="on"] .undo-toast-dock {
+    bottom: calc(65px + 16px);
+  }
+}
+
+/* YouTube 작은 창: 넓은 화면 오른쪽 아래(막대 위), 240×135. */
+.mini-video {
+  position: fixed;
+  right: 16px;
+  bottom: 80px;
+  z-index: 30;
+  width: 240px;
+  height: 135px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: black;
+  box-shadow: 0 8px 24px rgb(24 24 27 / 0.2);
+  transition: opacity var(--duration-fast) ease, transform var(--duration-fast) ease;
+}
+/* 접었거나 휴대폰이면 화면 밖에 두되 재생은 이어 간다(iframe을 없애면 멈춘다). */
+.mini-video[data-collapsed="true"] {
+  opacity: 0;
+  transform: translateY(16px);
+  pointer-events: none;
+  visibility: hidden;
+}
+@media (max-width: 767.98px) {
+  .mini-video {
+    left: -10000px;
+    right: auto;
+    opacity: 0;
+    pointer-events: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mini-video {
+    transition: none;
+  }
+}
+
+/* SoundCloud는 영상이 없어 위젯을 화면 밖에 둔다. */
+.mini-offscreen {
+  position: fixed;
+  left: -10000px;
+  top: 0;
+  width: 320px;
+  height: 166px;
+  opacity: 0;
+  pointer-events: none;
+}

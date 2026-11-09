@@ -94,7 +94,7 @@ function NewQnaFormContent({ actorId, returnTo }: { actorId: string; returnTo: s
   return (
     <div className="px-5 pt-5 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-10">
       <MobileTopBar title="새 질문 작성" back={{ href: returnTo, label: backLabel }} />
-      <div className="flex max-w-[760px] flex-col gap-5 md:gap-7">
+      <div className="flex max-w-[760px] flex-col gap-5 md:gap-7 md:mx-auto">
         <nav aria-label="위치" className="hidden items-center gap-1.5 text-ui md:flex">
           <Link
             href={returnTo}

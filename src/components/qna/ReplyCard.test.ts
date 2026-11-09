@@ -16,3 +16,23 @@ test("Q&A 답변은 역할 배지 없이 Stann 이름만 semibold로 구분한�
   assert.match(stann, /<span class="font-semibold">Stann<\/span>/u);
   assert.match(student, /<span class="font-normal">김학생<\/span>/u);
 });
+
+test("Q&A 이미지 첨부는 160×120 미리보기 버튼, 그 밖의 첨부는 새 창 칩으로 보인다", () => {
+  const withAttachment = (attachmentKind: "image" | "audio" | null) => ({
+    ...reply("김학생", "student"),
+    attachmentUrl: "/api/media/m1/setup.jpg",
+    attachmentKind,
+  });
+  const image = renderToStaticMarkup(createElement(ReplyCard, { reply: withAttachment("image") }));
+  assert.match(image, /<button[^>]*aria-label="첨부 이미지 크게 보기: setup\.jpg"/u);
+  const uuidName = renderToStaticMarkup(createElement(ReplyCard, { reply: { ...reply("Stann", "admin"), attachmentUrl: "/api/media/85381604-4e32-4cd2-8e6e-d6be2413e80f", attachmentKind: "image" } as never }));
+  assert.match(uuidName, /aria-label="첨부 이미지 크게 보기"/u, "media id는 이름으로 보이지 않는다");
+  assert.match(image, /<img[^>]*src="\/api\/media\/m1\/setup\.jpg"[^>]*class="[^"]*h-\[120px\] w-\[160px\]/u);
+  assert.doesNotMatch(image, /target="_blank"/u);
+
+  for (const kind of ["audio", null] as const) {
+    const chip = renderToStaticMarkup(createElement(ReplyCard, { reply: withAttachment(kind) }));
+    assert.match(chip, /<a[^>]*href="\/api\/media\/m1\/setup\.jpg"[^>]*target="_blank"/u);
+    assert.doesNotMatch(chip, /첨부 이미지 크게 보기/u);
+  }
+});

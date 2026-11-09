@@ -78,7 +78,7 @@ test("공개 iCal을 읽지 못한 학생은 건너뛰고 나머지는 그대로
 });
 
 test("다음 레슨은 포털 레슨과 연결된 일정 중 이른 쪽이다", () => {
-  const base = { email: "", displayName: null, createdAt: null, currentModule: null, pendingFeedbackCount: 0 };
+  const base = { email: "", displayName: null, createdAt: null, currentModule: null, pendingFeedbackCount: 0, openQnaCount: 0 };
   const stats: StudentRosterStat[] = [
     { ...base, id: "none", nextLessonDate: null },
     { ...base, id: "portal-earlier", nextLessonDate: new Date("2026-11-04T00:00:00Z") },

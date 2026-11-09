@@ -19,6 +19,13 @@ import { Button } from "@/components/ui/button";
 import { useConfirmAction } from "@/components/ui/confirm-action";
 import { RichTextContent } from "@/components/editor/RichTextContent";
 import { MixAnalysisEntries, MixAnalysisRating } from "@/components/feedback/MixAnalysisReview";
+import { getSubmissionReviewStatus, isSubmissionSettled } from "@/lib/assignment-submission";
+import {
+  AssignmentAcknowledgedNotice,
+  AssignmentReviewStatusRow,
+  QueueNextBar,
+  type QueueNext,
+} from "@/components/admin/assignments/AssignmentReviewControls";
 import { STUDENT_LEGACY_REDIRECTS } from "@/lib/legacy-dashboard-routes";
 import { mediaUrlAt, splitFeedbackByEntry, type MixAnalysis } from "@/lib/mix-analysis";
 import { analysisWriteHref } from "@/lib/student-space-routes";
@@ -42,6 +49,8 @@ interface AssignmentDetailClientProps {
     late: boolean;
   } | null;
   feedbackList: FeedbackItem[];
+  /** Stann이 피드백 없이 확인함으로 표시한 시각. 표시되면 학생이 고치거나 지울 수 없다. */
+  reviewedAt?: Date | null;
   isAdmin: boolean;
   /** 피드백 전 본인 제출을 삭제할 수 있을 때 삭제 뒤 돌아갈 경로. */
   deleteReturnTo?: string;
@@ -56,6 +65,8 @@ interface AssignmentDetailClientProps {
   returnTo: string;
   /** 관리자가 볼 때 학생 스페이스 링크 */
   spaceLink?: { href: string; label: string };
+  /** 업무함에서 들어와 처리를 마쳤을 때 다음 피드백 대기(AssignmentAck 보드). */
+  queueNext?: QueueNext;
 }
 
 const MENU_ITEM_CLASS =
@@ -135,6 +146,7 @@ export function AssignmentDetailClient({
   analysis,
   task,
   feedbackList,
+  reviewedAt = null,
   isAdmin,
   deleteReturnTo,
   title,
@@ -143,6 +155,7 @@ export function AssignmentDetailClient({
   breadcrumb,
   returnTo,
   spaceLink,
+  queueNext,
 }: AssignmentDetailClientProps) {
   const router = useProgressRouter();
   const [seekRequest, setSeekRequest] = useState<MediaSeekRequest>();
@@ -155,7 +168,8 @@ export function AssignmentDetailClient({
     [],
   );
   const deleteConfirm = useConfirmAction();
-  const canDelete = Boolean(deleteReturnTo) && feedbackList.length === 0;
+  const settled = isSubmissionSettled({ feedbackCount: feedbackList.length, reviewedAt });
+  const canDelete = Boolean(deleteReturnTo) && !settled;
   const requestDelete = deleteConfirm.request;
   // 본인 자유 제출(관리자 과제가 아닌 제출)은 피드백 전에 이 화면에서 바로 고친다.
   const canEditFree = canDelete && !task;
@@ -230,8 +244,16 @@ export function AssignmentDetailClient({
           </>
         ) : null}
       </p>
+      {isAdmin ? (
+        <div className="pt-2.5 md:pt-2">
+          <AssignmentReviewStatusRow assignmentId={assignmentId} feedbackCount={feedbackList.length} reviewedAt={reviewedAt} />
+        </div>
+      ) : null}
     </header>
   );
+  const acknowledgedNotice = !isAdmin && reviewedAt && getSubmissionReviewStatus({ feedbackCount: feedbackList.length, reviewedAt }) === "acknowledged"
+    ? <AssignmentAcknowledgedNotice reviewedAt={reviewedAt} />
+    : null;
 
   // 과제 설명(관리자가 낸 과제)과 학생이 쓴 글. 둘 다 없으면 그리지 않는다.
   const taskBrief = task ? (
@@ -254,7 +276,7 @@ export function AssignmentDetailClient({
       <RichTextContent html={textHtml} className="text-md leading-7 md:text-body" />
     </section>
   ) : null;
-  const editHint = !isAdmin && task && analysis && feedbackList.length === 0 ? (
+  const editHint = !isAdmin && task && analysis && !settled ? (
     <p className="text-xs text-muted-foreground">
       피드백이 달리기 전에는{" "}
       <Link href={analysisWriteHref(task.id)} className="underline underline-offset-[3px] hover:text-foreground">
@@ -262,7 +284,7 @@ export function AssignmentDetailClient({
       </Link>
       .
     </p>
-  ) : !isAdmin && task && feedbackList.length === 0 ? (
+  ) : !isAdmin && task && !settled ? (
     <p className="text-xs text-muted-foreground">
       피드백이 달리기 전에는{" "}
       <Link href={STUDENT_LEGACY_REDIRECTS.assignments} className="underline underline-offset-[3px] hover:text-foreground">
@@ -337,8 +359,11 @@ export function AssignmentDetailClient({
         ) : null}
         {renderHeader("narrow")}
         <div className={cn("flex min-w-0 flex-col gap-6 px-5 pt-4 md:px-0 md:pt-0", mediaUrl && "md:flex-[2_1_340px]")}>
+          {queueNext ? <QueueNextBar queueNext={queueNext} /> : null}
           {analysis && analysisFeedback ? (
             <>
+              {acknowledgedNotice}
+              {taskBrief}
               <MixAnalysisRating analysis={analysis} />
               <MixAnalysisEntries
                 assignmentId={assignmentId}
@@ -362,6 +387,7 @@ export function AssignmentDetailClient({
             </>
           ) : (
             <>
+              {acknowledgedNotice}
               {taskBrief}
               {submittedText}
               {editHint}

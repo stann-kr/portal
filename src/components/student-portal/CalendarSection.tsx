@@ -144,6 +144,12 @@ const EMPTY_ASSIGNMENT_TASKS: AssignmentTaskItem[] = [];
 
 interface CalendarSectionProps {
   initialLocation?: WorkspaceLocation;
+  /** 딥링크 `?task=`로 과제 목록에서 펼칠 과제(서버가 현재 학생 것인지 확인함). AssignmentView가 펼치고 표시한다. */
+  initialOpenTaskId?: string | null;
+  /** 딥링크 `?date=`: 월·주 달력이 처음 보여 줄 날짜(YYYY-MM-DD). */
+  initialCalendarDate?: string | null;
+  /** 딥링크 `?item=`: 달력에서 처음 열 항목 키(서버가 현재 목록에 있는지 확인함). */
+  initialCalendarItemKey?: string | null;
   unifiedItems: UnifiedItem[];
   curriculumModules: CurriculumModule[];
   assignments: StudentAssignmentSummary[];
@@ -176,6 +182,9 @@ interface CalendarSectionProps {
 
 export function CalendarSection({
   initialLocation,
+  initialOpenTaskId = null,
+  initialCalendarDate = null,
+  initialCalendarItemKey = null,
   unifiedItems,
   curriculumModules,
   assignments,
@@ -602,6 +611,8 @@ export function CalendarSection({
                 <UnifiedCalendar
                   isActive={isActive && activeTab === "calendar"}
                   items={unifiedItems}
+                  initialDate={initialCalendarDate}
+                  initialItemKey={initialCalendarItemKey}
                   view={effectiveCalendarView}
                   visibleTypes={visibleTypes}
                   preset={calendarPreset}
@@ -660,7 +671,7 @@ export function CalendarSection({
                 <ExternalCalendarConnection
                   key={`${externalCalendarConnection.connected}:${externalCalendarConnection.provider ?? "NONE"}`}
                   connection={externalCalendarConnection}
-                  className="mx-5 mt-6 md:mx-0 md:mt-0 md:max-w-[640px]"
+                  className="mx-5 mt-6 md:mx-auto md:mt-0 md:max-w-[640px]"
                 />
               ) : null}
             </>
@@ -672,7 +683,13 @@ export function CalendarSection({
             <CurriculumView pageHeader initialModules={curriculumModules} />
           ) : null}
           {workspaceRole === "student" && activeTab === "assignments" ? (
-            <AssignmentView pageHeader actorId={actorId} initialAssignments={assignments} initialTasks={assignmentTasks} />
+            <AssignmentView
+              pageHeader
+              actorId={actorId}
+              initialAssignments={assignments}
+              initialTasks={assignmentTasks}
+              initialOpenTaskId={initialOpenTaskId}
+            />
           ) : null}
         </Tabs>
 

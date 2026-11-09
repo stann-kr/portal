@@ -9,7 +9,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { FileText, Lock, Play } from "lucide-react";
 import { getActiveAuthSession } from "@/lib/auth-guard";
-import { getStudentAccountState, getStudentById } from "@/lib/actions/students";
+import { getStudentAccountState, getStudentById, getStudentOptions, getStudentWorkCounts } from "@/lib/actions/students";
 import { getCurriculumByStudent } from "@/lib/actions/curriculum";
 import { isCurriculumVisible } from "@/lib/curriculum-visibility";
 import { getConnectedLessonsForStudent, getLessonsByStudent } from "@/lib/actions/lessons";
@@ -21,6 +21,8 @@ import { getAssignmentTasksForStudent } from "@/lib/actions/assignmentTasks";
 import { AdminAssignmentsPanel } from "@/components/admin/assignments/AdminAssignmentsPanel";
 import { getStudentCalendarFeedIssuedAt } from "@/lib/actions/calendarFeed";
 import { StatusBadge } from "@/components/ui/status-badge";
+import { getSubmissionReviewStatus } from "@/lib/assignment-submission";
+import { SUBMISSION_REVIEW_PORTAL_STATUS } from "@/lib/portal-status";
 import { formatKstShortDate } from "@/lib/kst-format";
 import { describeAssignmentSubmission } from "@/lib/unified-item-normalization";
 import { buildAdminStudentNotesHref, StudentDetailTabs } from "@/components/admin/StudentDetailTabs";
@@ -47,6 +49,7 @@ import { getRequestNow } from "@/lib/request-time";
 import { StudentDetailTopBar } from "./StudentDetailTopBar";
 import { InstructorMemoEditor } from "@/components/lesson/InstructorMemoEditor";
 import { getInstructorMemo } from "@/lib/actions/instructorMemos";
+import { getLessonNoteIdsForStudent } from "@/lib/actions/lesson-notes";
 
 type RawColumn = Awaited<ReturnType<typeof getOrSeedColumns>>[number];
 type RawQnaThread = Awaited<ReturnType<typeof getQnaThreadsByStudent>>[number];
@@ -82,20 +85,25 @@ async function DiggingTabContent({ studentId }: { studentId: string }) {
   );
 }
 
-async function AssignmentsTabContent({ studentId, referenceTime }: { studentId: string; referenceTime: Date }) {
+async function AssignmentsTabContent({ actorId, studentId, referenceTime }: { actorId: string; studentId: string; referenceTime: Date }) {
   // 정기 과제 회차를 먼저 만든 뒤 제출 목록을 읽는다.
   const { tasks, recurrences } = await getAssignmentTasksForStudent(studentId);
-  const summaries = await getAssignmentSummariesByStudent(studentId);
+  const [summaries, studentOptions] = await Promise.all([
+    getAssignmentSummariesByStudent(studentId),
+    getStudentOptions().catch(() => []),
+  ]);
   const returnTo = buildAdminStudentDetailHref(studentId, "assignments");
 
   return (
     <div className="flex flex-col gap-8">
       <AdminAssignmentsPanel
+        actorId={actorId}
         studentId={studentId}
         tasks={tasks}
         recurrences={recurrences}
         referenceTime={referenceTime}
         returnTo={returnTo}
+        studentOptions={studentOptions}
       />
       <LedgerSection labelledBy="assignments-heading" className="max-w-[880px]">
         <LedgerSectionHeader
@@ -129,7 +137,7 @@ async function AssignmentsTabContent({ studentId, referenceTime }: { studentId: 
                         {submitted ? `${submitted} 제출` : "제출일 미정"} · 피드백 {assignment.feedbackCount}건
                       </span>
                     </span>
-                    <StatusBadge status={assignment.feedbackCount > 0 ? "feedbackReady" : "feedbackWaiting"} />
+                    <StatusBadge status={SUBMISSION_REVIEW_PORTAL_STATUS[getSubmissionReviewStatus(assignment)]} />
                   </Link>
                 </li>
               );
@@ -185,9 +193,10 @@ export default async function StudentDetailPage({
   if (!student) redirect("/dashboard/admin");
   // 노트 탭은 검색·표/목록을 갖춘 학생 스페이스 노트 화면이 canonical이다(AdminStudentNotes 보드).
   if (activeTab === "notes") redirect(buildAdminStudentNotesHref(studentId));
+  const workCounts = await getStudentWorkCounts(studentId);
 
   // Overview 탭 데이터는 미리 병렬 fetch
-  const [modules, lessons, calendarFeedIssuedAt, accountState, studentMemo, connectedLessons] = await (activeTab === "overview"
+  const [modules, lessons, calendarFeedIssuedAt, accountState, studentMemo, connectedLessons, lessonNoteIds] = await (activeTab === "overview"
     ? Promise.all([
         // 커리큘럼이 숨겨져 있으면 읽지 않는다(src/lib/curriculum-visibility.ts).
         isCurriculumVisible() ? getCurriculumByStudent(studentId) : Promise.resolve([]),
@@ -196,14 +205,16 @@ export default async function StudentDetailPage({
         getStudentAccountState(studentId),
         getInstructorMemo({ kind: "student", studentId }),
         getConnectedLessonsForStudent(studentId),
+        getLessonNoteIdsForStudent(studentId),
       ])
-    : Promise.resolve([[], [], null, { kind: "active" }, null, []] as [
+    : Promise.resolve([[], [], null, { kind: "active" }, null, [], {}] as [
         Awaited<ReturnType<typeof getCurriculumByStudent>>,
         Awaited<ReturnType<typeof getLessonsByStudent>>,
         Date | null,
         Awaited<ReturnType<typeof getStudentAccountState>>,
         Awaited<ReturnType<typeof getInstructorMemo>>,
         Awaited<ReturnType<typeof getConnectedLessonsForStudent>>,
+        Record<string, string>,
       ]));
   // 만료·지난 레슨 판단은 서버 시각 하나로 정해 화면 hydration과 어긋나지 않게 한다.
   const referenceTime = new Date(getRequestNow());
@@ -216,7 +227,7 @@ export default async function StudentDetailPage({
   return (
     <div className="px-5 pb-8 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-10">
       <StudentDetailTopBar studentId={studentId} returnTo={buildAdminStudentDetailHref(studentId, activeTab)} />
-      <div className="flex max-w-[1080px] flex-col md:gap-7">
+      <div className="flex max-w-[1080px] flex-col md:gap-7 md:mx-auto">
         <nav aria-label="위치" className="hidden items-center gap-1.5 text-ui md:flex">
           <Link
             href="/dashboard/admin?section=students"
@@ -241,7 +252,12 @@ export default async function StudentDetailPage({
           </div>
         </header>
 
-        <StudentDetailTabs studentId={studentId} activeTab={activeTab} className="-mx-5 px-5 md:mx-0 md:px-0" />
+        <StudentDetailTabs
+          studentId={studentId}
+          activeTab={activeTab}
+          counts={{ assignments: workCounts.pendingFeedbackCount, qna: workCounts.openQnaCount }}
+          className="-mx-5 px-5 md:mx-0 md:px-0"
+        />
 
         <div className="pt-2 md:pt-0">
           {activeTab === "overview" && (
@@ -253,6 +269,7 @@ export default async function StudentDetailPage({
               calendarFeedIssuedAt={calendarFeedIssuedAt}
               account={account}
               referenceTime={referenceTime}
+              lessonNoteIds={lessonNoteIds}
             />
           )}
 
@@ -275,7 +292,7 @@ export default async function StudentDetailPage({
 
           {activeTab === "assignments" && (
             <Suspense fallback={<div className={cn(TAB_FALLBACK_CLASS, "h-40 max-w-[880px]")} />}>
-              <AssignmentsTabContent studentId={studentId} referenceTime={referenceTime} />
+              <AssignmentsTabContent actorId={session.user.id!} studentId={studentId} referenceTime={referenceTime} />
             </Suspense>
           )}
 

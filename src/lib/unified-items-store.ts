@@ -42,6 +42,7 @@ type AssignmentRow = {
   id: string;
   mediaUrl: string | null;
   submittedAt: Date | null;
+  reviewedAt: Date | null;
   taskTitle: string | null;
 };
 type AssignmentTaskRow = {
@@ -160,6 +161,7 @@ export async function queryInternalUnifiedItems(
           id: assignments.id,
           mediaUrl: assignments.mediaUrl,
           submittedAt: assignments.submittedAt,
+          reviewedAt: assignments.reviewedAt,
           taskTitle: assignmentTasks.title,
         })
         .from(assignments)
@@ -187,6 +189,7 @@ export async function queryInternalUnifiedItems(
           dueAt: assignmentTasks.dueAt,
           createdAt: assignmentTasks.createdAt,
           submissionFormat: assignmentTasks.submissionFormat,
+          analysisForm: assignmentTasks.analysisForm,
         })
         .from(assignmentTasks)
         .where(and(

@@ -14,10 +14,14 @@ import {
   mediaUploadRequestHeaders,
   type MediaUploadPurpose,
 } from "@/lib/media-lifecycle";
+import { PrepareAudioError, losslessAudioKind, prepareAudioUpload, type PreparedAudioUpload } from "@/lib/audio/prepare-upload";
+import { AudioConvertFailedCard, AudioConvertingCard, AudioUploadingCard } from "@/components/upload/AudioUploadStatus";
 
 export type CompletedMediaUpload = {
   mediaObjectId: string;
   deliveryUrl: string;
+  /** convertAudio일 때만: 올린 파일의 준비 결과(변환 여부·비트레이트·길이·파형). */
+  audio?: PreparedAudioUpload;
 };
 
 export interface FileUploaderProps {
@@ -44,10 +48,19 @@ export interface FileUploaderProps {
    * composer: 답글 상자 바닥 줄의 클립 버튼(QnaThread 32px 글자 버튼 · MobileQnaThread 44×44 아이콘 버튼). 진행은 버튼 아래 얇은 막대로 보인다.
    */
   trigger?: "block" | "inline" | "composer";
+  /**
+   * 오디오 전용: WAV·AIFF·FLAC은 브라우저에서 MP3로 바꾼 뒤 올리고(원본은 올리지 않음) 진행을 상태 카드로 보인다.
+   * 변환하지 못하면 onError 대신 "바꾸지 못했습니다" 카드를 보인다.
+   * block은 모든 진행을 상태 카드로 보이고, inline·composer는 평소 버튼을 두되 변환하는 오디오의
+   * 변환·업로드·실패만 같은 카드로 보인다(그 밖의 파일은 평소 진행 표시 그대로).
+   */
+  convertAudio?: boolean;
 }
 
-type UploadRequest = { scope: string; xhr: XMLHttpRequest | null };
-type UploadProgressState = { request: UploadRequest; scope: string; progress: number };
+type UploadRequest = { scope: string; xhr: XMLHttpRequest | null; abort: AbortController };
+type UploadProgressState = { request: UploadRequest; scope: string; progress: number; fileName: string; fileSize: number; converted: boolean };
+type ConversionState = { request: UploadRequest; scope: string; fileName: string; fileSize: number; percent: number; etaSec: number | null };
+type FailureState = { scope: string; message: string };
 
 /**
  * Presigned URL 기반 R2 직접 업로드 컴포넌트
@@ -63,6 +76,7 @@ export function FileUploader({
   disabled = false,
   onUploadingChange,
   trigger = "block",
+  convertAudio = false,
 }: FileUploaderProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const scope = JSON.stringify([purpose, draftOperationId]);
@@ -75,6 +89,10 @@ export function FileUploader({
   const [upload, setUpload] = useState<UploadProgressState | null>(null);
   const isUploading = upload !== null && upload.scope === scope;
   const progress = isUploading ? upload.progress : 0;
+  const [conversion, setConversion] = useState<ConversionState | null>(null);
+  const isConverting = conversion !== null && conversion.scope === scope;
+  const [failure, setFailure] = useState<FailureState | null>(null);
+  const visibleFailure = failure !== null && failure.scope === scope ? failure.message : null;
 
   useLayoutEffect(() => {
     onUploadingChangeRef.current = onUploadingChange;
@@ -90,6 +108,8 @@ export function FileUploader({
       const request = requestRef.current;
       requestRef.current = null;
       request?.xhr?.abort();
+      request?.abort.abort();
+      if (request) setConversion((current) => (current?.request === request ? null : current));
       // 중단한 요청의 진행 표시도 바로 지워 같은 문맥으로 돌아왔을 때 버튼이 잠겨 보이지 않게 한다.
       if (request) setUpload((current) => (current?.request === request ? null : current));
       onUploadingChangeRef.current?.(false);
@@ -99,21 +119,46 @@ export function FileUploader({
   async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file || disabled || !draftOperationId || requestRef.current) return;
-    const request: UploadRequest = { scope, xhr: null };
+    const request: UploadRequest = { scope, xhr: null, abort: new AbortController() };
     requestRef.current = request;
-    const isCurrent = () => mountedRef.current && requestRef.current === request && scopeRef.current === request.scope;
+    const isOwner = () => mountedRef.current && requestRef.current === request && scopeRef.current === request.scope;
+    // 사용자가 취소한 요청은 계속 진행하지 않는다(정리는 아래 finally가 isOwner로 한다).
+    const isCurrent = () => isOwner() && !request.abort.signal.aborted;
 
-    setUpload({ request, scope: request.scope, progress: 0 });
     onUploadingChangeRef.current?.(true);
+    setFailure(null);
 
     let issuedMediaObjectId: string | null = null;
+    let uploadFile: File = file;
+    let prepared: PreparedAudioUpload | undefined;
     try {
+      // 0) 오디오 변환(WAV·AIFF·FLAC → MP3). 그 밖의 형식은 그대로 둔다.
+      if (convertAudio) {
+        // MP3로 바꿀 파일(WAV·AIFF·FLAC)만 변환 카드를 보인다. 그 밖의 파일은 크기만 확인하고 그대로 올린다.
+        if (losslessAudioKind(file)) setConversion({ request, scope: request.scope, fileName: file.name, fileSize: file.size, percent: 0, etaSec: null });
+        try {
+          prepared = await prepareAudioUpload(file, {
+            signal: request.abort.signal,
+            onProgress: ({ percent, etaSec }) => {
+              if (isCurrent()) {
+                setConversion((current) => (current?.request === request ? { ...current, percent, etaSec } : current));
+              }
+            },
+          });
+        } finally {
+          setConversion((current) => (current?.request === request ? null : current));
+        }
+        uploadFile = prepared.file;
+        if (!isCurrent()) return;
+      }
+      setUpload({ request, scope: request.scope, progress: 0, fileName: uploadFile.name, fileSize: uploadFile.size, converted: prepared?.converted ?? false });
+
       // 1) Server Action으로 Presigned URL 요청
       const result = await requestMediaUpload({
         purpose,
-        fileName: file.name,
-        mimeType: file.type,
-        fileSize: file.size,
+        fileName: uploadFile.name,
+        mimeType: uploadFile.type,
+        fileSize: uploadFile.size,
         draftOperationId,
       });
 
@@ -129,7 +174,7 @@ export function FileUploader({
 
       // 2) R2에 직접 PUT 업로드 (XMLHttpRequest로 진행률 추적)
       await uploadWithProgress(
-        file,
+        uploadFile,
         result.uploadUrl,
         result.uploadContentType,
         (value) => {
@@ -160,6 +205,7 @@ export function FileUploader({
       onUploadComplete({
         mediaObjectId: completed.mediaObjectId,
         deliveryUrl: completed.deliveryUrl,
+        ...(prepared ? { audio: prepared } : {}),
       });
       issuedMediaObjectId = null;
     } catch (err: unknown) {
@@ -167,7 +213,12 @@ export function FileUploader({
         await abandonMediaUpload(issuedMediaObjectId).catch(() => undefined);
       }
       const message = err instanceof Error ? err.message : "업로드 중 오류 발생";
-      if (isCurrent()) {
+      // 사용자가 취소했으면 오류를 알리지 않는다.
+      if (request.abort.signal.aborted) {
+        // 취소: 아래 finally가 상태를 정리한다.
+      } else if (err instanceof PrepareAudioError && err.code !== "too-large") {
+        if (isCurrent()) setFailure({ scope: request.scope, message: err.message });
+      } else if (isOwner()) {
         console.error("[FileUploader]", message);
         onError?.(message);
       }
@@ -175,7 +226,7 @@ export function FileUploader({
       request.xhr = null;
       // 중단된 이전 요청도 자기 진행 표시는 지운다. 다른 요청의 표시는 건드리지 않는다.
       setUpload((current) => (current?.request === request ? null : current));
-      if (isCurrent()) {
+      if (isOwner()) {
         requestRef.current = null;
         onUploadingChangeRef.current?.(false);
         // input 초기화 (같은 파일 재선택 가능하도록)
@@ -184,7 +235,13 @@ export function FileUploader({
     }
   }
 
-  const isTriggerDisabled = disabled || isUploading || !draftOperationId;
+  const isTriggerDisabled = disabled || isUploading || isConverting || !draftOperationId;
+  const cancelCurrent = () => {
+    const request = requestRef.current;
+    if (!request) return;
+    request.abort.abort();
+    request.xhr?.abort();
+  };
   const buttonText = isUploading ? "업로드 중..." : label;
   const fileInput = (
     <input
@@ -197,6 +254,31 @@ export function FileUploader({
       aria-label={label}
     />
   );
+
+  // inline·composer에서 변환한 오디오의 진행·실패는 block과 같은 상태 카드로 버튼 자리에 보인다.
+  const audioStatusCard = !convertAudio || trigger === "block"
+    ? null
+    : isConverting && conversion ? (
+      <AudioConvertingCard
+        fileName={conversion.fileName}
+        fileSize={conversion.fileSize}
+        percent={conversion.percent}
+        etaSec={conversion.etaSec}
+        onCancel={cancelCurrent}
+      />
+    ) : isUploading && upload?.converted ? (
+      <AudioUploadingCard fileName={upload.fileName} fileSize={upload.fileSize} percent={progress} onCancel={cancelCurrent} />
+    ) : visibleFailure ? (
+      <AudioConvertFailedCard message={visibleFailure} disabled={isTriggerDisabled} onPickAnother={() => inputRef.current?.click()} />
+    ) : null;
+  if (audioStatusCard) {
+    return (
+      <div className={cn("flex min-w-0 flex-col gap-2", trigger === "composer" && "w-full md:w-80")}>
+        {fileInput}
+        {audioStatusCard}
+      </div>
+    );
+  }
 
   if (trigger === "composer") {
     return (
@@ -232,6 +314,43 @@ export function FileUploader({
             />
           </div>
         ) : null}
+      </div>
+    );
+  }
+
+  if (convertAudio && trigger === "block") {
+    return (
+      <div className="flex flex-col gap-2">
+        {fileInput}
+        {isConverting && conversion ? (
+          <AudioConvertingCard
+            fileName={conversion.fileName}
+            fileSize={conversion.fileSize}
+            percent={conversion.percent}
+            etaSec={conversion.etaSec}
+            onCancel={cancelCurrent}
+          />
+        ) : isUploading && upload ? (
+          <AudioUploadingCard fileName={upload.fileName} fileSize={upload.fileSize} percent={progress} onCancel={cancelCurrent} />
+        ) : visibleFailure ? (
+          <AudioConvertFailedCard
+            message={visibleFailure}
+            disabled={isTriggerDisabled}
+            onPickAnother={() => inputRef.current?.click()}
+          />
+        ) : (
+          <button
+            type="button"
+            onClick={() => inputRef.current?.click()}
+            disabled={isTriggerDisabled}
+            className={buttonClassName({
+              variant: "outline",
+              className: "h-11 rounded-touch px-4 text-body md:h-8 md:rounded-md md:px-3.5 md:text-ui",
+            })}
+          >
+            {label}
+          </button>
+        )}
       </div>
     );
   }

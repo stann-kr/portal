@@ -7,8 +7,8 @@
  */
 "use client";
 
-import { useActionState, useState, useTransition } from "react";
-import { Trash2 } from "lucide-react";
+import { useActionState, useRef, useState, useTransition } from "react";
+import { Pencil, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ConfirmPanel, useConfirmAction } from "@/components/ui/confirm-action";
 import { Input } from "@/components/ui/input";
@@ -21,6 +21,7 @@ import { useFormDraft } from "@/lib/hooks/useFormDraft";
 import { formatAnalysisClock, splitFeedbackByEntry, type MixAnalysis } from "@/lib/mix-analysis";
 import { formatTimestamp } from "@/lib/utils/format";
 import type { FeedbackItem } from "./TimelineFeedback";
+import { FeedbackEditForm } from "./FeedbackEditForm";
 
 const CHIP_CLASS =
   "relative inline-flex h-6 shrink-0 items-center rounded-sm bg-accent px-2 font-mono text-xs font-medium text-highlight transition-colors duration-[var(--duration-fast)] after:absolute after:inset-x-0 after:-inset-y-2.5 after:content-[''] hover:bg-highlight/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none md:after:hidden";
@@ -46,22 +47,47 @@ export function MixAnalysisRating({ analysis }: { analysis: MixAnalysis }) {
   );
 }
 
-/** 한 줄 아래 붙는 Stann 피드백. 관리자는 지울 수 있다. */
+/** 한 줄 아래 붙는 Stann 피드백. 관리자는 그 자리에서 고치거나 지울 수 있다(시점은 줄에 묶여 있어 고치지 않는다). */
 function LineFeedback({
   feedback,
   assignmentId,
+  actorId,
   isAdmin,
   onChanged,
 }: {
   feedback: FeedbackItem;
   assignmentId: string;
+  actorId: string;
   isAdmin: boolean;
   onChanged: () => void;
 }) {
   const confirm = useConfirmAction();
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const editTriggerRef = useRef<HTMLButtonElement>(null);
   const label = feedback.timeMarker === null ? "전체" : formatAnalysisClock(feedback.timeMarker);
+  const closeEdit = () => {
+    setEditing(false);
+    requestAnimationFrame(() => editTriggerRef.current?.focus());
+  };
+  if (isAdmin && editing) {
+    return (
+      <div className="flex flex-col gap-2 rounded-md bg-sidebar px-3 py-2 md:ml-16">
+        <FeedbackEditForm
+          actorId={actorId}
+          feedback={feedback}
+          allowTimeMarker={false}
+          formatMarker={formatAnalysisClock}
+          onCancel={closeEdit}
+          onSaved={() => {
+            closeEdit();
+            onChanged();
+          }}
+        />
+      </div>
+    );
+  }
   return (
     <div className="group flex flex-col gap-2 rounded-md bg-sidebar px-3 py-2 md:ml-16">
       <div className="flex items-start gap-2">
@@ -69,6 +95,22 @@ function LineFeedback({
           <span className="text-xs font-semibold text-secondary-foreground">Stann</span>
           <p className="whitespace-pre-wrap break-words text-md leading-[22px] md:text-body">{feedback.content}</p>
         </div>
+        {isAdmin ? (
+          <Button
+            ref={editTriggerRef}
+            variant="ghost"
+            size="icon"
+            onClick={() => {
+              if (confirm.isOpen) confirm.close();
+              setEditing(true);
+            }}
+            disabled={isPending}
+            aria-label={`${label} 피드백 고치기`}
+            className="-my-1 shrink-0 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 focus:opacity-100"
+          >
+            <Pencil className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
+          </Button>
+        ) : null}
         {isAdmin ? (
           <Button
             variant="ghost"
@@ -281,7 +323,7 @@ export function MixAnalysisEntries({
                   ) : null}
                 </div>
                 {byEntry[index]!.map((feedback) => (
-                  <LineFeedback key={feedback.id} feedback={feedback} assignmentId={assignmentId} isAdmin={isAdmin} onChanged={onChanged} />
+                  <LineFeedback key={feedback.id} feedback={feedback} assignmentId={assignmentId} actorId={actorId} isAdmin={isAdmin} onChanged={onChanged} />
                 ))}
                 {isAdmin && entry.at !== null && firstAtThisTime && writingAt === entry.at ? (
                   <LineFeedbackForm

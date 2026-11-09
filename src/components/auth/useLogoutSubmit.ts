@@ -12,6 +12,7 @@ import { postDocumentServerDraftDiscard } from "@/lib/document-server-draft-disc
 import { flushQueuedDocumentServerDraftDiscards } from "@/lib/document-server-draft-logout";
 import { clearLocalDocumentDraftsForLogout } from "@/lib/local-draft-continuity-client";
 import { releaseThisDeviceForLogout } from "@/components/push/push-client";
+import { bindPlayerOwner } from "@/components/player/player-store";
 
 /** 로그아웃 요청이 길어져도 잠금이 먼저 만료되지 않게 이 간격으로 다시 기록한다(만료 15초보다 짧게). */
 const LOGOUT_LOCK_RENEW_MS = 5_000;
@@ -51,8 +52,14 @@ function releaseLock(ownerId: string, handle: AccountLogoutLockHandle | null): v
 /**
  * 로그아웃이 확인된 뒤 localStorage 초안(동기)과 공동 편집 기기 보관(IndexedDB, 비동기)을 지우고,
  * 이 기기의 알림 구독을 해제한다(공유 기기에서 다음 사람에게 앞 계정 알림이 가지 않게).
+ * 앱 공용 플레이어(하단 미니 플레이어)의 곡도 닫아 다음 계정에게 앞 계정의 곡이 보이지 않게 한다.
  */
 async function clearLocalDataAfterLogout(ownerId: string): Promise<void> {
+  try {
+    bindPlayerOwner(null);
+  } catch {
+    // 재생 정리 실패는 다음 계정 경계(LocalDraftAccountBoundary)에서 다시 닫는다.
+  }
   try {
     await clearLocalDocumentDraftsForLogout(ownerId);
   } catch {

@@ -390,6 +390,8 @@ export const assignments = sqliteTable(
       sql`(strftime('%s', 'now'))`,
     ),
     updatedAt: integer("updated_at", { mode: "timestamp" }),
+    /** Stann이 피드백 없이 "확인함"으로 표시한 시각. 표시되면 학생은 수정·삭제할 수 없다. */
+    reviewedAt: integer("reviewed_at", { mode: "timestamp" }),
   },
   (table) => [
     uniqueIndex("assignments_task_unique").on(table.taskId),

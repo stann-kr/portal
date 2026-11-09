@@ -1,4 +1,4 @@
-import { isManagedMediaObjectKey } from "@/lib/media-lifecycle";
+import { isManagedAudioPeaksObjectKey, isManagedMediaObjectKey } from "@/lib/media-lifecycle";
 
 export interface MediaObjectDeletionStorage {
   delete(objectKey: string, signal?: AbortSignal): Promise<void>;
@@ -14,7 +14,7 @@ export function createR2BindingDeletionStorage(
 ): MediaObjectDeletionStorage {
   return {
     async delete(objectKey) {
-      if (!isManagedMediaObjectKey(objectKey)) {
+      if (!isManagedMediaObjectKey(objectKey) && !isManagedAudioPeaksObjectKey(objectKey)) {
         throw new Error("관리 대상 R2 object key가 올바르지 않습니다.");
       }
       await bucket.delete(objectKey);

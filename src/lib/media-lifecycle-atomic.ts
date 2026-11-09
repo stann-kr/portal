@@ -25,6 +25,7 @@ import {
   MEDIA_SEAL_REQUEST_TIMEOUT_MS,
   MEDIA_UPLOAD_STAGING_GRACE_SECONDS,
   DOCUMENT_IMAGE_CLAIM_BATCH_SIZE,
+  audioPeaksSidecarObjectKey,
   mediaDeletionBackoffSeconds,
 } from "@/lib/media-lifecycle";
 import { extractDocumentImageMediaIds } from "@/lib/document-image-references";
@@ -1135,6 +1136,14 @@ export async function processMediaDeletionOutbox(
       await runStorageOperationWithTimeout(deleteTimeoutMs, (signal) =>
         storage.delete(candidate.objectKey, signal),
       );
+      // 오디오 final이면 옆의 파형 JSON도 지운다. 없으면 R2 delete가 그대로 성공하고,
+      // 실패해도 매체 삭제는 완료로 두며 남은 파형은 inventory reconciliation이 다시 지운다.
+      const peaksObjectKey = audioPeaksSidecarObjectKey(candidate.objectKey);
+      if (peaksObjectKey) {
+        await runStorageOperationWithTimeout(deleteTimeoutMs, (signal) =>
+          storage.delete(peaksObjectKey, signal),
+        ).catch(() => undefined);
+      }
       const completedAt = options.now ?? new Date();
       await executeDocumentStatementsAtomically(context, [
         {

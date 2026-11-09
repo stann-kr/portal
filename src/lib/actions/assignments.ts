@@ -11,17 +11,23 @@
 import { revalidatePath } from "next/cache";
 import { createDb } from "@/db/client";
 import { assignments, assignmentTasks, feedbacks, profiles } from "@/db/schema";
-import { and, asc, count, desc, eq, isNull, notExists, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, isNull, sql } from "drizzle-orm";
 import {
   requireAuth,
   requireAdmin,
   assertOwnerOrAdmin,
   requireStudentTarget,
 } from "@/lib/auth-guard";
-import { validateFreeSubmissionPayload } from "@/lib/assignment-submission";
+import { settledSubmissionError, validateFreeSubmissionPayload } from "@/lib/assignment-submission";
+import { assignmentAwaitingReview } from "@/lib/assignment-review-query";
 import { pushMessages } from "@/lib/push/messages";
 import { notifyPush } from "@/lib/push/notify";
 import { fromStoredAssignmentFormat } from "@/lib/assignment-recurrence";
+
+async function countFeedbacks(db: ReturnType<typeof createDb>, assignmentId: string): Promise<number> {
+  const [row] = await db.select({ value: count(feedbacks.id) }).from(feedbacks).where(eq(feedbacks.assignmentId, assignmentId));
+  return Number(row?.value ?? 0);
+}
 
 // ───────────────────────────────────────────────
 // 학생: 과제 제출
@@ -104,24 +110,19 @@ export async function updateMyFreeSubmission(
     .set({ mediaUrl: payload.mediaUrl, textHtml: payload.textHtml, updatedAt: new Date() })
     .where(and(
       ownFreeSubmission,
-      notExists(
-        db
-          .select({ id: feedbacks.id })
-          .from(feedbacks)
-          .where(eq(feedbacks.assignmentId, assignments.id)),
-      ),
+      assignmentAwaitingReview(db),
     ))
     .returning({ id: assignments.id });
 
   if (updated.length === 0) {
     const [remaining] = await db
-      .select({ id: assignments.id })
+      .select({ id: assignments.id, reviewedAt: assignments.reviewedAt })
       .from(assignments)
       .where(ownFreeSubmission)
       .limit(1);
     return {
       error: remaining
-        ? "피드백이 등록된 제출은 고칠 수 없습니다. 필요하면 Stann에게 문의해 주세요."
+        ? settledSubmissionError("고칠", { feedbackCount: await countFeedbacks(db, assignmentId), reviewedAt: remaining.reviewedAt })
         : "고칠 제출을 찾을 수 없습니다. 목록을 새로고침해 주세요.",
     };
   }
@@ -156,25 +157,20 @@ export async function deleteMyAssignment(assignmentId: string): Promise<DeleteAs
     .delete(assignments)
     .where(and(
       ownAssignment,
-      notExists(
-        db
-          .select({ id: feedbacks.id })
-          .from(feedbacks)
-          .where(eq(feedbacks.assignmentId, assignments.id)),
-      ),
+      assignmentAwaitingReview(db),
     ))
     .returning({ id: assignments.id });
 
   if (deleted.length === 0) {
     const [remaining] = await db
-      .select({ id: assignments.id })
+      .select({ id: assignments.id, reviewedAt: assignments.reviewedAt })
       .from(assignments)
       .where(ownAssignment)
       .limit(1);
     return {
       success: false,
       error: remaining
-        ? "피드백이 등록된 제출은 삭제할 수 없습니다. 필요하면 Stann에게 문의해 주세요."
+        ? settledSubmissionError("삭제할", { feedbackCount: await countFeedbacks(db, assignmentId), reviewedAt: remaining.reviewedAt })
         : "이미 삭제됐거나 찾을 수 없는 제출입니다. 목록을 새로고침해 주세요.",
     };
   }
@@ -201,6 +197,7 @@ export async function getMyAssignments() {
       mediaUrl: assignments.mediaUrl,
       textHtml: assignments.textHtml,
       submittedAt: assignments.submittedAt,
+      reviewedAt: assignments.reviewedAt,
       taskTitle: assignmentTasks.title,
     })
     .from(assignments)
@@ -235,6 +232,7 @@ export async function getAssignmentSummariesByStudent(studentId: string) {
       hasText: sql<number>`${assignments.textHtml} IS NOT NULL AND length(${assignments.textHtml}) > 0`,
       taskTitle: assignmentTasks.title,
       submittedAt: assignments.submittedAt,
+      reviewedAt: assignments.reviewedAt,
       feedbackCount: count(feedbacks.id),
     })
     .from(assignments)
@@ -287,7 +285,7 @@ export async function getAssignmentById(assignmentId: string) {
 }
 
 /**
- * Admin Dashboard: 피드백 없는 과제 수 (Pending Feedbacks 통계).
+ * Admin Dashboard: 검토 대기(피드백 없고 확인함도 아닌) 제출 수 (Pending Feedbacks 통계).
  */
 export async function getPendingFeedbackCount(): Promise<number> {
   await requireAdmin();
@@ -296,19 +294,12 @@ export async function getPendingFeedbackCount(): Promise<number> {
   const rows = await db
     .select({ id: assignments.id })
     .from(assignments)
-    .where(
-      notExists(
-        db
-          .select()
-          .from(feedbacks)
-          .where(eq(feedbacks.assignmentId, assignments.id)),
-      ),
-    );
+    .where(assignmentAwaitingReview(db));
   return rows.length;
 }
 
 /**
- * Admin 업무함: 피드백이 아직 없는 제출(링크·글 모두)을 오래된 제출 순으로 조회합니다.
+ * Admin 업무함: 검토 대기(피드백 없고 확인함도 아닌) 제출(링크·글 모두)을 오래된 제출 순으로 조회합니다.
  */
 export async function getPendingFeedbackAssignments() {
   await requireAdmin();
@@ -327,13 +318,6 @@ export async function getPendingFeedbackAssignments() {
     .from(assignments)
     .innerJoin(profiles, eq(assignments.studentId, profiles.id))
     .leftJoin(assignmentTasks, eq(assignmentTasks.id, assignments.taskId))
-    .where(
-      notExists(
-        db
-          .select({ id: feedbacks.id })
-          .from(feedbacks)
-          .where(eq(feedbacks.assignmentId, assignments.id)),
-      ),
-    )
+    .where(assignmentAwaitingReview(db))
     .orderBy(asc(assignments.submittedAt));
 }

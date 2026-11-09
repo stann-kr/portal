@@ -7,8 +7,10 @@ import { drizzle } from "drizzle-orm/better-sqlite3";
 import type { DbContext } from "@/db/client";
 import * as schema from "@/db/schema";
 import {
+  canSetQnaStatus,
   createQnaReplyAtomically,
   createQnaThreadAtomically,
+  isQnaStatusTransitionAllowed,
   purgeQnaThreadAtomically,
   restoreTrashedQnaThreadAtomically,
   setQnaStatusAtomically,
@@ -412,4 +414,201 @@ test("질문 작성 중 가이드 페이지가 지워져도 질문과 인용은 
     sqlite.prepare("SELECT guide_page_id, page_title, anchor_quote FROM qna_guide_anchors").all(),
     [{ guide_page_id: null, page_title: "음원 관리", anchor_quote: "폴더 정리" }],
   );
+});
+
+async function seedAnsweredThread(
+  sqlite: SqliteDatabase,
+  dbContext: LocalDbContext,
+  threadId: string,
+) {
+  seedProfile(sqlite, "student-1");
+  seedProfile(sqlite, "student-2");
+  seedProfile(sqlite, "admin-1", "admin");
+  assert.equal((await createThread(dbContext, { studentId: "student-1", threadId })).ok, true);
+  const answered = await createQnaReplyAtomically(dbContext, {
+    actor: actor("admin-1", true),
+    threadId,
+    replyId: `${threadId}-answer`,
+    operationId: operationId(operationSequence++),
+    contentHtml: "<p>답변</p>",
+    attachmentUrl: null,
+    attachmentObjectId: null,
+    now: new Date("2026-01-01T00:01:00.000Z"),
+  });
+  assert.equal(answered.ok, true);
+}
+
+test("질문 작성 학생은 답변받은(ANSWERED) 자기 질문을 해결됨으로 닫고 재전송은 replay된다", async (context) => {
+  const { sqlite, dbContext } = setupDatabase(context);
+  await seedAnsweredThread(sqlite, dbContext, "author-close");
+  const write = {
+    actor: actor("student-1"),
+    threadId: "author-close",
+    operationId: operationId(900),
+    baseRevision: 2,
+    status: "CLOSED" as const,
+    now: new Date("2026-01-01T00:02:00.000Z"),
+  };
+  const result = await setQnaStatusAtomically(dbContext, write);
+  assert.equal(result.ok, true);
+  assert.deepEqual(getThread(sqlite, "author-close"), { status: "CLOSED", version: 3, deleted_at: null });
+  assert.equal(countRows(sqlite, "qna_thread_events", "thread_id", "author-close"), 3);
+
+  const replay = await setQnaStatusAtomically(dbContext, write);
+  assert.equal(replay.ok, true);
+  if (replay.ok) assert.equal(replay.replayed, true);
+  assert.equal(getThread(sqlite, "author-close")?.version, 3);
+});
+
+test("학생은 OPEN 질문을 닫거나 CLOSED 외 상태를 정할 수 없다", async (context) => {
+  const { sqlite, dbContext } = setupDatabase(context);
+  seedProfile(sqlite, "student-1");
+  assert.equal((await createThread(dbContext, { studentId: "student-1", threadId: "open-close" })).ok, true);
+
+  const closeOpen = await setQnaStatusAtomically(dbContext, {
+    actor: actor("student-1"),
+    threadId: "open-close",
+    operationId: operationId(910),
+    baseRevision: 1,
+    status: "CLOSED",
+    now: new Date("2026-01-01T00:02:00.000Z"),
+  });
+  assert.equal(closeOpen.ok, false);
+  if (!closeOpen.ok) assert.equal(closeOpen.reason, "STATUS_TRANSITION_FORBIDDEN");
+
+  const setAnswered = await setQnaStatusAtomically(dbContext, {
+    actor: actor("student-1"),
+    threadId: "open-close",
+    operationId: operationId(911),
+    baseRevision: 1,
+    status: "ANSWERED",
+    now: new Date("2026-01-01T00:02:00.000Z"),
+  });
+  assert.equal(setAnswered.ok, false);
+  if (!setAnswered.ok) assert.equal(setAnswered.reason, "NOT_FOUND_OR_FORBIDDEN");
+  assert.deepEqual(getThread(sqlite, "open-close"), { status: "OPEN", version: 1, deleted_at: null });
+  assert.equal(countRows(sqlite, "document_operation_ledger", "operation_id", operationId(910)), 0);
+});
+
+test("다른 학생은 답변받은 남의 질문을 닫을 수 없다", async (context) => {
+  const { sqlite, dbContext } = setupDatabase(context);
+  await seedAnsweredThread(sqlite, dbContext, "other-close");
+  const result = await setQnaStatusAtomically(dbContext, {
+    actor: actor("student-2"),
+    threadId: "other-close",
+    operationId: operationId(920),
+    baseRevision: 2,
+    status: "CLOSED",
+    now: new Date("2026-01-01T00:02:00.000Z"),
+  });
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.equal(result.reason, "NOT_FOUND_OR_FORBIDDEN");
+  assert.deepEqual(getThread(sqlite, "other-close"), { status: "ANSWERED", version: 2, deleted_at: null });
+});
+
+test("관리자 상태 변경은 그대로 OPEN·ANSWERED·CLOSED 어디로든 가능하다", async (context) => {
+  const { sqlite, dbContext } = setupDatabase(context);
+  seedProfile(sqlite, "student-1");
+  seedProfile(sqlite, "admin-1", "admin");
+  assert.equal((await createThread(dbContext, { studentId: "student-1", threadId: "admin-status" })).ok, true);
+  const steps = ["CLOSED", "OPEN", "ANSWERED"] as const;
+  for (const [index, status] of steps.entries()) {
+    const result = await setQnaStatusAtomically(dbContext, {
+      actor: actor("admin-1", true),
+      threadId: "admin-status",
+      operationId: operationId(930 + index),
+      baseRevision: index + 1,
+      status,
+      now: new Date("2026-01-01T00:02:00.000Z"),
+    });
+    assert.equal(result.ok, true);
+    assert.equal(getThread(sqlite, "admin-status")?.status, status);
+  }
+});
+
+test("학생이 닫은 질문의 SET_STATUS replay는 다른 학생 actor로 통과하지 않는다", async (context) => {
+  const { sqlite, dbContext } = setupDatabase(context);
+  await seedAnsweredThread(sqlite, dbContext, "closed-by-author");
+  assert.equal(
+    (await setQnaStatusAtomically(dbContext, {
+      actor: actor("student-1"),
+      threadId: "closed-by-author",
+      operationId: operationId(940),
+      baseRevision: 2,
+      status: "CLOSED",
+      now: new Date("2026-01-01T00:02:00.000Z"),
+    })).ok,
+    true,
+  );
+  // 학생 SET_STATUS replay가 다른 학생 actor로는 통과하지 않는다.
+  const foreignReplay = await setQnaStatusAtomically(dbContext, {
+    actor: actor("student-2"),
+    threadId: "closed-by-author",
+    operationId: operationId(940),
+    baseRevision: 2,
+    status: "CLOSED",
+    now: new Date("2026-01-01T00:02:00.000Z"),
+  });
+  assert.equal(foreignReplay.ok, false);
+});
+
+test("질문 작성 학생은 닫은 자기 질문을 다시 열고 다른 학생은 열 수 없다", async (context) => {
+  const { sqlite, dbContext } = setupDatabase(context);
+  await seedAnsweredThread(sqlite, dbContext, "author-reopen");
+  const at = new Date("2026-01-01T00:02:00.000Z");
+  const close = await setQnaStatusAtomically(dbContext, {
+    actor: actor("student-1"), threadId: "author-reopen", operationId: operationId(950), baseRevision: 2, status: "CLOSED", now: at,
+  });
+  assert.equal(close.ok, true);
+
+  const foreign = await setQnaStatusAtomically(dbContext, {
+    actor: actor("student-2"), threadId: "author-reopen", operationId: operationId(951), baseRevision: 3, status: "OPEN", now: at,
+  });
+  assert.equal(foreign.ok, false);
+  if (!foreign.ok) assert.equal(foreign.reason, "NOT_FOUND_OR_FORBIDDEN");
+  assert.deepEqual(getThread(sqlite, "author-reopen"), { status: "CLOSED", version: 3, deleted_at: null });
+
+  const reopenWrite = {
+    actor: actor("student-1"), threadId: "author-reopen", operationId: operationId(952), baseRevision: 3, status: "OPEN" as const, now: at,
+  };
+  const reopen = await setQnaStatusAtomically(dbContext, reopenWrite);
+  assert.equal(reopen.ok, true);
+  assert.deepEqual(getThread(sqlite, "author-reopen"), { status: "OPEN", version: 4, deleted_at: null });
+  const replay = await setQnaStatusAtomically(dbContext, reopenWrite);
+  assert.equal(replay.ok, true);
+  if (replay.ok) assert.equal(replay.replayed, true);
+  assert.equal(getThread(sqlite, "author-reopen")?.version, 4);
+
+  // 다시 연 질문에는 추가 질문을 쓸 수 있다.
+  const followUp = await createQnaReplyAtomically(dbContext, {
+    actor: actor("student-1"),
+    threadId: "author-reopen",
+    replyId: "author-reopen-follow-up",
+    operationId: operationId(953),
+    contentHtml: "<p>추가 질문</p>",
+    attachmentUrl: null,
+    attachmentObjectId: null,
+    now: at,
+  });
+  assert.equal(followUp.ok, true);
+});
+
+test("학생은 답변받은(ANSWERED) 질문을 OPEN으로 되돌릴 수 없고 관리자 상태 변경은 그대로다", async (context) => {
+  const { sqlite, dbContext } = setupDatabase(context);
+  await seedAnsweredThread(sqlite, dbContext, "answered-reopen");
+  const at = new Date("2026-01-01T00:02:00.000Z");
+  const reopen = await setQnaStatusAtomically(dbContext, {
+    actor: actor("student-1"), threadId: "answered-reopen", operationId: operationId(960), baseRevision: 2, status: "OPEN", now: at,
+  });
+  assert.equal(reopen.ok, false);
+  if (!reopen.ok) assert.equal(reopen.reason, "STATUS_TRANSITION_FORBIDDEN");
+  assert.deepEqual(getThread(sqlite, "answered-reopen"), { status: "ANSWERED", version: 2, deleted_at: null });
+
+  assert.equal(isQnaStatusTransitionAllowed({ isAdmin: true, from: "ANSWERED", to: "OPEN" }), true);
+  assert.equal(isQnaStatusTransitionAllowed({ isAdmin: false, from: "CLOSED", to: "OPEN" }), true);
+  assert.equal(isQnaStatusTransitionAllowed({ isAdmin: false, from: "OPEN", to: "OPEN" }), false);
+  assert.equal(canSetQnaStatus(actor("student-1"), "student-1", "OPEN"), true);
+  assert.equal(canSetQnaStatus(actor("student-2"), "student-1", "OPEN"), false);
+  assert.equal(canSetQnaStatus(actor("student-1"), "student-1", "ANSWERED"), false);
+  assert.equal(canSetQnaStatus(actor("admin-1", true), "student-1", "ANSWERED"), true);
 });

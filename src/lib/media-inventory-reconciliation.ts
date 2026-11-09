@@ -2,7 +2,7 @@ import { inArray } from "drizzle-orm";
 import type { DbContext } from "@/db/client";
 import { mediaObjects } from "@/db/schema";
 import { asDocumentReadDb } from "@/lib/document-lifecycle-atomic";
-import { isManagedFinalMediaObjectKey } from "@/lib/media-lifecycle";
+import { audioPeaksBaseObjectKey, isManagedFinalMediaObjectKey } from "@/lib/media-lifecycle";
 
 const RECONCILIATION_PREFIX = "media/";
 const RECONCILIATION_CURSOR_KEY =
@@ -134,9 +134,16 @@ export async function reconcileManagedFinalMediaObjects(
     limit,
     ...(startAfter ? { startAfter } : {}),
   });
-  const managedKeys = page.objects
-    .map((object) => object.key)
-    .filter(isManagedFinalMediaObjectKey);
+  // 파형 JSON(`<audio key>.peaks.json`)은 그 오디오 final의 상태를 따른다.
+  const registryKeyOf = (key: string) =>
+    isManagedFinalMediaObjectKey(key) ? key : audioPeaksBaseObjectKey(key);
+  const managedKeys = [
+    ...new Set(
+      page.objects
+        .map((object) => registryKeyOf(object.key))
+        .filter((key): key is string => key !== null),
+    ),
+  ];
   const rows = managedKeys.length
     ? await asDocumentReadDb(context)
         .select({ objectKey: mediaObjects.objectKey, state: mediaObjects.state })
@@ -153,11 +160,12 @@ export async function reconcileManagedFinalMediaObjects(
     }
     result.inspected += 1;
     lastProcessed = object.key;
-    if (!isManagedFinalMediaObjectKey(object.key)) {
+    const registryKey = registryKeyOf(object.key);
+    if (!registryKey) {
       result.invalid += 1;
       continue;
     }
-    const state = stateByKey.get(object.key);
+    const state = stateByKey.get(registryKey);
     if (state && state !== "PENDING_DELETE" && state !== "DELETED") {
       result.preserved += 1;
       continue;

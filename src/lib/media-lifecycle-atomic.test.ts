@@ -928,6 +928,11 @@ test("게시물 purge는 R2 삭제 전 registry와 object별 outbox를 commit하
       "COMMUNITY_POST_AUDIO",
       storageIdFor(STUDENT_MEDIA_ID),
     ),
+    // 오디오 final 옆 파형 JSON도 함께 지운다(없어도 R2 delete는 성공한다).
+    `${createMediaObjectKey(
+      "COMMUNITY_POST_AUDIO",
+      storageIdFor(STUDENT_MEDIA_ID),
+    )}.peaks.json`,
   ]);
   assert.equal(readMedia(sqlite, STUDENT_MEDIA_ID)?.state, "DELETED");
   assert.ok(readMedia(sqlite, STUDENT_MEDIA_ID)?.deleted_at);

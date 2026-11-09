@@ -27,13 +27,15 @@ import {
 import { buildInvitePath, INVITE_LIFETIME_MS } from "@/lib/invite-token";
 import {
   queryStudentRosterStats,
+  queryStudentWorkCounts,
   withConnectedNextLessons,
   type StudentRosterStat,
+  type StudentWorkCounts,
 } from "@/lib/student-roster";
 import { queryConnectedNextEvents } from "@/lib/connected-next-lesson";
 import { fetchExternalItemsForUser } from "@/lib/external-items";
 
-export type { StudentRosterStat } from "@/lib/student-roster";
+export type { StudentRosterStat, StudentWorkCounts } from "@/lib/student-roster";
 
 // ───────────────────────────────────────────────
 // 학생 목록 조회
@@ -217,4 +219,23 @@ export async function getStudentRosterStats(): Promise<StudentRosterStat[]> {
     queryConnectedNextEvents(db, referenceTime, fetchExternalItemsForUser),
   ]);
   return withConnectedNextLessons(stats, connected);
+}
+
+/** 학생 상세 탭 숫자: 검토 대기 제출 수와 미답변 질문 수. 활성 학생만 센다. */
+export async function getStudentWorkCounts(studentId: string): Promise<StudentWorkCounts> {
+  const student = await requireStudentTarget(studentId);
+  return queryStudentWorkCounts(createDb(), student.id);
+}
+
+export type StudentOption = { id: string; name: string };
+
+/** 과제를 함께 낼 학생 목록(UsabilityBundle ⑭): 학생 계정 id와 표시 이름. 받는 쪽 검증은 각 action이 다시 한다. */
+export async function getStudentOptions(): Promise<StudentOption[]> {
+  await requireAdmin();
+  const rows = await createDb()
+    .select({ id: profiles.id, email: profiles.email, displayName: profiles.displayName })
+    .from(profiles)
+    .where(eq(profiles.role, "student"))
+    .orderBy(profiles.displayName, profiles.email);
+  return rows.map((row) => ({ id: row.id, name: row.displayName?.trim() || row.email }));
 }

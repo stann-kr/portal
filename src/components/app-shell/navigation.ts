@@ -206,3 +206,13 @@ export function navigateWithinPage(href: string): boolean {
   window.dispatchEvent(new window.PopStateEvent("popstate", { state: window.history.state }));
   return true;
 }
+
+/** 사이드바 메뉴 옆 숫자 배지를 다는 메뉴(Stann 업무함). */
+export const WORK_BADGE_NAV_ID = "work";
+
+/** 업무함 숫자 배지 글자. 0 이하이면 숨기고(null) 99를 넘으면 "99+"로 줄인다. */
+export function formatWorkBadge(count: number | null | undefined): { text: string; label: string } | null {
+  if (!count || !Number.isFinite(count) || count <= 0) return null;
+  const whole = Math.floor(count);
+  return { text: whole > 99 ? "99+" : String(whole), label: `처리할 일 ${whole}건` };
+}

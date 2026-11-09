@@ -65,7 +65,7 @@ export default async function QnaPage({
     <div className="px-5 pb-8 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-14">
       {/* 좁은 화면의 새 질문(+)도 지금 목록 문맥으로 돌아오게 한다. */}
       {!isAdmin ? <MobileTopBar title="Q&A" action={{ href: newHref, label: "새 질문" }} /> : null}
-      <div className="flex max-w-[880px] flex-col md:gap-6">
+      <div className="flex max-w-[880px] flex-col md:gap-6 md:mx-auto">
         <header className="flex flex-wrap items-end justify-between gap-4">
           <div className="flex flex-col gap-1">
             <h1 className="sr-only md:not-sr-only md:text-display md:font-semibold md:tracking-display">Q&amp;A</h1>

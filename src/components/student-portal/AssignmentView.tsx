@@ -6,7 +6,7 @@
  */
 "use client";
 
-import { useState, useActionState, useCallback, useRef } from "react";
+import { useState, useActionState, useCallback, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FileText, FilePlay, Play } from "lucide-react";
@@ -22,7 +22,6 @@ import {
 } from "@/lib/actions/assignmentTasks";
 import { getMyFeedbacksMap } from "@/lib/actions/feedbacks";
 import { EmptyState } from "@/components/ui/empty-state";
-import { RichTextContent } from "@/components/editor/RichTextContent";
 import { DraftStatus } from "@/components/editor/DraftStatus";
 import { FreeSubmissionForm } from "@/components/student-portal/FreeSubmissionForm";
 import { describeAssignmentSubmission } from "@/lib/unified-item-normalization";
@@ -32,14 +31,18 @@ import {
   ASSIGNMENT_TASK_STATUS_LABELS,
   ASSIGNMENT_TEXT_MAX_LENGTH,
   ASSIGNMENT_TEXT_MAX_LENGTH_LABEL,
+  getSubmissionReviewStatus,
   htmlToPlainText,
   isLateSubmission,
+  isSubmissionSettled,
   type AssignmentTaskStatus,
 } from "@/lib/assignment-submission";
 import { formatKstDot } from "@/lib/kst-format";
 import { getPortalStatus, STATUS_TONE_DOT_CLASS_NAMES, type PortalStatusTone } from "@/lib/portal-status";
 import { STUDENT_LEGACY_REDIRECTS } from "@/lib/legacy-dashboard-routes";
-import { analysisWriteHref } from "@/lib/student-space-routes";
+import { analysisWriteHref, assignmentTaskHref } from "@/lib/student-space-routes";
+import { CopyLinkButton } from "@/components/ui/CopyLinkButton";
+import { AssignmentBrief } from "@/components/student-portal/AssignmentBrief";
 import { createDocumentDraftKey } from "@/lib/form-draft";
 import { useFormDraft } from "@/lib/hooks/useFormDraft";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
@@ -59,7 +62,14 @@ interface AssignmentViewProps {
    * 워크스페이스가 자기 머리(h1)를 그리는 동안은 false로 두어 요약과 본문만 그린다.
    */
   pageHeader?: boolean;
+  /**
+   * 딥링크 `?task=`로 펼칠 과제(서버가 현재 학생 것인지 확인함). 그 행으로 스크롤해 1.5초 테두리로 표시하고,
+   * 제출할 수 있는 과제면 제출 폼을 연다.
+   */
+  initialOpenTaskId?: string | null;
 }
+
+const HIGHLIGHT_MS = 1500;
 
 // ── 헬퍼 ─────────────────────────────────────────
 
@@ -71,6 +81,7 @@ const TASK_STATUS_TONE: Record<AssignmentTaskStatus, PortalStatusTone> = {
   open: "neutral",
   overdue: "destructive",
   submitted: "warning",
+  acknowledged: "success",
   reviewed: "success",
 };
 
@@ -241,22 +252,25 @@ function TaskRow({
   task,
   actorId,
   open,
+  highlighted,
   onToggle,
   onDone,
 }: {
   task: AssignmentTaskItem;
   actorId: string;
   open: boolean;
+  /** 딥링크로 연 과제: 2px 먹색 테두리(움직임 줄이기에서는 전환 없이). */
+  highlighted: boolean;
   onToggle: (taskId: string | null) => void;
   onDone: () => Promise<void>;
 }) {
   const submission = task.submission;
   const duePassed = useHasPassed(task.dueAt ? task.dueAt.getTime() : null);
   const status: AssignmentTaskStatus = submission
-    ? submission.feedbackCount > 0 ? "reviewed" : "submitted"
+    ? getSubmissionReviewStatus(submission)
     : duePassed ? "overdue" : "open";
   const late = submission ? isLateSubmission(task.dueAt, submission.submittedAt) : false;
-  const canEdit = submission ? submission.feedbackCount === 0 : true;
+  const canEdit = submission ? !isSubmissionSettled(submission) : true;
   const panelId = `task-panel-${task.id}`;
   const meta = [
     formatDue(task.dueAt),
@@ -265,7 +279,13 @@ function TaskRow({
   ].filter(Boolean).join(" · ");
 
   return (
-    <li className="flex flex-col gap-3 border-b border-muted py-3">
+    <li
+      id={`task-row-${task.id}`}
+      className={cn(
+        "flex scroll-mt-24 flex-col gap-3 border-b border-muted py-3 outline-2 outline-offset-[6px] outline-transparent outline-solid transition-[outline-color] duration-[var(--duration-fast)] motion-reduce:transition-none",
+        highlighted && "rounded-lg outline-foreground",
+      )}
+    >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <span className="flex min-w-0 flex-1 basis-60 flex-col gap-0.5">
           <span className="break-words text-md font-medium md:text-body">{task.title}</span>
@@ -306,11 +326,13 @@ function TaskRow({
           ) : null}
         </span>
       </div>
-      {open ? (
+      {/* 과제 설명은 제출 폼을 열지 않았거나 피드백으로 잠겨도 펼쳐 볼 수 있다. 제출 폼을 열면 함께 펼친다. */}
+      {task.descriptionHtml ? <AssignmentBrief html={task.descriptionHtml} open={open} /> : null}
+      {open && canEdit && task.submissionFormat !== "ANALYSIS" ? (
         <div id={panelId} className="flex flex-col gap-3">
-          {task.descriptionHtml ? (
-            <RichTextContent html={task.descriptionHtml} className="text-body leading-6 text-secondary-foreground" />
-          ) : null}
+          <div className="flex justify-end">
+            <CopyLinkButton path={assignmentTaskHref(task.id)} title={task.title} />
+          </div>
           <TaskSubmitForm
             task={task}
             actorId={actorId}
@@ -330,8 +352,11 @@ function TaskRow({
 // ── 자유 제출 목록 행 ────────────────────────────
 
 function AssignmentRow({ assignment }: { assignment: StudentAssignmentSummary }) {
-  const waiting = assignment.feedbackCount === 0;
-  const status = waiting ? getPortalStatus("feedbackWaiting").label : `피드백 ${assignment.feedbackCount}개`;
+  const reviewStatus = getSubmissionReviewStatus(assignment);
+  const waiting = reviewStatus === "submitted";
+  const status = waiting
+    ? getPortalStatus("feedbackWaiting").label
+    : reviewStatus === "acknowledged" ? ASSIGNMENT_TASK_STATUS_LABELS.acknowledged : `피드백 ${assignment.feedbackCount}개`;
   const submittedAt = formatSubmittedAt(assignment.submittedAt);
   const source = [assignment.mediaUrl ? mediaSourceLabel(assignment.mediaUrl) : null, assignment.hasText ? "글" : null]
     .filter(Boolean).join(" · ") || "글";
@@ -368,12 +393,29 @@ function AssignmentRow({ assignment }: { assignment: StudentAssignmentSummary })
 
 // ── 메인 컴포넌트 ─────────────────────────────────
 
-export function AssignmentView({ actorId, initialAssignments, initialTasks = [], pageHeader = false }: AssignmentViewProps) {
+export function AssignmentView({
+  actorId,
+  initialAssignments,
+  initialTasks = [],
+  pageHeader = false,
+  initialOpenTaskId = null,
+}: AssignmentViewProps) {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
   const [assignments, setAssignments] = useState<StudentAssignmentSummary[]>(initialAssignments);
   const [tasks, setTasks] = useState<AssignmentTaskItem[]>(initialTasks);
-  const [openTaskId, setOpenTaskId] = useState<string | null>(null);
+  const [openTaskId, setOpenTaskId] = useState<string | null>(initialOpenTaskId);
+  const [highlightTaskId, setHighlightTaskId] = useState<string | null>(initialOpenTaskId);
+
+  // 딥링크 과제: 처음 한 번 그 행으로 스크롤하고 1.5초 뒤 테두리를 지운다.
+  useEffect(() => {
+    if (!initialOpenTaskId) return;
+    const row = document.getElementById(`task-row-${initialOpenTaskId}`);
+    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+    row?.scrollIntoView({ block: "center", behavior: reduceMotion ? "auto" : "smooth" });
+    const timer = window.setTimeout(() => setHighlightTaskId(null), HIGHLIGHT_MS);
+    return () => window.clearTimeout(timer);
+  }, [initialOpenTaskId]);
   const [refreshError, setRefreshError] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -393,7 +435,7 @@ export function AssignmentView({ actorId, initialAssignments, initialTasks = [],
   }, [router]);
 
   const freeAssignments = assignments.filter((assignment) => assignment.taskId === null);
-  const waitingCount = freeAssignments.filter((assignment) => assignment.feedbackCount === 0).length;
+  const waitingCount = freeAssignments.filter((assignment) => !isSubmissionSettled(assignment)).length;
   const unsubmittedTaskCount = tasks.filter((task) => task.submission === null).length;
   const summary = [
     tasks.length > 0 ? `받은 과제 ${tasks.length}개 · 미제출 ${unsubmittedTaskCount}개` : null,
@@ -401,7 +443,7 @@ export function AssignmentView({ actorId, initialAssignments, initialTasks = [],
   ].filter(Boolean).join(" · ") || null;
 
   const body = (
-    <div className={cn("flex flex-col gap-7 md:gap-8", pageHeader && "max-w-[880px]")}>
+    <div className={cn("flex flex-col gap-7 md:gap-8", pageHeader && "max-w-[880px] md:mx-auto")}>
       {pageHeader ? (
         <header className="flex flex-col gap-1">
           <h1 className="text-mobile-title font-semibold tracking-display md:text-display">과제</h1>
@@ -429,6 +471,7 @@ export function AssignmentView({ actorId, initialAssignments, initialTasks = [],
                 task={task}
                 actorId={actorId}
                 open={openTaskId === task.id}
+                highlighted={highlightTaskId === task.id}
                 onToggle={setOpenTaskId}
                 onDone={refresh}
               />

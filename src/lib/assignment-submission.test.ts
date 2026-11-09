@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  ASSIGNMENT_TASK_STATUS_LABELS,
   ASSIGNMENT_TEXT_MAX_LENGTH,
   getAssignmentTaskStatus,
+  getSubmissionReviewStatus,
   htmlToPlainText,
   isLateSubmission,
+  isSubmissionSettled,
+  settledSubmissionError,
   normalizePlainTextField,
   plainTextToHtml,
   validateFreeSubmissionPayload,
@@ -75,9 +79,28 @@ test("과제 상태는 제출·피드백·마감으로 정하고 마감 뒤 제�
   assert.equal(getAssignmentTaskStatus({ dueAt: future }, null, now), "open");
   assert.equal(getAssignmentTaskStatus({ dueAt: null }, null, now), "open");
   assert.equal(getAssignmentTaskStatus({ dueAt: past }, null, now), "overdue");
-  assert.equal(getAssignmentTaskStatus({ dueAt: past }, { feedbackCount: 0 }, now), "submitted");
-  assert.equal(getAssignmentTaskStatus({ dueAt: past }, { feedbackCount: 2 }, now), "reviewed");
+  assert.equal(getAssignmentTaskStatus({ dueAt: past }, { feedbackCount: 0, reviewedAt: null }, now), "submitted");
+  assert.equal(getAssignmentTaskStatus({ dueAt: past }, { feedbackCount: 2, reviewedAt: null }, now), "reviewed");
+  assert.equal(getAssignmentTaskStatus({ dueAt: past }, { feedbackCount: 0, reviewedAt: now }, now), "acknowledged");
+  assert.equal(getAssignmentTaskStatus({ dueAt: past }, { feedbackCount: 1, reviewedAt: now }, now), "reviewed", "피드백이 확인함보다 앞선다");
   assert.equal(isLateSubmission(past, now), true);
   assert.equal(isLateSubmission(future, now), false);
   assert.equal(isLateSubmission(null, now), false);
+});
+
+test("검토 상태: 피드백 > 확인함 > 피드백 대기 순서이고, 피드백이나 확인함이 있으면 잠긴(끝난) 제출이다", () => {
+  const at = new Date("2026-11-02T12:00:00.000Z");
+  assert.equal(getSubmissionReviewStatus({ feedbackCount: 0, reviewedAt: null }), "submitted");
+  assert.equal(getSubmissionReviewStatus({ feedbackCount: 0, reviewedAt: at }), "acknowledged");
+  assert.equal(getSubmissionReviewStatus({ feedbackCount: 0, reviewedAt: at.toISOString() }), "acknowledged", "통합 목록 metadata의 ISO 문자열");
+  assert.equal(getSubmissionReviewStatus({ feedbackCount: 0, reviewedAt: "" }), "submitted");
+  assert.equal(getSubmissionReviewStatus({ feedbackCount: 3, reviewedAt: at }), "reviewed");
+  assert.equal(isSubmissionSettled({ feedbackCount: 0, reviewedAt: null }), false);
+  assert.equal(isSubmissionSettled({ feedbackCount: 0, reviewedAt: at }), true);
+  assert.equal(isSubmissionSettled({ feedbackCount: 1, reviewedAt: null }), true);
+  assert.equal(ASSIGNMENT_TASK_STATUS_LABELS.acknowledged, "Stann 확인함");
+  assert.equal(ASSIGNMENT_TASK_STATUS_LABELS.submitted, "피드백 대기");
+  assert.equal(ASSIGNMENT_TASK_STATUS_LABELS.reviewed, "피드백 완료");
+  assert.match(settledSubmissionError("고칠", { feedbackCount: 1, reviewedAt: at }), /^피드백이 등록된 제출은 고칠 수 없습니다/u);
+  assert.match(settledSubmissionError("삭제할", { feedbackCount: 0, reviewedAt: at }), /^Stann이 확인한 제출은 삭제할 수 없습니다/u);
 });
