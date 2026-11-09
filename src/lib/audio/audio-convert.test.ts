@@ -6,7 +6,7 @@ import { blobByteReader, parsePcmHeader, readExtended80, UnsupportedAudioFormatE
 import { decodePcmChunk, pcmChunkRanges } from "./pcm-stream";
 import { estimateMp3Bytes, selectMp3Bitrate } from "./mp3-bitrate";
 import { parseFlacStreamInfo } from "./flac-info";
-import { createPcmFileSource, encodeSourceToMp3, type Mp3EncoderLike } from "./mp3-encode";
+import { AudioTooLongError, createPcmFileSource, encodeSourceToMp3, maxSourceFrames, MAX_SOURCE_DURATION_SEC, type Mp3EncoderLike, type PcmSource } from "./mp3-encode";
 import { estimateRemainingSeconds, formatRemaining, losslessAudioKind, mp3FileName } from "./prepare-upload";
 
 const MAX = 95 * 1024 * 1024;
@@ -260,4 +260,58 @@ test("취소 신호가 오면 AbortError로 멈춘다", async () => {
     encodeSourceToMp3(source, { createEncoder: () => createMp3Encoder() as Promise<Mp3EncoderLike>, maxBytes: MAX, signal: controller.signal }),
     (error: unknown) => error instanceof DOMException && error.name === "AbortError",
   );
+});
+
+/** 머리글에는 1초라고 적고 실제로는 조각을 `count`개 내는 원본과, 호출마다 정해진 바이트를 내는 가짜 인코더. */
+function lyingSource(framesPerChunk: number, count: number, pulled: { count: number }): PcmSource {
+  const rate = 44100;
+  return {
+    sampleRate: rate,
+    channels: 1,
+    totalFrames: rate,
+    async *chunks() {
+      for (let index = 0; index < count; index++) {
+        pulled.count += 1;
+        yield [new Float32Array(framesPerChunk).fill(0.1)];
+      }
+    },
+  };
+}
+
+function fakeEncoder(bytesPerCall: number, calls: { count: number }): () => Promise<Mp3EncoderLike> {
+  return async () => ({
+    configure() {},
+    encode() {
+      calls.count += 1;
+      return new Uint8Array(bytesPerCall);
+    },
+    finalize: () => new Uint8Array(0),
+  });
+}
+
+test("출력이 maxBytes를 넘는 순간 남은 조각을 읽지 않고 too-long으로 멈춘다", async () => {
+  const pulled = { count: 0 };
+  const calls = { count: 0 };
+  // 1초라고 적힌 원본이 조각 200개(조각마다 1,000바이트 출력)를 낸다. 상한 100,000바이트.
+  await assert.rejects(
+    encodeSourceToMp3(lyingSource(100, 200, pulled), { createEncoder: fakeEncoder(1000, calls), maxBytes: 100_000 }),
+    (error: unknown) => error instanceof AudioTooLongError,
+  );
+  assert.equal(calls.count, 101, "101번째 조각에서 상한을 넘자마자 멈춘다");
+  assert.equal(pulled.count, 101, "그 뒤 조각은 읽지 않는다");
+});
+
+test("머리글 길이(+여유)보다 프레임이 많이 나오면 인코딩하기 전에 too-long으로 멈춘다", async () => {
+  const pulled = { count: 0 };
+  const calls = { count: 0 };
+  const source = lyingSource(44100, 200, pulled);
+  assert.equal(maxSourceFrames(source), Math.ceil(44100 * 1.02) + 44100);
+  await assert.rejects(
+    encodeSourceToMp3(source, { createEncoder: fakeEncoder(10, calls), maxBytes: MAX }),
+    (error: unknown) => error instanceof AudioTooLongError,
+  );
+  assert.equal(pulled.count, 3, "세 번째 조각(3초)에서 상한(약 2.02초)을 넘는다");
+  assert.equal(calls.count, 2, "넘친 조각은 인코딩하지 않는다");
+  // 머리글이 아주 길어도 절대 상한을 넘지 않는다.
+  assert.equal(maxSourceFrames({ sampleRate: 48000, totalFrames: 48000 * 10 * 60 * 60 }), 48000 * MAX_SOURCE_DURATION_SEC);
 });

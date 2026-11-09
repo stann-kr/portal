@@ -160,15 +160,35 @@ test("형식이 틀리거나 너무 큰 파형은 400·413으로 거절한다", 
   assert.equal(putCalls.length, 0);
 });
 
-test("읽을 수 있는 사람이 처음 쓴 파형만 남고 두 번째 쓰기는 덮지 않는다", async (t) => {
+test("읽을 수만 있는 다른 학생은 파형을 쓸 수 없고(403) 저장소에 남기지 못한다", async (t) => {
   await setup(t);
   activeSession = session("other");
   assert.equal((await get(ATTACHED_ID)).status, 404, "아직 파형이 없다");
+  const denied = await put(ATTACHED_ID, JSON.stringify(samplePeaks(10, 0.9)));
+  assert.equal(denied.status, 403);
+  const deniedPost = await route.POST(new Request(`https://portal.test/api/media/${ATTACHED_ID}/peaks`, { method: "POST", body: JSON.stringify(samplePeaks(10, 0.9)) }), context(ATTACHED_ID));
+  assert.equal(deniedPost.status, 403);
+  assert.equal(putCalls.length, 0, "권한이 없으면 저장소를 건드리지 않는다");
+  assert.equal(stored.size, 0);
+
+  // 남이 먼저 쓰지 못했으므로 소유자의 첫 쓰기가 저장된다.
+  activeSession = session("owner");
+  assert.equal((await put(ATTACHED_ID, JSON.stringify(samplePeaks(3500, 0.25)))).status, 201);
+
+  activeSession = session("other");
+  const loaded = await get(ATTACHED_ID);
+  assert.equal(loaded.status, 200, "읽기 권한이 있으면 여전히 읽는다");
+  assert.equal(((await loaded.json()) as AudioPeaks).peaks[0], 0.25);
+});
+
+test("소유자가 처음 쓴 파형만 남고 관리자의 두 번째 쓰기는 덮지 않는다", async (t) => {
+  await setup(t);
+  activeSession = session("owner");
   const first = await put(ATTACHED_ID, JSON.stringify(samplePeaks(3500, 0.25)));
   assert.equal(first.status, 201);
   assert.deepEqual(await first.json(), { saved: true });
 
-  activeSession = session("owner");
+  activeSession = session("admin", "admin");
   const second = await route.POST(new Request(`https://portal.test/api/media/${ATTACHED_ID}/peaks`, { method: "POST", body: JSON.stringify(samplePeaks(10, 0.9)) }), context(ATTACHED_ID));
   assert.equal(second.status, 200);
   assert.deepEqual(await second.json(), { saved: false });
@@ -183,6 +203,16 @@ test("읽을 수 있는 사람이 처음 쓴 파형만 남고 두 번째 쓰기�
     "media/community-post-audio/20000000-0000-4000-8000-000000000012.peaks.json",
     "media/community-post-audio/20000000-0000-4000-8000-000000000012.peaks.json",
   ], "오디오 key 옆에 저장한다");
+});
+
+test("관리자는 소유자가 아니어도 파형을 처음 저장할 수 있다(201)", async (t) => {
+  await setup(t);
+  activeSession = session("admin", "admin");
+  const saved = await put(ATTACHED_ID, JSON.stringify(samplePeaks()));
+  assert.equal(saved.status, 201);
+  assert.deepEqual(await saved.json(), { saved: true });
+  activeSession = session("owner");
+  assert.equal((await get(ATTACHED_ID)).status, 200);
 });
 
 test("올린 사람은 붙이기 전(READY)에도 파형을 저장할 수 있다", async (t) => {

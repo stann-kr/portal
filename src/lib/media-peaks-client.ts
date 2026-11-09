@@ -21,13 +21,15 @@ export async function loadAudioPeaks(mediaObjectId: string, signal?: AbortSignal
   }
 }
 
+/** 저장 결과: 저장됨(새로 또는 이미 있음), 권한 없음(소유자·관리자가 아님, 정상), 실패. */
+export type SaveAudioPeaksResult = "saved" | "forbidden" | "failed";
+
 /**
- * 파형을 저장한다. 처음 쓴 값만 남으므로 이미 있으면 그대로 둔다.
- * @returns 저장 요청이 받아들여졌으면(새로 저장 또는 이미 있음) true, 실패하면 false.
+ * 파형을 저장하고 결과 종류를 돌려준다. 소유자·관리자만 쓸 수 있어 다른 사람은 "forbidden"이며 오류가 아니다.
  */
-export async function saveAudioPeaks(mediaObjectId: string, peaks: AudioPeaks): Promise<boolean> {
+export async function saveAudioPeaksResult(mediaObjectId: string, peaks: AudioPeaks): Promise<SaveAudioPeaksResult> {
   const parsed = parseAudioPeaks(peaks);
-  if (!parsed.ok) return false;
+  if (!parsed.ok) return "failed";
   try {
     const response = await fetch(peaksUrl(mediaObjectId), {
       method: "PUT",
@@ -35,8 +37,17 @@ export async function saveAudioPeaks(mediaObjectId: string, peaks: AudioPeaks): 
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(parsed.value),
     });
-    return response.ok;
+    if (response.status === 403) return "forbidden";
+    return response.ok ? "saved" : "failed";
   } catch {
-    return false;
+    return "failed";
   }
+}
+
+/**
+ * 파형을 저장한다. 처음 쓴 값만 남으므로 이미 있으면 그대로 둔다.
+ * @returns 저장 요청이 받아들여졌으면(새로 저장 또는 이미 있음) true, 실패·권한 없음이면 false.
+ */
+export async function saveAudioPeaks(mediaObjectId: string, peaks: AudioPeaks): Promise<boolean> {
+  return (await saveAudioPeaksResult(mediaObjectId, peaks)) === "saved";
 }

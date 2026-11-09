@@ -3,6 +3,8 @@
  * @description 남긴 피드백을 그 자리에서 고치는 줄(UsabilityBundle ⑫). 관리자 전용.
  * 시점(분:초) 칸과 내용 한 줄, 취소·저장. 고치는 중인 내용은 이 기기에 남고(local draft),
  * 저장 중에는 화면 이탈을 막는다. 서버는 고치기 시작할 때의 값과 같을 때만 바꾼다(updateFeedback).
+ * 기준값(expected)은 고치기 시작할 때 한 번 잡아 고정하고 보관본에도 함께 남긴다. 그래서 고치는 사이
+ * 화면 값(props)이 새로 바뀌거나 예전 보관본을 되살려도, 시작했던 값과 서버 값이 다르면 덮지 않고 충돌로 알린다.
  */
 "use client";
 
@@ -15,7 +17,16 @@ import { useFormDraft } from "@/lib/hooks/useFormDraft";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
 import { formatTimestamp } from "@/lib/utils/format";
 
-type EditDraft = { timeMarker: string; content: string };
+type EditBaseline = { content: string; timeMarker: number | null };
+type EditDraft = { timeMarker: string; content: string; expected?: EditBaseline };
+
+function readBaseline(value: unknown): EditBaseline | null {
+  if (!value || typeof value !== "object") return null;
+  const { content, timeMarker } = value as Record<string, unknown>;
+  if (typeof content !== "string") return null;
+  if (!(timeMarker === null || (typeof timeMarker === "number" && Number.isSafeInteger(timeMarker)))) return null;
+  return { content, timeMarker };
+}
 
 export function FeedbackEditForm({
   actorId,
@@ -33,19 +44,24 @@ export function FeedbackEditForm({
   onSaved: () => void;
   onCancel: () => void;
 }) {
-  const initialMarker = feedback.timeMarker === null ? "" : formatTimestamp(feedback.timeMarker);
+  // 고치기 시작할 때의 값. 이후 props가 바뀌어도 그대로 두고, 보관본을 되살리면 보관본의 기준값을 쓴다.
+  const [baseline, setBaseline] = useState<EditBaseline>(() => ({ content: feedback.content, timeMarker: feedback.timeMarker }));
+  const initialMarker = baseline.timeMarker === null ? "" : formatTimestamp(baseline.timeMarker);
   const [timeMarker, setTimeMarker] = useState(initialMarker);
-  const [content, setContent] = useState(feedback.content);
+  const [content, setContent] = useState(baseline.content);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const contentRef = useRef<HTMLInputElement>(null);
   const draft = useFormDraft<EditDraft>(
     createDocumentDraftKey("assignment-feedback", actorId, `edit:${feedback.id}`),
     (saved) => {
+      // 기준값이 없는 예전 보관본은 지금 기준값을 그대로 쓴다.
+      const savedBaseline = readBaseline(saved.expected);
+      if (savedBaseline) setBaseline(savedBaseline);
       if (typeof saved.timeMarker === "string" && allowTimeMarker) setTimeMarker(saved.timeMarker);
       if (typeof saved.content === "string") setContent(saved.content);
     },
-    { onReset: () => { setTimeMarker(initialMarker); setContent(feedback.content); } },
+    { onReset: () => { setTimeMarker(initialMarker); setContent(baseline.content); } },
   );
   useBusyNavigationGuard(isPending);
   useEffect(() => {
@@ -56,8 +72,8 @@ export function FeedbackEditForm({
     setTimeMarker(next.timeMarker);
     setContent(next.content);
     setError(null);
-    if (next.timeMarker === initialMarker && next.content === feedback.content) draft.clear({ reason: "empty" });
-    else draft.save(next);
+    if (next.timeMarker === initialMarker && next.content === baseline.content) draft.clear({ reason: "empty" });
+    else draft.save({ ...next, expected: baseline });
   };
 
   // 취소는 고치던 내용을 버린다(이 기기 보관본도 지운다).
@@ -87,12 +103,12 @@ export function FeedbackEditForm({
         setError(null);
         startTransition(async () => {
           try {
-            const result = await updateFeedback(feedback.id, submitted, { content: feedback.content, timeMarker: feedback.timeMarker });
+            const result = await updateFeedback(feedback.id, submitted, baseline);
             if (!result.success) {
               setError(result.error);
               return;
             }
-            draft.clear({ reason: "submitted", submittedData: submitted });
+            draft.clear({ reason: "submitted", submittedData: { ...submitted, expected: baseline } });
             onSaved();
           } catch {
             setError("피드백을 고치지 못했습니다. 다시 시도해 주세요.");

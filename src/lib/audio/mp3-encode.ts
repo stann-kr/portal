@@ -3,6 +3,8 @@
  * @description 조각 단위 PCM 원본을 CBR MP3로 인코딩하면서 같은 흐름에서 파형(peaks)을 만든다.
  * 브라우저 Worker와 Node 테스트가 함께 쓰도록 환경 API(Worker·AudioContext)에 의존하지 않는다.
  * 인코딩 결과는 몇 MB마다 Blob으로 합쳐 큰 배열 하나로 커지지 않게 한다.
+ * 상한은 끝에서만이 아니라 조각마다 확인한다: 출력 바이트가 maxBytes를 넘거나, 원본이 머리글에 적힌 길이
+ * (+작은 여유)·절대 상한보다 많은 프레임을 내면 그 자리에서 AudioTooLongError로 멈춘다.
  */
 import { createPeaksAccumulator, type AudioPeaks } from "./peaks";
 import { selectMp3Bitrate, type Mp3BitrateKbps } from "./mp3-bitrate";
@@ -40,6 +42,17 @@ export class AudioTooLongError extends Error {
 }
 
 const BLOB_FLUSH_BYTES = 8 * 1024 * 1024;
+/** 머리글 길이보다 더 나와도 받아 주는 여유: 2% + 1초. */
+const DECLARED_FRAMES_TOLERANCE_RATIO = 1.02;
+const DECLARED_FRAMES_TOLERANCE_SEC = 1;
+/** 머리글과 관계없이 처리하는 원본 길이의 절대 상한(4시간). */
+export const MAX_SOURCE_DURATION_SEC = 4 * 60 * 60;
+
+/** 이 원본에서 처리할 수 있는 최대 프레임 수(머리글 길이+여유와 절대 상한 중 작은 값). */
+export function maxSourceFrames(source: Pick<PcmSource, "sampleRate" | "totalFrames">): number {
+  const declared = Math.ceil(source.totalFrames * DECLARED_FRAMES_TOLERANCE_RATIO) + Math.ceil(source.sampleRate * DECLARED_FRAMES_TOLERANCE_SEC);
+  return Math.min(declared, Math.floor(source.sampleRate * MAX_SOURCE_DURATION_SEC));
+}
 
 function throwIfAborted(signal?: AbortSignal) {
   if (signal?.aborted) throw new DOMException("변환을 취소했습니다.", "AbortError");
@@ -61,7 +74,8 @@ export async function encodeSourceToMp3(
 ): Promise<EncodeMp3Result> {
   const durationSec = source.totalFrames / source.sampleRate;
   const bitrateKbps = selectMp3Bitrate(durationSec, options.maxBytes);
-  if (!bitrateKbps) throw new AudioTooLongError();
+  if (!bitrateKbps || durationSec > MAX_SOURCE_DURATION_SEC) throw new AudioTooLongError();
+  const maxFrames = maxSourceFrames(source);
   const encoder = await options.createEncoder();
   encoder.configure({
     channels: source.channels,
@@ -73,9 +87,13 @@ export async function encodeSourceToMp3(
   let blob = new Blob([]);
   let pending: Uint8Array<ArrayBuffer>[] = [];
   let pendingBytes = 0;
+  let outputBytes = 0;
   // 인코더가 돌려주는 배열은 WASM 메모리를 가리키므로 다음 호출 전에 복사한다.
   const keep = (bytes: Uint8Array) => {
     if (bytes.byteLength === 0) return;
+    outputBytes += bytes.byteLength;
+    // 상한을 넘는 순간 멈춘다(남은 조각을 더 읽거나 인코딩하지 않는다).
+    if (outputBytes > options.maxBytes) throw new AudioTooLongError();
     pending.push(bytes.slice());
     pendingBytes += bytes.byteLength;
     if (pendingBytes >= BLOB_FLUSH_BYTES) {
@@ -90,6 +108,8 @@ export async function encodeSourceToMp3(
     throwIfAborted(options.signal);
     const length = channels[0]?.length ?? 0;
     if (length === 0) continue;
+    // 머리글보다 훨씬 긴 원본은 인코딩하기 전에 멈춘다.
+    if (framesDone + length > maxFrames) throw new AudioTooLongError();
     peaks.push(channels);
     keep(encoder.encode(channels));
     framesDone += length;

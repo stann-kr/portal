@@ -3010,6 +3010,51 @@ test("피드백 고치기: 관리자는 그 자리에서 내용·시점을 고�
   assert.equal(browser.document.querySelector('form[aria-label="01:30 피드백 고치기"]'), null, "저장하면 고치기 줄을 닫는다");
 });
 
+test("피드백 고치기: 고치는 사이 화면 값이 바뀌어도, 예전 보관본을 되살려도 시작한 값을 기준(expected)으로 보내 덮지 않는다", async (context) => {
+  const sent: unknown[][] = [];
+  editFeedback = async (...args) => { sent.push(args); return { success: false, error: "다른 화면에서 이 피드백이 먼저 바뀌었습니다. 새로고침한 뒤 다시 고쳐 주세요." }; };
+  context.after(() => { editFeedback = async () => ({ success: true }); });
+  browser.localStorage.clear();
+  const listA = [{ id: "fb-cas", timeMarker: 90, content: "A 내용", createdAt: null }];
+  const listB = [{ id: "fb-cas", timeMarker: 120, content: "B 내용", createdAt: null }];
+  const setValue = (input: HTMLInputElement, value: string) => {
+    const setter = Object.getOwnPropertyDescriptor(browser.HTMLInputElement.prototype, "value")?.set;
+    setter?.call(input, value);
+    input.dispatchEvent(new browser.Event("input", { bubbles: true }) as unknown as Event);
+  };
+  const root = await render(context, <TimelineFeedback assignmentId="cas-assignment" actorId="admin-cas" feedbackList={listA} isAdmin />);
+
+  await press("01:30 피드백 고치기");
+  await settle();
+  const contentInput = browser.document.querySelectorAll('form[aria-label="01:30 피드백 고치기"] input')[1] as unknown as HTMLInputElement;
+  assert.equal(contentInput.value, "A 내용");
+  await act(async () => { setValue(contentInput, "A를 고친 내용"); });
+  await settle();
+
+  // 고치는 중에 다른 화면의 저장으로 props가 B로 새로 고쳐진다.
+  await act(async () => root.render(<TimelineFeedback assignmentId="cas-assignment" actorId="admin-cas" feedbackList={listB} isAdmin />));
+  await settle();
+  assert.ok(browser.document.querySelector("form"), "고치기 줄은 그대로 열려 있다");
+  await press("저장");
+  await settle();
+  assert.deepEqual(sent.at(-1), ["fb-cas", { timeMarker: "01:30", content: "A를 고친 내용" }, { content: "A 내용", timeMarker: 90 }], "기준값은 시작한 A다(B가 아니다)");
+  assert.match(browser.document.querySelector('[role="alert"]')?.textContent ?? "", /먼저 바뀌었습니다/u, "서버가 충돌로 거절한다");
+
+  // 화면을 닫았다 B 값으로 다시 열어 이 기기의 예전 보관본(A 기준)을 되살려도 기준값은 A다.
+  await act(async () => root.render(<></>));
+  await settle();
+  await act(async () => root.render(<TimelineFeedback assignmentId="cas-assignment" actorId="admin-cas" feedbackList={listB} isAdmin />));
+  await settle();
+  await press("02:00 피드백 고치기");
+  await settle();
+  const restored = browser.document.querySelectorAll('form[aria-label="02:00 피드백 고치기"] input')[1] as unknown as HTMLInputElement;
+  assert.equal(restored.value, "A를 고친 내용", "보관본을 되살린다");
+  await press("저장");
+  await settle();
+  assert.deepEqual(sent.at(-1)?.[2], { content: "A 내용", timeMarker: 90 }, "되살린 보관본은 자기 기준값(A)으로 보내 충돌이 난다");
+  assert.equal(sent.length, 2);
+});
+
 test("학생 상세 레슨 행은 그 날짜 노트가 있으면 노트 열기, 없으면 날짜를 채운 새 노트로 간다", async (context) => {
   await render(context, <OverviewTab
     studentId="student-1"
