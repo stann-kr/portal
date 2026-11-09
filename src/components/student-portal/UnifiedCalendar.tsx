@@ -243,13 +243,17 @@ const CALENDAR_PLUGINS = [dayGridPlugin, timeGridPlugin, interactionPlugin];
 const WEEK_CONTENT_HEIGHT = 680;
 /** 주 보기 전체 높이(머리줄 포함)의 하한. 창이 낮아도 이보다 줄이지 않는다. */
 const WEEK_MIN_HEIGHT = 560;
+/** 월 보기(5주 달)가 붙기 전 빈 판 높이. 실제 높이와 같아 붙을 때 아래 내용이 밀리지 않는다. */
+const MONTH_PLACEHOLDER_HEIGHT = 681;
 /**
  * 주 보기가 스크롤 영역(화면 영역) 아래 끝까지 채우는 전체 높이(px).
- * 스크롤 영역의 보이는 높이에서 달력 말고 나머지 내용(머리줄·안내·공개 캘린더 블록·여백) 높이를 뺀다.
- * 화면마다 달력 위아래에 무엇이 있든 그대로 반영된다.
+ * 스크롤 영역의 보이는 높이에서 달력 말고 나머지 내용(페이지 열 위쪽 내용 + 페이지 열에서 달력을 뺀 높이) 높이를 뺀다.
+ * 스크롤 영역 scrollHeight는 내용이 짧으면 보이는 높이에 고정돼(min-h-full 포함) 쓰지 않는다. 페이지 열은 늘어나지 않으므로
+ * 달력 높이와 무관한 값이 나와 줄였다 늘려도 다시 채운다.
  */
-export function weekFillHeight(scrollerClientHeight: number, scrollerScrollHeight: number, calendarHeight: number): number {
-  return Math.max(WEEK_MIN_HEIGHT, Math.floor(scrollerClientHeight - (scrollerScrollHeight - calendarHeight)));
+export function weekFillHeight(scrollerClientHeight: number, contentAbovePage: number, pageHeight: number, calendarHeight: number): number {
+  const rest = contentAbovePage + pageHeight - calendarHeight;
+  return Math.max(WEEK_MIN_HEIGHT, Math.floor(scrollerClientHeight - rest));
 }
 
 /** 가장 가까운 세로 스크롤 영역(셸의 화면 영역). 없으면 문서. */
@@ -551,13 +555,17 @@ export function UnifiedCalendar({
     const element = gridRef.current;
     if (!element) return;
     const scroller = nearestScroller(element);
+    const page = element.closest<HTMLElement>("[data-calendar-page]") ?? element;
     const measure = () => {
-      setWeekHeight(weekFillHeight(scroller.clientHeight, scroller.scrollHeight, element.offsetHeight));
+      const above = page.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+      setWeekHeight(weekFillHeight(scroller.clientHeight, above, page.offsetHeight, element.offsetHeight));
     };
     measure();
     window.addEventListener("resize", measure);
+    // 월→주 전환 뒤 FullCalendar가 자리를 잡을 때(달력 크기 변화)도 다시 잰다. 같은 값이면 다시 그리지 않아 반복되지 않는다.
     const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
     observer?.observe(scroller);
+    observer?.observe(page);
     return () => {
       window.removeEventListener("resize", measure);
       observer?.disconnect();
@@ -606,7 +614,7 @@ export function UnifiedCalendar({
       <div className="hidden flex-wrap items-center justify-between gap-3 md:flex">
         <div className="flex min-w-0 items-center gap-1">
           <h2 className="mr-3 min-w-0 truncate text-lg/[26px] font-semibold tracking-title" data-calendar-title aria-live="polite">
-            {period.title || <SkeletonBar className="h-5 w-36" />}
+            {period.title || <SkeletonBar className="my-[3px] h-5 w-36" />}
           </h2>
           <button type="button" onClick={() => api()?.prev()} aria-label={`이전 ${unit}`} className={iconButton}>
             <ChevronLeft className="size-4" strokeWidth={1.8} aria-hidden="true" />
@@ -676,7 +684,7 @@ export function UnifiedCalendar({
       <div
         ref={gridRef}
         className={cn("fc-custom fc-notion relative hidden md:block", canQuickCreate && "calendar-can-create")}
-        style={period.type === null ? { minHeight: view === "timeGridWeek" ? (weekHeight ?? WEEK_CONTENT_HEIGHT + 92) : 640 } : undefined}
+        style={period.type === null ? { minHeight: view === "timeGridWeek" ? (weekHeight ?? WEEK_CONTENT_HEIGHT + 92) : MONTH_PLACEHOLDER_HEIGHT } : undefined}
         aria-label="통합 일정 달력"
       >
         {period.type === null ? (

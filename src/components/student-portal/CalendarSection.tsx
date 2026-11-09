@@ -526,6 +526,8 @@ export function CalendarSection({
           value={segmentValue}
           onValueChange={handleSegmentChange}
           activationMode="manual"
+          // 주 보기가 화면 영역을 채울 때 달력 말고 나머지 높이를 재는 기준(UnifiedCalendar weekFillHeight).
+          data-calendar-page=""
           className={cn("flex flex-col", isCalendarFamily && "pb-8 md:gap-5 md:px-[clamp(20px,3vw,40px)] md:pb-10 md:pt-8")}
         >
           {isCalendarFamily ? (

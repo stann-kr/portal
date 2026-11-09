@@ -52,6 +52,7 @@ const ROUTE_SKELETON_LABELS: Record<RouteSkeletonKind, string> = {
   board: "디깅 보드를 불러오는 중",
   assignment: "과제를 불러오는 중",
   calendar: "일정을 불러오는 중",
+  "calendar-admin": "일정을 불러오는 중",
   "guide-index": "가이드 목록을 불러오는 중",
   "guide-page": "가이드를 불러오는 중",
   auth: "불러오는 중",
@@ -313,7 +314,7 @@ function BoardSkeleton({ label }: { label: string }) {
  * 일정(관리자 일정·학생 캘린더): 제목과 보기 전환, 기간 줄, 넓은 화면은 화면 아래까지 채우는 7칸 달력 판,
  * 좁은 화면은 날짜 줄과 일정 목록(MobileCalendar).
  */
-function CalendarSkeleton({ label }: { label: string }) {
+function CalendarSkeleton({ label, note = false }: { label: string; note?: boolean }) {
   return (
     <Frame label={label} top="calendar" width="full" gap="gap-5" padding={CALENDAR_FRAME_PADDING}>
       <div className="hidden items-center gap-3 md:flex">
@@ -321,11 +322,13 @@ function CalendarSkeleton({ label }: { label: string }) {
         <SkeletonBlock className="h-9 w-48 rounded-md" />
         <SkeletonBlock className="ml-auto h-9 w-28 rounded-md" />
       </div>
+      {/* 관리자 일정: 제목 아래 안내 한 줄("전체 학생의 포탈 일정입니다…") */}
+      {note ? <SkeletonBar className="-mt-2 hidden h-3.5 w-[300px] md:block" /> : null}
       <div className="flex items-center gap-3">
         <SkeletonBar className="h-6 w-40" />
         <SkeletonBlock className="h-8 w-16 rounded-md" />
       </div>
-      <div className="hidden h-[calc(100dvh-280px)] min-h-[480px] grid-cols-7 overflow-hidden rounded-lg border border-border md:grid">
+      <div className="hidden h-[calc(100dvh-248px)] min-h-[480px] grid-cols-7 overflow-hidden rounded-lg border border-border md:grid">
         {Array.from({ length: 7 }, (_, index) => (
           <div key={index} className="flex flex-col gap-2 border-r border-border p-2 last:border-r-0">
             <SkeletonBar className="h-3 w-10" />
@@ -457,6 +460,8 @@ export function RouteSkeleton({ kind, label }: { kind: RouteSkeletonKind; label?
       return <AssignmentSkeleton label={text} />;
     case "calendar":
       return <CalendarSkeleton label={text} />;
+    case "calendar-admin":
+      return <CalendarSkeleton label={text} note />;
     case "guide-index":
       return <GuideIndexSkeleton label={text} />;
     case "guide-page":

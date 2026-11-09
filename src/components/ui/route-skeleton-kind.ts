@@ -19,6 +19,7 @@ export type RouteSkeletonKind =
   | "board"
   | "assignment"
   | "calendar"
+  | "calendar-admin"
   | "guide-index"
   | "guide-page"
   | "auth"
@@ -69,7 +70,7 @@ const ROUTE_SKELETON_RULES: ReadonlyArray<[pattern: RegExp, kind: RouteSkeletonK
 function resolveSectionSkeletonKind(path: string, search: URLSearchParams): RouteSkeletonKind | null {
   const section = search.get("section");
   if (path === "/dashboard/admin") {
-    if (section === "schedule") return "calendar";
+    if (section === "schedule") return "calendar-admin";
     if (section === "students") return "record-list-narrow";
     return null;
   }
