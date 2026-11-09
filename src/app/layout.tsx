@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { IBM_Plex_Mono, IBM_Plex_Sans_KR } from "next/font/google";
 import { cookies } from "next/headers";
 import { parseThemeCookie, THEME_COOKIE, themeColorsFor } from "@/lib/web-app-theme";
+import { InputFontAlias } from "@/components/fonts/InputFontAlias";
 import { PersistentPlayerHost } from "@/components/player/PersistentPlayerHost";
 import "./globals.css";
 
@@ -13,15 +14,6 @@ const plexSans = IBM_Plex_Sans_KR({
   subsets: ["latin"],
   display: "block",
   variable: "--font-plex-sans",
-});
-// 입력칸·편집기 전용 같은 글꼴(swap). 한글 조각을 처음 칠 때 block이면 그 조각을 받는 동안 입력 글자가 투명해져
-// 깜빡이므로, 입력 영역만 대체 글꼴로 먼저 보이고 바뀌게 한다. 옵션을 본문과 같게(subsets·weight·preload) 두어
-// next/font가 같은 내용 hash의 파일(같은 URL)을 내므로 글꼴 파일을 두 번 받지 않는다.
-const plexSansInput = IBM_Plex_Sans_KR({
-  weight: ["400", "500", "600"],
-  subsets: ["latin"],
-  display: "swap",
-  variable: "--font-plex-sans-input",
 });
 const plexMono = IBM_Plex_Mono({
   weight: ["400", "500"],
@@ -42,7 +34,11 @@ export const metadata: Metadata = {
   applicationName: "Portal - Stann",
   // iPhone 홈 화면에 추가하면 Safari 막대 없이 앱처럼 열린다(웹 푸시의 전제).
   appleWebApp: { capable: true, title: "Portal", statusBarStyle: "default" },
-  icons: { apple: "/icons/apple-touch-icon.png" },
+  // icons를 직접 주면 src/app/icon.svg 파일 규칙 링크가 빠지므로 icon.svg를 적는다(favicon.ico는 파일 규칙이 넣는다).
+  icons: {
+    icon: [{ url: "/icon.svg", type: "image/svg+xml" }],
+    apple: "/icons/apple-touch-icon.png",
+  },
 };
 
 /** 이 기기에서 고른 화면 모드(cookie). 없으면 null(= 시스템). 루트 layout은 이미 force-dynamic이라 정적 생성에 영향이 없다. */
@@ -66,7 +62,7 @@ export default async function RootLayout({
     <html
       lang="ko"
       data-theme={theme ?? undefined}
-      className={`${plexSans.variable} ${plexSansInput.variable} ${plexMono.variable}`}
+      className={`${plexSans.variable} ${plexMono.variable}`}
     >
       <body
         className="font-sans antialiased bg-background text-foreground"
@@ -86,6 +82,7 @@ export default async function RootLayout({
         </div>
         {/* 페이지를 옮겨도 이어지는 하단 미니 플레이어. 레이아웃이 바뀌어도 남도록 루트에 한 번만 둔다. */}
         <PersistentPlayerHost />
+        <InputFontAlias />
       </body>
     </html>
   );

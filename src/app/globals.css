@@ -488,7 +488,7 @@
     outline-offset: 2px;
   }
 
-  /* 입력 영역은 같은 글꼴의 swap 선언(layout.tsx plexSansInput)을 쓴다. 본문용 block 선언을 앞에 두면 한글 조각을
+  /* 입력 영역은 같은 글꼴 파일을 다른 이름·swap으로 등록한 별칭(components/fonts/input-font-alias.ts)을 쓴다. 본문용 block 선언을 앞에 두면 한글 조각을
      처음 받는 동안 입력 글자가 투명해져 깜빡이므로, 대체 목록에서 block 글꼴을 빼고 기기 한글 글꼴로 먼저 보인다.
      preflight의 `input { font: inherit }`보다 뒤·같은 specificity라 이긴다. font-mono 등 utility는 layer 순서로 이 규칙보다 우선한다. */
   input,
@@ -501,7 +501,7 @@
 }
 
 :root {
-  --font-sans-input: var(--font-plex-sans-input), system-ui, -apple-system, "Apple SD Gothic Neo", sans-serif;
+  --font-sans-input: "Portal Input Sans", system-ui, -apple-system, "Apple SD Gothic Neo", sans-serif;
 }
 
 @media (prefers-reduced-motion: reduce) {

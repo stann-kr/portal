@@ -46,25 +46,15 @@ test("prefers-color-scheme는 globals.css의 어두운 token 블록 한 곳에�
   assert.equal(css.match(/prefers-color-scheme/g)?.length, 1);
 });
 
-test("입력 영역 글꼴은 swap 선언을 쓰고 본문은 block을 유지한다(입력 중 글자 깜빡임 회귀)", () => {
-  const declaration = (variable: string) => {
-    const match = layout.match(new RegExp(`IBM_Plex_Sans_KR\\(\\{([^}]*variable: "${variable}"[^}]*)\\}\\)`));
-    assert.ok(match, `${variable} 선언이 있어야 한다`);
-    return match[1];
-  };
-  const body = declaration("--font-plex-sans");
-  const input = declaration("--font-plex-sans-input");
-  assert.match(body, /display: "block"/);
-  assert.match(input, /display: "(swap|fallback|optional)"/);
-  assert.doesNotMatch(input, /display: "block"/);
-  // 옵션이 같아야(display 제외) next/font가 같은 파일 URL을 낸다.
-  const withoutDisplay = (source: string) => source.replace(/display: "[a-z]+",|variable: "[^"]+",?/g, "").replace(/\s+/g, "");
-  assert.equal(withoutDisplay(input), withoutDisplay(body));
-  assert.match(layout, /plexSansInput\.variable/);
+test("입력 영역 글꼴은 별칭(swap)을 쓰고 본문은 block 하나만 선언한다(입력 중 글자 깜빡임 회귀)", () => {
+  // next/font로 같은 글꼴을 두 번 선언하면 family 이름이 같아 본문까지 swap이 된다. 본문 선언은 하나만 둔다.
+  assert.equal(layout.match(/IBM_Plex_Sans_KR\(\{/g)?.length, 1);
+  assert.match(layout, /IBM_Plex_Sans_KR\(\{[^}]*display: "block"/);
+  assert.match(layout, /<InputFontAlias \/>/);
 
   const inputVariable = css.match(/--font-sans-input:\s*([^;]+);/);
   assert.ok(inputVariable, "--font-sans-input이 정의돼야 한다");
-  assert.match(inputVariable[1], /^var\(--font-plex-sans-input\)/);
+  assert.match(inputVariable[1], /^"Portal Input Sans"/);
   // 대체 목록에 block 글꼴이 끼면 그 글꼴을 받는 동안 다시 투명해진다.
   assert.doesNotMatch(inputVariable[1], /--font-plex-sans\)|--font-sans\b|"IBM Plex Sans KR"/);
 
