@@ -363,6 +363,7 @@ export function AssignmentDetailClient({
           {analysis && analysisFeedback ? (
             <>
               {acknowledgedNotice}
+              {taskBrief}
               <MixAnalysisRating analysis={analysis} />
               <MixAnalysisEntries
                 assignmentId={assignmentId}
