@@ -245,6 +245,8 @@ const WEEK_CONTENT_HEIGHT = 680;
 const WEEK_MIN_HEIGHT = 560;
 /** 월 보기(5주 달)가 붙기 전 빈 판 높이. 실제 높이와 같아 붙을 때 아래 내용이 밀리지 않는다. */
 const MONTH_PLACEHOLDER_HEIGHT = 681;
+/** 서버가 그릴 때(창 높이를 재기 전) 주 보기 빈 판 높이. 관리자 일정 배치(달력 외 248px)와 일정 스켈레톤과 같은 식이다. */
+const WEEK_PLACEHOLDER_CSS_HEIGHT = "max(560px, calc(100dvh - 248px))";
 /**
  * 주 보기가 스크롤 영역(화면 영역) 아래 끝까지 채우는 전체 높이(px).
  * 스크롤 영역의 보이는 높이에서 달력 말고 나머지 내용(페이지 열 위쪽 내용 + 페이지 열에서 달력을 뺀 높이) 높이를 뺀다.
@@ -684,7 +686,7 @@ export function UnifiedCalendar({
       <div
         ref={gridRef}
         className={cn("fc-custom fc-notion relative hidden md:block", canQuickCreate && "calendar-can-create")}
-        style={period.type === null ? { minHeight: view === "timeGridWeek" ? (weekHeight ?? WEEK_CONTENT_HEIGHT + 92) : MONTH_PLACEHOLDER_HEIGHT } : undefined}
+        style={period.type === null ? { minHeight: view === "timeGridWeek" ? (weekHeight ?? WEEK_PLACEHOLDER_CSS_HEIGHT) : MONTH_PLACEHOLDER_HEIGHT } : undefined}
         aria-label="통합 일정 달력"
       >
         {period.type === null ? (
