@@ -2242,6 +2242,30 @@ test("늦게 끝난 현재 위치 읽기는 그 사이 직접 입력한 시점�
   assert.equal(inputValue("timeMarker"), "", "초안에도 늦은 읽기 결과를 남기지 않는다");
 });
 
+test("문서 편집 서식 줄: 편집기가 늦게 그려져도 초점이 들어오면 키보드 높이를 따라가고, 초점이 나가면 지운다", async (context) => {
+  const viewport = Object.assign(new browser.EventTarget(), { height: browser.innerHeight, offsetTop: 0 });
+  const original = Object.getOwnPropertyDescriptor(browser, "visualViewport");
+  Object.defineProperty(browser, "visualViewport", { configurable: true, value: viewport });
+  context.after(() => {
+    if (original) Object.defineProperty(browser, "visualViewport", original);
+    else delete (browser as unknown as { visualViewport?: unknown }).visualViewport;
+  });
+  const root = browser.document.documentElement;
+  await render(context, <FullEditor variant="page" initialContent="<p>짧은 노트</p>" ariaLabel="본문" onChange={() => {}} />);
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  const editable = browser.document.querySelector('[contenteditable="true"]');
+  assert.ok(editable, "편집 영역이 있다");
+  await act(async () => { editable.dispatchEvent(new browser.FocusEvent("focusin", { bubbles: true })); });
+  assert.equal(root.dataset.editorDock, "", "편집 중 표시(본문 아래 여백)");
+  assert.equal(root.style.getPropertyValue("--keyboard-inset"), "0px");
+  viewport.height = browser.innerHeight - 300;
+  await act(async () => { viewport.dispatchEvent(new browser.Event("resize")); });
+  assert.equal(root.style.getPropertyValue("--keyboard-inset"), "300px", "키보드가 가린 높이만큼 올린다");
+  await act(async () => { editable.dispatchEvent(new browser.FocusEvent("focusout", { bubbles: true })); });
+  assert.equal(root.dataset.editorDock, undefined);
+  assert.equal(root.style.getPropertyValue("--keyboard-inset"), "");
+});
+
 test("믹스셋 목록 줄은 링크 플레이어를 누른 줄에만 열고, 오디오 줄은 하단 미니 플레이어(공용 곡)로 재생하며 매체 없음 줄은 그대로 둔다", async (context) => {
   playerStore.resetPlayerForTests();
   context.after(() => playerStore.resetPlayerForTests());

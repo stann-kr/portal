@@ -652,7 +652,8 @@ export function FullEditor({
   );
   // 좁은 화면 문서 편집 서식 줄을 키보드 바로 위에 붙인다(B 묶음 ⑦).
   const editorRootRef = useRef<HTMLDivElement>(null);
-  useKeyboardInset(editorRootRef, isPage && !isMarkdownMode && !disabled);
+  // 편집기는 첫 렌더에 없을 수 있다(immediatelyRender: false → 아래 return null). 루트 div가 생기는 렌더에서 다시 붙도록 editor도 조건에 둔다.
+  useKeyboardInset(editorRootRef, isPage && !isMarkdownMode && !disabled && editor !== null);
 
   if (!editor) return null;
 
