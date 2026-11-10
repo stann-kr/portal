@@ -10,7 +10,7 @@
  */
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent, type PointerEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent, type PointerEvent, type RefObject } from "react";
 import Link from "next/link";
 import { ChevronDown, ChevronUp, Pause, Play, X } from "lucide-react";
 import { formatTimeMarker } from "@/lib/community-mixset-media";
@@ -29,6 +29,38 @@ import {
 import { fractionFromPointer, playedFraction, seekForKey, spokenTime } from "./waveform";
 
 const YOUTUBE_NOTICE_KEY = "portal:mini-player:youtube-notice";
+/** 미니 플레이어 막대 높이(홈 표시줄 여백 제외). player.css가 본문 아래 여백·입력줄 위치에 쓴다. */
+const MINI_PLAYER_HEIGHT_PROPERTY = "--mini-player-height";
+
+/** 홈 표시줄 여백(padding)과 넓은 화면 위 경계선을 뺀 막대 높이. */
+function miniPlayerBarHeight(element: HTMLElement): number {
+  const style = window.getComputedStyle(element);
+  const padding = (Number.parseFloat(style.paddingTop) || 0) + (Number.parseFloat(style.paddingBottom) || 0);
+  return Math.max(0, element.clientHeight - padding);
+}
+
+/**
+ * 미니 플레이어 막대 높이를 재어 `<html>`의 `--mini-player-height`로 둔다(YouTube 안내 줄이 붙으면 높아진다).
+ * 막대가 사라지면 지운다(그동안 CSS는 58px로 본다).
+ */
+function useMiniPlayerHeight(ref: RefObject<HTMLElement | null>) {
+  useLayoutEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+    const root = document.documentElement;
+    const measure = () => {
+      const height = miniPlayerBarHeight(element);
+      if (height > 0) root.style.setProperty(MINI_PLAYER_HEIGHT_PROPERTY, `${Math.round(height)}px`);
+    };
+    measure();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    observer?.observe(element);
+    return () => {
+      observer?.disconnect();
+      root.style.removeProperty(MINI_PLAYER_HEIGHT_PROPERTY);
+    };
+  }, [ref]);
+}
 /** player.css에서 작은 창을 화면 밖으로 옮기는 폭과 같다. */
 const MOBILE_QUERY = "(max-width: 767.98px)";
 
@@ -75,6 +107,8 @@ export function PersistentPlayerHost() {
 
 function MiniPlayer({ state, track }: { state: PlayerState; track: PlayerTrack }) {
   const controllerRef = useRef<PlaybackController | null>(null);
+  const barRef = useRef<HTMLElement>(null);
+  useMiniPlayerHeight(barRef);
   const readerRef = useRef<PlaybackPositionReader | null>(null);
   const isLink = track.kind !== "audio";
   const playing = state.playing;
@@ -188,7 +222,7 @@ function MiniPlayer({ state, track }: { state: PlayerState; track: PlayerTrack }
         </div>
       ) : null}
 
-      <section aria-label="이어 듣기 플레이어" className="mini-player">
+      <section ref={barRef} aria-label="이어 듣기 플레이어" className="mini-player">
         {/* 휴대폰: 위쪽 경계 자리의 2px 진행선(B 묶음 ③). 넓은 화면은 막대 안 탐색 막대가 맡는다. */}
         <span aria-hidden="true" className="block h-0.5 bg-border md:hidden">
           <span className="block h-0.5 bg-foreground" style={{ width: `${fraction * 100}%` }} />
