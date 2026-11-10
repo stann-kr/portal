@@ -561,6 +561,10 @@ test("Q&A 목록은 URL 상태 필터와 상세·작성·휴지통의 복귀 문
     const allTab = [...group.querySelectorAll("button")].find((button) => (button.textContent ?? "").startsWith("전체"))!;
     await act(async () => allTab.click());
     assert.equal(harness.container.querySelectorAll('a[href^="/dashboard/qna/thread-"]').length, 2, "전체 탭은 서버를 거치지 않고 바로 두 대화를 보인다");
+    // 머리의 휴지통 링크도 바꾼 탭(전체)으로 돌아오게 복귀 주소가 바뀐다.
+    const trashLink = [...harness.container.querySelectorAll<HTMLAnchorElement>("a")].find((link) => new URL(link.href, "https://portal.test").pathname === "/dashboard/qna/trash")!;
+    const trashBack = new URL(new URL(trashLink.href, "https://portal.test").searchParams.get("returnTo")!, "https://portal.test");
+    assert.equal(trashBack.searchParams.get("qnaStatus"), null, "탭을 바꾼 뒤 휴지통에서 돌아오면 바꾼 탭");
   }
   await harness.rerender(<ThreadList threads={qnaPageData} isAdmin filter="ANSWERED" returnTo="/dashboard/admin/students/student-1?tab=qna#records" />);
   // 학생 상세 안 Q&A 칩: 상태를 바꿔도 주소의 tab·hash는 그대로 둔다.

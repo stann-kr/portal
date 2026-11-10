@@ -7,7 +7,7 @@
  */
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { MessageCircle, Search } from "lucide-react";
 import type { QnaStatus } from "@/db/schema";
@@ -20,6 +20,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { cn } from "@/lib/utils";
 import { formatKstMonthDay } from "@/lib/kst-format";
 import { QnaStatusLabel } from "./qna-display";
+import { setQnaListFilter } from "./qna-list-filter";
 
 type Thread = {
   id: string;
@@ -59,9 +60,15 @@ export function ThreadList({
     setRendered({ filter, threads });
     setCurrent(filter);
   }
+  // 서버가 새로 그리면 머리 링크도 서버 값을 따르게 비우고, 화면을 떠나면 지운다.
+  useEffect(() => {
+    setQnaListFilter(null);
+    return () => setQnaListFilter(null);
+  }, [rendered]);
   const selectFilter = (next: QnaFilterTab) => {
     if (next === current) return;
     setCurrent(next);
+    setQnaListFilter(next);
     // 주소의 qnaStatus만 바꾼다(앱 라우터가 history 변경을 받아 useSearchParams도 맞춘다). 다른 값·hash는 그대로.
     const url = new URL(window.location.href);
     if (next === "ALL") url.searchParams.delete("qnaStatus");

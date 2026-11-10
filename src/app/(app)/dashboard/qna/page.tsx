@@ -7,10 +7,9 @@ export const dynamic = "force-dynamic";
 
 import { getActiveAuthSession } from "@/lib/auth-guard";
 import { redirect } from "next/navigation";
-import Link from "next/link";
 import { Plus, Trash2 } from "lucide-react";
 import { buttonClassName } from "@/components/ui/button";
-import { MobileTopBar } from "@/components/app-shell/AppSidebar";
+import { QnaListContextLink, QnaListTopBar } from "@/components/qna/QnaListContextLink";
 import { getQnaThreads } from "@/lib/actions/qna";
 import { ThreadList } from "@/components/qna/ThreadList";
 import type { QnaStatus } from "@/db/schema";
@@ -58,13 +57,13 @@ export default async function QnaPage({
     status: t.status as QnaStatus,
   }));
 
-  const trashHref = `/dashboard/qna/trash?returnTo=${encodeURIComponent(listHref)}`;
-  const newHref = `/dashboard/qna/new?returnTo=${encodeURIComponent(listHref)}`;
+  // 머리 링크는 화면 안 상태 탭을 바꾼 뒤에도 그 탭으로 돌아오게 client에서 복귀 주소를 만든다.
+  const context = { parentReturnTo, filter, search };
 
   return (
     <div className="px-5 pb-8 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-14">
       {/* 좁은 화면의 새 질문(+)도 지금 목록 문맥으로 돌아오게 한다. */}
-      {!isAdmin ? <MobileTopBar title="Q&A" action={{ href: newHref, label: "새 질문" }} /> : null}
+      <QnaListTopBar title="Q&A" newQuestion={!isAdmin} {...context} />
       <div className="flex max-w-[880px] flex-col md:gap-6 md:mx-auto">
         <header className="flex flex-wrap items-end justify-between gap-4">
           <div className="flex flex-col gap-1">
@@ -74,23 +73,24 @@ export default async function QnaPage({
             </p>
           </div>
           <div className="hidden gap-2 md:flex">
-            <Link href={trashHref} className={buttonClassName({ variant: "ghost" })}>휴지통</Link>
+            <QnaListContextLink path="/dashboard/qna/trash" {...context} className={buttonClassName({ variant: "ghost" })}>휴지통</QnaListContextLink>
             {!isAdmin ? (
-              <Link href={newHref} className={buttonClassName({ className: "gap-1.5" })}>
+              <QnaListContextLink path="/dashboard/qna/new" {...context} className={buttonClassName({ className: "gap-1.5" })}>
                 <Plus className="size-3.5" strokeWidth={1.8} aria-hidden="true" />새 질문
-              </Link>
+              </QnaListContextLink>
             ) : null}
           </div>
         </header>
 
         <ThreadList variant="tabs" threads={threads} isAdmin={isAdmin} returnTo={listHref} filter={filter} query={search} />
 
-        <Link
-          href={trashHref}
+        <QnaListContextLink
+          path="/dashboard/qna/trash"
+          {...context}
           className="mt-2 flex h-11 items-center gap-2 self-start text-body text-secondary-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:hidden"
         >
           <Trash2 className="size-4" strokeWidth={1.6} aria-hidden="true" />휴지통
-        </Link>
+        </QnaListContextLink>
       </div>
     </div>
   );
