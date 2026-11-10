@@ -228,6 +228,9 @@ function MiniPlayer({ state, track }: { state: PlayerState; track: PlayerTrack }
           <span className="block h-0.5 bg-foreground" style={{ width: `${fraction * 100}%` }} />
         </span>
         {track.kind === "youtube" ? <YouTubeLeaveNotice /> : null}
+        {state.error ? (
+          <p role="alert" className="px-3 pt-1.5 text-xs text-destructive md:px-4">오디오를 재생하지 못했습니다</p>
+        ) : null}
         <div className="flex h-14 items-center gap-2.5 px-3 md:h-16 md:gap-4 md:px-4">
           <button
             type="button"

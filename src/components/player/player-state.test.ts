@@ -101,3 +101,14 @@ test("작은 창 접기는 소리와 무관하게 토글되고 새 곡에서는 
   state = reducePlayer(state, { type: "start", track: audioTrack });
   assert.equal(state.videoCollapsed, false);
 });
+
+test("공용 오디오 오류는 그 곡에만 표시하고 멈추며, 다음 start에서 지운다", () => {
+  let state = run([{ type: "start", track: audioTrack }, { type: "error", key: "other" }]);
+  assert.equal(state.error, false, "다른 곡의 오류는 무시한다");
+  state = run([{ type: "error", key: audioTrack.key }], state);
+  assert.equal(state.error, true);
+  assert.equal(state.playing, false);
+  state = run([{ type: "start", track: audioTrack }], state);
+  assert.equal(state.error, false);
+  assert.equal(run([{ type: "error", key: audioTrack.key }, { type: "close" }], state).error, false);
+});

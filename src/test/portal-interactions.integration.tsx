@@ -2150,6 +2150,24 @@ test("믹스셋 파형은 시점 댓글 아이콘·말풍선으로 댓글을 찾
   assert.equal(browser.document.documentElement.dataset.miniPlayer, undefined);
 });
 
+test("미니 플레이어는 공용 오디오가 재생하지 못하면 알리고, 다시 시작하면 지운다", async (context) => {
+  playerStore.resetPlayerForTests();
+  context.after(() => playerStore.resetPlayerForTests());
+  await render(context, <PersistentPlayerHost />);
+  const track = { key: "broken-audio", kind: "audio" as const, url: "/api/media/broken", title: "깨진 오디오", subtitle: "", href: "/community/broken-audio", mediaObjectId: null };
+  await act(async () => playerStore.startTrack(track));
+  const audio = playerStore.getSharedAudio();
+  assert.ok(audio);
+  const bar = () => browser.document.querySelector('section[aria-label="이어 듣기 플레이어"]');
+  assert.ok(bar());
+  assert.equal(bar()?.querySelector('[role="alert"]'), null);
+  await act(async () => { audio.dispatchEvent(new browser.Event("error") as unknown as Event); });
+  assert.equal(bar()?.querySelector('[role="alert"]')?.textContent, "오디오를 재생하지 못했습니다");
+  assert.equal(playerStore.getPlayerState().playing, false);
+  await act(async () => playerStore.startTrack(track));
+  assert.equal(bar()?.querySelector('[role="alert"]'), null, "다시 시작하면 지운다");
+});
+
 test("댓글 시점 칸은 매체가 있는 믹스셋에만 보이고 시점·작업 식별자·초안을 함께 다룬다", async (context) => {
   browser.localStorage.clear();
   const submissions: { content: unknown; timeMarker: unknown; operationId: unknown }[] = [];
