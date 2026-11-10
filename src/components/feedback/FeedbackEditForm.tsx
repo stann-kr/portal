@@ -2,6 +2,7 @@
  * @file src/components/feedback/FeedbackEditForm.tsx
  * @description 남긴 피드백을 그 자리에서 고치는 줄(UsabilityBundle ⑫). 관리자 전용.
  * 시점(분:초) 칸과 내용 한 줄, 취소·저장. 고치는 중인 내용은 이 기기에 남고(local draft),
+ * "취소"는 보관본까지 버리지만 Esc는 줄만 닫고 보관본을 남긴다(다시 열면 되살아난다. 한글 조합 중 Esc는 무시).
  * 저장 중에는 화면 이탈을 막는다. 서버는 고치기 시작할 때의 값과 같을 때만 바꾼다(updateFeedback).
  * 기준값(expected)은 고치기 시작할 때 한 번 잡아 고정하고 보관본에도 함께 남긴다. 그래서 고치는 사이
  * 화면 값(props)이 새로 바뀌거나 예전 보관본을 되살려도, 시작했던 값과 서버 값이 다르면 덮지 않고 충돌로 알린다.
@@ -115,6 +116,17 @@ export function FeedbackEditForm({
     onCancel();
   };
 
+  // Esc는 줄만 닫고 고치던 내용(이 기기 보관본)은 남긴다. 다시 열면 되살아난다. 바꾼 것이 없으면 취소와 같다.
+  const dismiss = () => {
+    const dirty = legacy !== null || timeMarker !== initialMarker || content !== baseline.content;
+    if (!dirty) {
+      cancel();
+      return;
+    }
+    draft.flush();
+    onCancel();
+  };
+
   const label = feedback.timeMarker === null ? "전체" : formatMarker(feedback.timeMarker);
   const inputIdBase = `feedback-edit-${feedback.id}`;
 
@@ -124,10 +136,10 @@ export function FeedbackEditForm({
       className="flex flex-col gap-2"
       onBlur={draft.flush}
       onKeyDown={(event) => {
-        if (event.key === "Escape" && !isPending) {
-          event.preventDefault();
-          cancel();
-        }
+        // 한글 조합 중 Esc는 조합 취소이므로 줄을 닫지 않는다.
+        if (event.key !== "Escape" || isPending || event.nativeEvent.isComposing || event.keyCode === 229) return;
+        event.preventDefault();
+        dismiss();
       }}
       onSubmit={(event) => {
         event.preventDefault();

@@ -2,7 +2,9 @@
  * @file src/components/player/use-audio-peaks.ts
  * @description 업로드 오디오 파형을 서버에서 불러오고, 없으면 처음 재생할 때 이 브라우저가 만들어 서버에 저장한다.
  * 한 번 저장되면 그 뒤로는 누구든 서버에서 불러오기만 한다.
- * - 같은 주소는 한 번만 계산한다(화면을 떠나도 계산·저장은 끝까지 간다).
+ * - 같은 주소는 한 번만 계산한다(`shared-peaks-jobs`). 그 주소를 기다리는 화면이 모두 떠나고 하단 공용 플레이어도
+ *   그 주소를 재생하지 않으면 받기·디코딩을 멈춘다. 아직 큐에서 차례를 기다리던 작업은 시작하지 않는다.
+ *   멈춘 작업은 실패로 기억하지 않고 저장하지 않으며, 다음에 그 화면을 열면 처음부터 다시 만든다.
  * - 메모리: 결과는 최근 8개 주소만 기억하고, 디코딩은 한 번에 하나만 돌린다(`enqueuePeaksDecode`).
  * - 저장: 오디오를 읽을 수 있는 사람은 누구든 아직 없는 파형을 처음 한 번 저장한다(서버가 처음 값만 남긴다).
  *   예전 서버가 403을 주면 그 매체는 다시 PUT하지 않는다.
@@ -19,14 +21,17 @@ import { loadAudioPeaks, saveAudioPeaksResult } from "@/lib/media-peaks-client";
 import { canComputePeaksOnThisDevice, computeAudioPeaksFromUrl, enqueuePeaksDecode } from "./compute-audio-peaks";
 import { LruMap } from "./peaks-cache";
 import { hasRecentPeaksFailure, rememberPeaksFailure } from "./peaks-failure-memory";
+import { getPlayerState } from "./player-store";
+import { createSharedPeaksJobs } from "./shared-peaks-jobs";
 
 export type PeaksStatus = "loading" | "ready" | "missing" | "computing" | "unavailable";
 
 /** 주소별 결과: 파형, 또는 만들 수 없음(null). */
 const known = new LruMap<string, AudioPeaks | null>(8);
-const computing = new Map<string, Promise<AudioPeaks | null>>();
 /** 저장 권한이 없다고 답한 매체(다시 PUT하지 않는다). 매체 ID 문자열만 둔다. */
 const saveForbidden = new LruMap<string, true>(64);
+/** 주소별 매체 ID(작업 본문은 주소만 받는다). */
+const mediaIds = new LruMap<string, string | null>(32);
 
 /** 이 브라우저에서 만들지 않을 것인지(기기 제한 또는 최근 실패). */
 function shouldSkipCompute(mediaObjectId: string | null): boolean {
@@ -34,31 +39,38 @@ function shouldSkipCompute(mediaObjectId: string | null): boolean {
   return mediaObjectId ? hasRecentPeaksFailure(mediaObjectId) : false;
 }
 
-function computeOnce(url: string, mediaObjectId: string | null): Promise<AudioPeaks | null> {
-  const running = computing.get(url);
-  if (running) return running;
-  const task = enqueueDecode(url, mediaObjectId)
-    .then(async ({ peaks, complete }) => {
-      known.set(url, peaks);
-      if (peaks && complete && mediaObjectId && !saveForbidden.has(mediaObjectId)) {
-        const result = await saveAudioPeaksResult(mediaObjectId, peaks);
-        if (result === "forbidden") saveForbidden.set(mediaObjectId, true);
-      }
-      return peaks;
-    })
-    .finally(() => computing.delete(url));
-  computing.set(url, task);
-  return task;
-}
+type DecodeOutcome = { peaks: AudioPeaks | null; complete: boolean; aborted: boolean };
 
-async function enqueueDecode(url: string, mediaObjectId: string | null): Promise<{ peaks: AudioPeaks | null; complete: boolean }> {
-  if (shouldSkipCompute(mediaObjectId)) return { peaks: null, complete: false };
-  const result = await enqueuePeaksDecode(() => computeAudioPeaksFromUrl(url));
+const jobs = createSharedPeaksJobs<AudioPeaks | null>({
+  async run(url, signal) {
+    const mediaObjectId = mediaIds.get(url) ?? null;
+    const { peaks, complete, aborted } = await enqueueDecode(url, mediaObjectId, signal);
+    // 멈춘 작업은 결과를 남기지 않는다(다음에 다시 만든다).
+    if (aborted) return null;
+    known.set(url, peaks);
+    if (peaks && complete && mediaObjectId && !saveForbidden.has(mediaObjectId)) {
+      const result = await saveAudioPeaksResult(mediaObjectId, peaks);
+      if (result === "forbidden") saveForbidden.set(mediaObjectId, true);
+    }
+    return peaks;
+  },
+  // 하단 공용 플레이어가 이 주소를 재생 중이면 화면을 떠나도 끝까지 만든다.
+  keepAlive: (url) => getPlayerState().track?.url === url,
+});
+
+async function enqueueDecode(url: string, mediaObjectId: string | null, signal: AbortSignal): Promise<DecodeOutcome> {
+  if (shouldSkipCompute(mediaObjectId)) return { peaks: null, complete: false, aborted: false };
+  const result = await enqueuePeaksDecode(async () => {
+    // 차례를 기다리는 동안 모두 떠났으면 시작하지 않는다.
+    if (signal.aborted) return null;
+    return computeAudioPeaksFromUrl(url, signal);
+  });
+  if (result === null || signal.aborted) return { peaks: null, complete: false, aborted: true };
   // 일부 조각을 디코딩하지 못한 파형은 이번에만 보여 주고 저장하지 않으며, 실패처럼 기억해 다음 재생 때 다시 받지 않는다.
   if (!result.ok ? !result.retry : !result.complete) {
     if (mediaObjectId) rememberPeaksFailure(mediaObjectId);
   }
-  return result.ok ? { peaks: result.peaks, complete: result.complete } : { peaks: null, complete: false };
+  return result.ok ? { peaks: result.peaks, complete: result.complete, aborted: false } : { peaks: null, complete: false, aborted: false };
 }
 
 type Outcome = { url: string; peaks: AudioPeaks | null };
@@ -93,11 +105,14 @@ export function useAudioPeaks(url: string, mediaObjectId: string | null, shouldC
   useEffect(() => {
     if (!needsCompute) return;
     let active = true;
-    void computeOnce(url, mediaObjectId).then((peaks) => {
+    mediaIds.set(url, mediaObjectId);
+    const job = jobs.subscribe(url);
+    void job.promise.then((peaks) => {
       if (active) setComputed({ url, peaks });
     });
     return () => {
       active = false;
+      job.release();
     };
   }, [mediaObjectId, needsCompute, url]);
 

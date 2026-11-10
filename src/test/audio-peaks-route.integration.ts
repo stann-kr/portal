@@ -11,6 +11,7 @@ let activeDb: PortalTestDb | null = null;
 let activeSession: AuthSession | null = null;
 const stored = new Map<string, string>();
 const putCalls: string[] = [];
+const replaceCalls: string[] = [];
 let route: typeof import("@/app/api/media/[mediaObjectId]/peaks/route");
 
 mock.module("@/lib/auth-guard", {
@@ -36,6 +37,11 @@ mock.module("@/lib/r2", {
         if (stored.has(key)) return false;
         stored.set(key, json);
         return true;
+      },
+      async replace(audioObjectKey: string, json: string) {
+        const key = `${audioObjectKey}.peaks.json`;
+        replaceCalls.push(key);
+        stored.set(key, json);
       },
     }),
   },
@@ -64,6 +70,7 @@ async function setup(context: TestContext) {
   activeDb = isolated.db;
   stored.clear();
   putCalls.length = 0;
+  replaceCalls.length = 0;
   context.after(async () => {
     activeDb = null;
     activeSession = null;
@@ -160,12 +167,16 @@ test("형식이 틀리거나 너무 큰 파형은 400·413으로 거절한다", 
   assert.equal(putCalls.length, 0);
 });
 
-test("길이가 파일 크기와 맞지 않는 파형(평균 10,000kbps 초과 등)은 400으로 거절한다", async (t) => {
+test("길이가 파일 크기와 맞지 않는 파형(MP3 평균 8~400kbps 밖 등)은 400으로 거절한다", async (t) => {
   await setup(t);
   activeSession = session("other");
-  // 파일은 84MB(3500초 × 192kbps). 1초·30초 길이는 이 파일의 파형일 수 없다(평균 22,400kbps 이상).
+  // 파일은 84MB MP3(3500초 × 192kbps). 1초·30초 길이는 이 파일의 파형일 수 없다(평균 22,400kbps 이상).
   assert.equal((await put(ATTACHED_ID, JSON.stringify(samplePeaks(1, 0.9)))).status, 400);
   assert.equal((await put(ATTACHED_ID, JSON.stringify(samplePeaks(30, 0.9)))).status, 400);
+  // 1000초면 672kbps: 예전 넓은 범위(4~10,000kbps)는 통과했지만 MP3로는 맞지 않는다.
+  assert.equal((await put(ATTACHED_ID, JSON.stringify(samplePeaks(1000, 0.9)))).status, 400);
+  // 30시간이면 6.2kbps: MP3로는 너무 낮다.
+  assert.equal((await put(ATTACHED_ID, JSON.stringify(samplePeaks(30 * 60 * 60, 0.9)))).status, 400);
   assert.equal(putCalls.length, 0);
   assert.equal(stored.size, 0);
 });
@@ -178,18 +189,67 @@ test("오디오를 읽을 수 있는 다른 학생도 아직 없는 파형을 �
   assert.equal(saved.status, 201);
   assert.deepEqual(await saved.json(), { saved: true });
 
-  // 처음 쓴 값이 이긴다: 그 뒤 소유자의 쓰기는 덮지 않는다(POST도 같다).
-  activeSession = session("owner");
-  const ownerPost = await route.POST(new Request(`https://portal.test/api/media/${ATTACHED_ID}/peaks`, { method: "POST", body: JSON.stringify(samplePeaks(3400, 0.9)) }), context(ATTACHED_ID));
-  assert.equal(ownerPost.status, 200);
-  assert.deepEqual(await ownerPost.json(), { saved: false });
+  // 다른 reader의 두 번째 쓰기는 덮지 않는다.
+  const again = await put(ATTACHED_ID, JSON.stringify(samplePeaks(3400, 0.7)));
+  assert.equal(again.status, 200);
+  assert.deepEqual(await again.json(), { saved: false });
 
   for (const reader of [session("owner"), session("other"), session("admin", "admin")]) {
     activeSession = reader;
     const loaded = await get(ATTACHED_ID);
     assert.equal(loaded.status, 200, `${reader.user.id}가 서버 파형을 불러온다`);
-    assert.equal(((await loaded.json()) as AudioPeaks).peaks[0], 0.25);
+    const body = (await loaded.json()) as AudioPeaks & { writer?: unknown };
+    assert.equal(body.peaks[0], 0.25);
+    assert.equal(body.writer, undefined, "GET은 AudioPeaks 모양만 돌려준다");
   }
+  assert.equal(replaceCalls.length, 0);
+});
+
+test("소유자·관리자는 다른 학생이 먼저 쓴 파형을 바꾸고, 그 뒤로는 학생이 덮지 못한다", async (t) => {
+  await setup(t);
+  activeSession = session("other");
+  assert.equal((await put(ATTACHED_ID, JSON.stringify(samplePeaks(3500, 0.25)))).status, 201);
+
+  // 소유자(POST도 같다)가 바꾼다.
+  activeSession = session("owner");
+  const ownerPost = await route.POST(new Request(`https://portal.test/api/media/${ATTACHED_ID}/peaks`, { method: "POST", body: JSON.stringify(samplePeaks(3400, 0.9)) }), context(ATTACHED_ID));
+  assert.equal(ownerPost.status, 201);
+  assert.deepEqual(await ownerPost.json(), { saved: true });
+  assert.equal(((await (await get(ATTACHED_ID)).json()) as AudioPeaks).peaks[0], 0.9);
+
+  // 소유자가 쓴 값은 학생도, 관리자도 덮지 않는다.
+  activeSession = session("other");
+  assert.deepEqual(await (await put(ATTACHED_ID, JSON.stringify(samplePeaks(3500, 0.1)))).json(), { saved: false });
+  activeSession = session("admin", "admin");
+  assert.deepEqual(await (await put(ATTACHED_ID, JSON.stringify(samplePeaks(3500, 0.2)))).json(), { saved: false });
+  assert.equal(((await (await get(ATTACHED_ID)).json()) as AudioPeaks).peaks[0], 0.9);
+  assert.equal(replaceCalls.length, 1);
+});
+
+test("관리자도 다른 학생이 먼저 쓴 파형을 바꾼다", async (t) => {
+  await setup(t);
+  activeSession = session("other");
+  assert.equal((await put(ATTACHED_ID, JSON.stringify(samplePeaks(3500, 0.25)))).status, 201);
+  activeSession = session("admin", "admin");
+  const replaced = await put(ATTACHED_ID, JSON.stringify(samplePeaks(3500, 0.6)));
+  assert.equal(replaced.status, 201);
+  activeSession = session("owner");
+  assert.equal(((await (await get(ATTACHED_ID)).json()) as AudioPeaks).peaks[0], 0.6);
+});
+
+test("쓴 사람 표시가 없는 예전 파형은 소유자가 쓴 것으로 보고 덮지 않는다", async (t) => {
+  await setup(t);
+  const key = "media/community-post-audio/20000000-0000-4000-8000-000000000012.peaks.json";
+  stored.set(key, JSON.stringify(samplePeaks(3500, 0.33)));
+  for (const writer of [session("owner"), session("admin", "admin"), session("other")]) {
+    activeSession = writer;
+    const response = await put(ATTACHED_ID, JSON.stringify(samplePeaks(3500, 0.8)));
+    assert.equal(response.status, 200, `${writer.user.id}`);
+    assert.deepEqual(await response.json(), { saved: false });
+  }
+  activeSession = session("other");
+  assert.equal(((await (await get(ATTACHED_ID)).json()) as AudioPeaks).peaks[0], 0.33);
+  assert.equal(replaceCalls.length, 0);
 });
 
 test("소유자가 처음 쓴 파형만 남고 관리자의 두 번째 쓰기는 덮지 않는다", async (t) => {

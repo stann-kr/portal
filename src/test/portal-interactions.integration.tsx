@@ -2150,6 +2150,52 @@ test("믹스셋 파형은 시점 댓글 아이콘·말풍선으로 댓글을 찾
   assert.equal(browser.document.documentElement.dataset.miniPlayer, undefined);
 });
 
+test("믹스셋 파형: 이 화면이 맡은 곡을 멈춘 채 파형을 화살표로 옮기면 위치만 옮기고 재생하지 않는다", async (context) => {
+  browser.localStorage.clear();
+  playerStore.resetPlayerForTests();
+  context.after(() => playerStore.resetPlayerForTests());
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(null, { status: 404 })) as typeof fetch;
+  context.after(() => { globalThis.fetch = originalFetch; });
+  const post = mixsetPost("mixset-seek", { mediaUrl: "/api/media/audio-seek", mediaObjectId: null });
+  await render(context, <PostDetailClient postId={post.id} post={post} initialCommentList={[]} currentUserId="student-1" isAdmin={false} returnTo="/community" />);
+  await press("재생");
+  const audio = playerStore.getSharedAudio();
+  assert.ok(audio);
+  await act(async () => { audio.dispatchEvent(new browser.Event("loadedmetadata") as unknown as Event); audio.dispatchEvent(new browser.Event("play") as unknown as Event); });
+  await press("일시정지");
+  await act(async () => { audio.dispatchEvent(new browser.Event("pause") as unknown as Event); });
+  assert.equal(audio.paused, true);
+
+  const slider = browser.document.querySelector('section[aria-label="믹스셋 재생"] [role="slider"]');
+  assert.ok(slider);
+  await act(async () => {
+    slider.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }));
+  });
+  await settle();
+  assert.equal(audio.paused, true, "멈춘 채 옮기면 재생하지 않는다");
+  assert.equal(playerStore.getPlayerState().playing, false);
+  assert.equal(playerStore.getPlayerState().position, 5, "위치는 5초 옮긴다");
+});
+
+test("미니 플레이어는 공용 오디오가 재생하지 못하면 알리고, 다시 시작하면 지운다", async (context) => {
+  playerStore.resetPlayerForTests();
+  context.after(() => playerStore.resetPlayerForTests());
+  await render(context, <PersistentPlayerHost />);
+  const track = { key: "broken-audio", kind: "audio" as const, url: "/api/media/broken", title: "깨진 오디오", subtitle: "", href: "/community/broken-audio", mediaObjectId: null };
+  await act(async () => playerStore.startTrack(track));
+  const audio = playerStore.getSharedAudio();
+  assert.ok(audio);
+  const bar = () => browser.document.querySelector('section[aria-label="이어 듣기 플레이어"]');
+  assert.ok(bar());
+  assert.equal(bar()?.querySelector('[role="alert"]'), null);
+  await act(async () => { audio.dispatchEvent(new browser.Event("error") as unknown as Event); });
+  assert.equal(bar()?.querySelector('[role="alert"]')?.textContent, "오디오를 재생하지 못했습니다");
+  assert.equal(playerStore.getPlayerState().playing, false);
+  await act(async () => playerStore.startTrack(track));
+  assert.equal(bar()?.querySelector('[role="alert"]'), null, "다시 시작하면 지운다");
+});
+
 test("댓글 시점 칸은 매체가 있는 믹스셋에만 보이고 시점·작업 식별자·초안을 함께 다룬다", async (context) => {
   browser.localStorage.clear();
   const submissions: { content: unknown; timeMarker: unknown; operationId: unknown }[] = [];
@@ -3280,6 +3326,49 @@ test("피드백 고치기: 기준값 없는 예전 보관본은 바로 저장하
   await press("저장");
   await settle();
   assert.deepEqual(sent, [["fb-legacy", { timeMarker: "01:30", content: "A를 고친 예전 내용" }, { content: "B 내용", timeMarker: 120 }]], "비교하고 고른 뒤에야 지금 값(B)을 기준으로 보낸다");
+});
+
+test("피드백 고치기: Esc는 줄만 닫고 고치던 내용은 이 기기에 남기며, 한글 조합 중 Esc는 무시한다", async (context) => {
+  editFeedback = async () => ({ success: true });
+  browser.localStorage.clear();
+  const list = [{ id: "fb-esc", timeMarker: 90, content: "처음 내용", createdAt: null }];
+  await render(context, <TimelineFeedback assignmentId="esc-assignment" actorId="admin-esc" feedbackList={list} isAdmin />);
+  const setValue = (input: HTMLInputElement, value: string) => {
+    const setter = Object.getOwnPropertyDescriptor(browser.HTMLInputElement.prototype, "value")?.set;
+    setter?.call(input, value);
+    input.dispatchEvent(new browser.Event("input", { bubbles: true }) as unknown as Event);
+  };
+  const escape = async (input: HTMLInputElement, isComposing: boolean) => {
+    await act(async () => {
+      input.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true, isComposing }) as unknown as Event);
+    });
+    await settle();
+  };
+  const formSelector = 'form[aria-label="01:30 피드백 고치기"]';
+
+  await press("01:30 피드백 고치기");
+  await settle();
+  const contentInput = browser.document.querySelectorAll(`${formSelector} input`)[1] as unknown as HTMLInputElement;
+  await act(async () => { setValue(contentInput, "고치던 내용"); });
+  await settle();
+
+  await escape(contentInput, true);
+  assert.ok(browser.document.querySelector(formSelector), "조합 중 Esc는 줄을 닫지 않는다");
+
+  await escape(contentInput, false);
+  assert.equal(browser.document.querySelector(formSelector), null, "Esc는 줄을 닫는다");
+
+  await press("01:30 피드백 고치기");
+  await settle();
+  const reopened = browser.document.querySelectorAll(`${formSelector} input`)[1] as unknown as HTMLInputElement;
+  assert.equal(reopened.value, "고치던 내용", "다시 열면 고치던 내용이 되살아난다");
+
+  // 취소는 보관본까지 버린다.
+  await press("취소");
+  await settle();
+  await press("01:30 피드백 고치기");
+  await settle();
+  assert.equal((browser.document.querySelectorAll(`${formSelector} input`)[1] as unknown as HTMLInputElement).value, "처음 내용");
 });
 
 test("피드백 고치기: 기준값 없는 예전 보관본을 버리면 지금 값에서 다시 고친다", async (context) => {

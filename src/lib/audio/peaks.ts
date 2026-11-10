@@ -43,13 +43,48 @@ export function parseAudioPeaks(raw: unknown): AudioPeaksParseResult {
 /** 파형 길이로 본 평균 비트레이트 허용 범위(kbps). 압축 오디오(8~320kbps)부터 무압축 다채널까지 넉넉히 둔다. */
 const MIN_PLAUSIBLE_KBPS = 4;
 const MAX_PLAUSIBLE_KBPS = 10_000;
+/** MP3는 8~320kbps(VBR 여유 포함)라 범위를 좁힌다. 남이 엉뚱한 길이를 먼저 저장하기 어렵게 한다. */
+const MPEG_MIN_PLAUSIBLE_KBPS = 8;
+const MPEG_MAX_PLAUSIBLE_KBPS = 400;
 
-/** 파형 길이가 파일 크기와 맞는지(크기를 모르면 통과). 남이 엉뚱한 길이를 먼저 저장하지 못하게 한다. */
-export function isPlausiblePeaksDuration(duration: number, sizeBytes: number | null): boolean {
+function isMpegContentType(contentType: string | null | undefined): boolean {
+  const type = (contentType ?? "").split(";")[0].trim().toLowerCase();
+  return type === "audio/mpeg" || type === "audio/mp3" || type === "audio/mpeg3" || type === "audio/x-mpeg";
+}
+
+/**
+ * 파형 길이가 파일 크기와 맞는지(크기를 모르면 통과). 남이 엉뚱한 길이를 먼저 저장하지 못하게 한다.
+ * MP3(audio/mpeg)는 평균 8~400kbps, 그 밖의 형식은 4~10,000kbps를 받는다.
+ */
+export function isPlausiblePeaksDuration(duration: number, sizeBytes: number | null, contentType?: string | null): boolean {
   if (!Number.isFinite(duration) || duration <= 0) return false;
   if (!sizeBytes || !Number.isFinite(sizeBytes) || sizeBytes <= 0) return true;
   const kbps = (sizeBytes * 8) / duration / 1000;
-  return kbps >= MIN_PLAUSIBLE_KBPS && kbps <= MAX_PLAUSIBLE_KBPS;
+  const [min, max] = isMpegContentType(contentType)
+    ? [MPEG_MIN_PLAUSIBLE_KBPS, MPEG_MAX_PLAUSIBLE_KBPS]
+    : [MIN_PLAUSIBLE_KBPS, MAX_PLAUSIBLE_KBPS];
+  return kbps >= min && kbps <= max;
+}
+
+/**
+ * 저장한 파형을 쓴 사람의 종류. `owner`는 오디오 소유자·관리자, `reader`는 그 밖에 오디오를 읽을 수 있는 사람이다.
+ * 저장 JSON에 `writer` 필드로 함께 두며(`AudioPeaks` 모양은 그대로), 필드가 없는 예전 파일은 `owner`로 본다.
+ */
+export type AudioPeaksWriter = "owner" | "reader";
+
+/** 저장할 JSON. `parseAudioPeaks`는 `writer`를 무시하므로 읽는 쪽 모양은 바뀌지 않는다. */
+export function serializeStoredAudioPeaks(value: AudioPeaks, writer: AudioPeaksWriter): string {
+  return JSON.stringify({ ...value, writer });
+}
+
+/** 저장 JSON을 쓴 사람의 종류. `writer: "reader"`만 reader이고, 없거나 읽을 수 없으면 owner(예전 파일 호환)다. */
+export function storedAudioPeaksWriter(stored: string): AudioPeaksWriter {
+  try {
+    const raw = JSON.parse(stored) as { writer?: unknown } | null;
+    return raw && typeof raw === "object" && raw.writer === "reader" ? "reader" : "owner";
+  } catch {
+    return "owner";
+  }
 }
 
 /**
