@@ -2290,6 +2290,13 @@ test("위쪽 이동 막대는 주소가 먼저 바뀌어도 불러오는 중 스
   await act(async () => root.render(screen(false)));
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
   assert.equal(bar(), null, "내용이 그려지면 막대가 사라진다");
+
+  // 이동 중 뒤로가기: 출발 주소로 돌아오면 막대를 바로 끈다(15초 포기까지 남지 않는다).
+  await act(async () => { startNavigationProgress(); });
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 160)); });
+  assert.ok(bar(), "이동을 기다리는 동안 막대가 보인다");
+  await act(async () => { browser.dispatchEvent(new browser.Event("popstate")); });
+  assert.equal(bar(), null, "뒤로·앞으로를 누르면 막대가 꺼진다");
 });
 
 test("믹스셋 목록 줄은 링크 플레이어를 누른 줄에만 열고, 오디오 줄은 하단 미니 플레이어(공용 곡)로 재생하며 매체 없음 줄은 그대로 둔다", async (context) => {

@@ -98,13 +98,20 @@ export function NavigationProgress() {
       const form = event.target;
       if (!event.defaultPrevented && form instanceof HTMLFormElement && form.method.toLowerCase() === "get") start();
     };
+    // 이동 중 뒤로·앞으로를 누르면 기다리던 이동이 취소된다. 출발 주소로 돌아오면 끝낼 신호가 없으므로 여기서 끈다.
+    const cancel = () => {
+      setStartedAt(null);
+      setVisible(false);
+    };
     window.addEventListener("click", onClick);
     window.addEventListener("submit", onSubmit);
     window.addEventListener(START_EVENT, start);
+    window.addEventListener("popstate", cancel);
     return () => {
       window.removeEventListener("click", onClick);
       window.removeEventListener("submit", onSubmit);
       window.removeEventListener(START_EVENT, start);
+      window.removeEventListener("popstate", cancel);
     };
   }, []);
 
