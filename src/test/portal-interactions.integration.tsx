@@ -31,6 +31,7 @@ let renderCalendarEventContent: typeof import("@/components/calendar/CalendarEve
 let VideoPlayer: typeof import("@/components/player/VideoPlayer").VideoPlayer;
 let TimelineFeedback: typeof import("@/components/feedback/TimelineFeedback").TimelineFeedback;
 let PostDetailClient: typeof import("@/app/community/[postId]/PostDetailClient").PostDetailClient;
+let navigationProgress: typeof import("@/components/app-shell/NavigationProgress");
 let playerStore: typeof import("@/components/player/player-store");
 let PersistentPlayerHost: typeof import("@/components/player/PersistentPlayerHost").PersistentPlayerHost;
 let MixsetFeedbackCard: typeof import("@/components/community/MixsetFeedbackCard").MixsetFeedbackCard;
@@ -105,6 +106,7 @@ mock.module("next/navigation", { namedExports: {
   useRouter: () => ({ push() {}, refresh() {}, replace(href: string) { routerReplacements.push(href); } }),
   // 관리자 학생 상세의 좁은 화면 편집 모드(`?edit=1`)처럼 주소 값을 읽는 화면용. 테스트 창의 현재 주소를 준다.
   useSearchParams: () => new URLSearchParams(globalThis.location?.search ?? ""),
+  usePathname: () => (globalThis.window as { location?: { pathname: string } } | undefined)?.location?.pathname ?? "/",
 } });
 // Browser/provider loading is exercised separately; this boundary exposes v3's HTML media API.
 const HtmlMediaBoundary = React.forwardRef<HTMLVideoElement, ReactPlayerProps>((props, ref) => (
@@ -289,6 +291,7 @@ before(async () => {
   ({ TimelineFeedback } = await import("@/components/feedback/TimelineFeedback"));
   reviewControls = await import("@/components/admin/assignments/AssignmentReviewControls");
   ({ PostDetailClient } = await import("@/app/community/[postId]/PostDetailClient"));
+  navigationProgress = await import("@/components/app-shell/NavigationProgress");
   playerStore = await import("@/components/player/player-store");
   ({ PersistentPlayerHost } = await import("@/components/player/PersistentPlayerHost"));
   ({ MixsetFeedbackCard } = await import("@/components/community/MixsetFeedbackCard"));
@@ -2264,6 +2267,29 @@ test("문서 편집 서식 줄: 편집기가 늦게 그려져도 초점이 들�
   await act(async () => { editable.dispatchEvent(new browser.FocusEvent("focusout", { bubbles: true })); });
   assert.equal(root.dataset.editorDock, undefined);
   assert.equal(root.style.getPropertyValue("--keyboard-inset"), "");
+});
+
+test("위쪽 이동 막대는 주소가 먼저 바뀌어도 불러오는 중 스켈레톤이 사라질 때까지 남는다", async (context) => {
+  const { NavigationProgress, startNavigationProgress } = navigationProgress;
+  const originalUrl = browser.location.href;
+  context.after(() => browser.history.replaceState(null, "", originalUrl));
+  const screen = (skeleton: boolean) => (
+    <>
+      <NavigationProgress />
+      {skeleton ? <div className="skeleton-region" role="status" aria-busy="true" /> : <p>내용</p>}
+    </>
+  );
+  const root = await render(context, screen(false));
+  const bar = () => browser.document.querySelector(".portal-nav-progress");
+  await act(async () => { startNavigationProgress(); });
+  // loading.tsx 화면: 클릭 직후 주소가 바뀌고 스켈레톤이 보인다.
+  browser.history.pushState(null, "", "/dashboard/guide");
+  await act(async () => root.render(screen(true)));
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 160)); });
+  assert.ok(bar(), "주소가 바뀌었어도 스켈레톤이 있는 동안 막대가 보인다");
+  await act(async () => root.render(screen(false)));
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  assert.equal(bar(), null, "내용이 그려지면 막대가 사라진다");
 });
 
 test("믹스셋 목록 줄은 링크 플레이어를 누른 줄에만 열고, 오디오 줄은 하단 미니 플레이어(공용 곡)로 재생하며 매체 없음 줄은 그대로 둔다", async (context) => {

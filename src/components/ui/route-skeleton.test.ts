@@ -57,6 +57,11 @@ test("내용을 그리는 화면의 loading.tsx 스켈레톤 모양은 첫 진�
     const source = readFileSync(loading, "utf8");
     // query까지 보고 고르는 loading(SectionRouteSkeleton)은 셸 스켈레톤과 같은 resolver를 그대로 쓴다.
     if (source.includes("<SectionRouteSkeleton")) continue;
+    // 가이드 loading은 layout(목차) 안 본문 자리만 바꾼다. 첫 진입 셸 스켈레톤은 같은 순서의 guide-page(목차 포함)다.
+    if (source.includes("<GuideArticleSkeleton")) {
+      assert.equal(resolveRouteSkeletonKind(routePathOf(page)), "guide-page", relative(root, page));
+      continue;
+    }
     const declared = /kind="([a-z-]+)"/u.exec(source)?.[1] ?? (source.includes("RouteLoadingState") ? "generic" : null);
     // 셸 밖 화면((auth)·privacy)도 같은 대응을 쓴다.
     assert.equal(resolveRouteSkeletonKind(routePathOf(page)), declared as RouteSkeletonKind, relative(root, page));

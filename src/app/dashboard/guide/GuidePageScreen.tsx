@@ -3,6 +3,7 @@
  * @description 공용 가이드 페이지 읽기 화면. 학생·관리자가 같은 본문을 보고, 질문 위치는 서버가 보는 사람 기준으로 고른다.
  * `/dashboard/guide/[pageId]`와 가이드 첫 화면(`/dashboard/guide`, 첫 페이지)이 함께 쓴다. 첫 화면이 redirect하지 않고
  * 바로 그려 두 번째 요청과 스켈레톤 교체(목록 모양 → 페이지 모양)가 없다.
+ * 바깥 여백과 왼쪽 목차는 가이드 layout(GuideShell)이 그린다. 이 화면은 본문(article)만 그려 페이지를 옮겨도 목차가 남는다.
  */
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -11,31 +12,24 @@ import { MobileTopBar } from "@/components/app-shell/AppSidebar";
 import { NoteDocumentTitle } from "@/components/notes/NoteDocumentChrome";
 import { formatNoteUpdated } from "@/components/notes/note-display";
 import { GuideDeleteButton } from "@/components/guide/GuideDeleteButton";
-import { GuidePageNav } from "@/components/guide/GuidePageNav";
 import { GuideReader } from "@/components/guide/GuideReader";
 import { buttonClassName } from "@/components/ui/button";
-import { getGuidePage, getGuidePages, getGuideQuestions } from "@/lib/actions/guide";
+import { getGuidePage, getGuideQuestions } from "@/lib/actions/guide";
 import type { AuthSession } from "@/lib/auth-guard";
 import { guidePagePath, listGuideBlockIds } from "@/lib/guide-content";
 import { getRequestNow } from "@/lib/request-time";
 
 export async function GuidePageScreen({ pageId, session }: { pageId: string; session: AuthSession }) {
-  const [page, pages, questions] = await Promise.all([
-    getGuidePage(pageId),
-    getGuidePages(),
-    getGuideQuestions(pageId),
-  ]);
+  const [page, questions] = await Promise.all([getGuidePage(pageId), getGuideQuestions(pageId)]);
   if (!page) notFound();
 
   const isAdmin = session.user.role === "admin";
   const updatedLabel = formatNoteUpdated(page.updatedAt, getRequestNow());
 
   return (
-    <div className="px-5 pb-8 pt-4 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-14">
+    <>
       <MobileTopBar title="가이드" />
-      <div className="flex max-w-[1120px] flex-col gap-5 md:flex-row md:gap-12 md:mx-auto">
-        <GuidePageNav pages={pages.map(({ id, title }) => ({ id, title }))} currentId={page.id} canManage={isAdmin} />
-        <article className="flex min-w-0 max-w-[760px] flex-1 flex-col gap-6">
+        <article className="flex min-w-0 flex-col gap-6">
           <header className="flex flex-col gap-3">
             <NoteDocumentTitle>{page.title}</NoteDocumentTitle>
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -70,7 +64,6 @@ export async function GuidePageScreen({ pageId, session }: { pageId: string; ses
             actorId={session.user.id}
           />
         </article>
-      </div>
-    </div>
+    </>
   );
 }

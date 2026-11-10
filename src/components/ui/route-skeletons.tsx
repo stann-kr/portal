@@ -395,6 +395,20 @@ function GuidePageSkeleton({ label }: { label: string }) {
   );
 }
 
+/**
+ * 가이드 본문만(목차·바깥 여백은 가이드 layout이 이미 그렸다). 가이드 페이지 사이 이동·첫 화면 loading이 쓴다.
+ * 순서는 실제 화면과 같다: 제목(44px 줄) → 수정 정보 줄 → 본문.
+ */
+export function GuideArticleSkeleton() {
+  return (
+    <SkeletonRegion label="가이드를 불러오는 중" className="flex flex-col gap-5">
+      <SkeletonBar className="h-8 w-[60%] md:h-11" />
+      <SkeletonBar className="h-3 w-28" />
+      <TextLines count={9} />
+    </SkeletonRegion>
+  );
+}
+
 /** 로그인·가입·새 비밀번호: 로고는 (auth) layout이 이미 그린다. */
 function AuthSkeleton({ label }: { label: string }) {
   return (
