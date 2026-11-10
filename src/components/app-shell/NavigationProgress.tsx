@@ -37,9 +37,15 @@ export function useProgressRouter() {
   }), [router]);
 }
 
+/** 지금 화면에 불러오는 중 스켈레톤(loading.tsx·셸 스켈레톤)이 있는지. */
+function hasLoadingSkeleton(): boolean {
+  return document.querySelector(".skeleton-region") !== null;
+}
+
 /**
  * 화면 이동을 기다리는 동안 위쪽 가장자리에 2px 막대를 띄운다(캔버스 States "화면 이동 중").
- * 다른 주소로 가는 링크 클릭과 `startNavigationProgress` 호출에서 시작하고, 주소가 바뀌면 끝난다.
+ * 다른 주소로 가는 링크 클릭과 `startNavigationProgress` 호출에서 시작하고, 주소가 바뀐 뒤 스켈레톤까지 사라지면 끝난다.
+ * loading.tsx가 있는 화면은 클릭 직후(약 10ms) 주소가 먼저 바뀌고 스켈레톤이 보이므로, 주소만 보면 막대가 뜨기 전에 끝났다.
  */
 export function NavigationProgress() {
   const pathname = usePathname();
@@ -52,11 +58,27 @@ export function NavigationProgress() {
     locationKeyRef.current = locationKey;
   }, [locationKey]);
 
-  // 주소가 바뀌면 이동이 끝난 것이다. 렌더 중 비교해 바로 끈다.
-  if (startedAt && startedAt.key !== locationKey) {
-    setStartedAt(null);
-    setVisible(false);
-  }
+  // 주소가 바뀌었으면 도착했다. 실제 내용이 그려질 때(스켈레톤이 사라질 때) 끝낸다.
+  const arrived = startedAt !== null && startedAt.key !== locationKey;
+  useEffect(() => {
+    if (!arrived) return;
+    const finish = () => {
+      setStartedAt(null);
+      setVisible(false);
+    };
+    if (!hasLoadingSkeleton()) {
+      finish();
+      return;
+    }
+    const observer = new MutationObserver(() => {
+      if (!hasLoadingSkeleton()) {
+        observer.disconnect();
+        finish();
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, [arrived]);
 
   useEffect(() => {
     let nextId = 0;
@@ -76,13 +98,20 @@ export function NavigationProgress() {
       const form = event.target;
       if (!event.defaultPrevented && form instanceof HTMLFormElement && form.method.toLowerCase() === "get") start();
     };
+    // 이동 중 뒤로·앞으로를 누르면 기다리던 이동이 취소된다. 출발 주소로 돌아오면 끝낼 신호가 없으므로 여기서 끈다.
+    const cancel = () => {
+      setStartedAt(null);
+      setVisible(false);
+    };
     window.addEventListener("click", onClick);
     window.addEventListener("submit", onSubmit);
     window.addEventListener(START_EVENT, start);
+    window.addEventListener("popstate", cancel);
     return () => {
       window.removeEventListener("click", onClick);
       window.removeEventListener("submit", onSubmit);
       window.removeEventListener(START_EVENT, start);
+      window.removeEventListener("popstate", cancel);
     };
   }, []);
 

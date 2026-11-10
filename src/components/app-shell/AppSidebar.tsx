@@ -10,7 +10,6 @@ import { ChevronLeft, Menu, Plus, X, type LucideIcon } from "lucide-react";
 import { ButtonSpinner } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { AccountMenu } from "./AccountMenu";
-import { NavigationProgress } from "./NavigationProgress";
 import {
   APP_NAV_ITEMS,
   WORK_BADGE_NAV_ID,
@@ -228,7 +227,6 @@ export function AppSidebar({
 
   return (
     <TopBarContext.Provider value={setOverride}>
-      <NavigationProgress />
       <aside
         aria-label="사이드바"
         className="sticky top-0 hidden h-[100dvh] w-60 shrink-0 flex-col gap-6 border-r border-border bg-sidebar px-3 py-4 md:flex"
