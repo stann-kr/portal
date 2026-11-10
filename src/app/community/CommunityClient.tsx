@@ -10,8 +10,8 @@
 
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
+import { useProgressRouter } from "@/components/app-shell/NavigationProgress";
 import { Hash, MessageSquare, Music2, Plus, RotateCcw, Search, Settings2, Trash2 } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { Button, buttonClassName } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
@@ -94,7 +94,8 @@ function communityHref(boardType: CommunityBoardType, category: string): string 
 // ─── 메인 컴포넌트 ────────────────────────────────
 
 export default function CommunityClient({ isAdmin, initial, search = null }: CommunityClientProps) {
-  const router = useRouter();
+  // 검색을 끝내고 게시판을 옮길 때도 위쪽 이동 막대를 켠다.
+  const router = useProgressRouter();
   const [activeTab, setActiveTab] = useState<CommunityBoardType>(initial.boardType);
   const [activeCategory, setActiveCategory] = useState<string>(initial.category);
   const [categories, setCategories] = useState<Category[]>(initial.categories);
@@ -327,9 +328,9 @@ export default function CommunityClient({ isAdmin, initial, search = null }: Com
             {activeTab === "GENERAL" && currentCat ? `# ${currentCat.name} 채널` : COMMUNITY_BOARD_LABELS[activeTab]}에서 띄어 쓴 단어를 제목·본문에서 모두 찾습니다. 입력한 뒤 Enter를 누르세요.
           </span>
           {search ? (
-            <a href={communityHref(activeTab, activeCategory)} className="text-ui text-secondary-foreground underline underline-offset-4 hover:text-foreground">
+            <Link href={communityHref(activeTab, activeCategory)} className="text-ui text-secondary-foreground underline underline-offset-4 hover:text-foreground">
               검색 초기화
-            </a>
+            </Link>
           ) : null}
         </SoftGetForm>
 
@@ -343,12 +344,12 @@ export default function CommunityClient({ isAdmin, initial, search = null }: Com
                   {communitySearchSummary(search.query, search.posts.length)}
                 </span>
                 {search.posts.length === 0 && search.scope !== "all" ? (
-                  <a
+                  <Link
                     href={communitySearchHref({ boardType: activeTab, category: activeCategory, query: search.query, scope: "all" })}
                     className="text-foreground underline underline-offset-4"
                   >
                     전체에서 찾기
-                  </a>
+                  </Link>
                 ) : null}
               </p>
               {search.posts.length > 0 ? (

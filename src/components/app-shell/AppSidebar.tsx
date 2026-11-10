@@ -169,10 +169,11 @@ function AccountRow({
   );
 }
 
-function Brand({ size, onNavigate }: { size: "desktop" | "drawer"; onNavigate?: () => void }) {
+function Brand({ size, role, onNavigate }: { size: "desktop" | "drawer"; role: AppRole; onNavigate?: () => void }) {
   return (
     <Link
-      href="/"
+      // 역할별 첫 화면으로 바로 간다("/"는 proxy redirect를 한 번 더 거친다).
+      href={role === "admin" ? "/dashboard/admin" : "/dashboard/student"}
       onClick={onNavigate}
       className={cn(
         "flex items-center gap-2.5 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
@@ -231,7 +232,7 @@ export function AppSidebar({
         aria-label="사이드바"
         className="sticky top-0 hidden h-[100dvh] w-60 shrink-0 flex-col gap-6 border-r border-border bg-sidebar px-3 py-4 md:flex"
       >
-        <Brand size="desktop" />
+        <Brand size="desktop" role={role} />
         <SidebarNav role={role} variant="desktop" workCount={workCount} />
         <AccountRow role={role} displayName={displayName} ownerId={ownerId} canDeleteAccount={canDeleteAccount} variant="desktop" />
       </aside>
@@ -275,7 +276,7 @@ export function AppSidebar({
           >
             <Dialog.Title className="sr-only">메뉴</Dialog.Title>
             <div className="flex items-center justify-between">
-              <Brand size="drawer" onNavigate={() => setOpen(false)} />
+              <Brand size="drawer" role={role} onNavigate={() => setOpen(false)} />
               <Dialog.Close
                 aria-label="메뉴 닫기"
                 className="-mr-1 flex size-11 items-center justify-center rounded-touch text-secondary-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"

@@ -60,7 +60,7 @@ test("학생 딥링크는 현재 학생의 과제·항목 목록에 있을 때�
 });
 
 test("딥링크 주소 helper", () => {
-  assert.equal(assignmentTaskHref("t 1"), "/dashboard/student/assignments?task=t%201");
+  assert.equal(assignmentTaskHref("t 1"), "/dashboard/student?section=workspace&view=assignments&task=t%201", "예전 주소 redirect 없이 정식 주소");
   assert.equal(assignmentTaskHref("t1", { analysis: true }), analysisWriteHref("t1"));
   assert.equal(
     calendarItemHref("2026-11-09", "PORTAL:EVENT:a"),

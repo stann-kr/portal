@@ -78,6 +78,35 @@ export function roleHomeRedirectPath({
   return role === "admin" ? "/dashboard/admin" : "/dashboard/student";
 }
 
+/**
+ * 예전 주소를 화면을 그리기 전에 정식 주소로 보낸다(page의 redirect는 셸·스켈레톤을 보낸 뒤라 문서를 한 번 더 받았다).
+ * `/dashboard/student/assignments?task=`(과제 알림·복사 링크)와 `/dashboard/calendar`(예전 알림·북마크). page의 redirect는 남겨 둔다.
+ */
+export function legacyRouteRedirectPath({
+  isLoggedIn,
+  role,
+  pathname,
+  search,
+}: {
+  isLoggedIn: boolean;
+  role: unknown;
+  pathname: string;
+  search: string;
+}): string | null {
+  if (!isLoggedIn) return null;
+  const path = pathname.length > 1 ? pathname.replace(/\/+$/u, "") : pathname;
+  if (path === "/dashboard/calendar") {
+    return role === "admin" ? "/dashboard/admin?section=schedule&view=calendar" : "/dashboard/student?section=workspace&view=calendar";
+  }
+  if (path === "/dashboard/student/assignments" && role !== "admin") {
+    const task = new URLSearchParams(search).get("task");
+    const target = new URLSearchParams({ section: "workspace", view: "assignments" });
+    if (task) target.set("task", task);
+    return `/dashboard/student?${target.toString()}`;
+  }
+  return null;
+}
+
 export const authConfig: NextAuthConfig = {
   providers: [],
   session: {
@@ -104,6 +133,8 @@ export const authConfig: NextAuthConfig = {
       ) {
         return Response.redirect(new URL(PASSWORD_CHANGE_PATH, nextUrl));
       }
+      const legacyPath = legacyRouteRedirectPath({ isLoggedIn, role: auth?.user?.role, pathname: nextUrl.pathname, search: nextUrl.search });
+      if (legacyPath) return Response.redirect(new URL(legacyPath, nextUrl));
       const homePath = roleHomeRedirectPath({ isLoggedIn, role: auth?.user?.role, pathname: nextUrl.pathname });
       if (homePath) {
         const target = new URL(homePath, nextUrl);

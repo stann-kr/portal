@@ -5,6 +5,7 @@ import {
   authConfig,
   isCoarseRequestAuthorized,
   PASSWORD_CHANGE_PATH,
+  legacyRouteRedirectPath,
   roleHomeRedirectPath,
   shouldRedirectToPasswordChange,
 } from "./auth.config";
@@ -123,4 +124,14 @@ test("/dashboard 시작 주소는 화면을 그리기 전에 역할별 첫 화�
   assert.ok(pending instanceof Response);
   assert.equal(pending.headers.get("location"), `https://portal.example${PASSWORD_CHANGE_PATH}`);
   assert.equal(await authorized({ auth: null, request: { nextUrl: new URL("https://portal.example/dashboard") } }), false);
+});
+
+test("예전 주소는 화면을 그리기 전에 정식 주소로 보낸다", () => {
+  const go = (pathname: string, search = "", role: string = "student") => legacyRouteRedirectPath({ isLoggedIn: true, role, pathname, search });
+  assert.equal(go("/dashboard/student/assignments", "?task=t-1"), "/dashboard/student?section=workspace&view=assignments&task=t-1");
+  assert.equal(go("/dashboard/student/assignments"), "/dashboard/student?section=workspace&view=assignments");
+  assert.equal(go("/dashboard/calendar", "", "admin"), "/dashboard/admin?section=schedule&view=calendar");
+  assert.equal(go("/dashboard/calendar"), "/dashboard/student?section=workspace&view=calendar");
+  assert.equal(go("/dashboard/student/assignments/a-1"), null, "과제 상세는 그대로");
+  assert.equal(legacyRouteRedirectPath({ isLoggedIn: false, role: "student", pathname: "/dashboard/calendar", search: "" }), null);
 });

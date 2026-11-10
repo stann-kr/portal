@@ -141,11 +141,11 @@ test("메시지: 눌렀을 때 열 포탈 경로와 같은 대상의 알림을 �
   assert.match(lateNight.url, /date=2026-11-11&/u, "UTC 자정 뒤 KST 날짜를 쓴다");
   const moved = pushMessages.lessonScheduled({ lessonId: "l", scheduledAt: new Date("2026-11-10T05:00:00Z"), changed: true, toAdmin: true, studentName: "김학생" });
   assert.equal(moved.body, "김학생님이 레슨을 옮겼습니다: 11.10 14:00");
-  assert.equal(moved.url, "/dashboard/calendar", "관리자 알림은 관리자 캘린더 그대로");
+  assert.equal(moved.url, "/dashboard/admin?section=schedule&view=calendar", "관리자 알림은 관리자 캘린더(정식 주소)");
   assert.equal(
     pushMessages.assignmentAssigned({ taskId: "t 1", title: "셋", dueAt: null }).url,
-    "/dashboard/student/assignments?task=t%201",
-    "새 과제 알림은 그 과제가 펼쳐진 목록",
+    "/dashboard/student?section=workspace&view=assignments&task=t%201",
+    "새 과제 알림은 그 과제가 펼쳐진 목록(정식 주소)",
   );
   assert.equal(
     pushMessages.assignmentAssigned({ taskId: "t 1", title: "분석", dueAt: null, analysis: true }).url,
