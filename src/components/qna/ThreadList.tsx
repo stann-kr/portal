@@ -1,8 +1,13 @@
 /**
  * @file src/components/qna/ThreadList.tsx
  * @description Q&A 스레드 목록(캔버스 Qna·MobileQna·AdminStudentQna 보드).
- * 상태 필터와 검색은 GET form으로 주소에 남겨 상세·작성·휴지통을 다녀와도 같은 목록 문맥을 연다.
+ * 상태 필터와 검색은 주소에 남겨 상세·작성·휴지통을 다녀와도 같은 목록 문맥을 연다.
+ * 상태 탭은 이미 받은 목록을 화면에서 거르는 것이라 서버를 거치지 않고 바로 바꾸고 주소만 고친다(전에는 탭마다 문서를 다시 받았다).
+ * 검색은 서버가 찾으므로 앱 안 이동(SoftGetForm)으로 보낸다.
  */
+"use client";
+
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { MessageCircle, Search } from "lucide-react";
 import type { QnaStatus } from "@/db/schema";
@@ -10,10 +15,12 @@ import { QNA_FILTER_TABS, type QnaFilterTab } from "@/lib/qna-status";
 import { buildQnaFilterHref, buildQnaSearchHref } from "@/lib/qna-routes";
 import { DOCUMENT_SEARCH_MAX_QUERY_LENGTH } from "@/lib/document-search";
 import { Input } from "@/components/ui/input";
+import { SoftGetForm } from "@/components/ui/soft-get-form";
 import { EmptyState } from "@/components/ui/empty-state";
 import { cn } from "@/lib/utils";
 import { formatKstMonthDay } from "@/lib/kst-format";
 import { QnaStatusLabel } from "./qna-display";
+import { setQnaListFilter } from "./qna-list-filter";
 
 type Thread = {
   id: string;
@@ -46,7 +53,29 @@ export function ThreadList({
   query = "",
   variant = "chips",
 }: ThreadListProps) {
-  const listHref = buildQnaSearchHref(buildQnaFilterHref(returnTo, filter), query);
+  // 서버가 다시 그리면(검색·뒤로가기·새로고침) 그때 주소의 필터를 따른다. 화면 안 탭 변경은 주소도 함께 바꾸므로 어긋나지 않는다.
+  const [rendered, setRendered] = useState({ filter, threads });
+  const [current, setCurrent] = useState(filter);
+  if (rendered.filter !== filter || rendered.threads !== threads) {
+    setRendered({ filter, threads });
+    setCurrent(filter);
+  }
+  // 서버가 새로 그리면 머리 링크도 서버 값을 따르게 비우고, 화면을 떠나면 지운다.
+  useEffect(() => {
+    setQnaListFilter(null);
+    return () => setQnaListFilter(null);
+  }, [rendered]);
+  const selectFilter = (next: QnaFilterTab) => {
+    if (next === current) return;
+    setCurrent(next);
+    setQnaListFilter(next);
+    // 주소의 qnaStatus만 바꾼다(앱 라우터가 history 변경을 받아 useSearchParams도 맞춘다). 다른 값·hash는 그대로.
+    const url = new URL(window.location.href);
+    if (next === "ALL") url.searchParams.delete("qnaStatus");
+    else url.searchParams.set("qnaStatus", next);
+    window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+  };
+  const listHref = buildQnaSearchHref(buildQnaFilterHref(returnTo, current), query);
   const listUrl = new URL(listHref, "https://portal.local");
   const formAction = `${listUrl.pathname}${listUrl.hash}`;
   const counts = {
@@ -55,13 +84,12 @@ export function ThreadList({
     ANSWERED: threads.filter((thread) => thread.status === "ANSWERED").length,
     CLOSED: threads.filter((thread) => thread.status === "CLOSED").length,
   };
-  const filteredThreads = filter === "ALL" ? threads : threads.filter((thread) => thread.status === filter);
+  const filteredThreads = current === "ALL" ? threads : threads.filter((thread) => thread.status === current);
   const isTabs = variant === "tabs";
 
   const statusFilter = (
-    <form
-      action={formAction}
-      method="get"
+    <div
+      role="group"
       aria-label="Q&A 상태 필터"
       className={cn(
         "flex",
@@ -70,17 +98,13 @@ export function ThreadList({
           : "flex-wrap gap-1",
       )}
     >
-      {[...listUrl.searchParams].filter(([key]) => key !== "qnaStatus").map(([name, value], index) => (
-        <input key={`${name}:${index}`} type="hidden" name={name} value={value} />
-      ))}
       {QNA_FILTER_TABS.map(({ id, label }) => {
-        const isActive = filter === id;
+        const isActive = current === id;
         return (
           <button
             key={id}
-            type="submit"
-            name="qnaStatus"
-            value={id}
+            type="button"
+            onClick={() => selectFilter(id)}
             aria-pressed={isActive}
             className={cn(
               "inline-flex shrink-0 items-center gap-1 whitespace-nowrap transition-colors duration-[var(--duration-fast)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none",
@@ -102,14 +126,13 @@ export function ThreadList({
           </button>
         );
       })}
-    </form>
+    </div>
   );
 
   const search = (
-    <form
+    <SoftGetForm
       key={query}
       action={formAction}
-      method="get"
       role="search"
       aria-label="Q&A 검색"
       className={cn("flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1", isTabs ? "w-full md:w-auto" : "w-full sm:w-auto")}
@@ -136,7 +159,7 @@ export function ThreadList({
       {query ? (
         <Link href={buildQnaSearchHref(listHref, "")} className="text-ui text-secondary-foreground underline underline-offset-4 hover:text-foreground">검색 초기화</Link>
       ) : null}
-    </form>
+    </SoftGetForm>
   );
 
   return (

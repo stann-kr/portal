@@ -96,7 +96,7 @@ export function CopyLinkButton({
       <span
         role="status"
         className={cn(
-          "pointer-events-none absolute right-0 top-full z-10 mt-1 whitespace-nowrap empty:hidden",
+          "pointer-events-none absolute right-0 top-full z-10 mt-1 whitespace-nowrap empty:sr-only",
           status && "inline-flex items-center gap-1.5 rounded-md bg-sidebar px-2.5 py-1.5 text-xs text-foreground",
           status === "failed" && "text-destructive",
         )}

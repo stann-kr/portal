@@ -10,6 +10,21 @@ const SHOW_DELAY_MS = 120;
 /** 주소가 끝내 바뀌지 않는 이동(중간에 취소된 클릭 등)도 막대가 남지 않게 한다. */
 const GIVE_UP_MS = 15_000;
 
+/** 루트 NavigationProgress가 붙어 있는 동안의 앱 라우터 push. 라우터 밖(테스트·라우터 없는 렌더)에서는 없다. */
+let appRouterPush: ((href: string) => void) | null = null;
+
+/**
+ * 라우터 hook을 쓸 수 없는 곳(본문 HTML 위임 클릭 등)에서 앱 안 이동을 한다. 라우터가 없으면 문서 이동으로 대신한다.
+ */
+export function pushInApp(href: string) {
+  if (!appRouterPush) {
+    window.location.assign(href);
+    return;
+  }
+  if (changesLocation(href)) startNavigationProgress();
+  appRouterPush(href);
+}
+
 /** 버튼·action 뒤 `router.push`처럼 링크 클릭이 아닌 이동도 막대를 띄운다. */
 export function startNavigationProgress() {
   window.dispatchEvent(new Event(START_EVENT));
@@ -48,6 +63,13 @@ function hasLoadingSkeleton(): boolean {
  * loading.tsx가 있는 화면은 클릭 직후(약 10ms) 주소가 먼저 바뀌고 스켈레톤이 보이므로, 주소만 보면 막대가 뜨기 전에 끝났다.
  */
 export function NavigationProgress() {
+  const router = useRouter();
+  useEffect(() => {
+    appRouterPush = (href) => router.push(href);
+    return () => {
+      appRouterPush = null;
+    };
+  }, [router]);
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const locationKey = `${pathname}?${searchParams?.toString() ?? ""}`;

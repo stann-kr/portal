@@ -516,10 +516,14 @@ export function audioPeaksObjectKey(audioObjectKey: string): string {
   return `${audioObjectKey}.peaks.json`;
 }
 
-/** 파형 JSON 저장소. 처음 쓴 값만 남기고(If-None-Match: *) 이후 쓰기는 false로 무시한다. */
+/**
+ * 파형 JSON 저장소. `putIfAbsent`는 처음 쓴 값만 남기고(If-None-Match: *) 이후 쓰기는 false로 무시한다.
+ * `replace`는 있는 값을 덮는다(소유자·관리자가 다른 사람이 먼저 쓴 파형을 바꿀 때만 route가 부른다).
+ */
 export interface AudioPeaksStorage {
   get(audioObjectKey: string): Promise<string | null>;
   putIfAbsent(audioObjectKey: string, json: string): Promise<boolean>;
+  replace(audioObjectKey: string, json: string): Promise<void>;
 }
 
 export async function getAudioPeaksStorage(): Promise<AudioPeaksStorage> {
@@ -535,17 +539,17 @@ export async function getAudioPeaksStorage(): Promise<AudioPeaksStorage> {
         const key = audioPeaksObjectKey(audioObjectKey);
         if (await bucket.head(key)) return false;
         const bytes = new TextEncoder().encode(json);
-        const stream = new ReadableStream<Uint8Array>({
-          start(controller) {
-            controller.enqueue(bytes);
-            controller.close();
-          },
-        });
-        const stored = await bucket.put(key, withKnownLength(stream, bytes.byteLength), {
+        const stored = await bucket.put(key, withKnownLength(bytesStream(bytes), bytes.byteLength), {
           httpMetadata: { contentType: "application/json" },
           onlyIf: new Headers({ "If-None-Match": "*" }),
         });
         return stored !== null;
+      },
+      async replace(audioObjectKey, json) {
+        const bytes = new TextEncoder().encode(json);
+        await bucket.put(audioPeaksObjectKey(audioObjectKey), withKnownLength(bytesStream(bytes), bytes.byteLength), {
+          httpMetadata: { contentType: "application/json" },
+        });
       },
     };
   }
@@ -583,5 +587,26 @@ export async function getAudioPeaksStorage(): Promise<AudioPeaksStorage> {
         throw error;
       }
     },
+    async replace(audioObjectKey, json) {
+      const bytes = new TextEncoder().encode(json);
+      await client.send(
+        new PutObjectCommand({
+          Bucket: BUCKET_NAME,
+          Key: audioPeaksObjectKey(audioObjectKey),
+          Body: bytes,
+          ContentType: "application/json",
+          ContentLength: bytes.byteLength,
+        }),
+      );
+    },
   };
+}
+
+function bytesStream(bytes: Uint8Array): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(bytes);
+      controller.close();
+    },
+  });
 }

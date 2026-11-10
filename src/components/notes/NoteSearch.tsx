@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { SoftGetForm } from "@/components/ui/soft-get-form";
 import type { PrivateNoteListItem } from "./PrivateNoteList";
 
 import {
@@ -36,7 +37,7 @@ export function NoteSearch({ action, query, hiddenFields, clearHref = action }: 
   clearHref?: string;
 }) {
   return (
-    <form key={query} action={action} method="get" role="search" aria-label="노트 검색" className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 max-md:w-full">
+    <SoftGetForm key={query} action={action} role="search" aria-label="노트 검색" className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 max-md:w-full">
       {hiddenFields
         ? Object.entries(hiddenFields).map(([name, value]) => <input key={name} type="hidden" name={name} value={value} />)
         : null}
@@ -59,6 +60,6 @@ export function NoteSearch({ action, query, hiddenFields, clearHref = action }: 
           검색 초기화
         </Link>
       ) : null}
-    </form>
+    </SoftGetForm>
   );
 }

@@ -37,6 +37,8 @@ export type PlayerState = {
   /** 링크 플레이어가 주인이 바뀌어 새로 열릴 때 이어 갈 위치. nonce는 같은 값도 새 요청으로 만든다. */
   resume: { seconds: number; nonce: number } | null;
   videoCollapsed: boolean;
+  /** 공용 오디오 요소가 지금 곡을 재생하지 못했다(`error` event). 다음 start에서 지운다. */
+  error: boolean;
 };
 
 export type PlayerAction =
@@ -45,7 +47,8 @@ export type PlayerAction =
   | { type: "start"; track: PlayerTrack; at?: number }
   | { type: "progress"; key: string; position?: number; duration?: number; playing?: boolean }
   | { type: "close" }
-  | { type: "toggle-video" };
+  | { type: "toggle-video" }
+  | { type: "error"; key: string };
 
 export const INITIAL_PLAYER_STATE: PlayerState = {
   track: null,
@@ -56,6 +59,7 @@ export const INITIAL_PLAYER_STATE: PlayerState = {
   duration: 0,
   resume: null,
   videoCollapsed: false,
+  error: false,
 };
 
 function nextResume(state: PlayerState): PlayerState["resume"] {
@@ -94,6 +98,7 @@ export function reducePlayer(state: PlayerState, action: PlayerAction): PlayerSt
         duration: same ? state.duration : 0,
         resume: owner === "persistent" ? { seconds: position, nonce: (state.resume?.nonce ?? 0) + 1 } : null,
         videoCollapsed: same ? state.videoCollapsed : false,
+        error: false,
       };
     }
     case "progress": {
@@ -110,6 +115,9 @@ export function reducePlayer(state: PlayerState, action: PlayerAction): PlayerSt
       return { ...INITIAL_PLAYER_STATE, pageKey: state.pageKey, resume: state.resume };
     case "toggle-video":
       return { ...state, videoCollapsed: !state.videoCollapsed };
+    case "error":
+      if (state.track?.key !== action.key || state.error) return state;
+      return { ...state, error: true, playing: false };
   }
 }
 

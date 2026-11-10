@@ -127,6 +127,12 @@ export function getSharedAudio(): HTMLAudioElement | null {
   element.addEventListener("play", report);
   element.addEventListener("pause", report);
   element.addEventListener("ended", report);
+  // 받지 못했거나 디코딩하지 못한 오디오. 곡을 닫으며 src를 뗀 경우(주소 없음)는 오류로 보지 않는다.
+  element.addEventListener("error", () => {
+    const key = state.track?.kind === "audio" ? state.track.key : null;
+    if (!key || !element.getAttribute("src")) return;
+    dispatchPlayer({ type: "error", key });
+  });
   element.addEventListener("timeupdate", () => updateMediaSessionPosition(element));
   audio = element;
   return element;

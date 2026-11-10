@@ -4,6 +4,9 @@
  * 재생은 앱 공용 오디오 요소(player-store)를 조작하므로 화면을 떠나도 하단 미니 플레이어가 이어 가고,
  * 돌아오면 같은 위치에서 다시 이 화면이 맡는다.
  * 64px 파형(재생한 부분 먹색·남은 부분 회색) + 20px 시점 댓글 줄. 파형은 role=slider(←/→ 5초).
+ * 파형(slider)을 누르거나 화살표로 옮기면 이 화면이 맡은 곡은 위치만 옮기고 재생·멈춤은 그대로 둔다(멈춘 채 옮겨도 재생하지 않는다).
+ * 아직 이 곡을 맡지 않았으면(다른 곡 재생 중·처음) 그 위치부터 재생을 시작한다(위치만 기억해 두는 별도 상태는 두지 않는다).
+ * 댓글 시점(seekRequest)은 "여기부터 듣기"이므로 그 위치로 옮기고 재생한다.
  */
 "use client";
 
@@ -61,18 +64,18 @@ export function WaveformPlayer({ track, markers = [], seekRequest, onPositionRea
     return () => dispatchPlayer({ type: "page-unmount", key });
   }, [key]);
 
-  const seekTo = useCallback((seconds: number) => {
+  const seekTo = useCallback((seconds: number, { play }: { play: boolean }) => {
     // 렌더 시점 값이 아니라 최신 상태로 판단한다.
     if (isPageActive(getPlayerState(), key)) {
       seekAudio(seconds);
-      resumeTrack();
+      if (play) resumeTrack();
     } else startTrack(track, seconds);
   }, [key, track]);
 
   // 댓글 시점(누를 때마다 새 객체). metadata 전이면 공용 요소가 받아 두었다가 옮긴다.
   useEffect(() => {
     if (!seekRequest || !Number.isFinite(seekRequest.seconds) || seekRequest.seconds < 0) return;
-    seekTo(seekRequest.seconds);
+    seekTo(seekRequest.seconds, { play: true });
     // seekTo는 track 객체가 바뀔 때마다 새로 만들어지므로 요청이 바뀔 때만 실행한다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seekRequest]);
@@ -126,7 +129,7 @@ export function WaveformPlayer({ track, markers = [], seekRequest, onPositionRea
         duration={duration}
         onSeek={(seconds) => {
           setError(false);
-          seekTo(seconds);
+          seekTo(seconds, { play: false });
         }}
         markers={markers}
         onMarkerOpen={onMarkerOpen}

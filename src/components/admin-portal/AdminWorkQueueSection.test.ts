@@ -130,4 +130,27 @@ test("업무함 피드백 대기 행의 확인: 행이 바로 빠지고 되돌�
   assert.match(container.querySelector('[role="alert"]')?.textContent ?? "", /피드백이 달린 제출/u);
   assert.equal(container.querySelector('[role="alert"]'), alertRegion, "role을 바꾸지 않고 같은 alert 영역의 글만 바꾼다");
   assert.equal(status?.textContent ?? "", "", "오류는 status 영역에서 읽지 않는다");
+
+  // 되돌리기 저장이 실패하면 서버는 여전히 확인함이므로 행을 다시 빼고 이유를 알린다.
+  await act(async () => { ackButton("테크노 셋 #2")?.click(); });
+  await flush();
+  failNext = true;
+  const undoAgain = [...container.querySelectorAll("button")].find((button) => button.textContent === "되돌리기");
+  assert.ok(undoAgain);
+  await act(async () => { undoAgain.click(); });
+  await flush();
+  assert.deepEqual(calls.slice(-2), [["a1", true], ["a1", false]]);
+  assert.equal(ackButton("테크노 셋 #2"), null, "취소를 저장하지 못하면 행을 다시 뺀다");
+  assert.match(container.querySelector('[role="alert"]')?.textContent ?? "", /피드백이 달린 제출/u);
+
+  // 안내가 보이는 사이 다른 행을 확인하면 되돌리기는 마지막 행을 가리키고 앞 행은 확인함으로 남는다.
+  await act(async () => { ackButton("하우스 롱셋")?.click(); });
+  await flush();
+  assert.match(container.querySelector('[role="status"]')?.textContent ?? "", /'하우스 롱셋'를 확인함으로 표시했습니다/u);
+  const undoLatest = [...container.querySelectorAll("button")].find((button) => button.textContent === "되돌리기");
+  await act(async () => { undoLatest?.click(); });
+  await flush();
+  assert.deepEqual(calls.at(-1), ["a2", false]);
+  assert.ok(ackButton("하우스 롱셋"), "마지막 행이 돌아온다");
+  assert.equal(ackButton("테크노 셋 #2"), null, "앞 행은 확인함으로 남는다");
 });

@@ -125,7 +125,7 @@ test("포탈 첫 화면은 ?section=·?view=까지 보고 모양을 고른다(�
   assert.equal(resolveRouteSkeletonKind("/dashboard/student", "section=workspace"), "calendar");
   assert.equal(resolveRouteSkeletonKind("/dashboard/student", "section=workspace&view=assignments"), "record-list-narrow");
   assert.equal(resolveRouteSkeletonKind("/dashboard/guide"), "guide-page", "가이드 첫 화면은 첫 페이지를 바로 그린다");
-  for (const path of ["src/app/dashboard/admin/loading.tsx", "src/app/dashboard/student/loading.tsx"]) {
+  for (const path of ["src/app/(app)/dashboard/admin/loading.tsx", "src/app/(app)/dashboard/student/loading.tsx"]) {
     assert.match(readFileSync(join(root, path), "utf8"), /<SectionRouteSkeleton \/>/u, path);
   }
 });

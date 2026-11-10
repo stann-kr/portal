@@ -4,6 +4,7 @@ import { Window } from "happy-dom";
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import * as Y from "yjs";
+import { QNA_STATUS_LABELS } from "@/lib/qna-status";
 
 type MockEditorProps = {
   collaboration?: { doc: Y.Doc };
@@ -332,10 +333,10 @@ let PostTrashActions: typeof import("@/components/community/PostTrashActions").P
 let QnaThreadLifecycleActions: typeof import("@/components/qna/QnaThreadLifecycleActions").QnaThreadLifecycleActions;
 let NoteFullForm: typeof import("@/components/notes/NoteFullForm").NoteFullForm;
 let UnifiedNoteDetail: typeof import("@/components/student-portal/UnifiedNoteDetail").UnifiedNoteDetail;
-let StudentNotesPage: typeof import("@/app/dashboard/student/notes/page").default;
-let AdminStudentNotesPage: typeof import("@/app/dashboard/admin/students/[id]/notes/page").default;
-let QnaPage: typeof import("@/app/dashboard/qna/page").default;
-let QnaTrashPage: typeof import("@/app/dashboard/qna/trash/page").default;
+let StudentNotesPage: typeof import("@/app/(app)/dashboard/student/notes/page").default;
+let AdminStudentNotesPage: typeof import("@/app/(app)/dashboard/admin/students/[id]/notes/page").default;
+let QnaPage: typeof import("@/app/(app)/dashboard/qna/page").default;
+let QnaTrashPage: typeof import("@/app/(app)/dashboard/qna/trash/page").default;
 let ThreadList: typeof import("@/components/qna/ThreadList").ThreadList;
 
 before(async () => {
@@ -345,7 +346,7 @@ before(async () => {
   ({ RestorePostRevisionButton } = await import("@/components/community/RestorePostRevisionButton"));
   ({ PostTrashActions } = await import("@/components/community/PostTrashActions"));
   ({ QnaThreadLifecycleActions } = await import("@/components/qna/QnaThreadLifecycleActions"));
-  ({ default: QnaTrashPage } = await import("@/app/dashboard/qna/trash/page"));
+  ({ default: QnaTrashPage } = await import("@/app/(app)/dashboard/qna/trash/page"));
   ({ UnifiedNoteDetail } = await import("@/components/student-portal/UnifiedNoteDetail"));
   [
     { NewPostForm },
@@ -365,9 +366,9 @@ before(async () => {
     import("@/components/qna/ThreadDetailClient"),
     import("@/components/notes/RestoreNoteRevisionButton"),
     import("@/components/notes/NoteFullForm"),
-    import("@/app/dashboard/student/notes/page"),
-    import("@/app/dashboard/admin/students/[id]/notes/page"),
-    import("@/app/dashboard/qna/page"),
+    import("@/app/(app)/dashboard/student/notes/page"),
+    import("@/app/(app)/dashboard/admin/students/[id]/notes/page"),
+    import("@/app/(app)/dashboard/qna/page"),
     import("@/components/qna/ThreadList"),
   ]);
 });
@@ -541,13 +542,12 @@ test("Q&A 목록은 URL 상태 필터와 상세·작성·휴지통의 복귀 문
     const parent = `/dashboard/${role}?section=${role === "admin" ? "work" : "today"}`;
     const page = (qnaStatus: string) => QnaPage({ searchParams: Promise.resolve({ returnTo: parent, qnaStatus }) });
     await harness.rerender(await page("ANSWERED"));
-    const form = harness.container.querySelector<HTMLFormElement>('form[aria-label="Q&A 상태 필터"]')!;
-    assert.equal(form.method, "get");
-    const answered = form.querySelector<HTMLButtonElement>('button[value="ANSWERED"]')!;
-    assert.equal(answered.getAttribute("aria-pressed"), "true");
-    const data = new FormData(form, answered);
-    assert.equal(data.get("qnaStatus"), "ANSWERED");
-    assert.equal(data.get("returnTo"), parent);
+    // 상태 탭은 서버를 거치지 않는 화면 안 필터다(주소의 qnaStatus만 바꾼다).
+    const group = harness.container.querySelector('[role="group"][aria-label="Q&A 상태 필터"]')!;
+    assert.ok(group);
+    const pressed = [...group.querySelectorAll("button")].filter((button) => button.getAttribute("aria-pressed") === "true");
+    assert.equal(pressed.length, 1);
+    assert.match(pressed[0].textContent ?? "", new RegExp(QNA_STATUS_LABELS.ANSWERED, "u"));
     const links = [...harness.container.querySelectorAll<HTMLAnchorElement>("a")].map((link) => new URL(link.href, "https://portal.test"));
     const details = links.filter((link) => link.pathname.startsWith("/dashboard/qna/thread-"));
     assert.equal(details.length, 1);
@@ -558,14 +558,27 @@ test("Q&A 목록은 URL 상태 필터와 상세·작성·휴지통의 복귀 문
     assert.equal(list.searchParams.get("returnTo"), parent);
     assert.equal(links.find((link) => link.pathname === "/dashboard/qna/trash")?.searchParams.get("returnTo"), listHref);
     if (role === "student") assert.equal(links.find((link) => link.pathname === "/dashboard/qna/new")?.searchParams.get("returnTo"), listHref);
-    const all = new FormData(form, form.querySelector<HTMLButtonElement>('button[value="ALL"]')!);
-    await harness.rerender(await page(String(all.get("qnaStatus"))));
-    assert.equal(harness.container.querySelectorAll('a[href^="/dashboard/qna/thread-"]').length, 2);
+    const allTab = [...group.querySelectorAll("button")].find((button) => (button.textContent ?? "").startsWith("전체"))!;
+    await act(async () => allTab.click());
+    assert.equal(harness.container.querySelectorAll('a[href^="/dashboard/qna/thread-"]').length, 2, "전체 탭은 서버를 거치지 않고 바로 두 대화를 보인다");
+    // 머리의 휴지통 링크도 바꾼 탭(전체)으로 돌아오게 복귀 주소가 바뀐다.
+    const trashLink = [...harness.container.querySelectorAll<HTMLAnchorElement>("a")].find((link) => new URL(link.href, "https://portal.test").pathname === "/dashboard/qna/trash")!;
+    const trashBack = new URL(new URL(trashLink.href, "https://portal.test").searchParams.get("returnTo")!, "https://portal.test");
+    assert.equal(trashBack.searchParams.get("qnaStatus"), null, "탭을 바꾼 뒤 휴지통에서 돌아오면 바꾼 탭");
   }
   await harness.rerender(<ThreadList threads={qnaPageData} isAdmin filter="ANSWERED" returnTo="/dashboard/admin/students/student-1?tab=qna#records" />);
-  const form = harness.container.querySelector<HTMLFormElement>('form[aria-label="Q&A 상태 필터"]')!;
-  assert.equal(form.getAttribute("action"), "/dashboard/admin/students/student-1#records");
-  assert.equal(new FormData(form).get("tab"), "qna");
+  // 학생 상세 안 Q&A 칩: 상태를 바꿔도 주소의 tab·hash는 그대로 둔다.
+  harness.browserWindow.history.replaceState(null, "", "/dashboard/admin/students/student-1?tab=qna&qnaStatus=ANSWERED#records");
+  const closedChip = [...harness.container.querySelectorAll('[role="group"][aria-label="Q&A 상태 필터"] button')]
+    .find((button) => (button.textContent ?? "").includes(QNA_STATUS_LABELS.CLOSED))! as HTMLButtonElement;
+  await act(async () => closedChip.click());
+  const chipUrl = new URL(harness.browserWindow.location.href);
+  assert.equal(chipUrl.searchParams.get("tab"), "qna");
+  assert.equal(chipUrl.searchParams.get("qnaStatus"), "CLOSED");
+  assert.equal(chipUrl.hash, "#records");
+  const answeredChip = [...harness.container.querySelectorAll('[role="group"][aria-label="Q&A 상태 필터"] button')]
+    .find((button) => (button.textContent ?? "").includes(QNA_STATUS_LABELS.ANSWERED))! as HTMLButtonElement;
+  await act(async () => answeredChip.click());
   const detail = new URL(harness.container.querySelector<HTMLAnchorElement>('a[href^="/dashboard/qna/"]')!.href, "https://portal.test");
   const back = new URL(detail.searchParams.get("returnTo")!, "https://portal.test");
   assert.equal(back.pathname, "/dashboard/admin/students/student-1");
@@ -590,10 +603,17 @@ test("Q&A 검색은 본문 미리보기·빈 결과에서도 검색과 상태·�
     assert.equal(fields.get("qnaQuery"), "EQ 리듬");
     assert.equal(fields.get("qnaStatus"), "ANSWERED");
     assert.equal(fields.get("returnTo"), parent);
-    const filter = harness.container.querySelector<HTMLFormElement>('form[aria-label="Q&A 상태 필터"]')!;
-    const filterFields = new FormData(filter, filter.querySelector<HTMLButtonElement>('button[value="OPEN"]')!);
-    assert.equal(filterFields.get("qnaQuery"), "EQ 리듬");
-    assert.equal(filterFields.getAll("qnaQuery").length, 1);
+    // 검색 중 상태 탭을 바꾸면 검색어는 주소에 그대로 두고 qnaStatus만 바꾼다.
+    harness.browserWindow.history.replaceState(null, "", "/dashboard/qna?qnaQuery=EQ+%EB%A6%AC%EB%93%AC&qnaStatus=ANSWERED");
+    const openTab = [...harness.container.querySelectorAll('[role="group"][aria-label="Q&A 상태 필터"] button')]
+      .find((button) => (button.textContent ?? "").includes(QNA_STATUS_LABELS.OPEN))! as HTMLButtonElement;
+    await act(async () => openTab.click());
+    const afterUrl = new URL(harness.browserWindow.location.href);
+    assert.equal(afterUrl.searchParams.get("qnaQuery"), "EQ 리듬");
+    assert.equal(afterUrl.searchParams.get("qnaStatus"), "OPEN");
+    const answeredTab = [...harness.container.querySelectorAll('[role="group"][aria-label="Q&A 상태 필터"] button')]
+      .find((button) => (button.textContent ?? "").includes(QNA_STATUS_LABELS.ANSWERED))! as HTMLButtonElement;
+    await act(async () => answeredTab.click());
     assert.match(harness.container.textContent ?? "", /EQ & <리듬>을 조절한 답변/u);
     assert.equal(harness.container.querySelector("리듬"), null);
     const details = harness.container.querySelector<HTMLAnchorElement>('a[href^="/dashboard/qna/search-thread"]')!;

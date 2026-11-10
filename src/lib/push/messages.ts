@@ -2,6 +2,7 @@ import { formatKstMonthDayTime } from "@/lib/kst-format";
 import { toKstDateInputValue } from "@/lib/date-input";
 import { calendarItemHref } from "@/lib/portal-location";
 import { assignmentTaskHref } from "@/lib/student-space-routes";
+import { getLegacyCalendarRedirect } from "@/lib/legacy-dashboard-routes";
 
 /**
  * 알림 종류. 계정마다 종류별로 끌 수 있다(test는 끌 수 없다).
@@ -117,7 +118,7 @@ export const pushMessages = {
       body,
       // 학생은 그 날짜로 이동해 레슨 상세를 연다(레슨이 지워졌으면 날짜만). 관리자 캘린더는 아직 날짜 딥링크가 없다.
       url: input.toAdmin
-        ? "/dashboard/calendar"
+        ? getLegacyCalendarRedirect("admin")
         : calendarItemHref(toKstDateInputValue(input.scheduledAt), `PORTAL:LESSON:${input.lessonId}`),
       tag: `lesson:${input.lessonId}`,
     };

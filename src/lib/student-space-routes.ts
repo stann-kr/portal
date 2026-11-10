@@ -1,3 +1,4 @@
+import { STUDENT_LEGACY_REDIRECTS } from "@/lib/legacy-dashboard-routes";
 export const STUDENT_DETAIL_TABS = ["overview", "assignments", "digging", "notes", "qna"] as const;
 export type StudentDetailTab = (typeof STUDENT_DETAIL_TABS)[number];
 
@@ -28,5 +29,6 @@ export function analysisWriteHref(taskId: string): string {
 /** 학생 과제 목록에서 특정 과제를 펼치는 주소. 분석(믹스셋 분석) 과제는 작성 화면으로 보낸다. */
 export function assignmentTaskHref(taskId: string, options: { analysis?: boolean } = {}): string {
   if (options.analysis) return analysisWriteHref(taskId);
-  return `/dashboard/student/assignments?task=${encodeURIComponent(taskId)}`;
+  // 정식 주소로 바로 연다. 예전 `/dashboard/student/assignments?task=`는 서버 redirect를 한 번 더 거쳤다.
+  return `${STUDENT_LEGACY_REDIRECTS.assignments}&task=${encodeURIComponent(taskId)}`;
 }

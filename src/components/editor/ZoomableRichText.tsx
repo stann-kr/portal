@@ -2,6 +2,32 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { ImageViewer, type ViewerImage } from "@/components/image-viewer/ImageViewer";
+import { pushInApp } from "@/components/app-shell/NavigationProgress";
+
+/**
+ * 본문 링크를 누를 때 할 일. 포탈 안 주소는 앱 안 이동(문서를 새로 받지 않는다), 다른 사이트는 새 탭,
+ * 같은 화면 안 위치(#)·보조 키·가운데 버튼은 브라우저에 맡긴다(null).
+ */
+export function richTextLinkAction(
+  anchor: { getAttribute(name: string): string | null },
+  origin: string,
+  current: { pathname: string; search: string },
+): { kind: "internal"; href: string } | { kind: "external"; href: string } | null {
+  const raw = anchor.getAttribute("href");
+  if (!raw || raw.startsWith("#") || /^(?:mailto|tel):/iu.test(raw)) return null;
+  let url: URL;
+  try {
+    url = new URL(raw, origin);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+  if (url.origin !== origin) return { kind: "external", href: url.href };
+  if (url.pathname === current.pathname && url.search === current.search && url.hash) return null;
+  // 파일·API 주소(첨부 내려받기 등)는 문서로 연다.
+  if (url.pathname.startsWith("/api/")) return null;
+  return { kind: "internal", href: `${url.pathname}${url.search}${url.hash}` };
+}
 
 const ZOOM_WRAPPER_CLASS = "rich-text-zoom";
 
@@ -63,7 +89,19 @@ export function ZoomableRichText({ html, className }: { html: string; className:
   }, []);
 
   const onClick = (event: MouseEvent) => {
-    if (openFrom(event.target)) event.preventDefault();
+    if (openFrom(event.target)) {
+      event.preventDefault();
+      return;
+    }
+    // 본문 링크: 정화 단계가 target을 지워 모두 같은 탭 문서 이동이었다.
+    if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    const anchor = event.target instanceof Element ? event.target.closest("a[href]") : null;
+    if (!anchor || !rootRef.current?.contains(anchor) || anchor.closest(".ProseMirror")) return;
+    const action = richTextLinkAction(anchor, window.location.origin, window.location);
+    if (!action) return;
+    event.preventDefault();
+    if (action.kind === "internal") pushInApp(action.href);
+    else window.open(action.href, "_blank", "noopener,noreferrer");
   };
 
   // 버튼과 같게 Enter는 누를 때, Space는 뗄 때 연다. Space를 누를 때 열면 뗄 때 뷰어 닫기 버튼이 눌린다.
