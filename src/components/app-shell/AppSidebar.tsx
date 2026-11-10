@@ -237,7 +237,7 @@ export function AppSidebar({
       </aside>
 
       <Dialog.Root open={open} onOpenChange={setOpen}>
-        <header className="sticky top-0 z-30 box-content flex h-[3.25rem] shrink-0 pt-[env(safe-area-inset-top)] items-center justify-between gap-1 border-b border-muted bg-background px-1 md:hidden">
+        <header className="sticky top-0 z-30 box-content flex h-[3.25rem] shrink-0 pt-[env(safe-area-inset-top)] items-center justify-between gap-1 bg-background px-1 shadow-[inset_0_-1px_0_var(--color-muted)] md:hidden">
           {back ? (
             <Link
               href={back.href}
