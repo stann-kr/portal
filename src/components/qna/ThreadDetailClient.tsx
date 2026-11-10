@@ -564,7 +564,8 @@ function ThreadDetailContent({
                       className={cn(
                         "pointer-events-none absolute bottom-3 right-[3.75rem] inline-flex shrink-0 items-center gap-3 text-[11px] text-muted-foreground",
                         "md:pointer-events-auto md:static md:ml-auto md:text-xs",
-                        !hasReplyDraft && "max-md:hidden",
+                        // 내용이 없을 때도 live 영역은 남기고 눈에만 숨긴다(display:none이면 안내를 읽지 못한다).
+                        !hasReplyDraft && "max-md:sr-only",
                       )}
                     >
                       <CollabPresence awareness={draft.collab.status === "solo" ? null : draft.collab.provider?.awareness} />
