@@ -2170,7 +2170,7 @@ test("믹스셋 파형: 이 화면이 맡은 곡을 멈춘 채 파형을 화살�
   const slider = browser.document.querySelector('section[aria-label="믹스셋 재생"] [role="slider"]');
   assert.ok(slider);
   await act(async () => {
-    slider.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }) as unknown as Event);
+    slider.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }));
   });
   await settle();
   assert.equal(audio.paused, true, "멈춘 채 옮기면 재생하지 않는다");
