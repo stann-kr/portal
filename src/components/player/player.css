@@ -98,6 +98,16 @@ html[data-mini-player="on"] body {
   padding-bottom: calc(var(--mini-player-height, 58px) + env(safe-area-inset-bottom));
 }
 
+/* 화면 높이를 꽉 쓰는 화면(h-app: 일정·Q&A 상세·문서)은 미니 플레이어 높이만큼 줄여 아래가 플레이어에 가려지지 않게 한다. */
+html[data-mini-player="on"] .h-app {
+  height: calc(100dvh - var(--app-topbar-height) - var(--mini-player-height, 58px) - env(safe-area-inset-bottom));
+}
+@media (min-width: 768px) {
+  html[data-mini-player="on"] .h-app {
+    height: calc(100dvh - var(--app-topbar-height) - 65px);
+  }
+}
+
 /*
  * 화면 아래에 붙는 입력줄(댓글·답변 입력, 편집 서식 줄)은 좁은 화면에서 미니 플레이어 위에 붙는다.
  * 홈 표시줄 여백은 미니 플레이어가 이미 가지므로 입력줄은 기본 여백(--dock-pad)만 둔다.

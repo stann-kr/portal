@@ -133,5 +133,9 @@ test("예전 주소는 화면을 그리기 전에 정식 주소로 보낸다", (
   assert.equal(go("/dashboard/calendar", "", "admin"), "/dashboard/admin?section=schedule&view=calendar");
   assert.equal(go("/dashboard/calendar"), "/dashboard/student?section=workspace&view=calendar");
   assert.equal(go("/dashboard/student/assignments/a-1"), null, "과제 상세는 그대로");
+  assert.equal(go("/dashboard/admin"), "/dashboard/student", "학생이 관리자 첫 화면");
+  assert.equal(go("/dashboard/student", "", "admin"), "/dashboard/admin", "관리자가 학생 첫 화면");
+  assert.equal(go("/dashboard/admin", "", "admin"), null);
+  assert.equal(go("/dashboard/admin/students/s-1/digging", "", "admin"), "/dashboard/admin/students/s-1?tab=digging");
   assert.equal(legacyRouteRedirectPath({ isLoggedIn: false, role: "student", pathname: "/dashboard/calendar", search: "" }), null);
 });

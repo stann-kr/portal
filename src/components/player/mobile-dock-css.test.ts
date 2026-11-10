@@ -57,3 +57,8 @@ test("좁은 화면 위쪽 막대는 경계선을 안쪽 그림자로 그려 높
     assert.doesNotMatch(header, /\bborder-b\b/u, path);
   }
 });
+
+test("미니 플레이어가 있으면 화면 높이를 꽉 쓰는 h-app 화면도 그만큼 줄인다", () => {
+  const css = read("src/components/player/player.css");
+  assert.match(css, /html\[data-mini-player="on"\] \.h-app \{\s*height: calc\(100dvh - var\(--app-topbar-height\) - var\(--mini-player-height, 58px\) - env\(safe-area-inset-bottom\)\);/u);
+});

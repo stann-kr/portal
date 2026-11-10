@@ -3,6 +3,7 @@
  * hook과 셸 의존 없이 표시만 하므로 server page에서 바로 렌더한다.
  */
 import Link from "next/link";
+import { MobileTopBar } from "@/components/app-shell/AppSidebar";
 import type { ReactNode } from "react";
 import { ChevronLeft, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -44,6 +45,8 @@ export function RecordPageFrame({
         "md:mx-auto",
       )}
     >
+      {/* 좁은 화면 위쪽 막대의 뒤로도 같은 복귀 주소로(주소 기본값은 목록 첫 화면이라 고른 탭·검색을 잃었다). */}
+      <MobileTopBar back={back} />
       <header className="flex flex-col gap-7">
         <Link
           href={back.href}
