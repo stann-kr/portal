@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { AUDIO_PEAKS_COUNT, createPeaksAccumulator, createTimedPeaksAccumulator, isPlausiblePeaksDuration, parseAudioPeaks } from "./peaks";
+import { AUDIO_PEAKS_COUNT, createPeaksAccumulator, createTimedPeaksAccumulator, isPlausiblePeaksDuration, parseAudioPeaks, serializeStoredAudioPeaks, storedAudioPeaksWriter } from "./peaks";
 
 test("파형 누적은 조각 단위 입력을 1000개 구간 최대 진폭으로 정규화한다", () => {
   const total = AUDIO_PEAKS_COUNT * 4;
@@ -71,4 +71,25 @@ test("파형 길이는 파일 크기로 본 평균 비트레이트가 4~10,000kb
   assert.equal(isPlausiblePeaksDuration(0, null), false);
   assert.equal(isPlausiblePeaksDuration(Number.NaN, 1000), false);
   assert.equal(isPlausiblePeaksDuration(Number.POSITIVE_INFINITY, null), false);
+});
+
+test("MP3(audio/mpeg)는 평균 비트레이트 8~400kbps만 받아들인다", () => {
+  const size60min192k = Math.round((60 * 60 * 192_000) / 8);
+  assert.equal(isPlausiblePeaksDuration(60 * 60, size60min192k, "audio/mpeg"), true);
+  // 1/3 길이면 576kbps: 다른 형식이면 통과하지만 MP3로는 맞지 않는다.
+  assert.equal(isPlausiblePeaksDuration(20 * 60, size60min192k, "audio/mpeg"), false);
+  assert.equal(isPlausiblePeaksDuration(20 * 60, size60min192k, "audio/wav"), true);
+  // 30배 길이면 6.4kbps: MP3로는 너무 낮다.
+  assert.equal(isPlausiblePeaksDuration(30 * 60 * 60, size60min192k, "audio/mpeg; charset=binary"), false);
+  assert.equal(isPlausiblePeaksDuration(30, null, "audio/mpeg"), true, "크기를 모르면 통과");
+});
+
+test("저장 JSON은 쓴 사람 종류를 함께 두고, 필드가 없는 예전 파일은 소유자가 쓴 것으로 본다", () => {
+  const value = { version: 1 as const, duration: 10, peaks: Array.from({ length: AUDIO_PEAKS_COUNT }, () => 0.5) };
+  const stored = serializeStoredAudioPeaks(value, "reader");
+  assert.equal(storedAudioPeaksWriter(stored), "reader");
+  assert.deepEqual(parseAudioPeaks(JSON.parse(stored)), { ok: true, value }, "읽는 모양은 그대로다");
+  assert.equal(storedAudioPeaksWriter(serializeStoredAudioPeaks(value, "owner")), "owner");
+  assert.equal(storedAudioPeaksWriter(JSON.stringify(value)), "owner", "예전 파일");
+  assert.equal(storedAudioPeaksWriter("{broken"), "owner");
 });
