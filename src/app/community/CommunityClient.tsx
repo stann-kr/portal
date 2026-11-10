@@ -25,6 +25,7 @@ import { resolveCommunityBoardType, type CommunityBoardType } from "@/lib/commun
 import { DOCUMENT_SEARCH_MAX_QUERY_LENGTH } from "@/lib/document-search";
 import { communitySearchHref, communitySearchSummary, type CommunitySearchScope } from "@/lib/community-search";
 import { cn } from "@/lib/utils";
+import { SoftGetForm } from "@/components/ui/soft-get-form";
 
 type Category = Awaited<ReturnType<typeof getCategories>>[number];
 type Post = Awaited<ReturnType<typeof getCommunityPostPage>>["posts"][number];
@@ -298,10 +299,9 @@ export default function CommunityClient({ isAdmin, initial, search = null }: Com
         </nav>
 
         {/* 게시물 찾기: Q&A 검색과 같은 GET form. 지금 게시판·채널 안에서 제목·본문을 찾는다. */}
-        <form
+        <SoftGetForm
           key={search?.query ?? ""}
           action="/community"
-          method="get"
           role="search"
           aria-label="게시물 검색"
           className="mt-3 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 md:mt-0"
@@ -331,7 +331,7 @@ export default function CommunityClient({ isAdmin, initial, search = null }: Com
               검색 초기화
             </a>
           ) : null}
-        </form>
+        </SoftGetForm>
 
         {/* 게시물 목록 */}
         <div className="flex flex-col">

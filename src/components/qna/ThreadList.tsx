@@ -10,6 +10,7 @@ import { QNA_FILTER_TABS, type QnaFilterTab } from "@/lib/qna-status";
 import { buildQnaFilterHref, buildQnaSearchHref } from "@/lib/qna-routes";
 import { DOCUMENT_SEARCH_MAX_QUERY_LENGTH } from "@/lib/document-search";
 import { Input } from "@/components/ui/input";
+import { SoftGetForm } from "@/components/ui/soft-get-form";
 import { EmptyState } from "@/components/ui/empty-state";
 import { cn } from "@/lib/utils";
 import { formatKstMonthDay } from "@/lib/kst-format";
@@ -59,9 +60,8 @@ export function ThreadList({
   const isTabs = variant === "tabs";
 
   const statusFilter = (
-    <form
+    <SoftGetForm
       action={formAction}
-      method="get"
       aria-label="Q&A 상태 필터"
       className={cn(
         "flex",
@@ -102,14 +102,13 @@ export function ThreadList({
           </button>
         );
       })}
-    </form>
+    </SoftGetForm>
   );
 
   const search = (
-    <form
+    <SoftGetForm
       key={query}
       action={formAction}
-      method="get"
       role="search"
       aria-label="Q&A 검색"
       className={cn("flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1", isTabs ? "w-full md:w-auto" : "w-full sm:w-auto")}
@@ -136,7 +135,7 @@ export function ThreadList({
       {query ? (
         <Link href={buildQnaSearchHref(listHref, "")} className="text-ui text-secondary-foreground underline underline-offset-4 hover:text-foreground">검색 초기화</Link>
       ) : null}
-    </form>
+    </SoftGetForm>
   );
 
   return (
