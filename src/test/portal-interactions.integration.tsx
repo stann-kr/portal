@@ -2150,6 +2150,34 @@ test("믹스셋 파형은 시점 댓글 아이콘·말풍선으로 댓글을 찾
   assert.equal(browser.document.documentElement.dataset.miniPlayer, undefined);
 });
 
+test("믹스셋 파형: 이 화면이 맡은 곡을 멈춘 채 파형을 화살표로 옮기면 위치만 옮기고 재생하지 않는다", async (context) => {
+  browser.localStorage.clear();
+  playerStore.resetPlayerForTests();
+  context.after(() => playerStore.resetPlayerForTests());
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(null, { status: 404 })) as typeof fetch;
+  context.after(() => { globalThis.fetch = originalFetch; });
+  const post = mixsetPost("mixset-seek", { mediaUrl: "/api/media/audio-seek", mediaObjectId: null });
+  await render(context, <PostDetailClient postId={post.id} post={post} initialCommentList={[]} currentUserId="student-1" isAdmin={false} returnTo="/community" />);
+  await press("재생");
+  const audio = playerStore.getSharedAudio();
+  assert.ok(audio);
+  await act(async () => { audio.dispatchEvent(new browser.Event("loadedmetadata") as unknown as Event); audio.dispatchEvent(new browser.Event("play") as unknown as Event); });
+  await press("일시정지");
+  await act(async () => { audio.dispatchEvent(new browser.Event("pause") as unknown as Event); });
+  assert.equal(audio.paused, true);
+
+  const slider = browser.document.querySelector('section[aria-label="믹스셋 재생"] [role="slider"]');
+  assert.ok(slider);
+  await act(async () => {
+    slider.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }) as unknown as Event);
+  });
+  await settle();
+  assert.equal(audio.paused, true, "멈춘 채 옮기면 재생하지 않는다");
+  assert.equal(playerStore.getPlayerState().playing, false);
+  assert.equal(playerStore.getPlayerState().position, 5, "위치는 5초 옮긴다");
+});
+
 test("미니 플레이어는 공용 오디오가 재생하지 못하면 알리고, 다시 시작하면 지운다", async (context) => {
   playerStore.resetPlayerForTests();
   context.after(() => playerStore.resetPlayerForTests());
