@@ -30,7 +30,7 @@ let CalendarQuickCreate: typeof import("@/components/calendar/CalendarQuickCreat
 let renderCalendarEventContent: typeof import("@/components/calendar/CalendarEventChip").renderCalendarEventContent;
 let VideoPlayer: typeof import("@/components/player/VideoPlayer").VideoPlayer;
 let TimelineFeedback: typeof import("@/components/feedback/TimelineFeedback").TimelineFeedback;
-let PostDetailClient: typeof import("@/app/community/[postId]/PostDetailClient").PostDetailClient;
+let PostDetailClient: typeof import("@/app/(app)/community/[postId]/PostDetailClient").PostDetailClient;
 let navigationProgress: typeof import("@/components/app-shell/NavigationProgress");
 let playerStore: typeof import("@/components/player/player-store");
 let PersistentPlayerHost: typeof import("@/components/player/PersistentPlayerHost").PersistentPlayerHost;
@@ -40,7 +40,7 @@ let saveComment: typeof import("@/lib/actions/comments").createComment = async (
 let removeComment: typeof import("@/lib/actions/comments").deleteComment = async () => {};
 let trashPost: typeof import("@/lib/actions/posts").deletePost = async () => ({ success: true });
 let AssignmentView: typeof import("@/components/student-portal/AssignmentView").AssignmentView;
-let AssignmentDetailClient: typeof import("@/app/dashboard/student/assignments/[id]/AssignmentDetailClient").AssignmentDetailClient;
+let AssignmentDetailClient: typeof import("@/app/(app)/dashboard/student/assignments/[id]/AssignmentDetailClient").AssignmentDetailClient;
 let FileUploader: typeof import("@/components/upload/FileUploader").FileUploader;
 let FullEditor: typeof import("@/components/editor/FullEditor").FullEditor;
 let pastedEditorImageFiles: typeof import("@/components/editor/useEditorImageUpload").pastedEditorImageFiles;
@@ -82,7 +82,7 @@ let StudentPasswordResetControl: typeof import("@/components/admin/StudentPasswo
 let createStudentAction: typeof import("@/lib/actions/students").createStudent = async () => ({});
 let reissueInvite: typeof import("@/lib/actions/students").reissueStudentInvite = async () => "/invite#student-1.secret";
 let StudentInviteControl: typeof import("@/components/admin/StudentInviteControl").StudentInviteControl;
-let NewStudentPage: typeof import("@/app/dashboard/admin/students/new/page").default;
+let NewStudentPage: typeof import("@/app/(app)/dashboard/admin/students/new/page").default;
 let inviteStatus: typeof import("@/lib/actions/invite").getInviteStatus = async () => ({ status: "invalid" });
 let completeInviteAction: typeof import("@/lib/actions/invite").completeInvite = async () => ({ success: true });
 let InviteSignup: typeof import("@/components/auth/InviteSignup").InviteSignup;
@@ -97,7 +97,7 @@ let loadAllStudentsCalendar: typeof import("@/lib/actions/unifiedItems").getUnif
 });
 let login: typeof import("@/lib/actions/session").loginWithCredentials = async () => ({});
 let loadCommunityPage: typeof import("@/lib/actions/posts").getCommunityPostPage = async () => ({ posts: [], nextCursor: null });
-let CommunityClient: typeof import("@/app/community/CommunityClient").default;
+let CommunityClient: typeof import("@/app/(app)/community/CommunityClient").default;
 let LoginForm: typeof import("@/components/auth/LoginForm").LoginForm;
 const previousGlobals = new Map<string, PropertyDescriptor | undefined>();
 
@@ -290,7 +290,7 @@ before(async () => {
   ({ VideoPlayer } = await import("@/components/player/VideoPlayer"));
   ({ TimelineFeedback } = await import("@/components/feedback/TimelineFeedback"));
   reviewControls = await import("@/components/admin/assignments/AssignmentReviewControls");
-  ({ PostDetailClient } = await import("@/app/community/[postId]/PostDetailClient"));
+  ({ PostDetailClient } = await import("@/app/(app)/community/[postId]/PostDetailClient"));
   navigationProgress = await import("@/components/app-shell/NavigationProgress");
   playerStore = await import("@/components/player/player-store");
   ({ PersistentPlayerHost } = await import("@/components/player/PersistentPlayerHost"));
@@ -298,7 +298,7 @@ before(async () => {
   ({ AssignmentTaskForm } = await import("@/components/admin/assignments/AssignmentTaskForms"));
   ({ CommentForm } = await import("@/components/community/CommentForm"));
   ({ AssignmentView } = await import("@/components/student-portal/AssignmentView"));
-  ({ AssignmentDetailClient } = await import("@/app/dashboard/student/assignments/[id]/AssignmentDetailClient"));
+  ({ AssignmentDetailClient } = await import("@/app/(app)/dashboard/student/assignments/[id]/AssignmentDetailClient"));
   ({ FileUploader } = await import("@/components/upload/FileUploader"));
   ({ FullEditor } = await import("@/components/editor/FullEditor"));
   ({ pastedEditorImageFiles } = await import("@/components/editor/useEditorImageUpload"));
@@ -306,12 +306,12 @@ before(async () => {
   ({ AdminPortalClient } = await import("@/components/admin-portal/AdminPortalClient"));
   ({ StudentPortalClient } = await import("@/components/student-portal/StudentPortalClient"));
   ({ LoginForm } = await import("@/components/auth/LoginForm"));
-  ({ default: CommunityClient } = await import("@/app/community/CommunityClient"));
+  ({ default: CommunityClient } = await import("@/app/(app)/community/CommunityClient"));
   ({ OverviewTab } = await import("@/components/admin/OverviewTab"));
   ({ PasswordChangeControl, PasswordChangeForm } = await import("@/components/auth/PasswordChangeControl"));
   ({ StudentPasswordResetControl } = await import("@/components/admin/StudentPasswordResetControl"));
   ({ StudentInviteControl } = await import("@/components/admin/StudentInviteControl"));
-  ({ default: NewStudentPage } = await import("@/app/dashboard/admin/students/new/page"));
+  ({ default: NewStudentPage } = await import("@/app/(app)/dashboard/admin/students/new/page"));
   ({ InviteSignup } = await import("@/components/auth/InviteSignup"));
   confirmActionModule = await import("@/components/ui/confirm-action");
   ({ CalendarFeedControl } = await import("@/components/admin/CalendarFeedControl"));

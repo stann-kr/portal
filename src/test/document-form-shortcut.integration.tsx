@@ -333,10 +333,10 @@ let PostTrashActions: typeof import("@/components/community/PostTrashActions").P
 let QnaThreadLifecycleActions: typeof import("@/components/qna/QnaThreadLifecycleActions").QnaThreadLifecycleActions;
 let NoteFullForm: typeof import("@/components/notes/NoteFullForm").NoteFullForm;
 let UnifiedNoteDetail: typeof import("@/components/student-portal/UnifiedNoteDetail").UnifiedNoteDetail;
-let StudentNotesPage: typeof import("@/app/dashboard/student/notes/page").default;
-let AdminStudentNotesPage: typeof import("@/app/dashboard/admin/students/[id]/notes/page").default;
-let QnaPage: typeof import("@/app/dashboard/qna/page").default;
-let QnaTrashPage: typeof import("@/app/dashboard/qna/trash/page").default;
+let StudentNotesPage: typeof import("@/app/(app)/dashboard/student/notes/page").default;
+let AdminStudentNotesPage: typeof import("@/app/(app)/dashboard/admin/students/[id]/notes/page").default;
+let QnaPage: typeof import("@/app/(app)/dashboard/qna/page").default;
+let QnaTrashPage: typeof import("@/app/(app)/dashboard/qna/trash/page").default;
 let ThreadList: typeof import("@/components/qna/ThreadList").ThreadList;
 
 before(async () => {
@@ -346,7 +346,7 @@ before(async () => {
   ({ RestorePostRevisionButton } = await import("@/components/community/RestorePostRevisionButton"));
   ({ PostTrashActions } = await import("@/components/community/PostTrashActions"));
   ({ QnaThreadLifecycleActions } = await import("@/components/qna/QnaThreadLifecycleActions"));
-  ({ default: QnaTrashPage } = await import("@/app/dashboard/qna/trash/page"));
+  ({ default: QnaTrashPage } = await import("@/app/(app)/dashboard/qna/trash/page"));
   ({ UnifiedNoteDetail } = await import("@/components/student-portal/UnifiedNoteDetail"));
   [
     { NewPostForm },
@@ -366,9 +366,9 @@ before(async () => {
     import("@/components/qna/ThreadDetailClient"),
     import("@/components/notes/RestoreNoteRevisionButton"),
     import("@/components/notes/NoteFullForm"),
-    import("@/app/dashboard/student/notes/page"),
-    import("@/app/dashboard/admin/students/[id]/notes/page"),
-    import("@/app/dashboard/qna/page"),
+    import("@/app/(app)/dashboard/student/notes/page"),
+    import("@/app/(app)/dashboard/admin/students/[id]/notes/page"),
+    import("@/app/(app)/dashboard/qna/page"),
     import("@/components/qna/ThreadList"),
   ]);
 });

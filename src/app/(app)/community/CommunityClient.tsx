@@ -1,0 +1,486 @@
+/**
+ * @file src/app/(app)/community/CommunityClient.tsx
+ * @description 커뮤니티 목록(캔버스 Community·MobileCommunity 보드).
+ * 게시판(공지·자유·믹스셋) 탭과 자유 게시판 채널 칩, 게시물 목록, 이어 읽기.
+ * - ANNOUNCEMENT: 고정 공지는 펼친 줄, 나머지는 한 줄 링크(AnnouncementList)
+ * - GENERAL: 채널별 최신순 목록
+ * - FEEDBACK: 믹스셋 줄과 인라인 오디오(MixsetFeedbackCard)
+ */
+"use client";
+
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import Link from "next/link";
+import { useProgressRouter } from "@/components/app-shell/NavigationProgress";
+import { Hash, MessageSquare, Music2, Plus, RotateCcw, Search, Settings2, Trash2 } from "lucide-react";
+import { Button, buttonClassName } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Input } from "@/components/ui/input";
+import { MobileTopBar } from "@/components/app-shell/AppSidebar";
+import { getCategories } from "@/lib/actions/categories";
+import { getCommunityPostPage } from "@/lib/actions/posts";
+import { AnnouncementList } from "@/components/community/AnnouncementList";
+import { MixsetFeedbackCard } from "@/components/community/MixsetFeedbackCard";
+import { COMMUNITY_BOARD_LABELS, CommunityPostRow } from "@/components/community/CommunityPostRow";
+import { resolveCommunityBoardType, type CommunityBoardType } from "@/lib/community-location";
+import { DOCUMENT_SEARCH_MAX_QUERY_LENGTH } from "@/lib/document-search";
+import { communitySearchHref, communitySearchSummary, type CommunitySearchScope } from "@/lib/community-search";
+import { cn } from "@/lib/utils";
+import { SoftGetForm } from "@/components/ui/soft-get-form";
+
+type Category = Awaited<ReturnType<typeof getCategories>>[number];
+type Post = Awaited<ReturnType<typeof getCommunityPostPage>>["posts"][number];
+type FeedbackPost = Post;
+
+interface CommunityClientProps {
+  isAdmin: boolean;
+  /** 서버가 URL로 확정한 첫 위치와 첫 페이지. */
+  initial: {
+    boardType: CommunityBoardType;
+    category: string;
+    categories: Category[];
+    posts: Post[];
+    nextCursor: string | null;
+  };
+  /** 서버가 `?q=`로 찾은 결과. 있으면 목록 대신 검색 결과를 보인다. */
+  search?: { query: string; scope: CommunitySearchScope; posts: Post[] } | null;
+}
+
+/** 이어 읽은 페이지를 붙이되 이미 보이는 게시물은 다시 넣지 않는다. */
+function appendPage(current: Post[], next: Post[]): Post[] {
+  const seen = new Set(current.map((post) => post.id));
+  return [...current, ...next.filter((post) => !seen.has(post.id))];
+}
+
+/** 지금 화면에 필요한 목록의 식별자. 받은 목록의 key와 다르면 skeleton을 보인다. */
+function listKey(boardType: CommunityBoardType, category: string): string | null {
+  if (boardType !== "GENERAL") return boardType;
+  return category ? `GENERAL:${category}` : null;
+}
+
+/** 채널이 아닌 게시판. 자유 게시판은 채널(#)로 바로 고른다. */
+const BOARD_LINKS: readonly CommunityBoardType[] = ["ANNOUNCEMENT", "FEEDBACK"];
+
+/** 게시판 한 줄의 항목. 새로고침·새 탭에서도 같은 위치를 여는 주소를 갖고, 클릭은 화면 안에서 바꾼다. */
+function BoardLink({ href, active, onSelect, children }: { href: string; active: boolean; onSelect: () => void; children: ReactNode }) {
+  return (
+    <a
+      href={href}
+      // 클릭은 서버 이동 없이 화면 안에서 바꾸므로 위쪽 진행 막대를 켜지 않는다(목록 skeleton이 대신 보인다).
+      data-progress-skip=""
+      aria-current={active ? "page" : undefined}
+      onClick={(event) => {
+        if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        event.preventDefault();
+        if (!active) onSelect();
+      }}
+      className={cn(
+        "flex h-11 shrink-0 items-center whitespace-nowrap transition-colors duration-[var(--duration-fast)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none md:h-9",
+        active
+          ? "font-medium text-foreground shadow-[inset_0_-2px_0_currentColor]"
+          : "text-secondary-foreground hover:text-foreground",
+      )}
+    >
+      {children}
+    </a>
+  );
+}
+
+function communityHref(boardType: CommunityBoardType, category: string): string {
+  const params = new URLSearchParams({ boardType });
+  if (category) params.set("category", category);
+  return `/community?${params.toString()}`;
+}
+
+// ─── 메인 컴포넌트 ────────────────────────────────
+
+export default function CommunityClient({ isAdmin, initial, search = null }: CommunityClientProps) {
+  // 검색을 끝내고 게시판을 옮길 때도 위쪽 이동 막대를 켠다.
+  const router = useProgressRouter();
+  const [activeTab, setActiveTab] = useState<CommunityBoardType>(initial.boardType);
+  const [activeCategory, setActiveCategory] = useState<string>(initial.category);
+  const [categories, setCategories] = useState<Category[]>(initial.categories);
+  const [generalPosts, setGeneralPosts] = useState<Post[]>(
+    initial.boardType === "GENERAL" ? initial.posts : [],
+  );
+  const [announcementPosts, setAnnouncementPosts] = useState<FeedbackPost[]>(
+    initial.boardType === "ANNOUNCEMENT" ? initial.posts : [],
+  );
+  const [feedbackPosts, setFeedbackPosts] = useState<FeedbackPost[]>(
+    initial.boardType === "FEEDBACK" ? initial.posts : [],
+  );
+  const [loadedKey, setLoadedKey] = useState<string | null>(() => listKey(initial.boardType, initial.category));
+  const [nextCursor, setNextCursor] = useState<string | null>(initial.nextCursor);
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
+  const [reloadToken, setReloadToken] = useState(0);
+  const loadedKeyRef = useRef(loadedKey);
+  const handledReloadRef = useRef(reloadToken);
+  const requestedKeyRef = useRef<string | null>(loadedKey);
+
+  // 다시 시도할 때만 채널 목록을 새로 읽는다. 첫 목록은 서버가 함께 보냈다.
+  useEffect(() => {
+    if (reloadToken === 0) return;
+    let cancelled = false;
+    getCategories()
+      .then((data) => {
+        if (!cancelled) setCategories(data);
+      })
+      .catch(() => {
+        if (!cancelled) setLoadError("커뮤니티 채널을 불러오지 못했습니다.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [reloadToken]);
+
+  // tab·category를 URL에서 복원해 상세·작성 화면을 다녀와도 같은 목록 문맥을 유지한다.
+  useEffect(() => {
+    const restore = () => {
+      const params = new URLSearchParams(window.location.search);
+      setActiveTab(resolveCommunityBoardType(params.get("boardType")));
+
+      const requestedCategory = params.get("category");
+      const restoredCategory = categories.find((item) => item.slug === requestedCategory)?.slug
+        ?? categories[0]?.slug;
+      if (restoredCategory) setActiveCategory(restoredCategory);
+    };
+
+    restore();
+    window.addEventListener("popstate", restore);
+    return () => window.removeEventListener("popstate", restore);
+  }, [categories]);
+
+  // 현재 위치의 목록이 없거나 다시 시도를 요청했을 때만 읽는다.
+  useEffect(() => {
+    const key = listKey(activeTab, activeCategory);
+    const reloadRequested = handledReloadRef.current !== reloadToken;
+    if (!key || (key === loadedKeyRef.current && !reloadRequested)) {
+      // 다른 목록을 읽던 중 이미 받은 목록으로 돌아오면 취소된 요청의 진행·오류 상태를 남기지 않는다.
+      setLoading(false);
+      setLoadError(null);
+      return;
+    }
+    handledReloadRef.current = reloadToken;
+    let cancelled = false;
+    setLoading(true);
+    setLoadError(null);
+    setLoadMoreError(null);
+    getCommunityPostPage({ boardType: activeTab, category: activeCategory })
+      .then((page) => {
+        if (cancelled) return;
+        if (activeTab === "GENERAL") setGeneralPosts(page.posts);
+        else if (activeTab === "ANNOUNCEMENT") setAnnouncementPosts(page.posts);
+        else setFeedbackPosts(page.posts);
+        setNextCursor(page.nextCursor);
+        loadedKeyRef.current = key;
+        setLoadedKey(key);
+        setLoading(false);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setLoadError("게시물을 불러오지 못했습니다.");
+        setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, activeCategory, reloadToken]);
+
+  const requestedKey = listKey(activeTab, activeCategory);
+  // 늦게 도착한 "더 보기" 응답이 지금 보이는 목록인지 비교할 수 있게 커밋된 위치만 기록한다.
+  useLayoutEffect(() => {
+    requestedKeyRef.current = requestedKey;
+  }, [requestedKey]);
+  const hasNoChannel = activeTab === "GENERAL" && categories.length === 0;
+  const awaitingList = !loadError && !hasNoChannel && (loading || requestedKey !== loadedKey);
+  const visibleCount = activeTab === "GENERAL"
+    ? generalPosts.length
+    : activeTab === "ANNOUNCEMENT" ? announcementPosts.length : feedbackPosts.length;
+
+  const loadMore = () => {
+    const key = requestedKey;
+    if (!nextCursor || loadingMore || !key || key !== loadedKey) return;
+    setLoadingMore(true);
+    setLoadMoreError(null);
+    getCommunityPostPage({ boardType: activeTab, category: activeCategory, cursor: nextCursor })
+      .then((page) => {
+        // 읽는 동안 다른 목록으로 옮겼으면 결과를 섞지 않는다.
+        if (requestedKeyRef.current !== key) return;
+        if (activeTab === "GENERAL") setGeneralPosts((current) => appendPage(current, page.posts));
+        else if (activeTab === "ANNOUNCEMENT") setAnnouncementPosts((current) => appendPage(current, page.posts));
+        else setFeedbackPosts((current) => appendPage(current, page.posts));
+        setNextCursor(page.nextCursor);
+      })
+      .catch(() => {
+        if (requestedKeyRef.current === key) setLoadMoreError("다음 게시물을 불러오지 못했습니다. 다시 시도해 주세요.");
+      })
+      .finally(() => setLoadingMore(false));
+  };
+  const currentCat = categories.find((c) => c.slug === activeCategory);
+  const returnTo = `/community?boardType=${activeTab}&category=${encodeURIComponent(activeCategory)}`;
+  const trashHref = `/community/trash?returnTo=${encodeURIComponent(returnTo)}`;
+  const searchReturnTo = search
+    ? communitySearchHref({ boardType: activeTab, category: activeCategory, query: search.query, scope: search.scope })
+    : returnTo;
+
+  const changeLocation = (
+    nextTab: CommunityBoardType,
+    nextCategory = activeCategory,
+  ) => {
+    // 검색 결과를 보는 중에 게시판·채널을 고르면 검색을 끝내고 그 목록으로 간다.
+    if (search) {
+      setActiveTab(nextTab);
+      setActiveCategory(nextCategory);
+      router.push(communitySearchHref({ boardType: nextTab, category: nextCategory, query: "" }));
+      return;
+    }
+    setActiveTab(nextTab);
+    setActiveCategory(nextCategory);
+    const url = new URL(window.location.href);
+    url.searchParams.set("boardType", nextTab);
+    if (nextCategory) url.searchParams.set("category", nextCategory);
+    window.history.pushState({}, "", `${url.pathname}${url.search}${url.hash}`);
+  };
+
+  const canWrite = (activeTab !== "ANNOUNCEMENT" || isAdmin) && !hasNoChannel;
+  // 학생은 공지를 쓸 수 없으므로 좁은 화면의 새 글(+)은 자유 게시판 작성으로 연다.
+  const newPostBoardType: CommunityBoardType = activeTab === "ANNOUNCEMENT" && !isAdmin ? "GENERAL" : activeTab;
+  const newPostHref = `/community/new?boardType=${newPostBoardType}&category=${encodeURIComponent(activeCategory)}&returnTo=${encodeURIComponent(returnTo)}`;
+
+  return (
+    <div className="px-5 pb-8 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-14">
+      {/* 쓸 수 없는 탭(학생의 공지)·채널이 없을 때는 위쪽 막대 + 도 숨긴다. */}
+      <MobileTopBar title="커뮤니티" action={canWrite ? { href: newPostHref, label: "새 글" } : null} />
+      <div className="flex max-w-[880px] flex-col md:gap-6 md:mx-auto">
+        <header className="flex flex-wrap items-end justify-between gap-4">
+          <h1 className="sr-only md:not-sr-only md:text-display md:font-semibold md:tracking-display">커뮤니티</h1>
+          <div className="hidden gap-2 md:flex">
+            {isAdmin ? (
+              <Link href="/dashboard/admin/categories" className={buttonClassName({ variant: "ghost", className: "gap-1.5" })}>
+                <Settings2 className="size-3.5" strokeWidth={1.6} aria-hidden="true" />채널 관리
+              </Link>
+            ) : null}
+            <Link href={trashHref} className={buttonClassName({ variant: "ghost" })}>휴지통</Link>
+            {canWrite ? (
+              <Link href={newPostHref} className={buttonClassName({ className: "gap-1.5" })}>
+                <Plus className="size-3.5" strokeWidth={1.8} aria-hidden="true" />새 글
+              </Link>
+            ) : null}
+          </div>
+        </header>
+
+        {/* 게시판 한 줄: 공지 · 믹스셋 | # 채널(자유 게시판). 탭과 채널 칩을 두 단으로 나누지 않는다. */}
+        <nav aria-label="게시판" className="scroll-row -mx-5 flex items-center gap-5 border-b border-muted px-5 text-body md:mx-0 md:flex-wrap md:gap-x-5 md:gap-y-1 md:overflow-visible md:border-border md:px-0">
+          {BOARD_LINKS.map((tab) => (
+            <BoardLink
+              key={tab}
+              href={communityHref(tab, activeCategory)}
+              active={tab === activeTab}
+              onSelect={() => changeLocation(tab)}
+            >
+              {COMMUNITY_BOARD_LABELS[tab]}
+            </BoardLink>
+          ))}
+          {categories.length > 0 ? <span aria-hidden="true" className="h-4 w-px shrink-0 bg-border" /> : null}
+          {categories.map((cat) => (
+            <BoardLink
+              key={cat.id}
+              href={communityHref("GENERAL", cat.slug)}
+              active={activeTab === "GENERAL" && cat.slug === activeCategory}
+              onSelect={() => changeLocation("GENERAL", cat.slug)}
+            >
+              <span aria-hidden="true" className="mr-0.5 text-muted-foreground">#</span>{cat.name}
+            </BoardLink>
+          ))}
+          {categories.length === 0 && activeTab === "GENERAL" ? (
+            <BoardLink href={communityHref("GENERAL", "")} active onSelect={() => undefined}>자유</BoardLink>
+          ) : null}
+        </nav>
+
+        {/* 게시물 찾기: Q&A 검색과 같은 GET form. 지금 게시판·채널 안에서 제목·본문을 찾는다. */}
+        <SoftGetForm
+          key={search?.query ?? ""}
+          action="/community"
+          role="search"
+          aria-label="게시물 검색"
+          className="mt-3 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 md:mt-0"
+        >
+          <input type="hidden" name="boardType" value={activeTab} />
+          {activeTab === "GENERAL" && activeCategory ? <input type="hidden" name="category" value={activeCategory} /> : null}
+          <label htmlFor="community-search" className="relative flex min-w-0 flex-1 items-center md:flex-none">
+            <span className="sr-only">게시물 찾기</span>
+            <Search className="pointer-events-none absolute left-3.5 size-4 text-muted-foreground md:left-2.5 md:size-3.5" strokeWidth={1.8} aria-hidden="true" />
+            <Input
+              id="community-search"
+              name="q"
+              type="search"
+              enterKeyHint="search"
+              defaultValue={search?.query ?? ""}
+              maxLength={DOCUMENT_SEARCH_MAX_QUERY_LENGTH}
+              placeholder="제목·본문 찾기"
+              aria-describedby="community-search-scope"
+              className="pl-10 md:h-8 md:w-60 md:pl-8 md:text-ui"
+            />
+          </label>
+          <span id="community-search-scope" className="sr-only">
+            {activeTab === "GENERAL" && currentCat ? `# ${currentCat.name} 채널` : COMMUNITY_BOARD_LABELS[activeTab]}에서 띄어 쓴 단어를 제목·본문에서 모두 찾습니다. 입력한 뒤 Enter를 누르세요.
+          </span>
+          {search ? (
+            <Link href={communityHref(activeTab, activeCategory)} className="text-ui text-secondary-foreground underline underline-offset-4 hover:text-foreground">
+              검색 초기화
+            </Link>
+          ) : null}
+        </SoftGetForm>
+
+        {/* 게시물 목록 */}
+        <div className="flex flex-col">
+          {search ? (
+            <section aria-label="검색 결과" className="flex flex-col">
+              <p role="status" className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-muted py-3 text-ui text-secondary-foreground">
+                <span>
+                  {search.scope === "all" ? "전체에서 " : ""}
+                  {communitySearchSummary(search.query, search.posts.length)}
+                </span>
+                {search.posts.length === 0 && search.scope !== "all" ? (
+                  <Link
+                    href={communitySearchHref({ boardType: activeTab, category: activeCategory, query: search.query, scope: "all" })}
+                    className="text-foreground underline underline-offset-4"
+                  >
+                    전체에서 찾기
+                  </Link>
+                ) : null}
+              </p>
+              {search.posts.length > 0 ? (
+                <ul className="flex flex-col">
+                  {search.posts.map((post) => (
+                    <CommunityPostRow key={post.id} post={post} returnTo={searchReturnTo} />
+                  ))}
+                </ul>
+              ) : null}
+            </section>
+          ) : awaitingList ? (
+            <div role="status" aria-label="게시물을 불러오는 중" className="flex flex-col">
+              {[0, 1, 2, 3].map((index) => (
+                <div key={index} className="flex flex-col gap-2 border-b border-muted py-4 md:px-1">
+                  <span className="h-4 w-2/5 rounded-sm bg-muted" />
+                  <span className="h-3.5 w-4/5 rounded-sm bg-sidebar" />
+                  <span className="h-3 w-24 rounded-sm bg-sidebar" />
+                </div>
+              ))}
+            </div>
+          ) : loadError ? (
+            <div role="alert" className="mt-4 flex flex-col items-start gap-3 rounded-lg border border-muted px-5 py-8 md:mt-0">
+              <p className="text-body text-foreground">{loadError}</p>
+              <Button type="button" onClick={() => setReloadToken((token) => token + 1)} className="gap-1.5">
+                <RotateCcw className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
+                다시 시도
+              </Button>
+            </div>
+          ) : (
+            <>
+              {activeTab === "ANNOUNCEMENT" ? (
+                <AnnouncementList
+                  posts={announcementPosts.map((p) => ({
+                    ...p,
+                    isPinned: p.isPinned ?? false,
+                    createdAt: p.createdAt ?? null,
+                  }))}
+                  isAdmin={isAdmin}
+                  returnTo={returnTo}
+                />
+              ) : null}
+
+              {activeTab === "GENERAL" ? (
+                hasNoChannel ? (
+                  <EmptyState
+                    className="mt-4 md:mt-0"
+                    icon={<Hash className="size-4" strokeWidth={1.6} aria-hidden="true" />}
+                    title={isAdmin ? "채널이 아직 없습니다" : "아직 열린 채널이 없습니다"}
+                    description={isAdmin
+                      ? "자유 게시판에 글을 쓰려면 채널이 하나 이상 필요합니다."
+                      : "Stann이 채널을 추가하면 글을 쓸 수 있습니다."}
+                    action={isAdmin ? (
+                      <Link href="/dashboard/admin/categories" className={buttonClassName({ variant: "outline" })}>채널 추가하기</Link>
+                    ) : undefined}
+                  />
+                ) : generalPosts.length === 0 ? (
+                  <EmptyState
+                    className="mt-4 md:mt-0"
+                    icon={<MessageSquare className="size-4" strokeWidth={1.6} aria-hidden="true" />}
+                    title="아직 게시물이 없습니다"
+                    description={currentCat ? `# ${currentCat.name} 채널의 첫 글을 남겨 보세요.` : "첫 글을 남겨 보세요."}
+                    action={<Link href={newPostHref} className={buttonClassName({ variant: "outline" })}>첫 게시물 작성하기</Link>}
+                  />
+                ) : (
+                  <ul className="flex flex-col">
+                    {generalPosts.map((post) => (
+                      <CommunityPostRow key={post.id} post={post} returnTo={returnTo} />
+                    ))}
+                  </ul>
+                )
+              ) : null}
+
+              {activeTab === "FEEDBACK" ? (
+                feedbackPosts.length === 0 ? (
+                  <EmptyState
+                    className="mt-4 md:mt-0"
+                    icon={<Music2 className="size-4" strokeWidth={1.6} aria-hidden="true" />}
+                    title="공유된 믹스셋이 없습니다"
+                    description="녹음한 믹스셋을 올리고 피드백을 나눠 보세요."
+                    action={<Link href={newPostHref} className={buttonClassName({ variant: "outline" })}>첫 믹스셋 공유하기</Link>}
+                  />
+                ) : (
+                  <ul className="flex flex-col">
+                    {feedbackPosts.map((post) => (
+                      <MixsetFeedbackCard
+                        key={post.id}
+                        post={{
+                          ...post,
+                          createdAt: post.createdAt ?? null,
+                        }}
+                        returnTo={returnTo}
+                      />
+                    ))}
+                  </ul>
+                )
+              ) : null}
+
+              {nextCursor && !hasNoChannel ? (
+                <div className="mt-6 flex flex-col items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={loadMore}
+                    pending={loadingMore}
+                    aria-describedby="community-list-count"
+                    className="text-secondary-foreground"
+                  >
+                    {loadingMore ? "불러오는 중" : "게시물 더 보기"}
+                  </Button>
+                  <p id="community-list-count" role="status" className="sr-only">
+                    최근 {visibleCount}개 표시 중
+                  </p>
+                  {loadMoreError ? <p role="alert" className="text-ui text-destructive">{loadMoreError}</p> : null}
+                </div>
+              ) : null}
+            </>
+          )}
+        </div>
+
+        {/* 좁은 화면은 머리 버튼 대신 목록 아래에서 휴지통·채널 관리로 간다. */}
+        <div className="mt-2 flex flex-col md:hidden">
+          <Link href={trashHref} className="flex h-11 items-center gap-2 self-start text-body text-secondary-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            <Trash2 className="size-4" strokeWidth={1.6} aria-hidden="true" />휴지통
+          </Link>
+          {isAdmin ? (
+            <Link href="/dashboard/admin/categories" className="flex h-11 items-center gap-2 self-start text-body text-secondary-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              <Settings2 className="size-4" strokeWidth={1.6} aria-hidden="true" />채널 관리
+            </Link>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}

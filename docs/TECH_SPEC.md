@@ -26,11 +26,11 @@ OpenNext → Cloudflare Worker
 
 | 영역 | 파일/경로 | 확인 내용 |
 |---|---|---|
-| Root·dashboard redirect | `src/app/page.tsx`, `src/app/dashboard/page.tsx` | session role별 시작 경로 |
+| Root·dashboard redirect | `src/app/page.tsx`, `src/app/(app)/dashboard/page.tsx` | session role별 시작 경로 |
 | Auth | `src/auth.ts`, `src/auth.config.ts`, `src/proxy.ts` | credentials, session, route access |
-| Student portal | `src/app/dashboard/student/page.tsx`, `src/components/student-portal/` | 오늘 요약·통합 워크스페이스·커뮤니티 |
-| Admin portal | `src/app/dashboard/admin/page.tsx`, `src/components/admin-portal/` | 업무함·학생·일정(공지·커뮤니티는 `/community`) |
-| Shared flows | `src/app/community/`, `src/app/dashboard/qna/` | 게시판·Q&A |
+| Student portal | `src/app/(app)/dashboard/student/page.tsx`, `src/components/student-portal/` | 오늘 요약·통합 워크스페이스·커뮤니티 |
+| Admin portal | `src/app/(app)/dashboard/admin/page.tsx`, `src/components/admin-portal/` | 업무함·학생·일정(공지·커뮤니티는 `/community`) |
+| Shared flows | `src/app/(app)/community/`, `src/app/(app)/dashboard/qna/` | 게시판·Q&A |
 | Data aggregation | `src/lib/actions/unifiedItems.ts`, `src/lib/unified-item-normalization.ts`, `src/lib/utils/unifiedItemUtils.ts` | 학생 스페이스·포탈 출처를 포함한 레슨·일정·노트·디깅·Q&A·과제 통합 |
 | DB schema·client | `src/db/schema.ts`, `src/db/client.ts` | table, D1/local SQLite 선택 |
 | Server actions | `src/lib/actions/` | query, mutation, revalidation |
@@ -38,7 +38,7 @@ OpenNext → Cloudflare Worker
 | Local draft account boundary | `src/components/auth/`, `src/lib/account-cleanup-client.ts`, `src/lib/account-terminal-lock.ts`, `src/lib/local-draft-continuity-client.ts`, `src/lib/document-server-draft-logout.ts`, `src/lib/document-server-draft-discard-api.ts`, `src/app/api/document-drafts/discard/route.ts` | 기기 초안 목록·명시 폐기, 로그아웃·계정 전환·삭제 신호 정리 |
 | Server draft continuity(공동 편집 이전 계약) | `src/lib/actions/documentDrafts.ts`, `src/lib/hooks/useSyncedFormDraft.ts`, `src/lib/hooks/useDocumentServerDraftSync.ts`, `src/lib/document-server-draft-atomic.ts`, `src/lib/document-server-draft-queue.ts`, `src/components/editor/ServerDraftStatus.tsx` | 노트·가이드·게시물·Q&A 편집기는 더 이상 호출하지 않는다. 코드와 `document_server_drafts`는 남아 있으며 이전 초안 보관함이 읽는다 |
 | Realtime collaboration | `worker.ts`, `src/lib/collab/**`(`protocol.ts`, `token.ts`, `authorize.ts`, `token-handler.ts`, `worker-route.ts`, `room-core.ts`, `document-room.ts`, `server-env.ts`, `doc-key.ts`), `src/lib/collab/client/**`, `src/app/api/collab/token/route.ts`, `src/components/editor/CollabPresence.tsx`, `src/components/notes/useLiveCollabNote.tsx` | 문서별 room(DO)·토큰·권한·저장 탭 선출·시드·reset, 읽기 전용 노트 실시간 보기 |
-| Legacy draft archive | `src/app/dashboard/drafts/page.tsx`, `src/components/drafts/LegacyDraftArchive.tsx`, `src/lib/actions/legacyDrafts.ts`, `src/lib/legacy-draft-content.ts` | 이전 로컬·서버 초안과 복구본의 읽기 전용 보관함(복사·삭제만) |
+| Legacy draft archive | `src/app/(app)/dashboard/drafts/page.tsx`, `src/components/drafts/LegacyDraftArchive.tsx`, `src/lib/actions/legacyDrafts.ts`, `src/lib/legacy-draft-content.ts` | 이전 로컬·서버 초안과 복구본의 읽기 전용 보관함(복사·삭제만) |
 | Route auto refresh | `src/components/app-shell/RouteAutoRefresh.tsx` | 목록·홈의 30초 조용한 재조회와 history 복귀 재조회 |
 | Document lifecycle | `src/lib/document-lifecycle-atomic.ts`, `src/lib/post-atomic.ts`, `src/lib/qna-atomic.ts` | 게시물·Q&A version CAS, 불변 이력·receipt, 휴지통·복원·purge·tombstone 원자 경계 |
 | Storage | `src/lib/r2.ts`, `src/lib/media-lifecycle-atomic.ts`, `src/lib/actions/upload.ts`, `src/app/api/media/` | Worker 경유 staging upload(`PUT /api/media/upload/[id]`)·binding seal, D1 registry·삭제 outbox, 본문 이미지 연결(`src/lib/document-image-references.ts`), 인증 delivery |
@@ -291,8 +291,8 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 |---|---|
 | auth·role | `src/auth.ts`, `src/auth.config.ts`, `src/proxy.ts`, `src/lib/active-profile.ts`, `src/lib/auth-guard.ts`, `src/lib/credential-fingerprint.ts`, `src/lib/password-storage.ts`, `src/lib/actions/password.ts`, `docs/REQUIREMENTS.md` |
 | schema·migration | `src/db/schema.ts`, `drizzle/**`, 관련 action, `docs/TECH_SPEC.md` |
-| student portal | `src/app/dashboard/student/page.tsx`, `src/components/student-portal/**` |
-| admin portal | `src/app/dashboard/admin/page.tsx`, `src/components/admin-portal/**`, `src/lib/actions/students.ts` |
+| student portal | `src/app/(app)/dashboard/student/page.tsx`, `src/components/student-portal/**` |
+| admin portal | `src/app/(app)/dashboard/admin/page.tsx`, `src/components/admin-portal/**`, `src/lib/actions/students.ts` |
 | rich text·input | 관련 form, `src/lib/sanitize-html.ts`, server action |
 | 문서 draft·재진입(문서 외 form·보관함) | `src/lib/form-draft.ts`, `src/lib/hooks/useFormDraft.ts`, `src/lib/legacy-draft-content.ts`, `src/lib/actions/legacyDrafts.ts`, `src/components/drafts/LegacyDraftArchive.tsx`, `src/lib/hooks/useSyncedFormDraft.ts`·`useDocumentServerDraftSync.ts`·`src/lib/document-server-draft-*.ts`(편집기에서는 미사용 이전 계약), 안정 문서 route |
 | 노트 편집·실시간 보기 | `src/lib/actions/privateNotes.ts`(revalidate 범위·`getPrivateNoteHead`·reset 호출), `src/components/notes/NoteEditorForm.tsx`, `src/components/notes/NoteFullForm.tsx`, `src/components/notes/LiveNoteArticle.tsx`, `src/components/notes/useLiveCollabNote.tsx`, `src/components/student-portal/UnifiedNoteDetail.tsx`, `src/components/app-shell/RouteAutoRefresh.tsx`, `src/lib/sanitize-html.ts` |

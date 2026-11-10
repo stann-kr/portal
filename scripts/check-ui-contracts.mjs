@@ -102,10 +102,10 @@ if (layoutMainOwners.length !== 1 || !layoutMainOwners[0]?.startsWith("src/app/l
 const requiredRouteStates = [
   "src/app/error.tsx",
   "src/app/global-error.tsx",
-  "src/app/dashboard/loading.tsx",
-  "src/app/dashboard/error.tsx",
-  "src/app/community/loading.tsx",
-  "src/app/community/error.tsx",
+  "src/app/(app)/dashboard/loading.tsx",
+  "src/app/(app)/dashboard/error.tsx",
+  "src/app/(app)/community/loading.tsx",
+  "src/app/(app)/community/error.tsx",
 ];
 for (const requiredPath of requiredRouteStates) {
   try {

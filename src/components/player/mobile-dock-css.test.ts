@@ -14,7 +14,7 @@ test("좁은 화면 아래 입력줄은 미니 플레이어 위로 올라가고 
     /@media \(max-width: 47\.999rem\) \{\s*html\[data-mini-player="on"\] \.sticky-dock \{\s*bottom: calc\(var\(--mini-player-height, 58px\) \+ env\(safe-area-inset-bottom\)\);\s*padding-bottom: var\(--dock-pad, 0\.5rem\);/u,
   );
   // 댓글·답변 입력줄은 같은 표시와 같은 안전 영역 식을 쓴다.
-  for (const path of ["src/components/qna/ThreadDetailClient.tsx", "src/app/community/[postId]/PostDetailClient.tsx"]) {
+  for (const path of ["src/components/qna/ThreadDetailClient.tsx", "src/app/(app)/community/[postId]/PostDetailClient.tsx"]) {
     const source = read(path);
     assert.match(source, /sticky-dock sticky bottom-0/u, path);
     assert.ok(source.includes("pb-[max(0.5rem,env(safe-area-inset-bottom))]"), path);

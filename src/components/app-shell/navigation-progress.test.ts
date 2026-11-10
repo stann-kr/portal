@@ -48,3 +48,9 @@ test("위쪽 이동 막대는 루트 layout에 한 번만 둔다(대시보드↔
   assert.match(read("src/app/layout.tsx"), /<Suspense fallback=\{null\}>\s*<NavigationProgress \/>\s*<\/Suspense>/u);
   assert.doesNotMatch(read("src/components/app-shell/AppSidebar.tsx"), /<NavigationProgress/u);
 });
+
+test("대시보드·커뮤니티는 한 셸(src/app/(app)/layout.tsx)을 함께 써서 오갈 때 사이드바를 다시 그리지 않는다", async () => {
+  const { execFileSync } = await import("node:child_process");
+  const files = execFileSync("git", ["grep", "-l", "<AppShell>", "--", "src/app"], { encoding: "utf8" }).trim().split("\n");
+  assert.deepEqual(files, ["src/app/(app)/layout.tsx"]);
+});
