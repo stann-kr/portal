@@ -77,11 +77,15 @@
   background: var(--color-background);
   box-shadow: 0 -4px 16px rgb(24 24 27 / 0.06);
   padding-bottom: env(safe-area-inset-bottom);
+  /* 가로로 눕힌 iPhone의 노치·둥근 모서리(세로 화면은 0). */
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
 }
 @media (min-width: 768px) {
-  /* 사이드바(240px) 오른쪽. 휴대폰은 위쪽 2px 진행선이 경계를 대신한다. */
+  /* 사이드바(240px) 오른쪽. body가 왼쪽 안전 영역만큼 밀리므로 그만큼 더 띄운다. 휴대폰은 위쪽 2px 진행선이 경계를 대신한다. */
   .mini-player {
-    left: 15rem;
+    left: calc(15rem + env(safe-area-inset-left));
+    padding-left: 0;
     border-top: 1px solid var(--color-border);
   }
 }
@@ -127,7 +131,7 @@ html[data-mini-player="on"] .undo-toast-dock {
 /* YouTube 작은 창: 넓은 화면 오른쪽 아래(막대 위), 240×135. */
 .mini-video {
   position: fixed;
-  right: 16px;
+  right: calc(16px + env(safe-area-inset-right));
   bottom: 80px;
   z-index: 30;
   width: 240px;

@@ -39,3 +39,21 @@ test("미니 플레이어 높이는 재어 둔 --mini-player-height를 쓰고, 5
   assert.match(host, /new ResizeObserver\(measure\)/u);
   assert.match(host, /removeProperty\(MINI_PLAYER_HEIGHT_PROPERTY\)/u);
 });
+
+test("가로 화면 안전 영역: 본문·미니 플레이어·서랍·옆 패널이 노치 쪽 안쪽 여백을 둔다", () => {
+  assert.match(read("src/app/globals.css"), /body \{[^}]*padding-left: env\(safe-area-inset-left\);\s*padding-right: env\(safe-area-inset-right\);/u);
+  const css = read("src/components/player/player.css");
+  assert.match(css, /\.mini-player \{[^}]*padding-left: env\(safe-area-inset-left\);\s*padding-right: env\(safe-area-inset-right\);/u);
+  assert.match(css, /\.mini-video \{\s*position: fixed;\s*right: calc\(16px \+ env\(safe-area-inset-right\)\);/u);
+  assert.match(read("src/components/app-shell/AppSidebar.tsx"), /portal-drawer [^"]*pl-\[calc\(0\.75rem\+env\(safe-area-inset-left\)\)\]/u);
+  assert.match(read("src/components/student-portal/SlidePanel.tsx"), /portal-panel [^"]*pr-\[env\(safe-area-inset-right\)\]/u);
+});
+
+test("좁은 화면 위쪽 막대는 경계선을 안쪽 그림자로 그려 높이가 --app-topbar-height와 같다", () => {
+  for (const path of ["src/components/app-shell/AppSidebar.tsx", "src/components/app-shell/AppShellSkeleton.tsx"]) {
+    const source = read(path);
+    const header = /sticky top-0 z-30 box-content flex h-\[3\.25rem\][^"]*/u.exec(source)?.[0] ?? "";
+    assert.ok(header.includes("shadow-[inset_0_-1px_0_var(--color-muted)]"), path);
+    assert.doesNotMatch(header, /\bborder-b\b/u, path);
+  }
+});

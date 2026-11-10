@@ -487,6 +487,9 @@
     /* 한국어는 어절 단위로 줄을 바꾸고, 공백 없이 긴 낱말·주소만 넘칠 때 끊는다. */
     word-break: keep-all;
     overflow-wrap: break-word;
+    /* viewport-fit=cover: 가로로 눕힌 iPhone의 노치·둥근 모서리 쪽 내용을 안쪽으로 민다(세로 화면은 0). */
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
     @apply min-h-[100dvh] font-sans antialiased;
   }
 

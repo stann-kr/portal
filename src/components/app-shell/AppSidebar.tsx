@@ -271,7 +271,7 @@ export function AppSidebar({
           <Dialog.Overlay className="portal-backdrop fixed inset-0 z-40 bg-scrim" />
           <Dialog.Content
             aria-describedby={undefined}
-            className="portal-drawer fixed inset-y-0 left-0 z-50 flex w-70 max-w-[85vw] flex-col border-r border-border bg-background px-3 pb-[calc(2.125rem+env(safe-area-inset-bottom))] pt-[calc(0.25rem+env(safe-area-inset-top))] shadow-drawer focus:outline-none"
+            className="portal-drawer fixed inset-y-0 left-0 z-50 flex w-[calc(17.5rem+env(safe-area-inset-left))] max-w-[85vw] flex-col border-r border-border bg-background pl-[calc(0.75rem+env(safe-area-inset-left))] pr-3 pb-[calc(2.125rem+env(safe-area-inset-bottom))] pt-[calc(0.25rem+env(safe-area-inset-top))] shadow-drawer focus:outline-none"
           >
             <Dialog.Title className="sr-only">메뉴</Dialog.Title>
             <div className="flex items-center justify-between">
