@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import type { Metadata, Viewport } from "next";
 import { IBM_Plex_Mono, IBM_Plex_Sans_KR } from "next/font/google";
 import { cookies } from "next/headers";
@@ -5,6 +6,7 @@ import { parseThemeCookie, THEME_COOKIE, themeColorsFor } from "@/lib/web-app-th
 import { appleStartupImages } from "@/lib/apple-splash";
 import { InputFontAlias } from "@/components/fonts/InputFontAlias";
 import { PersistentPlayerHost } from "@/components/player/PersistentPlayerHost";
+import { NavigationProgress } from "@/components/app-shell/NavigationProgress";
 import "./globals.css";
 
 // Quiet Ledger 글자: 본문 IBM Plex Sans KR, 시간·숫자 IBM Plex Mono. 빌드 때 받아 자체 호스팅한다.
@@ -84,6 +86,13 @@ export default async function RootLayout({
             {children}
           </main>
         </div>
+        {/*
+          위쪽 이동 막대. 대시보드↔커뮤니티처럼 다른 layout(각자 AppShell)으로 옮기면 셸 안의 막대는 새로 그려져
+          클릭에서 켠 상태를 잃는다. 루트에 한 번만 둔다(useSearchParams라 Suspense).
+        */}
+        <Suspense fallback={null}>
+          <NavigationProgress />
+        </Suspense>
         {/* 페이지를 옮겨도 이어지는 하단 미니 플레이어. 레이아웃이 바뀌어도 남도록 루트에 한 번만 둔다. */}
         <PersistentPlayerHost />
         <InputFontAlias />

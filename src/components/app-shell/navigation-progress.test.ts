@@ -41,3 +41,10 @@ test("다른 앱 주소로 가는 왼쪽 클릭만 위쪽 진행 막대를 켠�
     "링크가 아닌 곳",
   );
 });
+
+test("위쪽 이동 막대는 루트 layout에 한 번만 둔다(대시보드↔커뮤니티처럼 셸이 바뀌는 이동에도 켠 상태가 남는다)", async () => {
+  const { readFileSync } = await import("node:fs");
+  const read = (path: string) => readFileSync(`${process.cwd()}/${path}`, "utf8");
+  assert.match(read("src/app/layout.tsx"), /<Suspense fallback=\{null\}>\s*<NavigationProgress \/>\s*<\/Suspense>/u);
+  assert.doesNotMatch(read("src/components/app-shell/AppSidebar.tsx"), /<NavigationProgress/u);
+});
