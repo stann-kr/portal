@@ -98,6 +98,12 @@ export function legacyRouteRedirectPath({
   if (path === "/dashboard/calendar") {
     return role === "admin" ? "/dashboard/admin?section=schedule&view=calendar" : "/dashboard/student?section=workspace&view=calendar";
   }
+  // 역할이 다른 첫 화면(학생이 /dashboard/admin, 관리자가 /dashboard/student)은 자기 첫 화면으로. 하위 화면은 layout gate가 맡는다.
+  if (path === "/dashboard/admin" && role !== "admin") return "/dashboard/student";
+  if (path === "/dashboard/student" && role === "admin") return "/dashboard/admin";
+  // 관리자 학생 상세의 예전 디깅 주소는 탭 주소로.
+  const digging = /^\/dashboard\/admin\/students\/([^/]+)\/digging$/u.exec(path);
+  if (digging && role === "admin") return `/dashboard/admin/students/${digging[1]}?tab=digging`;
   if (path === "/dashboard/student/assignments" && role !== "admin") {
     const task = new URLSearchParams(search).get("task");
     const target = new URLSearchParams({ section: "workspace", view: "assignments" });
@@ -134,7 +140,7 @@ export const authConfig: NextAuthConfig = {
         return Response.redirect(new URL(PASSWORD_CHANGE_PATH, nextUrl));
       }
       const legacyPath = legacyRouteRedirectPath({ isLoggedIn, role: auth?.user?.role, pathname: nextUrl.pathname, search: nextUrl.search });
-      if (legacyPath) return Response.redirect(new URL(legacyPath, nextUrl));
+      if (legacyPath) return Response.redirect(new URL(legacyPath, nextUrl), 307);
       const homePath = roleHomeRedirectPath({ isLoggedIn, role: auth?.user?.role, pathname: nextUrl.pathname });
       if (homePath) {
         const target = new URL(homePath, nextUrl);

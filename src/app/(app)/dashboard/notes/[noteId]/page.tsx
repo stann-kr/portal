@@ -40,7 +40,11 @@ export default async function NotePage({
   if (!session?.user?.id) redirect("/login");
 
   const { noteId } = await params;
-  const note = await getPrivateNoteIncludingTrash(noteId);
+  // 남의 노트(권한 없음)는 오류 화면 대신 없는 노트처럼 404로 보인다. 다른 오류는 그대로 올린다.
+  const note = await getPrivateNoteIncludingTrash(noteId).catch((error: unknown) => {
+    if (error instanceof Error && (error.message === "Unauthorized" || error.message === "Student not found")) return null;
+    throw error;
+  });
   if (!note) notFound();
 
   const fallback = session.user.role === "admin" ? "/dashboard/admin" : "/dashboard/student/notes";
