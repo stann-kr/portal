@@ -7,6 +7,7 @@ import { appleStartupImages } from "@/lib/apple-splash";
 import { InputFontAlias } from "@/components/fonts/InputFontAlias";
 import { PersistentPlayerHost } from "@/components/player/PersistentPlayerHost";
 import { NavigationProgress } from "@/components/app-shell/NavigationProgress";
+import { ServiceWorkerNavigation } from "@/components/push/ServiceWorkerNavigation";
 import "./globals.css";
 
 // Quiet Ledger 글자: 본문 IBM Plex Sans KR, 시간·숫자 IBM Plex Mono. 빌드 때 받아 자체 호스팅한다.
@@ -93,6 +94,8 @@ export default async function RootLayout({
         <Suspense fallback={null}>
           <NavigationProgress />
         </Suspense>
+        {/* 알림을 누르면 열린 화면 안에서 앱 이동(public/sw.js가 부탁한다). */}
+        <ServiceWorkerNavigation />
         {/* 페이지를 옮겨도 이어지는 하단 미니 플레이어. 레이아웃이 바뀌어도 남도록 루트에 한 번만 둔다. */}
         <PersistentPlayerHost />
         <InputFontAlias />

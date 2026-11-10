@@ -44,6 +44,24 @@ self.addEventListener("push", (event) => {
   event.waitUntil(self.registration.showNotification(title, options));
 });
 
+/** 화면(ServiceWorkerNavigation)에 앱 안 이동을 부탁하고 1.5초 안에 답을 받으면 true. */
+function askClientToNavigate(client, path) {
+  return new Promise((resolve) => {
+    const channel = new MessageChannel();
+    const timer = setTimeout(() => resolve(false), 1500);
+    channel.port1.onmessage = (message) => {
+      clearTimeout(timer);
+      resolve(message.data === "navigated");
+    };
+    try {
+      client.postMessage({ type: "portal:navigate", url: path }, [channel.port2]);
+    } catch {
+      clearTimeout(timer);
+      resolve(false);
+    }
+  });
+}
+
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const path = safePath(event.notification.data && event.notification.data.url);
@@ -54,7 +72,10 @@ self.addEventListener("notificationclick", (event) => {
       for (const client of windows) {
         if (new URL(client.url).origin !== self.location.origin) continue;
         await client.focus();
-        if (client.url !== target && "navigate" in client) await client.navigate(target);
+        if (client.url === target) return;
+        // 열린 화면이 앱 안 이동으로 옮기게 한다(문서를 새로 받으면 셸까지 다시 그린다). 답이 없으면(예전 화면) 문서 이동.
+        if (await askClientToNavigate(client, path)) return;
+        if ("navigate" in client) await client.navigate(target);
         return;
       }
       await self.clients.openWindow(target);

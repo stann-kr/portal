@@ -5,6 +5,7 @@
  * 각 탭은 서버에서 데이터를 병렬 fetch하여 렌더링.
  */
 import { Suspense } from "react";
+import { SkeletonBlock, SkeletonRegion } from "@/components/ui/skeleton";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { FileText, Lock, Play } from "lucide-react";
@@ -54,7 +55,17 @@ import { getLessonNoteIdsForStudent } from "@/lib/actions/lesson-notes";
 type RawColumn = Awaited<ReturnType<typeof getOrSeedColumns>>[number];
 type RawQnaThread = Awaited<ReturnType<typeof getQnaThreadsByStudent>>[number];
 
-const TAB_FALLBACK_CLASS = "skeleton-bar rounded-lg";
+/**
+ * 탭 내용을 기다리는 자리. SkeletonRegion이라 "불러오는 중"을 알리고, 위쪽 이동 막대도 이 자리가 사라질 때 끝난다
+ * (전에는 막대 조각만 있어 탭을 누르면 막대가 먼저 끝나 아무 반응이 없어 보였다).
+ */
+function TabFallback({ className }: { className: string }) {
+  return (
+    <SkeletonRegion label="탭 내용을 불러오는 중">
+      <SkeletonBlock className={className} />
+    </SkeletonRegion>
+  );
+}
 
 // ─── 탭별 콘텐츠 ───────────────────────────────────
 
@@ -291,19 +302,19 @@ export default async function StudentDetailPage({
           ) : null}
 
           {activeTab === "assignments" && (
-            <Suspense fallback={<div className={cn(TAB_FALLBACK_CLASS, "h-40 max-w-[880px]")} />}>
+            <Suspense fallback={<TabFallback className="h-40 max-w-[880px]" />}>
               <AssignmentsTabContent actorId={session.user.id!} studentId={studentId} referenceTime={referenceTime} />
             </Suspense>
           )}
 
           {activeTab === "digging" && (
-            <Suspense fallback={<div className={cn(TAB_FALLBACK_CLASS, "h-64")} />}>
+            <Suspense fallback={<TabFallback className="h-64" />}>
               <DiggingTabContent studentId={studentId} />
             </Suspense>
           )}
 
           {activeTab === "qna" && (
-            <Suspense fallback={<div className={cn(TAB_FALLBACK_CLASS, "h-40 max-w-[880px]")} />}>
+            <Suspense fallback={<TabFallback className="h-40 max-w-[880px]" />}>
               <QnaTabContent studentId={studentId} filter={resolveQnaFilter(qnaStatus)} query={normalizeDocumentSearchQuery(qnaQuery)} />
             </Suspense>
           )}

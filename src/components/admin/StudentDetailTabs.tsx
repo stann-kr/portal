@@ -4,6 +4,7 @@
  * 개요·과제·디깅·Q&A는 `?tab=`, 노트는 학생 스페이스 노트 화면(검색·표/목록)이 canonical이다.
  */
 import Link from "next/link";
+import { TabPendingMark } from "@/components/ui/tab-pending-mark";
 import { cn } from "@/lib/utils";
 import {
   buildAdminStudentDetailHref,
@@ -50,13 +51,14 @@ export function StudentDetailTabs({ studentId, activeTab, counts, className }: S
             href={key === "notes" ? buildAdminStudentNotesHref(studentId) : buildAdminStudentDetailHref(studentId, key)}
             aria-current={isActive ? "page" : undefined}
             className={cn(
-              "flex h-11 shrink-0 items-center whitespace-nowrap rounded-sm transition-colors duration-[var(--duration-fast)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring motion-reduce:transition-none md:h-auto md:py-2",
+              "relative flex h-11 shrink-0 items-center whitespace-nowrap rounded-sm transition-colors duration-[var(--duration-fast)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring motion-reduce:transition-none md:h-auto md:py-2",
               isActive
                 ? "font-medium text-foreground shadow-[inset_0_-2px_0_var(--color-foreground)]"
                 : "text-secondary-foreground hover:text-foreground",
             )}
           >
             {label}
+            {isActive ? null : <TabPendingMark />}
             {count > 0 ? (
               <span className="ml-1.5 font-mono text-ui font-normal tabular-nums text-muted-foreground">
                 <span className="sr-only">, {COUNT_LABELS[key] ?? ""} </span>

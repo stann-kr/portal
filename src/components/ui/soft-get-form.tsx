@@ -8,7 +8,17 @@ export function softGetFormHref(form: HTMLFormElement, submitter: HTMLElement | 
   const target = new URL(form.getAttribute("action") || base, base);
   // GET form은 action 주소의 query를 form 값으로 바꾼다(HTML 규칙). hash는 남긴다.
   target.search = "";
-  const data = submitter ? new FormData(form, submitter) : new FormData(form);
+  let data: FormData;
+  try {
+    data = submitter ? new FormData(form, submitter) : new FormData(form);
+  } catch {
+    // FormData(form, submitter)를 모르는 예전 브라우저(Safari 16.3 이하 등)는 누른 버튼 값을 직접 더한다.
+    data = new FormData(form);
+  }
+  const submitterName = submitter?.getAttribute("name");
+  if (submitter && submitterName && !data.has(submitterName)) {
+    data.append(submitterName, submitter.getAttribute("value") ?? "");
+  }
   for (const [name, value] of data) {
     target.searchParams.append(name, typeof value === "string" ? value : value.name);
   }
