@@ -3282,6 +3282,49 @@ test("피드백 고치기: 기준값 없는 예전 보관본은 바로 저장하
   assert.deepEqual(sent, [["fb-legacy", { timeMarker: "01:30", content: "A를 고친 예전 내용" }, { content: "B 내용", timeMarker: 120 }]], "비교하고 고른 뒤에야 지금 값(B)을 기준으로 보낸다");
 });
 
+test("피드백 고치기: Esc는 줄만 닫고 고치던 내용은 이 기기에 남기며, 한글 조합 중 Esc는 무시한다", async (context) => {
+  editFeedback = async () => ({ success: true });
+  browser.localStorage.clear();
+  const list = [{ id: "fb-esc", timeMarker: 90, content: "처음 내용", createdAt: null }];
+  await render(context, <TimelineFeedback assignmentId="esc-assignment" actorId="admin-esc" feedbackList={list} isAdmin />);
+  const setValue = (input: HTMLInputElement, value: string) => {
+    const setter = Object.getOwnPropertyDescriptor(browser.HTMLInputElement.prototype, "value")?.set;
+    setter?.call(input, value);
+    input.dispatchEvent(new browser.Event("input", { bubbles: true }) as unknown as Event);
+  };
+  const escape = async (input: HTMLInputElement, isComposing: boolean) => {
+    await act(async () => {
+      input.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true, isComposing }) as unknown as Event);
+    });
+    await settle();
+  };
+  const formSelector = 'form[aria-label="01:30 피드백 고치기"]';
+
+  await press("01:30 피드백 고치기");
+  await settle();
+  const contentInput = browser.document.querySelectorAll(`${formSelector} input`)[1] as unknown as HTMLInputElement;
+  await act(async () => { setValue(contentInput, "고치던 내용"); });
+  await settle();
+
+  await escape(contentInput, true);
+  assert.ok(browser.document.querySelector(formSelector), "조합 중 Esc는 줄을 닫지 않는다");
+
+  await escape(contentInput, false);
+  assert.equal(browser.document.querySelector(formSelector), null, "Esc는 줄을 닫는다");
+
+  await press("01:30 피드백 고치기");
+  await settle();
+  const reopened = browser.document.querySelectorAll(`${formSelector} input`)[1] as unknown as HTMLInputElement;
+  assert.equal(reopened.value, "고치던 내용", "다시 열면 고치던 내용이 되살아난다");
+
+  // 취소는 보관본까지 버린다.
+  await press("취소");
+  await settle();
+  await press("01:30 피드백 고치기");
+  await settle();
+  assert.equal((browser.document.querySelectorAll(`${formSelector} input`)[1] as unknown as HTMLInputElement).value, "처음 내용");
+});
+
 test("피드백 고치기: 기준값 없는 예전 보관본을 버리면 지금 값에서 다시 고친다", async (context) => {
   const sent: unknown[][] = [];
   editFeedback = async (...args) => { sent.push(args); return { success: true }; };
