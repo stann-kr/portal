@@ -10,7 +10,7 @@ import test from "node:test";
 const root = process.cwd();
 const pageColumns: Array<[file: string, container: string]> = [
   ["src/app/dashboard/guide/page.tsx", "flex max-w-[720px] flex-col gap-6 md:mx-auto"],
-  ["src/app/dashboard/guide/[pageId]/page.tsx", "flex max-w-[1120px] flex-col gap-5 md:flex-row md:gap-12 md:mx-auto"],
+  ["src/app/dashboard/guide/GuidePageScreen.tsx", "flex max-w-[1120px] flex-col gap-5 md:flex-row md:gap-12 md:mx-auto"],
   ["src/app/dashboard/student/assignments/[id]/page.tsx", "flex max-w-[880px] flex-col items-start gap-2 md:mx-auto"],
   ["src/app/dashboard/student/assignments/analysis/[taskId]/page.tsx", "flex max-w-[880px] flex-col items-start gap-2 md:mx-auto"],
   ["src/app/dashboard/student/digging/page.tsx", "flex max-w-[1120px] flex-col gap-8 md:gap-12 md:mx-auto"],

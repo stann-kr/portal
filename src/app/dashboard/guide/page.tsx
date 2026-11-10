@@ -1,6 +1,6 @@
 /**
  * @file src/app/dashboard/guide/page.tsx
- * @description 공용 가이드 첫 화면. 첫 페이지를 열고, 페이지가 없으면 빈 화면(관리자는 새 페이지)을 보인다.
+ * @description 공용 가이드 첫 화면. 첫 페이지를 이 주소에서 바로 그리고(redirect 없음), 페이지가 없으면 빈 화면(관리자는 새 페이지)을 보인다.
  */
 import { redirect } from "next/navigation";
 import { BookOpenText } from "lucide-react";
@@ -9,7 +9,7 @@ import { GuideNewPageButton } from "@/components/guide/GuideNewPageButton";
 import { EmptyState } from "@/components/ui/empty-state";
 import { getGuidePages } from "@/lib/actions/guide";
 import { getActiveAuthSession } from "@/lib/auth-guard";
-import { guidePagePath } from "@/lib/guide-content";
+import { GuidePageScreen } from "./GuidePageScreen";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "가이드" };
@@ -19,7 +19,7 @@ export default async function GuideIndexPage() {
   if (!session?.user?.id) redirect("/login");
 
   const pages = await getGuidePages();
-  if (pages[0]) redirect(guidePagePath(pages[0].id));
+  if (pages[0]) return <GuidePageScreen pageId={pages[0].id} session={session} />;
 
   return (
     <div className="px-5 pb-8 pt-4 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-14">

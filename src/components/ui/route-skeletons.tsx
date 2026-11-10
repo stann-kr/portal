@@ -11,10 +11,14 @@ import type { RouteSkeletonKind } from "./route-skeleton-kind";
 
 const FRAME_PADDING = "px-5 pb-8 md:px-[clamp(20px,4.5vw,64px)] md:pb-20";
 
+/** 일정 계열 화면(CalendarSection)의 바깥 여백: 좌우가 더 좁고 위 여백이 작다. */
+const CALENDAR_FRAME_PADDING = "px-5 pb-8 md:px-[clamp(20px,3vw,40px)] md:pb-10";
+
 const TOP_PADDING = {
   compact: "pt-4 md:pt-14",
   standard: "pt-6 md:pt-14",
   detail: "pt-6 md:pt-10",
+  calendar: "pt-4 md:pt-8",
 } as const;
 
 const COLUMN_WIDTH = {
@@ -25,6 +29,7 @@ const COLUMN_WIDTH = {
   1040: "max-w-[1040px]",
   1080: "max-w-[1080px]",
   1120: "max-w-[1120px]",
+  full: "max-w-none",
 } as const;
 
 const ROW_WIDTHS = ["w-[62%]", "w-[48%]", "w-[70%]", "w-[55%]", "w-[40%]", "w-[66%]", "w-[52%]", "w-[58%]"];
@@ -46,6 +51,8 @@ const ROUTE_SKELETON_LABELS: Record<RouteSkeletonKind, string> = {
   "form-wide": "설정을 불러오는 중",
   board: "디깅 보드를 불러오는 중",
   assignment: "과제를 불러오는 중",
+  calendar: "일정을 불러오는 중",
+  "calendar-admin": "일정을 불러오는 중",
   "guide-index": "가이드 목록을 불러오는 중",
   "guide-page": "가이드를 불러오는 중",
   auth: "불러오는 중",
@@ -57,16 +64,18 @@ function Frame({
   top,
   width,
   gap = "gap-6 md:gap-8",
+  padding = FRAME_PADDING,
   children,
 }: {
   label: string;
   top: keyof typeof TOP_PADDING;
   width: keyof typeof COLUMN_WIDTH;
   gap?: string;
+  padding?: string;
   children: ReactNode;
 }) {
   return (
-    <SkeletonRegion label={label} className={cn("box-border min-h-[100dvh]", FRAME_PADDING, TOP_PADDING[top])}>
+    <SkeletonRegion label={label} className={cn("box-border min-h-[100dvh]", padding, TOP_PADDING[top])}>
       <div className={cn("flex flex-col", COLUMN_WIDTH[width], gap, "md:mx-auto")}>{children}</div>
     </SkeletonRegion>
   );
@@ -301,6 +310,43 @@ function BoardSkeleton({ label }: { label: string }) {
   );
 }
 
+/**
+ * 일정(관리자 일정·학생 캘린더): 제목과 보기 전환, 기간 줄, 넓은 화면은 화면 아래까지 채우는 7칸 달력 판,
+ * 좁은 화면은 날짜 줄과 일정 목록(MobileCalendar).
+ */
+function CalendarSkeleton({ label, note = false }: { label: string; note?: boolean }) {
+  return (
+    <Frame label={label} top="calendar" width="full" gap="gap-5" padding={CALENDAR_FRAME_PADDING}>
+      <div className="hidden items-center gap-3 md:flex">
+        <SkeletonBar className="h-8 w-20" />
+        <SkeletonBlock className="h-9 w-48 rounded-md" />
+        <SkeletonBlock className="ml-auto h-9 w-28 rounded-md" />
+      </div>
+      {/* 관리자 일정: 제목 아래 안내 한 줄("전체 학생의 포탈 일정입니다…") */}
+      {note ? <SkeletonBar className="-mt-2 hidden h-3.5 w-[300px] md:block" /> : null}
+      <div className="flex items-center gap-3">
+        <SkeletonBar className="h-6 w-40" />
+        <SkeletonBlock className="h-8 w-16 rounded-md" />
+      </div>
+      <div className="hidden h-[calc(100dvh-248px)] min-h-[480px] grid-cols-7 overflow-hidden rounded-lg border border-border md:grid">
+        {Array.from({ length: 7 }, (_, index) => (
+          <div key={index} className="flex flex-col gap-2 border-r border-border p-2 last:border-r-0">
+            <SkeletonBar className="h-3 w-10" />
+          </div>
+        ))}
+      </div>
+      <div className="flex flex-col gap-4 md:hidden">
+        <div className="grid grid-cols-7 gap-2">
+          {Array.from({ length: 7 }, (_, index) => (
+            <SkeletonBlock key={index} className="h-12 rounded-md" />
+          ))}
+        </div>
+        <ListRows count={5} />
+      </div>
+    </Frame>
+  );
+}
+
 /** 과제 상세: 돌아가기, 제목, 정보 줄, 파형 플레이어, 피드백. */
 function AssignmentSkeleton({ label }: { label: string }) {
   return (
@@ -340,8 +386,9 @@ function GuidePageSkeleton({ label }: { label: string }) {
         ))}
       </div>
       <div className="flex min-w-0 max-w-[760px] flex-1 flex-col gap-5">
+        {/* 실제 화면 순서: 제목(44px 줄) → 수정 정보 줄 → 본문 */}
+        <SkeletonBar className="h-8 w-[60%] md:h-11" />
         <SkeletonBar className="h-3 w-28" />
-        <SkeletonBar className="h-8 w-[60%]" />
         <TextLines count={9} />
       </div>
     </Frame>
@@ -411,6 +458,10 @@ export function RouteSkeleton({ kind, label }: { kind: RouteSkeletonKind; label?
       return <BoardSkeleton label={text} />;
     case "assignment":
       return <AssignmentSkeleton label={text} />;
+    case "calendar":
+      return <CalendarSkeleton label={text} />;
+    case "calendar-admin":
+      return <CalendarSkeleton label={text} note />;
     case "guide-index":
       return <GuideIndexSkeleton label={text} />;
     case "guide-page":

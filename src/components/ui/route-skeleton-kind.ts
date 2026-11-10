@@ -18,6 +18,8 @@ export type RouteSkeletonKind =
   | "form-wide"
   | "board"
   | "assignment"
+  | "calendar"
+  | "calendar-admin"
   | "guide-index"
   | "guide-page"
   | "auth"
@@ -51,7 +53,7 @@ const ROUTE_SKELETON_RULES: ReadonlyArray<[pattern: RegExp, kind: RouteSkeletonK
   [/^\/dashboard\/qna$/u, "thread-list"],
   [new RegExp(`^/dashboard/guide/${ID}/edit$`, "u"), "editor"],
   [new RegExp(`^/dashboard/guide/${ID}$`, "u"), "guide-page"],
-  [/^\/dashboard\/guide$/u, "guide-index"],
+  [/^\/dashboard\/guide$/u, "guide-page"],
   [/^\/community\/new$/u, "editor"],
   [/^\/community\/trash$/u, "history"],
   [new RegExp(`^/community/${ID}/history$`, "u"), "history"],
@@ -61,8 +63,28 @@ const ROUTE_SKELETON_RULES: ReadonlyArray<[pattern: RegExp, kind: RouteSkeletonK
   [/^\/privacy$/u, "privacy"],
 ];
 
-export function resolveRouteSkeletonKind(pathname: string): RouteSkeletonKind {
+/**
+ * 같은 주소에서 `?section=`·`?view=`로 화면이 바뀌는 포탈 첫 화면(관리자 업무함·학생·일정, 학생 홈·캘린더·과제)은
+ * 주소만으로 모양을 고르면 다른 화면의 스켈레톤이 먼저 보인다. query까지 보고 고른다.
+ */
+function resolveSectionSkeletonKind(path: string, search: URLSearchParams): RouteSkeletonKind | null {
+  const section = search.get("section");
+  if (path === "/dashboard/admin") {
+    if (section === "schedule") return "calendar-admin";
+    if (section === "students") return "record-list-narrow";
+    return null;
+  }
+  if (path === "/dashboard/student" && section === "workspace") {
+    const view = search.get("view");
+    return view === "assignments" || view === "curriculum" ? "record-list-narrow" : "calendar";
+  }
+  return null;
+}
+
+export function resolveRouteSkeletonKind(pathname: string, search: URLSearchParams | string = ""): RouteSkeletonKind {
   const path = pathname.length > 1 ? pathname.replace(/\/+$/u, "") : pathname;
+  const sectionKind = resolveSectionSkeletonKind(path, typeof search === "string" ? new URLSearchParams(search) : search);
+  if (sectionKind) return sectionKind;
   for (const [pattern, kind] of ROUTE_SKELETON_RULES) {
     if (pattern.test(path)) return kind;
   }
