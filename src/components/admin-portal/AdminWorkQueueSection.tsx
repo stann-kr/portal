@@ -152,17 +152,26 @@ export function AdminWorkQueueSection({
       },
     );
   };
+  /**
+   * 되돌리기는 안내에 남아 있는 마지막 확인 한 건만 취소한다. 안내가 보이는 사이 다른 행을 확인하면 안내가 새 행으로 바뀌고,
+   * 앞 행은 확인함으로 남는다(서버에도 저장되어 사라지지 않으며, 과제 화면의 "확인 취소"로 되돌린다).
+   * 취소 저장이 실패하면 서버는 여전히 확인함이므로 행을 다시 빼고 이유를 알린다.
+   */
   const undoAcknowledge = () => {
     const assignmentId = ackToast?.assignmentId;
     if (!assignmentId) return;
     setAckToast(null);
     setAcknowledged(assignmentId, false);
     requestAnimationFrame(() => ackButtons.current.get(assignmentId)?.focus());
+    const fail = (message: string) => {
+      setAcknowledged(assignmentId, true);
+      setAckToast({ key: `undo-error:${assignmentId}:${++toastSeq.current}`, assignmentId: null, message, tone: "error" });
+    };
     void runReview(assignmentId, false).then(
       (result) => {
-        if (!result.success) setAckToast({ key: `undo-error:${assignmentId}:${++toastSeq.current}`, assignmentId: null, message: result.error, tone: "error" });
+        if (!result.success) fail(result.error);
       },
-      () => setAckToast({ key: `undo-error:${assignmentId}:${++toastSeq.current}`, assignmentId: null, message: "확인 취소를 저장하지 못했습니다. 과제 화면에서 다시 시도해 주세요.", tone: "error" }),
+      () => fail("확인 취소를 저장하지 못했습니다. 과제 화면에서 다시 시도해 주세요."),
     );
   };
   const [showAllPending, setShowAllPending] = useState(false);
