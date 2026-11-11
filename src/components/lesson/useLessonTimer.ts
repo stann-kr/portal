@@ -11,11 +11,10 @@ export type LessonTimerState = {
   runningSince: number | null;
   /** 일시정지까지 쌓인 시간(ms) */
   elapsedMs: number;
-  /** 다음에 넣을 트랙 번호 */
-  nextTrack: number;
 };
 
-const INITIAL: LessonTimerState = { runningSince: null, elapsedMs: 0, nextTrack: 1 };
+/** 트랙 번호는 본문의 트랙 제목에서 센다(lesson-structure). 예전에 남긴 `nextTrack` 값은 읽지 않는다. */
+const INITIAL: LessonTimerState = { runningSince: null, elapsedMs: 0 };
 
 /** 아직 만들지 않은 새 노트의 타이머 범위. 노트가 만들어지면 그 노트 id로 옮긴다. */
 const NEW_NOTE_SCOPE_PREFIX = "new:";
@@ -35,8 +34,7 @@ function readStored(scopeId: string): LessonTimerState {
     const value = JSON.parse(raw) as Partial<LessonTimerState>;
     const runningSince = typeof value.runningSince === "number" && Number.isFinite(value.runningSince) ? value.runningSince : null;
     const elapsedMs = typeof value.elapsedMs === "number" && value.elapsedMs >= 0 ? value.elapsedMs : 0;
-    const nextTrack = typeof value.nextTrack === "number" && Number.isInteger(value.nextTrack) && value.nextTrack >= 1 ? value.nextTrack : 1;
-    return { runningSince, elapsedMs, nextTrack };
+    return { runningSince, elapsedMs };
   } catch {
     return INITIAL;
   }
@@ -44,7 +42,7 @@ function readStored(scopeId: string): LessonTimerState {
 
 function writeStored(scopeId: string, state: LessonTimerState): void {
   try {
-    if (state.runningSince === null && state.elapsedMs === 0 && state.nextTrack === 1) {
+    if (state.runningSince === null && state.elapsedMs === 0) {
       window.localStorage.removeItem(storageKey(scopeId));
     } else {
       window.localStorage.setItem(storageKey(scopeId), JSON.stringify(state));
@@ -120,13 +118,6 @@ export function useLessonTimer(scopeId: string) {
 
   const reset = useCallback(() => update(() => INITIAL), [update]);
 
-  /** 트랙 번호를 하나 쓰고 다음 번호로 넘긴다. */
-  const takeTrack = useCallback((): number => {
-    const track = state.nextTrack;
-    update((previous) => ({ ...previous, nextTrack: previous.nextTrack + 1 }));
-    return track;
-  }, [state.nextTrack, update]);
-
   /** 지금 시각 기준 경과(초). 화면 갱신 주기와 관계없이 누른 순간을 읽는다. */
   const readSeconds = useCallback(() => Math.floor(lessonElapsedMs(state, Date.now()) / 1000), [state]);
 
@@ -134,10 +125,8 @@ export function useLessonTimer(scopeId: string) {
     running: state.runningSince !== null,
     started: state.runningSince !== null || state.elapsedMs > 0,
     elapsedSeconds: Math.floor(lessonElapsedMs(state, now) / 1000),
-    nextTrack: state.nextTrack,
     toggle,
     reset,
-    takeTrack,
     readSeconds,
   };
 }

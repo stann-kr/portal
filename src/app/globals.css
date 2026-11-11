@@ -564,6 +564,56 @@
 }
 .collab-selection { background: color-mix(in srgb, var(--collab-color) 18%, transparent); }
 
+/* ─── 수업 노트: 세트 구조(AdminNoteLesson 보드) ───────────── */
+/* 트랙 제목(`트랙 09 · 곡명 [31:20]`)과 전환 칸(`⇄ 전환 09 → 10`)은 기존 블록에 class만 붙는다(편집기 decoration·읽기 화면 공통). */
+:where(.ProseMirror, .rich-text) .lesson-track {
+  display: flex;
+  align-items: baseline;
+  gap: 0.625rem;
+  font-size: 1.125rem;
+  line-height: 1.75rem;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+:where(.ProseMirror, .rich-text) > .lesson-track:not(:first-child) { margin-top: 1.25rem; }
+:where(.ProseMirror, .rich-text) > .lesson-track + * { margin-top: 0.25rem; }
+:where(.ProseMirror, .rich-text) .lesson-track .lesson-timestamp {
+  margin-left: auto;
+  font-size: 0.8125rem;
+  font-weight: 400;
+}
+:where(.ProseMirror, .rich-text) blockquote.lesson-transition {
+  border-left: 0;
+  margin-block: 0;
+  padding: 0.5rem 0.875rem 0.625rem;
+  border-radius: 0.5rem;
+  background: color-mix(in srgb, var(--color-muted) 70%, var(--color-background));
+  color: var(--color-foreground);
+}
+:where(.ProseMirror, .rich-text) > * + blockquote.lesson-transition { margin-top: 0.75rem; }
+:where(.ProseMirror, .rich-text) .lesson-transition > p:first-child {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 0.8125rem;
+  line-height: 1.25rem;
+  color: var(--color-muted-foreground);
+}
+:where(.ProseMirror, .rich-text) .lesson-transition > p:first-child .lesson-timestamp { margin-left: auto; }
+:where(.ProseMirror, .rich-text) .lesson-transition > p + p {
+  margin-top: 0.125rem;
+  font-size: 0.9375rem;
+  line-height: 1.625rem;
+}
+
+/* 수업 도구 아래 막대(좁은 화면): 휴대폰에서 편집 중이면 키보드 위 서식 줄(44px) 바로 위로 올린다. */
+@media (max-width: 47.999rem) {
+  html[data-editor-dock] .lesson-live-bar {
+    bottom: calc(var(--keyboard-inset, 0px) + 3rem);
+    padding-bottom: 0.5rem;
+  }
+}
+
 /* ─── 수업 노트: 시점 표시 `[12:34]` ───────────── */
 /* 편집기 decoration이 붙인 class. 녹음 링크가 있는 노트(`data-lesson-recording`)에서만 눌러 재생하는 모양이 된다. */
 .lesson-timestamp {
