@@ -418,6 +418,10 @@ function sanitizeAttribute(tagName: string, attribute: HtmlAttribute): HtmlAttri
     return { name, value };
   }
 
+  if (name === "data-indent" && (tagName === "p" || /^h[1-6]$/u.test(tagName)) && /^[1-6]$/u.test(value)) {
+    return { name, value };
+  }
+
   if (name === "data-block-id" && BLOCK_ID_TAGS.has(tagName) && SAFE_BLOCK_ID.test(value)) {
     return { name, value };
   }

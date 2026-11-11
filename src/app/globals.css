@@ -288,6 +288,13 @@
 :where(.ProseMirror, .rich-text) [data-text-align="center"] { text-align: center; }
 :where(.ProseMirror, .rich-text) [data-text-align="right"] { text-align: right; }
 :where(.ProseMirror, .rich-text) [data-text-align="justify"] { text-align: justify; }
+/* 문단·제목 들여쓰기(편집기 Tab, 1~6단계). 한 단계 = 1.5em. */
+:where(.ProseMirror, .rich-text) [data-indent="1"] { margin-inline-start: 1.5em; }
+:where(.ProseMirror, .rich-text) [data-indent="2"] { margin-inline-start: 3em; }
+:where(.ProseMirror, .rich-text) [data-indent="3"] { margin-inline-start: 4.5em; }
+:where(.ProseMirror, .rich-text) [data-indent="4"] { margin-inline-start: 6em; }
+:where(.ProseMirror, .rich-text) [data-indent="5"] { margin-inline-start: 7.5em; }
+:where(.ProseMirror, .rich-text) [data-indent="6"] { margin-inline-start: 9em; }
 
 /* 인라인 코드 */
 :where(.ProseMirror, .rich-text) code:not(pre code) {

@@ -26,6 +26,7 @@ import type { Awareness } from "y-protocols/awareness";
 import { common, createLowlight } from "lowlight";
 import { GuideBlockId } from "./guide-block-id-extension";
 import { LessonTimestamp } from "./lesson-timestamp-extension";
+import { Indent } from "./indent-extension";
 
 export type FullEditorCollaborator = { name: string; colorIndex: number };
 
@@ -163,6 +164,8 @@ export function createFullEditorExtensions({
     }),
     // 수업 시점 `[12:34]` 표시(decoration만, schema 변경 없음)
     LessonTimestamp,
+    // Tab·Shift+Tab 들여쓰기(문단·제목 data-indent), 초점이 편집기 밖으로 나가지 않게
+    Indent,
     ...(preserveBlockIds ? [GuideBlockId] : []),
     ...(collaboration
       ? [
