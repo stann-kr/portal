@@ -9,7 +9,8 @@ import type { Editor, JSONContent } from "@tiptap/core";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 
 /** 제목 또는 옛 형식 문단의 `트랙 N`(뒤에 `·` 곡명, 시점이 올 수 있다). */
-const TRACK_PATTERN = /^\s*(▸\s*)?트랙\s*(\d{1,3})(?!\d)\s*(?:[·:\-–—]\s*)?(.*)$/u;
+/** 번호 뒤는 공백·구분자·시점·끝만 온다(`트랙 3번 추천` 같은 제목은 트랙이 아니다). */
+const TRACK_PATTERN = /^\s*(▸\s*)?트랙\s*(\d{1,3})(?=\s|$|[·:\-–—[])\s*(?:[·:\-–—]\s*)?(.*)$/u;
 const TIMESTAMP_TEXT = /\[(?:\d{1,2}:)?\d{1,3}:[0-5]\d\]/gu;
 export const TRANSITION_MARK = "⇄";
 
@@ -50,7 +51,8 @@ export function readTrackHeading(node: ProseMirrorNode): { number: number; title
   if (!isHeading && node.type.name !== "paragraph") return null;
   const match = TRACK_PATTERN.exec(node.textContent);
   if (!match || (!isHeading && !match[1])) return null;
-  const title = match[3].replace(TIMESTAMP_TEXT, "").replace(/\s+/gu, " ").trim();
+  // 시점 뒤에 곡명을 덧붙인 `트랙 11 [00:03] · intro`도 곡명만 읽는다.
+  const title = match[3].replace(TIMESTAMP_TEXT, " ").replace(/\s+/gu, " ").trim().replace(/^[·:\-–—]\s*/u, "");
   return { number: Number(match[2]), title };
 }
 
@@ -268,15 +270,21 @@ export function insertLessonTag(editor: Editor, label: string): void {
   editor.chain().focus().insertContentAt(start, [text(label, true), text(" ")], { updateSelection: false }).run();
 }
 
-/** 세트 목록에서 누른 트랙 제목 끝으로 커서를 옮긴다. */
+const TRAILING_TIMESTAMP = /\s*\[(?:\d{1,2}:)?\d{1,3}:[0-5]\d\]\s*$/u;
+
+/** 세트 목록에서 누른 트랙 제목의 곡명 자리(맨 끝 시점 앞)로 커서를 옮긴다. */
 export function focusLessonTrack(editor: Editor, number: number): void {
   const track = readLessonStructure(editor.state.doc).tracks.find((item) => item.number === number);
-  if (track) focusEndOf(editor, track.headerEnd);
+  if (!track) return;
+  const node = editor.state.doc.nodeAt(track.from);
+  const trailing = node ? TRAILING_TIMESTAMP.exec(node.textContent)?.[0].length ?? 0 : 0;
+  focusEndOf(editor, track.headerEnd - trailing);
 }
 
 const INLINE_OPEN = "(?:<[^>]+>)*\\s*";
-const TRACK_HEADING_HTML = new RegExp(`<(h[1-6])(\\s[^>]*)?>(?=${INLINE_OPEN}(?:▸\\s*)?트랙\\s*\\d)`, "gu");
-const TRACK_PARAGRAPH_HTML = new RegExp(`<(p)(\\s[^>]*)?>(?=${INLINE_OPEN}▸\\s*트랙\\s*\\d)`, "gu");
+const NUMBER_END = "(?=\\s|$|<|[·:\\-–—[])";
+const TRACK_HEADING_HTML = new RegExp(`<(h[1-6])(\\s[^>]*)?>(?=${INLINE_OPEN}(?:▸\\s*)?트랙\\s*\\d{1,3}${NUMBER_END})`, "gu");
+const TRACK_PARAGRAPH_HTML = new RegExp(`<(p)(\\s[^>]*)?>(?=${INLINE_OPEN}▸\\s*트랙\\s*\\d{1,3}${NUMBER_END})`, "gu");
 const TRANSITION_HTML = new RegExp(`<(blockquote)(\\s[^>]*)?>(?=\\s*<p[^>]*>${INLINE_OPEN}${TRANSITION_MARK})`, "gu");
 
 /**

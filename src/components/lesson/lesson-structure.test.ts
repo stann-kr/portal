@@ -73,6 +73,26 @@ test("▸ 없는 일반 문단 \"트랙 3번이 좋았다\"는 트랙이 아니�
   assert.equal(insertTransitionNote(editor), false, "트랙이 없으면 전환 칸을 만들지 않는다");
 });
 
+test("가이드 같은 다른 문서의 `트랙 3번 추천` 제목은 트랙으로 꾸미지 않는다", (context) => {
+  const { editor, element } = createEditor(context, "<h2>트랙 3번 추천</h2><h3>트랙 4 · 정리</h3>");
+  assert.deepEqual(readLessonStructure(editor.state.doc).tracks.map((track) => track.number), [4]);
+  assert.equal(element.querySelectorAll(".lesson-track").length, 1);
+  assert.equal(markLessonBlocksHtml("<h2>트랙 3번 추천</h2>"), "<h2>트랙 3번 추천</h2>");
+});
+
+test("시점이 붙은 트랙 제목도 세트 목록에서 누르면 시점 앞에 곡명을 적는다", (context) => {
+  const { editor } = createEditor(context, "<h3>트랙 11 [00:03]</h3><p></p>");
+  focusLessonTrack(editor, 11);
+  typeHere(editor, " · intro");
+  assert.equal(editor.getHTML(), "<h3>트랙 11 · intro [00:03]</h3><p></p>");
+  assert.equal(readLessonStructure(editor.state.doc).tracks[0].title, "intro");
+});
+
+test("시점 뒤에 적은 곡명도 곡명만 읽는다", (context) => {
+  const { editor } = createEditor(context, "<h3>트랙 12 [00:09] · outro</h3>");
+  assert.equal(readLessonStructure(editor.state.doc).tracks[0].title, "outro");
+});
+
 test("다음 곡으로: 지금 트랙 끝에 전환 칸과 다음 트랙 제목을 넣고 커서는 전환 칸에 둔다", (context) => {
   const { editor } = createEditor(context, "<p>수업 녹음</p><p></p>");
 
