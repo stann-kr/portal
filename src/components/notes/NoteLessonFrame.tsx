@@ -5,9 +5,10 @@ import { Lock } from "lucide-react";
 import { InstructorLessonPanel, type InstructorLessonPanelProps } from "@/components/lesson/InstructorLessonPanel";
 import { RecordingDock } from "@/components/lesson/RecordingDock";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 /** 관리자 화면에서만 서버가 넘기는 수업 도구 값. 노트 id는 화면(새 노트·문서)이 정한다. */
-export type NoteInstructorTools = Omit<InstructorLessonPanelProps, "noteId" | "actorId" | "open" | "onClose">;
+export type NoteInstructorTools = Omit<InstructorLessonPanelProps, "noteId" | "actorId" | "open" | "onClose" | "onOpen">;
 
 /** 위쪽 막대에 둘 "수업 도구" 버튼. 넓은 화면은 패널이 늘 옆에 있어 좁은 화면에만 보인다. */
 export type NoteLessonToolsButton = (size: "touch" | "sm") => ReactNode;
@@ -47,7 +48,8 @@ export function NoteLessonFrame({
   return (
     <>
       <div className="xl:flex xl:items-start">
-        <div ref={contentRef} className="min-w-0 xl:flex-1">
+        {/* 좁은 화면은 아래 고정 수업 막대만큼 본문 끝을 띄운다. */}
+        <div ref={contentRef} className={cn("min-w-0 xl:flex-1", instructor && "max-xl:pb-28")}>
           {children(toolsButton)}
         </div>
         {instructor ? (
@@ -57,11 +59,12 @@ export function NoteLessonFrame({
             actorId={actorId}
             open={toolsOpen}
             onClose={() => setToolsOpen(false)}
+            onOpen={() => setToolsOpen(true)}
           />
         ) : null}
       </div>
       {/* 본문의 녹음 링크와 [시점]으로 수업 녹음을 다시 듣는다. 재생 칸은 찾는 범위(contentRef) 밖에 둔다. */}
-      <RecordingDock rootRef={contentRef} className={instructor ? "xl:pr-[360px]" : undefined} />
+      <RecordingDock rootRef={contentRef} className={instructor ? "bottom-[7.5rem] md:bottom-[7.5rem] xl:bottom-5 xl:pr-[360px]" : undefined} />
     </>
   );
 }
