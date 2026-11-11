@@ -470,6 +470,30 @@ test("FullEditor는 고른 이미지를 Worker 경로로 올린 뒤 본문에 �
   assert.match(browser.document.querySelector('[role="status"]')?.textContent ?? "", /10MB/u);
 });
 
+test("편집기 Tab은 초점을 밖으로 보내지 않고 문단을 들여쓰며 Shift+Tab으로 내어쓴다", async (context) => {
+  const changes: string[] = [];
+  await render(context, <FullEditor variant="page" initialContent="<p>첫 줄</p><ul><li><p>항목 1</p></li><li><p>항목 2</p></li></ul>" ariaLabel="본문" onChange={(html) => changes.push(html)} />);
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+  const view = browser.document.querySelector('[contenteditable="true"]')!;
+  const press = async (key: string, shiftKey = false) => {
+    const event = new browser.KeyboardEvent("keydown", { key, shiftKey, bubbles: true, cancelable: true });
+    await act(async () => {
+      view.dispatchEvent(event);
+      // 본문 HTML은 입력을 조금 모았다가 넘긴다(deferred serializer).
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    });
+    return event;
+  };
+  const tab = await press("Tab");
+  assert.equal(tab.defaultPrevented, true, "Tab이 브라우저 초점 이동으로 가지 않는다");
+  assert.match(changes.at(-1) ?? "", /<p data-indent="1">첫 줄<\/p>/u);
+  await press("Tab");
+  assert.match(changes.at(-1) ?? "", /<p data-indent="2">첫 줄<\/p>/u);
+  const back = await press("Tab", true);
+  assert.equal(back.defaultPrevented, true);
+  assert.match(changes.at(-1) ?? "", /<p data-indent="1">첫 줄<\/p>/u);
+});
+
 test("편집기 붙여넣기는 글과 함께 온 미리보기 그림을 올리지 않고 그림만 있을 때 올린다", () => {
   const image = new browser.File(["png"], "shot.png", { type: "image/png" }) as unknown as File;
   assert.equal(pastedEditorImageFiles({ types: ["text/html", "Files"], files: [image] }), null);

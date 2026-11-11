@@ -56,17 +56,17 @@ const OUTPUT_ATTRIBUTES = new Map<string, ReadonlySet<string>>(
     ["a", ["href", "title"]],
     ["col", ["title", "width"]],
     ["div", ["data-youtube-video", "title"]],
-    ["h1", ["data-text-align", "title"]],
-    ["h2", ["data-text-align", "title"]],
-    ["h3", ["data-text-align", "title"]],
-    ["h4", ["data-text-align", "title"]],
-    ["h5", ["data-text-align", "title"]],
-    ["h6", ["data-text-align", "title"]],
+    ["h1", ["data-indent", "data-text-align", "title"]],
+    ["h2", ["data-indent", "data-text-align", "title"]],
+    ["h3", ["data-indent", "data-text-align", "title"]],
+    ["h4", ["data-indent", "data-text-align", "title"]],
+    ["h5", ["data-indent", "data-text-align", "title"]],
+    ["h6", ["data-indent", "data-text-align", "title"]],
     ["iframe", ["allowfullscreen", "loading", "src", "title"]],
     ["img", ["alt", "height", "src", "title", "width"]],
     ["li", ["data-checked", "data-type", "title"]],
     ["ol", ["start", "title"]],
-    ["p", ["data-text-align", "title"]],
+    ["p", ["data-indent", "data-text-align", "title"]],
     ["td", ["colspan", "colwidth", "rowspan", "title"]],
     ["th", ["colspan", "colwidth", "rowspan", "title"]],
     ["ul", ["data-type", "title"]],
@@ -433,4 +433,12 @@ test("가이드 블록 식별자 data-block-id는 블록 태그와 안전한 값
 test("data-block-id가 없는 노트·게시물 HTML은 그대로다", () => {
   const note = '<p data-text-align="center">본문</p><ul data-type="taskList"><li data-type="taskItem" data-checked="false"><p>할 일</p></li></ul>';
   assert.equal(sanitizeHtml(note), note);
+});
+
+test("문단·제목 들여쓰기(data-indent)는 1~6만 남긴다", () => {
+  assert.equal(sanitizeHtml('<p data-indent="2">들여쓰기</p>'), '<p data-indent="2">들여쓰기</p>');
+  assert.equal(sanitizeHtml('<h2 data-indent="6">제목</h2>'), '<h2 data-indent="6">제목</h2>');
+  assert.equal(sanitizeHtml('<p data-indent="7">넘침</p>'), "<p>넘침</p>");
+  assert.equal(sanitizeHtml('<p data-indent="1;x">이상</p>'), "<p>이상</p>");
+  assert.equal(sanitizeHtml('<div data-indent="1">div</div>').includes("data-indent"), false);
 });
