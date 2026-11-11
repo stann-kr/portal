@@ -401,6 +401,7 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 - 녹음 재생: `RecordingDock`이 노트 본문 DOM(편집·읽기 화면)에서 첫 YouTube·SoundCloud 링크(`a[href]`·영상 블록 iframe)를 MutationObserver로 찾고, 시작 위치(`t`·`start`·`#t=`)를 offset으로 더해 `VideoPlayer`의 `seekRequest`로 이동한다. 재생 칸은 찾는 범위 밖에 둔다.
 - 과제 피드백 찍어 두기: `useFeedbackMarks`가 관리자·과제별 시점 목록을 localStorage에 두고, 고르면 시점 칸을 채우고 그 위치로 이동한다. 성공 제출한 시점은 목록에서 뺀다. 서버·피드백 초안 계약은 그대로다.
 - 미검증: 실제 YouTube·SoundCloud 이동, 브라우저 화면(넓은 화면 옆 칸·좁은 화면 서랍), remote D1 `0022` 적용.
+- 라이브 큐(2026-11-11, 캔버스 `AdminNoteLesson`·`MobileAdminNoteLesson`): `lesson-structure.ts`가 노트 문서 맨 위 블록에서 세트 구조를 읽는다. 트랙 = 제목 `트랙 N`(또는 옛 형식 문단 `▸ 트랙 N`), 전환 = `⇄`로 시작하는 blockquote, 그 밖의 블록은 곡 피드백(목록은 항목 단위로 센다). 결과는 문서 node별 WeakMap cache라 `useSyncExternalStore` snapshot이 안정적이다(`useLessonNoteStructure`, 편집기 `transaction` 구독이라 공동 편집 변경도 따라간다). 넣기(`insertNextTrack`·`insertSongFeedback`·`insertTransitionNote`·`insertLessonTag`)는 커서가 아니라 마지막 트랙 구간(뒤쪽 빈 줄 제외) 기준이고, 넣은 뒤 구조를 다시 읽어 커서를 둔다. 트랙 번호는 본문 최댓값+1이며 `useLessonTimer`는 더 이상 번호를 들고 있지 않는다(예전 localStorage의 `nextTrack`은 무시). 꾸밈은 `LessonTimestamp` extension의 node decoration(`lesson-track`·`lesson-transition`)과 읽기 화면 `markLessonBlocksHtml`(정화 뒤 고정 class만 더함)로 같은 CSS를 쓴다. schema·저장 HTML·sanitize allowlist는 그대로다. 패널 버튼·태그는 `mousedown` 기본 동작을 막아 편집기 커서 줄을 지킨다. 좁은 화면 아래 막대(`.lesson-live-bar`)는 휴대폰 편집 중(`data-editor-dock`) 서식 줄 위로 올라간다.
 
 ## 웹앱 푸시 알림(2026-11-09)
 
