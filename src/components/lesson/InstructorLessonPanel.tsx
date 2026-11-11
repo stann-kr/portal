@@ -400,7 +400,7 @@ export function InstructorLessonPanel({
       <section
         aria-label="수업 도구 · 지금 트랙"
         className={cn(
-          "lesson-live-bar fixed inset-x-0 bottom-0 z-30 flex-col gap-2.5 border-t border-border bg-background px-3 pt-2.5 shadow-[0_-8px_24px_rgba(24,24,27,0.06)]",
+          "lesson-live-bar fixed inset-x-0 bottom-0 z-30 md:left-60 flex-col gap-2.5 border-t border-border bg-background px-3 pt-2.5 shadow-[0_-8px_24px_rgba(24,24,27,0.06)]",
           "pb-[max(1rem,env(safe-area-inset-bottom))] xl:hidden",
           open ? "hidden" : "flex",
         )}
