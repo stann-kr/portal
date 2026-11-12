@@ -42,6 +42,11 @@ test("개인정보처리방침은 로그인 전에도 열린다", () => {
   assert.equal(isCoarseRequestAuthorized({ isLoggedIn: false, pathname: "/privacy/other" }), false);
 });
 
+test("레슨 상담 안내는 로그인 전에도 열린다", () => {
+  assert.equal(isCoarseRequestAuthorized({ isLoggedIn: false, pathname: "/lesson" }), true);
+  assert.equal(isCoarseRequestAuthorized({ isLoggedIn: false, pathname: "/lesson/other" }), false);
+});
+
 test("calendar feed는 route token gate에 도달할 수 있다", () => {
   assert.equal(
     isCoarseRequestAuthorized({

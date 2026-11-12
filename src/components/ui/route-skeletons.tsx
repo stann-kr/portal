@@ -57,6 +57,7 @@ const ROUTE_SKELETON_LABELS: Record<RouteSkeletonKind, string> = {
   "guide-page": "가이드를 불러오는 중",
   auth: "불러오는 중",
   privacy: "개인정보 처리방침을 불러오는 중",
+  "lesson-info": "레슨 안내를 불러오는 중",
 };
 
 function Frame({
@@ -440,6 +441,24 @@ function PrivacySkeleton({ label }: { label: string }) {
   );
 }
 
+/** 공개 레슨 안내(/lesson): 위쪽 막대와 소개·요약 자리. */
+function LessonInfoSkeleton({ label }: { label: string }) {
+  return (
+    <SkeletonRegion label={label} className="flex min-h-[100dvh] w-full flex-col">
+      <div className="flex h-14 items-center justify-between border-b border-muted px-4 md:h-[60px] md:px-12">
+        <SkeletonBar className="h-6 w-32" />
+        <SkeletonBar className="h-9 w-20" />
+      </div>
+      <div className="mx-auto flex w-full max-w-[880px] flex-col gap-5 px-5 py-14 md:gap-7 md:pt-28">
+        <SkeletonBar className="h-3 w-48" />
+        <SkeletonBar className="h-10 w-[80%] md:h-14" />
+        <TextLines count={2} />
+        <SkeletonBar className="h-12 w-40" />
+      </div>
+    </SkeletonRegion>
+  );
+}
+
 /** route의 loading.tsx와 첫 진입 셸 자리에서 쓰는 화면 모양별 스켈레톤. */
 export function RouteSkeleton({ kind, label }: { kind: RouteSkeletonKind; label?: string }) {
   const text = label ?? ROUTE_SKELETON_LABELS[kind];
@@ -484,6 +503,8 @@ export function RouteSkeleton({ kind, label }: { kind: RouteSkeletonKind; label?
       return <AuthSkeleton label={text} />;
     case "privacy":
       return <PrivacySkeleton label={text} />;
+    case "lesson-info":
+      return <LessonInfoSkeleton label={text} />;
     case "generic":
       return <RouteLoadingState label={text} />;
   }
