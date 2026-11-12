@@ -23,7 +23,8 @@ export type RouteSkeletonKind =
   | "guide-index"
   | "guide-page"
   | "auth"
-  | "privacy";
+  | "privacy"
+  | "lesson-info";
 
 const ID = "[^/]+";
 
@@ -61,6 +62,7 @@ const ROUTE_SKELETON_RULES: ReadonlyArray<[pattern: RegExp, kind: RouteSkeletonK
   [/^\/community$/u, "thread-list"],
   [/^\/(?:login|invite|account\/password)$/u, "auth"],
   [/^\/privacy$/u, "privacy"],
+  [/^\/lesson$/u, "lesson-info"],
 ];
 
 /**

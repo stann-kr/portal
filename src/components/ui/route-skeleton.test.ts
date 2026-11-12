@@ -63,7 +63,7 @@ test("내용을 그리는 화면의 loading.tsx 스켈레톤 모양은 첫 진�
       continue;
     }
     const declared = /kind="([a-z-]+)"/u.exec(source)?.[1] ?? (source.includes("RouteLoadingState") ? "generic" : null);
-    // 셸 밖 화면((auth)·privacy)도 같은 대응을 쓴다.
+    // 셸 밖 화면((auth)·privacy·lesson)도 같은 대응을 쓴다.
     assert.equal(resolveRouteSkeletonKind(routePathOf(page)), declared as RouteSkeletonKind, relative(root, page));
   }
 });
@@ -71,7 +71,7 @@ test("내용을 그리는 화면의 loading.tsx 스켈레톤 모양은 첫 진�
 test("스켈레톤은 status·busy로 한 번 알리고 막대는 화면 읽기에서 숨긴다", () => {
   const kinds: RouteSkeletonKind[] = [
     "generic", "work-queue", "today", "student-detail", "record-list", "record-list-narrow", "history", "thread-list",
-    "document", "editor", "form", "form-narrow", "form-wide", "board", "assignment", "calendar", "calendar-admin", "guide-index", "guide-page", "auth", "privacy",
+    "document", "editor", "form", "form-narrow", "form-wide", "board", "assignment", "calendar", "calendar-admin", "guide-index", "guide-page", "auth", "privacy", "lesson-info",
   ];
   for (const kind of kinds) {
     const markup = renderToStaticMarkup(React.createElement(RouteSkeleton, { kind }));
