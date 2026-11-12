@@ -199,7 +199,7 @@ export default function LessonInfoPage() {
                 href={INSTAGRAM_DM_URL}
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex h-12 flex-1 items-center justify-center gap-2 rounded-lg bg-background px-[22px] text-[15px] font-medium text-foreground md:flex-none"
+                className="inline-flex h-12 basis-full items-center justify-center gap-2 whitespace-nowrap rounded-lg bg-background px-[22px] text-[15px] font-medium text-foreground md:basis-auto"
               >
                 <Instagram className="size-[18px]" strokeWidth={1.8} aria-hidden="true" />
                 인스타그램 DM 보내기
