@@ -80,7 +80,7 @@ let PasswordChangeForm: typeof import("@/components/auth/PasswordChangeControl")
 let resetPassword: typeof import("@/lib/actions/students").resetStudentPassword = async () => "abcd-efgh-jkmn";
 let StudentPasswordResetControl: typeof import("@/components/admin/StudentPasswordResetControl").StudentPasswordResetControl;
 let createStudentAction: typeof import("@/lib/actions/students").createStudent = async () => ({});
-let reissueInvite: typeof import("@/lib/actions/students").reissueStudentInvite = async () => "/invite#student-1.secret";
+let reissueInvite: typeof import("@/lib/actions/students").reissueStudentInvite = async () => ({ invitePath: "/invite#student-1.secret", email: "student@example.com", emailStatus: "sent" });
 let StudentInviteControl: typeof import("@/components/admin/StudentInviteControl").StudentInviteControl;
 let NewStudentPage: typeof import("@/app/(app)/dashboard/admin/students/new/page").default;
 let inviteStatus: typeof import("@/lib/actions/invite").getInviteStatus = async () => ({ status: "invalid" });
@@ -2914,7 +2914,7 @@ test("creating a student shows the signup link once and starts a fresh form for 
   const submitted: string[][] = [];
   createStudentAction = async (_previous, data) => {
     submitted.push([String(data.get("displayName")), String(data.get("email")), String(data.get("password"))]);
-    return { created: { studentId: "student-9", displayName: "민지", invitePath: "/invite#student-9.secret-value" } };
+    return { created: { studentId: "student-9", displayName: "민지", email: "minji@example.com", invitePath: "/invite#student-9.secret-value", emailStatus: "sent" } };
   };
   context.after(() => { createStudentAction = async () => ({}); });
   await render(context, <NewStudentPage />);
@@ -2924,6 +2924,7 @@ test("creating a student shows the signup link once and starts a fresh form for 
   await press("계정 생성");
   assert.deepEqual(submitted, [["민지", "minji@example.com", "null"]]);
   assert.equal(browser.document.querySelector("code")?.textContent, "https://portal.test/invite#student-9.secret-value");
+  assert.match(browser.document.body.textContent ?? "", /minji@example\.com로 가입 링크를 보냈습니다/u, "메일을 보냈다고 알리고 링크도 남긴다");
   assert.equal(browser.document.activeElement?.id, "created-student-heading");
   const detail = [...browser.document.querySelectorAll("a")].find((link) => link.textContent === "학생 상세로 이동");
   assert.equal(detail?.getAttribute("href"), "/dashboard/admin/students/student-9?tab=overview");
@@ -2978,8 +2979,8 @@ test("signup link explains an expired or missing token without showing the form"
 
 test("signup link reissue confirms first while a link is live and shows the new link once", async (context) => {
   const issued: string[] = [];
-  reissueInvite = async (studentId) => { issued.push(studentId); return `/invite#${studentId}.new-${issued.length}`; };
-  context.after(() => { reissueInvite = async () => "/invite#student-1.secret"; });
+  reissueInvite = async (studentId) => { issued.push(studentId); return { invitePath: `/invite#${studentId}.new-${issued.length}`, email: "student@example.com", emailStatus: issued.length === 1 ? "sent" : "failed" }; };
+  context.after(() => { reissueInvite = async () => ({ invitePath: "/invite#student-1.secret", email: "student@example.com", emailStatus: "sent" }); });
   const root = await render(context, <StudentInviteControl studentId="student-live" expiresAt={new Date("2026-10-21T03:00:00.000Z")} expired={false} />);
   assert.match(browser.document.body.textContent ?? "", /10월 21일/u);
   await press("가입 링크 다시 발급");
@@ -2987,11 +2988,13 @@ test("signup link reissue confirms first while a link is live and shows the new 
   assert.equal(browser.document.activeElement?.textContent, "취소");
   await press("가입 링크 다시 발급 확인");
   assert.equal(browser.document.querySelector("code")?.textContent, "https://portal.test/invite#student-live.new-1");
+  assert.match(browser.document.body.textContent ?? "", /student@example\.com로 가입 링크를 보냈습니다/u);
 
   await act(async () => root.render(<StudentInviteControl key="expired" studentId="student-old" expiresAt={new Date("2026-10-01T03:00:00.000Z")} expired />));
   assert.match(browser.document.body.textContent ?? "", /가입 링크가 만료됐습니다/u);
   await press("가입 링크 다시 발급");
   assert.deepEqual(issued, ["student-live", "student-old"], "an expired link has nothing to break, so it is issued directly");
+  assert.match(browser.document.body.textContent ?? "", /메일을 보내지 못했습니다\. 아래 링크를 학생에게 직접 전달해 주세요/u, "a failed email still leaves the link to hand over");
 });
 
 test("confirm panel starts on cancel, closes on Escape, and stays open only while the confirmed action runs", async (context) => {

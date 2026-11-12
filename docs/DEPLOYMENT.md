@@ -133,6 +133,12 @@ iCloud 연동:
 2. `node scripts/generate-vapid-keys.mjs`로 만든 키를 `wrangler secret put VAPID_PUBLIC_KEY`·`VAPID_PRIVATE_KEY`로 넣는다(환경마다 다른 키, 값은 기록에 남기지 않는다). secret이 없으면 알림 설정에 "켤 수 없습니다"만 보이고 다른 기능은 그대로다. 키를 바꾸면 모든 기기가 다시 켜야 한다.
 3. 배포 뒤 승인된 기기에서 알림 켜기 → 테스트 알림 수신을 확인한다. iPhone은 홈 화면에 추가한 앱에서 확인한다.
 
+### 가입 링크 메일 gate
+
+- `wrangler.toml`의 `[[send_email]] name = "EMAIL"` binding이 필요하다(secret 없음). Workers Paid 플랜에서만 임의 주소로 보낸다.
+- 배포 전 Cloudflare Email Service → Email Sending에 `portal.stann.kr`을 발송 도메인으로 등록하고 `cf-bounce.portal.stann.kr`(MX·SPF)·`cf-bounce._domainkey.portal.stann.kr`(DKIM)·`_dmarc.portal.stann.kr`이 검증됐는지 본다. apex `stann.kr`의 MX·SPF·`_dmarc`(iCloud 메일)는 바꾸지 않는다.
+- 등록 전이거나 발송이 실패하면 화면이 "보내지 못했습니다"와 링크를 보여 주므로 학생 생성은 막히지 않는다.
+
 ### 실시간 공동 편집 전환 gate
 
 노트·가이드·게시물·Q&A 편집기는 `DOC_ROOMS` 없이도 혼자 모드(기기 보관, 이 탭이 저장)로 열리지만 공동 편집·실시간 보기는 binding이 있어야 동작한다. DO class 생성은 code deploy와 별도 승인 범위다.

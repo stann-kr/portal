@@ -25,6 +25,7 @@ import {
   type StoredCredentialState,
 } from "@/lib/password-storage";
 import { buildInvitePath, INVITE_LIFETIME_MS } from "@/lib/invite-token";
+import { sendInviteEmail, type InviteEmailStatus } from "@/lib/invite-email";
 import {
   queryStudentRosterStats,
   queryStudentWorkCounts,
@@ -61,18 +62,20 @@ export async function getStudentCount(): Promise<number> {
 export type CreateStudentState = {
   error?: string;
   /** 만든 학생. 가입 링크는 이 응답으로 한 번만 돌려준다. */
-  created?: { studentId: string; displayName: string; invitePath: string };
+  created?: { studentId: string; displayName: string; email: string; invitePath: string; emailStatus: InviteEmailStatus };
 };
 
 const STUDENT_NAME_MAX_LENGTH = 60;
 const STUDENT_EMAIL_MAX_LENGTH = 254;
 
 /** 7일 동안 한 번 쓸 수 있는 가입 링크 secret을 만들고 저장할 hash와 링크 경로를 돌려준다. */
-async function issueInvite(studentId: string): Promise<{ passwordHash: string; invitePath: string }> {
+async function issueInvite(studentId: string): Promise<{ passwordHash: string; invitePath: string; expiresAt: Date }> {
   const secret = generateInviteSecret();
+  const expiresAt = new Date(Date.now() + INVITE_LIFETIME_MS);
   return {
-    passwordHash: inviteHash(await bcrypt.hash(secret, 10), new Date(Date.now() + INVITE_LIFETIME_MS)),
+    passwordHash: inviteHash(await bcrypt.hash(secret, 10), expiresAt),
     invitePath: buildInvitePath(studentId, secret),
+    expiresAt,
   };
 }
 
@@ -116,7 +119,7 @@ export async function createStudent(
   }
 
   const id = crypto.randomUUID();
-  const { passwordHash, invitePath } = await issueInvite(id);
+  const { passwordHash, invitePath, expiresAt } = await issueInvite(id);
 
   await db.insert(profiles).values({
     id,
@@ -127,31 +130,36 @@ export async function createStudent(
   });
 
   revalidatePath("/dashboard/admin");
-  return { created: { studentId: id, displayName, invitePath } };
+  // 계정은 이미 만들었으므로 메일이 실패해도 화면의 링크로 전달할 수 있다.
+  const emailStatus = await sendInviteEmail({ to: email, displayName, invitePath, expiresAt });
+  return { created: { studentId: id, displayName, email, invitePath, emailStatus } };
 }
 
+export type ReissuedInvite = { invitePath: string; email: string; emailStatus: InviteEmailStatus };
+
 /**
- * 아직 가입하지 않은 학생의 가입 링크를 다시 발급한다. 이전 링크는 바로 쓸 수 없게 된다.
+ * 아직 가입하지 않은 학생의 가입 링크를 다시 발급하고 학생 이메일로 보낸다. 이전 링크는 바로 쓸 수 없게 된다.
  * 이미 비밀번호를 정한 학생은 임시 비밀번호 발급을 쓴다.
  */
-export async function reissueStudentInvite(studentId: string): Promise<string> {
+export async function reissueStudentInvite(studentId: string): Promise<ReissuedInvite> {
   const student = await requireStudentTarget(studentId);
   const db = createDb();
   const [row] = await db
-    .select({ passwordHash: profiles.passwordHash })
+    .select({ passwordHash: profiles.passwordHash, email: profiles.email, displayName: profiles.displayName })
     .from(profiles)
     .where(eq(profiles.id, student.id))
     .limit(1);
   if (!row?.passwordHash || !parseInviteHash(row.passwordHash)) throw new Error("Invite unavailable");
 
-  const { passwordHash, invitePath } = await issueInvite(student.id);
+  const { passwordHash, invitePath, expiresAt } = await issueInvite(student.id);
   const updated = await db
     .update(profiles)
     .set({ passwordHash })
     .where(and(eq(profiles.id, student.id), eq(profiles.passwordHash, row.passwordHash)))
     .returning({ id: profiles.id });
   if (updated.length === 0) throw new Error("Invite changed");
-  return invitePath;
+  const emailStatus = await sendInviteEmail({ to: row.email, displayName: row.displayName ?? "", invitePath, expiresAt });
+  return { invitePath, email: row.email, emailStatus };
 }
 
 // ───────────────────────────────────────────────

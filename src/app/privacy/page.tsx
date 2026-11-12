@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 export const metadata = { title: "개인정보처리방침" };
 
 /** 개정 시 이 날짜와 본문을 함께 바꾼다. */
-const EFFECTIVE_DATE = "2026년 10월 28일";
+const EFFECTIVE_DATE = "2026년 11월 12일";
 const CONTACT_EMAIL = "stannlumo@gmail.com";
 
 /**
@@ -28,6 +28,7 @@ export default function PrivacyPage() {
       <Section title="2. 처리하는 정보">
         <ul>
           <li>계정: 이메일 주소, 표시 이름, 비밀번호(암호화한 값만 보관), 역할(학생·Stann)</li>
+          <li>가입 안내 메일: Stann이 계정을 만들거나 가입 링크를 다시 발급하면, 그 이메일 주소로 표시 이름과 가입 링크를 담은 메일을 보냅니다.</li>
           <li>레슨 기록: 레슨 일정, 과제와 제출물(믹스셋 링크·글·파일), 피드백, 노트, 질문과 답변, 커뮤니티 글과 댓글</li>
           <li>캘린더: 포탈에서 만든 일정과, Stann이 연결한 외부 캘린더(Google 캘린더·iCloud 캘린더)의 일정 제목·시간·설명·반복 규칙</li>
           <li>운영 정보: 로그인 유지를 위한 세션 쿠키, 로그인 시도 제한에 쓰는 접속 IP, 요청·오류 기록</li>
@@ -61,7 +62,7 @@ export default function PrivacyPage() {
       <Section title="4. 외부 서비스">
         <p>정보를 판매하거나 다른 목적으로 제공하지 않으며, 포탈 운영에 필요한 범위에서 다음 서비스를 이용합니다.</p>
         <ul>
-          <li>Cloudflare: 포탈의 서버, 데이터베이스와 파일 저장소. 정보는 미국 등 국외 데이터센터에서 처리될 수 있습니다.</li>
+          <li>Cloudflare: 포탈의 서버, 데이터베이스와 파일 저장소, 가입 안내 메일 발송(Cloudflare Email Service). 정보는 미국 등 국외 데이터센터에서 처리될 수 있습니다.</li>
           <li>
             Google·Apple: Stann이 학생의 캘린더 동기화를 켠 경우에만, 그 학생의 레슨·일정 제목·시간·설명이 Stann의 Google 캘린더나 iCloud
             캘린더에 기록됩니다. 캘린더를 함께 공유받은 학생은 그 일정을 해당 캘린더에서도 볼 수 있습니다.

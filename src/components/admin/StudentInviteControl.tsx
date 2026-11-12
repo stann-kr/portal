@@ -4,7 +4,8 @@ import { useState, useTransition } from "react";
 import { AccountStatusRow, ACCOUNT_ACTION_BUTTON_CLASS, OneTimeSecret } from "@/components/admin/OneTimeSecret";
 import { Button } from "@/components/ui/button";
 import { ConfirmPanel, useConfirmAction } from "@/components/ui/confirm-action";
-import { reissueStudentInvite } from "@/lib/actions/students";
+import { InviteEmailStatusLine, inviteLinkNotice } from "@/components/admin/InviteEmailStatusLine";
+import { reissueStudentInvite, type ReissuedInvite } from "@/lib/actions/students";
 import { INVITE_LIFETIME_MS } from "@/lib/invite-token";
 import { formatKst } from "@/lib/kst-format";
 import { cn } from "@/lib/utils";
@@ -30,7 +31,7 @@ export function StudentInviteControl({
   statusClassName?: string;
   actionsClassName?: string;
 }) {
-  const [invitePath, setInvitePath] = useState<string | null>(null);
+  const [issued, setIssued] = useState<ReissuedInvite | null>(null);
   const [linkExpiresAt, setLinkExpiresAt] = useState(expiresAt);
   const [hasLiveLink, setHasLiveLink] = useState(!expired);
   const [error, setError] = useState<string | null>(null);
@@ -41,8 +42,7 @@ export function StudentInviteControl({
     setError(null);
     startTransition(async () => {
       try {
-        const path = await reissueStudentInvite(studentId);
-        setInvitePath(path);
+        setIssued(await reissueStudentInvite(studentId));
         setLinkExpiresAt(new Date(Date.now() + INVITE_LIFETIME_MS));
         setHasLiveLink(true);
       } catch {
@@ -51,6 +51,7 @@ export function StudentInviteControl({
     });
   };
 
+  const invitePath = issued?.invitePath ?? null;
   const inviteUrl = invitePath && typeof window !== "undefined" ? `${window.location.origin}${invitePath}` : invitePath;
 
   return (
@@ -58,7 +59,7 @@ export function StudentInviteControl({
       <AccountStatusRow label="가입" className={statusClassName}>
         {hasLiveLink
           ? `대기 · 가입 링크는 ${formatKst(linkExpiresAt, EXPIRES_FORMAT)}까지 한 번 쓸 수 있습니다`
-          : "대기 · 가입 링크가 만료됐습니다. 새 링크를 발급해 전달해 주세요"}
+          : "대기 · 가입 링크가 만료됐습니다. 새 링크를 발급하면 학생 이메일로 보냅니다"}
       </AccountStatusRow>
 
       <div className={cn("flex flex-col", actionsClassName)}>
@@ -79,7 +80,7 @@ export function StudentInviteControl({
         {reissueConfirm.isOpen ? (
           <ConfirmPanel
             confirm={reissueConfirm}
-            message="새 링크를 발급하면 이전에 보낸 가입 링크는 바로 쓸 수 없게 됩니다. 발급할까요?"
+            message="새 링크를 발급해 학생 이메일로 보내면 이전 가입 링크는 바로 쓸 수 없게 됩니다. 발급할까요?"
             confirmLabel="가입 링크 다시 발급 확인"
             pendingLabel="발급 중…"
             pending={isPending}
@@ -89,13 +90,11 @@ export function StudentInviteControl({
         ) : null}
 
         <div aria-live="polite" aria-atomic="true" className="[&:not(:empty)]:mt-3">
-          {inviteUrl ? (
-            <OneTimeSecret
-              key={inviteUrl}
-              label="가입 링크"
-              value={inviteUrl}
-              notice="이 화면을 벗어나면 다시 볼 수 없습니다. 학생에게 이 링크를 직접 전달해 주세요."
-            />
+          {inviteUrl && issued ? (
+            <div key={inviteUrl} className="flex flex-col gap-3">
+              <InviteEmailStatusLine status={issued.emailStatus} email={issued.email} />
+              <OneTimeSecret label="가입 링크" value={inviteUrl} notice={inviteLinkNotice(issued.emailStatus, "")} />
+            </div>
           ) : null}
         </div>
 
