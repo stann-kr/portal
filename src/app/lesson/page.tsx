@@ -16,7 +16,6 @@ export const metadata: Metadata = {
 };
 
 const INSTAGRAM_HANDLE = "stannlumo";
-const INSTAGRAM_DM_URL = `https://ig.me/m/${INSTAGRAM_HANDLE}`;
 const INSTAGRAM_PROFILE_URL = `https://www.instagram.com/${INSTAGRAM_HANDLE}/`;
 
 const FACTS = [
@@ -196,17 +195,15 @@ export default function LessonInfoPage() {
             </p>
             <div className="flex flex-wrap items-center gap-3 pt-2">
               <a
-                href={INSTAGRAM_DM_URL}
+                href={INSTAGRAM_PROFILE_URL}
                 target="_blank"
                 rel="noreferrer"
                 className="inline-flex h-12 basis-full items-center justify-center gap-2 whitespace-nowrap rounded-lg bg-background px-[22px] text-[15px] font-medium text-foreground md:basis-auto"
               >
                 <Instagram className="size-[18px]" strokeWidth={1.8} aria-hidden="true" />
-                인스타그램 DM 보내기
+                인스타그램에서 문의하기
               </a>
-              <a href={INSTAGRAM_PROFILE_URL} target="_blank" rel="noreferrer" className="font-mono text-sm text-primary-foreground/70 underline-offset-4 hover:underline">
-                @{INSTAGRAM_HANDLE}
-              </a>
+              <span className="font-mono text-sm text-primary-foreground/70">@{INSTAGRAM_HANDLE}</span>
             </div>
             <p className="text-ui leading-[22px] text-primary-foreground/70">
               문의하실 때 디제잉 경험, 관심 있는 과정(정규·취미), 가능한 요일을 함께 적어 주시면 빠르게 안내해 드립니다.
