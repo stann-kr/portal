@@ -8,6 +8,7 @@
 import { useActionState, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Check, ChevronLeft } from "lucide-react";
+import { InviteEmailStatusLine, inviteLinkNotice } from "@/components/admin/InviteEmailStatusLine";
 import { OneTimeSecret } from "@/components/admin/OneTimeSecret";
 import { Button, buttonClassName } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -45,10 +46,11 @@ function CreatedStudent({
       >
         {created.displayName} 학생 계정을 만들었습니다
       </h1>
+      <InviteEmailStatusLine status={created.emailStatus} email={created.email} />
       <OneTimeSecret
         label="가입 링크"
         value={inviteUrl}
-        notice="이 화면을 벗어나면 다시 볼 수 없습니다. 링크는 7일 동안 한 번 쓸 수 있고, 학생 상세에서 다시 발급할 수 있습니다."
+        notice={inviteLinkNotice(created.emailStatus, " 링크는 7일 동안 한 번 쓸 수 있고, 학생 상세에서 다시 발급할 수 있습니다.")}
       />
       <div className="flex flex-wrap gap-2 pt-2">
         <Link
@@ -125,7 +127,7 @@ function NewStudentForm({ onCreated }: { onCreated: (created: NonNullable<Create
           className="md:h-10"
         />
         <p id="email-help" className="text-xs leading-[18px] text-muted-foreground">
-          학생이 로그인할 때 쓰는 주소입니다. 계정을 만들면 가입 링크가 나오고, 학생이 그 링크에서 비밀번호를 정합니다.
+          학생이 로그인할 때 쓰는 주소입니다. 계정을 만들면 이 주소로 가입 링크를 보내고, 학생이 그 링크에서 비밀번호를 정합니다.
         </p>
       </div>
 
@@ -173,7 +175,7 @@ export default function NewStudentPage() {
           <>
             <header className="flex flex-col gap-1.5">
               <h1 className="text-mobile-title font-semibold tracking-display text-foreground md:text-display">학생 계정 생성</h1>
-              <p className="text-body text-secondary-foreground">새 수강생 계정을 만들고 가입 링크를 발급합니다.</p>
+              <p className="text-body text-secondary-foreground">새 수강생 계정을 만들고 가입 링크를 이메일로 보냅니다.</p>
             </header>
             <NewStudentForm key={formKey} onCreated={setCreated} />
           </>

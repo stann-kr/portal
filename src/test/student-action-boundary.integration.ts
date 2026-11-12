@@ -284,6 +284,8 @@ test("학생 생성은 이메일을 정규화하고 대소문자만 다른 중�
   assert.equal(created?.displayName, "새 학생");
   assert.equal(created?.role, "student");
   assert.equal(result.created?.studentId, created?.id);
+  assert.equal(result.created?.email, "new.student@example.com");
+  assert.equal(result.created?.emailStatus, "skipped", "메일 binding이 없는 환경은 보내지 않고 화면 링크로 전달한다");
   assert.match(result.created?.invitePath ?? "", new RegExp(`^/invite#${created?.id}\\.[A-Za-z0-9_-]{43}$`, "u"));
   assert.match(created?.passwordHash ?? "", /^invite:\d+:\$2[aby]\$/u, "가입 전에는 가입 링크 secret의 hash만 저장한다");
 });
@@ -332,7 +334,8 @@ test("가입 링크는 학생이 한 번만 직접 비밀번호를 정하게 하
   activeSession = createSession("admin-1", "admin");
   const reissued = await studentActions.reissueStudentInvite(jun.studentId);
   assert.deepEqual(await inviteActions.getInviteStatus(tokenOf(jun.invitePath)), { status: "invalid" }, "다시 발급하면 이전 링크는 쓸 수 없다");
-  assert.deepEqual(await inviteActions.getInviteStatus(tokenOf(reissued)), { status: "valid", displayName: "준", email: "jun@example.com" });
+  assert.deepEqual(await inviteActions.getInviteStatus(tokenOf(reissued.invitePath)), { status: "valid", displayName: "준", email: "jun@example.com" });
+  assert.deepEqual([reissued.email, reissued.emailStatus], ["jun@example.com", "skipped"]);
 });
 
 test("레슨 예약·시간 변경은 관리자와 대상 학생 레슨으로 제한하고 결과를 상태로 돌려준다", { concurrency: false }, async (context) => {

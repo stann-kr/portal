@@ -55,6 +55,10 @@ namespace_id = "2026101401"
   limit = 10
   period = 60
 
+# 학생 가입 링크 메일(Cloudflare Email Service, 발송 도메인 portal.stann.kr). src/lib/invite-email.ts
+[[send_email]]
+name = "EMAIL"
+
 [observability]
 enabled = true
 head_sampling_rate = 1
