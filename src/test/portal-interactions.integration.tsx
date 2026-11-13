@@ -38,7 +38,7 @@ let PersistentPlayerHost: typeof import("@/components/player/PersistentPlayerHos
 let MixsetFeedbackCard: typeof import("@/components/community/MixsetFeedbackCard").MixsetFeedbackCard;
 let CommentForm: typeof import("@/components/community/CommentForm").CommentForm;
 let saveComment: typeof import("@/lib/actions/comments").createComment = async () => ({});
-let removeComment: typeof import("@/lib/actions/comments").deleteComment = async () => {};
+let removeComment: typeof import("@/lib/actions/comments").deleteComment = async () => ({ success: true });
 let trashPost: typeof import("@/lib/actions/posts").deletePost = async () => ({ success: true });
 let AssignmentView: typeof import("@/components/student-portal/AssignmentView").AssignmentView;
 let AssignmentDetailClient: typeof import("@/app/(app)/dashboard/student/assignments/[id]/AssignmentDetailClient").AssignmentDetailClient;
@@ -103,8 +103,9 @@ let LoginForm: typeof import("@/components/auth/LoginForm").LoginForm;
 const previousGlobals = new Map<string, PropertyDescriptor | undefined>();
 
 const routerReplacements: string[] = [];
+let routerRefreshes = 0;
 mock.module("next/navigation", { namedExports: {
-  useRouter: () => ({ push() {}, refresh() {}, replace(href: string) { routerReplacements.push(href); } }),
+  useRouter: () => ({ push() {}, refresh() { routerRefreshes += 1; }, replace(href: string) { routerReplacements.push(href); } }),
   // 관리자 학생 상세의 좁은 화면 편집 모드(`?edit=1`)처럼 주소 값을 읽는 화면용. 테스트 창의 현재 주소를 준다.
   useSearchParams: () => new URLSearchParams(globalThis.location?.search ?? ""),
   usePathname: () => (globalThis.window as { location?: { pathname: string } } | undefined)?.location?.pathname ?? "/",
@@ -2052,7 +2053,7 @@ test("게시물 삭제는 응답 유실 재시도와 복원 후 새 삭제 의�
 test("failed comment deletion keeps the conversation and unfinished reply visible", async (context) => {
   browser.localStorage.clear();
   removeComment = async () => { throw new Error("offline"); };
-  context.after(() => { removeComment = async () => {}; });
+  context.after(() => { removeComment = async () => ({ success: true }); });
   const post = {
     id: "delete-post", authorId: "student-1", title: "레슨 이야기", contentHtml: "<p>본문</p>",
     category: "general", boardType: "GENERAL" as const, isPinned: false, mediaUrl: null,
@@ -2068,6 +2069,15 @@ test("failed comment deletion keeps the conversation and unfinished reply visibl
   assert.match(browser.document.querySelector('[role="alert"]')?.textContent ?? "", /댓글을 삭제하지 못했습니다/);
   assert.equal(browser.document.activeElement?.getAttribute("aria-label"), "학생 댓글 삭제", "실패 뒤 확인을 연 버튼으로 돌아간다");
   assert.match(browser.document.body.textContent, /기존 대화/);
+  assert.equal(inputValue("content"), "아직 작성 중인 답글");
+
+  // 화면을 열어 둔 사이 게시물이 휴지통으로 갔으면 서버가 돌려준 이유를 보이고 화면을 다시 받는다.
+  const refreshesBefore = routerRefreshes;
+  removeComment = async () => ({ error: "휴지통으로 옮겨진 게시물의 댓글은 삭제할 수 없습니다." });
+  await press("학생 댓글 삭제");
+  await press("댓글 삭제 확인");
+  assert.match(browser.document.querySelector('[role="alert"]')?.textContent ?? "", /휴지통으로 옮겨진 게시물/u);
+  assert.equal(routerRefreshes, refreshesBefore + 1);
   assert.equal(inputValue("content"), "아직 작성 중인 답글");
 });
 

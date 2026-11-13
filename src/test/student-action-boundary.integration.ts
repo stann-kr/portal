@@ -162,19 +162,21 @@ test("댓글 삭제는 게시물 대상과 작성자 권한을 함께 검증하�
     title: "레슨 기록", contentHtml: "<p>본문</p>",
   })));
   await db.insert(comments).values({ id: "comment-1", postId: "post-1", authorId: "student-1", contentHtml: "<p>보존할 대화</p>" });
-  await commentActions.deleteComment("comment-1", "post-2");
+  const notDeleted = { error: "댓글을 찾을 수 없거나 삭제할 권한이 없습니다." };
+  assert.deepEqual(await commentActions.deleteComment("comment-1", "post-2"), notDeleted);
   assert.equal((await db.select().from(comments)).length, 1);
   activeSession = createSession("student-2", "student");
-  await commentActions.deleteComment("comment-1", "post-1");
+  assert.deepEqual(await commentActions.deleteComment("comment-1", "post-1"), notDeleted);
   assert.equal((await db.select().from(comments)).length, 1);
   activeSession = createSession("admin-1", "admin");
-  await commentActions.deleteComment("comment-1", "post-2");
+  assert.deepEqual(await commentActions.deleteComment("comment-1", "post-2"), notDeleted);
   assert.equal((await db.select().from(comments)).length, 1);
   await db.update(posts).set({ deletedAt: new Date() }).where(eq(posts.id, "post-1"));
-  await commentActions.deleteComment("comment-1", "post-1");
+  // 화면을 열어 둔 사이 게시물이 휴지통으로 갔으면 조용히 끝내지 않고 이유를 돌려준다.
+  assert.deepEqual(await commentActions.deleteComment("comment-1", "post-1"), { error: "휴지통으로 옮겨진 게시물의 댓글은 삭제할 수 없습니다." });
   assert.equal((await db.select().from(comments)).length, 1);
   await db.update(posts).set({ deletedAt: null }).where(eq(posts.id, "post-1"));
-  await commentActions.deleteComment("comment-1", "post-1");
+  assert.deepEqual(await commentActions.deleteComment("comment-1", "post-1"), { success: true });
   assert.equal((await db.select().from(comments)).length, 0);
 });
 
