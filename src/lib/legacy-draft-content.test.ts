@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { DOCUMENT_DRAFT_KINDS } from "./form-draft/contract";
 import {
+  isLegacyArchiveDraftKind,
   legacyDraftCopyText,
   legacyDraftHtmlToPlainText,
   parseLegacyServerDraftPayload,
@@ -19,6 +21,15 @@ test("깨진 JSON·객체가 아닌 payload는 던지지 않고 빈 내용이다
   assert.deepEqual(parseLegacyServerDraftPayload(JSON.stringify({ data: "x" })), empty);
   assert.deepEqual(readLegacyDraftContent(null), empty);
   assert.deepEqual(readLegacyDraftContent({ title: 3, contentHtml: {} }), empty);
+});
+
+test("보관함은 실시간 편집으로 옮겨 간 문서 종류의 기기 초안만 이전 초안으로 본다", () => {
+  const legacy = DOCUMENT_DRAFT_KINDS.filter((kind) => isLegacyArchiveDraftKind(kind));
+  assert.deepEqual([...legacy].sort(), ["community-post", "guide-page", "note", "qna-reply", "qna-thread"]);
+  // 지금도 폼이 쓰고 되살리는 초안은 보관함에 옛 초안으로 보이지 않는다.
+  for (const kind of ["community-comment", "assignment-feedback", "instructor-memo"]) {
+    assert.equal(isLegacyArchiveDraftKind(kind), false, kind);
+  }
 });
 
 test("본문 필드는 contentHtml, content, body, text 순으로 비어 있지 않은 첫 값을 쓴다", () => {

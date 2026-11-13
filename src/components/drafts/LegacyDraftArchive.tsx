@@ -10,6 +10,7 @@ import { discardDocumentServerDraft } from "@/lib/actions/documentDrafts";
 import type { LegacyServerDraft } from "@/lib/actions/legacyDrafts";
 import { createCreationOperationId } from "@/lib/creation-operation";
 import {
+  isLegacyArchiveDraftKind,
   legacyDraftCopyText,
   readLegacyDraftContent,
   type LegacyDraftContent,
@@ -138,7 +139,8 @@ export function LegacyDraftArchive({
     // 저장소 읽기는 mount 직후 한 번 예약해 effect 본문에서 동기 setState를 하지 않는다.
     const load = () => {
       const result = readLocalDocumentDrafts(actorId);
-      setLocalItems([...readRecoveredItems(actorId), ...result.drafts.map((draft) => ({
+      // 지금도 폼이 쓰는 기기 초안(댓글·피드백·제출·메모·과제 폼)은 "이 기기의 초안"에서 다루고 여기서는 뺀다.
+      setLocalItems([...readRecoveredItems(actorId), ...result.drafts.filter((draft) => isLegacyArchiveDraftKind(draft.kind)).map((draft) => ({
         id: `local:${draft.sourceKey}`,
         scope: "local",
         sourceKey: draft.sourceKey,
