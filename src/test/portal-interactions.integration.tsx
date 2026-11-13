@@ -29,6 +29,7 @@ let UnifiedCalendar: typeof import("@/components/student-portal/UnifiedCalendar"
 let CalendarQuickCreate: typeof import("@/components/calendar/CalendarQuickCreate").CalendarQuickCreate;
 let renderCalendarEventContent: typeof import("@/components/calendar/CalendarEventChip").renderCalendarEventContent;
 let VideoPlayer: typeof import("@/components/player/VideoPlayer").VideoPlayer;
+type PlaybackController = import("@/components/player/VideoPlayer").PlaybackController;
 let TimelineFeedback: typeof import("@/components/feedback/TimelineFeedback").TimelineFeedback;
 let PostDetailClient: typeof import("@/app/(app)/community/[postId]/PostDetailClient").PostDetailClient;
 let navigationProgress: typeof import("@/components/app-shell/NavigationProgress");
@@ -1820,6 +1821,39 @@ test("SoundCloud queues seconds as widget milliseconds and releases its listener
   assert.equal(pauses, 1);
   await act(async () => ready());
   assert.equal(seeks.length, 2);
+});
+
+test("준비 전에 멈춘 플레이어는 준비가 끝나도 예약된 재생을 시작하지 않는다", async (context) => {
+  let controller: PlaybackController | null = null;
+  const trackController = (next: PlaybackController | null) => { controller = next; };
+  const playing: boolean[] = [];
+  const trackPlaying = (next: boolean) => { playing.push(next); };
+  const mediaUrl = "https://www.youtube.com/watch?v=aqz-KE-bpKQ";
+  const root = await render(context, <VideoPlayer url={mediaUrl} onControllerChange={trackController} onPlayingChange={trackPlaying} />);
+  const video = browser.document.querySelector("video");
+  assert.ok(video);
+  await act(async () => { controller!.seek(30); controller!.pause(); });
+  await act(async () => { video.dispatchEvent(new browser.Event("loadedmetadata")); });
+  assert.equal(video.currentTime, 30, "옮길 위치는 그대로 적용한다");
+  assert.equal(playing.at(-1), false, "멈춘 뒤에는 metadata가 와도 재생하지 않는다");
+  await act(async () => { controller!.seek(45); });
+  assert.equal(playing.at(-1), true, "준비된 뒤의 위치 이동은 그 위치부터 재생한다");
+  await act(async () => root.render(<div />));
+
+  const listeners = new Map<string, () => void>();
+  const seeks: number[] = [];
+  let plays = 0;
+  const widget = { bind: (event: string, callback: () => void) => listeners.set(event, callback), unbind: (event: string) => { listeners.delete(event); },
+    seekTo: (value: number) => seeks.push(value), play: () => { plays++; }, pause: () => {}, getPosition: () => {}, getDuration: () => {} };
+  Object.defineProperty(browser, "SC", { configurable: true, value: { Widget: Object.assign(() => widget, { Events: { READY: "ready", ERROR: "error" } }) } });
+  context.after(() => Reflect.deleteProperty(browser, "SC"));
+  await act(async () => root.render(<VideoPlayer url="https://soundcloud.com/artist/mix" onControllerChange={trackController} />));
+  const ready = listeners.get("ready");
+  assert.ok(ready);
+  await act(async () => { controller!.seek(30); controller!.pause(); });
+  await act(async () => ready());
+  assert.deepEqual(seeks, [30000]);
+  assert.equal(plays, 0, "멈춘 뒤에는 widget READY가 와도 재생하지 않는다");
 });
 
 test("feedback failure keeps the time and text; only a confirmed save clears them", async (context) => {
