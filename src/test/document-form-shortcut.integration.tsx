@@ -163,6 +163,7 @@ let saveQnaThread: typeof import("@/lib/actions/qna").createQnaThread = async ()
 let saveQnaInline: typeof import("@/lib/actions/qna").createQnaThreadInline = async () => ({});
 let saveNewPost: typeof import("@/lib/actions/posts").createPost = async () => ({});
 let savePostEdit: typeof import("@/lib/actions/posts").updatePostContent = async () => ({});
+let loadPostSeed: typeof import("@/lib/actions/posts").getPostCollabSeed = async () => { throw new Error("게시본 조회를 준비하지 않은 테스트입니다."); };
 let changeQnaStatus: typeof import("@/lib/actions/qna").updateThreadStatus = async () => ({ success: true, currentRevision: 2 });
 let changeQnaLifecycle: typeof import("@/lib/actions/qna").trashQnaThread = async () => ({ success: true, currentRevision: 2 });
 let notePageRole: "student" | "admin" = "student";
@@ -217,6 +218,7 @@ mock.module("@/lib/actions/posts", {
       return saveNewPost(...args);
     },
     updatePostContent: (...args: Parameters<typeof savePostEdit>) => savePostEdit(...args),
+    getPostCollabSeed: (...args: Parameters<typeof loadPostSeed>) => loadPostSeed(...args),
   },
 });
 mock.module("@/lib/actions/categories", {
@@ -1414,23 +1416,43 @@ test("게시물 수정 form은 mixsetLinkUrl prop이 없으면 링크 칸 없이
   assert.equal("mixsetLinkUrl" in requests[0]!, false, "링크 칸이 없으면 매체를 바꾸지 않도록 칸을 보내지 않는다.");
 });
 
-test("게시물 수정 취소는 함께 쓰는 작업본을 되돌리지 않고 화면만 닫는다", { concurrency: false }, async (context) => {
-  const post = { id: "post-cancel-close-only", title: "처음 제목", contentHtml: "<p>처음 본문</p>", version: 1 };
+/** 취소 테스트 공통: 수정 화면을 열고 작업본 본문을 바꾼 뒤 취소를 누른다. */
+async function editThenCancelPost(context: Parameters<typeof renderForm>[0], post: { id: string; title: string; contentHtml: string; version: number }) {
   let cancelled = 0;
-  const harness = await renderForm(context, <PostEditForm actorId="post-cancel-actor" post={post} mixsetLinkUrl={null} onCancel={() => { cancelled += 1; }} onSaved={() => undefined} />);
+  const harness = await renderForm(context, <PostEditForm actorId={`${post.id}-actor`} post={post} mixsetLinkUrl={null} onCancel={() => { cancelled += 1; }} onSaved={() => undefined} />);
   const { container } = harness;
   await waitUntil(() => Boolean(container.querySelector(BODY_FIELD)) && !container.querySelector<HTMLTextAreaElement>(BODY_FIELD)?.disabled, 3000, "수정 작업본이 열려야 합니다.");
-  // 작업본은 다른 기기·다른 편집자와 함께 쓴다. 이 화면에서 넣었든 다른 화면에서 넣었든 같은 문서에 있다.
-  typeInto(harness, container.querySelector<HTMLTextAreaElement>(BODY_FIELD)!, "다른 기기에서 넣은 문장");
+  typeInto(harness, container.querySelector<HTMLTextAreaElement>(BODY_FIELD)!, "게시하지 않은 수정");
   await act(async () => { await waitForRealTime(50); });
-
   const cancelButton = [...container.querySelectorAll<HTMLButtonElement>('button[type="button"]')].find((button) => button.textContent?.trim() === "취소");
   assert.ok(cancelButton, "취소 버튼이 있어야 합니다.");
   await act(async () => cancelButton.click());
   await act(async () => { await waitForRealTime(50); });
+  return { body: () => container.querySelector<HTMLTextAreaElement>(BODY_FIELD)?.value, title: () => container.querySelector<HTMLInputElement>('[name="title"]')?.value, cancelled: () => cancelled };
+}
 
-  assert.equal(cancelled, 1, "취소는 화면을 닫는다.");
-  assert.equal(container.querySelector<HTMLTextAreaElement>(BODY_FIELD)?.value, "다른 기기에서 넣은 문장", "작업본 내용은 그대로 남는다(되돌리기는 변경 이력에서 한다).");
+test("게시물 수정 취소는 처음 연 게시본이 아니라 그 사이 게시된 최신 게시본으로 작업본을 되돌린다", { concurrency: false }, async (context) => {
+  const post = { id: "post-cancel-latest", title: "처음 제목", contentHtml: "<p>처음 본문</p>", version: 1 };
+  // 이 화면을 연 뒤 다른 기기가 v2를 게시했다. 옛 v1으로 되돌리면 다음 저장이 v2를 덮는다.
+  loadPostSeed = (async () => ({ ...post, title: "다른 기기가 게시한 제목", contentHtml: "<p>다른 기기가 게시한 본문</p>", version: 2, lifecycle: 0 })) as unknown as typeof loadPostSeed;
+  context.after(() => { loadPostSeed = async () => { throw new Error("게시본 조회를 준비하지 않은 테스트입니다."); }; });
+
+  const result = await editThenCancelPost(context, post);
+
+  assert.equal(result.cancelled(), 1, "취소는 화면을 닫는다.");
+  assert.equal(result.body(), "다른 기기가 게시한 본문", "작업본은 최신 게시본 본문이 된다.");
+  assert.equal(result.title(), "다른 기기가 게시한 제목", "작업본 제목도 최신 게시본을 따른다.");
+});
+
+test("게시물 수정 취소는 최신 게시본을 읽지 못하면 작업본을 되돌리지 않고 닫는다", { concurrency: false }, async (context) => {
+  const post = { id: "post-cancel-offline", title: "처음 제목", contentHtml: "<p>처음 본문</p>", version: 1 };
+  loadPostSeed = async () => { throw new Error("offline"); };
+  context.after(() => { loadPostSeed = async () => { throw new Error("게시본 조회를 준비하지 않은 테스트입니다."); }; });
+
+  const result = await editThenCancelPost(context, post);
+
+  assert.equal(result.cancelled(), 1, "읽지 못해도 화면은 닫는다.");
+  assert.equal(result.body(), "게시하지 않은 수정", "옛 게시본으로 되돌리지 않고 작업본을 남긴다.");
 });
 
 test("게시물 수정 form은 링크 게시물에 링크 칸을 두고 검증·제출에 포함한다", { concurrency: false }, async (context) => {
