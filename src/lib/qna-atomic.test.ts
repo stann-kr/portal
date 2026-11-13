@@ -176,7 +176,7 @@ test("reply ID가 다른 thread와 충돌하면 status와 event가 함께 rollba
   assert.equal(countRows(sqlite, "qna_thread_events", "thread_id", "target-thread"), 1);
 });
 
-test("CLOSED thread에는 reply와 새 event를 남기지 않는다", async (context) => {
+test("학생은 CLOSED thread에 reply와 새 event를 남기지 못한다", async (context) => {
   const { sqlite, dbContext } = setupDatabase(context);
   seedProfile(sqlite, "student-1");
   seedProfile(sqlite, "admin-1", "admin");
@@ -217,6 +217,58 @@ test("CLOSED thread에는 reply와 새 event를 남기지 않는다", async (con
   });
   assert.equal(countRows(sqlite, "qna_replies", "id", "closed-reply"), 0);
   assert.equal(countRows(sqlite, "qna_thread_events", "thread_id", "closed-thread"), 2);
+});
+
+test("관리자의 답변은 CLOSED thread를 ANSWERED로 다시 열고 답글·event를 한 번에 남긴다", async (context) => {
+  const { sqlite, dbContext } = setupDatabase(context);
+  seedProfile(sqlite, "student-1");
+  seedProfile(sqlite, "admin-1", "admin");
+  assert.equal(
+    (await createThread(dbContext, { studentId: "student-1", threadId: "reopen-thread" })).ok,
+    true,
+  );
+  const closed = await setQnaStatusAtomically(dbContext, {
+    actor: actor("admin-1", true),
+    threadId: "reopen-thread",
+    operationId: operationId(2),
+    baseRevision: 1,
+    status: "CLOSED",
+    now: new Date("2026-01-01T00:01:00.000Z"),
+  });
+  assert.equal(closed.ok, true);
+
+  const write = {
+    actor: actor("admin-1", true),
+    threadId: "reopen-thread",
+    replyId: "reopen-reply",
+    operationId: operationId(3),
+    contentHtml: "<p>닫힌 뒤 답변</p>",
+    attachmentUrl: null,
+    attachmentObjectId: null,
+    now: new Date("2026-01-01T00:02:00.000Z"),
+  };
+  const result = await createQnaReplyAtomically(dbContext, write);
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(getThread(sqlite, "reopen-thread"), {
+    status: "ANSWERED",
+    version: 3,
+    deleted_at: null,
+  });
+  assert.equal(countRows(sqlite, "qna_replies", "id", "reopen-reply"), 1);
+  assert.equal(countRows(sqlite, "qna_thread_events", "thread_id", "reopen-thread"), 3);
+  assert.deepEqual(
+    sqlite
+      .prepare("SELECT event_type, status FROM qna_thread_events WHERE thread_id = ? ORDER BY event_number DESC LIMIT 1")
+      .get("reopen-thread"),
+    { event_type: "APPEND_REPLY", status: "ANSWERED" },
+  );
+
+  // 같은 요청을 다시 보내면 답글을 한 번 더 만들지 않는다.
+  const replay = await createQnaReplyAtomically(dbContext, write);
+  assert.equal(replay.ok, true);
+  if (replay.ok) assert.equal(replay.replayed, true);
+  assert.equal(countRows(sqlite, "qna_replies", "thread_id", "reopen-thread"), 2);
 });
 
 test("다른 학생은 OPEN thread에도 reply를 남길 수 없다", async (context) => {

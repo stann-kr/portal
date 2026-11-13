@@ -479,7 +479,8 @@ async function classifyQnaMutation(
         currentRevision: thread.version,
       };
     }
-    if (thread.status === "CLOSED") {
+    // 닫힌 질문이 실패 사유가 되는 것은 학생뿐이다(관리자의 답변은 닫힌 질문을 다시 연다).
+    if (thread.status === "CLOSED" && !actor.isAdmin) {
       return { ok: false, reason: "CLOSED", threadId, currentRevision: thread.version };
     }
     return { ok: false, reason: "INTERNAL_INVARIANT_FAILURE" };
@@ -775,7 +776,10 @@ export async function createQnaReplyAtomically(
     if (thread.deletedAt) {
       return { ok: false, reason: "TRASHED", threadId: thread.id, currentRevision: thread.version };
     }
-    if (thread.status === "CLOSED") {
+    // 닫힌 질문에 학생은 답글을 달 수 없다(먼저 '다시 열기'). 관리자의 답변은 같은 쓰기에서 상태를 ANSWERED로 바꿔
+    // 질문을 다시 연다. 답글 trigger(qna_replies_before_insert_receipt_match)는 insert 시점의 상태를 보므로,
+    // 아래 UPDATE가 먼저 실행되는 이 순서에서만 통과한다.
+    if (thread.status === "CLOSED" && !write.actor.isAdmin) {
       return { ok: false, reason: "CLOSED", threadId: thread.id, currentRevision: thread.version };
     }
 
@@ -808,13 +812,14 @@ export async function createQnaReplyAtomically(
             UPDATE qna_threads
             SET status = ?, updated_at = ?, version = version + 1
             WHERE id = ? AND version = ? AND deleted_at IS NULL
-              AND status <> 'CLOSED' AND (student_id = ? OR ? = 1)
+              AND (status <> 'CLOSED' OR ? = 1) AND (student_id = ? OR ? = 1)
           `,
           params: [
             nextStatus,
             documentEpochSeconds(write.now),
             write.threadId,
             thread.version,
+            Number(write.actor.isAdmin),
             write.actor.id,
             Number(write.actor.isAdmin),
           ],
@@ -888,7 +893,7 @@ export async function createQnaReplyAtomically(
         attempt === 0 &&
         current &&
         !current.deletedAt &&
-        current.status !== "CLOSED" &&
+        (current.status !== "CLOSED" || write.actor.isAdmin) &&
         canAccessThread(write.actor, current) &&
         current.version !== thread.version
       ) {
