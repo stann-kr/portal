@@ -1922,7 +1922,7 @@ test("community comment failure and remount preserve the author's draft", async 
     id: "draft-post", authorId: "student-1", title: "레슨 이야기", contentHtml: "<p>본문</p>",
     category: "general", boardType: "GENERAL" as const, isPinned: false, mediaUrl: null,
     mediaObjectId: null, createdAt: new Date(), updatedAt: new Date(), deletedAt: null,
-    deletedById: null, version: 1, authorName: "학생", authorEmail: null,
+    deletedById: null, version: 1, authorName: "학생",
   };
   const screen = (actorId: string) => <PostDetailClient postId={post.id} post={post} initialCommentList={[]} currentUserId={actorId} isAdmin={false} returnTo="/community" />;
   const root = await render(context, screen("student-1"));
@@ -1995,7 +1995,7 @@ test("게시물 삭제는 응답 유실 재시도와 복원 후 새 삭제 의�
     id: "delete-retry-post", authorId: "student-1", title: "레슨 이야기", contentHtml: "<p>본문</p>",
     category: "general", boardType: "GENERAL" as const, isPinned: false, mediaUrl: null,
     mediaObjectId: null, createdAt: new Date(), updatedAt: new Date(), deletedAt: null,
-    deletedById: null, version: 1, authorName: "학생", authorEmail: null,
+    deletedById: null, version: 1, authorName: "학생",
   };
   const screen = (version: number, deletedAt: Date | null = null) => <PostDetailClient postId={post.id} post={{ ...post, version, deletedAt }} initialCommentList={[]} currentUserId="student-1" isAdmin={false} returnTo="/community" />;
   const root = await render(context, screen(1));
@@ -2023,9 +2023,9 @@ test("failed comment deletion keeps the conversation and unfinished reply visibl
     id: "delete-post", authorId: "student-1", title: "레슨 이야기", contentHtml: "<p>본문</p>",
     category: "general", boardType: "GENERAL" as const, isPinned: false, mediaUrl: null,
     mediaObjectId: null, createdAt: new Date(), updatedAt: new Date(), deletedAt: null,
-    deletedById: null, version: 1, authorName: "학생", authorEmail: null,
+    deletedById: null, version: 1, authorName: "학생",
   };
-  const comment = { id: "comment-1", postId: post.id, authorId: "student-1", contentHtml: "<p>기존 대화</p>", createdAt: new Date(), timeMarkerSeconds: null, authorName: "학생", authorEmail: null };
+  const comment = { id: "comment-1", postId: post.id, authorId: "student-1", contentHtml: "<p>기존 대화</p>", createdAt: new Date(), timeMarkerSeconds: null, authorName: "학생" };
   await render(context, <PostDetailClient postId={post.id} post={post} initialCommentList={[comment]} currentUserId="student-1" isAdmin={false} returnTo="/community" />);
   await fill("content", "아직 작성 중인 답글");
   await press("학생 댓글 삭제");
@@ -2042,12 +2042,12 @@ function mixsetPost(id: string, media: { mediaUrl: string | null; mediaObjectId:
     id, authorId: "student-1", title: "금요일 믹스셋", contentHtml: "<p>본문</p>",
     category: "general", boardType, isPinned: false, ...media,
     createdAt: new Date(), updatedAt: new Date(), deletedAt: null as Date | null,
-    deletedById: null, version: 1, authorName: "학생", authorEmail: null,
+    deletedById: null, version: 1, authorName: "학생",
   };
 }
 
 function mixsetComment(id: string, postId: string, text: string, timeMarkerSeconds: number | null) {
-  return { id, postId, authorId: "student-2", contentHtml: `<p>${text}</p>`, createdAt: new Date(), timeMarkerSeconds, authorName: "다른 학생", authorEmail: null };
+  return { id, postId, authorId: "student-2", contentHtml: `<p>${text}</p>`, createdAt: new Date(), timeMarkerSeconds, authorName: "다른 학생" };
 }
 
 test("믹스셋 링크 상세는 본문 위에 플레이어를 두고 댓글 시점을 누를 때마다 그 위치로 이동한다", async (context) => {
@@ -2372,7 +2372,7 @@ test("위쪽 이동 막대는 주소가 먼저 바뀌어도 불러오는 중 스
 test("믹스셋 목록 줄은 링크 플레이어를 누른 줄에만 열고, 오디오 줄은 하단 미니 플레이어(공용 곡)로 재생하며 매체 없음 줄은 그대로 둔다", async (context) => {
   playerStore.resetPlayerForTests();
   context.after(() => playerStore.resetPlayerForTests());
-  const base = { contentHtml: "<p>미리보기</p>", authorName: "학생", authorEmail: null, createdAt: new Date() };
+  const base = { contentHtml: "<p>미리보기</p>", authorName: "학생", createdAt: new Date() };
   await render(context, <ul>
     <MixsetFeedbackCard post={{ ...base, id: "link", title: "링크 믹스셋", mediaUrl: "https://www.youtube.com/watch?v=aqz-KE-bpKQ", mediaObjectId: null }} />
     <MixsetFeedbackCard post={{ ...base, id: "audio", title: "오디오 믹스셋", mediaUrl: "/api/media/audio-1", mediaObjectId: "audio-1" }} />
@@ -2410,7 +2410,7 @@ test("믹스셋 링크 줄과 하단 미니 플레이어(YouTube)는 실제 재�
     ? { matches: true, media: query, addEventListener() {}, removeEventListener() {} }
     : originalMatchMedia(query))) as typeof browser.matchMedia;
   context.after(() => { browser.matchMedia = originalMatchMedia; });
-  const base = { contentHtml: "<p>미리보기</p>", authorName: "학생", authorEmail: null, createdAt: new Date() };
+  const base = { contentHtml: "<p>미리보기</p>", authorName: "학생", createdAt: new Date() };
   await render(context, <>
     <ul>
       <MixsetFeedbackCard post={{ ...base, id: "row-a", title: "줄 A", mediaUrl: "https://www.youtube.com/watch?v=aaaaaaaaaaa", mediaObjectId: null }} />
@@ -2646,7 +2646,7 @@ test("community shows the server-loaded list first and explains a board without 
     id: "post-1", authorId: "student-1", category: "general", boardType: "GENERAL" as const, isPinned: false,
     mediaUrl: null, mediaObjectId: null, title: "레슨 후기", contentHtml: "<p>오늘 배운 것</p>",
     createdAt: new Date(), updatedAt: new Date(), deletedAt: null, version: 1,
-    authorName: "학생", authorEmail: null, commentCount: 2,
+    authorName: "학생", commentCount: 2,
   };
   const previousUrl = browser.location.href;
   context.after(() => browser.history.replaceState({}, "", previousUrl));
@@ -2700,7 +2700,7 @@ test("community load-more appends the next page once and stops at the last page"
   const makePost = (index: number) => ({
     id: `post-${index}`, authorId: "student-1", category: "general", boardType: "GENERAL" as const, isPinned: false,
     mediaUrl: null, mediaObjectId: null, title: `기록 ${index}`, contentHtml: "<p>본문</p>",
-    createdAt: new Date(), updatedAt: new Date(), deletedAt: null, version: 1, authorName: "학생", authorEmail: null, commentCount: 0,
+    createdAt: new Date(), updatedAt: new Date(), deletedAt: null, version: 1, authorName: "학생", commentCount: 0,
   });
   loadCommunityPage = async ({ cursor }) => {
     cursors.push(cursor);

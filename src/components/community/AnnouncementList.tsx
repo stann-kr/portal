@@ -23,7 +23,6 @@ type Post = {
   contentHtml: string;
   isPinned: boolean;
   authorName: string | null;
-  authorEmail: string | null;
   createdAt: Date | null;
   version: number;
   commentCount?: number;

@@ -72,6 +72,7 @@ import {
   processMediaDeletionOutboxBestEffort,
 } from "@/lib/media-lifecycle-atomic";
 import { mediaDeliveryPath, parseMediaUuidV4 } from "@/lib/media-lifecycle";
+import { publicAuthorName } from "@/lib/public-author-name";
 import { pushMessages } from "@/lib/push/messages";
 import { notifyPush } from "@/lib/push/notify";
 
@@ -91,8 +92,7 @@ const POST_SELECT = {
   updatedAt: posts.updatedAt,
   version: posts.version,
   deletedAt: posts.deletedAt,
-  authorName: profiles.displayName,
-  authorEmail: profiles.email,
+  authorName: publicAuthorName,
 } as const;
 
 function lifecycleError(reason: PostMutationFailureReason): string {
@@ -141,8 +141,7 @@ const POST_SUMMARY_SELECT = {
   boardType: posts.boardType,
   isPinned: posts.isPinned,
   createdAt: posts.createdAt,
-  authorName: profiles.displayName,
-  authorEmail: profiles.email,
+  authorName: publicAuthorName,
 } as const;
 
 const POST_SUMMARY_MAX_LIMIT = 50;

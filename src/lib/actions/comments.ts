@@ -13,6 +13,7 @@ import { and, eq, asc, isNull, sql } from "drizzle-orm";
 import { assertOwnerOrAdmin, requireAuth } from "@/lib/auth-guard";
 import { CREATION_OPERATION_FIELD, deriveCreationResourceId, resolveCreationOperationId } from "@/lib/creation-operation";
 import { COMMENT_TIME_MARKER_FIELD, parseTimeMarker } from "@/lib/community-mixset-media";
+import { publicAuthorName } from "@/lib/public-author-name";
 import { pushMessages } from "@/lib/push/messages";
 import { notifyPush } from "@/lib/push/notify";
 
@@ -50,8 +51,7 @@ export async function getCommentsByPost(postId: string) {
       contentHtml: comments.contentHtml,
       createdAt: comments.createdAt,
       timeMarkerSeconds: comments.timeMarkerSeconds,
-      authorName: profiles.displayName,
-      authorEmail: profiles.email,
+      authorName: publicAuthorName,
     })
     .from(comments)
     .leftJoin(profiles, eq(comments.authorId, profiles.id))

@@ -35,7 +35,6 @@ type FeedbackPost = {
   /** 업로드 오디오의 매체 ID. 링크 게시물은 비어 있다. */
   mediaObjectId?: string | null;
   authorName: string | null;
-  authorEmail: string | null;
   createdAt: Date | null;
   commentCount?: number;
 };
