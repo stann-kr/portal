@@ -4957,3 +4957,20 @@ test("게시물·댓글·Q&A 응답은 다른 사용자의 이메일 전체를 �
   assert.equal(wire.includes("private.example"), false);
   assert.equal(wire.includes("authorEmail"), false);
 });
+
+test("댓글은 5,000자까지만 저장하고 넘으면 쓰기 전에 거부한다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context, createSession("student-1", "student"));
+  await seedProfile(db, "student-1");
+  const created = await postActions.createPost({}, createPostForm(crypto.randomUUID(), "댓글 길이 확인", "<p>본문</p>"));
+  const postId = created.postId;
+  assert.ok(postId);
+
+  // 글자 수는 이모지 같은 surrogate pair도 한 글자로 센다.
+  const atLimit = await commentActions.createComment(postId, {}, createCommentForm(crypto.randomUUID(), "🎧".repeat(5_000)));
+  assert.equal(atLimit.success, true);
+
+  const tooLong = await commentActions.createComment(postId, {}, createCommentForm(crypto.randomUUID(), "가".repeat(5_001)));
+  assert.equal(tooLong.success, undefined);
+  assert.match(tooLong.error ?? "", /5,000자/u);
+  assert.equal((await db.select().from(comments).where(eq(comments.postId, postId))).length, 1);
+});
