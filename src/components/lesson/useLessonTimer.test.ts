@@ -93,6 +93,9 @@ test("새 노트 타이머는 같은 탭 새로고침 뒤 이어지고, 새 탭�
 test("노트가 만들어지면 시간을 노트로 옮기고, 초기화하면 보관 값을 지운다", async (context) => {
   const newScope = lessonTimerScope(null, "student-1");
   const { browserWindow } = installWindow(context);
+  // 시작과 멈춤이 같은 1ms 안에 끝나면 잰 시간이 0이라 "시작 안 함"이 된다. 시계를 호출마다 1초씩 보낸다.
+  let clock = Date.parse("2026-11-13T12:00:00Z");
+  context.mock.method(Date, "now", () => (clock += 1_000));
   const timer = await mountTimer(newScope);
   await act(async () => timer.get().toggle());
   await act(async () => timer.get().toggle());
