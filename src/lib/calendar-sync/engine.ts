@@ -78,8 +78,21 @@ export const RELINKED_FINGERPRINT = "RELINKED";
 /**
  * 원격에서 지워진 포탈 레슨의 link 표시(remote_id NULL). 레슨 삭제는 관리자 전용이라 바깥 삭제로 지우지 않고,
  * 원격 사본도 다시 만들지 않는다(사용자 결정: 바깥 삭제는 연결만 끊기). 포탈에서 레슨을 지우면 tombstone으로 정리된다.
+ * 끊을 때의 fingerprint를 `DETACHED:<fingerprint>`로 함께 남겨, 그 뒤 포탈에서 옮기면(fingerprint가 달라지면)
+ * 바깥에 다시 만들어 잇는다(사용자 결정: 옮긴 레슨은 다시 연결). 기준이 없는 표시(`DETACHED`)는 다시 만들지 않는다.
  */
 export const DETACHED_FINGERPRINT = "DETACHED";
+
+function detachedFingerprint(baseline: string): string {
+  return `${DETACHED_FINGERPRINT}:${baseline}`;
+}
+
+/** 연결이 끊긴 link면 끊을 때의 fingerprint(없으면 빈 문자열), 아니면 null. */
+function detachedBaseline(link: LinkRow): string | null {
+  if (link.remoteId) return null;
+  if (link.localFingerprint === DETACHED_FINGERPRINT) return "";
+  return link.localFingerprint.startsWith(`${DETACHED_FINGERPRINT}:`) ? link.localFingerprint.slice(DETACHED_FINGERPRINT.length + 1) : null;
+}
 export const LESSON_REMOTE_TITLE = "레슨";
 /** 종료 시각이 없는 포탈 일정을 원격에 보낼 때의 길이. */
 export const OPEN_EVENT_REMOTE_MINUTES = 60;
@@ -572,10 +585,10 @@ async function applyRemoteDeletion(state: RunState, link: LinkRow, attempt = 1):
   }
   if (local.kind === "LESSON") {
     // 바깥 삭제(학생·관리자 누구든 구분할 수 없다)는 포탈 레슨을 지우지 않고 연결만 끊는다. 그 사이 포탈 삭제
-    // tombstone이 생겼으면 덮지 않는다(push가 정리한다).
+    // tombstone이 생겼으면 덮지 않는다(push가 정리한다). 지금 위치를 기준으로 남겨 이후 포탈 이동만 다시 만든다.
     await executeFenced(state, [{
       query: "UPDATE calendar_sync_links SET remote_id = NULL, etag = NULL, local_fingerprint = ?, last_error = NULL, updated_at = ? WHERE id = ? AND local_fingerprint = ?",
-      params: [DETACHED_FINGERPRINT, epochSeconds(state.now()), link.id, link.localFingerprint],
+      params: [detachedFingerprint(await localFingerprint(local)), epochSeconds(state.now()), link.id, link.localFingerprint],
     }]);
     return;
   }
@@ -823,9 +836,10 @@ async function writeLocalToRemote(state: RunState, link: LinkRow, input: RemoteE
 }
 
 async function pushRow(state: RunState, row: LocalCalendarRow, link: LinkRow | undefined): Promise<void> {
-  // 바깥에서 지워 연결만 끊은 레슨은 원격에 다시 만들지 않는다.
-  if (link && !link.remoteId && link.localFingerprint === DETACHED_FINGERPRINT) return;
   const fingerprint = await localFingerprint(row);
+  // 바깥에서 지워 연결만 끊은 레슨은 포탈에서 옮기지 않았으면 원격에 다시 만들지 않는다. 옮겼으면 아래에서 다시 만들어 잇는다.
+  const detached = link ? detachedBaseline(link) : null;
+  if (detached !== null && (detached === "" || detached === fingerprint)) return;
   if (link && link.remoteId && link.localFingerprint === fingerprint) return;
   assertCanWrite(state);
   const input = localRowToRemoteInput(row);

@@ -266,8 +266,7 @@ test("원격에서 레슨을 지우면 포탈 레슨은 지우지 않고 연결�
   assert.equal(harness.remote.writeCount(), 0);
   assert.ok(links(harness).every((link) => link.remote_id === null), "연결이 끊긴다");
 
-  // 다음 동기화·웹 이동에도 다시 만들지 않는다.
-  harness.sqlite.prepare("UPDATE lessons SET scheduled_at = ? WHERE id = 'lesson-keep'").run(seconds(at("2026-11-04T09:00:00Z")));
+  // 포탈에서 옮기지 않으면 다음 동기화에도 다시 만들지 않는다(옮긴 경우는 아래 테스트).
   await harness.sync();
   assert.equal(harness.remote.events.size, 0);
   assert.equal(harness.remote.writeCount(), 0);
@@ -280,6 +279,61 @@ test("원격에서 레슨을 지우면 포탈 레슨은 지우지 않고 연결�
   await harness.sync({ mode: "push" });
   assert.deepEqual(links(harness).map((link) => link.local_id), ["lesson-changed"]);
   assert.equal(harness.remote.writeCount(), 0);
+});
+
+test("연결이 끊긴 레슨을 포탈에서 옮기면 다음 동기화가 원격에 다시 만들어 잇고, 옮기지 않은 레슨은 그대로 둔다", async (context) => {
+  const harness = setup(context);
+  insertLesson(harness, "lesson-moved", at("2026-11-03T09:00:00Z"));
+  insertLesson(harness, "lesson-still", at("2026-11-10T09:00:00Z"));
+  await harness.sync();
+  const byRef = (ref: string) => [...harness.remote.events.values()].find((event) => event.portalRef === ref);
+  harness.remote.remoteDelete(byRef("lesson:lesson-moved")!.remoteId);
+  harness.remote.remoteDelete(byRef("lesson:lesson-still")!.remoteId);
+  await harness.sync();
+  assert.equal(harness.remote.events.size, 0);
+
+  harness.sqlite.prepare("UPDATE lessons SET scheduled_at = ? WHERE id = 'lesson-moved'").run(seconds(at("2026-11-05T09:00:00Z")));
+  harness.remote.calls = [];
+  const result = await harness.sync();
+  assert.equal(result.status, "synced");
+  const recreated = byRef("lesson:lesson-moved");
+  assert.ok(recreated, "옮긴 레슨은 원격에 다시 만든다");
+  assert.equal(recreated.start.getTime(), at("2026-11-05T09:00:00Z").getTime());
+  assert.equal(byRef("lesson:lesson-still"), undefined, "옮기지 않은 레슨은 다시 만들지 않는다");
+  assert.equal(harness.remote.writeCount(), 1);
+  const moved = links(harness).find((link) => link.local_id === "lesson-moved")!;
+  assert.equal(moved.remote_id, recreated.remoteId, "다시 잇는다");
+  assert.equal(moved.local_fingerprint, await localFingerprint({ kind: "LESSON", id: "lesson-moved", start: at("2026-11-05T09:00:00Z") }));
+  assert.equal(links(harness).find((link) => link.local_id === "lesson-still")!.remote_id, null);
+
+  // 다시 이은 뒤에는 보통 연결처럼 동작한다(더 쓰지 않는다).
+  harness.remote.calls = [];
+  await harness.sync();
+  assert.equal(harness.remote.writeCount(), 0);
+  assert.equal(harness.remote.events.size, 1);
+});
+
+test("가져온 원격 일정을 포탈에서 고쳐 동기화한 뒤 매핑을 해제했다 다시 지정해도 포탈·원격에 한 건씩만 남는다", async (context) => {
+  const harness = setup(context);
+  const remote = harness.remote.remoteAdd({ title: "합주", start: at("2026-11-02T10:00:00Z"), end: at("2026-11-02T12:00:00Z") });
+  await harness.sync();
+  const [imported] = harness.rows<{ id: string }>("SELECT id FROM calendar_events");
+  harness.sqlite.prepare("UPDATE calendar_events SET title = '합주(장소 변경)', start_time = ?, end_time = ? WHERE id = ?")
+    .run(seconds(at("2026-11-02T11:00:00Z")), seconds(at("2026-11-02T13:00:00Z")), imported.id);
+  await harness.sync();
+  assert.equal(harness.remote.events.get(remote.remoteId)!.title, "합주(장소 변경)");
+
+  remapSameCalendar(harness);
+  harness.remote.calls = [];
+  const result = await harness.sync();
+  assert.equal(result.status, "synced");
+  assert.deepEqual(harness.rows<{ id: string }>("SELECT id FROM calendar_events").map((row) => row.id), [imported.id], "포탈에 사본이 생기지 않는다");
+  assert.equal(harness.remote.calls.filter((call) => call === "create").length, 0, "원격에 사본을 만들지 않는다");
+  assert.equal(harness.remote.events.size, 1);
+  assert.deepEqual(links(harness).map((link) => [link.local_id, link.remote_id]), [[imported.id, remote.remoteId]]);
+  await harness.sync();
+  assert.equal(harness.rows("SELECT id FROM calendar_events").length, 1);
+  assert.equal(harness.remote.events.size, 1);
 });
 
 function remapSameCalendar(harness: Harness): void {
