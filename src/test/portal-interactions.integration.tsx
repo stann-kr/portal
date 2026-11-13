@@ -3570,6 +3570,75 @@ test("guide page viewers panel opens selected students in click order, sends ALL
   assert.equal(browser.document.activeElement?.textContent, "열람 학생 3명", "closing returns focus to the header button");
 });
 
+test("guide page viewers panel still reports a failed save when another student is checked while it re-reads", async (context) => {
+  const calls: string[] = [];
+  let failNext = false;
+  let holdNextRead = false;
+  let releaseRead: (() => void) | null = null;
+  const server = new Map<string, { open: boolean; openCount: number }>([
+    ["student-b", { open: true, openCount: 2 }],
+    ["student-c", { open: false, openCount: 0 }],
+  ]);
+  const names: Record<string, string> = { "student-b": "학생 B", "student-c": "학생 C" };
+  const snapshot = () => ({
+    pageId: "guide-1",
+    totalPages: 3,
+    students: [...server].map(([studentId, value]) => ({
+      studentId, name: names[studentId]!, setting: "SELECTED" as const, canView: value.open, openCount: value.openCount,
+    })),
+  });
+  guideAccessActions = {
+    ...guideAccessDefaults,
+    getGuidePageViewers: async (pageId) => {
+      calls.push(`read:${pageId}`);
+      if (holdNextRead) {
+        holdNextRead = false;
+        await new Promise<void>((resolve) => { releaseRead = resolve; });
+      }
+      return snapshot();
+    },
+    setStudentGuideAccessPage: async (studentId, pageId, open) => {
+      calls.push(`page:${studentId}:${pageId}:${open}`);
+      if (failNext) {
+        failNext = false;
+        return { ok: false, error: "가이드 페이지를 찾을 수 없습니다. 이미 삭제되었을 수 있습니다." };
+      }
+      const current = server.get(studentId)!;
+      server.set(studentId, { open, openCount: current.openCount + (open ? 1 : -1) });
+      return { ok: true };
+    },
+  };
+  context.after(() => { guideAccessActions = { ...guideAccessDefaults }; });
+
+  await render(context, <GuidePageViewers pageTitle="장비 소개" initial={snapshot()} />);
+  await press("열람 학생 1명");
+  const dialog = browser.document.querySelector('[role="dialog"]');
+  assert.ok(dialog);
+  const boxes = () => [...dialog.querySelectorAll('input[type="checkbox"]')] as unknown as HTMLInputElement[];
+
+  // 학생 B 저장이 실패해 서버 값을 다시 읽는 동안 학생 C를 체크한다.
+  failNext = true;
+  holdNextRead = true;
+  await act(async () => { boxes()[0].click(); });
+  await settle();
+  await act(async () => { boxes()[1].click(); });
+  await settle();
+  assert.deepEqual(calls.slice(1), ["page:student-b:guide-1:false", "read:guide-1"], "the next save waits for the re-read");
+  assert.equal(dialog.querySelector('[role="status"]')?.textContent, "저장 중…");
+
+  releaseRead!();
+  await settle();
+  assert.deepEqual(calls.slice(1), [
+    "page:student-b:guide-1:false",
+    "read:guide-1",
+    "page:student-c:guide-1:true",
+    "read:guide-1",
+  ]);
+  assert.match(dialog.querySelector('[role="alert"]')?.textContent ?? "", /가이드 페이지를 찾을 수 없습니다/u, "B's failure is still reported");
+  assert.equal(dialog.querySelector('[role="status"]')?.textContent, "");
+  assert.deepEqual(boxes().map((box) => box.checked), [true, true], "the panel follows what the server holds");
+});
+
 test("guide page viewers panel says when there are no students yet", async (context) => {
   guideAccessActions = { ...guideAccessDefaults, getGuidePageViewers: async () => ({ pageId: "guide-1", totalPages: 1, students: [] }) };
   context.after(() => { guideAccessActions = { ...guideAccessDefaults }; });
