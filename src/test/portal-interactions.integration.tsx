@@ -3756,9 +3756,16 @@ test("admin schedule opens 전체 학생 by default with student chips, an all-n
   const allLoads: unknown[] = [];
   const studentLoads: string[] = [];
   const lessonRequests: string[] = [];
+  // 기간 없이 부르면 서버처럼 오늘을 덮는 기간을 돌려준다(보이는 기간이 덮이면 더 읽지 않는다).
+  const dayMs = 24 * 60 * 60 * 1000;
   loadAllStudentsCalendar = async (input) => {
     allLoads.push(input);
-    return { items, start: "2026-01-01T00:00:00.000Z", end: "2026-04-30T23:59:59.999Z", truncated: false };
+    return {
+      items,
+      start: input?.start ?? new Date(today.getTime() - 120 * dayMs).toISOString(),
+      end: input?.end ?? new Date(today.getTime() + 120 * dayMs).toISOString(),
+      truncated: false,
+    };
   };
   loadStudentCalendar = async (id) => { studentLoads.push(id); return []; };
   saveLesson = async (studentId) => {
@@ -3899,6 +3906,61 @@ test("전체 학생 일별 보기도 읽지 않은 주로 옮기면 그 기간�
   });
   await settle();
   assert.ok(loads.length >= 1, "읽지 않은 주로 옮기면 전체 학생 일정을 더 읽는다");
+});
+
+test("전체 학생 기간 읽기 오류는 그 기간을 다시 읽어 성공하거나 읽은 기간으로 옮기면 사라지고, 다시 시도는 보던 기간을 읽는다", async (context) => {
+  const students = [
+    { id: "student-1", email: "minji@example.test", displayName: "민지", createdAt: null, currentModule: null, nextLessonDate: null, pendingFeedbackCount: 0, openQnaCount: 0 },
+  ];
+  const loads: ({ start?: string; end?: string } | undefined)[] = [];
+  let failNext = false;
+  loadAllStudentsCalendar = async (input) => {
+    loads.push(input);
+    if (failNext) {
+      failNext = false;
+      throw new Error("network");
+    }
+    return { items: [], start: input?.start ?? "2026-01-01T00:00:00.000Z", end: input?.end ?? "2026-12-31T23:59:59.999Z", truncated: false };
+  };
+  context.after(() => {
+    loadAllStudentsCalendar = async () => ({ items: [], start: "2026-01-01T00:00:00.000Z", end: "2026-04-30T23:59:59.999Z", truncated: false });
+    lastDailyListProps = null;
+  });
+  const referenceTime = new Date("2026-11-14T03:00:00.000Z");
+  browser.history.replaceState({}, "", "/dashboard/admin?section=schedule&view=daily&student=all");
+  await render(context, <AdminPortalClient
+    initialLocation={resolvePortalLocation("admin", { section: "schedule", view: "daily", student: "all" })}
+    initialUnifiedItems={[]} students={students}
+    initialAllStudentsWindow={{ start: "2026-08-01T00:00:00.000Z", end: "2027-01-31T23:59:59.999Z", truncated: false }}
+    adminId="admin" qnaThreads={[]} pendingAssignments={[]} referenceTime={referenceTime}
+  />);
+  const old = [new Date("2025-09-07T00:00:00+09:00"), new Date("2025-09-13T23:59:59.999+09:00")] as const;
+  const current = [new Date("2026-11-08T00:00:00+09:00"), new Date("2026-11-14T23:59:59.999+09:00")] as const;
+  const showRange = async (range: readonly [Date, Date]) => {
+    await act(async () => lastDailyListProps?.onVisibleRangeChange?.(range[0], range[1]));
+    await settle();
+  };
+  const errorShown = () => /이 기간의 전체 학생 일정을 불러오지 못했습니다/u.test(browser.document.body.textContent ?? "");
+
+  failNext = true;
+  await showRange(old);
+  assert.equal(errorShown(), true, "읽지 못한 기간은 알린다");
+  await showRange(current);
+  assert.equal(errorShown(), false, "이미 읽은 기간으로 옮기면 오류 줄이 사라진다");
+  await showRange(old);
+  assert.equal(errorShown(), false, "실패한 기간으로 돌아와 다시 읽어 성공하면 오류 줄이 없다");
+
+  const older = [new Date("2025-03-02T00:00:00+09:00"), new Date("2025-03-08T23:59:59.999+09:00")] as const;
+  failNext = true;
+  await showRange(older);
+  assert.equal(errorShown(), true);
+  const before = loads.length;
+  await press("다시 시도");
+  await settle();
+  assert.equal(errorShown(), false, "다시 시도로 그 기간을 읽으면 오류 줄이 사라진다");
+  const retried = loads.slice(before);
+  assert.ok(retried.length >= 1 && retried.every((input) => input?.start !== undefined), "다시 시도는 전체를 처음부터 읽지 않고 보던 기간을 읽는다");
+  assert.ok(retried.some((input) => new Date(input!.start!) <= older[0] && new Date(input!.end!) >= older[1]), "보던 기간을 덮는 범위를 읽는다");
 });
 
 test("전체 학생 기간을 다시 읽으면 그 기간에서 지워지거나 옮겨진 항목을 지우고 기간 밖 항목은 둔다", async (context) => {
