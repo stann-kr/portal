@@ -6,7 +6,7 @@ import StarterKit from "@tiptap/starter-kit";
 import * as Y from "yjs";
 import { GuideBlockId } from "./guide-block-id-extension";
 import { createFullEditorExtensions } from "./full-editor-extensions";
-import { seedCollabDoc } from "@/lib/collab/client/seed";
+import { COLLAB_FRAGMENT, seedCollabDoc } from "@/lib/collab/client/seed";
 import { collabDocHtml } from "@/lib/collab/client/doc-html";
 import { listGuideBlockIds, prepareGuideHtml } from "@/lib/guide-content";
 
@@ -42,6 +42,21 @@ test("가이드 블록 식별자를 보존하고 문단 끝 Enter의 새 문단�
   assert.ok(afterMiddle, editor.getHTML());
   assert.notEqual(afterMiddle[1], afterMiddle[2]);
   assert.equal(afterMiddle[2], afterEnd[1], "이미 받은 식별자는 다음 편집에서 바뀌지 않는다");
+  // 문단 맨 앞에서 Enter: 글이 아래 블록으로 내려가므로 아래 블록이 식별자를 지키고(질문 위치가 글을 따라간다) 위 빈 문단이 새 식별자를 받는다.
+  editor.chain().setTextSelection(position - 1).splitBlock().run();
+  const afterStart = /<p data-block-id="(b[a-z0-9]{10})"><\/p><p data-block-id="keep">앞<\/p><p data-block-id="(b[a-z0-9]{10})">뒤<\/p>/u.exec(editor.getHTML());
+  assert.ok(afterStart, editor.getHTML());
+  assert.notEqual(afterStart[1], afterStart[2]);
+  assert.equal(afterStart[2], afterMiddle[1]);
+  // 목록 항목 맨 앞에서 Enter: 글이 내려간 안쪽 문단이 식별자를 지킨다(질문 위치는 고른 글을 품은 가장 안쪽 블록에 붙는다).
+  // 항목(li) 자체는 Tiptap이 새 항목에 식별자를 복사하지 않아 자리에 남는다.
+  let itemText = -1;
+  editor.state.doc.descendants((node, pos) => {
+    if (node.attrs.blockId === "lp1") itemText = pos + 1;
+    return true;
+  });
+  editor.chain().setTextSelection(itemText).splitListItem("listItem").run();
+  assert.match(editor.getHTML(), /<ul><li data-block-id="li1"><p data-block-id="b[a-z0-9]{10}"><\/p><\/li><li data-block-id="b[a-z0-9]{10}"><p data-block-id="lp1">항목<\/p><\/li><\/ul>/u, editor.getHTML());
   // 시드 때 식별자가 맞지 않던 블록도 첫 편집에서 식별자를 받는다.
   assert.doesNotMatch(editor.getHTML(), /<p>x<\/p>/u);
 
@@ -95,4 +110,24 @@ test("공동 편집 doc에서 새로 만든 블록의 식별자는 저장을 거
   assert.deepEqual(save(docA), first, "다른 곳을 고쳐 다시 저장해도 새 블록의 식별자가 같다");
   editorB.chain().setTextSelection(2).insertContent("Y").run();
   assert.deepEqual(save(docB), first, "다른 기기가 저장해도 같은 식별자를 보낸다");
+
+  // 다른 기기(옛 client 등)가 식별자 없이 넣은 블록은 받는 쪽 편집기가 원격 변경만으로 식별자를 쓰지 않는다.
+  // 모든 기기가 동시에 서로 다른 값을 쓰지 않게, 식별자는 그 블록을 만든 기기나 다음 로컬 편집이 준다.
+  const fragment = docA.getXmlFragment(COLLAB_FRAGMENT);
+  docA.transact(() => {
+    const paragraph = new Y.XmlElement("paragraph");
+    paragraph.insert(0, [new Y.XmlText("원격 문단")]);
+    fragment.insert(fragment.length, [paragraph]);
+  }, "other-device");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const lastBlockId = (editor: Editor) => editor.state.doc.lastChild?.attrs.blockId ?? null;
+  assert.equal(editorA.state.doc.lastChild?.textContent, "원격 문단");
+  assert.equal(editorB.state.doc.lastChild?.textContent, "원격 문단");
+  assert.equal(lastBlockId(editorA), null, "원격 변경만 받은 편집기는 식별자를 쓰지 않는다");
+  assert.equal(lastBlockId(editorB), null);
+  assert.equal((fragment.get(fragment.length - 1) as Y.XmlElement).getAttribute("blockId"), undefined, "room에도 쓰지 않는다");
+  editorB.chain().setTextSelection(2).insertContent("Z").run();
+  const assigned = lastBlockId(editorB);
+  assert.match(String(assigned), /^b[a-z0-9]{10}$/u, "다음 로컬 편집에서 식별자를 받는다");
+  assert.equal(lastBlockId(editorA), assigned, "그 값이 다른 기기에도 그대로 간다");
 });
