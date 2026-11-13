@@ -370,3 +370,37 @@ test("가이드 열람 설정은 관리자만 학생에게 하고, 닫아도 고
   assert.equal((await db.select().from(guideAccessPages)).length, 0, "지운 페이지의 열람 행은 남지 않는다");
   assert.deepEqual((await guideAccessActions.getStudentGuideAccess("student-new")).pageIds, []);
 });
+
+test("가이드 페이지의 열람 학생 목록은 관리자만 받고, 학생마다 설정·볼 수 있는지·열린 페이지 수를 이름순으로 준다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("student-a", "student"));
+  await assert.rejects(guideAccessActions.getGuidePageViewers("guide-1"), /Admin only/, "학생은 다른 학생의 열람 설정을 받지 못한다");
+
+  activeSession = createSession("admin-1", "admin");
+  assert.deepEqual(await guideAccessActions.setStudentGuideAccessSetting("student-b", "SELECTED"), { ok: true });
+  assert.deepEqual(await guideAccessActions.setStudentGuideAccessPage("student-b", "guide-2", true), { ok: true });
+  assert.deepEqual(await guideAccessActions.setStudentGuideAccessSetting("student-new", "SELECTED"), { ok: true });
+
+  assert.deepEqual(await guideAccessActions.getGuidePageViewers("guide-1"), {
+    pageId: "guide-1",
+    totalPages: 2,
+    students: [
+      { studentId: "student-new", name: "새 학생", setting: "SELECTED", canView: false, openCount: 0 },
+      { studentId: "student-a", name: "학생 A", setting: "ALL", canView: true, openCount: 0 },
+      { studentId: "student-b", name: "학생 B", setting: "SELECTED", canView: false, openCount: 1 },
+    ],
+  });
+
+  // 패널의 체크는 학생 상세와 같은 쓰기(setStudentGuideAccessPage)를 쓴다. 닫힘 학생은 패널에서 바뀌지 않는다.
+  assert.deepEqual(await guideAccessActions.setStudentGuideAccessPage("student-b", "guide-1", true), { ok: true });
+  assert.deepEqual(await guideAccessActions.setStudentGuideAccessSetting("student-a", "CLOSED"), { ok: true });
+  const after = await guideAccessActions.getGuidePageViewers("guide-1");
+  assert.deepEqual(after?.students.map((row) => [row.studentId, row.setting, row.canView, row.openCount]), [
+    ["student-new", "SELECTED", false, 0],
+    ["student-a", "CLOSED", false, 0],
+    ["student-b", "SELECTED", true, 2],
+  ]);
+
+  assert.equal(await guideAccessActions.getGuidePageViewers("no-such-page"), null);
+  assert.equal(await guideAccessActions.getGuidePageViewers("../guide-1"), null);
+  assert.equal((await db.select().from(guideAccess)).length, 2, "읽기는 아무것도 쓰지 않는다");
+});

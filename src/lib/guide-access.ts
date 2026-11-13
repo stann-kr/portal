@@ -84,3 +84,52 @@ export async function writeGuideAccessPage(
     .delete(guideAccessPages)
     .where(and(eq(guideAccessPages.studentId, input.studentId), eq(guideAccessPages.guidePageId, input.pageId)));
 }
+
+/** 가이드 페이지 하나를 기준으로 본 학생 한 명. openCount는 "선택"에서 고른(지금 있는) 페이지 수다. */
+export type GuidePageViewer = {
+  studentId: string;
+  name: string;
+  setting: GuideAccessSetting;
+  canView: boolean;
+  openCount: number;
+};
+
+/**
+ * 페이지 하나의 열람 학생 목록(관리자 전용 화면용, 권한 검사는 호출하는 action이 한다).
+ * 학생 순서는 학생 목록과 같게 이름순이다. 판정은 resolveGuideViewerAccess와 같다.
+ */
+export async function listGuidePageViewers(
+  context: DbContext,
+  input: {
+    pageId: string;
+    existingPageIds: ReadonlySet<string>;
+    students: readonly { id: string; displayName: string | null; email: string }[];
+  },
+): Promise<GuidePageViewer[]> {
+  const db = asDocumentReadDb(context);
+  const [modes, pages] = await Promise.all([
+    db.select({ studentId: guideAccess.studentId, mode: guideAccess.mode }).from(guideAccess),
+    db.select({ studentId: guideAccessPages.studentId, pageId: guideAccessPages.guidePageId }).from(guideAccessPages),
+  ]);
+  const modeByStudent = new Map(modes.map((row) => [row.studentId, row.mode]));
+  const pagesByStudent = new Map<string, Set<string>>();
+  for (const row of pages) {
+    if (!input.existingPageIds.has(row.pageId)) continue;
+    const set = pagesByStudent.get(row.studentId) ?? new Set<string>();
+    set.add(row.pageId);
+    pagesByStudent.set(row.studentId, set);
+  }
+  return input.students
+    .map((student) => {
+      const setting: GuideAccessSetting = modeByStudent.get(student.id) ?? "CLOSED";
+      const selected = pagesByStudent.get(student.id) ?? new Set<string>();
+      return {
+        studentId: student.id,
+        name: student.displayName?.trim() || student.email,
+        setting,
+        canView: setting === "ALL" || (setting === "SELECTED" && selected.has(input.pageId)),
+        openCount: selected.size,
+      };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name, "ko-KR") || a.studentId.localeCompare(b.studentId));
+}
