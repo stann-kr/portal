@@ -74,6 +74,32 @@ function removeStored(scopeId: string): void {
   }
 }
 
+/**
+ * 새 노트 작성 화면을 이 탭에서 연 적이 있는지. 작성본(NoteEditorForm의 생성 id)처럼 탭 sessionStorage에 두어
+ * 같은 탭의 새로고침은 시간을 이어받고, 다른 탭·창에서 연 새 작성 화면은 0부터 시작한다.
+ */
+function tabMarkerKey(scopeId: string): string {
+  return `portal:lesson-timer-tab:${scopeId}`;
+}
+
+function claimNewNoteTab(scopeId: string): boolean {
+  try {
+    if (window.sessionStorage.getItem(tabMarkerKey(scopeId))) return true;
+    window.sessionStorage.setItem(tabMarkerKey(scopeId), "1");
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+function releaseNewNoteTab(scopeId: string): void {
+  try {
+    window.sessionStorage.removeItem(tabMarkerKey(scopeId));
+  } catch {
+    // 저장소를 쓸 수 없으면 표시도 없다.
+  }
+}
+
 export function useLessonTimer(scopeId: string) {
   const [state, setState] = useState<LessonTimerState>(INITIAL);
   const [now, setNow] = useState(() => Date.now());
@@ -85,8 +111,9 @@ export function useLessonTimer(scopeId: string) {
     if (previous !== null && previous !== scopeId && previous.startsWith(NEW_NOTE_SCOPE_PREFIX)) {
       // 새 노트가 만들어지면 작성 중에 잰 시간을 그 노트로 넘긴다.
       moveStored(previous, scopeId);
-    } else if (previous === null && scopeId.startsWith(NEW_NOTE_SCOPE_PREFIX)) {
-      // 새 노트는 전에 쓰다 만 작성 화면의 시간을 이어받지 않는다.
+      releaseNewNoteTab(previous);
+    } else if (previous === null && scopeId.startsWith(NEW_NOTE_SCOPE_PREFIX) && !claimNewNoteTab(scopeId)) {
+      // 다른 탭에서 쓰다 만 작성 화면의 시간은 이어받지 않는다. 같은 탭 새로고침은 이어서 잰다.
       removeStored(scopeId);
     }
     // 저장소는 hydration 뒤에만 읽는다.
