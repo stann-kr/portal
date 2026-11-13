@@ -6,7 +6,7 @@ import { ReplyCard } from "./ReplyCard";
 
 const reply = (authorName: string, authorRole: string) => ({
   id: authorName, contentHtml: "<p>본문</p>", attachmentUrl: null, createdAt: new Date("2026-10-26T09:02:00Z"),
-  authorName, authorEmail: null, authorRole,
+  authorName, authorRole,
 });
 
 test("Q&A 답변은 역할 배지 없이 Stann 이름만 semibold로 구분한다", () => {

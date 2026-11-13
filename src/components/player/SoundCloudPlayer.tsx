@@ -128,7 +128,8 @@ function SoundCloudEmbed({ url, seekRequest, onPositionReaderChange, title = "So
     if (!onControllerChange) return;
     onControllerChange({
       play: () => widgetRef.current?.play(),
-      pause: () => widgetRef.current?.pause(),
+      // 준비 전에 예약된 "옮긴 뒤 재생"도 함께 취소한다. 남겨 두면 widget READY 순간 다시 재생된다.
+      pause: () => { pendingPlayRef.current = false; widgetRef.current?.pause(); },
       seek: (seconds, options) => {
         pendingSeekRef.current = seconds;
         pendingPlayRef.current = options?.play !== false;

@@ -68,7 +68,6 @@ type Reply = {
   attachmentKind?: MediaAttachmentKind | null;
   createdAt: Date | null | undefined;
   authorName: string | null | undefined;
-  authorEmail: string | null | undefined;
   authorRole: string | null | undefined;
 };
 

@@ -162,19 +162,21 @@ test("댓글 삭제는 게시물 대상과 작성자 권한을 함께 검증하�
     title: "레슨 기록", contentHtml: "<p>본문</p>",
   })));
   await db.insert(comments).values({ id: "comment-1", postId: "post-1", authorId: "student-1", contentHtml: "<p>보존할 대화</p>" });
-  await commentActions.deleteComment("comment-1", "post-2");
+  const notDeleted = { error: "댓글을 찾을 수 없거나 삭제할 권한이 없습니다." };
+  assert.deepEqual(await commentActions.deleteComment("comment-1", "post-2"), notDeleted);
   assert.equal((await db.select().from(comments)).length, 1);
   activeSession = createSession("student-2", "student");
-  await commentActions.deleteComment("comment-1", "post-1");
+  assert.deepEqual(await commentActions.deleteComment("comment-1", "post-1"), notDeleted);
   assert.equal((await db.select().from(comments)).length, 1);
   activeSession = createSession("admin-1", "admin");
-  await commentActions.deleteComment("comment-1", "post-2");
+  assert.deepEqual(await commentActions.deleteComment("comment-1", "post-2"), notDeleted);
   assert.equal((await db.select().from(comments)).length, 1);
   await db.update(posts).set({ deletedAt: new Date() }).where(eq(posts.id, "post-1"));
-  await commentActions.deleteComment("comment-1", "post-1");
+  // 화면을 열어 둔 사이 게시물이 휴지통으로 갔으면 조용히 끝내지 않고 이유를 돌려준다.
+  assert.deepEqual(await commentActions.deleteComment("comment-1", "post-1"), { error: "휴지통으로 옮겨진 게시물의 댓글은 삭제할 수 없습니다." });
   assert.equal((await db.select().from(comments)).length, 1);
   await db.update(posts).set({ deletedAt: null }).where(eq(posts.id, "post-1"));
-  await commentActions.deleteComment("comment-1", "post-1");
+  assert.deepEqual(await commentActions.deleteComment("comment-1", "post-1"), { success: true });
   assert.equal((await db.select().from(comments)).length, 0);
 });
 
@@ -1061,6 +1063,37 @@ function taskForm(fields: Record<string, string | string[]>): FormData {
 function shiftDayKey(key: string, days: number): string {
   return dayKeyFromNumber(dayNumberFromKey(key)! + days);
 }
+
+test("디깅 보드를 처음 여는 요청이 겹쳐도 기본 열은 한 벌만 생기고, 관리자가 먼저 열면 만들지 않는다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("admin-1", "admin"));
+  await seedProfile(db, "admin-1", "admin");
+  await seedProfile(db, "student-1");
+  await seedProfile(db, "student-2");
+
+  assert.deepEqual(await diggingActions.getOrSeedColumns("student-1"), [], "관리자 조회는 학생 보드의 열을 대신 만들지 않는다");
+
+  activeSession = createSession("student-1", "student");
+  // 두 탭·RSC 요청이 동시에 "열이 없다"를 본 경우.
+  const [first, second] = await Promise.all([
+    diggingActions.getOrSeedColumns("student-1"),
+    diggingActions.getOrSeedColumns("student-1"),
+  ]);
+  const expected = ["트랙명", "아티스트", "감상평", "선호도", "별점", "링크"];
+  assert.deepEqual(first.map((column) => column.name), expected);
+  assert.deepEqual(second.map((column) => column.name), expected);
+  const stored = await db.select().from(diggingColumns).where(eq(diggingColumns.userId, "student-1")).orderBy(diggingColumns.sortOrder);
+  assert.deepEqual(stored.map((column) => [column.name, column.columnType, column.isDefault]), [
+    ["트랙명", "text", true],
+    ["아티스트", "text", true],
+    ["감상평", "textarea", true],
+    ["선호도", "select", true],
+    ["별점", "rating", true],
+    ["링크", "link", true],
+  ]);
+  assert.equal(stored[3]?.options, JSON.stringify(["좋음", "보통", "별로"]));
+  assert.ok(stored.every((column) => column.createdAt instanceof Date), "생성 시각이 남는다");
+  assert.equal((await db.select().from(diggingColumns).where(eq(diggingColumns.userId, "student-2"))).length, 0);
+});
 
 test("관리자 과제는 대상 학생에게만 쓰이고 학생은 자기 과제에만 형식대로 제출·수정한다", { concurrency: false }, async (context) => {
   const db = await setupDatabase(context, createSession("admin-1", "admin"));

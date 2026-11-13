@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type * as Y from "yjs";
 import { collabSavedMarker } from "../saved-marker";
 import { COLLAB_META } from "./seed";
@@ -209,6 +209,18 @@ export function useCollabAutosave<S>({
     };
   }, [runSave]);
 
+  // 앱 안 이동으로 화면이 사라질 때는 pagehide가 없다. 기다리던 저장을 그 자리에서 보낸다(server action은 unmount 뒤에도 끝난다).
+  // layout effect 정리는 문서를 닫는 effect 정리보다 먼저 실행되므로 지금 내용을 읽을 수 있다.
+  const runSaveRef = useRef(runSave);
+  useEffect(() => {
+    runSaveRef.current = runSave;
+  });
+  useLayoutEffect(
+    () => () => {
+      if (idleTimerRef.current) void runSaveRef.current();
+    },
+    [],
+  );
   useEffect(() => () => clearTimer(), []);
 
   const retry = useCallback(() => {

@@ -4923,3 +4923,37 @@ test("자동 저장 이력은 보관 단계대로 솎이고 최신·복원·생�
   await assert.rejects(db.run(sql`DELETE FROM private_note_revisions WHERE note_id = 'note-prune' AND revision_number = 5`));
   assert.deepEqual(await numbers(), [5]);
 });
+
+test("게시물·댓글·Q&A 응답은 다른 사용자의 이메일 전체를 싣지 않고 표시 이름만 보낸다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context, createSession("nameless-1", "student"));
+  await seedProfile(db, "student-1");
+  await seedProfile(db, "admin-1", "admin");
+  // 표시 이름이 없는 계정: 화면이 이름 대신 쓰던 이메일 앞부분만 서버가 잘라 보내야 한다.
+  await db.insert(profiles).values({ id: "nameless-1", email: "hidden.person@private.example", displayName: null, role: "student" });
+
+  const created = await postActions.createPost({}, createPostForm(crypto.randomUUID(), "이름 없는 계정의 믹스셋", "<p>본문</p>"));
+  const postId = created.postId;
+  assert.ok(postId);
+  await db.insert(comments).values([
+    { id: "email-scope-comment-1", postId, authorId: "nameless-1", contentHtml: "<p>이름 없는 댓글</p>" },
+    { id: "email-scope-comment-2", postId, authorId: "student-1", contentHtml: "<p>이름 있는 댓글</p>" },
+  ]);
+  const thread = await qnaActions.createQnaThread({}, createDocumentForm("이름 없는 질문", "<p>질문</p>"));
+  assert.ok(thread.thread?.id);
+
+  activeSession = createSession("student-1", "student");
+  const post = await postActions.getPostById(postId);
+  const page = await postActions.getCommunityPostPage({ boardType: "FEEDBACK" });
+  const postComments = await commentActions.getCommentsByPost(postId);
+  assert.equal(post?.authorName, "hidden.person");
+  assert.equal(page.posts.find((row) => row.id === postId)?.authorName, "hidden.person");
+  assert.deepEqual(postComments.map((comment) => comment.authorName), ["hidden.person", "student-1"]);
+
+  activeSession = createSession("admin-1", "admin");
+  const adminThread = await qnaActions.getQnaThread(thread.thread.id);
+  assert.deepEqual(adminThread?.replies.map((reply) => reply.authorName), ["hidden.person"]);
+
+  const wire = JSON.stringify([post, page, postComments, adminThread?.replies]);
+  assert.equal(wire.includes("private.example"), false);
+  assert.equal(wire.includes("authorEmail"), false);
+});

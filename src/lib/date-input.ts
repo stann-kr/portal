@@ -57,6 +57,25 @@ export function parseKstDateTimeInput(value: string): Date | null {
   return toKstDateTimeInputValue(parsed) === expected ? parsed : null;
 }
 
+const OFFSET_DATE_TIME_PATTERN = /^(\d{4})-(\d{2})-(\d{2})T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2})$/u;
+
+/**
+ * 서버가 받는 시각 입력. timezone 없는 datetime-local 값은 KST로, `Z`·`±hh:mm`이 붙은 ISO 값은 그 offset으로 읽는다.
+ * 그 밖의 형식과 달력에 없는 날짜(2월 30일)는 null이다. `new Date(text)`에 맡기면 실행 환경 timezone으로 읽거나
+ * 없는 날짜를 다음 달로 넘겨 다른 시각이 저장된다.
+ */
+export function parseDateTimeInput(value: string): Date | null {
+  const local = parseKstDateTimeInput(value);
+  if (local) return local;
+  const match = OFFSET_DATE_TIME_PATTERN.exec(value);
+  if (!match) return null;
+  const [, yearText, monthText, dayText] = match;
+  const calendarDay = new Date(Date.UTC(Number(yearText), Number(monthText) - 1, Number(dayText)));
+  if (calendarDay.toISOString().slice(0, 10) !== `${yearText}-${monthText}-${dayText}`) return null;
+  const parsed = new Date(value);
+  return Number.isFinite(parsed.getTime()) ? parsed : null;
+}
+
 /** FullCalendar의 date-only 또는 offset 포함 선택값을 KST 날짜 key로 정규화한다. */
 export function calendarSelectionToKstDateKey(value: string): string | null {
   if (DATE_ONLY_PATTERN.test(value)) {

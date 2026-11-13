@@ -20,3 +20,10 @@ test("같은 이름이 반복된 query(배열)처럼 문자열이 아닌 값은 
     assert.equal(safeReturnPath(value, "/dashboard"), "/dashboard");
   }
 });
+
+test("정규화하면 protocol-relative가 되는 점 세그먼트 경로를 거부한다", () => {
+  for (const value of ["/.//evil.example", "/a/..//evil.example", "/%2e//evil.example", "/x/..//evil.example?next=1"]) {
+    assert.equal(safeReturnPath(value, "/dashboard"), "/dashboard", value);
+  }
+  assert.equal(safeReturnPath("/./community?board=mix", "/dashboard"), "/community?board=mix");
+});

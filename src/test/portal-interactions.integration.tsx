@@ -29,6 +29,7 @@ let UnifiedCalendar: typeof import("@/components/student-portal/UnifiedCalendar"
 let CalendarQuickCreate: typeof import("@/components/calendar/CalendarQuickCreate").CalendarQuickCreate;
 let renderCalendarEventContent: typeof import("@/components/calendar/CalendarEventChip").renderCalendarEventContent;
 let VideoPlayer: typeof import("@/components/player/VideoPlayer").VideoPlayer;
+type PlaybackController = import("@/components/player/VideoPlayer").PlaybackController;
 let TimelineFeedback: typeof import("@/components/feedback/TimelineFeedback").TimelineFeedback;
 let PostDetailClient: typeof import("@/app/(app)/community/[postId]/PostDetailClient").PostDetailClient;
 let navigationProgress: typeof import("@/components/app-shell/NavigationProgress");
@@ -37,7 +38,7 @@ let PersistentPlayerHost: typeof import("@/components/player/PersistentPlayerHos
 let MixsetFeedbackCard: typeof import("@/components/community/MixsetFeedbackCard").MixsetFeedbackCard;
 let CommentForm: typeof import("@/components/community/CommentForm").CommentForm;
 let saveComment: typeof import("@/lib/actions/comments").createComment = async () => ({});
-let removeComment: typeof import("@/lib/actions/comments").deleteComment = async () => {};
+let removeComment: typeof import("@/lib/actions/comments").deleteComment = async () => ({ success: true });
 let trashPost: typeof import("@/lib/actions/posts").deletePost = async () => ({ success: true });
 let AssignmentView: typeof import("@/components/student-portal/AssignmentView").AssignmentView;
 let AssignmentDetailClient: typeof import("@/app/(app)/dashboard/student/assignments/[id]/AssignmentDetailClient").AssignmentDetailClient;
@@ -97,13 +98,15 @@ let loadAllStudentsCalendar: typeof import("@/lib/actions/unifiedItems").getUnif
 });
 let login: typeof import("@/lib/actions/session").loginWithCredentials = async () => ({});
 let loadCommunityPage: typeof import("@/lib/actions/posts").getCommunityPostPage = async () => ({ posts: [], nextCursor: null });
+let togglePin: typeof import("@/lib/actions/posts").togglePinPost = async () => ({ success: true });
 let CommunityClient: typeof import("@/app/(app)/community/CommunityClient").default;
 let LoginForm: typeof import("@/components/auth/LoginForm").LoginForm;
 const previousGlobals = new Map<string, PropertyDescriptor | undefined>();
 
 const routerReplacements: string[] = [];
+let routerRefreshes = 0;
 mock.module("next/navigation", { namedExports: {
-  useRouter: () => ({ push() {}, refresh() {}, replace(href: string) { routerReplacements.push(href); } }),
+  useRouter: () => ({ push() {}, refresh() { routerRefreshes += 1; }, replace(href: string) { routerReplacements.push(href); } }),
   // 관리자 학생 상세의 좁은 화면 편집 모드(`?edit=1`)처럼 주소 값을 읽는 화면용. 테스트 창의 현재 주소를 준다.
   useSearchParams: () => new URLSearchParams(globalThis.location?.search ?? ""),
   usePathname: () => (globalThis.window as { location?: { pathname: string } } | undefined)?.location?.pathname ?? "/",
@@ -152,7 +155,7 @@ mock.module("@/lib/actions/comments", { namedExports: {
 mock.module("@/lib/actions/posts", { namedExports: {
   deletePost: (...args: Parameters<typeof trashPost>) => trashPost(...args),
   getCommunityPostPage: (...args: Parameters<typeof loadCommunityPage>) => loadCommunityPage(...args),
-  togglePinPost: async () => ({ success: true }),
+  togglePinPost: (...args: Parameters<typeof togglePin>) => togglePin(...args),
 } });
 mock.module("@/lib/actions/categories", { namedExports: { getCategories: async () => [] } });
 mock.module("@/lib/actions/upload", { namedExports: {
@@ -1822,6 +1825,39 @@ test("SoundCloud queues seconds as widget milliseconds and releases its listener
   assert.equal(seeks.length, 2);
 });
 
+test("준비 전에 멈춘 플레이어는 준비가 끝나도 예약된 재생을 시작하지 않는다", async (context) => {
+  let controller: PlaybackController | null = null;
+  const trackController = (next: PlaybackController | null) => { controller = next; };
+  const playing: boolean[] = [];
+  const trackPlaying = (next: boolean) => { playing.push(next); };
+  const mediaUrl = "https://www.youtube.com/watch?v=aqz-KE-bpKQ";
+  const root = await render(context, <VideoPlayer url={mediaUrl} onControllerChange={trackController} onPlayingChange={trackPlaying} />);
+  const video = browser.document.querySelector("video");
+  assert.ok(video);
+  await act(async () => { controller!.seek(30); controller!.pause(); });
+  await act(async () => { video.dispatchEvent(new browser.Event("loadedmetadata")); });
+  assert.equal(video.currentTime, 30, "옮길 위치는 그대로 적용한다");
+  assert.equal(playing.at(-1), false, "멈춘 뒤에는 metadata가 와도 재생하지 않는다");
+  await act(async () => { controller!.seek(45); });
+  assert.equal(playing.at(-1), true, "준비된 뒤의 위치 이동은 그 위치부터 재생한다");
+  await act(async () => root.render(<div />));
+
+  const listeners = new Map<string, () => void>();
+  const seeks: number[] = [];
+  let plays = 0;
+  const widget = { bind: (event: string, callback: () => void) => listeners.set(event, callback), unbind: (event: string) => { listeners.delete(event); },
+    seekTo: (value: number) => seeks.push(value), play: () => { plays++; }, pause: () => {}, getPosition: () => {}, getDuration: () => {} };
+  Object.defineProperty(browser, "SC", { configurable: true, value: { Widget: Object.assign(() => widget, { Events: { READY: "ready", ERROR: "error" } }) } });
+  context.after(() => Reflect.deleteProperty(browser, "SC"));
+  await act(async () => root.render(<VideoPlayer url="https://soundcloud.com/artist/mix" onControllerChange={trackController} />));
+  const ready = listeners.get("ready");
+  assert.ok(ready);
+  await act(async () => { controller!.seek(30); controller!.pause(); });
+  await act(async () => ready());
+  assert.deepEqual(seeks, [30000]);
+  assert.equal(plays, 0, "멈춘 뒤에는 widget READY가 와도 재생하지 않는다");
+});
+
 test("feedback failure keeps the time and text; only a confirmed save clears them", async (context) => {
   let refreshes = 0;
   const operationIds: unknown[] = [];
@@ -1922,7 +1958,7 @@ test("community comment failure and remount preserve the author's draft", async 
     id: "draft-post", authorId: "student-1", title: "레슨 이야기", contentHtml: "<p>본문</p>",
     category: "general", boardType: "GENERAL" as const, isPinned: false, mediaUrl: null,
     mediaObjectId: null, createdAt: new Date(), updatedAt: new Date(), deletedAt: null,
-    deletedById: null, version: 1, authorName: "학생", authorEmail: null,
+    deletedById: null, version: 1, authorName: "학생",
   };
   const screen = (actorId: string) => <PostDetailClient postId={post.id} post={post} initialCommentList={[]} currentUserId={actorId} isAdmin={false} returnTo="/community" />;
   const root = await render(context, screen("student-1"));
@@ -1995,7 +2031,7 @@ test("게시물 삭제는 응답 유실 재시도와 복원 후 새 삭제 의�
     id: "delete-retry-post", authorId: "student-1", title: "레슨 이야기", contentHtml: "<p>본문</p>",
     category: "general", boardType: "GENERAL" as const, isPinned: false, mediaUrl: null,
     mediaObjectId: null, createdAt: new Date(), updatedAt: new Date(), deletedAt: null,
-    deletedById: null, version: 1, authorName: "학생", authorEmail: null,
+    deletedById: null, version: 1, authorName: "학생",
   };
   const screen = (version: number, deletedAt: Date | null = null) => <PostDetailClient postId={post.id} post={{ ...post, version, deletedAt }} initialCommentList={[]} currentUserId="student-1" isAdmin={false} returnTo="/community" />;
   const root = await render(context, screen(1));
@@ -2018,14 +2054,14 @@ test("게시물 삭제는 응답 유실 재시도와 복원 후 새 삭제 의�
 test("failed comment deletion keeps the conversation and unfinished reply visible", async (context) => {
   browser.localStorage.clear();
   removeComment = async () => { throw new Error("offline"); };
-  context.after(() => { removeComment = async () => {}; });
+  context.after(() => { removeComment = async () => ({ success: true }); });
   const post = {
     id: "delete-post", authorId: "student-1", title: "레슨 이야기", contentHtml: "<p>본문</p>",
     category: "general", boardType: "GENERAL" as const, isPinned: false, mediaUrl: null,
     mediaObjectId: null, createdAt: new Date(), updatedAt: new Date(), deletedAt: null,
-    deletedById: null, version: 1, authorName: "학생", authorEmail: null,
+    deletedById: null, version: 1, authorName: "학생",
   };
-  const comment = { id: "comment-1", postId: post.id, authorId: "student-1", contentHtml: "<p>기존 대화</p>", createdAt: new Date(), timeMarkerSeconds: null, authorName: "학생", authorEmail: null };
+  const comment = { id: "comment-1", postId: post.id, authorId: "student-1", contentHtml: "<p>기존 대화</p>", createdAt: new Date(), timeMarkerSeconds: null, authorName: "학생" };
   await render(context, <PostDetailClient postId={post.id} post={post} initialCommentList={[comment]} currentUserId="student-1" isAdmin={false} returnTo="/community" />);
   await fill("content", "아직 작성 중인 답글");
   await press("학생 댓글 삭제");
@@ -2035,6 +2071,15 @@ test("failed comment deletion keeps the conversation and unfinished reply visibl
   assert.equal(browser.document.activeElement?.getAttribute("aria-label"), "학생 댓글 삭제", "실패 뒤 확인을 연 버튼으로 돌아간다");
   assert.match(browser.document.body.textContent, /기존 대화/);
   assert.equal(inputValue("content"), "아직 작성 중인 답글");
+
+  // 화면을 열어 둔 사이 게시물이 휴지통으로 갔으면 서버가 돌려준 이유를 보이고 화면을 다시 받는다.
+  const refreshesBefore = routerRefreshes;
+  removeComment = async () => ({ error: "휴지통으로 옮겨진 게시물의 댓글은 삭제할 수 없습니다." });
+  await press("학생 댓글 삭제");
+  await press("댓글 삭제 확인");
+  assert.match(browser.document.querySelector('[role="alert"]')?.textContent ?? "", /휴지통으로 옮겨진 게시물/u);
+  assert.equal(routerRefreshes, refreshesBefore + 1);
+  assert.equal(inputValue("content"), "아직 작성 중인 답글");
 });
 
 function mixsetPost(id: string, media: { mediaUrl: string | null; mediaObjectId: string | null }, boardType: "FEEDBACK" | "GENERAL" = "FEEDBACK") {
@@ -2042,12 +2087,12 @@ function mixsetPost(id: string, media: { mediaUrl: string | null; mediaObjectId:
     id, authorId: "student-1", title: "금요일 믹스셋", contentHtml: "<p>본문</p>",
     category: "general", boardType, isPinned: false, ...media,
     createdAt: new Date(), updatedAt: new Date(), deletedAt: null as Date | null,
-    deletedById: null, version: 1, authorName: "학생", authorEmail: null,
+    deletedById: null, version: 1, authorName: "학생",
   };
 }
 
 function mixsetComment(id: string, postId: string, text: string, timeMarkerSeconds: number | null) {
-  return { id, postId, authorId: "student-2", contentHtml: `<p>${text}</p>`, createdAt: new Date(), timeMarkerSeconds, authorName: "다른 학생", authorEmail: null };
+  return { id, postId, authorId: "student-2", contentHtml: `<p>${text}</p>`, createdAt: new Date(), timeMarkerSeconds, authorName: "다른 학생" };
 }
 
 test("믹스셋 링크 상세는 본문 위에 플레이어를 두고 댓글 시점을 누를 때마다 그 위치로 이동한다", async (context) => {
@@ -2372,7 +2417,7 @@ test("위쪽 이동 막대는 주소가 먼저 바뀌어도 불러오는 중 스
 test("믹스셋 목록 줄은 링크 플레이어를 누른 줄에만 열고, 오디오 줄은 하단 미니 플레이어(공용 곡)로 재생하며 매체 없음 줄은 그대로 둔다", async (context) => {
   playerStore.resetPlayerForTests();
   context.after(() => playerStore.resetPlayerForTests());
-  const base = { contentHtml: "<p>미리보기</p>", authorName: "학생", authorEmail: null, createdAt: new Date() };
+  const base = { contentHtml: "<p>미리보기</p>", authorName: "학생", createdAt: new Date() };
   await render(context, <ul>
     <MixsetFeedbackCard post={{ ...base, id: "link", title: "링크 믹스셋", mediaUrl: "https://www.youtube.com/watch?v=aqz-KE-bpKQ", mediaObjectId: null }} />
     <MixsetFeedbackCard post={{ ...base, id: "audio", title: "오디오 믹스셋", mediaUrl: "/api/media/audio-1", mediaObjectId: "audio-1" }} />
@@ -2410,7 +2455,7 @@ test("믹스셋 링크 줄과 하단 미니 플레이어(YouTube)는 실제 재�
     ? { matches: true, media: query, addEventListener() {}, removeEventListener() {} }
     : originalMatchMedia(query))) as typeof browser.matchMedia;
   context.after(() => { browser.matchMedia = originalMatchMedia; });
-  const base = { contentHtml: "<p>미리보기</p>", authorName: "학생", authorEmail: null, createdAt: new Date() };
+  const base = { contentHtml: "<p>미리보기</p>", authorName: "학생", createdAt: new Date() };
   await render(context, <>
     <ul>
       <MixsetFeedbackCard post={{ ...base, id: "row-a", title: "줄 A", mediaUrl: "https://www.youtube.com/watch?v=aaaaaaaaaaa", mediaObjectId: null }} />
@@ -2646,7 +2691,7 @@ test("community shows the server-loaded list first and explains a board without 
     id: "post-1", authorId: "student-1", category: "general", boardType: "GENERAL" as const, isPinned: false,
     mediaUrl: null, mediaObjectId: null, title: "레슨 후기", contentHtml: "<p>오늘 배운 것</p>",
     createdAt: new Date(), updatedAt: new Date(), deletedAt: null, version: 1,
-    authorName: "학생", authorEmail: null, commentCount: 2,
+    authorName: "학생", commentCount: 2,
   };
   const previousUrl = browser.location.href;
   context.after(() => browser.history.replaceState({}, "", previousUrl));
@@ -2695,12 +2740,45 @@ test("community shows the server-loaded list first and explains a board without 
   assert.equal([...browser.document.querySelectorAll("a")].some((anchor) => anchor.textContent === "새 글"), false);
 });
 
+test("공지 고정을 바꾸면 목록을 다시 받아 표시와 version이 맞고, 이어서 다시 바꿔도 충돌하지 않는다", async (context) => {
+  const pinCalls: unknown[][] = [];
+  const announcement = (isPinned: boolean, version: number) => ({
+    id: "notice-1", authorId: "admin-1", category: "", boardType: "ANNOUNCEMENT" as const, isPinned,
+    mediaUrl: null, mediaObjectId: null, title: "휴강 안내", contentHtml: "<p>다음 주는 쉽니다</p>",
+    createdAt: new Date(), updatedAt: new Date(), deletedAt: null, version, authorName: "Stann", commentCount: 0,
+  });
+  // 서버는 고정을 바꿀 때마다 version을 올린다.
+  let stored = announcement(false, 1);
+  togglePin = async (...args) => {
+    pinCalls.push(args);
+    if (args[3] !== stored.version) return { success: false, error: "다른 화면에서 이 게시물이 먼저 변경되었습니다." };
+    stored = announcement(args[1], stored.version + 1);
+    return { success: true };
+  };
+  loadCommunityPage = async () => ({ posts: [stored], nextCursor: null });
+  context.after(() => {
+    togglePin = async () => ({ success: true });
+    loadCommunityPage = async () => ({ posts: [], nextCursor: null });
+  });
+  const previousUrl = browser.location.href;
+  context.after(() => browser.history.replaceState({}, "", previousUrl));
+  browser.history.replaceState({}, "", "/community?boardType=ANNOUNCEMENT");
+  await render(context, <CommunityClient isAdmin initial={{ boardType: "ANNOUNCEMENT", category: "", categories: [], posts: [stored], nextCursor: null }} />);
+
+  await press("고정: 휴강 안내");
+  assert.ok(button("고정 해제: 휴강 안내"), "고정한 뒤에는 고정 해제로 보인다");
+  await press("고정 해제: 휴강 안내");
+  assert.ok(button("고정: 휴강 안내"));
+  assert.deepEqual(pinCalls.map((args) => [args[1], args[3]]), [[true, 1], [false, 2]], "두 번째 변경은 새 version으로 보낸다");
+  assert.equal(browser.document.querySelector('[role="alert"]'), null);
+});
+
 test("community load-more appends the next page once and stops at the last page", async (context) => {
   const cursors: (string | null | undefined)[] = [];
   const makePost = (index: number) => ({
     id: `post-${index}`, authorId: "student-1", category: "general", boardType: "GENERAL" as const, isPinned: false,
     mediaUrl: null, mediaObjectId: null, title: `기록 ${index}`, contentHtml: "<p>본문</p>",
-    createdAt: new Date(), updatedAt: new Date(), deletedAt: null, version: 1, authorName: "학생", authorEmail: null, commentCount: 0,
+    createdAt: new Date(), updatedAt: new Date(), deletedAt: null, version: 1, authorName: "학생", commentCount: 0,
   });
   loadCommunityPage = async ({ cursor }) => {
     cursors.push(cursor);

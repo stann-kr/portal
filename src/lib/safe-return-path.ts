@@ -11,6 +11,8 @@ export function safeReturnPath(value: unknown, fallback: string): string {
   try {
     const parsed = new URL(value, LOCAL_ORIGIN);
     if (parsed.origin !== LOCAL_ORIGIN) return fallback;
+    // "/.//host"처럼 점 세그먼트가 사라지면 "//host"가 되어 다른 출처로 열린다.
+    if (parsed.pathname.startsWith("//")) return fallback;
     return `${parsed.pathname}${parsed.search}${parsed.hash}`;
   } catch {
     return fallback;

@@ -23,7 +23,6 @@ type Post = {
   contentHtml: string;
   isPinned: boolean;
   authorName: string | null;
-  authorEmail: string | null;
   createdAt: Date | null;
   version: number;
   commentCount?: number;
@@ -33,12 +32,14 @@ interface AnnouncementListProps {
   posts: Post[];
   isAdmin: boolean;
   returnTo?: string;
+  /** 고정 상태를 바꾼 뒤. 목록을 state로 들고 있는 화면은 여기서 다시 받는다(없으면 route를 새로 받는다). */
+  onChanged?: () => void;
 }
 
 const PIN_BUTTON_CLASS =
   "h-11 shrink-0 rounded-touch px-3 text-body font-normal text-secondary-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 md:h-7 md:rounded-md md:px-2.5 md:text-xs";
 
-export function AnnouncementList({ posts, isAdmin, returnTo = "/community" }: AnnouncementListProps) {
+export function AnnouncementList({ posts, isAdmin, returnTo = "/community", onChanged }: AnnouncementListProps) {
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [pendingPostId, setPendingPostId] = useState<string | null>(null);
@@ -75,7 +76,8 @@ export function AnnouncementList({ posts, isAdmin, returnTo = "/community" }: An
         }
         operationIdsRef.current.delete(postId);
         setError(null);
-        router.refresh();
+        if (onChanged) onChanged();
+        else router.refresh();
       } catch {
         setError("공지 고정 상태를 변경하지 못했습니다. 다시 시도해 주세요.");
       }

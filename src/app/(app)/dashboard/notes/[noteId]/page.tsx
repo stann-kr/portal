@@ -25,6 +25,7 @@ import { NoteTrashActions } from "@/components/notes/NoteTrashActions";
 import { formatNoteLongDate, formatNoteUpdated, formatTrashDeadline, formatTrashTime } from "@/components/notes/note-display";
 import { PRIVATE_NOTE_TRASH_RETENTION_SECONDS } from "@/lib/private-note-continuity";
 import { getRequestNow } from "@/lib/request-time";
+import { missingWhenAccessDenied } from "@/lib/access-denied-as-missing";
 
 export const metadata = { title: "노트" };
 
@@ -41,10 +42,7 @@ export default async function NotePage({
 
   const { noteId } = await params;
   // 남의 노트(권한 없음)는 오류 화면 대신 없는 노트처럼 404로 보인다. 다른 오류는 그대로 올린다.
-  const note = await getPrivateNoteIncludingTrash(noteId).catch((error: unknown) => {
-    if (error instanceof Error && (error.message === "Unauthorized" || error.message === "Student not found")) return null;
-    throw error;
-  });
+  const note = await missingWhenAccessDenied(getPrivateNoteIncludingTrash(noteId));
   if (!note) notFound();
 
   const fallback = session.user.role === "admin" ? "/dashboard/admin" : "/dashboard/student/notes";

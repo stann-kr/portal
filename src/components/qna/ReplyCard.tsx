@@ -20,7 +20,6 @@ type Reply = {
   attachmentKind?: MediaAttachmentKind | null;
   createdAt: Date | null | undefined;
   authorName: string | null | undefined;
-  authorEmail: string | null | undefined;
   authorRole: string | null | undefined;
 };
 
@@ -30,8 +29,7 @@ interface ReplyCardProps {
 
 export function ReplyCard({ reply }: ReplyCardProps) {
   const isStann = reply.authorRole === "admin";
-  const author =
-    reply.authorName ?? reply.authorEmail?.split("@")[0] ?? "이름 미등록";
+  const author = reply.authorName ?? "이름 미등록";
   const time = formatKstMonthDayTime(reply.createdAt, "작성 시각 미정");
   const attachmentName = reply.attachmentUrl?.split("/").pop() || "첨부 파일";
 

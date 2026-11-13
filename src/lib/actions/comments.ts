@@ -13,6 +13,7 @@ import { and, eq, asc, isNull, sql } from "drizzle-orm";
 import { assertOwnerOrAdmin, requireAuth } from "@/lib/auth-guard";
 import { CREATION_OPERATION_FIELD, deriveCreationResourceId, resolveCreationOperationId } from "@/lib/creation-operation";
 import { COMMENT_TIME_MARKER_FIELD, parseTimeMarker } from "@/lib/community-mixset-media";
+import { publicAuthorName } from "@/lib/public-author-name";
 import { pushMessages } from "@/lib/push/messages";
 import { notifyPush } from "@/lib/push/notify";
 
@@ -50,8 +51,7 @@ export async function getCommentsByPost(postId: string) {
       contentHtml: comments.contentHtml,
       createdAt: comments.createdAt,
       timeMarkerSeconds: comments.timeMarkerSeconds,
-      authorName: profiles.displayName,
-      authorEmail: profiles.email,
+      authorName: publicAuthorName,
     })
     .from(comments)
     .leftJoin(profiles, eq(comments.authorId, profiles.id))
@@ -179,10 +179,13 @@ export async function createComment(
 // 삭제 (본인 댓글 또는 Admin)
 // ───────────────────────────────────────────────
 
+export type DeleteCommentResult = { success: true } | { error: string };
+
 /**
- * 댓글 삭제.
+ * 댓글 삭제. 지우지 못한 이유(게시물이 휴지통으로 감, 이미 지워짐·권한 없음)는 결과로 돌려준다.
+ * 화면이 열려 있는 사이 상태가 바뀐 경우이므로 호출한 화면이 안내하고 새로 받게 한다.
  */
-export async function deleteComment(commentId: string, postId: string) {
+export async function deleteComment(commentId: string, postId: string): Promise<DeleteCommentResult> {
   const session = await requireAuth();
   const db = createDb();
 
@@ -191,7 +194,10 @@ export async function deleteComment(commentId: string, postId: string) {
     .from(posts)
     .where(and(eq(posts.id, postId), isNull(posts.deletedAt)))
     .limit(1);
-  if (!activePost) return;
+  if (!activePost) {
+    revalidatePath(`/community/${postId}`);
+    return { error: "휴지통으로 옮겨진 게시물의 댓글은 삭제할 수 없습니다." };
+  }
 
   const condition = and(
     eq(comments.id, commentId),
@@ -201,6 +207,8 @@ export async function deleteComment(commentId: string, postId: string) {
       : eq(comments.authorId, session.user.id!),
   );
 
-  await db.delete(comments).where(condition);
+  const deleted = await db.delete(comments).where(condition).returning({ id: comments.id });
   revalidatePath(`/community/${postId}`);
+  if (deleted.length === 0) return { error: "댓글을 찾을 수 없거나 삭제할 권한이 없습니다." };
+  return { success: true };
 }

@@ -76,6 +76,20 @@ const AUDIO_MIME_TYPES = [
   "audio/wav",
 ] as const;
 
+/**
+ * 브라우저·OS마다 같은 형식을 다른 이름으로 보고한다(Chrome·Safari의 .m4a는 audio/x-m4a).
+ * 허용 목록과 저장 MIME은 정규 이름 하나로 두고, 알려진 별칭만 그 이름으로 바꿔 받는다.
+ */
+const MIME_TYPE_ALIASES: Readonly<Record<string, string>> = {
+  "audio/x-m4a": "audio/mp4",
+  "audio/m4a": "audio/mp4",
+  "audio/mp3": "audio/mpeg",
+  "audio/x-wav": "audio/wav",
+  "audio/wave": "audio/wav",
+  "audio/x-aiff": "audio/aiff",
+  "audio/x-flac": "audio/flac",
+};
+
 export const DOCUMENT_IMAGE_MIME_TYPES = [
   "image/gif",
   "image/jpeg",
@@ -230,19 +244,20 @@ export function validateMediaUploadInput(
 
   const policy = MEDIA_PURPOSE_POLICIES[candidate.purpose];
   const rawMimeType = candidate.mimeType;
+  const loweredMimeType = typeof rawMimeType === "string" ? rawMimeType.toLowerCase() : "";
+  const canonicalMimeType = Object.hasOwn(MIME_TYPE_ALIASES, loweredMimeType)
+    ? MIME_TYPE_ALIASES[loweredMimeType]!
+    : loweredMimeType;
   if (
     typeof rawMimeType !== "string" ||
     rawMimeType !== rawMimeType.trim() ||
-    !(policy.allowedMimeTypes as readonly string[]).includes(
-      rawMimeType.toLowerCase(),
-    )
+    !(policy.allowedMimeTypes as readonly string[]).includes(canonicalMimeType)
   ) {
     return validationFailure(
       "INVALID_MIME_TYPE",
       "업로드 목적에 허용되지 않는 파일 형식입니다.",
     );
   }
-  const canonicalMimeType = rawMimeType.toLowerCase();
 
   if (
     typeof candidate.fileSize !== "number" ||

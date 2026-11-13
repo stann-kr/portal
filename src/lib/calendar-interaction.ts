@@ -160,6 +160,14 @@ export function resolveSavedMove(
   return latest ? applyCalendarMoveToItem(latest, request) : null;
 }
 
+/**
+ * 열려 있는 상세 패널의 항목(열 때 찍어 둔 사본)이 방금 옮긴 항목이면 옮긴 값으로 바꾼다.
+ * 그대로 두면 패널이 옛 시각을 보이고, 거기서 제목만 고쳐 저장해도 옛 시각이 다시 저장된다.
+ */
+export function selectedItemAfterMove(selected: UnifiedItem | null, moved: UnifiedItem): UnifiedItem | null {
+  return selected && getUnifiedItemKey(selected) === getUnifiedItemKey(moved) ? moved : selected;
+}
+
 /** 서버에서 다시 받은 항목이 이미 이동한 자리에 있는지. 그때까지 화면은 이동한 자리를 유지한다. */
 export function isCalendarMoveReflected(item: UnifiedItem, request: CalendarMoveRequest): boolean {
   switch (request.kind) {

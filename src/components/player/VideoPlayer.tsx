@@ -86,7 +86,8 @@ function MediaPlayer({ url, seekRequest, onPositionReaderChange, onPlaybackError
     if (!onControllerChange) return;
     onControllerChange({
       play: () => setPlaying(true),
-      pause: () => setPlaying(false),
+      // 준비 전에 예약된 "옮긴 뒤 재생"도 함께 취소한다. 남겨 두면 metadata가 온 순간 다시 재생된다.
+      pause: () => { pendingPlayRef.current = false; setPlaying(false); },
       seek: (seconds, options) => {
         pendingSeekRef.current = seconds;
         pendingPlayRef.current = options?.play !== false;

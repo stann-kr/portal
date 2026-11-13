@@ -10,6 +10,7 @@ import { useEffect, useId, useRef, useState, useTransition, useCallback } from "
 import { Plus, X } from "lucide-react";
 import { ButtonSpinner } from "@/components/ui/button";
 import { createDiggingTrack, fetchLinkMeta } from "@/lib/actions/digging";
+import { fillEmptyFromLinkMeta, numberCellValue } from "./inline-add-values";
 import { parseStoredDiggingOptions } from "@/lib/digging-contract";
 import { StarRating } from "./StarRating";
 import { CamelotPicker } from "./CamelotPicker";
@@ -67,22 +68,20 @@ export function InlineAddRow({ columns, onTrackCreated }: InlineAddRowProps) {
   const linkColId = columns.find((c) => c.columnType === "link")?.id;
   const firstColId = linkColId ?? columns[0]?.id;
 
+  // 가장 최근 링크 조회만 반영한다. 링크를 바꾸거나 트랙을 추가한 뒤 늦게 온 응답은 다음 줄의 칸을 채우지 않는다.
+  const linkMetaRequestRef = useRef(0);
   const handleLinkBlur = async (url: string) => {
     if (!url || !url.startsWith("http")) return;
+    const request = ++linkMetaRequestRef.current;
     setIsFetching(true);
     try {
       const meta = await fetchLinkMeta(url);
-      const trackNameCol = columns.find((c) => c.name === "트랙명");
-      const artistCol = columns.find((c) => c.name === "아티스트");
-      if (meta.title && trackNameCol && !values[trackNameCol.id]) {
-        setValue(trackNameCol.id, meta.title);
-      }
-      if (meta.artist && artistCol && !values[artistCol.id]) {
-        setValue(artistCol.id, meta.artist);
-      }
+      if (request !== linkMetaRequestRef.current) return;
+      // 응답이 온 시점의 값으로 판단한다. 기다리는 동안 직접 입력한 글자는 덮지 않는다.
+      setValues((current) => fillEmptyFromLinkMeta(current, columns, meta));
     } catch { /* 메타 추출 실패 무시 */ }
     finally {
-      setIsFetching(false);
+      if (request === linkMetaRequestRef.current) setIsFetching(false);
     }
   };
 
@@ -96,6 +95,8 @@ export function InlineAddRow({ columns, onTrackCreated }: InlineAddRowProps) {
         onTrackCreated(created);
         setValues({});
         setLinkUrl("");
+        linkMetaRequestRef.current += 1;
+        setIsFetching(false);
       } catch {
         setSubmitError("트랙을 추가하지 못했습니다. 입력을 확인하고 다시 시도해 주세요.");
       }
@@ -224,7 +225,7 @@ export function InlineAddRow({ columns, onTrackCreated }: InlineAddRowProps) {
                 onChange={(e) =>
                   setValue(
                     col.id,
-                    col.columnType === "number" ? Number(e.target.value) : e.target.value,
+                    col.columnType === "number" ? numberCellValue(e.target.value) : e.target.value,
                   )
                 }
                 onKeyDown={handleKeyDown}

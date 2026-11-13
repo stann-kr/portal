@@ -2,10 +2,11 @@
 
 import { useEffect } from "react";
 import { useProgressRouter } from "@/components/app-shell/NavigationProgress";
+import { safeReturnPath } from "@/lib/safe-return-path";
 
-/** 알림이 열 주소로 받아도 되는 값: 같은 출처의 경로만(`/`로 시작, `//` 제외). */
+/** 알림이 열 주소로 받아도 되는 값: 같은 출처의 경로만(정규화 뒤 `//`·backslash 포함 거부). */
 export function safeNotificationPath(value: unknown): string | null {
-  return typeof value === "string" && value.startsWith("/") && !value.startsWith("//") ? value : null;
+  return safeReturnPath(value, "") || null;
 }
 
 /**

@@ -585,6 +585,39 @@ test("room에 연결된 동안 D1 저장(이력)은 바로 하지 않고 기다�
   assert.equal(calls[0]!.data.title, "고친 제목");
 });
 
+test("저장을 기다리는 중에 앱 안 이동으로 편집기가 사라지면 그 자리에서 한 번 저장한다", { concurrency: false }, async (context) => {
+  const { COLLAB_ROOM_BACKED_SAVE } = await import("@/lib/collab/client/useCollabAutosave");
+  const previous = { ...COLLAB_ROOM_BACKED_SAVE };
+  COLLAB_ROOM_BACKED_SAVE.idleMs = 60_000;
+  COLLAB_ROOM_BACKED_SAVE.maxWaitMs = 600_000;
+  context.after(() => Object.assign(COLLAB_ROOM_BACKED_SAVE, previous));
+  const env = setupBrowser(context);
+  const calls: SaveCall[] = [];
+  const note = { id: "note-unmount", title: "원래 제목", contentHtml: "<p>본문</p>", noteDate: null, version: 1 };
+  seedHeads.set(note.id, note);
+  const device = await env.mount(
+    <NoteEditorForm
+      actorId="student-1"
+      note={note}
+      action={async (_previous: object, formData: FormData) => {
+        const call = { device: "A" as const, data: Object.fromEntries(formData) };
+        calls.push(call);
+        return { success: true, note: { ...note, title: String(call.data.title), version: 2 } };
+      }}
+    />,
+  );
+  await waitReady(device);
+  await waitUntil(() => formOf(device).dataset.collabStatus === "connected", 4000, "연결돼야 합니다.");
+  await act(async () => typeInto(env, titleOf(device), "떠나기 직전 제목"));
+  assert.equal(calls.length, 0, "입력 직후에는 아직 저장하지 않는다");
+  // 뒤로 가기·단축키 이동처럼 초점이 편집기 밖으로 나가지 않은 채 화면이 바뀐다.
+  await device.unmount();
+  await waitUntil(() => calls.length === 1, 3000, "편집기가 사라질 때 기다리던 저장을 보내야 합니다.");
+  assert.equal(calls[0]!.data.title, "떠나기 직전 제목");
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 300)); });
+  assert.equal(calls.length, 1, "한 번만 저장한다");
+});
+
 // ---------------------------------------------------------------------------
 // 2. 읽기 전용 연결
 // ---------------------------------------------------------------------------

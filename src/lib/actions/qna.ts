@@ -59,6 +59,7 @@ import {
 } from "@/lib/guide-content";
 import { findGuideAnchorForThread, findGuidePage } from "@/lib/guide-store";
 import type { QnaGuideAnchorWrite } from "@/lib/qna-atomic";
+import { publicAuthorName } from "@/lib/public-author-name";
 import { pushMessages } from "@/lib/push/messages";
 import { notifyPush } from "@/lib/push/notify";
 
@@ -263,8 +264,7 @@ async function readQnaThread(threadId: string, includeTrash: boolean) {
       attachmentObjectId: qnaReplies.attachmentObjectId,
       createdAt: qnaReplies.createdAt,
       authorId: qnaReplies.authorId,
-      authorName: profiles.displayName,
-      authorEmail: profiles.email,
+      authorName: publicAuthorName,
       authorRole: profiles.role,
     })
     .from(qnaReplies)

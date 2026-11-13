@@ -16,6 +16,7 @@ import {
 } from "@/components/notes/DocumentRecordFrame";
 import { formatRecordTime } from "@/lib/kst-format";
 import { getRequestNow } from "@/lib/request-time";
+import { missingWhenAccessDenied } from "@/lib/access-denied-as-missing";
 
 export const metadata = { title: "노트 변경 이력" };
 
@@ -39,7 +40,8 @@ export default async function NoteHistoryPage({
   const session = await getActiveAuthSession();
   if (!session?.user?.id) redirect("/login");
   const { noteId } = await params;
-  const note = await getPrivateNoteIncludingTrash(noteId);
+  // 남의 노트의 이력 주소도 문서 화면처럼 404로 보인다.
+  const note = await missingWhenAccessDenied(getPrivateNoteIncludingTrash(noteId));
   if (!note) notFound();
   const revisions = await getPrivateNoteRevisions(noteId);
   const fallback = `/dashboard/notes/${noteId}`;

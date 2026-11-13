@@ -107,7 +107,12 @@ export function PostDetailClient({
     setDeleteError(null);
     startTransition(async () => {
       try {
-        await deleteComment(commentId, postId);
+        const result = await deleteComment(commentId, postId);
+        if ("error" in result) {
+          // 화면을 열어 둔 사이 게시물·댓글 상태가 바뀌었다. 이유를 알리고 지금 상태로 다시 받는다.
+          setDeleteError(result.error);
+          router.refresh();
+        }
       } catch {
         setDeleteError("댓글을 삭제하지 못했습니다. 다시 시도해 주세요.");
       }

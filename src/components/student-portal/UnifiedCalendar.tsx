@@ -56,6 +56,7 @@ import {
   getCalendarNow,
   isCalendarMoveReflected,
   resolveSavedMove,
+  selectedItemAfterMove,
   toCalendarWallTime,
   getNoteCalendarDateKey,
   type CalendarEditContext,
@@ -448,6 +449,8 @@ export function UnifiedCalendar({
       const saved = resolveSavedMove(latestItemsRef.current, key, request);
       if (saved) onItemUpdated?.(saved);
       const moved = saved ?? applyCalendarMoveToItem(original, request);
+      // 옆에 열려 있는 상세 패널이 이 항목이면 옮긴 시각으로 맞춘다.
+      setSelectedItem((current) => selectedItemAfterMove(current, moved));
       setNotice({
         tone: "status",
         message: describeMove(original, request),

@@ -16,21 +16,20 @@ type CommunityPostSummary = {
   title: string;
   contentHtml: string;
   authorName: string | null;
-  authorEmail: string | null;
   createdAt: Date | null;
   /** 목록 응답이 함께 보내는 댓글 수. 상세·다른 목록처럼 값이 없으면 표시하지 않는다. */
   commentCount?: number;
 };
 
 /** 목록 줄 아래 메타: 작성자 · 날짜 · 댓글 N(캔버스 Community 보드). */
-export function communityRowMeta(post: Pick<CommunityPostSummary, "authorName" | "authorEmail" | "createdAt" | "commentCount">, authorFallback?: string): string {
+export function communityRowMeta(post: Pick<CommunityPostSummary, "authorName" | "createdAt" | "commentCount">, authorFallback?: string): string {
   const parts = [communityAuthorName(post, authorFallback), formatKstShortDate(post.createdAt, "날짜 정보 없음")];
   if (typeof post.commentCount === "number") parts.push(`댓글 ${post.commentCount}`);
   return parts.join(" · ");
 }
 
-export function communityAuthorName(post: Pick<CommunityPostSummary, "authorName" | "authorEmail">, fallback = "작성자 미상"): string {
-  return post.authorName ?? post.authorEmail?.split("@")[0] ?? fallback;
+export function communityAuthorName(post: Pick<CommunityPostSummary, "authorName">, fallback = "작성자 미상"): string {
+  return post.authorName ?? fallback;
 }
 
 /** 목록 미리보기용 평문. 저장 HTML을 직접 렌더하지 않는다. */

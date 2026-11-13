@@ -34,6 +34,21 @@ export function normalizeEditorUrl(value: string, kind: EditorInsertKind): strin
   }
 }
 
+/**
+ * 선택이 비어 있으면 표시 글자를 링크로 넣고, 선택이 있으면 그 범위에 링크를 건다.
+ * 표시 글자는 text node로 넣는다. 문자열로 넣으면 tiptap-markdown이 markdown으로 다시 읽어
+ * 글자 수가 달라지고, 원문 길이로 잡은 링크 범위가 뒤 본문까지 번진다.
+ */
+export function insertEditorLink(editor: Editor, selection: EditorSelection, text: string, href: string): void {
+  const chain = editor.chain().focus().setTextSelection(selection);
+  if (selection.from === selection.to) {
+    const label = text.trim() || href;
+    chain.insertContent({ type: "text", text: label, marks: [{ type: "link", attrs: { href } }] }).run();
+  } else {
+    chain.setLink({ href }).run();
+  }
+}
+
 export function EditorInsertPanel({
   editor,
   kind,
@@ -87,18 +102,7 @@ export function EditorInsertPanel({
       return;
     }
 
-    const chain = editor.chain().focus().setTextSelection(selection);
-    if (selection.from === selection.to) {
-      const label = text.trim() || normalizedUrl;
-      chain
-        .insertContent(label)
-        .setTextSelection({ from: selection.from, to: selection.from + label.length })
-        .setLink({ href: normalizedUrl })
-        .setTextSelection(selection.from + label.length)
-        .run();
-    } else {
-      chain.setLink({ href: normalizedUrl }).run();
-    }
+    insertEditorLink(editor, selection, text, normalizedUrl);
     onClose();
   };
 
