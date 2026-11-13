@@ -23,7 +23,7 @@ import {
   sniffImageMimeType,
   type MediaUploadRequestHeaders,
 } from "./media-upload-request";
-import { createPostAtomically, purgePostAtomically, trashPostAtomically } from "./post-atomic";
+import { createPostAtomically, purgePostAtomically, trashPostAtomically, updatePostAtomically } from "./post-atomic";
 import {
   createPrivateNoteAtomically,
   purgePrivateNoteAtomically,
@@ -160,10 +160,12 @@ test("본문 이미지가 많아도 모두 연결하도록 D1 parameter 한도 �
   });
   assert.equal(statements.length, 3);
   assert.ok(statements.every((statement) => (statement.params?.length ?? 0) <= 100));
+  // id 목록 뒤에는 저장자와 편집 권한 판단용 문서 id가 온다.
   assert.deepEqual(
-    statements.flatMap((statement) => (statement.params ?? []).slice(6)),
+    statements.flatMap((statement) => (statement.params ?? []).slice(5, -2)),
     ids,
   );
+  assert.ok(statements.every((statement) => (statement.params ?? []).slice(-2).join() === `${STUDENT},note`));
   assert.deepEqual(
     documentImageClaimStatements({
       contentHtml: "<p>이미지 없음</p>",
@@ -204,7 +206,7 @@ test("형식 판정은 stream 앞부분만 읽고 나머지 내용을 그대로 
   assert.deepEqual(rebuilt, original);
 });
 
-test("노트 저장은 저장자 소유 READY 이미지만 노트에 연결하고 영구 삭제 때 함께 지운다", async (context) => {
+test("노트 저장은 노트를 고칠 수 있는 사람의 READY 이미지만 노트에 연결하고 영구 삭제 때 함께 지운다", async (context) => {
   const { sqlite, dbContext } = setupDatabase(context);
   const ownImage = "30000000-0000-4000-8000-000000000011";
   const laterImage = "30000000-0000-4000-8000-000000000012";
@@ -287,6 +289,88 @@ test("노트 저장은 저장자 소유 READY 이미지만 노트에 연결하�
       .get()?.value,
     2,
   );
+});
+
+test("공동 편집에서 문서를 고칠 권한이 있는 사람이 올린 이미지는 누가 저장하든 그 문서에 연결한다", async (context) => {
+  const { sqlite, dbContext } = setupDatabase(context);
+  const adminImage = "30000000-0000-4000-8000-000000000031";
+  const outsiderImage = "30000000-0000-4000-8000-000000000032";
+  const otherNoteImage = "30000000-0000-4000-8000-000000000033";
+  const adminPostImage = "30000000-0000-4000-8000-000000000034";
+  const outsiderPostImage = "30000000-0000-4000-8000-000000000035";
+  for (const [id, owner] of [
+    [adminImage, ADMIN],
+    [outsiderImage, OTHER],
+    [otherNoteImage, STUDENT],
+    [adminPostImage, ADMIN],
+    [outsiderPostImage, OTHER],
+  ] as const) {
+    await createReadyImage(dbContext, id, owner);
+  }
+  const writeTime = new Date(NOW.getTime() + 5_000);
+  const note = (noteId: string, op: number, contentHtml: string) =>
+    createPrivateNoteAtomically(dbContext, {
+      actor: { id: STUDENT, isAdmin: false },
+      subjectId: STUDENT,
+      noteId,
+      operationId: operationId(op),
+      title: "공동 편집 노트",
+      contentHtml,
+      noteDate: null,
+      now: writeTime,
+    });
+  assert.equal((await note("shared-note", 21, "<p>시작</p>")).ok, true);
+  assert.equal((await note("earlier-note", 22, imageHtml(otherNoteImage))).ok, true);
+
+  // 저장 담당이 작성자 학생이어도 관리자가 넣은 이미지는 연결한다.
+  // 노트를 고칠 권한이 없는 다른 학생의 이미지와 이미 다른 노트에 연결된 이미지는 가져오지 않는다.
+  const saved = await updatePrivateNoteAtomically(dbContext, {
+    actor: { id: STUDENT, isAdmin: false },
+    noteId: "shared-note",
+    operationId: operationId(23),
+    baseRevision: 1,
+    title: "공동 편집 노트",
+    contentHtml: imageHtml(adminImage, outsiderImage, otherNoteImage),
+    noteDate: null,
+    now: new Date(writeTime.getTime() + 1_000),
+  });
+  assert.equal(saved.ok, true, JSON.stringify(saved));
+  assert.deepEqual(mediaRow(sqlite, adminImage), {
+    state: "ATTACHED",
+    resource_type: "PRIVATE_NOTE",
+    resource_id: "shared-note",
+  });
+  assert.deepEqual(mediaRow(sqlite, outsiderImage), { state: "READY", resource_type: null, resource_id: null });
+  assert.equal(mediaRow(sqlite, otherNoteImage)?.resource_id, "earlier-note");
+
+  const post = await createPostAtomically(dbContext, {
+    actor: { id: STUDENT, isAdmin: false },
+    postId: "shared-post",
+    operationId: operationId(24),
+    snapshot: {
+      category: "general",
+      boardType: "GENERAL",
+      isPinned: false,
+      mediaUrl: null,
+      mediaObjectId: null,
+      title: "공동 편집 글",
+      contentHtml: "<p>시작</p>",
+    },
+    now: writeTime,
+  });
+  assert.equal(post.ok, true, JSON.stringify(post));
+  const postSaved = await updatePostAtomically(dbContext, {
+    actor: { id: STUDENT, isAdmin: false },
+    postId: "shared-post",
+    operationId: operationId(25),
+    baseRevision: 1,
+    title: "공동 편집 글",
+    contentHtml: imageHtml(adminPostImage, outsiderPostImage),
+    now: new Date(writeTime.getTime() + 1_000),
+  });
+  assert.equal(postSaved.ok, true, JSON.stringify(postSaved));
+  assert.equal(mediaRow(sqlite, adminPostImage)?.resource_id, "shared-post");
+  assert.deepEqual(mediaRow(sqlite, outsiderPostImage), { state: "READY", resource_type: null, resource_id: null });
 });
 
 test("글 본문 이미지는 글에 연결되고 글 영구 삭제 때 함께 지운다", async (context) => {
