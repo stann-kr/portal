@@ -8,7 +8,7 @@
  */
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useProgressRouter } from "@/components/app-shell/NavigationProgress";
 import { Hash, MessageSquare, Music2, Plus, RotateCcw, Search, Settings2, Trash2 } from "lucide-react";
@@ -187,6 +187,17 @@ export default function CommunityClient({ isAdmin, initial, search = null }: Com
       cancelled = true;
     };
   }, [activeTab, activeCategory, reloadToken]);
+
+  // 공지 목록은 이 화면의 state다. 고정을 바꾼 뒤 route만 새로 받으면 옛 표시와 옛 version이 남아 다음 변경이 충돌한다.
+  // 보이는 목록은 그대로 둔 채 조용히 다시 받고, 실패하면 다시 시도 화면으로 넘긴다.
+  const refreshAnnouncements = useCallback(() => {
+    getCommunityPostPage({ boardType: "ANNOUNCEMENT", category: "" })
+      .then((page) => {
+        setAnnouncementPosts(page.posts);
+        if (requestedKeyRef.current === "ANNOUNCEMENT") setNextCursor(page.nextCursor);
+      })
+      .catch(() => setReloadToken((token) => token + 1));
+  }, []);
 
   const requestedKey = listKey(activeTab, activeCategory);
   // 늦게 도착한 "더 보기" 응답이 지금 보이는 목록인지 비교할 수 있게 커밋된 위치만 기록한다.
@@ -389,6 +400,7 @@ export default function CommunityClient({ isAdmin, initial, search = null }: Com
                   }))}
                   isAdmin={isAdmin}
                   returnTo={returnTo}
+                  onChanged={refreshAnnouncements}
                 />
               ) : null}
 

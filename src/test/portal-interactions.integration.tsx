@@ -98,6 +98,7 @@ let loadAllStudentsCalendar: typeof import("@/lib/actions/unifiedItems").getUnif
 });
 let login: typeof import("@/lib/actions/session").loginWithCredentials = async () => ({});
 let loadCommunityPage: typeof import("@/lib/actions/posts").getCommunityPostPage = async () => ({ posts: [], nextCursor: null });
+let togglePin: typeof import("@/lib/actions/posts").togglePinPost = async () => ({ success: true });
 let CommunityClient: typeof import("@/app/(app)/community/CommunityClient").default;
 let LoginForm: typeof import("@/components/auth/LoginForm").LoginForm;
 const previousGlobals = new Map<string, PropertyDescriptor | undefined>();
@@ -154,7 +155,7 @@ mock.module("@/lib/actions/comments", { namedExports: {
 mock.module("@/lib/actions/posts", { namedExports: {
   deletePost: (...args: Parameters<typeof trashPost>) => trashPost(...args),
   getCommunityPostPage: (...args: Parameters<typeof loadCommunityPage>) => loadCommunityPage(...args),
-  togglePinPost: async () => ({ success: true }),
+  togglePinPost: (...args: Parameters<typeof togglePin>) => togglePin(...args),
 } });
 mock.module("@/lib/actions/categories", { namedExports: { getCategories: async () => [] } });
 mock.module("@/lib/actions/upload", { namedExports: {
@@ -2737,6 +2738,39 @@ test("community shows the server-loaded list first and explains a board without 
   await settle();
   assert.ok([...browser.document.querySelectorAll("a")].some((anchor) => anchor.getAttribute("href") === "/dashboard/admin/categories" && anchor.textContent === "채널 추가하기"));
   assert.equal([...browser.document.querySelectorAll("a")].some((anchor) => anchor.textContent === "새 글"), false);
+});
+
+test("공지 고정을 바꾸면 목록을 다시 받아 표시와 version이 맞고, 이어서 다시 바꿔도 충돌하지 않는다", async (context) => {
+  const pinCalls: unknown[][] = [];
+  const announcement = (isPinned: boolean, version: number) => ({
+    id: "notice-1", authorId: "admin-1", category: "", boardType: "ANNOUNCEMENT" as const, isPinned,
+    mediaUrl: null, mediaObjectId: null, title: "휴강 안내", contentHtml: "<p>다음 주는 쉽니다</p>",
+    createdAt: new Date(), updatedAt: new Date(), deletedAt: null, version, authorName: "Stann", commentCount: 0,
+  });
+  // 서버는 고정을 바꿀 때마다 version을 올린다.
+  let stored = announcement(false, 1);
+  togglePin = async (...args) => {
+    pinCalls.push(args);
+    if (args[3] !== stored.version) return { success: false, error: "다른 화면에서 이 게시물이 먼저 변경되었습니다." };
+    stored = announcement(args[1], stored.version + 1);
+    return { success: true };
+  };
+  loadCommunityPage = async () => ({ posts: [stored], nextCursor: null });
+  context.after(() => {
+    togglePin = async () => ({ success: true });
+    loadCommunityPage = async () => ({ posts: [], nextCursor: null });
+  });
+  const previousUrl = browser.location.href;
+  context.after(() => browser.history.replaceState({}, "", previousUrl));
+  browser.history.replaceState({}, "", "/community?boardType=ANNOUNCEMENT");
+  await render(context, <CommunityClient isAdmin initial={{ boardType: "ANNOUNCEMENT", category: "", categories: [], posts: [stored], nextCursor: null }} />);
+
+  await press("고정: 휴강 안내");
+  assert.ok(button("고정 해제: 휴강 안내"), "고정한 뒤에는 고정 해제로 보인다");
+  await press("고정 해제: 휴강 안내");
+  assert.ok(button("고정: 휴강 안내"));
+  assert.deepEqual(pinCalls.map((args) => [args[1], args[3]]), [[true, 1], [false, 2]], "두 번째 변경은 새 version으로 보낸다");
+  assert.equal(browser.document.querySelector('[role="alert"]'), null);
 });
 
 test("community load-more appends the next page once and stops at the last page", async (context) => {
