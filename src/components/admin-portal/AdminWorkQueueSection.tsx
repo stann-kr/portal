@@ -36,6 +36,9 @@ const WORK_QUEUE_PATH = "/dashboard/admin?section=work";
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
 
+/** 되돌리기 안내. assignmentId가 있으면 그 행의 확인을 되돌릴 수 있고, 오류 안내는 null이다. */
+type AckToast = UndoToastMessage & { assignmentId: string | null };
+
 function formatDay(date: Date) {
   return formatKst(date, { month: "long", day: "numeric", weekday: "long" });
 }
@@ -105,8 +108,13 @@ export function AdminWorkQueueSection({
 }) {
   // 확인함으로 표시한 제출은 서버 응답을 기다리지 않고 목록에서 뺀다(되돌리면 다시 보인다).
   const [acknowledgedIds, setAcknowledgedIds] = useState<ReadonlySet<string>>(() => new Set());
-  const [ackToast, setAckToast] = useState<(UndoToastMessage & { assignmentId: string | null }) | null>(null);
+  const [ackToast, setAckToast] = useState<AckToast | null>(null);
+  const ackToastRef = useRef<AckToast | null>(null);
+  // 다른 행의 되돌리기 안내가 떠 있는 동안 도착한 오류. 그 안내가 닫히거나 되돌리기를 누르면 보인다.
+  const deferredError = useRef<AckToast | null>(null);
   const ackChains = useRef(new Map<string, Promise<unknown>>());
+  // 행별 마지막 요청 번호. 늦게 도착한 앞선 요청의 결과는 행 상태·안내를 바꾸지 않는다.
+  const latestRequest = useRef(new Map<string, number>());
   const ackButtons = useRef(new Map<string, HTMLButtonElement>());
   const undoButtonRef = useRef<HTMLButtonElement>(null);
   const toastSeq = useRef(0);
@@ -122,12 +130,29 @@ export function AdminWorkQueueSection({
     else next.delete(assignmentId);
     return next;
   });
-  // 같은 제출의 표시·취소 요청은 보낸 순서대로 처리한다.
+  const showToast = (next: AckToast | null) => {
+    ackToastRef.current = next;
+    setAckToast(next);
+  };
+  const dismissToast = () => {
+    const deferred = deferredError.current;
+    deferredError.current = null;
+    showToast(deferred);
+  };
+  const showError = (kind: "ack-error" | "undo-error", assignmentId: string, message: string) => {
+    const error: AckToast = { key: `${kind}:${assignmentId}:${++toastSeq.current}`, assignmentId: null, message, tone: "error" };
+    const current = ackToastRef.current;
+    if (current?.assignmentId && current.assignmentId !== assignmentId) deferredError.current = error;
+    else showToast(error);
+  };
+  // 같은 제출의 표시·취소 요청은 보낸 순서대로 처리하고, 결과는 그 행의 마지막 요청만 반영한다.
   const runReview = (assignmentId: string, reviewed: boolean) => {
+    const seq = (latestRequest.current.get(assignmentId) ?? 0) + 1;
+    latestRequest.current.set(assignmentId, seq);
     const previous = ackChains.current.get(assignmentId) ?? Promise.resolve();
     const request = previous.catch(() => undefined).then(() => setReviewed(assignmentId, reviewed));
     ackChains.current.set(assignmentId, request);
-    return request;
+    return { request, isLatest: () => latestRequest.current.get(assignmentId) === seq };
   };
   const acknowledge = (assignment: PendingFeedbackAssignment, title: string) => {
     // 행이 사라지므로 focus를 다음 행의 확인 버튼(없으면 되돌리기)으로 옮긴다.
@@ -135,39 +160,43 @@ export function AdminWorkQueueSection({
     const index = rows.findIndex((row) => row.id === assignment.id);
     const nextId = rows[index + 1]?.id ?? rows[index - 1]?.id;
     setAcknowledged(assignment.id, true);
-    setAckToast({ key: `ack:${assignment.id}:${++toastSeq.current}`, assignmentId: assignment.id, message: `'${title}'를 확인함으로 표시했습니다`, undoLabel: "되돌리기" });
+    showToast({ key: `ack:${assignment.id}:${++toastSeq.current}`, assignmentId: assignment.id, message: `'${title}'를 확인함으로 표시했습니다`, undoLabel: "되돌리기" });
     requestAnimationFrame(() => {
       const target = (nextId ? ackButtons.current.get(nextId) : null) ?? undoButtonRef.current;
       target?.focus();
     });
-    void runReview(assignment.id, true).then(
+    const { request, isLatest } = runReview(assignment.id, true);
+    const fail = (message: string) => {
+      if (!isLatest()) return;
+      setAcknowledged(assignment.id, false);
+      showError("ack-error", assignment.id, message);
+    };
+    void request.then(
       (result) => {
-        if (result.success) return;
-        setAcknowledged(assignment.id, false);
-        setAckToast({ key: `ack-error:${assignment.id}:${++toastSeq.current}`, assignmentId: null, message: result.error, tone: "error" });
+        if (!result.success) fail(result.error);
       },
-      () => {
-        setAcknowledged(assignment.id, false);
-        setAckToast({ key: `ack-error:${assignment.id}:${++toastSeq.current}`, assignmentId: null, message: "확인함으로 표시하지 못했습니다. 다시 시도해 주세요.", tone: "error" });
-      },
+      () => fail("확인함으로 표시하지 못했습니다. 다시 시도해 주세요."),
     );
   };
   /**
    * 되돌리기는 안내에 남아 있는 마지막 확인 한 건만 취소한다. 안내가 보이는 사이 다른 행을 확인하면 안내가 새 행으로 바뀌고,
    * 앞 행은 확인함으로 남는다(서버에도 저장되어 사라지지 않으며, 과제 화면의 "확인 취소"로 되돌린다).
+   * 앞 행의 저장이 그 사이 실패하면 앞 행은 바로 목록에 돌아오고, 오류 안내는 지금 안내가 닫힌 뒤 보인다.
    * 취소 저장이 실패하면 서버는 여전히 확인함이므로 행을 다시 빼고 이유를 알린다.
    */
   const undoAcknowledge = () => {
     const assignmentId = ackToast?.assignmentId;
     if (!assignmentId) return;
-    setAckToast(null);
+    dismissToast();
     setAcknowledged(assignmentId, false);
     requestAnimationFrame(() => ackButtons.current.get(assignmentId)?.focus());
+    const { request, isLatest } = runReview(assignmentId, false);
     const fail = (message: string) => {
+      if (!isLatest()) return;
       setAcknowledged(assignmentId, true);
-      setAckToast({ key: `undo-error:${assignmentId}:${++toastSeq.current}`, assignmentId: null, message, tone: "error" });
+      showError("undo-error", assignmentId, message);
     };
-    void runReview(assignmentId, false).then(
+    void request.then(
       (result) => {
         if (!result.success) fail(result.error);
       },
@@ -372,7 +401,7 @@ export function AdminWorkQueueSection({
         ref={undoButtonRef}
         toast={ackToast}
         onUndo={ackToast?.assignmentId ? undoAcknowledge : undefined}
-        onDismiss={() => setAckToast(null)}
+        onDismiss={dismissToast}
       />
     </div>
   );
