@@ -71,7 +71,13 @@ export const Indent = Extension.create({
         const editor = this.editor;
         if (!editor.isEditable) return false;
         if (inList(editor)) return editor.commands.sinkListItem(editor.isActive("taskItem") ? "taskItem" : "listItem") || true;
-        if (editor.isActive("codeBlock")) return editor.commands.insertContent("  ");
+        // insertContent에 문자열을 주면 tiptap-markdown이 markdown으로 다시 읽어 공백만 있는 입력이 사라진다.
+        if (editor.isActive("codeBlock")) {
+          return editor.commands.command(({ tr, dispatch }) => {
+            if (dispatch) tr.insertText("  ");
+            return true;
+          });
+        }
         return changeIndent(editor, 1);
       },
       "Shift-Tab": () => {
