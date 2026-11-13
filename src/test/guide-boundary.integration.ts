@@ -375,6 +375,23 @@ test("주소창에서 붙여 넣은 포탈 전체 주소의 닫힌 가이드 페
   );
 });
 
+test("본문 기준 상대 주소·겹친 슬래시로 쓴 닫힌 가이드 페이지 링크도 선택 학생에게 글자로만 간다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, null);
+  const linked = '<p data-block-id="b1"><a href="guide-2">가</a> <a href="../guide/guide-2#c1">나</a> '
+    + '<a href="/dashboard//guide/guide-2">다</a> <a href="#b2">이 페이지</a> <a href="guide-1">믹서</a></p>';
+  await db.update(guidePages).set({ contentHtml: linked }).where(eq(guidePages.id, "guide-1"));
+
+  activeSession = createSession("admin-1", "admin");
+  assert.deepEqual(await guideAccessActions.setStudentGuideAccessSetting("student-a", "SELECTED"), { ok: true });
+  assert.deepEqual(await guideAccessActions.setStudentGuideAccessPage("student-a", "guide-1", true), { ok: true });
+
+  activeSession = createSession("student-a", "student");
+  assert.equal(
+    (await guideActions.getGuidePage("guide-1"))?.contentHtml,
+    '<p data-block-id="b1">가 나 다 <a href="#b2">이 페이지</a> <a href="guide-1">믹서</a></p>',
+  );
+});
+
 test("가이드 열람 설정은 관리자만 학생에게 하고, 닫아도 고른 페이지는 남으며 페이지를 지우면 함께 정리된다", { concurrency: false }, async (context) => {
   const db = await setupDatabase(context, createSession("student-a", "student"));
   await assert.rejects(guideAccessActions.getStudentGuideAccess("student-a"), /Admin only/);

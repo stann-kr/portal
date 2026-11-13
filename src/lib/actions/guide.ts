@@ -129,11 +129,11 @@ export async function getGuidePage(pageId: string): Promise<GuidePageRecord | nu
   if (!page || access.kind !== "selected") return page;
   return {
     ...page,
-    // 주소창에서 붙여 넣은 포탈 전체 주소(AUTH_URL origin) 링크도 같은 규칙을 따른다.
+    // 본문 기준 상대 주소는 이 페이지 주소로 읽고, 주소창에서 붙여 넣은 포탈 전체 주소(AUTH_URL origin) 링크도 같은 규칙을 따른다.
     contentHtml: unwrapClosedGuidePageLinks(
       page.contentHtml,
       (linked) => access.pageIds.has(linked),
-      readRuntimeEnv("AUTH_URL"),
+      { currentPageId: id, portalOrigin: readRuntimeEnv("AUTH_URL") },
     ),
   };
 }
