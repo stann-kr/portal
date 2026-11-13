@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { after, before, mock, test, type TestContext } from "node:test";
+import { eq } from "drizzle-orm";
 import type { AuthSession } from "@/lib/auth-guard";
 import { guideAccess, guideAccessPages, guideAssets, guidePages, profiles, qnaGuideAnchors } from "@/db/schema";
 import { createIsolatedPortalD1, type IsolatedPortalD1 } from "@/test/isolated-d1";
@@ -327,6 +328,27 @@ test("선택으로 열린 학생은 고른 페이지만 보고, 닫힌 페이지
   // 학생 B의 전체 열람은 학생 A의 설정과 무관하다.
   activeSession = createSession("student-b", "student");
   assert.deepEqual((await guideActions.getGuidePages()).map((page) => page.id), ["guide-1", "guide-2"]);
+});
+
+test("선택으로 열린 학생에게는 본문에서 열리지 않은 페이지로 가는 링크가 글자로만 가고, 관리자·전체 학생은 그대로다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, null);
+  const linked = '<p data-block-id="b1">CDJ는 <a href="/dashboard/guide/guide-2#c1">음원 관리</a>와 <a href="/dashboard/guide/guide-1#b2"><strong>믹서</strong></a>를 보세요. <a href="https://example.com/dashboard/guide/guide-2">바깥</a></p>';
+  await db.update(guidePages).set({ contentHtml: linked }).where(eq(guidePages.id, "guide-1"));
+
+  activeSession = createSession("admin-1", "admin");
+  assert.deepEqual(await guideAccessActions.setStudentGuideAccessSetting("student-a", "SELECTED"), { ok: true });
+  assert.deepEqual(await guideAccessActions.setStudentGuideAccessPage("student-a", "guide-1", true), { ok: true });
+  assert.equal((await guideActions.getGuidePage("guide-1"))?.contentHtml, linked, "관리자는 본문 그대로");
+
+  activeSession = createSession("student-a", "student");
+  assert.equal(
+    (await guideActions.getGuidePage("guide-1"))?.contentHtml,
+    '<p data-block-id="b1">CDJ는 음원 관리와 <a href="/dashboard/guide/guide-1#b2"><strong>믹서</strong></a>를 보세요. <a href="https://example.com/dashboard/guide/guide-2">바깥</a></p>',
+    "닫힌 페이지 링크만 글자로 남고, 열린 페이지·바깥 링크는 그대로다",
+  );
+
+  activeSession = createSession("student-b", "student");
+  assert.equal((await guideActions.getGuidePage("guide-1"))?.contentHtml, linked, "전체 학생은 본문 그대로");
 });
 
 test("가이드 열람 설정은 관리자만 학생에게 하고, 닫아도 고른 페이지는 남으며 페이지를 지우면 함께 정리된다", { concurrency: false }, async (context) => {

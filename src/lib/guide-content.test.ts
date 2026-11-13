@@ -7,6 +7,7 @@ import {
   normalizeGuideQuote,
   prepareGuideHtml,
   stripGuideBlockIds,
+  unwrapClosedGuidePageLinks,
 } from "./guide-content";
 import { sanitizeHtml } from "./sanitize-html";
 
@@ -98,4 +99,19 @@ test("재전송 비교는 속성 값에 >·<가 있어도 블록 식별자를 �
     assert.notEqual(first, second, html);
     assert.equal(stripGuideBlockIds(first), stripGuideBlockIds(second), html);
   }
+});
+
+test("열리지 않은 가이드 페이지 링크만 글자로 바꾸고, 바뀐 것이 없으면 입력을 그대로 돌려준다", () => {
+  const isOpen = (pageId: string) => pageId === "open-1";
+  const html = '<ul><li data-block-id="l1"><a href="/dashboard/guide/closed-1?x=1#b1">닫힌 <em>페이지</em></a></li>'
+    + '<li data-block-id="l2"><a href="/dashboard/guide/open-1">열린</a> <a href="/dashboard/guide">목록</a></li>'
+    + '<li data-block-id="l3"><a href="//other.example/dashboard/guide/closed-1">다른 곳</a> <a href="/dashboard/guide/closed%2D1/edit">편집</a></li></ul>';
+  assert.equal(
+    unwrapClosedGuidePageLinks(html, isOpen),
+    '<ul><li data-block-id="l1">닫힌 <em>페이지</em></li>'
+      + '<li data-block-id="l2"><a href="/dashboard/guide/open-1">열린</a> <a href="/dashboard/guide">목록</a></li>'
+      + '<li data-block-id="l3"><a href="//other.example/dashboard/guide/closed-1">다른 곳</a> 편집</li></ul>',
+  );
+  const untouched = '<p data-block-id="p1"><a href="/dashboard/guide/open-1">열린</a></p>';
+  assert.equal(unwrapClosedGuidePageLinks(untouched, isOpen), untouched);
 });

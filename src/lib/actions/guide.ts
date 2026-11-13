@@ -24,6 +24,7 @@ import {
   extractGuideAssetIds,
   parseGuidePageId,
   prepareGuideHtml,
+  unwrapClosedGuidePageLinks,
 } from "@/lib/guide-content";
 import {
   createGuidePageRecord,
@@ -114,11 +115,21 @@ export async function isGuideClosedForViewer(): Promise<boolean> {
   return (await viewerAccess(await requireAuth())).kind === "closed";
 }
 
+/**
+ * 보는 사람에게 열린 페이지만 돌려준다. 일부 페이지만 열린("선택") 학생에게는 본문에서 열리지 않은 페이지로 가는
+ * 링크를 글자로 바꿔 보낸다. 관리자와 "전체" 학생은 본문 그대로다.
+ */
 export async function getGuidePage(pageId: string): Promise<GuidePageRecord | null> {
   const session = await requireAuth();
   const id = parseGuidePageId(pageId);
-  if (!id || !canViewGuidePage(await viewerAccess(session), id)) return null;
-  return findGuidePage(createDbContext(), id);
+  const access = await viewerAccess(session);
+  if (!id || !canViewGuidePage(access, id)) return null;
+  const page = await findGuidePage(createDbContext(), id);
+  if (!page || access.kind !== "selected") return page;
+  return {
+    ...page,
+    contentHtml: unwrapClosedGuidePageLinks(page.contentHtml, (linked) => access.pageIds.has(linked)),
+  };
 }
 
 /** 이 페이지에 걸린 질문 위치. 학생은 본인 질문만, 관리자는 학생 이름과 함께 전부. 열리지 않은 페이지는 빈 목록이다. */
