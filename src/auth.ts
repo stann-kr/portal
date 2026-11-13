@@ -72,9 +72,10 @@ export function createNodeAuthConfig(
           : null;
         if (!profile) return null;
         // 비밀번호가 바뀐 뒤 남은 다른 기기의 session은 지문이 달라 거부한다.
-        // 지문 결합 전에 발급된 token은 지문이 없으며 기존 최대 수명까지 유지된다.
+        // 지문 결합 전에 발급된 token(지문 없음)도 거부한다. 갱신마다 수명이 늘어 비밀번호 변경·
+        // 가입 링크 재발급으로 끊을 수 없기 때문이다. 다시 로그인하면 위 분기에서 지문이 붙는다.
         if (
-          typeof token.credentialFingerprint === "string" &&
+          typeof token.credentialFingerprint !== "string" ||
           token.credentialFingerprint !== profile.credentialFingerprint
         ) {
           return null;
@@ -83,8 +84,7 @@ export function createNodeAuthConfig(
         token.name = profile.displayName;
         token.email = profile.email;
         token.role = profile.role;
-        // 임시 비밀번호 여부는 매 요청 현재 hash에서 다시 판단한다. 지문 없는 이전 token도
-        // 관리자가 비밀번호를 초기화한 뒤에는 포탈 기능을 쓰지 못한다.
+        // 임시 비밀번호 여부는 token claim이 아니라 매 요청 현재 hash에서 다시 판단한다.
         if (profile.passwordChangeRequired) token.passwordChangeRequired = true;
         else delete token.passwordChangeRequired;
         return token;
