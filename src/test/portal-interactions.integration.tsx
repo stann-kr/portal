@@ -1630,6 +1630,40 @@ test("track metadata cannot overwrite newer typing and track save locks custom c
   assert.equal(button("닫기").disabled, false);
 });
 
+test("Escape inside the open Camelot picker closes only the picker, then the next Escape closes the track dialog", async (context) => {
+  const closes: boolean[] = [];
+  function TrackHarness() {
+    const [open, setOpen] = useState(true);
+    return <AddTrackDialog open={open} onOpenChange={(next) => { closes.push(next); setOpen(next); }} onSuccess={() => {}} columns={[
+      { id: "title", name: "트랙명", columnType: "text", options: null },
+      { id: "key", name: "키", columnType: "camelot_key", options: null },
+    ]} />;
+  }
+  await render(context, <TrackHarness />);
+  const pressEscapeFromFocus = async () => {
+    const target = browser.document.activeElement;
+    assert.ok(target);
+    await act(async () => {
+      target.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    });
+    await settle();
+  };
+  const picker = () => browser.document.querySelector('[role="group"][aria-label="키 고르기"]');
+
+  await press("키");
+  assert.ok(picker(), "picker opens inside the dialog");
+  const keyChoice = button("8A");
+  await act(async () => keyChoice.focus());
+  await pressEscapeFromFocus();
+  assert.equal(picker(), null, "Escape closes the picker");
+  assert.ok(browser.document.querySelector('[role="dialog"]'), "the dialog stays open");
+  assert.deepEqual(closes, []);
+  assert.equal(browser.document.activeElement, button("키"), "focus returns to the picker trigger");
+
+  await pressEscapeFromFocus();
+  assert.deepEqual(closes, [false], "with the picker closed, Escape dismisses the dialog");
+});
+
 test("digging board saves only changed cells, clears numbers and ratings without coercing to zero", async (context) => {
   const saves: [string, string, unknown][] = [];
   saveTrackValue = async (trackId, columnId, value) => { saves.push([trackId, columnId, value]); };

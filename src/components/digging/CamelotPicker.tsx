@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
+import { OPEN_ESCAPE_LAYER } from "@/components/ui/escape-layer";
 
 // 카멜롯 휠 24개 키
 const CAMELOT_KEYS = [
@@ -75,6 +76,7 @@ export function CamelotPicker({
     <div
       ref={rootRef}
       className="relative"
+      {...(open ? OPEN_ESCAPE_LAYER : {})}
       onKeyDown={(event) => {
         if (event.key !== "Escape" || !open) return;
         event.preventDefault();
