@@ -172,15 +172,30 @@ export function parseGuidePageId(value: unknown): string | null {
 
 const GUIDE_PAGE_PATH_PREFIX = "/dashboard/guide/";
 
-/** 본문 링크가 가리키는 가이드 페이지 id. 같은 포탈 안의 상대 경로(`/dashboard/guide/<id>…`)만 본다. */
-function linkedGuidePageId(href: string): string | null {
-  let url: URL;
+const RELATIVE_LINK_BASE = "https://portal.invalid";
+
+function parseOrigin(value: string | null | undefined): string | null {
+  if (!value) return null;
   try {
-    url = new URL(href, "https://portal.invalid");
+    return new URL(value).origin;
   } catch {
     return null;
   }
-  if (url.origin !== "https://portal.invalid" || !url.pathname.startsWith(GUIDE_PAGE_PATH_PREFIX)) return null;
+}
+
+/**
+ * 본문 링크가 가리키는 가이드 페이지 id. 상대 경로(`/dashboard/guide/<id>…`)와, 포탈 origin을 알면 주소창에서 붙여 넣은
+ * 같은 origin의 전체 주소를 본다.
+ */
+function linkedGuidePageId(href: string, portalOrigin: string | null): string | null {
+  let url: URL;
+  try {
+    url = new URL(href, RELATIVE_LINK_BASE);
+  } catch {
+    return null;
+  }
+  const samePortal = url.origin === RELATIVE_LINK_BASE || (portalOrigin !== null && url.origin === portalOrigin);
+  if (!samePortal || !url.pathname.startsWith(GUIDE_PAGE_PATH_PREFIX)) return null;
   const segment = url.pathname.slice(GUIDE_PAGE_PATH_PREFIX.length).split("/")[0] ?? "";
   try {
     return parseGuidePageId(decodeURIComponent(segment));
@@ -192,14 +207,20 @@ function linkedGuidePageId(href: string): string | null {
 /**
  * 보는 사람에게 열리지 않은 가이드 페이지로 가는 링크는 링크를 빼고 글자만 남긴다(질문 위치 표시와 같은 방식,
  * 2026-11-14 사용자 결정). 다른 링크와 블록 구조는 그대로 둔다. 바뀐 것이 없으면 입력을 그대로 돌려준다.
+ * `portalOrigin`(포탈 주소, 예: AUTH_URL)을 주면 그 origin의 전체 주소 링크도 같은 규칙을 따른다.
  */
-export function unwrapClosedGuidePageLinks(sanitizedHtml: string, isOpen: (pageId: string) => boolean): string {
+export function unwrapClosedGuidePageLinks(
+  sanitizedHtml: string,
+  isOpen: (pageId: string) => boolean,
+  portalOrigin?: string | null,
+): string {
+  const origin = parseOrigin(portalOrigin);
   const fragment = parseGuideFragment(sanitizedHtml);
   const closed: Element[] = [];
   visitElements(fragment, (element) => {
     if (defaultTreeAdapter.getTagName(element) !== "a") return;
     const href = element.attrs.find((attribute) => attribute.name === "href")?.value;
-    const pageId = href ? linkedGuidePageId(href) : null;
+    const pageId = href ? linkedGuidePageId(href, origin) : null;
     if (pageId && !isOpen(pageId)) closed.push(element);
   });
   if (!closed.length) return sanitizedHtml;

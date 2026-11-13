@@ -351,6 +351,30 @@ test("선택으로 열린 학생에게는 본문에서 열리지 않은 페이�
   assert.equal((await guideActions.getGuidePage("guide-1"))?.contentHtml, linked, "전체 학생은 본문 그대로");
 });
 
+test("주소창에서 붙여 넣은 포탈 전체 주소의 닫힌 가이드 페이지 링크도 선택 학생에게 글자로만 간다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, null);
+  const previousAuthUrl = process.env.AUTH_URL;
+  process.env.AUTH_URL = "https://portal.example.com/";
+  context.after(() => {
+    if (previousAuthUrl === undefined) delete process.env.AUTH_URL;
+    else process.env.AUTH_URL = previousAuthUrl;
+  });
+  const linked = '<p data-block-id="b1"><a href="https://portal.example.com/dashboard/guide/guide-2">음원 관리</a>와 '
+    + '<a href="https://portal.example.com/dashboard/guide/guide-1#b2">믹서</a>, <a href="https://example.com/dashboard/guide/guide-2">바깥</a></p>';
+  await db.update(guidePages).set({ contentHtml: linked }).where(eq(guidePages.id, "guide-1"));
+
+  activeSession = createSession("admin-1", "admin");
+  assert.deepEqual(await guideAccessActions.setStudentGuideAccessSetting("student-a", "SELECTED"), { ok: true });
+  assert.deepEqual(await guideAccessActions.setStudentGuideAccessPage("student-a", "guide-1", true), { ok: true });
+
+  activeSession = createSession("student-a", "student");
+  assert.equal(
+    (await guideActions.getGuidePage("guide-1"))?.contentHtml,
+    '<p data-block-id="b1">음원 관리와 '
+      + '<a href="https://portal.example.com/dashboard/guide/guide-1#b2">믹서</a>, <a href="https://example.com/dashboard/guide/guide-2">바깥</a></p>',
+  );
+});
+
 test("가이드 열람 설정은 관리자만 학생에게 하고, 닫아도 고른 페이지는 남으며 페이지를 지우면 함께 정리된다", { concurrency: false }, async (context) => {
   const db = await setupDatabase(context, createSession("student-a", "student"));
   await assert.rejects(guideAccessActions.getStudentGuideAccess("student-a"), /Admin only/);

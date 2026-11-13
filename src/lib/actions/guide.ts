@@ -12,6 +12,7 @@ import { revalidatePath } from "next/cache";
 import { createDbContext } from "@/db/client";
 import { requireAdmin, requireAuth, type AuthSession } from "@/lib/auth-guard";
 import { canViewGuidePage, resolveGuideViewerAccess, type GuideViewerAccess } from "@/lib/guide-access";
+import { readRuntimeEnv } from "@/lib/runtime-env";
 import {
   CREATION_OPERATION_FIELD,
   deriveCreationResourceId,
@@ -128,7 +129,12 @@ export async function getGuidePage(pageId: string): Promise<GuidePageRecord | nu
   if (!page || access.kind !== "selected") return page;
   return {
     ...page,
-    contentHtml: unwrapClosedGuidePageLinks(page.contentHtml, (linked) => access.pageIds.has(linked)),
+    // 주소창에서 붙여 넣은 포탈 전체 주소(AUTH_URL origin) 링크도 같은 규칙을 따른다.
+    contentHtml: unwrapClosedGuidePageLinks(
+      page.contentHtml,
+      (linked) => access.pageIds.has(linked),
+      readRuntimeEnv("AUTH_URL"),
+    ),
   };
 }
 

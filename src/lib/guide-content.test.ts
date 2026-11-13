@@ -115,3 +115,20 @@ test("열리지 않은 가이드 페이지 링크만 글자로 바꾸고, 바뀐
   const untouched = '<p data-block-id="p1"><a href="/dashboard/guide/open-1">열린</a></p>';
   assert.equal(unwrapClosedGuidePageLinks(untouched, isOpen), untouched);
 });
+
+test("포탈 전체 주소로 붙여 넣은 가이드 페이지 링크도 포탈 origin이면 같은 규칙을 따르고, 다른 origin은 그대로다", () => {
+  const isOpen = (pageId: string) => pageId === "open-1";
+  const html = '<p data-block-id="p1"><a href="https://portal.example/dashboard/guide/closed-1#b1">닫힌</a> '
+    + '<a href="https://portal.example/dashboard/guide/open-1">열린</a> '
+    + '<a href="https://other.example/dashboard/guide/closed-1">다른 곳</a> '
+    + '<a href="http://portal.example/dashboard/guide/closed-1">다른 scheme</a></p>';
+  assert.equal(
+    unwrapClosedGuidePageLinks(html, isOpen, "https://portal.example/"),
+    '<p data-block-id="p1">닫힌 '
+      + '<a href="https://portal.example/dashboard/guide/open-1">열린</a> '
+      + '<a href="https://other.example/dashboard/guide/closed-1">다른 곳</a> '
+      + '<a href="http://portal.example/dashboard/guide/closed-1">다른 scheme</a></p>',
+  );
+  assert.equal(unwrapClosedGuidePageLinks(html, isOpen), html, "포탈 origin을 모르면 전체 주소는 건드리지 않는다");
+  assert.equal(unwrapClosedGuidePageLinks(html, isOpen, "not a url"), html, "읽을 수 없는 origin도 같다");
+});
