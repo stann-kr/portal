@@ -164,6 +164,31 @@ test("MIME은 purpose allowlist에 한해 소문자 정규형으로 만든다", 
     assert.equal(canonicalAudio.value.canonicalMimeType, "audio/mpeg");
   }
 
+  // 브라우저가 보고하는 별칭은 정규 이름으로 받는다(화면이 안내하는 .m4a는 Chrome·Safari에서 audio/x-m4a다).
+  for (const [alias, canonical] of [
+    ["audio/x-m4a", "audio/mp4"],
+    ["Audio/X-M4A", "audio/mp4"],
+    ["audio/mp3", "audio/mpeg"],
+    ["audio/x-wav", "audio/wav"],
+    ["audio/x-aiff", "audio/aiff"],
+    ["audio/x-flac", "audio/flac"],
+  ] as const) {
+    const result = validateMediaUploadInput({ ...validAudioInput(), mimeType: alias });
+    assert.equal(result.ok, true, alias);
+    if (result.ok) assert.equal(result.value.canonicalMimeType, canonical, alias);
+  }
+  // 별칭은 목적별 허용 목록을 넓히지 않는다.
+  const aliasOutsidePolicy = validateMediaUploadInput({
+    ...validAudioInput(),
+    purpose: "DOCUMENT_IMAGE",
+    fileName: "cover.m4a",
+    mimeType: "audio/x-m4a",
+  });
+  assert.equal(aliasOutsidePolicy.ok, false);
+  for (const mimeType of ["constructor", "__proto__", "toString"]) {
+    assert.equal(validateMediaUploadInput({ ...validAudioInput(), mimeType }).ok, false, mimeType);
+  }
+
   const qnaImage = validateMediaUploadInput({
     ...validAudioInput(),
     purpose: "QNA_ATTACHMENT",
