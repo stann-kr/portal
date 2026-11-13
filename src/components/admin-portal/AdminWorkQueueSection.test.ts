@@ -220,6 +220,7 @@ test("업무함 확인: 앞 행 저장이 늦게 실패해도 다른 행의 되�
   const pending = [
     { id: "a1", mediaUrl: null, taskTitle: "테크노 셋 #2", submittedAt: new Date("2026-10-23T12:40:00.000Z"), studentId: "s1", studentName: "김학생", studentEmail: "kim@example.test" },
     { id: "a2", mediaUrl: null, taskTitle: "하우스 롱셋", submittedAt: new Date("2026-10-24T12:40:00.000Z"), studentId: "s2", studentName: "이학생", studentEmail: "lee@example.test" },
+    { id: "a3", mediaUrl: null, taskTitle: "딥하우스 믹스", submittedAt: new Date("2026-10-25T12:40:00.000Z"), studentId: "s3", studentName: "박학생", studentEmail: "park@example.test" },
   ];
   await act(async () => {
     root.render(React.createElement(AdminWorkQueueSection, {
@@ -265,4 +266,23 @@ test("업무함 확인: 앞 행 저장이 늦게 실패해도 다른 행의 되�
   assert.equal(ackButton("테크노 셋 #2"), null, "마지막 의도(확인함)대로 행은 빠져 있다");
   assert.match(container.querySelector('[role="status"]')?.textContent ?? "", /'테크노 셋 #2'/u, "마지막 확인의 되돌리기 안내가 남는다");
   assert.ok(undoButton());
+
+  // 미뤄 둔 오류의 행을 다시 확인해 성공하면 그 옛 오류는 버린다: 안내가 닫혀도 방금 성공한 동작에 실패를 알리지 않는다.
+  holdNext = "a2-late";
+  await act(async () => { ackButton("하우스 롱셋")?.click(); });
+  await act(async () => { ackButton("딥하우스 믹스")?.click(); });
+  await flush();
+  await act(async () => held.get("a2-late")?.({ success: false, error: "네트워크 오류로 확인함으로 표시하지 못했습니다." }));
+  await flush();
+  assert.ok(ackButton("하우스 롱셋"), "실패한 행은 돌아온다");
+  assert.equal(alertText(), "", "오류는 다른 행의 안내 뒤로 미뤄진다");
+  await act(async () => { ackButton("하우스 롱셋")?.click(); });
+  await flush();
+  assert.equal(ackButton("하우스 롱셋"), null, "다시 확인해 이번에는 성공했다");
+  await act(async () => { undoButton()?.click(); });
+  assert.equal(alertText(), "", "안내를 닫아도 버린 옛 실패를 알리지 않는다");
+  await flush();
+  assert.deepEqual(calls.slice(-4), [["a2", true], ["a3", true], ["a2", true], ["a2", false]]);
+  assert.ok(ackButton("하우스 롱셋"), "되돌리기로 다시 보인다");
+  assert.equal(alertText(), "");
 });

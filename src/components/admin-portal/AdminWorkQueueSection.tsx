@@ -110,8 +110,9 @@ export function AdminWorkQueueSection({
   const [acknowledgedIds, setAcknowledgedIds] = useState<ReadonlySet<string>>(() => new Set());
   const [ackToast, setAckToast] = useState<AckToast | null>(null);
   const ackToastRef = useRef<AckToast | null>(null);
-  // 다른 행의 되돌리기 안내가 떠 있는 동안 도착한 오류. 그 안내가 닫히거나 되돌리기를 누르면 보인다.
-  const deferredError = useRef<AckToast | null>(null);
+  // 다른 행의 되돌리기 안내가 떠 있는 동안 도착한 오류(행마다 하나, 도착 순서). 그 안내가 닫히거나 되돌리기를 누르면
+  // 하나씩 보인다. 그 행에 새 요청이 시작되면 그 행의 미룬 오류는 버린다(다시 확인해 성공한 동작에 옛 실패를 알리지 않는다).
+  const deferredErrors = useRef(new Map<string, AckToast>());
   const ackChains = useRef(new Map<string, Promise<unknown>>());
   // 행별 마지막 요청 번호. 늦게 도착한 앞선 요청의 결과는 행 상태·안내를 바꾸지 않는다.
   const latestRequest = useRef(new Map<string, number>());
@@ -135,20 +136,30 @@ export function AdminWorkQueueSection({
     setAckToast(next);
   };
   const dismissToast = () => {
-    const deferred = deferredError.current;
-    deferredError.current = null;
+    const next = deferredErrors.current.entries().next();
+    if (next.done) {
+      showToast(null);
+      return;
+    }
+    const [assignmentId, deferred] = next.value;
+    deferredErrors.current.delete(assignmentId);
     showToast(deferred);
   };
   const showError = (kind: "ack-error" | "undo-error", assignmentId: string, message: string) => {
     const error: AckToast = { key: `${kind}:${assignmentId}:${++toastSeq.current}`, assignmentId: null, message, tone: "error" };
     const current = ackToastRef.current;
-    if (current?.assignmentId && current.assignmentId !== assignmentId) deferredError.current = error;
-    else showToast(error);
+    if (current?.assignmentId && current.assignmentId !== assignmentId) {
+      deferredErrors.current.delete(assignmentId);
+      deferredErrors.current.set(assignmentId, error);
+    } else {
+      showToast(error);
+    }
   };
   // 같은 제출의 표시·취소 요청은 보낸 순서대로 처리하고, 결과는 그 행의 마지막 요청만 반영한다.
   const runReview = (assignmentId: string, reviewed: boolean) => {
     const seq = (latestRequest.current.get(assignmentId) ?? 0) + 1;
     latestRequest.current.set(assignmentId, seq);
+    deferredErrors.current.delete(assignmentId);
     const previous = ackChains.current.get(assignmentId) ?? Promise.resolve();
     const request = previous.catch(() => undefined).then(() => setReviewed(assignmentId, reviewed));
     ackChains.current.set(assignmentId, request);
