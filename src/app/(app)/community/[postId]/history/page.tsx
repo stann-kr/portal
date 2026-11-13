@@ -18,6 +18,7 @@ import { formatRecordTime } from "@/lib/kst-format";
 import { getRequestNow } from "@/lib/request-time";
 import { describeRevisionLinkChange } from "@/lib/community-mixset-media";
 import { describeCommunityBoardLocation } from "@/lib/community-location";
+import { missingWhenAccessDenied } from "@/lib/access-denied-as-missing";
 
 export const metadata = { title: "게시물 변경 이력" };
 
@@ -42,7 +43,8 @@ export default async function PostHistoryPage({
   const session = await getActiveAuthSession();
   if (!session?.user?.id) redirect("/login");
   const { postId } = await params;
-  const post = await getPostIncludingTrash(postId);
+  // 남이 휴지통으로 보낸 게시물은 없는 게시물처럼 404로 보인다.
+  const post = await missingWhenAccessDenied(getPostIncludingTrash(postId));
   if (!post || (session.user.role !== "admin" && session.user.id !== post.authorId)) {
     notFound();
   }

@@ -12,6 +12,7 @@ import { PostDetailClient } from "./PostDetailClient";
 import { safeReturnPath } from "@/lib/safe-return-path";
 import { redirect } from "next/navigation";
 import { buttonClassName } from "@/components/ui/button";
+import { missingWhenAccessDenied } from "@/lib/access-denied-as-missing";
 
 export const metadata = { title: "게시물" };
 
@@ -28,11 +29,13 @@ export default async function PostDetailPage({
   const session = await getActiveAuthSession();
   if (!session?.user?.id) redirect("/login");
 
-  const [post, commentList, categories] = await Promise.all([
-    getPostIncludingTrash(postId),
-    getCommentsByPost(postId),
+  // 남이 휴지통으로 보낸 게시물은 오류 화면이 아니라 아래 "찾을 수 없습니다" 안내로 보인다.
+  const [post, comments, categories] = await Promise.all([
+    missingWhenAccessDenied(getPostIncludingTrash(postId)),
+    missingWhenAccessDenied(getCommentsByPost(postId)),
     getCategories(),
   ]);
+  const commentList = comments ?? [];
 
   if (!post) {
     return (
