@@ -1153,6 +1153,12 @@ test("관리자 과제는 대상 학생에게만 쓰이고 학생은 자기 과�
   assert.match((await assignmentTaskActions.updateAssignmentTask("student-1", taskId, {}, taskForm({ title: "고친 제목", submissionFormat: "TEXT", version: "1" }))).error ?? "", /형식/u);
   assert.equal((await assignmentTaskActions.updateAssignmentTask("student-1", taskId, {}, taskForm({ title: "고친 제목", submissionFormat: "MIX", version: "1" }))).success, true);
   assert.match((await assignmentTaskActions.updateAssignmentTask("student-1", taskId, {}, taskForm({ title: "옛 버전", submissionFormat: "MIX", version: "1" }))).error ?? "", /먼저 고쳤/u);
+  // 두 화면이 같은 version으로 동시에 저장하면 진 쪽은 형식 문구가 아니라 "먼저 고쳤습니다"를 받는다.
+  const raced = await Promise.all(["동시 A", "동시 B"].map((title) => (
+    assignmentTaskActions.updateAssignmentTask("student-1", taskId, {}, taskForm({ title, submissionFormat: "MIX", version: "2" }))
+  )));
+  assert.equal(raced.filter((result) => result.success).length, 1);
+  assert.match(raced.find((result) => !result.success)?.error ?? "", /먼저 고쳤/u);
 
   // 피드백이 달리면 학생은 제출을 고칠 수 없다.
   assert.equal((await feedbackActions.createFeedback(submitted.id!, {}, taskForm({ operationId: crypto.randomUUID(), timeMarker: "00:30", content: "좋아요" }))).success, true);

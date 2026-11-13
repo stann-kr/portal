@@ -504,7 +504,10 @@ export async function updateAssignmentTask(
     ))
     .returning({ id: assignmentTasks.id });
   if (updated.length === 0) {
-    if (current.version !== version) {
+    // 실패 원인은 저장 뒤 다시 읽어 고른다. 앞서 읽은 값은 동시 저장에서 이미 낡았을 수 있다.
+    const [latest] = await db.select({ version: assignmentTasks.version }).from(assignmentTasks).where(scope).limit(1);
+    if (!latest) return { error: "과제를 찾을 수 없습니다. 목록을 새로고침해 주세요." };
+    if (latest.version !== version || !formatChanged) {
       return { error: "다른 곳에서 이 과제를 먼저 고쳤습니다. 새로고침한 뒤 다시 고쳐 주세요." };
     }
     return { error: "학생이 이미 제출한 과제는 제출 형식을 바꿀 수 없습니다. 제목·설명·마감만 고칠 수 있습니다." };
