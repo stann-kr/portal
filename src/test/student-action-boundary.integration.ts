@@ -994,6 +994,134 @@ test("일정 상세 수정 form은 본인 일정만 바꾸고 검증 실패를 �
   assert.deepEqual((await db.select().from(calendarEvents)).map((row) => row.id), ["event-2"]);
 });
 
+test("일정 상세 수정 form은 고친 칸만 저장해 연 뒤에 옮긴 시간·바뀐 칸을 덮지 않는다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("student-1", "student"));
+  await seedProfile(db, "student-1");
+  await db.insert(calendarEvents).values({
+    id: "event-1",
+    userId: "student-1",
+    eventType: "PRACTICE",
+    title: "Original",
+    description: "메모",
+    // 관리자가 옮긴 뒤의 시간(초 단위 포함). 학생 화면은 옮기기 전 값을 연 채로 남아 있다.
+    startTime: new Date("2026-08-14T05:00:30.000Z"),
+    endTime: new Date("2026-08-14T06:00:00.000Z"),
+  });
+  const opened = {
+    "opened.title": "Original",
+    "opened.eventType": "PRACTICE",
+    "opened.startTime": "2026-08-13T10:00",
+    "opened.endTime": "2026-08-13T11:00",
+    "opened.description": "메모",
+  };
+  const form = (fields: Record<string, string>) => {
+    const data = new FormData();
+    for (const [key, value] of Object.entries(fields)) data.set(key, value);
+    return data;
+  };
+  const row = async () => (await db.select().from(calendarEvents).where(eq(calendarEvents.id, "event-1")))[0];
+
+  // 제목만 고쳤다: 옮긴 시간은 그대로 남고 돌려준 값도 저장된 값이다.
+  const titled = await calendarActions.updateCalendarEventDetails({}, form({
+    ...opened,
+    eventId: "event-1",
+    title: "Renamed",
+    eventType: "PRACTICE",
+    startTime: "2026-08-13T10:00",
+    endTime: "2026-08-13T11:00",
+    description: "메모",
+  }));
+  assert.equal(titled.error, undefined);
+  assert.equal(titled.event?.startTime, "2026-08-14T05:00:30.000Z", "돌려준 일정은 옮긴 시간이다");
+  assert.equal((await row())?.title, "Renamed");
+  assert.equal((await row())?.startTime.toISOString(), "2026-08-14T05:00:30.000Z", "고치지 않은 시작 시간은 덮지 않는다");
+  assert.equal((await row())?.endTime?.toISOString(), "2026-08-14T06:00:00.000Z");
+
+  // 종료 시간만 고쳤다: 지금 시작 시간과 합쳐 검증하고 종료만 바꾼다.
+  const ended = await calendarActions.updateCalendarEventDetails({}, form({
+    ...opened,
+    "opened.title": "Renamed",
+    eventId: "event-1",
+    title: "Renamed",
+    eventType: "PRACTICE",
+    startTime: "2026-08-13T10:00",
+    endTime: "2026-08-14T16:00",
+    description: "메모",
+  }));
+  assert.equal(ended.error, undefined);
+  assert.equal((await row())?.startTime.toISOString(), "2026-08-14T05:00:30.000Z");
+  assert.equal((await row())?.endTime?.toISOString(), "2026-08-14T07:00:00.000Z");
+  assert.deepEqual(
+    await calendarActions.updateCalendarEventDetails({}, form({
+      ...opened,
+      eventId: "event-1",
+      title: "Original",
+      eventType: "PRACTICE",
+      startTime: "2026-08-13T10:00",
+      endTime: "2026-08-14T13:00",
+      description: "메모",
+    })),
+    { error: "종료 시간은 시작 시간 이후여야 합니다." },
+    "고친 종료 시간은 지금 시작 시간과 합쳐 검증한다",
+  );
+
+  // 아무 칸도 고치지 않았다: 쓰지 않고 저장된 값을 돌려준다.
+  const unchanged = await calendarActions.updateCalendarEventDetails({}, form({
+    ...opened,
+    eventId: "event-1",
+    title: "Original",
+    eventType: "PRACTICE",
+    startTime: "2026-08-13T10:00",
+    endTime: "2026-08-13T11:00",
+    description: "메모",
+  }));
+  assert.equal(unchanged.event?.title, "Renamed");
+  assert.equal(unchanged.event?.endTime, "2026-08-14T07:00:00.000Z");
+  assert.equal((await row())?.title, "Renamed");
+
+  // 연 값을 보내지 않는 이전 화면은 보낸 값 전체를 저장한다.
+  await calendarActions.updateCalendarEventDetails({}, form({
+    eventId: "event-1",
+    title: "Legacy",
+    eventType: "GIG",
+    startTime: "2026-08-15T19:00",
+    endTime: "2026-08-15T21:00",
+    description: "",
+  }));
+  const legacy = await row();
+  assert.equal(legacy?.title, "Legacy");
+  assert.equal(legacy?.startTime.toISOString(), "2026-08-15T10:00:00.000Z");
+  assert.equal(legacy?.description, null);
+});
+
+test("일정을 읽은 뒤 저장 직전에 지워지면 저장했다고 하지 않는다", { concurrency: false }, async (context) => {
+  const { db, setBeforeWrite } = await setupRacingDatabase(context, createSession("student-1", "student"), "calendar_events");
+  await seedProfile(db, "student-1");
+  await db.insert(calendarEvents).values({
+    id: "event-1",
+    userId: "student-1",
+    eventType: "PRACTICE",
+    title: "Original",
+    startTime: new Date("2026-08-13T01:00:00.000Z"),
+    endTime: new Date("2026-08-13T02:00:00.000Z"),
+  });
+  setBeforeWrite(async () => {
+    await db.delete(calendarEvents).where(eq(calendarEvents.id, "event-1"));
+  });
+  const data = new FormData();
+  for (const [key, value] of Object.entries({
+    eventId: "event-1",
+    title: "Renamed",
+    eventType: "PRACTICE",
+    startTime: "2026-08-13T10:00",
+    endTime: "2026-08-13T11:00",
+    description: "",
+  })) data.set(key, value);
+
+  assert.deepEqual(await calendarActions.updateCalendarEventDetails({}, data), { error: "일정을 찾을 수 없습니다." });
+  assert.equal((await db.select().from(calendarEvents)).length, 0);
+});
+
 test("digging write는 student session과 소유 column/type을 요구하고 거부 시 DB가 불변이다", { concurrency: false }, async (context) => {
   const db = await setupDatabase(context, createSession("student-1", "student"));
   await seedProfile(db, "admin-1", "admin");
@@ -1361,10 +1489,10 @@ test("정기 과제 회차는 동시 조회에도 한 번만 생기고 수정·�
 
 
 /**
- * 학생 요청이 과제를 읽은 뒤 쓰기 직전에 관리자 변경이 끼어드는 상황을 재현한다.
- * assignments INSERT·UPDATE statement가 실행되기 직전에 한 번 `beforeWrite`를 실행한다.
+ * 학생 요청이 대상을 읽은 뒤 쓰기 직전에 다른 변경이 끼어드는 상황을 재현한다.
+ * `table`(기본 assignments)의 INSERT·UPDATE statement가 실행되기 직전에 한 번 `beforeWrite`를 실행한다.
  */
-async function setupRacingDatabase(context: TestContext, session: AuthSession) {
+async function setupRacingDatabase(context: TestContext, session: AuthSession, table = "assignments") {
   const isolated = await createIsolatedPortalD1();
   let beforeWrite: (() => Promise<void>) | null = null;
   let maxBind = { count: 0, query: "" };
@@ -1372,7 +1500,7 @@ async function setupRacingDatabase(context: TestContext, session: AuthSession) {
   type Prepared = ReturnType<typeof binding.prepare>;
   const originals = new WeakMap<object, Prepared>();
   const wrap = (prepared: Prepared, query: string): Prepared => {
-    const racingWrite = /^\s*(?:insert into|update) "?assignments"?\s/iu.test(query);
+    const racingWrite = new RegExp(`^\\s*(?:insert into|update) "?${table}"?\\s`, "iu").test(query);
     const wrapper = new Proxy(prepared, {
       get(inner, key) {
         const value = Reflect.get(inner, key);

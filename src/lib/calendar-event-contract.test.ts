@@ -6,6 +6,7 @@ import {
   CALENDAR_EVENT_TITLE_MAX_LENGTH,
   parseCalendarEventCreateInput,
   parseCalendarEventUpdateInput,
+  pickEditedCalendarEventFields,
   type CalendarEventValues,
 } from "./calendar-event-contract";
 
@@ -89,4 +90,32 @@ test("일정 patch는 알려진 필드만 허용하고 기존 값과 합친 시�
   );
   assert.equal(valid.ok, true);
   if (valid.ok) assert.equal(valid.value.description, "이동");
+});
+
+test("상세 수정 form은 연 값과 다른 칸만 patch로 고른다", () => {
+  const submitted: CalendarEventValues = {
+    title: "믹싱 연습",
+    eventType: "PRACTICE",
+    startTime: new Date("2026-08-13T01:00:00.000Z"),
+    endTime: new Date("2026-08-13T02:00:00.000Z"),
+    description: null,
+  };
+  const opened = {
+    title: "  믹싱 연습 ",
+    eventType: "PRACTICE",
+    startTime: "2026-08-13T10:00",
+    endTime: "2026-08-13T11:00",
+    description: "",
+  };
+  assert.deepEqual(pickEditedCalendarEventFields(submitted, opened), {}, "같은 규칙으로 읽으면 같은 값");
+  assert.deepEqual(
+    pickEditedCalendarEventFields({ ...submitted, title: "전환 연습", endTime: null }, opened),
+    { title: "전환 연습", endTime: null },
+  );
+  assert.deepEqual(
+    pickEditedCalendarEventFields({ ...submitted, eventType: "NOTE" }, { ...opened, startTime: "not-a-date", eventType: "" }),
+    { startTime: submitted.startTime },
+    "읽을 수 없는 연 값은 고친 칸으로 보고, 빈 유형은 NOTE와 같게 읽는다",
+  );
+  assert.deepEqual(pickEditedCalendarEventFields(submitted, null), submitted, "연 값이 없으면 전체를 쓴다");
 });

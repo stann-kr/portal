@@ -1582,6 +1582,12 @@ test("own calendar event edit keeps input on failure and delete confirms before 
   assert.equal(browser.document.querySelector('[role="alert"]')?.textContent, "종료 시간은 시작 시간 이후여야 합니다.");
   assert.equal((browser.document.getElementById("event-edit-event-1-title") as unknown as HTMLInputElement).value, "리듬 연습 2");
   assert.equal(submitted[0]?.get("eventId"), "event-1");
+  assert.equal(submitted[0]?.get("title"), "리듬 연습 2");
+  assert.deepEqual(
+    ["title", "eventType", "startTime", "endTime", "description"].map((field) => submitted[0]?.get(`opened.${field}`)),
+    ["리듬 연습", "PRACTICE", "2026-10-09T10:00", "2026-10-09T11:00", "기존 메모"],
+    "the form sends the values it opened with so the server saves only edited fields",
+  );
   assert.equal(updates.length, 0);
   assert.ok(busy.includes(true), "save locks the surrounding panel");
 

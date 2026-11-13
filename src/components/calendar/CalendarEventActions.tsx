@@ -8,6 +8,7 @@ import {
   updateCalendarEventDetails,
   type CreateEventState,
 } from "@/lib/actions/calendarEvents";
+import { CALENDAR_EVENT_EDIT_FIELDS, openedCalendarEventFieldName } from "@/lib/calendar-event-contract";
 import { toKstDateTimeInputValue } from "@/lib/date-input";
 import { createCalendarEventUnifiedItem } from "@/lib/unified-item-normalization";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
@@ -47,6 +48,8 @@ export function CalendarEventActions({
 }) {
   const [mode, setMode] = useState<"view" | "edit" | "confirm-delete">("view");
   const [fields, setFields] = useState(() => fieldsFromItem(item));
+  // 수정을 시작할 때의 값. 서버가 이 값과 비교해 고친 칸만 저장한다.
+  const [openedFields, setOpenedFields] = useState(() => fieldsFromItem(item));
   const [notice, setNotice] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const deleteMessageId = useId();
@@ -91,7 +94,9 @@ export function CalendarEventActions({
   }, [mode, titleInputId]);
 
   const startEdit = () => {
-    setFields(fieldsFromItem(item));
+    const opened = fieldsFromItem(item);
+    setFields(opened);
+    setOpenedFields(opened);
     setNotice(null);
     setDeleteError(null);
     setMode("edit");
@@ -118,6 +123,9 @@ export function CalendarEventActions({
     return (
       <form action={saveAction} className="flex flex-col gap-4 rounded-touch border border-border p-3.5" aria-busy={isSaving} aria-label="일정 수정">
         <input type="hidden" name="eventId" value={item.id} />
+        {CALENDAR_EVENT_EDIT_FIELDS.map((field) => (
+          <input key={field} type="hidden" name={openedCalendarEventFieldName(field)} value={openedFields[field]} />
+        ))}
         {formError ? (
           <p id={`${titleInputId}-error`} role="alert" className="rounded-touch bg-destructive-muted px-3.5 py-2 text-ui text-destructive">
             {formError}

@@ -17,8 +17,13 @@ import {
 } from "@/lib/calendar-sync/sync-runner";
 import { executeDocumentStatementsAtomically } from "@/lib/document-lifecycle-atomic";
 import {
+  CALENDAR_EVENT_EDIT_FIELDS,
+  openedCalendarEventFieldName,
   parseCalendarEventCreateInput,
   parseCalendarEventUpdateInput,
+  pickEditedCalendarEventFields,
+  type CalendarEventEditField,
+  type CalendarEventValues,
 } from "@/lib/calendar-event-contract";
 
 // ─── 조회 ────────────────────────────────────────
@@ -111,11 +116,26 @@ type CalendarEventWriteResult =
   | { ok: true; value: CreatedCalendarEvent }
   | { ok: false; error: string };
 
-/** 본인 일정의 현재 값을 기준으로 patch를 검증하고 같은 owner 조건으로만 갱신한다. */
+function toCreatedCalendarEvent(eventId: string, values: CalendarEventValues): CreatedCalendarEvent {
+  return {
+    id: eventId,
+    title: values.title,
+    eventType: values.eventType,
+    startTime: values.startTime.toISOString(),
+    endTime: values.endTime?.toISOString() ?? null,
+    description: values.description,
+  };
+}
+
+/**
+ * 본인 일정의 현재 값을 기준으로 patch를 검증하고 같은 owner 조건으로만 갱신한다. 읽은 뒤 일정이 지워져 갱신된 행이
+ * 없으면 저장하지 않았다고 돌려준다. `allowUnchanged`면 빈 patch(고친 칸 없음)는 쓰지 않고 지금 값을 돌려준다.
+ */
 async function writeOwnCalendarEventPatch(
   userId: string,
   eventId: string,
   data: unknown,
+  options: { allowUnchanged?: boolean } = {},
 ): Promise<CalendarEventWriteResult> {
   const db = createDb();
   const [current] = await db
@@ -135,11 +155,18 @@ async function writeOwnCalendarEventPatch(
     )
     .limit(1);
   if (!current) return { ok: false, error: "일정을 찾을 수 없거나 권한이 없습니다." };
+  if (
+    options.allowUnchanged
+    && data && typeof data === "object" && !Array.isArray(data)
+    && Object.keys(data).length === 0
+  ) {
+    return { ok: true, value: toCreatedCalendarEvent(eventId, current) };
+  }
 
   const parsed = parseCalendarEventUpdateInput(data, current);
   if (!parsed.ok) return parsed;
 
-  await db
+  const [saved] = await db
     .update(calendarEvents)
     .set(parsed.value)
     .where(
@@ -147,23 +174,20 @@ async function writeOwnCalendarEventPatch(
         eq(calendarEvents.id, eventId),
         eq(calendarEvents.userId, userId),
       ),
-    );
+    )
+    .returning({
+      title: calendarEvents.title,
+      eventType: calendarEvents.eventType,
+      startTime: calendarEvents.startTime,
+      endTime: calendarEvents.endTime,
+      description: calendarEvents.description,
+    });
+  if (!saved) return { ok: false, error: "일정을 찾을 수 없습니다." };
 
   await schedulePushStudentCalendarChanges(userId);
   revalidatePath("/dashboard/calendar");
   revalidatePath("/dashboard/student");
-  const next = { ...current, ...parsed.value };
-  return {
-    ok: true,
-    value: {
-      id: eventId,
-      title: next.title,
-      eventType: next.eventType,
-      startTime: next.startTime.toISOString(),
-      endTime: next.endTime?.toISOString() ?? null,
-      description: next.description,
-    },
-  };
+  return { ok: true, value: toCreatedCalendarEvent(eventId, saved) };
 }
 
 /**
@@ -215,6 +239,8 @@ export async function moveCalendarEvent(
 
 /**
  * 상세 패널의 일정 수정 form action. 검증 실패를 throw 대신 상태로 돌려 입력을 유지한다.
+ * form이 연 값(`opened.*`)을 함께 보내면 학생이 고친 칸만 저장해, 그 사이 다른 곳에서 옮긴 시간이나 동기화된 칸을
+ * 덮지 않는다(2026-11-14 사용자 결정). 연 값이 없으면(이전 화면) 보낸 값 전체를 저장한다.
  */
 export async function updateCalendarEventDetails(
   _prev: CreateEventState,
@@ -234,7 +260,13 @@ export async function updateCalendarEventDetails(
   });
   if (!parsed.ok) return { error: parsed.error };
 
-  const result = await writeOwnCalendarEventPatch(session.user.id!, eventId, parsed.value);
+  const opened = formData.has(openedCalendarEventFieldName("startTime"))
+    ? Object.fromEntries(
+      CALENDAR_EVENT_EDIT_FIELDS.map((field) => [field, formData.get(openedCalendarEventFieldName(field))]),
+    ) as Record<CalendarEventEditField, unknown>
+    : null;
+  const patch = pickEditedCalendarEventFields(parsed.value, opened);
+  const result = await writeOwnCalendarEventPatch(session.user.id!, eventId, patch, { allowUnchanged: true });
   if (!result.ok) return { error: result.error };
   return { id: eventId, event: result.value };
 }
