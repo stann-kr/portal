@@ -5,6 +5,7 @@ import {
   decryptExternalCalendarUrl,
   encryptExternalCalendarUrl,
   EXTERNAL_CALENDAR_MAX_BYTES,
+  EXTERNAL_CALENDAR_MAX_SCANNED_OCCURRENCES,
   fetchExternalCalendarIcs,
   normalizeExternalCalendarUrl,
   parseExternalCalendarItems,
@@ -140,11 +141,51 @@ test("호출자가 지정한 bounded window 밖의 외부 일정은 반환하지
   }));
 });
 
-test("window 이전 recurrence도 확장 상한에 포함해 조용히 누락하지 않는다", async () => {
+const seriesIcs = (lines: string) => `BEGIN:VCALENDAR\r\nVERSION:2.0\r\n${lines}END:VCALENDAR\r\n`;
+const seriesInput = { subscriptionId: "long-series", studentId: "student-1", provider: "GOOGLE" as const, spaceLabel: "Mina", referenceTime: new Date("2026-08-01T00:00:00.000Z") };
+
+test("몇 년 전에 시작한 매일 반복은 지난 회차를 세지 않고 보이는 기간의 일정을 돌려준다", async () => {
+  // 2020-01-01부터 매일 3,000번(2028-03까지). 예전에는 지난 회차 2,000번에서 캘린더 전체가 거부됐다.
+  const items = await parseExternalCalendarItems({
+    ...seriesInput,
+    ics: seriesIcs("BEGIN:VEVENT\r\nUID:long-series\r\nDTSTART:20200101T100000Z\r\nDTEND:20200101T110000Z\r\nRRULE:FREQ=DAILY;COUNT=3000\r\nSUMMARY:Long lesson\r\nEND:VEVENT\r\n"),
+  });
+  // window: 기준일 90일 전(2026-05-03) ~ 365일 뒤(2027-08-01). 그 안의 매일 10:00Z 회차가 빠짐없이 나온다.
+  assert.equal(items[0]?.date.toISOString(), "2026-05-03T10:00:00.000Z");
+  assert.equal(items.at(-1)?.date.toISOString(), "2027-07-31T10:00:00.000Z");
+  assert.equal(items.length, 455);
+  assert.equal(new Set(items.map((item) => item.id)).size, items.length);
+});
+
+test("지난 회차를 옮긴 예외가 보이는 기간 안에 있으면 건너뛰지 않는다", async () => {
+  const items = await parseExternalCalendarItems({
+    ...seriesInput,
+    ics: seriesIcs(
+      "BEGIN:VEVENT\r\nUID:moved-series\r\nDTSTART:20260101T100000Z\r\nDTEND:20260101T110000Z\r\nRRULE:FREQ=WEEKLY;COUNT=4\r\nSUMMARY:Weekly\r\nEND:VEVENT\r\n"
+      + "BEGIN:VEVENT\r\nUID:moved-series\r\nRECURRENCE-ID:20260108T100000Z\r\nDTSTART:20260810T100000Z\r\nDTEND:20260810T110000Z\r\nSUMMARY:Moved into window\r\nEND:VEVENT\r\n",
+    ),
+  });
+  assert.deepEqual(items.map((item) => [item.title, item.date.toISOString()]), [["Moved into window", "2026-08-10T10:00:00.000Z"]]);
+});
+
+test("보이는 기간 안의 일정이 상한을 넘으면 일부만 빼지 않고 캘린더를 거부한다", async () => {
+  // 기준일 90일 전부터 매시간: 기간 안에 2,000번을 넘는다.
   await assert.rejects(
     () => parseExternalCalendarItems({
-      ics: "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:long-series\r\nDTSTART:20200101T100000Z\r\nDTEND:20200101T110000Z\r\nRRULE:FREQ=DAILY;COUNT=3000\r\nSUMMARY:Long lesson\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n",
-      subscriptionId: "long-series", studentId: "student-1", provider: "GOOGLE", spaceLabel: "Mina", referenceTime: new Date("2026-08-01T00:00:00.000Z"),
+      ...seriesInput,
+      ics: seriesIcs("BEGIN:VEVENT\r\nUID:hourly\r\nDTSTART:20260601T000000Z\r\nDTEND:20260601T001000Z\r\nRRULE:FREQ=HOURLY\r\nSUMMARY:Hourly\r\nEND:VEVENT\r\n"),
+    }),
+    /too many recurrences/u,
+  );
+});
+
+test("지난 반복을 건너뛰는 횟수에도 상한이 있어 계산이 끝없이 길어지지 않는다", async () => {
+  // 2020년부터 10분마다: 보이는 기간에 닿기 전에 건너뛰기 상한(5만 번)에 걸린다.
+  assert.equal(EXTERNAL_CALENDAR_MAX_SCANNED_OCCURRENCES, 50_000);
+  await assert.rejects(
+    () => parseExternalCalendarItems({
+      ...seriesInput,
+      ics: seriesIcs("BEGIN:VEVENT\r\nUID:minutely\r\nDTSTART:20200101T000000Z\r\nDTEND:20200101T000500Z\r\nRRULE:FREQ=MINUTELY;INTERVAL=10\r\nSUMMARY:Minutely\r\nEND:VEVENT\r\n"),
     }),
     /too many recurrences/u,
   );
