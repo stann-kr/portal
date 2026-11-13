@@ -147,7 +147,6 @@ pill 형태는 오늘 날짜 표시와 개수처럼 모양 자체가 의미를 �
 | `BlockCommandMenu` | `/` 검색과 keyboard로 실행하는 block 삽입 목록 |
 | `EditorInsertPanel` | 링크·이미지·YouTube URL을 검증하고 selection에 삽입하는 panel |
 | `DraftStatus` | 로컬·계정 초안 저장 상태, 복구본과 다중 기기 충돌의 명시적 선택 |
-| `ServerDraftStatus` | 오프라인 재시도·서버 저장 시각·다른 기기 비교·원문 복사·2단계 서버본 폐기 |
 | `LocalDraftManager` | 현재 계정의 기기 초안 목록, 안전한 미리보기와 문서별·전체 2단계 폐기 |
 | `AccountMenu` | 사이드바·메뉴 서랍 계정 줄의 … 메뉴. 메뉴 focus scope가 끝난 뒤 초안·비밀번호·계정 삭제 대화상자를 열고, 로그아웃은 `useLogoutSubmit`을 쓴다 |
 | `useLogoutSubmit`·`LogoutTextButton` | 로그아웃 form의 제출. 첫 제출을 멈추고 이 계정의 서버 초안 폐기 요청만 최대 3초 보낸 뒤(실패·오프라인이어도 계속) 로컬 초안을 지우고 세션을 끝낸다. 글자형 버튼은 그동안 비활성 |
