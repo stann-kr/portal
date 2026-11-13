@@ -8,7 +8,7 @@ import { revalidatePath } from "next/cache";
 import { createDb } from "@/db/client";
 import { diggingColumns, diggingTracks } from "@/db/schema";
 import type { DiggingColumnType } from "@/db/schema";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { requireAuth, requireStudentOwnerOrAdmin } from "@/lib/auth-guard";
 import {
   DIGGING_COLUMNS_MAX_COUNT,
@@ -55,14 +55,15 @@ export async function getOrSeedColumns(userId: string) {
   if (existing.length > 0) return existing;
   if (session.user.role === "admin") return existing;
 
-  // 기본 컬럼 시드
-  const rows = DEFAULT_COLUMNS.map((col) => ({
-    id: crypto.randomUUID(),
-    userId,
-    isDefault: true,
-    ...col,
-  }));
-  await db.insert(diggingColumns).values(rows);
+  // 기본 컬럼 시드. 두 요청이 동시에 "열 없음"을 봐도 한 벌만 생기게, 열이 없을 때만 넣는 한 문장으로 쓴다.
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const seedRows = DEFAULT_COLUMNS.map(
+    (col) => sql`(${crypto.randomUUID()}, ${userId}, ${col.name}, ${col.columnType}, ${col.options ?? null}, ${col.sortOrder}, 1, ${nowSeconds})`,
+  );
+  await db.run(sql`
+    INSERT INTO digging_columns (id, user_id, name, column_type, options, sort_order, is_default, created_at)
+    SELECT * FROM (VALUES ${sql.join(seedRows, sql`, `)})
+    WHERE NOT EXISTS (SELECT 1 FROM digging_columns WHERE user_id = ${userId})`);
   return db
     .select()
     .from(diggingColumns)

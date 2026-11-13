@@ -1062,6 +1062,37 @@ function shiftDayKey(key: string, days: number): string {
   return dayKeyFromNumber(dayNumberFromKey(key)! + days);
 }
 
+test("디깅 보드를 처음 여는 요청이 겹쳐도 기본 열은 한 벌만 생기고, 관리자가 먼저 열면 만들지 않는다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("admin-1", "admin"));
+  await seedProfile(db, "admin-1", "admin");
+  await seedProfile(db, "student-1");
+  await seedProfile(db, "student-2");
+
+  assert.deepEqual(await diggingActions.getOrSeedColumns("student-1"), [], "관리자 조회는 학생 보드의 열을 대신 만들지 않는다");
+
+  activeSession = createSession("student-1", "student");
+  // 두 탭·RSC 요청이 동시에 "열이 없다"를 본 경우.
+  const [first, second] = await Promise.all([
+    diggingActions.getOrSeedColumns("student-1"),
+    diggingActions.getOrSeedColumns("student-1"),
+  ]);
+  const expected = ["트랙명", "아티스트", "감상평", "선호도", "별점", "링크"];
+  assert.deepEqual(first.map((column) => column.name), expected);
+  assert.deepEqual(second.map((column) => column.name), expected);
+  const stored = await db.select().from(diggingColumns).where(eq(diggingColumns.userId, "student-1")).orderBy(diggingColumns.sortOrder);
+  assert.deepEqual(stored.map((column) => [column.name, column.columnType, column.isDefault]), [
+    ["트랙명", "text", true],
+    ["아티스트", "text", true],
+    ["감상평", "textarea", true],
+    ["선호도", "select", true],
+    ["별점", "rating", true],
+    ["링크", "link", true],
+  ]);
+  assert.equal(stored[3]?.options, JSON.stringify(["좋음", "보통", "별로"]));
+  assert.ok(stored.every((column) => column.createdAt instanceof Date), "생성 시각이 남는다");
+  assert.equal((await db.select().from(diggingColumns).where(eq(diggingColumns.userId, "student-2"))).length, 0);
+});
+
 test("관리자 과제는 대상 학생에게만 쓰이고 학생은 자기 과제에만 형식대로 제출·수정한다", { concurrency: false }, async (context) => {
   const db = await setupDatabase(context, createSession("admin-1", "admin"));
   await seedProfile(db, "admin-1", "admin");
