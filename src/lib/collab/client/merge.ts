@@ -6,7 +6,10 @@
  * - 겹치지 않는 구간은 양쪽 모두 적용, 한쪽만 바꾼 구간은 그쪽, 같은 변경은 한 번.
  * - 양쪽이 같은 블록 하나를 다르게 바꾸면(구조·속성이 같은 글자 전용 블록) 글자 단위 3-way를 시도한다.
  * - 그래도 겹치면 theirs 블록 뒤에 mine 블록을 이어 넣어 이 기기 입력을 문서 안에 남긴다(conflicts += 1).
- * - mine의 변경이 이미 theirs에 들어 있으면 다시 넣지 않는다(같은 병합을 두 번 해도 no-op).
+ * - mine의 변경이 이미 theirs에 들어 있으면 다시 넣지 않는다. 같은 (base, mine)을 그 결과 위에 다시 병합해도
+ *   대부분 no-op이지만 보장은 아니다: "내가 고친 블록을 상대가 지웠다/다시 고쳤다"와 "내 변경을 넣은 뒤 누가 지웠다/고쳤다"는
+ *   세 문서만으로 구분할 수 없다(merge.test.ts의 한계 테스트). 그래서 호출하는 쪽이 이미 넣은 작업을 따로 표시한다
+ *   (useCollabDocument의 RebaseJob.applied).
  */
 
 /** LCS 표 상한(칸 수). Uint32 4바이트 × 2백만 = 8MB. 넘으면 선형 메모리 LCS(Hirschberg)로 바꾼다. */
@@ -299,10 +302,25 @@ function editsOverlap(a: TextEdit, b: TextEdit): boolean {
   return overlaps(a.start, a.end, b.start, b.end) && !(a.start === a.end && b.start === b.end);
 }
 
-/** mine의 변경이 theirs에 이미 그대로 있는지: mine → theirs 편집이 mine이 넣은 구간을 건드리지 않음. */
+/** mine의 변경이 theirs에 이미 그대로 있는지. */
 function mineAlreadyInTheirs(base: string, mine: string, theirs: string): boolean {
   if (mine === theirs) return true;
   const own = textEdit(base, mine);
+  if (own.insert !== "") {
+    // base의 같은 구간을 theirs도 바꿨고 그 글의 앞이나 끝에 내가 넣은 글이 그대로 있으면 이미 들어간 것으로 본다.
+    // 내 글을 넣은 뒤 바로 옆에 이어 쓴 문서("p1" → 내 "p1 e2" → "p1 e5 e2") 위에 다시 병합할 때 글이 한 번 더 붙지 않게 한다.
+    // 기준은 base다: mine과 theirs만 견주면 같은 글자가 이어질 때 자르는 자리에 따라 내 삭제·교체를 반영된 것으로 잘못 본다.
+    // 내가 지우기만 한 경우에는 쓰지 않는다: 같은 구간을 theirs가 다른 글로 바꿨으면 겹친 편집이라 둘 다 남긴다.
+    const other = textEdit(base, theirs);
+    if (
+      other.start === own.start &&
+      other.end === own.end &&
+      (other.insert.startsWith(own.insert) || other.insert.endsWith(own.insert))
+    ) {
+      return true;
+    }
+  }
+  // 그 밖에는 mine → theirs 편집이 mine이 넣은 구간을 건드리지 않을 때.
   const regionStart = own.start;
   const regionEnd = own.start + own.insert.length;
   const rest = textEdit(mine, theirs);
@@ -399,6 +417,14 @@ function mergeBlocks(
     ...hunksOf("theirs", theirsMap, theirs.length),
   ]);
 
+  // base 위치 b 앞·뒤에서 가장 가까운 "theirs에도 그대로 있는 base 블록"의 theirs 위치.
+  // 그 사이의 theirs 블록이 그 자리 주변에서 theirs가 바꾼 구간이다.
+  const windowStart = new Array<number>(base.length + 1).fill(0);
+  for (let i = 0; i < base.length; i += 1) windowStart[i + 1] = theirsMap[i] >= 0 ? theirsMap[i] + 1 : windowStart[i];
+  const windowEnd = new Array<number>(base.length + 1).fill(theirs.length);
+  for (let i = base.length - 1; i >= 0; i -= 1) windowEnd[i] = theirsMap[i] >= 0 ? theirsMap[i] : windowEnd[i + 1];
+  const theirsNear = (group: Group) => theirsKeys.slice(windowStart[group.bs], windowEnd[group.be]);
+
   let conflicts = 0;
   const out: PmNode[] = [];
   let b = 0;
@@ -414,6 +440,10 @@ function mergeBlocks(
     }
     const mineSeg = segmentOf("mine", group, mine, mineMap);
     if (!hasTheirs) {
+      // 내가 넣기만 한 자리의 바로 옆을 theirs가 바꿨고 그 구간에 같은 블록들이 이미 이어져 있으면 다시 넣지 않는다.
+      // (내 삽입을 넣은 뒤 옆 블록이 고쳐진 문서 위에 같은 병합을 다시 할 때 블록이 한 번 더 생기지 않게.)
+      // 문서 전체가 아니라 옆 구간만 본다: 멀리 있는 같은 블록까지 치면 블록을 옮긴 편집에서 내 삽입이 사라진다.
+      if (group.bs === group.be && containsRun(theirsNear(group), mineSeg.map(canonical))) continue;
       out.push(...mineSeg);
       continue;
     }
@@ -445,7 +475,9 @@ function mergeBlocks(
     // mine 쪽에서 실제로 바뀐 블록만 이어 넣는다(theirs가 지운, mine이 손대지 않은 블록을 되살리지 않는다).
     if (onConflict === "both") {
       const baseSegKeys = new Set(baseKeys.slice(group.bs, group.be));
-      out.push(...mineSeg.filter((block, index) => !baseSegKeys.has(mineSegKeys[index]) && !theirsSegKeys.includes(mineSegKeys[index])));
+      // 이 구간과 맞닿은 theirs 변경 구간에 이미 있는 블록도 다시 붙이지 않는다.
+      const nearKeys = new Set(theirsNear(group));
+      out.push(...mineSeg.filter((block, index) => !baseSegKeys.has(mineSegKeys[index]) && !nearKeys.has(mineSegKeys[index])));
     }
   }
   while (b < base.length) out.push(theirs[theirsMap[b++]]);
