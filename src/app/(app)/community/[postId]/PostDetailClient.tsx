@@ -28,6 +28,7 @@ import { classifyMixsetMedia, formatTimeMarker } from "@/lib/community-mixset-me
 import type { WaveformMarkerInput } from "@/components/player/waveform";
 import { PostEditForm } from "@/components/community/PostEditForm";
 import { PostTrashActions } from "@/components/community/PostTrashActions";
+import { ADMIN_TRASHED_DETAIL_NOTE } from "@/lib/trash-restore";
 import { COMMUNITY_BOARD_LABELS, communityAuthorName, communityPreview } from "@/components/community/CommunityPostRow";
 import { MobileMoreMenu, type MobileMoreMenuItem } from "@/components/ui/mobile-more-menu";
 import { initialOf } from "@/components/qna/qna-display";
@@ -270,12 +271,15 @@ export function PostDetailClient({
             <p className="text-ui text-secondary-foreground">
               삭제 {formatKst(post.deletedAt)} · 댓글과 변경 이력은 함께 보존됩니다.
             </p>
+            {post.restoreLocked ? (
+              <p className="text-ui text-secondary-foreground">{ADMIN_TRASHED_DETAIL_NOTE}</p>
+            ) : null}
           </div>
           <PostTrashActions
             postId={post.id}
             version={post.version}
             deletedAt={post.deletedAt.toISOString()}
-            canRestore={canManagePost}
+            canRestore={canManagePost && !post.restoreLocked}
             canPurge={isAdmin}
             returnTo={returnTo}
           />

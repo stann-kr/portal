@@ -58,7 +58,10 @@ let markReviewed: typeof import("@/lib/actions/assignment-review").setAssignment
 let reviewControls: typeof import("@/components/admin/assignments/AssignmentReviewControls");
 let saveTaskSubmission: typeof import("@/lib/actions/assignmentTasks").submitAssignmentTask = async () => ({});
 let createTask: typeof import("@/lib/actions/assignmentTasks").createAssignmentTask = async () => ({});
+let updateTask: typeof import("@/lib/actions/assignmentTasks").updateAssignmentTask = async () => ({ error: "테스트 미설정" });
 let AssignmentTaskForm: typeof import("@/components/admin/assignments/AssignmentTaskForms").AssignmentTaskForm;
+let AssignmentRecurrenceForm: typeof import("@/components/admin/assignments/AssignmentTaskForms").AssignmentRecurrenceForm;
+let updateRecurrence: typeof import("@/lib/actions/assignmentTasks").updateAssignmentRecurrence = async () => ({ error: "테스트 미설정" });
 let loadTasks: typeof import("@/lib/actions/assignmentTasks").getMyAssignmentTasks = async () => [];
 let saveEvent: typeof import("@/lib/actions/calendarEvents").createCalendarEvent = async () => ({});
 let editEvent: typeof import("@/lib/actions/calendarEvents").updateCalendarEventDetails = async () => ({});
@@ -133,9 +136,9 @@ mock.module("@/lib/actions/assignmentTasks", { namedExports: {
   submitAssignmentTask: (...args: Parameters<typeof saveTaskSubmission>) => saveTaskSubmission(...args),
   updateMyTaskSubmission: async () => ({ error: "테스트 미설정" }),
   createAssignmentTask: (...args: Parameters<typeof createTask>) => createTask(...args),
-  updateAssignmentTask: async () => ({ error: "테스트 미설정" }),
+  updateAssignmentTask: (...args: Parameters<typeof updateTask>) => updateTask(...args),
   createAssignmentRecurrence: async () => ({ error: "테스트 미설정" }),
-  updateAssignmentRecurrence: async () => ({ error: "테스트 미설정" }),
+  updateAssignmentRecurrence: (...args: Parameters<typeof updateRecurrence>) => updateRecurrence(...args),
 } });
 mock.module("@/lib/actions/feedbacks", { namedExports: {
   createFeedback: (...args: Parameters<typeof saveFeedback>) => saveFeedback(...args),
@@ -298,7 +301,7 @@ before(async () => {
   playerStore = await import("@/components/player/player-store");
   ({ PersistentPlayerHost } = await import("@/components/player/PersistentPlayerHost"));
   ({ MixsetFeedbackCard } = await import("@/components/community/MixsetFeedbackCard"));
-  ({ AssignmentTaskForm } = await import("@/components/admin/assignments/AssignmentTaskForms"));
+  ({ AssignmentTaskForm, AssignmentRecurrenceForm } = await import("@/components/admin/assignments/AssignmentTaskForms"));
   ({ CommentForm } = await import("@/components/community/CommentForm"));
   ({ AssignmentView } = await import("@/components/student-portal/AssignmentView"));
   ({ AssignmentDetailClient } = await import("@/app/(app)/dashboard/student/assignments/[id]/AssignmentDetailClient"));
@@ -1958,7 +1961,7 @@ test("community comment failure and remount preserve the author's draft", async 
     id: "draft-post", authorId: "student-1", title: "레슨 이야기", contentHtml: "<p>본문</p>",
     category: "general", boardType: "GENERAL" as const, isPinned: false, mediaUrl: null,
     mediaObjectId: null, createdAt: new Date(), updatedAt: new Date(), deletedAt: null,
-    deletedById: null, version: 1, authorName: "학생",
+    restoreLocked: false, version: 1, authorName: "학생",
   };
   const screen = (actorId: string) => <PostDetailClient postId={post.id} post={post} initialCommentList={[]} currentUserId={actorId} isAdmin={false} returnTo="/community" />;
   const root = await render(context, screen("student-1"));
@@ -2031,7 +2034,7 @@ test("게시물 삭제는 응답 유실 재시도와 복원 후 새 삭제 의�
     id: "delete-retry-post", authorId: "student-1", title: "레슨 이야기", contentHtml: "<p>본문</p>",
     category: "general", boardType: "GENERAL" as const, isPinned: false, mediaUrl: null,
     mediaObjectId: null, createdAt: new Date(), updatedAt: new Date(), deletedAt: null,
-    deletedById: null, version: 1, authorName: "학생",
+    restoreLocked: false, version: 1, authorName: "학생",
   };
   const screen = (version: number, deletedAt: Date | null = null) => <PostDetailClient postId={post.id} post={{ ...post, version, deletedAt }} initialCommentList={[]} currentUserId="student-1" isAdmin={false} returnTo="/community" />;
   const root = await render(context, screen(1));
@@ -2059,7 +2062,7 @@ test("failed comment deletion keeps the conversation and unfinished reply visibl
     id: "delete-post", authorId: "student-1", title: "레슨 이야기", contentHtml: "<p>본문</p>",
     category: "general", boardType: "GENERAL" as const, isPinned: false, mediaUrl: null,
     mediaObjectId: null, createdAt: new Date(), updatedAt: new Date(), deletedAt: null,
-    deletedById: null, version: 1, authorName: "학생",
+    restoreLocked: false, version: 1, authorName: "학생",
   };
   const comment = { id: "comment-1", postId: post.id, authorId: "student-1", contentHtml: "<p>기존 대화</p>", createdAt: new Date(), timeMarkerSeconds: null, authorName: "학생" };
   await render(context, <PostDetailClient postId={post.id} post={post} initialCommentList={[comment]} currentUserId="student-1" isAdmin={false} returnTo="/community" />);
@@ -2087,7 +2090,7 @@ function mixsetPost(id: string, media: { mediaUrl: string | null; mediaObjectId:
     id, authorId: "student-1", title: "금요일 믹스셋", contentHtml: "<p>본문</p>",
     category: "general", boardType, isPinned: false, ...media,
     createdAt: new Date(), updatedAt: new Date(), deletedAt: null as Date | null,
-    deletedById: null, version: 1, authorName: "학생",
+    restoreLocked: false, version: 1, authorName: "학생",
   };
 }
 
@@ -2546,6 +2549,111 @@ test("여러 학생 과제 내기는 고른 학생·작성 정보를 이 기기�
   await settle();
   assert.equal(sent.length, 2);
   assert.deepEqual(sent[1], sent[0], "같은 학생·같은 operationId로 다시 보내 학생별로 한 번만 저장된다");
+});
+
+test("과제 고치기는 고치던 내용을 이 기기에 보관해 다시 열면 되살리고 고치기 시작한 version으로 보낸다. 그 사이 과제가 바뀌었으면 되살리기만 하고 저장을 막는다", async (context) => {
+  browser.localStorage.clear();
+  const sent: { version: string; title: string }[] = [];
+  updateTask = async (_studentId, _taskId, _previous, data) => {
+    sent.push({ version: String(data.get("version")), title: String(data.get("title")) });
+    return { success: true, id: "t-1" };
+  };
+  context.after(() => { updateTask = async () => ({ error: "테스트 미설정" }); });
+  const task = (version: number, title: string) => ({
+    id: "t-1", title, descriptionHtml: "<p>원래 설명</p>", submissionFormat: "MIX", dueAt: null,
+    occurrenceDate: null, recurrenceId: null, version, createdAt: new Date("2026-11-01T00:00:00Z"), submission: null,
+  });
+  let cancelled = 0;
+  const form = (version: number, title: string) => (
+    <AssignmentTaskForm key={`t-1:${version}`} actorId="admin-edit" studentId="s-1" task={task(version, title) as never} onDone={() => {}} onCancel={() => { cancelled += 1; }} />
+  );
+  const root = await render(context, form(3, "킥 정리"));
+  await settle();
+  await fill("task-edit-t-1-title", "킥 정리 고침");
+  await settle();
+
+  // 저장하지 않고 화면을 떠났다가 다시 연다(새로고침·앱 안 이동).
+  await act(async () => root.render(<></>));
+  await settle();
+  await act(async () => root.render(form(3, "킥 정리")));
+  await settle();
+  assert.equal(inputValue("title"), "킥 정리 고침", "고치던 제목이 되살아난다");
+  await press("저장");
+  assert.deepEqual(sent, [{ version: "3", title: "킥 정리 고침" }]);
+
+  // 저장한 뒤에는 보관본이 없다.
+  await act(async () => root.render(<></>));
+  await settle();
+  await act(async () => root.render(form(4, "킥 정리 고침")));
+  await settle();
+  assert.equal(inputValue("title"), "킥 정리 고침");
+  assert.equal(browser.document.querySelector('[role="alert"]'), null);
+
+  // 고치던 중 다른 곳에서 과제가 바뀌면(version 4 → 5) 고치던 내용은 되살리되 저장은 막는다.
+  await fill("task-edit-t-1-title", "이 기기에서 고치던 제목");
+  await settle();
+  await act(async () => root.render(<></>));
+  await settle();
+  await act(async () => root.render(form(5, "다른 기기에서 바꾼 제목")));
+  await settle();
+  assert.equal(inputValue("title"), "이 기기에서 고치던 제목", "고치던 내용을 잃지 않는다");
+  assert.match(browser.document.querySelector('[role="alert"]')?.textContent ?? "", /다른 곳에서 바뀌어 이대로는 저장할 수 없습니다/u);
+  assert.equal(button("저장").hasAttribute("disabled"), true);
+  await act(async () => { (button("저장").closest("form") as unknown as HTMLFormElement).requestSubmit(); });
+  await settle();
+  assert.equal(sent.length, 1, "바뀐 과제를 모르고 덮어쓰지 않는다");
+
+  // 취소하면 보관본을 버리고, 다시 열면 지금 과제에서 시작한다.
+  await press("취소");
+  assert.equal(cancelled, 1);
+  await act(async () => root.render(<></>));
+  await settle();
+  await act(async () => root.render(form(5, "다른 기기에서 바꾼 제목")));
+  await settle();
+  assert.equal(inputValue("title"), "다른 기기에서 바꾼 제목");
+  assert.equal(browser.document.querySelector('[role="alert"]'), null);
+});
+
+test("정기 과제 고치기도 고치던 내용을 이 기기에 보관해 되살리고, 그 사이 규칙이 바뀌었으면 저장을 막는다", async (context) => {
+  browser.localStorage.clear();
+  const sent: { version: string; title: string }[] = [];
+  updateRecurrence = async (_studentId, _recurrenceId, _previous, data) => {
+    sent.push({ version: String(data.get("version")), title: String(data.get("title")) });
+    return { success: true, id: "r-1" };
+  };
+  context.after(() => { updateRecurrence = async () => ({ error: "테스트 미설정" }); });
+  const recurrence = (version: number, title: string) => ({
+    id: "r-1", title, descriptionHtml: "<p>매주 연습</p>", submissionFormat: "MIX", weekdays: 0b0000010, intervalWeeks: 1,
+    startDate: "2026-11-02", dueTime: "21:00", endDate: null, maxOccurrences: null, active: true, version,
+  });
+  const form = (version: number, title: string) => (
+    <AssignmentRecurrenceForm key={`r-1:${version}`} actorId="admin-edit" studentId="s-1" recurrence={recurrence(version, title) as never} referenceTime={new Date("2026-11-13T03:00:00Z")} onDone={() => {}} onCancel={() => {}} />
+  );
+  const root = await render(context, form(2, "주간 믹스"));
+  await settle();
+  await fill("recurrence-edit-r-1-title", "주간 믹스 고침");
+  await settle();
+  await act(async () => root.render(<></>));
+  await settle();
+
+  // 그 사이 다른 곳에서 규칙이 바뀌었다(version 2 → 3).
+  await act(async () => root.render(form(3, "다른 기기에서 바꾼 규칙")));
+  await settle();
+  assert.equal(inputValue("title"), "주간 믹스 고침", "고치던 내용을 잃지 않는다");
+  assert.match(browser.document.querySelector('[role="alert"]')?.textContent ?? "", /다른 곳에서 바뀌어 이대로는 저장할 수 없습니다/u);
+  assert.equal(button("저장").hasAttribute("disabled"), true);
+  await act(async () => { (button("저장").closest("form") as unknown as HTMLFormElement).requestSubmit(); });
+  await settle();
+  assert.equal(sent.length, 0, "바뀐 규칙을 모르고 덮어쓰지 않는다");
+
+  // 바뀐 것이 없었다면(같은 version) 고치기 시작한 version으로 보낸다.
+  await act(async () => root.render(<></>));
+  await settle();
+  await act(async () => root.render(form(2, "주간 믹스")));
+  await settle();
+  assert.equal(inputValue("title"), "주간 믹스 고침");
+  await press("저장");
+  assert.deepEqual(sent, [{ version: "2", title: "주간 믹스 고침" }]);
 });
 
 test("assignment errors retain the URL and a failed refresh retries without resubmission", async (context) => {
@@ -3520,7 +3628,9 @@ test("admin schedule opens 전체 학생 by default with student chips, an all-n
     { id: "student-1", email: "minji@example.test", displayName: "민지", createdAt: null, currentModule: null, nextLessonDate: null, pendingFeedbackCount: 0, openQnaCount: 0 },
     { id: "student-2", email: "junho@example.test", displayName: "준호", createdAt: null, currentModule: null, nextLessonDate: null, pendingFeedbackCount: 0, openQnaCount: 0 },
   ];
+  // 자정 직전에 돌리면 1시간짜리 일정이 다음 날로 넘어가 달력 칸 두 곳에 그려진다. 낮 시각으로 고정한다.
   const today = new Date();
+  today.setHours(12, 0, 0, 0);
   const items: UnifiedItem[] = [
     { id: "lesson-1", type: "EVENT", subType: "LESSON", title: "레슨", date: today, endDate: null, metadata: {},
       space: { studentId: "student-1", label: "민지" }, source: { kind: "PORTAL", entity: "LESSON", label: "포탈" } },

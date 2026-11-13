@@ -53,7 +53,7 @@ test("학생 메모와 노트 메모는 따로 저장되고, 낡은 version은 �
   assert.equal((await readInstructorMemo(db, noteTarget))?.contentHtml, "<p>n</p>");
 });
 
-test("10분 안의 저장은 이력 한 칸에 모이고, 오래된 이력은 정리된다", async (context) => {
+test("10분 안의 저장은 이력 한 칸에 모이고, 오래된 이력은 정리하되 바로 앞 내용은 남긴다", async (context) => {
   const { db } = setup(context);
   const target = { studentId: "student", noteId: null };
   const start = 1_800_000_000_000;
@@ -78,7 +78,32 @@ test("10분 안의 저장은 이력 한 칸에 모이고, 오래된 이력은 �
   const later = start + 11 * minute + (INSTRUCTOR_MEMO_REVISION_RETENTION.retainSeconds + 60) * 1000;
   await save("<p>5</p>", later);
   revisions = await listInstructorMemoRevisions(db, memoId);
-  assert.deepEqual(revisions.map((revision) => revision.contentHtml), ["<p>5</p>"]);
+  // 90일 지난 칸은 지우지만, 덮어쓰기 전 내용(4)은 나이와 관계없이 남는다.
+  assert.deepEqual(revisions.map((revision) => revision.contentHtml), ["<p>5</p>", "<p>4</p>"]);
+
+  // 이어서 10분 안에 저장해도 바로 앞 칸(4)은 덮지 않는다.
+  await save("<p>6</p>", later + 2 * minute);
+  revisions = await listInstructorMemoRevisions(db, memoId);
+  assert.deepEqual(revisions.map((revision) => revision.contentHtml), ["<p>6</p>", "<p>4</p>"]);
+
+  // 다음 새 칸이 생기면 그 바로 앞(6)만 기간과 관계없이 남는다.
+  await save("<p>7</p>", later + (INSTRUCTOR_MEMO_REVISION_RETENTION.retainSeconds + 60) * 1000);
+  revisions = await listInstructorMemoRevisions(db, memoId);
+  assert.deepEqual(revisions.map((revision) => revision.contentHtml), ["<p>7</p>", "<p>6</p>"]);
+});
+
+test("오래 둔 메모를 지우거나 덮어써도 직전 내용은 이력에 남는다", async (context) => {
+  const { db } = setup(context);
+  const target = { studentId: "student", noteId: null };
+  const start = 1_800_000_000_000;
+  const created = await saveInstructorMemo(db, { ...target, contentHtml: "<p>오래 둔 메모</p>", baseVersion: 0, actorId: "admin", now: new Date(start) });
+  assert.equal(created.ok, true);
+  const memoId = created.ok ? created.memo.id : "";
+  const later = start + (INSTRUCTOR_MEMO_REVISION_RETENTION.retainSeconds + 24 * 60 * 60) * 1000;
+  const overwritten = await saveInstructorMemo(db, { ...target, contentHtml: "", baseVersion: 1, actorId: "admin", now: new Date(later) });
+  assert.equal(overwritten.ok, true);
+  const revisions = await listInstructorMemoRevisions(db, memoId);
+  assert.deepEqual(revisions.map((revision) => revision.contentHtml), ["", "<p>오래 둔 메모</p>"]);
 });
 
 test("노트를 영구 삭제하면 그 노트의 메모와 이력도 함께 지워진다", async (context) => {

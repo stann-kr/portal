@@ -11,6 +11,7 @@ import {
 } from "@/components/notes/DocumentRecordFrame";
 import { formatTrashDeadline, formatTrashTime } from "@/components/notes/note-display";
 import { getRequestNow } from "@/lib/request-time";
+import { ADMIN_TRASHED_BADGE, adminTrashedState } from "@/lib/trash-restore";
 
 export const metadata = { title: "게시물 휴지통" };
 
@@ -36,22 +37,27 @@ export default async function CommunityTrashPage() {
             const expired = Boolean(
               post.purgeEligibleAt && post.purgeEligibleAt.getTime() <= now,
             );
+            // Stann이 지운 자기 글: 목록에 남기되 표시를 붙이고 복원 버튼을 뺀다(서버도 학생의 복원을 거부한다).
+            const locked = post.restoreLocked;
             return (
               <TrashRecordItem
                 key={post.id}
                 title={post.title}
                 href={`/community/${post.id}?returnTo=${encodeURIComponent("/community/trash")}`}
                 meta={`${post.authorName ?? "작성자 미상"} · 삭제 ${formatTrashTime(post.deletedAt, now)}`}
+                badge={locked ? ADMIN_TRASHED_BADGE : undefined}
                 expired={expired}
                 state={expired
                   ? "복원 기한이 만료되어 영구 삭제할 수 있습니다."
-                  : `복원 가능: ${formatTrashDeadline(post.purgeEligibleAt, now)}까지`}
+                  : locked
+                    ? adminTrashedState(formatTrashDeadline(post.purgeEligibleAt, now))
+                    : `복원 가능: ${formatTrashDeadline(post.purgeEligibleAt, now)}까지`}
                 actions={
                   <PostTrashActions
                     postId={post.id}
                     version={post.version}
                     deletedAt={post.deletedAt!.toISOString()}
-                    canRestore={!expired && (session.user.role === "admin" || session.user.id === post.authorId)}
+                    canRestore={!expired && !locked && (session.user.role === "admin" || session.user.id === post.authorId)}
                     canPurge={session.user.role === "admin" && expired}
                     returnTo="/community/trash"
                   />

@@ -192,32 +192,47 @@ export const calendarFeedTokens = sqliteTable(
   ],
 );
 
-export const curriculums = sqliteTable("curriculums", {
-  id: text("id").primaryKey(),
-  studentId: text("student_id")
-    .references(() => profiles.id, { onDelete: "cascade" })
-    .notNull(),
-  weekNum: integer("week_num").notNull(),
-  title: text("title").notNull(),
-  isCompleted: integer("is_completed", { mode: "boolean" })
-    .default(false)
-    .notNull(),
-  createdAt: integer("created_at", { mode: "timestamp" }).default(
-    sql`(strftime('%s', 'now'))`,
-  ),
-});
+export const curriculums = sqliteTable(
+  "curriculums",
+  {
+    id: text("id").primaryKey(),
+    studentId: text("student_id")
+      .references(() => profiles.id, { onDelete: "cascade" })
+      .notNull(),
+    weekNum: integer("week_num").notNull(),
+    title: text("title").notNull(),
+    isCompleted: integer("is_completed", { mode: "boolean" })
+      .default(false)
+      .notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).default(
+      sql`(strftime('%s', 'now'))`,
+    ),
+  },
+  (table) => [
+    index("curriculums_student_week_idx").on(table.studentId, table.weekNum),
+  ],
+);
 
-export const lessons = sqliteTable("lessons", {
-  id: text("id").primaryKey(),
-  studentId: text("student_id")
-    .references(() => profiles.id, { onDelete: "cascade" })
-    .notNull(),
-  scheduledAt: integer("scheduled_at", { mode: "timestamp" }).notNull(),
-  googleEventId: text("google_event_id"),
-  createdAt: integer("created_at", { mode: "timestamp" }).default(
-    sql`(strftime('%s', 'now'))`,
-  ),
-});
+export const lessons = sqliteTable(
+  "lessons",
+  {
+    id: text("id").primaryKey(),
+    studentId: text("student_id")
+      .references(() => profiles.id, { onDelete: "cascade" })
+      .notNull(),
+    scheduledAt: integer("scheduled_at", { mode: "timestamp" }).notNull(),
+    googleEventId: text("google_event_id"),
+    createdAt: integer("created_at", { mode: "timestamp" }).default(
+      sql`(strftime('%s', 'now'))`,
+    ),
+  },
+  (table) => [
+    index("lessons_student_scheduled_idx").on(
+      table.studentId,
+      table.scheduledAt,
+    ),
+  ],
+);
 
 export type ExternalCalendarProvider = "GOOGLE" | "ICLOUD";
 
@@ -1303,17 +1318,23 @@ export const diggingColumns = sqliteTable("digging_columns", {
  * values: JSON 객체 { [columnId]: value } — 모든 컬럼 값 저장.
  * linkUrl: 음악 링크 (YouTube / SoundCloud / Spotify 등).
  */
-export const diggingTracks = sqliteTable("digging_tracks", {
-  id: text("id").primaryKey(),
-  userId: text("user_id")
-    .references(() => profiles.id, { onDelete: "cascade" })
-    .notNull(),
-  linkUrl: text("link_url"),
-  values: text("values").default("{}").notNull(), // JSON
-  createdAt: integer("created_at", { mode: "timestamp" }).default(
-    sql`(strftime('%s', 'now'))`,
-  ),
-});
+export const diggingTracks = sqliteTable(
+  "digging_tracks",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .references(() => profiles.id, { onDelete: "cascade" })
+      .notNull(),
+    linkUrl: text("link_url"),
+    values: text("values").default("{}").notNull(), // JSON
+    createdAt: integer("created_at", { mode: "timestamp" }).default(
+      sql`(strftime('%s', 'now'))`,
+    ),
+  },
+  (table) => [
+    index("digging_tracks_user_created_idx").on(table.userId, table.createdAt),
+  ],
+);
 
 /**
  * 디깅 보드 위 플레이리스트 목록 — 학생이 등록한 Beatport 공유·SoundCloud 세트 링크.
@@ -1398,24 +1419,30 @@ export const qnaThreads = sqliteTable(
   ],
 );
 
-export const qnaReplies = sqliteTable("qna_replies", {
-  id: text("id").primaryKey(),
-  threadId: text("thread_id")
-    .references(() => qnaThreads.id, { onDelete: "cascade" })
-    .notNull(),
-  authorId: text("author_id")
-    .references(() => profiles.id, { onDelete: "cascade" })
-    .notNull(),
-  contentHtml: text("content_html").notNull(),
-  attachmentUrl: text("attachment_url"),
-  attachmentObjectId: text("attachment_object_id").references(
-    () => mediaObjects.id,
-    { onDelete: "restrict" },
-  ),
-  createdAt: integer("created_at", { mode: "timestamp" }).default(
-    sql`(strftime('%s', 'now'))`,
-  ),
-});
+export const qnaReplies = sqliteTable(
+  "qna_replies",
+  {
+    id: text("id").primaryKey(),
+    threadId: text("thread_id")
+      .references(() => qnaThreads.id, { onDelete: "cascade" })
+      .notNull(),
+    authorId: text("author_id")
+      .references(() => profiles.id, { onDelete: "cascade" })
+      .notNull(),
+    contentHtml: text("content_html").notNull(),
+    attachmentUrl: text("attachment_url"),
+    attachmentObjectId: text("attachment_object_id").references(
+      () => mediaObjects.id,
+      { onDelete: "restrict" },
+    ),
+    createdAt: integer("created_at", { mode: "timestamp" }).default(
+      sql`(strftime('%s', 'now'))`,
+    ),
+  },
+  (table) => [
+    index("qna_replies_thread_created_idx").on(table.threadId, table.createdAt),
+  ],
+);
 
 export type QnaThreadEventType =
   | "BASELINE"
@@ -1530,23 +1557,29 @@ export const qnaThreadEvents = sqliteTable(
  */
 export type CalendarEventType = "LESSON" | "PRACTICE" | "GIG" | "NOTE";
 
-export const calendarEvents = sqliteTable("calendar_events", {
-  id: text("id").primaryKey(),
-  userId: text("user_id")
-    .references(() => profiles.id, { onDelete: "cascade" })
-    .notNull(),
-  eventType: text("event_type")
-    .$type<CalendarEventType>()
-    .default("NOTE")
-    .notNull(),
-  title: text("title").notNull(),
-  startTime: integer("start_time", { mode: "timestamp" }).notNull(),
-  endTime: integer("end_time", { mode: "timestamp" }),
-  description: text("description"),
-  createdAt: integer("created_at", { mode: "timestamp" }).default(
-    sql`(strftime('%s', 'now'))`,
-  ),
-});
+export const calendarEvents = sqliteTable(
+  "calendar_events",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .references(() => profiles.id, { onDelete: "cascade" })
+      .notNull(),
+    eventType: text("event_type")
+      .$type<CalendarEventType>()
+      .default("NOTE")
+      .notNull(),
+    title: text("title").notNull(),
+    startTime: integer("start_time", { mode: "timestamp" }).notNull(),
+    endTime: integer("end_time", { mode: "timestamp" }),
+    description: text("description"),
+    createdAt: integer("created_at", { mode: "timestamp" }).default(
+      sql`(strftime('%s', 'now'))`,
+    ),
+  },
+  (table) => [
+    index("calendar_events_user_start_idx").on(table.userId, table.startTime),
+  ],
+);
 
 /**
  * 모든 학생이 같은 내용을 보는 공용 가이드 페이지. 관리자만 쓴다.

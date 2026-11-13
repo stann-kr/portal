@@ -19,6 +19,10 @@ migrations_dir = "drizzle"
 binding = "BUCKET"
 bucket_name = "portal-storage"
 
+# wrangler.toml과 같게: 사용자 접속 지점과 관계없이 D1 가까이에서 실행한다.
+[placement]
+mode = "smart"
+
 # 문서별 실시간 공동 편집 room(Yjs). 클래스는 worker.ts가 export한다.
 # 운영 첫 배포 때 v1 migration으로 SQLite 저장소 DO가 만들어진다(DEPLOYMENT 승인 항목).
 [[durable_objects.bindings]]
@@ -48,6 +52,10 @@ namespace_id = "2026101401"
   [ratelimits.simple]
   limit = 10
   period = 60
+
+# wrangler.toml과 같게: 학생 가입 링크 메일(Cloudflare Email Service). 이 설정으로 올린 version도 메일을 보낼 수 있어야 한다.
+[[send_email]]
+name = "EMAIL"
 
 [observability]
 enabled = true

@@ -125,7 +125,7 @@ test("theirs가 지운 블록을 mine이 수정 → 충돌, mine 블록 유지",
   assert.equal(result.changed, true);
 });
 
-test("같은 병합을 두 번 해도 중복되지 않음(멱등)", () => {
+test("같은 병합을 그 결과 위에 다시 해도 바뀌지 않는 경우들(보장은 아니다: 아래 한계 테스트)", () => {
   const cases: { base: PmDoc; mine: PmDoc; theirs: PmDoc }[] = [
     { base: doc(p("one"), p("two")), mine: doc(p("one"), p("two"), p("three")), theirs: doc(p("one!"), p("two")) },
     { base: doc(p("the quick brown fox")), mine: doc(p("the slow brown fox")), theirs: doc(p("the quick brown cat")) },
@@ -134,6 +134,10 @@ test("같은 병합을 두 번 해도 중복되지 않음(멱등)", () => {
     { base: doc(p("a"), p("b")), mine: doc(p("a"), p("b!")), theirs: doc(p("a")) },
     { base: doc(p("x")), mine: doc(p("x"), p("m")), theirs: doc(p("x"), p("t")) },
     { base: doc(p("abcd")), mine: doc(p("acd")), theirs: doc(p("abd")) },
+    // 내가 앞에 넣고 상대가 바로 뒤 블록을 고침.
+    { base: doc(p("가")), mine: doc(p("새 줄"), p("가")), theirs: doc(p("가 수정")) },
+    // 내가 앞·뒤에 넣고 상대가 그 사이 블록을 다른 종류로 바꿈.
+    { base: doc(p("가")), mine: doc(p("앞"), p("가"), p("뒤")), theirs: doc(h(2, "가")) },
   ];
   for (const { base, mine, theirs } of cases) {
     const first = mergeCollabDocuments({ base, mine, theirs, baseFields: { t: "a" }, mineFields: { t: "b" }, theirsFields: { t: "a" } });
@@ -149,6 +153,141 @@ test("같은 병합을 두 번 해도 중복되지 않음(멱등)", () => {
     assert.equal(second.changed, false, JSON.stringify(texts(first.doc)));
     assert.deepEqual(second.doc, first.doc);
     assert.equal(second.conflicts, 0);
+  }
+});
+
+test("내가 넣은 블록 옆을 고친 문서 위에 다시 병합해도 그 블록이 한 번 더 생기지 않는다", () => {
+  const base = doc(p("가"));
+  const mine = doc(p("새 줄"), p("가"));
+  // 내 삽입이 들어간 뒤 누군가 옆 문단을 고친 문서.
+  const theirs = doc(p("새 줄"), p("가 수정"));
+  const result = mergeCollabDocuments({ base, mine, theirs });
+  assert.deepEqual(texts(result.doc), ["새 줄", "가 수정"]);
+  assert.equal(result.changed, false);
+  assert.equal(result.conflicts, 0);
+
+  // 여러 블록을 넣었으면 그 묶음이 그대로 이어져 있을 때만 이미 들어간 것으로 본다.
+  const pair = mergeCollabDocuments({
+    base,
+    mine: doc(p("하나"), p("둘"), p("가")),
+    theirs: doc(p("하나"), p("둘"), p("가 수정")),
+  });
+  assert.equal(pair.changed, false);
+});
+
+test("이미 들어갔는지는 넣은 자리 옆 구간에서만 본다: 멀리 있는 같은 블록이나 그대로인 이웃 블록은 치지 않는다", () => {
+  // 상대가 문서 끝에 같은 글을 넣었어도 내 삽입 자리 양옆이 그대로면 내 블록을 넣는다.
+  const far = mergeCollabDocuments({
+    base: doc(p("a"), p("b"), p("c")),
+    mine: doc(p("a"), p("같은 글"), p("b"), p("c")),
+    theirs: doc(p("a"), p("b"), p("c 수정"), p("같은 글")),
+  });
+  assert.deepEqual(texts(far.doc), ["a", "같은 글", "b", "c 수정", "같은 글"]);
+
+  // 블록을 복제한 것은 옆 블록이 고쳐져도 남는다(복제 원본은 양쪽에 그대로 있는 블록이라 옆 구간에 들지 않는다).
+  const duplicated = mergeCollabDocuments({
+    base: doc(p("x"), p("가")),
+    mine: doc(p("x"), p("x"), p("가")),
+    theirs: doc(p("x"), p("가 수정")),
+  });
+  assert.deepEqual(texts(duplicated.doc), ["x", "x", "가 수정"]);
+  const plain = mergeCollabDocuments({ base: doc(p("x")), mine: doc(p("x"), p("x")), theirs: doc(p("x")) });
+  assert.deepEqual(texts(plain.doc), ["x", "x"]);
+});
+
+test("겹친 구간의 내 블록이 맞닿은 상대 변경 구간에 이미 있으면 다시 붙이지 않는다", () => {
+  const result = mergeCollabDocuments({
+    base: doc(p("a"), p("b"), p("c")),
+    mine: doc(p("a"), p("M")),
+    theirs: doc(p("a"), p("M"), p("b"), p("c 수정")),
+  });
+  assert.deepEqual(texts(result.doc), ["a", "M", "b", "c 수정"]);
+  assert.equal(result.changed, false);
+});
+
+test("글자: 내가 넣은 글 바로 앞에 이어 쓴 문서 위에 다시 병합해도 그 글이 한 번 더 붙지 않는다", () => {
+  const base = doc(p("p1"));
+  const mine = doc(p("p1 e2"));
+  // 내 " e2"가 들어간 뒤 그 앞에 " e5"를 더 쓴 문서. mine → theirs만 견주면 " e"가 겹쳐 내 구간을 건드린 것처럼 보인다.
+  const theirs = doc(p("p1 e5 e2"));
+  const result = mergeCollabDocuments({ base, mine, theirs });
+  assert.deepEqual(texts(result.doc), ["p1 e5 e2"]);
+  assert.equal(result.changed, false);
+
+  // 같은 구간을 바꾼 것도 같다: 내가 바꿔 넣은 글이 상대 글의 끝에 그대로 있다.
+  const replaced = mergeCollabDocuments({ base: doc(p("p1 x")), mine: doc(p("p1 e2")), theirs: doc(p("p1 e5 e2")) });
+  assert.deepEqual(texts(replaced.doc), ["p1 e5 e2"]);
+  assert.equal(replaced.conflicts, 0);
+});
+
+test("글자: 내가 지우기만 한 구간을 상대가 다른 글로 바꿨으면 이미 반영된 것으로 보지 않고 둘 다 남긴다", () => {
+  const result = mergeCollabDocuments({ base: doc(p("문단35891")), mine: doc(p("문단3589")), theirs: doc(p("문단35893")) });
+  assert.deepEqual(texts(result.doc), ["문단35893", "문단3589"]);
+  assert.equal(result.conflicts, 1);
+});
+
+test("한계: 넣은 뒤 지우거나 고친 것은 처음부터 달랐던 것과 구분하지 못한다(다시 병합하면 되살아나므로 호출하는 쪽이 이미 넣은 작업을 표시한다)", () => {
+  // 내가 고친 블록을 넣은 뒤 지운 문서 = 상대가 그 블록을 지운 문서. 3-way는 내 블록을 지키는 쪽을 고른다.
+  const revived = mergeCollabDocuments({
+    base: doc(p("p0"), p("p1")),
+    mine: doc(p("p0"), p("p1 고침")),
+    theirs: doc(p("p0")),
+  });
+  assert.deepEqual(texts(revived.doc), ["p0", "p1 고침"]);
+  assert.equal(revived.conflicts, 1);
+
+  // 내가 넣은 블록을 고친 문서 = 상대가 같은 자리에 다른 블록을 넣은 문서.
+  const again = mergeCollabDocuments({
+    base: doc(p("a")),
+    mine: doc(p("a"), p("넣은 글")),
+    theirs: doc(p("a"), p("넣은 글을 고침")),
+  });
+  assert.deepEqual(texts(again.doc), ["a", "넣은 글을 고침", "넣은 글"]);
+
+  // 내가 넣은 블록을 지운 문서 = 아직 넣지 않은 문서.
+  const inserted = mergeCollabDocuments({ base: doc(p("a")), mine: doc(p("a"), p("넣은 글")), theirs: doc(p("a")) });
+  assert.deepEqual(texts(inserted.doc), ["a", "넣은 글"]);
+});
+
+test("무작위(중복 블록·빈 문단·이동 포함): 내가 새로 넣은 블록과 상대가 새로 넣은 블록은 결과에 적어도 한 번 남는다", () => {
+  let seed = 20261113;
+  const next = (n: number) => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return Math.floor((seed / 0x100000000) * n);
+  };
+  // 글자 병합이 끼지 않게 글자 전용이 아닌 블록만 쓴다.
+  const block = (name: string): PmNode => ({ type: "image", attrs: { src: name } });
+  const pool = ["가", "나", "다", "가", "", "나"];
+  let fresh = 0;
+  const make = () => (next(2) === 0 ? block(`새${fresh++}`) : block(pool[next(pool.length)]));
+  const mutate = (blocks: PmNode[], count: number) => {
+    const out = [...blocks];
+    for (let k = 0; k < count; k += 1) {
+      const kind = next(5);
+      if (kind < 2 || out.length === 0) out.splice(next(out.length + 1), 0, make());
+      else if (kind === 2) out.splice(next(out.length), 1);
+      else if (kind === 3) out.splice(next(out.length + 1), 0, out.splice(next(out.length), 1)[0]);
+      else out[next(out.length)] = make();
+    }
+    return out;
+  };
+  const key = (node: PmNode) => String(node.attrs?.src);
+  for (let n = 0; n < 4_000; n += 1) {
+    const base = Array.from({ length: 1 + next(6) }, make);
+    const mine = mutate(base, 1 + next(3));
+    const theirs = mutate(base, next(4));
+    const result = mergeCollabDocuments({ base: doc(...base), mine: doc(...mine), theirs: doc(...theirs) });
+    const baseKeys = new Set(base.map(key));
+    const resultKeys = new Set((result.doc.content ?? []).map(key));
+    for (const side of [mine, theirs]) {
+      for (const node of side) {
+        if (baseKeys.has(key(node))) continue;
+        assert.ok(
+          resultKeys.has(key(node)),
+          `${key(node)} 유실: base ${base.map(key)} / mine ${mine.map(key)} / theirs ${theirs.map(key)} → ${[...(result.doc.content ?? [])].map(key)}`,
+        );
+      }
+    }
   }
 });
 

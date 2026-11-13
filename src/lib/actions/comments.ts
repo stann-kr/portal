@@ -17,6 +17,9 @@ import { publicAuthorName } from "@/lib/public-author-name";
 import { pushMessages } from "@/lib/push/messages";
 import { notifyPush } from "@/lib/push/notify";
 
+// 댓글은 짧은 일반 글이라 문서 본문(800 KiB)보다 훨씬 작게 막는다. 글자 수는 code point로 센다.
+const COMMENT_MAX_LENGTH = 5_000;
+
 function escapeHtml(text: string): string {
   return text
     .replace(/&/g, "&amp;")
@@ -119,6 +122,7 @@ export async function createComment(
   const rawContent = formData.get("content");
   const content = typeof rawContent === "string" ? rawContent.trim() : "";
   if (!content) return { error: "댓글 내용을 입력해주세요." };
+  if ([...content].length > COMMENT_MAX_LENGTH) return { error: `댓글은 ${new Intl.NumberFormat("ko-KR").format(COMMENT_MAX_LENGTH)}자까지 쓸 수 있습니다.` };
   const operationId = resolveCreationOperationId(formData.get(CREATION_OPERATION_FIELD));
   if (!operationId) return { error: "작성 정보를 확인하지 못했습니다. 입력 내용을 보관한 뒤 새로고침해 주세요." };
 

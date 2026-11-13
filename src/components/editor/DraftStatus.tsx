@@ -2,13 +2,8 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import { AlertTriangle, Check, Loader2, RotateCcw, Trash2 } from "lucide-react";
-import { ServerDraftStatus } from "@/components/editor/ServerDraftStatus";
 import { buttonClassName } from "@/components/ui/button";
 import type { FormDraftRecoverySummary, FormDraftStatus } from "@/lib/form-draft";
-import type {
-  DocumentServerDraftSyncResult,
-  DocumentServerDraftSyncStatus,
-} from "@/lib/hooks/useDocumentServerDraftSync";
 import { formatKst } from "@/lib/kst-format";
 
 function formatSavedTime(value: Date | null): string | null {
@@ -26,12 +21,6 @@ function formatRecoveryDateTime(value: Date): string | null {
 }
 
 const QUIET_VISIBLE_LOCAL_STATUSES: ReadonlySet<FormDraftStatus> = new Set(["error", "incompatible", "conflict"]);
-const QUIET_VISIBLE_SERVER_STATUSES: ReadonlySet<DocumentServerDraftSyncStatus> = new Set([
-  "remote-available",
-  "conflict",
-  "error",
-  "offline",
-]);
 
 function DraftStateLine({
   status,
@@ -280,7 +269,6 @@ export function DraftStatus({
   recoveries = [],
   onRestoreRecovery,
   onDiscardRecovery,
-  serverSync,
   disabled = false,
   quiet = false,
 }: {
@@ -292,7 +280,6 @@ export function DraftStatus({
   recoveries?: readonly FormDraftRecoverySummary[];
   onRestoreRecovery?: (storageKey: string) => void;
   onDiscardRecovery?: (storageKey: string) => void;
-  serverSync?: DocumentServerDraftSyncResult;
   disabled?: boolean;
   /**
    * 자동 저장 문서에서는 평소의 임시 저장 진행 문구를 숨기고, 복원·충돌·오류·다른 기기 작성본처럼
@@ -323,9 +310,6 @@ export function DraftStatus({
           savedAt={savedAt}
           restored={restored}
         />
-      ) : null}
-      {serverSync && (!quiet || QUIET_VISIBLE_SERVER_STATUSES.has(serverSync.status)) ? (
-        <ServerDraftStatus sync={serverSync} disabled={disabled} />
       ) : null}
       {recoveries.length > 0 ? (
         <div className="flex flex-col gap-2 rounded-lg border border-warning-border bg-warning-muted p-3">

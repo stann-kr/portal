@@ -29,6 +29,7 @@ let lessonActions: typeof import("@/lib/actions/lessons");
 let calendarEventActions: typeof import("@/lib/actions/calendarEvents");
 let clientFactory: typeof import("@/lib/calendar-sync/client-factory");
 let googleConnection: typeof import("@/lib/calendar-sync/google-connection");
+let connectionStore: typeof import("@/lib/calendar-sync/connection-store");
 let scheduledSync: typeof import("@/lib/calendar-sync/scheduled-sync");
 let notifyRoute: typeof import("@/app/api/calendar-connections/google/notify/route");
 const previousKey = process.env.EXTERNAL_CALENDAR_ENCRYPTION_KEY;
@@ -71,6 +72,7 @@ before(async () => {
     import("@/app/api/calendar-connections/google/notify/route"),
     import("@/lib/calendar-sync/google-connection"),
   ]);
+  connectionStore = await import("@/lib/calendar-sync/connection-store");
 });
 
 after(() => {
@@ -324,6 +326,36 @@ test("매핑이 없는 학생의 쓰기 action은 원격 client를 만들지 않
   assert.equal(factoryCalls, 0);
 });
 
+test("캘린더 지정을 풀 때 포탈에서 고친 뒤 아직 보내지 못한 변경을 먼저 내보내, 다시 지정해도 일정이 한 벌만 남는다", { concurrency: false }, async (context) => {
+  const { db, remote } = await setup(context, createSession("admin-1", "admin"));
+  const start = new Date(Date.now() + 86_400_000);
+  const added = remote.remoteAdd({ title: "합주", start, end: new Date(start.getTime() + 7_200_000) });
+  const { connectionId, mappingId } = await connectAndMap(db);
+  const [imported] = await db.select().from(calendarEvents);
+  assert.equal(imported.title, "합주");
+
+  // 포탈에서 고쳤지만 그 push가 아직 원격에 닿지 않은 상태(쓰기 action의 push는 응답 뒤에 나가고 실패할 수 있다).
+  await db.update(calendarEvents).set({ title: "합주(장소 변경)" }).where(eq(calendarEvents.id, imported.id));
+  const removed = await syncActions.removeCalendarMapping(mappingId);
+  assert.ok(removed.success, removed.error);
+  assert.equal((await db.select().from(calendarMappings)).length, 0);
+  assert.equal(remote.events.get(added.remoteId)?.title, "합주(장소 변경)", "풀기 전에 밀린 수정을 원격에 보낸다");
+
+  const saved = await syncActions.saveCalendarMapping({}, form({ connectionId, studentId: "student-1", remoteCalendarId: "cal-1" }));
+  assert.ok(saved.success, saved.error);
+  assert.deepEqual((await db.select().from(calendarEvents)).map((row) => [row.id, row.title]), [[imported.id, "합주(장소 변경)"]], "포탈에 사본이 생기지 않는다");
+  assert.equal(remote.events.size, 1, "원격에도 사본이 생기지 않는다");
+
+  // 원격이 응답하지 않아도 해제는 그대로 된다(내보내기는 best-effort).
+  const [remapped] = await db.select().from(calendarMappings);
+  await db.update(calendarEvents).set({ title: "합주(다시 변경)" }).where(eq(calendarEvents.id, imported.id));
+  remote.failAll = new CalendarProviderError("provider down");
+  const removedWhileDown = await syncActions.removeCalendarMapping(remapped.id);
+  assert.ok(removedWhileDown.success, removedWhileDown.error);
+  assert.equal((await db.select().from(calendarMappings)).length, 0);
+  assert.equal(remote.events.get(added.remoteId)?.title, "합주(장소 변경)");
+});
+
 // ─── Google 변경 알림·예약 동기화 ─────────────────────────
 
 const GOOGLE_ENV = {
@@ -505,4 +537,100 @@ test("Google·iCloud 둘 다 연결한 학생은 Google 변경이 예약 동기�
   assert.equal(reflected!.portalRef, `event:${portalEvent.id}`, "포탈 일정이 iCloud 사본의 원본이다");
   assert.equal(reflected!.start.getTime(), start.getTime());
   assert.equal([...googleRemote.events.values()].length, 1, "Google에는 중복을 만들지 않는다");
+});
+
+// ─── 다른 계정으로 다시 연결 ─────────────────────────────
+
+test("iCloud를 다른 Apple ID로 다시 연결하면 이전 계정의 매핑·link·cursor를 지우고, 같은 계정이면 유지한다", { concurrency: false }, async (context) => {
+  const { db } = await setup(context, createSession("admin-1", "admin"));
+  await db.insert(lessons).values({ id: "lesson-1", studentId: "student-1", scheduledAt: new Date(Date.now() + 2 * 86_400_000) });
+  const { connectionId } = await connectAndMap(db);
+  assert.equal((await db.select().from(calendarSyncLinks)).length, 1);
+
+  // 같은 계정(대소문자·공백만 다름)은 지금처럼 매핑을 유지한다.
+  const same = await syncActions.connectICloudCalendar({}, form({ appleId: " Teacher@iCloud.com ", appPassword: APP_PASSWORD }));
+  assert.ok(same.success, same.error);
+  assert.equal((await db.select().from(calendarMappings)).length, 1);
+  assert.equal((await db.select().from(calendarSyncLinks)).length, 1);
+
+  const other = await syncActions.connectICloudCalendar({}, form({ appleId: "other@icloud.com", appPassword: APP_PASSWORD }));
+  assert.ok(other.success, other.error);
+  const [connection] = await db.select().from(calendarConnections);
+  assert.equal(connection.id, connectionId);
+  assert.equal(connection.accountLabel, "other@icloud.com");
+  assert.equal((await db.select().from(calendarMappings)).length, 0, "이전 계정 캘린더 매핑(cursor 포함)을 지운다");
+  assert.equal((await db.select().from(calendarSyncLinks)).length, 0);
+  assert.equal((await db.select().from(lessons)).length, 1, "포탈 레슨은 남는다");
+});
+
+test("Google을 다른 계정으로 다시 연결하면 이전 자격 증명으로 알림 channel을 중지하고 매핑을 지우며, 같은 계정·확인 못 한 계정이면 유지한다", { concurrency: false }, async (context) => {
+  const { db } = await setup(context, createSession("admin-1", "admin"));
+  const channels = enableGoogleChannels(context);
+  const calendars = new Map([["cal-1", new FakeCalendar()]]);
+  clientFactory.setCalendarClientFactoryForTests(async () => routeByCalendar(calendars));
+  const connectionId = await insertGoogleConnection(db);
+  const mappingId = await mapStudent(db, connectionId, "student-1", "cal-1");
+  await db.update(calendarMappings).set({ cursor: "old-cursor" }).where(eq(calendarMappings.id, mappingId));
+  assert.equal((await db.select().from(calendarPushChannels)).length, 1);
+  const ctx = { kind: "d1" as const, db: requireActiveDb() };
+  const key = Buffer.from(TEST_KEY, "base64");
+  const credentials = { refreshToken: "refresh-new", accessToken: "access-new", accessTokenExpiresAt: Date.now() + 3_600_000 };
+
+  for (const accountId of ["Teacher@gmail.com", null]) {
+    await connectionStore.upsertCalendarConnection(ctx, {
+      ownerId: "admin-1", provider: "GOOGLE", accountLabel: accountId ?? "Google 계정", accountId, credentials, key,
+    });
+    const [mapping] = await db.select().from(calendarMappings);
+    assert.equal(mapping?.cursor, "old-cursor", `${accountId ?? "확인 못 한 계정"}은 매핑·cursor를 유지한다`);
+    assert.equal(channels.stops.length, 0);
+  }
+
+  assert.equal((await db.select().from(calendarConnections))[0].accountLabel, "Teacher@gmail.com", "확인 못 한 계정은 표시 이름을 덮지 않는다");
+  const watched = channels.lastWatchFor("cal-1");
+  await connectionStore.upsertCalendarConnection(ctx, {
+    ownerId: "admin-1", provider: "GOOGLE", accountLabel: "other@gmail.com", accountId: "other@gmail.com", credentials, key,
+  });
+  assert.deepEqual(channels.stops.map((stop) => [stop.channelId, stop.resourceId]), [[watched.channelId, watched.resourceId]]);
+  assert.equal((await db.select().from(calendarPushChannels)).length, 0);
+  assert.equal((await db.select().from(calendarMappings)).length, 0);
+  const [connection] = await db.select().from(calendarConnections);
+  assert.equal(connection.id, connectionId);
+  assert.equal(connection.accountLabel, "other@gmail.com");
+  assert.equal(connection.status, "ACTIVE");
+});
+
+test("Google을 다른 계정으로 다시 연결하면 새 연결을 저장한 뒤 이전 계정 token을 폐기하고, 같은 계정·확인 못 한 계정이면 폐기하지 않으며 폐기 실패는 새 연결을 막지 않는다", { concurrency: false }, async (context) => {
+  const { db } = await setup(context, createSession("admin-1", "admin"));
+  enableGoogleChannels(context);
+  const ctx = { kind: "d1" as const, db: requireActiveDb() };
+  const key = Buffer.from(TEST_KEY, "base64");
+  const credentialsFor = (refreshToken: string) => ({ refreshToken, accessToken: "access", accessTokenExpiresAt: Date.now() + 3_600_000 });
+  const revoked: string[] = [];
+  const revokeGoogleToken = async (token: string) => {
+    revoked.push(token);
+  };
+  const connect = (account: string | null, refreshToken: string, deps = { revokeGoogleToken }) =>
+    connectionStore.upsertCalendarConnection(ctx, {
+      ownerId: "admin-1", provider: "GOOGLE", accountLabel: account ?? "Google 계정", accountId: account, credentials: credentialsFor(refreshToken), key,
+    }, deps);
+
+  await connect("teacher@gmail.com", "refresh-a1");
+  await connect(" Teacher@Gmail.com ", "refresh-a2");
+  await connect(null, "refresh-a3");
+  assert.equal(revoked.length, 0, "같은 계정·확인 못 한 계정은 이전 token을 폐기하지 않는다");
+
+  await connect("other@gmail.com", "refresh-b1");
+  assert.deepEqual(revoked, ["refresh-a3"], "이전 계정의 마지막 token만 폐기한다");
+  const [connection] = await db.select().from(calendarConnections);
+  assert.equal(connection.accountLabel, "other@gmail.com");
+  assert.equal(connection.status, "ACTIVE");
+
+  await connect("third@gmail.com", "refresh-c1", {
+    revokeGoogleToken: async () => {
+      throw new CalendarProviderError("revoke failed");
+    },
+  });
+  const [afterFailure] = await db.select().from(calendarConnections);
+  assert.equal(afterFailure.accountLabel, "third@gmail.com", "폐기 실패는 새 연결을 막지 않는다");
+  assert.equal(afterFailure.status, "ACTIVE");
 });

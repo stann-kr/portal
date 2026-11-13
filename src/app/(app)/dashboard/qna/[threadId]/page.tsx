@@ -52,6 +52,7 @@ export default async function QnaThreadPage({
           status={status}
           version={thread.version}
           deletedAt={thread.deletedAt?.toISOString() ?? null}
+          restoreLocked={thread.restoreLocked}
           replies={thread.replies.map((r: QnaReply) => ({
             ...r,
             authorRole: r.authorRole ?? null,

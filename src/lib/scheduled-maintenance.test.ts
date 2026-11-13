@@ -237,3 +237,16 @@ test("scheduled target config는 custom entry를 쓰되 Cron과 route를 활성�
   assert.doesNotMatch(config, /^\[triggers\]$/mu);
   assert.doesNotMatch(config, /^\[\[routes\]\]$/mu);
 });
+
+test("scheduled target config는 route를 뺀 wrangler.toml의 binding·placement 블록을 모두 갖는다", () => {
+  // 이 설정으로 올린 version이 실제 요청도 받으므로, 한쪽에만 있는 binding은 그 기능을 조용히 끈다.
+  const blockHeaders = (path: string) =>
+    [...readFileSync(path, "utf8").matchAll(/^\s*(\[\[?[a-z_.]+\]\]?)\s*$/gmu)]
+      .map((match) => match[1])
+      .filter((header) => header !== "[[routes]]" && header !== "[version_metadata]")
+      .sort();
+  assert.deepEqual(blockHeaders("wrangler.scheduled.toml"), blockHeaders("wrangler.toml"));
+  const scheduled = readFileSync("wrangler.scheduled.toml", "utf8");
+  assert.match(scheduled, /^\[placement\]\nmode = "smart"$/mu);
+  assert.match(scheduled, /^\[\[send_email\]\]\nname = "EMAIL"$/mu);
+});

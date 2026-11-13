@@ -633,8 +633,42 @@ export function mediaClaimStatements(input: {
 }
 
 /**
- * 본문이 참조하는 저장자 소유 READY 본문 이미지를 이 문서에 연결한다.
- * 다른 사람 이미지·이미 연결된 이미지·없는 ID는 건드리지 않으므로 저장을 막지 않는다.
+ * 본문 이미지를 올린 사람이 그 문서를 고칠 수 있는지 판단하는 SQL. 각 문서의 기존 편집 규칙과 같다
+ * (노트·게시물: 작성자 또는 관리자, `canMutateNote`·`canMutatePost`·공동 편집 쓰기 권한).
+ * 공동 편집에서는 저장을 맡은 한 사람만 저장하므로, 다른 편집자가 넣은 이미지도 연결해야 404·만료 정리가 없다.
+ * 문서 행이 아직 없는 생성 저장(게시물 INSERT 전 claim)이나 단독 작성인 Q&A 답글은 저장자 본인 이미지만 연결한다.
+ */
+const DOCUMENT_EDITOR_UPLOADER_CONDITIONS: Partial<Record<MediaResourceType, string>> = {
+  PRIVATE_NOTE: `
+    EXISTS (
+      SELECT 1 FROM private_notes AS claim_document
+      WHERE claim_document.id = ? AND claim_document.deleted_at IS NULL
+        AND (
+          claim_document.author_id = media_objects.owner_id
+          OR EXISTS (
+            SELECT 1 FROM profiles AS claim_uploader
+            WHERE claim_uploader.id = media_objects.owner_id AND claim_uploader.role = 'admin'
+          )
+        )
+    )`,
+  COMMUNITY_POST: `
+    EXISTS (
+      SELECT 1 FROM posts AS claim_document
+      WHERE claim_document.id = ? AND claim_document.deleted_at IS NULL
+        AND (
+          claim_document.author_id = media_objects.owner_id
+          OR EXISTS (
+            SELECT 1 FROM profiles AS claim_uploader
+            WHERE claim_uploader.id = media_objects.owner_id AND claim_uploader.role = 'admin'
+          )
+        )
+    )`,
+};
+
+/**
+ * 본문이 참조하는 READY 본문 이미지 중 저장자 또는 이 문서를 고칠 권한이 있는 사람이 올린 것을 이 문서에 연결한다.
+ * 권한 없는 사람의 이미지·이미 다른 문서에 연결된 이미지·없는 ID는 건드리지 않으므로 저장을 막지 않는다.
+ * 문서 쓰기와 같은 batch에서 현재 문서 행으로 판단하므로 검사와 연결 사이에 권한이 바뀌지 않는다.
  */
 export function documentImageClaimStatements(input: {
   contentHtml: string;
@@ -645,6 +679,7 @@ export function documentImageClaimStatements(input: {
 }): DocumentAtomicStatement[] {
   const mediaIds = extractDocumentImageMediaIds(input.contentHtml);
   const now = documentEpochSeconds(input.now)!;
+  const editorCondition = DOCUMENT_EDITOR_UPLOADER_CONDITIONS[input.resourceType];
   const statements: DocumentAtomicStatement[] = [];
   for (
     let offset = 0;
@@ -657,19 +692,21 @@ export function documentImageClaimStatements(input: {
         UPDATE media_objects
         SET state = 'ATTACHED', resource_type = ?, resource_id = ?,
             attached_at = ?, updated_at = ?
-        WHERE purpose = 'DOCUMENT_IMAGE' AND owner_id = ? AND state = 'READY'
+        WHERE purpose = 'DOCUMENT_IMAGE' AND state = 'READY'
           AND resource_type IS NULL AND resource_id IS NULL
           AND ready_at >= ?
           AND id IN (${batch.map(() => "?").join(", ")})
+          AND (owner_id = ?${editorCondition ? ` OR ${editorCondition}` : ""})
       `,
       params: [
         input.resourceType,
         input.resourceId,
         now,
         now,
-        input.ownerId,
         now - MEDIA_DRAFT_RETENTION_SECONDS,
         ...batch,
+        input.ownerId,
+        ...(editorCondition ? [input.resourceId] : []),
       ],
     });
   }

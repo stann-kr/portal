@@ -62,6 +62,7 @@ import type { QnaGuideAnchorWrite } from "@/lib/qna-atomic";
 import { publicAuthorName } from "@/lib/public-author-name";
 import { pushMessages } from "@/lib/push/messages";
 import { notifyPush } from "@/lib/push/notify";
+import { withRestoreLock } from "@/lib/trash-restore";
 
 /** 가이드 구간 질문의 위치 입력. 없으면 일반 질문이다. */
 async function resolveGuideAnchor(
@@ -243,8 +244,8 @@ export async function getQnaThreadsByStudent(studentId: string, query = "") {
 async function readQnaThread(threadId: string, includeTrash: boolean) {
   const session = await requireAuth();
   const isAdmin = session.user.role === "admin";
-  const [thread] = await createDb()
-    .select(THREAD_SELECT)
+  const [threadRow] = await createDb()
+    .select({ ...THREAD_SELECT, deletedById: qnaThreads.deletedById })
     .from(qnaThreads)
     .leftJoin(profiles, eq(qnaThreads.studentId, profiles.id))
     .where(
@@ -255,7 +256,8 @@ async function readQnaThread(threadId: string, includeTrash: boolean) {
       ),
     )
     .limit(1);
-  if (!thread) return null;
+  if (!threadRow) return null;
+  const thread = withRestoreLock(threadRow, { id: session.user.id, isAdmin });
   const replies = await createDb()
     .select({
       id: qnaReplies.id,
@@ -331,7 +333,7 @@ export async function getTrashedQnaThreads() {
   const session = await requireAuth();
   const isAdmin = session.user.role === "admin";
   const rows = await createDb()
-    .select(THREAD_SELECT)
+    .select({ ...THREAD_SELECT, deletedById: qnaThreads.deletedById })
     .from(qnaThreads)
     .leftJoin(profiles, eq(qnaThreads.studentId, profiles.id))
     .where(
@@ -343,7 +345,8 @@ export async function getTrashedQnaThreads() {
           ),
     )
     .orderBy(desc(qnaThreads.deletedAt));
-  return rows.map((thread) => ({
+  // 학생에게는 관리자가 지운 자기 질문도 보이되(되살릴 수는 없다), 지운 사람 id 대신 복원 잠금 여부만 내보낸다.
+  return rows.map((row) => withRestoreLock(row, { id: session.user.id, isAdmin })).map((thread) => ({
     ...thread,
     purgeEligibleAt: thread.deletedAt
       ? new Date(thread.deletedAt.getTime() + QNA_TRASH_RETENTION_SECONDS * 1000)

@@ -54,7 +54,7 @@ test("GET /api/auth/session은 active profile의 현재 session만 반환한다"
   const response = await sessionRequest(async (profileId) => {
     lookedUpIds.push(profileId);
     return PROFILE;
-  });
+  }, PROFILE.credentialFingerprint ?? undefined);
 
   assert.equal(response.status, 200);
   assert.deepEqual(lookedUpIds, [PROFILE.id]);
@@ -91,7 +91,7 @@ test("비밀번호 지문이 같은 session은 유지하고 응답에 지문을 
   assert.equal("credentialFingerprint" in body.user, false);
 });
 
-test("비밀번호가 바뀐 뒤 이전 지문의 session은 폐기하고 지문 없는 이전 token은 만료까지 허용한다", async () => {
+test("비밀번호가 바뀐 뒤 이전 지문의 session과 지문 없는 이전 token은 폐기한다", async () => {
   const stale = await sessionRequest(async () => PROFILE, credentialFingerprint("$2a$10$previous-password-hash") ?? undefined);
   assert.equal(await stale.json(), null);
   assert.match(stale.headers.get("set-cookie") ?? "", /authjs\.session-token=;.*Max-Age=0/i);
@@ -99,9 +99,10 @@ test("비밀번호가 바뀐 뒤 이전 지문의 session은 폐기하고 지문
   const passwordRemoved = await sessionRequest(async () => ({ ...PROFILE, credentialFingerprint: null }), PROFILE.credentialFingerprint ?? undefined);
   assert.equal(await passwordRemoved.json(), null);
 
+  // 지문 결합 전에 발급된 token은 갱신될 때마다 수명이 늘어 비밀번호 변경·가입 링크 재발급으로도 끊기지 않았다.
   const legacy = await sessionRequest(async () => PROFILE);
-  const legacyBody = (await legacy.json()) as { user: Record<string, unknown> } | null;
-  assert.equal(legacyBody?.user.id, PROFILE.id);
+  assert.equal(await legacy.json(), null);
+  assert.match(legacy.headers.get("set-cookie") ?? "", /authjs\.session-token=;.*Max-Age=0/i);
 });
 
 async function credentialsLoginResponse(
@@ -182,15 +183,15 @@ test("관리자가 발급한 임시 비밀번호 로그인은 새 비밀번호 �
   assert.equal(normal?.passwordChangeRequired, undefined);
 });
 
-test("임시 비밀번호 상태는 매 요청 현재 profile에서 다시 판단해 지문 없는 이전 token에도 적용한다", async () => {
+test("임시 비밀번호 상태는 매 요청 현재 profile에서 다시 판단한다", async () => {
   const temporary = { ...PROFILE, passwordChangeRequired: true };
   const current = await sessionRequest(async () => temporary, PROFILE.credentialFingerprint ?? undefined);
   const currentBody = (await current.json()) as { user: Record<string, unknown> };
   assert.equal(currentBody.user.passwordChangeRequired, true);
 
-  const legacy = await sessionRequest(async () => temporary);
-  const legacyBody = (await legacy.json()) as { user: Record<string, unknown> };
-  assert.equal(legacyBody.user.passwordChangeRequired, true);
+  const cleared = await sessionRequest(async () => PROFILE, PROFILE.credentialFingerprint ?? undefined);
+  const clearedBody = (await cleared.json()) as { user: Record<string, unknown> };
+  assert.equal("passwordChangeRequired" in clearedBody.user, false);
 });
 
 test("credentials 로그인은 검증한 비밀번호 hash의 지문을 session token에 결합한다", async () => {
@@ -247,4 +248,34 @@ test("proxy는 임시 비밀번호 token의 화면 이동을 새 비밀번호 �
     assert.equal((await request(pathname, true))?.headers.get("location") ?? null, null, pathname);
   }
   assert.equal((await request("/dashboard/student", false))?.headers.get("location") ?? null, null);
+});
+
+test("로그인 직후 발급된 cookie는 다음 session 요청에서 지문 검사를 통과한다", async () => {
+  const passwordHash = await bcrypt.hash("correct horse battery", 4);
+  const config: Omit<Parameters<typeof Auth>[1], "raw"> = {
+    ...createNodeAuthConfig(
+      async () => ({ ...PROFILE, credentialFingerprint: credentialFingerprint(passwordHash) }),
+      async () => ({ ...PROFILE, passwordHash }),
+    ),
+    secret: AUTH_SECRET,
+    basePath: "/api/auth",
+    skipCSRFCheck,
+  };
+  const login = await Auth(
+    new Request("http://localhost/api/auth/callback/credentials", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ email: PROFILE.email, password: "correct horse battery", callbackUrl: "/dashboard" }),
+    }),
+    config,
+  );
+  const sessionCookie = login.headers.getSetCookie().find((cookie) => cookie.startsWith(`${SESSION_COOKIE_NAME}=`));
+  assert.ok(sessionCookie, "로그인 성공 시 session cookie를 발급한다");
+
+  const session = await Auth(
+    new Request("http://localhost/api/auth/session", { headers: { cookie: sessionCookie.split(";")[0] } }),
+    config,
+  );
+  const body = (await session.json()) as { user: Record<string, unknown> } | null;
+  assert.equal(body?.user.id, PROFILE.id);
 });

@@ -75,6 +75,7 @@ import { mediaDeliveryPath, parseMediaUuidV4 } from "@/lib/media-lifecycle";
 import { publicAuthorName } from "@/lib/public-author-name";
 import { pushMessages } from "@/lib/push/messages";
 import { notifyPush } from "@/lib/push/notify";
+import { withRestoreLock } from "@/lib/trash-restore";
 
 const VALID_BOARD_TYPES: readonly BoardType[] = ["ANNOUNCEMENT", "GENERAL", "FEEDBACK"];
 
@@ -323,21 +324,21 @@ export async function getPostCollabSeed(postId: string) {
 export async function getPostIncludingTrash(postId: string) {
   const session = await requireAuth();
   const [post] = await createDb()
-    .select(POST_SELECT)
+    .select({ ...POST_SELECT, deletedById: posts.deletedById })
     .from(posts)
     .leftJoin(profiles, eq(posts.authorId, profiles.id))
     .where(eq(posts.id, postId))
     .limit(1);
   if (!post) return null;
   if (post.deletedAt) assertOwnerOrAdmin(session, post.authorId);
-  return post;
+  return withRestoreLock(post, { id: session.user.id, isAdmin: session.user.role === "admin" });
 }
 
 export async function getTrashedPosts() {
   const session = await requireAuth();
   const isAdmin = session.user.role === "admin";
   const rows = await createDb()
-    .select(POST_SELECT)
+    .select({ ...POST_SELECT, deletedById: posts.deletedById })
     .from(posts)
     .leftJoin(profiles, eq(posts.authorId, profiles.id))
     .where(
@@ -346,7 +347,8 @@ export async function getTrashedPosts() {
         : and(eq(posts.authorId, session.user.id!), isNotNull(posts.deletedAt)),
     )
     .orderBy(desc(posts.deletedAt));
-  return rows.map((post) => ({
+  // 학생에게는 관리자가 지운 자기 글도 보이되(되살릴 수는 없다), 지운 사람 id 대신 복원 잠금 여부만 내보낸다.
+  return rows.map((row) => withRestoreLock(row, { id: session.user.id, isAdmin })).map((post) => ({
     ...post,
     purgeEligibleAt: post.deletedAt
       ? new Date(post.deletedAt.getTime() + POST_TRASH_RETENTION_SECONDS * 1000)
@@ -829,7 +831,7 @@ export async function restorePostRevision(
       await abortCollabRestore(roomKey, operationId);
       return {
         success: false,
-        error: "수정 화면에 아직 게시하지 않은 변경이 있어 되돌리지 않았습니다. 그 변경을 게시하거나 취소한 뒤 다시 시도해 주세요.",
+        error: "수정 화면에 아직 게시하지 않은 변경이 있어 되돌리지 않았습니다. 그 변경을 게시한 뒤 다시 시도해 주세요.",
       };
     }
   }

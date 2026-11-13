@@ -9,7 +9,13 @@ export const EXTERNAL_CALENDAR_WINDOW_PAST_DAYS = 90;
 export const EXTERNAL_CALENDAR_WINDOW_FUTURE_DAYS = 365;
 export const EXTERNAL_CALENDAR_MAX_WINDOW_DAYS = 1_095;
 export const EXTERNAL_CALENDAR_MAX_EVENTS = 500;
+/** 보이는 기간(window) 안에서 돌려주는 일정 수의 상한. 넘으면 그 캘린더 전체를 거부한다(일부만 조용히 빼지 않는다). */
 export const EXTERNAL_CALENDAR_MAX_OCCURRENCES = 2_000;
+/**
+ * 반복을 펼치며 건너뛰는 횟수(window 밖의 지난 반복 포함)의 상한. 한 번의 계산이 끝없이 길어지지 않게 하는 안전장치다.
+ * 몇 년 전에 시작한 매일 반복(1년 약 365번)은 넉넉히 통과하고, 분 단위 반복처럼 비정상적으로 촘촘한 것만 걸린다.
+ */
+export const EXTERNAL_CALENDAR_MAX_SCANNED_OCCURRENCES = 50_000;
 
 export type ExternalCalendarConnectionSummary = {
   connected: boolean;
@@ -257,7 +263,40 @@ export async function parseExternalCalendarItems(input: {
     component: eventComponent,
     event: new ICAL.Event(eventComponent),
   }));
-  let expanded = 0;
+  const pushOccurrence = async (event: ICAL.Event, uid: string, occurrence: ICAL.Time) => {
+    // 예외(RECURRENCE-ID)가 시각을 옮겼을 수 있으므로 window 판정은 실제 시작 시각으로 한다.
+    const details = event.getOccurrenceDetails(occurrence);
+    if (details.item.component.getFirstPropertyValue("status") === "CANCELLED") return;
+    const start = details.startDate.toJSDate();
+    if (start < window.start || start > window.end) return;
+    const recurrenceIdentity = details.recurrenceId.toString();
+    const allDay = details.startDate.isDate;
+    result.push({
+      id: await stableExternalEventId(input.subscriptionId, uid, recurrenceIdentity),
+      type: "EVENT",
+      subType: "LESSON",
+      title: sanitizeSummary(details.item.summary),
+      date: start,
+      endDate: details.endDate ? details.endDate.toJSDate() : null,
+      metadata: {
+        allDay,
+        external: true,
+        ...(allDay
+          ? {
+              allDayStartDate: details.startDate.toString(),
+              allDayEndDate: details.endDate.toString(),
+            }
+          : {}),
+      },
+      space: { studentId: input.studentId, label: input.spaceLabel },
+      source,
+    });
+    // 세는 것은 window 안의 일정뿐이다. 지난 반복은 아래 scanned 상한만 쓴다.
+    if (result.length >= EXTERNAL_CALENDAR_MAX_OCCURRENCES) {
+      throw new ExternalCalendarError("External calendar has too many recurrences");
+    }
+  };
+  let scanned = 0;
   for (const entry of eventEntries) {
     if (entry.event.isRecurrenceException() || entry.component.getFirstPropertyValue("status") === "CANCELLED") continue;
     const uid = entry.event.uid;
@@ -266,52 +305,23 @@ export async function parseExternalCalendarItems(input: {
       .filter((candidate) => candidate.event.isRecurrenceException() && candidate.event.uid === uid)
       .map((candidate) => candidate.component);
     const event = new ICAL.Event(entry.component, { exceptions });
-    const occurrences = event.isRecurring() ? event.iterator() : null;
-    const candidates: ICAL.Time[] = [];
-    if (occurrences) {
-      while (true) {
-        if (expanded >= EXTERNAL_CALENDAR_MAX_OCCURRENCES) {
-          throw new ExternalCalendarError("External calendar has too many recurrences");
-        }
-        const next = occurrences.next();
-        if (!next) break;
-        expanded += 1;
-        if (next.toJSDate() > window.end) break;
-        candidates.push(next);
-      }
-    } else {
-      candidates.push(event.startDate);
+    if (!event.isRecurring()) {
+      await pushOccurrence(event, uid, event.startDate);
+      continue;
     }
-    for (const occurrence of candidates) {
-      const details = event.getOccurrenceDetails(occurrence);
-      if (details.item.component.getFirstPropertyValue("status") === "CANCELLED") continue;
-      const start = details.startDate.toJSDate();
-      if (start < window.start || start > window.end) continue;
-      const recurrenceIdentity = details.recurrenceId.toString();
-      const allDay = details.startDate.isDate;
-      result.push({
-        id: await stableExternalEventId(input.subscriptionId, uid, recurrenceIdentity),
-        type: "EVENT",
-        subType: "LESSON",
-        title: sanitizeSummary(details.item.summary),
-        date: start,
-        endDate: details.endDate ? details.endDate.toJSDate() : null,
-        metadata: {
-          allDay,
-          external: true,
-          ...(allDay
-            ? {
-                allDayStartDate: details.startDate.toString(),
-                allDayEndDate: details.endDate.toString(),
-              }
-            : {}),
-        },
-        space: { studentId: input.studentId, label: input.spaceLabel },
-        source,
-      });
-      if (result.length >= EXTERNAL_CALENDAR_MAX_OCCURRENCES) {
+    const occurrences = event.iterator();
+    while (true) {
+      if (scanned >= EXTERNAL_CALENDAR_MAX_SCANNED_OCCURRENCES) {
         throw new ExternalCalendarError("External calendar has too many recurrences");
       }
+      const next = occurrences.next();
+      if (!next) break;
+      scanned += 1;
+      const occurrenceStart = next.toJSDate();
+      if (occurrenceStart > window.end) break;
+      // 예외가 없는 반복의 지난 회차는 상세를 만들지 않고 건너뛴다(예외가 있으면 옮겨진 회차가 window 안일 수 있다).
+      if (exceptions.length === 0 && occurrenceStart < window.start) continue;
+      await pushOccurrence(event, uid, next);
     }
   }
   return result.sort((left, right) => left.date.getTime() - right.date.getTime());

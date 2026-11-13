@@ -13,6 +13,7 @@ import { formatTrashDeadline, formatTrashTime } from "@/components/notes/note-di
 import { QNA_STATUS_LABELS } from "@/lib/qna-status";
 import { safeReturnPath } from "@/lib/safe-return-path";
 import { getRequestNow } from "@/lib/request-time";
+import { ADMIN_TRASHED_BADGE, adminTrashedState } from "@/lib/trash-restore";
 
 export const metadata = { title: "Q&A 휴지통" };
 
@@ -43,22 +44,27 @@ export default async function QnaTrashPage({ searchParams }: {
             const expired = Boolean(
               thread.purgeEligibleAt && thread.purgeEligibleAt.getTime() <= now,
             );
+            // Stann이 지운 자기 질문: 목록에 남기되 표시를 붙이고 복원 버튼을 뺀다(서버도 학생의 복원을 거부한다).
+            const locked = thread.restoreLocked;
             return (
               <TrashRecordItem
                 key={thread.id}
                 title={thread.title}
                 href={`/dashboard/qna/${thread.id}?returnTo=${encodeURIComponent(trashHref)}`}
                 meta={`${isAdmin ? `${thread.studentName ?? "학생"} · ` : ""}${QNA_STATUS_LABELS[thread.status]} · 삭제 ${formatTrashTime(thread.deletedAt, now)}`}
+                badge={locked ? ADMIN_TRASHED_BADGE : undefined}
                 expired={expired}
                 state={expired
                   ? "복원 기한이 만료되어 영구 삭제할 수 있습니다."
-                  : `복원 가능: ${formatTrashDeadline(thread.purgeEligibleAt, now)}까지`}
+                  : locked
+                    ? adminTrashedState(formatTrashDeadline(thread.purgeEligibleAt, now))
+                    : `복원 가능: ${formatTrashDeadline(thread.purgeEligibleAt, now)}까지`}
                 actions={
                   <QnaThreadLifecycleActions
                     threadId={thread.id}
                     version={thread.version}
                     deletedAt={thread.deletedAt!.toISOString()}
-                    canRestore={!expired}
+                    canRestore={!expired && !locked}
                     canPurge={isAdmin && expired}
                     returnTo={trashHref}
                   />

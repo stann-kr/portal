@@ -21,8 +21,6 @@ import { DOCUMENT_SERVER_DRAFT_RETENTION_SECONDS } from "@/lib/document-server-d
 export const DOCUMENT_SERVER_DRAFT_QUEUE_VERSION = 1;
 export const DOCUMENT_SERVER_DRAFT_DEVICE_STORAGE_KEY_PREFIX =
   "portal:document-server-draft-device-id:";
-export const DOCUMENT_SERVER_DRAFT_QUEUE_CHANGE_EVENT =
-  "portal:document-server-draft-queue-change";
 export const DOCUMENT_SERVER_DRAFT_QUEUE_TTL_MS =
   DOCUMENT_SERVER_DRAFT_RETENTION_SECONDS * 1_000;
 

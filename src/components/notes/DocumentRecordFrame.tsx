@@ -138,6 +138,7 @@ export function TrashRecordItem({
   title,
   href,
   meta,
+  badge,
   state,
   expired,
   actions,
@@ -145,6 +146,8 @@ export function TrashRecordItem({
   title: string;
   href: string;
   meta: ReactNode;
+  /** 메타 줄 끝에 붙는 작은 표시(예: "Stann이 지움"). */
+  badge?: string;
   state: string;
   expired: boolean;
   actions: ReactNode;
@@ -158,7 +161,12 @@ export function TrashRecordItem({
         >
           {title}
         </Link>
-        <span className="text-xs text-muted-foreground">{meta}</span>
+        <span className="inline-flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+          {meta}
+          {badge ? (
+            <span className="inline-flex h-5 items-center rounded-sm bg-muted px-1.5 text-[11px] font-medium text-secondary-foreground">{badge}</span>
+          ) : null}
+        </span>
         <span className={cn("text-xs", expired ? "text-warning" : "text-secondary-foreground")}>{state}</span>
       </div>
       {actions}

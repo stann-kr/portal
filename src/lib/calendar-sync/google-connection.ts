@@ -6,11 +6,11 @@
  * 그래도 방어적으로 관리자 session을 다시 확인한다.
  */
 import { revalidatePath } from "next/cache";
-import { createDbContext, type DrizzleDb } from "@/db/client";
+import { createDbContext } from "@/db/client";
 import { requireAdmin } from "@/lib/auth-guard";
 import type { CalendarSyncFormState } from "@/lib/actions/calendarSync";
 import { isCalendarEncryptionConfigured, requireCalendarEncryptionKey } from "./client-factory";
-import { upsertCalendarConnection } from "./connection-store";
+import { GOOGLE_ACCOUNT_FALLBACK_LABEL, upsertCalendarConnection } from "./connection-store";
 import { CALENDAR_SYNC_MESSAGES, CalendarSyncConfigError } from "./engine";
 import { exchangeGoogleCode, fetchGoogleAccountLabel } from "./google";
 import { getGoogleCalendarOAuthConfig } from "./oauth-config";
@@ -44,11 +44,13 @@ export async function completeGoogleCalendarConnection(input: {
       codeVerifier,
     });
     if (!tokens.refreshToken) return { error: MESSAGES.googleNoRefresh };
-    const label = await fetchGoogleAccountLabel({ accessToken: tokens.accessToken }).catch(() => null);
-    await upsertCalendarConnection(createDbContext().db as unknown as DrizzleDb, {
+    const label = (await fetchGoogleAccountLabel({ accessToken: tokens.accessToken }).catch(() => null))?.trim() || null;
+    await upsertCalendarConnection(createDbContext(), {
       ownerId: session.user.id,
       provider: "GOOGLE",
-      accountLabel: label?.trim() || "Google 계정",
+      accountLabel: label ?? GOOGLE_ACCOUNT_FALLBACK_LABEL,
+      // 다른 Google 계정으로 다시 연결하면 이전 계정의 매핑을 정리한다(주소를 못 읽으면 판단하지 않는다).
+      accountId: label,
       credentials: {
         refreshToken: tokens.refreshToken,
         accessToken: tokens.accessToken,

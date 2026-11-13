@@ -163,6 +163,8 @@ let saveQnaThread: typeof import("@/lib/actions/qna").createQnaThread = async ()
 let saveQnaInline: typeof import("@/lib/actions/qna").createQnaThreadInline = async () => ({});
 let saveNewPost: typeof import("@/lib/actions/posts").createPost = async () => ({});
 let savePostEdit: typeof import("@/lib/actions/posts").updatePostContent = async () => ({});
+const POST_SEED_NOT_READY = async () => { throw new Error("게시본 조회를 준비하지 않은 테스트입니다."); };
+let loadPostSeed: typeof import("@/lib/actions/posts").getPostCollabSeed = POST_SEED_NOT_READY;
 let changeQnaStatus: typeof import("@/lib/actions/qna").updateThreadStatus = async () => ({ success: true, currentRevision: 2 });
 let changeQnaLifecycle: typeof import("@/lib/actions/qna").trashQnaThread = async () => ({ success: true, currentRevision: 2 });
 let notePageRole: "student" | "admin" = "student";
@@ -217,6 +219,7 @@ mock.module("@/lib/actions/posts", {
       return saveNewPost(...args);
     },
     updatePostContent: (...args: Parameters<typeof savePostEdit>) => savePostEdit(...args),
+    getPostCollabSeed: (...args: Parameters<typeof loadPostSeed>) => loadPostSeed(...args),
   },
 });
 mock.module("@/lib/actions/categories", {
@@ -645,7 +648,7 @@ test("Q&A 검색은 본문 미리보기·빈 결과에서도 검색과 상태·�
 test("Q&A 휴지통은 전달받은 검색·상태 문맥을 상세 왕복과 목록 복귀에 사용한다", { concurrency: false }, async (context) => {
   const parent = "/dashboard/admin/students/student-1?tab=qna&qnaStatus=ANSWERED&qnaQuery=EQ#records";
   notePageRole = "admin";
-  qnaTrashPageData = [{ id: "trashed-thread", title: "보존된 대화", status: "ANSWERED", version: 4, createdAt: null, updatedAt: null, studentId: "student-1", studentName: "학생", studentEmail: null, deletedAt: new Date(), purgeEligibleAt: new Date(Date.now() + 86400000) }];
+  qnaTrashPageData = [{ id: "trashed-thread", title: "보존된 대화", status: "ANSWERED", version: 4, createdAt: null, updatedAt: null, studentId: "student-1", studentName: "학생", studentEmail: null, restoreLocked: false, deletedAt: new Date(), purgeEligibleAt: new Date(Date.now() + 86400000) }];
   context.after(() => { qnaTrashPageData = []; notePageRole = "student"; });
   const page = (returnTo: string) => QnaTrashPage({ searchParams: Promise.resolve({ returnTo }) });
   const harness = await renderForm(context, <div />);
@@ -660,6 +663,26 @@ test("Q&A 휴지통은 전달받은 검색·상태 문맥을 상세 왕복과 �
   assert.equal(harness.container.querySelector<HTMLAnchorElement>("header a")?.getAttribute("href"), parent);
   await harness.rerender(await page("https://outside.example"));
   assert.equal(harness.container.querySelector<HTMLAnchorElement>("header a")?.getAttribute("href"), "/dashboard/qna");
+});
+
+test("학생 Q&A 휴지통은 Stann이 지운 질문에 표시를 붙이고 복원 버튼을 빼 둔다", { concurrency: false }, async (context) => {
+  const base = { status: "ANSWERED" as const, version: 4, createdAt: null, updatedAt: null, studentId: "student-1", studentName: "학생", studentEmail: null, deletedAt: new Date(), purgeEligibleAt: new Date(Date.now() + 864000000) };
+  qnaTrashPageData = [
+    { ...base, id: "own-trashed", title: "직접 지운 질문", restoreLocked: false },
+    { ...base, id: "admin-trashed", title: "Stann이 지운 질문", restoreLocked: true },
+  ];
+  context.after(() => { qnaTrashPageData = []; });
+  const harness = await renderForm(context, <div />);
+  await harness.rerender(await QnaTrashPage({ searchParams: Promise.resolve({}) }));
+  const rows = [...harness.container.querySelectorAll("li")];
+  const own = rows.find((row) => row.textContent?.includes("직접 지운 질문"))!;
+  const locked = rows.find((row) => row.textContent?.includes("Stann이 지운 질문"))!;
+  assert.equal(own.textContent?.includes("Stann이 지움"), false);
+  assert.equal(own.querySelectorAll("button").length, 1, "직접 지운 질문에는 복원 버튼이 있다.");
+  assert.equal(locked.textContent?.includes("Stann이 지움"), true);
+  assert.match(locked.textContent ?? "", /Stann이 지운 글은 Stann만 되살릴 수 있습니다\. .+까지 보관됩니다\./u);
+  assert.equal(locked.querySelectorAll("button").length, 0, "Stann이 지운 질문에는 복원 버튼이 없다.");
+  assert.ok(locked.querySelector("a"), "상세로 가는 링크는 남는다.");
 });
 
 test("관리자 노트 작성 화면의 휴지통 링크는 대상 학생과 검색 복귀 위치를 유지한다", { concurrency: false }, async (context) => {
@@ -1217,6 +1240,50 @@ test("종료된 Q&A의 답글 입력은 잠기고 저장 단축키와 등록이 
 
 
 
+function closedThreadScreen(isAdmin: boolean) {
+  return (
+    <ThreadDetailClient
+      actorId={isAdmin ? "closed-reply-admin" : "closed-reply-student"}
+      createdAt="2026-08-05T00:00:00.000Z"
+      isAdmin={isAdmin}
+      replies={[]}
+      returnTo="/dashboard/qna"
+      status="CLOSED"
+      version={1}
+      deletedAt={null}
+      studentName="학생"
+      threadId={isAdmin ? "closed-reply-admin-thread" : "closed-reply-student-thread"}
+      title="종료된 질문"
+    />
+  );
+}
+
+test("종료된 Q&A에서 학생은 답변 칸 없이 종료 안내만 본다", { concurrency: false }, async (context) => {
+  const { container } = await renderForm(context, closedThreadScreen(false));
+  await act(async () => { await waitForRealTime(50); });
+  assert.equal(container.querySelector("form"), null, "학생은 종료된 질문에 답변 칸이 없다.");
+  assert.equal(container.textContent?.includes("종료된 스레드입니다."), true);
+  assert.equal(container.querySelector('[role="note"]'), null);
+});
+
+test("종료된 Q&A에서 Stann은 답변 칸이 열려 있어 바로 등록한다", { concurrency: false }, async (context) => {
+  let replyCalls = 0;
+  saveQnaReply = async () => { replyCalls += 1; return { success: true }; };
+  context.after(() => { saveQnaReply = async () => ({}); });
+  const admin = await renderForm(context, closedThreadScreen(true));
+  const { container } = admin;
+  assert.equal(container.textContent?.includes("종료된 스레드입니다."), false, "Stann에게는 종료 안내 대신 답변 칸을 보인다.");
+  const notes = [...container.querySelectorAll('[role="note"]')].map((note) => note.textContent);
+  assert.ok(notes.length > 0 && notes.every((text) => text === '종료된 질문입니다. 답변을 등록하면 "답변 완료"로 다시 열립니다.'));
+  assert.equal(container.textContent?.includes("미전송 초안"), false);
+  await writeCollabBody(admin, "종료된 질문에 다는 답변");
+  const editor = container.querySelector<HTMLTextAreaElement>(BODY_FIELD)!;
+  assert.equal(editor.disabled, false, "Stann의 답변 칸은 잠기지 않는다.");
+  await waitForCondition(() => !submitControl(container).disabled, "답변 등록 버튼이 켜져야 합니다.");
+  await act(async () => submitControl(container).click());
+  assert.equal(replyCalls, 1, "종료된 질문에도 Stann의 답변은 등록 요청을 보낸다.");
+});
+
 /** 실제 시간이 걸리는 자동 저장(1.5초 idle)을 기다린다. */
 async function waitForRealTime(ms: number): Promise<void> {
   await act(async () => {
@@ -1412,6 +1479,103 @@ test("게시물 수정 form은 mixsetLinkUrl prop이 없으면 링크 칸 없이
   await act(async () => submitControl(harness.container).click());
   assert.equal(requests.length, 1);
   assert.equal("mixsetLinkUrl" in requests[0]!, false, "링크 칸이 없으면 매체를 바꾸지 않도록 칸을 보내지 않는다.");
+});
+
+test("게시물 수정 취소는 함께 쓰는 작업본을 되돌리지 않고 화면만 닫는다", { concurrency: false }, async (context) => {
+  const post = { id: "post-cancel-close-only", title: "처음 제목", contentHtml: "<p>처음 본문</p>", version: 1 };
+  let cancelled = 0;
+  const harness = await renderForm(context, <PostEditForm actorId="post-cancel-actor" post={post} mixsetLinkUrl={null} onCancel={() => { cancelled += 1; }} onSaved={() => undefined} />);
+  const { container } = harness;
+  await waitUntil(() => Boolean(container.querySelector(BODY_FIELD)) && !container.querySelector<HTMLTextAreaElement>(BODY_FIELD)?.disabled, 3000, "수정 작업본이 열려야 합니다.");
+  // 작업본은 다른 기기·다른 편집자와 함께 쓴다. 이 화면에서 넣었든 다른 화면에서 넣었든 같은 문서에 있다.
+  typeInto(harness, container.querySelector<HTMLTextAreaElement>(BODY_FIELD)!, "다른 기기에서 넣은 문장");
+  await act(async () => { await waitForRealTime(50); });
+
+  const cancelButton = [...container.querySelectorAll<HTMLButtonElement>('button[type="button"]')].find((button) => button.textContent?.trim() === "취소");
+  assert.ok(cancelButton, "취소 버튼이 있어야 합니다.");
+  await act(async () => cancelButton.click());
+  await act(async () => { await waitForRealTime(50); });
+
+  assert.equal(cancelled, 1, "취소는 화면을 닫는다.");
+  assert.equal(container.querySelector<HTMLTextAreaElement>(BODY_FIELD)?.value, "다른 기기에서 넣은 문장", "작업본 내용은 그대로 남는다.");
+});
+
+const REVERT_LABEL = "게시된 글로 되돌리기";
+function buttonsByText(container: Element, text: string): HTMLButtonElement[] {
+  return [...container.querySelectorAll<HTMLButtonElement>("button")].filter((button) => button.textContent?.trim() === text);
+}
+
+/** 되돌리기 테스트 공통: 수정 화면을 열고 작업본 본문을 바꾼 뒤 "게시된 글로 되돌리기" 확인을 연다. */
+async function editPostThenOpenRevert(context: Parameters<typeof renderForm>[0], post: { id: string; title: string; contentHtml: string; version: number }) {
+  let cancelled = 0;
+  const harness = await renderForm(context, <PostEditForm actorId={`${post.id}-actor`} post={post} mixsetLinkUrl={null} onCancel={() => { cancelled += 1; }} onSaved={() => undefined} />);
+  const { container } = harness;
+  await waitUntil(() => Boolean(container.querySelector(BODY_FIELD)) && !container.querySelector<HTMLTextAreaElement>(BODY_FIELD)?.disabled, 3000, "수정 작업본이 열려야 합니다.");
+  await act(async () => { await waitForRealTime(300); });
+  assert.equal(buttonsByText(container, REVERT_LABEL).length, 0, "게시본과 같으면 되돌리기 버튼이 없다.");
+  typeInto(harness, container.querySelector<HTMLTextAreaElement>(BODY_FIELD)!, "게시하지 않은 수정");
+  await waitUntil(() => buttonsByText(container, REVERT_LABEL).length === 1, 3000, "게시한 뒤에 고친 내용이 있으면 되돌리기 버튼이 보여야 합니다.");
+  await act(async () => buttonsByText(container, REVERT_LABEL)[0]!.click());
+  return {
+    harness,
+    container,
+    body: () => container.querySelector<HTMLTextAreaElement>(BODY_FIELD)?.value,
+    title: () => container.querySelector<HTMLInputElement>('[name="title"]')?.value,
+    cancelled: () => cancelled,
+  };
+}
+
+test("게시된 글로 되돌리기는 확인을 거쳐 작업본을 최신 게시본으로 맞추고 수정 화면에 머문다", { concurrency: false }, async (context) => {
+  const post = { id: "post-revert-latest", title: "처음 제목", contentHtml: "<p>처음 본문</p>", version: 1 };
+  // 이 화면을 연 뒤 다른 기기가 v2를 게시했다. 옛 v1으로 되돌리면 다음 저장이 v2를 덮는다.
+  let seedReads = 0;
+  loadPostSeed = (async () => {
+    seedReads += 1;
+    return { ...post, title: "다른 기기가 게시한 제목", contentHtml: "<p>다른 기기가 게시한 본문</p>", version: 2, lifecycle: 0 };
+  }) as unknown as typeof loadPostSeed;
+  context.after(() => { loadPostSeed = POST_SEED_NOT_READY; });
+
+  const view = await editPostThenOpenRevert(context, post);
+  const { container } = view;
+  const panel = container.querySelector<HTMLElement>('[role="group"]');
+  assert.ok(panel, "확인 영역이 열려야 합니다.");
+  assert.equal(panel.textContent?.includes("함께 고치던 사람이 넣은 내용도 사라지며 되살릴 수 없습니다."), true);
+  const panelCancel = [...panel.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "취소");
+  assert.equal(view.harness.browserWindow.document.activeElement, panelCancel, "확인이 열리면 취소에 초점을 둔다.");
+  const footerCancel = buttonsByText(container, "취소").find((button) => !panel.contains(button));
+  assert.equal(footerCancel?.disabled, true, "확인이 열린 동안 아래 취소는 잠근다.");
+  assert.equal((submitControl(container) as HTMLButtonElement).disabled, true, "확인이 열린 동안 저장은 잠근다.");
+
+  // 확인에서 취소하면 아무것도 바뀌지 않는다.
+  await act(async () => panelCancel!.click());
+  assert.equal(container.querySelector('[role="group"]'), null);
+  assert.equal(seedReads, 0, "확인 전에는 게시본을 읽지 않는다.");
+  assert.equal(view.body(), "게시하지 않은 수정");
+
+  await act(async () => buttonsByText(container, REVERT_LABEL)[0]!.click());
+  const confirmButton = buttonsByText(container.querySelector<HTMLElement>('[role="group"]')!, REVERT_LABEL)[0];
+  assert.ok(confirmButton);
+  await act(async () => confirmButton.click());
+  await waitUntil(() => view.body() === "다른 기기가 게시한 본문", 3000, "작업본 본문이 최신 게시본이 되어야 합니다.");
+  assert.equal(view.title(), "다른 기기가 게시한 제목", "작업본 제목도 최신 게시본을 따른다.");
+  await waitUntil(() => buttonsByText(container, REVERT_LABEL).length === 0, 3000, "되돌린 뒤에는 버튼과 확인 영역이 사라져야 합니다.");
+  assert.equal(view.cancelled(), 0, "되돌린 뒤에도 수정 화면에 머문다.");
+  assert.equal(view.harness.browserWindow.document.activeElement, container.querySelector('[name="title"]'), "사라진 버튼 대신 제목으로 초점을 옮긴다.");
+});
+
+test("게시된 글로 되돌리기는 최신 게시본을 읽지 못하면 작업본을 그대로 두고 알린다", { concurrency: false }, async (context) => {
+  const post = { id: "post-revert-offline", title: "처음 제목", contentHtml: "<p>처음 본문</p>", version: 1 };
+  loadPostSeed = async () => { throw new Error("offline"); };
+  context.after(() => { loadPostSeed = POST_SEED_NOT_READY; });
+
+  const view = await editPostThenOpenRevert(context, post);
+  const { container } = view;
+  await act(async () => buttonsByText(container.querySelector<HTMLElement>('[role="group"]')!, REVERT_LABEL)[0]!.click());
+  await waitUntil(() => container.querySelector('[role="group"]') === null, 3000, "확인 영역이 닫혀야 합니다.");
+
+  assert.equal(view.body(), "게시하지 않은 수정", "옛 게시본으로 되돌리지 않고 작업본을 남긴다.");
+  assert.equal(container.textContent?.includes("게시된 글을 읽지 못해 되돌리지 않았습니다."), true);
+  assert.equal(buttonsByText(container, REVERT_LABEL).length, 1, "다시 시도할 수 있게 버튼이 남는다.");
 });
 
 test("게시물 수정 form은 링크 게시물에 링크 칸을 두고 검증·제출에 포함한다", { concurrency: false }, async (context) => {

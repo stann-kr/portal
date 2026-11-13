@@ -2076,6 +2076,45 @@ test("Q&A event 이력과 휴지통 수명주기는 답변을 보존하고 만�
   assert.equal((await db.select().from(qnaThreads)).length, 0);
 });
 
+test("관리자가 지운 게시물·질문은 학생 휴지통과 상세에 복원 잠금으로 보이고 지운 사람 id는 내보내지 않는다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context);
+  await seedProfile(db, "student-1");
+  await seedProfile(db, "admin-1", "admin");
+  const created = await postActions.createPost({}, createPostForm(crypto.randomUUID(), "관리자가 지울 글", "<p>본문</p>"));
+  const ownPost = await postActions.createPost({}, createPostForm(crypto.randomUUID(), "직접 지울 글", "<p>본문</p>"));
+  const thread = await qnaActions.createQnaThread({}, createDocumentForm("관리자가 지울 질문", "<p>질문</p>", crypto.randomUUID()));
+  assert.ok(created.postId && ownPost.postId && thread.thread?.id);
+  assert.equal((await postActions.trashPost(ownPost.postId, crypto.randomUUID(), 1)).success, true);
+
+  activeSession = createSession("admin-1", "admin");
+  assert.equal((await postActions.trashPost(created.postId, crypto.randomUUID(), 1)).success, true);
+  assert.equal((await qnaActions.trashQnaThread(thread.thread.id, crypto.randomUUID(), 1)).success, true);
+  // 관리자 화면: 모든 글을 되살릴 수 있다.
+  assert.deepEqual((await postActions.getTrashedPosts()).map((post) => post.restoreLocked), [false, false]);
+  assert.equal((await qnaActions.getTrashedQnaThreads())[0]?.restoreLocked, false);
+
+  activeSession = createSession("student-1", "student");
+  const trashedPosts = await postActions.getTrashedPosts();
+  assert.deepEqual(
+    Object.fromEntries(trashedPosts.map((post) => [post.title, post.restoreLocked])),
+    { "관리자가 지울 글": true, "직접 지울 글": false },
+    "학생 휴지통에는 관리자가 지운 자기 글도 남되 복원 잠금으로 보인다.",
+  );
+  const trashedThreads = await qnaActions.getTrashedQnaThreads();
+  assert.equal(trashedThreads.length, 1);
+  assert.equal(trashedThreads[0]!.restoreLocked, true);
+  const postDetail = await postActions.getPostIncludingTrash(created.postId);
+  const threadDetail = await qnaActions.getQnaThreadIncludingTrash(thread.thread.id);
+  assert.equal(postDetail?.restoreLocked, true);
+  assert.equal(threadDetail?.restoreLocked, true);
+  for (const row of [...trashedPosts, ...trashedThreads, postDetail!, threadDetail!]) {
+    assert.equal("deletedById" in row, false, "지운 사람 id는 화면으로 내보내지 않는다.");
+  }
+  // 화면 표시와 서버 규칙이 같다: 잠긴 글은 학생이 되살리지 못한다.
+  const refused = await postActions.restorePost(created.postId, crypto.randomUUID(), 2);
+  assert.notEqual(refused.success, true);
+});
+
 test("다른 사용자는 게시물이 이미 같은 payload여도 편집 성공을 회수할 수 없다", { concurrency: false }, async (context) => {
   const { db } = await setupDatabase(context, createSession("student-2", "student"));
   await seedProfile(db, "student-1");
@@ -4956,4 +4995,21 @@ test("게시물·댓글·Q&A 응답은 다른 사용자의 이메일 전체를 �
   const wire = JSON.stringify([post, page, postComments, adminThread?.replies]);
   assert.equal(wire.includes("private.example"), false);
   assert.equal(wire.includes("authorEmail"), false);
+});
+
+test("댓글은 5,000자까지만 저장하고 넘으면 쓰기 전에 거부한다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context, createSession("student-1", "student"));
+  await seedProfile(db, "student-1");
+  const created = await postActions.createPost({}, createPostForm(crypto.randomUUID(), "댓글 길이 확인", "<p>본문</p>"));
+  const postId = created.postId;
+  assert.ok(postId);
+
+  // 글자 수는 이모지 같은 surrogate pair도 한 글자로 센다.
+  const atLimit = await commentActions.createComment(postId, {}, createCommentForm(crypto.randomUUID(), "🎧".repeat(5_000)));
+  assert.equal(atLimit.success, true);
+
+  const tooLong = await commentActions.createComment(postId, {}, createCommentForm(crypto.randomUUID(), "가".repeat(5_001)));
+  assert.equal(tooLong.success, undefined);
+  assert.match(tooLong.error ?? "", /5,000자/u);
+  assert.equal((await db.select().from(comments).where(eq(comments.postId, postId))).length, 1);
 });
