@@ -3,7 +3,7 @@
  * @description 관리자 전용 수업 메모의 저장·이력 규칙. 학생과 함께 쓰는 노트와 다른 표에 두고,
  * 한 사람(Stann)이 쓰므로 공동 편집 대신 version 비교로 다른 기기의 덮어쓰기만 막는다.
  */
-import { and, desc, eq, isNull, lt, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import type { DrizzleDb } from "@/db/client";
 import { instructorMemoRevisions, instructorMemos } from "@/db/schema";
 
@@ -12,11 +12,14 @@ export const INSTRUCTOR_MEMO_MAX_HTML_LENGTH = 200_000;
 export const INSTRUCTOR_MEMO_REVISION_RETENTION = {
   /** 이 시간 안의 저장은 마지막 이력 한 칸을 덮어쓴다. */
   coalesceSeconds: 10 * 60,
-  /** 이보다 오래된 이력은 지운다(최신 한 칸은 남김). */
+  /** 이보다 오래된 이력은 지운다(최신 칸과 그 바로 앞 칸은 남김). */
   retainSeconds: 90 * 24 * 60 * 60,
   /** 메모 하나에 남기는 이력 수의 상한. */
   maxCount: 200,
 } as const;
+
+/** 정리할 때 기간과 관계없이 남기는 최신 칸 수: 지금 내용과 그 바로 앞 내용. */
+const INSTRUCTOR_MEMO_REVISION_ALWAYS_KEPT = 2;
 
 export type InstructorMemoTarget = { studentId: string; noteId: string | null };
 
@@ -119,7 +122,7 @@ export async function saveInstructorMemo(
   return { ok: true, memo };
 }
 
-/** 저장된 내용을 이력에 남긴다. 10분 안에 이어진 저장은 마지막 칸을 덮어쓰고, 오래된 칸은 정리한다. */
+/** 저장된 내용을 이력에 남긴다. 10분 안에 이어진 저장은 마지막 칸을 덮어쓰고, 오래된 칸은 정리한다(바로 앞 칸은 남김). */
 async function recordInstructorMemoRevision(
   db: DrizzleDb,
   input: { memo: InstructorMemoHead; now: Date },
@@ -152,15 +155,18 @@ async function recordInstructorMemoRevision(
     createdAt: input.now,
     updatedAt: input.now,
   });
-  // 방금 만든 칸은 남기고, 보관 기간이 지났거나 상한을 넘은 칸을 지운다.
-  await db
-    .delete(instructorMemoRevisions)
-    .where(
-      and(
-        eq(instructorMemoRevisions.memoId, input.memo.id),
-        lt(instructorMemoRevisions.createdAt, new Date(nowMs - retention.retainSeconds * 1000)),
-      ),
-    );
+  // 보관 기간이 지났거나 상한을 넘은 칸을 지운다. 방금 만든 칸과 그 바로 앞 칸(덮어쓰기 전 내용)은
+  // 나이와 관계없이 남겨, 오래 둔 메모를 실수로 덮어도 되살릴 수 있게 한다.
+  const cutoffSeconds = Math.floor((nowMs - retention.retainSeconds * 1000) / 1000);
+  await db.run(sql`DELETE FROM instructor_memo_revisions
+    WHERE memo_id = ${input.memo.id}
+      AND created_at < ${cutoffSeconds}
+      AND id NOT IN (
+        SELECT kept.id FROM instructor_memo_revisions AS kept
+        WHERE kept.memo_id = ${input.memo.id}
+        ORDER BY kept.created_at DESC, kept.revision_number DESC
+        LIMIT ${INSTRUCTOR_MEMO_REVISION_ALWAYS_KEPT}
+      )`);
   await db.run(sql`DELETE FROM instructor_memo_revisions
     WHERE memo_id = ${input.memo.id}
       AND id NOT IN (
