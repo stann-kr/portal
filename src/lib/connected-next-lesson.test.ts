@@ -67,6 +67,27 @@ test("연결된 캘린더의 가장 가까운 앞으로의 일정을 학생별�
   assert.equal(result.has("plain"), false);
 });
 
+test("동기화 일정도 90일보다 먼 것은 다음 레슨으로 보지 않는다", async (context) => {
+  const db = createSqliteTestDb(context);
+  insertProfile(db, "admin-1", "admin");
+  for (const id of ["far", "edge"]) insertProfile(db, id, "student");
+  insertConnection(db, "conn-1", "GOOGLE");
+  insertMapping(db, "map-far", "conn-1", "far", "cal-far");
+  insertMapping(db, "map-edge", "conn-1", "edge", "cal-edge");
+  const insertLinkedEvent = (id: string, userId: string, mapping: string, iso: string) => {
+    db.run("INSERT INTO calendar_events (id, user_id, title, start_time) VALUES (?, ?, '일정', ?)", id, userId, epoch(iso));
+    db.run("INSERT INTO calendar_sync_links (id, mapping_id, local_kind, local_id, local_fingerprint) VALUES (?, ?, 'EVENT', ?, 'fp')", `l-${id}`, mapping, id);
+  };
+  // NOW(2026-11-03T03:00Z)에서 90일 뒤는 2027-02-01T03:00Z다.
+  insertLinkedEvent("far-200", "far", "map-far", "2027-05-22T10:00:00Z");
+  insertLinkedEvent("edge-in", "edge", "map-edge", "2027-02-01T02:00:00Z");
+  insertLinkedEvent("edge-out", "edge", "map-edge", "2027-02-01T04:00:00Z");
+
+  const result = await queryConnectedNextEvents(db.ctx.db as unknown as DrizzleDb, NOW, async () => []);
+  assert.equal(result.has("far"), false, "반복 사본·iCal 구독과 같은 90일 창을 쓴다");
+  assert.equal(result.get("edge")?.toISOString(), "2027-02-01T02:00:00.000Z");
+});
+
 test("공개 iCal을 읽지 못한 학생은 건너뛰고 나머지는 그대로 센다", async (context) => {
   const db = createSqliteTestDb(context);
   insertProfile(db, "subscribed", "student");

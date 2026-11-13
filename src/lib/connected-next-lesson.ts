@@ -58,6 +58,7 @@ export async function queryConnectedNextEvents(
         eq(calendarSyncLinks.localKind, "EVENT"),
         ne(calendarSyncLinks.localFingerprint, DELETED_FINGERPRINT),
         gte(calendarEvents.startTime, referenceTime),
+        lt(calendarEvents.startTime, windowEnd),
       ))
       .groupBy(calendarMappings.studentId),
     db
