@@ -44,6 +44,7 @@ import { useDocumentSaveShortcut } from "@/lib/hooks/useDocumentSaveShortcut";
 import { CREATION_OPERATION_FIELD, createCreationOperationId } from "@/lib/creation-operation";
 import { CreationConflictActions } from "@/components/editor/CreationConflictActions";
 import { QNA_LIFECYCLE_LABELS, useQnaThreadLifecycle, type QnaLifecycleKind } from "@/components/qna/QnaThreadLifecycleActions";
+import { ADMIN_TRASHED_DETAIL_NOTE } from "@/lib/trash-restore";
 import { abandonMediaUpload } from "@/lib/actions/upload";
 import { formatKst, formatKstShortDate } from "@/lib/kst-format";
 import { cn } from "@/lib/utils";
@@ -76,6 +77,8 @@ interface ThreadDetailClientProps {
   status: QnaStatus;
   version: number;
   deletedAt: string | null;
+  /** Stann이 휴지통으로 보낸 질문이라 보는 학생이 되살릴 수 없다(서버 복원 규칙과 같은 값). */
+  restoreLocked?: boolean;
   replies: Reply[];
   isAdmin: boolean;
   /** 지금 사람이 이 질문을 쓴 학생이면 true(해결됨으로 닫기·다시 열기). */
@@ -98,6 +101,7 @@ function ThreadDetailContent({
   status,
   version,
   deletedAt,
+  restoreLocked = false,
   replies: initialReplies,
   isAdmin,
   isAuthor = false,
@@ -216,7 +220,7 @@ function ThreadDetailContent({
     threadId,
     version: currentVersion,
     deletedAt,
-    canRestore: true,
+    canRestore: !restoreLocked,
     canPurge: isAdmin,
     returnTo,
   });
@@ -367,6 +371,7 @@ function ThreadDetailContent({
       {isTrashed ? (
         <p role="status" className="rounded-lg border border-warning-border bg-warning-muted p-4 text-body text-foreground">
           휴지통에 있는 Q&amp;A입니다. 답변과 상태 변경 이력은 함께 보존되며 복원 전에는 새 답변을 등록할 수 없습니다.
+          {restoreLocked ? ` ${ADMIN_TRASHED_DETAIL_NOTE}` : null}
         </p>
       ) : null}
 

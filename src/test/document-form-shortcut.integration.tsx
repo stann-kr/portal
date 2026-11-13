@@ -648,7 +648,7 @@ test("Q&A 검색은 본문 미리보기·빈 결과에서도 검색과 상태·�
 test("Q&A 휴지통은 전달받은 검색·상태 문맥을 상세 왕복과 목록 복귀에 사용한다", { concurrency: false }, async (context) => {
   const parent = "/dashboard/admin/students/student-1?tab=qna&qnaStatus=ANSWERED&qnaQuery=EQ#records";
   notePageRole = "admin";
-  qnaTrashPageData = [{ id: "trashed-thread", title: "보존된 대화", status: "ANSWERED", version: 4, createdAt: null, updatedAt: null, studentId: "student-1", studentName: "학생", studentEmail: null, deletedAt: new Date(), purgeEligibleAt: new Date(Date.now() + 86400000) }];
+  qnaTrashPageData = [{ id: "trashed-thread", title: "보존된 대화", status: "ANSWERED", version: 4, createdAt: null, updatedAt: null, studentId: "student-1", studentName: "학생", studentEmail: null, restoreLocked: false, deletedAt: new Date(), purgeEligibleAt: new Date(Date.now() + 86400000) }];
   context.after(() => { qnaTrashPageData = []; notePageRole = "student"; });
   const page = (returnTo: string) => QnaTrashPage({ searchParams: Promise.resolve({ returnTo }) });
   const harness = await renderForm(context, <div />);
@@ -663,6 +663,26 @@ test("Q&A 휴지통은 전달받은 검색·상태 문맥을 상세 왕복과 �
   assert.equal(harness.container.querySelector<HTMLAnchorElement>("header a")?.getAttribute("href"), parent);
   await harness.rerender(await page("https://outside.example"));
   assert.equal(harness.container.querySelector<HTMLAnchorElement>("header a")?.getAttribute("href"), "/dashboard/qna");
+});
+
+test("학생 Q&A 휴지통은 Stann이 지운 질문에 표시를 붙이고 복원 버튼을 빼 둔다", { concurrency: false }, async (context) => {
+  const base = { status: "ANSWERED" as const, version: 4, createdAt: null, updatedAt: null, studentId: "student-1", studentName: "학생", studentEmail: null, deletedAt: new Date(), purgeEligibleAt: new Date(Date.now() + 864000000) };
+  qnaTrashPageData = [
+    { ...base, id: "own-trashed", title: "직접 지운 질문", restoreLocked: false },
+    { ...base, id: "admin-trashed", title: "Stann이 지운 질문", restoreLocked: true },
+  ];
+  context.after(() => { qnaTrashPageData = []; });
+  const harness = await renderForm(context, <div />);
+  await harness.rerender(await QnaTrashPage({ searchParams: Promise.resolve({}) }));
+  const rows = [...harness.container.querySelectorAll("li")];
+  const own = rows.find((row) => row.textContent?.includes("직접 지운 질문"))!;
+  const locked = rows.find((row) => row.textContent?.includes("Stann이 지운 질문"))!;
+  assert.equal(own.textContent?.includes("Stann이 지움"), false);
+  assert.equal(own.querySelectorAll("button").length, 1, "직접 지운 질문에는 복원 버튼이 있다.");
+  assert.equal(locked.textContent?.includes("Stann이 지움"), true);
+  assert.match(locked.textContent ?? "", /Stann이 지운 글은 Stann만 되살릴 수 있습니다\. .+까지 보관됩니다\./u);
+  assert.equal(locked.querySelectorAll("button").length, 0, "Stann이 지운 질문에는 복원 버튼이 없다.");
+  assert.ok(locked.querySelector("a"), "상세로 가는 링크는 남는다.");
 });
 
 test("관리자 노트 작성 화면의 휴지통 링크는 대상 학생과 검색 복귀 위치를 유지한다", { concurrency: false }, async (context) => {

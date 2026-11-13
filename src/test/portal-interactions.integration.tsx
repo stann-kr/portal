@@ -1961,7 +1961,7 @@ test("community comment failure and remount preserve the author's draft", async 
     id: "draft-post", authorId: "student-1", title: "레슨 이야기", contentHtml: "<p>본문</p>",
     category: "general", boardType: "GENERAL" as const, isPinned: false, mediaUrl: null,
     mediaObjectId: null, createdAt: new Date(), updatedAt: new Date(), deletedAt: null,
-    deletedById: null, version: 1, authorName: "학생",
+    restoreLocked: false, version: 1, authorName: "학생",
   };
   const screen = (actorId: string) => <PostDetailClient postId={post.id} post={post} initialCommentList={[]} currentUserId={actorId} isAdmin={false} returnTo="/community" />;
   const root = await render(context, screen("student-1"));
@@ -2034,7 +2034,7 @@ test("게시물 삭제는 응답 유실 재시도와 복원 후 새 삭제 의�
     id: "delete-retry-post", authorId: "student-1", title: "레슨 이야기", contentHtml: "<p>본문</p>",
     category: "general", boardType: "GENERAL" as const, isPinned: false, mediaUrl: null,
     mediaObjectId: null, createdAt: new Date(), updatedAt: new Date(), deletedAt: null,
-    deletedById: null, version: 1, authorName: "학생",
+    restoreLocked: false, version: 1, authorName: "학생",
   };
   const screen = (version: number, deletedAt: Date | null = null) => <PostDetailClient postId={post.id} post={{ ...post, version, deletedAt }} initialCommentList={[]} currentUserId="student-1" isAdmin={false} returnTo="/community" />;
   const root = await render(context, screen(1));
@@ -2062,7 +2062,7 @@ test("failed comment deletion keeps the conversation and unfinished reply visibl
     id: "delete-post", authorId: "student-1", title: "레슨 이야기", contentHtml: "<p>본문</p>",
     category: "general", boardType: "GENERAL" as const, isPinned: false, mediaUrl: null,
     mediaObjectId: null, createdAt: new Date(), updatedAt: new Date(), deletedAt: null,
-    deletedById: null, version: 1, authorName: "학생",
+    restoreLocked: false, version: 1, authorName: "학생",
   };
   const comment = { id: "comment-1", postId: post.id, authorId: "student-1", contentHtml: "<p>기존 대화</p>", createdAt: new Date(), timeMarkerSeconds: null, authorName: "학생" };
   await render(context, <PostDetailClient postId={post.id} post={post} initialCommentList={[comment]} currentUserId="student-1" isAdmin={false} returnTo="/community" />);
@@ -2090,7 +2090,7 @@ function mixsetPost(id: string, media: { mediaUrl: string | null; mediaObjectId:
     id, authorId: "student-1", title: "금요일 믹스셋", contentHtml: "<p>본문</p>",
     category: "general", boardType, isPinned: false, ...media,
     createdAt: new Date(), updatedAt: new Date(), deletedAt: null as Date | null,
-    deletedById: null, version: 1, authorName: "학생",
+    restoreLocked: false, version: 1, authorName: "학생",
   };
 }
 
