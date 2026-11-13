@@ -3628,7 +3628,9 @@ test("admin schedule opens 전체 학생 by default with student chips, an all-n
     { id: "student-1", email: "minji@example.test", displayName: "민지", createdAt: null, currentModule: null, nextLessonDate: null, pendingFeedbackCount: 0, openQnaCount: 0 },
     { id: "student-2", email: "junho@example.test", displayName: "준호", createdAt: null, currentModule: null, nextLessonDate: null, pendingFeedbackCount: 0, openQnaCount: 0 },
   ];
+  // 자정 직전에 돌리면 1시간짜리 일정이 다음 날로 넘어가 달력 칸 두 곳에 그려진다. 낮 시각으로 고정한다.
   const today = new Date();
+  today.setHours(12, 0, 0, 0);
   const items: UnifiedItem[] = [
     { id: "lesson-1", type: "EVENT", subType: "LESSON", title: "레슨", date: today, endDate: null, metadata: {},
       space: { studentId: "student-1", label: "민지" }, source: { kind: "PORTAL", entity: "LESSON", label: "포탈" } },
