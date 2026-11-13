@@ -167,6 +167,13 @@ type RebaseJob = {
   mineFields: MergeFields;
   /** 재적용 전에 남긴 복구본 key. 반영되면 지운다. */
   recoveryKey: string | null;
+  /**
+   * 이 작업의 병합을 이미 넣은 문서와 그때의 결과. ack를 받지 못해 다시 시도할 때 같은 문서에는 다시 합치지 않는다:
+   * 그 사이 사용자가 고친 문서가 theirs가 되면 3-way 병합은 "내가 바꾼 블록을 상대가 바꿈"과 구분하지 못해
+   * 이미 넣은 블록을 한 번 더 붙이거나 지운 블록을 되살린다. 넣은 내용은 문서에 있으므로 재시도는 ack만 기다린다.
+   * 문서 객체가 바뀌면(편집 세션이 다시 시작됨) 다시 합친다.
+   */
+  applied?: { target: Y.Doc; changed: boolean; conflicts: number; fields: MergeFields };
 };
 
 /** 다시 적용하지 못할 때를 대비한 복구 사본. 이전 초안 보관함이 본인 계정 것만 읽는다. */
@@ -416,31 +423,39 @@ export function useCollabDocument(options: CollabDocumentOptions): CollabDocumen
           while (!disposed && !doc.isDestroyed) {
             const job = jobRef.current.find((pending) => pending.storageKey === storageKey);
             if (!job) break;
-            // theirs는 적용 직전 같은 tick에 live doc에서 읽는다.
-            const merged = mergeCollabDocuments({
-              base: job.base,
-              mine: job.mine,
-              theirs: readPmDoc(doc),
-              baseFields: job.baseFields,
-              mineFields: job.mineFields,
-              theirsFields: readContentFields(doc),
-              // 복원과 겹친 내 칸 입력은 남긴다(제거는 선택으로).
-              fieldConflict: job.kind === "restore" ? "mine" : "theirs",
-            });
-            if (merged.changed) {
-              const schema = getSchema(optionsRef.current.extensions());
-              const node = schema.nodeFromJSON(merged.doc);
-              doc.transact(() => {
-                updateYFragment(doc, doc.getXmlFragment(COLLAB_FRAGMENT), node, { mapping: new Map(), isOMark: new Map() });
-                const meta = doc.getMap(COLLAB_META);
-                for (const [name, value] of Object.entries(merged.fields)) {
-                  if (INTERNAL_META_FIELDS.has(name)) continue;
-                  if (meta.get(name) !== value) meta.set(name, value);
-                }
-              }, "collab-rebase");
+            // 이 문서에 이미 넣은 작업은 다시 합치지 않는다(재시도는 ack만 기다린다).
+            let outcome = job.applied?.target === doc ? job.applied : null;
+            if (!outcome) {
+              // theirs는 적용 직전 같은 tick에 live doc에서 읽는다.
+              const merged = mergeCollabDocuments({
+                base: job.base,
+                mine: job.mine,
+                theirs: readPmDoc(doc),
+                baseFields: job.baseFields,
+                mineFields: job.mineFields,
+                theirsFields: readContentFields(doc),
+                // 복원과 겹친 내 칸 입력은 남긴다(제거는 선택으로).
+                fieldConflict: job.kind === "restore" ? "mine" : "theirs",
+              });
+              if (merged.changed) {
+                const schema = getSchema(optionsRef.current.extensions());
+                const node = schema.nodeFromJSON(merged.doc);
+                doc.transact(() => {
+                  updateYFragment(doc, doc.getXmlFragment(COLLAB_FRAGMENT), node, { mapping: new Map(), isOMark: new Map() });
+                  const meta = doc.getMap(COLLAB_META);
+                  for (const [name, value] of Object.entries(merged.fields)) {
+                    if (INTERNAL_META_FIELDS.has(name)) continue;
+                    if (meta.get(name) !== value) meta.set(name, value);
+                  }
+                }, "collab-rebase");
+              }
+              outcome = { target: doc, changed: merged.changed, conflicts: merged.conflicts, fields: merged.fields };
+              job.applied = outcome;
             }
+            const applied = outcome;
             // 제거 선택의 기준은 되살린 바로 그 순간의 문서다(ack를 기다리는 동안 들어온 다른 입력은 제거 대상이 아니다).
             // ack 실패 뒤 재시도에서는 다시 계산하지 않는다(그사이 입력이 제거 대상에 들어가지 않게 처음 값을 job에 고정).
+            // 문서가 바뀌어 다시 합친 경우에도 처음 값을 그대로 둔다.
             if (job.kind === "restore" && !job.kept) job.kept = { doc: readPmDoc(doc), fields: readContentFields(doc) };
             const keptNow = job.kept ?? null;
             // room에 저장(ack)된 뒤에야 작업을 끝내고 잠금을 푼다(다음 탭이 이 결과를 보고 같은 변경을 다시 넣지 않게).
@@ -451,7 +466,7 @@ export function useCollabDocument(options: CollabDocumentOptions): CollabDocumen
             const lostField =
               job.kind === "rebase" &&
               Object.keys(job.mineFields).some(
-                (name) => !INTERNAL_META_FIELDS.has(name) && job.mineFields[name] !== job.baseFields[name] && merged.fields[name] !== job.mineFields[name],
+                (name) => !INTERNAL_META_FIELDS.has(name) && job.mineFields[name] !== job.baseFields[name] && applied.fields[name] !== job.mineFields[name],
               );
             jobRef.current = jobRef.current.filter((pending) => pending !== job);
             if (!lostField) removeStorageItem(job.recoveryKey);
@@ -459,7 +474,7 @@ export function useCollabDocument(options: CollabDocumentOptions): CollabDocumen
               offerChoice = { kept: keptNow, restored: job.restored, undo: null };
               continue;
             }
-            const next: CollabRebaseNotice = lostField ? "kept" : merged.changed ? (merged.conflicts > 0 ? "overlapped" : "applied") : null;
+            const next: CollabRebaseNotice = lostField ? "kept" : applied.changed ? (applied.conflicts > 0 ? "overlapped" : "applied") : null;
             if (next === "kept" || (next === "overlapped" && notice !== "kept") || (next === "applied" && notice === null)) notice = next;
           }
         });

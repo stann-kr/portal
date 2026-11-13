@@ -177,6 +177,8 @@ function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
 type Room = { core: RoomCore; storage: MemoryStorage; sockets: Set<ServerSocket> };
 const rooms = new Map<string, Room>();
 const openSockets = new Set<FakeWebSocket>();
+/** true면 기기가 보낸 메시지가 room에 닿지 않는다(연결은 열려 있지만 ack가 오지 않는 상태). */
+let stalledUplink = false;
 
 function roomFor(key: string): Room {
   let room = rooms.get(key);
@@ -259,6 +261,8 @@ class FakeWebSocket {
 
   send(data: ArrayBuffer | Uint8Array) {
     if (this.readyState !== FakeWebSocket.OPEN) throw new Error("socket is not open");
+    // 멈춘 연결: 보낸 것처럼 보이지만 room에 닿지 않아 ack가 오지 않는다.
+    if (stalledUplink) return;
     const bytes = data instanceof Uint8Array ? new Uint8Array(data) : new Uint8Array(data.slice(0));
     setTimeout(() => {
       if (this.readyState === FakeWebSocket.OPEN) this.room?.core.message(this.server, bytes);
@@ -957,6 +961,41 @@ test("복원과 겹친 이 기기 입력(room이 받기 전): 문서에 남고 �
   await act(async () => buttonOf(device, "내 입력 유지")!.click());
   assert.equal(choiceOf(device), null, "유지하면 안내를 닫는다");
   assert.equal(editorMounts, mounts);
+});
+
+test("복원과 겹친 입력을 되살린 뒤 ack가 오지 않아 재시도해도 다시 합치지 않는다: 그 사이 고쳐 쓴 문단 옆에 되살린 문단이 또 생기지 않는다", { concurrency: false }, async (context) => {
+  const env = setupBrowser(context);
+  context.after(() => { stalledUplink = false; });
+  const note = { id: "note-1", title: "제목", contentHtml: "<p>첫 문단</p>", noteDate: null, version: 1 };
+  seedHeads.set(note.id, note);
+  const device = await env.mount(<NoteEditorForm actorId="student-1" note={note} action={async () => ({ success: true })} />);
+  await waitReady(device);
+  await waitUntil(() => formOf(device).dataset.collabStatus === "connected", 3000, "연결");
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 100)); });
+  const doc = mountedDocs[0]!;
+  // 되살리는 편집(collab-rebase)을 보내는 순간부터 연결이 멈춘다: 문서에는 들어갔지만 ack가 오지 않는다.
+  const stallOnReapply = (transaction: Y.Transaction) => {
+    if (transaction.origin !== "collab-rebase") return;
+    stalledUplink = true;
+    doc.off("beforeTransaction", stallOnReapply); // 처음 되살릴 때만 멈춘다.
+  };
+  doc.on("beforeTransaction", stallOnReapply);
+  context.after(() => doc.off("beforeTransaction", stallOnReapply));
+  await restoreRoom("note:note-1", 7, { html: "<p>되돌린 문단</p>", fields: { title: "제목", noteDate: "" } }, async () => {
+    await act(async () => setFragmentText(doc, "첫 문단 내 입력"));
+  });
+  await waitUntil(() => stalledUplink && /내 입력/u.test(bodyOf(device)!.value) && /되돌린 문단/u.test(bodyOf(device)!.value), 6000, `복원본 위에 내 입력을 되살려야 합니다: ${bodyOf(device)?.value}`);
+  // 사용자가 되살아난 문단을 통째로 고쳐 쓴다. 이 뒤로 문서에 "내 입력"·"되돌린 문단"은 없어야 한다.
+  // (병합 함수만으로는 "내가 고친 블록을 상대가 바꿈"과 구분할 수 없어, 다시 합치면 되살린 문단을 한 번 더 붙인다.)
+  await act(async () => setFragmentText(doc, "다시 쓴 글"));
+  // ack 대기(5초)가 실패해 재시도가 예약될 때까지 기다린 뒤 연결을 되살린다(끊고 다시 붙으면 밀린 update가 간다).
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 5300)); });
+  stalledUplink = false;
+  for (const socket of [...openSockets]) socket.closeFromServer(1006, "network");
+  // 재시도가 끝나면(ack 확인) 선택 안내가 뜬다.
+  await waitUntil(() => choiceOf(device)?.dataset.restoreChoice === "offer", 12000, `재시도 뒤 작업이 끝나야 합니다: ${device.container.textContent}`);
+  assert.equal(bodyOf(device)!.value, "다시 쓴 글", "재시도는 이미 반영한 병합을 다시 하지 않는다(되살린 문단을 한 번 더 붙이지 않는다).");
+  await waitUntil(() => fragmentText(rooms.get("note:note-1")!.storage.toDoc()) === "다시 쓴 글", 3000, "room도 같은 내용이다");
 });
 
 test("오프라인 중 다른 기기가 복원해도 다시 연결하면 같은 편집기에서 복원본 위에 오프라인 입력이 남고 선택할 수 있다", { concurrency: false }, async (context) => {
