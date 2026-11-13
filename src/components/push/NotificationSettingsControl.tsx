@@ -16,6 +16,7 @@ import {
 } from "./push-client";
 import { enablePushOnThisDevice, OPEN_NOTIFICATION_SETTINGS_EVENT } from "./enable-device";
 import { PushSwitch } from "./PushSwitch";
+import { createOncePerOwner } from "./once-per-owner";
 
 /**
  * 이 기기 칸의 상태(캔버스 NotificationSettings 보드).
@@ -99,15 +100,14 @@ async function loadSettings(ownerId: string): Promise<LoadedState> {
   return { device: { kind: "off", publicKey: setup.publicKey }, muted };
 }
 
-let backgroundSyncStarted = false;
+const isFirstSyncForOwner = createOncePerOwner();
 
 /**
  * 화면을 열 때 한 번: 알림을 켜 둔 기기면 Service Worker를 갱신하고, 구독을 지금 계정 기준으로 맞춘다(reconcileSubscription).
- * 계정 메뉴가 데스크톱·서랍 두 곳에 있어도 한 번만 돈다.
+ * 계정 메뉴가 데스크톱·서랍 두 곳에 있어도 계정마다 한 번만 돈다(앱 안에서 계정을 바꾸면 새 계정으로 다시 돈다).
  */
 function syncSubscriptionInBackground(ownerId: string): void {
-  if (backgroundSyncStarted) return;
-  backgroundSyncStarted = true;
+  if (!isFirstSyncForOwner(ownerId)) return;
   if (readPushSupport() !== "supported" || readNotificationPermission() !== "granted") return;
   void (async () => {
     try {
