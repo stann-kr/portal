@@ -46,6 +46,7 @@ type QnaThreadHead = {
   updatedAt: Date | null;
   version: number;
   deletedAt: Date | null;
+  deletedById: string | null;
 };
 
 export type QnaResourceState = "ACTIVE" | "TRASHED" | "PURGED";
@@ -173,6 +174,7 @@ async function findThread(
       updatedAt: qnaThreads.updatedAt,
       version: qnaThreads.version,
       deletedAt: qnaThreads.deletedAt,
+      deletedById: qnaThreads.deletedById,
     })
     .from(qnaThreads)
     .where(eq(qnaThreads.id, threadId))
@@ -1104,6 +1106,10 @@ async function mutateQnaTrashState(
     if (!thread.deletedAt) {
       return { ok: false, reason: "VERSION_CONFLICT", threadId: thread.id, currentRevision: thread.version };
     }
+    // 관리자가 휴지통으로 보낸 질문은 관리자만 되살린다.
+    if (!write.actor.isAdmin && thread.deletedById !== write.actor.id) {
+      return { ok: false, reason: "NOT_FOUND_OR_FORBIDDEN" };
+    }
     if (
       documentEpochSeconds(thread.deletedAt)! <=
       documentEpochSeconds(write.now)! - QNA_TRASH_RETENTION_SECONDS
@@ -1150,7 +1156,7 @@ async function mutateQnaTrashState(
                 SET deleted_at = NULL, deleted_by_id = NULL,
                     updated_at = ?, version = version + 1
                 WHERE id = ? AND version = ? AND deleted_at IS NOT NULL
-                  AND deleted_at > ? AND (student_id = ? OR ? = 1)
+                  AND deleted_at > ? AND ((student_id = ? AND deleted_by_id = ?) OR ? = 1)
               `,
         params:
           operationType === "TRASH"
@@ -1168,6 +1174,7 @@ async function mutateQnaTrashState(
                 write.threadId,
                 write.baseRevision,
                 documentEpochSeconds(write.now)! - QNA_TRASH_RETENTION_SECONDS,
+                write.actor.id,
                 write.actor.id,
                 Number(write.actor.isAdmin),
               ],

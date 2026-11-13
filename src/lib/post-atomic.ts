@@ -52,6 +52,7 @@ type PostHead = {
   updatedAt: Date;
   version: number;
   deletedAt: Date | null;
+  deletedById: string | null;
 };
 
 export type PostResourceState = "ACTIVE" | "TRASHED" | "PURGED";
@@ -176,6 +177,7 @@ async function findPost(context: DbContext, postId: string): Promise<PostHead | 
       updatedAt: posts.updatedAt,
       version: posts.version,
       deletedAt: posts.deletedAt,
+      deletedById: posts.deletedById,
     })
     .from(posts)
     .where(eq(posts.id, postId))
@@ -1022,6 +1024,10 @@ async function mutatePostTrashState(
     if (!existing.deletedAt) {
       return { ok: false, reason: "VERSION_CONFLICT", postId: write.postId, currentRevision: existing.version };
     }
+    // 관리자가 휴지통으로 보낸 게시물은 관리자만 되살린다.
+    if (!write.actor.isAdmin && existing.deletedById !== write.actor.id) {
+      return { ok: false, reason: "NOT_FOUND_OR_FORBIDDEN" };
+    }
     if (
       documentEpochSeconds(existing.deletedAt)! <=
       documentEpochSeconds(write.now)! - POST_TRASH_RETENTION_SECONDS
@@ -1062,7 +1068,7 @@ async function mutatePostTrashState(
                 UPDATE posts
                 SET deleted_at = NULL, deleted_by_id = NULL, updated_at = ?, version = version + 1
                 WHERE id = ? AND version = ? AND deleted_at IS NOT NULL
-                  AND deleted_at > ? AND (author_id = ? OR ? = 1)
+                  AND deleted_at > ? AND ((author_id = ? AND deleted_by_id = ?) OR ? = 1)
               `,
         params:
           operationType === "TRASH"
@@ -1080,6 +1086,7 @@ async function mutatePostTrashState(
                 write.postId,
                 write.baseRevision,
                 documentEpochSeconds(write.now)! - POST_TRASH_RETENTION_SECONDS,
+                write.actor.id,
                 write.actor.id,
                 Number(write.actor.isAdmin),
               ],

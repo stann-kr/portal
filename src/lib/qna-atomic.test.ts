@@ -612,3 +612,45 @@ test("학생은 답변받은(ANSWERED) 질문을 OPEN으로 되돌릴 수 없고
   assert.equal(canSetQnaStatus(actor("student-1"), "student-1", "ANSWERED"), false);
   assert.equal(canSetQnaStatus(actor("admin-1", true), "student-1", "ANSWERED"), true);
 });
+
+test("관리자가 휴지통으로 보낸 질문은 관리자만 되살리고, 학생이 지운 질문은 학생이 되살린다", async (context) => {
+  const { sqlite, dbContext } = setupDatabase(context);
+  seedProfile(sqlite, "student-1");
+  seedProfile(sqlite, "admin-1", "admin");
+  for (const threadId of ["admin-trashed", "self-trashed"]) {
+    assert.equal((await createThread(dbContext, { studentId: "student-1", threadId })).ok, true);
+  }
+  assert.equal(
+    (await trashQnaThreadAtomically(dbContext, {
+      actor: actor("admin-1", true), threadId: "admin-trashed", operationId: operationId(980), baseRevision: 1, now: new Date("2026-01-02T00:00:00.000Z"),
+    })).ok,
+    true,
+  );
+  assert.equal(
+    (await trashQnaThreadAtomically(dbContext, {
+      actor: actor("student-1"), threadId: "self-trashed", operationId: operationId(981), baseRevision: 1, now: new Date("2026-01-02T00:00:00.000Z"),
+    })).ok,
+    true,
+  );
+  const at = new Date("2026-01-03T00:00:00.000Z");
+
+  const blocked = await restoreTrashedQnaThreadAtomically(dbContext, {
+    actor: actor("student-1"), threadId: "admin-trashed", operationId: operationId(982), baseRevision: 2, now: at,
+  });
+  assert.equal(blocked.ok, false);
+  if (!blocked.ok) assert.equal(blocked.reason, "NOT_FOUND_OR_FORBIDDEN");
+  assert.equal(getThread(sqlite, "admin-trashed")?.version, 2);
+  assert.notEqual(getThread(sqlite, "admin-trashed")?.deleted_at, null);
+  assert.equal(countRows(sqlite, "document_operation_ledger", "operation_id", operationId(982)), 0);
+
+  const self = await restoreTrashedQnaThreadAtomically(dbContext, {
+    actor: actor("student-1"), threadId: "self-trashed", operationId: operationId(983), baseRevision: 2, now: at,
+  });
+  assert.equal(self.ok, true);
+
+  const byAdmin = await restoreTrashedQnaThreadAtomically(dbContext, {
+    actor: actor("admin-1", true), threadId: "admin-trashed", operationId: operationId(984), baseRevision: 2, now: at,
+  });
+  assert.equal(byAdmin.ok, true);
+  assert.deepEqual(getThread(sqlite, "admin-trashed"), { status: "OPEN", version: 3, deleted_at: null });
+});
