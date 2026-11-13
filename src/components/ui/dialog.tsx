@@ -5,7 +5,7 @@ import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useOverlayFocus } from "./use-overlay-focus";
-import { isEscapeInsideOpenLayer } from "./escape-layer";
+import { isEscapeForOpenLayer } from "./escape-layer";
 
 const Dialog = DialogPrimitive.Root;
 const DialogTrigger = DialogPrimitive.Trigger;
@@ -54,7 +54,7 @@ function DialogContent({
         }}
         onEscapeKeyDown={(event) => {
           onEscapeKeyDown?.(event);
-          if (!dismissible || isEscapeInsideOpenLayer(event)) event.preventDefault();
+          if (!dismissible || isEscapeForOpenLayer(event)) event.preventDefault();
         }}
         onPointerDownOutside={(event) => {
           onPointerDownOutside?.(event);

@@ -1668,6 +1668,65 @@ test("Escape inside the open Camelot picker closes only the picker, then the nex
   assert.deepEqual(closes, [false], "with the picker closed, Escape dismisses the dialog");
 });
 
+test("Escape while the Camelot picker is open but focus stayed elsewhere in the dialog closes only the picker (Safari·Firefox click does not focus the trigger)", async (context) => {
+  const closes: boolean[] = [];
+  function TrackHarness() {
+    const [open, setOpen] = useState(true);
+    return <AddTrackDialog open={open} onOpenChange={(next) => { closes.push(next); setOpen(next); }} onSuccess={() => {}} columns={[
+      { id: "title", name: "트랙명", columnType: "text", options: null },
+      { id: "key", name: "키", columnType: "camelot_key", options: null },
+    ]} />;
+  }
+  await render(context, <TrackHarness />);
+  const picker = () => browser.document.querySelector('[role="group"][aria-label="키 고르기"]');
+  await press("키");
+  assert.ok(picker());
+  const otherField = browser.document.querySelector('[role="dialog"] input');
+  assert.ok(otherField instanceof browser.HTMLInputElement);
+  await act(async () => otherField.focus());
+  assert.equal(browser.document.activeElement, otherField, "focus is outside the picker");
+  await act(async () => {
+    otherField.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+  });
+  await settle();
+  assert.equal(picker(), null, "Escape closes the picker");
+  assert.deepEqual(closes, [], "the dialog stays open");
+  assert.equal(browser.document.activeElement, otherField, "focus stays where it was");
+
+  await act(async () => {
+    otherField.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+  });
+  await settle();
+  assert.deepEqual(closes, [false], "with the picker closed, Escape dismisses the dialog");
+});
+
+test("digging table key picker floats on the viewport so the scroll box does not clip it, and the scroll box contains its absolute children", async (context) => {
+  await render(context, <DiggingBoard
+    initialColumns={[
+      { id: "title", name: "트랙명", columnType: "text", options: null, isDefault: true, sortOrder: 0 },
+      { id: "key", name: "키", columnType: "camelot_key", options: null, isDefault: false, sortOrder: 1 },
+    ]}
+    initialTracks={[{ id: "track-1", linkUrl: null, createdAt: new Date("2026-10-09T01:00:00.000Z"), values: { title: "Intro", key: "" } }]}
+  />);
+  const scrollBox = browser.document.querySelector("table")?.parentElement;
+  assert.ok(scrollBox);
+  assert.ok(scrollBox.classList.contains("overflow-x-auto"));
+  assert.ok(scrollBox.classList.contains("relative"), "sr-only text in the header cannot widen the page");
+  const trigger = browser.document.querySelector('table button[aria-label="키"]');
+  assert.ok(trigger instanceof browser.HTMLButtonElement);
+  await act(async () => trigger.click());
+  const panel = browser.document.querySelector('table [role="group"][aria-label="키 고르기"]');
+  assert.ok(panel instanceof browser.HTMLElement);
+  assert.ok(panel.classList.contains("fixed"), "the table picker is positioned on the viewport");
+  assert.equal(panel.classList.contains("absolute"), false);
+  assert.match(panel.style.top, /px$/u);
+  assert.match(panel.style.left, /px$/u);
+  await act(async () => {
+    browser.document.body.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  });
+  assert.equal(browser.document.querySelector('[role="group"][aria-label="키 고르기"]'), null, "Escape from outside closes it");
+});
+
 test("digging board saves only changed cells, clears numbers and ratings without coercing to zero", async (context) => {
   const saves: [string, string, unknown][] = [];
   saveTrackValue = async (trackId, columnId, value) => { saves.push([trackId, columnId, value]); };

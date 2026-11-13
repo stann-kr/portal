@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { OPEN_ESCAPE_LAYER } from "@/components/ui/escape-layer";
 
@@ -20,7 +20,10 @@ interface CamelotPickerProps {
   variant?: "table" | "field";
 }
 
-/** 카멜롯 키 선택. 열린 키판은 Esc나 바깥 누르기로 닫고, 닫히면 키 버튼으로 초점이 돌아간다. */
+/**
+ * 카멜롯 키 선택. 열린 키판은 Esc나 바깥 누르기로 닫고, 키판 안에서 닫으면 키 버튼으로 초점이 돌아간다.
+ * 표 칸(table)의 키판은 가로 스크롤 칸에 잘리지 않게 화면 기준(fixed)으로 키 버튼 아래(자리가 없으면 위)에 둔다.
+ */
 export function CamelotPicker({
   value,
   onChange,
@@ -32,15 +35,51 @@ export function CamelotPicker({
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const floating = variant === "table";
 
   useEffect(() => {
     if (!open) return;
     const closeOutside = (event: PointerEvent) => {
       if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
     };
+    // 초점이 키판 밖에 남아 있어도(버튼을 눌러도 초점을 주지 않는 브라우저) Esc는 키판만 닫는다.
+    // 키판 안의 Esc는 아래 onKeyDown이 먼저 처리하고 전파를 멈춘다.
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
     document.addEventListener("pointerdown", closeOutside);
-    return () => document.removeEventListener("pointerdown", closeOutside);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOutside);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
   }, [open]);
+
+  useLayoutEffect(() => {
+    if (!open || !floating) return;
+    const place = () => {
+      const trigger = triggerRef.current;
+      const panel = panelRef.current;
+      if (!trigger || !panel) return;
+      const rect = trigger.getBoundingClientRect();
+      const gap = 4;
+      const margin = 8;
+      const below = rect.bottom + gap;
+      const above = rect.top - gap - panel.offsetHeight;
+      const top = below + panel.offsetHeight > window.innerHeight - margin && above >= margin ? above : below;
+      const left = Math.max(margin, Math.min(rect.left, window.innerWidth - panel.offsetWidth - margin));
+      panel.style.top = `${top}px`;
+      panel.style.left = `${left}px`;
+    };
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [open, floating]);
 
   if (readonly) {
     return value ? (
@@ -104,9 +143,13 @@ export function CamelotPicker({
 
       {open && (
         <div
+          ref={panelRef}
           role="group"
           aria-label={`${ariaLabel} 고르기`}
-          className="absolute left-0 top-full mt-1 flex w-64 flex-col gap-1 rounded-lg border border-border bg-background p-3 shadow-floating"
+          className={cn(
+            "flex w-64 flex-col gap-1 rounded-lg border border-border bg-background p-3 shadow-floating",
+            floating ? "fixed" : "absolute left-0 top-full mt-1",
+          )}
           style={{ zIndex: "var(--z-dropdown)" }}
         >
           <div className="grid grid-cols-6 gap-1">

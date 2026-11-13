@@ -763,8 +763,9 @@ export function DiggingBoard({
         )}
       </div>
 
-      {/* 넓은 화면: 날짜 묶음(rowgroup)별 표 */}
-      <div className="hidden overflow-x-auto md:block">
+      {/* 넓은 화면: 날짜 묶음(rowgroup)별 표. relative: 표 안의 absolute 요소(머리칸의 sr-only 글자 등)가
+          이 스크롤 칸 기준으로 놓여야 잘리고, 페이지 전체를 가로로 넓히지 않는다. */}
+      <div className="relative hidden overflow-x-auto md:block">
         <table className="w-full table-fixed border-collapse text-body" style={{ minWidth: tableMinWidth }}>
           <thead>
             <tr className="border-b border-border">
