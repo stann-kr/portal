@@ -11,7 +11,7 @@ import { ButtonSpinner } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { AccountMenu } from "./AccountMenu";
 import {
-  APP_NAV_ITEMS,
+  visibleNavItems,
   WORK_BADGE_NAV_ID,
   formatWorkBadge,
   navigateWithinPage,
@@ -81,11 +81,13 @@ function SidebarNav({
   role,
   variant,
   workCount,
+  guideHidden,
   onNavigate,
 }: {
   role: AppRole;
   variant: "desktop" | "drawer";
   workCount?: number | null;
+  guideHidden?: boolean;
   onNavigate?: () => void;
 }) {
   const location = useLocation();
@@ -94,7 +96,7 @@ function SidebarNav({
 
   return (
     <nav aria-label="주요 메뉴" className={cn("flex flex-col gap-0.5", variant === "drawer" && "mt-3")}>
-      {APP_NAV_ITEMS[role].map(({ id, label, href, Icon }) => {
+      {visibleNavItems(role, { guideHidden }).map(({ id, label, href, Icon }) => {
         const active = id === activeId;
         return (
           <Link
@@ -199,12 +201,15 @@ export function AppSidebar({
   ownerId,
   canDeleteAccount,
   workCount = null,
+  guideHidden = false,
   children,
 }: {
   role: AppRole;
   displayName: string;
   ownerId: string;
   canDeleteAccount: boolean;
+  /** 가이드가 열리지 않은 학생이면 메뉴에서 "가이드"를 뺀다. */
+  guideHidden?: boolean;
   /** Stann 업무함 처리할 일 수(검토 대기 제출 + 답변 대기 질문). 학생은 null. */
   workCount?: number | null;
   children: ReactNode;
@@ -233,7 +238,7 @@ export function AppSidebar({
         className="sticky top-0 hidden h-[100dvh] w-60 shrink-0 flex-col gap-6 border-r border-border bg-sidebar px-3 py-4 md:flex"
       >
         <Brand size="desktop" role={role} />
-        <SidebarNav role={role} variant="desktop" workCount={workCount} />
+        <SidebarNav role={role} variant="desktop" workCount={workCount} guideHidden={guideHidden} />
         <AccountRow role={role} displayName={displayName} ownerId={ownerId} canDeleteAccount={canDeleteAccount} variant="desktop" />
       </aside>
 
@@ -284,7 +289,7 @@ export function AppSidebar({
                 <X className="size-[18px]" strokeWidth={1.6} aria-hidden="true" />
               </Dialog.Close>
             </div>
-            <SidebarNav role={role} variant="drawer" workCount={workCount} onNavigate={() => setOpen(false)} />
+            <SidebarNav role={role} variant="drawer" workCount={workCount} guideHidden={guideHidden} onNavigate={() => setOpen(false)} />
             <AccountRow role={role} displayName={displayName} ownerId={ownerId} canDeleteAccount={canDeleteAccount} variant="drawer" />
           </Dialog.Content>
         </Dialog.Portal>

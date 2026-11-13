@@ -1,11 +1,13 @@
 /**
- * 공용 가이드 이미지의 업로드(관리자)·열람(로그인한 활성 사용자) 처리.
+ * 공용 가이드 이미지의 업로드(관리자)·열람(관리자와 가이드가 열린 학생) 처리.
+ * 학생은 자기에게 열린 페이지의 이미지만 받는다(src/lib/guide-access.ts). 열리지 않은 이미지는 없는 이미지와 같게 답한다.
  * route는 실제 session·DB·R2를 넘기고, 테스트는 가짜 의존성을 넘긴다.
  */
-import { eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type { DbContext } from "@/db/client";
-import { guideAssets, type GuideAssetContentType } from "@/db/schema";
+import { guideAccessPages, guideAssets, guidePages, type GuideAssetContentType } from "@/db/schema";
 import { asDocumentReadDb } from "@/lib/document-lifecycle-atomic";
+import { resolveGuideViewerAccess } from "@/lib/guide-access";
 import {
   GUIDE_ASSET_MAX_BYTES,
   guideAssetPath,
@@ -123,16 +125,38 @@ export async function handleGuideAssetGet(
   const assetId = parseGuideAssetId(rawAssetId);
   if (!assetId) return reply(404);
 
-  const [asset] = await asDocumentReadDb(deps.getContext())
+  const context = deps.getContext();
+  const access = await resolveGuideViewerAccess(context, {
+    id: session.user.id,
+    isAdmin: session.user.role === "admin",
+  });
+  if (access.kind === "closed") return reply(404);
+
+  const db = asDocumentReadDb(context);
+  const [asset] = await db
     .select({
       objectKey: guideAssets.objectKey,
       contentType: guideAssets.contentType,
       sizeBytes: guideAssets.sizeBytes,
+      guidePageId: guideAssets.guidePageId,
     })
     .from(guideAssets)
     .where(eq(guideAssets.id, assetId))
     .limit(1);
   if (!asset) return reply(404);
+  if (access.kind === "selected" && !(asset.guidePageId && access.pageIds.has(asset.guidePageId))) {
+    // 이미지는 처음 쓰인 페이지에만 연결된다. 다른 페이지로 복사해 쓴 이미지는 열린 페이지 본문에 있는지로 확인한다.
+    const [usedInOpenPage] = await db
+      .select({ id: guidePages.id })
+      .from(guideAccessPages)
+      .innerJoin(guidePages, eq(guideAccessPages.guidePageId, guidePages.id))
+      .where(and(
+        eq(guideAccessPages.studentId, session.user.id),
+        sql`instr(${guidePages.contentHtml}, ${guideAssetPath(assetId)}) > 0`,
+      ))
+      .limit(1);
+    if (!usedInOpenPage) return reply(404);
+  }
 
   const object = await (await deps.getStorage()).get(asset.objectKey);
   if (!object) return reply(404);

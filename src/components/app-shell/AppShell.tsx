@@ -1,9 +1,10 @@
 import { Suspense, type ReactNode } from "react";
 import { redirect } from "next/navigation";
 import { LocalDraftAccountBoundary } from "@/components/auth/LocalDraftAccountBoundary";
-import { createDb } from "@/db/client";
+import { createDb, createDbContext } from "@/db/client";
 import { isAccountDeletionEnabled } from "@/lib/account-privacy-rollout";
 import { getActiveAuthSession } from "@/lib/auth-guard";
+import { resolveGuideViewerAccess } from "@/lib/guide-access";
 import { queryAdminWorkCount } from "@/lib/student-roster";
 import { AppShellSkeleton } from "./AppShellSkeleton";
 import { AppSidebar } from "./AppSidebar";
@@ -38,6 +39,10 @@ async function AuthenticatedShell({ children }: { children: ReactNode }) {
   const displayName = session.user.name || (role === "admin" ? "Stann" : "학생");
   // 업무함 숫자는 Stann에게만 서버에서 센다. 세지 못해도 화면은 그대로 열고 숫자만 숨긴다.
   const workCount = role === "admin" ? await queryAdminWorkCount(createDb()).catch(() => null) : null;
+  // 가이드가 열리지 않은 학생은 메뉴에서 가이드를 뺀다. 확인하지 못하면 숨긴다(열람 자체는 가이드 화면이 다시 판정한다).
+  const guideHidden = role === "student"
+    ? await resolveGuideViewerAccess(createDbContext(), { id: ownerId, isAdmin: false }).then((access) => access.kind === "closed", () => true)
+    : false;
 
   return (
     <>
@@ -48,6 +53,7 @@ async function AuthenticatedShell({ children }: { children: ReactNode }) {
         ownerId={ownerId}
         canDeleteAccount={role === "student" && isAccountDeletionEnabled()}
         workCount={workCount}
+        guideHidden={guideHidden}
       >
         {children}
       </AppSidebar>

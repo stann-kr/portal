@@ -7,9 +7,11 @@ export type QnaGuideAnchorView = {
   pageTitle: string;
   blockId: string | null;
   quote: string;
+  /** 페이지는 있지만 보는 사람에게 열리지 않았다(링크만 뺀다). */
+  pageClosed?: boolean;
 };
 
-/** Q&A가 가이드의 어느 구간에서 시작됐는지 보인다. 페이지가 지워졌으면 제목·인용만 남긴다. */
+/** Q&A가 가이드의 어느 구간에서 시작됐는지 보인다. 페이지가 지워졌거나 보는 사람에게 열리지 않았으면 제목·인용만 남긴다. */
 export function GuideAnchorNote({ anchor }: { anchor: QnaGuideAnchorView }) {
   const label = (
     <>
@@ -28,7 +30,8 @@ export function GuideAnchorNote({ anchor }: { anchor: QnaGuideAnchorView }) {
         </Link>
       ) : (
         <span className="min-w-0 break-words">
-          {label} <span className="text-muted-foreground">(가이드 페이지가 삭제되었습니다)</span>
+          {label}
+          {anchor.pageClosed ? null : <> <span className="text-muted-foreground">(가이드 페이지가 삭제되었습니다)</span></>}
         </span>
       )}
     </p>

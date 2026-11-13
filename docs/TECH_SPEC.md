@@ -76,8 +76,8 @@ OpenNext → Cloudflare Worker
 | `/dashboard/student/notes` | 학생 노트 목록 |
 | `/dashboard/student/assignments/[id]` | 과제 재생·타임라인 피드백. 학생 본인과 관리자만 열고, 검증된 `returnTo`로 직전 화면에 복귀한다. 관리자에게는 제출 학생을 표시한다 |
 | `/dashboard/student/notes/new` | 학생 본인 노트 전체 화면 작성 |
-| `/dashboard/guide` | 공용 가이드 페이지 목록(학생·관리자 공통, 사이드바 "가이드"). 관리자는 페이지 추가·순서 변경 |
-| `/dashboard/guide/[pageId]` | 가이드 페이지 읽기. 학생은 문단을 골라 질문하고 본인 질문 위치를, 관리자는 모든 학생의 질문 위치를 본다 |
+| `/dashboard/guide` | 공용 가이드 페이지 목록(사이드바 "가이드"). 학생은 열린 페이지만 보고, 가이드가 닫힌 학생은 메뉴에 없으며 주소로 들어오면 안내만 본다. 관리자는 페이지 추가·순서 변경 |
+| `/dashboard/guide/[pageId]` | 가이드 페이지 읽기. 학생은 자기에게 열린 페이지에서 문단을 골라 질문하고 본인 질문 위치를, 관리자는 모든 학생의 질문 위치를 본다. 열리지 않은 페이지는 404다 |
 | `/dashboard/guide/[pageId]/edit` | 관리자 전용 가이드 편집(공동 편집 room·이탈 보호, 삭제) |
 | `/dashboard/admin/calendar-sync` | 관리자 캘린더 동기화 설정(운영 도구에서 진입): 서버 설정 안내, Google·iCloud 계정 연결·해제, 학생별 캘린더 매핑·지금 동기화·오류 표시 |
 | `/dashboard/student/digging` | 학생 본인 디깅 보드: 트랙 값 편집·삭제, 컬럼 관리. 검증된 `returnTo`로 복귀 |
@@ -100,7 +100,7 @@ OpenNext → Cloudflare Worker
 | `/api/account-cleanup/register` | 인증된 학생 기기의 cleanup token digest 등록 |
 | `/api/account-cleanup/status` | 삭제 신호만 반환하는 익명·same-origin·no-store 상태 조회 |
 | `/api/guide-assets` | 관리자 전용 가이드 이미지 업로드(JPG·PNG·GIF·WebP, 10MB, R2 `guide/<uuid>`) |
-| `/api/guide-assets/[assetId]` | 로그인 사용자에게 가이드 이미지 전달 |
+| `/api/guide-assets/[assetId]` | 관리자와, 그 이미지가 쓰인 페이지가 열린 학생에게 가이드 이미지 전달(그 밖에는 404) |
 | `/api/collab/token` | `POST`. 세션과 문서 권한을 확인해 60초 HMAC 연결 토큰(`mode` read/write, 150초 lease·발급 시각·노트/게시물 lifecycle 표지 포함)을 발급한다. `proxy` 대상에서 빼 로그아웃 상태에는 redirect 대신 401/403을 돌려준다. 공동 편집 binding이 없으면 `{ collab: false }`(혼자 모드). 같은 origin만 허용, `no-store` |
 | `/api/collab/ws/<key>` | WebSocket. Next route가 아니라 `worker.ts`가 먼저 가로채 토큰 서명·만료·key를 확인하고 `DOC_ROOMS`의 `DocumentRoom`으로 넘긴다. 토큰은 `Sec-WebSocket-Protocol: portal-collab, <token>`으로 받아 URL·요청 log에 남지 않는다 |
 | `/dashboard/drafts` | 이전 초안 보관함(읽기 전용). 계정 메뉴에서 진입 |
@@ -140,7 +140,7 @@ OpenNext → Cloudflare Worker
 
 - 사용자·수업: `profiles`, `curriculums`, `lessons`, `external_calendar_subscriptions`
 - 과제·피드백: `assignment_tasks`, `assignment_recurrences`, `assignments`, `feedbacks`
-- 공용 가이드: `guide_pages`, `guide_assets`, `qna_guide_anchors`
+- 공용 가이드: `guide_pages`, `guide_assets`, `qna_guide_anchors`, 학생별 열람 권한 `guide_access`, `guide_access_pages`
 - 캘린더 양방향 동기화: `calendar_connections`, `calendar_mappings`, `calendar_sync_links`, `calendar_remote_series`(예정: `calendar_push_channels`)
 - 콘텐츠: `categories`, `posts`, `post_revisions`, `comments`
 - 개인 학습 기록: `private_notes`, `private_note_revisions`, `calendar_events`
@@ -351,12 +351,22 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 
 ### 공용 가이드
 
-- `guide_pages`(제목 120자·정렬 순서·sanitize된 본문 800 KiB·version)는 모든 학생이 같은 내용을 본다. 쓰기는 관리자만, 읽기는 로그인 사용자 전부다. 편집은 노트와 같은 로컬·서버 초안(`document_server_drafts` 종류 `guide-page`, `0016`에서 CHECK 확장)과 version CAS·충돌 선택·이탈 보호를 따른다. 삭제도 기준 version을 확인한다.
+- `guide_pages`(제목 120자·정렬 순서·sanitize된 본문 800 KiB·version)는 모든 학생에게 같은 내용이다. 쓰기는 관리자만, 읽기는 관리자와 아래 "학생별 가이드 열람 권한"으로 열린 학생이다. 편집은 노트와 같은 로컬·서버 초안(`document_server_drafts` 종류 `guide-page`, `0016`에서 CHECK 확장)과 version CAS·충돌 선택·이탈 보호를 따른다. 삭제도 기준 version을 확인한다.
 - 저장할 때 모든 블록 요소에 `data-block-id`를 부여·보존한다(`prepareGuideHtml`). sanitize allowlist는 형식이 제한된 `data-block-id`만 허용한다. 생성 재전송은 블록 ID를 뺀 본문 전체를 비교해 같은 내용이면 기존 결과로 수렴하고, 비교는 본문 텍스트에 들어 있는 `data-block-id` 글자를 지우지 않는다.
-- `guide_assets`는 학생 media 수명주기와 분리된 R2 `guide/<uuid>` key의 가이드 이미지다(JPG·PNG·GIF·WebP, 10MB). 업로드는 관리자만, 전달은 로그인 사용자만 받는다. D1 기록에 실패하면 올린 R2 객체를 지운다.
+- `guide_assets`는 학생 media 수명주기와 분리된 R2 `guide/<uuid>` key의 가이드 이미지다(JPG·PNG·GIF·WebP, 10MB). 업로드는 관리자만 한다. 전달은 관리자와 가이드가 열린 학생이 받고, "선택"인 학생은 이미지가 연결된 페이지가 열려 있거나 열린 페이지 본문에 그 이미지 주소가 있을 때만 받는다. D1 기록에 실패하면 올린 R2 객체를 지운다.
 - 가이드 구간 질문은 기존 1:1 Q&A 스레드에 `qna_guide_anchors`(스레드 PK·페이지 ID(SET NULL)·페이지 제목·블록 ID·인용문 500자)를 붙인다. 질문은 스레드 생성과 같은 원자 쓰기에서 저장되고 기존 Q&A 권한을 그대로 따른다: 학생은 본인 질문만, 관리자는 모든 질문의 위치를 가이드 화면에서 본다. 블록이나 페이지가 사라져도 인용문과 페이지 제목으로 질문을 표시한다.
 - 가져오기: `npx tsx scripts/guide-import/build.ts [exportDir] [outDir]`가 Claude 문서 export(탭 7개 HTML·사진 23개·다이어그램 JSX)를 읽어 `outDir`(기본 `.wrangler/guide-import`)에 `seed.sql`, 이미지 객체, 로컬 적용 명령을 출력하는 `apply-local.sh`를 만든다. 스크립트는 local·remote D1·R2에 직접 쓰지 않는다. 내부 링크는 포탈 가이드 경로로 바꾸고 mention·byline은 지운다. seed는 `INSERT OR IGNORE`라 다시 실행해도 포탈에서 고친 내용을 덮어쓰지 않지만, 포탈에서 지운 페이지는 되살아나므로 처음 한 번만 적용한다.
 - 다이어그램 JSX는 export 원본(다른 사용자가 쓸 수 있는 문서)이라 실행 코드로 신뢰하지 않는다. esbuild로 문법 변환만 한 뒤 `node --permission -` child process에 stdin으로 넘겨 렌더한다. fs 읽기·쓰기·child_process·worker·addon이 막히고 env가 비어 있어 읽거나 내보낼 비밀값이 없다(Node permission model은 네트워크를 막지 않는다). 결과 SVG는 포탈 token 색으로 정리한 뒤 이미지로 넣는다.
+
+### 학생별 가이드 열람 권한 (2026-11-13)
+
+- `guide_access`(student_id PK → `profiles` CASCADE, mode CHECK `ALL`|`SELECTED`, updated_at)와 `guide_access_pages`(student_id → `profiles` CASCADE, guide_page_id → `guide_pages` CASCADE, 둘의 복합 PK, index `guide_access_pages_page_idx`)는 `0028_guide_access`가 만든다. 행이 없으면 닫힘, `ALL`이면 전체, `SELECTED`면 `guide_access_pages`의 페이지만 열린다. `SELECTED`인데 페이지가 없으면 닫힘과 같다. 닫힘으로 바꾸면 `guide_access` 행만 지우고 고른 페이지는 남긴다.
+- 판정은 `src/lib/guide-access.ts`의 `resolveGuideViewerAccess`·`canViewGuidePage` 하나이고 관리자는 항상 전체다. 목차(`getGuidePages`)·본문(`getGuidePage`)·질문 위치(`getGuideQuestions`)·가이드 질문 만들기(`resolveGuideAnchor`)·Q&A 스레드의 질문 위치 링크·이미지(`handleGuideAssetGet`)·사이드바 메뉴(`AppShell` → `visibleNavItems`)가 모두 이 판정을 쓴다. 열리지 않은 페이지는 없는 페이지와 같은 응답이다(404·빈 목록·같은 오류 문구).
+- Q&A 스레드의 질문 위치는 페이지 제목·인용문을 그대로 주고, 보는 사람에게 열리지 않은 페이지면 `guidePageId`를 `null`로 바꾸고 `pageClosed`를 붙여 링크와 "삭제되었습니다" 안내를 뺀다.
+- 설정은 `src/lib/actions/guideAccess.ts`가 한다. 세 action 모두 `requireStudentTarget`(관리자 확인 + 대상이 학생)을 먼저 거친다. 화면은 학생 상세 · 개요의 `GuideAccessControl`이며 저장은 누른 순서대로 하나씩 보내고, 실패가 섞이면 서버에 저장된 값을 다시 읽어 화면을 맞춘다.
+- 사이드바 메뉴는 layout이 그려질 때(첫 진입·새로고침) 정해진다. 설정을 바꿔도 이미 열려 있는 학생 화면의 메뉴는 다음 새로고침에 바뀌고, 열람 자체는 요청마다 다시 판정한다. 이미지 응답은 `private` cache라 닫기 전에 본 이미지는 그 브라우저에 남을 수 있다.
+- 가이드 페이지 삭제(`deleteGuidePageRecord`)와 학생 계정 삭제(`account-privacy-atomic`)는 열람 행도 함께 지운다.
+- `0028`의 backfill은 적용 시점의 `role = 'student'`이고 가입을 마친 계정(`password_hash`가 있고 `invite:`로 시작하지 않음)에 `ALL` 행을 넣는다. 가입 링크만 받은 계정과 관리자는 행이 없다. `npm run db:check`가 `0027 → 0028` upgrade(표·제약·cascade·backfill 대상)를 검사한다.
 
 ### 캘린더 양방향 동기화
 

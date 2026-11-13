@@ -17,6 +17,7 @@ export function ChoiceGroup<T extends string>({
   onChange,
   variant,
   disabled = false,
+  labelHidden = false,
 }: {
   label: string;
   options: readonly ChoiceOption<T>[];
@@ -25,6 +26,8 @@ export function ChoiceGroup<T extends string>({
   /** segment: 채움 면 위의 세그먼트(게시판 유형), chips: 둥근 칩(채널) */
   variant: "segment" | "chips";
   disabled?: boolean;
+  /** 이름이 바로 옆 줄에 이미 보일 때: 이름을 화면에서 숨기고 보조 기술에만 알린다. */
+  labelHidden?: boolean;
 }) {
   const labelId = useId();
   const buttonsRef = useRef<(HTMLButtonElement | null)[]>([]);
@@ -51,7 +54,7 @@ export function ChoiceGroup<T extends string>({
 
   return (
     <div className="flex flex-col gap-2">
-      <span id={labelId} className="text-body font-medium text-secondary-foreground md:text-ui">{label}</span>
+      <span id={labelId} className={labelHidden ? "sr-only" : "text-body font-medium text-secondary-foreground md:text-ui"}>{label}</span>
       <div
         role="radiogroup"
         aria-labelledby={labelId}

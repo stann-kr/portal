@@ -57,6 +57,7 @@ import {
   normalizeGuideQuote,
   parseGuidePageId,
 } from "@/lib/guide-content";
+import { canViewGuidePage, resolveGuideViewerAccess, type GuideViewer } from "@/lib/guide-access";
 import { findGuideAnchorForThread, findGuidePage } from "@/lib/guide-store";
 import type { QnaGuideAnchorWrite } from "@/lib/qna-atomic";
 import { publicAuthorName } from "@/lib/public-author-name";
@@ -68,6 +69,7 @@ import { withRestoreLock } from "@/lib/trash-restore";
 async function resolveGuideAnchor(
   context: DbContext,
   formData: FormData,
+  viewer: GuideViewer,
 ): Promise<{ ok: true; anchor: QnaGuideAnchorWrite | null } | { ok: false; error: string }> {
   const rawPageId = formData.get("guidePageId");
   if (rawPageId === null || rawPageId === "") return { ok: true, anchor: null };
@@ -78,7 +80,10 @@ async function resolveGuideAnchor(
   if (!pageId || blockId === undefined || !quote) {
     return { ok: false, error: "질문할 가이드 위치를 확인할 수 없습니다. 가이드에서 다시 골라 주세요." };
   }
-  const page = await findGuidePage(context, pageId);
+  // 열리지 않은 페이지는 없는 페이지와 같게 답한다(제목이 질문 위치로 새지 않게).
+  const page = canViewGuidePage(await resolveGuideViewerAccess(context, viewer), pageId)
+    ? await findGuidePage(context, pageId)
+    : null;
   if (!page) return { ok: false, error: "가이드 페이지를 찾을 수 없습니다. 이미 삭제되었을 수 있습니다." };
   return { ok: true, anchor: { guidePageId: page.id, pageTitle: page.title, blockId, quote } };
 }
@@ -274,7 +279,16 @@ async function readQnaThread(threadId: string, includeTrash: boolean) {
     .where(eq(qnaReplies.threadId, threadId))
     .orderBy(qnaReplies.createdAt);
   const repliesWithKind = await withQnaAttachmentKinds(replies);
-  const guideAnchor = await findGuideAnchorForThread(createDbContext(), threadId);
+  const anchorContext = createDbContext();
+  const storedAnchor = await findGuideAnchorForThread(anchorContext, threadId);
+  // 질문 위치(제목·인용)는 그대로 보이고, 보는 사람에게 열리지 않은 페이지로 가는 링크만 뺀다.
+  const guideAnchor = storedAnchor?.guidePageId &&
+    !canViewGuidePage(
+      await resolveGuideViewerAccess(anchorContext, { id: session.user.id!, isAdmin: session.user.role === "admin" }),
+      storedAnchor.guidePageId,
+    )
+    ? { ...storedAnchor, guidePageId: null, pageClosed: true }
+    : storedAnchor ? { ...storedAnchor, pageClosed: false } : null;
   return { ...thread, replies: repliesWithKind, guideAnchor };
 }
 
@@ -445,7 +459,10 @@ async function createQnaThreadRecord(
     JSON.stringify(["qna-initial-reply", studentId]),
   );
   const context = createDbContext();
-  const guideAnchor = await resolveGuideAnchor(context, formData);
+  const guideAnchor = await resolveGuideAnchor(context, formData, {
+    id: session.user.id!,
+    isAdmin: session.user.role === "admin",
+  });
   if (!guideAnchor.ok) return { error: guideAnchor.error };
   const threadActor = actor(session);
   const submittedLegacyUrl = String(formData.get("attachmentUrl") ?? "").trim();

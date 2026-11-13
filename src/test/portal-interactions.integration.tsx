@@ -93,6 +93,13 @@ let InviteSignup: typeof import("@/components/auth/InviteSignup").InviteSignup;
 let confirmActionModule: typeof import("@/components/ui/confirm-action");
 let issueFeedUrl: typeof import("@/lib/actions/calendarFeed").issueStudentCalendarFeedUrl = async () => "/api/calendar/feed?token=test";
 let CalendarFeedControl: typeof import("@/components/admin/CalendarFeedControl").CalendarFeedControl;
+type GuideAccessActions = typeof import("@/lib/actions/guideAccess");
+const guideAccessDefaults: Pick<GuideAccessActions, "getStudentGuideAccess" | "setStudentGuideAccessSetting" | "setStudentGuideAccessPage"> = {
+  getStudentGuideAccess: async () => ({ setting: "CLOSED", pageIds: [], pages: [] }),
+  setStudentGuideAccessSetting: async () => ({ ok: true }),
+  setStudentGuideAccessPage: async () => ({ ok: true }),
+};
+let guideAccessActions = { ...guideAccessDefaults };
 let connectCalendar: typeof import("@/lib/actions/externalCalendars").connectExternalCalendar = async () => ({});
 let ExternalCalendarConnection: typeof import("@/components/student-portal/ExternalCalendarConnection").ExternalCalendarConnection;
 let loadStudentCalendar: typeof import("@/lib/actions/unifiedItems").getUnifiedItemsForStudent = async () => [];
@@ -189,6 +196,11 @@ mock.module("@/lib/actions/curriculum", { namedExports: {
 mock.module("@/lib/actions/calendarFeed", { namedExports: {
   issueStudentCalendarFeedUrl: (...args: Parameters<typeof issueFeedUrl>) => issueFeedUrl(...args),
   getStudentCalendarFeedIssuedAt: async () => null,
+} });
+mock.module("@/lib/actions/guideAccess", { namedExports: {
+  getStudentGuideAccess: (...args: Parameters<GuideAccessActions["getStudentGuideAccess"]>) => guideAccessActions.getStudentGuideAccess(...args),
+  setStudentGuideAccessSetting: (...args: Parameters<GuideAccessActions["setStudentGuideAccessSetting"]>) => guideAccessActions.setStudentGuideAccessSetting(...args),
+  setStudentGuideAccessPage: (...args: Parameters<GuideAccessActions["setStudentGuideAccessPage"]>) => guideAccessActions.setStudentGuideAccessPage(...args),
 } });
 mock.module("@/lib/actions/password", { namedExports: { changeOwnPassword: (...args: Parameters<typeof changePassword>) => changePassword(...args) } });
 mock.module("@/lib/actions/students", { namedExports: {
@@ -3247,6 +3259,76 @@ test("calendar feed replacement asks before expiring the student's existing subs
   await press("구독 URL 다시 발급 확인");
   assert.deepEqual(issued, ["new-student", "subscribed-student"]);
   assert.equal(browser.document.querySelector("code")?.textContent, "https://portal.test/api/calendar/feed?token=token-2");
+});
+
+test("admin overview guide section saves each choice at once, in click order, and falls back to the saved value on failure", async (context) => {
+  const calls: string[] = [];
+  let failNext = false;
+  guideAccessActions = {
+    getStudentGuideAccess: async () => {
+      calls.push("read");
+      return { setting: "SELECTED", pageIds: ["guide-1"], pages: [{ id: "guide-1", title: "장비 소개" }, { id: "guide-2", title: "음원 관리" }] };
+    },
+    setStudentGuideAccessSetting: async (studentId, setting) => {
+      calls.push(`setting:${studentId}:${setting}`);
+      return { ok: true };
+    },
+    setStudentGuideAccessPage: async (studentId, pageId, open) => {
+      calls.push(`page:${studentId}:${pageId}:${open}`);
+      if (!failNext) return { ok: true };
+      failNext = false;
+      return { ok: false, error: "가이드 페이지를 찾을 수 없습니다. 이미 삭제되었을 수 있습니다." };
+    },
+  };
+  context.after(() => { guideAccessActions = { ...guideAccessDefaults }; });
+
+  await render(context, <OverviewTab
+    studentId="student-1"
+    modules={[]}
+    lessons={[]}
+    guideAccess={{ setting: "CLOSED", pageIds: [], pages: [{ id: "guide-1", title: "장비 소개" }, { id: "guide-2", title: "음원 관리" }] }}
+  />);
+  const section = browser.document.querySelector('[aria-labelledby="guide-access-heading"]');
+  assert.ok(section, "the guide section sits in the overview");
+  const text = () => section.textContent ?? "";
+  const group = section.querySelector('[role="radiogroup"]');
+  assert.equal(browser.document.getElementById(group?.getAttribute("aria-labelledby") ?? "")?.textContent, "가이드 열람");
+  const checked = () => [...section.querySelectorAll('[role="radio"]')].filter((radio) => radio.getAttribute("aria-checked") === "true").map((radio) => radio.textContent);
+  const boxes = () => [...section.querySelectorAll('input[type="checkbox"]')] as unknown as HTMLInputElement[];
+  assert.deepEqual(checked(), ["닫힘"]);
+  assert.match(text(), /열람닫힘/u);
+  assert.match(text(), /닫힘이면 학생 메뉴에 가이드가 보이지 않습니다\./u);
+  assert.equal(boxes().length, 0, "the page list only opens for 선택");
+  assert.doesNotMatch(text(), /저장됨/u);
+
+  await press("전체");
+  await settle();
+  assert.deepEqual(calls, ["setting:student-1:ALL"]);
+  assert.match(text(), /열람전체 · 2개 페이지/u);
+  assert.match(text(), /나중에 만든 페이지도 함께 열립니다\./u);
+  assert.match(section.querySelector('[role="status"]')?.textContent ?? "", /저장됨/u);
+
+  await press("선택");
+  await settle();
+  assert.match(text(), /열람선택 · 2개 중 0개/u);
+  assert.match(text(), /고른 페이지가 없으면 학생에게는 닫힘과 같습니다\./u);
+  assert.equal(section.querySelector("legend")?.textContent, "열어 줄 페이지");
+  assert.deepEqual(boxes().map((box) => [box.parentElement?.textContent, box.checked]), [["장비 소개", false], ["음원 관리", false]]);
+
+  await act(async () => { boxes()[1].click(); });
+  await settle();
+  assert.deepEqual(calls.slice(1), ["setting:student-1:SELECTED", "page:student-1:guide-2:true"]);
+  assert.match(text(), /열람선택 · 2개 중 1개/u);
+  assert.doesNotMatch(text(), /닫힘과 같습니다/u);
+
+  // 저장이 실패하면 서버에 저장된 값을 다시 읽어 화면을 맞추고 이유를 알린다.
+  failNext = true;
+  await act(async () => { boxes()[1].click(); });
+  await settle();
+  assert.deepEqual(calls.slice(3), ["page:student-1:guide-2:false", "read"]);
+  assert.deepEqual(boxes().map((box) => box.checked), [true, false], "the screen follows what the server holds");
+  assert.match(section.querySelector('[role="alert"]')?.textContent ?? "", /가이드 페이지를 찾을 수 없습니다/u);
+  assert.doesNotMatch(section.querySelector('[role="status"]')?.textContent ?? "", /저장됨/u);
 });
 
 test("admin overview shows the curriculum ledger with its progress count only when the switch is on", async (context) => {

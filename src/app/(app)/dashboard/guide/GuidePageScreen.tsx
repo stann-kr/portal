@@ -14,14 +14,19 @@ import { formatNoteUpdated } from "@/components/notes/note-display";
 import { GuideDeleteButton } from "@/components/guide/GuideDeleteButton";
 import { GuideReader } from "@/components/guide/GuideReader";
 import { buttonClassName } from "@/components/ui/button";
-import { getGuidePage, getGuideQuestions } from "@/lib/actions/guide";
+import { GuideClosedNotice } from "@/components/guide/GuideClosedNotice";
+import { getGuidePage, getGuideQuestions, isGuideClosedForViewer } from "@/lib/actions/guide";
 import type { AuthSession } from "@/lib/auth-guard";
 import { guidePagePath, listGuideBlockIds } from "@/lib/guide-content";
 import { getRequestNow } from "@/lib/request-time";
 
 export async function GuidePageScreen({ pageId, session }: { pageId: string; session: AuthSession }) {
   const [page, questions] = await Promise.all([getGuidePage(pageId), getGuideQuestions(pageId)]);
-  if (!page) notFound();
+  // 열리지 않은 페이지는 없는 페이지와 같다. 가이드 전체가 닫힌 학생에게는 안내만 보인다.
+  if (!page) {
+    if (await isGuideClosedForViewer()) return <GuideClosedNotice />;
+    notFound();
+  }
 
   const isAdmin = session.user.role === "admin";
   const updatedLabel = formatNoteUpdated(page.updatedAt, getRequestNow());

@@ -21,6 +21,7 @@ import { getAssignmentSummariesByStudent } from "@/lib/actions/assignments";
 import { getAssignmentTasksForStudent } from "@/lib/actions/assignmentTasks";
 import { AdminAssignmentsPanel } from "@/components/admin/assignments/AdminAssignmentsPanel";
 import { getStudentCalendarFeedIssuedAt } from "@/lib/actions/calendarFeed";
+import { getStudentGuideAccess, type StudentGuideAccessView } from "@/lib/actions/guideAccess";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { getSubmissionReviewStatus } from "@/lib/assignment-submission";
 import { SUBMISSION_REVIEW_PORTAL_STATUS } from "@/lib/portal-status";
@@ -207,7 +208,7 @@ export default async function StudentDetailPage({
   const workCounts = await getStudentWorkCounts(studentId);
 
   // Overview 탭 데이터는 미리 병렬 fetch
-  const [modules, lessons, calendarFeedIssuedAt, accountState, studentMemo, connectedLessons, lessonNoteIds] = await (activeTab === "overview"
+  const [modules, lessons, calendarFeedIssuedAt, accountState, studentMemo, connectedLessons, lessonNoteIds, guideAccess] = await (activeTab === "overview"
     ? Promise.all([
         // 커리큘럼이 숨겨져 있으면 읽지 않는다(src/lib/curriculum-visibility.ts).
         isCurriculumVisible() ? getCurriculumByStudent(studentId) : Promise.resolve([]),
@@ -217,8 +218,9 @@ export default async function StudentDetailPage({
         getInstructorMemo({ kind: "student", studentId }),
         getConnectedLessonsForStudent(studentId),
         getLessonNoteIdsForStudent(studentId),
+        getStudentGuideAccess(studentId),
       ])
-    : Promise.resolve([[], [], null, { kind: "active" }, null, [], {}] as [
+    : Promise.resolve([[], [], null, { kind: "active" }, null, [], {}, undefined] as [
         Awaited<ReturnType<typeof getCurriculumByStudent>>,
         Awaited<ReturnType<typeof getLessonsByStudent>>,
         Date | null,
@@ -226,6 +228,7 @@ export default async function StudentDetailPage({
         Awaited<ReturnType<typeof getInstructorMemo>>,
         Awaited<ReturnType<typeof getConnectedLessonsForStudent>>,
         Record<string, string>,
+        StudentGuideAccessView | undefined,
       ]));
   // 만료·지난 레슨 판단은 서버 시각 하나로 정해 화면 hydration과 어긋나지 않게 한다.
   const referenceTime = new Date(getRequestNow());
@@ -279,6 +282,7 @@ export default async function StudentDetailPage({
               connectedLessons={connectedLessons}
               calendarFeedIssuedAt={calendarFeedIssuedAt}
               account={account}
+              guideAccess={guideAccess}
               referenceTime={referenceTime}
               lessonNoteIds={lessonNoteIds}
             />

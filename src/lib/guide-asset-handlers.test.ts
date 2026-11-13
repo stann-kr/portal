@@ -100,13 +100,14 @@ test("다른 출처·형식 위장·SVG·크기 초과 업로드를 거부한다
 });
 
 test("가이드 이미지 열람은 로그인이 필요하고 private cache·nosniff로 보낸다", async (context) => {
-  const { deps, state } = setup(context, admin);
+  const { sqlite, deps, state } = setup(context, admin);
   assert.equal((await handleGuideAssetUpload(uploadRequest(PNG), deps)).status, 201);
 
   state.session = null;
   assert.equal((await handleGuideAssetGet(ASSET_ID, deps)).status, 401);
 
   state.session = student;
+  sqlite.prepare("INSERT INTO guide_access (student_id, mode, updated_at) VALUES (?, 'ALL', 0)").run("student-1");
   const response = await handleGuideAssetGet(ASSET_ID, deps);
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("content-type"), "image/png");
@@ -116,6 +117,38 @@ test("가이드 이미지 열람은 로그인이 필요하고 private cache·nos
 
   assert.equal((await handleGuideAssetGet("7c9e6679-7425-40de-944b-e07fc1f90ae7", deps)).status, 404);
   assert.equal((await handleGuideAssetGet("../media/x", deps)).status, 404);
+});
+
+test("가이드 이미지는 가이드가 열린 학생에게만, 선택이면 열린 페이지에 쓰인 것만 보낸다", async (context) => {
+  const { sqlite, deps, state } = setup(context, admin);
+  assert.equal((await handleGuideAssetUpload(uploadRequest(PNG), deps)).status, 201);
+  const insertPage = sqlite.prepare("INSERT INTO guide_pages (id, title, sort_order, content_html) VALUES (?, ?, ?, ?)");
+  insertPage.run("guide-1", "장비 소개", 0, `<img src="/api/guide-assets/${ASSET_ID}" alt="">`);
+  insertPage.run("guide-2", "음원 관리", 1, "<p>폴더</p>");
+  insertPage.run("guide-3", "복사해 쓴 페이지", 2, `<p>같은 그림</p><img src="/api/guide-assets/${ASSET_ID}" alt="">`);
+  sqlite.prepare("UPDATE guide_assets SET guide_page_id = 'guide-1' WHERE id = ?").run(ASSET_ID);
+
+  state.session = student;
+  assert.equal((await handleGuideAssetGet(ASSET_ID, deps)).status, 404, "열람 행이 없으면 닫힘이다");
+
+  sqlite.prepare("INSERT INTO guide_access (student_id, mode, updated_at) VALUES (?, 'SELECTED', 0)").run("student-1");
+  assert.equal((await handleGuideAssetGet(ASSET_ID, deps)).status, 404, "선택인데 고른 페이지가 없으면 닫힘이다");
+  const openPage = sqlite.prepare("INSERT INTO guide_access_pages (student_id, guide_page_id, created_at) VALUES ('student-1', ?, 0)");
+  openPage.run("guide-2");
+  assert.equal((await handleGuideAssetGet(ASSET_ID, deps)).status, 404, "열린 페이지에 쓰이지 않은 이미지는 없는 이미지와 같다");
+  openPage.run("guide-3");
+  assert.equal((await handleGuideAssetGet(ASSET_ID, deps)).status, 200, "열린 페이지 본문에 복사해 쓴 이미지는 보인다");
+  sqlite.prepare("DELETE FROM guide_access_pages WHERE guide_page_id = 'guide-3'").run();
+  assert.equal((await handleGuideAssetGet(ASSET_ID, deps)).status, 404);
+  openPage.run("guide-1");
+  assert.equal((await handleGuideAssetGet(ASSET_ID, deps)).status, 200, "이미지가 연결된 페이지가 열려 있으면 보인다");
+
+  sqlite.prepare("UPDATE guide_access SET mode = 'ALL' WHERE student_id = 'student-1'").run();
+  sqlite.prepare("DELETE FROM guide_access_pages").run();
+  assert.equal((await handleGuideAssetGet(ASSET_ID, deps)).status, 200);
+
+  state.session = admin;
+  assert.equal((await handleGuideAssetGet(ASSET_ID, deps)).status, 200, "관리자는 항상 본다");
 });
 
 test("R2 저장 뒤 DB 기록이 실패하면 올린 객체를 지운다", async (context) => {

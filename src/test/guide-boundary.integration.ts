@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { after, before, mock, test, type TestContext } from "node:test";
 import type { AuthSession } from "@/lib/auth-guard";
-import { guideAssets, guidePages, profiles, qnaGuideAnchors } from "@/db/schema";
+import { guideAccess, guideAccessPages, guideAssets, guidePages, profiles, qnaGuideAnchors } from "@/db/schema";
 import { createIsolatedPortalD1, type IsolatedPortalD1 } from "@/test/isolated-d1";
 
 type PortalTestDb = IsolatedPortalD1["db"];
@@ -9,6 +9,7 @@ type PortalTestDb = IsolatedPortalD1["db"];
 let activeDb: PortalTestDb | null = null;
 let activeSession: AuthSession | null = null;
 let guideActions: typeof import("@/lib/actions/guide");
+let guideAccessActions: typeof import("@/lib/actions/guideAccess");
 let qnaActions: typeof import("@/lib/actions/qna");
 let draftActions: typeof import("@/lib/actions/documentDrafts");
 let formDraft: typeof import("@/lib/form-draft");
@@ -44,8 +45,9 @@ mock.module("next/cache", {
 });
 
 before(async () => {
-  [guideActions, qnaActions, draftActions, formDraft, draftContract, guideContent] = await Promise.all([
+  [guideActions, guideAccessActions, qnaActions, draftActions, formDraft, draftContract, guideContent] = await Promise.all([
     import("@/lib/actions/guide"),
+    import("@/lib/actions/guideAccess"),
     import("@/lib/actions/qna"),
     import("@/lib/actions/documentDrafts"),
     import("@/lib/form-draft"),
@@ -69,6 +71,12 @@ async function setupDatabase(context: TestContext, session: AuthSession | null):
     { id: "admin-1", email: "admin-1@example.com", displayName: "관리자", role: "admin" },
     { id: "student-a", email: "student-a@example.com", displayName: "학생 A", role: "student" },
     { id: "student-b", email: "student-b@example.com", displayName: "학생 B", role: "student" },
+    { id: "student-new", email: "student-new@example.com", displayName: "새 학생", role: "student" },
+  ]);
+  // 학생 A·B는 가이드 전체가 열린 학생, 새 학생은 아직 열리지 않은 학생(guide_access 행 없음)이다.
+  await db.insert(guideAccess).values([
+    { studentId: "student-a", mode: "ALL" },
+    { studentId: "student-b", mode: "ALL" },
   ]);
   await db.insert(guidePages).values([
     { id: "guide-1", title: "장비 소개", sortOrder: 0, contentHtml: '<p data-block-id="b1">CDJ</p><p data-block-id="b2">믹서</p>' },
@@ -202,7 +210,7 @@ test("블록을 지운 편집과 페이지 삭제 뒤에도 질문과 인용이 
   assert.deepEqual(anchors.map((anchor) => [anchor.guidePageId, anchor.pageTitle, anchor.anchorQuote]), [[null, "장비 소개", "믹서"]]);
   activeSession = createSession("student-a", "student");
   const thread = await qnaActions.getQnaThread(asked.thread!.id);
-  assert.deepEqual(thread?.guideAnchor, { guidePageId: null, pageTitle: "장비 소개", blockId: "b2", quote: "믹서" });
+  assert.deepEqual(thread?.guideAnchor, { guidePageId: null, pageTitle: "장비 소개", blockId: "b2", quote: "믹서", pageClosed: false });
 });
 
 test("가이드 서버 초안은 관리자만 가질 수 있다", { concurrency: false }, async (context) => {
@@ -267,4 +275,98 @@ test("이미지 150개를 참조하는 저장도 D1 bind 제한 없이 모두 �
   const rows = await db.select({ pageId: guideAssets.guidePageId }).from(guideAssets);
   assert.equal(rows.length, 150);
   assert.ok(rows.every((row) => row.pageId === "guide-1"));
+});
+
+test("가이드가 열리지 않은 학생은 목차·본문·질문 위치를 받지 못하고 가이드 질문도 만들 수 없다", { concurrency: false }, async (context) => {
+  await setupDatabase(context, createSession("student-new", "student"));
+  assert.equal(await guideActions.isGuideClosedForViewer(), true);
+  assert.deepEqual(await guideActions.getGuidePages(), []);
+  assert.equal(await guideActions.getGuidePage("guide-1"), null);
+  assert.deepEqual(await guideActions.getGuideQuestions("guide-1"), []);
+  const blocked = await askGuideQuestion("student-new", "b1", "CDJ");
+  assert.equal(blocked.success, undefined);
+  assert.match(blocked.error ?? "", /가이드 페이지를 찾을 수 없습니다/u);
+
+  activeSession = createSession("student-a", "student");
+  assert.equal(await guideActions.isGuideClosedForViewer(), false);
+  activeSession = createSession("admin-1", "admin");
+  assert.equal(await guideActions.isGuideClosedForViewer(), false, "관리자는 권한 행이 없어도 전체를 본다");
+  assert.deepEqual((await guideActions.getGuidePages()).map((page) => page.id), ["guide-1", "guide-2"]);
+});
+
+test("선택으로 열린 학생은 고른 페이지만 보고, 닫힌 페이지의 지난 질문은 링크 없이 남는다", { concurrency: false }, async (context) => {
+  await setupDatabase(context, null);
+  const asked = await askGuideQuestion("student-a", "c1", "폴더", "guide-2");
+  assert.equal(asked.success, true);
+
+  activeSession = createSession("admin-1", "admin");
+  assert.deepEqual(await guideAccessActions.setStudentGuideAccessSetting("student-a", "SELECTED"), { ok: true });
+  activeSession = createSession("student-a", "student");
+  assert.equal(await guideActions.isGuideClosedForViewer(), true, "선택인데 고른 페이지가 없으면 닫힘과 같다");
+
+  activeSession = createSession("admin-1", "admin");
+  assert.deepEqual(await guideAccessActions.setStudentGuideAccessPage("student-a", "guide-1", true), { ok: true });
+  assert.deepEqual(await guideAccessActions.setStudentGuideAccessPage("student-a", "guide-1", true), { ok: true }, "같은 요청을 다시 보내도 같다");
+
+  activeSession = createSession("student-a", "student");
+  assert.equal(await guideActions.isGuideClosedForViewer(), false);
+  assert.deepEqual((await guideActions.getGuidePages()).map((page) => page.id), ["guide-1"]);
+  assert.equal((await guideActions.getGuidePage("guide-1"))?.title, "장비 소개");
+  assert.equal(await guideActions.getGuidePage("guide-2"), null);
+  assert.deepEqual(await guideActions.getGuideQuestions("guide-2"), [], "닫힌 페이지에는 본인 질문 위치도 주지 않는다");
+  assert.ok((await askGuideQuestion("student-a", "c1", "폴더", "guide-2")).error);
+  assert.equal((await askGuideQuestion("student-a", "b1", "CDJ", "guide-1")).success, true);
+
+  activeSession = createSession("student-a", "student");
+  const thread = await qnaActions.getQnaThread(asked.thread!.id);
+  assert.deepEqual(thread?.guideAnchor, { guidePageId: null, pageTitle: "음원 관리", blockId: "c1", quote: "폴더", pageClosed: true });
+  activeSession = createSession("admin-1", "admin");
+  const adminView = await qnaActions.getQnaThread(asked.thread!.id);
+  assert.equal(adminView?.guideAnchor?.guidePageId, "guide-2", "관리자에게는 링크가 그대로 간다");
+
+  // 학생 B의 전체 열람은 학생 A의 설정과 무관하다.
+  activeSession = createSession("student-b", "student");
+  assert.deepEqual((await guideActions.getGuidePages()).map((page) => page.id), ["guide-1", "guide-2"]);
+});
+
+test("가이드 열람 설정은 관리자만 학생에게 하고, 닫아도 고른 페이지는 남으며 페이지를 지우면 함께 정리된다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("student-a", "student"));
+  await assert.rejects(guideAccessActions.getStudentGuideAccess("student-a"), /Admin only/);
+  await assert.rejects(guideAccessActions.setStudentGuideAccessSetting("student-a", "ALL"), /Admin only/);
+  await assert.rejects(guideAccessActions.setStudentGuideAccessPage("student-new", "guide-1", true), /Admin only/);
+  assert.equal((await db.select().from(guideAccessPages)).length, 0);
+
+  activeSession = createSession("admin-1", "admin");
+  await assert.rejects(guideAccessActions.setStudentGuideAccessSetting("admin-1", "ALL"), /Student not found/);
+  await assert.rejects(guideAccessActions.setStudentGuideAccessSetting("no-such-student", "ALL"), /Student not found/);
+  assert.deepEqual(await guideAccessActions.getStudentGuideAccess("student-new"), {
+    setting: "CLOSED",
+    pageIds: [],
+    pages: [{ id: "guide-1", title: "장비 소개" }, { id: "guide-2", title: "음원 관리" }],
+  });
+  const badSetting = await guideAccessActions.setStudentGuideAccessSetting("student-new", "EVERYONE" as never);
+  assert.equal(badSetting.ok, false);
+  const missingPage = await guideAccessActions.setStudentGuideAccessPage("student-new", "no-such-page", true);
+  assert.equal(missingPage.ok, false);
+  assert.equal((await db.select().from(guideAccess)).filter((row) => row.studentId === "student-new").length, 0);
+
+  assert.deepEqual(await guideAccessActions.setStudentGuideAccessSetting("student-new", "SELECTED"), { ok: true });
+  assert.deepEqual(await guideAccessActions.setStudentGuideAccessPage("student-new", "guide-2", true), { ok: true });
+  assert.deepEqual(await guideAccessActions.setStudentGuideAccessPage("student-new", "guide-1", true), { ok: true });
+  assert.deepEqual(await guideAccessActions.setStudentGuideAccessPage("student-new", "guide-1", false), { ok: true });
+  assert.deepEqual(await guideAccessActions.setStudentGuideAccessSetting("student-new", "CLOSED"), { ok: true });
+  const closed = await guideAccessActions.getStudentGuideAccess("student-new");
+  assert.deepEqual([closed.setting, closed.pageIds], ["CLOSED", ["guide-2"]], "닫아도 고른 페이지는 남는다");
+  activeSession = createSession("student-new", "student");
+  assert.deepEqual(await guideActions.getGuidePages(), []);
+
+  activeSession = createSession("admin-1", "admin");
+  assert.deepEqual(await guideAccessActions.setStudentGuideAccessSetting("student-new", "ALL"), { ok: true });
+  activeSession = createSession("student-new", "student");
+  assert.deepEqual((await guideActions.getGuidePages()).map((page) => page.id), ["guide-1", "guide-2"]);
+
+  activeSession = createSession("admin-1", "admin");
+  assert.deepEqual(await guideActions.deleteGuidePage("guide-2", 1), { ok: true });
+  assert.equal((await db.select().from(guideAccessPages)).length, 0, "지운 페이지의 열람 행은 남지 않는다");
+  assert.deepEqual((await guideAccessActions.getStudentGuideAccess("student-new")).pageIds, []);
 });

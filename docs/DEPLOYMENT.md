@@ -31,7 +31,7 @@
 
 | 항목 | 저장소에서 확인할 수 있는 것 | 운영 적용을 확인하는 증거 |
 |---|---|---|
-| D1 migration | SQL·journal·snapshot `0000~0027`, 메모리 DB에서 체인·schema 검증 | 대상 D1의 적용 목록과 실제 schema·FK, 그 목록에서 계산한 pending 범위 |
+| D1 migration | SQL·journal·snapshot `0000~0028`, 메모리 DB에서 체인·schema 검증 | 대상 D1의 적용 목록과 실제 schema·FK, 그 목록에서 계산한 pending 범위 |
 | 계정 삭제 | `0012`와 삭제·정리 구현, application 설정의 `ACCOUNT_DELETION_ENABLED="false"` 기본값 | 활성 Worker의 유효 flag, 기기 adoption, 승인된 삭제·정리 smoke |
 | 예약 정리 | `worker.ts`의 `scheduled` handler, Workers Logs 설정, source에 없는 Cron trigger | 원격 trigger 주기, 대상 version의 실제 scheduled invocation, backlog·실패·alert 증거 |
 | 외부 캘린더 | `0013` 구독 테이블과 `EXTERNAL_CALENDAR_ENCRYPTION_KEY` 요구 조건 | 대상 schema, secret 설정 확인, 승인된 연결·읽기·교체·해제 smoke |
@@ -139,6 +139,14 @@ iCloud 연동:
 2. 이 version부터 비밀번호 지문이 없는 예전 session은 거부된다. 배포 직후 해당 기기는 로그인 화면으로 가므로, 학생에게 한 번 다시 로그인해야 할 수 있다고 미리 알린다.
 3. `wrangler.scheduled.toml`은 `wrangler.toml`과 같은 placement·메일 binding을 가진다(일치를 테스트로 고정). scheduled 설정으로 version을 올릴 때만 적용되며, binding 변경이므로 code deploy와 따로 승인한다.
 4. 개인정보처리방침의 "이메일 주소 전체는 다른 학생에게 보이지 않습니다"는 커뮤니티·댓글·Q&A 응답에서 타인 이메일을 뺀 수정과 같은 version이거나 그 뒤 version에서만 내보낸다. 배포일이 시행일(`src/app/privacy/page.tsx`의 `EFFECTIVE_DATE`)과 다르면 시행일을 배포일로 고친다.
+
+### 학생별 가이드 열람 권한 전환 gate (2026-11-13)
+
+1. 원격 D1에 `0028_guide_access`를 **코드보다 먼저** 적용한다(백업·bookmark 먼저). 새 표 두 개를 만들고, 그 시점에 가입을 마친 학생마다 `guide_access`에 `ALL` 행을 넣는다. 표 추가만이 아니라 운영 데이터를 쓰는 migration이므로 code deploy와 따로 승인받는다. 이전 코드는 새 표를 읽지 않아 먼저 적용해도 동작이 같다.
+2. 순서를 바꾸면 안 된다. 새 코드가 표 없이 나가면 학생의 가이드 화면과 관리자의 학생 상세 · 개요가 오류가 된다(학생 메뉴에서는 가이드가 빠진다).
+3. 적용 뒤 `SELECT mode, COUNT(*) FROM guide_access GROUP BY mode`와 가입을 마친 학생 수를 비교한다(read-only). migration과 code deploy 사이에 가입을 마친 학생은 행이 없어 닫힘으로 시작한다.
+4. 배포 뒤 닫아 둘 학생은 학생 상세 · 개요의 "가이드" 구획에서 직접 닫는다. 새로 초대하는 학생은 닫힘으로 시작하므로 첫 수업 뒤에 열어 준다.
+5. 되돌리기: 이전 코드로 되돌리면 모든 로그인 사용자가 다시 가이드 전체를 본다. 두 표는 남겨 두어도 이전 코드에 영향이 없다.
 
 ### 가입 링크 메일 gate
 
