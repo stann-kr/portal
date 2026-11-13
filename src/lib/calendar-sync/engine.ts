@@ -19,7 +19,7 @@
  * DB·client·시계는 주입받아 단위 테스트에서 실제 SQLite와 가짜 provider로 검증한다.
  * 오류 메시지·lastError에는 token·암호·원격 본문을 넣지 않고 짧은 한국어 분류만 남긴다.
  */
-import { and, eq, exists, gte, inArray, isNull, lt, lte, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, eq, exists, gte, inArray, isNull, lt, lte, or, sql, type SQL } from "drizzle-orm";
 import type { DbContext, DrizzleDb } from "@/db/client";
 import {
   calendarConnections,
@@ -75,6 +75,11 @@ export const DELETED_FINGERPRINT = "DELETED";
 export const FULL_RESYNC_MISSING_LOOKUP_CAP = 20;
 /** portalRef로 link를 다시 이은 직후 표시. 실제 fingerprint와 달라 다음 push가 로컬 내용으로 원격을 맞춘다. */
 export const RELINKED_FINGERPRINT = "RELINKED";
+/**
+ * 원격에서 지워진 포탈 레슨의 link 표시(remote_id NULL). 레슨 삭제는 관리자 전용이라 바깥 삭제로 지우지 않고,
+ * 원격 사본도 다시 만들지 않는다(사용자 결정: 바깥 삭제는 연결만 끊기). 포탈에서 레슨을 지우면 tombstone으로 정리된다.
+ */
+export const DETACHED_FINGERPRINT = "DETACHED";
 export const LESSON_REMOTE_TITLE = "레슨";
 /** 종료 시각이 없는 포탈 일정을 원격에 보낼 때의 길이. */
 export const OPEN_EVENT_REMOTE_MINUTES = 60;
@@ -427,6 +432,60 @@ async function importRemoteEvent(state: RunState, remote: RemoteEvent): Promise<
   state.localChanged = true;
 }
 
+/**
+ * portalRef 없는 원격 일정을 가져오기 전에, 예전에 가져와 둔 같은 내용의 포탈 일정(NOTE, 이 매핑에 link 없음)이
+ * 있으면 새로 만들지 않고 그 행에 잇는다. 매핑을 해제했다 다시 지정하면 link가 cascade로 사라지는데, 가져온 일정은
+ * 원격에 portalRef가 없어 다시 이을 수 없어서 포탈·원격에 사본이 생기던 문제를 막는다(schema·원격 쓰기 없이).
+ * 이은 행은 fingerprint가 같아 push가 원격에 다시 쓰지 않는다. 이었으면 true.
+ */
+async function adoptUnlinkedImport(state: RunState, remote: RemoteEvent): Promise<boolean> {
+  const values = remoteEventToLocalValues(remote);
+  const candidates = await state.db
+    .select({ id: calendarEvents.id })
+    .from(calendarEvents)
+    .where(and(
+      eq(calendarEvents.userId, state.studentId),
+      eq(calendarEvents.eventType, "NOTE"),
+      eq(calendarEvents.title, values.title),
+      values.description === null ? isNull(calendarEvents.description) : eq(calendarEvents.description, values.description),
+      eq(calendarEvents.startTime, values.start),
+      values.end === null ? isNull(calendarEvents.endTime) : eq(calendarEvents.endTime, values.end),
+    ))
+    .orderBy(asc(calendarEvents.createdAt), asc(calendarEvents.id))
+    .limit(20);
+  if (candidates.length === 0) return false;
+  const linked = new Set((await state.db
+    .select({ localId: calendarSyncLinks.localId })
+    .from(calendarSyncLinks)
+    .where(and(
+      eq(calendarSyncLinks.mappingId, state.mappingId),
+      eq(calendarSyncLinks.localKind, "EVENT"),
+      inArray(calendarSyncLinks.localId, candidates.map((candidate) => candidate.id)),
+    ))).map((row) => row.localId));
+  const target = candidates.find((candidate) => !linked.has(candidate.id));
+  if (!target) return false;
+  const local: LocalCalendarRow = { kind: "EVENT", id: target.id, ...values };
+  const guard = localRowGuard(local, state.studentId);
+  const nowSeconds = epochSeconds(state.now());
+  // 읽은 뒤 웹에서 바뀌었으면 잇지 않는다(0행). 그때는 기존처럼 새로 가져온다.
+  await executeFenced(state, [{
+    query:
+      "INSERT INTO calendar_sync_links (id, mapping_id, local_kind, local_id, remote_id, etag, local_fingerprint, created_at, updated_at) " +
+      `SELECT ?, ?, 'EVENT', ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM calendar_events WHERE ${guard.where}) ` +
+      "ON CONFLICT DO NOTHING",
+    params: [
+      crypto.randomUUID(), state.mappingId, target.id, remote.remoteId, remote.etag, await localFingerprint(local), nowSeconds, nowSeconds,
+      ...guard.params,
+    ],
+  }]);
+  const [adopted] = await state.db
+    .select({ id: calendarSyncLinks.id })
+    .from(calendarSyncLinks)
+    .where(and(eq(calendarSyncLinks.mappingId, state.mappingId), eq(calendarSyncLinks.remoteId, remote.remoteId)))
+    .limit(1);
+  return Boolean(adopted);
+}
+
 /** 조건부 batch가 0행(웹 수정 경합)으로 되돌려지면 한 번 다시 읽어 판단한다. 그래도 실패하면 오류를 올린다. */
 const MAX_CONDITIONAL_ATTEMPTS = 2;
 
@@ -509,6 +568,15 @@ async function applyRemoteDeletion(state: RunState, link: LinkRow, attempt = 1):
   const local = await loadLocalRow(state.db, state.studentId, link.localKind, link.localId);
   if (!local) {
     await deleteLink(state, link.id);
+    return;
+  }
+  if (local.kind === "LESSON") {
+    // 바깥 삭제(학생·관리자 누구든 구분할 수 없다)는 포탈 레슨을 지우지 않고 연결만 끊는다. 그 사이 포탈 삭제
+    // tombstone이 생겼으면 덮지 않는다(push가 정리한다).
+    await executeFenced(state, [{
+      query: "UPDATE calendar_sync_links SET remote_id = NULL, etag = NULL, local_fingerprint = ?, last_error = NULL, updated_at = ? WHERE id = ? AND local_fingerprint = ?",
+      params: [DETACHED_FINGERPRINT, epochSeconds(state.now()), link.id, link.localFingerprint],
+    }]);
     return;
   }
   const current = await localFingerprint(local);
@@ -617,6 +685,11 @@ async function applyPull(state: RunState, result: PullResult, full: boolean, win
       continue;
     }
     if (remote.start.getTime() < window.from.getTime() || remote.start.getTime() > window.to.getTime()) continue;
+    if (await adoptUnlinkedImport(state, remote)) {
+      await loadLinks(state);
+      ({ byRemote, byLocal } = indexLinks(state.links));
+      continue;
+    }
     await importRemoteEvent(state, remote);
   }
 
@@ -750,6 +823,8 @@ async function writeLocalToRemote(state: RunState, link: LinkRow, input: RemoteE
 }
 
 async function pushRow(state: RunState, row: LocalCalendarRow, link: LinkRow | undefined): Promise<void> {
+  // 바깥에서 지워 연결만 끊은 레슨은 원격에 다시 만들지 않는다.
+  if (link && !link.remoteId && link.localFingerprint === DETACHED_FINGERPRINT) return;
   const fingerprint = await localFingerprint(row);
   if (link && link.remoteId && link.localFingerprint === fingerprint) return;
   assertCanWrite(state);

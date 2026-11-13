@@ -170,15 +170,16 @@ async function markConnectionNeedsReauth(connectionId: string, message: string):
     .catch(() => undefined);
 }
 
-/** 같은 관리자·provider 연결이 있으면 그 id를 재사용해 자격 증명을 바꾸고(매핑 유지) 없으면 새로 만든다. */
+/** 같은 관리자·provider 연결이 있으면 그 id를 재사용해 자격 증명을 바꾸고(같은 계정이면 매핑 유지) 없으면 새로 만든다. */
 async function upsertConnection<P extends ExternalCalendarProvider>(input: {
   ownerId: string;
   provider: P;
   accountLabel: string;
+  accountId: string | null;
   credentials: ConnectionCredentials<P>;
   key: Uint8Array;
 }): Promise<void> {
-  await upsertCalendarConnection(readDb(), input);
+  await upsertCalendarConnection(createDbContext(), input);
 }
 
 // ─── 관리자 설정 ────────────────────────────────────────
@@ -289,6 +290,7 @@ export async function connectICloudCalendar(
       ownerId: session.user.id,
       provider: "ICLOUD",
       accountLabel: appleId,
+      accountId: appleId,
       credentials: { appleId, appPassword, calendarHomeUrl },
       key: requireCalendarEncryptionKey(),
     });
