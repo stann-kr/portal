@@ -53,6 +53,7 @@ import { validateMixAnalysisUpgrade } from "./migration-check/mix-analysis.mjs";
 import { validatePushSubscriptionsUpgrade } from "./migration-check/push-subscriptions.mjs";
 import { validatePushMutedCategoriesUpgrade } from "./migration-check/push-muted-categories.mjs";
 import { validateAssignmentReviewedAtUpgrade } from "./migration-check/assignment-reviewed-at.mjs";
+import { validateListQueryIndexesUpgrade } from "./migration-check/list-query-indexes.mjs";
 import {
   validateAccountPrivacyAtomicSource,
   validateAccountPrivacySemantics,
@@ -194,6 +195,8 @@ async function main() {
   console.log("PASS populated 0024 → 0025 push muted category table, category CHECK, pair uniqueness and profile cascade");
   await validateAssignmentReviewedAtUpgrade(migrationFiles);
   console.log("PASS populated 0025 → 0026 assignment reviewed_at nullable column and row preservation without table rebuild");
+  await validateListQueryIndexesUpgrade(migrationFiles);
+  console.log("PASS populated 0026 → 0027 list query indexes, schema and row preservation, index use by list queries");
 }
 
 try {
