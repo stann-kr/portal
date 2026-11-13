@@ -122,7 +122,7 @@ export async function createComment(
   const rawContent = formData.get("content");
   const content = typeof rawContent === "string" ? rawContent.trim() : "";
   if (!content) return { error: "댓글 내용을 입력해주세요." };
-  if ([...content].length > COMMENT_MAX_LENGTH) return { error: `댓글은 ${COMMENT_MAX_LENGTH.toLocaleString("ko-KR")}자까지 쓸 수 있습니다.` };
+  if ([...content].length > COMMENT_MAX_LENGTH) return { error: `댓글은 ${new Intl.NumberFormat("ko-KR").format(COMMENT_MAX_LENGTH)}자까지 쓸 수 있습니다.` };
   const operationId = resolveCreationOperationId(formData.get(CREATION_OPERATION_FIELD));
   if (!operationId) return { error: "작성 정보를 확인하지 못했습니다. 입력 내용을 보관한 뒤 새로고침해 주세요." };
 
