@@ -23,8 +23,16 @@ function readPayload(event) {
 
 /** 같은 출처의 경로만 연다. 다른 출처·잘못된 값은 대시보드로 연다. */
 function safePath(value) {
-  if (typeof value !== "string" || !value.startsWith("/") || value.startsWith("//")) return DEFAULT_URL;
-  return value;
+  if (typeof value !== "string" || !value.startsWith("/") || value.startsWith("//") || value.includes("\\")) return DEFAULT_URL;
+  try {
+    const origin = self.location.origin;
+    const parsed = new URL(value, origin);
+    // "/.//host"는 정규화하면 "//host"가 되어 다른 출처로 열린다.
+    if (parsed.origin !== origin || parsed.pathname.startsWith("//")) return DEFAULT_URL;
+    return parsed.pathname + parsed.search + parsed.hash;
+  } catch {
+    return DEFAULT_URL;
+  }
 }
 
 self.addEventListener("push", (event) => {
