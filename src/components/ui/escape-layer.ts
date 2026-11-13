@@ -14,11 +14,12 @@ const OPEN_LAYER_SELECTOR = '[data-escape-layer="open"]';
 /**
  * 이 Esc를 대화상자 대신 열린 자체 팝업이 받아야 하는지. 초점이 팝업 안에 있을 때뿐 아니라, 같은 대화상자 안에
  * 팝업이 열려 있는데 초점은 바깥에 남은 경우도 포함한다(macOS Safari·Firefox는 버튼을 눌러도 초점을 주지 않는다).
- * 이때 팝업은 document에서 Esc를 받아 닫는다.
+ * 초점이 어느 대화상자에도 없으면(초점을 가진 요소가 사라지거나 blur되어 body로 빠진 경우) Esc를 받은
+ * 대화상자(`container`) 안에 열린 팝업이 있는지 본다. 이때 팝업은 document에서 Esc를 받아 닫는다.
  */
-export function isEscapeForOpenLayer(event: KeyboardEvent) {
-  const target = event.target;
-  if (!(target instanceof Element)) return false;
-  if (target.closest(OPEN_LAYER_SELECTOR)) return true;
-  return target.closest('[role="dialog"], [role="alertdialog"]')?.querySelector(OPEN_LAYER_SELECTOR) != null;
+export function isEscapeForOpenLayer(event: KeyboardEvent, container?: Element | null) {
+  const target = event.target instanceof Element ? event.target : null;
+  if (target?.closest(OPEN_LAYER_SELECTOR)) return true;
+  const dialog = target?.closest('[role="dialog"], [role="alertdialog"]') ?? container ?? null;
+  return dialog?.querySelector(OPEN_LAYER_SELECTOR) != null;
 }

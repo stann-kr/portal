@@ -1703,6 +1703,36 @@ test("Escape while the Camelot picker is open but focus stayed elsewhere in the 
   assert.deepEqual(closes, [false], "with the picker closed, Escape dismisses the dialog");
 });
 
+test("Escape while the Camelot picker is open and focus fell to the page body closes only the picker, not the dialog", async (context) => {
+  const closes: boolean[] = [];
+  function TrackHarness() {
+    const [open, setOpen] = useState(true);
+    return <AddTrackDialog open={open} onOpenChange={(next) => { closes.push(next); setOpen(next); }} onSuccess={() => {}} columns={[
+      { id: "title", name: "트랙명", columnType: "text", options: null },
+      { id: "key", name: "키", columnType: "camelot_key", options: null },
+    ]} />;
+  }
+  await render(context, <TrackHarness />);
+  const picker = () => browser.document.querySelector('[role="group"][aria-label="키 고르기"]');
+  await press("키");
+  assert.ok(picker());
+  // 초점을 가진 요소가 사라지거나 blur되면 초점은 body로 빠진다. 이때도 열린 키판이 Esc를 먼저 받는다.
+  await act(async () => (browser.document.activeElement as unknown as HTMLElement | null)?.blur());
+  assert.equal(browser.document.activeElement, browser.document.body, "focus is on the page body");
+  const escapeFromBody = async () => {
+    await act(async () => {
+      browser.document.body.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    });
+    await settle();
+  };
+  await escapeFromBody();
+  assert.equal(picker(), null, "Escape closes the picker");
+  assert.deepEqual(closes, [], "the dialog stays open");
+
+  await escapeFromBody();
+  assert.deepEqual(closes, [false], "with the picker closed, Escape dismisses the dialog");
+});
+
 test("digging table key picker floats on the viewport so the scroll box does not clip it, and the scroll box contains its absolute children", async (context) => {
   await render(context, <DiggingBoard
     initialColumns={[
