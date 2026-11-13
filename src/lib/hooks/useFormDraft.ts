@@ -26,6 +26,7 @@ import {
   writeFormDraftClearMarkers,
   readFormDraftRecovery,
   isImmutableFormDraftRecoveryKey,
+  findImmutableFormDraftRecoveryKeyForRaw,
 } from "@/lib/form-draft";
 import {
   useState,
@@ -703,6 +704,17 @@ export function useFormDraft<T>(
         canonicalSavedAtMs = stored.savedAt?.getTime() ?? null;
         lastKnownCanonicalRawRef.current = raw;
         localSnapshotRawRef.current = raw;
+        // 저장·취소 없이 닫힌 앞 인스턴스가 이 canonical과 함께 쓴 같은 raw의 불변 shadow는 지금 화면본과 같다.
+        // 자기 shadow로 이어받아 다음 자기 저장·폐기 때 정리한다. 그러지 않으면 아무도 지우지 않아 고치거나
+        // 저장한 뒤 "복구 가능한 작성본"으로 남는다. 살아 있는 다른 탭은 canonical이 바뀌면 자기 화면본을
+        // 새 shadow로 다시 보존한다(preserveVisibleSnapshot).
+        const inheritedRecoveryKey = raw
+          ? findImmutableFormDraftRecoveryKeyForRaw(window.localStorage, key, raw)
+          : null;
+        if (inheritedRecoveryKey) {
+          activeRecoveryKeyRef.current = inheritedRecoveryKey;
+          protectedRecoveryKeysRef.current = new Set([inheritedRecoveryKey]);
+        }
         const storedSignature = createFormDraftDataSignature(stored.data);
         lastDataSignatureRef.current = storedSignature;
         rememberObservedSavedAt(

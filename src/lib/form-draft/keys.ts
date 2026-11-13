@@ -327,3 +327,24 @@ export function collectFormDraftRecoveryKeys(
   }
   return candidateKeys;
 }
+
+/**
+ * 이 raw와 바이트까지 같은 불변 recovery 하나를 찾는다. 다시 마운트된 form이 이어받은 canonical과 함께
+ * 앞 인스턴스가 써 둔 shadow를 자기 shadow로 이어받을 때 쓴다(다음 자기 저장·폐기 때 정리된다).
+ */
+export function findImmutableFormDraftRecoveryKeyForRaw(
+  storage: Pick<FormDraftRecoveryStorage, "length" | "key" | "getItem">,
+  sourceKey: string,
+  raw: string,
+): string | null {
+  const rawSignature = bytesToHex(sha256(utf8ToBytes(raw)));
+  for (const recoveryKey of collectFormDraftRecoveryKeys(storage, sourceKey)) {
+    if (
+      readImmutableFormDraftRecoveryRawSignature(sourceKey, recoveryKey) === rawSignature &&
+      storage.getItem(recoveryKey) === raw
+    ) {
+      return recoveryKey;
+    }
+  }
+  return null;
+}

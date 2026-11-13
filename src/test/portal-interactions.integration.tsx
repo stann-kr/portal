@@ -2614,6 +2614,10 @@ test("과제 고치기는 고치던 내용을 이 기기에 보관해 다시 열
     occurrenceDate: null, recurrenceId: null, version, createdAt: new Date("2026-11-01T00:00:00Z"), submission: null,
   });
   let cancelled = 0;
+  const recoveryNotice = () =>
+    Array.from(browser.document.querySelectorAll('[role="status"]'))
+      .map((element) => element.textContent ?? "")
+      .find((text) => /복구 가능한 작성본/u.test(text)) ?? null;
   const form = (version: number, title: string) => (
     <AssignmentTaskForm key={`t-1:${version}`} actorId="admin-edit" studentId="s-1" task={task(version, title) as never} onDone={() => {}} onCancel={() => { cancelled += 1; }} />
   );
@@ -2638,6 +2642,7 @@ test("과제 고치기는 고치던 내용을 이 기기에 보관해 다시 열
   await settle();
   assert.equal(inputValue("title"), "킥 정리 고침");
   assert.equal(browser.document.querySelector('[role="alert"]'), null);
+  assert.equal(recoveryNotice(), null, "닫혔다 다시 연 뒤 저장해도 앞 단계 내용이 복구본으로 남지 않는다");
 
   // 고치던 중 다른 곳에서 과제가 바뀌면(version 4 → 5) 고치던 내용은 되살리되 저장은 막는다.
   await fill("task-edit-t-1-title", "이 기기에서 고치던 제목");
@@ -2662,6 +2667,7 @@ test("과제 고치기는 고치던 내용을 이 기기에 보관해 다시 열
   await settle();
   assert.equal(inputValue("title"), "다른 기기에서 바꾼 제목");
   assert.equal(browser.document.querySelector('[role="alert"]'), null);
+  assert.equal(recoveryNotice(), null, "취소 뒤 다시 열어도 복구본이 남지 않는다");
 });
 
 test("정기 과제 고치기도 고치던 내용을 이 기기에 보관해 되살리고, 그 사이 규칙이 바뀌었으면 저장을 막는다", async (context) => {
