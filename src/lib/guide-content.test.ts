@@ -86,3 +86,16 @@ test("재전송 비교는 태그의 블록 식별자만 지우고 본문 텍스�
   assert.notEqual(sameA, sameB);
   assert.equal(stripGuideBlockIds(sameA), stripGuideBlockIds(sameB));
 });
+
+test("재전송 비교는 속성 값에 >·<가 있어도 블록 식별자를 지운다", () => {
+  for (const html of [
+    `<p>본문</p><img src="/api/guide-assets/${"a".repeat(32)}" alt="EQ > 컴프 순서">`,
+    '<p title="a<b c > d">본문</p>',
+    '<p title="따옴표 &quot;> 안">본문</p>',
+  ]) {
+    const first = prepareGuideHtml(html, sequence("a"));
+    const second = prepareGuideHtml(html, sequence("b"));
+    assert.notEqual(first, second, html);
+    assert.equal(stripGuideBlockIds(first), stripGuideBlockIds(second), html);
+  }
+});
