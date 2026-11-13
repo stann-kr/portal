@@ -79,6 +79,7 @@ let DiggingBoard: typeof import("@/components/digging/DiggingBoard").DiggingBoar
 let toggleModule: typeof import("@/lib/actions/curriculum").toggleModuleComplete = async () => {};
 let editModule: typeof import("@/lib/actions/curriculum").updateModule = async () => ({ success: true });
 let OverviewTab: typeof import("@/components/admin/OverviewTab").OverviewTab;
+let GuidePageViewers: typeof import("@/components/guide/GuidePageViewers").GuidePageViewers;
 let changePassword: typeof import("@/lib/actions/password").changeOwnPassword = async () => ({ success: true });
 let PasswordChangeControl: typeof import("@/components/auth/PasswordChangeControl").PasswordChangeControl;
 let PasswordChangeForm: typeof import("@/components/auth/PasswordChangeControl").PasswordChangeForm;
@@ -95,8 +96,9 @@ let confirmActionModule: typeof import("@/components/ui/confirm-action");
 let issueFeedUrl: typeof import("@/lib/actions/calendarFeed").issueStudentCalendarFeedUrl = async () => "/api/calendar/feed?token=test";
 let CalendarFeedControl: typeof import("@/components/admin/CalendarFeedControl").CalendarFeedControl;
 type GuideAccessActions = typeof import("@/lib/actions/guideAccess");
-const guideAccessDefaults: Pick<GuideAccessActions, "getStudentGuideAccess" | "setStudentGuideAccessSetting" | "setStudentGuideAccessPage"> = {
+const guideAccessDefaults: Pick<GuideAccessActions, "getStudentGuideAccess" | "getGuidePageViewers" | "setStudentGuideAccessSetting" | "setStudentGuideAccessPage"> = {
   getStudentGuideAccess: async () => ({ setting: "CLOSED", pageIds: [], pages: [] }),
+  getGuidePageViewers: async () => null,
   setStudentGuideAccessSetting: async () => ({ ok: true }),
   setStudentGuideAccessPage: async () => ({ ok: true }),
 };
@@ -204,6 +206,7 @@ mock.module("@/lib/actions/calendarFeed", { namedExports: {
 } });
 mock.module("@/lib/actions/guideAccess", { namedExports: {
   getStudentGuideAccess: (...args: Parameters<GuideAccessActions["getStudentGuideAccess"]>) => guideAccessActions.getStudentGuideAccess(...args),
+  getGuidePageViewers: (...args: Parameters<GuideAccessActions["getGuidePageViewers"]>) => guideAccessActions.getGuidePageViewers(...args),
   setStudentGuideAccessSetting: (...args: Parameters<GuideAccessActions["setStudentGuideAccessSetting"]>) => guideAccessActions.setStudentGuideAccessSetting(...args),
   setStudentGuideAccessPage: (...args: Parameters<GuideAccessActions["setStudentGuideAccessPage"]>) => guideAccessActions.setStudentGuideAccessPage(...args),
 } });
@@ -333,6 +336,7 @@ before(async () => {
   ({ LoginForm } = await import("@/components/auth/LoginForm"));
   ({ default: CommunityClient } = await import("@/app/(app)/community/CommunityClient"));
   ({ OverviewTab } = await import("@/components/admin/OverviewTab"));
+  ({ GuidePageViewers } = await import("@/components/guide/GuidePageViewers"));
   ({ PasswordChangeControl, PasswordChangeForm } = await import("@/components/auth/PasswordChangeControl"));
   ({ StudentPasswordResetControl } = await import("@/components/admin/StudentPasswordResetControl"));
   ({ StudentInviteControl } = await import("@/components/admin/StudentInviteControl"));
@@ -3425,6 +3429,7 @@ test("admin overview guide section saves each choice at once, in click order, an
   const calls: string[] = [];
   let failNext = false;
   guideAccessActions = {
+    ...guideAccessDefaults,
     getStudentGuideAccess: async () => {
       calls.push("read");
       return { setting: "SELECTED", pageIds: ["guide-1"], pages: [{ id: "guide-1", title: "장비 소개" }, { id: "guide-2", title: "음원 관리" }] };
@@ -3489,6 +3494,91 @@ test("admin overview guide section saves each choice at once, in click order, an
   assert.deepEqual(boxes().map((box) => box.checked), [true, false], "the screen follows what the server holds");
   assert.match(section.querySelector('[role="alert"]')?.textContent ?? "", /가이드 페이지를 찾을 수 없습니다/u);
   assert.doesNotMatch(section.querySelector('[role="status"]')?.textContent ?? "", /저장됨/u);
+});
+
+test("guide page viewers panel opens selected students in click order, sends ALL and CLOSED students to the detail page, and follows the server on failure", async (context) => {
+  const calls: string[] = [];
+  let failNext = false;
+  const server = new Map<string, { setting: "CLOSED" | "ALL" | "SELECTED"; open: boolean; openCount: number }>([
+    ["student-a", { setting: "ALL", open: true, openCount: 3 }],
+    ["student-b", { setting: "SELECTED", open: true, openCount: 2 }],
+    ["student-c", { setting: "SELECTED", open: false, openCount: 0 }],
+    ["student-d", { setting: "CLOSED", open: false, openCount: 0 }],
+  ]);
+  const names: Record<string, string> = { "student-a": "학생 A", "student-b": "학생 B", "student-c": "학생 C", "student-d": "학생 D" };
+  const snapshot = () => ({
+    pageId: "guide-1",
+    totalPages: 3,
+    students: [...server].map(([studentId, value]) => ({
+      studentId, name: names[studentId]!, setting: value.setting, canView: value.open, openCount: value.openCount,
+    })),
+  });
+  guideAccessActions = {
+    ...guideAccessDefaults,
+    getGuidePageViewers: async (pageId) => { calls.push(`read:${pageId}`); return snapshot(); },
+    setStudentGuideAccessPage: async (studentId, pageId, open) => {
+      calls.push(`page:${studentId}:${pageId}:${open}`);
+      if (failNext) {
+        failNext = false;
+        return { ok: false, error: "가이드 페이지를 찾을 수 없습니다. 이미 삭제되었을 수 있습니다." };
+      }
+      const current = server.get(studentId)!;
+      server.set(studentId, { ...current, open, openCount: current.openCount + (open ? 1 : -1) });
+      return { ok: true };
+    },
+  };
+  context.after(() => { guideAccessActions = { ...guideAccessDefaults }; });
+
+  await render(context, <GuidePageViewers pageTitle="장비 소개" initial={snapshot()} />);
+  assert.equal(button("열람 학생 2명").getAttribute("aria-haspopup"), "dialog");
+  await press("열람 학생 2명");
+  assert.deepEqual(calls, ["read:guide-1"], "the panel reads the latest list when it opens");
+  const dialog = browser.document.querySelector('[role="dialog"]');
+  assert.ok(dialog);
+  assert.equal(dialog.querySelector("h2")?.textContent, "이 페이지를 볼 수 있는 학생");
+  assert.equal(dialog.querySelector("p")?.textContent, "장비 소개 · 학생 4명 중 2명");
+  assert.equal(dialog.querySelector("legend")?.textContent, "선택 학생 · 체크하면 이 페이지가 열립니다");
+  const rows = () => [...dialog.querySelectorAll("label")].map((row) => [row.textContent, (row.querySelector("input") as unknown as HTMLInputElement).checked]);
+  assert.deepEqual(rows(), [["학생 B3개 중 2개 열림", true], ["학생 C3개 중 0개 열림 · 닫힘과 같음", false]]);
+  const others = [...dialog.querySelectorAll("li")];
+  assert.deepEqual(others.map((row) => row.textContent), ["✓학생 A전체학생 상세", "–학생 D닫힘학생 상세"]);
+  assert.deepEqual(
+    others.map((row) => [row.querySelector("a")?.getAttribute("href"), row.querySelector("a")?.getAttribute("aria-label")]),
+    [["/dashboard/admin/students/student-a?tab=overview", "학생 A 학생 상세"], ["/dashboard/admin/students/student-d?tab=overview", "학생 D 학생 상세"]],
+  );
+  assert.equal(dialog.querySelectorAll('input[type="checkbox"]').length, 2, "ALL and CLOSED students have no checkbox here");
+
+  await act(async () => { (dialog.querySelectorAll('input[type="checkbox"]')[1] as unknown as HTMLInputElement).click(); });
+  await settle();
+  assert.deepEqual(calls.slice(1), ["page:student-c:guide-1:true"]);
+  assert.deepEqual(rows()[1], ["학생 C3개 중 1개 열림", true]);
+  assert.equal(dialog.querySelector("p")?.textContent, "장비 소개 · 학생 4명 중 3명");
+  assert.equal(dialog.querySelector('[role="status"]')?.textContent, "저장됨");
+  assert.equal(button("열람 학생 3명").getAttribute("aria-expanded"), "true");
+
+  // 저장이 실패하면 서버에 저장된 값을 다시 읽어 화면을 맞추고 이유를 알린다.
+  failNext = true;
+  await act(async () => { (dialog.querySelectorAll('input[type="checkbox"]')[0] as unknown as HTMLInputElement).click(); });
+  await settle();
+  assert.deepEqual(calls.slice(2), ["page:student-b:guide-1:false", "read:guide-1"]);
+  assert.deepEqual(rows()[0], ["학생 B3개 중 2개 열림", true], "the panel follows what the server holds");
+  assert.match(dialog.querySelector('[role="alert"]')?.textContent ?? "", /가이드 페이지를 찾을 수 없습니다/u);
+  assert.equal(dialog.querySelector('[role="status"]')?.textContent, "");
+
+  await escape();
+  assert.equal(browser.document.querySelector('[role="dialog"]'), null);
+  assert.equal(browser.document.activeElement?.textContent, "열람 학생 3명", "closing returns focus to the header button");
+});
+
+test("guide page viewers panel says when there are no students yet", async (context) => {
+  guideAccessActions = { ...guideAccessDefaults, getGuidePageViewers: async () => ({ pageId: "guide-1", totalPages: 1, students: [] }) };
+  context.after(() => { guideAccessActions = { ...guideAccessDefaults }; });
+  await render(context, <GuidePageViewers pageTitle="장비 소개" initial={{ pageId: "guide-1", totalPages: 1, students: [] }} />);
+  await press("열람 학생 0명");
+  const dialog = browser.document.querySelector('[role="dialog"]');
+  assert.equal(dialog?.querySelector("p")?.textContent, "장비 소개");
+  assert.match(dialog?.textContent ?? "", /아직 학생이 없습니다\./u);
+  assert.equal(dialog?.querySelector("fieldset"), null);
 });
 
 test("admin overview shows the curriculum ledger with its progress count only when the switch is on", async (context) => {
