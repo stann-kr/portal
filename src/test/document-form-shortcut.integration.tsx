@@ -163,6 +163,8 @@ let saveQnaThread: typeof import("@/lib/actions/qna").createQnaThread = async ()
 let saveQnaInline: typeof import("@/lib/actions/qna").createQnaThreadInline = async () => ({});
 let saveNewPost: typeof import("@/lib/actions/posts").createPost = async () => ({});
 let savePostEdit: typeof import("@/lib/actions/posts").updatePostContent = async () => ({});
+const POST_SEED_NOT_READY = async () => { throw new Error("게시본 조회를 준비하지 않은 테스트입니다."); };
+let loadPostSeed: typeof import("@/lib/actions/posts").getPostCollabSeed = POST_SEED_NOT_READY;
 let changeQnaStatus: typeof import("@/lib/actions/qna").updateThreadStatus = async () => ({ success: true, currentRevision: 2 });
 let changeQnaLifecycle: typeof import("@/lib/actions/qna").trashQnaThread = async () => ({ success: true, currentRevision: 2 });
 let notePageRole: "student" | "admin" = "student";
@@ -217,6 +219,7 @@ mock.module("@/lib/actions/posts", {
       return saveNewPost(...args);
     },
     updatePostContent: (...args: Parameters<typeof savePostEdit>) => savePostEdit(...args),
+    getPostCollabSeed: (...args: Parameters<typeof loadPostSeed>) => loadPostSeed(...args),
   },
 });
 mock.module("@/lib/actions/categories", {
@@ -1431,6 +1434,84 @@ test("게시물 수정 취소는 함께 쓰는 작업본을 되돌리지 않고 
 
   assert.equal(cancelled, 1, "취소는 화면을 닫는다.");
   assert.equal(container.querySelector<HTMLTextAreaElement>(BODY_FIELD)?.value, "다른 기기에서 넣은 문장", "작업본 내용은 그대로 남는다.");
+});
+
+const REVERT_LABEL = "게시된 글로 되돌리기";
+function buttonsByText(container: Element, text: string): HTMLButtonElement[] {
+  return [...container.querySelectorAll<HTMLButtonElement>("button")].filter((button) => button.textContent?.trim() === text);
+}
+
+/** 되돌리기 테스트 공통: 수정 화면을 열고 작업본 본문을 바꾼 뒤 "게시된 글로 되돌리기" 확인을 연다. */
+async function editPostThenOpenRevert(context: Parameters<typeof renderForm>[0], post: { id: string; title: string; contentHtml: string; version: number }) {
+  let cancelled = 0;
+  const harness = await renderForm(context, <PostEditForm actorId={`${post.id}-actor`} post={post} mixsetLinkUrl={null} onCancel={() => { cancelled += 1; }} onSaved={() => undefined} />);
+  const { container } = harness;
+  await waitUntil(() => Boolean(container.querySelector(BODY_FIELD)) && !container.querySelector<HTMLTextAreaElement>(BODY_FIELD)?.disabled, 3000, "수정 작업본이 열려야 합니다.");
+  await act(async () => { await waitForRealTime(300); });
+  assert.equal(buttonsByText(container, REVERT_LABEL).length, 0, "게시본과 같으면 되돌리기 버튼이 없다.");
+  typeInto(harness, container.querySelector<HTMLTextAreaElement>(BODY_FIELD)!, "게시하지 않은 수정");
+  await waitUntil(() => buttonsByText(container, REVERT_LABEL).length === 1, 3000, "게시한 뒤에 고친 내용이 있으면 되돌리기 버튼이 보여야 합니다.");
+  await act(async () => buttonsByText(container, REVERT_LABEL)[0]!.click());
+  return {
+    harness,
+    container,
+    body: () => container.querySelector<HTMLTextAreaElement>(BODY_FIELD)?.value,
+    title: () => container.querySelector<HTMLInputElement>('[name="title"]')?.value,
+    cancelled: () => cancelled,
+  };
+}
+
+test("게시된 글로 되돌리기는 확인을 거쳐 작업본을 최신 게시본으로 맞추고 수정 화면에 머문다", { concurrency: false }, async (context) => {
+  const post = { id: "post-revert-latest", title: "처음 제목", contentHtml: "<p>처음 본문</p>", version: 1 };
+  // 이 화면을 연 뒤 다른 기기가 v2를 게시했다. 옛 v1으로 되돌리면 다음 저장이 v2를 덮는다.
+  let seedReads = 0;
+  loadPostSeed = (async () => {
+    seedReads += 1;
+    return { ...post, title: "다른 기기가 게시한 제목", contentHtml: "<p>다른 기기가 게시한 본문</p>", version: 2, lifecycle: 0 };
+  }) as unknown as typeof loadPostSeed;
+  context.after(() => { loadPostSeed = POST_SEED_NOT_READY; });
+
+  const view = await editPostThenOpenRevert(context, post);
+  const { container } = view;
+  const panel = container.querySelector<HTMLElement>('[role="group"]');
+  assert.ok(panel, "확인 영역이 열려야 합니다.");
+  assert.equal(panel.textContent?.includes("함께 고치던 사람이 넣은 내용도 사라지며 되살릴 수 없습니다."), true);
+  const panelCancel = [...panel.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "취소");
+  assert.equal(view.harness.browserWindow.document.activeElement, panelCancel, "확인이 열리면 취소에 초점을 둔다.");
+  const footerCancel = buttonsByText(container, "취소").find((button) => !panel.contains(button));
+  assert.equal(footerCancel?.disabled, true, "확인이 열린 동안 아래 취소는 잠근다.");
+  assert.equal((submitControl(container) as HTMLButtonElement).disabled, true, "확인이 열린 동안 저장은 잠근다.");
+
+  // 확인에서 취소하면 아무것도 바뀌지 않는다.
+  await act(async () => panelCancel!.click());
+  assert.equal(container.querySelector('[role="group"]'), null);
+  assert.equal(seedReads, 0, "확인 전에는 게시본을 읽지 않는다.");
+  assert.equal(view.body(), "게시하지 않은 수정");
+
+  await act(async () => buttonsByText(container, REVERT_LABEL)[0]!.click());
+  const confirmButton = buttonsByText(container.querySelector<HTMLElement>('[role="group"]')!, REVERT_LABEL)[0];
+  assert.ok(confirmButton);
+  await act(async () => confirmButton.click());
+  await waitUntil(() => view.body() === "다른 기기가 게시한 본문", 3000, "작업본 본문이 최신 게시본이 되어야 합니다.");
+  assert.equal(view.title(), "다른 기기가 게시한 제목", "작업본 제목도 최신 게시본을 따른다.");
+  await waitUntil(() => buttonsByText(container, REVERT_LABEL).length === 0, 3000, "되돌린 뒤에는 버튼과 확인 영역이 사라져야 합니다.");
+  assert.equal(view.cancelled(), 0, "되돌린 뒤에도 수정 화면에 머문다.");
+  assert.equal(view.harness.browserWindow.document.activeElement, container.querySelector('[name="title"]'), "사라진 버튼 대신 제목으로 초점을 옮긴다.");
+});
+
+test("게시된 글로 되돌리기는 최신 게시본을 읽지 못하면 작업본을 그대로 두고 알린다", { concurrency: false }, async (context) => {
+  const post = { id: "post-revert-offline", title: "처음 제목", contentHtml: "<p>처음 본문</p>", version: 1 };
+  loadPostSeed = async () => { throw new Error("offline"); };
+  context.after(() => { loadPostSeed = POST_SEED_NOT_READY; });
+
+  const view = await editPostThenOpenRevert(context, post);
+  const { container } = view;
+  await act(async () => buttonsByText(container.querySelector<HTMLElement>('[role="group"]')!, REVERT_LABEL)[0]!.click());
+  await waitUntil(() => container.querySelector('[role="group"]') === null, 3000, "확인 영역이 닫혀야 합니다.");
+
+  assert.equal(view.body(), "게시하지 않은 수정", "옛 게시본으로 되돌리지 않고 작업본을 남긴다.");
+  assert.equal(container.textContent?.includes("게시된 글을 읽지 못해 되돌리지 않았습니다."), true);
+  assert.equal(buttonsByText(container, REVERT_LABEL).length, 1, "다시 시도할 수 있게 버튼이 남는다.");
 });
 
 test("게시물 수정 form은 링크 게시물에 링크 칸을 두고 검증·제출에 포함한다", { concurrency: false }, async (context) => {
