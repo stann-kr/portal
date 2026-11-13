@@ -10,6 +10,9 @@ import {
   type DefaultTreeAdapterTypes,
 } from "parse5";
 import { BLOCK_ID_TAGS, SAFE_BLOCK_ID, sanitizeHtml } from "@/lib/sanitize-html";
+import { createRandomGuideBlockId } from "@/lib/guide-block-id";
+
+export { createRandomGuideBlockId };
 
 export const GUIDE_TITLE_MAX_LENGTH = 120;
 export const GUIDE_BASE_REVISION_FIELD = "baseRevision";
@@ -26,7 +29,6 @@ export const GUIDE_ASSET_CONTENT_TYPES = [
 ] as const;
 
 const GUIDE_ASSET_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
-const BLOCK_ID_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
 
 type Element = DefaultTreeAdapterTypes.Element;
 type ParentNode = DefaultTreeAdapterTypes.ParentNode;
@@ -59,14 +61,6 @@ export function normalizeGuideQuote(value: unknown): string | null {
   return codePoints.length <= GUIDE_QUOTE_MAX_LENGTH
     ? collapsed
     : codePoints.slice(0, GUIDE_QUOTE_MAX_LENGTH).join("").trimEnd();
-}
-
-export function createRandomGuideBlockId(): string {
-  const bytes = new Uint8Array(10);
-  crypto.getRandomValues(bytes);
-  let id = "b";
-  for (const byte of bytes) id += BLOCK_ID_ALPHABET[byte % BLOCK_ID_ALPHABET.length];
-  return id;
 }
 
 function visitElements(parent: ParentNode, visit: (element: Element) => void): void {
