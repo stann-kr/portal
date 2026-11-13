@@ -44,6 +44,17 @@ export async function getUnifiedItemsForStudent(
   return fetchInternalItemsForUser(studentId, input);
 }
 
+/**
+ * 특정 학생의 bounded 내부 일정과 실제로 읽은 기간·잘림 여부(관리자 전용). 뒤로/앞으로 복귀 때 다시 읽은 기간 안에서
+ * 응답에 없는 포탈 항목(다른 탭·기기에서 지운 것)을 지울 수 있게 한다. 잘렸으면 호출자는 병합만 한다.
+ */
+export async function getUnifiedItemsWindowForStudent(studentId: string): Promise<UnifiedItemsWindow> {
+  await requireStudentTarget(studentId);
+  const query = resolveUnifiedItemsQuery(undefined);
+  const { items, truncated } = await queryInternalUnifiedItemsForStudents(createDb(), [studentId], query);
+  return { items, start: query.start.toISOString(), end: query.end.toISOString(), truncated };
+}
+
 /** 내부 일정과 분리해 학생 본인의 외부 공개 feed를 fail-soft로 반환한다. */
 export async function getExternalUnifiedItems(
   input?: UnifiedItemsQueryInput,
@@ -61,7 +72,7 @@ export async function getExternalUnifiedItemsForStudent(
   return fetchExternalItemsForUser(studentId, input);
 }
 
-export type AllStudentsUnifiedItems = {
+export type UnifiedItemsWindow = {
   items: UnifiedItem[];
   /** 실제로 읽은 기간(ISO). 클라이언트는 이 범위를 읽은 범위로 기억한다. */
   start: string;
@@ -69,6 +80,8 @@ export type AllStudentsUnifiedItems = {
   /** 상한에 닿아 기간 안 항목 일부가 빠졌을 수 있다. */
   truncated: boolean;
 };
+
+export type AllStudentsUnifiedItems = UnifiedItemsWindow;
 
 /**
  * 관리자 일정 "전체 학생": 모든 활성 학생의 포탈 내부 항목(외부 캘린더 제외)을 보이는 기간만큼 반환한다.

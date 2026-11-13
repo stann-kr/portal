@@ -103,6 +103,9 @@ let guideAccessActions = { ...guideAccessDefaults };
 let connectCalendar: typeof import("@/lib/actions/externalCalendars").connectExternalCalendar = async () => ({});
 let ExternalCalendarConnection: typeof import("@/components/student-portal/ExternalCalendarConnection").ExternalCalendarConnection;
 let loadStudentCalendar: typeof import("@/lib/actions/unifiedItems").getUnifiedItemsForStudent = async () => [];
+let loadStudentCalendarWindow: typeof import("@/lib/actions/unifiedItems").getUnifiedItemsWindowForStudent = async () => ({
+  items: [], start: "2025-11-14T00:00:00.000Z", end: "2027-11-14T23:59:59.999Z", truncated: true,
+});
 let loadAllStudentsCalendar: typeof import("@/lib/actions/unifiedItems").getUnifiedItemsForAllStudents = async () => ({
   items: [], start: "2026-01-01T00:00:00.000Z", end: "2026-04-30T23:59:59.999Z", truncated: false,
 });
@@ -237,6 +240,7 @@ mock.module("@/lib/actions/calendarSync", { namedExports: {
 mock.module("@/lib/actions/unifiedItems", { namedExports: {
   getUnifiedItemsForStudent: (...args: Parameters<typeof loadStudentCalendar>) => loadStudentCalendar(...args),
   getUnifiedItemsForAllStudents: (...args: Parameters<typeof loadAllStudentsCalendar>) => loadAllStudentsCalendar(...args),
+  getUnifiedItemsWindowForStudent: (...args: Parameters<typeof loadStudentCalendarWindow>) => loadStudentCalendarWindow(...args),
   getExternalUnifiedItemsForStudent: async () => [],
   getExternalUnifiedItems: async () => [],
 } });
@@ -4026,4 +4030,50 @@ test("전체 학생 기간을 다시 읽으면 그 기간에서 지워지거나 
   await settle();
   assert.deepEqual(shownIds(), ["fresh-later", "kept", "outside"], "기간 안에서 응답에 없는 항목만 지운다");
   assert.equal(lastDailyListProps?.items?.find((shown) => shown.id === "kept")?.title, "옮긴 일정");
+});
+
+test("학생 한 명 일정도 돌아와 다시 읽으면 다른 곳에서 지운 항목을 지우고, 잘린 응답이면 병합만 한다", async (context) => {
+  const students = [
+    { id: "student-1", email: "minji@example.test", displayName: "민지", createdAt: null, currentModule: null, nextLessonDate: null, pendingFeedbackCount: 0, openQnaCount: 0 },
+  ];
+  const item = (id: string, iso: string): UnifiedItem => ({
+    id, type: "EVENT", subType: "PRACTICE", title: id, date: new Date(iso), endDate: null, metadata: {},
+    space: { studentId: "student-1", label: "민지" }, source: { kind: "PORTAL", entity: "CALENDAR_EVENT", label: "포탈" },
+  });
+  const deleted = item("deleted", "2026-02-10T01:00:00.000Z");
+  const kept = item("kept", "2026-02-11T01:00:00.000Z");
+  const window = { start: "2025-02-01T00:00:00.000Z", end: "2027-02-01T23:59:59.999Z" };
+  let truncated = true;
+  const requested: string[] = [];
+  loadStudentCalendarWindow = async (studentId) => {
+    requested.push(studentId);
+    return { items: [kept], ...window, truncated };
+  };
+  context.after(() => {
+    loadStudentCalendarWindow = async () => ({ items: [], start: "2025-11-14T00:00:00.000Z", end: "2027-11-14T23:59:59.999Z", truncated: true });
+    lastDailyListProps = null;
+  });
+  browser.history.replaceState({}, "", "/dashboard/admin?section=schedule&view=daily&student=student-1");
+  await render(context, <AdminPortalClient
+    initialLocation={resolvePortalLocation("admin", { section: "schedule", view: "daily", student: "student-1" })}
+    initialStudentId="student-1"
+    initialUnifiedItems={[deleted, kept]} students={students}
+    adminId="admin" qnaThreads={[]} pendingAssignments={[]} referenceTime={new Date("2026-02-01T00:00:00.000Z")}
+  />);
+  const shownIds = () => (lastDailyListProps?.items ?? []).map((shown) => shown.id).sort();
+  const returnToPage = async () => {
+    const pageShow = new browser.Event("pageshow");
+    Object.defineProperty(pageShow, "persisted", { value: true });
+    await act(async () => { browser.dispatchEvent(pageShow); });
+    await settle();
+  };
+  assert.deepEqual(shownIds(), ["deleted", "kept"]);
+
+  await returnToPage();
+  assert.deepEqual(requested, ["student-1"], "보고 있는 학생만 다시 읽는다");
+  assert.deepEqual(shownIds(), ["deleted", "kept"], "잘린 응답은 병합만 한다");
+
+  truncated = false;
+  await returnToPage();
+  assert.deepEqual(shownIds(), ["kept"], "읽은 기간 안에서 응답에 없는 항목은 지운다");
 });

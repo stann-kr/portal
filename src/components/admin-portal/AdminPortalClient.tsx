@@ -12,7 +12,7 @@ import type {
   AdminQueueThread,
   PendingFeedbackAssignment,
 } from "@/lib/admin-work-queue";
-import { getUnifiedItemsForAllStudents, getUnifiedItemsForStudent } from "@/lib/actions/unifiedItems";
+import { getUnifiedItemsForAllStudents, getUnifiedItemsForStudent, getUnifiedItemsWindowForStudent } from "@/lib/actions/unifiedItems";
 import { ALL_STUDENTS_SCOPE, resolveAdminScheduleStudent } from "@/lib/admin-schedule-scope";
 import {
   getAllStudentsItemsWindow,
@@ -233,7 +233,7 @@ export function AdminPortalClient({
 
   // 노트 자동 저장·생성은 revalidatePath를 부르지 않고, 뒤로/앞으로·bfcache 복원은 옛 서버 props로 mount한다.
   // 캘린더 항목은 props를 state로 옮겨 쓰므로 router.refresh()로는 바뀌지 않는다 → 내부 항목만 다시 받아 덮는다
-  // (외부 캘린더 항목은 그대로 둔다. 휴지통 이동은 여전히 revalidate하므로 여기서 빠진 항목을 지우지 않는다).
+  // (외부 캘린더 항목은 그대로 둔다. 다른 탭·기기에서 지운 항목은 같은 탭의 revalidate로 알 수 없으므로 읽은 기간 안에서 지운다).
   const refetchInternalCalendarItems = useCallback(() => {
     const studentId = calendarLoadedStudentIdRef.current;
     if (!studentId) return;
@@ -250,10 +250,11 @@ export function AdminPortalClient({
       }
       return;
     }
-    void getUnifiedItemsForStudent(studentId)
-      .then((items) => {
+    void getUnifiedItemsWindowForStudent(studentId)
+      .then((result) => {
         if (calendarRequestRef.current !== requestId || calendarLoadedStudentIdRef.current !== studentId) return;
-        setCalendarItems((current) => upsertUnifiedItems(current, items));
+        // 전체 학생과 같은 규칙: 읽은 기간 안에서 응답에 없는 포탈 항목은 지운다(잘린 응답은 병합만, 외부 캘린더 항목은 그대로).
+        setCalendarItems((current) => replaceUnifiedItemsInRange(current, result.items, toResponseRange(result)));
       })
       .catch(() => undefined);
   }, []);
