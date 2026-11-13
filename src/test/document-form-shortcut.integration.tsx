@@ -1220,6 +1220,50 @@ test("종료된 Q&A의 답글 입력은 잠기고 저장 단축키와 등록이 
 
 
 
+function closedThreadScreen(isAdmin: boolean) {
+  return (
+    <ThreadDetailClient
+      actorId={isAdmin ? "closed-reply-admin" : "closed-reply-student"}
+      createdAt="2026-08-05T00:00:00.000Z"
+      isAdmin={isAdmin}
+      replies={[]}
+      returnTo="/dashboard/qna"
+      status="CLOSED"
+      version={1}
+      deletedAt={null}
+      studentName="학생"
+      threadId={isAdmin ? "closed-reply-admin-thread" : "closed-reply-student-thread"}
+      title="종료된 질문"
+    />
+  );
+}
+
+test("종료된 Q&A에서 학생은 답변 칸 없이 종료 안내만 본다", { concurrency: false }, async (context) => {
+  const { container } = await renderForm(context, closedThreadScreen(false));
+  await act(async () => { await waitForRealTime(50); });
+  assert.equal(container.querySelector("form"), null, "학생은 종료된 질문에 답변 칸이 없다.");
+  assert.equal(container.textContent?.includes("종료된 스레드입니다."), true);
+  assert.equal(container.querySelector('[role="note"]'), null);
+});
+
+test("종료된 Q&A에서 Stann은 답변 칸이 열려 있어 바로 등록한다", { concurrency: false }, async (context) => {
+  let replyCalls = 0;
+  saveQnaReply = async () => { replyCalls += 1; return { success: true }; };
+  context.after(() => { saveQnaReply = async () => ({}); });
+  const admin = await renderForm(context, closedThreadScreen(true));
+  const { container } = admin;
+  assert.equal(container.textContent?.includes("종료된 스레드입니다."), false, "Stann에게는 종료 안내 대신 답변 칸을 보인다.");
+  const notes = [...container.querySelectorAll('[role="note"]')].map((note) => note.textContent);
+  assert.ok(notes.length > 0 && notes.every((text) => text === '종료된 질문입니다. 답변을 등록하면 "답변 완료"로 다시 열립니다.'));
+  assert.equal(container.textContent?.includes("미전송 초안"), false);
+  await writeCollabBody(admin, "종료된 질문에 다는 답변");
+  const editor = container.querySelector<HTMLTextAreaElement>(BODY_FIELD)!;
+  assert.equal(editor.disabled, false, "Stann의 답변 칸은 잠기지 않는다.");
+  await waitForCondition(() => !submitControl(container).disabled, "답변 등록 버튼이 켜져야 합니다.");
+  await act(async () => submitControl(container).click());
+  assert.equal(replyCalls, 1, "종료된 질문에도 Stann의 답변은 등록 요청을 보낸다.");
+});
+
 /** 실제 시간이 걸리는 자동 저장(1.5초 idle)을 기다린다. */
 async function waitForRealTime(ms: number): Promise<void> {
   await act(async () => {

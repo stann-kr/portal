@@ -174,7 +174,8 @@ function ThreadDetailContent({
     !isRichTextEmpty(contentHtml) ||
     Boolean(attachmentUrl) ||
     Boolean(attachmentObjectId);
-  const showReplyComposer = currentStatus !== "CLOSED" || hasReplyDraft;
+  // 종료된 질문: 학생은 쓰던 초안만 보고(등록 불가), Stann은 답변 칸이 열려 있어 등록하면 "답변 완료"로 다시 열린다(2026-11-13 사용자 결정).
+  const showReplyComposer = currentStatus !== "CLOSED" || hasReplyDraft || isAdmin;
   const isTrashed = Boolean(deletedAt);
 
   // 관리자는 어떤 상태로든, 질문한 학생은 해결됨으로 닫기(ANSWERED→CLOSED)·다시 열기(CLOSED→OPEN)만 한다.
@@ -257,6 +258,10 @@ function ThreadDetailContent({
   const isClosed = currentStatus === "CLOSED";
   const studentCanClose = !isAdmin && isAuthor && currentStatus === "ANSWERED";
   const studentCanReopen = !isAdmin && isAuthor && isClosed;
+  // 종료로 답변 칸이 잠기는 것은 학생뿐이다(서버도 Stann의 답변만 종료된 질문을 다시 연다).
+  const composerLocked = isClosed && !isAdmin;
+  const adminReopensOnReply = isClosed && isAdmin;
+  const reopenNote = '종료된 질문입니다. 답변을 등록하면 "답변 완료"로 다시 열립니다.';
   const draftView = describeCollabStatus({
     connection: draft.collab.status,
     mode: draft.collab.mode,
@@ -274,8 +279,8 @@ function ThreadDetailContent({
     editor: cn(
       hasAttachment ? "row-start-3" : "row-start-2",
       hasAttachment
-        ? (isClosed ? "col-span-3 col-start-1" : "col-span-2 col-start-1")
-        : (isClosed ? "col-span-2 col-start-2" : "col-start-2"),
+        ? (composerLocked ? "col-span-3 col-start-1" : "col-span-2 col-start-1")
+        : (composerLocked ? "col-span-2 col-start-2" : "col-start-2"),
     ),
     submit: cn("col-start-3", hasAttachment ? "row-start-3" : "row-start-2"),
   };
@@ -438,7 +443,7 @@ function ThreadDetailContent({
           )}
           onKeyDownCapture={handleReplySaveShortcut}
           onSubmit={(event) => {
-            if (!loaded || currentStatus === "CLOSED" || isReplyFormBusy || isEditorUploading || !operationId) {
+            if (!loaded || composerLocked || isReplyFormBusy || isEditorUploading || !operationId) {
               event.preventDefault();
               return;
             }
@@ -453,8 +458,8 @@ function ThreadDetailContent({
         >
           <input type="hidden" name={CREATION_OPERATION_FIELD} value={operationId} />
           <input ref={contentInputRef} type="hidden" name="contentHtml" value={contentHtml} />
-          <p className={cn("text-ui font-semibold text-secondary-foreground", !isClosed && "sr-only")}>
-            {isClosed
+          <p className={cn("text-ui font-semibold text-secondary-foreground", !composerLocked && "sr-only")}>
+            {composerLocked
               ? "미전송 초안"
               : isAdmin
                 ? "답변 작성"
@@ -462,7 +467,10 @@ function ThreadDetailContent({
           </p>
           {/* 안내·오류·충돌 선택은 입력란 위에 둔다(좁은 화면에서는 입력 막대 안에서 길어지면 스크롤). */}
           <div className="flex max-h-[40dvh] flex-col gap-2 overflow-y-auto empty:hidden md:max-h-none md:overflow-visible">
-            {isClosed ? (
+            {adminReopensOnReply ? (
+              <p role="note" className="px-1 text-xs leading-[18px] text-muted-foreground md:hidden">{reopenNote}</p>
+            ) : null}
+            {composerLocked ? (
               <p role="status" className="rounded-lg border border-warning-border bg-warning-muted px-3 py-2 text-ui text-foreground">
                 스레드가 종료되어 등록할 수 없지만, 작성 중이던 내용은 실시간 작성본에 보존되어 있습니다. 내용을 복사하거나 Stann이 다시 열 때 이어서 등록할 수 있습니다.
               </p>
@@ -521,7 +529,7 @@ function ThreadDetailContent({
                   toolsContainer={editorToolsElement}
                   contentClassName={cn("px-3 py-2.5 text-base leading-[22px] md:px-4 md:py-3.5 md:text-md md:leading-6", hasReplyDraft && "max-md:pr-16")}
                   placeholder={isAdmin ? "답변을 입력하세요" : "추가 질문을 입력하세요"}
-                  disabled={!loaded || isClosed || isReplyFormBusy}
+                  disabled={!loaded || composerLocked || isReplyFormBusy}
                   ariaLabel={isAdmin ? "Q&A 답변 내용" : "Q&A 추가 질문 내용"}
                 />
               ) : (
@@ -539,12 +547,15 @@ function ThreadDetailContent({
                     draft.setField("attachmentUrl", upload?.deliveryUrl ?? "");
                     draft.setField("attachmentObjectId", upload?.mediaObjectId ?? "");
                   }}
-                  disabled={!loaded || isClosed || isReplyFormBusy}
+                  disabled={!loaded || composerLocked || isReplyFormBusy}
                   onUploadingChange={setIsUploading}
                   onErrorChange={setAttachmentError}
                   trigger="composer"
                 />
               </div>
+              {adminReopensOnReply ? (
+                <p role="note" className="hidden min-w-0 flex-[1_1_12rem] text-xs leading-[18px] text-muted-foreground md:block">{reopenNote}</p>
+              ) : null}
               <div className="contents md:flex md:shrink-0 md:items-center md:gap-3">
                 {/*
                   좁은 화면(B 묶음 ④): 줄을 풀어(contents) 따로 한 줄을 차지하지 않는다. 편집기 도구 자리는 내용이 있을 때만 1행,
@@ -572,7 +583,7 @@ function ThreadDetailContent({
                     </span>
                   ) : null}
                 </div>
-                {!isClosed ? (
+                {!composerLocked ? (
                   <Button
                     type="submit"
                     aria-label={submitLabel}
@@ -590,7 +601,7 @@ function ThreadDetailContent({
         </form>
       )}
 
-      {currentStatus === "CLOSED" && !hasReplyDraft && !isTrashed && (
+      {composerLocked && !hasReplyDraft && !isTrashed && (
         <p className="py-4 text-center text-body text-muted-foreground">
           종료된 스레드입니다.
         </p>
