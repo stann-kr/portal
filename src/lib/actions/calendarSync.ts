@@ -36,6 +36,7 @@ import { loadRemoteSeriesItems } from "@/lib/calendar-sync/remote-series-items";
 import { ensureGoogleWatchChannel, stopGoogleWatchChannelsFor } from "@/lib/calendar-sync/push-channels";
 import {
   CALENDAR_SYNC_READ_BUDGET_MS,
+  CALENDAR_SYNC_WRITE_HOOK_BUDGET_MS,
   scheduleEnsureStudentGoogleChannels,
   syncCalendarMapping,
   syncStudentCalendarMappings,
@@ -406,8 +407,13 @@ export async function removeCalendarMapping(mappingId: string): Promise<Calendar
   const session = await requireAdmin();
   const mapping = await findOwnedMapping(session.user.id, mappingId);
   if (!mapping) return { error: MESSAGES.mappingMissing };
+  const ctx = createDbContext();
+  // 지정을 풀면 link가 함께 지워진다. 포탈에서 고쳤지만 아직 원격에 보내지 못한 일정은 그 뒤 다시 지정할 때
+  // 원격 일정과 내용이 달라 이어지지 않고 한 벌 더 생긴다. 풀기 전에 밀린 변경을 한 번 내보낸다(2026-11-13 사용자 결정).
+  // best-effort다: 원격 실패·시간 상한·다른 실행의 lease·비활성 연결이어도 해제는 그대로 진행한다.
+  await syncCalendarMapping(ctx, mapping.id, { mode: "push", deadline: Date.now() + CALENDAR_SYNC_WRITE_HOOK_BUDGET_MS }).catch(() => undefined);
   // 변경 알림 channel을 먼저 중지한다(best-effort). 행은 매핑 삭제 cascade로도 지워진다.
-  await stopGoogleWatchChannelsFor(createDbContext(), { mappingId: mapping.id }).catch(() => undefined);
+  await stopGoogleWatchChannelsFor(ctx, { mappingId: mapping.id }).catch(() => undefined);
   await readDb().delete(calendarMappings).where(eq(calendarMappings.id, mapping.id));
   revalidatePath(SETTINGS_PATH);
   return { success: "캘린더 연결을 해제했습니다. 포탈과 원격 캘린더의 일정은 그대로 남습니다." };

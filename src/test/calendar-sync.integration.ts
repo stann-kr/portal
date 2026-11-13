@@ -326,6 +326,36 @@ test("매핑이 없는 학생의 쓰기 action은 원격 client를 만들지 않
   assert.equal(factoryCalls, 0);
 });
 
+test("캘린더 지정을 풀 때 포탈에서 고친 뒤 아직 보내지 못한 변경을 먼저 내보내, 다시 지정해도 일정이 한 벌만 남는다", { concurrency: false }, async (context) => {
+  const { db, remote } = await setup(context, createSession("admin-1", "admin"));
+  const start = new Date(Date.now() + 86_400_000);
+  const added = remote.remoteAdd({ title: "합주", start, end: new Date(start.getTime() + 7_200_000) });
+  const { connectionId, mappingId } = await connectAndMap(db);
+  const [imported] = await db.select().from(calendarEvents);
+  assert.equal(imported.title, "합주");
+
+  // 포탈에서 고쳤지만 그 push가 아직 원격에 닿지 않은 상태(쓰기 action의 push는 응답 뒤에 나가고 실패할 수 있다).
+  await db.update(calendarEvents).set({ title: "합주(장소 변경)" }).where(eq(calendarEvents.id, imported.id));
+  const removed = await syncActions.removeCalendarMapping(mappingId);
+  assert.ok(removed.success, removed.error);
+  assert.equal((await db.select().from(calendarMappings)).length, 0);
+  assert.equal(remote.events.get(added.remoteId)?.title, "합주(장소 변경)", "풀기 전에 밀린 수정을 원격에 보낸다");
+
+  const saved = await syncActions.saveCalendarMapping({}, form({ connectionId, studentId: "student-1", remoteCalendarId: "cal-1" }));
+  assert.ok(saved.success, saved.error);
+  assert.deepEqual((await db.select().from(calendarEvents)).map((row) => [row.id, row.title]), [[imported.id, "합주(장소 변경)"]], "포탈에 사본이 생기지 않는다");
+  assert.equal(remote.events.size, 1, "원격에도 사본이 생기지 않는다");
+
+  // 원격이 응답하지 않아도 해제는 그대로 된다(내보내기는 best-effort).
+  const [remapped] = await db.select().from(calendarMappings);
+  await db.update(calendarEvents).set({ title: "합주(다시 변경)" }).where(eq(calendarEvents.id, imported.id));
+  remote.failAll = new CalendarProviderError("provider down");
+  const removedWhileDown = await syncActions.removeCalendarMapping(remapped.id);
+  assert.ok(removedWhileDown.success, removedWhileDown.error);
+  assert.equal((await db.select().from(calendarMappings)).length, 0);
+  assert.equal(remote.events.get(added.remoteId)?.title, "합주(장소 변경)");
+});
+
 // ─── Google 변경 알림·예약 동기화 ─────────────────────────
 
 const GOOGLE_ENV = {
