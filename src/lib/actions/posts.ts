@@ -829,7 +829,7 @@ export async function restorePostRevision(
       await abortCollabRestore(roomKey, operationId);
       return {
         success: false,
-        error: "수정 화면에 아직 게시하지 않은 변경이 있어 되돌리지 않았습니다. 그 변경을 게시하거나 취소한 뒤 다시 시도해 주세요.",
+        error: "수정 화면에 아직 게시하지 않은 변경이 있어 되돌리지 않았습니다. 그 변경을 게시한 뒤 다시 시도해 주세요.",
       };
     }
   }
