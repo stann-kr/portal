@@ -31,7 +31,7 @@
 
 | 항목 | 저장소에서 확인할 수 있는 것 | 운영 적용을 확인하는 증거 |
 |---|---|---|
-| D1 migration | SQL·journal·snapshot `0000~0025`, 메모리 DB에서 체인·schema 검증 | 대상 D1의 적용 목록과 실제 schema·FK, 그 목록에서 계산한 pending 범위 |
+| D1 migration | SQL·journal·snapshot `0000~0027`, 메모리 DB에서 체인·schema 검증 | 대상 D1의 적용 목록과 실제 schema·FK, 그 목록에서 계산한 pending 범위 |
 | 계정 삭제 | `0012`와 삭제·정리 구현, application 설정의 `ACCOUNT_DELETION_ENABLED="false"` 기본값 | 활성 Worker의 유효 flag, 기기 adoption, 승인된 삭제·정리 smoke |
 | 예약 정리 | `worker.ts`의 `scheduled` handler, Workers Logs 설정, source에 없는 Cron trigger | 원격 trigger 주기, 대상 version의 실제 scheduled invocation, backlog·실패·alert 증거 |
 | 외부 캘린더 | `0013` 구독 테이블과 `EXTERNAL_CALENDAR_ENCRYPTION_KEY` 요구 조건 | 대상 schema, secret 설정 확인, 승인된 연결·읽기·교체·해제 smoke |
@@ -132,6 +132,12 @@ iCloud 연동:
 1. 원격 D1에 `0024_push_subscriptions`·`0025_push_muted_categories`를 적용한다(새 표만 추가, 백업·bookmark 먼저). 코드보다 먼저 적용해도 기존 동작은 그대로다.
 2. `node scripts/generate-vapid-keys.mjs`로 만든 키를 `wrangler secret put VAPID_PUBLIC_KEY`·`VAPID_PRIVATE_KEY`로 넣는다(환경마다 다른 키, 값은 기록에 남기지 않는다). secret이 없으면 알림 설정에 "켤 수 없습니다"만 보이고 다른 기능은 그대로다. 키를 바꾸면 모든 기기가 다시 켜야 한다.
 3. 배포 뒤 승인된 기기에서 알림 켜기 → 테스트 알림 수신을 확인한다. iPhone은 홈 화면에 추가한 앱에서 확인한다.
+
+### 목록 index·옛 session 전환 gate (2026-11-13)
+
+1. 원격 D1에 `0027_list_query_indexes`를 적용한다(기존 표 5개에 index만 추가, 백업·bookmark 먼저). 코드와 순서가 무관하다: index가 없어도 동작은 같고 목록 조회만 느리다.
+2. 이 version부터 비밀번호 지문이 없는 예전 session은 거부된다. 배포 직후 해당 기기는 로그인 화면으로 가므로, 학생에게 한 번 다시 로그인해야 할 수 있다고 미리 알린다.
+3. `wrangler.scheduled.toml`은 `wrangler.toml`과 같은 placement·메일 binding을 가진다(일치를 테스트로 고정). scheduled 설정으로 version을 올릴 때만 적용되며, binding 변경이므로 code deploy와 따로 승인한다.
 
 ### 가입 링크 메일 gate
 
