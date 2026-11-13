@@ -1037,7 +1037,7 @@ test("일정 상세 수정 form은 고친 칸만 저장해 연 뒤에 옮긴 시
   assert.equal((await row())?.startTime.toISOString(), "2026-08-14T05:00:30.000Z", "고치지 않은 시작 시간은 덮지 않는다");
   assert.equal((await row())?.endTime?.toISOString(), "2026-08-14T06:00:00.000Z");
 
-  // 종료 시간만 고쳤다: 지금 시작 시간과 합쳐 검증하고 종료만 바꾼다.
+  // 시작·종료는 한 묶음이다: 종료만 고쳐도 학생이 보던 시작과 함께 저장해, 옮긴 시작과 섞인 범위나 범위 오류가 생기지 않는다.
   const ended = await calendarActions.updateCalendarEventDetails({}, form({
     ...opened,
     "opened.title": "Renamed",
@@ -1045,25 +1045,36 @@ test("일정 상세 수정 form은 고친 칸만 저장해 연 뒤에 옮긴 시
     title: "Renamed",
     eventType: "PRACTICE",
     startTime: "2026-08-13T10:00",
-    endTime: "2026-08-14T16:00",
+    endTime: "2026-08-13T11:30",
     description: "메모",
   }));
-  assert.equal(ended.error, undefined);
-  assert.equal((await row())?.startTime.toISOString(), "2026-08-14T05:00:30.000Z");
-  assert.equal((await row())?.endTime?.toISOString(), "2026-08-14T07:00:00.000Z");
-  assert.deepEqual(
-    await calendarActions.updateCalendarEventDetails({}, form({
-      ...opened,
-      eventId: "event-1",
-      title: "Original",
-      eventType: "PRACTICE",
-      startTime: "2026-08-13T10:00",
-      endTime: "2026-08-14T13:00",
-      description: "메모",
-    })),
-    { error: "종료 시간은 시작 시간 이후여야 합니다." },
-    "고친 종료 시간은 지금 시작 시간과 합쳐 검증한다",
-  );
+  assert.equal(ended.error, undefined, "옮긴 시작(14일)과 합쳐 범위 오류를 내지 않는다");
+  assert.equal((await row())?.startTime.toISOString(), "2026-08-13T01:00:00.000Z");
+  assert.equal((await row())?.endTime?.toISOString(), "2026-08-13T02:30:00.000Z");
+
+  // 다시 옮겨진 뒤 시작만 고쳤다: 학생이 보던 종료와 함께 저장해 누구도 고르지 않은 범위가 생기지 않는다.
+  await db.update(calendarEvents).set({
+    startTime: new Date("2026-08-14T05:00:00.000Z"),
+    endTime: new Date("2026-08-14T07:00:00.000Z"),
+  }).where(eq(calendarEvents.id, "event-1"));
+  const started = await calendarActions.updateCalendarEventDetails({}, form({
+    ...opened,
+    "opened.title": "Renamed",
+    "opened.endTime": "2026-08-13T11:30",
+    eventId: "event-1",
+    title: "Renamed",
+    eventType: "PRACTICE",
+    startTime: "2026-08-13T10:30",
+    endTime: "2026-08-13T11:30",
+    description: "메모",
+  }));
+  assert.equal(started.error, undefined);
+  assert.equal((await row())?.startTime.toISOString(), "2026-08-13T01:30:00.000Z");
+  assert.equal((await row())?.endTime?.toISOString(), "2026-08-13T02:30:00.000Z", "옮긴 종료(14일 16:00)와 섞지 않는다");
+  await db.update(calendarEvents).set({
+    startTime: new Date("2026-08-14T05:00:30.000Z"),
+    endTime: new Date("2026-08-14T07:00:00.000Z"),
+  }).where(eq(calendarEvents.id, "event-1"));
 
   // 아무 칸도 고치지 않았다: 쓰지 않고 저장된 값을 돌려준다.
   const unchanged = await calendarActions.updateCalendarEventDetails({}, form({

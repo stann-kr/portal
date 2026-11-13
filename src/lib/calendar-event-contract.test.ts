@@ -110,11 +110,17 @@ test("상세 수정 form은 연 값과 다른 칸만 patch로 고른다", () => 
   assert.deepEqual(pickEditedCalendarEventFields(submitted, opened), {}, "같은 규칙으로 읽으면 같은 값");
   assert.deepEqual(
     pickEditedCalendarEventFields({ ...submitted, title: "전환 연습", endTime: null }, opened),
-    { title: "전환 연습", endTime: null },
+    { title: "전환 연습", startTime: submitted.startTime, endTime: null },
+    "시작·종료는 한 묶음이라 종료만 고쳐도 보던 시작과 함께 쓴다",
+  );
+  assert.deepEqual(
+    pickEditedCalendarEventFields({ ...submitted, startTime: new Date("2026-08-13T01:30:00.000Z") }, opened),
+    { startTime: new Date("2026-08-13T01:30:00.000Z"), endTime: submitted.endTime },
+    "시작만 고쳐도 보던 종료와 함께 쓴다",
   );
   assert.deepEqual(
     pickEditedCalendarEventFields({ ...submitted, eventType: "NOTE" }, { ...opened, startTime: "not-a-date", eventType: "" }),
-    { startTime: submitted.startTime },
+    { startTime: submitted.startTime, endTime: submitted.endTime },
     "읽을 수 없는 연 값은 고친 칸으로 보고, 빈 유형은 NOTE와 같게 읽는다",
   );
   assert.deepEqual(pickEditedCalendarEventFields(submitted, null), submitted, "연 값이 없으면 전체를 쓴다");

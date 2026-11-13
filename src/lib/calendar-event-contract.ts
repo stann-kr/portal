@@ -156,7 +156,8 @@ function sameOptionalTime(left: Date | null, right: Date | null): boolean {
 /**
  * 상세 패널 수정 form이 연 값(opened)과 보낸 값(submitted)을 같은 규칙으로 읽어 비교하고, 학생이 고친 칸만 patch로
  * 고른다. 손대지 않은 칸은 그 사이 다른 곳(관리자가 옮긴 시간·외부 캘린더 동기화)에서 바뀐 값을 덮지 않고, 같은 칸을
- * 둘이 고치면 나중 저장이 이긴다(2026-11-14 사용자 결정). 연 값을 읽을 수 없는 칸은 고친 칸으로 본다.
+ * 둘이 고치면 나중 저장이 이긴다(2026-11-14 사용자 결정). 시작·종료는 한 칸처럼 묶어 하나를 고치면 둘 다 쓴다.
+ * 연 값을 읽을 수 없는 칸은 고친 칸으로 본다.
  * opened가 null이면(연 값을 보내지 않는 이전 화면) 보낸 값 전체를 patch로 쓴다.
  */
 export function pickEditedCalendarEventFields(
@@ -169,12 +170,18 @@ export function pickEditedCalendarEventFields(
   if (!title.ok || title.value !== submitted.title) patch.title = submitted.title;
   const eventType = parseEventType(opened.eventType || "NOTE");
   if (!eventType.ok || eventType.value !== submitted.eventType) patch.eventType = submitted.eventType;
+  // 시작·종료는 한 묶음이다. 하나만 고쳐도 학생이 보던 범위 전체를 써서, 그 사이 옮긴 다른 쪽과 섞인 범위
+  // (누구도 고르지 않은 길이·범위 오류)가 생기지 않게 한다.
   const startTime = parseDate(opened.startTime, "시작 시간");
-  if (!startTime.ok || startTime.value.getTime() !== submitted.startTime.getTime()) {
-    patch.startTime = submitted.startTime;
-  }
   const endTime = parseOptionalDate(opened.endTime, "종료 시간");
-  if (!endTime.ok || !sameOptionalTime(endTime.value, submitted.endTime)) patch.endTime = submitted.endTime;
+  const timeEdited = !startTime.ok
+    || startTime.value.getTime() !== submitted.startTime.getTime()
+    || !endTime.ok
+    || !sameOptionalTime(endTime.value, submitted.endTime);
+  if (timeEdited) {
+    patch.startTime = submitted.startTime;
+    patch.endTime = submitted.endTime;
+  }
   const description = parseDescription(opened.description);
   if (!description.ok || description.value !== submitted.description) patch.description = submitted.description;
   return patch;
