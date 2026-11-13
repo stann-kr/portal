@@ -1414,6 +1414,25 @@ test("게시물 수정 form은 mixsetLinkUrl prop이 없으면 링크 칸 없이
   assert.equal("mixsetLinkUrl" in requests[0]!, false, "링크 칸이 없으면 매체를 바꾸지 않도록 칸을 보내지 않는다.");
 });
 
+test("게시물 수정 취소는 함께 쓰는 작업본을 되돌리지 않고 화면만 닫는다", { concurrency: false }, async (context) => {
+  const post = { id: "post-cancel-close-only", title: "처음 제목", contentHtml: "<p>처음 본문</p>", version: 1 };
+  let cancelled = 0;
+  const harness = await renderForm(context, <PostEditForm actorId="post-cancel-actor" post={post} mixsetLinkUrl={null} onCancel={() => { cancelled += 1; }} onSaved={() => undefined} />);
+  const { container } = harness;
+  await waitUntil(() => Boolean(container.querySelector(BODY_FIELD)) && !container.querySelector<HTMLTextAreaElement>(BODY_FIELD)?.disabled, 3000, "수정 작업본이 열려야 합니다.");
+  // 작업본은 다른 기기·다른 편집자와 함께 쓴다. 이 화면에서 넣었든 다른 화면에서 넣었든 같은 문서에 있다.
+  typeInto(harness, container.querySelector<HTMLTextAreaElement>(BODY_FIELD)!, "다른 기기에서 넣은 문장");
+  await act(async () => { await waitForRealTime(50); });
+
+  const cancelButton = [...container.querySelectorAll<HTMLButtonElement>('button[type="button"]')].find((button) => button.textContent?.trim() === "취소");
+  assert.ok(cancelButton, "취소 버튼이 있어야 합니다.");
+  await act(async () => cancelButton.click());
+  await act(async () => { await waitForRealTime(50); });
+
+  assert.equal(cancelled, 1, "취소는 화면을 닫는다.");
+  assert.equal(container.querySelector<HTMLTextAreaElement>(BODY_FIELD)?.value, "다른 기기에서 넣은 문장", "작업본 내용은 그대로 남는다(되돌리기는 변경 이력에서 한다).");
+});
+
 test("게시물 수정 form은 링크 게시물에 링크 칸을 두고 검증·제출에 포함한다", { concurrency: false }, async (context) => {
   const post = { id: "post-mixset-link", title: "링크 믹스셋", contentHtml: "<p>링크 본문</p>", version: 1 };
   const requests: Record<string, FormDataEntryValue>[] = [];

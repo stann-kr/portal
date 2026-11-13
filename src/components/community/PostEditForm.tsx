@@ -2,8 +2,6 @@
 
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import dynamic from "next/dynamic";
-import { generateJSON, getSchema } from "@tiptap/core";
-import { prosemirrorJSONToYXmlFragment } from "@tiptap/y-tiptap";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { CollabDraftStatus } from "@/components/editor/CollabDraftStatus";
@@ -22,7 +20,7 @@ import { POST_BASE_REVISION_FIELD } from "@/lib/post-continuity";
 import { classifyMixsetMedia, MIXSET_LINK_FIELD, normalizeMixsetLinkUrl } from "@/lib/community-mixset-media";
 import { isImplicitSubmitEnter } from "@/components/community/empty-title-enter";
 import { useCollabFormDraft } from "@/lib/collab/client/useCollabFormDraft";
-import { COLLAB_FRAGMENT, COLLAB_META } from "@/lib/collab/client/seed";
+import { COLLAB_META } from "@/lib/collab/client/seed";
 import { canonicalCollabHtml, collabDocHtml } from "@/lib/collab/client/doc-html";
 import type * as Y from "yjs";
 import { collabSavedMarker } from "@/lib/collab/saved-marker";
@@ -56,7 +54,7 @@ type PostHead = { version: number; title: string; contentHtml: string };
 /**
  * 게시물 수정(작성자·관리자). 수정 중인 내용은 `post:<id>` 공동 편집 작업본에 실시간으로 보관된다:
  * 같은 게시물을 연 기기·사람과 바로 합쳐지고 새로고침해도 남으며, 선택창이 없다.
- * "변경사항 저장"을 눌러야 게시본이 바뀐다(독자에게 수정 중인 내용이 보이지 않는다). "취소"는 작업본을 게시본으로 되돌린다.
+ * "변경사항 저장"을 눌러야 게시본이 바뀐다(독자에게 수정 중인 내용이 보이지 않는다). "취소"는 화면만 닫고 작업본은 남긴다.
  */
 export function PostEditForm(props: PostEditFormProps) {
   return <PostEditFormContent key={`${props.actorId}:${props.post.id}`} {...props} />;
@@ -223,24 +221,6 @@ function PostEditFormContent({ actorId, post, onCancel, onSaved, onBusyChange, m
     }
   }, [draft, hasLinkField, isSubmitBlocked, onSaved, post.id]);
 
-  /** 취소: 작업본을 마지막 게시본으로 되돌린 뒤 닫는다(같은 작업본을 연 다른 기기도 함께 되돌아간다). */
-  const cancel = useCallback(() => {
-    const doc = draft.collab.doc;
-    if (doc && !doc.isDestroyed && loaded) {
-      const head = headRef.current;
-      const extensions = getExtensions();
-      doc.transact(() => {
-        const fragment = doc.getXmlFragment(COLLAB_FRAGMENT);
-        if (fragment.length > 0) fragment.delete(0, fragment.length);
-        prosemirrorJSONToYXmlFragment(getSchema(extensions), generateJSON(head.contentHtml || "<p></p>", extensions), fragment);
-        const meta = doc.getMap(COLLAB_META);
-        meta.set("title", head.title);
-        if (hasLinkField) meta.set("mixsetLinkUrl", initialLinkUrl ?? "");
-      });
-    }
-    onCancel();
-  }, [draft.collab.doc, getExtensions, hasLinkField, initialLinkUrl, loaded, onCancel]);
-
   const handleSaveShortcut = useDocumentSaveShortcut({ disabled: isSubmitBlocked, onSave: () => void submit() });
   const linkHintId = `${linkFieldId}-hint`;
   const linkErrorId = `${linkFieldId}-error`;
@@ -350,7 +330,9 @@ function PostEditFormContent({ actorId, post, onCancel, onSaved, onBusyChange, m
       )}
 
       <div className="flex justify-end gap-2 border-t border-muted pt-3 md:pt-2">
-        <Button type="button" variant="outline" size="touch" onClick={cancel} disabled={isPending || isEditorUploading} className="md:h-9 md:rounded-md md:px-3.5 md:text-ui">
+        {/* 취소는 화면만 닫는다. 작업본은 다른 기기·다른 편집자와 함께 쓰므로 여기서 게시본으로 되돌리면 남이 넣은
+            내용까지 사라진다. 게시하지 않은 수정은 작업본에 남고, 되돌리기는 변경 이력에서 한다. */}
+        <Button type="button" variant="outline" size="touch" onClick={onCancel} disabled={isPending || isEditorUploading} className="md:h-9 md:rounded-md md:px-3.5 md:text-ui">
           취소
         </Button>
         <Button
