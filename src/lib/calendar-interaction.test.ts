@@ -8,6 +8,7 @@ import {
   fromCalendarWallTime,
   isCalendarMoveReflected,
   resolveSavedMove,
+  selectedItemAfterMove,
   toCalendarWallTime,
   getCalendarItemEditing,
   getCalendarItemLockReason,
@@ -177,6 +178,17 @@ test("저장이 끝난 이동은 그 사이 바뀐 최신 항목에 날짜만 �
   assert.equal(saved?.metadata.description, "메모");
   assert.equal(saved?.date.toISOString(), "2026-10-29T03:00:00.000Z");
   assert.equal(resolveSavedMove([], key, request), null);
+});
+
+test("열려 있는 상세 패널의 항목은 그 항목을 옮겼을 때만 옮긴 값으로 바뀐다", () => {
+  const opened = item("CALENDAR_EVENT", { endDate: new Date("2026-10-27T02:00:00.000Z") });
+  const moved = applyCalendarMoveToItem(opened, { kind: "event", startTime: "2026-10-29T06:00:00.000Z", endTime: "2026-10-29T07:00:00.000Z" });
+  const shown = selectedItemAfterMove(opened, moved);
+  assert.equal(shown?.date.toISOString(), "2026-10-29T06:00:00.000Z", "패널이 옛 시작 시각을 들고 있지 않는다");
+  assert.equal(new Date(shown!.endDate!).toISOString(), "2026-10-29T07:00:00.000Z");
+  const other = item("CALENDAR_EVENT", { id: "CALENDAR_EVENT-2" });
+  assert.equal(selectedItemAfterMove(other, moved), other, "다른 항목을 보고 있으면 그대로 둔다");
+  assert.equal(selectedItemAfterMove(null, moved), null, "패널을 열지 않았으면 열지 않는다");
 });
 
 test("다시 받은 항목이 이동한 자리에 있는지 종류별로 판정한다", () => {
