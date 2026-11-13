@@ -62,6 +62,15 @@ test("일정의 type, 길이, 시각 순서와 문자열 상한을 거부한다"
   }
 });
 
+test("달력에 없는 날짜와 timezone 없는 비표준 시각 문자열은 다른 날로 저장하지 않고 거부한다", () => {
+  for (const startTime of ["2026-02-30T10:00", "2026-02-30T10:00:00Z", "2026/08/13 00:30"]) {
+    const result = parseCalendarEventCreateInput({ ...current, startTime, endTime: null });
+    assert.equal(result.ok, false, startTime);
+  }
+  const withOffset = parseCalendarEventCreateInput({ ...current, startTime: "2026-08-13T00:30:00+09:00", endTime: null });
+  assert.equal(withOffset.ok && withOffset.value.startTime.toISOString(), "2026-08-12T15:30:00.000Z");
+});
+
 test("일정 patch는 알려진 필드만 허용하고 기존 값과 합친 시간 범위를 검증한다", () => {
   assert.equal(
     parseCalendarEventUpdateInput({ userId: "admin-1" }, current).ok,

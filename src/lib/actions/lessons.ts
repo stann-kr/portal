@@ -23,7 +23,7 @@ import {
   requireStudentTarget,
   type AuthSession,
 } from "@/lib/auth-guard";
-import { parseKstDateTimeInput } from "@/lib/date-input";
+import { parseDateTimeInput } from "@/lib/date-input";
 import { queryConnectedLessonsForStudent, type ConnectedLesson } from "@/lib/connected-next-lesson";
 import { fetchExternalItemsForUser } from "@/lib/external-items";
 import { pushMessages } from "@/lib/push/messages";
@@ -114,8 +114,8 @@ function parseLessonScheduleInput(formData: FormData): { ok: true; value: Date }
   if (typeof scheduledAtStr !== "string" || !scheduledAtStr) {
     return { ok: false, error: "날짜와 시간을 입력해주세요." };
   }
-  const scheduledAt = parseKstDateTimeInput(scheduledAtStr) ?? new Date(scheduledAtStr);
-  if (isNaN(scheduledAt.getTime())) return { ok: false, error: "유효하지 않은 날짜입니다." };
+  const scheduledAt = parseDateTimeInput(scheduledAtStr);
+  if (!scheduledAt) return { ok: false, error: "유효하지 않은 날짜입니다." };
   return { ok: true, value: scheduledAt };
 }
 
