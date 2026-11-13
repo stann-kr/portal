@@ -138,6 +138,7 @@ iCloud 연동:
 1. 원격 D1에 `0027_list_query_indexes`를 적용한다(기존 표 5개에 index만 추가, 백업·bookmark 먼저). 코드와 순서가 무관하다: index가 없어도 동작은 같고 목록 조회만 느리다.
 2. 이 version부터 비밀번호 지문이 없는 예전 session은 거부된다. 배포 직후 해당 기기는 로그인 화면으로 가므로, 학생에게 한 번 다시 로그인해야 할 수 있다고 미리 알린다.
 3. `wrangler.scheduled.toml`은 `wrangler.toml`과 같은 placement·메일 binding을 가진다(일치를 테스트로 고정). scheduled 설정으로 version을 올릴 때만 적용되며, binding 변경이므로 code deploy와 따로 승인한다.
+4. 개인정보처리방침의 "이메일 주소 전체는 다른 학생에게 보이지 않습니다"는 커뮤니티·댓글·Q&A 응답에서 타인 이메일을 뺀 수정과 같은 version이거나 그 뒤 version에서만 내보낸다. 배포일이 시행일(`src/app/privacy/page.tsx`의 `EFFECTIVE_DATE`)과 다르면 시행일을 배포일로 고친다.
 
 ### 가입 링크 메일 gate
 
