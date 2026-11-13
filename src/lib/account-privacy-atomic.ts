@@ -694,6 +694,8 @@ function accountDeletionStatements(input: {
     // 이 계정으로 등록된 기기 알림 구독. 계정이 사라진 뒤 남은 기기로 알림이 가지 않게 함께 지운다.
     { query: "DELETE FROM push_subscriptions WHERE profile_id = ?", params: [actorId] },
     { query: "DELETE FROM push_muted_categories WHERE profile_id = ?", params: [actorId] },
+    { query: "DELETE FROM guide_access_pages WHERE student_id = ?", params: [actorId] },
+    { query: "DELETE FROM guide_access WHERE student_id = ?", params: [actorId] },
     {
       query: "DELETE FROM profiles WHERE id = ? AND role = 'student'",
       params: [actorId],

@@ -1681,6 +1681,49 @@ export const qnaGuideAnchors = sqliteTable(
   ],
 );
 
+export type GuideAccessMode = "ALL" | "SELECTED";
+
+/**
+ * 학생별 가이드 열람 상태. 행이 없으면 닫힘(메뉴에서 가이드가 빠지고 어떤 페이지도 열리지 않는다).
+ * ALL은 나중에 만든 페이지까지 모두, SELECTED는 guide_access_pages에 있는 페이지만 열린다.
+ */
+export const guideAccess = sqliteTable(
+  "guide_access",
+  {
+    studentId: text("student_id")
+      .primaryKey()
+      .references(() => profiles.id, { onDelete: "cascade" }),
+    mode: text("mode").$type<GuideAccessMode>().notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .default(sql`(strftime('%s', 'now'))`)
+      .notNull(),
+  },
+  (table) => [check("guide_access_mode_check", sql`${table.mode} IN ('ALL', 'SELECTED')`)],
+);
+
+/**
+ * "선택"일 때 학생에게 열어 준 페이지. 닫힘·전체로 바꿔도 고른 목록은 남겨 다시 "선택"으로 돌아오면 그대로 쓴다.
+ * 학생·페이지가 지워지면 함께 지워진다.
+ */
+export const guideAccessPages = sqliteTable(
+  "guide_access_pages",
+  {
+    studentId: text("student_id")
+      .references(() => profiles.id, { onDelete: "cascade" })
+      .notNull(),
+    guidePageId: text("guide_page_id")
+      .references(() => guidePages.id, { onDelete: "cascade" })
+      .notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .default(sql`(strftime('%s', 'now'))`)
+      .notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.studentId, table.guidePageId] }),
+    index("guide_access_pages_page_idx").on(table.guidePageId),
+  ],
+);
+
 export type CalendarConnectionStatus = "ACTIVE" | "NEEDS_REAUTH";
 
 /**

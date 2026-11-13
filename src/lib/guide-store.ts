@@ -275,6 +275,11 @@ export async function deleteGuidePageRecord(
         params: [input.pageId],
       },
       {
+        // 학생에게 열어 준 표시도 함께 지운다(FK cascade에만 기대지 않는다).
+        query: "DELETE FROM guide_access_pages WHERE guide_page_id = ? AND EXISTS (SELECT 1 FROM guide_pages WHERE id = ? AND version = ?)",
+        params: [input.pageId, input.pageId, input.baseVersion],
+      },
+      {
         query: "DELETE FROM guide_pages WHERE id = ? AND version = ?",
         params: [input.pageId, input.baseVersion],
       },

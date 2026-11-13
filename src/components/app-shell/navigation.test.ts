@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { APP_NAV_ITEMS, WORK_BADGE_NAV_ID, formatWorkBadge, resolveActiveNavItem, resolveMobileTopBar } from "./navigation";
+import { APP_NAV_ITEMS, WORK_BADGE_NAV_ID, formatWorkBadge, resolveActiveNavItem, resolveMobileTopBar, visibleNavItems } from "./navigation";
 
 const at = (url: string) => {
   const parsed = new URL(url, "http://portal.test");
@@ -79,6 +79,14 @@ test("가이드는 학생·관리자 메뉴에 같은 주소로 있고 페이지
     title: "가이드 편집",
     back: { href: "/dashboard/guide/guide-1", label: "가이드로 돌아가기" },
   });
+});
+
+test("가이드가 열리지 않은 학생의 메뉴에서는 가이드만 빠지고, 관리자 메뉴는 그대로다", () => {
+  const ids = (role: "student" | "admin", guideHidden?: boolean) => visibleNavItems(role, { guideHidden }).map((item) => item.id);
+  assert.deepEqual(ids("student"), APP_NAV_ITEMS.student.map((item) => item.id));
+  assert.deepEqual(ids("student", false), APP_NAV_ITEMS.student.map((item) => item.id));
+  assert.deepEqual(ids("student", true), APP_NAV_ITEMS.student.map((item) => item.id).filter((id) => id !== "guide"));
+  assert.deepEqual(ids("admin", true), APP_NAV_ITEMS.admin.map((item) => item.id));
 });
 
 test("업무함 숫자 배지는 0이면 숨기고 99를 넘으면 99+로 줄이며 실제 건수를 읽어 준다", () => {

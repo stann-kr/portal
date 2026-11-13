@@ -1,7 +1,7 @@
 /**
  * @file src/components/admin/OverviewTab.tsx
  * @description 학생 상세 — 개요 탭(AdminStudentDetail·MobileAdminStudentDetail 보드).
- * 넓은 화면은 왼쪽 레슨 일정·커리큘럼, 오른쪽 계정. 좁은 화면은 레슨 일정 → 커리큘럼 → 계정 순서다.
+ * 넓은 화면은 왼쪽 레슨 일정·커리큘럼, 오른쪽 계정·가이드. 좁은 화면은 레슨 일정 → 커리큘럼 → 계정 → 가이드 순서다.
  * 커리큘럼은 src/lib/curriculum-visibility.ts 스위치가 켜졌을 때만 그린다.
  * 데이터는 RSC 부모(page.tsx)에서 props로 전달받음.
  */
@@ -25,9 +25,11 @@ import {
   type CreateLessonState,
 } from "@/lib/actions/lessons";
 import { CalendarFeedControl } from "@/components/admin/CalendarFeedControl";
+import { GuideAccessControl } from "@/components/admin/GuideAccessControl";
 import { StudentInviteControl } from "@/components/admin/StudentInviteControl";
 import { StudentPasswordResetControl } from "@/components/admin/StudentPasswordResetControl";
 import { ConfirmPanel, useConfirmAction } from "@/components/ui/confirm-action";
+import type { StudentGuideAccessView } from "@/lib/actions/guideAccess";
 import { formatKst } from "@/lib/kst-format";
 import { isCurriculumVisible } from "@/lib/curriculum-visibility";
 import { cn } from "@/lib/utils";
@@ -75,6 +77,8 @@ interface OverviewTabProps {
   account?:
     | { kind: "active" | "temporary" }
     | { kind: "invite"; expiresAt: Date; expired: boolean };
+  /** 이 학생의 가이드 열람 설정과 가이드 페이지 목록. 없으면 "가이드" 구획을 그리지 않는다. */
+  guideAccess?: StudentGuideAccessView;
   /** 지난 레슨·다음 레슨을 가르는 서버 기준 시각. 없으면 화면을 연 시각을 쓴다. */
   referenceTime?: Date;
   /** 커리큘럼 구역을 그릴지. 기본값은 숨김 스위치를 따른다. */
@@ -304,6 +308,7 @@ export function OverviewTab({
   connectedLessons = [],
   calendarFeedIssuedAt = null,
   account = { kind: "active" },
+  guideAccess,
   referenceTime,
   showCurriculum = isCurriculumVisible(),
   lessonNoteIds,
@@ -552,7 +557,8 @@ export function OverviewTab({
       </div>
 
       {/* 계정: 상태 줄을 먼저 모으고(order 1·2) 조작은 버튼 순서대로(order 3·4) 둔다. DOM은 조작마다 자기 상태 줄과 붙어 있다. */}
-      <LedgerSection labelledBy="account-heading" className="md:flex-[1_1_280px]">
+      <div className="flex min-w-0 flex-col gap-6 md:flex-[1_1_280px] md:gap-10">
+      <LedgerSection labelledBy="account-heading">
         <LedgerSectionHeader id="account-heading" title="계정" />
         <div className="mt-3 flex flex-col md:mt-4">
           <CalendarFeedControl
@@ -585,6 +591,15 @@ export function OverviewTab({
           </p>
         </div>
       </LedgerSection>
+
+      {/* 가이드: 이 학생이 가이드를 볼 수 있는지와 열어 줄 페이지(GuideAccess 보드). */}
+      {guideAccess ? (
+        <LedgerSection labelledBy="guide-access-heading">
+          <LedgerSectionHeader id="guide-access-heading" title="가이드" />
+          <GuideAccessControl studentId={studentId} initial={guideAccess} />
+        </LedgerSection>
+      ) : null}
+      </div>
     </div>
   );
 }

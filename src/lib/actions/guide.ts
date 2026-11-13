@@ -1,6 +1,7 @@
 /**
  * @file src/lib/actions/guide.ts
- * @description 공용 가이드 페이지 server action. 모든 활성 사용자가 읽고, 관리자만 만들고·고치고·순서를 바꾸고·지운다.
+ * @description 공용 가이드 페이지 server action. 관리자는 모두 읽고·만들고·고치고·순서를 바꾸고·지운다.
+ * 학생은 Stann이 열어 준 범위(src/lib/guide-access.ts: 닫힘·전체·선택)만 읽는다. 열리지 않은 페이지는 없는 페이지와 같게 답한다.
  * 학생 질문 위치는 서버 query에서 본인 질문만(관리자는 전체) 고른다.
  */
 "use server";
@@ -9,7 +10,8 @@ import { formatCollabDocKey } from "@/lib/collab/doc-key";
 import { closeCollabRoomAfterMutation, isStaleCollabSave, STALE_COLLAB_SAVE_MESSAGE } from "@/lib/collab/server-env";
 import { revalidatePath } from "next/cache";
 import { createDbContext } from "@/db/client";
-import { requireAdmin, requireAuth } from "@/lib/auth-guard";
+import { requireAdmin, requireAuth, type AuthSession } from "@/lib/auth-guard";
+import { canViewGuidePage, resolveGuideViewerAccess, type GuideViewerAccess } from "@/lib/guide-access";
 import {
   CREATION_OPERATION_FIELD,
   deriveCreationResourceId,
@@ -89,26 +91,44 @@ function toClientPage(page: GuidePageRecord) {
 
 export type GuideClientPage = ReturnType<typeof toClientPage>;
 
-/** 사이드 목록용 페이지 제목·순서. 학생·관리자 모두 같은 목록을 본다. */
+function viewerOf(session: AuthSession) {
+  return { id: session.user.id, isAdmin: session.user.role === "admin" };
+}
+
+function viewerAccess(session: AuthSession): Promise<GuideViewerAccess> {
+  return resolveGuideViewerAccess(createDbContext(), viewerOf(session));
+}
+
+/** 사이드 목록용 페이지 제목·순서. 학생은 열린 페이지만 받는다. */
 export async function getGuidePages() {
-  await requireAuth();
-  return listGuidePageSummaries(createDbContext());
+  const session = await requireAuth();
+  const context = createDbContext();
+  const access = await resolveGuideViewerAccess(context, viewerOf(session));
+  if (access.kind === "closed") return [];
+  const pages = await listGuidePageSummaries(context);
+  return access.kind === "all" ? pages : pages.filter((page) => access.pageIds.has(page.id));
+}
+
+/** 보는 사람에게 가이드가 닫혀 있는지(열린 페이지가 하나도 없음). 닫힌 학생에게는 안내만 보인다. */
+export async function isGuideClosedForViewer(): Promise<boolean> {
+  return (await viewerAccess(await requireAuth())).kind === "closed";
 }
 
 export async function getGuidePage(pageId: string): Promise<GuidePageRecord | null> {
-  await requireAuth();
+  const session = await requireAuth();
   const id = parseGuidePageId(pageId);
-  return id ? findGuidePage(createDbContext(), id) : null;
+  if (!id || !canViewGuidePage(await viewerAccess(session), id)) return null;
+  return findGuidePage(createDbContext(), id);
 }
 
-/** 이 페이지에 걸린 질문 위치. 학생은 본인 질문만, 관리자는 학생 이름과 함께 전부. */
+/** 이 페이지에 걸린 질문 위치. 학생은 본인 질문만, 관리자는 학생 이름과 함께 전부. 열리지 않은 페이지는 빈 목록이다. */
 export async function getGuideQuestions(pageId: string): Promise<GuideQuestionAnchor[]> {
   const session = await requireAuth();
   const id = parseGuidePageId(pageId);
-  if (!id) return [];
+  if (!id || !canViewGuidePage(await viewerAccess(session), id)) return [];
   return listGuideQuestionAnchors(createDbContext(), {
     pageId: id,
-    viewer: { id: session.user.id, isAdmin: session.user.role === "admin" },
+    viewer: viewerOf(session),
   });
 }
 

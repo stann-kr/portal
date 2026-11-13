@@ -62,6 +62,14 @@ export const APP_NAV_ITEMS: Record<AppRole, readonly AppNavItem[]> = {
   ],
 };
 
+/**
+ * 이 사용자에게 보일 메뉴. 가이드가 열리지 않은 학생에게는 "가이드"를 뺀다(주소로 직접 들어오면 안내만 보인다).
+ */
+export function visibleNavItems(role: AppRole, options: { guideHidden?: boolean } = {}): readonly AppNavItem[] {
+  const items = APP_NAV_ITEMS[role];
+  return role === "student" && options.guideHidden ? items.filter((item) => item.id !== "guide") : items;
+}
+
 type Location = { pathname: string; searchParams: URLSearchParams };
 
 /** 현재 주소가 어느 메뉴에 속하는지 정한다. 상세·작성·휴지통 화면도 상위 메뉴를 표시한다. */

@@ -53,6 +53,7 @@ import { validateMixAnalysisUpgrade } from "./migration-check/mix-analysis.mjs";
 import { validatePushSubscriptionsUpgrade } from "./migration-check/push-subscriptions.mjs";
 import { validatePushMutedCategoriesUpgrade } from "./migration-check/push-muted-categories.mjs";
 import { validateAssignmentReviewedAtUpgrade } from "./migration-check/assignment-reviewed-at.mjs";
+import { validateGuideAccessUpgrade } from "./migration-check/guide-access.mjs";
 import { validateListQueryIndexesUpgrade } from "./migration-check/list-query-indexes.mjs";
 import {
   validateAccountPrivacyAtomicSource,
@@ -197,6 +198,8 @@ async function main() {
   console.log("PASS populated 0025 → 0026 assignment reviewed_at nullable column and row preservation without table rebuild");
   await validateListQueryIndexesUpgrade(migrationFiles);
   console.log("PASS populated 0026 → 0027 list query indexes, schema and row preservation, index use by list queries");
+  await validateGuideAccessUpgrade(migrationFiles);
+  console.log("PASS populated 0027 → 0028 guide access tables, signed-up student backfill, constraints and cascades");
 }
 
 try {
