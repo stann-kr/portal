@@ -21,6 +21,7 @@ let AdminPortalClient: typeof import("@/components/admin-portal/AdminPortalClien
 let StudentPortalClient: typeof import("@/components/student-portal/StudentPortalClient").StudentPortalClient;
 let EventFormDialog: typeof import("@/components/calendar/EventFormDialog").EventFormDialog;
 let AddTrackDialog: typeof import("@/components/digging/AddTrackDialog").AddTrackDialog;
+let LegacyDraftArchive: typeof import("@/components/drafts/LegacyDraftArchive").LegacyDraftArchive;
 let CurriculumView: typeof import("@/components/student-portal/CurriculumView").CurriculumView;
 let TiptapEditor: typeof import("@tiptap/core").Editor;
 let StarterKit: typeof import("@tiptap/starter-kit").default;
@@ -171,6 +172,7 @@ mock.module("@/lib/actions/posts", { namedExports: {
   togglePinPost: (...args: Parameters<typeof togglePin>) => togglePin(...args),
 } });
 mock.module("@/lib/actions/categories", { namedExports: { getCategories: async () => [] } });
+mock.module("@/lib/actions/documentDrafts", { namedExports: { discardDocumentServerDraft: async () => ({ ok: true }) } });
 mock.module("@/lib/actions/upload", { namedExports: {
   requestMediaUpload: (...args: Parameters<typeof requestUpload>) => requestUpload(...args),
   completeMediaUploadAction: (...args: Parameters<typeof completeUpload>) => completeUpload(...args),
@@ -301,6 +303,7 @@ before(async () => {
   ({ CalendarEventActions } = await import("@/components/calendar/CalendarEventActions"));
   ({ LessonActions } = await import("@/components/calendar/LessonActions"));
   ({ AddTrackDialog } = await import("@/components/digging/AddTrackDialog"));
+  ({ LegacyDraftArchive } = await import("@/components/drafts/LegacyDraftArchive"));
   ({ DiggingBoard } = await import("@/components/digging/DiggingBoard"));
   ({ CurriculumView } = await import("@/components/student-portal/CurriculumView"));
   ({ Editor: TiptapEditor } = await import("@tiptap/core"));
@@ -1796,6 +1799,24 @@ test("digging board opens the inline add row from its link prompt and the read-o
   assert.equal([...browser.document.querySelectorAll("button")].some((element) => ["디깅 트랙 삭제", "링크를 붙여넣어 트랙 추가", "트랙 삭제"].includes(element.getAttribute("aria-label") ?? element.textContent ?? "")), false);
   assert.ok(browser.document.querySelector('table [role="img"][aria-label="별점 3점"]'), "read-only stars read as one rating");
   assert.match(browser.document.querySelector("table tbody")?.textContent ?? "", /2026년 10월 9일 \(.\) · 1곡/u);
+});
+
+test("이전 초안 보관함은 실시간 편집으로 옮겨 간 문서 종류의 기기 초안만 보이고, 지금 폼이 쓰는 댓글 초안은 옛 초안으로 보이지 않는다", async (context) => {
+  browser.localStorage.clear();
+  context.after(() => browser.localStorage.clear());
+  browser.localStorage.setItem(
+    createDocumentDraftKey("note", "student-archive", "note-1"),
+    serializeFormDraft({ title: "옛 노트 초안", contentHtml: "<p>옛 노트 본문</p>" }),
+  );
+  browser.localStorage.setItem(
+    createDocumentDraftKey("community-comment", "student-archive", "post-1"),
+    serializeFormDraft({ content: "지금 쓰는 댓글" }),
+  );
+  await render(context, <LegacyDraftArchive actorId="student-archive" serverDrafts={[]} />);
+  await settle();
+  const text = browser.document.body.textContent ?? "";
+  assert.match(text, /옛 노트 초안/u, "실시간 편집으로 옮겨 간 노트의 기기 초안은 보관함에 보인다");
+  assert.doesNotMatch(text, /지금 쓰는 댓글/u, "댓글 폼이 지금 되살리는 초안은 보관함에 보이지 않는다");
 });
 
 test("curriculum rolls back failed optimistic completion and allows a successful retry", async (context) => {
