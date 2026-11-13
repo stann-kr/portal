@@ -568,3 +568,39 @@ test("Google을 다른 계정으로 다시 연결하면 이전 자격 증명으�
   assert.equal(connection.accountLabel, "other@gmail.com");
   assert.equal(connection.status, "ACTIVE");
 });
+
+test("Google을 다른 계정으로 다시 연결하면 새 연결을 저장한 뒤 이전 계정 token을 폐기하고, 같은 계정·확인 못 한 계정이면 폐기하지 않으며 폐기 실패는 새 연결을 막지 않는다", { concurrency: false }, async (context) => {
+  const { db } = await setup(context, createSession("admin-1", "admin"));
+  enableGoogleChannels(context);
+  const ctx = { kind: "d1" as const, db: requireActiveDb() };
+  const key = Buffer.from(TEST_KEY, "base64");
+  const credentialsFor = (refreshToken: string) => ({ refreshToken, accessToken: "access", accessTokenExpiresAt: Date.now() + 3_600_000 });
+  const revoked: string[] = [];
+  const revokeGoogleToken = async (token: string) => {
+    revoked.push(token);
+  };
+  const connect = (account: string | null, refreshToken: string, deps = { revokeGoogleToken }) =>
+    connectionStore.upsertCalendarConnection(ctx, {
+      ownerId: "admin-1", provider: "GOOGLE", accountLabel: account ?? "Google 계정", accountId: account, credentials: credentialsFor(refreshToken), key,
+    }, deps);
+
+  await connect("teacher@gmail.com", "refresh-a1");
+  await connect(" Teacher@Gmail.com ", "refresh-a2");
+  await connect(null, "refresh-a3");
+  assert.equal(revoked.length, 0, "같은 계정·확인 못 한 계정은 이전 token을 폐기하지 않는다");
+
+  await connect("other@gmail.com", "refresh-b1");
+  assert.deepEqual(revoked, ["refresh-a3"], "이전 계정의 마지막 token만 폐기한다");
+  const [connection] = await db.select().from(calendarConnections);
+  assert.equal(connection.accountLabel, "other@gmail.com");
+  assert.equal(connection.status, "ACTIVE");
+
+  await connect("third@gmail.com", "refresh-c1", {
+    revokeGoogleToken: async () => {
+      throw new CalendarProviderError("revoke failed");
+    },
+  });
+  const [afterFailure] = await db.select().from(calendarConnections);
+  assert.equal(afterFailure.accountLabel, "third@gmail.com", "폐기 실패는 새 연결을 막지 않는다");
+  assert.equal(afterFailure.status, "ACTIVE");
+});

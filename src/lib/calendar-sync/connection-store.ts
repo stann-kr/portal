@@ -6,7 +6,8 @@ import { and, eq } from "drizzle-orm";
 import type { DbContext, DrizzleDb } from "@/db/client";
 import { calendarConnections, calendarMappings, type ExternalCalendarProvider } from "@/db/schema";
 import { executeDocumentStatementsAtomically, type DocumentAtomicStatement } from "@/lib/document-lifecycle-atomic";
-import { encryptConnectionCredentials, type ConnectionCredentials } from "./credentials";
+import { decryptConnectionCredentials, encryptConnectionCredentials, type ConnectionCredentials } from "./credentials";
+import { revokeGoogleToken } from "./google";
 import { stopGoogleWatchChannelsFor } from "./push-channels";
 
 const MAX_LABEL_LENGTH = 200;
@@ -28,6 +29,10 @@ function toStatement(query: { toSQL(): { sql: string; params: unknown[] } }): Do
  * 같은 계정이면 매핑을 유지한다. 계정(accountId)이 바뀌었으면 이전 계정의 캘린더 매핑은 새 계정에서 쓸 수 없으므로
  * 이전 자격 증명으로 알림 channel을 먼저 중지하고(best-effort) 매핑을 지운다(cursor·link·series·channel은 cascade).
  * 포탈 레슨·일정은 남는다. accountId가 없으면(계정을 확인하지 못함) 바뀌었는지 알 수 없어 지금처럼 유지한다.
+ * Google 계정이 바뀌었으면 새 연결을 저장한 뒤 이전 계정의 token을 폐기한다(연결 해제와 같은 revoke, best-effort).
+ * 같은 계정·확인하지 못한 계정은 폐기하지 않는다. Google revoke는 그 계정의 grant 전체를 끊으므로 같은 계정의
+ * 이전 token을 폐기하면 방금 받은 새 token까지 죽는다. 한계: 직전 연결이 계정을 확인하지 못한 채 저장됐고 그것이
+ * 실은 지금 연결하는 계정이었다면(표시 이름은 그 전 계정으로 남아 있다) 새 token도 함께 끊겨 한 번 더 연결해야 한다.
  */
 export async function upsertCalendarConnection<P extends ExternalCalendarProvider>(
   ctx: DbContext,
@@ -40,10 +45,16 @@ export async function upsertCalendarConnection<P extends ExternalCalendarProvide
     credentials: ConnectionCredentials<P>;
     key: Uint8Array;
   },
+  deps: { revokeGoogleToken?: (token: string) => Promise<void> } = {},
 ): Promise<void> {
   const db = ctx.db as unknown as DrizzleDb;
   const [existing] = await db
-    .select({ id: calendarConnections.id, accountLabel: calendarConnections.accountLabel })
+    .select({
+      id: calendarConnections.id,
+      accountLabel: calendarConnections.accountLabel,
+      encryptedCredentials: calendarConnections.encryptedCredentials,
+      credentialsIv: calendarConnections.credentialsIv,
+    })
     .from(calendarConnections)
     .where(and(eq(calendarConnections.ownerId, input.ownerId), eq(calendarConnections.provider, input.provider)))
     .limit(1);
@@ -60,6 +71,16 @@ export async function upsertCalendarConnection<P extends ExternalCalendarProvide
     const accountChanged = nextAccount !== null && previousAccount !== null && nextAccount !== previousAccount;
     // 확인하지 못한 계정은 이전 표시 이름(실제 주소)을 덮지 않는다.
     const accountLabel = nextAccount === null ? existing.accountLabel : input.accountLabel.slice(0, MAX_LABEL_LENGTH);
+    // 이전 Google token은 자격 증명을 바꾸기 전에 읽어 둔다(바꾼 뒤에는 읽을 수 없다). 못 읽으면 폐기를 건너뛴다.
+    const previousGoogleToken = accountChanged && input.provider === "GOOGLE"
+      ? await decryptConnectionCredentials({
+        connectionId: id,
+        provider: "GOOGLE",
+        encryptedCredentials: existing.encryptedCredentials,
+        credentialsIv: existing.credentialsIv,
+        key: input.key,
+      }).then((credentials) => credentials.refreshToken, () => null)
+      : null;
     if (accountChanged) {
       // 자격 증명을 바꾸기 전에 중지한다(이전 계정의 channel은 이전 자격 증명으로만 멈출 수 있다).
       await stopGoogleWatchChannelsFor(ctx, { connectionId: id });
@@ -71,6 +92,11 @@ export async function upsertCalendarConnection<P extends ExternalCalendarProvide
         .set({ ...encrypted, accountLabel, status: "ACTIVE", lastError: null, updatedAt: new Date() })
         .where(eq(calendarConnections.id, id))),
     ]);
+    if (previousGoogleToken) {
+      // 새 연결을 저장한 뒤에 폐기한다. 실패(이미 무효·네트워크)는 새 연결을 막지 않는다.
+      const revoke = deps.revokeGoogleToken ?? ((token: string) => revokeGoogleToken({ token }));
+      await revoke(previousGoogleToken).catch(() => undefined);
+    }
     return;
   }
   await db.insert(calendarConnections).values({
