@@ -7,6 +7,8 @@
  * 저장에 성공하면 패널이 폼을 닫고, 고치기 폼은 `id:version` key로 새로 그려진다.
  * 만들기 폼은 입력·작성 정보(operationId)·"다른 학생에게도 내기" 학생 목록을 이 기기에 보관한다(local draft).
  * 여러 학생 중 일부만 저장된 뒤 새로고침해 다시 내도 같은 학생·같은 operationId로 보내 학생별로 한 번만 저장된다.
+ * 고치기 폼도 고치던 내용을 이 기기에 보관한다(설명이 길 수 있다). 보관본은 고치기 시작한 version을 함께 두고,
+ * 그 사이 다른 곳에서 과제가 바뀌었으면 되살리기만 하고 저장은 막는다(바뀐 내용을 모르고 덮지 않게).
  */
 "use client";
 
@@ -82,28 +84,26 @@ const readString = (value: unknown, fallback: string) => (typeof value === "stri
 const readStringList = (value: unknown): string[] => (Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []);
 
 /**
- * 만들기 폼의 local draft. 값이 바뀔 때마다 보관하고(빈 폼이면 지운다), 저장에 성공하거나 취소하면 지운다.
- * 고치기 폼(enabled=false)은 버전 비교로 충돌을 막으므로 보관하지 않는다.
+ * 만들기·고치기 폼의 local draft. 값이 바뀔 때마다 보관하고(바꾼 것이 없으면 지운다), 저장에 성공하거나 취소하면 지운다.
  */
-function useCreationDraft<T extends object>({
+function useTaskFormDraft<T extends object>({
   actorId,
   contextId,
-  enabled,
   values,
   empty,
   restore,
 }: {
   actorId: string;
   contextId: string;
-  enabled: boolean;
   values: T;
+  /** 만들기는 빈 폼, 고치기는 처음 값 그대로일 때. */
   empty: boolean;
   restore: (saved: Partial<Record<keyof T, unknown>>) => void;
 }) {
   const restoreRef = useRef(restore);
   useEffect(() => { restoreRef.current = restore; });
   const draft = useFormDraft<T>(createDocumentDraftKey("assignment-feedback", actorId, contextId), (saved) => {
-    if (enabled) restoreRef.current(saved as Partial<Record<keyof T, unknown>>);
+    restoreRef.current(saved as Partial<Record<keyof T, unknown>>);
   });
   const signature = JSON.stringify(values);
   const lastSignatureRef = useRef(signature);
@@ -111,13 +111,21 @@ function useCreationDraft<T extends object>({
   useEffect(() => { valuesRef.current = values; });
   const { loaded, save, clear } = draft;
   useEffect(() => {
-    if (!enabled || !loaded || signature === lastSignatureRef.current) return;
+    if (!loaded || signature === lastSignatureRef.current) return;
     lastSignatureRef.current = signature;
     if (empty) clear({ reason: "empty" });
     else save(valuesRef.current);
-  }, [clear, empty, enabled, loaded, save, signature]);
+  }, [clear, empty, loaded, save, signature]);
   return draft;
 }
+
+/** 고치기 보관본의 기준 version. 없거나 이상하면 그 보관본은 되살리지 않는다(무엇을 고치던 것인지 알 수 없다). */
+function readBaseVersion(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : null;
+}
+
+const STALE_EDIT_DRAFT =
+  "이 기기에 남아 있던 고치던 내용을 되살렸습니다. 그 사이 다른 곳에서 바뀌어 이대로는 저장할 수 없습니다. 필요한 내용을 복사해 두고 취소한 뒤 다시 고쳐 주세요.";
 
 function TitleAndDescription({
   idPrefix,
@@ -240,10 +248,10 @@ function AlsoStudentsField({
   );
 }
 
-function FormActions({ isPending, submitLabel, onCancel }: { isPending: boolean; submitLabel: string; onCancel: () => void }) {
+function FormActions({ isPending, submitLabel, submitDisabled = false, onCancel }: { isPending: boolean; submitLabel: string; submitDisabled?: boolean; onCancel: () => void }) {
   return (
     <div className="flex flex-wrap gap-2">
-      <Button type="submit" pending={isPending} className="max-md:h-11">
+      <Button type="submit" pending={isPending} disabled={submitDisabled} className="max-md:h-11">
         {isPending ? "저장 중..." : submitLabel}
       </Button>
       <Button type="button" variant="outline" onClick={onCancel} disabled={isPending} className="max-md:h-11">
@@ -279,14 +287,27 @@ export function AssignmentTaskForm({
   const [operationId, setOperationId] = useState(createCreationOperationId);
   const [alsoStudentIds, setAlsoStudentIds] = useState<string[]>([]);
   const creating = !task;
-  const draft = useCreationDraft({
+  const formatLocked = Boolean(task?.submission);
+  // 고치기: 처음 값과 고치기 시작한 version. 보관본을 되살리면 보관본의 version을 그대로 보낸다.
+  const [initial] = useState(() => ({ format, title, description, dueDate, dueTime }));
+  const [baseVersion, setBaseVersion] = useState(task?.version ?? 0);
+  const staleDraft = Boolean(task) && baseVersion !== task?.version;
+  const draft = useTaskFormDraft({
     actorId,
     contextId: task ? `assignment-task-edit:${task.id}` : `assignment-task-new:${studentId}`,
-    enabled: creating,
-    values: { format, title, description, dueDate, dueTime, alsoStudentIds, operationId },
-    empty: !title && !description && !dueDate && !dueTime && alsoStudentIds.length === 0 && format === "MIX",
-    restore: (saved) => {
-      if (typeof saved.format === "string" && (ASSIGNMENT_SUBMISSION_FORMATS as readonly string[]).includes(saved.format)) setFormat(saved.format as AssignmentSubmissionFormatValue);
+    values: creating
+      ? { format, title, description, dueDate, dueTime, alsoStudentIds, operationId }
+      : { format, title, description, dueDate, dueTime, baseVersion },
+    empty: creating
+      ? !title && !description && !dueDate && !dueTime && alsoStudentIds.length === 0 && format === "MIX"
+      : format === initial.format && title === initial.title && description === initial.description && dueDate === initial.dueDate && dueTime === initial.dueTime,
+    restore: (saved: Record<string, unknown>) => {
+      if (!creating) {
+        const savedVersion = readBaseVersion(saved.baseVersion);
+        if (savedVersion === null) return;
+        setBaseVersion(savedVersion);
+      }
+      if (!formatLocked && typeof saved.format === "string" && (ASSIGNMENT_SUBMISSION_FORMATS as readonly string[]).includes(saved.format)) setFormat(saved.format as AssignmentSubmissionFormatValue);
       setTitle(readString(saved.title, ""));
       setDescription(readString(saved.description, ""));
       setDueDate(readString(saved.dueDate, ""));
@@ -301,14 +322,13 @@ export function AssignmentTaskForm({
       ? updateAssignmentTask(studentId, task.id, previous, data)
       : createAssignmentTask(studentId, previous, data)),
     () => {
-      if (creating) draft.clear({ reason: "submitted" });
+      draft.clear({ reason: "submitted" });
       onDone();
     },
   );
   const idPrefix = task ? `task-edit-${task.id}` : "task-new";
-  const formatLocked = Boolean(task?.submission);
   const cancel = () => {
-    if (creating) draft.clear({ reason: "discard" });
+    draft.clear({ reason: "discard" });
     onCancel();
   };
 
@@ -317,14 +337,15 @@ export function AssignmentTaskForm({
       action={action}
       className={FORM_CLASS}
       aria-label={task ? `${task.title} 고치기` : "과제 내기"}
-      onBlur={creating ? draft.flush : undefined}
+      onBlur={draft.flush}
       onSubmit={(event) => {
         // 보관본을 읽기 전이나 다른 탭 보관본과 충돌하면 보내지 않는다(작성 정보가 바뀌어 중복 저장되지 않게).
-        if (creating && (!draft.loaded || !draft.canSubmit)) event.preventDefault();
-        else if (creating) draft.flush();
+        // 되살린 보관본의 기준 version이 지금과 다르면 보내지 않는다(그 사이 바뀐 내용을 덮지 않게).
+        if (!draft.loaded || !draft.canSubmit || staleDraft) event.preventDefault();
+        else draft.flush();
       }}
     >
-      {task ? <input type="hidden" name="version" value={task.version} /> : (
+      {task ? <input type="hidden" name="version" value={baseVersion} /> : (
         <input type="hidden" name={CREATION_OPERATION_FIELD} value={operationId} />
       )}
       <TitleAndDescription
@@ -354,9 +375,9 @@ export function AssignmentTaskForm({
       {task ? null : (
         <AlsoStudentsField studentId={studentId} options={studentOptions} selected={alsoStudentIds} onChange={setAlsoStudentIds} disabled={isPending} idPrefix={idPrefix} />
       )}
-      {state.error ? <p role="alert" className="text-ui text-destructive">{state.error}</p> : null}
-      {creating ? <DraftStatus {...draft} onRestoreRecovery={draft.restoreRecovery} onDiscardRecovery={draft.discardRecovery} disabled={isPending} quiet /> : null}
-      <FormActions isPending={isPending} submitLabel={task ? "저장" : alsoStudentIds.length > 0 ? `${alsoStudentIds.length + 1}명에게 과제 내기` : "과제 내기"} onCancel={cancel} />
+      {staleDraft ? <p role="alert" className="text-ui text-destructive">{STALE_EDIT_DRAFT}</p> : state.error ? <p role="alert" className="text-ui text-destructive">{state.error}</p> : null}
+      <DraftStatus {...draft} onRestoreRecovery={draft.restoreRecovery} onDiscardRecovery={draft.discardRecovery} disabled={isPending} quiet />
+      <FormActions isPending={isPending} submitDisabled={staleDraft} submitLabel={task ? "저장" : alsoStudentIds.length > 0 ? `${alsoStudentIds.length + 1}명에게 과제 내기` : "과제 내기"} onCancel={cancel} />
     </form>
   );
 }
@@ -395,14 +416,25 @@ export function AssignmentRecurrenceForm({
   const [alsoStudentIds, setAlsoStudentIds] = useState<string[]>([]);
   const creating = !recurrence;
   const [initialStartDate] = useState(startDate);
-  const draft = useCreationDraft({
+  // 고치기: 처음 값과 고치기 시작한 version. 보관본을 되살리면 보관본의 version을 그대로 보낸다.
+  const editable = { format, days, title, description, intervalWeeks, startDate, dueTime, endDate, maxOccurrences };
+  const [initialSignature] = useState(() => JSON.stringify(editable));
+  const [baseVersion, setBaseVersion] = useState(recurrence?.version ?? 0);
+  const staleDraft = Boolean(recurrence) && baseVersion !== recurrence?.version;
+  const draft = useTaskFormDraft({
     actorId,
     contextId: recurrence ? `assignment-recurrence-edit:${recurrence.id}` : `assignment-recurrence-new:${studentId}`,
-    enabled: creating,
-    values: { format, days, title, description, intervalWeeks, startDate, dueTime, endDate, maxOccurrences, alsoStudentIds, operationId },
-    empty: !title && !description && days.length === 0 && !endDate && !maxOccurrences && alsoStudentIds.length === 0
-      && format === "MIX" && intervalWeeks === "1" && startDate === initialStartDate && dueTime === "21:00",
-    restore: (saved) => {
+    values: creating ? { ...editable, alsoStudentIds, operationId } : { ...editable, baseVersion },
+    empty: creating
+      ? !title && !description && days.length === 0 && !endDate && !maxOccurrences && alsoStudentIds.length === 0
+        && format === "MIX" && intervalWeeks === "1" && startDate === initialStartDate && dueTime === "21:00"
+      : JSON.stringify(editable) === initialSignature,
+    restore: (saved: Record<string, unknown>) => {
+      if (!creating) {
+        const savedVersion = readBaseVersion(saved.baseVersion);
+        if (savedVersion === null) return;
+        setBaseVersion(savedVersion);
+      }
       if (typeof saved.format === "string" && (ASSIGNMENT_SUBMISSION_FORMATS as readonly string[]).includes(saved.format)) setFormat(saved.format as AssignmentSubmissionFormatValue);
       if (Array.isArray(saved.days)) setDays(saved.days.filter((day): day is number => Number.isInteger(day) && day >= 0 && day <= 6));
       setTitle(readString(saved.title, ""));
@@ -422,12 +454,12 @@ export function AssignmentRecurrenceForm({
       ? updateAssignmentRecurrence(studentId, recurrence.id, previous, data)
       : createAssignmentRecurrence(studentId, previous, data)),
     () => {
-      if (creating) draft.clear({ reason: "submitted" });
+      draft.clear({ reason: "submitted" });
       onDone();
     },
   );
   const cancel = () => {
-    if (creating) draft.clear({ reason: "discard" });
+    draft.clear({ reason: "discard" });
     onCancel();
   };
   const idPrefix = recurrence ? `recurrence-edit-${recurrence.id}` : "recurrence-new";
@@ -443,13 +475,13 @@ export function AssignmentRecurrenceForm({
       action={action}
       className={FORM_CLASS}
       aria-label={recurrence ? `${recurrence.title} 정기 과제 고치기` : "정기 과제 만들기"}
-      onBlur={creating ? draft.flush : undefined}
+      onBlur={draft.flush}
       onSubmit={(event) => {
-        if (creating && (!draft.loaded || !draft.canSubmit)) event.preventDefault();
-        else if (creating) draft.flush();
+        if (!draft.loaded || !draft.canSubmit || staleDraft) event.preventDefault();
+        else draft.flush();
       }}
     >
-      {recurrence ? <input type="hidden" name="version" value={recurrence.version} /> : (
+      {recurrence ? <input type="hidden" name="version" value={baseVersion} /> : (
         <input type="hidden" name={CREATION_OPERATION_FIELD} value={operationId} />
       )}
       <TitleAndDescription
@@ -557,9 +589,9 @@ export function AssignmentRecurrenceForm({
       {recurrence ? null : (
         <AlsoStudentsField studentId={studentId} options={studentOptions} selected={alsoStudentIds} onChange={setAlsoStudentIds} disabled={isPending} idPrefix={idPrefix} />
       )}
-      {state.error ? <p role="alert" className="text-ui text-destructive">{state.error}</p> : null}
-      {creating ? <DraftStatus {...draft} onRestoreRecovery={draft.restoreRecovery} onDiscardRecovery={draft.discardRecovery} disabled={isPending} quiet /> : null}
-      <FormActions isPending={isPending} submitLabel={recurrence ? "저장" : alsoStudentIds.length > 0 ? `${alsoStudentIds.length + 1}명에게 정기 과제 만들기` : "정기 과제 만들기"} onCancel={cancel} />
+      {staleDraft ? <p role="alert" className="text-ui text-destructive">{STALE_EDIT_DRAFT}</p> : state.error ? <p role="alert" className="text-ui text-destructive">{state.error}</p> : null}
+      <DraftStatus {...draft} onRestoreRecovery={draft.restoreRecovery} onDiscardRecovery={draft.discardRecovery} disabled={isPending} quiet />
+      <FormActions isPending={isPending} submitDisabled={staleDraft} submitLabel={recurrence ? "저장" : alsoStudentIds.length > 0 ? `${alsoStudentIds.length + 1}명에게 정기 과제 만들기` : "정기 과제 만들기"} onCancel={cancel} />
     </form>
   );
 }
