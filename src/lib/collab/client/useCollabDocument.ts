@@ -336,6 +336,8 @@ export function useCollabDocument(options: CollabDocumentOptions): CollabDocumen
     let persistence: Persistence | null = null;
     let confirmedPersistence: Persistence | null = null;
     let persistenceClosed = false;
+    /** 로그아웃·계정 전환 정리가 이 문서를 지나갔다(화면만 닫힌 것과 구분한다). */
+    let ownerCleared = false;
     let provider: CollabProvider | null = null;
     let offlineTimer: ReturnType<typeof setTimeout> | null = null;
     let seedRetryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -713,7 +715,9 @@ export function useCollabDocument(options: CollabDocumentOptions): CollabDocumen
       unsubscribers.push(
         subscribeCollabOwnerClear((signal) => {
           const mine = signal.mode === "owner" ? signal.ownerId === owner : signal.ownerId !== owner;
-          if (mine) void closePersistence();
+          if (!mine) return;
+          ownerCleared = true;
+          void closePersistence();
         }),
       );
     }
@@ -721,11 +725,16 @@ export function useCollabDocument(options: CollabDocumentOptions): CollabDocumen
     void (async () => {
       if (docName && confirmedName && owner && rememberCollabDbName(owner, docName) && rememberCollabDbName(owner, confirmedName)) {
         [persistence, confirmedPersistence] = await Promise.all([openPersistence(docName, doc), openPersistence(confirmedName, confirmed)]);
-        // 여는 사이 로그아웃·계정 정리가 지나갔으면 방금 만든 DB를 닫고 지운다(정리 뒤 다시 생기지 않게).
-        if (persistenceClosed || isCollabOwnerLocked(owner)) {
+        if (ownerCleared || isCollabOwnerLocked(owner)) {
+          // 여는 사이 로그아웃·계정 정리가 지나갔으면 방금 만든 DB를 닫고 지운다(정리 뒤 다시 생기지 않게).
           persistenceClosed = false;
           await closePersistence();
           await Promise.all([deleteIndexedDb(docName), deleteIndexedDb(confirmedName)]).catch(() => undefined);
+        } else if (persistenceClosed) {
+          // 여는 사이 화면만 닫혔으면(빠른 재마운트) 방금 연 연결만 닫는다. 같은 문서를 다시 연 화면이 같은 DB를 쓰고 있으므로
+          // 지우지 않는다(지우면 그 화면의 기기 보관이 닫혀 입력 저장이 오류로 멈춘다).
+          persistenceClosed = false;
+          await closePersistence();
         }
       }
       if (disposed) {
