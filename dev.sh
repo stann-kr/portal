@@ -26,11 +26,14 @@ case "$1" in
     docker compose run --rm web sh
     ;;
   "seed")
-    EMAIL="${2:-admin@stannlumo.com}"
-    PASS="${3:-adminpassword123!}"
-    DISPLAY_NAME="${4:-Stann}"
-    echo "🌱 Seeding admin user: $EMAIL"
-    docker compose run --rm web npx tsx src/scripts/setup-admin.ts "$EMAIL" "$PASS" "$DISPLAY_NAME" --exec
+    # 관리자 정보는 .env.local의 DEV_ADMIN_* 값에서만 읽는다(README "로컬 관리자 계정").
+    # 비밀번호가 process 목록과 shell history에 남지 않도록 명령행 인자는 받지 않는다.
+    if [ "$#" -gt 1 ]; then
+      echo "seed는 인자를 받지 않습니다. .env.local에 DEV_ADMIN_SEED_ENABLED, DEV_ADMIN_EMAIL, DEV_ADMIN_PASSWORD, DEV_ADMIN_DISPLAY_NAME을 설정하세요." >&2
+      exit 1
+    fi
+    echo "🌱 Seeding local admin from .env.local (DEV_ADMIN_*)..."
+    docker compose run --rm web npm run dev:seed-admin
     ;;
   "logs")
     echo "📋 Showing logs..."
@@ -38,7 +41,7 @@ case "$1" in
     ;;
   *)
     echo "Usage: ./dev.sh [dev|migrate|studio|build|shell|seed|logs]"
-    echo "       ./dev.sh seed [email] [password] [displayName]"
+    echo "       ./dev.sh seed   (.env.local의 DEV_ADMIN_* 값으로 로컬 관리자 계정을 만든다)"
     exit 1
     ;;
 esac
