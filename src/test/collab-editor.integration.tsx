@@ -768,6 +768,46 @@ test("혼자 모드 새 노트는 제목·본문이 갖춰지면 생성 action�
   assert.deepEqual(tokenRequests.length, 1, "생성 전후 같은 room을 쓰므로 토큰은 다시 받지 않는다");
 });
 
+test("새 노트 저장을 기다리는 중에 앱 안 이동으로 화면이 사라지면 노트는 만들되, 옮겨 간 화면의 주소는 바꾸지 않는다", { concurrency: false }, async (context) => {
+  const env = setupBrowser(context);
+  tokenPolicy = { collab: false, mode: "write", userId: "student-1", displayName: "김학생" };
+  type CreateResult = import("@/lib/actions/privateNotes").CreateNoteState;
+  const created: Record<string, FormDataEntryValue>[] = [];
+  const saved: string[] = [];
+  const createAction = async (_previous: object, formData: FormData): Promise<CreateResult> => {
+    const data = Object.fromEntries(formData);
+    created.push(data);
+    // 응답이 화면이 사라진 뒤에 온다.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const id = deriveCreationResourceId(String(data.operationId), JSON.stringify(["private-note", "student-1", "student-1"]));
+    return { success: true, note: { id, title: String(data.title), contentHtml: String(data.contentHtml), noteDate: null, createdAt: new Date(), version: 1 } };
+  };
+  const device = await env.mount(
+    <NoteEditorForm
+      actorId="student-1"
+      create={{ studentId: "student-1", action: createAction, updateAction: async () => ({}), returnTo: "/dashboard/student/notes" }}
+      onSaved={(note) => saved.push(note.id)}
+    />,
+  );
+  await waitReady(device);
+  await act(async () => typeInto(env, titleOf(device), "떠나기 직전 새 노트"));
+  await act(async () => typeInto(env, bodyOf(device)!, "첫 문장"));
+  assert.equal(created.length, 0, "입력 직후에는 아직 만들지 않는다");
+
+  // 사이드바 링크처럼 앱 안 이동으로 화면이 사라지고, 주소는 이미 옮겨 간 화면의 것이다.
+  await device.unmount();
+  env.browserWindow.history.replaceState(null, "", "/dashboard/student?section=workspace&view=calendar");
+  await waitUntil(() => created.length === 1, 3000, "화면이 사라질 때 기다리던 생성을 보내야 합니다.");
+  await waitUntil(() => saved.length === 1, 3000, "만든 노트는 부모 목록에 알려야 합니다.");
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 200)); });
+  assert.equal(
+    `${env.browserWindow.location.pathname}${env.browserWindow.location.search}`,
+    "/dashboard/student?section=workspace&view=calendar",
+    "이미 옮겨 간 화면의 주소를 노트 주소로 바꾸지 않는다",
+  );
+  assert.equal(created.length, 1, "한 번만 만든다");
+});
+
 // ---------------------------------------------------------------------------
 // 4. 결정적 시드
 // ---------------------------------------------------------------------------
