@@ -65,6 +65,13 @@ OpenNext → Cloudflare Worker
 | Editor | Tiptap |
 | Deploy | OpenNext for Cloudflare, Wrangler |
 
+### Worker 첫 요청 비용(2026-11-14)
+
+- isolate가 새로 뜬 뒤 첫 요청은 그 화면이 쓰는 서버 chunk(RSC·SSR)를 모두 평가한다. 운영 CPU의 큰 몫이 이 첫 요청이라, 여러 화면이 쓰는 모듈은 한 동작에서만 쓰는 무거운 라이브러리를 정적 import하지 않는다.
+- `src/lib/collab/server-env.ts`는 HTML↔Yjs 변환(`server-restore`: yjs·linkedom·tiptap 전체 확장·코드 강조)을 `loadServerRestore()`로 복원·repair 때만 불러온다. action·route는 `server-restore`를 정적 import하지 않는다(노트 checkpoint·게시물 dirty 비교도 같은 loader).
+- 관리자·학생 첫 화면(`CalendarSection`)의 Q&A 작성 폼과 일정 상세의 노트 상세(`UnifiedItemDetail` → `UnifiedNoteDetail`)는 `next/dynamic`으로 나눈다. 둘 다 패널을 열 때만 렌더하고, `useIdlePreload`가 화면이 뜬 뒤 한가할 때 미리 받아 처음 열 때 기다리지 않는다. 정적 import로 되돌리면 첫 화면 SSR이 편집기 묶음(약 0.9MB)을 다시 평가한다.
+- 로컬 wrangler dev 측정(5회 중앙값, 같은 조건): 첫 요청 CPU 관리자 `/dashboard/admin` 469→354ms, 학생 `/dashboard/student` 457→376ms. 이후 요청은 35~50ms로 같다.
+
 ## 주요 route
 
 | Route | 역할 |

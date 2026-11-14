@@ -4,8 +4,9 @@ import { useState, useRef, useEffect } from "react";
 import { getUnifiedItemKey, type UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 import { UnifiedItemSpaceBadge, UnifiedItemTypeBadge } from "@/components/ui/unified-item-type";
 import { SlidePanel } from "./SlidePanel";
-import { UnifiedItemDetail } from "./UnifiedItemDetail";
+import { UnifiedItemDetail, preloadUnifiedNoteDetail } from "./UnifiedItemDetail";
 import type { NoteDetailViewer } from "./UnifiedNoteDetail";
+import { useIdlePreload } from "@/lib/hooks/useIdlePreload";
 
 export type UnifiedItemChangeHandlers = {
   /** 학생 본인 스페이스에서만 포탈 일정을 수정·삭제할 수 있다. */
@@ -46,6 +47,7 @@ export function UnifiedItemDetailPanel({
   /** 관리자 화면처럼 학생 스페이스를 함께 보여야 하면 true. */
   showSpaceContext?: boolean;
 } & UnifiedItemChangeHandlers) {
+  useIdlePreload(preloadUnifiedNoteDetail);
   const [busy, setBusy] = useState(false);
   // 저장이 끝났을 때 사용자가 그사이 고른 항목(최신 item)을 덮어쓰지 않도록 마지막 요청을 기억한다.
   const requestedKey = item ? getUnifiedItemKey(item) : null;

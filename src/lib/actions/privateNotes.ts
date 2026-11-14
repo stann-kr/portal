@@ -10,12 +10,12 @@ import {
   applyCollabRestore,
   beginCollabRestore,
   closeCollabRoomAfterMutation,
+  loadServerRestore,
   notifyCollabTopic,
   parseCollabSaveEpoch,
   setCollabRoomMetaAfterMutation,
   STALE_COLLAB_SAVE_MESSAGE,
 } from "@/lib/collab/server-env";
-import { canonicalServerHtml } from "@/lib/collab/server-restore";
 import { noteRoomFields, readNoteRestoreTarget } from "@/lib/collab/restore-targets";
 import { revalidatePath } from "next/cache";
 import { and, desc, eq, isNotNull, isNull } from "drizzle-orm";
@@ -871,6 +871,7 @@ async function saveRestoreCheckpoint(
   const fields = noteRoomFields(head);
   const title = typeof content.fields.title === "string" ? content.fields.title : "";
   const noteDate = typeof content.fields.noteDate === "string" ? content.fields.noteDate : "";
+  const { canonicalServerHtml } = await loadServerRestore();
   if (title.trim() === fields.title && noteDate === fields.noteDate && content.html === canonicalServerHtml(head.contentHtml)) {
     return { ok: true };
   }

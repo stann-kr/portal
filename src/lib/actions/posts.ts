@@ -7,10 +7,10 @@ import {
   applyCollabRestore,
   beginCollabRestore,
   closeCollabRoomAfterMutation,
+  loadServerRestore,
   parseCollabSaveEpoch,
   STALE_COLLAB_SAVE_MESSAGE,
 } from "@/lib/collab/server-env";
-import { canonicalServerHtml } from "@/lib/collab/server-restore";
 import { postRoomFields, readPostRestoreTarget, type PostHeadRow } from "@/lib/collab/restore-targets";
 import { and, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
@@ -827,7 +827,7 @@ export async function restorePostRevision(
         error: prepared.kind === "busy" ? "다른 화면에서 이미 되돌리는 중입니다. 잠시 뒤 다시 시도해 주세요." : "열린 수정 화면을 확인하지 못해 되돌리지 않았습니다. 잠시 뒤 다시 시도해 주세요.",
       };
     }
-    if (prepared.kind === "ready" && prepared.content && isPostWorkingCopyDirty(prepared.content, before)) {
+    if (prepared.kind === "ready" && prepared.content && (await isPostWorkingCopyDirty(prepared.content, before))) {
       await abortCollabRestore(roomKey, operationId);
       return {
         success: false,
@@ -857,10 +857,11 @@ export async function restorePostRevision(
 }
 
 /** 작업본(제목·링크·본문)이 게시본과 다른지. 링크 칸은 작업본에 있을 때만 비교한다. */
-function isPostWorkingCopyDirty(content: { html: string; fields: Record<string, string | number | null> }, head: PostHeadRow): boolean {
+async function isPostWorkingCopyDirty(content: { html: string; fields: Record<string, string | number | null> }, head: PostHeadRow): Promise<boolean> {
   const withLink = "mixsetLinkUrl" in content.fields;
   const expected = postRoomFields(head, withLink);
   for (const [name, value] of Object.entries(expected)) if ((content.fields[name] ?? "") !== value) return true;
+  const { canonicalServerHtml } = await loadServerRestore();
   return content.html !== canonicalServerHtml(head.contentHtml);
 }
 

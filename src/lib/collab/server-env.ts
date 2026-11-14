@@ -10,9 +10,16 @@ import {
   setCollabRoomMeta,
 } from "./worker-route";
 import { COLLAB_EPOCH_FIELD } from "./protocol";
-import { buildCollabRestoreUpdate, readCollabStateContent } from "./server-restore";
 import type { MergeFields } from "./client/merge";
 import { formatCollabDocKey } from "./doc-key";
+
+/**
+ * 복원용 HTML↔Yjs 변환(yjs·linkedom·tiptap 전체 확장·코드 강조)은 실제로 복원할 때만 불러온다.
+ * 정적으로 import하면 이 파일을 쓰는 action이 연결된 모든 화면의 서버 번들이 Worker 첫 요청마다 이 묶음을 평가한다.
+ */
+export function loadServerRestore(): Promise<typeof import("./server-restore")> {
+  return import("./server-restore");
+}
 
 /**
  * Next route·server action에서 같은 Worker의 공동 편집 binding을 읽는다.
@@ -94,7 +101,7 @@ export async function beginCollabRestore(key: string, id: string): Promise<Colla
     if (!result) return { kind: "none" };
     if (!result.ok) return { kind: "busy" };
     const state = base64ToBytes(result.state);
-    const content = result.seeded ? readCollabStateContent(state) : null;
+    const content = result.seeded ? (await loadServerRestore()).readCollabStateContent(state) : null;
     return {
       kind: "ready",
       clean: result.clean,
@@ -145,6 +152,7 @@ export async function applyCollabRestore(
         continue;
       }
       const current = base64ToBytes(held.state);
+      const { buildCollabRestoreUpdate } = await loadServerRestore();
       const update = buildCollabRestoreUpdate({
         base: held.base ? base64ToBytes(held.base) : null,
         current,
