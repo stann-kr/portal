@@ -89,6 +89,7 @@ test("발송: 키가 없으면 받는 사람을 읽지 않고 끝낸다", async 
 test("발송: 모든 기기로 보내고 결과를 기기별로 남기며, 한 기기의 예외가 다른 기기를 막지 않는다", async () => {
   const keys = { ...(await generateVapidKeyPair()), subject: "mailto:a@b.c" };
   const recorded: [string, string][] = [];
+  let recordCalls = 0;
   let receivedExclude: string | undefined;
   const deps: PushDeliveryDeps = {
     readConfig: () => keys,
@@ -101,12 +102,28 @@ test("발송: 모든 기기로 보내고 결과를 기기별로 남기며, 한 �
       if (item.id === "b") return "gone";
       throw new Error("network");
     },
-    record: async (id, outcome) => { recorded.push([id, outcome]); },
+    record: async (results) => {
+      recordCalls += 1;
+      for (const { id, outcome } of results) recorded.push([id, outcome]);
+    },
   };
   const summary = await deliverPush({ kind: "profiles", profileIds: ["s1", "s2"] }, pushMessages.test(), { excludeProfileId: "admin" }, deps);
   assert.deepEqual(summary, { sent: 1, gone: 1, failed: 1 });
   assert.equal(receivedExclude, "admin");
   assert.deepEqual(recorded.sort(), [["a", "sent"], ["b", "gone"], ["c", "failed"]]);
+  assert.equal(recordCalls, 1, "결과는 기기마다가 아니라 한 번에 남긴다");
+
+  // 결과 저장이 실패해도 발송 결과는 그대로 돌려준다.
+  const unsaved = await deliverPush({ kind: "profiles", profileIds: ["s1"] }, pushMessages.test(), {}, {
+    ...deps,
+    record: async () => { throw new Error("db down"); },
+  });
+  assert.deepEqual(unsaved, { sent: 1, gone: 1, failed: 1 });
+
+  // 받을 기기가 없으면 저장을 부르지 않는다.
+  recordCalls = 0;
+  await deliverPush({ kind: "profiles", profileIds: ["s9"] }, pushMessages.test(), {}, { ...deps, listTargets: async () => [] });
+  assert.equal(recordCalls, 0);
 });
 
 test("send: 성공·사라짐(404·410)·일시 실패를 나누고 표준 헤더로 보낸다", async () => {

@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { before, mock, test, type TestContext } from "node:test";
-import { profiles } from "@/db/schema";
+import { eq } from "drizzle-orm";
+import { profiles, pushSubscriptions } from "@/db/schema";
 import type { AuthSession } from "@/lib/auth-guard";
-import { upsertPushSubscription } from "@/lib/push/store";
+import { PUSH_MAX_CONSECUTIVE_FAILURES, recordPushOutcomes, upsertPushSubscription } from "@/lib/push/store";
 import { createIsolatedPortalD1, type IsolatedPortalD1 } from "@/test/isolated-d1";
 
 /** 테스트 알림 action이 계정별 한도를 넘으면 푸시 서비스로 요청하지 않는지 확인한다. */
@@ -89,4 +90,40 @@ test("테스트 알림: 계정 한도 안에서는 보내고, 한도를 넘으�
   assert.deepEqual(await pushActions.sendTestPush(ENDPOINT), { ok: false, error: LIMITED });
   assert.equal(sendCount, 1, "한도를 넘은 요청은 푸시 서비스로 가지 않는다");
   assert.deepEqual(limitedFor, ["student-1", "student-1"]);
+});
+
+test("발송 결과 기록: 여러 기기의 결과를 종류별로 묶어 남기고, 사라진 구독과 실패가 쌓인 구독만 지운다", { concurrency: false }, async (context) => {
+  const db = await setup(context);
+  await db.delete(pushSubscriptions);
+  const now = new Date("2026-11-14T12:00:00.000Z");
+  const seed = (id: string, failureCount: number) => ({
+    id, profileId: "student-1", endpoint: `https://fcm.googleapis.com/fcm/send/${id}`, ...KEYS, failureCount,
+  });
+  await db.insert(pushSubscriptions).values([
+    seed("sent-1", 4), seed("sent-2", 0), seed("gone-1", 0), seed("failed-new", 0),
+    seed("failed-last", PUSH_MAX_CONSECUTIVE_FAILURES - 1), seed("untouched", 3),
+  ]);
+
+  await recordPushOutcomes(db, [
+    { id: "sent-1", outcome: "sent" }, { id: "sent-2", outcome: "sent" }, { id: "gone-1", outcome: "gone" },
+    { id: "failed-new", outcome: "failed" }, { id: "failed-last", outcome: "failed" },
+    // 그 사이 지워진 구독의 결과가 섞여도 나머지 기록을 막지 않는다.
+    { id: "already-deleted", outcome: "failed" },
+  ], now);
+
+  const rows = await db
+    .select({ id: pushSubscriptions.id, failureCount: pushSubscriptions.failureCount, lastSuccessAt: pushSubscriptions.lastSuccessAt })
+    .from(pushSubscriptions)
+    .where(eq(pushSubscriptions.profileId, "student-1"));
+  assert.deepEqual(
+    rows.map((row) => [row.id, row.failureCount, row.lastSuccessAt?.toISOString() ?? null]).sort(),
+    [
+      ["failed-new", 1, null],
+      ["sent-1", 0, now.toISOString()],
+      ["sent-2", 0, now.toISOString()],
+      ["untouched", 3, null],
+    ],
+  );
+  // 결과가 없으면 아무 것도 하지 않는다.
+  await recordPushOutcomes(db, [], now);
 });

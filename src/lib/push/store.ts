@@ -168,24 +168,45 @@ export async function setPushCategoryEnabled(
   await db.insert(pushMutedCategories).values({ profileId, category }).onConflictDoNothing();
 }
 
-/** 보낸 결과를 남긴다. 사라진 구독과 실패가 계속 쌓인 구독은 지운다. */
+export type PushOutcomeRecord = { id: string; outcome: PushSendOutcome };
+
+/**
+ * 한 번 보낸 여러 기기의 결과를 남긴다. 사라진 구독과 실패가 계속 쌓인 구독은 지운다.
+ * 기기마다 statement를 나누지 않고 결과 종류별로 묶어(D1 bind 100개 제한에 맞춰 나눠) 쓴다.
+ * 한 종류의 쓰기가 실패해도 나머지 종류는 끝까지 쓰고, 실패는 마지막에 올린다.
+ */
+export async function recordPushOutcomes(db: DrizzleDb, results: readonly PushOutcomeRecord[], now: Date = new Date()): Promise<void> {
+  const chunksOf = (outcome: PushSendOutcome): string[][] => {
+    const ids = [...new Set(results.filter((result) => result.outcome === outcome).map((result) => result.id))];
+    const chunks: string[][] = [];
+    for (let start = 0; start < ids.length; start += PUSH_TARGET_ID_CHUNK) chunks.push(ids.slice(start, start + PUSH_TARGET_ID_CHUNK));
+    return chunks;
+  };
+  const writes: Promise<void>[] = [
+    ...chunksOf("gone").map(async (ids) => {
+      await db.delete(pushSubscriptions).where(inArray(pushSubscriptions.id, ids));
+    }),
+    ...chunksOf("sent").map(async (ids) => {
+      await db
+        .update(pushSubscriptions)
+        .set({ lastSuccessAt: now, failureCount: 0 })
+        .where(inArray(pushSubscriptions.id, ids));
+    }),
+    ...chunksOf("failed").map(async (ids) => {
+      await db
+        .update(pushSubscriptions)
+        .set({ failureCount: sql`${pushSubscriptions.failureCount} + 1` })
+        .where(inArray(pushSubscriptions.id, ids));
+      await db
+        .delete(pushSubscriptions)
+        .where(and(inArray(pushSubscriptions.id, ids), sql`${pushSubscriptions.failureCount} >= ${PUSH_MAX_CONSECUTIVE_FAILURES}`));
+    }),
+  ];
+  const failed = (await Promise.allSettled(writes)).find((result) => result.status === "rejected");
+  if (failed) throw failed.reason;
+}
+
+/** 기기 하나의 결과를 남긴다. */
 export async function recordPushOutcome(db: DrizzleDb, id: string, outcome: PushSendOutcome, now: Date = new Date()): Promise<void> {
-  if (outcome === "gone") {
-    await db.delete(pushSubscriptions).where(eq(pushSubscriptions.id, id));
-    return;
-  }
-  if (outcome === "sent") {
-    await db
-      .update(pushSubscriptions)
-      .set({ lastSuccessAt: now, failureCount: 0 })
-      .where(eq(pushSubscriptions.id, id));
-    return;
-  }
-  await db
-    .update(pushSubscriptions)
-    .set({ failureCount: sql`${pushSubscriptions.failureCount} + 1` })
-    .where(eq(pushSubscriptions.id, id));
-  await db
-    .delete(pushSubscriptions)
-    .where(and(eq(pushSubscriptions.id, id), sql`${pushSubscriptions.failureCount} >= ${PUSH_MAX_CONSECUTIVE_FAILURES}`));
+  await recordPushOutcomes(db, [{ id, outcome }], now);
 }

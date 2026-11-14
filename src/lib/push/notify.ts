@@ -3,7 +3,7 @@ import { runAfterResponse } from "@/lib/after-response";
 import { readPushConfig } from "./config";
 import type { PushCategory, PushMessage } from "./messages";
 import { sendWebPush, type PushSendOutcome } from "./send";
-import { listPushTargets, recordPushOutcome, type PushAudience, type StoredPushTarget } from "./store";
+import { listPushTargets, recordPushOutcomes, type PushAudience, type PushOutcomeRecord, type StoredPushTarget } from "./store";
 import type { VapidKeys } from "./web-push-crypto";
 
 export type { PushAudience } from "./store";
@@ -12,7 +12,8 @@ export type PushDeliveryDeps = {
   readConfig: () => VapidKeys | null;
   listTargets: (audience: PushAudience, excludeProfileId?: string, category?: PushCategory) => Promise<StoredPushTarget[]>;
   send: (target: StoredPushTarget, message: PushMessage, keys: VapidKeys) => Promise<PushSendOutcome>;
-  record: (id: string, outcome: PushSendOutcome) => Promise<void>;
+  /** 보낸 기기 전체의 결과를 한 번에 남긴다. */
+  record: (results: readonly PushOutcomeRecord[]) => Promise<void>;
 };
 
 export type PushDeliverySummary = { sent: number; gone: number; failed: number };
@@ -24,13 +25,14 @@ function defaultDeps(): PushDeliveryDeps {
     readConfig: () => readPushConfig(),
     listTargets: (audience, excludeProfileId, category) => listPushTargets(database(), audience, excludeProfileId, category),
     send: (target, message, keys) => sendWebPush(target, message, keys),
-    record: (id, outcome) => recordPushOutcome(database(), id, outcome),
+    record: (results) => recordPushOutcomes(database(), results),
   };
 }
 
 /**
  * 받는 사람의 모든 기기로 보낸다. 키가 없으면(기능 꺼짐) DB를 읽지 않고 끝낸다.
- * 기기 하나의 실패가 다른 기기·저장 결과에 영향을 주지 않는다.
+ * 기기 하나의 발송 실패가 다른 기기의 발송을 막지 않고, 결과 저장이 실패해도 발송 결과는 그대로 돌려준다.
+ * 결과는 모든 발송이 끝난 뒤 한 번에 남긴다(기기마다 DB를 왕복하지 않는다).
  */
 export async function deliverPush(
   audience: PushAudience,
@@ -43,11 +45,12 @@ export async function deliverPush(
   if (!keys) return summary;
   const category = message.category === "test" ? undefined : message.category;
   const targets = await deps.listTargets(audience, options.excludeProfileId, category);
-  await Promise.all(targets.map(async (target) => {
+  const results = await Promise.all(targets.map(async (target): Promise<PushOutcomeRecord> => {
     const outcome = await deps.send(target, message, keys).catch((): PushSendOutcome => "failed");
     summary[outcome] += 1;
-    await deps.record(target.id, outcome).catch(() => undefined);
+    return { id: target.id, outcome };
   }));
+  if (results.length > 0) await deps.record(results).catch(() => undefined);
   return summary;
 }
 
