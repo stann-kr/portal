@@ -1,6 +1,6 @@
-import { drizzle, type AnyD1Database } from "drizzle-orm/d1";
+import type { AnyD1Database } from "drizzle-orm/d1";
 import type { DbContext } from "@/db/client";
-import * as schema from "@/db/schema";
+import { d1DrizzleFor } from "@/db/d1-drizzle";
 
 /** request AsyncLocalStorage가 없는 scheduled event용 explicit D1 context다. */
 export function createD1DbContext(
@@ -8,6 +8,6 @@ export function createD1DbContext(
 ): Extract<DbContext, { kind: "d1" }> {
   return {
     kind: "d1",
-    db: drizzle(binding, { schema }),
+    db: d1DrizzleFor(binding),
   };
 }

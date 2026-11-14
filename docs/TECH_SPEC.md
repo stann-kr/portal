@@ -73,6 +73,8 @@ OpenNext → Cloudflare Worker
 - 학생 홈·Q&A 스레드의 `CollabNotifyRefresh`는 yjs·`CollabProvider`를 마운트한 뒤 동적 import한다. 받지 못하면 연결 없이 `RouteAutoRefresh` 재조회만 남는다.
 - `src/lib/collab/server-env.ts`는 HTML↔Yjs 변환(`server-restore`: yjs·linkedom·tiptap 전체 확장·코드 강조)을 `loadServerRestore()`로 복원·repair 때만 불러온다. action·route는 `server-restore`를 정적 import하지 않는다(노트 checkpoint·게시물 dirty 비교도 같은 loader).
 - 관리자·학생 첫 화면(`CalendarSection`)의 Q&A 작성 폼과 일정 상세의 노트 상세(`UnifiedItemDetail` → `UnifiedNoteDetail`)는 `next/dynamic`으로 나눈다. 둘 다 패널을 열 때만 렌더하고, `useIdlePreload`가 화면이 뜬 뒤 한가할 때 미리 받는다(미리 받기가 끝나기 전에 열면 그 자리에 "준비하는 중"·"불러오는 중"을 잠깐 보인다). 정적 import로 되돌리면 첫 화면 SSR이 편집기 묶음(약 0.9MB)을 다시 평가한다.
+- `drizzle(binding, { schema })`는 부를 때마다 schema 전체의 관계 설정을 새로 만든다(Node 측정 호출당 약 0.9ms, schema 없이는 0.005ms). 데이터 함수마다 `createDb()`/`createDbContext()`를 부르므로 `src/db/d1-drizzle.ts`의 `d1DrizzleFor()`가 같은 D1 바인딩이면 인스턴스를 다시 쓴다(WeakMap, 로컬 SQLite도 연결 단위로 같다). scheduled(`worker.ts`)도 `createD1DbContext()`로 같은 함수를 쓴다.
+- `src/lib/r2.ts`는 `@aws-sdk/client-s3`를 정적 import하지 않는다. 운영은 R2 바인딩을 쓰고, 바인딩이 없을 때(`next dev` 등)만 `createR2Client()`가 SDK를 동적으로 불러온다. 정적 import면 학생·관리자·커뮤니티 페이지 첫 요청이 SDK 모듈 평가(관리자 냉시작 프로파일 약 31ms)를 치른다.
 - 로컬 wrangler dev 측정(5회 중앙값, 같은 조건): 첫 요청 CPU 관리자 `/dashboard/admin` 469→354ms, 학생 `/dashboard/student` 457→376ms. 이후 요청은 35~50ms로 같다.
 
 ## 주요 route

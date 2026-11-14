@@ -1,11 +1,4 @@
-import {
-  CopyObjectCommand,
-  DeleteObjectCommand,
-  GetObjectCommand,
-  HeadObjectCommand,
-  PutObjectCommand,
-  S3Client,
-} from "@aws-sdk/client-s3";
+import type { S3Client } from "@aws-sdk/client-s3";
 import {
   isManagedAudioPeaksObjectKey,
   isManagedFinalMediaObjectKey,
@@ -16,7 +9,14 @@ import type { MediaObjectDeletionStorage } from "@/lib/r2-deletion-storage";
 
 const BUCKET_NAME = process.env.R2_BUCKET_NAME ?? "portal-storage";
 
-function createR2Client(): S3Client {
+type S3Sdk = typeof import("@aws-sdk/client-s3");
+type S3Access = { client: S3Client; sdk: S3Sdk };
+
+// 운영은 R2 binding을 쓴다. S3 SDK(번들 약 1MB, Worker 첫 요청에서 평가하면 수십 ms)는
+// binding이 없을 때(next dev 등)만 불러온다. 정적 import로 되돌리면 r2.ts를 쓰는 모든 화면의 첫 요청이 다시 평가한다.
+let s3SdkPromise: Promise<S3Sdk> | null = null;
+
+async function createR2Client(): Promise<S3Access> {
   const endpoint = process.env.R2_ENDPOINT;
   const accessKeyId = process.env.R2_ACCESS_KEY_ID;
   const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY;
@@ -25,12 +25,15 @@ function createR2Client(): S3Client {
     throw new Error("R2 업로드 자격 증명이 설정되지 않았습니다.");
   }
 
-  return new S3Client({
+  s3SdkPromise ??= import("@aws-sdk/client-s3");
+  const sdk = await s3SdkPromise;
+  const client = new sdk.S3Client({
     region: "auto",
     endpoint,
     credentials: { accessKeyId, secretAccessKey },
     requestChecksumCalculation: "WHEN_REQUIRED",
   });
+  return { client, sdk };
 }
 
 function assertManagedFinalObjectKey(objectKey: string): void {
@@ -257,7 +260,7 @@ async function createBoundOrS3Storage(): Promise<MediaObjectStorage> {
     };
   }
 
-  const client = createR2Client();
+  const { client, sdk } = await createR2Client();
   return {
     async putUpload(uploadObjectKey, body, signal) {
       assertManagedUploadObjectKey(uploadObjectKey);
@@ -267,7 +270,7 @@ async function createBoundOrS3Storage(): Promise<MediaObjectStorage> {
       }
       try {
         await client.send(
-          new PutObjectCommand({
+          new sdk.PutObjectCommand({
             Bucket: BUCKET_NAME,
             Key: uploadObjectKey,
             Body: bytes,
@@ -287,7 +290,7 @@ async function createBoundOrS3Storage(): Promise<MediaObjectStorage> {
       assertManagedObjectKey(objectKey);
       try {
         const result = await client.send(
-          new HeadObjectCommand({ Bucket: BUCKET_NAME, Key: objectKey }),
+          new sdk.HeadObjectCommand({ Bucket: BUCKET_NAME, Key: objectKey }),
           { abortSignal: signal },
         );
         return {
@@ -305,14 +308,14 @@ async function createBoundOrS3Storage(): Promise<MediaObjectStorage> {
         uploadObjectKey,
         finalObjectKey,
         source,
-        client,
+        { client, sdk },
         signal,
       );
     },
     async delete(objectKey, signal) {
       assertDeletableObjectKey(objectKey);
       await client.send(
-        new DeleteObjectCommand({ Bucket: BUCKET_NAME, Key: objectKey }),
+        new sdk.DeleteObjectCommand({ Bucket: BUCKET_NAME, Key: objectKey }),
         { abortSignal: signal },
       );
     },
@@ -323,7 +326,7 @@ async function sealR2Object(
   uploadObjectKey: string,
   finalObjectKey: string,
   source: MediaObjectHead,
-  client = createR2Client(),
+  { client, sdk }: S3Access,
   signal?: AbortSignal,
 ): Promise<MediaObjectHead> {
   assertManagedUploadObjectKey(uploadObjectKey);
@@ -332,7 +335,7 @@ async function sealR2Object(
     throw new Error("검증할 R2 upload ETag가 없습니다.");
   }
   await client.send(
-    new CopyObjectCommand({
+    new sdk.CopyObjectCommand({
       Bucket: BUCKET_NAME,
       Key: finalObjectKey,
       CopySource: `${BUCKET_NAME}/${uploadObjectKey}`,
@@ -343,7 +346,7 @@ async function sealR2Object(
     { abortSignal: signal },
   );
   const result = await client.send(
-    new HeadObjectCommand({ Bucket: BUCKET_NAME, Key: finalObjectKey }),
+    new sdk.HeadObjectCommand({ Bucket: BUCKET_NAME, Key: finalObjectKey }),
     { abortSignal: signal },
   );
   return {
@@ -387,10 +390,10 @@ export async function getR2ObjectContent(
     };
   }
 
-  const client = createR2Client();
+  const { client, sdk } = await createR2Client();
   try {
     const result = await client.send(
-      new GetObjectCommand({
+      new sdk.GetObjectCommand({
         Bucket: BUCKET_NAME,
         Key: objectKey,
         Range: range
@@ -474,12 +477,12 @@ export async function getGuideAssetStorage(): Promise<GuideAssetObjectStorage> {
     };
   }
 
-  const client = createR2Client();
+  const { client, sdk } = await createR2Client();
   return {
     async put(objectKey, bytes, contentType) {
       assertGuideAssetObjectKey(objectKey);
       await client.send(
-        new PutObjectCommand({
+        new sdk.PutObjectCommand({
           Bucket: BUCKET_NAME,
           Key: objectKey,
           Body: bytes,
@@ -491,7 +494,7 @@ export async function getGuideAssetStorage(): Promise<GuideAssetObjectStorage> {
     async get(objectKey) {
       assertGuideAssetObjectKey(objectKey);
       try {
-        const result = await client.send(new GetObjectCommand({ Bucket: BUCKET_NAME, Key: objectKey }));
+        const result = await client.send(new sdk.GetObjectCommand({ Bucket: BUCKET_NAME, Key: objectKey }));
         if (!result.Body) return null;
         return {
           body: toWebReadableStream(result.Body),
@@ -505,7 +508,7 @@ export async function getGuideAssetStorage(): Promise<GuideAssetObjectStorage> {
     },
     async delete(objectKey) {
       assertGuideAssetObjectKey(objectKey);
-      await client.send(new DeleteObjectCommand({ Bucket: BUCKET_NAME, Key: objectKey }));
+      await client.send(new sdk.DeleteObjectCommand({ Bucket: BUCKET_NAME, Key: objectKey }));
     },
   };
 }
@@ -554,12 +557,12 @@ export async function getAudioPeaksStorage(): Promise<AudioPeaksStorage> {
     };
   }
 
-  const client = createR2Client();
+  const { client, sdk } = await createR2Client();
   return {
     async get(audioObjectKey) {
       try {
         const result = await client.send(
-          new GetObjectCommand({ Bucket: BUCKET_NAME, Key: audioPeaksObjectKey(audioObjectKey) }),
+          new sdk.GetObjectCommand({ Bucket: BUCKET_NAME, Key: audioPeaksObjectKey(audioObjectKey) }),
         );
         if (!result.Body) return null;
         return new Response(toWebReadableStream(result.Body)).text();
@@ -572,7 +575,7 @@ export async function getAudioPeaksStorage(): Promise<AudioPeaksStorage> {
       const bytes = new TextEncoder().encode(json);
       try {
         await client.send(
-          new PutObjectCommand({
+          new sdk.PutObjectCommand({
             Bucket: BUCKET_NAME,
             Key: audioPeaksObjectKey(audioObjectKey),
             Body: bytes,
@@ -590,7 +593,7 @@ export async function getAudioPeaksStorage(): Promise<AudioPeaksStorage> {
     async replace(audioObjectKey, json) {
       const bytes = new TextEncoder().encode(json);
       await client.send(
-        new PutObjectCommand({
+        new sdk.PutObjectCommand({
           Bucket: BUCKET_NAME,
           Key: audioPeaksObjectKey(audioObjectKey),
           Body: bytes,
