@@ -11,7 +11,10 @@ import { createDocumentDraftKey } from "@/lib/form-draft";
 import { useFormDraft } from "@/lib/hooks/useFormDraft";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
 import { CREATION_OPERATION_FIELD, createCreationOperationId, parseCreationOperationId } from "@/lib/creation-operation";
+import { COMMENT_COUNTER_FROM, COMMENT_MAX_LENGTH, limitCommentContent } from "@/lib/community-comment";
 import { COMMENT_TIME_MARKER_FIELD, formatTimeMarker, parseTimeMarker } from "@/lib/community-mixset-media";
+
+const COMMENT_MAX_LABEL = new Intl.NumberFormat("ko-KR").format(COMMENT_MAX_LENGTH);
 
 type CommentDraft = { content: string; timeMarker?: string; operationId?: string };
 
@@ -19,6 +22,7 @@ type CommentDraft = { content: string; timeMarker?: string; operationId?: string
  * 게시물 댓글 입력(캔버스 CommunityPost·MobileCommunityPost 댓글 줄: 한 줄 입력 + 등록).
  * 입력값은 이 기기 초안으로 조용히 보존하고, 복원·충돌·오류·복구본이 있을 때만 줄 아래에 안내한다.
  * 매체가 있는 믹스셋 게시물이면 선택 칸 "시점"을 더해 재생 위치에 댓글을 남긴다(비우면 일반 댓글).
+ * 내용은 서버 한도(5,000자)에서 멈추고, 4,500자부터 줄 아래에 글자 수를 보인다(캔버스 "코드 리뷰 2차 후속" ③).
  */
 export function CommentForm({
   postId,
@@ -40,6 +44,7 @@ export function CommentForm({
 }) {
   const contentId = useId();
   const errorId = useId();
+  const lengthId = useId();
   const timeId = useId();
   const timeHelpId = useId();
   const timeErrorId = useId();
@@ -48,6 +53,8 @@ export function CommentForm({
   // 시점 입력·제출·초기화가 일어나면 진행 중인 ‘현재 위치’ 읽기 결과를 버린다.
   const positionReadGeneration = useRef(0);
   const [content, setContent] = useState("");
+  // 한도를 넘겨 붙여넣어 뒷부분이 잘렸는지. 한 글자씩 더 치다 멈춘 것과 안내 문구가 다르다.
+  const [pasteCut, setPasteCut] = useState(false);
   const [timeMarker, setTimeMarker] = useState("");
   const [timeError, setTimeError] = useState<string | null>(null);
   const [positionStatus, setPositionStatus] = useState<string | null>(null);
@@ -57,13 +64,14 @@ export function CommentForm({
   const draft = useFormDraft<CommentDraft>(
     createDocumentDraftKey("community-comment", actorId, postId),
     (saved) => {
-      setContent(typeof saved.content === "string" ? saved.content : "");
+      setContent(typeof saved.content === "string" ? limitCommentContent(saved.content).value : "");
+      setPasteCut(false);
       setTimeMarker(allowTimeMarker && typeof saved.timeMarker === "string" ? saved.timeMarker : "");
       setOperationId(parseCreationOperationId(saved.operationId) ?? createCreationOperationId());
       setTimeError(null);
       setShowResult(false);
     },
-    { onReset: () => { positionReadGeneration.current += 1; setContent(""); setTimeMarker(""); setTimeError(null); setOperationId(createCreationOperationId()); setShowResult(false); } },
+    { onReset: () => { positionReadGeneration.current += 1; setContent(""); setPasteCut(false); setTimeMarker(""); setTimeError(null); setOperationId(createCreationOperationId()); setShowResult(false); } },
   );
   const [state, action, pending] = useActionState<CreateCommentState, FormData>(async (previous, data) => {
     let result: CreateCommentState;
@@ -81,6 +89,7 @@ export function CommentForm({
         submittedAliases: [{ content: submittedContent }, { content: submittedContent, timeMarker: submittedTimeMarker }],
       });
       setContent("");
+      setPasteCut(false);
       positionReadGeneration.current += 1;
       setTimeMarker("");
       setPositionStatus(null);
@@ -135,6 +144,10 @@ export function CommentForm({
   };
 
   const controlsDisabled = !draft.loaded || pending;
+  const contentLength = content.length < COMMENT_COUNTER_FROM ? 0 : [...content].length;
+  const showLength = contentLength >= COMMENT_COUNTER_FROM;
+  const atLimit = contentLength >= COMMENT_MAX_LENGTH;
+  const contentDescribedBy = [showLength ? lengthId : null, showResult && state.error ? errorId : null].filter(Boolean).join(" ");
   const timeDescribedBy = [timeHelpId, timeError ? timeErrorId : null].filter(Boolean).join(" ");
 
   return (
@@ -222,13 +235,14 @@ export function CommentForm({
           placeholder="댓글을 입력하세요..."
           value={content}
           onChange={(event) => {
-            const value = event.target.value;
-            setContent(value);
-            saveDraft({ content: value, timeMarker });
+            const limited = limitCommentContent(event.target.value);
+            setContent(limited.value);
+            setPasteCut(limited.cut > 1);
+            saveDraft({ content: limited.value, timeMarker });
           }}
           required
           disabled={!draft.loaded || pending}
-          aria-describedby={showResult && state.error ? errorId : undefined}
+          aria-describedby={contentDescribedBy || undefined}
           className="min-w-0 flex-1 md:h-10"
         />
         {/* 좁은 화면은 Q&A 답변 입력줄과 같은 44px 화살표 버튼, 넓은 화면은 글자 버튼(B 묶음 ④). */}
@@ -243,6 +257,19 @@ export function CommentForm({
           <span aria-hidden="true" className="hidden md:inline">{pending ? "등록 중..." : "등록"}</span>
         </Button>
       </div>
+      {/* 글자 수 줄은 한도에 가까워졌을 때만 보인다. 첫 안내가 읽히도록 자리는 늘 두고, 평소에는 간격을 만들지 않게 감춘다. */}
+      <p
+        id={lengthId}
+        role="status"
+        className={showLength ? cn("text-xs", atLimit ? "text-destructive" : "text-muted-foreground") : "sr-only"}
+      >
+        {showLength ? (
+          <>
+            <span className="font-mono">{new Intl.NumberFormat("ko-KR").format(contentLength)} / {COMMENT_MAX_LABEL}</span>
+            {atLimit ? ` · ${pasteCut ? `${COMMENT_MAX_LABEL}자까지만 들어갔습니다.` : "더 입력할 수 없습니다."}` : null}
+          </>
+        ) : null}
+      </p>
       {showResult && state.error && <p id={errorId} role="alert" className="text-ui text-destructive">{state.error}</p>}
       {showResult && state.success && <p role="status" className="text-xs text-success">댓글이 저장되었습니다.</p>}
       <DraftStatus

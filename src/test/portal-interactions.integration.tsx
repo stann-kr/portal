@@ -4721,3 +4721,223 @@ test("수강 종료한 학생은 확인 없이 바로 복원하고, 사라진 �
   assert.equal(browser.document.querySelector('[aria-live="polite"] p'), null);
   assert.match(browser.document.querySelector('[role="alert"]')?.textContent ?? "", /이미 복원했거나/u);
 });
+
+// ── 코드 리뷰 2차 후속 화면(캔버스 "코드 리뷰 2차 후속" ①~⑤) ──
+
+test("따로 내려받는 화면 조각은 내려받기에 실패하면 그 자리에 안내와 다시 시도를 보이고, 그리다 난 오류는 위로 넘긴다", async (context) => {
+  const { retryableLazy, LazyLoadFailed } = await import("@/components/ui/retryable-lazy");
+  context.mock.method(console, "error", () => {});
+  let attempts = 0;
+  const Piece = retryableLazy<{ label: string }>(
+    async () => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("Loading chunk failed");
+      return function Loaded({ label }: { label: string }) { return <p>{label}</p>; };
+    },
+    {
+      loading: <p>불러오는 중</p>,
+      failed: (retry) => <LazyLoadFailed message="전체 내용을 불러오지 못했습니다." onRetry={retry} />,
+    },
+  );
+  await render(context, <div><p>둘레 화면</p><Piece label="노트 본문" /></div>);
+  const alert = browser.document.querySelector('[role="alert"]');
+  assert.match(alert?.textContent ?? "", /전체 내용을 불러오지 못했습니다\./u);
+  assert.match(browser.document.body.textContent ?? "", /둘레 화면/u, "둘레 화면은 그대로 남는다");
+  await press("다시 시도");
+  await settle();
+  assert.equal(attempts, 2, "다시 시도는 그 조각만 다시 내려받는다");
+  assert.equal(browser.document.querySelector('[role="alert"]'), null);
+  assert.match(browser.document.body.textContent ?? "", /노트 본문/u);
+
+  // 내려받은 조각이 그려지다 던진 오류는 이 자리에서 삼키지 않는다(route 오류 화면이 맡는다).
+  const Broken = retryableLazy<object>(
+    async () => function Throws(): React.ReactElement { throw new Error("render failed"); },
+    { loading: null, failed: () => <p>내려받기 실패 안내</p> },
+  );
+  class Outer extends React.Component<{ children: React.ReactNode }, { message: string | null }> {
+    state: { message: string | null } = { message: null };
+    static getDerivedStateFromError(error: unknown) { return { message: error instanceof Error ? error.message : "unknown" }; }
+    render() { return this.state.message ? <p data-outer-error>{this.state.message}</p> : this.props.children; }
+  }
+  await render(context, <Outer><Broken /></Outer>);
+  assert.equal(browser.document.querySelector("[data-outer-error]")?.textContent, "render failed");
+  assert.doesNotMatch(browser.document.body.textContent ?? "", /내려받기 실패 안내/u);
+});
+
+test("컬럼 관리 창의 첫 포커스는 넓은 화면에서 새 컬럼 이름 칸, 좁은 화면에서 창 제목이다", async (context) => {
+  const { ColumnManager } = await import("@/components/digging/ColumnManager");
+  const originalMatchMedia = browser.matchMedia.bind(browser);
+  let wide = true;
+  browser.matchMedia = ((query: string) => (query === "(min-width: 768px)"
+    ? { matches: wide, media: query, addEventListener() {}, removeEventListener() {} }
+    : originalMatchMedia(query))) as typeof browser.matchMedia;
+  context.after(() => { browser.matchMedia = originalMatchMedia; });
+  const columns = [
+    { id: "title", name: "트랙명", columnType: "text" as const, options: null, isDefault: true, sortOrder: 0 },
+    { id: "mood", name: "분위기", columnType: "text" as const, options: null, isDefault: false, sortOrder: 1 },
+  ];
+  const screen = (open: boolean) => <ColumnManager open={open} onOpenChange={() => {}} columns={columns} onSuccess={() => {}} />;
+  const root = await render(context, screen(true));
+  assert.equal(browser.document.activeElement, browser.document.getElementById("digging-new-column-name"), "넓은 화면은 이름 칸에서 시작한다");
+
+  await act(async () => root.render(screen(false)));
+  await settle();
+  wide = false;
+  await act(async () => root.render(screen(true)));
+  await settle();
+  const title = [...browser.document.querySelectorAll('[role="dialog"] h2')].find((element) => element.textContent === "컬럼 관리");
+  assert.ok(title);
+  assert.equal(browser.document.activeElement, title, "좁은 화면은 키보드가 올라오지 않게 창 제목에서 시작한다");
+});
+
+test("댓글 칸은 5,000자에서 멈추고 4,500자부터 글자 수를 보이며, 잘린 붙여넣기는 따로 알린다", async (context) => {
+  browser.localStorage.clear();
+  await render(context, <PostDetailClient postId="limit-post" post={mixsetPost("limit-post", { mediaUrl: null, mediaObjectId: null }, "GENERAL")} initialCommentList={[]} currentUserId="student-limit" isAdmin={false} returnTo="/community" />);
+  const input = browser.document.querySelector('input[name="content"]');
+  assert.ok(input instanceof browser.HTMLInputElement);
+  const lengthLine = () => {
+    const ids = (input.getAttribute("aria-describedby") ?? "").split(" ").filter(Boolean);
+    return ids.map((id) => browser.document.getElementById(id)).find((element) => element?.getAttribute("role") === "status") ?? null;
+  };
+  await fill("content", "가".repeat(4_499));
+  assert.equal(lengthLine(), null, "4,500자 전에는 글자 수를 보이지 않는다");
+  assert.doesNotMatch(browser.document.body.textContent ?? "", /\/ 5,000/u);
+
+  await fill("content", "가".repeat(4_812));
+  assert.equal(lengthLine()?.textContent, "4,812 / 5,000");
+  assert.doesNotMatch(lengthLine()?.className ?? "", /text-destructive/u);
+
+  await fill("content", "가".repeat(5_000));
+  assert.equal(lengthLine()?.textContent, "5,000 / 5,000 · 더 입력할 수 없습니다.");
+  assert.match(lengthLine()?.className ?? "", /text-destructive/u);
+
+  await fill("content", "가".repeat(5_001));
+  assert.equal(input.value.length, 5_000, "한 글자 더 쳐도 늘지 않는다");
+  assert.equal(lengthLine()?.textContent, "5,000 / 5,000 · 더 입력할 수 없습니다.");
+
+  await fill("content", "나".repeat(5_300));
+  assert.equal(input.value, "나".repeat(5_000), "붙여넣은 글은 앞에서부터 5,000자까지만 들어간다");
+  assert.equal(lengthLine()?.textContent, "5,000 / 5,000 · 5,000자까지만 들어갔습니다.");
+
+  await fill("content", "나".repeat(4_600));
+  assert.equal(lengthLine()?.textContent, "4,600 / 5,000", "줄이면 평소 글자 수로 돌아온다");
+});
+
+const PASTED_PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+
+async function pasteIntoEditor(html: string) {
+  const dom = browser.document.querySelector(".ProseMirror") as unknown as { editor?: Editor } | null;
+  assert.ok(dom?.editor, "편집기가 준비됐다");
+  const editor = dom.editor;
+  await act(async () => {
+    editor.commands.focus("end");
+    editor.view.pasteHTML(html, new browser.Event("paste") as unknown as ClipboardEvent);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  });
+}
+
+test("FullEditor는 붙여넣은 글 속 data 이미지를 본문에 넣지 않고 파일로 올려 넣는다", { concurrency: false }, async (context) => {
+  const { releases } = mockEditorImageUpload(context);
+  const changes: string[] = [];
+  await render(context, <FullEditor initialContent="<p>본문</p>" ariaLabel="본문" onChange={(html) => changes.push(html)} />);
+  await settleEditor();
+  await pasteIntoEditor(`<p>붙여넣은 글</p><img src="${PASTED_PNG}" alt="그림">`);
+  await settleEditor();
+  assert.ok(changes.at(-1)?.includes("붙여넣은 글"), "글은 바로 들어간다");
+  assert.equal(changes.some((html) => html.includes("data:image")), false, "data 이미지는 본문에 들어가지 않는다");
+  assert.match(browser.document.body.textContent ?? "", /이미지 1장 올리는 중…/u);
+  await act(async () => { releases[0]?.(undefined as never); await new Promise((resolve) => setTimeout(resolve, 10)); });
+  await settleEditor();
+  assert.match(changes.at(-1) ?? "", /<img[^>]+src="\/api\/media\/30000000-0000-4000-8000-000000000001"/u, "올라간 이미지를 본문에 넣는다");
+  assert.equal(changes.some((html) => html.includes("data:image")), false);
+  assert.doesNotMatch(browser.document.body.textContent ?? "", /올리는 중/u);
+});
+
+test("FullEditor는 붙여넣은 data 이미지를 넣지 못하면 몇 장을 왜 못 넣었는지 알린다", { concurrency: false }, async (context) => {
+  mockEditorImageUpload(context);
+  requestUpload = async () => ({ success: false, error: "저장 공간 오류" });
+  const changes: string[] = [];
+  await render(context, <FullEditor initialContent="<p>본문</p>" ariaLabel="본문" onChange={(html) => changes.push(html)} />);
+  await settleEditor();
+  await pasteIntoEditor(`<p>첫 글</p><img src="${PASTED_PNG}"><img src="${PASTED_PNG}">`);
+  await settleEditor();
+  assert.match(browser.document.body.textContent ?? "", /붙여넣은 이미지 2장을 올리지 못해 뺐습니다\. 이미지 버튼으로 다시 넣어 주세요\./u);
+  assert.equal(changes.some((html) => html.includes("<img")), false, "올리지 못한 이미지는 본문에 없다");
+  await press("닫기");
+  assert.doesNotMatch(browser.document.body.textContent ?? "", /붙여넣은 이미지/u);
+
+  // 형식이 맞지 않는 이미지는 올리지 않고 장수와 까닭을 알린다.
+  await pasteIntoEditor('<p>둘째 글</p><img src="data:image/bmp;base64,Qk0=">');
+  await settleEditor();
+  assert.match(browser.document.body.textContent ?? "", /붙여넣은 이미지 1장을 넣지 못했습니다\./u);
+  assert.equal(changes.some((html) => html.includes("data:image")), false);
+  assert.ok(changes.at(-1)?.includes("둘째 글"));
+});
+
+test("제출 수정은 저장된 제출보다 오래된 이 기기 초안을 지우고 알리며, 더 새 초안은 그대로 복원한다", async (context) => {
+  browser.localStorage.clear();
+  editFreeSubmission = async () => ({ error: "테스트 미설정" });
+  const listHref = "/dashboard/student?section=workspace&view=assignments";
+  const savedAt = new Date("2026-11-14T03:00:00.000Z");
+  const detail = (assignmentId: string, actorId: string) => (
+    <AssignmentDetailClient
+      key={`${assignmentId}:${actorId}`}
+      assignmentId={assignmentId} actorId={actorId} mediaUrl={null} textHtml="<p>다른 기기에서 고친 글</p>" savedAt={savedAt} analysis={null} task={null} feedbackList={[]}
+      isAdmin={false} deleteReturnTo={listHref} title="글 제출" submittedLabel="2026년 11월 14일 12:00 제출"
+      submittedLabelShort="11월 14일 12:00 제출" breadcrumb={{ href: listHref, label: "과제" }} returnTo={listHref}
+    />
+  );
+  const staleKey = createDocumentDraftKey("assignment-feedback", "student-stale", "free-submission:free-stale");
+  browser.localStorage.setItem(staleKey, serializeFormDraft({ mediaUrl: "", text: "이 기기의 옛 초안" }, savedAt.getTime() - 60_000));
+  const root = await render(context, detail("free-stale", "student-stale"));
+  await press("제출 수정");
+  await settle();
+  const textarea = () => browser.document.getElementById("free-submission-free-stale-text") as unknown as HTMLTextAreaElement;
+  assert.equal(textarea().value, "다른 기기에서 고친 글", "저장된 제출을 보인다");
+  assert.match(browser.document.body.textContent ?? "", /다른 기기에서 고친 내용이 있습니다\. 이 기기에 남아 있던 이전 작성 내용은 지웠습니다\./u);
+  assert.equal(browser.localStorage.getItem(staleKey), null, "오래된 초안은 남기지 않는다");
+  assert.doesNotMatch(browser.document.body.textContent ?? "", /복구 가능한 작성본/u);
+
+  // 다시 쓰기 시작하면 안내를 거두고 평소 임시 저장 문구로 돌아간다.
+  const setter = Object.getOwnPropertyDescriptor(browser.HTMLTextAreaElement.prototype, "value")?.set;
+  await act(async () => {
+    textarea().focus();
+    setter?.call(textarea(), "다른 기기에서 고친 글에 이어 씀");
+    textarea().dispatchEvent(new browser.Event("input", { bubbles: true }) as unknown as Event);
+  });
+  await settle();
+  assert.doesNotMatch(browser.document.body.textContent ?? "", /이전 작성 내용은 지웠습니다/u);
+  await press("닫기");
+
+  // 이 기기 초안이 더 새것이면 지금처럼 복원한다.
+  const freshKey = createDocumentDraftKey("assignment-feedback", "student-fresh", "free-submission:free-fresh");
+  browser.localStorage.setItem(freshKey, serializeFormDraft({ mediaUrl: "", text: "방금 쓰던 초안" }, savedAt.getTime() + 60_000));
+  await act(async () => root.render(detail("free-fresh", "student-fresh")));
+  await settle();
+  await press("제출 수정");
+  await settle();
+  assert.equal((browser.document.getElementById("free-submission-free-fresh-text") as unknown as HTMLTextAreaElement).value, "방금 쓰던 초안");
+  assert.match(browser.document.body.textContent ?? "", /저장되지 않은 작성 내용을 복원했습니다/u);
+  assert.doesNotMatch(browser.document.body.textContent ?? "", /이전 작성 내용은 지웠습니다/u);
+  assert.notEqual(browser.localStorage.getItem(freshKey), null);
+});
+
+test("받은 과제 제출 수정도 다른 기기에서 제출한 뒤 남은 이 기기 초안을 지우고 알린다", async (context) => {
+  browser.localStorage.clear();
+  const submittedAt = new Date("2026-11-14T03:00:00.000Z");
+  const task = {
+    id: "task-stale", title: "연습 일지", descriptionHtml: "<p>이번 주 연습</p>", submissionFormat: "TEXT" as const,
+    dueAt: new Date(Date.now() + 86_400_000), occurrenceDate: null, recurrenceId: null, version: 1, createdAt: new Date(),
+    submission: { id: "submission-stale", mediaUrl: null, textHtml: "<p>다른 기기에서 낸 글</p>", analysisJson: null, submittedAt, updatedAt: null, reviewedAt: null, feedbackCount: 0 },
+  };
+  const key = createDocumentDraftKey("assignment-feedback", "student-task-stale", "task-submission:task-stale");
+  browser.localStorage.setItem(key, serializeFormDraft({ mediaUrl: "", text: "내기 전에 이 기기에서 쓰던 글" }, submittedAt.getTime() - 3_600_000));
+  await render(context, <AssignmentView actorId="student-task-stale" initialAssignments={[]} initialTasks={[task]} />);
+  await press("제출 수정");
+  await settle();
+  const textarea = browser.document.getElementById("task-task-stale-text");
+  assert.ok(textarea instanceof browser.HTMLTextAreaElement);
+  assert.equal(textarea.value, "다른 기기에서 낸 글");
+  assert.match(browser.document.body.textContent ?? "", /다른 기기에서 고친 내용이 있습니다\. 이 기기에 남아 있던 이전 작성 내용은 지웠습니다\./u);
+  assert.equal(browser.localStorage.getItem(key), null);
+});

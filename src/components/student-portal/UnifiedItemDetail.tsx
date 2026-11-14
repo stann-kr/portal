@@ -16,7 +16,7 @@ import { Disc3, MessageSquareText } from "lucide-react";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 import { getUnifiedItemKindLabel } from "@/components/ui/unified-item-type";
 import { buttonClassName } from "@/components/ui/button";
-import dynamic from "next/dynamic";
+import { LazyLoadFailed, retryableLazy } from "@/components/ui/retryable-lazy";
 import type { NoteDetailViewer } from "./UnifiedNoteDetail";
 import {
   CalendarEventActions,
@@ -33,12 +33,12 @@ import { assignmentTaskHref, buildAdminStudentDetailHref, buildStudentDiggingBoa
  * 받는 동안은 노트 상세가 처음 보이는 "불러오는 중"과 같은 줄을 둔다.
  */
 export const preloadUnifiedNoteDetail = () => import("./UnifiedNoteDetail");
-const UnifiedNoteDetail = dynamic(
-  () => import("./UnifiedNoteDetail").then((m) => ({ default: m.UnifiedNoteDetail })),
+const UnifiedNoteDetail = retryableLazy(
+  () => import("./UnifiedNoteDetail").then((m) => m.UnifiedNoteDetail),
   {
-    loading: () => (
-      <p className="text-xs text-muted-foreground" role="status">전체 내용을 불러오는 중입니다.</p>
-    ),
+    loading: <p className="text-xs text-muted-foreground" role="status">전체 내용을 불러오는 중입니다.</p>,
+    // 받지 못하면 화면 전체 오류로 넘기지 않고 이 자리에서 알린다(캔버스 "코드 리뷰 2차 후속" ①).
+    failed: (retry) => <LazyLoadFailed message="전체 내용을 불러오지 못했습니다." onRetry={retry} />,
   },
 );
 

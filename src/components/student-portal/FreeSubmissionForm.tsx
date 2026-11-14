@@ -25,6 +25,7 @@ import { CREATION_OPERATION_FIELD, createCreationOperationId, parseCreationOpera
 import { createDocumentDraftKey } from "@/lib/form-draft";
 import { useFormDraft } from "@/lib/hooks/useFormDraft";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
+import { useStaleDraftDrop } from "@/lib/hooks/useStaleDraftDrop";
 import { cn } from "@/lib/utils";
 
 type FreeSubmissionDraft = { mediaUrl: string; text: string };
@@ -37,8 +38,11 @@ const TEXTAREA_CLASS =
 interface FreeSubmissionFormProps {
   /** 지금 학생(작성자) ID. 초안을 계정별로 격리한다. */
   actorId: string;
-  /** 고칠 제출. 없으면 새 제출을 만든다. */
-  submission?: { id: string; mediaUrl: string | null; textHtml: string | null } | null;
+  /**
+   * 고칠 제출. 없으면 새 제출을 만든다.
+   * `savedAt`(마지막 저장 시각)을 주면 그보다 오래된 이 기기 초안은 열 때 지운다.
+   */
+  submission?: { id: string; mediaUrl: string | null; textHtml: string | null; savedAt?: Date | null } | null;
   /** 입력 id 접두어(라벨·도움말 연결용). */
   idPrefix: string;
   /** 새 제출 폼의 링크 칸(빈 상태에서 이 칸으로 이동한다). */
@@ -80,6 +84,11 @@ export function FreeSubmissionForm({
     },
     { onReset: () => { setMediaUrl(initial.mediaUrl); setText(initial.text); setOperationId(createCreationOperationId()); setShowResult(false); } },
   );
+  const { staleDropped, dismissStaleNotice } = useStaleDraftDrop(draft, submission?.savedAt, () => {
+    setMediaUrl(initial.mediaUrl);
+    setText(initial.text);
+    setShowResult(false);
+  });
   const [state, action, isPending] = useActionState<SubmitAssignmentState, FormData>(async (previous, data) => {
     let result: SubmitAssignmentState;
     try {
@@ -109,6 +118,7 @@ export function FreeSubmissionForm({
   useBusyNavigationGuard(isPending);
 
   const saveDraft = (next: FreeSubmissionDraft) => {
+    dismissStaleNotice();
     setShowResult(false);
     setEmptyError(false);
     setSubmitted(false);
@@ -213,7 +223,7 @@ export function FreeSubmissionForm({
       </div>
       {error ? <p role="alert" className="text-ui text-destructive">{error}</p> : null}
       {submitted && !editing ? <p role="status" className="text-ui text-success">제출했습니다.</p> : null}
-      <DraftStatus {...draft} onRestoreRecovery={draft.restoreRecovery} onDiscardRecovery={draft.discardRecovery} disabled={isPending} />
+      <DraftStatus {...draft} staleDropped={staleDropped} onRestoreRecovery={draft.restoreRecovery} onDiscardRecovery={draft.discardRecovery} disabled={isPending} />
     </form>
   );
 }

@@ -25,6 +25,7 @@ import { normalizeAssignmentMediaUrl } from "@/lib/assignment-media-url";
 import { createDocumentDraftKey } from "@/lib/form-draft";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
 import { useFormDraft } from "@/lib/hooks/useFormDraft";
+import { useStaleDraftDrop } from "@/lib/hooks/useStaleDraftDrop";
 import {
   MIX_ANALYSIS_MEMO_MAX_LENGTH,
   MIX_ANALYSIS_ONE_LINER_MAX_LENGTH,
@@ -133,10 +134,17 @@ export function MixAnalysisWriteForm({
     },
     { onReset: () => applyDraft(initial) },
   );
+  // 다른 기기에서 제출·수정한 뒤에 남은 이 기기의 이전 초안은 열 때 지우고 저장된 분석을 보인다.
+  const { staleDropped, dismissStaleNotice } = useStaleDraftDrop(
+    draft,
+    submission ? submission.updatedAt ?? submission.submittedAt : null,
+    () => applyDraft(initial),
+  );
 
   const update = (patch: Partial<FormState> | ((previous: FormState) => Partial<FormState>)) => {
     const previous = formRef.current;
     const next = { ...previous, ...(typeof patch === "function" ? patch(previous) : patch) };
+    dismissStaleNotice();
     setForm(next);
     setShowResult(false);
     const nextDraft = toDraft(next);
@@ -415,7 +423,7 @@ export function MixAnalysisWriteForm({
           </section>
 
           {showResult && state.error ? <p role="alert" className="text-ui text-destructive">{state.error}</p> : null}
-          <DraftStatus {...draft} onRestoreRecovery={draft.restoreRecovery} onDiscardRecovery={draft.discardRecovery} disabled={isPending} />
+          <DraftStatus {...draft} staleDropped={staleDropped} onRestoreRecovery={draft.restoreRecovery} onDiscardRecovery={draft.discardRecovery} disabled={isPending} />
 
           {/* 넓은 화면 제출 줄 */}
           <div className="hidden items-center justify-between gap-3 border-t border-border pt-4 md:flex">

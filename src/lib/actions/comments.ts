@@ -12,13 +12,13 @@ import { comments, posts, profiles } from "@/db/schema";
 import { and, eq, asc, isNull, sql } from "drizzle-orm";
 import { assertOwnerOrAdmin, requireAuth } from "@/lib/auth-guard";
 import { CREATION_OPERATION_FIELD, deriveCreationResourceId, resolveCreationOperationId } from "@/lib/creation-operation";
+import { COMMENT_MAX_LENGTH } from "@/lib/community-comment";
 import { COMMENT_TIME_MARKER_FIELD, parseTimeMarker } from "@/lib/community-mixset-media";
 import { publicAuthorName } from "@/lib/public-author-name";
 import { pushMessages } from "@/lib/push/messages";
 import { notifyPush } from "@/lib/push/notify";
 
-// 댓글은 짧은 일반 글이라 문서 본문(800 KiB)보다 훨씬 작게 막는다. 글자 수는 code point로 센다.
-const COMMENT_MAX_LENGTH = 5_000;
+// 댓글은 짧은 일반 글이라 문서 본문(800 KiB)보다 훨씬 작게 막는다. 글자 수는 code point로 센다(입력 칸과 같은 상수).
 
 function escapeHtml(text: string): string {
   return text

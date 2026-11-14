@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useInsertionEffect, useRef, useState } from "react";
 import {
   abandonMediaUpload,
   completeMediaUploadAction,
   requestMediaUpload,
 } from "@/lib/actions/upload";
 import { createCreationOperationId } from "@/lib/creation-operation";
+import { pastedImagesRejectedMessage, pastedImagesUploadFailedMessage } from "@/components/editor/pasted-data-images";
 import {
   DOCUMENT_IMAGE_MAX_BYTES,
   DOCUMENT_IMAGE_MIME_TYPES,
@@ -139,13 +140,23 @@ export function useEditorImageUpload<Context>(
   });
   const draftOperationIdRef = useRef<string | null>(null);
   const onUploadedRef = useRef(onUploaded);
-  onUploadedRef.current = onUploaded;
   const uploaderRef = useRef(uploader);
-  uploaderRef.current = uploader;
+  // 업로드는 render가 끝난 뒤(이벤트·비동기 흐름)에만 이 값을 읽는다. 같은 commit의 다른 effect보다 먼저 최신 값으로 맞춘다.
+  useInsertionEffect(() => {
+    onUploadedRef.current = onUploaded;
+    uploaderRef.current = uploader;
+  }, [onUploaded, uploader]);
 
-  const uploadImages = useCallback((files: readonly File[], context: Context) => {
+  /**
+   * `source`가 "pasted"면 붙여넣은 글에서 골라낸 이미지다. 사용자가 고른 파일이 아니라 글과 함께 들어온 것이므로,
+   * 넣지 못한 장수를 세어 "붙여넣은 이미지 N장…"으로 알린다.
+   */
+  const uploadImages = useCallback((files: readonly File[], context: Context, source: "picked" | "pasted" = "picked") => {
     const images = files.filter(isEditorImageFile);
-    const firstError = files.map(editorImageFileError).find(Boolean) ?? null;
+    const fileErrors = files.map(editorImageFileError).filter((error): error is string => error !== null);
+    const firstError = fileErrors.length === 0
+      ? null
+      : source === "pasted" ? pastedImagesRejectedMessage(fileErrors.length, fileErrors[0]) : fileErrors[0];
     const valid = images.filter((file) => editorImageFileError(file) === null);
     setState((current) => ({
       pendingCount: current.pendingCount + valid.length,
@@ -157,15 +168,20 @@ export function useEditorImageUpload<Context>(
 
     // 끝난 순서가 아니라 고른 순서대로 본문에 들어가도록 차례로 올린다.
     void (async () => {
+      let failures = 0;
       for (const file of valid) {
         try {
           const uploaded = await uploaderRef.current.upload(file, draftOperationId);
           onUploadedRef.current({ ...uploaded, file }, context);
           setState((current) => ({ ...current, pendingCount: current.pendingCount - 1 }));
         } catch (error) {
+          failures += 1;
+          const message = source === "pasted"
+            ? pastedImagesUploadFailedMessage(failures)
+            : error instanceof Error ? error.message : "이미지를 올리지 못했습니다.";
           setState((current) => ({
             pendingCount: current.pendingCount - 1,
-            error: error instanceof Error ? error.message : "이미지를 올리지 못했습니다.",
+            error: message,
           }));
         }
       }

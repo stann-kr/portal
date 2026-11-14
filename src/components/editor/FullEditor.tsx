@@ -11,6 +11,7 @@ import { useEditor, useEditorState, EditorContent } from "@tiptap/react";
 import { BubbleMenu } from "@tiptap/react/menus";
 import { type MarkdownStorage } from "tiptap-markdown";
 import type { Editor } from "@tiptap/core";
+import type { Slice } from "@tiptap/pm/model";
 import {
   createFullEditorExtensions,
   type FullEditorCollaboration,
@@ -28,6 +29,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { BlockCommandMenu } from "./BlockCommandMenu";
+import { extractPastedDataImages, pastedDataImageFile } from "./pasted-data-images";
 import type { EditorBlockCommandContext } from "./editor-block-commands";
 import {
   EditorInsertPanel,
@@ -386,7 +388,8 @@ export function FullEditor({
   const imageUpload = useEditorImageUpload<number>(handleUploadedImage, imageUploader);
   const uploadImagesForCurrentContent = imageUpload.uploadImages;
   const uploadImages = useCallback(
-    (files: readonly File[]) => uploadImagesForCurrentContent(files, contentGenerationRef.current),
+    (files: readonly File[], source?: "picked" | "pasted") =>
+      uploadImagesForCurrentContent(files, contentGenerationRef.current, source),
     [uploadImagesForCurrentContent],
   );
   const imageUploadBusy = imageUpload.pendingCount > 0 || deferredImageCount > 0;
@@ -427,6 +430,16 @@ export function FullEditor({
         event.preventDefault();
         uploadImages(files);
         return true;
+      },
+      // 붙여넣은 글 속에 내용 통째로 든 이미지(data URL)는 본문에 넣지 않고 골라내 파일로 올린다.
+      // 올라간 이미지는 붙여넣은 글 뒤에 들어가고, 올리지 못한 것은 아래 알림 줄이 알린다.
+      transformPasted: (slice: Slice, view: { dragging: unknown }) => {
+        // 편집기 안에서 끌어 옮기는 중이면 그대로 둔다. 원래 자리에서 지워진 뒤 업로드가 실패하면 이미지를 잃는다.
+        if (view.dragging) return slice;
+        const extracted = extractPastedDataImages(slice);
+        if (extracted.sources.length === 0) return slice;
+        uploadImages(extracted.sources.map(pastedDataImageFile), "pasted");
+        return extracted.slice;
       },
       handleDrop: (
         view: { posAtCoords: (coords: { left: number; top: number }) => { pos: number } | null },
