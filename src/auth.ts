@@ -20,6 +20,7 @@ import {
   verifyStoredPassword,
 } from "@/lib/password-storage";
 import { isPasswordAttemptAllowed } from "@/lib/password-attempt-limit";
+import { rememberVerifiedSessionProfile } from "@/lib/verified-session-profile";
 
 type FindActiveSessionProfileById = (
   profileId: string,
@@ -87,6 +88,8 @@ export function createNodeAuthConfig(
         // 임시 비밀번호 여부는 token claim이 아니라 매 요청 현재 hash에서 다시 판단한다.
         if (profile.passwordChangeRequired) token.passwordChangeRequired = true;
         else delete token.passwordChangeRequired;
+        // 여기까지 온 profile은 방금 DB에서 읽어 확인한 값이다. 같은 호출의 session gate가 다시 읽지 않게 넘긴다.
+        rememberVerifiedSessionProfile(profile);
         return token;
       },
     },

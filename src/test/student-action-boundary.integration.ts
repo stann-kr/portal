@@ -70,9 +70,14 @@ function requireActiveDb(): PortalTestDb {
 
 let signInCalls: unknown[][] = [];
 let signInImpl: (...args: unknown[]) => Promise<unknown> = async () => "/dashboard";
+/** 실제 auth()의 JWT 갱신이 하는 일(확인한 profile 남기기)을 흉내 낼 때만 넣는다. */
+let authRefresh: (() => void) | null = null;
 mock.module("@/auth", {
   namedExports: {
-    auth: async () => activeSession,
+    auth: async () => {
+      authRefresh?.();
+      return activeSession;
+    },
     signIn: async (...args: unknown[]) => {
       signInCalls.push(args);
       return signInImpl(...args);
@@ -1575,6 +1580,37 @@ async function setupRacingDatabase(context: TestContext, session: AuthSession, t
     maxBind: () => maxBind,
   };
 }
+
+test("session gate는 같은 호출의 JWT 갱신이 확인한 profile을 다시 읽지 않고, 확인이 없거나 대상이 다르면 DB로 판정한다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("student-1", "student"));
+  context.after(() => { authRefresh = null; });
+  const guard = await import("@/lib/auth-guard");
+  const { rememberVerifiedSessionProfile } = await import("@/lib/verified-session-profile");
+  const verified = { id: "student-1", email: "current@example.com", displayName: "현재 이름", role: "student" as const };
+
+  // DB에 profile이 없으므로, 통과한다면 갱신이 넘긴 profile을 쓴 것이다(다시 읽지 않았다).
+  authRefresh = () => rememberVerifiedSessionProfile(verified);
+  // session(token)의 role·이름이 오래돼도 확인한 profile이 권한 원본이다.
+  activeSession = { ...createSession("student-1", "admin"), user: { ...createSession("student-1", "admin").user, name: "옛 이름" } };
+  const session = await guard.requireAuth();
+  assert.deepEqual(
+    { id: session.user.id, role: session.user.role, name: session.user.name, email: session.user.email },
+    { id: "student-1", role: "student", name: "현재 이름", email: "current@example.com" },
+  );
+  await assert.rejects(guard.requireAdmin(), /Admin only/u);
+
+  // 다른 계정의 profile이 남아 있어도 session의 대상과 다르면 쓰지 않고 DB로 판정한다.
+  authRefresh = () => rememberVerifiedSessionProfile({ ...verified, id: "student-2" });
+  await assert.rejects(guard.requireAuth(), /Unauthorized/u);
+
+  // 앞선 호출이 남긴 값은 다음 호출로 넘어가지 않는다.
+  authRefresh = null;
+  await assert.rejects(guard.requireAuth(), /Unauthorized/u);
+
+  // 갱신이 넘긴 값이 없으면 전처럼 DB의 profile로 판정한다.
+  await seedProfile(db, "student-1");
+  assert.equal((await guard.requireAuth()).user.email, "student-1@example.com");
+});
 
 test("정기 과제 회차 생성은 계획한 날짜 범위의 회차만 읽고도 이미 있는 회차를 다시 만들지 않는다", { concurrency: false }, async (context) => {
   const isolated = await createIsolatedPortalD1();
