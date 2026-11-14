@@ -21,12 +21,15 @@ import {
   FREE_SUBMISSION_EMPTY_ERROR,
   htmlToPlainText,
 } from "@/lib/assignment-submission";
+import { CREATION_OPERATION_FIELD, createCreationOperationId, parseCreationOperationId } from "@/lib/creation-operation";
 import { createDocumentDraftKey } from "@/lib/form-draft";
 import { useFormDraft } from "@/lib/hooks/useFormDraft";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
 import { cn } from "@/lib/utils";
 
 type FreeSubmissionDraft = { mediaUrl: string; text: string };
+/** 초안에는 새 제출의 작업 ID도 함께 둔다(탭을 닫았다 열어 다시 내도 같은 제출로 처리된다). */
+type StoredFreeSubmissionDraft = FreeSubmissionDraft & { operationId?: string };
 
 const TEXTAREA_CLASS =
   "min-h-32 w-full resize-y rounded-touch border border-input bg-background px-3 py-2 text-base leading-6 text-foreground placeholder:text-muted-foreground focus-visible:outline-2 focus-visible:-outline-offset-1 focus-visible:outline-ring disabled:opacity-50 md:rounded-md md:text-body";
@@ -65,14 +68,17 @@ export function FreeSubmissionForm({
   const [showResult, setShowResult] = useState(false);
   const [emptyError, setEmptyError] = useState(false);
   const [submitted, setSubmitted] = useState(false);
-  const draft = useFormDraft<FreeSubmissionDraft>(
+  // 새 제출의 작업 ID. 내용을 고칠 때마다 새로 만들고, 같은 내용을 다시 보내면 그대로라 서버가 한 번만 저장한다.
+  const [operationId, setOperationId] = useState("");
+  const draft = useFormDraft<StoredFreeSubmissionDraft>(
     createDocumentDraftKey("assignment-feedback", actorId, `free-submission:${submission?.id ?? "new"}`),
     (saved) => {
       setMediaUrl(typeof saved.mediaUrl === "string" ? saved.mediaUrl : initial.mediaUrl);
       setText(typeof saved.text === "string" ? saved.text : initial.text);
+      setOperationId(parseCreationOperationId(saved.operationId) ?? createCreationOperationId());
       setShowResult(false);
     },
-    { onReset: () => { setMediaUrl(initial.mediaUrl); setText(initial.text); setShowResult(false); } },
+    { onReset: () => { setMediaUrl(initial.mediaUrl); setText(initial.text); setOperationId(createCreationOperationId()); setShowResult(false); } },
   );
   const [state, action, isPending] = useActionState<SubmitAssignmentState, FormData>(async (previous, data) => {
     let result: SubmitAssignmentState;
@@ -85,10 +91,15 @@ export function FreeSubmissionForm({
     }
     if (result.success) {
       const submittedData = { mediaUrl: String(data.get("mediaUrl") ?? ""), text: String(data.get("text") ?? "") };
-      draft.clear({ reason: "submitted", submittedData, submittedAliases: [submittedData] });
+      draft.clear({
+        reason: "submitted",
+        submittedData: editing ? submittedData : { ...submittedData, operationId: String(data.get(CREATION_OPERATION_FIELD) ?? "") },
+        submittedAliases: [submittedData],
+      });
       if (!editing) {
         setMediaUrl("");
         setText("");
+        setOperationId(createCreationOperationId());
         setSubmitted(true);
       }
       await onDone();
@@ -101,7 +112,9 @@ export function FreeSubmissionForm({
     setShowResult(false);
     setEmptyError(false);
     setSubmitted(false);
-    if (next.mediaUrl !== initial.mediaUrl || next.text !== initial.text) draft.save(next);
+    const nextOperationId = createCreationOperationId();
+    setOperationId(nextOperationId);
+    if (next.mediaUrl !== initial.mediaUrl || next.text !== initial.text) draft.save(editing ? next : { ...next, operationId: nextOperationId });
     else draft.clear();
   };
   const mediaId = `${idPrefix}-media-url`;
@@ -131,6 +144,7 @@ export function FreeSubmissionForm({
         setShowResult(true);
       }}
     >
+      {editing ? null : <input type="hidden" name={CREATION_OPERATION_FIELD} value={operationId} />}
       <div className="flex flex-col gap-0.5">
         <h2 id={headingId} className="text-ui font-semibold text-secondary-foreground">
           {editing ? "제출 수정" : "새 제출"}

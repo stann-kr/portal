@@ -2898,6 +2898,53 @@ test("a free submission sends text without a link, refuses an empty form locally
   assert.match(browser.document.querySelector('[role="status"]')?.textContent ?? "", /제출했습니다/u);
 });
 
+test("a free submission resends the same operation id after a lost response and a new one after the text changes", async (context) => {
+  const sent: { operationId: string; text: string }[] = [];
+  let lose = true;
+  saveAssignment = async (_previous, data) => {
+    sent.push({ operationId: String(data.get("operationId") ?? ""), text: String(data.get("text")) });
+    if (lose) throw new Error("connection lost");
+    return { success: true, id: "free-retry" };
+  };
+  context.after(() => { saveAssignment = async () => ({}); loadAssignments = async () => []; });
+  await render(context, <AssignmentView actorId="student-free-retry" initialAssignments={[]} />);
+  const textarea = () => {
+    const element = browser.document.getElementById("assignment-text");
+    assert.ok(element instanceof browser.HTMLTextAreaElement);
+    return element;
+  };
+  const setter = Object.getOwnPropertyDescriptor(browser.HTMLTextAreaElement.prototype, "value")?.set;
+  const type = async (value: string) => {
+    await act(async () => {
+      textarea().focus();
+      setter?.call(textarea(), value);
+      textarea().dispatchEvent(new browser.Event("input", { bubbles: true }));
+    });
+    await settle();
+  };
+  const submit = async () => {
+    await act(async () => { (textarea().form as unknown as HTMLFormElement).requestSubmit(); });
+    await settle();
+  };
+
+  await type("오늘 연습 기록");
+  await submit();
+  assert.match(browser.document.querySelector('[role="alert"]')?.textContent ?? "", /제출 결과를 확인하지 못했습니다/u);
+  assert.equal(textarea().value, "오늘 연습 기록", "입력은 그대로 남는다");
+  await submit();
+  assert.equal(sent.length, 2);
+  assert.match(sent[0]!.operationId, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u, "작업 ID를 보낸다");
+  assert.equal(sent[1]!.operationId, sent[0]!.operationId, "같은 내용을 다시 보내면 같은 작업 ID다");
+
+  // 내용을 고치면 다른 제출이다.
+  await type("오늘 연습 기록, 한 줄 더");
+  lose = false;
+  await submit();
+  assert.equal(sent.length, 3);
+  assert.notEqual(sent[2]!.operationId, sent[0]!.operationId);
+  assert.match(sent[2]!.operationId, /^[0-9a-f-]{36}$/u);
+});
+
 test("a task submission Stann acknowledged shows 'Stann 확인함' without an edit button, and an unacknowledged one stays editable", async (context) => {
   const base = {
     title: "연습 일지", descriptionHtml: "<p>이번 주 연습</p>", submissionFormat: "TEXT" as const,

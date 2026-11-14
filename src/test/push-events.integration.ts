@@ -162,9 +162,12 @@ test("과제: 새 과제는 학생에게, 학생 제출은 관리자에게 보�
     exclude: "student-1",
   });
 
-  const free = await assignmentActions.submitAssignment({}, form({ text: "<p>자유 연습</p>" }));
+  const freeFields = { [CREATION_OPERATION_FIELD]: crypto.randomUUID(), text: "<p>자유 연습</p>" };
+  const free = await assignmentActions.submitAssignment({}, form(freeFields));
   assert.equal(free.success, true, JSON.stringify(free));
   assert.equal(sent[2]!.message.body, "김학생님 과제 제출: 자유 과제");
+  await assignmentActions.submitAssignment({}, form(freeFields));
+  assert.equal(sent.length, 3, "같은 자유 제출 재전송은 다시 알리지 않는다");
 });
 
 test("레슨: 관리자가 잡거나 옮기면 학생에게, 학생이 옮기면 관리자에게 보낸다", { concurrency: false }, async (context) => {

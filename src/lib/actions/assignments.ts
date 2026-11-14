@@ -23,6 +23,7 @@ import { assignmentAwaitingReview } from "@/lib/assignment-review-query";
 import { pushMessages } from "@/lib/push/messages";
 import { notifyPush } from "@/lib/push/notify";
 import { fromStoredAssignmentFormat } from "@/lib/assignment-recurrence";
+import { CREATION_OPERATION_FIELD, deriveCreationResourceId, resolveCreationOperationId } from "@/lib/creation-operation";
 
 async function countFeedbacks(db: ReturnType<typeof createDb>, assignmentId: string): Promise<number> {
   const [row] = await db.select({ value: count(feedbacks.id) }).from(feedbacks).where(eq(feedbacks.assignmentId, assignmentId));
@@ -42,7 +43,7 @@ export type SubmitAssignmentState = {
 /**
  * 자유 제출 (Student 전용). 관리자 과제 없이 링크·글 중 하나 이상을 낸다.
  * @param _prev - useActionState 이전 상태
- * @param formData - { mediaUrl?, text? }
+ * @param formData - { mediaUrl?, text?, operationId (UUID v4) }
  */
 export async function submitAssignment(
   _prev: SubmitAssignmentState,
@@ -58,20 +59,36 @@ export async function submitAssignment(
   });
   if (!payload.ok) return { error: payload.error };
 
-  const db = createDb();
-  const id = crypto.randomUUID();
+  // 응답을 못 받고 같은 내용을 다시 보내도 제출이 한 건만 남도록, 폼이 보낸 작업 ID에서 제출 id를 정한다.
+  const operationId = resolveCreationOperationId(formData.get(CREATION_OPERATION_FIELD));
+  if (!operationId) return { error: "작성 정보를 확인하지 못했습니다. 입력 내용을 보관한 뒤 새로고침해 주세요." };
+  const id = deriveCreationResourceId(operationId, JSON.stringify(["free-submission", session.user.id]));
 
-  await db.insert(assignments).values({
+  const db = createDb();
+  const inserted = await db.insert(assignments).values({
     id,
     studentId: session.user.id!,
     mediaUrl: payload.mediaUrl,
     textHtml: payload.textHtml,
-  });
-  await notifyPush(
-    { kind: "role", role: "admin" },
-    pushMessages.assignmentSubmitted({ assignmentId: id, studentName: session.user.name ?? null, title: null }),
-    { excludeProfileId: session.user.id },
-  );
+  }).onConflictDoNothing({ target: assignments.id }).returning({ id: assignments.id });
+  if (inserted.length === 0) {
+    const [existing] = await db.select().from(assignments).where(eq(assignments.id, id)).limit(1);
+    if (
+      !existing ||
+      existing.studentId !== session.user.id ||
+      existing.taskId !== null ||
+      existing.mediaUrl !== payload.mediaUrl ||
+      existing.textHtml !== payload.textHtml
+    ) {
+      return { error: "이 제출은 고치기 전 내용으로 이미 저장되었거나 상태가 바뀌었습니다. 목록을 확인해 주세요." };
+    }
+  } else {
+    await notifyPush(
+      { kind: "role", role: "admin" },
+      pushMessages.assignmentSubmitted({ assignmentId: id, studentName: session.user.name ?? null, title: null }),
+      { excludeProfileId: session.user.id },
+    );
+  }
 
   revalidatePath("/dashboard/student/assignments");
   revalidatePath("/dashboard/student");

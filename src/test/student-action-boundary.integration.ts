@@ -496,7 +496,8 @@ test("자유 제출은 링크·글·둘 다를 받고 피드백 전 본인 자�
   await seedProfile(db, "student-1");
   await seedProfile(db, "student-2");
   const link = "https://youtu.be/aqz-KE-bpKQ";
-  const freeForm = (fields: Record<string, string>) => taskForm(fields);
+  // 제출마다 새 작업 ID를 보낸다(폼이 내용을 고칠 때마다 새로 만든다).
+  const freeForm = (fields: Record<string, string>) => taskForm({ operationId: crypto.randomUUID(), ...fields });
   const rowOf = async (id: string) => (await db.select().from(assignments).where(eq(assignments.id, id)))[0];
 
   const textOnly = await assignmentActions.submitAssignment({}, freeForm({ mediaUrl: "", text: "<script>alert(1)</script>\n오늘 연습 & 질문" }));
@@ -513,6 +514,22 @@ test("자유 제출은 링크·글·둘 다를 받고 피드백 전 본인 자�
   const both = await assignmentActions.submitAssignment({}, freeForm({ mediaUrl: link, text: "세트 설명" }));
   assert.equal(both.success, true);
   assert.deepEqual([(await rowOf(both.id!))?.mediaUrl, (await rowOf(both.id!))?.textHtml], [link, "<p>세트 설명</p>"]);
+
+  // 응답을 못 받고 같은 내용을 다시 보내면(같은 작업 ID) 제출은 한 건만 남고 같은 id를 돌려준다.
+  const retryId = crypto.randomUUID();
+  const firstTry = await assignmentActions.submitAssignment({}, freeForm({ operationId: retryId, text: "다시 보내는 제출" }));
+  const countAfterFirstTry = (await db.select().from(assignments)).length;
+  const secondTry = await assignmentActions.submitAssignment({}, freeForm({ operationId: retryId, text: "다시 보내는 제출" }));
+  assert.equal(firstTry.success, true);
+  assert.deepEqual(secondTry, { success: true, id: firstTry.id });
+  assert.equal((await db.select().from(assignments)).length, countAfterFirstTry, "같은 제출을 두 번 저장하지 않는다");
+  // 같은 작업 ID로 다른 내용이 오면 덮어쓰지 않고 알린다.
+  const changed = await assignmentActions.submitAssignment({}, freeForm({ operationId: retryId, text: "그 사이 고친 내용" }));
+  assert.match(changed.error ?? "", /이미 저장/u);
+  assert.equal((await rowOf(firstTry.id!))?.textHtml, "<p>다시 보내는 제출</p>");
+  // 작업 ID가 없으면 재전송을 구분할 수 없어 받지 않는다.
+  assert.match((await assignmentActions.submitAssignment({}, taskForm({ text: "작업 ID 없음" }))).error ?? "", /작성 정보를 확인하지 못했습니다/u);
+  assert.equal((await db.select().from(assignments)).length, countAfterFirstTry);
 
   const countBefore = (await db.select().from(assignments)).length;
   assert.match((await assignmentActions.submitAssignment({}, freeForm({ mediaUrl: " ", text: " " }))).error ?? "", /하나 이상/u);
