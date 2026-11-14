@@ -85,28 +85,19 @@ export async function addDiggingColumn(data: {
   if (!parsed.ok) throw new Error(parsed.error);
   const db = createDb();
 
-  const existing = await db
-    .select({ sortOrder: diggingColumns.sortOrder })
-    .from(diggingColumns)
-    .where(eq(diggingColumns.userId, session.user.id!))
-    .orderBy(diggingColumns.sortOrder);
-  if (existing.length >= DIGGING_COLUMNS_MAX_COUNT) {
+  const userId = session.user.id!;
+  const options = parsed.value.options ? JSON.stringify(parsed.value.options) : null;
+  // 개수 확인과 순서 계산을 INSERT 한 문장에 둔다. 따로 읽으면 동시에 추가한 두 요청이 같은 개수·같은 순서를 보고
+  // 상한을 넘기거나 같은 sort_order를 받는다. 표 이름을 직접 쓴 SQL이라 안쪽 조회의 열이 바깥 표와 섞이지 않는다.
+  const inserted = await db.all<{ id: string }>(sql`
+    INSERT INTO digging_columns (id, user_id, name, column_type, options, sort_order, is_default)
+    SELECT ${crypto.randomUUID()}, ${userId}, ${parsed.value.name}, ${parsed.value.columnType}, ${options},
+      (SELECT coalesce(max(sort_order), -1) + 1 FROM digging_columns WHERE user_id = ${userId}), 0
+    WHERE (SELECT count(*) FROM digging_columns WHERE user_id = ${userId}) < ${DIGGING_COLUMNS_MAX_COUNT}
+    RETURNING id`);
+  if (inserted.length === 0) {
     throw new Error(`컬럼은 최대 ${DIGGING_COLUMNS_MAX_COUNT}개까지 만들 수 있습니다.`);
   }
-
-  const maxOrder = existing.length > 0
-    ? Math.max(...existing.map((c: { sortOrder: number | null }) => c.sortOrder ?? 0))
-    : -1;
-
-  await db.insert(diggingColumns).values({
-    id: crypto.randomUUID(),
-    userId: session.user.id!,
-    name: parsed.value.name,
-    columnType: parsed.value.columnType,
-    options: parsed.value.options ? JSON.stringify(parsed.value.options) : null,
-    sortOrder: maxOrder + 1,
-    isDefault: false,
-  });
 
   revalidatePath("/dashboard/student/digging");
   revalidatePath("/dashboard/student");

@@ -23,6 +23,7 @@ import {
   type DiggingPlaylistProviderName,
 } from "@/lib/digging-contract";
 import { fetchSoundCloudPlaylistTitle } from "@/lib/digging-link-metadata";
+import { isUniqueViolation } from "@/lib/db-errors";
 
 export type DiggingPlaylist = {
   id: string;
@@ -243,16 +244,6 @@ async function requirePlaylistWriter(studentId: string): Promise<string> {
 
 function parseExpectedUpdatedAt(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-function isUniqueViolation(error: unknown): boolean {
-  let current: unknown = error;
-  for (let depth = 0; current && depth < 4; depth += 1) {
-    const message = current instanceof Error ? current.message : String(current);
-    if (message.includes("UNIQUE constraint failed")) return true;
-    current = current instanceof Error ? current.cause : null;
-  }
-  return false;
 }
 
 function revalidateDigging(studentId: string): void {

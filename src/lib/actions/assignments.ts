@@ -308,11 +308,11 @@ export async function getPendingFeedbackCount(): Promise<number> {
   await requireAdmin();
   const db = createDb();
 
-  const rows = await db
-    .select({ id: assignments.id })
+  const [row] = await db
+    .select({ value: count() })
     .from(assignments)
     .where(assignmentAwaitingReview(db));
-  return rows.length;
+  return Number(row?.value ?? 0);
 }
 
 /**
