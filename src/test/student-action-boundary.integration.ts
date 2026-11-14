@@ -496,7 +496,8 @@ test("자유 제출은 링크·글·둘 다를 받고 피드백 전 본인 자�
   await seedProfile(db, "student-1");
   await seedProfile(db, "student-2");
   const link = "https://youtu.be/aqz-KE-bpKQ";
-  const freeForm = (fields: Record<string, string>) => taskForm(fields);
+  // 제출마다 새 작업 ID를 보낸다(폼이 내용을 고칠 때마다 새로 만든다).
+  const freeForm = (fields: Record<string, string>) => taskForm({ operationId: crypto.randomUUID(), ...fields });
   const rowOf = async (id: string) => (await db.select().from(assignments).where(eq(assignments.id, id)))[0];
 
   const textOnly = await assignmentActions.submitAssignment({}, freeForm({ mediaUrl: "", text: "<script>alert(1)</script>\n오늘 연습 & 질문" }));
@@ -513,6 +514,22 @@ test("자유 제출은 링크·글·둘 다를 받고 피드백 전 본인 자�
   const both = await assignmentActions.submitAssignment({}, freeForm({ mediaUrl: link, text: "세트 설명" }));
   assert.equal(both.success, true);
   assert.deepEqual([(await rowOf(both.id!))?.mediaUrl, (await rowOf(both.id!))?.textHtml], [link, "<p>세트 설명</p>"]);
+
+  // 응답을 못 받고 같은 내용을 다시 보내면(같은 작업 ID) 제출은 한 건만 남고 같은 id를 돌려준다.
+  const retryId = crypto.randomUUID();
+  const firstTry = await assignmentActions.submitAssignment({}, freeForm({ operationId: retryId, text: "다시 보내는 제출" }));
+  const countAfterFirstTry = (await db.select().from(assignments)).length;
+  const secondTry = await assignmentActions.submitAssignment({}, freeForm({ operationId: retryId, text: "다시 보내는 제출" }));
+  assert.equal(firstTry.success, true);
+  assert.deepEqual(secondTry, { success: true, id: firstTry.id });
+  assert.equal((await db.select().from(assignments)).length, countAfterFirstTry, "같은 제출을 두 번 저장하지 않는다");
+  // 같은 작업 ID로 다른 내용이 오면 덮어쓰지 않고 알린다.
+  const changed = await assignmentActions.submitAssignment({}, freeForm({ operationId: retryId, text: "그 사이 고친 내용" }));
+  assert.match(changed.error ?? "", /이미 저장/u);
+  assert.equal((await rowOf(firstTry.id!))?.textHtml, "<p>다시 보내는 제출</p>");
+  // 작업 ID가 없으면 재전송을 구분할 수 없어 받지 않는다.
+  assert.match((await assignmentActions.submitAssignment({}, taskForm({ text: "작업 ID 없음" }))).error ?? "", /작성 정보를 확인하지 못했습니다/u);
+  assert.equal((await db.select().from(assignments)).length, countAfterFirstTry);
 
   const countBefore = (await db.select().from(assignments)).length;
   assert.match((await assignmentActions.submitAssignment({}, freeForm({ mediaUrl: " ", text: " " }))).error ?? "", /하나 이상/u);
@@ -1558,6 +1575,28 @@ async function setupRacingDatabase(context: TestContext, session: AuthSession, t
     maxBind: () => maxBind,
   };
 }
+
+test("디깅 칸 저장은 읽은 뒤 다른 탭이 같은 트랙의 다른 칸을 고쳐도 그 값을 지우지 않는다", { concurrency: false }, async (context) => {
+  const { db, setBeforeWrite } = await setupRacingDatabase(context, createSession("student-1", "student"), "digging_tracks");
+  await seedProfile(db, "student-1");
+  await db.insert(diggingColumns).values([
+    { id: "col-title", userId: "student-1", name: "트랙명", columnType: "text", sortOrder: 0 },
+    { id: "col-memo", userId: "student-1", name: "감상평", columnType: "text", sortOrder: 1 },
+  ]);
+  await db.insert(diggingTracks).values({ id: "track-race", userId: "student-1", values: JSON.stringify({ "col-title": "Original" }) });
+  const stored = async () => JSON.parse((await db.select().from(diggingTracks).where(eq(diggingTracks.id, "track-race")))[0]!.values) as Record<string, unknown>;
+
+  // 이 요청이 트랙을 읽은 뒤 쓰기 직전에, 다른 탭이 감상평 칸을 저장한다.
+  setBeforeWrite(async () => {
+    await db.update(diggingTracks).set({ values: JSON.stringify({ "col-title": "Original", "col-memo": "다른 탭의 감상평" }) }).where(eq(diggingTracks.id, "track-race"));
+  });
+  await diggingActions.updateDiggingTrackValue("track-race", "col-title", "고친 제목");
+  assert.deepEqual(await stored(), { "col-title": "고친 제목", "col-memo": "다른 탭의 감상평" });
+
+  // 끼어든 변경이 없으면 한 번에 저장한다.
+  await diggingActions.updateDiggingTrackValue("track-race", "col-memo", "이 탭의 감상평");
+  assert.deepEqual(await stored(), { "col-title": "고친 제목", "col-memo": "이 탭의 감상평" });
+});
 
 test("학생 제출·수정은 읽은 뒤 관리자가 형식을 바꾸면 저장하지 않고 과제가 바뀌었다고 알린다", { concurrency: false }, async (context) => {
   const { db, setBeforeWrite } = await setupRacingDatabase(context, createSession("student-1", "student"));

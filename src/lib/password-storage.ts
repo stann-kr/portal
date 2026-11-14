@@ -67,12 +67,22 @@ export function generateInviteSecret(): string {
   return btoa(String.fromCharCode(...bytes)).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "");
 }
 
+/**
+ * 비교할 hash가 없을 때 쓰는 자리 채움 hash(버린 임의 문자열, 저장 hash와 같은 cost 10).
+ * 비밀이 아니며 어떤 비밀번호와도 맞지 않는 것으로 취급한다(결과는 쓰지 않는다).
+ */
+const ABSENT_ACCOUNT_BCRYPT_HASH = "$2b$10$wqSp1vIwA8jfa4xguE23EOiTFQN905pL4yEbk0d/ctSHTEJDV.taW";
+
 /** 저장 형식과 관계없이 입력한 비밀번호가 저장된 hash와 맞는지 확인한다. 가입 링크 secret은 로그인에 쓸 수 없다. */
 export async function verifyStoredPassword(
   password: string,
   storedHash: string | null | undefined,
 ): Promise<boolean> {
-  if (!storedHash || parseInviteHash(storedHash)) return false;
+  if (!storedHash || parseInviteHash(storedHash)) {
+    // 계정이 없거나 아직 가입 전이어도 한 번 비교한다. 바로 돌아가면 응답 시간만으로 가입된 이메일인지 알 수 있다.
+    await bcrypt.compare(password, ABSENT_ACCOUNT_BCRYPT_HASH);
+    return false;
+  }
   const bcryptHash = isTemporaryPasswordHash(storedHash)
     ? storedHash.slice(TEMPORARY_PASSWORD_HASH_PREFIX.length)
     : storedHash;

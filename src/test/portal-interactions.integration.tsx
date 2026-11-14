@@ -1774,6 +1774,44 @@ test("digging table key picker floats on the viewport so the scroll box does not
   assert.equal(browser.document.querySelector('[role="group"][aria-label="키 고르기"]'), null, "Escape from outside closes it");
 });
 
+test("digging key cell sends the value picked while an earlier save is still pending, even when it equals the last saved one", async (context) => {
+  const saves: unknown[] = [];
+  const first = Promise.withResolvers<void>();
+  saveTrackValue = async (_trackId, _columnId, value) => {
+    saves.push(value);
+    if (saves.length === 1) await first.promise;
+  };
+  context.after(() => { first.resolve(); saveTrackValue = async () => {}; });
+  await render(context, <DiggingBoard
+    initialColumns={[
+      { id: "title", name: "트랙명", columnType: "text", options: null, isDefault: true, sortOrder: 0 },
+      { id: "key", name: "키", columnType: "camelot_key", options: null, isDefault: false, sortOrder: 1 },
+    ]}
+    initialTracks={[{ id: "track-1", linkUrl: null, createdAt: new Date("2026-10-09T01:00:00.000Z"), values: { title: "Intro", key: "8A" } }]}
+  />);
+  const trigger = () => {
+    const element = browser.document.querySelector('table button[aria-label="키"]');
+    assert.ok(element instanceof browser.HTMLButtonElement);
+    return element;
+  };
+  const pick = async (key: string) => {
+    await act(async () => trigger().click());
+    const choice = [...browser.document.querySelectorAll('table [role="group"][aria-label="키 고르기"] button')].find((item) => item.textContent === key);
+    assert.ok(choice instanceof browser.HTMLButtonElement, `${key} 버튼`);
+    await act(async () => choice.click());
+    await settle();
+  };
+
+  await pick("9A");
+  assert.deepEqual(saves, ["9A"]);
+  // 9A 저장 응답 전에 원래 값 8A로 되돌린다. 서버에는 9A가 들어가므로 8A도 보내야 한다.
+  await pick("8A");
+  await act(async () => first.resolve());
+  await settle();
+  assert.deepEqual(saves, ["9A", "8A"], "되돌린 값도 저장한다");
+  assert.match(trigger().textContent ?? "", /8A/u);
+});
+
 test("digging board saves only changed cells, clears numbers and ratings without coercing to zero", async (context) => {
   const saves: [string, string, unknown][] = [];
   saveTrackValue = async (trackId, columnId, value) => { saves.push([trackId, columnId, value]); };
@@ -2756,6 +2794,18 @@ test("과제 고치기는 고치던 내용을 이 기기에 보관해 다시 열
   await act(async () => root.render(form(3, "킥 정리")));
   await settle();
   assert.equal(inputValue("title"), "킥 정리 고침", "고치던 제목이 되살아난다");
+  // 되살린 값을 곧바로 다시 보관하지 않는다: 보관 지연(0.5초)이 지나도 되살렸다는 안내가 남는다.
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 700)); });
+  assert.ok(
+    Array.from(browser.document.querySelectorAll('[role="status"]')).some((element) => /저장되지 않은 작성 내용을 복원했습니다/u.test(element.textContent ?? "")),
+    "되살린 뒤 '복원했습니다' 안내가 남는다",
+  );
+  // 되살린 뒤 고치면 다시 보관한다.
+  await fill("task-edit-t-1-title", "킥 정리 고침 2");
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 700)); });
+  assert.match(browser.localStorage.getItem(createDocumentDraftKey("assignment-feedback", "admin-edit", "assignment-task-edit:t-1")) ?? "", /킥 정리 고침 2/u, "되살린 뒤 고친 내용도 보관된다");
+  await fill("task-edit-t-1-title", "킥 정리 고침");
+  await settle();
   await press("저장");
   assert.deepEqual(sent, [{ version: "3", title: "킥 정리 고침" }]);
 
@@ -2884,6 +2934,53 @@ test("a free submission sends text without a link, refuses an empty form locally
   assert.deepEqual(submissions, [{ mediaUrl: "", text: "오늘 연습 기록" }]);
   assert.equal((browser.document.getElementById("assignment-text") as unknown as HTMLTextAreaElement).value, "");
   assert.match(browser.document.querySelector('[role="status"]')?.textContent ?? "", /제출했습니다/u);
+});
+
+test("a free submission resends the same operation id after a lost response and a new one after the text changes", async (context) => {
+  const sent: { operationId: string; text: string }[] = [];
+  let lose = true;
+  saveAssignment = async (_previous, data) => {
+    sent.push({ operationId: String(data.get("operationId") ?? ""), text: String(data.get("text")) });
+    if (lose) throw new Error("connection lost");
+    return { success: true, id: "free-retry" };
+  };
+  context.after(() => { saveAssignment = async () => ({}); loadAssignments = async () => []; });
+  await render(context, <AssignmentView actorId="student-free-retry" initialAssignments={[]} />);
+  const textarea = () => {
+    const element = browser.document.getElementById("assignment-text");
+    assert.ok(element instanceof browser.HTMLTextAreaElement);
+    return element;
+  };
+  const setter = Object.getOwnPropertyDescriptor(browser.HTMLTextAreaElement.prototype, "value")?.set;
+  const type = async (value: string) => {
+    await act(async () => {
+      textarea().focus();
+      setter?.call(textarea(), value);
+      textarea().dispatchEvent(new browser.Event("input", { bubbles: true }));
+    });
+    await settle();
+  };
+  const submit = async () => {
+    await act(async () => { (textarea().form as unknown as HTMLFormElement).requestSubmit(); });
+    await settle();
+  };
+
+  await type("오늘 연습 기록");
+  await submit();
+  assert.match(browser.document.querySelector('[role="alert"]')?.textContent ?? "", /제출 결과를 확인하지 못했습니다/u);
+  assert.equal(textarea().value, "오늘 연습 기록", "입력은 그대로 남는다");
+  await submit();
+  assert.equal(sent.length, 2);
+  assert.match(sent[0]!.operationId, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u, "작업 ID를 보낸다");
+  assert.equal(sent[1]!.operationId, sent[0]!.operationId, "같은 내용을 다시 보내면 같은 작업 ID다");
+
+  // 내용을 고치면 다른 제출이다.
+  await type("오늘 연습 기록, 한 줄 더");
+  lose = false;
+  await submit();
+  assert.equal(sent.length, 3);
+  assert.notEqual(sent[2]!.operationId, sent[0]!.operationId);
+  assert.match(sent[2]!.operationId, /^[0-9a-f-]{36}$/u);
 });
 
 test("a task submission Stann acknowledged shows 'Stann 확인함' without an edit button, and an unacknowledged one stays editable", async (context) => {
@@ -3497,6 +3594,59 @@ test("admin overview guide section saves each choice at once, in click order, an
   assert.deepEqual(calls.slice(3), ["page:student-1:guide-2:false", "read"]);
   assert.deepEqual(boxes().map((box) => box.checked), [true, false], "the screen follows what the server holds");
   assert.match(section.querySelector('[role="alert"]')?.textContent ?? "", /가이드 페이지를 찾을 수 없습니다/u);
+  assert.doesNotMatch(section.querySelector('[role="status"]')?.textContent ?? "", /저장됨/u);
+});
+
+test("admin overview guide section keeps a failure and re-reads when the next choice is saved during the re-read", async (context) => {
+  const calls: string[] = [];
+  let holdNextRead = false;
+  let releaseRead: (() => void) | null = null;
+  const pages = [{ id: "guide-1", title: "장비 소개" }, { id: "guide-2", title: "음원 관리" }];
+  // 서버: '선택'으로 바꾸는 저장은 실패해 닫힘이 남고, 페이지 체크 저장은 성공한다.
+  const serverPageIds = new Set<string>();
+  guideAccessActions = {
+    ...guideAccessDefaults,
+    getStudentGuideAccess: async () => {
+      calls.push("read");
+      if (holdNextRead) {
+        holdNextRead = false;
+        await new Promise<void>((resolve) => { releaseRead = resolve; });
+      }
+      return { setting: "CLOSED", pageIds: [...serverPageIds], pages };
+    },
+    setStudentGuideAccessSetting: async (studentId, setting) => {
+      calls.push(`setting:${studentId}:${setting}`);
+      return { ok: false, error: "가이드 열람 설정을 저장하지 못했습니다. 다시 시도해 주세요." };
+    },
+    setStudentGuideAccessPage: async (studentId, pageId, open) => {
+      calls.push(`page:${studentId}:${pageId}:${open}`);
+      if (open) serverPageIds.add(pageId);
+      else serverPageIds.delete(pageId);
+      return { ok: true };
+    },
+  };
+  context.after(() => { guideAccessActions = { ...guideAccessDefaults }; });
+
+  await render(context, <OverviewTab studentId="student-1" modules={[]} lessons={[]} guideAccess={{ setting: "CLOSED", pageIds: [], pages }} />);
+  const section = browser.document.querySelector('[aria-labelledby="guide-access-heading"]');
+  assert.ok(section);
+  const checked = () => [...section.querySelectorAll('[role="radio"]')].filter((radio) => radio.getAttribute("aria-checked") === "true").map((radio) => radio.textContent);
+  const boxes = () => [...section.querySelectorAll('input[type="checkbox"]')] as unknown as HTMLInputElement[];
+
+  // '선택' 저장이 실패해 서버 값을 다시 읽는 동안, 화면에 먼저 나타난 페이지를 체크한다.
+  holdNextRead = true;
+  await press("선택");
+  await settle();
+  assert.deepEqual(calls, ["setting:student-1:SELECTED", "read"]);
+  await act(async () => { boxes()[0].click(); });
+  await settle();
+  assert.equal(section.querySelector('[role="status"]')?.textContent, "저장 중…");
+
+  releaseRead!();
+  await settle();
+  assert.deepEqual(calls, ["setting:student-1:SELECTED", "read", "page:student-1:guide-1:true", "read"], "the later save ends with another re-read");
+  assert.deepEqual(checked(), ["닫힘"], "the screen follows what the server holds");
+  assert.match(section.querySelector('[role="alert"]')?.textContent ?? "", /가이드 열람 설정을 저장하지 못했습니다/u, "the first failure is still reported");
   assert.doesNotMatch(section.querySelector('[role="status"]')?.textContent ?? "", /저장됨/u);
 });
 

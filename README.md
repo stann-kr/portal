@@ -15,7 +15,7 @@ Stann Lumo의 DJ 레슨 운영을 위한 웹 포탈이다. 학생과 관리자�
 
 요구 사항:
 
-- Node.js 20.18.1 이상
+- Node.js 22.3 이상(`package.json` engines는 22 이상이고, 통합 테스트가 쓰는 `--experimental-test-module-mocks`는 22.3부터 있다)
 - npm
 - `.env.example`을 참고해 작성한 `.env.local`
 

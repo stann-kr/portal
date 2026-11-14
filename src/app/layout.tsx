@@ -11,8 +11,10 @@ import { ServiceWorkerNavigation } from "@/components/push/ServiceWorkerNavigati
 import "./globals.css";
 
 // Quiet Ledger 글자: 본문 IBM Plex Sans KR, 시간·숫자 IBM Plex Mono. 빌드 때 받아 자체 호스팅한다.
-// 한글은 unicode-range 조각(미리 받기 없음)이라 swap이면 새로고침마다 시스템 한글 글꼴로 먼저 그렸다가 바뀐다.
+// 한글은 unicode-range 조각이라 swap이면 새로고침마다 시스템 한글 글꼴로 먼저 그렸다가 바뀐다.
 // block으로 글꼴이 올 때까지(최대 약 3초) 글자를 숨겨 바뀌는 순간을 없앤다. 캐시된 뒤에는 거의 바로 그려진다.
+// 미리 받기(preload): 400 굵기 한글 조각에는 붙지 않는다. 500·600 굵기 한글 조각에는 next/font가 latin 조각으로
+// 잘못 알아 미리 받기 link를 붙인다(2026-11-14 빌드 기준 164개). 줄이려면 preload 옵션이나 글꼴 파일 구성을 바꿔야 한다.
 const plexSans = IBM_Plex_Sans_KR({
   weight: ["400", "500", "600"],
   subsets: ["latin"],

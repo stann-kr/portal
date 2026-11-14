@@ -102,7 +102,11 @@ function useTaskFormDraft<T extends object>({
 }) {
   const restoreRef = useRef(restore);
   useEffect(() => { restoreRef.current = restore; });
+  // 되살린 횟수. 되살린 값이 form에 들어오는 render와 같은 render에서 늘어난다.
+  const [restoreCount, setRestoreCount] = useState(0);
+  const seenRestoreCountRef = useRef(0);
   const draft = useFormDraft<T>(createDocumentDraftKey("assignment-feedback", actorId, contextId), (saved) => {
+    setRestoreCount((count) => count + 1);
     restoreRef.current(saved as Partial<Record<keyof T, unknown>>);
   });
   const signature = JSON.stringify(values);
@@ -111,11 +115,17 @@ function useTaskFormDraft<T extends object>({
   useEffect(() => { valuesRef.current = values; });
   const { loaded, save, clear } = draft;
   useEffect(() => {
+    if (restoreCount !== seenRestoreCountRef.current) {
+      // 방금 되살린 값은 이미 보관돼 있다. 다시 보관하면 '복원했습니다' 안내가 곧바로 지워진다.
+      seenRestoreCountRef.current = restoreCount;
+      lastSignatureRef.current = signature;
+      return;
+    }
     if (!loaded || signature === lastSignatureRef.current) return;
     lastSignatureRef.current = signature;
     if (empty) clear({ reason: "empty" });
     else save(valuesRef.current);
-  }, [clear, empty, loaded, save, signature]);
+  }, [clear, empty, loaded, restoreCount, save, signature]);
   return draft;
 }
 

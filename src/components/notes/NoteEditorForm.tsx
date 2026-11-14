@@ -188,6 +188,14 @@ function NoteEditorFormContent({ note, create, actorId, action, focusBodyEnd = f
     onSavedRef.current = onSaved;
     onBusyChangeRef.current = onBusyChange;
   });
+  // 화면이 사라질 때 보내는 저장(useCollabAutosave)은 응답이 unmount 뒤에 온다. 그때는 주소처럼 이 화면에만 속한 것을 건드리지 않는다.
+  const mountedRef = useRef(false);
+  useLayoutEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   // 새 노트의 생성 요청 id는 화면이 열려 있는 동안 하나다. room도 이 id에서 나온 노트 id로 정한다.
   // 첫 저장 전 새로고침해도 같은 작성본(room·기기 보관)으로 돌아오도록 이 탭의 sessionStorage에 둔다.
@@ -379,7 +387,10 @@ function NoteEditorFormContent({ note, create, actorId, action, focusBodyEnd = f
       setNoteId(createdId);
       forgetNewNoteOperationId(actorId, create.studentId);
       // state를 null로 넘겨야 Next가 내부 상태를 복사하고 router의 현재 주소(usePathname)도 함께 맞춘다.
-      window.history.replaceState(null, "", `/dashboard/notes/${createdId}?returnTo=${encodeURIComponent(create.returnTo)}`);
+      // 앱 안 이동으로 이미 다른 화면이면 그 화면의 주소를 노트 주소로 바꾸지 않는다(노트는 만들어졌고 목록에는 알린다).
+      if (mountedRef.current) {
+        window.history.replaceState(null, "", `/dashboard/notes/${createdId}?returnTo=${encodeURIComponent(create.returnTo)}`);
+      }
       if (state.note) {
         publishHeadVersion(state.note.version);
         onSavedRef.current?.({

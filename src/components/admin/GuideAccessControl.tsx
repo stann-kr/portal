@@ -58,23 +58,26 @@ export function GuideAccessControl({ studentId, initial }: { studentId: string; 
       pendingRef.current -= 1;
       if (pendingRef.current > 0) return;
       const failure = failedRef.current;
-      failedRef.current = null;
       if (!failure) {
         setStatus("saved");
         return;
       }
       // 실패한 저장이 섞였으면 화면이 서버와 달라졌을 수 있다. 저장된 값을 다시 읽어 맞춘다.
+      let saved: StudentGuideAccessView | null = null;
       try {
-        const saved = await getStudentGuideAccess(studentId);
-        if (pendingRef.current > 0) return;
+        saved = await getStudentGuideAccess(studentId);
+      } catch {
+        saved = null;
+      }
+      // 다시 읽는 사이 새 저장을 보냈으면 실패 사유를 남겨 두고, 그 저장이 끝날 때 다시 읽고 함께 알린다.
+      if (pendingRef.current > 0) return;
+      failedRef.current = null;
+      if (saved) {
         setSetting(saved.setting);
         setOpenIds(new Set(saved.pageIds));
         setPages(saved.pages);
-        setError(failure);
-      } catch {
-        if (pendingRef.current > 0) return;
-        setError(`${failure} 화면을 새로고침해 저장된 값을 확인해 주세요.`);
       }
+      setError(saved ? failure : `${failure} 화면을 새로고침해 저장된 값을 확인해 주세요.`);
       setStatus("idle");
     });
   };

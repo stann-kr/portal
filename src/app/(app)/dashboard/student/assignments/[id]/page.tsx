@@ -9,6 +9,7 @@ import { getAssignmentById, getPendingFeedbackAssignments } from "@/lib/actions/
 import { getFeedbacksByAssignment } from "@/lib/actions/feedbacks";
 import { getStudentById } from "@/lib/actions/students";
 import { getActiveAuthSession } from "@/lib/auth-guard";
+import { missingWhenAccessDenied } from "@/lib/access-denied-as-missing";
 import { AssignmentDetailClient } from "./AssignmentDetailClient";
 import { formatKst } from "@/lib/kst-format";
 import { safeReturnPath } from "@/lib/safe-return-path";
@@ -45,7 +46,8 @@ export default async function AssignmentDetailPage({
   const fromWorkQueue = isAdmin && query.from === "work";
 
   // 다른 학생의 과제와 없는 과제를 같은 화면으로 처리해 존재 여부를 드러내지 않는다.
-  const assignment = await getAssignmentById(assignmentId).catch(() => null);
+  // 권한 거부만 없는 과제로 바꾼다. DB 일시 오류까지 "찾을 수 없습니다"로 보이면 다시 시도할 길이 없다.
+  const assignment = await missingWhenAccessDenied(getAssignmentById(assignmentId));
   if (!assignment) {
     return (
       <div className="px-5 pb-8 pt-6 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-14">

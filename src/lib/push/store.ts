@@ -85,6 +85,9 @@ export type PushAudience =
   | { kind: "role"; role: "admin" | "student" }
   | { kind: "everyone" };
 
+/** 받는 사람 id를 한 statement에 싣는 수(D1 bind 상한 100보다 작게). */
+const PUSH_TARGET_ID_CHUNK = 90;
+
 /**
  * 받는 사람의 구독. 보낸 사람 본인(excludeProfileId)과 이 종류(category)를 끈 계정은 빼고, 지금 있는 계정만 고른다.
  * category가 없으면(테스트 알림) 끈 종류를 보지 않는다.
@@ -106,11 +109,15 @@ export async function listPushTargets(
   if (audience.kind === "profiles") {
     const ids = [...new Set(audience.profileIds)].filter((id) => id && id !== excludeProfileId);
     if (ids.length === 0) return [];
-    rows = await db
-      .select(columns)
-      .from(pushSubscriptions)
-      .innerJoin(profiles, eq(profiles.id, pushSubscriptions.profileId))
-      .where(inArray(pushSubscriptions.profileId, ids));
+    // D1은 statement 하나에 bind를 100개까지만 받는다. 받는 사람이 많으면 나눠 읽는다.
+    rows = [];
+    for (let start = 0; start < ids.length; start += PUSH_TARGET_ID_CHUNK) {
+      rows.push(...await db
+        .select(columns)
+        .from(pushSubscriptions)
+        .innerJoin(profiles, eq(profiles.id, pushSubscriptions.profileId))
+        .where(inArray(pushSubscriptions.profileId, ids.slice(start, start + PUSH_TARGET_ID_CHUNK))));
+    }
   } else if (audience.kind === "role") {
     rows = await db
       .select(columns)
@@ -125,13 +132,12 @@ export async function listPushTargets(
   }
   const candidates = excludeProfileId ? rows.filter((row) => row.profileId !== excludeProfileId) : rows;
   if (!category || candidates.length === 0) return candidates;
+  // 후보 계정 id를 bind하지 않는다(알림을 켠 계정이 100개를 넘으면 D1이 거절해 아무에게도 가지 않는다).
+  // 이 종류를 끈 계정은 계정 수를 넘지 않으므로 종류만으로 읽어 여기서 거른다.
   const muted = await db
     .select({ profileId: pushMutedCategories.profileId })
     .from(pushMutedCategories)
-    .where(and(
-      eq(pushMutedCategories.category, category),
-      inArray(pushMutedCategories.profileId, [...new Set(candidates.map((row) => row.profileId))]),
-    ));
+    .where(eq(pushMutedCategories.category, category));
   if (muted.length === 0) return candidates;
   const mutedIds = new Set(muted.map((row) => row.profileId));
   return candidates.filter((row) => !mutedIds.has(row.profileId));

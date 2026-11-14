@@ -110,14 +110,14 @@ export function createNodeAuthConfig(
             const user = await findProfileByEmail(
               credentials.email as string,
             );
+            // 계정이 없어도 같은 확인을 거친다(verifyStoredPassword가 자리 채움 hash와 비교해 응답 시간을 맞춘다).
+            const isValid = await verifyStoredPassword(
+              credentials.password as string,
+              user?.passwordHash,
+            );
             if (!user || !user.passwordHash) {
               return null;
             }
-
-            const isValid = await verifyStoredPassword(
-              credentials.password as string,
-              user.passwordHash,
-            );
 
             if (!isValid) return null;
 
