@@ -11,7 +11,7 @@ export { PASSWORD_ATTEMPT_LIMITED_MESSAGE } from "@/lib/login-messages";
 
 const MISSING_CLIENT_ADDRESS_KEY = "missing-cloudflare-client-address";
 
-function findPasswordAttemptLimiter(): PasswordAttemptRateLimiter | null {
+export function findPasswordAttemptLimiter(): PasswordAttemptRateLimiter | null {
   try {
     const { getCloudflareContext } = require("@opennextjs/cloudflare") as {
       getCloudflareContext: () => { env?: Record<string, unknown> };

@@ -3,7 +3,7 @@ import { base64UrlDecode } from "./web-push-crypto";
 
 /**
  * 브라우저 PushSubscription.toJSON()에서 받은 값을 저장 가능한 구독으로 좁힌다.
- * endpoint는 https·2048자 이하, p256dh는 비압축 P-256 공개키(65바이트), auth는 16바이트여야 한다.
+ * endpoint는 알려진 푸시 서비스의 https 주소·2048자 이하(`isAllowedPushEndpoint`), p256dh는 비압축 P-256 공개키(65바이트), auth는 16바이트여야 한다.
  */
 export function parsePushSubscriptionInput(input: unknown): PushTarget | null {
   if (typeof input !== "object" || input === null) return null;

@@ -5,7 +5,7 @@ import { detectPushSupport } from "@/components/push/push-client";
 import { readPushConfig } from "./config";
 import { pushMessages } from "./messages";
 import { deliverPush, type PushDeliveryDeps } from "./notify";
-import { sendWebPush } from "./send";
+import { isAllowedPushEndpoint, sendWebPush } from "./send";
 import type { StoredPushTarget } from "./store";
 import { parsePushSubscriptionInput } from "./subscription-input";
 import { generateVapidKeyPair } from "./web-push-crypto";
@@ -14,7 +14,7 @@ const P256DH = "BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyP
 const AUTH = "BTBZMqHH6r4Tts7J_aSIgg";
 
 function target(id: string, profileId: string): StoredPushTarget {
-  return { id, profileId, endpoint: `https://push.example.com/${id}`, p256dh: P256DH, auth: AUTH };
+  return { id, profileId, endpoint: `https://fcm.googleapis.com/fcm/send/${id}`, p256dh: P256DH, auth: AUTH };
 }
 
 test("config: 두 키와 https·mailto 연락처가 있어야 켜지고, 연락처가 없으면 AUTH_URL을 쓴다", async () => {
@@ -36,6 +36,31 @@ test("config: 두 키와 https·mailto 연락처가 있어야 켜지고, 연락�
     null,
     "키를 바꿔 넣음",
   );
+});
+
+test("알림 주소: 알려진 푸시 서비스의 https 기본 포트 주소만 받는다", () => {
+  for (const endpoint of [
+    "https://fcm.googleapis.com/fcm/send/abc",
+    "https://updates.push.services.mozilla.com/wpush/v2/abc",
+    "https://web.push.apple.com/abc",
+    "https://wns2-par02p.notify.windows.com/w/?token=abc",
+  ]) {
+    assert.equal(isAllowedPushEndpoint(endpoint), true, endpoint);
+  }
+  for (const endpoint of [
+    "https://push.example.com/abc",
+    "https://fcm.googleapis.com.example.com/abc",
+    "https://evilpush.apple.com.example/abc",
+    "https://notfcm.googleapis.com/abc",
+    "https://fcm.googleapis.com:8443/abc",
+    "https://user:pass@fcm.googleapis.com/abc",
+    "https://169.254.169.254/latest/meta-data",
+    "https://localhost/abc",
+    "http://fcm.googleapis.com/abc",
+    "not a url",
+  ]) {
+    assert.equal(isAllowedPushEndpoint(endpoint), false, endpoint);
+  }
 });
 
 test("구독 입력: https endpoint와 65바이트 p256dh·16바이트 auth만 받고 패딩을 뗀다", () => {
@@ -98,6 +123,7 @@ test("send: 성공·사라짐(404·410)·일시 실패를 나누고 표준 헤�
   assert.equal(await sendWebPush(item, pushMessages.test(), keys, respond(429)), "failed");
   assert.equal(await sendWebPush(item, pushMessages.test(), keys, (async () => { throw new Error("down"); }) as typeof fetch), "failed");
   assert.equal(await sendWebPush({ ...item, endpoint: "http://push.example.com/a" }, pushMessages.test(), keys, respond(201)), "gone");
+  assert.equal(await sendWebPush({ ...item, endpoint: "https://push.example.com/a" }, pushMessages.test(), keys, respond(201)), "gone", "목록에 없는 주소로는 요청하지 않는다");
   assert.equal(await sendWebPush({ ...item, p256dh: "broken" }, pushMessages.test(), keys, respond(201)), "gone");
 
   const headers = calls[0]!.init.headers as Record<string, string>;
