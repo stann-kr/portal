@@ -208,6 +208,9 @@ export async function createDiggingTrack(data: {
   };
 }
 
+/** 칸 저장이 다른 저장과 겹쳤을 때 다시 읽어 시도하는 횟수. */
+const TRACK_VALUE_WRITE_ATTEMPTS = 4;
+
 /**
  * 트랙 단일 셀 값 업데이트 (인라인 편집).
  */
@@ -220,9 +223,9 @@ export async function updateDiggingTrackValue(
   assertStudentSession(session.user.role);
   const db = createDb();
 
-  const [[track], [column]] = await Promise.all([
+  const readTrackValues = () =>
     db
-      .select()
+      .select({ values: diggingTracks.values })
       .from(diggingTracks)
       .where(
         and(
@@ -230,7 +233,9 @@ export async function updateDiggingTrackValue(
           eq(diggingTracks.userId, session.user.id!),
         ),
       )
-      .limit(1),
+      .limit(1);
+  const [[firstRead], [column]] = await Promise.all([
+    readTrackValues(),
     db
       .select({
         id: diggingColumns.id,
@@ -248,31 +253,43 @@ export async function updateDiggingTrackValue(
       .limit(1),
   ]);
 
-  if (!track || !column) {
+  if (!firstRead || !column) {
     throw new Error("트랙 또는 컬럼을 찾을 수 없습니다.");
   }
   const parsedValue = parseDiggingColumnValue(column, value);
   if (!parsedValue.ok) throw new Error(parsedValue.error);
 
-  const currentValues = (() => {
-    try { return JSON.parse(track.values ?? "{}") as Record<string, unknown>; }
-    catch { return {} as Record<string, unknown>; }
-  })();
-  currentValues[columnId] = parsedValue.value;
-  const serialized = JSON.stringify(currentValues);
-  if (new TextEncoder().encode(serialized).byteLength > DIGGING_TRACK_VALUES_MAX_BYTES) {
-    throw new Error("트랙 입력값이 저장 가능한 크기를 넘었습니다.");
-  }
+  // 칸 값은 트랙의 JSON 한 덩어리에 들어 있다. 읽은 값이 그대로일 때만 쓰고, 그 사이 다른 탭·기기가
+  // 같은 트랙의 다른 칸을 고쳤으면 다시 읽어 그 위에 이 칸만 바꾼다(통째로 덮어써 남의 칸을 지우지 않는다).
+  let track: { values: string } | undefined = firstRead;
+  for (let attempt = 0; attempt < TRACK_VALUE_WRITE_ATTEMPTS; attempt += 1) {
+    if (!track) throw new Error("트랙 또는 컬럼을 찾을 수 없습니다.");
+    const readValues = track.values;
+    const currentValues = (() => {
+      try { return JSON.parse(readValues ?? "{}") as Record<string, unknown>; }
+      catch { return {} as Record<string, unknown>; }
+    })();
+    currentValues[columnId] = parsedValue.value;
+    const serialized = JSON.stringify(currentValues);
+    if (new TextEncoder().encode(serialized).byteLength > DIGGING_TRACK_VALUES_MAX_BYTES) {
+      throw new Error("트랙 입력값이 저장 가능한 크기를 넘었습니다.");
+    }
 
-  await db
-    .update(diggingTracks)
-    .set({ values: serialized })
-    .where(
-      and(
-        eq(diggingTracks.id, trackId),
-        eq(diggingTracks.userId, session.user.id!),
-      ),
-    );
+    const written = await db
+      .update(diggingTracks)
+      .set({ values: serialized })
+      .where(
+        and(
+          eq(diggingTracks.id, trackId),
+          eq(diggingTracks.userId, session.user.id!),
+          eq(diggingTracks.values, readValues),
+        ),
+      )
+      .returning({ id: diggingTracks.id });
+    if (written.length > 0) return;
+    [track] = await readTrackValues();
+  }
+  throw new Error("다른 곳에서 이 트랙을 함께 고치고 있어 저장하지 못했습니다. 잠시 뒤 다시 시도해 주세요.");
 }
 
 /**
