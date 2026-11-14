@@ -53,3 +53,20 @@ test("가입 링크 secret은 만료 시각과 함께 저장되고 로그인 비
   assert.equal(await verifyInviteSecret(secret, "$2a$04$x", new Date()), "invalid");
   assert.equal(await verifyStoredPassword(secret, stored), false);
 });
+
+test("계정이 없거나 가입 전이어도 비밀번호 확인과 같은 일을 해, 응답 시간으로 가입 여부를 알 수 없다", async () => {
+  const stored = await bcrypt.hash("real-pass-1", 10);
+  const invite = inviteHash(await bcrypt.hash("invite-secret", 10), new Date(Date.now() + 60_000));
+  const elapsed = async (run: () => Promise<boolean>) => {
+    const startedAt = performance.now();
+    assert.equal(await run(), false);
+    return performance.now() - startedAt;
+  };
+  // 한 번씩 미리 돌려 JIT 차이를 줄인다.
+  await verifyStoredPassword("warm-up", stored);
+  const wrongPassword = await elapsed(() => verifyStoredPassword("wrong-pass", stored));
+  const noAccount = await elapsed(() => verifyStoredPassword("wrong-pass", null));
+  const notJoined = await elapsed(() => verifyStoredPassword("wrong-pass", invite));
+  assert.ok(noAccount > wrongPassword * 0.3, `없는 계정 ${noAccount.toFixed(1)}ms, 틀린 비밀번호 ${wrongPassword.toFixed(1)}ms`);
+  assert.ok(notJoined > wrongPassword * 0.3, `가입 전 계정 ${notJoined.toFixed(1)}ms, 틀린 비밀번호 ${wrongPassword.toFixed(1)}ms`);
+});
