@@ -12,6 +12,7 @@ import { BubbleMenu } from "@tiptap/react/menus";
 import { type MarkdownStorage } from "tiptap-markdown";
 import type { Editor } from "@tiptap/core";
 import type { Slice } from "@tiptap/pm/model";
+import { NodeSelection, Selection, TextSelection } from "@tiptap/pm/state";
 import {
   createFullEditorExtensions,
   type FullEditorCollaboration,
@@ -355,6 +356,25 @@ export function FullEditor({
         .insertContentAt(currentEditor.state.selection.to, {
           type: "image",
           attrs: { src: upload.deliveryUrl, alt: alt || null },
+        })
+        .command(({ tr }) => {
+          // 붙여넣은 글에서 올린 이미지는 사용자가 고른 것이 아니라 글을 쓰는 도중에 들어온다.
+          // 선택된 채로 두면 이어서 친 글자가 이미지를 지우므로 커서를 이미지 뒤로 옮긴다.
+          if (upload.source !== "pasted" || !(tr.selection instanceof NodeSelection)) return true;
+          const after = tr.selection.to;
+          const next = Selection.findFrom(tr.doc.resolve(after), 1, true);
+          if (next) {
+            tr.setSelection(next);
+            return true;
+          }
+          // 이미지가 문서의 마지막이면 뒤에 글을 이어 쓸 빈 문단을 만든다.
+          const $after = tr.doc.resolve(after);
+          const paragraph = tr.doc.type.schema.nodes.paragraph;
+          if (paragraph && $after.parent.canReplaceWith($after.index(), $after.index(), paragraph)) {
+            tr.insert(after, paragraph.create());
+            tr.setSelection(TextSelection.create(tr.doc, after + 1));
+          }
+          return true;
         })
         .run();
     },

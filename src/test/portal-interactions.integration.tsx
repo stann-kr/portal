@@ -4749,6 +4749,25 @@ test("따로 내려받는 화면 조각은 내려받기에 실패하면 그 자�
   assert.equal(browser.document.querySelector('[role="alert"]'), null);
   assert.match(browser.document.body.textContent ?? "", /노트 본문/u);
 
+  // 불러오는 중·실패 자리는 그 조각이 받을 props를 받아, 이미 아는 제목을 먼저 보일 수 있다.
+  let titledAttempts = 0;
+  const Titled = retryableLazy<{ title: string }>(
+    async () => {
+      titledAttempts += 1;
+      if (titledAttempts === 1) throw new Error("Loading chunk failed");
+      return function Loaded({ title }: { title: string }) { return <article>{title} 본문</article>; };
+    },
+    {
+      loading: ({ title }) => <p>{title} 불러오는 중</p>,
+      failed: (retry, { title }) => <div data-titled-failed><h2>{title}</h2><LazyLoadFailed message="전체 내용을 불러오지 못했습니다." onRetry={retry} /></div>,
+    },
+  );
+  await render(context, <Titled title="11월 2주차 레슨 노트" />);
+  assert.equal(browser.document.querySelector("[data-titled-failed] h2")?.textContent, "11월 2주차 레슨 노트", "실패 자리에 제목이 남는다");
+  await press("다시 시도");
+  await settle();
+  assert.equal(browser.document.querySelector("article")?.textContent, "11월 2주차 레슨 노트 본문");
+
   // 내려받은 조각이 그려지다 던진 오류는 이 자리에서 삼키지 않는다(route 오류 화면이 맡는다).
   const Broken = retryableLazy<object>(
     async () => function Throws(): React.ReactElement { throw new Error("render failed"); },
@@ -4851,6 +4870,37 @@ test("FullEditor는 붙여넣은 글 속 data 이미지를 본문에 넣지 않�
   assert.match(changes.at(-1) ?? "", /<img[^>]+src="\/api\/media\/30000000-0000-4000-8000-000000000001"/u, "올라간 이미지를 본문에 넣는다");
   assert.equal(changes.some((html) => html.includes("data:image")), false);
   assert.doesNotMatch(browser.document.body.textContent ?? "", /올리는 중/u);
+
+  // 글을 쓰는 도중에 들어온 이미지는 선택된 채로 남지 않는다. 이어서 친 글자가 이미지를 지우면 안 된다.
+  const editor = (browser.document.querySelector(".ProseMirror") as unknown as { editor: Editor }).editor;
+  assert.equal(editor.state.selection.toJSON().type, "text", "커서는 이미지 뒤에 놓인다");
+  await act(async () => {
+    const { from, to } = editor.state.selection;
+    editor.view.dispatch(editor.state.tr.insertText("이어 쓴 글", from, to));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  });
+  await settleEditor();
+  const continued = changes.at(-1) ?? "";
+  assert.match(continued, /<img[^>]+src="\/api\/media\/30000000-0000-4000-8000-000000000001"/u, "이어 써도 이미지는 남는다");
+  assert.ok(continued.indexOf("붙여넣은 글") < continued.indexOf("<img") && continued.indexOf("<img") < continued.indexOf("이어 쓴 글"), "붙여넣은 글, 이미지, 이어 쓴 글 순서다");
+});
+
+test("FullEditor는 붙여넣은 data 이미지 여러 장을 붙여넣은 순서대로 넣는다", { concurrency: false }, async (context) => {
+  const { releases } = mockEditorImageUpload(context);
+  const changes: string[] = [];
+  await render(context, <FullEditor initialContent="<p>본문</p>" ariaLabel="본문" onChange={(html) => changes.push(html)} />);
+  await settleEditor();
+  await pasteIntoEditor(`<p>붙여넣은 글</p><img src="${PASTED_PNG}"><img src="${PASTED_PNG}">`);
+  await settleEditor();
+  for (const index of [0, 1]) {
+    await act(async () => { releases[index]?.(undefined as never); await new Promise((resolve) => setTimeout(resolve, 10)); });
+    await settleEditor();
+  }
+  const html = changes.at(-1) ?? "";
+  const first = html.indexOf("/api/media/30000000-0000-4000-8000-000000000001");
+  const second = html.indexOf("/api/media/30000000-0000-4000-8000-000000000002");
+  assert.ok(first !== -1 && second !== -1, "두 장 모두 본문에 들어간다");
+  assert.ok(first < second, "먼저 붙여넣은 이미지가 앞에 온다");
 });
 
 test("FullEditor는 붙여넣은 data 이미지를 넣지 못하면 몇 장을 왜 못 넣었는지 알린다", { concurrency: false }, async (context) => {

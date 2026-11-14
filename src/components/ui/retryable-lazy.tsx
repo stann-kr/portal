@@ -46,10 +46,15 @@ class LazyLoadBoundary extends Component<BoundaryProps, { error: unknown }> {
  * 열 때 따로 내려받는 화면 조각(캔버스 "코드 리뷰 2차 후속" ①).
  * 내려받기에 실패하면 화면 전체 오류로 넘기지 않고 그 자리에 `failed`를 보이고,
  * "다시 시도"는 그 조각만 다시 내려받는다. React.lazy는 실패를 기억하므로 다시 시도할 때 새로 만든다.
+ * `loading`·`failed`는 그 조각이 받을 props를 함께 받아, 조각 없이도 아는 값(제목 등)을 같은 자리에 먼저 보일 수 있다.
  */
 export function retryableLazy<Props extends object>(
   load: () => Promise<ComponentType<Props>>,
-  options: { loading: ReactNode; failed: (retry: () => void) => ReactNode },
+  options: {
+    /** 내려받는 동안 보일 자리. 함수로 주면 그 조각이 받을 props로 그린다(제목처럼 이미 아는 값을 먼저 보일 때). */
+    loading: ReactNode | ((props: Props) => ReactNode);
+    failed: (retry: () => void, props: Props) => ReactNode;
+  },
 ): ComponentType<Props> {
   const create = () =>
     lazy(() =>
@@ -79,9 +84,10 @@ export function retryableLazy<Props extends object>(
   function RetryableLazy(props: Props) {
     const shown = useSyncExternalStore(subscribe, readGeneration, readGeneration);
     const Loaded = Current;
+    const loading = typeof options.loading === "function" ? options.loading(props) : options.loading;
     return (
-      <LazyLoadBoundary key={shown} failed={options.failed} onRetry={retry}>
-        <Suspense fallback={options.loading}>
+      <LazyLoadBoundary key={shown} failed={(retryLoad) => options.failed(retryLoad, props)} onRetry={retry}>
+        <Suspense fallback={loading}>
           <Loaded {...props} />
         </Suspense>
       </LazyLoadBoundary>

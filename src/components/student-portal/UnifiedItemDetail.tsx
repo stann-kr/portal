@@ -33,12 +33,30 @@ import { assignmentTaskHref, buildAdminStudentDetailHref, buildStudentDiggingBoa
  * 받는 동안은 노트 상세가 처음 보이는 "불러오는 중"과 같은 줄을 둔다.
  */
 export const preloadUnifiedNoteDetail = () => import("./UnifiedNoteDetail");
+/** 노트 본문 조각을 받기 전·받지 못했을 때의 자리. 이미 아는 제목은 받은 뒤와 같은 모양으로 먼저 보인다. */
+function NoteDetailPlaceholder({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div className="flex flex-col gap-3">
+      <h2 className="break-words text-2xl font-semibold tracking-display">{title}</h2>
+      {children}
+    </div>
+  );
+}
+
 const UnifiedNoteDetail = retryableLazy(
   () => import("./UnifiedNoteDetail").then((m) => m.UnifiedNoteDetail),
   {
-    loading: <p className="text-xs text-muted-foreground" role="status">전체 내용을 불러오는 중입니다.</p>,
+    loading: ({ item }) => (
+      <NoteDetailPlaceholder title={item.title}>
+        <p className="text-xs text-muted-foreground" role="status">전체 내용을 불러오는 중입니다.</p>
+      </NoteDetailPlaceholder>
+    ),
     // 받지 못하면 화면 전체 오류로 넘기지 않고 이 자리에서 알린다(캔버스 "코드 리뷰 2차 후속" ①).
-    failed: (retry) => <LazyLoadFailed message="전체 내용을 불러오지 못했습니다." onRetry={retry} />,
+    failed: (retry, { item }) => (
+      <NoteDetailPlaceholder title={item.title}>
+        <LazyLoadFailed message="전체 내용을 불러오지 못했습니다." onRetry={retry} />
+      </NoteDetailPlaceholder>
+    ),
   },
 );
 
