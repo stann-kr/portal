@@ -146,6 +146,29 @@ test("누르면 같은 글 이미지 중 그 위치로 열고, ←/→로 넘기
   assert.equal(browser.document.activeElement, third);
 });
 
+test("이전·다음 버튼으로 넘겨도 초점이 그 버튼에 남아 Enter를 이어 누를 수 있다", { concurrency: false }, async (context) => {
+  const container = await render(context, <RichTextContent html={html} />);
+  const first = container.querySelector(".rich-text img") as unknown as HTMLElement;
+  first.focus();
+  await click(first);
+  assert.equal(caption(), "믹서 EQ 설정 · 1 / 3");
+
+  const next = dialog()?.querySelector('button[aria-label="다음 이미지"]') as unknown as HTMLElement;
+  next.focus();
+  await click(next);
+  assert.equal(caption(), "이미지 · 2 / 3");
+  assert.equal(browser.document.activeElement, next, "넘긴 뒤에도 같은 '다음 이미지' 버튼에 초점");
+  await click(browser.document.activeElement as unknown as HTMLElement);
+  assert.equal(caption(), "셋업 사진 · 3 / 3");
+
+  const prev = dialog()?.querySelector('button[aria-label="이전 이미지"]') as unknown as HTMLElement;
+  prev.focus();
+  await click(prev);
+  assert.equal(caption(), "이미지 · 2 / 3");
+  assert.equal(browser.document.activeElement, prev);
+  await key(browser.document.activeElement, "Escape");
+});
+
 test("키보드: Enter로 열고, 닫기 버튼으로 닫으면 초점이 돌아간다. 이미지 하나면 넘기기 버튼과 번호가 없다", { concurrency: false }, async (context) => {
   const container = await render(context, <RichTextContent html='<p>하나</p><img src="data:image/png;base64,AAAA" alt="한 장">' />);
   const image = container.querySelector(".rich-text img") as unknown as HTMLElement;

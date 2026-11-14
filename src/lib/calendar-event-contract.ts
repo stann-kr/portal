@@ -128,6 +128,65 @@ export function parseCalendarEventCreateInput(input: {
   };
 }
 
+/** 상세 패널 수정 form이 고칠 수 있는 칸. */
+export const CALENDAR_EVENT_EDIT_FIELDS = [
+  "title",
+  "eventType",
+  "startTime",
+  "endTime",
+  "description",
+] as const;
+
+export type CalendarEventEditField = (typeof CALENDAR_EVENT_EDIT_FIELDS)[number];
+
+/** 상세 패널 수정 form이 연 값을 함께 보내는 hidden input 이름. */
+export function openedCalendarEventFieldName(field: CalendarEventEditField): string {
+  return `opened.${field}`;
+}
+
+function parseOptionalDate(value: unknown, label: string): ValidationResult<Date | null> {
+  if (value === null || value === undefined || value === "") return { ok: true, value: null };
+  return parseDate(value, label);
+}
+
+function sameOptionalTime(left: Date | null, right: Date | null): boolean {
+  return left === null || right === null ? left === right : left.getTime() === right.getTime();
+}
+
+/**
+ * 상세 패널 수정 form이 연 값(opened)과 보낸 값(submitted)을 같은 규칙으로 읽어 비교하고, 학생이 고친 칸만 patch로
+ * 고른다. 손대지 않은 칸은 그 사이 다른 곳(관리자가 옮긴 시간·외부 캘린더 동기화)에서 바뀐 값을 덮지 않고, 같은 칸을
+ * 둘이 고치면 나중 저장이 이긴다(2026-11-14 사용자 결정). 시작·종료는 한 칸처럼 묶어 하나를 고치면 둘 다 쓴다.
+ * 연 값을 읽을 수 없는 칸은 고친 칸으로 본다.
+ * opened가 null이면(연 값을 보내지 않는 이전 화면) 보낸 값 전체를 patch로 쓴다.
+ */
+export function pickEditedCalendarEventFields(
+  submitted: CalendarEventValues,
+  opened: Record<CalendarEventEditField, unknown> | null,
+): CalendarEventPatch {
+  if (!opened) return { ...submitted };
+  const patch: CalendarEventPatch = {};
+  const title = parseTitle(opened.title);
+  if (!title.ok || title.value !== submitted.title) patch.title = submitted.title;
+  const eventType = parseEventType(opened.eventType || "NOTE");
+  if (!eventType.ok || eventType.value !== submitted.eventType) patch.eventType = submitted.eventType;
+  // 시작·종료는 한 묶음이다. 하나만 고쳐도 학생이 보던 범위 전체를 써서, 그 사이 옮긴 다른 쪽과 섞인 범위
+  // (누구도 고르지 않은 길이·범위 오류)가 생기지 않게 한다.
+  const startTime = parseDate(opened.startTime, "시작 시간");
+  const endTime = parseOptionalDate(opened.endTime, "종료 시간");
+  const timeEdited = !startTime.ok
+    || startTime.value.getTime() !== submitted.startTime.getTime()
+    || !endTime.ok
+    || !sameOptionalTime(endTime.value, submitted.endTime);
+  if (timeEdited) {
+    patch.startTime = submitted.startTime;
+    patch.endTime = submitted.endTime;
+  }
+  const description = parseDescription(opened.description);
+  if (!description.ok || description.value !== submitted.description) patch.description = submitted.description;
+  return patch;
+}
+
 export function parseCalendarEventUpdateInput(
   input: unknown,
   current: CalendarEventValues,

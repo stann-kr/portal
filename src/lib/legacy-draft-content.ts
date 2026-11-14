@@ -9,6 +9,16 @@ export type LegacyDraftContent = {
   contentHtml: string;
 };
 
+/**
+ * 실시간 공동 편집으로 옮겨 가 이제 기기 초안을 쓰지 않는 문서 종류. 보관함은 이 종류의 기기 초안만 "이전 초안"으로 보인다.
+ * 댓글·과제 피드백·제출·수업 메모·과제 폼은 지금도 같은 키로 기기 초안을 쓰고 폼이 직접 되살리므로 넣지 않는다.
+ */
+const LEGACY_ARCHIVE_DRAFT_KINDS: ReadonlySet<string> = new Set(["note", "community-post", "qna-thread", "qna-reply", "guide-page"]);
+
+export function isLegacyArchiveDraftKind(kind: string): boolean {
+  return LEGACY_ARCHIVE_DRAFT_KINDS.has(kind);
+}
+
 // 편집기가 예전에 본문을 담던 필드 이름(recovery-preview와 같은 우선순위).
 const BODY_FIELDS = ["contentHtml", "content", "body", "text"] as const;
 

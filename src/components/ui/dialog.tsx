@@ -5,6 +5,7 @@ import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useOverlayFocus } from "./use-overlay-focus";
+import { isEscapeForOpenLayer } from "./escape-layer";
 
 const Dialog = DialogPrimitive.Root;
 const DialogTrigger = DialogPrimitive.Trigger;
@@ -35,9 +36,16 @@ function DialogContent({
   onPointerDownOutside,
   onInteractOutside,
   dismissible = true,
+  ref,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & { dismissible?: boolean }) {
   const { captureFocus, restoreFocus } = useOverlayFocus();
+  const contentRef = React.useRef<HTMLDivElement | null>(null);
+  const setContentRef = React.useCallback((node: HTMLDivElement | null) => {
+    contentRef.current = node;
+    if (typeof ref === "function") ref(node);
+    else if (ref) ref.current = node;
+  }, [ref]);
 
   return (
     <DialogPortal>
@@ -53,7 +61,7 @@ function DialogContent({
         }}
         onEscapeKeyDown={(event) => {
           onEscapeKeyDown?.(event);
-          if (!dismissible) event.preventDefault();
+          if (!dismissible || isEscapeForOpenLayer(event, contentRef.current)) event.preventDefault();
         }}
         onPointerDownOutside={(event) => {
           onPointerDownOutside?.(event);
@@ -69,6 +77,7 @@ function DialogContent({
           className,
         )}
         {...props}
+        ref={setContentRef}
       >
         <span aria-hidden="true" className="mx-auto mb-3 block h-1 w-9 rounded-full bg-border md:hidden" />
         {children}

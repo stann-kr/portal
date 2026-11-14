@@ -44,6 +44,8 @@ test("탭 변환은 byline·mention을 지우고 내부 참조·blob 이미지·
   assert.match(output, /<img src="\/api\/guide-assets\/0f8fad5b-d9cb-469f-a165-70867728950e" alt="CDJ" data-block-id="t\d+">/u);
   assert.match(output, /<img src="\/api\/guide-assets\/7c9e6679-7425-40de-944b-e07fc1f90ae7" alt="번호 그림" data-block-id="t\d+"><p data-block-id="t\d+">번호 그림<\/p>/u);
   assert.match(output, /<ul data-type="taskList"><li data-checked="false" data-type="taskItem"/u);
+  // 읽기 화면이 체크 칸을 그리는 편집기와 같은 칸 구조로 저장한다.
+  assert.match(output, /<li data-checked="false" data-type="taskItem"[^>]*><label><span><\/span><\/label><div><p[^>]*> 켜기<\/p><\/div><\/li>/u);
   assert.equal(sanitizeHtml(output), output);
   assert.equal(warnings.length, 1);
 });

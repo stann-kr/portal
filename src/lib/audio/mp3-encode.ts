@@ -6,7 +6,7 @@
  * 상한은 끝에서만이 아니라 조각마다 확인한다: 출력 바이트가 maxBytes를 넘거나, 원본이 머리글에 적힌 길이
  * (+작은 여유)·절대 상한보다 많은 프레임을 내면 그 자리에서 AudioTooLongError로 멈춘다.
  */
-import { createPeaksAccumulator, type AudioPeaks } from "./peaks";
+import { createTimedPeaksAccumulator, type AudioPeaks } from "./peaks";
 import { selectMp3Bitrate, type Mp3BitrateKbps } from "./mp3-bitrate";
 import { blobByteReader, parsePcmHeader } from "./pcm-header";
 import { decodePcmChunk, outputChannelCount, pcmChunkRanges } from "./pcm-stream";
@@ -83,7 +83,8 @@ export async function encodeSourceToMp3(
     bitrate: bitrateKbps,
     outputSampleRate: mp3OutputSampleRate(source.sampleRate),
   });
-  const peaks = createPeaksAccumulator(source.totalFrames);
+  // 머리글 길이가 실제와 다를 수 있으므로(잘린 FLAC) 시간 기준으로 모으고 실제 길이로 나눈다.
+  const peaks = createTimedPeaksAccumulator();
   let blob = new Blob([]);
   let pending: Uint8Array<ArrayBuffer>[] = [];
   let pendingBytes = 0;
@@ -110,7 +111,7 @@ export async function encodeSourceToMp3(
     if (length === 0) continue;
     // 머리글보다 훨씬 긴 원본은 인코딩하기 전에 멈춘다.
     if (framesDone + length > maxFrames) throw new AudioTooLongError();
-    peaks.push(channels);
+    peaks.push(channels, source.sampleRate, framesDone / source.sampleRate);
     keep(encoder.encode(channels));
     framesDone += length;
     const percent = Math.min(99, Math.floor((framesDone / source.totalFrames) * 100));

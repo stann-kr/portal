@@ -27,6 +27,7 @@ import {
   prepareGuideHtml,
 } from "@/lib/guide-content";
 import { sniffImageMimeType } from "@/lib/media-upload-request";
+import { normalizeTaskItemsHtml } from "@/lib/task-item-html";
 
 type Element = DefaultTreeAdapterTypes.Element;
 type ParentNode = DefaultTreeAdapterTypes.ParentNode;
@@ -262,7 +263,7 @@ export function transformGuideTabHtml(rawHtml: string, context: GuideTabTransfor
     }
   }
 
-  return prepareGuideHtml(serialize(fragment), context.createBlockId);
+  return prepareGuideHtml(normalizeTaskItemsHtml(serialize(fragment)), context.createBlockId);
 }
 
 /**

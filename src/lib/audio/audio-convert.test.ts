@@ -309,6 +309,28 @@ test("출력이 maxBytes를 넘는 순간 남은 조각을 읽지 않고 too-lon
   assert.equal(pulled.count, 101, "그 뒤 조각은 읽지 않는다");
 });
 
+test("원본이 머리글 길이보다 짧게 끝나면(잘린 FLAC) 파형도 실제 길이 전체에 펼친다", async () => {
+  // 머리글 100초, 실제 50초. 25초부터 큰 소리이므로 파형은 가운데(500번)부터 커지고 끝(999번)까지 이어져야 한다.
+  const rate = 1000;
+  const source: PcmSource = {
+    sampleRate: rate,
+    channels: 1,
+    totalFrames: 100 * rate,
+    async *chunks() {
+      for (let start = 0; start < 50 * rate; start += 4000) {
+        yield [Float32Array.from({ length: Math.min(4000, 50 * rate - start) }, (_, i) => (start + i >= 25 * rate ? 0.9 : 0.05))];
+      }
+    },
+  };
+  const result = await encodeSourceToMp3(source, { createEncoder: fakeEncoder(10, { count: 0 }), maxBytes: MAX });
+  assert.equal(result.durationSec, 50);
+  assert.equal(result.peaks.duration, 50);
+  assert.equal(result.peaks.peaks.length, AUDIO_PEAKS_COUNT);
+  assert.equal(result.peaks.peaks.findIndex((value) => value > 0.5), 500);
+  assert.equal(result.peaks.peaks[AUDIO_PEAKS_COUNT - 1], 1, "끝 막대까지 소리가 그려진다");
+  assert.ok(result.peaks.peaks[499]! < 0.1, "큰 소리 전 막대는 작다");
+});
+
 test("머리글 길이(+여유)보다 프레임이 많이 나오면 인코딩하기 전에 too-long으로 멈춘다", async () => {
   const pulled = { count: 0 };
   const calls = { count: 0 };

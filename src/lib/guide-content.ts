@@ -10,6 +10,9 @@ import {
   type DefaultTreeAdapterTypes,
 } from "parse5";
 import { BLOCK_ID_TAGS, SAFE_BLOCK_ID, sanitizeHtml } from "@/lib/sanitize-html";
+import { createRandomGuideBlockId } from "@/lib/guide-block-id";
+
+export { createRandomGuideBlockId };
 
 export const GUIDE_TITLE_MAX_LENGTH = 120;
 export const GUIDE_BASE_REVISION_FIELD = "baseRevision";
@@ -26,7 +29,6 @@ export const GUIDE_ASSET_CONTENT_TYPES = [
 ] as const;
 
 const GUIDE_ASSET_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
-const BLOCK_ID_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
 
 type Element = DefaultTreeAdapterTypes.Element;
 type ParentNode = DefaultTreeAdapterTypes.ParentNode;
@@ -59,14 +61,6 @@ export function normalizeGuideQuote(value: unknown): string | null {
   return codePoints.length <= GUIDE_QUOTE_MAX_LENGTH
     ? collapsed
     : codePoints.slice(0, GUIDE_QUOTE_MAX_LENGTH).join("").trimEnd();
-}
-
-export function createRandomGuideBlockId(): string {
-  const bytes = new Uint8Array(10);
-  crypto.getRandomValues(bytes);
-  let id = "b";
-  for (const byte of bytes) id += BLOCK_ID_ALPHABET[byte % BLOCK_ID_ALPHABET.length];
-  return id;
 }
 
 function visitElements(parent: ParentNode, visit: (element: Element) => void): void {
@@ -176,11 +170,91 @@ export function parseGuidePageId(value: unknown): string | null {
   return typeof value === "string" && GUIDE_PAGE_ID_PATTERN.test(value) ? value : null;
 }
 
+const GUIDE_PAGE_PATH_PREFIX = "/dashboard/guide/";
+const GUIDE_INDEX_PATH = "/dashboard/guide";
+
+const RELATIVE_LINK_ORIGIN = "https://portal.invalid";
+
+function parseOrigin(value: string | null | undefined): string | null {
+  if (!value) return null;
+  try {
+    return new URL(value).origin;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 본문 링크가 가리키는 가이드 페이지 id. `base`(본문이 그려지는 주소) 기준으로 상대 주소(`closed-1`·`../guide/…`·
+ * `/dashboard/guide/<id>…`)를 읽고, 포탈 origin을 알면 주소창에서 붙여 넣은 같은 origin의 전체 주소도 본다.
+ */
+function linkedGuidePageId(href: string, base: string, portalOrigin: string | null): string | null {
+  let url: URL;
+  try {
+    url = new URL(href, base);
+  } catch {
+    return null;
+  }
+  const samePortal = url.origin === RELATIVE_LINK_ORIGIN || (portalOrigin !== null && url.origin === portalOrigin);
+  if (!samePortal) return null;
+  // 겹친 슬래시(`/dashboard//guide/…`)는 서버가 한 칸으로 줄인 주소로 보내므로 같은 페이지로 본다.
+  const pathname = url.pathname.replace(/\/{2,}/gu, "/");
+  if (!pathname.startsWith(GUIDE_PAGE_PATH_PREFIX)) return null;
+  const segment = pathname.slice(GUIDE_PAGE_PATH_PREFIX.length).split("/")[0] ?? "";
+  try {
+    return parseGuidePageId(decodeURIComponent(segment));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 보는 사람에게 열리지 않은 가이드 페이지로 가는 링크는 링크를 빼고 글자만 남긴다(질문 위치 표시와 같은 방식,
+ * 2026-11-14 사용자 결정). 다른 링크와 블록 구조는 그대로 둔다. 바뀐 것이 없으면 입력을 그대로 돌려준다.
+ * 같은 본문이 페이지 주소(`/dashboard/guide/<currentPageId>`)와, 첫 페이지면 가이드 첫 화면(`/dashboard/guide`)에서도
+ * 그려지므로 상대 주소는 두 주소 기준으로 읽어 어느 쪽에서든 닫힌 페이지로 가면 글자로 바꾼다.
+ * `portalOrigin`(포탈 주소, 예: AUTH_URL)을 주면 그 origin의 전체 주소 링크도 같은 규칙을 따른다.
+ */
+export function unwrapClosedGuidePageLinks(
+  sanitizedHtml: string,
+  isOpen: (pageId: string) => boolean,
+  options: { currentPageId: string; portalOrigin?: string | null },
+): string {
+  const origin = parseOrigin(options.portalOrigin);
+  const bases = [
+    `${RELATIVE_LINK_ORIGIN}${guidePagePath(options.currentPageId)}`,
+    `${RELATIVE_LINK_ORIGIN}${GUIDE_INDEX_PATH}`,
+  ];
+  const fragment = parseGuideFragment(sanitizedHtml);
+  const closed: Element[] = [];
+  visitElements(fragment, (element) => {
+    if (defaultTreeAdapter.getTagName(element) !== "a") return;
+    const href = element.attrs.find((attribute) => attribute.name === "href")?.value;
+    if (!href) return;
+    const leadsToClosedPage = bases.some((base) => {
+      const pageId = linkedGuidePageId(href, base, origin);
+      return pageId !== null && !isOpen(pageId);
+    });
+    if (leadsToClosedPage) closed.push(element);
+  });
+  if (!closed.length) return sanitizedHtml;
+  for (const link of closed) {
+    const parent = defaultTreeAdapter.getParentNode(link);
+    if (!parent) continue;
+    for (const child of [...defaultTreeAdapter.getChildNodes(link)]) {
+      defaultTreeAdapter.insertBefore(parent, child, link);
+    }
+    defaultTreeAdapter.detachNode(link);
+  }
+  return serialize(fragment);
+}
+
 /**
  * 블록 식별자를 뺀 본문. 같은 원문을 다시 보내면 새 블록의 식별자만 무작위로 달라지므로,
  * 재전송이 같은 요청인지 비교할 때 쓴다(입력은 prepareGuideHtml을 거친 HTML).
  */
 export function stripGuideBlockIds(preparedHtml: string): string {
-  // 본문 텍스트에 같은 글자가 있어도 지우지 않도록 시작 태그 안의 속성만 지운다(sanitize 뒤라 텍스트의 `<`는 escape되어 있다).
-  return preparedHtml.replace(/<[A-Za-z][^<>]*>/gu, (tag) => tag.replace(/ data-block-id="[A-Za-z0-9_-]{1,64}"/gu, ""));
+  // 본문 텍스트에 같은 글자가 있어도 지우지 않도록 시작 태그 안의 속성만 지운다. 텍스트의 `<`는 escape되어 있지만
+  // 속성 값(img alt·title)의 `<`·`>`는 그대로 직렬화되므로, 따옴표로 감싼 값은 한 덩어리로 건너뛴다.
+  return preparedHtml.replace(/<[A-Za-z](?:[^<>"]|"[^"]*")*>/gu, (tag) => tag.replace(/ data-block-id="[A-Za-z0-9_-]{1,64}"/gu, ""));
 }

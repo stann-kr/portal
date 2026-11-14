@@ -21,6 +21,7 @@ let AdminPortalClient: typeof import("@/components/admin-portal/AdminPortalClien
 let StudentPortalClient: typeof import("@/components/student-portal/StudentPortalClient").StudentPortalClient;
 let EventFormDialog: typeof import("@/components/calendar/EventFormDialog").EventFormDialog;
 let AddTrackDialog: typeof import("@/components/digging/AddTrackDialog").AddTrackDialog;
+let LegacyDraftArchive: typeof import("@/components/drafts/LegacyDraftArchive").LegacyDraftArchive;
 let CurriculumView: typeof import("@/components/student-portal/CurriculumView").CurriculumView;
 let TiptapEditor: typeof import("@tiptap/core").Editor;
 let StarterKit: typeof import("@tiptap/starter-kit").default;
@@ -78,6 +79,7 @@ let DiggingBoard: typeof import("@/components/digging/DiggingBoard").DiggingBoar
 let toggleModule: typeof import("@/lib/actions/curriculum").toggleModuleComplete = async () => {};
 let editModule: typeof import("@/lib/actions/curriculum").updateModule = async () => ({ success: true });
 let OverviewTab: typeof import("@/components/admin/OverviewTab").OverviewTab;
+let GuidePageViewers: typeof import("@/components/guide/GuidePageViewers").GuidePageViewers;
 let changePassword: typeof import("@/lib/actions/password").changeOwnPassword = async () => ({ success: true });
 let PasswordChangeControl: typeof import("@/components/auth/PasswordChangeControl").PasswordChangeControl;
 let PasswordChangeForm: typeof import("@/components/auth/PasswordChangeControl").PasswordChangeForm;
@@ -94,8 +96,9 @@ let confirmActionModule: typeof import("@/components/ui/confirm-action");
 let issueFeedUrl: typeof import("@/lib/actions/calendarFeed").issueStudentCalendarFeedUrl = async () => "/api/calendar/feed?token=test";
 let CalendarFeedControl: typeof import("@/components/admin/CalendarFeedControl").CalendarFeedControl;
 type GuideAccessActions = typeof import("@/lib/actions/guideAccess");
-const guideAccessDefaults: Pick<GuideAccessActions, "getStudentGuideAccess" | "setStudentGuideAccessSetting" | "setStudentGuideAccessPage"> = {
+const guideAccessDefaults: Pick<GuideAccessActions, "getStudentGuideAccess" | "getGuidePageViewers" | "setStudentGuideAccessSetting" | "setStudentGuideAccessPage"> = {
   getStudentGuideAccess: async () => ({ setting: "CLOSED", pageIds: [], pages: [] }),
+  getGuidePageViewers: async () => null,
   setStudentGuideAccessSetting: async () => ({ ok: true }),
   setStudentGuideAccessPage: async () => ({ ok: true }),
 };
@@ -103,6 +106,9 @@ let guideAccessActions = { ...guideAccessDefaults };
 let connectCalendar: typeof import("@/lib/actions/externalCalendars").connectExternalCalendar = async () => ({});
 let ExternalCalendarConnection: typeof import("@/components/student-portal/ExternalCalendarConnection").ExternalCalendarConnection;
 let loadStudentCalendar: typeof import("@/lib/actions/unifiedItems").getUnifiedItemsForStudent = async () => [];
+let loadStudentCalendarWindow: typeof import("@/lib/actions/unifiedItems").getUnifiedItemsWindowForStudent = async () => ({
+  items: [], start: "2025-11-14T00:00:00.000Z", end: "2027-11-14T23:59:59.999Z", truncated: true,
+});
 let loadAllStudentsCalendar: typeof import("@/lib/actions/unifiedItems").getUnifiedItemsForAllStudents = async () => ({
   items: [], start: "2026-01-01T00:00:00.000Z", end: "2026-04-30T23:59:59.999Z", truncated: false,
 });
@@ -168,6 +174,7 @@ mock.module("@/lib/actions/posts", { namedExports: {
   togglePinPost: (...args: Parameters<typeof togglePin>) => togglePin(...args),
 } });
 mock.module("@/lib/actions/categories", { namedExports: { getCategories: async () => [] } });
+mock.module("@/lib/actions/documentDrafts", { namedExports: { discardDocumentServerDraft: async () => ({ ok: true }) } });
 mock.module("@/lib/actions/upload", { namedExports: {
   requestMediaUpload: (...args: Parameters<typeof requestUpload>) => requestUpload(...args),
   completeMediaUploadAction: (...args: Parameters<typeof completeUpload>) => completeUpload(...args),
@@ -199,6 +206,7 @@ mock.module("@/lib/actions/calendarFeed", { namedExports: {
 } });
 mock.module("@/lib/actions/guideAccess", { namedExports: {
   getStudentGuideAccess: (...args: Parameters<GuideAccessActions["getStudentGuideAccess"]>) => guideAccessActions.getStudentGuideAccess(...args),
+  getGuidePageViewers: (...args: Parameters<GuideAccessActions["getGuidePageViewers"]>) => guideAccessActions.getGuidePageViewers(...args),
   setStudentGuideAccessSetting: (...args: Parameters<GuideAccessActions["setStudentGuideAccessSetting"]>) => guideAccessActions.setStudentGuideAccessSetting(...args),
   setStudentGuideAccessPage: (...args: Parameters<GuideAccessActions["setStudentGuideAccessPage"]>) => guideAccessActions.setStudentGuideAccessPage(...args),
 } });
@@ -237,6 +245,7 @@ mock.module("@/lib/actions/calendarSync", { namedExports: {
 mock.module("@/lib/actions/unifiedItems", { namedExports: {
   getUnifiedItemsForStudent: (...args: Parameters<typeof loadStudentCalendar>) => loadStudentCalendar(...args),
   getUnifiedItemsForAllStudents: (...args: Parameters<typeof loadAllStudentsCalendar>) => loadAllStudentsCalendar(...args),
+  getUnifiedItemsWindowForStudent: (...args: Parameters<typeof loadStudentCalendarWindow>) => loadStudentCalendarWindow(...args),
   getExternalUnifiedItemsForStudent: async () => [],
   getExternalUnifiedItems: async () => [],
 } });
@@ -297,6 +306,7 @@ before(async () => {
   ({ CalendarEventActions } = await import("@/components/calendar/CalendarEventActions"));
   ({ LessonActions } = await import("@/components/calendar/LessonActions"));
   ({ AddTrackDialog } = await import("@/components/digging/AddTrackDialog"));
+  ({ LegacyDraftArchive } = await import("@/components/drafts/LegacyDraftArchive"));
   ({ DiggingBoard } = await import("@/components/digging/DiggingBoard"));
   ({ CurriculumView } = await import("@/components/student-portal/CurriculumView"));
   ({ Editor: TiptapEditor } = await import("@tiptap/core"));
@@ -326,6 +336,7 @@ before(async () => {
   ({ LoginForm } = await import("@/components/auth/LoginForm"));
   ({ default: CommunityClient } = await import("@/app/(app)/community/CommunityClient"));
   ({ OverviewTab } = await import("@/components/admin/OverviewTab"));
+  ({ GuidePageViewers } = await import("@/components/guide/GuidePageViewers"));
   ({ PasswordChangeControl, PasswordChangeForm } = await import("@/components/auth/PasswordChangeControl"));
   ({ StudentPasswordResetControl } = await import("@/components/admin/StudentPasswordResetControl"));
   ({ StudentInviteControl } = await import("@/components/admin/StudentInviteControl"));
@@ -1575,6 +1586,12 @@ test("own calendar event edit keeps input on failure and delete confirms before 
   assert.equal(browser.document.querySelector('[role="alert"]')?.textContent, "종료 시간은 시작 시간 이후여야 합니다.");
   assert.equal((browser.document.getElementById("event-edit-event-1-title") as unknown as HTMLInputElement).value, "리듬 연습 2");
   assert.equal(submitted[0]?.get("eventId"), "event-1");
+  assert.equal(submitted[0]?.get("title"), "리듬 연습 2");
+  assert.deepEqual(
+    ["title", "eventType", "startTime", "endTime", "description"].map((field) => submitted[0]?.get(`opened.${field}`)),
+    ["리듬 연습", "PRACTICE", "2026-10-09T10:00", "2026-10-09T11:00", "기존 메모"],
+    "the form sends the values it opened with so the server saves only edited fields",
+  );
   assert.equal(updates.length, 0);
   assert.ok(busy.includes(true), "save locks the surrounding panel");
 
@@ -1628,6 +1645,129 @@ test("track metadata cannot overwrite newer typing and track save locks custom c
   assert.ok(browser.document.querySelector('[role="alert"]'));
   assert.equal((browser.document.getElementById("digging-column-title") as unknown as HTMLInputElement).value, "직접 입력한 트랙명");
   assert.equal(button("닫기").disabled, false);
+});
+
+test("Escape inside the open Camelot picker closes only the picker, then the next Escape closes the track dialog", async (context) => {
+  const closes: boolean[] = [];
+  function TrackHarness() {
+    const [open, setOpen] = useState(true);
+    return <AddTrackDialog open={open} onOpenChange={(next) => { closes.push(next); setOpen(next); }} onSuccess={() => {}} columns={[
+      { id: "title", name: "트랙명", columnType: "text", options: null },
+      { id: "key", name: "키", columnType: "camelot_key", options: null },
+    ]} />;
+  }
+  await render(context, <TrackHarness />);
+  const pressEscapeFromFocus = async () => {
+    const target = browser.document.activeElement;
+    assert.ok(target);
+    await act(async () => {
+      target.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    });
+    await settle();
+  };
+  const picker = () => browser.document.querySelector('[role="group"][aria-label="키 고르기"]');
+
+  await press("키");
+  assert.ok(picker(), "picker opens inside the dialog");
+  const keyChoice = button("8A");
+  await act(async () => keyChoice.focus());
+  await pressEscapeFromFocus();
+  assert.equal(picker(), null, "Escape closes the picker");
+  assert.ok(browser.document.querySelector('[role="dialog"]'), "the dialog stays open");
+  assert.deepEqual(closes, []);
+  assert.equal(browser.document.activeElement, button("키"), "focus returns to the picker trigger");
+
+  await pressEscapeFromFocus();
+  assert.deepEqual(closes, [false], "with the picker closed, Escape dismisses the dialog");
+});
+
+test("Escape while the Camelot picker is open but focus stayed elsewhere in the dialog closes only the picker (Safari·Firefox click does not focus the trigger)", async (context) => {
+  const closes: boolean[] = [];
+  function TrackHarness() {
+    const [open, setOpen] = useState(true);
+    return <AddTrackDialog open={open} onOpenChange={(next) => { closes.push(next); setOpen(next); }} onSuccess={() => {}} columns={[
+      { id: "title", name: "트랙명", columnType: "text", options: null },
+      { id: "key", name: "키", columnType: "camelot_key", options: null },
+    ]} />;
+  }
+  await render(context, <TrackHarness />);
+  const picker = () => browser.document.querySelector('[role="group"][aria-label="키 고르기"]');
+  await press("키");
+  assert.ok(picker());
+  const otherField = browser.document.querySelector('[role="dialog"] input');
+  assert.ok(otherField instanceof browser.HTMLInputElement);
+  await act(async () => otherField.focus());
+  assert.equal(browser.document.activeElement, otherField, "focus is outside the picker");
+  await act(async () => {
+    otherField.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+  });
+  await settle();
+  assert.equal(picker(), null, "Escape closes the picker");
+  assert.deepEqual(closes, [], "the dialog stays open");
+  assert.equal(browser.document.activeElement, otherField, "focus stays where it was");
+
+  await act(async () => {
+    otherField.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+  });
+  await settle();
+  assert.deepEqual(closes, [false], "with the picker closed, Escape dismisses the dialog");
+});
+
+test("Escape while the Camelot picker is open and focus fell to the page body closes only the picker, not the dialog", async (context) => {
+  const closes: boolean[] = [];
+  function TrackHarness() {
+    const [open, setOpen] = useState(true);
+    return <AddTrackDialog open={open} onOpenChange={(next) => { closes.push(next); setOpen(next); }} onSuccess={() => {}} columns={[
+      { id: "title", name: "트랙명", columnType: "text", options: null },
+      { id: "key", name: "키", columnType: "camelot_key", options: null },
+    ]} />;
+  }
+  await render(context, <TrackHarness />);
+  const picker = () => browser.document.querySelector('[role="group"][aria-label="키 고르기"]');
+  await press("키");
+  assert.ok(picker());
+  // 초점을 가진 요소가 사라지거나 blur되면 초점은 body로 빠진다. 이때도 열린 키판이 Esc를 먼저 받는다.
+  await act(async () => (browser.document.activeElement as unknown as HTMLElement | null)?.blur());
+  assert.equal(browser.document.activeElement, browser.document.body, "focus is on the page body");
+  const escapeFromBody = async () => {
+    await act(async () => {
+      browser.document.body.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    });
+    await settle();
+  };
+  await escapeFromBody();
+  assert.equal(picker(), null, "Escape closes the picker");
+  assert.deepEqual(closes, [], "the dialog stays open");
+
+  await escapeFromBody();
+  assert.deepEqual(closes, [false], "with the picker closed, Escape dismisses the dialog");
+});
+
+test("digging table key picker floats on the viewport so the scroll box does not clip it, and the scroll box contains its absolute children", async (context) => {
+  await render(context, <DiggingBoard
+    initialColumns={[
+      { id: "title", name: "트랙명", columnType: "text", options: null, isDefault: true, sortOrder: 0 },
+      { id: "key", name: "키", columnType: "camelot_key", options: null, isDefault: false, sortOrder: 1 },
+    ]}
+    initialTracks={[{ id: "track-1", linkUrl: null, createdAt: new Date("2026-10-09T01:00:00.000Z"), values: { title: "Intro", key: "" } }]}
+  />);
+  const scrollBox = browser.document.querySelector("table")?.parentElement;
+  assert.ok(scrollBox);
+  assert.ok(scrollBox.classList.contains("overflow-x-auto"));
+  assert.ok(scrollBox.classList.contains("relative"), "sr-only text in the header cannot widen the page");
+  const trigger = browser.document.querySelector('table button[aria-label="키"]');
+  assert.ok(trigger instanceof browser.HTMLButtonElement);
+  await act(async () => trigger.click());
+  const panel = browser.document.querySelector('table [role="group"][aria-label="키 고르기"]');
+  assert.ok(panel instanceof browser.HTMLElement);
+  assert.ok(panel.classList.contains("fixed"), "the table picker is positioned on the viewport");
+  assert.equal(panel.classList.contains("absolute"), false);
+  assert.match(panel.style.top, /px$/u);
+  assert.match(panel.style.left, /px$/u);
+  await act(async () => {
+    browser.document.body.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  });
+  assert.equal(browser.document.querySelector('[role="group"][aria-label="키 고르기"]'), null, "Escape from outside closes it");
 });
 
 test("digging board saves only changed cells, clears numbers and ratings without coercing to zero", async (context) => {
@@ -1699,6 +1839,24 @@ test("digging board opens the inline add row from its link prompt and the read-o
   assert.equal([...browser.document.querySelectorAll("button")].some((element) => ["디깅 트랙 삭제", "링크를 붙여넣어 트랙 추가", "트랙 삭제"].includes(element.getAttribute("aria-label") ?? element.textContent ?? "")), false);
   assert.ok(browser.document.querySelector('table [role="img"][aria-label="별점 3점"]'), "read-only stars read as one rating");
   assert.match(browser.document.querySelector("table tbody")?.textContent ?? "", /2026년 10월 9일 \(.\) · 1곡/u);
+});
+
+test("이전 초안 보관함은 실시간 편집으로 옮겨 간 문서 종류의 기기 초안만 보이고, 지금 폼이 쓰는 댓글 초안은 옛 초안으로 보이지 않는다", async (context) => {
+  browser.localStorage.clear();
+  context.after(() => browser.localStorage.clear());
+  browser.localStorage.setItem(
+    createDocumentDraftKey("note", "student-archive", "note-1"),
+    serializeFormDraft({ title: "옛 노트 초안", contentHtml: "<p>옛 노트 본문</p>" }),
+  );
+  browser.localStorage.setItem(
+    createDocumentDraftKey("community-comment", "student-archive", "post-1"),
+    serializeFormDraft({ content: "지금 쓰는 댓글" }),
+  );
+  await render(context, <LegacyDraftArchive actorId="student-archive" serverDrafts={[]} />);
+  await settle();
+  const text = browser.document.body.textContent ?? "";
+  assert.match(text, /옛 노트 초안/u, "실시간 편집으로 옮겨 간 노트의 기기 초안은 보관함에 보인다");
+  assert.doesNotMatch(text, /지금 쓰는 댓글/u, "댓글 폼이 지금 되살리는 초안은 보관함에 보이지 않는다");
 });
 
 test("curriculum rolls back failed optimistic completion and allows a successful retry", async (context) => {
@@ -2576,6 +2734,10 @@ test("과제 고치기는 고치던 내용을 이 기기에 보관해 다시 열
     occurrenceDate: null, recurrenceId: null, version, createdAt: new Date("2026-11-01T00:00:00Z"), submission: null,
   });
   let cancelled = 0;
+  const recoveryNotice = () =>
+    Array.from(browser.document.querySelectorAll('[role="status"]'))
+      .map((element) => element.textContent ?? "")
+      .find((text) => /복구 가능한 작성본/u.test(text)) ?? null;
   const form = (version: number, title: string) => (
     <AssignmentTaskForm key={`t-1:${version}`} actorId="admin-edit" studentId="s-1" task={task(version, title) as never} onDone={() => {}} onCancel={() => { cancelled += 1; }} />
   );
@@ -2600,6 +2762,7 @@ test("과제 고치기는 고치던 내용을 이 기기에 보관해 다시 열
   await settle();
   assert.equal(inputValue("title"), "킥 정리 고침");
   assert.equal(browser.document.querySelector('[role="alert"]'), null);
+  assert.equal(recoveryNotice(), null, "닫혔다 다시 연 뒤 저장해도 앞 단계 내용이 복구본으로 남지 않는다");
 
   // 고치던 중 다른 곳에서 과제가 바뀌면(version 4 → 5) 고치던 내용은 되살리되 저장은 막는다.
   await fill("task-edit-t-1-title", "이 기기에서 고치던 제목");
@@ -2624,6 +2787,7 @@ test("과제 고치기는 고치던 내용을 이 기기에 보관해 다시 열
   await settle();
   assert.equal(inputValue("title"), "다른 기기에서 바꾼 제목");
   assert.equal(browser.document.querySelector('[role="alert"]'), null);
+  assert.equal(recoveryNotice(), null, "취소 뒤 다시 열어도 복구본이 남지 않는다");
 });
 
 test("정기 과제 고치기도 고치던 내용을 이 기기에 보관해 되살리고, 그 사이 규칙이 바뀌었으면 저장을 막는다", async (context) => {
@@ -3265,6 +3429,7 @@ test("admin overview guide section saves each choice at once, in click order, an
   const calls: string[] = [];
   let failNext = false;
   guideAccessActions = {
+    ...guideAccessDefaults,
     getStudentGuideAccess: async () => {
       calls.push("read");
       return { setting: "SELECTED", pageIds: ["guide-1"], pages: [{ id: "guide-1", title: "장비 소개" }, { id: "guide-2", title: "음원 관리" }] };
@@ -3329,6 +3494,160 @@ test("admin overview guide section saves each choice at once, in click order, an
   assert.deepEqual(boxes().map((box) => box.checked), [true, false], "the screen follows what the server holds");
   assert.match(section.querySelector('[role="alert"]')?.textContent ?? "", /가이드 페이지를 찾을 수 없습니다/u);
   assert.doesNotMatch(section.querySelector('[role="status"]')?.textContent ?? "", /저장됨/u);
+});
+
+test("guide page viewers panel opens selected students in click order, sends ALL and CLOSED students to the detail page, and follows the server on failure", async (context) => {
+  const calls: string[] = [];
+  let failNext = false;
+  const server = new Map<string, { setting: "CLOSED" | "ALL" | "SELECTED"; open: boolean; openCount: number }>([
+    ["student-a", { setting: "ALL", open: true, openCount: 3 }],
+    ["student-b", { setting: "SELECTED", open: true, openCount: 2 }],
+    ["student-c", { setting: "SELECTED", open: false, openCount: 0 }],
+    ["student-d", { setting: "CLOSED", open: false, openCount: 0 }],
+  ]);
+  const names: Record<string, string> = { "student-a": "학생 A", "student-b": "학생 B", "student-c": "학생 C", "student-d": "학생 D" };
+  const snapshot = () => ({
+    pageId: "guide-1",
+    totalPages: 3,
+    students: [...server].map(([studentId, value]) => ({
+      studentId, name: names[studentId]!, setting: value.setting, canView: value.open, openCount: value.openCount,
+    })),
+  });
+  guideAccessActions = {
+    ...guideAccessDefaults,
+    getGuidePageViewers: async (pageId) => { calls.push(`read:${pageId}`); return snapshot(); },
+    setStudentGuideAccessPage: async (studentId, pageId, open) => {
+      calls.push(`page:${studentId}:${pageId}:${open}`);
+      if (failNext) {
+        failNext = false;
+        return { ok: false, error: "가이드 페이지를 찾을 수 없습니다. 이미 삭제되었을 수 있습니다." };
+      }
+      const current = server.get(studentId)!;
+      server.set(studentId, { ...current, open, openCount: current.openCount + (open ? 1 : -1) });
+      return { ok: true };
+    },
+  };
+  context.after(() => { guideAccessActions = { ...guideAccessDefaults }; });
+
+  await render(context, <GuidePageViewers pageTitle="장비 소개" initial={snapshot()} />);
+  assert.equal(button("열람 학생 2명").getAttribute("aria-haspopup"), "dialog");
+  await press("열람 학생 2명");
+  assert.deepEqual(calls, ["read:guide-1"], "the panel reads the latest list when it opens");
+  const dialog = browser.document.querySelector('[role="dialog"]');
+  assert.ok(dialog);
+  assert.equal(dialog.querySelector("h2")?.textContent, "이 페이지를 볼 수 있는 학생");
+  assert.equal(dialog.querySelector("p")?.textContent, "장비 소개 · 학생 4명 중 2명");
+  assert.equal(dialog.querySelector("legend")?.textContent, "선택 학생 · 체크하면 이 페이지가 열립니다");
+  const rows = () => [...dialog.querySelectorAll("label")].map((row) => [row.textContent, (row.querySelector("input") as unknown as HTMLInputElement).checked]);
+  assert.deepEqual(rows(), [["학생 B3개 중 2개 열림", true], ["학생 C3개 중 0개 열림 · 닫힘과 같음", false]]);
+  const others = [...dialog.querySelectorAll("li")];
+  assert.deepEqual(others.map((row) => row.textContent), ["✓학생 A전체학생 상세", "–학생 D닫힘학생 상세"]);
+  assert.deepEqual(
+    others.map((row) => [row.querySelector("a")?.getAttribute("href"), row.querySelector("a")?.getAttribute("aria-label")]),
+    [["/dashboard/admin/students/student-a?tab=overview", "학생 A 학생 상세"], ["/dashboard/admin/students/student-d?tab=overview", "학생 D 학생 상세"]],
+  );
+  assert.equal(dialog.querySelectorAll('input[type="checkbox"]').length, 2, "ALL and CLOSED students have no checkbox here");
+
+  await act(async () => { (dialog.querySelectorAll('input[type="checkbox"]')[1] as unknown as HTMLInputElement).click(); });
+  await settle();
+  assert.deepEqual(calls.slice(1), ["page:student-c:guide-1:true"]);
+  assert.deepEqual(rows()[1], ["학생 C3개 중 1개 열림", true]);
+  assert.equal(dialog.querySelector("p")?.textContent, "장비 소개 · 학생 4명 중 3명");
+  assert.equal(dialog.querySelector('[role="status"]')?.textContent, "저장됨");
+  assert.equal(button("열람 학생 3명").getAttribute("aria-expanded"), "true");
+
+  // 저장이 실패하면 서버에 저장된 값을 다시 읽어 화면을 맞추고 이유를 알린다.
+  failNext = true;
+  await act(async () => { (dialog.querySelectorAll('input[type="checkbox"]')[0] as unknown as HTMLInputElement).click(); });
+  await settle();
+  assert.deepEqual(calls.slice(2), ["page:student-b:guide-1:false", "read:guide-1"]);
+  assert.deepEqual(rows()[0], ["학생 B3개 중 2개 열림", true], "the panel follows what the server holds");
+  assert.match(dialog.querySelector('[role="alert"]')?.textContent ?? "", /가이드 페이지를 찾을 수 없습니다/u);
+  assert.equal(dialog.querySelector('[role="status"]')?.textContent, "");
+
+  await escape();
+  assert.equal(browser.document.querySelector('[role="dialog"]'), null);
+  assert.equal(browser.document.activeElement?.textContent, "열람 학생 3명", "closing returns focus to the header button");
+});
+
+test("guide page viewers panel still reports a failed save when another student is checked while it re-reads", async (context) => {
+  const calls: string[] = [];
+  let failNext = false;
+  let holdNextRead = false;
+  let releaseRead: (() => void) | null = null;
+  const server = new Map<string, { open: boolean; openCount: number }>([
+    ["student-b", { open: true, openCount: 2 }],
+    ["student-c", { open: false, openCount: 0 }],
+  ]);
+  const names: Record<string, string> = { "student-b": "학생 B", "student-c": "학생 C" };
+  const snapshot = () => ({
+    pageId: "guide-1",
+    totalPages: 3,
+    students: [...server].map(([studentId, value]) => ({
+      studentId, name: names[studentId]!, setting: "SELECTED" as const, canView: value.open, openCount: value.openCount,
+    })),
+  });
+  guideAccessActions = {
+    ...guideAccessDefaults,
+    getGuidePageViewers: async (pageId) => {
+      calls.push(`read:${pageId}`);
+      if (holdNextRead) {
+        holdNextRead = false;
+        await new Promise<void>((resolve) => { releaseRead = resolve; });
+      }
+      return snapshot();
+    },
+    setStudentGuideAccessPage: async (studentId, pageId, open) => {
+      calls.push(`page:${studentId}:${pageId}:${open}`);
+      if (failNext) {
+        failNext = false;
+        return { ok: false, error: "가이드 페이지를 찾을 수 없습니다. 이미 삭제되었을 수 있습니다." };
+      }
+      const current = server.get(studentId)!;
+      server.set(studentId, { open, openCount: current.openCount + (open ? 1 : -1) });
+      return { ok: true };
+    },
+  };
+  context.after(() => { guideAccessActions = { ...guideAccessDefaults }; });
+
+  await render(context, <GuidePageViewers pageTitle="장비 소개" initial={snapshot()} />);
+  await press("열람 학생 1명");
+  const dialog = browser.document.querySelector('[role="dialog"]');
+  assert.ok(dialog);
+  const boxes = () => [...dialog.querySelectorAll('input[type="checkbox"]')] as unknown as HTMLInputElement[];
+
+  // 학생 B 저장이 실패해 서버 값을 다시 읽는 동안 학생 C를 체크한다.
+  failNext = true;
+  holdNextRead = true;
+  await act(async () => { boxes()[0].click(); });
+  await settle();
+  await act(async () => { boxes()[1].click(); });
+  await settle();
+  assert.deepEqual(calls.slice(1), ["page:student-b:guide-1:false", "read:guide-1"], "the next save waits for the re-read");
+  assert.equal(dialog.querySelector('[role="status"]')?.textContent, "저장 중…");
+
+  releaseRead!();
+  await settle();
+  assert.deepEqual(calls.slice(1), [
+    "page:student-b:guide-1:false",
+    "read:guide-1",
+    "page:student-c:guide-1:true",
+    "read:guide-1",
+  ]);
+  assert.match(dialog.querySelector('[role="alert"]')?.textContent ?? "", /가이드 페이지를 찾을 수 없습니다/u, "B's failure is still reported");
+  assert.equal(dialog.querySelector('[role="status"]')?.textContent, "");
+  assert.deepEqual(boxes().map((box) => box.checked), [true, true], "the panel follows what the server holds");
+});
+
+test("guide page viewers panel says when there are no students yet", async (context) => {
+  guideAccessActions = { ...guideAccessDefaults, getGuidePageViewers: async () => ({ pageId: "guide-1", totalPages: 1, students: [] }) };
+  context.after(() => { guideAccessActions = { ...guideAccessDefaults }; });
+  await render(context, <GuidePageViewers pageTitle="장비 소개" initial={{ pageId: "guide-1", totalPages: 1, students: [] }} />);
+  await press("열람 학생 0명");
+  const dialog = browser.document.querySelector('[role="dialog"]');
+  assert.equal(dialog?.querySelector("p")?.textContent, "장비 소개");
+  assert.match(dialog?.textContent ?? "", /아직 학생이 없습니다\./u);
+  assert.equal(dialog?.querySelector("fieldset"), null);
 });
 
 test("admin overview shows the curriculum ledger with its progress count only when the switch is on", async (context) => {
@@ -3722,9 +4041,16 @@ test("admin schedule opens 전체 학생 by default with student chips, an all-n
   const allLoads: unknown[] = [];
   const studentLoads: string[] = [];
   const lessonRequests: string[] = [];
+  // 기간 없이 부르면 서버처럼 오늘을 덮는 기간을 돌려준다(보이는 기간이 덮이면 더 읽지 않는다).
+  const dayMs = 24 * 60 * 60 * 1000;
   loadAllStudentsCalendar = async (input) => {
     allLoads.push(input);
-    return { items, start: "2026-01-01T00:00:00.000Z", end: "2026-04-30T23:59:59.999Z", truncated: false };
+    return {
+      items,
+      start: input?.start ?? new Date(today.getTime() - 120 * dayMs).toISOString(),
+      end: input?.end ?? new Date(today.getTime() + 120 * dayMs).toISOString(),
+      truncated: false,
+    };
   };
   loadStudentCalendar = async (id) => { studentLoads.push(id); return []; };
   saveLesson = async (studentId) => {
@@ -3867,6 +4193,61 @@ test("전체 학생 일별 보기도 읽지 않은 주로 옮기면 그 기간�
   assert.ok(loads.length >= 1, "읽지 않은 주로 옮기면 전체 학생 일정을 더 읽는다");
 });
 
+test("전체 학생 기간 읽기 오류는 그 기간을 다시 읽어 성공하거나 읽은 기간으로 옮기면 사라지고, 다시 시도는 보던 기간을 읽는다", async (context) => {
+  const students = [
+    { id: "student-1", email: "minji@example.test", displayName: "민지", createdAt: null, currentModule: null, nextLessonDate: null, pendingFeedbackCount: 0, openQnaCount: 0 },
+  ];
+  const loads: ({ start?: string; end?: string } | undefined)[] = [];
+  let failNext = false;
+  loadAllStudentsCalendar = async (input) => {
+    loads.push(input);
+    if (failNext) {
+      failNext = false;
+      throw new Error("network");
+    }
+    return { items: [], start: input?.start ?? "2026-01-01T00:00:00.000Z", end: input?.end ?? "2026-12-31T23:59:59.999Z", truncated: false };
+  };
+  context.after(() => {
+    loadAllStudentsCalendar = async () => ({ items: [], start: "2026-01-01T00:00:00.000Z", end: "2026-04-30T23:59:59.999Z", truncated: false });
+    lastDailyListProps = null;
+  });
+  const referenceTime = new Date("2026-11-14T03:00:00.000Z");
+  browser.history.replaceState({}, "", "/dashboard/admin?section=schedule&view=daily&student=all");
+  await render(context, <AdminPortalClient
+    initialLocation={resolvePortalLocation("admin", { section: "schedule", view: "daily", student: "all" })}
+    initialUnifiedItems={[]} students={students}
+    initialAllStudentsWindow={{ start: "2026-08-01T00:00:00.000Z", end: "2027-01-31T23:59:59.999Z", truncated: false }}
+    adminId="admin" qnaThreads={[]} pendingAssignments={[]} referenceTime={referenceTime}
+  />);
+  const old = [new Date("2025-09-07T00:00:00+09:00"), new Date("2025-09-13T23:59:59.999+09:00")] as const;
+  const current = [new Date("2026-11-08T00:00:00+09:00"), new Date("2026-11-14T23:59:59.999+09:00")] as const;
+  const showRange = async (range: readonly [Date, Date]) => {
+    await act(async () => lastDailyListProps?.onVisibleRangeChange?.(range[0], range[1]));
+    await settle();
+  };
+  const errorShown = () => /이 기간의 전체 학생 일정을 불러오지 못했습니다/u.test(browser.document.body.textContent ?? "");
+
+  failNext = true;
+  await showRange(old);
+  assert.equal(errorShown(), true, "읽지 못한 기간은 알린다");
+  await showRange(current);
+  assert.equal(errorShown(), false, "이미 읽은 기간으로 옮기면 오류 줄이 사라진다");
+  await showRange(old);
+  assert.equal(errorShown(), false, "실패한 기간으로 돌아와 다시 읽어 성공하면 오류 줄이 없다");
+
+  const older = [new Date("2025-03-02T00:00:00+09:00"), new Date("2025-03-08T23:59:59.999+09:00")] as const;
+  failNext = true;
+  await showRange(older);
+  assert.equal(errorShown(), true);
+  const before = loads.length;
+  await press("다시 시도");
+  await settle();
+  assert.equal(errorShown(), false, "다시 시도로 그 기간을 읽으면 오류 줄이 사라진다");
+  const retried = loads.slice(before);
+  assert.ok(retried.length >= 1 && retried.every((input) => input?.start !== undefined), "다시 시도는 전체를 처음부터 읽지 않고 보던 기간을 읽는다");
+  assert.ok(retried.some((input) => new Date(input!.start!) <= older[0] && new Date(input!.end!) >= older[1]), "보던 기간을 덮는 범위를 읽는다");
+});
+
 test("전체 학생 기간을 다시 읽으면 그 기간에서 지워지거나 옮겨진 항목을 지우고 기간 밖 항목은 둔다", async (context) => {
   const students = [
     { id: "student-1", email: "minji@example.test", displayName: "민지", createdAt: null, currentModule: null, nextLessonDate: null, pendingFeedbackCount: 0, openQnaCount: 0 },
@@ -3930,4 +4311,50 @@ test("전체 학생 기간을 다시 읽으면 그 기간에서 지워지거나 
   await settle();
   assert.deepEqual(shownIds(), ["fresh-later", "kept", "outside"], "기간 안에서 응답에 없는 항목만 지운다");
   assert.equal(lastDailyListProps?.items?.find((shown) => shown.id === "kept")?.title, "옮긴 일정");
+});
+
+test("학생 한 명 일정도 돌아와 다시 읽으면 다른 곳에서 지운 항목을 지우고, 잘린 응답이면 병합만 한다", async (context) => {
+  const students = [
+    { id: "student-1", email: "minji@example.test", displayName: "민지", createdAt: null, currentModule: null, nextLessonDate: null, pendingFeedbackCount: 0, openQnaCount: 0 },
+  ];
+  const item = (id: string, iso: string): UnifiedItem => ({
+    id, type: "EVENT", subType: "PRACTICE", title: id, date: new Date(iso), endDate: null, metadata: {},
+    space: { studentId: "student-1", label: "민지" }, source: { kind: "PORTAL", entity: "CALENDAR_EVENT", label: "포탈" },
+  });
+  const deleted = item("deleted", "2026-02-10T01:00:00.000Z");
+  const kept = item("kept", "2026-02-11T01:00:00.000Z");
+  const window = { start: "2025-02-01T00:00:00.000Z", end: "2027-02-01T23:59:59.999Z" };
+  let truncated = true;
+  const requested: string[] = [];
+  loadStudentCalendarWindow = async (studentId) => {
+    requested.push(studentId);
+    return { items: [kept], ...window, truncated };
+  };
+  context.after(() => {
+    loadStudentCalendarWindow = async () => ({ items: [], start: "2025-11-14T00:00:00.000Z", end: "2027-11-14T23:59:59.999Z", truncated: true });
+    lastDailyListProps = null;
+  });
+  browser.history.replaceState({}, "", "/dashboard/admin?section=schedule&view=daily&student=student-1");
+  await render(context, <AdminPortalClient
+    initialLocation={resolvePortalLocation("admin", { section: "schedule", view: "daily", student: "student-1" })}
+    initialStudentId="student-1"
+    initialUnifiedItems={[deleted, kept]} students={students}
+    adminId="admin" qnaThreads={[]} pendingAssignments={[]} referenceTime={new Date("2026-02-01T00:00:00.000Z")}
+  />);
+  const shownIds = () => (lastDailyListProps?.items ?? []).map((shown) => shown.id).sort();
+  const returnToPage = async () => {
+    const pageShow = new browser.Event("pageshow");
+    Object.defineProperty(pageShow, "persisted", { value: true });
+    await act(async () => { browser.dispatchEvent(pageShow); });
+    await settle();
+  };
+  assert.deepEqual(shownIds(), ["deleted", "kept"]);
+
+  await returnToPage();
+  assert.deepEqual(requested, ["student-1"], "보고 있는 학생만 다시 읽는다");
+  assert.deepEqual(shownIds(), ["deleted", "kept"], "잘린 응답은 병합만 한다");
+
+  truncated = false;
+  await returnToPage();
+  assert.deepEqual(shownIds(), ["kept"], "읽은 기간 안에서 응답에 없는 항목은 지운다");
 });

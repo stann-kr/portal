@@ -121,10 +121,21 @@ test("전체 학생 일정은 활성 학생 항목을 섞어 돌려주고 학생
   assert.equal(result.truncated, false);
   assert.equal(result.start, "2026-10-01T00:00:00.000Z");
 
-  // 학생 계정은 전체 학생 일정을 읽을 수 없다.
+  // 학생 한 명 기간 조회(복귀 재조회용): 그 학생 항목과 읽은 기간·잘림 여부를 함께 돌려준다.
+  const single = await unifiedActions.getUnifiedItemsWindowForStudent("student-1");
+  assert.ok(single.items.length > 0 && single.items.every((item) => item.space.studentId === "student-1"), "대상 학생 항목만");
+  assert.ok(single.items.some((item) => item.id === "lesson-1"));
+  assert.equal(single.truncated, false);
+  assert.ok(new Date(single.start) < new Date(single.end));
+
+  // 학생 계정은 전체 학생 일정도, 다른(또는 자기) 학생의 관리자용 기간 조회도 읽을 수 없다.
   activeSession = createSession("student-1", "student");
   await assert.rejects(() => unifiedActions.getUnifiedItemsForAllStudents(RANGE));
+  await assert.rejects(() => unifiedActions.getUnifiedItemsWindowForStudent("student-2"));
+  await assert.rejects(() => unifiedActions.getUnifiedItemsWindowForStudent("student-1"));
   activeSession = createSession("admin-1", "admin");
+  // 학생이 아닌 대상(관리자 계정)은 거부한다.
+  await assert.rejects(() => unifiedActions.getUnifiedItemsWindowForStudent("admin-1"));
 
   // 한 번에 읽는 기간은 넉 달(124일)까지다.
   await assert.rejects(() => unifiedActions.getUnifiedItemsForAllStudents({ start: "2026-01-01", end: "2026-12-31" }), RangeError);

@@ -7,6 +7,7 @@ import {
   normalizeGuideQuote,
   prepareGuideHtml,
   stripGuideBlockIds,
+  unwrapClosedGuidePageLinks,
 } from "./guide-content";
 import { sanitizeHtml } from "./sanitize-html";
 
@@ -85,4 +86,67 @@ test("재전송 비교는 태그의 블록 식별자만 지우고 본문 텍스�
   const sameB = prepareGuideHtml("<h2>제목</h2><p>본문</p>", sequence("b"));
   assert.notEqual(sameA, sameB);
   assert.equal(stripGuideBlockIds(sameA), stripGuideBlockIds(sameB));
+});
+
+test("재전송 비교는 속성 값에 >·<가 있어도 블록 식별자를 지운다", () => {
+  for (const html of [
+    `<p>본문</p><img src="/api/guide-assets/${"a".repeat(32)}" alt="EQ > 컴프 순서">`,
+    '<p title="a<b c > d">본문</p>',
+    '<p title="따옴표 &quot;> 안">본문</p>',
+  ]) {
+    const first = prepareGuideHtml(html, sequence("a"));
+    const second = prepareGuideHtml(html, sequence("b"));
+    assert.notEqual(first, second, html);
+    assert.equal(stripGuideBlockIds(first), stripGuideBlockIds(second), html);
+  }
+});
+
+test("열리지 않은 가이드 페이지 링크만 글자로 바꾸고, 바뀐 것이 없으면 입력을 그대로 돌려준다", () => {
+  const isOpen = (pageId: string) => pageId === "open-1";
+  const html = '<ul><li data-block-id="l1"><a href="/dashboard/guide/closed-1?x=1#b1">닫힌 <em>페이지</em></a></li>'
+    + '<li data-block-id="l2"><a href="/dashboard/guide/open-1">열린</a> <a href="/dashboard/guide">목록</a></li>'
+    + '<li data-block-id="l3"><a href="//other.example/dashboard/guide/closed-1">다른 곳</a> <a href="/dashboard/guide/closed%2D1/edit">편집</a></li></ul>';
+  assert.equal(
+    unwrapClosedGuidePageLinks(html, isOpen, { currentPageId: "open-1" }),
+    '<ul><li data-block-id="l1">닫힌 <em>페이지</em></li>'
+      + '<li data-block-id="l2"><a href="/dashboard/guide/open-1">열린</a> <a href="/dashboard/guide">목록</a></li>'
+      + '<li data-block-id="l3"><a href="//other.example/dashboard/guide/closed-1">다른 곳</a> 편집</li></ul>',
+  );
+  const untouched = '<p data-block-id="p1"><a href="/dashboard/guide/open-1">열린</a></p>';
+  assert.equal(unwrapClosedGuidePageLinks(untouched, isOpen, { currentPageId: "open-1" }), untouched);
+});
+
+test("포탈 전체 주소로 붙여 넣은 가이드 페이지 링크도 포탈 origin이면 같은 규칙을 따르고, 다른 origin은 그대로다", () => {
+  const isOpen = (pageId: string) => pageId === "open-1";
+  const html = '<p data-block-id="p1"><a href="https://portal.example/dashboard/guide/closed-1#b1">닫힌</a> '
+    + '<a href="https://portal.example/dashboard/guide/open-1">열린</a> '
+    + '<a href="https://other.example/dashboard/guide/closed-1">다른 곳</a> '
+    + '<a href="http://portal.example/dashboard/guide/closed-1">다른 scheme</a></p>';
+  assert.equal(
+    unwrapClosedGuidePageLinks(html, isOpen, { currentPageId: "open-1", portalOrigin: "https://portal.example/" }),
+    '<p data-block-id="p1">닫힌 '
+      + '<a href="https://portal.example/dashboard/guide/open-1">열린</a> '
+      + '<a href="https://other.example/dashboard/guide/closed-1">다른 곳</a> '
+      + '<a href="http://portal.example/dashboard/guide/closed-1">다른 scheme</a></p>',
+  );
+  assert.equal(unwrapClosedGuidePageLinks(html, isOpen, { currentPageId: "open-1" }), html, "포탈 origin을 모르면 전체 주소는 건드리지 않는다");
+  assert.equal(unwrapClosedGuidePageLinks(html, isOpen, { currentPageId: "open-1", portalOrigin: "not a url" }), html, "읽을 수 없는 origin도 같다");
+});
+
+test("문서 기준 상대 링크와 겹친 슬래시도 본문이 그려지는 주소(페이지·가이드 첫 화면) 기준으로 읽는다", () => {
+  const isOpen = (pageId: string) => pageId === "open-1";
+  const html = '<p data-block-id="p1">'
+    + '<a href="closed-1">a</a> <a href="./closed-1#b1">b</a> <a href="../guide/closed-1">c</a> '
+    + '<a href="/dashboard//guide/closed-1">d</a> <a href="/dashboard/guide//closed-1?x=1">e</a> '
+    + '<a href="guide/closed-1">f</a> <a href="_">g</a> '
+    + '<a href="#b2">h</a> <a href="?x=1">i</a> <a href="open-1">j</a> <a href="../closed-1">k</a></p>';
+  assert.equal(
+    unwrapClosedGuidePageLinks(html, isOpen, { currentPageId: "open-1" }),
+    '<p data-block-id="p1">'
+      + 'a b c '
+      + 'd e '
+      + 'f g '
+      + '<a href="#b2">h</a> <a href="?x=1">i</a> <a href="open-1">j</a> <a href="../closed-1">k</a></p>',
+    "지금 페이지 안 링크(#·?)와 열린 페이지는 그대로이고, 가이드 페이지 밖 주소도 그대로다",
+  );
 });

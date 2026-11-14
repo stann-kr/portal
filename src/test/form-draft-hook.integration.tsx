@@ -1492,6 +1492,38 @@ test("일반 clear는 다른 작성 흐름의 동일 signature recovery를 삭�
   assert.equal(harness.getResult(1).status, "conflict");
 });
 
+test("저장·취소 없이 닫혔다 다시 열린 form은 이어받은 보관본과 같은 shadow를 자기 것으로 정리한다", { concurrency: false }, async (context) => {
+  const draftKey = createDocumentDraftKey("note", "student-1", "note-remount-shadow");
+  const closedDraft = draft("닫기 전 입력");
+  const reopenedDraft = draft("다시 연 뒤 입력");
+  const harness = await createDraftHookHarness(context, draftKey);
+  const { browserWindow } = harness;
+
+  await act(async () => {
+    harness.getResult().save(closedDraft);
+    harness.getResult().flush();
+  });
+  assert.equal(listRecoveryKeys(browserWindow.localStorage, draftKey).length, 1);
+
+  await harness.remount(draftKey);
+  assert.deepEqual(harness.restoredDrafts.at(-1), closedDraft);
+  assert.equal(harness.getResult().recoveries.length, 0);
+
+  await act(async () => {
+    harness.getResult().save(reopenedDraft);
+    harness.getResult().flush();
+  });
+  assert.deepEqual(readDraft(browserWindow.localStorage, draftKey), reopenedDraft);
+  assert.deepEqual(harness.getResult().recoveries, []);
+  assert.equal(listRecoveryKeys(browserWindow.localStorage, draftKey).length, 1);
+
+  await act(async () => {
+    harness.getResult().clear();
+  });
+  assert.equal(browserWindow.localStorage.getItem(draftKey), null);
+  assert.deepEqual(listRecoveryKeys(browserWindow.localStorage, draftKey), []);
+});
+
 test("이전 recovery 삭제 뒤 debounce 중인 새 입력은 새 불변 shadow에 보존한다", { concurrency: false }, async (context) => {
   const draftKey = createDocumentDraftKey("note", "student-1", "note-discard-pending");
   const visibleDraft = draft("충돌 전 화면 내용");

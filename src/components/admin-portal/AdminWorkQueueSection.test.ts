@@ -154,3 +154,135 @@ test("업무함 피드백 대기 행의 확인: 행이 바로 빠지고 되돌�
   assert.ok(ackButton("하우스 롱셋"), "마지막 행이 돌아온다");
   assert.equal(ackButton("테크노 셋 #2"), null, "앞 행은 확인함으로 남는다");
 });
+
+test("업무함 확인: 앞 행 저장이 늦게 실패해도 다른 행의 되돌리기를 가리지 않고, 같은 행의 늦은 결과는 최신 요청을 뒤집지 않는다", async (context) => {
+  const browserWindow = new Window({ url: "https://portal.test/dashboard/admin?section=work" });
+  const names = [
+    "window", "self", "document", "navigator", "Event", "CustomEvent", "KeyboardEvent", "PointerEvent", "Node", "Element", "HTMLElement",
+    "HTMLInputElement", "MutationObserver", "ResizeObserver", "getComputedStyle", "requestAnimationFrame", "cancelAnimationFrame",
+    "IS_REACT_ACT_ENVIRONMENT", "React",
+  ] as const;
+  const previous = new Map<string, PropertyDescriptor | undefined>();
+  const values: Record<string, unknown> = {
+    window: browserWindow,
+    self: browserWindow,
+    document: browserWindow.document,
+    navigator: browserWindow.navigator,
+    Event: browserWindow.Event,
+    CustomEvent: browserWindow.CustomEvent,
+    KeyboardEvent: browserWindow.KeyboardEvent,
+    PointerEvent: browserWindow.PointerEvent,
+    Node: browserWindow.Node,
+    Element: browserWindow.Element,
+    HTMLElement: browserWindow.HTMLElement,
+    HTMLInputElement: browserWindow.HTMLInputElement,
+    MutationObserver: browserWindow.MutationObserver,
+    ResizeObserver: browserWindow.ResizeObserver,
+    getComputedStyle: browserWindow.getComputedStyle.bind(browserWindow),
+    requestAnimationFrame: browserWindow.requestAnimationFrame.bind(browserWindow),
+    cancelAnimationFrame: browserWindow.cancelAnimationFrame.bind(browserWindow),
+    IS_REACT_ACT_ENVIRONMENT: true,
+    React,
+  };
+  for (const name of names) {
+    previous.set(name, Object.getOwnPropertyDescriptor(globalThis, name));
+    Object.defineProperty(globalThis, name, { configurable: true, writable: true, value: values[name] });
+  }
+  const { createRoot } = await import("react-dom/client");
+  const { AdminWorkQueueSection } = await import("./AdminWorkQueueSection");
+  const container = browserWindow.document.createElement("div");
+  browserWindow.document.body.append(container);
+  const root = createRoot(container as unknown as HTMLElement);
+  context.after(async () => {
+    await act(async () => root.unmount());
+    browserWindow.close();
+    for (const name of [...names].reverse()) {
+      const descriptor = previous.get(name);
+      if (descriptor) Object.defineProperty(globalThis, name, descriptor);
+      else Reflect.deleteProperty(globalThis, name);
+    }
+  });
+
+  type Result = { success: true; reviewedAt: Date | null } | { success: false; error: string };
+  const calls: [string, boolean][] = [];
+  // 늦게 끝낼 요청을 이름으로 잡아 둔다. 나머지는 바로 성공한다.
+  const held = new Map<string, (result: Result) => void>();
+  let holdNext: string | null = null;
+  const setReviewed = (assignmentId: string, reviewed: boolean) => new Promise<Result>((resolve) => {
+    calls.push([assignmentId, reviewed]);
+    if (holdNext) {
+      held.set(holdNext, resolve);
+      holdNext = null;
+      return;
+    }
+    resolve({ success: true, reviewedAt: reviewed ? new Date() : null });
+  });
+  const pending = [
+    { id: "a1", mediaUrl: null, taskTitle: "테크노 셋 #2", submittedAt: new Date("2026-10-23T12:40:00.000Z"), studentId: "s1", studentName: "김학생", studentEmail: "kim@example.test" },
+    { id: "a2", mediaUrl: null, taskTitle: "하우스 롱셋", submittedAt: new Date("2026-10-24T12:40:00.000Z"), studentId: "s2", studentName: "이학생", studentEmail: "lee@example.test" },
+    { id: "a3", mediaUrl: null, taskTitle: "딥하우스 믹스", submittedAt: new Date("2026-10-25T12:40:00.000Z"), studentId: "s3", studentName: "박학생", studentEmail: "park@example.test" },
+  ];
+  await act(async () => {
+    root.render(React.createElement(AdminWorkQueueSection, {
+      students: [],
+      threads: [],
+      pendingAssignments: pending,
+      referenceTime: new Date("2026-11-09T00:00:00.000Z"),
+      onOpenSchedule: () => undefined,
+      pushOwnerId: "admin-1",
+      setReviewed,
+    }));
+  });
+  const flush = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+  const ackButton = (title: string) => container.querySelector(`button[aria-label="${title} 확인함으로 표시"]`) as HTMLButtonElement | null;
+  const undoButton = () => [...container.querySelectorAll("button")].find((button) => button.textContent === "되돌리기");
+  const alertText = () => container.querySelector('[role="alert"]')?.textContent ?? "";
+
+  // A 확인(늦게 실패) → B 확인 → A 실패 도착: A는 돌아오고 B의 되돌리기는 남는다.
+  holdNext = "a1-ack";
+  await act(async () => { ackButton("테크노 셋 #2")?.click(); });
+  await act(async () => { ackButton("하우스 롱셋")?.click(); });
+  await flush();
+  assert.match(container.querySelector('[role="status"]')?.textContent ?? "", /'하우스 롱셋'/u);
+  await act(async () => held.get("a1-ack")?.({ success: false, error: "피드백이 달린 제출은 확인함으로 표시하지 않습니다." }));
+  await flush();
+  assert.ok(ackButton("테크노 셋 #2"), "실패한 앞 행은 바로 돌아온다");
+  assert.ok(undoButton(), "다른 행의 되돌리기는 남는다");
+  assert.equal(alertText(), "", "오류는 되돌리기 안내를 덮지 않고 기다린다");
+  await act(async () => { undoButton()?.click(); });
+  await flush();
+  assert.deepEqual(calls.at(-1), ["a2", false]);
+  assert.ok(ackButton("하우스 롱셋"));
+  assert.match(alertText(), /피드백이 달린 제출/u, "되돌리기 뒤 미뤄 둔 오류를 알린다");
+
+  // 같은 행: 확인(늦게 네트워크 실패) → 되돌리기 → 다시 확인. 늦은 실패가 마지막 확인을 뒤집지 않는다.
+  holdNext = "a1-first";
+  await act(async () => { ackButton("테크노 셋 #2")?.click(); });
+  await act(async () => { undoButton()?.click(); });
+  await act(async () => { ackButton("테크노 셋 #2")?.click(); });
+  await act(async () => held.get("a1-first")?.({ success: false, error: "네트워크 오류" }));
+  await flush();
+  assert.deepEqual(calls.slice(-3), [["a1", true], ["a1", false], ["a1", true]], "서버에는 보낸 순서대로 간다");
+  assert.equal(ackButton("테크노 셋 #2"), null, "마지막 의도(확인함)대로 행은 빠져 있다");
+  assert.match(container.querySelector('[role="status"]')?.textContent ?? "", /'테크노 셋 #2'/u, "마지막 확인의 되돌리기 안내가 남는다");
+  assert.ok(undoButton());
+
+  // 미뤄 둔 오류의 행을 다시 확인해 성공하면 그 옛 오류는 버린다: 안내가 닫혀도 방금 성공한 동작에 실패를 알리지 않는다.
+  holdNext = "a2-late";
+  await act(async () => { ackButton("하우스 롱셋")?.click(); });
+  await act(async () => { ackButton("딥하우스 믹스")?.click(); });
+  await flush();
+  await act(async () => held.get("a2-late")?.({ success: false, error: "네트워크 오류로 확인함으로 표시하지 못했습니다." }));
+  await flush();
+  assert.ok(ackButton("하우스 롱셋"), "실패한 행은 돌아온다");
+  assert.equal(alertText(), "", "오류는 다른 행의 안내 뒤로 미뤄진다");
+  await act(async () => { ackButton("하우스 롱셋")?.click(); });
+  await flush();
+  assert.equal(ackButton("하우스 롱셋"), null, "다시 확인해 이번에는 성공했다");
+  await act(async () => { undoButton()?.click(); });
+  assert.equal(alertText(), "", "안내를 닫아도 버린 옛 실패를 알리지 않는다");
+  await flush();
+  assert.deepEqual(calls.slice(-4), [["a2", true], ["a3", true], ["a2", true], ["a2", false]]);
+  assert.ok(ackButton("하우스 롱셋"), "되돌리기로 다시 보인다");
+  assert.equal(alertText(), "");
+});

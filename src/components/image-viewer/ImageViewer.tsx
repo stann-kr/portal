@@ -105,15 +105,32 @@ export function ImageViewer({ images, index, onIndexChange, returnFocus }: Image
             </span>
           </div>
           {image ? (
-            <ImageStage
-              key={`${current}:${image.src}`}
-              image={image}
-              label={label}
-              hasSiblings={total > 1}
-              onPrev={() => go(-1)}
-              onNext={() => go(1)}
-              onClose={close}
-            />
+            <div
+              className="relative flex min-h-0 flex-1 items-center justify-between gap-4 pb-[52px] md:px-3 md:pb-8"
+              // 이미지 옆 빈 바탕을 누르면 닫는다(Radix 바깥 누르기는 전체화면 내용 위에서 일어나지 않는다).
+              onClick={(event) => { if (event.target === event.currentTarget) close(); }}
+            >
+              {/* 넘기기 버튼은 이미지마다 새로 만드는 무대 바깥에 두어, 눌러 넘겨도 초점이 버튼에 남는다. */}
+              {total > 1 ? (
+                <StageButton label="이전 이미지" onClick={() => go(-1)}>
+                  <ChevronLeft className="size-5" strokeWidth={1.8} aria-hidden="true" />
+                </StageButton>
+              ) : null}
+              <ImageStage
+                key={`${current}:${image.src}`}
+                image={image}
+                label={label}
+                hasSiblings={total > 1}
+                onPrev={() => go(-1)}
+                onNext={() => go(1)}
+                onClose={close}
+              />
+              {total > 1 ? (
+                <StageButton label="다음 이미지" onClick={() => go(1)}>
+                  <ChevronRight className="size-5" strokeWidth={1.8} aria-hidden="true" />
+                </StageButton>
+              ) : null}
+            </div>
           ) : null}
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
@@ -322,41 +339,25 @@ function ImageStage({
 
   return (
     <div
-      className="relative flex min-h-0 flex-1 items-center justify-between gap-4 pb-[52px] md:px-3 md:pb-8"
-      // 이미지 옆 빈 바탕을 누르면 닫는다(Radix 바깥 누르기는 전체화면 내용 위에서 일어나지 않는다).
-      onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}
+      ref={stageRef}
+      data-image-viewer-stage=""
+      className={cn("relative flex h-full min-w-0 flex-1 touch-none select-none items-center justify-center overflow-hidden", (dragging || active) && "image-viewer-dragging")}
+      style={stageStyle}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerCancel}
     >
-      {hasSiblings ? (
-        <StageButton label="이전 이미지" onClick={onPrev}>
-          <ChevronLeft className="size-5" strokeWidth={1.8} aria-hidden="true" />
-        </StageButton>
-      ) : null}
-      <div
-        ref={stageRef}
-        data-image-viewer-stage=""
-        className={cn("relative flex h-full min-w-0 flex-1 touch-none select-none items-center justify-center overflow-hidden", (dragging || active) && "image-viewer-dragging")}
-        style={stageStyle}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={onPointerCancel}
-      >
-        {/* eslint-disable-next-line @next/next/no-img-element -- 저장된 본문 이미지(/api/media·data:)를 그대로 보여 준다. */}
-        <img
-          ref={imageRef}
-          src={image.src}
-          alt={label}
-          draggable={false}
-          onLoad={updateZoomable}
-          className="image-viewer-image block max-h-full max-w-full rounded-xs object-contain"
-          style={imageStyle}
-        />
-      </div>
-      {hasSiblings ? (
-        <StageButton label="다음 이미지" onClick={onNext}>
-          <ChevronRight className="size-5" strokeWidth={1.8} aria-hidden="true" />
-        </StageButton>
-      ) : null}
+      {/* eslint-disable-next-line @next/next/no-img-element -- 저장된 본문 이미지(/api/media·data:)를 그대로 보여 준다. */}
+      <img
+        ref={imageRef}
+        src={image.src}
+        alt={label}
+        draggable={false}
+        onLoad={updateZoomable}
+        className="image-viewer-image block max-h-full max-w-full rounded-xs object-contain"
+        style={imageStyle}
+      />
     </div>
   );
 }

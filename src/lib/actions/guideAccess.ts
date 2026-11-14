@@ -6,14 +6,17 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createDbContext } from "@/db/client";
-import { requireStudentTarget } from "@/lib/auth-guard";
+import { createDb, createDbContext } from "@/db/client";
+import { listActiveStudentProfiles } from "@/lib/active-profile";
+import { requireAdmin, requireStudentTarget } from "@/lib/auth-guard";
 import {
   isGuideAccessSetting,
+  listGuidePageViewers,
   readStudentGuideAccess,
   writeGuideAccessPage,
   writeGuideAccessSetting,
   type GuideAccessSetting,
+  type GuidePageViewer,
 } from "@/lib/guide-access";
 import { parseGuidePageId } from "@/lib/guide-content";
 import { listGuidePageSummaries } from "@/lib/guide-store";
@@ -44,6 +47,28 @@ export async function getStudentGuideAccess(studentId: string): Promise<StudentG
     setting: access.setting,
     pageIds: access.pageIds.filter((id) => existing.has(id)),
     pages: pages.map((page) => ({ id: page.id, title: page.title })),
+  };
+}
+
+/** 가이드 페이지 화면의 "열람 학생" 패널: 이 페이지를 기준으로 본 모든 학생. 없는 페이지면 null. */
+export type GuidePageViewersView = {
+  pageId: string;
+  totalPages: number;
+  students: GuidePageViewer[];
+};
+
+export async function getGuidePageViewers(pageId: string): Promise<GuidePageViewersView | null> {
+  await requireAdmin();
+  const id = parseGuidePageId(pageId);
+  if (!id) return null;
+  const context = createDbContext();
+  const [pages, students] = await Promise.all([listGuidePageSummaries(context), listActiveStudentProfiles(createDb())]);
+  const existingPageIds = new Set(pages.map((page) => page.id));
+  if (!existingPageIds.has(id)) return null;
+  return {
+    pageId: id,
+    totalPages: pages.length,
+    students: await listGuidePageViewers(context, { pageId: id, existingPageIds, students }),
   };
 }
 

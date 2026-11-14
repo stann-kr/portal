@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { after, before, mock, test, type TestContext } from "node:test";
+import { eq } from "drizzle-orm";
 import type { AuthSession } from "@/lib/auth-guard";
 import { guideAccess, guideAccessPages, guideAssets, guidePages, profiles, qnaGuideAnchors } from "@/db/schema";
 import { createIsolatedPortalD1, type IsolatedPortalD1 } from "@/test/isolated-d1";
@@ -329,6 +330,68 @@ test("선택으로 열린 학생은 고른 페이지만 보고, 닫힌 페이지
   assert.deepEqual((await guideActions.getGuidePages()).map((page) => page.id), ["guide-1", "guide-2"]);
 });
 
+test("선택으로 열린 학생에게는 본문에서 열리지 않은 페이지로 가는 링크가 글자로만 가고, 관리자·전체 학생은 그대로다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, null);
+  const linked = '<p data-block-id="b1">CDJ는 <a href="/dashboard/guide/guide-2#c1">음원 관리</a>와 <a href="/dashboard/guide/guide-1#b2"><strong>믹서</strong></a>를 보세요. <a href="https://example.com/dashboard/guide/guide-2">바깥</a></p>';
+  await db.update(guidePages).set({ contentHtml: linked }).where(eq(guidePages.id, "guide-1"));
+
+  activeSession = createSession("admin-1", "admin");
+  assert.deepEqual(await guideAccessActions.setStudentGuideAccessSetting("student-a", "SELECTED"), { ok: true });
+  assert.deepEqual(await guideAccessActions.setStudentGuideAccessPage("student-a", "guide-1", true), { ok: true });
+  assert.equal((await guideActions.getGuidePage("guide-1"))?.contentHtml, linked, "관리자는 본문 그대로");
+
+  activeSession = createSession("student-a", "student");
+  assert.equal(
+    (await guideActions.getGuidePage("guide-1"))?.contentHtml,
+    '<p data-block-id="b1">CDJ는 음원 관리와 <a href="/dashboard/guide/guide-1#b2"><strong>믹서</strong></a>를 보세요. <a href="https://example.com/dashboard/guide/guide-2">바깥</a></p>',
+    "닫힌 페이지 링크만 글자로 남고, 열린 페이지·바깥 링크는 그대로다",
+  );
+
+  activeSession = createSession("student-b", "student");
+  assert.equal((await guideActions.getGuidePage("guide-1"))?.contentHtml, linked, "전체 학생은 본문 그대로");
+});
+
+test("주소창에서 붙여 넣은 포탈 전체 주소의 닫힌 가이드 페이지 링크도 선택 학생에게 글자로만 간다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, null);
+  const previousAuthUrl = process.env.AUTH_URL;
+  process.env.AUTH_URL = "https://portal.example.com/";
+  context.after(() => {
+    if (previousAuthUrl === undefined) delete process.env.AUTH_URL;
+    else process.env.AUTH_URL = previousAuthUrl;
+  });
+  const linked = '<p data-block-id="b1"><a href="https://portal.example.com/dashboard/guide/guide-2">음원 관리</a>와 '
+    + '<a href="https://portal.example.com/dashboard/guide/guide-1#b2">믹서</a>, <a href="https://example.com/dashboard/guide/guide-2">바깥</a></p>';
+  await db.update(guidePages).set({ contentHtml: linked }).where(eq(guidePages.id, "guide-1"));
+
+  activeSession = createSession("admin-1", "admin");
+  assert.deepEqual(await guideAccessActions.setStudentGuideAccessSetting("student-a", "SELECTED"), { ok: true });
+  assert.deepEqual(await guideAccessActions.setStudentGuideAccessPage("student-a", "guide-1", true), { ok: true });
+
+  activeSession = createSession("student-a", "student");
+  assert.equal(
+    (await guideActions.getGuidePage("guide-1"))?.contentHtml,
+    '<p data-block-id="b1">음원 관리와 '
+      + '<a href="https://portal.example.com/dashboard/guide/guide-1#b2">믹서</a>, <a href="https://example.com/dashboard/guide/guide-2">바깥</a></p>',
+  );
+});
+
+test("본문 기준 상대 주소·겹친 슬래시로 쓴 닫힌 가이드 페이지 링크도 선택 학생에게 글자로만 간다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, null);
+  const linked = '<p data-block-id="b1"><a href="guide-2">가</a> <a href="../guide/guide-2#c1">나</a> '
+    + '<a href="/dashboard//guide/guide-2">다</a> <a href="#b2">이 페이지</a> <a href="guide-1">믹서</a></p>';
+  await db.update(guidePages).set({ contentHtml: linked }).where(eq(guidePages.id, "guide-1"));
+
+  activeSession = createSession("admin-1", "admin");
+  assert.deepEqual(await guideAccessActions.setStudentGuideAccessSetting("student-a", "SELECTED"), { ok: true });
+  assert.deepEqual(await guideAccessActions.setStudentGuideAccessPage("student-a", "guide-1", true), { ok: true });
+
+  activeSession = createSession("student-a", "student");
+  assert.equal(
+    (await guideActions.getGuidePage("guide-1"))?.contentHtml,
+    '<p data-block-id="b1">가 나 다 <a href="#b2">이 페이지</a> <a href="guide-1">믹서</a></p>',
+  );
+});
+
 test("가이드 열람 설정은 관리자만 학생에게 하고, 닫아도 고른 페이지는 남으며 페이지를 지우면 함께 정리된다", { concurrency: false }, async (context) => {
   const db = await setupDatabase(context, createSession("student-a", "student"));
   await assert.rejects(guideAccessActions.getStudentGuideAccess("student-a"), /Admin only/);
@@ -369,4 +432,38 @@ test("가이드 열람 설정은 관리자만 학생에게 하고, 닫아도 고
   assert.deepEqual(await guideActions.deleteGuidePage("guide-2", 1), { ok: true });
   assert.equal((await db.select().from(guideAccessPages)).length, 0, "지운 페이지의 열람 행은 남지 않는다");
   assert.deepEqual((await guideAccessActions.getStudentGuideAccess("student-new")).pageIds, []);
+});
+
+test("가이드 페이지의 열람 학생 목록은 관리자만 받고, 학생마다 설정·볼 수 있는지·열린 페이지 수를 이름순으로 준다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("student-a", "student"));
+  await assert.rejects(guideAccessActions.getGuidePageViewers("guide-1"), /Admin only/, "학생은 다른 학생의 열람 설정을 받지 못한다");
+
+  activeSession = createSession("admin-1", "admin");
+  assert.deepEqual(await guideAccessActions.setStudentGuideAccessSetting("student-b", "SELECTED"), { ok: true });
+  assert.deepEqual(await guideAccessActions.setStudentGuideAccessPage("student-b", "guide-2", true), { ok: true });
+  assert.deepEqual(await guideAccessActions.setStudentGuideAccessSetting("student-new", "SELECTED"), { ok: true });
+
+  assert.deepEqual(await guideAccessActions.getGuidePageViewers("guide-1"), {
+    pageId: "guide-1",
+    totalPages: 2,
+    students: [
+      { studentId: "student-new", name: "새 학생", setting: "SELECTED", canView: false, openCount: 0 },
+      { studentId: "student-a", name: "학생 A", setting: "ALL", canView: true, openCount: 0 },
+      { studentId: "student-b", name: "학생 B", setting: "SELECTED", canView: false, openCount: 1 },
+    ],
+  });
+
+  // 패널의 체크는 학생 상세와 같은 쓰기(setStudentGuideAccessPage)를 쓴다. 닫힘 학생은 패널에서 바뀌지 않는다.
+  assert.deepEqual(await guideAccessActions.setStudentGuideAccessPage("student-b", "guide-1", true), { ok: true });
+  assert.deepEqual(await guideAccessActions.setStudentGuideAccessSetting("student-a", "CLOSED"), { ok: true });
+  const after = await guideAccessActions.getGuidePageViewers("guide-1");
+  assert.deepEqual(after?.students.map((row) => [row.studentId, row.setting, row.canView, row.openCount]), [
+    ["student-new", "SELECTED", false, 0],
+    ["student-a", "CLOSED", false, 0],
+    ["student-b", "SELECTED", true, 2],
+  ]);
+
+  assert.equal(await guideAccessActions.getGuidePageViewers("no-such-page"), null);
+  assert.equal(await guideAccessActions.getGuidePageViewers("../guide-1"), null);
+  assert.equal((await db.select().from(guideAccess)).length, 2, "읽기는 아무것도 쓰지 않는다");
 });

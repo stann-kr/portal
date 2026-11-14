@@ -49,6 +49,7 @@ export {
   createFormDraftRecoveryKey,
   createImmutableFormDraftRecoveryKey,
   isImmutableFormDraftRecoveryKey,
+  findImmutableFormDraftRecoveryKeyForRaw,
   isFormDraftRecoveryKey,
   type DocumentDraftArtifact,
   readDocumentDraftArtifact,

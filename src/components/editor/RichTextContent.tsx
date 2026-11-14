@@ -1,5 +1,6 @@
 import { cn } from "@/lib/utils";
 import { sanitizeHtml } from "@/lib/sanitize-html";
+import { normalizeTaskItemsHtml } from "@/lib/task-item-html";
 import { markLessonBlocksHtml } from "@/components/lesson/lesson-structure";
 import { ZoomableRichText } from "./ZoomableRichText";
 
@@ -14,8 +15,8 @@ export function RichTextContent({
   html: string;
   className?: string;
 }) {
-  // 수업 노트의 트랙 제목·전환 칸은 편집 화면과 같은 모양으로 보인다.
-  const sanitizedHtml = markLessonBlocksHtml(sanitizeHtml(html));
+  // 수업 노트의 트랙 제목·전환 칸과 체크 칸은 편집 화면과 같은 모양으로 보인다.
+  const sanitizedHtml = markLessonBlocksHtml(normalizeTaskItemsHtml(sanitizeHtml(html)));
 
   return (
     <ZoomableRichText
