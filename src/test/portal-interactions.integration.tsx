@@ -3512,6 +3512,59 @@ test("admin overview guide section saves each choice at once, in click order, an
   assert.doesNotMatch(section.querySelector('[role="status"]')?.textContent ?? "", /저장됨/u);
 });
 
+test("admin overview guide section keeps a failure and re-reads when the next choice is saved during the re-read", async (context) => {
+  const calls: string[] = [];
+  let holdNextRead = false;
+  let releaseRead: (() => void) | null = null;
+  const pages = [{ id: "guide-1", title: "장비 소개" }, { id: "guide-2", title: "음원 관리" }];
+  // 서버: '선택'으로 바꾸는 저장은 실패해 닫힘이 남고, 페이지 체크 저장은 성공한다.
+  const serverPageIds = new Set<string>();
+  guideAccessActions = {
+    ...guideAccessDefaults,
+    getStudentGuideAccess: async () => {
+      calls.push("read");
+      if (holdNextRead) {
+        holdNextRead = false;
+        await new Promise<void>((resolve) => { releaseRead = resolve; });
+      }
+      return { setting: "CLOSED", pageIds: [...serverPageIds], pages };
+    },
+    setStudentGuideAccessSetting: async (studentId, setting) => {
+      calls.push(`setting:${studentId}:${setting}`);
+      return { ok: false, error: "가이드 열람 설정을 저장하지 못했습니다. 다시 시도해 주세요." };
+    },
+    setStudentGuideAccessPage: async (studentId, pageId, open) => {
+      calls.push(`page:${studentId}:${pageId}:${open}`);
+      if (open) serverPageIds.add(pageId);
+      else serverPageIds.delete(pageId);
+      return { ok: true };
+    },
+  };
+  context.after(() => { guideAccessActions = { ...guideAccessDefaults }; });
+
+  await render(context, <OverviewTab studentId="student-1" modules={[]} lessons={[]} guideAccess={{ setting: "CLOSED", pageIds: [], pages }} />);
+  const section = browser.document.querySelector('[aria-labelledby="guide-access-heading"]');
+  assert.ok(section);
+  const checked = () => [...section.querySelectorAll('[role="radio"]')].filter((radio) => radio.getAttribute("aria-checked") === "true").map((radio) => radio.textContent);
+  const boxes = () => [...section.querySelectorAll('input[type="checkbox"]')] as unknown as HTMLInputElement[];
+
+  // '선택' 저장이 실패해 서버 값을 다시 읽는 동안, 화면에 먼저 나타난 페이지를 체크한다.
+  holdNextRead = true;
+  await press("선택");
+  await settle();
+  assert.deepEqual(calls, ["setting:student-1:SELECTED", "read"]);
+  await act(async () => { boxes()[0].click(); });
+  await settle();
+  assert.equal(section.querySelector('[role="status"]')?.textContent, "저장 중…");
+
+  releaseRead!();
+  await settle();
+  assert.deepEqual(calls, ["setting:student-1:SELECTED", "read", "page:student-1:guide-1:true", "read"], "the later save ends with another re-read");
+  assert.deepEqual(checked(), ["닫힘"], "the screen follows what the server holds");
+  assert.match(section.querySelector('[role="alert"]')?.textContent ?? "", /가이드 열람 설정을 저장하지 못했습니다/u, "the first failure is still reported");
+  assert.doesNotMatch(section.querySelector('[role="status"]')?.textContent ?? "", /저장됨/u);
+});
+
 test("guide page viewers panel opens selected students in click order, sends ALL and CLOSED students to the detail page, and follows the server on failure", async (context) => {
   const calls: string[] = [];
   let failNext = false;
