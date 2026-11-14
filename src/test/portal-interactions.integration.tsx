@@ -1774,6 +1774,44 @@ test("digging table key picker floats on the viewport so the scroll box does not
   assert.equal(browser.document.querySelector('[role="group"][aria-label="키 고르기"]'), null, "Escape from outside closes it");
 });
 
+test("digging key cell sends the value picked while an earlier save is still pending, even when it equals the last saved one", async (context) => {
+  const saves: unknown[] = [];
+  const first = Promise.withResolvers<void>();
+  saveTrackValue = async (_trackId, _columnId, value) => {
+    saves.push(value);
+    if (saves.length === 1) await first.promise;
+  };
+  context.after(() => { first.resolve(); saveTrackValue = async () => {}; });
+  await render(context, <DiggingBoard
+    initialColumns={[
+      { id: "title", name: "트랙명", columnType: "text", options: null, isDefault: true, sortOrder: 0 },
+      { id: "key", name: "키", columnType: "camelot_key", options: null, isDefault: false, sortOrder: 1 },
+    ]}
+    initialTracks={[{ id: "track-1", linkUrl: null, createdAt: new Date("2026-10-09T01:00:00.000Z"), values: { title: "Intro", key: "8A" } }]}
+  />);
+  const trigger = () => {
+    const element = browser.document.querySelector('table button[aria-label="키"]');
+    assert.ok(element instanceof browser.HTMLButtonElement);
+    return element;
+  };
+  const pick = async (key: string) => {
+    await act(async () => trigger().click());
+    const choice = [...browser.document.querySelectorAll('table [role="group"][aria-label="키 고르기"] button')].find((item) => item.textContent === key);
+    assert.ok(choice instanceof browser.HTMLButtonElement, `${key} 버튼`);
+    await act(async () => choice.click());
+    await settle();
+  };
+
+  await pick("9A");
+  assert.deepEqual(saves, ["9A"]);
+  // 9A 저장 응답 전에 원래 값 8A로 되돌린다. 서버에는 9A가 들어가므로 8A도 보내야 한다.
+  await pick("8A");
+  await act(async () => first.resolve());
+  await settle();
+  assert.deepEqual(saves, ["9A", "8A"], "되돌린 값도 저장한다");
+  assert.match(trigger().textContent ?? "", /8A/u);
+});
+
 test("digging board saves only changed cells, clears numbers and ratings without coercing to zero", async (context) => {
   const saves: [string, string, unknown][] = [];
   saveTrackValue = async (trackId, columnId, value) => { saves.push([trackId, columnId, value]); };

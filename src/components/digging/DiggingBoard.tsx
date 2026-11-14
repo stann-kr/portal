@@ -124,6 +124,10 @@ function EditableCell({
 }) {
   const [value, setValue] = useState(initialValue);
   const savedValueRef = useRef(initialValue);
+  // 마지막으로 저장을 요청한 값(응답을 기다리는 것 포함)과 그 순번. 진행 중에 다시 고른 값을 확정된 값과만 비교하면
+  // "9A 저장 중 → 원래 값 8A"가 같은 값으로 보여 보내지 않게 되고, 화면(8A)과 서버(9A)가 어긋난다.
+  const requestedValueRef = useRef(initialValue);
+  const requestSeqRef = useRef(0);
   const [isPending, startTransition] = useTransition();
   const [saveStatus, setSaveStatus] = useState<{ kind: "success" | "error"; message: string } | null>(null);
   const [editingLink, setEditingLink] = useState(false);
@@ -137,11 +141,12 @@ function EditableCell({
   const save = useCallback(
     (newVal: unknown) => {
       // 포커스만 이동한 경우 같은 값을 다시 저장하지 않는다.
-      if (String(newVal ?? "") === String(savedValueRef.current ?? "")) {
+      if (String(newVal ?? "") === String(requestedValueRef.current ?? "")) {
         setValue(newVal);
         return;
       }
-      const previousValue = savedValueRef.current;
+      const seq = ++requestSeqRef.current;
+      requestedValueRef.current = newVal;
       setValue(newVal);
       setSaveStatus(null);
       startTransition(async () => {
@@ -149,9 +154,12 @@ function EditableCell({
           await updateDiggingTrackValue(trackId, columnId, newVal);
           savedValueRef.current = newVal;
           onSaved?.(trackId, columnId, newVal);
-          setSaveStatus({ kind: "success", message: `${columnName} 저장됨` });
+          if (seq === requestSeqRef.current) setSaveStatus({ kind: "success", message: `${columnName} 저장됨` });
         } catch {
-          setValue(previousValue);
+          // 더 새 요청이 있으면 그 결과가 화면을 정한다. 마지막 요청이 실패했을 때만 확정된 값으로 되돌린다.
+          if (seq !== requestSeqRef.current) return;
+          requestedValueRef.current = savedValueRef.current;
+          setValue(savedValueRef.current);
           setSaveStatus({ kind: "error", message: `${columnName}을 저장하지 못했습니다. 다시 시도해 주세요.` });
         }
       });
