@@ -10,6 +10,7 @@ import { MixAnalysisWriteForm } from "@/components/student-portal/MixAnalysisWri
 import { getMyAssignmentTask } from "@/lib/actions/assignmentTasks";
 import { ASSIGNMENT_FORMAT_LABELS } from "@/lib/assignment-recurrence";
 import { isSubmissionSettled } from "@/lib/assignment-submission";
+import { missingWhenAccessDenied } from "@/lib/access-denied-as-missing";
 import { getActiveAuthSession } from "@/lib/auth-guard";
 import { formatKst } from "@/lib/kst-format";
 import { STUDENT_LEGACY_REDIRECTS } from "@/lib/legacy-dashboard-routes";
@@ -26,8 +27,8 @@ export default async function MixAnalysisWritePage({ params }: { params: Promise
   const session = await getActiveAuthSession();
   if (!session?.user?.id) redirect("/login");
   const { taskId } = await params;
-  // 관리자·다른 학생의 과제·없는 과제는 같은 안내로 둔다.
-  const task = session.user.role === "student" ? await getMyAssignmentTask(taskId).catch(() => null) : null;
+  // 관리자·다른 학생의 과제·없는 과제는 같은 안내로 둔다(DB 일시 오류는 오류 화면의 "다시 시도"로 보낸다).
+  const task = session.user.role === "student" ? await missingWhenAccessDenied(getMyAssignmentTask(taskId)) : null;
   const unavailable = !task || task.submissionFormat !== "ANALYSIS"
     ? "분석을 쓸 과제를 찾을 수 없습니다."
     : task.submission && isSubmissionSettled(task.submission)
