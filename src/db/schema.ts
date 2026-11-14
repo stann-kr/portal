@@ -192,6 +192,47 @@ export const calendarFeedTokens = sqliteTable(
   ],
 );
 
+/**
+ * 그룹레슨(예: 2:1) 묶음. 과제·커리큘럼·레슨·제출·피드백은 학생별 행 그대로 두고,
+ * 그룹은 묶어 보여 주기와 "한 번에 내기", 그룹 노트 공유에만 쓴다(2026-11-15 사용자 결정).
+ */
+export const lessonGroups = sqliteTable(
+  "lesson_groups",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .default(sql`(strftime('%s', 'now'))`)
+      .notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .default(sql`(strftime('%s', 'now'))`)
+      .notNull(),
+  },
+  (table) => [
+    check(
+      "lesson_groups_payload_check",
+      sql`length(${table.id}) > 0 AND length(trim(${table.name})) BETWEEN 1 AND 60 AND ${table.createdAt} <= ${table.updatedAt}`,
+    ),
+  ],
+);
+
+/** 학생은 그룹 하나에만 속한다. 학생 계정이 지워지면 멤버십도 함께 지운다. */
+export const lessonGroupMembers = sqliteTable(
+  "lesson_group_members",
+  {
+    studentId: text("student_id")
+      .primaryKey()
+      .references(() => profiles.id, { onDelete: "cascade" }),
+    groupId: text("group_id")
+      .references(() => lessonGroups.id, { onDelete: "cascade" })
+      .notNull(),
+    joinedAt: integer("joined_at", { mode: "timestamp" })
+      .default(sql`(strftime('%s', 'now'))`)
+      .notNull(),
+  },
+  (table) => [index("lesson_group_members_group_idx").on(table.groupId)],
+);
+
 export const curriculums = sqliteTable(
   "curriculums",
   {
@@ -697,6 +738,13 @@ export const privateNotes = sqliteTable(
     authorId: text("author_id")
       .references(() => profiles.id, { onDelete: "restrict" })
       .notNull(),
+    /**
+     * 그룹 노트면 그룹 id. 이때 열람·편집 권한은 관리자와 현재 그룹 멤버가 갖고 student_id로 정하지 않는다.
+     * 노트가 남아 있는 그룹은 지울 수 없다(restrict).
+     */
+    groupId: text("group_id").references(() => lessonGroups.id, {
+      onDelete: "restrict",
+    }),
     title: text("title").notNull(),
     contentHtml: text("content_html").notNull(),
     /** 사용자가 지정한 노트 날짜. 없으면 createdAt fallback. */
@@ -720,6 +768,11 @@ export const privateNotes = sqliteTable(
       table.createdAt,
     ),
     index("private_notes_deleted_at_idx").on(table.deletedAt),
+    index("private_notes_group_deleted_created_idx").on(
+      table.groupId,
+      table.deletedAt,
+      table.createdAt,
+    ),
     check("private_notes_version_check", sql`${table.version} >= 1`),
     check(
       "private_notes_deleted_actor_check",

@@ -696,6 +696,7 @@ function accountDeletionStatements(input: {
     { query: "DELETE FROM push_muted_categories WHERE profile_id = ?", params: [actorId] },
     { query: "DELETE FROM guide_access_pages WHERE student_id = ?", params: [actorId] },
     { query: "DELETE FROM guide_access WHERE student_id = ?", params: [actorId] },
+    { query: "DELETE FROM lesson_group_members WHERE student_id = ?", params: [actorId] },
     {
       query: "DELETE FROM profiles WHERE id = ? AND role = 'student'",
       params: [actorId],
