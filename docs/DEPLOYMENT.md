@@ -100,7 +100,7 @@ Google Calendar 연동:
 - [x] OAuth 동의 화면(Google Auth Platform)을 구성한다(외부, 홈페이지 `https://portal.stann.kr`, 승인된 도메인 `stann.kr`, 개인정보처리방침 `https://portal.stann.kr/privacy`). scope는 `https://www.googleapis.com/auth/calendar.events`와 `https://www.googleapis.com/auth/calendar.calendarlist.readonly` 두 개다(`src/lib/calendar-sync/google.ts` `GOOGLE_CALENDAR_SCOPES`). email·profile scope는 쓰지 않는다.
 - [ ] 게시 상태: 개인정보처리방침 링크가 없으면 "앱 게시"가 비활성이라 `/privacy`(로그인 없이 열림)를 배포한 뒤 링크를 등록하고 "프로덕션"으로 게시한다. 게시 전에는 관리자 계정을 테스트 사용자로 둔다. 참고: 게시 상태가 "테스트"이면 테스트 사용자로 관리자 Google 계정을 추가해야 하고, 이 상태에서 받은 refresh token은 짧게(약 7일) 만료될 수 있다. calendar scope는 민감한 scope라 "프로덕션" 게시에는 Google 검증이 필요할 수 있다. 연결 계정이 관리자 한 명뿐이므로 어느 상태로 둘지 콘솔 안내를 확인해 결정한다.
 - [x] OAuth client ID를 "웹 애플리케이션" 유형으로 만들고 승인된 redirect URI에 `https://portal.stann.kr/api/calendar-connections/google/callback`을 정확히 넣는다(`wrangler.toml`의 `AUTH_URL` origin + 고정 경로). 로그인용 Google provider client와 섞지 않는다.
-- [ ] Worker secret을 등록한다: `npx wrangler secret put GOOGLE_CALENDAR_CLIENT_ID`, `npx wrangler secret put GOOGLE_CALENDAR_CLIENT_SECRET`(값은 프롬프트로만 입력).
+- [ ] Worker secret을 등록한다: `npx wrangler versions secret put GOOGLE_CALENDAR_CLIENT_ID --message <공백없는문구>`, `npx wrangler versions secret put GOOGLE_CALENDAR_CLIENT_SECRET --message <공백없는문구>`(값은 프롬프트로만 입력). 이 저장소는 Workers Builds가 version을 올리기만 하고 배포는 따로 하므로 `wrangler secret put`을 쓰지 않는다: 올라갔지만 배포되지 않은 version이 있으면 거부되고, 없으면 새 version을 바로 100% 배포한다. `versions secret put`은 secret이 든 version만 만들고 배포하지 않으며, 다음 Builds upload가 그 secret을 이어받는다(2026-11-09 VAPID 키 등록 때 확인).
 - [ ] `EXTERNAL_CALENDAR_ENCRYPTION_KEY`는 위 사전 체크리스트의 기존 항목과 같은 secret이다. 아직 없으면 32-byte 무작위 key를 base64url로 만들어 한 번 등록한다. 이 key는 iCal 구독 URL과 함께 캘린더 연결 token·앱 암호도 복호화하므로, 교체하면 기존 구독이 끊기고 모든 연결이 "다시 연결 필요"가 된다.
 
 iCloud 연동:
@@ -130,7 +130,7 @@ iCloud 연동:
 ### 웹앱 푸시 알림 전환 gate
 
 1. 원격 D1에 `0024_push_subscriptions`·`0025_push_muted_categories`를 적용한다(새 표만 추가, 백업·bookmark 먼저). 코드보다 먼저 적용해도 기존 동작은 그대로다.
-2. `node scripts/generate-vapid-keys.mjs`로 만든 키를 `wrangler secret put VAPID_PUBLIC_KEY`·`VAPID_PRIVATE_KEY`로 넣는다(환경마다 다른 키, 값은 기록에 남기지 않는다). secret이 없으면 알림 설정에 "켤 수 없습니다"만 보이고 다른 기능은 그대로다. 키를 바꾸면 모든 기기가 다시 켜야 한다.
+2. `node scripts/generate-vapid-keys.mjs`로 만든 키를 `npx wrangler versions secret put VAPID_PUBLIC_KEY --message <공백없는문구>`·`VAPID_PRIVATE_KEY`로 넣는다(환경마다 다른 키, 값은 기록에 남기지 않는다. `wrangler secret put`을 쓰지 않는 이유는 위 Google Calendar 연동의 secret 항목과 같다). secret이 없으면 알림 설정에 "켤 수 없습니다"만 보이고 다른 기능은 그대로다. 키를 바꾸면 모든 기기가 다시 켜야 한다.
 3. 배포 뒤 승인된 기기에서 알림 켜기 → 테스트 알림 수신을 확인한다. iPhone은 홈 화면에 추가한 앱에서 확인한다.
 
 ### 목록 index·옛 session 전환 gate (2026-11-13)
