@@ -5,13 +5,13 @@
  * - 다시 연결됐을 때 room 순번(seq)이 마지막으로 본 값과 다르면 그사이 놓친 알림이 있으므로 한 번 다시 받는다.
  * - 입력 중이면(`shouldSkipRouteRefresh`) 미뤘다가 입력이 멈추면 받는다(알림을 버리지 않는다).
  * - binding이 없는 환경(next dev)은 연결하지 않고, 기존 `RouteAutoRefresh` 30초 재조회가 그대로 따라온다.
+ * - yjs·연결 코드는 마운트한 뒤에 받는다(학생 홈 첫 화면 JS와 Worker 첫 요청에서 뺀다). 받지 못하면 연결 없이
+ *   `RouteAutoRefresh` 재조회만 남는다.
  */
 "use client";
 
 import { useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
-import * as Y from "yjs";
-import { CollabProvider } from "@/lib/collab/client/provider";
 import { formatCollabDocKey, type CollabNotifyTopic } from "@/lib/collab/doc-key";
 import { shouldSkipRouteRefresh } from "./RouteAutoRefresh";
 
@@ -39,53 +39,68 @@ export function CollabNotifyRefresh({ topic, id, since }: { topic: CollabNotifyT
     } catch {
       return;
     }
-    const doc = new Y.Doc();
-    const provider = new CollabProvider(doc, { request: { key }, localEpoch: null });
-    let lastSeq: number | null = null;
-    let lastRefreshAt = 0;
-    let pending = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
+    let cancelled = false;
+    let teardown: (() => void) | null = null;
+    // 두 번째 인자는 chunk를 받지 못한 경우만 다룬다(연결 설정 중 오류는 그대로 드러난다).
+    void Promise.all([import("yjs"), import("@/lib/collab/client/provider")]).then(
+      ([Y, { CollabProvider }]) => {
+        if (cancelled) return;
+        const doc = new Y.Doc();
+        const provider = new CollabProvider(doc, { request: { key }, localEpoch: null });
+        let lastSeq: number | null = null;
+        let lastRefreshAt = 0;
+        let pending = false;
+        let timer: ReturnType<typeof setTimeout> | null = null;
 
-    const run = () => {
-      timer = null;
-      if (!pending) return;
-      const wait = COLLAB_NOTIFY_MIN_GAP_MS - (Date.now() - lastRefreshAt);
-      if (wait > 0) {
-        timer = setTimeout(run, wait);
-        return;
-      }
-      if (document.visibilityState === "hidden" || shouldSkipRouteRefresh(document)) {
-        timer = setTimeout(run, COLLAB_NOTIFY_DEFER_MS);
-        return;
-      }
-      pending = false;
-      lastRefreshAt = Date.now();
-      routerRef.current.refresh();
-    };
-    const request = () => {
-      pending = true;
-      if (!timer) timer = setTimeout(run, 0);
-    };
-    const unsubscribe = provider.on("seq", (seq, reason, changedAt) => {
-      const previous = lastSeq;
-      lastSeq = seq;
-      // 첫 연결: 화면을 그린 뒤에 온 알림이 있으면 따라잡는다. 그 뒤로는 순번이 바뀌면(놓친 알림 포함) 다시 받는다.
-      if (previous === null && reason === "hello") {
-        if (typeof changedAt === "number" && changedAt > sinceRef.current) request();
-        return;
-      }
-      if (previous !== seq) request();
-    });
-    const onVisible = () => {
-      if (document.visibilityState === "visible" && pending && !timer) timer = setTimeout(run, 0);
-    };
-    document.addEventListener("visibilitychange", onVisible);
+        const run = () => {
+          timer = null;
+          if (!pending) return;
+          const wait = COLLAB_NOTIFY_MIN_GAP_MS - (Date.now() - lastRefreshAt);
+          if (wait > 0) {
+            timer = setTimeout(run, wait);
+            return;
+          }
+          if (document.visibilityState === "hidden" || shouldSkipRouteRefresh(document)) {
+            timer = setTimeout(run, COLLAB_NOTIFY_DEFER_MS);
+            return;
+          }
+          pending = false;
+          lastRefreshAt = Date.now();
+          routerRef.current.refresh();
+        };
+        const request = () => {
+          pending = true;
+          if (!timer) timer = setTimeout(run, 0);
+        };
+        const unsubscribe = provider.on("seq", (seq, reason, changedAt) => {
+          const previous = lastSeq;
+          lastSeq = seq;
+          // 첫 연결: 화면을 그린 뒤에 온 알림이 있으면 따라잡는다. 그 뒤로는 순번이 바뀌면(놓친 알림 포함) 다시 받는다.
+          if (previous === null && reason === "hello") {
+            if (typeof changedAt === "number" && changedAt > sinceRef.current) request();
+            return;
+          }
+          if (previous !== seq) request();
+        });
+        const onVisible = () => {
+          if (document.visibilityState === "visible" && pending && !timer) timer = setTimeout(run, 0);
+        };
+        document.addEventListener("visibilitychange", onVisible);
+        teardown = () => {
+          unsubscribe();
+          document.removeEventListener("visibilitychange", onVisible);
+          if (timer) clearTimeout(timer);
+          provider.destroy();
+          doc.destroy();
+        };
+      },
+      () => {
+        // 연결 코드를 받지 못하면(오프라인, 배포 직후 옛 chunk) RouteAutoRefresh 재조회가 대신한다.
+      },
+    );
     return () => {
-      unsubscribe();
-      document.removeEventListener("visibilitychange", onVisible);
-      if (timer) clearTimeout(timer);
-      provider.destroy();
-      doc.destroy();
+      cancelled = true;
+      teardown?.();
     };
   }, [id, topic]);
 
