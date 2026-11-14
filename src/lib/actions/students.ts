@@ -26,6 +26,7 @@ import {
 } from "@/lib/password-storage";
 import { buildInvitePath, INVITE_LIFETIME_MS } from "@/lib/invite-token";
 import { sendInviteEmail, type InviteEmailStatus } from "@/lib/invite-email";
+import { isProfileDuplicate } from "@/lib/db-errors";
 import {
   queryStudentRosterStats,
   queryStudentWorkCounts,
@@ -121,13 +122,20 @@ export async function createStudent(
   const id = crypto.randomUUID();
   const { passwordHash, invitePath, expiresAt } = await issueInvite(id);
 
-  await db.insert(profiles).values({
-    id,
-    email,
-    passwordHash,
-    displayName,
-    role: "student",
-  });
+  try {
+    await db.insert(profiles).values({
+      id,
+      email,
+      passwordHash,
+      displayName,
+      role: "student",
+    });
+  } catch (error) {
+    // 같은 이메일을 동시에 만들면(두 번 누름·두 탭) 위 확인을 둘 다 지나도 DB(INSERT trigger·unique index)가 막는다.
+    // id는 방금 만든 UUID라 여기서 겹치는 것은 이메일이다.
+    if (isProfileDuplicate(error)) return { error: "이미 존재하는 이메일입니다." };
+    throw error;
+  }
 
   revalidatePath("/dashboard/admin");
   // 계정은 이미 만들었으므로 메일이 실패해도 화면의 링크로 전달할 수 있다.

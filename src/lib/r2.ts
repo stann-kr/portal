@@ -25,7 +25,11 @@ async function createR2Client(): Promise<S3Access> {
     throw new Error("R2 업로드 자격 증명이 설정되지 않았습니다.");
   }
 
-  s3SdkPromise ??= import("@aws-sdk/client-s3");
+  // 불러오기가 한 번 실패해도(일시적인 chunk 오류) 실패한 promise를 붙잡아 두지 않고 다음 요청이 다시 시도한다.
+  s3SdkPromise ??= import("@aws-sdk/client-s3").catch((error: unknown) => {
+    s3SdkPromise = null;
+    throw error;
+  });
   const sdk = await s3SdkPromise;
   const client = new sdk.S3Client({
     region: "auto",

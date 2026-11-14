@@ -19,6 +19,7 @@ import {
   upsertPushSubscription,
 } from "@/lib/push/store";
 import { parsePushSubscriptionInput } from "@/lib/push/subscription-input";
+import { isTestPushAllowed, TEST_PUSH_LIMITED_MESSAGE } from "@/lib/push/test-push-limit";
 
 export type PushSetupState = {
   /** 서버에 발신 키가 없으면 null(알림 기능 꺼짐). 브라우저 구독의 applicationServerKey로 쓴다. */
@@ -84,6 +85,7 @@ export async function sendTestPush(endpoint: string): Promise<TestPushResult> {
   const config = readPushConfig();
   const value = readEndpoint(endpoint);
   if (!config || !value) return { ok: false, error: "테스트 알림을 보내지 못했습니다." };
+  if (!(await isTestPushAllowed(session.user.id))) return { ok: false, error: TEST_PUSH_LIMITED_MESSAGE };
   const db = createDb();
   const target = await findOwnPushTarget(db, session.user.id, value);
   if (!target) return { ok: false, error: "이 기기가 등록되어 있지 않습니다. 알림을 다시 켜 주세요.", unregistered: true };

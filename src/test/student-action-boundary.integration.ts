@@ -70,9 +70,14 @@ function requireActiveDb(): PortalTestDb {
 
 let signInCalls: unknown[][] = [];
 let signInImpl: (...args: unknown[]) => Promise<unknown> = async () => "/dashboard";
+/** 실제 auth()의 JWT 갱신이 하는 일(확인한 profile 남기기)을 흉내 낼 때만 넣는다. */
+let authRefresh: (() => void) | null = null;
 mock.module("@/auth", {
   namedExports: {
-    auth: async () => activeSession,
+    auth: async () => {
+      authRefresh?.();
+      return activeSession;
+    },
     signIn: async (...args: unknown[]) => {
       signInCalls.push(args);
       return signInImpl(...args);
@@ -1575,6 +1580,136 @@ async function setupRacingDatabase(context: TestContext, session: AuthSession, t
     maxBind: () => maxBind,
   };
 }
+
+test("session gate는 같은 호출의 JWT 갱신이 확인한 profile을 다시 읽지 않고, 확인이 없거나 대상이 다르면 DB로 판정한다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("student-1", "student"));
+  context.after(() => { authRefresh = null; });
+  const guard = await import("@/lib/auth-guard");
+  const { rememberVerifiedSessionProfile } = await import("@/lib/verified-session-profile");
+  const verified = { id: "student-1", email: "current@example.com", displayName: "현재 이름", role: "student" as const };
+
+  // DB에 profile이 없으므로, 통과한다면 갱신이 넘긴 profile을 쓴 것이다(다시 읽지 않았다).
+  authRefresh = () => rememberVerifiedSessionProfile(verified);
+  // session(token)의 role·이름이 오래돼도 확인한 profile이 권한 원본이다.
+  activeSession = { ...createSession("student-1", "admin"), user: { ...createSession("student-1", "admin").user, name: "옛 이름" } };
+  const session = await guard.requireAuth();
+  assert.deepEqual(
+    { id: session.user.id, role: session.user.role, name: session.user.name, email: session.user.email },
+    { id: "student-1", role: "student", name: "현재 이름", email: "current@example.com" },
+  );
+  await assert.rejects(guard.requireAdmin(), /Admin only/u);
+
+  // 다른 계정의 profile이 남아 있어도 session의 대상과 다르면 쓰지 않고 DB로 판정한다.
+  authRefresh = () => rememberVerifiedSessionProfile({ ...verified, id: "student-2" });
+  await assert.rejects(guard.requireAuth(), /Unauthorized/u);
+
+  // 앞선 호출이 남긴 값은 다음 호출로 넘어가지 않는다.
+  authRefresh = null;
+  await assert.rejects(guard.requireAuth(), /Unauthorized/u);
+
+  // 갱신이 넘긴 값이 없으면 전처럼 DB의 profile로 판정한다.
+  await seedProfile(db, "student-1");
+  assert.equal((await guard.requireAuth()).user.email, "student-1@example.com");
+});
+
+test("정기 과제 회차 생성은 계획한 날짜 범위의 회차만 읽고도 이미 있는 회차를 다시 만들지 않는다", { concurrency: false }, async (context) => {
+  const isolated = await createIsolatedPortalD1();
+  context.after(() => isolated.dispose());
+  const queries: string[] = [];
+  const spied = new Proxy(isolated.binding, {
+    get(target, prop) {
+      if (prop === "prepare") return (query: string) => { queries.push(query); return target.prepare(query); };
+      const value = Reflect.get(target, prop);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  }) as AnyD1Database;
+  const db = drizzle(spied, { schema: portalSchema }) as unknown as PortalTestDb;
+  const { ensureRecurringAssignmentTasks } = await import("@/lib/assignment-task-generation");
+  const { RECURRENCE_GENERATION_CAP } = await import("@/lib/assignment-recurrence");
+  const dbContext = { kind: "d1", db } as unknown as Parameters<typeof ensureRecurringAssignmentTasks>[0];
+  await seedProfile(db, "admin-1", "admin");
+  await seedProfile(db, "student-1");
+  const now = new Date();
+  const today = kstTodayKey(now);
+  const longAgo = new Date(now.getTime() - 200 * 86_400_000);
+  // 200일 전부터 매일 이어진 규칙: 계획은 최근 RECURRENCE_GENERATION_CAP개(오늘 + 다음 회차 포함)뿐이다.
+  await db.insert(assignmentRecurrences).values({
+    id: "rule-long", studentId: "student-1", title: "매일 기록", submissionFormat: "TEXT",
+    startDate: shiftDayKey(today, -200), intervalWeeks: 1, weekdays: 127, dueTime: "21:00",
+    createdById: "admin-1", createdAt: longAgo, updatedAt: longAgo,
+  });
+  const earliestPlanned = shiftDayKey(today, 2 - RECURRENCE_GENERATION_CAP);
+  const seeded = [shiftDayKey(today, -150), shiftDayKey(today, -100), earliestPlanned, shiftDayKey(today, -3)];
+  await db.insert(assignmentTasks).values(seeded.map((occurrenceDate, index) => ({
+    id: `seeded-${index}`, studentId: "student-1", recurrenceId: "rule-long", occurrenceDate, title: "매일 기록", submissionFormat: "TEXT" as const,
+  })));
+
+  queries.length = 0;
+  assert.equal(await ensureRecurringAssignmentTasks(dbContext, "student-1", now), RECURRENCE_GENERATION_CAP - 2, "범위 안에 이미 있는 두 회차(경계 날짜 포함)는 건너뛴다");
+  const taskRead = queries.find((query) => /^select\b/iu.test(query) && query.includes("assignment_tasks"));
+  assert.match(taskRead ?? "", /"occurrence_date" >= \?/u, "지난 회차 전체가 아니라 계획한 가장 이른 날짜부터 읽는다");
+  assert.equal(await ensureRecurringAssignmentTasks(dbContext, "student-1", now), 0, "다시 불러도 새로 만들 회차가 없다");
+  const rows = await db.select({ occurrenceDate: assignmentTasks.occurrenceDate }).from(assignmentTasks).where(eq(assignmentTasks.recurrenceId, "rule-long"));
+  assert.equal(rows.length, RECURRENCE_GENERATION_CAP + 2);
+  assert.equal(new Set(rows.map((row) => row.occurrenceDate)).size, rows.length);
+
+  // 계획이 없으면(모두 멈춤) 회차를 읽지도 않는다.
+  await db.update(assignmentRecurrences).set({ pausedAt: now }).where(eq(assignmentRecurrences.id, "rule-long"));
+  assert.equal(await ensureRecurringAssignmentTasks(dbContext, "student-1", now), 0);
+});
+
+test("새 학생 만들기는 같은 이메일을 동시에 만들어도 오류 대신 중복 안내를 돌려준다", { concurrency: false }, async (context) => {
+  const { db, setBeforeWrite } = await setupRacingDatabase(context, createSession("admin-1", "admin"), "profiles");
+  await seedProfile(db, "admin-1", "admin");
+  // 이 요청이 중복 확인을 지난 뒤 쓰기 직전에, 다른 요청이 같은 이메일로 먼저 만든다.
+  setBeforeWrite(async () => {
+    await db.insert(profiles).values({ id: "raced-student", email: "race@example.com", displayName: "먼저 만든 학생", role: "student" });
+  });
+  const formData = new FormData();
+  formData.set("displayName", "나중 요청");
+  formData.set("email", "Race@Example.com");
+  const result = await studentActions.createStudent({}, formData);
+  assert.deepEqual(result, { error: "이미 존재하는 이메일입니다." });
+  const stored = await db.select({ id: profiles.id }).from(profiles).where(eq(profiles.email, "race@example.com"));
+  assert.deepEqual(stored, [{ id: "raced-student" }]);
+});
+
+test("디깅 열 추가는 동시에 추가해도 상한을 넘지 않고 순서를 맨 뒤로 매긴다", { concurrency: false }, async (context) => {
+  const { db, setBeforeWrite } = await setupRacingDatabase(context, createSession("student-1", "student"), "digging_columns");
+  await seedProfile(db, "student-1");
+  await seedProfile(db, "student-2");
+  const { DIGGING_COLUMNS_MAX_COUNT } = await import("@/lib/digging-contract");
+  const columnsOf = (userId: string) => db.select().from(diggingColumns).where(eq(diggingColumns.userId, userId)).orderBy(diggingColumns.sortOrder);
+
+  await db.insert(diggingColumns).values([
+    { id: "mine-0", userId: "student-1", name: "트랙명", columnType: "text", sortOrder: 0 },
+    { id: "mine-1", userId: "student-1", name: "BPM", columnType: "number", sortOrder: 7 },
+    // 다른 학생의 열은 개수·순서 계산에 들지 않는다.
+    { id: "other-0", userId: "student-2", name: "남의 열", columnType: "text", sortOrder: 40 },
+  ]);
+  await diggingActions.addDiggingColumn({ name: "장르", columnType: "select", options: ["House", "Techno"] });
+  const added = (await columnsOf("student-1")).at(-1)!;
+  assert.deepEqual(
+    { name: added.name, columnType: added.columnType, options: added.options, sortOrder: added.sortOrder, isDefault: added.isDefault },
+    { name: "장르", columnType: "select", options: JSON.stringify(["House", "Techno"]), sortOrder: 8, isDefault: false },
+  );
+  assert.ok(added.createdAt instanceof Date);
+
+  // 상한 하나 전까지 채운 뒤, 이 요청이 쓰기 직전에 다른 탭이 마지막 자리를 채운다.
+  const fill = DIGGING_COLUMNS_MAX_COUNT - 1 - (await columnsOf("student-1")).length;
+  for (let index = 0; index < fill; index += 1) {
+    await db.insert(diggingColumns).values({ id: `fill-${index}`, userId: "student-1", name: `열 ${index}`, columnType: "text", sortOrder: 100 + index });
+  }
+  setBeforeWrite(async () => {
+    await db.insert(diggingColumns).values({ id: "raced-column", userId: "student-1", name: "다른 탭의 열", columnType: "text", sortOrder: 900 });
+  });
+  await assert.rejects(
+    diggingActions.addDiggingColumn({ name: "넘치는 열", columnType: "text" }),
+    new RegExp(`최대 ${DIGGING_COLUMNS_MAX_COUNT}개`, "u"),
+  );
+  assert.equal((await columnsOf("student-1")).length, DIGGING_COLUMNS_MAX_COUNT);
+  assert.equal((await columnsOf("student-2")).length, 1);
+});
 
 test("디깅 칸 저장은 읽은 뒤 다른 탭이 같은 트랙의 다른 칸을 고쳐도 그 값을 지우지 않는다", { concurrency: false }, async (context) => {
   const { db, setBeforeWrite } = await setupRacingDatabase(context, createSession("student-1", "student"), "digging_tracks");

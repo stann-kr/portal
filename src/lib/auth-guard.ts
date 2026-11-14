@@ -10,6 +10,7 @@ import {
   findActiveProfileById,
   type ActiveProfile,
 } from "@/lib/active-profile";
+import { captureVerifiedSessionProfile } from "@/lib/verified-session-profile";
 import type { Session } from "next-auth";
 
 export type AuthSession = Session & {
@@ -71,6 +72,7 @@ export async function requireStudentOwnerOrAdmin(
 
 /**
  * JWT session subject를 매 요청 DB profile과 대조하고 DB role을 권한 원본으로 쓴다.
+ * (`loadProfile`은 DB에서 읽거나, 같은 호출의 JWT 갱신이 방금 DB에서 읽어 확인한 profile을 돌려준다.)
  * profile이 삭제되었거나 비활성 상태이면 stale JWT를 인증으로 승격하지 않는다.
  * 임시 비밀번호 session도 포함하므로 새 비밀번호 설정 화면과 action에서만 직접 쓴다.
  */
@@ -132,9 +134,16 @@ export async function requireAuth(): Promise<AuthSession> {
  * 한 server component 렌더 안에서 layout·page·여러 query가 반복 호출해도 JWT 해석과
  * profile 재검증을 한 번만 수행한다. React cache는 렌더 요청 범위에서만 memoize하므로
  * server action·route handler 호출은 매번 다시 검증한다.
+ *
+ * `auth()`의 JWT 갱신이 이 호출 안에서 방금 DB에서 읽어 확인한 profile이 있으면 그 값을 쓴다
+ * (같은 행을 요청마다 두 번 읽지 않는다). 갱신을 거치지 않았거나 session의 대상과 다르면 DB에서 읽는다.
  */
 const resolveRequestSignedInSession = cache(
-  async (): Promise<AuthSession | null> => resolveSignedInSession(await auth()),
+  async (): Promise<AuthSession | null> => {
+    const { result: session, profile: verified } = await captureVerifiedSessionProfile(() => auth());
+    return resolveSignedInSession(session, async (profileId) =>
+      verified && verified.id === profileId ? verified : findActiveProfileById(profileId));
+  },
 );
 
 /**

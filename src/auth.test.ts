@@ -10,6 +10,7 @@ import { createNodeAuthConfig } from "./auth";
 import type { ActiveSessionProfile } from "./lib/active-profile";
 import { credentialFingerprint } from "./lib/credential-fingerprint";
 import { temporaryPasswordHash } from "./lib/password-storage";
+import { captureVerifiedSessionProfile } from "./lib/verified-session-profile";
 
 const AUTH_SECRET = "test-only-auth-secret-with-sufficient-entropy";
 const SESSION_COOKIE_NAME = "authjs.session-token";
@@ -103,6 +104,37 @@ test("비밀번호가 바뀐 뒤 이전 지문의 session과 지문 없는 이�
   const legacy = await sessionRequest(async () => PROFILE);
   assert.equal(await legacy.json(), null);
   assert.match(legacy.headers.get("set-cookie") ?? "", /authjs\.session-token=;.*Max-Age=0/i);
+});
+
+test("session 갱신이 확인한 profile은 감싼 호출에만 넘어가고, 확인에 실패한 token은 아무 것도 넘기지 않는다", async () => {
+  const fingerprint = PROFILE.credentialFingerprint ?? undefined;
+  const verified = await captureVerifiedSessionProfile(() => sessionRequest(async () => PROFILE, fingerprint));
+  assert.equal(((await verified.result.json()) as { user: { id: string } }).user.id, PROFILE.id);
+  // 지문·임시 비밀번호 여부는 넘기지 않는다.
+  assert.deepEqual(verified.profile, { id: PROFILE.id, email: PROFILE.email, displayName: PROFILE.displayName, role: PROFILE.role });
+
+  const rejected = [
+    () => sessionRequest(async () => null, fingerprint),
+    () => sessionRequest(async () => PROFILE, credentialFingerprint("$2a$10$previous-password-hash") ?? undefined),
+    () => sessionRequest(async () => ({ ...PROFILE, credentialFingerprint: null }), fingerprint),
+    () => sessionRequest(async () => PROFILE),
+  ];
+  for (const request of rejected) {
+    const outcome = await captureVerifiedSessionProfile(request);
+    assert.equal(await outcome.result.json(), null);
+    assert.equal(outcome.profile, null);
+  }
+
+  // 동시에 진행되는 두 호출은 서로의 profile을 받지 않는다.
+  const [first, second] = await Promise.all([
+    captureVerifiedSessionProfile(() => sessionRequest(async () => PROFILE, fingerprint)),
+    captureVerifiedSessionProfile(() => sessionRequest(async () => null, fingerprint)),
+  ]);
+  assert.equal(first.profile?.id, PROFILE.id);
+  assert.equal(second.profile, null);
+
+  // 감싸지 않은 호출은 전과 같이 동작한다.
+  assert.equal((await sessionRequest(async () => PROFILE, fingerprint)).status, 200);
 });
 
 async function credentialsLoginResponse(

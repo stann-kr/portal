@@ -10,13 +10,14 @@
  *   batch는 왕복을 줄이기 위한 것이고 중복 방지는 unique index가 맡는다.
  * - 렌더 중에도 부르므로 revalidatePath를 부르지 않는다.
  */
-import { and, eq, isNotNull, isNull } from "drizzle-orm";
+import { and, eq, gte, isNotNull, isNull } from "drizzle-orm";
 import type { DbContext, DrizzleDb } from "@/db/client";
 import { assignmentRecurrences, assignmentTasks } from "@/db/schema";
 import {
   deriveAssignmentTaskId,
   planRecurrenceOccurrences,
   RECURRENCE_GENERATION_CAP,
+  type PlannedOccurrence,
 } from "@/lib/assignment-recurrence";
 import {
   executeDocumentStatementsAtomically,
@@ -43,14 +44,28 @@ const INSERT_OCCURRENCE_SQL =
   "WHERE EXISTS (SELECT 1 FROM assignment_recurrences WHERE id = ? AND student_id = ? AND version = ? AND paused_at IS NULL) " +
   "ON CONFLICT DO NOTHING";
 
+/** 규칙이 지금 만들어 둘 회차(날짜 오름차순). 멈춘 규칙은 없다. */
+function planRuleOccurrences(rule: RecurrenceRow, now: Date): PlannedOccurrence[] {
+  if (rule.pausedAt) return [];
+  return planRecurrenceOccurrences(rule, { now, floor: rule.updatedAt, cap: RECURRENCE_GENERATION_CAP });
+}
+
 export function buildOccurrenceInsertStatements(
   rule: RecurrenceRow,
   existingDates: ReadonlySet<string>,
   now: Date,
 ): DocumentAtomicStatement[] {
-  if (rule.pausedAt) return [];
+  return occurrenceInsertStatements(rule, planRuleOccurrences(rule, now), existingDates, now);
+}
+
+function occurrenceInsertStatements(
+  rule: RecurrenceRow,
+  planned: readonly PlannedOccurrence[],
+  existingDates: ReadonlySet<string>,
+  now: Date,
+): DocumentAtomicStatement[] {
   const nowSeconds = epochSeconds(now);
-  return planRecurrenceOccurrences(rule, { now, floor: rule.updatedAt, cap: RECURRENCE_GENERATION_CAP })
+  return planned
     .filter((occurrence) => !existingDates.has(occurrence.occurrenceDate))
     .map((occurrence) => ({
       query: INSERT_OCCURRENCE_SQL,
@@ -95,6 +110,16 @@ export async function ensureRecurringAssignmentTasks(
     ));
   if (rules.length === 0) return 0;
 
+  // 계획은 규칙마다 최근 RECURRENCE_GENERATION_CAP개뿐이다. 오래 이어진 규칙의 지난 회차까지 읽지 않도록
+  // 계획에 든 가장 이른 날짜부터만 읽는다(occurrence_date는 YYYY-MM-DD라 문자열 비교가 날짜 순서와 같다).
+  const plans = rules
+    .map((rule) => ({ rule, planned: planRuleOccurrences(rule, now) }))
+    .filter((plan) => plan.planned.length > 0);
+  if (plans.length === 0) return 0;
+  const earliestDate = plans
+    .map((plan) => plan.planned[0]!.occurrenceDate)
+    .reduce((earliest, date) => (date < earliest ? date : earliest));
+
   const existing = await db
     .select({ recurrenceId: assignmentTasks.recurrenceId, occurrenceDate: assignmentTasks.occurrenceDate })
     .from(assignmentTasks)
@@ -102,6 +127,7 @@ export async function ensureRecurringAssignmentTasks(
       eq(assignmentTasks.studentId, studentId),
       // 규칙 id 목록을 bind하지 않는다(D1 bind 100개 제한). 학생의 정기 회차 전체를 읽고 아래에서 규칙별로 나눈다.
       recurrenceId ? eq(assignmentTasks.recurrenceId, recurrenceId) : isNotNull(assignmentTasks.recurrenceId),
+      gte(assignmentTasks.occurrenceDate, earliestDate),
     ));
   const existingByRule = new Map<string, Set<string>>();
   for (const row of existing) {
@@ -111,8 +137,8 @@ export async function ensureRecurringAssignmentTasks(
     existingByRule.set(row.recurrenceId, dates);
   }
 
-  const statements = rules
-    .flatMap((rule) => buildOccurrenceInsertStatements(rule, existingByRule.get(rule.id) ?? new Set(), now))
+  const statements = plans
+    .flatMap(({ rule, planned }) => occurrenceInsertStatements(rule, planned, existingByRule.get(rule.id) ?? new Set(), now))
     .slice(0, GENERATION_STATEMENT_CAP);
   if (statements.length === 0) return 0;
   await executeDocumentStatementsAtomically(context, statements);

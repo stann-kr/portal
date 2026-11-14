@@ -10,10 +10,21 @@ export type PushSendOutcome = "sent" | "gone" | "failed";
 const PUSH_TTL_SECONDS = 24 * 60 * 60;
 const PUSH_REQUEST_TIMEOUT_MS = 10_000;
 
+/**
+ * 브라우저가 구독 주소로 주는 푸시 서비스 host(이 이름 자체 또는 그 하위 host).
+ * Chrome·Edge(Android)·Samsung·Opera·Brave는 FCM, Firefox는 Mozilla, Safari·홈 화면 앱은 Apple, Windows Edge는 WNS다.
+ * 목록에 없는 브라우저는 알림을 켤 수 없다(2026-11-14 사용자 결정: 로그인한 사용자가 임의 주소를 등록해
+ * 서버가 그 주소로 요청을 보내게 하는 것을 막는다).
+ */
+const PUSH_SERVICE_HOSTS = ["fcm.googleapis.com", "push.services.mozilla.com", "push.apple.com", "notify.windows.com"];
+
 export function isAllowedPushEndpoint(endpoint: string): boolean {
+  if (endpoint.length > 2048) return false;
   try {
     const url = new URL(endpoint);
-    return url.protocol === "https:" && endpoint.length <= 2048;
+    if (url.protocol !== "https:" || url.port !== "" || url.username !== "" || url.password !== "") return false;
+    const host = url.hostname.toLowerCase();
+    return PUSH_SERVICE_HOSTS.some((service) => host === service || host.endsWith(`.${service}`));
   } catch {
     return false;
   }
