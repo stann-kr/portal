@@ -15,7 +15,8 @@ import { Disc3, MessageSquareText } from "lucide-react";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 import { getUnifiedItemKindLabel } from "@/components/ui/unified-item-type";
 import { buttonClassName } from "@/components/ui/button";
-import { UnifiedNoteDetail, type NoteDetailViewer } from "./UnifiedNoteDetail";
+import dynamic from "next/dynamic";
+import type { NoteDetailViewer } from "./UnifiedNoteDetail";
 import {
   CalendarEventActions,
   isEditableCalendarEventItem,
@@ -24,6 +25,21 @@ import { isManagedLessonItem, LessonActions } from "@/components/calendar/Lesson
 import { formatDetailDate, formatDetailMoment, shiftDateKey } from "@/components/calendar/calendar-dates";
 import { toKstDateInputValue } from "@/lib/date-input";
 import { assignmentTaskHref, buildAdminStudentDetailHref, buildStudentDiggingBoardHref } from "@/lib/student-space-routes";
+
+/**
+ * 노트 상세는 편집기·공동 편집 코드를 함께 끌어온다. 상세 패널을 열 때만 렌더하므로 나눠 받아
+ * 서버 첫 렌더(Worker 첫 요청 평가)와 초기 JS에서 빼고, 패널(`UnifiedItemDetailPanel`)이 한가할 때 미리 받아 둔다.
+ * 받는 동안은 노트 상세가 처음 보이는 "불러오는 중"과 같은 줄을 둔다.
+ */
+export const preloadUnifiedNoteDetail = () => import("./UnifiedNoteDetail");
+const UnifiedNoteDetail = dynamic(
+  () => import("./UnifiedNoteDetail").then((m) => ({ default: m.UnifiedNoteDetail })),
+  {
+    loading: () => (
+      <p className="text-xs text-muted-foreground" role="status">전체 내용을 불러오는 중입니다.</p>
+    ),
+  },
+);
 
 // ── 타입 라벨 ────────────────────────────────────
 

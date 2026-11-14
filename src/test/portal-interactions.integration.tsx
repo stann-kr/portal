@@ -256,8 +256,12 @@ let lastDailyListProps: RecordedDailyListProps | null = null;
 mock.module("@/components/student-portal/DailyListView", { namedExports: {
   DailyListView: (props: RecordedDailyListProps) => { lastDailyListProps = props; return null; },
 } });
+// 상세 패널은 노트 상세 코드를 한가할 때 미리 받는다(`preloadUnifiedNoteDetail`). 편집기를 불러오지 않게 빈 loader로 둔다.
+mock.module("@/components/student-portal/UnifiedItemDetail", { namedExports: {
+  UnifiedItemDetail: () => null,
+  preloadUnifiedNoteDetail: async () => undefined,
+} });
 for (const [folder, name] of [
-  ["student-portal", "UnifiedItemDetail"],
   ["student-portal", "AllItemsView"],
   ["admin-portal", "StudentManagementSection"], ["admin-portal", "AdminWorkQueueSection"],
   ["qna", "QnaSlideForm"],

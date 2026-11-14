@@ -26,7 +26,9 @@ import { isCurriculumVisible } from "@/lib/curriculum-visibility";
 import { AssignmentView } from "./AssignmentView";
 import { CreateEntryDropdown } from "./CreateEntryDropdown";
 import { SlidePanel, SlidePanelDock } from "./SlidePanel";
-import { QnaSlideForm } from "@/components/qna/QnaSlideForm";
+import dynamic from "next/dynamic";
+import { CollabEditorPending } from "@/components/editor/CollabEditorPending";
+import { useIdlePreload } from "@/lib/hooks/useIdlePreload";
 import { CalendarTypeFilter } from "@/components/calendar/CalendarTypeFilter";
 import {
   CalendarQuickCreate,
@@ -55,6 +57,16 @@ import type { CalendarQuickCreateSelection } from "@/lib/calendar-quick-create";
 import { createDaySelection } from "@/lib/unified-item-views";
 import { nextFullHour, toKstDateInputValue, toKstDateTimeInputValue } from "@/lib/date-input";
 import { cn } from "@/lib/utils";
+
+/**
+ * Q&A 작성 폼은 편집기·공동 편집 코드를 함께 끌어온다. 패널을 열 때만 렌더하므로 나눠 받아
+ * 서버 첫 렌더(Worker 첫 요청 평가)와 초기 JS에서 빼고, 화면이 뜬 뒤 한가할 때 미리 받아 둔다.
+ */
+const preloadQnaSlideForm = () => import("@/components/qna/QnaSlideForm");
+const QnaSlideForm = dynamic(
+  () => import("@/components/qna/QnaSlideForm").then((m) => ({ default: m.QnaSlideForm })),
+  { loading: () => <CollabEditorPending minHeight="12.5rem" /> },
+);
 
 // ── 타입 ──────────────────────────────────────────
 
@@ -231,6 +243,7 @@ export function CalendarSection({
   } | null>(null);
   const [qnaSlideOpen, setQnaSlideOpen] = useState(false);
   const [qnaFormBusy, setQnaFormBusy] = useState(false);
+  useIdlePreload(preloadQnaSlideForm, canCreateQna);
   const [activeTab, setActiveTab] = useState<CalendarTabValue>(initialLocation?.view ?? "calendar");
   // 관리자 일정은 주 보기(AdminSchedule 보드), 학생 캘린더는 월 보기(Calendar 보드)로 시작한다. 이 세션 동안 유지한다.
   const [calendarView, setCalendarView] = useState<CalendarGridView>(

@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
-import manifest from "@/app/manifest";
+import { WEB_APP_BACKGROUND } from "@/lib/web-app-theme";
 import { PORTAL_MARK, PORTAL_SERVICE_NAME, PORTAL_SHORT_NAME, portalMarkSvg } from "./portal-mark";
 
 const root = new URL("../../../", import.meta.url);
 
-test("브랜드: src/app/icon.svg는 portal-mark.ts 수치로 만든 그림과 같다", async () => {
-  const svg = (await readFile(new URL("src/app/icon.svg", root), "utf8")).trim();
+test("브랜드: public/icon.svg는 portal-mark.ts 수치로 만든 그림과 같다", async () => {
+  const svg = (await readFile(new URL("public/icon.svg", root), "utf8")).trim();
   assert.equal(svg, portalMarkSvg({ tile: "rounded" }));
 });
 
@@ -28,11 +28,27 @@ test("브랜드: 바깥 타원은 가로 가운데, 폭은 타일의 76%", () =>
   assert.equal(Math.round(((outer.rx * 2) / viewBox) * 100), 76);
 });
 
-test("브랜드: manifest 이름과 아이콘(any 둥근 타일, maskable 따로)", () => {
-  const m = manifest();
+// manifest는 Worker를 거치지 않는 정적 파일(public/manifest.webmanifest)이라 코드 값과 어긋나지 않는지 여기서 본다.
+// iPhone은 홈 화면 앱(standalone)에서만 웹 푸시를 받으므로 display·start_url·id가 알림의 전제다.
+test("브랜드: manifest 이름과 아이콘(any 둥근 타일, maskable 따로)", async () => {
+  const m = JSON.parse(await readFile(new URL("public/manifest.webmanifest", root), "utf8")) as {
+    id: string;
+    name: string;
+    short_name: string;
+    start_url: string;
+    display: string;
+    background_color: string;
+    theme_color: string;
+    icons: { src: string; purpose: string }[];
+  };
   assert.equal(m.name, PORTAL_SERVICE_NAME);
   assert.equal(m.short_name, PORTAL_SHORT_NAME);
-  const maskable = m.icons?.find((icon) => icon.purpose === "maskable");
+  assert.equal(m.display, "standalone");
+  assert.equal(m.id, "/dashboard");
+  assert.equal(m.start_url, "/dashboard");
+  assert.equal(m.background_color, WEB_APP_BACKGROUND.light);
+  assert.equal(m.theme_color, WEB_APP_BACKGROUND.light);
+  const maskable = m.icons.find((icon) => icon.purpose === "maskable");
   assert.equal(maskable?.src, "/icons/icon-maskable-512.png");
 });
 

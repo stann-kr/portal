@@ -1,0 +1,5 @@
+# https://developers.cloudflare.com/workers/static-assets/redirects
+# iOS·링크 미리보기는 layout의 apple-touch-icon 링크와 별개로 루트 경로를 직접 찾는다.
+# 정적 redirect로 답해 404 페이지를 그리느라 Worker를 깨우지 않는다.
+/apple-touch-icon.png /icons/apple-touch-icon.png 301
+/apple-touch-icon-precomposed.png /icons/apple-touch-icon.png 301

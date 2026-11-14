@@ -1,0 +1,7 @@
+# https://developers.cloudflare.com/workers/static-assets/headers
+# https://opennext.js.org/cloudflare/caching#static-assets-caching
+# /_next/static 아래 파일은 내용이 바뀌면 이름(hash)도 바뀌므로 브라우저가 1년 동안 다시 묻지 않게 한다.
+# 정적 파일 기본값(max-age=0, must-revalidate)이면 페이지를 열 때마다 JS·CSS·폰트를 하나씩 다시 확인한다.
+# 이름이 고정된 public 파일(sw.js, icons, splash, vendor)은 여기에 넣지 않는다.
+/_next/static/*
+  Cache-Control: public,max-age=31536000,immutable

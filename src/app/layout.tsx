@@ -39,11 +39,14 @@ export const metadata: Metadata = {
   // iPhone 홈 화면에 추가하면 Safari 막대 없이 앱처럼 열린다(웹 푸시의 전제).
   // startupImage: 서버 응답 전(Worker 냉시작 등) 검은 화면 대신 바로 보이는 시작 화면.
   appleWebApp: { capable: true, title: "Portal", statusBarStyle: "default", startupImage: appleStartupImages() },
-  // icons를 직접 주면 src/app/icon.svg 파일 규칙 링크가 빠지므로 icon.svg를 적는다(favicon.ico는 파일 규칙이 넣는다).
+  // icon.svg·manifest.webmanifest는 public 정적 파일이다. app 파일 규칙(icon.svg, manifest.ts)이면 Worker가
+  // 페이지를 열 때마다 만들어 응답해(냉시작이면 수백 ms CPU) 정적 파일로 두고 여기서 링크한다.
+  // favicon.ico는 app 파일 규칙이 넣고 정적 파일로 나간다.
   icons: {
     icon: [{ url: "/icon.svg", type: "image/svg+xml" }],
     apple: "/icons/apple-touch-icon.png",
   },
+  manifest: "/manifest.webmanifest",
 };
 
 /** 이 기기에서 고른 화면 모드(cookie). 없으면 null(= 시스템). 루트 layout은 이미 force-dynamic이라 정적 생성에 영향이 없다. */

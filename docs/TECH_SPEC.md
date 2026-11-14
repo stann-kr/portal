@@ -65,6 +65,18 @@ OpenNext → Cloudflare Worker
 | Editor | Tiptap |
 | Deploy | OpenNext for Cloudflare, Wrangler |
 
+### Worker 첫 요청 비용(2026-11-14)
+
+- isolate가 새로 뜬 뒤 첫 요청은 그 화면이 쓰는 서버 chunk(RSC·SSR)를 모두 평가한다(로컬 측정에서 첫 요청 350~470ms, 이후 요청 35~50ms). 운영 7일(2026-11-07~14) 요청 CPU는 p50 13ms, p90 264ms, p99 843ms라 사용자가 적은 이 앱에서는 새 isolate의 첫 요청이 CPU 대부분을 차지한다(GraphQL `workersInvocationsAdaptive`, route별 분해는 없다). 여러 화면이 쓰는 모듈은 한 동작에서만 쓰는 무거운 라이브러리를 정적 import하지 않는다.
+- 내용이 고정된 응답은 Worker를 깨우지 않는 정적 파일로 둔다. `public/icon.svg`·`public/manifest.webmanifest`는 app 파일 규칙(`icon.svg`·`manifest.ts`) 대신 정적 asset이고 루트 layout `metadata`가 링크한다(manifest 값은 `portal-mark.test.ts`가 코드 상수와 대조). `public/robots.txt`(모두 허용, 전과 같은 효과)와 `public/_redirects`(iOS가 직접 찾는 `/apple-touch-icon*.png` → `/icons/apple-touch-icon.png`)도 Worker 없이 답한다.
+- `public/_headers`가 `/_next/static/*`(이름에 hash가 있는 JS·CSS·폰트)에 `Cache-Control: public,max-age=31536000,immutable`을 붙인다. 정적 asset 기본값(`max-age=0, must-revalidate`)이면 페이지를 열 때마다 chunk·폰트를 하나씩 다시 확인한다. 이름이 고정된 public 파일(`sw.js`, 아이콘, splash)은 규칙에 넣지 않는다.
+- 학생 홈·Q&A 스레드의 `CollabNotifyRefresh`는 yjs·`CollabProvider`를 마운트한 뒤 동적 import한다. 받지 못하면 연결 없이 `RouteAutoRefresh` 재조회만 남는다.
+- `src/lib/collab/server-env.ts`는 HTML↔Yjs 변환(`server-restore`: yjs·linkedom·tiptap 전체 확장·코드 강조)을 `loadServerRestore()`로 복원·repair 때만 불러온다. action·route는 `server-restore`를 정적 import하지 않는다(노트 checkpoint·게시물 dirty 비교도 같은 loader).
+- 관리자·학생 첫 화면(`CalendarSection`)의 Q&A 작성 폼과 일정 상세의 노트 상세(`UnifiedItemDetail` → `UnifiedNoteDetail`)는 `next/dynamic`으로 나눈다. 둘 다 패널을 열 때만 렌더하고, `useIdlePreload`가 화면이 뜬 뒤 한가할 때 미리 받는다(미리 받기가 끝나기 전에 열면 그 자리에 "준비하는 중"·"불러오는 중"을 잠깐 보인다). 정적 import로 되돌리면 첫 화면 SSR이 편집기 묶음(약 0.9MB)을 다시 평가한다.
+- `drizzle(binding, { schema })`는 부를 때마다 schema 전체의 관계 설정을 새로 만든다(Node 측정 호출당 약 0.9ms, schema 없이는 0.005ms). 데이터 함수마다 `createDb()`/`createDbContext()`를 부르므로 `src/db/d1-drizzle.ts`의 `d1DrizzleFor()`가 같은 D1 바인딩이면 인스턴스를 다시 쓴다(WeakMap, 로컬 SQLite도 연결 단위로 같다). scheduled(`worker.ts`)도 `createD1DbContext()`로 같은 함수를 쓴다.
+- `src/lib/r2.ts`는 `@aws-sdk/client-s3`를 정적 import하지 않는다. 운영은 R2 바인딩을 쓰고, 바인딩이 없을 때(`next dev` 등)만 `createR2Client()`가 SDK를 동적으로 불러온다. 정적 import면 학생·관리자·커뮤니티 페이지 첫 요청이 SDK 모듈 평가(관리자 냉시작 프로파일 약 31ms)를 치른다.
+- 로컬 wrangler dev 측정(5회 중앙값, 같은 조건): 첫 요청 CPU 관리자 `/dashboard/admin` 469→354ms, 학생 `/dashboard/student` 457→376ms. 이후 요청은 35~50ms로 같다.
+
 ## 주요 route
 
 | Route | 역할 |
@@ -420,7 +432,7 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 
 ## 웹앱 푸시 알림(2026-11-09)
 
-- 웹앱: `src/app/manifest.ts`(standalone, `/dashboard` 시작, SL 아이콘 `public/icons/` 512·192·apple 180), 루트 layout의 `appleWebApp`·`themeColor`(`src/lib/web-app-theme.ts`). `public/sw.js`는 `push`·`notificationclick`만 다루고 fetch를 가로채거나 캐시하지 않는다. 알림 클릭은 같은 출처 경로만 열고 열린 창을 먼저 쓴다. proxy matcher는 `sw.js`·`manifest.webmanifest`를 로그인 검사에서 뺀다.
+- 웹앱: `public/manifest.webmanifest`(정적 파일, layout `metadata.manifest`가 링크; standalone, `/dashboard` 시작, SL 아이콘 `public/icons/` 512·192·apple 180), 루트 layout의 `appleWebApp`·`themeColor`(`src/lib/web-app-theme.ts`). `public/sw.js`는 `push`·`notificationclick`만 다루고 fetch를 가로채거나 캐시하지 않는다. 알림 클릭은 같은 출처 경로만 열고 열린 창을 먼저 쓴다. proxy matcher는 `sw.js`·`manifest.webmanifest`를 로그인 검사에서 뺀다.
 - 저장: `push_subscriptions`(`0024`, endpoint unique·https·2048자, p256dh 65바이트·auth 16바이트 base64url, profile FK cascade, 계정 삭제 batch에서 명시 삭제). 같은 endpoint를 다른 계정이 켜면 그 계정으로 옮긴다.
 - 발송(`src/lib/push/`): `web-push-crypto.ts`가 WebCrypto만으로 RFC 8291 aes128gcm 한 record(4096, 부록 A 벡터와 바이트 일치 테스트)와 RFC 8292 VAPID ES256 JWT(aud=푸시 서비스 출처, 12시간)를 만든다. `send.ts`는 TTL 24시간·Urgency normal로 보내고 2xx=sent, 404·410=gone(행 삭제), 그 밖=failed(`failure_count`+1, 10회면 삭제). `notify.ts`의 `notifyPush(audience, message, { excludeProfileId })`는 `after-response.ts`(Next `after` → Workers waitUntil)로 응답 뒤 보내고 실패는 log만 남긴다. 키(`VAPID_PUBLIC_KEY`·`VAPID_PRIVATE_KEY`, 연락처 `VAPID_SUBJECT` 없으면 `AUTH_URL`)가 없으면 DB를 읽지 않고 끝낸다. 설정값은 `runtime-env.ts`(캘린더 동기화와 공용)로 읽는다.
 - 이벤트: `createFeedback`·`createAssignmentTask`·`submitAssignmentTask`·`submitAssignment`·`createQnaThread*`·`createQnaReply`·`createLesson`·`rescheduleLesson`·`moveLesson`·`createPost(ANNOUNCEMENT)`가 새로 저장했을 때만(재전송·replayed 제외) 부른다. 정기 과제 회차 생성·수정·삭제는 알리지 않는다.

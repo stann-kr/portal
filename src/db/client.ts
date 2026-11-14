@@ -12,7 +12,8 @@
  */
 import type { Database as BetterSqliteDatabase } from "better-sqlite3";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
-import type { AnyD1Database, DrizzleD1Database } from "drizzle-orm/d1";
+import type { AnyD1Database } from "drizzle-orm/d1";
+import { d1DrizzleFor, type D1DrizzleDb } from "./d1-drizzle";
 import {
   getOrCreateOpenConnection,
   selectLocalD1SqliteFile,
@@ -33,9 +34,7 @@ export type LocalDrizzleDb = BetterSQLite3Database<typeof schema> & {
   $client: BetterSqliteDatabase;
 };
 
-export type D1DrizzleDb = DrizzleD1Database<typeof schema> & {
-  $client: AnyD1Database;
-};
+export type { D1DrizzleDb };
 
 /**
  * 일반 조회/단일 쓰기 호출부가 공유하는 비동기 SQLite ORM 표면.
@@ -50,14 +49,8 @@ export type DbContext =
   | { kind: "local"; db: LocalDrizzleDb }
   | { kind: "d1"; db: D1DrizzleDb };
 
-/**
- * D1 바인딩을 직접 받아 Drizzle 인스턴스 생성 (Workers 프로덕션용).
- * @param d1 - Cloudflare D1Database 바인딩
- */
-function createD1Db(d1: AnyD1Database): D1DrizzleDb {
-  const { drizzle }: typeof import("drizzle-orm/d1") = require("drizzle-orm/d1");
-  return drizzle(d1, { schema });
-}
+/** 로컬 SQLite도 같은 연결이면 Drizzle 인스턴스를 다시 쓴다(d1-drizzle.ts의 D1 쪽과 같은 이유). */
+const localDrizzleByConnection = new WeakMap<BetterSqliteDatabase, LocalDrizzleDb>();
 
 /**
  * 환경에 따라 적절한 Drizzle DB 인스턴스를 반환하는 팩토리 함수.
@@ -76,7 +69,7 @@ export function createDbContext(): DbContext {
       const d1 = ctx?.env?.DB as AnyD1Database | undefined;
 
       if (d1) {
-        return { kind: "d1", db: createD1Db(d1) };
+        return { kind: "d1", db: d1DrizzleFor(d1) };
       }
     } catch {
       // Cloudflare 컨텍스트 획득 실패 시 로컬 환경으로 폴백
@@ -157,5 +150,9 @@ function createLocalDb(): LocalDrizzleDb {
     },
   );
 
-  return drizzle(sqlite, { schema });
+  const cached = localDrizzleByConnection.get(sqlite);
+  if (cached) return cached;
+  const db = drizzle(sqlite, { schema });
+  localDrizzleByConnection.set(sqlite, db);
+  return db;
 }
