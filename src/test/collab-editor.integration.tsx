@@ -1181,6 +1181,70 @@ test("알림 room: 답글·최근 노트 알림이 오면 화면을 다시 받�
   await waitUntil(() => refreshCount === 3, 8000, "다시 연결하면 놓친 알림을 따라잡아야 합니다.");
 });
 
+test("알림 room: 연결 코드를 받지 못하면 네트워크가 돌아왔을 때 한 번만 더 받아 보고, 준비하다 실패하면 만든 연결을 정리한다", { concurrency: false }, async (context) => {
+  const env = setupBrowser(context);
+  tokenPolicy = { collab: true, mode: "read", userId: "student-1", displayName: "김학생" };
+  type Load = NonNullable<Parameters<typeof CollabNotifyRefresh>[0]["load"]>;
+  const loadReal: Load = () => Promise.all([import("yjs"), import("@/lib/collab/client/provider")]);
+  const online = () => act(async () => { env.browserWindow.dispatchEvent(new env.browserWindow.Event("online")); });
+  const settle = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 50)); });
+
+  // 처음에는 받지 못하고, 다시 연결된 뒤에는 받는다.
+  let attempts = 0;
+  const flaky: Load = () => {
+    attempts += 1;
+    return attempts === 1 ? Promise.reject(new Error("chunk")) : loadReal();
+  };
+  await env.mount(<CollabNotifyRefresh topic="qna" id="thread-retry" since={Date.now()} load={flaky} />);
+  await settle();
+  assert.equal(attempts, 1);
+  assert.equal(rooms.get("notify:qna:thread-retry")?.sockets.size ?? 0, 0, "받지 못한 동안은 연결하지 않는다");
+  await online();
+  await waitUntil(() => Boolean(rooms.get("notify:qna:thread-retry")?.sockets.size), 3000, "다시 연결되면 알림 room에 붙어야 합니다.");
+  assert.equal(attempts, 2);
+
+  // 다시 받아도 안 되면 더 시도하지 않는다(RouteAutoRefresh 재조회가 대신한다).
+  let failures = 0;
+  const broken: Load = () => {
+    failures += 1;
+    return Promise.reject(new Error("chunk"));
+  };
+  const gone = await env.mount(<CollabNotifyRefresh topic="qna" id="thread-broken" since={Date.now()} load={broken} />);
+  await settle();
+  await online();
+  await settle();
+  await online();
+  await settle();
+  assert.equal(failures, 2, "한 번만 더 받아 본다");
+
+  // 화면을 떠난 뒤에는 다시 연결돼도 받지 않는다.
+  let afterLeave = 0;
+  const leaving = await env.mount(<CollabNotifyRefresh topic="qna" id="thread-left" since={Date.now()} load={() => { afterLeave += 1; return Promise.reject(new Error("chunk")); }} />);
+  await settle();
+  await leaving.unmount();
+  await online();
+  await settle();
+  assert.equal(afterLeave, 1);
+  await gone.unmount();
+
+  // 연결을 준비하다 실패하면 그때까지 만든 연결을 정리하고 오류를 남긴다.
+  const errors = context.mock.method(console, "error", () => undefined);
+  let created = 0;
+  let destroyed = 0;
+  class FailingProvider {
+    constructor() { created += 1; }
+    on(): never { throw new Error("setup"); }
+    destroy() { destroyed += 1; }
+  }
+  const failing: Load = async () => [await import("yjs"), { CollabProvider: FailingProvider }] as unknown as Awaited<ReturnType<Load>>;
+  const failed = await env.mount(<CollabNotifyRefresh topic="qna" id="thread-setup" since={Date.now()} load={failing} />);
+  await settle();
+  assert.deepEqual([created, destroyed], [1, 1], "준비에 실패하면 만든 연결을 닫는다");
+  assert.equal(errors.mock.callCount(), 1);
+  await failed.unmount();
+  assert.equal(destroyed, 1, "이미 정리한 연결을 다시 닫지 않는다");
+});
+
 async function goOffline(env: Env, device: Device): Promise<void> {
   tokenOffline = true;
   for (const socket of [...openSockets]) socket.closeFromServer(1006, "network");
