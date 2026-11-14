@@ -2756,6 +2756,18 @@ test("과제 고치기는 고치던 내용을 이 기기에 보관해 다시 열
   await act(async () => root.render(form(3, "킥 정리")));
   await settle();
   assert.equal(inputValue("title"), "킥 정리 고침", "고치던 제목이 되살아난다");
+  // 되살린 값을 곧바로 다시 보관하지 않는다: 보관 지연(0.5초)이 지나도 되살렸다는 안내가 남는다.
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 700)); });
+  assert.ok(
+    Array.from(browser.document.querySelectorAll('[role="status"]')).some((element) => /저장되지 않은 작성 내용을 복원했습니다/u.test(element.textContent ?? "")),
+    "되살린 뒤 '복원했습니다' 안내가 남는다",
+  );
+  // 되살린 뒤 고치면 다시 보관한다.
+  await fill("task-edit-t-1-title", "킥 정리 고침 2");
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 700)); });
+  assert.match(browser.localStorage.getItem(createDocumentDraftKey("assignment-feedback", "admin-edit", "assignment-task-edit:t-1")) ?? "", /킥 정리 고침 2/u, "되살린 뒤 고친 내용도 보관된다");
+  await fill("task-edit-t-1-title", "킥 정리 고침");
+  await settle();
   await press("저장");
   assert.deepEqual(sent, [{ version: "3", title: "킥 정리 고침" }]);
 
