@@ -86,6 +86,58 @@ export async function readStudentHomeLessonGroup(
   };
 }
 
+/** 그룹 멤버 id(이름순 아님, 없으면 빈 배열). */
+export async function readLessonGroupMemberIds(context: DbContext, groupId: string): Promise<string[]> {
+  const rows = await asDocumentReadDb(context)
+    .select({ studentId: lessonGroupMembers.studentId })
+    .from(lessonGroupMembers)
+    .where(eq(lessonGroupMembers.groupId, groupId))
+    .orderBy(asc(lessonGroupMembers.studentId));
+  return rows.map((row) => row.studentId);
+}
+
+export type GroupLessonTarget = { lessonId: string; studentId: string };
+
+/**
+ * 관리자가 레슨 하나를 옮기거나 지울 때 함께 바꿀 레슨들. 그 학생의 그룹 멤버 모두에게 같은 시각 레슨이 있으면
+ * 그룹레슨이라 멤버별 레슨을 하나씩 돌려주고, 아니면 그 레슨만 돌려준다(2026-11-15 사용자 결정: 관리자 이동은 모두,
+ * 학생 이동은 본인만). 레슨이 없으면 null.
+ */
+export async function readGroupLessonTargets(
+  context: DbContext,
+  studentId: string,
+  lessonId: string,
+): Promise<{ scheduledAt: Date; targets: GroupLessonTarget[] } | null> {
+  const db = asDocumentReadDb(context);
+  const [lesson] = await db
+    .select({ scheduledAt: lessons.scheduledAt })
+    .from(lessons)
+    .where(and(eq(lessons.id, lessonId), eq(lessons.studentId, studentId)))
+    .limit(1);
+  if (!lesson) return null;
+  const self = { scheduledAt: lesson.scheduledAt, targets: [{ lessonId, studentId }] };
+  const groupId = await readStudentLessonGroupId(context, studentId);
+  if (!groupId) return self;
+  const members = await db
+    .select({ studentId: lessonGroupMembers.studentId })
+    .from(lessonGroupMembers)
+    .where(eq(lessonGroupMembers.groupId, groupId));
+  const others = members.map((member) => member.studentId).filter((id) => id !== studentId);
+  if (others.length === 0) return self;
+  const rows = await db
+    .select({ id: lessons.id, studentId: lessons.studentId })
+    .from(lessons)
+    .where(and(inArray(lessons.studentId, others), eq(lessons.scheduledAt, lesson.scheduledAt)))
+    .orderBy(asc(lessons.id));
+  const byStudent = new Map<string, string>();
+  for (const row of rows) if (!byStudent.has(row.studentId)) byStudent.set(row.studentId, row.id);
+  if (others.some((id) => !byStudent.has(id))) return self;
+  return {
+    scheduledAt: lesson.scheduledAt,
+    targets: [self.targets[0], ...others.map((id) => ({ lessonId: byStudent.get(id)!, studentId: id }))],
+  };
+}
+
 /** 학생이 속한 그룹 id(없으면 null). 권한 판정용. */
 export async function readStudentLessonGroupId(context: DbContext, studentId: string): Promise<string | null> {
   const [row] = await asDocumentReadDb(context)

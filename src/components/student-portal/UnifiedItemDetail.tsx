@@ -9,6 +9,7 @@
  */
 "use client";
 
+import { readStudentGroupLessonTag } from "@/lib/group-lesson-items";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { Disc3, MessageSquareText } from "lucide-react";
@@ -121,6 +122,7 @@ export function UnifiedItemDetail({
   const allDayEndDate = metaStr(item.metadata, "allDayEndDate");
   const metaFeedbackCount = item.metadata.feedbackCount as number | undefined;
   const isAllDay = item.metadata.allDay === true;
+  const studentGroupLesson = readStudentGroupLessonTag(item);
   const description = item.description ?? metaDescription;
   const isLesson = item.type === "EVENT" && item.subType === "LESSON";
   // 아직 제출하지 않은 관리자 과제는 마감 시각에 놓이고, 제출은 과제 화면에서 한다.
@@ -201,7 +203,11 @@ export function UnifiedItemDetail({
       {item.type === "EVENT" ? (
         <>
           {canManageEvents && item.source.entity === "LESSON" ? (
-            <p className="text-xs/[18px] text-muted-foreground">레슨 일정은 Stann이 관리합니다.</p>
+            <p className="text-xs/[18px] text-muted-foreground">
+              {studentGroupLesson
+                ? `그룹레슨 · ${studentGroupLesson.groupName}${studentGroupLesson.partnerNames.length > 0 ? ` · ${studentGroupLesson.partnerNames.join(", ")}님과 함께` : ""}. 캘린더에서 옮기면 내 레슨만 옮겨집니다.`
+                : "레슨 일정은 Stann이 관리합니다."}
+            </p>
           ) : canManageEvents && item.source.kind !== "PORTAL" ? (
             <p className="text-xs/[18px] text-muted-foreground">연결한 외부 캘린더의 일정은 읽기 전용입니다.</p>
           ) : null}

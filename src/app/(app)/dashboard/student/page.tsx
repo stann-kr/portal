@@ -25,6 +25,7 @@ import {
 } from "@/lib/portal-location";
 import { getUnifiedItemKey } from "@/lib/utils/unifiedItemUtils";
 import { getMyHomeLessonGroup } from "@/lib/actions/lessonGroups";
+import { tagStudentGroupLessons } from "@/lib/group-lesson-items";
 import { RouteAutoRefresh } from "@/components/app-shell/RouteAutoRefresh";
 import { CollabNotifyRefresh } from "@/components/app-shell/CollabNotifyRefresh";
 
@@ -83,7 +84,7 @@ export default async function StudentPortalPage({ searchParams }: { searchParams
         initialLocation={initialLocation}
         deepLink={deepLink}
         announcements={announcements}
-        unifiedItems={unifiedItems}
+        unifiedItems={tagStudentGroupLessons(unifiedItems, lessonGroup)}
         curriculumModules={curriculumModules.map((module) => ({
           ...module,
           description: null,

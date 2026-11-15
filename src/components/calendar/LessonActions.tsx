@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { deleteLesson, rescheduleLesson, type CreateLessonState } from "@/lib/actions/lessons";
 import { toKstDateTimeInputValue } from "@/lib/date-input";
 import { createLessonUnifiedItem } from "@/lib/unified-item-normalization";
+import { readGroupLessonMetadata } from "@/lib/group-lesson-items";
 import { cn } from "@/lib/utils";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 
@@ -26,6 +27,8 @@ export function LessonActions({
   onBusyChange?: (busy: boolean) => void;
 }) {
   const studentId = item.space.studentId;
+  const group = readGroupLessonMetadata(item);
+  const groupNames = group ? group.members.map((member) => member.label).join(", ") : null;
   const [mode, setMode] = useState<"view" | "reschedule" | "confirm-delete">("view");
   const [scheduledAt, setScheduledAt] = useState(() => toKstDateTimeInputValue(item.date));
   const [notice, setNotice] = useState<string | null>(null);
@@ -41,10 +44,12 @@ export function LessonActions({
         if (result.lesson) {
           setMode("view");
           setNotice("레슨 시간을 변경했습니다.");
-          onUpdated(createLessonUnifiedItem(
-            { id: result.lesson.id, scheduledAt: new Date(result.lesson.scheduledAt) },
-            { id: studentId, email: item.space.label, displayName: item.space.label },
-          ));
+          onUpdated(group
+            ? { ...item, date: new Date(result.lesson.scheduledAt) }
+            : createLessonUnifiedItem(
+              { id: result.lesson.id, scheduledAt: new Date(result.lesson.scheduledAt) },
+              { id: studentId, email: item.space.label, displayName: item.space.label },
+            ));
         }
         return result;
       } catch {
@@ -128,10 +133,16 @@ export function LessonActions({
           레슨 시간 변경
         </Button>
       ) : null}
-      <p className="text-xs/[18px] text-muted-foreground">학생의 일정과 구독 캘린더에도 반영됩니다.</p>
+      <p className="text-xs/[18px] text-muted-foreground">
+        {group
+          ? `그룹레슨 · ${group.groupName}: ${groupNames} 모두의 일정과 구독 캘린더에 함께 반영됩니다.`
+          : "학생의 일정과 구독 캘린더에도 반영됩니다."}
+      </p>
       {mode === "confirm-delete" ? (
         <div role="group" aria-labelledby={deleteMessageId} className="flex flex-col gap-2.5 rounded-touch bg-destructive-muted px-3.5 py-3">
-          <p id={deleteMessageId} className="text-ui text-destructive">이 레슨을 삭제할까요? 학생의 일정과 구독 캘린더에서도 사라집니다.</p>
+          <p id={deleteMessageId} className="text-ui text-destructive">{group
+            ? `이 그룹레슨을 삭제할까요? ${groupNames} 모두의 일정과 구독 캘린더에서 사라집니다.`
+            : "이 레슨을 삭제할까요? 학생의 일정과 구독 캘린더에서도 사라집니다."}</p>
           {deleteError ? <p role="alert" className="text-ui font-medium text-destructive">{deleteError}</p> : null}
           <div className="flex justify-end gap-1.5">
             <Button ref={cancelDeleteRef} type="button" variant="outline" className={cn(smallButton, "md:px-2.5")} onClick={() => setMode("view")} disabled={isDeleting}>

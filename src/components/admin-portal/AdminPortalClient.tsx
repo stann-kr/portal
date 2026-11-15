@@ -28,6 +28,7 @@ import type { PortalLocation, PortalSection } from "@/lib/portal-location";
 
 // ── 섹션 컴포넌트
 import { CalendarSection } from "@/components/student-portal/CalendarSection";
+import { expandGroupLessonItem, mergeGroupLessonItems } from "@/lib/group-lesson-items";
 import { StudentManagementSection } from "./StudentManagementSection";
 import { StudentFilterDropdown } from "./StudentFilterDropdown";
 import { AdminWorkQueueSection } from "./AdminWorkQueueSection";
@@ -288,16 +289,21 @@ export function AdminPortalClient({
 
   const handleStudentChange = (studentId: string) => selectStudent(studentId, "push");
   // 레슨 예약·변경·삭제는 현재 학생 캘린더에 즉시 반영한다. 다른 학생으로 바뀐 뒤 늦은 결과는 무시한다.
+  // 합쳐 보인 그룹레슨은 멤버별 레슨으로 풀어 반영한다(src/lib/group-lesson-items.ts).
   const upsertCalendarItem = useCallback((item: UnifiedItem) => {
     const loaded = calendarLoadedStudentIdRef.current;
-    setCalendarItems((current) => item.space.studentId === loaded || (loaded === ALL_STUDENTS_SCOPE && studentIds.includes(item.space.studentId))
-      ? upsertUnifiedItems(current, [item])
-      : current);
+    const accepted = expandGroupLessonItem(item).filter((member) =>
+      member.space.studentId === loaded || (loaded === ALL_STUDENTS_SCOPE && studentIds.includes(member.space.studentId)));
+    if (accepted.length > 0) setCalendarItems((current) => upsertUnifiedItems(current, accepted));
   }, [studentIds]);
   const removeCalendarItem = useCallback((item: UnifiedItem) => {
-    const key = getUnifiedItemKey(item);
-    setCalendarItems((current) => current.filter((candidate) => getUnifiedItemKey(candidate) !== key));
+    const keys = new Set(expandGroupLessonItem(item).map(getUnifiedItemKey));
+    setCalendarItems((current) => current.filter((candidate) => !keys.has(getUnifiedItemKey(candidate))));
   }, []);
+  const displayedCalendarItems = useMemo(
+    () => mergeGroupLessonItems(calendarItems, lessonGroups),
+    [calendarItems, lessonGroups],
+  );
   const isAllStudents = selectedStudentId === ALL_STUDENTS_SCOPE;
   const selectedStudent = students.find((student) => student.id === selectedStudentId);
   const selectedSpaceLabel = isAllStudents
@@ -309,6 +315,10 @@ export function AdminPortalClient({
     () => students.map((student) => ({ id: student.id, label: getUnifiedItemSpaceLabel(student) })),
     [students],
   );
+  const groupChoices = useMemo(() => lessonGroups.flatMap((group) => {
+    const members = studentChoices.filter((student) => group.memberIds.includes(student.id));
+    return members.length >= 2 ? [{ id: group.id, label: group.name, members }] : [];
+  }), [lessonGroups, studentChoices]);
   const allStudentsNotice = isAllStudents && !isLoadingCalendar ? (
     <p role="status">
       전체 학생의 포탈 일정입니다(외부 캘린더 제외).
@@ -344,11 +354,12 @@ export function AdminPortalClient({
               initialLocation={initialLocation}
               key={selectedStudentId}
               isActive={activeSection === "schedule"}
-              unifiedItems={isLoadingCalendar ? [] : calendarItems}
+              unifiedItems={isLoadingCalendar ? [] : displayedCalendarItems}
               curriculumModules={[]}
               assignments={[]}
               studentId={isAllStudents ? "" : selectedStudentId}
               studentChoices={isAllStudents ? studentChoices : undefined}
+              groupChoices={isAllStudents ? groupChoices : undefined}
               onVisibleRangeChange={isAllStudents ? loadAllStudentsRange : undefined}
               allNotesHref="/dashboard/admin/notes"
               scopeNotice={allStudentsNotice}

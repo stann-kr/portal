@@ -9,6 +9,8 @@ type PortalTestDb = IsolatedPortalD1["db"];
 let activeDb: PortalTestDb | null = null;
 let activeSession: AuthSession | null = null;
 let actions: typeof import("@/lib/actions/lessonGroups");
+let lessonActions: typeof import("@/lib/actions/lessons");
+const pushed: { profileIds: string[]; tag: string }[] = [];
 
 function createSession(id: string, role: "admin" | "student"): AuthSession {
   return { expires: "2099-01-01T00:00:00.000Z", user: { id, role, name: id, email: `${id}@example.com`, image: null } };
@@ -27,9 +29,23 @@ mock.module("@/db/client", {
   },
 });
 mock.module("next/cache", { namedExports: { revalidatePath: () => undefined } });
+mock.module("@/lib/calendar-sync/sync-runner", {
+  namedExports: {
+    schedulePushStudentCalendarChanges: async () => undefined,
+    markLinksDeletedStatement: () => ({ query: "SELECT 1", params: [] }),
+  },
+});
+mock.module("@/lib/push/notify", {
+  namedExports: {
+    notifyPush: async (audience: { kind: string; profileIds?: string[]; role?: string }, message: { tag: string }) => {
+      pushed.push({ profileIds: audience.profileIds ?? [`role:${audience.role}`], tag: message.tag });
+    },
+  },
+});
 
 before(async () => {
   actions = await import("@/lib/actions/lessonGroups");
+  lessonActions = await import("@/lib/actions/lessons");
 });
 after(() => mock.restoreAll());
 
@@ -142,4 +158,55 @@ test("학생 홈은 멤버 모두 같은 시각인 다가오는 레슨만 그룹
   assert.equal(await actions.getMyHomeLessonGroup(now), null);
   activeSession = createSession("admin-1", "admin");
   assert.equal(await actions.getMyHomeLessonGroup(now), null);
+});
+
+function form(values: Record<string, string>): FormData {
+  const data = new FormData();
+  for (const [key, value] of Object.entries(values)) data.set(key, value);
+  return data;
+}
+
+test("그룹레슨: 관리자 예약·이동·삭제는 멤버 모두, 학생 이동은 본인 레슨만, 다가오는 레슨은 한 번으로 센다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context);
+  activeSession = createSession("admin-1", "admin");
+  const created = await actions.saveLessonGroupAction({ groupId: null, name: "화요일반", memberIds: ["student-a", "student-b"] });
+  const groupId = created.ok ? created.id! : "";
+  const lessonTimes = async () => (await db.select().from(lessons))
+    .map((row) => [row.studentId, row.scheduledAt.toISOString()] as const)
+    .sort((x, y) => x[0].localeCompare(y[0]));
+
+  // 학생은 그룹레슨을 만들 수 없다.
+  activeSession = createSession("student-a", "student");
+  await assert.rejects(lessonActions.createGroupLesson(groupId, {}, form({ scheduledAt: "2099-11-18T19:00" })), /Admin only/);
+
+  activeSession = createSession("admin-1", "admin");
+  pushed.length = 0;
+  const made = await lessonActions.createGroupLesson(groupId, {}, form({ scheduledAt: "2099-11-18T19:00" }));
+  assert.equal(made.success, true);
+  assert.deepEqual(made.lessons?.map((lesson) => lesson.studentId).sort(), ["student-a", "student-b"]);
+  assert.deepEqual(await lessonTimes(), [["student-a", "2099-11-18T10:00:00.000Z"], ["student-b", "2099-11-18T10:00:00.000Z"]]);
+  assert.deepEqual(pushed.map((entry) => entry.profileIds[0]).sort(), ["student-a", "student-b"]);
+  assert.deepEqual(await lessonActions.createGroupLesson("no-group", {}, form({ scheduledAt: "2099-11-18T19:00" })), { error: "그룹을 찾지 못했습니다. 목록을 새로고침해 주세요." });
+
+  // 혼자 레슨(다른 학생)도 하나 있어 다가오는 레슨은 그룹 1 + 혼자 1 = 2.
+  await db.insert(lessons).values({ id: "solo-c", studentId: "student-c", scheduledAt: new Date("2099-11-20T10:00:00.000Z") });
+  assert.equal(await lessonActions.getUpcomingLessonCount(), 2);
+
+  // 관리자가 옮기면 둘 다 옮겨진다.
+  const lessonA = made.lessons!.find((lesson) => lesson.studentId === "student-a")!.id;
+  assert.equal((await lessonActions.moveLesson(lessonA, "student-a", "2099-11-19T20:00")).success, true);
+  assert.deepEqual((await lessonTimes()).filter(([id]) => id !== "student-c"), [["student-a", "2099-11-19T11:00:00.000Z"], ["student-b", "2099-11-19T11:00:00.000Z"]]);
+
+  // 학생이 옮기면 본인 레슨만 바뀌고, 그 뒤엔 그룹레슨이 아니다.
+  activeSession = createSession("student-b", "student");
+  const lessonB = made.lessons!.find((lesson) => lesson.studentId === "student-b")!.id;
+  assert.equal((await lessonActions.moveLesson(lessonB, "student-b", "2099-11-19T21:00")).success, true);
+  assert.deepEqual((await lessonTimes()).filter(([id]) => id !== "student-c"), [["student-a", "2099-11-19T11:00:00.000Z"], ["student-b", "2099-11-19T12:00:00.000Z"]]);
+  activeSession = createSession("admin-1", "admin");
+  assert.equal(await lessonActions.getUpcomingLessonCount(), 3);
+
+  // 다시 같은 시각으로 맞춘 뒤 관리자가 지우면 둘 다 지워진다. 다른 학생 레슨은 남는다.
+  assert.equal((await lessonActions.moveLesson(lessonB, "student-b", "2099-11-19T20:00")).success, true);
+  await lessonActions.deleteLesson(lessonA, "student-a");
+  assert.deepEqual(await lessonTimes(), [["student-c", "2099-11-20T10:00:00.000Z"]]);
 });

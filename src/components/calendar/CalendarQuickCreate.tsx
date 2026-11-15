@@ -10,7 +10,7 @@ import { useProgressRouter } from "@/components/app-shell/NavigationProgress";
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { createCalendarEvent } from "@/lib/actions/calendarEvents";
-import { createLesson } from "@/lib/actions/lessons";
+import { createGroupLesson, createLesson } from "@/lib/actions/lessons";
 import { CALENDAR_EVENT_TITLE_MAX_LENGTH } from "@/lib/calendar-event-contract";
 import { formatKstDateLabel, parseKstDateTimeInput } from "@/lib/date-input";
 import { PRIVATE_NOTE_MAX_TITLE_LENGTH } from "@/lib/private-note-continuity";
@@ -25,6 +25,27 @@ import { cn } from "@/lib/utils";
 import { formatDayLong } from "./calendar-dates";
 
 export type QuickCreateStudentChoice = { id: string; label: string };
+/** 관리자 "전체 학생"에서 레슨 대상으로 고를 수 있는 그룹. 고르면 멤버마다 레슨이 하나씩 생긴다. */
+export type QuickCreateGroupChoice = { id: string; label: string; members: QuickCreateStudentChoice[] };
+export const GROUP_CHOICE_PREFIX = "group:";
+
+/** 그룹레슨 예약 결과를 멤버별 레슨 항목으로 만든다(화면은 다시 합쳐 보인다). */
+export function createGroupLessonItems(
+  lessons: readonly { id: string; studentId: string; scheduledAt: string }[],
+  group: QuickCreateGroupChoice,
+): UnifiedItem[] {
+  return lessons.map((lesson) => {
+    const label = group.members.find((member) => member.id === lesson.studentId)?.label ?? group.label;
+    return createLessonUnifiedItem(
+      { id: lesson.id, scheduledAt: new Date(lesson.scheduledAt) },
+      { id: lesson.studentId, email: label, displayName: label },
+    );
+  });
+}
+
+export function groupLessonNotice(group: QuickCreateGroupChoice): string {
+  return `${group.members.map((member) => member.label).join(" · ")}에게 레슨이 하나씩 들어갑니다.`;
+}
 
 export type CalendarQuickCreateOptions = {
   /**
@@ -41,6 +62,8 @@ export type CalendarQuickCreateOptions = {
    * 학생 개인 일정(canCreateEvent)은 학생 본인 스페이스에서만 열리므로 함께 쓰지 않는다.
    */
   studentChoices?: readonly QuickCreateStudentChoice[];
+  /** studentChoices와 함께 쓴다. 레슨을 고를 때만 대상에 그룹이 나온다. */
+  groupChoices?: readonly QuickCreateGroupChoice[];
 };
 
 /** 만들 수 있는 항목이 하나라도 있을 때만 빠른 만들기를 연다. */
@@ -96,9 +119,11 @@ export function CalendarQuickCreate({ selection, anchor, options, onCreated, onC
   const studentSelectRef = useRef<HTMLSelectElement>(null);
   const studentSelectId = useId();
   const chosenStudent = studentChoices?.find((student) => student.id === chosenStudentId) ?? null;
-  // 학생을 고르는 창이면 고른 학생, 아니면 지금 학생 스페이스가 대상이다.
+  const groupChoices = kind === "lesson" && studentChoices ? options.groupChoices ?? [] : [];
+  const chosenGroup = groupChoices.find((group) => `${GROUP_CHOICE_PREFIX}${group.id}` === chosenStudentId) ?? null;
+  // 학생을 고르는 창이면 고른 학생(레슨은 그룹도), 아니면 지금 학생 스페이스가 대상이다.
   const target = studentChoices
-    ? chosenStudent ? { id: chosenStudent.id, label: chosenStudent.label } : null
+    ? chosenStudent ? { id: chosenStudent.id, label: chosenStudent.label } : chosenGroup ? { id: chosenGroup.id, label: chosenGroup.label } : null
     : { id: options.studentId, label: options.spaceLabel };
 
   // 창이 열린 채 다른 칸을 고르면 시각을 새 선택으로 옮기고, 입력한 제목과 직접 고른 유형은 그대로 둔다.
@@ -204,6 +229,16 @@ export function CalendarQuickCreate({ selection, anchor, options, onCreated, onC
       } else {
         const formData = new FormData();
         formData.set("scheduledAt", start);
+        if (chosenGroup) {
+          const result = await createGroupLesson(chosenGroup.id, {}, formData);
+          if (!result.lessons) {
+            setError(result.error ?? "그룹레슨을 예약하지 못했습니다.");
+            return;
+          }
+          for (const item of createGroupLessonItems(result.lessons, chosenGroup)) onCreated(item);
+          onClose();
+          return;
+        }
         const result = await createLesson(target.id, {}, formData);
         if (!result.lesson) {
           setError(result.error ?? "레슨을 예약하지 못했습니다.");
@@ -276,7 +311,7 @@ export function CalendarQuickCreate({ selection, anchor, options, onCreated, onC
 
           {studentChoices ? (
             <label htmlFor={studentSelectId} className="flex flex-col gap-1.5 text-ui text-secondary-foreground md:flex-row md:items-center md:justify-between md:text-xs md:text-muted-foreground">
-              학생
+              {groupChoices.length > 0 ? "대상" : "학생"}
               <select
                 ref={studentSelectRef}
                 id={studentSelectId}
@@ -290,13 +325,27 @@ export function CalendarQuickCreate({ selection, anchor, options, onCreated, onC
                 aria-invalid={error !== null && !target ? true : undefined}
                 className="h-11 w-full rounded-touch border border-input bg-background px-3 text-base text-foreground focus-visible:outline-2 focus-visible:-outline-offset-1 focus-visible:outline-ring md:h-[30px] md:w-[150px] md:rounded-md md:px-2 md:text-xs"
               >
-                <option value="">학생 고르기</option>
-                {studentChoices.map((student) => (
+                <option value="">{groupChoices.length > 0 ? "대상 고르기" : "학생 고르기"}</option>
+                {groupChoices.length > 0 ? (
+                  <>
+                    <optgroup label="그룹">
+                      {groupChoices.map((group) => (
+                        <option key={group.id} value={`${GROUP_CHOICE_PREFIX}${group.id}`}>{group.label} ({group.members.length}명)</option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="학생">
+                      {studentChoices.map((student) => (
+                        <option key={student.id} value={student.id}>{student.label}</option>
+                      ))}
+                    </optgroup>
+                  </>
+                ) : studentChoices.map((student) => (
                   <option key={student.id} value={student.id}>{student.label}</option>
                 ))}
               </select>
             </label>
           ) : null}
+          {chosenGroup ? <p className="text-xs text-muted-foreground">{groupLessonNotice(chosenGroup)}</p> : null}
 
           {kinds.length > 1 ? (
             <div
