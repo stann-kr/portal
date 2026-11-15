@@ -8,7 +8,7 @@ import { ChevronLeft } from "lucide-react";
 import { MobileTopBar } from "@/components/app-shell/AppSidebar";
 import { getActiveAuthSession } from "@/lib/auth-guard";
 import { getStudentById } from "@/lib/actions/students";
-import { getPrivateNotes } from "@/lib/actions/privateNotes";
+import { getPrivateNotes, getStudentGroupNotes } from "@/lib/actions/privateNotes";
 import { NotesMobileLinks, NotesPageHeader } from "@/components/notes/NotesPageHeader";
 import { NotesDatabase } from "@/components/notes/NotesDatabase";
 import { toNotesDatabaseRows } from "@/lib/notes-database";
@@ -39,7 +39,12 @@ export default async function AdminStudentNotesPage({
   const composerPath = `${listPath}/new`;
   const query = getNoteSearchQuery((await searchParams).q);
   const returnTo = query ? `${listPath}?q=${encodeURIComponent(query)}` : listPath;
-  const notes = await getPrivateNotes(studentId);
+  // 개인 노트와 그 학생이 지금 속한 그룹의 그룹 노트를 함께 보이고, 그룹이 있으면 범위 보기를 둔다.
+  const [personalNotes, groupNotes] = await Promise.all([getPrivateNotes(studentId), getStudentGroupNotes(studentId)]);
+  const notes = [
+    ...personalNotes.map((note) => ({ ...note, groupName: null })),
+    ...(groupNotes?.notes ?? []).map((note) => ({ ...note, groupName: groupNotes!.group.name })),
+  ];
   const matchingNotes = searchPrivateNotes(notes, query);
   const detailHref = buildAdminStudentDetailHref(studentId, "overview");
   const timelineHref = buildNotesLessonsTimelineHref({ role: "admin", studentId });
@@ -73,6 +78,7 @@ export default async function AdminStudentNotesPage({
           searchAction={listPath}
           query={query}
           totalCount={notes.length}
+          scopeFilter={groupNotes !== null}
           now={getRequestNow()}
           emptyMessage={query ? "검색 결과가 없습니다. 다른 단어로 검색하거나 검색을 초기화해 주세요." : "아직 이 학생 스페이스에 작성된 노트가 없습니다."}
         />

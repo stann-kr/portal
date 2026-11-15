@@ -162,9 +162,8 @@ export function UnifiedNoteDetail({
   }, [noteId, attempt]);
 
   const fullPageHref = `/dashboard/notes/${encodeURIComponent(noteId)}?returnTo=${encodeURIComponent(returnTo)}`;
-  const canEdit = body.status === "ready" && Boolean(
-    viewer && (viewer.role === "admin" || viewer.actorId === body.note.authorId),
-  );
+  // 쓰기 권한은 서버가 노트 규칙(개인: 작성자·관리자, 그룹: 관리자·지금 멤버)으로 정한 값을 따른다.
+  const canEdit = body.status === "ready" && Boolean(viewer && body.note.access === "write");
   const updatedLabel = body.status === "ready"
     ? savedAt !== null ? formatNoteUpdated(savedAt, savedAt) : formatNoteUpdated(body.note.updatedAt, body.loadedAt)
     : null;

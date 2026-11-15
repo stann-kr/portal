@@ -4,7 +4,7 @@
  */
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { History, type LucideIcon } from "lucide-react";
+import { History, Users, type LucideIcon } from "lucide-react";
 import { buttonClassName } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -89,6 +89,16 @@ export const NOTE_DATE_INPUT_CLASS =
   "h-9 rounded-md border border-input bg-background px-2 font-mono text-base text-foreground focus-visible:outline-2 focus-visible:-outline-offset-1 focus-visible:outline-ring disabled:opacity-50 md:h-[30px] md:text-xs";
 
 /** 속성 줄 묶음과 아래 구분선. */
+/** 그룹 노트 문서의 머리 안내 줄(제목 위). 누가 함께 보고 고치는지 알린다. */
+export function NoteGroupShareLine({ children }: { children: ReactNode }) {
+  return (
+    <p className="inline-flex min-w-0 items-start gap-2 text-ui text-secondary-foreground">
+      <Users className="mt-[3px] size-3.5 shrink-0" strokeWidth={1.6} aria-hidden="true" />
+      <span className="min-w-0">{children}</span>
+    </p>
+  );
+}
+
 export function NoteProperties({ children }: { children: ReactNode }) {
   return (
     <>

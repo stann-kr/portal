@@ -17,6 +17,16 @@ export function buildPrivateNoteHref(noteId: string, returnTo: string): string {
   return `/dashboard/notes/${noteId}?returnTo=${encodeURIComponent(returnTo)}`;
 }
 
+/** 그룹 노트 행의 작은 "그룹" 표시. 화면 읽기 프로그램에는 그룹 이름까지 읽힌다. */
+export function GroupNoteBadge({ groupName }: { groupName: string }) {
+  return (
+    <span className="inline-flex h-[18px] shrink-0 items-center rounded-sm border border-border px-1 text-[11px] leading-none text-secondary-foreground">
+      <span aria-hidden="true">그룹</span>
+      <span className="sr-only">{groupName} 그룹 노트</span>
+    </span>
+  );
+}
+
 /** 표·목록 보기가 공유하는 빈 상태(States 보드 빈 화면). 의미(메시지)는 호출한 화면이 정한다. */
 export function NotesEmptyState({ message, children }: { message: string; children?: ReactNode }) {
   return (
@@ -44,7 +54,10 @@ export function NoteRowList({ rows, returnTo, now }: { rows: NotesDatabaseRow[];
             className="flex flex-col gap-0.5 border-b border-muted py-[11px] text-foreground transition-colors hover:bg-sidebar focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring md:px-2"
           >
             <span className="flex items-baseline justify-between gap-3">
-              <h2 className="min-w-0 truncate text-md font-medium">{row.title}</h2>
+              <span className="flex min-w-0 items-center gap-1.5">
+                <h2 className="min-w-0 truncate text-md font-medium">{row.title}</h2>
+                {row.groupName ? <GroupNoteBadge groupName={row.groupName} /> : null}
+              </span>
               <span className="shrink-0 font-mono text-xs text-muted-foreground">
                 {toLedgerDateLabel(row.dateLabel, { now, omitSameYear: true })}
               </span>

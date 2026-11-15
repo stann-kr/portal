@@ -48,9 +48,7 @@ export default async function NoteHistoryPage({
   const { returnTo: requestedReturnTo } = await searchParams;
   const returnTo = safeReturnPath(requestedReturnTo, fallback);
   const noteHref = `/dashboard/notes/${noteId}?returnTo=${encodeURIComponent(returnTo)}`;
-  const canRestore =
-    !note.deletedAt &&
-    (session.user.role === "admin" || session.user.id === note.authorId);
+  const canRestore = !note.deletedAt && note.access === "write";
   const now = getRequestNow();
 
   return (

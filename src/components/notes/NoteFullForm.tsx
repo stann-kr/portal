@@ -9,9 +9,11 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, Trash2 } from "lucide-react";
+import { ChevronLeft, FolderOpen, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { NoteBreadcrumb, NoteDocumentStrip, NoteHistoryLink, resolveNoteParent } from "./NoteDocumentChrome";
+import { NoteBreadcrumb, NoteDocumentStrip, NoteGroupShareLine, NoteHistoryLink, NoteProperty, resolveNoteParent } from "./NoteDocumentChrome";
+import { groupNoteShareLine, type StudentLessonGroup } from "@/lib/lesson-group-rules";
+import { PRIVATE_NOTE_GROUP_FIELD } from "@/lib/private-note-continuity";
 import { updatePrivateNote, type CreateNoteState } from "@/lib/actions/privateNotes";
 import { MobileTopBar } from "@/components/app-shell/AppSidebar";
 import { DeleteNoteButton } from "./DeleteNoteButton";
@@ -35,6 +37,14 @@ interface NoteFullFormProps {
   authorName?: string;
   /** 관리자 작성 화면에서만 서버가 넘긴다. 수업 중 새 노트에서도 바로 타이머·메모를 쓴다. */
   instructor?: NoteInstructorTools;
+  /**
+   * 그 학생이 속한 그룹. 있으면 "저장 위치"(개인 노트 / 그룹 노트)를 고른다. 저장 위치는 첫 저장(생성) 때만 쓰이고,
+   * 공동 편집 room·기기 보관 키에는 넣지 않아 바꿔도 작성 중인 내용이 그대로다.
+   */
+  group?: StudentLessonGroup | null;
+  /** 저장 위치의 개인 노트 이름(학생: "내 노트", 관리자: "{학생} 노트"). */
+  personalLabel?: string;
+  viewerIsAdmin?: boolean;
 }
 
 /** 생성 뒤 `history.replaceState`로 바뀐 문서 주소. 휴지통·작성 주소는 해당하지 않는다. */
@@ -44,7 +54,20 @@ function isRestoredAtNoteDocumentPath(): boolean {
   return typeof window !== "undefined" && NOTE_DOCUMENT_PATH.test(window.location.pathname);
 }
 
-export function NoteFullForm({ action, actorId, studentId, returnTo, defaultDate, defaultTitle = "", spaceLabel, authorName, instructor }: NoteFullFormProps) {
+export function NoteFullForm({
+  action,
+  actorId,
+  studentId,
+  returnTo,
+  defaultDate,
+  defaultTitle = "",
+  spaceLabel,
+  authorName,
+  instructor,
+  group = null,
+  personalLabel = "내 노트",
+  viewerIsAdmin = false,
+}: NoteFullFormProps) {
   const router = useRouter();
   // 제자리 생성이 `history.replaceState`로 주소를 바꾸면 Next는 그 history 항목에 작성 화면 트리를 복사해 둔다.
   // 변경 이력 등으로 이동했다가 뒤로 오면 노트 주소에서 작성 화면이 복원되므로, 입력 전에 실제 문서 페이지로 바꾼다
@@ -59,6 +82,12 @@ export function NoteFullForm({ action, actorId, studentId, returnTo, defaultDate
   const [updatedLabel, setUpdatedLabel] = useState<string | null>(null);
   // 첫 자동 저장이 만든 노트 id. 수업 도구의 이 수업 메모가 이때부터 열린다.
   const [createdId, setCreatedId] = useState<string | null>(null);
+  const [location, setLocation] = useState<"personal" | "group">("personal");
+  const groupLocation = group && location === "group" ? group : null;
+  const createAction = (previous: CreateNoteState, formData: FormData) => {
+    if (groupLocation) formData.set(PRIVATE_NOTE_GROUP_FIELD, groupLocation.id);
+    return action(previous, formData);
+  };
   const parent = resolveNoteParent(returnTo);
   const trashHref = `/dashboard/notes/trash?studentId=${encodeURIComponent(studentId)}&returnTo=${encodeURIComponent(returnTo)}`;
 
@@ -67,13 +96,14 @@ export function NoteFullForm({ action, actorId, studentId, returnTo, defaultDate
   }
 
   return (
-    <NoteLessonFrame noteId={createdId} actorId={actorId} instructor={instructor}>
+    // 그룹 노트에는 학생 한 명의 수업 메모를 붙이지 않는다.
+    <NoteLessonFrame noteId={createdId} actorId={actorId} instructor={groupLocation ? undefined : instructor}>
       {(toolsButton) => (
         <NoteEditorForm
           actorId={actorId}
           create={{
             studentId,
-            action,
+            action: createAction,
             updateAction: (noteId, previous, formData) => updatePrivateNote(noteId, previous, formData),
             defaultTitle,
             defaultDate,
@@ -86,6 +116,28 @@ export function NoteFullForm({ action, actorId, studentId, returnTo, defaultDate
           document={{
             authorName,
             updatedLabel,
+            header: groupLocation ? (
+              <NoteGroupShareLine>{groupNoteShareLine(groupLocation, { id: actorId, isAdmin: viewerIsAdmin })}</NoteGroupShareLine>
+            ) : null,
+            renderExtraProperties: ({ noteId }) => (group && !noteId ? (
+              <NoteProperty icon={FolderOpen} label="저장 위치" tall>
+                <div role="radiogroup" aria-label="저장 위치" className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                  {([["personal", personalLabel], ["group", `${group.name} 그룹 노트`]] as const).map(([value, label]) => (
+                    <label key={value} className="inline-flex min-h-11 cursor-pointer items-center gap-2 md:min-h-8">
+                      <input
+                        type="radio"
+                        name="note-location"
+                        value={value}
+                        checked={location === value}
+                        onChange={() => setLocation(value)}
+                        className="size-4 accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      />
+                      {label}
+                    </label>
+                  ))}
+                </div>
+              </NoteProperty>
+            ) : null),
             renderBars: ({ status, title, noteId, version, busy }) => {
               if (noteId) {
                 // 만든 뒤에는 문서 페이지(NoteDoc·MobileNoteDoc 보드)와 같은 위치 줄·변경 이력·더 보기.

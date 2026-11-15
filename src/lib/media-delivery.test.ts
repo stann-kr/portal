@@ -106,3 +106,24 @@ test("READY preview와 trashed community media의 audience를 제한한다", () 
     true,
   );
 });
+
+test("노트 본문 이미지: 개인 노트는 그 학생·관리자, 그룹 노트는 지금 멤버·관리자만 읽는다", () => {
+  const noteImage = {
+    ownerId: "student-1",
+    purpose: "DOCUMENT_IMAGE" as const,
+    state: "ATTACHED" as const,
+    resourceType: "PRIVATE_NOTE" as const,
+  };
+  const personal = { kind: "PRIVATE_NOTE" as const, studentId: "student-1" };
+  assert.equal(canAccessMediaDelivery({ id: "student-1", role: "student" }, noteImage, personal), true);
+  assert.equal(canAccessMediaDelivery({ id: "student-2", role: "student" }, noteImage, personal), false);
+  assert.equal(canAccessMediaDelivery({ id: "admin-1", role: "admin" }, noteImage, personal), true);
+
+  // 만든 사람(student-1)이 그룹을 떠났고 지금 멤버는 student-2·student-3이다.
+  const group = { kind: "PRIVATE_NOTE" as const, studentId: "student-1", groupMemberIds: ["student-2", "student-3"] };
+  assert.equal(canAccessMediaDelivery({ id: "student-2", role: "student" }, noteImage, group), true);
+  assert.equal(canAccessMediaDelivery({ id: "student-3", role: "student" }, noteImage, group), true);
+  assert.equal(canAccessMediaDelivery({ id: "student-1", role: "student" }, noteImage, group), false, "떠난 만든 사람");
+  assert.equal(canAccessMediaDelivery({ id: "student-4", role: "student" }, noteImage, group), false);
+  assert.equal(canAccessMediaDelivery({ id: "admin-1", role: "admin" }, noteImage, group), true);
+});

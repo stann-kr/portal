@@ -34,6 +34,8 @@ export async function queryLessonNoteIds(
     .from(privateNotes)
     .where(and(
       inArray(privateNotes.studentId, ids),
+      // 학생 한 명의 레슨에 거는 링크이므로 개인 노트만 본다(그룹 노트는 만든 사람의 노트처럼 붙이지 않는다).
+      isNull(privateNotes.groupId),
       isNull(privateNotes.deletedAt),
       from && to
         ? or(

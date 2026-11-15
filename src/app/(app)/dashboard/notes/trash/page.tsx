@@ -62,7 +62,7 @@ export default async function NoteTrashPage({
                 key={note.id}
                 title={note.title}
                 href={`/dashboard/notes/${note.id}?returnTo=${encodeURIComponent(trashHref)}`}
-                meta={`${note.authorName ?? "작성자 미상"} · 삭제 ${formatTrashTime(note.deletedAt, now)}`}
+                meta={`${note.groupName ? `${note.groupName} 그룹 노트 · ` : ""}${note.authorName ?? "작성자 미상"} · 삭제 ${formatTrashTime(note.deletedAt, now)}`}
                 expired={expired}
                 state={expired
                   ? "복원 기한이 만료되어 영구 삭제할 수 있습니다."
@@ -71,7 +71,7 @@ export default async function NoteTrashPage({
                   <NoteTrashActions
                     noteId={note.id}
                     version={note.version}
-                    canRestore={!expired && (session.user.role === "admin" || session.user.id === note.authorId)}
+                    canRestore={!expired && note.canWrite}
                     canPurge={session.user.role === "admin" && expired}
                     returnTo={trashHref}
                   />

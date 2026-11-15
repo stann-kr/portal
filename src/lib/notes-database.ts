@@ -30,6 +30,8 @@ export type NotesDatabaseSource = {
   updatedAt: Date | null;
   authorName: string | null;
   searchPreview?: string;
+  /** 그룹 노트면 그룹 이름. 목록 행에 "그룹" 표시를 붙이고 "내 노트·그룹 노트" 보기로 가른다. */
+  groupName?: string | null;
 };
 
 /** client로 보내는 가벼운 행. 본문 HTML은 포함하지 않는다. */
@@ -38,6 +40,8 @@ export type NotesDatabaseRow = {
   title: string;
   preview: string;
   authorName: string | null;
+  /** 그룹 노트면 그룹 이름, 개인 노트면 null. */
+  groupName: string | null;
   /** 정렬용 epoch ms. 값이 없으면 null. */
   dateValue: number | null;
   updatedValue: number | null;
@@ -73,6 +77,7 @@ export function toNotesDatabaseRow(note: NotesDatabaseSource): NotesDatabaseRow 
     title: note.title,
     preview: note.searchPreview ?? getPrivateNotePreview(note.contentHtml),
     authorName: note.authorName,
+    groupName: note.groupName ?? null,
     dateValue: toEpoch(date),
     updatedValue: toEpoch(note.updatedAt),
     dateLabel: formatKst(date, DATE_LABEL_OPTIONS, "날짜 없음"),
@@ -147,4 +152,13 @@ export function sortNotesDatabaseRows(rows: NotesDatabaseRow[], sort: NotesSort)
 export function getNotesSortAria(sort: NotesSort, key: NotesSortKey): "ascending" | "descending" | "none" {
   if (sort.key !== key) return "none";
   return sort.direction === "asc" ? "ascending" : "descending";
+}
+
+/** 노트 목록 범위 보기(그룹이 있는 학생에게만): 전체 · 내 노트 · 그룹 노트. */
+export type NotesScope = "all" | "personal" | "group";
+
+export function filterNotesByScope<T extends { groupName: string | null }>(rows: T[], scope: NotesScope): T[] {
+  if (scope === "personal") return rows.filter((row) => row.groupName === null);
+  if (scope === "group") return rows.filter((row) => row.groupName !== null);
+  return rows;
 }

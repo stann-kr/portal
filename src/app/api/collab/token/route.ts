@@ -1,11 +1,12 @@
 import { eq } from "drizzle-orm";
-import { createDb } from "@/db/client";
+import { createDb, createDbContext } from "@/db/client";
 import { guidePages, posts, privateNotes, qnaThreads } from "@/db/schema";
 import { privateNoteLifecycleSql } from "@/lib/private-note-atomic";
 import { postLifecycleSql } from "@/lib/post-atomic";
 import { findStudentTarget, getActiveAuthSession } from "@/lib/auth-guard";
 import { readCollabWorkerEnv, repairCollabRoomIfBehind } from "@/lib/collab/server-env";
 import { parseCollabDocKey } from "@/lib/collab/doc-key";
+import { isCurrentLessonGroupMember } from "@/lib/note-access";
 import { readNoteRestoreTarget, readPostRestoreTarget } from "@/lib/collab/restore-targets";
 import { createCollabTokenHandler } from "@/lib/collab/token-handler";
 
@@ -25,6 +26,7 @@ export const POST = createCollabTokenHandler({
         .select({
           studentId: privateNotes.studentId,
           authorId: privateNotes.authorId,
+          groupId: privateNotes.groupId,
           deletedAt: privateNotes.deletedAt,
           // 권한·삭제 상태와 같은 조회에서 lifecycle 표지(마지막 복원 revision)를 읽는다.
           lifecycle: privateNoteLifecycleSql,
@@ -60,6 +62,9 @@ export const POST = createCollabTokenHandler({
     },
     async isActiveStudent(id) {
       return (await findStudentTarget(id)) !== null;
+    },
+    async isGroupMember(studentId, groupId) {
+      return isCurrentLessonGroupMember(createDbContext(), studentId, groupId);
     },
   },
   async repairRoom(key, lifecycle) {

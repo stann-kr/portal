@@ -1,11 +1,14 @@
 import { deriveCreationResourceId, parseCreationOperationId } from "@/lib/creation-operation";
 import { formatCollabDocKey, isCollabKeySegment, parseCollabDocKey, type CollabDocKey } from "./doc-key";
 import type { CollabMode } from "./protocol";
+import { noteAccessNeedsMembership, resolveNoteAccess } from "@/lib/note-access-rules";
 
 /**
  * 공동 편집 토큰 발급 전 권한 판단. 기존 문서 action과 같은 규칙만 쓴다.
- * - 노트: 읽기 학생 본인·관리자, 쓰기 작성자·관리자. 휴지통 노트는 거부(볼 권한이 있으면 TRASHED로 구분).
- * - 새 노트: 결정적 생성 id가 아직 없고 그 학생 공간에 쓸 수 있으면 쓰기.
+ * - 노트: `resolveNoteAccess` 규칙. 개인 노트는 읽기 학생 본인·관리자, 쓰기 작성자·관리자. 그룹 노트는 관리자·지금 그 그룹
+ *   멤버가 쓰기, 그 밖은 거부. 휴지통 노트는 거부(볼 권한이 있으면 TRASHED로 구분).
+ * - 새 노트: 결정적 생성 id가 아직 없고 그 학생 공간에 쓸 수 있으면 쓰기. 저장 위치(개인·그룹)는 room id에 넣지 않는다
+ *   (작성 중 저장 위치를 바꿔도 room이 바뀌지 않게). 그룹 노트로 만들 수 있는지는 생성 action의 원자 INSERT가 확인한다.
  * - 가이드: 관리자만. 게시물: 작성자·관리자, 휴지통 제외.
  * - 새 글 작성본(draft): 본인만. Q&A 답글은 thread 접근 권한도 확인한다.
  * - 알림(notify): 읽기만. Q&A는 thread 접근 권한, 학생 노트는 관리자와 그 학생.
@@ -15,12 +18,14 @@ import type { CollabMode } from "./protocol";
 export type CollabActor = { id: string; isAdmin: boolean };
 
 export type CollabDocumentLoaders = {
-  findNote(id: string): Promise<{ studentId: string; authorId: string; deletedAt: Date | null; lifecycle: number } | null>;
+  findNote(id: string): Promise<{ studentId: string; authorId: string; groupId: string | null; deletedAt: Date | null; lifecycle: number } | null>;
   findPost(id: string): Promise<{ authorId: string; deletedAt: Date | null; lifecycle: number } | null>;
   findGuidePage(id: string): Promise<{ id: string } | null>;
   findQnaThread(id: string): Promise<{ studentId: string; deletedAt: Date | null } | null>;
   /** 활성 학생 profile인지(관리자가 학생 공간에 새 노트를 만들 때). */
   isActiveStudent(id: string): Promise<boolean>;
+  /** 학생이 지금 그 그룹 멤버인지(그룹 노트 권한). */
+  isGroupMember(studentId: string, groupId: string): Promise<boolean>;
 };
 
 export type CollabNoteCreateRequest = { operationId: string; studentId: string };
@@ -49,9 +54,11 @@ async function authorizeKey(
     case "note": {
       const note = await loaders.findNote(key.id);
       if (!note) return null;
-      if (!actor.isAdmin && actor.id !== note.studentId) return null;
+      const member = noteAccessNeedsMembership(actor, note) ? await loaders.isGroupMember(actor.id, note.groupId) : false;
+      const mode = resolveNoteAccess(actor, note, member);
+      if (!mode) return null;
       if (note.deletedAt) return TRASHED;
-      return { mode: actor.isAdmin || actor.id === note.authorId ? "write" : "read", lifecycle: note.lifecycle };
+      return { mode, lifecycle: note.lifecycle };
     }
     case "guide": {
       if (!actor.isAdmin) return null;

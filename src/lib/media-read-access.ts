@@ -6,6 +6,7 @@
 import { and, eq } from "drizzle-orm";
 import type { createDb } from "@/db/client";
 import {
+  lessonGroupMembers,
   mediaObjects,
   posts,
   privateNotes,
@@ -41,11 +42,18 @@ async function loadDocumentImageResource(
 ): Promise<MediaDeliveryResourceContext> {
   if (resourceType === "PRIVATE_NOTE") {
     const [note] = await db
-      .select({ studentId: privateNotes.studentId })
+      .select({ studentId: privateNotes.studentId, groupId: privateNotes.groupId })
       .from(privateNotes)
       .where(eq(privateNotes.id, resourceId))
       .limit(1);
-    return note ? { kind: "PRIVATE_NOTE", studentId: note.studentId } : null;
+    if (!note) return null;
+    if (!note.groupId) return { kind: "PRIVATE_NOTE", studentId: note.studentId };
+    // 그룹 노트: 지금 멤버만(그룹을 떠난 학생·만든 사람이어도 멤버가 아니면 못 본다).
+    const members = await db
+      .select({ studentId: lessonGroupMembers.studentId })
+      .from(lessonGroupMembers)
+      .where(eq(lessonGroupMembers.groupId, note.groupId));
+    return { kind: "PRIVATE_NOTE", studentId: note.studentId, groupMemberIds: members.map((member) => member.studentId) };
   }
   if (resourceType === "COMMUNITY_POST") {
     const [post] = await db

@@ -50,15 +50,29 @@ export async function readStudentLessonGroup(context: DbContext, studentId: stri
     .where(eq(lessonGroupMembers.studentId, studentId))
     .limit(1);
   if (!membership) return null;
-  const rows = await db
+  return { id: membership.groupId, name: membership.name, members: await readLessonGroupMembers(context, membership.groupId) };
+}
+
+async function readLessonGroupMembers(context: DbContext, groupId: string): Promise<StudentLessonGroup["members"]> {
+  const rows = await asDocumentReadDb(context)
     .select({ id: profiles.id, displayName: profiles.displayName })
     .from(lessonGroupMembers)
     .innerJoin(profiles, eq(profiles.id, lessonGroupMembers.studentId))
-    .where(eq(lessonGroupMembers.groupId, membership.groupId));
-  const members = rows
+    .where(eq(lessonGroupMembers.groupId, groupId));
+  return rows
     .map((row) => ({ id: row.id, name: studentDisplayName(row.displayName) }))
     .sort((a, b) => a.name.localeCompare(b.name, "ko-KR") || a.id.localeCompare(b.id));
-  return { id: membership.groupId, name: membership.name, members };
+}
+
+/** 그룹 id로 이름과 멤버(이름순). 권한 확인은 부르는 쪽이 먼저 한다. 없으면 null. */
+export async function readLessonGroupById(context: DbContext, groupId: string): Promise<StudentLessonGroup | null> {
+  const [group] = await asDocumentReadDb(context)
+    .select({ id: lessonGroups.id, name: lessonGroups.name })
+    .from(lessonGroups)
+    .where(eq(lessonGroups.id, groupId))
+    .limit(1);
+  if (!group) return null;
+  return { ...group, members: await readLessonGroupMembers(context, group.id) };
 }
 
 /**

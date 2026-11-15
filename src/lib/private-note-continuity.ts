@@ -4,6 +4,8 @@ import type { DocumentOperationType } from "@/db/schema";
 import { deriveCreationResourceId } from "@/lib/creation-operation";
 
 export const PRIVATE_NOTE_BASE_REVISION_FIELD = "baseRevision";
+/** 새 노트의 저장 위치가 그룹이면 그 그룹 id(없거나 빈 값이면 개인 노트). */
+export const PRIVATE_NOTE_GROUP_FIELD = "groupId";
 export const PRIVATE_NOTE_RESTORE_REVISION_FIELD = "revisionNumber";
 export const PRIVATE_NOTE_REQUEST_HASH_VERSION = 1;
 export const PRIVATE_NOTE_SNAPSHOT_HASH_VERSION = 1;

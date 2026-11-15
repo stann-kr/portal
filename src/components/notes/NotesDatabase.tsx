@@ -17,6 +17,7 @@ import {
   DEFAULT_NOTES_SORT,
   DEFAULT_NOTES_VIEW_MODE,
   NOTES_SORT_LABELS,
+  filterNotesByScope,
   formatNotesSortValue,
   getNotesSortAria,
   parseNotesSort,
@@ -24,13 +25,14 @@ import {
   sortNotesDatabaseRows,
   toggleNotesSort,
   type NotesDatabaseRow,
+  type NotesScope,
   type NotesSort,
   type NotesSortKey,
   type NotesViewMode,
 } from "@/lib/notes-database";
 import { cn } from "@/lib/utils";
 import { NoteSearch } from "./NoteSearch";
-import { buildPrivateNoteHref, NoteRowList, NotesEmptyState } from "./PrivateNoteList";
+import { buildPrivateNoteHref, GroupNoteBadge, NoteRowList, NotesEmptyState } from "./PrivateNoteList";
 import { formatListUpdatedLabel, toLedgerDateLabel } from "./note-display";
 
 const NOTES_VIEW_CHANGE_EVENT = "portal:notes-view-change";
@@ -140,6 +142,7 @@ function NotesTable({ rows, returnTo, sort, onSort, now }: {
               >
                 <FileText className="size-[15px] shrink-0 text-item-note" strokeWidth={1.6} aria-hidden="true" />
                 <span className="min-w-0 max-w-[70%] shrink-0 truncate font-medium">{row.title}</span>
+                {row.groupName ? <GroupNoteBadge groupName={row.groupName} /> : null}
                 <span className="min-w-0 flex-1 truncate text-ui text-muted-foreground">{row.preview}</span>
               </Link>
             </td>
@@ -164,6 +167,7 @@ export function NotesDatabase({
   totalCount,
   emptyMessage,
   now,
+  scopeFilter = false,
 }: {
   rows: NotesDatabaseRow[];
   /** 보기 선택을 기억할 현재 로그인 계정. */
@@ -178,6 +182,8 @@ export function NotesDatabase({
   emptyMessage: string;
   /** 서버 기준 시각(`getRequestNow()`). 주면 하루 안 수정은 "2시간 전"처럼, 같은 해 날짜는 좁은 화면에서 월·일로 줄인다. */
   now?: number;
+  /** 그 학생에게 그룹이 있으면 "전체 · 내 노트 · 그룹 노트" 보기를 보인다(rows에는 그룹 노트도 들어 있다). */
+  scopeFilter?: boolean;
 }) {
   const router = useProgressRouter();
   const [view, setView] = useNotesViewMode(ownerId);
@@ -187,7 +193,9 @@ export function NotesDatabase({
   const inputRef = useRef<HTMLInputElement>(null);
   const addButtonRef = useRef<HTMLButtonElement>(null);
   const restoreFocusRef = useRef(false);
-  const sortedRows = sortNotesDatabaseRows(rows, sort);
+  const [scope, setScope] = useState<NotesScope>("all");
+  const scopedRows = scopeFilter ? filterNotesByScope(rows, scope) : rows;
+  const sortedRows = sortNotesDatabaseRows(scopedRows, sort);
 
   useEffect(() => {
     if (adding) {
@@ -247,7 +255,23 @@ export function NotesDatabase({
     </button>
   );
 
-  const countLabel = query ? `전체 ${totalCount}개 중 ${rows.length}개` : `노트 ${totalCount}개`;
+  const countLabel = query
+    ? `전체 ${totalCount}개 중 ${scopedRows.length}개`
+    : scope === "all" || !scopeFilter ? `노트 ${totalCount}개` : `노트 ${scopedRows.length}개`;
+
+  const scopeButton = (value: NotesScope, label: string) => (
+    <button
+      type="button"
+      aria-pressed={scope === value}
+      onClick={() => setScope(value)}
+      className={cn(
+        "inline-flex h-11 items-center rounded-touch px-3 text-ui transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:h-7 md:rounded-md md:px-2.5",
+        scope === value ? "bg-muted font-medium text-foreground" : "text-secondary-foreground hover:bg-muted hover:text-foreground",
+      )}
+    >
+      {label}
+    </button>
+  );
 
   return (
     <section aria-label="노트 데이터베이스" className="flex flex-col gap-1 md:gap-6">
@@ -256,6 +280,13 @@ export function NotesDatabase({
           {viewButton("table", "표", Table2)}
           {viewButton("list", "목록", List)}
         </div>
+        {scopeFilter ? (
+          <div role="group" aria-label="노트 범위" className="flex items-center gap-1 max-md:w-full">
+            {scopeButton("all", "전체")}
+            {scopeButton("personal", "내 노트")}
+            {scopeButton("group", "그룹 노트")}
+          </div>
+        ) : null}
         <div className="flex min-w-0 flex-wrap items-center gap-2 max-md:w-full">
           <NoteSearch action={searchAction} query={query} />
           {/* 좁은 화면에서는 개수 줄 오른쪽에 같은 정렬을 둔다. */}
@@ -273,7 +304,7 @@ export function NotesDatabase({
 
       <div>
         {sortedRows.length === 0 ? (
-          <NotesEmptyState message={emptyMessage} />
+          <NotesEmptyState message={scopeFilter && scope === "group" && !query ? "아직 그룹 노트가 없습니다." : emptyMessage} />
         ) : view === "table" ? (
           <>
             {/* 좁은 화면에서는 가로 스크롤 대신 같은 행을 목록으로 접는다. */}
