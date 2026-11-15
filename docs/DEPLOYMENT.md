@@ -32,7 +32,7 @@
 
 | 항목 | 저장소에서 확인할 수 있는 것 | 운영 적용을 확인하는 증거 |
 |---|---|---|
-| D1 migration | SQL·journal·snapshot `0000~0028`, 메모리 DB에서 체인·schema 검증 | 대상 D1의 적용 목록과 실제 schema·FK, 그 목록에서 계산한 pending 범위 |
+| D1 migration | SQL·journal·snapshot `0000~0030`, 메모리 DB에서 체인·schema 검증 | 대상 D1의 적용 목록과 실제 schema·FK, 그 목록에서 계산한 pending 범위 |
 | 계정 삭제 | `0012`와 삭제·정리 구현, application 설정의 `ACCOUNT_DELETION_ENABLED="false"` 기본값 | 활성 Worker의 유효 flag, 기기 adoption, 승인된 삭제·정리 smoke |
 | 예약 정리 | `worker.ts`의 `scheduled` handler, Workers Logs 설정, source에 없는 Cron trigger | 원격 trigger 주기, 대상 version의 실제 scheduled invocation, backlog·실패·alert 증거 |
 | 외부 캘린더 | `0013` 구독 테이블과 `EXTERNAL_CALENDAR_ENCRYPTION_KEY` 요구 조건 | 대상 schema, secret 설정 확인, 승인된 연결·읽기·교체·해제 smoke |
@@ -42,6 +42,7 @@
 | 캘린더 양방향 동기화 | `0017` 연결·매핑·link·반복 일정 table, `GOOGLE_CALENDAR_CLIENT_ID`·`GOOGLE_CALENDAR_CLIENT_SECRET`·`EXTERNAL_CALENDAR_ENCRYPTION_KEY` 요구 조건, `AUTH_URL` 기준 redirect URI | 대상 schema, secret 설정 확인, Google Cloud OAuth client의 redirect URI, 승인된 연결·매핑·양방향 반영·해제 smoke |
 | 캘린더 실시간 반영 | `0018` 알림 채널 table, `/api/calendar-connections/google/notify`, `worker.ts` `scheduled`의 캘린더 동기화. source에 없는 Cron trigger | 원격 Cron 주기, 대상 version의 실제 scheduled invocation, Google 채널 등록·갱신과 알림 수신 로그 |
 | 웹앱 푸시 알림 | `0024` 구독·`0025` 끈 종류 table, `VAPID_PUBLIC_KEY`·`VAPID_PRIVATE_KEY`(선택 `VAPID_SUBJECT`) 요구 조건, 없으면 알림만 꺼짐 | 대상 D1의 `0024` 적용, secret 설정 확인, 승인된 기기에서 알림 켜기·테스트 알림 수신 |
+| 그룹레슨 | `0029` 그룹·멤버 table과 `private_notes.group_id`, `0030` `document_tombstones.group_id`와 media UPDATE trigger 넷 재생성 | 대상 D1의 `0029`·`0030` 적용과 `lesson_groups`·`lesson_group_members` 존재, 관리자 학생 목록의 그룹 만들기 |
 | 배포 환경 분리 | 현재 tracked 설정의 Worker는 `portal` | development/production Worker·D1·R2·route·secret·branch trigger 각각의 inventory |
 
 운영 확인은 기존 상태 조회, migration·secret·trigger 변경, 데이터 쓰기 smoke를 구분해 승인된
@@ -148,6 +149,13 @@ iCloud 연동:
 3. 적용 뒤 `SELECT mode, COUNT(*) FROM guide_access GROUP BY mode`와 가입을 마친 학생 수를 비교한다(read-only). migration과 code deploy 사이에 가입을 마친 학생은 행이 없어 닫힘으로 시작한다.
 4. 배포 뒤 닫아 둘 학생은 학생 상세 · 개요의 "가이드" 구획에서 직접 닫는다. 새로 초대하는 학생은 닫힘으로 시작하므로 첫 수업 뒤에 열어 준다.
 5. 되돌리기: 이전 코드로 되돌리면 모든 로그인 사용자가 다시 가이드 전체를 본다. 두 표는 남겨 두어도 이전 코드에 영향이 없다.
+
+### 그룹레슨 전환 gate (2026-11-16)
+
+1. 원격 D1에 `0029_lesson_groups`·`0030_group_note_retention`을 **코드보다 먼저** 적용한다(Time Travel bookmark 먼저). `0029`는 새 표 두 개와 `private_notes.group_id`(nullable)를, `0030`은 `document_tombstones.group_id`(nullable)를 더하고 `media_objects` UPDATE trigger 넷을 `0014`와 같은 순서로 다시 만든다. 기존 행은 바뀌지 않고, 이전 코드는 새 칸을 읽지 않으며 trigger는 계정 삭제 중(ERASING)에만 쓰는 전이 하나를 더 열 뿐이라 먼저 적용해도 동작이 같다.
+2. 순서를 바꾸면 안 된다. 새 코드가 표 없이 나가면 노트 목록·학생 목록·일정 조회가 오류가 된다.
+3. 적용 뒤 `SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 2`와 `PRAGMA table_info(private_notes)`·`PRAGMA table_info(document_tombstones)`로 `group_id`를 확인한다(read-only).
+4. 되돌리기: 이전 코드로 되돌려도 새 표·칸은 남겨 두면 된다. 그룹 노트가 있으면 이전 코드에서는 그 노트가 만든 사람의 개인 노트처럼 보이므로, 되돌리기 전에 그룹 노트를 휴지통으로 옮기거나 그대로 둘지 정한다.
 
 ### 가입 링크 메일 gate
 

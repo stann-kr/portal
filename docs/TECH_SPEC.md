@@ -332,7 +332,7 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 
 - runtime dependency audit은 현재 0건이다. 상위 의존성이 보안 패치 전 하위 의존성을 고정하는 구간은 `package.json` override로 제한하며, upstream stable이 해당 버전을 채택하면 override를 제거해야 한다.
 - 개발 도구 전체 audit에는 Drizzle Kit의 구형 esbuild loader 체인에서 발생하는 moderate 권고가 남아 있다. 현재 npm 제안은 호환되지 않는 구버전 downgrade이므로 upstream 패치를 추적한다.
-- migration SQL과 `drizzle/meta` 생성 이력은 `0028`까지 대응하고 `db:check`가 전체 replay와 단계별 upgrade를 검사한다. persistent local D1과 remote의 실제 적용 이력은 승인된 운영 점검 전 추정하지 않는다(마지막 기록: persistent local D1 `0009`까지).
+- migration SQL과 `drizzle/meta` 생성 이력은 `0030`까지 대응하고 `db:check`가 전체 replay와 단계별 upgrade를 검사한다. persistent local D1과 remote의 실제 적용 이력은 승인된 운영 점검 전 추정하지 않는다(마지막 기록: persistent local D1 `0009`까지).
 - 대표 문서 server action과 draft 생명주기의 격리 integration test는 있으나 실제 브라우저 reload·offline·navigation·delete/restore E2E는 없다. 노트 편집기 안정화(자동 저장 revalidate 미호출·제자리 생성·서버본 조용한 폐기)와 학생 실시간 보기도 DOM 통합 테스트까지만 있고 실제 브라우저 두 창 동작은 확인되지 않았다.
 - 운영 배포 직후 이미 열려 있던 탭은 build ID 불일치로 다음 Server Action에서 한 번 hard reload된다(일회성, 코드로 막지 않는다). 서버 초안 fence(b)는 같은 초·같은 version·같은 본문으로 다시 쓴 다른 기기의 행을 폐기 의도에 포함해 지운다(본문이 같아 내용 손실 없음). live view 폴링은 head 조회 1회가 D1 읽기 약 3회라 열린 읽기 탭 수에 비례해 읽기 요청이 늘며, backoff 상한 20초가 그 비용 경계다.
 - 신규 managed media의 registry·문서 claim·purge 삭제 outbox와 인증 delivery, bounded 예약 정리·final prefix cursor reconciliation source를 구현했다. Copy timeout·lease·recovery grace 뒤 발견된 registry 없는 final object와 삭제 상태 object는 다음 inventory page에서 재삭제한다. production에서는 private R2 CORS·staging lifecycle·Cron과 알림을 검증해야 하며, 기존 외부 URL과 managed 형식이 아닌 legacy R2 object는 자동 삭제 대상으로 추정하지 않는다.
@@ -381,6 +381,15 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 - 사이드바 메뉴는 layout이 그려질 때(첫 진입·새로고침) 정해진다. 설정을 바꿔도 이미 열려 있는 학생 화면의 메뉴는 다음 새로고침에 바뀌고, 열람 자체는 요청마다 다시 판정한다. 이미지 응답은 `private` cache라 닫기 전에 본 이미지는 그 브라우저에 남을 수 있다.
 - 가이드 페이지 삭제(`deleteGuidePageRecord`)와 학생 계정 삭제(`account-privacy-atomic`)는 열람 행도 함께 지운다.
 - `0028`의 backfill은 적용 시점의 `role = 'student'`이고 가입을 마친 계정(`password_hash`가 있고 `invite:`로 시작하지 않음)에 `ALL` 행을 넣는다. 가입 링크만 받은 계정과 관리자는 행이 없다. `npm run db:check`가 `0027 → 0028` upgrade(표·제약·cascade·backfill 대상)를 검사한다.
+
+### 그룹레슨 (2026-11-16)
+
+- 표: `lesson_groups`(id, name 1–60자 CHECK)와 `lesson_group_members`(student_id PK → `profiles` CASCADE로 학생당 그룹 하나, group_id → `lesson_groups` CASCADE). 레슨·과제·커리큘럼·일정은 학생별 행 그대로이고 그룹은 묶음일 뿐이다. 규칙은 `src/lib/lesson-groups.ts`·`src/lib/lesson-group-rules.ts`, action은 `src/lib/actions/lessonGroups.ts`(만들기·고치기·해제는 관리자, 학생은 본인 그룹 이름과 멤버 표시 이름만). 그룹 노트가 남아 있으면(휴지통 포함) 해제하지 않는다.
+- 일정: `src/lib/group-lesson-items.ts`의 `mergeGroupLessonItems`가 같은 그룹 + 같은 시작 시각 + 같은 출처의 레슨이 멤버 모두에게 있을 때만 관리자 "전체 학생" 일정에서 한 항목("그룹레슨 · 이름")으로 합친다. 관리자가 옮기거나 지우면(`src/lib/actions/lessons.ts`) 멤버 레슨을 조건부 원자 batch로 함께 바꾸고, 학생이 옮기면 본인 레슨만 바뀐다. `createGroupLesson`은 관리자 전용이다. 학생 화면은 `tagStudentGroupLessons`로 본인 레슨에 그룹 표시만 붙이고 다른 학생의 레슨은 주지 않는다.
+- 과제·커리큘럼: 과제는 기존 "다른 학생에게도 내기"(학생별 operationId) 위의 "받는 학생" 선택, 커리큘럼 모듈은 `createModule`의 같은 그룹 멤버 fan-out(INSERT…SELECT + sentinel). 낸 뒤에는 학생별로 고치고 지운다.
+- 그룹 노트: `private_notes.group_id`(→ `lesson_groups` RESTRICT). 판정은 `src/lib/note-access-rules.ts`의 `resolveNoteAccess` 하나이고 그룹 노트는 관리자 또는 지금 멤버가 읽고 쓴다(student_id·author_id로 정하지 않음). 원자 쓰기는 `noteWriteAccessSql`로 같은 batch 안에서 멤버십을 다시 확인한다. 만든 사람이 student_id·author_id이고 관리자가 만들면 관리자다. 개인 노트 목록·일정·레슨 노트·강사 메모는 `group_id IS NULL`만 본다. 영구 삭제는 관리자만이며 tombstone의 `group_id`(`0030`)로 지금 멤버에게만 PURGED를 준다. 만들기 request hash는 groupId가 있을 때만 그 값을 더해 개인 노트 hash는 바뀌지 않는다.
+- 계정 삭제: 멤버십을 지우고, 그 학생이 만든 노트(그룹 노트 포함)는 기존 규칙대로 지운다. 다른 사람이 만든 그룹 노트에 그 학생이 올린 ATTACHED 이미지는 지우지 않고 owner를 그 노트의 student_id에게 넘긴다(`0030` trigger가 ERASING 삭제 작업 중의 이 전이만 연다).
+- 검증: `src/test/group-notes.integration.ts`, `src/test/lesson-groups.integration.ts`, `src/lib/group-lesson-items.test.ts`, `db:check`의 `0028 → 0029`·`0029 → 0030` upgrade 검사.
 
 ### 캘린더 양방향 동기화
 
