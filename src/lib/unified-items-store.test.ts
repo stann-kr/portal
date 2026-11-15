@@ -161,7 +161,7 @@ test("통합 일정의 노트는 본문 앞부분만 읽고 HTML 대신 평문 �
     CREATE TABLE profiles (id TEXT PRIMARY KEY, email TEXT NOT NULL, display_name TEXT);
     CREATE TABLE private_notes (
       id TEXT PRIMARY KEY, student_id TEXT NOT NULL, author_id TEXT NOT NULL, title TEXT NOT NULL,
-      content_html TEXT NOT NULL, note_date INTEGER, created_at INTEGER NOT NULL, deleted_at INTEGER
+      content_html TEXT NOT NULL, note_date INTEGER, created_at INTEGER NOT NULL, deleted_at INTEGER, group_id TEXT
     );
     INSERT INTO profiles VALUES ('student-1', 'student@example.com', '학생');
   `);

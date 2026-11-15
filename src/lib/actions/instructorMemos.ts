@@ -52,7 +52,8 @@ async function resolveTarget(scope: InstructorMemoScope): Promise<InstructorMemo
   const [note] = await db
     .select({ studentId: privateNotes.studentId })
     .from(privateNotes)
-    .where(and(eq(privateNotes.id, scope.noteId), isNull(privateNotes.deletedAt)))
+    // 수업 메모는 학생 한 명의 공간에 붙는다. 그룹 노트(group_id 있음)에는 붙이지 않는다.
+    .where(and(eq(privateNotes.id, scope.noteId), isNull(privateNotes.deletedAt), isNull(privateNotes.groupId)))
     .limit(1);
   if (!note) return null;
   await requireStudentTarget(note.studentId);

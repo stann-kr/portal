@@ -8,6 +8,7 @@ import {
   updatePrivateNote,
 } from "@/lib/actions/privateNotes";
 import { safeReturnPath } from "@/lib/safe-return-path";
+import { groupNoteShareLine } from "@/lib/lesson-group-rules";
 import { RichTextContent } from "@/components/editor/RichTextContent";
 import { LiveNoteArticle } from "@/components/notes/LiveNoteArticle";
 import { NoteDocEditor } from "@/components/notes/NoteDocEditor";
@@ -16,6 +17,7 @@ import {
   NoteDocumentBody,
   NoteDocumentStrip,
   NoteDocumentTitle,
+  NoteGroupShareLine,
   NoteHistoryLink,
   NoteProperties,
   NoteProperty,
@@ -50,7 +52,11 @@ export default async function NotePage({
   const returnTo = safeReturnPath(requestedReturnTo, fallback);
   const parent = resolveNoteParent(returnTo);
   const historyHref = `/dashboard/notes/${note.id}/history?returnTo=${encodeURIComponent(returnTo)}`;
-  const canEdit = session.user.role === "admin" || session.user.id === note.authorId;
+  // 쓰기 권한은 서버의 노트 규칙(개인: 작성자·관리자, 그룹: 관리자·지금 멤버)으로 정한 값이다.
+  const canEdit = note.access === "write";
+  const groupShareLine = note.group
+    ? groupNoteShareLine(note.group, { id: session.user.id, isAdmin: session.user.role === "admin" })
+    : null;
   const action = updatePrivateNote.bind(null, note.id);
   const now = getRequestNow();
   const purgeEligibleAt = note.deletedAt
@@ -102,6 +108,7 @@ export default async function NotePage({
         authorName={authorName}
         updatedLabel={updatedLabel}
         instructor={instructor}
+        groupShareLine={groupShareLine}
       />
     );
   }
@@ -145,6 +152,7 @@ export default async function NotePage({
         <NoteHistoryLink href={historyHref} />
       </NoteDocumentStrip>
       <NoteDocumentBody as="article">
+        {groupShareLine ? <NoteGroupShareLine>{groupShareLine}</NoteGroupShareLine> : null}
         <NoteDocumentTitle>{note.title}</NoteDocumentTitle>
         <NoteProperties>
           <NoteProperty icon={CalendarDays} label="날짜">{formatNoteLongDate(note.noteDate ?? note.createdAt, "날짜 정보 없음")}</NoteProperty>

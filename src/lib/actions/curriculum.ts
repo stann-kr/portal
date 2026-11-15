@@ -7,7 +7,12 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createDb } from "@/db/client";
+import { createDb, createDbContext } from "@/db/client";
+import {
+  DOCUMENT_CONDITIONAL_WRITE_SENTINEL,
+  executeDocumentStatementsAtomically,
+} from "@/lib/document-lifecycle-atomic";
+import { readStudentLessonGroupId } from "@/lib/lesson-groups";
 import { curriculums } from "@/db/schema";
 import { and, eq, asc } from "drizzle-orm";
 import {
@@ -104,6 +109,36 @@ export async function createModule(
 
   const input = parseModuleInput(formData);
   if (!input.ok) return { error: input.error };
+
+  // 그룹레슨: 같은 그룹 멤버에게도 같은 모듈을 하나씩 만든다(캔버스 GroupLesson ③). 그 뒤로는 학생별 모듈이다.
+  const alsoIds = [...new Set(formData.getAll("alsoStudentId").filter((value): value is string => typeof value === "string" && value.length > 0))]
+    .filter((id) => id !== studentId);
+  if (alsoIds.length > 0) {
+    const groupId = await readStudentLessonGroupId(createDbContext(), studentId);
+    if (!groupId) return { error: "그룹이 바뀌었습니다. 새로고침한 뒤 다시 추가해 주세요." };
+    const statements = [studentId, ...alsoIds].flatMap((targetId) => [
+      {
+        query: `
+          INSERT INTO curriculums (id, student_id, week_num, title, is_completed)
+          SELECT ?, profile.id, ?, ?, 0 FROM profiles AS profile
+          JOIN lesson_group_members AS member ON member.student_id = profile.id AND member.group_id = ?
+          WHERE profile.id = ? AND profile.role = 'student'
+        `,
+        params: [crypto.randomUUID(), input.weekNum, input.title, groupId, targetId],
+      },
+      DOCUMENT_CONDITIONAL_WRITE_SENTINEL,
+    ]);
+    try {
+      await executeDocumentStatementsAtomically(createDbContext(), statements);
+    } catch (error) {
+      if (String((error as Error)?.message ?? error).includes("DOCUMENT_BATCH_ABORT")) {
+        return { error: "그룹이 바뀌었습니다. 새로고침한 뒤 다시 추가해 주세요." };
+      }
+      throw error;
+    }
+    for (const targetId of [studentId, ...alsoIds]) revalidateCurriculumPaths(targetId);
+    return { success: true };
+  }
 
   const db = createDb();
   await db.insert(curriculums).values({

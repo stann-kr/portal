@@ -66,6 +66,8 @@ interface ConnectedLesson {
 }
 
 interface OverviewTabProps {
+  /** 이 학생의 그룹레슨 그룹. 있으면 모듈 추가에 "함께 추가"가 나온다. */
+  lessonGroup?: OverviewLessonGroup | null;
   studentId: string;
   modules: Module[];
   lessons: Lesson[];
@@ -104,16 +106,24 @@ function focusAfterClose(id: string) {
 // ─── 커리큘럼 추가 폼 ──────────────────────────────
 
 // form action은 결과와 무관하게 uncontrolled 입력을 비우므로, 실패 시 입력을 지키려고 값을 제어하고 성공 때만 비운다.
+/** 학생 상세 개요의 그룹레슨 그룹: 이름과 함께하는 학생. */
+export type OverviewLessonGroup = { name: string; partners: { id: string; name: string }[] };
+
 function AddModuleForm({
   studentId,
   nextWeek,
+  lessonGroup,
   onClose,
 }: {
   studentId: string;
   nextWeek: number;
+  lessonGroup: OverviewLessonGroup | null;
   onClose: () => void;
 }) {
   const [weekNum, setWeekNum] = useState(String(nextWeek));
+  // 그룹 멤버에게도 함께 추가(캔버스 GroupLesson ③, 기본 켬). 낸 뒤로는 학생별 모듈이다.
+  const [alsoGroup, setAlsoGroup] = useState(true);
+  const partners = lessonGroup?.partners ?? [];
   const [title, setTitle] = useState("");
   const titleRef = useRef<HTMLInputElement>(null);
   const [state, action, isPending] = useActionState<CreateModuleState, FormData>(
@@ -154,6 +164,20 @@ function AddModuleForm({
         <label htmlFor="module-title" className={FIELD_LABEL_CLASS}>모듈 제목</label>
         <Input ref={titleRef} id="module-title" name="title" type="text" maxLength={120} placeholder="예: BPM 매칭 연습" required value={title} onChange={(event) => setTitle(event.target.value)} disabled={isPending} />
       </div>
+      {lessonGroup && partners.length > 0 ? (
+        <label htmlFor="module-also-group" className="flex min-h-11 w-full items-center gap-2 text-ui text-secondary-foreground md:min-h-7">
+          <input
+            id="module-also-group"
+            type="checkbox"
+            checked={alsoGroup}
+            onChange={(event) => setAlsoGroup(event.target.checked)}
+            disabled={isPending}
+            className="size-4 shrink-0 accent-[var(--color-foreground)]"
+          />
+          {lessonGroup.name} {partners.map((partner) => partner.name).join(", ")}에게도 추가
+        </label>
+      ) : null}
+      {alsoGroup ? partners.map((partner) => <input key={partner.id} type="hidden" name="alsoStudentId" value={partner.id} />) : null}
       <div className="flex gap-2">
         <Button type="button" variant="outline" className="h-11 rounded-touch md:h-9 md:rounded-md" onClick={onClose} disabled={isPending}>닫기</Button>
         <Button type="submit" className="h-11 rounded-touch md:h-9 md:rounded-md" disabled={isPending}>
@@ -312,6 +336,7 @@ export function OverviewTab({
   referenceTime,
   showCurriculum = isCurriculumVisible(),
   lessonNoteIds,
+  lessonGroup = null,
 }: OverviewTabProps) {
   const searchParams = useSearchParams();
   const rowEditing = searchParams?.get("edit") === "1";
@@ -541,6 +566,7 @@ export function OverviewTab({
             <AddModuleForm
               studentId={studentId}
               nextWeek={modules.reduce((max, module) => Math.max(max, module.weekNum ?? 0), 0) + 1}
+              lessonGroup={lessonGroup}
               onClose={() => {
                 setAddingModule(false);
                 focusAfterClose("module-add-trigger");

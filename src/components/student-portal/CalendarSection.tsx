@@ -33,6 +33,7 @@ import { CalendarTypeFilter } from "@/components/calendar/CalendarTypeFilter";
 import {
   CalendarQuickCreate,
   type CalendarQuickCreateOptions,
+  type QuickCreateGroupChoice,
   type QuickCreateStudentChoice,
 } from "@/components/calendar/CalendarQuickCreate";
 import { LessonScheduleDialog } from "@/components/calendar/LessonScheduleDialog";
@@ -198,6 +199,8 @@ interface CalendarSectionProps {
    * 만들기(칸 선택·레슨 예약)는 이 목록에서 학생을 먼저 고른다. 이때 studentId는 빈 값이다.
    */
   studentChoices?: readonly QuickCreateStudentChoice[];
+  /** 관리자 "전체 학생": 레슨 예약 대상으로 고를 그룹레슨 그룹. */
+  groupChoices?: readonly QuickCreateGroupChoice[];
   /** 달력이 보여 주는 기간이 바뀔 때("전체 학생"은 아직 읽지 않은 기간을 더 읽는다). */
   onVisibleRangeChange?: (start: Date, end: Date) => void;
   /** 머리줄 오른쪽 "전체 노트 보기" 링크(관리자). */
@@ -231,6 +234,7 @@ export function CalendarSection({
   loadError = null,
   onRetry,
   studentChoices,
+  groupChoices,
   onVisibleRangeChange,
   allNotesHref,
   scopeNotice,
@@ -495,6 +499,7 @@ export function CalendarSection({
     studentId,
     spaceLabel,
     studentChoices: allStudents ? studentChoices : undefined,
+    groupChoices: allStudents ? groupChoices : undefined,
   };
 
   const clearPreset = () => {
@@ -590,6 +595,7 @@ export function CalendarSection({
                       canCreateDigging={isStudentWorkspace}
                       canCreateLesson={canManageLessons}
                       lessonStudentChoices={allStudents ? studentChoices : undefined}
+                      lessonGroupChoices={allStudents ? groupChoices : undefined}
                       onSuccess={(item) => {
                         onAddItem?.(item);
                         setCreateMenuOpen(false);
@@ -785,6 +791,7 @@ export function CalendarSection({
             defaultStart={lessonDefaultStart}
             onSuccess={(item) => onAddItem?.(item)}
             studentChoices={allStudents ? studentChoices : undefined}
+            groupChoices={allStudents ? groupChoices : undefined}
           />
         ) : null}
 

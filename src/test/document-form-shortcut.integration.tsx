@@ -187,6 +187,8 @@ mock.module("@/lib/actions/privateNotes", { namedExports: {
   restorePrivateNote: (...args: Parameters<typeof changeNoteLifecycle>) => changeNoteLifecycle(...args),
   purgePrivateNote: (...args: Parameters<typeof changeNoteLifecycle>) => changeNoteLifecycle(...args),
   getPrivateNotes: async (studentId: string) => { notePageTargets.push(studentId); return notePageData; },
+  // 그룹에 속하지 않은 학생: 그룹 노트 범위 보기를 두지 않는다.
+  getStudentGroupNotes: async () => null,
   getPrivateNote: (...args: Parameters<typeof loadPanelNote>) => loadPanelNote(...args),
   getPrivateNoteHead: async () => null,
   updatePrivateNote: (...args: Parameters<typeof savePanelNote>) => savePanelNote(...args),
@@ -498,8 +500,8 @@ test("학생·관리자 노트 검색은 본문을 찾고 상세·작성·휴지
   const harness = await renderForm(context, <div />);
   const date = new Date("2020-01-01T00:00:00Z");
   notePageData = [
-    { id: "old-note", title: "오래된 레슨", contentHtml: "<p>비트<strong>매칭</strong> 연습</p>", authorName: "강사", authorId: "teacher", version: 1, noteDate: date, createdAt: date, updatedAt: date },
-    { id: "other-note", title: "다른 기록", contentHtml: "<p>다른 본문</p>", authorName: "학생", authorId: "student-search", version: 1, noteDate: null, createdAt: date, updatedAt: date },
+    { id: "old-note", title: "오래된 레슨", contentHtml: "<p>비트<strong>매칭</strong> 연습</p>", authorName: "강사", authorId: "teacher", version: 1, noteDate: date, createdAt: date, updatedAt: date, groupId: null },
+    { id: "other-note", title: "다른 기록", contentHtml: "<p>다른 본문</p>", authorName: "학생", authorId: "student-search", version: 1, noteDate: null, createdAt: date, updatedAt: date, groupId: null },
   ];
   context.after(() => { notePageData = []; notePageTargets.length = 0; notePageRole = "student"; });
   for (const role of ["student", "admin"] as const) {
@@ -1102,6 +1104,10 @@ const panelNoteRecord = (authorId: string) => ({
   version: 3,
   deletedAt: null,
   authorName: "학생",
+  groupId: null,
+  group: null,
+  // 서버가 정한 접근(개인 노트: 작성자·관리자 쓰기, 그 학생은 읽기). 이 패널의 보는 사람은 student-1이다.
+  access: authorId === "student-1" ? ("write" as const) : ("read" as const),
 });
 const panelNoteItem = {
   id: "panel-note",

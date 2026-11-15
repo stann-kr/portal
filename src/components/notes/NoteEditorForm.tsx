@@ -112,6 +112,10 @@ export type NoteDocumentLayout = {
   authorName?: string | null;
   updatedLabel?: string | null;
   renderBars: (bars: NoteDocumentBars) => ReactNode;
+  /** 제목 위 안내 줄(그룹 노트: "{그룹} 그룹 노트 · …도 보고 함께 고칠 수 있어요."). */
+  header?: ReactNode;
+  /** 날짜·작성자·수정 아래에 더하는 속성 줄(새 노트의 저장 위치 등). `noteId`가 null이면 아직 만들기 전이다. */
+  renderExtraProperties?: (state: { noteId: string | null }) => ReactNode;
 };
 
 export type SavedNote = {
@@ -653,6 +657,7 @@ function NoteEditorFormContent({ note, create, actorId, action, focusBodyEnd = f
           })}
           <NoteDocumentBody>
             <h1 className="sr-only">{created ? "노트 편집" : "새 노트"}</h1>
+            {documentLayout.header}
             {titleField}
             <NoteProperties>
               <NoteProperty icon={CalendarDays} label="날짜" htmlFor={dateInputId} tall>{dateField}</NoteProperty>
@@ -662,6 +667,7 @@ function NoteEditorFormContent({ note, create, actorId, action, focusBodyEnd = f
               {documentLayout.updatedLabel ? (
                 <NoteProperty icon={Clock3} label="수정">{documentLayout.updatedLabel}</NoteProperty>
               ) : null}
+              {documentLayout.renderExtraProperties?.({ noteId })}
             </NoteProperties>
             {errorAlert}
             {editor}

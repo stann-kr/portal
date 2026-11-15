@@ -14,7 +14,13 @@ import {
   markLinksDeletedStatement,
   schedulePushStudentCalendarChanges,
 } from "@/lib/calendar-sync/sync-runner";
-import { executeDocumentStatementsAtomically } from "@/lib/document-lifecycle-atomic";
+import {
+  DOCUMENT_CONDITIONAL_WRITE_SENTINEL,
+  documentEpochSeconds,
+  executeDocumentStatementsAtomically,
+} from "@/lib/document-lifecycle-atomic";
+import { listLessonGroups, readGroupLessonTargets, readLessonGroupMemberIds } from "@/lib/lesson-groups";
+import { sharedLessonStarts } from "@/lib/lesson-group-rules";
 import { and, eq, gte, asc, desc } from "drizzle-orm";
 import {
   requireAdmin,
@@ -79,11 +85,21 @@ export async function getUpcomingLessonCount(): Promise<number> {
   await requireAdmin();
   const db = createDb();
   const now = new Date();
-  const rows = await db
-    .select({ id: lessons.id })
-    .from(lessons)
-    .where(gte(lessons.scheduledAt, now));
-  return rows.length;
+  const [rows, groups] = await Promise.all([
+    db
+      .select({ studentId: lessons.studentId, scheduledAt: lessons.scheduledAt })
+      .from(lessons)
+      .where(gte(lessons.scheduledAt, now)),
+    listLessonGroups(createDbContext()),
+  ]);
+  // 그룹레슨(같은 그룹 + 같은 시각, 멤버 모두)은 한 번으로 센다.
+  let merged = 0;
+  for (const group of groups) {
+    const starts = group.memberIds.map((id) =>
+      rows.filter((row) => row.studentId === id).map((row) => row.scheduledAt.getTime()));
+    merged += sharedLessonStarts(starts).length * (group.memberIds.length - 1);
+  }
+  return rows.length - merged;
 }
 
 /**
@@ -161,6 +177,65 @@ export async function createLesson(
   return { success: true, lesson: { id, scheduledAt: parsed.value.toISOString() } };
 }
 
+export type CreateGroupLessonState = {
+  error?: string;
+  success?: boolean;
+  lessons?: (ScheduledLesson & { studentId: string })[];
+};
+
+/**
+ * 그룹레슨 만들기 (Admin 전용). 멤버마다 같은 시각 레슨을 하나씩 만든다(일정은 학생별 행, 2026-11-15 사용자 결정).
+ */
+export async function createGroupLesson(
+  groupId: string,
+  _prev: CreateGroupLessonState,
+  formData: FormData,
+): Promise<CreateGroupLessonState> {
+  const session = await requireAdmin();
+  const parsed = parseLessonScheduleInput(formData);
+  if (!parsed.ok) return { error: parsed.error };
+  const memberIds = typeof groupId === "string" && groupId
+    ? await readLessonGroupMemberIds(createDbContext(), groupId)
+    : [];
+  if (memberIds.length === 0) return { error: "그룹을 찾지 못했습니다. 목록을 새로고침해 주세요." };
+
+  const scheduledAt = documentEpochSeconds(parsed.value);
+  const created = memberIds.map((studentId) => ({ id: crypto.randomUUID(), studentId }));
+  try {
+    // 그 사이 멤버가 빠졌거나 학생이 아니게 되면 하나도 만들지 않는다.
+    await executeDocumentStatementsAtomically(createDbContext(), created.flatMap((lesson) => [
+      {
+        query: `
+          INSERT INTO lessons (id, student_id, scheduled_at)
+          SELECT ?, member.student_id, ? FROM lesson_group_members AS member
+          JOIN profiles AS profile ON profile.id = member.student_id AND profile.role = 'student'
+          WHERE member.student_id = ? AND member.group_id = ?
+        `,
+        params: [lesson.id, scheduledAt, lesson.studentId, groupId],
+      },
+      DOCUMENT_CONDITIONAL_WRITE_SENTINEL,
+    ]));
+  } catch (error) {
+    if (String((error as Error)?.message ?? error).includes("DOCUMENT_BATCH_ABORT")) {
+      return { error: "그 사이 그룹이 바뀌었습니다. 목록을 새로고침해 주세요." };
+    }
+    throw error;
+  }
+  for (const lesson of created) {
+    await notifyPush(
+      { kind: "profiles", profileIds: [lesson.studentId] },
+      pushMessages.lessonScheduled({ lessonId: lesson.id, scheduledAt: parsed.value, changed: false }),
+      { excludeProfileId: session.user.id },
+    );
+    await schedulePushStudentCalendarChanges(lesson.studentId);
+    revalidateLessonPaths(lesson.studentId);
+  }
+  return {
+    success: true,
+    lessons: created.map((lesson) => ({ ...lesson, scheduledAt: parsed.value.toISOString() })),
+  };
+}
+
 /**
  * 레슨 시간 변경 (Admin 전용). 대상 학생의 레슨만 바꾸고 결과를 상태로 돌려준다.
  */
@@ -184,6 +259,38 @@ async function writeLessonSchedule(
   const parsed = parseLessonScheduleInput(formData);
   if (!parsed.ok) return { error: parsed.error };
 
+  const movedByAdmin = actor.user.role === "admin";
+  // 관리자가 그룹레슨을 옮기면 멤버 모두의 같은 시각 레슨을 함께, 학생은 본인 레슨만 옮긴다(2026-11-15 사용자 결정).
+  const group = movedByAdmin ? await readGroupLessonTargets(createDbContext(), studentId, lessonId) : null;
+  if (group && group.targets.length > 1) {
+    const from = documentEpochSeconds(group.scheduledAt);
+    const to = documentEpochSeconds(parsed.value);
+    try {
+      await executeDocumentStatementsAtomically(createDbContext(), group.targets.flatMap((target) => [
+        {
+          query: "UPDATE lessons SET scheduled_at = ? WHERE id = ? AND student_id = ? AND scheduled_at = ?",
+          params: [to, target.lessonId, target.studentId, from],
+        },
+        DOCUMENT_CONDITIONAL_WRITE_SENTINEL,
+      ]));
+    } catch (error) {
+      if (String((error as Error)?.message ?? error).includes("DOCUMENT_BATCH_ABORT")) {
+        return { error: "그 사이 그룹레슨이 바뀌었습니다. 목록을 새로고침해 주세요." };
+      }
+      throw error;
+    }
+    for (const target of group.targets) {
+      await notifyPush(
+        { kind: "profiles", profileIds: [target.studentId] },
+        pushMessages.lessonScheduled({ lessonId: target.lessonId, scheduledAt: parsed.value, changed: true }),
+        { excludeProfileId: actor.user.id },
+      );
+      await schedulePushStudentCalendarChanges(target.studentId);
+      revalidateLessonPaths(target.studentId);
+    }
+    return { success: true, lesson: { id: lessonId, scheduledAt: parsed.value.toISOString() } };
+  }
+
   const db = createDb();
   const updated = await db
     .update(lessons)
@@ -192,7 +299,6 @@ async function writeLessonSchedule(
     .returning({ id: lessons.id });
   if (updated.length === 0) return { error: "레슨을 찾을 수 없습니다. 목록을 새로고침해 주세요." };
   // 관리자가 옮기면 학생에게, 학생이 옮기면 관리자에게 알린다.
-  const movedByAdmin = actor.user.role === "admin";
   await notifyPush(
     movedByAdmin ? { kind: "profiles", profileIds: [studentId] } : { kind: "role", role: "admin" },
     pushMessages.lessonScheduled({
@@ -239,11 +345,16 @@ export async function moveLesson(
  */
 export async function deleteLesson(lessonId: string, studentId: string) {
   await requireStudentTarget(studentId);
+  // 그룹레슨이면 멤버 모두의 같은 시각 레슨을 함께 지운다(관리자 전용 경로).
+  const group = await readGroupLessonTargets(createDbContext(), studentId, lessonId);
+  const targets = group?.targets ?? [{ lessonId, studentId }];
   // 원격 사본을 지울 수 있게 link를 DELETED로 남기는 것과 레슨 삭제를 함께 commit한다.
-  await executeDocumentStatementsAtomically(createDbContext(), [
-    markLinksDeletedStatement("LESSON", lessonId, studentId),
-    { query: "DELETE FROM lessons WHERE id = ? AND student_id = ?", params: [lessonId, studentId] },
-  ]);
-  await schedulePushStudentCalendarChanges(studentId);
-  revalidateLessonPaths(studentId);
+  await executeDocumentStatementsAtomically(createDbContext(), targets.flatMap((target) => [
+    markLinksDeletedStatement("LESSON", target.lessonId, target.studentId),
+    { query: "DELETE FROM lessons WHERE id = ? AND student_id = ?", params: [target.lessonId, target.studentId] },
+  ]));
+  for (const target of targets) {
+    await schedulePushStudentCalendarChanges(target.studentId);
+    revalidateLessonPaths(target.studentId);
+  }
 }

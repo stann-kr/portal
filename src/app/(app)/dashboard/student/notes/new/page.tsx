@@ -6,6 +6,7 @@
 import { redirect } from "next/navigation";
 import { getActiveAuthSession } from "@/lib/auth-guard";
 import { createPrivateNote } from "@/lib/actions/privateNotes";
+import { getStudentLessonGroup } from "@/lib/actions/lessonGroups";
 import { NoteFullForm } from "@/components/notes/NoteFullForm";
 import { safeReturnPath } from "@/lib/safe-return-path";
 import { resolveNoteCreateDefaultDate, resolveNoteCreateDefaultTitle } from "@/lib/note-create-route";
@@ -27,6 +28,8 @@ export default async function NewNotePage({
   const boundAction = createPrivateNote.bind(null, studentId);
   const query = await searchParams;
   const returnTo = safeReturnPath(query.returnTo, "/dashboard/student/notes");
+  // 그룹이 있으면 저장 위치(내 노트 / 그룹 노트)를 고른다.
+  const group = await getStudentLessonGroup(studentId);
 
   return (
     <NoteFullForm
@@ -38,6 +41,8 @@ export default async function NewNotePage({
       defaultTitle={resolveNoteCreateDefaultTitle(query.title)}
       spaceLabel="내 스페이스"
       authorName={session.user.name?.trim() || session.user.email || undefined}
+      group={group}
+      personalLabel="내 노트"
     />
   );
 }

@@ -23,7 +23,11 @@ export type MediaDeliveryRecord = {
 export type MediaDeliveryResourceContext =
   | { kind: "COMMUNITY_POST"; authorId: string; deleted: boolean }
   | { kind: "QNA_REPLY"; studentId: string }
-  | { kind: "PRIVATE_NOTE"; studentId: string }
+  /**
+   * 개인 노트는 그 학생(studentId), 그룹 노트는 지금 그 그룹 멤버(groupMemberIds)가 본다. 관리자는 둘 다.
+   * groupMemberIds가 있으면 그룹 노트로 판단하고 studentId(만든 사람)는 보지 않는다.
+   */
+  | { kind: "PRIVATE_NOTE"; studentId: string; groupMemberIds?: readonly string[] }
   | null;
 
 /** READY preview는 owner만, ATTACHED object는 문서 audience만 읽을 수 있다. */
@@ -44,10 +48,13 @@ export function canAccessMediaDelivery(
         resource.authorId === principal.id
       );
     }
-    if (
-      (media.resourceType === "QNA_REPLY" && resource?.kind === "QNA_REPLY") ||
-      (media.resourceType === "PRIVATE_NOTE" && resource?.kind === "PRIVATE_NOTE")
-    ) {
+    if (media.resourceType === "PRIVATE_NOTE" && resource?.kind === "PRIVATE_NOTE") {
+      if (principal.role === "admin") return true;
+      return resource.groupMemberIds
+        ? resource.groupMemberIds.includes(principal.id)
+        : resource.studentId === principal.id;
+    }
+    if (media.resourceType === "QNA_REPLY" && resource?.kind === "QNA_REPLY") {
       return principal.role === "admin" || resource.studentId === principal.id;
     }
     return false;

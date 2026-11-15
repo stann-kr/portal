@@ -80,15 +80,20 @@ function loaders(overrides: Partial<CollabDocumentLoaders> = {}): CollabDocument
   return {
     findNote: async (id) =>
       ({
-        mine: { studentId: "s1", authorId: "s1", deletedAt: null, lifecycle: 0 },
-        stann: { studentId: "s1", authorId: "admin", deletedAt: null, lifecycle: 7 },
-        trashed: { studentId: "s1", authorId: "s1", deletedAt: new Date(NOW), lifecycle: 0 },
+        mine: { studentId: "s1", authorId: "s1", groupId: null, deletedAt: null, lifecycle: 0 },
+        stann: { studentId: "s1", authorId: "admin", groupId: null, deletedAt: null, lifecycle: 7 },
+        trashed: { studentId: "s1", authorId: "s1", groupId: null, deletedAt: new Date(NOW), lifecycle: 0 },
+        // 그룹 g1(멤버 s1·s3)의 그룹 노트. 만든 사람은 s1, 관리자가 만든 것은 student_id가 관리자다.
+        group: { studentId: "s1", authorId: "s1", groupId: "g1", deletedAt: null, lifecycle: 3 },
+        groupByAdmin: { studentId: "admin", authorId: "admin", groupId: "g1", deletedAt: null, lifecycle: 0 },
+        groupTrashed: { studentId: "s1", authorId: "s1", groupId: "g1", deletedAt: new Date(NOW), lifecycle: 0 },
       })[id] ?? null,
     findPost: async (id) =>
       ({ p1: { authorId: "s1", deletedAt: null, lifecycle: 2 }, gone: { authorId: "s1", deletedAt: new Date(NOW), lifecycle: 0 } })[id] ?? null,
     findGuidePage: async (id) => (id === "g1" ? { id } : null),
     findQnaThread: async (id) => (id === "t1" ? { studentId: "s1", deletedAt: null } : null),
-    isActiveStudent: async (id) => id === "s1" || id === "s2",
+    isActiveStudent: async (id) => id === "s1" || id === "s2" || id === "s3",
+    isGroupMember: async (studentId, groupId) => groupId === "g1" && (studentId === "s1" || studentId === "s3"),
     ...overrides,
   };
 }
@@ -111,6 +116,34 @@ test("권한: 노트는 학생 본인·관리자만, 쓰기는 작성자·관리
   assert.deepEqual(await authorizeCollabRequest(student1, { key: "bad key" }, loaders()), { ok: false, reason: "BAD_REQUEST" });
 });
 
+test("권한: 그룹 노트는 관리자·지금 그 그룹 멤버가 읽고 함께 고치고, 그 밖은 거부한다", async () => {
+  const student3 = { id: "s3", isAdmin: false };
+  for (const key of ["note:group", "note:groupByAdmin"]) {
+    const lifecycle = key === "note:group" ? 3 : 0;
+    assert.deepEqual(await authorizeCollabRequest(student1, { key }, loaders()), { ok: true, key, mode: "write", lifecycle }, `만든 멤버 ${key}`);
+    assert.deepEqual(await authorizeCollabRequest(student3, { key }, loaders()), { ok: true, key, mode: "write", lifecycle }, `다른 멤버 ${key}`);
+    assert.deepEqual(await authorizeCollabRequest(admin, { key }, loaders()), { ok: true, key, mode: "write", lifecycle }, `관리자 ${key}`);
+    assert.deepEqual(await authorizeCollabRequest(student2, { key }, loaders()), { ok: false, reason: "NOT_FOUND_OR_FORBIDDEN" }, `멤버 아님 ${key}`);
+  }
+  // 그룹을 떠나면(만든 사람이어도) 접근을 잃는다: student_id·author_id로 정하지 않는다.
+  const left = loaders({ isGroupMember: async (studentId) => studentId === "s3" });
+  assert.deepEqual(await authorizeCollabRequest(student1, { key: "note:group" }, left), { ok: false, reason: "NOT_FOUND_OR_FORBIDDEN" });
+  assert.equal((await authorizeCollabRequest(student3, { key: "note:group" }, left)).ok, true);
+  // 휴지통의 그룹 노트는 멤버에게 TRASHED, 남에게는 없음과 같다.
+  assert.deepEqual(await authorizeCollabRequest(student3, { key: "note:groupTrashed" }, loaders()), { ok: false, reason: "TRASHED" });
+  assert.deepEqual(await authorizeCollabRequest(student2, { key: "note:groupTrashed" }, loaders()), { ok: false, reason: "NOT_FOUND_OR_FORBIDDEN" });
+  // 관리자는 멤버십을 묻지 않는다.
+  let asked = 0;
+  const counting = loaders({ isGroupMember: async () => { asked += 1; return false; } });
+  assert.equal((await authorizeCollabRequest(admin, { key: "note:group" }, counting)).ok, true);
+  assert.equal(asked, 0);
+  // 이미 만든 그룹 노트의 생성 room 요청도 그룹 규칙을 따른다.
+  const operationId = "6f1c2b8a-3d4e-4f5a-8b6c-7d8e9f0a1b2c";
+  const created = loaders({ findNote: async () => ({ studentId: "s1", authorId: "s1", groupId: "g1", deletedAt: null, lifecycle: 0 }) });
+  assert.equal((await authorizeCollabRequest(student2, { createNote: { operationId, studentId: "s2" } }, created)).ok, false, "멤버 아님");
+  assert.equal((await authorizeCollabRequest(student3, { createNote: { operationId, studentId: "s3" } }, created)).ok, true, "멤버");
+});
+
 test("권한: 새 노트는 결정적 생성 id의 room을 그 학생 공간 쓰기 권한자에게만 연다", async () => {
   const operationId = "6f1c2b8a-3d4e-4f5a-8b6c-7d8e9f0a1b2c";
   const expectedId = deriveCreationResourceId(operationId, JSON.stringify(["private-note", "s1", "s1"]));
@@ -124,7 +157,7 @@ test("권한: 새 노트는 결정적 생성 id의 room을 그 학생 공간 쓰
   assert.equal((await authorizeCollabRequest(admin, { createNote: { operationId, studentId: "nobody" } }, loaders())).ok, false, "학생 아님");
   assert.equal((await authorizeCollabRequest(student1, { createNote: { operationId: "x", studentId: "s1" } }, loaders())).ok, false);
   // 이미 만들어진 노트면 일반 노트 규칙: 다른 학생이 같은 id를 노려도 거부된다.
-  const existing = loaders({ findNote: async () => ({ studentId: "s1", authorId: "s1", deletedAt: null, lifecycle: 0 }) });
+  const existing = loaders({ findNote: async () => ({ studentId: "s1", authorId: "s1", groupId: null, deletedAt: null, lifecycle: 0 }) });
   assert.equal((await authorizeCollabRequest(student2, { createNote: { operationId, studentId: "s2" } }, existing)).ok, false);
 });
 

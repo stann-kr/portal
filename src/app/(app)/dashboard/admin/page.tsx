@@ -6,6 +6,7 @@
 import { redirect } from "next/navigation";
 import { getActiveAuthSession } from "@/lib/auth-guard";
 import { getStudentRosterStats } from "@/lib/actions/students";
+import { getLessonGroups } from "@/lib/actions/lessonGroups";
 import {
   getUnifiedItemsForAllStudents,
   getUnifiedItemsForStudent,
@@ -47,7 +48,7 @@ export default async function AdminPortalPage({ searchParams }: { searchParams: 
       && student.nextLessonDate.getTime() >= lessonWindow.from.getTime()
       && student.nextLessonDate.getTime() <= lessonWindow.to.getTime())
     .map((student) => student.id);
-  const [initialCalendar, qnaThreads, pendingAssignments, lessonNoteIds] = await Promise.all([
+  const [initialCalendar, qnaThreads, pendingAssignments, lessonNoteIds, lessonGroups] = await Promise.all([
     initialStudentId === ALL_STUDENTS_SCOPE
       ? getUnifiedItemsForAllStudents().then((result: AllStudentsUnifiedItems) => ({ items: result.items, window: result }))
       : initialStudentId
@@ -56,6 +57,7 @@ export default async function AdminPortalPage({ searchParams }: { searchParams: 
     getQnaThreads(),
     getPendingFeedbackAssignments(),
     getLessonNoteIdsInRange(upcomingStudentIds, lessonWindow).catch(() => ({})),
+    getLessonGroups(),
   ]);
 
   return (
@@ -67,6 +69,7 @@ export default async function AdminPortalPage({ searchParams }: { searchParams: 
         ? { start: initialCalendar.window.start, end: initialCalendar.window.end, truncated: initialCalendar.window.truncated }
         : undefined}
       students={students}
+      lessonGroups={lessonGroups}
       adminId={adminId}
       qnaThreads={qnaThreads}
       pendingAssignments={pendingAssignments}

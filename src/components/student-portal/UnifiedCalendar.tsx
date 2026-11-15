@@ -66,6 +66,7 @@ import type { CalendarQuickCreateSelection } from "@/lib/calendar-quick-create";
 import { createDaySelection } from "@/lib/unified-item-views";
 import { moveCalendarEvent } from "@/lib/actions/calendarEvents";
 import { moveLesson } from "@/lib/actions/lessons";
+import { readGroupLessonMetadata, readStudentGroupLessonTag, untagStudentGroupLesson } from "@/lib/group-lesson-items";
 import { movePrivateNoteDate } from "@/lib/actions/privateNotes";
 import { createCreationOperationId } from "@/lib/creation-operation";
 import { formatKst } from "@/lib/kst-format";
@@ -129,7 +130,7 @@ const KST_MOVE_DATE = { month: "long", day: "numeric", weekday: "short" } as con
 
 // 조사가 앞말에 따라 바뀌지 않도록 "무엇 · 어디로" 형태로 알린다.
 function describeMove(item: UnifiedItem, request: CalendarMoveRequest): string {
-  const kind = item.type === "NOTE" ? "노트" : item.source.entity === "LESSON" ? "레슨" : "일정";
+  const kind = item.type === "NOTE" ? "노트" : item.source.entity === "LESSON" ? (readGroupLessonMetadata(item) ? "그룹레슨" : "레슨") : "일정";
   const name = item.source.entity === "LESSON" ? "" : ` "${item.title}"`;
   let when: string;
   if (request.kind === "note") {
@@ -140,7 +141,9 @@ function describeMove(item: UnifiedItem, request: CalendarMoveRequest): string {
     when = `${formatKst(request.startTime, KST_MOVE_DATE)} ${formatKst(request.startTime, KST_TIME)}`;
     if (request.endTime) when += `–${formatKst(request.endTime, KST_TIME)}`;
   }
-  return `${kind}${name} → ${when}에 저장했습니다.`;
+  // 학생이 그룹레슨을 옮기면 본인 레슨만 바뀐다(2026-11-15 사용자 결정).
+  const onlyMine = readStudentGroupLessonTag(item) ? " 내 레슨만 옮겨졌습니다." : "";
+  return `${kind}${name} → ${when}에 저장했습니다.${onlyMine}`;
 }
 
 function reverseRequest(item: UnifiedItem, request: CalendarMoveRequest): CalendarMoveRequest {
@@ -446,9 +449,10 @@ export function UnifiedCalendar({
         return;
       }
       // 기다리는 동안 목록에서 빠진 항목은 되살리지 않고, 남아 있으면 최신 값에 이동만 합친다.
-      const saved = resolveSavedMove(latestItemsRef.current, key, request);
+      const resolved = resolveSavedMove(latestItemsRef.current, key, request);
+      const saved = resolved ? untagStudentGroupLesson(resolved) : null;
       if (saved) onItemUpdated?.(saved);
-      const moved = saved ?? applyCalendarMoveToItem(original, request);
+      const moved = saved ?? untagStudentGroupLesson(applyCalendarMoveToItem(original, request));
       // 옆에 열려 있는 상세 패널이 이 항목이면 옮긴 시각으로 맞춘다.
       setSelectedItem((current) => selectedItemAfterMove(current, moved));
       setNotice({

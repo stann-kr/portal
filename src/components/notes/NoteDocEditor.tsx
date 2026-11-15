@@ -4,7 +4,7 @@ import { useState } from "react";
 import { MobileTopBar } from "@/components/app-shell/AppSidebar";
 import type { UpdateNoteState } from "@/lib/actions/privateNotes";
 import { DeleteNoteButton } from "./DeleteNoteButton";
-import { NoteBreadcrumb, NoteDocumentStrip, NoteHistoryLink, type NoteParent } from "./NoteDocumentChrome";
+import { NoteBreadcrumb, NoteDocumentStrip, NoteGroupShareLine, NoteHistoryLink, type NoteParent } from "./NoteDocumentChrome";
 import { NoteEditorForm } from "./NoteEditorForm";
 import { NoteLessonFrame, type NoteInstructorTools } from "./NoteLessonFrame";
 import { formatNoteUpdated } from "./note-display";
@@ -25,6 +25,7 @@ export function NoteDocEditor({
   authorName,
   updatedLabel: initialUpdatedLabel,
   instructor,
+  groupShareLine,
 }: {
   note: { id: string; title: string; contentHtml: string; noteDate: Date | null; version: number };
   actorId: string;
@@ -37,6 +38,8 @@ export function NoteDocEditor({
   updatedLabel: string;
   /** 관리자 화면에서만 서버가 넘긴다. 학생에게는 수업 도구와 메모를 그리지 않는다. */
   instructor?: NoteInstructorTools;
+  /** 그룹 노트면 머리 안내 줄 문구. */
+  groupShareLine?: string | null;
 }) {
   // 자동 저장은 route를 다시 렌더하지 않으므로 "수정" 줄은 저장 응답의 시각으로 여기서 맞춘다.
   const [updatedLabel, setUpdatedLabel] = useState(initialUpdatedLabel);
@@ -54,6 +57,7 @@ export function NoteDocEditor({
           document={{
             authorName,
             updatedLabel,
+            header: groupShareLine ? <NoteGroupShareLine>{groupShareLine}</NoteGroupShareLine> : null,
             renderBars: ({ status, title, version }) => (
               <>
                 <MobileTopBar

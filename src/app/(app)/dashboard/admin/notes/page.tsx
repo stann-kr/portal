@@ -48,7 +48,7 @@ export default async function AdminAllNotesPage({
   const rows: AllNotesTableRow[] = notes.map((note) => ({
     // 서버가 이미 짧은 미리보기(검색이면 일치 주변)를 만들었으므로 본문 HTML 없이 행을 만든다.
     ...toNotesDatabaseRow({ ...note, contentHtml: "", searchPreview: note.preview }),
-    studentLabel: labels.get(note.studentId) ?? "학생",
+    studentLabel: note.groupName ? `${note.groupName} 그룹` : labels.get(note.studentId) ?? "학생",
     kindLabel: ALL_NOTE_KIND_LABELS[note.kind],
   }));
 

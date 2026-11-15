@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   DEFAULT_NOTES_SORT,
+  filterNotesByScope,
   formatNotesSortValue,
   getNotesSortAria,
   parseNotesSort,
@@ -31,7 +32,7 @@ const source = {
 
 function row(id: string, patch: Partial<NotesDatabaseRow> = {}): NotesDatabaseRow {
   return {
-    id, title: id, preview: "", authorName: null,
+    id, title: id, preview: "", authorName: null, groupName: null,
     dateValue: null, updatedValue: null, dateLabel: "", updatedLabel: "",
     ...patch,
   };
@@ -107,4 +108,13 @@ test("보기 선택은 표·목록만 받아들이고 계정별 키는 다른 �
   assert.equal(readAccountNotesViewStorageOwnerId(createAccountCalendarTabStorageKey("user-a")), null);
   assert.equal(readAccountCalendarTabStorageOwnerId(key), null);
   assert.throws(() => createAccountNotesViewStorageKey(""), TypeError);
+});
+
+test("범위 보기: 전체는 그대로, 내 노트는 개인 노트만, 그룹 노트는 그룹 노트만 남긴다", () => {
+  const rows = [row("mine"), row("group", { groupName: "화요일반" })];
+  assert.deepEqual(filterNotesByScope(rows, "all").map((item) => item.id), ["mine", "group"]);
+  assert.deepEqual(filterNotesByScope(rows, "personal").map((item) => item.id), ["mine"]);
+  assert.deepEqual(filterNotesByScope(rows, "group").map((item) => item.id), ["group"]);
+  assert.equal(toNotesDatabaseRow({ ...source, groupName: "화요일반" }).groupName, "화요일반");
+  assert.equal(toNotesDatabaseRow(source).groupName, null);
 });

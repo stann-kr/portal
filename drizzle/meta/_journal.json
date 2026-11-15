@@ -204,6 +204,20 @@
       "when": 1794575666011,
       "tag": "0028_guide_access",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "6",
+      "when": 1794690489795,
+      "tag": "0029_lesson_groups",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "6",
+      "when": 1794767125868,
+      "tag": "0030_group_note_retention",
+      "breakpoints": true
     }
   ]
 }

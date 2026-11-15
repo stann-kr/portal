@@ -10,10 +10,16 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { createLesson, type CreateLessonState } from "@/lib/actions/lessons";
+import { createGroupLesson, createLesson, type CreateLessonState } from "@/lib/actions/lessons";
 import { createLessonUnifiedItem } from "@/lib/unified-item-normalization";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
-import type { QuickCreateStudentChoice } from "./CalendarQuickCreate";
+import {
+  createGroupLessonItems,
+  GROUP_CHOICE_PREFIX,
+  groupLessonNotice,
+  type QuickCreateGroupChoice,
+  type QuickCreateStudentChoice,
+} from "./CalendarQuickCreate";
 
 /** 관리자가 학생 일정 캘린더에서 바로 레슨을 예약한다(머리의 "레슨 예약", 좁은 화면 위쪽 막대의 +). */
 export function LessonScheduleDialog({
@@ -24,6 +30,7 @@ export function LessonScheduleDialog({
   defaultStart,
   onSuccess,
   studentChoices,
+  groupChoices = [],
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -34,16 +41,32 @@ export function LessonScheduleDialog({
   onSuccess?: (item: UnifiedItem) => void;
   /** 관리자 일정 "전체 학생": 예약할 학생을 대화상자에서 먼저 고른다(필수). 서버 action이 활성 학생인지 다시 확인한다. */
   studentChoices?: readonly QuickCreateStudentChoice[];
+  /** studentChoices와 함께 쓴다. 그룹을 고르면 멤버마다 레슨이 하나씩 생긴다(캔버스 GroupLesson ②). */
+  groupChoices?: readonly QuickCreateGroupChoice[];
 }) {
   const [scheduledAt, setScheduledAt] = useState(defaultStart ?? "");
   const [chosenStudentId, setChosenStudentId] = useState("");
   const chosenStudent = studentChoices?.find((student) => student.id === chosenStudentId) ?? null;
+  const groups = studentChoices ? groupChoices : [];
+  const chosenGroup = groups.find((group) => `${GROUP_CHOICE_PREFIX}${group.id}` === chosenStudentId) ?? null;
   // 예약 결과를 받은 학생. 대화상자를 연 채 선택을 바꿔도 이미 저장한 레슨의 학생을 쓴다.
   const savedTargetRef = useRef<{ id: string; label: string }>({ id: studentId, label: spaceLabel });
   const handledLessonRef = useRef<string | null>(null);
   const [state, action, isPending] = useActionState<CreateLessonState, FormData>(
     async (previous, data) => {
       const targetId = studentChoices ? String(data.get("lessonStudentId") ?? "") : studentId;
+      const group = groups.find((candidate) => `${GROUP_CHOICE_PREFIX}${candidate.id}` === targetId);
+      if (group) {
+        try {
+          const result = await createGroupLesson(group.id, {}, data);
+          if (!result.lessons) return { error: result.error ?? "그룹레슨을 예약하지 못했습니다." };
+          onOpenChange(false);
+          for (const item of createGroupLessonItems(result.lessons, group)) onSuccess?.(item);
+          return {};
+        } catch {
+          return { error: "저장 결과를 확인하지 못했습니다. 일정을 확인한 뒤 다시 시도해 주세요." };
+        }
+      }
       const target = studentChoices
         ? studentChoices.find((student) => student.id === targetId)
         : { id: studentId, label: spaceLabel };
@@ -90,7 +113,7 @@ export function LessonScheduleDialog({
           <DialogTitle>레슨 예약</DialogTitle>
           <DialogDescription>
             {studentChoices
-              ? `${chosenStudent ? `${chosenStudent.label} 학생의` : "학생을 고르고"} 레슨 날짜와 시간을 정하세요. 구독 캘린더에도 반영됩니다.`
+              ? `${chosenGroup ? `${chosenGroup.label} 그룹의` : chosenStudent ? `${chosenStudent.label} 학생의` : groups.length > 0 ? "대상을 고르고" : "학생을 고르고"} 레슨 날짜와 시간을 정하세요. 구독 캘린더에도 반영됩니다.`
               : `${spaceLabel} 학생의 레슨 날짜와 시간을 정하세요. 구독 캘린더에도 반영됩니다.`}
           </DialogDescription>
         </DialogHeader>
@@ -102,7 +125,7 @@ export function LessonScheduleDialog({
           ) : null}
           {studentChoices ? (
             <label htmlFor="lesson-schedule-student" className="flex flex-col gap-1.5 text-xs text-secondary-foreground">
-              학생
+              {groups.length > 0 ? "대상" : "학생"}
               <select
                 id="lesson-schedule-student"
                 name="lessonStudentId"
@@ -113,11 +136,25 @@ export function LessonScheduleDialog({
                 aria-describedby={error ? "lesson-form-error" : undefined}
                 className="h-11 w-full rounded-touch border border-input bg-background px-3 text-base text-foreground focus-visible:outline-2 focus-visible:-outline-offset-1 focus-visible:outline-ring disabled:opacity-50 md:h-9 md:rounded-md md:px-2.5 md:text-ui"
               >
-                <option value="">학생 고르기</option>
-                {studentChoices.map((student) => (
+                <option value="">{groups.length > 0 ? "대상 고르기" : "학생 고르기"}</option>
+                {groups.length > 0 ? (
+                  <>
+                    <optgroup label="그룹">
+                      {groups.map((group) => (
+                        <option key={group.id} value={`${GROUP_CHOICE_PREFIX}${group.id}`}>{group.label} ({group.members.length}명)</option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="학생">
+                      {studentChoices.map((student) => (
+                        <option key={student.id} value={student.id}>{student.label}</option>
+                      ))}
+                    </optgroup>
+                  </>
+                ) : studentChoices.map((student) => (
                   <option key={student.id} value={student.id}>{student.label}</option>
                 ))}
               </select>
+              {chosenGroup ? <span className="text-xs text-muted-foreground">{groupLessonNotice(chosenGroup)}</span> : null}
             </label>
           ) : null}
           <label htmlFor="lesson-schedule-start" className="flex flex-col gap-1.5 text-xs text-secondary-foreground">

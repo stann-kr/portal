@@ -3,6 +3,7 @@ import type { DbContext, DrizzleDb } from "@/db/client";
 import {
   documentOperationLedger,
   documentTombstones,
+  lessonGroups,
   privateNoteRevisions,
   privateNotes,
   profiles,
@@ -27,6 +28,7 @@ import {
   documentImageClaimStatements,
   privateNoteMediaPurgeStatements,
 } from "@/lib/media-lifecycle-atomic";
+import { isCurrentLessonGroupMember, readNoteAccess } from "@/lib/note-access";
 
 type AtomicActor = {
   id: string;
@@ -42,6 +44,8 @@ type NoteHead = {
   id: string;
   studentId: string;
   authorId: string;
+  /** 그룹 노트면 그룹 id. 접근은 관리자 또는 지금 그 그룹 멤버다(`resolveNoteAccess`). */
+  groupId: string | null;
   title: string;
   contentHtml: string;
   noteDate: Date | null;
@@ -87,6 +91,11 @@ export type PrivateNoteMutationResult =
 type CreatePrivateNoteWrite = {
   actor: AtomicActor;
   subjectId: string;
+  /**
+   * 그룹 노트로 만들 그룹. 있으면 subjectId는 만든 사람 본인이어야 하고(용량도 만든 사람 기준),
+   * 학생은 지금 그 그룹 멤버일 때만, 관리자는 있는 그룹이면 만든다(같은 INSERT 안에서 확인).
+   */
+  groupId?: string | null;
   noteId: string;
   operationId: string;
   title: string;
@@ -172,6 +181,7 @@ async function findNote(context: DbContext, noteId: string): Promise<NoteHead | 
       id: privateNotes.id,
       studentId: privateNotes.studentId,
       authorId: privateNotes.authorId,
+      groupId: privateNotes.groupId,
       title: privateNotes.title,
       contentHtml: privateNotes.contentHtml,
       noteDate: privateNotes.noteDate,
@@ -194,6 +204,7 @@ async function findTombstone(context: DbContext, noteId: string) {
       resourceId: documentTombstones.resourceId,
       subjectId: documentTombstones.subjectId,
       ownerId: documentTombstones.ownerId,
+      groupId: documentTombstones.groupId,
       sourceVersion: documentTombstones.sourceVersion,
     })
     .from(documentTombstones)
@@ -238,8 +249,36 @@ function canReadSubject(actor: AtomicActor, subjectId: string): boolean {
   return actor.isAdmin || actor.id === subjectId;
 }
 
-function canMutateNote(actor: AtomicActor, note: NoteHead): boolean {
-  return actor.isAdmin || actor.id === note.authorId;
+/** 지운 노트의 PURGED 응답을 받을 수 있는지: 그룹 노트는 관리자·지금 멤버, 개인 노트는 관리자·그 학생. */
+async function canSeeTombstone(
+  context: DbContext,
+  actor: AtomicActor,
+  tombstone: { subjectId: string; groupId: string | null },
+): Promise<boolean> {
+  if (actor.isAdmin) return true;
+  if (tombstone.groupId) return isCurrentLessonGroupMember(context, actor.id, tombstone.groupId);
+  return actor.id === tombstone.subjectId;
+}
+
+/** 노트를 고칠 수 있는지(개인: 그 학생 공간의 작성자·관리자, 그룹: 관리자·지금 멤버). */
+async function canMutateNote(context: DbContext, actor: AtomicActor, note: NoteHead): Promise<boolean> {
+  return (await readNoteAccess(context, actor, note)) === "write";
+}
+
+/**
+ * 쓰기 문장의 권한 조건. 미리 읽은 판단과 같은 규칙을 같은 batch 안에서 현재 행·멤버십으로 다시 확인한다
+ * (그 사이 그룹에서 빠진 멤버의 쓰기는 조건부 쓰기 실패로 거절된다). `private_notes` 행을 대상으로 하는 문장 안에서만 쓴다.
+ */
+function noteWriteAccessSql(actor: AtomicActor): { clause: string; params: readonly unknown[] } {
+  return {
+    clause: `(? = 1
+      OR (private_notes.group_id IS NULL AND private_notes.author_id = ?)
+      OR (private_notes.group_id IS NOT NULL AND EXISTS (
+        SELECT 1 FROM lesson_group_members AS access_member
+        WHERE access_member.student_id = ? AND access_member.group_id = private_notes.group_id
+      )))`,
+    params: [Number(actor.isAdmin), actor.id, actor.id],
+  };
 }
 
 async function resolveReceiptReplay(
@@ -265,7 +304,21 @@ async function resolveReceiptReplay(
 
   if (!receipt) return null;
   if (!canReadSubject(input.actor, receipt.subjectId)) {
-    return { ok: false, reason: "NOT_FOUND_OR_FORBIDDEN" };
+    // 그룹 노트는 만든 사람이 subject다. 다른 멤버의 영수증은 지금 그 노트를 고칠 수 있을 때만 이어 받는다.
+    const groupNote = input.operationType === "CREATE" || input.operationType === "PURGE"
+      ? null
+      : await findNote(context, receipt.resourceId);
+    if (!groupNote && input.operationType !== "CREATE" && input.operationType !== "PURGE") {
+      // 그 사이 영구 삭제된 그룹 노트: 지금 멤버면 PURGED로 알린다.
+      const tombstone = await findTombstone(context, receipt.resourceId);
+      if (tombstone?.groupId && (await canSeeTombstone(context, input.actor, tombstone))) {
+        return { ok: false, reason: "PURGED", noteId: receipt.resourceId };
+      }
+      return { ok: false, reason: "NOT_FOUND_OR_FORBIDDEN" };
+    }
+    if (!groupNote?.groupId || !(await canMutateNote(context, input.actor, groupNote))) {
+      return { ok: false, reason: "NOT_FOUND_OR_FORBIDDEN" };
+    }
   }
   const requestHash = createPrivateNoteRequestHashForVersion(
     input.request,
@@ -308,7 +361,7 @@ async function resolveReceiptReplay(
   if (!note || note.studentId !== receipt.subjectId) {
     return { ok: false, reason: "NOT_FOUND_OR_FORBIDDEN" };
   }
-  if (input.operationType !== "CREATE" && !canMutateNote(input.actor, note)) {
+  if (input.operationType !== "CREATE" && !(await canMutateNote(context, input.actor, note))) {
     return { ok: false, reason: "NOT_FOUND_OR_FORBIDDEN" };
   }
 
@@ -482,7 +535,7 @@ async function classifyMissingMutation(
 ): Promise<PrivateNoteMutationResult> {
   const note = await findNote(context, noteId);
   if (note) {
-    if (!canReadSubject(actor, note.studentId) || !canMutateNote(actor, note)) {
+    if (!(await canMutateNote(context, actor, note))) {
       return { ok: false, reason: "NOT_FOUND_OR_FORBIDDEN" };
     }
     if (note.deletedAt) {
@@ -504,7 +557,7 @@ async function classifyMissingMutation(
   }
 
   const tombstone = await findTombstone(context, noteId);
-  if (tombstone && canReadSubject(actor, tombstone.subjectId)) {
+  if (tombstone && (await canSeeTombstone(context, actor, tombstone))) {
     return { ok: false, reason: "PURGED", noteId };
   }
   return { ok: false, reason: "NOT_FOUND_OR_FORBIDDEN" };
@@ -522,6 +575,7 @@ export async function createPrivateNoteAtomically(
     title: write.title,
     contentHtml: write.contentHtml,
     noteDate: write.noteDate,
+    groupId: write.groupId ?? null,
   };
   const requestHash = createPrivateNoteRequestHash(request);
   const replay = await resolveReceiptReplay(context, {
@@ -532,9 +586,15 @@ export async function createPrivateNoteAtomically(
   });
   if (replay) return replay;
 
+  const groupId = write.groupId ?? null;
+  // 그룹 노트의 subject(student_id·용량 주체)는 만든 사람 본인이다.
+  if (groupId && write.subjectId !== write.actor.id) {
+    return { ok: false, reason: "NOT_FOUND_OR_FORBIDDEN" };
+  }
+
   const tombstone = await findTombstone(context, write.noteId);
   if (tombstone) {
-    return canReadSubject(write.actor, tombstone.subjectId)
+    return (await canSeeTombstone(context, write.actor, tombstone))
       ? { ok: false, reason: "PURGED", noteId: write.noteId }
       : { ok: false, reason: "NOT_FOUND_OR_FORBIDDEN" };
   }
@@ -545,6 +605,7 @@ export async function createPrivateNoteAtomically(
     if (
       existing.studentId !== write.subjectId ||
       existing.authorId !== write.actor.id ||
+      existing.groupId !== groupId ||
       !canReadSubject(write.actor, existing.studentId)
     ) {
       return { ok: false, reason: "NOT_FOUND_OR_FORBIDDEN" };
@@ -576,7 +637,7 @@ export async function createPrivateNoteAtomically(
             )
             SELECT ?, ?, ?, student_id, 'PRIVATE_NOTE', 'CREATE', id, ?, ?, version, ?
             FROM private_notes
-            WHERE id = ? AND student_id = ? AND author_id = ?
+            WHERE id = ? AND student_id = ? AND author_id = ? AND group_id IS ?
               AND deleted_at IS NULL AND title = ? AND content_html = ?
               AND note_date IS ?
           `,
@@ -590,6 +651,7 @@ export async function createPrivateNoteAtomically(
             write.noteId,
             write.subjectId,
             write.actor.id,
+            groupId,
             write.title,
             write.contentHtml,
             epochSeconds(write.noteDate),
@@ -643,12 +705,23 @@ export async function createPrivateNoteAtomically(
       {
         query: `
           INSERT INTO private_notes (
-            id, student_id, author_id, title, content_html, note_date,
+            id, student_id, author_id, group_id, title, content_html, note_date,
             created_at, updated_at, version, deleted_at, deleted_by_id
           )
-          SELECT ?, profile.id, ?, ?, ?, ?, ?, ?, 1, NULL, NULL
+          SELECT ?, profile.id, ?, ?, ?, ?, ?, ?, ?, 1, NULL, NULL
           FROM profiles AS profile
           WHERE profile.id = ? AND (? = 1 OR profile.id = ?)
+            AND (
+              ? IS NULL
+              OR (
+                profile.id = ?
+                AND EXISTS (SELECT 1 FROM lesson_groups WHERE id = ?)
+                AND (? = 1 OR EXISTS (
+                  SELECT 1 FROM lesson_group_members AS access_member
+                  WHERE access_member.student_id = profile.id AND access_member.group_id = ?
+                ))
+              )
+            )
             AND (
               coalesce((
                 SELECT sum(length(cast(title AS blob)) + length(cast(content_html AS blob)))
@@ -667,6 +740,7 @@ export async function createPrivateNoteAtomically(
         params: [
           write.noteId,
           write.actor.id,
+          groupId,
           write.title,
           write.contentHtml,
           epochSeconds(write.noteDate),
@@ -675,6 +749,11 @@ export async function createPrivateNoteAtomically(
           write.subjectId,
           Number(write.actor.isAdmin),
           write.actor.id,
+          groupId,
+          write.actor.id,
+          groupId,
+          Number(write.actor.isAdmin),
+          groupId,
           write.subjectId,
           write.subjectId,
           newStorageBytes,
@@ -725,6 +804,16 @@ export async function createPrivateNoteAtomically(
       .limit(1);
     if (!profile || !canReadSubject(write.actor, write.subjectId)) {
       return { ok: false, reason: "NOT_FOUND_OR_FORBIDDEN" };
+    }
+    if (groupId) {
+      const [group] = await asReadDb(context)
+        .select({ id: lessonGroups.id })
+        .from(lessonGroups)
+        .where(eq(lessonGroups.id, groupId))
+        .limit(1);
+      if (!group || !(write.actor.isAdmin || (await isCurrentLessonGroupMember(context, write.actor.id, groupId)))) {
+        return { ok: false, reason: "NOT_FOUND_OR_FORBIDDEN" };
+      }
     }
     const usage = await getStorageUsageBytes(context, write.subjectId);
     if (usage + newStorageBytes > PRIVATE_NOTE_STORAGE_QUOTA_BYTES) {
@@ -820,7 +909,7 @@ export async function updatePrivateNoteAtomically(
       write.collabEpoch,
     );
   }
-  if (!canReadSubject(write.actor, existing.studentId) || !canMutateNote(write.actor, existing)) {
+  if (!(await canMutateNote(context, write.actor, existing))) {
     return { ok: false, reason: "NOT_FOUND_OR_FORBIDDEN" };
   }
   if (existing.deletedAt) {
@@ -840,6 +929,7 @@ export async function updatePrivateNoteAtomically(
 
   const recordId = deriveDocumentOperationRecordId(write.actor.id, write.operationId);
   const collabCondition = collabEpochCondition(write.collabEpoch);
+  const writeAccess = noteWriteAccessSql(write.actor);
   const alreadyCurrent =
     existing.title === write.title &&
     existing.contentHtml === write.contentHtml &&
@@ -858,7 +948,7 @@ export async function updatePrivateNoteAtomically(
             SELECT ?, ?, ?, student_id, 'PRIVATE_NOTE', 'UPDATE', id, ?, ?, version, ?
             FROM private_notes
             WHERE id = ? AND version = ? AND deleted_at IS NULL
-              AND (author_id = ? OR ? = 1)
+              AND ${writeAccess.clause}
               AND title = ? AND content_html = ? AND note_date IS ?${collabCondition.clause}
           `,
           params: [
@@ -870,8 +960,7 @@ export async function updatePrivateNoteAtomically(
             epochSeconds(write.now),
             write.noteId,
             write.baseRevision,
-            write.actor.id,
-            Number(write.actor.isAdmin),
+            ...writeAccess.params,
             write.title,
             write.contentHtml,
             epochSeconds(write.noteDate),
@@ -937,7 +1026,7 @@ export async function updatePrivateNoteAtomically(
           SET title = ?, content_html = ?, note_date = ?, updated_at = ?,
               version = version + 1
           WHERE id = ? AND version = ? AND deleted_at IS NULL
-            AND (author_id = ? OR ? = 1)
+            AND ${writeAccess.clause}
             AND (
               coalesce((
                 SELECT sum(length(cast(head.title AS blob)) + length(cast(head.content_html AS blob)))
@@ -963,8 +1052,7 @@ export async function updatePrivateNoteAtomically(
           epochSeconds(write.now),
           write.noteId,
           write.baseRevision,
-          write.actor.id,
-          Number(write.actor.isAdmin),
+          ...writeAccess.params,
           nextSnapshotBytes,
           PRIVATE_NOTE_STORAGE_QUOTA_BYTES,
           ...collabCondition.params,
@@ -1010,7 +1098,7 @@ export async function updatePrivateNoteAtomically(
     const current = await findNote(context, write.noteId);
     if (
       current &&
-      canMutateNote(write.actor, current) &&
+      (await canMutateNote(context, write.actor, current)) &&
       !current.deletedAt &&
       current.version === write.baseRevision &&
       !(await isCollabEpochStale(context, write.noteId, write.collabEpoch))
@@ -1058,7 +1146,7 @@ export async function trashPrivateNoteAtomically(
   if (!existing) {
     return classifyMissingMutation(context, write.actor, write.noteId, write.baseRevision);
   }
-  if (!canReadSubject(write.actor, existing.studentId) || !canMutateNote(write.actor, existing)) {
+  if (!(await canMutateNote(context, write.actor, existing))) {
     return { ok: false, reason: "NOT_FOUND_OR_FORBIDDEN" };
   }
   if (existing.deletedAt) {
@@ -1069,6 +1157,7 @@ export async function trashPrivateNoteAtomically(
   }
 
   const nextRevision = existing.version + 1;
+  const writeAccess = noteWriteAccessSql(write.actor);
   const recordId = deriveDocumentOperationRecordId(write.actor.id, write.operationId);
   const snapshot: PrivateNoteCanonicalSnapshot = {
     title: existing.title,
@@ -1095,7 +1184,7 @@ export async function trashPrivateNoteAtomically(
           UPDATE private_notes
           SET deleted_at = ?, deleted_by_id = ?, updated_at = ?, version = version + 1
           WHERE id = ? AND version = ? AND deleted_at IS NULL
-            AND (author_id = ? OR ? = 1)
+            AND ${writeAccess.clause}
         `,
         params: [
           epochSeconds(write.now),
@@ -1103,8 +1192,7 @@ export async function trashPrivateNoteAtomically(
           epochSeconds(write.now),
           write.noteId,
           write.baseRevision,
-          write.actor.id,
-          Number(write.actor.isAdmin),
+          ...writeAccess.params,
         ],
       },
       CONDITIONAL_WRITE_SENTINEL,
@@ -1165,7 +1253,7 @@ export async function restoreTrashedPrivateNoteAtomically(
   if (!existing) {
     return classifyMissingMutation(context, write.actor, write.noteId, write.baseRevision);
   }
-  if (!canReadSubject(write.actor, existing.studentId) || !canMutateNote(write.actor, existing)) {
+  if (!(await canMutateNote(context, write.actor, existing))) {
     return { ok: false, reason: "NOT_FOUND_OR_FORBIDDEN" };
   }
   if (!existing.deletedAt) {
@@ -1182,6 +1270,7 @@ export async function restoreTrashedPrivateNoteAtomically(
   }
 
   const nextRevision = existing.version + 1;
+  const writeAccess = noteWriteAccessSql(write.actor);
   const recordId = deriveDocumentOperationRecordId(write.actor.id, write.operationId);
   const snapshot: PrivateNoteCanonicalSnapshot = {
     title: existing.title,
@@ -1208,15 +1297,14 @@ export async function restoreTrashedPrivateNoteAtomically(
           UPDATE private_notes
           SET deleted_at = NULL, deleted_by_id = NULL, updated_at = ?, version = version + 1
           WHERE id = ? AND version = ? AND deleted_at IS NOT NULL
-            AND deleted_at > ? AND (author_id = ? OR ? = 1)
+            AND deleted_at > ? AND ${writeAccess.clause}
         `,
         params: [
           epochSeconds(write.now),
           write.noteId,
           write.baseRevision,
           epochSeconds(write.now)! - PRIVATE_NOTE_TRASH_RETENTION_SECONDS,
-          write.actor.id,
-          Number(write.actor.isAdmin),
+          ...writeAccess.params,
         ],
       },
       CONDITIONAL_WRITE_SENTINEL,
@@ -1278,7 +1366,7 @@ export async function restorePrivateNoteRevisionAtomically(
   if (!existing) {
     return classifyMissingMutation(context, write.actor, write.noteId, write.baseRevision);
   }
-  if (!canReadSubject(write.actor, existing.studentId) || !canMutateNote(write.actor, existing)) {
+  if (!(await canMutateNote(context, write.actor, existing))) {
     return { ok: false, reason: "NOT_FOUND_OR_FORBIDDEN" };
   }
   if (existing.deletedAt) {
@@ -1334,6 +1422,7 @@ export async function restorePrivateNoteRevisionAtomically(
   }
 
   const nextRevision = existing.version + 1;
+  const writeAccess = noteWriteAccessSql(write.actor);
   const recordId = deriveDocumentOperationRecordId(write.actor.id, write.operationId);
   const snapshot: PrivateNoteCanonicalSnapshot = {
     title: sourceRevision.title,
@@ -1362,7 +1451,7 @@ export async function restorePrivateNoteRevisionAtomically(
           SET title = ?, content_html = ?, note_date = ?, updated_at = ?,
               version = version + 1
           WHERE id = ? AND version = ? AND deleted_at IS NULL
-            AND (author_id = ? OR ? = 1)
+            AND ${writeAccess.clause}
             AND EXISTS (
               SELECT 1 FROM private_note_revisions
               WHERE note_id = private_notes.id AND revision_number = ?
@@ -1393,8 +1482,7 @@ export async function restorePrivateNoteRevisionAtomically(
           epochSeconds(write.now),
           write.noteId,
           write.baseRevision,
-          write.actor.id,
-          Number(write.actor.isAdmin),
+          ...writeAccess.params,
           write.revisionNumber,
           sourceRevision.title,
           sourceRevision.contentHtml,
@@ -1437,7 +1525,7 @@ export async function restorePrivateNoteRevisionAtomically(
     const current = await findNote(context, write.noteId);
     if (
       current &&
-      canMutateNote(write.actor, current) &&
+      (await canMutateNote(context, write.actor, current)) &&
       !current.deletedAt &&
       current.version === write.baseRevision
     ) {
@@ -1511,14 +1599,15 @@ export async function purgePrivateNoteAtomically(
       {
         query: `
           INSERT INTO document_tombstones (
-            resource_type, resource_id, subject_id, owner_id, source_created_at,
+            resource_type, resource_id, subject_id, owner_id, group_id, source_created_at,
             source_version, purged_at, purged_by_id
-          ) VALUES ('PRIVATE_NOTE', ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES ('PRIVATE_NOTE', ?, ?, ?, ?, ?, ?, ?, ?)
         `,
         params: [
           write.noteId,
           existing.studentId,
           existing.authorId,
+          existing.groupId,
           epochSeconds(existing.createdAt),
           existing.version,
           epochSeconds(write.now),

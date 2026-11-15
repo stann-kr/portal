@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Window } from "happy-dom";
 import React, { act } from "react";
+import type { StudentRosterStat } from "@/lib/student-roster";
 
 test("roster 행은 요약 열과 더 보기 메뉴의 canonical 학생 링크만 제공하고 검색으로 좁힌다", async (context) => {
   const browserWindow = new Window({ url: "https://portal.test/dashboard/admin?section=students" });
@@ -142,4 +143,30 @@ test("roster 행은 요약 열과 더 보기 메뉴의 canonical 학생 링크�
   assert.ok([...container.querySelectorAll("thead th")].some((th) => th.textContent === "현재 진도"));
   assert.match(rows()[0].textContent ?? "", /WEEK 01 · 기초/u);
   assert.match(rows()[1].textContent ?? "", /진도 미지정/u);
+
+  // 그룹레슨 그룹이 있으면 그룹 줄(rowgroup) 아래에 멤버가 먼저, 그룹에 없는 학생이 뒤에 온다.
+  const grouped: StudentRosterStat[] = [
+    ...renderedStudents,
+    { ...renderedStudents[1], id: "student-3", email: "solo@example.test", displayName: "혼자", nextLessonDate: null },
+  ];
+  grouped[0] = { ...grouped[0], nextLessonDate: new Date("2026-08-14T10:00:00.000Z") };
+  grouped[1] = { ...grouped[1], nextLessonDate: new Date("2026-08-14T10:00:00.000Z") };
+  await act(async () => {
+    root.render(React.createElement(StudentManagementSection, {
+      students: grouped,
+      lessonGroups: [{ id: "group-1", name: "화요일반", memberIds: ["student-2", "student-1"] }],
+    }));
+  });
+  const groupHeader = container.querySelector('table th[scope="rowgroup"]');
+  assert.match(groupHeader?.textContent ?? "", /그룹화요일반2명/u);
+  assert.match(groupHeader?.parentElement?.textContent ?? "", /08\.14 19:00/u, "멤버 다음 레슨이 같으면 그룹 줄에 보인다");
+  const memberHrefs = [...container.querySelectorAll("table tbody tr td:first-child a")].map((link) => link.getAttribute("href"));
+  assert.deepEqual(memberHrefs, [
+    "/dashboard/admin/students/student-1?tab=overview",
+    "/dashboard/admin/students/student-2?tab=overview",
+    "/dashboard/admin/students/student-3?tab=overview",
+  ]);
+  assert.ok(container.querySelector('button[aria-label="화요일반 그룹 관리"]'), "그룹 줄에 관리 버튼");
+  assert.ok(container.querySelector('button[aria-label="그룹 만들기"]'), "머리에 그룹 만들기");
+  assert.match(container.textContent ?? "", /수강생 3명 · 그룹 1개/u);
 });

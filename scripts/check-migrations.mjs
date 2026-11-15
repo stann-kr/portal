@@ -54,6 +54,8 @@ import { validatePushSubscriptionsUpgrade } from "./migration-check/push-subscri
 import { validatePushMutedCategoriesUpgrade } from "./migration-check/push-muted-categories.mjs";
 import { validateAssignmentReviewedAtUpgrade } from "./migration-check/assignment-reviewed-at.mjs";
 import { validateGuideAccessUpgrade } from "./migration-check/guide-access.mjs";
+import { validateLessonGroupsUpgrade } from "./migration-check/lesson-groups.mjs";
+import { validateGroupNoteRetentionUpgrade } from "./migration-check/group-note-retention.mjs";
 import { validateListQueryIndexesUpgrade } from "./migration-check/list-query-indexes.mjs";
 import {
   validateAccountPrivacyAtomicSource,
@@ -200,6 +202,10 @@ async function main() {
   console.log("PASS populated 0026 → 0027 list query indexes, schema and row preservation, index use by list queries");
   await validateGuideAccessUpgrade(migrationFiles);
   console.log("PASS populated 0027 → 0028 guide access tables, signed-up student backfill, constraints and cascades");
+  await validateLessonGroupsUpgrade(migrationFiles);
+  console.log("PASS populated 0028 → 0029 lesson group tables, nullable note group_id, constraints and cascades");
+  await validateGroupNoteRetentionUpgrade(migrationFiles);
+  console.log("PASS populated 0029 → 0030 tombstone group_id, group note image owner handoff only while the uploader account is ERASING");
 }
 
 try {

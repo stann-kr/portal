@@ -135,6 +135,8 @@ async function querySourceRows(
         .from(privateNotes)
         .where(and(
           owner(privateNotes.studentId),
+          // 그룹 노트는 만든 사람의 개인 항목처럼 보이지 않게 뺀다(그룹 노트는 노트 목록의 그룹 노트 보기에서 본다).
+          isNull(privateNotes.groupId),
           isNull(privateNotes.deletedAt),
           sql<boolean>`coalesce(${privateNotes.noteDate}, ${privateNotes.createdAt}) BETWEEN ${startEpoch} AND ${endEpoch}`,
         ))

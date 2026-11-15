@@ -18,10 +18,13 @@ import {
 } from "@/lib/collab/server-env";
 import { noteRoomFields, readNoteRestoreTarget } from "@/lib/collab/restore-targets";
 import { revalidatePath } from "next/cache";
-import { and, desc, eq, isNotNull, isNull } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull, or } from "drizzle-orm";
 import { createDb, createDbContext } from "@/db/client";
 import { privateNoteRevisions, privateNotes, profiles } from "@/db/schema";
-import { requireAuth, requireStudentOwnerOrAdmin } from "@/lib/auth-guard";
+import { requireAuth, requireStudentOwnerOrAdmin, type AuthSession } from "@/lib/auth-guard";
+import { readLessonGroupById, readLessonGroupMemberIds, readStudentLessonGroup } from "@/lib/lesson-groups";
+import { readNoteAccess } from "@/lib/note-access";
+import { resolveNoteAccess, type NoteAccessMode, type NoteAccessSubject } from "@/lib/note-access-rules";
 import {
   CREATION_OPERATION_FIELD,
   createCreationOperationId,
@@ -44,6 +47,7 @@ import {
 } from "@/lib/private-note-atomic";
 import {
   PRIVATE_NOTE_BASE_REVISION_FIELD,
+  PRIVATE_NOTE_GROUP_FIELD,
   PRIVATE_NOTE_MAX_CONTENT_LABEL,
   PRIVATE_NOTE_MAX_TITLE_LENGTH,
   PRIVATE_NOTE_TRASH_RETENTION_SECONDS,
@@ -139,32 +143,97 @@ function revalidatePrivateNotePaths(studentId: string, noteId?: string): void {
   revalidatePath("/dashboard/student");
 }
 
-/** active note만 반환한다. */
+function noteActor(session: AuthSession) {
+  return { id: session.user.id, isAdmin: session.user.role === "admin" };
+}
+
+/**
+ * 노트 하나에 대한 접근(쓰기·읽기). 그룹 노트는 관리자 또는 지금 그 그룹 멤버, 개인 노트는 기존 규칙
+ * (그 학생 본인·관리자가 읽고 작성자·관리자가 쓴다, 대상은 활성 학생 공간)이다. 권한이 없으면 "Unauthorized"를 던진다
+ * (페이지는 `missingWhenAccessDenied`로 없는 노트처럼 404를 보인다).
+ */
+async function requireNoteAccess(session: AuthSession, note: NoteAccessSubject): Promise<NoteAccessMode> {
+  const actor = noteActor(session);
+  if (note.groupId) {
+    const mode = await readNoteAccess(createDbContext(), actor, note);
+    if (!mode) throw new Error("Unauthorized");
+    return mode;
+  }
+  await requireStudentOwnerOrAdmin(session, note.studentId);
+  const mode = resolveNoteAccess(actor, note, false);
+  if (!mode) throw new Error("Unauthorized");
+  return mode;
+}
+
+/** 노트를 알리고 다시 받게 할 학생 공간들. 그룹 노트는 지금 멤버 모두, 개인 노트는 그 학생. */
+async function noteAudienceStudentIds(note: { studentId: string; groupId: string | null }): Promise<string[]> {
+  if (!note.groupId) return [note.studentId];
+  return readLessonGroupMemberIds(createDbContext(), note.groupId);
+}
+
+async function announceNoteChange(
+  note: { studentId: string; groupId: string | null },
+  options: { noteId?: string; revalidate: boolean },
+): Promise<void> {
+  const audience = await noteAudienceStudentIds(note).catch(() => [note.studentId]);
+  for (const studentId of audience) {
+    if (options.revalidate) revalidatePrivateNotePaths(studentId, options.noteId);
+    notifyCollabTopic("student-notes", studentId);
+  }
+}
+
+const noteListColumns = {
+  id: privateNotes.id,
+  title: privateNotes.title,
+  contentHtml: privateNotes.contentHtml,
+  noteDate: privateNotes.noteDate,
+  createdAt: privateNotes.createdAt,
+  updatedAt: privateNotes.updatedAt,
+  version: privateNotes.version,
+  authorId: privateNotes.authorId,
+  authorName: profiles.displayName,
+  groupId: privateNotes.groupId,
+};
+
+/** 그 학생의 개인 노트(active)만 반환한다. 그룹 노트는 `getStudentGroupNotes`가 따로 준다. */
 export async function getPrivateNotes(targetStudentId: string) {
   const session = await requireAuth();
   await requireStudentOwnerOrAdmin(session, targetStudentId);
   const db = createDb();
   return db
-    .select({
-      id: privateNotes.id,
-      title: privateNotes.title,
-      contentHtml: privateNotes.contentHtml,
-      noteDate: privateNotes.noteDate,
-      createdAt: privateNotes.createdAt,
-      updatedAt: privateNotes.updatedAt,
-      version: privateNotes.version,
-      authorId: privateNotes.authorId,
-      authorName: profiles.displayName,
-    })
+    .select(noteListColumns)
     .from(privateNotes)
     .leftJoin(profiles, eq(privateNotes.authorId, profiles.id))
     .where(
       and(
         eq(privateNotes.studentId, targetStudentId),
+        isNull(privateNotes.groupId),
         isNull(privateNotes.deletedAt),
       ),
     )
     .orderBy(desc(privateNotes.createdAt));
+}
+
+export type StudentGroupNotes = {
+  group: { id: string; name: string; members: { id: string; name: string }[] };
+  notes: Awaited<ReturnType<typeof getPrivateNotes>>;
+};
+
+/**
+ * 그 학생이 지금 속한 그룹의 그룹 노트(active). 학생 본인(=지금 멤버)과 관리자만 부른다. 그룹이 없으면 null.
+ */
+export async function getStudentGroupNotes(targetStudentId: string): Promise<StudentGroupNotes | null> {
+  const session = await requireAuth();
+  await requireStudentOwnerOrAdmin(session, targetStudentId);
+  const group = await readStudentLessonGroup(createDbContext(), targetStudentId);
+  if (!group) return null;
+  const notes = await createDb()
+    .select(noteListColumns)
+    .from(privateNotes)
+    .leftJoin(profiles, eq(privateNotes.authorId, profiles.id))
+    .where(and(eq(privateNotes.groupId, group.id), isNull(privateNotes.deletedAt)))
+    .orderBy(desc(privateNotes.createdAt));
+  return { group, notes };
 }
 
 /** active 단일 note를 권한 범위 안에서 반환한다. */
@@ -190,6 +259,8 @@ export async function getPrivateNoteCollabSeed(noteId: string): Promise<PrivateN
   const [row] = await createDb()
     .select({
       studentId: privateNotes.studentId,
+      authorId: privateNotes.authorId,
+      groupId: privateNotes.groupId,
       title: privateNotes.title,
       contentHtml: privateNotes.contentHtml,
       noteDate: privateNotes.noteDate,
@@ -202,7 +273,7 @@ export async function getPrivateNoteCollabSeed(noteId: string): Promise<PrivateN
     .limit(1);
   if (!row) return { status: "missing" };
   try {
-    await requireStudentOwnerOrAdmin(session, row.studentId);
+    await requireNoteAccess(session, row);
   } catch {
     return { status: "missing" };
   }
@@ -221,7 +292,7 @@ export type PrivateNoteHead = { id: string; version: number; updatedAt: Date | n
 
 /**
  * 읽기 전용 실시간 보기(live view)의 가벼운 head 조회: 본문 없이 id·version·updatedAt만.
- * 권한 경계는 `getPrivateNote`와 같다(본인 학생 또는 관리자, 그 밖은 throw). 휴지통·없는 노트는 null.
+ * 권한 경계는 `getPrivateNote`와 같다(개인 노트는 본인 학생·관리자, 그룹 노트는 관리자·지금 멤버, 그 밖은 throw). 휴지통·없는 노트는 null.
  */
 export async function getPrivateNoteHead(noteId: string): Promise<PrivateNoteHead | null> {
   const session = await requireAuth();
@@ -230,6 +301,8 @@ export async function getPrivateNoteHead(noteId: string): Promise<PrivateNoteHea
     .select({
       id: privateNotes.id,
       studentId: privateNotes.studentId,
+      authorId: privateNotes.authorId,
+      groupId: privateNotes.groupId,
       version: privateNotes.version,
       updatedAt: privateNotes.updatedAt,
     })
@@ -237,7 +310,7 @@ export async function getPrivateNoteHead(noteId: string): Promise<PrivateNoteHea
     .where(and(eq(privateNotes.id, noteId), isNull(privateNotes.deletedAt)))
     .limit(1);
   if (!head) return null;
-  await requireStudentOwnerOrAdmin(session, head.studentId);
+  await requireNoteAccess(session, head);
   return { id: head.id, version: head.version, updatedAt: head.updatedAt };
 }
 
@@ -268,6 +341,7 @@ async function getPrivateNoteRecord(noteId: string, includeTrash: boolean) {
       version: privateNotes.version,
       deletedAt: privateNotes.deletedAt,
       authorName: profiles.displayName,
+      groupId: privateNotes.groupId,
     })
     .from(privateNotes)
     .leftJoin(profiles, eq(privateNotes.authorId, profiles.id))
@@ -279,13 +353,20 @@ async function getPrivateNoteRecord(noteId: string, includeTrash: boolean) {
     .limit(1);
 
   if (!note) return null;
-  await requireStudentOwnerOrAdmin(session, note.studentId);
-  return note;
+  const access = await requireNoteAccess(session, note);
+  // 그룹 노트는 문서 머리 안내 줄에 쓸 그룹 이름·멤버 이름을 함께 준다(볼 권한이 확인된 뒤에만 읽는다).
+  const group = note.groupId ? await readLessonGroupById(createDbContext(), note.groupId) : null;
+  return { ...note, access, group };
 }
 
+/**
+ * 그 학생 공간의 휴지통: 개인 노트와 그 학생이 지금 속한 그룹의 그룹 노트. `canWrite`는 복원할 수 있는지다
+ * (개인: 작성자·관리자, 그룹: 관리자·멤버 — 학생 본인은 멤버라 목록에 보이면 복원할 수 있다).
+ */
 export async function getTrashedPrivateNotes(targetStudentId: string) {
   const session = await requireAuth();
   await requireStudentOwnerOrAdmin(session, targetStudentId);
+  const group = await readStudentLessonGroup(createDbContext(), targetStudentId);
   const db = createDb();
   const notes = await db
     .select({
@@ -298,19 +379,28 @@ export async function getTrashedPrivateNotes(targetStudentId: string) {
       deletedAt: privateNotes.deletedAt,
       authorId: privateNotes.authorId,
       authorName: profiles.displayName,
+      groupId: privateNotes.groupId,
     })
     .from(privateNotes)
     .leftJoin(profiles, eq(privateNotes.authorId, profiles.id))
     .where(
       and(
-        eq(privateNotes.studentId, targetStudentId),
+        group
+          ? or(
+            and(eq(privateNotes.studentId, targetStudentId), isNull(privateNotes.groupId)),
+            eq(privateNotes.groupId, group.id),
+          )
+          : and(eq(privateNotes.studentId, targetStudentId), isNull(privateNotes.groupId)),
         isNotNull(privateNotes.deletedAt),
       ),
     )
     .orderBy(desc(privateNotes.deletedAt));
 
+  const isAdmin = session.user.role === "admin";
   return notes.map((note) => ({
     ...note,
+    groupName: note.groupId && group ? group.name : null,
+    canWrite: isAdmin || note.groupId !== null || note.authorId === session.user.id,
     purgeEligibleAt: note.deletedAt
       ? new Date(note.deletedAt.getTime() + PRIVATE_NOTE_TRASH_RETENTION_SECONDS * 1000)
       : null,
@@ -370,6 +460,10 @@ export async function createPrivateNote(
   const session = await requireAuth();
   const userId = session.user.id!;
   await requireStudentOwnerOrAdmin(session, targetStudentId);
+  // 저장 위치가 그룹이면 그 그룹 노트로 만든다. 만든 사람이 student_id(용량 주체)이고, 학생은 지금 멤버일 때만,
+  // 관리자는 있는 그룹이면 만든다(원자 INSERT가 확인한다).
+  const rawGroupId = formData.get(PRIVATE_NOTE_GROUP_FIELD);
+  const groupId = typeof rawGroupId === "string" && rawGroupId.trim() ? rawGroupId.trim() : null;
   const payload = validateNotePayload(formData);
   if (!payload.ok) return { error: payload.error, conflictKind: payload.reason };
 
@@ -379,13 +473,16 @@ export async function createPrivateNote(
   if (!operationId) {
     return { error: "문서 생성 식별자가 올바르지 않습니다. 페이지를 새로고침해 주세요." };
   }
+  // 노트 id는 저장 위치와 관계없이 (작성자, 열린 학생 공간)에서 정한다. 작성 화면이 처음부터 이 id로 공동 편집 room을
+  // 열고(저장 위치를 바꿔도 room이 바뀌지 않게), 생성 전 room 권한도 그 학생 공간 규칙을 따른다.
   const id = deriveCreationResourceId(
     operationId,
     JSON.stringify(["private-note", userId, targetStudentId]),
   );
   const result = await createPrivateNoteAtomically(createDbContext(), {
     actor: { id: userId, isAdmin: session.user.role === "admin" },
-    subjectId: targetStudentId,
+    subjectId: groupId ? userId : targetStudentId,
+    groupId,
     noteId: id,
     operationId,
     title: payload.title,
@@ -412,7 +509,7 @@ export async function createPrivateNote(
   }
 
   // 자동 저장(제자리 생성) 중 route 재렌더를 막기 위해 revalidate하지 않는다(위 주석). 학생 홈 최근 노트에는 알린다.
-  notifyCollabTopic("student-notes", targetStudentId);
+  await announceNoteChange({ studentId: targetStudentId, groupId }, { revalidate: false });
   const currentNote = result.replayed
     ? await getPrivateNoteIncludingTrash(id)
     : null;
@@ -520,6 +617,7 @@ export async function updatePrivateNote(
           id: privateNotes.id,
           studentId: privateNotes.studentId,
           authorId: privateNotes.authorId,
+          groupId: privateNotes.groupId,
           title: privateNotes.title,
           contentHtml: privateNotes.contentHtml,
           noteDate: privateNotes.noteDate,
@@ -532,9 +630,7 @@ export async function updatePrivateNote(
       const mayReadCurrent = Boolean(
         current &&
           !current.deletedAt &&
-          (session.user.role === "admin" ||
-            (session.user.id === current.studentId &&
-              session.user.id === current.authorId)),
+          (await readNoteAccess(createDbContext(), noteActor(session), current)) === "write",
       );
       if (current && mayReadCurrent) {
         conflictNote = {
@@ -569,7 +665,7 @@ export async function updatePrivateNote(
     };
   }
   // 자동 저장마다 route가 다시 렌더되지 않도록 revalidate하지 않는다(위 주석). 학생 홈 최근 노트에는 알린다.
-  notifyCollabTopic("student-notes", note.studentId);
+  await announceNoteChange(note, { revalidate: false });
   if (!result.replayed) {
     // 보관 단계를 넘긴 자동 저장 이력을 솎는다. 실패해도 저장 결과는 그대로다(다음 저장이 다시 솎는다).
     await prunePrivateNoteRevisions(createDbContext(), { noteId, now: new Date() }).catch((error: unknown) => {
@@ -621,7 +717,7 @@ export async function movePrivateNoteDate(
 
   const current = await getPrivateNoteForMutation(noteId);
   const isAdmin = session.user.role === "admin";
-  if (!current || (!isAdmin && current.authorId !== session.user.id)) {
+  if (!current || current.access !== "write") {
     return {
       ok: false,
       error: mutationErrorMessage("NOT_FOUND_OR_FORBIDDEN"),
@@ -656,14 +752,13 @@ export async function movePrivateNoteDate(
       conflictKind: result.reason,
     };
   }
-  revalidatePrivateNotePaths(current.studentId, noteId);
+  await announceNoteChange(current, { noteId, revalidate: true });
   // 열린 편집 room의 날짜도 바꾼다. 그렇지 않으면 다음 자동 저장이 옛 날짜로 되돌린다.
   const markerAfter = await readPrivateNoteLifecycleMarker(createDbContext(), noteId);
   const movedVersion = result.currentRevision ?? result.operationResultRevision;
   if (markerAfter === markerBefore) {
     await setCollabRoomMetaAfterMutation(formatCollabDocKey({ kind: "note", id: noteId }), "noteDate", noteDate, markerAfter, movedVersion);
   }
-  notifyCollabTopic("student-notes", current.studentId);
   return {
     ok: true,
     noteDate: parsedDate,
@@ -721,10 +816,7 @@ async function runLifecycleAction(
   const roomKey = formatCollabDocKey({ kind: "note", id: noteId });
   if (kind === "trash") await closeCollabRoomAfterMutation(roomKey, true);
   if (kind === "purge") await closeCollabRoomAfterMutation(roomKey, false);
-  if (noteBefore) {
-    revalidatePrivateNotePaths(noteBefore.studentId, noteId);
-    notifyCollabTopic("student-notes", noteBefore.studentId);
-  }
+  if (noteBefore) await announceNoteChange(noteBefore, { noteId, revalidate: true });
   return {
     success: true,
     replayed: result.replayed,
@@ -780,7 +872,7 @@ export async function restorePrivateNoteRevision(
   // 되돌리기 전에 열린 실시간 문서의 지금 상태를 복원 기준으로 남기고, 저장되지 않은 내용은 revision으로 남긴다
   // (다른 기기의 입력이 이력에서 사라지지 않게). 편집은 멈추지 않는다: 준비 뒤 입력은 복원 뒤에도 문서에 남는다.
   // 쓸 수 있는 사람의 요청만 준비한다(권한 없는 요청이 다른 복원을 막지 못하게).
-  const mayRestore = Boolean(noteBefore && !noteBefore.deletedAt && (actor.isAdmin || noteBefore.authorId === actor.id));
+  const mayRestore = Boolean(noteBefore && !noteBefore.deletedAt && noteBefore.access === "write");
   let checkpointBase = baseRevision;
   let checkpointRevision: number | undefined;
   if (mayRestore && noteBefore) {
@@ -843,10 +935,7 @@ export async function restorePrivateNoteRevision(
   const target = typeof restoredRevision === "number" ? await readNoteRestoreTarget(noteId) : null;
   if (typeof restoredRevision === "number" && target) await applyCollabRestore(roomKey, operationId, restoredRevision, target);
   else if (mayRestore) await abortCollabRestore(roomKey, operationId);
-  if (noteBefore) {
-    revalidatePrivateNotePaths(noteBefore.studentId, noteId);
-    notifyCollabTopic("student-notes", noteBefore.studentId);
-  }
+  if (noteBefore) await announceNoteChange(noteBefore, { noteId, revalidate: true });
   return {
     success: true,
     replayed: result.replayed,

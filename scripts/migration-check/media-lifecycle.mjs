@@ -47,6 +47,8 @@ export function validateMediaLifecycleTriggers(database) {
     mediaLifecycleMigrationFile,
     accountPrivacyMigrationFile,
     documentImageMigrationFile,
+    // 0030: 계정 삭제 중 남의 그룹 노트 이미지 owner 이전(identity·transition trigger 다시 만듦).
+    "0030_group_note_retention.sql",
   ]) {
     const migrationStatements = readFileSync(
       join(migrationsDirectory, migrationFile),

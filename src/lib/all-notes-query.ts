@@ -8,9 +8,9 @@
  *   학생별 노트 검색처럼 NFKC·소문자로 정규화한 띄어 쓴 단어를 모두 포함해야 한다. SQLite LIKE는 ASCII만 대소문자를 무시한다.
  * - 페이지: 최근 수정순(updatedAt DESC, id DESC) keyset 커서. 본문은 미리보기용 앞부분과 검색 일치 주변만 substr로 읽는다.
  */
-import { and, desc, eq, inArray, isNull, lt, or, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, lt, or, sql, type SQL } from "drizzle-orm";
 import type { DrizzleDb } from "@/db/client";
-import { privateNotes, profiles } from "@/db/schema";
+import { lessonGroupMembers, lessonGroups, privateNotes, profiles } from "@/db/schema";
 import { getDocumentSearchExcerpt, getDocumentSearchWords, getSearchableDocumentText } from "@/lib/document-search";
 import { getPrivateNotePreview } from "@/lib/notes-database";
 import { UNIFIED_NOTE_PREVIEW_SOURCE_CHARS } from "@/lib/unified-items-store";
@@ -24,12 +24,13 @@ const SEARCH_EXCERPT_SOURCE_BEFORE = 400;
 const SEARCH_EXCERPT_SOURCE_CHARS = 1_600;
 const CURSOR_ID_MAX_LENGTH = 200;
 
-/** 실제 데이터로 가를 수 있는 노트 종류: 작성자가 Stann(관리자)인지 학생 본인인지. */
-export type AllNoteKind = "STANN" | "STUDENT";
+/** 실제 데이터로 가를 수 있는 노트 종류: 그룹 노트, 아니면 작성자가 Stann(관리자)인지 학생 본인인지. */
+export type AllNoteKind = "STANN" | "STUDENT" | "GROUP";
 
 export const ALL_NOTE_KIND_LABELS: Record<AllNoteKind, string> = {
   STANN: "Stann 노트",
   STUDENT: "학생 노트",
+  GROUP: "그룹 노트",
 };
 
 /** 표에 필요한 필드만 담는다. 본문은 짧은 평문 미리보기(검색이면 일치 주변 발췌)로만 싣는다. */
@@ -39,6 +40,8 @@ export type AllNoteRow = {
   /** 짧은 평문 미리보기(검색이면 일치 주변 발췌). */
   preview: string;
   studentId: string;
+  /** 그룹 노트면 그룹 이름(학생 열에 대신 보인다). 그룹 노트는 그룹당 한 번만 나온다. */
+  groupName: string | null;
   authorName: string | null;
   kind: AllNoteKind;
   noteDate: Date | null;
@@ -133,6 +136,7 @@ export async function queryAllStudentNotesPage(
       title: privateNotes.title,
       bodySource,
       studentId: privateNotes.studentId,
+      groupName: lessonGroups.name,
       authorId: privateNotes.authorId,
       authorName: profiles.displayName,
       authorRole: profiles.role,
@@ -142,10 +146,24 @@ export async function queryAllStudentNotesPage(
     })
     .from(privateNotes)
     .leftJoin(profiles, eq(profiles.id, privateNotes.authorId))
+    .leftJoin(lessonGroups, eq(lessonGroups.id, privateNotes.groupId))
     .where(and(
+      // 개인 노트는 그 학생 공간으로, 그룹 노트는 그룹으로 한 번만 센다(학생을 고르면 그 학생이 지금 속한 그룹의 노트).
       options.studentId
-        ? eq(privateNotes.studentId, options.studentId)
-        : inArray(privateNotes.studentId, db.select({ id: profiles.id }).from(profiles).where(eq(profiles.role, "student"))),
+        ? or(
+          and(eq(privateNotes.studentId, options.studentId), isNull(privateNotes.groupId)),
+          inArray(
+            privateNotes.groupId,
+            db.select({ id: lessonGroupMembers.groupId }).from(lessonGroupMembers).where(eq(lessonGroupMembers.studentId, options.studentId)),
+          ),
+        )
+        : or(
+          and(
+            isNull(privateNotes.groupId),
+            inArray(privateNotes.studentId, db.select({ id: profiles.id }).from(profiles).where(eq(profiles.role, "student"))),
+          ),
+          isNotNull(privateNotes.groupId),
+        ),
       isNull(privateNotes.deletedAt),
       searchCondition(words),
       cursor
@@ -164,8 +182,8 @@ export async function queryAllStudentNotesPage(
     preview: words.length
       ? getDocumentSearchExcerpt(getSearchableDocumentText(dropPartialLeadingTag(bodySource ?? "")), words) ?? getPrivateNotePreview(bodySource ?? "")
       : getPrivateNotePreview(bodySource ?? ""),
-    // 작성자가 학생 본인이면 학생 노트, 관리자(또는 지워진 작성자)는 Stann 노트로 본다.
-    kind: authorRole === "student" && authorId === row.studentId ? "STUDENT" : "STANN",
+    // 그룹 노트는 그룹 노트로, 작성자가 학생 본인이면 학생 노트, 관리자(또는 지워진 작성자)는 Stann 노트로 본다.
+    kind: row.groupName !== null ? "GROUP" : authorRole === "student" && authorId === row.studentId ? "STUDENT" : "STANN",
   }));
   const last = page.at(-1);
   return {
