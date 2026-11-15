@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { after, before, mock, test, type TestContext } from "node:test";
 import type { AuthSession } from "@/lib/auth-guard";
-import { lessonGroupMembers, lessonGroups, lessons, privateNotes, profiles } from "@/db/schema";
+import { curriculums, lessonGroupMembers, lessonGroups, lessons, privateNotes, profiles } from "@/db/schema";
 import { createIsolatedPortalD1, type IsolatedPortalD1 } from "@/test/isolated-d1";
 
 type PortalTestDb = IsolatedPortalD1["db"];
@@ -209,4 +209,30 @@ test("그룹레슨: 관리자 예약·이동·삭제는 멤버 모두, 학생 �
   assert.equal((await lessonActions.moveLesson(lessonB, "student-b", "2099-11-19T20:00")).success, true);
   await lessonActions.deleteLesson(lessonA, "student-a");
   assert.deepEqual(await lessonTimes(), [["student-c", "2099-11-20T10:00:00.000Z"]]);
+});
+
+test("커리큘럼 모듈은 같은 그룹 멤버에게만 함께 추가하고, 그룹 밖 학생이 섞이면 하나도 만들지 않는다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context);
+  activeSession = createSession("admin-1", "admin");
+  assert.equal((await actions.saveLessonGroupAction({ groupId: null, name: "화요일반", memberIds: ["student-a", "student-b"] })).ok, true);
+  const curriculumActions = await import("@/lib/actions/curriculum");
+  const modules = async () => (await db.select().from(curriculums)).map((row) => [row.studentId, row.weekNum, row.title]).sort();
+
+  const outsider = form({ weekNum: "5", title: "하모닉 믹싱 입문" });
+  outsider.append("alsoStudentId", "student-c");
+  assert.match((await curriculumActions.createModule("student-a", {}, outsider)).error ?? "", /그룹이 바뀌었습니다/);
+  assert.deepEqual(await modules(), []);
+
+  const together = form({ weekNum: "5", title: "하모닉 믹싱 입문" });
+  together.append("alsoStudentId", "student-b");
+  assert.deepEqual(await curriculumActions.createModule("student-a", {}, together), { success: true });
+  assert.deepEqual(await modules(), [["student-a", 5, "하모닉 믹싱 입문"], ["student-b", 5, "하모닉 믹싱 입문"]]);
+
+  // 그룹이 없는 학생은 함께 추가할 수 없다.
+  const solo = form({ weekNum: "1", title: "기초" });
+  solo.append("alsoStudentId", "student-a");
+  assert.match((await curriculumActions.createModule("student-c", {}, solo)).error ?? "", /그룹이 바뀌었습니다/);
+
+  activeSession = createSession("student-a", "student");
+  await assert.rejects(curriculumActions.createModule("student-a", {}, together));
 });

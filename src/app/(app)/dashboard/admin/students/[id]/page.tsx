@@ -20,6 +20,7 @@ import { getQnaThreadsByStudent } from "@/lib/actions/qna";
 import { getAssignmentSummariesByStudent } from "@/lib/actions/assignments";
 import { getAssignmentTasksForStudent } from "@/lib/actions/assignmentTasks";
 import { AdminAssignmentsPanel } from "@/components/admin/assignments/AdminAssignmentsPanel";
+import { getStudentLessonGroup } from "@/lib/actions/lessonGroups";
 import { getStudentCalendarFeedIssuedAt } from "@/lib/actions/calendarFeed";
 import { getStudentGuideAccess, type StudentGuideAccessView } from "@/lib/actions/guideAccess";
 import { StatusBadge } from "@/components/ui/status-badge";
@@ -100,9 +101,10 @@ async function DiggingTabContent({ studentId }: { studentId: string }) {
 async function AssignmentsTabContent({ actorId, studentId, referenceTime }: { actorId: string; studentId: string; referenceTime: Date }) {
   // 정기 과제 회차를 먼저 만든 뒤 제출 목록을 읽는다.
   const { tasks, recurrences } = await getAssignmentTasksForStudent(studentId);
-  const [summaries, studentOptions] = await Promise.all([
+  const [summaries, studentOptions, lessonGroup] = await Promise.all([
     getAssignmentSummariesByStudent(studentId),
     getStudentOptions().catch(() => []),
+    getStudentLessonGroup(studentId),
   ]);
   const returnTo = buildAdminStudentDetailHref(studentId, "assignments");
 
@@ -116,6 +118,7 @@ async function AssignmentsTabContent({ actorId, studentId, referenceTime }: { ac
         referenceTime={referenceTime}
         returnTo={returnTo}
         studentOptions={studentOptions}
+        lessonGroup={lessonGroup ? { name: lessonGroup.name, memberIds: lessonGroup.members.map((member) => member.id) } : null}
       />
       <LedgerSection labelledBy="assignments-heading" className="max-w-[880px]">
         <LedgerSectionHeader
@@ -205,7 +208,10 @@ export default async function StudentDetailPage({
   if (!student) redirect("/dashboard/admin");
   // 노트 탭은 검색·표/목록을 갖춘 학생 스페이스 노트 화면이 canonical이다(AdminStudentNotes 보드).
   if (activeTab === "notes") redirect(buildAdminStudentNotesHref(studentId));
-  const workCounts = await getStudentWorkCounts(studentId);
+  const [workCounts, lessonGroup] = await Promise.all([
+    getStudentWorkCounts(studentId),
+    activeTab === "overview" ? getStudentLessonGroup(studentId) : Promise.resolve(null),
+  ]);
 
   // Overview 탭 데이터는 미리 병렬 fetch
   const [modules, lessons, calendarFeedIssuedAt, accountState, studentMemo, connectedLessons, lessonNoteIds, guideAccess] = await (activeTab === "overview"
@@ -285,6 +291,10 @@ export default async function StudentDetailPage({
               guideAccess={guideAccess}
               referenceTime={referenceTime}
               lessonNoteIds={lessonNoteIds}
+              lessonGroup={lessonGroup ? {
+                name: lessonGroup.name,
+                partners: lessonGroup.members.filter((member) => member.id !== studentId),
+              } : null}
             />
           )}
 

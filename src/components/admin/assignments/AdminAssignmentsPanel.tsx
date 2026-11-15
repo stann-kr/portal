@@ -34,7 +34,7 @@ import {
 import { formatKstDot } from "@/lib/kst-format";
 import { STATUS_TONE_DOT_CLASS_NAMES, type PortalStatusTone } from "@/lib/portal-status";
 import { cn } from "@/lib/utils";
-import { AssignmentRecurrenceForm, AssignmentTaskForm } from "./AssignmentTaskForms";
+import { AssignmentRecurrenceForm, AssignmentTaskForm, type AssignmentLessonGroup } from "./AssignmentTaskForms";
 import type { StudentOption } from "@/lib/actions/students";
 
 const TASK_STATUS_TONE: Record<AssignmentTaskStatus, PortalStatusTone> = {
@@ -72,6 +72,7 @@ export function AdminAssignmentsPanel({
   referenceTime,
   returnTo,
   studentOptions = [],
+  lessonGroup = null,
 }: {
   /** 과제 폼 보관본(local draft)의 주인(관리자). */
   actorId: string;
@@ -82,6 +83,8 @@ export function AdminAssignmentsPanel({
   returnTo: string;
   /** "다른 학생에게도 내기"에 보일 학생(지금 학생 포함). */
   studentOptions?: StudentOption[];
+  /** 이 학생의 그룹레슨 그룹. 있으면 과제 만들기에 "받는 학생"이 나온다(캔버스 GroupLesson ③). */
+  lessonGroup?: AssignmentLessonGroup | null;
 }) {
   const router = useRouter();
   const [editor, setEditor] = useState<Editor>(null);
@@ -121,10 +124,10 @@ export function AdminAssignmentsPanel({
         </Button>
       </div>
       {editor?.kind === "new-task" ? (
-        <AssignmentTaskForm actorId={actorId} studentId={studentId} studentOptions={studentOptions} onDone={afterSave} onCancel={closeEditor} />
+        <AssignmentTaskForm actorId={actorId} studentId={studentId} studentOptions={studentOptions} lessonGroup={lessonGroup} onDone={afterSave} onCancel={closeEditor} />
       ) : null}
       {editor?.kind === "new-recurrence" ? (
-        <AssignmentRecurrenceForm actorId={actorId} studentId={studentId} studentOptions={studentOptions} referenceTime={referenceTime} onDone={afterSave} onCancel={closeEditor} />
+        <AssignmentRecurrenceForm actorId={actorId} studentId={studentId} studentOptions={studentOptions} lessonGroup={lessonGroup} referenceTime={referenceTime} onDone={afterSave} onCancel={closeEditor} />
       ) : null}
       {error ? <p role="alert" className="text-ui text-destructive">{error}</p> : null}
 

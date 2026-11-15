@@ -2763,6 +2763,31 @@ test("여러 학생 과제 내기는 고른 학생·작성 정보를 이 기기�
   assert.deepEqual(sent[1], sent[0], "같은 학생·같은 operationId로 다시 보내 학생별로 한 번만 저장된다");
 });
 
+test("그룹 멤버 학생의 과제 내기는 \"받는 학생\"으로 그룹 멤버를 한 번에 고른다", async (context) => {
+  browser.localStorage.clear();
+  const sent: string[][] = [];
+  createTask = async (_studentId, _previous, data) => {
+    sent.push(data.getAll("alsoStudentId").map(String));
+    return { success: true };
+  };
+  context.after(() => { createTask = async () => ({}); });
+  const options = [{ id: "s-1", name: "김학생" }, { id: "s-2", name: "이학생" }, { id: "s-3", name: "박학생" }];
+  await render(context, <AssignmentTaskForm actorId="admin-group" studentId="s-1" studentOptions={options as never} lessonGroup={{ name: "화요일반", memberIds: ["s-1", "s-2"] }} onDone={() => {}} onCancel={() => {}} />);
+  await settle();
+  const radio = (label: string) => [...browser.document.querySelectorAll('[role="radio"]')].find((element) => element.textContent === label) as unknown as HTMLElement;
+  assert.equal(radio("김학생만").getAttribute("aria-checked"), "true");
+  await act(async () => { radio("화요일반 전체 (2명)").click(); });
+  await settle();
+  assert.equal(radio("화요일반 전체 (2명)").getAttribute("aria-checked"), "true");
+  assert.equal((browser.document.getElementById("task-new-also-s-2") as unknown as HTMLInputElement).checked, true);
+  assert.equal((browser.document.getElementById("task-new-also-s-3") as unknown as HTMLInputElement).checked, false);
+  assert.match(browser.document.body.textContent ?? "", /김학생 · 이학생에게 각각 들어갑니다/u);
+  await fill("task-new-title", "8마디 전환");
+  await press("2명에게 과제 내기");
+  await settle();
+  assert.deepEqual(sent, [["s-2"]]);
+});
+
 test("과제 고치기는 고치던 내용을 이 기기에 보관해 다시 열면 되살리고 고치기 시작한 version으로 보낸다. 그 사이 과제가 바뀌었으면 되살리기만 하고 저장을 막는다", async (context) => {
   browser.localStorage.clear();
   const sent: { version: string; title: string }[] = [];

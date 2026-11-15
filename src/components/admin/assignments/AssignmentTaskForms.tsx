@@ -212,9 +212,13 @@ function FormatField({
  * 같은 과제를 다른 학생에게도 내는 체크박스(UsabilityBundle ⑭). 지금 학생은 항상 받으므로 체크된 채 잠근다.
  * 고른 학생마다 과제(또는 정기 과제 규칙)가 따로 만들어지고 각자 알림을 받는다.
  */
+/** 과제 만들기 "받는 학생"에 쓰는 그룹레슨 그룹(이름과 멤버 id). */
+export type AssignmentLessonGroup = { name: string; memberIds: readonly string[] };
+
 function AlsoStudentsField({
   studentId,
   options,
+  group,
   selected,
   onChange,
   disabled,
@@ -222,6 +226,7 @@ function AlsoStudentsField({
 }: {
   studentId: string;
   options: StudentOption[];
+  group: AssignmentLessonGroup | null;
   selected: readonly string[];
   onChange: (next: string[]) => void;
   disabled: boolean;
@@ -233,8 +238,52 @@ function AlsoStudentsField({
   const toggle = (id: string) => onChange(selected.includes(id) ? selected.filter((value) => value !== id) : [...selected, id]);
   const rowClass = "flex min-h-11 items-center gap-2 text-md md:min-h-7 md:text-body";
   const boxClass = "size-4 shrink-0 accent-[var(--color-foreground)]";
+  // 그룹 멤버 중 고를 수 있는 학생(활성 학생 목록에 있는 학생)만 그룹 전체에 넣는다.
+  const partners = group ? others.filter((option) => group.memberIds.includes(option.id)) : [];
+  const groupAll = partners.length > 0 && selected.length === partners.length && partners.every((option) => selected.includes(option.id));
   return (
     <fieldset className="flex flex-col gap-1 rounded-lg border border-border px-3.5 pb-3 pt-1" disabled={disabled}>
+      {group && partners.length > 0 ? (
+        <div className="flex flex-col gap-1.5 pb-2 pt-2">
+          <span id={`${idPrefix}-recipients`} className="text-ui font-medium">받는 학생</span>
+          <div
+            role="radiogroup"
+            aria-labelledby={`${idPrefix}-recipients`}
+            className="flex flex-wrap gap-1.5"
+            onKeyDown={(event) => {
+              // 두 칸뿐이라 방향키는 다른 쪽을 고르고 그 칸으로 옮긴다.
+              if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
+              event.preventDefault();
+              onChange(groupAll ? [] : partners.map((option) => option.id));
+              event.currentTarget.querySelector<HTMLElement>(`[data-group-all="${String(!groupAll)}"]`)?.focus();
+            }}
+          >
+            {[
+              { value: false, label: `${current?.name ?? "지금 학생"}만` },
+              { value: true, label: `${group.name} 전체 (${partners.length + 1}명)` },
+            ].map((choice) => (
+              <button
+                key={String(choice.value)}
+                type="button"
+                role="radio"
+                aria-checked={choice.value ? groupAll : selected.length === 0}
+                // 다른 학생을 직접 골라 둘 다 아니면 첫 칸으로 들어온다.
+                tabIndex={(choice.value ? groupAll : !groupAll) ? 0 : -1}
+                data-group-all={String(choice.value)}
+                onClick={() => onChange(choice.value ? partners.map((option) => option.id) : [])}
+                className="h-11 rounded-touch border border-border px-3 text-ui text-secondary-foreground aria-checked:border-foreground aria-checked:bg-selected aria-checked:text-foreground md:h-8 md:rounded-md"
+              >
+                {choice.label}
+              </button>
+            ))}
+          </div>
+          {groupAll ? (
+            <p className="text-xs text-muted-foreground">
+              {[current?.name ?? "지금 학생", ...partners.map((option) => option.name)].join(" · ")}에게 각각 들어갑니다. 낸 뒤에는 학생별로 고칩니다.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
       <legend className="px-1 text-ui font-medium">다른 학생에게도 내기</legend>
       <label htmlFor={`${idPrefix}-also-current`} className={rowClass}>
         <input id={`${idPrefix}-also-current`} type="checkbox" checked disabled className={boxClass} />
@@ -277,6 +326,7 @@ export function AssignmentTaskForm({
   studentId,
   task,
   studentOptions = [],
+  lessonGroup = null,
   onDone,
   onCancel,
 }: {
@@ -286,6 +336,8 @@ export function AssignmentTaskForm({
   task?: AssignmentTaskItem;
   /** 만들 때만 쓰는 "다른 학생에게도 내기" 학생 목록. */
   studentOptions?: StudentOption[];
+  /** 이 학생의 그룹레슨 그룹. 있으면 "받는 학생"으로 그룹 전체를 한 번에 고른다. */
+  lessonGroup?: AssignmentLessonGroup | null;
   onDone: () => void;
   onCancel: () => void;
 }) {
@@ -383,7 +435,7 @@ export function AssignmentTaskForm({
         </label>
       </div>
       {task ? null : (
-        <AlsoStudentsField studentId={studentId} options={studentOptions} selected={alsoStudentIds} onChange={setAlsoStudentIds} disabled={isPending} idPrefix={idPrefix} />
+        <AlsoStudentsField studentId={studentId} options={studentOptions} group={lessonGroup} selected={alsoStudentIds} onChange={setAlsoStudentIds} disabled={isPending} idPrefix={idPrefix} />
       )}
       {staleDraft ? <p role="alert" className="text-ui text-destructive">{STALE_EDIT_DRAFT}</p> : state.error ? <p role="alert" className="text-ui text-destructive">{state.error}</p> : null}
       <DraftStatus {...draft} onRestoreRecovery={draft.restoreRecovery} onDiscardRecovery={draft.discardRecovery} disabled={isPending} quiet />
@@ -399,6 +451,7 @@ export function AssignmentRecurrenceForm({
   recurrence,
   referenceTime,
   studentOptions = [],
+  lessonGroup = null,
   onDone,
   onCancel,
 }: {
@@ -408,6 +461,8 @@ export function AssignmentRecurrenceForm({
   recurrence?: AssignmentRecurrenceItem;
   /** 만들 때만 쓰는 "다른 학생에게도 내기" 학생 목록. */
   studentOptions?: StudentOption[];
+  /** 이 학생의 그룹레슨 그룹. 있으면 "받는 학생"으로 그룹 전체를 한 번에 고른다. */
+  lessonGroup?: AssignmentLessonGroup | null;
   referenceTime: Date;
   onDone: () => void;
   onCancel: () => void;
@@ -597,7 +652,7 @@ export function AssignmentRecurrenceForm({
         {recurrence ? " 고치면 아직 마감 전이고 제출이 없는 회차만 새 내용으로 다시 만들고, 지난 회차와 제출된 회차는 그대로 둡니다." : ""}
       </p>
       {recurrence ? null : (
-        <AlsoStudentsField studentId={studentId} options={studentOptions} selected={alsoStudentIds} onChange={setAlsoStudentIds} disabled={isPending} idPrefix={idPrefix} />
+        <AlsoStudentsField studentId={studentId} options={studentOptions} group={lessonGroup} selected={alsoStudentIds} onChange={setAlsoStudentIds} disabled={isPending} idPrefix={idPrefix} />
       )}
       {staleDraft ? <p role="alert" className="text-ui text-destructive">{STALE_EDIT_DRAFT}</p> : state.error ? <p role="alert" className="text-ui text-destructive">{state.error}</p> : null}
       <DraftStatus {...draft} onRestoreRecovery={draft.restoreRecovery} onDiscardRecovery={draft.discardRecovery} disabled={isPending} quiet />
