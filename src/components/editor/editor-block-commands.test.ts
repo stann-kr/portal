@@ -58,6 +58,24 @@ test("이미지·동영상·링크 명령은 편집기 밖 패널을 열 수 있
   assert.deepEqual(opened, ["pick", "image", "youtube", "link"]);
 });
 
+test("가이드 인용은 노트 편집기(openGuideQuote가 있는 편집기)에서만 보인다", () => {
+  const ids = (options: { withContext?: boolean; withGuideQuote?: boolean }) =>
+    filterEditorBlockCommands("", options).map((item) => item.id);
+  assert.equal(ids({ withContext: true }).includes("guide-quote"), false);
+  assert.equal(ids({ withGuideQuote: true }).includes("guide-quote"), false);
+  assert.equal(ids({ withContext: true, withGuideQuote: true }).includes("guide-quote"), true);
+  assert.deepEqual(
+    filterEditorBlockCommands("가이드", { withContext: true, withGuideQuote: true }).map((item) => item.id),
+    ["guide-quote"],
+  );
+  let opened = 0;
+  const editor = {} as Parameters<EditorBlockCommand["run"]>[0];
+  filterEditorBlockCommands("인용", { withContext: true, withGuideQuote: true })
+    .find((item) => item.id === "guide-quote")!
+    .run(editor, { pickImages: () => {}, openInsertPanel: () => {}, openGuideQuote: () => (opened += 1) });
+  assert.equal(opened, 1);
+});
+
 test("빈 검색어는 모든 블록 명령을 유지한다", () => {
   const commands = filterEditorBlockCommands("");
   assert.ok(commands.length >= 10);

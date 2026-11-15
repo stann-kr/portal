@@ -31,6 +31,8 @@ import { useCollabDocument } from "@/lib/collab/client/useCollabDocument";
 import { useCollabLeaveGuard } from "@/lib/collab/client/useCollabLeaveGuard";
 import { useCollabMetaField } from "@/lib/collab/client/useCollabMetaField";
 import type { CollabTokenRequest } from "@/lib/collab/client/provider";
+import type { GuideQuotePickerTarget, GuideQuoteSpace } from "@/lib/actions/guideNoteQuote";
+import { GUIDE_QUOTE_PARAM, stripGuideQuoteParam, takeGuideQuote } from "@/lib/guide-note-quote-handoff";
 import { NoteDateField } from "./NoteDateField";
 import { CollabEditorPending } from "@/components/editor/CollabEditorPending";
 
@@ -81,6 +83,8 @@ type NoteEditorFormProps = {
   document?: NoteDocumentLayout;
   /** 캘린더 상세 패널 배치(Calendar 보드 노트 패널). `document`가 없을 때만 쓴다. 없으면 지금 배치 그대로다. */
   panel?: NotePanelLayout;
+  /** 새 노트: 만들기 전 "가이드 인용"이 기준으로 삼을 공간(지금 고른 저장 위치). 만든 뒤에는 노트 자체가 기준이다. */
+  guideQuoteSpace?: GuideQuoteSpace | null;
 };
 
 /**
@@ -181,7 +185,7 @@ export function NoteEditorForm(props: NoteEditorFormProps) {
   return <NoteEditorFormContent key={`${props.actorId}:${props.note?.id ?? `new:${props.create?.studentId ?? ""}`}`} {...props} />;
 }
 
-function NoteEditorFormContent({ note, create, actorId, action, focusBodyEnd = false, onSaved, onBusyChange, document: documentLayout, panel: panelLayout }: NoteEditorFormProps) {
+function NoteEditorFormContent({ note, create, actorId, action, focusBodyEnd = false, onSaved, onBusyChange, document: documentLayout, panel: panelLayout, guideQuoteSpace = null }: NoteEditorFormProps) {
   const dateInputId = useId();
   const formRef = useRef<HTMLFormElement>(null);
   const errorRef = useRef<HTMLDivElement>(null);
@@ -496,6 +500,25 @@ function NoteEditorFormContent({ note, create, actorId, action, focusBodyEnd = f
     }, 50);
     return () => window.clearInterval(timer);
   }, [collab.ready, focusBodyEnd]);
+  // 가이드 화면의 "넣고 노트 열기"로 넘어온 인용(주소의 일회용 token). 문서 페이지에서만 한 번 꺼내 편집기에 넘긴다.
+  const [pendingGuideQuote, setPendingGuideQuote] = useState<string | null>(null);
+  useEffect(() => {
+    if (!documentLayout) return;
+    const token = new URLSearchParams(window.location.search).get(GUIDE_QUOTE_PARAM);
+    if (!token) return;
+    const html = takeGuideQuote(token);
+    stripGuideQuoteParam();
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 이 탭의 sessionStorage 보관은 mount 뒤에만 꺼낼 수 있다(꺼내면 지운다).
+    if (html) setPendingGuideQuote(html);
+    // 문서 배치는 화면이 열려 있는 동안 바뀌지 않는다. 처음 한 번만 읽는다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const clearPendingGuideQuote = useCallback(() => setPendingGuideQuote(null), []);
+  const guideQuoteTarget = useMemo<GuideQuotePickerTarget | null>(
+    () => (noteId ? { kind: "note", noteId } : guideQuoteSpace),
+    [guideQuoteSpace, noteId],
+  );
+
   // 긴 제목도 잘리지 않게 내용 높이에 맞춘다(field-sizing을 지원하지 않는 브라우저 포함).
   // 폭이 바뀔 때(회전·창 크기)와 글꼴이 늦게 도착했을 때도 다시 잰다. 폭만 볼 때 다시 재므로 높이 변경으로 반복되지 않는다.
   useLayoutEffect(() => {
@@ -606,6 +629,9 @@ function NoteEditorFormContent({ note, create, actorId, action, focusBodyEnd = f
         ariaLabel="노트 내용"
         variant="page"
         saveShortcutLabel={writable ? "바로 저장" : undefined}
+        pendingInsertHtml={writable ? pendingGuideQuote : null}
+        onPendingInsertDone={clearPendingGuideQuote}
+        guideQuoteTarget={guideQuoteTarget}
       />
     </div>
   ) : (

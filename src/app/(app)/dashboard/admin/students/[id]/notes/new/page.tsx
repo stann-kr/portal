@@ -15,7 +15,7 @@ export default async function AdminStudentNewNotePage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ returnTo?: string; date?: string; title?: string }>;
+  searchParams: Promise<{ returnTo?: string; date?: string; title?: string; space?: string }>;
 }) {
   const session = await getActiveAuthSession();
   if (!session?.user?.id) redirect("/login");
@@ -49,6 +49,7 @@ export default async function AdminStudentNewNotePage({
       group={group}
       personalLabel={`${studentName} 노트`}
       viewerIsAdmin
+      defaultLocation={query.space === "group" ? "group" : "personal"}
     />
   );
 }

@@ -6,14 +6,16 @@
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { CircleHelp, MessageCircleQuestion, X } from "lucide-react";
+import { CircleHelp, FilePlus2, MessageCircleQuestion, X } from "lucide-react";
 import { RichTextContent } from "@/components/editor/RichTextContent";
+import { GuideNoteQuoteDialog, type GuideNoteQuoteDraft } from "@/components/guide/GuideNoteQuoteDialog";
 import { QnaStatusLabel } from "@/components/qna/qna-display";
 import { QnaSlideForm, type QnaGuideAnchorInput } from "@/components/qna/QnaSlideForm";
 import { SlidePanel } from "@/components/student-portal/SlidePanel";
 import { Button } from "@/components/ui/button";
 import type { QnaStatus } from "@/db/schema";
 import { guidePagePath, normalizeGuideQuote } from "@/lib/guide-content";
+import { collectGuideQuoteSelection, type CollectedGuideQuote } from "@/lib/guide-note-quote-selection";
 import { cn } from "@/lib/utils";
 
 export type GuideReaderQuestion = {
@@ -25,7 +27,7 @@ export type GuideReaderQuestion = {
   quote: string;
 };
 
-type SelectionAnchor = { blockId: string; quote: string; top: number; left: number };
+type SelectionAnchor = { blockId: string; quote: string; top: number; left: number; noteQuote: CollectedGuideQuote | null };
 
 const BLOCK_SELECTOR = "[data-block-id]";
 
@@ -44,6 +46,8 @@ export function GuideReader({
   blockIds,
   questions,
   canAsk,
+  canQuote = false,
+  isAdmin = false,
   showStudentNames,
   actorId,
 }: {
@@ -52,6 +56,9 @@ export function GuideReader({
   blockIds: readonly string[];
   questions: readonly GuideReaderQuestion[];
   canAsk: boolean;
+  /** 고른 글을 학생 노트에 인용으로 담는다(학생·관리자). */
+  canQuote?: boolean;
+  isAdmin?: boolean;
   showStudentNames: boolean;
   actorId: string;
 }) {
@@ -61,6 +68,8 @@ export function GuideReader({
   const [openMarker, setOpenMarker] = useState<string | null>(null);
   const [selection, setSelection] = useState<SelectionAnchor | null>(null);
   const [panelAnchor, setPanelAnchor] = useState<QnaGuideAnchorInput | null>(null);
+  const [noteDraft, setNoteDraft] = useState<GuideNoteQuoteDraft | null>(null);
+  const selecting = canAsk || canQuote;
   const [formBusy, setFormBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const returnTo = guidePagePath(page.id);
@@ -130,9 +139,9 @@ export function GuideReader({
     return () => window.removeEventListener("hashchange", focusHash);
   }, [page.contentHtml]);
 
-  // 학생이 본문 안에서 고른 구간을 질문 위치로 잡는다.
+  // 본문 안에서 고른 구간을 질문 위치(학생)와 노트 인용(학생·관리자)으로 잡는다.
   useEffect(() => {
-    if (!canAsk) return;
+    if (!selecting) return;
     let frame = 0;
     const read = () => {
       frame = 0;
@@ -157,11 +166,14 @@ export function GuideReader({
       }
       const rect = range.getBoundingClientRect();
       const box = container.getBoundingClientRect();
+      // 버튼 묶음 폭: 질문+담기 두 개면 넓게 잡는다(오른쪽 끝을 넘지 않게).
+      const buttonsWidth = canAsk && canQuote ? 250 : 140;
       setSelection({
         blockId,
         quote,
         top: Math.max(0, rect.bottom - box.top + 6),
-        left: Math.min(Math.max(0, rect.left - box.left), Math.max(0, box.width - 140)),
+        left: Math.min(Math.max(0, rect.left - box.left), Math.max(0, box.width - buttonsWidth)),
+        noteQuote: canQuote ? collectGuideQuoteSelection(content, range) : null,
       });
     };
     const schedule = () => {
@@ -172,7 +184,7 @@ export function GuideReader({
       document.removeEventListener("selectionchange", schedule);
       if (frame) window.cancelAnimationFrame(frame);
     };
-  }, [canAsk]);
+  }, [canAsk, canQuote, selecting]);
 
   useEffect(() => {
     if (!openMarker) return;
@@ -254,20 +266,39 @@ export function GuideReader({
           ),
         )}
 
-        {canAsk && selection ? (
-          <div className="absolute z-20" style={{ top: selection.top, left: selection.left }}>
-            <Button
-              type="button"
-              size="sm"
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() =>
-                openQuestion({ pageId: page.id, pageTitle: page.title, blockId: selection.blockId, quote: selection.quote })
-              }
-              className="shadow-floating"
-            >
-              <CircleHelp className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
-              이 부분 질문
-            </Button>
+        {selecting && selection && (canAsk || selection.noteQuote) ? (
+          <div className="absolute z-20 flex gap-2" style={{ top: selection.top, left: selection.left }}>
+            {canAsk ? (
+              <Button
+                type="button"
+                size="sm"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() =>
+                  openQuestion({ pageId: page.id, pageTitle: page.title, blockId: selection.blockId, quote: selection.quote })
+                }
+                className="shadow-floating"
+              >
+                <CircleHelp className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
+                이 부분 질문
+              </Button>
+            ) : null}
+            {canQuote && selection.noteQuote ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  setNotice(null);
+                  setNoteDraft({ pageId: page.id, pageTitle: page.title, quote: selection.noteQuote! });
+                  setSelection(null);
+                }}
+                className="bg-background shadow-floating"
+              >
+                <FilePlus2 className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
+                노트에 담기
+              </Button>
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -314,6 +345,8 @@ export function GuideReader({
           <QuestionList questions={moved} showStudentNames={showStudentNames} questionHref={questionHref} />
         </section>
       ) : null}
+
+      {canQuote ? <GuideNoteQuoteDialog draft={noteDraft} isAdmin={isAdmin} onClose={() => setNoteDraft(null)} /> : null}
 
       {canAsk ? (
         <SlidePanel

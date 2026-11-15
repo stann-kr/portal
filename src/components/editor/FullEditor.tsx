@@ -47,6 +47,8 @@ import {
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
 import { COLLAB_REBASE_EVENT, readCollabNoticeInset } from "@/lib/collab/collab-events";
 import { useKeyboardInset } from "./keyboard-inset";
+import { GuideQuotePicker } from "./GuideQuotePicker";
+import type { GuideQuotePickerTarget } from "@/lib/actions/guideNoteQuote";
 
 // ── 타입 ──────────────────────────────────────────
 
@@ -98,6 +100,14 @@ interface FullEditorProps {
    * 실행 취소는 공동 편집 기록(내 입력만)을 쓴다. `awareness`가 있으면 다른 사람의 커서를 그린다.
    */
   collaboration?: FullEditorCollaboration;
+  /**
+   * 노트 편집기만: 가이드 화면에서 "넣고 노트 열기"로 넘어온 인용 HTML. 편집기가 준비되면 문서 끝에 한 번 넣고
+   * 커서를 인용 아래 빈 줄에 둔 뒤 `onPendingInsertDone`을 부른다.
+   */
+  pendingInsertHtml?: string | null;
+  onPendingInsertDone?: () => void;
+  /** 노트 편집기만: `/` 메뉴의 "가이드 인용"이 불러올 페이지의 기준(노트 또는 아직 만들기 전 공간). 없으면 명령이 숨는다. */
+  guideQuoteTarget?: GuideQuotePickerTarget | null;
 }
 
 
@@ -245,6 +255,9 @@ export function FullEditor({
   imageUploader = DOCUMENT_IMAGE_UPLOADER,
   preserveBlockIds = false,
   collaboration,
+  pendingInsertHtml = null,
+  onPendingInsertDone,
+  guideQuoteTarget = null,
 }: FullEditorProps) {
   const isPage = variant === "page";
   const isBare = variant === "bare";
@@ -646,10 +659,47 @@ export function FullEditor({
     imageInputRef.current?.click();
   }, [disabled]);
   // 고정 도구 줄이 없는 문서 페이지는 이미지·동영상·링크를 `/` 메뉴에서 연다.
-  const commandContext = useMemo<EditorBlockCommandContext>(
-    () => ({ pickImages, openInsertPanel }),
-    [openInsertPanel, pickImages],
+  // 노트의 "가이드 인용" 패널. 연 순간의 커서 자리에 넣는다.
+  const [guidePicker, setGuidePicker] = useState<EditorSelection | null>(null);
+  const openGuideQuote = useCallback(() => {
+    if (!editor || disabled) return;
+    const { from, to } = editor.state.selection;
+    setGuidePicker({ from, to });
+  }, [disabled, editor]);
+  const insertGuideQuote = useCallback(
+    (html: string) => {
+      const target = guidePicker;
+      setGuidePicker(null);
+      if (!editor || disabled || !target) return;
+      const size = editor.state.doc.content.size;
+      const range = { from: Math.min(target.from, size), to: Math.min(target.to, size) };
+      editor.chain().focus().insertContentAt(range, html).run();
+    },
+    [disabled, editor, guidePicker],
   );
+  const hasGuideQuote = Boolean(guideQuoteTarget);
+  const commandContext = useMemo<EditorBlockCommandContext>(
+    () => ({ pickImages, openInsertPanel, openGuideQuote: hasGuideQuote ? openGuideQuote : undefined }),
+    [hasGuideQuote, openGuideQuote, openInsertPanel, pickImages],
+  );
+
+  // 가이드에서 넘어온 인용: 편집기가 준비되면 문서 끝에 한 번 넣는다(빈 문서는 통째로 바꾼다).
+  const pendingInsertedRef = useRef(false);
+  const onPendingInsertDoneRef = useRef(onPendingInsertDone);
+  useEffect(() => {
+    onPendingInsertDoneRef.current = onPendingInsertDone;
+  }, [onPendingInsertDone]);
+  useEffect(() => {
+    if (!editor || disabled || !pendingInsertHtml || pendingInsertedRef.current) return;
+    pendingInsertedRef.current = true;
+    const end = editor.state.doc.content.size;
+    editor
+      .chain()
+      .insertContentAt(editor.isEmpty ? { from: 0, to: end } : end, pendingInsertHtml)
+      .focus("end", { scrollIntoView: true })
+      .run();
+    onPendingInsertDoneRef.current?.();
+  }, [disabled, editor, pendingInsertHtml]);
   // 좁은 화면 문서 편집 서식 줄을 키보드 바로 위에 붙인다(B 묶음 ⑦).
   const editorRootRef = useRef<HTMLDivElement>(null);
   // 편집기는 첫 렌더에 없을 수 있다(immediatelyRender: false → 아래 return null). 루트 div가 생기는 렌더에서 다시 붙도록 editor도 조건에 둔다.
@@ -1046,6 +1096,10 @@ export function FullEditor({
           uploadImages(files);
         }}
       />
+
+      {guidePicker && guideQuoteTarget ? (
+        <GuideQuotePicker target={guideQuoteTarget} onInsert={insertGuideQuote} onClose={() => setGuidePicker(null)} />
+      ) : null}
 
       {insertPanel ? (
         <EditorInsertPanel

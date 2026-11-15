@@ -45,6 +45,8 @@ interface NoteFullFormProps {
   /** 저장 위치의 개인 노트 이름(학생: "내 노트", 관리자: "{학생} 노트"). */
   personalLabel?: string;
   viewerIsAdmin?: boolean;
+  /** 처음 고를 저장 위치. 가이드에서 그룹 노트로 "새 노트"를 고르면 "group"으로 연다. 그룹이 없으면 무시한다. */
+  defaultLocation?: "personal" | "group";
 }
 
 /** 생성 뒤 `history.replaceState`로 바뀐 문서 주소. 휴지통·작성 주소는 해당하지 않는다. */
@@ -67,6 +69,7 @@ export function NoteFullForm({
   group = null,
   personalLabel = "내 노트",
   viewerIsAdmin = false,
+  defaultLocation = "personal",
 }: NoteFullFormProps) {
   const router = useRouter();
   // 제자리 생성이 `history.replaceState`로 주소를 바꾸면 Next는 그 history 항목에 작성 화면 트리를 복사해 둔다.
@@ -82,7 +85,7 @@ export function NoteFullForm({
   const [updatedLabel, setUpdatedLabel] = useState<string | null>(null);
   // 첫 자동 저장이 만든 노트 id. 수업 도구의 이 수업 메모가 이때부터 열린다.
   const [createdId, setCreatedId] = useState<string | null>(null);
-  const [location, setLocation] = useState<"personal" | "group">("personal");
+  const [location, setLocation] = useState<"personal" | "group">(group && defaultLocation === "group" ? "group" : "personal");
   const groupLocation = group && location === "group" ? group : null;
   const createAction = (previous: CreateNoteState, formData: FormData) => {
     if (groupLocation) formData.set(PRIVATE_NOTE_GROUP_FIELD, groupLocation.id);
@@ -109,6 +112,7 @@ export function NoteFullForm({
             defaultDate,
             returnTo,
           }}
+          guideQuoteSpace={groupLocation ? { kind: "group", id: groupLocation.id } : { kind: "student", id: studentId }}
           onSaved={(saved) => {
             setCreatedId(saved.id);
             if (saved.updatedAt) setUpdatedLabel(formatNoteUpdated(saved.updatedAt, Date.now()));
