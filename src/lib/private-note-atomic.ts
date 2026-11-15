@@ -204,6 +204,7 @@ async function findTombstone(context: DbContext, noteId: string) {
       resourceId: documentTombstones.resourceId,
       subjectId: documentTombstones.subjectId,
       ownerId: documentTombstones.ownerId,
+      groupId: documentTombstones.groupId,
       sourceVersion: documentTombstones.sourceVersion,
     })
     .from(documentTombstones)
@@ -246,6 +247,17 @@ async function getStorageUsageBytes(
 
 function canReadSubject(actor: AtomicActor, subjectId: string): boolean {
   return actor.isAdmin || actor.id === subjectId;
+}
+
+/** 지운 노트의 PURGED 응답을 받을 수 있는지: 그룹 노트는 관리자·지금 멤버, 개인 노트는 관리자·그 학생. */
+async function canSeeTombstone(
+  context: DbContext,
+  actor: AtomicActor,
+  tombstone: { subjectId: string; groupId: string | null },
+): Promise<boolean> {
+  if (actor.isAdmin) return true;
+  if (tombstone.groupId) return isCurrentLessonGroupMember(context, actor.id, tombstone.groupId);
+  return actor.id === tombstone.subjectId;
 }
 
 /** 노트를 고칠 수 있는지(개인: 그 학생 공간의 작성자·관리자, 그룹: 관리자·지금 멤버). */
@@ -296,6 +308,14 @@ async function resolveReceiptReplay(
     const groupNote = input.operationType === "CREATE" || input.operationType === "PURGE"
       ? null
       : await findNote(context, receipt.resourceId);
+    if (!groupNote && input.operationType !== "CREATE" && input.operationType !== "PURGE") {
+      // 그 사이 영구 삭제된 그룹 노트: 지금 멤버면 PURGED로 알린다.
+      const tombstone = await findTombstone(context, receipt.resourceId);
+      if (tombstone?.groupId && (await canSeeTombstone(context, input.actor, tombstone))) {
+        return { ok: false, reason: "PURGED", noteId: receipt.resourceId };
+      }
+      return { ok: false, reason: "NOT_FOUND_OR_FORBIDDEN" };
+    }
     if (!groupNote?.groupId || !(await canMutateNote(context, input.actor, groupNote))) {
       return { ok: false, reason: "NOT_FOUND_OR_FORBIDDEN" };
     }
@@ -537,7 +557,7 @@ async function classifyMissingMutation(
   }
 
   const tombstone = await findTombstone(context, noteId);
-  if (tombstone && canReadSubject(actor, tombstone.subjectId)) {
+  if (tombstone && (await canSeeTombstone(context, actor, tombstone))) {
     return { ok: false, reason: "PURGED", noteId };
   }
   return { ok: false, reason: "NOT_FOUND_OR_FORBIDDEN" };
@@ -555,6 +575,7 @@ export async function createPrivateNoteAtomically(
     title: write.title,
     contentHtml: write.contentHtml,
     noteDate: write.noteDate,
+    groupId: write.groupId ?? null,
   };
   const requestHash = createPrivateNoteRequestHash(request);
   const replay = await resolveReceiptReplay(context, {
@@ -573,7 +594,7 @@ export async function createPrivateNoteAtomically(
 
   const tombstone = await findTombstone(context, write.noteId);
   if (tombstone) {
-    return canReadSubject(write.actor, tombstone.subjectId)
+    return (await canSeeTombstone(context, write.actor, tombstone))
       ? { ok: false, reason: "PURGED", noteId: write.noteId }
       : { ok: false, reason: "NOT_FOUND_OR_FORBIDDEN" };
   }
@@ -1578,14 +1599,15 @@ export async function purgePrivateNoteAtomically(
       {
         query: `
           INSERT INTO document_tombstones (
-            resource_type, resource_id, subject_id, owner_id, source_created_at,
+            resource_type, resource_id, subject_id, owner_id, group_id, source_created_at,
             source_version, purged_at, purged_by_id
-          ) VALUES ('PRIVATE_NOTE', ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES ('PRIVATE_NOTE', ?, ?, ?, ?, ?, ?, ?, ?)
         `,
         params: [
           write.noteId,
           existing.studentId,
           existing.authorId,
+          existing.groupId,
           epochSeconds(existing.createdAt),
           existing.version,
           epochSeconds(write.now),

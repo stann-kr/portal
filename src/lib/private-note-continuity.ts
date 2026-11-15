@@ -32,6 +32,8 @@ export type PrivateNoteCanonicalRequest = {
   contentHtml?: string;
   noteDate?: Date | null;
   restoredFromRevision?: number | null;
+  /** 만들기에서 고른 그룹. 개인 노트(null)는 hash에 넣지 않아 기존 v1 영수증과 값이 같다. */
+  groupId?: string | null;
 };
 
 function sha256Hex(value: string): string {
@@ -58,6 +60,8 @@ function createPrivateNoteRequestHashV1(
       request.contentHtml ?? null,
       toEpochSeconds(request.noteDate),
       request.restoredFromRevision ?? null,
+      // 같은 operation으로 저장 위치(그룹)만 바꿔 다시 보내면 다른 요청으로 본다.
+      ...(request.groupId ? [["group", request.groupId]] : []),
     ]),
   );
 }

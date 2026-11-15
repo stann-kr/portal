@@ -310,6 +310,15 @@ test("그룹 노트 만들기: 학생은 본인 그룹만, 관리자는 어느 �
   const groupNote = await notes.createPrivateNote("student-a", {}, createForm("그룹 노트", "<p>함께</p>", groupId));
   assert.equal(personal.success && groupNote.success, true);
 
+  // 같은 operation으로 저장 위치만 바꿔 다시 보내면 다른 요청이다.
+  const reusedOperation = crypto.randomUUID();
+  as("student-a");
+  assert.equal((await notes.createPrivateNote("student-a", {}, createForm("위치", "<p>x</p>", null, reusedOperation))).success, true);
+  assert.equal(
+    (await notes.createPrivateNote("student-a", {}, createForm("위치", "<p>x</p>", groupId, reusedOperation))).conflictKind,
+    "OPERATION_PAYLOAD_CONFLICT",
+  );
+
   // 관리자가 B의 공간에서 그룹 노트를 쓰면 student_id·author_id는 관리자다.
   as("admin-1", "admin");
   const adminGroupNote = await notes.createPrivateNote("student-b", {}, createForm("Stann 그룹 노트", "<p>수업 정리</p>", groupId));
@@ -319,7 +328,7 @@ test("그룹 노트 만들기: 학생은 본인 그룹만, 관리자는 어느 �
 
   // 개인 목록에는 그룹 노트가 없다(A·B 모두). 그룹 노트 보기에는 둘 다 같은 그룹 노트가 보인다.
   as("student-a");
-  assert.deepEqual((await notes.getPrivateNotes("student-a")).map((note) => note.title), ["내 노트"]);
+  assert.deepEqual((await notes.getPrivateNotes("student-a")).map((note) => note.title).sort(), ["내 노트", "위치"]);
   as("student-b");
   assert.deepEqual((await notes.getPrivateNotes("student-b")).map((note) => note.title), []);
   const groupViewB = await notes.getStudentGroupNotes("student-b");
@@ -329,7 +338,7 @@ test("그룹 노트 만들기: 학생은 본인 그룹만, 관리자는 어느 �
   assert.deepEqual(groupViewB, groupViewA);
   // 관리자의 학생 노트 화면도 같은 둘을 본다.
   as("admin-1", "admin");
-  assert.deepEqual((await notes.getPrivateNotes("student-a")).map((note) => note.title), ["내 노트"]);
+  assert.deepEqual((await notes.getPrivateNotes("student-a")).map((note) => note.title).sort(), ["내 노트", "위치"]);
   assert.deepEqual((await notes.getStudentGroupNotes("student-b"))?.notes.length, 2);
   // 학생은 다른 학생 공간의 그룹 노트 목록을 부를 수 없다.
   as("student-c");
@@ -346,6 +355,36 @@ test("그룹 노트 만들기: 학생은 본인 그룹만, 관리자는 어느 �
   assert.equal(blocked.ok, false);
 });
 
+test("계정 삭제: 떠난 멤버가 남의 그룹 노트에 올린 이미지는 노트와 함께 남고, 개인 노트 이미지는 지운다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context);
+  const groupId = await createGroup(["student-a", "student-b"]);
+  as("student-a");
+  const groupNote = await notes.createPrivateNote("student-a", {}, createForm("그룹 노트", "<p>함께</p>", groupId));
+  as("student-b");
+  const personal = await notes.createPrivateNote("student-b", {}, createForm("B 개인", "<p>개인</p>", null));
+  assert.equal(groupNote.success && personal.success, true);
+  const keptImage = await seedNoteImage(db, groupNote.note!.id, "student-b");
+  const removedImage = await seedNoteImage(db, personal.note!.id, "student-b");
+
+  const deleted = await (await import("@/lib/account-privacy-atomic")).deleteStudentAccountAtomically({ kind: "d1", db } as never, {
+    actorId: "student-b",
+    operationId: crypto.randomUUID(),
+    initiatingCleanupTokenDigest: "b".repeat(64),
+    useEphemeralCleanupDigest: true,
+    now: new Date("2026-11-16T01:00:00Z"),
+  });
+  assert.equal(deleted.ok, true, JSON.stringify(deleted));
+  const stateOf = async (id: string) =>
+    (await db.select({ state: mediaObjects.state }).from(mediaObjects).where(eq(mediaObjects.id, id)))[0]?.state ?? "GONE";
+  assert.equal(await stateOf(keptImage), "ATTACHED", "그룹 노트 이미지는 남는다");
+  const [kept] = await db.select({ ownerId: mediaObjects.ownerId }).from(mediaObjects).where(eq(mediaObjects.id, keptImage));
+  assert.equal(kept.ownerId, "student-a", "남는 이미지는 그 노트의 주인에게 넘어간다");
+  assert.notEqual(await stateOf(removedImage), "ATTACHED", "개인 노트 이미지는 지울 대상이 된다");
+  assert.equal((await db.select().from(privateNotes).where(eq(privateNotes.id, groupNote.note!.id))).length, 1);
+  as("student-a");
+  assert.ok(await mediaRead.loadReadableMedia(db, { id: "student-a", role: "student" }, keptImage), "남은 멤버가 계속 읽는다");
+});
+
 test("영구 삭제는 그룹 노트도 관리자만 한다(멤버는 휴지통·복원까지)", { concurrency: false }, async (context) => {
   const db = await setupDatabase(context);
   const groupId = await createGroup(["student-a", "student-b"]);
@@ -353,12 +392,38 @@ test("영구 삭제는 그룹 노트도 관리자만 한다(멤버는 휴지통�
   const created = await notes.createPrivateNote("student-a", {}, createForm("지울 노트", "<p>x</p>", groupId));
   const noteId = created.note!.id;
   assert.equal((await notes.trashPrivateNote(noteId, crypto.randomUUID(), 1)).success, true);
+  // B가 되살렸다 다시 휴지통으로 옮긴다. 되살리기 operation은 나중에 응답을 못 받은 재전송으로 다시 보낸다.
+  as("student-b");
+  const restoreOperation = crypto.randomUUID();
+  assert.equal((await notes.restorePrivateNote(noteId, restoreOperation, 2)).success, true);
+  assert.equal((await notes.trashPrivateNote(noteId, crypto.randomUUID(), 3)).success, true);
   // 보존 기간이 지난 것처럼 휴지통 시각을 옮긴다.
   await db.update(privateNotes).set({ deletedAt: new Date(Date.now() - 40 * 86_400_000) }).where(eq(privateNotes.id, noteId));
-  as("student-b");
-  assert.equal((await notes.purgePrivateNote(noteId, crypto.randomUUID(), 2)).conflictKind, "NOT_FOUND_OR_FORBIDDEN");
+  assert.equal((await notes.purgePrivateNote(noteId, crypto.randomUUID(), 4)).conflictKind, "NOT_FOUND_OR_FORBIDDEN");
   as("admin-1", "admin");
-  assert.equal((await notes.purgePrivateNote(noteId, crypto.randomUUID(), 2)).success, true);
+  assert.equal((await notes.purgePrivateNote(noteId, crypto.randomUUID(), 4)).success, true);
   assert.equal((await db.select().from(privateNotes)).length, 0);
+  // 지금 멤버는 PURGED, 멤버 아닌 학생은 존재를 모른다(NOT_FOUND_OR_FORBIDDEN).
+  // (화면 action은 읽기 단계에서 먼저 NOT_FOUND로 거르므로, 원자 쓰기의 판정을 직접 본다.)
+  const atomicUpdate = (studentId: string) => atomic.updatePrivateNoteAtomically({ kind: "d1", db } as never, {
+    actor: { id: studentId, isAdmin: false },
+    noteId,
+    operationId: crypto.randomUUID(),
+    baseRevision: 4,
+    title: "x",
+    contentHtml: "<p>x</p>",
+    noteDate: null,
+    now: new Date(),
+  });
+  assert.deepEqual(await atomicUpdate("student-b"), { ok: false, reason: "PURGED", noteId });
+  assert.deepEqual(await atomicUpdate("student-c"), { ok: false, reason: "NOT_FOUND_OR_FORBIDDEN" });
+  const replay = await atomic.restoreTrashedPrivateNoteAtomically({ kind: "d1", db } as never, {
+    actor: { id: "student-b", isAdmin: false },
+    noteId,
+    operationId: restoreOperation,
+    baseRevision: 2,
+    now: new Date(),
+  });
+  assert.deepEqual(replay, { ok: false, reason: "PURGED", noteId }, "B 영수증 재전송");
   assert.deepEqual(await groups.deleteLessonGroupAction(groupId), { ok: true }, "그룹 노트가 사라지면 해제된다");
 });

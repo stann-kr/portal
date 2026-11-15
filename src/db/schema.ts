@@ -589,6 +589,8 @@ export const documentTombstones = sqliteTable(
     sourceVersion: integer("source_version").notNull(),
     purgedAt: integer("purged_at", { mode: "timestamp" }).notNull(),
     purgedById: text("purged_by_id"),
+    /** 지운 그룹 노트의 그룹(0030). PURGED 응답을 지금 멤버에게만 준다. 그룹 해제 뒤에도 남는 기록이라 FK는 두지 않는다. */
+    groupId: text("group_id"),
   },
   (table) => [
     primaryKey({ columns: [table.resourceType, table.resourceId] }),

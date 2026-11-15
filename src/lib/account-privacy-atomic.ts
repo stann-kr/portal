@@ -417,6 +417,13 @@ function accountDeletionStatements(input: {
                   )
                 )
               )
+              -- 다른 학생·관리자가 만든 그룹 노트에 이 계정이 올린 이미지는 노트와 함께 남긴다(그룹 노트는 그룹 소유).
+              AND NOT (media_objects.resource_type = 'PRIVATE_NOTE' AND EXISTS (
+                SELECT 1 FROM private_notes AS kept_group_note
+                WHERE kept_group_note.id = media_objects.resource_id
+                  AND kept_group_note.group_id IS NOT NULL
+                  AND kept_group_note.student_id <> ? AND kept_group_note.author_id <> ?
+              ))
           )
       `,
       params: [
@@ -439,6 +446,8 @@ function accountDeletionStatements(input: {
         input.initiatingTokenMode,
         input.initiatingCleanupTokenDigest,
         now,
+        actorId,
+        actorId,
         actorId,
         actorId,
         actorId,
@@ -530,6 +539,13 @@ function accountDeletionStatements(input: {
             )
           )
           AND media.state IN ('PENDING_UPLOAD', 'SEALING', 'READY', 'ATTACHED')
+          -- 다른 학생·관리자가 만든 그룹 노트에 이 계정이 올린 이미지는 노트와 함께 남긴다(그룹 노트는 그룹 소유).
+          AND NOT (media.resource_type = 'PRIVATE_NOTE' AND EXISTS (
+            SELECT 1 FROM private_notes AS kept_group_note
+            WHERE kept_group_note.id = media.resource_id
+              AND kept_group_note.group_id IS NOT NULL
+              AND kept_group_note.student_id <> ? AND kept_group_note.author_id <> ?
+          ))
           AND NOT EXISTS (
             SELECT 1 FROM media_deletion_outbox AS deletion
             WHERE deletion.media_object_id = media.id
@@ -544,6 +560,8 @@ function accountDeletionStatements(input: {
         now,
         now,
         now,
+        actorId,
+        actorId,
         actorId,
         actorId,
         actorId,
@@ -591,6 +609,13 @@ function accountDeletionStatements(input: {
             )
           )
           AND media.state IN ('PENDING_UPLOAD', 'SEALING', 'READY', 'ATTACHED')
+          -- 다른 학생·관리자가 만든 그룹 노트에 이 계정이 올린 이미지는 노트와 함께 남긴다(그룹 노트는 그룹 소유).
+          AND NOT (media.resource_type = 'PRIVATE_NOTE' AND EXISTS (
+            SELECT 1 FROM private_notes AS kept_group_note
+            WHERE kept_group_note.id = media.resource_id
+              AND kept_group_note.group_id IS NOT NULL
+              AND kept_group_note.student_id <> ? AND kept_group_note.author_id <> ?
+          ))
           AND NOT EXISTS (
             SELECT 1 FROM media_deletion_outbox AS deletion
             WHERE deletion.media_object_id = media.id
@@ -605,6 +630,8 @@ function accountDeletionStatements(input: {
         MEDIA_UPLOAD_STAGING_GRACE_SECONDS,
         now,
         now,
+        actorId,
+        actorId,
         actorId,
         actorId,
         actorId,
@@ -645,8 +672,35 @@ function accountDeletionStatements(input: {
             )
           )
           AND state IN ('PENDING_UPLOAD', 'SEALING', 'READY', 'ATTACHED')
+          -- 다른 학생·관리자가 만든 그룹 노트에 이 계정이 올린 이미지는 노트와 함께 남긴다(그룹 노트는 그룹 소유).
+          AND NOT (resource_type = 'PRIVATE_NOTE' AND EXISTS (
+            SELECT 1 FROM private_notes AS kept_group_note
+            WHERE kept_group_note.id = resource_id
+              AND kept_group_note.group_id IS NOT NULL
+              AND kept_group_note.student_id <> ? AND kept_group_note.author_id <> ?
+          ))
       `,
-      params: [now, now, actorId, actorId, actorId, actorId, actorId],
+      params: [now, now, actorId, actorId, actorId, actorId, actorId, actorId, actorId],
+    },
+    {
+      // 남기는 그룹 노트 이미지는 그 노트의 주인에게 넘긴다(0030 trigger가 이 전이만 연다). 계정 행을 지우기 전에 해야 한다.
+      query: `
+        UPDATE media_objects
+        SET owner_id = (
+              SELECT kept_owner.student_id FROM private_notes AS kept_owner
+              WHERE kept_owner.id = media_objects.resource_id
+            ),
+            updated_at = ?
+        WHERE owner_id = ? AND state = 'ATTACHED'
+          AND purpose = 'DOCUMENT_IMAGE' AND resource_type = 'PRIVATE_NOTE'
+          AND EXISTS (
+            SELECT 1 FROM private_notes AS kept_group_note
+            WHERE kept_group_note.id = media_objects.resource_id
+              AND kept_group_note.group_id IS NOT NULL
+              AND kept_group_note.student_id <> ? AND kept_group_note.author_id <> ?
+          )
+      `,
+      params: [now, actorId, actorId, actorId],
     },
     {
       query: `
