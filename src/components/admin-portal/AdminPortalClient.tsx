@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { getUnifiedItemKey, replaceUnifiedItemsInRange, upsertUnifiedItems, type UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 import type { StudentRosterStat } from "@/lib/actions/students";
+import type { LessonGroupSummary } from "@/lib/lesson-group-rules";
 import type {
   AdminQueueThread,
   PendingFeedbackAssignment,
@@ -45,6 +46,8 @@ export interface AdminPortalClientProps {
   initialStudentId?: string;
   initialUnifiedItems: UnifiedItem[];
   students: StudentRosterStat[];
+  /** 그룹레슨 그룹(학생 목록에 묶어 보인다). */
+  lessonGroups?: LessonGroupSummary[];
   adminId: string;
   qnaThreads: AdminQueueThread[];
   pendingAssignments: PendingFeedbackAssignment[];
@@ -70,6 +73,7 @@ export function AdminPortalClient({
   initialLocation,
   initialUnifiedItems,
   students,
+  lessonGroups = [],
   initialStudentId = students.length > 0 ? ALL_STUDENTS_SCOPE : "",
   adminId,
   qnaThreads,
@@ -386,6 +390,7 @@ export function AdminPortalClient({
           {activeSection === "students" && (
             <StudentManagementSection
               students={students}
+              lessonGroups={lessonGroups}
             />
           )}
         </>

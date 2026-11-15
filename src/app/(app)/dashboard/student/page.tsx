@@ -24,6 +24,7 @@ import {
   type PortalSearchParams,
 } from "@/lib/portal-location";
 import { getUnifiedItemKey } from "@/lib/utils/unifiedItemUtils";
+import { getMyHomeLessonGroup } from "@/lib/actions/lessonGroups";
 import { RouteAutoRefresh } from "@/components/app-shell/RouteAutoRefresh";
 import { CollabNotifyRefresh } from "@/components/app-shell/CollabNotifyRefresh";
 
@@ -50,7 +51,8 @@ export default async function StudentPortalPage({ searchParams }: { searchParams
   const assignmentTasks = await getMyAssignmentTasks();
 
   // 병렬 데이터 패치. 게시물은 본문 없이 화면에 필요한 개수만 읽는다.
-  const [announcements, unifiedItems, curriculumModules, rawAssignments, feedbacksMap, externalCalendarConnection] =
+  const referenceTime = new Date();
+  const [announcements, unifiedItems, curriculumModules, rawAssignments, feedbacksMap, externalCalendarConnection, lessonGroup] =
     await Promise.all([
       getAnnouncementSummaries(3),
       getUnifiedItems(),
@@ -59,6 +61,7 @@ export default async function StudentPortalPage({ searchParams }: { searchParams
       getMyAssignments(),
       getMyFeedbacksMap(),
       getExternalCalendarConnectionSummary(),
+      getMyHomeLessonGroup(referenceTime),
     ]);
 
   // 과제 피드백 카운트 병합
@@ -91,7 +94,8 @@ export default async function StudentPortalPage({ searchParams }: { searchParams
         displayName={displayName}
         spaceLabel={spaceLabel}
         externalCalendarConnection={externalCalendarConnection}
-        referenceTime={new Date()}
+        lessonGroup={lessonGroup}
+        referenceTime={referenceTime}
       />
     </>
   );

@@ -1,14 +1,15 @@
 /**
  * @file src/components/admin-portal/StudentManagementSection.tsx
  * @description 관리자 학생 roster(AdminStudents·MobileAdminStudents 보드). 목록은 요약만 보여 주고,
- * 행의 더 보기 메뉴와 링크가 canonical 학생 상세 route로 연결한다.
+ * 행의 더 보기 메뉴와 링크가 canonical 학생 상세 route로 연결한다. 그룹레슨 그룹이 있으면 그룹 줄 아래에 멤버를
+ * 들여 보이고, 그룹에 없는 학생은 그 아래에 둔다(캔버스 GroupLesson ①).
  */
 "use client";
 
 import { useDeferredValue, useState } from "react";
 import Link from "next/link";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { Ellipsis, Plus, Search, UserPlus } from "lucide-react";
+import { Ellipsis, Plus, Search, UserPlus, Users } from "lucide-react";
 import { buttonClassName } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
@@ -17,6 +18,8 @@ import { buildAdminStudentDetailHref, type StudentDetailTab } from "@/lib/studen
 import { cn } from "@/lib/utils";
 import { formatKstDot } from "@/lib/kst-format";
 import { isCurriculumVisible } from "@/lib/curriculum-visibility";
+import type { LessonGroupSummary } from "@/lib/lesson-group-rules";
+import { LessonGroupDialog } from "./LessonGroupDialog";
 
 const NEW_STUDENT_HREF = "/dashboard/admin/students/new";
 
@@ -106,18 +109,61 @@ function OpenQnaCount({ count }: { count: number }) {
   );
 }
 
+/** 그룹 줄의 다음 레슨: 멤버 모두의 다음 레슨이 같은 시각일 때만 보인다. */
+function groupNextLessonLabel(members: StudentRosterStat[]): string {
+  const first = members[0]?.nextLessonDate?.getTime();
+  if (first === undefined || members.some((member) => member.nextLessonDate?.getTime() !== first)) return "–";
+  return nextLessonLabel(members[0]!);
+}
+
+type RosterBlock = { group: LessonGroupSummary | null; members: StudentRosterStat[] };
+
+/** 그룹(이름순)마다 검색에 걸린 멤버를 묶고, 그룹에 없는 학생은 마지막 묶음에 둔다. */
+function buildRosterBlocks(
+  visibleStudents: StudentRosterStat[],
+  lessonGroups: readonly LessonGroupSummary[],
+): RosterBlock[] {
+  const grouped = new Set<string>();
+  const blocks: RosterBlock[] = [];
+  for (const group of lessonGroups) {
+    const memberIds = new Set(group.memberIds);
+    const members = visibleStudents.filter((student) => memberIds.has(student.id));
+    for (const id of group.memberIds) grouped.add(id);
+    if (members.length > 0) blocks.push({ group, members });
+  }
+  const solo = visibleStudents.filter((student) => !grouped.has(student.id));
+  if (solo.length > 0) blocks.push({ group: null, members: solo });
+  return blocks;
+}
+
+function GroupBadge() {
+  return (
+    <span className="inline-flex h-5 shrink-0 items-center rounded bg-selected px-1.5 text-[11px] font-medium text-secondary-foreground">
+      그룹
+    </span>
+  );
+}
+
 export function StudentManagementSection({
   students,
+  lessonGroups = [],
   showCurriculum = isCurriculumVisible(),
 }: {
   students: StudentRosterStat[];
+  /** 그룹레슨 그룹. 없으면 지금처럼 학생만 나온다. */
+  lessonGroups?: readonly LessonGroupSummary[];
   /** 현재 진도(커리큘럼) 열을 그릴지. 기본값은 숨김 스위치를 따른다. */
   showCurriculum?: boolean;
 }) {
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query.trim());
   const visibleStudents = students.filter((student) => matchesQuery(student, deferredQuery));
-  const countLabel = `수강생 ${students.length}명`;
+  const blocks = buildRosterBlocks(visibleStudents, lessonGroups);
+  const countLabel = lessonGroups.length > 0
+    ? `수강생 ${students.length}명 · 그룹 ${lessonGroups.length}개`
+    : `수강생 ${students.length}명`;
+  const [dialog, setDialog] = useState<{ open: boolean; group: LessonGroupSummary | null }>({ open: false, group: null });
+  const studentChoices = students.map((student) => ({ id: student.id, label: studentName(student) }));
 
   return (
     <div className="px-5 pb-8 pt-4 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-14">
@@ -144,6 +190,17 @@ export function StudentManagementSection({
                   className="pl-10 md:h-8 md:pl-8 md:text-ui"
                 />
               </label>
+              {students.length >= 2 ? (
+                <button
+                  type="button"
+                  onClick={() => setDialog({ open: true, group: null })}
+                  aria-label="그룹 만들기"
+                  className={buttonClassName({ variant: "outline", className: "h-11 shrink-0 px-3 md:h-8 md:text-ui" })}
+                >
+                  <Users className="size-4 md:size-3.5" strokeWidth={1.6} aria-hidden="true" />
+                  <span className="hidden md:inline">그룹 만들기</span>
+                </button>
+              ) : null}
               <Link href={NEW_STUDENT_HREF} className={buttonClassName({ className: "hidden shrink-0 md:inline-flex" })}>
                 <Plus className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
                 수강생 추가
@@ -170,47 +227,71 @@ export function StudentManagementSection({
               </p>
             ) : (
               <>
-                <ul className="flex flex-col border-t border-border md:hidden" aria-label="수강생 목록">
-                  {visibleStudents.map((student) => (
-                    <li key={student.id}>
-                      <Link
-                        href={buildAdminStudentDetailHref(student.id, "overview")}
-                        className="flex items-center gap-3 border-b border-muted py-3 text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                      >
-                        <span
-                          aria-hidden="true"
-                          className="flex size-9 shrink-0 items-center justify-center rounded-full bg-selected text-ui font-semibold text-secondary-foreground"
-                        >
-                          {studentInitial(student)}
-                        </span>
-                        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                          <span className="flex items-center gap-2">
-                            <span className="truncate text-md font-medium">{studentName(student)}</span>
-                            {student.pendingFeedbackCount > 0 ? (
-                              <span className="inline-flex shrink-0 items-center gap-1 text-xs text-secondary-foreground">
-                                <span className="size-1.5 rounded-full bg-item-qna" aria-hidden="true" />
-                                피드백 대기
+                <div className="flex flex-col border-t border-border md:hidden">
+                  {blocks.map((block) => (
+                    <section key={block.group?.id ?? "solo"} aria-label={block.group ? `그룹 ${block.group.name}` : "그룹 없는 수강생"}>
+                      {block.group ? (
+                        <div className="flex h-11 items-center gap-2 border-b border-muted bg-sidebar px-1">
+                          <GroupBadge />
+                          <span className="min-w-0 truncate text-ui font-semibold">{block.group.name}</span>
+                          <span className="text-xs text-muted-foreground">{block.group.memberIds.length}명</span>
+                          <button
+                            type="button"
+                            onClick={() => setDialog({ open: true, group: block.group })}
+                            aria-label={`${block.group.name} 그룹 관리`}
+                            className="ml-auto h-11 rounded-md px-2 text-xs text-secondary-foreground underline underline-offset-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          >
+                            관리
+                          </button>
+                        </div>
+                      ) : null}
+                      <ul className="flex flex-col" aria-label={block.group ? `${block.group.name} 멤버` : "수강생 목록"}>
+                        {block.members.map((student) => (
+                          <li key={student.id}>
+                            <Link
+                              href={buildAdminStudentDetailHref(student.id, "overview")}
+                              className={cn(
+                                "flex items-center gap-3 border-b border-muted py-3 text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                                block.group && "pl-4",
+                              )}
+                            >
+                              <span
+                                aria-hidden="true"
+                                className="flex size-9 shrink-0 items-center justify-center rounded-full bg-selected text-ui font-semibold text-secondary-foreground"
+                              >
+                                {studentInitial(student)}
                               </span>
-                            ) : null}
-                            {student.openQnaCount > 0 ? (
-                              <span className="inline-flex shrink-0 items-center gap-1 text-xs text-secondary-foreground">
-                                미답변 질문 <span className="font-mono tabular-nums">{student.openQnaCount}</span>
+                              <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                                <span className="flex items-center gap-2">
+                                  <span className="truncate text-md font-medium">{studentName(student)}</span>
+                                  {student.pendingFeedbackCount > 0 ? (
+                                    <span className="inline-flex shrink-0 items-center gap-1 text-xs text-secondary-foreground">
+                                      <span className="size-1.5 rounded-full bg-item-qna" aria-hidden="true" />
+                                      피드백 대기
+                                    </span>
+                                  ) : null}
+                                  {student.openQnaCount > 0 ? (
+                                    <span className="inline-flex shrink-0 items-center gap-1 text-xs text-secondary-foreground">
+                                      미답변 질문 <span className="font-mono tabular-nums">{student.openQnaCount}</span>
+                                    </span>
+                                  ) : null}
+                                </span>
+                                {/* 커리큘럼을 숨기면 진도 대신 넓은 화면 표처럼 이메일을 둘째 줄에 둔다. */}
+                                <span className="truncate text-ui leading-[18px] text-muted-foreground">
+                                  {showCurriculum ? student.currentModule || "진도 미지정" : student.email}
+                                </span>
                               </span>
-                            ) : null}
-                          </span>
-                          {/* 커리큘럼을 숨기면 진도 대신 넓은 화면 표처럼 이메일을 둘째 줄에 둔다. */}
-                          <span className="truncate text-ui leading-[18px] text-muted-foreground">
-                            {showCurriculum ? student.currentModule || "진도 미지정" : student.email}
-                          </span>
-                        </span>
-                        <span className="flex shrink-0 flex-col items-end gap-0.5">
-                          <span className="text-[11px] text-muted-foreground">다음 레슨</span>
-                          <span className="font-mono text-xs tabular-nums">{nextLessonLabel(student)}</span>
-                        </span>
-                      </Link>
-                    </li>
+                              <span className="flex shrink-0 flex-col items-end gap-0.5">
+                                <span className="text-[11px] text-muted-foreground">다음 레슨</span>
+                                <span className="font-mono text-xs tabular-nums">{nextLessonLabel(student)}</span>
+                              </span>
+                            </Link>
+                          </li>
+                        ))}
+                      </ul>
+                    </section>
                   ))}
-                </ul>
+                </div>
 
                 <div className="hidden overflow-x-auto md:block">
                   <table className={cn("w-full table-fixed border-collapse text-left text-body", showCurriculum ? "min-w-[860px]" : "min-w-[700px]")}>
@@ -223,39 +304,65 @@ export function StudentManagementSection({
                         <th scope="col" className="w-40 px-2 text-xs font-normal text-muted-foreground">다음 레슨</th>
                         <th scope="col" className="w-26 px-2 text-xs font-normal text-muted-foreground">피드백 대기</th>
                         <th scope="col" className="w-26 px-2 text-xs font-normal text-muted-foreground">미답변 질문</th>
-                        <th scope="col" className="w-12 px-2"><span className="sr-only">메뉴</span></th>
+                        <th scope="col" className="w-16 px-2"><span className="sr-only">메뉴</span></th>
                       </tr>
                     </thead>
-                    <tbody>
-                      {visibleStudents.map((student) => (
-                        <tr key={student.id} className="border-b border-muted">
-                          <td className="h-14 px-2">
-                            <Link
-                              href={buildAdminStudentDetailHref(student.id, "overview")}
-                              className="flex min-w-0 items-center gap-3 rounded-md text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                            >
-                              <span
-                                aria-hidden="true"
-                                className="flex size-7 shrink-0 items-center justify-center rounded-full bg-selected text-xs font-semibold text-secondary-foreground"
+                    {blocks.map((block) => (
+                      <tbody key={block.group?.id ?? "solo"}>
+                        {block.group ? (
+                          <tr className="border-b border-muted bg-sidebar">
+                            <th scope="rowgroup" colSpan={showCurriculum ? 2 : 1} className="h-10 px-2 text-left font-normal">
+                              <span className="flex items-center gap-2">
+                                <GroupBadge />
+                                <span className="truncate font-semibold">{block.group.name}</span>
+                                <span className="text-xs text-muted-foreground">{block.group.memberIds.length}명</span>
+                              </span>
+                            </th>
+                            <td className="px-2 font-mono text-xs tabular-nums text-secondary-foreground">{groupNextLessonLabel(block.members)}</td>
+                            <td className="px-2" />
+                            <td className="px-2" />
+                            <td className="px-2">
+                              <button
+                                type="button"
+                                onClick={() => setDialog({ open: true, group: block.group })}
+                                aria-label={`${block.group.name} 그룹 관리`}
+                                className="h-7 rounded-md px-2 text-xs text-secondary-foreground underline underline-offset-4 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                               >
-                                {studentInitial(student)}
-                              </span>
-                              <span className="flex min-w-0 flex-col">
-                                <span className="truncate font-medium">{studentName(student)}</span>
-                                <span className="truncate text-xs text-muted-foreground">{student.email}</span>
-                              </span>
-                            </Link>
-                          </td>
-                          {showCurriculum ? (
-                            <td className="truncate px-2 text-ui text-secondary-foreground">{student.currentModule || "진도 미지정"}</td>
-                          ) : null}
-                          <td className="px-2 font-mono text-xs tabular-nums text-secondary-foreground">{nextLessonLabel(student)}</td>
-                          <td className="px-2"><PendingFeedback count={student.pendingFeedbackCount} /></td>
-                          <td className="px-2"><OpenQnaCount count={student.openQnaCount} /></td>
-                          <td className="px-2"><StudentRowMenu student={student} /></td>
-                        </tr>
-                      ))}
-                    </tbody>
+                                관리
+                              </button>
+                            </td>
+                          </tr>
+                        ) : null}
+                        {block.members.map((student) => (
+                          <tr key={student.id} className="border-b border-muted">
+                            <td className={cn("h-14 px-2", block.group && "pl-7")}>
+                              <Link
+                                href={buildAdminStudentDetailHref(student.id, "overview")}
+                                className="flex min-w-0 items-center gap-3 rounded-md text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                              >
+                                <span
+                                  aria-hidden="true"
+                                  className="flex size-7 shrink-0 items-center justify-center rounded-full bg-selected text-xs font-semibold text-secondary-foreground"
+                                >
+                                  {studentInitial(student)}
+                                </span>
+                                <span className="flex min-w-0 flex-col">
+                                  <span className="truncate font-medium">{studentName(student)}</span>
+                                  <span className="truncate text-xs text-muted-foreground">{student.email}</span>
+                                </span>
+                              </Link>
+                            </td>
+                            {showCurriculum ? (
+                              <td className="truncate px-2 text-ui text-secondary-foreground">{student.currentModule || "진도 미지정"}</td>
+                            ) : null}
+                            <td className="px-2 font-mono text-xs tabular-nums text-secondary-foreground">{nextLessonLabel(student)}</td>
+                            <td className="px-2"><PendingFeedback count={student.pendingFeedbackCount} /></td>
+                            <td className="px-2"><OpenQnaCount count={student.openQnaCount} /></td>
+                            <td className="px-2"><StudentRowMenu student={student} /></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    ))}
                   </table>
                 </div>
               </>
@@ -263,6 +370,14 @@ export function StudentManagementSection({
           </>
         )}
       </div>
+      {/* 열 때만 그린다: 창이 router.refresh()를 쓰므로 목록만 그리는 곳(테스트 포함)에서는 router가 없어도 된다. */}
+      {dialog.open ? <LessonGroupDialog
+        open={dialog.open}
+        onOpenChange={(open) => setDialog((current) => ({ ...current, open }))}
+        group={dialog.group}
+        groups={lessonGroups}
+        students={studentChoices}
+      /> : null}
     </div>
   );
 }

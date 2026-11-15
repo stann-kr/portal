@@ -6,6 +6,7 @@
  */
 "use client";
 
+import type { StudentHomeLessonGroup } from "@/lib/lesson-group-rules";
 import type { StudentAssignmentSummary } from "@/lib/assignment-summary";
 import type { AssignmentTaskItem } from "@/lib/actions/assignmentTasks";
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
@@ -59,6 +60,8 @@ export interface StudentPortalClientProps {
   displayName: string;
   spaceLabel: string;
   externalCalendarConnection: ExternalCalendarConnectionSummary;
+  /** 그룹레슨 묶음(이름·함께하는 학생·같은 시각 레슨). 그룹이 없으면 null. */
+  lessonGroup?: StudentHomeLessonGroup | null;
   referenceTime: Date;
 }
 
@@ -94,6 +97,7 @@ export function StudentPortalClient({
   displayName,
   spaceLabel,
   externalCalendarConnection,
+  lessonGroup = null,
   referenceTime,
 }: StudentPortalClientProps) {
   const [createdItems, setCreatedItems] = useState<UnifiedItem[]>([]);
@@ -197,6 +201,7 @@ export function StudentPortalClient({
               displayName={displayName}
               referenceTime={referenceTime}
               pushOwnerId={studentId}
+              lessonGroup={lessonGroup}
             />
           )}
 

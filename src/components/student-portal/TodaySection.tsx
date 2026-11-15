@@ -14,6 +14,7 @@ import {
   toKstDayKey,
 } from "@/lib/student-today";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
+import type { StudentHomeLessonGroup } from "@/lib/lesson-group-rules";
 import { cn } from "@/lib/utils";
 import { AgendaRow } from "./today/AgendaRow";
 import { formatKstDot } from "@/lib/kst-format";
@@ -53,6 +54,13 @@ const COLUMN_CLASS = "contents md:flex md:min-w-0 md:flex-col md:gap-10";
 type Layout = "narrow" | "wide";
 const LAYOUT_ONLY_CLASS: Record<Layout, string> = { narrow: "md:hidden", wide: "max-md:hidden" };
 
+/** 다음 레슨이 그룹 멤버 모두 같은 시각이면 "그룹레슨 · 그룹 이름 · 이학생님과 함께", 아니면 null. */
+export function formatGroupLessonLabel(group: StudentHomeLessonGroup, lessonDate: Date): string | null {
+  if (!group.sharedLessonStarts.includes(lessonDate.getTime())) return null;
+  const partners = group.partnerNames.length > 0 ? ` · ${group.partnerNames.join(", ")}님과 함께` : "";
+  return `그룹레슨 · ${group.name}${partners}`;
+}
+
 function formatDay(date: Date) {
   return formatKst(date, { month: "long", day: "numeric", weekday: "long" });
 }
@@ -63,6 +71,7 @@ export function TodaySection({
   displayName,
   referenceTime,
   pushOwnerId,
+  lessonGroup = null,
 }: {
   announcements: Post[];
   unifiedItems: UnifiedItem[];
@@ -70,6 +79,8 @@ export function TodaySection({
   referenceTime: Date;
   /** 홈 맨 위 "알림 받기" 줄의 계정. */
   pushOwnerId: string;
+  /** 다음 레슨이 그룹레슨이면 그룹 이름과 함께하는 학생을 덧붙인다. */
+  lessonGroup?: StudentHomeLessonGroup | null;
 }) {
   const todayKey = toKstDayKey(referenceTime);
   const summary = getStudentTodaySummary(unifiedItems, referenceTime);
@@ -107,6 +118,9 @@ export function TodaySection({
     agenda.length > 0 ? `오늘 항목 ${agenda.length}개` : "오늘은 예정된 항목이 없습니다",
     todoEntries.length > 0 ? `확인할 일 ${todoEntries.length}개` : null,
   ].filter(Boolean);
+  const nextLessonGroupLabel = nextLesson && lessonGroup
+    ? formatGroupLessonLabel(lessonGroup, nextLesson.date)
+    : null;
   const nextLessonLong = nextLesson
     ? `${formatKst(nextLesson.date, { month: "long", day: "numeric", weekday: "short" })} ${formatHomeTime(nextLesson.date)}`
     : null;
@@ -192,7 +206,12 @@ export function TodaySection({
           </h1>
           <p className="text-body text-secondary-foreground">
             {summaryParts.join(" · ")}
-            {nextLessonLong ? <span className="hidden md:inline"> · 다음 레슨 {nextLessonLong}</span> : null}
+            {nextLessonLong ? (
+              <span className="hidden md:inline">
+                {" · "}다음 레슨 {nextLessonLong}
+                {nextLessonGroupLabel ? ` · ${nextLessonGroupLabel}` : null}
+              </span>
+            ) : null}
           </p>
           {nextLesson ? (
             <p className="mt-1 flex items-center gap-2 text-ui text-secondary-foreground md:hidden">
@@ -201,6 +220,7 @@ export function TodaySection({
               <span className="font-mono text-xs text-foreground">
                 {formatKstDot(nextLesson.date, { weekday: true, time: true, referenceTime })}
               </span>
+              {nextLessonGroupLabel ? <span className="min-w-0 truncate">· {nextLessonGroupLabel}</span> : null}
             </p>
           ) : null}
           <QuickActions newNoteHref={newNoteHref} returnTo={TODAY_PATH} />
