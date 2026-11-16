@@ -391,6 +391,15 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 - 계정 삭제: 멤버십을 지우고, 그 학생이 만든 노트(그룹 노트 포함)는 기존 규칙대로 지운다. 다른 사람이 만든 그룹 노트에 그 학생이 올린 ATTACHED 이미지는 지우지 않고 owner를 그 노트의 student_id에게 넘긴다(`0030` trigger가 ERASING 삭제 작업 중의 이 전이만 연다).
 - 검증: `src/test/group-notes.integration.ts`, `src/test/lesson-groups.integration.ts`, `src/lib/group-lesson-items.test.ts`, `db:check`의 `0028 → 0029`·`0029 → 0030` upgrade 검사.
 
+### 가이드 글을 노트에 담기 (2026-11-16)
+
+- 인용 HTML은 `src/lib/guide-note-quote.ts`의 `buildGuideNoteQuoteHtml` 하나가 만든다: `<blockquote>` 안에 문단(`<p>`)·제목(`<strong>`)·목록(`• `)·표 행(칸 글을 ` · `로 이음)과 마지막 줄 `<a href="/dashboard/guide/<id>#<block>">가이드 · 제목</a>`, 아래 빈 `<p>`. 글은 escape하고 블록 식별자가 형식에 맞지 않으면 `#`을 뺀다. 결과는 sanitize를 거쳐도 그대로다(노트 저장 경계). 링크 모양은 `globals.css`의 blockquote 마지막 줄 단독 가이드 링크 규칙이 정한다.
+- 화면의 구간 읽기는 `src/lib/guide-note-quote-selection.ts`의 `collectGuideQuoteSelection`(p·h1–6·pre·tr 줄 단위, 첫·끝 줄은 고른 곳까지, 이미지는 개수만)이다.
+- 가이드 화면에서 노트로 넘길 때는 HTML을 sessionStorage(`portal:guide-note-quote:<token>`, 30분)에 두고 노트 주소에 `guideQuote=<token>`만 붙인다(`src/lib/guide-note-quote-handoff.ts`). 노트 편집 화면은 token을 한 번 꺼내 지우고 주소에서 뺀 뒤, 편집 가능할 때만 문서 끝에 넣는다(새로고침·뒤로 가기에 두 번 들어가지 않음). 넣은 뒤 저장은 기존 CRDT·자동 저장 경로 그대로다.
+- 서버 action은 `src/lib/actions/guideNoteQuote.ts`: `getGuideQuoteDestinations`(학생은 요청 공간을 무시하고 본인 공간, 관리자는 학생·그룹 목록과 볼 수 없는 학생 이름), `openGuidePageForQuote`(관리자 전용, `planGuideQuoteOpen` 결과대로 페이지 행을 먼저 쓰고 SELECTED로 바꾼다. 다시 보내도 결과가 같다), `getGuideQuotePickerPages`·`getGuideQuotePickerPage`(노트 대상은 `readNoteAccess`로 쓰기 권한·휴지통을 확인하고, 노트의 학생 또는 그룹 멤버 모두와 보는 사람에게 열린 페이지만).
+- 편집기: `editor-block-commands.ts`의 `guide-quote` 명령은 `openGuideQuote`가 있을 때만 보이고, `FullEditor`가 `GuideQuotePicker`를 열어 저장해 둔 커서 자리에 `insertContentAt`으로 넣는다.
+- 검증: `src/lib/guide-note-quote.test.ts`, `src/test/guide-note-quote.integration.ts`.
+
 ### 캘린더 양방향 동기화
 
 - 연결 구조: 관리자가 Google 계정(OAuth)과 Apple ID(앱 전용 암호, CalDAV)를 각각 한 번 연결한다(`calendar_connections`, (owner, provider) UNIQUE). 학생마다 연결별로 원격 캘린더 하나를 매핑한다(`calendar_mappings`, (connection, student)·(connection, remote calendar) UNIQUE). 학생마다 provider가 달라도 되고 한 학생에 Google·iCloud를 둘 다 매핑할 수도 있다. 학생은 외부 계정 없이 공유받은 캘린더를 기존 앱에서 본다. 학생 계정 삭제 transaction은 그 학생의 매핑을 지우고 link·반복 일정 사본은 cascade로 함께 지운다.

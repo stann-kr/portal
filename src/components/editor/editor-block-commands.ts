@@ -4,6 +4,7 @@ import {
   AlignCenter,
   AlignLeft,
   AlignRight,
+  BookOpen,
   Code2,
   Heading1,
   Heading2,
@@ -25,6 +26,8 @@ import {
 export type EditorBlockCommandContext = {
   pickImages: () => void;
   openInsertPanel: (kind: "link" | "image" | "youtube") => void;
+  /** 노트 편집기만: "가이드 인용" 패널을 연다. 없으면 그 명령이 보이지 않는다. */
+  openGuideQuote?: () => void;
 };
 
 export type EditorBlockCommand = {
@@ -35,6 +38,8 @@ export type EditorBlockCommand = {
   Icon: LucideIcon;
   /** true면 `EditorBlockCommandContext`가 있는 편집기에서만 보인다. */
   needsContext?: boolean;
+  /** true면 `openGuideQuote`가 있는 편집기(노트)에서만 보인다. */
+  needsGuideQuote?: boolean;
   run: (editor: Editor, context?: EditorBlockCommandContext) => void;
 };
 
@@ -165,6 +170,16 @@ export const EDITOR_BLOCK_COMMANDS: readonly EditorBlockCommand[] = [
     run: (_editor, context) => context?.openInsertPanel("link"),
   },
   {
+    id: "guide-quote",
+    label: "가이드 인용",
+    description: "가이드 글을 골라 인용으로 넣기",
+    keywords: ["guide", "quote", "가이드", "인용", "참조"],
+    Icon: BookOpen,
+    needsContext: true,
+    needsGuideQuote: true,
+    run: (_editor, context) => context?.openGuideQuote?.(),
+  },
+  {
     id: "align-left",
     label: "왼쪽 정렬",
     description: "문단을 왼쪽에 맞춤",
@@ -192,11 +207,12 @@ export const EDITOR_BLOCK_COMMANDS: readonly EditorBlockCommand[] = [
 
 export function filterEditorBlockCommands(
   query: string,
-  options: { withContext?: boolean } = {},
+  options: { withContext?: boolean; withGuideQuote?: boolean } = {},
 ): readonly EditorBlockCommand[] {
-  const available = options.withContext
-    ? EDITOR_BLOCK_COMMANDS
-    : EDITOR_BLOCK_COMMANDS.filter((command) => !command.needsContext);
+  const available = EDITOR_BLOCK_COMMANDS.filter(
+    (command) =>
+      (options.withContext || !command.needsContext) && (options.withGuideQuote || !command.needsGuideQuote),
+  );
   const normalizedQuery = query.trim().toLocaleLowerCase("ko-KR");
   if (!normalizedQuery) return available;
 

@@ -29,9 +29,10 @@ export function BlockCommandMenu({ editor, context }: { editor: Editor; context?
   const dismissedMatchRef = useRef<SlashCommandMatch | null>(null);
 
   const hasContext = Boolean(context);
+  const hasGuideQuote = Boolean(context?.openGuideQuote);
   const commands = useMemo(
-    () => filterEditorBlockCommands(menu?.query ?? "", { withContext: hasContext }),
-    [hasContext, menu?.query],
+    () => filterEditorBlockCommands(menu?.query ?? "", { withContext: hasContext, withGuideQuote: hasGuideQuote }),
+    [hasContext, hasGuideQuote, menu?.query],
   );
   const contextRef = useRef(context);
   const commandsRef = useRef(commands);

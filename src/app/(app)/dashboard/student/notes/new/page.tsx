@@ -18,7 +18,7 @@ export const metadata = {
 export default async function NewNotePage({
   searchParams,
 }: {
-  searchParams: Promise<{ returnTo?: string; date?: string; title?: string }>;
+  searchParams: Promise<{ returnTo?: string; date?: string; title?: string; space?: string }>;
 }) {
   const session = await getActiveAuthSession();
   if (!session?.user?.id) redirect("/login");
@@ -43,6 +43,7 @@ export default async function NewNotePage({
       authorName={session.user.name?.trim() || session.user.email || undefined}
       group={group}
       personalLabel="내 노트"
+      defaultLocation={query.space === "group" ? "group" : "personal"}
     />
   );
 }

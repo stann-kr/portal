@@ -73,6 +73,8 @@ export async function GuidePageScreen({ pageId, session }: { pageId: string; ses
               quote: question.quote,
             }))}
             canAsk={session.user.role === "student"}
+            canQuote
+            isAdmin={isAdmin}
             showStudentNames={isAdmin}
             actorId={session.user.id}
           />
