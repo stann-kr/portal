@@ -7,11 +7,13 @@
  */
 
 import { revalidatePath } from "next/cache";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray, or } from "drizzle-orm";
 import { createDbContext, type DrizzleDb } from "@/db/client";
 import {
   calendarConnections,
   calendarMappings,
+  lessonGroupMembers,
+  lessonGroups,
   profiles,
   type CalendarConnectionStatus,
   type ExternalCalendarProvider,
@@ -38,11 +40,13 @@ import {
   CALENDAR_SYNC_READ_BUDGET_MS,
   CALENDAR_SYNC_WRITE_HOOK_BUDGET_MS,
   scheduleEnsureStudentGoogleChannels,
+  schedulePushStudentsCalendarChanges,
   syncCalendarMapping,
   syncStudentCalendarMappings,
 } from "@/lib/calendar-sync/sync-runner";
 import { CalendarAuthError } from "@/lib/calendar-sync/types";
 import { fetchExternalItemsForUser } from "@/lib/external-items";
+import { listLessonGroups, readLessonGroupMemberIds } from "@/lib/lesson-groups";
 import { getUnifiedItemSpaceLabel } from "@/lib/unified-item-normalization";
 import {
   resolveUnifiedItemsQuery,
@@ -58,10 +62,18 @@ export type CalendarSyncAvailability = {
   googleConfigured: boolean;
 };
 
+/** 학생 캘린더(STUDENT) 또는 그룹 캘린더(GROUP, 2026-11-16 사용자 결정). */
+export type CalendarMappingTargetKind = "STUDENT" | "GROUP";
+
 export type CalendarMappingSummary = {
   id: string;
-  studentId: string;
-  studentName: string;
+  targetKind: CalendarMappingTargetKind;
+  studentId: string | null;
+  groupId: string | null;
+  /** 학생 이름 또는 그룹 이름. */
+  targetName: string;
+  /** 그룹 캘린더면 멤버 이름(이름순), 학생 캘린더면 빈 배열. */
+  memberNames: string[];
   remoteCalendarId: string;
   remoteCalendarName: string;
   lastSyncedAt: string | null;
@@ -81,6 +93,8 @@ export type CalendarSyncOverview = {
   availability: CalendarSyncAvailability;
   connections: CalendarConnectionSummary[];
   students: { id: string; name: string }[];
+  /** 그룹 캘린더로 고를 수 있는 레슨 그룹(멤버 2명 이상). */
+  groups: { id: string; name: string; memberNames: string[] }[];
 };
 
 export type RemoteCalendarOption = { id: string; name: string; readOnly: boolean };
@@ -111,16 +125,18 @@ const MESSAGES = {
   connectionMissing: "연결 계정을 찾을 수 없습니다. 화면을 새로고침해 주세요.",
   mappingMissing: "캘린더 매핑을 찾을 수 없습니다. 화면을 새로고침해 주세요.",
   studentMissing: "학생을 찾을 수 없습니다.",
+  groupMissing: "그룹을 찾을 수 없습니다. 화면을 새로고침해 주세요.",
   needsReauth: "계정 인증이 만료되었습니다. 계정을 다시 연결해 주세요.",
   iCloudInput: "Apple ID와 앱 전용 암호를 입력해 주세요.",
   iCloudRejected: "Apple ID 또는 앱 전용 암호가 맞지 않습니다. appleid.apple.com에서 만든 앱 전용 암호인지 확인해 주세요.",
   iCloudFailed: "iCloud에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.",
   calendarListFailed: "원격 캘린더 목록을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.",
-  mappingInput: "연결 계정, 학생, 캘린더를 모두 골라 주세요.",
+  mappingInput: "연결 계정, 대상(학생·그룹), 캘린더를 모두 골라 주세요.",
   calendarNotFound: "고른 캘린더를 연결 계정에서 찾을 수 없습니다. 목록을 다시 불러와 주세요.",
   calendarReadOnly: "읽기 전용 캘린더에는 연결할 수 없습니다. 쓰기 권한이 있는 캘린더를 골라 주세요.",
   studentAlreadyMapped: "이 학생은 이미 이 계정의 캘린더에 연결되어 있습니다. 기존 연결을 해제한 뒤 다시 지정해 주세요.",
-  calendarAlreadyMapped: "이 캘린더는 이미 다른 학생에게 연결되어 있습니다. 학생마다 다른 캘린더를 골라 주세요.",
+  groupAlreadyMapped: "이 그룹은 이미 이 계정의 그룹 캘린더가 있습니다. 기존 연결을 해제한 뒤 다시 지정해 주세요.",
+  calendarAlreadyMapped: "이 캘린더는 이미 다른 학생이나 그룹에 연결되어 있습니다. 여러 학생이 함께 쓰는 캘린더는 그룹을 만든 뒤 그룹 캘린더로 지정해 주세요.",
   mappingConflict: "같은 연결이 이미 있습니다. 화면을 새로고침해 주세요.",
   syncBusy: "다른 동기화가 진행 중입니다. 잠시 후 다시 시도해 주세요.",
 } as const;
@@ -155,7 +171,12 @@ async function findOwnedConnection(ownerId: string, connectionId: string) {
 async function findOwnedMapping(ownerId: string, mappingId: string) {
   if (typeof mappingId !== "string" || !mappingId) return null;
   const [row] = await readDb()
-    .select({ id: calendarMappings.id, connectionId: calendarMappings.connectionId, status: calendarConnections.status })
+    .select({
+      id: calendarMappings.id,
+      connectionId: calendarMappings.connectionId,
+      groupId: calendarMappings.groupId,
+      status: calendarConnections.status,
+    })
     .from(calendarMappings)
     .innerJoin(calendarConnections, eq(calendarConnections.id, calendarMappings.connectionId))
     .where(and(eq(calendarMappings.id, mappingId), eq(calendarConnections.ownerId, ownerId)))
@@ -189,7 +210,7 @@ async function upsertConnection<P extends ExternalCalendarProvider>(input: {
 export async function getCalendarSyncOverview(): Promise<CalendarSyncOverview> {
   const session = await requireAdmin();
   const db = readDb();
-  const [connectionRows, mappingRows, studentRows] = await Promise.all([
+  const [connectionRows, mappingRows, studentRows, groupRows] = await Promise.all([
     db
       .select({
         id: calendarConnections.id,
@@ -206,8 +227,7 @@ export async function getCalendarSyncOverview(): Promise<CalendarSyncOverview> {
         id: calendarMappings.id,
         connectionId: calendarMappings.connectionId,
         studentId: calendarMappings.studentId,
-        studentDisplayName: profiles.displayName,
-        studentEmail: profiles.email,
+        groupId: calendarMappings.groupId,
         remoteCalendarId: calendarMappings.remoteCalendarId,
         remoteCalendarName: calendarMappings.remoteCalendarName,
         lastSyncedAt: calendarMappings.lastSyncedAt,
@@ -215,32 +235,64 @@ export async function getCalendarSyncOverview(): Promise<CalendarSyncOverview> {
       })
       .from(calendarMappings)
       .innerJoin(calendarConnections, eq(calendarConnections.id, calendarMappings.connectionId))
-      .innerJoin(profiles, eq(profiles.id, calendarMappings.studentId))
-      .where(eq(calendarConnections.ownerId, session.user.id))
-      .orderBy(asc(profiles.displayName), asc(profiles.email)),
+      .where(eq(calendarConnections.ownerId, session.user.id)),
     db
       .select({ id: profiles.id, displayName: profiles.displayName, email: profiles.email })
       .from(profiles)
       .where(eq(profiles.role, "student"))
       .orderBy(asc(profiles.displayName), asc(profiles.email)),
+    listLessonGroups(createDbContext()),
   ]);
+  const studentName = new Map(studentRows.map((student) => [student.id, getUnifiedItemSpaceLabel(student)]));
+  const groups = groupRows
+    .filter((group) => group.memberIds.length >= 2)
+    .map((group) => ({
+      id: group.id,
+      name: group.name,
+      memberNames: group.memberIds.map((id) => studentName.get(id) ?? "학생").sort((a, b) => a.localeCompare(b, "ko-KR")),
+    }));
+  const groupById = new Map(groupRows.map((group) => [group.id, group]));
+  const summaries = mappingRows.flatMap((mapping): (CalendarMappingSummary & { connectionId: string })[] => {
+    const base = {
+      id: mapping.id,
+      connectionId: mapping.connectionId,
+      remoteCalendarId: mapping.remoteCalendarId,
+      remoteCalendarName: mapping.remoteCalendarName,
+      lastSyncedAt: iso(mapping.lastSyncedAt),
+      lastError: mapping.lastError,
+    };
+    if (mapping.groupId) {
+      const group = groupById.get(mapping.groupId);
+      if (!group) return [];
+      return [{
+        ...base,
+        targetKind: "GROUP",
+        studentId: null,
+        groupId: group.id,
+        targetName: group.name,
+        memberNames: group.memberIds.map((id) => studentName.get(id) ?? "학생").sort((a, b) => a.localeCompare(b, "ko-KR")),
+      }];
+    }
+    const name = mapping.studentId ? studentName.get(mapping.studentId) : undefined;
+    if (!mapping.studentId || !name) return [];
+    return [{ ...base, targetKind: "STUDENT", studentId: mapping.studentId, groupId: null, targetName: name, memberNames: [] }];
+  });
+  // 그룹 캘린더를 먼저, 그다음 학생 캘린더를 이름순으로.
+  summaries.sort((a, b) =>
+    (a.targetKind === b.targetKind ? 0 : a.targetKind === "GROUP" ? -1 : 1) || a.targetName.localeCompare(b.targetName, "ko-KR"));
   return {
     availability: { encryptionConfigured: isCalendarEncryptionConfigured(), googleConfigured: isGoogleConfigured() },
     connections: connectionRows.map((connection) => ({
       ...connection,
-      mappings: mappingRows
+      mappings: summaries
         .filter((mapping) => mapping.connectionId === connection.id)
-        .map((mapping) => ({
-          id: mapping.id,
-          studentId: mapping.studentId,
-          studentName: getUnifiedItemSpaceLabel({ displayName: mapping.studentDisplayName, email: mapping.studentEmail }),
-          remoteCalendarId: mapping.remoteCalendarId,
-          remoteCalendarName: mapping.remoteCalendarName,
-          lastSyncedAt: iso(mapping.lastSyncedAt),
-          lastError: mapping.lastError,
-        })),
+        .map(({ connectionId: _connectionId, ...mapping }) => {
+          void _connectionId;
+          return mapping;
+        }),
     })),
     students: studentRows.map((student) => ({ id: student.id, name: getUnifiedItemSpaceLabel(student) })),
+    groups,
   };
 }
 
@@ -334,7 +386,19 @@ export async function disconnectCalendarConnection(
   return { success: "연결을 해제했습니다. 포탈의 레슨·일정은 그대로 남습니다." };
 }
 
-/** form fields: connectionId, studentId, remoteCalendarId. 저장 뒤 첫 전체 동기화를 실행한다. */
+/** form `target` 값: `student:<id>` 또는 `group:<id>`. 예전 form의 `studentId`도 받는다. */
+function readMappingTarget(formData: FormData): { kind: "student" | "group"; id: string } | null {
+  const target = formString(formData, "target");
+  const match = /^(student|group):(.+)$/u.exec(target);
+  if (match) return { kind: match[1] as "student" | "group", id: match[2] };
+  const studentId = formString(formData, "studentId");
+  return studentId ? { kind: "student", id: studentId } : null;
+}
+
+/**
+ * form fields: connectionId, target(`student:<id>`·`group:<id>`) 또는 studentId, remoteCalendarId. 저장 뒤 첫 전체 동기화를 실행한다.
+ * 그룹 캘린더를 정하면 멤버 개인 캘린더의 그룹레슨 사본을 응답 뒤 정리한다.
+ */
 export async function saveCalendarMapping(
   previous: CalendarSyncFormState,
   formData: FormData,
@@ -342,24 +406,30 @@ export async function saveCalendarMapping(
   void previous;
   const session = await requireAdmin();
   const connectionId = formString(formData, "connectionId");
-  const studentId = formString(formData, "studentId");
+  const target = readMappingTarget(formData);
   const remoteCalendarId = formString(formData, "remoteCalendarId");
-  if (!connectionId || !studentId || !remoteCalendarId) return { error: MESSAGES.mappingInput };
-  try {
-    await requireStudentTarget(studentId);
-  } catch {
-    return { error: MESSAGES.studentMissing };
+  if (!connectionId || !target || !remoteCalendarId) return { error: MESSAGES.mappingInput };
+  const db = readDb();
+  if (target.kind === "student") {
+    try {
+      await requireStudentTarget(target.id);
+    } catch {
+      return { error: MESSAGES.studentMissing };
+    }
+  } else {
+    const [group] = await db.select({ id: lessonGroups.id }).from(lessonGroups).where(eq(lessonGroups.id, target.id)).limit(1);
+    if (!group) return { error: MESSAGES.groupMissing };
   }
   const connection = await findOwnedConnection(session.user.id, connectionId);
   if (!connection) return { error: MESSAGES.connectionMissing };
   if (connection.status !== "ACTIVE") return { error: MESSAGES.needsReauth };
 
-  const db = readDb();
   const existing = await db
-    .select({ studentId: calendarMappings.studentId, remoteCalendarId: calendarMappings.remoteCalendarId })
+    .select({ studentId: calendarMappings.studentId, groupId: calendarMappings.groupId, remoteCalendarId: calendarMappings.remoteCalendarId })
     .from(calendarMappings)
     .where(eq(calendarMappings.connectionId, connection.id));
-  if (existing.some((mapping) => mapping.studentId === studentId)) return { error: MESSAGES.studentAlreadyMapped };
+  if (target.kind === "student" && existing.some((mapping) => mapping.studentId === target.id)) return { error: MESSAGES.studentAlreadyMapped };
+  if (target.kind === "group" && existing.some((mapping) => mapping.groupId === target.id)) return { error: MESSAGES.groupAlreadyMapped };
   if (existing.some((mapping) => mapping.remoteCalendarId === remoteCalendarId)) return { error: MESSAGES.calendarAlreadyMapped };
 
   const ctx = createDbContext();
@@ -385,7 +455,8 @@ export async function saveCalendarMapping(
     await db.insert(calendarMappings).values({
       id: mappingId,
       connectionId: connection.id,
-      studentId,
+      studentId: target.kind === "student" ? target.id : null,
+      groupId: target.kind === "group" ? target.id : null,
       remoteCalendarId,
       remoteCalendarName: calendarName,
     });
@@ -396,6 +467,10 @@ export async function saveCalendarMapping(
   const result = await syncCalendarMapping(ctx, mappingId, { force: true }).catch(() => null);
   // Google 매핑은 변경 알림 channel을 등록한다(https 주소일 때만, 실패는 저장 결과에 영향 없음).
   await ensureGoogleWatchChannel(ctx, mappingId).catch(() => undefined);
+  if (target.kind === "group") {
+    // 같은 계정에서는 그룹레슨을 이제 그룹 캘린더가 올린다. 그 계정 멤버 개인 캘린더의 사본을 응답 뒤 지운다(best-effort).
+    await schedulePushStudentsCalendarChanges(await readLessonGroupMemberIds(ctx, target.id)).catch(() => undefined);
+  }
   revalidatePath(SETTINGS_PATH);
   if (!result || result.status === "failed") {
     return { success: `캘린더를 연결했습니다. 첫 동기화는 실패했습니다: ${result?.error ?? CALENDAR_SYNC_MESSAGES.provider}` };
@@ -415,6 +490,10 @@ export async function removeCalendarMapping(mappingId: string): Promise<Calendar
   // 변경 알림 channel을 먼저 중지한다(best-effort). 행은 매핑 삭제 cascade로도 지워진다.
   await stopGoogleWatchChannelsFor(ctx, { mappingId: mapping.id }).catch(() => undefined);
   await readDb().delete(calendarMappings).where(eq(calendarMappings.id, mapping.id));
+  if (mapping.groupId) {
+    // 이 계정의 멤버 개인 캘린더로 그룹레슨이 돌아간다(엔진이 계정별로 판단). 응답 뒤 맞춘다.
+    await schedulePushStudentsCalendarChanges(await readLessonGroupMemberIds(ctx, mapping.groupId)).catch(() => undefined);
+  }
   revalidatePath(SETTINGS_PATH);
   return { success: "캘린더 연결을 해제했습니다. 포탈과 원격 캘린더의 일정은 그대로 남습니다." };
 }
@@ -464,8 +543,14 @@ export async function getStudentCalendarSyncStatus(
     })
     .from(calendarMappings)
     .innerJoin(calendarConnections, eq(calendarConnections.id, calendarMappings.connectionId))
-    .where(eq(calendarMappings.studentId, targetId))
-    .orderBy(asc(calendarConnections.provider));
+    .where(or(
+      eq(calendarMappings.studentId, targetId),
+      inArray(
+        calendarMappings.groupId,
+        readDb().select({ groupId: lessonGroupMembers.groupId }).from(lessonGroupMembers).where(eq(lessonGroupMembers.studentId, targetId)),
+      ),
+    ))
+    .orderBy(asc(calendarConnections.provider), asc(calendarMappings.id));
   return {
     mappings: rows.map((row) => ({
       provider: row.provider,

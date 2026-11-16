@@ -21,7 +21,7 @@ export function CalendarSyncSettings({
   overview: CalendarSyncOverview;
   result: GoogleOAuthResult | null;
 }) {
-  const { availability, connections, students } = overview;
+  const { availability, connections, students, groups } = overview;
   const encryptionNoticeId = useId();
   const googleNoticeId = useId();
   const [banner, setBanner] = useState(result);
@@ -117,7 +117,7 @@ export function CalendarSyncSettings({
               <ConnectionCard
                 key={connection.id}
                 connection={connection}
-                students={students}
+                targets={{ students, groups }}
                 googleReconnectEnabled={googleEnabled}
               />
             ))}

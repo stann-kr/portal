@@ -15,7 +15,7 @@ import {
 import { formatKst } from "@/lib/kst-format";
 import { cn } from "@/lib/utils";
 import { FeedbackMessages, feedbackDescribedBy } from "./FeedbackMessages";
-import { MappingForm } from "./MappingForm";
+import { MappingForm, type MappingTargetOptions } from "./MappingForm";
 import { ACTION_BUTTON_CLASS, CALENDAR_SYNC_MESSAGES, GOOGLE_CONNECT_HREF, NOTICE_CLASS, PROVIDER_LABEL } from "./calendar-sync-ui";
 
 type Feedback = { tone: "error" | "success"; text: string } | null;
@@ -25,14 +25,14 @@ function toFeedback(result: CalendarSyncFormState): Feedback {
   return result.success ? { tone: "success", text: result.success } : null;
 }
 
-/** 연결 계정 한 개: 상태·오류, 학생 캘린더 매핑 목록·추가, 연결 해제. */
+/** 연결 계정 한 개: 상태·오류, 학생·그룹 캘린더 매핑 목록·추가, 연결 해제. */
 export function ConnectionCard({
   connection,
-  students,
+  targets,
   googleReconnectEnabled,
 }: {
   connection: CalendarConnectionSummary;
-  students: { id: string; name: string }[];
+  targets: MappingTargetOptions;
   googleReconnectEnabled: boolean;
 }) {
   const router = useRouter();
@@ -45,7 +45,14 @@ export function ConnectionCard({
   const removeConfirm = useConfirmAction<string>();
   const needsReauth = connection.status === "NEEDS_REAUTH";
   const providerLabel = PROVIDER_LABEL[connection.provider];
-  const mappedStudentIds = new Set(connection.mappings.map((mapping) => mapping.studentId));
+  const mappedStudentIds = new Set(connection.mappings.flatMap((mapping) => (mapping.studentId ? [mapping.studentId] : [])));
+  const mappedGroupIds = new Set(connection.mappings.flatMap((mapping) => (mapping.groupId ? [mapping.groupId] : [])));
+  const availableTargets: MappingTargetOptions = {
+    students: targets.students.filter((student) => !mappedStudentIds.has(student.id)),
+    groups: targets.groups.filter((group) => !mappedGroupIds.has(group.id)),
+  };
+  const allTargetsMapped =
+    targets.students.length > 0 && availableTargets.students.length === 0 && availableTargets.groups.length === 0;
 
   function run(key: string, action: () => Promise<CalendarSyncFormState>) {
     setPendingAction(key);
@@ -96,11 +103,11 @@ export function ConnectionCard({
       ) : null}
 
       <div className="flex flex-col gap-2">
-        <h4 className="text-ui font-semibold text-secondary-foreground">학생 캘린더</h4>
+        <h4 className="text-ui font-semibold text-secondary-foreground">학생·그룹 캘린더</h4>
         {connection.mappings.length === 0 ? (
-          <p className="text-ui text-muted-foreground">아직 동기화할 학생 캘린더를 정하지 않았습니다.</p>
+          <p className="text-ui text-muted-foreground">아직 동기화할 학생·그룹 캘린더를 정하지 않았습니다.</p>
         ) : (
-          <ul className="flex flex-col border-t border-border" aria-label={`${connection.accountLabel} 학생 캘린더 매핑`}>
+          <ul className="flex flex-col border-t border-border" aria-label={`${connection.accountLabel} 학생·그룹 캘린더 매핑`}>
             {connection.mappings.map((mapping) => (
               <MappingRow
                 key={mapping.id}
@@ -121,8 +128,8 @@ export function ConnectionCard({
       {needsReauth ? null : (
         <MappingForm
           connectionId={connection.id}
-          students={students.filter((student) => !mappedStudentIds.has(student.id))}
-          allStudentsMapped={students.length > 0 && students.every((student) => mappedStudentIds.has(student.id))}
+          targets={availableTargets}
+          allTargetsMapped={allTargetsMapped}
         />
       )}
 
@@ -181,17 +188,20 @@ function MappingRow({
 }) {
   const confirming = confirm.value === mapping.id;
   const lastSynced = mapping.lastSyncedAt ? formatKst(mapping.lastSyncedAt, undefined, "") : "";
+  const isGroup = mapping.targetKind === "GROUP";
+  const label = isGroup ? `그룹 · ${mapping.targetName}` : mapping.targetName;
+  const syncText = lastSynced ? `마지막 동기화 ${lastSynced}` : "아직 동기화 전";
 
   return (
     <li className="flex flex-col gap-2 border-b border-muted py-3 md:flex-row md:flex-wrap md:items-center md:gap-4">
       <div className="flex min-w-0 flex-col gap-0.5 md:flex-[1_1_320px]">
         <p className="text-body text-foreground md:text-ui">
-          <span className="font-medium">{mapping.studentName}</span>
+          <span className="font-medium">{label}</span>
           <span className="text-muted-foreground"> · </span>
           <span className="break-all">{mapping.remoteCalendarName}</span>
         </p>
         <p className="text-ui text-muted-foreground md:text-xs">
-          {lastSynced ? `마지막 동기화 ${lastSynced}` : "아직 동기화 전"}
+          {isGroup ? `${mapping.memberNames.join("·")} · 그룹레슨만 · ${syncText}` : syncText}
         </p>
         {mapping.lastError ? (
           <p className="text-ui text-destructive md:text-xs">동기화 오류: {mapping.lastError}</p>
@@ -206,7 +216,7 @@ function MappingRow({
             pending={syncing}
             disabled={busy}
             aria-describedby={feedbackDescribedBy(statusId)}
-            aria-label={`${mapping.studentName} 지금 동기화`}
+            aria-label={`${label} 지금 동기화`}
             onClick={onSync}
           >
             {syncing ? "동기화 중" : "지금 동기화"}
@@ -217,7 +227,7 @@ function MappingRow({
             className={cn(ACTION_BUTTON_CLASS, "flex-auto md:flex-none")}
             disabled={busy}
             aria-expanded={false}
-            aria-label={`${mapping.studentName} 매핑 해제`}
+            aria-label={`${label} 매핑 해제`}
             onClick={(event) => confirm.request(event.currentTarget, mapping.id)}
           >
             매핑 해제
@@ -227,7 +237,11 @@ function MappingRow({
       {confirming ? (
         <ConfirmPanel
           confirm={confirm}
-          message={`${mapping.studentName} 학생의 동기화를 멈춥니다. 포탈 레슨·일정과 원격 캘린더 일정은 남습니다.`}
+          message={
+            isGroup
+              ? `${mapping.targetName} 그룹의 이 캘린더 동기화를 멈춥니다. 포탈 레슨·일정과 이 캘린더의 일정은 남고, 그룹레슨은 이 계정의 멤버 개인 캘린더로 다시 올라갑니다.`
+              : `${mapping.targetName} 학생의 동기화를 멈춥니다. 포탈 레슨·일정과 원격 캘린더 일정은 남습니다.`
+          }
           confirmLabel="매핑 해제 확인"
           pendingLabel="해제 중"
           pending={removing}

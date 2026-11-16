@@ -21,28 +21,35 @@ type CalendarList =
 
 const READ_ONLY_SUFFIX = " (읽기 전용이라 선택할 수 없음)";
 
+export type MappingTargetOptions = {
+  students: { id: string; name: string }[];
+  groups: { id: string; name: string; memberNames: string[] }[];
+};
+
 /**
- * 연결 계정의 원격 캘린더 하나를 학생 한 명에게 정한다. 캘린더 목록은 관리자가 요청할 때만 불러온다.
+ * 연결 계정의 원격 캘린더 하나를 학생 한 명 또는 레슨 그룹 하나에 정한다(그룹은 2026-11-16 사용자 결정).
+ * 캘린더 목록은 관리자가 요청할 때만 불러온다.
  * 입력값은 컴포넌트 state가 가지고, 제출은 form 자동 초기화 없이 action만 부르므로 오류 뒤에도 고른 값이 남는다.
  */
 export function MappingForm({
   connectionId,
-  students,
-  allStudentsMapped,
+  targets,
+  allTargetsMapped,
 }: {
   connectionId: string;
-  students: { id: string; name: string }[];
-  allStudentsMapped: boolean;
+  /** 이 계정에 아직 캘린더가 없는 대상만. */
+  targets: MappingTargetOptions;
+  allTargetsMapped: boolean;
 }) {
   const router = useRouter();
   const baseId = useId();
   const headingId = `${baseId}-heading`;
-  const studentFieldId = `${baseId}-student`;
+  const targetFieldId = `${baseId}-target`;
   const calendarFieldId = `${baseId}-calendar`;
   const calendarHelpId = `${baseId}-calendar-help`;
   const resultId = `${baseId}-result`;
 
-  const [studentId, setStudentId] = useState("");
+  const [target, setTarget] = useState("");
   const [remoteCalendarId, setRemoteCalendarId] = useState("");
   const [list, setList] = useState<CalendarList>({ phase: "idle" });
   const [, startSubmit] = useTransition();
@@ -51,7 +58,7 @@ export function MappingForm({
       try {
         const result = await saveCalendarMapping(previous, data);
         if (result.success) {
-          setStudentId("");
+          setTarget("");
           setRemoteCalendarId("");
         }
         return result;
@@ -91,19 +98,21 @@ export function MappingForm({
     startSubmit(() => formAction(data));
   }
 
-  if (students.length === 0) {
+  const { students, groups } = targets;
+  if (students.length === 0 && groups.length === 0) {
     return (
       <p className="text-ui text-muted-foreground">
-        {allStudentsMapped
-          ? "모든 학생에게 이 계정의 캘린더를 정했습니다."
+        {allTargetsMapped
+          ? "모든 학생과 그룹에 이 계정의 캘린더를 정했습니다."
           : "캘린더를 정할 학생이 없습니다. 수강생을 먼저 추가해 주세요."}
       </p>
     );
   }
+  const groupSelected = target.startsWith("group:");
 
   const writableCount = list.phase === "ready" ? list.calendars.filter((calendar) => !calendar.readOnly).length : 0;
   const hasReadOnly = list.phase === "ready" && list.calendars.some((calendar) => calendar.readOnly);
-  const canSubmit = list.phase === "ready" && Boolean(studentId) && Boolean(remoteCalendarId) && !pending;
+  const canSubmit = list.phase === "ready" && Boolean(target) && Boolean(remoteCalendarId) && !pending;
   const calendarHelp =
     list.phase === "idle"
       ? "이 계정의 캘린더 목록을 불러온 뒤 고를 수 있습니다."
@@ -115,28 +124,43 @@ export function MappingForm({
             ? "쓰기 권한이 있는 캘린더가 없습니다. 원격 캘린더에서 편집 권한을 준 뒤 다시 불러와 주세요."
             : hasReadOnly
               ? "읽기 전용 캘린더는 포탈 일정을 쓸 수 없어 고를 수 없습니다."
-              : "고른 캘린더와 이 학생의 포탈 레슨·일정을 양쪽으로 맞춥니다.";
+              : groupSelected
+                ? "멤버 모두 같은 시각인 그룹레슨을 일정 하나로 올리고, 이 캘린더에서 새로 만든 일정은 멤버 모두의 포탈 일정으로 가져옵니다. 그룹레슨은 이제 이 계정의 멤버 개인 캘린더에는 올라가지 않습니다(다른 계정의 개인 캘린더에는 그대로 올라갑니다)."
+                : "고른 캘린더와 이 학생의 포탈 레슨·일정을 양쪽으로 맞춥니다.";
 
   return (
     <form onSubmit={submit} aria-labelledby={headingId} className="flex flex-col gap-3 border-t border-border pt-4">
-      <h4 id={headingId} className="text-ui font-semibold text-secondary-foreground">학생 캘린더 추가</h4>
+      <h4 id={headingId} className="text-ui font-semibold text-secondary-foreground">학생·그룹 캘린더 추가</h4>
       <input type="hidden" name="connectionId" value={connectionId} />
       <div className="flex min-w-0 flex-col gap-3 md:flex-row md:items-end">
         <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-          <label htmlFor={studentFieldId} className={FIELD_LABEL_CLASS}>학생</label>
+          <label htmlFor={targetFieldId} className={FIELD_LABEL_CLASS}>대상</label>
           <select
-            id={studentFieldId}
-            name="studentId"
+            id={targetFieldId}
+            name="target"
             required
             disabled={pending}
-            value={studentId}
-            onChange={(event) => setStudentId(event.target.value)}
+            value={target}
+            onChange={(event) => setTarget(event.target.value)}
             className={SELECT_CLASS}
           >
-            <option value="">학생 선택</option>
-            {students.map((student) => (
-              <option key={student.id} value={student.id}>{student.name}</option>
-            ))}
+            <option value="">학생·그룹 선택</option>
+            {groups.length > 0 ? (
+              <optgroup label="그룹">
+                {groups.map((group) => (
+                  <option key={group.id} value={`group:${group.id}`}>
+                    {`그룹 · ${group.name} (${group.memberNames.join("·")})`}
+                  </option>
+                ))}
+              </optgroup>
+            ) : null}
+            {students.length > 0 ? (
+              <optgroup label="학생">
+                {students.map((student) => (
+                  <option key={student.id} value={`student:${student.id}`}>{student.name}</option>
+                ))}
+              </optgroup>
+            ) : null}
           </select>
         </div>
         <div className="flex min-w-0 flex-1 flex-col gap-1.5">

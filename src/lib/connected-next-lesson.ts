@@ -1,9 +1,10 @@
 /**
  * 학생에게 연결한 바깥 캘린더의 가장 가까운 일정을 학생별로 찾는다. 연결된 일정은 모두 레슨으로 센다(2026-11-03 사용자 결정).
  * - 관리자 양방향 동기화: 매핑에 연결된 학생 일정(calendar_events)과 원격 반복 일정 사본(calendar_remote_series)
+ * - 그룹 캘린더: 그룹 일정 원본에 연결된 멤버 사본(calendar_events.group_event_id)과 그룹 캘린더의 반복 일정 사본
  * - 학생 공개 iCal 구독: 저장하지 않으므로 그때 읽는다(실패하면 건너뛴다)
  */
-import { and, asc, eq, gte, lt, min, ne } from "drizzle-orm";
+import { and, asc, eq, gte, isNotNull, lt, min, ne } from "drizzle-orm";
 import type { DrizzleDb } from "@/db/client";
 import {
   calendarConnections,
@@ -12,6 +13,7 @@ import {
   calendarRemoteSeries,
   calendarSyncLinks,
   externalCalendarSubscriptions,
+  lessonGroupMembers,
 } from "@/db/schema";
 import { DELETED_FINGERPRINT } from "@/lib/calendar-sync/engine";
 import { loadRemoteSeriesItems } from "@/lib/calendar-sync/remote-series-items";
@@ -45,7 +47,7 @@ export async function queryConnectedNextEvents(
   fetchSubscribedItems: FetchSubscribedItems,
 ): Promise<Map<string, Date>> {
   const windowEnd = new Date(referenceTime.getTime() + CONNECTED_NEXT_LESSON_WINDOW_DAYS * 86_400_000);
-  const [syncedRows, seriesStudentRows, subscriptionRows] = await Promise.all([
+  const [syncedRows, groupCopyRows, seriesStudentRows, groupSeriesMemberRows, subscriptionRows] = await Promise.all([
     db
       .select({ studentId: calendarMappings.studentId, startTime: min(calendarEvents.startTime) })
       .from(calendarSyncLinks)
@@ -62,18 +64,41 @@ export async function queryConnectedNextEvents(
       ))
       .groupBy(calendarMappings.studentId),
     db
+      .select({ studentId: calendarEvents.userId, startTime: min(calendarEvents.startTime) })
+      .from(calendarEvents)
+      .innerJoin(
+        calendarSyncLinks,
+        and(eq(calendarSyncLinks.localId, calendarEvents.groupEventId), eq(calendarSyncLinks.localKind, "EVENT")),
+      )
+      .innerJoin(calendarMappings, and(eq(calendarMappings.id, calendarSyncLinks.mappingId), isNotNull(calendarMappings.groupId)))
+      .where(and(
+        ne(calendarSyncLinks.localFingerprint, DELETED_FINGERPRINT),
+        gte(calendarEvents.startTime, referenceTime),
+        lt(calendarEvents.startTime, windowEnd),
+      ))
+      .groupBy(calendarEvents.userId),
+    db
       .selectDistinct({ studentId: calendarMappings.studentId })
       .from(calendarRemoteSeries)
       .innerJoin(calendarMappings, eq(calendarMappings.id, calendarRemoteSeries.mappingId)),
+    db
+      .selectDistinct({ studentId: lessonGroupMembers.studentId })
+      .from(calendarRemoteSeries)
+      .innerJoin(calendarMappings, eq(calendarMappings.id, calendarRemoteSeries.mappingId))
+      .innerJoin(lessonGroupMembers, eq(lessonGroupMembers.groupId, calendarMappings.groupId)),
     db.selectDistinct({ studentId: externalCalendarSubscriptions.studentId }).from(externalCalendarSubscriptions),
   ]);
 
   const earliest = new Map<string, Date>();
-  for (const row of syncedRows) keepEarliest(earliest, row.studentId, row.startTime);
+  for (const row of [...syncedRows, ...groupCopyRows]) {
+    if (row.studentId) keepEarliest(earliest, row.studentId, row.startTime);
+  }
+  const seriesStudentIds = new Set<string>();
+  for (const row of [...seriesStudentRows, ...groupSeriesMemberRows]) if (row.studentId) seriesStudentIds.add(row.studentId);
 
   const window = { start: referenceTime, end: windowEnd };
   const [seriesResults, subscribedResults] = await Promise.all([
-    Promise.all(seriesStudentRows.map(async ({ studentId }) => {
+    Promise.all([...seriesStudentIds].map(async (studentId) => {
       try {
         return { studentId, items: await loadRemoteSeriesItems(db, { studentId, spaceLabel: "", window }) };
       } catch {
@@ -112,7 +137,7 @@ export async function queryConnectedLessonsForStudent(
   fetchSubscribedItems: FetchSubscribedItems,
 ): Promise<ConnectedLesson[]> {
   const windowEnd = new Date(referenceTime.getTime() + CONNECTED_NEXT_LESSON_WINDOW_DAYS * 86_400_000);
-  const [syncedRows, subscriptionRows] = await Promise.all([
+  const [syncedRows, groupCopyRows, subscriptionRows] = await Promise.all([
     db
       .select({
         id: calendarEvents.id,
@@ -135,6 +160,27 @@ export async function queryConnectedLessonsForStudent(
         lt(calendarEvents.startTime, windowEnd),
       ))
       .orderBy(asc(calendarEvents.startTime)),
+    db
+      .select({
+        id: calendarEvents.id,
+        title: calendarEvents.title,
+        startTime: calendarEvents.startTime,
+        provider: calendarConnections.provider,
+      })
+      .from(calendarEvents)
+      .innerJoin(
+        calendarSyncLinks,
+        and(eq(calendarSyncLinks.localId, calendarEvents.groupEventId), eq(calendarSyncLinks.localKind, "EVENT")),
+      )
+      .innerJoin(calendarMappings, and(eq(calendarMappings.id, calendarSyncLinks.mappingId), isNotNull(calendarMappings.groupId)))
+      .innerJoin(calendarConnections, eq(calendarConnections.id, calendarMappings.connectionId))
+      .where(and(
+        eq(calendarEvents.userId, studentId),
+        ne(calendarSyncLinks.localFingerprint, DELETED_FINGERPRINT),
+        gte(calendarEvents.startTime, referenceTime),
+        lt(calendarEvents.startTime, windowEnd),
+      ))
+      .orderBy(asc(calendarEvents.startTime), asc(calendarConnections.provider)),
     db
       .select({ id: externalCalendarSubscriptions.id })
       .from(externalCalendarSubscriptions)
@@ -161,7 +207,8 @@ export async function queryConnectedLessonsForStudent(
     seen.add(lesson.id);
     lessons.push(lesson);
   };
-  for (const row of syncedRows) {
+  // 그룹 일정이 Google·iCloud 그룹 캘린더 둘 다에 있으면 사본 하나로 한 번만 센다(seen).
+  for (const row of [...syncedRows, ...groupCopyRows]) {
     add({ id: `event:${row.id}`, title: row.title, scheduledAt: row.startTime, sourceLabel: PROVIDER_LABEL[row.provider] });
   }
   for (const item of [...seriesItems, ...subscribedItems]) {

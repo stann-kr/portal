@@ -33,6 +33,7 @@ test("통합 일정 store는 source query와 최종 결과 모두에 기간·개
       start_time INTEGER NOT NULL,
       end_time INTEGER,
       description TEXT,
+      group_event_id TEXT,
       created_at INTEGER
     );
     CREATE TABLE lessons (

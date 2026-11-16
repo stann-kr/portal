@@ -3,9 +3,16 @@
  * 여기 함수는 권한을 검사하지 않는다(호출하는 action이 먼저 검증한다).
  */
 import { runAfterResponse } from "@/lib/after-response";
-import { createDbContext, type DbContext } from "@/db/client";
-import { listActiveMappingIdsForStudent, syncCalendarMapping, type RunOptions } from "./mapping-sync";
-import { ensureGoogleWatchChannelsForStudent } from "./push-channels";
+import { createDbContext, type DbContext, type DrizzleDb } from "@/db/client";
+import {
+  listActiveMappingIdsForStudent,
+  listGroupPeerMappingIdsForStudent,
+  syncCalendarMapping,
+  type RunOptions,
+} from "./mapping-sync";
+import { calendarMappings } from "@/db/schema";
+import { eq } from "drizzle-orm";
+import { ensureGoogleWatchChannel, ensureGoogleWatchChannelsForStudent, stopGoogleWatchChannelsFor } from "./push-channels";
 
 export { listActiveMappingIdsForStudent, syncCalendarMapping } from "./mapping-sync";
 
@@ -36,15 +43,23 @@ export async function syncStudentCalendarMappings(ctx: DbContext, studentId: str
 export async function pushStudentCalendarChanges(studentId: string, options: { ctx?: DbContext; budgetMs?: number } = {}): Promise<void> {
   try {
     const ctx = options.ctx ?? createDbContext();
-    const mappingIds = await listActiveMappingIdsForStudent(ctx, studentId);
-    if (mappingIds.length === 0) return;
-    const deadline = Date.now() + (options.budgetMs ?? CALENDAR_SYNC_WRITE_HOOK_BUDGET_MS);
-    for (const mappingId of mappingIds) {
-      if (Date.now() >= deadline) return;
-      await syncCalendarMapping(ctx, mappingId, { mode: "push", deadline }).catch(() => undefined);
-    }
+    const budget = options.budgetMs ?? CALENDAR_SYNC_WRITE_HOOK_BUDGET_MS;
+    // 본인 학생·그룹 캘린더.
+    const own = await listActiveMappingIdsForStudent(ctx, studentId);
+    await pushMappings(ctx, own, Date.now() + budget);
+    // 그룹 캘린더가 있으면 다른 멤버의 개인 캘린더도(그룹레슨 여부가 바뀌었을 수 있다). 본인 push가 예산을 다 써도
+    // 밀리지 않게 시간 상한을 따로 둔다.
+    const peers = (await listGroupPeerMappingIdsForStudent(ctx, studentId)).filter((id) => !own.includes(id));
+    await pushMappings(ctx, peers, Date.now() + budget);
   } catch {
     // 로컬 쓰기는 이미 끝났다. 놓친 변경은 다음 동기화가 fingerprint 차이로 보낸다.
+  }
+}
+
+async function pushMappings(ctx: DbContext, mappingIds: readonly string[], deadline: number): Promise<void> {
+  for (const mappingId of mappingIds) {
+    if (Date.now() >= deadline) return;
+    await syncCalendarMapping(ctx, mappingId, { mode: "push", deadline }).catch(() => undefined);
   }
 }
 
@@ -54,6 +69,35 @@ export async function pushStudentCalendarChanges(studentId: string, options: { c
  */
 export async function schedulePushStudentCalendarChanges(studentId: string): Promise<void> {
   await runAfterResponse(() => pushStudentCalendarChanges(studentId));
+}
+
+/**
+ * 그룹 멤버가 바뀌었거나 그룹을 해제한 뒤(응답 뒤 best-effort): 관련 학생의 학생·그룹 캘린더를 push해 그룹레슨이
+ * 그룹 캘린더와 개인 캘린더 중 맞는 쪽에만 있게 한다(2026-11-16 사용자 결정). 학생마다 시간 상한을 따로 쓴다.
+ */
+export async function schedulePushStudentsCalendarChanges(studentIds: readonly string[]): Promise<void> {
+  const unique = [...new Set(studentIds)];
+  if (unique.length === 0) return;
+  await runAfterResponse(async () => {
+    for (const studentId of unique) await pushStudentCalendarChanges(studentId);
+  });
+}
+
+/** 그룹 해제 전에 그 그룹 캘린더들의 Google 변경 알림 channel을 멈춘다(best-effort, 매핑은 그룹 삭제 cascade로 지워진다). */
+export async function stopGroupCalendarChannels(groupId: string, ctx?: DbContext): Promise<void> {
+  await stopGoogleWatchChannelsFor(ctx ?? createDbContext(), { groupId }).catch(() => undefined);
+}
+
+/** 그룹 해제가 거부되면(그룹 노트 남음 등) 미리 멈춘 그룹 캘린더 channel을 다시 등록한다(best-effort). */
+export async function restoreGroupCalendarChannels(groupId: string, ctx?: DbContext): Promise<void> {
+  try {
+    const context = ctx ?? createDbContext();
+    const db = context.db as unknown as DrizzleDb;
+    const rows = await db.select({ id: calendarMappings.id }).from(calendarMappings).where(eq(calendarMappings.groupId, groupId));
+    for (const row of rows) await ensureGoogleWatchChannel(context, row.id).catch(() => undefined);
+  } catch {
+    // 다시 등록하지 못하면 다음 조회·예약 동기화가 channel을 갱신한다.
+  }
 }
 
 /**

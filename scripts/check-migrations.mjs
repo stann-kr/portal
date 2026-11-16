@@ -56,6 +56,7 @@ import { validateAssignmentReviewedAtUpgrade } from "./migration-check/assignmen
 import { validateGuideAccessUpgrade } from "./migration-check/guide-access.mjs";
 import { validateLessonGroupsUpgrade } from "./migration-check/lesson-groups.mjs";
 import { validateGroupNoteRetentionUpgrade } from "./migration-check/group-note-retention.mjs";
+import { validateGroupCalendarUpgrade } from "./migration-check/group-calendar.mjs";
 import { validateListQueryIndexesUpgrade } from "./migration-check/list-query-indexes.mjs";
 import {
   validateAccountPrivacyAtomicSource,
@@ -206,6 +207,8 @@ async function main() {
   console.log("PASS populated 0028 → 0029 lesson group tables, nullable note group_id, constraints and cascades");
   await validateGroupNoteRetentionUpgrade(migrationFiles);
   console.log("PASS populated 0029 → 0030 tombstone group_id, group note image owner handoff only while the uploader account is ERASING");
+  await validateGroupCalendarUpgrade(migrationFiles);
+  console.log("PASS populated 0030 → 0031 group calendar mapping rebuild keeps sync links/series/channels, target CHECK, group unique and cascades");
 }
 
 try {

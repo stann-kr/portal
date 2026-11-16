@@ -231,6 +231,7 @@ export async function saveLessonGroup(
       },
     );
   }
+  if (input.groupId && now !== null) statements.push(...groupEventCopyStatements(groupId, memberIds, membershipRows, now));
   try {
     await executeDocumentStatementsAtomically(context, statements);
   } catch (error) {
@@ -263,6 +264,42 @@ export async function deleteLessonGroup(context: DbContext, groupId: string): Pr
     throw error;
   }
   return { ok: true };
+}
+
+/**
+ * 그룹 캘린더에서 가져온 그룹 일정 사본을 멤버 변경에 맞춘다(그룹 캘린더, 2026-11-16).
+ * - 빠진 멤버의 사본은 원본과의 연결만 끊어 개인 일정으로 남긴다(그룹 해제와 같은 규칙).
+ * - 새 멤버에게는 아직 시작하지 않은 그룹 일정의 사본을 만든다. 원래 멤버가 지운 사본은 다시 만들지 않는다.
+ */
+function groupEventCopyStatements(
+  groupId: string,
+  memberIds: readonly string[],
+  membershipRows: readonly { studentId: string; groupId: string }[],
+  now: number,
+): DocumentAtomicStatement[] {
+  const existing = new Set(membershipRows.filter((row) => row.groupId === groupId).map((row) => row.studentId));
+  const added = memberIds.filter((id) => !existing.has(id));
+  const statements: DocumentAtomicStatement[] = [{
+    query: `
+      UPDATE calendar_events SET group_event_id = NULL
+      WHERE group_event_id IN (SELECT id FROM calendar_group_events WHERE group_id = ?)
+        AND user_id NOT IN (SELECT student_id FROM lesson_group_members WHERE group_id = ?)
+    `,
+    params: [groupId, groupId],
+  }];
+  for (const studentId of added) {
+    statements.push({
+      query: `
+        INSERT INTO calendar_events (id, user_id, event_type, title, start_time, end_time, description, group_event_id, created_at)
+        SELECT lower(hex(randomblob(16))), ?, 'NOTE', source.title, source.start_time, source.end_time, source.description, source.id, ?
+        FROM calendar_group_events AS source
+        WHERE source.group_id = ? AND source.start_time >= ?
+          AND NOT EXISTS (SELECT 1 FROM calendar_events AS copy WHERE copy.group_event_id = source.id AND copy.user_id = ?)
+      `,
+      params: [studentId, now, groupId, now, studentId],
+    });
+  }
+  return statements;
 }
 
 function isConditionalAbort(error: unknown): boolean {

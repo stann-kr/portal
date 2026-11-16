@@ -3,9 +3,9 @@
  * 같은 series_key의 VEVENT(master·예외)를 한 VCALENDAR로 합쳐 parseExternalCalendarItems에 넘긴다.
  */
 import ICAL from "ical.js";
-import { asc, eq } from "drizzle-orm";
+import { asc, eq, inArray, or } from "drizzle-orm";
 import type { DrizzleDb } from "@/db/client";
-import { calendarConnections, calendarMappings, calendarRemoteSeries } from "@/db/schema";
+import { calendarConnections, calendarMappings, calendarRemoteSeries, lessonGroupMembers } from "@/db/schema";
 import { parseExternalCalendarItems } from "@/lib/external-calendar";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 
@@ -28,7 +28,10 @@ export function mergeSeriesIcs(parts: string[]): string {
   return calendar.toString();
 }
 
-/** 학생 매핑의 원격 반복 일정을 window 안 회차로 펼친다. 망가진 사본 하나는 건너뛴다. */
+/**
+ * 학생 캘린더와 학생이 속한 그룹의 그룹 캘린더에 있는 원격 반복 일정을 window 안 회차로 펼친다(그룹 캘린더의 반복 일정은
+ * 멤버 모두에게 보인다). 망가진 사본 하나는 건너뛴다.
+ */
 export async function loadRemoteSeriesItems(
   db: DrizzleDb,
   input: { studentId: string; spaceLabel: string; window: { start: Date; end: Date } },
@@ -43,7 +46,13 @@ export async function loadRemoteSeriesItems(
     .from(calendarRemoteSeries)
     .innerJoin(calendarMappings, eq(calendarMappings.id, calendarRemoteSeries.mappingId))
     .innerJoin(calendarConnections, eq(calendarConnections.id, calendarMappings.connectionId))
-    .where(eq(calendarMappings.studentId, input.studentId))
+    .where(or(
+      eq(calendarMappings.studentId, input.studentId),
+      inArray(
+        calendarMappings.groupId,
+        db.select({ groupId: lessonGroupMembers.groupId }).from(lessonGroupMembers).where(eq(lessonGroupMembers.studentId, input.studentId)),
+      ),
+    ))
     .orderBy(asc(calendarRemoteSeries.mappingId), asc(calendarRemoteSeries.seriesKey));
   const groups = new Map<string, { mappingId: string; provider: (typeof rows)[number]["provider"]; parts: string[] }>();
   for (const row of rows) {

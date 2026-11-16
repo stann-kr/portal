@@ -32,7 +32,7 @@
 
 | 항목 | 저장소에서 확인할 수 있는 것 | 운영 적용을 확인하는 증거 |
 |---|---|---|
-| D1 migration | SQL·journal·snapshot `0000~0030`, 메모리 DB에서 체인·schema 검증 | 대상 D1의 적용 목록과 실제 schema·FK, 그 목록에서 계산한 pending 범위 |
+| D1 migration | SQL·journal·snapshot `0000~0031`, 메모리 DB에서 체인·schema 검증 | 대상 D1의 적용 목록과 실제 schema·FK, 그 목록에서 계산한 pending 범위 |
 | 계정 삭제 | `0012`와 삭제·정리 구현, application 설정의 `ACCOUNT_DELETION_ENABLED="false"` 기본값 | 활성 Worker의 유효 flag, 기기 adoption, 승인된 삭제·정리 smoke |
 | 예약 정리 | `worker.ts`의 `scheduled` handler, Workers Logs 설정, source에 없는 Cron trigger | 원격 trigger 주기, 대상 version의 실제 scheduled invocation, backlog·실패·alert 증거 |
 | 외부 캘린더 | `0013` 구독 테이블과 `EXTERNAL_CALENDAR_ENCRYPTION_KEY` 요구 조건 | 대상 schema, secret 설정 확인, 승인된 연결·읽기·교체·해제 smoke |
@@ -156,6 +156,13 @@ iCloud 연동:
 2. 순서를 바꾸면 안 된다. 새 코드가 표 없이 나가면 노트 목록·학생 목록·일정 조회가 오류가 된다.
 3. 적용 뒤 `SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 2`와 `PRAGMA table_info(private_notes)`·`PRAGMA table_info(document_tombstones)`로 `group_id`를 확인한다(read-only).
 4. 되돌리기: 이전 코드로 되돌려도 새 표·칸은 남겨 두면 된다. 그룹 노트가 있으면 이전 코드에서는 그 노트가 만든 사람의 개인 노트처럼 보이므로, 되돌리기 전에 그룹 노트를 휴지통으로 옮기거나 그대로 둘지 정한다.
+
+### 그룹 캘린더 전환 gate (2026-11-16)
+
+1. 원격 D1에 `0031_group_calendar`를 **코드보다 먼저** 적용한다(Time Travel bookmark 먼저, `0029`·`0030` 적용 뒤). `calendar_mappings`를 다시 만들며(`student_id` nullable, `group_id` 추가) 자식 표 세 개(`calendar_sync_links`·`calendar_remote_series`·`calendar_push_channels`)를 백업 표로 옮겼다가 되돌리고, `calendar_group_events` 표와 `calendar_events.group_event_id`를 더한다. 기존 행 값은 바뀌지 않는다. 이전 코드는 새 칸을 읽지 않으므로 먼저 적용해도 동작이 같다.
+2. 적용 중 다른 동기화가 매핑을 쓰지 않게, 예약 동기화와 알림이 몰리는 시간을 피한다(재생성은 한 batch이고 lease 칸도 옮겨진다).
+3. 적용 뒤 read-only로 `PRAGMA table_info(calendar_mappings)`(group_id), `SELECT COUNT(*) FROM calendar_sync_links`·`calendar_remote_series`·`calendar_push_channels`가 적용 전과 같은지, `PRAGMA foreign_key_check`가 비었는지, `__calendar_%_backup` 표가 없는지 본다.
+4. 되돌리기: 이전 코드로 되돌리기 전에 그룹 캘린더 매핑을 모두 해제한다(이전 코드는 `student_id`가 빈 매핑을 다루지 못한다). 표·칸은 남겨 두면 된다.
 
 ### 가입 링크 메일 gate
 

@@ -5,11 +5,15 @@ import type { AuthSession } from "@/lib/auth-guard";
 import {
   calendarConnections,
   calendarEvents,
+  calendarGroupEvents,
   calendarMappings,
   calendarPushChannels,
   calendarRemoteSeries,
   calendarSyncLinks,
+  lessonGroupMembers,
+  lessonGroups,
   lessons,
+  privateNotes,
   profiles,
 } from "@/db/schema";
 import { createIsolatedPortalD1, type IsolatedPortalD1 } from "@/test/isolated-d1";
@@ -27,6 +31,7 @@ let activeSession = createSession("student-1", "student");
 let syncActions: typeof import("@/lib/actions/calendarSync");
 let lessonActions: typeof import("@/lib/actions/lessons");
 let calendarEventActions: typeof import("@/lib/actions/calendarEvents");
+let lessonGroupActions: typeof import("@/lib/actions/lessonGroups");
 let clientFactory: typeof import("@/lib/calendar-sync/client-factory");
 let googleConnection: typeof import("@/lib/calendar-sync/google-connection");
 let connectionStore: typeof import("@/lib/calendar-sync/connection-store");
@@ -73,6 +78,7 @@ before(async () => {
     import("@/lib/calendar-sync/google-connection"),
   ]);
   connectionStore = await import("@/lib/calendar-sync/connection-store");
+  lessonGroupActions = await import("@/lib/actions/lessonGroups");
 });
 
 after(() => {
@@ -178,7 +184,7 @@ test("학생 조회는 다른 studentId를 무시하고 본인 동기화 항목�
       mappingId: mapping.id,
       remoteId: `series-${mapping.studentId}`,
       seriesKey: `${mapping.studentId}@example.com`,
-      icsText: seriesIcs(mapping.studentId),
+      icsText: seriesIcs(mapping.studentId ?? ""),
     });
   }
 
@@ -233,7 +239,7 @@ test("iCloud 자격 증명은 암호화해 저장하고 overview로 돌려주지
   assert.equal(overview.availability.encryptionConfigured, true);
   assert.equal(overview.connections.length, 1);
   assert.equal(overview.connections[0].mappings.length, 1);
-  assert.equal(overview.connections[0].mappings[0].studentName, "student-1");
+  assert.equal(overview.connections[0].mappings[0].targetName, "student-1");
 
   await db.update(calendarConnections).set({ status: "NEEDS_REAUTH", lastError: "x" }).where(eq(calendarConnections.id, connectionId));
   const reconnected = await syncActions.connectICloudCalendar({}, form({ appleId: "teacher@icloud.com", appPassword: APP_PASSWORD }));
@@ -633,4 +639,187 @@ test("Google을 다른 계정으로 다시 연결하면 새 연결을 저장한 
   const [afterFailure] = await db.select().from(calendarConnections);
   assert.equal(afterFailure.accountLabel, "third@gmail.com", "폐기 실패는 새 연결을 막지 않는다");
   assert.equal(afterFailure.status, "ACTIVE");
+});
+
+test("그룹 캘린더: 관리자가 그룹에 캘린더를 정하면 그룹레슨이 그 캘린더로만 가고, 해제하면 멤버 개인 캘린더로 돌아간다", { concurrency: false }, async (context) => {
+  const { db } = await setup(context, createSession("admin-1", "admin"));
+  // 원격 캘린더마다 따로 가진 가짜 client(같은 연결의 캘린더 둘을 구분한다).
+  const personal = new FakeCalendar();
+  const group = new FakeCalendar();
+  const byCalendar = new Map<string, FakeCalendar>([["cal-1", personal], ["cal-g", group]]);
+  const pick = (calendarId: string) => {
+    const calendar = byCalendar.get(calendarId);
+    if (!calendar) throw new Error(`unknown calendar ${calendarId}`);
+    return calendar;
+  };
+  const router: CalendarProviderClient = {
+    listCalendars: async () => [
+      { id: "cal-1", name: "student-1 레슨", readOnly: false },
+      { id: "cal-g", name: "화요일 그룹레슨", readOnly: false },
+    ],
+    pull: (calendarId, cursor, window) => pick(calendarId).pull(calendarId, cursor, window),
+    create: (calendarId, input) => pick(calendarId).create(calendarId, input),
+    update: (calendarId, remoteId, input, etag) => pick(calendarId).update(calendarId, remoteId, input, etag),
+    remove: (calendarId, remoteId, etag) => pick(calendarId).remove(calendarId, remoteId, etag),
+    get: (calendarId, remoteId) => pick(calendarId).get(calendarId, remoteId),
+    findByPortalRef: (calendarId, portalRef) => pick(calendarId).findByPortalRef(calendarId, portalRef),
+  } as CalendarProviderClient;
+  clientFactory.setCalendarClientFactoryForTests(async () => router);
+
+  await db.insert(lessonGroups).values({ id: "group-1", name: "화요일 2:1" });
+  await db.insert(lessonGroupMembers).values([
+    { studentId: "student-1", groupId: "group-1" },
+    { studentId: "student-2", groupId: "group-1" },
+  ]);
+  const groupStart = new Date(Date.now() + 2 * 86_400_000);
+  groupStart.setUTCSeconds(0, 0);
+  const soloStart = new Date(groupStart.getTime() + 86_400_000);
+  await db.insert(lessons).values([
+    { id: "lesson-g1", studentId: "student-1", scheduledAt: groupStart },
+    { id: "lesson-g2", studentId: "student-2", scheduledAt: groupStart },
+    { id: "lesson-solo", studentId: "student-1", scheduledAt: soloStart },
+  ]);
+
+  const connected = await syncActions.connectICloudCalendar({}, form({ appleId: "teacher@icloud.com", appPassword: APP_PASSWORD }));
+  assert.ok(connected.success, connected.error);
+  const [connection] = await db.select().from(calendarConnections);
+  const personalSaved = await syncActions.saveCalendarMapping({}, form({ connectionId: connection.id, target: "student:student-1", remoteCalendarId: "cal-1" }));
+  assert.ok(personalSaved.success, personalSaved.error);
+  assert.equal(personal.events.size, 2, "그룹 캘린더가 없으면 그룹레슨도 개인 캘린더로 간다");
+
+  const missing = await syncActions.saveCalendarMapping({}, form({ connectionId: connection.id, target: "group:missing", remoteCalendarId: "cal-g" }));
+  assert.equal(missing.error, "그룹을 찾을 수 없습니다. 화면을 새로고침해 주세요.");
+  const sameCalendar = await syncActions.saveCalendarMapping({}, form({ connectionId: connection.id, target: "group:group-1", remoteCalendarId: "cal-1" }));
+  assert.match(sameCalendar.error ?? "", /그룹 캘린더로 지정/u);
+
+  const groupSaved = await syncActions.saveCalendarMapping({}, form({ connectionId: connection.id, target: "group:group-1", remoteCalendarId: "cal-g" }));
+  assert.ok(groupSaved.success, groupSaved.error);
+  const groupEvents = [...group.events.values()];
+  assert.equal(groupEvents.length, 1, "그룹레슨은 그룹 캘린더에 일정 하나");
+  assert.equal(groupEvents[0].title, "그룹레슨");
+  assert.equal(groupEvents[0].start.getTime(), groupStart.getTime());
+  assert.deepEqual([...personal.events.values()].map((event) => event.start.getTime()), [soloStart.getTime()], "그룹레슨은 개인 캘린더에서 빠진다");
+
+  const again = await syncActions.saveCalendarMapping({}, form({ connectionId: connection.id, target: "group:group-1", remoteCalendarId: "cal-g" }));
+  assert.match(again.error ?? "", /이미 이 계정의 그룹 캘린더/u);
+
+  const overview = await syncActions.getCalendarSyncOverview();
+  assert.deepEqual(overview.groups, [{ id: "group-1", name: "화요일 2:1", memberNames: ["student-1", "student-2"] }]);
+  const [groupSummary, studentSummary] = overview.connections[0].mappings;
+  assert.equal(groupSummary.targetKind, "GROUP");
+  assert.equal(groupSummary.groupId, "group-1");
+  assert.equal(groupSummary.studentId, null);
+  assert.equal(groupSummary.targetName, "화요일 2:1");
+  assert.deepEqual(groupSummary.memberNames, ["student-1", "student-2"]);
+  assert.equal(studentSummary.targetKind, "STUDENT");
+  assert.equal(studentSummary.targetName, "student-1");
+
+  // 멤버 학생은 자기 그룹의 그룹 캘린더도 동기화 상태에서 본다. 그룹 밖 학생은 보지 않는다.
+  activeSession = createSession("student-2", "student");
+  const memberStatus = await syncActions.getStudentCalendarSyncStatus("student-2");
+  assert.deepEqual(memberStatus.mappings.map((mapping) => mapping.remoteCalendarName), ["화요일 그룹레슨"]);
+  activeSession = createSession("admin-1", "admin");
+
+  // 학생이 본인 레슨만 옮기면(관리자 이동은 멤버 모두를 옮긴다) 그 시각은 더는 그룹레슨이 아니다:
+  // 그룹 캘린더에서 빠지고 다른 멤버 레슨은 개인 캘린더로 돌아간다.
+  activeSession = createSession("student-2", "student");
+  const apartStart = new Date(groupStart.getTime() + 3_600_000);
+  const movedApart = await lessonActions.moveLesson("lesson-g2", "student-2", apartStart.toISOString());
+  assert.ok(movedApart.success, movedApart.error);
+  assert.equal(group.events.size, 0);
+  assert.deepEqual(
+    [...personal.events.values()].map((event) => event.start.getTime()).sort((a, b) => a - b),
+    [groupStart.getTime(), soloStart.getTime()],
+  );
+  const movedBack = await lessonActions.moveLesson("lesson-g2", "student-2", groupStart.toISOString());
+  assert.ok(movedBack.success, movedBack.error);
+  assert.equal(group.events.size, 1);
+  assert.deepEqual([...personal.events.values()].map((event) => event.start.getTime()), [soloStart.getTime()]);
+  activeSession = createSession("admin-1", "admin");
+
+  const [groupMapping] = await db.select().from(calendarMappings).where(eq(calendarMappings.groupId, "group-1"));
+  const removed = await syncActions.removeCalendarMapping(groupMapping.id);
+  assert.ok(removed.success, removed.error);
+  assert.equal((await db.select().from(calendarMappings).where(eq(calendarMappings.groupId, "group-1"))).length, 0);
+  assert.equal(group.events.size, 1, "해제해도 그룹 캘린더 일정은 남는다");
+  assert.deepEqual(
+    [...personal.events.values()].map((event) => event.start.getTime()).sort((a, b) => a - b),
+    [groupStart.getTime(), soloStart.getTime()],
+    "해제하면 그룹레슨이 멤버 개인 캘린더로 다시 올라간다",
+  );
+});
+
+test("그룹 캘린더: 그룹레슨 삭제·멤버 계정 삭제는 원격 사본을 지우고, 거부된 그룹 해제는 Google 알림을 지키며 해제는 멈춘다", { concurrency: false }, async (context) => {
+  const { db } = await setup(context, createSession("admin-1", "admin"));
+  const channels = enableGoogleChannels(context);
+  const personal1 = new FakeCalendar();
+  const personal2 = new FakeCalendar();
+  const group = new FakeCalendar();
+  clientFactory.setCalendarClientFactoryForTests(async () =>
+    routeByCalendar(new Map([["cal-1", personal1], ["cal-2", personal2], ["cal-g", group]])));
+  const connectionId = await insertGoogleConnection(db);
+  await db.insert(lessonGroups).values({ id: "group-1", name: "화요일 2:1" });
+  await db.insert(lessonGroupMembers).values([
+    { studentId: "student-1", groupId: "group-1" },
+    { studentId: "student-2", groupId: "group-1" },
+  ]);
+  const first = new Date(Date.now() + 2 * 86_400_000);
+  first.setUTCSeconds(0, 0);
+  const second = new Date(first.getTime() + 7 * 86_400_000);
+  await db.insert(lessons).values([
+    { id: "lesson-a1", studentId: "student-1", scheduledAt: first },
+    { id: "lesson-a2", studentId: "student-2", scheduledAt: first },
+    { id: "lesson-b1", studentId: "student-1", scheduledAt: second },
+    { id: "lesson-b2", studentId: "student-2", scheduledAt: second },
+  ]);
+  await mapStudent(db, connectionId, "student-1", "cal-1");
+  const personal2Mapping = await mapStudent(db, connectionId, "student-2", "cal-2");
+  const saved = await syncActions.saveCalendarMapping({}, form({ connectionId, target: "group:group-1", remoteCalendarId: "cal-g" }));
+  assert.ok(saved.success, saved.error);
+  const [groupMapping] = await db.select().from(calendarMappings).where(eq(calendarMappings.groupId, "group-1"));
+  assert.equal(group.events.size, 2);
+  assert.equal(personal1.events.size + personal2.events.size, 0, "그룹레슨은 개인 캘린더에서 빠진다");
+  assert.ok((await db.select().from(calendarPushChannels)).some((row) => row.mappingId === groupMapping.id), "그룹 캘린더도 알림 channel을 등록한다");
+
+  // 관리자가 그룹레슨(기준 레슨 포함)을 지우면 그룹 캘린더 사본도 지워지고, 다시 동기화해도 가져오지 않는다.
+  await lessonActions.deleteLesson("lesson-a1", "student-1");
+  assert.deepEqual([...group.events.values()].map((event) => event.start.getTime()), [second.getTime()]);
+  assert.equal((await db.select().from(calendarSyncLinks).where(eq(calendarSyncLinks.localId, "lesson-a1"))).length, 0);
+  const resync = await syncActions.syncCalendarMappingNow(groupMapping.id);
+  assert.ok(resync.success, resync.error);
+  assert.equal(group.events.size, 1);
+  assert.equal((await db.select().from(calendarGroupEvents)).length, 0, "지운 그룹레슨을 그룹 일정으로 가져오지 않는다");
+
+  // 그룹 노트가 남아 해제가 거부되면 그룹 캘린더의 Google 알림은 그대로 살아 있어야 한다.
+  await db.insert(privateNotes).values({
+    id: "group-note", studentId: "student-2", authorId: "student-2", groupId: "group-1", title: "그룹 노트", contentHtml: "<p>x</p>",
+  });
+  const refused = await lessonGroupActions.deleteLessonGroupAction("group-1");
+  assert.equal(refused.ok, false);
+  assert.ok((await db.select().from(calendarPushChannels)).some((row) => row.mappingId === groupMapping.id), "거부된 해제 뒤에도 channel이 있다");
+
+  // 기준 멤버(student-1)가 계정을 지우면 그룹이 한 명이 되어 그룹레슨이 사라진다: 그룹 캘린더 사본은 지워지고
+  // 남은 멤버 레슨은 개인 캘린더로 돌아간다. 그룹 캘린더 매핑은 남는다.
+  const deleted = await (await import("@/lib/account-privacy-atomic")).deleteStudentAccountAtomically({ kind: "d1", db } as never, {
+    actorId: "student-1",
+    operationId: crypto.randomUUID(),
+    initiatingCleanupTokenDigest: "c".repeat(64),
+    useEphemeralCleanupDigest: true,
+    now: new Date(),
+  });
+  assert.equal(deleted.ok, true, JSON.stringify(deleted));
+  assert.equal((await db.select().from(calendarMappings).where(eq(calendarMappings.groupId, "group-1"))).length, 1);
+  assert.ok((await syncActions.syncCalendarMappingNow(groupMapping.id)).success);
+  assert.equal(group.events.size, 0);
+  assert.ok((await syncActions.syncCalendarMappingNow(personal2Mapping)).success);
+  assert.deepEqual([...personal2.events.values()].map((event) => event.start.getTime()), [second.getTime()]);
+
+  // 노트를 비운 뒤 해제하면 그룹 캘린더 channel을 멈추고 매핑은 cascade로 사라진다.
+  await db.delete(privateNotes).where(eq(privateNotes.id, "group-note"));
+  const groupWatch = channels.lastWatchFor("cal-g");
+  const dissolved = await lessonGroupActions.deleteLessonGroupAction("group-1");
+  assert.equal(dissolved.ok, true);
+  assert.ok(channels.stops.some((stop) => stop.channelId === groupWatch.channelId), "해제 전에 그룹 캘린더 channel을 멈춘다");
+  assert.equal((await db.select().from(calendarMappings).where(eq(calendarMappings.groupId, "group-1"))).length, 0);
+  assert.equal((await db.select().from(calendarPushChannels)).filter((row) => row.mappingId === groupMapping.id).length, 0);
 });

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { after, before, mock, test, type TestContext } from "node:test";
 import type { AuthSession } from "@/lib/auth-guard";
-import { curriculums, lessonGroupMembers, lessonGroups, lessons, privateNotes, profiles } from "@/db/schema";
+import { calendarEvents, calendarGroupEvents, curriculums, lessonGroupMembers, lessonGroups, lessons, privateNotes, profiles } from "@/db/schema";
 import { createIsolatedPortalD1, type IsolatedPortalD1 } from "@/test/isolated-d1";
 
 type PortalTestDb = IsolatedPortalD1["db"];
@@ -32,6 +32,9 @@ mock.module("next/cache", { namedExports: { revalidatePath: () => undefined } })
 mock.module("@/lib/calendar-sync/sync-runner", {
   namedExports: {
     schedulePushStudentCalendarChanges: async () => undefined,
+    schedulePushStudentsCalendarChanges: async () => undefined,
+    stopGroupCalendarChannels: async () => undefined,
+    restoreGroupCalendarChannels: async () => undefined,
     markLinksDeletedStatement: () => ({ query: "SELECT 1", params: [] }),
   },
 });
@@ -235,4 +238,39 @@ test("커리큘럼 모듈은 같은 그룹 멤버에게만 함께 추가하고, 
 
   activeSession = createSession("student-a", "student");
   await assert.rejects(curriculumActions.createModule("student-a", {}, together));
+});
+
+test("멤버를 바꾸면 새 멤버는 아직 시작하지 않은 그룹 일정 사본을 받고 빠진 멤버의 사본은 개인 일정으로 남는다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context);
+  activeSession = createSession("admin-1", "admin");
+  const created = await actions.saveLessonGroupAction({ groupId: null, name: "화요일반", memberIds: ["student-a", "student-b"] });
+  assert.equal(created.ok, true);
+  const groupId = created.ok ? created.id! : "";
+  const future = new Date(Date.now() + 3 * 86_400_000);
+  const past = new Date(Date.now() - 3 * 86_400_000);
+  await db.insert(calendarGroupEvents).values([
+    { id: "ge-future", groupId, title: "합주", startTime: future },
+    { id: "ge-past", groupId, title: "지난 합주", startTime: past },
+  ]);
+  await db.insert(calendarEvents).values([
+    { id: "c-a-future", userId: "student-a", eventType: "NOTE", title: "합주", startTime: future, groupEventId: "ge-future" },
+    { id: "c-b-future", userId: "student-b", eventType: "NOTE", title: "합주", startTime: future, groupEventId: "ge-future" },
+    { id: "c-a-past", userId: "student-a", eventType: "NOTE", title: "지난 합주", startTime: past, groupEventId: "ge-past" },
+  ]);
+
+  // B를 빼고 C를 넣는다.
+  assert.equal((await actions.saveLessonGroupAction({ groupId, name: "화요일반", memberIds: ["student-a", "student-c"] })).ok, true);
+  const rows = (await db.select({ userId: calendarEvents.userId, title: calendarEvents.title, groupEventId: calendarEvents.groupEventId }).from(calendarEvents))
+    .map((row) => [row.userId, row.title, row.groupEventId])
+    .sort((left, right) => String(left[0]).localeCompare(String(right[0])) || String(left[1]).localeCompare(String(right[1])));
+  assert.deepEqual(rows, [
+    ["student-a", "지난 합주", "ge-past"],
+    ["student-a", "합주", "ge-future"],
+    ["student-b", "합주", null],
+    ["student-c", "합주", "ge-future"],
+  ]);
+
+  // 다시 저장해도 사본을 또 만들지 않는다.
+  assert.equal((await actions.saveLessonGroupAction({ groupId, name: "화요일반", memberIds: ["student-a", "student-c"] })).ok, true);
+  assert.equal((await db.select().from(calendarEvents)).length, 4);
 });

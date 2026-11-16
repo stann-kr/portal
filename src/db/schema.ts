@@ -1627,12 +1627,46 @@ export const calendarEvents = sqliteTable(
     startTime: integer("start_time", { mode: "timestamp" }).notNull(),
     endTime: integer("end_time", { mode: "timestamp" }),
     description: text("description"),
+    /** 그룹 캘린더에서 가져온 일정의 멤버별 사본이면 원본 그룹 일정. 사본은 개인 캘린더로 보내지 않는다. */
+    groupEventId: text("group_event_id").references(() => calendarGroupEvents.id, { onDelete: "set null" }),
     createdAt: integer("created_at", { mode: "timestamp" }).default(
       sql`(strftime('%s', 'now'))`,
     ),
   },
   (table) => [
     index("calendar_events_user_start_idx").on(table.userId, table.startTime),
+    index("calendar_events_group_event_idx").on(table.groupEventId),
+  ],
+);
+
+/**
+ * 그룹 캘린더에서 새로 만든 일정의 그룹 원본(2026-11-16 사용자 결정). 멤버마다 calendar_events 사본을 두고,
+ * 그룹 캘린더끼리는 이 원본을 기준으로 맞춘다. 학생이 포탈에서 자기 사본을 고치거나 지워도 원본은 그대로다.
+ */
+export const calendarGroupEvents = sqliteTable(
+  "calendar_group_events",
+  {
+    id: text("id").primaryKey(),
+    groupId: text("group_id")
+      .references(() => lessonGroups.id, { onDelete: "cascade" })
+      .notNull(),
+    title: text("title").notNull(),
+    description: text("description"),
+    startTime: integer("start_time", { mode: "timestamp" }).notNull(),
+    endTime: integer("end_time", { mode: "timestamp" }),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .default(sql`(strftime('%s', 'now'))`)
+      .notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .default(sql`(strftime('%s', 'now'))`)
+      .notNull(),
+  },
+  (table) => [
+    index("calendar_group_events_group_start_idx").on(table.groupId, table.startTime),
+    check(
+      "calendar_group_events_payload_check",
+      sql`length(${table.id}) > 0 AND length(${table.title}) > 0 AND (${table.endTime} IS NULL OR ${table.endTime} > ${table.startTime}) AND ${table.createdAt} <= ${table.updatedAt}`,
+    ),
   ],
 );
 
@@ -1828,7 +1862,10 @@ export const calendarConnections = sqliteTable(
   ],
 );
 
-/** 학생 한 명과 연결 계정의 공유 캘린더 하나를 잇는다. cursor는 provider 증분 동기화 위치다. */
+/**
+ * 연결 계정의 공유 캘린더 하나를 학생 한 명 또는 레슨 그룹 하나에 잇는다(둘 중 하나만). cursor는 provider 증분 동기화 위치다.
+ * 그룹 캘린더에는 멤버 모두 같은 시각인 그룹레슨과 그 캘린더에서 만든 그룹 일정만 오간다(2026-11-16 사용자 결정).
+ */
 export const calendarMappings = sqliteTable(
   "calendar_mappings",
   {
@@ -1836,9 +1873,8 @@ export const calendarMappings = sqliteTable(
     connectionId: text("connection_id")
       .references(() => calendarConnections.id, { onDelete: "cascade" })
       .notNull(),
-    studentId: text("student_id")
-      .references(() => profiles.id, { onDelete: "cascade" })
-      .notNull(),
+    studentId: text("student_id").references(() => profiles.id, { onDelete: "cascade" }),
+    groupId: text("group_id").references(() => lessonGroups.id, { onDelete: "cascade" }),
     remoteCalendarId: text("remote_calendar_id").notNull(),
     remoteCalendarName: text("remote_calendar_name").notNull(),
     cursor: text("cursor"),
@@ -1863,7 +1899,16 @@ export const calendarMappings = sqliteTable(
       table.connectionId,
       table.remoteCalendarId,
     ),
+    uniqueIndex("calendar_mappings_connection_group_unique").on(
+      table.connectionId,
+      table.groupId,
+    ),
     index("calendar_mappings_student_idx").on(table.studentId),
+    index("calendar_mappings_group_idx").on(table.groupId),
+    check(
+      "calendar_mappings_target_check",
+      sql`(${table.studentId} IS NULL) <> (${table.groupId} IS NULL)`,
+    ),
     check(
       "calendar_mappings_payload_check",
       sql`length(${table.id}) > 0 AND length(${table.remoteCalendarId}) > 0 AND length(${table.remoteCalendarName}) > 0 AND ${table.createdAt} <= ${table.updatedAt}`,
