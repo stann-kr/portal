@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Instagram } from "lucide-react";
+import { ArrowUpRight, Instagram } from "lucide-react";
 import { PortalLogoMark } from "@/components/brand/PortalLogoMark";
 import { cn } from "@/lib/utils";
 
@@ -16,6 +16,7 @@ export const metadata: Metadata = {
 };
 
 const INSTAGRAM_HANDLE = "stannlumo";
+const WEBSITE_URL = "https://lumo.stann.kr";
 const INSTAGRAM_PROFILE_URL = `https://www.instagram.com/${INSTAGRAM_HANDLE}/`;
 
 const FACTS = [
@@ -44,7 +45,7 @@ const COURSES = [
 const METHODS = [
   {
     title: "수준과 목표에 맞춘 1:1 수업",
-    body: "디제잉을 처음 시작하는 분부터 클럽 데뷔를 준비하는 분까지, 정해진 커리큘럼을 일괄적으로 따르기보다 경험과 관심사에 맞춰 수업을 구성합니다.",
+    body: "디제잉을 처음 시작하는 분부터 클럽 플레이를 준비하는 분까지, 정해진 커리큘럼을 일괄적으로 따르기보다 경험과 관심사에 맞춰 수업을 구성합니다.",
   },
   {
     title: "레슨 전용 포털로 진도 관리",
@@ -64,7 +65,7 @@ const STAGES = [
   { title: "페이더 믹스", goal: "페이더만으로 충분히 섞어 보며 볼륨의 개념을 확실히 이해하는 단계", topics: ["볼륨의 개념", "게인·레벨 맞추기", "페이더 믹스"] },
   { title: "EQ 믹스와 효과", goal: "볼륨 감각 위에 EQ와 루프·효과로 전환을 다듬는 단계", topics: ["EQ 믹스", "저음 교체", "루프", "효과"] },
   { title: "선곡과 셋 구성", goal: "곡을 고르고 흐름을 설계하는 단계", topics: ["테크노·하우스의 흐름", "선곡과 키", "에너지 곡선과 플로우", "30분 이상 셋 구성"] },
-  { title: "실전과 데뷔 준비", goal: "실제 클럽 환경에서 플레이할 준비를 하는 단계", topics: ["클럽 환경에서의 노하우", "셋 녹음과 리뷰", "연습 루틴", "데뷔 준비"] },
+  { title: "실전 준비", goal: "실제 클럽 환경에서 플레이할 준비를 하는 단계", topics: ["클럽 환경에서의 노하우", "셋 녹음과 리뷰", "연습 루틴", "플레이 전 점검"] },
 ] as const;
 
 const sectionTitle = "text-2xl font-semibold leading-8 tracking-display md:text-[30px] md:leading-10";
@@ -93,19 +94,28 @@ export default function LessonInfoPage() {
           <section aria-labelledby="lesson-hero-title" className="flex flex-col gap-5 py-14 md:gap-7 md:pb-[88px] md:pt-28">
             <p className="font-mono text-ui tracking-[0.04em] text-muted-foreground">TECHNO · HOUSE · DJ LESSON</p>
             <h1 id="lesson-hero-title" className="text-[32px] font-semibold leading-[42px] tracking-[-0.03em] md:text-[52px] md:leading-[64px]">
-              처음 장비를 만지는 날부터
+              테크노와 하우스를 위한
               <br />
-              클럽 데뷔까지
+              1:1 디제잉 레슨
             </h1>
             <p className="max-w-[620px] text-base leading-7 text-secondary-foreground md:text-lg md:leading-8">
               테크노와 하우스를 중심으로 9년간 활동해 온 DJ Stann이 각자의 수준과 목표에 맞춰 함께합니다. 현재 이태원 파우스트의 레지던트
               DJ로 활동하고 있습니다.
             </p>
+            <a
+              href={WEBSITE_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 self-start font-mono text-ui leading-5 text-secondary-foreground underline decoration-border underline-offset-4 hover:text-foreground"
+            >
+              lumo.stann.kr
+              <ArrowUpRight className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
+            </a>
             <div className="flex flex-wrap gap-3 pt-2">
-              <a href="#contact" className="inline-flex h-12 flex-1 items-center justify-center rounded-lg bg-primary px-[22px] text-[15px] font-medium text-primary-foreground md:flex-none">
+              <a href="#contact" className="inline-flex h-12 basis-full items-center justify-center rounded-lg bg-primary px-[22px] text-[15px] font-medium text-primary-foreground md:basis-auto">
                 상담 문의하기
               </a>
-              <a href="#course" className="inline-flex h-12 flex-1 items-center justify-center rounded-lg border border-border px-[22px] text-[15px] md:flex-none">
+              <a href="#course" className="inline-flex h-12 basis-full items-center justify-center rounded-lg border border-border px-[22px] text-[15px] md:basis-auto">
                 과정과 비용 보기
               </a>
             </div>
