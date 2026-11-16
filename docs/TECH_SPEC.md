@@ -420,11 +420,13 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 - 표(`0031`): `calendar_mappings`는 대상이 학생(`student_id`) 또는 그룹(`group_id` → `lesson_groups` CASCADE) 하나다(`calendar_mappings_target_check`, (connection, group) UNIQUE, (connection, remote calendar) UNIQUE 유지). 표를 다시 만들 때 자식 표(`calendar_sync_links`·`calendar_remote_series`·`calendar_push_channels`)는 DROP cascade를 피하려 백업·복원한다. `calendar_group_events`(그룹 일정 원본, 그룹 CASCADE)와 `calendar_events.group_event_id`(→ 원본 SET NULL, 그룹이 사라지면 사본은 개인 일정으로 남음).
 - 대상(`src/lib/calendar-sync/sync-target.ts`): 그룹레슨은 멤버(2명 이상) 모두에게 같은 시작 시각의 레슨이 있는 시각이다. 그룹 캘린더의 그룹레슨 일정은 학생 id 순 첫 멤버의 레슨 id를 link `local_id`·portalRef로 쓴다. 학생 매핑은 그 학생 그룹에 그룹 캘린더가 있으면 그룹레슨과 `group_event_id` 사본을 push 대상에서 뺀다.
 - 엔진(`engine.ts`): 그룹 매핑의 원격 이동은 멤버별 조건부 UPDATE + sentinel로 멤버 레슨을 함께 옮기고, 원격 일정 import는 원본 + 멤버 사본을 함께 만든다. 원본 수정·삭제는 사본에 먼저, 원본은 조건부로 쓴다. 그룹 매핑 실행이 로컬을 바꾸면 그룹의 다른 활성 그룹 매핑을 push한다(`mapping-sync.ts`).
-- push 범위: 레슨·일정 쓰기 뒤 push는 본인 학생·그룹 매핑, 그다음 그룹에 그룹 캘린더가 있으면 다른 멤버의 개인 매핑까지 돈다(같은 4초 예산, 넘으면 다음 동기화). 그룹 매핑 저장·해제와 그룹 멤버 변경·해제(`lessonGroups.ts`)는 관련 학생을 응답 뒤 push한다. 그룹 해제는 cascade 전에 그 그룹 매핑의 Google channel을 멈춘다.
+- push 범위: 레슨·일정 쓰기 뒤 push는 본인 학생·그룹 매핑, 그다음 그룹에 그룹 캘린더가 있으면 다른 멤버의 개인 매핑까지 돈다(같은 4초 예산, 넘으면 다음 동기화). 그룹 매핑 저장·해제와 그룹 멤버 변경·해제(`lessonGroups.ts`)는 관련 학생을 응답 뒤 push한다. 그룹 해제는 cascade 전에 그 그룹 매핑의 Google channel을 멈추고, 그룹 노트가 남아 해제가 거부되면 channel을 다시 등록한다.
 - 조회: 학생 동기화 상태·Google channel 갱신·원격 반복 일정·홈 다음 레슨은 본인 그룹의 그룹 매핑을 포함한다. 홈 다음 레슨은 같은 그룹 일정이 두 provider에 있어도 사본 하나로 센다.
 - 관리자 화면: `getCalendarSyncOverview`가 매핑마다 `targetKind`·`targetName`·`memberNames`와 고를 수 있는 그룹(멤버 2명 이상)을 준다. form 값은 `target=student:<id>|group:<id>`(예전 `studentId`도 받음).
+- 삭제: 그룹레슨 기준 레슨이 지워지면(관리자 삭제·계정 삭제) 그룹 매핑 link는 tombstone 없이 남지만, push가 로컬 행이 없는 link를 고아로 보고 원격 사본을 지우며 portalRef가 있는 원격 일정은 다시 가져오지 않는다.
 - 계정 삭제는 학생 매핑만 지우고 그룹 매핑은 남는다(멤버십이 지워지며 그 학생 레슨은 그룹레슨에서 빠진다).
-- 검증: `src/lib/calendar-sync/group-calendar.test.ts`(엔진 7), `src/test/calendar-sync.integration.ts`의 그룹 캘린더 action 흐름, `db:check`의 `0030 → 0031` upgrade 검사.
+- 한계: 그룹 캘린더가 한 provider에만 있어도 그룹레슨은 모든 멤버 개인 캘린더에서 빠진다(다른 provider 개인 캘린더만 쓰는 멤버는 그 캘린더에서 그룹레슨을 보지 못한다). 그룹 해제 확인 문구는 그룹의 다른 캘린더가 남은 경우에도 "개인 캘린더로 다시 올라간다"고 말한다.
+- 검증: `src/lib/calendar-sync/group-calendar.test.ts`(엔진 7), `src/test/calendar-sync.integration.ts`의 그룹 캘린더 action 흐름 둘(저장·이동·해제, 삭제·계정 삭제·그룹 해제 channel), `db:check`의 `0030 → 0031` upgrade 검사.
 
 ### 캘린더 실시간 반영(2026-10-27 사용자 결정)
 

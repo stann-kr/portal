@@ -34,6 +34,7 @@ mock.module("@/lib/calendar-sync/sync-runner", {
     schedulePushStudentCalendarChanges: async () => undefined,
     schedulePushStudentsCalendarChanges: async () => undefined,
     stopGroupCalendarChannels: async () => undefined,
+    restoreGroupCalendarChannels: async () => undefined,
     markLinksDeletedStatement: () => ({ query: "SELECT 1", params: [] }),
   },
 });

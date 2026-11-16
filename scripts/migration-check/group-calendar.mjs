@@ -28,9 +28,9 @@ export async function validateGroupCalendarUpgrade(migrationFiles) {
       INSERT INTO lesson_group_members (student_id, group_id) VALUES ('gc-a', 'gc-group'), ('gc-b', 'gc-group');
       INSERT INTO calendar_connections (id, owner_id, provider, account_label, encrypted_credentials, credentials_iv, created_at, updated_at)
         VALUES ('gc-conn', 'gc-admin', 'GOOGLE', 'stann@example.com', 'cipher', 'iv', 1700000000, 1700000000);
-      INSERT INTO calendar_mappings (id, connection_id, student_id, remote_calendar_id, remote_calendar_name, cursor, last_synced_at, created_at, updated_at)
-        VALUES ('gc-map-a', 'gc-conn', 'gc-a', 'cal-a', 'A 레슨', 'cursor-a', 1700000100, 1700000000, 1700000100),
-               ('gc-map-b', 'gc-conn', 'gc-b', 'cal-b', 'B 레슨', NULL, NULL, 1700000000, 1700000000);
+      INSERT INTO calendar_mappings (id, connection_id, student_id, remote_calendar_id, remote_calendar_name, cursor, last_synced_at, last_error, sync_lease_until, created_at, updated_at)
+        VALUES ('gc-map-a', 'gc-conn', 'gc-a', 'cal-a', 'A 레슨', 'cursor-a', 1700000100, '동기화 오류', 1700000160, 1700000000, 1700000100),
+               ('gc-map-b', 'gc-conn', 'gc-b', 'cal-b', 'B 레슨', NULL, NULL, NULL, NULL, 1700000000, 1700000000);
       INSERT INTO calendar_sync_links (id, mapping_id, local_kind, local_id, remote_id, etag, local_fingerprint, last_error, created_at, updated_at)
         VALUES ('gc-link-1', 'gc-map-a', 'LESSON', 'lesson-1', 'remote-1', 'etag-1', 'fp-1', NULL, 1700000000, 1700000001),
                ('gc-link-2', 'gc-map-a', 'EVENT', 'event-1', NULL, NULL, 'DELETED', '오류', 1700000000, 1700000002),
@@ -44,7 +44,7 @@ export async function validateGroupCalendarUpgrade(migrationFiles) {
     `);
     const snapshot = () => ({
       mappings: database.all(`
-        SELECT id, connection_id, student_id, remote_calendar_id, remote_calendar_name, cursor, last_synced_at, created_at, updated_at
+        SELECT id, connection_id, student_id, remote_calendar_id, remote_calendar_name, cursor, last_synced_at, last_error, sync_lease_until, created_at, updated_at
         FROM calendar_mappings ORDER BY id`),
       links: database.all("SELECT * FROM calendar_sync_links ORDER BY id"),
       series: database.all("SELECT * FROM calendar_remote_series ORDER BY mapping_id, remote_id"),

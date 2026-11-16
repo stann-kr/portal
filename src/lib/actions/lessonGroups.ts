@@ -9,7 +9,11 @@ import { revalidatePath } from "next/cache";
 import { createDb, createDbContext } from "@/db/client";
 import { listActiveStudentProfiles } from "@/lib/active-profile";
 import { requireAdmin, requireAuth, requireStudentOwnerOrAdmin } from "@/lib/auth-guard";
-import { schedulePushStudentsCalendarChanges, stopGroupCalendarChannels } from "@/lib/calendar-sync/sync-runner";
+import {
+  restoreGroupCalendarChannels,
+  schedulePushStudentsCalendarChanges,
+  stopGroupCalendarChannels,
+} from "@/lib/calendar-sync/sync-runner";
 import {
   deleteLessonGroup,
   listLessonGroups,
@@ -100,6 +104,8 @@ export async function deleteLessonGroupAction(groupId: string): Promise<LessonGr
   await stopGroupCalendarChannels(groupId);
   const result = await deleteLessonGroup(createDbContext(), groupId);
   if (!result.ok) {
+    // 그룹과 그룹 캘린더 매핑이 남았으니 멈춘 Google 변경 알림을 되돌린다.
+    if (result.error === "HAS_NOTES") await restoreGroupCalendarChannels(groupId);
     return result.error === "HAS_NOTES"
       ? { ok: false, error: `그룹 노트 ${result.noteCount}개가 남아 있어 해제할 수 없습니다. 휴지통까지 비운 뒤 해제해 주세요.` }
       : { ok: false, error: "그룹이 이미 해제되었습니다." };

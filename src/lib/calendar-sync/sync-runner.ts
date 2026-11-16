@@ -3,14 +3,16 @@
  * 여기 함수는 권한을 검사하지 않는다(호출하는 action이 먼저 검증한다).
  */
 import { runAfterResponse } from "@/lib/after-response";
-import { createDbContext, type DbContext } from "@/db/client";
+import { createDbContext, type DbContext, type DrizzleDb } from "@/db/client";
 import {
   listActiveMappingIdsForStudent,
   listGroupPeerMappingIdsForStudent,
   syncCalendarMapping,
   type RunOptions,
 } from "./mapping-sync";
-import { ensureGoogleWatchChannelsForStudent, stopGoogleWatchChannelsFor } from "./push-channels";
+import { calendarMappings } from "@/db/schema";
+import { eq } from "drizzle-orm";
+import { ensureGoogleWatchChannel, ensureGoogleWatchChannelsForStudent, stopGoogleWatchChannelsFor } from "./push-channels";
 
 export { listActiveMappingIdsForStudent, syncCalendarMapping } from "./mapping-sync";
 
@@ -79,6 +81,18 @@ export async function schedulePushStudentsCalendarChanges(studentIds: readonly s
 /** 그룹 해제 전에 그 그룹 캘린더들의 Google 변경 알림 channel을 멈춘다(best-effort, 매핑은 그룹 삭제 cascade로 지워진다). */
 export async function stopGroupCalendarChannels(groupId: string, ctx?: DbContext): Promise<void> {
   await stopGoogleWatchChannelsFor(ctx ?? createDbContext(), { groupId }).catch(() => undefined);
+}
+
+/** 그룹 해제가 거부되면(그룹 노트 남음 등) 미리 멈춘 그룹 캘린더 channel을 다시 등록한다(best-effort). */
+export async function restoreGroupCalendarChannels(groupId: string, ctx?: DbContext): Promise<void> {
+  try {
+    const context = ctx ?? createDbContext();
+    const db = context.db as unknown as DrizzleDb;
+    const rows = await db.select({ id: calendarMappings.id }).from(calendarMappings).where(eq(calendarMappings.groupId, groupId));
+    for (const row of rows) await ensureGoogleWatchChannel(context, row.id).catch(() => undefined);
+  } catch {
+    // 다시 등록하지 못하면 다음 조회·예약 동기화가 channel을 갱신한다.
+  }
 }
 
 /**

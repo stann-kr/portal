@@ -5,6 +5,7 @@ import type { AuthSession } from "@/lib/auth-guard";
 import {
   calendarConnections,
   calendarEvents,
+  calendarGroupEvents,
   calendarMappings,
   calendarPushChannels,
   calendarRemoteSeries,
@@ -12,6 +13,7 @@ import {
   lessonGroupMembers,
   lessonGroups,
   lessons,
+  privateNotes,
   profiles,
 } from "@/db/schema";
 import { createIsolatedPortalD1, type IsolatedPortalD1 } from "@/test/isolated-d1";
@@ -29,6 +31,7 @@ let activeSession = createSession("student-1", "student");
 let syncActions: typeof import("@/lib/actions/calendarSync");
 let lessonActions: typeof import("@/lib/actions/lessons");
 let calendarEventActions: typeof import("@/lib/actions/calendarEvents");
+let lessonGroupActions: typeof import("@/lib/actions/lessonGroups");
 let clientFactory: typeof import("@/lib/calendar-sync/client-factory");
 let googleConnection: typeof import("@/lib/calendar-sync/google-connection");
 let connectionStore: typeof import("@/lib/calendar-sync/connection-store");
@@ -75,6 +78,7 @@ before(async () => {
     import("@/lib/calendar-sync/google-connection"),
   ]);
   connectionStore = await import("@/lib/calendar-sync/connection-store");
+  lessonGroupActions = await import("@/lib/actions/lessonGroups");
 });
 
 after(() => {
@@ -743,4 +747,79 @@ test("그룹 캘린더: 관리자가 그룹에 캘린더를 정하면 그룹레�
     [groupStart.getTime(), soloStart.getTime()],
     "해제하면 그룹레슨이 멤버 개인 캘린더로 다시 올라간다",
   );
+});
+
+test("그룹 캘린더: 그룹레슨 삭제·멤버 계정 삭제는 원격 사본을 지우고, 거부된 그룹 해제는 Google 알림을 지키며 해제는 멈춘다", { concurrency: false }, async (context) => {
+  const { db } = await setup(context, createSession("admin-1", "admin"));
+  const channels = enableGoogleChannels(context);
+  const personal1 = new FakeCalendar();
+  const personal2 = new FakeCalendar();
+  const group = new FakeCalendar();
+  clientFactory.setCalendarClientFactoryForTests(async () =>
+    routeByCalendar(new Map([["cal-1", personal1], ["cal-2", personal2], ["cal-g", group]])));
+  const connectionId = await insertGoogleConnection(db);
+  await db.insert(lessonGroups).values({ id: "group-1", name: "화요일 2:1" });
+  await db.insert(lessonGroupMembers).values([
+    { studentId: "student-1", groupId: "group-1" },
+    { studentId: "student-2", groupId: "group-1" },
+  ]);
+  const first = new Date(Date.now() + 2 * 86_400_000);
+  first.setUTCSeconds(0, 0);
+  const second = new Date(first.getTime() + 7 * 86_400_000);
+  await db.insert(lessons).values([
+    { id: "lesson-a1", studentId: "student-1", scheduledAt: first },
+    { id: "lesson-a2", studentId: "student-2", scheduledAt: first },
+    { id: "lesson-b1", studentId: "student-1", scheduledAt: second },
+    { id: "lesson-b2", studentId: "student-2", scheduledAt: second },
+  ]);
+  await mapStudent(db, connectionId, "student-1", "cal-1");
+  const personal2Mapping = await mapStudent(db, connectionId, "student-2", "cal-2");
+  const saved = await syncActions.saveCalendarMapping({}, form({ connectionId, target: "group:group-1", remoteCalendarId: "cal-g" }));
+  assert.ok(saved.success, saved.error);
+  const [groupMapping] = await db.select().from(calendarMappings).where(eq(calendarMappings.groupId, "group-1"));
+  assert.equal(group.events.size, 2);
+  assert.equal(personal1.events.size + personal2.events.size, 0, "그룹레슨은 개인 캘린더에서 빠진다");
+  assert.ok((await db.select().from(calendarPushChannels)).some((row) => row.mappingId === groupMapping.id), "그룹 캘린더도 알림 channel을 등록한다");
+
+  // 관리자가 그룹레슨(기준 레슨 포함)을 지우면 그룹 캘린더 사본도 지워지고, 다시 동기화해도 가져오지 않는다.
+  await lessonActions.deleteLesson("lesson-a1", "student-1");
+  assert.deepEqual([...group.events.values()].map((event) => event.start.getTime()), [second.getTime()]);
+  assert.equal((await db.select().from(calendarSyncLinks).where(eq(calendarSyncLinks.localId, "lesson-a1"))).length, 0);
+  const resync = await syncActions.syncCalendarMappingNow(groupMapping.id);
+  assert.ok(resync.success, resync.error);
+  assert.equal(group.events.size, 1);
+  assert.equal((await db.select().from(calendarGroupEvents)).length, 0, "지운 그룹레슨을 그룹 일정으로 가져오지 않는다");
+
+  // 그룹 노트가 남아 해제가 거부되면 그룹 캘린더의 Google 알림은 그대로 살아 있어야 한다.
+  await db.insert(privateNotes).values({
+    id: "group-note", studentId: "student-2", authorId: "student-2", groupId: "group-1", title: "그룹 노트", contentHtml: "<p>x</p>",
+  });
+  const refused = await lessonGroupActions.deleteLessonGroupAction("group-1");
+  assert.equal(refused.ok, false);
+  assert.ok((await db.select().from(calendarPushChannels)).some((row) => row.mappingId === groupMapping.id), "거부된 해제 뒤에도 channel이 있다");
+
+  // 기준 멤버(student-1)가 계정을 지우면 그룹이 한 명이 되어 그룹레슨이 사라진다: 그룹 캘린더 사본은 지워지고
+  // 남은 멤버 레슨은 개인 캘린더로 돌아간다. 그룹 캘린더 매핑은 남는다.
+  const deleted = await (await import("@/lib/account-privacy-atomic")).deleteStudentAccountAtomically({ kind: "d1", db } as never, {
+    actorId: "student-1",
+    operationId: crypto.randomUUID(),
+    initiatingCleanupTokenDigest: "c".repeat(64),
+    useEphemeralCleanupDigest: true,
+    now: new Date(),
+  });
+  assert.equal(deleted.ok, true, JSON.stringify(deleted));
+  assert.equal((await db.select().from(calendarMappings).where(eq(calendarMappings.groupId, "group-1"))).length, 1);
+  assert.ok((await syncActions.syncCalendarMappingNow(groupMapping.id)).success);
+  assert.equal(group.events.size, 0);
+  assert.ok((await syncActions.syncCalendarMappingNow(personal2Mapping)).success);
+  assert.deepEqual([...personal2.events.values()].map((event) => event.start.getTime()), [second.getTime()]);
+
+  // 노트를 비운 뒤 해제하면 그룹 캘린더 channel을 멈추고 매핑은 cascade로 사라진다.
+  await db.delete(privateNotes).where(eq(privateNotes.id, "group-note"));
+  const groupWatch = channels.lastWatchFor("cal-g");
+  const dissolved = await lessonGroupActions.deleteLessonGroupAction("group-1");
+  assert.equal(dissolved.ok, true);
+  assert.ok(channels.stops.some((stop) => stop.channelId === groupWatch.channelId), "해제 전에 그룹 캘린더 channel을 멈춘다");
+  assert.equal((await db.select().from(calendarMappings).where(eq(calendarMappings.groupId, "group-1"))).length, 0);
+  assert.equal((await db.select().from(calendarPushChannels)).filter((row) => row.mappingId === groupMapping.id).length, 0);
 });
