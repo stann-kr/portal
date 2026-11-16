@@ -4,7 +4,7 @@ export const metadata = { title: "개인정보처리방침" };
 
 /** 개정 시 이 날짜와 본문을 함께 바꾼다. */
 const EFFECTIVE_DATE = "2026년 11월 14일";
-const CONTACT_EMAIL = "stannlumo@gmail.com";
+const CONTACT_EMAIL = "portal@stann.kr";
 
 /**
  * @file src/app/privacy/page.tsx

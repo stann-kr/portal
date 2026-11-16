@@ -10,7 +10,7 @@ import { readRuntimeEnv } from "@/lib/runtime-env";
 
 export const INVITE_EMAIL_FROM = { email: "no-reply@portal.stann.kr", name: "Stann Lumo" } as const;
 /** 학생이 답장하면 Stann이 받는 주소(개인정보처리방침의 문의 주소와 같다). */
-export const INVITE_EMAIL_REPLY_TO = "stannlumo@gmail.com";
+export const INVITE_EMAIL_REPLY_TO = "portal@stann.kr";
 
 export type InviteEmailStatus = "sent" | "failed" | "skipped";
 
