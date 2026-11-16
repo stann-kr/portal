@@ -30,7 +30,7 @@ export function buildLessonCalendarIcs(
       duration: { hours: 1 },
       title: `DJ Lesson — ${student.displayName ?? student.email}`,
       description: "Portal - Stann DJ 레슨",
-      organizer: { name: "Stann Lumo", email: "admin@stannlumo.com" },
+      organizer: { name: "Stann Lumo", email: "portal@stann.kr" },
       status: "CONFIRMED",
       busyStatus: "BUSY",
     };
