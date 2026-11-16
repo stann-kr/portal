@@ -43,18 +43,23 @@ export async function syncStudentCalendarMappings(ctx: DbContext, studentId: str
 export async function pushStudentCalendarChanges(studentId: string, options: { ctx?: DbContext; budgetMs?: number } = {}): Promise<void> {
   try {
     const ctx = options.ctx ?? createDbContext();
-    // 본인 학생·그룹 캘린더, 그다음 그룹 캘린더가 있으면 다른 멤버의 개인 캘린더(그룹레슨 여부가 바뀌었을 수 있다).
+    const budget = options.budgetMs ?? CALENDAR_SYNC_WRITE_HOOK_BUDGET_MS;
+    // 본인 학생·그룹 캘린더.
     const own = await listActiveMappingIdsForStudent(ctx, studentId);
-    const peers = await listGroupPeerMappingIdsForStudent(ctx, studentId);
-    const mappingIds = [...own, ...peers.filter((id) => !own.includes(id))];
-    if (mappingIds.length === 0) return;
-    const deadline = Date.now() + (options.budgetMs ?? CALENDAR_SYNC_WRITE_HOOK_BUDGET_MS);
-    for (const mappingId of mappingIds) {
-      if (Date.now() >= deadline) return;
-      await syncCalendarMapping(ctx, mappingId, { mode: "push", deadline }).catch(() => undefined);
-    }
+    await pushMappings(ctx, own, Date.now() + budget);
+    // 그룹 캘린더가 있으면 다른 멤버의 개인 캘린더도(그룹레슨 여부가 바뀌었을 수 있다). 본인 push가 예산을 다 써도
+    // 밀리지 않게 시간 상한을 따로 둔다.
+    const peers = (await listGroupPeerMappingIdsForStudent(ctx, studentId)).filter((id) => !own.includes(id));
+    await pushMappings(ctx, peers, Date.now() + budget);
   } catch {
     // 로컬 쓰기는 이미 끝났다. 놓친 변경은 다음 동기화가 fingerprint 차이로 보낸다.
+  }
+}
+
+async function pushMappings(ctx: DbContext, mappingIds: readonly string[], deadline: number): Promise<void> {
+  for (const mappingId of mappingIds) {
+    if (Date.now() >= deadline) return;
+    await syncCalendarMapping(ctx, mappingId, { mode: "push", deadline }).catch(() => undefined);
   }
 }
 

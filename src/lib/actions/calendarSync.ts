@@ -468,7 +468,7 @@ export async function saveCalendarMapping(
   // Google 매핑은 변경 알림 channel을 등록한다(https 주소일 때만, 실패는 저장 결과에 영향 없음).
   await ensureGoogleWatchChannel(ctx, mappingId).catch(() => undefined);
   if (target.kind === "group") {
-    // 그룹레슨은 이제 그룹 캘린더가 올린다. 멤버 개인 캘린더의 사본을 응답 뒤 지운다(best-effort, 남으면 다음 동기화).
+    // 같은 계정에서는 그룹레슨을 이제 그룹 캘린더가 올린다. 그 계정 멤버 개인 캘린더의 사본을 응답 뒤 지운다(best-effort).
     await schedulePushStudentsCalendarChanges(await readLessonGroupMemberIds(ctx, target.id)).catch(() => undefined);
   }
   revalidatePath(SETTINGS_PATH);
@@ -491,7 +491,7 @@ export async function removeCalendarMapping(mappingId: string): Promise<Calendar
   await stopGoogleWatchChannelsFor(ctx, { mappingId: mapping.id }).catch(() => undefined);
   await readDb().delete(calendarMappings).where(eq(calendarMappings.id, mapping.id));
   if (mapping.groupId) {
-    // 그룹의 다른 그룹 캘린더가 없으면 그룹레슨이 멤버 개인 캘린더로 돌아간다(엔진이 판단). 응답 뒤 맞춘다.
+    // 이 계정의 멤버 개인 캘린더로 그룹레슨이 돌아간다(엔진이 계정별로 판단). 응답 뒤 맞춘다.
     await schedulePushStudentsCalendarChanges(await readLessonGroupMemberIds(ctx, mapping.groupId)).catch(() => undefined);
   }
   revalidatePath(SETTINGS_PATH);

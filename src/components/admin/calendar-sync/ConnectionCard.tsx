@@ -239,7 +239,7 @@ function MappingRow({
           confirm={confirm}
           message={
             isGroup
-              ? `${mapping.targetName} 그룹의 이 캘린더 동기화를 멈춥니다. 포탈 레슨·일정과 이 캘린더의 일정은 남고, 그룹레슨은 멤버 개인 캘린더로 다시 올라갑니다.`
+              ? `${mapping.targetName} 그룹의 이 캘린더 동기화를 멈춥니다. 포탈 레슨·일정과 이 캘린더의 일정은 남고, 그룹레슨은 이 계정의 멤버 개인 캘린더로 다시 올라갑니다.`
               : `${mapping.targetName} 학생의 동기화를 멈춥니다. 포탈 레슨·일정과 원격 캘린더 일정은 남습니다.`
           }
           confirmLabel="매핑 해제 확인"

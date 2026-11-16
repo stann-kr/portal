@@ -286,8 +286,12 @@ async function loadStudentLocalRow(db: DrizzleDb, target: Extract<SyncTarget, { 
       endTime: calendarEvents.endTime,
     })
     .from(calendarEvents)
-    // 그룹 캘린더에서 가져온 사본은 개인 캘린더로 보내지 않는다.
-    .where(and(eq(calendarEvents.id, id), eq(calendarEvents.userId, studentId), isNull(calendarEvents.groupEventId)))
+    // 같은 서비스에 그룹 캘린더가 있으면 그룹 일정 사본은 개인 캘린더로 보내지 않는다.
+    .where(and(
+      eq(calendarEvents.id, id),
+      eq(calendarEvents.userId, studentId),
+      target.excludeGroupEventCopies ? isNull(calendarEvents.groupEventId) : undefined,
+    ))
     .limit(1);
   return row
     ? { kind: "EVENT", id: row.id, title: row.title, description: row.description, start: row.startTime, end: row.endTime }
@@ -911,8 +915,8 @@ async function loadStudentRowsForPush(state: RunState, target: Extract<SyncTarge
       .from(calendarEvents)
       .where(and(
         eq(calendarEvents.userId, target.studentId),
-        // 그룹 캘린더에서 가져온 사본은 개인 캘린더로 보내지 않는다.
-        isNull(calendarEvents.groupEventId),
+        // 같은 서비스에 그룹 캘린더가 있으면 그룹 일정 사본은 개인 캘린더로 보내지 않는다.
+        target.excludeGroupEventCopies ? isNull(calendarEvents.groupEventId) : undefined,
         or(
           and(gte(calendarEvents.startTime, window.from), lte(calendarEvents.startTime, window.to)),
           inArray(calendarEvents.id, linkedLocalIds(state, "EVENT")),

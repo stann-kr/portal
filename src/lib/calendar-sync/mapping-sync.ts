@@ -32,9 +32,11 @@ export async function syncCalendarMapping(ctx: DbContext, mappingId: string, opt
     .from(calendarMappings)
     .innerJoin(calendarConnections, eq(calendarConnections.id, calendarMappings.connectionId))
     .where(and(eq(calendarMappings.groupId, mapping.groupId), ne(calendarMappings.id, mappingId), eq(calendarConnections.status, "ACTIVE")));
-  for (const sibling of siblings) {
+  // 그룹의 다른 그룹 캘린더, 그다음 멤버 개인 캘린더(그룹 캘린더가 없는 서비스의 개인 캘린더는 그룹레슨·사본을 받는다).
+  const memberMappingIds = await listActiveMemberMappingIdsForGroup(ctx, mapping.groupId);
+  for (const id of [...siblings.map((sibling) => sibling.id), ...memberMappingIds]) {
     if (options.deadline !== undefined && Date.now() >= options.deadline) break;
-    await syncSingleMapping(ctx, sibling.id, { mode: "push", deadline: options.deadline, now: options.now }).catch(() => undefined);
+    await syncSingleMapping(ctx, id, { mode: "push", deadline: options.deadline, now: options.now }).catch(() => undefined);
   }
   return result;
 }

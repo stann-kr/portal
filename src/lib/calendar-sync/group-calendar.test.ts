@@ -86,22 +86,28 @@ test("그룹 캘린더는 멤버 모두 같은 시각인 그룹레슨만 첫 멤
   );
 });
 
-test("그룹 캘린더가 생기면 멤버 개인 캘린더에서 그룹레슨만 빠지고, 해제하면 다시 올라간다", async (context) => {
+test("같은 서비스에 그룹 캘린더가 생기면 그 서비스 개인 캘린더에서만 그룹레슨이 빠지고, 해제하면 다시 올라간다", async (context) => {
   const harness = setup(context);
   insertLesson(harness, "l-a", "s-a", T_GROUP);
   insertLesson(harness, "l-b", "s-b", T_GROUP);
   insertLesson(harness, "l-a-solo", "s-a", T_SOLO);
   insertMapping(harness, "map-a", "conn-google", "s-a", "cal-a");
   await harness.sync("map-a");
-  assert.deepEqual(remoteTitles(harness.remotes["map-a"]), [`레슨@${T_GROUP.toISOString()}`, `레슨@${T_SOLO.toISOString()}`]);
+  const both = [`레슨@${T_GROUP.toISOString()}`, `레슨@${T_SOLO.toISOString()}`];
+  assert.deepEqual(remoteTitles(harness.remotes["map-a"]), both);
 
-  insertGroupMapping(harness, "map-group-icloud", "conn-icloud", "cal-group");
+  // 다른 서비스(iCloud)의 그룹 캘린더는 Google 개인 캘린더를 바꾸지 않는다(Google만 쓰는 멤버도 그룹레슨을 본다).
+  insertGroupMapping(harness, "map-group-icloud", "conn-icloud", "cal-group-i");
   await harness.sync("map-a");
-  assert.deepEqual(remoteTitles(harness.remotes["map-a"]), [`레슨@${T_SOLO.toISOString()}`], "개인 캘린더의 그룹레슨 사본을 지운다");
+  assert.deepEqual(remoteTitles(harness.remotes["map-a"]), both);
 
-  harness.run("DELETE FROM calendar_mappings WHERE id = 'map-group-icloud'");
+  insertGroupMapping(harness, "map-group-google", "conn-google", "cal-group-g");
   await harness.sync("map-a");
-  assert.deepEqual(remoteTitles(harness.remotes["map-a"]), [`레슨@${T_GROUP.toISOString()}`, `레슨@${T_SOLO.toISOString()}`]);
+  assert.deepEqual(remoteTitles(harness.remotes["map-a"]), [`레슨@${T_SOLO.toISOString()}`], "같은 서비스의 그룹레슨 사본을 지운다");
+
+  harness.run("DELETE FROM calendar_mappings WHERE id = 'map-group-google'");
+  await harness.sync("map-a");
+  assert.deepEqual(remoteTitles(harness.remotes["map-a"]), both);
 });
 
 test("그룹 캘린더에서 그룹레슨을 옮기면 멤버 레슨이 모두 옮겨지고 다른 서비스 그룹 캘린더도 따라간다", async (context) => {
@@ -214,4 +220,56 @@ test("그룹 캘린더를 다시 지정해도 같은 내용의 그룹 일정 원
   await harness.sync("map-group-google");
   assert.equal(harness.rows("SELECT id FROM calendar_group_events").length, 1);
   assert.equal(eventRows(harness).length, 2);
+});
+
+test("그룹 캘린더가 없는 계정의 개인 캘린더에는 그룹레슨과 그룹 일정 사본이 그대로 올라간다", async (context) => {
+  const harness = setup(context);
+  insertLesson(harness, "l-a", "s-a", T_GROUP);
+  insertLesson(harness, "l-b", "s-b", T_GROUP);
+  insertGroupMapping(harness, "map-group-google", "conn-google", "cal-group-g");
+  insertMapping(harness, "map-b-icloud", "conn-icloud", "s-b", "cal-b");
+  harness.remotes["map-group-google"] = new FakeCalendar();
+  const start = new Date("2026-11-20T09:00:00.000Z");
+  harness.remotes["map-group-google"].remoteAdd({ title: "합주", start, end: new Date(start.getTime() + 60 * 60_000) });
+  await harness.sync("map-group-google");
+
+  await harness.sync("map-b-icloud");
+  assert.deepEqual(remoteTitles(harness.remotes["map-b-icloud"]), [`레슨@${T_GROUP.toISOString()}`, `합주@${start.toISOString()}`]);
+});
+
+test("학생이 포탈에서 지운 그룹 일정 사본은 다음 그룹 동기화에서 다시 생기지 않는다", async (context) => {
+  const harness = setup(context);
+  insertGroupMapping(harness, "map-group-google", "conn-google", "cal-group-g");
+  harness.remotes["map-group-google"] = new FakeCalendar();
+  const start = new Date("2026-11-20T09:00:00.000Z");
+  const created = harness.remotes["map-group-google"].remoteAdd({ title: "합주", start, end: new Date(start.getTime() + 60 * 60_000) });
+  await harness.sync("map-group-google");
+  harness.run("DELETE FROM calendar_events WHERE user_id = 's-b'");
+
+  await harness.sync("map-group-google");
+  harness.remotes["map-group-google"].remoteEdit(created.remoteId, { title: "합주 (B룸)" });
+  await harness.sync("map-group-google");
+  assert.deepEqual(eventRows(harness).map((row) => [row.user_id, row.title]), [["s-a", "합주 (B룸)"]]);
+  assert.equal(harness.remotes["map-group-google"].events.size, 1, "그룹 캘린더 일정은 남는다");
+});
+
+test("그룹레슨 기준 멤버가 그룹에서 빠지면 새 기준 레슨으로 일정 하나를 다시 올린다", async (context) => {
+  const harness = setup(context);
+  insertProfile(harness, "s-c", "student");
+  harness.run("INSERT INTO lesson_group_members (student_id, group_id) VALUES ('s-c', 'g-1')");
+  insertLesson(harness, "l-a", "s-a", T_GROUP);
+  insertLesson(harness, "l-b", "s-b", T_GROUP);
+  insertLesson(harness, "l-c", "s-c", T_GROUP);
+  insertGroupMapping(harness, "map-group-google", "conn-google", "cal-group");
+  await harness.sync("map-group-google");
+  assert.equal([...harness.remotes["map-group-google"].events.values()][0].portalRef, "lesson:l-a");
+
+  harness.run("DELETE FROM lesson_group_members WHERE student_id = 's-a'");
+  await harness.sync("map-group-google", "push");
+  const remote = [...harness.remotes["map-group-google"].events.values()];
+  assert.deepEqual(remote.map((event) => [event.title, event.portalRef]), [["그룹레슨", "lesson:l-b"]]);
+  assert.deepEqual(
+    harness.rows("SELECT local_id FROM calendar_sync_links WHERE mapping_id = 'map-group-google'"),
+    [{ local_id: "l-b" }],
+  );
 });

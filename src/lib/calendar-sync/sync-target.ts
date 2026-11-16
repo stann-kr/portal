@@ -4,7 +4,8 @@
  * 그룹 캘린더(2026-11-16 사용자 결정):
  * - 그룹레슨 = 멤버(2명 이상) 모두에게 같은 시작 시각의 포탈 레슨이 있는 시각. 관리자 일정의 합쳐 보기와 같은 규칙이다.
  * - 그룹 캘린더의 그룹레슨 일정 하나는 첫 멤버(학생 id 순) 레슨 id를 기준(link local_id·portalRef)으로 삼는다.
- * - 그룹에 그룹 캘린더가 하나라도 있으면 그룹레슨과 그룹 일정 사본은 멤버 개인 캘린더에 올리지 않는다.
+ * - 그룹 캘린더가 있는 연결 계정(서비스)에서는 그룹레슨과 그룹 일정 사본을 멤버 개인 캘린더에 올리지 않는다.
+ *   그룹 캘린더가 없는 서비스의 개인 캘린더에는 그대로 올린다(그 서비스만 쓰는 멤버도 그룹레슨을 본다).
  */
 import { and, asc, eq, inArray } from "drizzle-orm";
 import type { DrizzleDb } from "@/db/client";
@@ -15,10 +16,12 @@ export type SyncTarget =
     kind: "student";
     studentId: string;
     /**
-     * 학생이 속한 그룹에 그룹 캘린더가 있으면 그 그룹의 멤버 id(학생 id 순, 2명 이상). 이때 그룹레슨은 개인 캘린더에서 뺀다.
-     * 없으면 null.
+     * 같은 연결 계정에 학생 그룹의 그룹 캘린더가 있으면 그 그룹의 멤버 id(학생 id 순, 2명 이상). 이때 그룹레슨은
+     * 개인 캘린더에서 뺀다. 없으면 null.
      */
     groupLessonMemberIds: string[] | null;
+    /** 같은 연결 계정에 그룹 캘린더가 있어 그룹 일정 사본(group_event_id)을 개인 캘린더에서 뺀다. */
+    excludeGroupEventCopies: boolean;
   }
   | { kind: "group"; groupId: string; memberIds: string[] };
 
@@ -34,7 +37,10 @@ export async function readGroupMemberIds(db: DrizzleDb, groupId: string): Promis
 }
 
 /** 매핑 대상 읽기. 학생 매핑이면 그 학생 그룹에 그룹 캘린더가 있는지도 함께 본다. */
-export async function loadSyncTarget(db: DrizzleDb, mapping: { studentId: string | null; groupId: string | null }): Promise<SyncTarget | null> {
+export async function loadSyncTarget(
+  db: DrizzleDb,
+  mapping: { studentId: string | null; groupId: string | null; connectionId: string },
+): Promise<SyncTarget | null> {
   if (mapping.groupId) return { kind: "group", groupId: mapping.groupId, memberIds: await readGroupMemberIds(db, mapping.groupId) };
   if (!mapping.studentId) return null;
   const [membership] = await db
@@ -42,15 +48,16 @@ export async function loadSyncTarget(db: DrizzleDb, mapping: { studentId: string
     .from(lessonGroupMembers)
     .where(eq(lessonGroupMembers.studentId, mapping.studentId))
     .limit(1);
-  if (!membership) return { kind: "student", studentId: mapping.studentId, groupLessonMemberIds: null };
+  const personal = { kind: "student" as const, studentId: mapping.studentId, groupLessonMemberIds: null, excludeGroupEventCopies: false };
+  if (!membership) return personal;
   const [groupMapping] = await db
     .select({ id: calendarMappings.id })
     .from(calendarMappings)
-    .where(eq(calendarMappings.groupId, membership.groupId))
+    .where(and(eq(calendarMappings.groupId, membership.groupId), eq(calendarMappings.connectionId, mapping.connectionId)))
     .limit(1);
-  if (!groupMapping) return { kind: "student", studentId: mapping.studentId, groupLessonMemberIds: null };
+  if (!groupMapping) return personal;
   const memberIds = await readGroupMemberIds(db, membership.groupId);
-  return { kind: "student", studentId: mapping.studentId, groupLessonMemberIds: memberIds.length >= 2 ? memberIds : null };
+  return { ...personal, groupLessonMemberIds: memberIds.length >= 2 ? memberIds : null, excludeGroupEventCopies: true };
 }
 
 /** 멤버들의 포탈 레슨(시각 필터 선택). 멤버는 적고(2~4명) 레슨도 학생당 수백 개 안이라 통째로 읽는다. */
