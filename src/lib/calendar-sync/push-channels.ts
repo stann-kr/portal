@@ -9,7 +9,7 @@
  */
 import { and, eq, inArray, isNull, lt, or } from "drizzle-orm";
 import type { DbContext, DrizzleDb } from "@/db/client";
-import { calendarConnections, calendarMappings, calendarPushChannels } from "@/db/schema";
+import { calendarConnections, calendarMappings, calendarPushChannels, lessonGroupMembers } from "@/db/schema";
 import { createGoogleChannelApiForConnection, type GoogleChannelApi, type StoredCalendarConnection } from "./client-factory";
 import { getGoogleCalendarOAuthConfig } from "./oauth-config";
 import { base64UrlEncode, sha256Hex } from "./types";
@@ -169,8 +169,18 @@ async function listGoogleMappingsNeedingChannel(ctx: DbContext, now: Date, stude
     eq(calendarConnections.status, "ACTIVE"),
     or(isNull(calendarPushChannels.mappingId), lt(calendarPushChannels.expiresAt, renewBefore)),
   ];
-  if (studentId) conditions.push(eq(calendarMappings.studentId, studentId));
-  const rows = await readDb(ctx)
+  const db = readDb(ctx);
+  // 학생 기준이면 학생 캘린더와 그 학생 그룹의 그룹 캘린더(그룹 캘린더 알림도 멤버 화면 조회가 갱신한다).
+  if (studentId) {
+    conditions.push(or(
+      eq(calendarMappings.studentId, studentId),
+      inArray(
+        calendarMappings.groupId,
+        db.select({ groupId: lessonGroupMembers.groupId }).from(lessonGroupMembers).where(eq(lessonGroupMembers.studentId, studentId)),
+      ),
+    )!);
+  }
+  const rows = await db
     .select({ id: calendarMappings.id })
     .from(calendarMappings)
     .innerJoin(calendarConnections, eq(calendarConnections.id, calendarMappings.connectionId))
@@ -215,12 +225,12 @@ export function ensureGoogleWatchChannelsForStudent(ctx: DbContext, studentId: s
 }
 
 /**
- * 매핑 해제·연결 해제 전에 부른다: Google channel을 중지(best-effort)하고 channel 행을 지운다.
+ * 매핑 해제·연결 해제·그룹 해제 전에 부른다: Google channel을 중지(best-effort)하고 channel 행을 지운다.
  * 매핑 행 자체는 지우지 않는다(호출자가 지우며 cascade로도 지워진다).
  */
 export async function stopGoogleWatchChannelsFor(
   ctx: DbContext,
-  target: { mappingId: string } | { connectionId: string },
+  target: { mappingId: string } | { connectionId: string } | { groupId: string },
 ): Promise<{ stopped: number }> {
   let stopped = 0;
   try {
@@ -238,16 +248,26 @@ export async function stopGoogleWatchChannelsFor(
       .from(calendarPushChannels)
       .innerJoin(calendarMappings, eq(calendarMappings.id, calendarPushChannels.mappingId))
       .innerJoin(calendarConnections, eq(calendarConnections.id, calendarMappings.connectionId))
-      .where("mappingId" in target ? eq(calendarMappings.id, target.mappingId) : eq(calendarMappings.connectionId, target.connectionId));
+      .where(
+        "mappingId" in target
+          ? eq(calendarMappings.id, target.mappingId)
+          : "connectionId" in target
+            ? eq(calendarMappings.connectionId, target.connectionId)
+            : eq(calendarMappings.groupId, target.groupId),
+      );
     if (rows.length === 0) return { stopped };
-    let api: GoogleChannelApi | null = null;
-    try {
-      api = await createGoogleChannelApiForConnection(ctx, storedConnection(rows[0]));
-    } catch {
-      api = null;
-    }
+    // 그룹 해제는 여러 연결(관리자 Google 계정)에 걸칠 수 있어 연결마다 API를 만든다.
+    const apis = new Map<string, GoogleChannelApi | null>();
     for (const row of rows) {
-      if (!api) break;
+      if (!apis.has(row.connectionId)) {
+        try {
+          apis.set(row.connectionId, await createGoogleChannelApiForConnection(ctx, storedConnection(row)));
+        } catch {
+          apis.set(row.connectionId, null);
+        }
+      }
+      const api = apis.get(row.connectionId);
+      if (!api) continue;
       try {
         await api.stop({ channelId: row.channelId, resourceId: row.resourceId });
         stopped += 1;

@@ -24,6 +24,7 @@ import type { DbContext, DrizzleDb } from "@/db/client";
 import {
   calendarConnections,
   calendarEvents,
+  calendarGroupEvents,
   calendarMappings,
   calendarRemoteSeries,
   calendarSyncLinks,
@@ -60,6 +61,7 @@ import {
   type RemoteEventInput,
   type WriteResult,
 } from "./types";
+import { loadMemberLessons, loadSyncTarget, sharedGroupLessons, type MemberLesson, type SyncTarget } from "./sync-target";
 
 export const CALENDAR_SYNC_WINDOW_PAST_DAYS = 90;
 export const CALENDAR_SYNC_WINDOW_FUTURE_DAYS = 365;
@@ -94,6 +96,8 @@ function detachedBaseline(link: LinkRow): string | null {
   return link.localFingerprint.startsWith(`${DETACHED_FINGERPRINT}:`) ? link.localFingerprint.slice(DETACHED_FINGERPRINT.length + 1) : null;
 }
 export const LESSON_REMOTE_TITLE = "레슨";
+/** 그룹 캘린더에 올리는 그룹레슨 제목. */
+export const GROUP_LESSON_REMOTE_TITLE = "그룹레슨";
 /** 종료 시각이 없는 포탈 일정을 원격에 보낼 때의 길이. */
 export const OPEN_EVENT_REMOTE_MINUTES = 60;
 const MAX_SERIES_ICS_LENGTH = 262_144;
@@ -139,7 +143,11 @@ export type SyncEngineResult =
   | { status: "synced"; localChanged: boolean; partial: boolean }
   | { status: "failed"; localChanged: boolean; error: string; authFailed: boolean };
 
-type LocalLesson = { kind: "LESSON"; id: string; start: Date };
+/**
+ * 그룹 캘린더의 그룹레슨이면 id는 첫 멤버 레슨 id, members는 멤버별 레슨(멤버 순서), title은 그룹레슨 제목이다.
+ * 학생 캘린더의 레슨은 members·title이 없다(기존 fingerprint 그대로).
+ */
+type LocalLesson = { kind: "LESSON"; id: string; start: Date; title?: string; members?: MemberLesson[] };
 type LocalEvent = { kind: "EVENT"; id: string; title: string; description: string | null; start: Date; end: Date | null };
 export type LocalCalendarRow = LocalLesson | LocalEvent;
 
@@ -172,7 +180,7 @@ function isKstMidnight(date: Date): boolean {
 /** 로컬 행을 원격 입력으로 바꾼다. 종료 없는 일정은 60분, KST 자정~자정(24시간 배수)은 종일로 보낸다. */
 export function localRowToRemoteInput(row: LocalCalendarRow): RemoteEventInput {
   if (row.kind === "LESSON") {
-    return lessonToRemoteInput({ lessonId: row.id, title: LESSON_REMOTE_TITLE, start: row.start, description: "" });
+    return lessonToRemoteInput({ lessonId: row.id, title: row.title ?? LESSON_REMOTE_TITLE, start: row.start, description: "" });
   }
   const end = row.end && row.end.getTime() > row.start.getTime()
     ? row.end
@@ -253,14 +261,21 @@ class LeaseLost extends Error {}
 
 // ── 로컬 행 읽기·쓰기 ─────────────────────────────────────
 
-async function loadLocalRow(db: DrizzleDb, studentId: string, kind: CalendarSyncLocalKind, id: string): Promise<LocalCalendarRow | null> {
+async function loadStudentLocalRow(db: DrizzleDb, target: Extract<SyncTarget, { kind: "student" }>, kind: CalendarSyncLocalKind, id: string): Promise<LocalCalendarRow | null> {
+  const studentId = target.studentId;
   if (kind === "LESSON") {
     const [row] = await db
       .select({ id: lessons.id, scheduledAt: lessons.scheduledAt })
       .from(lessons)
       .where(and(eq(lessons.id, id), eq(lessons.studentId, studentId)))
       .limit(1);
-    return row ? { kind: "LESSON", id: row.id, start: row.scheduledAt } : null;
+    if (!row) return null;
+    // 그룹 캘린더가 맡는 그룹레슨은 개인 캘린더 항목이 아니다(push가 개인 사본을 지운다).
+    if (target.groupLessonMemberIds) {
+      const shared = sharedGroupLessons(await loadMemberLessons(db, target.groupLessonMemberIds, row.scheduledAt), target.groupLessonMemberIds);
+      if (shared.has(row.scheduledAt.getTime())) return null;
+    }
+    return { kind: "LESSON", id: row.id, start: row.scheduledAt };
   }
   const [row] = await db
     .select({
@@ -271,30 +286,117 @@ async function loadLocalRow(db: DrizzleDb, studentId: string, kind: CalendarSync
       endTime: calendarEvents.endTime,
     })
     .from(calendarEvents)
-    .where(and(eq(calendarEvents.id, id), eq(calendarEvents.userId, studentId)))
+    // 그룹 캘린더에서 가져온 사본은 개인 캘린더로 보내지 않는다.
+    .where(and(eq(calendarEvents.id, id), eq(calendarEvents.userId, studentId), isNull(calendarEvents.groupEventId)))
     .limit(1);
   return row
     ? { kind: "EVENT", id: row.id, title: row.title, description: row.description, start: row.startTime, end: row.endTime }
     : null;
 }
 
+/** 그룹 캘린더 항목: 그룹레슨(첫 멤버 레슨 id 기준) 또는 그룹 일정 원본. */
+async function loadGroupLocalRow(db: DrizzleDb, target: Extract<SyncTarget, { kind: "group" }>, kind: CalendarSyncLocalKind, id: string): Promise<LocalCalendarRow | null> {
+  if (kind === "LESSON") {
+    if (target.memberIds.length < 2) return null;
+    const [head] = await db
+      .select({ scheduledAt: lessons.scheduledAt })
+      .from(lessons)
+      .where(and(eq(lessons.id, id), inArray(lessons.studentId, target.memberIds)))
+      .limit(1);
+    if (!head) return null;
+    const members = sharedGroupLessons(await loadMemberLessons(db, target.memberIds, head.scheduledAt), target.memberIds).get(head.scheduledAt.getTime());
+    // 더 이상 멤버 모두의 레슨이 아니거나 기준 레슨이 바뀌었으면 이 그룹 캘린더 항목이 아니다.
+    if (!members || members[0].id !== id) return null;
+    return { kind: "LESSON", id, start: head.scheduledAt, title: GROUP_LESSON_REMOTE_TITLE, members };
+  }
+  const [row] = await db
+    .select({
+      id: calendarGroupEvents.id,
+      title: calendarGroupEvents.title,
+      description: calendarGroupEvents.description,
+      startTime: calendarGroupEvents.startTime,
+      endTime: calendarGroupEvents.endTime,
+    })
+    .from(calendarGroupEvents)
+    .where(and(eq(calendarGroupEvents.id, id), eq(calendarGroupEvents.groupId, target.groupId)))
+    .limit(1);
+  return row
+    ? { kind: "EVENT", id: row.id, title: row.title, description: row.description, start: row.startTime, end: row.endTime }
+    : null;
+}
+
+async function loadLocalRow(state: RunState, kind: CalendarSyncLocalKind, id: string): Promise<LocalCalendarRow | null> {
+  return state.target.kind === "group"
+    ? loadGroupLocalRow(state.db, state.target, kind, id)
+    : loadStudentLocalRow(state.db, state.target, kind, id);
+}
+
 /**
  * 읽었던 로컬 값과 같을 때만 맞는 WHERE 조건(웹 수정과의 경합 방지). 뒤에 DOCUMENT_CONDITIONAL_WRITE_SENTINEL을
- * 붙이면 0행이면 batch 전체가 되돌려진다.
+ * 붙이면 0행이면 batch 전체가 되돌려진다. 그룹레슨은 첫 멤버 레슨 행 기준이다(멤버별 이동은 lessonMoveStatements).
  */
-function localRowGuard(row: LocalCalendarRow, studentId: string): { where: string; params: unknown[] } {
+function localRowGuard(row: LocalCalendarRow, target: SyncTarget): { table: string; where: string; params: unknown[] } {
   if (row.kind === "LESSON") {
-    return { where: "id = ? AND student_id = ? AND scheduled_at = ?", params: [row.id, studentId, epochSeconds(row.start)] };
+    const owner = row.members?.[0]?.studentId ?? (target.kind === "student" ? target.studentId : "");
+    return { table: "lessons", where: "id = ? AND student_id = ? AND scheduled_at = ?", params: [row.id, owner, epochSeconds(row.start)] };
+  }
+  const values = [row.title, row.description, epochSeconds(row.start), row.end ? epochSeconds(row.end) : null];
+  if (target.kind === "group") {
+    return {
+      table: "calendar_group_events",
+      where: "id = ? AND group_id = ? AND title = ? AND description IS ? AND start_time = ? AND end_time IS ?",
+      params: [row.id, target.groupId, ...values],
+    };
   }
   return {
+    table: "calendar_events",
     where: "id = ? AND user_id = ? AND title = ? AND description IS ? AND start_time = ? AND end_time IS ?",
-    params: [row.id, studentId, row.title, row.description, epochSeconds(row.start), row.end ? epochSeconds(row.end) : null],
+    params: [row.id, target.studentId, ...values],
   };
 }
 
-function deleteLocalRowStatement(row: LocalCalendarRow, studentId: string): DocumentAtomicStatement {
-  const guard = localRowGuard(row, studentId);
-  return { query: `DELETE FROM ${row.kind === "LESSON" ? "lessons" : "calendar_events"} WHERE ${guard.where}`, params: guard.params };
+/** 일정 행 삭제(guard 문장 바로 뒤에 sentinel을 붙인다). 그룹 일정은 멤버 사본을 먼저 지운 뒤 원본을 지운다. */
+function deleteEventStatements(row: LocalEvent, target: SyncTarget): DocumentAtomicStatement[] {
+  const guard = localRowGuard(row, target);
+  const statements: DocumentAtomicStatement[] = [];
+  if (target.kind === "group") {
+    statements.push({ query: "DELETE FROM calendar_events WHERE group_event_id = ?", params: [row.id] });
+  }
+  statements.push({ query: `DELETE FROM ${guard.table} WHERE ${guard.where}`, params: guard.params }, DOCUMENT_CONDITIONAL_WRITE_SENTINEL);
+  return statements;
+}
+
+/** 레슨 시간 이동(원격 변경 반영). 그룹레슨은 멤버 레슨을 모두 옮긴다(각 행이 읽은 시각 그대로일 때만). */
+function lessonMoveStatements(row: LocalLesson, start: Date, target: SyncTarget): DocumentAtomicStatement[] {
+  const members = row.members ?? [{ id: row.id, studentId: target.kind === "student" ? target.studentId : "", start: row.start }];
+  return members.flatMap((member) => [
+    {
+      query: "UPDATE lessons SET scheduled_at = ? WHERE id = ? AND student_id = ? AND scheduled_at = ?",
+      params: [epochSeconds(start), member.id, member.studentId, epochSeconds(member.start)],
+    },
+    DOCUMENT_CONDITIONAL_WRITE_SENTINEL,
+  ]);
+}
+
+/** 일정 내용 반영. 그룹 일정은 원본(guard)과 멤버 사본 모두를 바꾼다. */
+function eventUpdateStatements(row: LocalEvent, values: ReturnType<typeof remoteEventToLocalValues>, target: SyncTarget): DocumentAtomicStatement[] {
+  const guard = localRowGuard(row, target);
+  const set = [values.title, values.description, epochSeconds(values.start), values.end ? epochSeconds(values.end) : null];
+  const statements: DocumentAtomicStatement[] = [];
+  if (target.kind === "group") {
+    statements.push({
+      query: "UPDATE calendar_events SET title = ?, description = ?, start_time = ?, end_time = ? WHERE group_event_id = ?",
+      params: [...set, row.id],
+    });
+  }
+  statements.push(
+    {
+      query: `UPDATE ${guard.table} SET title = ?, description = ?, start_time = ?, end_time = ?${target.kind === "group" ? ", updated_at = ?" : ""} WHERE ${guard.where}`,
+      params: [...set, ...(target.kind === "group" ? [epochSeconds(new Date())] : []), ...guard.params],
+    },
+    DOCUMENT_CONDITIONAL_WRITE_SENTINEL,
+  );
+  return statements;
 }
 
 // ── 엔진 ──────────────────────────────────────────────────
@@ -304,7 +406,7 @@ type RunState = {
   db: DrizzleDb;
   client: CalendarProviderClient;
   mappingId: string;
-  studentId: string;
+  target: SyncTarget;
   calendarId: string;
   leaseId: string;
   now: () => Date;
@@ -425,17 +527,36 @@ async function remoteCall<T>(state: RunState, call: () => Promise<T>): Promise<T
 
 // ── pull 적용 ──
 
+/**
+ * portalRef 없는 원격 새 일정을 가져온다. 학생 캘린더면 그 학생 일정(NOTE) 하나, 그룹 캘린더면 그룹 일정 원본과
+ * 지금 멤버 모두의 사본(NOTE, group_event_id)을 만든다(2026-11-16 사용자 결정).
+ */
 async function importRemoteEvent(state: RunState, remote: RemoteEvent): Promise<void> {
   const values = remoteEventToLocalValues(remote);
   const id = crypto.randomUUID();
   const fingerprint = await localFingerprint({ kind: "EVENT", id, ...values });
   const nowSeconds = epochSeconds(state.now());
-  await executeFenced(state, [
-    {
+  const range = [epochSeconds(values.start), values.end ? epochSeconds(values.end) : null] as const;
+  const localStatements: DocumentAtomicStatement[] = state.target.kind === "group"
+    ? [
+      {
+        query:
+          "INSERT INTO calendar_group_events (id, group_id, title, description, start_time, end_time, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        params: [id, state.target.groupId, values.title, values.description, ...range, nowSeconds, nowSeconds],
+      },
+      ...state.target.memberIds.map((memberId) => ({
+        query:
+          "INSERT INTO calendar_events (id, user_id, event_type, title, start_time, end_time, description, group_event_id, created_at) VALUES (?, ?, 'NOTE', ?, ?, ?, ?, ?, ?)",
+        params: [crypto.randomUUID(), memberId, values.title, ...range, values.description, id, nowSeconds],
+      })),
+    ]
+    : [{
       query:
         "INSERT INTO calendar_events (id, user_id, event_type, title, start_time, end_time, description, created_at) VALUES (?, ?, 'NOTE', ?, ?, ?, ?, ?)",
-      params: [id, state.studentId, values.title, epochSeconds(values.start), values.end ? epochSeconds(values.end) : null, values.description, nowSeconds],
-    },
+      params: [id, state.target.studentId, values.title, ...range, values.description, nowSeconds],
+    }];
+  await executeFenced(state, [
+    ...localStatements,
     {
       query:
         "INSERT INTO calendar_sync_links (id, mapping_id, local_kind, local_id, remote_id, etag, local_fingerprint, created_at, updated_at) VALUES (?, ?, 'EVENT', ?, ?, ?, ?, ?, ?)",
@@ -453,19 +574,34 @@ async function importRemoteEvent(state: RunState, remote: RemoteEvent): Promise<
  */
 async function adoptUnlinkedImport(state: RunState, remote: RemoteEvent): Promise<boolean> {
   const values = remoteEventToLocalValues(remote);
-  const candidates = await state.db
-    .select({ id: calendarEvents.id })
-    .from(calendarEvents)
-    .where(and(
-      eq(calendarEvents.userId, state.studentId),
-      eq(calendarEvents.eventType, "NOTE"),
-      eq(calendarEvents.title, values.title),
-      values.description === null ? isNull(calendarEvents.description) : eq(calendarEvents.description, values.description),
-      eq(calendarEvents.startTime, values.start),
-      values.end === null ? isNull(calendarEvents.endTime) : eq(calendarEvents.endTime, values.end),
-    ))
-    .orderBy(asc(calendarEvents.createdAt), asc(calendarEvents.id))
-    .limit(20);
+  // 그룹 캘린더는 같은 내용의 그룹 일정 원본에 잇는다(다른 서비스 그룹 캘린더에 같은 일정이 이미 있을 때도 원본 하나로).
+  const candidates = state.target.kind === "group"
+    ? await state.db
+      .select({ id: calendarGroupEvents.id })
+      .from(calendarGroupEvents)
+      .where(and(
+        eq(calendarGroupEvents.groupId, state.target.groupId),
+        eq(calendarGroupEvents.title, values.title),
+        values.description === null ? isNull(calendarGroupEvents.description) : eq(calendarGroupEvents.description, values.description),
+        eq(calendarGroupEvents.startTime, values.start),
+        values.end === null ? isNull(calendarGroupEvents.endTime) : eq(calendarGroupEvents.endTime, values.end),
+      ))
+      .orderBy(asc(calendarGroupEvents.createdAt), asc(calendarGroupEvents.id))
+      .limit(20)
+    : await state.db
+      .select({ id: calendarEvents.id })
+      .from(calendarEvents)
+      .where(and(
+        eq(calendarEvents.userId, state.target.studentId),
+        eq(calendarEvents.eventType, "NOTE"),
+        isNull(calendarEvents.groupEventId),
+        eq(calendarEvents.title, values.title),
+        values.description === null ? isNull(calendarEvents.description) : eq(calendarEvents.description, values.description),
+        eq(calendarEvents.startTime, values.start),
+        values.end === null ? isNull(calendarEvents.endTime) : eq(calendarEvents.endTime, values.end),
+      ))
+      .orderBy(asc(calendarEvents.createdAt), asc(calendarEvents.id))
+      .limit(20);
   if (candidates.length === 0) return false;
   const linked = new Set((await state.db
     .select({ localId: calendarSyncLinks.localId })
@@ -478,13 +614,13 @@ async function adoptUnlinkedImport(state: RunState, remote: RemoteEvent): Promis
   const target = candidates.find((candidate) => !linked.has(candidate.id));
   if (!target) return false;
   const local: LocalCalendarRow = { kind: "EVENT", id: target.id, ...values };
-  const guard = localRowGuard(local, state.studentId);
+  const guard = localRowGuard(local, state.target);
   const nowSeconds = epochSeconds(state.now());
   // 읽은 뒤 웹에서 바뀌었으면 잇지 않는다(0행). 그때는 기존처럼 새로 가져온다.
   await executeFenced(state, [{
     query:
       "INSERT INTO calendar_sync_links (id, mapping_id, local_kind, local_id, remote_id, etag, local_fingerprint, created_at, updated_at) " +
-      `SELECT ?, ?, 'EVENT', ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM calendar_events WHERE ${guard.where}) ` +
+      `SELECT ?, ?, 'EVENT', ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM ${guard.table} WHERE ${guard.where}) ` +
       "ON CONFLICT DO NOTHING",
     params: [
       crypto.randomUUID(), state.mappingId, target.id, remote.remoteId, remote.etag, await localFingerprint(local), nowSeconds, nowSeconds,
@@ -522,7 +658,7 @@ async function reevaluateLinked(state: RunState, link: LinkRow, attempt: number)
 async function applyRemoteToLinked(state: RunState, link: LinkRow, remote: RemoteEvent, attempt = 1): Promise<void> {
   if (link.etag === remote.etag) return;
   if (link.localFingerprint === DELETED_FINGERPRINT) return;
-  const local = await loadLocalRow(state.db, state.studentId, link.localKind, link.localId);
+  const local = await loadLocalRow(state, link.localKind, link.localId);
   if (!local) return; // push 단계가 원격 사본을 지운다.
   const current = await localFingerprint(local);
   if (current !== link.localFingerprint) {
@@ -534,23 +670,16 @@ async function applyRemoteToLinked(state: RunState, link: LinkRow, remote: Remot
   const nowSeconds = epochSeconds(state.now());
   const statements: DocumentAtomicStatement[] = [];
   // 읽었던 값과 같을 때만 바꾼다. 그 사이 웹 수정이 있으면 0행 → sentinel이 batch 전체를 되돌린다.
-  const guard = localRowGuard(local, state.studentId);
   if (local.kind === "LESSON") {
-    // 레슨은 시간만 반영한다(제목·설명·길이 변경은 무시).
-    next = { ...local, start: persisted(remote.start) };
-    statements.push({
-      query: `UPDATE lessons SET scheduled_at = ? WHERE ${guard.where}`,
-      params: [epochSeconds(next.start), ...guard.params],
-    });
+    // 레슨은 시간만 반영한다(제목·설명·길이 변경은 무시). 그룹레슨은 멤버 레슨을 모두 옮긴다.
+    const start = persisted(remote.start);
+    next = { ...local, start, members: local.members?.map((member) => ({ ...member, start })) };
+    statements.push(...lessonMoveStatements(local, start, state.target));
   } else {
     const values = remoteEventToLocalValues(remote);
     next = { ...local, ...values };
-    statements.push({
-      query: `UPDATE calendar_events SET title = ?, description = ?, start_time = ?, end_time = ? WHERE ${guard.where}`,
-      params: [values.title, values.description, epochSeconds(values.start), values.end ? epochSeconds(values.end) : null, ...guard.params],
-    });
+    statements.push(...eventUpdateStatements(local, values, state.target));
   }
-  statements.push(DOCUMENT_CONDITIONAL_WRITE_SENTINEL);
   const nextFingerprint = await localFingerprint(next);
   statements.push(
     {
@@ -578,7 +707,7 @@ async function applyRemoteDeletion(state: RunState, link: LinkRow, attempt = 1):
     await deleteLink(state, link.id);
     return;
   }
-  const local = await loadLocalRow(state.db, state.studentId, link.localKind, link.localId);
+  const local = await loadLocalRow(state, link.localKind, link.localId);
   if (!local) {
     await deleteLink(state, link.id);
     return;
@@ -599,8 +728,7 @@ async function applyRemoteDeletion(state: RunState, link: LinkRow, attempt = 1):
   }
   try {
     await executeFenced(state, [
-      deleteLocalRowStatement(local, state.studentId),
-      DOCUMENT_CONDITIONAL_WRITE_SENTINEL,
+      ...deleteEventStatements(local, state.target),
       { query: "DELETE FROM calendar_sync_links WHERE id = ? AND local_fingerprint = ?", params: [link.id, link.localFingerprint] },
       DOCUMENT_CONDITIONAL_WRITE_SENTINEL,
     ]);
@@ -678,7 +806,7 @@ async function applyPull(state: RunState, result: PullResult, full: boolean, win
         }
         continue; // 다른 원격 id에 이미 이어진 사본은 가져오지 않는다.
       }
-      const local = await loadLocalRow(state.db, state.studentId, ref.kind, ref.id);
+      const local = await loadLocalRow(state, ref.kind, ref.id);
       if (!local) continue; // 다른 학생·이미 지운 포탈 항목의 원격 사본은 가져오지 않는다.
       await executeFenced(state, [
         toStatement(state.db.insert(calendarSyncLinks).values({
@@ -719,7 +847,7 @@ async function applyPull(state: RunState, result: PullResult, full: boolean, win
     let missingLookups = 0;
     for (const link of state.links) {
       if (!link.remoteId || seen.has(link.remoteId) || link.localFingerprint === DELETED_FINGERPRINT) continue;
-      const local = await loadLocalRow(state.db, state.studentId, link.localKind, link.localId);
+      const local = await loadLocalRow(state, link.localKind, link.localId);
       if (!local) continue;
       if (local.start.getTime() < window.from.getTime() || local.start.getTime() > window.to.getTime()) continue;
       if (missingLookups >= FULL_RESYNC_MISSING_LOOKUP_CAP) {
@@ -749,21 +877,27 @@ async function applyPull(state: RunState, result: PullResult, full: boolean, win
 
 // ── push ──
 
-async function loadLocalRowsForPush(state: RunState, window: PullWindow): Promise<LocalCalendarRow[]> {
-  const linkedIds = (kind: CalendarSyncLocalKind) =>
-    state.db
-      .select({ id: calendarSyncLinks.localId })
-      .from(calendarSyncLinks)
-      .where(and(eq(calendarSyncLinks.mappingId, state.mappingId), eq(calendarSyncLinks.localKind, kind)));
-  const [lessonRows, eventRows] = await Promise.all([
+function inWindow(start: Date, window: PullWindow): boolean {
+  return start.getTime() >= window.from.getTime() && start.getTime() <= window.to.getTime();
+}
+
+function linkedLocalIds(state: RunState, kind: CalendarSyncLocalKind) {
+  return state.db
+    .select({ id: calendarSyncLinks.localId })
+    .from(calendarSyncLinks)
+    .where(and(eq(calendarSyncLinks.mappingId, state.mappingId), eq(calendarSyncLinks.localKind, kind)));
+}
+
+async function loadStudentRowsForPush(state: RunState, target: Extract<SyncTarget, { kind: "student" }>, window: PullWindow): Promise<LocalCalendarRow[]> {
+  const [lessonRows, eventRows, memberLessons] = await Promise.all([
     state.db
       .select({ id: lessons.id, scheduledAt: lessons.scheduledAt })
       .from(lessons)
       .where(and(
-        eq(lessons.studentId, state.studentId),
+        eq(lessons.studentId, target.studentId),
         or(
           and(gte(lessons.scheduledAt, window.from), lte(lessons.scheduledAt, window.to)),
-          inArray(lessons.id, linkedIds("LESSON")),
+          inArray(lessons.id, linkedLocalIds(state, "LESSON")),
         ),
       )),
     state.db
@@ -776,15 +910,22 @@ async function loadLocalRowsForPush(state: RunState, window: PullWindow): Promis
       })
       .from(calendarEvents)
       .where(and(
-        eq(calendarEvents.userId, state.studentId),
+        eq(calendarEvents.userId, target.studentId),
+        // 그룹 캘린더에서 가져온 사본은 개인 캘린더로 보내지 않는다.
+        isNull(calendarEvents.groupEventId),
         or(
           and(gte(calendarEvents.startTime, window.from), lte(calendarEvents.startTime, window.to)),
-          inArray(calendarEvents.id, linkedIds("EVENT")),
+          inArray(calendarEvents.id, linkedLocalIds(state, "EVENT")),
         ),
       )),
+    target.groupLessonMemberIds ? loadMemberLessons(state.db, target.groupLessonMemberIds) : Promise.resolve([]),
   ]);
+  // 그룹 캘린더가 있으면 그룹레슨은 그쪽이 올린다. 개인 캘린더에서는 빼서 이미 올라간 사본을 push가 지운다.
+  const groupStarts = target.groupLessonMemberIds ? sharedGroupLessons(memberLessons, target.groupLessonMemberIds) : new Map();
   return [
-    ...lessonRows.map((row): LocalCalendarRow => ({ kind: "LESSON", id: row.id, start: row.scheduledAt })),
+    ...lessonRows
+      .filter((row) => !groupStarts.has(row.scheduledAt.getTime()))
+      .map((row): LocalCalendarRow => ({ kind: "LESSON", id: row.id, start: row.scheduledAt })),
     ...eventRows.map((row): LocalCalendarRow => ({
       kind: "EVENT",
       id: row.id,
@@ -794,6 +935,46 @@ async function loadLocalRowsForPush(state: RunState, window: PullWindow): Promis
       end: row.endTime,
     })),
   ];
+}
+
+async function loadGroupRowsForPush(state: RunState, target: Extract<SyncTarget, { kind: "group" }>, window: PullWindow): Promise<LocalCalendarRow[]> {
+  const [memberLessons, eventRows, linkedLessonIds] = await Promise.all([
+    loadMemberLessons(state.db, target.memberIds),
+    state.db
+      .select({
+        id: calendarGroupEvents.id,
+        title: calendarGroupEvents.title,
+        description: calendarGroupEvents.description,
+        startTime: calendarGroupEvents.startTime,
+        endTime: calendarGroupEvents.endTime,
+      })
+      .from(calendarGroupEvents)
+      .where(and(
+        eq(calendarGroupEvents.groupId, target.groupId),
+        or(
+          and(gte(calendarGroupEvents.startTime, window.from), lte(calendarGroupEvents.startTime, window.to)),
+          inArray(calendarGroupEvents.id, linkedLocalIds(state, "EVENT")),
+        ),
+      )),
+    linkedLocalIds(state, "LESSON"),
+  ]);
+  const linked = new Set(linkedLessonIds.map((row) => row.id));
+  const rows: LocalCalendarRow[] = [];
+  for (const [startMs, members] of sharedGroupLessons(memberLessons, target.memberIds)) {
+    const start = new Date(startMs);
+    if (!inWindow(start, window) && !linked.has(members[0].id)) continue;
+    rows.push({ kind: "LESSON", id: members[0].id, start, title: GROUP_LESSON_REMOTE_TITLE, members });
+  }
+  for (const row of eventRows) {
+    rows.push({ kind: "EVENT", id: row.id, title: row.title, description: row.description, start: row.startTime, end: row.endTime });
+  }
+  return rows;
+}
+
+async function loadLocalRowsForPush(state: RunState, window: PullWindow): Promise<LocalCalendarRow[]> {
+  return state.target.kind === "group"
+    ? loadGroupRowsForPush(state, state.target, window)
+    : loadStudentRowsForPush(state, state.target, window);
 }
 
 async function createRemote(state: RunState, input: RemoteEventInput): Promise<WriteResult> {
@@ -1000,6 +1181,7 @@ export async function runCalendarMappingSync(options: SyncEngineOptions): Promis
     .select({
       id: calendarMappings.id,
       studentId: calendarMappings.studentId,
+      groupId: calendarMappings.groupId,
       remoteCalendarId: calendarMappings.remoteCalendarId,
       cursor: calendarMappings.cursor,
       updatedAt: calendarMappings.updatedAt,
@@ -1012,6 +1194,8 @@ export async function runCalendarMappingSync(options: SyncEngineOptions): Promis
     .limit(1);
   if (!mapping) return { status: "skipped", localChanged: false, reason: "missing" };
   if (mapping.connectionStatus !== "ACTIVE") return { status: "skipped", localChanged: false, reason: "inactive" };
+  const target = await loadSyncTarget(db, mapping);
+  if (!target) return { status: "skipped", localChanged: false, reason: "missing" };
 
   const startedAt = now();
   const force = Boolean(options.force) || mode === "push";
@@ -1026,7 +1210,7 @@ export async function runCalendarMappingSync(options: SyncEngineOptions): Promis
     db,
     client: undefined as unknown as CalendarProviderClient,
     mappingId: mapping.id,
-    studentId: mapping.studentId,
+    target,
     calendarId: mapping.remoteCalendarId,
     leaseId,
     now,

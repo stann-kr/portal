@@ -9,9 +9,11 @@ import { revalidatePath } from "next/cache";
 import { createDb, createDbContext } from "@/db/client";
 import { listActiveStudentProfiles } from "@/lib/active-profile";
 import { requireAdmin, requireAuth, requireStudentOwnerOrAdmin } from "@/lib/auth-guard";
+import { schedulePushStudentsCalendarChanges, stopGroupCalendarChannels } from "@/lib/calendar-sync/sync-runner";
 import {
   deleteLessonGroup,
   listLessonGroups,
+  readLessonGroupMemberIds,
   readStudentHomeLessonGroup,
   readStudentLessonGroup,
   saveLessonGroup,
@@ -61,8 +63,10 @@ export async function saveLessonGroupAction(input: {
   if (memberIds.some((id) => !activeIds.has(id))) {
     return { ok: false, error: "고를 수 없는 학생이 있습니다. 목록을 새로 고쳐 주세요." };
   }
+  const groupId = typeof input.groupId === "string" && input.groupId ? input.groupId : null;
+  const previousMemberIds = groupId ? await readLessonGroupMemberIds(createDbContext(), groupId) : [];
   const result = await saveLessonGroup(createDbContext(), {
-    groupId: typeof input.groupId === "string" && input.groupId ? input.groupId : null,
+    groupId,
     name: input.name,
     memberIds,
     now: new Date(),
@@ -83,12 +87,17 @@ export async function saveLessonGroupAction(input: {
     }
   }
   revalidateGroups();
+  // 멤버가 바뀌면 그룹레슨(멤버 모두 같은 시각)이 달라진다. 그룹 캘린더와 빠지거나 들어온 학생의 개인 캘린더를 맞춘다.
+  await schedulePushStudentsCalendarChanges([...previousMemberIds, ...memberIds]);
   return { ok: true, id: result.id };
 }
 
 export async function deleteLessonGroupAction(groupId: string): Promise<LessonGroupWriteResult> {
   await requireAdmin();
   if (typeof groupId !== "string" || !groupId) return { ok: false, error: "그룹을 찾지 못했습니다." };
+  const memberIds = await readLessonGroupMemberIds(createDbContext(), groupId);
+  // 그룹을 지우면 그룹 캘린더 매핑이 cascade로 지워진다. 그 전에 Google 변경 알림을 멈춘다.
+  await stopGroupCalendarChannels(groupId);
   const result = await deleteLessonGroup(createDbContext(), groupId);
   if (!result.ok) {
     return result.error === "HAS_NOTES"
@@ -96,5 +105,7 @@ export async function deleteLessonGroupAction(groupId: string): Promise<LessonGr
       : { ok: false, error: "그룹이 이미 해제되었습니다." };
   }
   revalidateGroups();
+  // 그룹 캘린더가 없어졌으니 그룹레슨을 멤버 개인 캘린더로 다시 올린다.
+  await schedulePushStudentsCalendarChanges(memberIds);
   return { ok: true };
 }

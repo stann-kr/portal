@@ -4,8 +4,13 @@
  */
 import { runAfterResponse } from "@/lib/after-response";
 import { createDbContext, type DbContext } from "@/db/client";
-import { listActiveMappingIdsForStudent, syncCalendarMapping, type RunOptions } from "./mapping-sync";
-import { ensureGoogleWatchChannelsForStudent } from "./push-channels";
+import {
+  listActiveMappingIdsForStudent,
+  listGroupPeerMappingIdsForStudent,
+  syncCalendarMapping,
+  type RunOptions,
+} from "./mapping-sync";
+import { ensureGoogleWatchChannelsForStudent, stopGoogleWatchChannelsFor } from "./push-channels";
 
 export { listActiveMappingIdsForStudent, syncCalendarMapping } from "./mapping-sync";
 
@@ -36,7 +41,10 @@ export async function syncStudentCalendarMappings(ctx: DbContext, studentId: str
 export async function pushStudentCalendarChanges(studentId: string, options: { ctx?: DbContext; budgetMs?: number } = {}): Promise<void> {
   try {
     const ctx = options.ctx ?? createDbContext();
-    const mappingIds = await listActiveMappingIdsForStudent(ctx, studentId);
+    // 본인 학생·그룹 캘린더, 그다음 그룹 캘린더가 있으면 다른 멤버의 개인 캘린더(그룹레슨 여부가 바뀌었을 수 있다).
+    const own = await listActiveMappingIdsForStudent(ctx, studentId);
+    const peers = await listGroupPeerMappingIdsForStudent(ctx, studentId);
+    const mappingIds = [...own, ...peers.filter((id) => !own.includes(id))];
     if (mappingIds.length === 0) return;
     const deadline = Date.now() + (options.budgetMs ?? CALENDAR_SYNC_WRITE_HOOK_BUDGET_MS);
     for (const mappingId of mappingIds) {
@@ -54,6 +62,23 @@ export async function pushStudentCalendarChanges(studentId: string, options: { c
  */
 export async function schedulePushStudentCalendarChanges(studentId: string): Promise<void> {
   await runAfterResponse(() => pushStudentCalendarChanges(studentId));
+}
+
+/**
+ * 그룹 멤버가 바뀌었거나 그룹을 해제한 뒤(응답 뒤 best-effort): 관련 학생의 학생·그룹 캘린더를 push해 그룹레슨이
+ * 그룹 캘린더와 개인 캘린더 중 맞는 쪽에만 있게 한다(2026-11-16 사용자 결정). 학생마다 시간 상한을 따로 쓴다.
+ */
+export async function schedulePushStudentsCalendarChanges(studentIds: readonly string[]): Promise<void> {
+  const unique = [...new Set(studentIds)];
+  if (unique.length === 0) return;
+  await runAfterResponse(async () => {
+    for (const studentId of unique) await pushStudentCalendarChanges(studentId);
+  });
+}
+
+/** 그룹 해제 전에 그 그룹 캘린더들의 Google 변경 알림 channel을 멈춘다(best-effort, 매핑은 그룹 삭제 cascade로 지워진다). */
+export async function stopGroupCalendarChannels(groupId: string, ctx?: DbContext): Promise<void> {
+  await stopGoogleWatchChannelsFor(ctx ?? createDbContext(), { groupId }).catch(() => undefined);
 }
 
 /**

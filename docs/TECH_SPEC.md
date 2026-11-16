@@ -91,7 +91,7 @@ OpenNext → Cloudflare Worker
 | `/dashboard/guide` | 공용 가이드 페이지 목록(사이드바 "가이드"). 학생은 열린 페이지만 보고, 가이드가 닫힌 학생은 메뉴에 없으며 주소로 들어오면 안내만 본다. 관리자는 페이지 추가·순서 변경 |
 | `/dashboard/guide/[pageId]` | 가이드 페이지 읽기. 학생은 자기에게 열린 페이지에서 문단을 골라 질문하고 본인 질문 위치를, 관리자는 모든 학생의 질문 위치를 본다. 열리지 않은 페이지는 404다 |
 | `/dashboard/guide/[pageId]/edit` | 관리자 전용 가이드 편집(공동 편집 room·이탈 보호, 삭제) |
-| `/dashboard/admin/calendar-sync` | 관리자 캘린더 동기화 설정(운영 도구에서 진입): 서버 설정 안내, Google·iCloud 계정 연결·해제, 학생별 캘린더 매핑·지금 동기화·오류 표시 |
+| `/dashboard/admin/calendar-sync` | 관리자 캘린더 동기화 설정(운영 도구에서 진입): 서버 설정 안내, Google·iCloud 계정 연결·해제, 학생·그룹별 캘린더 매핑·지금 동기화·오류 표시 |
 | `/dashboard/student/digging` | 학생 본인 디깅 보드: 트랙 값 편집·삭제, 컬럼 관리. 검증된 `returnTo`로 복귀 |
 | `/dashboard/admin/students/[id]/notes` | 관리자 대상 학생 노트 목록 |
 | `/dashboard/admin/students/[id]/notes/new` | 관리자 대상 학생 노트 전체 화면 작성 |
@@ -332,7 +332,7 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 
 - runtime dependency audit은 현재 0건이다. 상위 의존성이 보안 패치 전 하위 의존성을 고정하는 구간은 `package.json` override로 제한하며, upstream stable이 해당 버전을 채택하면 override를 제거해야 한다.
 - 개발 도구 전체 audit에는 Drizzle Kit의 구형 esbuild loader 체인에서 발생하는 moderate 권고가 남아 있다. 현재 npm 제안은 호환되지 않는 구버전 downgrade이므로 upstream 패치를 추적한다.
-- migration SQL과 `drizzle/meta` 생성 이력은 `0030`까지 대응하고 `db:check`가 전체 replay와 단계별 upgrade를 검사한다. persistent local D1과 remote의 실제 적용 이력은 승인된 운영 점검 전 추정하지 않는다(마지막 기록: persistent local D1 `0009`까지).
+- migration SQL과 `drizzle/meta` 생성 이력은 `0031`까지 대응하고 `db:check`가 전체 replay와 단계별 upgrade를 검사한다. persistent local D1과 remote의 실제 적용 이력은 승인된 운영 점검 전 추정하지 않는다(마지막 기록: persistent local D1 `0009`까지).
 - 대표 문서 server action과 draft 생명주기의 격리 integration test는 있으나 실제 브라우저 reload·offline·navigation·delete/restore E2E는 없다. 노트 편집기 안정화(자동 저장 revalidate 미호출·제자리 생성·서버본 조용한 폐기)와 학생 실시간 보기도 DOM 통합 테스트까지만 있고 실제 브라우저 두 창 동작은 확인되지 않았다.
 - 운영 배포 직후 이미 열려 있던 탭은 build ID 불일치로 다음 Server Action에서 한 번 hard reload된다(일회성, 코드로 막지 않는다). 서버 초안 fence(b)는 같은 초·같은 version·같은 본문으로 다시 쓴 다른 기기의 행을 폐기 의도에 포함해 지운다(본문이 같아 내용 손실 없음). live view 폴링은 head 조회 1회가 D1 읽기 약 3회라 열린 읽기 탭 수에 비례해 읽기 요청이 늘며, backoff 상한 20초가 그 비용 경계다.
 - 신규 managed media의 registry·문서 claim·purge 삭제 outbox와 인증 delivery, bounded 예약 정리·final prefix cursor reconciliation source를 구현했다. Copy timeout·lease·recovery grace 뒤 발견된 registry 없는 final object와 삭제 상태 object는 다음 inventory page에서 재삭제한다. production에서는 private R2 CORS·staging lifecycle·Cron과 알림을 검증해야 하며, 기존 외부 URL과 managed 형식이 아닌 legacy R2 object는 자동 삭제 대상으로 추정하지 않는다.
@@ -414,6 +414,17 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 - provider client는 SDK 없이 fetch만 쓴다. Google은 `calendar.events`·`calendar.calendarlist.readonly` scope, `syncToken` 증분(410이면 전체 재동기화), iCloud는 `sync-collection`·`calendar-multiget`(50개씩)과 etag를 쓴다. 허용 host(Google API·OAuth host, `caldav.icloud.com`·`p<N>-caldav.icloud.com`), HTTPS, credential·port 없는 URL만 요청하고 Google redirect는 거부, CalDAV redirect는 같은 허용 host 안에서 3회까지 따른다.
 - 보안: 연결·매핑·지금 동기화는 `requireAdmin`(매핑 대상은 `requireStudentTarget`), 학생은 자기 상태와 외부 항목만 본다. Google refresh·access token과 iCloud 앱 암호는 `EXTERNAL_CALENDAR_ENCRYPTION_KEY`로 AES-GCM 암호화하고 AAD `calendar-connection:v1:<연결 ID>:<provider>`로 다른 행·provider로 옮긴 ciphertext를 거부한다(`credentials.ts`). 원문은 응답·화면·로그에 돌려주지 않고 `last_error`에는 짧은 한국어 분류만 남긴다. 인증 실패는 연결을 `NEEDS_REAUTH`로 바꾸고 내부 일정은 그대로 둔다.
 - Google OAuth는 PKCE(S256)·`access_type=offline`·`prompt=consent`다. state·code verifier·시작한 관리자·만료(10분)를 서버 저장소 없이 HttpOnly cookie(`portal_google_calendar_oauth`, path `/api/calendar-connections/google`)에 담고, 암호화 key에서 HKDF로 파생한 별도 AES-GCM key로 봉인한다. callback은 봉인 해제·state 상수 시간 비교·같은 관리자·만료를 확인한 뒤 code를 교환하고, code·token·verifier를 log·응답·주소에 남기지 않는다. `calendar.events` scope가 빠지면 연결하지 않는다.
+
+### 그룹 캘린더 (2026-11-16)
+
+- 표(`0031`): `calendar_mappings`는 대상이 학생(`student_id`) 또는 그룹(`group_id` → `lesson_groups` CASCADE) 하나다(`calendar_mappings_target_check`, (connection, group) UNIQUE, (connection, remote calendar) UNIQUE 유지). 표를 다시 만들 때 자식 표(`calendar_sync_links`·`calendar_remote_series`·`calendar_push_channels`)는 DROP cascade를 피하려 백업·복원한다. `calendar_group_events`(그룹 일정 원본, 그룹 CASCADE)와 `calendar_events.group_event_id`(→ 원본 SET NULL, 그룹이 사라지면 사본은 개인 일정으로 남음).
+- 대상(`src/lib/calendar-sync/sync-target.ts`): 그룹레슨은 멤버(2명 이상) 모두에게 같은 시작 시각의 레슨이 있는 시각이다. 그룹 캘린더의 그룹레슨 일정은 학생 id 순 첫 멤버의 레슨 id를 link `local_id`·portalRef로 쓴다. 학생 매핑은 그 학생 그룹에 그룹 캘린더가 있으면 그룹레슨과 `group_event_id` 사본을 push 대상에서 뺀다.
+- 엔진(`engine.ts`): 그룹 매핑의 원격 이동은 멤버별 조건부 UPDATE + sentinel로 멤버 레슨을 함께 옮기고, 원격 일정 import는 원본 + 멤버 사본을 함께 만든다. 원본 수정·삭제는 사본에 먼저, 원본은 조건부로 쓴다. 그룹 매핑 실행이 로컬을 바꾸면 그룹의 다른 활성 그룹 매핑을 push한다(`mapping-sync.ts`).
+- push 범위: 레슨·일정 쓰기 뒤 push는 본인 학생·그룹 매핑, 그다음 그룹에 그룹 캘린더가 있으면 다른 멤버의 개인 매핑까지 돈다(같은 4초 예산, 넘으면 다음 동기화). 그룹 매핑 저장·해제와 그룹 멤버 변경·해제(`lessonGroups.ts`)는 관련 학생을 응답 뒤 push한다. 그룹 해제는 cascade 전에 그 그룹 매핑의 Google channel을 멈춘다.
+- 조회: 학생 동기화 상태·Google channel 갱신·원격 반복 일정·홈 다음 레슨은 본인 그룹의 그룹 매핑을 포함한다. 홈 다음 레슨은 같은 그룹 일정이 두 provider에 있어도 사본 하나로 센다.
+- 관리자 화면: `getCalendarSyncOverview`가 매핑마다 `targetKind`·`targetName`·`memberNames`와 고를 수 있는 그룹(멤버 2명 이상)을 준다. form 값은 `target=student:<id>|group:<id>`(예전 `studentId`도 받음).
+- 계정 삭제는 학생 매핑만 지우고 그룹 매핑은 남는다(멤버십이 지워지며 그 학생 레슨은 그룹레슨에서 빠진다).
+- 검증: `src/lib/calendar-sync/group-calendar.test.ts`(엔진 7), `src/test/calendar-sync.integration.ts`의 그룹 캘린더 action 흐름, `db:check`의 `0030 → 0031` upgrade 검사.
 
 ### 캘린더 실시간 반영(2026-10-27 사용자 결정)
 

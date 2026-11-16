@@ -56,6 +56,8 @@ mock.module("next/navigation", {
 mock.module("@/lib/calendar-sync/sync-runner", {
   namedExports: {
     schedulePushStudentCalendarChanges: async () => undefined,
+    schedulePushStudentsCalendarChanges: async () => undefined,
+    stopGroupCalendarChannels: async () => undefined,
     markLinksDeletedStatement: () => ({ query: "SELECT 1", params: [] }),
   },
 });
