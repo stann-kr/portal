@@ -21,6 +21,9 @@ export type AppRole = "admin" | "student";
 /** 운영 도구. 캘린더 동기화 설정(CALENDAR_SYNC_ADMIN_PATH)은 운영 도구에서 들어가는 하위 화면이다. */
 const ADMIN_OPERATIONS_HREF = "/dashboard/admin/operations";
 
+/** 관리자 전체 노트(학생 필터로 한 학생만 볼 수 있다). 사이드바 "노트"와 일정 머리줄 "전체 노트 보기"가 연다. */
+const ADMIN_NOTES_HREF = "/dashboard/admin/notes";
+
 /** 학생·관리자가 같은 주소로 여는 공용 가이드. */
 const GUIDE_HREF = "/dashboard/guide";
 
@@ -55,6 +58,7 @@ export const APP_NAV_ITEMS: Record<AppRole, readonly AppNavItem[]> = {
     { id: "work", label: "업무함", href: "/dashboard/admin?section=work", Icon: Inbox },
     { id: "students", label: "학생", href: "/dashboard/admin?section=students", Icon: Users },
     { id: "schedule", label: "일정", href: "/dashboard/admin?section=schedule", Icon: CalendarDays },
+    { id: "notes", label: "노트", href: ADMIN_NOTES_HREF, Icon: FileText },
     { id: "guide", label: "가이드", href: GUIDE_HREF, Icon: BookOpenText },
     { id: "qna", label: "Q&A", href: "/dashboard/qna", Icon: CircleHelp },
     { id: "community", label: "커뮤니티", href: "/community", Icon: MessageSquare },
@@ -71,6 +75,13 @@ export function visibleNavItems(role: AppRole, options: { guideHidden?: boolean 
 }
 
 type Location = { pathname: string; searchParams: URLSearchParams };
+
+/** 주소(쿼리 포함 가능)가 관리자 전체 노트 목록인지. 노트 문서는 `returnTo`로 어디서 열렸는지 안다. */
+function isAdminNotesPath(path: string | null): boolean {
+  if (!path) return false;
+  const pathname = path.split(/[?#]/u)[0];
+  return pathname === ADMIN_NOTES_HREF || pathname.startsWith(`${ADMIN_NOTES_HREF}/`);
+}
 
 /** 현재 주소가 어느 메뉴에 속하는지 정한다. 상세·작성·휴지통 화면도 상위 메뉴를 표시한다. */
 export function resolveActiveNavItem(role: AppRole, { pathname, searchParams }: Location): string | null {
@@ -94,9 +105,10 @@ export function resolveActiveNavItem(role: AppRole, { pathname, searchParams }: 
       if (section && ids.includes(section)) return section;
       return "work";
     }
+    // 전체 노트와, 거기서 연 노트 문서·변경 이력은 노트 메뉴다. 학생 상세에서 연 노트는 학생 메뉴로 남는다.
+    if (isAdminNotesPath(pathname)) return "notes";
+    if (pathname.startsWith("/dashboard/notes") && isAdminNotesPath(searchParams.get("returnTo"))) return "notes";
     if (pathname.startsWith("/dashboard/admin/students") || pathname.startsWith("/dashboard/notes")) return "students";
-    // 전체 노트는 일정 머리줄의 "전체 노트 보기"에서 연다.
-    if (pathname.startsWith("/dashboard/admin/notes")) return "schedule";
     if (
       pathname.startsWith(ADMIN_OPERATIONS_HREF) ||
       pathname.startsWith("/dashboard/admin/categories") ||
@@ -190,6 +202,7 @@ export function resolveMobileTopBar(role: AppRole, location: Location): MobileTo
     if (active === "students") return { title: "학생", action: { href: "/dashboard/admin/students/new", label: "수강생 추가" } };
     return { title: navLabel(active) };
   }
+  if (pathname === ADMIN_NOTES_HREF) return { title: "전체 노트" };
   if (pathname === "/dashboard/admin/students/new") return { title: "수강생 추가", back: { href: ADMIN_STUDENTS_HREF, label: "학생 목록으로" } };
   if (pathname.startsWith("/dashboard/admin/students/") || pathname.startsWith("/dashboard/notes")) {
     return { title: "학생", back: { href: ADMIN_STUDENTS_HREF, label: "학생 목록으로" } };

@@ -26,8 +26,29 @@ test("커리큘럼이 숨겨져 있으면 학생 메뉴에 없고 예전 커리�
 test("관리자 사이드바는 학생별 화면을 학생 메뉴로, 분류 관리를 운영 도구로 표시한다", () => {
   assert.equal(resolveActiveNavItem("admin", at("/dashboard/admin?section=schedule")), "schedule");
   assert.equal(resolveActiveNavItem("admin", at("/dashboard/admin/students/s1?tab=notes")), "students");
-  assert.equal(resolveActiveNavItem("admin", at("/dashboard/admin/notes?student=s1")), "schedule", "전체 노트는 일정에서 연다");
   assert.equal(resolveActiveNavItem("admin", at("/dashboard/admin/categories")), "operations");
+});
+
+test("관리자 사이드바의 노트는 일정 다음에 있고 전체 노트와 거기서 연 노트를 노트 메뉴로 표시한다", () => {
+  const ids = APP_NAV_ITEMS.admin.map((item) => item.id);
+  assert.equal(ids.indexOf("notes"), ids.indexOf("schedule") + 1);
+  const notes = APP_NAV_ITEMS.admin.find((item) => item.id === "notes");
+  assert.equal(notes?.label, "노트");
+  assert.equal(notes?.href, "/dashboard/admin/notes");
+
+  assert.equal(resolveActiveNavItem("admin", at("/dashboard/admin/notes")), "notes");
+  assert.equal(resolveActiveNavItem("admin", at("/dashboard/admin/notes?student=s1&q=eq")), "notes");
+  const fromAllNotes = encodeURIComponent("/dashboard/admin/notes?student=s1");
+  assert.equal(resolveActiveNavItem("admin", at(`/dashboard/notes/n1?returnTo=${fromAllNotes}`)), "notes");
+  assert.equal(resolveActiveNavItem("admin", at(`/dashboard/notes/n1/history?returnTo=${fromAllNotes}`)), "notes");
+  // 학생 상세에서 연 노트, 비슷하지만 다른 주소는 노트 메뉴가 아니다.
+  const fromStudent = encodeURIComponent("/dashboard/admin/students/s1/notes");
+  assert.equal(resolveActiveNavItem("admin", at(`/dashboard/notes/n1?returnTo=${fromStudent}`)), "students");
+  assert.equal(resolveActiveNavItem("admin", at("/dashboard/notes/n1")), "students");
+  assert.equal(resolveActiveNavItem("admin", at(`/dashboard/notes/n1?returnTo=${encodeURIComponent("/dashboard/admin/notesx")}`)), "students");
+
+  // 좁은 화면에서도 메뉴 화면이라 뒤로 가기 없이 제목만 둔다.
+  assert.deepEqual(resolveMobileTopBar("admin", at("/dashboard/admin/notes?student=s1")), { title: "전체 노트" });
 });
 
 test("캘린더 동기화 설정은 운영 도구 메뉴 아래 화면이고 좁은 화면에서 운영 도구로 돌아간다", () => {
