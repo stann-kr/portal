@@ -1,12 +1,11 @@
 /**
- * 관리자 전체 노트 목록(개선 2차 시안 3번). 일정 머리줄의 "전체 노트 보기"가 이 화면으로 온다.
+ * 관리자 전체 노트 목록(개선 2차 시안 3번). 사이드바 "노트"와 일정 머리줄의 "전체 노트 보기"가 이 화면으로 온다.
  * 모든 활성 학생의 노트를 최근 수정순으로 50개씩 보이고, 학생 필터(`?student=`)·제목·본문 검색(`?q=`)·다음 페이지(`?cursor=`)를 둔다.
  * 검색·필터·페이지는 서버 SQL이 처리하고, 화면에는 표에 필요한 필드와 짧은 미리보기만 온다.
  * 노트 작성은 학생 스페이스 문맥이 필요하므로 학생별 노트 화면·일정의 만들기가 맡는다.
  */
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { ChevronLeft } from "lucide-react";
 import { MobileTopBar } from "@/components/app-shell/AppSidebar";
 import { RouteAutoRefresh } from "@/components/app-shell/RouteAutoRefresh";
 import { AllNotesTable, type AllNotesTableRow } from "@/components/notes/AllNotesTable";
@@ -24,7 +23,6 @@ import { firstSearchValue } from "@/lib/portal-location";
 export const metadata = { title: "전체 노트" };
 
 const LIST_PATH = "/dashboard/admin/notes";
-const SCHEDULE_HREF = "/dashboard/admin?section=schedule&student=all";
 const PAGE_LINK_CLASS =
   "inline-flex min-h-11 items-center rounded-md px-2 text-ui text-secondary-foreground underline underline-offset-4 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:min-h-8";
 
@@ -76,17 +74,11 @@ export default async function AdminAllNotesPage({
 
   return (
     <div className="px-5 pb-8 pt-6 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-10">
-      <MobileTopBar title="전체 노트" back={{ href: SCHEDULE_HREF, label: "일정으로" }} />
+      <MobileTopBar title="전체 노트" />
       {/* 자동 저장은 목록을 revalidate하지 않으므로 편집에서 돌아오거나 창으로 돌아올 때 제목·날짜를 다시 받는다. */}
       <RouteAutoRefresh />
       <div className="flex max-w-[1080px] flex-col gap-5 md:mx-auto md:gap-6">
         <header className="flex flex-col gap-3 max-md:sr-only">
-          <Link
-            href={SCHEDULE_HREF}
-            className="-ml-1 hidden h-8 items-center gap-1.5 self-start rounded-md pl-1 pr-2 text-ui text-secondary-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:inline-flex"
-          >
-            <ChevronLeft className="size-4" strokeWidth={1.8} aria-hidden="true" />일정으로 돌아가기
-          </Link>
           <div className="flex min-w-0 flex-col gap-1">
             <p className="hidden text-xs text-muted-foreground md:block">전체 학생</p>
             <h1 className="sr-only text-display font-semibold tracking-display text-foreground md:not-sr-only">전체 노트</h1>
