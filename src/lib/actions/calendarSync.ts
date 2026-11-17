@@ -35,6 +35,7 @@ import {
 import { revokeGoogleToken } from "@/lib/calendar-sync/google";
 import { getGoogleCalendarOAuthConfig } from "@/lib/calendar-sync/oauth-config";
 import { loadRemoteSeriesItems } from "@/lib/calendar-sync/remote-series-items";
+import { countUnmapEvents, unmapStatements } from "@/lib/calendar-sync/mapping-cleanup";
 import { ensureGoogleWatchChannel, stopGoogleWatchChannelsFor } from "@/lib/calendar-sync/push-channels";
 import {
   CALENDAR_SYNC_READ_BUDGET_MS,
@@ -45,6 +46,7 @@ import {
   syncStudentCalendarMappings,
 } from "@/lib/calendar-sync/sync-runner";
 import { CalendarAuthError } from "@/lib/calendar-sync/types";
+import { executeDocumentStatementsAtomically } from "@/lib/document-lifecycle-atomic";
 import { fetchExternalItemsForUser } from "@/lib/external-items";
 import { listLessonGroups, readLessonGroupMemberIds } from "@/lib/lesson-groups";
 import { activeStudentProfileCondition } from "@/lib/student-status";
@@ -175,6 +177,7 @@ async function findOwnedMapping(ownerId: string, mappingId: string) {
     .select({
       id: calendarMappings.id,
       connectionId: calendarMappings.connectionId,
+      studentId: calendarMappings.studentId,
       groupId: calendarMappings.groupId,
       status: calendarConnections.status,
     })
@@ -479,24 +482,37 @@ export async function saveCalendarMapping(
   return { success: "캘린더를 연결하고 첫 동기화를 마쳤습니다." };
 }
 
+/**
+ * 매핑을 풀고, 그 캘린더와 link로 이어진 포탈 일정을 함께 지운다(2026-11-17 사용자 결정, 범위는 mapping-cleanup).
+ * 레슨과 원격 캘린더의 일정은 남는다.
+ */
 export async function removeCalendarMapping(mappingId: string): Promise<CalendarSyncFormState> {
   const session = await requireAdmin();
   const mapping = await findOwnedMapping(session.user.id, mappingId);
   if (!mapping) return { error: MESSAGES.mappingMissing };
   const ctx = createDbContext();
-  // 지정을 풀면 link가 함께 지워진다. 포탈에서 고쳤지만 아직 원격에 보내지 못한 일정은 그 뒤 다시 지정할 때
-  // 원격 일정과 내용이 달라 이어지지 않고 한 벌 더 생긴다. 풀기 전에 밀린 변경을 한 번 내보낸다(2026-11-13 사용자 결정).
-  // best-effort다: 원격 실패·시간 상한·다른 실행의 lease·비활성 연결이어도 해제는 그대로 진행한다.
+  // 포탈에서 고쳤지만 아직 원격에 보내지 못한 변경을 먼저 내보낸다(2026-11-13 사용자 결정). 해제하면 이 캘린더의 포탈
+  // 일정은 지워지므로, 보내지 않으면 그 수정은 어디에도 남지 않는다. 다른 캘린더에도 이어져 남는 일정은 다시 지정할 때
+  // 원격 일정과 내용이 같아야 한 벌로 이어진다. best-effort다: 원격 실패·시간 상한·다른 실행의 lease·비활성 연결이어도
+  // 해제는 그대로 진행한다.
   await syncCalendarMapping(ctx, mapping.id, { mode: "push", deadline: Date.now() + CALENDAR_SYNC_WRITE_HOOK_BUDGET_MS }).catch(() => undefined);
   // 변경 알림 channel을 먼저 중지한다(best-effort). 행은 매핑 삭제 cascade로도 지워진다.
   await stopGoogleWatchChannelsFor(ctx, { mappingId: mapping.id }).catch(() => undefined);
-  await readDb().delete(calendarMappings).where(eq(calendarMappings.id, mapping.id));
+  const target = { mappingId: mapping.id, studentId: mapping.studentId, groupId: mapping.groupId };
+  const removedEvents = await countUnmapEvents(ctx, target);
+  await executeDocumentStatementsAtomically(ctx, unmapStatements(target));
   if (mapping.groupId) {
-    // 이 계정의 멤버 개인 캘린더로 그룹레슨이 돌아간다(엔진이 계정별로 판단). 응답 뒤 맞춘다.
+    // 이 계정의 멤버 개인 캘린더로 그룹레슨이 돌아간다(엔진이 계정별로 판단). 지운 그룹 일정 사본이 다른 계정
+    // 개인 캘린더에 올라가 있었으면 그 사본도 이때 지워진다. 응답 뒤 맞춘다.
     await schedulePushStudentsCalendarChanges(await readLessonGroupMemberIds(ctx, mapping.groupId)).catch(() => undefined);
   }
   revalidatePath(SETTINGS_PATH);
-  return { success: "캘린더 연결을 해제했습니다. 포탈과 원격 캘린더의 일정은 그대로 남습니다." };
+  revalidatePath("/dashboard/calendar");
+  revalidatePath("/dashboard/student");
+  revalidatePath("/dashboard/admin");
+  if (removedEvents === 0) return { success: "캘린더 연결을 해제했습니다. 레슨과 원격 캘린더의 일정은 남습니다." };
+  const what = mapping.groupId ? "그룹 일정" : "포탈 일정";
+  return { success: `캘린더 연결을 해제하고 ${what} ${removedEvents}개를 지웠습니다. 레슨과 원격 캘린더의 일정은 남습니다.` };
 }
 
 export async function syncCalendarMappingNow(mappingId: string): Promise<CalendarSyncFormState> {

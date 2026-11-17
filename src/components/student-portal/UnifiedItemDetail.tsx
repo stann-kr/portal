@@ -218,6 +218,15 @@ export function UnifiedItemDetail({
               onDeleted={onItemRemoved}
               onBusyChange={onBusyChange}
             />
+          ) : !canManageEvents && canManageLessons && isEditableCalendarEventItem(item) && onItemUpdated && onItemRemoved ? (
+            // 관리자 화면: 학생 일정은 삭제만(2026-11-17 사용자 결정). 내용 수정은 학생 본인만 한다.
+            <CalendarEventActions
+              item={item}
+              onUpdated={onItemUpdated}
+              onDeleted={onItemRemoved}
+              onBusyChange={onBusyChange}
+              studentOwner={{ id: item.space.studentId, name: item.space.label }}
+            />
           ) : null}
           {canManageLessons && isManagedLessonItem(item) && onItemUpdated && onItemRemoved ? (
             <LessonActions

@@ -16,7 +16,10 @@ import { CalendarEventFields, type CalendarEventFieldValues } from "./CalendarEv
 
 const EVENT_TYPES = new Set<CalendarEventType>(["LESSON", "PRACTICE", "GIG", "NOTE"]);
 
-/** 포탈에서 학생이 직접 만든 일정만 수정·삭제 대상이다. 레슨·외부 일정은 읽기 전용이다. */
+/**
+ * 포탈 학생 일정(직접 만든 일정·연결 캘린더에서 들어온 일정)만 수정·삭제 대상이다. 레슨·외부 일정은 읽기 전용이다.
+ * 학생 본인은 수정·삭제, 관리자는 삭제만 한다(2026-11-17 사용자 결정).
+ */
 export function isEditableCalendarEventItem(item: UnifiedItem): boolean {
   return item.type === "EVENT"
     && item.source.kind === "PORTAL"
@@ -40,11 +43,14 @@ export function CalendarEventActions({
   onUpdated,
   onDeleted,
   onBusyChange,
+  studentOwner,
 }: {
   item: UnifiedItem;
   onUpdated: (item: UnifiedItem) => void;
   onDeleted: (item: UnifiedItem) => void;
   onBusyChange?: (busy: boolean) => void;
+  /** 관리자가 학생 일정을 볼 때 그 학생. 있으면 삭제만 보여 주고 확인 문구에 학생 이름을 넣는다. */
+  studentOwner?: { id: string; name: string };
 }) {
   const [mode, setMode] = useState<"view" | "edit" | "confirm-delete">("view");
   const [fields, setFields] = useState(() => fieldsFromItem(item));
@@ -111,7 +117,7 @@ export function CalendarEventActions({
     setDeleteError(null);
     startDelete(async () => {
       try {
-        await deleteCalendarEvent(item.id);
+        await deleteCalendarEvent(item.id, studentOwner?.id);
         onDeleted(item);
       } catch {
         setDeleteError("일정을 삭제하지 못했습니다. 다시 시도해 주세요.");
@@ -155,7 +161,11 @@ export function CalendarEventActions({
       {notice ? <p role="status" className="text-ui text-success">{notice}</p> : null}
       {mode === "confirm-delete" ? (
         <div role="group" aria-labelledby={deleteMessageId} className="flex flex-col gap-2.5 rounded-touch bg-destructive-muted px-3.5 py-3">
-          <p id={deleteMessageId} className="text-ui text-destructive">이 일정을 삭제할까요? 삭제한 일정은 복구할 수 없습니다.</p>
+          <p id={deleteMessageId} className="text-ui text-destructive">
+            {studentOwner
+              ? `${studentOwner.name}의 이 일정을 삭제할까요? 연결된 캘린더에서도 지워지고 복구할 수 없습니다.`
+              : "이 일정을 삭제할까요? 삭제한 일정은 복구할 수 없습니다."}
+          </p>
           {deleteError ? <p role="alert" className="text-ui font-medium text-destructive">{deleteError}</p> : null}
           <div className="flex justify-end gap-1.5">
             <Button ref={cancelDeleteRef} type="button" variant="outline" className="h-11 rounded-touch md:h-[30px] md:rounded-md md:px-2.5 md:text-xs" onClick={() => setMode("view")} disabled={isDeleting}>
@@ -168,9 +178,11 @@ export function CalendarEventActions({
         </div>
       ) : (
         <div className="flex flex-wrap gap-2">
-          <Button ref={editButtonRef} type="button" variant="outline" className="h-11 rounded-touch px-3 md:h-8 md:rounded-md" onClick={startEdit}>
-            일정 수정
-          </Button>
+          {studentOwner ? null : (
+            <Button ref={editButtonRef} type="button" variant="outline" className="h-11 rounded-touch px-3 md:h-8 md:rounded-md" onClick={startEdit}>
+              일정 수정
+            </Button>
+          )}
           <Button
             type="button"
             variant="destructive"

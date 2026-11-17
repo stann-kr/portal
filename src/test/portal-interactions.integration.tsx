@@ -1637,6 +1637,28 @@ test("own calendar event edit keeps input on failure and delete confirms before 
   assert.deepEqual(removals.map((removed) => removed.id), ["event-1"]);
 });
 
+test("admin sees only delete on a student's calendar event and deletes it for that student", async (context) => {
+  const item: UnifiedItem = {
+    id: "event-9", type: "EVENT", subType: "NOTE", title: "합주", date: new Date("2026-11-18T05:00:00.000Z"), metadata: {},
+    space: { studentId: "student-7", label: "김학생" }, source: { kind: "PORTAL", entity: "CALENDAR_EVENT", label: "포탈" },
+  };
+  const removals: UnifiedItem[] = [];
+  const calls: unknown[][] = [];
+  removeEvent = async (...args) => { calls.push(args); };
+  context.after(() => { removeEvent = async () => {}; });
+  await render(context, <CalendarEventActions item={item} onUpdated={() => undefined} onDeleted={(removed) => removals.push(removed)} studentOwner={{ id: "student-7", name: "김학생" }} />);
+  assert.equal([...browser.document.querySelectorAll("button")].some((node) => node.textContent === "일정 수정"), false, "admin cannot edit a student's event");
+  await press("일정 삭제");
+  assert.equal(
+    browser.document.querySelector('[role="group"] p')?.textContent?.trim(),
+    "김학생의 이 일정을 삭제할까요? 연결된 캘린더에서도 지워지고 복구할 수 없습니다.",
+  );
+  assert.equal(browser.document.activeElement?.textContent, "취소");
+  await press("삭제");
+  assert.deepEqual(calls, [["event-9", "student-7"]]);
+  assert.deepEqual(removals.map((removed) => removed.id), ["event-9"]);
+});
+
 test("track metadata cannot overwrite newer typing and track save locks custom controls and dismissal", async (context) => {
   const metadata = Promise.withResolvers<Awaited<ReturnType<typeof fetchMetadata>>>();
   const pending = Promise.withResolvers<Awaited<ReturnType<typeof saveTrack>>>();
