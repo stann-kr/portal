@@ -28,6 +28,7 @@ import { CalendarFeedControl } from "@/components/admin/CalendarFeedControl";
 import { GuideAccessControl } from "@/components/admin/GuideAccessControl";
 import { StudentInviteControl } from "@/components/admin/StudentInviteControl";
 import { StudentPasswordResetControl } from "@/components/admin/StudentPasswordResetControl";
+import { StudentArchiveControl } from "@/components/admin/StudentArchiveControl";
 import { ConfirmPanel, useConfirmAction } from "@/components/ui/confirm-action";
 import type { StudentGuideAccessView } from "@/lib/actions/guideAccess";
 import { formatKst } from "@/lib/kst-format";
@@ -81,6 +82,8 @@ interface OverviewTabProps {
     | { kind: "invite"; expiresAt: Date; expired: boolean };
   /** 이 학생의 가이드 열람 설정과 가이드 페이지 목록. 없으면 "가이드" 구획을 그리지 않는다. */
   guideAccess?: StudentGuideAccessView;
+  /** 확인 문구에 쓰는 학생 이름(없으면 이메일). 있으면 계정 구역 맨 아래에 '수강 종료'를 둔다. */
+  studentName?: string;
   /** 지난 레슨·다음 레슨을 가르는 서버 기준 시각. 없으면 화면을 연 시각을 쓴다. */
   referenceTime?: Date;
   /** 커리큘럼 구역을 그릴지. 기본값은 숨김 스위치를 따른다. */
@@ -333,6 +336,7 @@ export function OverviewTab({
   calendarFeedIssuedAt = null,
   account = { kind: "active" },
   guideAccess,
+  studentName,
   referenceTime,
   showCurriculum = isCurriculumVisible(),
   lessonNoteIds,
@@ -582,7 +586,8 @@ export function OverviewTab({
         ) : null}
       </div>
 
-      {/* 계정: 상태 줄을 먼저 모으고(order 1·2) 조작은 버튼 순서대로(order 3·4) 둔다. DOM은 조작마다 자기 상태 줄과 붙어 있다. */}
+      {/* 계정: 상태 줄을 먼저 모으고(order 1·2) 조작은 버튼 순서대로(order 3·4) 둔다. DOM은 조작마다 자기 상태 줄과 붙어 있다.
+          수강 종료는 안내 문구 아래 구분선 뒤 맨 끝(order 6, 캔버스 StudentArchive ①). */}
       <div className="flex min-w-0 flex-col gap-6 md:flex-[1_1_280px] md:gap-10">
       <LedgerSection labelledBy="account-heading">
         <LedgerSectionHeader id="account-heading" title="계정" />
@@ -615,6 +620,9 @@ export function OverviewTab({
               ? "구독 URL과 가입 링크는 발급 직후 한 번만 보입니다. 다시 발급하면 이전 값은 즉시 만료됩니다."
               : "구독 URL과 임시 비밀번호는 발급 직후 한 번만 보입니다. 다시 발급하면 이전 값은 즉시 만료됩니다."}
           </p>
+          {studentName ? (
+            <StudentArchiveControl studentId={studentId} studentName={studentName} className="order-6 mt-4" />
+          ) : null}
         </div>
       </LedgerSection>
 

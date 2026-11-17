@@ -13,6 +13,7 @@ import {
   executeDocumentStatementsAtomically,
 } from "@/lib/document-lifecycle-atomic";
 import { readStudentLessonGroupId } from "@/lib/lesson-groups";
+import { activeStudentSql } from "@/lib/student-status";
 import { curriculums } from "@/db/schema";
 import { and, eq, asc } from "drizzle-orm";
 import {
@@ -122,7 +123,7 @@ export async function createModule(
           INSERT INTO curriculums (id, student_id, week_num, title, is_completed)
           SELECT ?, profile.id, ?, ?, 0 FROM profiles AS profile
           JOIN lesson_group_members AS member ON member.student_id = profile.id AND member.group_id = ?
-          WHERE profile.id = ? AND profile.role = 'student'
+          WHERE profile.id = ? AND ${activeStudentSql("profile")}
         `,
         params: [crypto.randomUUID(), input.weekNum, input.title, groupId, targetId],
       },

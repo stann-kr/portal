@@ -20,6 +20,7 @@ import {
 } from "@/lib/auth-guard";
 import { settledSubmissionError, validateFreeSubmissionPayload } from "@/lib/assignment-submission";
 import { assignmentAwaitingReview } from "@/lib/assignment-review-query";
+import { ACTIVE_ACCOUNT_STATUS } from "@/lib/student-status";
 import { pushMessages } from "@/lib/push/messages";
 import { notifyPush } from "@/lib/push/notify";
 import { fromStoredAssignmentFormat } from "@/lib/assignment-recurrence";
@@ -335,6 +336,7 @@ export async function getPendingFeedbackAssignments() {
     .from(assignments)
     .innerJoin(profiles, eq(assignments.studentId, profiles.id))
     .leftJoin(assignmentTasks, eq(assignmentTasks.id, assignments.taskId))
-    .where(assignmentAwaitingReview(db))
+    // 업무함: 수강 종료한 학생의 제출은 기록으로 남기고 대기 목록에서만 뺀다.
+    .where(and(assignmentAwaitingReview(db), eq(profiles.accountStatus, ACTIVE_ACCOUNT_STATUS)))
     .orderBy(asc(assignments.submittedAt));
 }

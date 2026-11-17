@@ -289,6 +289,7 @@ export default async function StudentDetailPage({
               calendarFeedIssuedAt={calendarFeedIssuedAt}
               account={account}
               guideAccess={guideAccess}
+              studentName={name}
               referenceTime={referenceTime}
               lessonNoteIds={lessonNoteIds}
               lessonGroup={lessonGroup ? {

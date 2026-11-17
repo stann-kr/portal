@@ -9,7 +9,8 @@
  */
 import { and, asc, eq, inArray } from "drizzle-orm";
 import type { DrizzleDb } from "@/db/client";
-import { calendarMappings, lessonGroupMembers, lessons } from "@/db/schema";
+import { calendarMappings, lessonGroupMembers, lessons, profiles } from "@/db/schema";
+import { ACTIVE_ACCOUNT_STATUS } from "@/lib/student-status";
 
 export type SyncTarget =
   | {
@@ -27,11 +28,13 @@ export type SyncTarget =
 
 export type MemberLesson = { id: string; studentId: string; start: Date };
 
+/** 수강 중인 멤버 id(학생 id 순). 수강 종료한 멤버는 그룹 자리만 남고 그룹레슨 판정에서는 빠진다(2026-11-18). */
 export async function readGroupMemberIds(db: DrizzleDb, groupId: string): Promise<string[]> {
   const rows = await db
     .select({ studentId: lessonGroupMembers.studentId })
     .from(lessonGroupMembers)
-    .where(eq(lessonGroupMembers.groupId, groupId))
+    .innerJoin(profiles, eq(profiles.id, lessonGroupMembers.studentId))
+    .where(and(eq(lessonGroupMembers.groupId, groupId), eq(profiles.accountStatus, ACTIVE_ACCOUNT_STATUS)))
     .orderBy(asc(lessonGroupMembers.studentId));
   return rows.map((row) => row.studentId);
 }

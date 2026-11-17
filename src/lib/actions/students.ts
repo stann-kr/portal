@@ -6,9 +6,10 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createDb } from "@/db/client";
+import { redirect } from "next/navigation";
+import { createDb, createDbContext } from "@/db/client";
 import { profiles } from "@/db/schema";
-import { and, count, eq, sql } from "drizzle-orm";
+import { and, count, desc, eq, sql } from "drizzle-orm";
 import * as bcrypt from "bcryptjs";
 import {
   findStudentTarget,
@@ -35,6 +36,13 @@ import {
   type StudentWorkCounts,
 } from "@/lib/student-roster";
 import { queryConnectedNextEvents } from "@/lib/connected-next-lesson";
+import {
+  activeStudentProfileCondition,
+  ACTIVE_ACCOUNT_STATUS,
+  ARCHIVED_ACCOUNT_STATUS,
+} from "@/lib/student-status";
+import { readLessonGroupMemberIds, readStudentLessonGroupId } from "@/lib/lesson-groups";
+import { schedulePushStudentsCalendarChanges } from "@/lib/calendar-sync/sync-runner";
 import { fetchExternalItemsForUser } from "@/lib/external-items";
 
 export type { StudentRosterStat, StudentWorkCounts } from "@/lib/student-roster";
@@ -52,7 +60,7 @@ export async function getStudentCount(): Promise<number> {
   const rows = await db
     .select({ value: count() })
     .from(profiles)
-    .where(eq(profiles.role, "student"));
+    .where(activeStudentProfileCondition());
   return Number(rows[0]?.value ?? 0);
 }
 
@@ -251,7 +259,110 @@ export async function getStudentOptions(): Promise<StudentOption[]> {
   const rows = await createDb()
     .select({ id: profiles.id, email: profiles.email, displayName: profiles.displayName })
     .from(profiles)
-    .where(eq(profiles.role, "student"))
+    .where(activeStudentProfileCondition())
     .orderBy(profiles.displayName, profiles.email);
   return rows.map((row) => ({ id: row.id, name: row.displayName?.trim() || row.email }));
+}
+
+// ───────────────────────────────────────────────
+// 수강 종료(보관)·복원 (2026-11-18 사용자 결정)
+// ───────────────────────────────────────────────
+
+export type StudentArchiveResult = { ok: true; name: string } | { ok: false; error: string };
+
+/** 수강 종료 뒤 돌아가는 학생 목록. */
+const ADMIN_STUDENTS_PATH = "/dashboard/admin?section=students";
+
+function archiveDisplayName(row: { displayName: string | null; email: string }): string {
+  return row.displayName?.trim() || row.email;
+}
+
+function revalidateStudentLists() {
+  // 학생 목록·선택지·업무함과 사이드바 숫자가 모두 바뀐다.
+  revalidatePath("/dashboard", "layout");
+}
+
+/**
+ * 수강 종료·복원으로 그룹의 수강 중인 멤버가 바뀌면 그룹레슨 판정이 달라진다(그룹 멤버를 바꿀 때와 같다).
+ * 그룹 캘린더와 멤버 개인 캘린더를 응답 뒤에 맞춘다. 수강 종료한 학생 본인 캘린더는 엔진이 건너뛴다.
+ */
+async function scheduleGroupCalendarResync(studentId: string) {
+  const context = createDbContext();
+  const groupId = await readStudentLessonGroupId(context, studentId);
+  const memberIds = groupId ? await readLessonGroupMemberIds(context, groupId) : [];
+  await schedulePushStudentsCalendarChanges([...memberIds, studentId]);
+}
+
+/**
+ * 학생의 수강을 종료(보관)한다. 기록은 하나도 지우지 않고 계정 상태만 바꾼다. 상태가 바뀌면 그 학생의 session은
+ * 다음 인증 확인에서 끝나고(parseActiveProfile), 로그인·목록·선택지·알림·캘린더 동기화에서 빠진다.
+ * 수강 중인 학생일 때만 바꾸는 조건부 UPDATE라 두 번 눌러도 한 번만 반영된다. 관리자 계정은 대상이 아니다.
+ * 성공하면 학생 목록으로 이동한다(학생 상세는 더 열 수 없다). 실패만 상태로 돌려준다.
+ */
+export async function archiveStudent(studentId: string): Promise<Extract<StudentArchiveResult, { ok: false }>> {
+  await requireAdmin();
+  const student = typeof studentId === "string" && studentId ? await findStudentTarget(studentId) : null;
+  if (!student) {
+    return { ok: false, error: "이미 수강을 종료했거나 찾을 수 없는 학생입니다. 학생 목록을 새로 고쳐 주세요." };
+  }
+  const updated = await createDb()
+    .update(profiles)
+    .set({ accountStatus: ARCHIVED_ACCOUNT_STATUS, archivedAt: new Date() })
+    .where(and(
+      eq(profiles.id, student.id),
+      eq(profiles.role, "student"),
+      eq(profiles.accountStatus, ACTIVE_ACCOUNT_STATUS),
+    ))
+    .returning({ id: profiles.id });
+  if (updated.length === 0) {
+    return { ok: false, error: "이미 수강을 종료했거나 찾을 수 없는 학생입니다. 학생 목록을 새로 고쳐 주세요." };
+  }
+  revalidateStudentLists();
+  await scheduleGroupCalendarResync(student.id);
+  redirect(ADMIN_STUDENTS_PATH);
+}
+
+/** 수강 종료한 학생을 복원한다. 기록·비밀번호·그룹 자리·캘린더 연결은 그대로라 바로 다시 로그인할 수 있다. */
+export async function restoreStudent(studentId: string): Promise<StudentArchiveResult> {
+  await requireAdmin();
+  if (typeof studentId !== "string" || !studentId) {
+    return { ok: false, error: "학생을 찾지 못했습니다. 목록을 새로 고쳐 주세요." };
+  }
+  const updated = await createDb()
+    .update(profiles)
+    .set({ accountStatus: ACTIVE_ACCOUNT_STATUS, archivedAt: null })
+    .where(and(
+      eq(profiles.id, studentId),
+      eq(profiles.role, "student"),
+      eq(profiles.accountStatus, ARCHIVED_ACCOUNT_STATUS),
+    ))
+    .returning({ id: profiles.id, displayName: profiles.displayName, email: profiles.email });
+  if (updated.length === 0) {
+    return { ok: false, error: "이미 복원했거나 찾을 수 없는 학생입니다. 목록을 새로 고쳐 주세요." };
+  }
+  revalidateStudentLists();
+  await scheduleGroupCalendarResync(studentId);
+  return { ok: true, name: archiveDisplayName(updated[0]!) };
+}
+
+export type ArchivedStudent = { id: string; email: string; displayName: string | null; archivedAt: Date | null };
+
+/** 수강 종료한 학생(최근에 종료한 학생부터). 상태를 보지 않는 별도 조회라 학생 대상 action 경계와 섞지 않는다. */
+export async function getArchivedStudents(): Promise<ArchivedStudent[]> {
+  await requireAdmin();
+  return createDb()
+    .select({ id: profiles.id, email: profiles.email, displayName: profiles.displayName, archivedAt: profiles.archivedAt })
+    .from(profiles)
+    .where(and(eq(profiles.role, "student"), eq(profiles.accountStatus, ARCHIVED_ACCOUNT_STATUS)))
+    .orderBy(desc(profiles.archivedAt), profiles.displayName, profiles.email);
+}
+
+/** 학생 목록 아래 '수강 종료한 학생 N명' 링크의 숫자. 0이면 링크를 그리지 않는다. */
+export async function getArchivedStudentCount(): Promise<number> {
+  await requireAdmin();
+  const rows = await createDb()
+    .select({ value: count() })
+    .from(profiles)
+    .where(and(eq(profiles.role, "student"), eq(profiles.accountStatus, ARCHIVED_ACCOUNT_STATUS)));
+  return Number(rows[0]?.value ?? 0);
 }

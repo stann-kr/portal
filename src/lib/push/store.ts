@@ -2,6 +2,7 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import type { DrizzleDb } from "@/db/client";
 import { profiles, pushMutedCategories, pushSubscriptions } from "@/db/schema";
 import type { PushCategory } from "./messages";
+import { ACTIVE_ACCOUNT_STATUS } from "@/lib/student-status";
 import type { PushSendOutcome, PushTarget } from "./send";
 
 export type StoredPushTarget = PushTarget & { id: string; profileId: string };
@@ -90,6 +91,7 @@ const PUSH_TARGET_ID_CHUNK = 90;
 
 /**
  * 받는 사람의 구독. 보낸 사람 본인(excludeProfileId)과 이 종류(category)를 끈 계정은 빼고, 지금 있는 계정만 고른다.
+ * 수강 종료한(ACTIVE가 아닌) 계정의 구독은 지우지 않고 남겨 두되 보내지 않는다(복원하면 다시 받는다).
  * category가 없으면(테스트 알림) 끈 종류를 보지 않는다.
  */
 export async function listPushTargets(
@@ -116,19 +118,23 @@ export async function listPushTargets(
         .select(columns)
         .from(pushSubscriptions)
         .innerJoin(profiles, eq(profiles.id, pushSubscriptions.profileId))
-        .where(inArray(pushSubscriptions.profileId, ids.slice(start, start + PUSH_TARGET_ID_CHUNK))));
+        .where(and(
+          inArray(pushSubscriptions.profileId, ids.slice(start, start + PUSH_TARGET_ID_CHUNK)),
+          eq(profiles.accountStatus, ACTIVE_ACCOUNT_STATUS),
+        )));
     }
   } else if (audience.kind === "role") {
     rows = await db
       .select(columns)
       .from(pushSubscriptions)
       .innerJoin(profiles, eq(profiles.id, pushSubscriptions.profileId))
-      .where(eq(profiles.role, audience.role));
+      .where(and(eq(profiles.role, audience.role), eq(profiles.accountStatus, ACTIVE_ACCOUNT_STATUS)));
   } else {
     rows = await db
       .select(columns)
       .from(pushSubscriptions)
-      .innerJoin(profiles, eq(profiles.id, pushSubscriptions.profileId));
+      .innerJoin(profiles, eq(profiles.id, pushSubscriptions.profileId))
+      .where(eq(profiles.accountStatus, ACTIVE_ACCOUNT_STATUS));
   }
   const candidates = excludeProfileId ? rows.filter((row) => row.profileId !== excludeProfileId) : rows;
   if (!category || candidates.length === 0) return candidates;

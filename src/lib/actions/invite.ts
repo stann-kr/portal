@@ -6,6 +6,7 @@ import { headers } from "next/headers";
 import { signIn } from "@/auth";
 import { createDb } from "@/db/client";
 import { profiles } from "@/db/schema";
+import { ACTIVE_ACCOUNT_STATUS } from "@/lib/student-status";
 import { parseInviteToken } from "@/lib/invite-token";
 import { isPasswordAttemptAllowed, PASSWORD_ATTEMPT_LIMITED_MESSAGE } from "@/lib/password-attempt-limit";
 import { newPasswordPolicyError } from "@/lib/password-policy";
@@ -38,12 +39,14 @@ async function loadInvite(token: unknown) {
       email: profiles.email,
       displayName: profiles.displayName,
       role: profiles.role,
+      accountStatus: profiles.accountStatus,
       passwordHash: profiles.passwordHash,
     })
     .from(profiles)
     .where(eq(profiles.id, parsed.studentId))
     .limit(1);
-  if (!account || account.role !== "student") return null;
+  // 수강 종료한 학생의 가입 링크는 쓸 수 없는 링크와 같게 다룬다(복원하면 남은 기간 동안 다시 쓸 수 있다).
+  if (!account || account.role !== "student" || account.accountStatus !== ACTIVE_ACCOUNT_STATUS) return null;
   const result = await verifyInviteSecret(parsed.secret, account.passwordHash, new Date());
   return { account, result };
 }
@@ -90,7 +93,11 @@ export async function completeInvite(
   const updated = await createDb()
     .update(profiles)
     .set({ passwordHash: await bcrypt.hash(newPassword, 10) })
-    .where(and(eq(profiles.id, invite.account.id), eq(profiles.passwordHash, invite.account.passwordHash!)))
+    .where(and(
+      eq(profiles.id, invite.account.id),
+      eq(profiles.passwordHash, invite.account.passwordHash!),
+      eq(profiles.accountStatus, ACTIVE_ACCOUNT_STATUS),
+    ))
     .returning({ id: profiles.id });
   if (updated.length === 0) {
     return { error: "가입 링크가 이미 사용됐습니다. 정한 비밀번호로 로그인해 주세요.", linkUnusable: "invalid" };

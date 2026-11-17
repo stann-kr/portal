@@ -17,7 +17,7 @@ test("roster 통계는 large fixture도 학생별 반복 scan 없이 고정 5개
   });
   context.after(() => sqlite.close());
   sqlite.exec(`
-    CREATE TABLE profiles (id TEXT PRIMARY KEY, email TEXT NOT NULL, display_name TEXT, role TEXT NOT NULL, created_at INTEGER);
+    CREATE TABLE profiles (id TEXT PRIMARY KEY, email TEXT NOT NULL, display_name TEXT, role TEXT NOT NULL, created_at INTEGER, account_status TEXT NOT NULL DEFAULT 'ACTIVE', archived_at INTEGER);
     CREATE TABLE curriculums (id TEXT PRIMARY KEY, student_id TEXT NOT NULL, week_num INTEGER NOT NULL, title TEXT NOT NULL, is_completed INTEGER NOT NULL, created_at INTEGER);
     CREATE TABLE lessons (id TEXT PRIMARY KEY, student_id TEXT NOT NULL, scheduled_at INTEGER NOT NULL, google_event_id TEXT, created_at INTEGER);
     CREATE TABLE assignments (id TEXT PRIMARY KEY, student_id TEXT NOT NULL, media_url TEXT NOT NULL, submitted_at INTEGER, reviewed_at INTEGER);
@@ -36,6 +36,11 @@ test("roster 통계는 large fixture도 학생별 반복 scan 없이 고정 5개
     insertProfile.run("student-none", "none@example.com", "미지정", "student", nowEpoch + 1);
     insertProfile.run("student-complete", "complete@example.com", "완료", "student", nowEpoch + 2);
     insertProfile.run("student-open", "open@example.com", "진행", "student", nowEpoch + 3);
+    // 수강 종료한 학생은 같은 5개 query 안에서 목록과 숫자에서 빠진다.
+    insertProfile.run("student-archived", "archived@example.com", "종료", "student", nowEpoch + 4);
+    sqlite.prepare("UPDATE profiles SET account_status = 'ARCHIVED', archived_at = ? WHERE id = 'student-archived'").run(nowEpoch);
+    insertAssignment.run("archived-pending", "student-archived", "archived.mp4", nowEpoch);
+    insertThread.run("archived-q", "student-archived", "OPEN", null);
     insertModule.run("complete-1", "student-complete", 1, "기초", 1);
     insertModule.run("open-2", "student-open", 2, "믹싱", 0);
     insertModule.run("open-1", "student-open", 1, "기초", 0);
@@ -73,6 +78,7 @@ test("roster 통계는 large fixture도 학생별 반복 scan 없이 고정 5개
   const byId = new Map(rows.map((row) => [row.id, row]));
 
   assert.equal(rows.length, 123);
+  assert.equal(byId.has("student-archived"), false);
   assert.equal(byId.get("student-none")?.currentModule, "진도 미지정");
   assert.equal(byId.get("student-complete")?.currentModule, "모든 과정 완료");
   assert.equal(byId.get("student-open")?.currentModule, "WEEK 01 · 기초");

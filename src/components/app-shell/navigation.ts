@@ -204,6 +204,9 @@ export function resolveMobileTopBar(role: AppRole, location: Location): MobileTo
   }
   if (pathname === ADMIN_NOTES_HREF) return { title: "전체 노트" };
   if (pathname === "/dashboard/admin/students/new") return { title: "수강생 추가", back: { href: ADMIN_STUDENTS_HREF, label: "학생 목록으로" } };
+  if (pathname === "/dashboard/admin/students/archived") {
+    return { title: "수강 종료한 학생", back: { href: ADMIN_STUDENTS_HREF, label: "학생 목록으로" } };
+  }
   if (pathname.startsWith("/dashboard/admin/students/") || pathname.startsWith("/dashboard/notes")) {
     return { title: "학생", back: { href: ADMIN_STUDENTS_HREF, label: "학생 목록으로" } };
   }

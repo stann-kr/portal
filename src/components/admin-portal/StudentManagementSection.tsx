@@ -2,14 +2,15 @@
  * @file src/components/admin-portal/StudentManagementSection.tsx
  * @description 관리자 학생 roster(AdminStudents·MobileAdminStudents 보드). 목록은 요약만 보여 주고,
  * 행의 더 보기 메뉴와 링크가 canonical 학생 상세 route로 연결한다. 그룹레슨 그룹이 있으면 그룹 줄 아래에 멤버를
- * 들여 보이고, 그룹에 없는 학생은 그 아래에 둔다(캔버스 GroupLesson ①).
+ * 들여 보이고, 그룹에 없는 학생은 그 아래에 둔다(캔버스 GroupLesson ①). 수강 종료한 학생이 있으면 맨 아래에
+ * '수강 종료한 학생 N명' 링크를, 수강 종료 직후에는 목록 위에 결과 안내를 한 번 보인다(캔버스 StudentArchive ②).
  */
 "use client";
 
-import { useDeferredValue, useState } from "react";
+import { useDeferredValue, useEffect, useState } from "react";
 import Link from "next/link";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { Ellipsis, Plus, Search, UserPlus, Users } from "lucide-react";
+import { ChevronRight, Ellipsis, Plus, Search, UserPlus, Users } from "lucide-react";
 import { buttonClassName } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
@@ -18,10 +19,12 @@ import { buildAdminStudentDetailHref, type StudentDetailTab } from "@/lib/studen
 import { cn } from "@/lib/utils";
 import { formatKstDot } from "@/lib/kst-format";
 import { isCurriculumVisible } from "@/lib/curriculum-visibility";
+import { clearFlashNotice, peekFlashNotice, STUDENT_LIST_NOTICE_KEY } from "@/lib/flash-notice";
 import type { LessonGroupSummary } from "@/lib/lesson-group-rules";
 import { LessonGroupDialog } from "./LessonGroupDialog";
 
 const NEW_STUDENT_HREF = "/dashboard/admin/students/new";
+const ARCHIVED_STUDENTS_HREF = "/dashboard/admin/students/archived";
 
 const MENU_ITEM_CLASS =
   "flex h-9 w-full cursor-default select-none items-center rounded-md px-2.5 text-ui text-foreground outline-none data-[highlighted]:bg-muted";
@@ -144,17 +147,40 @@ function GroupBadge() {
   );
 }
 
+/** 목록 맨 아래 '수강 종료한 학생 N명'. 좁은 화면은 줄 전체, 넓은 화면은 밑줄 글자 링크. */
+function ArchivedStudentsLink({ count }: { count: number }) {
+  return (
+    <Link
+      href={ARCHIVED_STUDENTS_HREF}
+      className="flex h-12 items-center justify-between border-b border-muted text-body text-secondary-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring md:inline-flex md:h-10 md:self-start md:justify-start md:gap-1.5 md:rounded-md md:border-0 md:text-ui md:underline md:underline-offset-4"
+    >
+      <span>
+        수강 종료한 학생 <span className="font-mono tabular-nums">{count}</span>명
+      </span>
+      <ChevronRight className="size-4 md:size-3.5" strokeWidth={1.8} aria-hidden="true" />
+    </Link>
+  );
+}
+
 export function StudentManagementSection({
   students,
   lessonGroups = [],
+  archivedCount = 0,
   showCurriculum = isCurriculumVisible(),
 }: {
   students: StudentRosterStat[];
   /** 그룹레슨 그룹. 없으면 지금처럼 학생만 나온다. */
   lessonGroups?: readonly LessonGroupSummary[];
+  /** 수강 종료한 학생 수. 0이면 맨 아래 링크를 그리지 않는다. */
+  archivedCount?: number;
   /** 현재 진도(커리큘럼) 열을 그릴지. 기본값은 숨김 스위치를 따른다. */
   showCurriculum?: boolean;
 }) {
+  // 학생 상세에서 수강을 종료하고 돌아왔을 때만 있는 안내. 처음 그릴 때 읽고, 다음 방문에는 보이지 않게 지운다.
+  const [notice] = useState(() => peekFlashNotice(STUDENT_LIST_NOTICE_KEY));
+  useEffect(() => {
+    clearFlashNotice(STUDENT_LIST_NOTICE_KEY);
+  }, []);
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query.trim());
   const visibleStudents = students.filter((student) => matchesQuery(student, deferredQuery));
@@ -168,6 +194,11 @@ export function StudentManagementSection({
   return (
     <div className="px-5 pb-8 pt-4 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-14">
       <div className="flex max-w-[1080px] flex-col gap-1 md:gap-6 md:mx-auto">
+        {notice ? (
+          <p role="status" className="mb-2 flex min-h-9 items-center rounded-md bg-sidebar px-3 py-2 text-ui text-foreground md:mb-0">
+            {notice}
+          </p>
+        ) : null}
         <header className="flex flex-wrap items-end justify-between gap-4">
           <div className="sr-only md:not-sr-only md:flex md:flex-col md:gap-1">
             <h1 className="text-display font-semibold tracking-display text-foreground">학생</h1>
@@ -369,6 +400,7 @@ export function StudentManagementSection({
             )}
           </>
         )}
+        {archivedCount > 0 ? <ArchivedStudentsLink count={archivedCount} /> : null}
       </div>
       {/* 열 때만 그린다: 창이 router.refresh()를 쓰므로 목록만 그리는 곳(테스트 포함)에서는 router가 없어도 된다. */}
       {dialog.open ? <LessonGroupDialog

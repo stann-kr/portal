@@ -2,6 +2,8 @@
  * 그룹레슨(예: 2:1) 묶음. 과제·커리큘럼·레슨·제출·피드백은 학생별 행 그대로 두고 그룹은 묶어 보여 주기와
  * "한 번에 내기", 그룹 노트 권한에만 쓴다(2026-11-15 사용자 결정). 학생은 그룹 하나에만 속한다.
  * 관리자 권한 검사는 호출하는 server action이 먼저 한다.
+ * 수강 종료한 학생은 그룹 자리(lesson_group_members)를 그대로 두지만 멤버 목록·인원·그룹 레슨 만들기·옮기기에서는 빠진다
+ * (2026-11-18 사용자 결정). 복원하면 다시 멤버로 보인다.
  */
 import { and, asc, eq, gte, inArray, sql } from "drizzle-orm";
 import type { DbContext } from "@/db/client";
@@ -24,12 +26,17 @@ import {
   type StudentHomeLessonGroup,
   type StudentLessonGroup,
 } from "@/lib/lesson-group-rules";
+import { ACTIVE_ACCOUNT_STATUS, activeStudentSql, notArchivedStudentSql } from "@/lib/student-status";
 
 export async function listLessonGroups(context: DbContext): Promise<LessonGroupSummary[]> {
   const db = asDocumentReadDb(context);
   const [groups, members] = await Promise.all([
     db.select({ id: lessonGroups.id, name: lessonGroups.name }).from(lessonGroups).orderBy(asc(lessonGroups.name), asc(lessonGroups.id)),
-    db.select({ studentId: lessonGroupMembers.studentId, groupId: lessonGroupMembers.groupId }).from(lessonGroupMembers),
+    db
+      .select({ studentId: lessonGroupMembers.studentId, groupId: lessonGroupMembers.groupId })
+      .from(lessonGroupMembers)
+      .innerJoin(profiles, eq(profiles.id, lessonGroupMembers.studentId))
+      .where(eq(profiles.accountStatus, ACTIVE_ACCOUNT_STATUS)),
   ]);
   const membersByGroup = new Map<string, string[]>();
   for (const member of members) {
@@ -58,7 +65,7 @@ async function readLessonGroupMembers(context: DbContext, groupId: string): Prom
     .select({ id: profiles.id, displayName: profiles.displayName })
     .from(lessonGroupMembers)
     .innerJoin(profiles, eq(profiles.id, lessonGroupMembers.studentId))
-    .where(eq(lessonGroupMembers.groupId, groupId));
+    .where(and(eq(lessonGroupMembers.groupId, groupId), eq(profiles.accountStatus, ACTIVE_ACCOUNT_STATUS)));
   return rows
     .map((row) => ({ id: row.id, name: studentDisplayName(row.displayName) }))
     .sort((a, b) => a.name.localeCompare(b.name, "ko-KR") || a.id.localeCompare(b.id));
@@ -100,12 +107,13 @@ export async function readStudentHomeLessonGroup(
   };
 }
 
-/** 그룹 멤버 id(이름순 아님, 없으면 빈 배열). */
+/** 수강 중인 그룹 멤버 id(이름순 아님, 없으면 빈 배열). */
 export async function readLessonGroupMemberIds(context: DbContext, groupId: string): Promise<string[]> {
   const rows = await asDocumentReadDb(context)
     .select({ studentId: lessonGroupMembers.studentId })
     .from(lessonGroupMembers)
-    .where(eq(lessonGroupMembers.groupId, groupId))
+    .innerJoin(profiles, eq(profiles.id, lessonGroupMembers.studentId))
+    .where(and(eq(lessonGroupMembers.groupId, groupId), eq(profiles.accountStatus, ACTIVE_ACCOUNT_STATUS)))
     .orderBy(asc(lessonGroupMembers.studentId));
   return rows.map((row) => row.studentId);
 }
@@ -132,10 +140,12 @@ export async function readGroupLessonTargets(
   const self = { scheduledAt: lesson.scheduledAt, targets: [{ lessonId, studentId }] };
   const groupId = await readStudentLessonGroupId(context, studentId);
   if (!groupId) return self;
+  // 수강 종료한 멤버는 빼고 본다(그 뒤에 만든 그룹 레슨에는 그 학생 몫이 없다).
   const members = await db
     .select({ studentId: lessonGroupMembers.studentId })
     .from(lessonGroupMembers)
-    .where(eq(lessonGroupMembers.groupId, groupId));
+    .innerJoin(profiles, eq(profiles.id, lessonGroupMembers.studentId))
+    .where(and(eq(lessonGroupMembers.groupId, groupId), eq(profiles.accountStatus, ACTIVE_ACCOUNT_STATUS)));
   const others = members.map((member) => member.studentId).filter((id) => id !== studentId);
   if (others.length === 0) return self;
   const rows = await db
@@ -177,7 +187,10 @@ export async function saveLessonGroup(
 
   const db = asDocumentReadDb(context);
   const [roles, membershipRows, existing] = await Promise.all([
-    db.select({ id: profiles.id, role: profiles.role }).from(profiles).where(inArray(profiles.id, memberIds)),
+    db
+      .select({ id: profiles.id, role: profiles.role, accountStatus: profiles.accountStatus })
+      .from(profiles)
+      .where(inArray(profiles.id, memberIds)),
     db
       .select({ studentId: lessonGroupMembers.studentId, groupId: lessonGroupMembers.groupId })
       .from(lessonGroupMembers)
@@ -187,7 +200,10 @@ export async function saveLessonGroup(
       : Promise.resolve([]),
   ]);
   if (input.groupId && existing.length === 0) return { ok: false, error: "NOT_FOUND" };
-  if (roles.length !== memberIds.length || roles.some((row) => row.role !== "student")) {
+  if (
+    roles.length !== memberIds.length
+    || roles.some((row) => row.role !== "student" || row.accountStatus !== ACTIVE_ACCOUNT_STATUS)
+  ) {
     return { ok: false, error: "NOT_STUDENT" };
   }
   const taken = membershipRows.filter((row) => row.groupId !== input.groupId).map((row) => row.studentId);
@@ -201,7 +217,9 @@ export async function saveLessonGroup(
       { query: "UPDATE lesson_groups SET name = ?, updated_at = ? WHERE id = ?", params: [name, now, groupId] },
       DOCUMENT_CONDITIONAL_WRITE_SENTINEL,
       {
-        query: `DELETE FROM lesson_group_members WHERE group_id = ? AND student_id NOT IN (${memberIds.map(() => "?").join(", ")})`,
+        // 고르는 목록에 없는 수강 종료 멤버는 빠진 것이 아니므로 자리를 남긴다.
+        query: `DELETE FROM lesson_group_members WHERE group_id = ? AND student_id NOT IN (${memberIds.map(() => "?").join(", ")})
+          AND ${notArchivedStudentSql("student_id")}`,
         params: [groupId, ...memberIds],
       },
     );
@@ -218,7 +236,7 @@ export async function saveLessonGroup(
         query: `
           INSERT INTO lesson_group_members (student_id, group_id, joined_at)
           SELECT profile.id, ?, ? FROM profiles AS profile
-          WHERE profile.id = ? AND profile.role = 'student'
+          WHERE profile.id = ? AND ${activeStudentSql("profile")}
             AND NOT EXISTS (SELECT 1 FROM lesson_group_members WHERE student_id = profile.id)
         `,
         params: [groupId, now, studentId],

@@ -24,6 +24,13 @@ export const profiles = sqliteTable("profiles", {
   createdAt: integer("created_at", { mode: "timestamp" }).default(
     sql`(strftime('%s', 'now'))`,
   ),
+  /**
+   * 계정 상태(0032). ACTIVE만 로그인·session·목록에 쓰인다. ARCHIVED는 관리자가 학생 수강을 종료(보관)한 상태로,
+   * 기록은 그대로 두고 로그인과 목록·선택지에서만 빠진다(2026-11-18 사용자 결정). 복원하면 ACTIVE로 돌아간다.
+   */
+  accountStatus: text("account_status", { enum: ["ACTIVE", "ARCHIVED"] }).default("ACTIVE").notNull(),
+  /** 수강 종료한 시각. ACTIVE면 NULL이다. */
+  archivedAt: integer("archived_at", { mode: "timestamp" }),
 });
 
 export type AccountDeletionStatus = "ERASING" | "ERASED" | "ALIASED";

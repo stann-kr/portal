@@ -225,6 +225,13 @@
       "when": 1794786965676,
       "tag": "0031_group_calendar",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "6",
+      "when": 1794940922172,
+      "tag": "0032_student_archive",
+      "breakpoints": true
     }
   ]
 }

@@ -88,6 +88,11 @@ let StudentPasswordResetControl: typeof import("@/components/admin/StudentPasswo
 let createStudentAction: typeof import("@/lib/actions/students").createStudent = async () => ({});
 let reissueInvite: typeof import("@/lib/actions/students").reissueStudentInvite = async () => ({ invitePath: "/invite#student-1.secret", email: "student@example.com", emailStatus: "sent" });
 let StudentInviteControl: typeof import("@/components/admin/StudentInviteControl").StudentInviteControl;
+let archiveAction: typeof import("@/lib/actions/students").archiveStudent = async () => ({ ok: false, error: "테스트 미설정" });
+let restoreAction: typeof import("@/lib/actions/students").restoreStudent = async () => ({ ok: false, error: "테스트 미설정" });
+let StudentArchiveControl: typeof import("@/components/admin/StudentArchiveControl").StudentArchiveControl;
+let ArchivedStudentsClient: typeof import("@/app/(app)/dashboard/admin/students/archived/ArchivedStudentsClient").ArchivedStudentsClient;
+let flashNotice: typeof import("@/lib/flash-notice");
 let NewStudentPage: typeof import("@/app/(app)/dashboard/admin/students/new/page").default;
 let inviteStatus: typeof import("@/lib/actions/invite").getInviteStatus = async () => ({ status: "invalid" });
 let completeInviteAction: typeof import("@/lib/actions/invite").completeInvite = async () => ({ success: true });
@@ -126,6 +131,11 @@ mock.module("next/navigation", { namedExports: {
   // 관리자 학생 상세의 좁은 화면 편집 모드(`?edit=1`)처럼 주소 값을 읽는 화면용. 테스트 창의 현재 주소를 준다.
   useSearchParams: () => new URLSearchParams(globalThis.location?.search ?? ""),
   usePathname: () => (globalThis.window as { location?: { pathname: string } } | undefined)?.location?.pathname ?? "/",
+  // 서버 action의 redirect는 Next.js 이동 신호(digest NEXT_REDIRECT)로 온다. 실제처럼 이동 신호만 다시 던진다.
+  unstable_rethrow: (error: unknown) => {
+    const digest = (error as { digest?: unknown } | null)?.digest;
+    if (typeof digest === "string" && digest.startsWith("NEXT_REDIRECT")) throw error;
+  },
 } });
 // Browser/provider loading is exercised separately; this boundary exposes v3's HTML media API.
 const HtmlMediaBoundary = React.forwardRef<HTMLVideoElement, ReactPlayerProps>((props, ref) => (
@@ -216,6 +226,8 @@ mock.module("@/lib/actions/students", { namedExports: {
   createStudent: (...args: Parameters<typeof createStudentAction>) => createStudentAction(...args),
   reissueStudentInvite: (...args: Parameters<typeof reissueInvite>) => reissueInvite(...args),
   getStudentAccountState: async () => ({ kind: "active" }),
+  archiveStudent: (...args: Parameters<typeof archiveAction>) => archiveAction(...args),
+  restoreStudent: (...args: Parameters<typeof restoreAction>) => restoreAction(...args),
 } });
 mock.module("@/lib/actions/invite", { namedExports: {
   getInviteStatus: (...args: Parameters<typeof inviteStatus>) => inviteStatus(...args),
@@ -344,6 +356,9 @@ before(async () => {
   ({ PasswordChangeControl, PasswordChangeForm } = await import("@/components/auth/PasswordChangeControl"));
   ({ StudentPasswordResetControl } = await import("@/components/admin/StudentPasswordResetControl"));
   ({ StudentInviteControl } = await import("@/components/admin/StudentInviteControl"));
+  ({ StudentArchiveControl } = await import("@/components/admin/StudentArchiveControl"));
+  ({ ArchivedStudentsClient } = await import("@/app/(app)/dashboard/admin/students/archived/ArchivedStudentsClient"));
+  flashNotice = await import("@/lib/flash-notice");
   ({ default: NewStudentPage } = await import("@/app/(app)/dashboard/admin/students/new/page"));
   ({ InviteSignup } = await import("@/components/auth/InviteSignup"));
   confirmActionModule = await import("@/components/ui/confirm-action");
@@ -4536,4 +4551,89 @@ test("학생 한 명 일정도 돌아와 다시 읽으면 다른 곳에서 지�
   truncated = false;
   await returnToPage();
   assert.deepEqual(shownIds(), ["kept"], "읽은 기간 안에서 응답에 없는 항목은 지운다");
+});
+
+test("수강 종료는 취소 우선 확인을 거치고, 성공하면 이동한 학생 목록에 결과 안내를 한 번 남긴다", async (context) => {
+  const archived: string[] = [];
+  let outcome: "error" | "redirect" | "throw" = "error";
+  archiveAction = async (studentId) => {
+    archived.push(studentId);
+    if (outcome === "redirect") {
+      throw Object.assign(new Error("NEXT_REDIRECT"), { digest: "NEXT_REDIRECT;push;/dashboard/admin?section=students;303;" });
+    }
+    if (outcome === "throw") throw new Error("network");
+    return { ok: false, error: "이미 수강을 종료했거나 찾을 수 없는 학생입니다. 학생 목록을 새로 고쳐 주세요." };
+  };
+  context.after(() => {
+    archiveAction = async () => ({ ok: false, error: "테스트 미설정" });
+    flashNotice.clearFlashNotice(flashNotice.STUDENT_LIST_NOTICE_KEY);
+  });
+  const confirmButton = () => {
+    const found = browser.document.querySelector('[role="group"] button[aria-describedby]');
+    assert.ok(found instanceof browser.HTMLButtonElement, "확인 영역의 수강 종료 버튼");
+    return found;
+  };
+  const confirmArchive = async () => {
+    await press("수강 종료");
+    await act(async () => confirmButton().click());
+    await settle();
+  };
+  const alertText = () => browser.document.querySelector('[role="alert"]')?.textContent ?? null;
+  const notice = () => flashNotice.peekFlashNotice(flashNotice.STUDENT_LIST_NOTICE_KEY);
+
+  await render(context, <StudentArchiveControl studentId="student-1" studentName="김학생" />);
+  assert.match(browser.document.body.textContent ?? "", /기록은 남고 언제든 복원할 수 있습니다/u);
+  await press("수강 종료");
+  assert.deepEqual(archived, [], "첫 누름은 확인만 연다");
+  assert.equal(browser.document.activeElement?.textContent, "취소");
+  assert.match(browser.document.body.textContent ?? "", /김학생의 수강을 종료할까요\? 모든 기기에서 로그아웃되고/u);
+  assert.equal(button("수강 종료").getAttribute("aria-expanded"), "true");
+  await press("취소");
+  assert.equal(browser.document.querySelector('[role="group"]'), null);
+  assert.equal(browser.document.activeElement?.textContent, "수강 종료", "닫으면 연 버튼으로 초점이 돌아온다");
+
+  await confirmArchive();
+  assert.deepEqual(archived, ["student-1"]);
+  assert.match(alertText() ?? "", /이미 수강을 종료했거나/u, "서버가 거절한 이유를 보인다");
+  assert.equal(notice(), null, "실패하면 목록 안내를 남기지 않는다");
+
+  outcome = "throw";
+  await confirmArchive();
+  assert.match(alertText() ?? "", /수강을 종료하지 못했습니다/u);
+  assert.equal(notice(), null);
+
+  outcome = "redirect";
+  await confirmArchive();
+  assert.equal(alertText(), null, "redirect는 실패가 아니라 이동이다");
+  assert.equal(notice(), "김학생의 수강을 종료했습니다.", "이동한 학생 목록이 처음 그릴 때 읽는다");
+});
+
+test("수강 종료한 학생은 확인 없이 바로 복원하고, 사라진 버튼 대신 결과 안내로 초점을 옮긴다", async (context) => {
+  const restored: string[] = [];
+  restoreAction = async (studentId) => {
+    restored.push(studentId);
+    return studentId === "student-2"
+      ? { ok: true, name: "정학생" }
+      : { ok: false, error: "이미 복원했거나 찾을 수 없는 학생입니다. 목록을 새로 고쳐 주세요." };
+  };
+  context.after(() => { restoreAction = async () => ({ ok: false, error: "테스트 미설정" }); });
+
+  await render(context, <ArchivedStudentsClient students={[
+    { id: "student-2", name: "정학생", email: "jung@example.com", archivedLabel: "11.18" },
+    { id: "student-3", name: "student3@example.com", email: "student3@example.com", archivedLabel: "11.02" },
+  ]} />);
+  assert.match(browser.document.body.textContent ?? "", /2명 · 로그인할 수 없고 학생 목록·선택지에 보이지 않습니다/u);
+  assert.equal(
+    [...browser.document.querySelectorAll("a")].find((link) => link.textContent === "학생")?.getAttribute("href"),
+    "/dashboard/admin?section=students",
+  );
+  await press("정학생 복원");
+  assert.deepEqual(restored, ["student-2"], "확인 없이 바로 복원한다");
+  const message = browser.document.querySelector('[aria-live="polite"] p');
+  assert.equal(message?.textContent, "정학생을 복원했습니다. 다시 로그인할 수 있습니다.");
+  assert.equal(browser.document.activeElement, message, "누른 행이 목록에서 빠지므로 결과 안내로 초점을 옮긴다");
+
+  await press("student3@example.com 복원");
+  assert.equal(browser.document.querySelector('[aria-live="polite"] p'), null);
+  assert.match(browser.document.querySelector('[role="alert"]')?.textContent ?? "", /이미 복원했거나/u);
 });

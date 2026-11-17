@@ -49,6 +49,8 @@ export interface AdminPortalClientProps {
   students: StudentRosterStat[];
   /** 그룹레슨 그룹(학생 목록에 묶어 보인다). */
   lessonGroups?: LessonGroupSummary[];
+  /** 수강 종료한 학생 수(학생 목록 맨 아래 링크). */
+  archivedStudentCount?: number;
   adminId: string;
   qnaThreads: AdminQueueThread[];
   pendingAssignments: PendingFeedbackAssignment[];
@@ -75,6 +77,7 @@ export function AdminPortalClient({
   initialUnifiedItems,
   students,
   lessonGroups = [],
+  archivedStudentCount = 0,
   initialStudentId = students.length > 0 ? ALL_STUDENTS_SCOPE : "",
   adminId,
   qnaThreads,
@@ -402,6 +405,7 @@ export function AdminPortalClient({
             <StudentManagementSection
               students={students}
               lessonGroups={lessonGroups}
+              archivedCount={archivedStudentCount}
             />
           )}
         </>
