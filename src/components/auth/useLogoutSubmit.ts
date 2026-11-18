@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { unstable_rethrow } from "next/navigation";
+import { isNavigationSignal } from "@/lib/navigation-signal";
 import { logoutCurrentUser } from "@/lib/actions/session";
 import {
   acquireAccountLogoutLock,
@@ -66,16 +66,6 @@ async function clearLocalDataAfterLogout(ownerId: string): Promise<void> {
     // 정리 실패는 다음 계정 전환·로그인 경계 정리에서 다시 수렴한다.
   }
   await releaseThisDeviceForLogout().catch(() => undefined);
-}
-
-/** 로그아웃 action의 redirect 같은 Next.js 이동 신호면 true(실패가 아니라 이동 중이다). */
-function isNavigationSignal(error: unknown): boolean {
-  try {
-    unstable_rethrow(error);
-    return false;
-  } catch {
-    return true;
-  }
 }
 
 /**

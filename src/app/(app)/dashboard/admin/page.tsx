@@ -5,7 +5,7 @@
  */
 import { redirect } from "next/navigation";
 import { getActiveAuthSession } from "@/lib/auth-guard";
-import { getStudentRosterStats } from "@/lib/actions/students";
+import { getArchivedStudentCount, getStudentRosterStats } from "@/lib/actions/students";
 import { getLessonGroups } from "@/lib/actions/lessonGroups";
 import {
   getUnifiedItemsForAllStudents,
@@ -48,16 +48,21 @@ export default async function AdminPortalPage({ searchParams }: { searchParams: 
       && student.nextLessonDate.getTime() >= lessonWindow.from.getTime()
       && student.nextLessonDate.getTime() <= lessonWindow.to.getTime())
     .map((student) => student.id);
-  const [initialCalendar, qnaThreads, pendingAssignments, lessonNoteIds, lessonGroups] = await Promise.all([
+  const [initialCalendar, qnaThreads, pendingAssignments, lessonNoteIds, lessonGroups, archivedStudentCount] = await Promise.all([
     initialStudentId === ALL_STUDENTS_SCOPE
       ? getUnifiedItemsForAllStudents().then((result: AllStudentsUnifiedItems) => ({ items: result.items, window: result }))
       : initialStudentId
         ? getUnifiedItemsForStudent(initialStudentId).then((items) => ({ items, window: null }))
         : Promise.resolve({ items: [], window: null }),
-    getQnaThreads(),
+    // 업무함 질문은 수강 중인 학생 것만(수강 종료한 학생의 질문은 Q&A 게시판에 그대로 남는다).
+    getQnaThreads().then((threads) => {
+      const enrolled = new Set(students.map((student) => student.id));
+      return threads.filter((thread) => enrolled.has(thread.studentId));
+    }),
     getPendingFeedbackAssignments(),
     getLessonNoteIdsInRange(upcomingStudentIds, lessonWindow).catch(() => ({})),
     getLessonGroups(),
+    getArchivedStudentCount(),
   ]);
 
   return (
@@ -70,6 +75,7 @@ export default async function AdminPortalPage({ searchParams }: { searchParams: 
         : undefined}
       students={students}
       lessonGroups={lessonGroups}
+      archivedStudentCount={archivedStudentCount}
       adminId={adminId}
       qnaThreads={qnaThreads}
       pendingAssignments={pendingAssignments}

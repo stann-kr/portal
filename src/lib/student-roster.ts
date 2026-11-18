@@ -2,6 +2,7 @@ import { and, desc, eq, gte, isNull, sql } from "drizzle-orm";
 import type { DrizzleDb } from "@/db/client";
 import { assignments, curriculums, lessons, profiles, qnaThreads } from "@/db/schema";
 import { assignmentAwaitingReview } from "./assignment-review-query";
+import { activeStudentProfileCondition, notArchivedStudentCondition } from "./student-status";
 import { formatModuleProgressLabel } from "./student-progress";
 
 export type StudentRosterStat = {
@@ -61,7 +62,7 @@ export async function queryStudentRosterStats(
         createdAt: profiles.createdAt,
       })
       .from(profiles)
-      .where(eq(profiles.role, "student"))
+      .where(activeStudentProfileCondition())
       .orderBy(desc(profiles.createdAt)),
     db
       .select({
@@ -158,16 +159,20 @@ export function withConnectedNextLessons(
 }
 
 /**
- * Stann 사이드바 업무함 숫자: 검토 대기 제출 + 답변을 기다리는 질문(모든 학생).
+ * Stann 사이드바 업무함 숫자: 검토 대기 제출 + 답변을 기다리는 질문(수강 중인 모든 학생).
  * 학생 상세 탭·roster와 같은 조건(assignmentAwaitingReview, OPEN이고 지우지 않은 질문)으로 센다.
+ * 수강 종료한 학생의 제출·질문은 업무함에 없으므로 숫자에서도 뺀다.
  */
 export async function queryAdminWorkCount(db: DrizzleDb): Promise<number> {
   const [[pending], [openQna]] = await Promise.all([
-    db.select({ value: sql<number>`count(*)` }).from(assignments).where(assignmentAwaitingReview(db)),
+    db
+      .select({ value: sql<number>`count(*)` })
+      .from(assignments)
+      .where(and(assignmentAwaitingReview(db), notArchivedStudentCondition(db, assignments.studentId))),
     db
       .select({ value: sql<number>`count(*)` })
       .from(qnaThreads)
-      .where(and(eq(qnaThreads.status, "OPEN"), isNull(qnaThreads.deletedAt))),
+      .where(and(eq(qnaThreads.status, "OPEN"), isNull(qnaThreads.deletedAt), notArchivedStudentCondition(db, qnaThreads.studentId))),
   ]);
   return Number(pending?.value ?? 0) + Number(openQna?.value ?? 0);
 }

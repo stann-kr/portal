@@ -1,0 +1,309 @@
+/**
+ * 학생 수강 종료(보관)·복원(0032 `profiles.account_status`)을 격리 D1(실제 D1 SQL)에서 확인한다.
+ * 수강 종료는 기록을 하나도 지우지 않고 로그인·session·목록·선택지·업무함·알림·그룹 판정·캘린더 동기화에서만 뺀다.
+ * 그룹 멤버 자리는 남고, 복원하면 모두 그대로 돌아온다.
+ */
+import assert from "node:assert/strict";
+import { after, before, mock, test, type TestContext } from "node:test";
+import { eq } from "drizzle-orm";
+import type { AuthSession } from "@/lib/auth-guard";
+import {
+  accountDeletionJobs,
+  assignments,
+  calendarConnections,
+  calendarMappings,
+  guideAccess,
+  lessonGroupMembers,
+  lessonGroups,
+  lessons,
+  privateNotes,
+  profiles,
+  pushSubscriptions,
+  qnaThreads,
+} from "@/db/schema";
+import { createIsolatedPortalD1, type IsolatedPortalD1 } from "@/test/isolated-d1";
+
+type PortalTestDb = IsolatedPortalD1["db"];
+
+let activeDb: PortalTestDb | null = null;
+let activeSession: AuthSession | null = null;
+let studentActions: typeof import("@/lib/actions/students");
+let groupActions: typeof import("@/lib/actions/lessonGroups");
+let assignmentActions: typeof import("@/lib/actions/assignments");
+let notesActions: typeof import("@/lib/actions/all-notes");
+let activeProfile: typeof import("@/lib/active-profile");
+let roster: typeof import("@/lib/student-roster");
+let pushStore: typeof import("@/lib/push/store");
+let mappingSync: typeof import("@/lib/calendar-sync/mapping-sync");
+const resyncedStudents: string[][] = [];
+
+class RedirectSignal extends Error {
+  constructor(readonly path: string) {
+    super(`NEXT_REDIRECT ${path}`);
+  }
+}
+
+function createSession(id: string, role: "admin" | "student"): AuthSession {
+  return { expires: "2099-01-01T00:00:00.000Z", user: { id, role, name: id, email: `${id}@example.com`, image: null } };
+}
+
+function requireActiveDb(): PortalTestDb {
+  if (!activeDb) throw new Error("격리 D1 테스트 DB가 준비되지 않았습니다.");
+  return activeDb;
+}
+
+mock.module("@/auth", { namedExports: { auth: async () => activeSession, signIn: async () => "/dashboard" } });
+mock.module("@/db/client", {
+  namedExports: {
+    createDb: () => requireActiveDb(),
+    createDbContext: () => ({ kind: "d1", db: requireActiveDb() }),
+  },
+});
+mock.module("next/cache", { namedExports: { revalidatePath: () => undefined } });
+mock.module("next/navigation", {
+  namedExports: {
+    redirect: (path: string) => {
+      throw new RedirectSignal(path);
+    },
+  },
+});
+mock.module("@/lib/calendar-sync/sync-runner", {
+  namedExports: {
+    schedulePushStudentCalendarChanges: async () => undefined,
+    schedulePushStudentsCalendarChanges: async (studentIds: string[]) => {
+      resyncedStudents.push([...studentIds]);
+    },
+    stopGroupCalendarChannels: async () => undefined,
+    restoreGroupCalendarChannels: async () => undefined,
+    markLinksDeletedStatement: () => ({ query: "SELECT 1", params: [] }),
+  },
+});
+mock.module("@/lib/push/notify", { namedExports: { notifyPush: async () => undefined } });
+
+const realFetch = globalThis.fetch;
+before(async () => {
+  globalThis.fetch = (async (input: unknown) => {
+    throw new Error(`테스트 중 외부 요청 금지: ${String(input)}`);
+  }) as typeof fetch;
+  studentActions = await import("@/lib/actions/students");
+  groupActions = await import("@/lib/actions/lessonGroups");
+  assignmentActions = await import("@/lib/actions/assignments");
+  notesActions = await import("@/lib/actions/all-notes");
+  activeProfile = await import("@/lib/active-profile");
+  roster = await import("@/lib/student-roster");
+  pushStore = await import("@/lib/push/store");
+  mappingSync = await import("@/lib/calendar-sync/mapping-sync");
+});
+
+after(() => {
+  globalThis.fetch = realFetch;
+  mock.restoreAll();
+});
+
+const keys = { p256dh: "B".repeat(87), auth: "a".repeat(22) };
+
+/** 김학생(a)·이학생(b)은 화요일반, 박학생(c)은 혼자. a에게 레슨·노트·검토 대기 제출·미답변 질문·알림 구독·캘린더 매핑이 있다. */
+async function setupDatabase(context: TestContext): Promise<PortalTestDb> {
+  const isolated = await createIsolatedPortalD1();
+  activeDb = isolated.db;
+  activeSession = createSession("admin-1", "admin");
+  resyncedStudents.length = 0;
+  context.after(async () => {
+    activeDb = null;
+    await isolated.dispose();
+  });
+  const db = isolated.db;
+  await db.insert(profiles).values([
+    { id: "admin-1", email: "admin-1@example.com", displayName: "Stann", role: "admin" },
+    { id: "student-a", email: "a@example.com", displayName: "김학생", role: "student" },
+    { id: "student-b", email: "b@example.com", displayName: "이학생", role: "student" },
+    { id: "student-c", email: "c@example.com", displayName: "박학생", role: "student" },
+  ]);
+  await db.insert(lessonGroups).values({ id: "group-1", name: "화요일반" });
+  await db.insert(lessonGroupMembers).values([
+    { studentId: "student-a", groupId: "group-1" },
+    { studentId: "student-b", groupId: "group-1" },
+  ]);
+  await db.insert(lessons).values({ id: "lesson-a", studentId: "student-a", scheduledAt: new Date("2026-12-01T10:00:00.000Z") });
+  await db.insert(privateNotes).values({
+    id: "note-a", studentId: "student-a", authorId: "admin-1", title: "김학생 레슨 메모", contentHtml: "<p>메모</p>",
+    noteDate: new Date("2026-11-10T03:00:00.000Z"),
+  });
+  await db.insert(assignments).values([
+    { id: "submission-a", studentId: "student-a", mediaUrl: "https://youtu.be/a", submittedAt: new Date("2026-11-15T00:00:00.000Z") },
+    { id: "submission-c", studentId: "student-c", mediaUrl: "https://youtu.be/c", submittedAt: new Date("2026-11-15T00:00:00.000Z") },
+  ]);
+  await db.insert(qnaThreads).values({ id: "qna-a", studentId: "student-a", title: "김학생 질문", status: "OPEN" });
+  await db.insert(pushSubscriptions).values([
+    { id: "sub-a", profileId: "student-a", endpoint: "https://push.example.com/a", ...keys },
+    { id: "sub-b", profileId: "student-b", endpoint: "https://push.example.com/b", ...keys },
+  ]);
+  await db.insert(calendarConnections).values({
+    id: "conn-1", ownerId: "admin-1", provider: "GOOGLE", accountLabel: "teacher@gmail.com",
+    encryptedCredentials: "sealed", credentialsIv: "iv",
+  });
+  await db.insert(calendarMappings).values({
+    id: "mapping-a", connectionId: "conn-1", studentId: "student-a", remoteCalendarId: "cal-a", remoteCalendarName: "김학생",
+  });
+  return db;
+}
+
+async function expectRedirect(promise: Promise<unknown>, path: string) {
+  await assert.rejects(promise, (error: unknown) => error instanceof RedirectSignal && error.path === path);
+}
+
+const ctx = () => ({ kind: "d1" as const, db: requireActiveDb() });
+
+test("수강 종료는 기록을 지우지 않고 로그인·목록·업무함·알림·그룹 판정·캘린더 동기화에서만 뺀다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context);
+
+  // 수강 종료 전: 김학생이 목록·업무함·알림 대상에 있다(대조군).
+  assert.deepEqual((await studentActions.getStudentRosterStats()).map((row) => row.id).sort(), ["student-a", "student-b", "student-c"]);
+  assert.equal(await roster.queryAdminWorkCount(db), 3, "제출 2건과 미답변 질문 1건");
+
+  activeSession = createSession("student-b", "student");
+  await assert.rejects(studentActions.archiveStudent("student-a"), /Admin only/);
+
+  activeSession = createSession("admin-1", "admin");
+  await expectRedirect(studentActions.archiveStudent("student-a"), "/dashboard/admin?section=students");
+  assert.deepEqual(resyncedStudents, [["student-b", "student-a"]], "남은 그룹 멤버와 본인 캘린더를 다시 맞춘다");
+
+  const [stored] = await db.select().from(profiles).where(eq(profiles.id, "student-a"));
+  assert.equal(stored?.accountStatus, "ARCHIVED");
+  assert.ok(stored?.archivedAt instanceof Date);
+
+  // 로그인·session: 같은 경계(parseActiveProfile)가 ARCHIVED를 막는다.
+  assert.equal(await activeProfile.findActiveProfileByEmail("a@example.com", db), null, "로그인할 수 없다");
+  assert.equal(await activeProfile.findActiveSessionProfileById("student-a", db), null, "기존 session은 다음 확인에서 끝난다");
+  assert.ok(await activeProfile.findActiveSessionProfileById("student-b", db), "다른 학생은 그대로다");
+
+  // 목록·선택지·숫자.
+  assert.deepEqual((await studentActions.getStudentRosterStats()).map((row) => row.id).sort(), ["student-b", "student-c"]);
+  assert.deepEqual((await studentActions.getStudentOptions()).map((row) => row.id), ["student-c", "student-b"]);
+  assert.equal(await studentActions.getStudentCount(), 2);
+  assert.deepEqual((await studentActions.getArchivedStudents()).map((row) => row.id), ["student-a"]);
+  assert.equal(await studentActions.getArchivedStudentCount(), 1);
+
+  // 업무함: 검토 대기 제출·미답변 질문에서 빠진다(기록은 남는다).
+  assert.deepEqual((await assignmentActions.getPendingFeedbackAssignments()).map((row) => row.id), ["submission-c"]);
+  assert.equal(await roster.queryAdminWorkCount(db), 1);
+
+  // 전체 노트: 수강 종료한 학생의 개인 노트는 빠진다.
+  const notes = await notesActions.getAllStudentNotes({});
+  assert.deepEqual(notes.students.map((student) => student.id).sort(), ["student-b", "student-c"]);
+  assert.equal(notes.notes.some((note) => note.id === "note-a"), false);
+
+  // 알림: 구독은 남기고 보내지만 않는다.
+  const targets = await pushStore.listPushTargets(db, { kind: "role", role: "student" });
+  assert.deepEqual(targets.map((target) => target.profileId), ["student-b"]);
+  assert.equal((await db.select().from(pushSubscriptions)).length, 2);
+
+  // 그룹: 자리는 남고 인원·그룹레슨 판정에서는 빠진다. 수강 종료한 학생은 새로 고를 수 없다.
+  const [group] = await groupActions.getLessonGroups();
+  assert.deepEqual(group?.memberIds, ["student-b"]);
+  const rejected = await groupActions.saveLessonGroupAction({ groupId: "group-1", name: "화요일반", memberIds: ["student-a", "student-b"] });
+  assert.equal(rejected.ok, false);
+  const saved = await groupActions.saveLessonGroupAction({ groupId: "group-1", name: "화요일반", memberIds: ["student-b", "student-c"] });
+  assert.equal(saved.ok, true);
+  const seats = await db.select({ studentId: lessonGroupMembers.studentId }).from(lessonGroupMembers).where(eq(lessonGroupMembers.groupId, "group-1"));
+  assert.deepEqual(seats.map((seat) => seat.studentId).sort(), ["student-a", "student-b", "student-c"], "그룹을 고쳐도 수강 종료한 학생 자리는 남는다");
+
+  // 캘린더: 매핑은 남기고 동기화만 멈춘다(외부 요청 없이 건너뛴다).
+  assert.deepEqual(await mappingSync.listAllActiveMappingIds(ctx()), []);
+  const skipped = await mappingSync.syncCalendarMapping(ctx(), "mapping-a");
+  assert.deepEqual(skipped, { status: "skipped", localChanged: false, reason: "archived" });
+
+  // 기록은 하나도 지우지 않는다.
+  assert.equal((await db.select().from(lessons).where(eq(lessons.studentId, "student-a"))).length, 1);
+  assert.equal((await db.select().from(privateNotes).where(eq(privateNotes.studentId, "student-a"))).length, 1);
+  assert.equal((await db.select().from(assignments).where(eq(assignments.studentId, "student-a"))).length, 1);
+  assert.equal((await db.select().from(qnaThreads).where(eq(qnaThreads.studentId, "student-a"))).length, 1);
+  assert.equal((await db.select().from(calendarMappings)).length, 1);
+
+  // 두 번 눌러도 한 번만, 관리자 계정은 대상이 아니다.
+  assert.deepEqual(await studentActions.archiveStudent("student-a"), {
+    ok: false,
+    error: "이미 수강을 종료했거나 찾을 수 없는 학생입니다. 학생 목록을 새로 고쳐 주세요.",
+  });
+  assert.equal((await studentActions.archiveStudent("admin-1")).ok, false);
+  const [admin] = await db.select().from(profiles).where(eq(profiles.id, "admin-1"));
+  assert.equal(admin?.accountStatus, "ACTIVE");
+});
+
+test("복원하면 로그인·목록·그룹·업무함·알림·캘린더가 기록과 함께 그대로 돌아온다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context);
+  await expectRedirect(studentActions.archiveStudent("student-a"), "/dashboard/admin?section=students");
+  resyncedStudents.length = 0;
+
+  activeSession = createSession("student-b", "student");
+  await assert.rejects(studentActions.restoreStudent("student-a"), /Admin only/);
+
+  activeSession = createSession("admin-1", "admin");
+  assert.deepEqual(await studentActions.restoreStudent("student-a"), { ok: true, name: "김학생" });
+  assert.deepEqual(resyncedStudents, [["student-a", "student-b", "student-a"]], "복원한 학생이 그룹 판정에 다시 들어가 그룹 캘린더를 맞춘다");
+
+  const [stored] = await db.select().from(profiles).where(eq(profiles.id, "student-a"));
+  assert.equal(stored?.accountStatus, "ACTIVE");
+  assert.equal(stored?.archivedAt, null);
+  assert.ok(await activeProfile.findActiveProfileByEmail("a@example.com", db), "다시 로그인할 수 있다");
+  assert.deepEqual((await studentActions.getStudentRosterStats()).map((row) => row.id).sort(), ["student-a", "student-b", "student-c"]);
+  assert.deepEqual((await groupActions.getLessonGroups())[0]?.memberIds, ["student-a", "student-b"]);
+  assert.equal(await roster.queryAdminWorkCount(db), 3);
+  assert.deepEqual((await pushStore.listPushTargets(db, { kind: "role", role: "student" })).map((target) => target.profileId).sort(), ["student-a", "student-b"]);
+  assert.deepEqual(await mappingSync.listAllActiveMappingIds(ctx()), ["mapping-a"]);
+  assert.equal(await studentActions.getArchivedStudentCount(), 0);
+
+  assert.deepEqual(await studentActions.restoreStudent("student-a"), {
+    ok: false,
+    error: "이미 복원했거나 찾을 수 없는 학생입니다. 목록을 새로 고쳐 주세요.",
+  });
+});
+
+test("학생 삭제는 가입 전·기록 없는 학생만 격리 D1에서 지우고, 그사이 레슨이 생기면 아무것도 지우지 않는다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context);
+  const invite = `invite:${Math.floor(Date.now() / 1000) + 7 * 86_400}:$2a$10$abcdefghijklmnopqrstuv`;
+  await db.insert(profiles).values([
+    { id: "student-new", email: "new@example.com", displayName: "최학생", role: "student", passwordHash: invite },
+    { id: "student-raced", email: "raced@example.com", displayName: "정학생", role: "student", passwordHash: invite },
+  ]);
+  await db.insert(guideAccess).values([
+    { studentId: "student-new", mode: "ALL" },
+    { studentId: "student-raced", mode: "ALL" },
+  ]);
+
+  activeSession = createSession("student-b", "student");
+  await assert.rejects(studentActions.deleteStudent("student-new"), /Admin only/);
+  activeSession = createSession("admin-1", "admin");
+
+  assert.deepEqual(await studentActions.getStudentDeletionState("student-new"), { kind: "deletable" });
+  assert.deepEqual(await studentActions.getStudentDeletionState("student-a"), { kind: "signed-up" });
+  await expectRedirect(studentActions.deleteStudent("student-new"), "/dashboard/admin?section=students");
+  assert.equal((await db.select().from(profiles).where(eq(profiles.id, "student-new"))).length, 0);
+  assert.equal((await db.select().from(guideAccess).where(eq(guideAccess.studentId, "student-new"))).length, 0);
+  const [receipt] = await db.select().from(accountDeletionJobs).where(eq(accountDeletionJobs.subjectId, "student-new"));
+  assert.equal(receipt?.status, "ERASED");
+  assert.deepEqual(await studentActions.deleteStudent("student-new"), {
+    ok: false,
+    error: "이미 삭제했거나 찾을 수 없는 학생입니다. 학생 목록을 새로 고쳐 주세요.",
+  });
+
+  // 화면을 연 뒤 레슨이 생기면 batch 맨 앞 조건이 막아 계정·설정·영수증 모두 그대로다.
+  assert.deepEqual(await studentActions.getStudentDeletionState("student-raced"), { kind: "deletable" });
+  await db.insert(lessons).values({ id: "lesson-raced", studentId: "student-raced", scheduledAt: new Date() });
+  assert.deepEqual(await studentActions.deleteStudent("student-raced"), {
+    ok: false,
+    error: "가입했거나 기록이 생겨 삭제하지 않았습니다. 수강 종료를 쓰세요.",
+  });
+  assert.equal((await db.select().from(profiles).where(eq(profiles.id, "student-raced"))).length, 1);
+  assert.equal((await db.select().from(guideAccess).where(eq(guideAccess.studentId, "student-raced"))).length, 1);
+  assert.equal((await db.select().from(lessons).where(eq(lessons.id, "lesson-raced"))).length, 1);
+  assert.equal((await db.select().from(accountDeletionJobs).where(eq(accountDeletionJobs.subjectId, "student-raced"))).length, 0);
+  assert.deepEqual(await studentActions.getStudentDeletionState("student-raced"), { kind: "has-records" });
+
+  // 가입한 학생은 기록이 있어도 없어도 지우지 않는다.
+  assert.deepEqual(await studentActions.deleteStudent("student-c"), {
+    ok: false,
+    error: "가입했거나 기록이 생겨 삭제하지 않았습니다. 수강 종료를 쓰세요.",
+  });
+  assert.equal((await db.select().from(profiles).where(eq(profiles.id, "student-c"))).length, 1);
+});

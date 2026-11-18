@@ -31,9 +31,9 @@ function isRecord(value: unknown): value is ProfileRecord {
 /**
  * DB profile row를 애플리케이션의 active account 계약으로 좁힌다.
  *
- * 현재 계정 폐기는 profile hard-delete로 표현한다. 이후 status 컬럼이 도입되면
- * password hash만 제외한 동적 column projection이 새 필드를 함께 반환하며,
- * ACTIVE 이외 값은 이 경계에서 fail-closed 된다.
+ * 학생 수강 종료(보관)는 `profiles.account_status`(0032)를 ARCHIVED로 바꿔 표현한다. password hash만 제외한
+ * 동적 column projection이 이 필드를 함께 반환하며, ACTIVE 이외 값은 이 경계에서 fail-closed 된다
+ * (로그인·session·학생 대상 action·캘린더 구독이 모두 여기를 지난다).
  */
 export function parseActiveProfile(row: unknown): ActiveProfile | null {
   if (!isRecord(row)) return null;
@@ -91,7 +91,7 @@ export async function findActiveProfileById(
 
 /**
  * 활성 학생 profile 전체. 학생 대상 action의 findStudentTarget과 같은 규칙(학생 role + 활성 계정)으로 고른다.
- * 계정 폐기는 profile hard-delete라 지운 학생은 여기 나오지 않는다.
+ * 수강 종료한 학생(ARCHIVED)은 여기 나오지 않는다.
  */
 export async function listActiveStudentProfiles(
   db: DrizzleDb = createDb(),

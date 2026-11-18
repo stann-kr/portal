@@ -10,6 +10,7 @@
 import { and, eq, inArray, isNull, lt, or } from "drizzle-orm";
 import type { DbContext, DrizzleDb } from "@/db/client";
 import { calendarConnections, calendarMappings, calendarPushChannels, lessonGroupMembers } from "@/db/schema";
+import { notArchivedStudentCondition } from "@/lib/student-status";
 import { createGoogleChannelApiForConnection, type GoogleChannelApi, type StoredCalendarConnection } from "./client-factory";
 import { getGoogleCalendarOAuthConfig } from "./oauth-config";
 import { base64UrlEncode, sha256Hex } from "./types";
@@ -170,6 +171,8 @@ async function listGoogleMappingsNeedingChannel(ctx: DbContext, now: Date, stude
     or(isNull(calendarPushChannels.mappingId), lt(calendarPushChannels.expiresAt, renewBefore)),
   ];
   const db = readDb(ctx);
+  // 수강 종료한 학생의 캘린더는 동기화하지 않으므로 변경 알림도 새로 걸지 않는다(복원 뒤 다음 갱신 때 다시 건다).
+  conditions.push(notArchivedStudentCondition(db, calendarMappings.studentId));
   // 학생 기준이면 학생 캘린더와 그 학생 그룹의 그룹 캘린더(그룹 캘린더 알림도 멤버 화면 조회가 갱신한다).
   if (studentId) {
     conditions.push(or(

@@ -1,9 +1,9 @@
 /**
  * 관리자 "전체 노트" 목록(개선 2차 시안 3번) 조회. 학생 범위·검색·페이지를 모두 SQL에서 처리한다.
  *
- * - 학생 범위: 고른 학생(서버가 활성 학생 목록과 대조한 id) 하나, 아니면 `role = 'student'` 서브쿼리.
- *   활성 학생 = 학생 role profile(계정 폐기는 hard-delete, accountStatus 컬럼은 아직 없음)이므로
- *   `listActiveStudentProfiles`와 같은 집합이다. id 목록을 bind하지 않아 학생 수와 무관하게 D1 bind 100개 안이다.
+ * - 학생 범위: 고른 학생(서버가 활성 학생 목록과 대조한 id) 하나, 아니면 수강 중인 학생(`role = 'student'`이고 ACTIVE) 서브쿼리.
+ *   수강 종료한 학생의 개인 노트는 빠지고 그룹 노트는 그대로다. `listActiveStudentProfiles`(parseActiveProfile)와
+ *   같은 집합이다. id 목록을 bind하지 않아 학생 수와 무관하게 D1 bind 100개 안이다.
  * - 검색: 평문 컬럼이 없어 `title`·`content_html`(HTML 원문)에 단어마다 `LIKE '%단어%' ESCAPE '\'`를 AND로 건다.
  *   학생별 노트 검색처럼 NFKC·소문자로 정규화한 띄어 쓴 단어를 모두 포함해야 한다. SQLite LIKE는 ASCII만 대소문자를 무시한다.
  * - 페이지: 최근 수정순(updatedAt DESC, id DESC) keyset 커서. 본문은 미리보기용 앞부분과 검색 일치 주변만 substr로 읽는다.
@@ -14,6 +14,7 @@ import { lessonGroupMembers, lessonGroups, privateNotes, profiles } from "@/db/s
 import { getDocumentSearchExcerpt, getDocumentSearchWords, getSearchableDocumentText } from "@/lib/document-search";
 import { getPrivateNotePreview } from "@/lib/notes-database";
 import { UNIFIED_NOTE_PREVIEW_SOURCE_CHARS } from "@/lib/unified-items-store";
+import { activeStudentProfileCondition } from "@/lib/student-status";
 
 /** 한 페이지 노트 수. */
 export const ALL_NOTES_PAGE_SIZE = 50;
@@ -160,7 +161,7 @@ export async function queryAllStudentNotesPage(
         : or(
           and(
             isNull(privateNotes.groupId),
-            inArray(privateNotes.studentId, db.select({ id: profiles.id }).from(profiles).where(eq(profiles.role, "student"))),
+            inArray(privateNotes.studentId, db.select({ id: profiles.id }).from(profiles).where(activeStudentProfileCondition())),
           ),
           isNotNull(privateNotes.groupId),
         ),

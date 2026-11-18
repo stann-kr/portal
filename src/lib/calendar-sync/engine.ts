@@ -29,8 +29,10 @@ import {
   calendarRemoteSeries,
   calendarSyncLinks,
   lessons,
+  profiles,
   type CalendarSyncLocalKind,
 } from "@/db/schema";
+import { ACTIVE_ACCOUNT_STATUS } from "@/lib/student-status";
 import {
   DOCUMENT_CONDITIONAL_WRITE_SENTINEL,
   executeDocumentStatementsAtomically,
@@ -139,7 +141,7 @@ export type SyncEngineOptions = {
 };
 
 export type SyncEngineResult =
-  | { status: "skipped"; localChanged: false; reason: "lease" | "throttled" | "inactive" | "missing" }
+  | { status: "skipped"; localChanged: false; reason: "lease" | "throttled" | "inactive" | "missing" | "archived" }
   | { status: "synced"; localChanged: boolean; partial: boolean }
   | { status: "failed"; localChanged: boolean; error: string; authFailed: boolean };
 
@@ -1191,13 +1193,19 @@ export async function runCalendarMappingSync(options: SyncEngineOptions): Promis
       updatedAt: calendarMappings.updatedAt,
       connectionId: calendarMappings.connectionId,
       connectionStatus: calendarConnections.status,
+      studentStatus: profiles.accountStatus,
     })
     .from(calendarMappings)
     .innerJoin(calendarConnections, eq(calendarConnections.id, calendarMappings.connectionId))
+    .leftJoin(profiles, eq(profiles.id, calendarMappings.studentId))
     .where(eq(calendarMappings.id, options.mappingId))
     .limit(1);
   if (!mapping) return { status: "skipped", localChanged: false, reason: "missing" };
   if (mapping.connectionStatus !== "ACTIVE") return { status: "skipped", localChanged: false, reason: "inactive" };
+  // 수강 종료한 학생의 캘린더는 매핑을 남긴 채 동기화만 멈춘다(복원하면 다시 맞춘다).
+  if (mapping.studentId && mapping.studentStatus !== ACTIVE_ACCOUNT_STATUS) {
+    return { status: "skipped", localChanged: false, reason: "archived" };
+  }
   const target = await loadSyncTarget(db, mapping);
   if (!target) return { status: "skipped", localChanged: false, reason: "missing" };
 

@@ -47,6 +47,7 @@ import {
 import { CalendarAuthError } from "@/lib/calendar-sync/types";
 import { fetchExternalItemsForUser } from "@/lib/external-items";
 import { listLessonGroups, readLessonGroupMemberIds } from "@/lib/lesson-groups";
+import { activeStudentProfileCondition } from "@/lib/student-status";
 import { getUnifiedItemSpaceLabel } from "@/lib/unified-item-normalization";
 import {
   resolveUnifiedItemsQuery,
@@ -239,7 +240,7 @@ export async function getCalendarSyncOverview(): Promise<CalendarSyncOverview> {
     db
       .select({ id: profiles.id, displayName: profiles.displayName, email: profiles.email })
       .from(profiles)
-      .where(eq(profiles.role, "student"))
+      .where(activeStudentProfileCondition())
       .orderBy(asc(profiles.displayName), asc(profiles.email)),
     listLessonGroups(createDbContext()),
   ]);

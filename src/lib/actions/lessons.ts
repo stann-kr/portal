@@ -20,6 +20,7 @@ import {
   executeDocumentStatementsAtomically,
 } from "@/lib/document-lifecycle-atomic";
 import { listLessonGroups, readGroupLessonTargets, readLessonGroupMemberIds } from "@/lib/lesson-groups";
+import { activeStudentSql } from "@/lib/student-status";
 import { sharedLessonStarts } from "@/lib/lesson-group-rules";
 import { and, eq, gte, asc, desc } from "drizzle-orm";
 import {
@@ -208,7 +209,7 @@ export async function createGroupLesson(
         query: `
           INSERT INTO lessons (id, student_id, scheduled_at)
           SELECT ?, member.student_id, ? FROM lesson_group_members AS member
-          JOIN profiles AS profile ON profile.id = member.student_id AND profile.role = 'student'
+          JOIN profiles AS profile ON profile.id = member.student_id AND ${activeStudentSql("profile")}
           WHERE member.student_id = ? AND member.group_id = ?
         `,
         params: [lesson.id, scheduledAt, lesson.studentId, groupId],

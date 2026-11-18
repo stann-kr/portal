@@ -57,6 +57,7 @@ import { validateGuideAccessUpgrade } from "./migration-check/guide-access.mjs";
 import { validateLessonGroupsUpgrade } from "./migration-check/lesson-groups.mjs";
 import { validateGroupNoteRetentionUpgrade } from "./migration-check/group-note-retention.mjs";
 import { validateGroupCalendarUpgrade } from "./migration-check/group-calendar.mjs";
+import { validateStudentArchiveUpgrade } from "./migration-check/student-archive.mjs";
 import { validateListQueryIndexesUpgrade } from "./migration-check/list-query-indexes.mjs";
 import {
   validateAccountPrivacyAtomicSource,
@@ -209,6 +210,8 @@ async function main() {
   console.log("PASS populated 0029 → 0030 tombstone group_id, group note image owner handoff only while the uploader account is ERASING");
   await validateGroupCalendarUpgrade(migrationFiles);
   console.log("PASS populated 0030 → 0031 group calendar mapping rebuild keeps sync links/series/channels, target CHECK, group unique and cascades");
+  await validateStudentArchiveUpgrade(migrationFiles);
+  console.log("PASS populated 0031 → 0032 profiles account_status ACTIVE default, archived_at nullable, archive/restore UPDATE through identity trigger, row preservation without table rebuild");
 }
 
 try {

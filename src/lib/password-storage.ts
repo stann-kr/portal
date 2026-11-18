@@ -9,7 +9,8 @@ import * as bcrypt from "bcryptjs";
  * 없이 한 번의 쓰기로 함께 바뀌게 한다. bcrypt hash는 `$`로 시작하므로 표시와 겹치지 않는다.
  */
 const TEMPORARY_PASSWORD_HASH_PREFIX = "temporary:";
-const INVITE_HASH_PREFIX = "invite:";
+/** 가입 전 계정의 표시. 학생 삭제 조건(직접 쓴 SQL)도 이 접두로 가입 전인지 본다. */
+export const INVITE_HASH_PREFIX = "invite:";
 
 /** 32자(혼동되는 l·o·0·1 제외)라 byte % 32에 편향이 없다. */
 const TEMPORARY_PASSWORD_ALPHABET = "abcdefghijkmnpqrstuvwxyz23456789";

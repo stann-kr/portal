@@ -5,6 +5,7 @@
 import { and, asc, eq, inArray, ne, or, sql } from "drizzle-orm";
 import type { DbContext, DrizzleDb } from "@/db/client";
 import { calendarConnections, calendarMappings, lessonGroupMembers } from "@/db/schema";
+import { notArchivedStudentCondition } from "@/lib/student-status";
 import { createCalendarClientForConnection } from "./client-factory";
 import { runCalendarMappingSync, type SyncEngineMode, type SyncEngineResult } from "./engine";
 
@@ -146,13 +147,17 @@ export async function listGroupPeerMappingIdsForStudent(ctx: DbContext, studentI
   return rows.map((row) => row.id);
 }
 
-/** 활성 연결의 모든 매핑 id. 가장 오래 동기화하지 않은 매핑부터(예약 실행이 시간 상한에 걸려도 돌아가며 처리). */
+/**
+ * 활성 연결의 모든 매핑 id. 가장 오래 동기화하지 않은 매핑부터(예약 실행이 시간 상한에 걸려도 돌아가며 처리).
+ * 수강 종료한 학생의 캘린더는 엔진이 건너뛰므로 처음부터 빼서 매번 맨 앞에 남지 않게 한다.
+ */
 export async function listAllActiveMappingIds(ctx: DbContext): Promise<string[]> {
-  const rows = await readDb(ctx)
+  const db = readDb(ctx);
+  const rows = await db
     .select({ id: calendarMappings.id })
     .from(calendarMappings)
     .innerJoin(calendarConnections, eq(calendarConnections.id, calendarMappings.connectionId))
-    .where(eq(calendarConnections.status, "ACTIVE"))
+    .where(and(eq(calendarConnections.status, "ACTIVE"), notArchivedStudentCondition(db, calendarMappings.studentId)))
     .orderBy(sql`${calendarMappings.lastSyncedAt} IS NOT NULL`, asc(calendarMappings.lastSyncedAt), asc(calendarMappings.id));
   return rows.map((row) => row.id);
 }

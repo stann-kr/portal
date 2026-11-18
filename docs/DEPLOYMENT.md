@@ -32,7 +32,7 @@
 
 | 항목 | 저장소에서 확인할 수 있는 것 | 운영 적용을 확인하는 증거 |
 |---|---|---|
-| D1 migration | SQL·journal·snapshot `0000~0031`, 메모리 DB에서 체인·schema 검증 | 대상 D1의 적용 목록과 실제 schema·FK, 그 목록에서 계산한 pending 범위 |
+| D1 migration | SQL·journal·snapshot `0000~0032`, 메모리 DB에서 체인·schema 검증 | 대상 D1의 적용 목록과 실제 schema·FK, 그 목록에서 계산한 pending 범위 |
 | 계정 삭제 | `0012`와 삭제·정리 구현, application 설정의 `ACCOUNT_DELETION_ENABLED="false"` 기본값 | 활성 Worker의 유효 flag, 기기 adoption, 승인된 삭제·정리 smoke |
 | 예약 정리 | `worker.ts`의 `scheduled` handler, Workers Logs 설정, source에 없는 Cron trigger | 원격 trigger 주기, 대상 version의 실제 scheduled invocation, backlog·실패·alert 증거 |
 | 외부 캘린더 | `0013` 구독 테이블과 `EXTERNAL_CALENDAR_ENCRYPTION_KEY` 요구 조건 | 대상 schema, secret 설정 확인, 승인된 연결·읽기·교체·해제 smoke |
@@ -42,6 +42,7 @@
 | 캘린더 양방향 동기화 | `0017` 연결·매핑·link·반복 일정 table, `GOOGLE_CALENDAR_CLIENT_ID`·`GOOGLE_CALENDAR_CLIENT_SECRET`·`EXTERNAL_CALENDAR_ENCRYPTION_KEY` 요구 조건, `AUTH_URL` 기준 redirect URI | 대상 schema, secret 설정 확인, Google Cloud OAuth client의 redirect URI, 승인된 연결·매핑·양방향 반영·해제 smoke |
 | 캘린더 실시간 반영 | `0018` 알림 채널 table, `/api/calendar-connections/google/notify`, `worker.ts` `scheduled`의 캘린더 동기화. source에 없는 Cron trigger | 원격 Cron 주기, 대상 version의 실제 scheduled invocation, Google 채널 등록·갱신과 알림 수신 로그 |
 | 웹앱 푸시 알림 | `0024` 구독·`0025` 끈 종류 table, `VAPID_PUBLIC_KEY`·`VAPID_PRIVATE_KEY`(선택 `VAPID_SUBJECT`) 요구 조건, 없으면 알림만 꺼짐 | 대상 D1의 `0024` 적용, secret 설정 확인, 승인된 기기에서 알림 켜기·테스트 알림 수신 |
+| 학생 수강 종료 | `0032`의 `profiles.account_status`(기본 ACTIVE)·`archived_at` 칸 추가 | 대상 D1의 `0032` 적용과 `PRAGMA table_info(profiles)`, 모든 계정이 ACTIVE인지(`SELECT account_status, COUNT(*) FROM profiles GROUP BY 1`) |
 | 그룹레슨 | `0029` 그룹·멤버 table과 `private_notes.group_id`, `0030` `document_tombstones.group_id`와 media UPDATE trigger 넷 재생성 | 대상 D1의 `0029`·`0030` 적용과 `lesson_groups`·`lesson_group_members` 존재, 관리자 학생 목록의 그룹 만들기 |
 | 배포 환경 분리 | 현재 tracked 설정의 Worker는 `portal` | development/production Worker·D1·R2·route·secret·branch trigger 각각의 inventory |
 
@@ -163,6 +164,14 @@ iCloud 연동:
 2. 적용 중 다른 동기화가 매핑을 쓰지 않게, 예약 동기화와 알림이 몰리는 시간을 피한다(재생성은 한 batch이고 lease 칸도 옮겨진다).
 3. 적용 뒤 read-only로 `PRAGMA table_info(calendar_mappings)`(group_id), `SELECT COUNT(*) FROM calendar_sync_links`·`calendar_remote_series`·`calendar_push_channels`가 적용 전과 같은지, `PRAGMA foreign_key_check`가 비었는지, `__calendar_%_backup` 표가 없는지 본다.
 4. 되돌리기: 이전 코드로 되돌리기 전에 그룹 캘린더 매핑을 모두 해제한다(이전 코드는 `student_id`가 빈 매핑을 다루지 못한다). 표·칸은 남겨 두면 된다.
+
+### 학생 수강 종료 전환 gate (2026-11-18)
+
+1. 원격 D1에 `0032_student_archive`를 **코드보다 먼저** 적용한다(Time Travel bookmark 먼저, `0031` 적용 뒤). `profiles`에 `account_status`(NOT NULL DEFAULT 'ACTIVE')와 `archived_at`(nullable)을 더하는 ALTER 두 개뿐이라 표를 다시 만들지 않고 FK·trigger·기존 행 값은 그대로다. 이전 코드는 새 칸을 읽지 않으므로 먼저 적용해도 동작이 같다(로그인 경계는 이미 칸이 있으면 ACTIVE만 통과시킨다).
+2. 순서를 바꾸면 안 된다. 새 코드가 칸 없이 나가면 학생 목록·업무함·알림·캘린더 동기화 query가 오류가 된다.
+3. 적용 뒤 read-only로 `SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1`, `PRAGMA table_info(profiles)`(account_status·archived_at), `SELECT account_status, COUNT(*) FROM profiles GROUP BY 1`(모두 ACTIVE)을 본다.
+4. 되돌리기: 이전 코드로 되돌리기 전에 수강 종료한 학생을 모두 복원할지 정한다. 이전 코드도 로그인·session 경계에서는 ARCHIVED를 막지만, 목록·선택지·알림·동기화에는 다시 보인다. 칸은 남겨 두면 된다.
+5. 같은 배포의 학생 삭제(가입 전·기록 없는 학생만)는 migration이 없다. 운영 smoke에서 삭제를 누르지 않는다. 코드를 되돌려도 이미 삭제한 학생은 돌아오지 않는다(남는 것은 ERASED 영수증뿐이고 30일 뒤 id도 가려진다).
 
 ### 가입 링크 메일 gate
 

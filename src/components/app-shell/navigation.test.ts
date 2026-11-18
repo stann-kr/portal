@@ -84,6 +84,12 @@ test("좁은 화면 위쪽 막대는 목록 화면에 메뉴와 주 행동, 상�
   assert.equal(resolveMobileTopBar("admin", at("/dashboard/qna")).action, undefined);
   assert.equal(resolveMobileTopBar("admin", at("/dashboard/admin?section=students")).action?.href, "/dashboard/admin/students/new");
   assert.equal(resolveMobileTopBar("admin", at("/dashboard/admin/students/s1")).back?.label, "학생 목록으로");
+  // 수강 종료한 학생 화면은 학생 메뉴 아래에 있고, 위쪽 막대는 자기 제목과 학생 목록으로 돌아가기를 둔다.
+  assert.equal(resolveActiveNavItem("admin", at("/dashboard/admin/students/archived")), "students");
+  assert.deepEqual(resolveMobileTopBar("admin", at("/dashboard/admin/students/archived")), {
+    title: "수강 종료한 학생",
+    back: { href: "/dashboard/admin?section=students", label: "학생 목록으로" },
+  });
 });
 
 test("가이드는 학생·관리자 메뉴에 같은 주소로 있고 페이지·편집 화면도 가이드 메뉴로 표시한다", () => {

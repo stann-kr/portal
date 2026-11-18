@@ -21,6 +21,7 @@ import {
   MEDIA_SEAL_RECOVERY_GRACE_SECONDS,
   MEDIA_UPLOAD_STAGING_GRACE_SECONDS,
 } from "@/lib/media-lifecycle";
+import { deletableStudentSql } from "@/lib/student-deletion";
 
 export const ACCOUNT_RAW_ID_RETENTION_SECONDS = 30 * 24 * 60 * 60;
 export const ACCOUNT_CLEANUP_TOKEN_LIMIT = 64;
@@ -890,6 +891,49 @@ export async function deleteStudentAccountAtomically(
       (now + ACCOUNT_RAW_ID_RETENTION_SECONDS) * 1_000,
     ),
   };
+}
+
+/**
+ * 관리자의 학생 삭제(가입 전·기록 없는 학생만, 2026-11-18 사용자 결정). 학생 본인 탈퇴와 같은 문장(삭제 영수증 ERASING →
+ * 설정·계정 삭제 → ERASED, 30일 뒤 id 가림)을 쓰고, 맨 앞에서 삭제 조건을 다시 확인한다. 판정 뒤 학생이 가입했거나
+ * 기록·그룹 자리가 생겼으면 한 batch 전체가 되돌아가 아무것도 지우지 않는다. 기기 정리 토큰은 없으므로 일회 digest를 쓴다.
+ */
+export async function deletePristineStudentAtomically(
+  context: DbContext,
+  input: { studentId: string; now: Date },
+): Promise<{ ok: true } | { ok: false; reason: "NOT_DELETABLE" }> {
+  const operationId = createSecureUuid();
+  const initiatingCleanupTokenDigest = bytesToHex(crypto.getRandomValues(new Uint8Array(32)));
+  const statements: DocumentAtomicStatement[] = [
+    {
+      query: `
+        INSERT INTO document_batch_abort_guard (reason)
+        SELECT 'STUDENT_NOT_DELETABLE'
+        WHERE NOT EXISTS (
+          SELECT 1 FROM profiles AS profile
+          WHERE profile.id = ? AND ${deletableStudentSql("profile")}
+        )
+      `,
+      params: [input.studentId],
+    },
+    ...accountDeletionStatements({
+      actorId: input.studentId,
+      operationId,
+      initiatingCleanupTokenDigest,
+      requestHash: requestHash({ actorId: input.studentId, operationId, initiatingCleanupTokenDigest }),
+      deletionJobId: createSecureUuid(),
+      erasureAlias: `erased:${createSecureUuid()}`,
+      now: documentEpochSeconds(input.now)!,
+      initiatingTokenMode: "EPHEMERAL",
+    }),
+  ];
+  try {
+    await executeDocumentStatementsAtomically(context, statements);
+  } catch (error) {
+    if (isExpectedAtomicRace(error)) return { ok: false, reason: "NOT_DELETABLE" };
+    throw error;
+  }
+  return { ok: true };
 }
 
 export async function findAccountDeletionByCleanupTokenDigest(
