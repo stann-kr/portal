@@ -1016,6 +1016,33 @@ test("일정 상세 수정 form은 본인 일정만 바꾸고 검증 실패를 �
   assert.deepEqual((await db.select().from(calendarEvents)).map((row) => row.id), ["event-2"]);
 });
 
+test("일정 삭제는 학생 본인과 관리자만 그 학생의 일정을 지운다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("student-1", "student"));
+  await seedProfile(db, "student-1");
+  await seedProfile(db, "student-2");
+  await seedProfile(db, "admin-1", "admin");
+  const base = { eventType: "NOTE" as const, title: "일정", startTime: new Date("2026-11-20T01:00:00.000Z") };
+  await db.insert(calendarEvents).values([
+    { ...base, id: "event-1", userId: "student-1" },
+    { ...base, id: "event-2", userId: "student-2" },
+    { ...base, id: "event-3", userId: "student-2" },
+  ]);
+  const ids = async () => (await db.select().from(calendarEvents).orderBy(calendarEvents.id)).map((row) => row.id);
+
+  // 학생은 다른 학생을 대상으로 지울 수 없다.
+  await assert.rejects(calendarActions.deleteCalendarEvent("event-2", "student-2"));
+  assert.deepEqual(await ids(), ["event-1", "event-2", "event-3"]);
+
+  // 관리자는 대상 학생의 일정만 지운다(다른 학생 id로 남의 일정을 지울 수 없다).
+  activeSession = createSession("admin-1", "admin");
+  await calendarActions.deleteCalendarEvent("event-1", "student-2");
+  assert.deepEqual(await ids(), ["event-1", "event-2", "event-3"], "일정 주인과 대상 학생이 다르면 지우지 않는다");
+  await calendarActions.deleteCalendarEvent("event-2", "student-2");
+  assert.deepEqual(await ids(), ["event-1", "event-3"]);
+  await calendarActions.deleteCalendarEvent("event-3", "admin-1");
+  assert.deepEqual(await ids(), ["event-1", "event-3"], "관리자 본인 id로는 학생 일정을 지우지 않는다");
+});
+
 test("일정 상세 수정 form은 고친 칸만 저장해 연 뒤에 옮긴 시간·바뀐 칸을 덮지 않는다", { concurrency: false }, async (context) => {
   const db = await setupDatabase(context, createSession("student-1", "student"));
   await seedProfile(db, "student-1");

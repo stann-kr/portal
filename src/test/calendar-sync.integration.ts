@@ -332,7 +332,7 @@ test("매핑이 없는 학생의 쓰기 action은 원격 client를 만들지 않
   assert.equal(factoryCalls, 0);
 });
 
-test("캘린더 지정을 풀 때 포탈에서 고친 뒤 아직 보내지 못한 변경을 먼저 내보내, 다시 지정해도 일정이 한 벌만 남는다", { concurrency: false }, async (context) => {
+test("캘린더 지정을 풀 때 포탈에서 고친 뒤 아직 보내지 못한 변경을 먼저 내보내고, 그 캘린더와 이어진 포탈 일정을 지운다", { concurrency: false }, async (context) => {
   const { db, remote } = await setup(context, createSession("admin-1", "admin"));
   const start = new Date(Date.now() + 86_400_000);
   const added = remote.remoteAdd({ title: "합주", start, end: new Date(start.getTime() + 7_200_000) });
@@ -343,23 +343,129 @@ test("캘린더 지정을 풀 때 포탈에서 고친 뒤 아직 보내지 못�
   // 포탈에서 고쳤지만 그 push가 아직 원격에 닿지 않은 상태(쓰기 action의 push는 응답 뒤에 나가고 실패할 수 있다).
   await db.update(calendarEvents).set({ title: "합주(장소 변경)" }).where(eq(calendarEvents.id, imported.id));
   const removed = await syncActions.removeCalendarMapping(mappingId);
-  assert.ok(removed.success, removed.error);
+  assert.equal(removed.success, "캘린더 연결을 해제하고 포탈 일정 1개를 지웠습니다. 레슨과 원격 캘린더의 일정은 남습니다.");
   assert.equal((await db.select().from(calendarMappings)).length, 0);
-  assert.equal(remote.events.get(added.remoteId)?.title, "합주(장소 변경)", "풀기 전에 밀린 수정을 원격에 보낸다");
+  assert.equal((await db.select().from(calendarEvents)).length, 0, "이 캘린더와 이어진 포탈 일정을 지운다");
+  assert.equal(remote.events.get(added.remoteId)?.title, "합주(장소 변경)", "풀기 전에 밀린 수정을 원격에 보내 수정이 남는다");
 
+  // 다시 지정하면 원격 일정을 한 번만 다시 가져온다.
   const saved = await syncActions.saveCalendarMapping({}, form({ connectionId, studentId: "student-1", remoteCalendarId: "cal-1" }));
   assert.ok(saved.success, saved.error);
-  assert.deepEqual((await db.select().from(calendarEvents)).map((row) => [row.id, row.title]), [[imported.id, "합주(장소 변경)"]], "포탈에 사본이 생기지 않는다");
-  assert.equal(remote.events.size, 1, "원격에도 사본이 생기지 않는다");
+  const reimported = await db.select().from(calendarEvents);
+  assert.deepEqual(reimported.map((row) => row.title), ["합주(장소 변경)"]);
+  assert.equal(remote.events.size, 1, "원격에 사본이 생기지 않는다");
 
   // 원격이 응답하지 않아도 해제는 그대로 된다(내보내기는 best-effort).
   const [remapped] = await db.select().from(calendarMappings);
-  await db.update(calendarEvents).set({ title: "합주(다시 변경)" }).where(eq(calendarEvents.id, imported.id));
   remote.failAll = new CalendarProviderError("provider down");
   const removedWhileDown = await syncActions.removeCalendarMapping(remapped.id);
   assert.ok(removedWhileDown.success, removedWhileDown.error);
   assert.equal((await db.select().from(calendarMappings)).length, 0);
-  assert.equal(remote.events.get(added.remoteId)?.title, "합주(장소 변경)");
+  assert.equal((await db.select().from(calendarEvents)).length, 0);
+  assert.equal(remote.events.get(added.remoteId)?.title, "합주(장소 변경)", "원격 일정은 그대로 남는다");
+});
+
+test("매핑 해제는 레슨·연결된 적 없는 일정·그룹 일정 사본·다른 캘린더에도 이어진 일정을 남긴다", { concurrency: false }, async (context) => {
+  const { db } = await setup(context, createSession("admin-1", "admin"));
+  const google = new FakeCalendar();
+  const icloud = new FakeCalendar();
+  const googleConnectionId = await insertGoogleConnection(db);
+  const connected = await syncActions.connectICloudCalendar({}, form({ appleId: "teacher@icloud.com", appPassword: APP_PASSWORD }));
+  assert.ok(connected.success, connected.error);
+  const [icloudConnection] = await db.select().from(calendarConnections).where(eq(calendarConnections.provider, "ICLOUD"));
+  clientFactory.setCalendarClientFactoryForTests(async () => routeByCalendar(new Map([["cal-1", google], ["cal-i", icloud]])));
+
+  const later = (days: number) => new Date(Date.now() + days * 86_400_000);
+  await db.insert(lessons).values({ id: "lesson-1", studentId: "student-1", scheduledAt: later(2) });
+  await db.insert(lessonGroups).values({ id: "group-1", name: "화요일 2:1" });
+  await db.insert(lessonGroupMembers).values([{ studentId: "student-1", groupId: "group-1" }, { studentId: "student-2", groupId: "group-1" }]);
+  await db.insert(calendarGroupEvents).values({ id: "gev-1", groupId: "group-1", title: "합동 연습", startTime: later(3) });
+  await db.insert(calendarEvents).values([
+    { id: "copy-1", userId: "student-1", title: "합동 연습", startTime: later(3), groupEventId: "gev-1" },
+    { id: "both", userId: "student-1", title: "양쪽 연결", startTime: later(4) },
+    { id: "student-2-event", userId: "student-2", title: "다른 학생", startTime: later(4) },
+    // 동기화 기간(-90일~) 밖이라 어느 캘린더에도 이어지지 않는 일정.
+    { id: "never-linked", userId: "student-1", title: "오래전", startTime: later(-200) },
+  ]);
+  const googleMapping = await mapStudent(db, googleConnectionId, "student-1", "cal-1");
+  // Google만 이어진 일정은 Google 매핑 뒤에 만든다(iCloud 매핑의 첫 동기화가 iCloud에도 보내지 않게).
+  const icloudSaved = await syncActions.saveCalendarMapping({}, form({ connectionId: icloudConnection.id, studentId: "student-1", remoteCalendarId: "cal-i" }));
+  assert.ok(icloudSaved.success, icloudSaved.error);
+  const [icloudMapping] = await db.select().from(calendarMappings).where(eq(calendarMappings.connectionId, icloudConnection.id));
+  await db.insert(calendarEvents).values({ id: "google-only", userId: "student-1", title: "Google만", startTime: later(5) });
+  await syncActions.syncCalendarMappingNow(googleMapping);
+  const linkedTo = async (mapping: string) =>
+    (await db.select().from(calendarSyncLinks).where(eq(calendarSyncLinks.mappingId, mapping))).map((link) => link.localId).sort();
+  assert.ok((await linkedTo(googleMapping)).includes("google-only"));
+  assert.ok(!(await linkedTo(icloudMapping.id)).includes("google-only"));
+  assert.ok((await linkedTo(icloudMapping.id)).includes("both"));
+  const googleRemoteBefore = google.events.size;
+
+  const removed = await syncActions.removeCalendarMapping(googleMapping);
+  assert.equal(removed.success, "캘린더 연결을 해제하고 포탈 일정 1개를 지웠습니다. 레슨과 원격 캘린더의 일정은 남습니다.");
+  const remaining = async () => (await db.select().from(calendarEvents)).map((row) => row.id).sort();
+  assert.deepEqual(await remaining(), ["both", "copy-1", "never-linked", "student-2-event"], "Google에만 이어진 일정만 지운다");
+  assert.equal((await db.select().from(lessons)).length, 1, "레슨은 남는다");
+  assert.equal(google.events.size, googleRemoteBefore, "원격 캘린더 일정은 그대로");
+  const icloudRemoteBefore = icloud.events.size;
+  await syncActions.syncCalendarMappingNow(icloudMapping.id);
+  assert.equal(icloud.events.size, icloudRemoteBefore, "남은 캘린더의 원격 사본을 지우지 않는다");
+  assert.ok((await remaining()).includes("both"), "남은 캘린더 동기화 뒤에도 일정이 그대로");
+
+  // 마지막 캘린더를 해제하면 그때 지운다. 그룹 일정 사본은 그룹 캘린더 몫이라 남긴다.
+  const removedLast = await syncActions.removeCalendarMapping(icloudMapping.id);
+  assert.ok(removedLast.success, removedLast.error);
+  assert.deepEqual(await remaining(), ["copy-1", "never-linked", "student-2-event"]);
+  assert.deepEqual((await db.select().from(calendarGroupEvents)).map((row) => row.id), ["gev-1"]);
+});
+
+test("그룹 캘린더 해제는 다른 그룹 캘린더에도 이어진 그룹 일정은 남기고, 마지막 그룹 캘린더를 풀 때 그룹 일정과 멤버 사본을 지운다", { concurrency: false }, async (context) => {
+  const { db } = await setup(context, createSession("admin-1", "admin"));
+  const google = new FakeCalendar();
+  const icloud = new FakeCalendar();
+  const googleConnectionId = await insertGoogleConnection(db);
+  const connected = await syncActions.connectICloudCalendar({}, form({ appleId: "teacher@icloud.com", appPassword: APP_PASSWORD }));
+  assert.ok(connected.success, connected.error);
+  const [icloudConnection] = await db.select().from(calendarConnections).where(eq(calendarConnections.provider, "ICLOUD"));
+  clientFactory.setCalendarClientFactoryForTests(async () => routeByCalendar(new Map([["cal-g", google], ["cal-gi", icloud]])));
+  await db.insert(lessonGroups).values({ id: "group-1", name: "화요일 2:1" });
+  await db.insert(lessonGroupMembers).values([{ studentId: "student-1", groupId: "group-1" }, { studentId: "student-2", groupId: "group-1" }]);
+  await db.insert(lessons).values([
+    { id: "lesson-1", studentId: "student-1", scheduledAt: new Date(Date.now() + 5 * 86_400_000) },
+  ]);
+
+  // Google 그룹 캘린더에서 만든 일정은 멤버 사본이 되고 iCloud 그룹 캘린더에도 올라간다.
+  const start = new Date(Date.now() + 2 * 86_400_000);
+  google.remoteAdd({ title: "공연 리허설", start, end: new Date(start.getTime() + 3_600_000) });
+  const googleSaved = await syncActions.saveCalendarMapping({}, form({ connectionId: googleConnectionId, target: "group:group-1", remoteCalendarId: "cal-g" }));
+  assert.ok(googleSaved.success, googleSaved.error);
+  const icloudSaved = await syncActions.saveCalendarMapping({}, form({ connectionId: icloudConnection.id, target: "group:group-1", remoteCalendarId: "cal-gi" }));
+  assert.ok(icloudSaved.success, icloudSaved.error);
+  assert.equal((await db.select().from(calendarGroupEvents)).length, 1);
+  assert.equal((await db.select().from(calendarEvents)).length, 2, "멤버마다 사본");
+  assert.equal(icloud.events.size, 1, "iCloud 그룹 캘린더에도 올라간다");
+  const [googleMapping] = await db.select().from(calendarMappings).where(eq(calendarMappings.connectionId, googleConnectionId));
+  const [icloudMapping] = await db.select().from(calendarMappings).where(eq(calendarMappings.connectionId, icloudConnection.id));
+
+  const removed = await syncActions.removeCalendarMapping(googleMapping.id);
+  assert.equal(removed.success, "캘린더 연결을 해제했습니다. 레슨과 원격 캘린더의 일정은 남습니다.");
+  assert.equal((await db.select().from(calendarGroupEvents)).length, 1, "iCloud 그룹 캘린더에도 이어진 그룹 일정은 남는다");
+  assert.equal((await db.select().from(calendarEvents)).length, 2);
+  assert.equal(google.events.size, 1, "원격 일정은 그대로");
+
+  const removedLast = await syncActions.removeCalendarMapping(icloudMapping.id);
+  assert.equal(removedLast.success, "캘린더 연결을 해제하고 그룹 일정 1개를 지웠습니다. 레슨과 원격 캘린더의 일정은 남습니다.");
+  assert.equal((await db.select().from(calendarGroupEvents)).length, 0);
+  assert.equal((await db.select().from(calendarEvents)).length, 0, "멤버 사본도 함께 지운다");
+  assert.equal((await db.select().from(lessons)).length, 1, "레슨은 남는다");
+  assert.equal(icloud.events.size, 1, "원격 일정은 그대로");
+
+  // 다시 지정하면 원격에만 남은 일정을 그룹 일정으로 다시 가져온다(포탈 원본이 없는 portalRef 일정 포함).
+  const again = await syncActions.saveCalendarMapping({}, form({ connectionId: icloudConnection.id, target: "group:group-1", remoteCalendarId: "cal-gi" }));
+  assert.ok(again.success, again.error);
+  assert.deepEqual((await db.select().from(calendarGroupEvents)).map((row) => row.title), ["공연 리허설"]);
+  assert.equal((await db.select().from(calendarEvents)).length, 2);
+  assert.equal(icloud.events.size, 1, "원격에 사본이 생기지 않는다");
 });
 
 // ─── Google 변경 알림·예약 동기화 ─────────────────────────

@@ -10,7 +10,7 @@
  *   lease를 잃어 되돌려지면 다시 시도하지 않고 멈춘다. 소유 중 웹 수정 경합이면 현재 원격·로컬로 다시 판단한다.
  * - 루프 방지는 calendar_sync_links + portalRef. 로컬 → 원격은 link(remote_id NULL)를 먼저 claim한 뒤 만든다.
  * - 로컬 삭제는 link local_fingerprint를 DELETED로 남기고, 원격 remove 성공 뒤 link를 지운다.
- * - 원격 새 일정(portalRef 없음)은 학생 calendar_events(NOTE)로 가져온다. 반복 일정은 calendar_remote_series 사본만 둔다.
+ * - 원격 새 일정(portalRef 없음, 또는 portalRef의 포탈 일정 원본이 아예 없음)은 학생 calendar_events(NOTE)로 가져온다. 반복 일정은 calendar_remote_series 사본만 둔다.
  * - 레슨은 원격 제목 "레슨", 60분. 원격 변경은 scheduledAt만 반영한다.
  * - window = 지금 -90일 ~ +365일. 조회 동기화는 60초 throttle, 모든 동기화는 60초 lease.
  * - 전체 모드는 push 뒤 lease를 풀기 전 마지막 cursor로 꼬리 pull을 한 번 더 해 실행 중 원격 변경(알림이 lease에 막힌 변경)을 반영한다.
@@ -329,6 +329,14 @@ async function loadGroupLocalRow(db: DrizzleDb, target: Extract<SyncTarget, { ki
   return row
     ? { kind: "EVENT", id: row.id, title: row.title, description: row.description, start: row.startTime, end: row.endTime }
     : null;
+}
+
+/** 포탈 일정(학생 일정 또는 그룹 일정 원본) 행이 누구 것이든 남아 있는지. */
+async function portalEventExists(db: DrizzleDb, id: string): Promise<boolean> {
+  const [event] = await db.select({ id: calendarEvents.id }).from(calendarEvents).where(eq(calendarEvents.id, id)).limit(1);
+  if (event) return true;
+  const [groupEvent] = await db.select({ id: calendarGroupEvents.id }).from(calendarGroupEvents).where(eq(calendarGroupEvents.id, id)).limit(1);
+  return Boolean(groupEvent);
 }
 
 async function loadLocalRow(state: RunState, kind: CalendarSyncLocalKind, id: string): Promise<LocalCalendarRow | null> {
@@ -813,23 +821,27 @@ async function applyPull(state: RunState, result: PullResult, full: boolean, win
         continue; // 다른 원격 id에 이미 이어진 사본은 가져오지 않는다.
       }
       const local = await loadLocalRow(state, ref.kind, ref.id);
-      if (!local) continue; // 다른 학생·이미 지운 포탈 항목의 원격 사본은 가져오지 않는다.
-      await executeFenced(state, [
-        toStatement(state.db.insert(calendarSyncLinks).values({
-          id: crypto.randomUUID(),
-          mappingId: state.mappingId,
-          localKind: ref.kind,
-          localId: ref.id,
-          remoteId: remote.remoteId,
-          etag: remote.etag,
-          localFingerprint: RELINKED_FINGERPRINT,
-          createdAt: state.now(),
-          updatedAt: state.now(),
-        }).onConflictDoNothing()),
-      ]);
-      await loadLinks(state);
-      ({ byRemote, byLocal } = indexLinks(state.links));
-      continue;
+      if (local) {
+        await executeFenced(state, [
+          toStatement(state.db.insert(calendarSyncLinks).values({
+            id: crypto.randomUUID(),
+            mappingId: state.mappingId,
+            localKind: ref.kind,
+            localId: ref.id,
+            remoteId: remote.remoteId,
+            etag: remote.etag,
+            localFingerprint: RELINKED_FINGERPRINT,
+            createdAt: state.now(),
+            updatedAt: state.now(),
+          }).onConflictDoNothing()),
+        ]);
+        await loadLinks(state);
+        ({ byRemote, byLocal } = indexLinks(state.links));
+        continue;
+      }
+      // 다른 학생·그룹의 항목이거나 레슨의 원격 사본은 가져오지 않는다. 포탈 일정 원본이 아예 없으면(매핑 해제 때
+      // 함께 지웠거나 연결이 없는 동안 지웠다) 원격에만 남은 일정이므로 아래에서 새 원격 일정처럼 가져온다(2026-11-17 사용자 결정).
+      if (ref.kind === "LESSON" || await portalEventExists(state.db, ref.id)) continue;
     }
     if (remote.start.getTime() < window.from.getTime() || remote.start.getTime() > window.to.getTime()) continue;
     if (await adoptUnlinkedImport(state, remote)) {

@@ -274,18 +274,21 @@ export async function updateCalendarEventDetails(
 // ─── 삭제 ────────────────────────────────────────
 
 /**
- * 캘린더 이벤트 삭제 (본인 이벤트만).
+ * 캘린더 이벤트 삭제. 학생은 본인 일정을, 관리자는 대상 학생의 일정을 지운다(2026-11-17 사용자 결정, 내용 수정은
+ * 학생 본인만). 원격 사본을 지울 수 있게 link를 DELETED로 남기는 것과 일정 삭제를 함께 commit한다.
  */
-export async function deleteCalendarEvent(eventId: string) {
+export async function deleteCalendarEvent(eventId: string, studentId?: string) {
   const session = await requireAuth();
-  const userId = session.user.id!;
-  // 원격 사본을 지울 수 있게 link를 DELETED로 남기는 것과 일정 삭제를 함께 commit한다.
+  const ownerId = typeof studentId === "string" && studentId ? studentId : session.user.id!;
+  // 다른 사용자의 일정이면 관리자이고 대상이 활성 학생이어야 한다. 본인 일정은 user_id 조건만으로 충분하다.
+  if (ownerId !== session.user.id) await requireStudentOwnerOrAdmin(session, ownerId);
   await executeDocumentStatementsAtomically(createDbContext(), [
-    markLinksDeletedStatement("EVENT", eventId, userId),
-    { query: "DELETE FROM calendar_events WHERE id = ? AND user_id = ?", params: [eventId, userId] },
+    markLinksDeletedStatement("EVENT", eventId, ownerId),
+    { query: "DELETE FROM calendar_events WHERE id = ? AND user_id = ?", params: [eventId, ownerId] },
   ]);
 
-  await schedulePushStudentCalendarChanges(userId);
+  await schedulePushStudentCalendarChanges(ownerId);
   revalidatePath("/dashboard/calendar");
   revalidatePath("/dashboard/student");
+  if (ownerId !== session.user.id) revalidatePath("/dashboard/admin");
 }
