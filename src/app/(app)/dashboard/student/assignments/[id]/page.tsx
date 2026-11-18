@@ -113,6 +113,7 @@ export default async function AssignmentDetailPage({
       actorId={session.user.id}
       mediaUrl={assignment.mediaUrl}
       textHtml={assignment.textHtml}
+      savedAt={assignment.updatedAt ?? assignment.submittedAt}
       analysis={task?.submissionFormat === "ANALYSIS" ? parseStoredMixAnalysis(assignment.analysisJson) : null}
       task={task ? {
         id: task.id,

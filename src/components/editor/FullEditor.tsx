@@ -11,6 +11,8 @@ import { useEditor, useEditorState, EditorContent } from "@tiptap/react";
 import { BubbleMenu } from "@tiptap/react/menus";
 import { type MarkdownStorage } from "tiptap-markdown";
 import type { Editor } from "@tiptap/core";
+import type { Slice } from "@tiptap/pm/model";
+import { NodeSelection, Selection, TextSelection } from "@tiptap/pm/state";
 import {
   createFullEditorExtensions,
   type FullEditorCollaboration,
@@ -28,6 +30,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { BlockCommandMenu } from "./BlockCommandMenu";
+import { extractPastedDataImages, pastedDataImageFile } from "./pasted-data-images";
 import type { EditorBlockCommandContext } from "./editor-block-commands";
 import {
   EditorInsertPanel,
@@ -354,6 +357,25 @@ export function FullEditor({
           type: "image",
           attrs: { src: upload.deliveryUrl, alt: alt || null },
         })
+        .command(({ tr }) => {
+          // 붙여넣은 글에서 올린 이미지는 사용자가 고른 것이 아니라 글을 쓰는 도중에 들어온다.
+          // 선택된 채로 두면 이어서 친 글자가 이미지를 지우므로 커서를 이미지 뒤로 옮긴다.
+          if (upload.source !== "pasted" || !(tr.selection instanceof NodeSelection)) return true;
+          const after = tr.selection.to;
+          const next = Selection.findFrom(tr.doc.resolve(after), 1, true);
+          if (next) {
+            tr.setSelection(next);
+            return true;
+          }
+          // 이미지가 문서의 마지막이면 뒤에 글을 이어 쓸 빈 문단을 만든다.
+          const $after = tr.doc.resolve(after);
+          const paragraph = tr.doc.type.schema.nodes.paragraph;
+          if (paragraph && $after.parent.canReplaceWith($after.index(), $after.index(), paragraph)) {
+            tr.insert(after, paragraph.create());
+            tr.setSelection(TextSelection.create(tr.doc, after + 1));
+          }
+          return true;
+        })
         .run();
     },
     [markContentDirty],
@@ -386,7 +408,8 @@ export function FullEditor({
   const imageUpload = useEditorImageUpload<number>(handleUploadedImage, imageUploader);
   const uploadImagesForCurrentContent = imageUpload.uploadImages;
   const uploadImages = useCallback(
-    (files: readonly File[]) => uploadImagesForCurrentContent(files, contentGenerationRef.current),
+    (files: readonly File[], source?: "picked" | "pasted") =>
+      uploadImagesForCurrentContent(files, contentGenerationRef.current, source),
     [uploadImagesForCurrentContent],
   );
   const imageUploadBusy = imageUpload.pendingCount > 0 || deferredImageCount > 0;
@@ -427,6 +450,16 @@ export function FullEditor({
         event.preventDefault();
         uploadImages(files);
         return true;
+      },
+      // 붙여넣은 글 속에 내용 통째로 든 이미지(data URL)는 본문에 넣지 않고 골라내 파일로 올린다.
+      // 올라간 이미지는 붙여넣은 글 뒤에 들어가고, 올리지 못한 것은 아래 알림 줄이 알린다.
+      transformPasted: (slice: Slice, view: { dragging: unknown }) => {
+        // 편집기 안에서 끌어 옮기는 중이면 그대로 둔다. 원래 자리에서 지워진 뒤 업로드가 실패하면 이미지를 잃는다.
+        if (view.dragging) return slice;
+        const extracted = extractPastedDataImages(slice);
+        if (extracted.sources.length === 0) return slice;
+        uploadImages(extracted.sources.map(pastedDataImageFile), "pasted");
+        return extracted.slice;
       },
       handleDrop: (
         view: { posAtCoords: (coords: { left: number; top: number }) => { pos: number } | null },

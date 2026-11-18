@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
-import { AlertTriangle, Check, Loader2, RotateCcw, Trash2 } from "lucide-react";
+import { AlertTriangle, Check, Info, Loader2, RotateCcw, Trash2 } from "lucide-react";
 import { buttonClassName } from "@/components/ui/button";
 import type { FormDraftRecoverySummary, FormDraftStatus } from "@/lib/form-draft";
 import { formatKst } from "@/lib/kst-format";
@@ -22,16 +22,22 @@ function formatRecoveryDateTime(value: Date): string | null {
 
 const QUIET_VISIBLE_LOCAL_STATUSES: ReadonlySet<FormDraftStatus> = new Set(["error", "incompatible", "conflict"]);
 
+/** 다른 기기에서 고친 글을 열며 이 기기의 이전 초안을 지웠을 때의 안내(캔버스 "코드 리뷰 2차 후속" ⑤). */
+export const STALE_DRAFT_DROPPED_MESSAGE =
+  "다른 기기에서 고친 내용이 있습니다. 이 기기에 남아 있던 이전 작성 내용은 지웠습니다.";
+
 function DraftStateLine({
   status,
   canSubmit,
   savedAt,
   restored,
+  staleDropped,
 }: {
   status: FormDraftStatus;
   canSubmit: boolean;
   savedAt: Date | null;
   restored: boolean;
+  staleDropped: boolean;
 }) {
   const time = formatSavedTime(savedAt);
 
@@ -93,6 +99,15 @@ function DraftStateLine({
         )}
         {restored ? "저장되지 않은 작성 내용을 복원했습니다" : "이 기기에 임시 저장됨"}
         {time ? <span className="font-mono">· {time}</span> : null}
+      </p>
+    );
+  }
+
+  if (staleDropped) {
+    return (
+      <p role="status" aria-live="polite" className="inline-flex items-start gap-1.5 text-xs text-secondary-foreground">
+        <Info className="mt-px size-3.5 shrink-0" strokeWidth={1.8} aria-hidden="true" />
+        <span>{STALE_DRAFT_DROPPED_MESSAGE}</span>
       </p>
     );
   }
@@ -271,6 +286,7 @@ export function DraftStatus({
   onDiscardRecovery,
   disabled = false,
   quiet = false,
+  staleDropped = false,
 }: {
   status: FormDraftStatus;
   /** 미래 버전 canonical 보호를 포함해 현재 서버 제출이 허용되는지 여부 */
@@ -286,6 +302,11 @@ export function DraftStatus({
    * 사용자가 판단할 일이 있을 때만 보여 준다.
    */
   quiet?: boolean;
+  /**
+   * 저장된 글보다 오래된 이 기기 초안을 지웠다는 안내를 평소 문구 자리에 보인다.
+   * 저장 중·저장됨·오류·충돌 문구가 있으면 그쪽이 먼저다.
+   */
+  staleDropped?: boolean;
 }) {
   const [showAllRecoveries, setShowAllRecoveries] = useState(false);
   const recoveryListId = useId();
@@ -303,12 +324,13 @@ export function DraftStatus({
       tabIndex={-1}
       className="flex flex-col gap-2"
     >
-      {!quiet || restored || QUIET_VISIBLE_LOCAL_STATUSES.has(status) ? (
+      {!quiet || restored || staleDropped || QUIET_VISIBLE_LOCAL_STATUSES.has(status) ? (
         <DraftStateLine
           status={status}
           canSubmit={canSubmit}
           savedAt={savedAt}
           restored={restored}
+          staleDropped={staleDropped}
         />
       ) : null}
       {recoveries.length > 0 ? (

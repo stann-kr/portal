@@ -146,7 +146,8 @@ pill 형태는 오늘 날짜 표시와 개수처럼 모양 자체가 의미를 �
 | `FullEditor` | rich text·Markdown 작성, block command, inline 삽입, keyboard save 경계. `variant`(boxed·page·bare)와 `toolbar`(full·compact·none): 노트 문서는 고정 도구 줄 없이 선택 서식 메뉴와 `/` 메뉴, 좁은 화면 편집 중 아래 서식 줄. bare는 마크다운 전환·이미지 상태·⌘S 안내를 상위 화면의 도구 자리로 보낸다(Q&A·댓글 입력 막대) |
 | `BlockCommandMenu` | `/` 검색과 keyboard로 실행하는 block 삽입 목록 |
 | `EditorInsertPanel` | 링크·이미지·YouTube URL을 검증하고 selection에 삽입하는 panel |
-| `DraftStatus` | 로컬·계정 초안 저장 상태, 복구본과 다중 기기 충돌의 명시적 선택 |
+| `DraftStatus` | 로컬·계정 초안 저장 상태, 복구본과 다중 기기 충돌의 명시적 선택. `staleDropped`면 평소 문구 자리에 정보 아이콘과 "다른 기기에서 고친 내용이 있습니다. 이 기기에 남아 있던 이전 작성 내용은 지웠습니다."(`text-xs`, 보조 글자색)를 보인다 |
+| `LazyLoadFailed` | 따로 내려받는 화면 조각의 내려받기 실패 안내. 한 줄(위험 색 `AlertTriangle`+문구, outline "다시 시도") 또는 `minHeight`를 준 상자(불러오는 중 자리와 같은 높이, 설명 한 줄 추가). `role="alert"` |
 | `LocalDraftManager` | 현재 계정의 기기 초안 목록, 안전한 미리보기와 문서별·전체 2단계 폐기 |
 | `AccountMenu` | 사이드바·메뉴 서랍 계정 줄의 … 메뉴. 메뉴 focus scope가 끝난 뒤 초안·비밀번호·계정 삭제 대화상자를 열고, 로그아웃은 `useLogoutSubmit`을 쓴다 |
 | `useLogoutSubmit`·`LogoutTextButton` | 로그아웃 form의 제출. 첫 제출을 멈추고 이 계정의 서버 초안 폐기 요청만 최대 3초 보낸 뒤(실패·오프라인이어도 계속) 로컬 초안을 지우고 세션을 끝낸다. 글자형 버튼은 그동안 비활성 |

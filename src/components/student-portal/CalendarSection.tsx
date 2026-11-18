@@ -26,7 +26,7 @@ import { isCurriculumVisible } from "@/lib/curriculum-visibility";
 import { AssignmentView } from "./AssignmentView";
 import { CreateEntryDropdown } from "./CreateEntryDropdown";
 import { SlidePanel, SlidePanelDock } from "./SlidePanel";
-import dynamic from "next/dynamic";
+import { LazyLoadFailed, retryableLazy } from "@/components/ui/retryable-lazy";
 import { CollabEditorPending } from "@/components/editor/CollabEditorPending";
 import { useIdlePreload } from "@/lib/hooks/useIdlePreload";
 import { CalendarTypeFilter } from "@/components/calendar/CalendarTypeFilter";
@@ -64,9 +64,20 @@ import { cn } from "@/lib/utils";
  * 서버 첫 렌더(Worker 첫 요청 평가)와 초기 JS에서 빼고, 화면이 뜬 뒤 한가할 때 미리 받아 둔다.
  */
 const preloadQnaSlideForm = () => import("@/components/qna/QnaSlideForm");
-const QnaSlideForm = dynamic(
-  () => import("@/components/qna/QnaSlideForm").then((m) => ({ default: m.QnaSlideForm })),
-  { loading: () => <CollabEditorPending minHeight="12.5rem" /> },
+const QnaSlideForm = retryableLazy(
+  () => import("@/components/qna/QnaSlideForm").then((m) => m.QnaSlideForm),
+  {
+    loading: <CollabEditorPending minHeight="12.5rem" />,
+    // 받지 못하면 화면 전체 오류로 넘기지 않고 같은 높이의 자리에서 알린다(캔버스 "코드 리뷰 2차 후속" ①).
+    failed: (retry) => (
+      <LazyLoadFailed
+        message="작성 칸을 불러오지 못했습니다."
+        description="연결을 확인한 뒤 다시 시도해 주세요."
+        minHeight="12.5rem"
+        onRetry={retry}
+      />
+    ),
+  },
 );
 
 // ── 타입 ──────────────────────────────────────────

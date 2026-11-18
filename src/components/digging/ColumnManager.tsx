@@ -5,7 +5,7 @@
  */
 "use client";
 
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { Trash2, Plus } from "lucide-react";
 import {
   Dialog,
@@ -28,6 +28,9 @@ const COLUMN_TYPE_LABELS: Record<DiggingColumnType, string> = {
   link: "링크",
   camelot_key: "카멜롯 키",
 };
+
+/** dialog가 아래 시트가 아니라 가운데 창으로 뜨는 폭. */
+const WIDE_QUERY = "(min-width: 768px)";
 
 type Column = {
   id: string;
@@ -54,6 +57,8 @@ export function ColumnManager({
   const [newType, setNewType] = useState<DiggingColumnType>("text");
   const [newOptions, setNewOptions] = useState(""); // 쉼표 구분
   const [error, setError] = useState("");
+  const titleRef = useRef<HTMLHeadingElement>(null);
+  const nameInputRef = useRef<HTMLInputElement>(null);
 
   const handleAdd = () => {
     if (!newName.trim()) return;
@@ -92,6 +97,13 @@ export function ColumnManager({
       <DialogContent
         dismissible={!isPending}
         aria-describedby={undefined}
+        onOpenAutoFocus={(event) => {
+          // 기본 첫 포커스는 목록의 삭제 버튼에 놓인다. 넓은 화면은 이름 칸에서 시작하고, 좁은 화면은
+          // 키보드가 바로 올라와 목록을 가리지 않게 창 제목에 둔다(캔버스 "코드 리뷰 2차 후속" ②).
+          event.preventDefault();
+          const wide = window.matchMedia?.(WIDE_QUERY).matches ?? true;
+          (wide ? nameInputRef.current : titleRef.current)?.focus();
+        }}
         onEscapeKeyDown={(event) => {
           // 열린 삭제 확인이 있으면 Esc는 dialog 대신 확인만 닫는다.
           if (!columnDeleteConfirm.isOpen) return;
@@ -100,7 +112,7 @@ export function ColumnManager({
         }}
       >
         <DialogHeader>
-          <DialogTitle>컬럼 관리</DialogTitle>
+          <DialogTitle ref={titleRef} tabIndex={-1} className="outline-none">컬럼 관리</DialogTitle>
         </DialogHeader>
 
         {/* 현재 컬럼 목록 */}
@@ -151,6 +163,7 @@ export function ColumnManager({
           <div className="flex gap-2">
             <label htmlFor="digging-new-column-name" className="sr-only">새 컬럼 이름</label>
             <Input
+              ref={nameInputRef}
               id="digging-new-column-name"
               placeholder="컬럼 이름"
               value={newName}

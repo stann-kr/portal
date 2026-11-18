@@ -45,6 +45,7 @@ import { CopyLinkButton } from "@/components/ui/CopyLinkButton";
 import { AssignmentBrief } from "@/components/student-portal/AssignmentBrief";
 import { createDocumentDraftKey } from "@/lib/form-draft";
 import { useFormDraft } from "@/lib/hooks/useFormDraft";
+import { useStaleDraftDrop } from "@/lib/hooks/useStaleDraftDrop";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
 import { useHasPassed } from "@/lib/hooks/useHasPassed";
 import { mediaSourceLabel } from "@/components/player/media-source";
@@ -146,6 +147,12 @@ function TaskSubmitForm({
     },
     { onReset: () => { setMediaUrl(initial.mediaUrl); setText(initial.text); setShowResult(false); } },
   );
+  // 다른 기기에서 제출·수정한 뒤에 남은 이 기기의 이전 초안은 열 때 지우고 저장된 제출을 보인다.
+  const { staleDropped, dismissStaleNotice } = useStaleDraftDrop(
+    draft,
+    submission ? submission.updatedAt ?? submission.submittedAt : null,
+    () => { setMediaUrl(initial.mediaUrl); setText(initial.text); setShowResult(false); },
+  );
   const [state, action, isPending] = useActionState<AssignmentTaskActionState, FormData>(async (previous, data) => {
     let result: AssignmentTaskActionState;
     try {
@@ -165,6 +172,7 @@ function TaskSubmitForm({
   useBusyNavigationGuard(isPending);
 
   const saveDraft = (next: TaskSubmissionDraft) => {
+    dismissStaleNotice();
     setShowResult(false);
     if (next.mediaUrl !== initial.mediaUrl || next.text !== initial.text) draft.save(next);
     else draft.clear();
@@ -241,7 +249,7 @@ function TaskSubmitForm({
         </Button>
       </div>
       {showResult && state.error ? <p role="alert" className="text-ui text-destructive">{state.error}</p> : null}
-      <DraftStatus {...draft} onRestoreRecovery={draft.restoreRecovery} onDiscardRecovery={draft.discardRecovery} disabled={isPending} />
+      <DraftStatus {...draft} staleDropped={staleDropped} onRestoreRecovery={draft.restoreRecovery} onDiscardRecovery={draft.discardRecovery} disabled={isPending} />
     </form>
   );
 }

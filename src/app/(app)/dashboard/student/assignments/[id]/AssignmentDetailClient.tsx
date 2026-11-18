@@ -37,6 +37,8 @@ interface AssignmentDetailClientProps {
   /** 글만 제출하면 null. 링크가 있을 때만 플레이어를 보인다. */
   mediaUrl: string | null;
   textHtml: string | null;
+  /** 제출을 마지막으로 저장한 시각. 자유 제출 수정 form이 이보다 오래된 이 기기 초안을 지운다. */
+  savedAt?: Date | null;
   /** 믹스셋 분석 과제의 분석. 다른 형식이면 null. */
   analysis: MixAnalysis | null;
   /** 관리자가 낸 과제에 대한 제출이면 과제 정보 */
@@ -143,6 +145,7 @@ export function AssignmentDetailClient({
   actorId,
   mediaUrl,
   textHtml,
+  savedAt = null,
   analysis,
   task,
   feedbackList,
@@ -296,7 +299,7 @@ export function AssignmentDetailClient({
     editingFree ? (
       <FreeSubmissionForm
         actorId={actorId}
-        submission={{ id: assignmentId, mediaUrl, textHtml }}
+        submission={{ id: assignmentId, mediaUrl, textHtml, savedAt }}
         idPrefix={`free-submission-${assignmentId}`}
         inputRef={editInputRef}
         className="rounded-lg border border-border p-4"
