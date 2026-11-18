@@ -44,6 +44,8 @@ import {
 import { readLessonGroupMemberIds, readStudentLessonGroupId } from "@/lib/lesson-groups";
 import { schedulePushStudentsCalendarChanges } from "@/lib/calendar-sync/sync-runner";
 import { fetchExternalItemsForUser } from "@/lib/external-items";
+import { deletePristineStudentAtomically } from "@/lib/account-privacy-atomic";
+import { readStudentDeletionState, type StudentDeletionState } from "@/lib/student-deletion";
 
 export type { StudentRosterStat, StudentWorkCounts } from "@/lib/student-roster";
 
@@ -365,4 +367,36 @@ export async function getArchivedStudentCount(): Promise<number> {
     .from(profiles)
     .where(and(eq(profiles.role, "student"), eq(profiles.accountStatus, ARCHIVED_ACCOUNT_STATUS)));
   return Number(rows[0]?.value ?? 0);
+}
+
+// ───────────────────────────────────────────────
+// 학생 삭제: 가입 전·기록 없는 학생만 (2026-11-18 사용자 결정)
+// ───────────────────────────────────────────────
+
+export type { StudentDeletionState } from "@/lib/student-deletion";
+
+/** 학생 상세 계정 구역의 삭제 상태(버튼·이유 안내). 판정 기준은 `student-deletion.ts` 한 군데에 있다. */
+export async function getStudentDeletionState(studentId: string): Promise<StudentDeletionState> {
+  const student = await requireStudentTarget(studentId);
+  // 방금 수강 종료했거나 사라졌으면 버튼을 보이지 않는다.
+  return (await readStudentDeletionState(createDbContext(), student.id)) ?? { kind: "signed-up" };
+}
+
+/**
+ * 가입 전이면서 기록·그룹 자리가 없는 학생을 지운다. 계정·가입 링크와 관리자가 만든 설정(캘린더 구독 URL·가이드 공개)이
+ * 함께 지워지고 되돌릴 수 없다. 조건은 삭제 batch 안에서 다시 확인하므로, 그사이 가입했거나 기록이 생기면 아무것도
+ * 지우지 않고 실패를 돌려준다. 성공하면 학생 목록으로 이동한다.
+ */
+export async function deleteStudent(studentId: string): Promise<{ ok: false; error: string }> {
+  await requireAdmin();
+  const student = typeof studentId === "string" && studentId ? await findStudentTarget(studentId) : null;
+  if (!student) {
+    return { ok: false, error: "이미 삭제했거나 찾을 수 없는 학생입니다. 학생 목록을 새로 고쳐 주세요." };
+  }
+  const result = await deletePristineStudentAtomically(createDbContext(), { studentId: student.id, now: new Date() });
+  if (!result.ok) {
+    return { ok: false, error: "가입했거나 기록이 생겨 삭제하지 않았습니다. 수강 종료를 쓰세요." };
+  }
+  revalidateStudentLists();
+  redirect(ADMIN_STUDENTS_PATH);
 }

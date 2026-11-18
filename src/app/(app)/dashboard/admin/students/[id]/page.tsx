@@ -10,7 +10,14 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { FileText, Lock, Play } from "lucide-react";
 import { getActiveAuthSession } from "@/lib/auth-guard";
-import { getStudentAccountState, getStudentById, getStudentOptions, getStudentWorkCounts } from "@/lib/actions/students";
+import {
+  getStudentAccountState,
+  getStudentById,
+  getStudentDeletionState,
+  getStudentOptions,
+  getStudentWorkCounts,
+  type StudentDeletionState,
+} from "@/lib/actions/students";
 import { getCurriculumByStudent } from "@/lib/actions/curriculum";
 import { isCurriculumVisible } from "@/lib/curriculum-visibility";
 import { getConnectedLessonsForStudent, getLessonsByStudent } from "@/lib/actions/lessons";
@@ -238,6 +245,10 @@ export default async function StudentDetailPage({
       ]));
   // 만료·지난 레슨 판단은 서버 시각 하나로 정해 화면 hydration과 어긋나지 않게 한다.
   const referenceTime = new Date(getRequestNow());
+  // 삭제 판정은 가입 전 학생에게만 필요하다(가입한 학생은 수강 종료만).
+  const deletion: StudentDeletionState = activeTab === "overview" && accountState.kind === "invite"
+    ? await getStudentDeletionState(studentId)
+    : { kind: "signed-up" };
   const account = accountState.kind === "invite"
     ? { ...accountState, expired: accountState.expiresAt.getTime() <= referenceTime.getTime() }
     : accountState;
@@ -290,6 +301,7 @@ export default async function StudentDetailPage({
               account={account}
               guideAccess={guideAccess}
               studentName={name}
+              deletion={deletion}
               referenceTime={referenceTime}
               lessonNoteIds={lessonNoteIds}
               lessonGroup={lessonGroup ? {

@@ -29,6 +29,8 @@ import { GuideAccessControl } from "@/components/admin/GuideAccessControl";
 import { StudentInviteControl } from "@/components/admin/StudentInviteControl";
 import { StudentPasswordResetControl } from "@/components/admin/StudentPasswordResetControl";
 import { StudentArchiveControl } from "@/components/admin/StudentArchiveControl";
+import { StudentDeleteControl } from "@/components/admin/StudentDeleteControl";
+import type { StudentDeletionState } from "@/lib/student-deletion";
 import { ConfirmPanel, useConfirmAction } from "@/components/ui/confirm-action";
 import type { StudentGuideAccessView } from "@/lib/actions/guideAccess";
 import { formatKst } from "@/lib/kst-format";
@@ -84,6 +86,8 @@ interface OverviewTabProps {
   guideAccess?: StudentGuideAccessView;
   /** 확인 문구에 쓰는 학생 이름(없으면 이메일). 있으면 계정 구역 맨 아래에 '수강 종료'를 둔다. */
   studentName?: string;
+  /** 가입 전 학생의 삭제 상태(StudentArchive 5번). 없으면 가입한 학생처럼 수강 종료만 둔다. */
+  deletion?: StudentDeletionState;
   /** 지난 레슨·다음 레슨을 가르는 서버 기준 시각. 없으면 화면을 연 시각을 쓴다. */
   referenceTime?: Date;
   /** 커리큘럼 구역을 그릴지. 기본값은 숨김 스위치를 따른다. */
@@ -337,6 +341,7 @@ export function OverviewTab({
   account = { kind: "active" },
   guideAccess,
   studentName,
+  deletion = { kind: "signed-up" },
   referenceTime,
   showCurriculum = isCurriculumVisible(),
   lessonNoteIds,
@@ -587,7 +592,7 @@ export function OverviewTab({
       </div>
 
       {/* 계정: 상태 줄을 먼저 모으고(order 1·2) 조작은 버튼 순서대로(order 3·4) 둔다. DOM은 조작마다 자기 상태 줄과 붙어 있다.
-          수강 종료는 안내 문구 아래 구분선 뒤 맨 끝(order 6, 캔버스 StudentArchive ①). */}
+          수강 종료는 안내 문구 아래 구분선 뒤(order 6, 캔버스 StudentArchive ①), 가입 전 학생의 삭제·이유 안내는 그 아래 맨 끝(order 7, 5번). */}
       <div className="flex min-w-0 flex-col gap-6 md:flex-[1_1_280px] md:gap-10">
       <LedgerSection labelledBy="account-heading">
         <LedgerSectionHeader id="account-heading" title="계정" />
@@ -622,6 +627,9 @@ export function OverviewTab({
           </p>
           {studentName ? (
             <StudentArchiveControl studentId={studentId} studentName={studentName} className="order-6 mt-4" />
+          ) : null}
+          {studentName ? (
+            <StudentDeleteControl studentId={studentId} studentName={studentName} deletion={deletion} className="order-7 mt-4" />
           ) : null}
         </div>
       </LedgerSection>

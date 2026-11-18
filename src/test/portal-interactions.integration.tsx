@@ -91,6 +91,8 @@ let StudentInviteControl: typeof import("@/components/admin/StudentInviteControl
 let archiveAction: typeof import("@/lib/actions/students").archiveStudent = async () => ({ ok: false, error: "테스트 미설정" });
 let restoreAction: typeof import("@/lib/actions/students").restoreStudent = async () => ({ ok: false, error: "테스트 미설정" });
 let StudentArchiveControl: typeof import("@/components/admin/StudentArchiveControl").StudentArchiveControl;
+let deleteAction: typeof import("@/lib/actions/students").deleteStudent = async () => ({ ok: false, error: "테스트 미설정" });
+let StudentDeleteControl: typeof import("@/components/admin/StudentDeleteControl").StudentDeleteControl;
 let ArchivedStudentsClient: typeof import("@/app/(app)/dashboard/admin/students/archived/ArchivedStudentsClient").ArchivedStudentsClient;
 let flashNotice: typeof import("@/lib/flash-notice");
 let NewStudentPage: typeof import("@/app/(app)/dashboard/admin/students/new/page").default;
@@ -228,6 +230,7 @@ mock.module("@/lib/actions/students", { namedExports: {
   getStudentAccountState: async () => ({ kind: "active" }),
   archiveStudent: (...args: Parameters<typeof archiveAction>) => archiveAction(...args),
   restoreStudent: (...args: Parameters<typeof restoreAction>) => restoreAction(...args),
+  deleteStudent: (...args: Parameters<typeof deleteAction>) => deleteAction(...args),
 } });
 mock.module("@/lib/actions/invite", { namedExports: {
   getInviteStatus: (...args: Parameters<typeof inviteStatus>) => inviteStatus(...args),
@@ -357,6 +360,7 @@ before(async () => {
   ({ StudentPasswordResetControl } = await import("@/components/admin/StudentPasswordResetControl"));
   ({ StudentInviteControl } = await import("@/components/admin/StudentInviteControl"));
   ({ StudentArchiveControl } = await import("@/components/admin/StudentArchiveControl"));
+  ({ StudentDeleteControl } = await import("@/components/admin/StudentDeleteControl"));
   ({ ArchivedStudentsClient } = await import("@/app/(app)/dashboard/admin/students/archived/ArchivedStudentsClient"));
   flashNotice = await import("@/lib/flash-notice");
   ({ default: NewStudentPage } = await import("@/app/(app)/dashboard/admin/students/new/page"));
@@ -4606,6 +4610,64 @@ test("수강 종료는 취소 우선 확인을 거치고, 성공하면 이동한
   await confirmArchive();
   assert.equal(alertText(), null, "redirect는 실패가 아니라 이동이다");
   assert.equal(notice(), "김학생의 수강을 종료했습니다.", "이동한 학생 목록이 처음 그릴 때 읽는다");
+});
+
+test("학생 삭제는 삭제할 수 있는 가입 전 학생에게만 보이고, 위험 색 확인을 거쳐 이동한 목록에 결과 안내를 남긴다", async (context) => {
+  const deleted: string[] = [];
+  let outcome: "error" | "redirect" = "error";
+  deleteAction = async (studentId) => {
+    deleted.push(studentId);
+    if (outcome === "redirect") {
+      throw Object.assign(new Error("NEXT_REDIRECT"), { digest: "NEXT_REDIRECT;push;/dashboard/admin?section=students;303;" });
+    }
+    return { ok: false, error: "가입했거나 기록이 생겨 삭제하지 않았습니다. 수강 종료를 쓰세요." };
+  };
+  context.after(() => {
+    deleteAction = async () => ({ ok: false, error: "테스트 미설정" });
+    flashNotice.clearFlashNotice(flashNotice.STUDENT_LIST_NOTICE_KEY);
+  });
+  const text = () => browser.document.body.textContent ?? "";
+  const notice = () => flashNotice.peekFlashNotice(flashNotice.STUDENT_LIST_NOTICE_KEY);
+
+  // 가입한 학생은 아무것도 그리지 않고, 가입 전인데 지울 수 없으면 버튼 대신 이유만 보인다.
+  const renderOnly = async (deletion: Parameters<typeof StudentDeleteControl>[0]["deletion"]) => {
+    const root = await render(context, <StudentDeleteControl studentId="student-1" studentName="김학생" deletion={deletion} />);
+    const seen = { text: text(), hasButton: browser.document.querySelector("button") !== null };
+    await act(async () => root.unmount());
+    return seen;
+  };
+  assert.deepEqual(await renderOnly({ kind: "signed-up" }), { text: "", hasButton: false });
+  const records = await renderOnly({ kind: "has-records" });
+  assert.equal(records.hasButton, false);
+  assert.match(records.text, /기록이 있어 삭제할 수 없습니다\. 기록을 남기려면 수강 종료를 쓰세요/u);
+  const group = await renderOnly({ kind: "in-group", groupName: "화요반" });
+  assert.equal(group.hasButton, false);
+  assert.match(group.text, /그룹 '화요반'에 속해 있어 삭제할 수 없습니다\. 그룹에서 뺀 뒤 삭제하세요/u);
+
+  await render(context, <StudentDeleteControl studentId="student-1" studentName="김학생" deletion={{ kind: "deletable" }} />);
+  assert.match(text(), /가입 전이고 기록이 없어 삭제할 수 있습니다\. 삭제하면 되돌릴 수 없습니다/u);
+  await press("학생 삭제");
+  assert.deepEqual(deleted, [], "첫 누름은 확인만 연다");
+  assert.equal(browser.document.activeElement?.textContent, "취소");
+  const panel = browser.document.querySelector('[role="group"]');
+  assert.ok(panel?.className.includes("bg-destructive-muted"), "되돌릴 수 없는 일이라 위험 면");
+  assert.match(text(), /김학생을 삭제할까요\? 계정과 가입 링크, 발급한 캘린더 구독 URL과 가이드 공개 설정이 함께 지워지고 되돌릴 수 없습니다/u);
+  await press("취소");
+  assert.equal(browser.document.activeElement?.textContent, "학생 삭제", "닫으면 연 버튼으로 초점이 돌아온다");
+
+  await press("학생 삭제");
+  await act(async () => button("삭제").click());
+  await settle();
+  assert.deepEqual(deleted, ["student-1"]);
+  assert.match(browser.document.querySelector('[role="alert"]')?.textContent ?? "", /가입했거나 기록이 생겨 삭제하지 않았습니다/u);
+  assert.equal(notice(), null, "실패하면 목록 안내를 남기지 않는다");
+
+  outcome = "redirect";
+  await press("학생 삭제");
+  await act(async () => button("삭제").click());
+  await settle();
+  assert.equal(browser.document.querySelector('[role="alert"]'), null, "redirect는 실패가 아니라 이동이다");
+  assert.equal(notice(), "김학생을 삭제했습니다.");
 });
 
 test("수강 종료한 학생은 확인 없이 바로 복원하고, 사라진 버튼 대신 결과 안내로 초점을 옮긴다", async (context) => {

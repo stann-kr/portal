@@ -171,6 +171,7 @@ iCloud 연동:
 2. 순서를 바꾸면 안 된다. 새 코드가 칸 없이 나가면 학생 목록·업무함·알림·캘린더 동기화 query가 오류가 된다.
 3. 적용 뒤 read-only로 `SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1`, `PRAGMA table_info(profiles)`(account_status·archived_at), `SELECT account_status, COUNT(*) FROM profiles GROUP BY 1`(모두 ACTIVE)을 본다.
 4. 되돌리기: 이전 코드로 되돌리기 전에 수강 종료한 학생을 모두 복원할지 정한다. 이전 코드도 로그인·session 경계에서는 ARCHIVED를 막지만, 목록·선택지·알림·동기화에는 다시 보인다. 칸은 남겨 두면 된다.
+5. 같은 배포의 학생 삭제(가입 전·기록 없는 학생만)는 migration이 없다. 운영 smoke에서 삭제를 누르지 않는다. 코드를 되돌려도 이미 삭제한 학생은 돌아오지 않는다(남는 것은 ERASED 영수증뿐이고 30일 뒤 id도 가려진다).
 
 ### 가입 링크 메일 gate
 

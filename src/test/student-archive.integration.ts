@@ -8,9 +8,11 @@ import { after, before, mock, test, type TestContext } from "node:test";
 import { eq } from "drizzle-orm";
 import type { AuthSession } from "@/lib/auth-guard";
 import {
+  accountDeletionJobs,
   assignments,
   calendarConnections,
   calendarMappings,
+  guideAccess,
   lessonGroupMembers,
   lessonGroups,
   lessons,
@@ -255,4 +257,53 @@ test("복원하면 로그인·목록·그룹·업무함·알림·캘린더가 �
     ok: false,
     error: "이미 복원했거나 찾을 수 없는 학생입니다. 목록을 새로 고쳐 주세요.",
   });
+});
+
+test("학생 삭제는 가입 전·기록 없는 학생만 격리 D1에서 지우고, 그사이 레슨이 생기면 아무것도 지우지 않는다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context);
+  const invite = `invite:${Math.floor(Date.now() / 1000) + 7 * 86_400}:$2a$10$abcdefghijklmnopqrstuv`;
+  await db.insert(profiles).values([
+    { id: "student-new", email: "new@example.com", displayName: "최학생", role: "student", passwordHash: invite },
+    { id: "student-raced", email: "raced@example.com", displayName: "정학생", role: "student", passwordHash: invite },
+  ]);
+  await db.insert(guideAccess).values([
+    { studentId: "student-new", mode: "ALL" },
+    { studentId: "student-raced", mode: "ALL" },
+  ]);
+
+  activeSession = createSession("student-b", "student");
+  await assert.rejects(studentActions.deleteStudent("student-new"), /Admin only/);
+  activeSession = createSession("admin-1", "admin");
+
+  assert.deepEqual(await studentActions.getStudentDeletionState("student-new"), { kind: "deletable" });
+  assert.deepEqual(await studentActions.getStudentDeletionState("student-a"), { kind: "signed-up" });
+  await expectRedirect(studentActions.deleteStudent("student-new"), "/dashboard/admin?section=students");
+  assert.equal((await db.select().from(profiles).where(eq(profiles.id, "student-new"))).length, 0);
+  assert.equal((await db.select().from(guideAccess).where(eq(guideAccess.studentId, "student-new"))).length, 0);
+  const [receipt] = await db.select().from(accountDeletionJobs).where(eq(accountDeletionJobs.subjectId, "student-new"));
+  assert.equal(receipt?.status, "ERASED");
+  assert.deepEqual(await studentActions.deleteStudent("student-new"), {
+    ok: false,
+    error: "이미 삭제했거나 찾을 수 없는 학생입니다. 학생 목록을 새로 고쳐 주세요.",
+  });
+
+  // 화면을 연 뒤 레슨이 생기면 batch 맨 앞 조건이 막아 계정·설정·영수증 모두 그대로다.
+  assert.deepEqual(await studentActions.getStudentDeletionState("student-raced"), { kind: "deletable" });
+  await db.insert(lessons).values({ id: "lesson-raced", studentId: "student-raced", scheduledAt: new Date() });
+  assert.deepEqual(await studentActions.deleteStudent("student-raced"), {
+    ok: false,
+    error: "가입했거나 기록이 생겨 삭제하지 않았습니다. 수강 종료를 쓰세요.",
+  });
+  assert.equal((await db.select().from(profiles).where(eq(profiles.id, "student-raced"))).length, 1);
+  assert.equal((await db.select().from(guideAccess).where(eq(guideAccess.studentId, "student-raced"))).length, 1);
+  assert.equal((await db.select().from(lessons).where(eq(lessons.id, "lesson-raced"))).length, 1);
+  assert.equal((await db.select().from(accountDeletionJobs).where(eq(accountDeletionJobs.subjectId, "student-raced"))).length, 0);
+  assert.deepEqual(await studentActions.getStudentDeletionState("student-raced"), { kind: "has-records" });
+
+  // 가입한 학생은 기록이 있어도 없어도 지우지 않는다.
+  assert.deepEqual(await studentActions.deleteStudent("student-c"), {
+    ok: false,
+    error: "가입했거나 기록이 생겨 삭제하지 않았습니다. 수강 종료를 쓰세요.",
+  });
+  assert.equal((await db.select().from(profiles).where(eq(profiles.id, "student-c"))).length, 1);
 });
