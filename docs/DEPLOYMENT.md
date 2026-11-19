@@ -32,7 +32,7 @@
 
 | 항목 | 저장소에서 확인할 수 있는 것 | 운영 적용을 확인하는 증거 |
 |---|---|---|
-| D1 migration | SQL·journal·snapshot `0000~0032`, 메모리 DB에서 체인·schema 검증 | 대상 D1의 적용 목록과 실제 schema·FK, 그 목록에서 계산한 pending 범위 |
+| D1 migration | SQL·journal·snapshot `0000~0033`, 메모리 DB에서 체인·schema 검증 | 대상 D1의 적용 목록과 실제 schema·FK, 그 목록에서 계산한 pending 범위 |
 | 계정 삭제 | `0012`와 삭제·정리 구현, application 설정의 `ACCOUNT_DELETION_ENABLED="false"` 기본값 | 활성 Worker의 유효 flag, 기기 adoption, 승인된 삭제·정리 smoke |
 | 예약 정리 | `worker.ts`의 `scheduled` handler, Workers Logs 설정, source에 없는 Cron trigger | 원격 trigger 주기, 대상 version의 실제 scheduled invocation, backlog·실패·alert 증거 |
 | 외부 캘린더 | `0013` 구독 테이블과 `EXTERNAL_CALENDAR_ENCRYPTION_KEY` 요구 조건 | 대상 schema, secret 설정 확인, 승인된 연결·읽기·교체·해제 smoke |
@@ -43,6 +43,7 @@
 | 캘린더 실시간 반영 | `0018` 알림 채널 table, `/api/calendar-connections/google/notify`, `worker.ts` `scheduled`의 캘린더 동기화. source에 없는 Cron trigger | 원격 Cron 주기, 대상 version의 실제 scheduled invocation, Google 채널 등록·갱신과 알림 수신 로그 |
 | 웹앱 푸시 알림 | `0024` 구독·`0025` 끈 종류 table, `VAPID_PUBLIC_KEY`·`VAPID_PRIVATE_KEY`(선택 `VAPID_SUBJECT`) 요구 조건, 없으면 알림만 꺼짐 | 대상 D1의 `0024` 적용, secret 설정 확인, 승인된 기기에서 알림 켜기·테스트 알림 수신 |
 | 학생 수강 종료 | `0032`의 `profiles.account_status`(기본 ACTIVE)·`archived_at` 칸 추가 | 대상 D1의 `0032` 적용과 `PRAGMA table_info(profiles)`, 모든 계정이 ACTIVE인지(`SELECT account_status, COUNT(*) FROM profiles GROUP BY 1`) |
+| 커뮤니티 댓글 답글 | `0033`의 `comments.parent_id`(nullable, FK 없음)·`comments_parent_idx` 추가 | 대상 D1의 `0033` 적용과 `PRAGMA table_info(comments)`, 기존 댓글이 모두 원 댓글인지(`SELECT COUNT(*) FROM comments WHERE parent_id IS NOT NULL` = 0) |
 | 그룹레슨 | `0029` 그룹·멤버 table과 `private_notes.group_id`, `0030` `document_tombstones.group_id`와 media UPDATE trigger 넷 재생성 | 대상 D1의 `0029`·`0030` 적용과 `lesson_groups`·`lesson_group_members` 존재, 관리자 학생 목록의 그룹 만들기 |
 | 배포 환경 분리 | 현재 tracked 설정의 Worker는 `portal` | development/production Worker·D1·R2·route·secret·branch trigger 각각의 inventory |
 
@@ -172,6 +173,13 @@ iCloud 연동:
 3. 적용 뒤 read-only로 `SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1`, `PRAGMA table_info(profiles)`(account_status·archived_at), `SELECT account_status, COUNT(*) FROM profiles GROUP BY 1`(모두 ACTIVE)을 본다.
 4. 되돌리기: 이전 코드로 되돌리기 전에 수강 종료한 학생을 모두 복원할지 정한다. 이전 코드도 로그인·session 경계에서는 ARCHIVED를 막지만, 목록·선택지·알림·동기화에는 다시 보인다. 칸은 남겨 두면 된다.
 5. 같은 배포의 학생 삭제(가입 전·기록 없는 학생만)는 migration이 없다. 운영 smoke에서 삭제를 누르지 않는다. 코드를 되돌려도 이미 삭제한 학생은 돌아오지 않는다(남는 것은 ERASED 영수증뿐이고 30일 뒤 id도 가려진다).
+
+### 커뮤니티 댓글 답글 전환 gate (2026-11-19)
+
+1. 원격 D1에 `0033_comment_replies`를 **코드보다 먼저** 적용한다(Time Travel bookmark 먼저, `0032` 적용 뒤). `comments`에 `parent_id`(nullable text)를 더하는 ALTER와 index 하나뿐이라 표를 다시 만들지 않고 FK·trigger·기존 행 값은 그대로다. 이전 코드는 새 칸을 읽지 않으므로 먼저 적용해도 동작이 같다.
+2. 순서를 바꾸면 안 된다. 새 코드가 칸 없이 나가면 게시물 상세의 댓글 조회가 오류가 된다.
+3. 적용 뒤 read-only로 `SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1`, `PRAGMA table_info(comments)`(parent_id), `PRAGMA index_list(comments)`(comments_parent_idx), `SELECT COUNT(*) FROM comments WHERE parent_id IS NOT NULL`(0)을 본다.
+4. 되돌리기: 이전 코드는 답글을 원 댓글처럼 평평하게(작성 순) 보인다. 지운 원 댓글 자리 표시는 없어지지만 답글 글은 그대로 남는다. 칸은 남겨 두면 된다.
 
 ### 가입 링크 메일 gate
 

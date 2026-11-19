@@ -8,7 +8,13 @@ const read = (path: string) => readFileSync(join(root, path), "utf8");
 
 test("좁은 화면 아래 입력줄은 미니 플레이어 위로 올라가고 홈 표시줄 여백은 미니 플레이어가 맡는다", () => {
   const css = read("src/components/player/player.css");
-  assert.match(css, /html\[data-mini-player="on"\] body \{\s*padding-bottom: calc\(var\(--mini-player-height, 58px\) \+ env\(safe-area-inset-bottom\)\);/u);
+  // 셸 화면은 셸 안 화면 영역이 여백을 가진다. body에 두면 sticky 사이드바·위쪽 막대가 끝까지 내렸을 때 밀려 올라간다.
+  assert.match(css, /html\[data-mini-player="on"\] \.app-content \{\s*padding-bottom: calc\(var\(--mini-player-height, 58px\) \+ env\(safe-area-inset-bottom\)\);/u);
+  assert.match(css, /html\[data-mini-player="on"\] body:not\(:has\(\.app-content\)\) \{\s*padding-bottom: calc\(var\(--mini-player-height, 58px\) \+ env\(safe-area-inset-bottom\)\);/u);
+  assert.doesNotMatch(css, /html\[data-mini-player="on"\] body \{/u);
+  for (const path of ["src/components/app-shell/AppSidebar.tsx", "src/components/app-shell/AppShellSkeleton.tsx"]) {
+    assert.match(read(path), /className="app-content min-w-0 flex-1"/u, path);
+  }
   assert.match(
     css,
     /@media \(max-width: 47\.999rem\) \{\s*html\[data-mini-player="on"\] \.sticky-dock \{\s*bottom: calc\(var\(--mini-player-height, 58px\) \+ env\(safe-area-inset-bottom\)\);\s*padding-bottom: var\(--dock-pad, 0\.5rem\);/u,

@@ -2317,7 +2317,7 @@ test("failed comment deletion keeps the conversation and unfinished reply visibl
     mediaObjectId: null, createdAt: new Date(), updatedAt: new Date(), deletedAt: null,
     restoreLocked: false, version: 1, authorName: "학생",
   };
-  const comment = { id: "comment-1", postId: post.id, authorId: "student-1", contentHtml: "<p>기존 대화</p>", createdAt: new Date(), timeMarkerSeconds: null, authorName: "학생" };
+  const comment = { id: "comment-1", postId: post.id, authorId: "student-1", contentHtml: "<p>기존 대화</p>", createdAt: new Date(), timeMarkerSeconds: null, parentId: null, authorName: "학생", authorRole: "student" };
   await render(context, <PostDetailClient postId={post.id} post={post} initialCommentList={[comment]} currentUserId="student-1" isAdmin={false} returnTo="/community" />);
   await fill("content", "아직 작성 중인 답글");
   await press("학생 댓글 삭제");
@@ -2338,6 +2338,87 @@ test("failed comment deletion keeps the conversation and unfinished reply visibl
   assert.equal(inputValue("content"), "아직 작성 중인 답글");
 });
 
+test("댓글 답글은 원 댓글 묶음 아래 한 입력에서 쓰고, 지워진 원 댓글 자리 아래 답글은 남되 새 답글은 받지 않는다", async (context) => {
+  browser.localStorage.clear();
+  const submissions: { postId: string; parentId: unknown; content: unknown }[] = [];
+  saveComment = async (postId, _previous, data) => {
+    submissions.push({ postId, parentId: data.get("parentId"), content: data.get("content") });
+    return { success: true, commentId: "reply-new" };
+  };
+  context.after(() => { saveComment = async () => ({}); });
+  const post = {
+    id: "reply-post", authorId: "student-1", title: "연습실 같이 쓰실 분", contentHtml: "<p>본문</p>",
+    category: "general", boardType: "GENERAL" as const, isPinned: false, mediaUrl: null,
+    mediaObjectId: null, createdAt: new Date(), updatedAt: new Date(), deletedAt: null,
+    restoreLocked: false, version: 1, authorName: "학생",
+  };
+  const at = (minute: number) => new Date(Date.UTC(2026, 9, 26, 6, minute));
+  const row = (id: string, authorId: string, authorName: string, text: string, minute: number, parentId: string | null) => (
+    { id, postId: post.id, authorId, contentHtml: `<p>${text}</p>`, createdAt: at(minute), timeMarkerSeconds: null, parentId, authorName, authorRole: authorName === "Stann" ? "admin" : "student" }
+  );
+  const comments = [
+    row("c-root", "student-2", "이학생", "저 갈게요", 1, null),
+    row("c-gone-reply", "student-3", "박학생", "헤드폰 챙길게요", 2, "c-gone"),
+    row("c-reply", "student-1", "학생", "좋아요", 3, "c-root"),
+    row("c-other", "student-3", "박학생", "녹음은요?", 4, null),
+  ];
+  await render(context, <PostDetailClient postId={post.id} post={post} initialCommentList={comments} currentUserId="student-1" isAdmin={false} returnTo="/community" />);
+  const section = browser.document.querySelector('section[aria-labelledby="comments-title"]');
+  assert.ok(section);
+  assert.match(section.querySelector("h2")?.textContent ?? "", /댓글\s*4/u, "답글을 포함해 보이는 글 수");
+  const groups = [...section.querySelectorAll(":scope > ol > li")];
+  assert.deepEqual(
+    groups.map((group) => group.textContent?.includes("삭제된 댓글입니다") ? "deleted" : group.querySelector("p span")?.textContent),
+    ["이학생", "deleted", "박학생"],
+    "지워진 원 댓글 묶음은 첫 답글 시각 자리에 놓인다",
+  );
+  const replies = section.querySelector('ol[aria-label="이학생 댓글의 답글"]');
+  assert.match(replies?.textContent ?? "", /좋아요/u, "답글은 원 댓글 아래 묶음에 들어간다");
+  const deletedGroup = groups[1]!;
+  assert.match(deletedGroup.textContent ?? "", /헤드폰 챙길게요/u, "원 댓글이 지워져도 답글은 남는다");
+  assert.equal([...deletedGroup.querySelectorAll("button")].filter((element) => element.textContent === "답글").length, 0, "지워진 묶음에는 새 답글을 달 수 없다");
+
+  const replyInput = () => {
+    const input = browser.document.querySelector('input[placeholder="답글을 입력하세요..."]');
+    return input instanceof browser.HTMLInputElement ? input : null;
+  };
+  assert.equal(replyInput(), null, "답글 입력은 누르기 전에는 없다");
+  await press("이학생 댓글에 답글");
+  assert.equal(button("이학생 댓글에 답글").getAttribute("aria-expanded"), "true");
+  assert.ok(replyInput());
+  assert.equal(replyInput()!.value, "");
+  assert.equal(browser.document.activeElement, replyInput(), "열면 답글 입력으로 초점이 간다");
+  assert.equal(browser.document.querySelector(`label[for="${replyInput()!.id}"]`)?.textContent, "이학생 댓글에 답글");
+  await press("학생 답글에 답글");
+  assert.equal(replyInput()!.value, "@학생 ", "답글의 답글은 같은 묶음 입력에 @이름이 들어간다");
+  assert.equal(browser.document.querySelectorAll('input[placeholder="답글을 입력하세요..."]').length, 1, "답글 입력은 하나만 열린다");
+  assert.equal(button("등록").disabled, true, "미리 넣은 @이름만으로는 등록하지 않는다");
+
+  await fill(replyInput()!.id, "@학생 순서 바꿔도 될까요?");
+  await act(async () => {
+    replyInput()!.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  });
+  await settle();
+  assert.equal(replyInput(), null, "Esc로 닫는다");
+  assert.equal(browser.document.activeElement?.getAttribute("aria-label"), "학생 답글에 답글", "닫으면 연 버튼으로 돌아간다");
+  await press("이학생 댓글에 답글");
+  assert.equal(replyInput()!.value, "@학생 순서 바꿔도 될까요?", "닫아도 묶음별 초안은 남는다");
+  const rootInput = browser.document.querySelector('input[placeholder="댓글을 입력하세요..."]');
+  assert.ok(rootInput instanceof browser.HTMLInputElement);
+  assert.equal(rootInput.value, "", "원 댓글 입력과 초안을 나눠 쓴다");
+
+  await press("등록");
+  assert.deepEqual(submissions, [{ postId: post.id, parentId: "c-root", content: "@학생 순서 바꿔도 될까요?" }]);
+  assert.equal(replyInput(), null, "등록하면 닫힌다");
+  assert.equal(routerRefreshes > 0, true);
+  await press("이학생 댓글에 답글");
+  assert.equal(replyInput()!.value, "", "등록한 답글 초안은 지운다");
+
+  // 답글이 있는 원 댓글 삭제 확인은 답글이 남는다고 알린다. 내 답글 삭제 확인은 답글 문구를 쓴다.
+  await press("학생 답글 삭제");
+  assert.match(browser.document.body.textContent ?? "", /이 답글을 삭제할까요\?/u);
+});
+
 function mixsetPost(id: string, media: { mediaUrl: string | null; mediaObjectId: string | null }, boardType: "FEEDBACK" | "GENERAL" = "FEEDBACK") {
   return {
     id, authorId: "student-1", title: "금요일 믹스셋", contentHtml: "<p>본문</p>",
@@ -2348,7 +2429,7 @@ function mixsetPost(id: string, media: { mediaUrl: string | null; mediaObjectId:
 }
 
 function mixsetComment(id: string, postId: string, text: string, timeMarkerSeconds: number | null) {
-  return { id, postId, authorId: "student-2", contentHtml: `<p>${text}</p>`, createdAt: new Date(), timeMarkerSeconds, authorName: "다른 학생" };
+  return { id, postId, authorId: "student-2", contentHtml: `<p>${text}</p>`, createdAt: new Date(), timeMarkerSeconds, parentId: null as string | null, authorName: "다른 학생", authorRole: "student" as string | null };
 }
 
 test("믹스셋 링크 상세는 본문 위에 플레이어를 두고 댓글 시점을 누를 때마다 그 위치로 이동한다", async (context) => {

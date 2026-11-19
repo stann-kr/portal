@@ -295,7 +295,8 @@ export function AppSidebar({
         </Dialog.Portal>
       </Dialog.Root>
 
-      <div className="min-w-0 flex-1">{children}</div>
+      {/* app-content: 미니 플레이어 아래 여백을 셸 안에서 갖는다(player.css). */}
+      <div className="app-content min-w-0 flex-1">{children}</div>
     </TopBarContext.Provider>
   );
 }

@@ -58,6 +58,7 @@ import {
   COMMENT_TIME_MARKER_FIELD,
   MIXSET_LINK_FIELD,
 } from "@/lib/community-mixset-media";
+import { COMMENT_PARENT_FIELD } from "@/lib/community-comment";
 import {
   createQnaRequestHashForVersion,
   type QnaCanonicalRequest,
@@ -5012,4 +5013,76 @@ test("댓글은 5,000자까지만 저장하고 넘으면 쓰기 전에 거부한
   assert.equal(tooLong.success, undefined);
   assert.match(tooLong.error ?? "", /5,000자/u);
   assert.equal((await db.select().from(comments).where(eq(comments.postId, postId))).length, 1);
+});
+
+function createCommentReplyForm(operationId: string, content: string, parentId: string, timeMarker?: string): FormData {
+  const formData = createCommentForm(operationId, content, timeMarker);
+  formData.set(COMMENT_PARENT_FIELD, parentId);
+  return formData;
+}
+
+test("답글은 원 댓글 한 단계로 모으고, 원 댓글이 지워져도 남으며 새 답글은 받지 않는다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context, createSession("student-1", "student"));
+  await seedProfile(db, "student-1");
+  await seedProfile(db, "student-2");
+  await seedProfile(db, "student-3");
+  const created = await postActions.createPost({}, createPostForm(crypto.randomUUID(), "연습실 같이 쓰실 분", "<p>본문</p>"));
+  const postId = created.postId;
+  assert.ok(postId);
+  const other = await postActions.createPost({}, createPostForm(crypto.randomUUID(), "다른 글", "<p>본문</p>"));
+  assert.ok(other.postId);
+
+  activeSession = createSession("student-2", "student");
+  const rootResult = await commentActions.createComment(postId, {}, createCommentForm(crypto.randomUUID(), "저 갈게요"));
+  const rootId = rootResult.commentId;
+  assert.ok(rootId);
+
+  // 원 댓글에 답글, 답글의 답글은 같은 원 댓글 묶음으로 저장한다.
+  activeSession = createSession("student-1", "student");
+  const replyOperation = crypto.randomUUID();
+  const reply = await commentActions.createComment(postId, {}, createCommentReplyForm(replyOperation, "좋아요", rootId));
+  assert.equal(reply.success, true);
+  assert.ok(reply.commentId);
+  activeSession = createSession("student-3", "student");
+  const nested = await commentActions.createComment(postId, {}, createCommentReplyForm(crypto.randomUUID(), "@학생 저도요", reply.commentId));
+  assert.equal(nested.success, true);
+  const parentOf = async (id: string) => (await db.select({ parentId: comments.parentId }).from(comments).where(eq(comments.id, id)))[0]?.parentId;
+  assert.equal(await parentOf(reply.commentId), rootId);
+  assert.equal(await parentOf(nested.commentId!), rootId, "답글의 답글도 원 댓글에 묶는다");
+  assert.deepEqual(
+    (await commentActions.getCommentsByPost(postId)).map((row) => [row.id, row.parentId]),
+    [[rootId, null], [reply.commentId, rootId], [nested.commentId, rootId]],
+  );
+
+  // 답글에는 재생 시점이 없고, 다른 게시물의 댓글이나 없는 댓글에는 달지 않는다.
+  const withMarker = await commentActions.createComment(postId, {}, createCommentReplyForm(crypto.randomUUID(), "시점 답글", rootId, "1:00"));
+  assert.match(withMarker.error ?? "", /답글에는 재생 시점/u);
+  const otherPostRoot = await commentActions.createComment(other.postId, {}, createCommentForm(crypto.randomUUID(), "다른 글 댓글"));
+  assert.ok(otherPostRoot.commentId);
+  const crossPost = await commentActions.createComment(postId, {}, createCommentReplyForm(crypto.randomUUID(), "엉뚱한 답글", otherPostRoot.commentId));
+  assert.match(crossPost.error ?? "", /원 댓글이 삭제되어/u);
+
+  // 같은 작업 재전송은 같은 답글을 돌려주고 줄을 늘리지 않는다.
+  activeSession = createSession("student-1", "student");
+  const replay = await commentActions.createComment(postId, {}, createCommentReplyForm(replyOperation, "좋아요", rootId));
+  assert.deepEqual(replay, { success: true, commentId: reply.commentId });
+  assert.equal((await db.select().from(comments).where(eq(comments.postId, postId))).length, 3);
+
+  // 원 댓글을 지워도 다른 사람의 답글은 남는다. 그 묶음에는 새 답글을 달지 않지만, 앞서 저장한 작업 재전송은 그 답글로 회수한다.
+  activeSession = createSession("student-2", "student");
+  assert.deepEqual(await commentActions.deleteComment(rootId, postId), { success: true });
+  assert.deepEqual(
+    (await db.select({ id: comments.id, parentId: comments.parentId }).from(comments).where(eq(comments.postId, postId))).map((row) => [row.id, row.parentId]).sort(),
+    [[reply.commentId, rootId], [nested.commentId, rootId]].sort(),
+  );
+  activeSession = createSession("student-1", "student");
+  const afterDelete = await commentActions.createComment(postId, {}, createCommentReplyForm(crypto.randomUUID(), "늦은 답글", rootId));
+  assert.match(afterDelete.error ?? "", /원 댓글이 삭제되어/u);
+  const toOrphanReply = await commentActions.createComment(postId, {}, createCommentReplyForm(crypto.randomUUID(), "늦은 답글", nested.commentId!));
+  assert.match(toOrphanReply.error ?? "", /원 댓글이 삭제되어/u, "남은 답글에 답해도 지워진 묶음에는 달지 않는다");
+  assert.deepEqual(
+    await commentActions.createComment(postId, {}, createCommentReplyForm(replyOperation, "좋아요", rootId)),
+    { success: true, commentId: reply.commentId },
+  );
+  assert.equal((await db.select().from(comments).where(eq(comments.postId, postId))).length, 2);
 });

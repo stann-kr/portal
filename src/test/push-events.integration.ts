@@ -275,7 +275,8 @@ test("커뮤니티: 새 글은 글쓴이를 뺀 모든 계정에, 댓글은 글�
   // 이학생이 첫 댓글: 글쓴이(김학생)에게만 간다.
   activeSession = createSession("student-2", "student", "이학생");
   const firstComment = form({ [CREATION_OPERATION_FIELD]: crypto.randomUUID(), content: "좋네요" });
-  assert.equal((await commentActions.createComment(postId, {}, firstComment)).success, true);
+  const firstResult = await commentActions.createComment(postId, {}, firstComment);
+  assert.equal(firstResult.success, true);
   await commentActions.createComment(postId, {}, firstComment);
   assert.equal(sent.length, 2, "같은 댓글 재전송");
   assert.deepEqual(sent[1]!.audience, { kind: "profiles", profileIds: ["student-1"] });
@@ -291,4 +292,17 @@ test("커뮤니티: 새 글은 글쓴이를 뺀 모든 계정에, 댓글은 글�
   assert.equal(sent[3]!.message.title, "새 댓글");
   assert.deepEqual(sent[3]!.audience, { kind: "profiles", profileIds: ["student-2"] }, "댓글 쓴 본인은 참여자에서 빠진다");
   assert.equal(sent[3]!.exclude, "admin-1");
+
+  // Stann이 이학생 댓글에 답글: 이학생은 "내 댓글에 답글" 하나만, 글쓴이는 "내 글에 새 댓글"(한 사람에 한 알림).
+  const replyForm = form({ [CREATION_OPERATION_FIELD]: crypto.randomUUID(), content: "고마워요", parentId: firstResult.commentId! });
+  assert.equal((await commentActions.createComment(postId, {}, replyForm)).success, true);
+  await commentActions.createComment(postId, {}, replyForm);
+  assert.equal(sent.length, 6, "같은 답글 재전송은 다시 보내지 않고, 참여자 알림은 이미 받은 사람을 빼면 없다");
+  assert.deepEqual(sent[4], {
+    audience: { kind: "profiles", profileIds: ["student-2"] },
+    message: { category: "community_comment", title: "내 댓글에 답글", body: "Stann님 답글: ‘이번 주 믹스 공유’", url: `/community/${postId}`, tag: `comment:${postId}` },
+    exclude: "admin-1",
+  });
+  assert.deepEqual(sent[5]!.audience, { kind: "profiles", profileIds: ["student-1"] });
+  assert.equal(sent[5]!.message.title, "내 글에 새 댓글");
 });

@@ -337,7 +337,7 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 
 - runtime dependency audit은 현재 0건이다. 상위 의존성이 보안 패치 전 하위 의존성을 고정하는 구간은 `package.json` override로 제한하며, upstream stable이 해당 버전을 채택하면 override를 제거해야 한다.
 - 개발 도구 전체 audit에는 Drizzle Kit의 구형 esbuild loader 체인에서 발생하는 moderate 권고가 남아 있다. 현재 npm 제안은 호환되지 않는 구버전 downgrade이므로 upstream 패치를 추적한다.
-- migration SQL과 `drizzle/meta` 생성 이력은 `0031`까지 대응하고 `db:check`가 전체 replay와 단계별 upgrade를 검사한다. persistent local D1과 remote의 실제 적용 이력은 승인된 운영 점검 전 추정하지 않는다(마지막 기록: persistent local D1 `0009`까지).
+- migration SQL과 `drizzle/meta` 생성 이력은 `0033`까지 대응하고 `db:check`가 전체 replay와 단계별 upgrade를 검사한다. persistent local D1과 remote의 실제 적용 이력은 승인된 운영 점검 전 추정하지 않는다(마지막 기록: persistent local D1 `0009`까지).
 - 대표 문서 server action과 draft 생명주기의 격리 integration test는 있으나 실제 브라우저 reload·offline·navigation·delete/restore E2E는 없다. 노트 편집기 안정화(자동 저장 revalidate 미호출·제자리 생성·서버본 조용한 폐기)와 학생 실시간 보기도 DOM 통합 테스트까지만 있고 실제 브라우저 두 창 동작은 확인되지 않았다.
 - 운영 배포 직후 이미 열려 있던 탭은 build ID 불일치로 다음 Server Action에서 한 번 hard reload된다(일회성, 코드로 막지 않는다). 서버 초안 fence(b)는 같은 초·같은 version·같은 본문으로 다시 쓴 다른 기기의 행을 폐기 의도에 포함해 지운다(본문이 같아 내용 손실 없음). live view 폴링은 head 조회 1회가 D1 읽기 약 3회라 열린 읽기 탭 수에 비례해 읽기 요청이 늘며, backoff 상한 20초가 그 비용 경계다.
 - 신규 managed media의 registry·문서 claim·purge 삭제 outbox와 인증 delivery, bounded 예약 정리·final prefix cursor reconciliation source를 구현했다. Copy timeout·lease·recovery grace 뒤 발견된 registry 없는 final object와 삭제 상태 object는 다음 inventory page에서 재삭제한다. production에서는 private R2 CORS·staging lifecycle·Cron과 알림을 검증해야 하며, 기존 외부 URL과 managed 형식이 아닌 legacy R2 object는 자동 삭제 대상으로 추정하지 않는다.
@@ -457,6 +457,18 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 - `0020_comment_time_markers`: `comments`에 `time_marker_seconds`와 CHECK `comments_time_marker_check`(NULL 또는 정수 0~86399)를 ADD COLUMN으로 더하고 index `comments_post_created_idx`(`post_id`, `created_at`)를 만든다. table을 다시 만들지 않아 기존 행과 `comments` trigger가 그대로다. 이 index는 게시물별 댓글을 작성 순으로 읽는 조회를 받친다. `db:check`가 채워진 0019 DB에서 0020 upgrade·CHECK·기존 행 보존을 검사한다. 댓글 조회·작성이 이 column을 읽으므로 운영에서는 코드 promotion 전에 적용한다([배포 가이드](./DEPLOYMENT.md)).
 - 미검증: 실제 YouTube·SoundCloud 재생·이동·위치 읽기, iOS 오디오 로드, 브라우저 화면(모바일 하단 댓글 막대 높이), remote D1 적용.
 
+## 커뮤니티 댓글 답글(2026-11-19)
+
+- 데이터(`0033_comment_replies`): `comments.parent_id`(nullable text, FK 없음)와 index `comments_parent_idx`. 원 댓글은 NULL, 답글은 원 댓글 ID다(한 단계). FK를 두지 않은 이유: 원 댓글을 지워도 다른 사람의 답글은 남겨야 하고, `0012`의 `comments` trigger(휴지통 게시물의 댓글 삭제 차단)를 다시 만들지 않으려는 것이다. FK cascade로 답글을 지우면 계정 삭제가 휴지통 게시물에서 그 trigger에 막힌다. ADD COLUMN·CREATE INDEX뿐이라 기존 행·trigger가 그대로다. `db:check`(`scripts/migration-check/comment-replies.mjs`)가 채워진 0032 DB에서 0033 upgrade, 칸 모양·FK 불변·index 사용, 원 댓글 삭제 뒤 답글 보존을 검사한다. 댓글 조회가 이 칸을 읽으므로 운영에서는 코드보다 먼저 적용한다([배포 가이드](./DEPLOYMENT.md)).
+- 작성(`createComment`): form의 `parentId`를 `findReplyRoot`로 같은 게시물의 원 댓글까지 올린다(답글의 답글도 원 댓글 묶음). 원 댓글이 없으면 거부하고, INSERT의 `post_id` 서브쿼리가 같은 자리에서 원 댓글(`parent_id IS NULL`, 같은 게시물)을 다시 확인한다(별칭 SQL, 아니면 `post_id`가 NULL이 되어 저장 실패). 답글의 결정적 ID는 `["community-comment-reply", 작성자, 게시물, 원 댓글]`이고 재전송 비교에 `parent_id`를 넣는다. 원 댓글이 지워진 뒤의 같은 작업 재전송은 남아 있는 그 답글로 회수한다. 답글에는 시점을 받지 않는다.
+- 삭제(`deleteComment`)는 바뀌지 않았다(본인·관리자, 즉시 삭제). 계정 삭제도 지우는 사람의 댓글만 지운다. 남은 답글의 `parent_id`는 사라진 ID를 가리킨다.
+- 화면(`src/components/community/CommentThreads.tsx`): `groupCommentThreads`가 작성 순 행을 원 댓글 묶음으로 모으고, 원 댓글이 없는 답글은 첫 답글 자리의 "삭제된 댓글입니다" 묶음(새 답글 없음)으로 둔다. 답글 입력(`CommentForm` 답글 모드)은 한 번에 하나, 초안 key는 `community-comment` + `<게시물>:reply:<원 댓글>`이며 "@이름"은 입력이 비었거나 앞서 넣은 그대로일 때만 바꾼다. 닫으면 연 버튼으로, 등록하면 새 답글로 초점을 옮긴다. 파형 표시는 원 댓글의 시점만 쓴다. 캔버스 `CommunityReplies`.
+- 검증: `src/lib/community-comment.test.ts`(묶음), `src/test/document-workflow.integration.ts`(한 단계·시점 거부·다른 게시물·재전송·원 댓글 삭제 뒤 보존과 거부), `src/test/push-events.integration.ts`(받는 사람 우선순위), `src/test/portal-interactions.integration.tsx`(묶음·지워진 자리·한 입력·@이름·Esc·묶음별 초안·등록).
+
+## 미니 플레이어 아래 여백(2026-11-19)
+
+- `html[data-mini-player="on"]`의 아래 여백은 셸의 본문 칸(`.app-content`, `AppSidebar`·`AppShellSkeleton`)이 갖는다. 전에는 `body`가 가져 sticky 사이드바·머리줄의 containing block(셸 div) 밖에 있었고, 화면 끝까지 내리면 그 여백만큼 사이드바·머리줄이 위로 밀렸다. 셸이 없는 화면은 `body:not(:has(.app-content))`가 그대로 갖는다(`:has`를 모르는 브라우저가 셸 규칙까지 버리지 않게 따로 쓴다). `src/components/player/mobile-dock-css.test.ts`가 규칙을 지킨다.
+
 ## 수업 도구·비밀 메모·녹음 시점(2026-11-02)
 
 - 비밀 메모: `instructor_memos`·`instructor_memo_revisions`(`0022_instructor_memos`, 새 표만 추가). 학생 메모는 `note_id` NULL(부분 unique index로 학생당 하나), 노트 메모는 `note_id` unique이며 노트 영구 삭제·학생 profile 삭제에 FK cascade, 계정 삭제 batch(`account-privacy-atomic.ts`)가 학생 메모를 명시적으로 지운다. 저장은 `version` 조건부 UPDATE(처음은 `ON CONFLICT DO NOTHING` INSERT)로 다른 기기의 덮어쓰기를 막고 충돌이면 현재 내용을 돌려준다. 이력은 저장마다 쓰되 마지막 칸이 10분 안이면 덮어쓰고, 90일 지난 칸과 200칸을 넘는 칸을 지운다(trigger 없음, 한 사람이 쓰는 메모라 불변 ledger를 두지 않는다). server action(`src/lib/actions/instructorMemos.ts`)은 모두 `requireAdmin` + `requireStudentTarget`이며 노트 메모의 학생은 노트(휴지통 제외)에서 읽는다. HTML은 `sanitizeHtml`, 20만 자 상한. 화면은 공동 편집이 아닌 `FullEditor`(이미지 업로드 거부) + 이 기기 초안(`instructor-memo` kind, 서버 초안 없음) + 1.5초 자동 저장이다. 노트 문서 페이지와 관리자 새 노트 작성 페이지는 관리자일 때만 메모를 읽어 `NoteLessonFrame`(`NoteDocEditor`·`NoteFullForm` 공통)의 `instructor`로 넘기고(넓은 화면 옆 칸, 좁은 화면 서랍), 학생 상세 개요 탭에 학생 메모를 둔다. 새 노트는 첫 저장으로 id가 생기면 이 수업 메모를 열고, 작성 중 잰 타이머(`new:<studentId>` 범위)를 그 노트로 옮긴다. 새 노트를 만드는 첫 저장은 room 보관 중에도 2분 대기 없이 1.5초 쉼 기준으로 한다.
@@ -475,7 +487,7 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 - 이벤트: `createFeedback`·`createAssignmentTask`·`submitAssignmentTask`·`submitAssignment`·`createQnaThread*`·`createQnaReply`·`createLesson`·`rescheduleLesson`·`moveLesson`·`createPost(ANNOUNCEMENT)`가 새로 저장했을 때만(재전송·replayed 제외) 부른다. 정기 과제 회차 생성·수정·삭제는 알리지 않는다.
 - 화면: 계정 메뉴 "알림 설정"(`src/components/push/`). 이 기기 상태(지원·iPhone 홈 화면 추가 필요·차단·키 없음·꺼짐·받는 중)를 읽고, 켜기는 권한 요청을 버튼 handler의 첫 await로 둔다. 이 기기 구독의 주인 계정을 localStorage(`portal:push-owner`)에 두고, 화면을 열 때 주인이 다르면 구독을 해제(→ 410으로 서버 행 정리), 같으면 서버에서 빠진 구독을 다시 등록한다. 로그아웃 확인 뒤에도 해제한다.
 - 종류별 끄기(`0025`): `push_muted_categories(profile_id, category)` 행이 있으면 그 종류를 끈 것이다(CHECK로 `PUSH_CATEGORIES`만, 계정 cascade·계정 삭제 batch 명시 삭제). `PushMessage.category`로 `listPushTargets`가 끈 계정을 빼며 테스트 알림은 보지 않는다. `setPushCategory` action은 본인 계정만 바꾼다. 끈 계정 조회는 종류만 조건으로 읽고, 대상 계정 id는 90개씩 나눠 읽는다(D1의 statement당 bind 100개 한도, 2026-11-14).
-- 커뮤니티: `createPost`(공지 외)는 `everyone`(글쓴이 제외), `createComment`는 글쓴이(“내 글에 새 댓글”)와 그 글의 다른 댓글 작성자(“새 댓글”)에게 보낸다.
+- 커뮤니티: `createPost`(공지 외)는 `everyone`(글쓴이 제외), `createComment`는 글쓴이(“내 글에 새 댓글”)와 그 글의 다른 댓글 작성자(“새 댓글”)에게 보낸다. 답글이면 원 댓글 작성자(“내 댓글에 답글”)가 먼저이고, 한 사람에게는 위 순서로 하나만 보낸다(모두 `community_comment` 종류).
 - 안내 줄(`PushPromptBanner`): 지원 기기·권한 미선택·14일 안 "나중에" 없음일 때만 보이고, 서버 공개키를 미리 받아 "알림 받기" 클릭의 첫 await를 권한 요청으로 둔다(`enable-device.ts`, 설정 스위치와 공용). iPhone Safari 탭은 `portal:open-notification-settings` 이벤트로 설정 시트를 연다.
 - 키 생성: `node scripts/generate-vapid-keys.mjs`(표준 출력만). 키를 바꾸면 기존 기기 구독은 모두 다시 켜야 한다.
 - 미검증: 실제 iPhone(홈 화면 앱)·안드로이드 수신, 운영 푸시 서비스별(Apple·Mozilla) 응답.

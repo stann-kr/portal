@@ -49,7 +49,7 @@ export function AppShellSkeleton() {
         <SkeletonBar className="h-4 w-24" />
         <span className="size-11" />
       </div>
-      <div className="min-w-0 flex-1">
+      <div className="app-content min-w-0 flex-1">
         <RouteSkeleton kind={kind} />
       </div>
     </>

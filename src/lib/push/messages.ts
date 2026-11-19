@@ -150,6 +150,16 @@ export const pushMessages = {
       tag: `comment:${input.postId}`,
     };
   },
+  /** 내 댓글(원 댓글)에 다른 사람이 답글을 달았다. 같은 게시물 댓글 알림과 tag를 함께 써 기기에는 최신 한 건만 남는다. */
+  commentReplied(input: { postId: string; authorName: string | null; title: string }): PushMessage {
+    return {
+      category: "community_comment",
+      title: "내 댓글에 답글",
+      body: `${person(input.authorName, "누군가")}님 답글: ${quoted(input.title, "내 댓글")}`,
+      url: `/community/${encodeURIComponent(input.postId)}`,
+      tag: `comment:${input.postId}`,
+    };
+  },
   test(): PushMessage {
     return { category: "test", title: "알림 테스트", body: "이 기기에서 포탈 알림을 받을 수 있습니다.", url: "/dashboard", tag: "test" };
   },
