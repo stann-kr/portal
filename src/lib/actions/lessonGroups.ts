@@ -107,7 +107,7 @@ export async function deleteLessonGroupAction(groupId: string): Promise<LessonGr
     // 그룹과 그룹 캘린더 매핑이 남았으니 멈춘 Google 변경 알림을 되돌린다.
     if (result.error === "HAS_NOTES") await restoreGroupCalendarChannels(groupId);
     return result.error === "HAS_NOTES"
-      ? { ok: false, error: `그룹 노트 ${result.noteCount}개가 남아 있어 해제할 수 없습니다. 휴지통까지 비운 뒤 해제해 주세요.` }
+      ? { ok: false, error: `그룹 노트 ${result.noteCount}개가 남아 있어 해제할 수 없습니다. 노트를 휴지통에 넣고 30일이 지나 비운 뒤 해제할 수 있습니다.` }
       : { ok: false, error: "그룹이 이미 해제되었습니다." };
   }
   revalidateGroups();

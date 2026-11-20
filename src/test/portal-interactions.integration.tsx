@@ -91,6 +91,9 @@ let StudentInviteControl: typeof import("@/components/admin/StudentInviteControl
 let archiveAction: typeof import("@/lib/actions/students").archiveStudent = async () => ({ ok: false, error: "테스트 미설정" });
 let restoreAction: typeof import("@/lib/actions/students").restoreStudent = async () => ({ ok: false, error: "테스트 미설정" });
 let StudentArchiveControl: typeof import("@/components/admin/StudentArchiveControl").StudentArchiveControl;
+let LessonGroupDialog: typeof import("@/components/admin-portal/LessonGroupDialog").LessonGroupDialog;
+let saveGroup: typeof import("@/lib/actions/lessonGroups").saveLessonGroupAction = async () => ({ ok: true });
+let removeGroup: typeof import("@/lib/actions/lessonGroups").deleteLessonGroupAction = async () => ({ ok: true });
 let deleteAction: typeof import("@/lib/actions/students").deleteStudent = async () => ({ ok: false, error: "테스트 미설정" });
 let StudentDeleteControl: typeof import("@/components/admin/StudentDeleteControl").StudentDeleteControl;
 let ArchivedStudentsClient: typeof import("@/app/(app)/dashboard/admin/students/archived/ArchivedStudentsClient").ArchivedStudentsClient;
@@ -232,6 +235,13 @@ mock.module("@/lib/actions/students", { namedExports: {
   restoreStudent: (...args: Parameters<typeof restoreAction>) => restoreAction(...args),
   deleteStudent: (...args: Parameters<typeof deleteAction>) => deleteAction(...args),
 } });
+mock.module("@/lib/actions/lessonGroups", { namedExports: {
+  getLessonGroups: async () => [],
+  getStudentLessonGroup: async () => null,
+  getMyHomeLessonGroup: async () => null,
+  saveLessonGroupAction: (...args: Parameters<typeof saveGroup>) => saveGroup(...args),
+  deleteLessonGroupAction: (...args: Parameters<typeof removeGroup>) => removeGroup(...args),
+} });
 mock.module("@/lib/actions/invite", { namedExports: {
   getInviteStatus: (...args: Parameters<typeof inviteStatus>) => inviteStatus(...args),
   completeInvite: (...args: Parameters<typeof completeInviteAction>) => completeInviteAction(...args),
@@ -360,6 +370,7 @@ before(async () => {
   ({ StudentPasswordResetControl } = await import("@/components/admin/StudentPasswordResetControl"));
   ({ StudentInviteControl } = await import("@/components/admin/StudentInviteControl"));
   ({ StudentArchiveControl } = await import("@/components/admin/StudentArchiveControl"));
+  ({ LessonGroupDialog } = await import("@/components/admin-portal/LessonGroupDialog"));
   ({ StudentDeleteControl } = await import("@/components/admin/StudentDeleteControl"));
   ({ ArchivedStudentsClient } = await import("@/app/(app)/dashboard/admin/students/archived/ArchivedStudentsClient"));
   flashNotice = await import("@/lib/flash-notice");
@@ -4802,6 +4813,95 @@ test("학생 한 명 일정도 돌아와 다시 읽으면 다른 곳에서 지�
   truncated = false;
   await returnToPage();
   assert.deepEqual(shownIds(), ["kept"], "읽은 기간 안에서 응답에 없는 항목은 지운다");
+});
+
+test("그룹 해제는 창 안 확인을 거치고, 막히면 남은 그룹 노트와 기한을 알리며, 저장·해제 결과는 목록 위 한 줄로 남긴다", async (context) => {
+  const removals: string[] = [];
+  removeGroup = async (groupId) => {
+    removals.push(groupId);
+    return removals.length === 1
+      ? { ok: false, error: "그룹 노트 3개가 남아 있어 해제할 수 없습니다. 노트를 휴지통에 넣고 30일이 지나 비운 뒤 해제할 수 있습니다." }
+      : { ok: true };
+  };
+  saveGroup = async () => ({ ok: true, id: "group-1" });
+  context.after(() => {
+    removeGroup = async () => ({ ok: true });
+    saveGroup = async () => ({ ok: true });
+  });
+  const group = { id: "group-1", name: "화요일반", memberIds: ["student-1", "student-2"] };
+  const students = [{ id: "student-1", label: "김학생" }, { id: "student-2", label: "이학생" }];
+  function GroupScreen() {
+    const [open, setOpen] = useState(true);
+    const [notice, setNotice] = useState<string | null>(null);
+    const noticeRef = useRef<HTMLParagraphElement>(null);
+    return (
+      <div>
+        <p ref={noticeRef} role="status" tabIndex={-1} data-testid="group-notice">{notice ?? ""}</p>
+        <button type="button" onClick={() => setOpen(true)}>그룹 다시 열기</button>
+        {open ? (
+          <LessonGroupDialog
+            open
+            onOpenChange={setOpen}
+            group={group}
+            groups={[group]}
+            students={students}
+            onDone={setNotice}
+            focusAfterDissolve={() => noticeRef.current?.focus()}
+          />
+        ) : null}
+      </div>
+    );
+  }
+  await render(context, <GroupScreen />);
+  const dialog = () => browser.document.querySelector('[role="dialog"]');
+  const notice = () => browser.document.querySelector('[data-testid="group-notice"]');
+
+  // 저장은 바로 하고 결과를 목록 위에 남긴다.
+  await press("저장");
+  assert.equal(dialog(), null);
+  assert.equal(notice()?.textContent, "화요일반을 저장했습니다.");
+  await press("그룹 다시 열기");
+
+  // "그룹 해제"는 바로 실행하지 않고 창 안에 확인을 펼친다. 초점은 확인의 취소에서 시작한다.
+  await press("그룹 해제");
+  assert.equal(removals.length, 0);
+  assert.equal(button("그룹 해제").getAttribute("aria-expanded"), "true");
+  const panel = () => dialog()?.querySelector('[role="group"]');
+  assert.equal(
+    panel()?.querySelector("p")?.textContent,
+    "화요일반을 해제할까요? 멤버의 레슨·과제·노트는 학생별로 그대로 남고, 그룹 캘린더 연결(Google·iCloud)은 풀립니다.",
+  );
+  assert.equal(browser.document.activeElement?.textContent, "취소");
+  assert.ok(panel()?.contains(browser.document.activeElement));
+
+  // 확인에서 누른 Esc는 창이 아니라 확인만 닫는다.
+  await act(async () => {
+    // 브라우저의 keydown처럼 취소할 수 있는 이벤트로 보낸다(창은 취소된 Esc를 무시한다).
+    browser.document.activeElement?.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+  });
+  await settle();
+  assert.ok(dialog(), "창은 열려 있다");
+  assert.equal(panel(), null);
+  assert.equal(browser.document.activeElement?.textContent, "그룹 해제");
+
+  // 그룹 노트가 남아 막히면 개수와 비우는 기한을 알리고 창은 그대로 둔다.
+  await press("그룹 해제");
+  await press("해제");
+  assert.deepEqual(removals, ["group-1"]);
+  assert.equal(
+    dialog()?.querySelector('[role="alert"]')?.textContent,
+    "그룹 노트 3개가 남아 있어 해제할 수 없습니다. 노트를 휴지통에 넣고 30일이 지나 비운 뒤 해제할 수 있습니다.",
+  );
+  assert.equal(panel(), null, "확인은 닫힌다");
+
+  // 해제하면 창을 닫고, 사라질 그룹 줄 대신 결과 줄로 초점을 옮긴다.
+  await press("그룹 해제");
+  await press("해제");
+  await settle();
+  assert.deepEqual(removals, ["group-1", "group-1"]);
+  assert.equal(dialog(), null);
+  assert.equal(notice()?.textContent, "화요일반을 해제했습니다.");
+  assert.equal(browser.document.activeElement, notice());
 });
 
 test("수강 종료는 취소 우선 확인을 거치고, 성공하면 이동한 학생 목록에 결과 안내를 한 번 남긴다", async (context) => {

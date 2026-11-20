@@ -7,7 +7,7 @@
  */
 "use client";
 
-import { useDeferredValue, useEffect, useState } from "react";
+import { useDeferredValue, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { ChevronRight, Ellipsis, Plus, Search, UserPlus, Users } from "lucide-react";
@@ -177,7 +177,9 @@ export function StudentManagementSection({
   showCurriculum?: boolean;
 }) {
   // 학생 상세에서 수강을 종료하고 돌아왔을 때만 있는 안내. 처음 그릴 때 읽고, 다음 방문에는 보이지 않게 지운다.
-  const [notice] = useState(() => peekFlashNotice(STUDENT_LIST_NOTICE_KEY));
+  // 그룹 저장·해제 결과도 같은 줄에 알린다.
+  const [notice, setNotice] = useState(() => peekFlashNotice(STUDENT_LIST_NOTICE_KEY));
+  const noticeRef = useRef<HTMLParagraphElement>(null);
   useEffect(() => {
     clearFlashNotice(STUDENT_LIST_NOTICE_KEY);
   }, []);
@@ -194,11 +196,17 @@ export function StudentManagementSection({
   return (
     <div className="px-5 pb-8 pt-4 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-14">
       <div className="flex max-w-[1080px] flex-col gap-1 md:gap-6 md:mx-auto">
-        {notice ? (
-          <p role="status" className="mb-2 flex min-h-9 items-center rounded-md bg-sidebar px-3 py-2 text-ui text-foreground md:mb-0">
-            {notice}
-          </p>
-        ) : null}
+        {/* 안내가 없을 때도 자리를 두어 그룹 저장·해제 결과가 읽히게 한다. */}
+        <p
+          ref={noticeRef}
+          role="status"
+          tabIndex={-1}
+          className={notice
+            ? "mb-2 flex min-h-9 items-center rounded-md bg-sidebar px-3 py-2 text-ui text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:mb-0"
+            : "sr-only"}
+        >
+          {notice ?? ""}
+        </p>
         <header className="flex flex-wrap items-end justify-between gap-4">
           <div className="sr-only md:not-sr-only md:flex md:flex-col md:gap-1">
             <h1 className="text-display font-semibold tracking-display text-foreground">학생</h1>
@@ -409,6 +417,8 @@ export function StudentManagementSection({
         group={dialog.group}
         groups={lessonGroups}
         students={studentChoices}
+        onDone={setNotice}
+        focusAfterDissolve={() => noticeRef.current?.focus({ preventScroll: true })}
       /> : null}
     </div>
   );

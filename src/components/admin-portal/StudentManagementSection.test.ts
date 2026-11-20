@@ -130,7 +130,8 @@ test("roster 행은 요약 열과 더 보기 메뉴의 canonical 학생 링크�
     search.dispatchEvent(new browserWindow.Event("input", { bubbles: true }) as unknown as Event);
   });
   assert.equal(rows().length, 0);
-  assert.match(container.querySelector('[role="status"]')?.textContent ?? "", /맞는 수강생이 없습니다/u);
+  // 목록 위 결과 줄(그룹 저장·해제 안내)도 status라 빈 결과 안내를 내용으로 찾는다.
+  assert.match([...container.querySelectorAll('[role="status"]')].map((element) => element.textContent).join("|"), /맞는 수강생이 없습니다/u);
 
   // 스위치를 켜면 현재 진도 열이 돌아온다.
   await act(async () => {
