@@ -1129,6 +1129,38 @@ test("calendar preserves its date, view and filters across view tabs and admin s
   assert.equal(button("노트 표시하기").getAttribute("aria-pressed"), "false");
 });
 
+test("admin schedule deep link opens that student's lesson once and drops it for another student", async (context) => {
+  browser.history.replaceState({}, "", "/dashboard/admin?section=schedule&view=calendar&student=student&date=2024-02-29&item=PORTAL%3ALESSON%3Alesson-1");
+  const lesson: UnifiedItem = {
+    id: "lesson-1", type: "EVENT", subType: "LESSON", title: "레슨", date: new Date("2024-02-29T10:00:00.000Z"), endDate: null, metadata: {},
+    space: { studentId: "student", label: "학생" }, source: { kind: "PORTAL", entity: "LESSON", label: "포탈" },
+  };
+  loadStudentCalendar = async () => [lesson];
+  context.after(() => { loadStudentCalendar = async () => []; });
+  const roster = (id: string, displayName: string) => ({ id, email: `${id}@example.test`, displayName, createdAt: null, currentModule: null, nextLessonDate: null, pendingFeedbackCount: 0, openQnaCount: 0 });
+  await render(context, <AdminPortalClient
+    initialLocation={resolvePortalLocation("admin", { section: "schedule", view: "calendar" })}
+    initialStudentId="student"
+    initialCalendarDeepLink={{ date: "2024-02-29", itemKey: "PORTAL:LESSON:lesson-1" }}
+    initialUnifiedItems={[lesson]}
+    adminId="admin" qnaThreads={[]} pendingAssignments={[]} referenceTime={new Date("2024-02-01T00:00:00.000Z")}
+    students={[roster("student", "학생"), roster("other", "다른학생")]}
+  />);
+  const calendarTitle = () => browser.document.querySelector("[data-calendar-title]")?.textContent ?? "";
+  const deepLinkTitle = calendarTitle();
+  assert.match(deepLinkTitle, /2월 25일/u, "알림의 레슨 날짜가 있는 주를 연다");
+  // 이 파일은 상세 본문(UnifiedItemDetail)을 비워 두므로 열린 패널의 제목으로 확인한다.
+  const openPanelTitle = () => browser.document.querySelector('[role="dialog"] h2')?.textContent ?? null;
+  assert.equal(openPanelTitle(), "레슨", "옮긴 레슨 상세가 열려 있다");
+
+  await act(async () => { navigateWithinPage("/dashboard/admin?section=schedule&view=calendar&student=other"); });
+  await settle();
+  await act(async () => { navigateWithinPage("/dashboard/admin?section=schedule&view=calendar&student=student"); });
+  await settle();
+  assert.equal(openPanelTitle(), null, "다른 학생을 거쳐 돌아오면 알림의 레슨을 다시 열지 않는다");
+  assert.notEqual(calendarTitle(), deepLinkTitle, "알림의 날짜로 다시 가지 않는다");
+});
+
 test("top bar + opens today's quick create or lesson booking once and clears the create address", async (context) => {
   browser.history.replaceState({}, "", "/dashboard/student?section=workspace&view=calendar&create=today");
   const student = await render(context, <StudentPortalClient

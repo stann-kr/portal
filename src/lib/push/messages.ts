@@ -1,6 +1,6 @@
 import { formatKstMonthDayTime } from "@/lib/kst-format";
 import { toKstDateInputValue } from "@/lib/date-input";
-import { calendarItemHref } from "@/lib/portal-location";
+import { adminCalendarItemHref, calendarItemHref } from "@/lib/portal-location";
 import { assignmentTaskHref } from "@/lib/student-space-routes";
 import { getLegacyCalendarRedirect } from "@/lib/legacy-dashboard-routes";
 import { ADMIN_WORK_QUEUE_PATH, buildAssignmentQueueHref } from "@/lib/admin-work-queue";
@@ -110,8 +110,18 @@ export const pushMessages = {
       tag: `qna:${input.threadId}`,
     };
   },
-  lessonScheduled(input: { lessonId: string; scheduledAt: Date; changed: boolean; studentName?: string | null; toAdmin?: boolean }): PushMessage {
+  lessonScheduled(input: {
+    lessonId: string;
+    scheduledAt: Date;
+    changed: boolean;
+    studentName?: string | null;
+    toAdmin?: boolean;
+    /** 관리자 알림이 열 학생 일정. 없으면 관리자 일정 첫 화면. */
+    studentId?: string | null;
+  }): PushMessage {
     const when = formatKstMonthDayTime(input.scheduledAt);
+    const date = toKstDateInputValue(input.scheduledAt);
+    const item = `PORTAL:LESSON:${input.lessonId}`;
     const body = input.toAdmin
       ? `${person(input.studentName, "학생")}님이 레슨을 옮겼습니다: ${when}`
       : input.changed
@@ -121,10 +131,10 @@ export const pushMessages = {
       category: "lesson",
       title: input.changed ? "레슨 일정 변경" : "새 레슨 일정",
       body,
-      // 학생은 그 날짜로 이동해 레슨 상세를 연다(레슨이 지워졌으면 날짜만). 관리자 캘린더는 아직 날짜 딥링크가 없다.
+      // 그 날짜로 이동해 레슨 상세를 연다(레슨이 지워졌으면 날짜만). 관리자는 그 학생 일정을 고른 채로 연다.
       url: input.toAdmin
-        ? getLegacyCalendarRedirect("admin")
-        : calendarItemHref(toKstDateInputValue(input.scheduledAt), `PORTAL:LESSON:${input.lessonId}`),
+        ? (input.studentId ? adminCalendarItemHref(input.studentId, date, item) : getLegacyCalendarRedirect("admin"))
+        : calendarItemHref(date, item),
       tag: `lesson:${input.lessonId}`,
     };
   },

@@ -182,9 +182,13 @@ test("메시지: 눌렀을 때 열 포탈 경로와 같은 대상의 알림을 �
   );
   const lateNight = pushMessages.lessonScheduled({ lessonId: "l", scheduledAt: new Date("2026-11-10T16:30:00Z"), changed: false });
   assert.match(lateNight.url, /date=2026-11-11&/u, "UTC 자정 뒤 KST 날짜를 쓴다");
-  const moved = pushMessages.lessonScheduled({ lessonId: "l", scheduledAt: new Date("2026-11-10T05:00:00Z"), changed: true, toAdmin: true, studentName: "김학생" });
+  const moved = pushMessages.lessonScheduled({ lessonId: "l", scheduledAt: new Date("2026-11-10T05:00:00Z"), changed: true, toAdmin: true, studentId: "s 1", studentName: "김학생" });
   assert.equal(moved.body, "김학생님이 레슨을 옮겼습니다: 11.10 14:00");
-  assert.equal(moved.url, "/dashboard/admin?section=schedule&view=calendar", "관리자 알림은 관리자 캘린더(정식 주소)");
+  assert.equal(
+    moved.url,
+    "/dashboard/admin?section=schedule&view=calendar&student=s+1&date=2026-11-10&item=PORTAL%3ALESSON%3Al",
+    "관리자 알림은 그 학생 일정의 그 날짜에서 옮긴 레슨 상세를 연다",
+  );
   assert.equal(
     pushMessages.assignmentAssigned({ taskId: "t 1", title: "셋", dueAt: null }).url,
     "/dashboard/student?section=workspace&view=assignments&task=t%201",

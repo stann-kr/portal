@@ -191,6 +191,11 @@ test("레슨: 관리자가 잡거나 옮기면 학생에게, 학생이 옮기면
   await lessonActions.moveLesson(lessonId, "student-1", "2026-11-12T16:00");
   assert.deepEqual(sent[2]!.audience, { kind: "role", role: "admin" });
   assert.match(sent[2]!.message.body, /^김학생님이 레슨을 옮겼습니다: /u);
+  assert.equal(
+    sent[2]!.message.url,
+    `/dashboard/admin?section=schedule&view=calendar&student=student-1&date=2026-11-12&item=PORTAL%3ALESSON%3A${lessonId}`,
+    "관리자는 알림에서 그 학생 일정의 옮긴 레슨을 바로 연다",
+  );
   assert.equal(sent[2]!.exclude, "student-1");
 
   // 다른 학생의 레슨은 옮기지 못하고 알림도 없다.
