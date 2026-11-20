@@ -14,7 +14,9 @@ import {
   qnaThreads,
   type QnaStatus,
 } from "@/db/schema";
-import { requireAuth, requireStudentTarget } from "@/lib/auth-guard";
+import { requireAdmin, requireAuth, requireStudentTarget } from "@/lib/auth-guard";
+import type { AdminQueueThread } from "@/lib/admin-work-queue";
+import { activeStudentProfileCondition } from "@/lib/student-status";
 import {
   CREATION_OPERATION_FIELD,
   deriveCreationResourceId,
@@ -397,6 +399,28 @@ export async function getQnaThreadEvents(threadId: string) {
     .leftJoin(qnaReplies, eq(qnaThreadEvents.replyId, qnaReplies.id))
     .where(eq(qnaThreadEvents.threadId, threadId))
     .orderBy(desc(qnaThreadEvents.eventNumber));
+}
+
+/**
+ * 업무함 "미답변 Q&A"와 같은 질문(수강 중인 학생의 답변 대기, 휴지통 제외). 관리자 전용.
+ * 업무함에서 연 Q&A가 답한 뒤 다음 질문으로 이어 줄 때 쓴다(캔버스 UxReview1120Admin ①).
+ */
+export async function getOpenQnaQueue(): Promise<AdminQueueThread[]> {
+  await requireAdmin();
+  return createDb()
+    .select({
+      id: qnaThreads.id,
+      title: qnaThreads.title,
+      status: qnaThreads.status,
+      createdAt: qnaThreads.createdAt,
+      updatedAt: qnaThreads.updatedAt,
+      studentId: qnaThreads.studentId,
+      studentName: profiles.displayName,
+      studentEmail: profiles.email,
+    })
+    .from(qnaThreads)
+    .innerJoin(profiles, eq(qnaThreads.studentId, profiles.id))
+    .where(and(eq(qnaThreads.status, "OPEN"), isNull(qnaThreads.deletedAt), activeStudentProfileCondition()));
 }
 
 export async function getOpenThreadCount(): Promise<number> {

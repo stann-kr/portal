@@ -43,6 +43,11 @@ function assignmentTime(assignment: PendingFeedbackAssignment) {
   return assignment.submittedAt?.getTime() ?? Number.MAX_SAFE_INTEGER;
 }
 
+/** 업무함 "미답변 Q&A" 순서(오래 기다린 질문 먼저). getAdminWorkQueue와 같은 기준. */
+export function sortOpenThreads<T extends AdminQueueThread>(threads: readonly T[]): T[] {
+  return [...threads].sort((a, b) => threadTime(a) - threadTime(b));
+}
+
 export function getAdminWorkQueue(
   students: StudentRosterStat[],
   threads: AdminQueueThread[],
@@ -50,9 +55,7 @@ export function getAdminWorkQueue(
   referenceTime: Date,
 ): AdminWorkQueue {
   const weekEnd = new Date(referenceTime.getTime() + 7 * 24 * 60 * 60 * 1000);
-  const openThreads = threads
-    .filter((thread) => thread.status === "OPEN")
-    .sort((a, b) => threadTime(a) - threadTime(b));
+  const openThreads = sortOpenThreads(threads.filter((thread) => thread.status === "OPEN"));
   const sortedPendingAssignments = sortPendingAssignments(pendingAssignments);
   const upcomingLessons = students
     .filter(
@@ -103,5 +106,19 @@ export function getNextPendingAssignment<T extends PendingFeedbackAssignment>(
   currentId: string,
 ): { remaining: number; next: T | null } {
   const rest = sortPendingAssignments(pending.filter((assignment) => assignment.id !== currentId));
+  return { remaining: rest.length, next: rest[0] ?? null };
+}
+
+/** 업무함에서 연 Q&A 주소. `from=work`가 있으면 답한 뒤 다음 미답변 질문으로 이어 준다(캔버스 UxReview1120Admin ①). */
+export function buildQnaQueueHref(threadId: string, returnTo: string): string {
+  return `/dashboard/qna/${encodeURIComponent(threadId)}?from=work&returnTo=${encodeURIComponent(returnTo)}`;
+}
+
+/** 지금 연 질문을 뺀 남은 미답변 질문 수와 업무함 순서의 다음 질문. 남은 것이 없으면 next는 null이다. */
+export function getNextOpenThread<T extends AdminQueueThread>(
+  open: readonly T[],
+  currentId: string,
+): { remaining: number; next: T | null } {
+  const rest = sortOpenThreads(open.filter((thread) => thread.id !== currentId && thread.status === "OPEN"));
   return { remaining: rest.length, next: rest[0] ?? null };
 }

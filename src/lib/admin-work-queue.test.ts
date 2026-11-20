@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildAssignmentQueueHref,
+  buildQnaQueueHref,
   getAdminWorkQueue,
+  getNextOpenThread,
   getNextPendingAssignment,
   type AdminQueueThread,
   type PendingFeedbackAssignment,
@@ -123,4 +125,18 @@ test("다음 항목은 지금 제출을 빼고 업무함 순서(오래된 제출
   assert.equal(getNextPendingAssignment([row("current", null)], "current").next, null);
   assert.equal(getNextPendingAssignment([], "current").remaining, 0);
   assert.equal(buildAssignmentQueueHref("a b", "/dashboard/admin?section=work"), "/dashboard/student/assignments/a%20b?from=work&returnTo=%2Fdashboard%2Fadmin%3Fsection%3Dwork");
+});
+
+test("업무함에서 연 Q&A는 지금 질문을 뺀 답변 대기 질문을 업무함 순서(오래 기다린 질문 먼저)로 이어 준다", () => {
+  const open = [
+    thread("current", "OPEN", "2026-08-01T00:00:00.000Z"),
+    thread("newer", "OPEN", "2026-08-04T00:00:00.000Z"),
+    thread("answered", "ANSWERED", "2026-07-01T00:00:00.000Z"),
+    thread("older", "OPEN", "2026-08-02T00:00:00.000Z"),
+  ];
+  const result = getNextOpenThread(open, "current");
+  assert.equal(result.remaining, 2);
+  assert.equal(result.next?.id, "older");
+  assert.deepEqual(getNextOpenThread([thread("current", "OPEN", "2026-08-01T00:00:00.000Z")], "current"), { remaining: 0, next: null });
+  assert.equal(buildQnaQueueHref("t 1", "/dashboard/admin?section=work"), "/dashboard/qna/t%201?from=work&returnTo=%2Fdashboard%2Fadmin%3Fsection%3Dwork");
 });

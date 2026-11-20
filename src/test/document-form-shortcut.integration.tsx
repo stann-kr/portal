@@ -914,6 +914,29 @@ test("Q&A 충돌 응답의 version만 채택하지 않고 서버 상태와 답�
   assert.equal(statusButton("답변 완료").getAttribute("aria-pressed"), "true");
 });
 
+test("업무함에서 연 Q&A는 돌아가기가 업무함으로이고, 답한 뒤에만 다음 미답변 질문 줄이 보인다", { concurrency: false }, async (context) => {
+  const screen = (props: Partial<React.ComponentProps<typeof ThreadDetailClient>>) => <ThreadDetailClient actorId="admin-queue" threadId="thread-queue" title="큐 포인트는 어디에 찍나요?" status="ANSWERED" version={1} isAdmin replies={[]} deletedAt={null} studentName="김학생" createdAt={null} returnTo="/dashboard/admin?section=work" {...props} />;
+  const harness = await renderForm(context, screen({
+    backToWorkQueue: true,
+    queueNext: { remaining: 2, queueHref: "/dashboard/admin?section=work", next: { href: "/dashboard/qna/thread-2?from=work", label: "이학생 · 헤드폰 볼륨이 작아요" } },
+  }));
+  const location = harness.container.querySelector('nav[aria-label="위치"]');
+  assert.equal(location?.textContent, "업무함으로");
+  assert.equal(location?.querySelector("a")?.getAttribute("href"), "/dashboard/admin?section=work");
+  const next = harness.container.querySelector('nav[aria-label="다음 미답변 질문"]');
+  assert.match(next?.textContent ?? "", /남은 미답변 질문 2건/u);
+  assert.equal(next?.querySelector("a")?.getAttribute("href"), "/dashboard/qna/thread-2?from=work");
+  assert.equal(next?.querySelector("a")?.textContent, "다음: 이학생 · 헤드폰 볼륨이 작아요");
+
+  await harness.rerender(screen({ backToWorkQueue: true, queueNext: { remaining: 0, queueHref: "/dashboard/admin?section=work", next: null } }));
+  assert.equal(harness.container.querySelector('nav[aria-label="다음 미답변 질문"]')?.textContent, "미답변 질문을 모두 처리했습니다 · 업무함으로");
+
+  // Q&A 목록에서 열면 위치 줄은 그대로이고 다음 질문 줄이 없다.
+  await harness.rerender(screen({ returnTo: "/dashboard/qna" }));
+  assert.match(harness.container.querySelector('nav[aria-label="위치"]')?.textContent ?? "", /^Q&A\/큐 포인트는 어디에 찍나요\?$/u);
+  assert.equal(harness.container.querySelector('nav[aria-label="다음 미답변 질문"]'), null);
+});
+
 test("Q&A 휴지통 충돌은 오래된 요청을 잠그고 전체 snapshot 재조회 뒤에만 새 요청을 허용한다", { concurrency: false }, async (context) => {
   const requests: Parameters<typeof changeQnaLifecycle>[] = [];
   let throwNext = true;

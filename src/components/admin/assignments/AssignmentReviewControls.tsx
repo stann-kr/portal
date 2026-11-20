@@ -3,7 +3,7 @@
  * @description 과제 "확인함"(AssignmentAck 보드) 화면 조각.
  * - AssignmentReviewStatusRow: Stann 과제 상세 머리의 상태 줄(피드백 대기 + 확인함으로 표시 / 확인함 + 확인 취소 / 피드백 완료).
  * - AssignmentAcknowledgedNotice: 학생 과제 상세의 "Stann이 확인했습니다" 안내.
- * - QueueNextBar: 업무함에서 들어와 처리한 뒤 다음 피드백 대기로 이어 주는 막대.
+ * - QueueNextBar: 업무함에서 들어와 처리한 뒤 다음 피드백 대기(또는 미답변 질문)로 이어 주는 막대.
  */
 "use client";
 
@@ -125,16 +125,23 @@ export type QueueNext = {
   queueHref: string;
 };
 
-export function QueueNextBar({ queueNext }: { queueNext: QueueNext }) {
+const QUEUE_NEXT_LABELS = {
+  assignment: { nav: "다음 피드백 대기", remaining: "남은 피드백 대기", done: "피드백 대기를 모두 처리했습니다" },
+  qna: { nav: "다음 미답변 질문", remaining: "남은 미답변 질문", done: "미답변 질문을 모두 처리했습니다" },
+} as const;
+
+/** 업무함에서 연 과제·Q&A를 처리한 뒤 업무함 순서의 다음 항목으로 이어 준다(캔버스 AssignmentAck·UxReview1120Admin ①). */
+export function QueueNextBar({ queueNext, kind = "assignment" }: { queueNext: QueueNext; kind?: keyof typeof QUEUE_NEXT_LABELS }) {
+  const labels = QUEUE_NEXT_LABELS[kind];
   return (
     <nav
-      aria-label="다음 피드백 대기"
+      aria-label={labels.nav}
       className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-lg border border-border px-4 py-3.5 md:max-w-[760px]"
     >
       {queueNext.next ? (
         <>
           <span className="text-ui text-secondary-foreground">
-            남은 피드백 대기 <span className="font-mono tabular-nums">{queueNext.remaining}</span>건
+            {labels.remaining} <span className="font-mono tabular-nums">{queueNext.remaining}</span>건
           </span>
           <Link
             href={queueNext.next.href}
@@ -146,7 +153,7 @@ export function QueueNextBar({ queueNext }: { queueNext: QueueNext }) {
         </>
       ) : (
         <span className="text-ui text-secondary-foreground">
-          피드백 대기를 모두 처리했습니다 ·{" "}
+          {labels.done} ·{" "}
           <Link href={queueNext.queueHref} className="inline-flex h-11 items-center underline underline-offset-[3px] hover:text-foreground md:h-auto">
             업무함으로
           </Link>

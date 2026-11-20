@@ -6,7 +6,9 @@ export const dynamic = "force-dynamic";
 
 import { getActiveAuthSession } from "@/lib/auth-guard";
 import { redirect } from "next/navigation";
-import { getQnaThreadIncludingTrash } from "@/lib/actions/qna";
+import { getOpenQnaQueue, getQnaThreadIncludingTrash } from "@/lib/actions/qna";
+import { ADMIN_WORK_QUEUE_PATH, buildQnaQueueHref, getNextOpenThread } from "@/lib/admin-work-queue";
+import type { QueueNext } from "@/components/admin/assignments/AssignmentReviewControls";
 import { ThreadDetailClient } from "@/components/qna/ThreadDetailClient";
 import { CollabNotifyRefresh } from "@/components/app-shell/CollabNotifyRefresh";
 import { RouteAutoRefresh } from "@/components/app-shell/RouteAutoRefresh";
@@ -22,7 +24,7 @@ export default async function QnaThreadPage({
   searchParams,
 }: {
   params: Promise<{ threadId: string }>;
-  searchParams: Promise<{ returnTo?: string }>;
+  searchParams: Promise<{ returnTo?: string; from?: string }>;
 }) {
   const session = await getActiveAuthSession();
   if (!session?.user) redirect("/login");
@@ -37,6 +39,26 @@ export default async function QnaThreadPage({
 
   const isAdmin = session.user.role === "admin";
   const status = thread.status as QnaStatus;
+
+  // 업무함에서 연 질문에 답하면(답변 대기가 아니게 되면) 업무함 순서의 다음 미답변 질문으로 이어 준다(캔버스 UxReview1120Admin ①).
+  // Q&A 목록·알림에서 연 경우(from=work 없음)에는 보이지 않는다.
+  let queueNext: QueueNext | undefined;
+  if (isAdmin && query.from === "work" && status !== "OPEN" && !thread.deletedAt) {
+    const open = await getOpenQnaQueue().catch(() => null);
+    if (open) {
+      const { remaining, next } = getNextOpenThread(open, threadId);
+      queueNext = {
+        remaining,
+        queueHref: returnTo,
+        next: next
+          ? {
+              href: buildQnaQueueHref(next.id, returnTo),
+              label: `${next.studentName?.trim() || next.studentEmail?.split("@")[0] || "이름 미등록"} · ${next.title}`,
+            }
+          : null,
+      };
+    }
+  }
 
   const studentName =
     thread.studentName ?? thread.studentEmail?.split("@")[0] ?? "학생";
@@ -64,6 +86,8 @@ export default async function QnaThreadPage({
           studentName={studentName}
           createdAt={thread.createdAt?.toISOString() ?? null}
           returnTo={returnTo}
+          backToWorkQueue={returnTo === ADMIN_WORK_QUEUE_PATH}
+          queueNext={queueNext}
           guideAnchor={thread.guideAnchor}
         />
       </div>

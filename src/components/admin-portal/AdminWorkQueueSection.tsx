@@ -7,7 +7,7 @@ import type { ReactNode } from "react";
 import { Check, FileText } from "lucide-react";
 import { setAssignmentReviewed } from "@/lib/actions/assignment-review";
 import { buildLessonNoteLink, LESSON_NOTE_LINK_CLASS } from "@/lib/lesson-note-links";
-import { ADMIN_WORK_QUEUE_PATH, buildAssignmentQueueHref } from "@/lib/admin-work-queue";
+import { ADMIN_WORK_QUEUE_PATH, buildAssignmentQueueHref, buildQnaQueueHref } from "@/lib/admin-work-queue";
 import { UndoToast, type UndoToastMessage } from "./UndoToast";
 import {
   getAdminWorkQueue,
@@ -268,7 +268,7 @@ export function AdminWorkQueueSection({
                   return (
                     <li key={thread.id}>
                       <Link
-                        href={`/dashboard/qna/${thread.id}?returnTo=${encodeURIComponent(WORK_QUEUE_PATH)}`}
+                        href={buildQnaQueueHref(thread.id, WORK_QUEUE_PATH)}
                         className={QUEUE_ROW_CLASS}
                       >
                         <QueueRowTitle>{thread.title}</QueueRowTitle>

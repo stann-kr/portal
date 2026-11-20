@@ -10,7 +10,7 @@ import { GuideAnchorNote, type QnaGuideAnchorView } from "@/components/qna/Guide
 import { useActionState, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowUp, Check, History, RotateCcw, Trash2 } from "lucide-react";
+import { ArrowLeft, ArrowUp, Check, History, RotateCcw, Trash2 } from "lucide-react";
 import { Button, buttonClassName } from "@/components/ui/button";
 import { CopyLinkButton } from "@/components/ui/CopyLinkButton";
 import { MobileTopBar } from "@/components/app-shell/AppSidebar";
@@ -49,6 +49,7 @@ import { abandonMediaUpload } from "@/lib/actions/upload";
 import { formatKst, formatKstShortDate } from "@/lib/kst-format";
 import { cn } from "@/lib/utils";
 import { CollabEditorPending } from "@/components/editor/CollabEditorPending";
+import { QueueNextBar, type QueueNext } from "@/components/admin/assignments/AssignmentReviewControls";
 
 /** 넓은 화면 머리와 좁은 화면 메뉴가 같은 이름을 쓴다. 휴지통 이동은 캔버스대로 아이콘 버튼의 이름이다. */
 const LIFECYCLE_TRIGGER_LABELS: Record<QnaLifecycleKind, string> = {
@@ -88,6 +89,10 @@ interface ThreadDetailClientProps {
   studentName: string;
   createdAt: string | null;
   returnTo: string;
+  /** 업무함에서 연 질문이면 돌아가기 이름이 "업무함으로"가 된다(캔버스 UxReview1120Admin ①). */
+  backToWorkQueue?: boolean;
+  /** 업무함에서 연 질문에 답한 뒤 다음 미답변 질문으로 이어 주는 줄. 그 밖에는 없다. */
+  queueNext?: QueueNext;
   /** 가이드 구간에서 시작한 질문이면 그 위치. */
   guideAnchor?: QnaGuideAnchorView | null;
 }
@@ -110,6 +115,8 @@ function ThreadDetailContent({
   studentName,
   createdAt,
   returnTo,
+  backToWorkQueue = false,
+  queueNext,
   guideAnchor,
 }: ThreadDetailClientProps) {
   // 같은 사람의 이 질문 답글 작성본은 기기와 관계없이 하나다(room `draft:qna-reply:<본인>:<질문>`).
@@ -258,7 +265,7 @@ function ThreadDetailContent({
       : isAdmin
         ? "답변 등록"
         : "질문 추가";
-  const backLabel = returnTo.startsWith("/dashboard/qna") ? "Q&A 목록으로" : "이전 화면으로";
+  const backLabel = backToWorkQueue ? "업무함으로" : returnTo.startsWith("/dashboard/qna") ? "Q&A 목록으로" : "이전 화면으로";
   const isClosed = currentStatus === "CLOSED";
   const studentCanClose = !isAdmin && isAuthor && currentStatus === "ANSWERED";
   const studentCanReopen = !isAdmin && isAuthor && isClosed;
@@ -306,10 +313,19 @@ function ThreadDetailContent({
             if (isReplyFormBusy) event.preventDefault();
           }}
         >
-          Q&amp;A
+          {backToWorkQueue ? (
+            <span className="inline-flex h-8 items-center gap-1.5">
+              <ArrowLeft className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
+              업무함으로
+            </span>
+          ) : "Q&A"}
         </Link>
-        <span aria-hidden="true" className="text-faint">/</span>
-        <span aria-current="page" className="min-w-0 truncate text-foreground">{title}</span>
+        {backToWorkQueue ? null : (
+          <>
+            <span aria-hidden="true" className="text-faint">/</span>
+            <span aria-current="page" className="min-w-0 truncate text-foreground">{title}</span>
+          </>
+        )}
       </nav>
 
       <header className="flex flex-wrap items-start justify-between gap-4">
@@ -435,6 +451,8 @@ function ThreadDetailContent({
           <ReplyCard key={reply.id} reply={reply} />
         ))}
       </ol>
+
+      {queueNext ? <QueueNextBar queueNext={queueNext} kind="qna" /> : null}
 
       {/* 답변 작성 폼: 넓은 화면은 r10 상자 하나(QnaThread), 좁은 화면은 화면 아래 입력 막대(MobileQnaThread) */}
       {showReplyComposer && !isTrashed && (
