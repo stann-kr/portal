@@ -73,9 +73,10 @@ export function RecordingDock({
 
   return (
     // 미니 플레이어가 켜져 있으면 그 막대 높이만큼 더 띄운다(--mini-player-offset, player.css).
+    // 휴대폰에서 편집 중이면 서식 줄 위로 올린다(lesson-recording-dock, globals.css·player.css).
     <div
       className={cn(
-        "pointer-events-none sticky bottom-[calc(0.75rem+var(--mini-player-offset,0px))] z-30 flex justify-center px-5 md:bottom-[calc(1.25rem+var(--mini-player-offset,0px))]",
+        "lesson-recording-dock pointer-events-none sticky bottom-[calc(0.75rem+var(--mini-player-offset,0px))] z-30 flex justify-center px-5 md:bottom-[calc(1.25rem+var(--mini-player-offset,0px))]",
         className,
       )}
     >

@@ -81,6 +81,11 @@ test("미니 플레이어가 있으면 수업 노트의 아래 수업 막대·�
     /html\[data-mini-player="on"\]\[data-editor-dock\] \.lesson-live-bar \{\s*bottom: calc\(max\(var\(--keyboard-inset, 0px\), var\(--mini-player-offset\)\) \+ 3rem\);/u,
   );
   assert.match(read("src/components/lesson/RecordingDock.tsx"), /sticky bottom-\[calc\(0\.75rem\+var\(--mini-player-offset,0px\)\)\]/u);
+  // 휴대폰에서 편집 중이면 녹음 칸도 서식 줄 위, 관리자 노트는 수업 막대 위(서식 줄이 막대를 3rem 올린 만큼 같이).
+  assert.match(read("src/components/lesson/RecordingDock.tsx"), /"lesson-recording-dock pointer-events-none sticky/u);
+  assert.match(read("src/components/notes/NoteLessonFrame.tsx"), /"lesson-recording-dock-above-bar bottom-/u);
+  assert.match(read("src/app/globals.css"), /html\[data-editor-dock\] \.lesson-recording-dock-above-bar \{\s*bottom: calc\(var\(--keyboard-inset, 0px\) \+ 10\.5rem\);/u);
+  assert.match(css, /html\[data-mini-player="on"\]\[data-editor-dock\] \.lesson-recording-dock-above-bar \{\s*bottom: calc\(max\(var\(--keyboard-inset, 0px\), var\(--mini-player-offset\)\) \+ 10\.5rem\);/u);
   assert.match(read("src/components/notes/NoteLessonFrame.tsx"), /bottom-\[calc\(7\.5rem\+var\(--mini-player-offset,0px\)\)\]/u);
   assert.match(read("src/components/lesson/InstructorLessonPanel.tsx"), /xl:h-\[calc\(100dvh-var\(--mini-player-offset,0px\)\)\]/u);
 });

@@ -142,6 +142,13 @@ html[data-mini-player="on"] .h-app {
     bottom: calc(max(var(--keyboard-inset, 0px), var(--mini-player-offset)) + 3rem);
     padding-bottom: 0.5rem;
   }
+  /* 수업 녹음 칸은 서식 줄 위, 수업 막대가 있으면 그 막대 위(globals.css의 키보드 규칙과 같은 간격). */
+  html[data-mini-player="on"][data-editor-dock] .lesson-recording-dock {
+    bottom: calc(max(var(--keyboard-inset, 0px), var(--mini-player-offset)) + 3.75rem);
+  }
+  html[data-mini-player="on"][data-editor-dock] .lesson-recording-dock-above-bar {
+    bottom: calc(max(var(--keyboard-inset, 0px), var(--mini-player-offset)) + 10.5rem);
+  }
 }
 
 /*

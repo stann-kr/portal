@@ -67,7 +67,7 @@ export function NoteLessonFrame({
       <RecordingDock
         rootRef={contentRef}
         className={instructor
-          ? "bottom-[calc(7.5rem+var(--mini-player-offset,0px))] md:bottom-[calc(7.5rem+var(--mini-player-offset,0px))] xl:bottom-[calc(1.25rem+var(--mini-player-offset,0px))] xl:pr-[360px]"
+          ? "lesson-recording-dock-above-bar bottom-[calc(7.5rem+var(--mini-player-offset,0px))] md:bottom-[calc(7.5rem+var(--mini-player-offset,0px))] xl:bottom-[calc(1.25rem+var(--mini-player-offset,0px))] xl:pr-[360px]"
           : undefined}
       />
     </>
