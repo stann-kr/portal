@@ -28,7 +28,7 @@ import { CalendarFeedControl } from "@/components/admin/CalendarFeedControl";
 import { GuideAccessControl } from "@/components/admin/GuideAccessControl";
 import { StudentInviteControl } from "@/components/admin/StudentInviteControl";
 import { StudentPasswordResetControl } from "@/components/admin/StudentPasswordResetControl";
-import { StudentArchiveControl } from "@/components/admin/StudentArchiveControl";
+import { StudentArchiveControl, type StudentArchiveUpcomingLessons } from "@/components/admin/StudentArchiveControl";
 import { StudentDeleteControl } from "@/components/admin/StudentDeleteControl";
 import type { StudentDeletionState } from "@/lib/student-deletion";
 import { ConfirmPanel, useConfirmAction } from "@/components/ui/confirm-action";
@@ -432,6 +432,17 @@ export function OverviewTab({
   const groupLessonStarts = new Set(lessonGroup && lessonGroup.partners.length > 0 ? lessonGroup.sharedLessonStarts ?? [] : []);
   const groupMemberNames = lessonGroup ? [studentName ?? "이 학생", ...lessonGroup.partners.map((partner) => partner.name)].join(" · ") : "";
   const scheduleHref = `/dashboard/admin?section=schedule&student=${encodeURIComponent(studentId)}`;
+  // 수강 종료 확인의 '예정 레슨 N개도 지우기'(캔버스 UxReview1120Policies ⑨). 서버가 지우는 기준(지금 이후)과 같다.
+  const upcomingPortalLessons = orderedLessons.filter((lesson) => !lesson.past && !lesson.connected);
+  const archiveUpcomingLessons: StudentArchiveUpcomingLessons = {
+    count: upcomingPortalLessons.length,
+    preview: upcomingPortalLessons.slice(0, 3).map((lesson) => ({
+      key: lesson.id,
+      label: formatKstDot(lesson.scheduledAt, { weekday: true, time: true, referenceTime: reference }),
+      group: groupLessonStarts.has(lesson.time),
+    })),
+    hasGroupLesson: upcomingPortalLessons.some((lesson) => groupLessonStarts.has(lesson.time)),
+  };
 
   return (
     <div className="flex flex-col gap-6 md:flex-row md:flex-wrap md:items-start md:gap-x-14 md:gap-y-10">
@@ -671,7 +682,12 @@ export function OverviewTab({
               : "구독 URL과 임시 비밀번호는 발급 직후 한 번만 보입니다. 다시 발급하면 이전 값은 즉시 만료됩니다."}
           </p>
           {studentName ? (
-            <StudentArchiveControl studentId={studentId} studentName={studentName} className="order-6 mt-4" />
+            <StudentArchiveControl
+              studentId={studentId}
+              studentName={studentName}
+              upcomingLessons={archiveUpcomingLessons}
+              className="order-6 mt-4"
+            />
           ) : null}
           {studentName ? (
             <StudentDeleteControl studentId={studentId} studentName={studentName} deletion={deletion} className="order-7 mt-4" />

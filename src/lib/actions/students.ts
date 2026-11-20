@@ -8,8 +8,8 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createDb, createDbContext } from "@/db/client";
-import { profiles } from "@/db/schema";
-import { and, count, desc, eq, sql } from "drizzle-orm";
+import { lessons, profiles } from "@/db/schema";
+import { and, count, desc, eq, gte, sql } from "drizzle-orm";
 import * as bcrypt from "bcryptjs";
 import {
   findStudentTarget,
@@ -42,7 +42,16 @@ import {
   ARCHIVED_ACCOUNT_STATUS,
 } from "@/lib/student-status";
 import { readLessonGroupMemberIds, readStudentLessonGroupId } from "@/lib/lesson-groups";
-import { schedulePushStudentsCalendarChanges } from "@/lib/calendar-sync/sync-runner";
+import {
+  markLinksDeletedStatement,
+  schedulePruneDeletedStudentCalendarCopies,
+  schedulePushStudentsCalendarChanges,
+} from "@/lib/calendar-sync/sync-runner";
+import {
+  DOCUMENT_CONDITIONAL_WRITE_SENTINEL,
+  executeDocumentStatementsAtomically,
+  type DocumentAtomicStatement,
+} from "@/lib/document-lifecycle-atomic";
 import { fetchExternalItemsForUser } from "@/lib/external-items";
 import { deletePristineStudentAtomically } from "@/lib/account-privacy-atomic";
 import { readStudentDeletionState, type StudentDeletionState } from "@/lib/student-deletion";
@@ -295,32 +304,60 @@ async function scheduleGroupCalendarResync(studentId: string) {
   await schedulePushStudentsCalendarChanges([...memberIds, studentId]);
 }
 
+const ARCHIVE_TARGET_MISSING = "이미 수강을 종료했거나 찾을 수 없는 학생입니다. 학생 목록을 새로 고쳐 주세요.";
+
+function isBatchAbort(error: unknown): boolean {
+  const text = String((error as { message?: unknown })?.message ?? error) + String((error as { cause?: unknown })?.cause ?? "");
+  return text.includes("DOCUMENT_BATCH_ABORT");
+}
+
 /**
- * 학생의 수강을 종료(보관)한다. 기록은 하나도 지우지 않고 계정 상태만 바꾼다. 상태가 바뀌면 그 학생의 session은
+ * 학생의 수강을 종료(보관)한다. 기록은 지우지 않고 계정 상태만 바꾼다. 상태가 바뀌면 그 학생의 session은
  * 다음 인증 확인에서 끝나고(parseActiveProfile), 로그인·목록·선택지·알림·캘린더 동기화에서 빠진다.
  * 수강 중인 학생일 때만 바꾸는 조건부 UPDATE라 두 번 눌러도 한 번만 반영된다. 관리자 계정은 대상이 아니다.
+ *
+ * deleteUpcomingLessons가 true면 지금 이후 예정 레슨(레슨 목록의 '예정'과 같은 기준)을 같은 batch에서 지운다
+ * (캔버스 UxReview1120Policies ⑨, 2026-11-20 사용자 결정). 그룹레슨도 이 학생 몫만 지우고 다른 멤버 레슨은 남긴다
+ * (deleteLesson처럼 멤버 모두로 넓히지 않는다). 상태가 이미 바뀌었으면 batch 전체가 되돌아가 레슨도 남는다.
+ * 지운 레슨의 원격 캘린더 사본은 응답 뒤 지운 항목만 정리하는 동기화로 지운다(수강 종료 학생은 일반 동기화를 멈춘다).
  * 성공하면 학생 목록으로 이동한다(학생 상세는 더 열 수 없다). 실패만 상태로 돌려준다.
  */
-export async function archiveStudent(studentId: string): Promise<Extract<StudentArchiveResult, { ok: false }>> {
+export async function archiveStudent(
+  studentId: string,
+  deleteUpcomingLessons: boolean = false,
+): Promise<Extract<StudentArchiveResult, { ok: false }>> {
   await requireAdmin();
   const student = typeof studentId === "string" && studentId ? await findStudentTarget(studentId) : null;
-  if (!student) {
-    return { ok: false, error: "이미 수강을 종료했거나 찾을 수 없는 학생입니다. 학생 목록을 새로 고쳐 주세요." };
-  }
-  const updated = await createDb()
-    .update(profiles)
-    .set({ accountStatus: ARCHIVED_ACCOUNT_STATUS, archivedAt: new Date() })
-    .where(and(
-      eq(profiles.id, student.id),
-      eq(profiles.role, "student"),
-      eq(profiles.accountStatus, ACTIVE_ACCOUNT_STATUS),
-    ))
-    .returning({ id: profiles.id });
-  if (updated.length === 0) {
-    return { ok: false, error: "이미 수강을 종료했거나 찾을 수 없는 학생입니다. 학생 목록을 새로 고쳐 주세요." };
+  if (!student) return { ok: false, error: ARCHIVE_TARGET_MISSING };
+  const now = new Date();
+  const nowSeconds = Math.floor(now.getTime() / 1_000);
+  const upcomingIds = deleteUpcomingLessons === true
+    ? (await createDb()
+        .select({ id: lessons.id })
+        .from(lessons)
+        .where(and(eq(lessons.studentId, student.id), gte(lessons.scheduledAt, now)))).map((row) => row.id)
+    : [];
+  const statements: DocumentAtomicStatement[] = [
+    {
+      query: "UPDATE profiles SET account_status = ?, archived_at = ? WHERE id = ? AND role = 'student' AND account_status = ?",
+      params: [ARCHIVED_ACCOUNT_STATUS, nowSeconds, student.id, ACTIVE_ACCOUNT_STATUS],
+    },
+    DOCUMENT_CONDITIONAL_WRITE_SENTINEL,
+    // 읽은 뒤 지난 시각으로 옮긴 레슨은 지우지 않는다(남은 DELETED 표시는 다음 동기화가 로컬 내용으로 되돌린다).
+    ...upcomingIds.flatMap((lessonId) => [
+      markLinksDeletedStatement("LESSON", lessonId, student.id, now),
+      { query: "DELETE FROM lessons WHERE id = ? AND student_id = ? AND scheduled_at >= ?", params: [lessonId, student.id, nowSeconds] },
+    ]),
+  ];
+  try {
+    await executeDocumentStatementsAtomically(createDbContext(), statements);
+  } catch (error) {
+    if (isBatchAbort(error)) return { ok: false, error: ARCHIVE_TARGET_MISSING };
+    throw error;
   }
   revalidateStudentLists();
   await scheduleGroupCalendarResync(student.id);
+  if (upcomingIds.length > 0) await schedulePruneDeletedStudentCalendarCopies(student.id);
   redirect(ADMIN_STUDENTS_PATH);
 }
 

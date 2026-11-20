@@ -5123,6 +5123,73 @@ test("수강 종료는 취소 우선 확인을 거치고, 성공하면 이동한
   assert.equal(notice(), "김학생의 수강을 종료했습니다.", "이동한 학생 목록이 처음 그릴 때 읽는다");
 });
 
+test("예정 레슨이 남은 학생의 수강 종료 확인은 '예정 레슨 N개도 지우기'를 켠 채 열고, 고른 대로 보내고 결과를 안내한다", async (context) => {
+  const calls: [string, boolean | undefined][] = [];
+  archiveAction = async (studentId, deleteUpcomingLessons) => {
+    calls.push([studentId, deleteUpcomingLessons]);
+    throw Object.assign(new Error("NEXT_REDIRECT"), { digest: "NEXT_REDIRECT;push;/dashboard/admin?section=students;303;" });
+  };
+  context.after(() => {
+    archiveAction = async () => ({ ok: false, error: "테스트 미설정" });
+    flashNotice.clearFlashNotice(flashNotice.STUDENT_LIST_NOTICE_KEY);
+  });
+  const checkbox = () => {
+    const found = browser.document.querySelector('[role="group"] input[type="checkbox"]');
+    assert.ok(found instanceof browser.HTMLInputElement, "확인 안의 예정 레슨 지우기 칸");
+    return found;
+  };
+  const confirmButton = () => {
+    const found = browser.document.querySelector('[role="group"] button[aria-describedby]');
+    assert.ok(found instanceof browser.HTMLButtonElement);
+    return found;
+  };
+  const notice = () => flashNotice.peekFlashNotice(flashNotice.STUDENT_LIST_NOTICE_KEY);
+
+  await render(
+    context,
+    <StudentArchiveControl
+      studentId="student-1"
+      studentName="김학생"
+      upcomingLessons={{
+        count: 4,
+        preview: [
+          { key: "l-1", label: "11.25 (화) 19:00", group: true },
+          { key: "l-2", label: "12.02 (화) 19:00", group: false },
+          { key: "l-3", label: "12.09 (화) 19:00", group: false },
+        ],
+        hasGroupLesson: true,
+      }}
+    />,
+  );
+  assert.equal(browser.document.querySelector('input[type="checkbox"]'), null, "확인을 열기 전에는 없다");
+  await press("수강 종료");
+  assert.equal(checkbox().checked, true, "기본은 켬");
+  assert.equal(browser.document.activeElement?.textContent, "취소", "초점은 여전히 취소");
+  const label = checkbox().closest("label")?.textContent ?? "";
+  assert.match(label, /^예정 레슨 4개도 지우기/u);
+  assert.match(label, /11\.25 \(화\) 19:00 그룹레슨 · 12\.02 \(화\) 19:00 · 12\.09 \(화\) 19:00 외 1개\. 학생 일정과 구독 캘린더에서도 사라집니다\. 그룹레슨은 김학생 몫만 지웁니다\./u);
+
+  await act(async () => confirmButton().click());
+  await settle();
+  assert.deepEqual(calls, [["student-1", true]]);
+  assert.equal(notice(), "김학생의 수강을 종료했습니다. 예정 레슨 4개를 지웠습니다.");
+
+  // 끄고 종료하면 레슨은 남기고, 다시 열면 기본(켬)으로 돌아온다.
+  flashNotice.clearFlashNotice(flashNotice.STUDENT_LIST_NOTICE_KEY);
+  assert.equal(browser.document.querySelector('[role="group"]'), null, "보낸 뒤 확인은 닫힌다");
+  await press("수강 종료");
+  await act(async () => checkbox().click());
+  assert.equal(checkbox().checked, false);
+  await press("취소");
+  await press("수강 종료");
+  assert.equal(checkbox().checked, true, "확인을 다시 열면 켬으로 돌아온다");
+  await act(async () => checkbox().click());
+  await act(async () => confirmButton().click());
+  await settle();
+  assert.deepEqual(calls[1], ["student-1", false]);
+  assert.equal(notice(), "김학생의 수강을 종료했습니다. 예정 레슨 4개는 남겨 두었고 복원하면 다시 보입니다.");
+});
+
 test("학생 삭제는 삭제할 수 있는 가입 전 학생에게만 보이고, 위험 색 확인을 거쳐 이동한 목록에 결과 안내를 남긴다", async (context) => {
   const deleted: string[] = [];
   let outcome: "error" | "redirect" = "error";

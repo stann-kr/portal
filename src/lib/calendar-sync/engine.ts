@@ -119,7 +119,12 @@ export const CALENDAR_SYNC_MESSAGES = {
 /** 설정 누락처럼 사용자가 서버 설정으로만 고칠 수 있는 오류. */
 export class CalendarSyncConfigError extends Error {}
 
-export type SyncEngineMode = "full" | "push";
+/**
+ * full: pull + push. push: 원격 pull 없이 로컬 변경만 보낸다.
+ * pruneDeleted: 로컬에서 지운 항목(DELETED link, 로컬 행 없음)의 원격 사본만 지운다. 그 밖의 항목은 보내지도 받지도 않아
+ * 동기화를 멈춘 수강 종료 학생 캘린더에도 쓸 수 있다(수강 종료와 함께 지운 예정 레슨, 캔버스 UxReview1120Policies ⑨).
+ */
+export type SyncEngineMode = "full" | "push" | "pruneDeleted";
 
 export type SyncEngineOptions = {
   ctx: DbContext;
@@ -134,7 +139,7 @@ export type SyncEngineOptions = {
   now?: () => Date;
   /** true면 60초 throttle을 건너뛴다(lease는 항상 지킨다). */
   force?: boolean;
-  /** push: 원격 pull 없이 로컬 변경만 보낸다(쓰기 action 직후 best-effort). */
+  /** push·pruneDeleted는 쓰기 action 직후 best-effort로 쓴다(SyncEngineMode 참고). */
   mode?: SyncEngineMode;
   /** epoch ms. 지나면 새 원격 요청을 시작하지 않고 멈춘다. */
   deadline?: number;
@@ -1141,6 +1146,33 @@ async function pushLocal(state: RunState, window: PullWindow): Promise<void> {
   }
 }
 
+/**
+ * DELETED link 가운데 로컬 행이 정말 없는 것만 원격에서 지운다. 로컬 행이 남아 있으면(삭제가 취소된 경합) 건드리지 않고
+ * 다음 일반 동기화가 로컬 내용으로 다시 맞춘다. DELETED가 아닌 link는 보지 않는다(pushLocal의 orphan 정리와 다르다).
+ */
+async function pruneDeletedLinks(state: RunState): Promise<void> {
+  if (state.leaseLost) return;
+  await loadLinks(state);
+  const deleted = state.links.filter((link) => link.localFingerprint === DELETED_FINGERPRINT);
+  if (deleted.length === 0) return;
+  const idsOf = (kind: CalendarSyncLocalKind) => deleted.filter((link) => link.localKind === kind).map((link) => link.localId);
+  const lessonIds = idsOf("LESSON");
+  const eventIds = idsOf("EVENT");
+  const [lessonRows, eventRows, groupEventRows] = await Promise.all([
+    lessonIds.length > 0 ? state.db.select({ id: lessons.id }).from(lessons).where(inArray(lessons.id, lessonIds)) : [],
+    eventIds.length > 0 ? state.db.select({ id: calendarEvents.id }).from(calendarEvents).where(inArray(calendarEvents.id, eventIds)) : [],
+    eventIds.length > 0 ? state.db.select({ id: calendarGroupEvents.id }).from(calendarGroupEvents).where(inArray(calendarGroupEvents.id, eventIds)) : [],
+  ]);
+  const present = new Set([
+    ...lessonRows.map((row) => linkKey("LESSON", row.id)),
+    ...[...eventRows, ...groupEventRows].map((row) => linkKey("EVENT", row.id)),
+  ]);
+  for (const link of deleted) {
+    if (present.has(linkKey(link.localKind, link.localId))) continue;
+    await runItem(state, link.id, () => removeRemote(state, link));
+  }
+}
+
 // ── 꼬리 pull ──
 
 /**
@@ -1214,15 +1246,15 @@ export async function runCalendarMappingSync(options: SyncEngineOptions): Promis
     .limit(1);
   if (!mapping) return { status: "skipped", localChanged: false, reason: "missing" };
   if (mapping.connectionStatus !== "ACTIVE") return { status: "skipped", localChanged: false, reason: "inactive" };
-  // 수강 종료한 학생의 캘린더는 매핑을 남긴 채 동기화만 멈춘다(복원하면 다시 맞춘다).
-  if (mapping.studentId && mapping.studentStatus !== ACTIVE_ACCOUNT_STATUS) {
+  // 수강 종료한 학생의 캘린더는 매핑을 남긴 채 동기화만 멈춘다(복원하면 다시 맞춘다). 지운 항목의 원격 사본 정리만 한다.
+  if (mapping.studentId && mapping.studentStatus !== ACTIVE_ACCOUNT_STATUS && mode !== "pruneDeleted") {
     return { status: "skipped", localChanged: false, reason: "archived" };
   }
   const target = await loadSyncTarget(db, mapping);
   if (!target) return { status: "skipped", localChanged: false, reason: "missing" };
 
   const startedAt = now();
-  const force = Boolean(options.force) || mode === "push";
+  const force = Boolean(options.force) || mode !== "full";
   const leaseId = await acquireLease(options.ctx, mapping.id, startedAt, force);
   if (!leaseId) {
     const throttled = !force && mapping.updatedAt.getTime() > startedAt.getTime() - CALENDAR_SYNC_THROTTLE_MS;
@@ -1268,7 +1300,8 @@ export async function runCalendarMappingSync(options: SyncEngineOptions): Promis
       const saved = await db.update(calendarMappings).set({ cursor: nextCursor }).where(ownsLease).returning({ id: calendarMappings.id });
       if (saved.length === 0) throw new LeaseLost();
     }
-    await pushLocal(state, window);
+    if (mode === "pruneDeleted") await pruneDeletedLinks(state);
+    else await pushLocal(state, window);
     if (mode === "full") await tailPull(state, nextCursor, window, ownsLease);
     const finishedAt = now();
     const lastError = state.itemFailures > 0 ? CALENDAR_SYNC_MESSAGES.partial : null;

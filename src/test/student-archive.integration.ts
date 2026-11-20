@@ -36,6 +36,7 @@ let roster: typeof import("@/lib/student-roster");
 let pushStore: typeof import("@/lib/push/store");
 let mappingSync: typeof import("@/lib/calendar-sync/mapping-sync");
 const resyncedStudents: string[][] = [];
+const prunedStudents: string[] = [];
 
 class RedirectSignal extends Error {
   constructor(readonly path: string) {
@@ -73,6 +74,9 @@ mock.module("@/lib/calendar-sync/sync-runner", {
     schedulePushStudentsCalendarChanges: async (studentIds: string[]) => {
       resyncedStudents.push([...studentIds]);
     },
+    schedulePruneDeletedStudentCalendarCopies: async (studentId: string) => {
+      prunedStudents.push(studentId);
+    },
     stopGroupCalendarChannels: async () => undefined,
     restoreGroupCalendarChannels: async () => undefined,
     markLinksDeletedStatement: () => ({ query: "SELECT 1", params: [] }),
@@ -108,6 +112,7 @@ async function setupDatabase(context: TestContext): Promise<PortalTestDb> {
   activeDb = isolated.db;
   activeSession = createSession("admin-1", "admin");
   resyncedStudents.length = 0;
+  prunedStudents.length = 0;
   context.after(async () => {
     activeDb = null;
     await isolated.dispose();
@@ -228,6 +233,39 @@ test("수강 종료는 기록을 지우지 않고 로그인·목록·업무함·
   assert.equal((await studentActions.archiveStudent("admin-1")).ok, false);
   const [admin] = await db.select().from(profiles).where(eq(profiles.id, "admin-1"));
   assert.equal(admin?.accountStatus, "ACTIVE");
+});
+
+test("수강 종료 때 예정 레슨 지우기를 켜면 그 학생의 지금 이후 레슨만 지우고 지난 레슨·다른 멤버 레슨은 남긴다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context);
+  const day = 24 * 60 * 60 * 1_000;
+  const groupStart = new Date(Date.now() + 7 * day);
+  // 준비 데이터의 고정 날짜 레슨은 시간이 지나면 지난 레슨이 되므로 지금 기준 레슨으로 바꾼다.
+  await db.delete(lessons).where(eq(lessons.id, "lesson-a"));
+  await db.insert(lessons).values([
+    { id: "lesson-a-past", studentId: "student-a", scheduledAt: new Date(Date.now() - 7 * day) },
+    { id: "lesson-a-group", studentId: "student-a", scheduledAt: groupStart },
+    { id: "lesson-b-group", studentId: "student-b", scheduledAt: groupStart },
+    { id: "lesson-c-solo", studentId: "student-c", scheduledAt: new Date(Date.now() + 3 * day) },
+  ]);
+  const lessonIds = async () => (await db.select({ id: lessons.id }).from(lessons)).map((row) => row.id).sort();
+  const before = await lessonIds();
+
+  // 끄고 종료하면(기본) 레슨은 하나도 지우지 않고 원격 정리도 하지 않는다.
+  await expectRedirect(studentActions.archiveStudent("student-c", false), "/dashboard/admin?section=students");
+  assert.deepEqual(await lessonIds(), before);
+  assert.deepEqual(prunedStudents, []);
+
+  // 켜고 종료하면 김학생의 지금 이후 레슨(개인·그룹 몫)만 지운다. 이학생의 같은 시각 그룹레슨은 남는다.
+  await expectRedirect(studentActions.archiveStudent("student-a", true), "/dashboard/admin?section=students");
+  const after = ["lesson-a-past", "lesson-b-group", "lesson-c-solo"];
+  assert.deepEqual(await lessonIds(), after);
+  assert.deepEqual(prunedStudents, ["student-a"], "지운 레슨의 원격 사본 정리를 응답 뒤로 예약한다");
+  const [stored] = await db.select().from(profiles).where(eq(profiles.id, "student-a"));
+  assert.equal(stored?.accountStatus, "ARCHIVED");
+
+  // 이미 수강을 종료한 학생은 다시 지우지 않는다(대상 확인에서 멈춘다).
+  assert.equal((await studentActions.archiveStudent("student-a", true)).ok, false);
+  assert.deepEqual(await lessonIds(), after);
 });
 
 test("복원하면 로그인·목록·그룹·업무함·알림·캘린더가 기록과 함께 그대로 돌아온다", { concurrency: false }, async (context) => {

@@ -57,6 +57,7 @@ export function ConfirmPanel({
   onConfirm,
   className,
   tone = "destructive",
+  detail,
 }: {
   confirm: Pick<ConfirmActionState<unknown>, "close">;
   message: ReactNode;
@@ -67,6 +68,8 @@ export function ConfirmPanel({
   className?: string;
   /** 삭제·만료처럼 되돌릴 수 없으면 destructive(위험 옅은 면·위험 면 버튼), 이력이 남는 복원은 neutral(옅은 면·먹색 버튼). */
   tone?: "destructive" | "neutral";
+  /** 문구 아래 버튼 위에 둘 선택 칸(예: 수강 종료의 '예정 레슨도 지우기'). 넓은 화면에서도 한 줄을 다 쓴다. */
+  detail?: ReactNode;
 }) {
   const messageId = useId();
   const cancelRef = useRef<HTMLButtonElement>(null);
@@ -111,6 +114,7 @@ export function ConfirmPanel({
       >
         {message}
       </p>
+      {detail ? <div className="min-w-0 md:basis-full">{detail}</div> : null}
       <div className="flex flex-wrap gap-2 md:ml-auto">
         <Button ref={cancelRef} type="button" variant="outline" className={PANEL_BUTTON_CLASS} onClick={close} disabled={pending}>
           취소
