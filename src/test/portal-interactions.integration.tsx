@@ -1091,6 +1091,64 @@ test("admin lesson detail reschedules and deletes only after a cancel-first conf
   assert.deepEqual(removals, ["lesson-1"]);
 });
 
+test("학생 상세 학생 고르기: 그룹 멤버를 그룹 이름 아래 묶고, 고르면 보고 있던 탭 그대로 그 학생 상세로 간다", async (context) => {
+  const { StudentSwitcherMenu, StudentSwitcherSheet, buildStudentSwitcherSections } = await import("@/components/admin/StudentSwitcher");
+  const students = [
+    { id: "s-kim", name: "김학생" },
+    { id: "s-park", name: "박학생" },
+    { id: "s-lee", name: "이학생" },
+    { id: "s-choi", name: "최학생" },
+  ];
+  const groups = [
+    { id: "g-tue", name: "화요일반", memberIds: ["s-lee", "s-kim"] },
+    // 수강 중인 멤버가 한 명뿐인 그룹은 묶지 않는다.
+    { id: "g-solo", name: "혼자반", memberIds: ["s-choi"] },
+  ];
+  assert.deepEqual(
+    buildStudentSwitcherSections(students, groups).map((section) => [section.label, section.students.map((student) => student.name)]),
+    [["화요일반", ["김학생", "이학생"]], ["학생", ["박학생", "최학생"]]],
+  );
+  assert.deepEqual(buildStudentSwitcherSections(students, []).map((section) => section.label), [null], "그룹이 없으면 머리 없이 학생만");
+
+  await render(context, <StudentSwitcherMenu studentId="s-kim" name="김학생" tab="assignments" students={students} groups={groups} />);
+  const trigger = button("김학생, 다른 학생 고르기");
+  await act(async () => {
+    trigger.focus();
+    trigger.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+  });
+  await settle();
+  const menu = browser.document.querySelector('[role="menu"][aria-label="학생 고르기"]');
+  assert.ok(menu);
+  const options = [...menu.querySelectorAll("a")].filter((option) => option.getAttribute("role") === "menuitem");
+  assert.deepEqual(options.map((option) => option.textContent), ["김학생", "이학생", "박학생", "최학생"]);
+  assert.deepEqual(options.map((option) => option.getAttribute("href")), [
+    "/dashboard/admin/students/s-kim?tab=assignments",
+    "/dashboard/admin/students/s-lee?tab=assignments",
+    "/dashboard/admin/students/s-park?tab=assignments",
+    "/dashboard/admin/students/s-choi?tab=assignments",
+  ]);
+  assert.equal(options[0]!.getAttribute("aria-current"), "page");
+  assert.match(menu.textContent ?? "", /^화요일반김학생이학생학생박학생최학생$/u);
+  await escape();
+
+  // 좁은 화면: 위쪽 막대 이름 버튼이 같은 목록을 아래 시트로 열고, 고르면 닫힌다.
+  await render(context, <StudentSwitcherSheet studentId="s-park" name="박학생" tab="digging" students={students} groups={groups} />);
+  await press("박학생, 다른 학생 고르기");
+  const sheet = browser.document.querySelector('[role="dialog"]');
+  assert.ok(sheet);
+  assert.equal(sheet.querySelector("h2")?.textContent, "학생 고르기");
+  const sheetLinks = [...(sheet.querySelector('nav[aria-label="학생 고르기"]')?.querySelectorAll("a") ?? [])];
+  assert.equal(sheetLinks.find((link) => link.getAttribute("aria-current") === "page")?.textContent, "박학생");
+  assert.equal(sheetLinks[1]!.getAttribute("href"), "/dashboard/admin/students/s-lee?tab=digging");
+  assert.deepEqual([...sheet.querySelectorAll('[role="group"]')].map((group) => group.getAttribute("aria-label")), ["화요일반", "학생"]);
+  await act(async () => {
+    sheetLinks[1]!.addEventListener("click", (event) => event.preventDefault(), { once: true });
+    sheetLinks[1]!.click();
+  });
+  await settle();
+  assert.equal(browser.document.querySelector('[role="dialog"]'), null);
+});
+
 test("학생 한 명 화면의 그룹레슨: 상세와 개요는 멤버 모두의 일정 안내·삭제 확인을 보이고, 레슨 예약·추가는 기본 이 학생만에서 그룹 전체를 보낸다", async (context) => {
   const tuesday = { id: "group-1", label: "화요일반", members: [{ id: "student-1", label: "김학생" }, { id: "student-2", label: "이학생" }] };
   const lesson: UnifiedItem = {

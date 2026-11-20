@@ -8,6 +8,10 @@ import { CalendarDays, Ellipsis, FilePlus, Pencil } from "lucide-react";
 import { MobileTopBar } from "@/components/app-shell/AppSidebar";
 import { buildAdminStudentNotesHref } from "@/components/admin/StudentDetailTabs";
 import { isCurriculumVisible } from "@/lib/curriculum-visibility";
+import { StudentSwitcherSheet } from "@/components/admin/StudentSwitcher";
+import type { StudentOption } from "@/lib/actions/students";
+import type { LessonGroupSummary } from "@/lib/lesson-group-rules";
+import type { StudentDetailTab } from "@/lib/student-space-routes";
 
 const ITEM_CLASS =
   "flex h-11 w-full cursor-default select-none items-center gap-2.5 rounded-touch px-3 text-md text-foreground outline-none data-[highlighted]:bg-muted";
@@ -15,8 +19,17 @@ const ITEM_CLASS =
 /**
  * 좁은 화면 학생 상세 위쪽 막대(MobileAdminStudentDetail 보드): 뒤로 "학생 목록으로" · 학생 · 더 보기.
  * 더 보기에는 탭 막대에 없는 이 학생의 바로가기(레슨 캘린더, 노트 작성)를 둔다.
+ * 다른 학생이 있으면 제목 자리가 학생 이름 버튼이 되고, 누르면 학생 고르기가 아래 시트로 열린다(캔버스 UxReview1120Admin ③).
  */
-export function StudentDetailTopBar({ studentId, returnTo }: { studentId: string; returnTo: string }) {
+export function StudentDetailTopBar({
+  studentId,
+  returnTo,
+  switcher,
+}: {
+  studentId: string;
+  returnTo: string;
+  switcher?: { name: string; tab: StudentDetailTab; students: StudentOption[]; groups: LessonGroupSummary[] } | null;
+}) {
   const searchParams = useSearchParams();
   const onOverview = (searchParams?.get("tab") ?? "overview") === "overview";
   const editing = searchParams?.get("edit") === "1";
@@ -67,11 +80,17 @@ export function StudentDetailTopBar({ studentId, returnTo }: { studentId: string
     </DropdownMenu.Root>
   ), [editing, onOverview, returnTo, studentId]);
 
+  const titleSlot = useMemo(
+    () => (switcher ? <StudentSwitcherSheet studentId={studentId} {...switcher} /> : undefined),
+    [studentId, switcher],
+  );
+
   return (
     <MobileTopBar
-      title="학생"
+      title={switcher?.name ?? "학생"}
       back={{ href: "/dashboard/admin?section=students", label: "학생 목록으로" }}
       actions={actions}
+      titleSlot={titleSlot}
     />
   );
 }
