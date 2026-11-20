@@ -372,7 +372,7 @@ export function AdminPortalClient({
               assignments={[]}
               studentId={isAllStudents ? "" : selectedStudentId}
               studentChoices={isAllStudents ? studentChoices : undefined}
-              groupChoices={isAllStudents ? groupChoices : undefined}
+              groupChoices={groupChoices}
               onVisibleRangeChange={isAllStudents ? loadAllStudentsRange : undefined}
               allNotesHref="/dashboard/admin/notes"
               scopeNotice={allStudentsNotice}

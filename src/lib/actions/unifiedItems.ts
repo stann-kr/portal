@@ -4,10 +4,12 @@
  */
 "use server";
 
-import { createDb } from "@/db/client";
+import { createDb, createDbContext } from "@/db/client";
 import { listActiveStudentProfiles } from "@/lib/active-profile";
 import { requireAdmin, requireAuth, requireStudentTarget } from "@/lib/auth-guard";
 import { fetchExternalItemsForUser } from "@/lib/external-items";
+import { tagMemberGroupLessons } from "@/lib/group-lesson-items";
+import { readStudentHomeLessonGroup } from "@/lib/lesson-groups";
 import {
   resolveAllStudentsItemsQuery,
   resolveUnifiedItemsQuery,
@@ -35,13 +37,24 @@ export async function getUnifiedItems(
   return fetchInternalItemsForUser(session.user.id!, input);
 }
 
+/**
+ * 관리자 학생 한 명 화면: 그룹 멤버 모두 같은 시각인 레슨에 그룹 표시를 붙인다(캔버스 UxReview1120Lessons ⑤).
+ * 함께하는 학생은 이름만 읽고, 그 학생의 레슨은 시각만 본다.
+ */
+async function tagStudentGroupLessonsForAdmin(studentId: string, items: UnifiedItem[], from: Date): Promise<UnifiedItem[]> {
+  if (!items.some((item) => item.source.entity === "LESSON")) return items;
+  return tagMemberGroupLessons(items, await readStudentHomeLessonGroup(createDbContext(), studentId, from));
+}
+
 /** 특정 학생의 bounded 내부 일정을 반환한다 (관리자 전용). */
 export async function getUnifiedItemsForStudent(
   studentId: string,
   input?: UnifiedItemsQueryInput,
 ): Promise<UnifiedItem[]> {
   await requireStudentTarget(studentId);
-  return fetchInternalItemsForUser(studentId, input);
+  const query = resolveUnifiedItemsQuery(input);
+  const items = await queryInternalUnifiedItems(createDb(), studentId, query);
+  return tagStudentGroupLessonsForAdmin(studentId, items, query.start);
 }
 
 /**
@@ -52,7 +65,12 @@ export async function getUnifiedItemsWindowForStudent(studentId: string): Promis
   await requireStudentTarget(studentId);
   const query = resolveUnifiedItemsQuery(undefined);
   const { items, truncated } = await queryInternalUnifiedItemsForStudents(createDb(), [studentId], query);
-  return { items, start: query.start.toISOString(), end: query.end.toISOString(), truncated };
+  return {
+    items: await tagStudentGroupLessonsForAdmin(studentId, items, query.start),
+    start: query.start.toISOString(),
+    end: query.end.toISOString(),
+    truncated,
+  };
 }
 
 /** 내부 일정과 분리해 학생 본인의 외부 공개 feed를 fail-soft로 반환한다. */

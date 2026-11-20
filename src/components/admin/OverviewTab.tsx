@@ -32,6 +32,8 @@ import { StudentArchiveControl } from "@/components/admin/StudentArchiveControl"
 import { StudentDeleteControl } from "@/components/admin/StudentDeleteControl";
 import type { StudentDeletionState } from "@/lib/student-deletion";
 import { ConfirmPanel, useConfirmAction } from "@/components/ui/confirm-action";
+import { GroupLessonBadge } from "@/components/calendar/GroupLessonBadge";
+import { LESSON_WITH_GROUP_FIELD } from "@/lib/lesson-group-rules";
 import type { StudentGuideAccessView } from "@/lib/actions/guideAccess";
 import { formatKst } from "@/lib/kst-format";
 import { isCurriculumVisible } from "@/lib/curriculum-visibility";
@@ -113,8 +115,14 @@ function focusAfterClose(id: string) {
 // ─── 커리큘럼 추가 폼 ──────────────────────────────
 
 // form action은 결과와 무관하게 uncontrolled 입력을 비우므로, 실패 시 입력을 지키려고 값을 제어하고 성공 때만 비운다.
-/** 학생 상세 개요의 그룹레슨 그룹: 이름과 함께하는 학생. */
-export type OverviewLessonGroup = { name: string; partners: { id: string; name: string }[] };
+/**
+ * 학생 상세 개요의 그룹레슨 그룹: 이름과 함께하는 학생, 그리고 이 학생 레슨 중 멤버 모두 같은 시각인 레슨의 시작(epoch ms).
+ */
+export type OverviewLessonGroup = {
+  name: string;
+  partners: { id: string; name: string }[];
+  sharedLessonStarts?: readonly number[];
+};
 
 function AddModuleForm({
   studentId,
@@ -260,14 +268,28 @@ function EditModuleForm({
 
 // ─── 레슨 추가 폼 ──────────────────────────────────
 
-function AddLessonForm({ studentId, onClose }: { studentId: string; onClose: () => void }) {
+function AddLessonForm({
+  studentId,
+  lessonGroup,
+  onClose,
+}: {
+  studentId: string;
+  lessonGroup: OverviewLessonGroup | null;
+  onClose: () => void;
+}) {
   const [scheduledAt, setScheduledAt] = useState("");
+  // 그룹 멤버에게도 같은 시각 레슨(캔버스 UxReview1120Lessons ⑥, 기본 끔). 그룹은 서버가 이 학생의 소속으로 정한다.
+  const [withGroup, setWithGroup] = useState(false);
+  const partners = lessonGroup?.partners ?? [];
   const inputRef = useRef<HTMLInputElement>(null);
   const [state, action, isPending] = useActionState<CreateLessonState, FormData>(
     async (previous, data) => {
       try {
         const result = await createLesson(studentId, previous, data);
-        if (result.success) setScheduledAt("");
+        if (result.success) {
+          setScheduledAt("");
+          setWithGroup(false);
+        }
         return result;
       } catch {
         return { error: "레슨을 추가하지 못했습니다. 다시 시도해 주세요." };
@@ -300,6 +322,21 @@ function AddLessonForm({ studentId, onClose }: { studentId: string; onClose: () 
           {isPending ? "추가 중..." : "추가"}
         </Button>
       </div>
+      {lessonGroup && partners.length > 0 ? (
+        <label htmlFor="lesson-with-group" className="flex min-h-11 w-full items-center gap-2 text-ui text-secondary-foreground md:min-h-7">
+          <input
+            id="lesson-with-group"
+            type="checkbox"
+            name={LESSON_WITH_GROUP_FIELD}
+            value="1"
+            checked={withGroup}
+            onChange={(event) => setWithGroup(event.target.checked)}
+            disabled={isPending}
+            className="size-4 shrink-0 accent-[var(--color-foreground)]"
+          />
+          {lessonGroup.name} {partners.map((partner) => partner.name).join(", ")}에게도 같은 시각 레슨 추가
+        </label>
+      ) : null}
       {state.error && (
         <p className="w-full text-xs text-destructive" role="alert">{state.error}</p>
       )}
@@ -391,6 +428,9 @@ export function OverviewTab({
 
   const completedCount = modules.filter((module) => module.isCompleted).length;
   const orderedLessons = orderLessons(lessons, connectedLessons, now);
+  // 그룹레슨 줄: 멤버 모두 같은 시각인 포탈 레슨(캔버스 UxReview1120Lessons ⑤). 지우면 서버가 멤버 레슨을 함께 지운다.
+  const groupLessonStarts = new Set(lessonGroup && lessonGroup.partners.length > 0 ? lessonGroup.sharedLessonStarts ?? [] : []);
+  const groupMemberNames = lessonGroup ? [studentName ?? "이 학생", ...lessonGroup.partners.map((partner) => partner.name)].join(" · ") : "";
   const scheduleHref = `/dashboard/admin?section=schedule&student=${encodeURIComponent(studentId)}`;
 
   return (
@@ -424,6 +464,7 @@ export function OverviewTab({
             <ul>
               {orderedLessons.map((l) => {
                 const lessonLabel = formatKst(l.scheduledAt, { year: "numeric", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" });
+                const groupLesson = !l.connected && lessonGroup !== null && groupLessonStarts.has(l.time);
                 return (
                   <li key={l.id} className="group border-b border-muted">
                     <div className="flex h-12 items-center gap-3 md:h-11 md:gap-3.5 md:px-1">
@@ -435,6 +476,7 @@ export function OverviewTab({
                       >
                         {formatKstDot(l.scheduledAt, { weekday: true, time: true, referenceTime: reference })}
                       </span>
+                      {groupLesson && lessonGroup ? <GroupLessonBadge groupName={lessonGroup.name} className="shrink" /> : null}
                       <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{l.note}</span>
                       {lessonNoteIds ? (() => {
                         const link = buildLessonNoteLink({
@@ -460,7 +502,7 @@ export function OverviewTab({
                         onClick={(event) => lessonDeleteConfirm.request(event.currentTarget, l.id)}
                         disabled={isPending}
                         aria-expanded={lessonDeleteConfirm.value === l.id}
-                        aria-label={`${lessonLabel} 레슨 삭제`}
+                        aria-label={`${lessonLabel} ${groupLesson ? "그룹레슨" : "레슨"} 삭제`}
                         className={cn(rowIconClass, "text-destructive hover:text-destructive")}
                       >
                         <Trash2 className="size-4" strokeWidth={1.6} aria-hidden="true" />
@@ -469,7 +511,9 @@ export function OverviewTab({
                     {lessonDeleteConfirm.value === l.id ? (
                       <ConfirmPanel
                         confirm={lessonDeleteConfirm}
-                        message={`${lessonLabel} 레슨을 삭제할까요? 학생의 일정과 구독 캘린더에서도 사라집니다.`}
+                        message={groupLesson
+                          ? `${lessonLabel} 그룹레슨을 삭제할까요? ${groupMemberNames} 모두의 일정과 구독 캘린더에서 사라집니다.`
+                          : `${lessonLabel} 레슨을 삭제할까요? 학생의 일정과 구독 캘린더에서도 사라집니다.`}
                         confirmLabel="레슨 삭제 확인"
                         pendingLabel="삭제 중..."
                         pending={isPending}
@@ -486,6 +530,7 @@ export function OverviewTab({
           {addingLesson ? (
             <AddLessonForm
               studentId={studentId}
+              lessonGroup={lessonGroup}
               onClose={() => {
                 setAddingLesson(false);
                 focusAfterClose("lesson-add-trigger");

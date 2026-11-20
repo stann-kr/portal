@@ -23,6 +23,12 @@ export type DeleteLessonGroupResult =
   | { ok: false; error: "NOT_FOUND" }
   | { ok: false; error: "HAS_NOTES"; noteCount: number };
 
+/**
+ * 학생 한 명 화면의 레슨 예약·추가에서 "그룹 전체"를 고르면 보내는 칸(값 "1"). 그룹은 서버가 그 학생의 소속으로 정하고
+ * 멤버마다 같은 시각 레슨을 하나씩 만든다(캔버스 UxReview1120Lessons ⑥).
+ */
+export const LESSON_WITH_GROUP_FIELD = "withGroup";
+
 export function normalizeLessonGroupName(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const name = value.trim().replace(/\s+/g, " ");

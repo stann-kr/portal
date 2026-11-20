@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { deleteLesson, rescheduleLesson, type CreateLessonState } from "@/lib/actions/lessons";
 import { toKstDateTimeInputValue } from "@/lib/date-input";
 import { createLessonUnifiedItem } from "@/lib/unified-item-normalization";
-import { readGroupLessonMetadata } from "@/lib/group-lesson-items";
+import { readLessonGroupNames } from "@/lib/group-lesson-items";
 import { cn } from "@/lib/utils";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 
@@ -27,8 +27,9 @@ export function LessonActions({
   onBusyChange?: (busy: boolean) => void;
 }) {
   const studentId = item.space.studentId;
-  const group = readGroupLessonMetadata(item);
-  const groupNames = group ? group.members.map((member) => member.label).join(", ") : null;
+  // 합친 그룹레슨(전체 학생)과 학생 한 명 화면의 그룹레슨 모두 멤버 레슨을 함께 바꾼다(캔버스 UxReview1120Lessons ⑤).
+  const group = readLessonGroupNames(item);
+  const groupNames = group ? group.memberNames.join(" · ") : null;
   const [mode, setMode] = useState<"view" | "reschedule" | "confirm-delete">("view");
   const [scheduledAt, setScheduledAt] = useState(() => toKstDateTimeInputValue(item.date));
   const [notice, setNotice] = useState<string | null>(null);

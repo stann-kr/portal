@@ -1091,6 +1091,112 @@ test("admin lesson detail reschedules and deletes only after a cancel-first conf
   assert.deepEqual(removals, ["lesson-1"]);
 });
 
+test("학생 한 명 화면의 그룹레슨: 상세와 개요는 멤버 모두의 일정 안내·삭제 확인을 보이고, 레슨 예약·추가는 기본 이 학생만에서 그룹 전체를 보낸다", async (context) => {
+  const tuesday = { id: "group-1", label: "화요일반", members: [{ id: "student-1", label: "김학생" }, { id: "student-2", label: "이학생" }] };
+  const lesson: UnifiedItem = {
+    id: "lesson-1", type: "EVENT", subType: "LESSON", title: "레슨", date: new Date("2026-11-25T10:00:00.000Z"), endDate: null,
+    metadata: { memberGroupLesson: { groupName: "화요일반", partnerNames: ["이학생"] } },
+    space: { studentId: "student-1", label: "김학생" }, source: { kind: "PORTAL", entity: "LESSON", label: "포탈" },
+  };
+  const updates: UnifiedItem[] = [];
+  const requests: { studentId: string; scheduledAt: unknown; withGroup: unknown }[] = [];
+  moveLesson = async (lessonId, _studentId, _previous, data) =>
+    ({ success: true, lesson: { id: lessonId, scheduledAt: new Date(`${String(data.get("scheduledAt"))}:00+09:00`).toISOString() } });
+  saveLesson = async (studentId, _previous, data) => {
+    requests.push({ studentId, scheduledAt: data.get("scheduledAt"), withGroup: data.get("withGroup") });
+    return { success: true, lesson: { id: `lesson-${requests.length + 1}`, scheduledAt: "2026-11-25T10:00:00.000Z" } };
+  };
+  context.after(() => { moveLesson = async () => ({}); saveLesson = async () => ({}); });
+
+  // 일정 상세: 그룹 안내와 삭제 확인이 멤버 모두를 말하고, 시간을 바꿔도 그룹 표시가 남는다.
+  const detail = await render(context, <LessonActions item={lesson} onUpdated={(next) => updates.push(next)} onDeleted={() => {}} />);
+  assert.match(browser.document.body.textContent ?? "", /그룹레슨 · 화요일반: 김학생 · 이학생 모두의 일정과 구독 캘린더에 함께 반영됩니다\./u);
+  await press("레슨 삭제");
+  assert.equal(browser.document.querySelector('[role="group"] p')?.textContent, "이 그룹레슨을 삭제할까요? 김학생 · 이학생 모두의 일정과 구독 캘린더에서 사라집니다.");
+  await press("취소");
+  await press("레슨 시간 변경");
+  await fill("lesson-reschedule-lesson-1", "2026-11-25T20:00");
+  await press("레슨 저장");
+  assert.deepEqual(updates[0]?.metadata.memberGroupLesson, { groupName: "화요일반", partnerNames: ["이학생"] });
+  await act(async () => detail.unmount());
+
+  // 레슨 예약 대화상자: 그룹 멤버면 "받는 학생"이 이 학생만으로 시작하고, 그룹 전체를 고르면 멤버를 알린 뒤 함께 보낸다.
+  const created: UnifiedItem[] = [];
+  const dropdown = (studentId: string, spaceLabel: string) => <CreateEntryDropdown studentId={studentId} diggingColumns={[]} spaceLabel={spaceLabel} defaultDate="2026-11-25T19:00"
+    canCreateQna={false} canCreateEvent={false} canCreateDigging={false} canCreateLesson lessonGroupChoices={[tuesday]} onSuccess={(item) => created.push(item)} />;
+  const booking = await render(context, dropdown("student-1", "김학생"));
+  await press("레슨 예약");
+  const radios = () => [...browser.document.querySelectorAll('[role="dialog"] [role="radiogroup"] [role="radio"]')]
+    .map((radio) => [radio.textContent, radio.getAttribute("aria-checked")]);
+  assert.equal(browser.document.getElementById(browser.document.querySelector('[role="dialog"] [role="radiogroup"]')?.getAttribute("aria-labelledby") ?? "")?.textContent, "받는 학생");
+  assert.deepEqual(radios(), [["김학생만", "true"], ["화요일반 전체 (2명)", "false"]]);
+  await press("화요일반 전체 (2명)");
+  assert.deepEqual(radios(), [["김학생만", "false"], ["화요일반 전체 (2명)", "true"]]);
+  assert.match(browser.document.querySelector('[role="dialog"]')?.textContent ?? "", /김학생 · 이학생에게 레슨이 하나씩 들어갑니다\./u);
+  await press("레슨 저장");
+  assert.deepEqual(requests.at(-1), { studentId: "student-1", scheduledAt: "2026-11-25T19:00", withGroup: "1" });
+  assert.deepEqual(created.at(-1)?.metadata.memberGroupLesson, { groupName: "화요일반", partnerNames: ["이학생"] });
+  // 다시 열면 이 학생만으로 돌아가고, 그대로 보내면 그룹 칸을 보내지 않는다.
+  await press("레슨 예약");
+  assert.deepEqual(radios(), [["김학생만", "true"], ["화요일반 전체 (2명)", "false"]]);
+  await press("레슨 저장");
+  assert.deepEqual(requests.at(-1), { studentId: "student-1", scheduledAt: "2026-11-25T19:00", withGroup: null });
+  assert.equal(created.at(-1)?.metadata.memberGroupLesson, undefined);
+  await act(async () => booking.unmount());
+  // 그룹에 없는 학생에게는 "받는 학생"이 보이지 않는다.
+  const solo = await render(context, dropdown("student-3", "박학생"));
+  await press("레슨 예약");
+  assert.equal(browser.document.querySelector('[role="dialog"] [role="radiogroup"]'), null);
+  await escape();
+  await act(async () => solo.unmount());
+
+  // 캘린더 칸에서 바로 예약도 같은 선택을 쓴다.
+  const quick = await render(context, <CalendarQuickCreate
+    selection={{ startStr: "2026-11-25T19:00:00+09:00", endStr: "2026-11-25T20:00:00+09:00", allDay: false }}
+    anchor={{ x: 200, y: 200 }}
+    options={{ canCreateEvent: false, canCreateLesson: true, studentId: "student-1", spaceLabel: "김학생", groupChoices: [tuesday] }}
+    onCreated={(item) => created.push(item)}
+    onClose={() => {}}
+  />);
+  assert.deepEqual(radios(), [["김학생만", "true"], ["화요일반 전체 (2명)", "false"]]);
+  await press("화요일반 전체 (2명)");
+  await press("레슨 예약");
+  assert.deepEqual(requests.at(-1), { studentId: "student-1", scheduledAt: "2026-11-25T19:00", withGroup: "1" });
+  assert.deepEqual(created.at(-1)?.metadata.memberGroupLesson, { groupName: "화요일반", partnerNames: ["이학생"] });
+  await act(async () => quick.unmount());
+
+  // 학생 상세 개요: 그룹레슨 줄은 그룹을 표시하고 멤버 모두를 말하는 삭제 확인을, 레슨 추가는 기본 끈 체크를 둔다.
+  await render(context, <OverviewTab
+    studentId="student-1"
+    studentName="김학생"
+    referenceTime={new Date("2026-11-20T03:00:00.000Z")}
+    modules={[]}
+    lessons={[
+      { id: "lesson-group", scheduledAt: new Date("2026-11-25T10:00:00.000Z") },
+      { id: "lesson-solo", scheduledAt: new Date("2026-11-27T10:00:00.000Z") },
+    ]}
+    lessonGroup={{ name: "화요일반", partners: [{ id: "student-2", name: "이학생" }], sharedLessonStarts: [Date.parse("2026-11-25T10:00:00.000Z")] }}
+  />);
+  const rows = [...browser.document.querySelectorAll('[aria-labelledby="lessons-heading"] li')];
+  assert.match(rows[0].textContent ?? "", /그룹레슨 · 화요일반/u);
+  assert.doesNotMatch(rows[1].textContent ?? "", /그룹레슨/u);
+  const groupDelete = rows[0].querySelector('button[aria-label$="그룹레슨 삭제"]');
+  assert.ok(groupDelete instanceof browser.HTMLButtonElement);
+  await act(async () => groupDelete.click());
+  await settle();
+  assert.match(rows[0].textContent ?? "", /그룹레슨을 삭제할까요\? 김학생 · 이학생 모두의 일정과 구독 캘린더에서 사라집니다\./u);
+  await press("레슨 추가");
+  const withGroup = browser.document.getElementById("lesson-with-group");
+  assert.ok(withGroup instanceof browser.HTMLInputElement);
+  assert.equal(withGroup.checked, false);
+  assert.equal(withGroup.closest("label")?.textContent, "화요일반 이학생에게도 같은 시각 레슨 추가");
+  await act(async () => withGroup.click());
+  await fill("lesson-scheduled-at", "2026-12-02T19:00");
+  await press("추가");
+  assert.deepEqual(requests.at(-1), { studentId: "student-1", scheduledAt: "2026-12-02T19:00", withGroup: "1" });
+  assert.equal(withGroup.checked, false, "추가한 뒤에는 기본(이 학생만)으로 돌아간다");
+});
+
 test("calendar preserves its date, view and filters across view tabs and admin sections", async (context) => {
   browser.history.replaceState({}, "", "/dashboard/admin?section=schedule&view=calendar&student=student");
   await render(context, <AdminPortalClient

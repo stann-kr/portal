@@ -27,7 +27,7 @@ import { getQnaThreadsByStudent } from "@/lib/actions/qna";
 import { getAssignmentSummariesByStudent } from "@/lib/actions/assignments";
 import { getAssignmentTasksForStudent } from "@/lib/actions/assignmentTasks";
 import { AdminAssignmentsPanel } from "@/components/admin/assignments/AdminAssignmentsPanel";
-import { getStudentLessonGroup } from "@/lib/actions/lessonGroups";
+import { getStudentGroupLessonStarts, getStudentLessonGroup } from "@/lib/actions/lessonGroups";
 import { getStudentCalendarFeedIssuedAt } from "@/lib/actions/calendarFeed";
 import { getStudentGuideAccess, type StudentGuideAccessView } from "@/lib/actions/guideAccess";
 import { StatusBadge } from "@/components/ui/status-badge";
@@ -215,9 +215,10 @@ export default async function StudentDetailPage({
   if (!student) redirect("/dashboard/admin");
   // 노트 탭은 검색·표/목록을 갖춘 학생 스페이스 노트 화면이 canonical이다(AdminStudentNotes 보드).
   if (activeTab === "notes") redirect(buildAdminStudentNotesHref(studentId));
-  const [workCounts, lessonGroup] = await Promise.all([
+  const [workCounts, lessonGroup, groupLessonStarts] = await Promise.all([
     getStudentWorkCounts(studentId),
     activeTab === "overview" ? getStudentLessonGroup(studentId) : Promise.resolve(null),
+    activeTab === "overview" ? getStudentGroupLessonStarts(studentId) : Promise.resolve([]),
   ]);
 
   // Overview 탭 데이터는 미리 병렬 fetch
@@ -307,6 +308,7 @@ export default async function StudentDetailPage({
               lessonGroup={lessonGroup ? {
                 name: lessonGroup.name,
                 partners: lessonGroup.members.filter((member) => member.id !== studentId),
+                sharedLessonStarts: groupLessonStarts,
               } : null}
             />
           )}

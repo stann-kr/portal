@@ -214,6 +214,52 @@ test("그룹레슨: 관리자 예약·이동·삭제는 멤버 모두, 학생 �
   assert.deepEqual(await lessonTimes(), [["student-c", "2099-11-20T10:00:00.000Z"]]);
 });
 
+test("학생 한 명 화면: 레슨의 그룹 전체는 그 학생의 지금 그룹으로 만들고, 그룹 표시는 멤버 모두 같은 시각인 레슨에만 붙는다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context);
+  activeSession = createSession("admin-1", "admin");
+  assert.equal((await actions.saveLessonGroupAction({ groupId: null, name: "화요일반", memberIds: ["student-a", "student-b"] })).ok, true);
+  const unifiedActions = await import("@/lib/actions/unifiedItems");
+  const lessonRows = async () => (await db.select().from(lessons))
+    .map((row) => [row.studentId, row.scheduledAt.toISOString()] as const)
+    .sort((x, y) => x[0].localeCompare(y[0]) || x[1].localeCompare(y[1]));
+
+  // 학생은 레슨을 만들 수 없다.
+  activeSession = createSession("student-a", "student");
+  await assert.rejects(lessonActions.createLesson("student-a", {}, form({ scheduledAt: "2099-11-25T19:00", withGroup: "1" })));
+
+  activeSession = createSession("admin-1", "admin");
+  pushed.length = 0;
+  const made = await lessonActions.createLesson("student-a", {}, form({ scheduledAt: "2099-11-25T19:00", withGroup: "1" }));
+  assert.equal(made.success, true);
+  assert.equal(made.lesson?.scheduledAt, "2099-11-25T10:00:00.000Z");
+  assert.deepEqual(await lessonRows(), [["student-a", "2099-11-25T10:00:00.000Z"], ["student-b", "2099-11-25T10:00:00.000Z"]]);
+  assert.deepEqual(pushed.map((entry) => entry.profileIds[0]).sort(), ["student-a", "student-b"]);
+  const ownLesson = (await db.select().from(lessons)).find((row) => row.studentId === "student-a");
+  assert.equal(made.lesson?.id, ownLesson?.id);
+
+  // 그룹이 없는 학생은 그룹 전체로 만들 수 없고 아무것도 쓰지 않는다.
+  assert.match((await lessonActions.createLesson("student-c", {}, form({ scheduledAt: "2099-11-26T19:00", withGroup: "1" }))).error ?? "", /그룹이 바뀌었습니다/);
+  assert.equal((await lessonRows()).length, 2);
+
+  // 이 학생만 고르면 혼자 레슨이고 그룹 표시가 붙지 않는다.
+  assert.equal((await lessonActions.createLesson("student-a", {}, form({ scheduledAt: "2099-11-27T19:00" }))).success, true);
+  assert.deepEqual(await actions.getStudentGroupLessonStarts("student-a"), [Date.parse("2099-11-25T10:00:00.000Z")]);
+  assert.deepEqual(await actions.getStudentGroupLessonStarts("student-c"), []);
+
+  const items = await unifiedActions.getUnifiedItemsForStudent("student-a", { start: "2099-11-01", end: "2099-12-31" });
+  const tags = items
+    .filter((item) => item.source.entity === "LESSON")
+    .map((item) => [item.date.toISOString(), item.title, item.metadata.memberGroupLesson ?? null])
+    .sort((x, y) => String(x[0]).localeCompare(String(y[0])));
+  assert.deepEqual(tags, [
+    ["2099-11-25T10:00:00.000Z", "레슨", { groupName: "화요일반", partnerNames: ["이학생"] }],
+    ["2099-11-27T10:00:00.000Z", "레슨", null],
+  ]);
+
+  activeSession = createSession("student-a", "student");
+  await assert.rejects(actions.getStudentGroupLessonStarts("student-a"));
+});
+
 test("커리큘럼 모듈은 같은 그룹 멤버에게만 함께 추가하고, 그룹 밖 학생이 섞이면 하나도 만들지 않는다", { concurrency: false }, async (context) => {
   const db = await setupDatabase(context);
   activeSession = createSession("admin-1", "admin");

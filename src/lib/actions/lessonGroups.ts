@@ -8,7 +8,7 @@
 import { revalidatePath } from "next/cache";
 import { createDb, createDbContext } from "@/db/client";
 import { listActiveStudentProfiles } from "@/lib/active-profile";
-import { requireAdmin, requireAuth, requireStudentOwnerOrAdmin } from "@/lib/auth-guard";
+import { requireAdmin, requireAuth, requireStudentOwnerOrAdmin, requireStudentTarget } from "@/lib/auth-guard";
 import {
   restoreGroupCalendarChannels,
   schedulePushStudentsCalendarChanges,
@@ -45,6 +45,16 @@ export async function getStudentLessonGroup(studentId: string): Promise<StudentL
   const session = await requireAuth();
   await requireStudentOwnerOrAdmin(session, studentId);
   return readStudentLessonGroup(createDbContext(), studentId);
+}
+
+/**
+ * 관리자 학생 상세 개요: 이 학생의 레슨 중 그룹 멤버 모두 같은 시각인 레슨의 시작(epoch ms, 캔버스 UxReview1120Lessons ⑤).
+ * 그룹이 없으면 빈 배열. 함께하는 학생의 레슨은 시각만 본다.
+ */
+export async function getStudentGroupLessonStarts(studentId: string): Promise<number[]> {
+  await requireStudentTarget(studentId);
+  const group = await readStudentHomeLessonGroup(createDbContext(), studentId, new Date(0));
+  return group?.sharedLessonStarts ?? [];
 }
 
 /** 로그인한 학생 본인의 홈용 그룹 정보(지금 이후 레슨 기준). 학생이 아니거나 그룹이 없으면 null. */
