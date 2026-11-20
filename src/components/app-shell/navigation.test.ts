@@ -90,6 +90,12 @@ test("좁은 화면 위쪽 막대는 목록 화면에 메뉴와 주 행동, 상�
     title: "수강 종료한 학생",
     back: { href: "/dashboard/admin?section=students", label: "학생 목록으로" },
   });
+  // 보기 전용 상세는 수강 종료한 학생 목록으로 돌아간다.
+  assert.equal(resolveActiveNavItem("admin", at("/dashboard/admin/students/archived/s1")), "students");
+  assert.deepEqual(resolveMobileTopBar("admin", at("/dashboard/admin/students/archived/s1")).back, {
+    href: "/dashboard/admin/students/archived",
+    label: "수강 종료한 학생으로",
+  });
 });
 
 test("가이드는 학생·관리자 메뉴에 같은 주소로 있고 페이지·편집 화면도 가이드 메뉴로 표시한다", () => {

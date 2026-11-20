@@ -1,7 +1,7 @@
 /**
  * 수강 종료한 학생(캔버스 StudentArchive ②·③). 학생 목록 맨 아래 링크로 온다. 사이드바는 '학생'이다.
  * 수강 종료한 학생은 로그인·목록·선택지에서 빠져 있고, 여기서만 보이며 바로 복원할 수 있다.
- * 기록은 복원한 뒤 학생 상세에서 보므로 이름은 링크가 아니다.
+ * 이름을 누르면 복원하지 않고 기록을 읽는 보기 전용 상세로 간다(캔버스 UxReview1120Policies ⑩).
  */
 import { redirect } from "next/navigation";
 import { getArchivedStudents } from "@/lib/actions/students";

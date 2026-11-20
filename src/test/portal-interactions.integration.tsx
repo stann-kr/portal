@@ -97,6 +97,8 @@ let removeGroup: typeof import("@/lib/actions/lessonGroups").deleteLessonGroupAc
 let deleteAction: typeof import("@/lib/actions/students").deleteStudent = async () => ({ ok: false, error: "테스트 미설정" });
 let StudentDeleteControl: typeof import("@/components/admin/StudentDeleteControl").StudentDeleteControl;
 let ArchivedStudentsClient: typeof import("@/app/(app)/dashboard/admin/students/archived/ArchivedStudentsClient").ArchivedStudentsClient;
+let ArchivedRecordRow: typeof import("@/app/(app)/dashboard/admin/students/archived/[id]/ArchivedRecordRow").ArchivedRecordRow;
+let ArchivedStudentBanner: typeof import("@/app/(app)/dashboard/admin/students/archived/[id]/ArchivedStudentBanner").ArchivedStudentBanner;
 let flashNotice: typeof import("@/lib/flash-notice");
 let NewStudentPage: typeof import("@/app/(app)/dashboard/admin/students/new/page").default;
 let inviteStatus: typeof import("@/lib/actions/invite").getInviteStatus = async () => ({ status: "invalid" });
@@ -373,6 +375,8 @@ before(async () => {
   ({ LessonGroupDialog } = await import("@/components/admin-portal/LessonGroupDialog"));
   ({ StudentDeleteControl } = await import("@/components/admin/StudentDeleteControl"));
   ({ ArchivedStudentsClient } = await import("@/app/(app)/dashboard/admin/students/archived/ArchivedStudentsClient"));
+  ({ ArchivedRecordRow } = await import("@/app/(app)/dashboard/admin/students/archived/[id]/ArchivedRecordRow"));
+  ({ ArchivedStudentBanner } = await import("@/app/(app)/dashboard/admin/students/archived/[id]/ArchivedStudentBanner"));
   flashNotice = await import("@/lib/flash-notice");
   ({ default: NewStudentPage } = await import("@/app/(app)/dashboard/admin/students/new/page"));
   ({ InviteSignup } = await import("@/components/auth/InviteSignup"));
@@ -5276,6 +5280,63 @@ test("수강 종료한 학생은 확인 없이 바로 복원하고, 사라진 �
   await press("student3@example.com 복원");
   assert.equal(browser.document.querySelector('[aria-live="polite"] p'), null);
   assert.match(browser.document.querySelector('[role="alert"]')?.textContent ?? "", /이미 복원했거나/u);
+});
+
+test("수강 종료한 학생 이름은 보기 전용 상세로 가고, 상세는 줄을 그 자리에서 펼치며 복원하면 학생 상세로 옮긴다", async (context) => {
+  await render(context, <ArchivedStudentsClient students={[
+    { id: "student-2", name: "정학생", email: "jung@example.com", archivedLabel: "11.18" },
+  ]} />);
+  const detailLinks = [...browser.document.querySelectorAll('a[href="/dashboard/admin/students/archived/student-2"]')];
+  assert.equal(detailLinks.length, 2, "휴대폰 줄과 넓은 화면 이름이 같은 상세로 간다");
+  for (const link of detailLinks) {
+    assert.equal(link.querySelector("button"), null, "링크 안에 복원 버튼을 넣지 않는다");
+    assert.match(link.textContent ?? "", /정학생/u);
+  }
+  await act(async () => browser.document.body.replaceChildren());
+
+  const restored: string[] = [];
+  restoreAction = async (studentId) => {
+    restored.push(studentId);
+    return restored.length === 1
+      ? { ok: false, error: "이미 복원했거나 찾을 수 없는 학생입니다. 목록을 새로 고쳐 주세요." }
+      : { ok: true, name: "정학생" };
+  };
+  context.after(() => { restoreAction = async () => ({ ok: false, error: "테스트 미설정" }); });
+  routerReplacements.length = 0;
+  await render(context, (
+    <div>
+      <ArchivedStudentBanner studentId="student-2" name="정학생" archivedLabel="11.18" />
+      <ul>
+        <ArchivedRecordRow title="15번째 수업" meta="11.11"><p>트랙 07</p></ArchivedRecordRow>
+      </ul>
+    </div>
+  ));
+  const note = browser.document.querySelector('[role="note"]');
+  assert.equal(note?.textContent?.replace(/\s+/gu, " ").trim(), "수강 종료 · 보기 전용 · 11.18 종료. 로그인할 수 없고 고칠 수 없습니다.복원");
+  assert.equal(browser.document.querySelectorAll("textarea, input, [contenteditable]").length, 0, "고칠 칸이 없다");
+
+  const row = browser.document.querySelector("li > button[aria-expanded]");
+  assert.ok(row instanceof browser.HTMLButtonElement);
+  assert.equal(row.textContent, "15번째 수업11.11");
+  assert.equal(row.getAttribute("aria-expanded"), "false");
+  assert.equal(browser.document.body.textContent?.includes("트랙 07"), false);
+  await act(async () => row.click());
+  assert.equal(row.getAttribute("aria-expanded"), "true");
+  const body = browser.document.getElementById(row.getAttribute("aria-controls") ?? "");
+  assert.ok(body instanceof browser.HTMLElement);
+  assert.equal(body.hidden, false);
+  assert.equal(body.textContent, "트랙 07");
+  await act(async () => row.click());
+  assert.equal(body.hidden, true, "다시 누르면 접는다");
+
+  await press("정학생 복원");
+  await settle();
+  assert.match(browser.document.querySelector('[role="alert"]')?.textContent ?? "", /이미 복원했거나/u);
+  assert.deepEqual(routerReplacements, []);
+  await press("정학생 복원");
+  await settle();
+  assert.deepEqual(restored, ["student-2", "student-2"]);
+  assert.deepEqual(routerReplacements, ["/dashboard/admin/students/student-2"], "복원하면 다시 고칠 수 있는 학생 상세로 옮긴다");
 });
 
 // ── 코드 리뷰 2차 후속 화면(캔버스 "코드 리뷰 2차 후속" ①~⑤) ──

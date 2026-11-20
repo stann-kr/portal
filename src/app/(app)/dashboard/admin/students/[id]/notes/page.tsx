@@ -17,6 +17,7 @@ import { getNoteSearchQuery, searchPrivateNotes } from "@/components/notes/NoteS
 import { buildNotesLessonsTimelineHref } from "@/lib/calendar-section-contract";
 import { getRequestNow } from "@/lib/request-time";
 import { RouteAutoRefresh } from "@/components/app-shell/RouteAutoRefresh";
+import { buildArchivedStudentHref, isArchivedStudent } from "@/lib/archived-student-records";
 
 export const metadata = { title: "학생 노트" };
 
@@ -33,7 +34,10 @@ export default async function AdminStudentNotesPage({
 
   const { id: studentId } = await params;
   const student = await getStudentById(studentId);
-  if (!student || student.role !== "student") redirect("/dashboard/admin");
+  if (!student || student.role !== "student") {
+    // 수강 종료한 학생의 노트는 보기 전용 상세의 노트 탭에서 본다(캔버스 UxReview1120Policies ⑩).
+    redirect(await isArchivedStudent(studentId) ? buildArchivedStudentHref(studentId) : "/dashboard/admin");
+  }
 
   const listPath = `/dashboard/admin/students/${studentId}/notes`;
   const composerPath = `${listPath}/new`;

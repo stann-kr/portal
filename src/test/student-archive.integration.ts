@@ -12,6 +12,7 @@ import {
   assignments,
   calendarConnections,
   calendarMappings,
+  feedbacks,
   guideAccess,
   lessonGroupMembers,
   lessonGroups,
@@ -21,6 +22,7 @@ import {
   pushSubscriptions,
   qnaThreads,
 } from "@/db/schema";
+import { createQnaReplyAtomically, createQnaThreadAtomically } from "@/lib/qna-atomic";
 import { createIsolatedPortalD1, type IsolatedPortalD1 } from "@/test/isolated-d1";
 
 type PortalTestDb = IsolatedPortalD1["db"];
@@ -35,6 +37,7 @@ let activeProfile: typeof import("@/lib/active-profile");
 let roster: typeof import("@/lib/student-roster");
 let pushStore: typeof import("@/lib/push/store");
 let mappingSync: typeof import("@/lib/calendar-sync/mapping-sync");
+let archivedRecords: typeof import("@/lib/archived-student-records");
 const resyncedStudents: string[][] = [];
 const prunedStudents: string[] = [];
 
@@ -97,6 +100,7 @@ before(async () => {
   roster = await import("@/lib/student-roster");
   pushStore = await import("@/lib/push/store");
   mappingSync = await import("@/lib/calendar-sync/mapping-sync");
+  archivedRecords = await import("@/lib/archived-student-records");
 });
 
 after(() => {
@@ -266,6 +270,90 @@ test("수강 종료 때 예정 레슨 지우기를 켜면 그 학생의 지금 �
   // 이미 수강을 종료한 학생은 다시 지우지 않는다(대상 확인에서 멈춘다).
   assert.equal((await studentActions.archiveStudent("student-a", true)).ok, false);
   assert.deepEqual(await lessonIds(), after);
+});
+
+test("수강 종료한 학생의 보기 전용 기록은 관리자만, 수강 종료한 학생만 읽고 그 학생의 개인 기록만 돌려준다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context);
+  const day = (value: string) => new Date(`2026-11-${value}T03:00:00.000Z`);
+  await db.insert(privateNotes).values([
+    // 그룹 노트·휴지통 노트·다른 학생 노트는 빠진다.
+    { id: "note-a-group", studentId: "student-a", authorId: "admin-1", groupId: "group-1", title: "화요일반 노트", contentHtml: "<p>그룹</p>" },
+    { id: "note-a-trash", studentId: "student-a", authorId: "admin-1", title: "지운 노트", contentHtml: "<p>x</p>", deletedAt: day("12"), deletedById: "admin-1" },
+    { id: "note-b", studentId: "student-b", authorId: "admin-1", title: "이학생 노트", contentHtml: "<p>b</p>" },
+  ]);
+  await db.insert(feedbacks).values([
+    { id: "fb-a-2", assignmentId: "submission-a", timeMarker: 95, content: "브레이크 잔음", createdAt: day("17") },
+    { id: "fb-a-1", assignmentId: "submission-a", timeMarker: null, content: "전체 흐름 좋음", createdAt: day("16") },
+    { id: "fb-c", assignmentId: "submission-c", timeMarker: null, content: "박학생 피드백", createdAt: day("16") },
+  ]);
+  await db.insert(qnaThreads).values([
+    { id: "qna-a-trash", studentId: "student-a", title: "지운 질문", status: "OPEN", deletedAt: day("13"), deletedById: "student-a" },
+    { id: "qna-b", studentId: "student-b", title: "이학생 질문", status: "OPEN" },
+  ]);
+  // 답글은 실제 작성 경로(receipt 포함)로만 들어간다.
+  const qnaContext = { kind: "d1" as const, db };
+  const asked = await createQnaThreadAtomically(qnaContext, {
+    actor: { id: "student-a", isAdmin: false }, threadId: "qna-a-asked", replyId: "reply-a-question",
+    operationId: crypto.randomUUID(), title: "잔음 처리 질문", contentHtml: "<p>질문 본문</p>",
+    attachmentUrl: null, attachmentObjectId: null, now: day("14"),
+  });
+  assert.equal(asked.ok, true);
+  const answered = await createQnaReplyAtomically(qnaContext, {
+    actor: { id: "admin-1", isAdmin: true }, threadId: "qna-a-asked", replyId: "reply-a-answer",
+    operationId: crypto.randomUUID(), contentHtml: "<p>답변</p>", attachmentUrl: null, attachmentObjectId: null, now: day("15"),
+  });
+  assert.equal(answered.ok, true);
+  const otherAsked = await createQnaThreadAtomically(qnaContext, {
+    actor: { id: "student-b", isAdmin: false }, threadId: "qna-b-asked", replyId: "reply-b",
+    operationId: crypto.randomUUID(), title: "이학생 질문 2", contentHtml: "<p>b 질문</p>",
+    attachmentUrl: null, attachmentObjectId: null, now: day("14"),
+  });
+  assert.equal(otherAsked.ok, true);
+
+  // 수강 중인 학생은 보기 전용 상세가 아니다(원래 학생 상세에서 본다).
+  assert.equal(await archivedRecords.loadArchivedStudentRecords("student-a", "notes"), null);
+  assert.equal(await archivedRecords.isArchivedStudent("student-a"), false);
+  await expectRedirect(studentActions.archiveStudent("student-a"), "/dashboard/admin?section=students");
+
+  // 학생 session은 수강 종료한 학생의 기록을 읽을 수 없다.
+  activeSession = createSession("student-b", "student");
+  await assert.rejects(archivedRecords.loadArchivedStudentRecords("student-a", "notes"), /Admin only/);
+  activeSession = createSession("admin-1", "admin");
+
+  const notes = await archivedRecords.loadArchivedStudentRecords("student-a", "notes");
+  assert.ok(notes && notes.tab === "notes");
+  assert.equal(notes.student.name, "김학생");
+  assert.ok(notes.student.archivedAt instanceof Date);
+  assert.deepEqual(notes.counts, { notes: 1, assignments: 1, qna: 2 }, "탭 숫자는 줄 수와 같다");
+  assert.deepEqual(notes.rows.map((row) => [row.id, row.title, row.contentHtml]), [["note-a", "김학생 레슨 메모", "<p>메모</p>"]]);
+  assert.equal(notes.rows[0]?.date.toISOString(), "2026-11-10T03:00:00.000Z", "노트 날짜가 있으면 그 날짜");
+
+  const submitted = await archivedRecords.loadArchivedStudentRecords("student-a", "assignments");
+  assert.ok(submitted && submitted.tab === "assignments");
+  assert.deepEqual(submitted.rows.map((row) => row.id), ["submission-a"]);
+  assert.deepEqual(submitted.rows[0]?.feedbacks.map((feedback) => [feedback.id, feedback.timeMarker, feedback.content]), [
+    ["fb-a-1", null, "전체 흐름 좋음"],
+    ["fb-a-2", 95, "브레이크 잔음"],
+  ], "그 제출의 피드백만 남긴 순서대로");
+
+  const qna = await archivedRecords.loadArchivedStudentRecords("student-a", "qna");
+  assert.ok(qna && qna.tab === "qna");
+  assert.deepEqual(qna.rows.map((row) => row.id), ["qna-a", "qna-a-asked"], "최근에 바뀐 질문부터");
+  assert.equal(qna.rows.length, qna.counts.qna);
+  assert.deepEqual(qna.rows[1]?.replies.map((reply) => [reply.id, reply.authorRole]), [
+    ["reply-a-question", "student"],
+    ["reply-a-answer", "admin"],
+  ], "질문 다음 답변");
+
+  // 수강 중인 학생·관리자·없는 id는 읽지 않는다.
+  for (const id of ["student-b", "admin-1", "missing", ""]) {
+    assert.equal(await archivedRecords.loadArchivedStudentRecords(id, "notes"), null, id);
+  }
+  assert.equal(await archivedRecords.isArchivedStudent("student-a"), true);
+
+  // 복원하면 다시 보기 전용 상세 대상이 아니다.
+  assert.equal((await studentActions.restoreStudent("student-a")).ok, true);
+  assert.equal(await archivedRecords.loadArchivedStudentRecords("student-a", "notes"), null);
 });
 
 test("복원하면 로그인·목록·그룹·업무함·알림·캘린더가 기록과 함께 그대로 돌아온다", { concurrency: false }, async (context) => {

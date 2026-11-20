@@ -61,6 +61,7 @@ import { StudentSwitcherMenu } from "@/components/admin/StudentSwitcher";
 import { InstructorMemoEditor } from "@/components/lesson/InstructorMemoEditor";
 import { getInstructorMemo } from "@/lib/actions/instructorMemos";
 import { getLessonNoteIdsForStudent } from "@/lib/actions/lesson-notes";
+import { buildArchivedStudentHref, isArchivedStudent } from "@/lib/archived-student-records";
 
 type RawColumn = Awaited<ReturnType<typeof getOrSeedColumns>>[number];
 type RawQnaThread = Awaited<ReturnType<typeof getQnaThreadsByStudent>>[number];
@@ -213,7 +214,8 @@ export default async function StudentDetailPage({
   if (tab !== activeTab) redirect(buildAdminStudentDetailHref(studentId, activeTab));
 
   const student = await getStudentById(studentId);
-  if (!student) redirect("/dashboard/admin");
+  // 수강 종료한 학생은 보기 전용 상세에서 본다(캔버스 UxReview1120Policies ⑩).
+  if (!student) redirect(await isArchivedStudent(studentId) ? buildArchivedStudentHref(studentId) : "/dashboard/admin");
   // 노트 탭은 검색·표/목록을 갖춘 학생 스페이스 노트 화면이 canonical이다(AdminStudentNotes 보드).
   if (activeTab === "notes") redirect(buildAdminStudentNotesHref(studentId));
   const [workCounts, lessonGroup, groupLessonStarts, switcherStudents, switcherGroups] = await Promise.all([
