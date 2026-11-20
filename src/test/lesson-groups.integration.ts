@@ -320,3 +320,32 @@ test("멤버를 바꾸면 새 멤버는 아직 시작하지 않은 그룹 일정
   assert.equal((await actions.saveLessonGroupAction({ groupId, name: "화요일반", memberIds: ["student-a", "student-c"] })).ok, true);
   assert.equal((await db.select().from(calendarEvents)).length, 4);
 });
+
+test("업무함 그룹레슨 줄의 그룹 노트 id는 관리자만 읽고, 기간 안 그 그룹의 휴지통 아닌 그룹 노트만 그룹·날짜로 묶는다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context);
+  await db.insert(lessonGroups).values([{ id: "g-tue", name: "화요일반" }, { id: "g-thu", name: "목요일반" }]);
+  await db.insert(lessonGroupMembers).values([
+    { groupId: "g-tue", studentId: "student-a" },
+    { groupId: "g-tue", studentId: "student-b" },
+    { groupId: "g-thu", studentId: "student-c" },
+    { groupId: "g-thu", studentId: "student-d" },
+  ]);
+  const day = new Date("2026-11-21T10:00:00.000Z"); // KST 11월 21일 19:00
+  await db.insert(privateNotes).values([
+    { id: "gn-old", studentId: "student-a", groupId: "g-tue", authorId: "admin-1", title: "그룹", contentHtml: "<p>a</p>", noteDate: new Date("2026-11-21T03:00:00.000Z"), updatedAt: new Date("2026-11-20T00:00:00.000Z") },
+    { id: "gn-new", studentId: "student-b", groupId: "g-tue", authorId: "admin-1", title: "그룹 2", contentHtml: "<p>b</p>", noteDate: new Date("2026-11-21T05:00:00.000Z"), updatedAt: new Date("2026-11-20T01:00:00.000Z") },
+    { id: "gn-trash", studentId: "student-c", groupId: "g-thu", authorId: "admin-1", title: "지움", contentHtml: "<p>c</p>", noteDate: new Date("2026-11-21T03:00:00.000Z"), deletedAt: new Date(), deletedById: "admin-1" },
+    { id: "gn-far", studentId: "student-c", groupId: "g-thu", authorId: "admin-1", title: "먼 날", contentHtml: "<p>d</p>", noteDate: new Date("2026-12-20T03:00:00.000Z") },
+    { id: "personal", studentId: "student-a", authorId: "admin-1", title: "개인", contentHtml: "<p>e</p>", noteDate: new Date("2026-11-21T03:00:00.000Z") },
+  ]);
+  const notes = await import("@/lib/actions/lesson-notes");
+  const links = await import("@/lib/lesson-note-links");
+  const range = { from: new Date("2026-11-20T00:00:00.000Z"), to: new Date("2026-11-27T00:00:00.000Z") };
+
+  activeSession = createSession("student-a", "student");
+  await assert.rejects(notes.getGroupLessonNoteIdsInRange(range), /Admin only/);
+
+  activeSession = createSession("admin-1", "admin");
+  const ids = await notes.getGroupLessonNoteIdsInRange(range);
+  assert.deepEqual(ids, { [links.groupLessonNoteKey("g-tue", day)]: "gn-new" });
+});

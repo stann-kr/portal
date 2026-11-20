@@ -15,7 +15,7 @@ import {
 import { ALL_STUDENTS_SCOPE, resolveAdminScheduleStudent } from "@/lib/admin-schedule-scope";
 import { getQnaThreads } from "@/lib/actions/qna";
 import { getPendingFeedbackAssignments } from "@/lib/actions/assignments";
-import { getLessonNoteIdsInRange } from "@/lib/actions/lesson-notes";
+import { getGroupLessonNoteIdsInRange, getLessonNoteIdsInRange } from "@/lib/actions/lesson-notes";
 import { AdminPortalClient } from "@/components/admin-portal/AdminPortalClient";
 import {
   firstSearchValue,
@@ -68,7 +68,11 @@ export default async function AdminPortalPage({ searchParams }: { searchParams: 
       return threads.filter((thread) => enrolled.has(thread.studentId));
     }),
     getPendingFeedbackAssignments(),
-    getLessonNoteIdsInRange(upcomingStudentIds, lessonWindow).catch(() => ({})),
+    // 그룹레슨 줄은 그 날 그룹 노트를 연다(열쇠가 "group:"으로 시작해 학생 열쇠와 겹치지 않는다).
+    Promise.all([
+      getLessonNoteIdsInRange(upcomingStudentIds, lessonWindow).catch(() => ({})),
+      getGroupLessonNoteIdsInRange(lessonWindow).catch(() => ({})),
+    ]).then(([personal, group]) => ({ ...personal, ...group })),
     getLessonGroups(),
     getArchivedStudentCount(),
   ]);

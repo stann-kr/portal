@@ -6,7 +6,7 @@
 
 import { createDb } from "@/db/client";
 import { requireAdmin, requireStudentTarget } from "@/lib/auth-guard";
-import { queryLessonNoteIds } from "@/lib/lesson-note-query";
+import { queryGroupLessonNoteIds, queryLessonNoteIds } from "@/lib/lesson-note-query";
 
 /** 학생 한 명의 "학생:KST 날짜" → 노트 id(학생 상세 레슨 목록). */
 export async function getLessonNoteIdsForStudent(studentId: string): Promise<Record<string, string>> {
@@ -21,4 +21,10 @@ export async function getLessonNoteIdsInRange(
 ): Promise<Record<string, string>> {
   await requireAdmin();
   return queryLessonNoteIds(createDb(), studentIds, range);
+}
+
+/** 기간 안 "group:그룹:KST 날짜" → 그룹 노트 id(업무함 그룹레슨 줄, 결정 ux1120-group-lesson-tools). */
+export async function getGroupLessonNoteIdsInRange(range: { from: Date; to: Date }): Promise<Record<string, string>> {
+  await requireAdmin();
+  return queryGroupLessonNoteIds(createDb(), range);
 }

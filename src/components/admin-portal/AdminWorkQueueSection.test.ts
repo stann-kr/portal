@@ -286,3 +286,127 @@ test("업무함 확인: 앞 행 저장이 늦게 실패해도 다른 행의 되�
   assert.ok(ackButton("하우스 롱셋"), "되돌리기로 다시 보인다");
   assert.equal(alertText(), "");
 });
+
+test("업무함 다가오는 레슨: 멤버 모두 같은 시각인 그룹레슨은 한 줄로 합쳐 그 날 그룹 노트를 열고, 5줄이 넘으면 나머지를 펼친다", async (context) => {
+  const browserWindow = new Window({ url: "https://portal.test/dashboard/admin?section=work" });
+  const values: Record<string, unknown> = {
+    window: browserWindow,
+    self: browserWindow,
+    document: browserWindow.document,
+    navigator: browserWindow.navigator,
+    Event: browserWindow.Event,
+    CustomEvent: browserWindow.CustomEvent,
+    KeyboardEvent: browserWindow.KeyboardEvent,
+    PointerEvent: browserWindow.PointerEvent,
+    Node: browserWindow.Node,
+    Element: browserWindow.Element,
+    HTMLElement: browserWindow.HTMLElement,
+    HTMLInputElement: browserWindow.HTMLInputElement,
+    MutationObserver: browserWindow.MutationObserver,
+    ResizeObserver: browserWindow.ResizeObserver,
+    getComputedStyle: browserWindow.getComputedStyle.bind(browserWindow),
+    requestAnimationFrame: browserWindow.requestAnimationFrame.bind(browserWindow),
+    cancelAnimationFrame: browserWindow.cancelAnimationFrame.bind(browserWindow),
+    IS_REACT_ACT_ENVIRONMENT: true,
+    React,
+  };
+  const previous = new Map<string, PropertyDescriptor | undefined>();
+  for (const name of Object.keys(values)) {
+    previous.set(name, Object.getOwnPropertyDescriptor(globalThis, name));
+    Object.defineProperty(globalThis, name, { configurable: true, writable: true, value: values[name] });
+  }
+  const { createRoot } = await import("react-dom/client");
+  const { AdminWorkQueueSection } = await import("./AdminWorkQueueSection");
+  const container = browserWindow.document.createElement("div");
+  browserWindow.document.body.append(container);
+  const root = createRoot(container as unknown as HTMLElement);
+  context.after(async () => {
+    await act(async () => root.unmount());
+    browserWindow.close();
+    for (const name of [...Object.keys(values)].reverse()) {
+      const descriptor = previous.get(name);
+      if (descriptor) Object.defineProperty(globalThis, name, descriptor);
+      else Reflect.deleteProperty(globalThis, name);
+    }
+  });
+
+  const referenceTime = new Date("2026-11-20T00:00:00.000Z");
+  const student = (id: string, name: string, at: string) => ({
+    id, email: `${id}@example.test`, displayName: name, createdAt: null, currentModule: null,
+    nextLessonDate: new Date(at), pendingFeedbackCount: 0, openQnaCount: 0,
+  });
+  const students = [
+    student("s-kim", "김학생", "2026-11-21T10:00:00.000Z"),
+    student("s-lee", "이학생", "2026-11-21T10:00:00.000Z"),
+    student("s-park", "박학생", "2026-11-22T05:00:00.000Z"),
+    student("s-choi", "최학생", "2026-11-23T02:00:00.000Z"),
+    student("s-jung", "정학생", "2026-11-24T11:00:00.000Z"),
+    student("s-han", "한학생", "2026-11-25T10:00:00.000Z"),
+    student("s-yoon", "윤학생", "2026-11-26T10:00:00.000Z"),
+  ];
+  await act(async () => {
+    root.render(React.createElement(AdminWorkQueueSection, {
+      students,
+      threads: [],
+      pendingAssignments: [],
+      referenceTime,
+      onOpenSchedule: () => undefined,
+      pushOwnerId: "admin-1",
+      lessonNoteIds: {},
+      lessonGroups: [{ id: "g-tue", name: "화요일반", memberIds: ["s-kim", "s-lee"] }],
+    }));
+  });
+  const list = () => container.querySelector('section[aria-labelledby="upcoming-lesson-heading"] ul')!;
+  const rows = () => [...list().querySelectorAll(":scope > li")];
+  assert.equal(rows().length, 5);
+  const groupRow = rows()[0]!;
+  assert.match(groupRow.textContent ?? "", /그룹레슨화요일반김학생 · 이학생/u);
+  assert.equal(groupRow.querySelector("a")?.getAttribute("href"), "/dashboard/admin/students/s-kim");
+  const groupNote = groupRow.querySelector('a[aria-label$="수업 노트 쓰기"]');
+  assert.equal(groupNote?.getAttribute("aria-label"), "화요일반 그룹레슨 11.21 수업 노트 쓰기");
+  assert.equal(
+    groupNote?.getAttribute("href"),
+    "/dashboard/admin/students/s-kim/notes/new?date=2026-11-21&space=group&returnTo=%2Fdashboard%2Fadmin%3Fsection%3Dwork",
+  );
+  // 머리 숫자(7일 안 레슨)는 합친 뒤 줄 수다.
+  const metric = [...container.querySelectorAll("dl > div")].find((node) => node.textContent?.includes("7일 내 레슨"));
+  assert.match(metric?.textContent ?? "", /6/u);
+
+  const more = [...container.querySelectorAll("button")].find((node) => node.textContent === "나머지 1건 더 보기")!;
+  assert.equal(more.getAttribute("aria-expanded"), "false");
+  await act(async () => more.click());
+  assert.equal(rows().length, 6);
+  assert.equal(more.textContent, "처음 5건만 보기");
+  assert.equal(more.getAttribute("aria-expanded"), "true");
+
+  // 그 날 그룹 노트가 있으면 "노트 열기"가 그 노트를 연다. 멤버 한 명이 다른 시각이면 합치지 않는다.
+  await act(async () => {
+    root.render(React.createElement(AdminWorkQueueSection, {
+      students: [students[0]!, { ...students[1]!, nextLessonDate: new Date("2026-11-21T11:00:00.000Z") }],
+      threads: [],
+      pendingAssignments: [],
+      referenceTime,
+      onOpenSchedule: () => undefined,
+      pushOwnerId: "admin-1",
+      lessonNoteIds: { "group:g-tue:2026-11-21": "group-note-1" },
+      lessonGroups: [{ id: "g-tue", name: "화요일반", memberIds: ["s-kim", "s-lee"] }],
+    }));
+  });
+  assert.deepEqual(rows().map((row) => row.querySelector("a")?.textContent?.includes("그룹레슨")), [false, false]);
+  await act(async () => {
+    root.render(React.createElement(AdminWorkQueueSection, {
+      students: students.slice(0, 2),
+      threads: [],
+      pendingAssignments: [],
+      referenceTime,
+      onOpenSchedule: () => undefined,
+      pushOwnerId: "admin-1",
+      lessonNoteIds: { "group:g-tue:2026-11-21": "group-note-1" },
+      lessonGroups: [{ id: "g-tue", name: "화요일반", memberIds: ["s-kim", "s-lee"] }],
+    }));
+  });
+  const opened = rows()[0]!.querySelector('a[aria-label$="수업 노트 열기"]');
+  assert.equal(opened?.getAttribute("href"), "/dashboard/notes/group-note-1?returnTo=%2Fdashboard%2Fadmin%3Fsection%3Dwork");
+  assert.equal(opened?.textContent, "노트 열기");
+  assert.equal(container.querySelector('[aria-expanded]'), null, "5줄 이하이면 펼치기 줄이 없다");
+});
