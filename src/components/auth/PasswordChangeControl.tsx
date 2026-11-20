@@ -5,6 +5,7 @@ import type { AccountDialogHandle } from "@/components/auth/LocalDraftManager";
 import { KeyRound } from "lucide-react";
 import { AUTH_INPUT_CLASS, AUTH_LABEL_CLASS, AUTH_SUBMIT_CLASS } from "@/components/auth/LoginSubmitButton";
 import { Button } from "@/components/ui/button";
+import { PasswordManagerUsername } from "@/components/auth/PasswordManagerUsername";
 import {
   Dialog,
   DialogContent,
@@ -57,12 +58,15 @@ export function PasswordChangeForm({
   onDone,
   onCancel,
   onBusyChange,
+  accountEmail = null,
 }: {
   variant?: PasswordChangeVariant;
   onDone: () => void;
   /** 대화상자의 취소 버튼. 없으면 취소 버튼을 그리지 않는다. */
   onCancel?: () => void;
   onBusyChange?: (busy: boolean) => void;
+  /** 로그인 이메일. 암호 관리자가 바꾼 비밀번호를 이 계정 항목에 저장하게 한다. */
+  accountEmail?: string | null;
 }) {
   const required = variant === "required";
   const baseId = useId();
@@ -146,6 +150,7 @@ export function PasswordChangeForm({
 
   return (
     <form action={action} className="flex flex-col gap-4" aria-busy={pending}>
+      <PasswordManagerUsername value={accountEmail} />
       {(Object.keys(labels) as ChangePasswordField[]).map((field) => {
         const inputId = `${baseId}-${field}`;
         const helpId = `${inputId}-help`;
@@ -212,9 +217,11 @@ export function PasswordChangeForm({
 export function PasswordChangeControl({
   controlRef,
   hideTrigger = false,
+  accountEmail = null,
 }: {
   controlRef?: Ref<AccountDialogHandle>;
   hideTrigger?: boolean;
+  accountEmail?: string | null;
 } = {}) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -246,7 +253,7 @@ export function PasswordChangeControl({
             현재 비밀번호를 확인한 뒤 바꿉니다. 이 기기의 로그인은 유지되고 다른 기기의 기존 로그인은 만료됩니다.
           </DialogDescription>
         </DialogHeader>
-        <PasswordChangeForm key={formKey} onDone={() => setOpen(false)} onCancel={() => handleOpenChange(false)} onBusyChange={setBusy} />
+        <PasswordChangeForm key={formKey} accountEmail={accountEmail} onDone={() => setOpen(false)} onCancel={() => handleOpenChange(false)} onBusyChange={setBusy} />
       </DialogContent>
     </Dialog>
   );

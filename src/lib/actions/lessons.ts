@@ -307,6 +307,7 @@ async function writeLessonSchedule(
       scheduledAt: parsed.value,
       changed: true,
       toAdmin: !movedByAdmin,
+      studentId,
       studentName: actor.user.name ?? null,
     }),
     { excludeProfileId: actor.user.id },

@@ -81,6 +81,9 @@ export function getAdminWorkQueue(
   };
 }
 
+/** 관리자 업무함 주소. 업무함에서 연 화면의 돌아가기 대상이다. */
+export const ADMIN_WORK_QUEUE_PATH = "/dashboard/admin?section=work";
+
 /** 업무함에서 연 과제 상세 주소. `from=work`가 있으면 처리 뒤 다음 피드백 대기로 이어 준다. */
 export function buildAssignmentQueueHref(assignmentId: string, returnTo: string): string {
   return `/dashboard/student/assignments/${encodeURIComponent(assignmentId)}?from=work&returnTo=${encodeURIComponent(returnTo)}`;

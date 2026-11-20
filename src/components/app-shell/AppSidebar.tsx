@@ -136,12 +136,14 @@ function AccountRow({
   role,
   displayName,
   ownerId,
+  accountEmail,
   canDeleteAccount,
   variant,
 }: {
   role: AppRole;
   displayName: string;
   ownerId: string;
+  accountEmail: string | null;
   canDeleteAccount: boolean;
   variant: "desktop" | "drawer";
 }) {
@@ -166,7 +168,7 @@ function AccountRow({
         <span className={cn("truncate font-medium", variant === "desktop" ? "text-ui" : "text-sm")}>{displayName}</span>
         {role === "admin" ? null : <span className="text-xs text-muted-foreground">학생</span>}
       </span>
-      <AccountMenu ownerId={ownerId} canDeleteAccount={canDeleteAccount} isAdmin={role === "admin"} size={variant === "desktop" ? "md" : "touch"} />
+      <AccountMenu ownerId={ownerId} accountEmail={accountEmail} canDeleteAccount={canDeleteAccount} isAdmin={role === "admin"} size={variant === "desktop" ? "md" : "touch"} />
     </div>
   );
 }
@@ -199,6 +201,7 @@ export function AppSidebar({
   role,
   displayName,
   ownerId,
+  accountEmail = null,
   canDeleteAccount,
   workCount = null,
   guideHidden = false,
@@ -207,6 +210,8 @@ export function AppSidebar({
   role: AppRole;
   displayName: string;
   ownerId: string;
+  /** 로그인 이메일. 비밀번호 변경 form이 암호 관리자에 사용자 이름으로 넘긴다(화면에는 보이지 않는다). */
+  accountEmail?: string | null;
   canDeleteAccount: boolean;
   /** 가이드가 열리지 않은 학생이면 메뉴에서 "가이드"를 뺀다. */
   guideHidden?: boolean;
@@ -239,7 +244,7 @@ export function AppSidebar({
       >
         <Brand size="desktop" role={role} />
         <SidebarNav role={role} variant="desktop" workCount={workCount} guideHidden={guideHidden} />
-        <AccountRow role={role} displayName={displayName} ownerId={ownerId} canDeleteAccount={canDeleteAccount} variant="desktop" />
+        <AccountRow role={role} displayName={displayName} ownerId={ownerId} accountEmail={accountEmail} canDeleteAccount={canDeleteAccount} variant="desktop" />
       </aside>
 
       <Dialog.Root open={open} onOpenChange={setOpen}>
@@ -290,12 +295,13 @@ export function AppSidebar({
               </Dialog.Close>
             </div>
             <SidebarNav role={role} variant="drawer" workCount={workCount} guideHidden={guideHidden} onNavigate={() => setOpen(false)} />
-            <AccountRow role={role} displayName={displayName} ownerId={ownerId} canDeleteAccount={canDeleteAccount} variant="drawer" />
+            <AccountRow role={role} displayName={displayName} ownerId={ownerId} accountEmail={accountEmail} canDeleteAccount={canDeleteAccount} variant="drawer" />
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>
 
-      <div className="min-w-0 flex-1">{children}</div>
+      {/* app-content: 미니 플레이어 아래 여백을 셸 안에서 갖는다(player.css). */}
+      <div className="app-content min-w-0 flex-1">{children}</div>
     </TopBarContext.Provider>
   );
 }

@@ -28,3 +28,49 @@ export function limitCommentContent(input: string): LimitedCommentContent {
     cut: characters.length - COMMENT_MAX_LENGTH,
   };
 }
+
+/** 답글이면 원 댓글 ID를 담는 form 칸. 비어 있으면 원 댓글이다. */
+export const COMMENT_PARENT_FIELD = "parentId";
+
+/** 답글 입력 초안 context. 원 댓글(묶음)마다 따로 보존한다(같은 "커뮤니티 댓글" 초안 종류). */
+export function commentReplyDraftContext(postId: string, rootId: string): string {
+  return `${postId}:reply:${rootId}`;
+}
+
+/** 답글의 답글을 열 때 입력 칸에 미리 넣는 말. 사용자가 지울 수 있는 일반 글자다. */
+export function replyMention(name: string): string {
+  return `@${name} `;
+}
+
+type ThreadRow = { id: string; parentId: string | null };
+
+export type CommentThread<T extends ThreadRow> =
+  | { kind: "comment"; id: string; root: T; replies: T[] }
+  | { kind: "deleted"; id: string; replies: T[] };
+
+/**
+ * 작성 순서로 받은 댓글을 원 댓글 + 답글 묶음으로 나눈다(한 단계).
+ * 원 댓글이 지워졌는데 답글이 남은 묶음은 "deleted"로, 그 묶음의 첫 답글 자리에 놓는다.
+ * 답글이 모두 지워지면 그 묶음도 없다.
+ */
+export function groupCommentThreads<T extends ThreadRow>(rows: readonly T[]): CommentThread<T>[] {
+  const rootIds = new Set(rows.filter((row) => row.parentId === null).map((row) => row.id));
+  const repliesByParent = new Map<string, T[]>();
+  for (const row of rows) {
+    if (row.parentId === null) continue;
+    const replies = repliesByParent.get(row.parentId);
+    if (replies) replies.push(row);
+    else repliesByParent.set(row.parentId, [row]);
+  }
+  const threads: CommentThread<T>[] = [];
+  const placedDeleted = new Set<string>();
+  for (const row of rows) {
+    if (row.parentId === null) {
+      threads.push({ kind: "comment", id: row.id, root: row, replies: repliesByParent.get(row.id) ?? [] });
+    } else if (!rootIds.has(row.parentId) && !placedDeleted.has(row.parentId)) {
+      placedDeleted.add(row.parentId);
+      threads.push({ kind: "deleted", id: row.parentId, replies: repliesByParent.get(row.parentId) ?? [] });
+    }
+  }
+  return threads;
+}

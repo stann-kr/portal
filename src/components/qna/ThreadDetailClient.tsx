@@ -477,7 +477,11 @@ function ThreadDetailContent({
             ) : null}
             {composerLocked ? (
               <p role="status" className="rounded-lg border border-warning-border bg-warning-muted px-3 py-2 text-ui text-foreground">
-                스레드가 종료되어 등록할 수 없지만, 작성 중이던 내용은 실시간 작성본에 보존되어 있습니다. 내용을 복사하거나 Stann이 다시 열 때 이어서 등록할 수 있습니다.
+                스레드가 종료되어 등록할 수 없지만, 작성 중이던 내용은 실시간 작성본에 보존되어 있습니다.{" "}
+                {/* 질문 작성자는 위의 "다시 열기"로 직접 열 수 있다(studentCanReopen). */}
+                {studentCanReopen
+                  ? "위의 “다시 열기”를 누르면 이어서 등록할 수 있습니다."
+                  : "내용을 복사하거나 Stann이 다시 열 때 이어서 등록할 수 있습니다."}
               </p>
             ) : null}
             {replyState.error && (!replyState.operationConflict || hasOperationConflict) && (

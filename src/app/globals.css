@@ -632,6 +632,13 @@
     bottom: calc(var(--keyboard-inset, 0px) + 3rem);
     padding-bottom: 0.5rem;
   }
+  /* 수업 녹음 칸도 서식 줄 위로, 수업 막대가 있는 관리자 노트는 그 막대(7.5rem) 위로 올린다. */
+  html[data-editor-dock] .lesson-recording-dock {
+    bottom: calc(var(--keyboard-inset, 0px) + 3.75rem);
+  }
+  html[data-editor-dock] .lesson-recording-dock-above-bar {
+    bottom: calc(var(--keyboard-inset, 0px) + 10.5rem);
+  }
 }
 
 /* ─── 수업 노트: 시점 표시 `[12:34]` ───────────── */

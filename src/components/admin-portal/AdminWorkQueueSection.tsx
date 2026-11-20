@@ -7,7 +7,7 @@ import type { ReactNode } from "react";
 import { Check, FileText } from "lucide-react";
 import { setAssignmentReviewed } from "@/lib/actions/assignment-review";
 import { buildLessonNoteLink, LESSON_NOTE_LINK_CLASS } from "@/lib/lesson-note-links";
-import { buildAssignmentQueueHref } from "@/lib/admin-work-queue";
+import { ADMIN_WORK_QUEUE_PATH, buildAssignmentQueueHref } from "@/lib/admin-work-queue";
 import { UndoToast, type UndoToastMessage } from "./UndoToast";
 import {
   getAdminWorkQueue,
@@ -32,7 +32,7 @@ import {
 } from "@/components/student-portal/today/HomeSection";
 
 const QUEUE_PREVIEW_COUNT = 5;
-const WORK_QUEUE_PATH = "/dashboard/admin?section=work";
+const WORK_QUEUE_PATH = ADMIN_WORK_QUEUE_PATH;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
 

@@ -62,6 +62,12 @@ test("학생 딥링크는 현재 학생의 과제·항목 목록에 있을 때�
 test("딥링크 주소 helper", () => {
   assert.equal(assignmentTaskHref("t 1"), "/dashboard/student?section=workspace&view=assignments&task=t%201", "예전 주소 redirect 없이 정식 주소");
   assert.equal(assignmentTaskHref("t1", { analysis: true }), analysisWriteHref("t1"));
+  // 홈 할 일·캘린더에서 연 분석 쓰기는 뒤로·취소가 들어온 화면으로 간다(일반 과제 주소에는 붙이지 않는다).
+  assert.equal(
+    assignmentTaskHref("t1", { analysis: true, returnTo: "/dashboard/student?section=today" }),
+    "/dashboard/student/assignments/analysis/t1?returnTo=%2Fdashboard%2Fstudent%3Fsection%3Dtoday",
+  );
+  assert.equal(assignmentTaskHref("t1", { returnTo: "/dashboard/student" }), assignmentTaskHref("t1"));
   assert.equal(
     calendarItemHref("2026-11-09", "PORTAL:EVENT:a"),
     "/dashboard/student?section=workspace&view=calendar&date=2026-11-09&item=PORTAL%3AEVENT%3Aa",

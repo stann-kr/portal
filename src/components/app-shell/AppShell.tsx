@@ -51,6 +51,7 @@ async function AuthenticatedShell({ children }: { children: ReactNode }) {
         role={role}
         displayName={displayName}
         ownerId={ownerId}
+        accountEmail={session.user.email ?? null}
         canDeleteAccount={role === "student" && isAccountDeletionEnabled()}
         workCount={workCount}
         guideHidden={guideHidden}

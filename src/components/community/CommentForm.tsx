@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useId, useRef, useState } from "react";
+import { type ChangeEvent, useActionState, useEffect, useId, useRef, useState } from "react";
 import { ArrowUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -11,7 +11,13 @@ import { createDocumentDraftKey } from "@/lib/form-draft";
 import { useFormDraft } from "@/lib/hooks/useFormDraft";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
 import { CREATION_OPERATION_FIELD, createCreationOperationId, parseCreationOperationId } from "@/lib/creation-operation";
-import { COMMENT_COUNTER_FROM, COMMENT_MAX_LENGTH, limitCommentContent } from "@/lib/community-comment";
+import {
+  COMMENT_COUNTER_FROM,
+  COMMENT_MAX_LENGTH,
+  COMMENT_PARENT_FIELD,
+  commentReplyDraftContext,
+  limitCommentContent,
+} from "@/lib/community-comment";
 import { COMMENT_TIME_MARKER_FIELD, formatTimeMarker, parseTimeMarker } from "@/lib/community-mixset-media";
 
 const COMMENT_MAX_LABEL = new Intl.NumberFormat("ko-KR").format(COMMENT_MAX_LENGTH);
@@ -23,25 +29,43 @@ type CommentDraft = { content: string; timeMarker?: string; operationId?: string
  * 입력값은 이 기기 초안으로 조용히 보존하고, 복원·충돌·오류·복구본이 있을 때만 줄 아래에 안내한다.
  * 매체가 있는 믹스셋 게시물이면 선택 칸 "시점"을 더해 재생 위치에 댓글을 남긴다(비우면 일반 댓글).
  * 내용은 서버 한도(5,000자)에서 멈추고, 4,500자부터 줄 아래에 글자 수를 보인다(캔버스 "코드 리뷰 2차 후속" ③).
+ * parentId가 있으면 답글 입력(캔버스 CommunityReplies): 묶음 아래에 열리고, 초안은 원 댓글 묶음마다 따로 보존하며,
+ * 시점 칸 없이 취소·등록을 둔다. mention("@이름 ")은 입력이 비어 있을 때만 미리 넣는다.
  */
 export function CommentForm({
   postId,
   actorId,
   onSaved,
   className,
-  allowTimeMarker = false,
+  allowTimeMarker: allowTimeMarkerProp = false,
   readPlaybackPosition,
+  parentId,
+  replyLabel,
+  mention = null,
+  onCancel,
 }: {
   postId: string;
   actorId: string;
-  onSaved: () => void;
+  /** 저장된 댓글 ID와 함께 부른다. */
+  onSaved: (commentId: string) => void;
   /** 좁은 화면 아래 고정 막대처럼 놓일 자리의 모양 */
   className?: string;
   /** 매체가 있는 믹스셋 게시물에서만 true: 재생 시점 칸을 보인다. */
   allowTimeMarker?: boolean;
   /** "현재 위치"로 시점을 채울 때 읽는 플레이어 위치(초). 없거나 null이면 읽지 못했다고 알린다. */
   readPlaybackPosition?: () => Promise<number | null>;
+  /** 답글을 달 원 댓글 ID. 있으면 답글 입력이다. */
+  parentId?: string;
+  /** 답글 입력 칸 이름(예: "이학생 댓글에 답글"). */
+  replyLabel?: string;
+  /** 답글의 답글이면 미리 넣을 "@이름 ". */
+  mention?: string | null;
+  /** 답글 입력 닫기(취소·Esc). 입력값은 초안으로 남는다. */
+  onCancel?: () => void;
 }) {
+  const isReply = Boolean(parentId);
+  // 답글에는 재생 시점이 없다(파형 아이콘은 원 댓글만).
+  const allowTimeMarker = allowTimeMarkerProp && !isReply;
   const contentId = useId();
   const errorId = useId();
   const lengthId = useId();
@@ -62,7 +86,7 @@ export function CommentForm({
   const [operationId, setOperationId] = useState("");
   const [showResult, setShowResult] = useState(false);
   const draft = useFormDraft<CommentDraft>(
-    createDocumentDraftKey("community-comment", actorId, postId),
+    createDocumentDraftKey("community-comment", actorId, parentId ? commentReplyDraftContext(postId, parentId) : postId),
     (saved) => {
       setContent(typeof saved.content === "string" ? limitCommentContent(saved.content).value : "");
       setPasteCut(false);
@@ -94,11 +118,29 @@ export function CommentForm({
       setTimeMarker("");
       setPositionStatus(null);
       setOperationId(createCreationOperationId());
-      onSaved();
+      onSaved(result.commentId);
     }
     return result;
   }, {});
   useBusyNavigationGuard(pending);
+
+  // 답글의 답글: 입력이 비어 있거나 앞서 넣은 "@이름 " 그대로일 때만 새 이름으로 바꾼다(초안·직접 쓴 글은 두고).
+  // 원 댓글의 "답글"로 바꾸면(이름 없음) 앞서 넣은 "@이름 "만 있던 입력을 비운다.
+  const [appliedMention, setAppliedMention] = useState<string | null>(null);
+  if (draft.loaded && (mention ?? null) !== appliedMention) {
+    setAppliedMention(mention ?? null);
+    if (content === "" || content === appliedMention) setContent(mention ?? "");
+  }
+  const untouchedMention = appliedMention !== null && content === appliedMention;
+
+  // 답글 입력은 열리거나 다른 답글에 답하면 입력 칸으로 초점을 옮기고 커서를 끝에 둔다.
+  useEffect(() => {
+    if (!isReply || !draft.loaded) return;
+    const input = contentRef.current;
+    if (!input) return;
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+  }, [isReply, draft.loaded, mention]);
 
   // 내용이나 시점이 바뀌면 다른 제출이므로 작업 식별자를 새로 만든다(서버 재시도 비교에 시점도 들어간다).
   const saveDraft = (next: { content: string; timeMarker: string }) => {
@@ -109,6 +151,12 @@ export function CommentForm({
     else draft.clear();
   };
 
+  const changeContent = (event: ChangeEvent<HTMLInputElement>) => {
+    const limited = limitCommentContent(event.target.value);
+    setContent(limited.value);
+    setPasteCut(limited.cut > 1);
+    saveDraft({ content: limited.value, timeMarker });
+  };
   const changeTimeMarker = (value: string) => {
     positionReadGeneration.current += 1;
     setTimeMarker(value);
@@ -177,6 +225,7 @@ export function CommentForm({
       }}
     >
       <input type="hidden" name={CREATION_OPERATION_FIELD} value={operationId} />
+      {parentId ? <input type="hidden" name={COMMENT_PARENT_FIELD} value={parentId} /> : null}
       {allowTimeMarker ? (
         <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
           <label htmlFor={timeId} className="shrink-0 text-xs text-muted-foreground">시점</label>
@@ -225,38 +274,77 @@ export function CommentForm({
       {allowTimeMarker ? (
         <p role="status" className={positionStatus ? "text-xs text-muted-foreground" : "sr-only"}>{positionStatus ?? ""}</p>
       ) : null}
-      <label htmlFor={contentId} className="sr-only">댓글 내용</label>
-      <div className="flex gap-2">
-        <Input
-          ref={contentRef}
-          id={contentId}
-          name="content"
-          type="text"
-          placeholder="댓글을 입력하세요..."
-          value={content}
-          onChange={(event) => {
-            const limited = limitCommentContent(event.target.value);
-            setContent(limited.value);
-            setPasteCut(limited.cut > 1);
-            saveDraft({ content: limited.value, timeMarker });
-          }}
-          required
-          disabled={!draft.loaded || pending}
-          aria-describedby={contentDescribedBy || undefined}
-          className="min-w-0 flex-1 md:h-10"
-        />
-        {/* 좁은 화면은 Q&A 답변 입력줄과 같은 44px 화살표 버튼, 넓은 화면은 글자 버튼(B 묶음 ④). */}
-        <Button
-          type="submit"
-          size="touch"
-          disabled={!draft.loaded || !draft.canSubmit || pending || !operationId || !content.trim()}
-          aria-label={pending ? "등록 중" : "댓글 등록"}
-          className="size-11 shrink-0 px-0 md:h-10 md:w-auto md:rounded-md md:px-4 md:text-ui"
-        >
-          <ArrowUp className="size-4 md:hidden" strokeWidth={1.8} aria-hidden="true" />
-          <span aria-hidden="true" className="hidden md:inline">{pending ? "등록 중..." : "등록"}</span>
-        </Button>
-      </div>
+      <label htmlFor={contentId} className="sr-only">{isReply ? (replyLabel ?? "답글 내용") : "댓글 내용"}</label>
+      {isReply ? (
+        // 답글 입력: 넓은 화면은 한 줄(입력 36 · 취소 · 등록), 휴대폰은 입력 44 아래 오른쪽에 취소·등록 44.
+        <div className="flex flex-col gap-1.5 md:flex-row md:items-center md:gap-2">
+          <Input
+            ref={contentRef}
+            id={contentId}
+            name="content"
+            type="text"
+            placeholder="답글을 입력하세요..."
+            value={content}
+            onChange={changeContent}
+            onKeyDown={(event) => {
+              if (event.key !== "Escape" || !onCancel || pending) return;
+              event.preventDefault();
+              onCancel();
+            }}
+            required
+            disabled={!draft.loaded || pending}
+            aria-describedby={contentDescribedBy || undefined}
+            className="min-w-0 md:flex-1"
+          />
+          <div className="flex justify-end gap-2">
+            {onCancel ? (
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={onCancel}
+                disabled={pending}
+                className="h-11 rounded-touch px-3 text-md md:h-9 md:rounded-md md:px-2.5 md:text-ui"
+              >
+                취소
+              </Button>
+            ) : null}
+            <Button
+              type="submit"
+              disabled={!draft.loaded || !draft.canSubmit || pending || !operationId || !content.trim() || untouchedMention}
+              className="h-11 rounded-touch px-4 text-md md:h-9 md:rounded-md md:px-3.5 md:text-ui"
+            >
+              {pending ? "등록 중..." : "등록"}
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex gap-2">
+          <Input
+            ref={contentRef}
+            id={contentId}
+            name="content"
+            type="text"
+            placeholder="댓글을 입력하세요..."
+            value={content}
+            onChange={changeContent}
+            required
+            disabled={!draft.loaded || pending}
+            aria-describedby={contentDescribedBy || undefined}
+            className="min-w-0 flex-1 md:h-10"
+          />
+          {/* 좁은 화면은 Q&A 답변 입력줄과 같은 44px 화살표 버튼, 넓은 화면은 글자 버튼(B 묶음 ④). */}
+          <Button
+            type="submit"
+            size="touch"
+            disabled={!draft.loaded || !draft.canSubmit || pending || !operationId || !content.trim()}
+            aria-label={pending ? "등록 중" : "댓글 등록"}
+            className="size-11 shrink-0 px-0 md:h-10 md:w-auto md:rounded-md md:px-4 md:text-ui"
+          >
+            <ArrowUp className="size-4 md:hidden" strokeWidth={1.8} aria-hidden="true" />
+            <span aria-hidden="true" className="hidden md:inline">{pending ? "등록 중..." : "등록"}</span>
+          </Button>
+        </div>
+      )}
       {/* 글자 수 줄은 한도에 가까워졌을 때만 보인다. 첫 안내가 읽히도록 자리는 늘 두고, 평소에는 간격을 만들지 않게 감춘다. */}
       <p
         id={lengthId}
@@ -271,7 +359,7 @@ export function CommentForm({
         ) : null}
       </p>
       {showResult && state.error && <p id={errorId} role="alert" className="text-ui text-destructive">{state.error}</p>}
-      {showResult && state.success && <p role="status" className="text-xs text-success">댓글이 저장되었습니다.</p>}
+      {showResult && state.success && !isReply && <p role="status" className="text-xs text-success">댓글이 저장되었습니다.</p>}
       <DraftStatus
         {...draft}
         quiet

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
-import { detectPushSupport } from "@/components/push/push-client";
+import { detectAppleHomeScreenApp, detectPushSupport } from "@/components/push/push-client";
 import { readPushConfig } from "./config";
 import { pushMessages } from "./messages";
 import { deliverPush, type PushDeliveryDeps } from "./notify";
@@ -182,9 +182,13 @@ test("메시지: 눌렀을 때 열 포탈 경로와 같은 대상의 알림을 �
   );
   const lateNight = pushMessages.lessonScheduled({ lessonId: "l", scheduledAt: new Date("2026-11-10T16:30:00Z"), changed: false });
   assert.match(lateNight.url, /date=2026-11-11&/u, "UTC 자정 뒤 KST 날짜를 쓴다");
-  const moved = pushMessages.lessonScheduled({ lessonId: "l", scheduledAt: new Date("2026-11-10T05:00:00Z"), changed: true, toAdmin: true, studentName: "김학생" });
+  const moved = pushMessages.lessonScheduled({ lessonId: "l", scheduledAt: new Date("2026-11-10T05:00:00Z"), changed: true, toAdmin: true, studentId: "s 1", studentName: "김학생" });
   assert.equal(moved.body, "김학생님이 레슨을 옮겼습니다: 11.10 14:00");
-  assert.equal(moved.url, "/dashboard/admin?section=schedule&view=calendar", "관리자 알림은 관리자 캘린더(정식 주소)");
+  assert.equal(
+    moved.url,
+    "/dashboard/admin?section=schedule&view=calendar&student=s+1&date=2026-11-10&item=PORTAL%3ALESSON%3Al",
+    "관리자 알림은 그 학생 일정의 그 날짜에서 옮긴 레슨 상세를 연다",
+  );
   assert.equal(
     pushMessages.assignmentAssigned({ taskId: "t 1", title: "셋", dueAt: null }).url,
     "/dashboard/student?section=workspace&view=assignments&task=t%201",
@@ -213,6 +217,10 @@ test("지원 판정: iPhone·iPad Safari 탭은 홈 화면 추가가 필요하�
   assert.equal(detectPushSupport({ userAgent: ipad, maxTouchPoints: 5, serviceWorker: {} }, tab), "needs-install");
   assert.equal(detectPushSupport({ userAgent: iphone, maxTouchPoints: 5, serviceWorker: {} }, installed), "supported");
   assert.equal(detectPushSupport({ userAgent: ipad, maxTouchPoints: 0, serviceWorker: {} }, tab), "supported", "데스크톱 Mac Safari");
+  // 알림을 거절한 홈 화면 앱은 기기 설정에서 다시 켠다(사이트 설정 안내가 맞지 않는다).
+  assert.equal(detectAppleHomeScreenApp({ userAgent: iphone, maxTouchPoints: 5 }, installed), true);
+  assert.equal(detectAppleHomeScreenApp({ userAgent: iphone, maxTouchPoints: 5 }, tab), false);
+  assert.equal(detectAppleHomeScreenApp({ userAgent: ipad, maxTouchPoints: 0 }, installed), false, "데스크톱 Mac은 사이트 설정");
   assert.equal(detectPushSupport({ userAgent: "Mozilla/5.0 (Linux; Android 14)", maxTouchPoints: 5 }, tab), "unsupported", "Service Worker 없음");
 });
 

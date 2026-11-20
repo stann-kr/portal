@@ -114,6 +114,13 @@ export function resolveStudentDeepLink<Item extends { id: string }>(
   };
 }
 
+/** 관리자 일정에서 그 학생을 고르고 특정 날짜로 가서 그 항목 상세를 여는 주소. */
+export function adminCalendarItemHref(studentId: string, date: string, itemId?: string | null): string {
+  const query = new URLSearchParams({ section: "schedule", view: "calendar", student: studentId, date });
+  if (itemId) query.set("item", itemId);
+  return `/dashboard/admin?${query.toString()}`;
+}
+
 /** 학생 캘린더의 특정 날짜로 가서 그 항목 상세를 여는 주소. */
 export function calendarItemHref(date: string, itemId?: string | null): string {
   const query = new URLSearchParams({ section: "workspace", view: "calendar", date });

@@ -1,8 +1,9 @@
 import { formatKstMonthDayTime } from "@/lib/kst-format";
 import { toKstDateInputValue } from "@/lib/date-input";
-import { calendarItemHref } from "@/lib/portal-location";
+import { adminCalendarItemHref, calendarItemHref } from "@/lib/portal-location";
 import { assignmentTaskHref } from "@/lib/student-space-routes";
 import { getLegacyCalendarRedirect } from "@/lib/legacy-dashboard-routes";
+import { ADMIN_WORK_QUEUE_PATH, buildAssignmentQueueHref } from "@/lib/admin-work-queue";
 
 /**
  * 알림 종류. 계정마다 종류별로 끌 수 있다(test는 끌 수 없다).
@@ -44,6 +45,9 @@ function person(name: string | null | undefined, fallback: string): string {
 
 const assignmentHref = (assignmentId: string) => `/dashboard/student/assignments/${encodeURIComponent(assignmentId)}`;
 const qnaHref = (threadId: string) => `/dashboard/qna/${encodeURIComponent(threadId)}`;
+/** 게시물의 그 댓글 자리(`comment-<id>`, CommentThreads)로 바로 연다. */
+const communityCommentHref = (postId: string, commentId: string) =>
+  `/community/${encodeURIComponent(postId)}#comment-${encodeURIComponent(commentId)}`;
 
 export const pushMessages = {
   feedbackAdded(input: { assignmentId: string; title: string | null }): PushMessage {
@@ -81,7 +85,8 @@ export const pushMessages = {
       category: "assignment",
       title: "과제 제출",
       body: `${person(input.studentName, "학생")}님 과제 제출: ${quoted(input.title, "자유 과제")}`,
-      url: assignmentHref(input.assignmentId),
+      // 관리자가 받는다. 업무함에서 연 것처럼 열어 확인·피드백 뒤 다음 피드백 대기로 이어지고 돌아가기는 업무함이다.
+      url: buildAssignmentQueueHref(input.assignmentId, ADMIN_WORK_QUEUE_PATH),
       tag: `submission:${input.assignmentId}`,
     };
   },
@@ -105,8 +110,18 @@ export const pushMessages = {
       tag: `qna:${input.threadId}`,
     };
   },
-  lessonScheduled(input: { lessonId: string; scheduledAt: Date; changed: boolean; studentName?: string | null; toAdmin?: boolean }): PushMessage {
+  lessonScheduled(input: {
+    lessonId: string;
+    scheduledAt: Date;
+    changed: boolean;
+    studentName?: string | null;
+    toAdmin?: boolean;
+    /** 관리자 알림이 열 학생 일정. 없으면 관리자 일정 첫 화면. */
+    studentId?: string | null;
+  }): PushMessage {
     const when = formatKstMonthDayTime(input.scheduledAt);
+    const date = toKstDateInputValue(input.scheduledAt);
+    const item = `PORTAL:LESSON:${input.lessonId}`;
     const body = input.toAdmin
       ? `${person(input.studentName, "학생")}님이 레슨을 옮겼습니다: ${when}`
       : input.changed
@@ -116,10 +131,10 @@ export const pushMessages = {
       category: "lesson",
       title: input.changed ? "레슨 일정 변경" : "새 레슨 일정",
       body,
-      // 학생은 그 날짜로 이동해 레슨 상세를 연다(레슨이 지워졌으면 날짜만). 관리자 캘린더는 아직 날짜 딥링크가 없다.
+      // 그 날짜로 이동해 레슨 상세를 연다(레슨이 지워졌으면 날짜만). 관리자는 그 학생 일정을 고른 채로 연다.
       url: input.toAdmin
-        ? getLegacyCalendarRedirect("admin")
-        : calendarItemHref(toKstDateInputValue(input.scheduledAt), `PORTAL:LESSON:${input.lessonId}`),
+        ? (input.studentId ? adminCalendarItemHref(input.studentId, date, item) : getLegacyCalendarRedirect("admin"))
+        : calendarItemHref(date, item),
       tag: `lesson:${input.lessonId}`,
     };
   },
@@ -141,12 +156,22 @@ export const pushMessages = {
       tag: `post:${input.postId}`,
     };
   },
-  commentAdded(input: { postId: string; authorName: string | null; title: string; toPostAuthor: boolean }): PushMessage {
+  commentAdded(input: { postId: string; commentId: string; authorName: string | null; title: string; toPostAuthor: boolean }): PushMessage {
     return {
       category: "community_comment",
       title: input.toPostAuthor ? "내 글에 새 댓글" : "새 댓글",
       body: `${person(input.authorName, "누군가")}님 댓글: ${quoted(input.title, input.toPostAuthor ? "내 글" : "참여한 글")}`,
-      url: `/community/${encodeURIComponent(input.postId)}`,
+      url: communityCommentHref(input.postId, input.commentId),
+      tag: `comment:${input.postId}`,
+    };
+  },
+  /** 내 댓글(원 댓글)에 다른 사람이 답글을 달았다. 같은 게시물 댓글 알림과 tag를 함께 써 기기에는 최신 한 건만 남는다. */
+  commentReplied(input: { postId: string; commentId: string; authorName: string | null; title: string }): PushMessage {
+    return {
+      category: "community_comment",
+      title: "내 댓글에 답글",
+      body: `${person(input.authorName, "누군가")}님 답글: ${quoted(input.title, "내 댓글")}`,
+      url: communityCommentHref(input.postId, input.commentId),
       tag: `comment:${input.postId}`,
     };
   },

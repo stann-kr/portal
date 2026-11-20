@@ -45,6 +45,8 @@ function toResponseRange(result: { start: string; end: string; truncated: boolea
 export interface AdminPortalClientProps {
   initialLocation?: PortalLocation<"admin">;
   initialStudentId?: string;
+  /** 처음 고른 학생 일정에서 열 날짜와 항목(학생이 옮긴 레슨 알림). 다른 학생을 고르면 버린다. */
+  initialCalendarDeepLink?: { date: string | null; itemKey: string | null };
   initialUnifiedItems: UnifiedItem[];
   students: StudentRosterStat[];
   /** 그룹레슨 그룹(학생 목록에 묶어 보인다). */
@@ -79,6 +81,7 @@ export function AdminPortalClient({
   lessonGroups = [],
   archivedStudentCount = 0,
   initialStudentId = students.length > 0 ? ALL_STUDENTS_SCOPE : "",
+  initialCalendarDeepLink,
   adminId,
   qnaThreads,
   pendingAssignments,
@@ -91,6 +94,7 @@ export function AdminPortalClient({
     initialStudentId
   );
   const [calendarItems, setCalendarItems] = useState<UnifiedItem[]>(initialUnifiedItems);
+  const [calendarDeepLink, setCalendarDeepLink] = useState(initialCalendarDeepLink ?? null);
   const [calendarLoadedStudentId, setCalendarLoadedStudentId] = useState(
     initialStudentId,
   );
@@ -165,6 +169,7 @@ export function AdminPortalClient({
     if (isAll ? students.length === 0 : !students.some((student) => student.id === studentId)) return;
     const requestId = ++calendarRequestRef.current;
     setSelectedStudentId(studentId);
+    setCalendarDeepLink(null);
     setCalendarItems([]);
     setCalendarLoadedStudentId("");
     calendarLoadedStudentIdRef.current = "";
@@ -179,6 +184,9 @@ export function AdminPortalClient({
       const url = new URL(window.location.href);
       url.searchParams.set("section", "schedule");
       url.searchParams.set("student", studentId);
+      // 딥링크 날짜·항목은 처음 학생 것이라 다른 학생 주소에 남기지 않는다.
+      url.searchParams.delete("date");
+      url.searchParams.delete("item");
       window.history[historyMode === "push" ? "pushState" : "replaceState"](
         {},
         "",
@@ -357,6 +365,8 @@ export function AdminPortalClient({
               initialLocation={initialLocation}
               key={selectedStudentId}
               isActive={activeSection === "schedule"}
+              initialCalendarDate={calendarDeepLink?.date ?? null}
+              initialCalendarItemKey={calendarDeepLink?.itemKey ?? null}
               unifiedItems={isLoadingCalendar ? [] : displayedCalendarItems}
               curriculumModules={[]}
               assignments={[]}

@@ -48,7 +48,9 @@ export type PlayerAction =
   | { type: "progress"; key: string; position?: number; duration?: number; playing?: boolean }
   | { type: "close" }
   | { type: "toggle-video" }
-  | { type: "error"; key: string };
+  | { type: "error"; key: string }
+  /** 오류 뒤 ▶를 다시 눌렀다. 오류 줄을 지우고, 재생 여부는 요소의 play·pause 보고가 정한다. */
+  | { type: "retry"; key: string };
 
 export const INITIAL_PLAYER_STATE: PlayerState = {
   track: null,
@@ -118,6 +120,9 @@ export function reducePlayer(state: PlayerState, action: PlayerAction): PlayerSt
     case "error":
       if (state.track?.key !== action.key || state.error) return state;
       return { ...state, error: true, playing: false };
+    case "retry":
+      if (state.track?.key !== action.key || !state.error) return state;
+      return { ...state, error: false };
   }
 }
 

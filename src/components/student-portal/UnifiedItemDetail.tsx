@@ -282,7 +282,7 @@ export function UnifiedItemDetail({
         <Link
           // canManageEvents는 학생 본인 스페이스다.
           href={canManageEvents
-            ? assignmentTaskHref(item.id, { analysis: item.metadata.submissionFormat === "ANALYSIS" })
+            ? assignmentTaskHref(item.id, { analysis: item.metadata.submissionFormat === "ANALYSIS", returnTo })
             : buildAdminStudentDetailHref(item.space.studentId, "assignments")}
           className={linkButton}
         >

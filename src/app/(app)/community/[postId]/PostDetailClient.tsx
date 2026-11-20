@@ -1,7 +1,7 @@
 /**
  * @file src/app/(app)/community/[postId]/PostDetailClient.tsx
  * @description 게시물 상세(캔버스 CommunityPost·MobileCommunityPost 보드): 위치·제목·채널·작성자 머리,
- * 본문(수정 시 PostEditForm), 댓글 목록과 댓글 입력. 좁은 화면에서는 수정·이력·삭제를 위쪽 막대의
+ * 본문(수정 시 PostEditForm), 댓글·답글 목록(CommentThreads)과 댓글 입력. 좁은 화면에서는 수정·이력·삭제를 위쪽 막대의
  * 게시물 메뉴로 옮기고 댓글 입력을 화면 아래에 붙인다. 매체가 있는 믹스셋 게시물은 본문 위에 플레이어를 두고,
  * 재생 시점이 있는 댓글의 시점을 누르면 그 위치부터 재생한다.
  */
@@ -22,6 +22,7 @@ import {
   getCommentsByPost,
 } from "@/lib/actions/comments";
 import { CommentForm } from "@/components/community/CommentForm";
+import { CommentThreads } from "@/components/community/CommentThreads";
 import { MixsetPlayer } from "@/components/community/MixsetPlayer";
 import type { MediaSeekRequest, PlaybackPositionReader } from "@/components/player/VideoPlayer";
 import { classifyMixsetMedia, formatTimeMarker } from "@/lib/community-mixset-media";
@@ -31,8 +32,6 @@ import { PostTrashActions } from "@/components/community/PostTrashActions";
 import { ADMIN_TRASHED_DETAIL_NOTE } from "@/lib/trash-restore";
 import { COMMUNITY_BOARD_LABELS, communityAuthorName, communityPreview } from "@/components/community/CommunityPostRow";
 import { MobileMoreMenu, type MobileMoreMenuItem } from "@/components/ui/mobile-more-menu";
-import { initialOf } from "@/components/qna/qna-display";
-import { formatKstMonthDayTime } from "@/lib/kst-format";
 import { createCreationOperationId } from "@/lib/creation-operation";
 import { resolveCommunityBoardType } from "@/lib/community-location";
 import { formatKst, formatKstShortDate } from "@/lib/kst-format";
@@ -69,7 +68,6 @@ export function PostDetailClient({
   const deleteOperation = useRef<{ key: string; id: string } | null>(null);
   const router = useRouter();
   const postDeleteConfirm = useConfirmAction();
-  const commentDeleteConfirm = useConfirmAction<string>();
   // 시점 요청은 그 요청을 만든 매체 주소에 묶는다. 링크를 바꿔 저장하면 새 플레이어가 예전 시점으로 재생하지 않는다.
   const [seekState, setSeekState] = useState<{ url: string; request: MediaSeekRequest }>();
   // 같은 시점을 다시 눌러도 화면 낭독기가 다시 읽도록 매번 새 노드(nonce key)로 알린다.
@@ -143,6 +141,7 @@ export function PostDetailClient({
   const isBusy = isPending || isEditPending;
   const historyHref = `/community/${post.id}/history?returnTo=${encodeURIComponent(returnTo)}`;
   const postPath = `/community/${encodeURIComponent(post.id)}`;
+  const refreshComments = useCallback(() => router.refresh(), [router]);
   const handleSaved = useCallback(() => {
     setIsEditing(false);
     router.refresh();
@@ -327,90 +326,19 @@ export function PostDetailClient({
         <RichTextContent html={post.contentHtml} className="border-b border-border pb-5 text-base leading-7 md:pb-8" />
       )}
 
-      {/* 댓글 */}
-      <section aria-labelledby="comments-title" className="flex flex-col">
-        <h2 id="comments-title" className="mb-1 text-ui font-semibold text-secondary-foreground">
-          댓글 <span className="font-mono font-normal text-muted-foreground">{commentList.length}</span>
-        </h2>
-
-        {commentList.length === 0 ? (
-          <p className="py-3 text-body text-muted-foreground">
-            {post.deletedAt ? "보존된 댓글이 없습니다." : "첫 댓글을 남겨보세요."}
-          </p>
-        ) : (
-          <ol className="flex flex-col">
-            {commentList.map((c) => {
-              const cAuthor = communityAuthorName(c);
-              const cDate = formatKstMonthDayTime(c.createdAt, "날짜 정보 없음");
-              const canDelete =
-                !post.deletedAt && (isAdmin || currentUserId === c.authorId);
-
-              return (
-                <li key={c.id} id={`comment-${c.id}`} tabIndex={-1} className="flex scroll-mt-4 flex-col gap-2 border-b border-muted py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:py-3.5">
-                  <div className="flex gap-3">
-                    <span aria-hidden="true" className="flex size-7 shrink-0 items-center justify-center rounded-full bg-selected text-xs font-semibold text-secondary-foreground">
-                      {initialOf(cAuthor)}
-                    </span>
-                    {/*
-                      좁은 화면: 시점 칩을 이름·시각 줄 끝에 두어 본문이 줄 전체를 쓴다(B 묶음 ①).
-                      넓은 화면: 지금처럼 칩이 본문 왼쪽. 칩은 하나만 그리고 grid 자리만 바꾼다.
-                    */}
-                    <div
-                      className={cn(
-                        "grid min-w-0 flex-1 items-center gap-x-2 gap-y-0.5 text-ui",
-                        c.timeMarkerSeconds === null
-                          ? "grid-cols-1"
-                          : "grid-cols-[auto_auto_minmax(0,1fr)] md:grid-cols-[auto_minmax(0,1fr)]",
-                      )}
-                    >
-                      <p className="col-start-1 row-start-1 flex flex-wrap items-center gap-2 md:col-span-full">
-                        <span className="font-semibold">{cAuthor}</span>
-                        <span className="font-mono text-xs text-muted-foreground">{cDate}</span>
-                      </p>
-                      {c.timeMarkerSeconds !== null ? (
-                        <span className="col-start-2 row-start-1 flex md:col-start-1 md:row-start-2 md:self-start">
-                          <CommentTimeMarker seconds={c.timeMarkerSeconds} onSeek={mixsetMedia ? seekTo : undefined} />
-                        </span>
-                      ) : null}
-                      <RichTextContent
-                        html={c.contentHtml}
-                        className={cn(
-                          "col-span-full row-start-2 min-w-0 text-md leading-6 md:text-body",
-                          c.timeMarkerSeconds !== null && "md:col-span-1 md:col-start-2",
-                        )}
-                      />
-                    </div>
-                    {canDelete ? (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={(event) => commentDeleteConfirm.request(event.currentTarget, c.id)}
-                        disabled={isPending}
-                        aria-expanded={commentDeleteConfirm.value === c.id}
-                        aria-label={`${cAuthor} 댓글 삭제`}
-                        className="-mr-2 -mt-2 size-11 shrink-0 rounded-touch text-muted-foreground md:mr-0 md:mt-0 md:size-7 md:rounded-md"
-                      >
-                        <Trash2 className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
-                      </Button>
-                    ) : null}
-                  </div>
-                  {canDelete && commentDeleteConfirm.value === c.id ? (
-                    <ConfirmPanel
-                      confirm={commentDeleteConfirm}
-                      message="이 댓글을 삭제할까요? 삭제한 댓글은 되돌릴 수 없습니다."
-                      confirmLabel="댓글 삭제 확인"
-                      pendingLabel="삭제 중..."
-                      pending={isPending}
-                      onConfirm={() => handleDeleteComment(c.id)}
-                      className="ml-10"
-                    />
-                  ) : null}
-                </li>
-              );
-            })}
-          </ol>
-        )}
-      </section>
+      {/* 댓글 + 답글 묶음 */}
+      <CommentThreads
+        postId={postId}
+        actorId={currentUserId}
+        comments={commentList}
+        isAdmin={isAdmin}
+        trashed={Boolean(post.deletedAt)}
+        canComment={canComment}
+        busy={isPending}
+        onDelete={handleDeleteComment}
+        onSeek={mixsetMedia ? seekTo : undefined}
+        onSaved={refreshComments}
+      />
 
       {/* 댓글 입력: 좁은 화면은 화면 아래에 붙는다(게시물 영역 안에서만). */}
       {canComment && currentUserId ? (
@@ -418,7 +346,7 @@ export function PostDetailClient({
           key={`${currentUserId}:${postId}`}
           postId={postId}
           actorId={currentUserId}
-          onSaved={() => router.refresh()}
+          onSaved={refreshComments}
           allowTimeMarker={Boolean(mixsetMedia)}
           readPlaybackPosition={mixsetMedia ? readPlaybackPosition : undefined}
           className={cn(
@@ -428,28 +356,5 @@ export function PostDetailClient({
         />
       ) : null}
     </article>
-  );
-}
-
-/** 댓글 재생 시점. 플레이어가 있으면 누르면 그 위치부터 재생하고, 매체가 사라졌으면 시점만 보인다. */
-function CommentTimeMarker({ seconds, onSeek }: { seconds: number; onSeek?: (seconds: number) => void }) {
-  const label = formatTimeMarker(seconds);
-  const chip = "inline-flex h-6 shrink-0 items-center rounded-sm px-2 font-mono text-xs font-medium";
-  if (!onSeek) {
-    return <span className={cn(chip, "bg-muted text-secondary-foreground")}>{label}</span>;
-  }
-  return (
-    <button
-      type="button"
-      onClick={() => onSeek(seconds)}
-      aria-label={`${label} 위치로 이동`}
-      // 좁은 화면은 위아래로 터치 영역을 넓힌다.
-      className={cn(
-        chip,
-        "relative bg-accent text-highlight transition-colors duration-[var(--duration-fast)] after:absolute after:inset-x-0 after:-inset-y-2.5 after:content-[''] hover:bg-highlight/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none md:after:hidden",
-      )}
-    >
-      {label}
-    </button>
   );
 }

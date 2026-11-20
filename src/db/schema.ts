@@ -1316,7 +1316,12 @@ export const postRevisions = sqliteTable(
   ],
 );
 
-/** time_marker_seconds가 있으면 믹스셋 게시물 재생 시점(초)에 단 댓글이다. 없으면 일반 댓글이다. */
+/**
+ * time_marker_seconds가 있으면 믹스셋 게시물 재생 시점(초)에 단 댓글이다. 없으면 일반 댓글이다.
+ * parent_id가 있으면 같은 게시물 원 댓글(parent_id 없음)에 단 답글이다(한 단계). 외래키를 두지 않는다:
+ * 원 댓글을 지워도 답글은 남고 화면이 그 자리를 "삭제된 댓글입니다"로 보인다. 같은 게시물·원 댓글 여부는
+ * 작성 action의 INSERT 조건이 지킨다.
+ */
 export const comments = sqliteTable(
   "comments",
   {
@@ -1332,9 +1337,11 @@ export const comments = sqliteTable(
       sql`(strftime('%s', 'now'))`,
     ),
     timeMarkerSeconds: integer("time_marker_seconds"),
+    parentId: text("parent_id"),
   },
   (table) => [
     index("comments_post_created_idx").on(table.postId, table.createdAt),
+    index("comments_parent_idx").on(table.parentId),
     check(
       "comments_time_marker_check",
       sql`${table.timeMarkerSeconds} IS NULL OR (typeof(${table.timeMarkerSeconds}) = 'integer' AND ${table.timeMarkerSeconds} >= 0 AND ${table.timeMarkerSeconds} <= 86399)`,

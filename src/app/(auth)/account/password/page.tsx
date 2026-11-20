@@ -23,7 +23,7 @@ export default async function RequiredPasswordChangePage() {
           Stann이 발급한 임시 비밀번호로 로그인했습니다. 계속하려면 본인만 아는 새 비밀번호를 정해 주세요.
         </p>
       </div>
-      <RequiredPasswordChange ownerId={session.user.id} />
+      <RequiredPasswordChange ownerId={session.user.id} accountEmail={session.user.email ?? null} />
     </div>
   );
 }

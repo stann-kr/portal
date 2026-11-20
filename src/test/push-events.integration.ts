@@ -161,7 +161,8 @@ test("과제: 새 과제는 학생에게, 학생 제출은 관리자에게 보�
   assert.equal(sent.length, 2, "같은 제출 재전송");
   assert.deepEqual(sent[1], {
     audience: { kind: "role", role: "admin" },
-    message: { category: "assignment", title: "과제 제출", body: "김학생님 과제 제출: ‘드랍 연습’", url: `/dashboard/student/assignments/${submitted.id}`, tag: `submission:${submitted.id}` },
+    // 업무함에서 연 것처럼 열려 처리 뒤 다음 피드백 대기로 이어지고 돌아가기는 업무함이다.
+    message: { category: "assignment", title: "과제 제출", body: "김학생님 과제 제출: ‘드랍 연습’", url: `/dashboard/student/assignments/${submitted.id}?from=work&returnTo=${encodeURIComponent("/dashboard/admin?section=work")}`, tag: `submission:${submitted.id}` },
     exclude: "student-1",
   });
 
@@ -190,6 +191,11 @@ test("레슨: 관리자가 잡거나 옮기면 학생에게, 학생이 옮기면
   await lessonActions.moveLesson(lessonId, "student-1", "2026-11-12T16:00");
   assert.deepEqual(sent[2]!.audience, { kind: "role", role: "admin" });
   assert.match(sent[2]!.message.body, /^김학생님이 레슨을 옮겼습니다: /u);
+  assert.equal(
+    sent[2]!.message.url,
+    `/dashboard/admin?section=schedule&view=calendar&student=student-1&date=2026-11-12&item=PORTAL%3ALESSON%3A${lessonId}`,
+    "관리자는 알림에서 그 학생 일정의 옮긴 레슨을 바로 연다",
+  );
   assert.equal(sent[2]!.exclude, "student-1");
 
   // 다른 학생의 레슨은 옮기지 못하고 알림도 없다.
@@ -275,12 +281,14 @@ test("커뮤니티: 새 글은 글쓴이를 뺀 모든 계정에, 댓글은 글�
   // 이학생이 첫 댓글: 글쓴이(김학생)에게만 간다.
   activeSession = createSession("student-2", "student", "이학생");
   const firstComment = form({ [CREATION_OPERATION_FIELD]: crypto.randomUUID(), content: "좋네요" });
-  assert.equal((await commentActions.createComment(postId, {}, firstComment)).success, true);
+  const firstResult = await commentActions.createComment(postId, {}, firstComment);
+  assert.equal(firstResult.success, true);
   await commentActions.createComment(postId, {}, firstComment);
   assert.equal(sent.length, 2, "같은 댓글 재전송");
   assert.deepEqual(sent[1]!.audience, { kind: "profiles", profileIds: ["student-1"] });
   assert.equal(sent[1]!.message.title, "내 글에 새 댓글");
   assert.equal(sent[1]!.message.body, "이학생님 댓글: ‘이번 주 믹스 공유’");
+  assert.equal(sent[1]!.message.url, `/community/${postId}#comment-${firstResult.commentId}`, "누르면 그 댓글 자리로 연다");
   assert.equal(sent[1]!.exclude, "student-2");
 
   // Stann 댓글: 글쓴이에게 "내 글에 새 댓글", 앞서 댓글 단 이학생에게 "새 댓글".
@@ -291,4 +299,18 @@ test("커뮤니티: 새 글은 글쓴이를 뺀 모든 계정에, 댓글은 글�
   assert.equal(sent[3]!.message.title, "새 댓글");
   assert.deepEqual(sent[3]!.audience, { kind: "profiles", profileIds: ["student-2"] }, "댓글 쓴 본인은 참여자에서 빠진다");
   assert.equal(sent[3]!.exclude, "admin-1");
+
+  // Stann이 이학생 댓글에 답글: 이학생은 "내 댓글에 답글" 하나만, 글쓴이는 "내 글에 새 댓글"(한 사람에 한 알림).
+  const replyForm = form({ [CREATION_OPERATION_FIELD]: crypto.randomUUID(), content: "고마워요", parentId: firstResult.commentId! });
+  const replyResult = await commentActions.createComment(postId, {}, replyForm);
+  assert.equal(replyResult.success, true);
+  await commentActions.createComment(postId, {}, replyForm);
+  assert.equal(sent.length, 6, "같은 답글 재전송은 다시 보내지 않고, 참여자 알림은 이미 받은 사람을 빼면 없다");
+  assert.deepEqual(sent[4], {
+    audience: { kind: "profiles", profileIds: ["student-2"] },
+    message: { category: "community_comment", title: "내 댓글에 답글", body: "Stann님 답글: ‘이번 주 믹스 공유’", url: `/community/${postId}#comment-${replyResult.commentId}`, tag: `comment:${postId}` },
+    exclude: "admin-1",
+  });
+  assert.deepEqual(sent[5]!.audience, { kind: "profiles", profileIds: ["student-1"] });
+  assert.equal(sent[5]!.message.title, "내 글에 새 댓글");
 });

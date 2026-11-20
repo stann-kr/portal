@@ -17,7 +17,15 @@ import { getQnaThreads } from "@/lib/actions/qna";
 import { getPendingFeedbackAssignments } from "@/lib/actions/assignments";
 import { getLessonNoteIdsInRange } from "@/lib/actions/lesson-notes";
 import { AdminPortalClient } from "@/components/admin-portal/AdminPortalClient";
-import { firstSearchValue, legacyPortalSectionRedirect, resolvePortalLocation, type PortalSearchParams } from "@/lib/portal-location";
+import {
+  firstSearchValue,
+  legacyPortalSectionRedirect,
+  resolvePortalDeepLink,
+  resolvePortalLocation,
+  resolveStudentDeepLink,
+  type PortalSearchParams,
+} from "@/lib/portal-location";
+import { getUnifiedItemKey } from "@/lib/utils/unifiedItemUtils";
 
 export const metadata = { title: "Stann 포탈" };
 
@@ -64,11 +72,18 @@ export default async function AdminPortalPage({ searchParams }: { searchParams: 
     getLessonGroups(),
     getArchivedStudentCount(),
   ]);
+  // 학생 일정 딥링크(?student=&date=&item=, 학생이 옮긴 레슨 알림): 그 날짜로 가서 그 학생 목록에 있는 항목이면 상세를 연다.
+  const calendarDeepLink = initialStudentId && initialStudentId !== ALL_STUDENTS_SCOPE
+    ? resolveStudentDeepLink(resolvePortalDeepLink(params), { taskIds: [], items: initialCalendar.items, keyOf: getUnifiedItemKey })
+    : null;
 
   return (
     <AdminPortalClient
       initialLocation={initialLocation}
       initialStudentId={initialStudentId}
+      initialCalendarDeepLink={calendarDeepLink
+        ? { date: calendarDeepLink.calendarDate, itemKey: calendarDeepLink.calendarItemKey }
+        : undefined}
       initialUnifiedItems={initialCalendar.items}
       initialAllStudentsWindow={initialCalendar.window
         ? { start: initialCalendar.window.start, end: initialCalendar.window.end, truncated: initialCalendar.window.truncated }

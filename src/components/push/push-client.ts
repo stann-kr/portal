@@ -9,10 +9,15 @@ export type PushSupport = "supported" | "needs-install" | "unsupported";
 type NavigatorLike = Pick<Navigator, "userAgent" | "maxTouchPoints"> & { standalone?: boolean; serviceWorker?: unknown };
 type WindowLike = { matchMedia?: (query: string) => { matches: boolean }; PushManager?: unknown; Notification?: unknown };
 
-export function detectPushSupport(nav: NavigatorLike, win: WindowLike): PushSupport {
+function appleMobileContext(nav: NavigatorLike, win: WindowLike) {
   // iPadOS Safari는 데스크톱 Mac처럼 보이므로 터치 지점으로 구분한다.
   const isAppleMobile = /iPhone|iPad|iPod/u.test(nav.userAgent) || (/Macintosh/u.test(nav.userAgent) && nav.maxTouchPoints > 1);
   const standalone = win.matchMedia?.("(display-mode: standalone)").matches === true || nav.standalone === true;
+  return { isAppleMobile, standalone };
+}
+
+export function detectPushSupport(nav: NavigatorLike, win: WindowLike): PushSupport {
+  const { isAppleMobile, standalone } = appleMobileContext(nav, win);
   if (isAppleMobile && !standalone) return "needs-install";
   const hasApis = Boolean(nav.serviceWorker) && Boolean(win.PushManager) && Boolean(win.Notification);
   return hasApis ? "supported" : "unsupported";
@@ -20,6 +25,16 @@ export function detectPushSupport(nav: NavigatorLike, win: WindowLike): PushSupp
 
 export function readPushSupport(): PushSupport {
   return detectPushSupport(window.navigator as NavigatorLike, window as unknown as WindowLike);
+}
+
+/** iPhone·iPad 홈 화면에 추가한 앱으로 열었는지. 이 앱의 알림 권한은 사이트 설정이 아니라 기기 설정에서 바꾼다. */
+export function detectAppleHomeScreenApp(nav: NavigatorLike, win: WindowLike): boolean {
+  const { isAppleMobile, standalone } = appleMobileContext(nav, win);
+  return isAppleMobile && standalone;
+}
+
+export function readAppleHomeScreenApp(): boolean {
+  return detectAppleHomeScreenApp(window.navigator as NavigatorLike, window as unknown as WindowLike);
 }
 
 export function readNotificationPermission(): NotificationPermission | null {

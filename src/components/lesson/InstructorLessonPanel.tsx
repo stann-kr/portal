@@ -182,7 +182,8 @@ export function InstructorLessonPanel({
           // 좁은 화면: 아래에서 올라오는 서랍, 중간 화면: 오른쪽 서랍, 넓은 화면: 노트 옆 고정 칸
           "fixed inset-x-0 bottom-0 max-h-[78dvh] rounded-t-xl border-t shadow-lg",
           "md:inset-y-0 md:left-auto md:right-0 md:max-h-none md:w-[360px] md:rounded-none md:border-l md:border-t-0",
-          "xl:sticky xl:top-0 xl:z-auto xl:h-dvh xl:w-[340px] xl:shrink-0 xl:shadow-none",
+          // 넓은 화면 고정 칸은 미니 플레이어가 켜져 있으면 그 높이만큼 짧아져 끝 줄이 가려지지 않는다.
+          "xl:sticky xl:top-0 xl:z-auto xl:h-[calc(100dvh-var(--mini-player-offset,0px))] xl:w-[340px] xl:shrink-0 xl:shadow-none",
           open ? "flex" : "hidden xl:flex",
         )}
       >

@@ -12,6 +12,7 @@ import {
   type CompleteInviteState,
 } from "@/lib/actions/invite";
 import { PASSWORD_MIN_LENGTH } from "@/lib/password-policy";
+import { PasswordManagerUsername } from "@/components/auth/PasswordManagerUsername";
 
 type InviteView =
   | { kind: "checking" }
@@ -106,6 +107,7 @@ function InviteForm({
       </div>
       <form action={action} className="flex flex-col gap-4" aria-busy={pending}>
         <input type="hidden" name="token" value={view.token} />
+        <PasswordManagerUsername value={view.email} />
         {(Object.keys(FIELD_LABELS) as CompleteInviteField[]).map((field) => {
           const inputId = `${baseId}-${field}`;
           const invalid = !pending && state.field === field;

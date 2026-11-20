@@ -199,7 +199,15 @@ export function resumeTrack(): void {
   if (!track) return;
   if (track.kind === "audio") {
     const element = getSharedAudio();
-    if (element) playAudio(element);
+    if (!element) return;
+    // 받지 못한(오류 난) 요소는 play()만으로 다시 받지 않을 수 있다. 같은 주소를 다시 불러와 멈춘 자리부터 잇는다.
+    if (state.error || element.error) {
+      pendingSeek = state.position;
+      audioReady = false;
+      dispatchPlayer({ type: "retry", key: track.key });
+      element.load();
+    }
+    playAudio(element);
   } else dispatchPlayer({ type: "progress", key: track.key, playing: true });
 }
 
