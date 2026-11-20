@@ -2339,6 +2339,85 @@ test("게시물 삭제는 응답 유실 재시도와 복원 후 새 삭제 의�
   assert.match(browser.document.querySelector('[role="alert"]')?.textContent ?? "", /먼저 변경되었습니다/u);
 });
 
+test("답글을 쓰는 사이 원 댓글이 지워지면 입력을 그 자리에 남기고, 쓴 글을 새 댓글 입력으로 옮기거나 버린다", async (context) => {
+  browser.localStorage.clear();
+  saveComment = async () => ({ error: "원 댓글이 삭제되어 답글을 달 수 없습니다. 댓글 목록을 새로 확인해 주세요.", replyRootMissing: true });
+  context.after(() => { saveComment = async () => ({}); });
+  const post = {
+    id: "orphan-post", authorId: "student-1", title: "연습실 같이 쓰실 분", contentHtml: "<p>본문</p>",
+    category: "general", boardType: "GENERAL" as const, isPinned: false, mediaUrl: null,
+    mediaObjectId: null, createdAt: new Date(), updatedAt: new Date(), deletedAt: null,
+    restoreLocked: false, version: 1, authorName: "학생",
+  };
+  const at = (minute: number) => new Date(Date.UTC(2026, 10, 20, 6, minute));
+  const row = (id: string, authorId: string, authorName: string, text: string, minute: number) => (
+    { id, postId: post.id, authorId, contentHtml: `<p>${text}</p>`, createdAt: at(minute), timeMarkerSeconds: null, parentId: null, authorName, authorRole: "student" }
+  );
+  const first = row("o-root", "student-2", "이학생", "저 갈게요", 1);
+  const second = row("o-other", "student-3", "박학생", "녹음은요?", 2);
+  const third = row("o-third", "student-3", "박학생", "몇 시예요?", 3);
+  const detail = (list: (typeof first)[]) => (
+    <PostDetailClient postId={post.id} post={post} initialCommentList={list} currentUserId="student-1" isAdmin={false} returnTo="/community" />
+  );
+  const root = await render(context, detail([first, second, third]));
+  const replyInput = () => {
+    const input = browser.document.querySelector('form input[name="content"]:not([placeholder="댓글을 입력하세요..."])');
+    return input instanceof browser.HTMLInputElement ? input : null;
+  };
+  const mainInput = () => {
+    const input = browser.document.querySelector('input[placeholder="댓글을 입력하세요..."]');
+    assert.ok(input instanceof browser.HTMLInputElement);
+    return input;
+  };
+  const alertText = () => browser.document.querySelector('[role="alert"]')?.textContent ?? "";
+
+  // 등록했는데 원 댓글이 이미 지워졌으면, 입력은 그대로 두고 등록 대신 버리기·새 댓글로 남기기를 둔다.
+  await press("이학생 댓글에 답글");
+  await fill(replyInput()!.id, "저도 갈게요");
+  const refreshesBefore = routerRefreshes;
+  await press("등록");
+  assert.equal(alertText(), "원 댓글이 삭제되어 답글을 달 수 없습니다. 쓴 글은 새 댓글로 남길 수 있습니다.");
+  assert.equal(routerRefreshes, refreshesBefore + 1, "댓글 목록을 다시 받는다");
+  assert.equal(replyInput()!.value, "저도 갈게요");
+  assert.equal([...browser.document.querySelectorAll("button")].some((element) => element.textContent === "등록" && element.closest("form") === replyInput()!.form), false);
+
+  // 새 목록에서 원 댓글이 사라져도 입력은 원래 자리("삭제된 댓글입니다" 아래)에 남는다.
+  await act(async () => root.render(detail([second, third])));
+  await settle();
+  const items = [...browser.document.querySelectorAll('section[aria-labelledby="comments-title"] > ol > li')];
+  assert.match(items[0]?.textContent ?? "", /삭제된 댓글입니다/u, "지워진 원 댓글 자리는 작성 순서 그대로");
+  assert.equal(replyInput()!.value, "저도 갈게요", "쓴 글은 그대로다");
+  assert.equal(browser.document.querySelector(`label[for="${replyInput()!.id}"]`)?.textContent, "삭제된 댓글에 쓰던 답글");
+
+  await press("새 댓글로 남기기");
+  assert.equal(replyInput(), null, "답글 입력은 닫힌다");
+  assert.equal(mainInput().value, "저도 갈게요", "쓴 글이 아래 댓글 입력으로 옮겨진다");
+  assert.equal(browser.document.activeElement, mainInput(), "초점도 댓글 입력으로 간다");
+  assert.doesNotMatch(browser.document.body.textContent ?? "", /삭제된 댓글입니다/u, "답글이 없던 지워진 자리는 닫으면 사라진다");
+
+  // 목록에서 원 댓글이 사라진 것을 먼저 알게 된 경우. 댓글 입력에 쓰던 글이 있으면 한 칸 띄워 뒤에 붙인다.
+  await press("박학생 댓글에 답글");
+  await fill(replyInput()!.id, "녹음 공유해요");
+  await act(async () => root.render(detail([third])));
+  await settle();
+  assert.equal(alertText(), "원 댓글이 삭제되어 답글을 달 수 없습니다. 쓴 글은 새 댓글로 남길 수 있습니다.");
+  await press("새 댓글로 남기기");
+  assert.equal(mainInput().value, "저도 갈게요 녹음 공유해요");
+
+  // 버리면 답글 초안도 지우고, 연 버튼이 사라졌으니 댓글 제목으로 초점이 간다.
+  await press("박학생 댓글에 답글");
+  await fill(replyInput()!.id, "지울 글");
+  await act(async () => root.render(detail([])));
+  await settle();
+  await press("버리기");
+  assert.equal(replyInput(), null);
+  assert.equal(browser.document.activeElement?.id, "comments-title");
+  await act(async () => root.render(detail([third])));
+  await settle();
+  await press("박학생 댓글에 답글");
+  assert.equal(replyInput()!.value, "", "버린 답글은 초안에도 남지 않는다");
+});
+
 test("failed comment deletion keeps the conversation and unfinished reply visible", async (context) => {
   browser.localStorage.clear();
   removeComment = async () => { throw new Error("offline"); };

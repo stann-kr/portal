@@ -1,6 +1,6 @@
 "use client";
 
-import { type ChangeEvent, useActionState, useEffect, useId, useRef, useState } from "react";
+import { type ChangeEvent, type Ref, useActionState, useEffect, useId, useImperativeHandle, useRef, useState } from "react";
 import { ArrowUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -25,6 +25,14 @@ const COMMENT_MAX_LABEL = new Intl.NumberFormat("ko-KR").format(COMMENT_MAX_LENG
 
 type CommentDraft = { content: string; timeMarker?: string; operationId?: string };
 
+/** 게시물 댓글 입력(원 댓글)에 바깥에서 글을 넣는 손잡이. 지워진 원 댓글에 쓰던 답글을 새 댓글로 옮길 때 쓴다. */
+export type CommentFormHandle = {
+  /** 입력 끝에 글을 붙이고(쓰던 글이 있으면 한 칸 띄워) 초안에 남긴 뒤 입력으로 초점을 옮긴다. 붙이지 못하면 false. */
+  appendText: (text: string) => boolean;
+};
+
+const ORPHAN_REPLY_MESSAGE = "원 댓글이 삭제되어 답글을 달 수 없습니다. 쓴 글은 새 댓글로 남길 수 있습니다.";
+
 /**
  * 게시물 댓글 입력(캔버스 CommunityPost·MobileCommunityPost 댓글 줄: 한 줄 입력 + 등록).
  * 입력값은 이 기기 초안으로 조용히 보존하고, 복원·충돌·오류·복구본이 있을 때만 줄 아래에 안내한다.
@@ -32,6 +40,8 @@ type CommentDraft = { content: string; timeMarker?: string; operationId?: string
  * 내용은 서버 한도(5,000자)에서 멈추고, 4,500자부터 줄 아래에 글자 수를 보인다(캔버스 "코드 리뷰 2차 후속" ③).
  * parentId가 있으면 답글 입력(캔버스 CommunityReplies): 묶음 아래에 열리고, 초안은 원 댓글 묶음마다 따로 보존하며,
  * 시점 칸 없이 취소·등록을 둔다. mention("@이름 ")은 입력이 비어 있을 때만 미리 넣는다.
+ * 쓰는 사이 원 댓글이 지워지면(목록에서 사라졌거나 등록이 그 이유로 거절됨) 입력은 그대로 두고 등록 대신
+ * 버리기·새 댓글로 남기기를 둔다(캔버스 UxReview1120Lessons ⑧).
  */
 export function CommentForm({
   postId,
@@ -45,6 +55,11 @@ export function CommentForm({
   replyLabel,
   mention = null,
   onCancel,
+  orphaned = false,
+  onRootMissing,
+  onDiscardOrphan,
+  onMoveToComment,
+  ref,
 }: {
   postId: string;
   actorId: string;
@@ -66,6 +81,16 @@ export function CommentForm({
   mention?: string | null;
   /** 답글 입력 닫기(취소·Esc). 입력값은 초안으로 남는다. */
   onCancel?: () => void;
+  /** 답글을 달 원 댓글이 목록에서 사라졌다. */
+  orphaned?: boolean;
+  /** 등록했는데 원 댓글이 지워져 저장되지 않았다(목록을 다시 받을 때 쓴다). */
+  onRootMissing?: () => void;
+  /** 원 댓글이 지워진 답글을 버렸다(초안은 이미 지움). */
+  onDiscardOrphan?: () => void;
+  /** 원 댓글이 지워진 답글을 새 댓글 입력으로 옮긴다. 옮겼으면 true를 돌려주고 답글 초안을 지운다. */
+  onMoveToComment?: (text: string) => boolean;
+  /** 원 댓글 입력에 바깥에서 글을 넣는 손잡이. */
+  ref?: Ref<CommentFormHandle>;
 }) {
   const isReply = Boolean(parentId);
   // 답글에는 재생 시점이 없다(파형 아이콘은 원 댓글만).
@@ -76,6 +101,7 @@ export function CommentForm({
   const timeId = useId();
   const timeHelpId = useId();
   const timeErrorId = useId();
+  const orphanAlertId = useId();
   const contentRef = useRef<HTMLInputElement>(null);
   const timeRef = useRef<HTMLInputElement>(null);
   // 시점 입력·제출·초기화가 일어나면 진행 중인 ‘현재 위치’ 읽기 결과를 버린다.
@@ -108,6 +134,7 @@ export function CommentForm({
     } catch {
       return { error: "저장 결과를 확인하지 못했습니다. 댓글 목록을 확인한 뒤 다시 시도해 주세요." };
     }
+    if (result.replyRootMissing) onRootMissing?.();
     if (result.success && result.commentId) {
       const submittedContent = String(data.get("content") ?? "");
       const submittedTimeMarker = String(data.get(COMMENT_TIME_MARKER_FIELD) ?? "");
@@ -136,6 +163,7 @@ export function CommentForm({
     if (content === "" || content === appliedMention) setContent(mention ?? "");
   }
   const untouchedMention = appliedMention !== null && content === appliedMention;
+  const orphan = isReply && (orphaned || state.replyRootMissing === true);
 
   // 답글 입력은 열리거나 다른 답글에 답하면 입력 칸으로 초점을 옮기고 커서를 끝에 둔다.
   useEffect(() => {
@@ -168,6 +196,26 @@ export function CommentForm({
     setPositionStatus(null);
     saveDraft({ content, timeMarker: value });
   };
+
+  useImperativeHandle(ref, () => ({
+    appendText(text) {
+      const input = contentRef.current;
+      if (!draft.loaded || !draft.canSubmit || pending || !input || !text.trim()) return false;
+      const current = input.value;
+      const limited = limitCommentContent(current.trim() ? `${current.trimEnd()} ${text.trimEnd()}` : text.trimEnd());
+      setContent(limited.value);
+      setPasteCut(limited.cut > 0);
+      saveDraft({ content: limited.value, timeMarker });
+      input.focus({ preventScroll: true });
+      input.scrollIntoView?.({ block: "nearest" });
+      // 새 값이 그려진 뒤 커서를 끝에 둔다.
+      requestAnimationFrame(() => {
+        if (contentRef.current !== input) return;
+        input.setSelectionRange(input.value.length, input.value.length);
+      });
+      return true;
+    },
+  }));
 
   // 듣다가 멈춘 위치를 옮겨 적지 않도록 현재 재생 위치(초 내림)로 시점을 채운다.
   const fillCurrentPosition = async () => {
@@ -209,7 +257,7 @@ export function CommentForm({
       className={cn("flex flex-col gap-1 [&>[role=group]:empty]:hidden", className)}
       onBlur={draft.flush}
       onSubmit={(event) => {
-        if (!draft.loaded || !draft.canSubmit || pending || !operationId) {
+        if (!draft.loaded || !draft.canSubmit || pending || !operationId || orphan) {
           event.preventDefault();
           return;
         }
@@ -279,8 +327,53 @@ export function CommentForm({
       {allowTimeMarker ? (
         <p role="status" className={positionStatus ? "text-xs text-muted-foreground" : "sr-only"}>{positionStatus ?? ""}</p>
       ) : null}
-      <label htmlFor={contentId} className="sr-only">{isReply ? (replyLabel ?? "답글 내용") : "댓글 내용"}</label>
-      {isReply ? (
+      <label htmlFor={contentId} className="sr-only">{orphan ? "삭제된 댓글에 쓰던 답글" : isReply ? (replyLabel ?? "답글 내용") : "댓글 내용"}</label>
+      {orphan ? (
+        // 원 댓글이 지워진 답글: 입력은 그대로 두고 아래에 이유와 버리기·새 댓글로 남기기를 둔다.
+        <div className="flex flex-col gap-1.5">
+          <Input
+            ref={contentRef}
+            id={contentId}
+            name="content"
+            type="text"
+            value={content}
+            onChange={changeContent}
+            disabled={!draft.loaded}
+            aria-describedby={[orphanAlertId, contentDescribedBy].filter(Boolean).join(" ") || undefined}
+            className="min-w-0"
+          />
+          <p id={orphanAlertId} role="alert" className="text-xs leading-[18px] text-destructive">{ORPHAN_REPLY_MESSAGE}</p>
+          <div className="flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => {
+                draft.clear({ reason: "discard" });
+                setContent("");
+                onDiscardOrphan?.();
+              }}
+              disabled={!draft.loaded}
+              className="h-11 rounded-touch px-3 text-md md:h-8 md:rounded-md md:px-2.5 md:text-ui"
+            >
+              버리기
+            </Button>
+            {onMoveToComment ? (
+              <Button
+                type="button"
+                onClick={() => {
+                  if (!onMoveToComment(content)) return;
+                  draft.clear({ reason: "discard" });
+                  setContent("");
+                }}
+                disabled={!draft.loaded || !content.trim() || untouchedMention}
+                className="h-11 rounded-touch px-4 text-md md:h-8 md:rounded-md md:px-3 md:text-ui"
+              >
+                새 댓글로 남기기
+              </Button>
+            ) : null}
+          </div>
+        </div>
+      ) : isReply ? (
         // 답글 입력: 넓은 화면은 한 줄(입력 36 · 취소 · 등록), 휴대폰은 입력 44 아래 오른쪽에 취소·등록 44.
         <div className="flex flex-col gap-1.5 md:flex-row md:items-center md:gap-2">
           <Input
@@ -363,7 +456,7 @@ export function CommentForm({
           </>
         ) : null}
       </p>
-      {showResult && state.error && <p id={errorId} role="alert" className="text-ui text-destructive">{state.error}</p>}
+      {showResult && state.error && !orphan && <p id={errorId} role="alert" className="text-ui text-destructive">{state.error}</p>}
       {showResult && state.success && !isReply && <p role="status" className="text-xs text-success">댓글이 저장되었습니다.</p>}
       <DraftStatus
         {...draft}

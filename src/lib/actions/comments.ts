@@ -73,6 +73,8 @@ export type CreateCommentState = {
   error?: string;
   success?: boolean;
   commentId?: string;
+  /** 답글을 달 원 댓글이 지워져 저장하지 않았다. 입력 칸은 쓴 글을 새 댓글로 옮길 수 있게 한다. */
+  replyRootMissing?: boolean;
 };
 
 /**
@@ -192,7 +194,7 @@ export async function createComment(
           revalidatePath(`/community/${postId}`);
           return { success: true, commentId: replayId };
         }
-        return { error: REPLY_ROOT_MISSING };
+        return { error: REPLY_ROOT_MISSING, replyRootMissing: true };
       }
       root = lookup.root;
     } catch {
@@ -234,7 +236,7 @@ export async function createComment(
       }).onConflictDoNothing({ target: comments.id }).returning({ id: comments.id });
     } catch (error) {
       // 확인 뒤 원 댓글이 지워졌으면 이유를 알린다. 그 밖의 실패는 바깥에서 일반 오류로 알린다.
-      if (rootId !== null && !(await findReplyRoot(db, postId, rootId)).root) return { error: REPLY_ROOT_MISSING };
+      if (rootId !== null && !(await findReplyRoot(db, postId, rootId)).root) return { error: REPLY_ROOT_MISSING, replyRootMissing: true };
       throw error;
     }
     if (inserted.length === 0) {
