@@ -1,7 +1,7 @@
 /**
  * @file src/lib/actions/instructorMemos.ts
  * @description 관리자만 보는 수업 메모(학생별·노트별) server action. 모든 호출이 관리자 세션을 요구하고,
- * 노트 메모는 대상 학생을 클라이언트 입력이 아니라 노트에서 읽는다.
+ * 노트 메모는 대상 학생을 클라이언트 입력이 아니라 노트에서 읽는다. 개인 노트와 그룹 노트 모두 노트 메모를 쓴다.
  */
 "use server";
 
@@ -48,15 +48,17 @@ async function resolveTarget(scope: InstructorMemoScope): Promise<InstructorMemo
     await requireStudentTarget(scope.studentId);
     return { studentId: scope.studentId, noteId: null };
   }
+  await requireAdmin();
   const db = createDb();
   const [note] = await db
-    .select({ studentId: privateNotes.studentId })
+    .select({ studentId: privateNotes.studentId, groupId: privateNotes.groupId })
     .from(privateNotes)
-    // 수업 메모는 학생 한 명의 공간에 붙는다. 그룹 노트(group_id 있음)에는 붙이지 않는다.
-    .where(and(eq(privateNotes.id, scope.noteId), isNull(privateNotes.deletedAt), isNull(privateNotes.groupId)))
+    .where(and(eq(privateNotes.id, scope.noteId), isNull(privateNotes.deletedAt)))
     .limit(1);
   if (!note) return null;
-  await requireStudentTarget(note.studentId);
+  // 그룹 노트의 이 수업 메모(캔버스 UxReview1120Policies ⑪)도 노트의 student_id에 붙인다. 그 학생이 수강을 종료했거나
+  // 그룹을 떠나도 노트와 메모는 그룹 것이라 학생 상태를 묻지 않는다. 노트와 메모는 계정 삭제·영구 삭제 때 함께 지워진다.
+  if (!note.groupId) await requireStudentTarget(note.studentId);
   return { studentId: note.studentId, noteId: scope.noteId };
 }
 

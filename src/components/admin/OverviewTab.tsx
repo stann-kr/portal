@@ -40,7 +40,7 @@ import { isCurriculumVisible } from "@/lib/curriculum-visibility";
 import { cn } from "@/lib/utils";
 import { formatKstDot } from "@/lib/kst-format";
 import { buildAdminStudentDetailHref } from "@/lib/student-space-routes";
-import { buildLessonNoteLink, LESSON_NOTE_LINK_CLASS } from "@/lib/lesson-note-links";
+import { buildGroupLessonNoteLink, buildLessonNoteLink, LESSON_NOTE_LINK_CLASS } from "@/lib/lesson-note-links";
 import {
   LEDGER_ADD_ROW_CLASS,
   LEDGER_HEADER_LINK_CLASS,
@@ -94,7 +94,10 @@ interface OverviewTabProps {
   referenceTime?: Date;
   /** 커리큘럼 구역을 그릴지. 기본값은 숨김 스위치를 따른다. */
   showCurriculum?: boolean;
-  /** "학생:KST 날짜" → 그 날짜 노트 id. 레슨 행의 수업 노트 링크가 있으면 열고 없으면 새 노트로 간다. */
+  /**
+   * "학생:KST 날짜" → 그 날짜 개인 노트 id, "group:그룹:KST 날짜" → 그 날 그룹 노트 id. 레슨 행의 수업 노트 링크가 있으면 열고
+   * 없으면 새 노트로 간다. 그룹레슨 줄은 그룹 노트만 본다(캔버스 UxReview1120Policies ⑪).
+   */
   lessonNoteIds?: Readonly<Record<string, string>>;
 }
 
@@ -119,6 +122,8 @@ function focusAfterClose(id: string) {
  * 학생 상세 개요의 그룹레슨 그룹: 이름과 함께하는 학생, 그리고 이 학생 레슨 중 멤버 모두 같은 시각인 레슨의 시작(epoch ms).
  */
 export type OverviewLessonGroup = {
+  /** 그룹레슨 줄의 그룹 노트 열쇠에 쓴다. */
+  id: string;
   name: string;
   partners: { id: string; name: string }[];
   sharedLessonStarts?: readonly number[];
@@ -490,16 +495,16 @@ export function OverviewTab({
                       {groupLesson && lessonGroup ? <GroupLessonBadge groupName={lessonGroup.name} className="shrink" /> : null}
                       <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{l.note}</span>
                       {lessonNoteIds ? (() => {
-                        const link = buildLessonNoteLink({
-                          studentId,
-                          lessonAt: new Date(l.scheduledAt),
-                          noteIds: lessonNoteIds,
-                          returnTo: buildAdminStudentDetailHref(studentId, "overview"),
-                        });
+                        const returnTo = buildAdminStudentDetailHref(studentId, "overview");
+                        const lessonAt = new Date(l.scheduledAt);
+                        // 그룹레슨 줄은 그 날 그룹 노트를 열고, 없으면 이 학생 그룹의 그룹 노트 새로 쓰기로 간다.
+                        const link = groupLesson && lessonGroup
+                          ? buildGroupLessonNoteLink({ groupId: lessonGroup.id, memberId: studentId, lessonAt, noteIds: lessonNoteIds, returnTo })
+                          : buildLessonNoteLink({ studentId, lessonAt, noteIds: lessonNoteIds, returnTo });
                         return (
                           <Link
                             href={link.href}
-                            aria-label={`${lessonLabel} ${link.existing ? "수업 노트 열기" : "수업 노트 쓰기"}`}
+                            aria-label={`${lessonLabel}${groupLesson ? " 그룹레슨" : ""} ${link.existing ? "수업 노트 열기" : "수업 노트 쓰기"}`}
                             className={LESSON_NOTE_LINK_CLASS}
                           >
                             <FileText className="size-3.5" strokeWidth={1.6} aria-hidden="true" />

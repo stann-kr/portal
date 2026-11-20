@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { after, before, mock, test, type TestContext } from "node:test";
 import { eq } from "drizzle-orm";
 import type { AuthSession } from "@/lib/auth-guard";
-import { mediaObjects, privateNoteRevisions, privateNotes, profiles } from "@/db/schema";
+import { instructorMemos, mediaObjects, privateNoteRevisions, privateNotes, profiles } from "@/db/schema";
 import { CREATION_OPERATION_FIELD } from "@/lib/creation-operation";
 import { PRIVATE_NOTE_BASE_REVISION_FIELD, PRIVATE_NOTE_GROUP_FIELD } from "@/lib/private-note-continuity";
 import { createIsolatedPortalD1, type IsolatedPortalD1 } from "@/test/isolated-d1";
@@ -23,6 +23,7 @@ let atomic: typeof import("@/lib/private-note-atomic");
 let collab: typeof import("@/lib/collab/authorize");
 let mediaRead: typeof import("@/lib/media-read-access");
 let noteAccess: typeof import("@/lib/note-access");
+let memos: typeof import("@/lib/actions/instructorMemos");
 
 function createSession(id: string, role: "admin" | "student"): AuthSession {
   return { expires: "2099-01-01T00:00:00.000Z", user: { id, role, name: id, email: `${id}@example.com`, image: null } };
@@ -50,13 +51,14 @@ mock.module("next/navigation", {
 });
 
 before(async () => {
-  [notes, groups, atomic, collab, mediaRead, noteAccess] = await Promise.all([
+  [notes, groups, atomic, collab, mediaRead, noteAccess, memos] = await Promise.all([
     import("@/lib/actions/privateNotes"),
     import("@/lib/actions/lessonGroups"),
     import("@/lib/private-note-atomic"),
     import("@/lib/collab/authorize"),
     import("@/lib/media-read-access"),
     import("@/lib/note-access"),
+    import("@/lib/actions/instructorMemos"),
   ]);
 });
 after(() => mock.restoreAll());
@@ -383,6 +385,74 @@ test("계정 삭제: 떠난 멤버가 남의 그룹 노트에 올린 이미지�
   assert.equal((await db.select().from(privateNotes).where(eq(privateNotes.id, groupNote.note!.id))).length, 1);
   as("student-a");
   assert.ok(await mediaRead.loadReadableMedia(db, { id: "student-a", role: "student" }, keptImage), "남은 멤버가 계속 읽는다");
+});
+
+test("그룹 노트 이 수업 메모(캔버스 UxReview1120Policies ⑪)는 관리자만, 노트의 student_id에 붙어 학생 메모와 섞이지 않고 만든 학생 상태와 관계없이 노트와 함께 산다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context);
+  const groupId = await createGroup(["student-a", "student-b"]);
+  as("student-a");
+  const byA = await notes.createPrivateNote("student-a", {}, createForm("A가 만든 그룹 노트", "<p>a</p>", groupId));
+  as("student-b");
+  const byB = await notes.createPrivateNote("student-b", {}, createForm("B가 만든 그룹 노트", "<p>b</p>", groupId));
+  as("admin-1", "admin");
+  const byAdmin = await notes.createPrivateNote("student-a", {}, createForm("Stann 그룹 노트", "<p>s</p>", groupId));
+  assert.equal(byA.success && byB.success && byAdmin.success, true);
+  const [noteA, noteB, noteAdmin] = [byA.note!.id, byB.note!.id, byAdmin.note!.id];
+
+  const save = (scope: Parameters<typeof memos.saveInstructorMemoAction>[0], contentHtml: string, baseVersion = 0) =>
+    memos.saveInstructorMemoAction(scope, { contentHtml, baseVersion });
+  for (const [noteId, text] of [[noteA, "A 노트 메모"], [noteB, "B 노트 메모"], [noteAdmin, "Stann 노트 메모"]] as const) {
+    const saved = await save({ kind: "note", noteId }, `<p>${text}</p>`);
+    assert.equal(saved.ok, true, JSON.stringify(saved));
+  }
+  // 멤버 탭은 그 학생 전체 메모(개인 노트의 학생 메모와 같은 행)다.
+  assert.equal((await save({ kind: "student", studentId: "student-a" }, "<p>A 전체</p>")).ok, true);
+  const memoRows = await db
+    .select({ studentId: instructorMemos.studentId, noteId: instructorMemos.noteId, contentHtml: instructorMemos.contentHtml })
+    .from(instructorMemos);
+  assert.deepEqual(
+    memoRows.map((row) => [row.studentId, row.noteId, row.contentHtml]).sort((a, b) => String(a[2]).localeCompare(String(b[2]))),
+    [
+      ["student-a", noteA, "<p>A 노트 메모</p>"],
+      ["student-a", null, "<p>A 전체</p>"],
+      ["student-b", noteB, "<p>B 노트 메모</p>"],
+      ["admin-1", noteAdmin, "<p>Stann 노트 메모</p>"],
+    ].sort((a, b) => String(a[2]).localeCompare(String(b[2]))),
+    "그룹 노트 메모는 노트의 student_id(만든 사람)에 붙고, 학생 전체 메모와 다른 행이다",
+  );
+  assert.equal((await memos.getInstructorMemo({ kind: "student", studentId: "student-a" }))?.contentHtml, "<p>A 전체</p>");
+
+  // 멤버 학생은 그룹 노트를 고칠 수 있어도 메모는 읽지도 쓰지도 못한다.
+  as("student-a");
+  await assert.rejects(memos.getInstructorMemo({ kind: "note", noteId: noteA }), /Admin only|Unauthorized/);
+  await assert.rejects(save({ kind: "note", noteId: noteA }, "<p>덮어쓰기</p>", 1), /Admin only|Unauthorized/);
+
+  // 만든 학생 A가 수강을 종료해도 그룹 노트 메모는 그대로 읽고 쓴다(개인 노트 메모는 수강 중 학생만).
+  await db.update(profiles).set({ accountStatus: "ARCHIVED", archivedAt: new Date("2026-11-17T00:00:00Z") }).where(eq(profiles.id, "student-a"));
+  as("admin-1", "admin");
+  assert.equal((await memos.getInstructorMemo({ kind: "note", noteId: noteA }))?.contentHtml, "<p>A 노트 메모</p>");
+  assert.equal((await save({ kind: "note", noteId: noteA }, "<p>A 노트 메모 2</p>", 1)).ok, true);
+
+  // 휴지통의 그룹 노트에는 메모를 붙이지 않는다.
+  as("student-b");
+  assert.equal((await notes.trashPrivateNote(noteAdmin, crypto.randomUUID(), 1)).success, true);
+  as("admin-1", "admin");
+  assert.equal(await memos.getInstructorMemo({ kind: "note", noteId: noteAdmin }), null);
+
+  // B가 계정을 지우면 B가 만든 그룹 노트와 그 메모가 함께 지워지고, 다른 그룹 노트의 메모는 남는다.
+  const deleted = await (await import("@/lib/account-privacy-atomic")).deleteStudentAccountAtomically({ kind: "d1", db } as never, {
+    actorId: "student-b",
+    operationId: crypto.randomUUID(),
+    initiatingCleanupTokenDigest: "c".repeat(64),
+    useEphemeralCleanupDigest: true,
+    now: new Date("2026-11-18T01:00:00Z"),
+  });
+  assert.equal(deleted.ok, true, JSON.stringify(deleted));
+  assert.equal((await db.select().from(privateNotes).where(eq(privateNotes.id, noteB))).length, 0);
+  assert.deepEqual(
+    (await db.select({ noteId: instructorMemos.noteId }).from(instructorMemos)).map((row) => row.noteId).sort(),
+    [noteA, noteAdmin, null].sort(),
+  );
 });
 
 test("영구 삭제는 그룹 노트도 관리자만 한다(멤버는 휴지통·복원까지)", { concurrency: false }, async (context) => {

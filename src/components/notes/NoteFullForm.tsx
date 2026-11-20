@@ -37,6 +37,8 @@ interface NoteFullFormProps {
   authorName?: string;
   /** 관리자 작성 화면에서만 서버가 넘긴다. 수업 중 새 노트에서도 바로 타이머·메모를 쓴다. */
   instructor?: NoteInstructorTools;
+  /** 저장 위치가 그룹 노트일 때의 수업 도구(멤버 이름 메모 탭, 캔버스 UxReview1120Policies ⑪). */
+  groupInstructor?: NoteInstructorTools;
   /**
    * 그 학생이 속한 그룹. 있으면 "저장 위치"(개인 노트 / 그룹 노트)를 고른다. 저장 위치는 첫 저장(생성) 때만 쓰이고,
    * 공동 편집 room·기기 보관 키에는 넣지 않아 바꿔도 작성 중인 내용이 그대로다.
@@ -66,6 +68,7 @@ export function NoteFullForm({
   spaceLabel,
   authorName,
   instructor,
+  groupInstructor,
   group = null,
   personalLabel = "내 노트",
   viewerIsAdmin = false,
@@ -99,8 +102,8 @@ export function NoteFullForm({
   }
 
   return (
-    // 그룹 노트에는 학생 한 명의 수업 메모를 붙이지 않는다.
-    <NoteLessonFrame noteId={createdId} actorId={actorId} instructor={groupLocation ? undefined : instructor}>
+    // 저장 위치를 바꿔도 같은 수업 도구를 두고 메모 탭만 바꾼다(같은 학생의 메모 편집기는 그대로 남는다).
+    <NoteLessonFrame noteId={createdId} actorId={actorId} instructor={groupLocation ? groupInstructor : instructor}>
       {(toolsButton) => (
         <NoteEditorForm
           actorId={actorId}

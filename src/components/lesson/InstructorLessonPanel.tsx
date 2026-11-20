@@ -25,15 +25,25 @@ import { formatLessonClock, lessonTimestampText } from "./lesson-timestamps";
 import { lessonTimerScope, useLessonTimer } from "./useLessonTimer";
 import { useLessonNoteEditor, useLessonNoteStructure } from "./useLessonNoteStructure";
 
+/** 비공개 메모의 학생 탭 하나(그 학생 전체 메모). */
+export type InstructorMemberMemo = {
+  studentId: string;
+  name: string;
+  memo: InstructorMemoSnapshot;
+};
+
 export type InstructorLessonPanelProps = {
   /** null이면 아직 만들지 않은 새 노트다. 첫 저장으로 id가 생기면 이 수업 메모를 쓸 수 있다. */
   noteId: string | null;
+  /** 새 노트 타이머를 붙이는 학생(작성 화면의 학생). 저장 위치를 바꿔도 같은 타이머를 쓴다. */
   studentId: string;
-  studentName: string;
   actorId: string;
   /** 새 노트는 서버에 메모가 없으므로 null을 넘긴다. */
   noteMemo: InstructorMemoSnapshot | null;
-  studentMemo: InstructorMemoSnapshot;
+  /** 학생 전체 메모 탭. 개인 노트는 그 학생 한 명, 그룹 노트는 지금 멤버(이름순)다. */
+  members: InstructorMemberMemo[];
+  /** 그룹 노트면 그룹 이름(캔버스 UxReview1120Policies ⑪). 메모 탭을 멤버 이름으로 둔다. */
+  groupName?: string | null;
   /** 좁은 화면에서 서랍으로 열려 있는지(넓은 화면은 늘 옆에 둔다). */
   open: boolean;
   onClose: () => void;
@@ -54,18 +64,23 @@ const keepEditorFocus = (event: ReactMouseEvent) => event.preventDefault();
 
 const TARGET_LABEL: Record<LessonInsertTarget, string> = { note: "노트", memo: "메모" };
 
+/** 메모 탭 열쇠. 학생 탭은 학생마다 고정이라 저장 위치를 바꿔도 같은 학생의 편집기를 다시 만들지 않는다. */
+type MemoTabKey = "note" | `student-${string}`;
+const memberTabKey = (studentId: string): MemoTabKey => `student-${studentId}`;
+
 /**
  * 관리자 수업 도구(노트 옆 패널, AdminNoteLesson 보드). 라이브 큐: 지금 트랙·다음 곡으로(전환 칸 + 다음 트랙 제목),
  * 곡 피드백·전환 메모, 빠른 태그, 본문에서 센 세트 목록. 타이머와 비공개 메모(이 수업·학생 전체)는 접어 둔다.
  * 좁은 화면은 아래 고정 막대(MobileAdminNoteLesson 보드)로 같은 동작을 누른다. 이 패널의 메모는 학생에게 보내지 않는다.
+ * 그룹 노트는 같은 도구에 메모 탭만 "이 수업"과 멤버 이름 탭이다(캔버스 UxReview1120Policies ⑪).
  */
 export function InstructorLessonPanel({
   noteId,
   studentId,
-  studentName,
   actorId,
   noteMemo,
-  studentMemo,
+  members,
+  groupName = null,
   open,
   onClose,
   onOpen,
@@ -74,7 +89,19 @@ export function InstructorLessonPanel({
   const timer = useLessonTimer(lessonTimerScope(noteId, studentId));
   const editor = useLessonNoteEditor();
   const structure = useLessonNoteStructure(editor);
-  const [memoTab, setMemoTab] = useState<"note" | "student">("note");
+  const [selectedMemoTab, setMemoTab] = useState<MemoTabKey>("note");
+  // 저장 위치를 바꿔 고른 학생 탭이 사라지면 이 수업 탭을 보인다.
+  const memoTab: MemoTabKey = selectedMemoTab === "note" || members.some((member) => memberTabKey(member.studentId) === selectedMemoTab)
+    ? selectedMemoTab
+    : "note";
+  const isGroup = groupName !== null;
+  const memoTabs: { key: MemoTabKey; label: string }[] = [
+    { key: "note", label: "이 수업" },
+    ...members.map((member) => ({ key: memberTabKey(member.studentId), label: isGroup ? member.name : `${member.name} 전체` })),
+  ];
+  const memoSummary = isGroup
+    ? members.length > 0 ? `이 수업 · 멤버 ${members.length}명` : "이 수업"
+    : memoTabs.map((tab) => tab.label).join(" · ");
   const [timerOpen, setTimerOpen] = useState(false);
   const [memoOpen, setMemoOpen] = useState(false);
   const [stampTarget, setStampTarget] = useState<LessonInsertTarget>("note");
@@ -188,10 +215,12 @@ export function InstructorLessonPanel({
         )}
       >
         <div className="flex items-center justify-between gap-2">
-          <h2 id={headingId} className="inline-flex items-center gap-1.5 text-sm font-semibold text-foreground">
-            <Lock className="size-3.5" strokeWidth={1.8} aria-hidden="true" />
-            수업 도구
-            <span className="text-xs font-normal text-muted-foreground">· 나만 보기</span>
+          <h2 id={headingId} className="inline-flex min-w-0 items-center gap-1.5 text-sm font-semibold text-foreground">
+            <Lock className="size-3.5 shrink-0" strokeWidth={1.8} aria-hidden="true" />
+            <span className="shrink-0">수업 도구</span>
+            <span className="truncate text-xs font-normal text-muted-foreground">
+              {isGroup ? `· 그룹레슨 · ${groupName}` : "· 나만 보기"}
+            </span>
           </h2>
           <Button type="button" variant="ghost" size="icon" className="xl:hidden" onClick={onClose} aria-label="수업 도구 닫기">
             <X className="size-4" strokeWidth={1.8} aria-hidden="true" />
@@ -346,23 +375,26 @@ export function InstructorLessonPanel({
             <ChevronRight className={cn("size-3.5 text-muted-foreground transition-transform motion-reduce:transition-none", memoOpen && "rotate-90")} strokeWidth={1.8} aria-hidden="true" />
             비공개 메모
             <span className="flex-1" />
-            <span className="truncate text-xs text-muted-foreground">이 수업 · {studentName} 전체</span>
+            <span className="truncate text-xs text-muted-foreground">{memoSummary}</span>
           </button>
-          {/* 접어도 두 메모 편집기를 열어 두어 입력·초안이 끊기지 않는다. */}
+          {/* 접어도 메모 편집기를 모두 열어 두어 입력·초안이 끊기지 않는다. */}
           <div id={`${headingId}-memos`} hidden={!memoOpen} className="flex flex-col gap-3 py-3">
-            <div role="tablist" aria-label="메모 종류" className="grid grid-cols-2 rounded-md bg-muted p-0.5 text-ui">
-              {([
-                ["note", "이 수업"],
-                ["student", `${studentName} 전체`],
-              ] as const).map(([value, label]) => (
+            <div
+              role="tablist"
+              aria-label="메모 종류"
+              className="grid rounded-md bg-muted p-0.5 text-ui"
+              style={{ gridTemplateColumns: `repeat(${memoTabs.length}, minmax(0, 1fr))` }}
+            >
+              {memoTabs.map(({ key, label }) => (
                 <button
-                  key={value}
+                  key={key}
                   type="button"
                   role="tab"
-                  id={`${headingId}-${value}-tab`}
-                  aria-controls={`${headingId}-${value}`}
-                  aria-selected={memoTab === value}
-                  onClick={() => setMemoTab(value)}
+                  id={`${headingId}-${key}-tab`}
+                  aria-controls={`${headingId}-${key}`}
+                  aria-selected={memoTab === key}
+                  title={label}
+                  onClick={() => setMemoTab(key)}
                   className="min-h-8 truncate rounded-sm px-2 text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring aria-selected:bg-background aria-selected:text-foreground aria-selected:shadow-sm"
                 >
                   {label}
@@ -384,15 +416,32 @@ export function InstructorLessonPanel({
                 </p>
               )}
             </div>
-            <div role="tabpanel" id={`${headingId}-student`} aria-labelledby={`${headingId}-student-tab`} hidden={memoTab !== "student"}>
-              <InstructorMemoEditor
-                scope={{ kind: "student", studentId }}
-                initial={studentMemo}
-                actorId={actorId}
-                label={`${studentName} 학생 메모`}
-                placeholder="성향, 장기 과제, 주의할 점처럼 계속 볼 메모"
-              />
-            </div>
+            {members.map((member) => {
+              const key = memberTabKey(member.studentId);
+              return (
+                <div
+                  key={key}
+                  role="tabpanel"
+                  id={`${headingId}-${key}`}
+                  aria-labelledby={`${headingId}-${key}-tab`}
+                  hidden={memoTab !== key}
+                  className="flex flex-col gap-2"
+                >
+                  <InstructorMemoEditor
+                    scope={{ kind: "student", studentId: member.studentId }}
+                    initial={member.memo}
+                    actorId={actorId}
+                    label={`${member.name} 학생 메모`}
+                    placeholder="성향, 장기 과제, 주의할 점처럼 계속 볼 메모"
+                  />
+                  {isGroup ? (
+                    <p className="text-xs leading-[18px] text-muted-foreground">
+                      {member.name} 전체 메모 · 학생에게 보이지 않습니다. 개인 노트의 학생 메모와 같습니다.
+                    </p>
+                  ) : null}
+                </div>
+              );
+            })}
           </div>
         </section>
       </aside>

@@ -321,7 +321,7 @@ test("멤버를 바꾸면 새 멤버는 아직 시작하지 않은 그룹 일정
   assert.equal((await db.select().from(calendarEvents)).length, 4);
 });
 
-test("업무함 그룹레슨 줄의 그룹 노트 id는 관리자만 읽고, 기간 안 그 그룹의 휴지통 아닌 그룹 노트만 그룹·날짜로 묶는다", { concurrency: false }, async (context) => {
+test("업무함·학생 상세 그룹레슨 줄의 그룹 노트 id는 관리자만 읽고, 휴지통 아닌 그룹 노트만 그룹·날짜로 묶는다(학생 상세는 그 학생 그룹만)", { concurrency: false }, async (context) => {
   const db = await setupDatabase(context);
   await db.insert(lessonGroups).values([{ id: "g-tue", name: "화요일반" }, { id: "g-thu", name: "목요일반" }]);
   await db.insert(lessonGroupMembers).values([
@@ -348,4 +348,15 @@ test("업무함 그룹레슨 줄의 그룹 노트 id는 관리자만 읽고, 기
   activeSession = createSession("admin-1", "admin");
   const ids = await notes.getGroupLessonNoteIdsInRange(range);
   assert.deepEqual(ids, { [links.groupLessonNoteKey("g-tue", day)]: "gn-new" });
+
+  // 학생 상세 레슨 목록(캔버스 UxReview1120Policies ⑪): 개인 노트 열쇠와 그 학생 그룹의 그룹 노트 열쇠만(기간 없이), 다른 그룹은 없다.
+  assert.deepEqual(await notes.getLessonNoteIdsForStudent("student-a"), {
+    [links.lessonNoteKey("student-a", day)]: "personal",
+    [links.groupLessonNoteKey("g-tue", day)]: "gn-new",
+  });
+  assert.deepEqual(await notes.getLessonNoteIdsForStudent("student-c"), {
+    [links.groupLessonNoteKey("g-thu", new Date("2026-12-20T03:00:00.000Z"))]: "gn-far",
+  });
+  activeSession = createSession("student-a", "student");
+  await assert.rejects(notes.getLessonNoteIdsForStudent("student-a"), /Admin only/);
 });

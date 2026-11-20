@@ -320,6 +320,7 @@ export default async function StudentDetailPage({
               referenceTime={referenceTime}
               lessonNoteIds={lessonNoteIds}
               lessonGroup={lessonGroup ? {
+                id: lessonGroup.id,
                 name: lessonGroup.name,
                 partners: lessonGroup.members.filter((member) => member.id !== studentId),
                 sharedLessonStarts: groupLessonStarts,

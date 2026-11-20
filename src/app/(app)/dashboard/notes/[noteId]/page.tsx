@@ -12,6 +12,7 @@ import { groupNoteShareLine } from "@/lib/lesson-group-rules";
 import { RichTextContent } from "@/components/editor/RichTextContent";
 import { LiveNoteArticle } from "@/components/notes/LiveNoteArticle";
 import { NoteDocEditor } from "@/components/notes/NoteDocEditor";
+import type { NoteInstructorTools } from "@/components/notes/NoteLessonFrame";
 import {
   NoteBreadcrumb,
   NoteDocumentBody,
@@ -30,6 +31,46 @@ import { getRequestNow } from "@/lib/request-time";
 import { missingWhenAccessDenied } from "@/lib/access-denied-as-missing";
 
 export const metadata = { title: "노트" };
+
+/**
+ * 관리자 수업 도구 값. 개인 노트는 그 학생 메모 탭 하나, 그룹 노트는 지금 멤버(수강 중, 이름순)마다 탭 하나다
+ * (캔버스 UxReview1120Policies ⑪). 개인 노트의 학생이 수강 중이 아니면 도구를 두지 않는다.
+ */
+async function loadNoteInstructorTools(note: {
+  id: string;
+  studentId: string;
+  group: { name: string; members: { id: string; name: string }[] } | null;
+}): Promise<NoteInstructorTools | undefined> {
+  if (note.group) {
+    const members = note.group.members;
+    const [noteMemo, ...memberMemos] = await Promise.all([
+      getInstructorMemo({ kind: "note", noteId: note.id }),
+      ...members.map((member) => getInstructorMemo({ kind: "student", studentId: member.id })),
+    ]);
+    if (!noteMemo) return undefined;
+    return {
+      studentId: note.studentId,
+      noteMemo,
+      groupName: note.group.name,
+      members: members.flatMap((member, index) => {
+        const memo = memberMemos[index];
+        return memo ? [{ studentId: member.id, name: member.name, memo }] : [];
+      }),
+    };
+  }
+  const student = await findStudentTarget(note.studentId);
+  if (!student) return undefined;
+  const [noteMemo, studentMemo] = await Promise.all([
+    getInstructorMemo({ kind: "note", noteId: note.id }),
+    getInstructorMemo({ kind: "student", studentId: student.id }),
+  ]);
+  if (!noteMemo || !studentMemo) return undefined;
+  return {
+    studentId: student.id,
+    noteMemo,
+    members: [{ studentId: student.id, name: student.displayName?.trim() || student.email, memo: studentMemo }],
+  };
+}
 
 /** 노트 문서(NoteDoc·MobileNoteDoc 보드). 작성자·관리자는 바로 편집하고, 휴지통·다른 작성자의 노트는 같은 틀의 읽기 화면이다. */
 export default async function NotePage({
@@ -76,21 +117,7 @@ export default async function NotePage({
 
   if (!note.deletedAt && canEdit) {
     // 수업 도구·비밀 메모는 관리자 화면에서만 읽어 넘긴다(학생 화면에는 내용이 실리지 않는다).
-    const student = session.user.role === "admin" ? await findStudentTarget(note.studentId) : null;
-    const [noteMemo, studentMemo] = student
-      ? await Promise.all([
-          getInstructorMemo({ kind: "note", noteId: note.id }),
-          getInstructorMemo({ kind: "student", studentId: student.id }),
-        ])
-      : [null, null];
-    const instructor = student && noteMemo && studentMemo
-      ? {
-          studentId: student.id,
-          studentName: student.displayName?.trim() || student.email,
-          noteMemo,
-          studentMemo,
-        }
-      : undefined;
+    const instructor = session.user.role === "admin" ? await loadNoteInstructorTools(note) : undefined;
     return (
       <NoteDocEditor
         note={{

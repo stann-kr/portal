@@ -1,7 +1,7 @@
 /**
  * 레슨 행 수업 노트 링크용 조회. 노트 날짜는 noteDate, 없으면 createdAt(노트 목록과 같은 규칙)이다.
  */
-import { and, gte, inArray, isNotNull, isNull, lte, or } from "drizzle-orm";
+import { and, eq, gte, inArray, isNotNull, isNull, lte, or } from "drizzle-orm";
 import type { DrizzleDb } from "@/db/client";
 import { privateNotes } from "@/db/schema";
 import { groupLessonNoteKey, lessonNoteKey } from "@/lib/lesson-note-links";
@@ -58,16 +58,17 @@ export async function queryLessonNoteIds(
 
 
 /**
- * 기간 안 그룹 노트를 "group:그룹:KST 날짜" → 노트 id로 묶는다(업무함 그룹레슨 줄). 같은 날 여럿이면 가장 최근에 고친 노트.
- * 관리자 화면 전용이라 모든 그룹을 본다.
+ * 그룹 노트를 "group:그룹:KST 날짜" → 노트 id로 묶는다(업무함·학생 상세의 그룹레슨 줄). 같은 날 여럿이면 가장 최근에 고친 노트.
+ * 관리자 화면 전용이다. groupId가 있으면 그 그룹만, range가 있으면 그 기간(앞뒤 하루 여유)만 읽는다.
  */
 export async function queryGroupLessonNoteIds(
   db: DrizzleDb,
-  range: { from: Date; to: Date },
+  filter: { range?: { from: Date; to: Date }; groupId?: string },
 ): Promise<Record<string, string>> {
+  const { range, groupId } = filter;
   const margin = 24 * 60 * 60 * 1000;
-  const from = new Date(range.from.getTime() - margin);
-  const to = new Date(range.to.getTime() + margin);
+  const from = range ? new Date(range.from.getTime() - margin) : null;
+  const to = range ? new Date(range.to.getTime() + margin) : null;
   const rows = await db
     .select({
       id: privateNotes.id,
@@ -78,12 +79,14 @@ export async function queryGroupLessonNoteIds(
     })
     .from(privateNotes)
     .where(and(
-      isNotNull(privateNotes.groupId),
+      groupId ? eq(privateNotes.groupId, groupId) : isNotNull(privateNotes.groupId),
       isNull(privateNotes.deletedAt),
-      or(
-        and(gte(privateNotes.noteDate, from), lte(privateNotes.noteDate, to)),
-        and(isNull(privateNotes.noteDate), gte(privateNotes.createdAt, from), lte(privateNotes.createdAt, to)),
-      ),
+      from && to
+        ? or(
+            and(gte(privateNotes.noteDate, from), lte(privateNotes.noteDate, to)),
+            and(isNull(privateNotes.noteDate), gte(privateNotes.createdAt, from), lte(privateNotes.createdAt, to)),
+          )
+        : undefined,
     ));
   const picked = new Map<string, { id: string; updated: number }>();
   for (const row of rows) {

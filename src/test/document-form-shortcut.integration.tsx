@@ -687,6 +687,57 @@ test("학생 Q&A 휴지통은 Stann이 지운 질문에 표시를 붙이고 복�
   assert.ok(locked.querySelector("a"), "상세로 가는 링크는 남는다.");
 });
 
+test("관리자 새 노트의 수업 도구는 저장 위치를 그룹 노트로 바꾸면 메모 탭을 멤버 이름으로 바꾸고 같은 학생 메모 칸은 그대로 둔다", { concurrency: false }, async (context) => {
+  // 캔버스 UxReview1120Policies ⑪: 그룹 노트에도 수업 도구, 비공개 메모는 "이 수업"과 멤버 이름 탭.
+  const memo = (contentHtml: string) => ({ memoId: null, contentHtml, version: 0, updatedAt: null });
+  const kim = { studentId: "s-kim", name: "김학생", memo: memo("") };
+  const lee = { studentId: "s-lee", name: "이학생", memo: memo("") };
+  const harness = await renderForm(context, (
+    <NoteFullForm
+      action={async () => ({})}
+      actorId="admin-group-tools"
+      studentId="s-kim"
+      returnTo="/dashboard/admin/students/s-kim/notes"
+      spaceLabel="김학생"
+      instructor={{ studentId: "s-kim", noteMemo: null, members: [kim] }}
+      groupInstructor={{ studentId: "s-kim", noteMemo: null, members: [kim, lee], groupName: "화요일반" }}
+      group={{ id: "g-tue", name: "화요일반", members: [{ id: "s-kim", name: "김학생" }, { id: "s-lee", name: "이학생" }] }}
+      personalLabel="김학생 노트"
+      viewerIsAdmin
+    />
+  ));
+  const panel = () => harness.container.querySelector<HTMLElement>("aside")!;
+  const tabs = () => [...panel().querySelectorAll('[role="tablist"][aria-label="메모 종류"] [role="tab"]')].map((tab) => tab.textContent);
+  const memoToggle = () => [...panel().querySelectorAll<HTMLButtonElement>("button[aria-expanded]")].find((button) => button.textContent?.includes("비공개 메모"))!;
+  const kimPanel = () => panel().querySelector('[role="tabpanel"][id$="-student-s-kim"]');
+
+  assert.match(panel().querySelector("h2")?.textContent ?? "", /수업 도구· 나만 보기/u);
+  assert.deepEqual(tabs(), ["이 수업", "김학생 전체"]);
+  assert.match(memoToggle().textContent ?? "", /이 수업 · 김학생 전체$/u);
+  const kimBefore = kimPanel();
+  assert.ok(kimBefore);
+
+  const groupRadio = harness.container.querySelector<HTMLInputElement>('input[name="note-location"][value="group"]')!;
+  await act(async () => groupRadio.click());
+  assert.match(panel().querySelector("h2")?.textContent ?? "", /수업 도구· 그룹레슨 · 화요일반/u);
+  assert.deepEqual(tabs(), ["이 수업", "김학생", "이학생"]);
+  assert.match(memoToggle().textContent ?? "", /이 수업 · 멤버 2명$/u);
+  assert.equal(kimPanel(), kimBefore, "저장 위치를 바꿔도 같은 학생 메모 칸을 다시 만들지 않는다");
+  const leeTab = [...panel().querySelectorAll<HTMLButtonElement>('[role="tab"]')].find((tab) => tab.textContent === "이학생")!;
+  await act(async () => leeTab.click());
+  const leePanel = panel().querySelector<HTMLElement>('[role="tabpanel"][id$="-student-s-lee"]')!;
+  assert.equal(leePanel.hidden, false);
+  assert.match(leePanel.textContent ?? "", /이학생 전체 메모 · 학생에게 보이지 않습니다\. 개인 노트의 학생 메모와 같습니다\./u);
+
+  // 개인 노트로 돌아가면 사라진 이학생 탭 대신 이 수업 탭을 보인다.
+  const personalRadio = harness.container.querySelector<HTMLInputElement>('input[name="note-location"][value="personal"]')!;
+  await act(async () => personalRadio.click());
+  assert.deepEqual(tabs(), ["이 수업", "김학생 전체"]);
+  const selected = panel().querySelector('[role="tab"][aria-selected="true"]');
+  assert.equal(selected?.textContent, "이 수업");
+  assert.equal(kimPanel(), kimBefore);
+});
+
 test("관리자 노트 작성 화면의 휴지통 링크는 대상 학생과 검색 복귀 위치를 유지한다", { concurrency: false }, async (context) => {
   const returnTo = "/dashboard/admin/students/student-selected/notes?q=EQ";
   const harness = await renderForm(context, <NoteFullForm action={async () => ({})} actorId="admin-search" studentId="student-selected" returnTo={returnTo} spaceLabel="대상 학생" />);

@@ -1237,11 +1237,24 @@ test("학생 한 명 화면의 그룹레슨: 상세와 개요는 멤버 모두�
       { id: "lesson-group", scheduledAt: new Date("2026-11-25T10:00:00.000Z") },
       { id: "lesson-solo", scheduledAt: new Date("2026-11-27T10:00:00.000Z") },
     ]}
-    lessonGroup={{ name: "화요일반", partners: [{ id: "student-2", name: "이학생" }], sharedLessonStarts: [Date.parse("2026-11-25T10:00:00.000Z")] }}
+    lessonGroup={{ id: "g-tue", name: "화요일반", partners: [{ id: "student-2", name: "이학생" }], sharedLessonStarts: [Date.parse("2026-11-25T10:00:00.000Z")] }}
+    // 그룹레슨 날에 개인 노트만 있고 그룹 노트는 없다. 혼자 하는 레슨 날에는 개인 노트가 있다.
+    lessonNoteIds={{ "student-1:2026-11-25": "personal-same-day", "student-1:2026-11-27": "solo-note" }}
   />);
   const rows = [...browser.document.querySelectorAll('[aria-labelledby="lessons-heading"] li')];
   assert.match(rows[0].textContent ?? "", /그룹레슨 · 화요일반/u);
   assert.doesNotMatch(rows[1].textContent ?? "", /그룹레슨/u);
+  // 그룹레슨 줄은 그룹 노트를 기준으로 한다(캔버스 UxReview1120Policies ⑪): 개인 노트가 있어도 그룹 노트 새로 쓰기로 간다.
+  const groupNoteLink = rows[0].querySelector('a[aria-label$="그룹레슨 수업 노트 쓰기"]');
+  assert.ok(groupNoteLink instanceof browser.HTMLAnchorElement);
+  assert.equal(groupNoteLink.textContent, "수업 노트");
+  const groupHref = new URL(groupNoteLink.href);
+  assert.equal(groupHref.pathname, "/dashboard/admin/students/student-1/notes/new");
+  assert.equal(groupHref.searchParams.get("date"), "2026-11-25");
+  assert.equal(groupHref.searchParams.get("space"), "group");
+  const soloNoteLink = rows[1].querySelector('a[aria-label$=" 수업 노트 열기"]');
+  assert.ok(soloNoteLink instanceof browser.HTMLAnchorElement);
+  assert.equal(new URL(soloNoteLink.href).pathname, "/dashboard/notes/solo-note");
   const groupDelete = rows[0].querySelector('button[aria-label$="그룹레슨 삭제"]');
   assert.ok(groupDelete instanceof browser.HTMLButtonElement);
   await act(async () => groupDelete.click());
