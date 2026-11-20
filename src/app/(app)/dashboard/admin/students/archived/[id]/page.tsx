@@ -150,7 +150,7 @@ export default async function ArchivedStudentDetailPage({
                   className={cn(
                     "relative flex h-11 shrink-0 items-center whitespace-nowrap rounded-sm transition-colors duration-[var(--duration-fast)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring motion-reduce:transition-none md:h-9",
                     isActive
-                      ? "font-medium text-foreground shadow-[inset_0_-2px_0_var(--color-foreground)]"
+                      ? "font-medium text-foreground after:pointer-events-none after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground"
                       : "text-muted-foreground hover:text-foreground",
                   )}
                 >
@@ -188,7 +188,11 @@ export default async function ArchivedStudentDetailPage({
                     ))
                   : records.rows.map((thread) => (
                       <ArchivedRecordRow key={thread.id} title={thread.title} meta={dot(thread.createdAt)}>
-                        <ul aria-label="질문과 답변" className="flex flex-col">
+                        <ul
+                          aria-label="질문과 답변"
+                          // 펼친 칸이 아래 줄을 그으므로 마지막 답변은 줄을 긋지 않는다.
+                          className="flex flex-col [&>li:first-child]:pt-0 [&>li:last-child]:border-b-0 [&>li:last-child]:pb-0"
+                        >
                           {thread.replies.map((reply) => (
                             <ReplyCard key={reply.id} reply={reply} />
                           ))}

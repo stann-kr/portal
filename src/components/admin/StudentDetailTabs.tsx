@@ -50,10 +50,11 @@ export function StudentDetailTabs({ studentId, activeTab, counts, className }: S
             key={key}
             href={key === "notes" ? buildAdminStudentNotesHref(studentId) : buildAdminStudentDetailHref(studentId, key)}
             aria-current={isActive ? "page" : undefined}
+            // 밑줄은 막대(after)로 긋는다. 둥근 모서리에 안쪽 그림자로 그으면 탭이 소수점 위치에 놓일 때 양옆에 이음선이 보인다.
             className={cn(
               "relative flex h-11 shrink-0 items-center whitespace-nowrap rounded-sm transition-colors duration-[var(--duration-fast)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring motion-reduce:transition-none md:h-auto md:py-2",
               isActive
-                ? "font-medium text-foreground shadow-[inset_0_-2px_0_var(--color-foreground)]"
+                ? "font-medium text-foreground after:pointer-events-none after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground"
                 : "text-secondary-foreground hover:text-foreground",
             )}
           >
