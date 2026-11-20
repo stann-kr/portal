@@ -43,7 +43,7 @@ export function TodoList({
         const { item, status } = entry;
         // 낼 과제는 그 과제가 펼쳐진 과제 화면(분석 과제는 분석 쓰기 화면)으로, 제출한 과제는 제출 상세로 보낸다.
         const href = status === "taskDue" || status === "taskOverdue"
-          ? assignmentTaskHref(item.id, { analysis: item.metadata.submissionFormat === "ANALYSIS" })
+          ? assignmentTaskHref(item.id, { analysis: item.metadata.submissionFormat === "ANALYSIS", returnTo })
           : item.type === "ASSIGNMENT"
           ? `/dashboard/student/assignments/${encodeURIComponent(item.id)}?returnTo=${encodedReturnTo}`
           : `/dashboard/qna/${encodeURIComponent(item.id)}?returnTo=${encodedReturnTo}`;

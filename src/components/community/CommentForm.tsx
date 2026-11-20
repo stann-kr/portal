@@ -125,10 +125,11 @@ export function CommentForm({
   useBusyNavigationGuard(pending);
 
   // 답글의 답글: 입력이 비어 있거나 앞서 넣은 "@이름 " 그대로일 때만 새 이름으로 바꾼다(초안·직접 쓴 글은 두고).
+  // 원 댓글의 "답글"로 바꾸면(이름 없음) 앞서 넣은 "@이름 "만 있던 입력을 비운다.
   const [appliedMention, setAppliedMention] = useState<string | null>(null);
-  if (draft.loaded && mention && mention !== appliedMention) {
-    setAppliedMention(mention);
-    if (content === "" || content === appliedMention) setContent(mention);
+  if (draft.loaded && (mention ?? null) !== appliedMention) {
+    setAppliedMention(mention ?? null);
+    if (content === "" || content === appliedMention) setContent(mention ?? "");
   }
   const untouchedMention = appliedMention !== null && content === appliedMention;
 

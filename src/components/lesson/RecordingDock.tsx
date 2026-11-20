@@ -72,7 +72,13 @@ export function RecordingDock({
   if (!recording) return null;
 
   return (
-    <div className={cn("pointer-events-none sticky bottom-3 z-30 flex justify-center px-5 md:bottom-5", className)}>
+    // 미니 플레이어가 켜져 있으면 그 막대 높이만큼 더 띄운다(--mini-player-offset, player.css).
+    <div
+      className={cn(
+        "pointer-events-none sticky bottom-[calc(0.75rem+var(--mini-player-offset,0px))] z-30 flex justify-center px-5 md:bottom-[calc(1.25rem+var(--mini-player-offset,0px))]",
+        className,
+      )}
+    >
       <section
         aria-label="수업 녹음"
         className="pointer-events-auto flex w-full max-w-[720px] flex-col gap-2 rounded-lg border border-border bg-background/95 p-2 shadow-lg backdrop-blur"

@@ -161,7 +161,8 @@ test("과제: 새 과제는 학생에게, 학생 제출은 관리자에게 보�
   assert.equal(sent.length, 2, "같은 제출 재전송");
   assert.deepEqual(sent[1], {
     audience: { kind: "role", role: "admin" },
-    message: { category: "assignment", title: "과제 제출", body: "김학생님 과제 제출: ‘드랍 연습’", url: `/dashboard/student/assignments/${submitted.id}`, tag: `submission:${submitted.id}` },
+    // 업무함에서 연 것처럼 열려 처리 뒤 다음 피드백 대기로 이어지고 돌아가기는 업무함이다.
+    message: { category: "assignment", title: "과제 제출", body: "김학생님 과제 제출: ‘드랍 연습’", url: `/dashboard/student/assignments/${submitted.id}?from=work&returnTo=${encodeURIComponent("/dashboard/admin?section=work")}`, tag: `submission:${submitted.id}` },
     exclude: "student-1",
   });
 
@@ -282,6 +283,7 @@ test("커뮤니티: 새 글은 글쓴이를 뺀 모든 계정에, 댓글은 글�
   assert.deepEqual(sent[1]!.audience, { kind: "profiles", profileIds: ["student-1"] });
   assert.equal(sent[1]!.message.title, "내 글에 새 댓글");
   assert.equal(sent[1]!.message.body, "이학생님 댓글: ‘이번 주 믹스 공유’");
+  assert.equal(sent[1]!.message.url, `/community/${postId}#comment-${firstResult.commentId}`, "누르면 그 댓글 자리로 연다");
   assert.equal(sent[1]!.exclude, "student-2");
 
   // Stann 댓글: 글쓴이에게 "내 글에 새 댓글", 앞서 댓글 단 이학생에게 "새 댓글".
@@ -295,12 +297,13 @@ test("커뮤니티: 새 글은 글쓴이를 뺀 모든 계정에, 댓글은 글�
 
   // Stann이 이학생 댓글에 답글: 이학생은 "내 댓글에 답글" 하나만, 글쓴이는 "내 글에 새 댓글"(한 사람에 한 알림).
   const replyForm = form({ [CREATION_OPERATION_FIELD]: crypto.randomUUID(), content: "고마워요", parentId: firstResult.commentId! });
-  assert.equal((await commentActions.createComment(postId, {}, replyForm)).success, true);
+  const replyResult = await commentActions.createComment(postId, {}, replyForm);
+  assert.equal(replyResult.success, true);
   await commentActions.createComment(postId, {}, replyForm);
   assert.equal(sent.length, 6, "같은 답글 재전송은 다시 보내지 않고, 참여자 알림은 이미 받은 사람을 빼면 없다");
   assert.deepEqual(sent[4], {
     audience: { kind: "profiles", profileIds: ["student-2"] },
-    message: { category: "community_comment", title: "내 댓글에 답글", body: "Stann님 답글: ‘이번 주 믹스 공유’", url: `/community/${postId}`, tag: `comment:${postId}` },
+    message: { category: "community_comment", title: "내 댓글에 답글", body: "Stann님 답글: ‘이번 주 믹스 공유’", url: `/community/${postId}#comment-${replyResult.commentId}`, tag: `comment:${postId}` },
     exclude: "admin-1",
   });
   assert.deepEqual(sent[5]!.audience, { kind: "profiles", profileIds: ["student-1"] });

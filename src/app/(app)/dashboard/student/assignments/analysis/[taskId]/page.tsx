@@ -14,19 +14,29 @@ import { missingWhenAccessDenied } from "@/lib/access-denied-as-missing";
 import { getActiveAuthSession } from "@/lib/auth-guard";
 import { formatKst } from "@/lib/kst-format";
 import { STUDENT_LEGACY_REDIRECTS } from "@/lib/legacy-dashboard-routes";
+import { safeReturnPath } from "@/lib/safe-return-path";
 
 export const metadata = { title: "믹스셋 분석" };
 
 const LIST_HREF = STUDENT_LEGACY_REDIRECTS.assignments;
 
-function detailHref(assignmentId: string): string {
-  return `/dashboard/student/assignments/${encodeURIComponent(assignmentId)}?returnTo=${encodeURIComponent(LIST_HREF)}`;
+function detailHref(assignmentId: string, returnTo: string): string {
+  return `/dashboard/student/assignments/${encodeURIComponent(assignmentId)}?returnTo=${encodeURIComponent(returnTo)}`;
 }
 
-export default async function MixAnalysisWritePage({ params }: { params: Promise<{ taskId: string }> }) {
+export default async function MixAnalysisWritePage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ taskId: string }>;
+  searchParams: Promise<{ returnTo?: string }>;
+}) {
   const session = await getActiveAuthSession();
   if (!session?.user?.id) redirect("/login");
-  const { taskId } = await params;
+  const [{ taskId }, query] = await Promise.all([params, searchParams]);
+  // 들어온 화면(홈 할 일·캘린더)으로 돌아간다. 없으면 과제 목록이다. 위치 줄은 계층(과제)을 그대로 보인다.
+  const backHref = safeReturnPath(query.returnTo, LIST_HREF);
+  const back = { href: backHref, label: backHref === LIST_HREF ? "과제 목록으로" : "이전 화면으로" };
   // 관리자·다른 학생의 과제·없는 과제는 같은 안내로 둔다(DB 일시 오류는 오류 화면의 "다시 시도"로 보낸다).
   const task = session.user.role === "student" ? await missingWhenAccessDenied(getMyAssignmentTask(taskId)) : null;
   const unavailable = !task || task.submissionFormat !== "ANALYSIS"
@@ -38,14 +48,14 @@ export default async function MixAnalysisWritePage({ params }: { params: Promise
   if (!task || unavailable) {
     return (
       <div className="px-5 pb-8 pt-6 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-14">
-        <MobileTopBar title="믹스셋 분석" back={{ href: LIST_HREF, label: "과제 목록으로" }} />
+        <MobileTopBar title="믹스셋 분석" back={back} />
         <div className="flex max-w-[880px] flex-col items-start gap-2 md:mx-auto">
           <p className="text-body text-secondary-foreground">{unavailable}</p>
           <Link
-            href={task?.submission ? detailHref(task.submission.id) : LIST_HREF}
+            href={task?.submission ? detailHref(task.submission.id, backHref) : backHref}
             className="inline-flex min-h-11 items-center text-ui text-secondary-foreground underline underline-offset-[3px] hover:text-foreground md:min-h-0"
           >
-            {task?.submission ? "피드백 보기" : "과제 목록으로 돌아가기"}
+            {task?.submission ? "피드백 보기" : backHref === LIST_HREF ? "과제 목록으로 돌아가기" : "이전 화면으로 돌아가기"}
           </Link>
         </div>
       </div>
@@ -59,7 +69,7 @@ export default async function MixAnalysisWritePage({ params }: { params: Promise
 
   return (
     <div className="flex flex-col md:gap-7 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-10">
-      <MobileTopBar title="믹스셋 분석" back={{ href: LIST_HREF, label: "과제 목록으로" }} />
+      <MobileTopBar title="믹스셋 분석" back={back} />
       <nav aria-label="위치" className="hidden min-w-0 items-center gap-1.5 text-ui md:flex">
         <Link
           href={LIST_HREF}
@@ -81,7 +91,7 @@ export default async function MixAnalysisWritePage({ params }: { params: Promise
         task={task}
         actorId={session.user.id}
         dueLabel={dueLabel}
-        backHref={LIST_HREF}
+        backHref={backHref}
       />
     </div>
   );

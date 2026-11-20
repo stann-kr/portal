@@ -112,3 +112,12 @@ test("공용 오디오 오류는 그 곡에만 표시하고 멈추며, 다음 st
   assert.equal(state.error, false);
   assert.equal(run([{ type: "error", key: audioTrack.key }, { type: "close" }], state).error, false);
 });
+
+test("오류 뒤 ▶(retry)는 그 곡의 오류 줄만 지우고 위치는 그대로 둔다", () => {
+  let state = run([{ type: "start", track: audioTrack }, { type: "progress", key: audioTrack.key, position: 42 }, { type: "error", key: audioTrack.key }]);
+  assert.equal(run([{ type: "retry", key: "other" }], state).error, true, "다른 곡의 retry는 무시한다");
+  state = run([{ type: "retry", key: audioTrack.key }], state);
+  assert.equal(state.error, false);
+  assert.equal(state.position, 42, "다시 받은 뒤 멈춘 자리부터 잇는다");
+  assert.equal(run([{ type: "retry", key: audioTrack.key }], state), state, "오류가 없으면 그대로");
+});

@@ -86,6 +86,7 @@ async function notifyCommentAdded(
   post: { title: string; authorId: string },
   session: Awaited<ReturnType<typeof requireAuth>>,
   rootAuthorId: string | null,
+  commentId: string,
 ): Promise<void> {
   try {
     const actorId = session.user.id;
@@ -94,14 +95,14 @@ async function notifyCommentAdded(
     if (replyRecipient) {
       await notifyPush(
         { kind: "profiles", profileIds: [replyRecipient] },
-        pushMessages.commentReplied({ postId, authorName, title: post.title }),
+        pushMessages.commentReplied({ postId, commentId, authorName, title: post.title }),
         { excludeProfileId: actorId },
       );
     }
     if (post.authorId !== replyRecipient) {
       await notifyPush(
         { kind: "profiles", profileIds: [post.authorId] },
-        pushMessages.commentAdded({ postId, authorName, title: post.title, toPostAuthor: true }),
+        pushMessages.commentAdded({ postId, commentId, authorName, title: post.title, toPostAuthor: true }),
         { excludeProfileId: actorId },
       );
     }
@@ -115,7 +116,7 @@ async function notifyCommentAdded(
     if (others.length > 0) {
       await notifyPush(
         { kind: "profiles", profileIds: others },
-        pushMessages.commentAdded({ postId, authorName, title: post.title, toPostAuthor: false }),
+        pushMessages.commentAdded({ postId, commentId, authorName, title: post.title, toPostAuthor: false }),
         { excludeProfileId: actorId },
       );
     }
@@ -236,7 +237,7 @@ export async function createComment(
         return { error: "이 댓글은 수정 전 내용으로 이미 저장되었거나 상태가 바뀌었습니다. 목록을 확인한 뒤 내용을 편집해 새 댓글로 등록해 주세요." };
       }
     } else {
-      await notifyCommentAdded(db, postId, activePost, session, root?.authorId ?? null);
+      await notifyCommentAdded(db, postId, activePost, session, root?.authorId ?? null, commentId);
     }
   } catch {
     return { error: "댓글을 저장하지 못했습니다. 다시 시도해 주세요." };

@@ -156,6 +156,13 @@ export function resolveNoteParent(returnTo: string): NoteParent {
       : parent("홈", "홈으로");
   }
   if (pathname.startsWith("/dashboard/admin/students/")) return parent("학생 상세", "학생 상세로");
-  if (pathname.startsWith("/dashboard/admin")) return parent("업무함", "업무함으로");
+  if (pathname === "/dashboard/admin") {
+    // 관리자 홈은 구역(?section=)마다 사이드바 이름이 다르다. 구역이 없으면 업무함이 열린다.
+    const section = new URLSearchParams(query).get("section");
+    if (section === "schedule") return parent("일정", "일정으로");
+    if (section === "students") return parent("학생", "학생 목록으로");
+    return parent("업무함", "업무함으로");
+  }
+  if (pathname.startsWith("/dashboard/guide")) return parent("가이드", "가이드로");
   return parent("돌아가기", "돌아가기");
 }

@@ -67,6 +67,10 @@ export function CommentThreads({
   const deleteConfirm = useConfirmAction<string>();
   const [replyTarget, setReplyTarget] = useState<ReplyTarget | null>(null);
   const replyOpener = useRef<HTMLButtonElement | null>(null);
+  // 지금 열린 답글 입력의 원 댓글. 등록을 기다리는 사이 다른 묶음의 입력을 열었는지 저장 응답에서 확인한다.
+  const openReplyRoot = useRef<string | null>(null);
+  const headingRef = useRef<HTMLHeadingElement | null>(null);
+  const listRef = useRef<HTMLElement | null>(null);
   // 답글을 등록하면 새로 받은 목록에서 그 답글로 초점을 옮긴다.
   const focusAfterSave = useRef<string | null>(null);
   useEffect(() => {
@@ -79,12 +83,58 @@ export function CommentThreads({
     target.scrollIntoView?.({ block: "nearest" });
   }, [comments]);
 
+  // 알림으로 연 주소(`#comment-<id>`)의 댓글로 옮긴다. 열려 있던 화면에서 주소만 바뀐 뒤 다시 받은 목록에
+  // 그 댓글이 들어오는 경우도 있어 목록이 바뀔 때마다 확인하고, 한 주소는 한 번만 옮긴다.
+  const handledHash = useRef<string | null>(null);
+  useEffect(() => {
+    const hash = window.location.hash;
+    if (!hash.startsWith("#comment-") || hash === handledHash.current) return;
+    let id: string;
+    try {
+      id = decodeURIComponent(hash.slice(1));
+    } catch {
+      return;
+    }
+    const target = document.getElementById(id);
+    if (!target) return;
+    handledHash.current = hash;
+    target.focus({ preventScroll: true });
+    target.scrollIntoView?.({ block: "center" });
+  }, [comments]);
+
+  // 댓글을 지우면 초점을 지운 자리 바로 다음 댓글(없으면 앞 댓글, 그것도 없으면 댓글 제목)로 옮긴다.
+  // 삭제 요청 때의 목록과 다른 목록이 왔는데 지운 댓글이 남아 있으면(실패·다시 받기) 초점을 그대로 둔다.
+  const focusAfterDelete = useRef<{ deletedId: string; neighborIds: string[]; comments: ThreadComment[] } | null>(null);
+  useEffect(() => {
+    const pending = focusAfterDelete.current;
+    if (!pending || pending.comments === comments) return;
+    focusAfterDelete.current = null;
+    if (document.getElementById(pending.deletedId)) return;
+    const target = pending.neighborIds
+      .map((id) => document.getElementById(id))
+      .find((element): element is HTMLElement => element !== null) ?? headingRef.current;
+    target?.focus({ preventScroll: true });
+    target?.scrollIntoView?.({ block: "nearest" });
+  }, [comments]);
+  const confirmDelete = (commentId: string) => {
+    const ids = Array.from(listRef.current?.querySelectorAll<HTMLElement>('[id^="comment-"]') ?? [], (element) => element.id);
+    const index = ids.indexOf(`comment-${commentId}`);
+    focusAfterDelete.current = {
+      deletedId: `comment-${commentId}`,
+      neighborIds: index < 0 ? [] : [...ids.slice(index + 1), ...ids.slice(0, index).reverse()],
+      comments,
+    };
+    onDelete(commentId);
+  };
+
   const canDelete = (authorId: string) => !trashed && (isAdmin || actorId === authorId);
   const openReply = (opener: HTMLButtonElement, target: ReplyTarget) => {
     replyOpener.current = opener;
+    openReplyRoot.current = target.rootId;
     setReplyTarget(target);
   };
   const closeReply = () => {
+    openReplyRoot.current = null;
     setReplyTarget(null);
     replyOpener.current?.focus();
   };
@@ -125,7 +175,7 @@ export function CommentThreads({
         confirmLabel={confirmLabel}
         pendingLabel="삭제 중..."
         pending={busy}
-        onConfirm={() => onDelete(comment.id)}
+        onConfirm={() => confirmDelete(comment.id)}
         className={className}
       />
     ) : null;
@@ -158,8 +208,13 @@ export function CommentThreads({
   );
 
   return (
-    <section aria-labelledby="comments-title" className="flex flex-col">
-      <h2 id="comments-title" className="mb-1 text-ui font-semibold text-secondary-foreground">
+    <section ref={listRef} aria-labelledby="comments-title" className="flex flex-col">
+      <h2
+        ref={headingRef}
+        id="comments-title"
+        tabIndex={-1}
+        className="mb-1 rounded-sm text-ui font-semibold text-secondary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
         댓글 <span className="font-mono font-normal text-muted-foreground">{comments.length}</span>
       </h2>
 
@@ -244,8 +299,12 @@ export function CommentThreads({
                     mention={replyTarget.mention}
                     onCancel={closeReply}
                     onSaved={(commentId) => {
-                      focusAfterSave.current = commentId;
-                      setReplyTarget(null);
+                      // 등록을 기다리는 사이 다른 묶음의 답글 입력을 열었으면 그 입력과 초점은 그대로 둔다.
+                      if (openReplyRoot.current === c.id) {
+                        openReplyRoot.current = null;
+                        focusAfterSave.current = commentId;
+                        setReplyTarget(null);
+                      }
                       onSaved();
                     }}
                     className="ml-10 mt-1.5"

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
-import { detectPushSupport } from "@/components/push/push-client";
+import { detectAppleHomeScreenApp, detectPushSupport } from "@/components/push/push-client";
 import { readPushConfig } from "./config";
 import { pushMessages } from "./messages";
 import { deliverPush, type PushDeliveryDeps } from "./notify";
@@ -213,6 +213,10 @@ test("지원 판정: iPhone·iPad Safari 탭은 홈 화면 추가가 필요하�
   assert.equal(detectPushSupport({ userAgent: ipad, maxTouchPoints: 5, serviceWorker: {} }, tab), "needs-install");
   assert.equal(detectPushSupport({ userAgent: iphone, maxTouchPoints: 5, serviceWorker: {} }, installed), "supported");
   assert.equal(detectPushSupport({ userAgent: ipad, maxTouchPoints: 0, serviceWorker: {} }, tab), "supported", "데스크톱 Mac Safari");
+  // 알림을 거절한 홈 화면 앱은 기기 설정에서 다시 켠다(사이트 설정 안내가 맞지 않는다).
+  assert.equal(detectAppleHomeScreenApp({ userAgent: iphone, maxTouchPoints: 5 }, installed), true);
+  assert.equal(detectAppleHomeScreenApp({ userAgent: iphone, maxTouchPoints: 5 }, tab), false);
+  assert.equal(detectAppleHomeScreenApp({ userAgent: ipad, maxTouchPoints: 0 }, installed), false, "데스크톱 Mac은 사이트 설정");
   assert.equal(detectPushSupport({ userAgent: "Mozilla/5.0 (Linux; Android 14)", maxTouchPoints: 5 }, tab), "unsupported", "Service Worker 없음");
 });
 

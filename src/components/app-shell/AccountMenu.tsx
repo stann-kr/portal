@@ -25,11 +25,14 @@ const ITEM_CLASS =
  */
 export function AccountMenu({
   ownerId,
+  accountEmail = null,
   canDeleteAccount,
   isAdmin,
   size = "md",
 }: {
   ownerId: string;
+  /** 비밀번호 변경 form의 암호 관리자용 사용자 이름. */
+  accountEmail?: string | null;
   canDeleteAccount: boolean;
   /** 알림 설정의 "받는 알림" 안내를 역할에 맞춘다. */
   isAdmin: boolean;
@@ -138,7 +141,7 @@ export function AccountMenu({
 
       <LocalDraftManager ownerId={ownerId} controlRef={draftsRef} hideTrigger />
       <NotificationSettingsControl controlRef={notificationsRef} ownerId={ownerId} isAdmin={isAdmin} />
-      <PasswordChangeControl controlRef={passwordRef} hideTrigger />
+      <PasswordChangeControl controlRef={passwordRef} hideTrigger accountEmail={accountEmail} />
       {canDeleteAccount ? <AccountDeletionControl ownerId={ownerId} controlRef={deleteRef} hideTrigger /> : null}
       {logout.error ? (
         <div

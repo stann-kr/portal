@@ -9,6 +9,7 @@ import { getCommentsByPost } from "@/lib/actions/comments";
 import { getCategories } from "@/lib/actions/categories";
 import { getActiveAuthSession } from "@/lib/auth-guard";
 import { PostDetailClient } from "./PostDetailClient";
+import { RouteAutoRefresh } from "@/components/app-shell/RouteAutoRefresh";
 import { safeReturnPath } from "@/lib/safe-return-path";
 import { redirect } from "next/navigation";
 import { buttonClassName } from "@/components/ui/button";
@@ -57,6 +58,8 @@ export default async function PostDetailPage({
   return (
     <div className="flex min-h-[calc(100dvh-var(--app-topbar-height))] flex-col md:block md:min-h-0 px-5 pt-5 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-10">
       <div className="flex max-w-[760px] flex-1 flex-col md:block md:mx-auto">
+        {/* 앱으로 돌아오면(알림을 누른 경우 포함) 그 사이 달린 댓글·답글을 받는다. 주기 재조회는 하지 않는다. */}
+        <RouteAutoRefresh intervalMs={null} />
         <PostDetailClient
           postId={postId}
           post={post}

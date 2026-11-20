@@ -10,6 +10,7 @@ import {
   readCurrentSubscription,
   readNotificationPermission,
   readPushOwner,
+  readAppleHomeScreenApp,
   readPushSupport,
   unsubscribeThisDevice,
   writePushOwner,
@@ -27,7 +28,8 @@ type DeviceState =
   | { kind: "unsupported" }
   | { kind: "needs-install" }
   | { kind: "unavailable" }
-  | { kind: "blocked" }
+  /** appleApp: iPhone·iPad 홈 화면 앱. 다시 허용하는 곳이 기기 설정이라 안내가 다르다. */
+  | { kind: "blocked"; appleApp: boolean }
   | { kind: "off"; publicKey: string }
   | { kind: "on"; publicKey: string; endpoint: string; deviceCount: number };
 
@@ -86,7 +88,7 @@ async function loadSettings(ownerId: string): Promise<LoadedState> {
   if (!setup.publicKey) return { device: { kind: "unavailable" }, muted: null };
   const muted = setup.mutedCategories;
   if (support !== "supported") return { device: { kind: support }, muted };
-  if (permission === "denied") return { device: { kind: "blocked" }, muted };
+  if (permission === "denied") return { device: { kind: "blocked", appleApp: readAppleHomeScreenApp() }, muted };
   if (subscription && permission === "granted") {
     if (!setup.registered) {
       const result = await reconcileSubscription(ownerId, subscription, false);
@@ -223,7 +225,9 @@ function DeviceSection({
         ? "이 브라우저는 알림을 지원하지 않습니다. 다른 기기에서 켜 주세요."
         : state.kind === "unavailable"
           ? "지금은 포탈 알림을 켤 수 없습니다."
-          : "이 브라우저에서 포탈 알림이 차단되어 있습니다. 브라우저의 사이트 설정에서 알림을 허용한 뒤 다시 열어 주세요.";
+          : state.appleApp
+            ? "이 앱의 알림이 꺼져 있습니다. 기기의 설정 → 알림 → Portal에서 ‘알림 허용’을 켠 뒤 앱을 다시 열어 주세요."
+            : "이 브라우저에서 포탈 알림이 차단되어 있습니다. 브라우저의 사이트 설정에서 알림을 허용한 뒤 다시 열어 주세요.";
 
   return (
     <section aria-labelledby="push-device-title" aria-busy={state.kind === "loading" || undefined} className={DEVICE_BOX_CLASS}>
@@ -345,7 +349,7 @@ export function NotificationSettingsControl({
     // 권한 요청은 누른 직후 첫 await여야 iPhone이 허용 창을 띄운다.
     void enablePushOnThisDevice(publicKey, ownerId)
       .then(async (result) => {
-        if (result.kind === "blocked") setState({ kind: "blocked" });
+        if (result.kind === "blocked") setState({ kind: "blocked", appleApp: readAppleHomeScreenApp() });
         else if (result.kind === "failed") setFeedback({ tone: "error", text: result.error });
         else if (result.kind === "enabled") {
           await refresh();

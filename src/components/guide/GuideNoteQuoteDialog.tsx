@@ -126,7 +126,8 @@ function GuideNoteQuoteDialogBody({ draft, isAdmin, onClose }: { draft: GuideNot
         setError("이 브라우저에서 인용을 노트로 넘기지 못했습니다. 사생활 보호 모드를 끄고 다시 시도해 주세요.");
         return;
       }
-      const returnTo = guidePagePath(draft.pageId);
+      // 노트에서 돌아오면 담은 문단 자리로 연다(GuideReader가 주소의 블록으로 스크롤한다).
+      const returnTo = guidePagePath(draft.pageId, draft.quote.blockId);
       const href =
         choice === NEW_NOTE
           ? guideQuoteNoteHref({

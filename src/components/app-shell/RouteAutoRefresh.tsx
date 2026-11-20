@@ -115,7 +115,8 @@ export function RouteAutoRefresh({
   intervalMs = ROUTE_AUTO_REFRESH_INTERVAL_MS,
   minGapMs = ROUTE_AUTO_REFRESH_MIN_GAP_MS,
 }: {
-  intervalMs?: number;
+  /** null이면 주기 재조회 없이 창으로 돌아올 때(focus·visibilitychange)와 history 복귀 때만 받는다. */
+  intervalMs?: number | null;
   minGapMs?: number;
 }) {
   const router = useRouter();
@@ -141,11 +142,11 @@ export function RouteAutoRefresh({
     const onVisibilityChange = () => {
       if (document.visibilityState !== "hidden") refresh();
     };
-    const interval = setInterval(refresh, intervalMs);
+    const interval = intervalMs === null ? undefined : setInterval(refresh, intervalMs);
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
-      clearInterval(interval);
+      if (interval !== undefined) clearInterval(interval);
       window.removeEventListener("focus", refresh);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };

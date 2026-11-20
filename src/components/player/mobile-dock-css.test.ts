@@ -68,3 +68,19 @@ test("미니 플레이어가 있으면 화면 높이를 꽉 쓰는 h-app 화면�
   const css = read("src/components/player/player.css");
   assert.match(css, /html\[data-mini-player="on"\] \.h-app \{\s*height: calc\(100dvh - var\(--app-topbar-height\) - var\(--mini-player-height, 58px\) - env\(safe-area-inset-bottom\)\);/u);
 });
+
+test("미니 플레이어가 있으면 수업 노트의 아래 수업 막대·녹음 재생 칸·넓은 화면 수업 도구 칸이 그 위로 올라간다", () => {
+  const css = read("src/components/player/player.css");
+  // 수업 막대와 미니 플레이어는 둘 다 아래 고정 z-30이라 올리지 않으면 막대 아래 줄(곡·전환·다음 곡)이 덮인다.
+  assert.match(read("src/components/lesson/InstructorLessonPanel.tsx"), /"lesson-live-bar fixed inset-x-0 bottom-0 z-30/u);
+  assert.match(css, /html\[data-mini-player="on"\] \{\s*--mini-player-offset: calc\(var\(--mini-player-height, 58px\) \+ env\(safe-area-inset-bottom\)\);/u);
+  assert.match(css, /html\[data-mini-player="on"\] \.lesson-live-bar \{\s*bottom: var\(--mini-player-offset\);/u);
+  // 휴대폰에서 편집 중이면 서식 줄(키보드 또는 미니 플레이어 위) 바로 위.
+  assert.match(
+    css,
+    /html\[data-mini-player="on"\]\[data-editor-dock\] \.lesson-live-bar \{\s*bottom: calc\(max\(var\(--keyboard-inset, 0px\), var\(--mini-player-offset\)\) \+ 3rem\);/u,
+  );
+  assert.match(read("src/components/lesson/RecordingDock.tsx"), /sticky bottom-\[calc\(0\.75rem\+var\(--mini-player-offset,0px\)\)\]/u);
+  assert.match(read("src/components/notes/NoteLessonFrame.tsx"), /bottom-\[calc\(7\.5rem\+var\(--mini-player-offset,0px\)\)\]/u);
+  assert.match(read("src/components/lesson/InstructorLessonPanel.tsx"), /xl:h-\[calc\(100dvh-var\(--mini-player-offset,0px\)\)\]/u);
+});

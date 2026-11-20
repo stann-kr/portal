@@ -2362,7 +2362,10 @@ test("댓글 답글은 원 댓글 묶음 아래 한 입력에서 쓰고, 지워�
     row("c-reply", "student-1", "학생", "좋아요", 3, "c-root"),
     row("c-other", "student-3", "박학생", "녹음은요?", 4, null),
   ];
-  await render(context, <PostDetailClient postId={post.id} post={post} initialCommentList={comments} currentUserId="student-1" isAdmin={false} returnTo="/community" />);
+  const detail = (list: typeof comments) => (
+    <PostDetailClient postId={post.id} post={post} initialCommentList={list} currentUserId="student-1" isAdmin={false} returnTo="/community" />
+  );
+  const root = await render(context, detail(comments));
   const section = browser.document.querySelector('section[aria-labelledby="comments-title"]');
   assert.ok(section);
   assert.match(section.querySelector("h2")?.textContent ?? "", /댓글\s*4/u, "답글을 포함해 보이는 글 수");
@@ -2393,6 +2396,10 @@ test("댓글 답글은 원 댓글 묶음 아래 한 입력에서 쓰고, 지워�
   assert.equal(replyInput()!.value, "@학생 ", "답글의 답글은 같은 묶음 입력에 @이름이 들어간다");
   assert.equal(browser.document.querySelectorAll('input[placeholder="답글을 입력하세요..."]').length, 1, "답글 입력은 하나만 열린다");
   assert.equal(button("등록").disabled, true, "미리 넣은 @이름만으로는 등록하지 않는다");
+  await press("이학생 댓글에 답글");
+  assert.equal(replyInput()!.value, "", "원 댓글의 답글로 바꾸면 앞서 넣은 @이름만 있던 입력을 비운다");
+  await press("학생 답글에 답글");
+  assert.equal(replyInput()!.value, "@학생 ");
 
   await fill(replyInput()!.id, "@학생 순서 바꿔도 될까요?");
   await act(async () => {
@@ -2417,6 +2424,27 @@ test("댓글 답글은 원 댓글 묶음 아래 한 입력에서 쓰고, 지워�
   // 답글이 있는 원 댓글 삭제 확인은 답글이 남는다고 알린다. 내 답글 삭제 확인은 답글 문구를 쓴다.
   await press("학생 답글 삭제");
   assert.match(browser.document.body.textContent ?? "", /이 답글을 삭제할까요\?/u);
+  // 지우고 새 목록이 오면 초점은 지운 자리 다음 댓글로 간다(문서 처음으로 빠지지 않는다).
+  await press("답글 삭제 확인");
+  const remaining = comments.filter((comment) => comment.id !== "c-reply");
+  await act(async () => root.render(detail(remaining)));
+  await settle();
+  assert.equal(browser.document.activeElement?.id, "comment-c-gone-reply", "지운 답글 다음 댓글로 초점이 간다");
+
+  // 답글 등록을 기다리는 사이 다른 묶음의 답글 입력을 열면, 앞 답글 저장이 끝나도 새 입력과 초점은 그대로다.
+  let finishSave: (value: Awaited<ReturnType<typeof saveComment>>) => void = () => {};
+  saveComment = () => new Promise((resolve) => { finishSave = resolve; });
+  await press("이학생 댓글에 답글");
+  await fill(replyInput()!.id, "먼저 쓴 답글");
+  await press("등록");
+  await press("박학생 댓글에 답글");
+  const otherLabel = () => browser.document.querySelector(`label[for="${replyInput()?.id}"]`)?.textContent;
+  assert.equal(otherLabel(), "박학생 댓글에 답글");
+  await act(async () => { finishSave({ success: true, commentId: "reply-late" }); });
+  await settle();
+  assert.ok(replyInput(), "앞 답글 저장이 끝나도 새로 연 입력은 닫히지 않는다");
+  assert.equal(otherLabel(), "박학생 댓글에 답글");
+  assert.equal(browser.document.activeElement, replyInput(), "초점도 새로 연 입력에 남는다");
 });
 
 function mixsetPost(id: string, media: { mediaUrl: string | null; mediaObjectId: string | null }, boardType: "FEEDBACK" | "GENERAL" = "FEEDBACK") {
@@ -3481,9 +3509,14 @@ test("required password change asks for the temporary password and enters the po
   };
   context.after(() => { changePassword = async () => ({ success: true }); });
   let entered = 0;
-  await render(context, <PasswordChangeForm variant="required" onDone={() => { entered += 1; }} />);
+  await render(context, <PasswordChangeForm variant="required" accountEmail="student@example.test" onDone={() => { entered += 1; }} />);
   const labels = [...browser.document.querySelectorAll("label")].map((label) => label.textContent);
   assert.deepEqual(labels, ["임시 비밀번호", "새 비밀번호", "새 비밀번호 확인"]);
+  // 암호 관리자가 새 비밀번호를 이 계정으로 저장하도록 보이지 않는 사용자 이름 칸을 둔다.
+  const username = browser.document.querySelector('form input[autocomplete="username"]');
+  assert.ok(username instanceof browser.HTMLInputElement);
+  assert.equal(username.value, "student@example.test");
+  assert.equal(username.hidden, true);
   for (const [name, value] of [["currentPassword", "abcd-efgh-jkmn"], ["newPassword", "my-new-password"], ["confirmPassword", "my-new-password"]]) {
     await fill(name, value);
   }

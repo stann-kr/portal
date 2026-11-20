@@ -21,14 +21,15 @@ export function buildStudentDiggingBoardHref(returnTo?: string): string {
     : "/dashboard/student/digging";
 }
 
-/** 학생 믹스셋 분석 작성·수정 화면(AnalysisWrite·MobileAnalysisWrite 보드). */
-export function analysisWriteHref(taskId: string): string {
-  return `/dashboard/student/assignments/analysis/${encodeURIComponent(taskId)}`;
+/** 학생 믹스셋 분석 작성·수정 화면(AnalysisWrite·MobileAnalysisWrite 보드). returnTo가 있으면 뒤로·취소가 그 화면으로 간다. */
+export function analysisWriteHref(taskId: string, returnTo?: string): string {
+  const base = `/dashboard/student/assignments/analysis/${encodeURIComponent(taskId)}`;
+  return returnTo ? `${base}?returnTo=${encodeURIComponent(returnTo)}` : base;
 }
 
 /** 학생 과제 목록에서 특정 과제를 펼치는 주소. 분석(믹스셋 분석) 과제는 작성 화면으로 보낸다. */
-export function assignmentTaskHref(taskId: string, options: { analysis?: boolean } = {}): string {
-  if (options.analysis) return analysisWriteHref(taskId);
+export function assignmentTaskHref(taskId: string, options: { analysis?: boolean; returnTo?: string } = {}): string {
+  if (options.analysis) return analysisWriteHref(taskId, options.returnTo);
   // 정식 주소로 바로 연다. 예전 `/dashboard/student/assignments?task=`는 서버 redirect를 한 번 더 거쳤다.
   return `${STUDENT_LEGACY_REDIRECTS.assignments}&task=${encodeURIComponent(taskId)}`;
 }
