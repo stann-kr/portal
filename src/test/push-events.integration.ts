@@ -293,7 +293,8 @@ test("커뮤니티: 새 글은 글쓴이를 뺀 모든 계정에, 댓글은 글�
 
   // Stann 댓글: 글쓴이에게 "내 글에 새 댓글", 앞서 댓글 단 이학생에게 "새 댓글".
   activeSession = createSession("admin-1", "admin", "Stann");
-  assert.equal((await commentActions.createComment(postId, {}, form({ [CREATION_OPERATION_FIELD]: crypto.randomUUID(), content: "피드백" }))).success, true);
+  const adminComment = await commentActions.createComment(postId, {}, form({ [CREATION_OPERATION_FIELD]: crypto.randomUUID(), content: "피드백" }));
+  assert.equal(adminComment.success, true);
   assert.equal(sent.length, 4);
   assert.deepEqual(sent[2]!.audience, { kind: "profiles", profileIds: ["student-1"] });
   assert.equal(sent[3]!.message.title, "새 댓글");
@@ -313,4 +314,44 @@ test("커뮤니티: 새 글은 글쓴이를 뺀 모든 계정에, 댓글은 글�
   });
   assert.deepEqual(sent[5]!.audience, { kind: "profiles", profileIds: ["student-1"] });
   assert.equal(sent[5]!.message.title, "내 글에 새 댓글");
+
+  // 글쓴이 김학생이 Stann의 답글에 답글(@Stann): 원 댓글 작성자 이학생과 부른 Stann이 한 건씩 "내 댓글에 답글"을 받는다.
+  activeSession = createSession("student-1", "student", "김학생");
+  const mentionReply = await commentActions.createComment(postId, {}, form({
+    [CREATION_OPERATION_FIELD]: crypto.randomUUID(),
+    content: "@Stann 네 다음에 반영할게요",
+    parentId: firstResult.commentId!,
+    replyToId: replyResult.commentId!,
+  }));
+  assert.equal(mentionReply.success, true, JSON.stringify(mentionReply));
+  assert.equal(sent.length, 7, "글쓴이는 본인이고, 다른 참여자는 이미 '내 댓글에 답글'을 받았다");
+  assert.deepEqual(sent[6]!.audience, { kind: "profiles", profileIds: ["student-2", "admin-1"] });
+  assert.equal(sent[6]!.message.title, "내 댓글에 답글");
+  assert.equal(sent[6]!.message.url, `/community/${postId}#comment-${mentionReply.commentId}`);
+  assert.equal(sent[6]!.exclude, "student-1");
+
+  // 원 댓글 작성자 본인이 남의 답글에 답하면(@Stann) 부른 사람만 "내 댓글에 답글", 글쓴이는 "내 글에 새 댓글".
+  // 다른 묶음의 댓글 ID를 replyToId로 보내면 그 작성자에게는 "내 댓글에 답글"이 가지 않는다.
+  activeSession = createSession("student-2", "student", "이학생");
+  assert.equal((await commentActions.createComment(postId, {}, form({
+    [CREATION_OPERATION_FIELD]: crypto.randomUUID(),
+    content: "@Stann 저도요",
+    parentId: firstResult.commentId!,
+    replyToId: replyResult.commentId!,
+  }))).success, true);
+  assert.deepEqual(sent.slice(7).map((entry) => [entry.message.title, entry.audience]), [
+    ["내 댓글에 답글", { kind: "profiles", profileIds: ["admin-1"] }],
+    ["내 글에 새 댓글", { kind: "profiles", profileIds: ["student-1"] }],
+  ]);
+  const before = sent.length;
+  assert.equal((await commentActions.createComment(postId, {}, form({
+    [CREATION_OPERATION_FIELD]: crypto.randomUUID(),
+    content: "다른 묶음 ID",
+    parentId: firstResult.commentId!,
+    replyToId: adminComment.commentId!,
+  }))).success, true);
+  assert.deepEqual(sent.slice(before).map((entry) => [entry.message.title, entry.audience]), [
+    ["내 글에 새 댓글", { kind: "profiles", profileIds: ["student-1"] }],
+    ["새 댓글", { kind: "profiles", profileIds: ["admin-1"] }],
+  ], "다른 묶음의 댓글을 가리켜도 그 작성자는 일반 '새 댓글'만 받는다");
 });

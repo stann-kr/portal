@@ -295,6 +295,7 @@ export function CommentThreads({
                     postId={postId}
                     actorId={actorId}
                     parentId={c.id}
+                    replyToId={replyTarget.sourceId !== c.id ? replyTarget.sourceId : undefined}
                     replyLabel={replyTarget.label}
                     mention={replyTarget.mention}
                     onCancel={closeReply}

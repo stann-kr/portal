@@ -15,6 +15,7 @@ import {
   COMMENT_COUNTER_FROM,
   COMMENT_MAX_LENGTH,
   COMMENT_PARENT_FIELD,
+  COMMENT_REPLY_TO_FIELD,
   commentReplyDraftContext,
   limitCommentContent,
 } from "@/lib/community-comment";
@@ -40,6 +41,7 @@ export function CommentForm({
   allowTimeMarker: allowTimeMarkerProp = false,
   readPlaybackPosition,
   parentId,
+  replyToId,
   replyLabel,
   mention = null,
   onCancel,
@@ -56,6 +58,8 @@ export function CommentForm({
   readPlaybackPosition?: () => Promise<number | null>;
   /** 답글을 달 원 댓글 ID. 있으면 답글 입력이다. */
   parentId?: string;
+  /** 답글의 답글이면 "답글"을 누른 그 답글 ID. 알림 대상만 정하고 초안·묶음은 parentId를 따른다. */
+  replyToId?: string;
   /** 답글 입력 칸 이름(예: "이학생 댓글에 답글"). */
   replyLabel?: string;
   /** 답글의 답글이면 미리 넣을 "@이름 ". */
@@ -226,6 +230,7 @@ export function CommentForm({
     >
       <input type="hidden" name={CREATION_OPERATION_FIELD} value={operationId} />
       {parentId ? <input type="hidden" name={COMMENT_PARENT_FIELD} value={parentId} /> : null}
+      {parentId && replyToId ? <input type="hidden" name={COMMENT_REPLY_TO_FIELD} value={replyToId} /> : null}
       {allowTimeMarker ? (
         <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
           <label htmlFor={timeId} className="shrink-0 text-xs text-muted-foreground">시점</label>

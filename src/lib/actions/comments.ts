@@ -13,7 +13,7 @@ import { comments, posts, profiles } from "@/db/schema";
 import { and, eq, asc, isNull, sql } from "drizzle-orm";
 import { assertOwnerOrAdmin, requireAuth } from "@/lib/auth-guard";
 import { CREATION_OPERATION_FIELD, deriveCreationResourceId, resolveCreationOperationId } from "@/lib/creation-operation";
-import { COMMENT_MAX_LENGTH, COMMENT_PARENT_FIELD } from "@/lib/community-comment";
+import { COMMENT_MAX_LENGTH, COMMENT_PARENT_FIELD, COMMENT_REPLY_TO_FIELD } from "@/lib/community-comment";
 import { COMMENT_TIME_MARKER_FIELD, parseTimeMarker } from "@/lib/community-mixset-media";
 import { publicAuthorName } from "@/lib/public-author-name";
 import { pushMessages } from "@/lib/push/messages";
@@ -76,30 +76,40 @@ export type CreateCommentState = {
 };
 
 /**
- * 새 댓글 알림: 답글이면 원 댓글 작성자에게 "내 댓글에 답글", 글쓴이에게 "내 글에 새 댓글", 앞서 댓글을 단 다른
- * 사람에게 "새 댓글". 한 사람에게는 한 건만(답글 > 내 글 > 참여 순) 가고, 댓글 쓴 본인은 받지 않는다.
- * 알림 준비가 실패해도 댓글 저장 결과는 바꾸지 않는다.
+ * 새 댓글 알림: 답글이면 원 댓글 작성자와 "답글"을 누른 답글의 작성자(@이름, 2026-11-20 사용자 결정)에게 "내 댓글에 답글",
+ * 글쓴이에게 "내 글에 새 댓글", 앞서 댓글을 단 다른 사람에게 "새 댓글". 한 사람에게는 한 건만(답글 > 내 글 > 참여 순) 가고,
+ * 댓글 쓴 본인은 받지 않는다. 알림 준비가 실패해도 댓글 저장 결과는 바꾸지 않는다.
  */
 async function notifyCommentAdded(
   db: ReturnType<typeof createDb>,
   postId: string,
   post: { title: string; authorId: string },
   session: Awaited<ReturnType<typeof requireAuth>>,
-  rootAuthorId: string | null,
+  reply: { rootId: string; rootAuthorId: string; replyToId: string | null } | null,
   commentId: string,
 ): Promise<void> {
   try {
     const actorId = session.user.id;
     const authorName = session.user.name ?? null;
-    const replyRecipient = rootAuthorId !== null && rootAuthorId !== actorId ? rootAuthorId : null;
-    if (replyRecipient) {
+    const replyAuthorIds = reply ? [reply.rootAuthorId] : [];
+    if (reply?.replyToId && reply.replyToId !== reply.rootId) {
+      // 같은 묶음의 답글일 때만 그 작성자를 더한다. 지워졌거나 다른 묶음이면 원 댓글 작성자에게만 간다.
+      const [target] = await db
+        .select({ authorId: comments.authorId })
+        .from(comments)
+        .where(and(eq(comments.id, reply.replyToId), eq(comments.postId, postId), eq(comments.parentId, reply.rootId)))
+        .limit(1);
+      if (target) replyAuthorIds.push(target.authorId);
+    }
+    const replyRecipients = [...new Set(replyAuthorIds)].filter((id) => id !== actorId);
+    if (replyRecipients.length > 0) {
       await notifyPush(
-        { kind: "profiles", profileIds: [replyRecipient] },
+        { kind: "profiles", profileIds: replyRecipients },
         pushMessages.commentReplied({ postId, commentId, authorName, title: post.title }),
         { excludeProfileId: actorId },
       );
     }
-    if (post.authorId !== replyRecipient) {
+    if (post.authorId !== actorId && !replyRecipients.includes(post.authorId)) {
       await notifyPush(
         { kind: "profiles", profileIds: [post.authorId] },
         pushMessages.commentAdded({ postId, commentId, authorName, title: post.title, toPostAuthor: true }),
@@ -112,7 +122,7 @@ async function notifyCommentAdded(
       .where(eq(comments.postId, postId));
     const others = participants
       .map((row) => row.authorId)
-      .filter((id) => id !== post.authorId && id !== actorId && id !== replyRecipient);
+      .filter((id) => id !== post.authorId && id !== actorId && !replyRecipients.includes(id));
     if (others.length > 0) {
       await notifyPush(
         { kind: "profiles", profileIds: others },
@@ -129,7 +139,8 @@ async function notifyCommentAdded(
  * 댓글 작성.
  * @param postId - 대상 게시물 ID
  * @param _prev - useActionState 이전 상태
- * @param formData - { content (plain text), timeMarker (선택: h:mm:ss·m:ss·초), parentId (선택: 답글을 달 댓글), operationId (UUID v4) }
+ * @param formData - { content (plain text), timeMarker (선택: h:mm:ss·m:ss·초), parentId (선택: 답글을 달 댓글),
+ *   replyToId (선택: 답글의 답글이면 "답글"을 누른 답글, 알림 대상만 정한다), operationId (UUID v4) }
  */
 export async function createComment(
   postId: string,
@@ -151,6 +162,8 @@ export async function createComment(
   const rawParentId = formData.get(COMMENT_PARENT_FIELD);
   const requestedParentId = typeof rawParentId === "string" && rawParentId.trim() ? rawParentId.trim() : null;
   if (requestedParentId !== null && timeMarkerSeconds !== null) return { error: "답글에는 재생 시점을 남길 수 없습니다." };
+  const rawReplyToId = formData.get(COMMENT_REPLY_TO_FIELD);
+  const replyToId = requestedParentId !== null && typeof rawReplyToId === "string" && rawReplyToId.trim() ? rawReplyToId.trim() : null;
 
   const db = createDb();
   const contentHtml = `<p>${escapeHtml(content)}</p>`;
@@ -237,7 +250,14 @@ export async function createComment(
         return { error: "이 댓글은 수정 전 내용으로 이미 저장되었거나 상태가 바뀌었습니다. 목록을 확인한 뒤 내용을 편집해 새 댓글로 등록해 주세요." };
       }
     } else {
-      await notifyCommentAdded(db, postId, activePost, session, root?.authorId ?? null, commentId);
+      await notifyCommentAdded(
+        db,
+        postId,
+        activePost,
+        session,
+        root ? { rootId: root.id, rootAuthorId: root.authorId, replyToId } : null,
+        commentId,
+      );
     }
   } catch {
     return { error: "댓글을 저장하지 못했습니다. 다시 시도해 주세요." };
