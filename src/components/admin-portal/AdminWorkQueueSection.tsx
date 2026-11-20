@@ -366,6 +366,7 @@ export function AdminWorkQueueSection({
           <LedgerSectionHeader
             id="upcoming-lesson-heading"
             title="다가오는 레슨"
+            count={<span className="md:hidden">{queue.metrics.upcomingLessonCount}</span>}
             aside={
               <button type="button" className={cn(LEDGER_HEADER_LINK_CLASS, "min-w-11 justify-end")} onClick={onOpenSchedule}>
                 일정 열기
