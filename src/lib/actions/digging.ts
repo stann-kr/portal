@@ -236,6 +236,12 @@ export async function updateDiggingTrackValue(
         ),
       )
       .limit(1);
+  const readColumnId = () =>
+    db
+      .select({ id: diggingColumns.id })
+      .from(diggingColumns)
+      .where(and(eq(diggingColumns.id, columnId), eq(diggingColumns.userId, session.user.id!)))
+      .limit(1);
   const [[firstRead], [column]] = await Promise.all([
     readTrackValues(),
     db
@@ -285,11 +291,16 @@ export async function updateDiggingTrackValue(
           eq(diggingTracks.id, trackId),
           eq(diggingTracks.userId, session.user.id!),
           eq(diggingTracks.values, readValues),
+          // 쓰는 순간에도 그 컬럼이 내 것으로 남아 있을 때만 쓴다. 컬럼 삭제는 그 값을 함께 지우므로, 읽은 뒤 다른 탭이
+          // 지운 컬럼의 값을 여기서 되살리지 않는다.
+          sql`EXISTS (SELECT 1 FROM digging_columns c WHERE c.id = ${columnId} AND c.user_id = ${session.user.id!})`,
         ),
       )
       .returning({ id: diggingTracks.id });
     if (written.length > 0) return;
-    [track] = await readTrackValues();
+    const [[nextTrack], [columnLeft]] = await Promise.all([readTrackValues(), readColumnId()]);
+    if (!columnLeft) throw new Error("트랙 또는 컬럼을 찾을 수 없습니다.");
+    track = nextTrack;
   }
   throw new Error("다른 곳에서 이 트랙을 함께 고치고 있어 저장하지 못했습니다. 잠시 뒤 다시 시도해 주세요.");
 }
