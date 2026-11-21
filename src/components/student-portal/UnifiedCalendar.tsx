@@ -363,10 +363,10 @@ export function UnifiedCalendar({
     latestItemsRef.current = items;
   });
   const [notice, setNotice] = useState<MoveNotice | null>(null);
+  // 관리자가 그룹 캘린더 사본을 끌어 놓은 뒤 확인을 기다리는 이동. 그동안 칩은 놓은 자리에 보인다.
   const [groupCopyMove, setGroupCopyMove] = useState<{
     original: UnifiedItem;
     request: CalendarMoveRequest;
-    revert: () => void;
   } | null>(null);
   const [quickSelection, setQuickSelection] = useState<{
     selection: CalendarQuickCreateSelection;
@@ -380,7 +380,15 @@ export function UnifiedCalendar({
     const pending = pendingMoves.get(getUnifiedItemKey(item));
     return pending ? applyCalendarMoveToItem(item, pending.request) : item;
   };
-  const displayedItems = pendingMoves.size === 0 ? items : items.map(withPendingMove);
+  // 확인을 기다리는 사본 이동도 놓은 자리에 겹쳐 보인다. 다시 그려도 FullCalendar가 칩을 원래 자리로 돌리지 않고,
+  // 취소하면 겹침을 지워 원래 자리로 돌아간다.
+  const confirmingKey = groupCopyMove ? getUnifiedItemKey(groupCopyMove.original) : null;
+  const withConfirmingMove = (item: UnifiedItem) => (
+    groupCopyMove && getUnifiedItemKey(item) === confirmingKey ? applyCalendarMoveToItem(item, groupCopyMove.request) : item
+  );
+  const displayedItems = pendingMoves.size === 0 && !groupCopyMove
+    ? items
+    : items.map((item) => withConfirmingMove(withPendingMove(item)));
   // 저장 응답을 기다리는 이동이 있으면 달력 위 알림 자리에 저장 중을 보인다.
   const savingMove = [...pendingMoves.values()].some((pending) => !pending.saved);
   const visibleItems = displayedItems.filter((item) => matchesCalendarPreset(item, preset) && visibleTypes.has(item.type));
@@ -492,7 +500,7 @@ export function UnifiedCalendar({
     }
     // 관리자가 그룹 캘린더 사본을 옮기면 그 학생 사본만 떼어지므로 저장 전에 묻는다. 그동안 칩은 놓은 자리에 둔다.
     if (context && needsGroupCopyMoveConfirm(original, context)) {
-      setGroupCopyMove({ original, request, revert: info.revert });
+      setGroupCopyMove({ original, request });
       return;
     }
     void commitMove(original, request, { undoable: true });
@@ -655,10 +663,7 @@ export function UnifiedCalendar({
       <GroupCopyMoveDialog
         open={groupCopyMove !== null}
         studentName={groupCopyMove?.original.space.label ?? "이 학생"}
-        onCancel={() => {
-          groupCopyMove?.revert();
-          setGroupCopyMove(null);
-        }}
+        onCancel={() => setGroupCopyMove(null)}
         onConfirm={() => {
           if (!groupCopyMove) return;
           setGroupCopyMove(null);
