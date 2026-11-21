@@ -5,11 +5,12 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createDb } from "@/db/client";
+import { createDb, createDbContext } from "@/db/client";
 import { diggingColumns, diggingTracks } from "@/db/schema";
 import type { DiggingColumnType } from "@/db/schema";
 import { and, eq, sql } from "drizzle-orm";
 import { requireAuth, requireStudentOwnerOrAdmin } from "@/lib/auth-guard";
+import { executeDocumentStatementsAtomically } from "@/lib/document-lifecycle-atomic";
 import {
   DIGGING_COLUMNS_MAX_COUNT,
   DIGGING_TRACK_VALUES_MAX_BYTES,
@@ -104,22 +105,32 @@ export async function addDiggingColumn(data: {
 }
 
 /**
- * 커스텀 컬럼 삭제 (isDefault=false만 허용).
+ * 커스텀 컬럼 삭제 (isDefault=false만 허용). 트랙에 남은 그 컬럼의 값도 함께 지운다.
  */
 export async function deleteDiggingColumn(columnId: string) {
   const session = await requireAuth();
   assertStudentSession(session.user.role);
-  const db = createDb();
+  const userId = session.user.id!;
 
-  await db
-    .delete(diggingColumns)
-    .where(
-      and(
-        eq(diggingColumns.id, columnId),
-        eq(diggingColumns.userId, session.user.id!),
-        eq(diggingColumns.isDefault, false),
-      ),
-    );
+  // 트랙 값의 key는 컬럼 id다. 지운 컬럼의 값은 다시 표시할 수 없는데, 남겨 두면 보이지 않는 채로 트랙 입력 크기
+  // 상한(`DIGGING_TRACK_VALUES_MAX_BYTES`)을 차지해 다른 칸 저장을 막는다. 지울 수 있는 내 컬럼일 때만 그 key를 빼고,
+  // 컬럼 삭제와 한 batch로 함께 되거나 함께 되지 않는다. CASE는 JSON이 깨진 행과 없는 컬럼 id에서 json 함수를 부르지 않게 한다.
+  await executeDocumentStatementsAtomically(createDbContext(), [
+    {
+      query: `UPDATE digging_tracks SET "values" = json_remove("values", '$."' || ? || '"')
+        WHERE user_id = ?
+          AND CASE
+            WHEN json_valid("values")
+              AND EXISTS (SELECT 1 FROM digging_columns WHERE id = ? AND user_id = ? AND is_default = 0)
+            THEN json_type("values", '$."' || ? || '"')
+          END IS NOT NULL`,
+      params: [columnId, userId, columnId, userId, columnId],
+    },
+    {
+      query: "DELETE FROM digging_columns WHERE id = ? AND user_id = ? AND is_default = 0",
+      params: [columnId, userId],
+    },
+  ]);
 
   revalidatePath("/dashboard/student/digging");
   revalidatePath("/dashboard/student");

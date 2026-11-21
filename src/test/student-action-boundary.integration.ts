@@ -1239,6 +1239,44 @@ test("digging write는 student session과 소유 column/type을 요구하고 거
   );
 });
 
+test("디깅 컬럼을 지우면 내 트랙에 남은 그 컬럼 값만 함께 지우고, 기본 컬럼·남의 트랙·깨진 값은 그대로 둔다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("student-1", "student"));
+  await seedProfile(db, "student-1");
+  await seedProfile(db, "student-2");
+  await db.insert(diggingColumns).values([
+    { id: "col-title", userId: "student-1", name: "트랙명", columnType: "text", sortOrder: 0, isDefault: true },
+    { id: "col-memo", userId: "student-1", name: "메모", columnType: "textarea", sortOrder: 1 },
+    { id: "col-other", userId: "student-2", name: "메모", columnType: "textarea", sortOrder: 0 },
+  ]);
+  await db.insert(diggingTracks).values([
+    { id: "track-both", userId: "student-1", values: JSON.stringify({ "col-title": "A", "col-memo": "긴 메모" }) },
+    { id: "track-title", userId: "student-1", values: JSON.stringify({ "col-title": "B" }) },
+    { id: "track-broken", userId: "student-1", values: "{broken" },
+    { id: "track-other", userId: "student-2", values: JSON.stringify({ "col-memo": "남의 값", "col-other": "C" }) },
+  ]);
+  const valuesOf = async (id: string) => (await db.select().from(diggingTracks).where(eq(diggingTracks.id, id)))[0]?.values;
+  const columnIds = async () => (await db.select({ id: diggingColumns.id }).from(diggingColumns)).map((row) => row.id).sort();
+
+  // 남의 컬럼과 기본 컬럼은 지워지지 않고, 그 값도 남는다.
+  await diggingActions.deleteDiggingColumn("col-other");
+  await diggingActions.deleteDiggingColumn("col-title");
+  assert.deepEqual(await columnIds(), ["col-memo", "col-other", "col-title"]);
+  assert.equal(await valuesOf("track-both"), JSON.stringify({ "col-title": "A", "col-memo": "긴 메모" }));
+  assert.equal(await valuesOf("track-other"), JSON.stringify({ "col-memo": "남의 값", "col-other": "C" }));
+
+  await diggingActions.deleteDiggingColumn("col-memo");
+  assert.deepEqual(await columnIds(), ["col-other", "col-title"]);
+  assert.deepEqual(JSON.parse((await valuesOf("track-both"))!), { "col-title": "A" }, "지운 컬럼의 값만 빠진다");
+  assert.equal(await valuesOf("track-title"), JSON.stringify({ "col-title": "B" }));
+  assert.equal(await valuesOf("track-broken"), "{broken", "깨진 값은 건드리지 않는다");
+  assert.equal(await valuesOf("track-other"), JSON.stringify({ "col-memo": "남의 값", "col-other": "C" }), "같은 key라도 남의 트랙은 그대로다");
+
+  // 없는 id와 따옴표가 든 id는 아무것도 바꾸지 않는다.
+  await diggingActions.deleteDiggingColumn("missing");
+  await diggingActions.deleteDiggingColumn('x"y');
+  assert.deepEqual(await columnIds(), ["col-other", "col-title"]);
+  assert.deepEqual(JSON.parse((await valuesOf("track-both"))!), { "col-title": "A" });
+});
 
 function taskForm(fields: Record<string, string | string[]>): FormData {
   const data = new FormData();
