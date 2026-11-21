@@ -216,12 +216,27 @@ export function filterEditorBlockCommands(
   const normalizedQuery = query.trim().toLocaleLowerCase("ko-KR");
   if (!normalizedQuery) return available;
 
-  return available.filter((command) => {
-    const searchable = [command.label, command.description, ...command.keywords]
-      .join(" ")
-      .toLocaleLowerCase("ko-KR");
-    return searchable.includes(normalizedQuery);
-  });
+  // Enter는 맨 위 명령을 실행하므로 더 가깝게 맞는 명령을 위에 둔다. 같은 정도로 맞으면 목록 순서를 유지한다.
+  return available
+    .flatMap((command, index) => {
+      const rank = blockCommandMatchRank(command, normalizedQuery);
+      return rank === null ? [] : [{ command, index, rank }];
+    })
+    .sort((a, b) => a.rank - b.rank || a.index - b.index)
+    .map((entry) => entry.command);
+}
+
+/**
+ * 검색어가 명령에 얼마나 가깝게 맞는지. 작을수록 위에 둔다(맞지 않으면 null).
+ * 0 이름·별칭과 같음, 1 이름·별칭의 앞부분, 2 이름·별칭의 중간, 3 설명에만 있음.
+ * 설명까지 한 줄로 이어 찾으면 "표"가 체크리스트 설명("…표시하는 항목")에 먼저 맞아 `/표`가 체크리스트를 넣는다.
+ */
+function blockCommandMatchRank(command: EditorBlockCommand, normalizedQuery: string): number | null {
+  const names = [command.label, ...command.keywords].map((name) => name.toLocaleLowerCase("ko-KR"));
+  if (names.includes(normalizedQuery)) return 0;
+  if (names.some((name) => name.startsWith(normalizedQuery))) return 1;
+  if (names.some((name) => name.includes(normalizedQuery))) return 2;
+  return command.description.toLocaleLowerCase("ko-KR").includes(normalizedQuery) ? 3 : null;
 }
 
 export type SlashCommandMatch = {

@@ -41,6 +41,26 @@ test("슬래시 명령은 한글·영문 별칭으로 검색된다", () => {
   assert.deepEqual(filterEditorBlockCommands("h2").map((item) => item.id), ["heading-2"]);
 });
 
+test("슬래시 검색은 이름·별칭이 맞는 명령을 설명만 맞는 명령보다 위에 둔다", () => {
+  // Enter는 맨 위 명령을 실행한다. "표"는 체크리스트 설명("…표시하는 항목")에도 들어 있어, 목록 순서대로 두면 "/표"가 체크리스트를 넣는다.
+  assert.deepEqual(filterEditorBlockCommands("표").map((item) => item.id), ["table", "task-list"]);
+  assert.deepEqual(filterEditorBlockCommands("TABLE").map((item) => item.id), ["table"]);
+  // 별칭이 맞는 이미지 주소·링크가 설명만 맞는 YouTube보다 위다.
+  assert.deepEqual(
+    filterEditorBlockCommands("주소", { withContext: true }).map((item) => item.id),
+    ["image-url", "link", "youtube"],
+  );
+  // 별칭의 앞부분이 맞는 목록이, 별칭 중간만 맞는 제목과 설명만 맞는 체크리스트보다 위다.
+  assert.deepEqual(
+    filterEditorBlockCommands("목").map((item) => item.id),
+    ["bullet-list", "ordered-list", "heading-1", "heading-2", "heading-3", "task-list"],
+  );
+  // 같은 정도로 맞으면 목록 순서를 유지한다.
+  assert.deepEqual(filterEditorBlockCommands("목록").map((item) => item.id), ["bullet-list", "ordered-list"]);
+  assert.deepEqual(filterEditorBlockCommands("제목").map((item) => item.id), ["heading-1", "heading-2", "heading-3"]);
+  assert.deepEqual(filterEditorBlockCommands("없는말"), []);
+});
+
 test("이미지·동영상·링크 명령은 편집기 밖 패널을 열 수 있는 편집기에서만 보인다", () => {
   const ids = (withContext: boolean) => filterEditorBlockCommands("", { withContext }).map((item) => item.id);
   for (const id of ["image-upload", "image-url", "youtube", "link"]) {
