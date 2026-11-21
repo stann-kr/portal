@@ -130,6 +130,22 @@ test("일정 생성 응답은 기존 통합 일정과 같은 source 계약을 �
   assert.equal(item.date.toISOString(), "2026-08-12T15:30:00.000Z");
 });
 
+test("그룹 캘린더 일정의 멤버 사본은 원본 id 대신 사본 표시만 metadata에 싣는다", () => {
+  const base = {
+    id: "event-g",
+    eventType: "LESSON" as const,
+    title: "레슨",
+    startTime: new Date("2026-11-25T10:00:00.000Z"),
+    endTime: new Date("2026-11-25T11:00:00.000Z"),
+    description: null,
+  };
+  const copy = createCalendarEventUnifiedItem({ ...base, groupEventId: "group-event-1" }, profile);
+  assert.equal(copy.metadata.groupCopy, true);
+  assert.equal(JSON.stringify(copy).includes("group-event-1"), false, "원본 id는 화면에 넘기지 않는다");
+  assert.equal("groupCopy" in createCalendarEventUnifiedItem({ ...base, groupEventId: null }, profile).metadata, false);
+  assert.equal("groupCopy" in createCalendarEventUnifiedItem(base, profile).metadata, false);
+});
+
 test("기본 한국어 digging 컬럼으로 생성 직후 제목을 만든다", () => {
   const item = createDiggingTrackUnifiedItem({
     id: "track-1",

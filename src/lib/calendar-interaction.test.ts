@@ -13,6 +13,7 @@ import {
   getCalendarItemEditing,
   getCalendarItemLockReason,
   getNoteCalendarDateKey,
+  needsGroupCopyMoveConfirm,
   type CalendarEditContext,
 } from "./calendar-interaction";
 import type { UnifiedItem, UnifiedItemSourceEntity } from "./utils/unifiedItemUtils";
@@ -213,4 +214,27 @@ test("겹친 이동은 마지막 요청만 결과를 반영하고 늦게 온 이
   assert.equal(tracker.isLatest("item", second), true, "이전 요청의 마무리가 최신 요청을 지우지 않는다");
   tracker.finish("item", second);
   assert.equal(tracker.isLatest("item", second), false);
+});
+
+test("관리자가 그룹 캘린더 사본을 옮길 때만 저장 전에 묻고, 옮긴 뒤 화면 항목은 더 이상 사본이 아니다", () => {
+  const copy = item("CALENDAR_EVENT", {
+    endDate: new Date("2026-10-27T02:00:00.000Z"),
+    metadata: { eventType: "LESSON", groupCopy: true },
+  });
+  assert.equal(needsGroupCopyMoveConfirm(copy, admin), true);
+  // 학생이 자기 사본을 옮기면 지금처럼 묻지 않고 떼어진다(2026-11-20 사용자 결정).
+  assert.equal(needsGroupCopyMoveConfirm(copy, student), false);
+  assert.equal(needsGroupCopyMoveConfirm(item("CALENDAR_EVENT"), admin), false);
+  assert.equal(needsGroupCopyMoveConfirm(item("LESSON", { metadata: { groupCopy: true } }), admin), false);
+  assert.equal(needsGroupCopyMoveConfirm({ ...copy, source: { ...copy.source, kind: "GOOGLE_CALENDAR" } }, admin), false);
+
+  const moved = applyCalendarMoveToItem(copy, {
+    kind: "event",
+    startTime: "2026-10-28T10:00:00.000Z",
+    endTime: "2026-10-28T11:00:00.000Z",
+  });
+  // 서버가 시간을 바꾼 사본을 그룹 원본에서 떼므로, 되돌리기·다음 이동이 다시 묻지 않는다.
+  assert.equal(needsGroupCopyMoveConfirm(moved, admin), false);
+  assert.equal(moved.metadata.eventType, "LESSON");
+  assert.equal(copy.metadata.groupCopy, true, "원래 항목은 바꾸지 않는다(실패하면 그대로 돌아간다)");
 });

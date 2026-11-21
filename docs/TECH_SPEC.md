@@ -437,6 +437,7 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 - push 범위: 레슨·일정 쓰기 뒤 push는 본인 학생·그룹 매핑, 그다음 그룹에 그룹 캘린더가 있으면 다른 멤버의 개인 매핑까지 돈다(본인과 멤버에 4초 예산을 따로 쓰고, 넘으면 다음 동기화). 그룹 매핑 저장·해제와 그룹 멤버 변경·해제(`lessonGroups.ts`)는 관련 학생을 응답 뒤 push한다. 그룹 해제는 cascade 전에 그 그룹 매핑의 Google channel을 멈추고, 그룹 노트가 남아 해제가 거부되면 channel을 다시 등록한다.
 - 조회: 학생 동기화 상태·Google channel 갱신·원격 반복 일정·홈 다음 레슨은 본인 그룹의 그룹 매핑을 포함한다. 홈 다음 레슨은 같은 그룹 일정이 두 provider에 있어도 사본 하나로 센다.
 - 멤버 사본 떼어 내기(2026-11-20 사용자 결정): 학생이 그룹 일정의 멤버 사본(`calendar_events.group_event_id`)을 실제로 고치면(`calendarEvents.ts`, 바뀐 칸이 있을 때만) 같은 UPDATE에서 `group_event_id`를 비워 개인 일정으로 둔다. 이후 원본을 고치거나 지워도 따라가지 않는다(멤버가 그룹에서 빠질 때와 같은 규칙). 검증: `calendar-sync.integration.ts`.
+- 관리자의 사본 옮기기 확인(2026-11-21 사용자 결정): 관리자가 학생 일정에서 끌어 옮기거나 길이를 바꾸는 것(`moveCalendarEvent`)도 같은 떼어 내기를 거친다. 통합 항목은 사본이면 원본 id 대신 `metadata.groupCopy`만 싣고(`createCalendarEventUnifiedItem`), `UnifiedCalendar`는 `needsGroupCopyMoveConfirm`(관리자·포탈 일정·사본)이면 저장 전에 `GroupCopyMoveDialog`로 묻는다. 취소·Esc·바깥 누르기는 칩을 제자리로 돌리고, 확인하면 옮긴 뒤 알림에 떼어졌다고 덧붙인다. 옮긴 화면 항목은 `applyCalendarMoveToItem`이 사본 표시를 빼 되돌리기(시간만 되돌린다)와 다음 이동이 다시 묻지 않는다. 학생 본인의 이동은 묻지 않는다. 관리자는 상세 패널에서 학생 일정을 고치지 않으므로(삭제만) 끌어 옮기기에만 묻는다.
 - 관리자 화면: `getCalendarSyncOverview`가 매핑마다 `targetKind`·`targetName`·`memberNames`와 고를 수 있는 그룹(멤버 2명 이상)을 준다. form 값은 `target=student:<id>|group:<id>`(예전 `studentId`도 받음).
 - 삭제: 그룹레슨 기준 레슨이 지워지면(관리자 삭제·계정 삭제) 그룹 매핑 link는 tombstone 없이 남지만, push가 로컬 행이 없는 link를 고아로 보고 원격 사본을 지우며 portalRef가 있는 원격 일정은 다시 가져오지 않는다.
 - 계정 삭제는 학생 매핑만 지우고 그룹 매핑은 남는다(멤버십이 지워지며 그 학생 레슨은 그룹레슨에서 빠진다).

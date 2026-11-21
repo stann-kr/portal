@@ -52,6 +52,7 @@ import {
   createLatestMoveTracker,
   fromCalendarWallTime,
   getCalendarItemEditing,
+  needsGroupCopyMoveConfirm,
   getCalendarItemLockReason,
   getCalendarNow,
   isCalendarMoveReflected,
@@ -65,6 +66,7 @@ import {
 import type { CalendarQuickCreateSelection } from "@/lib/calendar-quick-create";
 import { createDaySelection } from "@/lib/unified-item-views";
 import { moveCalendarEvent } from "@/lib/actions/calendarEvents";
+import { GroupCopyMoveDialog } from "@/components/calendar/GroupCopyMoveDialog";
 import { moveLesson } from "@/lib/actions/lessons";
 import { readGroupLessonMetadata, readMemberGroupLessonTag, readStudentGroupLessonTag, untagStudentGroupLesson } from "@/lib/group-lesson-items";
 import { movePrivateNoteDate } from "@/lib/actions/privateNotes";
@@ -129,7 +131,7 @@ const KST_TIME = { hour: "2-digit", minute: "2-digit", hourCycle: "h23" } as con
 const KST_MOVE_DATE = { month: "long", day: "numeric", weekday: "short" } as const;
 
 // 조사가 앞말에 따라 바뀌지 않도록 "무엇 · 어디로" 형태로 알린다.
-function describeMove(item: UnifiedItem, request: CalendarMoveRequest): string {
+function describeMove(item: UnifiedItem, request: CalendarMoveRequest, detachedGroupCopy = false): string {
   const kind = item.type === "NOTE" ? "노트" : item.source.entity === "LESSON" ? (readGroupLessonMetadata(item) || readMemberGroupLessonTag(item) ? "그룹레슨" : "레슨") : "일정";
   const name = item.source.entity === "LESSON" ? "" : ` "${item.title}"`;
   let when: string;
@@ -143,7 +145,9 @@ function describeMove(item: UnifiedItem, request: CalendarMoveRequest): string {
   }
   // 학생이 그룹레슨을 옮기면 본인 레슨만 바뀐다(2026-11-15 사용자 결정).
   const onlyMine = readStudentGroupLessonTag(item) ? " 내 레슨만 옮겨졌습니다." : "";
-  return `${kind}${name} → ${when}에 저장했습니다.${onlyMine}`;
+  // 관리자가 확인하고 옮긴 그룹 캘린더 사본. 되돌리기는 시간만 되돌리고 그룹 원본과 다시 잇지 않는다.
+  const detached = detachedGroupCopy ? " 이 학생 일정은 그룹 일정에서 떼어졌습니다." : "";
+  return `${kind}${name} → ${when}에 저장했습니다.${onlyMine}${detached}`;
 }
 
 function reverseRequest(item: UnifiedItem, request: CalendarMoveRequest): CalendarMoveRequest {
@@ -359,6 +363,11 @@ export function UnifiedCalendar({
     latestItemsRef.current = items;
   });
   const [notice, setNotice] = useState<MoveNotice | null>(null);
+  const [groupCopyMove, setGroupCopyMove] = useState<{
+    original: UnifiedItem;
+    request: CalendarMoveRequest;
+    revert: () => void;
+  } | null>(null);
   const [quickSelection, setQuickSelection] = useState<{
     selection: CalendarQuickCreateSelection;
     anchor: { x: number; y: number } | null;
@@ -427,7 +436,7 @@ export function UnifiedCalendar({
   });
 
   const commitMove = useCallback(
-    async (original: UnifiedItem, request: CalendarMoveRequest, options: { undoable: boolean }) => {
+    async (original: UnifiedItem, request: CalendarMoveRequest, options: { undoable: boolean; detachedGroupCopy?: boolean }) => {
       const key = getUnifiedItemKey(original);
       const entry: PendingMove = { request, saved: false };
       const token = moveTrackerRef.current.start(key);
@@ -457,7 +466,7 @@ export function UnifiedCalendar({
       setSelectedItem((current) => selectedItemAfterMove(current, moved));
       setNotice({
         tone: "status",
-        message: describeMove(original, request),
+        message: describeMove(original, request, options.detachedGroupCopy),
         undo: options.undoable ? { item: moved, request: reverseRequest(original, request) } : undefined,
       });
     },
@@ -479,6 +488,11 @@ export function UnifiedCalendar({
       : null;
     if (!original || !request) {
       info.revert();
+      return;
+    }
+    // 관리자가 그룹 캘린더 사본을 옮기면 그 학생 사본만 떼어지므로 저장 전에 묻는다. 그동안 칩은 놓은 자리에 둔다.
+    if (context && needsGroupCopyMoveConfirm(original, context)) {
+      setGroupCopyMove({ original, request, revert: info.revert });
       return;
     }
     void commitMove(original, request, { undoable: true });
@@ -638,6 +652,19 @@ export function UnifiedCalendar({
         {filters}
       </div>
 
+      <GroupCopyMoveDialog
+        open={groupCopyMove !== null}
+        studentName={groupCopyMove?.original.space.label ?? "이 학생"}
+        onCancel={() => {
+          groupCopyMove?.revert();
+          setGroupCopyMove(null);
+        }}
+        onConfirm={() => {
+          if (!groupCopyMove) return;
+          setGroupCopyMove(null);
+          void commitMove(groupCopyMove.original, groupCopyMove.request, { undoable: true, detachedGroupCopy: true });
+        }}
+      />
       {savingMove ? (
         <div role="status" className="mx-5 mb-3 flex min-h-10 items-center gap-2 rounded-touch bg-sidebar px-3.5 py-1.5 text-ui text-secondary-foreground md:mx-0 md:mb-0">
           <ButtonSpinner />
