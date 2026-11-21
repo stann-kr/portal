@@ -515,9 +515,13 @@ async function loadLink(state: RunState, linkId: string): Promise<LinkRow | null
   return row ?? null;
 }
 
+function assertBeforeDeadline(state: RunState): void {
+  if (state.deadline !== undefined && state.now().getTime() >= state.deadline) throw new DeadlineReached();
+}
+
 function assertCanWrite(state: RunState): void {
   if (state.remoteWrites >= CALENDAR_SYNC_MAX_REMOTE_WRITES) throw new DeadlineReached();
-  if (state.deadline !== undefined && state.now().getTime() >= state.deadline) throw new DeadlineReached();
+  assertBeforeDeadline(state);
 }
 
 /**
@@ -1095,6 +1099,9 @@ async function removeRemote(state: RunState, link: LinkRow): Promise<void> {
     }
   };
   if (!link.remoteId) {
+    // 원격 id가 없으면 원격을 먼저 찾는다. 이 조회는 `remoteCall`을 거치지 않고, 찾지 못하면 쓰기 없이 다음 link로
+    // 넘어간다. 이런 link가 많아도 시간 상한을 넘겨 조회를 잇지 않도록 여기서 확인한다.
+    assertBeforeDeadline(state);
     await removeFound(await findLive(state, portalRefFor(link.localKind, link.localId)));
   } else {
     const remoteId = link.remoteId;
@@ -1155,13 +1162,12 @@ async function pruneDeletedLinks(state: RunState): Promise<void> {
   await loadLinks(state);
   const deleted = state.links.filter((link) => link.localFingerprint === DELETED_FINGERPRINT);
   if (deleted.length === 0) return;
-  const idsOf = (kind: CalendarSyncLocalKind) => deleted.filter((link) => link.localKind === kind).map((link) => link.localId);
-  const lessonIds = idsOf("LESSON");
-  const eventIds = idsOf("EVENT");
+  const has = (kind: CalendarSyncLocalKind) => deleted.some((link) => link.localKind === kind);
+  // id 목록을 bind하지 않고 이 매핑의 link를 subquery로 건다(D1은 한 문장에 bind 값을 100개까지만 받는다).
   const [lessonRows, eventRows, groupEventRows] = await Promise.all([
-    lessonIds.length > 0 ? state.db.select({ id: lessons.id }).from(lessons).where(inArray(lessons.id, lessonIds)) : [],
-    eventIds.length > 0 ? state.db.select({ id: calendarEvents.id }).from(calendarEvents).where(inArray(calendarEvents.id, eventIds)) : [],
-    eventIds.length > 0 ? state.db.select({ id: calendarGroupEvents.id }).from(calendarGroupEvents).where(inArray(calendarGroupEvents.id, eventIds)) : [],
+    has("LESSON") ? state.db.select({ id: lessons.id }).from(lessons).where(inArray(lessons.id, linkedLocalIds(state, "LESSON"))) : [],
+    has("EVENT") ? state.db.select({ id: calendarEvents.id }).from(calendarEvents).where(inArray(calendarEvents.id, linkedLocalIds(state, "EVENT"))) : [],
+    has("EVENT") ? state.db.select({ id: calendarGroupEvents.id }).from(calendarGroupEvents).where(inArray(calendarGroupEvents.id, linkedLocalIds(state, "EVENT"))) : [],
   ]);
   const present = new Set([
     ...lessonRows.map((row) => linkKey("LESSON", row.id)),

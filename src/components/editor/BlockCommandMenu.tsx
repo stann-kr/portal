@@ -117,6 +117,15 @@ export function BlockCommandMenu({ editor, context }: { editor: Editor; context?
     const handleKeyDown = (event: KeyboardEvent) => {
       const current = menuRef.current;
       if (!current || !(event.target instanceof Node) || !editor.view.dom.contains(event.target)) return;
+      // 한글처럼 조합 중인 키 입력은 입력기 몫이라 넘긴다. macOS Chrome은 조합 중 Enter·화살표를
+      // keydown(조합 중) → 글자 확정 → keydown 순서로 두 번 보내므로, 첫 keydown에 블록을 넣으면
+      // 확정되는 글자가 그 블록에 들어가고 둘째 keydown이 줄을 하나 더 만든다.
+      // Safari는 확정 뒤의 keydown 한 번을 keyCode 229·조합 아님으로 보내므로 keyCode 229는 거르지 않는다.
+      if (event.isComposing) {
+        // 메뉴가 열린 동안의 Esc는 메뉴 몫이라 조합 중이어도 바깥 패널·대화상자가 받아 닫히지 않게 한다.
+        if (event.key === "Escape") event.stopPropagation();
+        return;
+      }
 
       const availableCommands = commandsRef.current;
       if (event.key === "Escape") {

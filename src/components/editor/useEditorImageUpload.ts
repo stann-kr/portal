@@ -55,8 +55,6 @@ export type EditorUploadedImage = {
   deliveryUrl: string;
   mediaObjectId: string;
   file: File;
-  /** 사용자가 고른 파일인지("picked"), 붙여넣은 글에서 골라낸 이미지인지("pasted"). */
-  source: "picked" | "pasted";
 };
 
 /** 본문에 넣지 않을 업로드를 서버 삭제 대기열에 넘긴다. 실패해도 만료 정리가 뒤따른다. */
@@ -174,7 +172,7 @@ export function useEditorImageUpload<Context>(
       for (const file of valid) {
         try {
           const uploaded = await uploaderRef.current.upload(file, draftOperationId);
-          onUploadedRef.current({ ...uploaded, file, source }, context);
+          onUploadedRef.current({ ...uploaded, file }, context);
           setState((current) => ({ ...current, pendingCount: current.pendingCount - 1 }));
         } catch (error) {
           failures += 1;

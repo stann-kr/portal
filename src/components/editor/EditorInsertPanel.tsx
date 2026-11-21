@@ -5,6 +5,7 @@ import type { Editor } from "@tiptap/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { moveCursorAfterInsertedNode } from "./cursor-after-inserted-node";
 
 export type EditorInsertKind = "link" | "image" | "youtube";
 
@@ -91,13 +92,20 @@ export function EditorInsertPanel({
         .focus()
         .setTextSelection(selection)
         .setImage({ src: normalizedUrl, alt: text.trim() || undefined })
+        .command(({ tr }) => moveCursorAfterInsertedNode(tr))
         .run();
       onClose();
       return;
     }
 
     if (kind === "youtube") {
-      editor.chain().focus().setTextSelection(selection).setYoutubeVideo({ src: normalizedUrl }).run();
+      editor
+        .chain()
+        .focus()
+        .setTextSelection(selection)
+        .setYoutubeVideo({ src: normalizedUrl })
+        .command(({ tr }) => moveCursorAfterInsertedNode(tr))
+        .run();
       onClose();
       return;
     }

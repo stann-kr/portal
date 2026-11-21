@@ -4,10 +4,10 @@
  */
 import { and, asc, eq, inArray, ne, or, sql } from "drizzle-orm";
 import type { DbContext, DrizzleDb } from "@/db/client";
-import { calendarConnections, calendarMappings, lessonGroupMembers } from "@/db/schema";
-import { notArchivedStudentCondition } from "@/lib/student-status";
+import { calendarConnections, calendarMappings, calendarSyncLinks, lessonGroupMembers, profiles } from "@/db/schema";
+import { ARCHIVED_ACCOUNT_STATUS, notArchivedStudentCondition } from "@/lib/student-status";
 import { createCalendarClientForConnection } from "./client-factory";
-import { runCalendarMappingSync, type SyncEngineMode, type SyncEngineResult } from "./engine";
+import { DELETED_FINGERPRINT, runCalendarMappingSync, type SyncEngineMode, type SyncEngineResult } from "./engine";
 
 export type RunOptions = { force?: boolean; mode?: SyncEngineMode; deadline?: number; now?: () => Date };
 
@@ -159,5 +159,28 @@ export async function listAllActiveMappingIds(ctx: DbContext): Promise<string[]>
     .innerJoin(calendarConnections, eq(calendarConnections.id, calendarMappings.connectionId))
     .where(and(eq(calendarConnections.status, "ACTIVE"), notArchivedStudentCondition(db, calendarMappings.studentId)))
     .orderBy(sql`${calendarMappings.lastSyncedAt} IS NOT NULL`, asc(calendarMappings.lastSyncedAt), asc(calendarMappings.id));
+  return rows.map((row) => row.id);
+}
+
+/**
+ * 수강 종료한 학생의 매핑 가운데 지운 항목 표시(DELETED link)가 아직 남은 것. 수강 종료 직후의 정리는 응답 뒤
+ * 시간·건수 상한 안에서만 돌아 예정 레슨이 많거나 캘린더 서비스가 느리면 원격 사본이 남는다. 그 매핑은
+ * `listAllActiveMappingIds`에 없으므로 예약 동기화가 이 목록으로 정리를 이어 간다. 오래 손대지 않은 매핑이 먼저다.
+ */
+export async function listArchivedMappingIdsWithDeletedLinks(ctx: DbContext): Promise<string[]> {
+  const rows = await readDb(ctx)
+    .selectDistinct({ id: calendarMappings.id, updatedAt: calendarMappings.updatedAt })
+    .from(calendarMappings)
+    .innerJoin(calendarConnections, eq(calendarConnections.id, calendarMappings.connectionId))
+    .innerJoin(profiles, eq(profiles.id, calendarMappings.studentId))
+    .innerJoin(calendarSyncLinks, eq(calendarSyncLinks.mappingId, calendarMappings.id))
+    .where(and(
+      eq(calendarConnections.status, "ACTIVE"),
+      eq(profiles.accountStatus, ARCHIVED_ACCOUNT_STATUS),
+      eq(calendarSyncLinks.localFingerprint, DELETED_FINGERPRINT),
+    ))
+    // 정리가 실패한 매핑은 `updatedAt`이 새로 찍혀 뒤로 간다. 계속 실패하는 매핑 하나가 매번 시간을 먼저 써서
+    // 다른 매핑의 정리를 굶기지 않는다.
+    .orderBy(asc(calendarMappings.updatedAt), asc(calendarMappings.id));
   return rows.map((row) => row.id);
 }

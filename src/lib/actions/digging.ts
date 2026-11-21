@@ -5,11 +5,12 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createDb } from "@/db/client";
+import { createDb, createDbContext } from "@/db/client";
 import { diggingColumns, diggingTracks } from "@/db/schema";
 import type { DiggingColumnType } from "@/db/schema";
 import { and, eq, sql } from "drizzle-orm";
 import { requireAuth, requireStudentOwnerOrAdmin } from "@/lib/auth-guard";
+import { executeDocumentStatementsAtomically } from "@/lib/document-lifecycle-atomic";
 import {
   DIGGING_COLUMNS_MAX_COUNT,
   DIGGING_TRACK_VALUES_MAX_BYTES,
@@ -104,22 +105,32 @@ export async function addDiggingColumn(data: {
 }
 
 /**
- * 커스텀 컬럼 삭제 (isDefault=false만 허용).
+ * 커스텀 컬럼 삭제 (isDefault=false만 허용). 트랙에 남은 그 컬럼의 값도 함께 지운다.
  */
 export async function deleteDiggingColumn(columnId: string) {
   const session = await requireAuth();
   assertStudentSession(session.user.role);
-  const db = createDb();
+  const userId = session.user.id!;
 
-  await db
-    .delete(diggingColumns)
-    .where(
-      and(
-        eq(diggingColumns.id, columnId),
-        eq(diggingColumns.userId, session.user.id!),
-        eq(diggingColumns.isDefault, false),
-      ),
-    );
+  // 트랙 값의 key는 컬럼 id다. 지운 컬럼의 값은 다시 표시할 수 없는데, 남겨 두면 보이지 않는 채로 트랙 입력 크기
+  // 상한(`DIGGING_TRACK_VALUES_MAX_BYTES`)을 차지해 다른 칸 저장을 막는다. 지울 수 있는 내 컬럼일 때만 그 key를 빼고,
+  // 컬럼 삭제와 한 batch로 함께 되거나 함께 되지 않는다. CASE는 JSON이 깨진 행과 없는 컬럼 id에서 json 함수를 부르지 않게 한다.
+  await executeDocumentStatementsAtomically(createDbContext(), [
+    {
+      query: `UPDATE digging_tracks SET "values" = json_remove("values", '$."' || ? || '"')
+        WHERE user_id = ?
+          AND CASE
+            WHEN json_valid("values")
+              AND EXISTS (SELECT 1 FROM digging_columns WHERE id = ? AND user_id = ? AND is_default = 0)
+            THEN json_type("values", '$."' || ? || '"')
+          END IS NOT NULL`,
+      params: [columnId, userId, columnId, userId, columnId],
+    },
+    {
+      query: "DELETE FROM digging_columns WHERE id = ? AND user_id = ? AND is_default = 0",
+      params: [columnId, userId],
+    },
+  ]);
 
   revalidatePath("/dashboard/student/digging");
   revalidatePath("/dashboard/student");
@@ -225,6 +236,12 @@ export async function updateDiggingTrackValue(
         ),
       )
       .limit(1);
+  const readColumnId = () =>
+    db
+      .select({ id: diggingColumns.id })
+      .from(diggingColumns)
+      .where(and(eq(diggingColumns.id, columnId), eq(diggingColumns.userId, session.user.id!)))
+      .limit(1);
   const [[firstRead], [column]] = await Promise.all([
     readTrackValues(),
     db
@@ -274,11 +291,16 @@ export async function updateDiggingTrackValue(
           eq(diggingTracks.id, trackId),
           eq(diggingTracks.userId, session.user.id!),
           eq(diggingTracks.values, readValues),
+          // 쓰는 순간에도 그 컬럼이 내 것으로 남아 있을 때만 쓴다. 컬럼 삭제는 그 값을 함께 지우므로, 읽은 뒤 다른 탭이
+          // 지운 컬럼의 값을 여기서 되살리지 않는다.
+          sql`EXISTS (SELECT 1 FROM digging_columns c WHERE c.id = ${columnId} AND c.user_id = ${session.user.id!})`,
         ),
       )
       .returning({ id: diggingTracks.id });
     if (written.length > 0) return;
-    [track] = await readTrackValues();
+    const [[nextTrack], [columnLeft]] = await Promise.all([readTrackValues(), readColumnId()]);
+    if (!columnLeft) throw new Error("트랙 또는 컬럼을 찾을 수 없습니다.");
+    track = nextTrack;
   }
   throw new Error("다른 곳에서 이 트랙을 함께 고치고 있어 저장하지 못했습니다. 잠시 뒤 다시 시도해 주세요.");
 }

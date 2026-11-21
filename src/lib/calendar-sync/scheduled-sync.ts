@@ -2,6 +2,7 @@
  * 예약 동기화(Worker `scheduled`). 활성 연결의 모든 매핑을 돌며 동기화하고 Google 변경 알림 channel을 갱신한다.
  *
  * - 둘 다 연결한 학생은 포탈이 중심이다: Google 매핑 동기화가 가져온 변경을 iCloud 매핑 동기화가 내보낸다.
+ * - 수강 종료한 학생의 매핑은 동기화하지 않고, 지운 레슨·일정의 원격 사본이 남아 있을 때만 그 정리를 이어 간다.
  * - throttle은 조회와 같은 60초 기준(force 아님), lease는 항상 지킨다.
  * - 매핑 하나의 실패는 나머지를 막지 않는다. 시간 상한(deadlineMs, epoch ms)이 지나면 새 매핑을 시작하지 않는다.
  * - 결과에는 개수만 담는다(비밀값·원격 본문 없음).
@@ -9,7 +10,7 @@
  *   env는 worker.ts가 `runWithCalendarSyncEnv`로 넘긴다.
  */
 import type { DbContext } from "@/db/client";
-import { listAllActiveMappingIds, syncCalendarMapping } from "./mapping-sync";
+import { listAllActiveMappingIds, listArchivedMappingIdsWithDeletedLinks, syncCalendarMapping } from "./mapping-sync";
 import { ensureGoogleWatchChannels, type EnsureChannelsSummary } from "./push-channels";
 
 /** Worker 예약 실행에서 캘린더 동기화에 쓰는 기본 시간 상한. */
@@ -25,8 +26,19 @@ export type ScheduledCalendarSyncSummary = {
   /** 시간 상한 때문에 이번 실행에서 시작하지 못한 매핑 수. */
   deferred: number;
   localChanged: number;
+  /**
+   * 수강 종료한 학생의 매핑 가운데 지운 항목의 원격 사본 정리를 이번에 끝낸 수(`total`과 동기화 개수에 넣지 않는다).
+   * 엔진 결과가 아니라 실행 뒤 표시(DELETED link)가 남았는지로 센다. 실행 중에 복원된 학생의 매핑은 정리 대상에서
+   * 빠지므로 여기에 든다(남은 표시는 그 매핑의 일반 동기화가 지운다).
+   */
+  pruned: number;
+  /**
+   * 실행 뒤에도 표시가 남은 매핑 수. 다음 실행이 다시 돈다. 상한·원격 실패·lease로 끝내지 못한 것, 시간 상한으로
+   * 시작하지 못한 것, 로컬 행이 남아 지우지 않는 표시가 모두 든다. 여러 실행에 걸쳐 줄지 않으면 막힌 매핑이 있다.
+   */
+  prunePending: number;
   channels: EnsureChannelsSummary;
-  /** 매핑 목록 조회 자체가 실패했다. */
+  /** 매핑 목록 조회(동기화 대상, 정리 대상, 정리 뒤 남은 표시 집계) 가운데 하나가 실패했다. */
   listFailed: boolean;
 };
 
@@ -47,6 +59,8 @@ export async function runScheduledCalendarSync(input: {
     failed: 0,
     deferred: 0,
     localChanged: 0,
+    pruned: 0,
+    prunePending: 0,
     channels: { renewed: 0, failed: 0, skipped: 0, deferred: 0 },
     listFailed: false,
   };
@@ -71,6 +85,33 @@ export async function runScheduledCalendarSync(input: {
       if (result.localChanged) summary.localChanged += 1;
     } catch {
       summary.failed += 1;
+    }
+  }
+
+  // 수강 종료 직후의 정리가 끝내지 못한 원격 사본을 이어서 지운다. 끝내지 못한 매핑은 표시가 남아 다음 실행이 다시 돈다.
+  let pruneIds: string[] = [];
+  try {
+    pruneIds = await listArchivedMappingIdsWithDeletedLinks(ctx);
+  } catch {
+    summary.listFailed = true;
+  }
+  for (const mappingId of pruneIds) {
+    if (clock().getTime() >= syncDeadline) break;
+    try {
+      await syncCalendarMapping(ctx, mappingId, { mode: "pruneDeleted", deadline: syncDeadline, ...(now ? { now } : {}) });
+    } catch {
+      // 한 매핑의 실패는 나머지를 막지 않는다. 끝내지 못한 매핑은 아래에서 남은 표시로 센다.
+    }
+  }
+  if (pruneIds.length > 0) {
+    // 엔진은 지울 것이 없어도, 로컬 행이 남아 건너뛰어도 "동기화함"으로 답한다. 표시가 남았는지를 다시 읽어 센다.
+    try {
+      const remaining = new Set(await listArchivedMappingIdsWithDeletedLinks(ctx));
+      summary.prunePending = pruneIds.filter((id) => remaining.has(id)).length;
+      summary.pruned = pruneIds.length - summary.prunePending;
+    } catch {
+      summary.listFailed = true;
+      summary.prunePending = pruneIds.length;
     }
   }
 

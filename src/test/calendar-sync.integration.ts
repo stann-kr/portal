@@ -319,6 +319,47 @@ test("레슨·일정 쓰기는 매핑이 있으면 원격에 push하고 provider
   assert.equal([...remote.events.values()].filter((entry) => entry.portalRef?.startsWith("lesson:")).length, 1);
 });
 
+test("지운 항목만 정리하는 동기화는 지운 레슨이 100개를 넘어도 실패하지 않고 이어서 원격 사본을 모두 지운다", { concurrency: false }, async (context) => {
+  const { db, remote } = await setup(context, createSession("admin-1", "admin"));
+  // D1은 한 문장에 bind 값을 100개까지만 받는다. 지운 레슨 id를 그대로 bind하면 이 개수에서 조회가 실패한다.
+  const { mappingId } = await connectAndMap(db);
+  // 수강 종료와 함께 예정 레슨을 지운 뒤의 상태: 원격 사본과 DELETED link만 남고 로컬 레슨 행은 없다.
+  const firstStart = Date.now() + 86_400_000;
+  const links = Array.from({ length: 101 }, (_, index) => {
+    const start = new Date(firstStart + index * 3_600_000);
+    const copy = remote.remoteAdd({ title: "레슨", start, end: new Date(start.getTime() + 3_600_000), portalRef: `lesson:lesson-bulk-${index}` });
+    return {
+      id: `link-bulk-${index}`,
+      mappingId,
+      localKind: "LESSON" as const,
+      localId: `lesson-bulk-${index}`,
+      remoteId: copy.remoteId,
+      etag: copy.etag,
+      localFingerprint: "DELETED",
+    };
+  });
+  for (let offset = 0; offset < links.length; offset += 10) {
+    await db.insert(calendarSyncLinks).values(links.slice(offset, offset + 10));
+  }
+  assert.equal(remote.events.size, links.length);
+
+  const { listArchivedMappingIdsWithDeletedLinks, syncCalendarMapping } = await import("@/lib/calendar-sync/mapping-sync");
+  const { CALENDAR_SYNC_MAX_REMOTE_WRITES } = await import("@/lib/calendar-sync/engine");
+  // 한 실행이 지우는 원격 사본 수에는 상한이 있다. 남은 몫은 다음 실행이 이어서 지운다.
+  const first = await syncCalendarMapping({ kind: "d1", db }, mappingId, { mode: "pruneDeleted" });
+  assert.equal(first.status, "synced", JSON.stringify(first));
+  assert.equal(remote.events.size, links.length - CALENDAR_SYNC_MAX_REMOTE_WRITES);
+  // 예약 동기화가 이어서 지울 대상은 수강 종료한 학생의 매핑 가운데 표시가 남은 것이다.
+  assert.deepEqual(await listArchivedMappingIdsWithDeletedLinks({ kind: "d1", db }), [], "수강 중인 학생의 매핑은 대상이 아니다");
+  await db.update(profiles).set({ accountStatus: "ARCHIVED" }).where(eq(profiles.id, "student-1"));
+  assert.deepEqual(await listArchivedMappingIdsWithDeletedLinks({ kind: "d1", db }), [mappingId]);
+  const second = await syncCalendarMapping({ kind: "d1", db }, mappingId, { mode: "pruneDeleted" });
+  assert.equal(second.status, "synced", JSON.stringify(second));
+  assert.equal(remote.events.size, 0, "지운 레슨의 원격 사본이 남지 않는다");
+  assert.equal((await db.select().from(calendarSyncLinks).where(eq(calendarSyncLinks.mappingId, mappingId))).length, 0);
+  assert.deepEqual(await listArchivedMappingIdsWithDeletedLinks({ kind: "d1", db }), [], "표시가 없어지면 대상에서 빠진다");
+});
+
 test("매핑이 없는 학생의 쓰기 action은 원격 client를 만들지 않는다", { concurrency: false }, async (context) => {
   await setup(context, createSession("admin-1", "admin"));
   let factoryCalls = 0;

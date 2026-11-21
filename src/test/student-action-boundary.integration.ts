@@ -1239,6 +1239,44 @@ test("digging write는 student session과 소유 column/type을 요구하고 거
   );
 });
 
+test("디깅 컬럼을 지우면 내 트랙에 남은 그 컬럼 값만 함께 지우고, 기본 컬럼·남의 트랙·깨진 값은 그대로 둔다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("student-1", "student"));
+  await seedProfile(db, "student-1");
+  await seedProfile(db, "student-2");
+  await db.insert(diggingColumns).values([
+    { id: "col-title", userId: "student-1", name: "트랙명", columnType: "text", sortOrder: 0, isDefault: true },
+    { id: "col-memo", userId: "student-1", name: "메모", columnType: "textarea", sortOrder: 1 },
+    { id: "col-other", userId: "student-2", name: "메모", columnType: "textarea", sortOrder: 0 },
+  ]);
+  await db.insert(diggingTracks).values([
+    { id: "track-both", userId: "student-1", values: JSON.stringify({ "col-title": "A", "col-memo": "긴 메모" }) },
+    { id: "track-title", userId: "student-1", values: JSON.stringify({ "col-title": "B" }) },
+    { id: "track-broken", userId: "student-1", values: "{broken" },
+    { id: "track-other", userId: "student-2", values: JSON.stringify({ "col-memo": "남의 값", "col-other": "C" }) },
+  ]);
+  const valuesOf = async (id: string) => (await db.select().from(diggingTracks).where(eq(diggingTracks.id, id)))[0]?.values;
+  const columnIds = async () => (await db.select({ id: diggingColumns.id }).from(diggingColumns)).map((row) => row.id).sort();
+
+  // 남의 컬럼과 기본 컬럼은 지워지지 않고, 그 값도 남는다.
+  await diggingActions.deleteDiggingColumn("col-other");
+  await diggingActions.deleteDiggingColumn("col-title");
+  assert.deepEqual(await columnIds(), ["col-memo", "col-other", "col-title"]);
+  assert.equal(await valuesOf("track-both"), JSON.stringify({ "col-title": "A", "col-memo": "긴 메모" }));
+  assert.equal(await valuesOf("track-other"), JSON.stringify({ "col-memo": "남의 값", "col-other": "C" }));
+
+  await diggingActions.deleteDiggingColumn("col-memo");
+  assert.deepEqual(await columnIds(), ["col-other", "col-title"]);
+  assert.deepEqual(JSON.parse((await valuesOf("track-both"))!), { "col-title": "A" }, "지운 컬럼의 값만 빠진다");
+  assert.equal(await valuesOf("track-title"), JSON.stringify({ "col-title": "B" }));
+  assert.equal(await valuesOf("track-broken"), "{broken", "깨진 값은 건드리지 않는다");
+  assert.equal(await valuesOf("track-other"), JSON.stringify({ "col-memo": "남의 값", "col-other": "C" }), "같은 key라도 남의 트랙은 그대로다");
+
+  // 없는 id와 따옴표가 든 id는 아무것도 바꾸지 않는다.
+  await diggingActions.deleteDiggingColumn("missing");
+  await diggingActions.deleteDiggingColumn('x"y');
+  assert.deepEqual(await columnIds(), ["col-other", "col-title"]);
+  assert.deepEqual(JSON.parse((await valuesOf("track-both"))!), { "col-title": "A" });
+});
 
 function taskForm(fields: Record<string, string | string[]>): FormData {
   const data = new FormData();
@@ -1758,6 +1796,35 @@ test("디깅 칸 저장은 읽은 뒤 다른 탭이 같은 트랙의 다른 칸�
   // 끼어든 변경이 없으면 한 번에 저장한다.
   await diggingActions.updateDiggingTrackValue("track-race", "col-memo", "이 탭의 감상평");
   assert.deepEqual(await stored(), { "col-title": "고친 제목", "col-memo": "이 탭의 감상평" });
+});
+
+test("디깅 칸 저장은 읽은 뒤 다른 탭이 그 컬럼을 지우면 지운 컬럼의 값을 되살리지 않는다", { concurrency: false }, async (context) => {
+  const { db, setBeforeWrite } = await setupRacingDatabase(context, createSession("student-1", "student"), "digging_tracks");
+  await seedProfile(db, "student-1");
+  await db.insert(diggingColumns).values([
+    { id: "col-title", userId: "student-1", name: "트랙명", columnType: "text", sortOrder: 0 },
+    { id: "col-memo", userId: "student-1", name: "감상평", columnType: "text", sortOrder: 1 },
+    { id: "col-mood", userId: "student-1", name: "분위기", columnType: "text", sortOrder: 2 },
+  ]);
+  await db.insert(diggingTracks).values({ id: "track-race", userId: "student-1", values: JSON.stringify({ "col-title": "Original", "col-memo": "지워질 감상평" }) });
+  const stored = async () => JSON.parse((await db.select().from(diggingTracks).where(eq(diggingTracks.id, "track-race")))[0]!.values) as Record<string, unknown>;
+  const columnIds = async () => (await db.select({ id: diggingColumns.id }).from(diggingColumns).orderBy(diggingColumns.sortOrder)).map((row) => row.id);
+
+  // 이 요청이 트랙과 컬럼을 읽은 뒤 쓰기 직전에, 다른 탭이 그 컬럼을 지운다(값도 함께 지워져 읽은 값과 달라진다).
+  setBeforeWrite(async () => { await diggingActions.deleteDiggingColumn("col-memo"); });
+  await assert.rejects(diggingActions.updateDiggingTrackValue("track-race", "col-memo", "되살아나면 안 되는 값"), /트랙 또는 컬럼을 찾을 수 없습니다/u);
+  assert.deepEqual(await stored(), { "col-title": "Original" });
+  assert.deepEqual(await columnIds(), ["col-title", "col-mood"]);
+
+  // 그 컬럼의 값이 아직 없던 트랙은 삭제가 값을 바꾸지 않아 읽은 값이 그대로다. 그래도 지운 컬럼의 값을 새로 쓰지 않는다.
+  setBeforeWrite(async () => { await diggingActions.deleteDiggingColumn("col-mood"); });
+  await assert.rejects(diggingActions.updateDiggingTrackValue("track-race", "col-mood", "새로 쓰면 안 되는 값"), /트랙 또는 컬럼을 찾을 수 없습니다/u);
+  assert.deepEqual(await stored(), { "col-title": "Original" });
+  assert.deepEqual(await columnIds(), ["col-title"]);
+
+  // 남아 있는 컬럼은 그대로 저장된다.
+  await diggingActions.updateDiggingTrackValue("track-race", "col-title", "고친 제목");
+  assert.deepEqual(await stored(), { "col-title": "고친 제목" });
 });
 
 test("학생 제출·수정은 읽은 뒤 관리자가 형식을 바꾸면 저장하지 않고 과제가 바뀌었다고 알린다", { concurrency: false }, async (context) => {

@@ -2,12 +2,14 @@ import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
 import { getExternalCalendarEncryptionKey } from "@/lib/external-calendar-key";
 import { setCalendarClientFactoryForTests, setGoogleChannelApiFactoryForTests } from "./client-factory";
+import { DELETED_FINGERPRINT } from "./engine";
 import { FakeCalendar } from "./fake-calendar-client";
 import { FakeGoogleChannels } from "./fake-channel-api";
 import { readCalendarSyncEnv } from "./oauth-config";
 import { runWithCalendarSyncEnv } from "./runtime-env";
 import { CALENDAR_SCHEDULED_CHANNEL_RESERVE_MS, runScheduledCalendarSync, serializeScheduledCalendarSyncSummary } from "./scheduled-sync";
-import { createSqliteTestDb, insertConnection, insertMapping, insertProfile } from "./sqlite-test-db";
+import { listArchivedMappingIdsWithDeletedLinks } from "./mapping-sync";
+import { createSqliteTestDb, insertConnection, insertMapping, insertProfile, type SqliteTestDb } from "./sqlite-test-db";
 import { CalendarProviderError } from "./types";
 
 const NOW = new Date("2026-10-27T03:00:00.000Z");
@@ -86,6 +88,144 @@ test("시간 상한이 지나면 새 매핑을 시작하지 않고 미룬 수를
   assert.equal(summary.deferred, 3);
   assert.equal(summary.synced + summary.failed + summary.skipped, 0);
   assert.equal(remotes.get("conn-google")!.calls.length, 0);
+});
+
+test("수강 종료한 학생의 매핑은 동기화하지 않고, 지운 레슨의 남은 원격 사본만 이어서 지운다", async (context) => {
+  const { db, remotes } = setup(context);
+  const icloud = remotes.get("conn-icloud")!;
+  db.run("UPDATE profiles SET account_status = 'ARCHIVED' WHERE id = 'student-c'");
+  // 수강 종료 직후의 정리가 끝내지 못한 상태: 로컬 레슨은 없고 DELETED link와 원격 사본만 남았다.
+  const copy = icloud.remoteAdd({
+    title: "레슨",
+    start: new Date("2026-11-02T10:00:00Z"),
+    end: new Date("2026-11-02T11:00:00Z"),
+    portalRef: "lesson:lesson-gone",
+  });
+  db.run(
+    "INSERT INTO calendar_sync_links (id, mapping_id, local_kind, local_id, remote_id, etag, local_fingerprint) VALUES (?, ?, 'LESSON', ?, ?, ?, ?)",
+    "link-gone", "map-c", "lesson-gone", copy.remoteId, copy.etag, DELETED_FINGERPRINT,
+  );
+
+  const summary = await runWithCalendarSyncEnv(ENV, () =>
+    runScheduledCalendarSync({ ctx: db.ctx, deadlineMs: NOW.getTime() + 60_000, now: () => NOW }),
+  );
+  assert.equal(summary.total, 2, "수강 중인 학생의 매핑만 동기화 대상이다");
+  assert.equal(summary.synced, 2);
+  assert.equal(summary.pruned, 1);
+  assert.equal(summary.prunePending, 0);
+  assert.equal(icloud.events.size, 0, "지운 레슨의 원격 사본을 지운다");
+  assert.deepEqual(icloud.calls.filter((call) => call !== "get"), ["remove"], "가져오거나 보내지 않는다");
+  assert.equal(db.rows("SELECT id FROM calendar_sync_links WHERE mapping_id = 'map-c'").length, 0);
+
+  // 남은 표시가 없으면 수강 종료한 학생의 매핑은 다시 건드리지 않는다.
+  icloud.calls = [];
+  const again = await runWithCalendarSyncEnv(ENV, () =>
+    runScheduledCalendarSync({ ctx: db.ctx, deadlineMs: NOW.getTime() + 180_000, now: () => new Date(NOW.getTime() + 120_000) }),
+  );
+  assert.equal(again.pruned, 0);
+  assert.equal(icloud.calls.length, 0);
+});
+
+test("정리를 끝내지 못한 매핑은 남은 수로 세고 표시를 남겨 다음 예약 실행이 다시 지운다", async (context) => {
+  const { db, remotes } = setup(context);
+  const icloud = remotes.get("conn-icloud")!;
+  db.run("UPDATE profiles SET account_status = 'ARCHIVED' WHERE id = 'student-c'");
+  const copy = icloud.remoteAdd({
+    title: "레슨",
+    start: new Date("2026-11-02T10:00:00Z"),
+    end: new Date("2026-11-02T11:00:00Z"),
+    portalRef: "lesson:lesson-gone",
+  });
+  db.run(
+    "INSERT INTO calendar_sync_links (id, mapping_id, local_kind, local_id, remote_id, etag, local_fingerprint) VALUES (?, ?, 'LESSON', ?, ?, ?, ?)",
+    "link-gone", "map-c", "lesson-gone", copy.remoteId, copy.etag, DELETED_FINGERPRINT,
+  );
+
+  icloud.failAll = new CalendarProviderError("provider down", { status: 503 });
+  const failed = await runWithCalendarSyncEnv(ENV, () =>
+    runScheduledCalendarSync({ ctx: db.ctx, deadlineMs: NOW.getTime() + 60_000, now: () => NOW }),
+  );
+  assert.equal(failed.prunePending, 1, JSON.stringify(failed));
+  assert.equal(failed.pruned, 0);
+  assert.equal(icloud.events.size, 1);
+  assert.equal(db.rows("SELECT id FROM calendar_sync_links WHERE mapping_id = 'map-c'").length, 1, "표시가 남는다");
+
+  icloud.failAll = null;
+  const retried = await runWithCalendarSyncEnv(ENV, () =>
+    runScheduledCalendarSync({ ctx: db.ctx, deadlineMs: NOW.getTime() + 180_000, now: () => new Date(NOW.getTime() + 120_000) }),
+  );
+  assert.equal(retried.pruned, 1);
+  assert.equal(retried.prunePending, 0);
+  assert.equal(icloud.events.size, 0);
+  assert.equal(db.rows("SELECT id FROM calendar_sync_links WHERE mapping_id = 'map-c'").length, 0);
+});
+
+/** 수강 종료 직후의 정리가 끝내지 못한 상태를 만든다: 원격 사본과 DELETED link만 남기고 로컬 레슨은 없다. */
+function leaveDeletedLessonCopy(db: SqliteTestDb, remote: FakeCalendar, mappingId: string, lessonId: string): void {
+  const copy = remote.remoteAdd({
+    title: "레슨",
+    start: new Date("2026-11-02T10:00:00Z"),
+    end: new Date("2026-11-02T11:00:00Z"),
+    portalRef: `lesson:${lessonId}`,
+  });
+  db.run(
+    "INSERT INTO calendar_sync_links (id, mapping_id, local_kind, local_id, remote_id, etag, local_fingerprint) VALUES (?, ?, 'LESSON', ?, ?, ?, ?)",
+    `link-${lessonId}`, mappingId, lessonId, copy.remoteId, copy.etag, DELETED_FINGERPRINT,
+  );
+}
+
+test("로컬 레슨이 남아 지우지 않는 표시는 끝낸 수가 아니라 남은 수로 센다", async (context) => {
+  const { db, remotes } = setup(context);
+  const icloud = remotes.get("conn-icloud")!;
+  db.run("UPDATE profiles SET account_status = 'ARCHIVED' WHERE id = 'student-c'");
+  leaveDeletedLessonCopy(db, icloud, "map-c", "lesson-kept");
+  // 삭제가 취소된 경합: 표시는 DELETED인데 로컬 레슨이 남아 있다. 정리는 이 사본을 지우지 않는다.
+  db.run("INSERT INTO lessons (id, student_id, scheduled_at) VALUES (?, ?, ?)", "lesson-kept", "student-c", Math.floor(Date.parse("2026-11-02T10:00:00Z") / 1000));
+
+  const summary = await runWithCalendarSyncEnv(ENV, () =>
+    runScheduledCalendarSync({ ctx: db.ctx, deadlineMs: NOW.getTime() + 60_000, now: () => NOW }),
+  );
+  assert.equal(summary.pruned, 0, JSON.stringify(summary));
+  assert.equal(summary.prunePending, 1);
+  assert.equal(icloud.events.size, 1, "로컬 레슨이 남은 사본은 지우지 않는다");
+  assert.equal(icloud.calls.includes("remove"), false);
+});
+
+test("시간 상한으로 시작하지 못한 정리도 남은 수로 센다", async (context) => {
+  const { db, remotes } = setup(context);
+  const icloud = remotes.get("conn-icloud")!;
+  db.run("UPDATE profiles SET account_status = 'ARCHIVED' WHERE id = 'student-c'");
+  leaveDeletedLessonCopy(db, icloud, "map-c", "lesson-gone");
+
+  const summary = await runWithCalendarSyncEnv(ENV, () =>
+    runScheduledCalendarSync({ ctx: db.ctx, deadlineMs: NOW.getTime() + CALENDAR_SCHEDULED_CHANNEL_RESERVE_MS, now: () => NOW }),
+  );
+  assert.equal(summary.pruned, 0, JSON.stringify(summary));
+  assert.equal(summary.prunePending, 1);
+  assert.equal(icloud.calls.length, 0, "시간 상한 뒤에는 원격 작업을 시작하지 않는다");
+  assert.equal(icloud.events.size, 1);
+});
+
+test("정리 대상은 오래 손대지 않은 매핑이 먼저라, 방금 실패한 매핑이 다른 매핑보다 뒤로 간다", async (context) => {
+  const { db, remotes } = setup(context);
+  db.run("UPDATE profiles SET account_status = 'ARCHIVED' WHERE id IN ('student-a', 'student-c')");
+  leaveDeletedLessonCopy(db, remotes.get("conn-google")!, "map-a", "lesson-a");
+  leaveDeletedLessonCopy(db, remotes.get("conn-icloud")!, "map-c", "lesson-c");
+  const older = Math.floor(NOW.getTime() / 1000) - 3_600;
+  db.run("UPDATE calendar_mappings SET updated_at = ? WHERE id IN ('map-a', 'map-c')", older);
+  assert.deepEqual(await listArchivedMappingIdsWithDeletedLinks(db.ctx), ["map-a", "map-c"]);
+
+  // map-a의 원격 삭제만 실패한다. map-c는 같은 실행에서 정리를 끝낸다.
+  remotes.get("conn-google")!.failAll = new CalendarProviderError("provider down", { status: 503 });
+  const summary = await runWithCalendarSyncEnv(ENV, () =>
+    runScheduledCalendarSync({ ctx: db.ctx, deadlineMs: NOW.getTime() + 60_000, now: () => NOW }),
+  );
+  assert.equal(summary.pruned, 1, JSON.stringify(summary));
+  assert.equal(summary.prunePending, 1);
+
+  // 새로 정리할 것이 생긴 map-c(오래 손대지 않음)가 방금 실패한 map-a보다 먼저 온다.
+  leaveDeletedLessonCopy(db, remotes.get("conn-icloud")!, "map-c", "lesson-c2");
+  assert.deepEqual(await listArchivedMappingIdsWithDeletedLinks(db.ctx), ["map-c", "map-a"]);
 });
 
 test("env override 안에서는 Worker env의 암호화 key·설정을 읽고 밖에서는 기존 경로를 따른다", async () => {

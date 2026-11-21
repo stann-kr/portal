@@ -43,9 +43,10 @@ async function loadNoteInstructorTools(note: {
 }): Promise<NoteInstructorTools | undefined> {
   if (note.group) {
     const members = note.group.members;
+    // 멤버 목록을 읽은 뒤 수강을 종료한 멤버는 메모 읽기가 거부한다. 그 멤버 탭만 빼고 나머지는 그대로 연다.
     const [noteMemo, ...memberMemos] = await Promise.all([
       getInstructorMemo({ kind: "note", noteId: note.id }),
-      ...members.map((member) => getInstructorMemo({ kind: "student", studentId: member.id })),
+      ...members.map((member) => missingWhenAccessDenied(getInstructorMemo({ kind: "student", studentId: member.id }))),
     ]);
     if (!noteMemo) return undefined;
     return {

@@ -2233,6 +2233,69 @@ test("editor command popup stays in its dialog and Escape closes only the popup"
   assert.equal(browser.document.querySelector('[role="dialog"]'), null);
 });
 
+test("편집기 / 메뉴는 한글 조합 중인 키 입력을 입력기에 넘기고 조합이 끝난 뒤의 키에만 반응한다", async (context) => {
+  const ready = { editor: null as Editor | null };
+  function EditorBody() {
+    const host = useRef<HTMLDivElement>(null);
+    const [editor, setEditor] = useState<Editor | null>(null);
+    useEffect(() => {
+      const value = new TiptapEditor({ element: host.current!, extensions: [StarterKit], content: "<p></p>", injectCSS: false });
+      ready.editor = value;
+      setEditor(value);
+      return () => value.destroy();
+    }, []);
+    return <><div ref={host} />{editor && <BlockCommandMenu editor={editor} />}</>;
+  }
+  function Harness() {
+    const [open, setOpen] = useState(true);
+    return <SlidePanel open={open} onOpenChange={setOpen} title="작성"><EditorBody /></SlidePanel>;
+  }
+  await render(context, <Harness />);
+  assert.ok(ready.editor);
+  const editor = ready.editor;
+  const panel = browser.document.querySelector('[role="dialog"]');
+  assert.ok(panel);
+  // DOM tests supply geometry; the real input method order is checked in the browser.
+  context.mock.method(panel, "getBoundingClientRect", () => new browser.DOMRect(360, 0, 640, 768));
+  context.mock.method(editor.view, "coordsAtPos", () => ({ left: 420, right: 420, top: 160, bottom: 180 }));
+  await act(async () => { editor.view.dom.focus(); editor.commands.insertContent("/제목"); });
+  const activeRow = () => [...browser.document.querySelectorAll('[role="listbox"] [role="option"]')]
+    .findIndex((option) => option.getAttribute("aria-selected") === "true");
+  const key = async (name: string, isComposing: boolean) => {
+    const event = new browser.KeyboardEvent("keydown", { key: name, bubbles: true, cancelable: true, isComposing });
+    await act(async () => { editor.view.dom.dispatchEvent(event as unknown as Event); });
+    return event.defaultPrevented;
+  };
+  const composition = (type: "compositionstart" | "compositionend") =>
+    act(async () => { editor.view.dom.dispatchEvent(new browser.Event(type, { bubbles: true }) as unknown as Event); });
+  assert.equal(activeRow(), 0);
+
+  // macOS Chrome은 조합 중 Enter를 keydown(조합 중) → 확정 → keydown 순서로 두 번 보낸다.
+  // 첫 keydown에 블록을 넣으면 확정되는 글자가 그 블록에 한 번 더 들어가고, 둘째 keydown이 줄을 하나 더 만든다.
+  await composition("compositionstart");
+  assert.equal(await key("ArrowDown", true), false);
+  assert.equal(activeRow(), 0, "조합 중 화살표는 줄을 옮기지 않는다");
+  assert.equal(await key("Escape", true), false);
+  assert.ok(browser.document.querySelector('[role="listbox"]'), "조합 중 Esc는 메뉴를 닫지 않는다");
+  assert.ok(browser.document.querySelector('[role="dialog"]'), "메뉴가 열린 동안 조합 중 Esc가 바깥 패널을 닫지 않는다");
+  assert.equal(await key("Enter", true), false);
+  assert.ok(browser.document.querySelector('[role="listbox"]'), "조합 중 Enter는 블록을 넣지 않는다");
+  assert.equal(editor.getText(), "/제목");
+  await composition("compositionend");
+
+  assert.equal(await key("ArrowDown", false), true);
+  assert.equal(activeRow(), 1);
+  assert.equal(await key("ArrowUp", false), true);
+  assert.equal(activeRow(), 0);
+  assert.equal(await key("Enter", false), true);
+  assert.equal(browser.document.querySelector('[role="listbox"]'), null);
+  const blocks = editor.getJSON().content ?? [];
+  // 제목 뒤 빈 문단은 StarterKit의 TrailingNode가 문서 끝에 두는 것이다.
+  assert.deepEqual(blocks.map((node) => node.type), ["heading", "paragraph"], "조합이 끝난 뒤의 Enter 한 번이 맨 위 블록을 넣는다");
+  assert.equal(blocks[0]?.attrs?.level, 1);
+  assert.equal(editor.state.doc.textContent, "", "확정된 검색어가 넣은 블록에 남지 않는다");
+});
+
 test("media source and queued or repeated feedback seeks use the HTML media contract", async (context) => {
   const url = "https://www.youtube.com/watch?v=aqz-KE-bpKQ";
   const root = await render(context, <VideoPlayer url={url} seekRequest={{ seconds: 90 }} />);
@@ -2590,8 +2653,13 @@ test("답글을 쓰는 사이 원 댓글이 지워지면 입력을 그 자리에
   // 목록에서 원 댓글이 사라진 것을 먼저 알게 된 경우. 댓글 입력에 쓰던 글이 있으면 한 칸 띄워 뒤에 붙인다.
   await press("박학생 댓글에 답글");
   await fill(replyInput()!.id, "녹음 공유해요");
+  const typing = replyInput()!;
+  typing.focus();
   await act(async () => root.render(detail([third])));
   await settle();
+  // DOM 노드끼리 assert.equal로 견주면 실패할 때 차이를 그리느라 멈추므로 같은 노드인지만 본다.
+  assert.ok(replyInput() === typing, "쓰던 입력을 다시 만들지 않는다(초점·한글 조합이 끊기지 않는다)");
+  assert.ok(browser.document.activeElement === typing, "쓰던 입력의 초점이 그대로다");
   assert.equal(alertText(), "원 댓글이 삭제되어 답글을 달 수 없습니다. 쓴 글은 새 댓글로 남길 수 있습니다.");
   await press("새 댓글로 남기기");
   assert.equal(mainInput().value, "저도 갈게요 녹음 공유해요");
@@ -5513,6 +5581,73 @@ test("FullEditor는 붙여넣은 글 속 data 이미지를 본문에 넣지 않�
   const continued = changes.at(-1) ?? "";
   assert.match(continued, /<img[^>]+src="\/api\/media\/30000000-0000-4000-8000-000000000001"/u, "이어 써도 이미지는 남는다");
   assert.ok(continued.indexOf("붙여넣은 글") < continued.indexOf("<img") && continued.indexOf("<img") < continued.indexOf("이어 쓴 글"), "붙여넣은 글, 이미지, 이어 쓴 글 순서다");
+});
+
+test("FullEditor는 고른 이미지를 넣은 뒤 커서를 이미지 뒤에 둬, 이어서 친 글자가 이미지를 지우지 않는다", { concurrency: false }, async (context) => {
+  const { releases } = mockEditorImageUpload(context);
+  const changes: string[] = [];
+  await render(context, <FullEditor initialContent="<p>본문</p>" ariaLabel="본문" onChange={(html) => changes.push(html)} />);
+  await settleEditor();
+  const editor = (browser.document.querySelector(".ProseMirror") as unknown as { editor: Editor }).editor;
+  await act(async () => { editor.commands.focus("end"); });
+  await chooseEditorImage();
+  await act(async () => { releases[0]?.(undefined as never); await new Promise((resolve) => setTimeout(resolve, 10)); });
+  await settleEditor();
+  const image = /<img[^>]+src="\/api\/media\/30000000-0000-4000-8000-000000000001"/u;
+  assert.match(changes.at(-1) ?? "", image, "올라간 이미지를 본문에 넣는다");
+  // 올리는 동안에도 글을 계속 쓴다. 이미지가 선택된 채로 들어오면 다음 글자가 이미지를 지운다.
+  assert.equal(editor.state.selection.toJSON().type, "text", "커서는 이미지 뒤에 놓인다");
+  await act(async () => {
+    const { from, to } = editor.state.selection;
+    editor.view.dispatch(editor.state.tr.insertText("이어 쓴 글", from, to));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  });
+  await settleEditor();
+  const continued = changes.at(-1) ?? "";
+  assert.match(continued, image, "이어 써도 이미지는 남는다");
+  assert.ok(continued.indexOf("본문") < continued.indexOf("<img") && continued.indexOf("<img") < continued.indexOf("이어 쓴 글"), "본문, 이미지, 이어 쓴 글 순서다");
+});
+
+test("FullEditor는 주소로 넣은 이미지·영상 뒤에 커서를 둬, 이어서 친 글자가 그 블록을 지우지 않는다", { concurrency: false }, async (context) => {
+  const changes: string[] = [];
+  await render(context, <FullEditor initialContent="<p>본문</p>" ariaLabel="본문" onChange={(html) => changes.push(html)} />);
+  await settleEditor();
+  const editor = (browser.document.querySelector(".ProseMirror") as unknown as { editor: Editor }).editor;
+  const insertByUrl = async (toolbarLabel: string, url: string) => {
+    await act(async () => { editor.commands.focus("end"); });
+    await press(toolbarLabel);
+    const input = browser.document.querySelector('[data-editor-insert-panel] input[type="url"]');
+    assert.ok(input instanceof browser.HTMLInputElement);
+    const setter = Object.getOwnPropertyDescriptor(browser.HTMLInputElement.prototype, "value")?.set;
+    assert.ok(setter);
+    await act(async () => {
+      setter.call(input, url);
+      input.dispatchEvent(new browser.Event("input", { bubbles: true }));
+      input.dispatchEvent(new browser.Event("change", { bubbles: true }));
+    });
+    await press("삽입");
+    await settleEditor();
+  };
+  const typeText = async (text: string) => {
+    await act(async () => {
+      const { from, to } = editor.state.selection;
+      editor.view.dispatch(editor.state.tr.insertText(text, from, to));
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+    await settleEditor();
+  };
+
+  await insertByUrl("이미지 주소로 넣기", "https://example.com/board.png");
+  assert.equal(editor.state.selection.toJSON().type, "text", "커서는 이미지 뒤에 놓인다");
+  await typeText("이미지 설명");
+  assert.match(changes.at(-1) ?? "", /<img[^>]+src="https:\/\/example\.com\/board\.png"/u, "이어 써도 이미지는 남는다");
+
+  await insertByUrl("유튜브 동영상 삽입", "https://www.youtube.com/watch?v=aqz-KE-bpKQ");
+  assert.equal(editor.state.selection.toJSON().type, "text", "커서는 영상 뒤에 놓인다");
+  await typeText("영상 설명");
+  const html = changes.at(-1) ?? "";
+  assert.match(html, /aqz-KE-bpKQ/u, "이어 써도 영상은 남는다");
+  assert.ok(html.indexOf("board.png") < html.indexOf("이미지 설명") && html.indexOf("이미지 설명") < html.indexOf("aqz-KE-bpKQ") && html.indexOf("aqz-KE-bpKQ") < html.indexOf("영상 설명"), "넣은 순서대로 이어진다");
 });
 
 test("FullEditor는 붙여넣은 data 이미지 여러 장을 붙여넣은 순서대로 넣는다", { concurrency: false }, async (context) => {

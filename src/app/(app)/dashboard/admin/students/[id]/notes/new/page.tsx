@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { missingWhenAccessDenied } from "@/lib/access-denied-as-missing";
 import { getActiveAuthSession } from "@/lib/auth-guard";
 import { getStudentById } from "@/lib/actions/students";
 import { createPrivateNote } from "@/lib/actions/privateNotes";
@@ -38,7 +39,10 @@ export default async function AdminStudentNewNotePage({
   // 바꾸므로 멤버 메모를 미리 읽는다. 이 학생 메모는 위에서 읽은 것을 그대로 쓴다.
   const groupMembers = group
     ? await Promise.all(group.members.map(async (member) => {
-        const memo = member.id === studentId ? studentMemo : await getInstructorMemo({ kind: "student", studentId: member.id });
+        // 그룹을 읽은 뒤 수강을 종료한 멤버는 메모 읽기가 거부한다. 그 멤버 탭만 뺀다.
+        const memo = member.id === studentId
+          ? studentMemo
+          : await missingWhenAccessDenied(getInstructorMemo({ kind: "student", studentId: member.id }));
         return memo ? [{ studentId: member.id, name: member.name, memo }] : [];
       })).then((rows) => rows.flat())
     : [];
