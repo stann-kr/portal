@@ -448,6 +448,25 @@ test("수강 종료한 학생 캘린더는 push를 건너뛰고, pruneDeleted만
   assert.equal(links(harness).find((link) => link.local_id === "lesson-kept")?.local_fingerprint, DELETED_FINGERPRINT);
 });
 
+test("원격 id가 없는 지운 표시는 시간 상한이 지나면 원격을 찾지 않고 남겨, 다음 실행이 정리한다", async (context) => {
+  const harness = setup(context);
+  // 원격에서 먼저 지워져 연결만 끊긴 레슨을 로컬에서도 지운 상태: 로컬 행도 원격 id도 없는 DELETED link.
+  for (const id of ["gone-1", "gone-2"]) {
+    harness.sqlite
+      .prepare("INSERT INTO calendar_sync_links (id, mapping_id, local_kind, local_id, remote_id, etag, local_fingerprint) VALUES (?, ?, 'LESSON', ?, NULL, NULL, ?)")
+      .run(`link-${id}`, MAPPING, id, DELETED_FINGERPRINT);
+  }
+
+  const late = await harness.sync({ mode: "pruneDeleted", deadline: BASE_NOW.getTime() });
+  assert.deepEqual(late, { status: "synced", localChanged: false, partial: true });
+  assert.deepEqual(harness.remote.calls, [], "시간 상한 뒤에는 원격 조회도 시작하지 않는다");
+  assert.equal(links(harness).length, 2, "표시를 남긴다");
+
+  const next = await harness.sync({ mode: "pruneDeleted" });
+  assert.deepEqual(next, { status: "synced", localChanged: false, partial: false });
+  assert.equal(links(harness).length, 0);
+});
+
 test("412 충돌에서 로컬이 바뀌었으면 remoteId로 현재 etag를 다시 읽고 로컬 내용으로 덮는다(웹 우선)", async (context) => {
   const harness = setup(context);
   insertEvent(harness, "event-1", { title: "연습", start: at("2026-11-05T11:00:00Z"), end: at("2026-11-05T12:00:00Z") });

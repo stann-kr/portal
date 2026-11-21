@@ -515,9 +515,13 @@ async function loadLink(state: RunState, linkId: string): Promise<LinkRow | null
   return row ?? null;
 }
 
+function assertBeforeDeadline(state: RunState): void {
+  if (state.deadline !== undefined && state.now().getTime() >= state.deadline) throw new DeadlineReached();
+}
+
 function assertCanWrite(state: RunState): void {
   if (state.remoteWrites >= CALENDAR_SYNC_MAX_REMOTE_WRITES) throw new DeadlineReached();
-  if (state.deadline !== undefined && state.now().getTime() >= state.deadline) throw new DeadlineReached();
+  assertBeforeDeadline(state);
 }
 
 /**
@@ -1095,6 +1099,9 @@ async function removeRemote(state: RunState, link: LinkRow): Promise<void> {
     }
   };
   if (!link.remoteId) {
+    // 원격 id가 없으면 원격을 먼저 찾는다. 이 조회는 `remoteCall`을 거치지 않고, 찾지 못하면 쓰기 없이 다음 link로
+    // 넘어간다. 이런 link가 많아도 시간 상한을 넘겨 조회를 잇지 않도록 여기서 확인한다.
+    assertBeforeDeadline(state);
     await removeFound(await findLive(state, portalRefFor(link.localKind, link.localId)));
   } else {
     const remoteId = link.remoteId;

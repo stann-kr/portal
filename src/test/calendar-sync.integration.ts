@@ -343,16 +343,21 @@ test("지운 항목만 정리하는 동기화는 지운 레슨이 100개를 넘�
   }
   assert.equal(remote.events.size, links.length);
 
-  const { syncCalendarMapping } = await import("@/lib/calendar-sync/mapping-sync");
+  const { listArchivedMappingIdsWithDeletedLinks, syncCalendarMapping } = await import("@/lib/calendar-sync/mapping-sync");
   const { CALENDAR_SYNC_MAX_REMOTE_WRITES } = await import("@/lib/calendar-sync/engine");
   // 한 실행이 지우는 원격 사본 수에는 상한이 있다. 남은 몫은 다음 실행이 이어서 지운다.
   const first = await syncCalendarMapping({ kind: "d1", db }, mappingId, { mode: "pruneDeleted" });
   assert.equal(first.status, "synced", JSON.stringify(first));
   assert.equal(remote.events.size, links.length - CALENDAR_SYNC_MAX_REMOTE_WRITES);
+  // 예약 동기화가 이어서 지울 대상은 수강 종료한 학생의 매핑 가운데 표시가 남은 것이다.
+  assert.deepEqual(await listArchivedMappingIdsWithDeletedLinks({ kind: "d1", db }), [], "수강 중인 학생의 매핑은 대상이 아니다");
+  await db.update(profiles).set({ accountStatus: "ARCHIVED" }).where(eq(profiles.id, "student-1"));
+  assert.deepEqual(await listArchivedMappingIdsWithDeletedLinks({ kind: "d1", db }), [mappingId]);
   const second = await syncCalendarMapping({ kind: "d1", db }, mappingId, { mode: "pruneDeleted" });
   assert.equal(second.status, "synced", JSON.stringify(second));
   assert.equal(remote.events.size, 0, "지운 레슨의 원격 사본이 남지 않는다");
   assert.equal((await db.select().from(calendarSyncLinks).where(eq(calendarSyncLinks.mappingId, mappingId))).length, 0);
+  assert.deepEqual(await listArchivedMappingIdsWithDeletedLinks({ kind: "d1", db }), [], "표시가 없어지면 대상에서 빠진다");
 });
 
 test("매핑이 없는 학생의 쓰기 action은 원격 client를 만들지 않는다", { concurrency: false }, async (context) => {

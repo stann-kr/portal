@@ -26,9 +26,15 @@ export type ScheduledCalendarSyncSummary = {
   /** 시간 상한 때문에 이번 실행에서 시작하지 못한 매핑 수. */
   deferred: number;
   localChanged: number;
-  /** 수강 종료한 학생의 매핑 가운데 지운 항목의 원격 사본 정리를 끝낸 수(`total`과 동기화 개수에 넣지 않는다). */
+  /**
+   * 수강 종료한 학생의 매핑 가운데 지운 항목의 원격 사본 정리를 이번에 끝낸 수(`total`과 동기화 개수에 넣지 않는다).
+   * 엔진 결과가 아니라 실행 뒤 표시(DELETED link)가 남았는지로 센다.
+   */
   pruned: number;
-  /** 정리를 이번에 끝내지 못한 매핑 수(상한·원격 실패·lease). 표시(DELETED link)가 남아 다음 실행이 다시 돈다. */
+  /**
+   * 실행 뒤에도 표시가 남은 매핑 수. 다음 실행이 다시 돈다. 상한·원격 실패·lease로 끝내지 못한 것, 시간 상한으로
+   * 시작하지 못한 것, 로컬 행이 남아 지우지 않는 표시가 모두 든다. 여러 실행에 걸쳐 줄지 않으면 막힌 매핑이 있다.
+   */
   prunePending: number;
   channels: EnsureChannelsSummary;
   /** 매핑 목록 조회(동기화 대상 또는 정리 대상) 자체가 실패했다. */
@@ -91,11 +97,20 @@ export async function runScheduledCalendarSync(input: {
   for (const mappingId of pruneIds) {
     if (clock().getTime() >= syncDeadline) break;
     try {
-      const result = await syncCalendarMapping(ctx, mappingId, { mode: "pruneDeleted", deadline: syncDeadline, ...(now ? { now } : {}) });
-      if (result.status === "synced" && !result.partial) summary.pruned += 1;
-      else summary.prunePending += 1;
+      await syncCalendarMapping(ctx, mappingId, { mode: "pruneDeleted", deadline: syncDeadline, ...(now ? { now } : {}) });
     } catch {
-      summary.prunePending += 1;
+      // 한 매핑의 실패는 나머지를 막지 않는다. 끝내지 못한 매핑은 아래에서 남은 표시로 센다.
+    }
+  }
+  if (pruneIds.length > 0) {
+    // 엔진은 지울 것이 없어도, 로컬 행이 남아 건너뛰어도 "동기화함"으로 답한다. 표시가 남았는지를 다시 읽어 센다.
+    try {
+      const remaining = new Set(await listArchivedMappingIdsWithDeletedLinks(ctx));
+      summary.prunePending = pruneIds.filter((id) => remaining.has(id)).length;
+      summary.pruned = pruneIds.length - summary.prunePending;
+    } catch {
+      summary.listFailed = true;
+      summary.prunePending = pruneIds.length;
     }
   }
 
