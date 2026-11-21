@@ -73,7 +73,8 @@ export async function schedulePushStudentCalendarChanges(studentId: string): Pro
 
 /**
  * 수강 종료와 함께 지운 예정 레슨의 원격 사본을 응답 뒤 지운다(캔버스 UxReview1120Policies ⑨). 수강 종료한 학생의
- * 개인 캘린더는 동기화를 멈추므로 지운 레슨(DELETED link)만 정리하는 모드로 돈다. 그룹 캘린더는 수강 종료 뒤
+ * 개인 캘린더는 동기화를 멈추므로 지운 레슨(DELETED link)만 정리하는 모드로 돈다. 시간·건수 상한 때문에 남은 몫은
+ * 예약 동기화가 같은 모드로 이어서 지운다. 그룹 캘린더는 수강 종료 뒤
  * 그룹 push(schedulePushStudentsCalendarChanges)가 남은 멤버 기준으로 맞춘다.
  */
 export async function schedulePruneDeletedStudentCalendarCopies(studentId: string): Promise<void> {
@@ -92,7 +93,7 @@ export async function schedulePruneDeletedStudentCalendarCopies(studentId: strin
         await syncCalendarMapping(ctx, row.id, { mode: "pruneDeleted", deadline }).catch(() => undefined);
       }
     } catch {
-      // 남은 DELETED link는 복원 뒤 첫 동기화가 지운다.
+      // 남은 DELETED link는 예약 동기화가 이어서 지운다(scheduled-sync).
     }
   });
 }
