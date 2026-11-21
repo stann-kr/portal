@@ -316,6 +316,16 @@ test("멤버를 바꾸면 새 멤버는 아직 시작하지 않은 그룹 일정
     ["student-c", "합주", "ge-future"],
   ]);
 
+  const unifiedActions = await import("@/lib/actions/unifiedItems");
+  // 관리자 캘린더가 읽는 항목에는 사본 표시만 실린다. 떼어진 B 일정은 사본이 아니다(옮기기 전 확인, 2026-11-21).
+  const window = { start: new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10), end: new Date(Date.now() + 7 * 86_400_000).toISOString().slice(0, 10) };
+  const copyFlag = async (studentId: string) => (await unifiedActions.getUnifiedItemsForStudent(studentId, window))
+    .filter((item) => item.source.entity === "CALENDAR_EVENT" && item.title === "합주")
+    .map((item) => item.metadata.groupCopy ?? null);
+  assert.deepEqual(await copyFlag("student-a"), [true]);
+  assert.deepEqual(await copyFlag("student-b"), [null]);
+  assert.ok(!JSON.stringify(await unifiedActions.getUnifiedItemsForStudent("student-a", window)).includes("ge-future"), "그룹 원본 id는 화면에 보내지 않는다");
+
   // 다시 저장해도 사본을 또 만들지 않는다.
   assert.equal((await actions.saveLessonGroupAction({ groupId, name: "화요일반", memberIds: ["student-a", "student-c"] })).ok, true);
   assert.equal((await db.select().from(calendarEvents)).length, 4);

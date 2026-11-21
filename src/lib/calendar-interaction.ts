@@ -39,6 +39,17 @@ export function getCalendarItemEditing(
   }
 }
 
+/**
+ * 관리자가 학생 일정에서 그룹 캘린더 일정의 사본을 옮기면 그 학생 사본만 그룹 원본에서 떼어진다.
+ * 그래서 관리자가 옮길 때만 저장 전에 묻는다(2026-11-21 사용자 결정). 학생 본인은 지금처럼 묻지 않는다.
+ */
+export function needsGroupCopyMoveConfirm(item: UnifiedItem, context: CalendarEditContext): boolean {
+  return context.role === "admin"
+    && item.source.kind === "PORTAL"
+    && item.source.entity === "CALENDAR_EVENT"
+    && item.metadata.groupCopy === true;
+}
+
 /** 끌 수 없는 항목을 끌려고 할 때 보여 줄 이유. 옮길 수 있으면 null. */
 export function getCalendarItemLockReason(item: UnifiedItem, context: CalendarEditContext): string | null {
   if (getCalendarItemEditing(item, context).movable) return null;
@@ -132,12 +143,17 @@ export function buildCalendarMoveRequest(
 /** 저장 전에 화면에 먼저 보여 줄 항목. 실패하면 원래 항목으로 되돌린다. */
 export function applyCalendarMoveToItem(item: UnifiedItem, request: CalendarMoveRequest): UnifiedItem {
   switch (request.kind) {
-    case "event":
+    case "event": {
+      // 시간을 바꾼 그룹 캘린더 사본은 서버가 그룹 원본에서 떼므로 화면 항목에서도 사본 표시를 뺀다.
+      const metadata = { ...item.metadata };
+      delete metadata.groupCopy;
       return {
         ...item,
+        metadata,
         date: new Date(request.startTime),
         endDate: request.endTime ? new Date(request.endTime) : null,
       };
+    }
     case "lesson":
       return { ...item, date: new Date(request.scheduledAt) };
     case "note": {

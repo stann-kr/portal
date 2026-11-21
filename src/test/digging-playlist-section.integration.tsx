@@ -35,6 +35,31 @@ mock.module("@/lib/actions/digging-playlists", {
     },
   },
 });
+type ImportItem = { title: string; artist: string; linkUrl: string | null };
+let importCalls: ImportItem[][] = [];
+let soundReads: string[] = [];
+let soundsImpl: (url: string) => Promise<unknown[]> = async () => [];
+mock.module("@/lib/actions/digging", {
+  namedExports: {
+    importDiggingTracks: async (items: ImportItem[]) => {
+      importCalls.push(items);
+      return {
+        ok: true,
+        created: items.map((item, index) => ({ id: `new-${index}`, createdAt: new Date(), linkUrl: item.linkUrl, values: { title: item.title } })),
+        skipped: 0,
+      };
+    },
+  },
+});
+// 외부 SoundCloud 위젯 대신 정해 둔 곡 정보를 돌려준다.
+mock.module("@/components/digging/soundcloud-playlist-sounds", {
+  namedExports: {
+    readSoundCloudPlaylistSounds: async (url: string) => {
+      soundReads.push(url);
+      return soundsImpl(url);
+    },
+  },
+});
 // 외부 SoundCloud 위젯 대신 받은 props만 보이는 자리표시자.
 mock.module("@/components/player/SoundCloudPlayer", {
   namedExports: {
@@ -99,6 +124,8 @@ async function render(context: TestContext, element: React.ReactElement) {
   updateCalls = [];
   deleteCalls = [];
   targetCalls = [];
+  importCalls = [];
+  soundReads = [];
   const container = browser.document.createElement("div");
   browser.document.body.append(container);
   const root = createRoot(container as unknown as Element);
@@ -169,6 +196,11 @@ test("관리자 보기도 추가·수정·삭제를 보이고 Beatport 새 탭 �
   assert.ok(findButton("플레이리스트 추가"));
   assert.ok(findButton("‘Warmup’ 수정"));
   assert.ok(findButton("‘Beatport 플레이리스트’ 삭제"));
+  assert.equal(
+    [...container.querySelectorAll("button")].some((element) => element.textContent?.startsWith("트랙 가져오기")),
+    false,
+    "트랙 보드는 학생 본인만 바꾸므로 관리자 보기에는 가져오기가 없다",
+  );
 
   const beatport = container.querySelector('a[href="https://www.beatport.com/playlists/share/11018932"]');
   assert.ok(beatport);
@@ -324,4 +356,111 @@ test("바뀐 내용이 있는 폼은 Esc·취소에 버림 확인을 거치고, 
   await press("저장하지 않고 닫기");
   assert.equal(container.querySelector('form[aria-label="‘Warmup’ 수정"]'), null);
   assert.equal(updateCalls.length, 0);
+});
+
+type Container = Awaited<ReturnType<typeof render>>;
+
+function importToggle(container: Container, playlistName: string) {
+  const row = [...container.querySelectorAll("li")].find((element) => element.textContent?.includes(playlistName));
+  const toggle = row && [...row.querySelectorAll("button")].find((element) => element.textContent?.startsWith("트랙 가져오기"));
+  assert.ok(toggle, `트랙 가져오기: ${playlistName}`);
+  return toggle;
+}
+
+function importRows(container: Container) {
+  return [...container.querySelectorAll('[data-import-list] input[type="checkbox"]')].map((input) => {
+    const box = input as unknown as HTMLInputElement;
+    return { text: box.closest("label")?.textContent ?? "", checked: box.checked, disabled: box.disabled };
+  });
+}
+
+const BOARD_COLUMNS = [
+  { id: "c-title", name: "트랙명", columnType: "text" as const },
+  { id: "c-artist", name: "아티스트", columnType: "text" as const },
+  { id: "c-link", name: "링크", columnType: "link" as const },
+];
+
+test("학생은 SoundCloud 앞 곡을 읽어 고르고, 보드에 있는 곡은 고를 수 없으며, 붙여 넣은 곡과 함께 보드에 넣는다", { concurrency: false }, async (context) => {
+  soundsImpl = async () => [
+    { title: "Lane 8 - Midnight Drive", permalink_url: "https://soundcloud.com/lane8/midnight-drive", user: { username: "Label" } },
+    { title: "Overtime", permalink_url: "https://soundcloud.com/kerri/overtime", user: { username: "Kerri Chandler" } },
+    { title: "Sun Tunnels", permalink_url: "https://soundcloud.com/lord/sun", user: { username: "Lord of the Isles" } },
+    ...Array.from({ length: 26 }, (_, index) => ({ id: index, kind: "track" })),
+  ];
+  const imported: unknown[][] = [];
+  const container = await render(context, (
+    <PlaylistSection
+      studentId="student-1"
+      initialPlaylists={playlists()}
+      trackImport={{
+        columns: BOARD_COLUMNS,
+        tracks: [{ linkUrl: "https://soundcloud.com/kerri/overtime", values: {} }],
+        onImported: (created) => imported.push(created),
+      }}
+    />
+  ));
+  const toggle = importToggle(container, "Warmup");
+  assert.equal(toggle.getAttribute("aria-expanded"), "false");
+  await act(async () => { toggle.click(); });
+  await settle();
+  assert.equal(toggle.getAttribute("aria-expanded"), "true");
+  assert.deepEqual(soundReads, ["https://soundcloud.com/stann/sets/warmup"]);
+  assert.match(container.textContent ?? "", /29곡 중 앞 3곡을 불러왔습니다\. 나머지 26곡은 아래에 목록을 붙여 넣어 더할 수 있습니다\./u);
+  assert.deepEqual(importRows(container), [
+    { text: "Midnight Drive · Lane 8", checked: true, disabled: false },
+    { text: "Overtime · Kerri Chandler보드에 있음", checked: false, disabled: true },
+    { text: "Sun Tunnels · Lord of the Isles", checked: true, disabled: false },
+  ]);
+
+  await fill("나머지 곡 목록 붙여넣기(선택)", "Moderat - Cold Water\nLane 8 - Midnight Drive\n");
+  assert.deepEqual(importRows(container).map((row) => row.text), [
+    "Midnight Drive · Lane 8",
+    "Overtime · Kerri Chandler보드에 있음",
+    "Sun Tunnels · Lord of the Isles",
+    "Cold Water · Moderat",
+  ], "위 목록과 같은 트랙명·아티스트인 붙여 넣은 줄은 한 번만 보인다");
+
+  const sun = [...container.querySelectorAll('[data-import-list] label')].find((label) => label.textContent?.startsWith("Sun Tunnels"));
+  await act(async () => { (sun?.querySelector("input") as unknown as HTMLInputElement).click(); });
+  await settle();
+  await press("고른 2곡 디깅 보드에 추가");
+  assert.deepEqual(importCalls, [[
+    { title: "Midnight Drive", artist: "Lane 8", linkUrl: "https://soundcloud.com/lane8/midnight-drive" },
+    { title: "Cold Water", artist: "Moderat", linkUrl: null },
+  ]]);
+  assert.equal(imported.length, 1);
+  assert.equal(imported[0].length, 2);
+  assert.match(container.querySelector('[role="status"]')?.textContent ?? "", /2곡을 디깅 보드에 넣었습니다/u);
+
+  await press("닫기");
+  assert.equal(toggle.getAttribute("aria-expanded"), "false");
+  assert.equal(container.querySelector("[data-import-list]"), null);
+  assert.equal(browser.document.activeElement, toggle);
+});
+
+test("SoundCloud를 읽지 못하면 붙여넣기로 안내하고, Beatport는 처음부터 붙여넣기만 받는다", { concurrency: false }, async (context) => {
+  soundsImpl = async () => { throw new Error("blocked"); };
+  const container = await render(context, (
+    <PlaylistSection studentId="student-1" initialPlaylists={playlists()} trackImport={{ columns: BOARD_COLUMNS, tracks: [], onImported: () => undefined }} />
+  ));
+  await act(async () => { importToggle(container, "Warmup").click(); });
+  await settle();
+  assert.match(container.textContent ?? "", /SoundCloud에서 곡 목록을 읽지 못했습니다/u);
+  await press("닫기");
+
+  await act(async () => { importToggle(container, "Beatport 플레이리스트").click(); });
+  await settle();
+  assert.equal(soundReads.length, 1, "Beatport는 외부에서 읽지 않는다");
+  assert.match(container.textContent ?? "", /Beatport 곡 목록은 자동으로 읽을 수 없습니다/u);
+  const add = findButton("고른 0곡 디깅 보드에 추가");
+  assert.ok(add?.disabled, "고른 곡이 없으면 추가를 막는다");
+  await fill("곡 목록 붙여넣기", "Rival Consoles - Glass Floor\nModerat - Cold Water\nFloorplan - Never Grow Old");
+  assert.deepEqual(importRows(container).map((row) => row.text), [
+    "Glass Floor · Rival Consoles",
+    "Cold Water · Moderat",
+    "Never Grow Old · Floorplan",
+  ]);
+  assert.match(container.textContent ?? "", /붙여 넣은 곡에는 링크가 없습니다\. 보드에서 링크 칸으로 더할 수 있습니다\./u);
+  await press("고른 3곡 디깅 보드에 추가");
+  assert.equal(importCalls[0].length, 3);
 });

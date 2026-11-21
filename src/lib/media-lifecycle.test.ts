@@ -24,6 +24,7 @@ import {
   isManagedMediaObjectKey,
   isManagedUploadMediaObjectKey,
   isTrustedLegacyMediaUrl,
+  mediaAttachmentFormatLabel,
   mediaUploadRequestHeaders,
   mediaDeletionBackoffSeconds,
   parseMediaUuidV4,
@@ -406,4 +407,19 @@ test("파형 JSON key는 오디오를 받을 수 있는 매체 final 옆에만 �
   assert.equal(isManagedAudioPeaksObjectKey(`${audio}.peaks.json.peaks.json`), false);
   assert.equal(isManagedAudioPeaksObjectKey(audio), false);
   assert.equal(isManagedMediaObjectKey(`${audio}.peaks.json`), false, "업로드·발급 경계의 key 검사는 넓히지 않는다");
+});
+
+test("첨부 형식 이름은 Q&A에 올릴 수 있는 MIME마다 짧은 이름을 주고, 모르는 MIME은 이름을 만들지 않는다", () => {
+  const cases: Array<[string, string]> = [
+    ["audio/mpeg", "MP3"], ["audio/wav", "WAV"], ["audio/flac", "FLAC"], ["audio/aiff", "AIFF"],
+    ["audio/mp4", "M4A"], ["audio/ogg", "OGG"], ["video/mp4", "MP4"], ["video/webm", "WebM"],
+    ["image/png", "PNG"], ["image/jpeg", "JPG"], ["image/gif", "GIF"], ["image/webp", "WebP"],
+  ];
+  for (const [mime, label] of cases) assert.equal(mediaAttachmentFormatLabel(mime), label, mime);
+  // 저장 MIME에 붙은 매개변수와 대소문자, 브라우저 별칭도 같은 이름이다.
+  assert.equal(mediaAttachmentFormatLabel("Audio/MPEG; charset=binary"), "MP3");
+  assert.equal(mediaAttachmentFormatLabel("audio/x-wav"), "WAV");
+  for (const unknown of ["application/pdf", "application/octet-stream", "", null, undefined]) {
+    assert.equal(mediaAttachmentFormatLabel(unknown), null, String(unknown));
+  }
 });

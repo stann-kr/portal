@@ -499,6 +499,11 @@ test("Q&A 스레드 읽기는 첨부가 100개를 넘어도 D1 bind 상한에 �
     thread.replies.map((reply) => reply.attachmentKind),
     Array.from({ length: total }, (_, index) => (index % 2 === 0 ? "image" : "audio")),
   );
+  // 이름을 저장하지 않는 첨부는 MIME 대신 짧은 형식 이름만 받는다(칩 글자 "첨부 파일 · MP3").
+  assert.deepEqual(
+    thread.replies.map((reply) => reply.attachmentFormat),
+    Array.from({ length: total }, (_, index) => (index % 2 === 0 ? "PNG" : "MP3")),
+  );
 });
 
 test("관리자 답변과 ANSWERED 상태를 한 번에 반영한다", { concurrency: false }, async (context) => {

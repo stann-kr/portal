@@ -1,11 +1,12 @@
 /**
- * Q&A 답글 첨부의 표시 종류(이미지인지)를 media MIME에서 계산한다. 스레드 화면과 수강 종료한 학생의
+ * Q&A 답글 첨부의 표시 종류(이미지인지)와 칩 형식 이름(MP3 등)을 media MIME에서 계산한다. 스레드 화면과 수강 종료한 학생의
  * 보기 전용 상세가 함께 쓴다. 호출자가 스레드 읽기 권한을 이미 확인해야 한다.
  */
 import { and, eq, inArray } from "drizzle-orm";
 import { createDb } from "@/db/client";
 import { mediaObjects } from "@/db/schema";
 import {
+  mediaAttachmentFormatLabel,
   mediaAttachmentKind,
   parseMediaDeliveryPath,
   parseMediaUuidV4,
@@ -17,11 +18,11 @@ const QNA_ATTACHMENT_LOOKUP_CHUNK = 90;
 
 /**
  * 답글 첨부의 표시 종류를 media MIME에서 계산한다. 스레드 읽기 권한은 호출자가 이미 확인했고,
- * 그 스레드 답글이 가리키는 Q&A 첨부 media만 조회하며 MIME 자체는 노출하지 않는다(종류만).
+ * 그 스레드 답글이 가리키는 Q&A 첨부 media만 조회하며 MIME 자체는 노출하지 않는다(종류와 짧은 형식 이름만).
  */
 export async function withQnaAttachmentKinds<
   T extends { attachmentUrl: string | null; attachmentObjectId: string | null },
->(replies: T[]): Promise<Array<T & { attachmentKind: MediaAttachmentKind | null }>> {
+>(replies: T[]): Promise<Array<T & { attachmentKind: MediaAttachmentKind | null; attachmentFormat: string | null }>> {
   const mediaIdFor = (reply: T) =>
     reply.attachmentUrl
       ? (parseMediaUuidV4(reply.attachmentObjectId) ?? parseMediaDeliveryPath(reply.attachmentUrl))
@@ -48,9 +49,11 @@ export async function withQnaAttachmentKinds<
   }
   return replies.map((reply) => {
     const mediaId = mediaIdFor(reply);
+    const mime = mediaId ? mimeById.get(mediaId) : undefined;
     return {
       ...reply,
-      attachmentKind: mediaId ? mediaAttachmentKind(mimeById.get(mediaId)) : null,
+      attachmentKind: mediaId ? mediaAttachmentKind(mime) : null,
+      attachmentFormat: mediaId ? mediaAttachmentFormatLabel(mime) : null,
     };
   });
 }

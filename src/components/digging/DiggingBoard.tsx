@@ -7,7 +7,7 @@
  */
 "use client";
 
-import { Fragment, useState, useMemo, useCallback, useEffect, useId, useRef, useTransition, type ReactNode } from "react";
+import { Fragment, useState, useMemo, useCallback, useEffect, useId, useRef, useTransition, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { useRouter } from "next/navigation";
 import { CalendarRange, ExternalLink, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { filterTracksByQuery, formatTrackSearchCount } from "./digging-track-search";
@@ -39,6 +39,8 @@ type Column = {
   sortOrder: number;
 };
 
+export type DiggingBoardTrack = Track;
+
 type Track = {
   id: string;
   linkUrl: string | null | undefined;
@@ -56,6 +58,11 @@ interface DiggingBoardProps {
   mobileTopBar?: boolean;
   /** 다른 화면(캘린더·홈 등)에서 열었을 때 위쪽 막대 왼쪽의 뒤로. 없으면 메뉴를 둔다. */
   mobileBack?: { href: string; label: string };
+  /**
+   * 트랙 목록을 부모가 들고 있을 때(학생 디깅 화면: 플레이리스트 트랙 가져오기가 같은 목록을 본다).
+   * 없으면 `initialTracks`로 보드가 직접 든다.
+   */
+  tracksState?: readonly [Track[], Dispatch<SetStateAction<Track[]>>];
 }
 
 type CellVariant = "table" | "card";
@@ -389,16 +396,18 @@ export function DiggingBoard({
   heading,
   mobileTopBar = false,
   mobileBack,
+  tracksState,
 }: DiggingBoardProps) {
   // 컬럼은 서버가 소유하고 변경 뒤 router.refresh로 다시 받는다. 트랙은 편집 중 상태를 유지한다.
   const columns = initialColumns;
   const router = useRouter();
-  const [tracks, setTracks] = useState<Track[]>(initialTracks);
+  const ownTracksState = useState<Track[]>(initialTracks);
+  const [tracks, setTracks] = tracksState ?? ownTracksState;
   const handleCellSaved = useCallback((trackId: string, columnId: string, value: unknown) => {
     setTracks((previous) => previous.map((track) => (
       track.id === trackId ? { ...track, values: { ...track.values, [columnId]: value } } : track
     )));
-  }, []);
+  }, [setTracks]);
   const [addOpen, setAddOpen] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
   const [dateFrom, setDateFrom] = useState("");
@@ -506,13 +515,13 @@ export function DiggingBoard({
         setMutationError("트랙을 삭제하지 못했습니다. 다시 시도해 주세요.");
       }
     });
-  }, []);
+  }, [setTracks]);
 
   const handleTrackCreated = useCallback(
     (newTrack: Track) => {
       setTracks((prev) => [newTrack, ...prev]);
     },
-    [],
+    [setTracks],
   );
 
   // ColumnManager 성공 시 서버에서 최신 컬럼 목록 재조회

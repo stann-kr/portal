@@ -36,3 +36,22 @@ test("Q&A 이미지 첨부는 160×120 미리보기 버튼, 그 밖의 첨부는
     assert.doesNotMatch(chip, /첨부 이미지 크게 보기/u);
   }
 });
+
+test("Q&A 이미지가 아닌 첨부 칩은 저장 주소 조각 대신 '첨부 파일 · 형식'을 보인다", () => {
+  const chip = (attachmentFormat: string | null) => renderToStaticMarkup(createElement(ReplyCard, {
+    reply: {
+      ...reply("Stann", "admin"),
+      attachmentUrl: "/api/media/85381604-4e32-4cd2-8e6e-d6be2413e80f",
+      attachmentKind: "audio",
+      attachmentFormat,
+    },
+  }));
+  const mp3 = chip("MP3");
+  assert.match(mp3, />첨부 파일 · MP3</u);
+  assert.match(mp3, /<span class="sr-only">\(새 창에서 열기\)<\/span>/u);
+  assert.doesNotMatch(mp3, />85381604/u, "media id는 칩 글자로 보이지 않는다");
+  const unknown = chip(null);
+  assert.match(unknown, />첨부 파일</u);
+  assert.doesNotMatch(unknown, /첨부 파일 ·/u);
+  assert.doesNotMatch(unknown, />85381604/u);
+});

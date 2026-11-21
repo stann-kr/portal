@@ -20,6 +20,7 @@ let CreateEntryDropdown: typeof import("@/components/student-portal/CreateEntryD
 let AdminPortalClient: typeof import("@/components/admin-portal/AdminPortalClient").AdminPortalClient;
 let StudentPortalClient: typeof import("@/components/student-portal/StudentPortalClient").StudentPortalClient;
 let EventFormDialog: typeof import("@/components/calendar/EventFormDialog").EventFormDialog;
+let GroupCopyMoveDialog: typeof import("@/components/calendar/GroupCopyMoveDialog").GroupCopyMoveDialog;
 let AddTrackDialog: typeof import("@/components/digging/AddTrackDialog").AddTrackDialog;
 let LegacyDraftArchive: typeof import("@/components/drafts/LegacyDraftArchive").LegacyDraftArchive;
 let CurriculumView: typeof import("@/components/student-portal/CurriculumView").CurriculumView;
@@ -334,6 +335,7 @@ before(async () => {
   ({ navigateWithinPage } = await import("@/components/app-shell/navigation"));
   ({ SlidePanel, SlidePanelDock } = await import("@/components/student-portal/SlidePanel"));
   ({ EventFormDialog } = await import("@/components/calendar/EventFormDialog"));
+  ({ GroupCopyMoveDialog } = await import("@/components/calendar/GroupCopyMoveDialog"));
   ({ CalendarEventActions } = await import("@/components/calendar/CalendarEventActions"));
   ({ LessonActions } = await import("@/components/calendar/LessonActions"));
   ({ AddTrackDialog } = await import("@/components/digging/AddTrackDialog"));
@@ -5755,4 +5757,41 @@ test("받은 과제 제출 수정도 다른 기기에서 제출한 뒤 남은 �
   assert.equal(textarea.value, "다른 기기에서 낸 글");
   assert.match(browser.document.body.textContent ?? "", /다른 기기에서 고친 내용이 있습니다\. 이 기기에 남아 있던 이전 작성 내용은 지웠습니다\./u);
   assert.equal(browser.localStorage.getItem(key), null);
+});
+
+test("관리자가 그룹 사본을 옮기기 전 확인 창은 취소·Esc면 제자리로, 확인이면 한 번만 옮긴다", { concurrency: false }, async (context) => {
+  const calls: string[] = [];
+  function Harness() {
+    const [open, setOpen] = useState(true);
+    return (
+      <>
+        <button type="button" onClick={() => setOpen(true)}>다시 끌기</button>
+        <GroupCopyMoveDialog
+          studentName="김학생"
+          open={open}
+          onCancel={() => { calls.push("cancel"); setOpen(false); }}
+          onConfirm={() => { calls.push("confirm"); setOpen(false); }}
+        />
+      </>
+    );
+  }
+  await render(context, <Harness />);
+  const dialog = () => browser.document.querySelector('[role="dialog"]');
+  assert.ok(dialog(), "끌어 놓으면 저장 전에 확인 창이 열린다");
+  assert.match(dialog()!.textContent ?? "", /이 학생 일정만 옮길까요\?/u);
+  assert.match(dialog()!.textContent ?? "", /김학생 일정만 그룹 일정에서 떼어지고, 다른 멤버 일정과 그룹 원본은 그대로입니다/u);
+  assert.equal(browser.document.activeElement?.textContent, "취소", "취소에 먼저 초점이 간다");
+
+  await press("취소");
+  assert.deepEqual(calls, ["cancel"]);
+  assert.equal(dialog(), null);
+
+  await press("다시 끌기");
+  await escape();
+  assert.deepEqual(calls, ["cancel", "cancel"], "Esc도 취소(제자리)다");
+
+  await press("다시 끌기");
+  await press("이 학생 일정만 옮기기");
+  assert.deepEqual(calls, ["cancel", "cancel", "confirm"], "확인은 취소를 함께 부르지 않는다");
+  assert.equal(dialog(), null);
 });

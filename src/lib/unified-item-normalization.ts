@@ -27,6 +27,8 @@ type CalendarEventRow = {
   startTime: Date;
   endTime: Date | null;
   description: string | null;
+  /** 그룹 캘린더 일정의 멤버 사본이면 원본 id. 생성·수정 응답에는 없다(그때는 사본이 아니거나 이미 떼어졌다). */
+  groupEventId?: string | null;
 };
 
 type LessonRow = {
@@ -187,7 +189,12 @@ export function createCalendarEventUnifiedItem(
     description: event.description ?? undefined,
     date: new Date(event.startTime),
     endDate: event.endTime ? new Date(event.endTime) : null,
-    metadata: { eventType: event.eventType, description: event.description },
+    // 그룹 캘린더 사본이면 원본 id 대신 표시만 싣는다. 관리자가 옮기기 전에 묻는 데 쓴다(2026-11-21 사용자 결정).
+    metadata: {
+      eventType: event.eventType,
+      description: event.description,
+      ...(event.groupEventId ? { groupCopy: true } : {}),
+    },
     space: createSpace(profile),
     source: createSource("CALENDAR_EVENT"),
   };

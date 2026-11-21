@@ -13,11 +13,20 @@ import { requireAuth, requireStudentOwnerOrAdmin } from "@/lib/auth-guard";
 import { executeDocumentStatementsAtomically } from "@/lib/document-lifecycle-atomic";
 import {
   DIGGING_COLUMNS_MAX_COUNT,
+  DIGGING_TEXT_MAX_LENGTH,
   DIGGING_TRACK_VALUES_MAX_BYTES,
   parseDiggingColumnInput,
   parseDiggingColumnValue,
   parseDiggingTrackInput,
 } from "@/lib/digging-contract";
+import {
+  DIGGING_IMPORT_MAX_TRACKS,
+  diggingBoardImportKeys,
+  diggingImportKey,
+  findDiggingImportColumns,
+  normalizeDiggingImportLink,
+  type DiggingImportCandidate,
+} from "@/lib/digging-import";
 import {
   fetchDiggingLinkMetadata,
   type DiggingLinkMetadata,
@@ -208,6 +217,110 @@ export async function createDiggingTrack(data: {
     linkUrl: parsed.value.linkUrl,
     values: parsed.value.values,
   };
+}
+
+/** D1은 문장 하나에 bind 값을 100개까지 받는다. 행마다 4개(id·user_id·link_url·values)를 쓴다. */
+const IMPORT_ROWS_PER_STATEMENT = 25;
+
+export type ImportDiggingTracksResult =
+  | {
+      ok: true;
+      created: { id: string; createdAt: Date; linkUrl: string | null; values: Record<string, unknown> }[];
+      /** 보드에 이미 있거나 같은 목록 안에서 겹쳐 건너뛴 곡 수. */
+      skipped: number;
+    }
+  | { ok: false; error: string };
+
+/**
+ * 플레이리스트에서 고른 곡을 학생 본인 보드에 한 번에 넣는다(2026-11-21 사용자 결정, 트랙 보드는 학생 본인만).
+ * 트랙명·아티스트·링크 칸에만 값을 넣고, 보드에 있는 곡(링크, 링크가 없으면 트랙명·아티스트)은 건너뛴다.
+ * 잘못된 링크가 하나라도 있으면 아무것도 넣지 않는다. 모든 행은 한 batch로 함께 들어가거나 함께 실패한다.
+ */
+export async function importDiggingTracks(items: DiggingImportCandidate[]): Promise<ImportDiggingTracksResult> {
+  const session = await requireAuth();
+  assertStudentSession(session.user.role);
+  const userId = session.user.id!;
+  if (!Array.isArray(items) || items.length === 0) return { ok: false, error: "가져올 곡을 골라 주세요." };
+  if (items.length > DIGGING_IMPORT_MAX_TRACKS) {
+    return { ok: false, error: `한 번에 ${DIGGING_IMPORT_MAX_TRACKS}곡까지 가져올 수 있습니다.` };
+  }
+
+  const db = createDb();
+  const columns = await db
+    .select({
+      id: diggingColumns.id,
+      userId: diggingColumns.userId,
+      name: diggingColumns.name,
+      columnType: diggingColumns.columnType,
+      options: diggingColumns.options,
+    })
+    .from(diggingColumns)
+    .where(eq(diggingColumns.userId, userId));
+  const ids = findDiggingImportColumns(columns);
+  if (!ids.titleId && !ids.artistId) {
+    return { ok: false, error: "트랙명·아티스트 칸이 없어 가져올 수 없습니다. 칸 관리에서 글자 칸을 더해 주세요." };
+  }
+
+  const existing = await db
+    .select({ linkUrl: diggingTracks.linkUrl, values: diggingTracks.values })
+    .from(diggingTracks)
+    .where(eq(diggingTracks.userId, userId));
+  const seen = diggingBoardImportKeys(
+    existing.map((row: (typeof existing)[number]) => ({
+      linkUrl: row.linkUrl,
+      values: (() => {
+        try { return JSON.parse(row.values ?? "{}") as Record<string, unknown>; }
+        catch { return {}; }
+      })(),
+    })),
+    ids,
+  );
+
+  const rows: { id: string; linkUrl: string | null; values: Record<string, unknown> }[] = [];
+  let skipped = 0;
+  for (const item of items) {
+    const title = typeof item?.title === "string" ? item.title.replace(/\s+/gu, " ").trim().slice(0, DIGGING_TEXT_MAX_LENGTH) : "";
+    const artist = typeof item?.artist === "string" ? item.artist.replace(/\s+/gu, " ").trim().slice(0, DIGGING_TEXT_MAX_LENGTH) : "";
+    const rawLink = item?.linkUrl;
+    const linkUrl = rawLink === null || rawLink === undefined || rawLink === "" ? null : normalizeDiggingImportLink(rawLink);
+    if (rawLink && !linkUrl) return { ok: false, error: "지원하는 HTTPS 음악 링크를 입력해 주세요." };
+    if (!title && !artist && !linkUrl) continue;
+
+    const values: Record<string, unknown> = {};
+    if (ids.titleId && title) values[ids.titleId] = title;
+    if (ids.artistId && artist) values[ids.artistId] = artist;
+    if (ids.linkId && linkUrl) values[ids.linkId] = linkUrl;
+    const parsed = parseDiggingTrackInput({ linkUrl: linkUrl ?? undefined, values }, columns);
+    if (!parsed.ok) return parsed;
+
+    const key = diggingImportKey({ title, artist, linkUrl });
+    if (seen.has(key)) {
+      skipped += 1;
+      continue;
+    }
+    // 링크 key와 함께 이름 key도 넣어, 뒤따르는 링크 없는 같은 곡을 건너뛴다(보드 key와 같은 규칙).
+    for (const added of diggingBoardImportKeys([{ linkUrl, values }], ids)) seen.add(added);
+    seen.add(key);
+    rows.push({ id: crypto.randomUUID(), linkUrl: parsed.value.linkUrl, values: parsed.value.values });
+  }
+  if (rows.length === 0 && skipped === 0) return { ok: false, error: "가져올 곡을 골라 주세요." };
+
+  if (rows.length > 0) {
+    const statements = [];
+    for (let start = 0; start < rows.length; start += IMPORT_ROWS_PER_STATEMENT) {
+      const chunk = rows.slice(start, start + IMPORT_ROWS_PER_STATEMENT);
+      statements.push({
+        query: `INSERT INTO digging_tracks (id, user_id, link_url, "values") VALUES ${chunk.map(() => "(?, ?, ?, ?)").join(", ")}`,
+        params: chunk.flatMap((row) => [row.id, userId, row.linkUrl, JSON.stringify(row.values)]),
+      });
+    }
+    await executeDocumentStatementsAtomically(createDbContext(), statements);
+    revalidatePath("/dashboard/student/digging");
+    revalidatePath("/dashboard/student");
+  }
+
+  const createdAt = new Date();
+  return { ok: true, created: rows.map((row) => ({ ...row, createdAt })), skipped };
 }
 
 /** 칸 저장이 다른 저장과 겹쳤을 때 다시 읽어 시도하는 횟수. */

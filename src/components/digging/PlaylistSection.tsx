@@ -4,6 +4,7 @@
  * - SoundCloud: "재생"으로 페이지 안 SoundCloud 위젯을 연다(한 번에 하나).
  * - Beatport: 외부 요청 없이 링크만 저장하고, 누르면 Beatport를 새 탭으로 연다.
  * - 학생 본인과 Stann(관리자, 학생 상세 디깅 탭): 추가·링크/제목/메모 수정·삭제(취소 우선 확인). 서버가 대상 학생을 다시 확인한다.
+ * - 학생 본인 화면은 줄마다 "트랙 가져오기"로 곡을 디깅 보드에 넣는다(`PlaylistTrackImport`, 관리자 보기에는 없다).
  * - 추가·수정 폼은 바뀐 내용이 있으면 Esc·취소에 버림 확인을 두고, 새로고침·탭 닫기는 브라우저 확인으로 막는다.
  */
 "use client";
@@ -15,6 +16,7 @@ import { ConfirmPanel, useConfirmAction, type ConfirmActionState } from "@/compo
 import { Input } from "@/components/ui/input";
 import { SectionHeader } from "@/components/ui/section-header";
 import { SoundCloudPlayer } from "@/components/player/SoundCloudPlayer";
+import { PlaylistTrackImport, type DiggingTrackImportBoard } from "@/components/digging/PlaylistTrackImport";
 import {
   createDiggingPlaylist,
   deleteDiggingPlaylist,
@@ -31,6 +33,7 @@ import {
   parseDiggingPlaylistTitle,
 } from "@/lib/digging-contract";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
+import { useUnsavedUnloadGuard } from "@/lib/hooks/useUnsavedUnloadGuard";
 import { cn } from "@/lib/utils";
 
 const PROVIDER_LABEL: Record<DiggingPlaylist["provider"], string> = {
@@ -54,14 +57,17 @@ interface PlaylistSectionProps {
   initialPlaylists: DiggingPlaylist[];
   /** 보는 사람에 따라 빈 목록 안내만 바꾼다. 편집 권한은 서버가 정한다. */
   viewer?: "student" | "admin";
+  /** 학생 본인 디깅 화면만 넘긴다. 있으면 줄마다 "트랙 가져오기"를 둔다(트랙 보드는 학생 본인만 바꾼다). */
+  trackImport?: DiggingTrackImportBoard;
 }
 
-export function PlaylistSection({ studentId, initialPlaylists, viewer = "student" }: PlaylistSectionProps) {
+export function PlaylistSection({ studentId, initialPlaylists, viewer = "student", trackImport }: PlaylistSectionProps) {
   const headingId = useId();
   const [playlists, setPlaylists] = useState<DiggingPlaylist[]>(initialPlaylists);
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [playingId, setPlayingId] = useState<string | null>(null);
+  const [importingId, setImportingId] = useState<string | null>(null);
   const [mutationError, setMutationError] = useState("");
   const [isDeleting, startDelete] = useTransition();
   const deleteConfirm = useConfirmAction<string>();
@@ -145,6 +151,21 @@ export function PlaylistSection({ studentId, initialPlaylists, viewer = "student
             const playerId = `${headingId}-player-${playlist.id}`;
             const playing = playingId === playlist.id;
             const editing = editingId === playlist.id;
+            const importing = trackImport !== undefined && importingId === playlist.id;
+            const importId = `${headingId}-import-${playlist.id}`;
+            const importToggle = trackImport ? (
+              <button
+                id={`${importId}-toggle`}
+                type="button"
+                aria-expanded={importing}
+                aria-controls={importing ? importId : undefined}
+                onClick={() => setImportingId(importing ? null : playlist.id)}
+                className={cn(TEXT_ACTION_CLASS, "aria-expanded:bg-muted aria-expanded:font-medium aria-expanded:text-foreground")}
+              >
+                트랙 가져오기
+                <span className="sr-only">: {name}</span>
+              </button>
+            ) : null;
             return (
               <li key={playlist.id} className="flex flex-col gap-3 border-b border-muted py-3">
                 {editing ? (
@@ -204,7 +225,10 @@ export function PlaylistSection({ studentId, initialPlaylists, viewer = "student
                             <ExternalLink className="size-3" strokeWidth={1.8} aria-hidden="true" />
                             <span className="sr-only">(새 탭)</span>
                           </a>
+                          {importToggle}
                         </div>
+                      ) : importToggle ? (
+                        <div className="-ml-2 flex flex-wrap items-center gap-1">{importToggle}</div>
                       ) : null}
                     </div>
                     <div className="flex shrink-0 items-center">
@@ -230,6 +254,18 @@ export function PlaylistSection({ studentId, initialPlaylists, viewer = "student
                     </div>
                   </div>
                 )}
+                {importing && !editing ? (
+                  <div id={importId}>
+                    <PlaylistTrackImport
+                      playlist={playlist}
+                      board={trackImport}
+                      onClose={() => {
+                        setImportingId(null);
+                        requestAnimationFrame(() => document.getElementById(`${importId}-toggle`)?.focus());
+                      }}
+                    />
+                  </div>
+                ) : null}
                 {deleteConfirm.value === playlist.id ? (
                   <ConfirmPanel
                     confirm={deleteConfirm}
@@ -568,17 +604,4 @@ function DiscardConfirmPanel({
       onConfirm={onConfirm}
     />
   );
-}
-
-/** 저장하지 않은 입력이 있으면 새로고침·탭 닫기·외부 이동에 브라우저 확인을 띄운다. */
-function useUnsavedUnloadGuard(dirty: boolean): void {
-  useEffect(() => {
-    if (!dirty) return;
-    const preventUnload = (event: BeforeUnloadEvent) => {
-      event.preventDefault();
-      event.returnValue = "";
-    };
-    window.addEventListener("beforeunload", preventUnload);
-    return () => window.removeEventListener("beforeunload", preventUnload);
-  }, [dirty]);
 }
