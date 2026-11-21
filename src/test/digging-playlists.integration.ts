@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { after, before, mock, test, type TestContext } from "node:test";
 import { asc, eq } from "drizzle-orm";
 import type { AuthSession } from "@/lib/auth-guard";
-import { diggingPlaylists, profiles } from "@/db/schema";
+import { diggingColumns, diggingPlaylists, diggingTracks, profiles } from "@/db/schema";
 import { createIsolatedPortalD1, type IsolatedPortalD1 } from "@/test/isolated-d1";
 
 type PortalTestDb = IsolatedPortalD1["db"];
@@ -10,6 +10,7 @@ type PortalTestDb = IsolatedPortalD1["db"];
 let activeDb: PortalTestDb | null = null;
 let activeSession = createSession("student-1", "student");
 let playlistActions: typeof import("@/lib/actions/digging-playlists");
+let diggingActions: typeof import("@/lib/actions/digging");
 let soundCloudTitleCalls: string[] = [];
 let soundCloudTitle: string | null = "Warmup Picks";
 // oEmbed 요청 도중 다른 탭이 행을 지우거나 추가하는 경합을 흉내 낸다.
@@ -58,6 +59,7 @@ before(async () => {
     throw new Error(`테스트 중 외부 요청 금지: ${String(input)}`);
   }) as typeof fetch;
   playlistActions = await import("@/lib/actions/digging-playlists");
+  diggingActions = await import("@/lib/actions/digging");
 });
 
 after(() => {
@@ -476,4 +478,71 @@ test("100개 상한은 INSERT가 다시 확인해 동시 등록에도 넘지 않
   await db.delete(diggingPlaylists).where(eq(diggingPlaylists.id, "race-100"));
   const fits = await playlistActions.createDiggingPlaylist(activeSession.user.id, { url: "https://www.beatport.com/playlists/share/5" });
   assert.ok(fits.ok, JSON.stringify(fits));
+});
+
+test("학생은 플레이리스트 곡을 한 번에 보드에 넣고, 보드에 있는 곡·같은 목록 안 중복은 건너뛴다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("student-1", "student"));
+  const columns = await diggingActions.getOrSeedColumns("student-1");
+  const id = (name: string) => columns.find((column) => column.name === name)!.id;
+  await db.insert(diggingTracks).values([
+    { id: "t-link", userId: "student-1", linkUrl: "https://soundcloud.com/kerri/overtime", values: JSON.stringify({ [id("트랙명")]: "Overtime" }) },
+    { id: "t-name", userId: "student-1", linkUrl: null, values: JSON.stringify({ [id("트랙명")]: "Glass Floor", [id("아티스트")]: "Rival Consoles" }) },
+    // 다른 학생 보드의 같은 곡은 중복이 아니다.
+    { id: "t-other", userId: "student-2", linkUrl: "https://soundcloud.com/lane8/midnight-drive", values: "{}" },
+  ]);
+  const fresh = Array.from({ length: 30 }, (_, index) => ({ title: `Track ${index}`, artist: `Artist ${index}`, linkUrl: null }));
+  const result = await diggingActions.importDiggingTracks([
+    { title: "Midnight Drive", artist: "Lane 8", linkUrl: "https://soundcloud.com/lane8/midnight-drive?in=x/sets/y" },
+    { title: "Overtime", artist: "Kerri Chandler", linkUrl: "https://soundcloud.com/kerri/overtime/" },
+    { title: "glass floor", artist: "RIVAL CONSOLES", linkUrl: null },
+    { title: "Midnight Drive", artist: "Lane 8", linkUrl: "https://soundcloud.com/lane8/midnight-drive" },
+    // 링크 없는 줄은 같은 목록 앞쪽의 링크 있는 곡과도 트랙명·아티스트로 겹친다.
+    { title: "Midnight Drive", artist: "lane 8", linkUrl: null },
+    ...fresh,
+  ]);
+  assert.ok(result.ok, JSON.stringify(result));
+  assert.equal(result.created.length, 31, "25곡 넘게도 문장을 나눠 모두 넣는다");
+  assert.equal(result.skipped, 4);
+  const midnight = result.created[0];
+  assert.equal(midnight.linkUrl, "https://soundcloud.com/lane8/midnight-drive");
+  assert.deepEqual(midnight.values, {
+    [id("트랙명")]: "Midnight Drive",
+    [id("아티스트")]: "Lane 8",
+    [id("링크")]: "https://soundcloud.com/lane8/midnight-drive",
+  });
+  assert.deepEqual(result.created[1].values, { [id("트랙명")]: "Track 0", [id("아티스트")]: "Artist 0" }, "링크 없는 곡은 링크 칸을 비운다");
+
+  const rows = await db.select().from(diggingTracks).where(eq(diggingTracks.userId, "student-1"));
+  assert.equal(rows.length, 33);
+  const saved = rows.find((row) => row.id === midnight.id)!;
+  assert.equal(saved.linkUrl, "https://soundcloud.com/lane8/midnight-drive");
+  assert.deepEqual(JSON.parse(saved.values), midnight.values);
+
+  const again = await diggingActions.importDiggingTracks(fresh.slice(0, 2));
+  assert.ok(again.ok);
+  assert.deepEqual([again.created.length, again.skipped], [0, 2], "같은 목록을 다시 가져오면 아무것도 늘지 않는다");
+});
+
+test("트랙 가져오기는 학생 본인만, 허용한 링크·상한 안에서만 쓰고 거절하면 DB가 그대로다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("admin-1", "admin"));
+  await assert.rejects(diggingActions.importDiggingTracks([{ title: "A", artist: "B", linkUrl: null }]), /학생만/u);
+
+  activeSession = createSession("student-1", "student");
+  await diggingActions.getOrSeedColumns("student-1");
+  const bad = await diggingActions.importDiggingTracks([
+    { title: "Fine", artist: "Artist", linkUrl: null },
+    { title: "Bad", artist: "Artist", linkUrl: "https://evil.example/track" },
+  ]);
+  assert.deepEqual(bad, { ok: false, error: "지원하는 HTTPS 음악 링크를 입력해 주세요." });
+  const tooMany = await diggingActions.importDiggingTracks(Array.from({ length: 221 }, (_, index) => ({ title: `T${index}`, artist: "A", linkUrl: null })));
+  assert.equal(tooMany.ok, false);
+  const empty = await diggingActions.importDiggingTracks([{ title: "  ", artist: "", linkUrl: null }]);
+  assert.equal(empty.ok, false);
+
+  // 트랙명·아티스트 칸을 모두 지운 보드에는 넣을 곳이 없다.
+  await db.delete(diggingColumns).where(eq(diggingColumns.userId, "student-1"));
+  await db.insert(diggingColumns).values({ id: "memo", userId: "student-1", name: "메모", columnType: "textarea", sortOrder: 0 });
+  const noColumns = await diggingActions.importDiggingTracks([{ title: "A", artist: "B", linkUrl: null }]);
+  assert.equal(noColumns.ok, false);
+  assert.equal((await db.select().from(diggingTracks)).length, 0);
 });
