@@ -177,7 +177,7 @@ Migration SQL은 `drizzle/`, Drizzle metadata는 `drizzle/meta/`에 둔다. Wran
 
 신규 업로드는 사용자에게 노출된 `media-upload/` staging key로만 PUT하고, 서버가 size·Content-Type metadata·ETag를 확인한 뒤 사용자에게 공개되지 않은 별도 `media/` final key로 봉인한다. D1의 `SEALING` lease가 봉인과 삭제를 직렬화하며, 결과를 잃은 Copy는 복구 유예 뒤 final 삭제 outbox가 다시 정리한다. 문서에는 object ID와 `/api/media/{id}`만 저장하고, 게시물과 Q&A의 원자 생성·purge transaction이 registry claim과 R2 삭제 의도를 함께 commit한다. R2 삭제는 lease·지수 backoff를 사용하는 durable outbox로 재시도한다.
 
-본문 편집기(`FullEditor`)의 `transformPasted`는 붙여넣은 조각에서 `data:` 주소의 이미지 node를 빼고(`src/components/editor/pasted-data-images.ts`, 빈 부모는 schema 기본 내용으로 채운다) 그 내용을 파일로 바꿔 버튼·끌어 놓기와 같은 업로드 경로(`useEditorImageUpload`의 `source: "pasted"`)로 올린다. 올라간 이미지는 선택 위치 뒤에 들어가고, 붙여넣은 이미지는 넣은 뒤 선택된 채로 두지 않고 커서를 그 뒤 글 자리로 옮긴다(이미지가 문서 끝이면 빈 문단을 만든다). 선택된 채면 이어서 친 글자가 이미지를 지우기 때문이다. 버튼·끌어 놓기로 고른 이미지는 전처럼 선택된 채 남는다. 형식·크기 거부와 업로드 실패는 장수를 세어 알림 줄에 낸다. 편집기 안에서 끌어 옮기는 조각은 그대로 둔다(2026-11-14).
+본문 편집기(`FullEditor`)의 `transformPasted`는 붙여넣은 조각에서 `data:` 주소의 이미지 node를 빼고(`src/components/editor/pasted-data-images.ts`, 빈 부모는 schema 기본 내용으로 채운다) 그 내용을 파일로 바꿔 버튼·끌어 놓기와 같은 업로드 경로(`useEditorImageUpload`의 `source: "pasted"`, 거부·실패 문구만 다르다)로 올린다. 올라간 이미지는 선택 위치 뒤에 들어가고, 넣은 뒤 선택된 채로 두지 않고 커서를 그 뒤 글 자리로 옮긴다(이미지가 문서 끝이면 빈 문단을 만든다, `src/components/editor/cursor-after-inserted-node.ts`). 선택된 채면 이어서 친 글자가 이미지를 지우기 때문이다. 버튼·끌어 놓기·붙여넣기로 올린 이미지와 삽입 패널에서 주소로 넣는 이미지·YouTube 영상 모두 같다(2026-11-21, 그 전에는 붙여넣은 이미지만). 형식·크기 거부와 업로드 실패는 장수를 세어 알림 줄에 낸다. 편집기 안에서 끌어 옮기는 조각은 그대로 둔다(2026-11-14).
 
 클라이언트 업로드는 목적·초안 operation과 개별 요청에 귀속된다. 실제 화면에 반영된 문맥 변경이나 unmount는 진행 중 PUT을 중단하고, 이후 도착한 발급·완료 응답, 진행률·오류·busy 해제를 새 초안에 전달하지 않는다. 아직 반영되지 않은 transition 렌더는 현재 업로드를 취소하지 않는다. 오래된 발급 객체의 정리는 기존 owner 검증과 outbox 정책을 따른다.
 
