@@ -177,6 +177,8 @@ Migration SQL은 `drizzle/`, Drizzle metadata는 `drizzle/meta/`에 둔다. Wran
 
 신규 업로드는 사용자에게 노출된 `media-upload/` staging key로만 PUT하고, 서버가 size·Content-Type metadata·ETag를 확인한 뒤 사용자에게 공개되지 않은 별도 `media/` final key로 봉인한다. D1의 `SEALING` lease가 봉인과 삭제를 직렬화하며, 결과를 잃은 Copy는 복구 유예 뒤 final 삭제 outbox가 다시 정리한다. 문서에는 object ID와 `/api/media/{id}`만 저장하고, 게시물과 Q&A의 원자 생성·purge transaction이 registry claim과 R2 삭제 의도를 함께 commit한다. R2 삭제는 lease·지수 backoff를 사용하는 durable outbox로 재시도한다.
 
+Q&A 답글 첨부는 원래 파일 이름을 저장하지 않는다. 스레드를 읽을 때 `withQnaAttachmentKinds`(`src/lib/qna-attachment-kinds.ts`)가 media MIME에서 표시 종류(`attachmentKind`: image·audio·video·file)와 짧은 형식 이름(`attachmentFormat`: MP3·WAV·FLAC·AIFF·M4A·OGG·MP4·WebM·PNG·JPG·GIF·WebP, `mediaAttachmentFormatLabel`)만 계산해 넘기고 MIME 자체는 넘기지 않는다. 이미지가 아닌 첨부 칩은 "첨부 파일 · MP3"처럼 보이고, 형식을 모르면 확장자가 있는 옛 파일 이름, 그것도 없으면 "첨부 파일"만 보인다(2026-11-21, 그 전에는 media id가 이름처럼 보였다).
+
 본문 편집기(`FullEditor`)의 `transformPasted`는 붙여넣은 조각에서 `data:` 주소의 이미지 node를 빼고(`src/components/editor/pasted-data-images.ts`, 빈 부모는 schema 기본 내용으로 채운다) 그 내용을 파일로 바꿔 버튼·끌어 놓기와 같은 업로드 경로(`useEditorImageUpload`의 `source: "pasted"`, 거부·실패 문구만 다르다)로 올린다. 올라간 이미지는 선택 위치 뒤에 들어가고, 넣은 뒤 선택된 채로 두지 않고 커서를 그 바로 뒤 글 자리로 옮긴다(`src/components/editor/cursor-after-inserted-node.ts`). 바로 뒤가 글 블록이면 그 맨 앞이고, 표·목록·다른 이미지이거나 아무것도 없으면 그 자리에 빈 문단을 만든다(표의 첫 칸이나 먼 문단으로 건너뛰지 않는다). 선택된 채면 이어서 친 글자가 이미지를 지우기 때문이다. 버튼·끌어 놓기·붙여넣기로 올린 이미지와 삽입 패널에서 주소로 넣는 이미지·YouTube 영상 모두 같다(2026-11-21, 그 전에는 붙여넣은 이미지만). 형식·크기 거부와 업로드 실패는 장수를 세어 알림 줄에 낸다. 편집기 안에서 끌어 옮기는 조각은 그대로 둔다(2026-11-14).
 
 클라이언트 업로드는 목적·초안 operation과 개별 요청에 귀속된다. 실제 화면에 반영된 문맥 변경이나 unmount는 진행 중 PUT을 중단하고, 이후 도착한 발급·완료 응답, 진행률·오류·busy 해제를 새 초안에 전달하지 않는다. 아직 반영되지 않은 transition 렌더는 현재 업로드를 취소하지 않는다. 오래된 발급 객체의 정리는 기존 owner 검증과 outbox 정책을 따른다.

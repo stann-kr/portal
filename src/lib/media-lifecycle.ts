@@ -409,6 +409,33 @@ export function mediaAttachmentKind(
   return "file";
 }
 
+/** Q&A 첨부 칩에 보일 짧은 형식 이름. 허용 MIME(정규 이름)과 그 별칭만 이름을 갖는다. */
+const MEDIA_FORMAT_LABELS: Readonly<Record<string, string>> = {
+  "audio/mpeg": "MP3",
+  "audio/wav": "WAV",
+  "audio/flac": "FLAC",
+  "audio/aiff": "AIFF",
+  "audio/mp4": "M4A",
+  "audio/ogg": "OGG",
+  "video/mp4": "MP4",
+  "video/webm": "WebM",
+  "image/png": "PNG",
+  "image/jpeg": "JPG",
+  "image/gif": "GIF",
+  "image/webp": "WebP",
+};
+
+/**
+ * MIME → 첨부 칩의 형식 이름(예: "MP3"). 이름을 저장하지 않는 첨부가 media id 대신 보일 글자다.
+ * 모르는 MIME이면 null(칩은 "첨부 파일"만 보인다). MIME 자체는 화면에 넘기지 않는다.
+ */
+export function mediaAttachmentFormatLabel(mimeType: string | null | undefined): string | null {
+  if (typeof mimeType !== "string") return null;
+  const normalized = mimeType.split(";")[0]!.trim().toLowerCase();
+  if (!normalized) return null;
+  return MEDIA_FORMAT_LABELS[MIME_TYPE_ALIASES[normalized] ?? normalized] ?? null;
+}
+
 /** `/api/media/<uuid>` 전달 경로에서 media id를 읽는다. 다른 형태면 null. */
 export function parseMediaDeliveryPath(path: string | null | undefined): string | null {
   if (typeof path !== "string") return null;

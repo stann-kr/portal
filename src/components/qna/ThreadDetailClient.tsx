@@ -68,6 +68,8 @@ type Reply = {
   attachmentUrl: string | null | undefined;
   /** 서버가 media MIME에서 계산한 첨부 종류(이미지 viewer용). */
   attachmentKind?: MediaAttachmentKind | null;
+  /** 서버가 media MIME에서 계산한 짧은 형식 이름(MP3 등). 이미지가 아닌 첨부 칩 글자에 쓴다. */
+  attachmentFormat?: string | null;
   createdAt: Date | null | undefined;
   authorName: string | null | undefined;
   authorRole: string | null | undefined;

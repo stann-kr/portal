@@ -67,6 +67,8 @@ export type ArchivedQnaRecord = {
     contentHtml: string;
     attachmentUrl: string | null;
     attachmentKind: MediaAttachmentKind | null;
+    /** 칩에 보일 짧은 형식 이름(MP3 등). 모르면 null. */
+    attachmentFormat: string | null;
     createdAt: Date | null;
     authorName: string | null;
     authorRole: string | null;
@@ -204,6 +206,7 @@ async function readQna(db: Db, studentId: string): Promise<ArchivedQnaRecord[]> 
       contentHtml: reply.contentHtml,
       attachmentUrl: reply.attachmentUrl,
       attachmentKind: reply.attachmentKind,
+      attachmentFormat: reply.attachmentFormat,
       createdAt: reply.createdAt,
       authorName: reply.authorName,
       authorRole: reply.authorRole,
