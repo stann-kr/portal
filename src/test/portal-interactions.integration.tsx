@@ -2233,6 +2233,69 @@ test("editor command popup stays in its dialog and Escape closes only the popup"
   assert.equal(browser.document.querySelector('[role="dialog"]'), null);
 });
 
+test("편집기 / 메뉴는 한글 조합 중인 키 입력을 입력기에 넘기고 조합이 끝난 뒤의 키에만 반응한다", async (context) => {
+  const ready = { editor: null as Editor | null };
+  function EditorBody() {
+    const host = useRef<HTMLDivElement>(null);
+    const [editor, setEditor] = useState<Editor | null>(null);
+    useEffect(() => {
+      const value = new TiptapEditor({ element: host.current!, extensions: [StarterKit], content: "<p></p>", injectCSS: false });
+      ready.editor = value;
+      setEditor(value);
+      return () => value.destroy();
+    }, []);
+    return <><div ref={host} />{editor && <BlockCommandMenu editor={editor} />}</>;
+  }
+  function Harness() {
+    const [open, setOpen] = useState(true);
+    return <SlidePanel open={open} onOpenChange={setOpen} title="작성"><EditorBody /></SlidePanel>;
+  }
+  await render(context, <Harness />);
+  assert.ok(ready.editor);
+  const editor = ready.editor;
+  const panel = browser.document.querySelector('[role="dialog"]');
+  assert.ok(panel);
+  // DOM tests supply geometry; the real input method order is checked in the browser.
+  context.mock.method(panel, "getBoundingClientRect", () => new browser.DOMRect(360, 0, 640, 768));
+  context.mock.method(editor.view, "coordsAtPos", () => ({ left: 420, right: 420, top: 160, bottom: 180 }));
+  await act(async () => { editor.view.dom.focus(); editor.commands.insertContent("/제목"); });
+  const activeRow = () => [...browser.document.querySelectorAll('[role="listbox"] [role="option"]')]
+    .findIndex((option) => option.getAttribute("aria-selected") === "true");
+  const key = async (name: string, isComposing: boolean) => {
+    const event = new browser.KeyboardEvent("keydown", { key: name, bubbles: true, cancelable: true, isComposing });
+    await act(async () => { editor.view.dom.dispatchEvent(event as unknown as Event); });
+    return event.defaultPrevented;
+  };
+  const composition = (type: "compositionstart" | "compositionend") =>
+    act(async () => { editor.view.dom.dispatchEvent(new browser.Event(type, { bubbles: true }) as unknown as Event); });
+  assert.equal(activeRow(), 0);
+
+  // macOS Chrome은 조합 중 Enter를 keydown(조합 중) → 확정 → keydown 순서로 두 번 보낸다.
+  // 첫 keydown에 블록을 넣으면 확정되는 글자가 그 블록에 한 번 더 들어가고, 둘째 keydown이 줄을 하나 더 만든다.
+  await composition("compositionstart");
+  assert.equal(await key("ArrowDown", true), false);
+  assert.equal(activeRow(), 0, "조합 중 화살표는 줄을 옮기지 않는다");
+  assert.equal(await key("Escape", true), false);
+  assert.ok(browser.document.querySelector('[role="listbox"]'), "조합 중 Esc는 메뉴를 닫지 않는다");
+  assert.ok(browser.document.querySelector('[role="dialog"]'), "메뉴가 열린 동안 조합 중 Esc가 바깥 패널을 닫지 않는다");
+  assert.equal(await key("Enter", true), false);
+  assert.ok(browser.document.querySelector('[role="listbox"]'), "조합 중 Enter는 블록을 넣지 않는다");
+  assert.equal(editor.getText(), "/제목");
+  await composition("compositionend");
+
+  assert.equal(await key("ArrowDown", false), true);
+  assert.equal(activeRow(), 1);
+  assert.equal(await key("ArrowUp", false), true);
+  assert.equal(activeRow(), 0);
+  assert.equal(await key("Enter", false), true);
+  assert.equal(browser.document.querySelector('[role="listbox"]'), null);
+  const blocks = editor.getJSON().content ?? [];
+  // 제목 뒤 빈 문단은 StarterKit의 TrailingNode가 문서 끝에 두는 것이다.
+  assert.deepEqual(blocks.map((node) => node.type), ["heading", "paragraph"], "조합이 끝난 뒤의 Enter 한 번이 맨 위 블록을 넣는다");
+  assert.equal(blocks[0]?.attrs?.level, 1);
+  assert.equal(editor.state.doc.textContent, "", "확정된 검색어가 넣은 블록에 남지 않는다");
+});
+
 test("media source and queued or repeated feedback seeks use the HTML media contract", async (context) => {
   const url = "https://www.youtube.com/watch?v=aqz-KE-bpKQ";
   const root = await render(context, <VideoPlayer url={url} seekRequest={{ seconds: 90 }} />);
