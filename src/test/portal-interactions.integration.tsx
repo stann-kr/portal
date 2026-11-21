@@ -5520,6 +5520,73 @@ test("FullEditor는 붙여넣은 글 속 data 이미지를 본문에 넣지 않�
   assert.ok(continued.indexOf("붙여넣은 글") < continued.indexOf("<img") && continued.indexOf("<img") < continued.indexOf("이어 쓴 글"), "붙여넣은 글, 이미지, 이어 쓴 글 순서다");
 });
 
+test("FullEditor는 고른 이미지를 넣은 뒤 커서를 이미지 뒤에 둬, 이어서 친 글자가 이미지를 지우지 않는다", { concurrency: false }, async (context) => {
+  const { releases } = mockEditorImageUpload(context);
+  const changes: string[] = [];
+  await render(context, <FullEditor initialContent="<p>본문</p>" ariaLabel="본문" onChange={(html) => changes.push(html)} />);
+  await settleEditor();
+  const editor = (browser.document.querySelector(".ProseMirror") as unknown as { editor: Editor }).editor;
+  await act(async () => { editor.commands.focus("end"); });
+  await chooseEditorImage();
+  await act(async () => { releases[0]?.(undefined as never); await new Promise((resolve) => setTimeout(resolve, 10)); });
+  await settleEditor();
+  const image = /<img[^>]+src="\/api\/media\/30000000-0000-4000-8000-000000000001"/u;
+  assert.match(changes.at(-1) ?? "", image, "올라간 이미지를 본문에 넣는다");
+  // 올리는 동안에도 글을 계속 쓴다. 이미지가 선택된 채로 들어오면 다음 글자가 이미지를 지운다.
+  assert.equal(editor.state.selection.toJSON().type, "text", "커서는 이미지 뒤에 놓인다");
+  await act(async () => {
+    const { from, to } = editor.state.selection;
+    editor.view.dispatch(editor.state.tr.insertText("이어 쓴 글", from, to));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  });
+  await settleEditor();
+  const continued = changes.at(-1) ?? "";
+  assert.match(continued, image, "이어 써도 이미지는 남는다");
+  assert.ok(continued.indexOf("본문") < continued.indexOf("<img") && continued.indexOf("<img") < continued.indexOf("이어 쓴 글"), "본문, 이미지, 이어 쓴 글 순서다");
+});
+
+test("FullEditor는 주소로 넣은 이미지·영상 뒤에 커서를 둬, 이어서 친 글자가 그 블록을 지우지 않는다", { concurrency: false }, async (context) => {
+  const changes: string[] = [];
+  await render(context, <FullEditor initialContent="<p>본문</p>" ariaLabel="본문" onChange={(html) => changes.push(html)} />);
+  await settleEditor();
+  const editor = (browser.document.querySelector(".ProseMirror") as unknown as { editor: Editor }).editor;
+  const insertByUrl = async (toolbarLabel: string, url: string) => {
+    await act(async () => { editor.commands.focus("end"); });
+    await press(toolbarLabel);
+    const input = browser.document.querySelector('[data-editor-insert-panel] input[type="url"]');
+    assert.ok(input instanceof browser.HTMLInputElement);
+    const setter = Object.getOwnPropertyDescriptor(browser.HTMLInputElement.prototype, "value")?.set;
+    assert.ok(setter);
+    await act(async () => {
+      setter.call(input, url);
+      input.dispatchEvent(new browser.Event("input", { bubbles: true }));
+      input.dispatchEvent(new browser.Event("change", { bubbles: true }));
+    });
+    await press("삽입");
+    await settleEditor();
+  };
+  const typeText = async (text: string) => {
+    await act(async () => {
+      const { from, to } = editor.state.selection;
+      editor.view.dispatch(editor.state.tr.insertText(text, from, to));
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+    await settleEditor();
+  };
+
+  await insertByUrl("이미지 주소로 넣기", "https://example.com/board.png");
+  assert.equal(editor.state.selection.toJSON().type, "text", "커서는 이미지 뒤에 놓인다");
+  await typeText("이미지 설명");
+  assert.match(changes.at(-1) ?? "", /<img[^>]+src="https:\/\/example\.com\/board\.png"/u, "이어 써도 이미지는 남는다");
+
+  await insertByUrl("유튜브 동영상 삽입", "https://www.youtube.com/watch?v=aqz-KE-bpKQ");
+  assert.equal(editor.state.selection.toJSON().type, "text", "커서는 영상 뒤에 놓인다");
+  await typeText("영상 설명");
+  const html = changes.at(-1) ?? "";
+  assert.match(html, /aqz-KE-bpKQ/u, "이어 써도 영상은 남는다");
+  assert.ok(html.indexOf("board.png") < html.indexOf("이미지 설명") && html.indexOf("이미지 설명") < html.indexOf("aqz-KE-bpKQ") && html.indexOf("aqz-KE-bpKQ") < html.indexOf("영상 설명"), "넣은 순서대로 이어진다");
+});
+
 test("FullEditor는 붙여넣은 data 이미지 여러 장을 붙여넣은 순서대로 넣는다", { concurrency: false }, async (context) => {
   const { releases } = mockEditorImageUpload(context);
   const changes: string[] = [];

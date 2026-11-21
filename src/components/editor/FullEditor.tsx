@@ -12,7 +12,7 @@ import { BubbleMenu } from "@tiptap/react/menus";
 import { type MarkdownStorage } from "tiptap-markdown";
 import type { Editor } from "@tiptap/core";
 import type { Slice } from "@tiptap/pm/model";
-import { NodeSelection, Selection, TextSelection } from "@tiptap/pm/state";
+import { moveCursorAfterInsertedNode } from "./cursor-after-inserted-node";
 import {
   createFullEditorExtensions,
   type FullEditorCollaboration,
@@ -347,8 +347,7 @@ export function FullEditor({
         markContentDirty();
         return true;
       }
-      // 다른 입력란의 포커스를 빼앗지 않고 현재 선택의 뒤에 넣는다.
-      // 앞서 넣은 이미지가 선택된 채여도 바꾸지 않고 그 뒤에 이어 붙인다.
+      // 다른 입력란의 포커스를 빼앗지 않고 현재 선택의 뒤에 넣는다(여러 장은 넣은 순서대로 이어진다).
       const currentEditor = editorInstanceRef.current;
       if (!currentEditor || currentEditor.isDestroyed || !currentEditor.isEditable) return false;
       return currentEditor
@@ -357,25 +356,8 @@ export function FullEditor({
           type: "image",
           attrs: { src: upload.deliveryUrl, alt: alt || null },
         })
-        .command(({ tr }) => {
-          // 붙여넣은 글에서 올린 이미지는 사용자가 고른 것이 아니라 글을 쓰는 도중에 들어온다.
-          // 선택된 채로 두면 이어서 친 글자가 이미지를 지우므로 커서를 이미지 뒤로 옮긴다.
-          if (upload.source !== "pasted" || !(tr.selection instanceof NodeSelection)) return true;
-          const after = tr.selection.to;
-          const next = Selection.findFrom(tr.doc.resolve(after), 1, true);
-          if (next) {
-            tr.setSelection(next);
-            return true;
-          }
-          // 이미지가 문서의 마지막이면 뒤에 글을 이어 쓸 빈 문단을 만든다.
-          const $after = tr.doc.resolve(after);
-          const paragraph = tr.doc.type.schema.nodes.paragraph;
-          if (paragraph && $after.parent.canReplaceWith($after.index(), $after.index(), paragraph)) {
-            tr.insert(after, paragraph.create());
-            tr.setSelection(TextSelection.create(tr.doc, after + 1));
-          }
-          return true;
-        })
+        // 이미지는 올리기가 끝난 뒤에 들어오고 그 사이에도 글을 계속 쓴다(고른 파일·끌어 놓기·붙여넣기 모두).
+        .command(({ tr }) => moveCursorAfterInsertedNode(tr))
         .run();
     },
     [markContentDirty],
