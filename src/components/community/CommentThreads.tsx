@@ -217,7 +217,7 @@ export function CommentThreads({
     ) : null;
 
   const replyList = (rootId: string, rootName: string | null, replies: ThreadComment[], acceptsReplies: boolean) => (
-    <ol aria-label={rootName ? `${rootName} 댓글의 답글` : "삭제된 댓글의 답글"} className="ml-10 mt-1 flex flex-col">
+    <ol key="replies" aria-label={rootName ? `${rootName} 댓글의 답글` : "삭제된 댓글의 답글"} className="ml-10 mt-1 flex flex-col">
       {replies.map((reply) => {
         const name = communityAuthorName(reply);
         return (
@@ -295,10 +295,12 @@ export function CommentThreads({
       ) : (
         <ol className="flex flex-col">
           {threads.map((thread) => {
+            // 묶음의 key는 원 댓글이 지워지기 전과 뒤가 같다. 답글을 쓰는 사이 원 댓글이 지워져도 묶음과 그 안의
+            // 답글 목록·입력을 다시 만들지 않아 쓰던 입력의 초점·커서·한글 조합이 끊기지 않는다.
             if (thread.kind === "deleted") {
               return (
-                <li key={`deleted-${thread.id}`} className="flex flex-col border-b border-muted py-3 md:py-3.5">
-                  <div className="flex items-center gap-3">
+                <li key={thread.id} className="flex flex-col border-b border-muted py-3 md:py-3.5">
+                  <div key="deleted-root" className="flex items-center gap-3">
                     <span aria-hidden="true" className="size-7 shrink-0 rounded-full border border-dashed border-faint" />
                     <p className="text-md leading-6 text-muted-foreground md:text-body">삭제된 댓글입니다</p>
                   </div>
@@ -311,8 +313,8 @@ export function CommentThreads({
             const name = communityAuthorName(c);
             const replyCount = thread.replies.length;
             return (
-              <li key={c.id} className="flex flex-col border-b border-muted py-3 md:py-3.5">
-                <div id={`comment-${c.id}`} tabIndex={-1} className="flex scroll-mt-4 gap-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              <li key={thread.id} className="flex flex-col border-b border-muted py-3 md:py-3.5">
+                <div key="root" id={`comment-${c.id}`} tabIndex={-1} className="flex scroll-mt-4 gap-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                   <span aria-hidden="true" className={cn("flex size-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold", avatarTone(c))}>
                     {initialOf(name)}
                   </span>

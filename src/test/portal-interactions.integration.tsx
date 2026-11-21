@@ -2590,8 +2590,13 @@ test("답글을 쓰는 사이 원 댓글이 지워지면 입력을 그 자리에
   // 목록에서 원 댓글이 사라진 것을 먼저 알게 된 경우. 댓글 입력에 쓰던 글이 있으면 한 칸 띄워 뒤에 붙인다.
   await press("박학생 댓글에 답글");
   await fill(replyInput()!.id, "녹음 공유해요");
+  const typing = replyInput()!;
+  typing.focus();
   await act(async () => root.render(detail([third])));
   await settle();
+  // DOM 노드끼리 assert.equal로 견주면 실패할 때 차이를 그리느라 멈추므로 같은 노드인지만 본다.
+  assert.ok(replyInput() === typing, "쓰던 입력을 다시 만들지 않는다(초점·한글 조합이 끊기지 않는다)");
+  assert.ok(browser.document.activeElement === typing, "쓰던 입력의 초점이 그대로다");
   assert.equal(alertText(), "원 댓글이 삭제되어 답글을 달 수 없습니다. 쓴 글은 새 댓글로 남길 수 있습니다.");
   await press("새 댓글로 남기기");
   assert.equal(mainInput().value, "저도 갈게요 녹음 공유해요");
