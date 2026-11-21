@@ -10,8 +10,8 @@ import {
   syncCalendarMapping,
   type RunOptions,
 } from "./mapping-sync";
-import { calendarMappings } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { calendarConnections, calendarMappings } from "@/db/schema";
+import { and, eq } from "drizzle-orm";
 import { ensureGoogleWatchChannel, ensureGoogleWatchChannelsForStudent, stopGoogleWatchChannelsFor } from "./push-channels";
 
 export { listActiveMappingIdsForStudent, syncCalendarMapping } from "./mapping-sync";
@@ -69,6 +69,32 @@ async function pushMappings(ctx: DbContext, mappingIds: readonly string[], deadl
  */
 export async function schedulePushStudentCalendarChanges(studentId: string): Promise<void> {
   await runAfterResponse(() => pushStudentCalendarChanges(studentId));
+}
+
+/**
+ * 수강 종료와 함께 지운 예정 레슨의 원격 사본을 응답 뒤 지운다(캔버스 UxReview1120Policies ⑨). 수강 종료한 학생의
+ * 개인 캘린더는 동기화를 멈추므로 지운 레슨(DELETED link)만 정리하는 모드로 돈다. 그룹 캘린더는 수강 종료 뒤
+ * 그룹 push(schedulePushStudentsCalendarChanges)가 남은 멤버 기준으로 맞춘다.
+ */
+export async function schedulePruneDeletedStudentCalendarCopies(studentId: string): Promise<void> {
+  await runAfterResponse(async () => {
+    try {
+      const ctx = createDbContext();
+      const db = ctx.db as unknown as DrizzleDb;
+      const rows = await db
+        .select({ id: calendarMappings.id })
+        .from(calendarMappings)
+        .innerJoin(calendarConnections, eq(calendarConnections.id, calendarMappings.connectionId))
+        .where(and(eq(calendarMappings.studentId, studentId), eq(calendarConnections.status, "ACTIVE")));
+      const deadline = Date.now() + CALENDAR_SYNC_WRITE_HOOK_BUDGET_MS;
+      for (const row of rows) {
+        if (Date.now() >= deadline) return;
+        await syncCalendarMapping(ctx, row.id, { mode: "pruneDeleted", deadline }).catch(() => undefined);
+      }
+    } catch {
+      // 남은 DELETED link는 복원 뒤 첫 동기화가 지운다.
+    }
+  });
 }
 
 /**

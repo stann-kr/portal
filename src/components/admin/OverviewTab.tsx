@@ -28,17 +28,19 @@ import { CalendarFeedControl } from "@/components/admin/CalendarFeedControl";
 import { GuideAccessControl } from "@/components/admin/GuideAccessControl";
 import { StudentInviteControl } from "@/components/admin/StudentInviteControl";
 import { StudentPasswordResetControl } from "@/components/admin/StudentPasswordResetControl";
-import { StudentArchiveControl } from "@/components/admin/StudentArchiveControl";
+import { StudentArchiveControl, type StudentArchiveUpcomingLessons } from "@/components/admin/StudentArchiveControl";
 import { StudentDeleteControl } from "@/components/admin/StudentDeleteControl";
 import type { StudentDeletionState } from "@/lib/student-deletion";
 import { ConfirmPanel, useConfirmAction } from "@/components/ui/confirm-action";
+import { GroupLessonBadge } from "@/components/calendar/GroupLessonBadge";
+import { LESSON_WITH_GROUP_FIELD } from "@/lib/lesson-group-rules";
 import type { StudentGuideAccessView } from "@/lib/actions/guideAccess";
 import { formatKst } from "@/lib/kst-format";
 import { isCurriculumVisible } from "@/lib/curriculum-visibility";
 import { cn } from "@/lib/utils";
 import { formatKstDot } from "@/lib/kst-format";
 import { buildAdminStudentDetailHref } from "@/lib/student-space-routes";
-import { buildLessonNoteLink, LESSON_NOTE_LINK_CLASS } from "@/lib/lesson-note-links";
+import { buildGroupLessonNoteLink, buildLessonNoteLink, LESSON_NOTE_LINK_CLASS } from "@/lib/lesson-note-links";
 import {
   LEDGER_ADD_ROW_CLASS,
   LEDGER_HEADER_LINK_CLASS,
@@ -92,7 +94,10 @@ interface OverviewTabProps {
   referenceTime?: Date;
   /** 커리큘럼 구역을 그릴지. 기본값은 숨김 스위치를 따른다. */
   showCurriculum?: boolean;
-  /** "학생:KST 날짜" → 그 날짜 노트 id. 레슨 행의 수업 노트 링크가 있으면 열고 없으면 새 노트로 간다. */
+  /**
+   * "학생:KST 날짜" → 그 날짜 개인 노트 id, "group:그룹:KST 날짜" → 그 날 그룹 노트 id. 레슨 행의 수업 노트 링크가 있으면 열고
+   * 없으면 새 노트로 간다. 그룹레슨 줄은 그룹 노트만 본다(캔버스 UxReview1120Policies ⑪).
+   */
   lessonNoteIds?: Readonly<Record<string, string>>;
 }
 
@@ -113,8 +118,16 @@ function focusAfterClose(id: string) {
 // ─── 커리큘럼 추가 폼 ──────────────────────────────
 
 // form action은 결과와 무관하게 uncontrolled 입력을 비우므로, 실패 시 입력을 지키려고 값을 제어하고 성공 때만 비운다.
-/** 학생 상세 개요의 그룹레슨 그룹: 이름과 함께하는 학생. */
-export type OverviewLessonGroup = { name: string; partners: { id: string; name: string }[] };
+/**
+ * 학생 상세 개요의 그룹레슨 그룹: 이름과 함께하는 학생, 그리고 이 학생 레슨 중 멤버 모두 같은 시각인 레슨의 시작(epoch ms).
+ */
+export type OverviewLessonGroup = {
+  /** 그룹레슨 줄의 그룹 노트 열쇠에 쓴다. */
+  id: string;
+  name: string;
+  partners: { id: string; name: string }[];
+  sharedLessonStarts?: readonly number[];
+};
 
 function AddModuleForm({
   studentId,
@@ -260,14 +273,28 @@ function EditModuleForm({
 
 // ─── 레슨 추가 폼 ──────────────────────────────────
 
-function AddLessonForm({ studentId, onClose }: { studentId: string; onClose: () => void }) {
+function AddLessonForm({
+  studentId,
+  lessonGroup,
+  onClose,
+}: {
+  studentId: string;
+  lessonGroup: OverviewLessonGroup | null;
+  onClose: () => void;
+}) {
   const [scheduledAt, setScheduledAt] = useState("");
+  // 그룹 멤버에게도 같은 시각 레슨(캔버스 UxReview1120Lessons ⑥, 기본 끔). 그룹은 서버가 이 학생의 소속으로 정한다.
+  const [withGroup, setWithGroup] = useState(false);
+  const partners = lessonGroup?.partners ?? [];
   const inputRef = useRef<HTMLInputElement>(null);
   const [state, action, isPending] = useActionState<CreateLessonState, FormData>(
     async (previous, data) => {
       try {
         const result = await createLesson(studentId, previous, data);
-        if (result.success) setScheduledAt("");
+        if (result.success) {
+          setScheduledAt("");
+          setWithGroup(false);
+        }
         return result;
       } catch {
         return { error: "레슨을 추가하지 못했습니다. 다시 시도해 주세요." };
@@ -300,6 +327,21 @@ function AddLessonForm({ studentId, onClose }: { studentId: string; onClose: () 
           {isPending ? "추가 중..." : "추가"}
         </Button>
       </div>
+      {lessonGroup && partners.length > 0 ? (
+        <label htmlFor="lesson-with-group" className="flex min-h-11 w-full items-center gap-2 text-ui text-secondary-foreground md:min-h-7">
+          <input
+            id="lesson-with-group"
+            type="checkbox"
+            name={LESSON_WITH_GROUP_FIELD}
+            value="1"
+            checked={withGroup}
+            onChange={(event) => setWithGroup(event.target.checked)}
+            disabled={isPending}
+            className="size-4 shrink-0 accent-[var(--color-foreground)]"
+          />
+          {lessonGroup.name} {partners.map((partner) => partner.name).join(", ")}에게도 같은 시각 레슨 추가
+        </label>
+      ) : null}
       {state.error && (
         <p className="w-full text-xs text-destructive" role="alert">{state.error}</p>
       )}
@@ -391,7 +433,21 @@ export function OverviewTab({
 
   const completedCount = modules.filter((module) => module.isCompleted).length;
   const orderedLessons = orderLessons(lessons, connectedLessons, now);
+  // 그룹레슨 줄: 멤버 모두 같은 시각인 포탈 레슨(캔버스 UxReview1120Lessons ⑤). 지우면 서버가 멤버 레슨을 함께 지운다.
+  const groupLessonStarts = new Set(lessonGroup && lessonGroup.partners.length > 0 ? lessonGroup.sharedLessonStarts ?? [] : []);
+  const groupMemberNames = lessonGroup ? [studentName ?? "이 학생", ...lessonGroup.partners.map((partner) => partner.name)].join(" · ") : "";
   const scheduleHref = `/dashboard/admin?section=schedule&student=${encodeURIComponent(studentId)}`;
+  // 수강 종료 확인의 '예정 레슨 N개도 지우기'(캔버스 UxReview1120Policies ⑨). 서버가 지우는 기준(지금 이후)과 같다.
+  const upcomingPortalLessons = orderedLessons.filter((lesson) => !lesson.past && !lesson.connected);
+  const archiveUpcomingLessons: StudentArchiveUpcomingLessons = {
+    count: upcomingPortalLessons.length,
+    preview: upcomingPortalLessons.slice(0, 3).map((lesson) => ({
+      key: lesson.id,
+      label: formatKstDot(lesson.scheduledAt, { weekday: true, time: true, referenceTime: reference }),
+      group: groupLessonStarts.has(lesson.time),
+    })),
+    hasGroupLesson: upcomingPortalLessons.some((lesson) => groupLessonStarts.has(lesson.time)),
+  };
 
   return (
     <div className="flex flex-col gap-6 md:flex-row md:flex-wrap md:items-start md:gap-x-14 md:gap-y-10">
@@ -424,6 +480,7 @@ export function OverviewTab({
             <ul>
               {orderedLessons.map((l) => {
                 const lessonLabel = formatKst(l.scheduledAt, { year: "numeric", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" });
+                const groupLesson = !l.connected && lessonGroup !== null && groupLessonStarts.has(l.time);
                 return (
                   <li key={l.id} className="group border-b border-muted">
                     <div className="flex h-12 items-center gap-3 md:h-11 md:gap-3.5 md:px-1">
@@ -435,18 +492,19 @@ export function OverviewTab({
                       >
                         {formatKstDot(l.scheduledAt, { weekday: true, time: true, referenceTime: reference })}
                       </span>
+                      {groupLesson && lessonGroup ? <GroupLessonBadge groupName={lessonGroup.name} className="shrink" /> : null}
                       <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{l.note}</span>
                       {lessonNoteIds ? (() => {
-                        const link = buildLessonNoteLink({
-                          studentId,
-                          lessonAt: new Date(l.scheduledAt),
-                          noteIds: lessonNoteIds,
-                          returnTo: buildAdminStudentDetailHref(studentId, "overview"),
-                        });
+                        const returnTo = buildAdminStudentDetailHref(studentId, "overview");
+                        const lessonAt = new Date(l.scheduledAt);
+                        // 그룹레슨 줄은 그 날 그룹 노트를 열고, 없으면 이 학생 그룹의 그룹 노트 새로 쓰기로 간다.
+                        const link = groupLesson && lessonGroup
+                          ? buildGroupLessonNoteLink({ groupId: lessonGroup.id, memberId: studentId, lessonAt, noteIds: lessonNoteIds, returnTo })
+                          : buildLessonNoteLink({ studentId, lessonAt, noteIds: lessonNoteIds, returnTo });
                         return (
                           <Link
                             href={link.href}
-                            aria-label={`${lessonLabel} ${link.existing ? "수업 노트 열기" : "수업 노트 쓰기"}`}
+                            aria-label={`${lessonLabel}${groupLesson ? " 그룹레슨" : ""} ${link.existing ? "수업 노트 열기" : "수업 노트 쓰기"}`}
                             className={LESSON_NOTE_LINK_CLASS}
                           >
                             <FileText className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
@@ -460,7 +518,7 @@ export function OverviewTab({
                         onClick={(event) => lessonDeleteConfirm.request(event.currentTarget, l.id)}
                         disabled={isPending}
                         aria-expanded={lessonDeleteConfirm.value === l.id}
-                        aria-label={`${lessonLabel} 레슨 삭제`}
+                        aria-label={`${lessonLabel} ${groupLesson ? "그룹레슨" : "레슨"} 삭제`}
                         className={cn(rowIconClass, "text-destructive hover:text-destructive")}
                       >
                         <Trash2 className="size-4" strokeWidth={1.6} aria-hidden="true" />
@@ -469,7 +527,9 @@ export function OverviewTab({
                     {lessonDeleteConfirm.value === l.id ? (
                       <ConfirmPanel
                         confirm={lessonDeleteConfirm}
-                        message={`${lessonLabel} 레슨을 삭제할까요? 학생의 일정과 구독 캘린더에서도 사라집니다.`}
+                        message={groupLesson
+                          ? `${lessonLabel} 그룹레슨을 삭제할까요? ${groupMemberNames} 모두의 일정과 구독 캘린더에서 사라집니다.`
+                          : `${lessonLabel} 레슨을 삭제할까요? 학생의 일정과 구독 캘린더에서도 사라집니다.`}
                         confirmLabel="레슨 삭제 확인"
                         pendingLabel="삭제 중..."
                         pending={isPending}
@@ -486,6 +546,7 @@ export function OverviewTab({
           {addingLesson ? (
             <AddLessonForm
               studentId={studentId}
+              lessonGroup={lessonGroup}
               onClose={() => {
                 setAddingLesson(false);
                 focusAfterClose("lesson-add-trigger");
@@ -626,7 +687,12 @@ export function OverviewTab({
               : "구독 URL과 임시 비밀번호는 발급 직후 한 번만 보입니다. 다시 발급하면 이전 값은 즉시 만료됩니다."}
           </p>
           {studentName ? (
-            <StudentArchiveControl studentId={studentId} studentName={studentName} className="order-6 mt-4" />
+            <StudentArchiveControl
+              studentId={studentId}
+              studentName={studentName}
+              upcomingLessons={archiveUpcomingLessons}
+              className="order-6 mt-4"
+            />
           ) : null}
           {studentName ? (
             <StudentDeleteControl studentId={studentId} studentName={studentName} deletion={deletion} className="order-7 mt-4" />

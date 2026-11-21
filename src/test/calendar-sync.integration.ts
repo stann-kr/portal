@@ -419,6 +419,45 @@ test("매핑 해제는 레슨·연결된 적 없는 일정·그룹 일정 사본
   assert.deepEqual((await db.select().from(calendarGroupEvents)).map((row) => row.id), ["gev-1"]);
 });
 
+test("그룹 일정 사본을 학생이 고치면 개인 일정으로 떨어져 원본 변경·삭제를 따르지 않는다", { concurrency: false }, async (context) => {
+  const { db } = await setup(context, createSession("admin-1", "admin"));
+  const google = new FakeCalendar();
+  const googleConnectionId = await insertGoogleConnection(db);
+  clientFactory.setCalendarClientFactoryForTests(async () => routeByCalendar(new Map([["cal-g", google]])));
+  await db.insert(lessonGroups).values({ id: "group-1", name: "화요일 2:1" });
+  await db.insert(lessonGroupMembers).values([{ studentId: "student-1", groupId: "group-1" }, { studentId: "student-2", groupId: "group-1" }]);
+  const start = new Date(Date.now() + 2 * 86_400_000);
+  const remote = google.remoteAdd({ title: "공연 리허설", start, end: new Date(start.getTime() + 3_600_000) });
+  const saved = await syncActions.saveCalendarMapping({}, form({ connectionId: googleConnectionId, target: "group:group-1", remoteCalendarId: "cal-g" }));
+  assert.ok(saved.success, saved.error);
+  const [mapping] = await db.select().from(calendarMappings).where(eq(calendarMappings.groupId, "group-1"));
+  const copyOf = async (userId: string) => (await db.select().from(calendarEvents).where(eq(calendarEvents.userId, userId)))[0];
+  const [copy1, copy2] = [await copyOf("student-1"), await copyOf("student-2")];
+  assert.ok(copy1?.groupEventId && copy2?.groupEventId, "멤버마다 그룹 원본에 이어진 사본");
+
+  // 같은 값을 다시 저장한 것은 고친 것이 아니라 연결을 그대로 둔다. 메모를 적은 학생 사본만 떨어진다.
+  activeSession = createSession("student-2", "student");
+  await calendarEventActions.updateCalendarEvent(copy2!.id, { title: "공연 리허설" });
+  activeSession = createSession("student-1", "student");
+  await calendarEventActions.updateCalendarEvent(copy1!.id, { description: "기타 챙기기" });
+  assert.equal((await copyOf("student-1"))!.groupEventId, null, "고친 사본은 개인 일정");
+  assert.equal((await copyOf("student-2"))!.groupEventId, copy2!.groupEventId);
+
+  activeSession = createSession("admin-1", "admin");
+  google.remoteEdit(remote.remoteId, { title: "공연 리허설 (장소 변경)" });
+  assert.ok((await syncActions.syncCalendarMappingNow(mapping.id)).success);
+  assert.deepEqual(
+    [await copyOf("student-1"), await copyOf("student-2")].map((row) => [row?.title, row?.description]),
+    [["공연 리허설", "기타 챙기기"], ["공연 리허설 (장소 변경)", null]],
+    "원본을 고치면 이어진 사본만 따라간다",
+  );
+
+  google.remoteDelete(remote.remoteId);
+  assert.ok((await syncActions.syncCalendarMappingNow(mapping.id)).success);
+  assert.equal(await copyOf("student-2"), undefined, "원본을 지우면 이어진 사본도 지운다");
+  assert.equal((await copyOf("student-1"))?.description, "기타 챙기기", "떨어진 일정은 남는다");
+});
+
 test("그룹 캘린더 해제는 다른 그룹 캘린더에도 이어진 그룹 일정은 남기고, 마지막 그룹 캘린더를 풀 때 그룹 일정과 멤버 사본을 지운다", { concurrency: false }, async (context) => {
   const { db } = await setup(context, createSession("admin-1", "admin"));
   const google = new FakeCalendar();

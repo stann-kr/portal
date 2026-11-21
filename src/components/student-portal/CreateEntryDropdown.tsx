@@ -49,7 +49,7 @@ interface CreateEntryDropdownProps {
   canCreateLesson?: boolean;
   /** 관리자 일정 "전체 학생": 레슨 예약 대화상자에서 학생을 먼저 고른다. */
   lessonStudentChoices?: readonly QuickCreateStudentChoice[];
-  /** 관리자 "전체 학생"의 레슨 예약 대상 그룹. */
+  /** 관리자 일정의 그룹레슨 그룹("전체 학생"은 레슨 대상, 학생 한 명이면 "받는 학생"). */
   lessonGroupChoices?: readonly QuickCreateGroupChoice[];
 }
 

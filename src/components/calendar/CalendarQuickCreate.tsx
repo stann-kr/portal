@@ -23,6 +23,9 @@ import {
 } from "@/lib/calendar-quick-create";
 import { cn } from "@/lib/utils";
 import { formatDayLong } from "./calendar-dates";
+import { findStudentLessonGroup, LessonRecipientChoice, memberGroupLessonTagFor } from "./LessonRecipientChoice";
+import { tagMemberGroupLesson } from "@/lib/group-lesson-items";
+import { LESSON_WITH_GROUP_FIELD } from "@/lib/lesson-group-rules";
 
 export type QuickCreateStudentChoice = { id: string; label: string };
 /** 관리자 "전체 학생"에서 레슨 대상으로 고를 수 있는 그룹. 고르면 멤버마다 레슨이 하나씩 생긴다. */
@@ -62,7 +65,10 @@ export type CalendarQuickCreateOptions = {
    * 학생 개인 일정(canCreateEvent)은 학생 본인 스페이스에서만 열리므로 함께 쓰지 않는다.
    */
   studentChoices?: readonly QuickCreateStudentChoice[];
-  /** studentChoices와 함께 쓴다. 레슨을 고를 때만 대상에 그룹이 나온다. */
+  /**
+   * studentChoices와 함께 쓰면 레슨 대상에 그룹이 나온다. 학생 한 명 화면(studentChoices 없음)에서는 그 학생의 그룹을 찾아
+   * 레슨 "받는 학생"으로 그룹 전체를 고르게 한다.
+   */
   groupChoices?: readonly QuickCreateGroupChoice[];
 };
 
@@ -120,6 +126,9 @@ export function CalendarQuickCreate({ selection, anchor, options, onCreated, onC
   const studentSelectId = useId();
   const chosenStudent = studentChoices?.find((student) => student.id === chosenStudentId) ?? null;
   const groupChoices = kind === "lesson" && studentChoices ? options.groupChoices ?? [] : [];
+  // 학생 한 명 화면: 그 학생이 그룹 멤버면 "받는 학생"으로 그룹 전체를 고를 수 있다(캔버스 UxReview1120Lessons ⑥).
+  const memberGroup = kind === "lesson" && !studentChoices ? findStudentLessonGroup(options.groupChoices, options.studentId) : null;
+  const [lessonWithGroup, setLessonWithGroup] = useState(false);
   const chosenGroup = groupChoices.find((group) => `${GROUP_CHOICE_PREFIX}${group.id}` === chosenStudentId) ?? null;
   // 학생을 고르는 창이면 고른 학생(레슨은 그룹도), 아니면 지금 학생 스페이스가 대상이다.
   const target = studentChoices
@@ -239,15 +248,18 @@ export function CalendarQuickCreate({ selection, anchor, options, onCreated, onC
           onClose();
           return;
         }
+        const withGroup = memberGroup !== null && lessonWithGroup;
+        if (withGroup) formData.set(LESSON_WITH_GROUP_FIELD, "1");
         const result = await createLesson(target.id, {}, formData);
         if (!result.lesson) {
           setError(result.error ?? "레슨을 예약하지 못했습니다.");
           return;
         }
-        onCreated(createLessonUnifiedItem(
+        const created = createLessonUnifiedItem(
           { id: result.lesson.id, scheduledAt: new Date(result.lesson.scheduledAt) },
           { id: target.id, email: target.label, displayName: target.label },
-        ));
+        );
+        onCreated(withGroup ? tagMemberGroupLesson(created, memberGroupLessonTagFor(memberGroup, target.id)) : created);
       }
       onClose();
     } catch {
@@ -435,6 +447,17 @@ export function CalendarQuickCreate({ selection, anchor, options, onCreated, onC
           ) : (
             <p className="text-ui text-muted-foreground md:text-xs">이 날짜의 노트를 만들고 바로 이어서 씁니다.</p>
           )}
+
+          {memberGroup ? (
+            <LessonRecipientChoice
+              studentId={options.studentId}
+              studentLabel={options.spaceLabel}
+              group={memberGroup}
+              withGroup={lessonWithGroup}
+              onChange={setLessonWithGroup}
+              disabled={pending}
+            />
+          ) : null}
 
           {error ? (
             <p id={errorId} role="alert" className="text-ui text-destructive md:text-xs">{error}</p>

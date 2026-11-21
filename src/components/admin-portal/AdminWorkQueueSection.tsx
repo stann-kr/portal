@@ -6,13 +6,16 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { Check, FileText } from "lucide-react";
 import { setAssignmentReviewed } from "@/lib/actions/assignment-review";
-import { buildLessonNoteLink, LESSON_NOTE_LINK_CLASS } from "@/lib/lesson-note-links";
-import { ADMIN_WORK_QUEUE_PATH, buildAssignmentQueueHref } from "@/lib/admin-work-queue";
+import { buildGroupLessonNoteLink, buildLessonNoteLink, LESSON_NOTE_LINK_CLASS } from "@/lib/lesson-note-links";
+import { GroupLessonBadge } from "@/components/calendar/GroupLessonBadge";
+import type { LessonGroupSummary } from "@/lib/lesson-group-rules";
+import { ADMIN_WORK_QUEUE_PATH, buildAssignmentQueueHref, buildQnaQueueHref } from "@/lib/admin-work-queue";
 import { UndoToast, type UndoToastMessage } from "./UndoToast";
 import {
   getAdminWorkQueue,
   type AdminQueueThread,
   type PendingFeedbackAssignment,
+  type UpcomingLessonRow,
 } from "@/lib/admin-work-queue";
 import type { StudentRosterStat } from "@/lib/actions/students";
 import { describeAssignmentSubmission } from "@/lib/unified-item-normalization";
@@ -92,6 +95,7 @@ export function AdminWorkQueueSection({
   onOpenSchedule,
   pushOwnerId,
   lessonNoteIds,
+  lessonGroups = [],
   setReviewed = setAssignmentReviewed,
 }: {
   students: StudentRosterStat[];
@@ -103,6 +107,8 @@ export function AdminWorkQueueSection({
   pushOwnerId: string;
   /** "학생:KST 날짜" → 그 날짜 노트 id. 다가오는 레슨 행의 수업 노트 링크에 쓴다. */
   lessonNoteIds?: Readonly<Record<string, string>>;
+  /** 다가오는 레슨에서 멤버 모두 같은 시각인 레슨을 그룹레슨 한 줄로 합칠 때 쓴다. */
+  lessonGroups?: readonly LessonGroupSummary[];
   /** 확인함 표시·취소 action. 테스트가 바꿔 끼운다. */
   setReviewed?: typeof setAssignmentReviewed;
 }) {
@@ -124,6 +130,7 @@ export function AdminWorkQueueSection({
     threads,
     pendingAssignments.filter((assignment) => !acknowledgedIds.has(assignment.id)),
     referenceTime,
+    lessonGroups,
   );
   const setAcknowledged = (assignmentId: string, hidden: boolean) => setAcknowledgedIds((current) => {
     const next = new Set(current);
@@ -219,6 +226,11 @@ export function AdminWorkQueueSection({
     ? queue.pendingAssignments
     : queue.pendingAssignments.slice(0, QUEUE_PREVIEW_COUNT);
   const hiddenPendingCount = queue.pendingAssignments.length - visiblePendingAssignments.length;
+  const [showAllUpcoming, setShowAllUpcoming] = useState(false);
+  const visibleUpcomingLessons = showAllUpcoming
+    ? queue.upcomingLessons
+    : queue.upcomingLessons.slice(0, QUEUE_PREVIEW_COUNT);
+  const hiddenUpcomingCount = queue.upcomingLessons.length - visibleUpcomingLessons.length;
   const metrics = [
     { label: "미답변 질문", value: queue.metrics.openThreadCount },
     { label: "피드백 대기", value: queue.metrics.pendingFeedbackCount },
@@ -268,7 +280,7 @@ export function AdminWorkQueueSection({
                   return (
                     <li key={thread.id}>
                       <Link
-                        href={`/dashboard/qna/${thread.id}?returnTo=${encodeURIComponent(WORK_QUEUE_PATH)}`}
+                        href={buildQnaQueueHref(thread.id, WORK_QUEUE_PATH)}
                         className={QUEUE_ROW_CLASS}
                       >
                         <QueueRowTitle>{thread.title}</QueueRowTitle>
@@ -354,6 +366,7 @@ export function AdminWorkQueueSection({
           <LedgerSectionHeader
             id="upcoming-lesson-heading"
             title="다가오는 레슨"
+            count={<span className="md:hidden">{queue.metrics.upcomingLessonCount}</span>}
             aside={
               <button type="button" className={cn(LEDGER_HEADER_LINK_CLASS, "min-w-11 justify-end")} onClick={onOpenSchedule}>
                 일정 열기
@@ -364,48 +377,21 @@ export function AdminWorkQueueSection({
             <LedgerEmptyRow>7일 이내 레슨이 없습니다. 일정 화면에서 학생별 캘린더를 확인할 수 있습니다.</LedgerEmptyRow>
           ) : (
             <ul className="grid grid-cols-[repeat(auto-fit,minmax(min(400px,100%),1fr))] gap-x-14">
-              {queue.upcomingLessons.map((student) => (
-                <li key={student.id} className="flex min-w-0 items-center gap-2 border-b border-muted">
-                  <Link
-                    href={`/dashboard/admin/students/${student.id}`}
-                    className={cn(LEDGER_ROW_CLASS, "flex h-12 min-w-0 flex-1 items-center gap-3 border-b-0 md:h-13 md:px-1")}
-                  >
-                    <span className="w-29 shrink-0 whitespace-nowrap font-mono text-xs tabular-nums text-secondary-foreground md:w-33">
-                      {formatKstDot(student.nextLessonDate, { weekday: true, time: true, referenceTime })}
-                    </span>
-                    <span className="shrink-0 text-md font-medium md:text-body">
-                      {student.displayName?.trim() || student.email}
-                    </span>
-                    {/* 현재 진도는 커리큘럼 숨김 스위치가 켜졌을 때만 보인다. */}
-                    {isCurriculumVisible() ? (
-                      <span className="min-w-0 truncate text-ui text-muted-foreground">
-                        {student.currentModule || "진도 미지정"}
-                      </span>
-                    ) : null}
-                  </Link>
-                  {lessonNoteIds && student.nextLessonDate ? (() => {
-                    const link = buildLessonNoteLink({
-                      studentId: student.id,
-                      lessonAt: student.nextLessonDate,
-                      noteIds: lessonNoteIds,
-                      returnTo: WORK_QUEUE_PATH,
-                    });
-                    const name = student.displayName?.trim() || student.email;
-                    return (
-                      <Link
-                        href={link.href}
-                        aria-label={`${name} ${formatKstDot(student.nextLessonDate, { referenceTime })} ${link.existing ? "수업 노트 열기" : "수업 노트 쓰기"}`}
-                        className={cn(LESSON_NOTE_LINK_CLASS, "md:mr-1")}
-                      >
-                        <FileText className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
-                        {link.existing ? "노트 열기" : "수업 노트"}
-                      </Link>
-                    );
-                  })() : null}
-                </li>
+              {visibleUpcomingLessons.map((row) => (
+                <UpcomingLessonItem key={row.id} row={row} referenceTime={referenceTime} lessonNoteIds={lessonNoteIds} />
               ))}
             </ul>
           )}
+          {queue.upcomingLessons.length > QUEUE_PREVIEW_COUNT ? (
+            <button
+              type="button"
+              className={LEDGER_ADD_ROW_CLASS}
+              aria-expanded={showAllUpcoming}
+              onClick={() => setShowAllUpcoming((value) => !value)}
+            >
+              {showAllUpcoming ? "처음 5건만 보기" : `나머지 ${hiddenUpcomingCount}건 더 보기`}
+            </button>
+          ) : null}
         </LedgerSection>
       </div>
       <UndoToast
@@ -415,5 +401,65 @@ export function AdminWorkQueueSection({
         onDismiss={dismissToast}
       />
     </div>
+  );
+}
+
+function studentLabel(student: StudentRosterStat): string {
+  return student.displayName?.trim() || student.email;
+}
+
+/**
+ * 다가오는 레슨 한 줄. 그룹레슨은 "그룹레슨" 표시·그룹 이름·멤버를 한 줄에 적고 그룹 첫 멤버의 학생 상세를 연다.
+ * 수업 노트는 학생 줄은 그 날 개인 노트, 그룹 줄은 그 날 그룹 노트(캔버스 UxReview1120Admin ②, 결정 ux1120-group-lesson-tools).
+ */
+function UpcomingLessonItem({
+  row,
+  referenceTime,
+  lessonNoteIds,
+}: {
+  row: UpcomingLessonRow;
+  referenceTime: Date;
+  lessonNoteIds?: Readonly<Record<string, string>>;
+}) {
+  const first = row.kind === "group" ? row.members[0]! : row.student;
+  const name = row.kind === "group" ? row.group.name : studentLabel(row.student);
+  const link = lessonNoteIds
+    ? row.kind === "group"
+      ? buildGroupLessonNoteLink({ groupId: row.group.id, memberId: first.id, lessonAt: row.at, noteIds: lessonNoteIds, returnTo: WORK_QUEUE_PATH })
+      : buildLessonNoteLink({ studentId: row.student.id, lessonAt: row.at, noteIds: lessonNoteIds, returnTo: WORK_QUEUE_PATH })
+    : null;
+  return (
+    <li className="flex min-w-0 items-center gap-2 border-b border-muted">
+      <Link
+        href={`/dashboard/admin/students/${first.id}`}
+        className={cn(LEDGER_ROW_CLASS, "flex h-12 min-w-0 flex-1 items-center gap-3 border-b-0 md:h-13 md:px-1")}
+      >
+        <span className="w-29 shrink-0 whitespace-nowrap font-mono text-xs tabular-nums text-secondary-foreground md:w-33">
+          {formatKstDot(row.at, { weekday: true, time: true, referenceTime })}
+        </span>
+        {row.kind === "group" ? <GroupLessonBadge className="hidden shrink-0 md:inline-flex" /> : null}
+        <span className="shrink-0 text-md font-medium md:text-body">{name}</span>
+        {row.kind === "group" ? (
+          <span className="min-w-0 truncate text-ui text-muted-foreground">
+            {row.members.map(studentLabel).join(" · ")}
+          </span>
+        ) : isCurriculumVisible() ? (
+          // 현재 진도는 커리큘럼 숨김 스위치가 켜졌을 때만 보인다.
+          <span className="min-w-0 truncate text-ui text-muted-foreground">
+            {row.student.currentModule || "진도 미지정"}
+          </span>
+        ) : null}
+      </Link>
+      {link ? (
+        <Link
+          href={link.href}
+          aria-label={`${row.kind === "group" ? `${name} 그룹레슨` : name} ${formatKstDot(row.at, { referenceTime })} ${link.existing ? "수업 노트 열기" : "수업 노트 쓰기"}`}
+          className={cn(LESSON_NOTE_LINK_CLASS, "md:mr-1")}
+        >
+          <FileText className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
+          {link.existing ? "노트 열기" : "수업 노트"}
+        </Link>
+      ) : null}
+    </li>
   );
 }

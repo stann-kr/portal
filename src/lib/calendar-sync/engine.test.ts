@@ -411,6 +411,43 @@ test("로컬 삭제는 DELETED tombstone link로 원격 사본을 지우고 link
   assert.deepEqual(links(harness), []);
 });
 
+test("수강 종료한 학생 캘린더는 push를 건너뛰고, pruneDeleted만 지운 레슨 사본을 지우며 다른 항목은 보내지도 다시 만들지도 않는다", async (context) => {
+  const harness = setup(context);
+  insertLesson(harness, "lesson-past", at("2026-10-20T09:00:00Z"));
+  insertLesson(harness, "lesson-future", at("2026-11-03T09:00:00Z"));
+  insertLesson(harness, "lesson-kept", at("2026-11-10T09:00:00Z"));
+  await harness.sync();
+  assert.equal(harness.remote.events.size, 3);
+  const remoteStart = (localId: string) => {
+    const link = links(harness).find((row) => row.local_id === localId);
+    return link?.remote_id ? harness.remote.events.get(link.remote_id)?.start.toISOString() : undefined;
+  };
+
+  // 수강 종료와 함께 예정 레슨 하나를 지운다. 남은 레슨을 옮기고 새 레슨을 더해도 수강 종료 동안은 보내지 않는다.
+  harness.sqlite.prepare("UPDATE profiles SET account_status = 'ARCHIVED' WHERE id = ?").run(STUDENT);
+  await executeDocumentStatementsAtomically(harness.ctx, [
+    markLinksDeletedStatement("LESSON", "lesson-future", STUDENT),
+    { query: "DELETE FROM lessons WHERE id = ? AND student_id = ?", params: ["lesson-future", STUDENT] },
+  ]);
+  harness.sqlite.prepare("UPDATE lessons SET scheduled_at = ? WHERE id = 'lesson-past'").run(seconds(at("2026-10-21T09:00:00Z")));
+  insertLesson(harness, "lesson-new", at("2026-11-12T09:00:00Z"));
+  // DELETED로 표시됐지만 로컬 행이 남은 레슨(삭제가 취소된 경합)은 지우지 않는다.
+  harness.sqlite.prepare("UPDATE calendar_sync_links SET local_fingerprint = ? WHERE local_id = 'lesson-kept'").run(DELETED_FINGERPRINT);
+
+  const skipped = await harness.sync({ mode: "push" });
+  assert.deepEqual(skipped, { status: "skipped", localChanged: false, reason: "archived" });
+  assert.equal(harness.remote.events.size, 3);
+
+  harness.remote.calls = [];
+  const pruned = await harness.sync({ mode: "pruneDeleted" });
+  assert.equal(pruned.status, "synced");
+  assert.deepEqual(harness.remote.calls.filter((call) => call !== "get"), ["remove"], "지운 레슨 사본 하나만 지운다");
+  assert.equal(harness.remote.events.size, 2);
+  assert.deepEqual(links(harness).map((link) => link.local_id), ["lesson-kept", "lesson-past"]);
+  assert.equal(remoteStart("lesson-past"), "2026-10-20T09:00:00.000Z", "지난 레슨 사본은 옮기지 않는다");
+  assert.equal(links(harness).find((link) => link.local_id === "lesson-kept")?.local_fingerprint, DELETED_FINGERPRINT);
+});
+
 test("412 충돌에서 로컬이 바뀌었으면 remoteId로 현재 etag를 다시 읽고 로컬 내용으로 덮는다(웹 우선)", async (context) => {
   const harness = setup(context);
   insertEvent(harness, "event-1", { title: "연습", start: at("2026-11-05T11:00:00Z"), end: at("2026-11-05T12:00:00Z") });

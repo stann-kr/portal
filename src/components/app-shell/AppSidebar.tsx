@@ -28,6 +28,8 @@ type TopBarOverride = Partial<Omit<MobileTopBarConfig, "action">> & {
   actions?: ReactNode;
   /** 제목 자리를 비우고 오른쪽 조작만 둘 때(노트 편집처럼) true. */
   hideTitle?: boolean;
+  /** 제목 글자 대신 둘 조작(학생 상세의 학생 고르기처럼). */
+  titleSlot?: ReactNode;
 };
 
 const TopBarContext = createContext<((override: TopBarOverride | null) => void) | null>(null);
@@ -38,7 +40,7 @@ const TopBarContext = createContext<((override: TopBarOverride | null) => void) 
  */
 export function MobileTopBar(props: TopBarOverride) {
   const setOverride = useContext(TopBarContext);
-  const { title, back, action, actions, hideTitle } = props;
+  const { title, back, action, actions, hideTitle, titleSlot } = props;
   const backHref = back?.href;
   const backLabel = back?.label;
   const actionHref = action?.href;
@@ -52,8 +54,9 @@ export function MobileTopBar(props: TopBarOverride) {
       action: actionHidden ? null : actionHref && actionLabel ? { href: actionHref, label: actionLabel } : undefined,
       actions,
       hideTitle,
+      titleSlot,
     });
-  }, [setOverride, title, backHref, backLabel, actionHidden, actionHref, actionLabel, actions, hideTitle]);
+  }, [setOverride, title, backHref, backLabel, actionHidden, actionHref, actionLabel, actions, hideTitle, titleSlot]);
   useLayoutEffect(() => () => setOverride?.(null), [setOverride]);
   return null;
 }
@@ -263,7 +266,7 @@ export function AppSidebar({
               <Menu className="size-5" strokeWidth={1.6} aria-hidden="true" />
             </Dialog.Trigger>
           )}
-          {override?.hideTitle ? null : <span className="min-w-0 truncate text-md font-semibold">{title}</span>}
+          {override?.hideTitle ? null : override?.titleSlot ?? <span className="min-w-0 truncate text-md font-semibold">{title}</span>}
           <div className={cn("flex min-w-11 items-center justify-end", override?.hideTitle && "flex-1")}>
             {override?.actions}
             {action ? (

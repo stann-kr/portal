@@ -27,7 +27,7 @@ import { getQnaThreadsByStudent } from "@/lib/actions/qna";
 import { getAssignmentSummariesByStudent } from "@/lib/actions/assignments";
 import { getAssignmentTasksForStudent } from "@/lib/actions/assignmentTasks";
 import { AdminAssignmentsPanel } from "@/components/admin/assignments/AdminAssignmentsPanel";
-import { getStudentLessonGroup } from "@/lib/actions/lessonGroups";
+import { getLessonGroups, getStudentGroupLessonStarts, getStudentLessonGroup } from "@/lib/actions/lessonGroups";
 import { getStudentCalendarFeedIssuedAt } from "@/lib/actions/calendarFeed";
 import { getStudentGuideAccess, type StudentGuideAccessView } from "@/lib/actions/guideAccess";
 import { StatusBadge } from "@/components/ui/status-badge";
@@ -57,9 +57,11 @@ import {
 } from "@/lib/student-space-routes";
 import { getRequestNow } from "@/lib/request-time";
 import { StudentDetailTopBar } from "./StudentDetailTopBar";
+import { StudentSwitcherMenu } from "@/components/admin/StudentSwitcher";
 import { InstructorMemoEditor } from "@/components/lesson/InstructorMemoEditor";
 import { getInstructorMemo } from "@/lib/actions/instructorMemos";
 import { getLessonNoteIdsForStudent } from "@/lib/actions/lesson-notes";
+import { buildArchivedStudentHref, isArchivedStudent } from "@/lib/archived-student-records";
 
 type RawColumn = Awaited<ReturnType<typeof getOrSeedColumns>>[number];
 type RawQnaThread = Awaited<ReturnType<typeof getQnaThreadsByStudent>>[number];
@@ -212,12 +214,17 @@ export default async function StudentDetailPage({
   if (tab !== activeTab) redirect(buildAdminStudentDetailHref(studentId, activeTab));
 
   const student = await getStudentById(studentId);
-  if (!student) redirect("/dashboard/admin");
+  // 수강 종료한 학생은 보기 전용 상세에서 본다(캔버스 UxReview1120Policies ⑩).
+  if (!student) redirect(await isArchivedStudent(studentId) ? buildArchivedStudentHref(studentId) : "/dashboard/admin");
   // 노트 탭은 검색·표/목록을 갖춘 학생 스페이스 노트 화면이 canonical이다(AdminStudentNotes 보드).
   if (activeTab === "notes") redirect(buildAdminStudentNotesHref(studentId));
-  const [workCounts, lessonGroup] = await Promise.all([
+  const [workCounts, lessonGroup, groupLessonStarts, switcherStudents, switcherGroups] = await Promise.all([
     getStudentWorkCounts(studentId),
     activeTab === "overview" ? getStudentLessonGroup(studentId) : Promise.resolve(null),
+    activeTab === "overview" ? getStudentGroupLessonStarts(studentId) : Promise.resolve([]),
+    // 머리 이름의 학생 고르기(캔버스 UxReview1120Admin ③). 못 읽으면 이름만 보인다.
+    getStudentOptions().catch(() => []),
+    getLessonGroups().catch(() => []),
   ]);
 
   // Overview 탭 데이터는 미리 병렬 fetch
@@ -257,7 +264,11 @@ export default async function StudentDetailPage({
 
   return (
     <div className="px-5 pb-8 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-10">
-      <StudentDetailTopBar studentId={studentId} returnTo={buildAdminStudentDetailHref(studentId, activeTab)} />
+      <StudentDetailTopBar
+        studentId={studentId}
+        returnTo={buildAdminStudentDetailHref(studentId, activeTab)}
+        switcher={switcherStudents.length > 1 ? { name, tab: activeTab, students: switcherStudents, groups: switcherGroups } : null}
+      />
       <div className="flex max-w-[1080px] flex-col md:gap-7 md:mx-auto">
         <nav aria-label="위치" className="hidden items-center gap-1.5 text-ui md:flex">
           <Link
@@ -267,7 +278,11 @@ export default async function StudentDetailPage({
             학생
           </Link>
           <span aria-hidden="true" className="text-faint">/</span>
-          <span aria-current="page" className="min-w-0 truncate text-foreground">{name}</span>
+          {switcherStudents.length > 1 ? (
+            <StudentSwitcherMenu studentId={studentId} name={name} tab={activeTab} students={switcherStudents} groups={switcherGroups} />
+          ) : (
+            <span aria-current="page" className="min-w-0 truncate text-foreground">{name}</span>
+          )}
         </nav>
 
         <header className="flex items-center gap-3.5 pb-4 pt-5 md:gap-4 md:p-0">
@@ -305,8 +320,10 @@ export default async function StudentDetailPage({
               referenceTime={referenceTime}
               lessonNoteIds={lessonNoteIds}
               lessonGroup={lessonGroup ? {
+                id: lessonGroup.id,
                 name: lessonGroup.name,
                 partners: lessonGroup.members.filter((member) => member.id !== studentId),
+                sharedLessonStarts: groupLessonStarts,
               } : null}
             />
           )}

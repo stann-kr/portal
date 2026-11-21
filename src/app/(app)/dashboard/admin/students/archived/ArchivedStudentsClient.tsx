@@ -17,12 +17,18 @@ export type ArchivedStudentRow = {
 
 const ADMIN_STUDENTS_HREF = "/dashboard/admin?section=students";
 
+/** 보기 전용 상세(캔버스 UxReview1120Policies ⑩). */
+function archivedDetailHref(studentId: string): string {
+  return `/dashboard/admin/students/archived/${encodeURIComponent(studentId)}`;
+}
+
 function initialOf(name: string): string {
   return Array.from(name.trim())[0]?.toUpperCase() ?? "학";
 }
 
 /**
  * 수강 종료한 학생 목록과 복원(캔버스 StudentArchive ②·③). 복원은 다시 수강 종료할 수 있는 일이라 확인 없이 바로 한다.
+ * 이름은 복원하지 않고 기록을 읽는 보기 전용 상세로 가는 링크다(넓은 화면은 이름, 휴대폰은 복원 버튼을 뺀 줄 전체).
  * 복원한 학생은 서버가 목록을 다시 보내 줄에서 빠지고, 결과 안내로 초점을 옮긴다(누른 버튼이 사라지므로).
  */
 export function ArchivedStudentsClient({ students }: { students: ArchivedStudentRow[] }) {
@@ -103,18 +109,23 @@ export function ArchivedStudentsClient({ students }: { students: ArchivedStudent
             <ul className="flex flex-col border-t border-border md:hidden" aria-label="수강 종료한 학생">
               {students.map((student) => (
                 <li key={student.id} className="flex items-center gap-3 border-b border-muted py-2.5">
-                  <span
-                    aria-hidden="true"
-                    className="flex size-9 shrink-0 items-center justify-center rounded-full bg-muted text-ui font-semibold text-muted-foreground"
+                  <Link
+                    href={archivedDetailHref(student.id)}
+                    className="flex min-h-11 min-w-0 flex-1 items-center gap-3 rounded-touch focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   >
-                    {initialOf(student.name)}
-                  </span>
-                  <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                    <span className="truncate text-md font-medium text-secondary-foreground">{student.name}</span>
-                    <span className="text-xs text-muted-foreground">
-                      <span className="font-mono tabular-nums">{student.archivedLabel}</span> 종료
+                    <span
+                      aria-hidden="true"
+                      className="flex size-9 shrink-0 items-center justify-center rounded-full bg-muted text-ui font-semibold text-muted-foreground"
+                    >
+                      {initialOf(student.name)}
                     </span>
-                  </span>
+                    <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                      <span className="truncate text-md font-medium text-secondary-foreground">{student.name}</span>
+                      <span className="text-xs text-muted-foreground">
+                        <span className="font-mono tabular-nums">{student.archivedLabel}</span> 종료
+                      </span>
+                    </span>
+                  </Link>
                   <Button
                     type="button"
                     variant="outline"
@@ -150,7 +161,12 @@ export function ArchivedStudentsClient({ students }: { students: ArchivedStudent
                             {initialOf(student.name)}
                           </span>
                           <span className="flex min-w-0 flex-col">
-                            <span className="truncate font-medium text-secondary-foreground">{student.name}</span>
+                            <Link
+                              href={archivedDetailHref(student.id)}
+                              className="truncate rounded-sm font-medium text-foreground underline decoration-faint underline-offset-[3px] hover:decoration-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            >
+                              {student.name}
+                            </Link>
                             <span className="truncate text-xs text-muted-foreground">{student.email}</span>
                           </span>
                         </span>

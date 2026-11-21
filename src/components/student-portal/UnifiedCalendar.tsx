@@ -66,7 +66,7 @@ import type { CalendarQuickCreateSelection } from "@/lib/calendar-quick-create";
 import { createDaySelection } from "@/lib/unified-item-views";
 import { moveCalendarEvent } from "@/lib/actions/calendarEvents";
 import { moveLesson } from "@/lib/actions/lessons";
-import { readGroupLessonMetadata, readStudentGroupLessonTag, untagStudentGroupLesson } from "@/lib/group-lesson-items";
+import { readGroupLessonMetadata, readMemberGroupLessonTag, readStudentGroupLessonTag, untagStudentGroupLesson } from "@/lib/group-lesson-items";
 import { movePrivateNoteDate } from "@/lib/actions/privateNotes";
 import { createCreationOperationId } from "@/lib/creation-operation";
 import { formatKst } from "@/lib/kst-format";
@@ -130,7 +130,7 @@ const KST_MOVE_DATE = { month: "long", day: "numeric", weekday: "short" } as con
 
 // 조사가 앞말에 따라 바뀌지 않도록 "무엇 · 어디로" 형태로 알린다.
 function describeMove(item: UnifiedItem, request: CalendarMoveRequest): string {
-  const kind = item.type === "NOTE" ? "노트" : item.source.entity === "LESSON" ? (readGroupLessonMetadata(item) ? "그룹레슨" : "레슨") : "일정";
+  const kind = item.type === "NOTE" ? "노트" : item.source.entity === "LESSON" ? (readGroupLessonMetadata(item) || readMemberGroupLessonTag(item) ? "그룹레슨" : "레슨") : "일정";
   const name = item.source.entity === "LESSON" ? "" : ` "${item.title}"`;
   let when: string;
   if (request.kind === "note") {

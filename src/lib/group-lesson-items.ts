@@ -121,3 +121,40 @@ export function untagStudentGroupLesson(item: UnifiedItem): UnifiedItem {
   void _tag;
   return { ...item, title: "레슨", metadata };
 }
+
+/**
+ * 관리자 학생 한 명 화면: 그룹 멤버 모두 같은 시각인 이 학생의 포탈 레슨에 그룹 이름과 함께하는 학생 이름을 붙인다
+ * (캔버스 UxReview1120Lessons ⑤). 제목·학생 칸은 그대로 두고, 상세가 그룹 표시와 "모두의 일정" 안내·삭제 확인을 보인다.
+ * 관리자가 옮기거나 지우면 서버가 멤버 레슨을 함께 바꾸므로(src/lib/actions/lessons.ts) 옮긴 뒤에도 표시를 유지한다.
+ */
+export type MemberGroupLessonTag = { groupName: string; partnerNames: string[] };
+
+export function readMemberGroupLessonTag(item: UnifiedItem): MemberGroupLessonTag | null {
+  const value = item.metadata?.memberGroupLesson as MemberGroupLessonTag | undefined;
+  return value && typeof value.groupName === "string" && Array.isArray(value.partnerNames) ? value : null;
+}
+
+export function tagMemberGroupLesson(item: UnifiedItem, tag: MemberGroupLessonTag): UnifiedItem {
+  return { ...item, metadata: { ...item.metadata, memberGroupLesson: tag } };
+}
+
+export function tagMemberGroupLessons(
+  items: readonly UnifiedItem[],
+  group: { name: string; partnerNames: string[]; sharedLessonStarts: number[] } | null,
+): UnifiedItem[] {
+  if (!group || group.sharedLessonStarts.length === 0) return [...items];
+  const shared = new Set(group.sharedLessonStarts);
+  const tag = { groupName: group.name, partnerNames: group.partnerNames };
+  return items.map((item) =>
+    item.type === "EVENT" && item.source.kind === "PORTAL" && item.source.entity === "LESSON" && shared.has(item.date.getTime())
+      ? tagMemberGroupLesson(item, tag)
+      : item);
+}
+
+/** 그룹레슨이면 그룹 이름과 멤버 이름(이 학생 먼저). 합친 그룹레슨(전체 학생)과 학생 한 명 화면 표시를 함께 읽는다. */
+export function readLessonGroupNames(item: UnifiedItem): { groupName: string; memberNames: string[] } | null {
+  const merged = readGroupLessonMetadata(item);
+  if (merged) return { groupName: merged.groupName, memberNames: merged.members.map((member) => member.label) };
+  const tag = readMemberGroupLessonTag(item);
+  return tag ? { groupName: tag.groupName, memberNames: [item.space.label, ...tag.partnerNames] } : null;
+}

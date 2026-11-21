@@ -19,9 +19,9 @@ import {
   documentEpochSeconds,
   executeDocumentStatementsAtomically,
 } from "@/lib/document-lifecycle-atomic";
-import { listLessonGroups, readGroupLessonTargets, readLessonGroupMemberIds } from "@/lib/lesson-groups";
+import { listLessonGroups, readGroupLessonTargets, readLessonGroupMemberIds, readStudentLessonGroupId } from "@/lib/lesson-groups";
 import { activeStudentSql } from "@/lib/student-status";
-import { sharedLessonStarts } from "@/lib/lesson-group-rules";
+import { LESSON_WITH_GROUP_FIELD, sharedLessonStarts } from "@/lib/lesson-group-rules";
 import { and, eq, gte, asc, desc } from "drizzle-orm";
 import {
   requireAdmin,
@@ -159,6 +159,17 @@ export async function createLesson(
   const parsed = parseLessonScheduleInput(formData);
   if (!parsed.ok) return { error: parsed.error };
 
+  // "그룹 전체"(캔버스 UxReview1120Lessons ⑥): 그룹은 화면이 보낸 값이 아니라 이 학생의 지금 소속으로 정한다.
+  if (formData.get(LESSON_WITH_GROUP_FIELD) === "1") {
+    const groupId = await readStudentLessonGroupId(createDbContext(), studentId);
+    if (!groupId) return { error: GROUP_CHANGED_ERROR };
+    const created = await insertGroupLessons(session.user.id, groupId, parsed.value);
+    if ("error" in created) return { error: created.error };
+    const own = created.lessons.find((lesson) => lesson.studentId === studentId);
+    if (!own) return { error: GROUP_CHANGED_ERROR };
+    return { success: true, lesson: { id: own.id, scheduledAt: own.scheduledAt } };
+  }
+
   const db = createDb();
   const id = crypto.randomUUID();
   await db.insert(lessons).values({
@@ -195,12 +206,26 @@ export async function createGroupLesson(
   const session = await requireAdmin();
   const parsed = parseLessonScheduleInput(formData);
   if (!parsed.ok) return { error: parsed.error };
-  const memberIds = typeof groupId === "string" && groupId
-    ? await readLessonGroupMemberIds(createDbContext(), groupId)
-    : [];
-  if (memberIds.length === 0) return { error: "그룹을 찾지 못했습니다. 목록을 새로고침해 주세요." };
+  const created = typeof groupId === "string" && groupId
+    ? await insertGroupLessons(session.user.id, groupId, parsed.value)
+    : { error: GROUP_NOT_FOUND_ERROR };
+  if ("error" in created) return { error: created.error };
+  return { success: true, lessons: created.lessons };
+}
 
-  const scheduledAt = documentEpochSeconds(parsed.value);
+const GROUP_NOT_FOUND_ERROR = "그룹을 찾지 못했습니다. 목록을 새로고침해 주세요.";
+const GROUP_CHANGED_ERROR = "그 사이 그룹이 바뀌었습니다. 목록을 새로고침해 주세요.";
+
+/** 수강 중인 그룹 멤버마다 같은 시각 레슨을 하나씩 만든다. 호출 전에 관리자 권한을 확인한다. */
+async function insertGroupLessons(
+  actorId: string | undefined,
+  groupId: string,
+  scheduledAtValue: Date,
+): Promise<{ lessons: (ScheduledLesson & { studentId: string })[] } | { error: string }> {
+  const memberIds = await readLessonGroupMemberIds(createDbContext(), groupId);
+  if (memberIds.length === 0) return { error: GROUP_NOT_FOUND_ERROR };
+
+  const scheduledAt = documentEpochSeconds(scheduledAtValue);
   const created = memberIds.map((studentId) => ({ id: crypto.randomUUID(), studentId }));
   try {
     // 그 사이 멤버가 빠졌거나 학생이 아니게 되면 하나도 만들지 않는다.
@@ -218,23 +243,20 @@ export async function createGroupLesson(
     ]));
   } catch (error) {
     if (String((error as Error)?.message ?? error).includes("DOCUMENT_BATCH_ABORT")) {
-      return { error: "그 사이 그룹이 바뀌었습니다. 목록을 새로고침해 주세요." };
+      return { error: GROUP_CHANGED_ERROR };
     }
     throw error;
   }
   for (const lesson of created) {
     await notifyPush(
       { kind: "profiles", profileIds: [lesson.studentId] },
-      pushMessages.lessonScheduled({ lessonId: lesson.id, scheduledAt: parsed.value, changed: false }),
-      { excludeProfileId: session.user.id },
+      pushMessages.lessonScheduled({ lessonId: lesson.id, scheduledAt: scheduledAtValue, changed: false }),
+      { excludeProfileId: actorId },
     );
     await schedulePushStudentCalendarChanges(lesson.studentId);
     revalidateLessonPaths(lesson.studentId);
   }
-  return {
-    success: true,
-    lessons: created.map((lesson) => ({ ...lesson, scheduledAt: parsed.value.toISOString() })),
-  };
+  return { lessons: created.map((lesson) => ({ ...lesson, scheduledAt: scheduledAtValue.toISOString() })) };
 }
 
 /**

@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
 import { runCalendarMappingSync, type SyncEngineMode } from "./engine";
 import { FakeCalendar } from "./fake-calendar-client";
+import { markLinksDeletedStatement } from "./sync-runner";
 import { createSqliteTestDb, insertConnection, insertMapping, insertProfile, type SqliteTestDb } from "./sqlite-test-db";
 
 const NOW = new Date("2026-11-16T00:00:00.000Z");
@@ -272,4 +273,36 @@ test("그룹레슨 기준 멤버가 그룹에서 빠지면 새 기준 레슨으�
     harness.rows("SELECT local_id FROM calendar_sync_links WHERE mapping_id = 'map-group-google'"),
     [{ local_id: "l-b" }],
   );
+});
+
+test("기준 멤버가 수강 종료하며 예정 레슨을 지우면 그룹 캘린더 일정은 하나 남고 그 학생 개인 캘린더 사본만 지워진다", async (context) => {
+  const harness = setup(context);
+  insertProfile(harness, "s-c", "student");
+  harness.run("INSERT INTO lesson_group_members (student_id, group_id) VALUES ('s-c', 'g-1')");
+  insertLesson(harness, "l-a", "s-a", T_GROUP);
+  insertLesson(harness, "l-b", "s-b", T_GROUP);
+  insertLesson(harness, "l-c", "s-c", T_GROUP);
+  insertGroupMapping(harness, "map-group-google", "conn-google", "cal-group");
+  // iCloud에는 그룹 캘린더가 없어 s-a 개인 캘린더에 그룹레슨이 그대로 오른다.
+  insertMapping(harness, "map-a-icloud", "conn-icloud", "s-a", "cal-a");
+  await harness.sync("map-group-google");
+  await harness.sync("map-a-icloud");
+  assert.equal(harness.remotes["map-a-icloud"].events.size, 1);
+
+  // 수강 종료와 같은 batch에서 s-a 몫만 지운다(archiveStudent와 같은 문장).
+  harness.run("UPDATE profiles SET account_status = 'ARCHIVED' WHERE id = 's-a'");
+  const marked = markLinksDeletedStatement("LESSON", "l-a", "s-a", NOW);
+  harness.run(marked.query, ...marked.params);
+  harness.run("DELETE FROM lessons WHERE id = 'l-a' AND student_id = 's-a'");
+
+  await harness.sync("map-group-google", "push");
+  assert.deepEqual(
+    [...harness.remotes["map-group-google"].events.values()].map((event) => [event.title, event.portalRef]),
+    [["그룹레슨", "lesson:l-b"]],
+  );
+  assert.deepEqual(lessonStarts(harness), { "l-b": seconds(T_GROUP), "l-c": seconds(T_GROUP) });
+
+  assert.equal((await harness.sync("map-a-icloud", "push")).status, "skipped");
+  assert.equal((await harness.sync("map-a-icloud", "pruneDeleted")).status, "synced");
+  assert.equal(harness.remotes["map-a-icloud"].events.size, 0);
 });

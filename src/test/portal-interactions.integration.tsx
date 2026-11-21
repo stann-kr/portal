@@ -91,9 +91,14 @@ let StudentInviteControl: typeof import("@/components/admin/StudentInviteControl
 let archiveAction: typeof import("@/lib/actions/students").archiveStudent = async () => ({ ok: false, error: "테스트 미설정" });
 let restoreAction: typeof import("@/lib/actions/students").restoreStudent = async () => ({ ok: false, error: "테스트 미설정" });
 let StudentArchiveControl: typeof import("@/components/admin/StudentArchiveControl").StudentArchiveControl;
+let LessonGroupDialog: typeof import("@/components/admin-portal/LessonGroupDialog").LessonGroupDialog;
+let saveGroup: typeof import("@/lib/actions/lessonGroups").saveLessonGroupAction = async () => ({ ok: true });
+let removeGroup: typeof import("@/lib/actions/lessonGroups").deleteLessonGroupAction = async () => ({ ok: true });
 let deleteAction: typeof import("@/lib/actions/students").deleteStudent = async () => ({ ok: false, error: "테스트 미설정" });
 let StudentDeleteControl: typeof import("@/components/admin/StudentDeleteControl").StudentDeleteControl;
 let ArchivedStudentsClient: typeof import("@/app/(app)/dashboard/admin/students/archived/ArchivedStudentsClient").ArchivedStudentsClient;
+let ArchivedRecordRow: typeof import("@/app/(app)/dashboard/admin/students/archived/[id]/ArchivedRecordRow").ArchivedRecordRow;
+let ArchivedStudentBanner: typeof import("@/app/(app)/dashboard/admin/students/archived/[id]/ArchivedStudentBanner").ArchivedStudentBanner;
 let flashNotice: typeof import("@/lib/flash-notice");
 let NewStudentPage: typeof import("@/app/(app)/dashboard/admin/students/new/page").default;
 let inviteStatus: typeof import("@/lib/actions/invite").getInviteStatus = async () => ({ status: "invalid" });
@@ -232,6 +237,13 @@ mock.module("@/lib/actions/students", { namedExports: {
   restoreStudent: (...args: Parameters<typeof restoreAction>) => restoreAction(...args),
   deleteStudent: (...args: Parameters<typeof deleteAction>) => deleteAction(...args),
 } });
+mock.module("@/lib/actions/lessonGroups", { namedExports: {
+  getLessonGroups: async () => [],
+  getStudentLessonGroup: async () => null,
+  getMyHomeLessonGroup: async () => null,
+  saveLessonGroupAction: (...args: Parameters<typeof saveGroup>) => saveGroup(...args),
+  deleteLessonGroupAction: (...args: Parameters<typeof removeGroup>) => removeGroup(...args),
+} });
 mock.module("@/lib/actions/invite", { namedExports: {
   getInviteStatus: (...args: Parameters<typeof inviteStatus>) => inviteStatus(...args),
   completeInvite: (...args: Parameters<typeof completeInviteAction>) => completeInviteAction(...args),
@@ -360,8 +372,11 @@ before(async () => {
   ({ StudentPasswordResetControl } = await import("@/components/admin/StudentPasswordResetControl"));
   ({ StudentInviteControl } = await import("@/components/admin/StudentInviteControl"));
   ({ StudentArchiveControl } = await import("@/components/admin/StudentArchiveControl"));
+  ({ LessonGroupDialog } = await import("@/components/admin-portal/LessonGroupDialog"));
   ({ StudentDeleteControl } = await import("@/components/admin/StudentDeleteControl"));
   ({ ArchivedStudentsClient } = await import("@/app/(app)/dashboard/admin/students/archived/ArchivedStudentsClient"));
+  ({ ArchivedRecordRow } = await import("@/app/(app)/dashboard/admin/students/archived/[id]/ArchivedRecordRow"));
+  ({ ArchivedStudentBanner } = await import("@/app/(app)/dashboard/admin/students/archived/[id]/ArchivedStudentBanner"));
   flashNotice = await import("@/lib/flash-notice");
   ({ default: NewStudentPage } = await import("@/app/(app)/dashboard/admin/students/new/page"));
   ({ InviteSignup } = await import("@/components/auth/InviteSignup"));
@@ -1078,6 +1093,183 @@ test("admin lesson detail reschedules and deletes only after a cancel-first conf
   removeLesson = async () => {};
   await press("삭제");
   assert.deepEqual(removals, ["lesson-1"]);
+});
+
+test("학생 상세 학생 고르기: 그룹 멤버를 그룹 이름 아래 묶고, 고르면 보고 있던 탭 그대로 그 학생 상세로 간다", async (context) => {
+  const { StudentSwitcherMenu, StudentSwitcherSheet, buildStudentSwitcherSections } = await import("@/components/admin/StudentSwitcher");
+  const students = [
+    { id: "s-kim", name: "김학생" },
+    { id: "s-park", name: "박학생" },
+    { id: "s-lee", name: "이학생" },
+    { id: "s-choi", name: "최학생" },
+  ];
+  const groups = [
+    { id: "g-tue", name: "화요일반", memberIds: ["s-lee", "s-kim"] },
+    // 수강 중인 멤버가 한 명뿐인 그룹은 묶지 않는다.
+    { id: "g-solo", name: "혼자반", memberIds: ["s-choi"] },
+  ];
+  assert.deepEqual(
+    buildStudentSwitcherSections(students, groups).map((section) => [section.label, section.students.map((student) => student.name)]),
+    [["화요일반", ["김학생", "이학생"]], ["학생", ["박학생", "최학생"]]],
+  );
+  assert.deepEqual(buildStudentSwitcherSections(students, []).map((section) => section.label), [null], "그룹이 없으면 머리 없이 학생만");
+
+  await render(context, <StudentSwitcherMenu studentId="s-kim" name="김학생" tab="assignments" students={students} groups={groups} />);
+  const trigger = button("김학생, 다른 학생 고르기");
+  await act(async () => {
+    trigger.focus();
+    trigger.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+  });
+  await settle();
+  const menu = browser.document.querySelector('[role="menu"][aria-label="학생 고르기"]');
+  assert.ok(menu);
+  const options = [...menu.querySelectorAll("a")].filter((option) => option.getAttribute("role") === "menuitem");
+  assert.deepEqual(options.map((option) => option.textContent), ["김학생", "이학생", "박학생", "최학생"]);
+  assert.deepEqual(options.map((option) => option.getAttribute("href")), [
+    "/dashboard/admin/students/s-kim?tab=assignments",
+    "/dashboard/admin/students/s-lee?tab=assignments",
+    "/dashboard/admin/students/s-park?tab=assignments",
+    "/dashboard/admin/students/s-choi?tab=assignments",
+  ]);
+  assert.equal(options[0]!.getAttribute("aria-current"), "page");
+  assert.match(menu.textContent ?? "", /^화요일반김학생이학생학생박학생최학생$/u);
+  await escape();
+
+  // 좁은 화면: 위쪽 막대 이름 버튼이 같은 목록을 아래 시트로 열고, 고르면 닫힌다.
+  await render(context, <StudentSwitcherSheet studentId="s-park" name="박학생" tab="digging" students={students} groups={groups} />);
+  await press("박학생, 다른 학생 고르기");
+  const sheet = browser.document.querySelector('[role="dialog"]');
+  assert.ok(sheet);
+  assert.equal(sheet.querySelector("h2")?.textContent, "학생 고르기");
+  const sheetLinks = [...(sheet.querySelector('nav[aria-label="학생 고르기"]')?.querySelectorAll("a") ?? [])];
+  assert.equal(sheetLinks.find((link) => link.getAttribute("aria-current") === "page")?.textContent, "박학생");
+  assert.equal(sheetLinks[1]!.getAttribute("href"), "/dashboard/admin/students/s-lee?tab=digging");
+  assert.deepEqual([...sheet.querySelectorAll('[role="group"]')].map((group) => group.getAttribute("aria-label")), ["화요일반", "학생"]);
+  await act(async () => {
+    sheetLinks[1]!.addEventListener("click", (event) => event.preventDefault(), { once: true });
+    sheetLinks[1]!.click();
+  });
+  await settle();
+  assert.equal(browser.document.querySelector('[role="dialog"]'), null);
+});
+
+test("학생 한 명 화면의 그룹레슨: 상세와 개요는 멤버 모두의 일정 안내·삭제 확인을 보이고, 레슨 예약·추가는 기본 이 학생만에서 그룹 전체를 보낸다", async (context) => {
+  const tuesday = { id: "group-1", label: "화요일반", members: [{ id: "student-1", label: "김학생" }, { id: "student-2", label: "이학생" }] };
+  const lesson: UnifiedItem = {
+    id: "lesson-1", type: "EVENT", subType: "LESSON", title: "레슨", date: new Date("2026-11-25T10:00:00.000Z"), endDate: null,
+    metadata: { memberGroupLesson: { groupName: "화요일반", partnerNames: ["이학생"] } },
+    space: { studentId: "student-1", label: "김학생" }, source: { kind: "PORTAL", entity: "LESSON", label: "포탈" },
+  };
+  const updates: UnifiedItem[] = [];
+  const requests: { studentId: string; scheduledAt: unknown; withGroup: unknown }[] = [];
+  moveLesson = async (lessonId, _studentId, _previous, data) =>
+    ({ success: true, lesson: { id: lessonId, scheduledAt: new Date(`${String(data.get("scheduledAt"))}:00+09:00`).toISOString() } });
+  saveLesson = async (studentId, _previous, data) => {
+    requests.push({ studentId, scheduledAt: data.get("scheduledAt"), withGroup: data.get("withGroup") });
+    return { success: true, lesson: { id: `lesson-${requests.length + 1}`, scheduledAt: "2026-11-25T10:00:00.000Z" } };
+  };
+  context.after(() => { moveLesson = async () => ({}); saveLesson = async () => ({}); });
+
+  // 일정 상세: 그룹 안내와 삭제 확인이 멤버 모두를 말하고, 시간을 바꿔도 그룹 표시가 남는다.
+  const detail = await render(context, <LessonActions item={lesson} onUpdated={(next) => updates.push(next)} onDeleted={() => {}} />);
+  assert.match(browser.document.body.textContent ?? "", /그룹레슨 · 화요일반: 김학생 · 이학생 모두의 일정과 구독 캘린더에 함께 반영됩니다\./u);
+  await press("레슨 삭제");
+  assert.equal(browser.document.querySelector('[role="group"] p')?.textContent, "이 그룹레슨을 삭제할까요? 김학생 · 이학생 모두의 일정과 구독 캘린더에서 사라집니다.");
+  await press("취소");
+  await press("레슨 시간 변경");
+  await fill("lesson-reschedule-lesson-1", "2026-11-25T20:00");
+  await press("레슨 저장");
+  assert.deepEqual(updates[0]?.metadata.memberGroupLesson, { groupName: "화요일반", partnerNames: ["이학생"] });
+  await act(async () => detail.unmount());
+
+  // 레슨 예약 대화상자: 그룹 멤버면 "받는 학생"이 이 학생만으로 시작하고, 그룹 전체를 고르면 멤버를 알린 뒤 함께 보낸다.
+  const created: UnifiedItem[] = [];
+  const dropdown = (studentId: string, spaceLabel: string) => <CreateEntryDropdown studentId={studentId} diggingColumns={[]} spaceLabel={spaceLabel} defaultDate="2026-11-25T19:00"
+    canCreateQna={false} canCreateEvent={false} canCreateDigging={false} canCreateLesson lessonGroupChoices={[tuesday]} onSuccess={(item) => created.push(item)} />;
+  const booking = await render(context, dropdown("student-1", "김학생"));
+  await press("레슨 예약");
+  const radios = () => [...browser.document.querySelectorAll('[role="dialog"] [role="radiogroup"] [role="radio"]')]
+    .map((radio) => [radio.textContent, radio.getAttribute("aria-checked")]);
+  assert.equal(browser.document.getElementById(browser.document.querySelector('[role="dialog"] [role="radiogroup"]')?.getAttribute("aria-labelledby") ?? "")?.textContent, "받는 학생");
+  assert.deepEqual(radios(), [["김학생만", "true"], ["화요일반 전체 (2명)", "false"]]);
+  await press("화요일반 전체 (2명)");
+  assert.deepEqual(radios(), [["김학생만", "false"], ["화요일반 전체 (2명)", "true"]]);
+  assert.match(browser.document.querySelector('[role="dialog"]')?.textContent ?? "", /김학생 · 이학생에게 레슨이 하나씩 들어갑니다\./u);
+  await press("레슨 저장");
+  assert.deepEqual(requests.at(-1), { studentId: "student-1", scheduledAt: "2026-11-25T19:00", withGroup: "1" });
+  assert.deepEqual(created.at(-1)?.metadata.memberGroupLesson, { groupName: "화요일반", partnerNames: ["이학생"] });
+  // 다시 열면 이 학생만으로 돌아가고, 그대로 보내면 그룹 칸을 보내지 않는다.
+  await press("레슨 예약");
+  assert.deepEqual(radios(), [["김학생만", "true"], ["화요일반 전체 (2명)", "false"]]);
+  await press("레슨 저장");
+  assert.deepEqual(requests.at(-1), { studentId: "student-1", scheduledAt: "2026-11-25T19:00", withGroup: null });
+  assert.equal(created.at(-1)?.metadata.memberGroupLesson, undefined);
+  await act(async () => booking.unmount());
+  // 그룹에 없는 학생에게는 "받는 학생"이 보이지 않는다.
+  const solo = await render(context, dropdown("student-3", "박학생"));
+  await press("레슨 예약");
+  assert.equal(browser.document.querySelector('[role="dialog"] [role="radiogroup"]'), null);
+  await escape();
+  await act(async () => solo.unmount());
+
+  // 캘린더 칸에서 바로 예약도 같은 선택을 쓴다.
+  const quick = await render(context, <CalendarQuickCreate
+    selection={{ startStr: "2026-11-25T19:00:00+09:00", endStr: "2026-11-25T20:00:00+09:00", allDay: false }}
+    anchor={{ x: 200, y: 200 }}
+    options={{ canCreateEvent: false, canCreateLesson: true, studentId: "student-1", spaceLabel: "김학생", groupChoices: [tuesday] }}
+    onCreated={(item) => created.push(item)}
+    onClose={() => {}}
+  />);
+  assert.deepEqual(radios(), [["김학생만", "true"], ["화요일반 전체 (2명)", "false"]]);
+  await press("화요일반 전체 (2명)");
+  await press("레슨 예약");
+  assert.deepEqual(requests.at(-1), { studentId: "student-1", scheduledAt: "2026-11-25T19:00", withGroup: "1" });
+  assert.deepEqual(created.at(-1)?.metadata.memberGroupLesson, { groupName: "화요일반", partnerNames: ["이학생"] });
+  await act(async () => quick.unmount());
+
+  // 학생 상세 개요: 그룹레슨 줄은 그룹을 표시하고 멤버 모두를 말하는 삭제 확인을, 레슨 추가는 기본 끈 체크를 둔다.
+  await render(context, <OverviewTab
+    studentId="student-1"
+    studentName="김학생"
+    referenceTime={new Date("2026-11-20T03:00:00.000Z")}
+    modules={[]}
+    lessons={[
+      { id: "lesson-group", scheduledAt: new Date("2026-11-25T10:00:00.000Z") },
+      { id: "lesson-solo", scheduledAt: new Date("2026-11-27T10:00:00.000Z") },
+    ]}
+    lessonGroup={{ id: "g-tue", name: "화요일반", partners: [{ id: "student-2", name: "이학생" }], sharedLessonStarts: [Date.parse("2026-11-25T10:00:00.000Z")] }}
+    // 그룹레슨 날에 개인 노트만 있고 그룹 노트는 없다. 혼자 하는 레슨 날에는 개인 노트가 있다.
+    lessonNoteIds={{ "student-1:2026-11-25": "personal-same-day", "student-1:2026-11-27": "solo-note" }}
+  />);
+  const rows = [...browser.document.querySelectorAll('[aria-labelledby="lessons-heading"] li')];
+  assert.match(rows[0].textContent ?? "", /그룹레슨 · 화요일반/u);
+  assert.doesNotMatch(rows[1].textContent ?? "", /그룹레슨/u);
+  // 그룹레슨 줄은 그룹 노트를 기준으로 한다(캔버스 UxReview1120Policies ⑪): 개인 노트가 있어도 그룹 노트 새로 쓰기로 간다.
+  const groupNoteLink = rows[0].querySelector('a[aria-label$="그룹레슨 수업 노트 쓰기"]');
+  assert.ok(groupNoteLink instanceof browser.HTMLAnchorElement);
+  assert.equal(groupNoteLink.textContent, "수업 노트");
+  const groupHref = new URL(groupNoteLink.href);
+  assert.equal(groupHref.pathname, "/dashboard/admin/students/student-1/notes/new");
+  assert.equal(groupHref.searchParams.get("date"), "2026-11-25");
+  assert.equal(groupHref.searchParams.get("space"), "group");
+  const soloNoteLink = rows[1].querySelector('a[aria-label$=" 수업 노트 열기"]');
+  assert.ok(soloNoteLink instanceof browser.HTMLAnchorElement);
+  assert.equal(new URL(soloNoteLink.href).pathname, "/dashboard/notes/solo-note");
+  const groupDelete = rows[0].querySelector('button[aria-label$="그룹레슨 삭제"]');
+  assert.ok(groupDelete instanceof browser.HTMLButtonElement);
+  await act(async () => groupDelete.click());
+  await settle();
+  assert.match(rows[0].textContent ?? "", /그룹레슨을 삭제할까요\? 김학생 · 이학생 모두의 일정과 구독 캘린더에서 사라집니다\./u);
+  await press("레슨 추가");
+  const withGroup = browser.document.getElementById("lesson-with-group");
+  assert.ok(withGroup instanceof browser.HTMLInputElement);
+  assert.equal(withGroup.checked, false);
+  assert.equal(withGroup.closest("label")?.textContent, "화요일반 이학생에게도 같은 시각 레슨 추가");
+  await act(async () => withGroup.click());
+  await fill("lesson-scheduled-at", "2026-12-02T19:00");
+  await press("추가");
+  assert.deepEqual(requests.at(-1), { studentId: "student-1", scheduledAt: "2026-12-02T19:00", withGroup: "1" });
+  assert.equal(withGroup.checked, false, "추가한 뒤에는 기본(이 학생만)으로 돌아간다");
 });
 
 test("calendar preserves its date, view and filters across view tabs and admin sections", async (context) => {
@@ -2337,6 +2529,85 @@ test("게시물 삭제는 응답 유실 재시도와 복원 후 새 삭제 의�
   trashPost = async () => ({ success: false, error: "다른 화면에서 이 게시물이 먼저 변경되었습니다. 현재 초안은 유지됩니다." });
   await deletePost();
   assert.match(browser.document.querySelector('[role="alert"]')?.textContent ?? "", /먼저 변경되었습니다/u);
+});
+
+test("답글을 쓰는 사이 원 댓글이 지워지면 입력을 그 자리에 남기고, 쓴 글을 새 댓글 입력으로 옮기거나 버린다", async (context) => {
+  browser.localStorage.clear();
+  saveComment = async () => ({ error: "원 댓글이 삭제되어 답글을 달 수 없습니다. 댓글 목록을 새로 확인해 주세요.", replyRootMissing: true });
+  context.after(() => { saveComment = async () => ({}); });
+  const post = {
+    id: "orphan-post", authorId: "student-1", title: "연습실 같이 쓰실 분", contentHtml: "<p>본문</p>",
+    category: "general", boardType: "GENERAL" as const, isPinned: false, mediaUrl: null,
+    mediaObjectId: null, createdAt: new Date(), updatedAt: new Date(), deletedAt: null,
+    restoreLocked: false, version: 1, authorName: "학생",
+  };
+  const at = (minute: number) => new Date(Date.UTC(2026, 10, 20, 6, minute));
+  const row = (id: string, authorId: string, authorName: string, text: string, minute: number) => (
+    { id, postId: post.id, authorId, contentHtml: `<p>${text}</p>`, createdAt: at(minute), timeMarkerSeconds: null, parentId: null, authorName, authorRole: "student" }
+  );
+  const first = row("o-root", "student-2", "이학생", "저 갈게요", 1);
+  const second = row("o-other", "student-3", "박학생", "녹음은요?", 2);
+  const third = row("o-third", "student-3", "박학생", "몇 시예요?", 3);
+  const detail = (list: (typeof first)[]) => (
+    <PostDetailClient postId={post.id} post={post} initialCommentList={list} currentUserId="student-1" isAdmin={false} returnTo="/community" />
+  );
+  const root = await render(context, detail([first, second, third]));
+  const replyInput = () => {
+    const input = browser.document.querySelector('form input[name="content"]:not([placeholder="댓글을 입력하세요..."])');
+    return input instanceof browser.HTMLInputElement ? input : null;
+  };
+  const mainInput = () => {
+    const input = browser.document.querySelector('input[placeholder="댓글을 입력하세요..."]');
+    assert.ok(input instanceof browser.HTMLInputElement);
+    return input;
+  };
+  const alertText = () => browser.document.querySelector('[role="alert"]')?.textContent ?? "";
+
+  // 등록했는데 원 댓글이 이미 지워졌으면, 입력은 그대로 두고 등록 대신 버리기·새 댓글로 남기기를 둔다.
+  await press("이학생 댓글에 답글");
+  await fill(replyInput()!.id, "저도 갈게요");
+  const refreshesBefore = routerRefreshes;
+  await press("등록");
+  assert.equal(alertText(), "원 댓글이 삭제되어 답글을 달 수 없습니다. 쓴 글은 새 댓글로 남길 수 있습니다.");
+  assert.equal(routerRefreshes, refreshesBefore + 1, "댓글 목록을 다시 받는다");
+  assert.equal(replyInput()!.value, "저도 갈게요");
+  assert.equal([...browser.document.querySelectorAll("button")].some((element) => element.textContent === "등록" && element.closest("form") === replyInput()!.form), false);
+
+  // 새 목록에서 원 댓글이 사라져도 입력은 원래 자리("삭제된 댓글입니다" 아래)에 남는다.
+  await act(async () => root.render(detail([second, third])));
+  await settle();
+  const items = [...browser.document.querySelectorAll('section[aria-labelledby="comments-title"] > ol > li')];
+  assert.match(items[0]?.textContent ?? "", /삭제된 댓글입니다/u, "지워진 원 댓글 자리는 작성 순서 그대로");
+  assert.equal(replyInput()!.value, "저도 갈게요", "쓴 글은 그대로다");
+  assert.equal(browser.document.querySelector(`label[for="${replyInput()!.id}"]`)?.textContent, "삭제된 댓글에 쓰던 답글");
+
+  await press("새 댓글로 남기기");
+  assert.equal(replyInput(), null, "답글 입력은 닫힌다");
+  assert.equal(mainInput().value, "저도 갈게요", "쓴 글이 아래 댓글 입력으로 옮겨진다");
+  assert.equal(browser.document.activeElement, mainInput(), "초점도 댓글 입력으로 간다");
+  assert.doesNotMatch(browser.document.body.textContent ?? "", /삭제된 댓글입니다/u, "답글이 없던 지워진 자리는 닫으면 사라진다");
+
+  // 목록에서 원 댓글이 사라진 것을 먼저 알게 된 경우. 댓글 입력에 쓰던 글이 있으면 한 칸 띄워 뒤에 붙인다.
+  await press("박학생 댓글에 답글");
+  await fill(replyInput()!.id, "녹음 공유해요");
+  await act(async () => root.render(detail([third])));
+  await settle();
+  assert.equal(alertText(), "원 댓글이 삭제되어 답글을 달 수 없습니다. 쓴 글은 새 댓글로 남길 수 있습니다.");
+  await press("새 댓글로 남기기");
+  assert.equal(mainInput().value, "저도 갈게요 녹음 공유해요");
+
+  // 버리면 답글 초안도 지우고, 연 버튼이 사라졌으니 댓글 제목으로 초점이 간다.
+  await press("박학생 댓글에 답글");
+  await fill(replyInput()!.id, "지울 글");
+  await act(async () => root.render(detail([])));
+  await settle();
+  await press("버리기");
+  assert.equal(replyInput(), null);
+  assert.equal(browser.document.activeElement?.id, "comments-title");
+  await act(async () => root.render(detail([third])));
+  await settle();
+  await press("박학생 댓글에 답글");
+  assert.equal(replyInput()!.value, "", "버린 답글은 초안에도 남지 않는다");
 });
 
 test("failed comment deletion keeps the conversation and unfinished reply visible", async (context) => {
@@ -4725,6 +4996,95 @@ test("학생 한 명 일정도 돌아와 다시 읽으면 다른 곳에서 지�
   assert.deepEqual(shownIds(), ["kept"], "읽은 기간 안에서 응답에 없는 항목은 지운다");
 });
 
+test("그룹 해제는 창 안 확인을 거치고, 막히면 남은 그룹 노트와 기한을 알리며, 저장·해제 결과는 목록 위 한 줄로 남긴다", async (context) => {
+  const removals: string[] = [];
+  removeGroup = async (groupId) => {
+    removals.push(groupId);
+    return removals.length === 1
+      ? { ok: false, error: "그룹 노트 3개가 남아 있어 해제할 수 없습니다. 노트를 휴지통에 넣고 30일이 지나 비운 뒤 해제할 수 있습니다." }
+      : { ok: true };
+  };
+  saveGroup = async () => ({ ok: true, id: "group-1" });
+  context.after(() => {
+    removeGroup = async () => ({ ok: true });
+    saveGroup = async () => ({ ok: true });
+  });
+  const group = { id: "group-1", name: "화요일반", memberIds: ["student-1", "student-2"] };
+  const students = [{ id: "student-1", label: "김학생" }, { id: "student-2", label: "이학생" }];
+  function GroupScreen() {
+    const [open, setOpen] = useState(true);
+    const [notice, setNotice] = useState<string | null>(null);
+    const noticeRef = useRef<HTMLParagraphElement>(null);
+    return (
+      <div>
+        <p ref={noticeRef} role="status" tabIndex={-1} data-testid="group-notice">{notice ?? ""}</p>
+        <button type="button" onClick={() => setOpen(true)}>그룹 다시 열기</button>
+        {open ? (
+          <LessonGroupDialog
+            open
+            onOpenChange={setOpen}
+            group={group}
+            groups={[group]}
+            students={students}
+            onDone={setNotice}
+            focusAfterDissolve={() => noticeRef.current?.focus()}
+          />
+        ) : null}
+      </div>
+    );
+  }
+  await render(context, <GroupScreen />);
+  const dialog = () => browser.document.querySelector('[role="dialog"]');
+  const notice = () => browser.document.querySelector('[data-testid="group-notice"]');
+
+  // 저장은 바로 하고 결과를 목록 위에 남긴다.
+  await press("저장");
+  assert.equal(dialog(), null);
+  assert.equal(notice()?.textContent, "화요일반을 저장했습니다.");
+  await press("그룹 다시 열기");
+
+  // "그룹 해제"는 바로 실행하지 않고 창 안에 확인을 펼친다. 초점은 확인의 취소에서 시작한다.
+  await press("그룹 해제");
+  assert.equal(removals.length, 0);
+  assert.equal(button("그룹 해제").getAttribute("aria-expanded"), "true");
+  const panel = () => dialog()?.querySelector('[role="group"]');
+  assert.equal(
+    panel()?.querySelector("p")?.textContent,
+    "화요일반을 해제할까요? 멤버의 레슨·과제·노트는 학생별로 그대로 남고, 그룹 캘린더 연결(Google·iCloud)은 풀립니다.",
+  );
+  assert.equal(browser.document.activeElement?.textContent, "취소");
+  assert.ok(panel()?.contains(browser.document.activeElement));
+
+  // 확인에서 누른 Esc는 창이 아니라 확인만 닫는다.
+  await act(async () => {
+    // 브라우저의 keydown처럼 취소할 수 있는 이벤트로 보낸다(창은 취소된 Esc를 무시한다).
+    browser.document.activeElement?.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+  });
+  await settle();
+  assert.ok(dialog(), "창은 열려 있다");
+  assert.equal(panel(), null);
+  assert.equal(browser.document.activeElement?.textContent, "그룹 해제");
+
+  // 그룹 노트가 남아 막히면 개수와 비우는 기한을 알리고 창은 그대로 둔다.
+  await press("그룹 해제");
+  await press("해제");
+  assert.deepEqual(removals, ["group-1"]);
+  assert.equal(
+    dialog()?.querySelector('[role="alert"]')?.textContent,
+    "그룹 노트 3개가 남아 있어 해제할 수 없습니다. 노트를 휴지통에 넣고 30일이 지나 비운 뒤 해제할 수 있습니다.",
+  );
+  assert.equal(panel(), null, "확인은 닫힌다");
+
+  // 해제하면 창을 닫고, 사라질 그룹 줄 대신 결과 줄로 초점을 옮긴다.
+  await press("그룹 해제");
+  await press("해제");
+  await settle();
+  assert.deepEqual(removals, ["group-1", "group-1"]);
+  assert.equal(dialog(), null);
+  assert.equal(notice()?.textContent, "화요일반을 해제했습니다.");
+  assert.equal(browser.document.activeElement, notice());
+});
+
 test("수강 종료는 취소 우선 확인을 거치고, 성공하면 이동한 학생 목록에 결과 안내를 한 번 남긴다", async (context) => {
   const archived: string[] = [];
   let outcome: "error" | "redirect" | "throw" = "error";
@@ -4778,6 +5138,73 @@ test("수강 종료는 취소 우선 확인을 거치고, 성공하면 이동한
   await confirmArchive();
   assert.equal(alertText(), null, "redirect는 실패가 아니라 이동이다");
   assert.equal(notice(), "김학생의 수강을 종료했습니다.", "이동한 학생 목록이 처음 그릴 때 읽는다");
+});
+
+test("예정 레슨이 남은 학생의 수강 종료 확인은 '예정 레슨 N개도 지우기'를 켠 채 열고, 고른 대로 보내고 결과를 안내한다", async (context) => {
+  const calls: [string, boolean | undefined][] = [];
+  archiveAction = async (studentId, deleteUpcomingLessons) => {
+    calls.push([studentId, deleteUpcomingLessons]);
+    throw Object.assign(new Error("NEXT_REDIRECT"), { digest: "NEXT_REDIRECT;push;/dashboard/admin?section=students;303;" });
+  };
+  context.after(() => {
+    archiveAction = async () => ({ ok: false, error: "테스트 미설정" });
+    flashNotice.clearFlashNotice(flashNotice.STUDENT_LIST_NOTICE_KEY);
+  });
+  const checkbox = () => {
+    const found = browser.document.querySelector('[role="group"] input[type="checkbox"]');
+    assert.ok(found instanceof browser.HTMLInputElement, "확인 안의 예정 레슨 지우기 칸");
+    return found;
+  };
+  const confirmButton = () => {
+    const found = browser.document.querySelector('[role="group"] button[aria-describedby]');
+    assert.ok(found instanceof browser.HTMLButtonElement);
+    return found;
+  };
+  const notice = () => flashNotice.peekFlashNotice(flashNotice.STUDENT_LIST_NOTICE_KEY);
+
+  await render(
+    context,
+    <StudentArchiveControl
+      studentId="student-1"
+      studentName="김학생"
+      upcomingLessons={{
+        count: 4,
+        preview: [
+          { key: "l-1", label: "11.25 (화) 19:00", group: true },
+          { key: "l-2", label: "12.02 (화) 19:00", group: false },
+          { key: "l-3", label: "12.09 (화) 19:00", group: false },
+        ],
+        hasGroupLesson: true,
+      }}
+    />,
+  );
+  assert.equal(browser.document.querySelector('input[type="checkbox"]'), null, "확인을 열기 전에는 없다");
+  await press("수강 종료");
+  assert.equal(checkbox().checked, true, "기본은 켬");
+  assert.equal(browser.document.activeElement?.textContent, "취소", "초점은 여전히 취소");
+  const label = checkbox().closest("label")?.textContent ?? "";
+  assert.match(label, /^예정 레슨 4개도 지우기/u);
+  assert.match(label, /11\.25 \(화\) 19:00 그룹레슨 · 12\.02 \(화\) 19:00 · 12\.09 \(화\) 19:00 외 1개\. 학생 일정과 구독 캘린더에서도 사라집니다\. 그룹레슨은 김학생 몫만 지웁니다\./u);
+
+  await act(async () => confirmButton().click());
+  await settle();
+  assert.deepEqual(calls, [["student-1", true]]);
+  assert.equal(notice(), "김학생의 수강을 종료했습니다. 예정 레슨 4개를 지웠습니다.");
+
+  // 끄고 종료하면 레슨은 남기고, 다시 열면 기본(켬)으로 돌아온다.
+  flashNotice.clearFlashNotice(flashNotice.STUDENT_LIST_NOTICE_KEY);
+  assert.equal(browser.document.querySelector('[role="group"]'), null, "보낸 뒤 확인은 닫힌다");
+  await press("수강 종료");
+  await act(async () => checkbox().click());
+  assert.equal(checkbox().checked, false);
+  await press("취소");
+  await press("수강 종료");
+  assert.equal(checkbox().checked, true, "확인을 다시 열면 켬으로 돌아온다");
+  await act(async () => checkbox().click());
+  await act(async () => confirmButton().click());
+  await settle();
+  assert.deepEqual(calls[1], ["student-1", false]);
+  assert.equal(notice(), "김학생의 수강을 종료했습니다. 예정 레슨 4개는 남겨 두었고 복원하면 다시 보입니다.");
 });
 
 test("학생 삭제는 삭제할 수 있는 가입 전 학생에게만 보이고, 위험 색 확인을 거쳐 이동한 목록에 결과 안내를 남긴다", async (context) => {
@@ -4866,6 +5293,63 @@ test("수강 종료한 학생은 확인 없이 바로 복원하고, 사라진 �
   await press("student3@example.com 복원");
   assert.equal(browser.document.querySelector('[aria-live="polite"] p'), null);
   assert.match(browser.document.querySelector('[role="alert"]')?.textContent ?? "", /이미 복원했거나/u);
+});
+
+test("수강 종료한 학생 이름은 보기 전용 상세로 가고, 상세는 줄을 그 자리에서 펼치며 복원하면 학생 상세로 옮긴다", async (context) => {
+  await render(context, <ArchivedStudentsClient students={[
+    { id: "student-2", name: "정학생", email: "jung@example.com", archivedLabel: "11.18" },
+  ]} />);
+  const detailLinks = [...browser.document.querySelectorAll('a[href="/dashboard/admin/students/archived/student-2"]')];
+  assert.equal(detailLinks.length, 2, "휴대폰 줄과 넓은 화면 이름이 같은 상세로 간다");
+  for (const link of detailLinks) {
+    assert.equal(link.querySelector("button"), null, "링크 안에 복원 버튼을 넣지 않는다");
+    assert.match(link.textContent ?? "", /정학생/u);
+  }
+  await act(async () => browser.document.body.replaceChildren());
+
+  const restored: string[] = [];
+  restoreAction = async (studentId) => {
+    restored.push(studentId);
+    return restored.length === 1
+      ? { ok: false, error: "이미 복원했거나 찾을 수 없는 학생입니다. 목록을 새로 고쳐 주세요." }
+      : { ok: true, name: "정학생" };
+  };
+  context.after(() => { restoreAction = async () => ({ ok: false, error: "테스트 미설정" }); });
+  routerReplacements.length = 0;
+  await render(context, (
+    <div>
+      <ArchivedStudentBanner studentId="student-2" name="정학생" archivedLabel="11.18" />
+      <ul>
+        <ArchivedRecordRow title="15번째 수업" meta="11.11"><p>트랙 07</p></ArchivedRecordRow>
+      </ul>
+    </div>
+  ));
+  const note = browser.document.querySelector('[role="note"]');
+  assert.equal(note?.textContent?.replace(/\s+/gu, " ").trim(), "수강 종료 · 보기 전용 · 11.18 종료. 로그인할 수 없고 고칠 수 없습니다.복원");
+  assert.equal(browser.document.querySelectorAll("textarea, input, [contenteditable]").length, 0, "고칠 칸이 없다");
+
+  const row = browser.document.querySelector("li > button[aria-expanded]");
+  assert.ok(row instanceof browser.HTMLButtonElement);
+  assert.equal(row.textContent, "15번째 수업11.11");
+  assert.equal(row.getAttribute("aria-expanded"), "false");
+  assert.equal(browser.document.body.textContent?.includes("트랙 07"), false);
+  await act(async () => row.click());
+  assert.equal(row.getAttribute("aria-expanded"), "true");
+  const body = browser.document.getElementById(row.getAttribute("aria-controls") ?? "");
+  assert.ok(body instanceof browser.HTMLElement);
+  assert.equal(body.hidden, false);
+  assert.equal(body.textContent, "트랙 07");
+  await act(async () => row.click());
+  assert.equal(body.hidden, true, "다시 누르면 접는다");
+
+  await press("정학생 복원");
+  await settle();
+  assert.match(browser.document.querySelector('[role="alert"]')?.textContent ?? "", /이미 복원했거나/u);
+  assert.deepEqual(routerReplacements, []);
+  await press("정학생 복원");
+  await settle();
+  assert.deepEqual(restored, ["student-2", "student-2"]);
+  assert.deepEqual(routerReplacements, ["/dashboard/admin/students/student-2"], "복원하면 다시 고칠 수 있는 학생 상세로 옮긴다");
 });
 
 // ── 코드 리뷰 2차 후속 화면(캔버스 "코드 리뷰 2차 후속" ①~⑤) ──

@@ -23,6 +23,7 @@ import {
   parseCalendarEventUpdateInput,
   pickEditedCalendarEventFields,
   type CalendarEventEditField,
+  type CalendarEventPatch,
   type CalendarEventValues,
 } from "@/lib/calendar-event-contract";
 
@@ -130,6 +131,8 @@ function toCreatedCalendarEvent(eventId: string, values: CalendarEventValues): C
 /**
  * 본인 일정의 현재 값을 기준으로 patch를 검증하고 같은 owner 조건으로만 갱신한다. 읽은 뒤 일정이 지워져 갱신된 행이
  * 없으면 저장하지 않았다고 돌려준다. `allowUnchanged`면 빈 patch(고친 칸 없음)는 쓰지 않고 지금 값을 돌려준다.
+ * 그룹 캘린더 일정의 멤버 사본을 실제로 고치면 그룹 원본과의 연결을 끊어 개인 일정으로 둔다(2026-11-20 사용자 결정):
+ * 그 뒤 원본을 고치거나 지워도 이 일정은 그대로다(멤버가 그룹에서 빠질 때와 같은 규칙).
  */
 async function writeOwnCalendarEventPatch(
   userId: string,
@@ -145,6 +148,7 @@ async function writeOwnCalendarEventPatch(
       startTime: calendarEvents.startTime,
       endTime: calendarEvents.endTime,
       description: calendarEvents.description,
+      groupEventId: calendarEvents.groupEventId,
     })
     .from(calendarEvents)
     .where(
@@ -165,10 +169,11 @@ async function writeOwnCalendarEventPatch(
 
   const parsed = parseCalendarEventUpdateInput(data, current);
   if (!parsed.ok) return parsed;
+  const detachFromGroup = current.groupEventId !== null && calendarEventPatchChanges(parsed.value, current);
 
   const [saved] = await db
     .update(calendarEvents)
-    .set(parsed.value)
+    .set(detachFromGroup ? { ...parsed.value, groupEventId: null } : parsed.value)
     .where(
       and(
         eq(calendarEvents.id, eventId),
@@ -188,6 +193,18 @@ async function writeOwnCalendarEventPatch(
   revalidatePath("/dashboard/calendar");
   revalidatePath("/dashboard/student");
   return { ok: true, value: toCreatedCalendarEvent(eventId, saved) };
+}
+
+/** patch가 지금 값과 다른 칸을 하나라도 바꾸는지. 시각은 같은 순간이면 같다고 본다. */
+function calendarEventPatchChanges(patch: CalendarEventPatch, current: CalendarEventValues): boolean {
+  return (Object.keys(patch) as (keyof CalendarEventPatch)[]).some((field) => {
+    const next = patch[field];
+    const now = current[field];
+    if (next instanceof Date || now instanceof Date) {
+      return !(next instanceof Date && now instanceof Date && next.getTime() === now.getTime());
+    }
+    return next !== now;
+  });
 }
 
 /**

@@ -32,6 +32,12 @@ export function limitCommentContent(input: string): LimitedCommentContent {
 /** 답글이면 원 댓글 ID를 담는 form 칸. 비어 있으면 원 댓글이다. */
 export const COMMENT_PARENT_FIELD = "parentId";
 
+/**
+ * 답글의 답글이면 "답글"을 누른 그 답글 ID를 담는 form 칸(알림 대상만 정한다). 묶음은 COMMENT_PARENT_FIELD의 원 댓글로 정하므로,
+ * 그 답글이 지워졌어도 답글은 원 댓글 묶음에 달린다.
+ */
+export const COMMENT_REPLY_TO_FIELD = "replyToId";
+
 /** 답글 입력 초안 context. 원 댓글(묶음)마다 따로 보존한다(같은 "커뮤니티 댓글" 초안 종류). */
 export function commentReplyDraftContext(postId: string, rootId: string): string {
   return `${postId}:reply:${rootId}`;

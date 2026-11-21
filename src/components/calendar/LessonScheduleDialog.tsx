@@ -20,6 +20,9 @@ import {
   type QuickCreateGroupChoice,
   type QuickCreateStudentChoice,
 } from "./CalendarQuickCreate";
+import { findStudentLessonGroup, LessonRecipientChoice, memberGroupLessonTagFor } from "./LessonRecipientChoice";
+import { tagMemberGroupLesson, type MemberGroupLessonTag } from "@/lib/group-lesson-items";
+import { LESSON_WITH_GROUP_FIELD } from "@/lib/lesson-group-rules";
 
 /** 관리자가 학생 일정 캘린더에서 바로 레슨을 예약한다(머리의 "레슨 예약", 좁은 화면 위쪽 막대의 +). */
 export function LessonScheduleDialog({
@@ -41,7 +44,10 @@ export function LessonScheduleDialog({
   onSuccess?: (item: UnifiedItem) => void;
   /** 관리자 일정 "전체 학생": 예약할 학생을 대화상자에서 먼저 고른다(필수). 서버 action이 활성 학생인지 다시 확인한다. */
   studentChoices?: readonly QuickCreateStudentChoice[];
-  /** studentChoices와 함께 쓴다. 그룹을 고르면 멤버마다 레슨이 하나씩 생긴다(캔버스 GroupLesson ②). */
+  /**
+   * studentChoices와 함께 쓰면 그룹을 고를 때 멤버마다 레슨이 하나씩 생긴다(캔버스 GroupLesson ②). 학생 한 명 화면에서는
+   * 그 학생의 그룹을 찾아 "받는 학생"으로 그룹 전체를 고르게 한다(캔버스 UxReview1120Lessons ⑥).
+   */
   groupChoices?: readonly QuickCreateGroupChoice[];
 }) {
   const [scheduledAt, setScheduledAt] = useState(defaultStart ?? "");
@@ -49,8 +55,15 @@ export function LessonScheduleDialog({
   const chosenStudent = studentChoices?.find((student) => student.id === chosenStudentId) ?? null;
   const groups = studentChoices ? groupChoices : [];
   const chosenGroup = groups.find((group) => `${GROUP_CHOICE_PREFIX}${group.id}` === chosenStudentId) ?? null;
-  // 예약 결과를 받은 학생. 대화상자를 연 채 선택을 바꿔도 이미 저장한 레슨의 학생을 쓴다.
-  const savedTargetRef = useRef<{ id: string; label: string }>({ id: studentId, label: spaceLabel });
+  // 학생 한 명 화면: 그 학생이 그룹 멤버면 "받는 학생"으로 그룹 전체를 고를 수 있다(캔버스 UxReview1120Lessons ⑥).
+  const memberGroup = studentChoices ? null : findStudentLessonGroup(groupChoices, studentId);
+  const [withGroup, setWithGroup] = useState(false);
+  // 예약 결과를 받은 학생과 그룹 표시. 대화상자를 연 채 선택을 바꿔도 이미 저장한 레슨의 값을 쓴다.
+  const savedTargetRef = useRef<{ id: string; label: string; groupTag: MemberGroupLessonTag | null }>({
+    id: studentId,
+    label: spaceLabel,
+    groupTag: null,
+  });
   const handledLessonRef = useRef<string | null>(null);
   const [state, action, isPending] = useActionState<CreateLessonState, FormData>(
     async (previous, data) => {
@@ -73,7 +86,13 @@ export function LessonScheduleDialog({
       if (!target) return { error: "레슨을 예약할 학생을 골라 주세요." };
       try {
         const result = await createLesson(target.id, previous, data);
-        if (result.lesson) savedTargetRef.current = { id: target.id, label: target.label };
+        if (result.lesson) {
+          savedTargetRef.current = {
+            id: target.id,
+            label: target.label,
+            groupTag: memberGroup && data.get(LESSON_WITH_GROUP_FIELD) === "1" ? memberGroupLessonTagFor(memberGroup, target.id) : null,
+          };
+        }
         return result;
       } catch {
         return { error: "저장 결과를 확인하지 못했습니다. 일정을 확인한 뒤 다시 시도해 주세요." };
@@ -91,6 +110,7 @@ export function LessonScheduleDialog({
     if (open) {
       setScheduledAt(defaultStart ?? "");
       setChosenStudentId("");
+      setWithGroup(false);
       setHasSubmitted(false);
     }
   }
@@ -99,12 +119,13 @@ export function LessonScheduleDialog({
     if (!state.lesson || handledLessonRef.current === state.lesson.id) return;
     handledLessonRef.current = state.lesson.id;
     onOpenChange(false);
-    const target = studentChoices ? savedTargetRef.current : { id: studentId, label: spaceLabel };
-    onSuccess?.(createLessonUnifiedItem(
+    const target = savedTargetRef.current;
+    const created = createLessonUnifiedItem(
       { id: state.lesson.id, scheduledAt: new Date(state.lesson.scheduledAt) },
       { id: target.id, email: target.label, displayName: target.label },
-    ));
-  }, [onOpenChange, onSuccess, spaceLabel, state.lesson, studentChoices, studentId]);
+    );
+    onSuccess?.(target.groupTag ? tagMemberGroupLesson(created, target.groupTag) : created);
+  }, [onOpenChange, onSuccess, state.lesson]);
 
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => { if (!isPending) onOpenChange(nextOpen); }}>
@@ -171,6 +192,19 @@ export function LessonScheduleDialog({
               className="font-mono md:px-2.5 md:text-xs"
             />
           </label>
+          {memberGroup ? (
+            <>
+              <LessonRecipientChoice
+                studentId={studentId}
+                studentLabel={spaceLabel}
+                group={memberGroup}
+                withGroup={withGroup}
+                onChange={setWithGroup}
+                disabled={isPending}
+              />
+              {withGroup ? <input type="hidden" name={LESSON_WITH_GROUP_FIELD} value="1" /> : null}
+            </>
+          ) : null}
           <div className="flex flex-col-reverse gap-2 md:flex-row md:justify-end">
             <Button
               type="button"

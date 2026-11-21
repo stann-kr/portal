@@ -9,7 +9,8 @@
  */
 "use client";
 
-import { readStudentGroupLessonTag } from "@/lib/group-lesson-items";
+import { readMemberGroupLessonTag, readStudentGroupLessonTag } from "@/lib/group-lesson-items";
+import { GroupLessonBadge } from "@/components/calendar/GroupLessonBadge";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { Disc3, MessageSquareText } from "lucide-react";
@@ -141,6 +142,8 @@ export function UnifiedItemDetail({
   const metaFeedbackCount = item.metadata.feedbackCount as number | undefined;
   const isAllDay = item.metadata.allDay === true;
   const studentGroupLesson = readStudentGroupLessonTag(item);
+  // 관리자 학생 한 명 화면의 그룹레슨(캔버스 UxReview1120Lessons ⑤). 제목은 "레슨" 그대로 두고 위에 그룹을 표시한다.
+  const memberGroupLesson = readMemberGroupLessonTag(item);
   const description = item.description ?? metaDescription;
   const isLesson = item.type === "EVENT" && item.subType === "LESSON";
   // 아직 제출하지 않은 관리자 과제는 마감 시각에 놓이고, 제출은 과제 화면에서 한다.
@@ -154,7 +157,14 @@ export function UnifiedItemDetail({
 
   return (
     <div className="flex flex-col gap-4">
-      <h2 className="break-words text-xl font-semibold tracking-title">{item.title}</h2>
+      {memberGroupLesson ? (
+        <div className="flex flex-col items-start gap-1">
+          <GroupLessonBadge groupName={memberGroupLesson.groupName} className="max-w-full" />
+          <h2 className="break-words text-xl font-semibold tracking-title">{item.title}</h2>
+        </div>
+      ) : (
+        <h2 className="break-words text-xl font-semibold tracking-title">{item.title}</h2>
+      )}
 
       <dl className="flex flex-col">
         {item.type === "EVENT" ? (

@@ -2,11 +2,12 @@
  * @file src/components/admin-portal/LessonGroupDialog.tsx
  * @description 그룹 만들기·관리 창(캔버스 GroupLesson ①). 이름과 멤버(2명 이상)를 정하고, 관리일 때는 해제도 한다.
  * 다른 그룹에 있는 학생은 고를 수 없고 그 그룹 이름이 함께 보인다. 서버 action이 같은 규칙을 다시 확인한다.
+ * "그룹 해제"는 창 안에 확인을 펼친 뒤 실행하고, 저장·해제 결과는 학생 목록 위 한 줄로 알린다(캔버스 UxReview1120Lessons ⑦).
  * 한두 칸짜리 짧은 form이라 로컬 초안·이탈 보호 대상이 아니다(2026-11-13 사용자 결정).
  */
 "use client";
 
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   Dialog,
@@ -17,6 +18,9 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { ConfirmPanel, useConfirmAction } from "@/components/ui/confirm-action";
+import { OPEN_ESCAPE_LAYER } from "@/components/ui/escape-layer";
+import { withObjectParticle } from "@/lib/korean-particle";
 import { deleteLessonGroupAction, saveLessonGroupAction } from "@/lib/actions/lessonGroups";
 import { LESSON_GROUP_MIN_MEMBERS, LESSON_GROUP_NAME_MAX, type LessonGroupSummary } from "@/lib/lesson-group-rules";
 
@@ -28,6 +32,8 @@ export function LessonGroupDialog({
   group,
   groups,
   students,
+  onDone,
+  focusAfterDissolve,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -35,12 +41,18 @@ export function LessonGroupDialog({
   group: LessonGroupSummary | null;
   groups: readonly LessonGroupSummary[];
   students: readonly LessonGroupStudentChoice[];
+  /** 저장·해제가 끝나면 학생 목록 위에 알릴 한 줄(예: "화요일반을 해제했습니다."). */
+  onDone?: (message: string) => void;
+  /** 해제하면 창을 연 그룹 줄이 사라지므로 창을 닫은 뒤 초점을 둘 곳으로 옮긴다. */
+  focusAfterDissolve?: () => void;
 }) {
   const router = useRouter();
   const [name, setName] = useState(group?.name ?? "");
   const [memberIds, setMemberIds] = useState<string[]>(group?.memberIds ?? []);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+  const dissolveConfirm = useConfirmAction();
+  const dissolved = useRef(false);
 
   // 열 때마다 대상 그룹 값으로 새로 채운다. 이전 값과 렌더 중에 비교해 바로 맞춘다.
   const [resetSource, setResetSource] = useState({ open, groupId: group?.id ?? null });
@@ -63,7 +75,7 @@ export function LessonGroupDialog({
     setMemberIds((current) => (checked ? [...current, id] : current.filter((value) => value !== id)));
   };
 
-  const run = (task: () => Promise<{ ok: boolean; error?: string }>) => {
+  const run = (task: () => Promise<{ ok: boolean; error?: string }>, doneMessage: string, dissolving = false) => {
     setError(null);
     startTransition(async () => {
       try {
@@ -72,6 +84,8 @@ export function LessonGroupDialog({
           setError(result.error ?? "저장하지 못했습니다.");
           return;
         }
+        dissolved.current = dissolving;
+        onDone?.(doneMessage);
         onOpenChange(false);
         router.refresh();
       } catch {
@@ -83,12 +97,22 @@ export function LessonGroupDialog({
   const save = () => {
     if (!name.trim()) return setError("그룹 이름을 적어 주세요.");
     if (memberIds.length < LESSON_GROUP_MIN_MEMBERS) return setError(`학생을 ${LESSON_GROUP_MIN_MEMBERS}명 이상 골라 주세요.`);
-    run(() => saveLessonGroupAction({ groupId: group?.id ?? null, name, memberIds }));
+    run(
+      () => saveLessonGroupAction({ groupId: group?.id ?? null, name, memberIds }),
+      `${withObjectParticle(name.trim())} ${group ? "저장했습니다." : "만들었습니다."}`,
+    );
   };
 
   return (
     <Dialog open={open} onOpenChange={(nextOpen) => { if (!isPending) onOpenChange(nextOpen); }}>
-      <DialogContent dismissible={!isPending}>
+      <DialogContent
+        dismissible={!isPending}
+        onCloseAutoFocus={(event) => {
+          if (!dissolved.current || !focusAfterDissolve) return;
+          event.preventDefault();
+          focusAfterDissolve();
+        }}
+      >
         <DialogHeader>
           <DialogTitle>{group ? "그룹 관리" : "그룹 만들기"}</DialogTitle>
           <DialogDescription>
@@ -149,7 +173,8 @@ export function LessonGroupDialog({
                 size="touch"
                 className="text-destructive md:h-8 md:rounded-md md:px-2.5 md:text-ui"
                 disabled={isPending}
-                onClick={() => run(() => deleteLessonGroupAction(group.id))}
+                aria-expanded={dissolveConfirm.isOpen}
+                onClick={(event) => dissolveConfirm.request(event.currentTarget)}
               >
                 그룹 해제
               </Button>
@@ -166,10 +191,23 @@ export function LessonGroupDialog({
                 취소
               </Button>
               <Button type="submit" size="touch" className="md:h-8 md:rounded-md md:px-3.5 md:text-ui" disabled={isPending}>
-                {isPending ? "저장 중..." : "저장"}
+                {isPending && !dissolveConfirm.isOpen ? "저장 중..." : "저장"}
               </Button>
             </div>
           </div>
+          {group && dissolveConfirm.isOpen ? (
+            // 확인이 열려 있으면 Esc는 창 대신 확인을 닫는다.
+            <div {...OPEN_ESCAPE_LAYER}>
+              <ConfirmPanel
+                confirm={dissolveConfirm}
+                message={`${withObjectParticle(group.name)} 해제할까요? 멤버의 레슨·과제·노트는 학생별로 그대로 남고, 그룹 캘린더 연결(Google·iCloud)은 풀립니다.`}
+                confirmLabel="해제"
+                pendingLabel="해제 중..."
+                pending={isPending}
+                onConfirm={() => run(() => deleteLessonGroupAction(group.id), `${withObjectParticle(group.name)} 해제했습니다.`, true)}
+              />
+            </div>
+          ) : null}
         </form>
       </DialogContent>
     </Dialog>

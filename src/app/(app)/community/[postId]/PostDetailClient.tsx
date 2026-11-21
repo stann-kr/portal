@@ -21,7 +21,7 @@ import {
   deleteComment,
   getCommentsByPost,
 } from "@/lib/actions/comments";
-import { CommentForm } from "@/components/community/CommentForm";
+import { CommentForm, type CommentFormHandle } from "@/components/community/CommentForm";
 import { CommentThreads } from "@/components/community/CommentThreads";
 import { MixsetPlayer } from "@/components/community/MixsetPlayer";
 import type { MediaSeekRequest, PlaybackPositionReader } from "@/components/player/VideoPlayer";
@@ -74,6 +74,8 @@ export function PostDetailClient({
   const [seekAnnouncement, setSeekAnnouncement] = useState({ text: "", nonce: 0 });
   const playerRegionRef = useRef<HTMLElement>(null);
   const positionReaderRef = useRef<PlaybackPositionReader | null>(null);
+  // 원 댓글이 지워진 답글을 "새 댓글로 남기기"로 옮길 아래 댓글 입력.
+  const commentFormRef = useRef<CommentFormHandle>(null);
   // 플레이어는 reader 콜백이 바뀔 때마다 다시 연결하므로 안정된 참조를 넘긴다.
   const handlePositionReaderChange = useCallback((reader: PlaybackPositionReader | null) => {
     positionReaderRef.current = reader;
@@ -338,12 +340,14 @@ export function PostDetailClient({
         onDelete={handleDeleteComment}
         onSeek={mixsetMedia ? seekTo : undefined}
         onSaved={refreshComments}
+        onMoveToNewComment={canComment && currentUserId ? (text) => commentFormRef.current?.appendText(text) ?? false : undefined}
       />
 
       {/* 댓글 입력: 좁은 화면은 화면 아래에 붙는다(게시물 영역 안에서만). */}
       {canComment && currentUserId ? (
         <CommentForm
           key={`${currentUserId}:${postId}`}
+          ref={commentFormRef}
           postId={postId}
           actorId={currentUserId}
           onSaved={refreshComments}

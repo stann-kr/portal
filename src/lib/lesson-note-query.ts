@@ -1,10 +1,10 @@
 /**
  * 레슨 행 수업 노트 링크용 조회. 노트 날짜는 noteDate, 없으면 createdAt(노트 목록과 같은 규칙)이다.
  */
-import { and, gte, inArray, isNull, lte, or } from "drizzle-orm";
+import { and, eq, gte, inArray, isNotNull, isNull, lte, or } from "drizzle-orm";
 import type { DrizzleDb } from "@/db/client";
 import { privateNotes } from "@/db/schema";
-import { lessonNoteKey } from "@/lib/lesson-note-links";
+import { groupLessonNoteKey, lessonNoteKey } from "@/lib/lesson-note-links";
 
 /** D1 statement당 bind 100개 제한 안에서 학생 id를 받는다. */
 export const LESSON_NOTE_STUDENT_LIMIT = 80;
@@ -56,3 +56,46 @@ export async function queryLessonNoteIds(
   return Object.fromEntries([...picked].map(([key, value]) => [key, value.id]));
 }
 
+
+/**
+ * 그룹 노트를 "group:그룹:KST 날짜" → 노트 id로 묶는다(업무함·학생 상세의 그룹레슨 줄). 같은 날 여럿이면 가장 최근에 고친 노트.
+ * 관리자 화면 전용이다. groupId가 있으면 그 그룹만, range가 있으면 그 기간(앞뒤 하루 여유)만 읽는다.
+ */
+export async function queryGroupLessonNoteIds(
+  db: DrizzleDb,
+  filter: { range?: { from: Date; to: Date }; groupId?: string },
+): Promise<Record<string, string>> {
+  const { range, groupId } = filter;
+  const margin = 24 * 60 * 60 * 1000;
+  const from = range ? new Date(range.from.getTime() - margin) : null;
+  const to = range ? new Date(range.to.getTime() + margin) : null;
+  const rows = await db
+    .select({
+      id: privateNotes.id,
+      groupId: privateNotes.groupId,
+      noteDate: privateNotes.noteDate,
+      createdAt: privateNotes.createdAt,
+      updatedAt: privateNotes.updatedAt,
+    })
+    .from(privateNotes)
+    .where(and(
+      groupId ? eq(privateNotes.groupId, groupId) : isNotNull(privateNotes.groupId),
+      isNull(privateNotes.deletedAt),
+      from && to
+        ? or(
+            and(gte(privateNotes.noteDate, from), lte(privateNotes.noteDate, to)),
+            and(isNull(privateNotes.noteDate), gte(privateNotes.createdAt, from), lte(privateNotes.createdAt, to)),
+          )
+        : undefined,
+    ));
+  const picked = new Map<string, { id: string; updated: number }>();
+  for (const row of rows) {
+    const date = row.noteDate ?? row.createdAt;
+    if (!date || !row.groupId) continue;
+    const key = groupLessonNoteKey(row.groupId, date);
+    const updated = row.updatedAt?.getTime() ?? 0;
+    const current = picked.get(key);
+    if (!current || updated > current.updated) picked.set(key, { id: row.id, updated });
+  }
+  return Object.fromEntries([...picked].map(([key, value]) => [key, value.id]));
+}

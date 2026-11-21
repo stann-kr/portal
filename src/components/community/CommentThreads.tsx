@@ -27,6 +27,8 @@ export type ThreadComment = {
 
 type ReplyTarget = {
   rootId: string;
+  /** 원 댓글이 쓰는 사이 지워지면 그 묶음 자리를 작성 시각으로 찾는다. */
+  rootCreatedAt: Date | null;
   /** "답글"을 누른 댓글(원 댓글 또는 답글). 그 버튼이 열림 상태를 보인다. */
   sourceId: string;
   mention: string | null;
@@ -37,6 +39,8 @@ type ReplyTarget = {
  * 게시물 댓글 목록(캔버스 CommunityPost·CommunityReplies): 원 댓글 + 한 단계 답글 묶음.
  * 답글 입력은 묶음 아래에 하나만 열린다. 원 댓글이 지워진 묶음은 "삭제된 댓글입니다" 자리 아래에 답글만 남고
  * 새 답글은 받지 않는다. 재생 시점 칩은 원 댓글에만 있다.
+ * 답글을 쓰는 사이 원 댓글이 지워지면 입력은 그 자리("삭제된 댓글입니다" 아래)에 남고, 쓴 글을 버리거나
+ * 새 댓글 입력으로 옮긴다(캔버스 UxReview1120Lessons ⑧).
  */
 export function CommentThreads({
   postId,
@@ -49,6 +53,7 @@ export function CommentThreads({
   onDelete,
   onSeek,
   onSaved,
+  onMoveToNewComment,
 }: {
   postId: string;
   actorId: string | null;
@@ -62,8 +67,10 @@ export function CommentThreads({
   /** 시점 칩을 누르면 그 위치부터 재생한다. 플레이어가 없으면 시점만 보인다. */
   onSeek?: (seconds: number) => void;
   onSaved: () => void;
+  /** 원 댓글이 지워진 답글을 새 댓글 입력으로 옮긴다. 옮겼으면 true. */
+  onMoveToNewComment?: (text: string) => boolean;
 }) {
-  const threads = useMemo(() => groupCommentThreads(comments), [comments]);
+  const groupedThreads = useMemo(() => groupCommentThreads(comments), [comments]);
   const deleteConfirm = useConfirmAction<string>();
   const [replyTarget, setReplyTarget] = useState<ReplyTarget | null>(null);
   const replyOpener = useRef<HTMLButtonElement | null>(null);
@@ -128,6 +135,26 @@ export function CommentThreads({
   };
 
   const canDelete = (authorId: string) => !trashed && (isAdmin || actorId === authorId);
+  // 열린 답글 입력의 원 댓글이 목록에서 사라졌으면(지워짐) 입력을 닫지 않고 그 자리에 남긴다.
+  // 답글이 하나도 없어 묶음까지 사라졌으면 원 댓글 작성 시각 자리에 "삭제된 댓글입니다"를 잠시 둔다.
+  const composerAllowed = canComment && actorId !== null && replyTarget !== null;
+  const orphanRootId = composerAllowed && !groupedThreads.some((thread) => thread.kind === "comment" && thread.id === replyTarget.rootId)
+    ? replyTarget.rootId
+    : null;
+  const orphanRootCreatedAt = orphanRootId ? replyTarget?.rootCreatedAt ?? null : null;
+  const threads = useMemo(() => {
+    if (!orphanRootId || groupedThreads.some((thread) => thread.id === orphanRootId)) return groupedThreads;
+    const placeholder = { kind: "deleted" as const, id: orphanRootId, replies: [] as ThreadComment[] };
+    const at = orphanRootCreatedAt?.getTime();
+    const index = at === undefined
+      ? -1
+      : groupedThreads.findIndex((thread) => {
+        const first = thread.kind === "comment" ? thread.root : thread.replies[0];
+        return (first?.createdAt?.getTime() ?? Number.POSITIVE_INFINITY) > at;
+      });
+    return index < 0 ? [...groupedThreads, placeholder] : [...groupedThreads.slice(0, index), placeholder, ...groupedThreads.slice(index)];
+  }, [groupedThreads, orphanRootId, orphanRootCreatedAt]);
+
   const openReply = (opener: HTMLButtonElement, target: ReplyTarget) => {
     replyOpener.current = opener;
     openReplyRoot.current = target.rootId;
@@ -136,14 +163,23 @@ export function CommentThreads({
   const closeReply = () => {
     openReplyRoot.current = null;
     setReplyTarget(null);
-    replyOpener.current?.focus();
+    // 연 버튼이 원 댓글과 함께 사라졌으면 댓글 제목으로 돌아간다.
+    const opener = replyOpener.current;
+    if (opener?.isConnected) opener.focus();
+    else headingRef.current?.focus();
   };
 
   const replyButton = (rootId: string, sourceId: string, mention: string | null, rootName: string, sourceName: string, kind: "댓글" | "답글") => (
     <div className="mt-0.5 flex h-6 items-center md:h-auto">
       <button
         type="button"
-        onClick={(event) => openReply(event.currentTarget, { rootId, sourceId, mention, label: `${rootName} 댓글에 답글` })}
+        onClick={(event) => openReply(event.currentTarget, {
+          rootId,
+          rootCreatedAt: comments.find((comment) => comment.id === rootId)?.createdAt ?? null,
+          sourceId,
+          mention,
+          label: `${rootName} 댓글에 답글`,
+        })}
         aria-expanded={replyTarget?.sourceId === sourceId}
         aria-label={`${sourceName} ${kind}에 답글`}
         className="-my-2.5 -ml-2 h-11 rounded-touch px-2 text-ui text-secondary-foreground transition-colors duration-[var(--duration-fast)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring aria-expanded:font-semibold aria-expanded:text-foreground motion-reduce:transition-none md:my-0 md:-ml-1.5 md:h-7 md:rounded-md md:px-1.5 md:text-xs md:hover:bg-muted md:aria-expanded:bg-muted md:aria-expanded:font-normal"
@@ -207,6 +243,40 @@ export function CommentThreads({
     </ol>
   );
 
+  const replyComposer = (rootId: string, orphaned: boolean) =>
+    composerAllowed && actorId !== null && replyTarget?.rootId === rootId ? (
+      <CommentForm
+        key={`${actorId}:${postId}:${rootId}`}
+        postId={postId}
+        actorId={actorId}
+        parentId={rootId}
+        replyToId={replyTarget.sourceId !== rootId ? replyTarget.sourceId : undefined}
+        replyLabel={replyTarget.label}
+        mention={replyTarget.mention}
+        onCancel={closeReply}
+        orphaned={orphaned}
+        onRootMissing={onSaved}
+        onDiscardOrphan={closeReply}
+        onMoveToComment={onMoveToNewComment ? (text) => {
+          if (!onMoveToNewComment(text)) return false;
+          // 초점은 새 댓글 입력으로 갔으니 연 버튼으로 돌리지 않는다.
+          openReplyRoot.current = null;
+          setReplyTarget(null);
+          return true;
+        } : undefined}
+        onSaved={(commentId) => {
+          // 등록을 기다리는 사이 다른 묶음의 답글 입력을 열었으면 그 입력과 초점은 그대로 둔다.
+          if (openReplyRoot.current === rootId) {
+            openReplyRoot.current = null;
+            focusAfterSave.current = commentId;
+            setReplyTarget(null);
+          }
+          onSaved();
+        }}
+        className="ml-10 mt-1.5"
+      />
+    ) : null;
+
   return (
     <section ref={listRef} aria-labelledby="comments-title" className="flex flex-col">
       <h2
@@ -232,14 +302,14 @@ export function CommentThreads({
                     <span aria-hidden="true" className="size-7 shrink-0 rounded-full border border-dashed border-faint" />
                     <p className="text-md leading-6 text-muted-foreground md:text-body">삭제된 댓글입니다</p>
                   </div>
-                  {replyList(thread.id, null, thread.replies, false)}
+                  {thread.replies.length > 0 ? replyList(thread.id, null, thread.replies, false) : null}
+                  {replyComposer(thread.id, true)}
                 </li>
               );
             }
             const c = thread.root;
             const name = communityAuthorName(c);
             const replyCount = thread.replies.length;
-            const composerOpen = canComment && actorId !== null && replyTarget?.rootId === c.id;
             return (
               <li key={c.id} className="flex flex-col border-b border-muted py-3 md:py-3.5">
                 <div id={`comment-${c.id}`} tabIndex={-1} className="flex scroll-mt-4 gap-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
@@ -289,27 +359,7 @@ export function CommentThreads({
                   "ml-10 mt-2",
                 )}
                 {replyCount > 0 ? replyList(c.id, name, thread.replies, true) : null}
-                {composerOpen && replyTarget ? (
-                  <CommentForm
-                    key={`${actorId}:${postId}:${c.id}`}
-                    postId={postId}
-                    actorId={actorId}
-                    parentId={c.id}
-                    replyLabel={replyTarget.label}
-                    mention={replyTarget.mention}
-                    onCancel={closeReply}
-                    onSaved={(commentId) => {
-                      // 등록을 기다리는 사이 다른 묶음의 답글 입력을 열었으면 그 입력과 초점은 그대로 둔다.
-                      if (openReplyRoot.current === c.id) {
-                        openReplyRoot.current = null;
-                        focusAfterSave.current = commentId;
-                        setReplyTarget(null);
-                      }
-                      onSaved();
-                    }}
-                    className="ml-10 mt-1.5"
-                  />
-                ) : null}
+                {replyComposer(c.id, false)}
               </li>
             );
           })}

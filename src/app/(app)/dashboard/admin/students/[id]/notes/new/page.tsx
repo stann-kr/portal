@@ -34,6 +34,14 @@ export default async function AdminStudentNewNotePage({
     // 이 학생이 그룹에 있으면 그 그룹 노트로도 쓸 수 있다(그룹 노트는 관리자 이름으로 만든다).
     getStudentLessonGroup(studentId),
   ]);
+  // 저장 위치를 그룹 노트로 바꾸면 멤버 이름 메모 탭을 둔다(캔버스 UxReview1120Policies ⑪). 저장 위치는 화면에서 바로
+  // 바꾸므로 멤버 메모를 미리 읽는다. 이 학생 메모는 위에서 읽은 것을 그대로 쓴다.
+  const groupMembers = group
+    ? await Promise.all(group.members.map(async (member) => {
+        const memo = member.id === studentId ? studentMemo : await getInstructorMemo({ kind: "student", studentId: member.id });
+        return memo ? [{ studentId: member.id, name: member.name, memo }] : [];
+      })).then((rows) => rows.flat())
+    : [];
 
   return (
     <NoteFullForm
@@ -45,7 +53,12 @@ export default async function AdminStudentNewNotePage({
       defaultTitle={resolveNoteCreateDefaultTitle(query.title)}
       spaceLabel={studentName}
       authorName={session.user.name || "Stann"}
-      instructor={studentMemo ? { studentId, studentName, noteMemo: null, studentMemo } : undefined}
+      instructor={studentMemo
+        ? { studentId, noteMemo: null, members: [{ studentId, name: studentName, memo: studentMemo }] }
+        : undefined}
+      groupInstructor={studentMemo && group
+        ? { studentId, noteMemo: null, members: groupMembers, groupName: group.name }
+        : undefined}
       group={group}
       personalLabel={`${studentName} 노트`}
       viewerIsAdmin

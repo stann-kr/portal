@@ -207,6 +207,9 @@ export function resolveMobileTopBar(role: AppRole, location: Location): MobileTo
   if (pathname === "/dashboard/admin/students/archived") {
     return { title: "수강 종료한 학생", back: { href: ADMIN_STUDENTS_HREF, label: "학생 목록으로" } };
   }
+  if (pathname.startsWith("/dashboard/admin/students/archived/")) {
+    return { title: "수강 종료한 학생", back: { href: "/dashboard/admin/students/archived", label: "수강 종료한 학생으로" } };
+  }
   if (pathname.startsWith("/dashboard/admin/students/") || pathname.startsWith("/dashboard/notes")) {
     return { title: "학생", back: { href: ADMIN_STUDENTS_HREF, label: "학생 목록으로" } };
   }

@@ -210,7 +210,7 @@ interface CalendarSectionProps {
    * 만들기(칸 선택·레슨 예약)는 이 목록에서 학생을 먼저 고른다. 이때 studentId는 빈 값이다.
    */
   studentChoices?: readonly QuickCreateStudentChoice[];
-  /** 관리자 "전체 학생": 레슨 예약 대상으로 고를 그룹레슨 그룹. */
+  /** 관리자 일정의 그룹레슨 그룹. "전체 학생"은 레슨 대상으로, 학생 한 명이면 그 학생 그룹의 "받는 학생"으로 쓴다. */
   groupChoices?: readonly QuickCreateGroupChoice[];
   /** 달력이 보여 주는 기간이 바뀔 때("전체 학생"은 아직 읽지 않은 기간을 더 읽는다). */
   onVisibleRangeChange?: (start: Date, end: Date) => void;
@@ -510,7 +510,7 @@ export function CalendarSection({
     studentId,
     spaceLabel,
     studentChoices: allStudents ? studentChoices : undefined,
-    groupChoices: allStudents ? groupChoices : undefined,
+    groupChoices,
   };
 
   const clearPreset = () => {
@@ -606,7 +606,7 @@ export function CalendarSection({
                       canCreateDigging={isStudentWorkspace}
                       canCreateLesson={canManageLessons}
                       lessonStudentChoices={allStudents ? studentChoices : undefined}
-                      lessonGroupChoices={allStudents ? groupChoices : undefined}
+                      lessonGroupChoices={groupChoices}
                       onSuccess={(item) => {
                         onAddItem?.(item);
                         setCreateMenuOpen(false);
@@ -802,7 +802,7 @@ export function CalendarSection({
             defaultStart={lessonDefaultStart}
             onSuccess={(item) => onAddItem?.(item)}
             studentChoices={allStudents ? studentChoices : undefined}
-            groupChoices={allStudents ? groupChoices : undefined}
+            groupChoices={groupChoices}
           />
         ) : null}
 
