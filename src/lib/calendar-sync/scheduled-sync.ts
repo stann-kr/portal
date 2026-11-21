@@ -28,7 +28,8 @@ export type ScheduledCalendarSyncSummary = {
   localChanged: number;
   /**
    * 수강 종료한 학생의 매핑 가운데 지운 항목의 원격 사본 정리를 이번에 끝낸 수(`total`과 동기화 개수에 넣지 않는다).
-   * 엔진 결과가 아니라 실행 뒤 표시(DELETED link)가 남았는지로 센다.
+   * 엔진 결과가 아니라 실행 뒤 표시(DELETED link)가 남았는지로 센다. 실행 중에 복원된 학생의 매핑은 정리 대상에서
+   * 빠지므로 여기에 든다(남은 표시는 그 매핑의 일반 동기화가 지운다).
    */
   pruned: number;
   /**
@@ -37,7 +38,7 @@ export type ScheduledCalendarSyncSummary = {
    */
   prunePending: number;
   channels: EnsureChannelsSummary;
-  /** 매핑 목록 조회(동기화 대상 또는 정리 대상) 자체가 실패했다. */
+  /** 매핑 목록 조회(동기화 대상, 정리 대상, 정리 뒤 남은 표시 집계) 가운데 하나가 실패했다. */
   listFailed: boolean;
 };
 
