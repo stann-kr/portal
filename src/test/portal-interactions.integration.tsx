@@ -170,6 +170,9 @@ mock.module("@/lib/actions/assignmentTasks", { namedExports: {
   updateAssignmentTask: (...args: Parameters<typeof updateTask>) => updateTask(...args),
   createAssignmentRecurrence: async () => ({ error: "테스트 미설정" }),
   updateAssignmentRecurrence: (...args: Parameters<typeof updateRecurrence>) => updateRecurrence(...args),
+  setAssignmentRecurrencePaused: async () => ({ success: true }),
+  deleteAssignmentRecurrence: async () => ({ success: true }),
+  deleteAssignmentTask: async () => ({ success: true }),
 } });
 mock.module("@/lib/actions/feedbacks", { namedExports: {
   createFeedback: (...args: Parameters<typeof saveFeedback>) => saveFeedback(...args),
@@ -3431,6 +3434,20 @@ test("과제 고치기는 고치던 내용을 이 기기에 보관해 다시 열
   assert.equal(inputValue("title"), "다른 기기에서 바꾼 제목");
   assert.equal(browser.document.querySelector('[role="alert"]'), null);
   assert.equal(recoveryNotice(), null, "취소 뒤 다시 열어도 복구본이 남지 않는다");
+});
+
+test("정기 과제를 고치는 동안 그 줄의 멈추기·삭제는 막는다", async (context) => {
+  browser.localStorage.clear();
+  const { AdminAssignmentsPanel } = await import("@/components/admin/assignments/AdminAssignmentsPanel");
+  const rule = {
+    id: "r-9", title: "주간 믹스", descriptionHtml: "<p>매주 연습</p>", submissionFormat: "MIX", weekdays: 0b0000010, intervalWeeks: 1,
+    startDate: "2026-11-02", dueTime: "21:00", endDate: null, maxOccurrences: null, active: true, version: 2, pausedAt: null,
+  };
+  await render(context, <AdminAssignmentsPanel actorId="admin-p" studentId="s-1" tasks={[]} recurrences={[rule] as never} referenceTime={new Date("2026-11-13T03:00:00Z")} returnTo="/dashboard/admin" />);
+  assert.equal(button("멈추기").disabled, false);
+  await press("주간 믹스 정기 과제 고치기");
+  assert.equal(button("멈추기").disabled, true, "고치는 동안 멈추기를 막는다");
+  assert.equal(button("주간 믹스 정기 과제 삭제").disabled, true, "고치는 동안 삭제를 막는다");
 });
 
 test("정기 과제 고치기도 고치던 내용을 이 기기에 보관해 되살리고, 그 사이 규칙이 바뀌었으면 저장을 막는다", async (context) => {

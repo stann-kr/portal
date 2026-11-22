@@ -137,6 +137,8 @@ export function AdminAssignmentsPanel({
           <ul>
             {recurrences.map((rule) => {
               const paused = rule.pausedAt !== null;
+              // 고치는 동안 멈춤·삭제는 규칙 version을 올려, 고치던 폼이 "다른 곳에서 바뀜"으로 저장을 막는다.
+              const editingThis = editor?.kind === "recurrence" && editor.id === rule.id;
               return (
                 <li key={rule.id} className={ROW_CLASS}>
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -151,7 +153,8 @@ export function AdminAssignmentsPanel({
                       <Button
                         type="button"
                         variant="outline"
-                        disabled={isPending}
+                        disabled={isPending || editingThis}
+                        title={editingThis ? "고치기를 저장하거나 닫은 뒤 바꿀 수 있습니다." : undefined}
                         onClick={() => run(() => setAssignmentRecurrencePaused(studentId, rule.id, !paused, rule.version))}
                         className="max-md:h-11"
                       >
@@ -162,7 +165,7 @@ export function AdminAssignmentsPanel({
                         variant="ghost"
                         size="icon"
                         aria-label={`${rule.title} 정기 과제 고치기`}
-                        aria-expanded={editor?.kind === "recurrence" && editor.id === rule.id}
+                        aria-expanded={editingThis}
                         onClick={() => setEditor({ kind: "recurrence", id: rule.id })}
                         className={ICON_BUTTON_CLASS}
                       >
@@ -174,7 +177,7 @@ export function AdminAssignmentsPanel({
                         size="icon"
                         aria-label={`${rule.title} 정기 과제 삭제`}
                         aria-expanded={recurrenceConfirm.value === rule.id}
-                        disabled={isPending}
+                        disabled={isPending || editingThis}
                         onClick={(event) => recurrenceConfirm.request(event.currentTarget, rule.id)}
                         className={cn(ICON_BUTTON_CLASS, "text-destructive hover:bg-destructive-muted hover:text-destructive")}
                       >
@@ -185,7 +188,7 @@ export function AdminAssignmentsPanel({
                   {paused ? (
                     <p className="text-xs text-muted-foreground">멈춘 동안에는 새 회차를 만들지 않습니다. 다시 시작하면 그때부터 회차를 만듭니다.</p>
                   ) : null}
-                  {editor?.kind === "recurrence" && editor.id === rule.id ? (
+                  {editingThis ? (
                     <AssignmentRecurrenceForm
                       key={`${rule.id}:${rule.version}`}
                       actorId={actorId}
