@@ -504,9 +504,25 @@ test("붙여 넣은 글이 있으면 가져오기 칸을 닫거나 다른 줄을
   await press("저장하지 않고 닫기");
   assert.equal(beatport.getAttribute("aria-expanded"), "false");
   assert.equal(warmup.getAttribute("aria-expanded"), "true");
+  assert.doesNotMatch(container.textContent ?? "", /작성 중인 내용이 있습니다/u, "새로 연 줄에 확인이 남지 않는다");
+
+  // 같은 줄을 고치려 해도 묻고, 버리면 수정 폼이 열린다.
+  await fill("나머지 곡 목록 붙여넣기(선택)", "Moderat - Cold Water");
+  await press("‘Warmup’ 수정");
+  assert.equal(container.querySelector('form[aria-label="‘Warmup’ 수정"]'), null, "붙여 넣은 글이 있으면 바로 수정 폼을 열지 않는다");
+  assert.match(container.textContent ?? "", /작성 중인 내용이 있습니다/u);
+  await press("저장하지 않고 닫기");
+  assert.ok(container.querySelector('form[aria-label="‘Warmup’ 수정"]'));
+  assert.equal(warmup.isConnected, false, "수정 폼이 줄을 대신한다");
+  assert.doesNotMatch(container.textContent ?? "", /작성 중인 내용이 있습니다/u);
+  await press("취소");
+  const reopened = importToggle(container, "Warmup");
+  assert.equal(reopened.getAttribute("aria-expanded"), "false", "수정을 닫아도 버린 가져오기 칸은 다시 열리지 않는다");
+  await act(async () => { reopened.click(); });
+  await settle();
 
   // 붙여 넣은 글이 없으면 묻지 않고 닫는다.
   await press("닫기");
-  assert.equal(warmup.getAttribute("aria-expanded"), "false");
+  assert.equal(reopened.getAttribute("aria-expanded"), "false");
   assert.doesNotMatch(container.textContent ?? "", /작성 중인 내용이 있습니다/u);
 });
