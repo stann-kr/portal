@@ -24,6 +24,9 @@ import {
 import { CREATION_OPERATION_FIELD, createCreationOperationId, parseCreationOperationId } from "@/lib/creation-operation";
 import { createDocumentDraftKey } from "@/lib/form-draft";
 import { useFormDraft } from "@/lib/hooks/useFormDraft";
+import { useAccountDraftSync } from "@/lib/hooks/useAccountDraftSync";
+import { freeSubmissionDraftKey } from "@/lib/assignment-drafts";
+import { AccountDraftNotice, draftPreviewText } from "@/components/student-portal/AccountDraftNotice";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
 import { useStaleDraftDrop } from "@/lib/hooks/useStaleDraftDrop";
 import { cn } from "@/lib/utils";
@@ -75,20 +78,35 @@ export function FreeSubmissionForm({
   const [submitted, setSubmitted] = useState(false);
   // 새 제출의 작업 ID. 내용을 고칠 때마다 새로 만들고, 같은 내용을 다시 보내면 그대로라 서버가 한 번만 저장한다.
   const [operationId, setOperationId] = useState("");
+  const applyDraft = (saved: StoredFreeSubmissionDraft) => {
+    setMediaUrl(typeof saved.mediaUrl === "string" ? saved.mediaUrl : initial.mediaUrl);
+    setText(typeof saved.text === "string" ? saved.text : initial.text);
+    setOperationId(parseCreationOperationId(saved.operationId) ?? createCreationOperationId());
+    setShowResult(false);
+  };
+  const resetForm = () => { setMediaUrl(initial.mediaUrl); setText(initial.text); setOperationId(createCreationOperationId()); setShowResult(false); };
+  const draftKey = freeSubmissionDraftKey(submission?.id ?? null);
   const draft = useFormDraft<StoredFreeSubmissionDraft>(
-    createDocumentDraftKey("assignment-feedback", actorId, `free-submission:${submission?.id ?? "new"}`),
-    (saved) => {
-      setMediaUrl(typeof saved.mediaUrl === "string" ? saved.mediaUrl : initial.mediaUrl);
-      setText(typeof saved.text === "string" ? saved.text : initial.text);
-      setOperationId(parseCreationOperationId(saved.operationId) ?? createCreationOperationId());
-      setShowResult(false);
-    },
-    { onReset: () => { setMediaUrl(initial.mediaUrl); setText(initial.text); setOperationId(createCreationOperationId()); setShowResult(false); } },
+    createDocumentDraftKey("assignment-feedback", actorId, draftKey),
+    applyDraft,
+    { onReset: resetForm },
   );
   const { staleDropped, dismissStaleNotice } = useStaleDraftDrop(draft, submission?.savedAt, () => {
     setMediaUrl(initial.mediaUrl);
     setText(initial.text);
     setShowResult(false);
+  });
+  // 쓰는 글을 계정에도 임시 저장해 다른 기기에서 이어 쓴다. 새 제출은 작업 ID도 함께 올려 두 기기에서 내도 한 건이 된다.
+  const changed = mediaUrl !== initial.mediaUrl || text !== initial.text;
+  const account = useAccountDraftSync<StoredFreeSubmissionDraft>({
+    ownerId: actorId,
+    draftKey,
+    draft,
+    value: changed ? (editing ? { mediaUrl, text } : { mediaUrl, text, operationId }) : null,
+    apply: applyDraft,
+    reset: resetForm,
+    savedAt: submission?.savedAt ?? null,
+    preview: (data) => draftPreviewText(data.text, data.mediaUrl),
   });
   const [state, action, isPending] = useActionState<SubmitAssignmentState, FormData>(async (previous, data) => {
     let result: SubmitAssignmentState;
@@ -97,10 +115,13 @@ export function FreeSubmissionForm({
         ? await updateMyFreeSubmission(submission.id, previous, data)
         : await submitAssignment(previous, data);
     } catch {
+      account.pause(false);
       return { error: "제출 결과를 확인하지 못했습니다. 목록을 새로고침해 확인한 뒤 다시 시도해 주세요." };
     }
     if (result.success) {
       const submittedData = { mediaUrl: String(data.get("mediaUrl") ?? ""), text: String(data.get("text") ?? "") };
+      // 새 제출 form은 비운 뒤 다음 글을 받으므로 계속 맞추고, 고치는 form은 여기서 멈춘다.
+      account.markSubmitted({ keepSyncing: !editing });
       draft.clear({
         reason: "submitted",
         submittedData: editing ? submittedData : { ...submittedData, operationId: String(data.get(CREATION_OPERATION_FIELD) ?? "") },
@@ -114,6 +135,8 @@ export function FreeSubmissionForm({
       }
       await onDone();
     }
+    // 제출이 안 됐으면 다시 계정에 맞춘다.
+    if (!result.success) account.pause(false);
     return result;
   }, {});
   useBusyNavigationGuard(isPending);
@@ -140,7 +163,10 @@ export function FreeSubmissionForm({
       noValidate
       aria-labelledby={headingId}
       className={cn("flex flex-col gap-3", className)}
-      onBlur={draft.flush}
+      onBlur={() => {
+        draft.flush();
+        account.flush();
+      }}
       // 링크 칸의 Enter는 제출하지 않고 글 칸으로 넘어간다.
       onKeyDown={keepEnterFromSubmitting}
       onSubmit={(event) => {
@@ -154,6 +180,7 @@ export function FreeSubmissionForm({
           return;
         }
         draft.flush();
+        account.pause(true);
         setShowResult(true);
       }}
     >
@@ -166,6 +193,7 @@ export function FreeSubmissionForm({
           링크나 글 중 하나 이상을 넣어 주세요.{editing ? "" : " 받은 과제와 별도로 자유롭게 제출합니다."}
         </p>
       </div>
+      <AccountDraftNotice sync={account} disabled={isPending} />
       <div className="flex flex-col gap-1.5">
         <label htmlFor={mediaId} className="text-xs text-muted-foreground">링크 (선택)</label>
         <Input
@@ -228,7 +256,14 @@ export function FreeSubmissionForm({
       </div>
       {error ? <p role="alert" className="text-ui text-destructive">{error}</p> : null}
       {submitted && !editing ? <p role="status" className="text-ui text-success">제출했습니다.</p> : null}
-      <DraftStatus {...draft} staleDropped={staleDropped} onRestoreRecovery={draft.restoreRecovery} onDiscardRecovery={draft.discardRecovery} disabled={isPending} />
+      <DraftStatus
+        {...draft}
+        staleDropped={staleDropped || account.remoteCleared}
+        account={{ state: account.state, at: account.stateAt }}
+        onRestoreRecovery={draft.restoreRecovery}
+        onDiscardRecovery={draft.discardRecovery}
+        disabled={isPending}
+      />
     </form>
   );
 }

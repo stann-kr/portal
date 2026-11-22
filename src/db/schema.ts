@@ -1372,6 +1372,30 @@ export const postReads = sqliteTable(
 );
 
 /**
+ * 학생이 제출 전에 쓰던 과제 글의 계정 사본(0035). 다른 기기에서도 이어 쓰도록 계정에 한 벌만 둔다(2026-11-23 사용자 결정).
+ * draft_key는 `task-submission:<과제>`·`analysis:<과제>`·`free-submission:<제출|new>` 세 모양이고, 과제 글이면 task_id도 둔다
+ * (과제를 지우면 함께 지워진다). version은 기기 사이 덮어쓰기를 막는 compare-and-set 값이다.
+ * 본인만 읽고 쓰며 관리자에게는 보이지 않는다. 제출하면 서버가 지운다.
+ */
+export const assignmentDrafts = sqliteTable(
+  "assignment_drafts",
+  {
+    ownerId: text("owner_id")
+      .references(() => profiles.id, { onDelete: "cascade" })
+      .notNull(),
+    draftKey: text("draft_key").notNull(),
+    taskId: text("task_id").references(() => assignmentTasks.id, { onDelete: "cascade" }),
+    payloadJson: text("payload_json").notNull(),
+    version: integer("version").notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.ownerId, table.draftKey] }),
+    index("assignment_drafts_owner_task_idx").on(table.ownerId, table.taskId),
+  ],
+);
+
+/**
  * Phase 5: 디깅 게시판 — 컬럼 정의 (유저별 커스텀).
  * columnType: text / textarea / number / select / rating / link / camelot_key
  * isDefault=true → 삭제 불가 (기본 제공 컬럼).

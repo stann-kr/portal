@@ -25,6 +25,8 @@ import { pushMessages } from "@/lib/push/messages";
 import { notifyPush } from "@/lib/push/notify";
 import { fromStoredAssignmentFormat } from "@/lib/assignment-recurrence";
 import { CREATION_OPERATION_FIELD, deriveCreationResourceId, resolveCreationOperationId } from "@/lib/creation-operation";
+import { deleteAssignmentDraftByKey } from "@/lib/assignment-draft-store";
+import { NEW_FREE_SUBMISSION_DRAFT_KEY, freeSubmissionDraftKey } from "@/lib/assignment-drafts";
 
 async function countFeedbacks(db: ReturnType<typeof createDb>, assignmentId: string): Promise<number> {
   const [row] = await db.select({ value: count(feedbacks.id) }).from(feedbacks).where(eq(feedbacks.assignmentId, assignmentId));
@@ -90,6 +92,8 @@ export async function submitAssignment(
       { excludeProfileId: session.user.id },
     );
   }
+  // 낸 글의 계정 임시 저장은 지운다(다른 기기가 제출 전 글을 다시 살리지 않게).
+  await deleteAssignmentDraftByKey(db, session.user.id, NEW_FREE_SUBMISSION_DRAFT_KEY);
 
   revalidatePath("/dashboard/student/assignments");
   revalidatePath("/dashboard/student");
@@ -145,6 +149,7 @@ export async function updateMyFreeSubmission(
     };
   }
 
+  await deleteAssignmentDraftByKey(db, studentId, freeSubmissionDraftKey(assignmentId));
   revalidatePath("/dashboard/student/assignments");
   revalidatePath(`/dashboard/student/assignments/${assignmentId}`);
   revalidatePath("/dashboard/student");
@@ -192,6 +197,8 @@ export async function deleteMyAssignment(assignmentId: string): Promise<DeleteAs
         : "이미 삭제됐거나 찾을 수 없는 제출입니다. 목록을 새로고침해 주세요.",
     };
   }
+  // 지운 자유 제출을 고치던 계정 임시 저장(외래키가 없는 key)도 함께 지운다.
+  await deleteAssignmentDraftByKey(db, session.user.id, freeSubmissionDraftKey(assignmentId));
 
   revalidatePath("/dashboard/student");
   revalidatePath("/dashboard/admin");

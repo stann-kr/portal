@@ -47,6 +47,7 @@ let studentActions: typeof import("@/lib/actions/students");
 let activeProfileModule: typeof import("@/lib/active-profile");
 let postActions: typeof import("@/lib/actions/posts");
 let postReadActions: typeof import("@/lib/actions/postReads");
+let assignmentDraftActions: typeof import("@/lib/actions/assignmentDrafts");
 let categoryActions: typeof import("@/lib/actions/categories");
 let passwordActions: typeof import("@/lib/actions/password");
 let memoActions: typeof import("@/lib/actions/instructorMemos");
@@ -110,7 +111,7 @@ mock.module("next/cache", {
 });
 
 before(async () => {
-  [calendarActions, curriculumActions, diggingActions, lessonActions, commentActions, feedbackActions, assignmentActions, studentActions, activeProfileModule, postActions, categoryActions, passwordActions, assignmentTaskActions, memoActions, assignmentReviewActions, postReadActions] =
+  [calendarActions, curriculumActions, diggingActions, lessonActions, commentActions, feedbackActions, assignmentActions, studentActions, activeProfileModule, postActions, categoryActions, passwordActions, assignmentTaskActions, memoActions, assignmentReviewActions, postReadActions, assignmentDraftActions] =
     await Promise.all([
       import("@/lib/actions/calendarEvents"),
       import("@/lib/actions/curriculum"),
@@ -128,6 +129,7 @@ before(async () => {
       import("@/lib/actions/instructorMemos"),
       import("@/lib/actions/assignment-review"),
       import("@/lib/actions/postReads"),
+      import("@/lib/actions/assignmentDrafts"),
     ]);
 });
 
@@ -492,6 +494,97 @@ test("게시물 읽음은 학생이 남의 글을 처음 연 때만 남고, 읽�
   assert.equal(adminPage.posts.find((post) => post.id === "post-by-2")?.readCount, 1);
   const adminSearch = await postActions.searchCommunityPosts({ boardType: "GENERAL", category: "general", query: "2의" });
   assert.equal(adminSearch.posts.find((post) => post.id === "post-by-2")?.readCount, 1);
+});
+
+test("과제 글 계정 임시 저장은 본인 학생만 쓰고 version으로 덮어쓰기를 막으며, 제출하면 지워진다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("student-1", "student"));
+  await seedProfile(db, "admin-1", "admin");
+  await seedProfile(db, "student-1");
+  await seedProfile(db, "student-2");
+  await db.insert(assignmentTasks).values([
+    { id: "draft-task", studentId: "student-1", title: "글 과제", submissionFormat: "TEXT" },
+    { id: "draft-task-other", studentId: "student-2", title: "남의 과제", submissionFormat: "TEXT" },
+  ]);
+  await db.insert(assignments).values({ id: "draft-free", studentId: "student-1", mediaUrl: null, textHtml: "<p>자유</p>" });
+  const payload = (text: string) => JSON.stringify({ mediaUrl: "", text });
+  const key = "task-submission:draft-task";
+  const rows = () => db.select().from(portalSchema.assignmentDrafts);
+
+  // 처음 저장 → version 1, 같은 기준으로 다시 저장하면 다른 기기가 먼저 쓴 사본을 돌려준다.
+  const first = await assignmentDraftActions.saveMyAssignmentDraft(key, payload("기기 A"), null);
+  assert.equal(first.status, "saved");
+  assert.equal(first.status === "saved" && first.version, 1);
+  const second = await assignmentDraftActions.saveMyAssignmentDraft(key, payload("기기 A 이어서"), 1);
+  assert.equal(second.status === "saved" && second.version, 2);
+  const stale = await assignmentDraftActions.saveMyAssignmentDraft(key, payload("기기 B 낡은 기준"), 1);
+  assert.equal(stale.status, "conflict");
+  assert.equal(stale.status === "conflict" && stale.draft?.version, 2);
+  assert.equal(stale.status === "conflict" && stale.draft?.payloadJson, payload("기기 A 이어서"));
+  const duplicateCreate = await assignmentDraftActions.saveMyAssignmentDraft(key, payload("기기 B 새로"), null);
+  assert.equal(duplicateCreate.status === "conflict" && duplicateCreate.draft?.version, 2, "이미 있으면 새로 만들지 않는다");
+  const read = await assignmentDraftActions.getMyAssignmentDraft(key);
+  assert.equal(read.ok && read.draft?.payloadJson, payload("기기 A 이어서"));
+
+  // 잘못된 key·내용, 남의 과제·남의 자유 제출·없는 과제는 받지 않는다.
+  for (const [badKey, badPayload] of [
+    ["note:draft-task", payload("x")],
+    ["task-submission:draft-task-other", payload("x")],
+    ["analysis:missing-task", payload("x")],
+    ["free-submission:draft-free/../x", payload("x")],
+    [key + "x", "not json"],
+    ["free-submission:new", "[1]"],
+    ["free-submission:new", JSON.stringify({ text: "가".repeat(70_000) })],
+  ] as const) {
+    assert.equal((await assignmentDraftActions.saveMyAssignmentDraft(badKey, badPayload, null)).status, "denied", badKey);
+  }
+  assert.equal((await assignmentDraftActions.saveMyAssignmentDraft("free-submission:draft-free", payload("고치는 중"), null)).status, "saved");
+  assert.equal((await assignmentDraftActions.saveMyAssignmentDraft("free-submission:new", payload("새 글"), null)).status, "saved");
+
+  // 학생 목록에는 과제별 "작성 중" 시각이 붙는다.
+  const [mineBefore] = await assignmentTaskActions.getMyAssignmentTasks();
+  assert.ok(mineBefore?.draftSavedAt instanceof Date);
+
+  // 다른 학생은 이 계정의 사본을 읽지도 덮지도 지우지도 못하고 자기 사본만 본다. 남의 과제 목록 시각도 없다.
+  activeSession = createSession("student-2", "student");
+  assert.deepEqual(await assignmentDraftActions.getMyAssignmentDraft(key), { ok: true, draft: null });
+  assert.equal((await assignmentDraftActions.saveMyAssignmentDraft(key, payload("남이 씀"), null)).status, "denied");
+  assert.equal((await assignmentDraftActions.discardMyAssignmentDraft(key, 2)).status, "discarded", "남의 행은 지워지지 않는다(자기 행이 없을 뿐)");
+  assert.equal((await assignmentTaskActions.getMyAssignmentTasks())[0]?.draftSavedAt ?? null, null);
+  // 관리자는 읽지도 쓰지도 못하고, 관리자 과제 목록에는 임시 저장 시각이 없다.
+  activeSession = createSession("admin-1", "admin");
+  assert.deepEqual(await assignmentDraftActions.getMyAssignmentDraft(key), { ok: false });
+  assert.equal((await assignmentDraftActions.saveMyAssignmentDraft("free-submission:new", payload("관리자"), null)).status, "denied");
+  assert.equal((await assignmentDraftActions.discardMyAssignmentDraft(key, 2)).status, "denied");
+  const adminView = await assignmentTaskActions.getAssignmentTasksForStudent("student-1");
+  assert.equal(adminView.tasks.find((task) => task.id === "draft-task")?.draftSavedAt, undefined);
+  assert.equal((await rows()).length, 3, "남·관리자 호출로 바뀐 행이 없다");
+  assert.equal((await rows()).find((row) => row.draftKey === key)?.version, 2);
+
+  // 수강 종료한 학생은 세션 자체가 막힌다.
+  await db.update(profiles).set({ accountStatus: "ARCHIVED", archivedAt: new Date() }).where(eq(profiles.id, "student-2"));
+  activeSession = createSession("student-2", "student");
+  await assert.rejects(assignmentDraftActions.getMyAssignmentDraft("free-submission:new"), /Unauthorized/u);
+
+  // 지울 때도 version이 맞아야 한다.
+  activeSession = createSession("student-1", "student");
+  assert.equal((await assignmentDraftActions.discardMyAssignmentDraft("free-submission:draft-free", 9)).status, "conflict");
+  assert.equal((await assignmentDraftActions.discardMyAssignmentDraft("free-submission:draft-free", 1)).status, "discarded");
+
+  // 제출하면 그 과제·새 자유 제출의 사본이 지워지고 목록의 "작성 중"도 사라진다.
+  const submitted = await assignmentTaskActions.submitAssignmentTask("draft-task", {}, taskForm({ text: "낸 글" }));
+  assert.equal(submitted.success, true);
+  assert.deepEqual(await assignmentDraftActions.getMyAssignmentDraft(key), { ok: true, draft: null });
+  assert.equal((await assignmentTaskActions.getMyAssignmentTasks())[0]?.draftSavedAt, null);
+  // 낸 뒤 고치는 중인 사본은 제출보다 새것이라 "고치는 중"으로 보이고, 제출 수정이 성공하면 다시 지워진다.
+  await db.update(assignments).set({ submittedAt: new Date(Date.now() - 60_000), updatedAt: null }).where(eq(assignments.id, submitted.id!));
+  assert.equal((await assignmentDraftActions.saveMyAssignmentDraft(key, payload("고치는 중"), null)).status, "saved");
+  assert.ok((await assignmentTaskActions.getMyAssignmentTasks())[0]?.draftSavedAt instanceof Date);
+  assert.equal((await assignmentTaskActions.updateMyTaskSubmission(submitted.id!, {}, taskForm({ text: "고친 글" }))).success, true);
+  assert.deepEqual(await assignmentDraftActions.getMyAssignmentDraft(key), { ok: true, draft: null });
+  const freeForm = taskForm({ text: "자유 글", operationId: "4c1f0f3e-8d1a-4b6e-9a51-2f0c7f1d2e3a" });
+  assert.equal((await assignmentActions.submitAssignment({}, freeForm)).success, true);
+  assert.deepEqual(await assignmentDraftActions.getMyAssignmentDraft("free-submission:new"), { ok: true, draft: null });
+  assert.equal((await rows()).length, 0);
 });
 
 test("학생별 과제 요약은 관리자에게만 최신 제출순과 피드백 수를 돌려준다", { concurrency: false }, async (context) => {
