@@ -18,6 +18,7 @@ import { ConfirmPanel, useConfirmAction } from "@/components/ui/confirm-action";
 import { Input } from "@/components/ui/input";
 import { addDiggingColumn, deleteDiggingColumn } from "@/lib/actions/digging";
 import type { DiggingColumnType } from "@/db/schema";
+import { DIGGING_COLUMNS_MAX_COUNT } from "@/lib/digging-contract";
 
 const COLUMN_TYPE_LABELS: Record<DiggingColumnType, string> = {
   text: "텍스트",
@@ -60,8 +61,11 @@ export function ColumnManager({
   const titleRef = useRef<HTMLHeadingElement>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
 
+  // 서버도 같은 상한으로 거절하지만, 그 오류는 운영에서 문구가 가려지므로 화면이 먼저 막고 이유를 보인다.
+  const atColumnLimit = columns.length >= DIGGING_COLUMNS_MAX_COUNT;
+
   const handleAdd = () => {
-    if (!newName.trim()) return;
+    if (!newName.trim() || atColumnLimit) return;
     setError("");
     startTransition(async () => {
       try {
@@ -160,6 +164,11 @@ export function ColumnManager({
         <div className="flex flex-col gap-3 border-t border-border pt-4">
           <p className="text-ui font-semibold text-secondary-foreground">새 컬럼 추가</p>
           {error ? <p className="text-ui text-destructive" role="alert">{error}</p> : null}
+          {atColumnLimit ? (
+            <p id="digging-column-limit" className="text-ui text-muted-foreground">
+              컬럼은 최대 {DIGGING_COLUMNS_MAX_COUNT}개까지 만들 수 있습니다. 새로 만들려면 쓰지 않는 컬럼을 먼저 삭제해 주세요.
+            </p>
+          ) : null}
           <div className="flex gap-2">
             <label htmlFor="digging-new-column-name" className="sr-only">새 컬럼 이름</label>
             <Input
@@ -194,7 +203,8 @@ export function ColumnManager({
           <Button
             type="button"
             onClick={handleAdd}
-            disabled={!newName.trim() || isPending}
+            disabled={!newName.trim() || isPending || atColumnLimit}
+            aria-describedby={atColumnLimit ? "digging-column-limit" : undefined}
             pending={isPending}
             size="touch"
             className="w-full md:h-8 md:rounded-md md:text-ui"

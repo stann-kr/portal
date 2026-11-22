@@ -5550,6 +5550,17 @@ test("컬럼 관리 창의 첫 포커스는 넓은 화면에서 새 컬럼 이�
   assert.equal(browser.document.activeElement, title, "좁은 화면은 키보드가 올라오지 않게 창 제목에서 시작한다");
 });
 
+test("컬럼이 상한에 닿으면 추가를 막고 이유를 보인다", async (context) => {
+  const { ColumnManager } = await import("@/components/digging/ColumnManager");
+  const { DIGGING_COLUMNS_MAX_COUNT } = await import("@/lib/digging-contract");
+  const columns = Array.from({ length: DIGGING_COLUMNS_MAX_COUNT }, (_, index) => ({ id: `c-${index}`, name: `열 ${index}`, columnType: "text" as const, isDefault: index === 0 }));
+  await render(context, <ColumnManager open onOpenChange={() => {}} columns={columns} onSuccess={() => {}} />);
+  await fill("digging-new-column-name", "새 열");
+  const add = button("추가");
+  assert.equal(add.disabled, true, "상한이면 이름을 넣어도 추가할 수 없다");
+  assert.match(browser.document.getElementById(add.getAttribute("aria-describedby") ?? "")?.textContent ?? "", new RegExp(`최대 ${DIGGING_COLUMNS_MAX_COUNT}개`, "u"));
+});
+
 test("댓글 칸은 5,000자에서 멈추고 4,500자부터 글자 수를 보이며, 잘린 붙여넣기는 따로 알린다", async (context) => {
   browser.localStorage.clear();
   await render(context, <PostDetailClient postId="limit-post" post={mixsetPost("limit-post", { mediaUrl: null, mediaObjectId: null }, "GENERAL")} initialCommentList={[]} currentUserId="student-limit" isAdmin={false} returnTo="/community" />);
