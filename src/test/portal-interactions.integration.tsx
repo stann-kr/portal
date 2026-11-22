@@ -1843,6 +1843,11 @@ test("own calendar event edit keeps input on failure and delete confirms before 
   );
   assert.equal(updates.length, 0);
   assert.ok(busy.includes(true), "save locks the surrounding panel");
+  // 취소하고 다시 열면 새로 연 폼에는 지난 저장 오류가 없다.
+  await press("취소");
+  await press("일정 수정");
+  assert.equal(browser.document.querySelector('[role="alert"]'), null, "reopened edit form starts without the old error");
+  await fill("event-edit-event-1-title", "리듬 연습 2");
 
   editEvent = async (_previous, data) => ({ id: "event-1", event: {
     id: "event-1", title: String(data.get("title")), eventType: "PRACTICE",
@@ -1858,6 +1863,9 @@ test("own calendar event edit keeps input on failure and delete confirms before 
   await press("삭제");
   assert.match(browser.document.querySelector('[role="alert"]')?.textContent ?? "", /삭제하지 못했습니다/u);
   assert.equal(removals.length, 0);
+  await press("취소");
+  await press("일정 삭제");
+  assert.equal(browser.document.querySelector('[role="alert"]'), null, "reopened delete confirm starts without the old error");
   removeEvent = async () => {};
   await press("삭제");
   assert.deepEqual(removals.map((removed) => removed.id), ["event-1"]);
