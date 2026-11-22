@@ -3330,6 +3330,27 @@ test("여러 학생 과제 내기는 고른 학생·작성 정보를 이 기기�
   assert.deepEqual(sent[1], sent[0], "같은 학생·같은 operationId로 다시 보내 학생별로 한 번만 저장된다");
 });
 
+test("보관해 둔 \"다른 학생에게도 내기\"에서 그 뒤 고를 수 없게 된 학생은 되살리지 않는다", async (context) => {
+  browser.localStorage.clear();
+  createTask = async () => ({ error: "다시 내 주세요." });
+  context.after(() => { createTask = async () => ({}); });
+  const form = (options: { id: string; name: string }[]) => <AssignmentTaskForm actorId="admin-archived" studentId="s-1" studentOptions={options as never} onDone={() => {}} onCancel={() => {}} />;
+  const root = await render(context, form([{ id: "s-1", name: "학생 1" }, { id: "s-2", name: "학생 2" }, { id: "s-3", name: "학생 3" }]));
+  await settle();
+  await fill("task-new-title", "킥 정리");
+  await act(async () => { (browser.document.getElementById("task-new-also-s-2") as unknown as HTMLInputElement).click(); });
+  await settle();
+  assert.ok(button("2명에게 과제 내기"));
+
+  // 학생 2가 수강 종료돼 목록에서 빠진 뒤 다시 연다.
+  await act(async () => root.render(<></>));
+  await settle();
+  await act(async () => root.render(form([{ id: "s-1", name: "학생 1" }, { id: "s-3", name: "학생 3" }])));
+  await settle();
+  assert.equal(inputValue("title"), "킥 정리", "나머지 작성 내용은 되살린다");
+  assert.ok(button("과제 내기"), "고를 수 없는 학생은 인원에 세지 않는다");
+});
+
 test("그룹 멤버 학생의 과제 내기는 \"받는 학생\"으로 그룹 멤버를 한 번에 고른다", async (context) => {
   browser.localStorage.clear();
   const sent: string[][] = [];
