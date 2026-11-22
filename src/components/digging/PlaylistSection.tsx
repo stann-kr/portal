@@ -5,6 +5,7 @@
  * - Beatport: 외부 요청 없이 링크만 저장하고, 누르면 Beatport를 새 탭으로 연다.
  * - 학생 본인과 Stann(관리자, 학생 상세 디깅 탭): 추가·링크/제목/메모 수정·삭제(취소 우선 확인). 서버가 대상 학생을 다시 확인한다.
  * - 학생 본인 화면은 줄마다 "트랙 가져오기"로 곡을 디깅 보드에 넣는다(`PlaylistTrackImport`, 관리자 보기에는 없다).
+ *   붙여 넣은 글이 있으면 칸을 닫거나(닫기·토글·Esc) 다른 줄의 가져오기를 열기 전에 버림 확인을 거친다.
  * - 추가·수정 폼은 바뀐 내용이 있으면 Esc·취소에 버림 확인을 두고, 새로고침·탭 닫기는 브라우저 확인으로 막는다.
  */
 "use client";
@@ -68,6 +69,18 @@ export function PlaylistSection({ studentId, initialPlaylists, viewer = "student
   const [editingId, setEditingId] = useState<string | null>(null);
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [importingId, setImportingId] = useState<string | null>(null);
+  // 열린 가져오기 칸에 붙여 넣은 글이 있으면 닫거나 다른 줄을 열기 전에 묻는다. value는 확인 뒤 열 줄(null이면 닫기).
+  const [importDirty, setImportDirty] = useState(false);
+  const importDiscard = useConfirmAction<string | null>();
+  const requestImport = (next: string | null, trigger: HTMLElement | null) => {
+    if (next === importingId) return;
+    if (importingId !== null && importDirty) {
+      importDiscard.request(trigger, next);
+      return;
+    }
+    setImportingId(next);
+    if (next === null) requestAnimationFrame(() => trigger?.focus());
+  };
   const [mutationError, setMutationError] = useState("");
   const [isDeleting, startDelete] = useTransition();
   const deleteConfirm = useConfirmAction<string>();
@@ -159,7 +172,7 @@ export function PlaylistSection({ studentId, initialPlaylists, viewer = "student
                 type="button"
                 aria-expanded={importing}
                 aria-controls={importing ? importId : undefined}
-                onClick={() => setImportingId(importing ? null : playlist.id)}
+                onClick={(event) => requestImport(importing ? null : playlist.id, event.currentTarget)}
                 className={cn(TEXT_ACTION_CLASS, "aria-expanded:bg-muted aria-expanded:font-medium aria-expanded:text-foreground")}
               >
                 트랙 가져오기
@@ -259,11 +272,18 @@ export function PlaylistSection({ studentId, initialPlaylists, viewer = "student
                     <PlaylistTrackImport
                       playlist={playlist}
                       board={trackImport}
-                      onClose={() => {
-                        setImportingId(null);
-                        requestAnimationFrame(() => document.getElementById(`${importId}-toggle`)?.focus());
-                      }}
+                      onDirtyChange={setImportDirty}
+                      onRequestClose={() => requestImport(null, document.getElementById(`${importId}-toggle`))}
                     />
+                    {importDiscard.isOpen ? (
+                      <DiscardConfirmPanel
+                        confirm={importDiscard}
+                        onConfirm={() => {
+                          setImportDirty(false);
+                          setImportingId(importDiscard.value);
+                        }}
+                      />
+                    ) : null}
                   </div>
                 ) : null}
                 {deleteConfirm.value === playlist.id ? (
