@@ -369,6 +369,9 @@ export async function disconnectCalendarConnection(
   if (!connection) return { error: MESSAGES.connectionMissing };
   // 변경 알림 channel은 token 폐기 전에 중지한다(폐기 뒤에는 stop을 부를 수 없다). 실패는 해제를 막지 않는다.
   await stopGoogleWatchChannelsFor(createDbContext(), { connectionId: connection.id }).catch(() => undefined);
+  // 폐기할 token은 지우기 전에 읽어 두고, 연결 기록을 먼저 지운 뒤 폐기한다.
+  // 지우기가 실패했는데 token만 죽어 연결이 ACTIVE로 남는 일이 없게 한다.
+  let refreshToken: string | null = null;
   if (connection.provider === "GOOGLE") {
     try {
       const credentials = await decryptConnectionCredentials({
@@ -378,14 +381,18 @@ export async function disconnectCalendarConnection(
         credentialsIv: connection.credentialsIv,
         key: requireCalendarEncryptionKey(),
       });
-      await revokeGoogleToken({ token: credentials.refreshToken });
+      refreshToken = credentials.refreshToken;
     } catch {
-      // 폐기 실패(이미 무효·네트워크)는 연결 해제를 막지 않는다. Google 계정 설정에서도 접근을 끊을 수 있다.
+      // 풀 수 없는 자격 증명은 폐기할 수 없다. 해제는 계속한다.
     }
   }
   await readDb()
     .delete(calendarConnections)
     .where(and(eq(calendarConnections.id, connection.id), eq(calendarConnections.ownerId, session.user.id)));
+  if (refreshToken) {
+    // 폐기 실패(이미 무효·네트워크)는 연결 해제를 막지 않는다. Google 계정 설정에서도 접근을 끊을 수 있다.
+    await revokeGoogleToken({ token: refreshToken }).catch(() => undefined);
+  }
   revalidatePath(SETTINGS_PATH);
   return { success: "연결을 해제했습니다. 포탈의 레슨·일정은 그대로 남습니다." };
 }
@@ -423,6 +430,8 @@ export async function saveCalendarMapping(
   } else {
     const [group] = await db.select({ id: lessonGroups.id }).from(lessonGroups).where(eq(lessonGroups.id, target.id)).limit(1);
     if (!group) return { error: MESSAGES.groupMissing };
+    // 화면은 수강 중인 멤버가 둘 이상인 그룹만 고르게 한다. 서버도 같은 기준으로 받는다.
+    if ((await readLessonGroupMemberIds(createDbContext(), target.id)).length < 2) return { error: MESSAGES.groupMissing };
   }
   const connection = await findOwnedConnection(session.user.id, connectionId);
   if (!connection) return { error: MESSAGES.connectionMissing };
