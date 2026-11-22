@@ -2171,7 +2171,7 @@ test("digging board add row: Enter right after pasting a link fills title·artis
   await render(context, <DiggingBoard initialColumns={columns} initialTracks={[]} />);
   await press("링크를 붙여넣어 트랙 추가");
   const link = () => browser.document.querySelector('table input[aria-label="링크"]') as unknown as HTMLInputElement;
-  const keydown = async (target: HTMLElement, init: KeyboardEventInit) => {
+  const keydown = async (target: HTMLElement, init: { key: string; isComposing?: boolean }) => {
     await act(async () => { target.dispatchEvent(new browser.KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init }) as unknown as Event); });
     await settle();
   };
