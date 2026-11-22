@@ -1249,13 +1249,15 @@ test("캘린더 노트 날짜 이동은 수정 권한자만 날짜만 바꾸고 
   const adminMove = await privateNoteActions.movePrivateNoteDate(noteId, "2026-08-06", crypto.randomUUID());
   assert.equal(adminMove.ok, true, "관리자는 학생 노트 날짜를 옮길 수 있다");
 
+  // 2026-11-23 사용자 결정: 노트 주인 학생은 관리자가 쓴 자기 노트도 고치므로 날짜도 옮긴다(이전에는 거부).
   activeSession = createSession("student-1", "student");
-  const notAuthor = await privateNoteActions.movePrivateNoteDate(adminNote.note.id, "2026-08-07", crypto.randomUUID());
-  assert.equal(notAuthor.ok, false, "학생은 관리자가 쓴 노트를 옮기지 못한다");
-  assert.equal(!notAuthor.ok && notAuthor.conflictKind, "NOT_FOUND_OR_FORBIDDEN");
-  const sameDay = await privateNoteActions.movePrivateNoteDate(adminNote.note.id, "2026-08-02", crypto.randomUUID());
+  const ownerMove = await privateNoteActions.movePrivateNoteDate(adminNote.note.id, "2026-08-07", crypto.randomUUID());
+  assert.equal(ownerMove.ok, true, "학생은 관리자가 쓴 자기 노트의 날짜를 옮긴다");
+  activeSession = createSession("student-2", "student");
+  const sameDay = await privateNoteActions.movePrivateNoteDate(adminNote.note.id, "2026-08-07", crypto.randomUUID());
   assert.equal(!sameDay.ok && sameDay.conflictKind, "NOT_FOUND_OR_FORBIDDEN", "이미 같은 날짜여도 권한 없는 이동은 성공으로 돌려주지 않는다");
 
+  activeSession = createSession("student-1", "student");
   const trashed = await privateNoteActions.trashPrivateNote(noteId, crypto.randomUUID(), 3);
   assert.equal(trashed.success, true);
   const afterTrash = await privateNoteActions.movePrivateNoteDate(noteId, "2026-08-08", crypto.randomUUID());
@@ -1267,7 +1269,7 @@ test("캘린더 노트 날짜 이동은 수정 권한자만 날짜만 바꾸고 
     .select({ noteDate: privateNotes.noteDate, version: privateNotes.version })
     .from(privateNotes)
     .where(eq(privateNotes.id, adminNote.note.id));
-  assert.deepEqual(adminHead, { noteDate: new Date("2026-08-02T00:00:00.000Z"), version: 1 });
+  assert.deepEqual(adminHead, { noteDate: new Date("2026-08-07T00:00:00.000Z"), version: 2 });
 });
 
 test("과거 revision 복원은 기존 이력을 바꾸지 않고 새 head revision을 추가한다", { concurrency: false }, async (context) => {

@@ -24,7 +24,12 @@ import { privateNoteRevisions, privateNotes, profiles } from "@/db/schema";
 import { requireAuth, requireStudentOwnerOrAdmin, type AuthSession } from "@/lib/auth-guard";
 import { readLessonGroupById, readLessonGroupMemberIds, readStudentLessonGroup } from "@/lib/lesson-groups";
 import { readNoteAccess } from "@/lib/note-access";
-import { resolveNoteAccess, type NoteAccessMode, type NoteAccessSubject } from "@/lib/note-access-rules";
+import {
+  canManageNoteLifecycle,
+  resolveNoteAccess,
+  type NoteAccessMode,
+  type NoteAccessSubject,
+} from "@/lib/note-access-rules";
 import {
   CREATION_OPERATION_FIELD,
   createCreationOperationId,
@@ -148,8 +153,8 @@ function noteActor(session: AuthSession) {
 }
 
 /**
- * 노트 하나에 대한 접근(쓰기·읽기). 그룹 노트는 관리자 또는 지금 그 그룹 멤버, 개인 노트는 기존 규칙
- * (그 학생 본인·관리자가 읽고 작성자·관리자가 쓴다, 대상은 활성 학생 공간)이다. 권한이 없으면 "Unauthorized"를 던진다
+ * 노트 하나에 대한 접근(쓰기·읽기). 그룹 노트는 관리자 또는 지금 그 그룹 멤버, 개인 노트는 그 학생 본인·관리자가
+ * 읽고 쓴다(대상은 활성 학생 공간, 2026-11-23부터 Stann이 만든 노트도 학생이 쓴다). 권한이 없으면 "Unauthorized"를 던진다
  * (페이지는 `missingWhenAccessDenied`로 없는 노트처럼 404를 보인다).
  */
 async function requireNoteAccess(session: AuthSession, note: NoteAccessSubject): Promise<NoteAccessMode> {
@@ -354,14 +359,22 @@ async function getPrivateNoteRecord(noteId: string, includeTrash: boolean) {
 
   if (!note) return null;
   const access = await requireNoteAccess(session, note);
+  // 휴지통 이동·휴지통 복원 버튼을 보일지. 그룹 노트의 "write"는 관리자·지금 멤버라 멤버십을 다시 읽지 않는다.
+  // 개인 노트는 작성자 본인·관리자만이다(학생은 Stann이 만든 자기 노트를 고치지만 버리지는 못한다, 2026-11-23).
+  const canManageLifecycle = canManageNoteLifecycle(
+    noteActor(session),
+    note,
+    Boolean(note.groupId) && access === "write",
+  );
   // 그룹 노트는 문서 머리 안내 줄에 쓸 그룹 이름·멤버 이름을 함께 준다(볼 권한이 확인된 뒤에만 읽는다).
   const group = note.groupId ? await readLessonGroupById(createDbContext(), note.groupId) : null;
-  return { ...note, access, group };
+  return { ...note, access, canManageLifecycle, group };
 }
 
 /**
- * 그 학생 공간의 휴지통: 개인 노트와 그 학생이 지금 속한 그룹의 그룹 노트. `canWrite`는 복원할 수 있는지다
- * (개인: 작성자·관리자, 그룹: 관리자·멤버 — 학생 본인은 멤버라 목록에 보이면 복원할 수 있다).
+ * 그 학생 공간의 휴지통: 개인 노트와 그 학생이 지금 속한 그룹의 그룹 노트. `canWrite`는 휴지통에서 복원할 수 있는지다
+ * (`canManageNoteLifecycle`과 같다 — 개인: 작성자·관리자, 그룹: 관리자·멤버. 학생 본인은 멤버라 목록에 보이면 복원할 수 있다.
+ * 2026-11-23부터 학생이 Stann의 노트를 편집할 수 있어도 휴지통 복원은 작성자·관리자만이다).
  */
 export async function getTrashedPrivateNotes(targetStudentId: string) {
   const session = await requireAuth();

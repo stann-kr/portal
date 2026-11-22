@@ -88,7 +88,8 @@ test("학생: 내가 고칠 수 있는 노트(내가 쓴 내 노트·그룹 노�
   if (!result.ok) return;
   assert.equal(result.value.spaces, null);
   assert.equal(result.value.newNoteStudentId, "student-a");
-  assert.deepEqual(result.value.notes.map((note) => note.id).sort(), ["note-a-own", "note-group"]);
+  // 2026-11-23 사용자 결정: Stann이 만든 내 노트도 학생이 쓰므로 담을 곳에 들어간다(이전에는 빠졌다).
+  assert.deepEqual(result.value.notes.map((note) => note.id).sort(), ["note-a-own", "note-a-stann", "note-group"]);
   // 그룹 멤버 B에게 guide-1이 닫혀 있어 그룹 노트에는 담을 수 없다. 학생에게 다른 학생의 열람 상태 이름은 주지 않는다.
   assert.equal(result.value.groupBlocked, true);
   assert.deepEqual(result.value.closedStudents, []);
@@ -152,8 +153,10 @@ test("편집기 가이드 인용: 노트의 학생(그룹은 멤버 모두)과 �
   assert.deepEqual(group.ok && group.value.map((page) => page.id), ["guide-2"]);
   assert.equal((await quote.getGuideQuotePickerPage({ kind: "note", noteId: "note-group" }, "guide-1")).ok, false);
   assert.equal((await quote.getGuideQuotePickerPage({ kind: "note", noteId: "note-group" }, "guide-2")).ok, true);
-  // Stann이 쓴 내 노트(읽기 전용)·다른 학생 노트·휴지통 노트는 거절한다.
-  assert.equal((await quote.getGuideQuotePickerPages({ kind: "note", noteId: "note-a-stann" })).ok, false);
+  // 2026-11-23 사용자 결정: Stann이 쓴 내 노트도 학생이 쓰므로 불러올 수 있다(이전에는 읽기 전용이라 거절).
+  const stannOwn = await quote.getGuideQuotePickerPages({ kind: "note", noteId: "note-a-stann" });
+  assert.deepEqual(stannOwn.ok && stannOwn.value.map((page) => page.id), ["guide-1", "guide-2"]);
+  // 다른 학생 노트·휴지통 노트는 거절한다.
   assert.equal((await quote.getGuideQuotePickerPages({ kind: "note", noteId: "note-b-own" })).ok, false);
   assert.equal((await quote.getGuideQuotePickerPages({ kind: "note", noteId: "note-a-trash" })).ok, false);
   // 만들기 전 공간: 본인·내 그룹만.

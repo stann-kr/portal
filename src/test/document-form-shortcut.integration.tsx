@@ -1180,8 +1180,10 @@ const panelNoteRecord = (authorId: string) => ({
   authorName: "학생",
   groupId: null,
   group: null,
-  // 서버가 정한 접근(개인 노트: 작성자·관리자 쓰기, 그 학생은 읽기). 이 패널의 보는 사람은 student-1이다.
-  access: authorId === "student-1" ? ("write" as const) : ("read" as const),
+  // 서버가 정한 접근. 이 패널의 보는 사람은 노트 주인 student-1이다. 2026-11-23 사용자 결정으로 개인 노트는
+  // 작성자와 관계없이 그 학생이 쓴다(이전에는 Stann이 만든 노트면 "read"). 휴지통 이동·복원은 작성자만.
+  access: "write" as const,
+  canManageLifecycle: authorId === "student-1",
 });
 const panelNoteItem = {
   id: "panel-note",
@@ -1229,7 +1231,8 @@ test("캘린더 패널에서 작성자는 노트를 바로 고치고 저장 결�
   assert.match(harness.container.textContent ?? "", /전체 화면으로 열기/u);
 });
 
-test("캘린더 패널에서 다른 작성자의 노트는 읽기 전용으로 보인다", { concurrency: false }, async (context) => {
+// 2026-11-23 사용자 결정: 이전에는 Stann이 만든 노트가 학생 패널에서 읽기 전용이었다. 이제 노트 주인 학생은 바로 고친다.
+test("캘린더 패널에서 Stann이 만든 내 노트도 학생이 바로 고친다", { concurrency: false }, async (context) => {
   loadPanelNote = async () => panelNoteRecord("admin-1");
   context.after(() => { loadPanelNote = async () => null; });
   const harness = await renderForm(context, <UnifiedNoteDetail
@@ -1237,9 +1240,11 @@ test("캘린더 패널에서 다른 작성자의 노트는 읽기 전용으로 �
     returnTo="/dashboard/student"
     viewer={{ actorId: "student-1", role: "student" }}
   />);
-  await waitForCondition(() => /읽기 전용/u.test(harness.container.textContent ?? ""), "읽기 전용 안내가 보인다.");
-  assert.equal(harness.container.querySelector('[name="title"]'), null);
-  assert.match(harness.container.textContent ?? "", /처음 본문/u);
+  await waitForCondition(
+    () => (harness.container.querySelector('[name="title"]') as unknown as HTMLTextAreaElement | null)?.value === "패널 노트",
+    "패널이 노트 편집기를 연다.",
+  );
+  assert.doesNotMatch(harness.container.textContent ?? "", /읽기 전용/u);
 });
 
 test("노트 저장 실패가 폼 밖으로 옮긴 포커스를 가로채지 않는다", { concurrency: false }, async (context) => {

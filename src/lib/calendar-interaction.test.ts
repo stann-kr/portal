@@ -36,7 +36,7 @@ const student: CalendarEditContext = { actorId: "student-1", role: "student" };
 const otherStudent: CalendarEditContext = { actorId: "student-2", role: "student" };
 const admin: CalendarEditContext = { actorId: "admin-1", role: "admin" };
 
-test("학생은 자기 스페이스의 일정·레슨과 본인이 쓴 노트를 옮기고 다른 학생 것은 옮기지 못한다", () => {
+test("학생은 자기 스페이스의 일정·레슨·노트(Stann이 만든 노트 포함)를 옮기고 다른 학생 것은 옮기지 못한다", () => {
   assert.deepEqual(getCalendarItemEditing(item("CALENDAR_EVENT"), student), {
     kind: "event",
     movable: true,
@@ -48,9 +48,10 @@ test("학생은 자기 스페이스의 일정·레슨과 본인이 쓴 노트를
     getCalendarItemEditing(item("PRIVATE_NOTE", { metadata: { authorId: "student-1" } }), student).kind,
     "note",
   );
+  // 2026-11-23 사용자 결정: Stann이 만든 자기 노트도 학생이 편집하므로 날짜도 옮긴다(이전에는 false).
   assert.equal(
     getCalendarItemEditing(item("PRIVATE_NOTE", { metadata: { authorId: "admin-1" } }), student).movable,
-    false,
+    true,
   );
   assert.equal(getCalendarItemEditing(item("CALENDAR_EVENT"), otherStudent).movable, false);
   assert.equal(getCalendarItemEditing(item("LESSON"), otherStudent).movable, false);
@@ -73,7 +74,9 @@ test("관리자는 학생 스페이스의 일정·레슨·노트를 모두 옮�
 
 test("끌 수 없는 항목은 이유를 알려 주고 옮길 수 있는 항목은 이유가 없다", () => {
   assert.equal(getCalendarItemLockReason(item("CALENDAR_EVENT"), student), null);
-  assert.match(getCalendarItemLockReason(item("PRIVATE_NOTE", { metadata: { authorId: "admin-1" } }), student) ?? "", /작성자나 Stann/u);
+  // 2026-11-23: Stann이 만든 자기 노트는 옮길 수 있어 이유가 없고, 다른 학생 스페이스의 노트만 막는다.
+  assert.equal(getCalendarItemLockReason(item("PRIVATE_NOTE", { metadata: { authorId: "admin-1" } }), student), null);
+  assert.match(getCalendarItemLockReason(item("PRIVATE_NOTE", { metadata: { authorId: "admin-1" } }), otherStudent) ?? "", /그 학생이나 Stann/u);
   assert.match(getCalendarItemLockReason(item("QNA_THREAD"), admin) ?? "", /올린 날짜/u);
   assert.match(getCalendarItemLockReason(item("ASSIGNMENT"), admin) ?? "", /제출한 날짜/u);
   assert.match(getCalendarItemLockReason(item("DIGGING_TRACK"), student) ?? "", /추가한 날짜/u);

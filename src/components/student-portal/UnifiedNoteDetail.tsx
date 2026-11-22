@@ -61,7 +61,8 @@ function MetaRow({ label, value }: { label: string; value: string }) {
 }
 
 /**
- * 읽기 전용 본문(다른 작성자의 노트). Stann이 쓰는 동안 학생 패널이 따라오게 같은 공동 편집 room에 읽기 전용으로 붙어
+ * 읽기 전용 본문(규칙이 "read"를 줄 때). 2026-11-23부터 학생도 Stann이 만든 자기 노트를 편집해 지금은 닿지 않지만
+ * 규칙의 읽기 모드에 대비해 남겨 둔다. Stann이 쓰는 동안 학생 패널이 따라오게 같은 공동 편집 room에 읽기 전용으로 붙어
  * 제목·날짜·본문을 실시간으로 바꾼다. hook 호출 순서를 지키려고 편집 분기와 분리했다.
  */
 function ReadOnlyNoteBody({
@@ -162,7 +163,7 @@ export function UnifiedNoteDetail({
   }, [noteId, attempt]);
 
   const fullPageHref = `/dashboard/notes/${encodeURIComponent(noteId)}?returnTo=${encodeURIComponent(returnTo)}`;
-  // 쓰기 권한은 서버가 노트 규칙(개인: 작성자·관리자, 그룹: 관리자·지금 멤버)으로 정한 값을 따른다.
+  // 쓰기 권한은 서버가 노트 규칙(개인: 그 학생 본인·관리자 — Stann이 만든 노트도(2026-11-23), 그룹: 관리자·지금 멤버)으로 정한 값을 따른다.
   const canEdit = body.status === "ready" && Boolean(viewer && body.note.access === "write");
   const updatedLabel = body.status === "ready"
     ? savedAt !== null ? formatNoteUpdated(savedAt, savedAt) : formatNoteUpdated(body.note.updatedAt, body.loadedAt)

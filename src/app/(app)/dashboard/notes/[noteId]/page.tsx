@@ -73,7 +73,10 @@ async function loadNoteInstructorTools(note: {
   };
 }
 
-/** 노트 문서(NoteDoc·MobileNoteDoc 보드). 작성자·관리자는 바로 편집하고, 휴지통·다른 작성자의 노트는 같은 틀의 읽기 화면이다. */
+/**
+ * 노트 문서(NoteDoc·MobileNoteDoc 보드). 쓸 수 있는 사람(관리자, 개인 노트는 그 학생 본인 — Stann이 만든 노트도(2026-11-23),
+ * 그룹 노트는 지금 멤버)은 바로 편집하고, 휴지통 노트는 같은 틀의 읽기 화면이다. 휴지통 이동·복원은 작성자·관리자(그룹은 멤버)만.
+ */
 export default async function NotePage({
   params,
   searchParams,
@@ -94,8 +97,10 @@ export default async function NotePage({
   const returnTo = safeReturnPath(requestedReturnTo, fallback);
   const parent = resolveNoteParent(returnTo);
   const historyHref = `/dashboard/notes/${note.id}/history?returnTo=${encodeURIComponent(returnTo)}`;
-  // 쓰기 권한은 서버의 노트 규칙(개인: 작성자·관리자, 그룹: 관리자·지금 멤버)으로 정한 값이다.
+  // 쓰기 권한은 서버의 노트 규칙(개인: 그 학생 본인·관리자, 그룹: 관리자·지금 멤버)으로 정한 값이다.
   const canEdit = note.access === "write";
+  // 휴지통 이동·복원은 따로 판단한다(개인: 작성자·관리자). 학생은 Stann이 만든 자기 노트를 고치지만 버리지 못한다.
+  const canManageLifecycle = note.canManageLifecycle;
   const groupShareLine = note.group
     ? groupNoteShareLine(note.group, { id: session.user.id, isAdmin: session.user.role === "admin" })
     : null;
@@ -137,11 +142,13 @@ export default async function NotePage({
         updatedLabel={updatedLabel}
         instructor={instructor}
         groupShareLine={groupShareLine}
+        canTrash={canManageLifecycle}
       />
     );
   }
 
-  // 다른 작성자의 노트(학생이 Stann의 수업 노트를 볼 때): 폴링으로 제자리에서 갱신하는 읽기 화면.
+  // 읽기만 할 수 있는 노트: 폴링으로 제자리에서 갱신하는 읽기 화면. 2026-11-23부터 노트 규칙이 "read"를 주는 경우가 없어
+  // (학생도 Stann이 만든 자기 노트를 편집한다) 지금은 닿지 않지만, 규칙의 읽기 모드에 대비해 남겨 둔다.
   if (!note.deletedAt) {
     return (
       <>
@@ -206,7 +213,7 @@ export default async function NotePage({
             <NoteTrashActions
               noteId={note.id}
               version={note.version}
-              canRestore={canEdit && !isTrashRetentionExpired}
+              canRestore={canManageLifecycle && !isTrashRetentionExpired}
               canPurge={canPurge}
               returnTo={returnTo}
             />
