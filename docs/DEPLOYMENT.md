@@ -32,7 +32,7 @@
 
 | 항목 | 저장소에서 확인할 수 있는 것 | 운영 적용을 확인하는 증거 |
 |---|---|---|
-| D1 migration | SQL·journal·snapshot `0000~0033`, 메모리 DB에서 체인·schema 검증 | 대상 D1의 적용 목록과 실제 schema·FK, 그 목록에서 계산한 pending 범위 |
+| D1 migration | SQL·journal·snapshot `0000~0034`, 메모리 DB에서 체인·schema 검증 | 대상 D1의 적용 목록과 실제 schema·FK, 그 목록에서 계산한 pending 범위 |
 | 계정 삭제 | `0012`와 삭제·정리 구현, application 설정의 `ACCOUNT_DELETION_ENABLED="false"` 기본값 | 활성 Worker의 유효 flag, 기기 adoption, 승인된 삭제·정리 smoke |
 | 예약 정리 | `worker.ts`의 `scheduled` handler, Workers Logs 설정, source에 없는 Cron trigger | 원격 trigger 주기, 대상 version의 실제 scheduled invocation, backlog·실패·alert 증거 |
 | 외부 캘린더 | `0013` 구독 테이블과 `EXTERNAL_CALENDAR_ENCRYPTION_KEY` 요구 조건 | 대상 schema, secret 설정 확인, 승인된 연결·읽기·교체·해제 smoke |
@@ -44,6 +44,7 @@
 | 웹앱 푸시 알림 | `0024` 구독·`0025` 끈 종류 table, `VAPID_PUBLIC_KEY`·`VAPID_PRIVATE_KEY`(선택 `VAPID_SUBJECT`) 요구 조건, 없으면 알림만 꺼짐 | 대상 D1의 `0024` 적용, secret 설정 확인, 승인된 기기에서 알림 켜기·테스트 알림 수신 |
 | 학생 수강 종료 | `0032`의 `profiles.account_status`(기본 ACTIVE)·`archived_at` 칸 추가 | 대상 D1의 `0032` 적용과 `PRAGMA table_info(profiles)`, 모든 계정이 ACTIVE인지(`SELECT account_status, COUNT(*) FROM profiles GROUP BY 1`) |
 | 커뮤니티 댓글 답글 | `0033`의 `comments.parent_id`(nullable, FK 없음)·`comments_parent_idx` 추가 | 대상 D1의 `0033` 적용과 `PRAGMA table_info(comments)`, 기존 댓글이 모두 원 댓글인지(`SELECT COUNT(*) FROM comments WHERE parent_id IS NOT NULL` = 0) |
+| 게시물 읽음 | `0034`의 `post_reads` 새 표(게시물·학생 복합 기본키, `first_read_at`, 게시물·계정 cascade)와 `post_reads_student_idx` | 대상 D1의 `0034` 적용과 `PRAGMA table_info(post_reads)`·`PRAGMA foreign_key_list(post_reads)`, 처음에는 빈 표 |
 | 그룹레슨 | `0029` 그룹·멤버 table과 `private_notes.group_id`, `0030` `document_tombstones.group_id`와 media UPDATE trigger 넷 재생성 | 대상 D1의 `0029`·`0030` 적용과 `lesson_groups`·`lesson_group_members` 존재, 관리자 학생 목록의 그룹 만들기 |
 | 배포 환경 분리 | 현재 tracked 설정의 Worker는 `portal` | development/production Worker·D1·R2·route·secret·branch trigger 각각의 inventory |
 
@@ -180,6 +181,14 @@ iCloud 연동:
 2. 순서를 바꾸면 안 된다. 새 코드가 칸 없이 나가면 게시물 상세의 댓글 조회가 오류가 된다.
 3. 적용 뒤 read-only로 `SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1`, `PRAGMA table_info(comments)`(parent_id), `PRAGMA index_list(comments)`(comments_parent_idx), `SELECT COUNT(*) FROM comments WHERE parent_id IS NOT NULL`(0)을 본다.
 4. 되돌리기: 이전 코드는 답글을 원 댓글처럼 평평하게(작성 순) 보인다. 지운 원 댓글 자리 표시는 없어지지만 답글 글은 그대로 남는다. 칸은 남겨 두면 된다.
+
+### 게시물 읽음 전환 gate (2026-11-23)
+
+1. 원격 D1에 `0034_post_reads`를 **코드보다 먼저** 적용한다(Time Travel bookmark 먼저, `0033` 적용 뒤). 새 표와 index를 만들 뿐 기존 표·trigger·행은 그대로이고, 이전 코드는 이 표를 읽지 않으므로 먼저 적용해도 동작이 같다.
+2. 순서를 바꾸면 안 된다. 새 코드가 표 없이 나가면 관리자의 커뮤니티 목록·검색과 게시물 상세가 오류가 된다(학생의 읽음 기록 호출은 실패해도 화면에 영향이 없다).
+3. 적용 뒤 read-only로 `SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1`, `PRAGMA table_info(post_reads)`, `PRAGMA foreign_key_list(post_reads)`(posts·profiles CASCADE), `SELECT COUNT(*) FROM post_reads`(0)을 본다.
+4. 되돌리기: 이전 코드는 이 표를 읽지도 쓰지도 않는다. 표는 남겨 두면 되고, 다시 올리면 그 사이 읽은 것은 빠진 채 이어서 쌓인다.
+5. 개인정보처리방침에 게시물 읽음 항목을 더하고 시행일을 2026년 11월 23일로 바꿨다. 실제 반영일이 다르면 그날로 고친다.
 
 ### 가입 링크 메일 gate
 

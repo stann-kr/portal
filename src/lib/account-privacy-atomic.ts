@@ -725,6 +725,8 @@ function accountDeletionStatements(input: {
       query: "DELETE FROM private_notes WHERE student_id = ? OR author_id = ?",
       params: [actorId, actorId],
     },
+    // 이 학생이 남의 게시물을 처음 연 기록. 자기 게시물의 기록은 아래 게시물 삭제가 함께 지운다.
+    { query: "DELETE FROM post_reads WHERE student_id = ?", params: [actorId] },
     { query: "DELETE FROM posts WHERE author_id = ?", params: [actorId] },
     { query: "DELETE FROM qna_threads WHERE student_id = ?", params: [actorId] },
     {

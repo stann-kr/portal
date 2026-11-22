@@ -74,6 +74,7 @@ import {
 } from "@/lib/media-lifecycle-atomic";
 import { mediaDeliveryPath, parseMediaUuidV4 } from "@/lib/media-lifecycle";
 import { publicAuthorName } from "@/lib/public-author-name";
+import { postReadCountSql } from "@/lib/post-read-count";
 import { pushMessages } from "@/lib/push/messages";
 import { notifyPush } from "@/lib/push/notify";
 import { withRestoreLock } from "@/lib/trash-restore";
@@ -96,6 +97,11 @@ const POST_SELECT = {
   deletedAt: posts.deletedAt,
   authorName: publicAuthorName,
 } as const;
+
+/** 목록 줄의 "읽음 N"은 관리자에게만 보낸다(학생 응답에는 값 자체를 넣지 않는다). */
+function adminReadCount(session: { user: { role?: string | null } }) {
+  return session.user.role === "admin" ? postReadCountSql() : sql<number | null>`NULL`;
+}
 
 function lifecycleError(reason: PostMutationFailureReason): string {
   switch (reason) {
@@ -174,7 +180,7 @@ export async function getCommunityPostPage(input: {
   category?: string | null;
   cursor?: string | null;
 }) {
-  await requireAuth();
+  const session = await requireAuth();
   const { boardType } = input;
   if (!VALID_BOARD_TYPES.includes(boardType)) throw new Error("Invalid board type");
   const cursor = input.cursor ? decodeCommunityPostCursor(input.cursor) : null;
@@ -197,6 +203,7 @@ export async function getCommunityPostPage(input: {
       ...POST_SELECT,
       contentHtml: sql<string>`substr(${posts.contentHtml}, 1, ${COMMUNITY_PREVIEW_SOURCE_CHARS})`,
       commentCount: sql<number>`(SELECT count(*) FROM ${comments} WHERE ${comments.postId} = ${posts.id})`.mapWith(Number),
+      readCount: adminReadCount(session),
       pinnedKey,
       createdKey,
     })
@@ -240,7 +247,7 @@ export async function searchCommunityPosts(input: {
   query: string;
   scope?: CommunitySearchScope;
 }) {
-  await requireAuth();
+  const session = await requireAuth();
   if (!VALID_BOARD_TYPES.includes(input.boardType)) throw new Error("Invalid board type");
   const words = getCommunitySearchWords(input.query);
   if (words.length === 0) return { posts: [] };
@@ -259,6 +266,7 @@ export async function searchCommunityPosts(input: {
     .select({
       ...POST_SELECT,
       commentCount: sql<number>`(SELECT count(*) FROM ${comments} WHERE ${comments.postId} = ${posts.id})`.mapWith(Number),
+      readCount: adminReadCount(session),
       createdKey,
     })
     .from(posts)

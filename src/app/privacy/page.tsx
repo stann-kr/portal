@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 export const metadata = { title: "개인정보처리방침" };
 
 /** 개정 시 이 날짜와 본문을 함께 바꾼다. */
-const EFFECTIVE_DATE = "2026년 11월 14일";
+const EFFECTIVE_DATE = "2026년 11월 23일";
 const CONTACT_EMAIL = "portal@stann.kr";
 
 /**
@@ -35,6 +35,7 @@ export default function PrivacyPage() {
             알림: 알림을 켠 기기마다 브라우저가 발급한 알림 수신 주소와 암호화 키, 받을 알림 종류 설정을 보관합니다. 그 기기에서 알림을 끄면
             지웁니다.
           </li>
+          <li>게시물 읽음: 학생이 커뮤니티 게시물을 처음 연 시각(게시물마다 한 번). Stann만 볼 수 있고 다른 학생에게는 보이지 않습니다.</li>
           <li>운영 정보: 로그인 유지를 위한 세션 쿠키, 로그인 시도 제한에 쓰는 접속 IP, 요청·오류 기록</li>
           <li>기기 저장: 작성 중인 글이 사라지지 않도록 쓰는 기기의 브라우저 저장소에 초안을 임시로 보관합니다.</li>
         </ul>

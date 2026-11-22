@@ -37,6 +37,7 @@ type FeedbackPost = {
   authorName: string | null;
   createdAt: Date | null;
   commentCount?: number;
+  readCount?: number | null;
 };
 
 interface MixsetFeedbackCardProps {

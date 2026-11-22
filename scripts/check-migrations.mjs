@@ -59,6 +59,7 @@ import { validateGroupNoteRetentionUpgrade } from "./migration-check/group-note-
 import { validateGroupCalendarUpgrade } from "./migration-check/group-calendar.mjs";
 import { validateStudentArchiveUpgrade } from "./migration-check/student-archive.mjs";
 import { validateCommentRepliesUpgrade } from "./migration-check/comment-replies.mjs";
+import { validatePostReadsUpgrade } from "./migration-check/post-reads.mjs";
 import { validateListQueryIndexesUpgrade } from "./migration-check/list-query-indexes.mjs";
 import {
   validateAccountPrivacyAtomicSource,
@@ -215,6 +216,8 @@ async function main() {
   console.log("PASS populated 0031 → 0032 profiles account_status ACTIVE default, archived_at nullable, archive/restore UPDATE through identity trigger, row preservation without table rebuild");
   await validateCommentRepliesUpgrade(migrationFiles);
   console.log("PASS populated 0032 → 0033 comments parent_id nullable without FK, parent index used, triggers and rows preserved, reply survives root delete");
+  await validatePostReadsUpgrade(migrationFiles);
+  console.log("PASS populated 0033 → 0034 post_reads table, composite key keeps first read, student index used, cascades on post delete and account FK, rows preserved");
 }
 
 try {

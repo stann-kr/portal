@@ -194,6 +194,11 @@ mock.module("@/lib/actions/posts", { namedExports: {
   getCommunityPostPage: (...args: Parameters<typeof loadCommunityPage>) => loadCommunityPage(...args),
   togglePinPost: (...args: Parameters<typeof togglePin>) => togglePin(...args),
 } });
+const postReadCalls: string[] = [];
+mock.module("@/lib/actions/postReads", { namedExports: {
+  recordPostRead: async (postId: string) => { postReadCalls.push(postId); },
+  getPostReadSummary: async () => null,
+} });
 mock.module("@/lib/actions/categories", { namedExports: { getCategories: async () => [] } });
 mock.module("@/lib/actions/documentDrafts", { namedExports: { discardDocumentServerDraft: async () => ({ ok: true }) } });
 mock.module("@/lib/actions/upload", { namedExports: {
@@ -2538,6 +2543,44 @@ test("과제 믹스를 들으며 시점만 찍어 두고, 나중에 고른 시�
   assert.equal(browser.document.querySelector('ul[aria-label="찍어 둔 시점"]'), null);
 });
 
+test("post readers: a student opening someone else's post records a read, the admin sees who read it", async (context) => {
+  postReadCalls.length = 0;
+  const post = {
+    id: "read-post", authorId: "student-2", title: "연습실", contentHtml: "<p>본문</p>",
+    category: "general", boardType: "GENERAL" as const, isPinned: false, mediaUrl: null,
+    mediaObjectId: null, createdAt: new Date(), updatedAt: new Date(), deletedAt: null,
+    restoreLocked: false, version: 1, authorName: "학생2",
+  };
+  const root = await render(context, <PostDetailClient postId={post.id} post={post} initialCommentList={[]} currentUserId="student-1" isAdmin={false} returnTo="/community" />);
+  await settle();
+  assert.deepEqual(postReadCalls, ["read-post"]);
+  assert.equal(browser.document.querySelector('[aria-controls="post-readers"]'), null, "학생에게는 읽음 표시가 없다");
+
+  await act(async () => root.render(<div />));
+  await act(async () => root.render(<PostDetailClient postId={post.id} post={post} initialCommentList={[]} currentUserId="student-2" isAdmin={false} returnTo="/community" />));
+  await settle();
+  assert.deepEqual(postReadCalls, ["read-post"], "글쓴이가 연 것은 남기지 않는다");
+
+  const summary = {
+    readers: [{ id: "student-1", name: "학생1", firstReadAt: new Date("2026-10-26T05:58:00Z") }],
+    unread: [{ id: "student-3", name: "학생3" }],
+  };
+  await act(async () => root.render(<div />));
+  await act(async () => root.render(<PostDetailClient postId={post.id} post={post} initialCommentList={[]} currentUserId="admin-1" isAdmin readSummary={summary} returnTo="/community" />));
+  await settle();
+  assert.deepEqual(postReadCalls, ["read-post"], "관리자가 연 것은 남기지 않는다");
+  const toggle = browser.document.querySelector('[aria-controls="post-readers"]') as InstanceType<typeof browser.HTMLButtonElement> | null;
+  assert.ok(toggle);
+  assert.equal(toggle.textContent?.replace(/\s+/gu, " ").trim(), "읽음 1/2");
+  assert.equal(toggle.getAttribute("aria-expanded"), "false");
+  assert.equal(browser.document.getElementById("post-readers"), null);
+  await act(async () => toggle.click());
+  assert.equal(toggle.getAttribute("aria-expanded"), "true");
+  const panel = browser.document.getElementById("post-readers");
+  assert.match(panel?.textContent ?? "", /학생1.*10\.26 14:58/u);
+  assert.match(panel?.textContent ?? "", /아직 안 읽음\s*1\s*학생3/u);
+});
+
 test("community comment failure and remount preserve the author's draft", async (context) => {
   browser.localStorage.clear();
   const operationIds: unknown[] = [];
@@ -3703,7 +3746,7 @@ test("community shows the server-loaded list first and explains a board without 
     id: "post-1", authorId: "student-1", category: "general", boardType: "GENERAL" as const, isPinned: false,
     mediaUrl: null, mediaObjectId: null, title: "레슨 후기", contentHtml: "<p>오늘 배운 것</p>",
     createdAt: new Date(), updatedAt: new Date(), deletedAt: null, version: 1,
-    authorName: "학생", commentCount: 2,
+    authorName: "학생", commentCount: 2, readCount: null,
   };
   const previousUrl = browser.location.href;
   context.after(() => browser.history.replaceState({}, "", previousUrl));
@@ -3757,7 +3800,7 @@ test("공지 고정을 바꾸면 목록을 다시 받아 표시와 version이 �
   const announcement = (isPinned: boolean, version: number) => ({
     id: "notice-1", authorId: "admin-1", category: "", boardType: "ANNOUNCEMENT" as const, isPinned,
     mediaUrl: null, mediaObjectId: null, title: "휴강 안내", contentHtml: "<p>다음 주는 쉽니다</p>",
-    createdAt: new Date(), updatedAt: new Date(), deletedAt: null, version, authorName: "Stann", commentCount: 0,
+    createdAt: new Date(), updatedAt: new Date(), deletedAt: null, version, authorName: "Stann", commentCount: 0, readCount: null,
   });
   // 서버는 고정을 바꿀 때마다 version을 올린다.
   let stored = announcement(false, 1);
@@ -3790,7 +3833,7 @@ test("community load-more appends the next page once and stops at the last page"
   const makePost = (index: number) => ({
     id: `post-${index}`, authorId: "student-1", category: "general", boardType: "GENERAL" as const, isPinned: false,
     mediaUrl: null, mediaObjectId: null, title: `기록 ${index}`, contentHtml: "<p>본문</p>",
-    createdAt: new Date(), updatedAt: new Date(), deletedAt: null, version: 1, authorName: "학생", commentCount: 0,
+    createdAt: new Date(), updatedAt: new Date(), deletedAt: null, version: 1, authorName: "학생", commentCount: 0, readCount: null,
   });
   loadCommunityPage = async ({ cursor }) => {
     cursors.push(cursor);

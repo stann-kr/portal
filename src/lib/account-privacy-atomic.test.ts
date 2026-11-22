@@ -344,6 +344,9 @@ test("계정 삭제는 owned/cross-resource payload와 media를 한 transaction�
     VALUES
       ('delete-own-comment', 'delete-other-post', 'delete-student', '<p>Mine</p>', 1767225600),
       ('delete-other-comment', 'delete-own-post', 'other-student', '<p>Other</p>', 1767225600);
+    INSERT INTO post_reads (post_id, student_id, first_read_at)
+    VALUES ('delete-other-post', 'delete-student', 1767225600),
+      ('delete-own-post', 'other-student', 1767225600);
     UPDATE posts SET deleted_at = 1767225601, deleted_by_id = 'other-student'
     WHERE id = 'delete-other-post';
 
@@ -543,6 +546,8 @@ test("계정 삭제는 owned/cross-resource payload와 media를 한 transaction�
     ),
     0,
   );
+  // 지운 학생이 남의 글을 연 기록과, 남이 지운 학생의 글을 연 기록이 모두 사라진다.
+  assert.equal(countRows(sqlite, "SELECT count(*) AS value FROM post_reads"), 0);
   assert.equal(
     countRows(
       sqlite,
