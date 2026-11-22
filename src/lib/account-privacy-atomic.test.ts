@@ -347,6 +347,9 @@ test("계정 삭제는 owned/cross-resource payload와 media를 한 transaction�
     INSERT INTO post_reads (post_id, student_id, first_read_at)
     VALUES ('delete-other-post', 'delete-student', 1767225600),
       ('delete-own-post', 'other-student', 1767225600);
+    INSERT INTO assignment_drafts (owner_id, draft_key, task_id, payload_json, version, updated_at)
+    VALUES ('delete-student', 'free-submission:new', NULL, '{"text":"쓰던 글"}', 1, 1767225600),
+      ('other-student', 'free-submission:new', NULL, '{"text":"남의 글"}', 1, 1767225600);
     UPDATE posts SET deleted_at = 1767225601, deleted_by_id = 'other-student'
     WHERE id = 'delete-other-post';
 
@@ -548,6 +551,9 @@ test("계정 삭제는 owned/cross-resource payload와 media를 한 transaction�
   );
   // 지운 학생이 남의 글을 연 기록과, 남이 지운 학생의 글을 연 기록이 모두 사라진다.
   assert.equal(countRows(sqlite, "SELECT count(*) AS value FROM post_reads"), 0);
+  // 지운 학생의 과제 글 계정 임시 저장만 사라진다.
+  assert.equal(countRows(sqlite, "SELECT count(*) AS value FROM assignment_drafts WHERE owner_id = 'delete-student'"), 0);
+  assert.equal(countRows(sqlite, "SELECT count(*) AS value FROM assignment_drafts WHERE owner_id = 'other-student'"), 1);
   assert.equal(
     countRows(
       sqlite,

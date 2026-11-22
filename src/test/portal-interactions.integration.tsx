@@ -174,6 +174,16 @@ mock.module("@/lib/actions/assignmentTasks", { namedExports: {
   deleteAssignmentRecurrence: async () => ({ success: true }),
   deleteAssignmentTask: async () => ({ success: true }),
 } });
+// 과제 글 계정 임시 저장(0035). 기본은 계정 사본이 없고 저장은 version을 하나씩 올린다.
+type AccountDraftActions = typeof import("@/lib/actions/assignmentDrafts");
+let getAccountDraft: AccountDraftActions["getMyAssignmentDraft"] = async () => ({ ok: true, draft: null });
+let saveAccountDraft: AccountDraftActions["saveMyAssignmentDraft"] = async (_key, _payload, base) => ({ status: "saved", version: (base ?? 0) + 1, updatedAt: new Date() });
+const discardAccountDraft: AccountDraftActions["discardMyAssignmentDraft"] = async () => ({ status: "discarded" });
+mock.module("@/lib/actions/assignmentDrafts", { namedExports: {
+  getMyAssignmentDraft: (...args: Parameters<typeof getAccountDraft>) => getAccountDraft(...args),
+  saveMyAssignmentDraft: (...args: Parameters<typeof saveAccountDraft>) => saveAccountDraft(...args),
+  discardMyAssignmentDraft: (...args: Parameters<typeof discardAccountDraft>) => discardAccountDraft(...args),
+} });
 mock.module("@/lib/actions/feedbacks", { namedExports: {
   createFeedback: (...args: Parameters<typeof saveFeedback>) => saveFeedback(...args),
   updateFeedback: (...args: Parameters<typeof editFeedback>) => editFeedback(...args),
@@ -3715,6 +3725,148 @@ test("a received text task submits only the text field, keeps the draft on failu
   assert.equal(taskLoads, 1);
   assert.match(browser.document.body.textContent ?? "", /피드백 대기/);
   assert.equal(browser.document.getElementById("task-task-text-text"), null, "제출 뒤 폼을 닫는다");
+});
+
+test("과제 목록은 계정에 임시 저장한 글을 \"작성 중\"·\"고치는 중\"과 이어 쓰기로 보인다", async (context) => {
+  const draftAt = new Date("2026-11-23T12:40:00Z");
+  const base = {
+    descriptionHtml: "", occurrenceDate: null, recurrenceId: null, version: 1, createdAt: new Date(),
+    dueAt: new Date(Date.now() + 86_400_000),
+  };
+  const tasks = [
+    { ...base, id: "draft-open", title: "연습 일지", submissionFormat: "TEXT" as const, submission: null, draftSavedAt: draftAt },
+    { ...base, id: "draft-analysis", title: "믹스 분석", submissionFormat: "ANALYSIS" as const, submission: null, draftSavedAt: draftAt },
+    {
+      ...base, id: "draft-edit", title: "제출한 과제", submissionFormat: "TEXT" as const, draftSavedAt: draftAt,
+      submission: { id: "sub-1", mediaUrl: null, textHtml: "<p>낸 글</p>", analysisJson: null, submittedAt: new Date(), updatedAt: null, reviewedAt: null, feedbackCount: 0 },
+    },
+    { ...base, id: "draft-none", title: "새 과제", submissionFormat: "TEXT" as const, submission: null, draftSavedAt: null },
+  ];
+  await render(context, <AssignmentView actorId="student-draft-list" initialAssignments={[]} initialTasks={tasks} />);
+  const row = (id: string) => browser.document.getElementById(`task-row-${id}`);
+  const rowText = (id: string) => row(id)?.textContent?.replace(/\s+/gu, " ") ?? "";
+  assert.match(rowText("draft-open"), /작성 중 11\.23 21:40/u);
+  assert.ok([...row("draft-open")!.querySelectorAll("button")].some((element) => element.textContent === "이어 쓰기"));
+  assert.ok([...row("draft-analysis")!.querySelectorAll("a")].some((element) => element.textContent === "이어 쓰기"), "분석 쓰기 → 이어 쓰기");
+  assert.match(rowText("draft-edit"), /고치는 중 11\.23 21:40/u);
+  assert.ok([...row("draft-edit")!.querySelectorAll("button")].some((element) => element.textContent === "제출 수정"));
+  assert.doesNotMatch(rowText("draft-none"), /작성 중|고치는 중/u);
+  assert.ok([...row("draft-none")!.querySelectorAll("button")].some((element) => element.textContent === "제출하기"));
+  const time = [...row("draft-open")!.querySelectorAll(".font-mono")].find((element) => element.textContent === "11.23 21:40");
+  assert.ok(time, "시각은 Mono");
+});
+
+test("다른 기기에서 쓴 계정 사본은 이 기기에 올리지 않은 입력이 없으면 조용히 불러오고, 고친 글은 계정에 올린다", async (context) => {
+  browser.localStorage.clear();
+  context.after(() => browser.localStorage.clear());
+  const saves: { key: string; payload: string; base: number | null }[] = [];
+  getAccountDraft = async (key) => ({
+    ok: true,
+    draft: key === "task-submission:account-load"
+      ? { payloadJson: JSON.stringify({ mediaUrl: "", text: "노트북에서 쓴 글" }), version: 3, updatedAt: new Date("2026-11-23T12:40:00Z") }
+      : null,
+  });
+  saveAccountDraft = async (key, payload, base) => {
+    saves.push({ key, payload, base });
+    return { status: "saved", version: (base ?? 0) + 1, updatedAt: new Date("2026-11-23T12:45:00Z") };
+  };
+  context.after(() => {
+    getAccountDraft = async () => ({ ok: true, draft: null });
+    saveAccountDraft = async (_key, _payload, base) => ({ status: "saved", version: (base ?? 0) + 1, updatedAt: new Date() });
+  });
+  const task = {
+    id: "account-load", title: "연습 일지", descriptionHtml: "", submissionFormat: "TEXT" as const,
+    dueAt: null, occurrenceDate: null, recurrenceId: null, version: 1, createdAt: new Date(), submission: null, draftSavedAt: new Date("2026-11-23T12:40:00Z"),
+  };
+  await render(context, <AssignmentView actorId="student-account-load" initialAssignments={[]} initialTasks={[task]} />);
+  await press("이어 쓰기");
+  await settle();
+  const textarea = browser.document.getElementById("task-account-load-text") as unknown as HTMLTextAreaElement;
+  assert.equal(textarea.value, "노트북에서 쓴 글");
+  const status = () => browser.document.querySelector('[aria-label="임시 저장 상태"]')?.textContent?.replace(/\s+/gu, " ") ?? "";
+  assert.match(status(), /다른 기기에서 쓴 내용을 불러왔습니다 ?· ?21:40/u);
+  assert.equal(browser.document.querySelector('form [role="status"] button') === null, true, "고르는 줄이 없다");
+  assert.equal(saves.length, 0, "불러온 글은 다시 올리지 않는다");
+
+  const setter = Object.getOwnPropertyDescriptor(browser.HTMLTextAreaElement.prototype, "value")?.set;
+  await act(async () => {
+    textarea.focus();
+    setter?.call(textarea, "노트북에서 쓴 글 + 폰에서 이어 씀");
+    textarea.dispatchEvent(new browser.Event("input", { bubbles: true }) as unknown as Event);
+  });
+  await settle();
+  assert.match(status(), /임시 저장 중/u);
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 1_600)); });
+  await settle();
+  assert.deepEqual(saves, [{ key: "task-submission:account-load", payload: JSON.stringify({ mediaUrl: "", text: "노트북에서 쓴 글 + 폰에서 이어 씀" }), base: 3 }]);
+  assert.match(status(), /임시 저장됨 · 다른 기기에서도 이어 쓸 수 있어요 ?· ?21:45/u);
+});
+
+test("이 기기에도 올리지 않은 다른 입력이 있으면 고를 때까지 올리지 않고, 고르지 않은 쪽은 되살릴 수 있다", async (context) => {
+  browser.localStorage.clear();
+  context.after(() => browser.localStorage.clear());
+  const saves: { payload: string; base: number | null }[] = [];
+  const remote = { payloadJson: JSON.stringify({ mediaUrl: "", text: "노트북에서 쓴 다른 글이 아주 길게 이어지는 경우에도 앞부분만 보입니다 끝" }), version: 2, updatedAt: new Date("2026-11-23T12:40:00Z") };
+  getAccountDraft = async (key) => ({ ok: true, draft: key.startsWith("task-submission:conflict-") ? remote : null });
+  saveAccountDraft = async (key, payload, base) => {
+    if (key.startsWith("task-submission:")) saves.push({ payload, base });
+    return { status: "saved", version: (base ?? 0) + 1, updatedAt: new Date("2026-11-23T12:50:00Z") };
+  };
+  context.after(() => {
+    getAccountDraft = async () => ({ ok: true, draft: null });
+    saveAccountDraft = async (_key, _payload, base) => ({ status: "saved", version: (base ?? 0) + 1, updatedAt: new Date() });
+  });
+  const task = (id: string) => ({
+    id, title: "연습 일지", descriptionHtml: "", submissionFormat: "TEXT" as const,
+    dueAt: null, occurrenceDate: null, recurrenceId: null, version: 1, createdAt: new Date(), submission: null, draftSavedAt: null,
+  });
+  const textOf = (id: string) => (browser.document.getElementById(`task-${id}-text`) as unknown as HTMLTextAreaElement | null)?.value;
+  const conflictRow = () => [...browser.document.querySelectorAll('form [role="status"]')]
+    .find((element) => element.textContent?.includes("이 기기의 내용과 다릅니다"));
+
+  // ① 그 내용으로 이어 쓰기: 이 기기 글은 보관본으로 남아 되살릴 수 있다.
+  browser.localStorage.setItem(
+    createDocumentDraftKey("assignment-feedback", "student-conflict", "task-submission:conflict-a"),
+    serializeFormDraft({ mediaUrl: "", text: "폰에서 쓰던 글" }),
+  );
+  const root = await render(context, <AssignmentView actorId="student-conflict" initialAssignments={[]} initialTasks={[task("conflict-a")]} />);
+  await press("제출하기");
+  await settle();
+  assert.equal(textOf("conflict-a"), "폰에서 쓰던 글");
+  const row = conflictRow();
+  assert.ok(row, "고르는 줄");
+  assert.match(row.textContent ?? "", /다른 기기에서 21:40에 쓴 내용이 있어요\. 이 기기의 내용과 다릅니다\./u);
+  assert.match(row.textContent ?? "", /“노트북에서 쓴 다른 글이 아주 길게 이어지는 경우에도 앞부분만 보입니다…”/u);
+  assert.equal(row.querySelector(".font-mono")?.textContent, "21:40");
+  assert.equal(saves.length, 0, "고를 때까지 올리지 않는다");
+  await press("그 내용으로 이어 쓰기");
+  assert.equal(textOf("conflict-a"), JSON.parse(remote.payloadJson).text);
+  assert.equal(conflictRow() === undefined, true, "고른 뒤에는 고르는 줄이 없다");
+  assert.match(browser.document.body.textContent ?? "", /고르지 않은 이 기기에서 쓰던 내용/u);
+  assert.equal(saves.length, 0, "계정 사본을 고르면 올릴 것이 없다");
+  await press("되살리기");
+  assert.equal(textOf("conflict-a"), "폰에서 쓰던 글");
+  assert.match(browser.document.body.textContent ?? "", /고르지 않은 이 기기에서 쓰던 내용/u, "바꾼 쪽(계정 글)을 다시 보관한다");
+
+  // ② 이 기기 내용 유지: 계정 사본 version을 기준으로 이 기기 글을 올리고, 덮인 계정 글은 보관본으로 남는다.
+  await act(async () => root.render(<div />));
+  saves.length = 0;
+  browser.localStorage.setItem(
+    createDocumentDraftKey("assignment-feedback", "student-conflict", "task-submission:conflict-b"),
+    serializeFormDraft({ mediaUrl: "", text: "폰에서 쓰던 글 B" }),
+  );
+  await act(async () => root.render(<AssignmentView actorId="student-conflict" initialAssignments={[]} initialTasks={[task("conflict-b")]} />));
+  await settle();
+  await press("제출하기");
+  await settle();
+  assert.ok(conflictRow());
+  await press("이 기기 내용 유지");
+  await settle();
+  assert.equal(textOf("conflict-b"), "폰에서 쓰던 글 B");
+  assert.deepEqual(saves, [{ payload: JSON.stringify({ mediaUrl: "", text: "폰에서 쓰던 글 B" }), base: 2 }]);
+  assert.match(browser.document.body.textContent ?? "", /고르지 않은 다른 기기에서 쓴 내용/u);
+  await press("되살리기");
+  assert.equal(textOf("conflict-b"), JSON.parse(remote.payloadJson).text);
 });
 
 test("failed login keeps the email and return target and moves focus to the password", async (context) => {

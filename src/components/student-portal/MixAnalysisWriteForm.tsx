@@ -25,6 +25,8 @@ import { normalizeAssignmentMediaUrl } from "@/lib/assignment-media-url";
 import { createDocumentDraftKey } from "@/lib/form-draft";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
 import { useFormDraft } from "@/lib/hooks/useFormDraft";
+import { useAccountDraftSync } from "@/lib/hooks/useAccountDraftSync";
+import { AccountDraftNotice, draftPreviewText } from "@/components/student-portal/AccountDraftNotice";
 import { useStaleDraftDrop } from "@/lib/hooks/useStaleDraftDrop";
 import {
   MIX_ANALYSIS_MEMO_MAX_LENGTH,
@@ -119,28 +121,27 @@ export function MixAnalysisWriteForm({
     setForm(toForm(value));
     setShowResult(false);
   };
+  const restoreDraft = (saved: WriteDraft) => {
+    const analysis = saved.analysis && typeof saved.analysis === "object" ? saved.analysis : initial.analysis;
+    applyDraft({
+      mediaUrl: typeof saved.mediaUrl === "string" ? saved.mediaUrl : initial.mediaUrl,
+      analysis: {
+        rating: typeof analysis.rating === "number" && analysis.rating >= 1 && analysis.rating <= 5 ? analysis.rating : null,
+        recommended: analysis.recommended === true,
+        oneLiner: typeof analysis.oneLiner === "string" ? analysis.oneLiner : "",
+        entries: readDraftEntries(analysis.entries),
+      },
+    });
+  };
+  const draftKey = `analysis:${task.id}`;
+  const savedAt = submission ? submission.updatedAt ?? submission.submittedAt : null;
   const draft = useFormDraft<WriteDraft>(
-    createDocumentDraftKey("assignment-feedback", actorId, `analysis:${task.id}`),
-    (saved) => {
-      const analysis = saved.analysis && typeof saved.analysis === "object" ? saved.analysis : initial.analysis;
-      applyDraft({
-        mediaUrl: typeof saved.mediaUrl === "string" ? saved.mediaUrl : initial.mediaUrl,
-        analysis: {
-          rating: typeof analysis.rating === "number" && analysis.rating >= 1 && analysis.rating <= 5 ? analysis.rating : null,
-          recommended: analysis.recommended === true,
-          oneLiner: typeof analysis.oneLiner === "string" ? analysis.oneLiner : "",
-          entries: readDraftEntries(analysis.entries),
-        },
-      });
-    },
+    createDocumentDraftKey("assignment-feedback", actorId, draftKey),
+    restoreDraft,
     { onReset: () => applyDraft(initial) },
   );
   // 다른 기기에서 제출·수정한 뒤에 남은 이 기기의 이전 초안은 열 때 지우고 저장된 분석을 보인다.
-  const { staleDropped, dismissStaleNotice } = useStaleDraftDrop(
-    draft,
-    submission ? submission.updatedAt ?? submission.submittedAt : null,
-    () => applyDraft(initial),
-  );
+  const { staleDropped, dismissStaleNotice } = useStaleDraftDrop(draft, savedAt, () => applyDraft(initial));
 
   const update = (patch: Partial<FormState> | ((previous: FormState) => Partial<FormState>)) => {
     const previous = formRef.current;
@@ -156,6 +157,22 @@ export function MixAnalysisWriteForm({
     entries: previous.entries.map((item) => (item.key === key ? { ...item, ...patch } : item)),
   }));
 
+  // 쓰는 분석을 계정에도 임시 저장해 다른 기기에서 이어 쓴다(이 기기 초안은 그대로 둔다).
+  const currentDraft = toDraft(form);
+  const account = useAccountDraftSync<WriteDraft>({
+    ownerId: actorId,
+    draftKey,
+    draft,
+    value: JSON.stringify(currentDraft) === JSON.stringify(initial) ? null : currentDraft,
+    apply: restoreDraft,
+    reset: () => applyDraft(initial),
+    savedAt,
+    preview: (data) => draftPreviewText(
+      data.analysis?.oneLiner,
+      ...(Array.isArray(data.analysis?.entries) ? data.analysis.entries.map((entry) => entry?.memo) : []),
+      data.mediaUrl,
+    ),
+  });
   const [state, action, isPending] = useActionState<AssignmentTaskActionState, FormData>(async (previous, data) => {
     let result: AssignmentTaskActionState;
     try {
@@ -163,14 +180,18 @@ export function MixAnalysisWriteForm({
         ? await updateMyTaskSubmission(submission.id, previous, data)
         : await submitAssignmentTask(task.id, previous, data);
     } catch {
+      account.pause(false);
       return { error: "제출 결과를 확인하지 못했습니다. 과제 목록을 새로고침해 확인한 뒤 다시 시도해 주세요." };
     }
     if (result.success && result.id) {
       const submitted = toDraft(formRef.current);
+      account.markSubmitted();
       draft.clear({ reason: "submitted", submittedData: submitted, submittedAliases: [submitted] });
       router.replace(`/dashboard/student/assignments/${encodeURIComponent(result.id)}?returnTo=${encodeURIComponent(backHref)}`);
       router.refresh();
     }
+    // 제출이 안 됐으면 다시 계정에 맞춘다.
+    if (!result.success) account.pause(false);
     return result;
   }, {});
   useBusyNavigationGuard(isPending);
@@ -251,7 +272,10 @@ export function MixAnalysisWriteForm({
       action={action}
       aria-label={`${task.title} ${editing ? "분석 수정" : "분석 쓰기"}`}
       className="flex flex-col md:flex-row md:flex-wrap md:items-start md:gap-10"
-      onBlur={draft.flush}
+      onBlur={() => {
+        draft.flush();
+        account.flush();
+      }}
       // 한 줄 칸(링크·시점·한줄평)의 Enter로 쓰던 분석이 제출되지 않게 한다. 시점 칸은 그 줄 메모로 넘어간다.
       onKeyDown={keepEnterFromSubmitting}
       onSubmit={(event) => {
@@ -260,6 +284,7 @@ export function MixAnalysisWriteForm({
           return;
         }
         draft.flush();
+        account.pause(true);
         setShowResult(true);
       }}
     >
@@ -316,6 +341,7 @@ export function MixAnalysisWriteForm({
       {/* 오른쪽(좁은 화면은 아래): 머리(좁은 화면)·평가·시점 메모·제출 */}
       <div className="flex min-w-0 flex-col gap-[18px] px-5 pt-4 md:flex-[2_1_340px] md:gap-6 md:px-0 md:pt-0">
         <div className="flex flex-col gap-[18px] md:gap-6">
+          <AccountDraftNotice sync={account} disabled={isPending} />
           <div className="flex items-center justify-between gap-3 md:flex-col md:items-stretch md:gap-6">
             <fieldset className="flex flex-col gap-2" disabled={disabled}>
               <legend className="sr-only mb-2 text-ui font-semibold text-secondary-foreground md:not-sr-only">종합 평점</legend>
@@ -428,11 +454,18 @@ export function MixAnalysisWriteForm({
           </section>
 
           {showResult && state.error ? <p role="alert" className="text-ui text-destructive">{state.error}</p> : null}
-          <DraftStatus {...draft} staleDropped={staleDropped} onRestoreRecovery={draft.restoreRecovery} onDiscardRecovery={draft.discardRecovery} disabled={isPending} />
+          <DraftStatus
+            {...draft}
+            staleDropped={staleDropped || account.remoteCleared}
+            account={{ state: account.state, at: account.stateAt }}
+            onRestoreRecovery={draft.restoreRecovery}
+            onDiscardRecovery={draft.discardRecovery}
+            disabled={isPending}
+          />
 
           {/* 넓은 화면 제출 줄 */}
           <div className="hidden items-center justify-between gap-3 border-t border-border pt-4 md:flex">
-            <span className="text-xs text-muted-foreground">작성 중인 내용은 이 기기에 임시 저장됩니다.</span>
+            <span className="text-xs text-muted-foreground">작성 중인 내용은 임시 저장되어 다른 기기에서도 이어 쓸 수 있습니다.</span>
             <div className="flex gap-2">
               <Button type="button" variant="outline" size="lg" onClick={() => router.push(backHref)} disabled={isPending}>
                 닫기

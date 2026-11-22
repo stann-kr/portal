@@ -727,6 +727,8 @@ function accountDeletionStatements(input: {
     },
     // 이 학생이 남의 게시물을 처음 연 기록. 자기 게시물의 기록은 아래 게시물 삭제가 함께 지운다.
     { query: "DELETE FROM post_reads WHERE student_id = ?", params: [actorId] },
+    // 제출 전 과제 글의 계정 임시 저장(0035). 본인만 쓰는 사본이라 남길 이유가 없다.
+    { query: "DELETE FROM assignment_drafts WHERE owner_id = ?", params: [actorId] },
     { query: "DELETE FROM posts WHERE author_id = ?", params: [actorId] },
     { query: "DELETE FROM qna_threads WHERE student_id = ?", params: [actorId] },
     {
