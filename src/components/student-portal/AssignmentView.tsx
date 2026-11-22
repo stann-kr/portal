@@ -50,6 +50,7 @@ import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
 import { useHasPassed } from "@/lib/hooks/useHasPassed";
 import { mediaSourceLabel } from "@/components/player/media-source";
 import { cn } from "@/lib/utils";
+import { keepEnterFromSubmitting } from "@/components/community/empty-title-enter";
 
 // ── 타입 ──────────────────────────────────────────
 
@@ -186,6 +187,8 @@ function TaskSubmitForm({
       className="flex flex-col gap-3 rounded-lg border border-border p-4"
       aria-label={editing ? `${task.title} 제출 수정` : `${task.title} 제출`}
       onBlur={draft.flush}
+      // 링크 칸의 Enter는 제출하지 않고 글 칸(있으면)으로 넘어간다.
+      onKeyDown={keepEnterFromSubmitting}
       onSubmit={(event) => {
         if (!draft.loaded || !draft.canSubmit || isPending) {
           event.preventDefault();
@@ -202,6 +205,8 @@ function TaskSubmitForm({
             id={`${formId}-media`}
             name="mediaUrl"
             type="url"
+            enterKeyHint={needsText ? "next" : undefined}
+            data-enter-focus={needsText ? `${formId}-text` : undefined}
             placeholder="YouTube 또는 SoundCloud 링크"
             value={mediaUrl}
             onChange={(event) => {

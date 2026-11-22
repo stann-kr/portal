@@ -37,6 +37,7 @@ import {
 } from "@/lib/mix-analysis";
 import { cn } from "@/lib/utils";
 import { AssignmentBrief } from "@/components/student-portal/AssignmentBrief";
+import { keepEnterFromSubmitting } from "@/components/community/empty-title-enter";
 
 type Entry = { key: string; at: string; memo: string };
 type WriteDraft = { mediaUrl: string; analysis: MixAnalysisDraft };
@@ -251,6 +252,8 @@ export function MixAnalysisWriteForm({
       aria-label={`${task.title} ${editing ? "분석 수정" : "분석 쓰기"}`}
       className="flex flex-col md:flex-row md:flex-wrap md:items-start md:gap-10"
       onBlur={draft.flush}
+      // 한 줄 칸(링크·시점·한줄평)의 Enter로 쓰던 분석이 제출되지 않게 한다. 시점 칸은 그 줄 메모로 넘어간다.
+      onKeyDown={keepEnterFromSubmitting}
       onSubmit={(event) => {
         if (!draft.loaded || !draft.canSubmit || isPending) {
           event.preventDefault();
@@ -383,6 +386,8 @@ export function MixAnalysisWriteForm({
                       type="text"
                       inputMode="numeric"
                       placeholder="MM:SS"
+                      enterKeyHint="next"
+                      data-enter-focus={`analysis-memo-${entry.key}`}
                       value={entry.at}
                       onChange={(event) => updateEntry(entry.key, { at: event.target.value })}
                       disabled={disabled}

@@ -5739,6 +5739,29 @@ test("제출 수정은 저장된 제출보다 오래된 이 기기 초안을 지
   assert.notEqual(browser.localStorage.getItem(freshKey), null);
 });
 
+test("제출 폼 링크 칸의 Enter는 제출하지 않고 글 칸으로 넘어간다", async (context) => {
+  browser.localStorage.clear();
+  editFreeSubmission = async () => ({ error: "테스트 미설정" });
+  const listHref = "/dashboard/student?section=workspace&view=assignments";
+  await render(context, (
+    <AssignmentDetailClient
+      assignmentId="free-enter" actorId="student-enter" mediaUrl="https://youtu.be/dQw4w9WgXcQ" textHtml={null} savedAt={new Date("2026-11-14T03:00:00.000Z")}
+      analysis={null} task={null} feedbackList={[]} isAdmin={false} deleteReturnTo={listHref} title="링크 제출"
+      submittedLabel="2026년 11월 14일 12:00 제출" submittedLabelShort="11월 14일 12:00 제출" breadcrumb={{ href: listHref, label: "과제" }} returnTo={listHref}
+    />
+  ));
+  await press("제출 수정");
+  await settle();
+  const link = browser.document.getElementById("free-submission-free-enter-media-url") as unknown as HTMLInputElement;
+  assert.ok(link, "링크 칸");
+  link.focus();
+  const enter = new browser.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+  await act(async () => { link.dispatchEvent(enter as unknown as Event); });
+  assert.equal(enter.defaultPrevented, true, "Enter로 암묵 제출하지 않는다");
+  assert.equal(browser.document.activeElement?.id, "free-submission-free-enter-text", "글 칸으로 넘어간다");
+  assert.equal(link.getAttribute("enterkeyhint"), "next");
+});
+
 test("받은 과제 제출 수정도 다른 기기에서 제출한 뒤 남은 이 기기 초안을 지우고 알린다", async (context) => {
   browser.localStorage.clear();
   const submittedAt = new Date("2026-11-14T03:00:00.000Z");
