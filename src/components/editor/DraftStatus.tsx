@@ -4,7 +4,8 @@ import { useEffect, useId, useRef, useState } from "react";
 import { AlertTriangle, Check, Info, Loader2, RotateCcw, Trash2 } from "lucide-react";
 import { buttonClassName } from "@/components/ui/button";
 import type { FormDraftRecoverySummary, FormDraftStatus } from "@/lib/form-draft";
-import { formatKst } from "@/lib/kst-format";
+import type { AccountDraftState } from "@/lib/hooks/useAccountDraftSync";
+import { formatKst, formatKstClock } from "@/lib/kst-format";
 
 function formatSavedTime(value: Date | null): string | null {
   return formatKst(value, { hour: "2-digit", minute: "2-digit" }) || null;
@@ -20,6 +21,41 @@ function formatRecoveryDateTime(value: Date): string | null {
   }) || null;
 }
 
+/** 계정 임시 저장을 쓰는 form의 상태(캔버스 CowriteDrafts ③). idle이면 이 기기 문구를 그대로 쓴다. */
+export type AccountDraftStatusProp = { state: AccountDraftState; at: Date | null };
+
+function AccountDraftStateLine({ state, at }: AccountDraftStatusProp) {
+  const time = formatKstClock(at) || null;
+  if (state === "saving") {
+    return (
+      <p role="status" aria-live="polite" className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+        <Loader2 className="size-3.5 shrink-0 animate-spin motion-reduce:animate-none" strokeWidth={1.8} aria-hidden="true" />
+        임시 저장 중…
+      </p>
+    );
+  }
+  if (state === "offline") {
+    return (
+      <p role="status" aria-live="polite" className="inline-flex items-start gap-1.5 text-xs text-muted-foreground">
+        <Info className="mt-px size-3.5 shrink-0" strokeWidth={1.8} aria-hidden="true" />
+        이 기기에만 저장됨 · 연결되면 계정에 올립니다
+      </p>
+    );
+  }
+  const loaded = state === "loaded";
+  return (
+    <p role="status" aria-live="polite" className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+      {loaded ? (
+        <RotateCcw className="size-3.5 shrink-0" strokeWidth={1.8} aria-hidden="true" />
+      ) : (
+        <Check className="size-3.5 shrink-0" strokeWidth={1.8} aria-hidden="true" />
+      )}
+      {loaded ? "다른 기기에서 쓴 내용을 불러왔습니다" : "임시 저장됨 · 다른 기기에서도 이어 쓸 수 있어요"}
+      {time ? <span className="font-mono">· {time}</span> : null}
+    </p>
+  );
+}
+
 const QUIET_VISIBLE_LOCAL_STATUSES: ReadonlySet<FormDraftStatus> = new Set(["error", "incompatible", "conflict"]);
 
 /** 다른 기기에서 고친 글을 열며 이 기기의 이전 초안을 지웠을 때의 안내(캔버스 "코드 리뷰 2차 후속" ⑤). */
@@ -32,12 +68,14 @@ function DraftStateLine({
   savedAt,
   restored,
   staleDropped,
+  account,
 }: {
   status: FormDraftStatus;
   canSubmit: boolean;
   savedAt: Date | null;
   restored: boolean;
   staleDropped: boolean;
+  account?: AccountDraftStatusProp;
 }) {
   const time = formatSavedTime(savedAt);
 
@@ -78,6 +116,12 @@ function DraftStateLine({
         다른 작성 흐름을 감지했습니다. 현재 입력은 별도 안전본으로 보관했습니다.
       </p>
     );
+  }
+
+  // 이 기기 저장 오류·충돌과 복원·이전 초안 정리 안내가 먼저이고, 그 밖에는 계정 저장 상태가 이 기기 문구를 대신한다.
+  const localNotice = (status === "saved" && restored) || staleDropped;
+  if (account && account.state !== "idle" && (account.state === "loaded" || !localNotice)) {
+    return <AccountDraftStateLine {...account} />;
   }
 
   if (status === "saving") {
@@ -287,6 +331,7 @@ export function DraftStatus({
   disabled = false,
   quiet = false,
   staleDropped = false,
+  account,
 }: {
   status: FormDraftStatus;
   /** 미래 버전 canonical 보호를 포함해 현재 서버 제출이 허용되는지 여부 */
@@ -307,6 +352,8 @@ export function DraftStatus({
    * 저장 중·저장됨·오류·충돌 문구가 있으면 그쪽이 먼저다.
    */
   staleDropped?: boolean;
+  /** 계정 임시 저장(과제 글). 주면 저장 중·저장됨 문구가 계정 기준으로 바뀐다. */
+  account?: AccountDraftStatusProp;
 }) {
   const [showAllRecoveries, setShowAllRecoveries] = useState(false);
   const recoveryListId = useId();
@@ -331,6 +378,7 @@ export function DraftStatus({
           savedAt={savedAt}
           restored={restored}
           staleDropped={staleDropped}
+          account={account}
         />
       ) : null}
       {recoveries.length > 0 ? (

@@ -1350,6 +1350,52 @@ export const comments = sqliteTable(
 );
 
 /**
+ * 학생이 커뮤니티 게시물을 처음 연 기록(0034). 학생마다 게시물당 한 줄이고 처음 연 시각만 남긴다.
+ * 관리자만 읽는다(2026-11-23 사용자 결정 "학생들은 보여주지 않고 나한테만"). 글쓴이·관리자가 연 것은 남기지 않는다.
+ * 게시물 영구 삭제와 계정 삭제 때 함께 지워진다.
+ */
+export const postReads = sqliteTable(
+  "post_reads",
+  {
+    postId: text("post_id")
+      .references(() => posts.id, { onDelete: "cascade" })
+      .notNull(),
+    studentId: text("student_id")
+      .references(() => profiles.id, { onDelete: "cascade" })
+      .notNull(),
+    firstReadAt: integer("first_read_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.postId, table.studentId] }),
+    index("post_reads_student_idx").on(table.studentId),
+  ],
+);
+
+/**
+ * 학생이 제출 전에 쓰던 과제 글의 계정 사본(0035). 다른 기기에서도 이어 쓰도록 계정에 한 벌만 둔다(2026-11-23 사용자 결정).
+ * draft_key는 `task-submission:<과제>`·`analysis:<과제>`·`free-submission:<제출|new>` 세 모양이고, 과제 글이면 task_id도 둔다
+ * (과제를 지우면 함께 지워진다). version은 기기 사이 덮어쓰기를 막는 compare-and-set 값이다.
+ * 본인만 읽고 쓰며 관리자에게는 보이지 않는다. 제출하면 서버가 지운다.
+ */
+export const assignmentDrafts = sqliteTable(
+  "assignment_drafts",
+  {
+    ownerId: text("owner_id")
+      .references(() => profiles.id, { onDelete: "cascade" })
+      .notNull(),
+    draftKey: text("draft_key").notNull(),
+    taskId: text("task_id").references(() => assignmentTasks.id, { onDelete: "cascade" }),
+    payloadJson: text("payload_json").notNull(),
+    version: integer("version").notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.ownerId, table.draftKey] }),
+    index("assignment_drafts_owner_task_idx").on(table.ownerId, table.taskId),
+  ],
+);
+
+/**
  * Phase 5: 디깅 게시판 — 컬럼 정의 (유저별 커스텀).
  * columnType: text / textarea / number / select / rating / link / camelot_key
  * isDefault=true → 삭제 불가 (기본 제공 컬럼).

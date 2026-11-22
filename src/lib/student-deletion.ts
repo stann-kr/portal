@@ -58,6 +58,10 @@ export const STUDENT_DELETION_RECORD_COLUMNS: readonly ProfileReference[] = [
   ["posts", "deleted_by_id"],
   ["post_revisions", "actor_id"],
   ["comments", "author_id"],
+  // 게시물 읽음(0034). 로그인한 학생만 남기므로 가입 전 학생에게는 생기지 않는다.
+  ["post_reads", "student_id"],
+  // 과제 글 계정 임시 저장(0035). 로그인한 학생만 쓰므로 가입 전 학생에게는 생기지 않는다.
+  ["assignment_drafts", "owner_id"],
   ["document_server_drafts", "owner_id"],
   ["document_server_draft_operations", "owner_id"],
   ["document_operation_ledger", "actor_id"],

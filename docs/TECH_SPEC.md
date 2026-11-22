@@ -345,7 +345,7 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 
 - runtime dependency audit은 현재 0건이다. 상위 의존성이 보안 패치 전 하위 의존성을 고정하는 구간은 `package.json` override로 제한하며, upstream stable이 해당 버전을 채택하면 override를 제거해야 한다.
 - 개발 도구 전체 audit에는 Drizzle Kit의 구형 esbuild loader 체인에서 발생하는 moderate 권고가 남아 있다. 현재 npm 제안은 호환되지 않는 구버전 downgrade이므로 upstream 패치를 추적한다.
-- migration SQL과 `drizzle/meta` 생성 이력은 `0033`까지 대응하고 `db:check`가 전체 replay와 단계별 upgrade를 검사한다. persistent local D1과 remote의 실제 적용 이력은 승인된 운영 점검 전 추정하지 않는다(마지막 기록: persistent local D1 `0009`까지).
+- migration SQL과 `drizzle/meta` 생성 이력은 `0035`까지 대응하고 `db:check`가 전체 replay와 단계별 upgrade를 검사한다. persistent local D1과 remote의 실제 적용 이력은 승인된 운영 점검 전 추정하지 않는다(마지막 기록: persistent local D1 `0009`까지).
 - 대표 문서 server action과 draft 생명주기의 격리 integration test는 있으나 실제 브라우저 reload·offline·navigation·delete/restore E2E는 없다. 노트 편집기 안정화(자동 저장 revalidate 미호출·제자리 생성·서버본 조용한 폐기)와 학생 실시간 보기도 DOM 통합 테스트까지만 있고 실제 브라우저 두 창 동작은 확인되지 않았다.
 - 운영 배포 직후 이미 열려 있던 탭은 build ID 불일치로 다음 Server Action에서 한 번 hard reload된다(일회성, 코드로 막지 않는다). 서버 초안 fence(b)는 같은 초·같은 version·같은 본문으로 다시 쓴 다른 기기의 행을 폐기 의도에 포함해 지운다(본문이 같아 내용 손실 없음). live view 폴링은 head 조회 1회가 D1 읽기 약 3회라 열린 읽기 탭 수에 비례해 읽기 요청이 늘며, backoff 상한 20초가 그 비용 경계다.
 - 신규 managed media의 registry·문서 claim·purge 삭제 outbox와 인증 delivery, bounded 예약 정리·final prefix cursor reconciliation source를 구현했다. Copy timeout·lease·recovery grace 뒤 발견된 registry 없는 final object와 삭제 상태 object는 다음 inventory page에서 재삭제한다. production에서는 private R2 CORS·staging lifecycle·Cron과 알림을 검증해야 하며, 기존 외부 URL과 managed 형식이 아닌 legacy R2 object는 자동 삭제 대상으로 추정하지 않는다.
@@ -569,3 +569,24 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 - 알림 전달은 best-effort다(30초 fallback).
 - 권한 회수는 lease(150초)만큼 늦을 수 있다. 휴지통 이동과 영구 삭제는 즉시 닫는다.
 - 운영 DO, 실제 hibernation 깨움(로컬에서 관찰할 수 없음), 실제 네트워크 단절·online 복귀, 모바일·Safari 실기기, 며칠 이어진 room은 미검증이다. 운영 배포는 [배포 가이드](./DEPLOYMENT.md)의 DO migration 승인 항목을 따른다.
+
+## 게시물 읽음(2026-11-23)
+
+- 데이터(`0034_post_reads`): `post_reads`(`post_id`·`student_id` 복합 기본키, `first_read_at`), 두 FK 모두 `ON DELETE CASCADE`, index `post_reads_student_idx`. 게시물 영구 삭제는 cascade로, 계정 삭제(`account-privacy-atomic.ts`)는 명시적 `DELETE FROM post_reads WHERE student_id = ?`로 지운다. `db:check`(`scripts/migration-check/post-reads.mjs`)가 채워진 0033 DB에서 upgrade·기존 행 보존·FK·index 사용·처음 시각 유지·게시물 삭제 cascade를 검사한다.
+- 기록(`recordPostRead`, `src/lib/actions/postReads.ts`): 학생 세션만, `INSERT OR IGNORE … SELECT FROM posts WHERE id = ? AND deleted_at IS NULL AND author_id <> 학생` 한 문장이라 글쓴이·휴지통·없는 글은 남지 않고 처음 시각이 유지된다. `PostDetailClient`가 학생이 남의 글을 열 때 effect로 한 번 부르고 실패는 무시한다.
+- 조회: `getPostReadSummary`(관리자 전용)는 수강 중인 학생(`role = student`, `account_status = ACTIVE`, 글쓴이 제외)을 읽은 학생(처음 읽은 순)과 안 읽은 학생(이름순)으로 나눈다. 안 읽은 학생에서는 가입 전(`password_hash`가 가입 링크 hash) 학생을 뺀다(`storedCredentialState`·학생 삭제 조건과 같은 기준). 학생 삭제 조건(`STUDENT_DELETION_RECORD_COLUMNS`)에는 `post_reads.student_id`를 기록 칸으로 넣었다(로그인한 학생만 남기므로 가입 전 학생에게는 생기지 않는다). 목록·검색의 `readCount`는 관리자 세션에서만 `postReadCountSql()`(바깥 `"posts"."id"`를 문자 그대로 쓴 상관 subquery)이고 학생 세션은 `NULL`이다. `communityRowMeta`가 숫자일 때만 "읽음 N"을 붙인다.
+- 화면: `src/components/community/PostReaders.tsx`의 `PostReadersToggle`(머리 줄 "읽음 N/M", `aria-expanded`·`aria-controls`)과 `PostReadersPanel`(기본 접힘). 캔버스 `PostReaders`.
+- 검증: `src/test/student-action-boundary.integration.ts`(기록 조건·관리자 전용·목록/검색 수·수강 종료 제외, 실제 D1), `src/test/portal-interactions.integration.tsx`(학생 기록 호출·글쓴이/관리자 미기록·토글), `src/lib/account-privacy-atomic.test.ts`(계정 삭제).
+
+## 과제 글 계정 임시 저장(2026-11-23)
+
+- 범위: 과제 글·링크 제출(`TaskSubmitForm`, key `task-submission:<과제>`), 믹스셋 분석(`MixAnalysisWriteForm`, `analysis:<과제>`), 자유 제출(`FreeSubmissionForm`, `free-submission:<제출|new>`). 이 기기 초안(`useFormDraft`)·`useStaleDraftDrop`·이탈 보호는 그대로 두고 계정 사본을 그 위에 얹는다. 캔버스 `CowriteDrafts`.
+- 데이터(`0035_assignment_drafts`): `assignment_drafts`(`owner_id`·`draft_key` 복합 기본키, `task_id` nullable, `payload_json`, `version`, `updated_at`), `owner_id`→profiles·`task_id`→assignment_tasks 모두 `ON DELETE CASCADE`, index `assignment_drafts_owner_task_idx(owner_id, task_id)`. 계정 삭제(`account-privacy-atomic.ts`)는 명시적 `DELETE FROM assignment_drafts WHERE owner_id = ?`, 학생 삭제 조건(`STUDENT_DELETION_RECORD_COLUMNS`)에 `assignment_drafts.owner_id`를 기록 칸으로 넣었다(로그인한 학생만 쓰므로 가입 전 학생에게는 없다). `db:check`(`scripts/migration-check/assignment-drafts.mjs`)가 채워진 0034 DB upgrade·기존 행 보존·FK·index 사용·INSERT 충돌 무시·version compare-and-set·과제 삭제 cascade를 검사한다.
+- server action(`src/lib/actions/assignmentDrafts.ts`): `getMyAssignmentDraft`·`saveMyAssignmentDraft(key, payloadJson, baseVersion|null)`·`discardMyAssignmentDraft(key, baseVersion)`. owner는 언제나 세션 학생(`requireAuth`가 수강 종료 계정을 막는다)이고 관리자는 `{ok:false}`·`denied`다. key는 세 모양만(`src/lib/assignment-drafts.ts`), 내용은 JSON object·200KB까지. 처음 저장은 `INSERT … SELECT … WHERE EXISTS(본인 과제 | 본인 자유 제출) ON CONFLICT DO NOTHING RETURNING`이라 소유 확인과 쓰기가 한 문장이다. 이후 저장·삭제는 `version` 조건이며 맞지 않으면 지금 사본(없으면 null)을 돌려준다.
+- 제출 정리(`src/lib/assignment-draft-store.ts`): 과제 제출(같은 내용 재전송 포함)·제출 수정·자유 제출·자유 제출 수정·삭제가 성공한 뒤 해당 key를 지운다(같은 batch가 아니라 바로 뒤, 실패는 무시). 학생 과제 목록은 `GROUP BY task_id`의 `max(updated_at)`을 한 번 읽어 제출 시각(`updated_at ?? submitted_at`)보다 새 사본만 `draftSavedAt`으로 붙인다. 관리자 목록에는 없다.
+- 클라이언트(`src/lib/hooks/useAccountDraftSync.ts`): 이 기기 초안이 읽힌 뒤 계정 사본을 한 번 읽고, 그 뒤 입력이 1.5초 쉬면(blur·pagehide·숨김은 바로) version 기준으로 올린다. localStorage marker `portal:assignmentDraftSync:<owner>:<key>`(마지막으로 계정과 맞춘 내용 서명·version·고르지 않은 쪽 보관본)로 "이 기기에 올리지 않은 입력"을 판단한다. 로그아웃·계정 삭제 정리(`local-owner-keys.ts`·`local-document-drafts.ts`)가 이 key도 지운다.
+  - 제출 시각보다 오래된 사본은 무시한다. 이 기기 값이 없거나 marker와 같으면(올리지 않은 입력 없음) 계정 사본을 조용히 적용하고 "다른 기기에서 쓴 내용을 불러왔습니다 · HH:mm"를 보인다. marker version이 계정 version과 같으면 이 기기 입력을 그대로 올린다. 그 밖에 내용이 다르면 고르기 전까지 올리지 않고 `AccountDraftNotice`의 고르는 줄(`role="status"`, 약 40자 미리보기)을 보인다.
+  - 고르지 않은 쪽은 `useFormDraft` 복구본 목록에 남기지 않는다(복원한 초안은 이전 shadow 복구 key를 물려받아 다음 저장 때 지우므로 보존이 보장되지 않는다). 대신 marker의 보관본에 남겨 "고르지 않은 … 내용을 이 기기에 보관했습니다" 줄에서 [되살리기](두 쪽을 바꾼다)·[버리기]를 준다. 이 기기·이 계정에만 있고 로그아웃하면 지워진다.
+  - 동기화된 사본이 계정에서 사라졌으면(다른 기기에서 제출) 이 기기 초안도 지우고 기존 "다른 곳에서 제출" 안내를 보인다. 제출 중에는 올리기를 멈추고, 성공하면 동기화를 끝낸다(새 자유 제출은 다음 글을 위해 이어 간다). 상태 줄은 `DraftStatus`의 `account` prop이다.
+- 검증: `src/test/student-action-boundary.integration.ts`(본인만·다른 학생/관리자 거부·남의 과제 거부·수강 종료 거부·잘못된 key/내용·CAS 충돌·제출/수정/자유 제출 삭제·목록 시각 본인만, 실제 D1), `src/test/portal-interactions.integration.tsx`(목록 줄·조용한 불러오기와 올리기·고르는 줄 두 경로와 보관본 되살리기), `src/lib/account-privacy-atomic.test.ts`(계정 삭제).
+- 남은 한계: 다른 기기에서 제출해 사본이 지워진 사이 이 기기에서 계속 쓰면 새 사본이 다시 생긴다(제출보다 새것이라 "고치는 중"으로 보인다). 실제 브라우저·여러 기기 동시 입력은 자동 테스트 밖이다.

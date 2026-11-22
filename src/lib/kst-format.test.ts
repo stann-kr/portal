@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { formatKst, formatKstDot, formatKstMonthDay, formatKstMonthDayTime, formatKstShortDate, formatRecordTime } from "./kst-format";
+import { formatKst, formatKstClock, formatKstDot, formatKstMonthDay, formatKstMonthDayTime, formatKstShortDate, formatRecordTime } from "./kst-format";
 
 test("UTC로 실행되는 서버에서도 KST 날짜와 시각으로 표시한다", () => {
   const previousTimeZone = process.env.TZ;
@@ -40,4 +40,10 @@ test("목록 점 날짜·이력 시각은 KST로 표시하고 다른 해에는 �
   assert.equal(formatRecordTime(new Date(now), now), "10.26 18:40");
   assert.equal(formatRecordTime(Date.UTC(2025, 0, 2, 0, 5), now), "2025.01.02 09:05");
   assert.equal(formatRecordTime(null, now), "시각 없음");
+});
+
+test("시각만 쓰는 곳은 KST 24시간 HH:mm이다", () => {
+  assert.equal(formatKstClock(new Date("2026-11-23T12:40:00.000Z")), "21:40");
+  assert.equal(formatKstClock(new Date("2026-11-23T15:05:00.000Z")), "00:05");
+  assert.equal(formatKstClock(null, "-"), "-");
 });

@@ -46,6 +46,7 @@ import { assignmentAwaitingReview } from "@/lib/assignment-review-query";
 import { ensureRecurringAssignmentTasks } from "@/lib/assignment-task-generation";
 import { pushMessages } from "@/lib/push/messages";
 import { notifyPush } from "@/lib/push/notify";
+import { deleteTaskAssignmentDrafts, loadTaskDraftTimes } from "@/lib/assignment-draft-store";
 import {
   DOCUMENT_CONDITIONAL_WRITE_SENTINEL,
   executeDocumentStatementsAtomically,
@@ -79,6 +80,11 @@ export type AssignmentTaskItem = {
   version: number;
   createdAt: Date;
   submission: AssignmentTaskSubmission | null;
+  /**
+   * 학생 본인 목록에서만: 제출 전(또는 제출 뒤 고치는 중) 계정에 임시 저장한 글의 마지막 시각.
+   * 제출보다 오래된 사본과 관리자 조회에는 없다(관리자는 제출한 글만 본다).
+   */
+  draftSavedAt?: Date | null;
 };
 
 export type AssignmentRecurrenceItem = {
@@ -370,7 +376,18 @@ export async function getMyAssignmentTasks(): Promise<AssignmentTaskItem[]> {
   const context = createDbContext();
   const now = new Date();
   await ensureRecurringAssignmentTasks(context, session.user.id, now);
-  return sortTasks(await loadTasksWithSubmissions(readDb(context), session.user.id), now);
+  const db = readDb(context);
+  const [tasks, draftTimes] = await Promise.all([
+    loadTasksWithSubmissions(db, session.user.id),
+    loadTaskDraftTimes(db, session.user.id),
+  ]);
+  return sortTasks(tasks.map((task) => {
+    const draftAt = draftTimes.get(task.id) ?? null;
+    const savedAt = task.submission ? task.submission.updatedAt ?? task.submission.submittedAt : null;
+    // 제출(수정)보다 먼저 쓴 사본은 이미 낸 글이라 "작성 중"으로 보이지 않는다.
+    const live = draftAt !== null && (savedAt === null || draftAt.getTime() > savedAt.getTime());
+    return { ...task, draftSavedAt: live ? draftAt : null };
+  }), now);
 }
 
 /** 관리자 학생 상세: 그 학생의 과제와 정기 과제 규칙. */
@@ -797,6 +814,7 @@ export async function submitAssignmentTask(
         && existing.textHtml === payload.textHtml
         && existing.analysisJson === payload.analysisJson
       ) {
+        await deleteTaskAssignmentDrafts(db, studentId, taskId);
         return { success: true, id: existing.id };
       }
       return { error: "이 과제는 이미 제출했습니다. 내용을 바꾸려면 제출 수정을 눌러 주세요." };
@@ -806,6 +824,8 @@ export async function submitAssignmentTask(
       pushMessages.assignmentSubmitted({ assignmentId: inserted[0]!.id, studentName: session.user.name ?? null, title: task.title }),
       { excludeProfileId: studentId },
     );
+    // 낸 글의 계정 임시 저장은 지운다(다른 기기가 제출 전 글을 다시 살리지 않게).
+    await deleteTaskAssignmentDrafts(db, studentId, taskId);
     revalidateAssignmentViews(studentId);
     return { success: true, id: inserted[0]!.id };
   } catch {
@@ -827,6 +847,7 @@ export async function updateMyTaskSubmission(
   const [row] = await db
     .select({
       id: assignments.id,
+      taskId: assignmentTasks.id,
       submissionFormat: assignmentTasks.submissionFormat,
       analysisForm: assignmentTasks.analysisForm,
     })
@@ -873,6 +894,7 @@ export async function updateMyTaskSubmission(
       error: isSubmissionSettled(review) ? settledSubmissionError("고칠", review) : TASK_CHANGED_MESSAGE,
     };
   }
+  await deleteTaskAssignmentDrafts(db, studentId, row.taskId);
   revalidateAssignmentViews(studentId);
   revalidatePath(`/dashboard/student/assignments/${assignmentId}`);
   return { success: true, id: assignmentId };

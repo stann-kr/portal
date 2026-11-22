@@ -37,7 +37,7 @@ import {
   isSubmissionSettled,
   type AssignmentTaskStatus,
 } from "@/lib/assignment-submission";
-import { formatKstDot } from "@/lib/kst-format";
+import { formatKstDot, formatKstMonthDayTime } from "@/lib/kst-format";
 import { getPortalStatus, STATUS_TONE_DOT_CLASS_NAMES, type PortalStatusTone } from "@/lib/portal-status";
 import { STUDENT_LEGACY_REDIRECTS } from "@/lib/legacy-dashboard-routes";
 import { analysisWriteHref, assignmentTaskHref } from "@/lib/student-space-routes";
@@ -45,6 +45,8 @@ import { CopyLinkButton } from "@/components/ui/CopyLinkButton";
 import { AssignmentBrief } from "@/components/student-portal/AssignmentBrief";
 import { createDocumentDraftKey } from "@/lib/form-draft";
 import { useFormDraft } from "@/lib/hooks/useFormDraft";
+import { useAccountDraftSync } from "@/lib/hooks/useAccountDraftSync";
+import { AccountDraftNotice, draftPreviewText } from "@/components/student-portal/AccountDraftNotice";
 import { useStaleDraftDrop } from "@/lib/hooks/useStaleDraftDrop";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
 import { useHasPassed } from "@/lib/hooks/useHasPassed";
@@ -138,22 +140,34 @@ function TaskSubmitForm({
   const [mediaUrl, setMediaUrl] = useState(initial.mediaUrl);
   const [text, setText] = useState(initial.text);
   const [showResult, setShowResult] = useState(false);
+  const applyDraft = (saved: TaskSubmissionDraft) => {
+    setMediaUrl(typeof saved.mediaUrl === "string" ? saved.mediaUrl : initial.mediaUrl);
+    setText(typeof saved.text === "string" ? saved.text : initial.text);
+    setShowResult(false);
+  };
+  const resetForm = () => { setMediaUrl(initial.mediaUrl); setText(initial.text); setShowResult(false); };
+  const draftKey = `task-submission:${task.id}`;
+  const savedAt = submission ? submission.updatedAt ?? submission.submittedAt : null;
   // 글 제출은 쓰는 중 새로고침·이탈에도 남도록 이 기기에 초안을 둔다(링크만 내는 과제도 같은 초안을 쓴다).
   const draft = useFormDraft<TaskSubmissionDraft>(
-    createDocumentDraftKey("assignment-feedback", actorId, `task-submission:${task.id}`),
-    (saved) => {
-      setMediaUrl(typeof saved.mediaUrl === "string" ? saved.mediaUrl : initial.mediaUrl);
-      setText(typeof saved.text === "string" ? saved.text : initial.text);
-      setShowResult(false);
-    },
-    { onReset: () => { setMediaUrl(initial.mediaUrl); setText(initial.text); setShowResult(false); } },
+    createDocumentDraftKey("assignment-feedback", actorId, draftKey),
+    applyDraft,
+    { onReset: resetForm },
   );
   // 다른 기기에서 제출·수정한 뒤에 남은 이 기기의 이전 초안은 열 때 지우고 저장된 제출을 보인다.
-  const { staleDropped, dismissStaleNotice } = useStaleDraftDrop(
+  const { staleDropped, dismissStaleNotice } = useStaleDraftDrop(draft, savedAt, resetForm);
+  // 쓰는 글을 계정에도 임시 저장해 다른 기기에서 이어 쓴다(이 기기 초안은 그대로 둔다).
+  const changed = mediaUrl !== initial.mediaUrl || text !== initial.text;
+  const account = useAccountDraftSync<TaskSubmissionDraft>({
+    ownerId: actorId,
+    draftKey,
     draft,
-    submission ? submission.updatedAt ?? submission.submittedAt : null,
-    () => { setMediaUrl(initial.mediaUrl); setText(initial.text); setShowResult(false); },
-  );
+    value: changed ? { mediaUrl, text } : null,
+    apply: applyDraft,
+    reset: resetForm,
+    savedAt,
+    preview: (data) => draftPreviewText(data.text, data.mediaUrl),
+  });
   const [state, action, isPending] = useActionState<AssignmentTaskActionState, FormData>(async (previous, data) => {
     let result: AssignmentTaskActionState;
     try {
@@ -161,13 +175,17 @@ function TaskSubmitForm({
         ? await updateMyTaskSubmission(submission.id, previous, data)
         : await submitAssignmentTask(task.id, previous, data);
     } catch {
+      account.pause(false);
       return { error: "제출 결과를 확인하지 못했습니다. 목록을 새로고침해 확인한 뒤 다시 시도해 주세요." };
     }
     if (result.success) {
       const submittedData = { mediaUrl: String(data.get("mediaUrl") ?? ""), text: String(data.get("text") ?? "") };
+      account.markSubmitted();
       draft.clear({ reason: "submitted", submittedData, submittedAliases: [submittedData] });
       await onDone();
     }
+    // 제출이 안 됐으면 다시 계정에 맞춘다.
+    if (!result.success) account.pause(false);
     return result;
   }, {});
   useBusyNavigationGuard(isPending);
@@ -186,7 +204,10 @@ function TaskSubmitForm({
       action={action}
       className="flex flex-col gap-3 rounded-lg border border-border p-4"
       aria-label={editing ? `${task.title} 제출 수정` : `${task.title} 제출`}
-      onBlur={draft.flush}
+      onBlur={() => {
+        draft.flush();
+        account.flush();
+      }}
       // 링크 칸의 Enter는 제출하지 않고 글 칸(있으면)으로 넘어간다.
       onKeyDown={keepEnterFromSubmitting}
       onSubmit={(event) => {
@@ -195,9 +216,11 @@ function TaskSubmitForm({
           return;
         }
         draft.flush();
+        account.pause(true);
         setShowResult(true);
       }}
     >
+      <AccountDraftNotice sync={account} disabled={isPending} />
       {needsLink ? (
         <div className="flex flex-col gap-1.5">
           <label htmlFor={`${formId}-media`} className="text-xs text-muted-foreground">믹스셋 링크</label>
@@ -254,7 +277,14 @@ function TaskSubmitForm({
         </Button>
       </div>
       {showResult && state.error ? <p role="alert" className="text-ui text-destructive">{state.error}</p> : null}
-      <DraftStatus {...draft} staleDropped={staleDropped} onRestoreRecovery={draft.restoreRecovery} onDiscardRecovery={draft.discardRecovery} disabled={isPending} />
+      <DraftStatus
+        {...draft}
+        staleDropped={staleDropped || account.remoteCleared}
+        account={{ state: account.state, at: account.stateAt }}
+        onRestoreRecovery={draft.restoreRecovery}
+        onDiscardRecovery={draft.discardRecovery}
+        disabled={isPending}
+      />
     </form>
   );
 }
@@ -285,6 +315,8 @@ function TaskRow({
   const late = submission ? isLateSubmission(task.dueAt, submission.submittedAt) : false;
   const canEdit = submission ? !isSubmissionSettled(submission) : true;
   const panelId = `task-panel-${task.id}`;
+  // 계정에 임시 저장한 글(제출 전 "작성 중", 제출 뒤 "고치는 중"). 고칠 수 없는 제출이면 보이지 않는다.
+  const draftSavedAt = canEdit ? task.draftSavedAt ?? null : null;
   const meta = [
     formatDue(task.dueAt),
     ASSIGNMENT_FORMAT_LABELS[task.submissionFormat],
@@ -305,6 +337,13 @@ function TaskRow({
           <span className="text-xs text-muted-foreground">
             <span className="font-mono">{meta}</span>
             {late ? " · 늦은 제출" : ""}
+            {draftSavedAt ? (
+              <>
+                {" · "}
+                <span className="text-secondary-foreground">{submission ? "고치는 중" : "작성 중"}</span>{" "}
+                <span className="font-mono">{formatKstMonthDayTime(draftSavedAt)}</span>
+              </>
+            ) : null}
           </span>
         </span>
         <StatusDot tone={TASK_STATUS_TONE[status]} label={ASSIGNMENT_TASK_STATUS_LABELS[status]} />
@@ -323,7 +362,7 @@ function TaskRow({
               href={analysisWriteHref(task.id)}
               className={buttonClassName({ variant: submission ? "outline" : "default", className: "max-md:h-11" })}
             >
-              {submission ? "분석 고치기" : "분석 쓰기"}
+              {submission ? "분석 고치기" : draftSavedAt ? "이어 쓰기" : "분석 쓰기"}
             </Link>
           ) : canEdit ? (
             <Button
@@ -334,7 +373,7 @@ function TaskRow({
               aria-controls={open ? panelId : undefined}
               onClick={() => onToggle(open ? null : task.id)}
             >
-              {submission ? "제출 수정" : "제출하기"}
+              {submission ? "제출 수정" : draftSavedAt ? "이어 쓰기" : "제출하기"}
             </Button>
           ) : null}
         </span>

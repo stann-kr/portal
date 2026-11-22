@@ -26,6 +26,7 @@ type Post = {
   createdAt: Date | null;
   version: number;
   commentCount?: number;
+  readCount?: number | null;
 };
 
 interface AnnouncementListProps {

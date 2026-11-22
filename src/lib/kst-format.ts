@@ -84,6 +84,11 @@ export function formatKstMonthDay(value: KstDateInput, fallback = ""): string {
 }
 
 /** "10.24 14:20"처럼 월.일과 24시간 시각. 값이 없으면 fallback. */
+/** 24시간 시각(Mono): "21:40". */
+export function formatKstClock(value: KstDateInput, fallback = ""): string {
+  return formatKst(value, CLOCK_24H, fallback);
+}
+
 export function formatKstMonthDayTime(value: KstDateInput, fallback = ""): string {
   const day = formatKstMonthDay(value);
   if (!day) return fallback;

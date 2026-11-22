@@ -19,12 +19,15 @@ type CommunityPostSummary = {
   createdAt: Date | null;
   /** 목록 응답이 함께 보내는 댓글 수. 상세·다른 목록처럼 값이 없으면 표시하지 않는다. */
   commentCount?: number;
+  /** 관리자 목록에만 오는 읽은 학생 수. 학생 응답은 null이라 표시하지 않는다. */
+  readCount?: number | null;
 };
 
-/** 목록 줄 아래 메타: 작성자 · 날짜 · 댓글 N(캔버스 Community 보드). */
-export function communityRowMeta(post: Pick<CommunityPostSummary, "authorName" | "createdAt" | "commentCount">, authorFallback?: string): string {
+/** 목록 줄 아래 메타: 작성자 · 날짜 · 댓글 N(캔버스 Community 보드) · 관리자에게만 읽음 N(캔버스 PostReaders ②). */
+export function communityRowMeta(post: Pick<CommunityPostSummary, "authorName" | "createdAt" | "commentCount" | "readCount">, authorFallback?: string): string {
   const parts = [communityAuthorName(post, authorFallback), formatKstShortDate(post.createdAt, "날짜 정보 없음")];
   if (typeof post.commentCount === "number") parts.push(`댓글 ${post.commentCount}`);
+  if (typeof post.readCount === "number") parts.push(`읽음 ${post.readCount}`);
   return parts.join(" · ");
 }
 
