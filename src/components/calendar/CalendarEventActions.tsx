@@ -58,6 +58,8 @@ export function CalendarEventActions({
   const [openedFields, setOpenedFields] = useState(() => fieldsFromItem(item));
   const [notice, setNotice] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  // 이번에 연 수정 폼에서 저장을 눌렀는지. 저장 결과(state)는 폼을 닫아도 남으므로, 다시 연 폼에 지난 오류를 보이지 않는다.
+  const [submittedInEdit, setSubmittedInEdit] = useState(false);
   const deleteMessageId = useId();
   const [isDeleting, startDelete] = useTransition();
   const cancelDeleteRef = useRef<HTMLButtonElement>(null);
@@ -85,7 +87,7 @@ export function CalendarEventActions({
     {},
   );
   const busy = isSaving || isDeleting;
-  const formError = mode === "edit" && !isSaving ? state.error : undefined;
+  const formError = mode === "edit" && submittedInEdit && !isSaving ? state.error : undefined;
 
   useEffect(() => {
     onBusyChange?.(busy);
@@ -105,6 +107,7 @@ export function CalendarEventActions({
     setOpenedFields(opened);
     setNotice(null);
     setDeleteError(null);
+    setSubmittedInEdit(false);
     setMode("edit");
   };
 
@@ -127,7 +130,7 @@ export function CalendarEventActions({
 
   if (mode === "edit") {
     return (
-      <form action={saveAction} className="flex flex-col gap-4 rounded-touch border border-border p-3.5" aria-busy={isSaving} aria-label="일정 수정">
+      <form action={saveAction} onSubmit={() => setSubmittedInEdit(true)} className="flex flex-col gap-4 rounded-touch border border-border p-3.5" aria-busy={isSaving} aria-label="일정 수정">
         <input type="hidden" name="eventId" value={item.id} />
         {CALENDAR_EVENT_EDIT_FIELDS.map((field) => (
           <input key={field} type="hidden" name={openedCalendarEventFieldName(field)} value={openedFields[field]} />
@@ -187,7 +190,7 @@ export function CalendarEventActions({
             type="button"
             variant="destructive"
             className="h-11 rounded-touch px-3 md:h-8 md:rounded-md"
-            onClick={() => { setNotice(null); setMode("confirm-delete"); }}
+            onClick={() => { setNotice(null); setDeleteError(null); setMode("confirm-delete"); }}
           >
             일정 삭제
           </Button>

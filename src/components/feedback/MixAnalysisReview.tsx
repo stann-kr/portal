@@ -22,6 +22,7 @@ import { formatAnalysisClock, splitFeedbackByEntry, type MixAnalysis } from "@/l
 import { formatTimestamp } from "@/lib/utils/format";
 import type { FeedbackItem } from "./TimelineFeedback";
 import { FeedbackEditForm } from "./FeedbackEditForm";
+import { FEEDBACK_CONTENT_MAX_LENGTH } from "@/lib/feedback-content";
 
 const CHIP_CLASS =
   "relative inline-flex h-6 shrink-0 items-center rounded-sm bg-accent px-2 font-mono text-xs font-medium text-highlight transition-colors duration-[var(--duration-fast)] after:absolute after:inset-x-0 after:-inset-y-2.5 after:content-[''] hover:bg-highlight/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none md:after:hidden";
@@ -218,6 +219,7 @@ function LineFeedbackForm({
           id={inputId}
           name="content"
           type="text"
+          maxLength={FEEDBACK_CONTENT_MAX_LENGTH}
           autoFocus
           placeholder={`${clock}에 남길 피드백`}
           value={content}

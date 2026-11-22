@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { fillEmptyFromLinkMeta, numberCellValue } from "./inline-add-values";
+import { fillEmptyFromLinkMeta, hasTrackInput, needsLinkMeta, numberCellValue } from "./inline-add-values";
 
 const columns = [
   { id: "title", name: "트랙명" },
@@ -26,4 +26,22 @@ test("지운 숫자 칸은 0이 아니라 빈 값이다", () => {
   assert.equal(numberCellValue("0"), 0);
   assert.equal(numberCellValue("128"), 128);
   assert.equal(numberCellValue("-3.5"), -3.5);
+});
+
+test("링크도 칸 값도 없으면 추가할 입력이 없다", () => {
+  assert.equal(hasTrackInput("", {}), false);
+  assert.equal(hasTrackInput("  ", { title: "  ", tags: [], rating: null, memo: "" }), false);
+  assert.equal(hasTrackInput("https://soundcloud.com/a/b", {}), true);
+  assert.equal(hasTrackInput("", { rating: 3 }), true);
+  assert.equal(hasTrackInput("", { tags: ["deep"] }), true);
+});
+
+test("링크가 있고 트랙명·아티스트 중 있는 칸이 비었을 때만 저장 전에 링크 정보를 읽는다", () => {
+  const link = "https://soundcloud.com/a/b";
+  assert.equal(needsLinkMeta(link, {}, columns), true);
+  assert.equal(needsLinkMeta(link, { title: "a" }, columns), true, "아티스트가 비었다");
+  assert.equal(needsLinkMeta(link, { title: "a", artist: "b" }, columns), false);
+  assert.equal(needsLinkMeta(link, { title: "a" }, [{ id: "title", name: "트랙명" }]), false, "아티스트 열이 없으면 트랙명만 본다");
+  assert.equal(needsLinkMeta("", {}, columns), false);
+  assert.equal(needsLinkMeta("soundcloud.com/a", {}, columns), false, "http 링크만 읽는다");
 });

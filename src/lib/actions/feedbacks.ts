@@ -18,6 +18,7 @@ import {
 } from "@/lib/auth-guard";
 import { pushMessages } from "@/lib/push/messages";
 import { notifyPush } from "@/lib/push/notify";
+import { FEEDBACK_CONTENT_TOO_LONG_ERROR, isFeedbackContentTooLong } from "@/lib/feedback-content";
 
 // ───────────────────────────────────────────────
 // 조회
@@ -84,6 +85,7 @@ export async function createFeedback(
   const content = typeof rawContent === "string" ? rawContent.trim() : "";
 
   if (!content) return { error: "피드백 내용을 입력해주세요." };
+  if (isFeedbackContentTooLong(content)) return { error: FEEDBACK_CONTENT_TOO_LONG_ERROR };
 
   const timeMarker = parseFeedbackTimeMarker(timeMarkerStr);
   if (Number.isNaN(timeMarker)) return { error: TIME_MARKER_ERROR };
@@ -154,6 +156,7 @@ export async function updateFeedback(
   if (typeof feedbackId !== "string" || !feedbackId) return { success: false, error: FEEDBACK_NOT_FOUND_ERROR };
   const content = typeof next?.content === "string" ? next.content.trim() : "";
   if (!content) return { success: false, error: "피드백 내용을 입력해주세요." };
+  if (isFeedbackContentTooLong(content)) return { success: false, error: FEEDBACK_CONTENT_TOO_LONG_ERROR };
   const timeMarker = parseFeedbackTimeMarker(typeof next?.timeMarker === "string" ? next.timeMarker.trim() : "");
   if (Number.isNaN(timeMarker)) return { success: false, error: TIME_MARKER_ERROR };
   if (typeof expected?.content !== "string" || !(expected.timeMarker === null || Number.isSafeInteger(expected.timeMarker))) {

@@ -1712,6 +1712,11 @@ test("게시물 full snapshot 이력과 휴지통 수명주기는 댓글을 보�
     ),
   );
   assert.equal(updated.success, true);
+  // 잘못된 복원 요청은 room에 복원 준비를 남기지 않고 오류로 돌려준다(예외로 끝나 60초 동안 되돌리기를 막지 않게).
+  const malformed = await postActions.restorePostRevision(postId, "not-a-uuid", 2, 1);
+  assert.equal(malformed.success, false);
+  assert.match(malformed.error ?? "", /복원 기준을 확인할 수 없습니다/u);
+  assert.equal((await postActions.restorePostRevision(postId, crypto.randomUUID(), 0, 1)).success, false);
   const revisionRestored = await postActions.restorePostRevision(
     postId,
     crypto.randomUUID(),

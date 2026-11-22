@@ -19,6 +19,7 @@ import { createDocumentDraftKey } from "@/lib/form-draft";
 import { useFormDraft } from "@/lib/hooks/useFormDraft";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
 import { formatTimestamp } from "@/lib/utils/format";
+import { FEEDBACK_CONTENT_MAX_LENGTH } from "@/lib/feedback-content";
 
 type EditBaseline = { content: string; timeMarker: number | null };
 type EditDraft = { timeMarker: string; content: string; expected?: EditBaseline };
@@ -195,6 +196,7 @@ export function FeedbackEditForm({
           ref={contentRef}
           id={`${inputIdBase}-content`}
           type="text"
+          maxLength={FEEDBACK_CONTENT_MAX_LENGTH}
           value={content}
           required
           disabled={!draft.loaded || isPending || legacy !== null}

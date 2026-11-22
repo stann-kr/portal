@@ -47,11 +47,15 @@ const ACTION_CLASS = "md:h-9 md:rounded-md md:px-3.5 md:text-ui";
 export function PlaylistTrackImport({
   playlist,
   board,
-  onClose,
+  onRequestClose,
+  onDirtyChange,
 }: {
   playlist: Pick<DiggingPlaylist, "provider" | "url">;
   board: DiggingTrackImportBoard;
-  onClose: () => void;
+  /** 닫기·Esc. 붙여 넣은 글이 있으면 부모가 버림 확인을 거친다. */
+  onRequestClose: () => void;
+  /** 붙여 넣은 글이 있는지. 칸이 사라질 때는 false로 돌린다. */
+  onDirtyChange?: (dirty: boolean) => void;
 }) {
   const pasteId = useId();
   const soundCloud = playlist.provider === "soundcloud";
@@ -64,6 +68,11 @@ export function PlaylistTrackImport({
 
   useBusyNavigationGuard(pending);
   useUnsavedUnloadGuard(pasteText.trim().length > 0);
+  const updatePasteText = (value: string) => {
+    setPasteText(value);
+    onDirtyChange?.(value.trim().length > 0);
+  };
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
 
   useEffect(() => {
     if (!soundCloud) return;
@@ -120,7 +129,7 @@ export function PlaylistTrackImport({
           return;
         }
         board.onImported(result.created);
-        setPasteText("");
+        updatePasteText("");
         setNotice(
           `${result.created.length}곡을 디깅 보드에 넣었습니다.`
           + (result.skipped > 0 ? ` 이미 보드에 있던 ${result.skipped}곡은 건너뛰었습니다.` : ""),
@@ -132,7 +141,14 @@ export function PlaylistTrackImport({
   };
 
   return (
-    <div className="flex flex-col gap-2.5 rounded-[10px] border border-muted p-3.5">
+    <div
+      className="flex flex-col gap-2.5 rounded-[10px] border border-muted p-3.5"
+      onKeyDown={(event) => {
+        if (event.key !== "Escape" || pending) return;
+        event.preventDefault();
+        onRequestClose();
+      }}
+    >
       {soundCloud ? <SoundCloudSummary state={sc} /> : (
         <p className={NOTE_CLASS}>Beatport 곡 목록은 자동으로 읽을 수 없습니다. 플레이리스트 화면에서 곡 목록을 선택해 복사한 뒤 붙여 넣으세요.</p>
       )}
@@ -145,7 +161,7 @@ export function PlaylistTrackImport({
           id={pasteId}
           rows={soundCloud ? 2 : 3}
           value={pasteText}
-          onChange={(event) => { setPasteText(event.target.value); setNotice(""); }}
+          onChange={(event) => { updatePasteText(event.target.value); setNotice(""); }}
           placeholder="한 줄에 한 곡: 아티스트 - 제목"
           disabled={pending}
           className={TEXTAREA_CLASS}
@@ -161,7 +177,7 @@ export function PlaylistTrackImport({
       <p role="status" className={cn("text-ui text-secondary-foreground", !notice && "sr-only")}>{notice}</p>
 
       <div className="flex flex-col-reverse gap-2 md:flex-row md:justify-end">
-        <Button type="button" variant="outline" size="touch" className={ACTION_CLASS} onClick={onClose} disabled={pending}>
+        <Button type="button" variant="outline" size="touch" className={ACTION_CLASS} onClick={onRequestClose} disabled={pending}>
           닫기
         </Button>
         <Button

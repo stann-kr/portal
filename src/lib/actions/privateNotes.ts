@@ -904,14 +904,21 @@ export async function restorePrivateNoteRevision(
       }
     }
   }
-  const result = await restorePrivateNoteRevisionAtomically(createDbContext(), {
-    actor,
-    noteId,
-    operationId,
-    baseRevision: checkpointBase,
-    revisionNumber,
-    now: new Date(),
-  });
+  let result: Awaited<ReturnType<typeof restorePrivateNoteRevisionAtomically>>;
+  try {
+    result = await restorePrivateNoteRevisionAtomically(createDbContext(), {
+      actor,
+      noteId,
+      operationId,
+      baseRevision: checkpointBase,
+      revisionNumber,
+      now: new Date(),
+    });
+  } catch (error) {
+    // D1 일시 오류 등으로 끝나도 남긴 복원 준비를 풀어 다음 되돌리기를 막지 않는다.
+    if (mayRestore) await abortCollabRestore(roomKey, operationId);
+    throw error;
+  }
   if (!result.ok) {
     if (mayRestore) await abortCollabRestore(roomKey, operationId);
     return {

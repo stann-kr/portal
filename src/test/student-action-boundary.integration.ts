@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { FEEDBACK_CONTENT_MAX_LENGTH } from "@/lib/feedback-content";
 import { after, before, mock, test, type TestContext } from "node:test";
 import { count, eq, inArray } from "drizzle-orm";
 import { drizzle, type AnyD1Database } from "drizzle-orm/d1";
@@ -591,6 +592,10 @@ test("피드백은 잘못된 재생 시점을 저장하지 않고 긴 믹스셋�
     const result = await feedbackActions.createFeedback("assignment-1", {}, form(value));
     assert.ok(result.error, value);
   }
+  // 내용은 정해 둔 길이까지만 받는다(화면 maxLength를 우회한 요청도).
+  const tooLong = form("01:30");
+  tooLong.set("content", "가".repeat(FEEDBACK_CONTENT_MAX_LENGTH + 1));
+  assert.match((await feedbackActions.createFeedback("assignment-1", {}, tooLong)).error ?? "", /자까지/u);
   assert.equal((await db.select().from(feedbacks)).length, 0);
   assert.ok((await feedbackActions.createFeedback("missing", {}, form("01:30"))).error);
   for (const value of ["100:30", "90", "00:00", " "]) {
@@ -2074,6 +2079,7 @@ test("피드백 고치기는 관리자만, 읽은 값과 같을 때만 바꾸고
     assert.equal((await feedbackActions.updateFeedback("fb-media", { content: "x", timeMarker }, { content: "처음 내용", timeMarker: 90 })).success, false, timeMarker);
   }
   assert.equal((await feedbackActions.updateFeedback("fb-media", { content: "  ", timeMarker: "01:30" }, { content: "처음 내용", timeMarker: 90 })).success, false);
+  assert.equal((await feedbackActions.updateFeedback("fb-media", { content: "가".repeat(FEEDBACK_CONTENT_MAX_LENGTH + 1), timeMarker: "01:30" }, { content: "처음 내용", timeMarker: 90 })).success, false);
   assert.equal((await feedbackActions.updateFeedback("missing", { content: "x", timeMarker: "" }, { content: "x", timeMarker: null })).success, false);
 
   // 내용과 시점을 함께 고친다.

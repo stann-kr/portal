@@ -23,3 +23,23 @@ export function fillEmptyFromLinkMeta(
 export function numberCellValue(text: string): number | "" {
   return text.trim() === "" ? "" : Number(text);
 }
+
+/** 링크도 칸 값도 없으면 추가하지 않는다(빈 Enter로 빈 트랙이 생기지 않게). */
+export function hasTrackInput(linkUrl: string, values: Record<string, unknown>): boolean {
+  if (linkUrl.trim()) return true;
+  return Object.values(values).some((value) =>
+    value !== null && value !== undefined && value !== "" && !(Array.isArray(value) && value.length === 0)
+    && !(typeof value === "string" && value.trim() === ""));
+}
+
+/**
+ * 저장 전에 링크 정보를 읽어야 하는지. 링크 칸이 blur되기 전에 Enter·추가를 누르면
+ * 트랙명·아티스트가 아직 비어 있으므로, 둘 중 있는 칸이 비었으면 저장 전에 읽어 채운다.
+ */
+export function needsLinkMeta(linkUrl: string, values: Record<string, unknown>, columns: readonly NamedColumn[]): boolean {
+  if (!/^https?:\/\//i.test(linkUrl.trim())) return false;
+  return ["트랙명", "아티스트"].some((name) => {
+    const column = columns.find((candidate) => candidate.name === name);
+    return column !== undefined && !values[column.id];
+  });
+}

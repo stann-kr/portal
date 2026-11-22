@@ -283,6 +283,9 @@
   :where(.ProseMirror, .rich-text) > :is(h1, h2, h3):not(:first-child) { margin-top: 1em; }
 }
 :where(.ProseMirror, .rich-text) p { margin: 0; }
+/* 편집기의 빈 줄은 빈 문단(<p></p>)으로 저장된다. 편집기는 trailing <br>로 한 줄 높이를 갖지만
+   읽기 화면에서는 높이가 0이라 빈 줄이 사라졌다. 보이지 않는 글자로 같은 한 줄을 만든다(복사에는 들어가지 않음). */
+.rich-text p:empty::before { content: "\200b"; }
 .rich-text { overflow-wrap: anywhere; }
 :where(.ProseMirror, .rich-text) [data-text-align="left"] { text-align: left; }
 :where(.ProseMirror, .rich-text) [data-text-align="center"] { text-align: center; }

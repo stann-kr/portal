@@ -170,6 +170,9 @@ mock.module("@/lib/actions/assignmentTasks", { namedExports: {
   updateAssignmentTask: (...args: Parameters<typeof updateTask>) => updateTask(...args),
   createAssignmentRecurrence: async () => ({ error: "테스트 미설정" }),
   updateAssignmentRecurrence: (...args: Parameters<typeof updateRecurrence>) => updateRecurrence(...args),
+  setAssignmentRecurrencePaused: async () => ({ success: true }),
+  deleteAssignmentRecurrence: async () => ({ success: true }),
+  deleteAssignmentTask: async () => ({ success: true }),
 } });
 mock.module("@/lib/actions/feedbacks", { namedExports: {
   createFeedback: (...args: Parameters<typeof saveFeedback>) => saveFeedback(...args),
@@ -1843,6 +1846,11 @@ test("own calendar event edit keeps input on failure and delete confirms before 
   );
   assert.equal(updates.length, 0);
   assert.ok(busy.includes(true), "save locks the surrounding panel");
+  // 취소하고 다시 열면 새로 연 폼에는 지난 저장 오류가 없다.
+  await press("취소");
+  await press("일정 수정");
+  assert.equal(browser.document.querySelector('[role="alert"]'), null, "reopened edit form starts without the old error");
+  await fill("event-edit-event-1-title", "리듬 연습 2");
 
   editEvent = async (_previous, data) => ({ id: "event-1", event: {
     id: "event-1", title: String(data.get("title")), eventType: "PRACTICE",
@@ -1858,6 +1866,9 @@ test("own calendar event edit keeps input on failure and delete confirms before 
   await press("삭제");
   assert.match(browser.document.querySelector('[role="alert"]')?.textContent ?? "", /삭제하지 못했습니다/u);
   assert.equal(removals.length, 0);
+  await press("취소");
+  await press("일정 삭제");
+  assert.equal(browser.document.querySelector('[role="alert"]'), null, "reopened delete confirm starts without the old error");
   removeEvent = async () => {};
   await press("삭제");
   assert.deepEqual(removals.map((removed) => removed.id), ["event-1"]);
@@ -2148,6 +2159,39 @@ test("digging board opens the inline add row from its link prompt and the read-o
   assert.equal([...browser.document.querySelectorAll("button")].some((element) => ["디깅 트랙 삭제", "링크를 붙여넣어 트랙 추가", "트랙 삭제"].includes(element.getAttribute("aria-label") ?? element.textContent ?? "")), false);
   assert.ok(browser.document.querySelector('table [role="img"][aria-label="별점 3점"]'), "read-only stars read as one rating");
   assert.match(browser.document.querySelector("table tbody")?.textContent ?? "", /2026년 10월 9일 \(.\) · 1곡/u);
+});
+
+test("digging board add row: Enter right after pasting a link fills title·artist first, blank Enter adds nothing, Korean composition Enter does not submit", async (context) => {
+  const saved: Parameters<typeof saveTrack>[0][] = [];
+  saveTrack = async (input) => { saved.push(input); return { id: `t-${saved.length}`, createdAt: new Date(), linkUrl: input.linkUrl ?? null, values: input.values }; };
+  fetchMetadata = async () => ({ title: "Midnight Drive", artist: "Lane 8" });
+  context.after(() => { fetchMetadata = async () => ({}); saveTrack = async (input) => ({ id: "track", createdAt: new Date(), linkUrl: input.linkUrl ?? null, values: input.values }); });
+  const columns = [
+    { id: "title", name: "트랙명", columnType: "text" as const, options: null, isDefault: true, sortOrder: 0 },
+    { id: "artist", name: "아티스트", columnType: "text" as const, options: null, isDefault: true, sortOrder: 1 },
+    { id: "link", name: "링크", columnType: "link" as const, options: null, isDefault: true, sortOrder: 2 },
+  ];
+  await render(context, <DiggingBoard initialColumns={columns} initialTracks={[]} />);
+  await press("링크를 붙여넣어 트랙 추가");
+  const link = () => browser.document.querySelector('table input[aria-label="링크"]') as unknown as HTMLInputElement;
+  const keydown = async (target: HTMLElement, init: { key: string; isComposing?: boolean }) => {
+    await act(async () => { target.dispatchEvent(new browser.KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init }) as unknown as Event); });
+    await settle();
+  };
+
+  await keydown(link(), { key: "Enter" });
+  assert.equal(saved.length, 0, "blank Enter adds nothing");
+  assert.match(browser.document.body.textContent ?? "", /링크를 붙여 넣거나 칸을 하나 이상 채워 주세요/u);
+
+  const setter = Object.getOwnPropertyDescriptor(browser.HTMLInputElement.prototype, "value")?.set;
+  await act(async () => { setter?.call(link(), "https://soundcloud.com/lane8/midnight-drive"); link().dispatchEvent(new browser.Event("input", { bubbles: true }) as unknown as Event); });
+  await keydown(link(), { key: "Enter", isComposing: true });
+  assert.equal(saved.length, 0, "Enter while composing Korean does not submit");
+
+  await keydown(link(), { key: "Enter" });
+  assert.equal(saved.length, 1);
+  assert.deepEqual(saved[0].values, { title: "Midnight Drive", artist: "Lane 8", link: "https://soundcloud.com/lane8/midnight-drive" });
+  assert.doesNotMatch(browser.document.body.textContent ?? "", /칸을 하나 이상 채워 주세요/u);
 });
 
 test("이전 초안 보관함은 실시간 편집으로 옮겨 간 문서 종류의 기기 초안만 보이고, 지금 폼이 쓰는 댓글 초안은 옛 초안으로 보이지 않는다", async (context) => {
@@ -3286,6 +3330,27 @@ test("여러 학생 과제 내기는 고른 학생·작성 정보를 이 기기�
   assert.deepEqual(sent[1], sent[0], "같은 학생·같은 operationId로 다시 보내 학생별로 한 번만 저장된다");
 });
 
+test("보관해 둔 \"다른 학생에게도 내기\"에서 그 뒤 고를 수 없게 된 학생은 되살리지 않는다", async (context) => {
+  browser.localStorage.clear();
+  createTask = async () => ({ error: "다시 내 주세요." });
+  context.after(() => { createTask = async () => ({}); });
+  const form = (options: { id: string; name: string }[]) => <AssignmentTaskForm actorId="admin-archived" studentId="s-1" studentOptions={options as never} onDone={() => {}} onCancel={() => {}} />;
+  const root = await render(context, form([{ id: "s-1", name: "학생 1" }, { id: "s-2", name: "학생 2" }, { id: "s-3", name: "학생 3" }]));
+  await settle();
+  await fill("task-new-title", "킥 정리");
+  await act(async () => { (browser.document.getElementById("task-new-also-s-2") as unknown as HTMLInputElement).click(); });
+  await settle();
+  assert.ok(button("2명에게 과제 내기"));
+
+  // 학생 2가 수강 종료돼 목록에서 빠진 뒤 다시 연다.
+  await act(async () => root.render(<></>));
+  await settle();
+  await act(async () => root.render(form([{ id: "s-1", name: "학생 1" }, { id: "s-3", name: "학생 3" }])));
+  await settle();
+  assert.equal(inputValue("title"), "킥 정리", "나머지 작성 내용은 되살린다");
+  assert.ok(button("과제 내기"), "고를 수 없는 학생은 인원에 세지 않는다");
+});
+
 test("그룹 멤버 학생의 과제 내기는 \"받는 학생\"으로 그룹 멤버를 한 번에 고른다", async (context) => {
   browser.localStorage.clear();
   const sent: string[][] = [];
@@ -3390,6 +3455,20 @@ test("과제 고치기는 고치던 내용을 이 기기에 보관해 다시 열
   assert.equal(inputValue("title"), "다른 기기에서 바꾼 제목");
   assert.equal(browser.document.querySelector('[role="alert"]'), null);
   assert.equal(recoveryNotice(), null, "취소 뒤 다시 열어도 복구본이 남지 않는다");
+});
+
+test("정기 과제를 고치는 동안 그 줄의 멈추기·삭제는 막는다", async (context) => {
+  browser.localStorage.clear();
+  const { AdminAssignmentsPanel } = await import("@/components/admin/assignments/AdminAssignmentsPanel");
+  const rule = {
+    id: "r-9", title: "주간 믹스", descriptionHtml: "<p>매주 연습</p>", submissionFormat: "MIX", weekdays: 0b0000010, intervalWeeks: 1,
+    startDate: "2026-11-02", dueTime: "21:00", endDate: null, maxOccurrences: null, active: true, version: 2, pausedAt: null,
+  };
+  await render(context, <AdminAssignmentsPanel actorId="admin-p" studentId="s-1" tasks={[]} recurrences={[rule] as never} referenceTime={new Date("2026-11-13T03:00:00Z")} returnTo="/dashboard/admin" />);
+  assert.equal(button("멈추기").disabled, false);
+  await press("주간 믹스 정기 과제 고치기");
+  assert.equal(button("멈추기").disabled, true, "고치는 동안 멈추기를 막는다");
+  assert.equal(button("주간 믹스 정기 과제 삭제").disabled, true, "고치는 동안 삭제를 막는다");
 });
 
 test("정기 과제 고치기도 고치던 내용을 이 기기에 보관해 되살리고, 그 사이 규칙이 바뀌었으면 저장을 막는다", async (context) => {
@@ -5509,6 +5588,17 @@ test("컬럼 관리 창의 첫 포커스는 넓은 화면에서 새 컬럼 이�
   assert.equal(browser.document.activeElement, title, "좁은 화면은 키보드가 올라오지 않게 창 제목에서 시작한다");
 });
 
+test("컬럼이 상한에 닿으면 추가를 막고 이유를 보인다", async (context) => {
+  const { ColumnManager } = await import("@/components/digging/ColumnManager");
+  const { DIGGING_COLUMNS_MAX_COUNT } = await import("@/lib/digging-contract");
+  const columns = Array.from({ length: DIGGING_COLUMNS_MAX_COUNT }, (_, index) => ({ id: `c-${index}`, name: `열 ${index}`, columnType: "text" as const, isDefault: index === 0 }));
+  await render(context, <ColumnManager open onOpenChange={() => {}} columns={columns} onSuccess={() => {}} />);
+  await fill("digging-new-column-name", "새 열");
+  const add = button("추가");
+  assert.equal(add.disabled, true, "상한이면 이름을 넣어도 추가할 수 없다");
+  assert.match(browser.document.getElementById(add.getAttribute("aria-describedby") ?? "")?.textContent ?? "", new RegExp(`최대 ${DIGGING_COLUMNS_MAX_COUNT}개`, "u"));
+});
+
 test("댓글 칸은 5,000자에서 멈추고 4,500자부터 글자 수를 보이며, 잘린 붙여넣기는 따로 알린다", async (context) => {
   browser.localStorage.clear();
   await render(context, <PostDetailClient postId="limit-post" post={mixsetPost("limit-post", { mediaUrl: null, mediaObjectId: null }, "GENERAL")} initialCommentList={[]} currentUserId="student-limit" isAdmin={false} returnTo="/community" />);
@@ -5737,6 +5827,29 @@ test("제출 수정은 저장된 제출보다 오래된 이 기기 초안을 지
   assert.match(browser.document.body.textContent ?? "", /저장되지 않은 작성 내용을 복원했습니다/u);
   assert.doesNotMatch(browser.document.body.textContent ?? "", /이전 작성 내용은 지웠습니다/u);
   assert.notEqual(browser.localStorage.getItem(freshKey), null);
+});
+
+test("제출 폼 링크 칸의 Enter는 제출하지 않고 글 칸으로 넘어간다", async (context) => {
+  browser.localStorage.clear();
+  editFreeSubmission = async () => ({ error: "테스트 미설정" });
+  const listHref = "/dashboard/student?section=workspace&view=assignments";
+  await render(context, (
+    <AssignmentDetailClient
+      assignmentId="free-enter" actorId="student-enter" mediaUrl="https://youtu.be/dQw4w9WgXcQ" textHtml={null} savedAt={new Date("2026-11-14T03:00:00.000Z")}
+      analysis={null} task={null} feedbackList={[]} isAdmin={false} deleteReturnTo={listHref} title="링크 제출"
+      submittedLabel="2026년 11월 14일 12:00 제출" submittedLabelShort="11월 14일 12:00 제출" breadcrumb={{ href: listHref, label: "과제" }} returnTo={listHref}
+    />
+  ));
+  await press("제출 수정");
+  await settle();
+  const link = browser.document.getElementById("free-submission-free-enter-media-url") as unknown as HTMLInputElement;
+  assert.ok(link, "링크 칸");
+  link.focus();
+  const enter = new browser.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+  await act(async () => { link.dispatchEvent(enter as unknown as Event); });
+  assert.equal(enter.defaultPrevented, true, "Enter로 암묵 제출하지 않는다");
+  assert.equal(browser.document.activeElement?.id, "free-submission-free-enter-text", "글 칸으로 넘어간다");
+  assert.equal(link.getAttribute("enterkeyhint"), "next");
 });
 
 test("받은 과제 제출 수정도 다른 기기에서 제출한 뒤 남은 이 기기 초안을 지우고 알린다", async (context) => {

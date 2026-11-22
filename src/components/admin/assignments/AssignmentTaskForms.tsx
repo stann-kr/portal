@@ -374,7 +374,8 @@ export function AssignmentTaskForm({
       setDescription(readString(saved.description, ""));
       setDueDate(readString(saved.dueDate, ""));
       setDueTime(readString(saved.dueTime, ""));
-      setAlsoStudentIds(readStringList(saved.alsoStudentIds));
+      // 보관한 뒤 수강 종료된 학생은 고를 수 없으므로 되살리지 않는다(체크박스 없이 버튼 인원에만 남지 않게).
+      setAlsoStudentIds(readStringList(saved.alsoStudentIds).filter((id) => id !== studentId && studentOptions.some((option) => option.id === id)));
       const savedOperationId = parseCreationOperationId(saved.operationId);
       if (savedOperationId) setOperationId(savedOperationId);
     },
@@ -509,7 +510,8 @@ export function AssignmentRecurrenceForm({
       setDueTime(readString(saved.dueTime, "21:00"));
       setEndDate(readString(saved.endDate, ""));
       setMaxOccurrences(readString(saved.maxOccurrences, ""));
-      setAlsoStudentIds(readStringList(saved.alsoStudentIds));
+      // 보관한 뒤 수강 종료된 학생은 고를 수 없으므로 되살리지 않는다(체크박스 없이 버튼 인원에만 남지 않게).
+      setAlsoStudentIds(readStringList(saved.alsoStudentIds).filter((id) => id !== studentId && studentOptions.some((option) => option.id === id)));
       const savedOperationId = parseCreationOperationId(saved.operationId);
       if (savedOperationId) setOperationId(savedOperationId);
     },

@@ -875,6 +875,10 @@ test("그룹 캘린더: 관리자가 그룹에 캘린더를 정하면 그룹레�
 
   const missing = await syncActions.saveCalendarMapping({}, form({ connectionId: connection.id, target: "group:missing", remoteCalendarId: "cal-g" }));
   assert.equal(missing.error, "그룹을 찾을 수 없습니다. 화면을 새로고침해 주세요.");
+  // 수강 중인 멤버가 둘 미만인 그룹은 화면에 없으므로 서버도 받지 않는다(한 학생은 한 그룹에만 속해 빈 그룹으로 확인한다).
+  await db.insert(lessonGroups).values({ id: "group-solo", name: "멤버가 빠진 반" });
+  const solo = await syncActions.saveCalendarMapping({}, form({ connectionId: connection.id, target: "group:group-solo", remoteCalendarId: "cal-g" }));
+  assert.equal(solo.error, "그룹을 찾을 수 없습니다. 화면을 새로고침해 주세요.");
   const sameCalendar = await syncActions.saveCalendarMapping({}, form({ connectionId: connection.id, target: "group:group-1", remoteCalendarId: "cal-1" }));
   assert.match(sameCalendar.error ?? "", /그룹 캘린더로 지정/u);
 

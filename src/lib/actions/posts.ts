@@ -28,6 +28,7 @@ import {
   createDocumentSnapshotFingerprint,
   isDocumentSnapshotFingerprint,
 } from "@/lib/document-snapshot-fingerprint";
+import { parsePrivateNoteRevision as parseDocumentRevision } from "@/lib/private-note-continuity";
 import {
   createPostAtomically,
   preflightLegacyPostCreateReplay,
@@ -802,11 +803,18 @@ export async function deletePost(
 
 export async function restorePostRevision(
   postId: string,
-  operationId: string,
-  baseRevision: number,
-  revisionNumber: number,
+  operationIdValue: string,
+  baseRevisionValue: number,
+  revisionNumberValue: number,
 ): Promise<PostLifecycleState> {
   const session = await requireAuth();
+  // room에 복원 준비를 남기기 전에 요청 값을 검사한다. 준비 뒤 예외로 끝나면 그 글의 되돌리기가 준비가 풀릴 때까지 막힌다.
+  const operationId = resolveCreationOperationId(operationIdValue);
+  const baseRevision = parseDocumentRevision(baseRevisionValue);
+  const revisionNumber = parseDocumentRevision(revisionNumberValue);
+  if (!operationId || !baseRevision || !revisionNumber) {
+    return { success: false, error: "복원 기준을 확인할 수 없습니다. 페이지를 새로고침해 주세요." };
+  }
   const roomKey = formatCollabDocKey({ kind: "post", id: postId });
   const [before] = await createDb()
     .select({ ...POST_SELECT })
@@ -835,14 +843,21 @@ export async function restorePostRevision(
       };
     }
   }
-  const result = await restorePostRevisionAtomically(createDbContext(), {
-    actor: actor(session),
-    postId,
-    operationId,
-    baseRevision,
-    revisionNumber,
-    now: new Date(),
-  });
+  let result: Awaited<ReturnType<typeof restorePostRevisionAtomically>>;
+  try {
+    result = await restorePostRevisionAtomically(createDbContext(), {
+      actor: actor(session),
+      postId,
+      operationId,
+      baseRevision,
+      revisionNumber,
+      now: new Date(),
+    });
+  } catch (error) {
+    // D1 일시 오류 등으로 끝나도 남긴 복원 준비를 풀어 다음 되돌리기를 막지 않는다.
+    if (mayRestore) await abortCollabRestore(roomKey, operationId);
+    throw error;
+  }
   if (result.ok) {
     // 복원 revision이 새 lifecycle 표지다. 열린 수정 작업본에는 복원한 게시본을 같은 문서의 한 편집으로 적용한다(다시 시작하지 않음).
     const restoredRevision = result.operationResultRevision ?? result.currentRevision;

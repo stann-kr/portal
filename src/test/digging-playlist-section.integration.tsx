@@ -464,3 +464,65 @@ test("SoundCloud를 읽지 못하면 붙여넣기로 안내하고, Beatport는 �
   await press("고른 3곡 디깅 보드에 추가");
   assert.equal(importCalls[0].length, 3);
 });
+
+test("붙여 넣은 글이 있으면 가져오기 칸을 닫거나 다른 줄을 열기 전에 버림 확인을 거친다", { concurrency: false }, async (context) => {
+  soundsImpl = async () => [];
+  const container = await render(context, (
+    <PlaylistSection studentId="student-1" initialPlaylists={playlists()} trackImport={{ columns: BOARD_COLUMNS, tracks: [], onImported: () => undefined }} />
+  ));
+  const beatport = importToggle(container, "Beatport 플레이리스트");
+  await act(async () => { beatport.click(); });
+  await settle();
+  await fill("곡 목록 붙여넣기", "Rival Consoles - Glass Floor");
+
+  // 닫기 → 확인(초점은 취소). 취소하면 글이 남는다.
+  await press("닫기");
+  assert.equal(beatport.getAttribute("aria-expanded"), "true", "붙여 넣은 글이 있으면 바로 닫지 않는다");
+  assert.match(container.textContent ?? "", /작성 중인 내용이 있습니다/u);
+  assert.equal(browser.document.activeElement?.textContent?.trim(), "취소");
+  await act(async () => { (browser.document.activeElement as unknown as HTMLButtonElement).click(); });
+  await settle();
+  assert.doesNotMatch(container.textContent ?? "", /작성 중인 내용이 있습니다/u);
+  assert.equal(field("곡 목록 붙여넣기").value, "Rival Consoles - Glass Floor");
+
+  // 줄의 토글과 칸 안의 Esc도 같은 확인을 거친다.
+  await act(async () => { beatport.click(); });
+  await settle();
+  assert.match(container.textContent ?? "", /작성 중인 내용이 있습니다/u);
+  await press("취소");
+  field("곡 목록 붙여넣기").focus();
+  await pressEscape();
+  assert.match(container.textContent ?? "", /작성 중인 내용이 있습니다/u);
+  await press("취소");
+
+  // 다른 줄의 가져오기를 열려고 해도 묻고, 버리면 그 줄이 열린다.
+  const warmup = importToggle(container, "Warmup");
+  await act(async () => { warmup.click(); });
+  await settle();
+  assert.equal(warmup.getAttribute("aria-expanded"), "false");
+  assert.match(container.textContent ?? "", /작성 중인 내용이 있습니다/u);
+  await press("저장하지 않고 닫기");
+  assert.equal(beatport.getAttribute("aria-expanded"), "false");
+  assert.equal(warmup.getAttribute("aria-expanded"), "true");
+  assert.doesNotMatch(container.textContent ?? "", /작성 중인 내용이 있습니다/u, "새로 연 줄에 확인이 남지 않는다");
+
+  // 같은 줄을 고치려 해도 묻고, 버리면 수정 폼이 열린다.
+  await fill("나머지 곡 목록 붙여넣기(선택)", "Moderat - Cold Water");
+  await press("‘Warmup’ 수정");
+  assert.equal(container.querySelector('form[aria-label="‘Warmup’ 수정"]'), null, "붙여 넣은 글이 있으면 바로 수정 폼을 열지 않는다");
+  assert.match(container.textContent ?? "", /작성 중인 내용이 있습니다/u);
+  await press("저장하지 않고 닫기");
+  assert.ok(container.querySelector('form[aria-label="‘Warmup’ 수정"]'));
+  assert.equal(warmup.isConnected, false, "수정 폼이 줄을 대신한다");
+  assert.doesNotMatch(container.textContent ?? "", /작성 중인 내용이 있습니다/u);
+  await press("취소");
+  const reopened = importToggle(container, "Warmup");
+  assert.equal(reopened.getAttribute("aria-expanded"), "false", "수정을 닫아도 버린 가져오기 칸은 다시 열리지 않는다");
+  await act(async () => { reopened.click(); });
+  await settle();
+
+  // 붙여 넣은 글이 없으면 묻지 않고 닫는다.
+  await press("닫기");
+  assert.equal(reopened.getAttribute("aria-expanded"), "false");
+  assert.doesNotMatch(container.textContent ?? "", /작성 중인 내용이 있습니다/u);
+});

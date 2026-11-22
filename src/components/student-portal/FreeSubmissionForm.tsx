@@ -27,6 +27,7 @@ import { useFormDraft } from "@/lib/hooks/useFormDraft";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
 import { useStaleDraftDrop } from "@/lib/hooks/useStaleDraftDrop";
 import { cn } from "@/lib/utils";
+import { keepEnterFromSubmitting } from "@/components/community/empty-title-enter";
 
 type FreeSubmissionDraft = { mediaUrl: string; text: string };
 /** 초안에는 새 제출의 작업 ID도 함께 둔다(탭을 닫았다 열어 다시 내도 같은 제출로 처리된다). */
@@ -140,6 +141,8 @@ export function FreeSubmissionForm({
       aria-labelledby={headingId}
       className={cn("flex flex-col gap-3", className)}
       onBlur={draft.flush}
+      // 링크 칸의 Enter는 제출하지 않고 글 칸으로 넘어간다.
+      onKeyDown={keepEnterFromSubmitting}
       onSubmit={(event) => {
         if (!draft.loaded || !draft.canSubmit || isPending) {
           event.preventDefault();
@@ -170,6 +173,8 @@ export function FreeSubmissionForm({
           id={mediaId}
           name="mediaUrl"
           type="url"
+          enterKeyHint="next"
+          data-enter-focus={textId}
           placeholder="YouTube 또는 SoundCloud 링크 붙여넣기"
           value={mediaUrl}
           onChange={(event) => {
