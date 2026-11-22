@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { createDiggingTrack, fetchLinkMeta } from "@/lib/actions/digging";
 import { StarRating } from "./StarRating";
+import { fillEmptyFromLinkMeta, hasTrackInput, needsLinkMeta } from "./inline-add-values";
 import { CamelotPicker } from "./CamelotPicker";
 import type { DiggingColumnType } from "@/db/schema";
 import { parseStoredDiggingOptions } from "@/lib/digging-contract";
@@ -64,13 +65,7 @@ export function AddTrackInlineForm({
     try {
       const meta = await fetchLinkMeta(url);
       if (request !== metadataRequest.current) return;
-      const trackNameCol = columns.find((c) => c.name === "트랙명");
-      const artistCol = columns.find((c) => c.name === "아티스트");
-      setValues((current) => ({
-        ...current,
-        ...(meta.title && trackNameCol && !current[trackNameCol.id] ? { [trackNameCol.id]: meta.title } : {}),
-        ...(meta.artist && artistCol && !current[artistCol.id] ? { [artistCol.id]: meta.artist } : {}),
-      }));
+      setValues((current) => fillEmptyFromLinkMeta(current, columns, meta));
     } catch {
       if (request === metadataRequest.current) setFetchError("링크 정보를 가져오지 못했습니다. 직접 입력할 수 있습니다.");
     } finally {
@@ -81,12 +76,22 @@ export function AddTrackInlineForm({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (isPending) return;
+    if (!hasTrackInput(linkUrl, values)) {
+      setSubmitError("링크를 붙여 넣거나 칸을 하나 이상 채워 주세요.");
+      return;
+    }
     metadataRequest.current += 1;
     setIsFetching(false);
     setSubmitError("");
     startTransition(async () => {
       try {
-        const finalValues = { ...values };
+        let finalValues = { ...values };
+        if (needsLinkMeta(linkUrl, finalValues, columns)) {
+          // 링크 칸이 blur되기 전에 추가하면 아직 비어 있는 트랙명·아티스트를 저장 전에 채운다.
+          try {
+            finalValues = fillEmptyFromLinkMeta(finalValues, columns, await fetchLinkMeta(linkUrl));
+          } catch { /* 읽지 못하면 링크만 저장한다 */ }
+        }
         if (linkColId && linkUrl) finalValues[linkColId] = linkUrl;
         const created = await createDiggingTrack({
           linkUrl: linkUrl || undefined,

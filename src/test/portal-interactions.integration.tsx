@@ -2150,6 +2150,39 @@ test("digging board opens the inline add row from its link prompt and the read-o
   assert.match(browser.document.querySelector("table tbody")?.textContent ?? "", /2026년 10월 9일 \(.\) · 1곡/u);
 });
 
+test("digging board add row: Enter right after pasting a link fills title·artist first, blank Enter adds nothing, Korean composition Enter does not submit", async (context) => {
+  const saved: Parameters<typeof saveTrack>[0][] = [];
+  saveTrack = async (input) => { saved.push(input); return { id: `t-${saved.length}`, createdAt: new Date(), linkUrl: input.linkUrl ?? null, values: input.values }; };
+  fetchMetadata = async () => ({ title: "Midnight Drive", artist: "Lane 8" });
+  context.after(() => { fetchMetadata = async () => ({}); saveTrack = async (input) => ({ id: "track", createdAt: new Date(), linkUrl: input.linkUrl ?? null, values: input.values }); });
+  const columns = [
+    { id: "title", name: "트랙명", columnType: "text" as const, options: null, isDefault: true, sortOrder: 0 },
+    { id: "artist", name: "아티스트", columnType: "text" as const, options: null, isDefault: true, sortOrder: 1 },
+    { id: "link", name: "링크", columnType: "link" as const, options: null, isDefault: true, sortOrder: 2 },
+  ];
+  await render(context, <DiggingBoard initialColumns={columns} initialTracks={[]} />);
+  await press("링크를 붙여넣어 트랙 추가");
+  const link = () => browser.document.querySelector('table input[aria-label="링크"]') as unknown as HTMLInputElement;
+  const keydown = async (target: HTMLElement, init: KeyboardEventInit) => {
+    await act(async () => { target.dispatchEvent(new browser.KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init }) as unknown as Event); });
+    await settle();
+  };
+
+  await keydown(link(), { key: "Enter" });
+  assert.equal(saved.length, 0, "blank Enter adds nothing");
+  assert.match(browser.document.body.textContent ?? "", /링크를 붙여 넣거나 칸을 하나 이상 채워 주세요/u);
+
+  const setter = Object.getOwnPropertyDescriptor(browser.HTMLInputElement.prototype, "value")?.set;
+  await act(async () => { setter?.call(link(), "https://soundcloud.com/lane8/midnight-drive"); link().dispatchEvent(new browser.Event("input", { bubbles: true }) as unknown as Event); });
+  await keydown(link(), { key: "Enter", isComposing: true });
+  assert.equal(saved.length, 0, "Enter while composing Korean does not submit");
+
+  await keydown(link(), { key: "Enter" });
+  assert.equal(saved.length, 1);
+  assert.deepEqual(saved[0].values, { title: "Midnight Drive", artist: "Lane 8", link: "https://soundcloud.com/lane8/midnight-drive" });
+  assert.doesNotMatch(browser.document.body.textContent ?? "", /칸을 하나 이상 채워 주세요/u);
+});
+
 test("이전 초안 보관함은 실시간 편집으로 옮겨 간 문서 종류의 기기 초안만 보이고, 지금 폼이 쓰는 댓글 초안은 옛 초안으로 보이지 않는다", async (context) => {
   browser.localStorage.clear();
   context.after(() => browser.localStorage.clear());

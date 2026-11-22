@@ -10,7 +10,7 @@ import { useEffect, useId, useRef, useState, useTransition, useCallback } from "
 import { Plus, X } from "lucide-react";
 import { ButtonSpinner } from "@/components/ui/button";
 import { createDiggingTrack, fetchLinkMeta } from "@/lib/actions/digging";
-import { fillEmptyFromLinkMeta, numberCellValue } from "./inline-add-values";
+import { fillEmptyFromLinkMeta, hasTrackInput, needsLinkMeta, numberCellValue } from "./inline-add-values";
 import { parseStoredDiggingOptions } from "@/lib/digging-contract";
 import { StarRating } from "./StarRating";
 import { CamelotPicker } from "./CamelotPicker";
@@ -86,10 +86,24 @@ export function InlineAddRow({ columns, onTrackCreated }: InlineAddRowProps) {
   };
 
   const handleSubmit = useCallback(() => {
+    if (isPending) return;
+    if (!hasTrackInput(linkUrl, values)) {
+      setSubmitError("링크를 붙여 넣거나 칸을 하나 이상 채워 주세요.");
+      return;
+    }
     setSubmitError("");
     startTransition(async () => {
       try {
-        const finalValues = { ...values };
+        let finalValues = { ...values };
+        if (needsLinkMeta(linkUrl, finalValues, columns)) {
+          // 링크 칸이 blur되기 전에 추가하면 아직 비어 있는 트랙명·아티스트를 저장 전에 채운다.
+          const request = ++linkMetaRequestRef.current;
+          setIsFetching(true);
+          try {
+            finalValues = fillEmptyFromLinkMeta(finalValues, columns, await fetchLinkMeta(linkUrl));
+          } catch { /* 읽지 못하면 링크만 저장한다 */ }
+          if (request === linkMetaRequestRef.current) setIsFetching(false);
+        }
         if (linkColId && linkUrl) finalValues[linkColId] = linkUrl;
         const created = await createDiggingTrack({ linkUrl: linkUrl || undefined, values: finalValues });
         onTrackCreated(created);
@@ -101,7 +115,7 @@ export function InlineAddRow({ columns, onTrackCreated }: InlineAddRowProps) {
         setSubmitError("트랙을 추가하지 못했습니다. 입력을 확인하고 다시 시도해 주세요.");
       }
     });
-  }, [values, linkUrl, linkColId, onTrackCreated]);
+  }, [isPending, values, linkUrl, linkColId, columns, onTrackCreated]);
 
   const collapse = () => {
     if (isPending) return;
@@ -112,6 +126,8 @@ export function InlineAddRow({ columns, onTrackCreated }: InlineAddRowProps) {
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
+      // 한글 조합 중 Enter는 글자를 확정할 뿐 제출하지 않는다.
+      if (e.nativeEvent.isComposing || e.keyCode === 229) return;
       e.preventDefault();
       handleSubmit();
     }
