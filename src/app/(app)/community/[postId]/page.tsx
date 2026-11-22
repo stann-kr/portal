@@ -7,6 +7,7 @@ import Link from "next/link";
 import { getPostIncludingTrash } from "@/lib/actions/posts";
 import { getCommentsByPost } from "@/lib/actions/comments";
 import { getCategories } from "@/lib/actions/categories";
+import { getPostReadSummary } from "@/lib/actions/postReads";
 import { getActiveAuthSession } from "@/lib/auth-guard";
 import { PostDetailClient } from "./PostDetailClient";
 import { RouteAutoRefresh } from "@/components/app-shell/RouteAutoRefresh";
@@ -31,10 +32,13 @@ export default async function PostDetailPage({
   if (!session?.user?.id) redirect("/login");
 
   // 남이 휴지통으로 보낸 게시물은 오류 화면이 아니라 아래 "찾을 수 없습니다" 안내로 보인다.
-  const [post, comments, categories] = await Promise.all([
+  const isAdmin = session.user.role === "admin";
+  // 읽은 학생 요약은 관리자에게만 읽어 보낸다(2026-11-23 사용자 결정).
+  const [post, comments, categories, readSummary] = await Promise.all([
     missingWhenAccessDenied(getPostIncludingTrash(postId)),
     missingWhenAccessDenied(getCommentsByPost(postId)),
     getCategories(),
+    isAdmin ? getPostReadSummary(postId) : Promise.resolve(null),
   ]);
   const commentList = comments ?? [];
 
@@ -51,7 +55,6 @@ export default async function PostDetailPage({
   }
 
   const currentUserId = session.user.id;
-  const isAdmin = session.user.role === "admin";
   // 게시물은 채널의 주소 식별자를 저장한다. 화면에는 채널 이름을 보인다.
   const channelName = categories.find((category) => category.slug === post.category)?.name ?? null;
 
@@ -68,6 +71,7 @@ export default async function PostDetailPage({
           currentUserId={currentUserId}
           isAdmin={isAdmin}
           returnTo={returnTo}
+          readSummary={readSummary}
         />
       </div>
     </div>

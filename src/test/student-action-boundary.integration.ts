@@ -46,6 +46,7 @@ let assignmentTaskActions: typeof import("@/lib/actions/assignmentTasks");
 let studentActions: typeof import("@/lib/actions/students");
 let activeProfileModule: typeof import("@/lib/active-profile");
 let postActions: typeof import("@/lib/actions/posts");
+let postReadActions: typeof import("@/lib/actions/postReads");
 let categoryActions: typeof import("@/lib/actions/categories");
 let passwordActions: typeof import("@/lib/actions/password");
 let memoActions: typeof import("@/lib/actions/instructorMemos");
@@ -109,7 +110,7 @@ mock.module("next/cache", {
 });
 
 before(async () => {
-  [calendarActions, curriculumActions, diggingActions, lessonActions, commentActions, feedbackActions, assignmentActions, studentActions, activeProfileModule, postActions, categoryActions, passwordActions, assignmentTaskActions, memoActions, assignmentReviewActions] =
+  [calendarActions, curriculumActions, diggingActions, lessonActions, commentActions, feedbackActions, assignmentActions, studentActions, activeProfileModule, postActions, categoryActions, passwordActions, assignmentTaskActions, memoActions, assignmentReviewActions, postReadActions] =
     await Promise.all([
       import("@/lib/actions/calendarEvents"),
       import("@/lib/actions/curriculum"),
@@ -126,6 +127,7 @@ before(async () => {
       import("@/lib/actions/assignmentTasks"),
       import("@/lib/actions/instructorMemos"),
       import("@/lib/actions/assignment-review"),
+      import("@/lib/actions/postReads"),
     ]);
 });
 
@@ -443,6 +445,53 @@ test("커뮤니티 목록은 keyset으로 겹침 없이 이어 읽고 미리보�
   assert.deepEqual(feedback.posts.map((post) => post.id), ["mix-old-pinned", "mix-new"], "고정 게시물이 먼저 온다");
   await assert.rejects(postActions.getCommunityPostPage({ boardType: "GENERAL", category: "general", cursor: "invalid!" }), /Invalid community cursor/u);
   assert.deepEqual(await postActions.getCommunityPostPage({ boardType: "GENERAL", category: "" }), { posts: [], nextCursor: null });
+});
+
+test("게시물 읽음은 학생이 남의 글을 처음 연 때만 남고, 읽은 학생과 수는 관리자에게만 보인다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("student-1", "student"));
+  await seedProfile(db, "admin-1", "admin");
+  await seedProfile(db, "student-1");
+  await seedProfile(db, "student-2");
+  await seedProfile(db, "student-3");
+  await seedProfile(db, "student-archived");
+  await seedProfile(db, "student-invited");
+  // 가입 전 학생(가입 링크만 있음)은 로그인할 수 없으므로 안 읽음에 세지 않는다.
+  await db.update(profiles).set({ passwordHash: "invite:9999999999:$2a$10$abcdefghijklmnopqrstuv" }).where(eq(profiles.id, "student-invited"));
+  await db.update(profiles).set({ accountStatus: "ARCHIVED", archivedAt: new Date() }).where(eq(profiles.id, "student-archived"));
+  await db.insert(posts).values([
+    { id: "post-by-2", authorId: "student-2", category: "general", boardType: "GENERAL" as const, title: "2의 글", contentHtml: "<p>x</p>", createdAt: new Date() },
+    { id: "post-trashed", authorId: "student-2", category: "general", boardType: "GENERAL" as const, title: "휴지통", contentHtml: "<p>x</p>", createdAt: new Date(), deletedAt: new Date() },
+  ]);
+  const readRows = () => db.select().from(portalSchema.postReads);
+
+  // 학생 1이 두 번 열어도 한 줄, 처음 시각 유지. 글쓴이·휴지통 글·없는 글은 남지 않는다.
+  await postReadActions.recordPostRead("post-by-2");
+  const [first] = await readRows();
+  await postReadActions.recordPostRead("post-by-2");
+  await postReadActions.recordPostRead("post-trashed");
+  await postReadActions.recordPostRead("missing-post");
+  assert.deepEqual(await readRows(), [first]);
+  activeSession = createSession("student-2", "student");
+  await postReadActions.recordPostRead("post-by-2");
+  activeSession = createSession("admin-1", "admin");
+  await postReadActions.recordPostRead("post-by-2");
+  assert.equal((await readRows()).length, 1, "글쓴이와 관리자가 연 것은 남기지 않는다");
+  // 수강 종료한 학생의 기록은 남아 있어도 세지 않는다.
+  await db.insert(portalSchema.postReads).values({ postId: "post-by-2", studentId: "student-archived", firstReadAt: new Date() });
+
+  activeSession = createSession("student-3", "student");
+  await assert.rejects(postReadActions.getPostReadSummary("post-by-2"), /Unauthorized|Forbidden|admin/iu);
+  const studentPage = await postActions.getCommunityPostPage({ boardType: "GENERAL", category: "general" });
+  assert.equal(studentPage.posts.find((post) => post.id === "post-by-2")?.readCount, null, "학생 목록에는 읽음 수를 보내지 않는다");
+
+  activeSession = createSession("admin-1", "admin");
+  const summary = await postReadActions.getPostReadSummary("post-by-2");
+  assert.deepEqual(summary?.readers.map((reader) => reader.id), ["student-1"]);
+  assert.deepEqual(summary?.unread.map((student) => student.id), ["student-3"], "글쓴이·관리자·수강 종료·가입 전 학생은 안 읽음에도 없다");
+  const adminPage = await postActions.getCommunityPostPage({ boardType: "GENERAL", category: "general" });
+  assert.equal(adminPage.posts.find((post) => post.id === "post-by-2")?.readCount, 1);
+  const adminSearch = await postActions.searchCommunityPosts({ boardType: "GENERAL", category: "general", query: "2의" });
+  assert.equal(adminSearch.posts.find((post) => post.id === "post-by-2")?.readCount, 1);
 });
 
 test("학생별 과제 요약은 관리자에게만 최신 제출순과 피드백 수를 돌려준다", { concurrency: false }, async (context) => {

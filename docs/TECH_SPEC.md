@@ -345,7 +345,7 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 
 - runtime dependency audit은 현재 0건이다. 상위 의존성이 보안 패치 전 하위 의존성을 고정하는 구간은 `package.json` override로 제한하며, upstream stable이 해당 버전을 채택하면 override를 제거해야 한다.
 - 개발 도구 전체 audit에는 Drizzle Kit의 구형 esbuild loader 체인에서 발생하는 moderate 권고가 남아 있다. 현재 npm 제안은 호환되지 않는 구버전 downgrade이므로 upstream 패치를 추적한다.
-- migration SQL과 `drizzle/meta` 생성 이력은 `0033`까지 대응하고 `db:check`가 전체 replay와 단계별 upgrade를 검사한다. persistent local D1과 remote의 실제 적용 이력은 승인된 운영 점검 전 추정하지 않는다(마지막 기록: persistent local D1 `0009`까지).
+- migration SQL과 `drizzle/meta` 생성 이력은 `0034`까지 대응하고 `db:check`가 전체 replay와 단계별 upgrade를 검사한다. persistent local D1과 remote의 실제 적용 이력은 승인된 운영 점검 전 추정하지 않는다(마지막 기록: persistent local D1 `0009`까지).
 - 대표 문서 server action과 draft 생명주기의 격리 integration test는 있으나 실제 브라우저 reload·offline·navigation·delete/restore E2E는 없다. 노트 편집기 안정화(자동 저장 revalidate 미호출·제자리 생성·서버본 조용한 폐기)와 학생 실시간 보기도 DOM 통합 테스트까지만 있고 실제 브라우저 두 창 동작은 확인되지 않았다.
 - 운영 배포 직후 이미 열려 있던 탭은 build ID 불일치로 다음 Server Action에서 한 번 hard reload된다(일회성, 코드로 막지 않는다). 서버 초안 fence(b)는 같은 초·같은 version·같은 본문으로 다시 쓴 다른 기기의 행을 폐기 의도에 포함해 지운다(본문이 같아 내용 손실 없음). live view 폴링은 head 조회 1회가 D1 읽기 약 3회라 열린 읽기 탭 수에 비례해 읽기 요청이 늘며, backoff 상한 20초가 그 비용 경계다.
 - 신규 managed media의 registry·문서 claim·purge 삭제 outbox와 인증 delivery, bounded 예약 정리·final prefix cursor reconciliation source를 구현했다. Copy timeout·lease·recovery grace 뒤 발견된 registry 없는 final object와 삭제 상태 object는 다음 inventory page에서 재삭제한다. production에서는 private R2 CORS·staging lifecycle·Cron과 알림을 검증해야 하며, 기존 외부 URL과 managed 형식이 아닌 legacy R2 object는 자동 삭제 대상으로 추정하지 않는다.
@@ -568,3 +568,11 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 - 알림 전달은 best-effort다(30초 fallback).
 - 권한 회수는 lease(150초)만큼 늦을 수 있다. 휴지통 이동과 영구 삭제는 즉시 닫는다.
 - 운영 DO, 실제 hibernation 깨움(로컬에서 관찰할 수 없음), 실제 네트워크 단절·online 복귀, 모바일·Safari 실기기, 며칠 이어진 room은 미검증이다. 운영 배포는 [배포 가이드](./DEPLOYMENT.md)의 DO migration 승인 항목을 따른다.
+
+## 게시물 읽음(2026-11-23)
+
+- 데이터(`0034_post_reads`): `post_reads`(`post_id`·`student_id` 복합 기본키, `first_read_at`), 두 FK 모두 `ON DELETE CASCADE`, index `post_reads_student_idx`. 게시물 영구 삭제는 cascade로, 계정 삭제(`account-privacy-atomic.ts`)는 명시적 `DELETE FROM post_reads WHERE student_id = ?`로 지운다. `db:check`(`scripts/migration-check/post-reads.mjs`)가 채워진 0033 DB에서 upgrade·기존 행 보존·FK·index 사용·처음 시각 유지·게시물 삭제 cascade를 검사한다.
+- 기록(`recordPostRead`, `src/lib/actions/postReads.ts`): 학생 세션만, `INSERT OR IGNORE … SELECT FROM posts WHERE id = ? AND deleted_at IS NULL AND author_id <> 학생` 한 문장이라 글쓴이·휴지통·없는 글은 남지 않고 처음 시각이 유지된다. `PostDetailClient`가 학생이 남의 글을 열 때 effect로 한 번 부르고 실패는 무시한다.
+- 조회: `getPostReadSummary`(관리자 전용)는 수강 중인 학생(`role = student`, `account_status = ACTIVE`, 글쓴이 제외)을 읽은 학생(처음 읽은 순)과 안 읽은 학생(이름순)으로 나눈다. 안 읽은 학생에서는 가입 전(`password_hash`가 가입 링크 hash) 학생을 뺀다(`storedCredentialState`·학생 삭제 조건과 같은 기준). 학생 삭제 조건(`STUDENT_DELETION_RECORD_COLUMNS`)에는 `post_reads.student_id`를 기록 칸으로 넣었다(로그인한 학생만 남기므로 가입 전 학생에게는 생기지 않는다). 목록·검색의 `readCount`는 관리자 세션에서만 `postReadCountSql()`(바깥 `"posts"."id"`를 문자 그대로 쓴 상관 subquery)이고 학생 세션은 `NULL`이다. `communityRowMeta`가 숫자일 때만 "읽음 N"을 붙인다.
+- 화면: `src/components/community/PostReaders.tsx`의 `PostReadersToggle`(머리 줄 "읽음 N/M", `aria-expanded`·`aria-controls`)과 `PostReadersPanel`(기본 접힘). 캔버스 `PostReaders`.
+- 검증: `src/test/student-action-boundary.integration.ts`(기록 조건·관리자 전용·목록/검색 수·수강 종료 제외, 실제 D1), `src/test/portal-interactions.integration.tsx`(학생 기록 호출·글쓴이/관리자 미기록·토글), `src/lib/account-privacy-atomic.test.ts`(계정 삭제).

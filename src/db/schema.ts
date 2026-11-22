@@ -1350,6 +1350,28 @@ export const comments = sqliteTable(
 );
 
 /**
+ * 학생이 커뮤니티 게시물을 처음 연 기록(0034). 학생마다 게시물당 한 줄이고 처음 연 시각만 남긴다.
+ * 관리자만 읽는다(2026-11-23 사용자 결정 "학생들은 보여주지 않고 나한테만"). 글쓴이·관리자가 연 것은 남기지 않는다.
+ * 게시물 영구 삭제와 계정 삭제 때 함께 지워진다.
+ */
+export const postReads = sqliteTable(
+  "post_reads",
+  {
+    postId: text("post_id")
+      .references(() => posts.id, { onDelete: "cascade" })
+      .notNull(),
+    studentId: text("student_id")
+      .references(() => profiles.id, { onDelete: "cascade" })
+      .notNull(),
+    firstReadAt: integer("first_read_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.postId, table.studentId] }),
+    index("post_reads_student_idx").on(table.studentId),
+  ],
+);
+
+/**
  * Phase 5: 디깅 게시판 — 컬럼 정의 (유저별 커스텀).
  * columnType: text / textarea / number / select / rating / link / camelot_key
  * isDefault=true → 삭제 불가 (기본 제공 컬럼).

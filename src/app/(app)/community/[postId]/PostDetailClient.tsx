@@ -7,7 +7,7 @@
  */
 "use client";
 
-import { useCallback, useMemo, useRef, useState, useTransition } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { BookOpen, History, PencilLine, Trash2 } from "lucide-react";
@@ -29,6 +29,8 @@ import { classifyMixsetMedia, formatTimeMarker } from "@/lib/community-mixset-me
 import type { WaveformMarkerInput } from "@/components/player/waveform";
 import { PostEditForm } from "@/components/community/PostEditForm";
 import { PostTrashActions } from "@/components/community/PostTrashActions";
+import { PostReadersPanel, PostReadersToggle } from "@/components/community/PostReaders";
+import { recordPostRead, type PostReadSummary } from "@/lib/actions/postReads";
 import { ADMIN_TRASHED_DETAIL_NOTE } from "@/lib/trash-restore";
 import { COMMUNITY_BOARD_LABELS, communityAuthorName, communityPreview } from "@/components/community/CommunityPostRow";
 import { MobileMoreMenu, type MobileMoreMenuItem } from "@/components/ui/mobile-more-menu";
@@ -49,6 +51,8 @@ interface PostDetailClientProps {
   currentUserId: string | null;
   isAdmin: boolean;
   returnTo: string;
+  /** 관리자에게만 오는 읽은 학생 요약(캔버스 PostReaders). 학생에게는 null이다. */
+  readSummary?: PostReadSummary | null;
 }
 
 export function PostDetailClient({
@@ -59,6 +63,7 @@ export function PostDetailClient({
   currentUserId,
   isAdmin,
   returnTo,
+  readSummary = null,
 }: PostDetailClientProps) {
   const commentList = initialCommentList;
   const [isPending, startTransition] = useTransition();
@@ -73,6 +78,14 @@ export function PostDetailClient({
   // 같은 시점을 다시 눌러도 화면 낭독기가 다시 읽도록 매번 새 노드(nonce key)로 알린다.
   const [seekAnnouncement, setSeekAnnouncement] = useState({ text: "", nonce: 0 });
   const playerRegionRef = useRef<HTMLElement>(null);
+  const [readersOpen, setReadersOpen] = useState(false);
+  // 학생이 남의 게시물을 열면 처음 한 번 읽음으로 남긴다(서버가 글쓴이·관리자·휴지통을 다시 거른다).
+  // 기록 실패는 읽기 화면에 영향을 주지 않는다.
+  const recordsRead = !isAdmin && Boolean(currentUserId) && currentUserId !== post.authorId && !post.deletedAt;
+  useEffect(() => {
+    if (!recordsRead) return;
+    recordPostRead(postId).catch(() => undefined);
+  }, [postId, recordsRead]);
   const positionReaderRef = useRef<PlaybackPositionReader | null>(null);
   // 원 댓글이 지워진 답글을 "새 댓글로 남기기"로 옮길 아래 댓글 입력.
   const commentFormRef = useRef<CommentFormHandle>(null);
@@ -213,6 +226,12 @@ export function PostDetailClient({
             {" · "}
             <span className="md:hidden">{shortDate}</span>
             <span className="hidden md:inline">{longDate}</span>
+            {readSummary ? (
+              <>
+                {" · "}
+                <PostReadersToggle summary={readSummary} open={readersOpen} onToggle={() => setReadersOpen((value) => !value)} />
+              </>
+            ) : null}
           </p>
           {post.deletedAt ? null : (
             <CopyLinkButton className="-ml-2.5 self-start md:hidden" path={postPath} title={post.title} />
@@ -247,6 +266,8 @@ export function PostDetailClient({
           ) : null}
         </div>
       </header>
+
+      {readSummary && readersOpen ? <PostReadersPanel summary={readSummary} /> : null}
 
       {postDeleteConfirm.isOpen && !post.deletedAt ? (
         <ConfirmPanel
