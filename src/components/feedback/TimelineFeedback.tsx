@@ -26,6 +26,7 @@ import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
 import { CREATION_OPERATION_FIELD, createCreationOperationId, parseCreationOperationId } from "@/lib/creation-operation";
 import { useFeedbackMarks } from "./useFeedbackMarks";
 import { FeedbackEditForm } from "./FeedbackEditForm";
+import { FEEDBACK_CONTENT_MAX_LENGTH } from "@/lib/feedback-content";
 
 export interface FeedbackItem {
   id: string;
@@ -269,6 +270,7 @@ function FeedbackForm({
             id="feedback-content"
             name="content"
             type="text"
+            maxLength={FEEDBACK_CONTENT_MAX_LENGTH}
             placeholder={overall ? "과제 전체에 남길 피드백" : "구체적인 수정 지점을 입력하세요"}
             value={content}
             onChange={(event) => {
