@@ -28,7 +28,7 @@ import {
   documentImageClaimStatements,
   privateNoteMediaPurgeStatements,
 } from "@/lib/media-lifecycle-atomic";
-import { isCurrentLessonGroupMember, readNoteAccess } from "@/lib/note-access";
+import { isCurrentLessonGroupMember, readNoteAccess, readNoteLifecycleAccess } from "@/lib/note-access";
 
 type AtomicActor = {
   id: string;
@@ -260,19 +260,29 @@ async function canSeeTombstone(
   return actor.id === tombstone.subjectId;
 }
 
-/** 노트를 고칠 수 있는지(개인: 그 학생 공간의 작성자·관리자, 그룹: 관리자·지금 멤버). */
+/** 노트를 고칠 수 있는지(개인: 그 학생 본인·관리자 — 2026-11-23부터 Stann이 만든 노트도, 그룹: 관리자·지금 멤버). */
 async function canMutateNote(context: DbContext, actor: AtomicActor, note: NoteHead): Promise<boolean> {
   return (await readNoteAccess(context, actor, note)) === "write";
 }
 
+/** 휴지통 이동·휴지통 복원을 할 수 있는지(개인: 작성자 본인·관리자, 그룹: 관리자·지금 멤버). */
+async function canManageNoteLifecycle(context: DbContext, actor: AtomicActor, note: NoteHead): Promise<boolean> {
+  return readNoteLifecycleAccess(context, actor, note);
+}
+
 /**
- * 쓰기 문장의 권한 조건. 미리 읽은 판단과 같은 규칙을 같은 batch 안에서 현재 행·멤버십으로 다시 확인한다
+ * 쓰기 문장의 권한 조건(`scope`: 편집 "edit" 또는 휴지통 이동·복원 "lifecycle"). 미리 읽은 판단과 같은 규칙을 같은 batch 안에서 현재 행·멤버십으로 다시 확인한다
  * (그 사이 그룹에서 빠진 멤버의 쓰기는 조건부 쓰기 실패로 거절된다). `private_notes` 행을 대상으로 하는 문장 안에서만 쓴다.
  */
-function noteWriteAccessSql(actor: AtomicActor): { clause: string; params: readonly unknown[] } {
+function noteWriteAccessSql(
+  actor: AtomicActor,
+  scope: "edit" | "lifecycle" = "edit",
+): { clause: string; params: readonly unknown[] } {
+  // 개인 노트: 편집은 그 학생 본인(2026-11-23, Stann이 만든 노트도), 휴지통 이동·복원은 작성자 본인. 관리자는 둘 다.
+  const personalColumn = scope === "edit" ? "private_notes.student_id" : "private_notes.author_id";
   return {
     clause: `(? = 1
-      OR (private_notes.group_id IS NULL AND private_notes.author_id = ?)
+      OR (private_notes.group_id IS NULL AND ${personalColumn} = ?)
       OR (private_notes.group_id IS NOT NULL AND EXISTS (
         SELECT 1 FROM lesson_group_members AS access_member
         WHERE access_member.student_id = ? AND access_member.group_id = private_notes.group_id
@@ -362,6 +372,12 @@ async function resolveReceiptReplay(
     return { ok: false, reason: "NOT_FOUND_OR_FORBIDDEN" };
   }
   if (input.operationType !== "CREATE" && !(await canMutateNote(context, input.actor, note))) {
+    return { ok: false, reason: "NOT_FOUND_OR_FORBIDDEN" };
+  }
+  if (
+    (input.operationType === "TRASH" || input.operationType === "RESTORE_TRASH") &&
+    !(await canManageNoteLifecycle(context, input.actor, note))
+  ) {
     return { ok: false, reason: "NOT_FOUND_OR_FORBIDDEN" };
   }
 
@@ -1146,7 +1162,7 @@ export async function trashPrivateNoteAtomically(
   if (!existing) {
     return classifyMissingMutation(context, write.actor, write.noteId, write.baseRevision);
   }
-  if (!(await canMutateNote(context, write.actor, existing))) {
+  if (!(await canManageNoteLifecycle(context, write.actor, existing))) {
     return { ok: false, reason: "NOT_FOUND_OR_FORBIDDEN" };
   }
   if (existing.deletedAt) {
@@ -1157,7 +1173,7 @@ export async function trashPrivateNoteAtomically(
   }
 
   const nextRevision = existing.version + 1;
-  const writeAccess = noteWriteAccessSql(write.actor);
+  const writeAccess = noteWriteAccessSql(write.actor, "lifecycle");
   const recordId = deriveDocumentOperationRecordId(write.actor.id, write.operationId);
   const snapshot: PrivateNoteCanonicalSnapshot = {
     title: existing.title,
@@ -1253,7 +1269,7 @@ export async function restoreTrashedPrivateNoteAtomically(
   if (!existing) {
     return classifyMissingMutation(context, write.actor, write.noteId, write.baseRevision);
   }
-  if (!(await canMutateNote(context, write.actor, existing))) {
+  if (!(await canManageNoteLifecycle(context, write.actor, existing))) {
     return { ok: false, reason: "NOT_FOUND_OR_FORBIDDEN" };
   }
   if (!existing.deletedAt) {
@@ -1270,7 +1286,7 @@ export async function restoreTrashedPrivateNoteAtomically(
   }
 
   const nextRevision = existing.version + 1;
-  const writeAccess = noteWriteAccessSql(write.actor);
+  const writeAccess = noteWriteAccessSql(write.actor, "lifecycle");
   const recordId = deriveDocumentOperationRecordId(write.actor.id, write.operationId);
   const snapshot: PrivateNoteCanonicalSnapshot = {
     title: existing.title,

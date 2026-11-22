@@ -497,3 +497,122 @@ test("영구 삭제는 그룹 노트도 관리자만 한다(멤버는 휴지통�
   assert.deepEqual(replay, { ok: false, reason: "PURGED", noteId }, "B 영수증 재전송");
   assert.deepEqual(await groups.deleteLessonGroupAction(groupId), { ok: true }, "그룹 노트가 사라지면 해제된다");
 });
+
+test("Stann이 만든 개인 노트(2026-11-23 사용자 결정): 노트 주인 학생은 함께 고치고 되돌리지만 휴지통·복원·영구 삭제는 못 하고, 다른 학생은 그대로 막힌다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context);
+  as("admin-1", "admin");
+  const created = await notes.createPrivateNote("student-a", {}, createForm("수업 노트", "<p>Stann 본문</p>", null));
+  assert.equal(created.success, true, created.error);
+  const noteId = created.note!.id;
+  const [row] = await db.select().from(privateNotes).where(eq(privateNotes.id, noteId));
+  assert.deepEqual([row.studentId, row.authorId, row.groupId], ["student-a", "admin-1", null]);
+
+  // 학생 A: 쓰기 권한(이전에는 "read")이지만 휴지통 이동·복원 권한은 없다. 공동 편집도 쓰기로 붙는다.
+  as("student-a");
+  const seen = await notes.getPrivateNote(noteId);
+  assert.equal(seen?.access, "write");
+  assert.equal(seen?.canManageLifecycle, false);
+  assert.deepEqual(
+    await collab.authorizeCollabRequest({ id: "student-a", isAdmin: false }, { key: `note:${noteId}` }, collabLoaders()),
+    { ok: true, key: `note:${noteId}`, mode: "write", lifecycle: 0 },
+  );
+
+  // A가 고친다. 이력의 actor는 A다.
+  const updated = await notes.updatePrivateNote(noteId, {}, updateForm("수업 노트", "<p>A가 덧붙인 본문</p>", 1));
+  assert.equal(updated.success, true, updated.error);
+  assert.equal(updated.currentRevision, 2);
+  const revisions = await db.select().from(privateNoteRevisions).where(eq(privateNoteRevisions.noteId, noteId));
+  assert.deepEqual(revisions.map((revision) => revision.actorId).sort(), ["admin-1", "student-a"]);
+  assert.equal((await notes.getPrivateNoteRevisions(noteId)).length, 2, "A도 이력을 본다");
+
+  // A가 첫 버전으로 되돌린다(이력 복원은 편집과 같다).
+  const restored = await notes.restorePrivateNoteRevision(noteId, crypto.randomUUID(), 2, 1);
+  assert.equal(restored.success, true, restored.error);
+  assert.equal((await notes.getPrivateNote(noteId))?.contentHtml, "<p>Stann 본문</p>");
+  const version = (await notes.getPrivateNote(noteId))!.version;
+
+  // 미리 읽기를 건너뛴 원자 쓰기도 같은 batch 조건(그 학생 본인)으로 통과한다.
+  const direct = await atomic.updatePrivateNoteAtomically({ kind: "d1", db } as never, {
+    actor: { id: "student-a", isAdmin: false },
+    noteId,
+    operationId: crypto.randomUUID(),
+    baseRevision: version,
+    title: "수업 노트",
+    contentHtml: "<p>A 원자 쓰기</p>",
+    noteDate: null,
+    now: new Date(),
+  });
+  assert.equal(direct.ok, true, JSON.stringify(direct));
+  const afterDirect = (await notes.getPrivateNote(noteId))!.version;
+
+  // A는 휴지통으로 옮기지 못한다(작성자·관리자만). 원자 쓰기도 같은 판단이다.
+  assert.equal((await notes.trashPrivateNote(noteId, crypto.randomUUID(), afterDirect)).conflictKind, "NOT_FOUND_OR_FORBIDDEN");
+  assert.deepEqual(
+    await atomic.trashPrivateNoteAtomically({ kind: "d1", db } as never, {
+      actor: { id: "student-a", isAdmin: false },
+      noteId,
+      operationId: crypto.randomUUID(),
+      baseRevision: afterDirect,
+      now: new Date(),
+    }),
+    { ok: false, reason: "NOT_FOUND_OR_FORBIDDEN" },
+  );
+  const [stillActive] = await db.select({ deletedAt: privateNotes.deletedAt }).from(privateNotes).where(eq(privateNotes.id, noteId));
+  assert.equal(stillActive.deletedAt, null);
+
+  // 수업 메모는 노트를 고칠 수 있어도 관리자만이다.
+  await assert.rejects(memos.getInstructorMemo({ kind: "note", noteId }), /Admin only|Unauthorized/);
+  await assert.rejects(
+    memos.saveInstructorMemoAction({ kind: "note", noteId }, { contentHtml: "<p>침범</p>", baseVersion: 0 }),
+    /Admin only|Unauthorized/,
+  );
+
+  // 다른 학생 B는 읽기·쓰기·되돌리기·공동 편집 모두 거부된다.
+  as("student-b");
+  await assert.rejects(notes.getPrivateNote(noteId), /Unauthorized/);
+  assert.equal((await notes.updatePrivateNote(noteId, {}, updateForm("x", "<p>침범</p>", afterDirect))).conflictKind, "NOT_FOUND_OR_FORBIDDEN");
+  assert.equal((await notes.restorePrivateNoteRevision(noteId, crypto.randomUUID(), afterDirect, 1)).success, undefined);
+  assert.deepEqual(
+    await atomic.updatePrivateNoteAtomically({ kind: "d1", db } as never, {
+      actor: { id: "student-b", isAdmin: false },
+      noteId,
+      operationId: crypto.randomUUID(),
+      baseRevision: afterDirect,
+      title: "x",
+      contentHtml: "<p>침범</p>",
+      noteDate: null,
+      now: new Date(),
+    }),
+    { ok: false, reason: "NOT_FOUND_OR_FORBIDDEN" },
+  );
+  assert.deepEqual(
+    await collab.authorizeCollabRequest({ id: "student-b", isAdmin: false }, { key: `note:${noteId}` }, collabLoaders()),
+    { ok: false, reason: "NOT_FOUND_OR_FORBIDDEN" },
+  );
+  const [untouched] = await db.select({ contentHtml: privateNotes.contentHtml }).from(privateNotes).where(eq(privateNotes.id, noteId));
+  assert.equal(untouched.contentHtml, "<p>A 원자 쓰기</p>");
+
+  // 관리자가 휴지통으로 옮기면 A는 휴지통에서 보지만 복원하지 못한다.
+  as("admin-1", "admin");
+  assert.equal((await notes.trashPrivateNote(noteId, crypto.randomUUID(), afterDirect)).success, true);
+  as("student-a");
+  assert.deepEqual((await notes.getTrashedPrivateNotes("student-a")).map((note) => [note.id, note.canWrite]), [[noteId, false]]);
+  assert.equal((await notes.getPrivateNoteIncludingTrash(noteId))?.canManageLifecycle, false);
+  assert.equal((await notes.restorePrivateNote(noteId, crypto.randomUUID(), afterDirect + 1)).conflictKind, "NOT_FOUND_OR_FORBIDDEN");
+  // 관리자는 휴지통에서 되살렸다가 다시 옮긴다.
+  as("admin-1", "admin");
+  assert.equal((await notes.restorePrivateNote(noteId, crypto.randomUUID(), afterDirect + 1)).success, true);
+  assert.equal((await notes.trashPrivateNote(noteId, crypto.randomUUID(), afterDirect + 2)).success, true);
+  as("student-a");
+  // 영구 삭제는 관리자만이다(보존 기간이 지난 것처럼 옮겨도).
+  await db.update(privateNotes).set({ deletedAt: new Date(Date.now() - 40 * 86_400_000) }).where(eq(privateNotes.id, noteId));
+  assert.equal((await notes.purgePrivateNote(noteId, crypto.randomUUID(), afterDirect + 3)).conflictKind, "NOT_FOUND_OR_FORBIDDEN");
+  assert.equal((await db.select().from(privateNotes).where(eq(privateNotes.id, noteId))).length, 1);
+
+  // 학생이 직접 만든 개인 노트는 지금처럼 본인이 휴지통으로 옮긴다.
+  as("student-a");
+  const own = await notes.createPrivateNote("student-a", {}, createForm("내 노트", "<p>내 본문</p>", null));
+  assert.equal(own.success, true, own.error);
+  assert.equal((await notes.getPrivateNote(own.note!.id))?.canManageLifecycle, true);
+  assert.equal((await notes.trashPrivateNote(own.note!.id, crypto.randomUUID(), 1)).success, true);
+});

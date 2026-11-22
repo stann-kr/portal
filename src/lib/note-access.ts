@@ -7,6 +7,7 @@ import type { DbContext } from "@/db/client";
 import { lessonGroupMembers } from "@/db/schema";
 import { asDocumentReadDb } from "@/lib/document-lifecycle-atomic";
 import {
+  canManageNoteLifecycle,
   noteAccessNeedsMembership,
   resolveNoteAccess,
   type NoteAccessActor,
@@ -33,4 +34,16 @@ export async function readNoteAccess(
     ? await isCurrentLessonGroupMember(context, actor.id, note.groupId)
     : false;
   return resolveNoteAccess(actor, note, member);
+}
+
+/** 휴지통 이동·휴지통 복원 권한(`canManageNoteLifecycle`). 그룹 노트일 때만 멤버십을 읽는다. */
+export async function readNoteLifecycleAccess(
+  context: DbContext,
+  actor: NoteAccessActor,
+  note: NoteAccessSubject,
+): Promise<boolean> {
+  const member = noteAccessNeedsMembership(actor, note)
+    ? await isCurrentLessonGroupMember(context, actor.id, note.groupId)
+    : false;
+  return canManageNoteLifecycle(actor, note, member);
 }

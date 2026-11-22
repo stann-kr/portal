@@ -101,9 +101,10 @@ const student1 = { id: "s1", isAdmin: false };
 const student2 = { id: "s2", isAdmin: false };
 const admin = { id: "admin", isAdmin: true };
 
-test("권한: 노트는 학생 본인·관리자만, 쓰기는 작성자·관리자만", async () => {
+test("권한: 노트는 학생 본인·관리자만 읽고 쓴다(Stann이 만든 노트도 학생이 쓴다)", async () => {
   assert.deepEqual(await authorizeCollabRequest(student1, { key: "note:mine" }, loaders()), { ok: true, key: "note:mine", mode: "write", lifecycle: 0 });
-  assert.deepEqual(await authorizeCollabRequest(student1, { key: "note:stann" }, loaders()), { ok: true, key: "note:stann", mode: "read", lifecycle: 7 });
+  // 2026-11-23 사용자 결정: Stann이 만든 그 학생의 개인 노트도 학생이 함께 쓴다(이전에는 "read").
+  assert.deepEqual(await authorizeCollabRequest(student1, { key: "note:stann" }, loaders()), { ok: true, key: "note:stann", mode: "write", lifecycle: 7 });
   assert.deepEqual(await authorizeCollabRequest(admin, { key: "note:stann" }, loaders()), { ok: true, key: "note:stann", mode: "write", lifecycle: 7 });
   assert.deepEqual(await authorizeCollabRequest(admin, { key: "note:mine" }, loaders()), { ok: true, key: "note:mine", mode: "write", lifecycle: 0 });
   for (const key of ["note:mine", "note:stann"]) {

@@ -115,7 +115,8 @@ const noteOptionColumns = {
   groupId: privateNotes.groupId,
 };
 
-async function personalNotes(studentId: string, authorId: string | null): Promise<GuideQuoteNoteOption[]> {
+/** 그 학생의 개인 노트. 학생도 Stann이 만든 자기 노트에 쓸 수 있으므로(2026-11-23) 작성자로 거르지 않는다. */
+async function personalNotes(studentId: string): Promise<GuideQuoteNoteOption[]> {
   const rows = await createDb()
     .select(noteOptionColumns)
     .from(privateNotes)
@@ -124,8 +125,6 @@ async function personalNotes(studentId: string, authorId: string | null): Promis
         eq(privateNotes.studentId, studentId),
         isNull(privateNotes.groupId),
         isNull(privateNotes.deletedAt),
-        // 학생은 내가 쓴 노트만 고친다(Stann이 쓴 내 노트는 읽기 전용).
-        authorId ? eq(privateNotes.authorId, authorId) : undefined,
       ),
     )
     .orderBy(desc(privateNotes.updatedAt));
@@ -174,7 +173,7 @@ export async function getGuideQuoteDestinations(
     const studentId = session.user.id;
     const group = await readStudentLessonGroup(context, studentId);
     const [own, shared, closedMembers] = await Promise.all([
-      personalNotes(studentId, studentId),
+      personalNotes(studentId),
       group ? groupNotes(group.id) : Promise.resolve([]),
       group ? closedStudentsFor(context, page.id, group.members.map((member) => member.id)) : Promise.resolve([]),
     ]);
@@ -213,7 +212,7 @@ export async function getGuideQuoteDestinations(
   const memberIds = await resolveSpaceStudents(context, session, space);
   if (!memberIds) return { ok: false, error: "학생 또는 그룹을 찾을 수 없습니다. 다시 골라 주세요." };
   const [notes, closedStudents] = await Promise.all([
-    space.kind === "student" ? personalNotes(space.id, null) : groupNotes(space.id),
+    space.kind === "student" ? personalNotes(space.id) : groupNotes(space.id),
     closedStudentsFor(context, page.id, memberIds),
   ]);
   const newNoteStudentId = space.kind === "student" ? space.id : memberIds.find((id) => activeIds.has(id)) ?? null;

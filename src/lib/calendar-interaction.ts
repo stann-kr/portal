@@ -17,7 +17,8 @@ const READ_ONLY: CalendarItemEditing = { kind: null, movable: false, resizable: 
 
 /**
  * 일정·레슨은 관리자와 그 학생 본인이 모두 옮긴다(2026-10-26 사용자 결정).
- * 노트는 노트 수정 권한과 같다: 관리자이거나 본인이 쓴 노트.
+ * 노트는 노트 수정 권한과 같다: 관리자이거나 그 학생 본인(2026-11-23부터 Stann이 만든 자기 노트도).
+ * 캘린더에는 개인 노트만 실린다(그룹 노트는 빠진다).
  */
 export function getCalendarItemEditing(
   item: UnifiedItem,
@@ -31,7 +32,7 @@ export function getCalendarItemEditing(
     case "LESSON":
       return ownsSpace ? { kind: "lesson", movable: true, resizable: false } : READ_ONLY;
     case "PRIVATE_NOTE":
-      return context.role === "admin" || (ownsSpace && item.metadata.authorId === context.actorId)
+      return ownsSpace
         ? { kind: "note", movable: true, resizable: false }
         : READ_ONLY;
     default:
@@ -56,7 +57,7 @@ export function getCalendarItemLockReason(item: UnifiedItem, context: CalendarEd
   if (item.source.kind !== "PORTAL") return "연결한 외부 캘린더의 일정은 그 캘린더에서 바꿔 주세요.";
   switch (item.source.entity) {
     case "PRIVATE_NOTE":
-      return "다른 사람이 쓴 노트는 작성자나 Stann만 날짜를 옮길 수 있습니다.";
+      return "다른 학생의 노트는 그 학생이나 Stann만 날짜를 옮길 수 있습니다.";
     case "DIGGING_TRACK":
       return "디깅 트랙은 추가한 날짜에 기록되어 옮길 수 없습니다.";
     case "QNA_THREAD":

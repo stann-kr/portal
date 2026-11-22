@@ -634,7 +634,8 @@ export function mediaClaimStatements(input: {
 
 /**
  * 본문 이미지를 올린 사람이 그 문서를 고칠 수 있는지 판단하는 SQL. 각 문서의 기존 편집 규칙과 같다
- * (노트·게시물: 작성자 또는 관리자, 그룹 노트는 지금 그 그룹 멤버도. `canMutateNote`·`canMutatePost`·공동 편집 쓰기 권한).
+ * (노트: 작성자·그 학생 본인(2026-11-23, Stann이 만든 개인 노트도 학생이 편집) 또는 관리자, 그룹 노트는 지금 그 그룹 멤버도.
+ * 게시물: 작성자 또는 관리자. `canMutateNote`·`canMutatePost`·공동 편집 쓰기 권한).
  * 공동 편집에서는 저장을 맡은 한 사람만 저장하므로, 다른 편집자가 넣은 이미지도 연결해야 404·만료 정리가 없다.
  * 문서 행이 아직 없는 생성 저장(게시물 INSERT 전 claim)이나 단독 작성인 Q&A 답글은 저장자 본인 이미지만 연결한다.
  */
@@ -644,7 +645,10 @@ const DOCUMENT_EDITOR_UPLOADER_CONDITIONS: Partial<Record<MediaResourceType, str
       SELECT 1 FROM private_notes AS claim_document
       WHERE claim_document.id = ? AND claim_document.deleted_at IS NULL
         AND (
-          (claim_document.group_id IS NULL AND claim_document.author_id = media_objects.owner_id)
+          (claim_document.group_id IS NULL AND (
+            claim_document.author_id = media_objects.owner_id
+            OR claim_document.student_id = media_objects.owner_id
+          ))
           OR (claim_document.group_id IS NOT NULL AND EXISTS (
             SELECT 1 FROM lesson_group_members AS claim_member
             WHERE claim_member.student_id = media_objects.owner_id

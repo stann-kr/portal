@@ -5,7 +5,7 @@ import { noteAccessNeedsMembership, resolveNoteAccess } from "@/lib/note-access-
 
 /**
  * 공동 편집 토큰 발급 전 권한 판단. 기존 문서 action과 같은 규칙만 쓴다.
- * - 노트: `resolveNoteAccess` 규칙. 개인 노트는 읽기 학생 본인·관리자, 쓰기 작성자·관리자. 그룹 노트는 관리자·지금 그 그룹
+ * - 노트: `resolveNoteAccess` 규칙. 개인 노트는 읽기·쓰기 그 학생 본인·관리자(2026-11-23부터 Stann이 만든 노트도). 그룹 노트는 관리자·지금 그 그룹
  *   멤버가 쓰기, 그 밖은 거부. 휴지통 노트는 거부(볼 권한이 있으면 TRASHED로 구분).
  * - 새 노트: 결정적 생성 id가 아직 없고 그 학생 공간에 쓸 수 있으면 쓰기. 저장 위치(개인·그룹)는 room id에 넣지 않는다
  *   (작성 중 저장 위치를 바꿔도 room이 바뀌지 않게). 그룹 노트로 만들 수 있는지는 생성 action의 원자 INSERT가 확인한다.

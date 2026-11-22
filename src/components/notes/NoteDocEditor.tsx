@@ -26,6 +26,7 @@ export function NoteDocEditor({
   updatedLabel: initialUpdatedLabel,
   instructor,
   groupShareLine,
+  canTrash,
 }: {
   note: { id: string; title: string; contentHtml: string; noteDate: Date | null; version: number };
   actorId: string;
@@ -40,6 +41,11 @@ export function NoteDocEditor({
   instructor?: NoteInstructorTools;
   /** 그룹 노트면 머리 안내 줄 문구. */
   groupShareLine?: string | null;
+  /**
+   * 휴지통 이동을 보일지(서버의 `canManageNoteLifecycle`). 학생이 Stann이 만든 자기 노트를 함께 쓸 때는 false라
+   * 더 보기 메뉴(지금은 휴지통 이동 하나뿐)를 그리지 않는다(2026-11-23).
+   */
+  canTrash: boolean;
 }) {
   // 자동 저장은 route를 다시 렌더하지 않으므로 "수정" 줄은 저장 응답의 시각으로 여기서 맞춘다.
   const [updatedLabel, setUpdatedLabel] = useState(initialUpdatedLabel);
@@ -68,7 +74,9 @@ export function NoteDocEditor({
                       {status}
                       {toolsButton("touch")}
                       <NoteHistoryLink href={historyHref} compact />
-                      <DeleteNoteButton noteId={note.id} version={version ?? note.version} presentation="menu" size="touch" />
+                      {canTrash ? (
+                        <DeleteNoteButton noteId={note.id} version={version ?? note.version} presentation="menu" size="touch" />
+                      ) : null}
                     </>
                   }
                 />
@@ -76,7 +84,9 @@ export function NoteDocEditor({
                   {status}
                   {toolsButton("sm")}
                   <NoteHistoryLink href={historyHref} />
-                  <DeleteNoteButton noteId={note.id} version={version ?? note.version} presentation="menu" />
+                  {canTrash ? (
+                    <DeleteNoteButton noteId={note.id} version={version ?? note.version} presentation="menu" />
+                  ) : null}
                 </NoteDocumentStrip>
               </>
             ),
