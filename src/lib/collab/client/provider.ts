@@ -910,11 +910,28 @@ export class CollabProvider {
       this.scheduleIdleCheck(remaining);
       return;
     }
+    // 화면을 보고 있고 다른 사람이 같은 문서에 함께 있으면 입력이 없어도 쉬지 않는다(수업 중 지켜보기).
+    // 숨긴 탭은 함께 있는 사람이 있어도 기준대로 쉰다.
+    if (this.hiddenAt === null && this.hasOtherPeople()) {
+      this.scheduleIdleCheck(PAUSE_RECHECK_MS);
+      return;
+    }
     if (!this.canPause()) {
       this.scheduleIdleCheck(PAUSE_RECHECK_MS);
       return;
     }
     this.pause();
+  }
+
+  /** awareness에 이 계정이 아닌 사람이 있다(같은 계정의 다른 탭은 세지 않는다). */
+  private hasOtherPeople(): boolean {
+    const me = this.identity?.userId ?? null;
+    for (const [clientId, state] of this.awareness.getStates()) {
+      if (clientId === this.doc.clientID) continue;
+      const userId = (state as { user?: { userId?: unknown } } | undefined)?.user?.userId;
+      if (typeof userId === "string" && userId !== me) return true;
+    }
+    return false;
   }
 
   /** 동기화가 끝난 연결이고 보낼 것·받는 중인 복원이 없을 때만 쉰다(놓아도 잃는 것이 없다). */
