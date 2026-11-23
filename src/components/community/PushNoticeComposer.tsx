@@ -131,7 +131,7 @@ export function PushNoticeComposer({
               aria-describedby={error ? errorId : undefined}
               aria-invalid={length > PUSH_NOTICE_MAX_LENGTH || undefined}
               placeholder="예: 내일 레슨은 30분 늦게 7시 30분에 시작해요."
-              className="w-full resize-none rounded-lg border border-input bg-background px-3 py-2.5 text-body text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="w-full resize-none rounded-lg border border-input bg-background px-3 py-2.5 text-body text-foreground placeholder:text-muted-foreground focus-visible:outline-2 focus-visible:outline-ring focus-visible:-outline-offset-1"
             />
             <p className={cn("self-end font-mono text-xs", length > PUSH_NOTICE_MAX_LENGTH ? "text-destructive" : "text-muted-foreground")}>
               {length}/{PUSH_NOTICE_MAX_LENGTH}

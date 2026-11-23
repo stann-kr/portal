@@ -6,7 +6,7 @@
 "use client";
 
 import { useEffect, useId, useState, useTransition } from "react";
-import { Bell, ChevronDown } from "lucide-react";
+import { Bell } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ConfirmPanel, useConfirmAction } from "@/components/ui/confirm-action";
 import {
@@ -80,11 +80,6 @@ export function PushNoticeRow({ notice, onChanged }: { notice: PushNoticeRowData
             {meta} · 읽음 <span className="font-mono">{notice.readCount}/{notice.recipientCount}</span>
           </span>
         </span>
-        <ChevronDown
-          aria-hidden="true"
-          className={cn("mt-1 size-3.5 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none md:mt-0", open && "rotate-180")}
-          strokeWidth={1.8}
-        />
       </button>
       {open ? (
         <div id={panelId} className="flex flex-col gap-3.5 pb-4 pl-6 md:px-1 md:pl-7">
