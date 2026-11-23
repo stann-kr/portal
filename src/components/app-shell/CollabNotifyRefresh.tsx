@@ -4,6 +4,8 @@
  * Q&A 답글·상태, 학생 홈 최근 노트가 다른 창에서 바뀌면 새로고침 없이 수 초 안에 보이게 한다.
  * - 다시 연결됐을 때 room 순번(seq)이 마지막으로 본 값과 다르면 그사이 놓친 알림이 있으므로 한 번 다시 받는다.
  * - 입력 중이면(`shouldSkipRouteRefresh`) 미뤘다가 입력이 멈추면 받는다(알림을 버리지 않는다).
+ * - 연결돼 있는 동안(`connected`, 잠시 쉬는 `paused` 포함)은 같은 화면 `RouteAutoRefresh`의 주기 재조회를 5분으로 늘린다
+ *   (`markCollabNotifyLive`). 쉬는 연결은 활동이 생기면 다시 붙고 놓친 순번을 따라잡는다.
  * - binding이 없는 환경(next dev)은 연결하지 않고, 기존 `RouteAutoRefresh` 30초 재조회가 그대로 따라온다.
  * - yjs·연결 코드는 마운트한 뒤에 받는다(학생 홈 첫 화면 JS와 Worker 첫 요청에서 뺀다). 받지 못하면 네트워크가
  *   돌아왔을 때 한 번만 더 받아 보고, 그래도 안 되면 연결 없이 `RouteAutoRefresh` 재조회만 남는다.
@@ -15,6 +17,7 @@ import { useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { formatCollabDocKey, type CollabNotifyTopic } from "@/lib/collab/doc-key";
 import { shouldSkipRouteRefresh } from "./RouteAutoRefresh";
+import { markCollabNotifyLive } from "./collab-notify-live";
 
 /** 알림이 몰려도 이 간격보다 자주 다시 받지 않는다. */
 export const COLLAB_NOTIFY_MIN_GAP_MS = 1_500;
@@ -112,6 +115,22 @@ export function CollabNotifyRefresh({
         }
         if (previous !== seq) request();
       }));
+      // 연결된 동안만 주기 재조회를 늘린다. 끊기거나(offline·denied 등) 정리되면 원래 간격으로 돌린다.
+      let releaseLive: (() => void) | null = null;
+      const syncLive = (status: string) => {
+        const live = status === "connected" || status === "paused";
+        if (live && !releaseLive) releaseLive = markCollabNotifyLive();
+        if (!live && releaseLive) {
+          releaseLive();
+          releaseLive = null;
+        }
+      };
+      cleanups.push(() => {
+        releaseLive?.();
+        releaseLive = null;
+      });
+      cleanups.push(provider.on("status", syncLive));
+      syncLive(provider.status);
       const onVisible = () => {
         if (document.visibilityState === "visible" && pending && !timer) timer = setTimeout(run, 0);
       };

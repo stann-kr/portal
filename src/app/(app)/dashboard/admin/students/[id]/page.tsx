@@ -20,7 +20,7 @@ import {
 } from "@/lib/actions/students";
 import { getCurriculumByStudent } from "@/lib/actions/curriculum";
 import { isCurriculumVisible } from "@/lib/curriculum-visibility";
-import { getConnectedLessonsForStudent, getLessonsByStudent } from "@/lib/actions/lessons";
+import { getConnectedLessonsForStudent, getLessonsByStudent, getSubscribedLessonsForStudent } from "@/lib/actions/lessons";
 import { getOrSeedColumns, getDiggingTracks } from "@/lib/actions/digging";
 import { getDiggingPlaylists } from "@/lib/actions/digging-playlists";
 import { getQnaThreadsByStudent } from "@/lib/actions/qna";
@@ -250,6 +250,10 @@ export default async function StudentDetailPage({
     getLessonGroups().catch(() => []),
   ]);
 
+  // 학생 공개 iCal 구독 일정(바깥 요청)은 기다리지 않고 promise로 넘겨 화면이 뜬 뒤 레슨 일정에 합친다.
+  const subscribedLessons = activeTab === "overview"
+    ? getSubscribedLessonsForStudent(studentId).catch(() => [])
+    : undefined;
   // Overview 탭 데이터는 미리 병렬 fetch
   const [modules, lessons, calendarFeedIssuedAt, accountState, studentMemo, connectedLessons, lessonNoteIds, guideAccess] = await (activeTab === "overview"
     ? Promise.all([
@@ -316,6 +320,7 @@ export default async function StudentDetailPage({
               modules={modules}
               lessons={lessons}
               connectedLessons={connectedLessons}
+              subscribedLessons={subscribedLessons}
               calendarFeedIssuedAt={calendarFeedIssuedAt}
               account={account}
               guideAccess={guideAccess}

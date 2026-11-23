@@ -7,11 +7,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useInsertionEffect, useLayoutEffect, useRef, type ReactNode } from "react";
-import FullCalendar from "@fullcalendar/react";
-import dayGridPlugin from "@fullcalendar/daygrid";
-import timeGridPlugin from "@fullcalendar/timegrid";
-import interactionPlugin from "@fullcalendar/interaction";
-import koLocale from "@fullcalendar/core/locales/ko";
+import type FullCalendar from "@fullcalendar/react";
 import type {
   DateSelectArg,
   DateSpanApi,
@@ -74,6 +70,31 @@ import { createCreationOperationId } from "@/lib/creation-operation";
 import { formatKst } from "@/lib/kst-format";
 import { cn } from "@/lib/utils";
 import { SkeletonBar } from "@/components/ui/skeleton";
+import { LazyLoadFailed, retryableLazy } from "@/components/ui/retryable-lazy";
+import { useIdlePreload } from "@/lib/hooks/useIdlePreload";
+
+/**
+ * FullCalendar(월·주 달력)는 코드가 커서 첫 화면 JS에서 빼고 따로 받는다. 받는 동안은 아래 같은 높이의 빈 판이
+ * 자리를 지킨다(loading은 그리지 않는다). 화면이 뜬 뒤 한가할 때 미리 받아 월·주를 열 때 기다리지 않게 한다.
+ */
+const preloadFullCalendarGrid = () => import("./FullCalendarGrid");
+const FullCalendarGrid = retryableLazy(
+  () => preloadFullCalendarGrid().then((m) => m.FullCalendarGrid),
+  {
+    loading: null,
+    // 빈 판(absolute) 위에 보이도록 한 겹 올린다.
+    failed: (retry) => (
+      <div className="relative z-[1] bg-background">
+        <LazyLoadFailed
+          message="달력을 불러오지 못했습니다."
+          description="연결을 확인한 뒤 다시 시도해 주세요."
+          minHeight="12.5rem"
+          onRetry={retry}
+        />
+      </div>
+    ),
+  },
+);
 
 export type CalendarGridView = "dayGridMonth" | "timeGridWeek";
 
@@ -246,7 +267,6 @@ function renderSlotLabel(arg: SlotLabelContentArg) {
 }
 
 const DAY_HEADER_FORMAT = { weekday: "short" } as const;
-const CALENDAR_PLUGINS = [dayGridPlugin, timeGridPlugin, interactionPlugin];
 /** 주 보기는 12시간(48px × 12)이 한 화면에 들어오는 높이로 두고 안에서 넘긴다(창 높이를 재기 전 기본값). */
 const WEEK_CONTENT_HEIGHT = 680;
 /** 주 보기 전체 높이(머리줄 포함)의 하한. 창이 낮아도 이보다 줄이지 않는다. */
@@ -298,7 +318,7 @@ export function UnifiedCalendar({
 }: UnifiedCalendarProps) {
   const calendarRef = useRef<FullCalendar>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const [initialView] = useState<CalendarGridView>(view);
+  useIdlePreload(preloadFullCalendarGrid);
   // 서버 렌더에는 기간 제목을 모르므로 비워 두고, 달력이 알려 준 실제 기간으로 채운다.
   const [period, setPeriod] = useState<{ type: CalendarGridView | null; title: string }>({ type: null, title: "" });
 
@@ -737,13 +757,11 @@ export function UnifiedCalendar({
             ))}
           </div>
         ) : null}
-        <FullCalendar
-          ref={calendarRef}
-          plugins={CALENDAR_PLUGINS}
-          initialView={initialView}
+        <FullCalendarGrid
+          calendarRef={calendarRef}
+          initialView={view}
           initialDate={initialDate ?? undefined}
           headerToolbar={false}
-          locale={koLocale}
           timeZone={CALENDAR_TIME_ZONE}
           now={getCalendarNow}
           events={fcEvents}

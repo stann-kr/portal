@@ -49,14 +49,19 @@ export default async function StudentPortalPage({ searchParams }: { searchParams
   });
 
   // 정기 과제 회차를 먼저 만들어 오늘·캘린더(통합 항목)가 같은 회차를 보게 한다.
-  const assignmentTasks = await getMyAssignmentTasks();
+  // 통합 항목만 회차 생성 뒤에 읽고, 나머지 조회는 회차 생성과 함께 병렬로 시작한다.
+  const assignmentTasksPromise = getMyAssignmentTasks();
+  const unifiedItemsPromise = assignmentTasksPromise.then(() => getUnifiedItems());
+  // 회차 생성이 실패하면 아래 Promise.all이 같은 오류로 끝난다. 통합 항목 promise의 같은 실패는 따로 알리지 않는다.
+  unifiedItemsPromise.catch(() => undefined);
 
   // 병렬 데이터 패치. 게시물은 본문 없이 화면에 필요한 개수만 읽는다.
   const referenceTime = new Date();
-  const [announcements, unifiedItems, curriculumModules, rawAssignments, feedbacksMap, externalCalendarConnection, lessonGroup] =
+  const [assignmentTasks, announcements, unifiedItems, curriculumModules, rawAssignments, feedbacksMap, externalCalendarConnection, lessonGroup] =
     await Promise.all([
+      assignmentTasksPromise,
       getAnnouncementSummaries(3),
-      getUnifiedItems(),
+      unifiedItemsPromise,
       // 커리큘럼이 숨겨져 있으면 읽지 않는다(src/lib/curriculum-visibility.ts).
       isCurriculumVisible() ? getMyCurriculum() : Promise.resolve([]),
       getMyAssignments(),

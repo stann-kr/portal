@@ -32,6 +32,20 @@ export type ActiveProfileLoader = (
 ) => Promise<ActiveProfile | null>;
 
 /**
+ * 학생 대상 확인의 기본 profile 조회. 한 렌더(요청) 안에서 같은 학생을 여러 action·query가 확인해도 한 번만 읽는다.
+ * React cache는 요청 범위에서만 memoize하므로 다른 요청(다음 action 호출)은 다시 읽는다.
+ */
+const findActiveProfileForRequest: ActiveProfileLoader = cache(
+  (profileId: string) => findActiveProfileById(profileId),
+);
+
+/**
+ * `resolveSignedInSession`이 이 요청에서 방금 DB(또는 JWT 갱신의 DB 확인)로 확인한 profile.
+ * 같은 session 객체로 본인 학생 스페이스를 확인할 때 같은 행을 다시 읽지 않는다. 손으로 만든 session은 여기 없다.
+ */
+const verifiedSessionProfiles = new WeakMap<object, ActiveProfile>();
+
+/**
  * 학생 스페이스를 대상으로 하는 route/action의 대상 profile 계약.
  * 존재하지 않거나 활성 학생이 아닌 profile은 같은 안전한 결과(null)로 좁힌다.
  */
@@ -48,7 +62,7 @@ export async function findStudentTarget(
  */
 export async function requireStudentTarget(
   studentId: string,
-  loadProfile: ActiveProfileLoader = findActiveProfileById,
+  loadProfile: ActiveProfileLoader = findActiveProfileForRequest,
 ): Promise<ActiveProfile> {
   await requireAdmin();
   const student = await findStudentTarget(studentId, loadProfile);
@@ -58,13 +72,19 @@ export async function requireStudentTarget(
 
 /**
  * 본인 또는 관리자가 학생 스페이스를 읽거나 변경할 때 대상 role까지 검증한다.
+ * 대상이 로그인한 학생 본인이고 session이 이 요청에서 활성 학생 profile로 확인된 것이면 그 profile을 쓴다
+ * (수강 종료·삭제된 학생은 session 확인에서 이미 걸러진다). 그 밖에는 대상 profile을 읽는다.
  */
 export async function requireStudentOwnerOrAdmin(
   session: AuthSession,
   studentId: string,
-  loadProfile: ActiveProfileLoader = findActiveProfileById,
+  loadProfile: ActiveProfileLoader = findActiveProfileForRequest,
 ): Promise<ActiveProfile> {
   assertOwnerOrAdmin(session, studentId);
+  const verified = loadProfile === findActiveProfileForRequest ? verifiedSessionProfiles.get(session) : undefined;
+  if (verified && verified.role === "student" && verified.id === studentId && session.user.id === studentId) {
+    return verified;
+  }
   const student = await findStudentTarget(studentId, loadProfile);
   if (!student) throw new Error("Student not found");
   return student;
@@ -84,7 +104,7 @@ export async function resolveSignedInSession(
   const profile = await loadProfile(session.user.id);
   if (!profile) return null;
 
-  return {
+  const resolved: AuthSession = {
     ...session,
     user: {
       ...session.user,
@@ -94,6 +114,8 @@ export async function resolveSignedInSession(
       role: profile.role,
     },
   };
+  verifiedSessionProfiles.set(resolved, profile);
+  return resolved;
 }
 
 /**

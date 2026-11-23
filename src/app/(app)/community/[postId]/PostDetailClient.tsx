@@ -123,9 +123,9 @@ export function PostDetailClient({
       try {
         const result = await deleteComment(commentId, postId);
         if ("error" in result) {
-          // 화면을 열어 둔 사이 게시물·댓글 상태가 바뀌었다. 이유를 알리고 지금 상태로 다시 받는다.
+          // 화면을 열어 둔 사이 게시물·댓글 상태가 바뀌었다. 이유를 알린다. 지금 상태는 action이 revalidatePath로
+          // 같은 응답에 담아 보내므로 따로 다시 받지 않는다(두 번 그리지 않는다).
           setDeleteError(result.error);
-          router.refresh();
         }
       } catch {
         setDeleteError("댓글을 삭제하지 못했습니다. 다시 시도해 주세요.");
@@ -157,10 +157,10 @@ export function PostDetailClient({
   const historyHref = `/community/${post.id}/history?returnTo=${encodeURIComponent(returnTo)}`;
   const postPath = `/community/${encodeURIComponent(post.id)}`;
   const refreshComments = useCallback(() => router.refresh(), [router]);
+  // 저장 action(updatePostContent)이 revalidatePath로 새 화면을 같은 응답에 담아 보내므로 따로 다시 받지 않는다.
   const handleSaved = useCallback(() => {
     setIsEditing(false);
-    router.refresh();
-  }, [router]);
+  }, []);
   const requestPostDelete = postDeleteConfirm.request;
   const toggleEditing = useCallback(() => setIsEditing((value) => !value), []);
 

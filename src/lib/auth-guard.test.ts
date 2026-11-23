@@ -176,3 +176,19 @@ test("임시 비밀번호 session은 새 비밀번호를 정하기 전까지 포
   assert.equal(signedIn?.user.passwordChangeRequired, true);
   assert.equal(await resolveSignedInSession(session, async () => null), null);
 });
+
+test("이 요청에서 활성 학생으로 확인한 session이 본인 스페이스를 대상으로 하면 profile을 다시 읽지 않는다", async () => {
+  const student = createProfile("student-1", "student");
+  const resolved = await resolveActiveSession(createSession("student-1", "student"), async () => student);
+  assert.ok(resolved);
+  // 기본 조회(DB)를 부르지 않고 session 확인 때 읽은 profile을 돌려준다(이 테스트에는 DB가 없다).
+  assert.deepEqual(await requireStudentOwnerOrAdmin(resolved, "student-1"), student);
+  // 다른 학생은 소유권에서 막힌다.
+  await assert.rejects(() => requireStudentOwnerOrAdmin(resolved, "student-2"), /Unauthorized/);
+  // 손으로 만든(확인되지 않은) session은 대상 profile을 읽는다(DB 없는 테스트에서는 조회가 실패한다).
+  await assert.rejects(() => requireStudentOwnerOrAdmin(createSession("student-1", "student"), "student-1"));
+  // 관리자 session은 대상 학생을 늘 읽는다.
+  const admin = await resolveActiveSession(createSession("admin-1", "admin"), async () => createProfile("admin-1", "admin"));
+  assert.ok(admin);
+  await assert.rejects(() => requireStudentOwnerOrAdmin(admin, "student-1"));
+});

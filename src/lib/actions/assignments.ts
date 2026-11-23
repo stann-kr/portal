@@ -211,6 +211,7 @@ export async function deleteMyAssignment(assignmentId: string): Promise<DeleteAs
 
 /**
  * 학생 본인 과제 목록 조회 (최신순).
+ * 목록은 글을 냈는지만 보이므로 본문(text_html) 대신 글 유무만 읽는다.
  */
 export async function getMyAssignments() {
   const session = await requireAuth();
@@ -220,7 +221,8 @@ export async function getMyAssignments() {
       id: assignments.id,
       taskId: assignments.taskId,
       mediaUrl: assignments.mediaUrl,
-      textHtml: assignments.textHtml,
+      // join한 표가 있어 열 이름을 표 이름과 함께 적는다.
+      hasText: sql<number>`(CASE WHEN "assignments"."text_html" IS NOT NULL AND length("assignments"."text_html") > 0 THEN 1 ELSE 0 END)`.mapWith(Number),
       submittedAt: assignments.submittedAt,
       reviewedAt: assignments.reviewedAt,
       taskTitle: assignmentTasks.title,

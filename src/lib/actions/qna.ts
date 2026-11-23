@@ -230,6 +230,20 @@ export async function getQnaThreads(query = "") {
   return searchQnaThreads(db, threads, query, isAdmin ? null : session.user.id!);
 }
 
+/**
+ * 관리자 업무함: 답변을 기다리는(OPEN) 질문만, 수강 중인 학생 것만 읽는다.
+ * 업무함은 OPEN 질문만 보이므로 닫힌 질문까지 모두 읽는 `getQnaThreads`를 쓰지 않는다.
+ */
+export async function getOpenQnaThreadsForWorkQueue() {
+  await requireAdmin();
+  return createDb()
+    .select(THREAD_SELECT)
+    .from(qnaThreads)
+    .innerJoin(profiles, eq(qnaThreads.studentId, profiles.id))
+    .where(and(eq(qnaThreads.status, "OPEN"), isNull(qnaThreads.deletedAt), activeStudentProfileCondition()))
+    .orderBy(desc(qnaThreads.updatedAt));
+}
+
 export async function getQnaThreadsByStudent(studentId: string, query = "") {
   await requireStudentTarget(studentId);
   const db = createDb();

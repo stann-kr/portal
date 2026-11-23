@@ -33,6 +33,7 @@ let studentActions: typeof import("@/lib/actions/students");
 let groupActions: typeof import("@/lib/actions/lessonGroups");
 let assignmentActions: typeof import("@/lib/actions/assignments");
 let notesActions: typeof import("@/lib/actions/all-notes");
+let qnaActions: typeof import("@/lib/actions/qna");
 let activeProfile: typeof import("@/lib/active-profile");
 let roster: typeof import("@/lib/student-roster");
 let pushStore: typeof import("@/lib/push/store");
@@ -96,6 +97,7 @@ before(async () => {
   groupActions = await import("@/lib/actions/lessonGroups");
   assignmentActions = await import("@/lib/actions/assignments");
   notesActions = await import("@/lib/actions/all-notes");
+  qnaActions = await import("@/lib/actions/qna");
   activeProfile = await import("@/lib/active-profile");
   roster = await import("@/lib/student-roster");
   pushStore = await import("@/lib/push/store");
@@ -432,4 +434,37 @@ test("학생 삭제는 가입 전·기록 없는 학생만 격리 D1에서 지�
     error: "가입했거나 기록이 생겨 삭제하지 않았습니다. 수강 종료를 쓰세요.",
   });
   assert.equal((await db.select().from(profiles).where(eq(profiles.id, "student-c"))).length, 1);
+});
+
+test("업무함 질문은 열린 질문만, 수강 중인 학생 것만 관리자에게 돌려준다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context);
+  await db.insert(qnaThreads).values([
+    { id: "qna-c-open", studentId: "student-c", title: "박학생 질문", status: "OPEN" },
+    { id: "qna-c-answered", studentId: "student-c", title: "답한 질문", status: "ANSWERED" },
+    { id: "qna-c-closed", studentId: "student-c", title: "닫은 질문", status: "CLOSED" },
+    { id: "qna-c-trashed", studentId: "student-c", title: "지운 질문", status: "OPEN", deletedAt: new Date("2026-11-20T00:00:00.000Z") },
+  ]);
+  assert.deepEqual((await qnaActions.getOpenQnaThreadsForWorkQueue()).map((thread) => thread.id).sort(), ["qna-a", "qna-c-open"]);
+
+  await db.update(profiles).set({ accountStatus: "ARCHIVED", archivedAt: new Date() }).where(eq(profiles.id, "student-a"));
+  assert.deepEqual((await qnaActions.getOpenQnaThreadsForWorkQueue()).map((thread) => thread.id), ["qna-c-open"], "수강 종료한 학생 질문은 뺀다");
+
+  activeSession = createSession("student-c", "student");
+  await assert.rejects(qnaActions.getOpenQnaThreadsForWorkQueue(), /Admin only/);
+});
+
+test("학생 내 제출 목록은 본문 대신 글이 있는지만 읽고 본인 제출만 돌려준다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context);
+  await db.insert(assignments).values([
+    { id: "text-c", studentId: "student-c", textHtml: "<p>연습 일지</p>", submittedAt: new Date("2026-11-16T00:00:00.000Z") },
+    { id: "empty-text-c", studentId: "student-c", mediaUrl: "https://youtu.be/e", textHtml: "", submittedAt: new Date("2026-11-14T00:00:00.000Z") },
+  ]);
+  activeSession = createSession("student-c", "student");
+  const rows = await assignmentActions.getMyAssignments();
+  assert.deepEqual(rows.map((row) => [row.id, row.hasText]), [
+    ["text-c", 1],
+    ["submission-c", 0],
+    ["empty-text-c", 0],
+  ]);
+  assert.equal("textHtml" in (rows[0] ?? {}), false, "본문은 목록으로 보내지 않는다");
 });

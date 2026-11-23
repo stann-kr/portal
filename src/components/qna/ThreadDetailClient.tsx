@@ -215,7 +215,7 @@ function ThreadDetailContent({
           return;
         }
         statusOperationIdsRef.current.delete(operationKey);
-        router.refresh();
+        // 성공하면 action이 revalidatePath로 새 화면을 같은 응답에 담아 보낸다(따로 다시 받지 않는다).
       } catch {
         setStatusError("상태를 변경하지 못했습니다. 다시 시도해 주세요.");
       }

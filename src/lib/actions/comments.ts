@@ -18,6 +18,7 @@ import { COMMENT_TIME_MARKER_FIELD, parseTimeMarker } from "@/lib/community-mixs
 import { publicAuthorName } from "@/lib/public-author-name";
 import { pushMessages } from "@/lib/push/messages";
 import { notifyPush } from "@/lib/push/notify";
+import { runAfterResponse } from "@/lib/after-response";
 
 // 댓글은 짧은 일반 글이라 문서 본문(800 KiB)보다 훨씬 작게 막는다. 글자 수는 code point로 센다(입력 칸과 같은 상수).
 
@@ -252,14 +253,9 @@ export async function createComment(
         return { error: "이 댓글은 수정 전 내용으로 이미 저장되었거나 상태가 바뀌었습니다. 목록을 확인한 뒤 내용을 편집해 새 댓글로 등록해 주세요." };
       }
     } else {
-      await notifyCommentAdded(
-        db,
-        postId,
-        activePost,
-        session,
-        root ? { rootId: root.id, rootAuthorId: root.authorId, replyToId } : null,
-        commentId,
-      );
+      // 받는 사람을 찾는 조회(답글 대상·참여자)까지 응답 뒤로 미뤄 댓글 저장 응답을 늦추지 않는다.
+      const replyTarget = root ? { rootId: root.id, rootAuthorId: root.authorId, replyToId } : null;
+      await runAfterResponse(() => notifyCommentAdded(db, postId, activePost, session, replyTarget, commentId));
     }
   } catch {
     return { error: "댓글을 저장하지 못했습니다. 다시 시도해 주세요." };

@@ -31,7 +31,7 @@ import {
   type AuthSession,
 } from "@/lib/auth-guard";
 import { parseDateTimeInput } from "@/lib/date-input";
-import { queryConnectedLessonsForStudent, type ConnectedLesson } from "@/lib/connected-next-lesson";
+import { queryConnectedLessonsForStudent, querySubscribedLessonsForStudent, type ConnectedLesson } from "@/lib/connected-next-lesson";
 import { fetchExternalItemsForUser } from "@/lib/external-items";
 import { pushMessages } from "@/lib/push/messages";
 import { notifyPush } from "@/lib/push/notify";
@@ -59,7 +59,14 @@ export async function getLessonsByStudent(studentId: string) {
  */
 export async function getConnectedLessonsForStudent(studentId: string): Promise<ConnectedLesson[]> {
   await requireStudentTarget(studentId);
-  return queryConnectedLessonsForStudent(createDb(), studentId, new Date(), fetchExternalItemsForUser);
+  // 공개 iCal 구독(바깥 요청)은 getSubscribedLessonsForStudent가 따로 읽는다(첫 화면을 막지 않는다).
+  return queryConnectedLessonsForStudent(createDb(), studentId, new Date(), null);
+}
+
+/** 관리자 학생 상세: 학생 공개 iCal 구독의 앞으로 일정. 화면이 뜬 뒤 레슨 일정에 합친다. 실패하면 빈 목록. */
+export async function getSubscribedLessonsForStudent(studentId: string): Promise<ConnectedLesson[]> {
+  await requireStudentTarget(studentId);
+  return querySubscribedLessonsForStudent(createDb(), studentId, new Date(), fetchExternalItemsForUser);
 }
 
 /**
