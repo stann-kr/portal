@@ -34,6 +34,8 @@ const ROUTE_SKELETON_RULES: ReadonlyArray<[pattern: RegExp, kind: RouteSkeletonK
   [new RegExp(`^/dashboard/admin/students/${ID}/notes/new$`, "u"), "editor"],
   [new RegExp(`^/dashboard/admin/students/${ID}/notes$`, "u"), "record-list"],
   [/^\/dashboard\/admin\/notes$/u, "record-list"],
+  // 새 노트·과제 내기 대상 고르기(그룹·학생 목록).
+  [/^\/dashboard\/admin\/(?:notes|assignments)\/new$/u, "record-list-narrow"],
   [new RegExp(`^/dashboard/admin/students/${ID}(?:/.*)?$`, "u"), "student-detail"],
   [/^\/dashboard\/admin\/(?:operations|calendar-sync)$/u, "form"],
   [/^\/dashboard\/admin\/categories$/u, "form-wide"],

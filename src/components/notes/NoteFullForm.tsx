@@ -12,7 +12,7 @@ import { useRouter } from "next/navigation";
 import { ChevronLeft, FolderOpen, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { NoteBreadcrumb, NoteDocumentStrip, NoteGroupShareLine, NoteHistoryLink, NoteProperty, resolveNoteParent } from "./NoteDocumentChrome";
-import { groupNoteShareLine, type StudentLessonGroup } from "@/lib/lesson-group-rules";
+import { formatGroupLabel, groupNoteShareLine, type StudentLessonGroup } from "@/lib/lesson-group-rules";
 import { PRIVATE_NOTE_GROUP_FIELD } from "@/lib/private-note-continuity";
 import { updatePrivateNote, type CreateNoteState } from "@/lib/actions/privateNotes";
 import { MobileTopBar } from "@/components/app-shell/AppSidebar";
@@ -129,7 +129,7 @@ export function NoteFullForm({
             renderExtraProperties: ({ noteId }) => (group && !noteId ? (
               <NoteProperty icon={FolderOpen} label="저장 위치" tall>
                 <div role="radiogroup" aria-label="저장 위치" className="flex flex-wrap items-center gap-x-4 gap-y-1">
-                  {([["personal", personalLabel], ["group", `${group.name} 그룹 노트`]] as const).map(([value, label]) => (
+                  {([["personal", personalLabel], ["group", `${formatGroupLabel(group.name)} 노트`]] as const).map(([value, label]) => (
                     <label key={value} className="inline-flex min-h-11 cursor-pointer items-center gap-2 md:min-h-8">
                       <input
                         type="radio"

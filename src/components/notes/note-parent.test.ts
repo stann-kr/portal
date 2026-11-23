@@ -16,4 +16,7 @@ test("노트를 연 화면(returnTo)에 맞춰 위치 줄 이름과 뒤로 이�
   assert.deepEqual(names("/dashboard/guide/p1#b-7"), ["가이드", "가이드로", "/dashboard/guide/p1#b-7"]);
   assert.deepEqual(names("/dashboard/admin/students/s1?tab=notes").slice(0, 2), ["학생 상세", "학생 상세로"]);
   assert.deepEqual(names("/dashboard/student?section=workspace").slice(0, 2), ["캘린더", "캘린더로"]);
+  // 새 노트·과제 내기 대상 고르기의 뒤로 이름도 연 화면을 따른다.
+  assert.deepEqual(names("/dashboard/admin/assignments").slice(0, 2), ["과제", "과제로"]);
+  assert.deepEqual(names("/dashboard/admin/notes?student=s1").slice(0, 2), ["노트", "노트 목록으로"]);
 });

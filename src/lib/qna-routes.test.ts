@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildQnaFilterHref, buildQnaListHref, buildQnaSearchHref, resolveQnaFilter } from "./qna-routes";
+import { buildQnaFilterHref, buildQnaListHref, buildQnaSearchHref, buildQnaStudentHref, resolveQnaFilter } from "./qna-routes";
 
 test("Q&A 목록 returnTo는 내부 경로만 보존한다", () => {
   assert.equal(
@@ -41,4 +41,18 @@ test("Q&A 상태 필터 URL은 상세 복귀와 관리자 학생 탭·상위 문
   assert.equal(reset.searchParams.get("tab"), "qna");
   assert.equal(resolveQnaFilter(["OPEN", "CLOSED"]), "ALL");
   assert.equal(resolveQnaFilter("invalid"), "ALL");
+});
+
+test("관리자 Q&A 학생 필터는 상태·검색·복귀 위치를 지키고 빈 값이면 지운다", () => {
+  const list = buildQnaListHref("/dashboard/admin?section=work", "OPEN", "EQ", "qa-s1");
+  const url = new URL(list, "https://portal.test");
+  assert.equal(url.searchParams.get("qnaStudent"), "qa-s1");
+  assert.equal(url.searchParams.get("qnaStatus"), "OPEN");
+  assert.equal(url.searchParams.get("qnaQuery"), "EQ");
+  assert.equal(url.searchParams.get("returnTo"), "/dashboard/admin?section=work");
+  const cleared = new URL(buildQnaStudentHref(list, null), "https://portal.test");
+  assert.equal(cleared.searchParams.has("qnaStudent"), false);
+  assert.equal(cleared.searchParams.get("qnaStatus"), "OPEN");
+  // 상태 탭을 바꿔도 학생은 남는다.
+  assert.equal(new URL(buildQnaFilterHref(list, "CLOSED"), "https://portal.test").searchParams.get("qnaStudent"), "qa-s1");
 });

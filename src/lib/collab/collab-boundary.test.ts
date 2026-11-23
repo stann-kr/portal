@@ -80,13 +80,16 @@ function loaders(overrides: Partial<CollabDocumentLoaders> = {}): CollabDocument
   return {
     findNote: async (id) =>
       ({
-        mine: { studentId: "s1", authorId: "s1", groupId: null, deletedAt: null, lifecycle: 0 },
-        stann: { studentId: "s1", authorId: "admin", groupId: null, deletedAt: null, lifecycle: 7 },
-        trashed: { studentId: "s1", authorId: "s1", groupId: null, deletedAt: new Date(NOW), lifecycle: 0 },
+        mine: { studentId: "s1", authorId: "s1", groupId: null, studentReadOnly: false, deletedAt: null, lifecycle: 0 },
+        stann: { studentId: "s1", authorId: "admin", groupId: null, studentReadOnly: false, deletedAt: null, lifecycle: 7 },
+        trashed: { studentId: "s1", authorId: "s1", groupId: null, studentReadOnly: false, deletedAt: new Date(NOW), lifecycle: 0 },
         // 그룹 g1(멤버 s1·s3)의 그룹 노트. 만든 사람은 s1, 관리자가 만든 것은 student_id가 관리자다.
-        group: { studentId: "s1", authorId: "s1", groupId: "g1", deletedAt: null, lifecycle: 3 },
-        groupByAdmin: { studentId: "admin", authorId: "admin", groupId: "g1", deletedAt: null, lifecycle: 0 },
-        groupTrashed: { studentId: "s1", authorId: "s1", groupId: "g1", deletedAt: new Date(NOW), lifecycle: 0 },
+        group: { studentId: "s1", authorId: "s1", groupId: "g1", studentReadOnly: false, deletedAt: null, lifecycle: 3 },
+        groupByAdmin: { studentId: "admin", authorId: "admin", groupId: "g1", studentReadOnly: false, deletedAt: null, lifecycle: 0 },
+        // 관리자가 학생 편집을 막은 노트(개인·그룹).
+        stannLocked: { studentId: "s1", authorId: "admin", groupId: null, studentReadOnly: true, deletedAt: null, lifecycle: 0 },
+        groupLocked: { studentId: "admin", authorId: "admin", groupId: "g1", studentReadOnly: true, deletedAt: null, lifecycle: 0 },
+        groupTrashed: { studentId: "s1", authorId: "s1", groupId: "g1", studentReadOnly: false, deletedAt: new Date(NOW), lifecycle: 0 },
       })[id] ?? null,
     findPost: async (id) =>
       ({ p1: { authorId: "s1", deletedAt: null, lifecycle: 2 }, gone: { authorId: "s1", deletedAt: new Date(NOW), lifecycle: 0 } })[id] ?? null,
@@ -117,6 +120,18 @@ test("권한: 노트는 학생 본인·관리자만 읽고 쓴다(Stann이 만�
   assert.deepEqual(await authorizeCollabRequest(student1, { key: "bad key" }, loaders()), { ok: false, reason: "BAD_REQUEST" });
 });
 
+test("권한: 관리자가 학생 편집을 막은 노트는 학생·멤버에게 읽기 전용 연결이고 관리자는 그대로 쓴다", async () => {
+  const student3 = { id: "s3", isAdmin: false };
+  assert.deepEqual(await authorizeCollabRequest(student1, { key: "note:stannLocked" }, loaders()), { ok: true, key: "note:stannLocked", mode: "read", lifecycle: 0 });
+  assert.deepEqual(await authorizeCollabRequest(admin, { key: "note:stannLocked" }, loaders()), { ok: true, key: "note:stannLocked", mode: "write", lifecycle: 0 });
+  assert.equal((await authorizeCollabRequest(student2, { key: "note:stannLocked" }, loaders())).ok, false, "다른 학생은 여전히 거부");
+  for (const actor of [student1, student3]) {
+    assert.deepEqual(await authorizeCollabRequest(actor, { key: "note:groupLocked" }, loaders()), { ok: true, key: "note:groupLocked", mode: "read", lifecycle: 0 });
+  }
+  assert.deepEqual(await authorizeCollabRequest(admin, { key: "note:groupLocked" }, loaders()), { ok: true, key: "note:groupLocked", mode: "write", lifecycle: 0 });
+  assert.equal((await authorizeCollabRequest(student2, { key: "note:groupLocked" }, loaders())).ok, false, "멤버가 아니면 거부");
+});
+
 test("권한: 그룹 노트는 관리자·지금 그 그룹 멤버가 읽고 함께 고치고, 그 밖은 거부한다", async () => {
   const student3 = { id: "s3", isAdmin: false };
   for (const key of ["note:group", "note:groupByAdmin"]) {
@@ -140,7 +155,7 @@ test("권한: 그룹 노트는 관리자·지금 그 그룹 멤버가 읽고 함
   assert.equal(asked, 0);
   // 이미 만든 그룹 노트의 생성 room 요청도 그룹 규칙을 따른다.
   const operationId = "6f1c2b8a-3d4e-4f5a-8b6c-7d8e9f0a1b2c";
-  const created = loaders({ findNote: async () => ({ studentId: "s1", authorId: "s1", groupId: "g1", deletedAt: null, lifecycle: 0 }) });
+  const created = loaders({ findNote: async () => ({ studentId: "s1", authorId: "s1", groupId: "g1", studentReadOnly: false, deletedAt: null, lifecycle: 0 }) });
   assert.equal((await authorizeCollabRequest(student2, { createNote: { operationId, studentId: "s2" } }, created)).ok, false, "멤버 아님");
   assert.equal((await authorizeCollabRequest(student3, { createNote: { operationId, studentId: "s3" } }, created)).ok, true, "멤버");
 });
@@ -158,7 +173,7 @@ test("권한: 새 노트는 결정적 생성 id의 room을 그 학생 공간 쓰
   assert.equal((await authorizeCollabRequest(admin, { createNote: { operationId, studentId: "nobody" } }, loaders())).ok, false, "학생 아님");
   assert.equal((await authorizeCollabRequest(student1, { createNote: { operationId: "x", studentId: "s1" } }, loaders())).ok, false);
   // 이미 만들어진 노트면 일반 노트 규칙: 다른 학생이 같은 id를 노려도 거부된다.
-  const existing = loaders({ findNote: async () => ({ studentId: "s1", authorId: "s1", groupId: null, deletedAt: null, lifecycle: 0 }) });
+  const existing = loaders({ findNote: async () => ({ studentId: "s1", authorId: "s1", groupId: null, studentReadOnly: false, deletedAt: null, lifecycle: 0 }) });
   assert.equal((await authorizeCollabRequest(student2, { createNote: { operationId, studentId: "s2" } }, existing)).ok, false);
 });
 
@@ -255,8 +270,20 @@ class MemoryStorage implements RoomStorage {
   updates: Uint8Array[] = [];
   seq = 0;
   savedSv: Uint8Array | null = null;
+  contributors: string[] = [];
   load() {
-    return { epoch: this.epoch, snapshot: this.snapshot, updates: [...this.updates], seq: this.seq, savedSv: this.savedSv, restoreIntent: this.restoreIntent };
+    return {
+      epoch: this.epoch,
+      snapshot: this.snapshot,
+      updates: [...this.updates],
+      seq: this.seq,
+      savedSv: this.savedSv,
+      restoreIntent: this.restoreIntent,
+      contributors: [...this.contributors],
+    };
+  }
+  setContributors(ids: readonly string[]) {
+    this.contributors = [...ids];
   }
   setSeq(seq: number) {
     this.seq = seq;
@@ -278,6 +305,7 @@ class MemoryStorage implements RoomStorage {
     this.updates = [];
     this.savedSv = null;
     this.restoreIntent = null;
+    this.contributors = [];
   }
   setEpoch(epoch: number) {
     this.epoch = epoch;
@@ -577,6 +605,49 @@ function storedDoc(storage: MemoryStorage): Y.Doc {
 function roomStateVector(storage: MemoryStorage): string {
   return Buffer.from(collabSavedMarker(storedDoc(storage))).toString("base64");
 }
+
+test("room: 마지막 저장 뒤 내용을 바꾼 사람을 연결 토큰의 사용자로 기록하고, 받아들인 저장에서 비우며 휴면 복귀에도 남긴다", () => {
+  const { storage, room, join } = createRoom();
+  const admin = join("write", "admin");
+  const student = join("write", "s1");
+  const reader = join("read", "s2");
+  room.message(student, updateMessage(textUpdate("학생")));
+  room.message(reader, updateMessage(textUpdate("거부")));
+  room.message(admin, updateMessage(textUpdate("관리자")));
+  room.message(student, updateMessage(textUpdate("또")));
+  assert.deepEqual(room.readContributors(), ["s1", "admin"], "처음 바꾼 순서, 읽기 소켓·중복 제외");
+  const revived = new RoomCore(storage, () => []);
+  rooms.push(revived);
+  assert.deepEqual(revived.readContributors(), ["s1", "admin"], "저장소에서 다시 읽는다");
+  // 저장 담당(관리자)이 지금 상태와 다른 표지를 보고하면 받아들이지 않고 편집자도 남긴다.
+  room.message(admin, controlMessage({ t: "saved", sv: Buffer.from(collabSavedMarker(new Y.Doc())).toString("base64") }));
+  assert.deepEqual(room.readContributors(), ["s1", "admin"]);
+  room.message(admin, controlMessage({ t: "saved", sv: roomStateVector(storage) }));
+  assert.deepEqual(room.readContributors(), [], "받아들인 저장 뒤 비운다");
+  assert.deepEqual(storage.contributors, []);
+  room.message(student, updateMessage(textUpdate("다음")));
+  assert.deepEqual(room.readContributors(), ["s1"]);
+  room.reset();
+  assert.deepEqual(room.readContributors(), [], "reset은 기록을 지운다");
+});
+
+test("room: 관리자가 편집을 막으면 그 사용자의 쓰기 연결만 읽기로 내리고 그 뒤 쓰기는 거부한다", () => {
+  const { storage, room, join } = createRoom();
+  const admin = join("write", "admin");
+  const student = join("write", "s1");
+  const studentTab = join("write", "s1");
+  room.message(student, awarenessMessage(7, 1, { canSave: true }));
+  assert.equal(room.downgradeUsers(["s1"]), 2);
+  for (const socket of [student, studentTab]) {
+    assert.equal(socket.attachment?.mode, "read");
+    assert.deepEqual(socket.controls().at(-1), { t: "mode", mode: "read" });
+  }
+  assert.equal(admin.attachment?.mode, "write", "관리자 연결은 그대로");
+  room.message(student, updateMessage(textUpdate("막힘")));
+  assert.equal(roomText(storage), "", "내린 뒤 쓰기는 반영되지 않는다");
+  assert.equal(student.controls().at(-1)?.code, "read-only");
+  assert.equal(room.downgradeUsers(["s1"]), 0, "이미 읽기면 다시 내리지 않는다");
+});
 
 test("room: 저장한 update 개수를 그 소켓에 ack로 알린다", () => {
   const { room, join } = createRoom();

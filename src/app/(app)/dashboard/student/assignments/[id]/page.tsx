@@ -27,6 +27,15 @@ export type AssignmentFeedback = Awaited<
 
 export const metadata = { title: "과제 피드백" };
 
+/** 관리자 위치 표시: 들어온 화면 이름(전체 과제·업무함·학생 과제 탭), 모르면 "이전 화면". */
+function adminReturnLabel(returnTo: string): string {
+  const path = returnTo.split(/[?#]/u)[0];
+  if (path === "/dashboard/admin/assignments") return "과제";
+  if (returnTo === "/dashboard/admin" || returnTo.startsWith("/dashboard/admin?section=work")) return "업무함";
+  if (/^\/dashboard\/admin\/students\/[^/]+$/u.test(path) && returnTo.includes("tab=assignments")) return "학생 과제";
+  return "이전 화면";
+}
+
 export default async function AssignmentDetailPage({
   params,
   searchParams,
@@ -131,7 +140,7 @@ export default async function AssignmentDetailPage({
       submittedLabel={submittedLabel}
       submittedLabelShort={submittedLabelShort}
       // 위치 표시는 계층(학생: 과제 목록), 위쪽 막대의 뒤로는 들어온 화면(returnTo)이다.
-      breadcrumb={isAdmin ? { href: returnTo, label: "이전 화면" } : { href: fallback, label: "과제" }}
+      breadcrumb={isAdmin ? { href: returnTo, label: adminReturnLabel(returnTo) } : { href: fallback, label: "과제" }}
       returnTo={returnTo}
       spaceLink={spaceLink}
       queueNext={queueNext}

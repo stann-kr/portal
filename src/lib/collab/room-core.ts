@@ -71,6 +71,8 @@ export type StoredRoomState = {
   savedSv?: Uint8Array | null;
   /** 진행 중인 복원 기록(준비 때의 기준 상태 S). */
   restoreIntent?: RestoreIntent | null;
+  /** 마지막으로 받아들인 저장 뒤 내용을 바꾼 사용자 id(토큰의 사용자, 처음 바꾼 순서). */
+  contributors?: string[];
 };
 
 export type RestoreIntent = { id: string; at: number; base: Uint8Array };
@@ -89,6 +91,7 @@ export interface RoomStorage {
   transact?<T>(task: () => T): T;
   setSeq?(seq: number, changedAt: number): void;
   setSavedSv?(sv: Uint8Array | null): void;
+  setContributors?(ids: readonly string[]): void;
 }
 
 /** renew 토큰 확인. DocumentRoom이 AUTH_SECRET으로 서명·만료·key를 확인해 claims를 돌려준다. */
@@ -263,6 +266,7 @@ export class RoomCore {
   private seq = 0;
   private changedAt = 0;
   private savedSv: Uint8Array | null = null;
+  private contributors: string[] = [];
   private snapshotBytes = 0;
   private pendingUpdateBytes = 0;
   private pendingUpdateCount = 0;
@@ -287,6 +291,7 @@ export class RoomCore {
     this.seq = state.seq ?? 0;
     this.changedAt = state.changedAt ?? 0;
     this.savedSv = state.savedSv ?? null;
+    this.contributors = state.contributors ?? [];
     this.intent = state.restoreIntent ?? null;
     this.snapshotBytes = state.snapshot?.byteLength ?? 0;
     this.pendingUpdateBytes = 0;
@@ -310,6 +315,8 @@ export class RoomCore {
     this.pendingUpdateCount += 1;
     // 반영한 소켓(origin)을 뺀 나머지에 전달한다. 서버가 직접 바꾼 칸(set-meta)은 origin이 없어 모두에게 간다.
     const except = origin && typeof origin === "object" && "send" in origin ? (origin as RoomSocket) : null;
+    // 바꾼 사람은 클라이언트가 아니라 연결 토큰의 사용자로 기록한다(저장 담당이 다른 사람이어도 버전 편집자가 맞게).
+    if (except) this.noteContributor(except.getAttachment()?.userId);
     this.broadcast(encodeSyncUpdate(update), except);
     if (
       this.pendingUpdateCount >= ROOM_COMPACT_UPDATE_COUNT ||
@@ -317,6 +324,51 @@ export class RoomCore {
     ) {
       this.compact();
     }
+  }
+
+  private noteContributor(userId: string | undefined): void {
+    if (!userId || this.contributors.includes(userId)) return;
+    this.contributors = [...this.contributors, userId];
+    this.storage.setContributors?.(this.contributors);
+  }
+
+  /** 마지막으로 받아들인 저장 뒤 내용을 바꾼 사용자. 저장 action이 버전 편집자로 쓴다. */
+  readContributors(): string[] {
+    this.load();
+    return [...this.contributors];
+  }
+
+  /**
+   * 열린 쓰기 연결 중 `userIds`의 것을 읽기로 내린다(관리자가 학생 편집을 막을 때). 토큰 갱신의 내리기와 같다:
+   * 클라이언트에 mode를 알리고 저장 담당 자격을 거둔다. 새 연결은 토큰 발급이 D1 규칙으로 읽기를 준다.
+   */
+  downgradeUsers(userIds: readonly string[]): number {
+    const targets = new Set(userIds);
+    let count = 0;
+    for (const socket of this.sockets()) {
+      const attachment = socket.getAttachment();
+      if (!attachment || attachment.mode !== "write" || !targets.has(attachment.userId)) continue;
+      this.downgradeSocket(socket, attachment);
+      count += 1;
+    }
+    return count;
+  }
+
+  private downgradeSocket(socket: RoomSocket, attachment: RoomSocketAttachment): RoomSocketAttachment {
+    const next: RoomSocketAttachment = { ...attachment, mode: "read", downgraded: true };
+    socket.setAttachment(next);
+    safeSend(socket, encodeControl({ t: "mode", mode: "read" }));
+    // 저장 담당 자격을 거둔다(다른 사람 화면의 선출도 바뀐다).
+    const changed: AwarenessDecoded[] = [];
+    for (const [clientId, entry] of this.awareness) {
+      if (entry.socket !== socket || entry.state === "null") continue;
+      const state = sanitizeAwarenessState(entry.state, next);
+      const clock = entry.clock + 1;
+      this.awareness.set(clientId, { clock, state, socket });
+      changed.push({ clientId, clock, state });
+    }
+    if (changed.length > 0) this.broadcast(encodeAwarenessMessage(changed), null);
+    return next;
   }
 
   private compact(): void {
@@ -559,33 +611,20 @@ export class RoomCore {
       safeClose(socket, COLLAB_CLOSE_STALE, "stale");
       return;
     }
-    const downgrade = attachment.mode === "write" && claims.m === "read";
-    const next: RoomSocketAttachment = {
-      ...attachment,
-      validUntil: claims.l * 1000,
-      leaseIat: claims.i,
-      ...(downgrade ? { mode: "read" as const, downgraded: true } : {}),
-    };
-    socket.setAttachment(next);
-    if (downgrade) {
-      safeSend(socket, encodeControl({ t: "mode", mode: "read" }));
-      // 저장 담당 자격을 거둔다(다른 사람 화면의 선출도 바뀐다).
-      const changed: AwarenessDecoded[] = [];
-      for (const [clientId, entry] of this.awareness) {
-        if (entry.socket !== socket || entry.state === "null") continue;
-        const state = sanitizeAwarenessState(entry.state, next);
-        const clock = entry.clock + 1;
-        this.awareness.set(clientId, { clock, state, socket });
-        changed.push({ clientId, clock, state });
-      }
-      if (changed.length > 0) this.broadcast(encodeAwarenessMessage(changed), null);
-    }
+    const renewed: RoomSocketAttachment = { ...attachment, validUntil: claims.l * 1000, leaseIat: claims.i };
+    socket.setAttachment(renewed);
+    if (attachment.mode === "write" && claims.m === "read") this.downgradeSocket(socket, renewed);
     this.onDeadline?.(this.nextDeadline());
   }
 
   private setSavedSv(sv: Uint8Array | null): void {
     this.savedSv = sv;
     this.storage.setSavedSv?.(sv);
+    // 받아들인 저장은 지금 room 상태와 같다: 그때까지 바꾼 사람은 그 버전에 기록됐다.
+    if (sv && this.contributors.length > 0) {
+      this.contributors = [];
+      this.storage.setContributors?.([]);
+    }
   }
 
   /** room 상태가 마지막 저장과 같은지(또는 아직 비어 있는지). */
@@ -728,6 +767,7 @@ export class RoomCore {
     this.destroy();
     this.epoch = nextEpoch;
     this.savedSv = null;
+    this.contributors = [];
     this.snapshotBytes = 0;
     this.pendingUpdateBytes = 0;
     this.pendingUpdateCount = 0;

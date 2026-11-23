@@ -47,8 +47,31 @@ test("관리자 사이드바의 노트는 일정 다음에 있고 전체 노트�
   assert.equal(resolveActiveNavItem("admin", at("/dashboard/notes/n1")), "students");
   assert.equal(resolveActiveNavItem("admin", at(`/dashboard/notes/n1?returnTo=${encodeURIComponent("/dashboard/admin/notesx")}`)), "students");
 
-  // 좁은 화면에서도 메뉴 화면이라 뒤로 가기 없이 제목만 둔다.
-  assert.deepEqual(resolveMobileTopBar("admin", at("/dashboard/admin/notes?student=s1")), { title: "전체 노트" });
+  // 좁은 화면에서도 메뉴 화면이라 뒤로 가기 없이 제목과 새 노트(대상 고르기)를 둔다.
+  assert.deepEqual(resolveMobileTopBar("admin", at("/dashboard/admin/notes?student=s1")), {
+    title: "전체 노트",
+    action: { href: "/dashboard/admin/notes/new", label: "새 노트" },
+  });
+  assert.equal(resolveActiveNavItem("admin", at("/dashboard/admin/notes/new")), "notes");
+  assert.deepEqual(resolveMobileTopBar("admin", at("/dashboard/admin/notes/new")).back?.href, "/dashboard/admin/notes");
+});
+
+test("관리자 사이드바의 과제는 노트 다음에 있고 전체 과제·대상 고르기·과제 상세를 과제 메뉴로 표시한다", () => {
+  const ids = APP_NAV_ITEMS.admin.map((item) => item.id);
+  assert.equal(ids.indexOf("assignments"), ids.indexOf("notes") + 1);
+  assert.equal(APP_NAV_ITEMS.admin.find((item) => item.id === "assignments")?.href, "/dashboard/admin/assignments");
+
+  assert.equal(resolveActiveNavItem("admin", at("/dashboard/admin/assignments?student=s1")), "assignments");
+  assert.equal(resolveActiveNavItem("admin", at("/dashboard/admin/assignments/new")), "assignments");
+  assert.equal(resolveActiveNavItem("admin", at("/dashboard/student/assignments/a1?from=work")), "assignments");
+  // 비슷하지만 다른 주소는 과제 메뉴가 아니다.
+  assert.notEqual(resolveActiveNavItem("admin", at("/dashboard/admin/assignmentsx")), "assignments");
+
+  assert.deepEqual(resolveMobileTopBar("admin", at("/dashboard/admin/assignments")), {
+    title: "과제",
+    action: { href: "/dashboard/admin/assignments/new", label: "과제 내기" },
+  });
+  assert.equal(resolveMobileTopBar("admin", at("/dashboard/admin/assignments/new")).back?.href, "/dashboard/admin/assignments");
 });
 
 test("캘린더 동기화 설정은 운영 도구 메뉴 아래 화면이고 좁은 화면에서 운영 도구로 돌아간다", () => {

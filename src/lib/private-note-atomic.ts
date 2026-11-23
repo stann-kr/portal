@@ -46,6 +46,8 @@ type NoteHead = {
   authorId: string;
   /** 그룹 노트면 그룹 id. 접근은 관리자 또는 지금 그 그룹 멤버다(`resolveNoteAccess`). */
   groupId: string | null;
+  /** 관리자가 학생 편집을 막았는지(0036). */
+  studentReadOnly: boolean;
   title: string;
   contentHtml: string;
   noteDate: Date | null;
@@ -117,6 +119,8 @@ type UpdatePrivateNoteWrite = {
    * 같을 때만 같은 원자 쓰기 안에서 반영한다. 없으면(혼자 모드) 확인하지 않는다.
    */
   collabEpoch?: number;
+  /** room이 기록한 이 버전의 실제 편집자(쓰기 권한으로 거른 값). 버전 이력 표시에만 쓴다. */
+  contributorIds?: readonly string[] | null;
   now: Date;
 };
 
@@ -182,6 +186,7 @@ async function findNote(context: DbContext, noteId: string): Promise<NoteHead | 
       studentId: privateNotes.studentId,
       authorId: privateNotes.authorId,
       groupId: privateNotes.groupId,
+      studentReadOnly: privateNotes.studentReadOnly,
       title: privateNotes.title,
       contentHtml: privateNotes.contentHtml,
       noteDate: privateNotes.noteDate,
@@ -280,14 +285,17 @@ function noteWriteAccessSql(
 ): { clause: string; params: readonly unknown[] } {
   // 개인 노트: 편집은 그 학생 본인(2026-11-23, Stann이 만든 노트도), 휴지통 이동·복원은 작성자 본인. 관리자는 둘 다.
   const personalColumn = scope === "edit" ? "private_notes.student_id" : "private_notes.author_id";
+  // 관리자가 학생 편집을 막은 노트(0036)는 작성자 본인이 아닌 학생·멤버의 편집·휴지통 이동을 같은 batch 안에서 거절한다.
   return {
     clause: `(? = 1
-      OR (private_notes.group_id IS NULL AND ${personalColumn} = ?)
-      OR (private_notes.group_id IS NOT NULL AND EXISTS (
-        SELECT 1 FROM lesson_group_members AS access_member
-        WHERE access_member.student_id = ? AND access_member.group_id = private_notes.group_id
+      OR ((private_notes.student_read_only = 0 OR private_notes.author_id = ?) AND (
+        (private_notes.group_id IS NULL AND ${personalColumn} = ?)
+        OR (private_notes.group_id IS NOT NULL AND EXISTS (
+          SELECT 1 FROM lesson_group_members AS access_member
+          WHERE access_member.student_id = ? AND access_member.group_id = private_notes.group_id
+        ))
       )))`,
-    params: [Number(actor.isAdmin), actor.id, actor.id],
+    params: [Number(actor.isAdmin), actor.id, actor.id, actor.id],
   };
 }
 
@@ -459,6 +467,8 @@ function revisionInsertStatement(input: {
   changeType: Exclude<DocumentOperationType, "PURGE">;
   snapshot: PrivateNoteCanonicalSnapshot;
   actorId: string;
+  /** 공동 편집 저장의 실제 편집자(room 기록). 없으면 null(이력은 actor를 보인다). */
+  contributorIds?: readonly string[] | null;
   restoredFromRevision?: number | null;
   operationRecordId: string;
   now: Date;
@@ -468,8 +478,8 @@ function revisionInsertStatement(input: {
       INSERT INTO private_note_revisions (
         id, note_id, revision_number, change_type, title, content_html,
         note_date, deleted_at, snapshot_hash, snapshot_hash_version,
-        actor_id, restored_from_revision, operation_record_id, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        actor_id, contributor_ids, restored_from_revision, operation_record_id, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     params: [
       input.revisionId,
@@ -483,6 +493,7 @@ function revisionInsertStatement(input: {
       createPrivateNoteSnapshotHash(input.snapshot),
       PRIVATE_NOTE_SNAPSHOT_HASH_VERSION,
       input.actorId,
+      input.contributorIds && input.contributorIds.length > 0 ? JSON.stringify(input.contributorIds) : null,
       input.restoredFromRevision ?? null,
       input.operationRecordId,
       epochSeconds(input.now),
@@ -1089,6 +1100,7 @@ export async function updatePrivateNoteAtomically(
         changeType: "UPDATE",
         snapshot,
         actorId: write.actor.id,
+        contributorIds: write.contributorIds ?? null,
         operationRecordId: recordId,
         now: write.now,
       }),

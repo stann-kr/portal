@@ -1,18 +1,21 @@
 /**
  * 관리자 학생 스페이스의 canonical 노트 목록(AdminStudentNotes 보드). 학생 상세의 노트 탭이 이 화면으로 온다.
- * 작성은 별도 composer route를 사용한다.
+ * 머리는 다른 탭과 같은 학생 상세 머리(학생 바꾸기·새 노트·과제 내기·탭, 캔버스 AdminUx1123 ②)를 쓰고,
+ * 아래에 시간으로 보기·휴지통과 노트 표/목록을 둔다. 작성은 별도 composer route를 사용한다.
  */
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { ChevronLeft } from "lucide-react";
-import { MobileTopBar } from "@/components/app-shell/AppSidebar";
+import { Clock3, Trash2 } from "lucide-react";
 import { getActiveAuthSession } from "@/lib/auth-guard";
-import { getStudentById } from "@/lib/actions/students";
+import { getStudentById, getStudentOptions, getStudentWorkCounts } from "@/lib/actions/students";
+import { getLessonGroups } from "@/lib/actions/lessonGroups";
+import { StudentDetailHead } from "@/components/admin/StudentDetailHead";
+import { StudentDetailTopBar } from "../StudentDetailTopBar";
+import { buttonClassName } from "@/components/ui/button";
 import { getPrivateNotes, getStudentGroupNotes } from "@/lib/actions/privateNotes";
-import { NotesMobileLinks, NotesPageHeader } from "@/components/notes/NotesPageHeader";
+import { NotesMobileLinks } from "@/components/notes/NotesPageHeader";
 import { NotesDatabase } from "@/components/notes/NotesDatabase";
 import { toNotesDatabaseRows } from "@/lib/notes-database";
-import { buildAdminStudentDetailHref } from "@/lib/student-space-routes";
 import { getNoteSearchQuery, searchPrivateNotes } from "@/components/notes/NoteSearch";
 import { buildNotesLessonsTimelineHref } from "@/lib/calendar-section-contract";
 import { getRequestNow } from "@/lib/request-time";
@@ -44,49 +47,67 @@ export default async function AdminStudentNotesPage({
   const query = getNoteSearchQuery((await searchParams).q);
   const returnTo = query ? `${listPath}?q=${encodeURIComponent(query)}` : listPath;
   // 개인 노트와 그 학생이 지금 속한 그룹의 그룹 노트를 함께 보이고, 그룹이 있으면 범위 보기를 둔다.
-  const [personalNotes, groupNotes] = await Promise.all([getPrivateNotes(studentId), getStudentGroupNotes(studentId)]);
+  const [personalNotes, groupNotes, workCounts, switcherStudents, switcherGroups] = await Promise.all([
+    getPrivateNotes(studentId),
+    getStudentGroupNotes(studentId),
+    getStudentWorkCounts(studentId),
+    // 머리 이름의 학생 고르기. 못 읽으면 이름만 보인다.
+    getStudentOptions().catch(() => []),
+    getLessonGroups().catch(() => []),
+  ]);
   const notes = [
     ...personalNotes.map((note) => ({ ...note, groupName: null })),
     ...(groupNotes?.notes ?? []).map((note) => ({ ...note, groupName: groupNotes!.group.name })),
   ];
   const matchingNotes = searchPrivateNotes(notes, query);
-  const detailHref = buildAdminStudentDetailHref(studentId, "overview");
+  const name = student.displayName?.trim() || student.email;
   const timelineHref = buildNotesLessonsTimelineHref({ role: "admin", studentId });
   const trashHref = `/dashboard/notes/trash?studentId=${encodeURIComponent(studentId)}&returnTo=${encodeURIComponent(returnTo)}`;
   return (
-    <div className="px-5 pb-8 pt-6 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-10">
-      <MobileTopBar title="노트" back={{ href: detailHref, label: "학생 상세로" }} />
+    <div className="px-5 pb-8 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-10">
+      <StudentDetailTopBar
+        studentId={studentId}
+        activeTab="notes"
+        returnTo={returnTo}
+        switcher={switcherStudents.length > 1 ? { name, tab: "notes", students: switcherStudents, groups: switcherGroups } : null}
+      />
       {/* 자동 저장은 목록을 revalidate하지 않으므로 편집에서 돌아오거나 창으로 돌아올 때 제목·날짜를 다시 받는다. */}
       <RouteAutoRefresh />
-      <div className="flex max-w-[1080px] flex-col gap-5 md:gap-6 md:mx-auto">
-        <NotesPageHeader
-          eyebrow={`학생 스페이스 · ${student.displayName?.trim() || student.email}`}
-          backLink={
-            <Link
-              href={detailHref}
-              className="-ml-1 hidden h-8 items-center gap-1.5 self-start rounded-md pl-1 pr-2 text-ui text-secondary-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:inline-flex"
-            >
-              <ChevronLeft className="size-4" strokeWidth={1.8} aria-hidden="true" />학생 상세로 돌아가기
-            </Link>
-          }
-          timelineHref={timelineHref}
-          trashHref={trashHref}
-          newNoteHref={`${composerPath}?returnTo=${encodeURIComponent(returnTo)}`}
-        />
-        <NotesDatabase
-          rows={toNotesDatabaseRows(matchingNotes)}
-          ownerId={session.user.id}
+      <div className="flex max-w-[1080px] flex-col md:mx-auto md:gap-7">
+        <StudentDetailHead
+          studentId={studentId}
+          name={name}
+          email={student.email}
+          activeTab="notes"
           returnTo={returnTo}
-          returnFallback={listPath}
-          composerPath={composerPath}
-          searchAction={listPath}
-          query={query}
-          totalCount={notes.length}
-          scopeFilter={groupNotes !== null}
-          now={getRequestNow()}
-          emptyMessage={query ? "검색 결과가 없습니다. 다른 단어로 검색하거나 검색을 초기화해 주세요." : "아직 이 학생 스페이스에 작성된 노트가 없습니다."}
+          counts={{ assignments: workCounts.pendingFeedbackCount, qna: workCounts.openQnaCount }}
+          switcherStudents={switcherStudents}
+          switcherGroups={switcherGroups}
         />
-        <NotesMobileLinks timelineHref={timelineHref} trashHref={trashHref} />
+        <div className="flex flex-col gap-5 pt-2 md:gap-4 md:pt-0">
+          <div className="hidden items-center justify-end gap-2 md:flex">
+            <Link href={timelineHref} className={buttonClassName({ variant: "ghost" })}>
+              <Clock3 className="size-3.5" strokeWidth={1.6} aria-hidden="true" />시간으로 보기
+            </Link>
+            <Link href={trashHref} className={buttonClassName({ variant: "ghost" })}>
+              <Trash2 className="size-3.5" strokeWidth={1.6} aria-hidden="true" />휴지통
+            </Link>
+          </div>
+          <NotesDatabase
+            rows={toNotesDatabaseRows(matchingNotes)}
+            ownerId={session.user.id}
+            returnTo={returnTo}
+            returnFallback={listPath}
+            composerPath={composerPath}
+            searchAction={listPath}
+            query={query}
+            totalCount={notes.length}
+            scopeFilter={groupNotes !== null}
+            now={getRequestNow()}
+            emptyMessage={query ? "검색 결과가 없습니다. 다른 단어로 검색하거나 검색을 초기화해 주세요." : "아직 이 학생 스페이스에 작성된 노트가 없습니다."}
+          />
+  <NotesMobileLinks timelineHref={timelineHref} trashHref={trashHref} />
+        </div>
       </div>
     </div>
   );

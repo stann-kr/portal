@@ -116,7 +116,7 @@ function updateForm(title: string, contentHtml: string, baseRevision: number): F
 const collabLoaders = () => ({
   async findNote(id: string) {
     const [row] = await requireActiveDb()
-      .select({ studentId: privateNotes.studentId, authorId: privateNotes.authorId, groupId: privateNotes.groupId, deletedAt: privateNotes.deletedAt })
+      .select({ studentId: privateNotes.studentId, authorId: privateNotes.authorId, groupId: privateNotes.groupId, studentReadOnly: privateNotes.studentReadOnly, deletedAt: privateNotes.deletedAt })
       .from(privateNotes)
       .where(eq(privateNotes.id, id))
       .limit(1);

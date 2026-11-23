@@ -85,6 +85,8 @@ test("roster 행은 요약 열과 더 보기 메뉴의 canonical 학생 링크�
   assert.doesNotMatch(container.textContent ?? "", /WEEK 01|현재 진도|진도 미지정/u);
   assert.match(first.textContent ?? "", /08\.14 19:00/u, "다음 레슨은 KST 점 날짜와 시각");
   assert.match(first.textContent ?? "", /2건/u, "피드백 대기 수를 함께 읽는다");
+  // 0이 아닌 피드백 대기 수는 그 학생 과제 탭으로 가는 링크다.
+  assert.ok(first.querySelector('a[href="/dashboard/admin/students/student-1?tab=assignments"]'), "피드백 대기 수 링크");
   assert.match(first.textContent ?? "", /3건/u, "미답변 질문 수를 함께 읽는다");
   assert.equal(
     first.querySelector("a")?.getAttribute("href"),
@@ -104,6 +106,10 @@ test("roster 행은 요약 열과 더 보기 메뉴의 canonical 학생 링크�
   const hrefs = [...menu.querySelectorAll('[role="menuitem"]')].map((item) => item.getAttribute("href"));
   assert.deepEqual(hrefs, [
     "/dashboard/admin/students/student-1?tab=overview",
+    // 새 노트(저장·닫기 뒤 학생 목록으로) · 과제 내기(과제 탭 폼) · 캘린더(캔버스 AdminUx1123 ③)
+    "/dashboard/admin/students/student-1/notes/new?returnTo=%2Fdashboard%2Fadmin%3Fsection%3Dstudents",
+    "/dashboard/admin/students/student-1?tab=assignments&compose=task",
+    "/dashboard/admin?section=schedule&student=student-1",
     "/dashboard/admin/students/student-1?tab=assignments",
     "/dashboard/admin/students/student-1?tab=digging",
     "/dashboard/admin/students/student-1/notes",

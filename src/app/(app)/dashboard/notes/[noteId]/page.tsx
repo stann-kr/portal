@@ -39,8 +39,12 @@ export const metadata = { title: "노트" };
 async function loadNoteInstructorTools(note: {
   id: string;
   studentId: string;
+  authorRole: string | null;
+  studentReadOnly: boolean;
   group: { name: string; members: { id: string; name: string }[] } | null;
 }): Promise<NoteInstructorTools | undefined> {
+  // 학생 편집 고르기는 관리자가 만든 노트에만 둔다(학생이 만든 노트는 그 학생 것이다).
+  const studentAccess = note.authorRole === "admin" ? { readOnly: note.studentReadOnly } : null;
   if (note.group) {
     const members = note.group.members;
     // 멤버 목록을 읽은 뒤 수강을 종료한 멤버는 메모 읽기가 거부한다. 그 멤버 탭만 빼고 나머지는 그대로 연다.
@@ -52,6 +56,7 @@ async function loadNoteInstructorTools(note: {
     return {
       studentId: note.studentId,
       noteMemo,
+      studentAccess,
       groupName: note.group.name,
       members: members.flatMap((member, index) => {
         const memo = memberMemos[index];
@@ -69,6 +74,7 @@ async function loadNoteInstructorTools(note: {
   return {
     studentId: student.id,
     noteMemo,
+    studentAccess,
     members: [{ studentId: student.id, name: student.displayName?.trim() || student.email, memo: studentMemo }],
   };
 }
@@ -102,7 +108,11 @@ export default async function NotePage({
   // 휴지통 이동·복원은 따로 판단한다(개인: 작성자·관리자). 학생은 Stann이 만든 자기 노트를 고치지만 버리지 못한다.
   const canManageLifecycle = note.canManageLifecycle;
   const groupShareLine = note.group
-    ? groupNoteShareLine(note.group, { id: session.user.id, isAdmin: session.user.role === "admin" })
+    ? groupNoteShareLine(
+        note.group,
+        { id: session.user.id, isAdmin: session.user.role === "admin" },
+        { studentReadOnly: note.studentReadOnly },
+      )
     : null;
   const action = updatePrivateNote.bind(null, note.id);
   const now = getRequestNow();
@@ -147,8 +157,7 @@ export default async function NotePage({
     );
   }
 
-  // 읽기만 할 수 있는 노트: 폴링으로 제자리에서 갱신하는 읽기 화면. 2026-11-23부터 노트 규칙이 "read"를 주는 경우가 없어
-  // (학생도 Stann이 만든 자기 노트를 편집한다) 지금은 닿지 않지만, 규칙의 읽기 모드에 대비해 남겨 둔다.
+  // 읽기만 할 수 있는 노트(Stann이 학생 편집을 막은 노트, 0036): 같은 room에 읽기로 붙어 제자리에서 갱신하는 읽기 화면.
   if (!note.deletedAt) {
     return (
       <>

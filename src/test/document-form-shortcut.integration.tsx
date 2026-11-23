@@ -179,6 +179,8 @@ mock.module("@/lib/auth-guard", { namedExports: {
 } });
 mock.module("@/lib/actions/students", { namedExports: {
   getStudentById: async (id: string) => ({ id, role: "student", displayName: "대상 학생" }),
+  getStudentWorkCounts: async () => ({ pendingFeedbackCount: 0, openQnaCount: 0 }),
+  getStudentOptions: async () => [],
 } });
 
 mock.module("@/lib/actions/privateNotes", { namedExports: {
@@ -204,10 +206,14 @@ mock.module("next/dynamic", {
 });
 mock.module("next/link", {
   defaultExport: MockLink,
+  // 학생 상세 탭(TabPendingMark)이 이동 중 표시를 읽는다. 이 suite에서는 이동이 바로 끝난다.
+  namedExports: { useLinkStatus: () => ({ pending: false }) },
 });
 mock.module("next/navigation", {
   namedExports: {
     useRouter: () => router,
+    // 학생 상세 노트 탭 머리(StudentDetailTopBar)가 주소의 탭·편집 상태를 읽는다.
+    useSearchParams: () => new URLSearchParams(),
     redirect: (path: string) => { throw new Error(`redirect:${path}`); },
   },
 });
@@ -500,8 +506,8 @@ test("학생·관리자 노트 검색은 본문을 찾고 상세·작성·휴지
   const harness = await renderForm(context, <div />);
   const date = new Date("2020-01-01T00:00:00Z");
   notePageData = [
-    { id: "old-note", title: "오래된 레슨", contentHtml: "<p>비트<strong>매칭</strong> 연습</p>", authorName: "강사", authorId: "teacher", version: 1, noteDate: date, createdAt: date, updatedAt: date, groupId: null },
-    { id: "other-note", title: "다른 기록", contentHtml: "<p>다른 본문</p>", authorName: "학생", authorId: "student-search", version: 1, noteDate: null, createdAt: date, updatedAt: date, groupId: null },
+    { id: "old-note", title: "오래된 레슨", contentHtml: "<p>비트<strong>매칭</strong> 연습</p>", authorName: "강사", authorId: "teacher", version: 1, noteDate: date, createdAt: date, updatedAt: date, groupId: null, studentReadOnly: false },
+    { id: "other-note", title: "다른 기록", contentHtml: "<p>다른 본문</p>", authorName: "학생", authorId: "student-search", version: 1, noteDate: null, createdAt: date, updatedAt: date, groupId: null, studentReadOnly: false },
   ];
   context.after(() => { notePageData = []; notePageTargets.length = 0; notePageRole = "student"; });
   for (const role of ["student", "admin"] as const) {
@@ -1178,7 +1184,9 @@ const panelNoteRecord = (authorId: string) => ({
   version: 3,
   deletedAt: null,
   authorName: "학생",
+  authorRole: authorId.startsWith("admin") ? "admin" : "student",
   groupId: null,
+  studentReadOnly: false,
   group: null,
   // 서버가 정한 접근. 이 패널의 보는 사람은 노트 주인 student-1이다. 2026-11-23 사용자 결정으로 개인 노트는
   // 작성자와 관계없이 그 학생이 쓴다(이전에는 Stann이 만든 노트면 "read"). 휴지통 이동·복원은 작성자만.

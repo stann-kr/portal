@@ -144,7 +144,7 @@ export type NoteParent = {
   backLabel: string;
 };
 
-/** 노트를 연 화면(`returnTo`)을 위치 줄의 상위 항목과 뒤로 버튼 이름으로 바꾼다. */
+/** 노트를 연 화면(`returnTo`)을 위치 줄의 상위 항목과 뒤로 버튼 이름으로 바꾼다. 새 노트·과제 내기 대상 고르기의 뒤로 이름도 이것을 쓴다. */
 export function resolveNoteParent(returnTo: string): NoteParent {
   const [pathname = "", query = ""] = returnTo.split("#")[0]!.split("?");
   const parent = (label: string, backLabel: string) => ({ href: returnTo, label, backLabel });
@@ -156,6 +156,7 @@ export function resolveNoteParent(returnTo: string): NoteParent {
       : parent("홈", "홈으로");
   }
   if (pathname.startsWith("/dashboard/admin/students/")) return parent("학생 상세", "학생 상세로");
+  if (pathname === "/dashboard/admin/assignments") return parent("과제", "과제로");
   if (pathname === "/dashboard/admin") {
     // 관리자 홈은 구역(?section=)마다 사이드바 이름이 다르다. 구역이 없으면 업무함이 열린다.
     const section = new URLSearchParams(query).get("section");

@@ -85,6 +85,13 @@ test("끌 수 없는 항목은 이유를 알려 주고 옮길 수 있는 항목�
   }), admin) ?? "", /외부 캘린더/u);
 });
 
+test("Stann이 읽기 전용으로 둔 노트는 학생이 옮기지 못하고 이유를 알리며 관리자는 그대로 옮긴다", () => {
+  const locked = item("PRIVATE_NOTE", { metadata: { authorId: "admin-1", studentReadOnly: true } });
+  assert.equal(getCalendarItemEditing(locked, student).movable, false);
+  assert.match(getCalendarItemLockReason(locked, student) ?? "", /읽기 전용/u);
+  assert.equal(getCalendarItemEditing(locked, admin).movable, true);
+});
+
 test("외부 캘린더·디깅·Q&A·과제는 누구도 끌 수 없다", () => {
   const external = item("EXTERNAL_CALENDAR_EVENT", {
     source: { kind: "GOOGLE_CALENDAR", entity: "EXTERNAL_CALENDAR_EVENT", label: "Google" },

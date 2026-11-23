@@ -9,10 +9,11 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { MessageCircle, Search } from "lucide-react";
+import { ChevronDown, MessageCircle, Search } from "lucide-react";
+import { useProgressRouter } from "@/components/app-shell/NavigationProgress";
 import type { QnaStatus } from "@/db/schema";
 import { QNA_FILTER_TABS, type QnaFilterTab } from "@/lib/qna-status";
-import { buildQnaFilterHref, buildQnaSearchHref } from "@/lib/qna-routes";
+import { buildQnaFilterHref, buildQnaSearchHref, buildQnaStudentHref } from "@/lib/qna-routes";
 import { DOCUMENT_SEARCH_MAX_QUERY_LENGTH } from "@/lib/document-search";
 import { Input } from "@/components/ui/input";
 import { SoftGetForm } from "@/components/ui/soft-get-form";
@@ -43,6 +44,8 @@ interface ThreadListProps {
    * tabs: Q&A 화면의 밑줄 탭(Qna·MobileQna 보드). 좁은 화면에서 탭 줄이 화면 끝까지(좌우 20px 여백 밖) 닿는다.
    */
   variant?: "tabs" | "chips";
+  /** 관리자 Q&A 화면의 학생 필터(질문한 학생이 둘 이상일 때). 고르면 `?qnaStudent=`로 다시 연다. */
+  studentFilter?: { options: ReadonlyArray<{ id: string; label: string }>; selected: string | null };
 }
 
 export function ThreadList({
@@ -52,7 +55,9 @@ export function ThreadList({
   filter = "ALL",
   query = "",
   variant = "chips",
+  studentFilter,
 }: ThreadListProps) {
+  const router = useProgressRouter();
   // 서버가 다시 그리면(검색·뒤로가기·새로고침) 그때 주소의 필터를 따른다. 화면 안 탭 변경은 주소도 함께 바꾸므로 어긋나지 않는다.
   const [rendered, setRendered] = useState({ filter, threads });
   const [current, setCurrent] = useState(filter);
@@ -129,6 +134,27 @@ export function ThreadList({
     </div>
   );
 
+  const studentSelect = studentFilter ? (
+    <label className="flex min-w-0 items-center gap-2 text-ui text-muted-foreground max-md:w-full">
+      학생
+      <span className="relative flex min-w-0 flex-1 items-center md:flex-none">
+        <select
+          // 서버가 다른 학생으로 다시 그리면 그 값으로 맞춘다.
+          key={studentFilter.selected ?? ""}
+          defaultValue={studentFilter.selected ?? ""}
+          onChange={(event) => router.push(buildQnaStudentHref(listHref, event.target.value || null))}
+          className="h-11 w-full min-w-0 appearance-none rounded-touch border border-border bg-background pl-3 pr-8 text-base text-foreground focus-visible:outline-2 focus-visible:-outline-offset-1 focus-visible:outline-ring md:h-8 md:max-w-48 md:rounded-md md:pl-2.5 md:pr-7 md:text-ui"
+        >
+          <option value="">전체 학생</option>
+          {studentFilter.options.map((option) => (
+            <option key={option.id} value={option.id}>{option.label}</option>
+          ))}
+        </select>
+        <ChevronDown className="pointer-events-none absolute right-2.5 size-3.5 text-secondary-foreground" strokeWidth={1.6} aria-hidden="true" />
+      </span>
+    </label>
+  ) : null;
+
   const search = (
     <SoftGetForm
       key={query}
@@ -167,7 +193,12 @@ export function ThreadList({
       {isTabs ? (
         <div className="flex flex-col gap-4 md:flex-row md:flex-wrap md:items-center md:justify-between md:gap-3 md:border-b md:border-border md:pb-3">
           {statusFilter}
-          {search}
+          {studentSelect ? (
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:gap-3">
+              {studentSelect}
+              {search}
+            </div>
+          ) : search}
         </div>
       ) : (
         <div className="flex flex-wrap items-center justify-between gap-3">

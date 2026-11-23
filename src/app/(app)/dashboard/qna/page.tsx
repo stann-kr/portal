@@ -1,7 +1,7 @@
 /**
  * @file src/app/(app)/dashboard/qna/page.tsx
  * @description Q&A 스레드 목록 페이지(캔버스 Qna·MobileQna 보드).
- * 학생: 본인 스레드만, 어드민: 전체 + 학생명 표시.
+ * 학생: 본인 스레드만, 어드민: 전체 + 학생명 표시. 어드민은 질문한 학생이 둘 이상이면 학생 필터(`?qnaStudent=`)를 둔다.
  */
 export const dynamic = "force-dynamic";
 
@@ -16,6 +16,17 @@ import type { QnaStatus } from "@/db/schema";
 import { safeReturnPath } from "@/lib/safe-return-path";
 import { buildQnaListHref, resolveQnaFilter } from "@/lib/qna-routes";
 import { normalizeDocumentSearchQuery } from "@/lib/document-search";
+import { firstSearchValue } from "@/lib/portal-location";
+
+/** 받은 질문에 나온 학생(이름순). 이름이 없으면 이메일 앞부분. */
+function buildQnaStudentOptions(threads: ReadonlyArray<{ studentId: string | null | undefined; studentName: string | null | undefined; studentEmail: string | null | undefined }>) {
+  const options = new Map<string, string>();
+  for (const thread of threads) {
+    if (!thread.studentId || options.has(thread.studentId)) continue;
+    options.set(thread.studentId, thread.studentName?.trim() || thread.studentEmail?.split("@")[0] || "이름 미등록");
+  }
+  return [...options].map(([id, label]) => ({ id, label })).sort((a, b) => a.label.localeCompare(b.label, "ko"));
+}
 
 type RawThread = Awaited<ReturnType<typeof getQnaThreads>>[number];
 
@@ -36,7 +47,7 @@ export const metadata = { title: "Q&A" };
 export default async function QnaPage({
   searchParams,
 }: {
-  searchParams: Promise<{ returnTo?: string; qnaStatus?: string | string[]; qnaQuery?: string | string[] }>;
+  searchParams: Promise<{ returnTo?: string; qnaStatus?: string | string[]; qnaQuery?: string | string[]; qnaStudent?: string | string[] }>;
 }) {
   const session = await getActiveAuthSession();
   if (!session?.user) redirect("/login");
@@ -49,16 +60,22 @@ export default async function QnaPage({
   );
   const filter = resolveQnaFilter(query.qnaStatus);
   const search = normalizeDocumentSearchQuery(query.qnaQuery);
-  const listHref = buildQnaListHref(parentReturnTo, filter, search);
   const rawThreads = await getQnaThreads(search);
+  // 관리자 학생 필터: 받은 질문의 학생만 고를 수 있고, 목록에 없는 값은 전체로 돌아간다.
+  const studentOptions = isAdmin ? buildQnaStudentOptions(rawThreads) : [];
+  const requestedStudent = isAdmin ? firstSearchValue(query.qnaStudent) : null;
+  const student = studentOptions.some((option) => option.id === requestedStudent) ? requestedStudent : null;
+  const listHref = buildQnaListHref(parentReturnTo, filter, search, student);
 
-  const threads: QnaThreadItem[] = rawThreads.map((t: RawThread) => ({
-    ...t,
-    status: t.status as QnaStatus,
-  }));
+  const threads: QnaThreadItem[] = rawThreads
+    .filter((t: RawThread) => !student || t.studentId === student)
+    .map((t: RawThread) => ({
+      ...t,
+      status: t.status as QnaStatus,
+    }));
 
   // 머리 링크는 화면 안 상태 탭을 바꾼 뒤에도 그 탭으로 돌아오게 client에서 복귀 주소를 만든다.
-  const context = { parentReturnTo, filter, search };
+  const context = { parentReturnTo, filter, search, student };
 
   return (
     <div className="px-5 pb-8 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-14">
@@ -82,7 +99,15 @@ export default async function QnaPage({
           </div>
         </header>
 
-        <ThreadList variant="tabs" threads={threads} isAdmin={isAdmin} returnTo={listHref} filter={filter} query={search} />
+        <ThreadList
+          variant="tabs"
+          threads={threads}
+          isAdmin={isAdmin}
+          returnTo={listHref}
+          filter={filter}
+          query={search}
+          studentFilter={isAdmin && studentOptions.length > 1 ? { options: studentOptions, selected: student } : undefined}
+        />
 
         <QnaListContextLink
           path="/dashboard/qna/trash"

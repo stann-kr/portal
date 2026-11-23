@@ -8,6 +8,7 @@ import {
   type NotesDatabaseSource,
 } from "@/lib/notes-database";
 import { formatListUpdatedLabel, toLedgerDateLabel } from "./note-display";
+import { formatGroupLabel } from "@/lib/lesson-group-rules";
 
 export { getPrivateNotePreview };
 
@@ -22,7 +23,7 @@ export function GroupNoteBadge({ groupName }: { groupName: string }) {
   return (
     <span className="inline-flex h-[18px] shrink-0 items-center rounded-sm border border-border px-1 text-[11px] leading-none text-secondary-foreground">
       <span aria-hidden="true">그룹</span>
-      <span className="sr-only">{groupName} 그룹 노트</span>
+      <span className="sr-only">{formatGroupLabel(groupName)} 노트</span>
     </span>
   );
 }

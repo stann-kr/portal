@@ -58,6 +58,7 @@ import type { CalendarQuickCreateSelection } from "@/lib/calendar-quick-create";
 import { createDaySelection } from "@/lib/unified-item-views";
 import { nextFullHour, toKstDateInputValue, toKstDateTimeInputValue } from "@/lib/date-input";
 import { cn } from "@/lib/utils";
+import { ADMIN_NOTE_PICKER_HREF } from "@/components/app-shell/navigation";
 
 /**
  * Q&A 작성 폼은 편집기·공동 편집 코드를 함께 끌어온다. 패널을 열 때만 렌더하므로 나눠 받아
@@ -309,14 +310,16 @@ export function CalendarSection({
     ? "/dashboard/student/notes/new"
     : `/dashboard/admin/students/${targetStudentId}/notes/new`;
   const noteReturnFallback = workspaceRole === "student" ? "/dashboard/student" : "/dashboard/admin";
-  // 머리·더 보기의 "새 노트"는 학생 한 명 문맥에서만 연다("전체 학생"은 칸 선택 만들기에서 학생을 고른다).
+  // 머리·더 보기의 "새 노트". 학생 한 명이면 그 학생의 새 노트, 관리자 "전체 학생"이면 그룹·학생 고르기를 먼저 연다.
   const noteCreateHref = hasSingleNoteTarget
     ? buildNoteCreateHref({
       pathname: noteCreatePathnameFor(studentId),
       returnTo: workspaceReturnTo,
       returnFallback: noteReturnFallback,
     })
-    : undefined;
+    : hasNoteTarget
+      ? `${ADMIN_NOTE_PICKER_HREF}?returnTo=${encodeURIComponent(workspaceReturnTo)}`
+      : undefined;
   const diggingBoardHref = workspaceRole === "student"
     ? buildStudentDiggingBoardHref(workspaceReturnTo)
     : hasSingleNoteTarget
@@ -542,7 +545,7 @@ export function CalendarSection({
 
   const moreLinks = workspaceRole === "admin" ? [
     noteCreateHref ? { href: noteCreateHref, label: "새 노트", Icon: NotebookPen } : null,
-    noteListHref ? { href: noteListHref, label: "노트 목록", Icon: FileText } : null,
+    noteListHref ? { href: noteListHref, label: allStudents ? "전체 노트" : "노트 목록", Icon: FileText } : null,
     diggingBoardHref ? { href: diggingBoardHref, label: "디깅 보드", Icon: Music } : null,
   ].filter((link): link is NonNullable<typeof link> => link !== null) : [];
 

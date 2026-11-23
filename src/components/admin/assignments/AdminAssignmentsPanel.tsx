@@ -5,7 +5,7 @@
  */
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Pencil, Trash2 } from "lucide-react";
@@ -34,6 +34,7 @@ import {
 import { formatKstDot } from "@/lib/kst-format";
 import { STATUS_TONE_DOT_CLASS_NAMES, type PortalStatusTone } from "@/lib/portal-status";
 import { cn } from "@/lib/utils";
+import type { AssignmentComposeKind } from "@/lib/admin-create-links";
 import { AssignmentRecurrenceForm, AssignmentTaskForm, type AssignmentLessonGroup } from "./AssignmentTaskForms";
 import type { StudentOption } from "@/lib/actions/students";
 
@@ -73,6 +74,8 @@ export function AdminAssignmentsPanel({
   returnTo,
   studentOptions = [],
   lessonGroup = null,
+  initialCompose = null,
+  composeReturnTo = null,
 }: {
   /** 과제 폼 보관본(local draft)의 주인(관리자). */
   actorId: string;
@@ -85,17 +88,40 @@ export function AdminAssignmentsPanel({
   studentOptions?: StudentOption[];
   /** 이 학생의 그룹레슨 그룹. 있으면 과제 만들기에 "받는 학생"이 나온다(캔버스 GroupLesson ③). */
   lessonGroup?: AssignmentLessonGroup | null;
+  /** 다른 화면의 "과제 내기"로 왔을 때(`?compose=`) 처음부터 펼칠 폼(캔버스 AdminUx1123 ①). */
+  initialCompose?: AssignmentComposeKind | null;
+  /** 그 폼을 저장하거나 닫으면 돌아갈 화면. 다른 폼을 열면 이 화면에 머문다. */
+  composeReturnTo?: string | null;
 }) {
   const router = useRouter();
-  const [editor, setEditor] = useState<Editor>(null);
+  const [editor, setEditorState] = useState<Editor>(
+    initialCompose === "task" ? { kind: "new-task" } : initialCompose === "recurrence" ? { kind: "new-recurrence" } : null,
+  );
+  const [returnAfterCompose, setReturnAfterCompose] = useState(initialCompose ? composeReturnTo : null);
+  // 주소의 `compose`·`returnTo`는 한 번만 쓴다. 새로고침·뒤로 오기에서 폼이 다시 펼쳐지지 않게 주소에서 뺀다(문서 이동 없음).
+  useEffect(() => {
+    if (!initialCompose) return;
+    const url = new URL(window.location.href);
+    url.searchParams.delete("compose");
+    url.searchParams.delete("returnTo");
+    window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+  }, [initialCompose]);
+  const setEditor = (next: Editor) => {
+    setReturnAfterCompose(null);
+    setEditorState(next);
+  };
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const taskConfirm = useConfirmAction<string>();
   const recurrenceConfirm = useConfirmAction<string>();
-  const closeEditor = () => setEditor(null);
-  const afterSave = () => {
+  const closeEditor = () => {
+    if (returnAfterCompose) router.push(returnAfterCompose);
     setEditor(null);
-    router.refresh();
+  };
+  const afterSave = () => {
+    if (returnAfterCompose) router.push(returnAfterCompose);
+    else router.refresh();
+    setEditor(null);
   };
 
   const run = (work: () => Promise<AssignmentTaskMutationResult>) => {

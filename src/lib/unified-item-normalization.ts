@@ -41,6 +41,8 @@ type NoteRow = {
   title: string;
   contentHtml: string;
   authorId: string;
+  /** 관리자가 학생 편집을 막았는지(0036). 없으면 함께 쓰기. */
+  studentReadOnly?: boolean;
   noteDate: Date | null;
   createdAt: Date;
 };
@@ -290,6 +292,7 @@ export function normalizeUnifiedItems({
         preview: createNotePreview(note.contentHtml),
         authorId: note.authorId,
         noteDate: note.noteDate,
+        studentReadOnly: note.studentReadOnly === true,
       },
       space,
       source: source("PRIVATE_NOTE"),

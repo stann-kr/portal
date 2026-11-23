@@ -70,6 +70,12 @@ function withAndParticle(name: string): string {
   return `${name}${hasFinal ? "과" : "와"}`;
 }
 
+/** 그룹 이름 표시: 이름이 이미 "그룹"으로 끝나면("화요 그룹") 다시 붙이지 않는다("화요 그룹 그룹" 방지). */
+export function formatGroupLabel(name: string): string {
+  const trimmed = name.trim();
+  return /그룹$/.test(trimmed) ? trimmed : `${trimmed} 그룹`;
+}
+
 /**
  * 그룹 노트 문서 머리 안내 줄(승인 캔버스 문구): "{그룹} 그룹 노트 · 이학생과 Stann도 보고 함께 고칠 수 있어요."
  * 보는 사람이 멤버면 다른 멤버와 Stann을, 관리자면 멤버 모두를 적는다.
@@ -77,8 +83,15 @@ function withAndParticle(name: string): string {
 export function groupNoteShareLine(
   group: { name: string; members: { id: string; name: string }[] },
   viewer: { id: string; isAdmin: boolean },
+  options: { studentReadOnly?: boolean } = {},
 ): string {
-  const head = `${group.name} 그룹 노트`;
+  const head = `${formatGroupLabel(group.name)} 노트`;
+  // 관리자가 학생 편집을 막은 노트(0036): 멤버는 읽기만 한다.
+  if (options.studentReadOnly) {
+    if (!viewer.isAdmin) return `${head} · Stann이 읽기 전용으로 두었어요.`;
+    const names = group.members.map((member) => member.name).join("·");
+    return names ? `${head} · 읽기 전용 · ${names}에게는 보기만 열려 있어요.` : `${head} · 읽기 전용 · 그룹 멤버는 보기만 해요.`;
+  }
   if (viewer.isAdmin) {
     const names = group.members.map((member) => member.name).join("·");
     return names ? `${head} · ${names}도 보고 함께 고칠 수 있어요.` : `${head} · 그룹 멤버도 보고 함께 고칠 수 있어요.`;

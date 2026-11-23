@@ -765,6 +765,11 @@ export const privateNotes = sqliteTable(
       .default(sql`(strftime('%s', 'now'))`)
       .notNull(),
     version: integer("version").default(1).notNull(),
+    /**
+     * 관리자가 학생 편집을 막았는지(0036, 2026-11-23 사용자 결정). 기본은 함께 쓰기(false).
+     * true면 작성자가 아닌 학생(개인 노트의 그 학생, 그룹 노트의 멤버)은 읽기만 한다. 학생이 만든 노트에는 쓰지 않는다.
+     */
+    studentReadOnly: integer("student_read_only", { mode: "boolean" }).default(false).notNull(),
     deletedAt: integer("deleted_at", { mode: "timestamp" }),
     deletedById: text("deleted_by_id").references(() => profiles.id, {
       onDelete: "set null",
@@ -814,7 +819,13 @@ export const privateNoteRevisions = sqliteTable(
     deletedAt: integer("deleted_at", { mode: "timestamp" }),
     snapshotHash: text("snapshot_hash"),
     snapshotHashVersion: integer("snapshot_hash_version"),
+    /** 이 버전을 저장한 사람(작업 영수증의 actor와 같다 — trigger가 확인한다). */
     actorId: text("actor_id"),
+    /**
+     * 공동 편집 저장에서 room이 연결 토큰으로 기록한 실제 편집자 profile id JSON 배열(0036). 이력 화면은 이 이름을 보이고,
+     * 없으면(혼자 저장·0036 이전 버전) actor_id를 보인다. 저장 담당이 다른 사람이어도 편집자가 맞게 남는다.
+     */
+    contributorIds: text("contributor_ids"),
     restoredFromRevision: integer("restored_from_revision"),
     operationRecordId: text("operation_record_id").references(
       () => documentOperationLedger.id,
