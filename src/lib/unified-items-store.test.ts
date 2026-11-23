@@ -86,7 +86,8 @@ test("과제 피드백 개수는 학생·기간 범위를 유지하고 과제 �
   let feedbackSelect = "";
   const sqlite = new Database(":memory:", {
     verbose: (statement) => {
-      if (typeof statement === "string" && /^select\b[\s\S]*\bfrom "feedbacks"/iu.test(statement)) {
+      // 피드백 개수는 과제 조회에 join해 함께 센다(따로 읽는 왕복 없음).
+      if (typeof statement === "string" && /^select\b[\s\S]*\b(?:from|join) "feedbacks"/iu.test(statement)) {
         feedbackSelect = statement;
       }
     },

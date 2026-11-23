@@ -9,11 +9,16 @@
  * "목록 → 노트 편집·자동 저장 → 뒤로"에서 옛 제목·날짜가 남는다. 그래서 popstate 직후 mount되면(history 복귀)
  * 한 번 더 받고, bfcache 복원(`pageshow` persisted)도 같은 규칙으로 다시 받는다. 일반 진입에서는 mount 때 받지 않는다
  * (서버가 방금 렌더했다).
+ *
+ * 같은 화면의 알림 room(`CollabNotifyRefresh`)이 연결돼 있으면 주요 변경은 알림으로 바로 받으므로, 주기 재조회는
+ * `ROUTE_AUTO_REFRESH_NOTIFY_INTERVAL_MS`(5분, collab-notify-live.ts)로 늘린다. 창으로 돌아올 때·history 복귀 때 받는 규칙은 그대로다.
+ * 알림 연결이 끊기면 원래 간격으로 돌아온다.
  */
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
+import { isCollabNotifyLive, resolveRouteRefreshInterval, subscribeCollabNotifyLive } from "./collab-notify-live";
 
 export const ROUTE_AUTO_REFRESH_INTERVAL_MS = 30_000;
 /** focus와 visibilitychange가 함께 와도 한 번만 다시 받는다. */
@@ -137,12 +142,15 @@ export function RouteAutoRefresh({
   }, [minGapMs]);
   // history 복귀(뒤로/앞으로) 직후의 mount와 bfcache 복원이면 되살린 옛 payload 대신 한 번 다시 받는다.
   useHistoryReturn(refresh);
+  // 알림 room이 연결돼 있으면 주기 재조회를 늘린다(알림이 주요 변경을 바로 알린다).
+  const notifyLive = useSyncExternalStore(subscribeCollabNotifyLive, isCollabNotifyLive, () => false);
+  const effectiveIntervalMs = resolveRouteRefreshInterval(intervalMs, notifyLive);
 
   useEffect(() => {
     const onVisibilityChange = () => {
       if (document.visibilityState !== "hidden") refresh();
     };
-    const interval = intervalMs === null ? undefined : setInterval(refresh, intervalMs);
+    const interval = effectiveIntervalMs === null ? undefined : setInterval(refresh, effectiveIntervalMs);
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
@@ -150,7 +158,7 @@ export function RouteAutoRefresh({
       window.removeEventListener("focus", refresh);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [intervalMs, refresh]);
+  }, [effectiveIntervalMs, refresh]);
 
   return null;
 }

@@ -11,6 +11,7 @@ import {
   parseExternalCalendarItems,
 } from "@/lib/external-calendar";
 import { getExternalCalendarEncryptionKey } from "@/lib/external-calendar-key";
+import { externalIcsCacheKey, readExternalIcsCached } from "@/lib/external-calendar-cache";
 import { getUnifiedItemSpaceLabel } from "@/lib/unified-item-normalization";
 import {
   resolveUnifiedItemsQuery,
@@ -55,7 +56,9 @@ export async function fetchExternalItemsForUser(
       provider: subscription.provider,
       key: getExternalCalendarEncryptionKey(),
     });
-    const ics = await fetchExternalCalendarIcs(url);
+    // 같은 구독을 짧은 간격으로 여러 화면이 읽어도 바깥 요청은 한 번만 한다(src/lib/external-calendar-cache.ts).
+    const cacheKey = await externalIcsCacheKey(subscription.id, subscription.encryptedUrl);
+    const ics = await readExternalIcsCached(cacheKey, () => fetchExternalCalendarIcs(url));
     const externalItems = await parseExternalCalendarItems({
       ics,
       subscriptionId: subscription.id,

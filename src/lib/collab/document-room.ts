@@ -10,6 +10,8 @@ import {
 import { verifyCollabToken } from "./token";
 import {
   normalizeCloseCode,
+  parseStoredContributors,
+  parseStoredDowngradedAt,
   RoomCore,
   type RoomSocket,
   type RoomSocketAttachment,
@@ -70,6 +72,8 @@ function createWebSocketPair(): [WebSocket, WebSocket] {
   return [pair[0], pair[1]];
 }
 
+/** 저장된 편집자별 위치를 읽는다. 목록에 없는 사용자·잘못된 값은 버린다. */
+
 function toBytes(value: unknown): Uint8Array {
   if (value instanceof Uint8Array) return value;
   if (value instanceof ArrayBuffer) return new Uint8Array(value);
@@ -94,15 +98,11 @@ export function createSqlRoomStorage(state: DurableObjectStateLike): RoomStorage
       const changedRow = sql.exec("SELECT value FROM room_meta WHERE key = 'changedAt'").toArray()[0];
       const savedRow = sql.exec("SELECT value FROM room_blob WHERE key = 'savedSv'").toArray()[0];
       const contributorsRow = sql.exec("SELECT value FROM room_blob WHERE key = 'contributors'").toArray()[0];
-      let contributors: string[] = [];
-      if (contributorsRow) {
-        try {
-          const parsed = JSON.parse(new TextDecoder().decode(toBytes(contributorsRow.value))) as unknown;
-          if (Array.isArray(parsed)) contributors = parsed.filter((id): id is string => typeof id === "string");
-        } catch {
-          contributors = [];
-        }
-      }
+      const { ids: contributors, clocks: contributorClocks } = parseStoredContributors(
+        contributorsRow ? new TextDecoder().decode(toBytes(contributorsRow.value)) : null,
+      );
+      const downgradedRow = sql.exec("SELECT value FROM room_blob WHERE key = 'downgradedAt'").toArray()[0];
+      const downgradedAt = parseStoredDowngradedAt(downgradedRow ? new TextDecoder().decode(toBytes(downgradedRow.value)) : null);
       const intentBaseRow = sql.exec("SELECT value FROM room_blob WHERE key = 'restoreBase'").toArray()[0];
       const intentMetaRow = sql.exec("SELECT value FROM room_blob WHERE key = 'restoreMeta'").toArray()[0];
       let restoreIntent: StoredRoomState["restoreIntent"] = null;
@@ -143,6 +143,8 @@ export function createSqlRoomStorage(state: DurableObjectStateLike): RoomStorage
         savedSv: savedRow ? toBytes(savedRow.value) : null,
         restoreIntent,
         contributors,
+        contributorClocks,
+        downgradedAt,
       };
     },
     appendUpdate(update) {
@@ -200,14 +202,24 @@ export function createSqlRoomStorage(state: DurableObjectStateLike): RoomStorage
         }
       });
     },
-    setContributors(ids) {
+    setContributors(ids, clocks) {
       if (ids.length === 0) {
         sql.exec("DELETE FROM room_blob WHERE key = 'contributors'");
         return;
       }
       sql.exec(
         "INSERT INTO room_blob (key, value) VALUES ('contributors', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        new TextEncoder().encode(JSON.stringify(ids)),
+        new TextEncoder().encode(JSON.stringify({ ids, clocks: clocks ?? {} })),
+      );
+    },
+    setDowngradedAt(value) {
+      if (Object.keys(value).length === 0) {
+        sql.exec("DELETE FROM room_blob WHERE key = 'downgradedAt'");
+        return;
+      }
+      sql.exec(
+        "INSERT INTO room_blob (key, value) VALUES ('downgradedAt', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        new TextEncoder().encode(JSON.stringify(value)),
       );
     },
     setSavedSv(sv) {
@@ -336,6 +348,12 @@ export class DocumentRoom {
             ? body.userIds.filter((id): id is string => typeof id === "string" && id.length > 0 && id.length <= 200).slice(0, 200)
             : [];
           return Response.json({ downgraded: this.core.downgradeUsers(userIds) });
+        }
+        case "/refresh": {
+          const userIds = Array.isArray(body.userIds)
+            ? body.userIds.filter((id): id is string => typeof id === "string" && id.length > 0 && id.length <= 200).slice(0, 200)
+            : [];
+          return Response.json({ refreshed: this.core.refreshUsers(userIds) });
         }
       }
     }

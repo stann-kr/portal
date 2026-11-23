@@ -19,7 +19,8 @@ export function toStudentAssignmentSummaries(
     taskId: string | null;
     taskTitle: string | null;
     mediaUrl: string | null;
-    textHtml: string | null;
+    /** 글을 냈는지(본문은 목록에서 읽지 않는다). DB 식은 0·1로 온다. */
+    hasText: boolean | number;
     submittedAt: Date | null;
     reviewedAt: Date | null;
   }[],
@@ -30,7 +31,7 @@ export function toStudentAssignmentSummaries(
     taskId: row.taskId,
     taskTitle: row.taskTitle,
     mediaUrl: row.mediaUrl,
-    hasText: Boolean(row.textHtml),
+    hasText: Boolean(row.hasText),
     submittedAt: row.submittedAt,
     reviewedAt: row.reviewedAt,
     feedbackCount: feedbackCounts[row.id] ?? 0,

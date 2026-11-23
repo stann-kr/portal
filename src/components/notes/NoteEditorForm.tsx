@@ -431,6 +431,7 @@ function NoteEditorFormContent({ note, create, actorId, action, focusBodyEnd = f
     readSnapshot,
     save: saveSnapshot,
     onSaved: (stateVector) => provider?.reportSaved(stateVector),
+    onAccepted: (stateVector) => provider?.reportSavedUpto(stateVector),
   });
   const hasUnsavedInput = (): boolean => {
     if (!doc || doc.isDestroyed) return false;
@@ -458,6 +459,8 @@ function NoteEditorFormContent({ note, create, actorId, action, focusBodyEnd = f
     isSaver: collab.isSaver,
     autosave: autosave.status,
     autosaveError: autosave.error,
+    syncing: collab.syncing,
+    savedAt: autosave.savedAt,
     blockedMessage: "제목과 내용을 입력하면 자동으로 저장됩니다.",
   });
   const retrySave = autosave.retry;

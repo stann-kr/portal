@@ -3,7 +3,12 @@ import test from "node:test";
 import type { DrizzleDb } from "@/db/client";
 import { createSqliteTestDb, insertConnection, insertMapping, insertProfile } from "@/lib/calendar-sync/sqlite-test-db";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
-import { queryConnectedLessonsForStudent, queryConnectedNextEvents } from "./connected-next-lesson";
+import {
+  queryConnectedLessonsForStudent,
+  queryConnectedNextEvents,
+  querySubscribedLessonsForStudent,
+  querySubscribedNextEvents,
+} from "./connected-next-lesson";
 import { withConnectedNextLessons, type StudentRosterStat } from "./student-roster";
 
 const NOW = new Date("2026-11-03T03:00:00.000Z");
@@ -148,4 +153,51 @@ test("학생 상세용 연결된 일정은 그 학생 것만 가까운 순서로
   ]);
   assert.ok(lessons.every((lesson) => lesson.title !== "남의 일정"));
   assert.ok(lessons.every((lesson) => lesson.scheduledAt.getTime() < NOW.getTime() + 90 * 86_400_000));
+});
+
+test("첫 화면용 조회(fetch 없음)는 공개 iCal을 읽지 않고, 공개 iCal 다음 레슨·일정은 따로 받는다", async (context) => {
+  const db = createSqliteTestDb(context);
+  insertProfile(db, "admin-1", "admin");
+  insertProfile(db, "subscribed", "student");
+  insertProfile(db, "other", "student");
+  db.run("INSERT INTO external_calendar_subscriptions (id, student_id, provider, label, encrypted_url, url_iv) VALUES ('sub-1', 'subscribed', 'GOOGLE', 'Google', 'x', 'y')");
+  const drizzle = db.ctx.db as unknown as DrizzleDb;
+
+  // 관리자 홈 첫 화면·학생 상세 첫 화면은 바깥 요청 없이 DB 일정만 쓴다.
+  assert.equal((await queryConnectedNextEvents(drizzle, NOW, null)).has("subscribed"), false);
+  assert.deepEqual(await queryConnectedLessonsForStudent(drizzle, "subscribed", NOW, null), []);
+
+  const requested: string[] = [];
+  const item = (id: string, iso: string) => ({
+    id, title: `수업 ${id}`, date: new Date(iso), source: { kind: "EXTERNAL", label: "Google Calendar" },
+  });
+  const fetchSubscribed = async (studentId: string) => {
+    requested.push(studentId);
+    return [
+      item("past", "2026-11-02T10:00:00Z"),
+      item("b", "2026-11-08T10:00:00Z"),
+      item("a", "2026-11-06T09:00:00Z"),
+      item("a", "2026-11-06T09:00:00Z"),
+      item("far", "2027-03-01T10:00:00Z"),
+    ] as unknown as UnifiedItem[];
+  };
+  const next = await querySubscribedNextEvents(drizzle, NOW, fetchSubscribed);
+  assert.deepEqual(requested, ["subscribed"], "구독한 학생만 읽는다");
+  assert.equal(next.get("subscribed")?.toISOString(), "2026-11-06T09:00:00.000Z");
+  assert.equal(next.has("other"), false);
+
+  const lessons = await querySubscribedLessonsForStudent(drizzle, "subscribed", NOW, fetchSubscribed);
+  assert.deepEqual(lessons.map((lesson) => [lesson.id, lesson.scheduledAt.toISOString(), lesson.sourceLabel]), [
+    ["EXTERNAL:a", "2026-11-06T09:00:00.000Z", "Google Calendar"],
+    ["EXTERNAL:b", "2026-11-08T10:00:00.000Z", "Google Calendar"],
+  ], "지난 일정·90일 밖·겹친 일정은 빼고 가까운 순서로 둔다");
+
+  requested.length = 0;
+  assert.deepEqual(await querySubscribedLessonsForStudent(drizzle, "other", NOW, fetchSubscribed), []);
+  assert.deepEqual(requested, [], "구독이 없는 학생은 바깥 요청을 하지 않는다");
+  assert.deepEqual(
+    await querySubscribedLessonsForStudent(drizzle, "subscribed", NOW, async () => { throw new Error("offline"); }),
+    [],
+    "바깥 요청이 실패하면 빈 목록으로 둔다",
+  );
 });

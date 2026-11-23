@@ -48,6 +48,11 @@ export type RoomSocketAttachment = {
   downgraded?: boolean;
   /** 이 소켓이 알린 awareness client id. 연결이 끊기면 지운다. */
   awarenessClientIds: number[];
+  /**
+   * 이 소켓이 알린 awareness 상태(커서 위치는 뺀 이름·색·저장 담당)와 clock. room이 메모리에서 내려갔다 깨어나도
+   * 새로 들어온 사람이 이미 있는 사람·저장 담당을 알게 한다(클라이언트는 15초마다 같은 상태를 다시 보내지 않는다).
+   */
+  presence?: Record<string, { c: number; s: string }>;
   /** 이 소켓에서 받아 저장한 update 개수(ack). */
   applied: number;
 };
@@ -73,7 +78,16 @@ export type StoredRoomState = {
   restoreIntent?: RestoreIntent | null;
   /** 마지막으로 받아들인 저장 뒤 내용을 바꾼 사용자 id(토큰의 사용자, 처음 바꾼 순서). */
   contributors?: string[];
+  /**
+   * 편집자별로 그 사람이 만든 update의 끝(Yjs client id → clock). 저장한 스냅샷의 state vector가 이것을 모두 덮으면
+   * 그 사람은 그 버전에 기록됐다. 없는 편집자(이전 형식·room이 메모리에서 내려간 뒤)는 room 상태와 같은 저장에서만 뺀다.
+   */
+  contributorClocks?: ContributorClocks;
+  /** 관리자가 학생 편집을 막은 시각(ms, 사용자별). 그보다 먼저 발급된 쓰기 토큰은 읽기로 받는다. */
+  downgradedAt?: Record<string, number>;
 };
+
+export type ContributorClocks = Record<string, Record<string, number>>;
 
 export type RestoreIntent = { id: string; at: number; base: Uint8Array };
 
@@ -91,13 +105,21 @@ export interface RoomStorage {
   transact?<T>(task: () => T): T;
   setSeq?(seq: number, changedAt: number): void;
   setSavedSv?(sv: Uint8Array | null): void;
-  setContributors?(ids: readonly string[]): void;
+  setContributors?(ids: readonly string[], clocks?: ContributorClocks): void;
+  setDowngradedAt?(value: Record<string, number>): void;
 }
 
 /** renew 토큰 확인. DocumentRoom이 AUTH_SECRET으로 서명·만료·key를 확인해 claims를 돌려준다. */
 export type RenewVerifier = (token: string, key: string) => Promise<CollabTokenClaims | null>;
 
+/**
+ * update 로그를 snapshot 하나로 접는 기준. 개수만 보면 큰 문서는 몇 백 글자마다 전체를 다시 쓰므로, 개수가 차도
+ * 쌓인 바이트가 snapshot의 절반(최소 64 KiB)이 될 때까지 기다린다. 개수가 아주 많아지면(깨울 때 다시 적용할 양)
+ * 크기와 관계없이 접는다.
+ */
 export const ROOM_COMPACT_UPDATE_COUNT = 200;
+export const ROOM_COMPACT_MAX_UPDATE_COUNT = 1000;
+export const ROOM_COMPACT_MIN_BYTES = 64 * 1024;
 /** room 밖에서 바꾼 칸의 D1 version을 남기는 meta key 접미사(`noteDate@v`). 내용 칸이 아니다. */
 export const COLLAB_META_VERSION_SUFFIX = "@v";
 /** 진행 중인 복원 기록이 다른 복원을 막는 시간(action이 중간에 죽으면 이 뒤 새 복원이 기록을 바꿀 수 있다). */
@@ -158,6 +180,44 @@ export function sanitizeAwarenessState(state: string, attachment: RoomSocketAtta
   });
 }
 export const ROOM_COMPACT_BYTES = 1024 * 1024;
+
+/** 소켓 attachment는 2 KiB까지라 남길 상태도 작게 둔다. */
+const PRESENCE_MAX_CHARS = 600;
+
+/**
+ * 받아들인 awareness를 attachment에 남길 모양으로 바꾼다. 커서 위치는 빼서(자주 바뀌고 다시 보내면 된다) 이름·색·저장
+ * 담당이 바뀔 때만 새 객체를 돌려준다(그대로면 같은 객체: attachment를 다시 쓰지 않는다).
+ */
+function keptPresence(
+  previous: RoomSocketAttachment["presence"],
+  accepted: readonly AwarenessDecoded[],
+): RoomSocketAttachment["presence"] {
+  let next = previous;
+  for (const { clientId, clock, state } of accepted) {
+    const key = String(clientId);
+    let kept: string | null = null;
+    if (state !== "null") {
+      try {
+        const parsed = JSON.parse(state) as Record<string, unknown>;
+        delete parsed.cursor;
+        const text = JSON.stringify(parsed);
+        kept = text.length <= PRESENCE_MAX_CHARS ? text : null;
+      } catch {
+        kept = null;
+      }
+    }
+    const current = next?.[key];
+    if (kept === null) {
+      if (!current) continue;
+      next = { ...next };
+      delete next[key];
+      continue;
+    }
+    if (current?.s === kept) continue;
+    next = { ...(next ?? {}), [key]: { c: clock, s: kept } };
+  }
+  return next;
+}
 
 /** restoreApply가 저장을 끝낸 뒤 메모리 doc에 반영할 때의 origin(다시 저장하지 않고 모두에게 전달). */
 const RESTORE_ORIGIN = Symbol("collab-restore");
@@ -259,6 +319,59 @@ export type RoomConnectInput = {
   lifecycle?: number | null;
 };
 
+/**
+ * DO `room_blob` `contributors` 값. 이전 형식은 id 배열, 지금은 `{ ids, clocks }`다. 읽지 못하면 비운다
+ * (편집자 기록은 버전 표시용이라 노트 열기를 막지 않는다).
+ */
+export function parseStoredContributors(text: string | null): { ids: string[]; clocks: ContributorClocks } {
+  if (!text) return { ids: [], clocks: {} };
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    const record = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
+    const raw = Array.isArray(parsed) ? parsed : Array.isArray(record?.ids) ? record.ids : [];
+    const ids = raw.filter((id): id is string => typeof id === "string");
+    const clocks: ContributorClocks = {};
+    const source = record?.clocks;
+    if (source && typeof source === "object" && !Array.isArray(source)) {
+      for (const userId of ids) {
+        const own = (source as Record<string, unknown>)[userId];
+        if (!own || typeof own !== "object" || Array.isArray(own)) continue;
+        const valid: Record<string, number> = {};
+        for (const [client, clock] of Object.entries(own)) {
+          if (/^\d+$/u.test(client) && typeof clock === "number" && Number.isSafeInteger(clock) && clock >= 0) valid[client] = clock;
+        }
+        clocks[userId] = valid;
+      }
+    }
+    return { ids, clocks };
+  } catch {
+    return { ids: [], clocks: {} };
+  }
+}
+
+/** DO `room_blob` `downgradedAt` 값(사용자 id → 막은 시각 ms). 읽지 못하면 비운다. */
+export function parseStoredDowngradedAt(text: string | null): Record<string, number> {
+  if (!text) return {};
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    const result: Record<string, number> = {};
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      for (const [userId, at] of Object.entries(parsed)) if (typeof at === "number" && Number.isFinite(at)) result[userId] = at;
+    }
+    return result;
+  } catch {
+    return {};
+  }
+}
+
+/** room 문서의 칸 map 이름(클라이언트 `COLLAB_META`와 같다). */
+const COLLAB_ROOM_META = "meta";
+/** 내용이 아닌 내부 칸(저장 표시·세대·생성 operation·시드). `server-restore.ts`의 INTERNAL_FIELDS와 같은 목록이다. */
+const NON_CONTENT_META_KEYS = new Set(["seeded", "savedHash", "headVersion", "operationId", "lifecycle"]);
+function isNonContentMetaKey(key: string): boolean {
+  return NON_CONTENT_META_KEYS.has(key) || key.endsWith(COLLAB_META_VERSION_SUFFIX);
+}
+
 export class RoomCore {
   private doc: Y.Doc | null = null;
   private readonly awareness = new Map<number, AwarenessEntry>();
@@ -267,6 +380,8 @@ export class RoomCore {
   private changedAt = 0;
   private savedSv: Uint8Array | null = null;
   private contributors: string[] = [];
+  private contributorClocks: ContributorClocks = {};
+  private downgradedAt: Record<string, number> = {};
   private snapshotBytes = 0;
   private pendingUpdateBytes = 0;
   private pendingUpdateCount = 0;
@@ -292,6 +407,8 @@ export class RoomCore {
     this.changedAt = state.changedAt ?? 0;
     this.savedSv = state.savedSv ?? null;
     this.contributors = state.contributors ?? [];
+    this.contributorClocks = state.contributorClocks ?? {};
+    this.downgradedAt = state.downgradedAt ?? {};
     this.intent = state.restoreIntent ?? null;
     this.snapshotBytes = state.snapshot?.byteLength ?? 0;
     this.pendingUpdateBytes = 0;
@@ -302,13 +419,15 @@ export class RoomCore {
       this.pendingUpdateBytes += update.byteLength;
       this.pendingUpdateCount += 1;
     }
-    doc.on("update", (update: Uint8Array, origin: unknown) => this.onDocUpdate(update, origin));
+    doc.on("update", (update: Uint8Array, origin: unknown, _doc: Y.Doc, transaction: Y.Transaction) =>
+      this.onDocUpdate(update, origin, transaction),
+    );
     this.doc = doc;
     this.restoreAwarenessOwnership();
     return { doc };
   }
 
-  private onDocUpdate(update: Uint8Array, origin: unknown): void {
+  private onDocUpdate(update: Uint8Array, origin: unknown, transaction: Y.Transaction): void {
     // 복원 update는 restoreApply가 lifecycle과 같은 transaction에서 이미 저장했다.
     if (origin !== RESTORE_ORIGIN) this.storage.appendUpdate(update);
     this.pendingUpdateBytes += update.byteLength;
@@ -316,20 +435,65 @@ export class RoomCore {
     // 반영한 소켓(origin)을 뺀 나머지에 전달한다. 서버가 직접 바꾼 칸(set-meta)은 origin이 없어 모두에게 간다.
     const except = origin && typeof origin === "object" && "send" in origin ? (origin as RoomSocket) : null;
     // 바꾼 사람은 클라이언트가 아니라 연결 토큰의 사용자로 기록한다(저장 담당이 다른 사람이어도 버전 편집자가 맞게).
-    if (except) this.noteContributor(except.getAttachment()?.userId);
+    if (except) this.noteContributor(except.getAttachment()?.userId, update, transaction);
     this.broadcast(encodeSyncUpdate(update), except);
-    if (
-      this.pendingUpdateCount >= ROOM_COMPACT_UPDATE_COUNT ||
-      this.pendingUpdateBytes >= ROOM_COMPACT_BYTES
-    ) {
-      this.compact();
-    }
+    if (this.shouldCompact()) this.compact();
   }
 
-  private noteContributor(userId: string | undefined): void {
-    if (!userId || this.contributors.includes(userId)) return;
+  private shouldCompact(): boolean {
+    if (this.pendingUpdateBytes >= ROOM_COMPACT_BYTES) return true;
+    if (this.pendingUpdateCount >= ROOM_COMPACT_MAX_UPDATE_COUNT) return true;
+    return (
+      this.pendingUpdateCount >= ROOM_COMPACT_UPDATE_COUNT &&
+      this.pendingUpdateBytes >= Math.max(ROOM_COMPACT_MIN_BYTES, this.snapshotBytes / 2)
+    );
+  }
+
+  private noteContributor(userId: string | undefined, update: Uint8Array, transaction: Y.Transaction): void {
+    if (!userId) return;
+    // 실제로 바뀐 type·key로 판단한다(디코딩한 struct의 parent는 같은 칸을 다시 쓰면 비어 있다).
+    // 저장 표시 같은 내부 meta 칸만 바뀐 update는 편집이 아니다. 지우기만 한 update도 바뀐 type이 있어 편집이다.
+    const meta = transaction.doc.getMap(COLLAB_ROOM_META);
+    const edited = [...transaction.changed].some(
+      ([type, keys]) => (type as unknown) !== meta || [...keys].some((key) => key === null || !isNonContentMetaKey(key)),
+    );
+    if (!edited) return;
+    const { structs } = Y.decodeUpdate(update);
+    const own = { ...(this.contributorClocks[userId] ?? {}) };
+    for (const struct of structs) {
+      const client = String(struct.id.client);
+      own[client] = Math.max(own[client] ?? 0, struct.id.clock + struct.length);
+    }
+    // 지우기는 state vector에 드러나지 않아 저장 스냅샷이 담았는지 알 수 없다. 닿을 수 없는 clock을 남겨
+    // saved-upto로는 빼지 않고 room 상태와 같은 저장(setSavedSv)에서만 뺀다(과소 기록 방지).
+    for (const client of transaction.deleteSet.clients.keys()) own[String(client)] = Number.MAX_SAFE_INTEGER;
+    this.contributorClocks = { ...this.contributorClocks, [userId]: own };
+    if (this.contributors.includes(userId)) return;
     this.contributors = [...this.contributors, userId];
-    this.storage.setContributors?.(this.contributors);
+    this.storage.setContributors?.(this.contributors, this.contributorClocks);
+  }
+
+  /** 저장한 스냅샷(sv)에 편집이 모두 들어간 사용자를 편집자 목록에서 뺀다(그 버전에 기록됐다). */
+  private clearContributorsCoveredBy(sv: Uint8Array): void {
+    if (this.contributors.length === 0) return;
+    let saved: Map<number, number>;
+    try {
+      saved = Y.decodeStateVector(sv);
+    } catch {
+      return;
+    }
+    const remaining = this.contributors.filter((userId) => {
+      const own = this.contributorClocks[userId];
+      // 어디까지 바꿨는지 모르는 편집자는 room 상태와 같은 저장(setSavedSv)에서만 뺀다.
+      if (!own || Object.keys(own).length === 0) return true;
+      return Object.entries(own).some(([client, clock]) => (saved.get(Number(client)) ?? 0) < clock);
+    });
+    if (remaining.length === this.contributors.length) return;
+    const clocks: ContributorClocks = {};
+    for (const userId of remaining) if (this.contributorClocks[userId]) clocks[userId] = this.contributorClocks[userId];
+    this.contributors = remaining;
+    this.contributorClocks = clocks;
+    this.storage.setContributors?.(remaining, clocks);
   }
 
   /** 마지막으로 받아들인 저장 뒤 내용을 바꾼 사용자. 저장 action이 버전 편집자로 쓴다. */
@@ -343,7 +507,16 @@ export class RoomCore {
    * 클라이언트에 mode를 알리고 저장 담당 자격을 거둔다. 새 연결은 토큰 발급이 D1 규칙으로 읽기를 준다.
    */
   downgradeUsers(userIds: readonly string[]): number {
+    this.load();
     const targets = new Set(userIds);
+    // 막은 시각을 남겨, 그 전에 받아 두었다가 뒤늦게 붙거나 갱신하는 쓰기 토큰도 읽기로 받는다.
+    const at = this.now();
+    const cutoff = at - COLLAB_LEASE_SECONDS * 1000 * 2;
+    const next: Record<string, number> = {};
+    for (const [userId, time] of Object.entries(this.downgradedAt)) if (time > cutoff) next[userId] = time;
+    for (const userId of targets) next[userId] = at;
+    this.downgradedAt = next;
+    this.storage.setDowngradedAt?.(next);
     let count = 0;
     for (const socket of this.sockets()) {
       const attachment = socket.getAttachment();
@@ -352,6 +525,33 @@ export class RoomCore {
       count += 1;
     }
     return count;
+  }
+
+  /** 주어진 사용자의 열린 연결에 바로 새 토큰을 받게 한다(학생 편집을 다시 열었을 때 화면이 곧 편집으로 바뀌게). */
+  refreshUsers(userIds: readonly string[]): number {
+    this.load();
+    const targets = new Set(userIds);
+    // 다시 열었으니 막은 시각을 지운다(Worker와 DO 시계 차이로 다시 연 뒤 받은 토큰까지 읽기로 받지 않게).
+    if (userIds.some((userId) => userId in this.downgradedAt)) {
+      const next = { ...this.downgradedAt };
+      for (const userId of userIds) delete next[userId];
+      this.downgradedAt = next;
+      this.storage.setDowngradedAt?.(next);
+    }
+    let count = 0;
+    for (const socket of this.sockets()) {
+      const attachment = socket.getAttachment();
+      if (!attachment || !targets.has(attachment.userId)) continue;
+      safeSend(socket, encodeControl({ t: "refresh" }));
+      count += 1;
+    }
+    return count;
+  }
+
+  /** 막은 시각보다 먼저 발급된 쓰기 토큰인지. */
+  private issuedBeforeDowngrade(userId: string, issuedAt: number): boolean {
+    const at = this.downgradedAt[userId];
+    return typeof at === "number" && issuedAt < at;
   }
 
   private downgradeSocket(socket: RoomSocket, attachment: RoomSocketAttachment): RoomSocketAttachment {
@@ -378,6 +578,8 @@ export class RoomCore {
     this.snapshotBytes = snapshot.byteLength;
     this.pendingUpdateBytes = 0;
     this.pendingUpdateCount = 0;
+    // 편집자별 위치는 새 편집자가 생길 때만 적는다. 접을 때 함께 남겨 room이 메모리에서 내려가도 대부분 이어지게 한다.
+    if (this.contributors.length > 0) this.storage.setContributors?.(this.contributors, this.contributorClocks);
   }
 
   /** 현재 저장 크기 추정(snapshot + 압축 전 update). */
@@ -396,8 +598,12 @@ export class RoomCore {
 
   private restoreAwarenessOwnership(): void {
     for (const socket of this.sockets()) {
-      for (const clientId of socket.getAttachment()?.awarenessClientIds ?? []) {
-        if (!this.awareness.has(clientId)) this.awareness.set(clientId, { clock: 0, state: "null", socket });
+      const attachment = socket.getAttachment();
+      for (const clientId of attachment?.awarenessClientIds ?? []) {
+        if (this.awareness.has(clientId)) continue;
+        const kept = attachment?.presence?.[String(clientId)];
+        const state = kept && attachment ? sanitizeAwarenessState(kept.s, attachment) : "null";
+        this.awareness.set(clientId, { clock: kept?.c ?? 0, state, socket });
       }
     }
   }
@@ -451,9 +657,10 @@ export class RoomCore {
     }
     const { doc } = this.load();
     const now = this.now();
+    const mode = input.mode === "write" && this.issuedBeforeDowngrade(input.userId, input.leaseIat ?? 0) ? "read" : input.mode;
     socket.setAttachment({
       userId: input.userId,
-      mode: input.mode,
+      mode,
       key: input.key ?? "",
       connectedAt: now,
       validUntil: input.validUntil ?? now + COLLAB_LEASE_SECONDS * 1000,
@@ -463,7 +670,7 @@ export class RoomCore {
     });
     safeSend(
       socket,
-      encodeControl({ t: "hello", epoch: this.epoch, mode: input.mode, seq: this.seq, ...(this.changedAt ? { changedAt: this.changedAt } : {}) }),
+      encodeControl({ t: "hello", epoch: this.epoch, mode, seq: this.seq, ...(this.changedAt ? { changedAt: this.changedAt } : {}) }),
     );
     const encoder = encoding.createEncoder();
     encoding.writeVarUint(encoder, COLLAB_MESSAGE_SYNC);
@@ -568,8 +775,9 @@ export class RoomCore {
       owned.add(entry.clientId);
       accepted.push({ clientId: entry.clientId, clock: entry.clock, state });
     }
-    if (owned.size !== attachment.awarenessClientIds.length) {
-      socket.setAttachment({ ...attachment, awarenessClientIds: Array.from(owned) });
+    const presence = keptPresence(attachment.presence, accepted);
+    if (owned.size !== attachment.awarenessClientIds.length || presence !== attachment.presence) {
+      socket.setAttachment({ ...attachment, awarenessClientIds: Array.from(owned), presence });
     }
     if (accepted.length === 0) return;
     this.broadcast(encodeAwarenessMessage(accepted), socket);
@@ -582,6 +790,12 @@ export class RoomCore {
         const sv = base64ToBytes(message.sv);
         // 저장한 내용이 지금 room 상태와 같을 때만 "저장됨"으로 기록한다.
         if (sv && bytesEqual(sv, roomSavedMarker(this.load().doc))) this.setSavedSv(sv);
+        return;
+      }
+      case "saved-upto": {
+        if (attachment.mode !== "write" || typeof message.sv !== "string") return;
+        const sv = base64ToBytes(message.sv);
+        if (sv) this.clearContributorsCoveredBy(sv);
         return;
       }
       case "renew": {
@@ -613,7 +827,8 @@ export class RoomCore {
     }
     const renewed: RoomSocketAttachment = { ...attachment, validUntil: claims.l * 1000, leaseIat: claims.i };
     socket.setAttachment(renewed);
-    if (attachment.mode === "write" && claims.m === "read") this.downgradeSocket(socket, renewed);
+    const renewedMode = claims.m === "write" && this.issuedBeforeDowngrade(attachment.userId, claims.i) ? "read" : claims.m;
+    if (attachment.mode === "write" && renewedMode === "read") this.downgradeSocket(socket, renewed);
     this.onDeadline?.(this.nextDeadline());
   }
 
@@ -623,7 +838,8 @@ export class RoomCore {
     // 받아들인 저장은 지금 room 상태와 같다: 그때까지 바꾼 사람은 그 버전에 기록됐다.
     if (sv && this.contributors.length > 0) {
       this.contributors = [];
-      this.storage.setContributors?.([]);
+      this.contributorClocks = {};
+      this.storage.setContributors?.([], {});
     }
   }
 
@@ -768,6 +984,7 @@ export class RoomCore {
     this.epoch = nextEpoch;
     this.savedSv = null;
     this.contributors = [];
+    this.contributorClocks = {};
     this.snapshotBytes = 0;
     this.pendingUpdateBytes = 0;
     this.pendingUpdateCount = 0;

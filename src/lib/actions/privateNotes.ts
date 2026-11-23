@@ -19,7 +19,7 @@ import {
 } from "@/lib/collab/server-env";
 import { noteRoomFields, readNoteRestoreTarget } from "@/lib/collab/restore-targets";
 import { revalidatePath } from "next/cache";
-import { and, desc, eq, inArray, isNotNull, isNull, or } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { createDb, createDbContext } from "@/db/client";
 import { privateNoteRevisions, privateNotes, profiles } from "@/db/schema";
 import { requireAuth, requireStudentOwnerOrAdmin, type AuthSession } from "@/lib/auth-guard";
@@ -188,10 +188,14 @@ async function announceNoteChange(
   }
 }
 
+/** 노트 목록 미리보기는 본문 앞부분만 쓴다(학생 홈 통합 일정과 같은 길이). 검색할 때만 전체 본문을 읽는다. */
+const NOTE_LIST_PREVIEW_SOURCE_CHARS = 4_096;
+
 const noteListColumns = {
   id: privateNotes.id,
   title: privateNotes.title,
-  contentHtml: privateNotes.contentHtml,
+  // profiles를 join하므로 열 이름을 표 이름과 함께 적는다.
+  contentHtml: sql<string>`substr("private_notes"."content_html", 1, ${NOTE_LIST_PREVIEW_SOURCE_CHARS})`,
   noteDate: privateNotes.noteDate,
   createdAt: privateNotes.createdAt,
   updatedAt: privateNotes.updatedAt,
@@ -202,13 +206,21 @@ const noteListColumns = {
   studentReadOnly: privateNotes.studentReadOnly,
 };
 
-/** 그 학생의 개인 노트(active)만 반환한다. 그룹 노트는 `getStudentGroupNotes`가 따로 준다. */
-export async function getPrivateNotes(targetStudentId: string) {
+/** 목록 열: 검색(`fullContent`)이면 전체 본문, 아니면 미리보기용 앞부분만. */
+function noteListSelection(fullContent: boolean) {
+  return fullContent ? { ...noteListColumns, contentHtml: privateNotes.contentHtml } : noteListColumns;
+}
+
+/**
+ * 그 학생의 개인 노트(active)만 반환한다. 그룹 노트는 `getStudentGroupNotes`가 따로 준다.
+ * `fullContent`가 아니면 본문은 미리보기용 앞부분만 담는다(목록 검색은 전체 본문으로 읽는다).
+ */
+export async function getPrivateNotes(targetStudentId: string, options: { fullContent?: boolean } = {}) {
   const session = await requireAuth();
   await requireStudentOwnerOrAdmin(session, targetStudentId);
   const db = createDb();
   return db
-    .select(noteListColumns)
+    .select(noteListSelection(options.fullContent === true))
     .from(privateNotes)
     .leftJoin(profiles, eq(privateNotes.authorId, profiles.id))
     .where(
@@ -229,13 +241,16 @@ export type StudentGroupNotes = {
 /**
  * 그 학생이 지금 속한 그룹의 그룹 노트(active). 학생 본인(=지금 멤버)과 관리자만 부른다. 그룹이 없으면 null.
  */
-export async function getStudentGroupNotes(targetStudentId: string): Promise<StudentGroupNotes | null> {
+export async function getStudentGroupNotes(
+  targetStudentId: string,
+  options: { fullContent?: boolean } = {},
+): Promise<StudentGroupNotes | null> {
   const session = await requireAuth();
   await requireStudentOwnerOrAdmin(session, targetStudentId);
   const group = await readStudentLessonGroup(createDbContext(), targetStudentId);
   if (!group) return null;
   const notes = await createDb()
-    .select(noteListColumns)
+    .select(noteListSelection(options.fullContent === true))
     .from(privateNotes)
     .leftJoin(profiles, eq(privateNotes.authorId, profiles.id))
     .where(and(eq(privateNotes.groupId, group.id), isNull(privateNotes.deletedAt)))

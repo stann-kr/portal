@@ -227,31 +227,33 @@ function parseRecurrenceForm(formData: FormData) {
 }
 
 async function loadTasksWithSubmissions(db: DrizzleDb, studentId: string, taskId?: string): Promise<AssignmentTaskItem[]> {
-  const tasks = await db
-    .select()
-    .from(assignmentTasks)
-    .where(and(eq(assignmentTasks.studentId, studentId), taskId ? eq(assignmentTasks.id, taskId) : undefined))
-    .orderBy(desc(assignmentTasks.dueAt), desc(assignmentTasks.createdAt));
+  // 과제와 제출은 서로 기다릴 필요가 없어 함께 읽는다(제출은 join으로 이 학생 과제에 묶인다).
+  const [tasks, submissionRows] = await Promise.all([
+    db
+      .select()
+      .from(assignmentTasks)
+      .where(and(eq(assignmentTasks.studentId, studentId), taskId ? eq(assignmentTasks.id, taskId) : undefined))
+      .orderBy(desc(assignmentTasks.dueAt), desc(assignmentTasks.createdAt)),
+    db
+      .select({
+        id: assignments.id,
+        taskId: assignments.taskId,
+        mediaUrl: assignments.mediaUrl,
+        textHtml: assignments.textHtml,
+        analysisJson: assignments.analysisJson,
+        submittedAt: assignments.submittedAt,
+        updatedAt: assignments.updatedAt,
+        reviewedAt: assignments.reviewedAt,
+        feedbackCount: count(feedbacks.id),
+      })
+      .from(assignments)
+      // 과제 id 목록을 bind하지 않고 join으로 좁힌다(D1은 statement당 bind 100개 제한).
+      .innerJoin(assignmentTasks, and(eq(assignmentTasks.id, assignments.taskId), eq(assignmentTasks.studentId, studentId)))
+      .leftJoin(feedbacks, eq(feedbacks.assignmentId, assignments.id))
+      .where(and(eq(assignments.studentId, studentId), taskId ? eq(assignments.taskId, taskId) : undefined))
+      .groupBy(assignments.id),
+  ]);
   if (tasks.length === 0) return [];
-
-  const submissionRows = await db
-    .select({
-      id: assignments.id,
-      taskId: assignments.taskId,
-      mediaUrl: assignments.mediaUrl,
-      textHtml: assignments.textHtml,
-      analysisJson: assignments.analysisJson,
-      submittedAt: assignments.submittedAt,
-      updatedAt: assignments.updatedAt,
-      reviewedAt: assignments.reviewedAt,
-      feedbackCount: count(feedbacks.id),
-    })
-    .from(assignments)
-    // 과제 id 목록을 bind하지 않고 join으로 좁힌다(D1은 statement당 bind 100개 제한).
-    .innerJoin(assignmentTasks, and(eq(assignmentTasks.id, assignments.taskId), eq(assignmentTasks.studentId, studentId)))
-    .leftJoin(feedbacks, eq(feedbacks.assignmentId, assignments.id))
-    .where(and(eq(assignments.studentId, studentId), taskId ? eq(assignments.taskId, taskId) : undefined))
-    .groupBy(assignments.id);
   const byTask = new Map(submissionRows.map((row) => [row.taskId, row]));
 
   return tasks.map((task) => {

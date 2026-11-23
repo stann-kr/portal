@@ -48,8 +48,9 @@ export default async function AdminStudentNotesPage({
   const returnTo = query ? `${listPath}?q=${encodeURIComponent(query)}` : listPath;
   // 개인 노트와 그 학생이 지금 속한 그룹의 그룹 노트를 함께 보이고, 그룹이 있으면 범위 보기를 둔다.
   const [personalNotes, groupNotes, workCounts, switcherStudents, switcherGroups] = await Promise.all([
-    getPrivateNotes(studentId),
-    getStudentGroupNotes(studentId),
+    // 검색할 때만 전체 본문을 읽고, 아니면 미리보기용 앞부분만 읽는다.
+    getPrivateNotes(studentId, { fullContent: Boolean(query) }),
+    getStudentGroupNotes(studentId, { fullContent: Boolean(query) }),
     getStudentWorkCounts(studentId),
     // 머리 이름의 학생 고르기. 못 읽으면 이름만 보인다.
     getStudentOptions().catch(() => []),

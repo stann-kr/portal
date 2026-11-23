@@ -18,7 +18,10 @@ class ScriptedSocket {
   constructor() {
     ScriptedSocket.last = this;
   }
-  send() {}
+  sent: Uint8Array[] = [];
+  send(data: Uint8Array) {
+    this.sent.push(data);
+  }
   close() {
     this.readyState = 3;
   }
@@ -179,4 +182,103 @@ test("쉬는 중 reconnect 요청은 바로 다시 연결한다", async (t) => {
   const again = await connected(provider, 0);
   assert.ok(again);
   assert.equal(provider.isPaused, false);
+});
+
+function makeWatchedProvider(mode: "read" | "write" = "write", tokenMode: () => "read" | "write" = () => mode) {
+  // 앞 테스트가 다시 붙으며 만든 소켓을 이 provider 것으로 착각하지 않게 비운다.
+  ScriptedSocket.last = null;
+  const doc = new Y.Doc();
+  const requests: unknown[] = [];
+  const provider = new CollabProvider(doc, {
+    request: { key: "note:n1" },
+    localEpoch: 0,
+    confirmed: new Y.Doc(),
+    fetchImpl: async (_input, init) => {
+      requests.push(JSON.parse(String(init?.body)));
+      return Response.json({ collab: true, key: "note:n1", mode: tokenMode(), token: "t", path: "/api/collab/ws/note%3An1", expiresIn: 60, userId: "u", displayName: "u" });
+    },
+    WebSocketImpl: ScriptedSocket as unknown as typeof WebSocket,
+    location: { protocol: "https:", host: "portal.test" },
+    idlePause: false,
+    watchdog: { helloMs: 120, ackStallMs: 120, ackCheckMs: 40 },
+  });
+  return { doc, provider, requests };
+}
+
+const syncMessages = (socket: ScriptedSocket) =>
+  socket.sent.filter((bytes) => bytes[0] === COLLAB_MESSAGE_SYNC && bytes[1] === syncProtocol.messageYjsUpdate);
+
+test("이 기기 입력은 짧게 묶어 한 메시지로 보내고, ack가 오면 보낼 것이 없다", async (t) => {
+  const { doc, provider } = makeWatchedProvider();
+  t.after(() => provider.destroy());
+  const socket = await connected(provider, 0);
+  socket.deliver(sync("step2", remoteUpdate("")));
+  socket.sent = [];
+  doc.getText("t").insert(0, "a");
+  doc.getText("t").insert(1, "b");
+  doc.getText("t").insert(2, "c");
+  assert.equal(syncMessages(socket).length, 0, "바로 보내지 않는다");
+  assert.equal(provider.hasUnsentChanges(), true, "묶어 둔 입력도 보내지 않은 것으로 본다");
+  await tick();
+  assert.equal(syncMessages(socket).length, 1, "세 번 친 것을 한 메시지로");
+  socket.deliver(control({ t: "ack", n: 1 }));
+  assert.equal(provider.hasUnsentChanges(), false);
+});
+
+test("hello가 오지 않거나 보낸 입력의 ack가 멈추면 소켓을 버리고 다시 붙는다", async (t) => {
+  const { doc, provider } = makeWatchedProvider();
+  t.after(() => provider.destroy());
+  for (let i = 0; i < 60 && !ScriptedSocket.last; i += 1) await tick();
+  const silent = ScriptedSocket.last!;
+  ScriptedSocket.last = null;
+  for (let i = 0; i < 60 && !ScriptedSocket.last; i += 1) await tick();
+  assert.equal(silent.readyState, 3, "hello 없는 소켓은 닫는다");
+  const live = await connected(provider, 0);
+  live.deliver(sync("step2", remoteUpdate("")));
+  doc.getText("t").insert(0, "x");
+  for (let i = 0; i < 60 && !ScriptedSocket.last; i += 1) await tick();
+  assert.equal(live.readyState, 3, "ack가 오지 않는 소켓은 닫는다");
+  assert.equal(provider.hasUnsentChanges(), true, "보내지 못한 입력은 다음 연결이 다시 보낸다");
+});
+
+test("화면을 닫으면 묶어 둔 마지막 입력을 보내고, 큰 입력을 올리는 동안에는 ack 감시가 소켓을 버리지 않는다", async (t) => {
+  const { doc, provider } = makeWatchedProvider();
+  let destroyed = false;
+  t.after(() => {
+    if (!destroyed) provider.destroy();
+  });
+  const socket = await connected(provider, 0);
+  socket.deliver(sync("step2", remoteUpdate("")));
+  socket.bufferedAmount = 1;
+  doc.getText("t").insert(0, "큰 입력");
+  await tick();
+  for (let i = 0; i < 6; i += 1) await tick();
+  assert.equal(socket.readyState, 1, "올리는 중에는 닫지 않는다");
+  socket.bufferedAmount = 0;
+  socket.deliver(control({ t: "ack", n: 1 }));
+  socket.sent = [];
+  doc.getText("t").insert(0, "끝");
+  provider.destroy();
+  destroyed = true;
+  assert.equal(syncMessages(socket).length, 1, "닫기 전에 보낸다");
+});
+
+test("관리자가 편집을 다시 열어 refresh가 오면 새 토큰(쓰기)으로 다시 붙는다", async (t) => {
+  let tokenMode: "read" | "write" = "read";
+  const { provider, requests } = makeWatchedProvider("read", () => tokenMode);
+  t.after(() => provider.destroy());
+  for (let i = 0; i < 60 && !ScriptedSocket.last; i += 1) await tick();
+  const first = ScriptedSocket.last!;
+  ScriptedSocket.last = null;
+  first.deliver(control({ t: "hello", epoch: 0, mode: "read" }));
+  assert.equal(provider.mode, "read");
+  tokenMode = "write";
+  first.deliver(control({ t: "refresh" }));
+  for (let i = 0; i < 60 && !ScriptedSocket.last; i += 1) await tick();
+  assert.equal(first.readyState, 3, "읽기 연결을 닫고");
+  assert.ok(ScriptedSocket.last, "새로 붙는다");
+  assert.deepEqual(requests[1], { key: "note:n1", renew: true }, "갱신 요청은 room 점검을 건너뛴다");
+  const second = await connected(provider, 0);
+  void second;
+  assert.equal(provider.mode, "write");
 });

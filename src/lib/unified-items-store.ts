@@ -1,5 +1,5 @@
 import type { InferSelectModel } from "drizzle-orm";
-import { and, desc, eq, gte, inArray, isNull, lte, notExists, or, sql } from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray, isNull, lte, notExists, or, sql } from "drizzle-orm";
 import type { DrizzleDb } from "@/db/client";
 import {
   assignments,
@@ -35,8 +35,6 @@ type NoteRow = {
 
 /** 통합 일정은 노트 미리보기만 쓰므로 본문 앞부분만 읽는다. 전체 본문은 상세에서 따로 불러온다. */
 export const UNIFIED_NOTE_PREVIEW_SOURCE_CHARS = 4_096;
-/** 피드백 수 조회 한 번에 bind하는 제출 id 수(D1 bind 100개 제한 아래). */
-export const FEEDBACK_COUNT_CHUNK = 90;
 /** 여러 학생을 한 번에 읽을 때 statement 하나에 bind하는 학생 id 수(D1 bind 100개 제한 아래, 기간·상한 bind 여유 포함). */
 export const STUDENT_ID_CHUNK = 90;
 type DiggingTrackRow = InferSelectModel<typeof diggingTracks>;
@@ -49,6 +47,7 @@ type AssignmentRow = {
   submittedAt: Date | null;
   reviewedAt: Date | null;
   taskTitle: string | null;
+  feedbackCount: number;
 };
 type AssignmentTaskRow = {
   id: string;
@@ -195,9 +194,12 @@ async function querySourceRows(
           submittedAt: assignments.submittedAt,
           reviewedAt: assignments.reviewedAt,
           taskTitle: assignmentTasks.title,
+          // 피드백 수를 같은 조회에서 센다(따로 한 번 더 읽지 않는다).
+          feedbackCount: count(feedbacks.id),
         })
         .from(assignments)
         .leftJoin(assignmentTasks, eq(assignmentTasks.id, assignments.taskId))
+        .leftJoin(feedbacks, eq(feedbacks.assignmentId, assignments.id))
         .where(and(
           owner(assignments.studentId),
           or(
@@ -208,6 +210,7 @@ async function querySourceRows(
             ),
           ),
         ))
+        .groupBy(assignments.id)
         .orderBy(desc(assignments.submittedAt))
         .limit(limit) as Promise<AssignmentRow[]>
     : Promise.resolve([] as AssignmentRow[]);
@@ -257,20 +260,10 @@ async function querySourceRows(
       taskRows,
     ]);
 
-  const assignmentIds = myAssignments.map((assignment) => assignment.id);
-  // D1은 statement당 bind 100개까지라 제출 id를 나눠 센다(소스 상한 200개).
-  const idChunks = chunkIds(assignmentIds, FEEDBACK_COUNT_CHUNK);
-  const scopedFeedbacks = (await Promise.all(idChunks.map((ids) => db
-    .select({
-      assignmentId: feedbacks.assignmentId,
-      count: sql<number>`count(*)`,
-    })
-    .from(feedbacks)
-    .where(inArray(feedbacks.assignmentId, ids))
-    .groupBy(feedbacks.assignmentId)))).flat();
   const feedbackCounts: Record<string, number> = {};
-  for (const row of scopedFeedbacks) {
-    feedbackCounts[row.assignmentId] = Number(row.count);
+  for (const row of myAssignments) {
+    const value = Number(row.feedbackCount);
+    if (value > 0) feedbackCounts[row.id] = value;
   }
 
   const sourceLimitReached = [events, studentLessons, notes, tracks, threads, myAssignments, openTasks]

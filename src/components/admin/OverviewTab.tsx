@@ -78,6 +78,8 @@ interface OverviewTabProps {
   lessons: Lesson[];
   /** 연결된 바깥 캘린더의 앞으로 일정(읽기 전용). */
   connectedLessons?: ConnectedLesson[];
+  /** 학생 공개 iCal 구독 일정. 서버가 기다리지 않고 넘기며, 도착하면 레슨 일정에 합친다. */
+  subscribedLessons?: Promise<ConnectedLesson[]>;
   /** 현재 레슨 캘린더 구독 URL의 마지막 발급 시각. */
   calendarFeedIssuedAt?: Date | null;
   /** 학생 계정 상태. 가입 대기면 만료 시각과 서버가 판단한 만료 여부를 함께 받는다. */
@@ -355,6 +357,8 @@ function AddLessonForm({
  * 앞으로의 레슨은 가까운 순서, 지난 레슨은 그 뒤에 최근 순서로 둔다(보드의 다음 → 이후 → 지난).
  * 연결된 캘린더 일정은 앞으로의 레슨에 섞고 제목·출처를 함께 적는다(지울 수 없다).
  */
+const NO_CONNECTED_LESSONS: ConnectedLesson[] = [];
+
 function orderLessons(lessons: Lesson[], connected: ConnectedLesson[], now: number) {
   const dated = [
     ...lessons
@@ -378,7 +382,8 @@ export function OverviewTab({
   studentId,
   modules,
   lessons,
-  connectedLessons = [],
+  connectedLessons: dbConnectedLessons = NO_CONNECTED_LESSONS,
+  subscribedLessons,
   calendarFeedIssuedAt = null,
   account = { kind: "active" },
   guideAccess,
@@ -393,6 +398,18 @@ export function OverviewTab({
   const rowEditing = searchParams?.get("edit") === "1";
   const rowIconClass = cn(ROW_ICON_BUTTON_CLASS, !rowEditing && "max-md:hidden");
   const [openedAt] = useState(() => Date.now());
+  const [lateLessons, setLateLessons] = useState<ConnectedLesson[]>(NO_CONNECTED_LESSONS);
+  useEffect(() => {
+    if (!subscribedLessons) return;
+    let cancelled = false;
+    void subscribedLessons.then((value) => {
+      if (!cancelled) setLateLessons(value);
+    }, () => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [subscribedLessons]);
+  const connectedLessons = lateLessons.length > 0 ? [...dbConnectedLessons, ...lateLessons] : dbConnectedLessons;
   const now = referenceTime?.getTime() ?? openedAt;
   const reference = new Date(now);
   const [isPending, startTransition] = useTransition();

@@ -27,7 +27,10 @@ export default async function StudentNotesPage({ searchParams }: {
   const query = getNoteSearchQuery((await searchParams).q);
   const returnTo = query ? `${listPath}?q=${encodeURIComponent(query)}` : listPath;
   // 개인 노트와 그 학생이 지금 속한 그룹의 그룹 노트를 함께 보이고, 그룹이 있으면 범위 보기를 둔다.
-  const [personalNotes, groupNotes] = await Promise.all([getPrivateNotes(session.user.id), getStudentGroupNotes(session.user.id)]);
+  const [personalNotes, groupNotes] = await Promise.all([
+    getPrivateNotes(session.user.id, { fullContent: Boolean(query) }),
+    getStudentGroupNotes(session.user.id, { fullContent: Boolean(query) }),
+  ]);
   const notes = [
     ...personalNotes.map((note) => ({ ...note, groupName: null })),
     ...(groupNotes?.notes ?? []).map((note) => ({ ...note, groupName: groupNotes!.group.name })),

@@ -1190,6 +1190,20 @@ test("노트 휴지통 이동과 복원은 기본 조회를 분리하고 각각 
   assert.equal(head?.deletedAt, null);
 });
 
+test("노트 목록은 본문 앞부분만 읽고, 검색할 때만 전체 본문을 읽는다", { concurrency: false }, async (context) => {
+  const { db } = await setupDatabase(context);
+  await seedProfile(db, "student-1");
+  const longBody = `<p>${"가".repeat(5_000)}끝단어</p>`;
+  await db.insert(privateNotes).values({
+    id: "long-note", studentId: "student-1", authorId: "student-1", title: "긴 노트", contentHtml: longBody,
+  });
+  const [preview] = await privateNoteActions.getPrivateNotes("student-1");
+  assert.equal(preview?.contentHtml.length, 4_096, "목록 미리보기는 앞 4,096자만 읽는다");
+  assert.equal(longBody.startsWith(preview?.contentHtml ?? "-"), true);
+  const [full] = await privateNoteActions.getPrivateNotes("student-1", { fullContent: true });
+  assert.equal(full?.contentHtml, longBody, "검색은 전체 본문으로 찾는다");
+});
+
 test("캘린더 노트 날짜 이동은 수정 권한자만 날짜만 바꾸고 본문을 보존한 새 revision을 남긴다", { concurrency: false }, async (context) => {
   const { db } = await setupDatabase(context);
   await seedProfile(db, "student-1");

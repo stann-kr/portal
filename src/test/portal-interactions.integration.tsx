@@ -6,6 +6,7 @@ import type { Editor } from "@tiptap/core";
 import * as Y from "yjs";
 import type { ReactPlayerProps } from "react-player/types";
 import { resolvePortalLocation } from "@/lib/portal-location";
+import { lessonNoteKey } from "@/lib/lesson-note-links";
 import { createDocumentDraftKey, serializeFormDraft } from "@/lib/form-draft";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
 let createRoot: typeof import("react-dom/client").createRoot;
@@ -307,9 +308,15 @@ mock.module("@/components/student-portal/UnifiedItemDetail", { namedExports: {
   UnifiedItemDetail: () => null,
   preloadUnifiedNoteDetail: async () => undefined,
 } });
+// 업무함은 받은 props만 기록한다(늦게 온 다음 레슨·수업 노트 링크를 합치는지 확인용).
+type RecordedWorkQueueProps = { students?: { id: string; nextLessonDate: Date | null }[]; lessonNoteIds?: Readonly<Record<string, string>> };
+let lastWorkQueueProps: RecordedWorkQueueProps | null = null;
+mock.module("@/components/admin-portal/AdminWorkQueueSection", { namedExports: {
+  AdminWorkQueueSection: (props: RecordedWorkQueueProps) => { lastWorkQueueProps = props; return null; },
+} });
 for (const [folder, name] of [
   ["student-portal", "AllItemsView"],
-  ["admin-portal", "StudentManagementSection"], ["admin-portal", "AdminWorkQueueSection"],
+  ["admin-portal", "StudentManagementSection"],
   ["qna", "QnaSlideForm"],
 ]) {
   mock.module(`@/components/${folder}/${name}`, { namedExports: { [name]: () => null } });
@@ -2798,13 +2805,14 @@ test("failed comment deletion keeps the conversation and unfinished reply visibl
   assert.match(browser.document.body.textContent, /기존 대화/);
   assert.equal(inputValue("content"), "아직 작성 중인 답글");
 
-  // 화면을 열어 둔 사이 게시물이 휴지통으로 갔으면 서버가 돌려준 이유를 보이고 화면을 다시 받는다.
+  // 화면을 열어 둔 사이 게시물이 휴지통으로 갔으면 서버가 돌려준 이유를 보인다. 지금 화면은 action의 revalidatePath가
+  // 같은 응답에 담아 보내므로 client가 따로 다시 받지 않는다(두 번 그리지 않는다).
   const refreshesBefore = routerRefreshes;
   removeComment = async () => ({ error: "휴지통으로 옮겨진 게시물의 댓글은 삭제할 수 없습니다." });
   await press("학생 댓글 삭제");
   await press("댓글 삭제 확인");
   assert.match(browser.document.querySelector('[role="alert"]')?.textContent ?? "", /휴지통으로 옮겨진 게시물/u);
-  assert.equal(routerRefreshes, refreshesBefore + 1);
+  assert.equal(routerRefreshes, refreshesBefore);
   assert.equal(inputValue("content"), "아직 작성 중인 답글");
 });
 
@@ -5145,6 +5153,58 @@ test("calendar quick create in 전체 학생 requires a student before a note or
   assert.deepEqual(lessonRequests, ["student-1"]);
   assert.deepEqual(created.map((item) => [item.id, item.space.studentId, item.space.label]), [["lesson-q", "student-1", "민지"]]);
   assert.deepEqual(noteTargets, []);
+});
+
+test("관리자 홈을 업무함으로 열면 일정 데이터를 읽지 않다가 일정 구역을 처음 열 때 한 번 읽고, 늦게 온 iCal 다음 레슨과 수업 노트 링크를 업무함에 합친다", async (context) => {
+  const referenceTime = new Date();
+  const students = [
+    { id: "student-1", email: "minji@example.test", displayName: "민지", createdAt: null, currentModule: null, nextLessonDate: null, pendingFeedbackCount: 0, openQnaCount: 0 },
+  ];
+  const loads: unknown[] = [];
+  loadAllStudentsCalendar = async (input) => {
+    loads.push(input);
+    return { items: [], start: "2026-01-01T00:00:00.000Z", end: "2026-12-31T23:59:59.999Z", truncated: false };
+  };
+  context.after(() => {
+    loadAllStudentsCalendar = async () => ({ items: [], start: "2026-01-01T00:00:00.000Z", end: "2026-04-30T23:59:59.999Z", truncated: false });
+    lastWorkQueueProps = null;
+  });
+  const lessonAt = new Date(referenceTime.getTime() + 2 * 86_400_000);
+  let resolveLate: (value: { nextLessonDates: Record<string, Date>; lessonNoteIds: Record<string, string> }) => void = () => undefined;
+  const lateRoster = new Promise<{ nextLessonDates: Record<string, Date>; lessonNoteIds: Record<string, string> }>((resolve) => {
+    resolveLate = resolve;
+  });
+  browser.history.replaceState({}, "", "/dashboard/admin?section=work");
+  await render(context, <AdminPortalClient
+    initialLocation={resolvePortalLocation("admin", { section: "work" })}
+    students={students} lateRoster={lateRoster}
+    adminId="admin" qnaThreads={[]} pendingAssignments={[]} referenceTime={referenceTime}
+  />);
+  await settle();
+  assert.equal(loads.length, 0, "업무함으로 열면 일정 데이터를 읽지 않는다");
+  assert.equal(browser.document.querySelector('[role="tablist"][aria-label="보기"]'), null, "일정 구역은 처음 열기 전에는 그리지 않는다");
+  const recordedNextLesson = () => lastWorkQueueProps?.students?.[0]?.nextLessonDate ?? null;
+  assert.equal(recordedNextLesson(), null);
+
+  // 바깥 iCal 다음 레슨이 늦게 도착하면 다가오는 레슨과 그 날 수업 노트 링크가 나타난다.
+  await act(async () => {
+    resolveLate({ nextLessonDates: { "student-1": lessonAt }, lessonNoteIds: { [lessonNoteKey("student-1", lessonAt)]: "note-1" } });
+    await lateRoster;
+  });
+  await settle();
+  assert.equal(recordedNextLesson()?.getTime(), lessonAt.getTime(), "늦게 온 다음 레슨을 합친다");
+  assert.equal(lastWorkQueueProps?.lessonNoteIds?.[lessonNoteKey("student-1", lessonAt)], "note-1", "그 날 수업 노트 링크도 합친다");
+
+  // 일정 구역을 처음 열 때 한 번 읽고, 다시 오가도 더 읽지 않는다.
+  await act(async () => { navigateWithinPage("/dashboard/admin?section=schedule&student=all"); });
+  await settle();
+  assert.equal(loads.length, 1, "일정 구역을 처음 열 때 전체 학생 일정을 한 번 읽는다");
+  assert.ok(browser.document.querySelector('[role="tablist"][aria-label="보기"]'));
+  await act(async () => { navigateWithinPage("/dashboard/admin?section=work&student=all"); });
+  await settle();
+  await act(async () => { navigateWithinPage("/dashboard/admin?section=schedule&student=all"); });
+  await settle();
+  assert.equal(loads.length, 1, "한 번 읽은 일정은 구역을 오가도 다시 읽지 않는다");
 });
 
 test("전체 학생 일별 보기도 읽지 않은 주로 옮기면 그 기간을 더 읽는다", async (context) => {

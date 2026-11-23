@@ -17,6 +17,7 @@ import {
  * - 복구본: `portal-collab-recovered:<owner>:<roomKey>:<ms>`(JSON에 userId)
  * - 이름 색인: `portal-collab-dbs:v1:<owner>` = 이 owner로 연 DB 이름 JSON 배열
  * - 잠금: `portal-collab-locked:v1:<sha256(owner)>`
+ * - 마지막으로 연 시각: `portal-collab-opened:v1:<owner>` = `{ [roomKey]: { at, clean } }`(오래 안 연 문서 정리 근거)
  *
  * 구버전(개발 중에만 존재): IDB `portal-collab:<roomKey>:<epoch>`, `portal-collab-epoch:<roomKey>`,
  * `portal-collab-recovered:<roomKey>:<ms>`(JSON userId). owner를 모르므로 어느 정리에서나 지우되,
@@ -29,6 +30,9 @@ export const COLLAB_GENERATION_PREFIX = "portal-collab-gen:";
 export const COLLAB_RECOVERED_PREFIX = "portal-collab-recovered:";
 export const COLLAB_DB_INDEX_PREFIX = "portal-collab-dbs:v1:";
 export const COLLAB_OWNER_LOCK_PREFIX = "portal-collab-locked:v1:";
+export const COLLAB_OPENED_PREFIX = "portal-collab-opened:v1:";
+/** 이만큼 열지 않았고 마지막에 room과 모두 맞춘 채 닫은 문서의 기기 보관본은 지운다(room·D1에 내용이 있다). */
+export const COLLAB_STALE_DOC_MS = 30 * 24 * 60 * 60 * 1000;
 export const COLLAB_LEGACY_EPOCH_PREFIX = "portal-collab-epoch:";
 /** 같은 window에 잠금·해제를 알린다(detail: {@link CollabOwnerLockEventDetail}). */
 export const COLLAB_OWNER_LOCK_EVENT = "portal:collab-owner-lock";
@@ -158,6 +162,7 @@ type ParsedStorageKey =
   | { kind: "legacy-recovered"; userId: string | null }
   | { kind: "legacy-epoch" }
   | { kind: "index"; owner: string }
+  | { kind: "opened"; owner: string }
   | { kind: "lock" };
 
 function readLegacyRecoveryUserId(storage: CollabStorage, key: string): string | null {
@@ -177,6 +182,10 @@ function parseCollabStorageKey(storage: CollabStorage, key: string): ParsedStora
   if (key.startsWith(COLLAB_DB_INDEX_PREFIX)) {
     const owner = key.slice(COLLAB_DB_INDEX_PREFIX.length);
     return OWNER_SEGMENT.test(owner) ? { kind: "index", owner } : null;
+  }
+  if (key.startsWith(COLLAB_OPENED_PREFIX)) {
+    const owner = key.slice(COLLAB_OPENED_PREFIX.length);
+    return OWNER_SEGMENT.test(owner) ? { kind: "opened", owner } : null;
   }
   if (key.startsWith(COLLAB_LEGACY_EPOCH_PREFIX)) return { kind: "legacy-epoch" };
   if (key.startsWith(COLLAB_GENERATION_PREFIX)) {
@@ -239,7 +248,7 @@ function scopedDataStorageKeys(storage: CollabStorage, scope: CleanupScope): str
     const parsed = parseCollabStorageKey(storage, key);
     if (!parsed) continue;
     if (
-      (parsed.kind === "generation" || parsed.kind === "recovered") && scope.ownerMatches(parsed.owner) ||
+      (parsed.kind === "generation" || parsed.kind === "recovered" || parsed.kind === "opened") && scope.ownerMatches(parsed.owner) ||
       parsed.kind === "legacy-epoch" ||
       parsed.kind === "legacy-recovered" && scope.legacyRecoveryMatches(parsed.userId)
     ) {
@@ -317,6 +326,111 @@ export async function listCollabDbNames(): Promise<string[]> {
     }
   }
   return [...names].sort();
+}
+
+// --- 마지막으로 연 시각과 오래된 보관본 정리 ---
+
+type OpenedEntry = { at: number; clean: boolean };
+
+function collabOpenedStorageKey(owner: string): string {
+  assertOwner(owner);
+  return `${COLLAB_OPENED_PREFIX}${owner}`;
+}
+
+function readOpened(storage: CollabStorage, owner: string): Record<string, OpenedEntry> {
+  try {
+    const value: unknown = JSON.parse(storage.getItem(collabOpenedStorageKey(owner)) ?? "{}");
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    const entries: Record<string, OpenedEntry> = {};
+    for (const [roomKey, entry] of Object.entries(value as Record<string, unknown>)) {
+      if (!entry || typeof entry !== "object") continue;
+      const { at, clean } = entry as { at?: unknown; clean?: unknown };
+      if (typeof at === "number" && Number.isFinite(at)) entries[roomKey] = { at, clean: clean === true };
+    }
+    return entries;
+  } catch {
+    return {};
+  }
+}
+
+function writeOpened(storage: CollabStorage, owner: string, entries: Record<string, OpenedEntry>): void {
+  const key = collabOpenedStorageKey(owner);
+  if (Object.keys(entries).length === 0) storage.removeItem(key);
+  else storage.setItem(key, JSON.stringify(entries));
+}
+
+/**
+ * 이 문서를 열었다(clean=false: 닫힐 때 모두 맞췄는지 모른다) / 닫았다(clean=true면 room과 모두 맞추고 보낼 것이 없다).
+ * owner가 잠겨 있으면 남기지 않는다.
+ */
+export function markCollabDocOpened(owner: string, roomKey: string, clean: boolean, now: number = Date.now()): void {
+  const storage = readStorage();
+  if (!storage) return;
+  try {
+    if (storage.getItem(collabOwnerLockStorageKey(owner)) === LOCK_VALUE) return;
+    const entries = readOpened(storage, owner);
+    entries[roomKey] = { at: now, clean };
+    writeOpened(storage, owner, entries);
+  } catch {
+    // 기록하지 못하면 그 문서는 정리 대상에서 빠질 뿐이다.
+  }
+}
+
+/**
+ * 오래 열지 않았고(기본 30일) 마지막에 모두 맞춘 채 닫은 문서의 IndexedDB를 지운다. 지금 연 문서(`keep`)와
+ * 닫을 때 보내지 못한 입력이 있었던(clean=false) 문서는 남긴다. 지운 roomKey를 돌려준다.
+ */
+export async function pruneStaleCollabDocs(
+  owner: string,
+  options: { keep?: string; now?: number; maxAgeMs?: number } = {},
+): Promise<string[]> {
+  const storage = readStorage();
+  if (!storage) return [];
+  const now = options.now ?? Date.now();
+  const cutoff = now - (options.maxAgeMs ?? COLLAB_STALE_DOC_MS);
+  let stale: string[];
+  try {
+    stale = Object.entries(readOpened(storage, owner))
+      .filter(([roomKey, entry]) => roomKey !== options.keep && entry.clean && entry.at < cutoff)
+      .map(([roomKey]) => roomKey);
+  } catch {
+    return [];
+  }
+  if (stale.length === 0) return [];
+  const indexKey = collabDbIndexStorageKey(owner);
+  const pruned: string[] = [];
+  for (const roomKey of stale) {
+    const names = readIndex(storage, indexKey).filter((name) => {
+      const parsed = parseCollabDbName(name);
+      return parsed?.scope === "owner" && parsed.owner === owner && parsed.roomKey === roomKey;
+    });
+    // 문서 DB를 먼저 지운다. 확인본만 남으면 다음에 열 때 room 상태와 같은 계보라 그대로 맞춰지지만,
+    // 문서만 남고 확인본이 비면 이 기기 입력처럼 보여 다시 합치게 된다.
+    names.sort((a, b) => Number(a.startsWith(COLLAB_CONFIRMED_DB_PREFIX)) - Number(b.startsWith(COLLAB_CONFIRMED_DB_PREFIX)));
+    let failed = false;
+    for (const name of names) {
+      if ((await deleteIndexedDb(name)) !== "deleted") {
+        failed = true;
+        break;
+      }
+    }
+    if (failed) continue;
+    try {
+      // 지우는 사이 이 문서를 다시 열었으면(시각이 바뀜) 기록은 남긴다. DB는 열린 화면이 다시 만든다.
+      const entries = readOpened(storage, owner);
+      if (entries[roomKey] && entries[roomKey].at < cutoff) delete entries[roomKey];
+      writeOpened(storage, owner, entries);
+      const removed = new Set(names);
+      const kept = readIndex(storage, indexKey).filter((name) => !removed.has(name));
+      if (kept.length === 0) storage.removeItem(indexKey);
+      else storage.setItem(indexKey, JSON.stringify(kept));
+      storage.removeItem(collabGenerationStorageKey(owner, roomKey));
+      pruned.push(roomKey);
+    } catch {
+      // 기록 정리에 실패해도 다음 정리에서 다시 시도한다.
+    }
+  }
+  return pruned;
 }
 
 // --- 삭제 ---

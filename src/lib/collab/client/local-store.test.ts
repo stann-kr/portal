@@ -14,6 +14,8 @@ import {
   isCollabOwnerLocked,
   listCollabDbNames,
   lockCollabOwner,
+  markCollabDocOpened,
+  pruneStaleCollabDocs,
   parseCollabDbName,
   rememberCollabDbName,
   subscribeCollabOwnerClear,
@@ -253,4 +255,44 @@ test("owner clear 구독은 lock 있는 owner·except-owner 알림만 넘긴다"
     { mode: "owner", ownerId: "ua" },
     { mode: "except-owner", ownerId: "ub" },
   ]);
+});
+
+test("오래 열지 않고 모두 맞춘 채 닫은 문서의 보관본만 지우고, 보낼 것이 남았던 문서·지금 연 문서·다른 owner는 남긴다", { concurrency: false }, async (context) => {
+  const idb = new FakeIndexedDb();
+  const { storage } = installCollabBrowser(context, idb);
+  const DAY = 24 * 60 * 60 * 1000;
+  const now = 100 * DAY;
+  const names = (owner: string, key: string) => [collabDocDbName(owner, key, 0), collabConfirmedDbName(owner, key, 0)];
+  for (const [owner, key] of [["ua", "note:old"], ["ua", "note:dirty"], ["ua", "note:open"], ["ua", "note:recent"], ["ub", "note:old"]] as const) {
+    for (const name of names(owner, key)) {
+      idb.names.add(name);
+      assert.equal(rememberCollabDbName(owner, name), true);
+    }
+  }
+  storage.setItem(collabGenerationStorageKey("ua", "note:old"), JSON.stringify({ gen: 0, synced: true }));
+  markCollabDocOpened("ua", "note:old", true, now - 40 * DAY);
+  markCollabDocOpened("ua", "note:dirty", false, now - 40 * DAY);
+  markCollabDocOpened("ua", "note:open", true, now - 40 * DAY);
+  markCollabDocOpened("ua", "note:recent", true, now - 2 * DAY);
+  markCollabDocOpened("ub", "note:old", true, now - 40 * DAY);
+
+  assert.deepEqual(await pruneStaleCollabDocs("ua", { keep: "note:open", now }), ["note:old"]);
+  for (const name of names("ua", "note:old")) assert.equal(idb.names.has(name), false);
+  for (const key of ["note:dirty", "note:open", "note:recent"]) for (const name of names("ua", key)) assert.equal(idb.names.has(name), true, key);
+  for (const name of names("ub", "note:old")) assert.equal(idb.names.has(name), true, "다른 owner");
+  assert.equal(storage.getItem(collabGenerationStorageKey("ua", "note:old")), null);
+  assert.equal((await listCollabDbNames()).some((name) => name.includes("ua:note:old")), false);
+  assert.deepEqual(await pruneStaleCollabDocs("ua", { keep: "note:open", now }), [], "두 번째는 지울 것이 없다");
+
+  // 문서 DB를 지우지 못하면 확인본은 건드리지 않고 기록을 남겨 다음에 다시 시도한다.
+  idb.behaviors.set(collabDocDbName("ua", "note:open", 0), "error");
+  assert.deepEqual(await pruneStaleCollabDocs("ua", { now }), []);
+  assert.equal(idb.names.has(collabConfirmedDbName("ua", "note:open", 0)), true);
+  assert.notEqual(storage.getItem("portal-collab-opened:v1:ua"), null);
+
+  // 계정 정리는 연 시각 기록도 지운다. 잠긴 owner는 새로 남기지 않는다.
+  await clearCollabLocalDataForOwner("ua", { deleteTimeoutMs: 50 });
+  assert.equal(storage.getItem("portal-collab-opened:v1:ua"), null);
+  markCollabDocOpened("ua", "note:x", true, now);
+  assert.equal(storage.getItem("portal-collab-opened:v1:ua"), null);
 });
