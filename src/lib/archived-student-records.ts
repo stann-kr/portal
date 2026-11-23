@@ -9,11 +9,17 @@ import { createDb } from "@/db/client";
 import {
   assignments,
   assignmentTasks,
+  diggingColumns,
+  diggingFeedbacks,
+  diggingPlaylists,
+  diggingTracks,
   feedbacks,
   privateNotes,
   profiles,
   qnaReplies,
   qnaThreads,
+  type DiggingColumnType,
+  type DiggingPlaylistProvider,
   type QnaStatus,
 } from "@/db/schema";
 import { requireAdmin } from "@/lib/auth-guard";
@@ -24,7 +30,7 @@ import { ARCHIVED_ACCOUNT_STATUS } from "@/lib/student-status";
 import { describeAssignmentSubmission } from "@/lib/unified-item-normalization";
 import type { MediaAttachmentKind } from "@/lib/media-lifecycle";
 
-export const ARCHIVED_RECORD_TABS = ["notes", "assignments", "qna"] as const;
+export const ARCHIVED_RECORD_TABS = ["notes", "assignments", "qna", "digging"] as const;
 export type ArchivedRecordTab = (typeof ARCHIVED_RECORD_TABS)[number];
 
 export function resolveArchivedRecordTab(value: string | string[] | undefined): ArchivedRecordTab {
@@ -75,6 +81,14 @@ export type ArchivedQnaRecord = {
   }[];
 };
 
+/** 디깅 탭: 트랙 보드(읽기 전용)에 필요한 컬럼·트랙, 플레이리스트, Stann의 디깅 피드백. */
+export type ArchivedDiggingRecord = {
+  columns: { id: string; name: string; columnType: DiggingColumnType; options: string | null; isDefault: boolean; sortOrder: number }[];
+  tracks: { id: string; userId: string; linkUrl: string | null; createdAt: Date | null; values: Record<string, unknown> }[];
+  playlists: { id: string; provider: DiggingPlaylistProvider; url: string; title: string | null; note: string | null; dugOn: string }[];
+  feedbacks: { dugOn: string; body: string; createdAt: Date; updatedAt: Date }[];
+};
+
 export type ArchivedStudentRecords = {
   student: ArchivedStudentSummary;
   counts: Record<ArchivedRecordTab, number>;
@@ -82,6 +96,7 @@ export type ArchivedStudentRecords = {
   | { tab: "notes"; rows: ArchivedNoteRecord[] }
   | { tab: "assignments"; rows: ArchivedAssignmentRecord[] }
   | { tab: "qna"; rows: ArchivedQnaRecord[] }
+  | { tab: "digging"; rows: ArchivedDiggingRecord }
 );
 
 type Db = ReturnType<typeof createDb>;
@@ -105,12 +120,18 @@ const personalNotesOf = (studentId: string) =>
 const threadsOf = (studentId: string) => and(eq(qnaThreads.studentId, studentId), isNull(qnaThreads.deletedAt));
 
 async function readCounts(db: Db, studentId: string): Promise<Record<ArchivedRecordTab, number>> {
-  const [[notes], [submitted], [threads]] = await Promise.all([
+  const [[notes], [submitted], [threads], [tracks]] = await Promise.all([
     db.select({ value: count() }).from(privateNotes).where(personalNotesOf(studentId)),
     db.select({ value: count() }).from(assignments).where(eq(assignments.studentId, studentId)),
     db.select({ value: count() }).from(qnaThreads).where(threadsOf(studentId)),
+    db.select({ value: count() }).from(diggingTracks).where(eq(diggingTracks.userId, studentId)),
   ]);
-  return { notes: Number(notes?.value ?? 0), assignments: Number(submitted?.value ?? 0), qna: Number(threads?.value ?? 0) };
+  return {
+    notes: Number(notes?.value ?? 0),
+    assignments: Number(submitted?.value ?? 0),
+    qna: Number(threads?.value ?? 0),
+    digging: Number(tracks?.value ?? 0),
+  };
 }
 
 async function readNotes(db: Db, studentId: string): Promise<ArchivedNoteRecord[]> {
@@ -215,8 +236,59 @@ async function readQna(db: Db, studentId: string): Promise<ArchivedQnaRecord[]> 
   return threads.map((thread) => ({ ...thread, replies: byThread.get(thread.id) ?? [] }));
 }
 
+/** 디깅 탭. 컬럼이 없어도 새로 만들지 않는다(보기 전용, getOrSeedColumns를 쓰지 않는다). */
+async function readDigging(db: Db, studentId: string): Promise<ArchivedDiggingRecord> {
+  const [columns, tracks, playlists, feedbackRows] = await Promise.all([
+    db
+      .select({
+        id: diggingColumns.id,
+        name: diggingColumns.name,
+        columnType: diggingColumns.columnType,
+        options: diggingColumns.options,
+        isDefault: diggingColumns.isDefault,
+        sortOrder: diggingColumns.sortOrder,
+      })
+      .from(diggingColumns)
+      .where(eq(diggingColumns.userId, studentId))
+      .orderBy(asc(diggingColumns.sortOrder), asc(diggingColumns.createdAt)),
+    db.select().from(diggingTracks).where(eq(diggingTracks.userId, studentId)).orderBy(asc(diggingTracks.createdAt)),
+    db
+      .select({
+        id: diggingPlaylists.id,
+        provider: diggingPlaylists.provider,
+        url: diggingPlaylists.url,
+        title: diggingPlaylists.title,
+        note: diggingPlaylists.note,
+        dugOn: diggingPlaylists.dugOn,
+      })
+      .from(diggingPlaylists)
+      .where(eq(diggingPlaylists.userId, studentId))
+      .orderBy(desc(diggingPlaylists.dugOn), desc(diggingPlaylists.createdAt)),
+    db
+      .select({ dugOn: diggingFeedbacks.dugOn, body: diggingFeedbacks.body, createdAt: diggingFeedbacks.createdAt, updatedAt: diggingFeedbacks.updatedAt })
+      .from(diggingFeedbacks)
+      .where(eq(diggingFeedbacks.studentId, studentId))
+      .orderBy(desc(diggingFeedbacks.dugOn)),
+  ]);
+  return {
+    columns,
+    tracks: tracks.map((track) => {
+      let values: Record<string, unknown> = {};
+      try {
+        const parsed: unknown = JSON.parse(track.values ?? "{}");
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) values = parsed as Record<string, unknown>;
+      } catch {
+        // 깨진 값은 빈 칸으로 보인다(보기 전용).
+      }
+      return { id: track.id, userId: track.userId, linkUrl: track.linkUrl, createdAt: track.createdAt, values };
+    }),
+    playlists,
+    feedbacks: feedbackRows,
+  };
+}
+
 /**
- * 보기 전용 상세 한 화면: 학생, 세 탭 숫자, 고른 탭의 줄(본문 포함). 수강 종료한 학생이 아니면 null.
+ * 보기 전용 상세 한 화면: 학생, 탭 숫자, 고른 탭의 줄(본문 포함). 수강 종료한 학생이 아니면 null.
  */
 export async function loadArchivedStudentRecords(
   studentId: string,
@@ -228,6 +300,7 @@ export async function loadArchivedStudentRecords(
   const counts = await readCounts(db, student.id);
   if (tab === "assignments") return { student, counts, tab, rows: await readAssignments(db, student.id) };
   if (tab === "qna") return { student, counts, tab, rows: await readQna(db, student.id) };
+  if (tab === "digging") return { student, counts, tab, rows: await readDigging(db, student.id) };
   return { student, counts, tab: "notes", rows: await readNotes(db, student.id) };
 }
 

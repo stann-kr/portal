@@ -114,6 +114,67 @@ export async function addDiggingColumn(data: {
 }
 
 /**
+ * 컬럼 이름(선택형이면 선택지도) 고치기. 학생 본인의 컬럼만, 유형은 바꾸지 않는다(트랙 값의 뜻이 바뀌지 않게).
+ * 기본 컬럼도 이름은 고칠 수 있다. 선택지를 바꿔도 이미 고른 트랙 값은 그대로 남는다.
+ */
+export async function updateDiggingColumn(columnId: string, data: { name: string; options?: string[] }) {
+  const session = await requireAuth();
+  assertStudentSession(session.user.role);
+  const userId = session.user.id!;
+  if (typeof columnId !== "string" || !columnId) throw new Error("컬럼을 찾을 수 없습니다.");
+  const db = createDb();
+  const [current] = await db
+    .select({ columnType: diggingColumns.columnType })
+    .from(diggingColumns)
+    .where(and(eq(diggingColumns.id, columnId), eq(diggingColumns.userId, userId)))
+    .limit(1);
+  if (!current) throw new Error("컬럼을 찾을 수 없습니다.");
+  const parsed = parseDiggingColumnInput({ name: data?.name, columnType: current.columnType, options: data?.options });
+  if (!parsed.ok) throw new Error(parsed.error);
+  await db
+    .update(diggingColumns)
+    .set({
+      name: parsed.value.name,
+      options: parsed.value.options ? JSON.stringify(parsed.value.options) : null,
+    })
+    .where(and(eq(diggingColumns.id, columnId), eq(diggingColumns.userId, userId), eq(diggingColumns.columnType, current.columnType)));
+  revalidatePath("/dashboard/student/digging");
+  revalidatePath("/dashboard/student");
+}
+
+/**
+ * 컬럼 순서 바꾸기: 한 칸 위(앞)·아래(뒤)로. 학생 본인의 컬럼 전체를 0부터 다시 매겨 한 batch로 쓴다.
+ * 예전 행에 같은 sort_order가 있어도 이번에 정리된다.
+ */
+export async function moveDiggingColumn(columnId: string, direction: "up" | "down") {
+  const session = await requireAuth();
+  assertStudentSession(session.user.role);
+  const userId = session.user.id!;
+  if (direction !== "up" && direction !== "down") throw new Error("순서를 바꾸지 못했습니다.");
+  const db = createDb();
+  const columns = await db
+    .select({ id: diggingColumns.id })
+    .from(diggingColumns)
+    .where(eq(diggingColumns.userId, userId))
+    .orderBy(diggingColumns.sortOrder, diggingColumns.createdAt, diggingColumns.id);
+  const index = columns.findIndex((column) => column.id === columnId);
+  if (index < 0) throw new Error("컬럼을 찾을 수 없습니다.");
+  const target = direction === "up" ? index - 1 : index + 1;
+  if (target < 0 || target >= columns.length) return;
+  const ordered = [...columns];
+  [ordered[index], ordered[target]] = [ordered[target], ordered[index]];
+  await executeDocumentStatementsAtomically(
+    createDbContext(),
+    ordered.map((column, sortOrder) => ({
+      query: "UPDATE digging_columns SET sort_order = ? WHERE id = ? AND user_id = ?",
+      params: [sortOrder, column.id, userId],
+    })),
+  );
+  revalidatePath("/dashboard/student/digging");
+  revalidatePath("/dashboard/student");
+}
+
+/**
  * 커스텀 컬럼 삭제 (isDefault=false만 허용). 트랙에 남은 그 컬럼의 값도 함께 지운다.
  */
 export async function deleteDiggingColumn(columnId: string) {

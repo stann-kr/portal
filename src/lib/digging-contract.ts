@@ -369,3 +369,37 @@ export function diggingPlaylistDisplayTitle(playlist: {
 }): string {
   return playlist.title?.trim() || DIGGING_PLAYLIST_DEFAULT_TITLES[playlist.provider];
 }
+
+/** 디깅 피드백 본문 길이(0038 digging_feedbacks_payload_check와 같다). */
+export const DIGGING_FEEDBACK_MAX_LENGTH = 2_000;
+
+const DIGGING_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/u;
+const DIGGING_DATE_MIN = "2000-01-01";
+
+/**
+ * 디깅한 날(KST YYYY-MM-DD). 실제 있는 날짜이고 오늘(KST)보다 늦지 않아야 한다.
+ * 플레이리스트의 dug_on과 디깅 피드백의 날짜 key가 같이 쓴다.
+ */
+export function parseDiggingDate(input: unknown, today: string): ValidationResult<string> {
+  const value = typeof input === "string" ? input.trim() : "";
+  const match = DIGGING_DATE_PATTERN.exec(value);
+  if (!match) return { ok: false, error: "디깅한 날을 골라 주세요." };
+  const [, year, month, day] = match;
+  const date = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
+  if (date.getUTCFullYear() !== Number(year) || date.getUTCMonth() !== Number(month) - 1 || date.getUTCDate() !== Number(day)) {
+    return { ok: false, error: "디깅한 날을 확인해 주세요." };
+  }
+  if (value < DIGGING_DATE_MIN) return { ok: false, error: "디깅한 날을 확인해 주세요." };
+  if (value > today) return { ok: false, error: "디깅한 날은 오늘보다 늦을 수 없습니다." };
+  return { ok: true, value };
+}
+
+/** 디깅 피드백 본문: 앞뒤 공백을 지우고 1~2,000자. 줄바꿈은 보존한다. */
+export function parseDiggingFeedbackBody(input: unknown): ValidationResult<string> {
+  const value = typeof input === "string" ? input.trim() : "";
+  if (!value) return { ok: false, error: "피드백을 입력해 주세요." };
+  if (value.length > DIGGING_FEEDBACK_MAX_LENGTH) {
+    return { ok: false, error: `피드백은 ${new Intl.NumberFormat("ko-KR").format(DIGGING_FEEDBACK_MAX_LENGTH)}자까지 쓸 수 있습니다.` };
+  }
+  return { ok: true, value };
+}

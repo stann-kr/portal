@@ -71,8 +71,8 @@ mock.module("@/components/player/SoundCloudPlayer", {
 function playlists(): DiggingPlaylist[] {
   const at = new Date("2026-10-20T00:00:00.000Z");
   return [
-    { id: "sc-1", provider: "soundcloud", url: "https://soundcloud.com/stann/sets/warmup", title: "Warmup", note: "오프닝\n후보", createdAt: at, updatedAt: at },
-    { id: "bp-1", provider: "beatport", url: "https://www.beatport.com/playlists/share/11018932", title: null, note: null, createdAt: at, updatedAt: at },
+    { id: "sc-1", provider: "soundcloud", url: "https://soundcloud.com/stann/sets/warmup", title: "Warmup", note: "오프닝\n후보", dugOn: "2026-10-20", createdAt: at, updatedAt: at },
+    { id: "bp-1", provider: "beatport", url: "https://www.beatport.com/playlists/share/11018932", title: null, note: null, dugOn: "2026-10-20", createdAt: at, updatedAt: at },
   ];
 }
 

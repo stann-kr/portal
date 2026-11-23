@@ -27,6 +27,9 @@ const ADMIN_NOTES_HREF = "/dashboard/admin/notes";
 /** 관리자 전체 과제(피드백 대기·아직 안 낸 과제·최근 확인한 제출, 학생 필터). 사이드바 "과제"와 업무함 "전체 과제"가 연다. */
 export const ADMIN_ASSIGNMENTS_HREF = "/dashboard/admin/assignments";
 
+/** 관리자 디깅(학생들이 디깅한 날과 피드백 여부, 학생 필터). 사이드바 "디깅"이 연다(캔버스 FlowGaps1123 ②). */
+export const ADMIN_DIGGING_HREF = "/dashboard/admin/digging";
+
 /** 대상(학생·그룹)을 먼저 고른 뒤 이미 있는 작성 화면을 여는 고르기 화면(캔버스 AdminUx1123 ①). */
 export const ADMIN_NOTE_PICKER_HREF = `${ADMIN_NOTES_HREF}/new`;
 export const ADMIN_ASSIGNMENT_PICKER_HREF = `${ADMIN_ASSIGNMENTS_HREF}/new`;
@@ -67,6 +70,7 @@ export const APP_NAV_ITEMS: Record<AppRole, readonly AppNavItem[]> = {
     { id: "schedule", label: "일정", href: "/dashboard/admin?section=schedule", Icon: CalendarDays },
     { id: "notes", label: "노트", href: ADMIN_NOTES_HREF, Icon: FileText },
     { id: "assignments", label: "과제", href: ADMIN_ASSIGNMENTS_HREF, Icon: FilePlay },
+    { id: "digging", label: "디깅", href: ADMIN_DIGGING_HREF, Icon: Music },
     { id: "guide", label: "가이드", href: GUIDE_HREF, Icon: BookOpenText },
     { id: "qna", label: "Q&A", href: "/dashboard/qna", Icon: CircleHelp },
     { id: "community", label: "커뮤니티", href: "/community", Icon: MessageSquare },
@@ -119,6 +123,7 @@ export function resolveActiveNavItem(role: AppRole, { pathname, searchParams }: 
     // 전체 과제와, 관리자가 연 과제 상세(학생 과제 주소를 함께 쓴다)는 과제 메뉴다.
     if (pathname === ADMIN_ASSIGNMENTS_HREF || pathname.startsWith(`${ADMIN_ASSIGNMENTS_HREF}/`)) return "assignments";
     if (pathname.startsWith("/dashboard/student/assignments")) return "assignments";
+    if (pathname === ADMIN_DIGGING_HREF || pathname.startsWith(`${ADMIN_DIGGING_HREF}/`)) return "digging";
     if (pathname.startsWith("/dashboard/admin/students") || pathname.startsWith("/dashboard/notes")) return "students";
     if (
       pathname.startsWith(ADMIN_OPERATIONS_HREF) ||
@@ -216,6 +221,7 @@ export function resolveMobileTopBar(role: AppRole, location: Location): MobileTo
   if (pathname === ADMIN_NOTES_HREF) return { title: "전체 노트", action: { href: ADMIN_NOTE_PICKER_HREF, label: "새 노트" } };
   if (pathname === ADMIN_NOTE_PICKER_HREF) return { title: "새 노트", back: { href: ADMIN_NOTES_HREF, label: "노트 목록으로" } };
   if (pathname === ADMIN_ASSIGNMENTS_HREF) return { title: "과제", action: { href: ADMIN_ASSIGNMENT_PICKER_HREF, label: "과제 내기" } };
+  if (pathname === ADMIN_DIGGING_HREF) return { title: "디깅" };
   if (pathname === ADMIN_ASSIGNMENT_PICKER_HREF) return { title: "과제 내기", back: { href: ADMIN_ASSIGNMENTS_HREF, label: "과제로" } };
   if (pathname.startsWith("/dashboard/student/assignments/")) {
     return { title: "과제", back: { href: ADMIN_ASSIGNMENTS_HREF, label: "과제로" } };

@@ -399,6 +399,11 @@ export const assignmentTasks = sqliteTable(
     /** 믹스셋 분석 양식. 정기 과제 회차는 규칙의 값을 그대로 받는다. */
     analysisForm: integer("analysis_form", { mode: "boolean" }).default(false).notNull(),
     dueAt: integer("due_at", { mode: "timestamp" }),
+    /**
+     * 관리자가 제출 없이 끝낸 시각(완료 처리). 완료된 과제는 학생이 제출할 수 없고,
+     * 마감 지남·아직 안 냄·홈 할 일·캘린더에서 빠진다. 다시 열면 NULL로 돌아간다.
+     */
+    closedAt: integer("closed_at", { mode: "timestamp" }),
     createdById: text("created_by_id").references(() => profiles.id, {
       onDelete: "set null",
     }),
@@ -428,6 +433,27 @@ export const assignmentTasks = sqliteTable(
       "assignment_tasks_payload_check",
       sql`length(${table.title}) > 0 AND ${table.version} >= 1 AND (${table.occurrenceDate} IS NULL OR length(${table.occurrenceDate}) = 10)`,
     ),
+  ],
+);
+
+/**
+ * 관리자가 지운 정기 과제 회차의 날짜. 회차는 조회 때 만들어지므로, 지운 날짜를 남겨
+ * 같은 회차가 다시 만들어지지 않게 한다. 규칙을 지우면 함께 지워진다.
+ */
+export const assignmentOccurrenceSkips = sqliteTable(
+  "assignment_occurrence_skips",
+  {
+    recurrenceId: text("recurrence_id")
+      .references(() => assignmentRecurrences.id, { onDelete: "cascade" })
+      .notNull(),
+    occurrenceDate: text("occurrence_date").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .default(sql`(strftime('%s', 'now'))`)
+      .notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.recurrenceId, table.occurrenceDate] }),
+    check("assignment_occurrence_skips_date_check", sql`length(${table.occurrenceDate}) = 10`),
   ],
 );
 
@@ -486,6 +512,8 @@ export const feedbacks = sqliteTable(
     createdAt: integer("created_at", { mode: "timestamp" }).default(
       sql`(strftime('%s', 'now'))`,
     ),
+    /** 마지막으로 고친 시각. 고친 적이 없으면 NULL이고 학생 화면에 "수정됨"을 보이지 않는다. */
+    updatedAt: integer("updated_at", { mode: "timestamp" }),
   },
   (table) => [
     index("feedbacks_assignment_idx").on(table.assignmentId),
@@ -1349,6 +1377,8 @@ export const comments = sqliteTable(
     ),
     timeMarkerSeconds: integer("time_marker_seconds"),
     parentId: text("parent_id"),
+    /** 작성자가 고친 시각(0038). 없으면 처음 쓴 그대로이며, 있으면 화면이 "수정됨"을 보인다. */
+    updatedAt: integer("updated_at", { mode: "timestamp" }),
   },
   (table) => [
     index("comments_post_created_idx").on(table.postId, table.createdAt),
@@ -1481,6 +1511,11 @@ export const diggingPlaylists = sqliteTable(
     url: text("url").notNull(),
     title: text("title"),
     note: text("note"),
+    /**
+     * 디깅한 날(KST YYYY-MM-DD). 학생이 고르며 기본은 올린 날이다. 트랙 보드의 날짜 묶음·디깅 피드백과 같은 날짜 key다.
+     * 0038 전 행은 올린 날(created_at의 KST 날짜)로 채웠다.
+     */
+    dugOn: text("dug_on").notNull(),
     createdAt: integer("created_at", { mode: "timestamp" })
       .default(sql`(strftime('%s', 'now'))`)
       .notNull(),
@@ -1501,6 +1536,35 @@ export const diggingPlaylists = sqliteTable(
         AND (${table.title} IS NULL OR length(${table.title}) BETWEEN 1 AND 200)
         AND (${table.note} IS NULL OR length(${table.note}) BETWEEN 1 AND 2000)
         AND ${table.createdAt} <= ${table.updatedAt}`,
+    ),
+    check("digging_playlists_dug_on_check", sql`length(${table.dugOn}) = 10`),
+  ],
+);
+
+/**
+ * 관리자가 학생 디깅의 하루치(트랙·플레이리스트)에 남긴 피드백. 학생·날짜마다 하나다.
+ * dug_on은 트랙 보드의 날짜 묶음(KST)·플레이리스트 dug_on과 같은 날짜 key다.
+ */
+export const diggingFeedbacks = sqliteTable(
+  "digging_feedbacks",
+  {
+    studentId: text("student_id")
+      .references(() => profiles.id, { onDelete: "cascade" })
+      .notNull(),
+    dugOn: text("dug_on").notNull(),
+    body: text("body").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .default(sql`(strftime('%s', 'now'))`)
+      .notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .default(sql`(strftime('%s', 'now'))`)
+      .notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.studentId, table.dugOn] }),
+    check(
+      "digging_feedbacks_payload_check",
+      sql`length(${table.dugOn}) = 10 AND length(trim(${table.body})) BETWEEN 1 AND 2000`,
     ),
   ],
 );

@@ -12,6 +12,16 @@ export function buildAdminStudentDetailHref(studentId: string, tab: StudentDetai
   return `/dashboard/admin/students/${encodeURIComponent(studentId)}?tab=${tab}`;
 }
 
+/** 디깅 피드백 한 날의 id(학생 디깅 화면·관리자 학생 상세 디깅 탭). 알림과 관리자 디깅 화면이 이 자리로 바로 간다. */
+export function diggingFeedbackAnchorId(dugOn: string): string {
+  return `digging-day-${dugOn}`;
+}
+
+/** 학생 상세 과제 탭에서 과제 한 줄의 id(전체 과제 화면이 이 줄로 바로 간다). */
+export function assignmentTaskAnchorId(taskId: string): string {
+  return `assignment-task-${taskId}`;
+}
+
 /** 학생 디깅 보드의 기본 복귀 위치: 워크스페이스 전체 항목의 디깅 필터. */
 export const STUDENT_DIGGING_TIMELINE_HREF = "/dashboard/student?section=workspace&view=all&type=DIGGING";
 

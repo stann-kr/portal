@@ -3,6 +3,7 @@
  * @description 커뮤니티 댓글 CRUD 서버 액션.
  * 작성: 모든 인증 사용자. 재생 시점은 매체(오디오·링크)가 있는 믹스셋 게시물에만 남길 수 있다.
  * 답글: 같은 게시물 원 댓글에 한 단계로 단다(답글의 답글도 그 원 댓글 묶음으로). 답글에는 재생 시점이 없다.
+ * 고치기: 작성자 본인만(내용만, 고친 시각을 남긴다).
  * 삭제: 본인 댓글 또는 Admin. 원 댓글을 지워도 답글은 남고 화면이 그 자리를 "삭제된 댓글입니다"로 보인다.
  */
 "use server";
@@ -55,6 +56,7 @@ export async function getCommentsByPost(postId: string) {
       authorId: comments.authorId,
       contentHtml: comments.contentHtml,
       createdAt: comments.createdAt,
+      updatedAt: comments.updatedAt,
       timeMarkerSeconds: comments.timeMarkerSeconds,
       parentId: comments.parentId,
       authorName: publicAuthorName,
@@ -290,6 +292,65 @@ async function findReplyRoot(
     .where(and(eq(comments.id, target.parentId), eq(comments.postId, postId), isNull(comments.parentId)))
     .limit(1);
   return { root: root ?? null, rootId: target.parentId };
+}
+
+// ───────────────────────────────────────────────
+// 고치기 (작성자 본인만)
+// ───────────────────────────────────────────────
+
+export type UpdateCommentResult = { success: true; contentHtml: string } | { error: string; changed?: boolean };
+
+const COMMENT_CHANGED_ERROR = "다른 곳에서 이 댓글이 먼저 바뀌었거나 지워졌습니다. 새로고침해 확인한 뒤 다시 고쳐 주세요.";
+
+/**
+ * 댓글 내용 고치기. 작성자 본인만 고친다(관리자도 남의 댓글 내용은 고치지 않고 지우기만 한다).
+ * 재생 시점·답글 자리는 바꾸지 않는다. 화면이 고치기 시작할 때 본 내용(expectedHtml)과 같을 때만 바꿔
+ * 다른 탭에서 먼저 고친 내용을 덮지 않는다. 휴지통 게시물의 댓글은 DB trigger도 막는다.
+ */
+export async function updateComment(
+  commentId: string,
+  postId: string,
+  input: { content: string; expectedHtml: string },
+): Promise<UpdateCommentResult> {
+  const session = await requireAuth();
+  const content = typeof input?.content === "string" ? input.content.trim() : "";
+  if (!content) return { error: "댓글 내용을 입력해주세요." };
+  if ([...content].length > COMMENT_MAX_LENGTH) return { error: `댓글은 ${new Intl.NumberFormat("ko-KR").format(COMMENT_MAX_LENGTH)}자까지 쓸 수 있습니다.` };
+  if (typeof commentId !== "string" || !commentId || typeof postId !== "string" || !postId || typeof input?.expectedHtml !== "string") {
+    return { error: COMMENT_CHANGED_ERROR, changed: true };
+  }
+  const contentHtml = `<p>${escapeHtml(content)}</p>`;
+  const db = createDb();
+  const [activePost] = await db
+    .select({ id: posts.id })
+    .from(posts)
+    .where(and(eq(posts.id, postId), isNull(posts.deletedAt)))
+    .limit(1);
+  if (!activePost) return { error: "휴지통으로 옮겨진 게시물의 댓글은 고칠 수 없습니다." };
+  // 같은 내용으로 다시 보낸 요청(재시도)은 성공으로 본다.
+  if (contentHtml === input.expectedHtml) return { success: true, contentHtml };
+  const updated = await db
+    .update(comments)
+    .set({ contentHtml, updatedAt: new Date() })
+    .where(and(
+      eq(comments.id, commentId),
+      eq(comments.postId, postId),
+      eq(comments.authorId, session.user.id!),
+      eq(comments.contentHtml, input.expectedHtml),
+    ))
+    .returning({ id: comments.id });
+  if (updated.length === 0) {
+    const [current] = await db
+      .select({ contentHtml: comments.contentHtml })
+      .from(comments)
+      .where(and(eq(comments.id, commentId), eq(comments.postId, postId), eq(comments.authorId, session.user.id!)))
+      .limit(1);
+    if (current?.contentHtml === contentHtml) return { success: true, contentHtml };
+    revalidatePath(`/community/${postId}`);
+    return { error: COMMENT_CHANGED_ERROR, changed: true };
+  }
+  revalidatePath(`/community/${postId}`);
+  return { success: true, contentHtml };
 }
 
 // ───────────────────────────────────────────────

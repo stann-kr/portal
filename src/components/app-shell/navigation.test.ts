@@ -154,3 +154,15 @@ test("업무함 숫자 배지는 0이면 숨기고 99를 넘으면 99+로 줄이
   assert.deepEqual(formatWorkBadge(130), { text: "99+", label: "처리할 일 130건" });
   assert.ok(APP_NAV_ITEMS.admin.some((item) => item.id === WORK_BADGE_NAV_ID && item.label === "업무함"));
 });
+
+test("관리자 사이드바의 디깅은 과제 다음에 있고 관리자 디깅 화면만 디깅 메뉴로 표시한다", () => {
+  const ids = APP_NAV_ITEMS.admin.map((item) => item.id);
+  assert.equal(ids.indexOf("digging"), ids.indexOf("assignments") + 1);
+  assert.equal(APP_NAV_ITEMS.admin.find((item) => item.id === "digging")?.href, "/dashboard/admin/digging");
+  assert.equal(resolveActiveNavItem("admin", at("/dashboard/admin/digging")), "digging");
+  assert.equal(resolveActiveNavItem("admin", at("/dashboard/admin/digging?student=s1")), "digging");
+  assert.notEqual(resolveActiveNavItem("admin", at("/dashboard/admin/diggingx")), "digging");
+  // 학생 상세의 디깅 탭은 학생 메뉴로 남는다.
+  assert.equal(resolveActiveNavItem("admin", at("/dashboard/admin/students/s1?tab=digging")), "students");
+  assert.deepEqual(resolveMobileTopBar("admin", at("/dashboard/admin/digging")), { title: "디깅" });
+});

@@ -1,6 +1,7 @@
 /**
  * @file src/components/admin/assignments/AdminAssignmentsPanel.tsx
- * @description 관리자 학생 상세 과제 탭: 과제 내기, 정기 과제 관리(멈춤·다시 시작·고치기·삭제), 낸 과제와 상태.
+ * @description 관리자 학생 상세 과제 탭: 과제 내기, 정기 과제 관리(멈춤·다시 시작·고치기·삭제), 낸 과제와 상태,
+ * 제출 없는 과제의 완료·다시 열기, 과제·정기 회차 삭제(캔버스 FlowGaps1123 ①).
  * 서버가 렌더한 목록을 받고, 바꾼 뒤에는 router.refresh로 서버 목록을 다시 받는다.
  */
 "use client";
@@ -17,8 +18,10 @@ import {
   LedgerSectionHeader,
 } from "@/components/student-portal/today/HomeSection";
 import {
+  closeAssignmentTask,
   deleteAssignmentRecurrence,
   deleteAssignmentTask,
+  reopenAssignmentTask,
   setAssignmentRecurrencePaused,
   type AssignmentRecurrenceItem,
   type AssignmentTaskItem,
@@ -32,6 +35,7 @@ import {
   type AssignmentTaskStatus,
 } from "@/lib/assignment-submission";
 import { formatKstDot } from "@/lib/kst-format";
+import { assignmentTaskAnchorId } from "@/lib/student-space-routes";
 import { STATUS_TONE_DOT_CLASS_NAMES, type PortalStatusTone } from "@/lib/portal-status";
 import { cn } from "@/lib/utils";
 import type { AssignmentComposeKind } from "@/lib/admin-create-links";
@@ -41,11 +45,15 @@ import type { StudentOption } from "@/lib/actions/students";
 const TASK_STATUS_TONE: Record<AssignmentTaskStatus, PortalStatusTone> = {
   open: "neutral",
   overdue: "destructive",
+  closed: "neutral",
   submitted: "warning",
   acknowledged: "success",
   reviewed: "success",
 };
 
+/** 줄 안의 글자 버튼(완료·다시 열기). 휴대폰에서는 44px 높이. */
+const TEXT_ACTION_CLASS =
+  "inline-flex h-11 items-center rounded-sm px-2 text-ui text-secondary-foreground underline-offset-[3px] hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 md:h-8";
 const ROW_CLASS = "flex flex-col gap-3 border-b border-muted py-3 md:px-1";
 const ICON_BUTTON_CLASS = "-my-1 shrink-0 max-md:size-11";
 
@@ -264,7 +272,7 @@ export function AdminAssignmentsPanel({
                 late ? "늦은 제출" : null,
               ].filter(Boolean).join(" · ");
               return (
-                <li key={task.id} className={ROW_CLASS}>
+                <li key={task.id} id={assignmentTaskAnchorId(task.id)} className={cn(ROW_CLASS, "scroll-mt-20")}>
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
                     <span className="flex min-w-0 flex-1 basis-60 flex-col gap-0.5">
                       <span className="break-words text-body font-medium">{task.title}</span>
@@ -282,7 +290,19 @@ export function AdminAssignmentsPanel({
                         >
                           {task.submission.feedbackCount > 0 ? "제출·피드백 보기" : "제출 보고 피드백"}
                         </Link>
-                      ) : null}
+                      ) : (
+                        <button
+                          type="button"
+                          disabled={isPending}
+                          onClick={() => run(() => (task.closedAt
+                            ? reopenAssignmentTask(studentId, task.id)
+                            : closeAssignmentTask(studentId, task.id)))}
+                          className={TEXT_ACTION_CLASS}
+                        >
+                          {task.closedAt ? "다시 열기" : "완료"}
+                          <span className="sr-only">: {task.title}</span>
+                        </button>
+                      )}
                       <Button
                         type="button"
                         variant="ghost"
@@ -294,20 +314,18 @@ export function AdminAssignmentsPanel({
                       >
                         <Pencil className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
                       </Button>
-                      {task.recurrenceId === null ? (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          aria-label={`${task.title} 과제 삭제`}
-                          aria-expanded={taskConfirm.value === task.id}
-                          disabled={isPending}
-                          onClick={(event) => taskConfirm.request(event.currentTarget, task.id)}
-                          className={cn(ICON_BUTTON_CLASS, "text-destructive hover:bg-destructive-muted hover:text-destructive")}
-                        >
-                          <Trash2 className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
-                        </Button>
-                      ) : null}
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        aria-label={`${task.title} 과제 삭제`}
+                        aria-expanded={taskConfirm.value === task.id}
+                        disabled={isPending}
+                        onClick={(event) => taskConfirm.request(event.currentTarget, task.id)}
+                        className={cn(ICON_BUTTON_CLASS, "text-destructive hover:bg-destructive-muted hover:text-destructive")}
+                      >
+                        <Trash2 className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
+                      </Button>
                     </span>
                   </div>
                   {editor?.kind === "task" && editor.id === task.id ? (
@@ -316,10 +334,13 @@ export function AdminAssignmentsPanel({
                   {taskConfirm.value === task.id ? (
                     <ConfirmPanel
                       confirm={taskConfirm}
-                      message={task.submission
-                        ? "이 과제를 삭제할까요? 학생의 제출과 피드백은 지워지지 않고 자유 제출로 남습니다."
-                        : "이 과제를 삭제할까요? 학생 과제 목록에서도 사라지며 되돌릴 수 없습니다."}
-                      confirmLabel="과제 삭제"
+                      message={[
+                        task.recurrenceId
+                          ? "이 회차를 삭제할까요? 이 날짜의 회차는 다시 만들어지지 않고, 정기 과제의 다른 회차는 그대로입니다."
+                          : "이 과제를 삭제할까요? 학생 과제 목록에서도 사라지며 되돌릴 수 없습니다.",
+                        task.submission ? "학생의 제출과 피드백은 지워지지 않고 자유 제출로 남습니다." : null,
+                      ].filter(Boolean).join(" ")}
+                      confirmLabel={task.recurrenceId ? "회차 삭제" : "과제 삭제"}
                       pendingLabel="삭제 중..."
                       pending={isPending}
                       onConfirm={() => run(() => deleteAssignmentTask(studentId, task.id))}

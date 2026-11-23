@@ -230,6 +230,8 @@ async function querySourceRows(
         .from(assignmentTasks)
         .where(and(
           owner(assignmentTasks.studentId),
+          // 관리자가 완료로 처리한 과제는 할 일·캘린더에서 뺀다.
+          isNull(assignmentTasks.closedAt),
           sql<boolean>`${taskPlacement} BETWEEN ${startEpoch} AND ${endEpoch}`,
           notExists(
             db.select({ id: assignments.id }).from(assignments).where(eq(assignments.taskId, assignmentTasks.id)),

@@ -48,6 +48,7 @@ export const STUDENT_DELETION_RECORD_COLUMNS: readonly ProfileReference[] = [
   ["calendar_mappings", "student_id"],
   ["calendar_connections", "owner_id"],
   ["digging_playlists", "user_id"],
+  ["digging_feedbacks", "student_id"],
   ["digging_tracks", "user_id"],
   ["digging_columns", "user_id"],
   ["qna_threads", "student_id"],

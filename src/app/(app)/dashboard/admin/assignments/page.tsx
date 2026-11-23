@@ -2,6 +2,7 @@
  * 관리자 전체 과제(캔버스 AdminAssignments, 2026-11-23). 사이드바 "과제"와 업무함 피드백 대기의 "전체 과제"가 이 화면으로 온다.
  * 수강 중인 학생 전체(또는 `?student=`로 고른 한 명)의 피드백 대기 · 아직 안 낸 과제 · 최근 확인한 제출을 한 화면에 둔다.
  * "과제 내기"는 학생을 골라 둔 상태면 그 학생 과제 탭의 폼을 바로 열고, 전체 학생이면 대상 고르기 화면을 연다.
+ * 아직 안 낸 과제는 줄 끝에서 완료·지우기를 한다(캔버스 FlowGaps1123 ①). 줄은 학생 과제 탭의 그 과제로 간다.
  */
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -10,6 +11,7 @@ import { MobileTopBar } from "@/components/app-shell/AppSidebar";
 import { RouteAutoRefresh } from "@/components/app-shell/RouteAutoRefresh";
 import { ADMIN_ASSIGNMENT_PICKER_HREF, ADMIN_ASSIGNMENTS_HREF } from "@/components/app-shell/navigation";
 import { NotesStudentFilter } from "@/components/notes/NotesStudentFilter";
+import { AdminOpenTaskList } from "@/components/admin/assignments/AdminOpenTaskList";
 import {
   LEDGER_HEADER_NOTE_CLASS,
   LEDGER_ROW_CLASS,
@@ -27,9 +29,9 @@ import { formatKstDot } from "@/lib/kst-format";
 import { firstSearchValue } from "@/lib/portal-location";
 import { cookies } from "next/headers";
 import { ADMIN_LIST_FILTER_COOKIES, resolveRememberedStudent } from "@/lib/admin-list-filter-memory";
-import { STATUS_TONE_DOT_CLASS_NAMES, type PortalStatusTone } from "@/lib/portal-status";
+import type { PortalStatusTone } from "@/lib/portal-status";
 import { getRequestNow } from "@/lib/request-time";
-import { buildAdminStudentDetailHref } from "@/lib/student-space-routes";
+import { assignmentTaskAnchorId, buildAdminStudentDetailHref } from "@/lib/student-space-routes";
 import { cn } from "@/lib/utils";
 
 export const metadata = { title: "과제" };
@@ -46,15 +48,6 @@ function RowStudent({ children }: { children: string }) {
 
 function RowTitle({ children }: { children: string }) {
   return <span className="min-w-0 basis-full truncate text-md font-medium md:flex-1 md:basis-auto md:text-body">{children}</span>;
-}
-
-function StatusDot({ tone, label }: { tone: PortalStatusTone; label: string }) {
-  return (
-    <span className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap text-ui text-secondary-foreground md:w-24">
-      <span aria-hidden="true" className={cn("size-1.5 shrink-0 rounded-full", STATUS_TONE_DOT_CLASS_NAMES[tone])} />
-      {label}
-    </span>
-  );
 }
 
 /** 아직 안 낸 과제의 상태: 마감 지남 · 오늘/내일 마감(KST 날짜 기준) · 진행 중 · 마감 없음. */
@@ -166,22 +159,18 @@ export default async function AdminAssignmentsPage({
           {open.length === 0 ? (
             <LedgerEmptyRow>낸 과제를 모두 제출했습니다.</LedgerEmptyRow>
           ) : (
-            <ul>
-              {open.map((task) => {
-                const status = openTaskStatus(task.dueAt, referenceTime);
-                const due = task.dueAt ? `${formatKstDot(task.dueAt, { weekday: true, referenceTime })} 마감` : "마감 없음";
-                return (
-                  <li key={task.id}>
-                    <Link href={buildAdminStudentDetailHref(task.studentId, "assignments")} className={ROW_CLASS}>
-                      <RowTitle>{task.title}</RowTitle>
-                      <RowStudent>{label(task.studentId)}</RowStudent>
-                      <span className="shrink-0 font-mono text-xs text-muted-foreground">{due}</span>
-                      <StatusDot tone={status.tone} label={status.label} />
-                    </Link>
-                  </li>
-                );
-              })}
-            </ul>
+            <AdminOpenTaskList
+              rows={open.map((task) => ({
+                id: task.id,
+                studentId: task.studentId,
+                studentLabel: label(task.studentId),
+                title: task.title,
+                dueLabel: task.dueAt ? `${formatKstDot(task.dueAt, { weekday: true, referenceTime })} 마감` : "마감 없음",
+                status: openTaskStatus(task.dueAt, referenceTime),
+                recurring: task.recurrenceId !== null,
+                href: `${buildAdminStudentDetailHref(task.studentId, "assignments")}#${assignmentTaskAnchorId(task.id)}`,
+              }))}
+            />
           )}
         </LedgerSection>
 

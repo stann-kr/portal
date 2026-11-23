@@ -84,6 +84,7 @@ const TEXTAREA_CLASS =
 const TASK_STATUS_TONE: Record<AssignmentTaskStatus, PortalStatusTone> = {
   open: "neutral",
   overdue: "destructive",
+  closed: "neutral",
   submitted: "warning",
   acknowledged: "success",
   reviewed: "success",
@@ -309,11 +310,13 @@ function TaskRow({
 }) {
   const submission = task.submission;
   const duePassed = useHasPassed(task.dueAt ? task.dueAt.getTime() : null);
+  const closed = !submission && task.closedAt !== null;
   const status: AssignmentTaskStatus = submission
     ? getSubmissionReviewStatus(submission)
-    : duePassed ? "overdue" : "open";
+    : closed ? "closed" : duePassed ? "overdue" : "open";
   const late = submission ? isLateSubmission(task.dueAt, submission.submittedAt) : false;
-  const canEdit = submission ? !isSubmissionSettled(submission) : true;
+  // Stann이 완료로 처리한 과제는 더 낼 수 없다(설명은 펼쳐 볼 수 있다).
+  const canEdit = submission ? !isSubmissionSettled(submission) : !closed;
   const panelId = `task-panel-${task.id}`;
   // 계정에 임시 저장한 글(제출 전 "작성 중", 제출 뒤 "고치는 중"). 고칠 수 없는 제출이면 보이지 않는다.
   const draftSavedAt = canEdit ? task.draftSavedAt ?? null : null;
@@ -333,7 +336,7 @@ function TaskRow({
     >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <span className="flex min-w-0 flex-1 basis-60 flex-col gap-0.5">
-          <span className="break-words text-md font-medium md:text-body">{task.title}</span>
+          <span className={cn("break-words text-md font-medium md:text-body", closed && "text-muted-foreground")}>{task.title}</span>
           <span className="text-xs text-muted-foreground">
             <span className="font-mono">{meta}</span>
             {late ? " · 늦은 제출" : ""}

@@ -23,6 +23,8 @@ import { isCurriculumVisible } from "@/lib/curriculum-visibility";
 import { getConnectedLessonsForStudent, getLessonsByStudent, getSubscribedLessonsForStudent } from "@/lib/actions/lessons";
 import { getOrSeedColumns, getDiggingTracks } from "@/lib/actions/digging";
 import { getDiggingPlaylists } from "@/lib/actions/digging-playlists";
+import { getStudentDiggingDays } from "@/lib/actions/digging-feedback";
+import { DiggingFeedbackPanel } from "@/components/digging/DiggingFeedbackPanel";
 import { getQnaThreadsByStudent } from "@/lib/actions/qna";
 import { getAssignmentSummariesByStudent } from "@/lib/actions/assignments";
 import { getAssignmentTasksForStudent } from "@/lib/actions/assignmentTasks";
@@ -83,15 +85,18 @@ function TabFallback({ className }: { className: string }) {
 
 // ─── 탭별 콘텐츠 ───────────────────────────────────
 
-async function DiggingTabContent({ studentId }: { studentId: string }) {
-  const [columns, tracks, playlists] = await Promise.all([
+async function DiggingTabContent({ actorId, studentId }: { actorId: string; studentId: string }) {
+  const [columns, tracks, playlists, days] = await Promise.all([
     getOrSeedColumns(studentId),
     getDiggingTracks(studentId),
     getDiggingPlaylists(studentId),
+    getStudentDiggingDays(studentId),
   ]);
 
   return (
     <div className="flex flex-col gap-8">
+      {/* 날짜별 피드백을 맨 위에 둔다(관리자 디깅 화면·알림이 이 날짜 줄로 바로 온다, 캔버스 FlowGaps1123 ④). */}
+      <DiggingFeedbackPanel actorId={actorId} studentId={studentId} days={days} />
       <PlaylistSection studentId={studentId} initialPlaylists={playlists} viewer="admin" />
       <DiggingBoard
         heading={<h2 className="text-ui font-semibold text-secondary-foreground">트랙</h2>}
@@ -362,7 +367,7 @@ export default async function StudentDetailPage({
 
           {activeTab === "digging" && (
             <Suspense fallback={<TabFallback className="h-64" />}>
-              <DiggingTabContent studentId={studentId} />
+              <DiggingTabContent actorId={session.user.id!} studentId={studentId} />
             </Suspense>
           )}
 

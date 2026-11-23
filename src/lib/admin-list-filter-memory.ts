@@ -1,11 +1,12 @@
 /**
- * 관리자 전체 노트·과제 목록의 마지막 학생 필터 기억. 사이드바로 다시 오면(주소에 `?student=`가 없으면) 마지막에 고른
+ * 관리자 전체 노트·과제·디깅 목록의 마지막 학생 필터 기억. 사이드바로 다시 오면(주소에 `?student=`가 없으면) 마지막에 고른
  * 학생으로 연다. 학생 필터가 고를 때와 그려질 때 cookie를 쓰고, 서버 page가 주소에 값이 없을 때만 읽는다.
  * 값은 학생 id(또는 "전체 학생"이면 빈 값)뿐이고, 서버가 수강 중인 학생 목록과 다시 맞춰 보므로 모르는 값은 전체로 돌아간다.
  */
 export const ADMIN_LIST_FILTER_COOKIES = {
   notes: "portal-admin-notes-student",
   assignments: "portal-admin-assignments-student",
+  digging: "portal-admin-digging-student",
 } as const;
 
 export type AdminListFilterKey = keyof typeof ADMIN_LIST_FILTER_COOKIES;

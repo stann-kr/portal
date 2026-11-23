@@ -1,12 +1,12 @@
 /**
  * @file src/components/digging/ColumnManager.tsx
- * @description 컬럼 추가/삭제 관리 다이얼로그.
- * isDefault 컬럼은 삭제 불가.
+ * @description 컬럼 추가·이름 고치기·순서 바꾸기·삭제 관리 다이얼로그(캔버스 FlowGaps1123 감사 보완).
+ * isDefault 컬럼은 삭제 불가(이름은 고칠 수 있다). 유형은 바꾸지 않는다(트랙 값의 뜻이 바뀌지 않게).
  */
 "use client";
 
 import { useRef, useState, useTransition } from "react";
-import { Trash2, Plus } from "lucide-react";
+import { ArrowDown, ArrowUp, Pencil, Trash2, Plus } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -16,7 +16,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { ConfirmPanel, useConfirmAction } from "@/components/ui/confirm-action";
 import { Input } from "@/components/ui/input";
-import { addDiggingColumn, deleteDiggingColumn } from "@/lib/actions/digging";
+import { addDiggingColumn, deleteDiggingColumn, moveDiggingColumn, updateDiggingColumn } from "@/lib/actions/digging";
 import type { DiggingColumnType } from "@/db/schema";
 import { DIGGING_COLUMNS_MAX_COUNT } from "@/lib/digging-contract";
 
@@ -38,7 +38,26 @@ type Column = {
   name: string;
   columnType: DiggingColumnType;
   isDefault: boolean;
+  /** 선택형 컬럼의 선택지(JSON 배열 문자열). */
+  options?: string | null;
 };
+
+const ICON_BUTTON_CLASS =
+  "flex size-11 shrink-0 items-center justify-center rounded-touch text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent md:size-8 md:rounded-md";
+
+function readOptions(raw: string | null | undefined): string {
+  if (!raw) return "";
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string").join(", ") : "";
+  } catch {
+    return "";
+  }
+}
+
+function splitOptions(value: string): string[] {
+  return value.split(",").map((item) => item.trim()).filter(Boolean);
+}
 
 interface ColumnManagerProps {
   open: boolean;
@@ -83,6 +102,46 @@ export function ColumnManager({
   };
 
   const columnDeleteConfirm = useConfirmAction<string>();
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editOptions, setEditOptions] = useState("");
+
+  const startEdit = (col: Column) => {
+    columnDeleteConfirm.close();
+    setEditingId(col.id);
+    setEditName(col.name);
+    setEditOptions(readOptions(col.options));
+    setError("");
+  };
+
+  const handleSaveEdit = (col: Column) => {
+    if (!editName.trim()) return;
+    setError("");
+    startTransition(async () => {
+      try {
+        await updateDiggingColumn(col.id, {
+          name: editName.trim(),
+          options: col.columnType === "select" ? splitOptions(editOptions) : undefined,
+        });
+        setEditingId(null);
+        onSuccess();
+      } catch {
+        setError("컬럼을 고치지 못했습니다. 이름(선택형이면 선택지)을 확인하고 다시 시도해 주세요.");
+      }
+    });
+  };
+
+  const handleMove = (colId: string, direction: "up" | "down") => {
+    setError("");
+    startTransition(async () => {
+      try {
+        await moveDiggingColumn(colId, direction);
+        onSuccess();
+      } catch {
+        setError("컬럼 순서를 바꾸지 못했습니다. 다시 시도해 주세요.");
+      }
+    });
+  };
 
   const handleDelete = (colId: string) => {
     setError("");
@@ -109,6 +168,12 @@ export function ColumnManager({
           (wide ? nameInputRef.current : titleRef.current)?.focus();
         }}
         onEscapeKeyDown={(event) => {
+          // 고치는 중이면 Esc는 dialog 대신 고치기만 닫는다(한글 조합 중 Esc는 조합 취소라 두지 않는다).
+          if (editingId !== null) {
+            event.preventDefault();
+            if (!isPending && !event.isComposing) setEditingId(null);
+            return;
+          }
           // 열린 삭제 확인이 있으면 Esc는 dialog 대신 확인만 닫는다.
           if (!columnDeleteConfirm.isOpen) return;
           event.preventDefault();
@@ -121,8 +186,36 @@ export function ColumnManager({
 
         {/* 현재 컬럼 목록 */}
         <ul className="-mx-1 flex max-h-60 flex-col overflow-y-auto px-1">
-          {columns.map((col) => (
+          {columns.map((col, index) => (
             <li key={col.id} className="flex flex-col gap-2 border-b border-muted py-1.5 last:border-b-0">
+              {editingId === col.id ? (
+                <form
+                  aria-label={`${col.name} 컬럼 고치기`}
+                  className="flex flex-col gap-2"
+                  onSubmit={(event) => { event.preventDefault(); handleSaveEdit(col); }}
+                >
+                  <label htmlFor={`digging-column-name-${col.id}`} className="sr-only">컬럼 이름</label>
+                  <Input
+                    id={`digging-column-name-${col.id}`}
+                    value={editName}
+                    onChange={(event) => setEditName(event.target.value)}
+                    disabled={isPending}
+                    autoFocus
+                  />
+                  {col.columnType === "select" ? (
+                    <div className="flex flex-col gap-1.5">
+                      <label htmlFor={`digging-column-options-${col.id}`} className="text-xs text-muted-foreground">
+                        선택지 (쉼표로 구분, 이미 고른 값은 그대로 남습니다)
+                      </label>
+                      <Input id={`digging-column-options-${col.id}`} value={editOptions} onChange={(event) => setEditOptions(event.target.value)} disabled={isPending} />
+                    </div>
+                  ) : null}
+                  <div className="flex justify-end gap-2">
+                    <Button type="button" variant="ghost" size="sm" onClick={() => setEditingId(null)} disabled={isPending} className="max-md:h-11">취소</Button>
+                    <Button type="submit" size="sm" pending={isPending} disabled={!editName.trim()} className="max-md:h-11">저장</Button>
+                  </div>
+                </form>
+              ) : (
               <div className="flex min-h-11 items-center justify-between gap-2 md:min-h-8">
                 <div className="flex min-w-0 items-center gap-2">
                   <span className="truncate text-body font-medium">{col.name}</span>
@@ -135,6 +228,34 @@ export function ColumnManager({
                     </span>
                   )}
                 </div>
+                <span className="flex shrink-0 items-center">
+                <button
+                  type="button"
+                  onClick={() => handleMove(col.id, "up")}
+                  disabled={index === 0 || isPending}
+                  className={ICON_BUTTON_CLASS}
+                  aria-label={`${col.name} 컬럼을 앞으로`}
+                >
+                  <ArrowUp className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleMove(col.id, "down")}
+                  disabled={index === columns.length - 1 || isPending}
+                  className={ICON_BUTTON_CLASS}
+                  aria-label={`${col.name} 컬럼을 뒤로`}
+                >
+                  <ArrowDown className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => startEdit(col)}
+                  disabled={isPending}
+                  className={ICON_BUTTON_CLASS}
+                  aria-label={`${col.name} 컬럼 이름 고치기`}
+                >
+                  <Pencil className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
+                </button>
                 <button
                   type="button"
                   onClick={(event) => columnDeleteConfirm.request(event.currentTarget, col.id)}
@@ -145,7 +266,9 @@ export function ColumnManager({
                 >
                   <Trash2 className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
                 </button>
+                </span>
               </div>
+              )}
               {columnDeleteConfirm.value === col.id ? (
                 <ConfirmPanel
                   confirm={columnDeleteConfirm}
