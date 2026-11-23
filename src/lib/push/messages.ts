@@ -163,7 +163,7 @@ export const pushMessages = {
       category: "announcement",
       title: "Stann의 알림",
       body: input.body,
-      url: `/dashboard/student?notice=${encodeURIComponent(input.noticeId)}`,
+      url: `/dashboard/student?section=today&notice=${encodeURIComponent(input.noticeId)}`,
       tag: `notice:${input.noticeId}`,
     };
   },

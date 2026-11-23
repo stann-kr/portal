@@ -116,7 +116,7 @@ test("알림 보내기: 관리자만, 수강 중이고 가입한 학생에게, �
       category: "announcement",
       title: "Stann의 알림",
       body: "내일 레슨은 30분 늦게\n7시 30분에 시작해요.",
-      url: `/dashboard/student?notice=${result.noticeId}`,
+      url: `/dashboard/student?section=today&notice=${result.noticeId}`,
       tag: `notice:${result.noticeId}`,
     },
     exclude: "admin-1",

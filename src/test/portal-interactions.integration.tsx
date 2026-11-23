@@ -2646,14 +2646,14 @@ test("student home notices: confirm hides the card, an opened push shows 확인�
     { id: "notice-new", body: "내일 레슨은 30분 늦게 7시 30분에 시작해요.", createdAt: new Date("2026-11-23T09:30:00Z") },
     { id: "notice-old", body: "B룸 공사로 A룸에서 해요.", createdAt: new Date("2026-11-18T01:00:00Z") },
   ];
-  browser.history.replaceState(null, "", "/dashboard/student?notice=notice-old");
+  browser.history.replaceState(null, "", "/dashboard/student?section=today&notice=notice-old");
   await render(context, <PushNoticeCards notices={notices} openedNoticeId="notice-old" />);
   await settle();
   const cards = () => [...browser.document.querySelectorAll('section[aria-label="Stann의 알림"]')];
   assert.equal(cards().length, 2);
   assert.match(cards()[0]?.textContent ?? "", /Stann의 알림 · 11\.23 18:30/u);
   assert.match(cards()[1]?.textContent ?? "", /확인됨/u);
-  assert.equal(browser.location.search, "", "주소의 notice는 지운다");
+  assert.equal(browser.location.search, "?section=today", "주소의 notice만 지운다");
   assert.deepEqual(noticeReadCalls, ["notice-old"]);
 
   const confirm = cards()[0]?.querySelector("button");

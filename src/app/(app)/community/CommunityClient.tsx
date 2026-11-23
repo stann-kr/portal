@@ -8,7 +8,7 @@
  */
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useProgressRouter } from "@/components/app-shell/NavigationProgress";
 import { Bell, Hash, MessageSquare, Music2, Plus, RotateCcw, Search, Settings2, Trash2 } from "lucide-react";
@@ -281,11 +281,12 @@ export default function CommunityClient({ isAdmin, initial, search = null, initi
   }, [sentMessage]);
 
   const canSendNotice = isAdmin && activeTab === "ANNOUNCEMENT" && !search;
-  const noticeButton = canSendNotice ? (
+  // 위쪽 막대 override는 element가 바뀔 때마다 다시 설정되므로 같은 버튼을 유지한다.
+  const noticeButton = useMemo(() => (canSendNotice ? (
     <button type="button" className={TOPBAR_BUTTON} aria-label="알림 보내기" onClick={() => setComposerOpen(true)}>
       <Bell className="size-5" strokeWidth={1.6} aria-hidden="true" />
     </button>
-  ) : null;
+  ) : null), [canSendNotice]);
 
   return (
     <div className="px-5 pb-8 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-14">
