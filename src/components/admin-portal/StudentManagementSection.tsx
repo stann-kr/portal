@@ -21,9 +21,11 @@ import { formatKstDot } from "@/lib/kst-format";
 import { isCurriculumVisible } from "@/lib/curriculum-visibility";
 import { clearFlashNotice, peekFlashNotice, STUDENT_LIST_NOTICE_KEY } from "@/lib/flash-notice";
 import type { LessonGroupSummary } from "@/lib/lesson-group-rules";
+import { buildAdminAssignmentComposeHref, buildAdminNoteComposeHref } from "@/lib/admin-create-links";
 import { LessonGroupDialog } from "./LessonGroupDialog";
 
 const NEW_STUDENT_HREF = "/dashboard/admin/students/new";
+const STUDENT_LIST_HREF = "/dashboard/admin?section=students";
 const ARCHIVED_STUDENTS_HREF = "/dashboard/admin/students/archived";
 
 const MENU_ITEM_CLASS =
@@ -49,16 +51,26 @@ function matchesQuery(student: StudentRosterStat, query: string): boolean {
   return [student.displayName ?? "", student.email].some((value) => value.toLocaleLowerCase("ko-KR").includes(needle));
 }
 
-/** 행의 더 보기 메뉴: 학생 상세의 각 기록으로 바로 간다. 노트는 학생 스페이스 노트 화면이 canonical이다. */
+/**
+ * 행의 더 보기 메뉴: 학생 상세·새 노트·과제 내기·캘린더(캔버스 AdminUx1123 ③), 그 아래 학생 상세의 각 기록으로 바로 간다.
+ * 노트는 학생 스페이스 노트 화면이 canonical이다. 새 노트는 저장하거나 닫으면 학생 목록으로 돌아온다.
+ */
 function StudentRowMenu({ student }: { student: StudentRosterStat }) {
   const name = studentName(student);
   const detailHref = (tab: StudentDetailTab) => buildAdminStudentDetailHref(student.id, tab);
-  const links = [
-    { label: "학생 상세", href: detailHref("overview") },
-    { label: "과제", href: detailHref("assignments") },
-    { label: "디깅", href: detailHref("digging") },
-    { label: "노트", href: `/dashboard/admin/students/${encodeURIComponent(student.id)}/notes` },
-    { label: "Q&A", href: detailHref("qna") },
+  const groups = [
+    [
+      { label: "학생 상세", href: detailHref("overview") },
+      { label: "새 노트", href: buildAdminNoteComposeHref(student.id, { returnTo: STUDENT_LIST_HREF }) },
+      { label: "과제 내기", href: buildAdminAssignmentComposeHref(student.id) },
+      { label: "캘린더에서 보기", href: `/dashboard/admin?section=schedule&student=${encodeURIComponent(student.id)}` },
+    ],
+    [
+      { label: "과제", href: detailHref("assignments") },
+      { label: "디깅", href: detailHref("digging") },
+      { label: "노트", href: `/dashboard/admin/students/${encodeURIComponent(student.id)}/notes` },
+      { label: "Q&A", href: detailHref("qna") },
+    ],
   ];
   return (
     <DropdownMenu.Root>
@@ -77,12 +89,17 @@ function StudentRowMenu({ student }: { student: StudentRosterStat }) {
           sideOffset={4}
           collisionPadding={12}
           style={{ zIndex: "var(--z-dropdown)" }}
-          className="portal-menu w-44 rounded-lg border border-border bg-background p-1 shadow-floating"
+          className="portal-menu w-48 rounded-lg border border-border bg-background p-1 shadow-floating"
         >
-          {links.map(({ label, href }) => (
-            <DropdownMenu.Item key={href} asChild className={MENU_ITEM_CLASS}>
-              <Link href={href}>{label}</Link>
-            </DropdownMenu.Item>
+          {groups.map((links, index) => (
+            <DropdownMenu.Group key={index}>
+              {index > 0 ? <DropdownMenu.Separator className="my-1 h-px bg-border" /> : null}
+              {links.map(({ label, href }) => (
+                <DropdownMenu.Item key={href} asChild className={MENU_ITEM_CLASS}>
+                  <Link href={href}>{label}</Link>
+                </DropdownMenu.Item>
+              ))}
+            </DropdownMenu.Group>
           ))}
         </DropdownMenu.Content>
       </DropdownMenu.Portal>
@@ -90,25 +107,42 @@ function StudentRowMenu({ student }: { student: StudentRosterStat }) {
   );
 }
 
-function PendingFeedback({ count }: { count: number }) {
+/** 처리할 일 숫자. 0이 아니면 그 학생의 해당 탭(과제·Q&A)으로 가는 링크다(캔버스 AdminUx1123 ③). */
+const COUNT_LINK_CLASS =
+  "-mx-1.5 inline-flex h-8 items-center gap-1.5 rounded-md px-1.5 font-mono text-xs tabular-nums text-foreground underline-offset-4 hover:bg-muted hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+
+function PendingFeedback({ studentId, name, count }: { studentId: string; name: string; count: number }) {
+  const dot = (
+    <span aria-hidden="true" className={cn("size-1.5 shrink-0 rounded-full", count > 0 ? "bg-item-qna" : "bg-transparent")} />
+  );
+  if (count === 0) {
+    return (
+      <span className="inline-flex items-center gap-1.5 font-mono text-xs tabular-nums text-foreground">
+        {dot}0<span className="sr-only">건</span>
+      </span>
+    );
+  }
   return (
-    <span className="inline-flex items-center gap-1.5 font-mono text-xs tabular-nums text-foreground">
-      <span
-        aria-hidden="true"
-        className={cn("size-1.5 shrink-0 rounded-full", count > 0 ? "bg-item-qna" : "bg-transparent")}
-      />
-      {count}
+    <Link href={buildAdminStudentDetailHref(studentId, "assignments")} aria-label={`${name} 피드백 대기 ${count}건`} className={COUNT_LINK_CLASS}>
+      {dot}{count}
       <span className="sr-only">건</span>
-    </span>
+    </Link>
   );
 }
 
-function OpenQnaCount({ count }: { count: number }) {
+function OpenQnaCount({ studentId, name, count }: { studentId: string; name: string; count: number }) {
+  if (count === 0) {
+    return (
+      <span className="font-mono text-xs tabular-nums text-foreground">
+        0<span className="sr-only">건</span>
+      </span>
+    );
+  }
   return (
-    <span className="font-mono text-xs tabular-nums text-foreground">
+    <Link href={buildAdminStudentDetailHref(studentId, "qna")} aria-label={`${name} 미답변 질문 ${count}건`} className={COUNT_LINK_CLASS}>
       {count}
       <span className="sr-only">건</span>
-    </span>
+    </Link>
   );
 }
 
@@ -395,8 +429,8 @@ export function StudentManagementSection({
                               <td className="truncate px-2 text-ui text-secondary-foreground">{student.currentModule || "진도 미지정"}</td>
                             ) : null}
                             <td className="px-2 font-mono text-xs tabular-nums text-secondary-foreground">{nextLessonLabel(student)}</td>
-                            <td className="px-2"><PendingFeedback count={student.pendingFeedbackCount} /></td>
-                            <td className="px-2"><OpenQnaCount count={student.openQnaCount} /></td>
+                            <td className="px-2"><PendingFeedback studentId={student.id} name={studentName(student)} count={student.pendingFeedbackCount} /></td>
+                            <td className="px-2"><OpenQnaCount studentId={student.id} name={studentName(student)} count={student.openQnaCount} /></td>
                             <td className="px-2"><StudentRowMenu student={student} /></td>
                           </tr>
                         ))}

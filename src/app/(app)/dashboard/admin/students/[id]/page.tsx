@@ -35,7 +35,8 @@ import { getSubmissionReviewStatus } from "@/lib/assignment-submission";
 import { SUBMISSION_REVIEW_PORTAL_STATUS } from "@/lib/portal-status";
 import { formatKstShortDate } from "@/lib/kst-format";
 import { describeAssignmentSubmission } from "@/lib/unified-item-normalization";
-import { buildAdminStudentNotesHref, StudentDetailTabs } from "@/components/admin/StudentDetailTabs";
+import { buildAdminStudentNotesHref } from "@/components/admin/StudentDetailTabs";
+import { StudentDetailHead } from "@/components/admin/StudentDetailHead";
 import { OverviewTab } from "@/components/admin/OverviewTab";
 import { DiggingBoard } from "@/components/digging/DiggingBoard";
 import { PlaylistSection } from "@/components/digging/PlaylistSection";
@@ -57,7 +58,6 @@ import {
 } from "@/lib/student-space-routes";
 import { getRequestNow } from "@/lib/request-time";
 import { StudentDetailTopBar } from "./StudentDetailTopBar";
-import { StudentSwitcherMenu } from "@/components/admin/StudentSwitcher";
 import { InstructorMemoEditor } from "@/components/lesson/InstructorMemoEditor";
 import { getInstructorMemo } from "@/lib/actions/instructorMemos";
 import { getLessonNoteIdsForStudent } from "@/lib/actions/lesson-notes";
@@ -133,6 +133,8 @@ async function AssignmentsTabContent({
   return (
     <div className="flex flex-col gap-8">
       <AdminAssignmentsPanel
+        // 머리의 "과제 내기"를 과제 탭에서 다시 눌러도 폼이 펼쳐지게, compose로 온 요청마다 새로 연다.
+        key={compose ? `compose-${compose.kind}-${getRequestNow()}` : "panel"}
         actorId={actorId}
         studentId={studentId}
         tasks={tasks}
@@ -287,7 +289,6 @@ export default async function StudentDetailPage({
   const compose = composeKind
     ? { kind: composeKind, returnTo: composeReturnPath ? safeReturnPath(composeReturnPath, buildAdminStudentDetailHref(studentId, "assignments")) : null }
     : null;
-  const initial = Array.from(name)[0]?.toUpperCase() ?? "학";
 
   return (
     <div className="px-5 pb-8 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-10">
@@ -297,39 +298,15 @@ export default async function StudentDetailPage({
         switcher={switcherStudents.length > 1 ? { name, tab: activeTab, students: switcherStudents, groups: switcherGroups } : null}
       />
       <div className="flex max-w-[1080px] flex-col md:gap-7 md:mx-auto">
-        <nav aria-label="위치" className="hidden items-center gap-1.5 text-ui md:flex">
-          <Link
-            href="/dashboard/admin?section=students"
-            className="rounded-sm text-secondary-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            학생
-          </Link>
-          <span aria-hidden="true" className="text-faint">/</span>
-          {switcherStudents.length > 1 ? (
-            <StudentSwitcherMenu studentId={studentId} name={name} tab={activeTab} students={switcherStudents} groups={switcherGroups} />
-          ) : (
-            <span aria-current="page" className="min-w-0 truncate text-foreground">{name}</span>
-          )}
-        </nav>
-
-        <header className="flex items-center gap-3.5 pb-4 pt-5 md:gap-4 md:p-0">
-          <span
-            aria-hidden="true"
-            className="flex size-12 shrink-0 items-center justify-center rounded-full bg-selected text-lg font-semibold text-secondary-foreground"
-          >
-            {initial}
-          </span>
-          <div className="flex min-w-0 flex-col gap-0.5">
-            <h1 className="break-words text-xl font-semibold tracking-title text-foreground md:text-2xl md:tracking-display">{name}</h1>
-            <p className="break-all text-ui text-muted-foreground">{student.email}</p>
-          </div>
-        </header>
-
-        <StudentDetailTabs
+        <StudentDetailHead
           studentId={studentId}
+          name={name}
+          email={student.email}
           activeTab={activeTab}
+          returnTo={buildAdminStudentDetailHref(studentId, activeTab)}
           counts={{ assignments: workCounts.pendingFeedbackCount, qna: workCounts.openQnaCount }}
-          className="-mx-5 px-5 md:mx-0 md:px-0"
+          switcherStudents={switcherStudents}
+          switcherGroups={switcherGroups}
         />
 
         <div className="pt-2 md:pt-0">
