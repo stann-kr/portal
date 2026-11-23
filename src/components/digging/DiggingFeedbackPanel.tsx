@@ -25,19 +25,14 @@ import { createDocumentDraftKey } from "@/lib/form-draft";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
 import { useFormDraft } from "@/lib/hooks/useFormDraft";
 import { useUnsavedUnloadGuard } from "@/lib/hooks/useUnsavedUnloadGuard";
-import { formatKst, formatKstMonthDayTime } from "@/lib/kst-format";
+import { formatDiggingDay } from "@/lib/digging-day";
+import { formatKstMonthDayTime } from "@/lib/kst-format";
 import { diggingFeedbackAnchorId } from "@/lib/student-space-routes";
 
 const TEXTAREA_CLASS =
   "w-full resize-y rounded-touch border border-input bg-background px-3 py-2.5 text-base text-foreground placeholder:text-muted-foreground focus-visible:outline-2 focus-visible:-outline-offset-1 focus-visible:outline-ring disabled:opacity-50 md:rounded-md md:py-2 md:text-sm";
 const TEXT_ACTION_CLASS =
   "inline-flex h-11 items-center rounded-sm px-2 text-ui text-secondary-foreground underline-offset-[3px] hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 md:h-8";
-
-/** "2026년 11월 23일 (월)" */
-export function formatDiggingDay(dugOn: string): string {
-  const date = new Date(`${dugOn}T00:00:00+09:00`);
-  return `${formatKst(date, { year: "numeric", month: "long", day: "numeric" })} (${formatKst(date, { weekday: "short" })})`;
-}
 
 function dayCounts(day: Pick<DiggingDay, "trackCount" | "playlistCount">): string {
   const parts = [

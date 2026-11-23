@@ -9,7 +9,7 @@ import { redirect } from "next/navigation";
 import { MobileTopBar } from "@/components/app-shell/AppSidebar";
 import { RouteAutoRefresh } from "@/components/app-shell/RouteAutoRefresh";
 import { ADMIN_DIGGING_HREF } from "@/components/app-shell/navigation";
-import { formatDiggingDay } from "@/components/digging/DiggingFeedbackPanel";
+import { formatDiggingDay } from "@/lib/digging-day";
 import { NotesStudentFilter } from "@/components/notes/NotesStudentFilter";
 import {
   LEDGER_HEADER_NOTE_CLASS,

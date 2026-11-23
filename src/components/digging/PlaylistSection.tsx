@@ -36,7 +36,7 @@ import {
   parseDiggingPlaylistTitle,
 } from "@/lib/digging-contract";
 import { toKstDateInputValue } from "@/lib/date-input";
-import { formatKstDot } from "@/lib/kst-format";
+import { formatDugOn } from "@/lib/digging-day";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
 import { useUnsavedUnloadGuard } from "@/lib/hooks/useUnsavedUnloadGuard";
 import { cn } from "@/lib/utils";
@@ -55,11 +55,6 @@ const ROW_ACTION_CLASS =
   "flex size-11 shrink-0 items-center justify-center rounded-touch text-secondary-foreground transition-colors duration-[var(--duration-fast)] hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 motion-reduce:transition-none md:size-8 md:rounded-md";
 const TEXT_ACTION_CLASS =
   "inline-flex h-11 items-center gap-1.5 rounded-touch px-2 text-ui text-secondary-foreground transition-colors duration-[var(--duration-fast)] hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none md:h-8 md:rounded-md";
-
-/** 디깅한 날(YYYY-MM-DD)의 짧은 표시: "11.23 (월)". */
-export function formatDugOn(dugOn: string, referenceTime?: Date): string {
-  return formatKstDot(new Date(`${dugOn}T00:00:00+09:00`), { weekday: true, referenceTime });
-}
 
 /** 서버 목록과 같은 순서: 디깅한 날 최근 순, 같은 날은 최근 등록순. */
 function sortPlaylists(playlists: DiggingPlaylist[]): DiggingPlaylist[] {

@@ -9,7 +9,7 @@ import { Paperclip } from "lucide-react";
 import { RichTextContent } from "@/components/editor/RichTextContent";
 import { DiggingBoard } from "@/components/digging/DiggingBoard";
 import { DiggingFeedbackList } from "@/components/digging/DiggingFeedbackPanel";
-import { formatDugOn } from "@/components/digging/PlaylistSection";
+import { formatDugOn } from "@/lib/digging-day";
 import { MixAnalysisRating } from "@/components/feedback/MixAnalysisReview";
 import { mediaSourceLabel } from "@/components/player/media-source";
 import { ReplyCard } from "@/components/qna/ReplyCard";
