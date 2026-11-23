@@ -1,7 +1,7 @@
 import { formatKstMonthDayTime } from "@/lib/kst-format";
 import { toKstDateInputValue } from "@/lib/date-input";
 import { adminCalendarItemHref, calendarItemHref } from "@/lib/portal-location";
-import { assignmentTaskHref } from "@/lib/student-space-routes";
+import { assignmentTaskHref, diggingFeedbackAnchorId } from "@/lib/student-space-routes";
 import { getLegacyCalendarRedirect } from "@/lib/legacy-dashboard-routes";
 import { ADMIN_WORK_QUEUE_PATH, buildAssignmentQueueHref } from "@/lib/admin-work-queue";
 
@@ -57,6 +57,17 @@ export const pushMessages = {
       body: `${quoted(input.title, "제출한 과제")}에 피드백이 달렸습니다.`,
       url: assignmentHref(input.assignmentId),
       tag: `feedback:${input.assignmentId}`,
+    };
+  },
+  /** Stann이 학생 디깅의 하루치에 피드백을 남겼을 때. 디깅 화면의 그 날 피드백으로 연다. */
+  diggingFeedbackAdded(input: { dugOn: string }): PushMessage {
+    const [, month, day] = input.dugOn.split("-");
+    return {
+      category: "feedback",
+      title: "새 디깅 피드백",
+      body: `${Number(month)}월 ${Number(day)}일 디깅에 Stann이 피드백을 남겼습니다.`,
+      url: `/dashboard/student/digging#${diggingFeedbackAnchorId(input.dugOn)}`,
+      tag: `digging-feedback:${input.dugOn}`,
     };
   },
   /** 피드백 없이 Stann이 확인함으로 표시했을 때. 같은 제출의 피드백 알림과 tag를 같이 써서 뒤에 오는 피드백 알림이 이 알림을 바꾼다. */

@@ -2777,7 +2777,7 @@ test("답글을 쓰는 사이 원 댓글이 지워지면 입력을 그 자리에
   };
   const at = (minute: number) => new Date(Date.UTC(2026, 10, 20, 6, minute));
   const row = (id: string, authorId: string, authorName: string, text: string, minute: number) => (
-    { id, postId: post.id, authorId, contentHtml: `<p>${text}</p>`, createdAt: at(minute), timeMarkerSeconds: null, parentId: null, authorName, authorRole: "student" }
+    { id, postId: post.id, authorId, contentHtml: `<p>${text}</p>`, createdAt: at(minute), updatedAt: null, timeMarkerSeconds: null, parentId: null, authorName, authorRole: "student" }
   );
   const first = row("o-root", "student-2", "이학생", "저 갈게요", 1);
   const second = row("o-other", "student-3", "박학생", "녹음은요?", 2);
@@ -2859,7 +2859,7 @@ test("failed comment deletion keeps the conversation and unfinished reply visibl
     mediaObjectId: null, createdAt: new Date(), updatedAt: new Date(), deletedAt: null,
     restoreLocked: false, version: 1, authorName: "학생",
   };
-  const comment = { id: "comment-1", postId: post.id, authorId: "student-1", contentHtml: "<p>기존 대화</p>", createdAt: new Date(), timeMarkerSeconds: null, parentId: null, authorName: "학생", authorRole: "student" };
+  const comment = { id: "comment-1", postId: post.id, authorId: "student-1", contentHtml: "<p>기존 대화</p>", createdAt: new Date(), updatedAt: null, timeMarkerSeconds: null, parentId: null, authorName: "학생", authorRole: "student" };
   await render(context, <PostDetailClient postId={post.id} post={post} initialCommentList={[comment]} currentUserId="student-1" isAdmin={false} returnTo="/community" />);
   await fill("content", "아직 작성 중인 답글");
   await press("학생 댓글 삭제");
@@ -2897,7 +2897,7 @@ test("댓글 답글은 원 댓글 묶음 아래 한 입력에서 쓰고, 지워�
   };
   const at = (minute: number) => new Date(Date.UTC(2026, 9, 26, 6, minute));
   const row = (id: string, authorId: string, authorName: string, text: string, minute: number, parentId: string | null) => (
-    { id, postId: post.id, authorId, contentHtml: `<p>${text}</p>`, createdAt: at(minute), timeMarkerSeconds: null, parentId, authorName, authorRole: authorName === "Stann" ? "admin" : "student" }
+    { id, postId: post.id, authorId, contentHtml: `<p>${text}</p>`, createdAt: at(minute), updatedAt: null, timeMarkerSeconds: null, parentId, authorName, authorRole: authorName === "Stann" ? "admin" : "student" }
   );
   const comments = [
     row("c-root", "student-2", "이학생", "저 갈게요", 1, null),
@@ -3000,7 +3000,7 @@ function mixsetPost(id: string, media: { mediaUrl: string | null; mediaObjectId:
 }
 
 function mixsetComment(id: string, postId: string, text: string, timeMarkerSeconds: number | null) {
-  return { id, postId, authorId: "student-2", contentHtml: `<p>${text}</p>`, createdAt: new Date(), timeMarkerSeconds, parentId: null as string | null, authorName: "다른 학생", authorRole: "student" as string | null };
+  return { id, postId, authorId: "student-2", contentHtml: `<p>${text}</p>`, createdAt: new Date(), updatedAt: null, timeMarkerSeconds, parentId: null as string | null, authorName: "다른 학생", authorRole: "student" as string | null };
 }
 
 test("믹스셋 링크 상세는 본문 위에 플레이어를 두고 댓글 시점을 누를 때마다 그 위치로 이동한다", async (context) => {
@@ -3739,7 +3739,7 @@ test("a free submission resends the same operation id after a lost response and 
 test("a task submission Stann acknowledged shows 'Stann 확인함' without an edit button, and an unacknowledged one stays editable", async (context) => {
   const base = {
     title: "연습 일지", descriptionHtml: "<p>이번 주 연습</p>", submissionFormat: "TEXT" as const,
-    dueAt: new Date(Date.now() + 86_400_000), occurrenceDate: null, recurrenceId: null, version: 1, createdAt: new Date(),
+    dueAt: new Date(Date.now() + 86_400_000), occurrenceDate: null, recurrenceId: null, closedAt: null, version: 1, createdAt: new Date(),
   };
   const submission = (id: string, reviewedAt: Date | null) => ({ id, mediaUrl: null, textHtml: "<p>기록</p>", analysisJson: null, submittedAt: new Date(), updatedAt: null, reviewedAt, feedbackCount: 0 });
   await render(context, <AssignmentView actorId="student-ack" initialAssignments={[
@@ -3761,7 +3761,7 @@ test("a task submission Stann acknowledged shows 'Stann 확인함' without an ed
 test("a received text task submits only the text field, keeps the draft on failure, and refreshes the task list", async (context) => {
   const task = {
     id: "task-text", title: "연습 일지", descriptionHtml: "<p>이번 주 연습</p>", submissionFormat: "TEXT" as const,
-    dueAt: new Date(Date.now() + 86_400_000), occurrenceDate: null, recurrenceId: null, version: 1, createdAt: new Date(), submission: null,
+    dueAt: new Date(Date.now() + 86_400_000), occurrenceDate: null, recurrenceId: null, closedAt: null, version: 1, createdAt: new Date(), submission: null,
   };
   const submissions: { taskId: string; text: string; mediaUrl: unknown }[] = [];
   saveTaskSubmission = async (taskId, _previous, data) => {
@@ -3803,7 +3803,7 @@ test("a received text task submits only the text field, keeps the draft on failu
 test("과제 목록은 계정에 임시 저장한 글을 \"작성 중\"·\"고치는 중\"과 이어 쓰기로 보인다", async (context) => {
   const draftAt = new Date("2026-11-23T12:40:00Z");
   const base = {
-    descriptionHtml: "", occurrenceDate: null, recurrenceId: null, version: 1, createdAt: new Date(),
+    descriptionHtml: "", occurrenceDate: null, recurrenceId: null, closedAt: null, version: 1, createdAt: new Date(),
     dueAt: new Date(Date.now() + 86_400_000),
   };
   const tasks = [
@@ -3849,7 +3849,7 @@ test("다른 기기에서 쓴 계정 사본은 이 기기에 올리지 않은 �
   });
   const task = {
     id: "account-load", title: "연습 일지", descriptionHtml: "", submissionFormat: "TEXT" as const,
-    dueAt: null, occurrenceDate: null, recurrenceId: null, version: 1, createdAt: new Date(), submission: null, draftSavedAt: new Date("2026-11-23T12:40:00Z"),
+    dueAt: null, occurrenceDate: null, recurrenceId: null, closedAt: null, version: 1, createdAt: new Date(), submission: null, draftSavedAt: new Date("2026-11-23T12:40:00Z"),
   };
   await render(context, <AssignmentView actorId="student-account-load" initialAssignments={[]} initialTasks={[task]} />);
   await press("이어 쓰기");
@@ -3891,7 +3891,7 @@ test("이 기기에도 올리지 않은 다른 입력이 있으면 고를 때까
   });
   const task = (id: string) => ({
     id, title: "연습 일지", descriptionHtml: "", submissionFormat: "TEXT" as const,
-    dueAt: null, occurrenceDate: null, recurrenceId: null, version: 1, createdAt: new Date(), submission: null, draftSavedAt: null,
+    dueAt: null, occurrenceDate: null, recurrenceId: null, closedAt: null, version: 1, createdAt: new Date(), submission: null, draftSavedAt: null,
   });
   const textOf = (id: string) => (browser.document.getElementById(`task-${id}-text`) as unknown as HTMLTextAreaElement | null)?.value;
   const conflictRow = () => [...browser.document.querySelectorAll('form [role="status"]')]
@@ -6177,7 +6177,7 @@ test("받은 과제 제출 수정도 다른 기기에서 제출한 뒤 남은 �
   const submittedAt = new Date("2026-11-14T03:00:00.000Z");
   const task = {
     id: "task-stale", title: "연습 일지", descriptionHtml: "<p>이번 주 연습</p>", submissionFormat: "TEXT" as const,
-    dueAt: new Date(Date.now() + 86_400_000), occurrenceDate: null, recurrenceId: null, version: 1, createdAt: new Date(),
+    dueAt: new Date(Date.now() + 86_400_000), occurrenceDate: null, recurrenceId: null, closedAt: null, version: 1, createdAt: new Date(),
     submission: { id: "submission-stale", mediaUrl: null, textHtml: "<p>다른 기기에서 낸 글</p>", analysisJson: null, submittedAt, updatedAt: null, reviewedAt: null, feedbackCount: 0 },
   };
   const key = createDocumentDraftKey("assignment-feedback", "student-task-stale", "task-submission:task-stale");

@@ -1,12 +1,15 @@
 /**
  * 수강 종료한 학생의 보기 전용 상세(캔버스 UxReview1120Policies ⑩, 2026-11-20 사용자 결정).
- * '수강 종료한 학생' 목록의 이름에서 온다. 노트·과제·Q&A를 복원하지 않고 읽기만 하고, 고치기·추가·삭제는 없다.
+ * '수강 종료한 학생' 목록의 이름에서 온다. 노트·과제·Q&A·디깅을 복원하지 않고 읽기만 하고, 고치기·추가·삭제는 없다.
  * 관리자이면서 대상이 수강 종료한 학생일 때만 그린다. 수강 중인 학생이면 원래 학생 상세로 보낸다.
  */
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { Paperclip } from "lucide-react";
 import { RichTextContent } from "@/components/editor/RichTextContent";
+import { DiggingBoard } from "@/components/digging/DiggingBoard";
+import { DiggingFeedbackList } from "@/components/digging/DiggingFeedbackPanel";
+import { formatDugOn } from "@/lib/digging-day";
 import { MixAnalysisRating } from "@/components/feedback/MixAnalysisReview";
 import { mediaSourceLabel } from "@/components/player/media-source";
 import { ReplyCard } from "@/components/qna/ReplyCard";
@@ -17,6 +20,7 @@ import {
   loadArchivedStudentRecords,
   resolveArchivedRecordTab,
   type ArchivedAssignmentRecord,
+  type ArchivedDiggingRecord,
   type ArchivedRecordTab,
 } from "@/lib/archived-student-records";
 import { getActiveAuthSession } from "@/lib/auth-guard";
@@ -34,7 +38,51 @@ const TABS: { key: ArchivedRecordTab; label: string; empty: string }[] = [
   { key: "notes", label: "노트", empty: "노트가 없습니다." },
   { key: "assignments", label: "과제", empty: "제출한 과제가 없습니다." },
   { key: "qna", label: "Q&A", empty: "질문이 없습니다." },
+  { key: "digging", label: "디깅", empty: "디깅 기록이 없습니다." },
 ];
+
+const PLAYLIST_PROVIDER_LABEL = { beatport: "Beatport", soundcloud: "SoundCloud" } as const;
+
+/** 디깅 탭(보기 전용): Stann의 디깅 피드백, 플레이리스트, 트랙 보드. */
+function DiggingRecords({ record }: { record: ArchivedDiggingRecord }) {
+  return (
+    <div className="flex flex-col gap-8 pt-4">
+      <DiggingFeedbackList feedbacks={record.feedbacks} />
+      {record.playlists.length > 0 ? (
+        <section aria-labelledby="archived-playlists-heading" className="flex flex-col gap-2">
+          <h2 id="archived-playlists-heading" className="text-ui font-semibold text-secondary-foreground">플레이리스트</h2>
+          <ul className="flex flex-col">
+            {record.playlists.map((playlist) => (
+              <li key={playlist.id} className="flex flex-col gap-0.5 border-b border-muted py-2.5">
+                <a
+                  href={playlist.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="self-start rounded-sm text-body font-medium underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  {playlist.title || `${PLAYLIST_PROVIDER_LABEL[playlist.provider]} 플레이리스트`}
+                  <span className="sr-only">(새 창에서 열기)</span>
+                </a>
+                <span className="font-mono text-xs text-muted-foreground">
+                  <span className="sr-only">디깅한 날 </span>{formatDugOn(playlist.dugOn)} · {PLAYLIST_PROVIDER_LABEL[playlist.provider]}
+                </span>
+                {playlist.note ? <p className="whitespace-pre-wrap break-words text-ui text-secondary-foreground">{playlist.note}</p> : null}
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+      {record.columns.length > 0 && record.tracks.length > 0 ? (
+        <DiggingBoard
+          heading={<h2 className="text-ui font-semibold text-secondary-foreground">트랙</h2>}
+          initialColumns={record.columns.map((column) => ({ ...column, isDefault: column.isDefault ?? false, sortOrder: column.sortOrder ?? 0 }))}
+          initialTracks={record.tracks}
+          readonly
+        />
+      ) : null}
+    </div>
+  );
+}
 
 const BREADCRUMB_LINK_CLASS =
   "rounded-sm text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
@@ -166,7 +214,13 @@ export default async function ArchivedStudentDetailPage({
             })}
           </nav>
 
-          {records.rows.length === 0 ? (
+          {records.tab === "digging" ? (
+            records.rows.tracks.length === 0 && records.rows.playlists.length === 0 && records.rows.feedbacks.length === 0 ? (
+              <p className="py-4 text-body text-muted-foreground">{emptyText}</p>
+            ) : (
+              <DiggingRecords record={records.rows} />
+            )
+          ) : records.rows.length === 0 ? (
             <p className="py-4 text-body text-muted-foreground">{emptyText}</p>
           ) : (
             <ul aria-label={`${TABS.find((item) => item.key === activeTab)?.label ?? ""} 기록`} className="flex flex-col">

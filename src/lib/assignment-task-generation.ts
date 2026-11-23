@@ -6,13 +6,15 @@
  *   동시에 여러 요청이 같은 회차를 만들어도 `ON CONFLICT DO NOTHING`으로 한 행만 남는다.
  * - 각 INSERT는 읽은 규칙 version이 그대로이고 멈추지 않았을 때만 행을 만든다. 관리자가 규칙을 바꾸는
  *   사이 옛 규칙으로 읽은 요청이 지운 회차를 다시 만들지 않게 하기 위해서다.
+ * - 관리자가 지운 회차 날짜(assignment_occurrence_skips)는 만들지 않는다. 읽을 때 빼고, 지우는 요청과 겹쳐도
+ *   INSERT 자체가 건너뛴 날짜를 다시 확인한다.
  * - D1은 statement당 bind 값이 100개로 제한되므로 행마다 statement를 나누고 한 batch로 보낸다.
  *   batch는 왕복을 줄이기 위한 것이고 중복 방지는 unique index가 맡는다.
  * - 렌더 중에도 부르므로 revalidatePath를 부르지 않는다.
  */
 import { and, eq, gte, isNotNull, isNull } from "drizzle-orm";
 import type { DbContext, DrizzleDb } from "@/db/client";
-import { assignmentRecurrences, assignmentTasks } from "@/db/schema";
+import { assignmentOccurrenceSkips, assignmentRecurrences, assignmentTasks } from "@/db/schema";
 import {
   deriveAssignmentTaskId,
   planRecurrenceOccurrences,
@@ -42,6 +44,7 @@ const INSERT_OCCURRENCE_SQL =
   "(id, student_id, recurrence_id, occurrence_date, title, description_html, submission_format, analysis_form, due_at, created_by_id, version, created_at, updated_at) " +
   "SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ? " +
   "WHERE EXISTS (SELECT 1 FROM assignment_recurrences WHERE id = ? AND student_id = ? AND version = ? AND paused_at IS NULL) " +
+  "AND NOT EXISTS (SELECT 1 FROM assignment_occurrence_skips WHERE recurrence_id = ? AND occurrence_date = ?) " +
   "ON CONFLICT DO NOTHING";
 
 /** 규칙이 지금 만들어 둘 회차(날짜 오름차순). 멈춘 규칙은 없다. */
@@ -85,6 +88,8 @@ function occurrenceInsertStatements(
         rule.id,
         rule.studentId,
         rule.version,
+        rule.id,
+        occurrence.occurrenceDate,
       ],
     }));
 }
@@ -120,17 +125,29 @@ export async function ensureRecurringAssignmentTasks(
     .map((plan) => plan.planned[0]!.occurrenceDate)
     .reduce((earliest, date) => (date < earliest ? date : earliest));
 
-  const existing = await db
-    .select({ recurrenceId: assignmentTasks.recurrenceId, occurrenceDate: assignmentTasks.occurrenceDate })
-    .from(assignmentTasks)
-    .where(and(
-      eq(assignmentTasks.studentId, studentId),
-      // 규칙 id 목록을 bind하지 않는다(D1 bind 100개 제한). 학생의 정기 회차 전체를 읽고 아래에서 규칙별로 나눈다.
-      recurrenceId ? eq(assignmentTasks.recurrenceId, recurrenceId) : isNotNull(assignmentTasks.recurrenceId),
-      gte(assignmentTasks.occurrenceDate, earliestDate),
-    ));
+  const [existing, skipped] = await Promise.all([
+    db
+      .select({ recurrenceId: assignmentTasks.recurrenceId, occurrenceDate: assignmentTasks.occurrenceDate })
+      .from(assignmentTasks)
+      .where(and(
+        eq(assignmentTasks.studentId, studentId),
+        // 규칙 id 목록을 bind하지 않는다(D1 bind 100개 제한). 학생의 정기 회차 전체를 읽고 아래에서 규칙별로 나눈다.
+        recurrenceId ? eq(assignmentTasks.recurrenceId, recurrenceId) : isNotNull(assignmentTasks.recurrenceId),
+        gte(assignmentTasks.occurrenceDate, earliestDate),
+      )),
+    // 지운 회차 날짜도 이미 있는 것처럼 건너뛴다. 규칙은 이 학생 것만 join으로 좁힌다.
+    db
+      .select({ recurrenceId: assignmentOccurrenceSkips.recurrenceId, occurrenceDate: assignmentOccurrenceSkips.occurrenceDate })
+      .from(assignmentOccurrenceSkips)
+      .innerJoin(assignmentRecurrences, eq(assignmentRecurrences.id, assignmentOccurrenceSkips.recurrenceId))
+      .where(and(
+        eq(assignmentRecurrences.studentId, studentId),
+        recurrenceId ? eq(assignmentOccurrenceSkips.recurrenceId, recurrenceId) : undefined,
+        gte(assignmentOccurrenceSkips.occurrenceDate, earliestDate),
+      )),
+  ]);
   const existingByRule = new Map<string, Set<string>>();
-  for (const row of existing) {
+  for (const row of [...existing, ...skipped]) {
     if (!row.recurrenceId || !row.occurrenceDate) continue;
     const dates = existingByRule.get(row.recurrenceId) ?? new Set<string>();
     dates.add(row.occurrenceDate);

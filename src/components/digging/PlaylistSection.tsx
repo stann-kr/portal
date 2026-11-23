@@ -6,6 +6,7 @@
  * - 학생 본인과 Stann(관리자, 학생 상세 디깅 탭): 추가·링크/제목/메모 수정·삭제(취소 우선 확인). 서버가 대상 학생을 다시 확인한다.
  * - 학생 본인 화면은 줄마다 "트랙 가져오기"로 곡을 디깅 보드에 넣는다(`PlaylistTrackImport`, 관리자 보기에는 없다).
  *   붙여 넣은 글이 있으면 칸을 닫거나(닫기·토글·Esc), 다른 줄의 가져오기를 열거나, 그 줄을 고치기 전에 버림 확인을 거친다.
+ * - 줄마다 디깅한 날을 보이고 목록은 디깅한 날 최근 순이다. 추가·수정 폼에서 날짜를 고른다(기본 오늘, 캔버스 FlowGaps1123 ③).
  * - 추가·수정 폼은 바뀐 내용이 있으면 Esc·취소에 버림 확인을 두고, 새로고침·탭 닫기는 브라우저 확인으로 막는다.
  */
 "use client";
@@ -30,9 +31,12 @@ import {
   DIGGING_PLAYLIST_URL_MAX_LENGTH,
   diggingPlaylistDisplayTitle,
   normalizeDiggingPlaylistUrl,
+  parseDiggingDate,
   parseDiggingPlaylistNote,
   parseDiggingPlaylistTitle,
 } from "@/lib/digging-contract";
+import { toKstDateInputValue } from "@/lib/date-input";
+import { formatDugOn } from "@/lib/digging-day";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
 import { useUnsavedUnloadGuard } from "@/lib/hooks/useUnsavedUnloadGuard";
 import { cn } from "@/lib/utils";
@@ -51,6 +55,45 @@ const ROW_ACTION_CLASS =
   "flex size-11 shrink-0 items-center justify-center rounded-touch text-secondary-foreground transition-colors duration-[var(--duration-fast)] hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 motion-reduce:transition-none md:size-8 md:rounded-md";
 const TEXT_ACTION_CLASS =
   "inline-flex h-11 items-center gap-1.5 rounded-touch px-2 text-ui text-secondary-foreground transition-colors duration-[var(--duration-fast)] hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none md:h-8 md:rounded-md";
+
+/** 서버 목록과 같은 순서: 디깅한 날 최근 순, 같은 날은 최근 등록순. */
+function sortPlaylists(playlists: DiggingPlaylist[]): DiggingPlaylist[] {
+  return [...playlists].sort((a, b) => (
+    b.dugOn.localeCompare(a.dugOn)
+    || new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    || b.id.localeCompare(a.id)
+  ));
+}
+
+function DugOnField({
+  formId,
+  value,
+  onChange,
+  disabled,
+}: {
+  formId: string;
+  value: string;
+  onChange: (value: string) => void;
+  disabled: boolean;
+}) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <label htmlFor={`${formId}-dug-on`} className={LABEL_CLASS}>디깅한 날</label>
+      <Input
+        id={`${formId}-dug-on`}
+        type="date"
+        required
+        max={toKstDateInputValue()}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        disabled={disabled}
+        aria-describedby={`${formId}-dug-on-hint`}
+        className="md:w-44"
+      />
+      <p id={`${formId}-dug-on-hint`} className={HINT_CLASS}>기본은 오늘입니다. 지난 디깅을 올릴 때 날짜를 바꿔 주세요.</p>
+    </div>
+  );
+}
 
 interface PlaylistSectionProps {
   /** 플레이리스트 주인 학생. 모든 쓰기 action에 대상으로 넘긴다. */
@@ -153,7 +196,7 @@ export function PlaylistSection({ studentId, initialPlaylists, viewer = "student
           studentId={studentId}
           onCancel={closeAddForm}
           onCreated={(playlist) => {
-            setPlaylists((current) => [playlist, ...current]);
+            setPlaylists((current) => sortPlaylists([playlist, ...current]));
             closeAddForm();
           }}
         />
@@ -197,7 +240,7 @@ export function PlaylistSection({ studentId, initialPlaylists, viewer = "student
                     playlist={playlist}
                     onCancel={() => { setEditingId(null); focusEditButton(playlist.id); }}
                     onSaved={(saved) => {
-                      setPlaylists((current) => current.map((item) => (item.id === saved.id ? saved : item)));
+                      setPlaylists((current) => sortPlaylists(current.map((item) => (item.id === saved.id ? saved : item))));
                       setEditingId(null);
                       focusEditButton(playlist.id);
                     }}
@@ -205,7 +248,9 @@ export function PlaylistSection({ studentId, initialPlaylists, viewer = "student
                 ) : (
                   <div className="flex items-start gap-3">
                     <div className="flex min-w-0 flex-1 flex-col gap-1">
-                      <span className="font-mono text-xs text-muted-foreground">{PROVIDER_LABEL[playlist.provider]}</span>
+                      <span className="font-mono text-xs text-muted-foreground">
+                        <span className="sr-only">디깅한 날 </span>{formatDugOn(playlist.dugOn)} · {PROVIDER_LABEL[playlist.provider]}
+                      </span>
                       {playlist.provider === "beatport" ? (
                         <a
                           href={playlist.url}
@@ -340,12 +385,14 @@ function PlaylistCreateForm({
   const [url, setUrl] = useState("");
   const [title, setTitle] = useState("");
   const [note, setNote] = useState("");
+  const [today] = useState(() => toKstDateInputValue());
+  const [dugOn, setDugOn] = useState(today);
   const [urlError, setUrlError] = useState("");
   const [formError, setFormError] = useState("");
   const [isPending, startTransition] = useTransition();
   const urlRef = useRef<HTMLInputElement>(null);
   const discardConfirm = useConfirmAction();
-  const dirty = url !== "" || title !== "" || note !== "";
+  const dirty = url !== "" || title !== "" || note !== "" || dugOn !== today;
   useBusyNavigationGuard(isPending);
   useUnsavedUnloadGuard(dirty && !isPending);
 
@@ -375,14 +422,20 @@ function PlaylistCreateForm({
     }
     const parsedTitle = parseDiggingPlaylistTitle(title);
     const parsedNote = parseDiggingPlaylistNote(note);
-    if (!parsedTitle.ok || !parsedNote.ok) {
-      setFormError(!parsedTitle.ok ? parsedTitle.error : !parsedNote.ok ? parsedNote.error : "");
+    const parsedDugOn = parseDiggingDate(dugOn, toKstDateInputValue());
+    if (!parsedTitle.ok || !parsedNote.ok || !parsedDugOn.ok) {
+      setFormError(!parsedTitle.ok ? parsedTitle.error : !parsedNote.ok ? parsedNote.error : !parsedDugOn.ok ? parsedDugOn.error : "");
       return;
     }
     setUrlError("");
     startTransition(async () => {
       try {
-        const result = await createDiggingPlaylist(studentId, { url: normalized.url, title: parsedTitle.value, note: parsedNote.value });
+        const result = await createDiggingPlaylist(studentId, {
+          url: normalized.url,
+          title: parsedTitle.value,
+          note: parsedNote.value,
+          dugOn: parsedDugOn.value,
+        });
         if (!result.ok) {
           setFormError(result.error);
           return;
@@ -433,6 +486,7 @@ function PlaylistCreateForm({
         </p>
         {urlError ? <p id={`${formId}-url-error`} className="text-xs text-destructive">{urlError}</p> : null}
       </div>
+      <DugOnField formId={formId} value={dugOn} onChange={setDugOn} disabled={isPending} />
       <div className="flex flex-col gap-1.5">
         <label htmlFor={`${formId}-title`} className={LABEL_CLASS}>제목 <span className="font-normal text-muted-foreground">(선택)</span></label>
         <Input
@@ -487,12 +541,13 @@ function PlaylistEditForm({
   const [url, setUrl] = useState(playlist.url);
   const [title, setTitle] = useState(initialTitle);
   const [note, setNote] = useState(initialNote);
+  const [dugOn, setDugOn] = useState(playlist.dugOn);
   const [urlError, setUrlError] = useState("");
   const [formError, setFormError] = useState("");
   const [isPending, startTransition] = useTransition();
   const urlRef = useRef<HTMLInputElement>(null);
   const discardConfirm = useConfirmAction();
-  const dirty = url !== playlist.url || title !== initialTitle || note !== initialNote;
+  const dirty = url !== playlist.url || title !== initialTitle || note !== initialNote || dugOn !== playlist.dugOn;
   useBusyNavigationGuard(isPending);
   useUnsavedUnloadGuard(dirty && !isPending);
 
@@ -523,8 +578,9 @@ function PlaylistEditForm({
     }
     const parsedTitle = parseDiggingPlaylistTitle(title);
     const parsedNote = parseDiggingPlaylistNote(note);
-    if (!parsedTitle.ok || !parsedNote.ok) {
-      setFormError(!parsedTitle.ok ? parsedTitle.error : !parsedNote.ok ? parsedNote.error : "");
+    const parsedDugOn = parseDiggingDate(dugOn, toKstDateInputValue());
+    if (!parsedTitle.ok || !parsedNote.ok || !parsedDugOn.ok) {
+      setFormError(!parsedTitle.ok ? parsedTitle.error : !parsedNote.ok ? parsedNote.error : !parsedDugOn.ok ? parsedDugOn.error : "");
       return;
     }
     setUrlError("");
@@ -534,6 +590,7 @@ function PlaylistEditForm({
           url: normalized.url,
           title: parsedTitle.value,
           note: parsedNote.value,
+          dugOn: parsedDugOn.value,
           // 폼을 연 시점의 행과 비교해, 그 사이 학생·Stann 중 다른 쪽이 고쳤으면 덮지 않는다.
           expectedUpdatedAt: new Date(playlist.updatedAt).getTime(),
         });
@@ -587,6 +644,7 @@ function PlaylistEditForm({
         </p>
         {urlError ? <p id={`${formId}-url-error`} className="text-xs text-destructive">{urlError}</p> : null}
       </div>
+      <DugOnField formId={formId} value={dugOn} onChange={setDugOn} disabled={isPending} />
       <div className="flex flex-col gap-1.5">
         <label htmlFor={`${formId}-title`} className={LABEL_CLASS}>제목</label>
         <Input

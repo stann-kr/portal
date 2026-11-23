@@ -30,6 +30,20 @@ export function limitCommentContent(input: string): LimitedCommentContent {
 }
 
 /** 답글이면 원 댓글 ID를 담는 form 칸. 비어 있으면 원 댓글이다. */
+/**
+ * 저장된 댓글 HTML(`<p>` 하나에 escape한 평문, createComment가 만든다)을 고치기 칸의 평문으로 되돌린다.
+ * 다른 모양의 HTML이면 태그를 빼고 엔티티만 풀어 보인다.
+ */
+export function commentPlainText(html: string): string {
+  const inner = /^<p>([\s\S]*)<\/p>$/u.exec(html)?.[1] ?? html.replace(/<[^>]*>/gu, "");
+  return inner
+    .replace(/&lt;/gu, "<")
+    .replace(/&gt;/gu, ">")
+    .replace(/&quot;/gu, '"')
+    .replace(/&#39;/gu, "'")
+    .replace(/&amp;/gu, "&");
+}
+
 export const COMMENT_PARENT_FIELD = "parentId";
 
 /**

@@ -142,7 +142,8 @@ export type UpdateFeedbackResult = { success: true } | { success: false; error: 
 
 /**
  * 남긴 피드백의 내용·시점을 고친다 (Admin 전용, UsabilityBundle ⑫).
- * feedbacks에는 version·updated_at 열이 없어, 화면이 읽은 값(expected)과 지금 값이 같을 때만 바꾸는
+ * 고친 시각은 updated_at에 남겨 학생 화면에 "수정됨"으로 보인다(0038).
+ * feedbacks에는 version 열이 없어, 화면이 읽은 값(expected)과 지금 값이 같을 때만 바꾸는
  * compare-and-set으로 다른 탭·기기에서 먼저 고친 내용을 덮어쓰지 않는다.
  * @param next - { content, timeMarker(분:초·정수 초, 비우면 전체 피드백) }
  * @param expected - 고치기 시작할 때 화면에 보이던 { content, timeMarker }
@@ -184,7 +185,7 @@ export async function updateFeedback(
 
   const updated = await db
     .update(feedbacks)
-    .set({ content, timeMarker })
+    .set({ content, timeMarker, updatedAt: new Date() })
     .where(and(
       eq(feedbacks.id, feedbackId),
       eq(feedbacks.content, expected.content),

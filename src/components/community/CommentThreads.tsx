@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Trash2 } from "lucide-react";
+import { Pencil, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ConfirmPanel, useConfirmAction } from "@/components/ui/confirm-action";
 import { RichTextContent } from "@/components/editor/RichTextContent";
 import { CommentForm } from "@/components/community/CommentForm";
+import { CommentEditForm } from "@/components/community/CommentEditForm";
 import { communityAuthorName } from "@/components/community/CommunityPostRow";
 import { initialOf } from "@/components/qna/qna-display";
 import { groupCommentThreads, replyMention } from "@/lib/community-comment";
@@ -18,6 +19,8 @@ export type ThreadComment = {
   authorId: string;
   contentHtml: string;
   createdAt: Date | null;
+  /** 작성자가 고친 시각. 있으면 "수정됨"을 보인다. */
+  updatedAt?: Date | null;
   timeMarkerSeconds: number | null;
   parentId: string | null;
   authorName: string | null;
@@ -135,6 +138,55 @@ export function CommentThreads({
   };
 
   const canDelete = (authorId: string) => !trashed && (isAdmin || actorId === authorId);
+  // 내용 고치기는 작성자 본인만 한다(관리자도 남의 댓글은 지우기만).
+  const canEdit = (authorId: string) => !trashed && actorId !== null && actorId === authorId;
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const editOpener = useRef<HTMLButtonElement | null>(null);
+  const closeEdit = () => {
+    setEditingId(null);
+    const opener = editOpener.current;
+    if (opener?.isConnected) opener.focus();
+  };
+
+  const editedMark = (comment: ThreadComment) => comment.updatedAt ? (
+    <span className="text-xs text-muted-foreground">
+      수정됨<span className="sr-only"> {formatKstMonthDayTime(comment.updatedAt)}</span>
+    </span>
+  ) : null;
+
+  const editButton = (comment: ThreadComment, label: string) => (
+    <Button
+      variant="ghost"
+      size="icon"
+      onClick={(event) => {
+        editOpener.current = event.currentTarget;
+        deleteConfirm.close();
+        setEditingId(comment.id);
+      }}
+      disabled={busy}
+      aria-expanded={editingId === comment.id}
+      aria-label={label}
+      className="-mt-2 size-11 shrink-0 rounded-touch text-muted-foreground md:mt-0 md:size-7 md:rounded-md"
+    >
+      <Pencil className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
+    </Button>
+  );
+
+  const editForm = (comment: ThreadComment, label: string) => actorId !== null ? (
+    <CommentEditForm
+      key={comment.id}
+      actorId={actorId}
+      postId={postId}
+      comment={comment}
+      label={label}
+      onCancel={closeEdit}
+      onSaved={() => {
+        closeEdit();
+        onSaved();
+      }}
+      className="mt-1"
+    />
+  ) : null;
   // 열린 답글 입력의 원 댓글이 목록에서 사라졌으면(지워짐) 입력을 닫지 않고 그 자리에 남긴다.
   // 답글이 하나도 없어 묶음까지 사라졌으면 원 댓글 작성 시각 자리에 "삭제된 댓글입니다"를 잠시 둔다.
   const composerAllowed = canComment && actorId !== null && replyTarget !== null;
@@ -230,10 +282,18 @@ export function CommentThreads({
                 <p className="flex flex-wrap items-center gap-2">
                   <span className="font-semibold">{name}</span>
                   <span className="font-mono text-xs text-muted-foreground">{formatKstMonthDayTime(reply.createdAt, "날짜 정보 없음")}</span>
+                  {editedMark(reply)}
                 </p>
-                <RichTextContent html={reply.contentHtml} className="min-w-0 text-md leading-6 md:text-body" />
-                {canComment && acceptsReplies && rootName ? replyButton(rootId, reply.id, replyMention(name), rootName, name, "답글") : null}
+                {editingId === reply.id && canEdit(reply.authorId) ? (
+                  editForm(reply, `${name} 답글`)
+                ) : (
+                  <>
+                    <RichTextContent html={reply.contentHtml} className="min-w-0 text-md leading-6 md:text-body" />
+                    {canComment && acceptsReplies && rootName ? replyButton(rootId, reply.id, replyMention(name), rootName, name, "답글") : null}
+                  </>
+                )}
               </div>
+              {canEdit(reply.authorId) && editingId !== reply.id ? editButton(reply, `${name} 답글 고치기`) : null}
               {canDelete(reply.authorId) ? deleteButton(reply, `${name} 답글 삭제`) : null}
             </div>
             {confirmPanel(reply, "이 답글을 삭제할까요? 삭제한 답글은 되돌릴 수 없습니다.", "답글 삭제 확인", "ml-[2.125rem]")}
@@ -334,22 +394,35 @@ export function CommentThreads({
                       <p className="col-start-1 row-start-1 flex flex-wrap items-center gap-2 md:col-span-full">
                         <span className="font-semibold">{name}</span>
                         <span className="font-mono text-xs text-muted-foreground">{formatKstMonthDayTime(c.createdAt, "날짜 정보 없음")}</span>
+                        {editedMark(c)}
                       </p>
                       {c.timeMarkerSeconds !== null ? (
                         <span className="col-start-2 row-start-1 flex md:col-start-1 md:row-start-2 md:self-start">
                           <CommentTimeMarker seconds={c.timeMarkerSeconds} onSeek={onSeek} />
                         </span>
                       ) : null}
-                      <RichTextContent
-                        html={c.contentHtml}
-                        className={cn(
-                          "col-span-full row-start-2 min-w-0 text-md leading-6 md:text-body",
-                          c.timeMarkerSeconds !== null && "md:col-span-1 md:col-start-2",
-                        )}
-                      />
+                      {editingId === c.id && canEdit(c.authorId) ? (
+                        <div
+                          className={cn(
+                            "col-span-full row-start-2 min-w-0",
+                            c.timeMarkerSeconds !== null && "md:col-span-1 md:col-start-2",
+                          )}
+                        >
+                          {editForm(c, `${name} 댓글`)}
+                        </div>
+                      ) : (
+                        <RichTextContent
+                          html={c.contentHtml}
+                          className={cn(
+                            "col-span-full row-start-2 min-w-0 text-md leading-6 md:text-body",
+                            c.timeMarkerSeconds !== null && "md:col-span-1 md:col-start-2",
+                          )}
+                        />
+                      )}
                     </div>
-                    {canComment ? replyButton(c.id, c.id, null, name, name, "댓글") : null}
+                    {canComment && editingId !== c.id ? replyButton(c.id, c.id, null, name, name, "댓글") : null}
                   </div>
+                  {canEdit(c.authorId) && editingId !== c.id ? editButton(c, `${name} 댓글 고치기`) : null}
                   {canDelete(c.authorId) ? deleteButton(c, `${name} 댓글 삭제`) : null}
                 </div>
                 {confirmPanel(

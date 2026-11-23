@@ -3,6 +3,7 @@ import { after, before, mock, test, type TestContext } from "node:test";
 import { Window } from "happy-dom";
 import React, { act } from "react";
 import type { DiggingPlaylist } from "@/lib/actions/digging-playlists";
+import { toKstDateInputValue } from "@/lib/date-input";
 
 let createRoot: typeof import("react-dom/client").createRoot;
 let PlaylistSection: typeof import("@/components/digging/PlaylistSection").PlaylistSection;
@@ -71,8 +72,8 @@ mock.module("@/components/player/SoundCloudPlayer", {
 function playlists(): DiggingPlaylist[] {
   const at = new Date("2026-10-20T00:00:00.000Z");
   return [
-    { id: "sc-1", provider: "soundcloud", url: "https://soundcloud.com/stann/sets/warmup", title: "Warmup", note: "오프닝\n후보", createdAt: at, updatedAt: at },
-    { id: "bp-1", provider: "beatport", url: "https://www.beatport.com/playlists/share/11018932", title: null, note: null, createdAt: at, updatedAt: at },
+    { id: "sc-1", provider: "soundcloud", url: "https://soundcloud.com/stann/sets/warmup", title: "Warmup", note: "오프닝\n후보", dugOn: "2026-10-20", createdAt: at, updatedAt: at },
+    { id: "bp-1", provider: "beatport", url: "https://www.beatport.com/playlists/share/11018932", title: null, note: null, dugOn: "2026-10-20", createdAt: at, updatedAt: at },
   ];
 }
 
@@ -261,7 +262,8 @@ test("학생 추가 폼은 단축 링크를 서버 요청 없이 안내하고 �
   assert.match(container.textContent ?? "", /비워 두면 ‘Beatport 플레이리스트’/u);
   await fill("메모", "  피크 타임  ");
   await submit(form);
-  assert.deepEqual(createCalls, [{ url: "https://www.beatport.com/playlists/share/11018932", title: null, note: "피크 타임" }]);
+  // 디깅한 날은 고르지 않으면 오늘(KST)이다.
+  assert.deepEqual(createCalls, [{ url: "https://www.beatport.com/playlists/share/11018932", title: null, note: "피크 타임", dugOn: toKstDateInputValue(new Date()) }]);
   assert.equal(container.querySelector('form[aria-label="플레이리스트 추가"]'), null);
   assert.ok(container.querySelector('a[href="https://www.beatport.com/playlists/share/11018932"]'));
   assert.equal(browser.document.activeElement?.textContent?.trim(), "플레이리스트 추가");
@@ -288,7 +290,7 @@ test("서버가 돌려준 중복 오류를 폼에 보이고, 수정·삭제 확�
   assert.doesNotMatch(container.textContent ?? "", /삭제한 뒤 다시 추가/u);
   await fill("제목", " Warmup v2 ");
   await submit(editForm);
-  assert.deepEqual(updateCalls, [["sc-1", { url: "https://soundcloud.com/stann/sets/warmup", title: "Warmup v2", note: "오프닝\n후보", expectedUpdatedAt: Date.parse("2026-10-20T00:00:00.000Z") }]]);
+  assert.deepEqual(updateCalls, [["sc-1", { url: "https://soundcloud.com/stann/sets/warmup", title: "Warmup v2", note: "오프닝\n후보", dugOn: "2026-10-20", expectedUpdatedAt: Date.parse("2026-10-20T00:00:00.000Z") }]]);
   assert.ok(findButton("‘Warmup v2’ 수정"));
 
   await press("‘Beatport 플레이리스트’ 삭제");
@@ -319,7 +321,7 @@ test("수정 폼에서 링크를 바꾸면 provider 안내가 바뀌고, 잘못�
   assert.match(editForm.textContent ?? "", /SoundCloud/u);
   assert.match(container.textContent ?? "", /비워 두면 SoundCloud에서 제목을 가져옵니다/u);
   await submit(editForm);
-  assert.deepEqual(updateCalls, [["bp-1", { url: "https://soundcloud.com/stann/sets/peak", title: null, note: null, expectedUpdatedAt: Date.parse("2026-10-20T00:00:00.000Z") }]]);
+  assert.deepEqual(updateCalls, [["bp-1", { url: "https://soundcloud.com/stann/sets/peak", title: null, note: null, dugOn: "2026-10-20", expectedUpdatedAt: Date.parse("2026-10-20T00:00:00.000Z") }]]);
 });
 
 test("바뀐 내용이 있는 폼은 Esc·취소에 버림 확인을 거치고, 바뀐 내용이 없으면 바로 닫는다", { concurrency: false }, async (context) => {

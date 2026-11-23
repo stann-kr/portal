@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { ConfirmPanel, useConfirmAction } from "@/components/ui/confirm-action";
 import { Input } from "@/components/ui/input";
 import { formatTimestamp } from "@/lib/utils/format";
+import { formatKstMonthDayTime } from "@/lib/kst-format";
 import {
   createFeedback,
   deleteFeedback,
@@ -34,6 +35,8 @@ export interface FeedbackItem {
   timeMarker: number | null;
   content: string;
   createdAt: Date | null;
+  /** 관리자가 고친 시각. 없으면 처음 남긴 그대로다. */
+  updatedAt?: Date | null;
 }
 
 interface TimelineFeedbackProps {
@@ -437,7 +440,14 @@ export function TimelineFeedback({
                   </button>
                 )}
 
-                <p className="min-w-0 flex-1 break-words text-md leading-6 md:text-body">{fb.content}</p>
+                <p className="min-w-0 flex-1 break-words text-md leading-6 md:text-body">
+                  {fb.content}
+                  {fb.updatedAt ? (
+                    <span className="ml-2 whitespace-nowrap text-xs text-muted-foreground">
+                      수정됨<span className="sr-only"> {formatKstMonthDayTime(new Date(fb.updatedAt))}</span>
+                    </span>
+                  ) : null}
+                </p>
 
                 {/* 고치기·삭제 버튼 (Admin only) */}
                 {isAdmin && (

@@ -8,15 +8,17 @@
  *
  * 결정
  * - 제출이 있는 과제는 제목·설명·마감만 바꿀 수 있고 제출 형식은 바꿀 수 없다(이미 낸 제출이 형식과 어긋나지 않게).
- * - 정기 과제 회차는 개별 삭제하지 않는다. 규칙을 멈추거나 바꾸거나 지우면 아직 마감 전이고 제출이 없는 회차만
- *   지우고 다시 만들며, 마감이 지났거나 제출된 회차는 그대로 둔다. 규칙을 지우면 남은 회차는 한 번 과제처럼 남는다.
+ * - 규칙을 멈추거나 바꾸거나 지우면 아직 마감 전이고 제출이 없는(완료하지 않은) 회차만 지우고 다시 만들며,
+ *   마감이 지났거나 제출됐거나 완료한 회차는 그대로 둔다. 규칙을 지우면 남은 회차는 한 번 과제처럼 남는다.
+ * - 정기 과제 회차도 하나씩 지울 수 있다. 지운 날짜는 assignment_occurrence_skips에 남겨 다시 만들지 않는다.
+ * - 완료(closed_at)는 제출이 없는 과제에만 둔다. 완료한 과제는 학생이 제출할 수 없고 다시 열면 원래대로 돌아간다.
  * - 과제를 지워도 제출은 자유 제출로 남는다(task_id ON DELETE SET NULL).
  * - 학생 제출 수정은 피드백이 달리기 전까지만 허용하고, 확인과 수정을 한 UPDATE로 처리한다.
  */
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { and, asc, count, desc, eq, exists, isNull, notExists, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, exists, isNotNull, isNull, notExists, sql } from "drizzle-orm";
 import { createDbContext, type DbContext, type DrizzleDb } from "@/db/client";
 import { assignmentRecurrences, assignmentTasks, assignments, feedbacks } from "@/db/schema";
 import { findStudentTarget, requireAuth, requireStudentTarget, type AuthSession } from "@/lib/auth-guard";
@@ -77,6 +79,8 @@ export type AssignmentTaskItem = {
   dueAt: Date | null;
   occurrenceDate: string | null;
   recurrenceId: string | null;
+  /** 관리자가 제출 없이 끝낸 시각(완료). 완료한 과제는 제출할 수 없다. */
+  closedAt: Date | null;
   version: number;
   createdAt: Date;
   submission: AssignmentTaskSubmission | null;
@@ -127,6 +131,7 @@ function sameSecond(a: Date | null, b: Date | null): boolean {
   return (a === null ? null : epochSeconds(a)) === (b === null ? null : epochSeconds(b));
 }
 
+const CLOSED_TASK_MESSAGE = "Stann이 이 과제를 완료로 처리해 더 제출할 수 없습니다. 다시 내야 하면 Stann에게 말해 주세요.";
 const TASK_CHANGED_MESSAGE = "과제가 바뀌었습니다. 목록을 새로고침해 바뀐 제출 형식을 확인한 뒤 다시 제출해 주세요.";
 
 function revalidateAssignmentViews(studentId: string) {
@@ -141,11 +146,11 @@ async function requireStudentSession(): Promise<AuthSession> {
   return session;
 }
 
-/** 아직 마감 전이고 제출이 없는 정기 회차를 지우는 statement. */
+/** 아직 마감 전이고 제출이 없는 정기 회차를 지우는 statement. 완료한 회차는 관리자가 끝낸 것이라 남긴다. */
 function deleteOpenUnsubmittedOccurrencesStatement(recurrenceId: string, studentId: string, now: Date) {
   return {
     query:
-      "DELETE FROM assignment_tasks WHERE recurrence_id = ? AND student_id = ? AND due_at > ? " +
+      "DELETE FROM assignment_tasks WHERE recurrence_id = ? AND student_id = ? AND due_at > ? AND closed_at IS NULL " +
       "AND NOT EXISTS (SELECT 1 FROM assignments WHERE assignments.task_id = assignment_tasks.id)",
     params: [recurrenceId, studentId, epochSeconds(now)],
   };
@@ -266,6 +271,7 @@ async function loadTasksWithSubmissions(db: DrizzleDb, studentId: string, taskId
       dueAt: task.dueAt,
       occurrenceDate: task.occurrenceDate,
       recurrenceId: task.recurrenceId,
+      closedAt: task.closedAt,
       version: task.version,
       createdAt: task.createdAt,
       submission: submission
@@ -535,30 +541,92 @@ export async function updateAssignmentTask(
   return { success: true, id: taskId };
 }
 
-/** 한 번 과제 삭제. 제출은 자유 제출로 남는다. 정기 과제 회차는 규칙에서 관리한다. */
+/**
+ * 과제 삭제. 제출은 자유 제출로 남는다(task_id ON DELETE SET NULL).
+ * 정기 과제 회차는 지운 날짜를 함께 남겨 같은 회차가 다시 만들어지지 않게 한다(삭제와 기록을 한 batch로).
+ */
 export async function deleteAssignmentTask(studentId: string, taskId: string): Promise<AssignmentTaskMutationResult> {
   await requireStudentTarget(studentId);
+  const context = createDbContext();
+  const db = readDb(context);
+  const scope = and(eq(assignmentTasks.id, taskId), eq(assignmentTasks.studentId, studentId));
+  const [task] = await db
+    .select({ recurrenceId: assignmentTasks.recurrenceId, occurrenceDate: assignmentTasks.occurrenceDate })
+    .from(assignmentTasks)
+    .where(scope)
+    .limit(1);
+  const missing = { success: false as const, error: "이미 삭제됐거나 찾을 수 없는 과제입니다. 목록을 새로고침해 주세요." };
+  if (!task) return missing;
+  if (task.recurrenceId && task.occurrenceDate) {
+    try {
+      await executeDocumentStatementsAtomically(context, [
+        {
+          // 읽은 뒤 규칙이 지워져 회차가 한 번 과제가 됐으면 지우지 않는다(아래 sentinel이 batch 전체를 되돌린다).
+          query: "DELETE FROM assignment_tasks WHERE id = ? AND student_id = ? AND recurrence_id = ? AND occurrence_date = ?",
+          params: [taskId, studentId, task.recurrenceId, task.occurrenceDate],
+        },
+        DOCUMENT_CONDITIONAL_WRITE_SENTINEL,
+        {
+          query:
+            "INSERT INTO assignment_occurrence_skips (recurrence_id, occurrence_date, created_at) " +
+            "SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM assignment_recurrences WHERE id = ? AND student_id = ?) " +
+            "ON CONFLICT DO NOTHING",
+          params: [task.recurrenceId, task.occurrenceDate, epochSeconds(new Date()), task.recurrenceId, studentId],
+        },
+      ]);
+    } catch {
+      return { success: false, error: "과제가 바뀌었습니다. 목록을 새로고침한 뒤 다시 지워 주세요." };
+    }
+  } else {
+    const deleted = await db.delete(assignmentTasks).where(scope).returning({ id: assignmentTasks.id });
+    if (deleted.length === 0) return missing;
+  }
+  revalidateAssignmentViews(studentId);
+  return { success: true };
+}
+
+/**
+ * 완료 처리: 아직 제출하지 않은 과제를 끝낸 것으로 둔다(수업에서 직접 봤거나 더 받지 않을 때).
+ * 제출 여부 확인과 표시를 한 UPDATE로 처리해, 같은 때 들어온 제출과 엇갈리지 않는다.
+ */
+export async function closeAssignmentTask(studentId: string, taskId: string): Promise<AssignmentTaskMutationResult> {
+  await requireStudentTarget(studentId);
   const db = readDb(createDbContext());
-  const deleted = await db
-    .delete(assignmentTasks)
+  const scope = and(eq(assignmentTasks.id, taskId), eq(assignmentTasks.studentId, studentId));
+  const now = new Date();
+  const closed = await db
+    .update(assignmentTasks)
+    .set({ closedAt: now, updatedAt: now, version: sql`${assignmentTasks.version} + 1` })
     .where(and(
-      eq(assignmentTasks.id, taskId),
-      eq(assignmentTasks.studentId, studentId),
-      isNull(assignmentTasks.recurrenceId),
+      scope,
+      isNull(assignmentTasks.closedAt),
+      notExists(db.select({ id: assignments.id }).from(assignments).where(eq(assignments.taskId, assignmentTasks.id))),
     ))
     .returning({ id: assignmentTasks.id });
-  if (deleted.length === 0) {
-    const [remaining] = await db
-      .select({ recurrenceId: assignmentTasks.recurrenceId })
-      .from(assignmentTasks)
-      .where(and(eq(assignmentTasks.id, taskId), eq(assignmentTasks.studentId, studentId)))
-      .limit(1);
-    return {
-      success: false,
-      error: remaining
-        ? "정기 과제 회차는 따로 지울 수 없습니다. 정기 과제를 멈추거나 고쳐 주세요."
-        : "이미 삭제됐거나 찾을 수 없는 과제입니다. 목록을 새로고침해 주세요.",
-    };
+  if (closed.length === 0) {
+    const [latest] = await db.select({ closedAt: assignmentTasks.closedAt }).from(assignmentTasks).where(scope).limit(1);
+    if (!latest) return { success: false, error: "이미 삭제됐거나 찾을 수 없는 과제입니다. 목록을 새로고침해 주세요." };
+    if (latest.closedAt) return { success: true };
+    return { success: false, error: "학생이 이미 제출한 과제입니다. 완료 대신 제출을 확인하거나 피드백을 남겨 주세요." };
+  }
+  revalidateAssignmentViews(studentId);
+  return { success: true };
+}
+
+/** 완료한 과제를 다시 연다. 학생이 다시 제출할 수 있고 마감이 지났으면 마감 지남으로 돌아간다. */
+export async function reopenAssignmentTask(studentId: string, taskId: string): Promise<AssignmentTaskMutationResult> {
+  await requireStudentTarget(studentId);
+  const db = readDb(createDbContext());
+  const scope = and(eq(assignmentTasks.id, taskId), eq(assignmentTasks.studentId, studentId));
+  const reopened = await db
+    .update(assignmentTasks)
+    .set({ closedAt: null, updatedAt: new Date(), version: sql`${assignmentTasks.version} + 1` })
+    .where(and(scope, isNotNull(assignmentTasks.closedAt)))
+    .returning({ id: assignmentTasks.id });
+  if (reopened.length === 0) {
+    const [latest] = await db.select({ id: assignmentTasks.id }).from(assignmentTasks).where(scope).limit(1);
+    if (!latest) return { success: false, error: "이미 삭제됐거나 찾을 수 없는 과제입니다. 목록을 새로고침해 주세요." };
+    return { success: true };
   }
   revalidateAssignmentViews(studentId);
   return { success: true };
@@ -773,11 +841,13 @@ export async function submitAssignmentTask(
       submissionFormat: assignmentTasks.submissionFormat,
       analysisForm: assignmentTasks.analysisForm,
       dueAt: assignmentTasks.dueAt,
+      closedAt: assignmentTasks.closedAt,
     })
     .from(assignmentTasks)
     .where(and(eq(assignmentTasks.id, taskId), eq(assignmentTasks.studentId, studentId)))
     .limit(1);
   if (!task) return { error: "과제를 찾을 수 없습니다. 목록을 새로고침해 주세요." };
+  if (task.closedAt) return { error: CLOSED_TASK_MESSAGE };
   const payload = validateSubmissionPayload(fromStoredAssignmentFormat(task), {
     mediaUrl: formData.get("mediaUrl"),
     text: formData.get("text"),
@@ -793,7 +863,7 @@ export async function submitAssignmentTask(
       WHERE EXISTS (
         SELECT 1 FROM assignment_tasks
         WHERE id = ${taskId} AND student_id = ${studentId} AND submission_format = ${task.submissionFormat}
-          AND analysis_form = ${task.analysisForm ? 1 : 0}
+          AND analysis_form = ${task.analysisForm ? 1 : 0} AND closed_at IS NULL
       )
       ON CONFLICT (task_id) DO NOTHING
       RETURNING id`);
@@ -809,7 +879,15 @@ export async function submitAssignmentTask(
         .from(assignments)
         .where(eq(assignments.taskId, taskId))
         .limit(1);
-      if (!existing) return { error: TASK_CHANGED_MESSAGE };
+      if (!existing) {
+        // 읽은 뒤 관리자가 완료로 처리했으면 그 이유를 알린다.
+        const [latest] = await db
+          .select({ closedAt: assignmentTasks.closedAt })
+          .from(assignmentTasks)
+          .where(and(eq(assignmentTasks.id, taskId), eq(assignmentTasks.studentId, studentId)))
+          .limit(1);
+        return { error: latest?.closedAt ? CLOSED_TASK_MESSAGE : TASK_CHANGED_MESSAGE };
+      }
       if (
         existing.studentId === studentId
         && existing.mediaUrl === payload.mediaUrl

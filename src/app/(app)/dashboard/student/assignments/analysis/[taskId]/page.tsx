@@ -43,7 +43,9 @@ export default async function MixAnalysisWritePage({
     ? "분석을 쓸 과제를 찾을 수 없습니다."
     : task.submission && isSubmissionSettled(task.submission)
       ? task.submission.feedbackCount > 0 ? "피드백이 달린 분석은 고칠 수 없습니다." : "Stann이 확인한 분석은 고칠 수 없습니다."
-      : null;
+      : !task.submission && task.closedAt
+        ? "Stann이 완료로 처리한 과제라 분석을 낼 수 없습니다."
+        : null;
 
   if (!task || unavailable) {
     return (

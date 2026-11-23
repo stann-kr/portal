@@ -12,6 +12,8 @@ import {
   assignments,
   calendarConnections,
   calendarMappings,
+  diggingFeedbacks,
+  diggingPlaylists,
   feedbacks,
   guideAccess,
   lessonGroupMembers,
@@ -145,6 +147,14 @@ async function setupDatabase(context: TestContext): Promise<PortalTestDb> {
     { id: "submission-c", studentId: "student-c", mediaUrl: "https://youtu.be/c", submittedAt: new Date("2026-11-15T00:00:00.000Z") },
   ]);
   await db.insert(qnaThreads).values({ id: "qna-a", studentId: "student-a", title: "김학생 질문", status: "OPEN" });
+  await db.insert(diggingPlaylists).values([
+    { id: "playlist-a", userId: "student-a", provider: "beatport", url: "https://www.beatport.com/playlists/share/1", dugOn: "2026-11-12" },
+    { id: "playlist-b", userId: "student-b", provider: "beatport", url: "https://www.beatport.com/playlists/share/2", dugOn: "2026-11-12" },
+  ]);
+  await db.insert(diggingFeedbacks).values([
+    { studentId: "student-a", dugOn: "2026-11-12", body: "김학생 디깅 피드백" },
+    { studentId: "student-b", dugOn: "2026-11-12", body: "이학생 디깅 피드백" },
+  ]);
   await db.insert(pushSubscriptions).values([
     { id: "sub-a", profileId: "student-a", endpoint: "https://push.example.com/a", ...keys },
     { id: "sub-b", profileId: "student-b", endpoint: "https://push.example.com/b", ...keys },
@@ -326,7 +336,7 @@ test("수강 종료한 학생의 보기 전용 기록은 관리자만, 수강 �
   assert.ok(notes && notes.tab === "notes");
   assert.equal(notes.student.name, "김학생");
   assert.ok(notes.student.archivedAt instanceof Date);
-  assert.deepEqual(notes.counts, { notes: 1, assignments: 1, qna: 2 }, "탭 숫자는 줄 수와 같다");
+  assert.deepEqual(notes.counts, { notes: 1, assignments: 1, qna: 2, digging: 0 }, "탭 숫자는 줄 수와 같다");
   assert.deepEqual(notes.rows.map((row) => [row.id, row.title, row.contentHtml]), [["note-a", "김학생 레슨 메모", "<p>메모</p>"]]);
   assert.equal(notes.rows[0]?.date.toISOString(), "2026-11-10T03:00:00.000Z", "노트 날짜가 있으면 그 날짜");
 
@@ -337,6 +347,13 @@ test("수강 종료한 학생의 보기 전용 기록은 관리자만, 수강 �
     ["fb-a-1", null, "전체 흐름 좋음"],
     ["fb-a-2", 95, "브레이크 잔음"],
   ], "그 제출의 피드백만 남긴 순서대로");
+
+  // 디깅 탭은 그 학생의 플레이리스트·피드백만 돌려준다(컬럼을 새로 만들지 않는다).
+  const digging = await archivedRecords.loadArchivedStudentRecords("student-a", "digging");
+  assert.ok(digging && digging.tab === "digging");
+  assert.deepEqual(digging.rows.playlists.map((playlist) => [playlist.id, playlist.dugOn]), [["playlist-a", "2026-11-12"]]);
+  assert.deepEqual(digging.rows.feedbacks.map((feedback) => feedback.body), ["김학생 디깅 피드백"]);
+  assert.deepEqual(digging.rows.columns, []);
 
   const qna = await archivedRecords.loadArchivedStudentRecords("student-a", "qna");
   assert.ok(qna && qna.tab === "qna");

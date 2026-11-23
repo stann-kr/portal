@@ -4,6 +4,7 @@
  * 읽기·쓰기 모두 학생 본인 또는 관리자(Stann)가 하며, 대상 학생 id를 명시로 받아 활성 학생인지 확인한다.
  * 관리자 쓰기는 2026-10-30 사용자 결정에 따른 소유권 예외이며 플레이리스트에만 해당한다(트랙 보드는 학생 본인만).
  * 모든 쓰기 WHERE에 대상 학생 user_id를 둬 다른 학생 행에 닿지 않게 한다.
+ * 디깅한 날(dug_on, KST)은 학생이 고르고 기본은 오늘이다. 목록은 디깅한 날 최근 순이다(캔버스 FlowGaps1123 ③).
  * Beatport는 어떤 외부 요청도 하지 않고, SoundCloud는 새 링크의 제목이 비었을 때만 oEmbed로 제목을 채운다.
  * 입력 오류(잘못된 링크·중복·길이)는 화면이 문구를 보일 수 있게 결과 객체로, 권한 오류는 throw로 돌려준다.
  */
@@ -18,12 +19,14 @@ import {
   DIGGING_PLAYLISTS_MAX_COUNT,
   clampDiggingPlaylistTitle,
   normalizeDiggingPlaylistUrl,
+  parseDiggingDate,
   parseDiggingPlaylistNote,
   parseDiggingPlaylistTitle,
   type DiggingPlaylistProviderName,
 } from "@/lib/digging-contract";
 import { fetchSoundCloudPlaylistTitle } from "@/lib/digging-link-metadata";
 import { isUniqueViolation } from "@/lib/db-errors";
+import { toKstDateInputValue } from "@/lib/date-input";
 
 export type DiggingPlaylist = {
   id: string;
@@ -31,6 +34,8 @@ export type DiggingPlaylist = {
   url: string;
   title: string | null;
   note: string | null;
+  /** 디깅한 날(KST YYYY-MM-DD). */
+  dugOn: string;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -50,11 +55,12 @@ const playlistColumns = {
   url: diggingPlaylists.url,
   title: diggingPlaylists.title,
   note: diggingPlaylists.note,
+  dugOn: diggingPlaylists.dugOn,
   createdAt: diggingPlaylists.createdAt,
   updatedAt: diggingPlaylists.updatedAt,
 };
 
-/** 학생의 플레이리스트(최근 등록순). 학생 본인 또는 관리자만 읽는다. */
+/** 학생의 플레이리스트(디깅한 날 최근 순, 같은 날은 최근 등록순). 학생 본인 또는 관리자만 읽는다. */
 export async function getDiggingPlaylists(userId: string): Promise<DiggingPlaylist[]> {
   const session = await requireAuth();
   await requireStudentOwnerOrAdmin(session, userId);
@@ -63,17 +69,22 @@ export async function getDiggingPlaylists(userId: string): Promise<DiggingPlayli
     .select(playlistColumns)
     .from(diggingPlaylists)
     .where(eq(diggingPlaylists.userId, userId))
-    .orderBy(desc(diggingPlaylists.createdAt), desc(diggingPlaylists.id));
+    .orderBy(desc(diggingPlaylists.dugOn), desc(diggingPlaylists.createdAt), desc(diggingPlaylists.id));
 }
 
 export async function createDiggingPlaylist(studentId: string, input: {
   url: string;
   title?: string | null;
   note?: string | null;
+  /** 디깅한 날. 비우면 오늘(KST). */
+  dugOn?: string | null;
 }): Promise<DiggingPlaylistMutationResult> {
   const userId = await requirePlaylistWriter(studentId);
   const normalized = normalizeDiggingPlaylistUrl(input?.url);
   if (!normalized.ok) return normalized;
+  const today = toKstDateInputValue();
+  const dugOn = parseDiggingDate(input?.dugOn || today, today);
+  if (!dugOn.ok) return dugOn;
   const title = parseDiggingPlaylistTitle(input?.title);
   if (!title.ok) return title;
   const note = parseDiggingPlaylistNote(input?.note);
@@ -105,6 +116,7 @@ export async function createDiggingPlaylist(studentId: string, input: {
     url: normalized.url,
     title: resolvedTitle,
     note: note.value,
+    dugOn: dugOn.value,
     createdAt: now,
     updatedAt: now,
   };
@@ -113,8 +125,8 @@ export async function createDiggingPlaylist(studentId: string, input: {
   try {
     // 위 개수 확인은 oEmbed 요청을 아끼는 빠른 길이고, 동시 등록에서도 상한을 넘지 않게 INSERT가 개수를 다시 확인한다.
     inserted = await db.all<{ id: string }>(sql`
-      INSERT INTO digging_playlists (id, user_id, provider, url, title, note, created_at, updated_at)
-      SELECT ${playlist.id}, ${userId}, ${playlist.provider}, ${playlist.url}, ${playlist.title}, ${playlist.note}, ${nowSeconds}, ${nowSeconds}
+      INSERT INTO digging_playlists (id, user_id, provider, url, title, note, dug_on, created_at, updated_at)
+      SELECT ${playlist.id}, ${userId}, ${playlist.provider}, ${playlist.url}, ${playlist.title}, ${playlist.note}, ${playlist.dugOn}, ${nowSeconds}, ${nowSeconds}
       WHERE (SELECT count(*) FROM digging_playlists WHERE user_id = ${userId}) < ${DIGGING_PLAYLISTS_MAX_COUNT}
       RETURNING id`);
   } catch (error) {
@@ -128,7 +140,7 @@ export async function createDiggingPlaylist(studentId: string, input: {
 }
 
 /**
- * 링크·제목·메모를 고친다. `url`을 빼면 링크는 그대로 둔다.
+ * 링크·제목·메모·디깅한 날을 고친다. `url`·`dugOn`을 빼면 그대로 둔다.
  * 링크가 바뀌면 provider를 새 링크로 다시 정하고, 같은 학생의 다른 행과 겹치면 중복 안내를 돌려준다.
  * 새 링크가 SoundCloud이고 제목이 비었으면 등록처럼 oEmbed로 제목을 채운다(실패해도 저장).
  * `expectedUpdatedAt`(화면이 읽은 updatedAt, ms)은 필수다. 그 사이 학생·Stann 중 다른 쪽이 고쳤거나 값이 없으면 덮지 않고 충돌로 돌려준다.
@@ -136,7 +148,7 @@ export async function createDiggingPlaylist(studentId: string, input: {
 export async function updateDiggingPlaylist(
   studentId: string,
   playlistId: string,
-  input: { url?: string | null; title?: string | null; note?: string | null; expectedUpdatedAt: number },
+  input: { url?: string | null; title?: string | null; note?: string | null; dugOn?: string | null; expectedUpdatedAt: number },
 ): Promise<DiggingPlaylistMutationResult> {
   const userId = await requirePlaylistWriter(studentId);
   if (typeof playlistId !== "string" || !playlistId) return { ok: false, error: NOT_FOUND_MESSAGE };
@@ -146,6 +158,9 @@ export async function updateDiggingPlaylist(
   if (!title.ok) return title;
   const note = parseDiggingPlaylistNote(input?.note);
   if (!note.ok) return note;
+  // 디깅한 날을 빼면 그대로 둔다.
+  const nextDugOn = input?.dugOn ? parseDiggingDate(input.dugOn, toKstDateInputValue()) : null;
+  if (nextDugOn && !nextDugOn.ok) return nextDugOn;
 
   const db = createDb();
   const [current] = await db
@@ -191,7 +206,7 @@ export async function updateDiggingPlaylist(
   try {
     updated = await db
       .update(diggingPlaylists)
-      .set({ provider, url, title: resolvedTitle, note: note.value, updatedAt })
+      .set({ provider, url, title: resolvedTitle, note: note.value, dugOn: nextDugOn?.value ?? current.dugOn, updatedAt })
       // 읽은 뒤(oEmbed 대기 포함) 다른 쪽이 고쳤으면 updated_at이 달라 0행이 된다.
       .where(and(
         eq(diggingPlaylists.id, playlistId),

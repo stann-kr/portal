@@ -8,7 +8,7 @@
  */
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { Plus } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 import { buildAdminStudentNotesHref } from "@/components/admin/StudentDetailTabs";
 import { buttonClassName } from "@/components/ui/button";
 import { MobileTopBar } from "@/components/app-shell/AppSidebar";
@@ -82,7 +82,7 @@ export default async function AdminAllNotesPage({
     : query
       ? "검색 결과가 없습니다. 다른 단어로 검색하거나 검색을 초기화해 주세요."
       : students.length === 0
-        ? "등록된 학생이 없습니다."
+        ? "등록된 학생이 없습니다. 수강생을 먼저 추가해 주세요."
         : "아직 작성된 노트가 없습니다.";
 
   return (
@@ -117,14 +117,32 @@ export default async function AdminAllNotesPage({
               clearHref={filterOnlyHref}
             />
           </div>
-          <div className="flex min-h-11 items-center md:min-h-0">
+          <div className="flex min-h-11 items-center justify-between gap-3 md:min-h-0">
             <p className="text-ui text-muted-foreground md:text-xs">
               <span role="status">{countLabel}</span>{" "}
               <span id="note-search-scope" className="sr-only">전체 기간에서 띄어 쓴 단어를 모두 포함한 노트를 찾습니다.</span>
             </p>
+            {/* 휴지통은 학생마다 따로라 학생을 골라 둔 상태에서만 그 학생의 휴지통을 연다. */}
+            {selectedStudentId ? (
+              <Link
+                href={`/dashboard/notes/trash?studentId=${encodeURIComponent(selectedStudentId)}&returnTo=${encodeURIComponent(returnTo)}`}
+                className="inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-md px-2 text-ui text-secondary-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:min-h-8 md:text-xs"
+              >
+                <Trash2 className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
+                {selectedLabel ? `${selectedLabel} 휴지통` : "휴지통"}
+              </Link>
+            ) : (
+              <span className="hidden text-xs text-muted-foreground md:inline">지운 노트는 학생을 고르면 휴지통에서 볼 수 있습니다.</span>
+            )}
           </div>
           {rows.length === 0 ? (
-            <NotesEmptyState message={emptyMessage} />
+            <NotesEmptyState message={emptyMessage}>
+              {!continued && !query && students.length === 0 ? (
+                <Link href="/dashboard/admin/students/new" className={buttonClassName({ variant: "outline", size: "sm" })}>
+                  <Plus className="size-3.5" strokeWidth={1.8} aria-hidden="true" />수강생 추가
+                </Link>
+              ) : null}
+            </NotesEmptyState>
           ) : (
             <AllNotesTable rows={rows} returnTo={returnTo} now={getRequestNow()} />
           )}

@@ -84,6 +84,7 @@ export default async function AssignmentDetailPage({
     timeMarker: f.timeMarker,
     content: f.content,
     createdAt: f.createdAt,
+    updatedAt: f.updatedAt,
   }));
 
   const time = { hour: "2-digit", minute: "2-digit", hourCycle: "h23" } as const;

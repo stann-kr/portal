@@ -165,23 +165,25 @@ export function settledSubmissionError(verb: "고칠" | "삭제할", submission:
   return `${reason} ${verb} 수 없습니다. 필요하면 Stann에게 문의해 주세요.`;
 }
 
-export type AssignmentTaskStatus = "open" | "overdue" | SubmissionReviewStatus;
+export type AssignmentTaskStatus = "open" | "overdue" | "closed" | SubmissionReviewStatus;
 
 export const ASSIGNMENT_TASK_STATUS_LABELS: Record<AssignmentTaskStatus, string> = {
   open: "미제출",
   overdue: "마감 지남",
+  closed: "완료",
   submitted: "피드백 대기",
   acknowledged: "Stann 확인함",
   reviewed: "피드백 완료",
 };
 
-/** 과제 상태: 제출 여부·피드백 수·확인함 여부·마감 시각으로 정한다. */
+/** 과제 상태: 제출 여부·피드백 수·확인함 여부·완료 처리·마감 시각으로 정한다. */
 export function getAssignmentTaskStatus(
-  task: { dueAt: Date | null },
+  task: { dueAt: Date | null; closedAt?: Date | null },
   submission: SubmissionReviewState | null,
   referenceTime: Date,
 ): AssignmentTaskStatus {
   if (submission) return getSubmissionReviewStatus(submission);
+  if (task.closedAt) return "closed";
   return task.dueAt && task.dueAt.getTime() < referenceTime.getTime() ? "overdue" : "open";
 }
 

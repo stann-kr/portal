@@ -3,9 +3,10 @@
 /**
  * 관리자 전체 과제 화면(캔버스 AdminAssignments): 수강 중인 학생 전체(또는 고른 한 명)의
  * 피드백 대기 제출 · 아직 안 낸 과제 · 최근 확인한 제출을 한 번에 읽는다.
- * 쓰기는 하지 않는다. 피드백·확인은 지금 과제 상세가, 과제 내기는 학생 상세 과제 탭 폼이 맡는다.
+ * 쓰기는 하지 않는다. 피드백·확인은 과제 상세가, 과제 내기는 학생 상세 과제 탭 폼이, 완료·삭제는 assignmentTasks action이 맡는다.
+ * 관리자가 완료로 처리한 과제는 아직 안 낸 과제에서 뺀다.
  */
-import { and, asc, desc, eq, gte, inArray, isNotNull, notExists, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, notExists, sql } from "drizzle-orm";
 import { createDbContext, type DbContext, type DrizzleDb } from "@/db/client";
 import { assignments, assignmentTasks } from "@/db/schema";
 import { requireAdmin } from "@/lib/auth-guard";
@@ -35,6 +36,8 @@ export type AdminOpenTask = {
   title: string;
   dueAt: Date | null;
   createdAt: Date;
+  /** 정기 과제 회차면 규칙 id(지우기 확인 문구가 달라진다). */
+  recurrenceId: string | null;
 };
 
 export type AdminReviewedSubmission = AdminPendingSubmission;
@@ -98,10 +101,12 @@ export async function getAdminAssignmentsOverview(
         title: assignmentTasks.title,
         dueAt: assignmentTasks.dueAt,
         createdAt: assignmentTasks.createdAt,
+        recurrenceId: assignmentTasks.recurrenceId,
       })
       .from(assignmentTasks)
       .where(and(
         inArray(assignmentTasks.studentId, owners),
+        isNull(assignmentTasks.closedAt),
         notExists(db.select({ id: assignments.id }).from(assignments).where(eq(assignments.taskId, assignmentTasks.id))),
       ))
       // 마감이 있는 과제를 마감이 가까운(지난) 순으로 먼저, 마감 없는 과제는 낸 순서로 뒤에 둔다.

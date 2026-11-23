@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  parseDiggingDate,
+  parseDiggingFeedbackBody,
   DIGGING_PLAYLIST_NOTE_MAX_LENGTH,
   DIGGING_PLAYLIST_TITLE_MAX_LENGTH,
   DIGGING_TEXTAREA_MAX_LENGTH,
@@ -168,4 +170,21 @@ test("oEmbed 제목은 공백을 정리해 상한까지만 저장하고 기본 �
   assert.equal(diggingPlaylistDisplayTitle({ provider: "beatport", title: null }), "Beatport 플레이리스트");
   assert.equal(diggingPlaylistDisplayTitle({ provider: "soundcloud", title: " " }), "SoundCloud 플레이리스트");
   assert.equal(diggingPlaylistDisplayTitle({ provider: "soundcloud", title: "Warmup" }), "Warmup");
+});
+
+test("디깅한 날은 실제 있는 2000-01-01~오늘의 YYYY-MM-DD만 받는다", () => {
+  const today = "2026-11-23";
+  assert.deepEqual(parseDiggingDate(" 2026-11-23 ", today), { ok: true, value: "2026-11-23" });
+  assert.deepEqual(parseDiggingDate("2000-01-01", today), { ok: true, value: "2000-01-01" });
+  for (const input of ["", null, "2026-11-24", "1999-12-31", "2026-02-30", "2026-13-01", "26-11-23", "2026/11/23", "2026-11-23T00:00"]) {
+    assert.equal(parseDiggingDate(input, today).ok, false, String(input));
+  }
+});
+
+test("디깅 피드백은 앞뒤 공백을 지운 1~2,000자이고 줄바꿈은 남긴다", () => {
+  assert.deepEqual(parseDiggingFeedbackBody("  좋아요\n다음 주에도  "), { ok: true, value: "좋아요\n다음 주에도" });
+  assert.equal(parseDiggingFeedbackBody("   ").ok, false);
+  assert.equal(parseDiggingFeedbackBody(undefined).ok, false);
+  assert.equal(parseDiggingFeedbackBody("가".repeat(2_000)).ok, true);
+  assert.equal(parseDiggingFeedbackBody("가".repeat(2_001)).ok, false);
 });

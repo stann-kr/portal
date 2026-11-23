@@ -267,6 +267,7 @@ test("관리자 등록도 학생별 100개 상한을 지킨다", { concurrency: 
     userId: "student-1",
     provider: "beatport" as const,
     url: `https://www.beatport.com/playlists/share/${1000 + index}`,
+    dugOn: "2026-11-20",
   }));
   for (let index = 0; index < seeds.length; index += 10) {
     await db.insert(diggingPlaylists).values(seeds.slice(index, index + 10));
@@ -351,6 +352,7 @@ test("링크 수정은 중복·잘못된 링크를 거부하고 행을 바꾸지
       userId: "student-1",
       provider: "soundcloud",
       url: "https://soundcloud.com/stann/sets/race",
+      dugOn: "2026-11-20",
     });
   };
   assert.deepEqual(
@@ -445,6 +447,7 @@ test("100개 상한은 INSERT가 다시 확인해 동시 등록에도 넘지 않
     userId: "student-1",
     provider: "beatport" as const,
     url: `https://www.beatport.com/playlists/share/${1000 + index}`,
+    dugOn: "2026-11-20",
   }));
   // D1은 한 문장의 bind 변수 수를 제한하므로 나눠 넣는다.
   for (let index = 0; index < seeds.length; index += 10) {
@@ -456,6 +459,7 @@ test("100개 상한은 INSERT가 다시 확인해 동시 등록에도 넘지 않
     userId: "student-2",
     provider: "beatport",
     url: "https://www.beatport.com/playlists/share/1",
+    dugOn: "2026-11-20",
   });
 
   // 개수 선검사(99개)를 지난 뒤 oEmbed 요청 중 다른 탭이 100번째를 등록한 경합.
@@ -465,6 +469,7 @@ test("100개 상한은 INSERT가 다시 확인해 동시 등록에도 넘지 않
       userId: "student-1",
       provider: "beatport",
       url: "https://www.beatport.com/playlists/share/9999",
+      dugOn: "2026-11-20",
     });
   };
   assert.deepEqual(await playlistActions.createDiggingPlaylist(activeSession.user.id, { url: "https://soundcloud.com/stann/sets/late" }), limitError);
