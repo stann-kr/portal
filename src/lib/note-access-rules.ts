@@ -7,6 +7,9 @@
  * - 그룹 노트(groupId 있음): 읽기·쓰기 모두 관리자 또는 지금 그 그룹 멤버(2026-11-15/16 사용자 결정).
  *   student_id·author_id(만든 사람)로 정하지 않는다. 그룹을 떠난 학생은 접근을 잃는다.
  *
+ * - 학생 편집 막기(studentReadOnly, 0036, 2026-11-23 사용자 결정): 관리자가 켜면 작성자가 아닌 학생(개인 노트의 그 학생,
+ *   그룹 노트의 멤버)은 읽기만 하고 휴지통 이동·복원도 못 한다. 작성자 본인은 그대로 쓴다(학생이 만든 노트에는 켜지 않는다).
+ *
  * server action·원자 쓰기·공동 편집 토큰·매체 읽기가 모두 이 함수로 판단한다. 원자 쓰기는 같은 규칙을
  * `noteWriteAccessSql`(private-note-atomic)로 같은 batch 안에서 다시 확인한다.
  */
@@ -16,7 +19,14 @@ export type NoteAccessSubject = {
   studentId: string;
   authorId: string;
   groupId: string | null;
+  /** 관리자가 학생 편집을 막았는지. 작성자 본인과 관리자에게는 영향이 없다. */
+  studentReadOnly: boolean;
 };
+
+/** 학생 편집 막기가 이 사람에게 적용되는지(관리자·작성자 본인은 아니다). */
+function blockedByReadOnly(actor: NoteAccessActor, note: NoteAccessSubject): boolean {
+  return note.studentReadOnly && !actor.isAdmin && actor.id !== note.authorId;
+}
 
 export type NoteAccessMode = "write" | "read";
 
@@ -30,10 +40,10 @@ export function resolveNoteAccess(
   isCurrentGroupMember: boolean,
 ): NoteAccessMode | null {
   if (actor.isAdmin) return "write";
-  if (note.groupId) return isCurrentGroupMember ? "write" : null;
+  if (note.groupId) return isCurrentGroupMember ? (blockedByReadOnly(actor, note) ? "read" : "write") : null;
   if (actor.id !== note.studentId) return null;
-  // 2026-11-23 사용자 결정: 작성자가 Stann이어도 노트 주인 학생은 쓴다(이전에는 "read").
-  return "write";
+  // 2026-11-23 사용자 결정: 작성자가 Stann이어도 노트 주인 학생은 쓴다(이전에는 "read"). 관리자가 막으면 읽기만.
+  return blockedByReadOnly(actor, note) ? "read" : "write";
 }
 
 /**
@@ -47,8 +57,17 @@ export function canManageNoteLifecycle(
   isCurrentGroupMember: boolean,
 ): boolean {
   if (actor.isAdmin) return true;
+  if (blockedByReadOnly(actor, note)) return false;
   if (note.groupId) return isCurrentGroupMember;
   return actor.id === note.studentId && actor.id === note.authorId;
+}
+
+/**
+ * 관리자가 이 노트의 학생 편집을 막을 수 있는지: 관리자가 만든 노트(개인·그룹)만. 학생이 만든 노트는 그 학생 것이라
+ * 막으면 주인이 자기 노트를 못 고치게 되므로 두지 않는다(서버 action도 같은 규칙으로 거절한다).
+ */
+export function canToggleStudentReadOnly(actor: NoteAccessActor, note: NoteAccessSubject & { authorIsAdmin: boolean }): boolean {
+  return actor.isAdmin && note.authorIsAdmin;
 }
 
 /** 멤버십 조회가 필요한 경우인지(관리자·개인 노트는 조회하지 않는다). */

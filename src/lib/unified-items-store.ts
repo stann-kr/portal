@@ -28,6 +28,7 @@ type NoteRow = {
   title: string;
   contentHtml: string;
   authorId: string;
+  studentReadOnly: boolean;
   noteDate: Date | null;
   createdAt: Date;
 };
@@ -129,6 +130,7 @@ async function querySourceRows(
           title: privateNotes.title,
           contentHtml: sql<string>`substr(${privateNotes.contentHtml}, 1, ${UNIFIED_NOTE_PREVIEW_SOURCE_CHARS})`,
           authorId: privateNotes.authorId,
+          studentReadOnly: privateNotes.studentReadOnly,
           noteDate: privateNotes.noteDate,
           createdAt: privateNotes.createdAt,
         })

@@ -61,6 +61,7 @@ import { validateStudentArchiveUpgrade } from "./migration-check/student-archive
 import { validateCommentRepliesUpgrade } from "./migration-check/comment-replies.mjs";
 import { validatePostReadsUpgrade } from "./migration-check/post-reads.mjs";
 import { validateAssignmentDraftsUpgrade } from "./migration-check/assignment-drafts.mjs";
+import { validateNoteReadOnlyUpgrade } from "./migration-check/note-read-only.mjs";
 import { validateListQueryIndexesUpgrade } from "./migration-check/list-query-indexes.mjs";
 import {
   validateAccountPrivacyAtomicSource,
@@ -221,6 +222,8 @@ async function main() {
   console.log("PASS populated 0033 → 0034 post_reads table, composite key keeps first read, student index used, cascades on post delete and account FK, rows preserved");
   await validateAssignmentDraftsUpgrade(migrationFiles);
   console.log("PASS populated 0034 → 0035 assignment_drafts table, owner/key composite key, version compare-and-set, owner-task index used, cascades on task delete and account FK, rows preserved");
+  await validateNoteReadOnlyUpgrade(migrationFiles);
+  console.log("PASS populated 0035 → 0036 private_notes student_read_only default 0 (co-write), revisions contributor_ids nullable, other tables/triggers and rows preserved");
 }
 
 try {

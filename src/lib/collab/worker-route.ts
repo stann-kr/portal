@@ -10,6 +10,8 @@ import {
   COLLAB_ROOM_CONNECT_URL,
   COLLAB_ROOM_EPOCH_URL,
   COLLAB_ROOM_NOTIFY_URL,
+  COLLAB_ROOM_CONTRIBUTORS_URL,
+  COLLAB_ROOM_DOWNGRADE_URL,
   COLLAB_ROOM_RESET_URL,
   COLLAB_ROOM_RESTORE_ABORT_URL,
   COLLAB_ROOM_RESTORE_APPLY_URL,
@@ -176,6 +178,22 @@ export async function setCollabRoomMeta(
     ...(typeof epoch === "number" ? { epoch } : {}),
     ...(typeof version === "number" ? { version } : {}),
   });
+  return Boolean(response?.ok);
+}
+
+/** 마지막 저장 뒤 room에서 내용을 바꾼 사용자. binding이 없으면 null(혼자 모드). */
+export async function readCollabRoomContributors(env: CollabWorkerEnv | undefined, key: string): Promise<string[] | null> {
+  const stub = roomStub(env, key);
+  if (!stub) return null;
+  const response = await stub.fetch(COLLAB_ROOM_CONTRIBUTORS_URL, { method: "GET" });
+  if (!response.ok) throw new Error("COLLAB_ROOM_CONTRIBUTORS_UNAVAILABLE");
+  const body = (await response.json()) as { contributors?: unknown };
+  return Array.isArray(body.contributors) ? body.contributors.filter((id): id is string => typeof id === "string") : [];
+}
+
+/** 열린 쓰기 연결 중 주어진 사용자를 읽기로 내린다. binding이 없으면 false. */
+export async function downgradeCollabRoomUsers(env: CollabWorkerEnv | undefined, key: string, userIds: readonly string[]): Promise<boolean> {
+  const response = await postRoom(env, key, COLLAB_ROOM_DOWNGRADE_URL, { userIds });
   return Boolean(response?.ok);
 }
 

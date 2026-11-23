@@ -83,8 +83,15 @@ export function formatGroupLabel(name: string): string {
 export function groupNoteShareLine(
   group: { name: string; members: { id: string; name: string }[] },
   viewer: { id: string; isAdmin: boolean },
+  options: { studentReadOnly?: boolean } = {},
 ): string {
   const head = `${formatGroupLabel(group.name)} 노트`;
+  // 관리자가 학생 편집을 막은 노트(0036): 멤버는 읽기만 한다.
+  if (options.studentReadOnly) {
+    if (!viewer.isAdmin) return `${head} · Stann이 읽기 전용으로 두었어요.`;
+    const names = group.members.map((member) => member.name).join("·");
+    return names ? `${head} · 읽기 전용 · ${names}에게는 보기만 열려 있어요.` : `${head} · 읽기 전용 · 그룹 멤버는 보기만 해요.`;
+  }
   if (viewer.isAdmin) {
     const names = group.members.map((member) => member.name).join("·");
     return names ? `${head} · ${names}도 보고 함께 고칠 수 있어요.` : `${head} · 그룹 멤버도 보고 함께 고칠 수 있어요.`;

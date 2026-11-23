@@ -95,5 +95,9 @@ export const COLLAB_ROOM_CLOSE_URL = "https://collab-room/close";
 export const COLLAB_ROOM_SET_META_URL = "https://collab-room/set-meta";
 /** 알림 room에 변경을 알린다. */
 export const COLLAB_ROOM_NOTIFY_URL = "https://collab-room/notify";
+/** 마지막 저장 뒤 이 room에서 내용을 바꾼 사용자(노트 버전의 편집자, 0036). */
+export const COLLAB_ROOM_CONTRIBUTORS_URL = "https://collab-room/contributors";
+/** 지금 열린 쓰기 연결 중 주어진 사용자를 읽기로 내린다(관리자가 학생 편집을 막을 때). */
+export const COLLAB_ROOM_DOWNGRADE_URL = "https://collab-room/downgrade";
 /** 저장 요청에 싣는 room epoch. 서버가 지금 room epoch와 다르면(복원·휴지통 뒤) 저장을 거부한다. */
 export const COLLAB_EPOCH_FIELD = "collabEpoch";

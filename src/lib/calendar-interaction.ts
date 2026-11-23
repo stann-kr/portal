@@ -32,6 +32,14 @@ export function getCalendarItemEditing(
     case "LESSON":
       return ownsSpace ? { kind: "lesson", movable: true, resizable: false } : READ_ONLY;
     case "PRIVATE_NOTE":
+      // 관리자가 학생 편집을 막은 노트는 작성자가 아닌 학생이 날짜도 옮기지 못한다(원자 쓰기가 같은 규칙으로 거절한다).
+      if (
+        context.role !== "admin" &&
+        item.metadata.studentReadOnly === true &&
+        item.metadata.authorId !== context.actorId
+      ) {
+        return READ_ONLY;
+      }
       return ownsSpace
         ? { kind: "note", movable: true, resizable: false }
         : READ_ONLY;
@@ -57,6 +65,9 @@ export function getCalendarItemLockReason(item: UnifiedItem, context: CalendarEd
   if (item.source.kind !== "PORTAL") return "연결한 외부 캘린더의 일정은 그 캘린더에서 바꿔 주세요.";
   switch (item.source.entity) {
     case "PRIVATE_NOTE":
+      if (item.metadata.studentReadOnly === true && item.space.studentId === context.actorId) {
+        return "Stann이 읽기 전용으로 둔 노트라 날짜를 옮길 수 없습니다.";
+      }
       return "다른 학생의 노트는 그 학생이나 Stann만 날짜를 옮길 수 있습니다.";
     case "DIGGING_TRACK":
       return "디깅 트랙은 추가한 날짜에 기록되어 옮길 수 없습니다.";

@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import type { InstructorMemoSnapshot } from "@/lib/actions/instructorMemos";
 import { cn } from "@/lib/utils";
 import { InstructorMemoEditor } from "./InstructorMemoEditor";
+import { NoteStudentAccessControl } from "./NoteStudentAccessControl";
 import {
   insertLessonLine,
   lessonTargetEditor,
@@ -44,6 +45,8 @@ export type InstructorLessonPanelProps = {
   members: InstructorMemberMemo[];
   /** 그룹 노트면 그룹 이름(캔버스 UxReview1120Policies ⑪). 메모 탭을 멤버 이름으로 둔다. */
   groupName?: string | null;
+  /** 관리자가 만든 저장된 노트면 학생 편집 설정(함께 쓰기·읽기 전용). 없으면 고르기를 두지 않는다. */
+  studentAccess?: { readOnly: boolean } | null;
   /** 좁은 화면에서 서랍으로 열려 있는지(넓은 화면은 늘 옆에 둔다). */
   open: boolean;
   onClose: () => void;
@@ -81,6 +84,7 @@ export function InstructorLessonPanel({
   noteMemo,
   members,
   groupName = null,
+  studentAccess = null,
   open,
   onClose,
   onOpen,
@@ -226,6 +230,10 @@ export function InstructorLessonPanel({
             <X className="size-4" strokeWidth={1.8} aria-hidden="true" />
           </Button>
         </div>
+
+        {noteId && studentAccess ? (
+          <NoteStudentAccessControl noteId={noteId} initialReadOnly={studentAccess.readOnly} isGroup={isGroup} />
+        ) : null}
 
         <section aria-label="지금 트랙" className="flex flex-col gap-3 rounded-[10px] border border-border p-3.5">
           <div className="flex items-end justify-between gap-3">

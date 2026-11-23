@@ -12,7 +12,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, isNull, or } from "drizzle-orm";
 import { createDb, createDbContext, type DbContext } from "@/db/client";
 import { privateNotes } from "@/db/schema";
 import { listActiveStudentProfiles } from "@/lib/active-profile";
@@ -115,8 +115,15 @@ const noteOptionColumns = {
   groupId: privateNotes.groupId,
 };
 
-/** 그 학생의 개인 노트. 학생도 Stann이 만든 자기 노트에 쓸 수 있으므로(2026-11-23) 작성자로 거르지 않는다. */
-async function personalNotes(studentId: string): Promise<GuideQuoteNoteOption[]> {
+/**
+ * 학생이 담을 수 있는 노트만: Stann이 읽기 전용으로 둔 노트(0036)는 작성자 본인이 아니면 뺀다. 관리자(`writerId` null)는 거르지 않는다.
+ */
+function writableByStudent(writerId: string | null) {
+  return writerId ? or(eq(privateNotes.studentReadOnly, false), eq(privateNotes.authorId, writerId)) : undefined;
+}
+
+/** 그 학생의 개인 노트. 학생도 Stann이 만든 자기 노트에 쓸 수 있으므로(2026-11-23) 작성자로 거르지 않는다(읽기 전용은 뺀다). */
+async function personalNotes(studentId: string, writerId: string | null): Promise<GuideQuoteNoteOption[]> {
   const rows = await createDb()
     .select(noteOptionColumns)
     .from(privateNotes)
@@ -125,17 +132,18 @@ async function personalNotes(studentId: string): Promise<GuideQuoteNoteOption[]>
         eq(privateNotes.studentId, studentId),
         isNull(privateNotes.groupId),
         isNull(privateNotes.deletedAt),
+        writableByStudent(writerId),
       ),
     )
     .orderBy(desc(privateNotes.updatedAt));
   return rows.map((row) => ({ id: row.id, title: row.title, dateLabel: noteDateLabel(row), group: false }));
 }
 
-async function groupNotes(groupId: string): Promise<GuideQuoteNoteOption[]> {
+async function groupNotes(groupId: string, writerId: string | null): Promise<GuideQuoteNoteOption[]> {
   const rows = await createDb()
     .select(noteOptionColumns)
     .from(privateNotes)
-    .where(and(eq(privateNotes.groupId, groupId), isNull(privateNotes.deletedAt)))
+    .where(and(eq(privateNotes.groupId, groupId), isNull(privateNotes.deletedAt), writableByStudent(writerId)))
     .orderBy(desc(privateNotes.updatedAt));
   return rows.map((row) => ({ id: row.id, title: row.title, dateLabel: noteDateLabel(row), group: true }));
 }
@@ -173,8 +181,8 @@ export async function getGuideQuoteDestinations(
     const studentId = session.user.id;
     const group = await readStudentLessonGroup(context, studentId);
     const [own, shared, closedMembers] = await Promise.all([
-      personalNotes(studentId),
-      group ? groupNotes(group.id) : Promise.resolve([]),
+      personalNotes(studentId, studentId),
+      group ? groupNotes(group.id, studentId) : Promise.resolve([]),
       group ? closedStudentsFor(context, page.id, group.members.map((member) => member.id)) : Promise.resolve([]),
     ]);
     return {
@@ -212,7 +220,7 @@ export async function getGuideQuoteDestinations(
   const memberIds = await resolveSpaceStudents(context, session, space);
   if (!memberIds) return { ok: false, error: "학생 또는 그룹을 찾을 수 없습니다. 다시 골라 주세요." };
   const [notes, closedStudents] = await Promise.all([
-    space.kind === "student" ? personalNotes(space.id) : groupNotes(space.id),
+    space.kind === "student" ? personalNotes(space.id, null) : groupNotes(space.id, null),
     closedStudentsFor(context, page.id, memberIds),
   ]);
   const newNoteStudentId = space.kind === "student" ? space.id : memberIds.find((id) => activeIds.has(id)) ?? null;
@@ -264,7 +272,12 @@ async function pickerAudience(context: DbContext, session: AuthSession, target: 
   if (target.kind === "note") {
     if (typeof target.noteId !== "string" || !target.noteId) return null;
     const [note] = await createDb()
-      .select({ studentId: privateNotes.studentId, authorId: privateNotes.authorId, groupId: privateNotes.groupId })
+      .select({
+        studentId: privateNotes.studentId,
+        authorId: privateNotes.authorId,
+        groupId: privateNotes.groupId,
+        studentReadOnly: privateNotes.studentReadOnly,
+      })
       .from(privateNotes)
       .where(and(eq(privateNotes.id, target.noteId), isNull(privateNotes.deletedAt)))
       .limit(1);

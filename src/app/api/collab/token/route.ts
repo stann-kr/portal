@@ -27,6 +27,7 @@ export const POST = createCollabTokenHandler({
           studentId: privateNotes.studentId,
           authorId: privateNotes.authorId,
           groupId: privateNotes.groupId,
+          studentReadOnly: privateNotes.studentReadOnly,
           deletedAt: privateNotes.deletedAt,
           // 권한·삭제 상태와 같은 조회에서 lifecycle 표지(마지막 복원 revision)를 읽는다.
           lifecycle: privateNoteLifecycleSql,

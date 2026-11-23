@@ -1,7 +1,7 @@
 /**
  * @file src/components/notes/LiveNoteArticle.tsx
- * @description 노트 문서 페이지의 읽기 전용 화면(노트 규칙이 "read"를 줄 때). 2026-11-23부터 학생도 Stann이 만든
- * 자기 노트를 편집해(`resolveNoteAccess`) 지금은 페이지에서 닿지 않지만 규칙의 읽기 모드에 대비해 남겨 둔다.
+ * @description 노트 문서 페이지의 읽기 전용 화면(노트 규칙이 "read"를 줄 때). 학생은 Stann이 만든 자기 노트·그룹 노트를
+ * 기본으로 함께 쓰고, Stann이 수업 도구 패널에서 "읽기 전용"으로 바꾼 노트(0036, 2026-11-23)만 이 화면으로 본다.
  * 서버가 넘긴 노트로 먼저 그리고, 같은 공동 편집 room에 읽기 전용으로 붙어 작성자의 입력과 커서를 실시간으로 보여 준다.
  * 휴지통 분기는 페이지가 서버에서 그대로 그린다.
  */
@@ -76,7 +76,7 @@ export function LiveNoteArticle({
           ) : (
             <p className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
               <LockKeyhole className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
-              다른 작성자의 노트는 읽기 전용입니다. 작성자가 쓰는 내용이 실시간으로 보입니다.
+              Stann이 읽기 전용으로 둔 노트입니다. 고치는 내용이 실시간으로 보입니다.
             </p>
           )}
 

@@ -4,8 +4,10 @@ import {
   applyCollabRoomRestore,
   beginCollabRoomRestore,
   closeCollabRoom,
+  downgradeCollabRoomUsers,
   holdCollabRoomRestore,
   notifyCollabRoom,
+  readCollabRoomContributors,
   readCollabRoomEpoch,
   setCollabRoomMeta,
 } from "./worker-route";
@@ -206,6 +208,23 @@ export async function setCollabRoomMetaAfterMutation(
   const env = readCollabWorkerEnv();
   if (!env) return;
   await setCollabRoomMeta(env, key, field, value, epoch, version).catch(() => false);
+}
+
+/**
+ * 공동 편집 저장의 실제 편집자(room이 연결 토큰으로 기록). binding이 없거나(혼자 모드) room을 읽지 못하면 null이고,
+ * 저장은 막지 않는다(이력은 저장한 사람을 보인다).
+ */
+export async function readCollabRoomContributorsForSave(key: string): Promise<string[] | null> {
+  const env = readCollabWorkerEnv();
+  if (!env) return null;
+  return readCollabRoomContributors(env, key).catch(() => null);
+}
+
+/** 관리자가 학생 편집을 막은 뒤 열린 학생 연결을 읽기로 내린다. binding이 없으면 아무것도 하지 않는다. */
+export async function downgradeCollabRoomUsersAfterMutation(key: string, userIds: readonly string[]): Promise<void> {
+  const env = readCollabWorkerEnv();
+  if (!env || userIds.length === 0) return;
+  await withRetry("collab_room_downgrade", key, () => downgradeCollabRoomUsers(env, key, userIds));
 }
 
 /** 답글·학생 최근 노트 알림. 저장 응답을 늦추지 않도록 응답 뒤에 보낸다(실패해도 화면은 30초 재조회로 따라온다). */

@@ -15,10 +15,11 @@ import {
   parseCollabSaveEpoch,
   setCollabRoomMetaAfterMutation,
   STALE_COLLAB_SAVE_MESSAGE,
+  readCollabRoomContributorsForSave,
 } from "@/lib/collab/server-env";
 import { noteRoomFields, readNoteRestoreTarget } from "@/lib/collab/restore-targets";
 import { revalidatePath } from "next/cache";
-import { and, desc, eq, isNotNull, isNull, or } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, or } from "drizzle-orm";
 import { createDb, createDbContext } from "@/db/client";
 import { privateNoteRevisions, privateNotes, profiles } from "@/db/schema";
 import { requireAuth, requireStudentOwnerOrAdmin, type AuthSession } from "@/lib/auth-guard";
@@ -198,6 +199,7 @@ const noteListColumns = {
   authorId: privateNotes.authorId,
   authorName: profiles.displayName,
   groupId: privateNotes.groupId,
+  studentReadOnly: privateNotes.studentReadOnly,
 };
 
 /** 그 학생의 개인 노트(active)만 반환한다. 그룹 노트는 `getStudentGroupNotes`가 따로 준다. */
@@ -266,6 +268,7 @@ export async function getPrivateNoteCollabSeed(noteId: string): Promise<PrivateN
       studentId: privateNotes.studentId,
       authorId: privateNotes.authorId,
       groupId: privateNotes.groupId,
+      studentReadOnly: privateNotes.studentReadOnly,
       title: privateNotes.title,
       contentHtml: privateNotes.contentHtml,
       noteDate: privateNotes.noteDate,
@@ -308,6 +311,7 @@ export async function getPrivateNoteHead(noteId: string): Promise<PrivateNoteHea
       studentId: privateNotes.studentId,
       authorId: privateNotes.authorId,
       groupId: privateNotes.groupId,
+      studentReadOnly: privateNotes.studentReadOnly,
       version: privateNotes.version,
       updatedAt: privateNotes.updatedAt,
     })
@@ -346,7 +350,9 @@ async function getPrivateNoteRecord(noteId: string, includeTrash: boolean) {
       version: privateNotes.version,
       deletedAt: privateNotes.deletedAt,
       authorName: profiles.displayName,
+      authorRole: profiles.role,
       groupId: privateNotes.groupId,
+      studentReadOnly: privateNotes.studentReadOnly,
     })
     .from(privateNotes)
     .leftJoin(profiles, eq(privateNotes.authorId, profiles.id))
@@ -393,6 +399,7 @@ export async function getTrashedPrivateNotes(targetStudentId: string) {
       authorId: privateNotes.authorId,
       authorName: profiles.displayName,
       groupId: privateNotes.groupId,
+      studentReadOnly: privateNotes.studentReadOnly,
     })
     .from(privateNotes)
     .leftJoin(profiles, eq(privateNotes.authorId, profiles.id))
@@ -424,7 +431,7 @@ export async function getPrivateNoteRevisions(noteId: string) {
   const note = await getPrivateNoteIncludingTrash(noteId);
   if (!note) return [];
   const db = createDb();
-  return db
+  const rows = await db
     .select({
       id: privateNoteRevisions.id,
       revisionNumber: privateNoteRevisions.revisionNumber,
@@ -436,12 +443,41 @@ export async function getPrivateNoteRevisions(noteId: string) {
       restoredFromRevision: privateNoteRevisions.restoredFromRevision,
       actorId: privateNoteRevisions.actorId,
       actorName: profiles.displayName,
+      contributorIds: privateNoteRevisions.contributorIds,
       createdAt: privateNoteRevisions.createdAt,
     })
     .from(privateNoteRevisions)
     .leftJoin(profiles, eq(privateNoteRevisions.actorId, profiles.id))
     .where(eq(privateNoteRevisions.noteId, noteId))
     .orderBy(desc(privateNoteRevisions.revisionNumber));
+  // 공동 편집 버전은 저장 담당 대신 room이 기록한 실제 편집자 이름을 보인다(0036 이후 버전만, 그 전 버전은 저장한 사람).
+  const contributorsOf = new Map(rows.map((row) => [row.id, parseRevisionContributorIds(row.contributorIds)]));
+  const ids = [...new Set([...contributorsOf.values()].flat())];
+  const names = new Map<string, string | null>();
+  if (ids.length > 0) {
+    const people = await db
+      .select({ id: profiles.id, displayName: profiles.displayName })
+      .from(profiles)
+      .where(inArray(profiles.id, ids));
+    for (const person of people) names.set(person.id, person.displayName);
+  }
+  return rows.map((row) => {
+    const contributorNames = (contributorsOf.get(row.id) ?? [])
+      .map((id) => names.get(id)?.trim())
+      .filter((name): name is string => Boolean(name));
+    return { ...row, actorName: contributorNames.length > 0 ? contributorNames.join(", ") : row.actorName };
+  });
+}
+
+/** 버전의 편집자 JSON(0036). 형식이 맞지 않으면 없는 것으로 본다. */
+function parseRevisionContributorIds(raw: string | null): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string").slice(0, 20) : [];
+  } catch {
+    return [];
+  }
 }
 
 export type CreateNoteState = {
@@ -572,6 +608,28 @@ export type UpdateNoteState = {
   };
 };
 
+/**
+ * room이 기록한 편집자 중 지금 이 노트를 볼 수 있는 사람만 남긴다(그 사이 그룹을 떠난 사람 등은 이름을 남기지 않는다).
+ * id는 room이 서명된 연결 토큰에서 얻은 값이라 클라이언트가 고를 수 없다. 읽기 전용으로 바뀐 학생도 그 전에 고친 것은 남긴다.
+ */
+async function verifiedRevisionContributors(note: NoteAccessSubject, ids: readonly string[] | null): Promise<string[] | null> {
+  if (!ids || ids.length === 0) return null;
+  const candidates = [...new Set(ids)].slice(0, 20);
+  const rows = await createDb()
+    .select({ id: profiles.id, role: profiles.role })
+    .from(profiles)
+    .where(inArray(profiles.id, candidates));
+  const roles = new Map(rows.map((row) => [row.id, row.role]));
+  const context = createDbContext();
+  const kept: string[] = [];
+  for (const id of candidates) {
+    const role = roles.get(id);
+    if (!role) continue;
+    if ((await readNoteAccess(context, { id, isAdmin: role === "admin" }, note)) !== null) kept.push(id);
+  }
+  return kept.length > 0 ? kept : null;
+}
+
 export async function updatePrivateNote(
   noteId: string,
   _prev: UpdateNoteState,
@@ -598,6 +656,14 @@ export async function updatePrivateNote(
   if (!payload.ok) return { error: payload.error, conflictKind: payload.reason };
   const collab = parseCollabSaveEpoch(formData);
   if (!collab.ok) return { error: STALE_COLLAB_SAVE_MESSAGE, collabStale: true };
+  // 공동 편집 저장이면 저장 담당이 아니라 room이 기록한 실제 편집자를 버전에 남긴다(이력 표시).
+  const contributorIds =
+    collab.collabEpoch === undefined
+      ? null
+      : await verifiedRevisionContributors(
+          noteBefore,
+          await readCollabRoomContributorsForSave(formatCollabDocKey({ kind: "note", id: noteId })),
+        );
 
   const result = await updatePrivateNoteAtomically(createDbContext(), {
     actor: {
@@ -611,6 +677,7 @@ export async function updatePrivateNote(
     contentHtml: payload.contentHtml,
     noteDate: payload.noteDate,
     ...(collab.collabEpoch === undefined ? {} : { collabEpoch: collab.collabEpoch }),
+    contributorIds,
     now: new Date(),
   });
   if (!result.ok && result.reason === "COLLAB_STALE") {
@@ -631,6 +698,7 @@ export async function updatePrivateNote(
           studentId: privateNotes.studentId,
           authorId: privateNotes.authorId,
           groupId: privateNotes.groupId,
+          studentReadOnly: privateNotes.studentReadOnly,
           title: privateNotes.title,
           contentHtml: privateNotes.contentHtml,
           noteDate: privateNotes.noteDate,

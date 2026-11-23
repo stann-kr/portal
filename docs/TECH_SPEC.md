@@ -345,7 +345,7 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 
 - runtime dependency audit은 현재 0건이다. 상위 의존성이 보안 패치 전 하위 의존성을 고정하는 구간은 `package.json` override로 제한하며, upstream stable이 해당 버전을 채택하면 override를 제거해야 한다.
 - 개발 도구 전체 audit에는 Drizzle Kit의 구형 esbuild loader 체인에서 발생하는 moderate 권고가 남아 있다. 현재 npm 제안은 호환되지 않는 구버전 downgrade이므로 upstream 패치를 추적한다.
-- migration SQL과 `drizzle/meta` 생성 이력은 `0035`까지 대응하고 `db:check`가 전체 replay와 단계별 upgrade를 검사한다. persistent local D1과 remote의 실제 적용 이력은 승인된 운영 점검 전 추정하지 않는다(마지막 기록: persistent local D1 `0009`까지).
+- migration SQL과 `drizzle/meta` 생성 이력은 `0036`까지 대응하고 `db:check`가 전체 replay와 단계별 upgrade를 검사한다. persistent local D1과 remote의 실제 적용 이력은 승인된 운영 점검 전 추정하지 않는다(마지막 기록: persistent local D1 `0009`까지).
 - 대표 문서 server action과 draft 생명주기의 격리 integration test는 있으나 실제 브라우저 reload·offline·navigation·delete/restore E2E는 없다. 노트 편집기 안정화(자동 저장 revalidate 미호출·제자리 생성·서버본 조용한 폐기)와 학생 실시간 보기도 DOM 통합 테스트까지만 있고 실제 브라우저 두 창 동작은 확인되지 않았다.
 - 운영 배포 직후 이미 열려 있던 탭은 build ID 불일치로 다음 Server Action에서 한 번 hard reload된다(일회성, 코드로 막지 않는다). 서버 초안 fence(b)는 같은 초·같은 version·같은 본문으로 다시 쓴 다른 기기의 행을 폐기 의도에 포함해 지운다(본문이 같아 내용 손실 없음). live view 폴링은 head 조회 1회가 D1 읽기 약 3회라 열린 읽기 탭 수에 비례해 읽기 요청이 늘며, backoff 상한 20초가 그 비용 경계다.
 - 신규 managed media의 registry·문서 claim·purge 삭제 outbox와 인증 delivery, bounded 예약 정리·final prefix cursor reconciliation source를 구현했다. Copy timeout·lease·recovery grace 뒤 발견된 registry 없는 final object와 삭제 상태 object는 다음 inventory page에서 재삭제한다. production에서는 private R2 CORS·staging lifecycle·Cron과 알림을 검증해야 하며, 기존 외부 URL과 managed 형식이 아닌 legacy R2 object는 자동 삭제 대상으로 추정하지 않는다.
@@ -577,6 +577,20 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 - 조회: `getPostReadSummary`(관리자 전용)는 수강 중인 학생(`role = student`, `account_status = ACTIVE`, 글쓴이 제외)을 읽은 학생(처음 읽은 순)과 안 읽은 학생(이름순)으로 나눈다. 안 읽은 학생에서는 가입 전(`password_hash`가 가입 링크 hash) 학생을 뺀다(`storedCredentialState`·학생 삭제 조건과 같은 기준). 학생 삭제 조건(`STUDENT_DELETION_RECORD_COLUMNS`)에는 `post_reads.student_id`를 기록 칸으로 넣었다(로그인한 학생만 남기므로 가입 전 학생에게는 생기지 않는다). 목록·검색의 `readCount`는 관리자 세션에서만 `postReadCountSql()`(바깥 `"posts"."id"`를 문자 그대로 쓴 상관 subquery)이고 학생 세션은 `NULL`이다. `communityRowMeta`가 숫자일 때만 "읽음 N"을 붙인다.
 - 화면: `src/components/community/PostReaders.tsx`의 `PostReadersToggle`(머리 줄 "읽음 N/M", `aria-expanded`·`aria-controls`)과 `PostReadersPanel`(기본 접힘). 캔버스 `PostReaders`.
 - 검증: `src/test/student-action-boundary.integration.ts`(기록 조건·관리자 전용·목록/검색 수·수강 종료 제외, 실제 D1), `src/test/portal-interactions.integration.tsx`(학생 기록 호출·글쓴이/관리자 미기록·토글), `src/lib/account-privacy-atomic.test.ts`(계정 삭제).
+
+## 관리자 과제·만들기 진입(2026-11-23)
+
+- 화면: `/dashboard/admin/assignments`(`getAdminAssignmentsOverview`, `src/lib/actions/admin-assignments.ts`)는 `requireAdmin` 뒤 수강 중인 학생(앞 90명, D1 bind 한도)마다 정기 과제 회차를 만들고 피드백 대기·안 낸 과제(최대 200)·최근 30일 피드백(최대 30)을 읽는다. 학생 필터는 수강 중인 학생 id만 받는다. 마감 표시는 KST 날짜(`toKstDateInputValue`)로 비교한다.
+- 대상 고르기: `/dashboard/admin/notes/new`·`/dashboard/admin/assignments/new`(`CreateTargetPicker`, `buildCreateStudentTargets`). 주소는 `src/lib/admin-create-links.ts`의 `buildAdminNoteComposeHref`·`buildAdminAssignmentComposeHref`(학생 상세 과제 탭 `?compose=task&returnTo=`)다. 과제 탭은 `compose`로 폼을 펼친 뒤 `replaceState`로 `compose`·`returnTo`를 지우고, 저장·닫기 때만 `returnTo`로 돌아간다(그 뒤 다시 연 폼은 과제 탭에 머문다).
+- 머리: `StudentDetailHead`를 학생 상세와 노트 탭이 함께 쓴다. 그룹 이름 표시는 `formatGroupLabel`(끝이 "그룹"이면 덧붙이지 않음). 검증: `src/test/admin-assignments.integration.ts`(실제 D1), `navigation.test.ts`, `StudentManagementSection.test.ts`.
+
+## 노트 읽기 전용·버전 편집자(2026-11-23)
+
+- 데이터(`0036_note_read_only`): `private_notes.student_read_only INTEGER NOT NULL DEFAULT 0`, `private_note_revisions.contributor_ids TEXT`(JSON 배열, nullable). 기존 행은 함께 쓰기(0)·null. `db:check`(`scripts/migration-check/note-read-only.mjs`)가 채워진 0035 DB upgrade와 다른 표·trigger·행 보존을 본다.
+- 규칙(`note-access-rules.ts`): 플래그가 켜지면 관리자·작성자 본인이 아닌 학생은 `resolveNoteAccess`가 "read", `canManageNoteLifecycle`이 false다. 원자 쓰기의 `noteWriteAccessSql`은 비관리자 조건에 `(student_read_only = 0 OR author_id = ?)`를 붙여 편집·휴지통 이동·복원을 같은 batch 안에서 다시 거절한다. 캘린더(`getCalendarItemEditing`, 항목 metadata `studentReadOnly`)는 끌지 못하게 하고, 가이드 인용 대상 목록은 학생에게 그 노트를 빼며, 공동 편집 토큰은 read를 준다.
+- 바꾸기(`setNoteStudentReadOnly`, `src/lib/actions/noteStudentAccess.ts`): 관리자 전용, 휴지통이 아닌 관리자 작성 노트만(`canToggleStudentReadOnly`). 켜면 room `POST /downgrade`로 그 학생(그룹은 멤버) 쓰기 연결을 읽기로 내리고(`RoomCore.downgradeUsers`, 토큰 renew 강등과 같은 처리) 저장 담당 자격을 거둔다. 끄면 열린 읽기 연결은 올리지 않는다(다시 열 때 쓰기 토큰). 화면은 `InstructorLessonPanel`의 `NoteStudentAccessControl`(radio 두 개, 즉시 저장), 학생 쪽은 `LiveNoteArticle`, 그룹 안내 줄은 `groupNoteShareLine(..., { studentReadOnly })`.
+- 버전 편집자: `RoomCore`가 쓰기 소켓의 update로 문서가 바뀔 때 연결 토큰의 `userId`를 처음 바꾼 순서로 기록하고(DO `room_blob` `contributors`), 받아들인 저장("saved" 표지가 room 상태와 같을 때)과 reset에서 비운다. 노트 저장 action은 공동 편집 저장이면 `GET /contributors`를 읽어 지금 그 노트를 볼 수 있는 사람만 남겨 `contributor_ids`에 넣는다(읽지 못하거나 binding이 없으면 null, 저장은 막지 않음). 버전 영수증 trigger가 `actor_id`를 작업 영수증 actor와 맞추므로 `actor_id`는 저장한 사람 그대로이고 `getPrivateNoteRevisions`가 표시 이름만 편집자로 바꾼다. 받아들이지 않은 저장 사이의 편집자는 다음 버전에도 이어 남아 과소 기록은 없고 과다 기록은 있을 수 있다.
+- 검증: `src/lib/collab/collab-boundary.test.ts`(read 토큰, contributors 기록·비우기·휴면 복귀, downgrade), `src/lib/calendar-interaction.test.ts`, `src/lib/lesson-group-rules.test.ts`, `src/test/note-read-only.integration.ts`(실제 D1: 기본 함께 쓰기, 관리자만 바꿈, 학생 저장·원자 쓰기 거절, 그룹 멤버 읽기, 학생 작성 노트 거절, 이력 이름).
 
 ## 과제 글 계정 임시 저장(2026-11-23)
 

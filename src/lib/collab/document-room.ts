@@ -93,6 +93,16 @@ export function createSqlRoomStorage(state: DurableObjectStateLike): RoomStorage
       const seqRow = sql.exec("SELECT value FROM room_meta WHERE key = 'seq'").toArray()[0];
       const changedRow = sql.exec("SELECT value FROM room_meta WHERE key = 'changedAt'").toArray()[0];
       const savedRow = sql.exec("SELECT value FROM room_blob WHERE key = 'savedSv'").toArray()[0];
+      const contributorsRow = sql.exec("SELECT value FROM room_blob WHERE key = 'contributors'").toArray()[0];
+      let contributors: string[] = [];
+      if (contributorsRow) {
+        try {
+          const parsed = JSON.parse(new TextDecoder().decode(toBytes(contributorsRow.value))) as unknown;
+          if (Array.isArray(parsed)) contributors = parsed.filter((id): id is string => typeof id === "string");
+        } catch {
+          contributors = [];
+        }
+      }
       const intentBaseRow = sql.exec("SELECT value FROM room_blob WHERE key = 'restoreBase'").toArray()[0];
       const intentMetaRow = sql.exec("SELECT value FROM room_blob WHERE key = 'restoreMeta'").toArray()[0];
       let restoreIntent: StoredRoomState["restoreIntent"] = null;
@@ -132,6 +142,7 @@ export function createSqlRoomStorage(state: DurableObjectStateLike): RoomStorage
         changedAt: Number(changedRow?.value ?? 0),
         savedSv: savedRow ? toBytes(savedRow.value) : null,
         restoreIntent,
+        contributors,
       };
     },
     appendUpdate(update) {
@@ -154,7 +165,7 @@ export function createSqlRoomStorage(state: DurableObjectStateLike): RoomStorage
       state.storage.transactionSync(() => {
         sql.exec("DELETE FROM room_snapshot");
         sql.exec("DELETE FROM room_updates");
-        sql.exec("DELETE FROM room_blob WHERE key IN ('savedSv', 'restoreBase', 'restoreMeta')");
+        sql.exec("DELETE FROM room_blob WHERE key IN ('savedSv', 'restoreBase', 'restoreMeta', 'contributors')");
         sql.exec(
           "INSERT INTO room_meta (key, value) VALUES ('generation', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
           nextEpoch,
@@ -188,6 +199,16 @@ export function createSqlRoomStorage(state: DurableObjectStateLike): RoomStorage
           sql.exec("INSERT INTO room_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", key, value);
         }
       });
+    },
+    setContributors(ids) {
+      if (ids.length === 0) {
+        sql.exec("DELETE FROM room_blob WHERE key = 'contributors'");
+        return;
+      }
+      sql.exec(
+        "INSERT INTO room_blob (key, value) VALUES ('contributors', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        new TextEncoder().encode(JSON.stringify(ids)),
+      );
     },
     setSavedSv(sv) {
       if (!sv) {
@@ -267,6 +288,9 @@ export class DocumentRoom {
     if (url.pathname === "/epoch" && request.method === "GET") {
       return Response.json({ epoch: this.core.currentEpoch });
     }
+    if (url.pathname === "/contributors" && request.method === "GET") {
+      return Response.json({ contributors: this.core.readContributors() });
+    }
     if (request.method === "POST" && url.pathname !== "/connect") {
       const body = await this.readJson(request);
       switch (url.pathname) {
@@ -307,6 +331,12 @@ export class DocumentRoom {
         }
         case "/notify":
           return Response.json({ seq: this.core.notify() });
+        case "/downgrade": {
+          const userIds = Array.isArray(body.userIds)
+            ? body.userIds.filter((id): id is string => typeof id === "string" && id.length > 0 && id.length <= 200).slice(0, 200)
+            : [];
+          return Response.json({ downgraded: this.core.downgradeUsers(userIds) });
+        }
       }
     }
     if (url.pathname !== "/connect" || request.headers.get("Upgrade") !== "websocket") {
