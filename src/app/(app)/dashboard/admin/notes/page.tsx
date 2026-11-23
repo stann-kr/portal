@@ -3,7 +3,7 @@
  * 모든 활성 학생의 노트를 최근 수정순으로 50개씩 보이고, 학생 필터(`?student=`)·제목·본문 검색(`?q=`)·다음 페이지(`?cursor=`)를 둔다.
  * 검색·필터·페이지는 서버 SQL이 처리하고, 화면에는 표에 필요한 필드와 짧은 미리보기만 온다.
  * 학생을 골라 둔 상태면 머리 오른쪽 "새 노트"(좁은 화면은 위쪽 막대 +)가 그 학생의 새 노트를 열고, 저장하거나 닫으면
- * 지금 보던 목록(같은 필터·검색·페이지)으로 돌아온다. "전체 학생"이면 누구의 노트인지 정할 수 없어 두지 않는다(캔버스 UxReview1120Admin ④).
+ * 지금 보던 목록(같은 필터·검색·페이지)으로 돌아온다. "전체 학생"이면 그룹·학생을 고르는 화면을 먼저 연다(캔버스 AdminUx1123 ①).
  */
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -11,6 +11,8 @@ import { Plus } from "lucide-react";
 import { buildAdminStudentNotesHref } from "@/components/admin/StudentDetailTabs";
 import { buttonClassName } from "@/components/ui/button";
 import { MobileTopBar } from "@/components/app-shell/AppSidebar";
+import { ADMIN_NOTE_PICKER_HREF } from "@/components/app-shell/navigation";
+import { formatGroupLabel } from "@/lib/lesson-group-rules";
 import { RouteAutoRefresh } from "@/components/app-shell/RouteAutoRefresh";
 import { AllNotesTable, type AllNotesTableRow } from "@/components/notes/AllNotesTable";
 import { getNoteSearchQuery, NoteSearch } from "@/components/notes/NoteSearch";
@@ -50,7 +52,7 @@ export default async function AdminAllNotesPage({
   const rows: AllNotesTableRow[] = notes.map((note) => ({
     // 서버가 이미 짧은 미리보기(검색이면 일치 주변)를 만들었으므로 본문 HTML 없이 행을 만든다.
     ...toNotesDatabaseRow({ ...note, contentHtml: "", searchPreview: note.preview }),
-    studentLabel: note.groupName ? `${note.groupName} 그룹` : labels.get(note.studentId) ?? "학생",
+    studentLabel: note.groupName ? formatGroupLabel(note.groupName) : labels.get(note.studentId) ?? "학생",
     kindLabel: ALL_NOTE_KIND_LABELS[note.kind],
   }));
 
@@ -71,7 +73,7 @@ export default async function AdminAllNotesPage({
   const selectedLabel = selectedStudentId ? labels.get(selectedStudentId) ?? null : null;
   const newNote = selectedStudentId && selectedLabel
     ? { href: `${buildAdminStudentNotesHref(selectedStudentId)}/new?returnTo=${encodeURIComponent(returnTo)}`, label: `${selectedLabel} 새 노트` }
-    : null;
+    : { href: `${ADMIN_NOTE_PICKER_HREF}?returnTo=${encodeURIComponent(returnTo)}`, label: "새 노트" };
   const emptyMessage = continued
     ? "이 뒤로는 노트가 없습니다."
     : query
@@ -91,11 +93,9 @@ export default async function AdminAllNotesPage({
             <p className="hidden text-xs text-muted-foreground md:block">전체 학생</p>
             <h1 className="sr-only text-display font-semibold tracking-display text-foreground md:not-sr-only">전체 노트</h1>
           </div>
-          {newNote ? (
-            <Link href={newNote.href} aria-label={newNote.label} className={buttonClassName({ className: "hidden md:inline-flex" })}>
-              <Plus className="size-3.5" strokeWidth={1.8} aria-hidden="true" />새 노트
-            </Link>
-          ) : null}
+          <Link href={newNote.href} aria-label={newNote.label} className={buttonClassName({ className: "hidden md:inline-flex" })}>
+            <Plus className="size-3.5" strokeWidth={1.8} aria-hidden="true" />새 노트
+          </Link>
         </header>
 
         <section aria-label="전체 노트" className="flex flex-col gap-1 md:gap-6">

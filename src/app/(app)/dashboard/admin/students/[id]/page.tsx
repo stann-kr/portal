@@ -62,6 +62,9 @@ import { InstructorMemoEditor } from "@/components/lesson/InstructorMemoEditor";
 import { getInstructorMemo } from "@/lib/actions/instructorMemos";
 import { getLessonNoteIdsForStudent } from "@/lib/actions/lesson-notes";
 import { buildArchivedStudentHref, isArchivedStudent } from "@/lib/archived-student-records";
+import { resolveAssignmentCompose, type AssignmentComposeKind } from "@/lib/admin-create-links";
+import { safeReturnPath } from "@/lib/safe-return-path";
+import { firstSearchValue } from "@/lib/portal-location";
 
 type RawColumn = Awaited<ReturnType<typeof getOrSeedColumns>>[number];
 type RawQnaThread = Awaited<ReturnType<typeof getQnaThreadsByStudent>>[number];
@@ -107,7 +110,17 @@ async function DiggingTabContent({ studentId }: { studentId: string }) {
   );
 }
 
-async function AssignmentsTabContent({ actorId, studentId, referenceTime }: { actorId: string; studentId: string; referenceTime: Date }) {
+async function AssignmentsTabContent({
+  actorId,
+  studentId,
+  referenceTime,
+  compose,
+}: {
+  actorId: string;
+  studentId: string;
+  referenceTime: Date;
+  compose: { kind: AssignmentComposeKind; returnTo: string | null } | null;
+}) {
   // 정기 과제 회차를 먼저 만든 뒤 제출 목록을 읽는다.
   const { tasks, recurrences } = await getAssignmentTasksForStudent(studentId);
   const [summaries, studentOptions, lessonGroup] = await Promise.all([
@@ -128,6 +141,8 @@ async function AssignmentsTabContent({ actorId, studentId, referenceTime }: { ac
         returnTo={returnTo}
         studentOptions={studentOptions}
         lessonGroup={lessonGroup ? { name: lessonGroup.name, memberIds: lessonGroup.members.map((member) => member.id) } : null}
+        initialCompose={compose?.kind ?? null}
+        composeReturnTo={compose?.returnTo ?? null}
       />
       <LedgerSection labelledBy="assignments-heading" className="max-w-[880px]">
         <LedgerSectionHeader
@@ -203,13 +218,19 @@ export default async function StudentDetailPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ tab?: string; qnaStatus?: string | string[]; qnaQuery?: string | string[] }>;
+  searchParams: Promise<{
+    tab?: string;
+    qnaStatus?: string | string[];
+    qnaQuery?: string | string[];
+    compose?: string | string[];
+    returnTo?: string | string[];
+  }>;
 }) {
   const session = await getActiveAuthSession();
   if (!session?.user || session.user.role !== "admin") redirect("/login");
 
   const { id: studentId } = await params;
-  const { tab = "overview", qnaStatus, qnaQuery } = await searchParams;
+  const { tab = "overview", qnaStatus, qnaQuery, compose: composeParam, returnTo: returnToParam } = await searchParams;
   const activeTab: StudentDetailTab = resolveStudentDetailTab(tab);
   if (tab !== activeTab) redirect(buildAdminStudentDetailHref(studentId, activeTab));
 
@@ -260,6 +281,12 @@ export default async function StudentDetailPage({
     ? { ...accountState, expired: accountState.expiresAt.getTime() <= referenceTime.getTime() }
     : accountState;
   const name = student.displayName?.trim() || student.email;
+  // 다른 화면의 "과제 내기"(캔버스 AdminUx1123 ①)로 왔으면 과제 탭 폼을 펼치고, 저장·닫기 뒤 그 화면으로 돌려보낸다.
+  const composeKind = activeTab === "assignments" ? resolveAssignmentCompose(firstSearchValue(composeParam)) : null;
+  const composeReturnPath = firstSearchValue(returnToParam);
+  const compose = composeKind
+    ? { kind: composeKind, returnTo: composeReturnPath ? safeReturnPath(composeReturnPath, buildAdminStudentDetailHref(studentId, "assignments")) : null }
+    : null;
   const initial = Array.from(name)[0]?.toUpperCase() ?? "학";
 
   return (
@@ -347,7 +374,7 @@ export default async function StudentDetailPage({
 
           {activeTab === "assignments" && (
             <Suspense fallback={<TabFallback className="h-40 max-w-[880px]" />}>
-              <AssignmentsTabContent actorId={session.user.id!} studentId={studentId} referenceTime={referenceTime} />
+              <AssignmentsTabContent actorId={session.user.id!} studentId={studentId} referenceTime={referenceTime} compose={compose} />
             </Suspense>
           )}
 

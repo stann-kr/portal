@@ -12,6 +12,7 @@ import {
 } from "@/components/notes/DocumentRecordFrame";
 import { formatTrashDeadline, formatTrashTime } from "@/components/notes/note-display";
 import { getRequestNow } from "@/lib/request-time";
+import { formatGroupLabel } from "@/lib/lesson-group-rules";
 
 export const metadata = { title: "노트 휴지통" };
 
@@ -62,7 +63,7 @@ export default async function NoteTrashPage({
                 key={note.id}
                 title={note.title}
                 href={`/dashboard/notes/${note.id}?returnTo=${encodeURIComponent(trashHref)}`}
-                meta={`${note.groupName ? `${note.groupName} 그룹 노트 · ` : ""}${note.authorName ?? "작성자 미상"} · 삭제 ${formatTrashTime(note.deletedAt, now)}`}
+                meta={`${note.groupName ? `${formatGroupLabel(note.groupName)} 노트 · ` : ""}${note.authorName ?? "작성자 미상"} · 삭제 ${formatTrashTime(note.deletedAt, now)}`}
                 expired={expired}
                 state={expired
                   ? "복원 기한이 만료되어 영구 삭제할 수 있습니다."
