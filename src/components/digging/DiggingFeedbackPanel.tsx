@@ -222,7 +222,15 @@ function DiggingFeedbackForm({
   const dirty = body !== initialBody;
   useBusyNavigationGuard(isPending);
   useUnsavedUnloadGuard(dirty && !isPending);
-  useEffect(() => { textareaRef.current?.focus(); }, []);
+  // 칸은 보관본을 불러오기 전까지 비활성이라, 불러온 뒤 한 번 초점을 준다(커서는 글 끝).
+  const focusedRef = useRef(false);
+  useEffect(() => {
+    const node = textareaRef.current;
+    if (!draft.loaded || focusedRef.current || !node) return;
+    focusedRef.current = true;
+    node.focus();
+    node.setSelectionRange(node.value.length, node.value.length);
+  }, [draft.loaded]);
 
   const change = (next: string) => {
     setBody(next);

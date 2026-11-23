@@ -66,6 +66,11 @@ interface ColumnManagerProps {
   onSuccess: () => void;
 }
 
+/** 목록은 높이가 정해진 스크롤 영역이라, 편집을 열면 저장·취소까지 보이게 그 칸을 한 번 스크롤해 둔다(고정 함수라 열 때만 불린다). */
+function revealEditForm(node: HTMLFormElement | null) {
+  node?.scrollIntoView({ block: "nearest" });
+}
+
 export function ColumnManager({
   open,
   onOpenChange,
@@ -190,6 +195,7 @@ export function ColumnManager({
             <li key={col.id} className="flex flex-col gap-2 border-b border-muted py-1.5 last:border-b-0">
               {editingId === col.id ? (
                 <form
+                  ref={revealEditForm}
                   aria-label={`${col.name} 컬럼 고치기`}
                   className="flex flex-col gap-2"
                   onSubmit={(event) => { event.preventDefault(); handleSaveEdit(col); }}
