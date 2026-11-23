@@ -62,6 +62,9 @@ export const STUDENT_DELETION_RECORD_COLUMNS: readonly ProfileReference[] = [
   ["post_reads", "student_id"],
   // 과제 글 계정 임시 저장(0035). 로그인한 학생만 쓰므로 가입 전 학생에게는 생기지 않는다.
   ["assignment_drafts", "owner_id"],
+  // 글 없이 보낸 알림의 받은 학생(0037). 보낼 때 가입한 학생만 넣으므로 가입 전 학생에게는 생기지 않는다.
+  ["push_notice_recipients", "student_id"],
+  ["push_notices", "author_id"],
   ["document_server_drafts", "owner_id"],
   ["document_server_draft_operations", "owner_id"],
   ["document_operation_ledger", "actor_id"],
@@ -80,8 +83,18 @@ function referenceExistsSql([table, column]: ProfileReference, idExpression: str
   return `EXISTS (SELECT 1 FROM ${table} AS blocker WHERE blocker.${column} = ${idExpression})`;
 }
 
+/**
+ * 조건을 반씩 묶은 괄호 OR로 만든다. 한 줄로 이은 `a OR b OR c …`는 칸 수만큼 식 깊이가 늘어
+ * D1의 식 깊이 한도(100)에 닿는다. 반씩 묶으면 깊이가 칸 수의 log₂로 준다.
+ */
+function balancedOrSql(conditions: readonly string[]): string {
+  if (conditions.length === 1) return conditions[0];
+  const middle = Math.ceil(conditions.length / 2);
+  return `(${balancedOrSql(conditions.slice(0, middle))} OR ${balancedOrSql(conditions.slice(middle))})`;
+}
+
 function anyRecordSql(idExpression: string): string {
-  return STUDENT_DELETION_RECORD_COLUMNS.map((reference) => referenceExistsSql(reference, idExpression)).join(" OR ");
+  return balancedOrSql(STUDENT_DELETION_RECORD_COLUMNS.map((reference) => referenceExistsSql(reference, idExpression)));
 }
 
 /** profiles 별칭이 가입 전인지(가입 링크 hash). 임시 비밀번호·일반 비밀번호는 가입한 것으로 본다. */

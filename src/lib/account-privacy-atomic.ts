@@ -729,6 +729,9 @@ function accountDeletionStatements(input: {
     { query: "DELETE FROM post_reads WHERE student_id = ?", params: [actorId] },
     // 제출 전 과제 글의 계정 임시 저장(0035). 본인만 쓰는 사본이라 남길 이유가 없다.
     { query: "DELETE FROM assignment_drafts WHERE owner_id = ?", params: [actorId] },
+    // 글 없이 받은 알림의 받은·읽은 기록(0037). 관리자가 보낸 알림이면 알림 자체도 지운다(받은 기록은 cascade).
+    { query: "DELETE FROM push_notice_recipients WHERE student_id = ?", params: [actorId] },
+    { query: "DELETE FROM push_notices WHERE author_id = ?", params: [actorId] },
     { query: "DELETE FROM posts WHERE author_id = ?", params: [actorId] },
     { query: "DELETE FROM qna_threads WHERE student_id = ?", params: [actorId] },
     {

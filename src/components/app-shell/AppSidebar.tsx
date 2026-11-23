@@ -193,7 +193,7 @@ function Brand({ size, role, onNavigate }: { size: "desktop" | "drawer"; role: A
   );
 }
 
-const TOPBAR_BUTTON =
+export const TOPBAR_BUTTON =
   "flex size-11 shrink-0 items-center justify-center rounded-touch text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 /**

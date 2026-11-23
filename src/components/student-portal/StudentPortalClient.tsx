@@ -23,6 +23,7 @@ import { PortalShell } from "@/components/ui/portal-shell";
 // ── 섹션 컴포넌트
 import { CalendarSection } from "./CalendarSection";
 import { TodaySection } from "./TodaySection";
+import type { StudentPushNotice } from "@/lib/actions/pushNotices";
 import type { ExternalCalendarConnectionSummary } from "@/lib/external-calendar";
 import type { PortalLocation, PortalSection, StudentDeepLink } from "@/lib/portal-location";
 
@@ -62,6 +63,10 @@ export interface StudentPortalClientProps {
   externalCalendarConnection: ExternalCalendarConnectionSummary;
   /** 그룹레슨 묶음(이름·함께하는 학생·같은 시각 레슨). 그룹이 없으면 null. */
   lessonGroup?: StudentHomeLessonGroup | null;
+  /** 아직 확인하지 않은 Stann의 알림(홈 맨 위 카드). */
+  pushNotices?: StudentPushNotice[];
+  /** 휴대폰 알림을 눌러 연 알림 id(?notice=). */
+  openedNoticeId?: string | null;
   referenceTime: Date;
 }
 
@@ -98,6 +103,8 @@ export function StudentPortalClient({
   spaceLabel,
   externalCalendarConnection,
   lessonGroup = null,
+  pushNotices = [],
+  openedNoticeId = null,
   referenceTime,
 }: StudentPortalClientProps) {
   const [createdItems, setCreatedItems] = useState<UnifiedItem[]>([]);
@@ -202,6 +209,8 @@ export function StudentPortalClient({
               referenceTime={referenceTime}
               pushOwnerId={studentId}
               lessonGroup={lessonGroup}
+              pushNotices={pushNotices}
+              openedNoticeId={openedNoticeId}
             />
           )}
 

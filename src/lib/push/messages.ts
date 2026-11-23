@@ -147,6 +147,26 @@ export const pushMessages = {
       tag: `announcement:${input.postId}`,
     };
   },
+  /** 안 읽은 학생에게 같은 공지를 다시 알린다. tag가 같아 앞 알림을 바꾸고 다시 울린다(sw.js renotify). */
+  announcementReminder(input: { postId: string; title: string }): PushMessage {
+    return {
+      category: "announcement",
+      title: "아직 확인하지 않은 공지",
+      body: quoted(input.title, "공지를 확인해 주세요."),
+      url: `/community/${encodeURIComponent(input.postId)}`,
+      tag: `announcement:${input.postId}`,
+    };
+  },
+  /** 글 없이 보내는 알림. 누르면 학생 홈이 열리고 그 알림이 읽음이 된다(`?notice=`). */
+  pushNotice(input: { noticeId: string; body: string }): PushMessage {
+    return {
+      category: "announcement",
+      title: "Stann의 알림",
+      body: input.body,
+      url: `/dashboard/student?section=today&notice=${encodeURIComponent(input.noticeId)}`,
+      tag: `notice:${input.noticeId}`,
+    };
+  },
   communityPostCreated(input: { postId: string; authorName: string | null; title: string }): PushMessage {
     return {
       category: "community_post",
