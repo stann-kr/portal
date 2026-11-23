@@ -11,13 +11,15 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useProgressRouter } from "@/components/app-shell/NavigationProgress";
-import { Hash, MessageSquare, Music2, Plus, RotateCcw, Search, Settings2, Trash2 } from "lucide-react";
+import { Bell, Hash, MessageSquare, Music2, Plus, RotateCcw, Search, Settings2, Trash2 } from "lucide-react";
 import { Button, buttonClassName } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
-import { MobileTopBar } from "@/components/app-shell/AppSidebar";
+import { MobileTopBar, TOPBAR_BUTTON } from "@/components/app-shell/AppSidebar";
 import { getCategories } from "@/lib/actions/categories";
 import { getCommunityPostPage } from "@/lib/actions/posts";
+import { listPushNotices, type PushNoticeRow } from "@/lib/actions/pushNotices";
+import { PushNoticeComposer } from "@/components/community/PushNoticeComposer";
 import { AnnouncementList } from "@/components/community/AnnouncementList";
 import { MixsetFeedbackCard } from "@/components/community/MixsetFeedbackCard";
 import { COMMUNITY_BOARD_LABELS, CommunityPostRow } from "@/components/community/CommunityPostRow";
@@ -43,6 +45,8 @@ interface CommunityClientProps {
   };
   /** 서버가 `?q=`로 찾은 결과. 있으면 목록 대신 검색 결과를 보인다. */
   search?: { query: string; scope: CommunitySearchScope; posts: Post[] } | null;
+  /** 관리자: 글 없이 보낸 알림(공지 탭에 섞는다). 학생에게는 빈 목록. */
+  initialNotices?: PushNoticeRow[];
 }
 
 /** 이어 읽은 페이지를 붙이되 이미 보이는 게시물은 다시 넣지 않는다. */
@@ -93,7 +97,7 @@ function communityHref(boardType: CommunityBoardType, category: string): string 
 
 // ─── 메인 컴포넌트 ────────────────────────────────
 
-export default function CommunityClient({ isAdmin, initial, search = null }: CommunityClientProps) {
+export default function CommunityClient({ isAdmin, initial, search = null, initialNotices = [] }: CommunityClientProps) {
   // 검색을 끝내고 게시판을 옮길 때도 위쪽 이동 막대를 켠다.
   const router = useProgressRouter();
   const [activeTab, setActiveTab] = useState<CommunityBoardType>(initial.boardType);
@@ -115,6 +119,9 @@ export default function CommunityClient({ isAdmin, initial, search = null }: Com
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
+  const [notices, setNotices] = useState<PushNoticeRow[]>(initialNotices);
+  const [composerOpen, setComposerOpen] = useState(false);
+  const [sentMessage, setSentMessage] = useState<string | null>(null);
   const loadedKeyRef = useRef(loadedKey);
   const handledReloadRef = useRef(reloadToken);
   const requestedKeyRef = useRef<string | null>(loadedKey);
@@ -260,10 +267,40 @@ export default function CommunityClient({ isAdmin, initial, search = null }: Com
   const newPostBoardType: CommunityBoardType = activeTab === "ANNOUNCEMENT" && !isAdmin ? "GENERAL" : activeTab;
   const newPostHref = `/community/new?boardType=${newPostBoardType}&category=${encodeURIComponent(activeCategory)}&returnTo=${encodeURIComponent(returnTo)}`;
 
+  // 보낸 알림·지운 알림 뒤 읽음 수를 새로 받는다. 실패하면 지금 목록을 그대로 둔다.
+  const refreshNotices = useCallback(() => {
+    if (!isAdmin) return;
+    listPushNotices().then(setNotices).catch(() => undefined);
+  }, [isAdmin]);
+
+  // 보냈습니다 안내는 잠시 뒤 걷는다.
+  useEffect(() => {
+    if (!sentMessage) return;
+    const timer = window.setTimeout(() => setSentMessage(null), 6000);
+    return () => window.clearTimeout(timer);
+  }, [sentMessage]);
+
+  const canSendNotice = isAdmin && activeTab === "ANNOUNCEMENT" && !search;
+  const noticeButton = canSendNotice ? (
+    <button type="button" className={TOPBAR_BUTTON} aria-label="알림 보내기" onClick={() => setComposerOpen(true)}>
+      <Bell className="size-5" strokeWidth={1.6} aria-hidden="true" />
+    </button>
+  ) : null;
+
   return (
     <div className="px-5 pb-8 md:px-[clamp(20px,4.5vw,64px)] md:pb-20 md:pt-14">
       {/* 쓸 수 없는 탭(학생의 공지)·채널이 없을 때는 위쪽 막대 + 도 숨긴다. */}
-      <MobileTopBar title="커뮤니티" action={canWrite ? { href: newPostHref, label: "새 글" } : null} />
+      <MobileTopBar title="커뮤니티" action={canWrite ? { href: newPostHref, label: "새 글" } : null} actions={noticeButton} />
+      {isAdmin ? (
+        <PushNoticeComposer
+          open={composerOpen}
+          onOpenChange={setComposerOpen}
+          onSent={(message) => {
+            setSentMessage(message);
+            refreshNotices();
+          }}
+        />
+      ) : null}
       <div className="flex max-w-[880px] flex-col md:gap-6 md:mx-auto">
         <header className="flex flex-wrap items-end justify-between gap-4">
           <h1 className="sr-only md:not-sr-only md:text-display md:font-semibold md:tracking-display">커뮤니티</h1>
@@ -274,6 +311,11 @@ export default function CommunityClient({ isAdmin, initial, search = null }: Com
               </Link>
             ) : null}
             <Link href={trashHref} className={buttonClassName({ variant: "ghost" })}>휴지통</Link>
+            {canSendNotice ? (
+              <Button type="button" variant="outline" className="gap-1.5" onClick={() => setComposerOpen(true)}>
+                <Bell className="size-3.5" strokeWidth={1.6} aria-hidden="true" />알림 보내기
+              </Button>
+            ) : null}
             {canWrite ? (
               <Link href={newPostHref} className={buttonClassName({ className: "gap-1.5" })}>
                 <Plus className="size-3.5" strokeWidth={1.8} aria-hidden="true" />새 글
@@ -391,6 +433,12 @@ export default function CommunityClient({ isAdmin, initial, search = null }: Com
             </div>
           ) : (
             <>
+              {activeTab === "ANNOUNCEMENT" && sentMessage ? (
+                <p role="status" className="mt-3 flex items-center gap-2 rounded-md bg-muted px-3 py-2 text-ui text-foreground md:mt-0">
+                  <Bell className="size-3.5 shrink-0 text-muted-foreground" strokeWidth={1.6} aria-hidden="true" />
+                  {sentMessage}
+                </p>
+              ) : null}
               {activeTab === "ANNOUNCEMENT" ? (
                 <AnnouncementList
                   posts={announcementPosts.map((p) => ({
@@ -401,6 +449,9 @@ export default function CommunityClient({ isAdmin, initial, search = null }: Com
                   isAdmin={isAdmin}
                   returnTo={returnTo}
                   onChanged={refreshAnnouncements}
+                  notices={notices}
+                  hasMorePosts={Boolean(nextCursor)}
+                  onNoticesChanged={refreshNotices}
                 />
               ) : null}
 

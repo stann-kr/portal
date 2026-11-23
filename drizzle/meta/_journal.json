@@ -260,6 +260,13 @@
       "when": 1795396905864,
       "tag": "0036_note_read_only",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "6",
+      "when": 1795429985241,
+      "tag": "0037_push_notices",
+      "breakpoints": true
     }
   ]
 }

@@ -6,6 +6,7 @@
 import { redirect } from "next/navigation";
 import { getActiveAuthSession } from "@/lib/auth-guard";
 import { getAnnouncementSummaries } from "@/lib/actions/posts";
+import { getMyUnreadPushNotices } from "@/lib/actions/pushNotices";
 import { getUnifiedItems } from "@/lib/actions/unifiedItems";
 import { getMyCurriculum } from "@/lib/actions/curriculum";
 import { isCurriculumVisible } from "@/lib/curriculum-visibility";
@@ -17,6 +18,7 @@ import { StudentPortalClient } from "@/components/student-portal/StudentPortalCl
 import { getUnifiedItemSpaceLabel } from "@/lib/unified-item-normalization";
 import { getExternalCalendarConnectionSummary } from "@/lib/actions/externalCalendars";
 import {
+  firstSearchValue,
   legacyPortalSectionRedirect,
   resolvePortalDeepLink,
   resolvePortalLocation,
@@ -57,7 +59,7 @@ export default async function StudentPortalPage({ searchParams }: { searchParams
 
   // 병렬 데이터 패치. 게시물은 본문 없이 화면에 필요한 개수만 읽는다.
   const referenceTime = new Date();
-  const [assignmentTasks, announcements, unifiedItems, curriculumModules, rawAssignments, feedbacksMap, externalCalendarConnection, lessonGroup] =
+  const [assignmentTasks, announcements, unifiedItems, curriculumModules, rawAssignments, feedbacksMap, externalCalendarConnection, lessonGroup, pushNotices] =
     await Promise.all([
       assignmentTasksPromise,
       getAnnouncementSummaries(3),
@@ -68,6 +70,7 @@ export default async function StudentPortalPage({ searchParams }: { searchParams
       getMyFeedbacksMap(),
       getExternalCalendarConnectionSummary(),
       getMyHomeLessonGroup(referenceTime),
+      getMyUnreadPushNotices(),
     ]);
 
   // 과제 피드백 카운트 병합
@@ -89,6 +92,8 @@ export default async function StudentPortalPage({ searchParams }: { searchParams
         initialLocation={initialLocation}
         deepLink={deepLink}
         announcements={announcements}
+        pushNotices={pushNotices}
+        openedNoticeId={firstSearchValue(params.notice)}
         unifiedItems={tagStudentGroupLessons(unifiedItems, lessonGroup)}
         curriculumModules={curriculumModules.map((module) => ({
           ...module,

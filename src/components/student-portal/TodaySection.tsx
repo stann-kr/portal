@@ -14,6 +14,7 @@ import {
   toKstDayKey,
 } from "@/lib/student-today";
 import type { UnifiedItem } from "@/lib/utils/unifiedItemUtils";
+import type { StudentPushNotice } from "@/lib/actions/pushNotices";
 import type { StudentHomeLessonGroup } from "@/lib/lesson-group-rules";
 import { cn } from "@/lib/utils";
 import { AgendaRow } from "./today/AgendaRow";
@@ -28,6 +29,7 @@ import {
   LedgerSection,
   LedgerSectionHeader,
 } from "./today/HomeSection";
+import { PushNoticeCards } from "./today/PushNoticeCards";
 import { QuickActions } from "./today/QuickActions";
 import { RecentNotesList } from "./today/RecentNotesList";
 import { TodoList } from "./today/TodoList";
@@ -72,6 +74,8 @@ export function TodaySection({
   referenceTime,
   pushOwnerId,
   lessonGroup = null,
+  pushNotices = [],
+  openedNoticeId = null,
 }: {
   announcements: Post[];
   unifiedItems: UnifiedItem[];
@@ -81,6 +85,10 @@ export function TodaySection({
   pushOwnerId: string;
   /** 다음 레슨이 그룹레슨이면 그룹 이름과 함께하는 학생을 덧붙인다. */
   lessonGroup?: StudentHomeLessonGroup | null;
+  /** 아직 확인하지 않은 Stann의 알림(최신 위). 인사 바로 아래 카드로 보인다. */
+  pushNotices?: StudentPushNotice[];
+  /** 휴대폰 알림을 눌러 연 알림 id(?notice=). */
+  openedNoticeId?: string | null;
 }) {
   const todayKey = toKstDayKey(referenceTime);
   const summary = getStudentTodaySummary(unifiedItems, referenceTime);
@@ -225,6 +233,7 @@ export function TodaySection({
           ) : null}
           <QuickActions newNoteHref={newNoteHref} returnTo={TODAY_PATH} />
         </header>
+        <PushNoticeCards notices={pushNotices} openedNoticeId={openedNoticeId} />
 
         <div className="flex flex-col gap-7 md:flex-row md:flex-wrap md:items-start md:gap-x-14 md:gap-y-12">
           <div className={cn(COLUMN_CLASS, "md:flex-[2_1_480px]")}>

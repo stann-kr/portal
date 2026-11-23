@@ -35,6 +35,7 @@ let VideoPlayer: typeof import("@/components/player/VideoPlayer").VideoPlayer;
 type PlaybackController = import("@/components/player/VideoPlayer").PlaybackController;
 let TimelineFeedback: typeof import("@/components/feedback/TimelineFeedback").TimelineFeedback;
 let PostDetailClient: typeof import("@/app/(app)/community/[postId]/PostDetailClient").PostDetailClient;
+let PushNoticeCards: typeof import("@/components/student-portal/today/PushNoticeCards").PushNoticeCards;
 let navigationProgress: typeof import("@/components/app-shell/NavigationProgress");
 let playerStore: typeof import("@/components/player/player-store");
 let PersistentPlayerHost: typeof import("@/components/player/PersistentPlayerHost").PersistentPlayerHost;
@@ -209,6 +210,15 @@ const postReadCalls: string[] = [];
 mock.module("@/lib/actions/postReads", { namedExports: {
   recordPostRead: async (postId: string) => { postReadCalls.push(postId); },
   getPostReadSummary: async () => null,
+  remindPostUnread: async (postId: string) => {
+    remindCalls.push(postId);
+    return { success: true, sentTo: 2, remindedAt: new Date() };
+  },
+} });
+const remindCalls: string[] = [];
+const noticeReadCalls: string[] = [];
+mock.module("@/lib/actions/pushNotices", { namedExports: {
+  markPushNoticeRead: async (noticeId: string) => { noticeReadCalls.push(noticeId); },
 } });
 mock.module("@/lib/actions/categories", { namedExports: { getCategories: async () => [] } });
 mock.module("@/lib/actions/documentDrafts", { namedExports: { discardDocumentServerDraft: async () => ({ ok: true }) } });
@@ -377,6 +387,7 @@ before(async () => {
   ({ TimelineFeedback } = await import("@/components/feedback/TimelineFeedback"));
   reviewControls = await import("@/components/admin/assignments/AssignmentReviewControls");
   ({ PostDetailClient } = await import("@/app/(app)/community/[postId]/PostDetailClient"));
+  ({ PushNoticeCards } = await import("@/components/student-portal/today/PushNoticeCards"));
   navigationProgress = await import("@/components/app-shell/NavigationProgress");
   playerStore = await import("@/components/player/player-store");
   ({ PersistentPlayerHost } = await import("@/components/player/PersistentPlayerHost"));
@@ -2580,7 +2591,9 @@ test("post readers: a student opening someone else's post records a read, the ad
 
   const summary = {
     readers: [{ id: "student-1", name: "학생1", firstReadAt: new Date("2026-10-26T05:58:00Z") }],
-    unread: [{ id: "student-3", name: "학생3" }],
+    unread: [{ id: "student-3", name: "학생3", pushOff: false }],
+    canRemind: false,
+    lastRemindedAt: null,
   };
   await act(async () => root.render(<div />));
   await act(async () => root.render(<PostDetailClient postId={post.id} post={post} initialCommentList={[]} currentUserId="admin-1" isAdmin readSummary={summary} returnTo="/community" />));
@@ -2596,6 +2609,58 @@ test("post readers: a student opening someone else's post records a read, the ad
   const panel = browser.document.getElementById("post-readers");
   assert.match(panel?.textContent ?? "", /학생1.*10\.26 14:58/u);
   assert.match(panel?.textContent ?? "", /아직 안 읽음\s*1\s*학생3/u);
+});
+
+test("post readers: an announcement shows push-off students and reminds unread students once per 10 minutes", async (context) => {
+  remindCalls.length = 0;
+  const post = {
+    id: "remind-post", authorId: "admin-1", title: "11월 레슨 일정", contentHtml: "<p>본문</p>",
+    category: "", boardType: "ANNOUNCEMENT" as const, isPinned: false, mediaUrl: null,
+    mediaObjectId: null, createdAt: new Date(), updatedAt: new Date(), deletedAt: null,
+    restoreLocked: false, version: 1, authorName: "Stann",
+  };
+  const summary = {
+    readers: [{ id: "student-1", name: "학생1", firstReadAt: new Date("2026-11-23T09:31:00Z") }],
+    unread: [{ id: "student-2", name: "학생2", pushOff: true }, { id: "student-3", name: "학생3", pushOff: false }],
+    canRemind: true,
+    lastRemindedAt: null,
+  };
+  await render(context, <PostDetailClient postId={post.id} post={post} initialCommentList={[]} currentUserId="admin-1" isAdmin readSummary={summary} returnTo="/community" />);
+  await settle();
+  const toggle = browser.document.querySelector('[aria-controls="post-readers"]') as InstanceType<typeof browser.HTMLButtonElement> | null;
+  await act(async () => toggle?.click());
+  const panel = () => browser.document.getElementById("post-readers");
+  assert.match(panel()?.textContent ?? "", /학생2\s*알림 꺼짐,\s*학생3/u);
+  const remind = [...panel()!.querySelectorAll("button")].find((button) => button.textContent?.includes("다시 알리기"));
+  assert.equal(remind?.textContent?.trim(), "안 읽은 2명에게 다시 알리기");
+  await act(async () => remind!.click());
+  await settle();
+  assert.deepEqual(remindCalls, ["remind-post"]);
+  assert.match(panel()?.textContent ?? "", /다시 알림 보냄 · \d{2}:\d{2} — 10분 뒤 다시 보낼 수 있습니다/u);
+  assert.equal([...panel()!.querySelectorAll("button")].some((button) => button.textContent?.includes("다시 알리기")), false, "10분 동안은 다시 누를 수 없다");
+});
+
+test("student home notices: confirm hides the card, an opened push shows 확인됨 and clears ?notice=", async (context) => {
+  noticeReadCalls.length = 0;
+  const notices = [
+    { id: "notice-new", body: "내일 레슨은 30분 늦게 7시 30분에 시작해요.", createdAt: new Date("2026-11-23T09:30:00Z") },
+    { id: "notice-old", body: "B룸 공사로 A룸에서 해요.", createdAt: new Date("2026-11-18T01:00:00Z") },
+  ];
+  browser.history.replaceState(null, "", "/dashboard/student?notice=notice-old");
+  await render(context, <PushNoticeCards notices={notices} openedNoticeId="notice-old" />);
+  await settle();
+  const cards = () => [...browser.document.querySelectorAll('section[aria-label="Stann의 알림"]')];
+  assert.equal(cards().length, 2);
+  assert.match(cards()[0]?.textContent ?? "", /Stann의 알림 · 11\.23 18:30/u);
+  assert.match(cards()[1]?.textContent ?? "", /확인됨/u);
+  assert.equal(browser.location.search, "", "주소의 notice는 지운다");
+  assert.deepEqual(noticeReadCalls, ["notice-old"]);
+
+  const confirm = cards()[0]?.querySelector("button");
+  assert.equal(confirm?.textContent?.startsWith("확인"), true);
+  await act(async () => confirm!.click());
+  assert.deepEqual(noticeReadCalls, ["notice-old", "notice-new"]);
+  assert.equal(cards().length, 1, "확인한 카드는 바로 사라진다");
 });
 
 test("community comment failure and remount preserve the author's draft", async (context) => {

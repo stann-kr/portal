@@ -10,6 +10,7 @@ import { getActiveAuthSession } from "@/lib/auth-guard";
 import { redirect } from "next/navigation";
 import { getCategories } from "@/lib/actions/categories";
 import { getCommunityPostPage, searchCommunityPosts } from "@/lib/actions/posts";
+import { listPushNotices } from "@/lib/actions/pushNotices";
 import { normalizeDocumentSearchQuery } from "@/lib/document-search";
 import { resolveCommunitySearchScope } from "@/lib/community-search";
 import { resolveCommunityBoardType } from "@/lib/community-location";
@@ -37,9 +38,10 @@ export default async function CommunityPage({
   // 검색(?q=)은 Q&A 검색처럼 GET form으로 서버가 읽는다. 지금 게시판·채널 안, scope=all이면 전체에서 찾는다.
   const query = normalizeDocumentSearchQuery(params.q);
   const scope = resolveCommunitySearchScope(firstSearchValue(params.scope));
-  const [page, search] = await Promise.all([
+  const [page, search, notices] = await Promise.all([
     getCommunityPostPage({ boardType, category }),
     query ? searchCommunityPosts({ boardType, category, query, scope }) : Promise.resolve(null),
+    isAdmin ? listPushNotices() : Promise.resolve([]),
   ]);
 
   return (
@@ -47,6 +49,7 @@ export default async function CommunityPage({
       isAdmin={isAdmin}
       initial={{ boardType, category, categories, posts: page.posts, nextCursor: page.nextCursor }}
       search={search ? { query, scope, posts: search.posts } : null}
+      initialNotices={notices}
     />
   );
 }

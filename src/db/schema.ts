@@ -2223,3 +2223,58 @@ export const pushMutedCategories = sqliteTable(
     ),
   ],
 );
+
+/** 글 없이 보내는 짧은 알림의 최대 글자 수(학생 잠금화면 두세 줄). */
+export const PUSH_NOTICE_MAX_LENGTH = 120;
+
+/**
+ * 글 없이 학생에게 보내는 짧은 알림(0037, 2026-11-23 사용자 결정 "글말고 알림만 보내는"). 관리자만 보내고 지운다.
+ * request_id는 같은 보내기 요청(두 번 누름·재시도)을 한 번만 만든다. last_reminded_at은 안 읽은 학생에게
+ * 다시 알린 마지막 시각으로, 10분 안에는 다시 보내지 않는다.
+ */
+export const pushNotices = sqliteTable(
+  "push_notices",
+  {
+    id: text("id").primaryKey(),
+    authorId: text("author_id")
+      .references(() => profiles.id, { onDelete: "cascade" })
+      .notNull(),
+    requestId: text("request_id").notNull(),
+    body: text("body").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    lastRemindedAt: integer("last_reminded_at", { mode: "timestamp" }),
+  },
+  (table) => [
+    uniqueIndex("push_notices_request_unique").on(table.requestId),
+    index("push_notices_created_idx").on(table.createdAt),
+    check("push_notices_body_check", sql`length(trim(${table.body})) BETWEEN 1 AND ${sql.raw(String(PUSH_NOTICE_MAX_LENGTH))}`),
+  ],
+);
+
+/**
+ * 알림을 받은 학생(보낸 순간의 수강 중 학생으로 고정)과 읽은 시각. 학생이 알림을 눌러 열거나 홈 카드에서 "확인"을 누르면 read_at을 한 번 남긴다.
+ */
+export const pushNoticeRecipients = sqliteTable(
+  "push_notice_recipients",
+  {
+    noticeId: text("notice_id")
+      .references(() => pushNotices.id, { onDelete: "cascade" })
+      .notNull(),
+    studentId: text("student_id")
+      .references(() => profiles.id, { onDelete: "cascade" })
+      .notNull(),
+    readAt: integer("read_at", { mode: "timestamp" }),
+  },
+  (table) => [
+    primaryKey({ columns: [table.noticeId, table.studentId] }),
+    index("push_notice_recipients_student_idx").on(table.studentId),
+  ],
+);
+
+/** 공지 게시물을 안 읽은 학생에게 다시 알린 마지막 시각(0037). 10분 안에는 다시 보내지 않는다. */
+export const postReminders = sqliteTable("post_reminders", {
+  postId: text("post_id")
+    .primaryKey()
+    .references(() => posts.id, { onDelete: "cascade" }),
+  lastRemindedAt: integer("last_reminded_at", { mode: "timestamp" }).notNull(),
+});

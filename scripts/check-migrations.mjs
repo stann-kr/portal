@@ -62,6 +62,7 @@ import { validateCommentRepliesUpgrade } from "./migration-check/comment-replies
 import { validatePostReadsUpgrade } from "./migration-check/post-reads.mjs";
 import { validateAssignmentDraftsUpgrade } from "./migration-check/assignment-drafts.mjs";
 import { validateNoteReadOnlyUpgrade } from "./migration-check/note-read-only.mjs";
+import { validatePushNoticesUpgrade } from "./migration-check/push-notices.mjs";
 import { validateListQueryIndexesUpgrade } from "./migration-check/list-query-indexes.mjs";
 import {
   validateAccountPrivacyAtomicSource,
@@ -224,6 +225,8 @@ async function main() {
   console.log("PASS populated 0034 → 0035 assignment_drafts table, owner/key composite key, version compare-and-set, owner-task index used, cascades on task delete and account FK, rows preserved");
   await validateNoteReadOnlyUpgrade(migrationFiles);
   console.log("PASS populated 0035 → 0036 private_notes student_read_only default 0 (co-write), revisions contributor_ids nullable, other tables/triggers and rows preserved");
+  await validatePushNoticesUpgrade(migrationFiles);
+  console.log("PASS populated 0036 → 0037 push_notices·push_notice_recipients·post_reminders added (cascade, request idempotency, body 1–120), other tables/triggers and rows preserved");
 }
 
 try {

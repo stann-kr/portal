@@ -347,6 +347,11 @@ test("계정 삭제는 owned/cross-resource payload와 media를 한 transaction�
     INSERT INTO post_reads (post_id, student_id, first_read_at)
     VALUES ('delete-other-post', 'delete-student', 1767225600),
       ('delete-own-post', 'other-student', 1767225600);
+    INSERT INTO push_notices (id, author_id, request_id, body, created_at)
+    VALUES ('delete-notice', 'admin-owner', 'delete-notice-request', 'Notice', 1767225600);
+    INSERT INTO push_notice_recipients (notice_id, student_id, read_at)
+    VALUES ('delete-notice', 'delete-student', 1767225600),
+      ('delete-notice', 'other-student', NULL);
     INSERT INTO assignment_drafts (owner_id, draft_key, task_id, payload_json, version, updated_at)
     VALUES ('delete-student', 'free-submission:new', NULL, '{"text":"쓰던 글"}', 1, 1767225600),
       ('other-student', 'free-submission:new', NULL, '{"text":"남의 글"}', 1, 1767225600);
@@ -551,6 +556,9 @@ test("계정 삭제는 owned/cross-resource payload와 media를 한 transaction�
   );
   // 지운 학생이 남의 글을 연 기록과, 남이 지운 학생의 글을 연 기록이 모두 사라진다.
   assert.equal(countRows(sqlite, "SELECT count(*) AS value FROM post_reads"), 0);
+  // 지운 학생이 받은 알림 기록만 사라지고, 같은 알림을 받은 다른 학생 기록과 알림은 남는다.
+  assert.equal(countRows(sqlite, "SELECT count(*) AS value FROM push_notice_recipients WHERE student_id = 'delete-student'"), 0);
+  assert.equal(countRows(sqlite, "SELECT count(*) AS value FROM push_notice_recipients WHERE student_id = 'other-student'"), 1);
   // 지운 학생의 과제 글 계정 임시 저장만 사라진다.
   assert.equal(countRows(sqlite, "SELECT count(*) AS value FROM assignment_drafts WHERE owner_id = 'delete-student'"), 0);
   assert.equal(countRows(sqlite, "SELECT count(*) AS value FROM assignment_drafts WHERE owner_id = 'other-student'"), 1);

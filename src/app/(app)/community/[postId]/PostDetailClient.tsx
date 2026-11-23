@@ -267,7 +267,7 @@ export function PostDetailClient({
         </div>
       </header>
 
-      {readSummary && readersOpen ? <PostReadersPanel summary={readSummary} /> : null}
+      {readSummary && readersOpen ? <PostReadersPanel summary={readSummary} postId={post.id} /> : null}
 
       {postDeleteConfirm.isOpen && !post.deletedAt ? (
         <ConfirmPanel
