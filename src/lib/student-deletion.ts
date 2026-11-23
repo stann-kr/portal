@@ -83,8 +83,18 @@ function referenceExistsSql([table, column]: ProfileReference, idExpression: str
   return `EXISTS (SELECT 1 FROM ${table} AS blocker WHERE blocker.${column} = ${idExpression})`;
 }
 
+/**
+ * 조건을 반씩 묶은 괄호 OR로 만든다. 한 줄로 이은 `a OR b OR c …`는 칸 수만큼 식 깊이가 늘어
+ * D1의 식 깊이 한도(100)에 닿는다. 반씩 묶으면 깊이가 칸 수의 log₂로 준다.
+ */
+function balancedOrSql(conditions: readonly string[]): string {
+  if (conditions.length === 1) return conditions[0];
+  const middle = Math.ceil(conditions.length / 2);
+  return `(${balancedOrSql(conditions.slice(0, middle))} OR ${balancedOrSql(conditions.slice(middle))})`;
+}
+
 function anyRecordSql(idExpression: string): string {
-  return STUDENT_DELETION_RECORD_COLUMNS.map((reference) => referenceExistsSql(reference, idExpression)).join(" OR ");
+  return balancedOrSql(STUDENT_DELETION_RECORD_COLUMNS.map((reference) => referenceExistsSql(reference, idExpression)));
 }
 
 /** profiles 별칭이 가입 전인지(가입 링크 hash). 임시 비밀번호·일반 비밀번호는 가입한 것으로 본다. */

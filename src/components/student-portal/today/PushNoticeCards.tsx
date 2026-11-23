@@ -43,7 +43,7 @@ export function PushNoticeCards({
   const visible = notices.filter((notice) => !dismissed.has(notice.id));
   if (visible.length === 0) return null;
 
-  const confirm = (noticeId: string) => {
+  const acknowledge = (noticeId: string) => {
     // 누르는 즉시 걷는다. 저장이 실패해도 다음 방문 때 다시 보이므로 따로 알리지 않는다.
     setDismissed((current) => new Set(current).add(noticeId));
     void markPushNoticeRead(noticeId).catch(() => undefined);
@@ -77,7 +77,7 @@ export function PushNoticeCards({
                 type="button"
                 variant="outline"
                 className="h-11 self-end rounded-touch px-4 text-ui font-medium md:h-9 md:self-auto md:rounded-md"
-                onClick={() => confirm(notice.id)}
+                onClick={() => acknowledge(notice.id)}
               >
                 확인<span className="sr-only">: {notice.body}</span>
               </Button>
