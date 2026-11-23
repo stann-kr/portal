@@ -6,6 +6,10 @@ import type { CollabMode } from "../protocol";
 /**
  * 연결 상태와 저장 상태를 한 줄 표시로 합친다. 선택창 없이 지금 어디에 남아 있는지만 알린다.
  */
+function formatClock(value: Date): string {
+  return `${String(value.getHours()).padStart(2, "0")}:${String(value.getMinutes()).padStart(2, "0")}`;
+}
+
 export type CollabStatusView = { kind: AutosaveStatusKind; message: string; shortMessage: string };
 
 export function describeCollabStatus(input: {
@@ -17,6 +21,10 @@ export function describeCollabStatus(input: {
   blockedMessage: string;
   /** 저장 버튼으로 반영하는 작업본(게시물 수정·새 글)은 자동 저장 문구를 쓰지 않는다. */
   manual?: boolean;
+  /** 보낸 입력이 1초 넘게 room에서 확인되지 않고 있다. */
+  syncing?: boolean;
+  /** 마지막으로 버전(D1)을 저장한 시각. */
+  savedAt?: Date | null;
 }): CollabStatusView {
   const { connection, mode, isSaver, autosave } = input;
   if (connection === "denied") {
@@ -54,6 +62,9 @@ export function describeCollabStatus(input: {
   if (connection === "connecting") {
     return { kind: "pending", message: "연결 중… 입력은 이 기기에 보관됩니다.", shortMessage: "연결 중" };
   }
+  if (connection === "connected" && input.syncing) {
+    return { kind: "pending", message: "동기화 중… 입력은 이 기기에 보관됩니다.", shortMessage: "동기화 중" };
+  }
   if (connection === "paused" && (input.manual || autosave === "idle" || autosave === "saved")) {
     // 쉬기 전에 room에 모두 보냈다(보낼 것이 있으면 쉬지 않는다). 입력하면 바로 다시 붙는다.
     return { kind: "saved", message: "보관됨 · 잠시 연결을 쉬는 중이며 입력하면 바로 이어집니다", shortMessage: "쉬는 중" };
@@ -76,13 +87,20 @@ export function describeCollabStatus(input: {
     case "saving":
       return { kind: "saving", message: "저장 중", shortMessage: "저장 중" };
     case "pending":
-      return { kind: "pending", message: "곧 저장됩니다", shortMessage: "저장 대기" };
-    default:
+      // 실시간 연결 중이면 입력은 이미 room에 보관됐다. 버전(이력)만 몇 분 간격으로 저장한다.
+      return connection === "connected"
+        ? { kind: "saved", message: "보관됨 · 버전은 잠시 뒤 저장됩니다", shortMessage: "보관됨" }
+        : { kind: "pending", message: "곧 저장됩니다", shortMessage: "저장 대기" };
+    default: {
+      // 실시간 연결 중에는 입력이 room에 바로 보관되고 D1 저장은 버전(이력)을 남긴다. 혼자 쓸 때는 저장이 곧 보관이다.
+      const at = input.savedAt ? formatClock(input.savedAt) : null;
+      if (connection === "solo") return { kind: "saved", message: at ? `저장됨 · ${at}` : "저장됨", shortMessage: "저장됨" };
       return {
         kind: "saved",
-        message: connection === "solo" ? "저장됨" : "저장됨 · 실시간 연결됨",
+        message: at ? `버전 저장 ${at} · 실시간 연결됨` : "저장됨 · 실시간 연결됨",
         shortMessage: "저장됨",
       };
+    }
   }
 }
 

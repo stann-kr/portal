@@ -15,6 +15,7 @@ import {
   type RoomSocketAttachment,
   type RoomStorage,
   type StoredRoomState,
+  type ContributorClocks,
 } from "./room-core";
 
 /**
@@ -70,6 +71,22 @@ function createWebSocketPair(): [WebSocket, WebSocket] {
   return [pair[0], pair[1]];
 }
 
+/** 저장된 편집자별 위치를 읽는다. 목록에 없는 사용자·잘못된 값은 버린다. */
+function readContributorClocks(value: unknown, ids: readonly string[]): ContributorClocks {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const result: ContributorClocks = {};
+  for (const userId of ids) {
+    const own = (value as Record<string, unknown>)[userId];
+    if (!own || typeof own !== "object" || Array.isArray(own)) continue;
+    const clocks: Record<string, number> = {};
+    for (const [client, clock] of Object.entries(own)) {
+      if (/^\d+$/u.test(client) && typeof clock === "number" && Number.isSafeInteger(clock) && clock >= 0) clocks[client] = clock;
+    }
+    result[userId] = clocks;
+  }
+  return result;
+}
+
 function toBytes(value: unknown): Uint8Array {
   if (value instanceof Uint8Array) return value;
   if (value instanceof ArrayBuffer) return new Uint8Array(value);
@@ -95,12 +112,30 @@ export function createSqlRoomStorage(state: DurableObjectStateLike): RoomStorage
       const savedRow = sql.exec("SELECT value FROM room_blob WHERE key = 'savedSv'").toArray()[0];
       const contributorsRow = sql.exec("SELECT value FROM room_blob WHERE key = 'contributors'").toArray()[0];
       let contributors: string[] = [];
+      let contributorClocks: ContributorClocks = {};
       if (contributorsRow) {
         try {
           const parsed = JSON.parse(new TextDecoder().decode(toBytes(contributorsRow.value))) as unknown;
-          if (Array.isArray(parsed)) contributors = parsed.filter((id): id is string => typeof id === "string");
+          // 이전 형식은 id 배열, 지금은 { ids, clocks }다.
+          const record = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
+          const ids = Array.isArray(parsed) ? parsed : Array.isArray(record?.ids) ? record.ids : [];
+          contributors = ids.filter((id): id is string => typeof id === "string");
+          contributorClocks = readContributorClocks(record?.clocks, contributors);
         } catch {
           contributors = [];
+          contributorClocks = {};
+        }
+      }
+      const downgradedRow = sql.exec("SELECT value FROM room_blob WHERE key = 'downgradedAt'").toArray()[0];
+      let downgradedAt: Record<string, number> = {};
+      if (downgradedRow) {
+        try {
+          const parsed = JSON.parse(new TextDecoder().decode(toBytes(downgradedRow.value))) as unknown;
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            for (const [userId, at] of Object.entries(parsed)) if (typeof at === "number" && Number.isFinite(at)) downgradedAt[userId] = at;
+          }
+        } catch {
+          downgradedAt = {};
         }
       }
       const intentBaseRow = sql.exec("SELECT value FROM room_blob WHERE key = 'restoreBase'").toArray()[0];
@@ -143,6 +178,8 @@ export function createSqlRoomStorage(state: DurableObjectStateLike): RoomStorage
         savedSv: savedRow ? toBytes(savedRow.value) : null,
         restoreIntent,
         contributors,
+        contributorClocks,
+        downgradedAt,
       };
     },
     appendUpdate(update) {
@@ -200,14 +237,24 @@ export function createSqlRoomStorage(state: DurableObjectStateLike): RoomStorage
         }
       });
     },
-    setContributors(ids) {
+    setContributors(ids, clocks) {
       if (ids.length === 0) {
         sql.exec("DELETE FROM room_blob WHERE key = 'contributors'");
         return;
       }
       sql.exec(
         "INSERT INTO room_blob (key, value) VALUES ('contributors', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        new TextEncoder().encode(JSON.stringify(ids)),
+        new TextEncoder().encode(JSON.stringify({ ids, clocks: clocks ?? {} })),
+      );
+    },
+    setDowngradedAt(value) {
+      if (Object.keys(value).length === 0) {
+        sql.exec("DELETE FROM room_blob WHERE key = 'downgradedAt'");
+        return;
+      }
+      sql.exec(
+        "INSERT INTO room_blob (key, value) VALUES ('downgradedAt', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        new TextEncoder().encode(JSON.stringify(value)),
       );
     },
     setSavedSv(sv) {
@@ -336,6 +383,12 @@ export class DocumentRoom {
             ? body.userIds.filter((id): id is string => typeof id === "string" && id.length > 0 && id.length <= 200).slice(0, 200)
             : [];
           return Response.json({ downgraded: this.core.downgradeUsers(userIds) });
+        }
+        case "/refresh": {
+          const userIds = Array.isArray(body.userIds)
+            ? body.userIds.filter((id): id is string => typeof id === "string" && id.length > 0 && id.length <= 200).slice(0, 200)
+            : [];
+          return Response.json({ refreshed: this.core.refreshUsers(userIds) });
         }
       }
     }

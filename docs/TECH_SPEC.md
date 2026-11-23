@@ -516,8 +516,8 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 - 브라우저: `Y.Doc` + `y-indexeddb`(기기 보관, owner·room별. 복원은 같은 문서의 편집이라 이름을 바꾸지 않는다) + `CollabProvider`(`src/lib/collab/client/provider.ts`). 연결마다 `POST /api/collab/token`을 부르고 `/api/collab/ws/<key>`에 `[portal-collab, <token>]` subprotocol로 접속한다. 연결은 최대 1시간 뒤 room이 닫고 클라이언트가 새 토큰으로 다시 연결한다.
 - `worker.ts`: `/api/collab/ws/`로 시작하는 요청만 가로채 토큰을 확인하고 `DOC_ROOMS.idFromName(key)`의 `DocumentRoom`으로 넘긴다. 그 밖은 OpenNext가 처리한다. binding이 없으면(`next dev`) 토큰 route가 `{ collab: false }`를 돌려주고 편집기는 혼자 모드(기기 보관 + 이 탭이 저장)로 동작한다.
 - room key: `note:<id>`, `guide:<id>`, `post:<id>`(수정 작업본), `draft:<post|qna-thread|qna-reply>:<ownerId>:<scope>`(새 문서).
-- `DocumentRoom`(`document-room.ts`, 로직은 `room-core.ts`): WebSocket hibernation을 쓰는 SQLite DO. update는 반영 즉시 저장하고 다른 소켓에 전달하며 200개 또는 1MB마다 snapshot으로 압축한다. 메시지 2 MiB, room 8 MiB를 넘으면 `too-large`로 닫는다. 저장 HTML 상한(800 KiB)은 기존 action이 그대로 지킨다.
-- 읽기 소켓은 sync step2·update를 반영하지 못한다(`error read-only`). awareness는 서버가 정리한다: `userId`는 토큰 값으로 덮고, `canSave`는 쓰기 소켓만 켤 수 있고, 소켓은 자기 client id의 상태만 쓰며, hibernation에서 깨어나면 소켓 attachment에서 복원한다. 소켓이 닫히면 그 커서를 지운다. 1005·1006 close code는 다시 보내지 않는다.
+- `DocumentRoom`(`document-room.ts`, 로직은 `room-core.ts`): WebSocket hibernation을 쓰는 SQLite DO. update는 반영 즉시 저장하고 다른 소켓에 전달하며, 쌓인 update가 1 MiB이거나 1,000개이거나, 200개 이상이면서 snapshot의 절반(최소 64 KiB)을 넘으면 snapshot으로 압축한다(작은 입력이 많은 긴 노트에서 snapshot 전체를 자주 다시 쓰지 않게, 2026-11-23). 메시지 2 MiB, room 8 MiB를 넘으면 `too-large`로 닫는다. 저장 HTML 상한(800 KiB)은 기존 action이 그대로 지킨다.
+- 읽기 소켓은 sync step2·update를 반영하지 못한다(`error read-only`). awareness는 서버가 정리한다: `userId`는 토큰 값으로 덮고, `canSave`는 쓰기 소켓만 켤 수 있고, 소켓은 자기 client id의 상태만 쓰며, hibernation에서 깨어나면 소켓 attachment에서 복원한다. attachment에는 커서를 뺀 상태(이름·`canSave`, 600자 상한)와 clock도 남겨, room이 메모리에서 내려갔다 깨어나도 새로 들어온 사람이 저장 담당·참여자를 바로 안다. 그래서 클라이언트 awareness heartbeat(15초 재전송)는 끈다(2026-11-23). 소켓이 닫히면 그 커서를 지운다. 1005·1006 close code는 다시 보내지 않는다.
 
 ### 저장 탭 선출과 room 세대
 
@@ -567,7 +567,7 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 - 같은 칸(제목·날짜)을 복원과 동시에 바꾸면 한 값만 남는다(동시 입력·이 기기 입력 쪽). 제거를 고르면 복원 값으로 돌아간다.
 - Web Locks가 없는 브라우저는 같은 IndexedDB를 쓰는 탭 사이 중복 재적용을 resync·ack에만 의존한다.
 - 알림 전달은 best-effort다(30초 fallback).
-- 권한 회수는 lease(150초)만큼 늦을 수 있다. 휴지통 이동과 영구 삭제는 즉시 닫는다.
+- 권한 회수는 lease(150초)만큼 늦을 수 있다(관리자가 학생 편집을 막는 경우는 즉시 내린다, 아래 노트 읽기 전용). 휴지통 이동과 영구 삭제는 즉시 닫는다.
 - 운영 DO, 실제 hibernation 깨움(로컬에서 관찰할 수 없음), 실제 네트워크 단절·online 복귀, 모바일·Safari 실기기, 며칠 이어진 room은 미검증이다. 운영 배포는 [배포 가이드](./DEPLOYMENT.md)의 DO migration 승인 항목을 따른다.
 
 ## 게시물 읽음(2026-11-23)
@@ -587,13 +587,24 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 - 일정 "전체 학생"의 더 보기 "새 노트"는 `ADMIN_NOTE_PICKER_HREF?returnTo=<일정>`. 대상 고르기 두 화면의 뒤로 이름은 `resolveNoteParent(returnTo).backLabel`.
 - 머리: `StudentDetailHead`를 학생 상세와 노트 탭이 함께 쓴다. 그룹 이름 표시는 `formatGroupLabel`(끝이 "그룹"이면 덧붙이지 않음). 검증: `src/test/admin-assignments.integration.ts`(실제 D1), `navigation.test.ts`, `StudentManagementSection.test.ts`.
 
+## 실시간 연결 반응 속도(2026-11-23)
+
+- 첫 연결: `useCollabDocument`가 기기 보관본(IndexedDB)을 여는 동안 토큰 요청을 함께 시작해 provider에 넘긴다(`initialToken`, 첫 연결에만). 토큰 요청은 10초 상한(`requestCollabToken`, AbortController)이고, 60초 renew 요청은 `{renew:true}`를 실어 token route가 room 점검(`repairRoom`)을 건너뛴다.
+- 죽은 연결 감지: hello가 10초 안에 오지 않거나, 보낸 update의 ack가 8초 넘게 멈추면(2초마다 확인) 그 소켓을 1006으로 처리하고 다시 붙는다. 보내지 못한 입력은 다음 연결이 다시 보낸다. 재연결 backoff에는 ±20% jitter를 둔다.
+- 전송: 이 기기 입력은 40ms 묶어 `Y.mergeUpdates` 한 메시지로 보낸다(보낼 것 확인·ack 대기·저장 표지 전에는 바로 보낸다). awareness는 100ms로 줄여 보내고 제거는 바로 보낸다. 오프라인 뒤 staging 합치기는 room이 이미 가진 부분을 빼고(받은 room state vector 기준) 차이만 보낸다.
+- `too-large`는 3초 뒤 한 번만 다시 시도한다(줄인 뒤 바로 이어지게). 동기화되면 다시 한 번 허용한다.
+- 상태 줄: 보낸 입력이 1초 넘게 확인되지 않으면 "동기화 중", 실시간 연결 중 버전 저장 대기는 "보관됨 · 버전은 잠시 뒤 저장됩니다", 저장 뒤에는 "버전 저장 HH:MM · 실시간 연결됨"(혼자 모드는 "저장됨 · HH:MM")을 보인다(`describeCollabStatus`).
+- 자동 저장 담당 탭은 실패·보류한 스냅샷이 있을 때만 입력마다 스냅샷을 다시 만든다(긴 노트에서 다른 사람 입력마다 HTML 변환을 하지 않게). 읽기 전용 실시간 보기는 내용과 "마지막 변경 시각"을 300ms에 한 번만 갱신한다.
+- 기기 보관 정리: 문서를 열 때 `portal-collab-opened:v1:<owner>`에 연 시각을, 닫을 때 room과 모두 맞추고 보낼 것·남은 재적용이 없었는지(clean)를 남긴다. 다른 문서를 열 때 30일 넘게 열지 않은 clean 문서의 IndexedDB(문서 DB 먼저, 성공하면 확인본)·색인·세대 기록을 지운다. 보낼 것이 남았던 문서와 지금 연 문서는 남기며 계정 정리는 이 기록도 지운다. 반영하지 못한 이 기기 입력을 보관함에도 남기지 못하면(저장 공간 부족) "lost" 안내로 직접 복사하라고 알린다.
+- 검증: `src/lib/collab/client/provider.test.ts`(묶어 보내기, hello·ack 감시 재연결, refresh 재연결), `collab-status.test.ts`, `local-store.test.ts`(오래된 보관본 정리), `collab-boundary.test.ts`(압축 기준).
+
 ## 노트 읽기 전용·버전 편집자(2026-11-23)
 
 - 데이터(`0036_note_read_only`): `private_notes.student_read_only INTEGER NOT NULL DEFAULT 0`, `private_note_revisions.contributor_ids TEXT`(JSON 배열, nullable). 기존 행은 함께 쓰기(0)·null. `db:check`(`scripts/migration-check/note-read-only.mjs`)가 채워진 0035 DB upgrade와 다른 표·trigger·행 보존을 본다.
 - 규칙(`note-access-rules.ts`): 플래그가 켜지면 관리자·작성자 본인이 아닌 학생은 `resolveNoteAccess`가 "read", `canManageNoteLifecycle`이 false다. 원자 쓰기의 `noteWriteAccessSql`은 비관리자 조건에 `(student_read_only = 0 OR author_id = ?)`를 붙여 편집·휴지통 이동·복원을 같은 batch 안에서 다시 거절한다. 캘린더(`getCalendarItemEditing`, 항목 metadata `studentReadOnly`)는 끌지 못하게 하고, 가이드 인용 대상 목록은 학생에게 그 노트를 빼며, 공동 편집 토큰은 read를 준다.
-- 바꾸기(`setNoteStudentReadOnly`, `src/lib/actions/noteStudentAccess.ts`): 관리자 전용, 휴지통이 아닌 관리자 작성 노트만(`canToggleStudentReadOnly`). 켜면 room `POST /downgrade`로 그 학생(그룹은 멤버) 쓰기 연결을 읽기로 내리고(`RoomCore.downgradeUsers`, 토큰 renew 강등과 같은 처리) 저장 담당 자격을 거둔다. 끄면 열린 읽기 연결은 올리지 않는다(다시 열 때 쓰기 토큰). 화면은 `InstructorLessonPanel`의 `NoteStudentAccessControl`(radio 두 개, 즉시 저장), 학생 쪽은 `LiveNoteArticle`, 그룹 안내 줄은 `groupNoteShareLine(..., { studentReadOnly })`.
-- 버전 편집자: `RoomCore`가 쓰기 소켓의 update로 문서가 바뀔 때 연결 토큰의 `userId`를 처음 바꾼 순서로 기록하고(DO `room_blob` `contributors`), 받아들인 저장("saved" 표지가 room 상태와 같을 때)과 reset에서 비운다. 노트 저장 action은 공동 편집 저장이면 `GET /contributors`를 읽어 지금 그 노트를 볼 수 있는 사람만 남겨 `contributor_ids`에 넣는다(읽지 못하거나 binding이 없으면 null, 저장은 막지 않음). 버전 영수증 trigger가 `actor_id`를 작업 영수증 actor와 맞추므로 `actor_id`는 저장한 사람 그대로이고 `getPrivateNoteRevisions`가 표시 이름만 편집자로 바꾼다. 받아들이지 않은 저장 사이의 편집자는 다음 버전에도 이어 남아 과소 기록은 없고 과다 기록은 있을 수 있다.
-- 검증: `src/lib/collab/collab-boundary.test.ts`(read 토큰, contributors 기록·비우기·휴면 복귀, downgrade), `src/lib/calendar-interaction.test.ts`, `src/lib/lesson-group-rules.test.ts`, `src/test/note-read-only.integration.ts`(실제 D1: 기본 함께 쓰기, 관리자만 바꿈, 학생 저장·원자 쓰기 거절, 그룹 멤버 읽기, 학생 작성 노트 거절, 이력 이름).
+- 바꾸기(`setNoteStudentReadOnly`, `src/lib/actions/noteStudentAccess.ts`): 관리자 전용, 휴지통이 아닌 관리자 작성 노트만(`canToggleStudentReadOnly`). 켜면 room `POST /downgrade`로 그 학생(그룹은 멤버) 쓰기 연결을 읽기로 내리고(`RoomCore.downgradeUsers`, 토큰 renew 강등과 같은 처리) 저장 담당 자격을 거두며, 내린 시각을 room(`room_blob` `downgradedAt`, lease 두 배 동안)에 남겨 그 전에 발급된 쓰기 토큰으로 늦게 붙거나 renew해도 읽기로 받는다(토큰 발급 시각 `i` 비교). 끄면 room `POST /refresh`가 그 사용자 연결에 `{t:"refresh"}`를 보내고, 클라이언트는 바로 새 토큰을 받아(쓰기면 다시 연결) 학생 읽기 화면이 `router.refresh()`로 편집 화면으로 바뀐다. 다시 열지 않아도 된다(2026-11-23). 화면은 `InstructorLessonPanel`의 `NoteStudentAccessControl`(radio 두 개, 즉시 저장), 학생 쪽은 `LiveNoteArticle`, 그룹 안내 줄은 `groupNoteShareLine(..., { studentReadOnly })`.
+- 버전 편집자: `RoomCore`가 쓰기 소켓의 update로 문서가 바뀔 때 연결 토큰의 `userId`를 처음 바꾼 순서로 기록하고(DO `room_blob` `contributors`), 받아들인 저장("saved" 표지가 room 상태와 같을 때)과 reset에서 비운다. 사람마다 바꾼 Yjs clock(client별 최대 clock)을 함께 남기고, 저장 담당은 저장이 받아들여지면 그 스냅샷을 만든 순간의 state vector를 `{t:"saved-upto"}`로 보낸다. room은 그 지점까지의 편집만 한 사람을 목록에서 빼므로 계속 함께 쓰는 중에도 다음 버전 편집자가 쌓이지 않는다. 저장 표시(`meta`)만 바꾼 update는 편집으로 세지 않는다(2026-11-23). 노트 저장 action은 공동 편집 저장이면 `GET /contributors`를 읽어 지금 그 노트를 볼 수 있는 사람만 남겨 `contributor_ids`에 넣는다(읽지 못하거나 binding이 없으면 null, 저장은 막지 않음). 버전 영수증 trigger가 `actor_id`를 작업 영수증 actor와 맞추므로 `actor_id`는 저장한 사람 그대로이고 `getPrivateNoteRevisions`가 표시 이름만 편집자로 바꾼다. 받아들이지 않은 저장 사이의 편집자는 다음 버전에도 이어 남아 과소 기록은 없다. clock이 없는 이전 형식 기록은 saved-upto로 빼지 않는다.
+- 검증: `src/lib/collab/collab-boundary.test.ts`(read 토큰, contributors 기록·비우기·휴면 복귀, downgrade, saved-upto 부분 비우기·meta 제외, 막기 전 토큰 읽기 처리, refresh 대상, attachment presence 복원), `src/lib/calendar-interaction.test.ts`, `src/lib/lesson-group-rules.test.ts`, `src/test/note-read-only.integration.ts`(실제 D1: 기본 함께 쓰기, 관리자만 바꿈, 학생 저장·원자 쓰기 거절, 그룹 멤버 읽기, 학생 작성 노트 거절, 이력 이름).
 
 ## 과제 글 계정 임시 저장(2026-11-23)
 

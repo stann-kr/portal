@@ -46,7 +46,7 @@ export function createCollabTokenHandler(deps: CollabTokenHandlerDeps) {
       return json({ error: "BAD_REQUEST" }, 400);
     }
     if (!body || typeof body !== "object") return json({ error: "BAD_REQUEST" }, 400);
-    const { key, createNote } = body as { key?: unknown; createNote?: unknown };
+    const { key, createNote, renew } = body as { key?: unknown; createNote?: unknown; renew?: unknown };
     const result = await authorizeCollabRequest(actor, { key, createNote }, deps.loaders);
     if (!result.ok) {
       if (result.reason === "BAD_REQUEST") return json({ error: "BAD_REQUEST" }, 400);
@@ -65,7 +65,9 @@ export function createCollabTokenHandler(deps: CollabTokenHandlerDeps) {
       };
       return json(response, 200);
     }
-    if (typeof result.lifecycle === "number" && result.lifecycle > 0 && deps.repairRoom) {
+    // 연결 중 갱신(renew)은 room 점검을 건너뛴다: 1분마다 room을 한 번 더 부르지 않게 한다. 뒤처진 room은 저장이
+    // 세대 불일치로 거부되면 클라이언트가 새로 붙고, 그 첫 발급이 고친다.
+    if (renew !== true && typeof result.lifecycle === "number" && result.lifecycle > 0 && deps.repairRoom) {
       await deps.repairRoom(result.key, result.lifecycle).catch(() => undefined);
     }
     const token = await signCollabToken(

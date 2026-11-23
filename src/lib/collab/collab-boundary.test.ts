@@ -31,6 +31,8 @@ import {
   encodeAwarenessEntries,
   normalizeCloseCode,
   RoomCore,
+  ROOM_COMPACT_MAX_UPDATE_COUNT,
+  ROOM_COMPACT_MIN_BYTES,
   ROOM_COMPACT_UPDATE_COUNT,
   ROOM_RESTORE_HOLD_MS,
   ROOM_RESTORE_INTENT_MS,
@@ -271,6 +273,8 @@ class MemoryStorage implements RoomStorage {
   seq = 0;
   savedSv: Uint8Array | null = null;
   contributors: string[] = [];
+  contributorClocks: Record<string, Record<string, number>> = {};
+  downgradedAt: Record<string, number> = {};
   load() {
     return {
       epoch: this.epoch,
@@ -280,10 +284,16 @@ class MemoryStorage implements RoomStorage {
       savedSv: this.savedSv,
       restoreIntent: this.restoreIntent,
       contributors: [...this.contributors],
+      contributorClocks: { ...this.contributorClocks },
+      downgradedAt: { ...this.downgradedAt },
     };
   }
-  setContributors(ids: readonly string[]) {
+  setContributors(ids: readonly string[], clocks: Record<string, Record<string, number>> = {}) {
     this.contributors = [...ids];
+    this.contributorClocks = { ...clocks };
+  }
+  setDowngradedAt(value: Record<string, number>) {
+    this.downgradedAt = { ...value };
   }
   setSeq(seq: number) {
     this.seq = seq;
@@ -413,19 +423,37 @@ test("room: 쓰기 소켓의 update만 저장·전달하고 읽기 소켓의 쓰
 test("room: 저장 상태는 새 room 인스턴스(휴면 복귀)에서도 이어지고 update가 쌓이면 압축된다", () => {
   const { storage, room, join } = createRoom();
   const writer = join("write");
-  for (let index = 0; index < ROOM_COMPACT_UPDATE_COUNT + 5; index += 1) {
+  const typeOne = (index: number) => {
     const doc = new Y.Doc();
     doc.clientID = 1000 + index;
     doc.getText("t").insert(0, "a");
     room.message(writer, updateMessage(Y.encodeStateAsUpdate(doc)));
-  }
+  };
+  // 작은 update는 개수만 차서는 접지 않는다(쌓인 바이트가 작으면 전체를 다시 쓰는 비용이 더 크다).
+  for (let index = 0; index < ROOM_COMPACT_UPDATE_COUNT + 5; index += 1) typeOne(index);
+  assert.equal(storage.snapshot, null, "작은 update 수백 개로는 접지 않는다");
+  // 개수가 아주 많아지면(깨울 때 다시 적용할 양) 크기와 관계없이 접는다.
+  for (let index = ROOM_COMPACT_UPDATE_COUNT + 5; index < ROOM_COMPACT_MAX_UPDATE_COUNT + 5; index += 1) typeOne(index);
   assert.ok(storage.snapshot, "snapshot 생성");
   assert.ok(storage.updates.length < ROOM_COMPACT_UPDATE_COUNT);
   const revived = new RoomCore(storage, () => []);
   rooms.push(revived);
   const fresh = new MemorySocket();
   revived.connect(fresh, { userId: "x", mode: "read" });
-  assert.equal(roomText(storage).length, ROOM_COMPACT_UPDATE_COUNT + 5);
+  assert.equal(roomText(storage).length, ROOM_COMPACT_MAX_UPDATE_COUNT + 5);
+});
+
+test("room: 개수가 차고 쌓인 바이트가 snapshot의 절반(최소 64 KiB)을 넘으면 접는다", () => {
+  const { storage, room, join } = createRoom();
+  const writer = join("write");
+  const chunk = "x".repeat(Math.ceil(ROOM_COMPACT_MIN_BYTES / ROOM_COMPACT_UPDATE_COUNT) + 16);
+  for (let index = 0; index < ROOM_COMPACT_UPDATE_COUNT + 1; index += 1) {
+    const doc = new Y.Doc();
+    doc.clientID = 5000 + index;
+    doc.getText("t").insert(0, chunk);
+    room.message(writer, updateMessage(Y.encodeStateAsUpdate(doc)));
+  }
+  assert.ok(storage.snapshot, "큰 편집이 쌓이면 개수 기준에서 접는다");
 });
 
 test("room: reset은 저장 상태를 지우고 epoch를 올린 뒤 모든 연결을 닫는다", () => {
@@ -647,6 +675,70 @@ test("room: 관리자가 편집을 막으면 그 사용자의 쓰기 연결만 �
   assert.equal(roomText(storage), "", "내린 뒤 쓰기는 반영되지 않는다");
   assert.equal(student.controls().at(-1)?.code, "read-only");
   assert.equal(room.downgradeUsers(["s1"]), 0, "이미 읽기면 다시 내리지 않는다");
+});
+
+test("room: 저장한 스냅샷(saved-upto)에 편집이 모두 들어간 사람만 편집자에서 빼고, 저장 표시만 바꾼 update는 편집으로 세지 않는다", () => {
+  const { storage, room, join } = createRoom();
+  const admin = join("write", "admin");
+  const student = join("write", "s1");
+  room.message(student, updateMessage(textUpdate("학생")));
+  // 저장 담당이 이 시점의 상태로 스냅샷을 만들었다. 그 뒤 관리자가 이어서 쳤다.
+  const savedSv = Buffer.from(Y.encodeStateVector(storedDoc(storage))).toString("base64");
+  room.message(admin, updateMessage(textUpdate("관리자")));
+  assert.deepEqual(room.readContributors(), ["s1", "admin"]);
+  room.message(admin, controlMessage({ t: "saved-upto", sv: savedSv }));
+  assert.deepEqual(room.readContributors(), ["admin"], "스냅샷 뒤에 친 관리자만 남는다");
+  assert.deepEqual(storage.contributors, ["admin"]);
+  // 저장 표시(meta)만 바꾼 update는 편집자가 아니다.
+  const meta = new Y.Doc();
+  meta.getMap("meta").set("savedHash", "h1");
+  room.message(student, updateMessage(Y.encodeStateAsUpdate(meta)));
+  assert.deepEqual(room.readContributors(), ["admin"]);
+  // 읽기 소켓의 saved-upto는 무시한다.
+  const reader = join("read", "r");
+  room.message(reader, controlMessage({ t: "saved-upto", sv: Buffer.from(Y.encodeStateVector(storedDoc(storage))).toString("base64") }));
+  assert.deepEqual(room.readContributors(), ["admin"]);
+  // 어디까지 바꿨는지 모르는 편집자(이전 형식)는 saved-upto로 빼지 않는다.
+  storage.contributorClocks = {};
+  const revived = new RoomCore(storage, () => [admin]);
+  rooms.push(revived);
+  revived.message(admin, controlMessage({ t: "saved-upto", sv: Buffer.from(Y.encodeStateVector(storedDoc(storage))).toString("base64") }));
+  assert.deepEqual(revived.readContributors(), ["admin"]);
+});
+
+test("room: 편집을 막은 뒤에는 그 전에 발급된 쓰기 토큰도 읽기로 받고, refresh는 그 사용자 연결에만 보낸다", () => {
+  let now = NOW;
+  const { room, join } = createRoom(() => now);
+  const admin = join("write", "admin");
+  join("write", "s1");
+  now += 1000;
+  room.downgradeUsers(["s1"]);
+  const late = join("write", "s1", { leaseIat: now - 500 });
+  assert.equal(late.attachment?.mode, "read", "막기 전 토큰으로 늦게 붙어도 읽기");
+  assert.equal(late.controls()[0].mode, "read");
+  const fresh = join("write", "s1", { leaseIat: now + 10 });
+  assert.equal(fresh.attachment?.mode, "write", "막은 뒤 다시 연 다음 받은 토큰은 쓰기");
+  const adminBefore = admin.controls().length;
+  assert.equal(room.refreshUsers(["s1"]), 3);
+  assert.deepEqual(fresh.controls().at(-1), { t: "refresh" });
+  assert.equal(admin.controls().length, adminBefore, "관리자 연결에는 보내지 않는다");
+});
+
+test("room: 메모리에서 내려갔다 깨어나도 attachment에 남긴 이름·저장 담당(커서 제외)을 새로 들어온 사람에게 알린다", () => {
+  const { storage, sockets, join } = createRoom();
+  const writer = join("write", "w");
+  const room = rooms.at(-1)!;
+  room.message(writer, awarenessMessage(7, 3, { user: { name: "W" }, canSave: true, cursor: { anchor: 1 } }));
+  assert.equal(writer.attachment?.presence?.["7"]?.c, 3);
+  assert.equal(JSON.parse(writer.attachment?.presence?.["7"]?.s ?? "{}").cursor, undefined, "커서는 남기지 않는다");
+  const revived = new RoomCore(storage, () => sockets.filter((socket) => socket.closed === null));
+  rooms.push(revived);
+  const joiner = new MemorySocket();
+  sockets.push(joiner);
+  revived.connect(joiner, { userId: "j", mode: "read", key: "note:n1" });
+  const seen = lastAwarenessStates(joiner).find((entry) => entry.clientId === 7);
+  assert.equal(seen?.state?.canSave, true);
+  assert.equal((seen?.state?.user as { name?: string } | undefined)?.name, "W");
 });
 
 test("room: 저장한 update 개수를 그 소켓에 ack로 알린다", () => {

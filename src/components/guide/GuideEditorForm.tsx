@@ -150,6 +150,8 @@ export function GuideEditorForm({ page, actorId, action }: GuideEditorFormProps)
     isSaver: collab.isSaver,
     autosave: autosave.status,
     autosaveError: autosave.error,
+    syncing: collab.syncing,
+    savedAt: autosave.savedAt,
     blockedMessage: "제목을 입력하면 자동으로 저장됩니다.",
   });
   const solo = collab.status === "solo";

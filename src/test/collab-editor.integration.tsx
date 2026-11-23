@@ -524,7 +524,7 @@ test("같은 노트를 연 두 기기는 제목·본문이 수렴하고 한 기�
   const saver = calls[0]!.device;
   const saverDevice = saver === "A" ? deviceA : deviceB;
   const otherDevice = saver === "A" ? deviceB : deviceA;
-  await waitUntil(() => /저장됨/u.test(saverDevice.container.textContent ?? ""), 3000, "저장 담당에 저장됨이 보여야 합니다.");
+  await waitUntil(() => /버전 저장 \d{2}:\d{2}/u.test(saverDevice.container.textContent ?? ""), 3000, "저장 담당에 버전 저장 시각이 보여야 합니다.");
 
   // 저장하지 않는 기기가 고쳐도 저장 담당이 이어서 저장하고, 기준 revision은 방금 저장된 version을 따라간다.
   // 이번에는 첫 시도가 버전 충돌이다: 선택창 없이 서버 최신 version(5)으로 한 번 더 저장한다.
@@ -553,7 +553,7 @@ test("같은 노트를 연 두 기기는 제목·본문이 수렴하고 한 기�
   assert.equal(titleOf(otherDevice).value, "충돌 뒤에도 남는 제목");
   assertNoChooser(deviceA, "충돌 재시도 뒤");
   assertNoChooser(deviceB, "충돌 재시도 뒤");
-  await waitUntil(() => /저장됨/u.test(saverDevice.container.textContent ?? ""), 3000, "재시도가 성공하면 저장됨이 보여야 합니다.");
+  await waitUntil(() => /버전 저장 \d{2}:\d{2}/u.test(saverDevice.container.textContent ?? ""), 3000, "재시도가 성공하면 버전 저장 시각이 보여야 합니다.");
 });
 
 test("room에 연결된 동안 D1 저장(이력)은 바로 하지 않고 기다렸다가, 편집기 밖으로 나가면 그때 한 번 저장한다", { concurrency: false }, async (context) => {

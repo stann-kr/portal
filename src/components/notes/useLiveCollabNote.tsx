@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
+import { useRouter } from "next/navigation";
 import { RichTextContent } from "@/components/editor/RichTextContent";
 import { createFullEditorExtensions } from "@/components/editor/FullEditor";
 import { formatCollabDocKey } from "@/lib/collab/doc-key";
@@ -75,9 +76,13 @@ export function useLiveCollabNote(
     const doc = collab.doc;
     if (!doc || !collab.ready) return;
     let timer: ReturnType<typeof setTimeout> | null = null;
+    let remoteAt: number | null = null;
     const capture = () => {
       timer = null;
       if (doc.isDestroyed) return;
+      // 입력마다 다시 그리지 않도록 "마지막으로 바뀐 시각"도 내용과 함께 300ms에 한 번만 올린다.
+      if (remoteAt !== null) setChangedAt(remoteAt);
+      remoteAt = null;
       const meta = doc.getMap(COLLAB_META);
       const next = {
         title: typeof meta.get("title") === "string" ? (meta.get("title") as string) : "",
@@ -88,7 +93,7 @@ export function useLiveCollabNote(
       onChangedRef.current?.(next);
     };
     const handleUpdate = (_update: Uint8Array, origin: unknown) => {
-      if (origin !== "seed") setChangedAt(Date.now());
+      if (origin !== "seed") remoteAt = Date.now();
       if (!timer) timer = setTimeout(capture, 300);
     };
     capture();
@@ -98,6 +103,15 @@ export function useLiveCollabNote(
       if (timer) clearTimeout(timer);
     };
   }, [collab.doc, collab.ready, getExtensions]);
+
+  // 관리자가 학생 편집을 다시 열면 연결이 쓰기 토큰으로 다시 붙는다. 그때 화면을 서버에서 다시 받아 편집 화면으로 바꾼다.
+  const router = useRouter();
+  const previousModeRef = useRef(collab.mode);
+  useEffect(() => {
+    const previous = previousModeRef.current;
+    previousModeRef.current = collab.mode;
+    if (previous === "read" && collab.mode === "write") router.refresh();
+  }, [collab.mode, router]);
 
   const missing = collab.status === "denied";
   const collaboration = useMemo(

@@ -5,6 +5,7 @@ import {
   beginCollabRoomRestore,
   closeCollabRoom,
   downgradeCollabRoomUsers,
+  refreshCollabRoomUsers,
   holdCollabRoomRestore,
   notifyCollabRoom,
   readCollabRoomContributors,
@@ -225,6 +226,13 @@ export async function downgradeCollabRoomUsersAfterMutation(key: string, userIds
   const env = readCollabWorkerEnv();
   if (!env || userIds.length === 0) return;
   await withRetry("collab_room_downgrade", key, () => downgradeCollabRoomUsers(env, key, userIds));
+}
+
+/** 관리자가 학생 편집을 다시 연 뒤 열린 학생 연결이 바로 새 토큰(쓰기)을 받게 한다. 실패해도 1분 갱신 때 따라온다. */
+export async function refreshCollabRoomUsersAfterMutation(key: string, userIds: readonly string[]): Promise<void> {
+  const env = readCollabWorkerEnv();
+  if (!env || userIds.length === 0) return;
+  await withRetry("collab_room_refresh", key, () => refreshCollabRoomUsers(env, key, userIds));
 }
 
 /** 답글·학생 최근 노트 알림. 저장 응답을 늦추지 않도록 응답 뒤에 보낸다(실패해도 화면은 30초 재조회로 따라온다). */

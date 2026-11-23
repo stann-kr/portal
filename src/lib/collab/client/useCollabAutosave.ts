@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import type * as Y from "yjs";
+import * as Y from "yjs";
 import { collabSavedMarker } from "../saved-marker";
 import { COLLAB_META } from "./seed";
 
@@ -35,6 +35,11 @@ export type CollabAutosaveOptions<S> = {
   roomBacked?: boolean;
   /** 저장 성공(또는 이미 저장된 내용과 같음) 뒤 room 상태의 저장 표지(snapshot). room이 "밀린 내용 없음"을 알게 한다. */
   onSaved?: (stateVector: Uint8Array) => void;
+  /**
+   * 저장이 받아들여졌을 때 그 스냅샷을 만든 순간의 state vector. 그 뒤 더 바뀌었어도 room이 이 지점까지 편집한
+   * 사람을 편집자 목록에서 빼게 한다(계속 함께 쓰는 중에도 다음 버전 편집자가 쌓이지 않게).
+   */
+  onAccepted?: (stateVector: Uint8Array) => void;
 };
 
 export const COLLAB_META_SAVED_HASH = "savedHash";
@@ -68,6 +73,7 @@ export function useCollabAutosave<S>({
   maxWaitMs: maxWaitMsOption,
   roomBacked = false,
   onSaved,
+  onAccepted,
 }: CollabAutosaveOptions<S>) {
   const idleMs = idleMsOption ?? (roomBacked ? COLLAB_ROOM_BACKED_SAVE.idleMs : 1500);
   const maxWaitMs = maxWaitMsOption ?? (roomBacked ? COLLAB_ROOM_BACKED_SAVE.maxWaitMs : 10_000);
@@ -78,11 +84,13 @@ export function useCollabAutosave<S>({
   const readRef = useRef(readSnapshot);
   const saveRef = useRef(save);
   const onSavedRef = useRef(onSaved);
+  const onAcceptedRef = useRef(onAccepted);
   const activeRef = useRef(false);
   useEffect(() => {
     readRef.current = readSnapshot;
     saveRef.current = save;
     onSavedRef.current = onSaved;
+    onAcceptedRef.current = onAccepted;
     roomBackedRef.current = roomBacked;
     activeRef.current = enabled && isSaver && Boolean(doc);
   });
@@ -120,6 +128,7 @@ export function useCollabAutosave<S>({
       setStatus("blocked");
       return;
     }
+    const snapshotSv = Y.encodeStateVector(doc);
     const hash = collabSnapshotHash(snapshot);
     const meta = doc.getMap(COLLAB_META);
     if (meta.get(COLLAB_META_SAVED_HASH) === hash) {
@@ -141,6 +150,7 @@ export function useCollabAutosave<S>({
         setSavedAt(new Date());
         setStatus("saved");
         if (!doc.isDestroyed) doc.transact(() => meta.set(COLLAB_META_SAVED_HASH, hash), "collab-autosave-meta");
+        onAcceptedRef.current?.(snapshotSv);
         reportSavedIfCurrent(hash);
       } else if ("deferred" in result) {
         // 복원 반영을 기다린다: 같은 스냅샷은 다시 보내지 않고, 문서가 바뀌면(복원 적용) 다시 저장한다.
@@ -180,8 +190,12 @@ export function useCollabAutosave<S>({
     const handleUpdate = (_update: Uint8Array, origin: unknown) => {
       // 저장 표시(meta.savedHash)만 바뀐 update는 다시 저장할 이유가 아니다.
       if (origin === "collab-autosave-meta") return;
-      const snapshot = activeRef.current ? readRef.current() : null;
-      if (snapshot !== null && failedHashRef.current === collabSnapshotHash(snapshot)) return;
+      // 실패·보류한 스냅샷이 있을 때만 지금 내용과 비교한다. 노트는 스냅샷이 문서 전체 HTML 변환이라
+      // 입력마다 만들면 긴 노트에서 타이핑이 무거워진다(누가 친 글자든 저장 담당 탭이 매번 계산한다).
+      if (failedHashRef.current !== null && activeRef.current) {
+        const snapshot = readRef.current();
+        if (snapshot !== null && failedHashRef.current === collabSnapshotHash(snapshot)) return;
+      }
       schedule();
     };
     doc.on("update", handleUpdate);
