@@ -10,6 +10,7 @@ import { buildGroupLessonNoteLink, buildLessonNoteLink, LESSON_NOTE_LINK_CLASS }
 import { GroupLessonBadge } from "@/components/calendar/GroupLessonBadge";
 import type { LessonGroupSummary } from "@/lib/lesson-group-rules";
 import { ADMIN_WORK_QUEUE_PATH, buildAssignmentQueueHref, buildQnaQueueHref } from "@/lib/admin-work-queue";
+import { ADMIN_ASSIGNMENTS_HREF } from "@/components/app-shell/navigation";
 import { UndoToast, type UndoToastMessage } from "./UndoToast";
 import {
   getAdminWorkQueue,
@@ -27,7 +28,6 @@ import { isCurriculumVisible } from "@/lib/curriculum-visibility";
 import {
   LEDGER_ADD_ROW_CLASS,
   LEDGER_HEADER_LINK_CLASS,
-  LEDGER_HEADER_NOTE_CLASS,
   LEDGER_ROW_CLASS,
   LedgerEmptyRow,
   LedgerSection,
@@ -309,7 +309,11 @@ export function AdminWorkQueueSection({
               id="pending-feedback-heading"
               title="피드백 대기"
               count={<span className="md:hidden">{queue.metrics.pendingFeedbackCount}</span>}
-              aside={<span className={cn(LEDGER_HEADER_NOTE_CLASS, "hidden md:inline")}>오래된 순</span>}
+              aside={
+                <Link href={ADMIN_ASSIGNMENTS_HREF} className={cn(LEDGER_HEADER_LINK_CLASS, "min-w-11 justify-end")}>
+                  전체 과제
+                </Link>
+              }
             />
             {queue.pendingAssignments.length === 0 ? (
               <LedgerEmptyRow>피드백 대기가 없습니다. 모든 제출을 처리했습니다.</LedgerEmptyRow>

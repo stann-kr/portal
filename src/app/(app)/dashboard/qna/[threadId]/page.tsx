@@ -10,6 +10,7 @@ import { getOpenQnaQueue, getQnaThreadIncludingTrash } from "@/lib/actions/qna";
 import { ADMIN_WORK_QUEUE_PATH, buildQnaQueueHref, getNextOpenThread } from "@/lib/admin-work-queue";
 import type { QueueNext } from "@/components/admin/assignments/AssignmentReviewControls";
 import { ThreadDetailClient } from "@/components/qna/ThreadDetailClient";
+import { buildAdminStudentDetailHref } from "@/lib/student-space-routes";
 import { CollabNotifyRefresh } from "@/components/app-shell/CollabNotifyRefresh";
 import { RouteAutoRefresh } from "@/components/app-shell/RouteAutoRefresh";
 import type { QnaStatus } from "@/db/schema";
@@ -84,6 +85,7 @@ export default async function QnaThreadPage({
           actorId={session.user.id!}
           title={thread.title}
           studentName={studentName}
+          studentHref={isAdmin ? buildAdminStudentDetailHref(thread.studentId, "qna") : null}
           createdAt={thread.createdAt?.toISOString() ?? null}
           returnTo={returnTo}
           backToWorkQueue={returnTo === ADMIN_WORK_QUEUE_PATH}

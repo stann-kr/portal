@@ -89,6 +89,8 @@ interface ThreadDetailClientProps {
   actorId: string;
   title: string;
   studentName: string;
+  /** 관리자가 보면 학생 이름을 그 학생 Q&A 탭 링크로 둔다(캔버스 AdminUx1123 ④). */
+  studentHref?: string | null;
   createdAt: string | null;
   returnTo: string;
   /** 업무함에서 연 질문이면 돌아가기 이름이 "업무함으로"가 된다(캔버스 UxReview1120Admin ①). */
@@ -115,6 +117,7 @@ function ThreadDetailContent({
   actorId,
   title,
   studentName,
+  studentHref = null,
   createdAt,
   returnTo,
   backToWorkQueue = false,
@@ -337,7 +340,16 @@ function ThreadDetailContent({
             <QnaStatusLabel status={currentStatus} />
             <span aria-hidden="true">·</span>
             <span>
-              {isAdmin ? `${studentName} · ` : null}
+              {isAdmin ? (
+                <>
+                  {studentHref ? (
+                    <Link href={studentHref} className="rounded-sm text-secondary-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                      {studentName}
+                    </Link>
+                  ) : studentName}
+                  {" · "}
+                </>
+              ) : null}
               {longDate ? (
                 <>
                   <span className="md:hidden">{shortDate} 질문</span>
