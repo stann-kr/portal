@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import * as Y from "yjs";
 import * as syncProtocol from "y-protocols/sync";
+import * as awarenessProtocol from "y-protocols/awareness";
 import * as encoding from "lib0/encoding";
 import { COLLAB_MESSAGE_CONTROL, COLLAB_MESSAGE_SYNC } from "../protocol";
 import { CollabProvider } from "./provider";
@@ -158,6 +159,33 @@ test("활동 없이 기준 시간이 지나면 연결을 놓고(쉬는 중), 이
   const again = await connected(provider, 0);
   assert.ok(again, "입력하면 다시 연결한다");
   assert.ok(statuses.includes("paused") && statuses.at(-1) !== "paused");
+});
+
+function addPeer(provider: CollabProvider, userId: string) {
+  const peer = new awarenessProtocol.Awareness(new Y.Doc());
+  peer.setLocalStateField("user", { userId, name: userId, colorIndex: 0 });
+  awarenessProtocol.applyAwarenessUpdate(provider.awareness, awarenessProtocol.encodeAwarenessUpdate(peer, [peer.clientID]), provider);
+  peer.destroy();
+}
+
+test("다른 사람이 같은 문서를 함께 보고 있으면 입력이 없어도 쉬지 않는다", async (t) => {
+  const { provider } = makeIdleProvider();
+  t.after(() => provider.destroy());
+  const socket = await connected(provider, 0);
+  socket.deliver(sync("step2", remoteUpdate("room")));
+  addPeer(provider, "student");
+  for (let i = 0; i < 20; i += 1) await tick();
+  assert.equal(provider.status, "connected", "함께 있는 사람이 있으면 연결을 유지한다");
+});
+
+test("같은 계정의 다른 탭만 있으면 기준대로 쉰다", async (t) => {
+  const { provider } = makeIdleProvider();
+  t.after(() => provider.destroy());
+  const socket = await connected(provider, 0);
+  socket.deliver(sync("step2", remoteUpdate("room")));
+  addPeer(provider, "u");
+  for (let i = 0; i < 20 && provider.status !== "paused"; i += 1) await tick();
+  assert.equal(provider.status, "paused");
 });
 
 test("보내지 못한 입력이 있으면 쉬지 않는다", async (t) => {
