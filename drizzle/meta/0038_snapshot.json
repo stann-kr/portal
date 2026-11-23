@@ -2277,7 +2277,8 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false
+          "autoincrement": false,
+          "default": "(strftime('%Y-%m-%d', 'now', '+9 hours'))"
         },
         "created_at": {
           "name": "created_at",

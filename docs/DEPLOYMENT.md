@@ -204,7 +204,7 @@ iCloud 연동:
 
 ### 과제 완료·디깅 피드백 gate (2026-11-23)
 
-1. 적용 전 read-only로 `SELECT COUNT(*) FROM digging_playlists`를 적어 둔다. 원격 D1에 `0038_flow_gaps`를 **코드보다 먼저** 적용한다(Time Travel bookmark 먼저, `0037` 적용 뒤). 새 표 두 개와 nullable 칸 셋을 더하고, `digging_playlists`는 `dug_on`(NOT NULL)을 더하려고 `PRAGMA defer_foreign_keys`로 재구성한다(다른 표가 이 표를 참조하지 않는다). 이전 코드는 칸 이름을 명시해 쓰므로 먼저 적용해도 동작이 같다.
+1. 적용 전 read-only로 `SELECT COUNT(*) FROM digging_playlists`를 적어 둔다. 원격 D1에 `0038_flow_gaps`를 **코드보다 먼저** 적용한다(Time Travel bookmark 먼저, `0037` 적용 뒤). 새 표 두 개와 nullable 칸 셋을 더하고, `digging_playlists`는 `dug_on`(NOT NULL, 기본값 오늘 KST 날짜)을 더하려고 `PRAGMA defer_foreign_keys`로 재구성한다(다른 표가 이 표를 참조하지 않는다). 이전 코드는 칸 이름을 명시해 쓰고 `dug_on`을 모르는 플레이리스트 INSERT는 기본값을 받으므로 먼저 적용해도 동작이 같다(`db:check`가 이전 코드의 INSERT를 검사한다).
 2. 순서를 바꾸면 안 된다. 새 코드가 칸·표 없이 나가면 과제 목록·디깅·댓글 화면이 오류가 된다.
 3. 적용 뒤 read-only로 `SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1`, `PRAGMA table_info(digging_playlists)`(dug_on), 재구성 뒤 `digging_playlists` 행 수(적용 전과 같음), `SELECT COUNT(*) FROM digging_playlists WHERE length(dug_on) <> 10`(0), `PRAGMA foreign_key_check`(빈 결과)를 본다.
 4. 새 secret·binding은 없다. 운영 smoke는 read-only로 한다.

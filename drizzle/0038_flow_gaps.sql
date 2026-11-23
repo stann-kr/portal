@@ -29,7 +29,7 @@ CREATE TABLE `__new_digging_playlists` (
 	`url` text NOT NULL,
 	`title` text,
 	`note` text,
-	`dug_on` text NOT NULL,
+	`dug_on` text DEFAULT (strftime('%Y-%m-%d', 'now', '+9 hours')) NOT NULL,
 	`created_at` integer DEFAULT (strftime('%s', 'now')) NOT NULL,
 	`updated_at` integer DEFAULT (strftime('%s', 'now')) NOT NULL,
 	FOREIGN KEY (`user_id`) REFERENCES `profiles`(`id`) ON UPDATE no action ON DELETE cascade,

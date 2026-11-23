@@ -254,9 +254,10 @@ test("디깅 피드백은 관리자만 날짜마다 하나 남기고, 학생은 
   assert.deepEqual(
     overview.days.map((day) => [day.studentId, day.dugOn, day.trackCount, day.playlistCount, day.feedback?.body ?? null]),
     [
-      ["student-1", "2026-11-23", 2, 0, "고친 피드백"],
+      // 피드백 전인 날을 먼저(줄 수 제한에 잘리지 않게), 그 안에서 최근 순.
       ["student-1", "2026-11-21", 0, 1, null],
       ["student-2", "2026-11-20", 1, 0, null],
+      ["student-1", "2026-11-23", 2, 0, "고친 피드백"],
     ],
   );
   const filtered = await feedbackActions.getAdminDiggingOverview({ studentId: "student-2" });

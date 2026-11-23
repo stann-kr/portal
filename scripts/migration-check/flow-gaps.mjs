@@ -100,9 +100,18 @@ export async function validateFlowGapsUpgrade(migrationFiles) {
       rejects(database, "INSERT INTO digging_playlists (id, user_id, provider, url, dug_on) VALUES ('fg-bad-date', 'fg-student', 'beatport', 'https://www.beatport.com/playlists/share/2', '11-23');"),
       "0038 dug_on 날짜 형식 제한이 없습니다.",
     );
+    // 이전 코드(dug_on을 모르는 INSERT·칸을 모르는 과제·피드백·댓글 INSERT)는 migration 적용 뒤·코드 되돌린 뒤에도 성공해야 한다.
+    database.exec(`
+      INSERT INTO digging_playlists (id, user_id, provider, url, title, note, created_at, updated_at)
+      SELECT 'fg-old-code', 'fg-student', 'beatport', 'https://www.beatport.com/playlists/share/3', NULL, NULL, 1779500000, 1779500000;
+      INSERT INTO assignment_tasks (id, student_id, title, submission_format) VALUES ('fg-old-task', 'fg-student', 'Old', 'TEXT');
+      INSERT INTO feedbacks (id, assignment_id, content) VALUES ('fg-old-feedback', 'fg-assignment', 'old');
+      INSERT INTO comments (id, post_id, author_id, content_html) VALUES ('fg-old-comment', 'fg-post', 'fg-student', '<p>o</p>');
+    `);
+    const [oldCodeRow] = database.all("SELECT dug_on FROM digging_playlists WHERE id = 'fg-old-code';");
     assert(
-      rejects(database, "INSERT INTO digging_playlists (id, user_id, provider, url) VALUES ('fg-no-date', 'fg-student', 'beatport', 'https://www.beatport.com/playlists/share/3');"),
-      "0038 dug_on 없는 플레이리스트를 받았습니다.",
+      /^\d{4}-\d{2}-\d{2}$/u.test(String(oldCodeRow?.dug_on)),
+      "0038 dug_on 기본값(오늘 KST)이 없어 이전 코드의 플레이리스트 INSERT가 실패합니다.",
     );
 
     database.exec(`

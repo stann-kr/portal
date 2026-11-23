@@ -69,8 +69,15 @@ type DayRow = {
 /**
  * 학생들의 디깅한 날(최근 순). 학생 id 목록은 json 하나로 bind한다(D1 bind 100개 제한).
  * 트랙 날짜는 디깅 보드와 같이 created_at의 KST 날짜다.
+ * `waitingFirst`면 피드백 전인 날을 먼저 담아, 줄 수 제한 때문에 오래된 피드백 전 날이 빠지지 않게 한다
+ * (관리자 디깅은 두 목록으로 나눠 보이므로 각 목록 안의 최근 순은 그대로다).
  */
-async function loadDiggingDays(db: DrizzleDb, studentIds: readonly string[], limit: number): Promise<DiggingDay[]> {
+async function loadDiggingDays(
+  db: DrizzleDb,
+  studentIds: readonly string[],
+  limit: number,
+  { waitingFirst = false }: { waitingFirst?: boolean } = {},
+): Promise<DiggingDay[]> {
   if (studentIds.length === 0) return [];
   const ids = JSON.stringify(studentIds);
   const rows = await db.all<DayRow>(sql`
@@ -95,7 +102,7 @@ async function loadDiggingDays(db: DrizzleDb, studentIds: readonly string[], lim
     SELECT g.student_id, g.dug_on, g.track_count, g.playlist_count, fb.body, fb.created_at, fb.updated_at
     FROM grouped AS g
     LEFT JOIN digging_feedbacks AS fb ON fb.student_id = g.student_id AND fb.dug_on = g.dug_on
-    ORDER BY g.dug_on DESC, g.student_id
+    ORDER BY ${waitingFirst ? sql`(fb.student_id IS NULL) DESC, ` : sql``}g.dug_on DESC, g.student_id
     LIMIT ${limit}`);
   return rows.map((row) => ({
     studentId: row.student_id,
@@ -125,7 +132,7 @@ export async function getAdminDiggingOverview(input: { studentId?: string | null
     ? input.studentId
     : null;
   const ids = selectedStudentId ? [selectedStudentId] : students.map((student) => student.id);
-  return { students, selectedStudentId, days: await loadDiggingDays(db, ids, ADMIN_DIGGING_DAY_LIMIT) };
+  return { students, selectedStudentId, days: await loadDiggingDays(db, ids, ADMIN_DIGGING_DAY_LIMIT, { waitingFirst: true }) };
 }
 
 /** 관리자 학생 상세 디깅 탭: 그 학생의 디깅한 날과 피드백. */

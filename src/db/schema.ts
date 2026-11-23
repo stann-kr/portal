@@ -1513,9 +1513,10 @@ export const diggingPlaylists = sqliteTable(
     note: text("note"),
     /**
      * 디깅한 날(KST YYYY-MM-DD). 학생이 고르며 기본은 올린 날이다. 트랙 보드의 날짜 묶음·디깅 피드백과 같은 날짜 key다.
-     * 0038 전 행은 올린 날(created_at의 KST 날짜)로 채웠다.
+     * 0038 전 행은 올린 날(created_at의 KST 날짜)로 채웠다. 기본값(오늘 KST)은 이 칸을 모르는 이전 코드의 INSERT가
+     * migration 적용 뒤·코드 되돌린 뒤에도 성공하게 한다.
      */
-    dugOn: text("dug_on").notNull(),
+    dugOn: text("dug_on").default(sql`(strftime('%Y-%m-%d', 'now', '+9 hours'))`).notNull(),
     createdAt: integer("created_at", { mode: "timestamp" })
       .default(sql`(strftime('%s', 'now'))`)
       .notNull(),
