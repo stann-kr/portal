@@ -3,7 +3,8 @@
 /**
  * 관리자가 노트의 학생 편집을 막거나 푼다(2026-11-23 사용자 결정, 0036 `student_read_only`). 기본은 함께 쓰기다.
  * 관리자가 만든 노트(개인·그룹)만 바꿀 수 있다. 학생이 만든 노트는 그 학생 것이라 막지 않는다(`canToggleStudentReadOnly`).
- * 막으면 열린 학생 편집 연결을 바로 읽기로 내린다. 풀면 학생이 노트를 다시 열 때부터 편집한다(읽기 연결은 올리지 않는다).
+ * 막으면 열린 학생 편집 연결을 바로 읽기로 내리고, 막기 전에 받아 둔 쓰기 토큰도 room이 읽기로 받는다.
+ * 풀면 열린 학생 연결에 새 토큰을 바로 받게 해, 노트를 다시 열지 않아도 편집 화면으로 바뀐다.
  */
 import { revalidatePath } from "next/cache";
 import { and, eq, isNull } from "drizzle-orm";
@@ -11,7 +12,7 @@ import { createDb, createDbContext } from "@/db/client";
 import { privateNotes, profiles } from "@/db/schema";
 import { requireAdmin } from "@/lib/auth-guard";
 import { formatCollabDocKey } from "@/lib/collab/doc-key";
-import { downgradeCollabRoomUsersAfterMutation } from "@/lib/collab/server-env";
+import { downgradeCollabRoomUsersAfterMutation, refreshCollabRoomUsersAfterMutation } from "@/lib/collab/server-env";
 import { readLessonGroupMemberIds } from "@/lib/lesson-groups";
 import { canToggleStudentReadOnly } from "@/lib/note-access-rules";
 
@@ -47,13 +48,11 @@ export async function setNoteStudentReadOnly(noteId: string, studentReadOnly: bo
       .set({ studentReadOnly })
       .where(and(eq(privateNotes.id, note.id), eq(privateNotes.authorId, note.authorId), isNull(privateNotes.deletedAt)));
   }
-  if (studentReadOnly) {
-    const studentIds = note.groupId ? await readLessonGroupMemberIds(createDbContext(), note.groupId) : [note.studentId];
-    await downgradeCollabRoomUsersAfterMutation(
-      formatCollabDocKey({ kind: "note", id: note.id }),
-      studentIds.filter((id) => id !== note.authorId),
-    );
-  }
+  const studentIds = (note.groupId ? await readLessonGroupMemberIds(createDbContext(), note.groupId) : [note.studentId])
+    .filter((id) => id !== note.authorId);
+  const roomKey = formatCollabDocKey({ kind: "note", id: note.id });
+  if (studentReadOnly) await downgradeCollabRoomUsersAfterMutation(roomKey, studentIds);
+  else await refreshCollabRoomUsersAfterMutation(roomKey, studentIds);
   revalidatePath(`/dashboard/notes/${note.id}`);
   return { ok: true, studentReadOnly };
 }

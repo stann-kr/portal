@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import * as Y from "yjs";
 import { getSchema, type AnyExtension } from "@tiptap/core";
 import { updateYFragment, yDocToProsemirrorJSON } from "@tiptap/y-tiptap";
-import { CollabProvider, type CollabConnectionStatus, type CollabTokenRequest } from "./provider";
+import { CollabProvider, requestCollabToken, type CollabConnectionStatus, type CollabTokenRequest } from "./provider";
 import { COLLAB_FRAGMENT, COLLAB_META, COLLAB_META_SEEDED, isCollabDocSeeded, seedCollabDoc, buildCollabSeedUpdate, type CollabSeedInput } from "./seed";
 import { collabDocHtml } from "./doc-html";
 import { hasLocalChanges, mergeCollabDocuments, type MergeFields, type PmDoc } from "./merge";
@@ -16,6 +16,8 @@ import {
   deleteIndexedDb,
   isCollabOwnerLocked,
   rememberCollabDbName,
+  markCollabDocOpened,
+  pruneStaleCollabDocs,
   subscribeCollabOwnerClear,
   subscribeCollabOwnerLock,
 } from "./local-store";
@@ -67,7 +69,8 @@ export type CollabDocumentOptions = {
 export type CollabSeedResult = (CollabSeedInput & { lifecycle?: number }) | null | CollabSeedStop;
 
 /** 다시 적용 결과 안내: applied(자동 반영)·overlapped(겹친 부분을 둘 다 남김)·kept(반영 못 해 보관함에 남김)·restored(다른 기기의 복원이 들어옴). */
-export type CollabRebaseNotice = "applied" | "overlapped" | "kept" | "restored" | null;
+/** lost: 반영하지 못한 이 기기 입력을 보관함에도 남기지 못했다(저장 공간 부족 등). 화면의 내용을 직접 옮겨 두라고 알린다. */
+export type CollabRebaseNotice = "applied" | "overlapped" | "kept" | "lost" | "restored" | null;
 
 /**
  * 복원과 겹친 이 기기 입력의 선택 안내. offer: 유지/제거를 고를 수 있음(고르지 않아도 편집 계속).
@@ -90,6 +93,8 @@ export type CollabDocumentState = {
   epoch: number | null;
   /** 복원·제자리 합치기 작업이 남았다. 자동 저장은 이 동안 미룬다(입력은 계속 받는다). */
   rebasing: boolean;
+  /** 보낸 입력이 1초 넘게 room에서 확인되지 않고 있다(상태 줄 "동기화 중"). */
+  syncing: boolean;
   /** 최신 head 시드: loading(시도 중)·failed(재시도 대기)·stopped(멈춤). */
   seedState: "idle" | "loading" | "failed" | "stopped";
   seedMessage: string | null;
@@ -298,6 +303,7 @@ export function useCollabDocument(options: CollabDocumentOptions): CollabDocumen
     user: options.user,
     epoch: null,
     rebasing: false,
+    syncing: false,
     seedState: "idle",
     seedMessage: null,
     rebaseNotice: null,
@@ -611,7 +617,7 @@ export function useCollabDocument(options: CollabDocumentOptions): CollabDocumen
           (name) => !INTERNAL_META_FIELDS.has(name) && mineFields[name] !== baseFields[name] && merged.fields[name] !== mineFields[name],
         );
         if (!lostField) removeStorageItem(recoveryKey);
-        const notice: CollabRebaseNotice = lostField ? "kept" : merged.changed && hasLocalChanges(base, mine, baseFields, mineFields) ? (merged.conflicts > 0 ? "overlapped" : "applied") : null;
+        const notice: CollabRebaseNotice = lostField ? (recoveryKey ? "kept" : "lost") : merged.changed && hasLocalChanges(base, mine, baseFields, mineFields) ? (merged.conflicts > 0 ? "overlapped" : "applied") : null;
         if (notice) update({ rebaseNotice: notice });
       } finally {
         roomDoc.destroy();
@@ -723,7 +729,13 @@ export function useCollabDocument(options: CollabDocumentOptions): CollabDocumen
     }
 
     void (async () => {
+      // 기기 보관본을 여는 동안 토큰을 함께 받는다(첫 연결이 두 일을 차례로 기다리지 않게).
+      const initialToken = typeof window === "undefined" ? null : requestCollabToken(parsedRequest);
+      initialToken?.catch(() => undefined);
       if (docName && confirmedName && owner && rememberCollabDbName(owner, docName) && rememberCollabDbName(owner, confirmedName)) {
+        // 연 시각을 남기고(닫을 때 모두 맞췄는지 다시 적는다), 오래 열지 않은 다른 문서의 보관본을 뒤에서 정리한다.
+        markCollabDocOpened(owner, storageKey, false);
+        void pruneStaleCollabDocs(owner, { keep: storageKey }).catch(() => undefined);
         [persistence, confirmedPersistence] = await Promise.all([openPersistence(docName, doc), openPersistence(confirmedName, confirmed)]);
         if (ownerCleared || isCollabOwnerLocked(owner)) {
           // 여는 사이 로그아웃·계정 정리가 지나갔으면 방금 만든 DB를 닫고 지운다(정리 뒤 다시 생기지 않게).
@@ -752,6 +764,7 @@ export function useCollabDocument(options: CollabDocumentOptions): CollabDocumen
         request: parsedRequest,
         localEpoch: stored ? stored.gen : null,
         confirmed,
+        initialToken,
         // 서버와 한 번도 맞춘 적 없는 기기 상태(오프라인 첫 열기 선시드)는 room에 바로 합치지 않는다.
         shouldHold: () => !syncedRecorded && isCollabDocSeeded(doc),
       });
@@ -774,9 +787,10 @@ export function useCollabDocument(options: CollabDocumentOptions): CollabDocumen
         provider.on("mode", (mode) => {
           if (mode === "read") {
             // 읽기로 바뀐 순간 보내지 못한 입력은 room에 들어갈 수 없다. 보관함 사본으로 남긴다.
-            if (provider?.hasUnsentChanges() && saveCollabRecoveryCopy(owner, storageKey, doc, optionsRef.current.extensions, provider.identity?.userId ?? null)) {
-              // 이 기기에 보이는 보내지 못한 입력은 문서에 들어가지 않는다. 보관함에 남겼음을 알린다.
-              update({ rebaseNotice: "kept" });
+            if (provider?.hasUnsentChanges()) {
+              // 이 기기에 보이는 보내지 못한 입력은 문서에 들어가지 않는다. 보관함에 남겼는지(남기지 못했는지) 알린다.
+              const kept = saveCollabRecoveryCopy(owner, storageKey, doc, optionsRef.current.extensions, provider.identity?.userId ?? null);
+              update({ rebaseNotice: kept ? "kept" : "lost" });
             }
             abandonJobs();
             choiceRef.current?.undo?.destroy();
@@ -787,6 +801,7 @@ export function useCollabDocument(options: CollabDocumentOptions): CollabDocumen
           publishAwareness();
           void trySeed(false);
         }),
+        provider.on("syncing", (syncing) => update({ syncing })),
         provider.on("hold", (roomState) => handleHold(roomState)),
         provider.on("restoring", () => {
           // 이 순간 confirmed는 복원 기준 C와 같다. C 밖의 이 기기 입력만 다시 맞출 대상이다.
@@ -857,6 +872,11 @@ export function useCollabDocument(options: CollabDocumentOptions): CollabDocumen
       for (const unsubscribe of unsubscribers) unsubscribe();
       choiceRef.current?.undo?.destroy();
       choiceRef.current = null;
+      // room과 한 번이라도 맞췄고 보낼 것·남은 작업이 없으면 "모두 맞춘 채 닫음"으로 남긴다(오래 안 열면 정리 대상).
+      if (owner && docName) {
+        const clean = syncedRecorded && provider !== null && provider.status !== "solo" && !provider.hasUnsentChanges() && pendingJobs().length === 0;
+        markCollabDocOpened(owner, storageKey, clean);
+      }
       provider?.destroy();
       providerRef.current = null;
       if (docRef.current === doc) docRef.current = null;

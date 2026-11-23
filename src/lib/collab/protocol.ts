@@ -58,12 +58,19 @@ export type CollabControlMessage =
   /** 권한이 읽기로 바뀌었다. */
   | { t: "mode"; mode: CollabMode }
   /** 알림 room: 대상이 바뀌었다(seq는 room이 매긴 순번). */
-  | { t: "changed"; seq: number };
+  | { t: "changed"; seq: number }
+  /** 권한이 바뀌었을 수 있다(관리자가 학생 편집을 다시 열었다): 바로 새 토큰을 받아 본다. */
+  | { t: "refresh" };
 
 /** 클라이언트 → room control. */
 export type CollabClientControlMessage =
   /** 저장 성공(또는 이미 저장된 내용과 같음). sv는 저장한 내용의 Yjs snapshot(delete set 포함, base64). */
   | { t: "saved"; sv: string }
+  /**
+   * 저장이 받아들여졌다. sv는 저장한 스냅샷을 만들 때의 state vector(base64)다. 그 뒤로 더 바뀌었어도
+   * 이 sv까지의 편집만 한 사람은 그 버전에 기록됐으므로 room의 편집자 목록에서 뺀다.
+   */
+  | { t: "saved-upto"; sv: string }
   | { t: "renew"; token: string };
 
 
@@ -99,5 +106,7 @@ export const COLLAB_ROOM_NOTIFY_URL = "https://collab-room/notify";
 export const COLLAB_ROOM_CONTRIBUTORS_URL = "https://collab-room/contributors";
 /** 지금 열린 쓰기 연결 중 주어진 사용자를 읽기로 내린다(관리자가 학생 편집을 막을 때). */
 export const COLLAB_ROOM_DOWNGRADE_URL = "https://collab-room/downgrade";
+/** 주어진 사용자의 열린 연결에 새 토큰을 바로 받게 한다(관리자가 학생 편집을 다시 열 때). */
+export const COLLAB_ROOM_REFRESH_URL = "https://collab-room/refresh";
 /** 저장 요청에 싣는 room epoch. 서버가 지금 room epoch와 다르면(복원·휴지통 뒤) 저장을 거부한다. */
 export const COLLAB_EPOCH_FIELD = "collabEpoch";

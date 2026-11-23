@@ -12,6 +12,7 @@ import {
   COLLAB_ROOM_NOTIFY_URL,
   COLLAB_ROOM_CONTRIBUTORS_URL,
   COLLAB_ROOM_DOWNGRADE_URL,
+  COLLAB_ROOM_REFRESH_URL,
   COLLAB_ROOM_RESET_URL,
   COLLAB_ROOM_RESTORE_ABORT_URL,
   COLLAB_ROOM_RESTORE_APPLY_URL,
@@ -194,6 +195,11 @@ export async function readCollabRoomContributors(env: CollabWorkerEnv | undefine
 /** 열린 쓰기 연결 중 주어진 사용자를 읽기로 내린다. binding이 없으면 false. */
 export async function downgradeCollabRoomUsers(env: CollabWorkerEnv | undefined, key: string, userIds: readonly string[]): Promise<boolean> {
   const response = await postRoom(env, key, COLLAB_ROOM_DOWNGRADE_URL, { userIds });
+  return Boolean(response?.ok);
+}
+
+export async function refreshCollabRoomUsers(env: CollabWorkerEnv | undefined, key: string, userIds: readonly string[]): Promise<boolean> {
+  const response = await postRoom(env, key, COLLAB_ROOM_REFRESH_URL, { userIds });
   return Boolean(response?.ok);
 }
 

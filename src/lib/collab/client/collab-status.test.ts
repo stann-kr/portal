@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { describeCollabPending, isCollabEditorPending } from "./collab-status";
+import { describeCollabPending, describeCollabStatus, isCollabEditorPending } from "./collab-status";
 
 const base = { connection: "connecting" as const, seedState: "idle" as const, seedMessage: null, slow: false };
 
@@ -32,4 +32,18 @@ test("기기 보관본으로 내용이 있어도 서버가 권한을 알려 주�
   assert.equal(isCollabEditorPending({ ready: true, mode: null, status: "offline" }), false);
   assert.equal(isCollabEditorPending({ ready: true, mode: "write", status: "connecting" }), false);
   assert.equal(isCollabEditorPending({ ready: true, mode: "read", status: "connected" }), false);
+});
+
+const statusBase = { mode: "write" as const, isSaver: true, autosaveError: null, blockedMessage: "b" };
+
+test("실시간 연결 중 확인이 늦으면 동기화 중, 버전 저장 대기는 보관됨, 저장 뒤에는 버전 시각을 보인다", () => {
+  assert.equal(describeCollabStatus({ ...statusBase, connection: "connected", autosave: "saved", syncing: true }).shortMessage, "동기화 중");
+  const pending = describeCollabStatus({ ...statusBase, connection: "connected", autosave: "pending" });
+  assert.equal(pending.kind, "saved");
+  assert.equal(pending.shortMessage, "보관됨");
+  assert.equal(describeCollabStatus({ ...statusBase, connection: "offline", autosave: "pending" }).shortMessage, "오프라인");
+  assert.equal(describeCollabStatus({ ...statusBase, connection: "solo", autosave: "pending" }).message, "곧 저장됩니다");
+  const at = new Date(2026, 10, 23, 9, 5);
+  assert.equal(describeCollabStatus({ ...statusBase, connection: "connected", autosave: "saved", savedAt: at }).message, "버전 저장 09:05 · 실시간 연결됨");
+  assert.equal(describeCollabStatus({ ...statusBase, connection: "solo", autosave: "saved", savedAt: at }).message, "저장됨 · 09:05");
 });
