@@ -582,6 +582,9 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 
 - 화면: `/dashboard/admin/assignments`(`getAdminAssignmentsOverview`, `src/lib/actions/admin-assignments.ts`)는 `requireAdmin` 뒤 수강 중인 학생(앞 90명, D1 bind 한도)마다 정기 과제 회차를 만들고 피드백 대기·안 낸 과제(최대 200)·최근 30일 피드백(최대 30)을 읽는다. 학생 필터는 수강 중인 학생 id만 받는다. 마감 표시는 KST 날짜(`toKstDateInputValue`)로 비교한다.
 - 대상 고르기: `/dashboard/admin/notes/new`·`/dashboard/admin/assignments/new`(`CreateTargetPicker`, `buildCreateStudentTargets`). 주소는 `src/lib/admin-create-links.ts`의 `buildAdminNoteComposeHref`·`buildAdminAssignmentComposeHref`(학생 상세 과제 탭 `?compose=task&returnTo=`)다. 과제 탭은 `compose`로 폼을 펼친 뒤 `replaceState`로 `compose`·`returnTo`를 지우고, 저장·닫기 때만 `returnTo`로 돌아간다(그 뒤 다시 연 폼은 과제 탭에 머문다).
+- 필터 기억: `src/lib/admin-list-filter-memory.ts`. `NotesStudentFilter`(`remember`)가 고를 때와 그려질 때 cookie(학생 id 또는 빈 값, 180일, `SameSite=Lax`)를 쓰고, 전체 노트·과제 page는 주소에 `student`가 없을 때만 읽는다(`resolveRememberedStudent`). 서버가 수강 중인 학생과 다시 맞춘다.
+- Q&A 학생 필터: `/dashboard/qna`(관리자)가 받은 질문의 학생으로 선택지를 만들고 `qnaStudent`가 그중 하나일 때만 거른다. `buildQnaListHref`·`buildQnaStudentHref`가 상태·검색·복귀와 함께 주소에 싣는다.
+- 일정 "전체 학생"의 더 보기 "새 노트"는 `ADMIN_NOTE_PICKER_HREF?returnTo=<일정>`. 대상 고르기 두 화면의 뒤로 이름은 `resolveNoteParent(returnTo).backLabel`.
 - 머리: `StudentDetailHead`를 학생 상세와 노트 탭이 함께 쓴다. 그룹 이름 표시는 `formatGroupLabel`(끝이 "그룹"이면 덧붙이지 않음). 검증: `src/test/admin-assignments.integration.ts`(실제 D1), `navigation.test.ts`, `StudentManagementSection.test.ts`.
 
 ## 노트 읽기 전용·버전 편집자(2026-11-23)

@@ -3,6 +3,7 @@
  * 학생을 고르면 그 학생 과제 탭의 "과제 내기" 폼을 펼친다. 같은 과제를 여러 학생에게 내려면 폼의 "다른 학생에게도 내기"를 쓴다.
  */
 import { redirect } from "next/navigation";
+import { resolveNoteParent } from "@/components/notes/NoteDocumentChrome";
 import { CreateTargetPicker } from "@/components/admin/CreateTargetPicker";
 import { getActiveAuthSession } from "@/lib/auth-guard";
 import { getStudentRosterStats } from "@/lib/actions/students";
@@ -28,7 +29,7 @@ export default async function AdminAssignmentPickerPage({ searchParams }: { sear
       pageTitle="과제 내기"
       heading="누구에게 과제를 낼까요?"
       hint="같은 과제를 여러 학생에게 내려면 폼의 '다른 학생에게도 내기'에서 더 고릅니다."
-      back={{ href: returnTo, label: returnTo === ASSIGNMENTS_HREF ? "과제로" : "이전 화면으로" }}
+      back={{ href: returnTo, label: resolveNoteParent(returnTo).backLabel }}
       students={buildCreateStudentTargets(students, getRequestNow(), (id) => buildAdminAssignmentComposeHref(id, returnTo))}
     />
   );

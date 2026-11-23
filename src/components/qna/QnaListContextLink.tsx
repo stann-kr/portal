@@ -7,16 +7,16 @@ import { buildQnaListHref } from "@/lib/qna-routes";
 import type { QnaFilterTab } from "@/lib/qna-status";
 import { useQnaListFilter } from "./qna-list-filter";
 
-type ListContext = { path: string; parentReturnTo: string; filter: QnaFilterTab; search: string };
+type ListContext = { path: string; parentReturnTo: string; filter: QnaFilterTab; search: string; student?: string | null };
 
-function useContextHref({ path, parentReturnTo, filter, search }: ListContext) {
+function useContextHref({ path, parentReturnTo, filter, search, student = null }: ListContext) {
   const current = useQnaListFilter(filter);
-  return `${path}?returnTo=${encodeURIComponent(buildQnaListHref(parentReturnTo, current, search))}`;
+  return `${path}?returnTo=${encodeURIComponent(buildQnaListHref(parentReturnTo, current, search, student))}`;
 }
 
 /** Q&A 목록 머리의 휴지통·새 질문 링크. 화면 안에서 바꾼 상태 탭까지 복귀 문맥에 싣는다. */
-export function QnaListContextLink({ path, parentReturnTo, filter, search, ...props }: ListContext & Omit<ComponentPropsWithoutRef<typeof Link>, "href">) {
-  return <Link {...props} href={useContextHref({ path, parentReturnTo, filter, search })} />;
+export function QnaListContextLink({ path, parentReturnTo, filter, search, student, ...props }: ListContext & Omit<ComponentPropsWithoutRef<typeof Link>, "href">) {
+  return <Link {...props} href={useContextHref({ path, parentReturnTo, filter, search, student })} />;
 }
 
 /** 좁은 화면 위쪽 막대의 새 질문(+)도 같은 문맥으로. */

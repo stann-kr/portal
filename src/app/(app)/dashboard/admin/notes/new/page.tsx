@@ -1,9 +1,10 @@
 /**
  * 관리자 새 노트 대상 고르기(캔버스 AdminUx1123 ①). 전체 노트(전체 학생)의 "새 노트"와 위쪽 막대 +가 이 화면을 연다.
- * 그룹을 고르면 첫 멤버의 composer를 그룹 노트로, 학생을 고르면 그 학생 노트로 연다. 저장하거나 닫으면 전체 노트로 돌아온다.
+ * 그룹을 고르면 첫 멤버의 composer를 그룹 노트로, 학생을 고르면 그 학생 노트로 연다. 일정 머리 더 보기의 "새 노트"(전체 학생)도 이 화면을 연다. 저장하거나 닫으면 연 화면(`returnTo`)으로 돌아온다.
  */
 import { redirect } from "next/navigation";
 import { CreateTargetPicker, type CreateTarget } from "@/components/admin/CreateTargetPicker";
+import { resolveNoteParent } from "@/components/notes/NoteDocumentChrome";
 import { getActiveAuthSession } from "@/lib/auth-guard";
 import { getLessonGroups } from "@/lib/actions/lessonGroups";
 import { getStudentRosterStats } from "@/lib/actions/students";
@@ -40,7 +41,7 @@ export default async function AdminNewNotePickerPage({ searchParams }: { searchP
     <CreateTargetPicker
       pageTitle="새 노트"
       heading="누구의 노트를 쓸까요?"
-      back={{ href: returnTo, label: "전체 노트로" }}
+      back={{ href: returnTo, label: resolveNoteParent(returnTo).backLabel }}
       groups={groupTargets}
       students={buildCreateStudentTargets(students, getRequestNow(), (id) => buildAdminNoteComposeHref(id, { returnTo }))}
     />

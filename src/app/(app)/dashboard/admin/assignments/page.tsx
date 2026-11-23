@@ -25,6 +25,8 @@ import { getActiveAuthSession } from "@/lib/auth-guard";
 import { toKstDateInputValue } from "@/lib/date-input";
 import { formatKstDot } from "@/lib/kst-format";
 import { firstSearchValue } from "@/lib/portal-location";
+import { cookies } from "next/headers";
+import { ADMIN_LIST_FILTER_COOKIES, resolveRememberedStudent } from "@/lib/admin-list-filter-memory";
 import { STATUS_TONE_DOT_CLASS_NAMES, type PortalStatusTone } from "@/lib/portal-status";
 import { getRequestNow } from "@/lib/request-time";
 import { buildAdminStudentDetailHref } from "@/lib/student-space-routes";
@@ -78,7 +80,7 @@ export default async function AdminAssignmentsPage({
   const referenceTime = new Date(getRequestNow());
   const now = referenceTime.getTime();
   const { students, selectedStudentId, pending, open, reviewed } = await getAdminAssignmentsOverview(
-    { studentId: firstSearchValue(params.student) },
+    { studentId: resolveRememberedStudent(firstSearchValue(params.student), (await cookies()).get(ADMIN_LIST_FILTER_COOKIES.assignments)?.value) },
     referenceTime,
   );
   const labels = new Map(students.map((student) => [student.id, student.label]));
@@ -114,7 +116,7 @@ export default async function AdminAssignmentsPage({
         </header>
 
         <div className="flex flex-wrap items-center justify-between gap-3 md:border-b md:border-border md:pb-3">
-          <NotesStudentFilter action={ADMIN_ASSIGNMENTS_HREF} students={students} selectedStudentId={selectedStudentId} query="" />
+          <NotesStudentFilter action={ADMIN_ASSIGNMENTS_HREF} students={students} selectedStudentId={selectedStudentId} query="" remember="assignments" />
           <dl className="flex flex-wrap gap-x-6 gap-y-1 text-ui">
             {metrics.map((metric) => (
               <div key={metric.label} className="flex gap-2">

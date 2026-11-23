@@ -19,7 +19,18 @@ export function buildQnaSearchHref(listPath: string, query: string): string {
   return `${url.pathname}${url.search}${url.hash}`;
 }
 
-export function buildQnaListHref(returnTo?: string, filter: QnaFilterTab = "ALL", query = ""): string {
+/** 관리자 Q&A 목록의 학생 필터(`qnaStudent`). 빈 값이면 전체 학생. */
+export function buildQnaStudentHref(listPath: string, studentId: string | null): string {
+  const url = new URL(safeReturnPath(listPath, "/dashboard/qna"), "https://portal.local");
+  if (studentId) url.searchParams.set("qnaStudent", studentId);
+  else url.searchParams.delete("qnaStudent");
+  return `${url.pathname}${url.search}${url.hash}`;
+}
+
+export function buildQnaListHref(returnTo?: string, filter: QnaFilterTab = "ALL", query = "", studentId: string | null = null): string {
   const safeReturnTo = safeReturnPath(returnTo, "/dashboard/student?section=today");
-  return buildQnaSearchHref(buildQnaFilterHref(`/dashboard/qna?returnTo=${encodeURIComponent(safeReturnTo)}`, filter), query);
+  return buildQnaStudentHref(
+    buildQnaSearchHref(buildQnaFilterHref(`/dashboard/qna?returnTo=${encodeURIComponent(safeReturnTo)}`, filter), query),
+    studentId,
+  );
 }

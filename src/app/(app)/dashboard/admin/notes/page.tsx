@@ -1,6 +1,7 @@
 /**
  * 관리자 전체 노트 목록(개선 2차 시안 3번). 사이드바 "노트"와 일정 머리줄의 "전체 노트 보기"가 이 화면으로 온다.
  * 모든 활성 학생의 노트를 최근 수정순으로 50개씩 보이고, 학생 필터(`?student=`)·제목·본문 검색(`?q=`)·다음 페이지(`?cursor=`)를 둔다.
+ * 주소에 학생이 없으면 마지막에 고른 학생으로 연다(`admin-list-filter-memory`).
  * 검색·필터·페이지는 서버 SQL이 처리하고, 화면에는 표에 필요한 필드와 짧은 미리보기만 온다.
  * 학생을 골라 둔 상태면 머리 오른쪽 "새 노트"(좁은 화면은 위쪽 막대 +)가 그 학생의 새 노트를 열고, 저장하거나 닫으면
  * 지금 보던 목록(같은 필터·검색·페이지)으로 돌아온다. "전체 학생"이면 그룹·학생을 고르는 화면을 먼저 연다(캔버스 AdminUx1123 ①).
@@ -25,6 +26,8 @@ import { toNotesDatabaseRow } from "@/lib/notes-database";
 import { getRequestNow } from "@/lib/request-time";
 import { getUnifiedItemSpaceLabel } from "@/lib/unified-item-normalization";
 import { firstSearchValue } from "@/lib/portal-location";
+import { cookies } from "next/headers";
+import { ADMIN_LIST_FILTER_COOKIES, resolveRememberedStudent } from "@/lib/admin-list-filter-memory";
 
 export const metadata = { title: "전체 노트" };
 
@@ -44,7 +47,7 @@ export default async function AdminAllNotesPage({
   const params = await searchParams;
   const query = getNoteSearchQuery(params.q);
   const { students, selectedStudentId, notes, continued, nextCursor } = await getAllStudentNotes({
-    studentId: firstSearchValue(params.student),
+    studentId: resolveRememberedStudent(firstSearchValue(params.student), (await cookies()).get(ADMIN_LIST_FILTER_COOKIES.notes)?.value),
     query,
     cursor: firstSearchValue(params.cursor),
   });
@@ -105,6 +108,7 @@ export default async function AdminAllNotesPage({
               students={students.map((student) => ({ id: student.id, label: labels.get(student.id) ?? student.email }))}
               selectedStudentId={selectedStudentId}
               query={query}
+              remember="notes"
             />
             <NoteSearch
               action={LIST_PATH}

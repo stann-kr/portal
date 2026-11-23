@@ -214,7 +214,7 @@ export function resolveMobileTopBar(role: AppRole, location: Location): MobileTo
     return { title: navLabel(active) };
   }
   if (pathname === ADMIN_NOTES_HREF) return { title: "전체 노트", action: { href: ADMIN_NOTE_PICKER_HREF, label: "새 노트" } };
-  if (pathname === ADMIN_NOTE_PICKER_HREF) return { title: "새 노트", back: { href: ADMIN_NOTES_HREF, label: "전체 노트로" } };
+  if (pathname === ADMIN_NOTE_PICKER_HREF) return { title: "새 노트", back: { href: ADMIN_NOTES_HREF, label: "노트 목록으로" } };
   if (pathname === ADMIN_ASSIGNMENTS_HREF) return { title: "과제", action: { href: ADMIN_ASSIGNMENT_PICKER_HREF, label: "과제 내기" } };
   if (pathname === ADMIN_ASSIGNMENT_PICKER_HREF) return { title: "과제 내기", back: { href: ADMIN_ASSIGNMENTS_HREF, label: "과제로" } };
   if (pathname.startsWith("/dashboard/student/assignments/")) {
