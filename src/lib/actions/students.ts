@@ -244,15 +244,16 @@ export async function getStudentById(studentId: string) {
 /**
  * 모든 학생 레코드와 함께 진행 상황 스탯을 병합하여 반환합니다.
  * 연결된 바깥 캘린더 중 DB에 있는 일정(양방향 동기화·그룹 사본·반복 사본)도 다음 레슨으로 센다.
- * 학생 공개 iCal 구독은 바깥 요청이라 여기서 기다리지 않는다. 필요한 화면은 `getSubscribedNextLessons`를 따로 받아 합친다.
+ * 학생 공개 iCal 구독은 바깥 요청이다. 관리자 홈은 `{ subscribed: false }`로 기다리지 않고 `getSubscribedNextLessons`를
+ * 뒤이어 받아 합친다. 대상 고르기 화면(다음 레슨 순 정렬)은 구독까지 함께 센다(구독 원문은 10분 보관돼 대개 바로 온다).
  */
-export async function getStudentRosterStats(): Promise<StudentRosterStat[]> {
+export async function getStudentRosterStats(options: { subscribed?: boolean } = {}): Promise<StudentRosterStat[]> {
   await requireAdmin();
   const db = createDb();
   const referenceTime = new Date();
   const [stats, connected] = await Promise.all([
     queryStudentRosterStats(db, referenceTime),
-    queryConnectedNextEvents(db, referenceTime, null),
+    queryConnectedNextEvents(db, referenceTime, options.subscribed === false ? null : fetchExternalItemsForUser),
   ]);
   return withConnectedNextLessons(stats, connected);
 }

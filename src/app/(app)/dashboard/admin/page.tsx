@@ -44,7 +44,7 @@ export default async function AdminPortalPage({ searchParams }: { searchParams: 
   // 첫 화면은 DB 데이터로 그리고, 받은 뒤 업무함·학생 목록에 합친다(AdminPortalClient lateRoster).
   const subscribedNextLessons = getSubscribedNextLessons().catch(() => ({} as Record<string, Date>));
   // 학생 목록 먼저 패치(DB만)
-  const students = await getStudentRosterStats();
+  const students = await getStudentRosterStats({ subscribed: false });
   // 일정의 학생 선택: `?student=<id>` 딥링크는 그 학생, 없거나 `all`이면 전체 학생(기본).
   const initialStudentId = resolveAdminScheduleStudent(
     firstSearchValue(params.student),
