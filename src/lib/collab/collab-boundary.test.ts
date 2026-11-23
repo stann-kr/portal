@@ -30,6 +30,8 @@ import {
   decodeAwarenessUpdate,
   encodeAwarenessEntries,
   normalizeCloseCode,
+  parseStoredContributors,
+  parseStoredDowngradedAt,
   RoomCore,
   ROOM_COMPACT_MAX_UPDATE_COUNT,
   ROOM_COMPACT_MIN_BYTES,
@@ -689,10 +691,13 @@ test("room: 저장한 스냅샷(saved-upto)에 편집이 모두 들어간 사람
   room.message(admin, controlMessage({ t: "saved-upto", sv: savedSv }));
   assert.deepEqual(room.readContributors(), ["admin"], "스냅샷 뒤에 친 관리자만 남는다");
   assert.deepEqual(storage.contributors, ["admin"]);
-  // 저장 표시(meta)만 바꾼 update는 편집자가 아니다.
+  // 저장 표시(meta)만 바꾼 update는 처음 쓰든 같은 칸을 다시 쓰든 편집자가 아니다.
   const meta = new Y.Doc();
   meta.getMap("meta").set("savedHash", "h1");
   room.message(student, updateMessage(Y.encodeStateAsUpdate(meta)));
+  const beforeRepeat = Y.encodeStateVector(meta);
+  meta.getMap("meta").set("savedHash", "h2");
+  room.message(student, updateMessage(Y.encodeStateAsUpdate(meta, beforeRepeat)));
   assert.deepEqual(room.readContributors(), ["admin"]);
   // 읽기 소켓의 saved-upto는 무시한다.
   const reader = join("read", "r");
@@ -704,6 +709,31 @@ test("room: 저장한 스냅샷(saved-upto)에 편집이 모두 들어간 사람
   rooms.push(revived);
   revived.message(admin, controlMessage({ t: "saved-upto", sv: Buffer.from(Y.encodeStateVector(storedDoc(storage))).toString("base64") }));
   assert.deepEqual(revived.readContributors(), ["admin"]);
+});
+
+test("room: 처음 쓰는 제목 칸과 지우기만 한 update는 편집이고, 지운 사람은 saved-upto로 빼지 않는다", () => {
+  const { storage, room, join } = createRoom();
+  const admin = join("write", "admin");
+  const student = join("write", "s1");
+  const shared = new Y.Doc();
+  shared.getText("t").insert(0, "abc");
+  room.message(admin, updateMessage(Y.encodeStateAsUpdate(shared)));
+  room.message(admin, controlMessage({ t: "saved-upto", sv: Buffer.from(Y.encodeStateVector(storedDoc(storage))).toString("base64") }));
+  assert.deepEqual(room.readContributors(), []);
+  const title = new Y.Doc();
+  title.getMap("meta").set("title", "제목");
+  room.message(student, updateMessage(Y.encodeStateAsUpdate(title)));
+  assert.deepEqual(room.readContributors(), ["s1"], "처음 쓰는 제목도 편집");
+  room.message(student, controlMessage({ t: "saved-upto", sv: Buffer.from(Y.encodeStateVector(storedDoc(storage))).toString("base64") }));
+  assert.deepEqual(room.readContributors(), []);
+  const before = Y.encodeStateVector(shared);
+  shared.getText("t").delete(0, 1);
+  const deleteOnly = Y.encodeStateAsUpdate(shared, before);
+  assert.equal(Y.decodeUpdate(deleteOnly).structs.length, 0, "지우기만 한 update");
+  room.message(student, updateMessage(deleteOnly));
+  assert.deepEqual(room.readContributors(), ["s1"], "지우기만 해도 편집");
+  room.message(admin, controlMessage({ t: "saved-upto", sv: Buffer.from(Y.encodeStateVector(storedDoc(storage))).toString("base64") }));
+  assert.deepEqual(room.readContributors(), ["s1"], "지우기는 state vector로 덮였는지 알 수 없어 남긴다");
 });
 
 test("room: 편집을 막은 뒤에는 그 전에 발급된 쓰기 토큰도 읽기로 받고, refresh는 그 사용자 연결에만 보낸다", () => {
@@ -722,6 +752,9 @@ test("room: 편집을 막은 뒤에는 그 전에 발급된 쓰기 토큰도 읽
   assert.equal(room.refreshUsers(["s1"]), 3);
   assert.deepEqual(fresh.controls().at(-1), { t: "refresh" });
   assert.equal(admin.controls().length, adminBefore, "관리자 연결에는 보내지 않는다");
+  // 다시 열면 막은 시각을 지워, 다시 연 뒤 받은 토큰은 시계 차이와 상관없이 쓰기다.
+  const afterUnlock = join("write", "s1", { leaseIat: now - 500 });
+  assert.equal(afterUnlock.attachment?.mode, "write");
 });
 
 test("room: 메모리에서 내려갔다 깨어나도 attachment에 남긴 이름·저장 담당(커서 제외)을 새로 들어온 사람에게 알린다", () => {
@@ -1022,4 +1055,14 @@ test("room 복원 적용: 저장 transaction이 실패하면 메모리 doc·세�
   assert.equal(room.currentEpoch, 2);
   assert.ok(writer.kinds().slice(before).includes("restored"));
   room.destroy();
+});
+
+test("room 저장값: 이전 형식(id 배열) 편집자 기록과 지금 형식·깨진 값을 모두 읽고, 막은 시각은 숫자만 받는다", () => {
+  assert.deepEqual(parseStoredContributors('["a","b",3]'), { ids: ["a", "b"], clocks: {} });
+  assert.deepEqual(parseStoredContributors('{"ids":["a"],"clocks":{"a":{"12":4,"x":1,"7":-1},"z":{"1":1}}}'), { ids: ["a"], clocks: { a: { "12": 4 } } });
+  assert.deepEqual(parseStoredContributors("{broken"), { ids: [], clocks: {} });
+  assert.deepEqual(parseStoredContributors(null), { ids: [], clocks: {} });
+  assert.deepEqual(parseStoredDowngradedAt('{"s1":5,"s2":"x"}'), { s1: 5 });
+  assert.deepEqual(parseStoredDowngradedAt("[1]"), {});
+  assert.deepEqual(parseStoredDowngradedAt(null), {});
 });

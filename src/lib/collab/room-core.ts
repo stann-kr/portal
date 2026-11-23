@@ -319,6 +319,59 @@ export type RoomConnectInput = {
   lifecycle?: number | null;
 };
 
+/**
+ * DO `room_blob` `contributors` 값. 이전 형식은 id 배열, 지금은 `{ ids, clocks }`다. 읽지 못하면 비운다
+ * (편집자 기록은 버전 표시용이라 노트 열기를 막지 않는다).
+ */
+export function parseStoredContributors(text: string | null): { ids: string[]; clocks: ContributorClocks } {
+  if (!text) return { ids: [], clocks: {} };
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    const record = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
+    const raw = Array.isArray(parsed) ? parsed : Array.isArray(record?.ids) ? record.ids : [];
+    const ids = raw.filter((id): id is string => typeof id === "string");
+    const clocks: ContributorClocks = {};
+    const source = record?.clocks;
+    if (source && typeof source === "object" && !Array.isArray(source)) {
+      for (const userId of ids) {
+        const own = (source as Record<string, unknown>)[userId];
+        if (!own || typeof own !== "object" || Array.isArray(own)) continue;
+        const valid: Record<string, number> = {};
+        for (const [client, clock] of Object.entries(own)) {
+          if (/^\d+$/u.test(client) && typeof clock === "number" && Number.isSafeInteger(clock) && clock >= 0) valid[client] = clock;
+        }
+        clocks[userId] = valid;
+      }
+    }
+    return { ids, clocks };
+  } catch {
+    return { ids: [], clocks: {} };
+  }
+}
+
+/** DO `room_blob` `downgradedAt` 값(사용자 id → 막은 시각 ms). 읽지 못하면 비운다. */
+export function parseStoredDowngradedAt(text: string | null): Record<string, number> {
+  if (!text) return {};
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    const result: Record<string, number> = {};
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      for (const [userId, at] of Object.entries(parsed)) if (typeof at === "number" && Number.isFinite(at)) result[userId] = at;
+    }
+    return result;
+  } catch {
+    return {};
+  }
+}
+
+/** room 문서의 칸 map 이름(클라이언트 `COLLAB_META`와 같다). */
+const COLLAB_ROOM_META = "meta";
+/** 내용이 아닌 내부 칸(저장 표시·세대·생성 operation·시드). `server-restore.ts`의 INTERNAL_FIELDS와 같은 목록이다. */
+const NON_CONTENT_META_KEYS = new Set(["seeded", "savedHash", "headVersion", "operationId", "lifecycle"]);
+function isNonContentMetaKey(key: string): boolean {
+  return NON_CONTENT_META_KEYS.has(key) || key.endsWith(COLLAB_META_VERSION_SUFFIX);
+}
+
 export class RoomCore {
   private doc: Y.Doc | null = null;
   private readonly awareness = new Map<number, AwarenessEntry>();
@@ -366,13 +419,15 @@ export class RoomCore {
       this.pendingUpdateBytes += update.byteLength;
       this.pendingUpdateCount += 1;
     }
-    doc.on("update", (update: Uint8Array, origin: unknown) => this.onDocUpdate(update, origin));
+    doc.on("update", (update: Uint8Array, origin: unknown, _doc: Y.Doc, transaction: Y.Transaction) =>
+      this.onDocUpdate(update, origin, transaction),
+    );
     this.doc = doc;
     this.restoreAwarenessOwnership();
     return { doc };
   }
 
-  private onDocUpdate(update: Uint8Array, origin: unknown): void {
+  private onDocUpdate(update: Uint8Array, origin: unknown, transaction: Y.Transaction): void {
     // 복원 update는 restoreApply가 lifecycle과 같은 transaction에서 이미 저장했다.
     if (origin !== RESTORE_ORIGIN) this.storage.appendUpdate(update);
     this.pendingUpdateBytes += update.byteLength;
@@ -380,7 +435,7 @@ export class RoomCore {
     // 반영한 소켓(origin)을 뺀 나머지에 전달한다. 서버가 직접 바꾼 칸(set-meta)은 origin이 없어 모두에게 간다.
     const except = origin && typeof origin === "object" && "send" in origin ? (origin as RoomSocket) : null;
     // 바꾼 사람은 클라이언트가 아니라 연결 토큰의 사용자로 기록한다(저장 담당이 다른 사람이어도 버전 편집자가 맞게).
-    if (except) this.noteContributor(except.getAttachment()?.userId, update);
+    if (except) this.noteContributor(except.getAttachment()?.userId, update, transaction);
     this.broadcast(encodeSyncUpdate(update), except);
     if (this.shouldCompact()) this.compact();
   }
@@ -394,16 +449,24 @@ export class RoomCore {
     );
   }
 
-  private noteContributor(userId: string | undefined, update: Uint8Array): void {
+  private noteContributor(userId: string | undefined, update: Uint8Array, transaction: Y.Transaction): void {
     if (!userId) return;
+    // 실제로 바뀐 type·key로 판단한다(디코딩한 struct의 parent는 같은 칸을 다시 쓰면 비어 있다).
+    // 저장 표시 같은 내부 meta 칸만 바뀐 update는 편집이 아니다. 지우기만 한 update도 바뀐 type이 있어 편집이다.
+    const meta = transaction.doc.getMap(COLLAB_ROOM_META);
+    const edited = [...transaction.changed].some(
+      ([type, keys]) => (type as unknown) !== meta || [...keys].some((key) => key === null || !isNonContentMetaKey(key)),
+    );
+    if (!edited) return;
     const { structs } = Y.decodeUpdate(update);
-    // 저장 표시(meta 칸)만 바꾼 update는 내용 편집이 아니다. 지우기만 한 update는 struct가 없어도 편집이다.
-    if (structs.length > 0 && structs.every((struct) => (struct as { parent?: unknown }).parent === "meta")) return;
     const own = { ...(this.contributorClocks[userId] ?? {}) };
     for (const struct of structs) {
       const client = String(struct.id.client);
       own[client] = Math.max(own[client] ?? 0, struct.id.clock + struct.length);
     }
+    // 지우기는 state vector에 드러나지 않아 저장 스냅샷이 담았는지 알 수 없다. 닿을 수 없는 clock을 남겨
+    // saved-upto로는 빼지 않고 room 상태와 같은 저장(setSavedSv)에서만 뺀다(과소 기록 방지).
+    for (const client of transaction.deleteSet.clients.keys()) own[String(client)] = Number.MAX_SAFE_INTEGER;
     this.contributorClocks = { ...this.contributorClocks, [userId]: own };
     if (this.contributors.includes(userId)) return;
     this.contributors = [...this.contributors, userId];
@@ -422,7 +485,7 @@ export class RoomCore {
     const remaining = this.contributors.filter((userId) => {
       const own = this.contributorClocks[userId];
       // 어디까지 바꿨는지 모르는 편집자는 room 상태와 같은 저장(setSavedSv)에서만 뺀다.
-      if (!own) return true;
+      if (!own || Object.keys(own).length === 0) return true;
       return Object.entries(own).some(([client, clock]) => (saved.get(Number(client)) ?? 0) < clock);
     });
     if (remaining.length === this.contributors.length) return;
@@ -466,7 +529,15 @@ export class RoomCore {
 
   /** 주어진 사용자의 열린 연결에 바로 새 토큰을 받게 한다(학생 편집을 다시 열었을 때 화면이 곧 편집으로 바뀌게). */
   refreshUsers(userIds: readonly string[]): number {
+    this.load();
     const targets = new Set(userIds);
+    // 다시 열었으니 막은 시각을 지운다(Worker와 DO 시계 차이로 다시 연 뒤 받은 토큰까지 읽기로 받지 않게).
+    if (userIds.some((userId) => userId in this.downgradedAt)) {
+      const next = { ...this.downgradedAt };
+      for (const userId of userIds) delete next[userId];
+      this.downgradedAt = next;
+      this.storage.setDowngradedAt?.(next);
+    }
     let count = 0;
     for (const socket of this.sockets()) {
       const attachment = socket.getAttachment();

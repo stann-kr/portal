@@ -366,6 +366,11 @@ export class CollabProvider {
       const socket = this.socket;
       if (!oldest || !socket) return;
       if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      // 큰 입력(붙여 넣은 이미지)을 아직 올리는 중이면 멈춘 것이 아니다. 다 올라간 뒤부터 다시 잰다.
+      if (socket.bufferedAmount > 0) {
+        oldest.at = Date.now();
+        return;
+      }
       if (Date.now() - oldest.at > (this.options.watchdog?.ackStallMs ?? ACK_STALL_MS)) this.dropDeadSocket(socket);
     }, this.options.watchdog?.ackCheckMs ?? ACK_CHECK_MS);
   }
@@ -1040,6 +1045,8 @@ export class CollabProvider {
 
   destroy(): void {
     if (this.destroyed) return;
+    // 묶어 둔 마지막 입력을 닫기 전에 보낸다(화면을 닫는 순간의 저장과 room 내용이 어긋나지 않게).
+    this.flushOutgoing();
     this.destroyed = true;
     this.connectSeq += 1;
     this.clearRetry();

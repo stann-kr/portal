@@ -241,6 +241,28 @@ test("hello가 오지 않거나 보낸 입력의 ack가 멈추면 소켓을 버�
   assert.equal(provider.hasUnsentChanges(), true, "보내지 못한 입력은 다음 연결이 다시 보낸다");
 });
 
+test("화면을 닫으면 묶어 둔 마지막 입력을 보내고, 큰 입력을 올리는 동안에는 ack 감시가 소켓을 버리지 않는다", async (t) => {
+  const { doc, provider } = makeWatchedProvider();
+  let destroyed = false;
+  t.after(() => {
+    if (!destroyed) provider.destroy();
+  });
+  const socket = await connected(provider, 0);
+  socket.deliver(sync("step2", remoteUpdate("")));
+  socket.bufferedAmount = 1;
+  doc.getText("t").insert(0, "큰 입력");
+  await tick();
+  for (let i = 0; i < 6; i += 1) await tick();
+  assert.equal(socket.readyState, 1, "올리는 중에는 닫지 않는다");
+  socket.bufferedAmount = 0;
+  socket.deliver(control({ t: "ack", n: 1 }));
+  socket.sent = [];
+  doc.getText("t").insert(0, "끝");
+  provider.destroy();
+  destroyed = true;
+  assert.equal(syncMessages(socket).length, 1, "닫기 전에 보낸다");
+});
+
 test("관리자가 편집을 다시 열어 refresh가 오면 새 토큰(쓰기)으로 다시 붙는다", async (t) => {
   let tokenMode: "read" | "write" = "read";
   const { provider, requests } = makeWatchedProvider("read", () => tokenMode);

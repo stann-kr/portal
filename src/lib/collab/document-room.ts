@@ -10,12 +10,13 @@ import {
 import { verifyCollabToken } from "./token";
 import {
   normalizeCloseCode,
+  parseStoredContributors,
+  parseStoredDowngradedAt,
   RoomCore,
   type RoomSocket,
   type RoomSocketAttachment,
   type RoomStorage,
   type StoredRoomState,
-  type ContributorClocks,
 } from "./room-core";
 
 /**
@@ -72,20 +73,6 @@ function createWebSocketPair(): [WebSocket, WebSocket] {
 }
 
 /** 저장된 편집자별 위치를 읽는다. 목록에 없는 사용자·잘못된 값은 버린다. */
-function readContributorClocks(value: unknown, ids: readonly string[]): ContributorClocks {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  const result: ContributorClocks = {};
-  for (const userId of ids) {
-    const own = (value as Record<string, unknown>)[userId];
-    if (!own || typeof own !== "object" || Array.isArray(own)) continue;
-    const clocks: Record<string, number> = {};
-    for (const [client, clock] of Object.entries(own)) {
-      if (/^\d+$/u.test(client) && typeof clock === "number" && Number.isSafeInteger(clock) && clock >= 0) clocks[client] = clock;
-    }
-    result[userId] = clocks;
-  }
-  return result;
-}
 
 function toBytes(value: unknown): Uint8Array {
   if (value instanceof Uint8Array) return value;
@@ -111,33 +98,11 @@ export function createSqlRoomStorage(state: DurableObjectStateLike): RoomStorage
       const changedRow = sql.exec("SELECT value FROM room_meta WHERE key = 'changedAt'").toArray()[0];
       const savedRow = sql.exec("SELECT value FROM room_blob WHERE key = 'savedSv'").toArray()[0];
       const contributorsRow = sql.exec("SELECT value FROM room_blob WHERE key = 'contributors'").toArray()[0];
-      let contributors: string[] = [];
-      let contributorClocks: ContributorClocks = {};
-      if (contributorsRow) {
-        try {
-          const parsed = JSON.parse(new TextDecoder().decode(toBytes(contributorsRow.value))) as unknown;
-          // 이전 형식은 id 배열, 지금은 { ids, clocks }다.
-          const record = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
-          const ids = Array.isArray(parsed) ? parsed : Array.isArray(record?.ids) ? record.ids : [];
-          contributors = ids.filter((id): id is string => typeof id === "string");
-          contributorClocks = readContributorClocks(record?.clocks, contributors);
-        } catch {
-          contributors = [];
-          contributorClocks = {};
-        }
-      }
+      const { ids: contributors, clocks: contributorClocks } = parseStoredContributors(
+        contributorsRow ? new TextDecoder().decode(toBytes(contributorsRow.value)) : null,
+      );
       const downgradedRow = sql.exec("SELECT value FROM room_blob WHERE key = 'downgradedAt'").toArray()[0];
-      let downgradedAt: Record<string, number> = {};
-      if (downgradedRow) {
-        try {
-          const parsed = JSON.parse(new TextDecoder().decode(toBytes(downgradedRow.value))) as unknown;
-          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-            for (const [userId, at] of Object.entries(parsed)) if (typeof at === "number" && Number.isFinite(at)) downgradedAt[userId] = at;
-          }
-        } catch {
-          downgradedAt = {};
-        }
-      }
+      const downgradedAt = parseStoredDowngradedAt(downgradedRow ? new TextDecoder().decode(toBytes(downgradedRow.value)) : null);
       const intentBaseRow = sql.exec("SELECT value FROM room_blob WHERE key = 'restoreBase'").toArray()[0];
       const intentMetaRow = sql.exec("SELECT value FROM room_blob WHERE key = 'restoreMeta'").toArray()[0];
       let restoreIntent: StoredRoomState["restoreIntent"] = null;
