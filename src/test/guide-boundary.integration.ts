@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { COLLAB_EPOCH_FIELD } from "@/lib/collab/protocol";
 import { after, before, mock, test, type TestContext } from "node:test";
 import { eq } from "drizzle-orm";
 import type { AuthSession } from "@/lib/auth-guard";
@@ -486,6 +487,16 @@ test("가이드 이력: 고치기 전 판을 10분에 한 번 남기고, 이전 
   assert.equal(after!.page.contentHtml, history!.revisions[0]!.contentHtml);
   assert.deepEqual(after!.revisions.map((revision) => [revision.pageVersion, revision.reason]), [[3, "RESTORE"], [1, "EDIT"]]);
   assert.match(after!.revisions[0]!.contentHtml, /셋째 판/u);
+
+  // 되돌린 판(4)이 공동 편집 세대가 된다(0040). 되돌리기 전 세대(0)에서 온 열린 편집기의 자동 저장은 되돌린 본문을 덮지 않고,
+  // 새 세대를 받은 저장만 들어간다.
+  assert.equal(after!.page.collabLifecycle, 4);
+  const staleSave = await guideActions.updateGuidePage("guide-1", {}, form({ baseRevision: 4, title: "장비 소개", contentHtml: '<p data-block-id="b1">셋째 판 옛 편집기</p>', [COLLAB_EPOCH_FIELD]: 0 }));
+  assert.equal(staleSave.collabStale, true, JSON.stringify(staleSave));
+  assert.equal((await guideActions.getGuidePageHistory("guide-1"))!.page.version, 4);
+  const freshSave = await guideActions.updateGuidePage("guide-1", {}, form({ baseRevision: 4, title: "장비 소개", contentHtml: '<p data-block-id="b1">되돌린 뒤 고침</p>', [COLLAB_EPOCH_FIELD]: 4 }));
+  assert.equal(freshSave.success, true, JSON.stringify(freshSave));
+  assert.equal(freshSave.page!.version, 5);
 
   // 학생은 이력을 받지 못한다.
   activeSession = createSession("student-a", "student");

@@ -63,7 +63,7 @@ export function parseCollabDocKey(value: unknown): CollabDocKey | null {
   return { kind, id };
 }
 
-/** 노트·게시물 room은 D1 lifecycle 표지(복원 revision)를 세대로 쓴다. */
+/** 노트·게시물·가이드 room은 D1 lifecycle 표지(복원 revision, 가이드는 0040)를 세대로 쓴다. */
 export function collabKeyHasLifecycle(key: CollabDocKey): boolean {
-  return key.kind === "note" || key.kind === "post";
+  return key.kind === "note" || key.kind === "post" || key.kind === "guide";
 }

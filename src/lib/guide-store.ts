@@ -35,6 +35,8 @@ export type GuidePageRecord = GuidePageSummary & {
   createdAt: Date;
   /** 휴지통으로 옮긴 시각(0039). 읽는 화면에는 휴지통 페이지가 오지 않는다. */
   deletedAt: Date | null;
+  /** 공동 편집 lifecycle 표지(0040): 마지막으로 이전 판으로 되돌린 판 번호. room 세대와 같다. */
+  collabLifecycle: number;
   updatedByName: string | null;
 };
 
@@ -58,6 +60,8 @@ export type GuideWriteFailureReason =
   | "NOT_FOUND"
   | "STALE_ORDER"
   | "NOT_TRASHED"
+  /** 공동 편집 저장이 되돌리기 전 세대에서 왔다(되돌린 본문을 덮지 않는다). */
+  | "COLLAB_STALE"
   | "INTERNAL";
 
 /** 재전송 비교: 제목과 블록 식별자를 뺀 본문이 모두 같아야 같은 요청이다. */
@@ -107,6 +111,7 @@ async function findGuidePageIncludingTrash(context: DbContext, pageId: string): 
       createdAt: guidePages.createdAt,
       updatedAt: guidePages.updatedAt,
       deletedAt: guidePages.deletedAt,
+      collabLifecycle: guidePages.collabLifecycle,
       updatedByName: profiles.displayName,
     })
     .from(guidePages)
@@ -196,11 +201,17 @@ export async function updateGuidePageRecord(
     assetIds: readonly string[];
     /** 고치기 전 판을 이력에 남길 때 쓸 id. */
     revisionId: string;
+    /** 공동 편집 저장이 실은 room 세대. 있으면 지금 lifecycle 표지와 같을 때만 쓴다. */
+    collabEpoch?: number;
     now: Date;
   },
 ): Promise<GuideWriteResult> {
   const before = await findGuidePage(context, input.pageId);
   if (!before) return { ok: false, reason: "NOT_FOUND", current: null };
+  // 되돌리기 전 세대의 저장(열린 편집기의 옛 본문)은 되돌린 본문을 덮지 않는다. room이 새 세대를 받으면 다시 저장한다.
+  if (input.collabEpoch !== undefined && before.collabLifecycle !== input.collabEpoch) {
+    return { ok: false, reason: "COLLAB_STALE", current: before };
+  }
   if (before.version !== input.baseVersion) {
     // 저장 응답을 잃고 같은 내용을 다시 보낸 경우는 이미 반영된 저장으로 본다.
     if (before.version === input.baseVersion + 1 && samePayload(before, input.title, input.contentHtml)) {
@@ -228,7 +239,7 @@ export async function updateGuidePageRecord(
           SET title = ?, content_html = ?, version = version + 1,
               updated_by_id = (SELECT id FROM profiles WHERE id = ?),
               updated_at = MAX(created_at, ?)
-          WHERE id = ? AND version = ? AND deleted_at IS NULL
+          WHERE id = ? AND version = ? AND deleted_at IS NULL${input.collabEpoch === undefined ? "" : " AND collab_lifecycle = ?"}
         `,
         params: [
           input.title,
@@ -237,6 +248,7 @@ export async function updateGuidePageRecord(
           epoch,
           input.pageId,
           input.baseVersion,
+          ...(input.collabEpoch === undefined ? [] : [input.collabEpoch]),
         ],
       },
       DOCUMENT_CONDITIONAL_WRITE_SENTINEL,
@@ -244,7 +256,9 @@ export async function updateGuidePageRecord(
     ]);
   } catch {
     const current = await findGuidePage(context, input.pageId);
-    return { ok: false, reason: current ? "VERSION_CONFLICT" : "NOT_FOUND", current };
+    if (!current) return { ok: false, reason: "NOT_FOUND", current };
+    const stale = input.collabEpoch !== undefined && current.collabLifecycle !== input.collabEpoch;
+    return { ok: false, reason: stale ? "COLLAB_STALE" : "VERSION_CONFLICT", current };
   }
   const page = await findGuidePage(context, input.pageId);
   return page
@@ -468,7 +482,7 @@ export async function listGuidePageRevisions(context: DbContext, pageId: string)
 
 /**
  * 이전 판으로 되돌린다. 지금 판을 먼저 이력에 남기고(RESTORE, 되돌리기도 되돌릴 수 있게) 그 판의 제목·본문을 새 판으로 쓴다.
- * `baseVersion`이 지금 판과 다르면 덮지 않는다.
+ * `baseVersion`이 지금 판과 다르면 덮지 않는다. 새 판 번호를 lifecycle 표지로 남겨(0040) 옛 세대 저장을 막는다.
  */
 export async function restoreGuidePageRevisionRecord(
   context: DbContext,
@@ -502,7 +516,7 @@ export async function restoreGuidePageRevisionRecord(
       {
         query: `
           UPDATE guide_pages
-          SET title = ?, content_html = ?, version = version + 1,
+          SET title = ?, content_html = ?, version = version + 1, collab_lifecycle = version + 1,
               updated_by_id = (SELECT id FROM profiles WHERE id = ?),
               updated_at = MAX(created_at, ?)
           WHERE id = ? AND version = ? AND deleted_at IS NULL

@@ -7,7 +7,7 @@ import { findStudentTarget, getActiveAuthSession } from "@/lib/auth-guard";
 import { readCollabWorkerEnv, repairCollabRoomIfBehind } from "@/lib/collab/server-env";
 import { parseCollabDocKey } from "@/lib/collab/doc-key";
 import { isCurrentLessonGroupMember } from "@/lib/note-access";
-import { readNoteRestoreTarget, readPostRestoreTarget } from "@/lib/collab/restore-targets";
+import { readGuideRestoreTarget, readNoteRestoreTarget, readPostRestoreTarget } from "@/lib/collab/restore-targets";
 import { createCollabTokenHandler } from "@/lib/collab/token-handler";
 
 export const dynamic = "force-dynamic";
@@ -50,7 +50,11 @@ export const POST = createCollabTokenHandler({
       return row ? { ...row, lifecycle: Number(row.lifecycle) } : null;
     },
     async findGuidePage(id) {
-      const [row] = await createDb().select({ id: guidePages.id, deletedAt: guidePages.deletedAt }).from(guidePages).where(eq(guidePages.id, id)).limit(1);
+      const [row] = await createDb()
+        .select({ id: guidePages.id, deletedAt: guidePages.deletedAt, lifecycle: guidePages.collabLifecycle })
+        .from(guidePages)
+        .where(eq(guidePages.id, id))
+        .limit(1);
       return row ?? null;
     },
     async findQnaThread(id) {
@@ -79,9 +83,10 @@ export const POST = createCollabTokenHandler({
   },
   async repairRoom(key, lifecycle) {
     const parsed = parseCollabDocKey(key);
-    if (!parsed || (parsed.kind !== "note" && parsed.kind !== "post")) return;
+    if (!parsed || (parsed.kind !== "note" && parsed.kind !== "post" && parsed.kind !== "guide")) return;
     const id = parsed.id;
-    await repairCollabRoomIfBehind(key, lifecycle, () => (parsed.kind === "note" ? readNoteRestoreTarget(id) : readPostRestoreTarget(id)));
+    const readTarget = { note: readNoteRestoreTarget, post: readPostRestoreTarget, guide: readGuideRestoreTarget }[parsed.kind];
+    await repairCollabRoomIfBehind(key, lifecycle, () => readTarget(id));
   },
   getSecret: () => process.env.AUTH_SECRET,
   isCollabAvailable: () => readCollabWorkerEnv() !== null,

@@ -28,7 +28,7 @@ export type CollabDocumentLoaders = {
     lifecycle: number;
   } | null>;
   findPost(id: string): Promise<{ authorId: string; deletedAt: Date | null; lifecycle: number } | null>;
-  findGuidePage(id: string): Promise<{ id: string; deletedAt: Date | null } | null>;
+  findGuidePage(id: string): Promise<{ id: string; deletedAt: Date | null; lifecycle: number } | null>;
   findQnaThread(id: string): Promise<{ studentId: string; deletedAt: Date | null } | null>;
   /** 답글 작성자와 그 질문의 휴지통 상태(답글 고치기 작성본). */
   findQnaReply(id: string): Promise<{ authorId: string; threadDeletedAt: Date | null } | null>;
@@ -76,7 +76,7 @@ async function authorizeKey(
       if (!page) return null;
       // 휴지통 가이드(0039)는 room을 열지 않는다. 되살리면 같은 room으로 다시 붙는다.
       if (page.deletedAt) return TRASHED;
-      return { mode: "write" };
+      return { mode: "write", lifecycle: page.lifecycle };
     }
     case "post": {
       const post = await loaders.findPost(key.id);

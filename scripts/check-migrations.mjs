@@ -65,6 +65,7 @@ import { validateNoteReadOnlyUpgrade } from "./migration-check/note-read-only.mj
 import { validatePushNoticesUpgrade } from "./migration-check/push-notices.mjs";
 import { validateFlowGapsUpgrade } from "./migration-check/flow-gaps.mjs";
 import { validateRemainingFlowsUpgrade } from "./migration-check/remaining-flows.mjs";
+import { validateGuideCollabLifecycleUpgrade } from "./migration-check/guide-collab-lifecycle.mjs";
 import { validateListQueryIndexesUpgrade } from "./migration-check/list-query-indexes.mjs";
 import {
   validateAccountPrivacyAtomicSource,
@@ -233,6 +234,8 @@ async function main() {
   console.log("PASS populated 0037 → 0038 assignment_tasks closed_at, assignment_occurrence_skips (cascade with rule), feedbacks·comments updated_at, digging_playlists dug_on backfilled to KST date with index and checks, digging_feedbacks (one per student·day, 1–2000, account cascade), rows preserved");
   await validateRemainingFlowsUpgrade(migrationFiles);
   console.log("PASS populated 0038 → 0039 lesson_groups dissolved_at, guide_pages deleted_at·deleted_by_id (set null), guide_page_revisions (EDIT/RESTORE, cascade), qna_reply_revisions (numbered edits, qna_replies still immutable), old-code inserts and rows preserved");
+  await validateGuideCollabLifecycleUpgrade(migrationFiles);
+  console.log("PASS populated 0039 → 0040 guide_pages collab_lifecycle default 0 NOT NULL, other tables/triggers and rows preserved, old-code insert/update keeps 0");
 }
 
 try {

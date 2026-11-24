@@ -97,7 +97,8 @@ function loaders(overrides: Partial<CollabDocumentLoaders> = {}): CollabDocument
       })[id] ?? null,
     findPost: async (id) =>
       ({ p1: { authorId: "s1", deletedAt: null, lifecycle: 2 }, gone: { authorId: "s1", deletedAt: new Date(NOW), lifecycle: 0 } })[id] ?? null,
-    findGuidePage: async (id) => ({ g1: { id: "g1", deletedAt: null }, gTrash: { id: "gTrash", deletedAt: new Date(NOW) } })[id] ?? null,
+    findGuidePage: async (id) =>
+      ({ g1: { id: "g1", deletedAt: null, lifecycle: 3 }, gTrash: { id: "gTrash", deletedAt: new Date(NOW), lifecycle: 0 } })[id] ?? null,
     findQnaThread: async (id) => (id === "t1" ? { studentId: "s1", deletedAt: null } : null),
     findQnaReply: async (id) =>
       ({ r1: { authorId: "s1", threadDeletedAt: null }, rAdmin: { authorId: "admin", threadDeletedAt: null }, rTrash: { authorId: "s1", threadDeletedAt: new Date(NOW) } })[id] ?? null,
@@ -185,7 +186,8 @@ test("권한: 새 노트는 결정적 생성 id의 room을 그 학생 공간 쓰
 
 test("권한: 가이드는 관리자만, 게시물은 작성자·관리자, 작성본은 본인만", async () => {
   assert.equal((await authorizeCollabRequest(student1, { key: "guide:g1" }, loaders())).ok, false);
-  assert.deepEqual(await authorizeCollabRequest(admin, { key: "guide:g1" }, loaders()), { ok: true, key: "guide:g1", mode: "write" });
+  // 가이드 room도 D1 lifecycle 표지(마지막으로 되돌린 판, 0040)를 세대로 받는다.
+  assert.deepEqual(await authorizeCollabRequest(admin, { key: "guide:g1" }, loaders()), { ok: true, key: "guide:g1", mode: "write", lifecycle: 3 });
   assert.equal((await authorizeCollabRequest(admin, { key: "guide:nope" }, loaders())).ok, false);
   assert.deepEqual(await authorizeCollabRequest(student1, { key: "post:p1" }, loaders()), { ok: true, key: "post:p1", mode: "write", lifecycle: 2 });
   assert.equal((await authorizeCollabRequest(student2, { key: "post:p1" }, loaders())).ok, false);

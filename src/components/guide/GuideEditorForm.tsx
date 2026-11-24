@@ -6,7 +6,7 @@
  * 선택창 없이 version 충돌은 최신 version으로 다시 저장하고, 저장·업로드 중 이탈을 막는다.
  * 본문 이미지는 가이드 이미지 저장소로 올리고, 블록 data-block-id(질문 위치)를 편집 중에도 보존한다.
  */
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { Eye } from "lucide-react";
@@ -36,6 +36,7 @@ import { useCollabHeadVersion } from "@/lib/collab/client/useCollabHeadVersion";
 import { useCollabLeaveGuard } from "@/lib/collab/client/useCollabLeaveGuard";
 import { useCollabMetaField } from "@/lib/collab/client/useCollabMetaField";
 import { GUIDE_IMAGE_UPLOADER } from "./guide-image-uploader";
+import { CollabNotices } from "@/components/editor/CollabNotices";
 import { CollabEditorPending } from "@/components/editor/CollabEditorPending";
 
 const FullEditor = dynamic(
@@ -43,7 +44,8 @@ const FullEditor = dynamic(
   { ssr: false, loading: () => <CollabEditorPending variant="page" minHeight="50dvh" /> },
 );
 
-type GuideSnapshot = { title: string; contentHtml: string };
+/** 저장 스냅샷. lifecycle은 본문·제목과 같은 동기 구간에서 읽은 room 세대다(되돌리기 전 본문을 새 세대로 보내지 않게). */
+type GuideSnapshot = { title: string; contentHtml: string; lifecycle: number | null };
 
 type GuideEditorFormProps = {
   page: { id: string; title: string; contentHtml: string; version: number };
@@ -75,16 +77,16 @@ export function GuideEditorForm({ page, actorId, action }: GuideEditorFormProps)
     extensions: getExtensions,
     // 연결돼 있으면 서버의 최신 페이지로 시드한다(못 읽으면 화면이 받은 페이지).
     getSeed: async (_reason, { online }) => {
+      // 연결돼 있으면 lifecycle 표지(0040)와 함께 읽어, room 세대와 다른 옛 head로 시드하지 않는다.
       const latest = online ? await getGuidePage(page.id).catch(() => null) : null;
-      const source = latest ?? page;
-      return { key: roomKey, version: source.version, html: source.contentHtml, fields: { title: source.title } };
+      if (latest) {
+        return { key: roomKey, version: latest.version, lifecycle: latest.collabLifecycle, html: latest.contentHtml, fields: { title: latest.title } };
+      }
+      return { key: roomKey, version: page.version, html: page.contentHtml, fields: { title: page.title } };
     },
   });
   const { doc, provider } = collab;
-  const epochRef = useRef(collab.epoch);
-  useEffect(() => {
-    epochRef.current = collab.epoch;
-  });
+  const readLifecycle = collab.readLifecycle;
   const [title, setTitle] = useCollabMetaField(doc, "title", page.title);
   const head = useCollabHeadVersion(doc, page.version);
   const [isEditorUploading, setIsEditorUploading] = useState(false);
@@ -94,13 +96,13 @@ export function GuideEditorForm({ page, actorId, action }: GuideEditorFormProps)
     const rawTitle = doc.getMap(COLLAB_META).get("title");
     const currentTitle = normalizeTitle(typeof rawTitle === "string" ? rawTitle : "");
     if (!currentTitle) return null;
-    return { title: currentTitle, contentHtml: collabDocHtml(doc, getExtensions()) };
-  }, [doc, getExtensions]);
+    return { title: currentTitle, contentHtml: collabDocHtml(doc, getExtensions()), lifecycle: readLifecycle() };
+  }, [doc, getExtensions, readLifecycle]);
 
   const save = useCallback(
     async (snapshot: GuideSnapshot): Promise<CollabSaveResult> => {
-      // 이 저장의 room 세대는 시작할 때 고정한다(삭제 뒤 옛 내용을 다시 보내지 않게).
-      const epoch = epochRef.current;
+      // 이 저장의 room 세대는 스냅샷과 같이 읽은 값이다(되돌리기 전 본문을 새 세대로 보내지 않게).
+      const epoch = snapshot.lifecycle;
       for (let attempt = 0; attempt < 2; attempt += 1) {
         const formData = new FormData();
         formData.set("title", snapshot.title);
@@ -128,10 +130,14 @@ export function GuideEditorForm({ page, actorId, action }: GuideEditorFormProps)
   const writable = collab.mode === "write" && collab.ready && (collab.status === "connected" || collab.status === "solo");
   const autosave = useCollabAutosave({
     doc,
-    enabled: writable && !isEditorUploading,
+    // 되돌리기·제자리 합치기가 끝날 때까지 자동 저장만 미룬다(입력은 계속 받는다).
+    enabled: writable && !isEditorUploading && !collab.rebasing,
     isSaver: collab.isSaver,
     readSnapshot,
     save,
+    // 저장한 지점을 room에 알려, 되돌리기가 "저장되지 않은 입력"을 정확히 판단하게 한다.
+    onSaved: (stateVector) => provider?.reportSaved(stateVector),
+    onAccepted: (stateVector) => provider?.reportSavedUpto(stateVector),
   });
   useCollabLeaveGuard(() => autosave.hasPendingSave() || collab.hasUnsentChanges() || isEditorUploading);
   const handleSaveShortcut = useDocumentSaveShortcut({ disabled: !writable, onSave: () => void autosave.flush() });
@@ -231,6 +237,7 @@ export function GuideEditorForm({ page, actorId, action }: GuideEditorFormProps)
         {statusView.kind === "error" ? (
           <AutosaveStatus status="error" message={statusView.message} onRetry={autosave.retry} />
         ) : null}
+        <CollabNotices collab={collab} />
         {!isCollabEditorPending(collab) && collaboration ? (
           <FullEditor
             collaboration={collaboration}

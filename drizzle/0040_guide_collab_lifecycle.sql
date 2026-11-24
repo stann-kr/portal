@@ -1,0 +1,1 @@
+ALTER TABLE `guide_pages` ADD `collab_lifecycle` integer DEFAULT 0 NOT NULL;

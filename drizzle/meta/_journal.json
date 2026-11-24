@@ -281,6 +281,13 @@
       "when": 1795535507743,
       "tag": "0039_remaining_flows",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "6",
+      "when": 1795537478022,
+      "tag": "0040_guide_collab_lifecycle",
+      "breakpoints": true
     }
   ]
 }

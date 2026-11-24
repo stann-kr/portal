@@ -1863,6 +1863,11 @@ export const guidePages = sqliteTable(
     deletedById: text("deleted_by_id").references(() => profiles.id, {
       onDelete: "set null",
     }),
+    /**
+     * 공동 편집 lifecycle 표지(0040): 마지막으로 이전 판으로 되돌린 판 번호(없으면 0). room 세대가 이 값을 따라
+     * 되돌리기를 열린 편집기에 한 편집으로 적용하고, 옛 세대의 자동 저장이 되돌린 본문을 덮지 못하게 한다.
+     */
+    collabLifecycle: integer("collab_lifecycle").default(0).notNull(),
   },
   (table) => [
     index("guide_pages_sort_idx").on(table.sortOrder),
