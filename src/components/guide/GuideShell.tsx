@@ -14,9 +14,9 @@ export function currentGuidePageId(pathname: string, pages: readonly GuideNavPag
   return match ? decodeURIComponent(match[1]!) : null;
 }
 
-/** 편집 화면은 자기 틀(전체 편집기)을 쓰므로 목차를 두지 않는다. */
+/** 편집 화면(전체 편집기)·이력·휴지통(기록 화면 틀)은 자기 틀을 쓰므로 목차를 두지 않는다. */
 export function isGuideEditPath(pathname: string): boolean {
-  return /^\/dashboard\/guide\/[^/]+\/edit\/?$/u.test(pathname);
+  return /^\/dashboard\/guide\/(?:[^/]+\/(?:edit|history)|trash)\/?$/u.test(pathname);
 }
 
 /**

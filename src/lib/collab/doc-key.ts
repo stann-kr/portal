@@ -4,11 +4,11 @@
  * - `note:<noteId>` 노트(본문·제목)
  * - `guide:<pageId>` 가이드 페이지
  * - `post:<postId>` 게시물 수정 작업본(저장해야 게시물에 반영)
- * - `draft:<kind>:<ownerId>:<scope>` 아직 서버 문서가 없는 새 글 작성본(작성자만)
+ * - `draft:<kind>:<ownerId>:<scope>` 아직 서버 문서가 없는 새 글 작성본(작성자만). `qna-reply-edit`은 이미 올린 답글을 고치는 작성본(scope = 답글 id)
  * - `notify:<topic>:<id>` 문서가 아닌 읽기 전용 알림 room(답글 목록·학생 최근 노트가 바뀌면 화면을 새로 고친다)
  */
 export type CollabNotifyTopic = "qna" | "student-notes";
-export type CollabDraftKind = "post" | "qna-thread" | "qna-reply";
+export type CollabDraftKind = "post" | "qna-thread" | "qna-reply" | "qna-reply-edit";
 
 export type CollabDocKey =
   | { kind: "note"; id: string }
@@ -18,7 +18,7 @@ export type CollabDocKey =
   | { kind: "notify"; topic: CollabNotifyTopic; id: string };
 
 const SEGMENT = /^[A-Za-z0-9_-]{1,100}$/;
-const DRAFT_KINDS: readonly CollabDraftKind[] = ["post", "qna-thread", "qna-reply"];
+const DRAFT_KINDS: readonly CollabDraftKind[] = ["post", "qna-thread", "qna-reply", "qna-reply-edit"];
 const NOTIFY_TOPICS: readonly CollabNotifyTopic[] = ["qna", "student-notes"];
 
 export function isCollabKeySegment(value: string): boolean {
@@ -63,7 +63,7 @@ export function parseCollabDocKey(value: unknown): CollabDocKey | null {
   return { kind, id };
 }
 
-/** 노트·게시물 room은 D1 lifecycle 표지(복원 revision)를 세대로 쓴다. */
+/** 노트·게시물·가이드 room은 D1 lifecycle 표지(복원 revision, 가이드는 0040)를 세대로 쓴다. */
 export function collabKeyHasLifecycle(key: CollabDocKey): boolean {
-  return key.kind === "note" || key.kind === "post";
+  return key.kind === "note" || key.kind === "post" || key.kind === "guide";
 }

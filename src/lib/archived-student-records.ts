@@ -26,6 +26,7 @@ import { requireAdmin } from "@/lib/auth-guard";
 import { parseStoredMixAnalysis, type MixAnalysis } from "@/lib/mix-analysis";
 import { publicAuthorName } from "@/lib/public-author-name";
 import { withQnaAttachmentKinds } from "@/lib/qna-attachment-kinds";
+import { withQnaReplyEdits } from "@/lib/qna-reply-edit";
 import { ARCHIVED_ACCOUNT_STATUS } from "@/lib/student-status";
 import { describeAssignmentSubmission } from "@/lib/unified-item-normalization";
 import type { MediaAttachmentKind } from "@/lib/media-lifecycle";
@@ -219,7 +220,8 @@ async function readQna(db: Db, studentId: string): Promise<ArchivedQnaRecord[]> 
       .where(threadsOf(studentId))
       .orderBy(asc(qnaReplies.createdAt)),
   ]);
-  const withKinds = await withQnaAttachmentKinds(replies);
+  // 고친 답글은 지금 본문을 보인다(감사 보완 #7).
+  const withKinds = await withQnaAttachmentKinds(await withQnaReplyEdits(db, replies));
   const byThread = new Map<string, ArchivedQnaRecord["replies"]>();
   for (const reply of withKinds) {
     byThread.set(reply.threadId, [...(byThread.get(reply.threadId) ?? []), {

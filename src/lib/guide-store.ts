@@ -2,13 +2,15 @@
  * 공용 가이드 페이지·질문 위치의 DB 읽기와 원자적 쓰기. 권한 검사는 호출하는 server action이 먼저 하고,
  * 여기서는 버전 조건·순서·연결 정리를 한 batch로 묶는다.
  */
-import { and, asc, eq, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, isNotNull, isNull } from "drizzle-orm";
 import type { DbContext } from "@/db/client";
 import {
+  guidePageRevisions,
   guidePages,
   profiles,
   qnaGuideAnchors,
   qnaThreads,
+  type GuidePageRevisionReason,
   type QnaStatus,
 } from "@/db/schema";
 import {
@@ -31,6 +33,10 @@ export type GuidePageRecord = GuidePageSummary & {
   contentHtml: string;
   version: number;
   createdAt: Date;
+  /** 휴지통으로 옮긴 시각(0039). 읽는 화면에는 휴지통 페이지가 오지 않는다. */
+  deletedAt: Date | null;
+  /** 공동 편집 lifecycle 표지(0040): 마지막으로 이전 판으로 되돌린 판 번호. room 세대와 같다. */
+  collabLifecycle: number;
   updatedByName: string | null;
 };
 
@@ -53,6 +59,9 @@ export type GuideWriteFailureReason =
   | "OPERATION_PAYLOAD_CONFLICT"
   | "NOT_FOUND"
   | "STALE_ORDER"
+  | "NOT_TRASHED"
+  /** 공동 편집 저장이 되돌리기 전 세대에서 왔다(되돌린 본문을 덮지 않는다). */
+  | "COLLAB_STALE"
   | "INTERNAL";
 
 /** 재전송 비교: 제목과 블록 식별자를 뺀 본문이 모두 같아야 같은 요청이다. */
@@ -73,13 +82,25 @@ export async function listGuidePageSummaries(context: DbContext): Promise<GuideP
       updatedAt: guidePages.updatedAt,
     })
     .from(guidePages)
+    .where(isNull(guidePages.deletedAt))
     .orderBy(asc(guidePages.sortOrder), asc(guidePages.createdAt), asc(guidePages.id));
 }
 
+/**
+ * 페이지 하나. 휴지통 페이지(0039)는 기본으로 없는 페이지와 같고, `includeTrashed`면 함께 읽는다
+ * (만들기 재전송의 id 대조, 휴지통 화면의 되살리기·영구 삭제).
+ */
 export async function findGuidePage(
   context: DbContext,
   pageId: string,
+  options: { includeTrashed?: boolean } = {},
 ): Promise<GuidePageRecord | null> {
+  const page = await findGuidePageIncludingTrash(context, pageId);
+  if (!page || (page.deletedAt && !options.includeTrashed)) return null;
+  return page;
+}
+
+async function findGuidePageIncludingTrash(context: DbContext, pageId: string): Promise<GuidePageRecord | null> {
   const [page] = await asDocumentReadDb(context)
     .select({
       id: guidePages.id,
@@ -89,6 +110,8 @@ export async function findGuidePage(
       version: guidePages.version,
       createdAt: guidePages.createdAt,
       updatedAt: guidePages.updatedAt,
+      deletedAt: guidePages.deletedAt,
+      collabLifecycle: guidePages.collabLifecycle,
       updatedByName: profiles.displayName,
     })
     .from(guidePages)
@@ -119,7 +142,7 @@ export async function createGuidePageRecord(
     now: Date;
   },
 ): Promise<GuideWriteResult> {
-  const existing = await findGuidePage(context, input.pageId);
+  const existing = await findGuidePage(context, input.pageId, { includeTrashed: true });
   if (existing) {
     // 같은 생성 요청(제목·본문 모두 같음)의 재전송이면 그대로 돌려준다. 내용이 다르면 거부한다.
     return existing.version === 1 && samePayload(existing, input.title, input.contentHtml)
@@ -155,7 +178,7 @@ export async function createGuidePageRecord(
       ...(claim ? [claim] : []),
     ]);
   } catch {
-    const raced = await findGuidePage(context, input.pageId);
+    const raced = await findGuidePage(context, input.pageId, { includeTrashed: true });
     if (raced && raced.version === 1 && samePayload(raced, input.title, input.contentHtml)) {
       return { ok: true, page: raced, replayed: true };
     }
@@ -176,11 +199,19 @@ export async function updateGuidePageRecord(
     title: string;
     contentHtml: string;
     assetIds: readonly string[];
+    /** 고치기 전 판을 이력에 남길 때 쓸 id. */
+    revisionId: string;
+    /** 공동 편집 저장이 실은 room 세대. 있으면 지금 lifecycle 표지와 같을 때만 쓴다. */
+    collabEpoch?: number;
     now: Date;
   },
 ): Promise<GuideWriteResult> {
   const before = await findGuidePage(context, input.pageId);
   if (!before) return { ok: false, reason: "NOT_FOUND", current: null };
+  // 되돌리기 전 세대의 저장(열린 편집기의 옛 본문)은 되돌린 본문을 덮지 않는다. room이 새 세대를 받으면 다시 저장한다.
+  if (input.collabEpoch !== undefined && before.collabLifecycle !== input.collabEpoch) {
+    return { ok: false, reason: "COLLAB_STALE", current: before };
+  }
   if (before.version !== input.baseVersion) {
     // 저장 응답을 잃고 같은 내용을 다시 보낸 경우는 이미 반영된 저장으로 본다.
     if (before.version === input.baseVersion + 1 && samePayload(before, input.title, input.contentHtml)) {
@@ -190,23 +221,34 @@ export async function updateGuidePageRecord(
   }
 
   const claim = claimAssetsStatement(input.pageId, input.assetIds);
+  const epoch = documentEpochSeconds(input.now)!;
   try {
     await executeDocumentStatementsAtomically(context, [
+      // 고치기 전 판을 이력에 남긴다. 공동 편집은 자주 저장하므로 10분 안에 남긴 판이 있으면 건너뛴다.
+      guideRevisionSnapshotStatement({
+        revisionId: input.revisionId,
+        pageId: input.pageId,
+        baseVersion: input.baseVersion,
+        reason: "EDIT",
+        epoch,
+        coalesceSeconds: GUIDE_REVISION_COALESCE_SECONDS,
+      }),
       {
         query: `
           UPDATE guide_pages
           SET title = ?, content_html = ?, version = version + 1,
               updated_by_id = (SELECT id FROM profiles WHERE id = ?),
               updated_at = MAX(created_at, ?)
-          WHERE id = ? AND version = ?
+          WHERE id = ? AND version = ? AND deleted_at IS NULL${input.collabEpoch === undefined ? "" : " AND collab_lifecycle = ?"}
         `,
         params: [
           input.title,
           input.contentHtml,
           input.actorId,
-          documentEpochSeconds(input.now),
+          epoch,
           input.pageId,
           input.baseVersion,
+          ...(input.collabEpoch === undefined ? [] : [input.collabEpoch]),
         ],
       },
       DOCUMENT_CONDITIONAL_WRITE_SENTINEL,
@@ -214,7 +256,9 @@ export async function updateGuidePageRecord(
     ]);
   } catch {
     const current = await findGuidePage(context, input.pageId);
-    return { ok: false, reason: current ? "VERSION_CONFLICT" : "NOT_FOUND", current };
+    if (!current) return { ok: false, reason: "NOT_FOUND", current };
+    const stale = input.collabEpoch !== undefined && current.collabLifecycle !== input.collabEpoch;
+    return { ok: false, reason: stale ? "COLLAB_STALE" : "VERSION_CONFLICT", current };
   }
   const page = await findGuidePage(context, input.pageId);
   return page
@@ -251,14 +295,54 @@ export async function reorderGuidePageRecords(
   }
 }
 
+/** 이 시간 안에 남긴 판이 있으면 고치기 전 판을 다시 남기지 않는다(초). */
+export const GUIDE_REVISION_COALESCE_SECONDS = 10 * 60;
+
 /**
- * 페이지를 지운다. 질문 위치·이미지는 FK SET NULL에만 기대지 않고 같은 batch에서 먼저 연결을 끊어
- * 질문은 제목·인용과 함께 남는다.
+ * 지금 판(`baseVersion`일 때만)을 이력 한 줄로 남기는 문장. 남길 판이 없으면 0행이라 batch를 멈추지 않는다.
+ * actor는 그 판을 마지막으로 고친 사람이다.
  */
-export async function deleteGuidePageRecord(
+function guideRevisionSnapshotStatement(input: {
+  revisionId: string;
+  pageId: string;
+  baseVersion: number;
+  reason: GuidePageRevisionReason;
+  epoch: number;
+  coalesceSeconds?: number;
+}): DocumentAtomicStatement {
+  const coalesce = input.coalesceSeconds
+    ? "AND NOT EXISTS (SELECT 1 FROM guide_page_revisions AS recent WHERE recent.page_id = page.id AND recent.created_at > ?)"
+    : "";
+  return {
+    query: `
+      INSERT INTO guide_page_revisions (id, page_id, page_version, title, content_html, reason, actor_id, created_at)
+      SELECT ?, page.id, page.version, page.title, page.content_html, ?, page.updated_by_id, ?
+      FROM guide_pages AS page
+      WHERE page.id = ? AND page.version = ? AND page.deleted_at IS NULL
+        AND NOT EXISTS (SELECT 1 FROM guide_page_revisions AS same WHERE same.page_id = page.id AND same.page_version = page.version)
+        ${coalesce}
+    `,
+    params: [
+      input.revisionId,
+      input.reason,
+      input.epoch,
+      input.pageId,
+      input.baseVersion,
+      ...(input.coalesceSeconds ? [input.epoch - input.coalesceSeconds] : []),
+    ],
+  };
+}
+
+type GuideMutationResult = { ok: true } | { ok: false; reason: GuideWriteFailureReason; current: GuidePageRecord | null };
+
+/**
+ * 페이지를 휴지통으로 옮긴다(0039). 질문 위치·이미지·학생에게 열어 준 표시는 그대로 두어 되살리면 다시 이어진다.
+ * 휴지통에 있는 동안 목록·읽기·열람 범위·질문 위치 링크에서 빠진다.
+ */
+export async function trashGuidePageRecord(
   context: DbContext,
-  input: { pageId: string; baseVersion: number },
-): Promise<{ ok: true } | { ok: false; reason: GuideWriteFailureReason; current: GuidePageRecord | null }> {
+  input: { actorId: string; pageId: string; baseVersion: number; now: Date },
+): Promise<GuideMutationResult> {
   const before = await findGuidePage(context, input.pageId);
   if (!before) return { ok: false, reason: "NOT_FOUND", current: null };
   if (before.version !== input.baseVersion) {
@@ -267,21 +351,12 @@ export async function deleteGuidePageRecord(
   try {
     await executeDocumentStatementsAtomically(context, [
       {
-        query: "UPDATE qna_guide_anchors SET guide_page_id = NULL WHERE guide_page_id = ?",
-        params: [input.pageId],
-      },
-      {
-        query: "UPDATE guide_assets SET guide_page_id = NULL WHERE guide_page_id = ?",
-        params: [input.pageId],
-      },
-      {
-        // 학생에게 열어 준 표시도 함께 지운다(FK cascade에만 기대지 않는다).
-        query: "DELETE FROM guide_access_pages WHERE guide_page_id = ? AND EXISTS (SELECT 1 FROM guide_pages WHERE id = ? AND version = ?)",
-        params: [input.pageId, input.pageId, input.baseVersion],
-      },
-      {
-        query: "DELETE FROM guide_pages WHERE id = ? AND version = ?",
-        params: [input.pageId, input.baseVersion],
+        query: `
+          UPDATE guide_pages
+          SET deleted_at = ?, deleted_by_id = (SELECT id FROM profiles WHERE id = ?), version = version + 1
+          WHERE id = ? AND version = ? AND deleted_at IS NULL
+        `,
+        params: [documentEpochSeconds(input.now), input.actorId, input.pageId, input.baseVersion],
       },
       DOCUMENT_CONDITIONAL_WRITE_SENTINEL,
     ]);
@@ -290,6 +365,172 @@ export async function deleteGuidePageRecord(
     const current = await findGuidePage(context, input.pageId);
     return { ok: false, reason: current ? "VERSION_CONFLICT" : "NOT_FOUND", current };
   }
+}
+
+/** 휴지통 페이지를 되살린다. 순서 자리는 지우기 전 그대로다. 같은 요청을 다시 보내도 결과가 같다. */
+export async function restoreTrashedGuidePageRecord(
+  context: DbContext,
+  input: { pageId: string },
+): Promise<GuideMutationResult> {
+  const before = await findGuidePage(context, input.pageId, { includeTrashed: true });
+  if (!before) return { ok: false, reason: "NOT_FOUND", current: null };
+  if (!before.deletedAt) return { ok: true };
+  try {
+    await executeDocumentStatementsAtomically(context, [
+      {
+        query: `
+          UPDATE guide_pages SET deleted_at = NULL, deleted_by_id = NULL, version = version + 1
+          WHERE id = ? AND version = ? AND deleted_at IS NOT NULL
+        `,
+        params: [input.pageId, before.version],
+      },
+      DOCUMENT_CONDITIONAL_WRITE_SENTINEL,
+    ]);
+    return { ok: true };
+  } catch {
+    const current = await findGuidePage(context, input.pageId, { includeTrashed: true });
+    if (current && !current.deletedAt) return { ok: true };
+    return { ok: false, reason: current ? "VERSION_CONFLICT" : "NOT_FOUND", current };
+  }
+}
+
+/**
+ * 휴지통 페이지를 영구 삭제한다. 질문 위치·이미지는 FK SET NULL에만 기대지 않고 같은 batch에서 먼저 연결을 끊어
+ * 질문은 제목·인용과 함께 남는다. 이력도 함께 지운다(FK cascade).
+ */
+export async function purgeGuidePageRecord(
+  context: DbContext,
+  input: { pageId: string },
+): Promise<GuideMutationResult> {
+  const before = await findGuidePage(context, input.pageId, { includeTrashed: true });
+  if (!before) return { ok: true };
+  if (!before.deletedAt) return { ok: false, reason: "NOT_TRASHED", current: before };
+  try {
+    await executeDocumentStatementsAtomically(context, [
+      {
+        query: "UPDATE qna_guide_anchors SET guide_page_id = NULL WHERE guide_page_id = ? AND EXISTS (SELECT 1 FROM guide_pages WHERE id = ? AND deleted_at IS NOT NULL)",
+        params: [input.pageId, input.pageId],
+      },
+      {
+        query: "UPDATE guide_assets SET guide_page_id = NULL WHERE guide_page_id = ? AND EXISTS (SELECT 1 FROM guide_pages WHERE id = ? AND deleted_at IS NOT NULL)",
+        params: [input.pageId, input.pageId],
+      },
+      {
+        // 학생에게 열어 준 표시도 함께 지운다(FK cascade에만 기대지 않는다).
+        query: "DELETE FROM guide_access_pages WHERE guide_page_id = ? AND EXISTS (SELECT 1 FROM guide_pages WHERE id = ? AND deleted_at IS NOT NULL)",
+        params: [input.pageId, input.pageId],
+      },
+      {
+        query: "DELETE FROM guide_pages WHERE id = ? AND deleted_at IS NOT NULL",
+        params: [input.pageId],
+      },
+      DOCUMENT_CONDITIONAL_WRITE_SENTINEL,
+    ]);
+    return { ok: true };
+  } catch {
+    const current = await findGuidePage(context, input.pageId, { includeTrashed: true });
+    if (!current) return { ok: true };
+    return { ok: false, reason: current.deletedAt ? "INTERNAL" : "NOT_TRASHED", current };
+  }
+}
+
+export type TrashedGuidePage = { id: string; title: string; deletedAt: Date; deletedByName: string | null };
+
+/** 휴지통 페이지 목록(최근 지운 순). */
+export async function listTrashedGuidePages(context: DbContext): Promise<TrashedGuidePage[]> {
+  const rows = await asDocumentReadDb(context)
+    .select({
+      id: guidePages.id,
+      title: guidePages.title,
+      deletedAt: guidePages.deletedAt,
+      deletedByName: profiles.displayName,
+    })
+    .from(guidePages)
+    .leftJoin(profiles, eq(guidePages.deletedById, profiles.id))
+    .where(isNotNull(guidePages.deletedAt))
+    .orderBy(desc(guidePages.deletedAt), asc(guidePages.id));
+  return rows.flatMap((row) => (row.deletedAt ? [{ ...row, deletedAt: row.deletedAt }] : []));
+}
+
+export type GuidePageRevisionRow = {
+  id: string;
+  pageVersion: number;
+  title: string;
+  contentHtml: string;
+  reason: GuidePageRevisionReason;
+  actorName: string | null;
+  createdAt: Date;
+};
+
+/** 한 페이지의 이전 판(최근 순). */
+export async function listGuidePageRevisions(context: DbContext, pageId: string): Promise<GuidePageRevisionRow[]> {
+  return asDocumentReadDb(context)
+    .select({
+      id: guidePageRevisions.id,
+      pageVersion: guidePageRevisions.pageVersion,
+      title: guidePageRevisions.title,
+      contentHtml: guidePageRevisions.contentHtml,
+      reason: guidePageRevisions.reason,
+      actorName: profiles.displayName,
+      createdAt: guidePageRevisions.createdAt,
+    })
+    .from(guidePageRevisions)
+    .leftJoin(profiles, eq(guidePageRevisions.actorId, profiles.id))
+    .where(eq(guidePageRevisions.pageId, pageId))
+    .orderBy(desc(guidePageRevisions.pageVersion), desc(guidePageRevisions.createdAt));
+}
+
+/**
+ * 이전 판으로 되돌린다. 지금 판을 먼저 이력에 남기고(RESTORE, 되돌리기도 되돌릴 수 있게) 그 판의 제목·본문을 새 판으로 쓴다.
+ * `baseVersion`이 지금 판과 다르면 덮지 않는다. 새 판 번호를 lifecycle 표지로 남겨(0040) 옛 세대 저장을 막는다.
+ */
+export async function restoreGuidePageRevisionRecord(
+  context: DbContext,
+  input: { actorId: string; pageId: string; revisionId: string; baseVersion: number; snapshotId: string; now: Date },
+): Promise<GuideWriteResult> {
+  const before = await findGuidePage(context, input.pageId);
+  if (!before) return { ok: false, reason: "NOT_FOUND", current: null };
+  const [revision] = await asDocumentReadDb(context)
+    .select({ title: guidePageRevisions.title, contentHtml: guidePageRevisions.contentHtml })
+    .from(guidePageRevisions)
+    .where(and(eq(guidePageRevisions.id, input.revisionId), eq(guidePageRevisions.pageId, input.pageId)))
+    .limit(1);
+  if (!revision) return { ok: false, reason: "NOT_FOUND", current: before };
+  if (before.version !== input.baseVersion) {
+    // 응답을 잃고 다시 보낸 같은 되돌리기면 이미 반영된 것으로 본다.
+    if (before.version === input.baseVersion + 1 && samePayload(before, revision.title, revision.contentHtml)) {
+      return { ok: true, page: before, replayed: true };
+    }
+    return { ok: false, reason: "VERSION_CONFLICT", current: before };
+  }
+  const epoch = documentEpochSeconds(input.now)!;
+  try {
+    await executeDocumentStatementsAtomically(context, [
+      guideRevisionSnapshotStatement({
+        revisionId: input.snapshotId,
+        pageId: input.pageId,
+        baseVersion: input.baseVersion,
+        reason: "RESTORE",
+        epoch,
+      }),
+      {
+        query: `
+          UPDATE guide_pages
+          SET title = ?, content_html = ?, version = version + 1, collab_lifecycle = version + 1,
+              updated_by_id = (SELECT id FROM profiles WHERE id = ?),
+              updated_at = MAX(created_at, ?)
+          WHERE id = ? AND version = ? AND deleted_at IS NULL
+        `,
+        params: [revision.title, revision.contentHtml, input.actorId, epoch, input.pageId, input.baseVersion],
+      },
+      DOCUMENT_CONDITIONAL_WRITE_SENTINEL,
+    ]);
+  } catch {
+    const current = await findGuidePage(context, input.pageId);
+    return { ok: false, reason: current ? "VERSION_CONFLICT" : "NOT_FOUND", current };
+  }
+  const page = await findGuidePage(context, input.pageId);
+  return page ? { ok: true, page, replayed: false } : { ok: false, reason: "NOT_FOUND", current: null };
 }
 
 /**
@@ -333,12 +574,17 @@ export async function findGuideAnchorForThread(
   const [anchor] = await asDocumentReadDb(context)
     .select({
       guidePageId: qnaGuideAnchors.guidePageId,
+      pageDeletedAt: guidePages.deletedAt,
       pageTitle: qnaGuideAnchors.pageTitle,
       blockId: qnaGuideAnchors.anchorBlockId,
       quote: qnaGuideAnchors.anchorQuote,
     })
     .from(qnaGuideAnchors)
+    .leftJoin(guidePages, eq(qnaGuideAnchors.guidePageId, guidePages.id))
     .where(eq(qnaGuideAnchors.threadId, threadId))
     .limit(1);
-  return anchor ?? null;
+  if (!anchor) return null;
+  // 휴지통 페이지로 가는 링크는 빼고 제목·인용만 보인다(되살리면 다시 이어진다).
+  const { pageDeletedAt, ...rest } = anchor;
+  return pageDeletedAt ? { ...rest, guidePageId: null } : rest;
 }

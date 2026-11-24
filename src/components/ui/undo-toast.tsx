@@ -1,5 +1,5 @@
 /**
- * @file src/components/admin-portal/UndoToast.tsx
+ * @file src/components/ui/undo-toast.tsx
  * @description 화면 아래쪽 되돌리기 안내(AssignmentAck 보드). 정해진 시간 뒤 닫히고,
  * 포인터가 올라가 있거나 focus가 안에 있는 동안은 닫히지 않는다.
  * 보조기기 알림은 늘 붙어 있는 두 영역(polite status·alert)의 글만 바꿔 읽힌다(한 요소의 role을 바꾸면 읽히지 않는 화면 낭독기가 있다).

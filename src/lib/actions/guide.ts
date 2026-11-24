@@ -7,7 +7,15 @@
 "use server";
 
 import { formatCollabDocKey } from "@/lib/collab/doc-key";
-import { closeCollabRoomAfterMutation, isStaleCollabSave, STALE_COLLAB_SAVE_MESSAGE } from "@/lib/collab/server-env";
+import {
+  abortCollabRestore,
+  applyCollabRestore,
+  beginCollabRestore,
+  closeCollabRoomAfterMutation,
+  parseCollabSaveEpoch,
+  STALE_COLLAB_SAVE_MESSAGE,
+} from "@/lib/collab/server-env";
+import { readGuideRestoreTarget } from "@/lib/collab/restore-targets";
 import { revalidatePath } from "next/cache";
 import { createDbContext } from "@/db/client";
 import { requireAdmin, requireAuth, type AuthSession } from "@/lib/auth-guard";
@@ -29,13 +37,20 @@ import {
 } from "@/lib/guide-content";
 import {
   createGuidePageRecord,
-  deleteGuidePageRecord,
   findGuidePage,
+  listGuidePageRevisions,
   listGuidePageSummaries,
   listGuideQuestionAnchors,
+  listTrashedGuidePages,
+  purgeGuidePageRecord,
   reorderGuidePageRecords,
+  restoreGuidePageRevisionRecord,
+  restoreTrashedGuidePageRecord,
+  trashGuidePageRecord,
   updateGuidePageRecord,
   type GuidePageRecord,
+  type GuidePageRevisionRow,
+  type TrashedGuidePage,
   type GuideQuestionAnchor,
   type GuideWriteFailureReason,
 } from "@/lib/guide-store";
@@ -54,6 +69,10 @@ function failureMessage(reason: GuideWriteFailureReason): string {
       return "가이드 페이지를 찾을 수 없습니다. 이미 삭제되었을 수 있습니다.";
     case "STALE_ORDER":
       return "다른 화면에서 페이지 목록이 바뀌었습니다. 새로고침한 뒤 다시 정렬해 주세요.";
+    case "NOT_TRASHED":
+      return "휴지통에 있는 페이지만 영구 삭제할 수 있습니다.";
+    case "COLLAB_STALE":
+      return STALE_COLLAB_SAVE_MESSAGE;
     case "INTERNAL":
       return "가이드를 안전하게 저장하지 못했습니다. 현재 초안을 유지한 채 다시 시도해 주세요.";
   }
@@ -203,9 +222,9 @@ export async function updateGuidePage(
   }
   const payload = readGuidePayload(formData);
   if (!payload.ok) return { error: payload.error };
-  if (await isStaleCollabSave(formData, formatCollabDocKey({ kind: "guide", id }))) {
-    return { error: STALE_COLLAB_SAVE_MESSAGE, collabStale: true };
-  }
+  // 공동 편집 저장은 room 세대(lifecycle 표지)를 싣는다. 되돌리기 전 세대의 저장은 아래 기록 단계가 거부한다.
+  const collab = parseCollabSaveEpoch(formData);
+  if (!collab.ok) return { error: STALE_COLLAB_SAVE_MESSAGE, collabStale: true };
   const result = await updateGuidePageRecord(createDbContext(), {
     actorId: session.user.id,
     pageId: id,
@@ -213,9 +232,12 @@ export async function updateGuidePage(
     title: payload.title,
     contentHtml: payload.contentHtml,
     assetIds: payload.assetIds,
+    revisionId: crypto.randomUUID(),
+    ...(collab.collabEpoch === undefined ? {} : { collabEpoch: collab.collabEpoch }),
     now: new Date(),
   });
   if (!result.ok) {
+    if (result.reason === "COLLAB_STALE") return { error: STALE_COLLAB_SAVE_MESSAGE, collabStale: true };
     return {
       error: failureMessage(result.reason),
       conflictKind: result.reason,
@@ -247,15 +269,120 @@ export async function reorderGuidePages(orderedIds: string[]): Promise<GuideMuta
   return { ok: true };
 }
 
+/** 페이지를 휴지통으로 옮긴다(0039). 휴지통에서 되살리거나 영구 삭제한다. */
 export async function deleteGuidePage(pageId: string, baseVersion: number): Promise<GuideMutationState> {
-  await requireAdmin();
+  const session = await requireAdmin();
   const id = parseGuidePageId(pageId);
   const version = parseRevision(baseVersion);
   if (!id || !version) return { ok: false, error: failureMessage("NOT_FOUND") };
-  const result = await deleteGuidePageRecord(createDbContext(), { pageId: id, baseVersion: version });
+  const result = await trashGuidePageRecord(createDbContext(), {
+    actorId: session.user.id,
+    pageId: id,
+    baseVersion: version,
+    now: new Date(),
+  });
   if (!result.ok) return { ok: false, error: failureMessage(result.reason) };
-  // 열린 편집기가 지운 페이지를 다시 저장하려 하지 않게 room을 비운다.
+  // 열린 편집기 연결을 닫는다(휴지통 페이지는 토큰을 받지 못한다). 상태는 남겨 되살리면 그대로 이어진다.
+  // 비우면 room 세대가 lifecycle 표지보다 앞서 되살린 뒤 다시 붙지 못한다.
+  await closeCollabRoomAfterMutation(formatCollabDocKey({ kind: "guide", id }), true);
+  revalidateGuide();
+  return { ok: true };
+}
+
+/** 휴지통 페이지 목록(관리자). */
+export async function getTrashedGuidePages(): Promise<TrashedGuidePage[]> {
+  await requireAdmin();
+  return listTrashedGuidePages(createDbContext());
+}
+
+export async function restoreTrashedGuidePage(pageId: string): Promise<GuideMutationState> {
+  await requireAdmin();
+  const id = parseGuidePageId(pageId);
+  if (!id) return { ok: false, error: failureMessage("NOT_FOUND") };
+  const result = await restoreTrashedGuidePageRecord(createDbContext(), { pageId: id });
+  if (!result.ok) return { ok: false, error: failureMessage(result.reason) };
+  revalidateGuide();
+  return { ok: true };
+}
+
+/** 휴지통 페이지를 영구 삭제한다. 이 페이지에서 시작한 질문은 Q&A에 제목·인용과 함께 남는다. */
+export async function purgeTrashedGuidePage(pageId: string): Promise<GuideMutationState> {
+  await requireAdmin();
+  const id = parseGuidePageId(pageId);
+  if (!id) return { ok: false, error: failureMessage("NOT_FOUND") };
+  const result = await purgeGuidePageRecord(createDbContext(), { pageId: id });
+  if (!result.ok) return { ok: false, error: failureMessage(result.reason) };
+  // 지운 페이지의 공동 편집 상태도 비운다.
   await closeCollabRoomAfterMutation(formatCollabDocKey({ kind: "guide", id }), false);
+  revalidateGuide();
+  return { ok: true };
+}
+
+/** 한 페이지의 이전 판(관리자). 휴지통 페이지는 없는 페이지와 같다. */
+export async function getGuidePageHistory(
+  pageId: string,
+): Promise<{ page: GuidePageRecord; revisions: GuidePageRevisionRow[] } | null> {
+  await requireAdmin();
+  const id = parseGuidePageId(pageId);
+  if (!id) return null;
+  const context = createDbContext();
+  const page = await findGuidePage(context, id);
+  if (!page) return null;
+  return { page, revisions: await listGuidePageRevisions(context, id) };
+}
+
+/**
+ * 이전 판으로 되돌린다. 지금 판은 이력에 남아 다시 되돌릴 수 있다.
+ * 열린 편집기에는 노트·게시물처럼 되돌린 본문을 같은 문서의 한 편집으로 적용한다(room 세대 = lifecycle 표지).
+ * 편집기에 아직 저장되지 않은 입력이 있으면 되돌리지 않는다(자동 저장이 끝난 뒤 다시 시도).
+ */
+export async function restoreGuidePageRevision(
+  pageId: string,
+  revisionId: string,
+  baseVersion: number,
+): Promise<GuideMutationState> {
+  const session = await requireAdmin();
+  const id = parseGuidePageId(pageId);
+  const version = parseRevision(baseVersion);
+  if (!id || !version || typeof revisionId !== "string" || !/^[A-Za-z0-9_-]{1,100}$/u.test(revisionId)) {
+    return { ok: false, error: failureMessage("NOT_FOUND") };
+  }
+  const roomKey = formatCollabDocKey({ kind: "guide", id });
+  const operationId = crypto.randomUUID();
+  const prepared = await beginCollabRestore(roomKey, operationId);
+  if (prepared.kind === "busy" || prepared.kind === "failed") {
+    await abortCollabRestore(roomKey, operationId);
+    return {
+      ok: false,
+      error: prepared.kind === "busy" ? "다른 화면에서 이미 되돌리는 중입니다. 잠시 뒤 다시 시도해 주세요." : "열린 편집 화면을 확인하지 못해 되돌리지 않았습니다. 잠시 뒤 다시 시도해 주세요.",
+    };
+  }
+  if (prepared.kind === "ready" && !prepared.clean) {
+    await abortCollabRestore(roomKey, operationId);
+    return { ok: false, error: "편집 화면에 아직 저장되지 않은 입력이 있어 되돌리지 않았습니다. 저장된 뒤 다시 시도해 주세요." };
+  }
+  let result: Awaited<ReturnType<typeof restoreGuidePageRevisionRecord>>;
+  try {
+    result = await restoreGuidePageRevisionRecord(createDbContext(), {
+      actorId: session.user.id,
+      pageId: id,
+      revisionId,
+      baseVersion: version,
+      snapshotId: crypto.randomUUID(),
+      now: new Date(),
+    });
+  } catch (error) {
+    await abortCollabRestore(roomKey, operationId);
+    throw error;
+  }
+  if (!result.ok) {
+    await abortCollabRestore(roomKey, operationId);
+    return { ok: false, error: failureMessage(result.reason) };
+  }
+  // 이 되돌리기의 판 번호가 새 세대다. 재전송이면 이미 적용된 세대라 room이 건너뛴다.
+  const target = await readGuideRestoreTarget(id);
+  if (target && result.page.collabLifecycle > 0) await applyCollabRestore(roomKey, operationId, result.page.collabLifecycle, target);
+  else await abortCollabRestore(roomKey, operationId);
   revalidateGuide();
   return { ok: true };
 }

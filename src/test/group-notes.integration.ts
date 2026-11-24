@@ -125,6 +125,7 @@ const collabLoaders = () => ({
   findPost: async () => null,
   findGuidePage: async () => null,
   findQnaThread: async () => null,
+  findQnaReply: async () => null,
   isActiveStudent: async () => true,
   isGroupMember: (studentId: string, groupId: string) =>
     noteAccess.isCurrentLessonGroupMember({ kind: "d1", db: requireActiveDb() } as never, studentId, groupId),
@@ -615,4 +616,50 @@ test("Stann이 만든 개인 노트(2026-11-23 사용자 결정): 노트 주인 
   assert.equal(own.success, true, own.error);
   assert.equal((await notes.getPrivateNote(own.note!.id))?.canManageLifecycle, true);
   assert.equal((await notes.trashPrivateNote(own.note!.id, crypto.randomUUID(), 1)).success, true);
+});
+
+test("그룹 해제(감사 보완 #8): 휴지통 노트만 남으면 그룹을 해제 표시로 두고 노트는 30일 보존, 관리자만 그룹 휴지통을 열며 되살리지 못하고 기한 뒤 영구 삭제하면 그룹도 사라진다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context);
+  const groupId = await createGroup(["student-a", "student-b"]);
+  as("student-a");
+  const created = await notes.createPrivateNote("student-a", {}, createForm("남길 노트", "<p>x</p>", groupId));
+  const noteId = created.note!.id;
+
+  // 쓰이는 그룹 노트가 있으면 해제하지 않는다.
+  as("admin-1", "admin");
+  const blocked = await groups.deleteLessonGroupAction(groupId);
+  assert.equal(blocked.ok, false);
+  assert.match(blocked.ok ? "" : blocked.error, /휴지통에 넣은 뒤 해제/u);
+
+  as("student-a");
+  assert.equal((await notes.trashPrivateNote(noteId, crypto.randomUUID(), 1)).success, true);
+  as("admin-1", "admin");
+  assert.deepEqual(await groups.deleteLessonGroupAction(groupId), { ok: true, keptTrashedNotes: 1 });
+  assert.deepEqual(await groups.getLessonGroups(), [], "해제한 그룹은 목록에서 빠진다");
+  assert.equal((await db.select().from(privateNotes)).length, 1, "휴지통 노트는 보존된다");
+  // 해제한 그룹을 다시 고치거나 그 그룹에 노트를 만들 수 없고, 멤버는 다른 그룹에 들어갈 수 있다.
+  assert.equal((await groups.saveLessonGroupAction({ groupId, name: "되살리기", memberIds: ["student-a", "student-b"] })).ok, false);
+  const regroup = await groups.saveLessonGroupAction({ groupId: null, name: "새 반", memberIds: ["student-a", "student-b"] });
+  assert.equal(regroup.ok, true);
+  as("student-a");
+  assert.ok((await notes.createPrivateNote("student-a", {}, createForm("옛 그룹에", "<p>x</p>", groupId))).error, "해제한 그룹에는 노트를 만들 수 없다");
+
+  // 그룹 휴지통: 관리자만, 해제 표시와 함께. 학생은 막힌다.
+  await assert.rejects(notes.getTrashedGroupNotes(groupId));
+  await assert.rejects(notes.getTrashGroupChoices());
+  as("admin-1", "admin");
+  const trash = await notes.getTrashedGroupNotes(groupId);
+  assert.ok(trash);
+  assert.deepEqual([trash.group.dissolved, trash.notes.map((note) => note.id)], [true, [noteId]]);
+  const choices = await notes.getTrashGroupChoices();
+  assert.deepEqual(choices.map((group) => [group.id, group.dissolved, group.trashedCount]), [[groupId, true, 1]]);
+
+  // 해제한 그룹의 노트는 관리자도 되살리지 못한다(어느 목록에도 보이지 않게 된다).
+  assert.notEqual((await notes.restorePrivateNote(noteId, crypto.randomUUID(), 2)).success, true);
+  // 기한 전 영구 삭제는 보존 기간 때문에 거절된다.
+  assert.notEqual((await notes.purgePrivateNote(noteId, crypto.randomUUID(), 2)).success, true);
+  await db.update(privateNotes).set({ deletedAt: new Date(Date.now() - 40 * 86_400_000) }).where(eq(privateNotes.id, noteId));
+  assert.equal((await notes.purgePrivateNote(noteId, crypto.randomUUID(), 2)).success, true);
+  assert.equal(await notes.getTrashedGroupNotes(groupId), null, "마지막 노트를 영구 삭제하면 해제한 그룹도 지운다");
+  assert.deepEqual(await notes.getTrashGroupChoices(), []);
 });

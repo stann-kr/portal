@@ -678,11 +678,11 @@ export async function createQnaThreadAtomically(
       },
       ...(write.guideAnchor
         ? [{
-            // 페이지가 그 사이 지워졌으면 연결 없이 제목·인용만 남긴다(FK 실패로 질문을 잃지 않는다).
+            // 페이지가 그 사이 지워졌거나 휴지통에 있으면 연결 없이 제목·인용만 남긴다(FK 실패로 질문을 잃지 않는다).
             query: `
               INSERT INTO qna_guide_anchors (
                 thread_id, guide_page_id, page_title, anchor_block_id, anchor_quote, created_at
-              ) VALUES (?, (SELECT id FROM guide_pages WHERE id = ?), ?, ?, ?, ?)
+              ) VALUES (?, (SELECT id FROM guide_pages WHERE id = ? AND deleted_at IS NULL), ?, ?, ?, ?)
             `,
             params: [
               write.threadId,

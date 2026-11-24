@@ -144,7 +144,8 @@ export function TrashRecordItem({
   actions,
 }: {
   title: string;
-  href: string;
+  /** 제목 링크. 휴지통에서 열어 볼 수 없는 문서(가이드 페이지)는 없다. */
+  href?: string;
   meta: ReactNode;
   /** 메타 줄 끝에 붙는 작은 표시(예: "Stann이 지움"). */
   badge?: string;
@@ -155,12 +156,16 @@ export function TrashRecordItem({
   return (
     <li className="flex flex-wrap items-center gap-x-4 gap-y-3 border-b border-muted px-1 py-4">
       <div className="flex min-w-0 flex-[1_1_360px] flex-col gap-1">
-        <Link
-          href={href}
-          className="self-start rounded-sm text-md font-medium text-foreground underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          {title}
-        </Link>
+        {href ? (
+          <Link
+            href={href}
+            className="self-start rounded-sm text-md font-medium text-foreground underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {title}
+          </Link>
+        ) : (
+          <span className="self-start text-md font-medium text-foreground">{title}</span>
+        )}
         <span className="inline-flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
           {meta}
           {badge ? (

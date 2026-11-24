@@ -28,8 +28,10 @@ export type CollabDocumentLoaders = {
     lifecycle: number;
   } | null>;
   findPost(id: string): Promise<{ authorId: string; deletedAt: Date | null; lifecycle: number } | null>;
-  findGuidePage(id: string): Promise<{ id: string } | null>;
+  findGuidePage(id: string): Promise<{ id: string; deletedAt: Date | null; lifecycle: number } | null>;
   findQnaThread(id: string): Promise<{ studentId: string; deletedAt: Date | null } | null>;
+  /** 답글 작성자와 그 질문의 휴지통 상태(답글 고치기 작성본). */
+  findQnaReply(id: string): Promise<{ authorId: string; threadDeletedAt: Date | null } | null>;
   /** 활성 학생 profile인지(관리자가 학생 공간에 새 노트를 만들 때). */
   isActiveStudent(id: string): Promise<boolean>;
   /** 학생이 지금 그 그룹 멤버인지(그룹 노트 권한). */
@@ -70,7 +72,11 @@ async function authorizeKey(
     }
     case "guide": {
       if (!actor.isAdmin) return null;
-      return (await loaders.findGuidePage(key.id)) ? { mode: "write" } : null;
+      const page = await loaders.findGuidePage(key.id);
+      if (!page) return null;
+      // 휴지통 가이드(0039)는 room을 열지 않는다. 되살리면 같은 room으로 다시 붙는다.
+      if (page.deletedAt) return TRASHED;
+      return { mode: "write", lifecycle: page.lifecycle };
     }
     case "post": {
       const post = await loaders.findPost(key.id);
@@ -85,6 +91,11 @@ async function authorizeKey(
         const thread = await loaders.findQnaThread(key.scope);
         if (!thread || thread.deletedAt) return null;
         if (!actor.isAdmin && actor.id !== thread.studentId) return null;
+      }
+      if (key.draftKind === "qna-reply-edit") {
+        // 고치기는 그 답글 작성자 본인만, 휴지통에 없는 질문에서만(관리자도 학생 답글은 못 고친다).
+        const reply = await loaders.findQnaReply(key.scope);
+        if (!reply || reply.authorId !== actor.id || reply.threadDeletedAt) return null;
       }
       return { mode: "write" };
     }

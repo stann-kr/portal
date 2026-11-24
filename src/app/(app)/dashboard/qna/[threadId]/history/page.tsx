@@ -1,6 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import { getActiveAuthSession } from "@/lib/auth-guard";
 import {
+  getQnaReplyEdits,
   getQnaThreadEvents,
   getQnaThreadIncludingTrash,
 } from "@/lib/actions/qna";
@@ -45,7 +46,10 @@ export default async function QnaHistoryPage({
   const thread = await getQnaThreadIncludingTrash(threadId);
   if (!thread) notFound();
 
-  const events = await getQnaThreadEvents(threadId);
+  const [events, edits] = await Promise.all([getQnaThreadEvents(threadId), getQnaReplyEdits(threadId)]);
+  // 고친 기록은 그 답글을 올린 이벤트 아래에 최근 순으로 붙인다(감사 보완 #7).
+  const editsByReply = new Map<string, typeof edits>();
+  for (const edit of edits) editsByReply.set(edit.replyId, [...(editsByReply.get(edit.replyId) ?? []), edit]);
   const query = await searchParams;
   const returnTo = safeReturnPath(query.returnTo, "/dashboard/qna");
   const threadHref = `/dashboard/qna/${threadId}?returnTo=${encodeURIComponent(returnTo)}`;
@@ -57,7 +61,7 @@ export default async function QnaHistoryPage({
       back={{ href: threadHref, label: "Q&A로 돌아가기" }}
       title="변경 이력"
       subtitle={<>{thread.title} · 현재 <span className="font-mono">{thread.version}</span>번 이벤트</>}
-      description="질문 생성, 답변 추가, 상태 변경과 휴지통 작업을 발생 순서대로 보존합니다."
+      description="질문 생성, 답변 추가, 상태 변경과 휴지통 작업을 발생 순서대로 보존합니다. 고친 글은 처음 올린 글과 고친 본문을 모두 남깁니다."
     >
       <RecordList ordered label="Q&A 변경 이력">
         {events.map((event) => (
@@ -74,7 +78,7 @@ export default async function QnaHistoryPage({
           >
             <p className={cn(RECORD_FULL_ROW, "text-ui text-foreground")}>{event.title}</p>
             {event.replyContentHtml ? (
-              <RecordDetails summary="이 이벤트의 답변 보기">
+              <RecordDetails summary={event.replyId && editsByReply.has(event.replyId) ? "처음 올린 글 보기" : "이 이벤트의 답변 보기"}>
                 <RichTextContent html={event.replyContentHtml} className="text-body text-secondary-foreground" />
                 {event.replyAttachmentUrl ? (
                   <a
@@ -88,6 +92,16 @@ export default async function QnaHistoryPage({
                 ) : null}
               </RecordDetails>
             ) : null}
+            {event.replyId
+              ? (editsByReply.get(event.replyId) ?? []).map((edit) => (
+                  <RecordDetails
+                    key={`${edit.replyId}-${edit.editNumber}`}
+                    summary={<>고친 글 <span className="font-mono">{edit.editNumber}</span>번 보기 · <span className="font-mono">{formatRecordTime(edit.createdAt, now)}</span></>}
+                  >
+                    <RichTextContent html={edit.contentHtml} className="text-body text-secondary-foreground" />
+                  </RecordDetails>
+                ))
+              : null}
             {event.deletedAt ? (
               <p className={cn(RECORD_FULL_ROW, "text-xs text-muted-foreground")}>
                 삭제 시각: <span className="font-mono">{formatRecordTime(event.deletedAt, now)}</span>

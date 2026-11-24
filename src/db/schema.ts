@@ -214,6 +214,11 @@ export const lessonGroups = sqliteTable(
     updatedAt: integer("updated_at", { mode: "timestamp" })
       .default(sql`(strftime('%s', 'now'))`)
       .notNull(),
+    /**
+     * 해제한 시각. 휴지통에 그룹 노트가 남은 그룹은 행을 지우지 못하므로(노트 FK restrict, 휴지통 30일 보존)
+     * 멤버·그룹 캘린더를 풀고 이 칸만 채운다. 목록·새 노트·캘린더 연결에서 빠지고, 마지막 노트를 영구 삭제하면 행도 지운다.
+     */
+    dissolvedAt: integer("dissolved_at", { mode: "timestamp" }),
   },
   (table) => [
     check(
@@ -1635,6 +1640,29 @@ export const qnaReplies = sqliteTable(
   ],
 );
 
+/**
+ * Q&A 답글(질문 본문 포함) 고치기(0039). qna_replies 행은 trigger로 바꿀 수 없으므로(원래 글 보존),
+ * 작성자가 고칠 때마다 고친 뒤 본문을 번호를 붙여 한 줄씩 쌓고, 화면은 가장 큰 번호의 본문을 보인다.
+ * 원래 글은 qna_replies에, 고친 과정은 여기에 남아 이력 화면이 모두 보인다. 답글이 지워지면(스레드 영구 삭제) 함께 지운다.
+ */
+export const qnaReplyRevisions = sqliteTable(
+  "qna_reply_revisions",
+  {
+    id: text("id").primaryKey(),
+    replyId: text("reply_id")
+      .references(() => qnaReplies.id, { onDelete: "cascade" })
+      .notNull(),
+    editNumber: integer("edit_number").notNull(),
+    contentHtml: text("content_html").notNull(),
+    editorId: text("editor_id").references(() => profiles.id, { onDelete: "set null" }),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("qna_reply_revisions_reply_number_unique").on(table.replyId, table.editNumber),
+    check("qna_reply_revisions_number_check", sql`${table.editNumber} >= 1 AND length(${table.contentHtml}) > 0`),
+  ],
+);
+
 export type QnaThreadEventType =
   | "BASELINE"
   | "CREATE"
@@ -1830,6 +1858,16 @@ export const guidePages = sqliteTable(
     updatedAt: integer("updated_at", { mode: "timestamp" })
       .default(sql`(strftime('%s', 'now'))`)
       .notNull(),
+    /** 휴지통에 넣은 시각(0039). null이면 목록에 보인다. 영구 삭제는 휴지통에서만 한다. */
+    deletedAt: integer("deleted_at", { mode: "timestamp" }),
+    deletedById: text("deleted_by_id").references(() => profiles.id, {
+      onDelete: "set null",
+    }),
+    /**
+     * 공동 편집 lifecycle 표지(0040): 마지막으로 이전 판으로 되돌린 판 번호(없으면 0). room 세대가 이 값을 따라
+     * 되돌리기를 열린 편집기에 한 편집으로 적용하고, 옛 세대의 자동 저장이 되돌린 본문을 덮지 못하게 한다.
+     */
+    collabLifecycle: integer("collab_lifecycle").default(0).notNull(),
   },
   (table) => [
     index("guide_pages_sort_idx").on(table.sortOrder),
@@ -1837,6 +1875,32 @@ export const guidePages = sqliteTable(
       "guide_pages_payload_check",
       sql`length(${table.id}) > 0 AND length(${table.title}) > 0 AND ${table.version} >= 1 AND ${table.createdAt} <= ${table.updatedAt}`,
     ),
+  ],
+);
+
+export type GuidePageRevisionReason = "EDIT" | "RESTORE";
+
+/**
+ * 가이드 페이지 이력(0039). 공동 편집 자동 저장이 잦아 저장마다 남기지 않고, 마지막 기록이 10분보다 오래됐을 때
+ * 저장 직전 본문을 남긴다(EDIT). 이력 복원 직전 본문은 항상 남긴다(RESTORE). 페이지를 영구 삭제하면 함께 지운다.
+ */
+export const guidePageRevisions = sqliteTable(
+  "guide_page_revisions",
+  {
+    id: text("id").primaryKey(),
+    pageId: text("page_id")
+      .references(() => guidePages.id, { onDelete: "cascade" })
+      .notNull(),
+    pageVersion: integer("page_version").notNull(),
+    title: text("title").notNull(),
+    contentHtml: text("content_html").notNull(),
+    reason: text("reason").$type<GuidePageRevisionReason>().notNull(),
+    actorId: text("actor_id").references(() => profiles.id, { onDelete: "set null" }),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  },
+  (table) => [
+    index("guide_page_revisions_page_created_idx").on(table.pageId, table.createdAt),
+    check("guide_page_revisions_reason_check", sql`${table.reason} IN ('EDIT', 'RESTORE')`),
   ],
 );
 

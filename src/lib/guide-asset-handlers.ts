@@ -3,7 +3,7 @@
  * 학생은 자기에게 열린 페이지의 이미지만 받는다(src/lib/guide-access.ts). 열리지 않은 이미지는 없는 이미지와 같게 답한다.
  * route는 실제 session·DB·R2를 넘기고, 테스트는 가짜 의존성을 넘긴다.
  */
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import type { DbContext } from "@/db/client";
 import { guideAccessPages, guideAssets, guidePages, type GuideAssetContentType } from "@/db/schema";
 import { asDocumentReadDb } from "@/lib/document-lifecycle-atomic";
@@ -152,6 +152,7 @@ export async function handleGuideAssetGet(
       .innerJoin(guidePages, eq(guideAccessPages.guidePageId, guidePages.id))
       .where(and(
         eq(guideAccessPages.studentId, session.user.id),
+        isNull(guidePages.deletedAt),
         sql`instr(${guidePages.contentHtml}, ${guideAssetPath(assetId)}) > 0`,
       ))
       .limit(1);

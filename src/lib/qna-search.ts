@@ -1,6 +1,7 @@
 import { and, asc, eq, gt, isNull } from "drizzle-orm";
 import type { createDb } from "@/db/client";
 import { qnaReplies, qnaThreads } from "@/db/schema";
+import { readQnaReplyEditHeads } from "@/lib/qna-reply-edit";
 import {
   getDocumentSearchExcerpt,
   getDocumentSearchWords,
@@ -39,10 +40,12 @@ export async function searchQnaThreads<T extends { id: string; title: string }>(
         studentId === null ? undefined : eq(qnaThreads.studentId, studentId),
         cursor === undefined ? undefined : gt(qnaReplies.id, cursor),
       )).orderBy(asc(qnaReplies.id)).limit(batchSize);
+    // 고친 답글은 지금 본문으로 찾는다(감사 보완 #7).
+    const edits = await readQnaReplyEditHeads(db, replies.map((reply) => reply.id));
     for (const reply of replies) {
       const match = matches.get(reply.threadId);
       if (!match) continue;
-      const body = getSearchableDocumentText(reply.contentHtml);
+      const body = getSearchableDocumentText(edits.get(reply.id)?.contentHtml ?? reply.contentHtml);
       const folded = body.toLowerCase();
       for (const word of match.missing) {
         if (folded.includes(word)) match.missing.delete(word);

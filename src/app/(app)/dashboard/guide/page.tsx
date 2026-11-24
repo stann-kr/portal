@@ -3,8 +3,10 @@
  * @description 공용 가이드 첫 화면. (볼 수 있는) 첫 페이지를 이 주소에서 바로 그리고(redirect 없음), 페이지가 없으면 빈 화면(관리자는 새 페이지)을,
  * 가이드가 열리지 않은 학생에게는 안내(GuideClosedNotice)를 보인다.
  */
+import Link from "next/link";
 import { redirect } from "next/navigation";
-import { BookOpenText } from "lucide-react";
+import { BookOpenText, Trash2 } from "lucide-react";
+import { buttonClassName } from "@/components/ui/button";
 import { MobileTopBar } from "@/components/app-shell/AppSidebar";
 import { GuideNewPageButton } from "@/components/guide/GuideNewPageButton";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -34,7 +36,15 @@ export default async function GuideIndexPage() {
           icon={<BookOpenText strokeWidth={1.6} aria-hidden="true" />}
           title="아직 가이드 페이지가 없습니다"
           description={session.user.role === "admin" ? "새 페이지를 만들어 레슨 가이드를 시작하세요." : "Stann이 가이드를 올리면 여기에 보입니다."}
-          action={session.user.role === "admin" ? <GuideNewPageButton /> : undefined}
+          action={session.user.role === "admin" ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <GuideNewPageButton />
+              <Link href="/dashboard/guide/trash" className={buttonClassName({ variant: "ghost" })}>
+                <Trash2 className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
+                휴지통
+              </Link>
+            </div>
+          ) : undefined}
         />
       </div>
     </div>

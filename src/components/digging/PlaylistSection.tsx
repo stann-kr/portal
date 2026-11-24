@@ -15,6 +15,8 @@ import { useEffect, useId, useRef, useState, useTransition } from "react";
 import { ExternalLink, Pencil, Play, Plus, Square, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ConfirmPanel, useConfirmAction, type ConfirmActionState } from "@/components/ui/confirm-action";
+import { UndoToast, type UndoToastMessage } from "@/components/ui/undo-toast";
+import { withObjectParticle } from "@/lib/korean-particle";
 import { Input } from "@/components/ui/input";
 import { SectionHeader } from "@/components/ui/section-header";
 import { SoundCloudPlayer } from "@/components/player/SoundCloudPlayer";
@@ -22,6 +24,7 @@ import { PlaylistTrackImport, type DiggingTrackImportBoard } from "@/components/
 import {
   createDiggingPlaylist,
   deleteDiggingPlaylist,
+  restoreDiggingPlaylist,
   updateDiggingPlaylist,
   type DiggingPlaylist,
 } from "@/lib/actions/digging-playlists";
@@ -136,7 +139,10 @@ export function PlaylistSection({ studentId, initialPlaylists, viewer = "student
   };
   const [mutationError, setMutationError] = useState("");
   const [isDeleting, startDelete] = useTransition();
-  const deleteConfirm = useConfirmAction<string>();
+  // 삭제는 확인 없이 바로 지우고 잠깐 "되돌리기"를 보여 준다(감사 보완 #10, 2026-11-25).
+  const [undoToast, setUndoToast] = useState<UndoToastMessage | null>(null);
+  const deletedRef = useRef(new Map<string, DiggingPlaylist>());
+  const undoButtonRef = useRef<HTMLButtonElement>(null);
   const addButtonRef = useRef<HTMLButtonElement>(null);
   const sectionRef = useRef<HTMLElement>(null);
 
@@ -152,7 +158,7 @@ export function PlaylistSection({ studentId, initialPlaylists, viewer = "student
     requestAnimationFrame(() => addButtonRef.current?.focus());
   };
 
-  const removePlaylist = (playlist: DiggingPlaylist) => {
+  const removePlaylist = (playlist: DiggingPlaylist, name: string) => {
     setMutationError("");
     startDelete(async () => {
       try {
@@ -163,10 +169,39 @@ export function PlaylistSection({ studentId, initialPlaylists, viewer = "student
         }
         setPlaylists((current) => current.filter((item) => item.id !== playlist.id));
         if (playingId === playlist.id) setPlayingId(null);
-        // 지운 행의 버튼이 사라져 초점이 body로 떨어지지 않게 추가 버튼(폼이 열려 있으면 섹션)으로 옮긴다.
-        requestAnimationFrame(() => (addButtonRef.current ?? sectionRef.current)?.focus());
+        const key = `playlist-${playlist.id}-${Date.now()}`;
+        deletedRef.current.set(key, result.playlist);
+        // 조사는 따옴표 안 이름의 끝 글자로 고른다("‘Beatport 플레이리스트’를").
+        const particle = withObjectParticle(name).slice(name.length);
+        setUndoToast({ key, message: `‘${name}’${particle} 목록에서 삭제했습니다.`, undoLabel: "되돌리기" });
+        // 지운 행의 버튼이 사라져 초점이 body로 떨어지지 않게 되돌리기 버튼으로 옮긴다.
+        requestAnimationFrame(() => (undoButtonRef.current ?? addButtonRef.current ?? sectionRef.current)?.focus());
       } catch {
         setMutationError("플레이리스트를 삭제하지 못했습니다. 다시 시도해 주세요.");
+      }
+    });
+  };
+
+  const undoDelete = () => {
+    const toast = undoToast;
+    const snapshot = toast ? deletedRef.current.get(toast.key) : undefined;
+    setUndoToast(null);
+    if (!toast || !snapshot) return;
+    deletedRef.current.delete(toast.key);
+    startDelete(async () => {
+      try {
+        const result = await restoreDiggingPlaylist(studentId, snapshot);
+        if (!result.ok) {
+          setMutationError(result.error);
+          return;
+        }
+        setPlaylists((current) => (
+          current.some((item) => item.id === result.playlist.id)
+            ? current
+            : sortPlaylists([...current, result.playlist])
+        ));
+      } catch {
+        setMutationError("플레이리스트를 되돌리지 못했습니다. 다시 등록해 주세요.");
       }
     });
   };
@@ -313,7 +348,7 @@ export function PlaylistSection({ studentId, initialPlaylists, viewer = "student
                       <button
                         type="button"
                         aria-label={`‘${name}’ 삭제`}
-                        onClick={(event) => deleteConfirm.request(event.currentTarget, playlist.id)}
+                        onClick={() => removePlaylist(playlist, name)}
                         disabled={isDeleting}
                         className={cn(ROW_ACTION_CLASS, "hover:text-destructive")}
                       >
@@ -348,16 +383,6 @@ export function PlaylistSection({ studentId, initialPlaylists, viewer = "student
                     ) : null}
                   </div>
                 ) : null}
-                {deleteConfirm.value === playlist.id ? (
-                  <ConfirmPanel
-                    confirm={deleteConfirm}
-                    message={`‘${name}’ 플레이리스트를 목록에서 삭제할까요? ${PROVIDER_LABEL[playlist.provider]}의 원래 플레이리스트는 그대로 남습니다.`}
-                    confirmLabel="플레이리스트 삭제"
-                    pendingLabel="삭제 중..."
-                    pending={isDeleting}
-                    onConfirm={() => removePlaylist(playlist)}
-                  />
-                ) : null}
                 {playlist.provider === "soundcloud" && playing ? (
                   <div id={playerId}>
                     <SoundCloudPlayer url={playlist.url} title={`${name} SoundCloud 플레이어`} variant="playlist" />
@@ -368,6 +393,7 @@ export function PlaylistSection({ studentId, initialPlaylists, viewer = "student
           })}
         </ul>
       )}
+      <UndoToast ref={undoButtonRef} toast={undoToast} onUndo={undoDelete} onDismiss={() => setUndoToast(null)} />
     </section>
   );
 }

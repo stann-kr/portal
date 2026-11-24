@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { createDb } from "@/db/client";
-import { posts, privateNotes } from "@/db/schema";
+import { guidePages, posts, privateNotes } from "@/db/schema";
 import { classifyMixsetMedia } from "@/lib/community-mixset-media";
 
 /**
@@ -40,4 +40,14 @@ export async function readPostRestoreTarget(postId: string): Promise<CollabResto
   if (!head || head.deletedAt) return null;
   // 링크 칸은 링크형 믹스셋 게시물만 쓴다. 칸이 없는 작업본에 새 칸을 만들지 않도록 링크가 있을 때만 싣는다.
   return { html: head.contentHtml, fields: postRoomFields(head, classifyMixsetMedia(head)?.kind === "link") };
+}
+
+export async function readGuideRestoreTarget(pageId: string): Promise<CollabRestoreTarget | null> {
+  const [head] = await createDb()
+    .select({ title: guidePages.title, contentHtml: guidePages.contentHtml, deletedAt: guidePages.deletedAt })
+    .from(guidePages)
+    .where(eq(guidePages.id, pageId))
+    .limit(1);
+  if (!head || head.deletedAt) return null;
+  return { html: head.contentHtml, fields: { title: head.title } };
 }

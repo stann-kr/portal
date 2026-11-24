@@ -7,7 +7,7 @@
  */
 
 import { revalidatePath } from "next/cache";
-import { and, asc, eq, inArray, or } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, or } from "drizzle-orm";
 import { createDbContext, type DrizzleDb } from "@/db/client";
 import {
   calendarConnections,
@@ -428,7 +428,7 @@ export async function saveCalendarMapping(
       return { error: MESSAGES.studentMissing };
     }
   } else {
-    const [group] = await db.select({ id: lessonGroups.id }).from(lessonGroups).where(eq(lessonGroups.id, target.id)).limit(1);
+    const [group] = await db.select({ id: lessonGroups.id }).from(lessonGroups).where(and(eq(lessonGroups.id, target.id), isNull(lessonGroups.dissolvedAt))).limit(1);
     if (!group) return { error: MESSAGES.groupMissing };
     // 화면은 수강 중인 멤버가 둘 이상인 그룹만 고르게 한다. 서버도 같은 기준으로 받는다.
     if ((await readLessonGroupMemberIds(createDbContext(), target.id)).length < 2) return { error: MESSAGES.groupMissing };

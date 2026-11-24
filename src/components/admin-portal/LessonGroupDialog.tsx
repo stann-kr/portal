@@ -8,7 +8,9 @@
 "use client";
 
 import { useRef, useState, useTransition } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { Trash2 } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -22,7 +24,7 @@ import { ConfirmPanel, useConfirmAction } from "@/components/ui/confirm-action";
 import { OPEN_ESCAPE_LAYER } from "@/components/ui/escape-layer";
 import { withObjectParticle } from "@/lib/korean-particle";
 import { deleteLessonGroupAction, saveLessonGroupAction } from "@/lib/actions/lessonGroups";
-import { LESSON_GROUP_MIN_MEMBERS, LESSON_GROUP_NAME_MAX, type LessonGroupSummary } from "@/lib/lesson-group-rules";
+import { groupTrashHref, LESSON_GROUP_MIN_MEMBERS, LESSON_GROUP_NAME_MAX, type LessonGroupSummary } from "@/lib/lesson-group-rules";
 
 export type LessonGroupStudentChoice = { id: string; label: string };
 
@@ -75,7 +77,11 @@ export function LessonGroupDialog({
     setMemberIds((current) => (checked ? [...current, id] : current.filter((value) => value !== id)));
   };
 
-  const run = (task: () => Promise<{ ok: boolean; error?: string }>, doneMessage: string, dissolving = false) => {
+  const run = <R extends { ok: boolean; error?: string }>(
+    task: () => Promise<R>,
+    doneMessage: string | ((result: R) => string),
+    dissolving = false,
+  ) => {
     setError(null);
     startTransition(async () => {
       try {
@@ -85,7 +91,7 @@ export function LessonGroupDialog({
           return;
         }
         dissolved.current = dissolving;
-        onDone?.(doneMessage);
+        onDone?.(typeof doneMessage === "function" ? doneMessage(result) : doneMessage);
         onOpenChange(false);
         router.refresh();
       } catch {
@@ -167,17 +173,25 @@ export function LessonGroupDialog({
           </fieldset>
           <div className="flex flex-col-reverse gap-2 md:flex-row md:items-center md:justify-between">
             {group ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="touch"
-                className="text-destructive md:h-8 md:rounded-md md:px-2.5 md:text-ui"
-                disabled={isPending}
-                aria-expanded={dissolveConfirm.isOpen}
-                onClick={(event) => dissolveConfirm.request(event.currentTarget)}
-              >
-                그룹 해제
-              </Button>
+              <div className="flex flex-col-reverse gap-2 md:flex-row md:items-center md:gap-1">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="touch"
+                  className="text-destructive md:h-8 md:rounded-md md:px-2.5 md:text-ui"
+                  disabled={isPending}
+                  aria-expanded={dissolveConfirm.isOpen}
+                  onClick={(event) => dissolveConfirm.request(event.currentTarget)}
+                >
+                  그룹 해제
+                </Button>
+                {/* 그룹 노트 휴지통은 학생 기준 휴지통과 따로 연다(학생이 그룹에서 빠져도 찾을 수 있게). */}
+                <Button asChild variant="ghost" size="touch" className="md:h-8 md:rounded-md md:px-2.5 md:text-ui">
+                  <Link href={groupTrashHref(group.id)} onClick={() => onOpenChange(false)}>
+                    <Trash2 aria-hidden="true" className="size-3.5" />그룹 휴지통
+                  </Link>
+                </Button>
+              </div>
             ) : <span aria-hidden="true" />}
             <div className="flex flex-col-reverse gap-2 md:flex-row">
               <Button
@@ -200,11 +214,17 @@ export function LessonGroupDialog({
             <div {...OPEN_ESCAPE_LAYER}>
               <ConfirmPanel
                 confirm={dissolveConfirm}
-                message={`${withObjectParticle(group.name)} 해제할까요? 멤버의 레슨·과제·노트는 학생별로 그대로 남고, 그룹 캘린더 연결(Google·iCloud)은 풀립니다.`}
+                message={`${withObjectParticle(group.name)} 해제할까요? 멤버의 레슨·과제·노트는 학생별로 그대로 남고, 그룹 캘린더 연결(Google·iCloud)은 풀립니다. 휴지통의 그룹 노트는 30일 보존 기간 동안 그룹 휴지통에 남습니다.`}
                 confirmLabel="해제"
                 pendingLabel="해제 중..."
                 pending={isPending}
-                onConfirm={() => run(() => deleteLessonGroupAction(group.id), `${withObjectParticle(group.name)} 해제했습니다.`, true)}
+                onConfirm={() => run(
+                  () => deleteLessonGroupAction(group.id),
+                  (result) => result.ok && result.keptTrashedNotes
+                    ? `${withObjectParticle(group.name)} 해제했습니다. 휴지통의 그룹 노트 ${result.keptTrashedNotes}개는 노트 휴지통의 그룹 목록에 남습니다.`
+                    : `${withObjectParticle(group.name)} 해제했습니다.`,
+                  true,
+                )}
               />
             </div>
           ) : null}

@@ -2,7 +2,8 @@
 
 import { useEffect, useState, useTransition } from "react";
 import Link from "next/link";
-import { ArrowDown, ArrowUp } from "lucide-react";
+import { ArrowDown, ArrowUp, Trash2 } from "lucide-react";
+import { buttonClassName } from "@/components/ui/button";
 import { useProgressRouter } from "@/components/app-shell/NavigationProgress";
 import { reorderGuidePages } from "@/lib/actions/guide";
 import { guidePagePath } from "@/lib/guide-content";
@@ -81,6 +82,17 @@ export function GuidePageNav({
               </Link>
             </li>
           ))}
+          {canManage ? (
+            <li className="shrink-0">
+              <Link
+                href="/dashboard/guide/trash"
+                className="inline-flex h-11 items-center gap-1.5 rounded-touch border border-dashed border-border px-3.5 text-body text-secondary-foreground"
+              >
+                <Trash2 className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
+                휴지통
+              </Link>
+            </li>
+          ) : null}
         </ul>
       </nav>
 
@@ -130,7 +142,18 @@ export function GuidePageNav({
           {error ? (
             <p role="alert" className="px-2 text-ui text-destructive">{error}</p>
           ) : null}
-          {canManage ? <GuideNewPageButton /> : null}
+          {canManage ? (
+            <div className="flex flex-col">
+              <GuideNewPageButton />
+              <Link
+                href="/dashboard/guide/trash"
+                className={buttonClassName({ variant: "ghost", className: "w-full justify-start" })}
+              >
+                <Trash2 className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
+                휴지통
+              </Link>
+            </div>
+          ) : null}
         </nav>
       </aside>
     </>

@@ -122,18 +122,16 @@ export default async function AdminAllNotesPage({
               <span role="status">{countLabel}</span>{" "}
               <span id="note-search-scope" className="sr-only">전체 기간에서 띄어 쓴 단어를 모두 포함한 노트를 찾습니다.</span>
             </p>
-            {/* 휴지통은 학생마다 따로라 학생을 골라 둔 상태에서만 그 학생의 휴지통을 연다. */}
-            {selectedStudentId ? (
-              <Link
-                href={`/dashboard/notes/trash?studentId=${encodeURIComponent(selectedStudentId)}&returnTo=${encodeURIComponent(returnTo)}`}
-                className="inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-md px-2 text-ui text-secondary-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:min-h-8 md:text-xs"
-              >
-                <Trash2 className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
-                {selectedLabel ? `${selectedLabel} 휴지통` : "휴지통"}
-              </Link>
-            ) : (
-              <span className="hidden text-xs text-muted-foreground md:inline">지운 노트는 학생을 고르면 휴지통에서 볼 수 있습니다.</span>
-            )}
+            {/* 학생을 골라 두면 그 학생의 휴지통, 아니면 그룹 노트 휴지통을 고르는 첫 화면을 연다. */}
+            <Link
+              href={selectedStudentId
+                ? `/dashboard/notes/trash?studentId=${encodeURIComponent(selectedStudentId)}&returnTo=${encodeURIComponent(returnTo)}`
+                : `/dashboard/notes/trash?returnTo=${encodeURIComponent(returnTo)}`}
+              className="inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-md px-2 text-ui text-secondary-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:min-h-8 md:text-xs"
+            >
+              <Trash2 className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
+              {selectedStudentId && selectedLabel ? `${selectedLabel} 휴지통` : "휴지통"}
+            </Link>
           </div>
           {rows.length === 0 ? (
             <NotesEmptyState message={emptyMessage}>

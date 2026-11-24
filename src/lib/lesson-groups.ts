@@ -5,7 +5,7 @@
  * 수강 종료한 학생은 그룹 자리(lesson_group_members)를 그대로 두지만 멤버 목록·인원·그룹 레슨 만들기·옮기기에서는 빠진다
  * (2026-11-18 사용자 결정). 복원하면 다시 멤버로 보인다.
  */
-import { and, asc, eq, gte, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import type { DbContext } from "@/db/client";
 import { lessonGroupMembers, lessonGroups, lessons, privateNotes, profiles } from "@/db/schema";
 import {
@@ -31,7 +31,7 @@ import { ACTIVE_ACCOUNT_STATUS, activeStudentSql, notArchivedStudentSql } from "
 export async function listLessonGroups(context: DbContext): Promise<LessonGroupSummary[]> {
   const db = asDocumentReadDb(context);
   const [groups, members] = await Promise.all([
-    db.select({ id: lessonGroups.id, name: lessonGroups.name }).from(lessonGroups).orderBy(asc(lessonGroups.name), asc(lessonGroups.id)),
+    db.select({ id: lessonGroups.id, name: lessonGroups.name }).from(lessonGroups).where(isNull(lessonGroups.dissolvedAt)).orderBy(asc(lessonGroups.name), asc(lessonGroups.id)),
     db
       .select({ studentId: lessonGroupMembers.studentId, groupId: lessonGroupMembers.groupId })
       .from(lessonGroupMembers)
@@ -71,15 +71,22 @@ async function readLessonGroupMembers(context: DbContext, groupId: string): Prom
     .sort((a, b) => a.name.localeCompare(b.name, "ko-KR") || a.id.localeCompare(b.id));
 }
 
-/** 그룹 id로 이름과 멤버(이름순). 권한 확인은 부르는 쪽이 먼저 한다. 없으면 null. */
-export async function readLessonGroupById(context: DbContext, groupId: string): Promise<StudentLessonGroup | null> {
+/**
+ * 그룹 id로 이름과 멤버(이름순). 권한 확인은 부르는 쪽이 먼저 한다. 없으면 null.
+ * 해제한 그룹은 `includeDissolved`일 때만 돌려준다(휴지통 노트 머리의 그룹 이름 등, 멤버는 비어 있다).
+ */
+export async function readLessonGroupById(
+  context: DbContext,
+  groupId: string,
+  options: { includeDissolved?: boolean } = {},
+): Promise<(StudentLessonGroup & { dissolved: boolean }) | null> {
   const [group] = await asDocumentReadDb(context)
-    .select({ id: lessonGroups.id, name: lessonGroups.name })
+    .select({ id: lessonGroups.id, name: lessonGroups.name, dissolvedAt: lessonGroups.dissolvedAt })
     .from(lessonGroups)
-    .where(eq(lessonGroups.id, groupId))
+    .where(options.includeDissolved ? eq(lessonGroups.id, groupId) : and(eq(lessonGroups.id, groupId), isNull(lessonGroups.dissolvedAt)))
     .limit(1);
   if (!group) return null;
-  return { ...group, members: await readLessonGroupMembers(context, group.id) };
+  return { id: group.id, name: group.name, dissolved: group.dissolvedAt !== null, members: await readLessonGroupMembers(context, group.id) };
 }
 
 /**
@@ -196,7 +203,7 @@ export async function saveLessonGroup(
       .from(lessonGroupMembers)
       .where(inArray(lessonGroupMembers.studentId, memberIds)),
     input.groupId
-      ? db.select({ id: lessonGroups.id }).from(lessonGroups).where(eq(lessonGroups.id, input.groupId)).limit(1)
+      ? db.select({ id: lessonGroups.id }).from(lessonGroups).where(and(eq(lessonGroups.id, input.groupId), isNull(lessonGroups.dissolvedAt))).limit(1)
       : Promise.resolve([]),
   ]);
   if (input.groupId && existing.length === 0) return { ok: false, error: "NOT_FOUND" };
@@ -214,7 +221,7 @@ export async function saveLessonGroup(
   const statements: DocumentAtomicStatement[] = [];
   if (input.groupId) {
     statements.push(
-      { query: "UPDATE lesson_groups SET name = ?, updated_at = ? WHERE id = ?", params: [name, now, groupId] },
+      { query: "UPDATE lesson_groups SET name = ?, updated_at = ? WHERE id = ? AND dissolved_at IS NULL", params: [name, now, groupId] },
       DOCUMENT_CONDITIONAL_WRITE_SENTINEL,
       {
         // 고르는 목록에 없는 수강 종료 멤버는 빠진 것이 아니므로 자리를 남긴다.
@@ -259,29 +266,89 @@ export async function saveLessonGroup(
   return { ok: true, id: groupId };
 }
 
-/** 그룹 노트(휴지통 포함)가 남아 있으면 지우지 않는다. 멤버십은 FK cascade와 같은 batch의 DELETE로 함께 지운다. */
-export async function deleteLessonGroup(context: DbContext, groupId: string): Promise<DeleteLessonGroupResult> {
+/**
+ * 그룹을 해제한다.
+ * - 휴지통 밖 그룹 노트가 있으면 해제하지 않는다(멤버가 함께 쓰는 노트를 먼저 휴지통에 넣어야 한다).
+ * - 휴지통에만 그룹 노트가 있으면 노트는 30일 보존 규칙대로 남기고(노트 FK restrict), 멤버·그룹 캘린더 원본·매핑을 지운 뒤
+ *   `dissolved_at`만 채운다. 마지막 휴지통 노트를 영구 삭제하면 `deleteDissolvedLessonGroupIfEmpty`가 행을 지운다.
+ * - 노트가 없으면 행을 지운다(멤버·캘린더는 FK cascade와 같은 batch의 DELETE로 함께 지운다).
+ */
+export async function deleteLessonGroup(context: DbContext, groupId: string, now: Date): Promise<DeleteLessonGroupResult> {
   const db = asDocumentReadDb(context);
-  const [[group], [notes]] = await Promise.all([
-    db.select({ id: lessonGroups.id }).from(lessonGroups).where(eq(lessonGroups.id, groupId)).limit(1),
-    db.select({ value: sql<number>`count(*)` }).from(privateNotes).where(eq(privateNotes.groupId, groupId)),
+  const [[group], noteRows] = await Promise.all([
+    db.select({ id: lessonGroups.id }).from(lessonGroups).where(and(eq(lessonGroups.id, groupId), isNull(lessonGroups.dissolvedAt))).limit(1),
+    db
+      .select({ trashed: sql<number>`${privateNotes.deletedAt} IS NOT NULL`, value: sql<number>`count(*)` })
+      .from(privateNotes)
+      .where(eq(privateNotes.groupId, groupId))
+      .groupBy(sql`${privateNotes.deletedAt} IS NOT NULL`),
   ]);
   if (!group) return { ok: false, error: "NOT_FOUND" };
-  const noteCount = Number(notes?.value ?? 0);
-  if (noteCount > 0) return { ok: false, error: "HAS_NOTES", noteCount };
+  const activeNotes = Number(noteRows.find((row) => !Number(row.trashed))?.value ?? 0);
+  const trashedNotes = Number(noteRows.find((row) => Number(row.trashed))?.value ?? 0);
+  if (activeNotes > 0) return { ok: false, error: "HAS_NOTES", noteCount: activeNotes };
+  const statements: DocumentAtomicStatement[] = trashedNotes > 0
+    ? [
+        {
+          query: "UPDATE lesson_groups SET dissolved_at = ?, updated_at = MAX(updated_at, ?) WHERE id = ? AND dissolved_at IS NULL",
+          params: [documentEpochSeconds(now), documentEpochSeconds(now), groupId],
+        },
+        DOCUMENT_CONDITIONAL_WRITE_SENTINEL,
+        {
+          // 사이에 휴지통 노트가 복원됐으면 해제하지 않는다.
+          query:
+            "INSERT INTO document_batch_abort_guard (reason) SELECT 'CONDITIONAL_WRITE' " +
+            "WHERE EXISTS (SELECT 1 FROM private_notes WHERE group_id = ? AND deleted_at IS NULL)",
+          params: [groupId],
+        },
+        { query: "DELETE FROM lesson_group_members WHERE group_id = ?", params: [groupId] },
+        { query: "DELETE FROM calendar_mappings WHERE group_id = ?", params: [groupId] },
+        { query: "DELETE FROM calendar_group_events WHERE group_id = ?", params: [groupId] },
+      ]
+    : [
+        { query: "DELETE FROM lesson_group_members WHERE group_id = ?", params: [groupId] },
+        { query: "DELETE FROM lesson_groups WHERE id = ?", params: [groupId] },
+      ];
   try {
-    await executeDocumentStatementsAtomically(context, [
-      { query: "DELETE FROM lesson_group_members WHERE group_id = ?", params: [groupId] },
-      { query: "DELETE FROM lesson_groups WHERE id = ?", params: [groupId] },
-    ]);
+    await executeDocumentStatementsAtomically(context, statements);
   } catch (error) {
-    // 사이에 그룹 노트가 생기면 FK restrict가 막는다.
-    if (/FOREIGN KEY/i.test(String((error as Error)?.message ?? error))) {
-      return { ok: false, error: "HAS_NOTES", noteCount: 1 };
+    // 사이에 그룹 노트가 생기거나 복원되면 FK restrict·조건 guard가 막는다.
+    if (isConditionalAbort(error) || /FOREIGN KEY/i.test(String((error as Error)?.message ?? error))) {
+      return { ok: false, error: "HAS_NOTES", noteCount: Math.max(1, activeNotes) };
     }
     throw error;
   }
-  return { ok: true };
+  return trashedNotes > 0 ? { ok: true, keptTrashedNotes: trashedNotes } : { ok: true };
+}
+
+/** 해제한 그룹에 노트가 하나도 남지 않았으면 행을 지운다(노트 영구 삭제 뒤 부른다). 해제하지 않은 그룹은 건드리지 않는다. */
+export async function deleteDissolvedLessonGroupIfEmpty(context: DbContext, groupId: string): Promise<void> {
+  await executeDocumentStatementsAtomically(context, [
+    {
+      query:
+        "DELETE FROM lesson_groups WHERE id = ? AND dissolved_at IS NOT NULL " +
+        "AND NOT EXISTS (SELECT 1 FROM private_notes WHERE group_id = ?)",
+      params: [groupId, groupId],
+    },
+  ]);
+}
+
+/** 휴지통에 그룹 노트가 있는 그룹(해제한 그룹 포함). 관리자 노트 휴지통의 그룹 고르기에 쓴다. 권한 확인은 부르는 쪽이 한다. */
+export async function listLessonGroupsWithTrashedNotes(
+  context: DbContext,
+): Promise<{ id: string; name: string; dissolved: boolean; trashedCount: number }[]> {
+  const rows = await asDocumentReadDb(context)
+    .select({
+      id: lessonGroups.id,
+      name: lessonGroups.name,
+      dissolvedAt: lessonGroups.dissolvedAt,
+      trashedCount: sql<number>`count(${privateNotes.id})`,
+    })
+    .from(lessonGroups)
+    .innerJoin(privateNotes, and(eq(privateNotes.groupId, lessonGroups.id), isNotNull(privateNotes.deletedAt)))
+    .groupBy(lessonGroups.id)
+    .orderBy(asc(lessonGroups.name), asc(lessonGroups.id));
+  return rows.map((row) => ({ id: row.id, name: row.name, dissolved: row.dissolvedAt !== null, trashedCount: Number(row.trashedCount) }));
 }
 
 /**

@@ -11,7 +11,7 @@ import { GroupLessonBadge } from "@/components/calendar/GroupLessonBadge";
 import type { LessonGroupSummary } from "@/lib/lesson-group-rules";
 import { ADMIN_WORK_QUEUE_PATH, buildAssignmentQueueHref, buildQnaQueueHref } from "@/lib/admin-work-queue";
 import { ADMIN_ASSIGNMENTS_HREF } from "@/components/app-shell/navigation";
-import { UndoToast, type UndoToastMessage } from "./UndoToast";
+import { UndoToast, type UndoToastMessage } from "@/components/ui/undo-toast";
 import {
   getAdminWorkQueue,
   type AdminQueueThread,

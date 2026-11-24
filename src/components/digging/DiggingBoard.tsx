@@ -13,7 +13,7 @@ import { CalendarRange, ExternalLink, Pencil, Plus, Search, Trash2 } from "lucid
 import { filterTracksByQuery, formatTrackSearchCount } from "./digging-track-search";
 import { MobileTopBar } from "@/components/app-shell/AppSidebar";
 import { Button, ButtonSpinner } from "@/components/ui/button";
-import { ConfirmPanel, useConfirmAction } from "@/components/ui/confirm-action";
+import { UndoToast, type UndoToastMessage } from "@/components/ui/undo-toast";
 import { Input } from "@/components/ui/input";
 import { AddTrackDialog } from "./AddTrackDialog";
 import { ColumnManager } from "./ColumnManager";
@@ -23,6 +23,8 @@ import { CamelotPicker } from "./CamelotPicker";
 import {
   updateDiggingTrackValue,
   deleteDiggingTrack,
+  restoreDiggingTrack,
+  type DeletedDiggingTrack,
 } from "@/lib/actions/digging";
 import type { DiggingColumnType } from "@/db/schema";
 import { parseStoredDiggingOptions } from "@/lib/digging-contract";
@@ -477,8 +479,10 @@ export function DiggingBoard({
     });
   };
 
-  const trackDeleteConfirm = useConfirmAction<string>();
-  const requestTrackDelete = trackDeleteConfirm.request;
+  // 트랙 삭제는 확인 없이 바로 지우고, 잠깐 "되돌리기"를 보여 준다(감사 보완 #10, 2026-11-25).
+  const [undoToast, setUndoToast] = useState<UndoToastMessage | null>(null);
+  const deletedTracksRef = useRef(new Map<string, { snapshot: DeletedDiggingTrack; index: number }>());
+  const undoButtonRef = useRef<HTMLButtonElement>(null);
   const trackLabelColumn = columns.find((column) => column.name === "트랙명")
     ?? columns.find((column) => column.columnType === "text");
   const primaryLinkColumn = columns.find((column) => column.columnType === "link");
@@ -491,31 +495,49 @@ export function DiggingBoard({
     if (typeof value === "string" && value) return value;
     return track.linkUrl || null;
   };
-  const renderTrackDeleteConfirm = (track: Track, className?: string) => (
-    trackDeleteConfirm.value === track.id ? (
-      <ConfirmPanel
-        confirm={trackDeleteConfirm}
-        message={`${describeTrack(track)}을 삭제할까요? 삭제 후에는 복구할 수 없습니다.`}
-        confirmLabel="트랙 삭제 확인"
-        pendingLabel="삭제 중..."
-        pending={isPending}
-        onConfirm={() => removeTrack(track.id)}
-        className={className}
-      />
-    ) : null
-  );
 
-  const removeTrack = useCallback((trackId: string) => {
+  const removeTrack = (track: Track) => {
     setMutationError("");
     startTransition(async () => {
       try {
-        await deleteDiggingTrack(trackId);
-        setTracks((previous) => previous.filter((track) => track.id !== trackId));
+        const deleted = await deleteDiggingTrack(track.id);
+        let index = -1;
+        setTracks((previous) => {
+          index = previous.findIndex((item) => item.id === track.id);
+          return previous.filter((item) => item.id !== track.id);
+        });
+        if (!deleted) return;
+        const key = `track-${deleted.id}-${Date.now()}`;
+        deletedTracksRef.current.set(key, { snapshot: deleted, index });
+        setUndoToast({ key, message: `${describeTrack(track)}을 삭제했습니다.`, undoLabel: "되돌리기" });
+        // 지운 행의 버튼이 사라져 초점이 body로 떨어지지 않게 되돌리기 버튼으로 옮긴다.
+        requestAnimationFrame(() => undoButtonRef.current?.focus());
       } catch {
         setMutationError("트랙을 삭제하지 못했습니다. 다시 시도해 주세요.");
       }
     });
-  }, [setTracks]);
+  };
+
+  const undoTrackDelete = useCallback(() => {
+    const toast = undoToast;
+    const entry = toast ? deletedTracksRef.current.get(toast.key) : undefined;
+    setUndoToast(null);
+    if (!toast || !entry) return;
+    deletedTracksRef.current.delete(toast.key);
+    startTransition(async () => {
+      try {
+        const restored = await restoreDiggingTrack(entry.snapshot);
+        setTracks((previous) => {
+          if (previous.some((item) => item.id === restored.id)) return previous;
+          const next = [...previous];
+          next.splice(entry.index < 0 ? 0 : Math.min(entry.index, next.length), 0, restored);
+          return next;
+        });
+      } catch {
+        setMutationError("트랙을 되돌리지 못했습니다. 다시 추가해 주세요.");
+      }
+    });
+  }, [setTracks, undoToast]);
 
   const handleTrackCreated = useCallback(
     (newTrack: Track) => {
@@ -680,6 +702,7 @@ export function DiggingBoard({
         </div>
       ) : null}
       {mutationError ? <p className="text-ui text-destructive" role="alert">{mutationError}</p> : null}
+      <UndoToast ref={undoButtonRef} toast={undoToast} onUndo={undoTrackDelete} onDismiss={() => setUndoToast(null)} />
 
       {/* 좁은 화면: 날짜 묶음별 트랙 카드 */}
       <div className="flex flex-col gap-3 md:hidden">
@@ -759,8 +782,7 @@ export function DiggingBoard({
                                 <button
                                   type="button"
                                   disabled={isPending}
-                                  aria-expanded={trackDeleteConfirm.value === track.id}
-                                  onClick={(event) => requestTrackDelete(event.currentTarget, track.id)}
+                                  onClick={() => removeTrack(track)}
                                   className="h-11 rounded-sm px-1 text-body text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
                                 >
                                   트랙 삭제
@@ -768,7 +790,6 @@ export function DiggingBoard({
                               ) : null}
                             </div>
                           ) : null}
-                          {renderTrackDeleteConfirm(track, "mb-2.5")}
                         </article>
                       );
                     })}
@@ -853,10 +874,9 @@ export function DiggingBoard({
                             <td className="px-2 align-middle">
                               <button
                                 type="button"
-                                onClick={(event) => requestTrackDelete(event.currentTarget, track.id)}
+                                onClick={() => removeTrack(track)}
                                 disabled={isPending}
-                                aria-expanded={trackDeleteConfirm.value === track.id}
-                                aria-label="디깅 트랙 삭제"
+                                aria-label={`${describeTrack(track)} 삭제`}
                                 className="flex size-6 items-center justify-center rounded-sm text-muted-foreground opacity-0 transition-opacity hover:bg-destructive-muted hover:text-destructive focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:opacity-100 group-focus-within:opacity-100 aria-expanded:opacity-100 disabled:opacity-50 motion-reduce:transition-none"
                               >
                                 <Trash2 className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
@@ -864,13 +884,6 @@ export function DiggingBoard({
                             </td>
                           ) : null}
                         </tr>
-                        {trackDeleteConfirm.value === track.id ? (
-                          <tr className="border-b border-muted">
-                            <td colSpan={columnCount} className="px-2 py-2">
-                              {renderTrackDeleteConfirm(track, "max-w-xl")}
-                            </td>
-                          </tr>
-                        ) : null}
                       </Fragment>
                     ))}
                 </tbody>
