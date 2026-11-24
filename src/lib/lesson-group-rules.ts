@@ -5,6 +5,11 @@
 export const LESSON_GROUP_NAME_MAX = 60;
 export const LESSON_GROUP_MIN_MEMBERS = 2;
 
+/** 관리자 그룹 노트 휴지통 주소. 돌아갈 곳은 학생 목록이다. */
+export function groupTrashHref(groupId: string, returnTo = "/dashboard/admin?section=students"): string {
+  return `/dashboard/notes/trash?groupId=${encodeURIComponent(groupId)}&returnTo=${encodeURIComponent(returnTo)}`;
+}
+
 export type LessonGroupSummary = { id: string; name: string; memberIds: string[] };
 
 /** 학생에게 보이는 그룹: 이름과 멤버 표시 이름만(이메일 등은 넣지 않는다). */
@@ -19,7 +24,7 @@ export type SaveLessonGroupResult =
   | { ok: true; id: string }
   | { ok: false; error: SaveLessonGroupError; takenStudentIds?: string[] };
 export type DeleteLessonGroupResult =
-  | { ok: true }
+  | { ok: true; keptTrashedNotes?: number }
   | { ok: false; error: "NOT_FOUND" }
   | { ok: false; error: "HAS_NOTES"; noteCount: number };
 

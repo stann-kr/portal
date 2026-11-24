@@ -22,8 +22,14 @@ import { revalidatePath } from "next/cache";
 import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { createDb, createDbContext } from "@/db/client";
 import { privateNoteRevisions, privateNotes, profiles } from "@/db/schema";
-import { requireAuth, requireStudentOwnerOrAdmin, type AuthSession } from "@/lib/auth-guard";
-import { readLessonGroupById, readLessonGroupMemberIds, readStudentLessonGroup } from "@/lib/lesson-groups";
+import { requireAdmin, requireAuth, requireStudentOwnerOrAdmin, type AuthSession } from "@/lib/auth-guard";
+import {
+  deleteDissolvedLessonGroupIfEmpty,
+  listLessonGroupsWithTrashedNotes,
+  readLessonGroupById,
+  readLessonGroupMemberIds,
+  readStudentLessonGroup,
+} from "@/lib/lesson-groups";
 import { readNoteAccess } from "@/lib/note-access";
 import {
   canManageNoteLifecycle,
@@ -388,7 +394,8 @@ async function getPrivateNoteRecord(noteId: string, includeTrash: boolean) {
     Boolean(note.groupId) && access === "write",
   );
   // 그룹 노트는 문서 머리 안내 줄에 쓸 그룹 이름·멤버 이름을 함께 준다(볼 권한이 확인된 뒤에만 읽는다).
-  const group = note.groupId ? await readLessonGroupById(createDbContext(), note.groupId) : null;
+  const found = note.groupId ? await readLessonGroupById(createDbContext(), note.groupId, { includeDissolved: true }) : null;
+  const group = found ? { id: found.id, name: found.name, members: found.members } : null;
   return { ...note, access, canManageLifecycle, group };
 }
 
@@ -440,6 +447,44 @@ export async function getTrashedPrivateNotes(targetStudentId: string) {
       ? new Date(note.deletedAt.getTime() + PRIVATE_NOTE_TRASH_RETENTION_SECONDS * 1000)
       : null,
   }));
+}
+
+/**
+ * 그룹 하나의 휴지통(관리자 전용). 학생이 그룹에서 빠졌거나 그룹을 해제해도 그 그룹의 휴지통 노트를 찾을 수 있게
+ * 학생이 아니라 그룹으로 연다. 그룹 멤버는 학생 휴지통에서 같은 노트를 본다.
+ */
+export async function getTrashedGroupNotes(groupId: string) {
+  await requireAdmin();
+  if (typeof groupId !== "string" || !groupId) return null;
+  const group = await readLessonGroupById(createDbContext(), groupId, { includeDissolved: true });
+  if (!group) return null;
+  const notes = await createDb()
+    .select({
+      id: privateNotes.id,
+      title: privateNotes.title,
+      version: privateNotes.version,
+      deletedAt: privateNotes.deletedAt,
+      authorName: profiles.displayName,
+    })
+    .from(privateNotes)
+    .leftJoin(profiles, eq(privateNotes.authorId, profiles.id))
+    .where(and(eq(privateNotes.groupId, groupId), isNotNull(privateNotes.deletedAt)))
+    .orderBy(desc(privateNotes.deletedAt));
+  return {
+    group: { id: group.id, name: group.name, dissolved: group.dissolved },
+    notes: notes.map((note) => ({
+      ...note,
+      purgeEligibleAt: note.deletedAt
+        ? new Date(note.deletedAt.getTime() + PRIVATE_NOTE_TRASH_RETENTION_SECONDS * 1000)
+        : null,
+    })),
+  };
+}
+
+/** 관리자 노트 휴지통 첫 화면에서 고를 그룹: 휴지통에 그룹 노트가 있는 그룹(해제한 그룹 포함). */
+export async function getTrashGroupChoices() {
+  await requireAdmin();
+  return listLessonGroupsWithTrashedNotes(createDbContext());
 }
 
 export async function getPrivateNoteRevisions(noteId: string) {
@@ -912,6 +957,8 @@ async function runLifecycleAction(
   const roomKey = formatCollabDocKey({ kind: "note", id: noteId });
   if (kind === "trash") await closeCollabRoomAfterMutation(roomKey, true);
   if (kind === "purge") await closeCollabRoomAfterMutation(roomKey, false);
+  // 해제한 그룹의 마지막 휴지통 노트를 지웠으면 남은 그룹 행도 지운다(해제하지 않은 그룹은 그대로).
+  if (kind === "purge" && noteBefore?.groupId) await deleteDissolvedLessonGroupIfEmpty(createDbContext(), noteBefore.groupId);
   if (noteBefore) await announceNoteChange(noteBefore, { noteId, revalidate: true });
   return {
     success: true,

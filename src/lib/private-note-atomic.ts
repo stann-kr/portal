@@ -1,4 +1,4 @@
-import { and, eq, notInArray, sql } from "drizzle-orm";
+import { and, eq, isNull, notInArray, sql } from "drizzle-orm";
 import type { DbContext, DrizzleDb } from "@/db/client";
 import {
   documentOperationLedger,
@@ -248,6 +248,15 @@ async function getStorageUsageBytes(
     );
 
   return Number(headUsage?.bytes ?? 0) + Number(revisionUsage?.bytes ?? 0);
+}
+
+async function isActiveLessonGroup(context: DbContext, groupId: string): Promise<boolean> {
+  const [group] = await asReadDb(context)
+    .select({ id: lessonGroups.id })
+    .from(lessonGroups)
+    .where(and(eq(lessonGroups.id, groupId), isNull(lessonGroups.dissolvedAt)))
+    .limit(1);
+  return Boolean(group);
 }
 
 function canReadSubject(actor: AtomicActor, subjectId: string): boolean {
@@ -742,7 +751,7 @@ export async function createPrivateNoteAtomically(
               ? IS NULL
               OR (
                 profile.id = ?
-                AND EXISTS (SELECT 1 FROM lesson_groups WHERE id = ?)
+                AND EXISTS (SELECT 1 FROM lesson_groups WHERE id = ? AND dissolved_at IS NULL)
                 AND (? = 1 OR EXISTS (
                   SELECT 1 FROM lesson_group_members AS access_member
                   WHERE access_member.student_id = profile.id AND access_member.group_id = ?
@@ -836,7 +845,7 @@ export async function createPrivateNoteAtomically(
       const [group] = await asReadDb(context)
         .select({ id: lessonGroups.id })
         .from(lessonGroups)
-        .where(eq(lessonGroups.id, groupId))
+        .where(and(eq(lessonGroups.id, groupId), isNull(lessonGroups.dissolvedAt)))
         .limit(1);
       if (!group || !(write.actor.isAdmin || (await isCurrentLessonGroupMember(context, write.actor.id, groupId)))) {
         return { ok: false, reason: "NOT_FOUND_OR_FORBIDDEN" };
@@ -1284,6 +1293,10 @@ export async function restoreTrashedPrivateNoteAtomically(
   if (!(await canManageNoteLifecycle(context, write.actor, existing))) {
     return { ok: false, reason: "NOT_FOUND_OR_FORBIDDEN" };
   }
+  // 해제한 그룹(0039)의 노트는 되살려도 어느 목록에도 보이지 않으므로 휴지통에서 읽기·기한 뒤 영구 삭제만 한다.
+  if (existing.groupId && !(await isActiveLessonGroup(context, existing.groupId))) {
+    return { ok: false, reason: "NOT_FOUND_OR_FORBIDDEN" };
+  }
   if (!existing.deletedAt) {
     return { ok: false, reason: "VERSION_CONFLICT", noteId: write.noteId, currentRevision: existing.version };
   }
@@ -1326,6 +1339,9 @@ export async function restoreTrashedPrivateNoteAtomically(
           SET deleted_at = NULL, deleted_by_id = NULL, updated_at = ?, version = version + 1
           WHERE id = ? AND version = ? AND deleted_at IS NOT NULL
             AND deleted_at > ? AND ${writeAccess.clause}
+            AND (private_notes.group_id IS NULL OR EXISTS (
+              SELECT 1 FROM lesson_groups WHERE id = private_notes.group_id AND dissolved_at IS NULL
+            ))
         `,
         params: [
           epochSeconds(write.now),

@@ -29,7 +29,7 @@ import {
   type StudentLessonGroup,
 } from "@/lib/lesson-group-rules";
 
-export type LessonGroupWriteResult = { ok: true; id?: string } | { ok: false; error: string };
+export type LessonGroupWriteResult = { ok: true; id?: string; keptTrashedNotes?: number } | { ok: false; error: string };
 
 function revalidateGroups(): void {
   revalidatePath("/dashboard", "layout");
@@ -112,16 +112,16 @@ export async function deleteLessonGroupAction(groupId: string): Promise<LessonGr
   const memberIds = await readLessonGroupMemberIds(createDbContext(), groupId);
   // 그룹을 지우면 그룹 캘린더 매핑이 cascade로 지워진다. 그 전에 Google 변경 알림을 멈춘다.
   await stopGroupCalendarChannels(groupId);
-  const result = await deleteLessonGroup(createDbContext(), groupId);
+  const result = await deleteLessonGroup(createDbContext(), groupId, new Date());
   if (!result.ok) {
     // 그룹과 그룹 캘린더 매핑이 남았으니 멈춘 Google 변경 알림을 되돌린다.
     if (result.error === "HAS_NOTES") await restoreGroupCalendarChannels(groupId);
     return result.error === "HAS_NOTES"
-      ? { ok: false, error: `그룹 노트 ${result.noteCount}개가 남아 있어 해제할 수 없습니다. 노트를 휴지통에 넣고 30일이 지나 비운 뒤 해제할 수 있습니다.` }
+      ? { ok: false, error: `그룹 노트 ${result.noteCount}개가 아직 쓰이고 있어 해제할 수 없습니다. 그룹 노트를 휴지통에 넣은 뒤 해제해 주세요(휴지통 노트는 그대로 보존됩니다).` }
       : { ok: false, error: "그룹이 이미 해제되었습니다." };
   }
   revalidateGroups();
   // 그룹 캘린더가 없어졌으니 그룹레슨을 멤버 개인 캘린더로 다시 올린다.
   await schedulePushStudentsCalendarChanges(memberIds);
-  return { ok: true };
+  return result.keptTrashedNotes ? { ok: true, keptTrashedNotes: result.keptTrashedNotes } : { ok: true };
 }
