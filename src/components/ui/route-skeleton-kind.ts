@@ -54,6 +54,8 @@ const ROUTE_SKELETON_RULES: ReadonlyArray<[pattern: RegExp, kind: RouteSkeletonK
   [new RegExp(`^/dashboard/qna/${ID}/history$`, "u"), "history"],
   [new RegExp(`^/dashboard/qna/${ID}$`, "u"), "document"],
   [/^\/dashboard\/qna$/u, "thread-list"],
+  [/^\/dashboard\/guide\/trash$/u, "history"],
+  [new RegExp(`^/dashboard/guide/${ID}/history$`, "u"), "history"],
   [new RegExp(`^/dashboard/guide/${ID}/edit$`, "u"), "editor"],
   [new RegExp(`^/dashboard/guide/${ID}$`, "u"), "guide-page"],
   [/^\/dashboard\/guide$/u, "guide-page"],
