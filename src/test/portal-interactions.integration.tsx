@@ -5471,12 +5471,12 @@ test("학생 한 명 일정도 돌아와 다시 읽으면 다른 곳에서 지�
   assert.deepEqual(shownIds(), ["kept"], "읽은 기간 안에서 응답에 없는 항목은 지운다");
 });
 
-test("그룹 해제는 창 안 확인을 거치고, 막히면 남은 그룹 노트와 기한을 알리며, 저장·해제 결과는 목록 위 한 줄로 남긴다", async (context) => {
+test("그룹 해제는 창 안 확인을 거치고, 쓰이는 그룹 노트가 남아 막히면 그 개수를 알리며, 저장·해제 결과는 목록 위 한 줄로 남긴다", async (context) => {
   const removals: string[] = [];
   removeGroup = async (groupId) => {
     removals.push(groupId);
     return removals.length === 1
-      ? { ok: false, error: "그룹 노트 3개가 남아 있어 해제할 수 없습니다. 노트를 휴지통에 넣고 30일이 지나 비운 뒤 해제할 수 있습니다." }
+      ? { ok: false, error: "그룹 노트 3개가 아직 쓰이고 있어 해제할 수 없습니다. 그룹 노트를 휴지통에 넣은 뒤 해제해 주세요(휴지통 노트는 그대로 보존됩니다)." }
       : { ok: true };
   };
   saveGroup = async () => ({ ok: true, id: "group-1" });
@@ -5525,7 +5525,7 @@ test("그룹 해제는 창 안 확인을 거치고, 막히면 남은 그룹 노�
   const panel = () => dialog()?.querySelector('[role="group"]');
   assert.equal(
     panel()?.querySelector("p")?.textContent,
-    "화요일반을 해제할까요? 멤버의 레슨·과제·노트는 학생별로 그대로 남고, 그룹 캘린더 연결(Google·iCloud)은 풀립니다.",
+    "화요일반을 해제할까요? 멤버의 레슨·과제·노트는 학생별로 그대로 남고, 그룹 캘린더 연결(Google·iCloud)은 풀립니다. 휴지통의 그룹 노트는 30일 보존 기간 동안 그룹 휴지통에 남습니다.",
   );
   assert.equal(browser.document.activeElement?.textContent, "취소");
   assert.ok(panel()?.contains(browser.document.activeElement));
@@ -5540,13 +5540,13 @@ test("그룹 해제는 창 안 확인을 거치고, 막히면 남은 그룹 노�
   assert.equal(panel(), null);
   assert.equal(browser.document.activeElement?.textContent, "그룹 해제");
 
-  // 그룹 노트가 남아 막히면 개수와 비우는 기한을 알리고 창은 그대로 둔다.
+  // 휴지통 밖 그룹 노트가 남아 막히면 개수를 알리고 창은 그대로 둔다(휴지통 노트는 해제를 막지 않는다, 0039).
   await press("그룹 해제");
   await press("해제");
   assert.deepEqual(removals, ["group-1"]);
   assert.equal(
     dialog()?.querySelector('[role="alert"]')?.textContent,
-    "그룹 노트 3개가 남아 있어 해제할 수 없습니다. 노트를 휴지통에 넣고 30일이 지나 비운 뒤 해제할 수 있습니다.",
+    "그룹 노트 3개가 아직 쓰이고 있어 해제할 수 없습니다. 그룹 노트를 휴지통에 넣은 뒤 해제해 주세요(휴지통 노트는 그대로 보존됩니다).",
   );
   assert.equal(panel(), null, "확인은 닫힌다");
 
