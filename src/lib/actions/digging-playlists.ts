@@ -233,20 +233,94 @@ export async function updateDiggingPlaylist(
   return { ok: true, playlist: saved };
 }
 
+/**
+ * 플레이리스트를 지우고 지운 행을 돌려준다(화면이 잠깐 "되돌리기"를 보여 주고 `restoreDiggingPlaylist`에 다시 넘긴다).
+ * 삭제는 바로 일어난다.
+ */
 export async function deleteDiggingPlaylist(
   studentId: string,
   playlistId: string,
-): Promise<{ ok: true } | { ok: false; error: string }> {
+): Promise<{ ok: true; playlist: DiggingPlaylist } | { ok: false; error: string }> {
   const userId = await requirePlaylistWriter(studentId);
   if (typeof playlistId !== "string" || !playlistId) return { ok: false, error: NOT_FOUND_MESSAGE };
   const db = createDb();
-  const deleted = await db
+  const [deleted] = await db
     .delete(diggingPlaylists)
     .where(and(eq(diggingPlaylists.id, playlistId), eq(diggingPlaylists.userId, userId)))
-    .returning({ id: diggingPlaylists.id });
-  if (deleted.length === 0) return { ok: false, error: NOT_FOUND_MESSAGE };
+    .returning(playlistColumns);
+  if (!deleted) return { ok: false, error: NOT_FOUND_MESSAGE };
   revalidateDigging(userId);
-  return { ok: true };
+  return { ok: true, playlist: deleted };
+}
+
+const PLAYLIST_ID_PATTERN = /^[A-Za-z0-9_-]{1,100}$/;
+
+/**
+ * 방금 지운 플레이리스트를 같은 id·만든 시각으로 되돌린다. 등록과 같은 검사(링크 정규화·제목·메모·디깅한 날·개수 상한·중복)를 거친다.
+ * 학생 본인 또는 관리자만(등록과 같은 권한). 이미 같은 id가 있으면(두 번 누름) 새로 넣지 않고 그 행을 돌려준다.
+ */
+export async function restoreDiggingPlaylist(
+  studentId: string,
+  snapshot: DiggingPlaylist,
+): Promise<DiggingPlaylistMutationResult> {
+  const userId = await requirePlaylistWriter(studentId);
+  if (!snapshot || typeof snapshot.id !== "string" || !PLAYLIST_ID_PATTERN.test(snapshot.id)) {
+    return { ok: false, error: NOT_FOUND_MESSAGE };
+  }
+  const normalized = normalizeDiggingPlaylistUrl(snapshot.url);
+  if (!normalized.ok) return normalized;
+  const today = toKstDateInputValue();
+  const dugOn = parseDiggingDate(snapshot.dugOn || today, today);
+  if (!dugOn.ok) return dugOn;
+  const title = parseDiggingPlaylistTitle(snapshot.title);
+  if (!title.ok) return title;
+  const note = parseDiggingPlaylistNote(snapshot.note);
+  if (!note.ok) return note;
+
+  const db = createDb();
+  const [same] = await db
+    .select({ ...playlistColumns, userId: diggingPlaylists.userId })
+    .from(diggingPlaylists)
+    .where(eq(diggingPlaylists.id, snapshot.id))
+    .limit(1);
+  if (same) {
+    if (same.userId !== userId) return { ok: false, error: NOT_FOUND_MESSAGE };
+    const { id, provider, url, title, note, dugOn, createdAt, updatedAt } = same;
+    return { ok: true, playlist: { id, provider, url, title, note, dugOn, createdAt, updatedAt } };
+  }
+
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const toSeconds = (value: unknown) => {
+    const time = new Date(value as string | number | Date).getTime();
+    return Number.isFinite(time) ? Math.min(Math.floor(time / 1000), nowSeconds) : nowSeconds;
+  };
+  const createdSeconds = toSeconds(snapshot.createdAt);
+  const updatedSeconds = Math.max(createdSeconds, toSeconds(snapshot.updatedAt));
+  const playlist: DiggingPlaylist = {
+    id: snapshot.id,
+    provider: normalized.provider,
+    url: normalized.url,
+    title: title.value,
+    note: note.value,
+    dugOn: dugOn.value,
+    createdAt: new Date(createdSeconds * 1000),
+    updatedAt: new Date(updatedSeconds * 1000),
+  };
+  let inserted: { id: string }[];
+  try {
+    inserted = await db.all<{ id: string }>(sql`
+      INSERT INTO digging_playlists (id, user_id, provider, url, title, note, dug_on, created_at, updated_at)
+      SELECT ${playlist.id}, ${userId}, ${playlist.provider}, ${playlist.url}, ${playlist.title}, ${playlist.note}, ${playlist.dugOn}, ${createdSeconds}, ${updatedSeconds}
+      WHERE (SELECT count(*) FROM digging_playlists WHERE user_id = ${userId}) < ${DIGGING_PLAYLISTS_MAX_COUNT}
+      RETURNING id`);
+  } catch (error) {
+    // 그 사이 같은 링크를 다시 등록했으면 되돌리지 않는다.
+    if (isUniqueViolation(error)) return { ok: false, error: DUPLICATE_MESSAGE };
+    throw error;
+  }
+  if (inserted.length === 0) return { ok: false, error: LIMIT_MESSAGE };
+  revalidateDigging(userId);
+  return { ok: true, playlist };
 }
 
 /** 쓰기 대상은 활성 학생이어야 하고, 요청자는 그 학생 본인 또는 관리자여야 한다. 반환값이 모든 쓰기의 user_id다. */

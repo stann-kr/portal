@@ -278,12 +278,15 @@ mock.module("@/lib/actions/invite", { namedExports: {
   getInviteStatus: (...args: Parameters<typeof inviteStatus>) => inviteStatus(...args),
   completeInvite: (...args: Parameters<typeof completeInviteAction>) => completeInviteAction(...args),
 } });
+let deleteTrack: (trackId: string) => Promise<unknown> = async () => null;
+let restoreTrack: (snapshot: unknown) => Promise<unknown> = async (snapshot) => snapshot;
 mock.module("@/lib/actions/digging", { namedExports: {
   getOrSeedColumns: async () => [],
   createDiggingTrack: (...args: Parameters<typeof saveTrack>) => saveTrack(...args),
   fetchLinkMeta: (...args: Parameters<typeof fetchMetadata>) => fetchMetadata(...args),
   updateDiggingTrackValue: (...args: Parameters<typeof saveTrackValue>) => saveTrackValue(...args),
-  deleteDiggingTrack: async () => {},
+  deleteDiggingTrack: (...args: [string]) => deleteTrack(...args),
+  restoreDiggingTrack: (...args: [unknown]) => restoreTrack(...args),
   addDiggingColumn: async () => {},
   deleteDiggingColumn: async () => {},
 } });
@@ -2189,7 +2192,10 @@ test("digging board opens the inline add row from its link prompt and the read-o
 
   await act(async () => root.render(<DiggingBoard key="readonly" initialColumns={columns} initialTracks={tracks} readonly />));
   assert.equal(browser.document.querySelectorAll("table input, table textarea, table select").length, 0);
-  assert.equal([...browser.document.querySelectorAll("button")].some((element) => ["디깅 트랙 삭제", "링크를 붙여넣어 트랙 추가", "트랙 삭제"].includes(element.getAttribute("aria-label") ?? element.textContent ?? "")), false);
+  assert.equal([...browser.document.querySelectorAll("button")].some((element) => {
+    const name = element.getAttribute("aria-label") ?? element.textContent ?? "";
+    return name === "링크를 붙여넣어 트랙 추가" || /트랙 삭제$/u.test(name);
+  }), false);
   assert.ok(browser.document.querySelector('table [role="img"][aria-label="별점 3점"]'), "read-only stars read as one rating");
   assert.match(browser.document.querySelector("table tbody")?.textContent ?? "", /2026년 10월 9일 \(.\) · 1곡/u);
 });
@@ -6227,4 +6233,39 @@ test("관리자가 그룹 사본을 옮기기 전 확인 창은 취소·Esc면 �
   await press("이 학생 일정만 옮기기");
   assert.deepEqual(calls, ["cancel", "cancel", "confirm"], "확인은 취소를 함께 부르지 않는다");
   assert.equal(dialog(), null);
+});
+
+test("digging board deletes a track at once and the undo toast puts it back at the same place", async (context) => {
+  const tracks = [
+    { id: "track-1", linkUrl: null, createdAt: new Date("2026-10-09T02:00:00.000Z"), values: { title: "Intro" } },
+    { id: "track-2", linkUrl: null, createdAt: new Date("2026-10-09T01:00:00.000Z"), values: { title: "Peak" } },
+  ];
+  const deleted: string[] = [];
+  const restored: unknown[] = [];
+  deleteTrack = async (trackId) => { deleted.push(trackId); return tracks.find((track) => track.id === trackId) ?? null; };
+  restoreTrack = async (snapshot) => { restored.push(snapshot); return snapshot; };
+  context.after(() => {
+    deleteTrack = async () => null;
+    restoreTrack = async (snapshot) => snapshot;
+  });
+  await render(context, <DiggingBoard
+    initialColumns={[{ id: "title", name: "트랙명", columnType: "text", options: null, isDefault: true, sortOrder: 0 }]}
+    initialTracks={tracks}
+  />);
+  const titles = () => [...browser.document.querySelectorAll('table input[aria-label="트랙명"]')].map((input) => (input instanceof browser.HTMLInputElement ? input.value : ""));
+  assert.deepEqual(titles(), ["Intro", "Peak"]);
+  const remove = browser.document.querySelector('table button[aria-label="‘Intro’ 트랙 삭제"]');
+  assert.ok(remove instanceof browser.HTMLButtonElement);
+  await act(async () => remove.click());
+  await settle();
+  // 확인 없이 바로 지운다.
+  assert.deepEqual(deleted, ["track-1"]);
+  assert.deepEqual(titles(), ["Peak"]);
+  assert.match(browser.document.body.textContent ?? "", /‘Intro’ 트랙을 삭제했습니다\./u);
+  const undo = [...browser.document.querySelectorAll("button")].find((element) => element.textContent === "되돌리기");
+  assert.ok(undo instanceof browser.HTMLButtonElement);
+  await act(async () => undo.click());
+  await settle();
+  assert.equal(restored.length, 1);
+  assert.deepEqual(titles(), ["Intro", "Peak"], "원래 자리로 돌아온다");
 });

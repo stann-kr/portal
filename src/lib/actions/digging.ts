@@ -482,22 +482,117 @@ export async function updateDiggingTrackValue(
 /**
  * 트랙 삭제.
  */
-export async function deleteDiggingTrack(trackId: string) {
+export type DeletedDiggingTrack = {
+  id: string;
+  linkUrl: string | null;
+  values: Record<string, unknown>;
+  createdAt: Date | null;
+};
+
+/**
+ * 트랙을 지우고 지운 행을 돌려준다(화면이 잠깐 "되돌리기"를 보여 주고 `restoreDiggingTrack`에 다시 넘긴다).
+ * 삭제는 바로 일어난다(화면을 떠나도 삭제가 유실되지 않게). 없거나 남의 트랙이면 null.
+ */
+export async function deleteDiggingTrack(trackId: string): Promise<DeletedDiggingTrack | null> {
   const session = await requireAuth();
   assertStudentSession(session.user.role);
   const db = createDb();
 
-  await db
+  const [deleted] = await db
     .delete(diggingTracks)
     .where(
       and(
         eq(diggingTracks.id, trackId),
         eq(diggingTracks.userId, session.user.id!),
       ),
-    );
+    )
+    .returning({
+      id: diggingTracks.id,
+      linkUrl: diggingTracks.linkUrl,
+      values: diggingTracks.values,
+      createdAt: diggingTracks.createdAt,
+    });
 
   revalidatePath("/dashboard/student/digging");
   revalidatePath("/dashboard/student");
+  if (!deleted) return null;
+  return { id: deleted.id, linkUrl: deleted.linkUrl, values: parseStoredTrackValues(deleted.values), createdAt: deleted.createdAt };
+}
+
+const TRACK_ID_PATTERN = /^[A-Za-z0-9_-]{1,100}$/;
+
+/**
+ * 방금 지운 트랙을 같은 id·만든 시각으로 되돌린다(학생 본인만, 트랙 보드는 학생 본인만이라는 규칙 그대로).
+ * 값은 새로 넣을 때와 같은 검사를 거친다. 그 사이 지운 컬럼의 값과 지금 컬럼 규칙에 맞지 않는 값은 뺀다.
+ * 이미 같은 id가 있으면(두 번 누름) 새로 넣지 않고 성공으로 본다.
+ */
+export async function restoreDiggingTrack(snapshot: DeletedDiggingTrack): Promise<{
+  id: string;
+  createdAt: Date;
+  linkUrl: string | null;
+  values: Record<string, unknown>;
+}> {
+  const session = await requireAuth();
+  assertStudentSession(session.user.role);
+  if (!snapshot || typeof snapshot.id !== "string" || !TRACK_ID_PATTERN.test(snapshot.id)) {
+    throw new Error("되돌릴 트랙을 찾지 못했습니다.");
+  }
+  const db = createDb();
+  const columns = await db
+    .select({
+      id: diggingColumns.id,
+      userId: diggingColumns.userId,
+      columnType: diggingColumns.columnType,
+      options: diggingColumns.options,
+    })
+    .from(diggingColumns)
+    .where(eq(diggingColumns.userId, session.user.id!));
+  const rawValues = snapshot.values && typeof snapshot.values === "object" && !Array.isArray(snapshot.values) ? snapshot.values : {};
+  const values: Record<string, unknown> = {};
+  for (const column of columns) {
+    if (!(column.id in rawValues)) continue;
+    const parsed = parseDiggingTrackInput({ values: { [column.id]: rawValues[column.id] } }, columns);
+    if (parsed.ok) Object.assign(values, parsed.value.values);
+  }
+  const parsed = parseDiggingTrackInput({ linkUrl: snapshot.linkUrl, values }, columns);
+  if (!parsed.ok) throw new Error(parsed.error);
+
+  const now = new Date();
+  const original = snapshot.createdAt ? new Date(snapshot.createdAt) : null;
+  // 만든 시각을 지켜 보드의 원래 자리로 돌아가게 한다(미래 시각은 받지 않는다).
+  const createdAt = original && Number.isFinite(original.getTime()) && original.getTime() <= now.getTime()
+    ? new Date(Math.floor(original.getTime() / 1000) * 1000)
+    : new Date(Math.floor(now.getTime() / 1000) * 1000);
+  await db
+    .insert(diggingTracks)
+    .values({
+      id: snapshot.id,
+      userId: session.user.id!,
+      linkUrl: parsed.value.linkUrl,
+      values: JSON.stringify(parsed.value.values),
+      createdAt,
+    })
+    .onConflictDoNothing({ target: diggingTracks.id });
+  const [row] = await db
+    .select({ id: diggingTracks.id, userId: diggingTracks.userId, linkUrl: diggingTracks.linkUrl, values: diggingTracks.values, createdAt: diggingTracks.createdAt })
+    .from(diggingTracks)
+    .where(eq(diggingTracks.id, snapshot.id))
+    .limit(1);
+  // 같은 id가 남의 행이면(있을 수 없지만) 되돌린 것으로 보지 않는다.
+  if (!row || row.userId !== session.user.id) throw new Error("되돌릴 트랙을 찾지 못했습니다.");
+
+  revalidatePath("/dashboard/student/digging");
+  revalidatePath("/dashboard/student");
+  return { id: row.id, createdAt: row.createdAt ?? createdAt, linkUrl: row.linkUrl, values: parseStoredTrackValues(row.values) };
+}
+
+function parseStoredTrackValues(raw: string | null): Record<string, unknown> {
+  try {
+    const parsed: unknown = JSON.parse(raw ?? "{}");
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
 }
 
 // ─── 링크 메타 추출 ───────────────────────────────

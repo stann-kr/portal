@@ -13,6 +13,7 @@ const previousGlobals = new Map<string, PropertyDescriptor | undefined>();
 let createCalls: unknown[] = [];
 let updateCalls: unknown[][] = [];
 let deleteCalls: string[] = [];
+let restoreCalls: string[] = [];
 // 모든 쓰기 action이 받은 대상 학생 id. 화면이 넘긴 studentId가 그대로 가야 한다.
 let targetCalls: string[] = [];
 let createImpl: (input: { url: string; title?: string | null; note?: string | null }) => Promise<unknown>;
@@ -32,7 +33,13 @@ mock.module("@/lib/actions/digging-playlists", {
     deleteDiggingPlaylist: async (studentId: string, id: string) => {
       targetCalls.push(studentId);
       deleteCalls.push(id);
-      return { ok: true };
+      const playlist = playlists().find((item) => item.id === id);
+      return playlist ? { ok: true, playlist } : { ok: false, error: "플레이리스트를 찾을 수 없습니다." };
+    },
+    restoreDiggingPlaylist: async (studentId: string, snapshot: { id: string }) => {
+      targetCalls.push(studentId);
+      restoreCalls.push(snapshot.id);
+      return { ok: true, playlist: snapshot };
     },
   },
 });
@@ -124,6 +131,7 @@ async function render(context: TestContext, element: React.ReactElement) {
   createCalls = [];
   updateCalls = [];
   deleteCalls = [];
+  restoreCalls = [];
   targetCalls = [];
   importCalls = [];
   soundReads = [];
@@ -225,9 +233,8 @@ test("관리자 보기도 추가·수정·삭제를 보이고 Beatport 새 탭 �
   await settle();
   assert.equal(container.querySelector("[data-player]"), null);
 
-  // 삭제는 화면이 받은 대상 학생 id와 함께 보낸다.
+  // 삭제는 화면이 받은 대상 학생 id와 함께 보낸다(확인 없이 바로 지우고 되돌리기를 보인다).
   await press("‘Beatport 플레이리스트’ 삭제");
-  await press("플레이리스트 삭제");
   assert.deepEqual(deleteCalls, ["bp-1"]);
   assert.deepEqual(targetCalls, ["student-1"]);
 });
@@ -293,16 +300,21 @@ test("서버가 돌려준 중복 오류를 폼에 보이고, 수정·삭제 확�
   assert.deepEqual(updateCalls, [["sc-1", { url: "https://soundcloud.com/stann/sets/warmup", title: "Warmup v2", note: "오프닝\n후보", dugOn: "2026-10-20", expectedUpdatedAt: Date.parse("2026-10-20T00:00:00.000Z") }]]);
   assert.ok(findButton("‘Warmup v2’ 수정"));
 
+  // 확인 없이 바로 지우고, 아래쪽 안내의 "되돌리기"로 같은 행을 되살린다(감사 보완 #10).
   await press("‘Beatport 플레이리스트’ 삭제");
-  assert.match(container.textContent ?? "", /원래 플레이리스트는 그대로 남습니다/u);
-  assert.equal(deleteCalls.length, 0);
-  await press("플레이리스트 삭제");
   assert.deepEqual(deleteCalls, ["bp-1"]);
   assert.deepEqual(targetCalls, ["student-1", "student-1", "student-1"]);
   assert.equal(container.querySelector('a[href="https://www.beatport.com/playlists/share/11018932"]'), null);
   assert.equal(container.querySelector("h2")?.textContent, "플레이리스트1");
-  // 지운 행의 버튼 대신 추가 버튼으로 초점이 간다.
-  assert.equal(browser.document.activeElement?.textContent?.trim(), "플레이리스트 추가");
+  assert.match(container.textContent ?? "", /‘Beatport 플레이리스트’를 목록에서 삭제했습니다\./u);
+  // 지운 행의 버튼 대신 되돌리기 버튼으로 초점이 간다.
+  await settle();
+  assert.equal(browser.document.activeElement?.textContent?.trim(), "되돌리기");
+  await press("되돌리기");
+  assert.deepEqual(restoreCalls, ["bp-1"]);
+  assert.deepEqual(targetCalls, ["student-1", "student-1", "student-1", "student-1"]);
+  assert.ok(container.querySelector('a[href="https://www.beatport.com/playlists/share/11018932"]'), "되돌린 행이 목록에 돌아온다");
+  assert.equal(container.querySelector("h2")?.textContent, "플레이리스트2");
 });
 
 test("수정 폼에서 링크를 바꾸면 provider 안내가 바뀌고, 잘못된 링크는 서버 요청 없이 칸에 안내한다", { concurrency: false }, async (context) => {

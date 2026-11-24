@@ -204,8 +204,31 @@ test("학생은 자기 플레이리스트만 고치고 지우며 다른 학생 �
   assert.equal(stored?.url, "https://www.beatport.com/playlists/share/1");
   assert.ok(stored && stored.updatedAt.getTime() >= stored.createdAt.getTime());
 
-  assert.deepEqual(await playlistActions.deleteDiggingPlaylist(activeSession.user.id, own.playlist.id), { ok: true });
+  const ownDeleted = await playlistActions.deleteDiggingPlaylist(activeSession.user.id, own.playlist.id);
+  assert.ok(ownDeleted.ok && ownDeleted.playlist.id === own.playlist.id, "지운 행을 되돌리기용으로 돌려준다");
   assert.deepEqual((await readPlaylists(db)).map((row) => row.id), [others.playlist.id]);
+
+  // 되돌리기: 같은 id·만든 시각으로 본인 행에 돌아온다. 두 번 눌러도 한 행이다.
+  const restored = await playlistActions.restoreDiggingPlaylist(activeSession.user.id, ownDeleted.playlist);
+  assert.ok(restored.ok, JSON.stringify(restored));
+  assert.equal(restored.playlist.id, own.playlist.id);
+  assert.equal(restored.playlist.createdAt.getTime(), ownDeleted.playlist.createdAt.getTime());
+  assert.ok((await playlistActions.restoreDiggingPlaylist(activeSession.user.id, ownDeleted.playlist)).ok);
+  const restoredRow = (await db.select().from(diggingPlaylists).where(eq(diggingPlaylists.id, own.playlist.id)))[0];
+  assert.equal(restoredRow?.userId, "student-1");
+  assert.equal((await readPlaylists(db)).length, 2);
+  // 남의 행 id로 되돌리기를 보내도 그 행을 가져오지 못하고, 남을 대상으로 보내면 권한 오류다.
+  assert.equal((await playlistActions.restoreDiggingPlaylist(activeSession.user.id, others.playlist)).ok, false);
+  await assert.rejects(playlistActions.restoreDiggingPlaylist("student-2", ownDeleted.playlist), /Unauthorized/u);
+  assert.deepEqual(
+    (await db.select().from(diggingPlaylists).where(eq(diggingPlaylists.id, others.playlist.id)))[0],
+    othersBefore,
+  );
+  // 지운 뒤 같은 링크를 다시 등록했으면 되돌리지 않고 중복 안내를 준다.
+  const again = await playlistActions.deleteDiggingPlaylist(activeSession.user.id, own.playlist.id);
+  assert.ok(again.ok);
+  assert.ok((await playlistActions.createDiggingPlaylist(activeSession.user.id, { url: again.playlist.url })).ok);
+  assert.deepEqual(await playlistActions.restoreDiggingPlaylist(activeSession.user.id, again.playlist), { ok: false, error: "이미 등록한 플레이리스트입니다." });
 
   await assert.rejects(playlistActions.getDiggingPlaylists("student-2"));
 });
@@ -239,7 +262,13 @@ test("관리자(Stann)는 대상 학생을 명시해 플레이리스트를 등�
   // 수정·삭제: 대상 학생의 행만 바뀐다.
   const updated = await playlistActions.updateDiggingPlaylist("student-1", own.playlist.id, { expectedUpdatedAt: await tokenOf(own.playlist.id), title: "Stann 수정", note: null });
   assert.ok(updated.ok && updated.playlist.title === "Stann 수정");
-  assert.deepEqual(await playlistActions.deleteDiggingPlaylist("student-1", created.playlist.id), { ok: true });
+  const adminDeleted = await playlistActions.deleteDiggingPlaylist("student-1", created.playlist.id);
+  assert.ok(adminDeleted.ok);
+  // 관리자도 대상 학생 행으로 되돌린다(등록과 같은 권한).
+  const adminRestored = await playlistActions.restoreDiggingPlaylist("student-1", adminDeleted.playlist);
+  assert.ok(adminRestored.ok);
+  assert.equal((await db.select().from(diggingPlaylists).where(eq(diggingPlaylists.id, created.playlist.id)))[0]?.userId, "student-1");
+  assert.ok((await playlistActions.deleteDiggingPlaylist("student-1", created.playlist.id)).ok);
 
   // 대상 학생과 다른 학생의 행 id를 섞어 보내면 찾을 수 없음으로 끝나고 그 행은 그대로다.
   assert.equal((await playlistActions.updateDiggingPlaylist("student-1", others.playlist.id, { expectedUpdatedAt: await tokenOf(others.playlist.id), title: "섞기" })).ok, false);
@@ -550,4 +579,35 @@ test("트랙 가져오기는 학생 본인만, 허용한 링크·상한 안에�
   const noColumns = await diggingActions.importDiggingTracks([{ title: "A", artist: "B", linkUrl: null }]);
   assert.equal(noColumns.ok, false);
   assert.equal((await db.select().from(diggingTracks)).length, 0);
+});
+
+test("트랙 삭제 되돌리기는 학생 본인만, 같은 id·만든 시각으로 넣고 남의 행·관리자는 막는다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("student-1", "student"));
+  await diggingActions.getOrSeedColumns("student-1");
+  const imported = await diggingActions.importDiggingTracks([{ title: "Keep", artist: "A", linkUrl: "https://soundcloud.com/a/keep" }]);
+  assert.ok(imported.ok);
+  const track = imported.created[0];
+  const deleted = await diggingActions.deleteDiggingTrack(track.id);
+  assert.ok(deleted, "지운 행을 되돌리기용으로 돌려준다");
+  assert.equal((await db.select().from(diggingTracks)).length, 0);
+
+  // 관리자는 트랙 보드를 쓰지 않는다(학생 본인만).
+  activeSession = createSession("admin-1", "admin");
+  await assert.rejects(diggingActions.restoreDiggingTrack(deleted));
+  activeSession = createSession("student-1", "student");
+  const restored = await diggingActions.restoreDiggingTrack({ ...deleted, values: { ...deleted.values, "no-such-column": "x" } });
+  assert.equal(restored.id, track.id);
+  assert.deepEqual(restored.values, track.values, "지금 없는 칸 값은 버린다");
+  assert.equal(restored.createdAt?.getTime(), deleted.createdAt?.getTime());
+  // 두 번 눌러도 한 행.
+  await diggingActions.restoreDiggingTrack(deleted);
+  const rows = await db.select().from(diggingTracks);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].userId, "student-1");
+
+  // 다른 학생이 같은 id로 되돌리기를 보내도 남의 행을 가져가지 못한다.
+  activeSession = createSession("student-2", "student");
+  await assert.rejects(diggingActions.restoreDiggingTrack(deleted));
+  assert.equal((await db.select().from(diggingTracks))[0].userId, "student-1");
+  await assert.rejects(diggingActions.restoreDiggingTrack({ ...deleted, id: "bad id/../x" }));
 });
