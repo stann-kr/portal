@@ -906,3 +906,49 @@ export async function togglePinPost(
   if (result.ok) revalidatePostPaths(postId);
   return lifecycleState(result);
 }
+
+/**
+ * 자유 게시판 글을 다른 채널로 옮긴다(감사 보완 #3). 작성자 본인이나 Stann만, 휴지통이 아닌 자유 게시판 글을 있는 채널로만 옮긴다.
+ * 본문은 그대로 두고 판 하나를 올려 이력에 남긴다. 같은 요청을 다시 보내면 같은 결과다.
+ */
+export async function movePostToChannel(
+  postId: string,
+  categoryValue: string,
+  operationIdValue: string,
+  baseRevisionValue: number,
+): Promise<PostLifecycleState> {
+  const session = await requireAuth();
+  const operationId = resolveCreationOperationId(operationIdValue);
+  const baseRevision = parseDocumentRevision(baseRevisionValue);
+  if (!operationId || !baseRevision || typeof categoryValue !== "string") {
+    return { success: false, error: "옮길 기준을 확인할 수 없습니다. 페이지를 새로고침해 주세요." };
+  }
+  const db = createDb();
+  const [[current], [channel]] = await Promise.all([
+    db
+      .select({ authorId: posts.authorId, title: posts.title, contentHtml: posts.contentHtml, boardType: posts.boardType, category: posts.category, deletedAt: posts.deletedAt })
+      .from(posts)
+      .where(eq(posts.id, postId))
+      .limit(1),
+    db.select({ slug: categories.slug }).from(categories).where(eq(categories.slug, categoryValue)).limit(1),
+  ]);
+  // 남의 글은 있는지도 알리지 않는다.
+  if (!current || (session.user.role !== "admin" && current.authorId !== session.user.id)) {
+    return { success: false, error: "게시물을 찾을 수 없습니다." };
+  }
+  if (current.boardType !== "GENERAL") return { success: false, error: "자유 게시판 글만 채널을 옮길 수 있습니다." };
+  if (current.deletedAt) return { success: false, error: "휴지통 게시물은 옮길 수 없습니다." };
+  if (!channel) return { success: false, error: "옮길 채널을 찾을 수 없습니다. 화면을 새로고침해 주세요." };
+  const result = await updatePostAtomically(createDbContext(), {
+    actor: actor(session),
+    postId,
+    operationId,
+    baseRevision,
+    title: current.title,
+    contentHtml: current.contentHtml,
+    category: channel.slug,
+    now: new Date(),
+  });
+  if (result.ok) revalidatePostPaths(postId);
+  return lifecycleState(result);
+}

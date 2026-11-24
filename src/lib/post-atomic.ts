@@ -103,6 +103,8 @@ export type UpdatePostWrite = {
   contentHtml: string;
   /** 링크 믹스셋 게시물의 새 링크(정규화된 값). 없으면 매체를 바꾸지 않는다. */
   mediaLinkUrl?: string;
+  /** 자유 게시판 글의 새 채널 slug(있는 채널인지는 action이 확인). 없으면 채널을 바꾸지 않는다. */
+  category?: string;
   /**
    * 공동 편집 저장이 시작 시점에 고정한 room generation. 있으면 lifecycle 표지(마지막 revision 복원 번호)가
    * 같을 때만 같은 원자 쓰기 안에서 반영한다. 없으면(혼자 모드) 확인하지 않는다.
@@ -659,6 +661,7 @@ export async function updatePostAtomically(
         title: write.title,
         contentHtml: write.contentHtml,
         mediaUrl: write.mediaLinkUrl ?? existing.mediaUrl,
+        category: write.category ?? existing.category,
       }
     : undefined;
   const request: PostCanonicalRequest = {
@@ -669,6 +672,7 @@ export async function updatePostAtomically(
     title: write.title,
     contentHtml: write.contentHtml,
     ...(write.mediaLinkUrl === undefined ? {} : { mediaLinkUrl: write.mediaLinkUrl }),
+    ...(write.category === undefined ? {} : { category: write.category }),
   };
   const requestHash = createPostRequestHash(request);
   const replay = await resolvePostReceiptReplay(context, {
@@ -700,6 +704,10 @@ export async function updatePostAtomically(
   ) {
     return { ok: false, reason: "INTERNAL_INVARIANT_FAILURE", postId: write.postId, currentRevision: existing.version };
   }
+  // 채널은 자유 게시판 글에서만 옮긴다(공지·믹스셋은 채널이 없다).
+  if (write.category !== undefined && existing.boardType !== "GENERAL") {
+    return { ok: false, reason: "INTERNAL_INVARIANT_FAILURE", postId: write.postId, currentRevision: existing.version };
+  }
 
   const recordId = deriveDocumentOperationRecordId(write.actor.id, write.operationId);
   const collabCondition = collabEpochCondition(write.collabEpoch);
@@ -716,7 +724,7 @@ export async function updatePostAtomically(
             SELECT ?, ?, ?, author_id, 'COMMUNITY_POST', 'UPDATE', id, ?, ?, version, ?
             FROM posts
             WHERE id = ? AND version = ? AND deleted_at IS NULL
-              AND (author_id = ? OR ? = 1) AND title = ? AND content_html = ? AND media_url IS ?${collabCondition.clause}
+              AND (author_id = ? OR ? = 1) AND title = ? AND content_html = ? AND media_url IS ? AND category = ?${collabCondition.clause}
           `,
           params: [
             recordId,
@@ -732,6 +740,7 @@ export async function updatePostAtomically(
             write.title,
             write.contentHtml,
             nextSnapshot.mediaUrl,
+            nextSnapshot.category,
             ...collabCondition.params,
           ],
         },
@@ -777,7 +786,7 @@ export async function updatePostAtomically(
       {
         query: `
           UPDATE posts
-          SET title = ?, content_html = ?, media_url = ?, updated_at = ?, version = version + 1
+          SET title = ?, content_html = ?, media_url = ?, category = ?, updated_at = ?, version = version + 1
           WHERE id = ? AND version = ? AND deleted_at IS NULL
             AND (author_id = ? OR ? = 1)${collabCondition.clause}
         `,
@@ -785,6 +794,7 @@ export async function updatePostAtomically(
           write.title,
           write.contentHtml,
           nextSnapshot.mediaUrl,
+          nextSnapshot.category,
           documentEpochSeconds(write.now),
           write.postId,
           write.baseRevision,
@@ -1168,7 +1178,8 @@ export async function restorePostRevisionAtomically(
     .limit(1);
   const snapshot: PostCanonicalSnapshot | undefined = revision
     ? {
-        category: revision.category,
+        // 채널은 글 내용이 아니라 놓인 자리다. 이전 판으로 되돌려도 지금 채널에 둔다(옮긴 뒤 지운 채널로 돌아가지 않는다).
+        category: existing?.category ?? revision.category,
         boardType: revision.boardType,
         isPinned: revision.isPinned,
         mediaUrl: revision.mediaUrl,

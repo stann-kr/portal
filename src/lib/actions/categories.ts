@@ -113,7 +113,7 @@ export async function deleteCategory(id: string): Promise<CategoryState> {
       .where(eq(posts.category, category.slug))
       .limit(1);
     if (linkedPost) {
-      return { error: "게시물이 있는 채널은 삭제할 수 없습니다." };
+      return { error: "게시물이 있는 채널은 삭제할 수 없습니다. 게시물을 다른 채널로 옮기거나 휴지통에서 영구 삭제한 뒤 삭제해 주세요." };
     }
 
     await db.delete(categories).where(eq(categories.id, id));

@@ -84,6 +84,20 @@ test("게시물 request hash v1 호환성을 보존하고 v2부터 media object 
   assert.equal(createPostRequestHashForVersion(postRequestFixture, 999), null);
 });
 
+test("게시물 request hash v4는 채널 이동을 반영하고, v1~v3 영수증과는 채널 이동 요청이 일치하지 않는다", () => {
+  const moveRequest: PostCanonicalRequest = { ...postRequestFixture, category: "gear" };
+  for (const version of [1, 2, 3]) {
+    // 채널을 옮기지 않는 요청은 버전별 hash가 그대로다(옛 영수증 재전송 대조).
+    assert.notEqual(createPostRequestHashForVersion(moveRequest, version), createPostRequestHashForVersion(postRequestFixture, version));
+  }
+  assert.notEqual(createPostRequestHashForVersion(postRequestFixture, 4), createPostRequestHashForVersion(postRequestFixture, 3));
+  assert.notEqual(createPostRequestHashForVersion(moveRequest, 4), createPostRequestHashForVersion(postRequestFixture, 4));
+  assert.notEqual(
+    createPostRequestHashForVersion(moveRequest, 4),
+    createPostRequestHashForVersion({ ...postRequestFixture, category: "free" }, 4),
+  );
+});
+
 test("게시물 snapshot hash v1 호환성을 보존하고 v2부터 media object ID를 반영한다", () => {
   const alternateSnapshot: PostCanonicalSnapshot = {
     ...postSnapshotFixture,

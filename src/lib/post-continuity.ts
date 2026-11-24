@@ -5,7 +5,7 @@ import { deriveCreationResourceId } from "@/lib/creation-operation";
 
 export const POST_BASE_REVISION_FIELD = "baseRevision";
 export const POST_RESTORE_REVISION_FIELD = "revisionNumber";
-export const POST_REQUEST_HASH_VERSION = 3;
+export const POST_REQUEST_HASH_VERSION = 4;
 export const POST_SNAPSHOT_HASH_VERSION = 2;
 export const POST_TRASH_RETENTION_SECONDS = 30 * 24 * 60 * 60;
 export const POST_MAX_CONTENT_BYTES = 800 * 1024;
@@ -44,6 +44,8 @@ export type PostCanonicalRequest = {
   restoredFromRevision?: number | null;
   /** UPDATE에서 믹스셋 링크를 바꿀 때만 둔다. 없으면 링크를 그대로 둔다(V3부터 hash에 포함). */
   mediaLinkUrl?: string;
+  /** UPDATE에서 자유 게시판 채널을 옮길 때만 둔다. 없으면 채널을 그대로 둔다(V4부터 hash에 포함). */
+  category?: string;
 };
 
 function sha256Hex(value: string): string {
@@ -142,10 +144,36 @@ function createPostRequestHashV3(request: PostCanonicalRequest): string {
   );
 }
 
+function createPostRequestHashV4(request: PostCanonicalRequest): string {
+  return sha256Hex(
+    JSON.stringify([
+      "portal-community-post-request",
+      4,
+      request.operationType,
+      "COMMUNITY_POST",
+      request.resourceId,
+      request.subjectId,
+      request.baseRevision,
+      snapshotTupleV2(request.snapshot),
+      request.title ?? null,
+      request.contentHtml ?? null,
+      request.isPinned ?? null,
+      request.restoredFromRevision ?? null,
+      request.mediaLinkUrl === undefined ? ["unchanged"] : ["set", request.mediaLinkUrl],
+      // 채널을 그대로 두는 요청과 옮기는 요청을 구분한다.
+      request.category === undefined ? ["unchanged"] : ["set", request.category],
+    ]),
+  );
+}
+
 export function createPostRequestHashForVersion(
   request: PostCanonicalRequest,
   version: number,
 ): string | null {
+  // V1~V3 영수증은 채널 이동을 기록하지 않았으므로 채널을 옮기는 요청은 그 영수증과 일치하지 않는 hash로 계산한다.
+  if (version >= 1 && version <= 3 && request.category !== undefined) {
+    return sha256Hex(JSON.stringify(["portal-community-post-request", version, "category-not-recordable", request.category]));
+  }
   // V1·V2 영수증은 링크 변경을 기록하지 않았으므로 링크를 바꾸는 요청은 어떤 V1·V2 영수증과도
   // 일치하지 않는 hash로 계산해 같은 작업이 아닌 payload 충돌로 분류한다.
   if ((version === 1 || version === 2) && request.mediaLinkUrl !== undefined) {
@@ -154,6 +182,7 @@ export function createPostRequestHashForVersion(
   if (version === 1) return createPostRequestHashV1(request);
   if (version === 2) return createPostRequestHashV2(request);
   if (version === 3) return createPostRequestHashV3(request);
+  if (version === 4) return createPostRequestHashV4(request);
   return null;
 }
 

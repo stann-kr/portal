@@ -10,7 +10,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { BookOpen, History, PencilLine, Trash2 } from "lucide-react";
+import { BookOpen, FolderInput, History, PencilLine, Trash2 } from "lucide-react";
+import { PostChannelMove, type PostChannelOption } from "@/components/community/PostChannelMove";
 import { Button, buttonClassName } from "@/components/ui/button";
 import { CopyLinkButton } from "@/components/ui/CopyLinkButton";
 import { ConfirmPanel, useConfirmAction } from "@/components/ui/confirm-action";
@@ -47,6 +48,8 @@ interface PostDetailClientProps {
   post: Post;
   /** 자유 게시판 채널 이름. 없으면 저장된 주소 식별자를 보인다. */
   channelName?: string | null;
+  /** 옮길 수 있는 채널(자유 게시판 글을 고칠 수 있는 사람에게만 쓴다). */
+  channels?: readonly PostChannelOption[];
   initialCommentList: Comment[];
   currentUserId: string | null;
   isAdmin: boolean;
@@ -59,6 +62,7 @@ export function PostDetailClient({
   postId,
   post,
   channelName = null,
+  channels = [],
   initialCommentList,
   currentUserId,
   isAdmin,
@@ -79,6 +83,7 @@ export function PostDetailClient({
   const [seekAnnouncement, setSeekAnnouncement] = useState({ text: "", nonce: 0 });
   const playerRegionRef = useRef<HTMLElement>(null);
   const [readersOpen, setReadersOpen] = useState(false);
+  const [movingChannel, setMovingChannel] = useState(false);
   // 학생이 남의 게시물을 열면 처음 한 번 읽음으로 남긴다(서버가 글쓴이·관리자·휴지통을 다시 거른다).
   // 기록 실패는 읽기 화면에 영향을 주지 않는다.
   const recordsRead = !isAdmin && Boolean(currentUserId) && currentUserId !== post.authorId && !post.deletedAt;
@@ -153,6 +158,7 @@ export function PostDetailClient({
   const canManagePost = isAdmin || currentUserId === post.authorId;
   const canDeletePost = canManagePost && !post.deletedAt;
   const canEditPost = canDeletePost;
+  const canMoveChannel = canEditPost && post.boardType === "GENERAL" && channels.length > 1;
   const isBusy = isPending || isEditPending;
   const historyHref = `/community/${post.id}/history?returnTo=${encodeURIComponent(returnTo)}`;
   const postPath = `/community/${encodeURIComponent(post.id)}`;
@@ -169,12 +175,15 @@ export function PostDetailClient({
     if (canEditPost) {
       items.push({ key: "edit", label: isEditing ? "읽기" : "수정", Icon: isEditing ? BookOpen : PencilLine, onSelect: toggleEditing, disabled: isBusy });
     }
+    if (canMoveChannel) {
+      items.push({ key: "move", label: "채널 옮기기", Icon: FolderInput, onSelect: () => setMovingChannel(true), disabled: isBusy });
+    }
     if (canManagePost) items.push({ key: "history", label: "이력", Icon: History, href: historyHref });
     if (canDeletePost) {
       items.push({ key: "delete", label: "게시물 삭제", Icon: Trash2, destructive: true, disabled: isBusy, onSelect: (trigger) => requestPostDelete(trigger) });
     }
     return <MobileMoreMenu label="게시물 메뉴" items={items} />;
-  }, [canDeletePost, canEditPost, canManagePost, historyHref, isBusy, isEditing, requestPostDelete, toggleEditing]);
+  }, [canDeletePost, canEditPost, canManagePost, canMoveChannel, historyHref, isBusy, isEditing, requestPostDelete, toggleEditing]);
 
   // 이어 듣기 정보: 미니 플레이어의 제목·작성자·"게시물로 가기"(돌아오면 같은 목록 위치로).
   const playerTrack = useMemo(() => ({
@@ -218,7 +227,20 @@ export function PostDetailClient({
           <p className="text-ui text-muted-foreground">
             {boardType === "GENERAL" ? (
               <>
-                <span className="text-secondary-foreground"># {channelName ?? post.category}</span>
+                {canMoveChannel ? (
+                  <button
+                    type="button"
+                    onClick={() => setMovingChannel((value) => !value)}
+                    disabled={isBusy}
+                    aria-expanded={movingChannel}
+                    aria-label={`채널 옮기기 (지금 # ${channelName ?? post.category})`}
+                    className="rounded-sm text-secondary-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    # {channelName ?? post.category}
+                  </button>
+                ) : (
+                  <span className="text-secondary-foreground"># {channelName ?? post.category}</span>
+                )}
                 {" · "}
               </>
             ) : null}
@@ -268,6 +290,16 @@ export function PostDetailClient({
       </header>
 
       {readSummary && readersOpen ? <PostReadersPanel summary={readSummary} postId={post.id} /> : null}
+
+      {canMoveChannel && movingChannel ? (
+        <PostChannelMove
+          postId={post.id}
+          version={post.version}
+          currentSlug={post.category}
+          channels={channels}
+          onClose={() => setMovingChannel(false)}
+        />
+      ) : null}
 
       {postDeleteConfirm.isOpen && !post.deletedAt ? (
         <ConfirmPanel

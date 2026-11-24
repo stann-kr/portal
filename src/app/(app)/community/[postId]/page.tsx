@@ -67,6 +67,7 @@ export default async function PostDetailPage({
           postId={postId}
           post={post}
           channelName={channelName}
+          channels={categories.map((category) => ({ slug: category.slug, name: category.name }))}
           initialCommentList={commentList}
           currentUserId={currentUserId}
           isAdmin={isAdmin}
