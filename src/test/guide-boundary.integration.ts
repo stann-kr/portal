@@ -205,8 +205,28 @@ test("블록을 지운 편집과 페이지 삭제 뒤에도 질문과 인용이 
   const afterEdit = await guideActions.getGuideQuestions("guide-1");
   assert.deepEqual(afterEdit.map((question) => [question.blockId, question.quote]), [["b2", "믹서"]]);
 
+  // 삭제는 휴지통으로 옮긴다(0039): 질문 위치는 페이지에 이어진 채 남고, 휴지통에 있는 동안 링크만 빠진다.
   activeSession = createSession("admin-1", "admin");
   assert.deepEqual(await guideActions.deleteGuidePage("guide-1", 2), { ok: true });
+  const linked = await db.select().from(qnaGuideAnchors);
+  assert.deepEqual(linked.map((anchor) => [anchor.guidePageId, anchor.pageTitle, anchor.anchorQuote]), [["guide-1", "장비 소개", "믹서"]]);
+  activeSession = createSession("student-a", "student");
+  assert.equal(await guideActions.getGuidePage("guide-1"), null, "휴지통 페이지는 읽을 수 없다");
+  const trashedThread = await qnaActions.getQnaThread(asked.thread!.id);
+  assert.deepEqual(trashedThread?.guideAnchor, { guidePageId: null, pageTitle: "장비 소개", blockId: "b2", quote: "믹서", pageClosed: false });
+
+  // 되살리면 질문 위치 링크가 다시 이어진다.
+  activeSession = createSession("admin-1", "admin");
+  assert.deepEqual(await guideActions.restoreTrashedGuidePage("guide-1"), { ok: true });
+  activeSession = createSession("student-a", "student");
+  assert.equal((await qnaActions.getQnaThread(asked.thread!.id))?.guideAnchor?.guidePageId, "guide-1");
+
+  // 영구 삭제는 휴지통에 있는 페이지만 하고, 질문은 제목·인용과 함께 남는다.
+  activeSession = createSession("admin-1", "admin");
+  assert.equal((await guideActions.purgeTrashedGuidePage("guide-1")).ok, false, "휴지통에 없는 페이지는 영구 삭제하지 않는다");
+  const restored = await guideActions.getGuidePage("guide-1");
+  assert.deepEqual(await guideActions.deleteGuidePage("guide-1", restored!.version), { ok: true });
+  assert.deepEqual(await guideActions.purgeTrashedGuidePage("guide-1"), { ok: true });
   const anchors = await db.select().from(qnaGuideAnchors);
   assert.deepEqual(anchors.map((anchor) => [anchor.guidePageId, anchor.pageTitle, anchor.anchorQuote]), [[null, "장비 소개", "믹서"]]);
   activeSession = createSession("student-a", "student");
@@ -428,10 +448,50 @@ test("가이드 열람 설정은 관리자만 학생에게 하고, 닫아도 고
   activeSession = createSession("student-new", "student");
   assert.deepEqual((await guideActions.getGuidePages()).map((page) => page.id), ["guide-1", "guide-2"]);
 
+  // 휴지통 페이지는 열람 범위에서 빠지지만 열어 준 표시는 남아, 되살리면 다시 열린다.
   activeSession = createSession("admin-1", "admin");
   assert.deepEqual(await guideActions.deleteGuidePage("guide-2", 1), { ok: true });
-  assert.equal((await db.select().from(guideAccessPages)).length, 0, "지운 페이지의 열람 행은 남지 않는다");
+  assert.equal((await db.select().from(guideAccessPages)).length, 1, "휴지통 페이지의 열람 행은 남는다");
   assert.deepEqual((await guideAccessActions.getStudentGuideAccess("student-new")).pageIds, []);
+  activeSession = createSession("student-new", "student");
+  assert.deepEqual((await guideActions.getGuidePages()).map((page) => page.id), ["guide-1"]);
+  activeSession = createSession("admin-1", "admin");
+  assert.deepEqual(await guideActions.restoreTrashedGuidePage("guide-2"), { ok: true });
+  assert.deepEqual((await guideAccessActions.getStudentGuideAccess("student-new")).pageIds, ["guide-2"]);
+
+  // 영구 삭제하면 열람 행도 함께 지운다.
+  const page = await guideActions.getGuidePage("guide-2");
+  assert.deepEqual(await guideActions.deleteGuidePage("guide-2", page!.version), { ok: true });
+  assert.deepEqual(await guideActions.purgeTrashedGuidePage("guide-2"), { ok: true });
+  assert.equal((await db.select().from(guideAccessPages)).length, 0, "영구 삭제한 페이지의 열람 행은 남지 않는다");
+  assert.deepEqual((await guideAccessActions.getStudentGuideAccess("student-new")).pageIds, []);
+});
+
+test("가이드 이력: 고치기 전 판을 10분에 한 번 남기고, 이전 판으로 되돌리면 지금 판도 남아 다시 되돌릴 수 있다", { concurrency: false }, async (context) => {
+  await setupDatabase(context, createSession("admin-1", "admin"));
+  const first = await guideActions.updateGuidePage("guide-1", {}, form({ baseRevision: 1, title: "장비 소개", contentHtml: '<p data-block-id="b1">둘째 판</p>' }));
+  assert.equal(first.success, true, JSON.stringify(first));
+  const second = await guideActions.updateGuidePage("guide-1", {}, form({ baseRevision: 2, title: "장비 소개", contentHtml: '<p data-block-id="b1">셋째 판</p>' }));
+  assert.equal(second.success, true, JSON.stringify(second));
+  const history = await guideActions.getGuidePageHistory("guide-1");
+  assert.deepEqual(history!.revisions.map((revision) => [revision.pageVersion, revision.reason]), [[1, "EDIT"]], "10분 안의 저장은 한 판으로 묶는다");
+
+  // 1판으로 되돌리면 지금(3판)이 RESTORE로 남고 4판이 1판 본문이 된다.
+  const revisionId = history!.revisions[0]!.id;
+  assert.deepEqual(await guideActions.restoreGuidePageRevision("guide-1", revisionId, 2), { ok: false, error: "다른 화면에서 이 가이드가 먼저 바뀌었습니다. 현재 초안과 서버 최신본을 비교해 골라 주세요." });
+  assert.deepEqual(await guideActions.restoreGuidePageRevision("guide-1", revisionId, 3), { ok: true });
+  assert.deepEqual(await guideActions.restoreGuidePageRevision("guide-1", revisionId, 3), { ok: true }, "같은 되돌리기 재전송");
+  const after = await guideActions.getGuidePageHistory("guide-1");
+  assert.equal(after!.page.version, 4);
+  assert.equal(after!.page.contentHtml, history!.revisions[0]!.contentHtml);
+  assert.deepEqual(after!.revisions.map((revision) => [revision.pageVersion, revision.reason]), [[3, "RESTORE"], [1, "EDIT"]]);
+  assert.match(after!.revisions[0]!.contentHtml, /셋째 판/u);
+
+  // 학생은 이력을 받지 못한다.
+  activeSession = createSession("student-a", "student");
+  await assert.rejects(guideActions.getGuidePageHistory("guide-1"), /Admin only/);
+  await assert.rejects(guideActions.restoreGuidePageRevision("guide-1", revisionId, 4), /Admin only/);
+  await assert.rejects(guideActions.getTrashedGuidePages(), /Admin only/);
 });
 
 test("가이드 페이지의 열람 학생 목록은 관리자만 받고, 학생마다 설정·볼 수 있는지·열린 페이지 수를 이름순으로 준다", { concurrency: false }, async (context) => {

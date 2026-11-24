@@ -3,9 +3,9 @@
  * 관리자는 항상 전체를 본다. 학생은 guide_access 행이 없으면 닫힘, ALL이면 전체, SELECTED면 guide_access_pages의 페이지만 본다.
  * 관리자 권한 검사는 호출하는 server action이 먼저 한다.
  */
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import type { DbContext } from "@/db/client";
-import { guideAccess, guideAccessPages, type GuideAccessMode } from "@/db/schema";
+import { guideAccess, guideAccessPages, guidePages, type GuideAccessMode } from "@/db/schema";
 import { asDocumentReadDb } from "@/lib/document-lifecycle-atomic";
 
 /** 관리자가 고르는 세 칸: 닫힘·전체·선택. */
@@ -31,7 +31,12 @@ export async function readStudentGuideAccess(context: DbContext, studentId: stri
   const db = asDocumentReadDb(context);
   const [[row], pages] = await Promise.all([
     db.select({ mode: guideAccess.mode }).from(guideAccess).where(eq(guideAccess.studentId, studentId)).limit(1),
-    db.select({ pageId: guideAccessPages.guidePageId }).from(guideAccessPages).where(eq(guideAccessPages.studentId, studentId)),
+    // 휴지통 페이지(0039)는 고른 목록에서 뺀다. 열어 준 표시는 남아 되살리면 다시 열린다.
+    db
+      .select({ pageId: guideAccessPages.guidePageId })
+      .from(guideAccessPages)
+      .innerJoin(guidePages, eq(guideAccessPages.guidePageId, guidePages.id))
+      .where(and(eq(guideAccessPages.studentId, studentId), isNull(guidePages.deletedAt))),
   ]);
   return { setting: row?.mode ?? "CLOSED", pageIds: pages.map((page) => page.pageId) };
 }

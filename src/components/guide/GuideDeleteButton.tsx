@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { ConfirmPanel, useConfirmAction } from "@/components/ui/confirm-action";
 import { deleteGuidePage } from "@/lib/actions/guide";
 
-/** 가이드 페이지 삭제(취소 우선 확인). 이 페이지의 질문은 Q&A에 제목·인용과 함께 남는다. */
+/** 가이드 페이지 삭제(취소 우선 확인). 휴지통으로 옮기고 되살리면 질문 위치·열람 설정이 다시 이어진다. */
 export function GuideDeleteButton({ pageId, version, title }: { pageId: string; version: number; title: string }) {
   const router = useProgressRouter();
   const confirm = useConfirmAction();
@@ -32,7 +32,7 @@ export function GuideDeleteButton({ pageId, version, title }: { pageId: string; 
       {confirm.isOpen ? (
         <ConfirmPanel
           confirm={confirm}
-          message={`‘${title}’ 페이지를 삭제할까요? 되돌릴 수 없습니다. 이 페이지에 남은 질문은 Q&A에 그대로 남습니다.`}
+          message={`‘${title}’ 페이지를 휴지통으로 옮길까요? 학생에게 보이지 않게 되고, 가이드 휴지통에서 되살릴 수 있습니다.`}
           confirmLabel="페이지 삭제"
           pendingLabel="삭제 중…"
           pending={isPending}

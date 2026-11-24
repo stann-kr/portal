@@ -8,7 +8,7 @@
  */
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { PencilLine } from "lucide-react";
+import { History, PencilLine } from "lucide-react";
 import { MobileTopBar } from "@/components/app-shell/AppSidebar";
 import { NoteDocumentTitle } from "@/components/notes/NoteDocumentChrome";
 import { formatNoteUpdated } from "@/components/notes/note-display";
@@ -55,6 +55,10 @@ export async function GuidePageScreen({ pageId, session }: { pageId: string; ses
                   <Link href={`${guidePagePath(page.id)}/edit`} className={buttonClassName({ variant: "outline" })}>
                     <PencilLine className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
                     편집
+                  </Link>
+                  <Link href={`${guidePagePath(page.id)}/history`} className={buttonClassName({ variant: "ghost" })}>
+                    <History className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
+                    이력
                   </Link>
                   <GuideDeleteButton pageId={page.id} version={page.version} title={page.title} />
                 </div>
