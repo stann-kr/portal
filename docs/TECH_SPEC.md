@@ -570,6 +570,17 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 - 권한 회수는 lease(150초)만큼 늦을 수 있다(관리자가 학생 편집을 막는 경우는 즉시 내린다, 아래 노트 읽기 전용). 휴지통 이동과 영구 삭제는 즉시 닫는다.
 - 운영 DO, 실제 hibernation 깨움(로컬에서 관찰할 수 없음), 실제 네트워크 단절·online 복귀, 모바일·Safari 실기기, 며칠 이어진 room은 미검증이다. 운영 배포는 [배포 가이드](./DEPLOYMENT.md)의 DO migration 승인 항목을 따른다.
 
+## 남은 흐름 보완(2026-11-25)
+
+- 채널 옮기기(`movePostToChannel`): 작성자·관리자, 휴지통이 아닌 GENERAL 글, 존재하는 채널만. `version = base` 조건부 UPDATE로 `category`를 바꾸고 같은 batch에서 revision을 남긴다. 게시물 공동 편집 room은 닫지 않는다(본문이 같으므로 열린 수정 화면의 저장이 옮긴 채널을 그대로 쓴다). 저장·복원 요청 hash(`POST_REQUEST_HASH_VERSION` 4)는 채널을 포함하고, 이전 판 복원은 지금 채널을 유지한다.
+- 가이드 휴지통(`0039`): `guide_pages.deleted_at`·`deleted_by_id`(profiles SET NULL). 삭제는 room을 보존한 채 닫고(`keep=true`), 휴지통 페이지는 공동 편집 토큰이 `TRASHED`로 거부해 열린 편집기는 휴지통 상태를 보인다. 되살리면 같은 room으로 다시 붙는다. 영구 삭제는 휴지통에서만, 질문 위치·이미지 연결을 같은 batch에서 먼저 끊고 room을 버린다(`keep=false`).
+- 가이드 이력(`0039`): `guide_page_revisions`(page cascade, actor SET NULL, reason EDIT·RESTORE). 저장은 같은 편집자의 10분 안 판을 묶는다(`GUIDE_REVISION_COALESCE_SECONDS`).
+- 가이드 되돌리기(`0040`): `guide_pages.collab_lifecycle`(NOT NULL 기본 0)이 room 세대다. 되돌리기는 노트·게시물과 같이 `beginCollabRestore` → 원자 DB 복원(`collab_lifecycle = version + 1`) → `applyCollabRestore`로 열린 편집기에 한 편집으로 넣고, 실패하면 `abortCollabRestore`한다. room에 저장되지 않은 입력이 있으면(`prepared.clean` 아님) 되돌리지 않는다. 가이드 편집기는 저장마다 같은 sync 구간에서 읽은 세대(`COLLAB_EPOCH_FIELD`)를 보내고, `updateGuidePageRecord`는 `AND collab_lifecycle = ?`로 옛 세대 저장을 `collabStale`로 거절한다. 토큰 route의 `repairRoom`이 세대가 뒤처진 가이드 room을 D1 본문으로 맞춘다. 가이드 편집기도 `reportSaved`·`reportSavedUpto`로 저장 완료를 room에 알린다.
+- Q&A 고치기(`0039`): `qna_replies` 행은 trigger로 바꿀 수 없으므로 고친 본문은 `qna_reply_revisions`(reply cascade, editor SET NULL, `(reply_id, edit_number)` unique)에 쌓고 화면은 마지막 판을 보인다. `editQnaReply`는 작성자 본인·휴지통 아닌 질문만, `expectedHtml`이 지금 본문과 같을 때만 다음 번호를 INSERT하고, 다르면 지금 본문을 돌려준다. 작성본은 room `draft:qna-reply-edit:<본인>:<답글>`(meta `baseHtml`)에 둔다.
+- 디깅 되돌리기: 삭제한 행을 클라이언트가 잠시 들고 있다가 "되돌리기"면 같은 id로 다시 INSERT한다(트랙은 학생 본인만, 플레이리스트는 학생·관리자).
+- 그룹 해제(`0039`): `lesson_groups.dissolved_at`. 쓰이는(휴지통이 아닌) 그룹 노트가 없으면 멤버 행을 지우고, 휴지통 그룹 노트가 남아 있으면 행을 지우지 않고 `dissolved_at`만 채운다(노트가 없으면 그대로 행을 지운다). 해제한 그룹은 목록·선택지·캘린더 동기화에서 빠지고, 휴지통 노트는 관리자 그룹 휴지통에서 30일 보존 기간 동안 본다. 마지막 휴지통 노트를 영구 삭제하면 `deleteDissolvedLessonGroupIfEmpty`가 그룹 행을 지운다.
+- `db:check`: `scripts/migration-check/remaining-flows.mjs`(0038→0039)·`guide-collab-lifecycle.mjs`(0039→0040)가 채워진 DB에서 행 보존·기본값·이전 코드 INSERT/UPDATE·CHECK·FK를 검사한다.
+
 ## 과제 완료·디깅 메뉴·디깅 피드백(2026-11-23)
 
 - 데이터(`0038_flow_gaps`): `assignment_tasks.closed_at`·`feedbacks.updated_at`·`comments.updated_at`(nullable) 칸 추가, `assignment_occurrence_skips`(`recurrence_id` FK cascade·`occurrence_date` 복합 기본키, 날짜 길이 CHECK), `digging_feedbacks`(`student_id` FK cascade·`dug_on` 복합 기본키, `body` trim 1~2,000 CHECK, `created_at`·`updated_at`), `digging_playlists.dug_on`(NOT NULL, 기본값 `strftime('%Y-%m-%d', 'now', '+9 hours')`로 이전 코드 INSERT 호환, 길이 CHECK). `dug_on`은 NOT NULL 칸이라 `PRAGMA defer_foreign_keys`로 표를 재구성하며 `strftime('%Y-%m-%d', created_at, 'unixepoch', '+9 hours')`로 채우고 unique index를 다시 만든다. `db:check`(`scripts/migration-check/flow-gaps.mjs`)가 채워진 0037 DB에서 행 보존·KST 채우기·index·CHECK·FK·skip cascade를 검사한다.
