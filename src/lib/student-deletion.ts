@@ -54,6 +54,8 @@ export const STUDENT_DELETION_RECORD_COLUMNS: readonly ProfileReference[] = [
   ["qna_threads", "student_id"],
   ["qna_threads", "deleted_by_id"],
   ["qna_replies", "author_id"],
+  // 고친 답글 기록(0039). 고친 사람은 답글 작성자다.
+  ["qna_reply_revisions", "editor_id"],
   ["qna_thread_events", "actor_id"],
   ["posts", "author_id"],
   ["posts", "deleted_by_id"],
@@ -75,6 +77,9 @@ export const STUDENT_DELETION_RECORD_COLUMNS: readonly ProfileReference[] = [
   ["media_objects", "owner_id"],
   ["guide_pages", "created_by_id"],
   ["guide_pages", "updated_by_id"],
+  // 가이드 휴지통·이력(0039). 관리자만 쓰지만 profiles를 가리키는 칸이라 기록으로 분류한다.
+  ["guide_pages", "deleted_by_id"],
+  ["guide_page_revisions", "actor_id"],
   ["guide_assets", "uploaded_by_id"],
   ["account_deletion_jobs", "subject_id"],
   ["account_cleanup_tokens", "subject_id"],
