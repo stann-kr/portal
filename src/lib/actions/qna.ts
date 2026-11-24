@@ -60,6 +60,7 @@ import { pushMessages } from "@/lib/push/messages";
 import { notifyPush } from "@/lib/push/notify";
 import { withRestoreLock } from "@/lib/trash-restore";
 import { withQnaAttachmentKinds } from "@/lib/qna-attachment-kinds";
+import { editQnaReplyAtomically, readQnaReplyEditHistory, withQnaReplyEdits } from "@/lib/qna-reply-edit";
 
 /** 가이드 구간 질문의 위치 입력. 없으면 일반 질문이다. */
 async function resolveGuideAnchor(
@@ -288,7 +289,8 @@ async function readQnaThread(threadId: string, includeTrash: boolean) {
     .leftJoin(profiles, eq(qnaReplies.authorId, profiles.id))
     .where(eq(qnaReplies.threadId, threadId))
     .orderBy(qnaReplies.createdAt);
-  const repliesWithKind = await withQnaAttachmentKinds(replies);
+  // 작성자가 고친 답글은 가장 최근 본문을 보인다(원래 글은 이력 화면에, 감사 보완 #7).
+  const repliesWithKind = await withQnaAttachmentKinds(await withQnaReplyEdits(createDb(), replies));
   const anchorContext = createDbContext();
   const storedAnchor = await findGuideAnchorForThread(anchorContext, threadId);
   // 질문 위치(제목·인용)는 그대로 보이고, 보는 사람에게 열리지 않은 페이지로 가는 링크만 뺀다.
@@ -333,6 +335,18 @@ export async function getTrashedQnaThreads() {
       ? new Date(thread.deletedAt.getTime() + QNA_TRASH_RETENTION_SECONDS * 1000)
       : null,
   }));
+}
+
+/** 한 질문의 답글 고친 기록(이력 화면). 질문을 볼 수 있는 사람만. */
+export async function getQnaReplyEdits(threadId: string) {
+  const session = await requireAuth();
+  const [thread] = await createDb()
+    .select({ studentId: qnaThreads.studentId })
+    .from(qnaThreads)
+    .where(eq(qnaThreads.id, threadId))
+    .limit(1);
+  if (!thread || !canAccessThread(session, thread.studentId)) return [];
+  return readQnaReplyEditHistory(createDb(), threadId);
 }
 
 export async function getQnaThreadEvents(threadId: string) {
@@ -664,6 +678,54 @@ export async function createQnaReply(
     replyId: result.replyId ?? replyId,
     currentRevision: result.currentRevision ?? undefined,
   };
+}
+
+export type EditQnaReplyState =
+  | { ok: true; contentHtml: string; editedAt: Date | null }
+  | { ok: false; error: string; currentHtml?: string };
+
+/**
+ * 답글(질문 본문 포함) 고치기(감사 보완 #7). 작성자 본인만, 휴지통에 없는 질문에서만. 만들기와 같은 정리·빈 글·길이 검사를 거치고
+ * `expectedHtml`(고치기 시작할 때 본 본문)이 지금 본문과 다르면 덮지 않는다. 첨부는 바꾸지 않는다.
+ */
+export async function editQnaReply(
+  replyId: string,
+  input: { expectedHtml: string; contentHtml: string },
+): Promise<EditQnaReplyState> {
+  const session = await requireAuth();
+  if (typeof replyId !== "string" || !replyId) return { ok: false, error: "답글을 찾을 수 없습니다." };
+  const rawHtml = typeof input?.contentHtml === "string" ? input.contentHtml : "";
+  const expectedHtml = typeof input?.expectedHtml === "string" ? input.expectedHtml : "";
+  if (isRichTextEmpty(rawHtml)) return { ok: false, error: "내용을 입력해 주세요." };
+  const contentHtml = sanitizeHtml(rawHtml);
+  if (isRichTextEmpty(contentHtml)) return { ok: false, error: "유효한 내용을 입력해 주세요." };
+  if (!isQnaContentWithinLimit(contentHtml)) {
+    return { ok: false, error: `Q&A 본문은 ${QNA_MAX_CONTENT_LABEL} 이하로 저장할 수 있습니다.` };
+  }
+  const result = await editQnaReplyAtomically(createDbContext(), {
+    actorId: session.user.id!,
+    replyId,
+    expectedHtml,
+    contentHtml,
+    editId: crypto.randomUUID(),
+    now: new Date(),
+  });
+  if (!result.ok) {
+    switch (result.reason) {
+      case "NOT_FOUND":
+        return { ok: false, error: "답글을 찾을 수 없습니다." };
+      case "TRASHED":
+        return { ok: false, error: "휴지통에 있는 질문은 고칠 수 없습니다. 복원한 뒤 고쳐 주세요." };
+      case "CONFLICT":
+        return {
+          ok: false,
+          error: "다른 창에서 이 글을 먼저 고쳤습니다. 지금 내용을 확인한 뒤 다시 고쳐 주세요.",
+          currentHtml: result.currentHtml,
+        };
+    }
+  }
+  if (!result.unchanged) revalidateQnaPaths(result.threadId);
+  return { ok: true, contentHtml: result.contentHtml, editedAt: result.editedAt };
 }
 
 export type QnaLifecycleState = {

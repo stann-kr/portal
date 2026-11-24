@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { createDb, createDbContext } from "@/db/client";
-import { guidePages, posts, privateNotes, qnaThreads } from "@/db/schema";
+import { guidePages, posts, privateNotes, qnaReplies, qnaThreads } from "@/db/schema";
 import { privateNoteLifecycleSql } from "@/lib/private-note-atomic";
 import { postLifecycleSql } from "@/lib/post-atomic";
 import { findStudentTarget, getActiveAuthSession } from "@/lib/auth-guard";
@@ -50,7 +50,7 @@ export const POST = createCollabTokenHandler({
       return row ? { ...row, lifecycle: Number(row.lifecycle) } : null;
     },
     async findGuidePage(id) {
-      const [row] = await createDb().select({ id: guidePages.id }).from(guidePages).where(eq(guidePages.id, id)).limit(1);
+      const [row] = await createDb().select({ id: guidePages.id, deletedAt: guidePages.deletedAt }).from(guidePages).where(eq(guidePages.id, id)).limit(1);
       return row ?? null;
     },
     async findQnaThread(id) {
@@ -58,6 +58,15 @@ export const POST = createCollabTokenHandler({
         .select({ studentId: qnaThreads.studentId, deletedAt: qnaThreads.deletedAt })
         .from(qnaThreads)
         .where(eq(qnaThreads.id, id))
+        .limit(1);
+      return row ?? null;
+    },
+    async findQnaReply(id) {
+      const [row] = await createDb()
+        .select({ authorId: qnaReplies.authorId, threadDeletedAt: qnaThreads.deletedAt })
+        .from(qnaReplies)
+        .innerJoin(qnaThreads, eq(qnaThreads.id, qnaReplies.threadId))
+        .where(eq(qnaReplies.id, id))
         .limit(1);
       return row ?? null;
     },

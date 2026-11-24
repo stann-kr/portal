@@ -125,6 +125,7 @@ const collabLoaders = () => ({
   findPost: async () => null,
   findGuidePage: async () => null,
   findQnaThread: async () => null,
+  findQnaReply: async () => null,
   isActiveStudent: async () => true,
   isGroupMember: (studentId: string, groupId: string) =>
     noteAccess.isCurrentLessonGroupMember({ kind: "d1", db: requireActiveDb() } as never, studentId, groupId),

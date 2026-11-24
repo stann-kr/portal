@@ -21,6 +21,7 @@ const FullEditor = dynamic(
   { ssr: false, loading: () => <CollabEditorPending variant="bare" /> }
 );
 import { ReplyCard } from "./ReplyCard";
+import { QnaReplyEditForm } from "./QnaReplyEditForm";
 import { AttachmentField } from "./AttachmentField";
 import { MobileMoreMenu, type MobileMoreMenuItem } from "@/components/ui/mobile-more-menu";
 import { QnaStatusLabel } from "./qna-display";
@@ -71,6 +72,10 @@ type Reply = {
   /** 서버가 media MIME에서 계산한 짧은 형식 이름(MP3 등). 이미지가 아닌 첨부 칩 글자에 쓴다. */
   attachmentFormat?: string | null;
   createdAt: Date | null | undefined;
+  /** 작성자가 본문을 고친 시각(감사 보완 #7). */
+  editedAt?: Date | string | null;
+  /** 작성자 id. 지금 사람과 같으면 "고치기"를 보인다. */
+  authorId?: string | null;
   authorName: string | null | undefined;
   authorRole: string | null | undefined;
 };
@@ -193,6 +198,7 @@ function ThreadDetailContent({
   // 종료된 질문: 학생은 쓰던 초안만 보고(등록 불가), Stann은 답변 칸이 열려 있어 등록하면 "답변 완료"로 다시 열린다(2026-11-13 사용자 결정).
   const showReplyComposer = currentStatus !== "CLOSED" || hasReplyDraft || isAdmin;
   const isTrashed = Boolean(deletedAt);
+  const [editingReplyId, setEditingReplyId] = useState<string | null>(null);
 
   // 관리자는 어떤 상태로든, 질문한 학생은 해결됨으로 닫기(ANSWERED→CLOSED)·다시 열기(CLOSED→OPEN)만 한다.
   const handleStatusChange = (newStatus: QnaStatus) => {
@@ -461,9 +467,34 @@ function ThreadDetailContent({
 
       {/* 대화 */}
       <ol className="flex flex-col border-t border-border">
-        {initialReplies.map((reply) => (
-          <ReplyCard key={reply.id} reply={reply} />
-        ))}
+        {initialReplies.map((reply, index) => {
+          const canEdit = !isTrashed && Boolean(reply.authorId) && reply.authorId === actorId;
+          const editLabel = index === 0 && !isAdmin ? "내 질문" : isAdmin ? "내 답변" : "내 추가 질문";
+          return (
+            <ReplyCard
+              key={reply.id}
+              reply={reply}
+              action={canEdit && editingReplyId !== reply.id ? (
+                <button
+                  type="button"
+                  onClick={() => setEditingReplyId(reply.id)}
+                  aria-label={`${editLabel} 고치기`}
+                  className="inline-flex h-11 items-center rounded-sm px-2 text-xs text-secondary-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:h-7"
+                >
+                  고치기
+                </button>
+              ) : null}
+              editor={canEdit && editingReplyId === reply.id ? (
+                <QnaReplyEditForm
+                  actorId={actorId}
+                  reply={reply}
+                  label={editLabel}
+                  onClose={() => setEditingReplyId(null)}
+                />
+              ) : undefined}
+            />
+          );
+        })}
       </ol>
 
       {queueNext ? <QueueNextBar queueNext={queueNext} kind="qna" /> : null}

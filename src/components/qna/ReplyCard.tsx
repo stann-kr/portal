@@ -4,6 +4,7 @@
  * 28px 이니셜 원(Stann은 먹색 면), 이름(Stann만 semibold, 학생은 regular)·시각, 본문, 첨부(이미지면 160×120 미리보기와
  * 전체화면 뷰어, 그 밖에는 "첨부 파일 · 형식" 새 창 칩). 역할 배지는 두지 않는다.
  */
+import type { ReactNode } from "react";
 import { Paperclip } from "lucide-react";
 import { RichTextContent } from "@/components/editor/RichTextContent";
 import { cn } from "@/lib/utils";
@@ -21,15 +22,21 @@ type Reply = {
   /** 서버가 media MIME에서 계산한 짧은 형식 이름(MP3 등). 이미지가 아닌 첨부 칩 글자에 쓴다. */
   attachmentFormat?: string | null;
   createdAt: Date | null | undefined;
+  /** 작성자가 본문을 고친 시각(감사 보완 #7). 고친 적 없으면 null. */
+  editedAt?: Date | string | null;
   authorName: string | null | undefined;
   authorRole: string | null | undefined;
 };
 
 interface ReplyCardProps {
   reply: Reply;
+  /** 이름·시각 줄 끝 조작(내 글 "고치기"). */
+  action?: ReactNode;
+  /** 본문 자리에 대신 그릴 내용(고치는 칸). 첨부는 그대로 둔다. */
+  editor?: ReactNode;
 }
 
-export function ReplyCard({ reply }: ReplyCardProps) {
+export function ReplyCard({ reply, action, editor }: ReplyCardProps) {
   const isStann = reply.authorRole === "admin";
   const author = reply.authorName ?? "이름 미등록";
   const time = formatKstMonthDayTime(reply.createdAt, "작성 시각 미정");
@@ -55,8 +62,12 @@ export function ReplyCard({ reply }: ReplyCardProps) {
         <p className="flex flex-wrap items-center gap-2 text-ui">
           <span className={isStann ? "font-semibold" : "font-normal"}>{author}</span>
           <span className="font-mono text-xs text-muted-foreground">{time}</span>
+          {reply.editedAt ? (
+            <span className="text-xs text-muted-foreground" title={`고친 시각 ${formatKstMonthDayTime(new Date(reply.editedAt), "")}`}>고침</span>
+          ) : null}
+          {action ? <span className="ml-auto">{action}</span> : null}
         </p>
-        <RichTextContent html={reply.contentHtml} className="text-md leading-6 md:leading-[26px]" />
+        {editor ?? <RichTextContent html={reply.contentHtml} className="text-md leading-6 md:leading-[26px]" />}
         {reply.attachmentUrl && reply.attachmentKind === "image" ? (
           <ReplyAttachmentImage src={reply.attachmentUrl} name={attachmentName} />
         ) : reply.attachmentUrl ? (

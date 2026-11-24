@@ -97,8 +97,10 @@ function loaders(overrides: Partial<CollabDocumentLoaders> = {}): CollabDocument
       })[id] ?? null,
     findPost: async (id) =>
       ({ p1: { authorId: "s1", deletedAt: null, lifecycle: 2 }, gone: { authorId: "s1", deletedAt: new Date(NOW), lifecycle: 0 } })[id] ?? null,
-    findGuidePage: async (id) => (id === "g1" ? { id } : null),
+    findGuidePage: async (id) => ({ g1: { id: "g1", deletedAt: null }, gTrash: { id: "gTrash", deletedAt: new Date(NOW) } })[id] ?? null,
     findQnaThread: async (id) => (id === "t1" ? { studentId: "s1", deletedAt: null } : null),
+    findQnaReply: async (id) =>
+      ({ r1: { authorId: "s1", threadDeletedAt: null }, rAdmin: { authorId: "admin", threadDeletedAt: null }, rTrash: { authorId: "s1", threadDeletedAt: new Date(NOW) } })[id] ?? null,
     isActiveStudent: async (id) => id === "s1" || id === "s2" || id === "s3",
     isGroupMember: async (studentId, groupId) => groupId === "g1" && (studentId === "s1" || studentId === "s3"),
     ...overrides,
@@ -196,6 +198,17 @@ test("권한: 가이드는 관리자만, 게시물은 작성자·관리자, 작�
   assert.equal((await authorizeCollabRequest(student1, { key: "draft:qna-reply:s1:t1" }, loaders())).ok, true);
   assert.equal((await authorizeCollabRequest(student2, { key: "draft:qna-reply:s2:t1" }, loaders())).ok, false, "남의 질문 답글");
   assert.equal((await authorizeCollabRequest(admin, { key: "draft:qna-reply:admin:t1" }, loaders())).ok, true);
+  // 휴지통 가이드(0039)는 room을 열지 않는다.
+  assert.deepEqual(await authorizeCollabRequest(admin, { key: "guide:gTrash" }, loaders()), { ok: false, reason: "TRASHED" });
+  assert.equal((await authorizeCollabRequest(student1, { key: "guide:gTrash" }, loaders())).ok, false);
+  // 답글 고치기 작성본(감사 보완 #7): 그 답글 작성자 본인만, 휴지통 질문은 거부. 관리자도 학생 답글은 못 고친다.
+  assert.equal((await authorizeCollabRequest(student1, { key: "draft:qna-reply-edit:s1:r1" }, loaders())).ok, true);
+  assert.equal((await authorizeCollabRequest(admin, { key: "draft:qna-reply-edit:admin:r1" }, loaders())).ok, false, "관리자가 학생 답글");
+  assert.equal((await authorizeCollabRequest(student2, { key: "draft:qna-reply-edit:s2:r1" }, loaders())).ok, false, "남의 답글");
+  assert.equal((await authorizeCollabRequest(student2, { key: "draft:qna-reply-edit:s1:r1" }, loaders())).ok, false, "남의 작성본");
+  assert.equal((await authorizeCollabRequest(admin, { key: "draft:qna-reply-edit:admin:rAdmin" }, loaders())).ok, true);
+  assert.equal((await authorizeCollabRequest(student1, { key: "draft:qna-reply-edit:s1:rTrash" }, loaders())).ok, false, "휴지통 질문");
+  assert.equal((await authorizeCollabRequest(student1, { key: "draft:qna-reply-edit:s1:none" }, loaders())).ok, false);
 });
 
 test("토큰 route: 비로그인 401, 권한 없음 403, 휴지통 410, binding 없으면 혼자 모드", async () => {
