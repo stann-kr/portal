@@ -570,6 +570,17 @@ UI token, 상태 registry, 공통 component와 접근성 규칙은 [디자인 �
 - 권한 회수는 lease(150초)만큼 늦을 수 있다(관리자가 학생 편집을 막는 경우는 즉시 내린다, 아래 노트 읽기 전용). 휴지통 이동과 영구 삭제는 즉시 닫는다.
 - 운영 DO, 실제 hibernation 깨움(로컬에서 관찰할 수 없음), 실제 네트워크 단절·online 복귀, 모바일·Safari 실기기, 며칠 이어진 room은 미검증이다. 운영 배포는 [배포 가이드](./DEPLOYMENT.md)의 DO migration 승인 항목을 따른다.
 
+## 시점 구간(2026-11-25)
+
+- 공통 규칙: `src/lib/time-range.ts`의 `splitTimeRange`(구분자 `~`·`-`, 앞뒤 공백 허용, 한쪽이 비거나 셋 이상이면 형식 오류)·`formatTimeRange`·`describeTimeRange`(낭독용 "A부터 B까지")·`TIME_RANGE_ORDER_ERROR`. 한 점을 읽는 규칙은 화면마다 그대로다(피드백 `parseFeedbackSeconds`, 댓글 `parseTimeMarker`).
+- 데이터(`0041_timestamp_ranges`): `feedbacks.time_marker_end`, `comments.time_marker_end_seconds`(nullable 정수). CHECK는 NULL이거나 정수이고 시작이 있으며 시작보다 커야 한다(댓글은 86399 이하). drizzle-kit이 만든 표 재구성 대신 `ADD COLUMN ... CONSTRAINT CHECK`로 써서 기존 행과 trigger를 그대로 둔다(`0020`과 같은 방식). 시작 칸·index는 그대로라 정렬·이동·`splitFeedbackByEntry`가 바뀌지 않는다.
+- 피드백: `parseFeedbackTimeRange`가 `{timeMarker, timeMarkerEnd}`를 돌려주고 `createFeedback` 재전송 비교·`updateFeedback`의 같은 값 확인과 CAS 조건에 끝을 넣는다. `expected.timeMarkerEnd`가 없으면(끝을 모르는 옛 화면) 끝 없음으로 본다. 시점을 비우면 끝도 지운다.
+- 댓글: `parseTimeMarkerRange`(`src/lib/community-mixset-media.ts`)가 `{seconds, endSeconds}`를 돌려준다. 형식 오류 문구는 구간 쓰는 법도 알린다. INSERT·답글 재전송·같은 작업 재전송 비교에 끝을 넣고, 답글 시점 거부는 그대로다(끝은 시작이 있어야 하므로 함께 거부된다).
+- 화면: 피드백·댓글 시점 칸에 시작 한 점만 있으면 "여기까지"가 보이고 지금 재생 위치를 끝으로 붙인다(끝이 시작 이하이면 안내만). 칩·파형 popup은 `formatTimeRange`, aria-label은 `describeTimeRange`를 쓴다. 파형은 연 표시에 `widthPercent`가 있으면 `span[data-waveform-range]` 띠를 그린다(pointer-events 없음).
+- 수업 노트: `LESSON_TIMESTAMP_PATTERN`이 `[a~b]`·`[a-b]`도 찾고 `parseLessonTimestampRange`가 끝이 시작 이하인 글자는 꾸미지 않는다. decoration은 `data-lesson-seconds`(시작)와 `data-lesson-end-seconds`를 붙이고, 누르면 녹음이 시작에서 재생된다(`RecordingDock`의 "12:34~13:10 구간"). `InstructorLessonPanel`의 "구간 찍기"(⌥R, `KeyR`)는 첫 누름에 시작을 기억하고(타이머가 멈춰 있으면 시작) 두 번째에 `[시작~끝]`을 넣으며, 초기화·취소로 버린다.
+- `db:check`: `scripts/migration-check/timestamp-ranges.mjs`(0040→0041)가 채워진 DB에서 행·trigger 보존, 기존 끝이 NULL인지, 이전 코드 INSERT/UPDATE, 구간 CHECK 거부, FK를 검사한다.
+- 검증: `src/lib/community-mixset-media.test.ts`·`src/components/lesson/lesson-timestamps.test.ts`(구간 읽기), `src/test/student-action-boundary.integration.ts`(피드백 구간 저장·거부·끝 CAS), `src/test/document-workflow.integration.ts`(댓글 구간 저장·재전송·거부), `src/test/portal-interactions.integration.tsx`(고치기 기준값의 끝).
+
 ## 남은 흐름 보완(2026-11-25)
 
 - 채널 옮기기(`movePostToChannel`): 작성자·관리자, 휴지통이 아닌 GENERAL 글, 존재하는 채널만. `version = base` 조건부 UPDATE로 `category`를 바꾸고 같은 batch에서 revision을 남긴다. 게시물 공동 편집 room은 닫지 않는다(본문이 같으므로 열린 수정 화면의 저장이 옮긴 채널을 그대로 쓴다). 저장·복원 요청 hash(`POST_REQUEST_HASH_VERSION` 4)는 채널을 포함하고, 이전 판 복원은 지금 채널을 유지한다.
