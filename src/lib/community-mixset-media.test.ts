@@ -8,6 +8,7 @@ import {
   isMixsetLinkUrl,
   normalizeMixsetLinkUrl,
   parseTimeMarker,
+  parseTimeMarkerRange,
 } from "./community-mixset-media";
 
 const FORMAT_ERROR = "재생 시점은 1:05:30, 12:34 또는 초(예: 754) 형식으로 입력해 주세요.";
@@ -38,6 +39,21 @@ test("재생 시점은 음수·형식 오류를 형식 안내로, 상한 초과�
   }
   for (const raw of ["24:00:00", "86400", "1440:00"]) {
     assert.deepEqual(parseTimeMarker(raw), { ok: false, error: MAX_ERROR }, raw);
+  }
+});
+
+test("재생 구간은 시작~끝(또는 -)을 받고, 끝이 시작보다 앞·같거나 한쪽이 비면 거부한다", () => {
+  assert.deepEqual(parseTimeMarkerRange("12:34~13:10"), { ok: true, seconds: 754, endSeconds: 790 });
+  assert.deepEqual(parseTimeMarkerRange(" 1:05:30 - 1:06:00 "), { ok: true, seconds: 3930, endSeconds: 3960 });
+  assert.deepEqual(parseTimeMarkerRange("754"), { ok: true, seconds: 754, endSeconds: null });
+  assert.deepEqual(parseTimeMarkerRange(""), { ok: true, seconds: null, endSeconds: null });
+  assert.deepEqual(parseTimeMarkerRange("13:10~12:34"), { ok: false, error: "끝 시점은 시작보다 뒤여야 합니다." });
+  assert.deepEqual(parseTimeMarkerRange("12:34~12:34"), { ok: false, error: "끝 시점은 시작보다 뒤여야 합니다." });
+  assert.deepEqual(parseTimeMarkerRange("23:59:00~24:00:00"), { ok: false, error: MAX_ERROR });
+  for (const raw of ["~12:34", "12:34~", "1~2~3", "-5", "12:34~abc", "abc"]) {
+    const result = parseTimeMarkerRange(raw);
+    assert.equal(result.ok, false, raw);
+    assert.match(result.ok ? "" : result.error, /구간은 12:34~13:10/u, raw);
   }
 });
 

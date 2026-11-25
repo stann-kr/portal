@@ -1,7 +1,7 @@
 /**
  * @file src/components/feedback/FeedbackEditForm.tsx
  * @description 남긴 피드백을 그 자리에서 고치는 줄(UsabilityBundle ⑫). 관리자 전용.
- * 시점(분:초) 칸과 내용 한 줄, 취소·저장. 고치는 중인 내용은 이 기기에 남고(local draft),
+ * 시점(분:초, 구간은 `01:30~02:10`) 칸과 내용 한 줄, 취소·저장. 고치는 중인 내용은 이 기기에 남고(local draft),
  * "취소"는 보관본까지 버리지만 Esc는 줄만 닫고 보관본을 남긴다(다시 열면 되살아난다. 한글 조합 중 Esc는 무시).
  * 저장 중에는 화면 이탈을 막는다. 서버는 고치기 시작할 때의 값과 같을 때만 바꾼다(updateFeedback).
  * 기준값(expected)은 고치기 시작할 때 한 번 잡아 고정하고 보관본에도 함께 남긴다. 그래서 고치는 사이
@@ -20,16 +20,24 @@ import { useFormDraft } from "@/lib/hooks/useFormDraft";
 import { useBusyNavigationGuard } from "@/lib/hooks/useBusyNavigationGuard";
 import { formatTimestamp } from "@/lib/utils/format";
 import { FEEDBACK_CONTENT_MAX_LENGTH } from "@/lib/feedback-content";
+import { formatTimeRange } from "@/lib/time-range";
 
-type EditBaseline = { content: string; timeMarker: number | null };
+type EditBaseline = { content: string; timeMarker: number | null; timeMarkerEnd: number | null };
 type EditDraft = { timeMarker: string; content: string; expected?: EditBaseline };
 
 function readBaseline(value: unknown): EditBaseline | null {
   if (!value || typeof value !== "object") return null;
-  const { content, timeMarker } = value as Record<string, unknown>;
+  const { content, timeMarker, timeMarkerEnd = null } = value as Record<string, unknown>;
   if (typeof content !== "string") return null;
   if (!(timeMarker === null || (typeof timeMarker === "number" && Number.isSafeInteger(timeMarker)))) return null;
-  return { content, timeMarker };
+  // 구간 전에 남은 보관본에는 끝이 없다: 끝 없음으로 읽는다.
+  if (!(timeMarkerEnd === null || (typeof timeMarkerEnd === "number" && Number.isSafeInteger(timeMarkerEnd)))) return null;
+  return { content, timeMarker, timeMarkerEnd };
+}
+
+/** 고치기 칸의 시점 글자. 끝이 있으면 `01:30~02:10`. */
+function markerText(value: { timeMarker: number | null; timeMarkerEnd?: number | null }): string {
+  return value.timeMarker === null ? "" : formatTimeRange(value.timeMarker, value.timeMarkerEnd ?? null, formatTimestamp);
 }
 
 export function FeedbackEditForm({
@@ -41,7 +49,7 @@ export function FeedbackEditForm({
   onCancel,
 }: {
   actorId: string;
-  feedback: { id: string; timeMarker: number | null; content: string };
+  feedback: { id: string; timeMarker: number | null; timeMarkerEnd?: number | null; content: string };
   /** false면 시점을 고치지 않는다(글 제출의 전체 피드백·분석 줄 피드백). */
   allowTimeMarker: boolean;
   formatMarker?: (seconds: number) => string;
@@ -49,8 +57,12 @@ export function FeedbackEditForm({
   onCancel: () => void;
 }) {
   // 고치기 시작할 때의 값. 이후 props가 바뀌어도 그대로 두고, 보관본을 되살리면 보관본의 기준값을 쓴다.
-  const [baseline, setBaseline] = useState<EditBaseline>(() => ({ content: feedback.content, timeMarker: feedback.timeMarker }));
-  const initialMarker = baseline.timeMarker === null ? "" : formatTimestamp(baseline.timeMarker);
+  const [baseline, setBaseline] = useState<EditBaseline>(() => ({
+    content: feedback.content,
+    timeMarker: feedback.timeMarker,
+    timeMarkerEnd: feedback.timeMarkerEnd ?? null,
+  }));
+  const initialMarker = markerText(baseline);
   const [timeMarker, setTimeMarker] = useState(initialMarker);
   const [content, setContent] = useState(baseline.content);
   const [error, setError] = useState<string | null>(null);
@@ -89,12 +101,12 @@ export function FeedbackEditForm({
     else draft.save({ ...next, expected: baseline });
   };
 
-  const currentMarker = feedback.timeMarker === null ? "" : formatTimestamp(feedback.timeMarker);
+  const currentMarker = markerText(feedback);
 
   // 비교를 마친 관리자가 고른 경우에만 지금 값을 기준값으로 잡고 예전 내용을 입력 칸에 넣는다.
   const applyLegacy = () => {
     if (!legacy) return;
-    const nextBaseline = { content: feedback.content, timeMarker: feedback.timeMarker };
+    const nextBaseline = { content: feedback.content, timeMarker: feedback.timeMarker, timeMarkerEnd: feedback.timeMarkerEnd ?? null };
     setBaseline(nextBaseline);
     setTimeMarker(legacy.timeMarker);
     setContent(legacy.content);
@@ -128,7 +140,7 @@ export function FeedbackEditForm({
     onCancel();
   };
 
-  const label = feedback.timeMarker === null ? "전체" : formatMarker(feedback.timeMarker);
+  const label = feedback.timeMarker === null ? "전체" : formatTimeRange(feedback.timeMarker, feedback.timeMarkerEnd ?? null, formatMarker);
   const inputIdBase = `feedback-edit-${feedback.id}`;
 
   return (
@@ -169,14 +181,16 @@ export function FeedbackEditForm({
             <input
               id={`${inputIdBase}-time`}
               type="text"
-              inputMode="numeric"
+              inputMode="text"
+              autoComplete="off"
+              spellCheck={false}
               value={timeMarker}
               placeholder="전체"
-              pattern="[0-9]+:[0-5][0-9]|[0-9]+"
-              title="예: 01:30 (분:초). 비우면 전체 피드백"
+              pattern="\s*[0-9]+(:[0-5][0-9])?(\s*(~|-)\s*[0-9]+(:[0-5][0-9])?)?\s*"
+              title="예: 01:30 (분:초), 구간은 01:30~02:10. 비우면 전체 피드백"
               disabled={!draft.loaded || isPending || legacy !== null}
               onChange={(event) => change({ timeMarker: event.target.value, content })}
-              className="h-11 w-20 rounded-sm border border-border bg-muted px-1.5 font-mono text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:h-6 md:w-16"
+              className="h-11 w-28 rounded-sm border border-border bg-muted px-1.5 font-mono text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:h-6 md:w-24"
             />
           </label>
         ) : (

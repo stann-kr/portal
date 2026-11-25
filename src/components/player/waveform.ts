@@ -39,19 +39,27 @@ export function resamplePeaks(peaks: readonly number[], barCount: number): numbe
 export type WaveformMarkerInput = {
   id: string;
   seconds: number;
+  /** 구간 댓글의 끝(초). 표시를 가리키면 파형 위에 시작~끝을 칠한다. */
+  endSeconds?: number | null;
   author: string;
   isStann: boolean;
   text: string;
 };
 
-export type WaveformMarker = WaveformMarkerInput & { leftPercent: number };
+export type WaveformMarker = WaveformMarkerInput & { leftPercent: number; /** 구간 폭(%). 끝이 길이를 넘으면 끝까지. */ widthPercent: number | null };
 
 /** 길이를 알 때만 시점 댓글을 0~100% 위치에 놓는다. 길이를 넘는 시점은 빼고 시간순으로 둔다. */
 export function positionMarkers(markers: readonly WaveformMarkerInput[], duration: number): WaveformMarker[] {
   if (!Number.isFinite(duration) || duration <= 0) return [];
   return markers
     .filter((marker) => Number.isFinite(marker.seconds) && marker.seconds >= 0 && marker.seconds <= duration)
-    .map((marker) => ({ ...marker, leftPercent: (marker.seconds / duration) * 100 }))
+    .map((marker) => {
+      const end = marker.endSeconds ?? null;
+      const widthPercent = end !== null && Number.isFinite(end) && end > marker.seconds
+        ? ((Math.min(end, duration) - marker.seconds) / duration) * 100
+        : null;
+      return { ...marker, leftPercent: (marker.seconds / duration) * 100, widthPercent };
+    })
     .sort((a, b) => a.seconds - b.seconds || a.id.localeCompare(b.id));
 }
 

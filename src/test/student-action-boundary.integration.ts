@@ -730,21 +730,25 @@ test("피드백은 잘못된 재생 시점을 저장하지 않고 긴 믹스셋�
     data.set("content", "전환 지점에서 저음을 교환해 주세요.");
     return data;
   };
-  for (const value of ["abc", "-1", "01:99", "01:30:00", "1.5", "9007199254740992"]) {
+  for (const value of ["abc", "-1", "01:99", "01:30:00", "1.5", "9007199254740992", "02:00~01:00", "01:00~01:00", "~01:00", "01:00~", "01:00~02:00~03:00"]) {
     const result = await feedbackActions.createFeedback("assignment-1", {}, form(value));
     assert.ok(result.error, value);
   }
+  assert.equal((await feedbackActions.createFeedback("assignment-1", {}, form("02:00~01:00"))).error, "끝 시점은 시작보다 뒤여야 합니다.");
   // 내용은 정해 둔 길이까지만 받는다(화면 maxLength를 우회한 요청도).
   const tooLong = form("01:30");
   tooLong.set("content", "가".repeat(FEEDBACK_CONTENT_MAX_LENGTH + 1));
   assert.match((await feedbackActions.createFeedback("assignment-1", {}, tooLong)).error ?? "", /자까지/u);
   assert.equal((await db.select().from(feedbacks)).length, 0);
   assert.ok((await feedbackActions.createFeedback("missing", {}, form("01:30"))).error);
-  for (const value of ["100:30", "90", "00:00", " "]) {
+  for (const value of ["100:30", "90", "00:00", " ", "01:20 - 01:45"]) {
     assert.equal((await feedbackActions.createFeedback("assignment-1", {}, form(value))).success, true);
   }
-  // 시점을 비우면 전체 피드백(null)이고 시점 피드백보다 앞에 놓인다.
-  assert.deepEqual((await feedbackActions.getFeedbacksByAssignment("assignment-1")).map((item) => item.timeMarker), [null, 0, 90, 6030]);
+  // 시점을 비우면 전체 피드백(null)이고 시점 피드백보다 앞에 놓인다. 구간은 시작 자리에 놓이고 끝을 함께 남긴다.
+  assert.deepEqual(
+    (await feedbackActions.getFeedbacksByAssignment("assignment-1")).map((item) => [item.timeMarker, item.timeMarkerEnd]),
+    [[null, null], [0, null], [80, 105], [90, null], [6030, null]],
+  );
 });
 
 test("댓글·피드백은 응답 유실 후 같은 제출을 한 번만 저장하고 다른 원문 재사용을 거부한다", { concurrency: false }, async (context) => {
@@ -2233,9 +2237,15 @@ test("피드백 고치기는 관리자만, 읽은 값과 같을 때만 바꾸고
   const stale = await feedbackActions.updateFeedback("fb-media", { content: "다른 탭 내용", timeMarker: "01:00" }, { content: "처음 내용", timeMarker: 90 });
   assert.equal(stale.success, false);
   assert.deepEqual(await rowOf("fb-media").then((row) => [row?.content, row?.timeMarker]), ["고친 내용", 192]);
-  // 시점을 비우면 전체 피드백이 된다.
-  assert.equal((await feedbackActions.updateFeedback("fb-media", { content: "고친 내용", timeMarker: "" }, { content: "고친 내용", timeMarker: 192 })).success, true);
-  assert.equal((await rowOf("fb-media"))?.timeMarker, null);
+  // 구간으로 고치고, 끝까지 같아야 바꾼다(끝을 모르는 옛 화면의 기준값은 끝 없음으로 본다).
+  assert.equal((await feedbackActions.updateFeedback("fb-media", { content: "고친 내용", timeMarker: "03:12~03:40" }, { content: "고친 내용", timeMarker: 192 })).success, true);
+  assert.deepEqual(await rowOf("fb-media").then((row) => [row?.timeMarker, row?.timeMarkerEnd]), [192, 220]);
+  assert.equal((await feedbackActions.updateFeedback("fb-media", { content: "다른 탭", timeMarker: "03:12" }, { content: "고친 내용", timeMarker: 192 })).success, false);
+  assert.equal((await feedbackActions.updateFeedback("fb-media", { content: "고친 내용", timeMarker: "03:40~03:12" }, { content: "고친 내용", timeMarker: 192, timeMarkerEnd: 220 })).success, false);
+  assert.deepEqual(await rowOf("fb-media").then((row) => [row?.content, row?.timeMarker, row?.timeMarkerEnd]), ["고친 내용", 192, 220]);
+  // 시점을 비우면 전체 피드백이 된다(끝도 함께 지운다).
+  assert.equal((await feedbackActions.updateFeedback("fb-media", { content: "고친 내용", timeMarker: "" }, { content: "고친 내용", timeMarker: 192, timeMarkerEnd: 220 })).success, true);
+  assert.deepEqual(await rowOf("fb-media").then((row) => [row?.timeMarker, row?.timeMarkerEnd]), [null, null]);
 
   // 글 제출 피드백에는 시점을 붙이지 않는다.
   assert.equal((await feedbackActions.updateFeedback("fb-text", { content: "글 피드백", timeMarker: "00:10" }, { content: "글 피드백", timeMarker: null })).success, false);

@@ -61,7 +61,7 @@ export type ArchivedAssignmentRecord = {
   mediaUrl: string | null;
   textHtml: string | null;
   analysis: MixAnalysis | null;
-  feedbacks: { id: string; timeMarker: number | null; content: string; createdAt: Date | null }[];
+  feedbacks: { id: string; timeMarker: number | null; timeMarkerEnd: number | null; content: string; createdAt: Date | null }[];
 };
 
 export type ArchivedQnaRecord = {
@@ -172,6 +172,7 @@ async function readAssignments(db: Db, studentId: string): Promise<ArchivedAssig
         id: feedbacks.id,
         assignmentId: feedbacks.assignmentId,
         timeMarker: feedbacks.timeMarker,
+        timeMarkerEnd: feedbacks.timeMarkerEnd,
         content: feedbacks.content,
         createdAt: feedbacks.createdAt,
       })

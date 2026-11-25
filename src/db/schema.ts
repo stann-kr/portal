@@ -504,7 +504,7 @@ export const assignments = sqliteTable(
   ],
 );
 
-/** time_marker가 없으면 글 제출이나 과제 전체에 대한 피드백이다. */
+/** time_marker가 없으면 글 제출이나 과제 전체에 대한 피드백이다. time_marker_end가 있으면 시작~끝 구간 피드백이다(0041). */
 export const feedbacks = sqliteTable(
   "feedbacks",
   {
@@ -513,6 +513,8 @@ export const feedbacks = sqliteTable(
       .references(() => assignments.id, { onDelete: "cascade" })
       .notNull(),
     timeMarker: integer("time_marker"),
+    /** 구간 끝(초). 시작(time_marker)이 있을 때만, 시작보다 뒤여야 한다(0041). */
+    timeMarkerEnd: integer("time_marker_end"),
     content: text("content").notNull(),
     createdAt: integer("created_at", { mode: "timestamp" }).default(
       sql`(strftime('%s', 'now'))`,
@@ -525,6 +527,10 @@ export const feedbacks = sqliteTable(
     check(
       "feedbacks_time_marker_check",
       sql`${table.timeMarker} IS NULL OR ${table.timeMarker} >= 0`,
+    ),
+    check(
+      "feedbacks_time_marker_end_check",
+      sql`${table.timeMarkerEnd} IS NULL OR (typeof(${table.timeMarkerEnd}) = 'integer' AND ${table.timeMarker} IS NOT NULL AND ${table.timeMarkerEnd} > ${table.timeMarker})`,
     ),
   ],
 );
@@ -1362,6 +1368,7 @@ export const postRevisions = sqliteTable(
 
 /**
  * time_marker_seconds가 있으면 믹스셋 게시물 재생 시점(초)에 단 댓글이다. 없으면 일반 댓글이다.
+ * time_marker_end_seconds가 있으면 시작~끝 구간에 단 댓글이다(0041).
  * parent_id가 있으면 같은 게시물 원 댓글(parent_id 없음)에 단 답글이다(한 단계). 외래키를 두지 않는다:
  * 원 댓글을 지워도 답글은 남고 화면이 그 자리를 "삭제된 댓글입니다"로 보인다. 같은 게시물·원 댓글 여부는
  * 작성 action의 INSERT 조건이 지킨다.
@@ -1381,6 +1388,8 @@ export const comments = sqliteTable(
       sql`(strftime('%s', 'now'))`,
     ),
     timeMarkerSeconds: integer("time_marker_seconds"),
+    /** 구간 끝(초). 시작이 있을 때만, 시작보다 뒤이고 23:59:59 이하(0041). */
+    timeMarkerEndSeconds: integer("time_marker_end_seconds"),
     parentId: text("parent_id"),
     /** 작성자가 고친 시각(0038). 없으면 처음 쓴 그대로이며, 있으면 화면이 "수정됨"을 보인다. */
     updatedAt: integer("updated_at", { mode: "timestamp" }),
@@ -1391,6 +1400,10 @@ export const comments = sqliteTable(
     check(
       "comments_time_marker_check",
       sql`${table.timeMarkerSeconds} IS NULL OR (typeof(${table.timeMarkerSeconds}) = 'integer' AND ${table.timeMarkerSeconds} >= 0 AND ${table.timeMarkerSeconds} <= 86399)`,
+    ),
+    check(
+      "comments_time_marker_end_check",
+      sql`${table.timeMarkerEndSeconds} IS NULL OR (typeof(${table.timeMarkerEndSeconds}) = 'integer' AND ${table.timeMarkerSeconds} IS NOT NULL AND ${table.timeMarkerEndSeconds} > ${table.timeMarkerSeconds} AND ${table.timeMarkerEndSeconds} <= 86399)`,
     ),
   ],
 );

@@ -22,7 +22,7 @@ import {
   nextTrackNumber,
   padTrack,
 } from "./lesson-structure";
-import { formatLessonClock, lessonTimestampText } from "./lesson-timestamps";
+import { formatLessonClock, lessonTimestampRangeText, lessonTimestampText } from "./lesson-timestamps";
 import { lessonTimerScope, useLessonTimer } from "./useLessonTimer";
 import { useLessonNoteEditor, useLessonNoteStructure } from "./useLessonNoteStructure";
 
@@ -58,7 +58,7 @@ export type InstructorLessonPanelProps = {
 export const LESSON_TAGS = ["비트매칭", "루프", "EQ·커브", "잔음", "볼륨", "프레이즈", "선곡·키"] as const;
 
 /** Alt(Option)와 함께 누르는 키. 입력 중에도 쓰도록 편집기보다 먼저 받는다. */
-const SHORTCUTS = { next: "KeyN", song: "KeyF", transition: "KeyM", toggle: "KeyP", stamp: "KeyT" } as const;
+const SHORTCUTS = { next: "KeyN", song: "KeyF", transition: "KeyM", toggle: "KeyP", stamp: "KeyT", range: "KeyR" } as const;
 
 const EMPTY_MEMO: InstructorMemoSnapshot = { memoId: null, contentHtml: "", version: 0, updatedAt: null };
 
@@ -111,6 +111,8 @@ export function InstructorLessonPanel({
   const [stampTarget, setStampTarget] = useState<LessonInsertTarget>("note");
   const [nextTitle, setNextTitle] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
+  // 구간 찍기: 처음 누르면 시작만 기억하고, 다시 누르면 `[시작~끝]`을 한 번에 넣는다(넣은 시점을 나중에 고치지 않는다).
+  const [rangeStart, setRangeStart] = useState<number | null>(null);
 
   const current = structure.tracks.at(-1) ?? null;
   const upcoming = nextTrackNumber(structure);
@@ -146,24 +148,48 @@ export function InstructorLessonPanel({
   });
   const tag = (label: string) => withEditor((target) => insertLessonTag(target, label));
 
-  const stamp = () => {
-    // 시작 전에 찍으면 그 순간을 믹스 시작으로 삼는다.
-    if (!timer.running && !timer.started) timer.toggle();
-    const text = lessonTimestampText(timer.started ? timer.readSeconds() : 0);
+  const insertStamp = (text: string) => {
     const rootOf = (kind: LessonInsertTarget) => (kind === "memo" ? document.getElementById(`${headingId}-${memoTab}`) : null) ?? document;
     const fallback = stampTarget === "note" ? "memo" : "note";
     const target = lessonTargetEditor(rootOf(stampTarget), stampTarget) ?? lessonTargetEditor(rootOf(fallback), fallback);
     if (!target) {
       setNotice("넣을 편집기가 아직 준비되지 않았습니다.");
-      return;
+      return false;
     }
     setNotice(null);
     insertLessonLine(target, text);
+    return true;
   };
 
-  const actionsRef = useRef({ nextTrack, songFeedback, transitionNote, stamp, toggle: timer.toggle });
+  const stamp = () => {
+    // 시작 전에 찍으면 그 순간을 믹스 시작으로 삼는다.
+    if (!timer.running && !timer.started) timer.toggle();
+    insertStamp(lessonTimestampText(timer.started ? timer.readSeconds() : 0));
+  };
+
+  const stampRange = () => {
+    if (rangeStart === null) {
+      if (!timer.running && !timer.started) timer.toggle();
+      setNotice(null);
+      setRangeStart(timer.started ? timer.readSeconds() : 0);
+      return;
+    }
+    const end = timer.started ? timer.readSeconds() : 0;
+    if (end <= rangeStart) {
+      setNotice("구간 끝은 시작보다 뒤여야 합니다. 조금 더 진행한 뒤 눌러 주세요.");
+      return;
+    }
+    if (insertStamp(lessonTimestampRangeText(rangeStart, end))) setRangeStart(null);
+  };
+
+  const resetTimer = () => {
+    setRangeStart(null);
+    timer.reset();
+  };
+
+  const actionsRef = useRef({ nextTrack, songFeedback, transitionNote, stamp, stampRange, toggle: timer.toggle });
   useEffect(() => {
-    actionsRef.current = { nextTrack, songFeedback, transitionNote, stamp, toggle: timer.toggle };
+    actionsRef.current = { nextTrack, songFeedback, transitionNote, stamp, stampRange, toggle: timer.toggle };
   });
   useEffect(() => {
     const handle = (event: KeyboardEvent) => {
@@ -173,6 +199,7 @@ export function InstructorLessonPanel({
       else if (event.code === SHORTCUTS.song) actions.songFeedback();
       else if (event.code === SHORTCUTS.transition) actions.transitionNote();
       else if (event.code === SHORTCUTS.stamp) actions.stamp();
+      else if (event.code === SHORTCUTS.range) actions.stampRange();
       else if (event.code === SHORTCUTS.toggle) actions.toggle();
       else return;
       event.preventDefault();
@@ -355,7 +382,7 @@ export function InstructorLessonPanel({
                 <span className="text-xs text-muted-foreground">믹스 시간</span>
                 <span className="font-mono text-2xl tabular-nums text-foreground">{formatLessonClock(timer.elapsedSeconds)}</span>
               </div>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 gap-2">
                 <Button type="button" variant="outline" size="sm" onClick={timer.toggle} aria-keyshortcuts="Alt+P">
                   {timer.running ? <Pause className="size-3.5" aria-hidden="true" /> : <Play className="size-3.5" aria-hidden="true" />}
                   {timer.running ? "일시정지" : timer.started ? "이어서" : "믹스 시작"}
@@ -363,13 +390,37 @@ export function InstructorLessonPanel({
                 <Button type="button" variant="secondary" size="sm" onMouseDown={keepEditorFocus} onClick={stamp} aria-keyshortcuts="Alt+T">
                   시점 찍기
                 </Button>
-                <Button type="button" variant="ghost" size="sm" onClick={timer.reset} disabled={!timer.started}>
+                <Button
+                  type="button"
+                  variant={rangeStart === null ? "secondary" : "outline"}
+                  size="sm"
+                  onMouseDown={keepEditorFocus}
+                  onClick={stampRange}
+                  aria-keyshortcuts="Alt+R"
+                  aria-pressed={rangeStart !== null}
+                  className={rangeStart === null ? undefined : "border-highlight bg-accent text-highlight hover:bg-accent"}
+                >
+                  {rangeStart === null ? "구간 찍기" : <>구간 끝 <span className="font-mono tabular-nums">({formatLessonClock(rangeStart)}~)</span></>}
+                </Button>
+                <Button type="button" variant="ghost" size="sm" onClick={resetTimer} disabled={!timer.started}>
                   <RotateCcw className="size-3.5" aria-hidden="true" />
                   초기화
                 </Button>
               </div>
+              {rangeStart !== null ? (
+                <p className="flex flex-wrap items-center gap-x-2 text-xs leading-5 text-secondary-foreground">
+                  {formatLessonClock(rangeStart)}부터 구간을 재는 중 · 다시 누르면 끝을 찍습니다
+                  <button
+                    type="button"
+                    onClick={() => setRangeStart(null)}
+                    className="-my-3 inline-flex h-11 items-center rounded-sm text-xs text-secondary-foreground underline underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:my-0 md:h-auto"
+                  >
+                    취소
+                  </button>
+                </p>
+              ) : null}
               <p className="text-xs leading-5 text-muted-foreground">
-                타이머가 돌면 다음 곡·전환 칸에 시점이 붙습니다 · 시점 찍기는 {TARGET_LABEL[stampTarget]}에 넣습니다(⌥T)
+                타이머가 돌면 다음 곡·전환 칸에 시점이 붙습니다 · 시점 찍기(⌥T)·구간 찍기(⌥R)는 {TARGET_LABEL[stampTarget]}에 넣습니다
               </p>
             </div>
           </div>

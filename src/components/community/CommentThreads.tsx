@@ -11,6 +11,7 @@ import { communityAuthorName } from "@/components/community/CommunityPostRow";
 import { initialOf } from "@/components/qna/qna-display";
 import { groupCommentThreads, replyMention } from "@/lib/community-comment";
 import { formatTimeMarker } from "@/lib/community-mixset-media";
+import { describeTimeRange, formatTimeRange } from "@/lib/time-range";
 import { formatKstMonthDayTime } from "@/lib/kst-format";
 import { cn } from "@/lib/utils";
 
@@ -22,6 +23,8 @@ export type ThreadComment = {
   /** 작성자가 고친 시각. 있으면 "수정됨"을 보인다. */
   updatedAt?: Date | null;
   timeMarkerSeconds: number | null;
+  /** 있으면 시작~끝 구간 댓글(0041). */
+  timeMarkerEndSeconds?: number | null;
   parentId: string | null;
   authorName: string | null;
   /** 관리자(Stann) 글은 아바타를 먹색으로(Q&A 답변과 같다). */
@@ -398,7 +401,7 @@ export function CommentThreads({
                       </p>
                       {c.timeMarkerSeconds !== null ? (
                         <span className="col-start-2 row-start-1 flex md:col-start-1 md:row-start-2 md:self-start">
-                          <CommentTimeMarker seconds={c.timeMarkerSeconds} onSeek={onSeek} />
+                          <CommentTimeMarker seconds={c.timeMarkerSeconds} endSeconds={c.timeMarkerEndSeconds ?? null} onSeek={onSeek} />
                         </span>
                       ) : null}
                       {editingId === c.id && canEdit(c.authorId) ? (
@@ -448,9 +451,9 @@ function avatarTone(comment: ThreadComment): string {
   return comment.authorRole === "admin" ? "bg-primary text-primary-foreground" : "bg-selected text-secondary-foreground";
 }
 
-/** 댓글 재생 시점. 플레이어가 있으면 누르면 그 위치부터 재생하고, 매체가 사라졌으면 시점만 보인다. */
-function CommentTimeMarker({ seconds, onSeek }: { seconds: number; onSeek?: (seconds: number) => void }) {
-  const label = formatTimeMarker(seconds);
+/** 댓글 재생 시점·구간. 플레이어가 있으면 누르면 그 위치(구간은 시작)부터 재생하고, 매체가 사라졌으면 시점만 보인다. */
+function CommentTimeMarker({ seconds, endSeconds, onSeek }: { seconds: number; endSeconds: number | null; onSeek?: (seconds: number) => void }) {
+  const label = formatTimeRange(seconds, endSeconds, formatTimeMarker);
   const chip = "inline-flex h-6 shrink-0 items-center rounded-sm px-2 font-mono text-xs font-medium";
   if (!onSeek) {
     return <span className={cn(chip, "bg-muted text-secondary-foreground")}>{label}</span>;
@@ -459,7 +462,7 @@ function CommentTimeMarker({ seconds, onSeek }: { seconds: number; onSeek?: (sec
     <button
       type="button"
       onClick={() => onSeek(seconds)}
-      aria-label={`${label} 위치로 이동`}
+      aria-label={`${describeTimeRange(seconds, endSeconds, formatTimeMarker)} 위치로 이동`}
       // 좁은 화면은 위아래로 터치 영역을 넓힌다.
       className={cn(
         chip,

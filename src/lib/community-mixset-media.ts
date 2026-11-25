@@ -6,6 +6,7 @@
  * 이전 방식으로 올린 오디오(legacy)다.
  */
 import { normalizeAssignmentMediaUrl } from "@/lib/assignment-media-url";
+import { splitTimeRange, TIME_RANGE_ORDER_ERROR } from "@/lib/time-range";
 
 /** 새 게시물·수정 form의 믹스셋 링크 칸 이름. legacy `mediaUrl` 칸과 섞이지 않게 따로 둔다. */
 export const MIXSET_LINK_FIELD = "mixsetLinkUrl";
@@ -79,6 +80,32 @@ export function parseTimeMarker(raw: unknown): TimeMarkerResult {
     return { ok: false, error: "재생 시점은 23:59:59 이하로 입력해 주세요." };
   }
   return { ok: true, seconds };
+}
+
+export type TimeMarkerRangeResult =
+  | { ok: true; seconds: number | null; endSeconds: number | null }
+  | { ok: false; error: string };
+
+const TIME_MARKER_RANGE_ERROR = "재생 시점은 12:34, 1:05:30 또는 초(예: 754) 형식으로, 구간은 12:34~13:10처럼 입력해 주세요.";
+
+/** 시점 하나 또는 구간(`12:34~13:10`, `-`도 받는다). 끝은 시작보다 뒤여야 한다. 빈 값은 시점 없음. */
+export function parseTimeMarkerRange(raw: unknown): TimeMarkerRangeResult {
+  if (raw === null || raw === undefined) return { ok: true, seconds: null, endSeconds: null };
+  if (typeof raw !== "string") return { ok: false, error: TIME_MARKER_RANGE_ERROR };
+  const value = raw.trim();
+  if (!value) return { ok: true, seconds: null, endSeconds: null };
+  const parts = splitTimeRange(value);
+  if (!parts) return { ok: false, error: TIME_MARKER_RANGE_ERROR };
+  // 형식 안내에는 구간 쓰는 법도 함께 알린다. 상한 안내는 그대로 둔다.
+  const toRangeError = (error: string) => (error === TIME_MARKER_ERROR ? TIME_MARKER_RANGE_ERROR : error);
+  const start = parseTimeMarker(parts.start);
+  if (!start.ok) return { ok: false, error: toRangeError(start.error) };
+  if (parts.end === null) return { ok: true, seconds: start.seconds, endSeconds: null };
+  const end = parseTimeMarker(parts.end);
+  if (!end.ok) return { ok: false, error: toRangeError(end.error) };
+  if (start.seconds === null || end.seconds === null) return { ok: false, error: TIME_MARKER_RANGE_ERROR };
+  if (end.seconds <= start.seconds) return { ok: false, error: TIME_RANGE_ORDER_ERROR };
+  return { ok: true, seconds: start.seconds, endSeconds: end.seconds };
 }
 
 /** 1시간 미만은 `mm:ss`, 그 이상은 `h:mm:ss`. parseTimeMarker가 그대로 다시 읽는다. */

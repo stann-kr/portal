@@ -1,15 +1,28 @@
 /**
  * @file src/components/lesson/lesson-timestamps.ts
- * @description 수업 노트의 시점 표시(`[12:34]`)와 녹음 링크 규칙. 시점은 본문에 일반 글자로 남기고
+ * @description 수업 노트의 시점 표시(`[12:34]`, 구간 `[12:34~13:10]`)와 녹음 링크 규칙. 시점은 본문에 일반 글자로 남기고
  * (편집기 schema·서버 변환·sanitize를 바꾸지 않는다), 화면에서만 눌러 재생할 수 있게 꾸민다.
  */
 
-/** `[m:ss]`·`[mm:ss]`·`[h:mm:ss]` */
-export const LESSON_TIMESTAMP_PATTERN = /\[(?:(\d{1,2}):)?(\d{1,3}):([0-5]\d)\]/gu;
+/**
+ * `[m:ss]`·`[mm:ss]`·`[h:mm:ss]`, 구간은 `[12:34~13:10]`(`-`도 읽는다). 1~3번 묶음이 시작, 4~6번 묶음이 끝이다.
+ * 끝이 시작보다 앞이거나 같은 구간은 시점으로 꾸미지 않는다(parseLessonTimestampRange가 null).
+ */
+export const LESSON_TIMESTAMP_PATTERN = /\[(?:(\d{1,2}):)?(\d{1,3}):([0-5]\d)(?:\s*[~-]\s*(?:(\d{1,2}):)?(\d{1,3}):([0-5]\d))?\]/gu;
 
 export function parseLessonTimestamp(match: RegExpExecArray | RegExpMatchArray): number {
   const hours = match[1] ? Number(match[1]) : 0;
   return hours * 3600 + Number(match[2]) * 60 + Number(match[3]);
+}
+
+/** 시점 하나면 end가 null, 구간이면 시작·끝(초). 뒤집힌 구간은 null. */
+export function parseLessonTimestampRange(
+  match: RegExpExecArray | RegExpMatchArray,
+): { start: number; end: number | null } | null {
+  const start = parseLessonTimestamp(match);
+  if (match[5] === undefined) return { start, end: null };
+  const end = (match[4] ? Number(match[4]) : 0) * 3600 + Number(match[5]) * 60 + Number(match[6]);
+  return end > start ? { start, end } : null;
 }
 
 export function formatLessonClock(totalSeconds: number): string {
@@ -24,6 +37,10 @@ export function formatLessonClock(totalSeconds: number): string {
 
 export function lessonTimestampText(totalSeconds: number): string {
   return `[${formatLessonClock(totalSeconds)}]`;
+}
+
+export function lessonTimestampRangeText(startSeconds: number, endSeconds: number): string {
+  return `[${formatLessonClock(startSeconds)}~${formatLessonClock(endSeconds)}]`;
 }
 
 export function lessonTrackText(track: number): string {

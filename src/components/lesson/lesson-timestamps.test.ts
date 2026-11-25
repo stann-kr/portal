@@ -9,9 +9,11 @@ import {
   LESSON_TIMESTAMP_PATTERN,
   findLessonRecording,
   formatLessonClock,
+  lessonTimestampRangeText,
   lessonTimestampText,
   parseLessonRecording,
   parseLessonTimestamp,
+  parseLessonTimestampRange,
 } from "./lesson-timestamps";
 
 test("시점 표시는 분:초와 시:분:초를 읽고 같은 모양으로 쓴다", () => {
@@ -20,6 +22,13 @@ test("시점 표시는 분:초와 시:분:초를 읽고 같은 모양으로 쓴�
   assert.equal(lessonTimestampText(754), "[12:34]");
   assert.equal(formatLessonClock(3723), "1:02:03");
   assert.equal(formatLessonClock(-3), "00:00");
+});
+
+test("시점 구간 [시작~끝]은 시작·끝을 읽고, 뒤집힌 구간은 시점으로 보지 않는다", () => {
+  const ranges = [..."[12:34~13:10] [1:00 - 1:02:03] [5:00~4:00] [3:00~3:00] [0:05]".matchAll(LESSON_TIMESTAMP_PATTERN)]
+    .map(parseLessonTimestampRange);
+  assert.deepEqual(ranges, [{ start: 754, end: 790 }, { start: 60, end: 3723 }, null, null, { start: 5, end: null }]);
+  assert.equal(lessonTimestampRangeText(754, 790), "[12:34~13:10]");
 });
 
 test("YouTube·SoundCloud 링크를 녹음으로 읽고 시작 위치를 믹스 시작으로 더한다", () => {

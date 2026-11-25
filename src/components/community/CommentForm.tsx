@@ -19,7 +19,8 @@ import {
   commentReplyDraftContext,
   limitCommentContent,
 } from "@/lib/community-comment";
-import { COMMENT_TIME_MARKER_FIELD, formatTimeMarker, parseTimeMarker } from "@/lib/community-mixset-media";
+import { COMMENT_TIME_MARKER_FIELD, formatTimeMarker, parseTimeMarkerRange } from "@/lib/community-mixset-media";
+import { TIME_RANGE_SEPARATOR } from "@/lib/time-range";
 
 const COMMENT_MAX_LABEL = new Intl.NumberFormat("ko-KR").format(COMMENT_MAX_LENGTH);
 
@@ -243,6 +244,39 @@ export function CommentForm({
     }
   };
 
+  // 시작 한 점만 채운 뒤 더 듣다가 누르면 지금 위치를 구간 끝으로 붙인다.
+  const parsedMarker = allowTimeMarker ? parseTimeMarkerRange(timeMarker) : null;
+  const rangeStart = parsedMarker?.ok && parsedMarker.seconds !== null && parsedMarker.endSeconds === null ? parsedMarker.seconds : null;
+  const fillRangeEnd = async () => {
+    if (rangeStart === null) return;
+    setPositionStatus(null);
+    setReadingPosition(true);
+    const generation = ++positionReadGeneration.current;
+    try {
+      const seconds = readPlaybackPosition ? await readPlaybackPosition() : null;
+      if (generation !== positionReadGeneration.current) return;
+      if (seconds === null) {
+        setPositionStatus("재생 위치를 읽지 못했습니다. 플레이어를 재생한 뒤 다시 눌러 주세요.");
+        return;
+      }
+      const end = Math.floor(seconds);
+      if (end <= rangeStart) {
+        setPositionStatus("끝 위치는 시작보다 뒤여야 합니다. 조금 더 들은 뒤 눌러 주세요.");
+        return;
+      }
+      const marker = `${formatTimeMarker(rangeStart)}${TIME_RANGE_SEPARATOR}${formatTimeMarker(end)}`;
+      setTimeMarker(marker);
+      setTimeError(null);
+      saveDraft({ content: contentRef.current?.value ?? content, timeMarker: marker });
+      contentRef.current?.focus();
+    } catch {
+      if (generation !== positionReadGeneration.current) return;
+      setPositionStatus("재생 위치를 읽지 못했습니다. 끝 시점을 직접 입력해 주세요.");
+    } finally {
+      setReadingPosition(false);
+    }
+  };
+
   const controlsDisabled = !draft.loaded || pending;
   const contentLength = content.length < COMMENT_COUNTER_FROM ? 0 : [...content].length;
   const showLength = contentLength >= COMMENT_COUNTER_FROM;
@@ -263,7 +297,7 @@ export function CommentForm({
         }
         // 서버가 최종 판단하지만 형식이 틀린 시점은 보내기 전에 칸 옆에서 알린다.
         if (allowTimeMarker) {
-          const parsed = parseTimeMarker(timeMarker);
+          const parsed = parseTimeMarkerRange(timeMarker);
           if (!parsed.ok) {
             event.preventDefault();
             setTimeError(parsed.error);
@@ -296,7 +330,7 @@ export function CommentForm({
             disabled={controlsDisabled}
             aria-invalid={timeError ? true : undefined}
             aria-describedby={timeDescribedBy}
-            className="w-[5.5rem] font-mono placeholder:text-faint md:h-8"
+            className="w-[8.5rem] font-mono placeholder:text-faint md:h-8"
           />
           {readPlaybackPosition ? (
             <button
@@ -306,6 +340,17 @@ export function CommentForm({
               className="inline-flex h-11 items-center rounded-sm px-1.5 text-xs text-secondary-foreground underline underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 md:h-8"
             >
               현재 위치
+            </button>
+          ) : null}
+          {readPlaybackPosition && rangeStart !== null ? (
+            <button
+              type="button"
+              onClick={fillRangeEnd}
+              disabled={controlsDisabled || readingPosition}
+              aria-label={`${formatTimeMarker(rangeStart)}부터 지금 위치까지 구간으로`}
+              className="inline-flex h-11 items-center rounded-sm px-1.5 text-xs text-foreground underline underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 md:h-8"
+            >
+              여기까지
             </button>
           ) : null}
           {timeMarker ? (
@@ -319,7 +364,7 @@ export function CommentForm({
               비우기
             </button>
           ) : null}
-          <span id={timeHelpId} className="sr-only">선택 항목입니다. 예: 12:34 또는 1:05:30. 비우면 시점 없는 댓글로 남습니다.</span>
+          <span id={timeHelpId} className="sr-only">선택 항목입니다. 예: 12:34 또는 1:05:30, 구간은 12:34~13:10. 비우면 시점 없는 댓글로 남습니다.</span>
         </div>
       ) : null}
       {timeError ? <p id={timeErrorId} role="alert" className="text-xs text-destructive">{timeError}</p> : null}

@@ -23,7 +23,7 @@ export function RecordingDock({
   const [recording, setRecording] = useState<LessonRecording | null>(null);
   const [open, setOpen] = useState(false);
   const [seekRequest, setSeekRequest] = useState<MediaSeekRequest | undefined>(undefined);
-  const [lastSeek, setLastSeek] = useState<number | null>(null);
+  const [lastSeek, setLastSeek] = useState<{ start: number; end: number | null } | null>(null);
 
   useEffect(() => {
     const root = rootRef.current;
@@ -59,7 +59,8 @@ export function RecordingDock({
       const seconds = Number(marker.dataset.lessonSeconds);
       if (!Number.isFinite(seconds)) return;
       setOpen(true);
-      setLastSeek(seconds);
+      const end = marker.dataset.lessonEndSeconds === undefined ? null : Number(marker.dataset.lessonEndSeconds);
+      setLastSeek({ start: seconds, end: end !== null && Number.isFinite(end) && end > seconds ? end : null });
       setSeekRequest({ seconds: recording.offsetSeconds + seconds });
     };
     root.addEventListener("click", handleClick);
@@ -94,7 +95,11 @@ export function RecordingDock({
           <span className="min-w-0 flex-1 truncate">
             수업 녹음 · {mediaSourceLabel(recording.url)}
             <span className="text-muted-foreground">
-              {lastSeek !== null ? ` · ${formatLessonClock(lastSeek)}부터` : " · 본문의 [시점]을 누르면 그 부분을 재생합니다"}
+              {lastSeek !== null
+                ? lastSeek.end !== null
+                  ? ` · ${formatLessonClock(lastSeek.start)}~${formatLessonClock(lastSeek.end)} 구간`
+                  : ` · ${formatLessonClock(lastSeek.start)}부터`
+                : " · 본문의 [시점]을 누르면 그 부분을 재생합니다"}
             </span>
           </span>
           {open

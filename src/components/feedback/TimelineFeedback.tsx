@@ -1,7 +1,7 @@
 /**
  * @file src/components/feedback/TimelineFeedback.tsx
  * @description 과제 피드백 UI 컴포넌트.
- * - 타임스탬프 클릭 시 VideoPlayer의 해당 시점으로 이동
+ * - 타임스탬프 클릭 시 VideoPlayer의 해당 시점으로 이동(구간 `01:20~01:45`은 시작 위치로)
  * - 재생 시점이 없는 피드백은 "전체" 표시로 구분한다(글 제출·과제 전체에 대한 피드백)
  * - Admin: 피드백 작성 폼 노출(재생 시점은 비워 둘 수 있다), 남긴 피드백을 그 자리에서 고치기·삭제
  * - Student: 조회만 가능
@@ -28,11 +28,14 @@ import { CREATION_OPERATION_FIELD, createCreationOperationId, parseCreationOpera
 import { useFeedbackMarks } from "./useFeedbackMarks";
 import { FeedbackEditForm } from "./FeedbackEditForm";
 import { FEEDBACK_CONTENT_MAX_LENGTH } from "@/lib/feedback-content";
+import { describeTimeRange, formatTimeRange, splitTimeRange, TIME_RANGE_SEPARATOR } from "@/lib/time-range";
 
 export interface FeedbackItem {
   id: string;
   /** 없으면 과제 전체에 대한 피드백 */
   timeMarker: number | null;
+  /** 있으면 시작~끝 구간 피드백. 없으면(빈 값 포함) 시점 하나다. */
+  timeMarkerEnd?: number | null;
   content: string;
   createdAt: Date | null;
   /** 관리자가 고친 시각. 없으면 처음 남긴 그대로다. */
@@ -58,16 +61,27 @@ interface TimelineFeedbackProps {
   variant?: "timeline" | "overall";
 }
 
-/** 폼의 시점 글자(분:초·초)를 초로 읽는다. 서버(createFeedback)와 같은 형식만 받는다. */
-function parseMarker(value: string): number | null {
+/** 시점 하나(분:초·초)를 초로 읽는다. 서버(createFeedback)와 같은 형식만 받는다. */
+function parseSeconds(value: string): number | null {
   const trimmed = value.trim();
   const minutesAndSeconds = /^(\d+):([0-5]\d)$/u.exec(trimmed);
   if (minutesAndSeconds) return Number(minutesAndSeconds[1]) * 60 + Number(minutesAndSeconds[2]);
   return /^\d+$/u.test(trimmed) ? Number(trimmed) : null;
 }
 
+/** 폼의 시점 글자에서 시작(초)을 읽는다. 구간이면 끝도 읽고, 형식이 틀리면 null. */
+function parseMarker(value: string): { start: number; end: number | null } | null {
+  const parts = splitTimeRange(value.trim());
+  if (!parts) return null;
+  const start = parseSeconds(parts.start);
+  if (start === null) return null;
+  if (parts.end === null) return { start, end: null };
+  const end = parseSeconds(parts.end);
+  return end === null ? null : { start, end };
+}
+
 function feedbackLabel(fb: FeedbackItem): string {
-  return fb.timeMarker === null ? "전체" : formatTimestamp(fb.timeMarker);
+  return fb.timeMarker === null ? "전체" : formatTimeRange(fb.timeMarker, fb.timeMarkerEnd ?? null, formatTimestamp);
 }
 
 // ─── 관리자 피드백 작성 폼 ────────────────────────
@@ -123,8 +137,8 @@ function FeedbackForm({
     if (result.success) {
       const submittedData = { timeMarker: String(data.get("timeMarker") ?? ""), content: String(data.get("content") ?? "") };
       // 찍어 둔 시점으로 쓴 피드백이면 그 시점을 목록에서 뺀다.
-      const submittedSeconds = parseMarker(submittedData.timeMarker);
-      if (submittedSeconds !== null) marks.remove(submittedSeconds);
+      const submittedMarker = parseMarker(submittedData.timeMarker);
+      if (submittedMarker !== null) marks.remove(submittedMarker.start);
       draft.clear({ reason: "submitted", submittedData: {
         ...submittedData,
         operationId: String(data.get(CREATION_OPERATION_FIELD) ?? ""),
@@ -163,6 +177,37 @@ function FeedbackForm({
       document.getElementById("feedback-content")?.focus();
     } catch {
       setPositionError("재생 위치를 읽지 못했습니다. 시점을 직접 입력해 주세요.");
+    } finally {
+      setReadingPosition(false);
+    }
+  };
+
+  // 시작을 채운 뒤 더 듣다가 누르면 지금 위치를 구간 끝으로 붙인다.
+  const rangeStart = (() => {
+    const marker = parseMarker(timeMarker);
+    return marker && marker.end === null ? marker.start : null;
+  })();
+  const fillRangeEnd = async () => {
+    if (!readPlaybackPosition || rangeStart === null) return;
+    setPositionError(null);
+    setReadingPosition(true);
+    try {
+      const seconds = await readPlaybackPosition();
+      if (seconds === null) {
+        setPositionError("재생 위치를 읽지 못했습니다. 플레이어를 재생한 뒤 다시 시도해 주세요.");
+        return;
+      }
+      const end = Math.floor(seconds);
+      if (end <= rangeStart) {
+        setPositionError("끝 위치는 시작보다 뒤여야 합니다. 조금 더 들은 뒤 눌러 주세요.");
+        return;
+      }
+      const marker = `${formatTimestamp(rangeStart)}${TIME_RANGE_SEPARATOR}${formatTimestamp(end)}`;
+      setTimeMarker(marker);
+      saveDraft({ timeMarker: marker, content });
+      document.getElementById("feedback-content")?.focus();
+    } catch {
+      setPositionError("재생 위치를 읽지 못했습니다. 끝 시점을 직접 입력해 주세요.");
     } finally {
       setReadingPosition(false);
     }
@@ -231,21 +276,34 @@ function FeedbackForm({
           새 피드백 추가
         </p>
       )}
-      <div className={allowTimeMarker ? "grid gap-3 sm:grid-cols-[7rem_minmax(0,1fr)_auto] sm:items-end" : "grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end"}>
+      <div className={allowTimeMarker ? "grid gap-3 sm:grid-cols-[9.5rem_minmax(0,1fr)_auto] sm:items-end" : "grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end"}>
         {allowTimeMarker ? <div className="flex flex-col gap-1.5">
           <div className="flex items-center justify-between gap-2">
             <label htmlFor="feedback-time-marker" className="text-xs text-muted-foreground">
               재생 시점 (선택)
             </label>
             {readPlaybackPosition ? (
-              <button
-                type="button"
-                onClick={fillCurrentPosition}
-                disabled={!draft.loaded || isPending || readingPosition}
-                className="-my-3 inline-flex h-11 items-center rounded-sm text-xs text-secondary-foreground underline underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 md:my-0 md:h-auto"
-              >
-                현재 위치
-              </button>
+              <span className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={fillCurrentPosition}
+                  disabled={!draft.loaded || isPending || readingPosition}
+                  className="-my-3 inline-flex h-11 items-center rounded-sm text-xs text-secondary-foreground underline underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 md:my-0 md:h-auto"
+                >
+                  현재 위치
+                </button>
+                {rangeStart !== null ? (
+                  <button
+                    type="button"
+                    onClick={fillRangeEnd}
+                    disabled={!draft.loaded || isPending || readingPosition}
+                    aria-label={`${formatTimestamp(rangeStart)}부터 지금 위치까지 구간으로`}
+                    className="-my-3 inline-flex h-11 items-center rounded-sm text-xs text-foreground underline underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 md:my-0 md:h-auto"
+                  >
+                    여기까지
+                  </button>
+                ) : null}
+              </span>
             ) : null}
           </div>
           <Input
@@ -253,14 +311,16 @@ function FeedbackForm({
             name="timeMarker"
             type="text"
             placeholder="MM:SS"
+            autoComplete="off"
+            spellCheck={false}
             value={timeMarker}
             onChange={(event) => {
               setTimeMarker(event.target.value);
               saveDraft({ timeMarker: event.target.value, content });
             }}
             className="font-mono"
-            pattern="[0-9]+:[0-5][0-9]"
-            title="예: 01:30 (분:초). 비우면 전체 피드백"
+            pattern="\s*[0-9]+(:[0-5][0-9])?(\s*(~|-)\s*[0-9]+(:[0-5][0-9])?)?\s*"
+            title="예: 01:30 (분:초), 구간은 01:30~02:10. 비우면 전체 피드백"
             disabled={!draft.loaded || isPending}
             aria-describedby={showResult && state.error ? "feedback-error feedback-time-help" : "feedback-time-help"}
           />
@@ -327,7 +387,7 @@ function FeedbackForm({
       ) : null}
       {overall ? null : (
         <p id="feedback-time-help" className="text-xs text-muted-foreground">
-          {allowTimeMarker ? "재생 시점을 비우면 과제 전체에 대한 피드백으로 남습니다." : "글 제출에는 전체 피드백으로 남깁니다."}
+          {allowTimeMarker ? "재생 시점을 비우면 과제 전체에 대한 피드백으로 남습니다. 01:20~01:45처럼 구간도 적을 수 있습니다." : "글 제출에는 전체 피드백으로 남깁니다."}
         </p>
       )}
       {positionError ? <p role="alert" className="text-xs text-destructive">{positionError}</p> : null}
@@ -433,10 +493,10 @@ export function TimelineFeedback({
                   <button
                     type="button"
                     onClick={() => { if (fb.timeMarker !== null) onSeek?.(fb.timeMarker); }}
-                    aria-label={`${formatTimestamp(fb.timeMarker)} 위치로 이동`}
+                    aria-label={`${describeTimeRange(fb.timeMarker, fb.timeMarkerEnd ?? null, formatTimestamp)} 위치로 이동`}
                     className="relative inline-flex h-6 shrink-0 items-center rounded-sm bg-accent px-2 font-mono text-xs font-medium text-highlight transition-colors duration-[var(--duration-fast)] after:absolute after:inset-x-0 after:-inset-y-2.5 after:content-[''] hover:bg-highlight/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none md:after:hidden"
                   >
-                    {formatTimestamp(fb.timeMarker)}
+                    {formatTimeRange(fb.timeMarker, fb.timeMarkerEnd ?? null, formatTimestamp)}
                   </button>
                 )}
 
