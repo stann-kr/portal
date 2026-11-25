@@ -14,6 +14,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { LoaderCircle, Pause, Play } from "lucide-react";
 import type { MediaSeekRequest, PlaybackPositionReader } from "./VideoPlayer";
 import { formatTimeMarker } from "@/lib/community-mixset-media";
+import { describeTimeRange, formatTimeRange } from "@/lib/time-range";
 import { cn } from "@/lib/utils";
 import { isPageActive, type PlayerTrack } from "./player-state";
 import {
@@ -247,12 +248,21 @@ function WaveformTrack({
             <span aria-hidden="true" className="waveform-line waveform-line--compact"><span style={{ width: `${fraction * 100}%` }} /></span>
           )}
         </div>
+        {open && open.widthPercent !== null ? (
+          // 가리킨 구간 댓글의 시작~끝을 파형 위에 옅게 칠한다(누르기는 그대로 파형이 받는다).
+          <span
+            aria-hidden="true"
+            data-waveform-range=""
+            style={{ left: `${open.leftPercent}%`, width: `${open.widthPercent}%` }}
+            className={cn("pointer-events-none absolute top-0 border-x border-highlight bg-highlight/15", lineOnly ? "h-7" : "h-16")}
+          />
+        ) : null}
         <div aria-label="시점 댓글" role="group" className="absolute inset-x-0 bottom-0 h-5">
           {placed.map((marker) => (
             <button
               key={marker.id}
               type="button"
-              aria-label={`${marker.author} ${formatTimeMarker(marker.seconds)} 댓글`}
+              aria-label={`${marker.author} ${describeTimeRange(marker.seconds, marker.endSeconds ?? null, formatTimeMarker)} 댓글`}
               aria-expanded={openMarker === marker.id}
               onPointerEnter={(event) => { if (event.pointerType === "mouse") setOpenMarker(marker.id); }}
               onFocus={() => setOpenMarker(marker.id)}
@@ -277,11 +287,11 @@ function WaveformTrack({
             onMarkerOpen?.(open.id);
           }}
           onKeyDown={(event) => { if (event.key === "Escape") setOpenMarker(null); }}
-          aria-label={`${open.author} ${formatTimeMarker(open.seconds)} 댓글로 이동`}
+          aria-label={`${open.author} ${describeTimeRange(open.seconds, open.endSeconds ?? null, formatTimeMarker)} 댓글로 이동`}
           style={{ marginLeft: `clamp(0px, calc(${open.leftPercent}% - 140px), max(0px, calc(100% - 280px)))` }}
           className="flex max-w-[280px] flex-col gap-1 self-start rounded-md bg-primary px-3 py-2.5 text-left text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
         >
-          <span className="font-mono text-[11px] opacity-80">{open.author} · {formatTimeMarker(open.seconds)}</span>
+          <span className="font-mono text-[11px] opacity-80">{open.author} · {formatTimeRange(open.seconds, open.endSeconds ?? null, formatTimeMarker)}</span>
           <span className="line-clamp-3 text-ui">{open.text}</span>
         </button>
       ) : null}

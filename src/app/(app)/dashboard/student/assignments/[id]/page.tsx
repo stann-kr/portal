@@ -82,6 +82,7 @@ export default async function AssignmentDetailPage({
   const feedbackList = fb.map((f: AssignmentFeedback) => ({
     id: f.id,
     timeMarker: f.timeMarker,
+    timeMarkerEnd: f.timeMarkerEnd,
     content: f.content,
     createdAt: f.createdAt,
     updatedAt: f.updatedAt,

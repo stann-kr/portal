@@ -19,6 +19,7 @@ import {
 import { pushMessages } from "@/lib/push/messages";
 import { notifyPush } from "@/lib/push/notify";
 import { FEEDBACK_CONTENT_TOO_LONG_ERROR, isFeedbackContentTooLong } from "@/lib/feedback-content";
+import { splitTimeRange, TIME_RANGE_ORDER_ERROR } from "@/lib/time-range";
 
 // ───────────────────────────────────────────────
 // 조회
@@ -51,17 +52,30 @@ export async function getFeedbacksByAssignment(assignmentId: string) {
 // Admin: 피드백 작성
 // ───────────────────────────────────────────────
 
-const TIME_MARKER_ERROR = "재생 시점은 01:30 같은 분:초 형식이나 0 이상의 정수 초로 입력해 주세요. 초는 00~59입니다.";
+const TIME_MARKER_ERROR = "재생 시점은 01:30 같은 분:초 형식이나 0 이상의 정수 초로, 구간은 01:30~02:10처럼 입력해 주세요. 초는 00~59입니다.";
 
-/** 시점 글자(분:초·정수 초)를 초로 읽는다. 비우면 전체 피드백(null), 형식이 틀리면 NaN. */
-function parseFeedbackTimeMarker(value: string): number | null {
-  // 재생 시점을 비우면 과제 전체(글 제출 포함)에 대한 피드백이다.
-  if (!value) return null;
+/** 시점 하나(분:초·정수 초)를 초로 읽는다. 형식이 틀리면 NaN. */
+function parseFeedbackSeconds(value: string): number {
   const minutesAndSeconds = /^(\d+):([0-5]\d)$/.exec(value);
   const seconds = minutesAndSeconds
     ? Number(minutesAndSeconds[1]) * 60 + Number(minutesAndSeconds[2])
     : /^\d+$/.test(value) ? Number(value) : NaN;
   return Number.isSafeInteger(seconds) && seconds >= 0 ? seconds : NaN;
+}
+
+type FeedbackTimeRange = { timeMarker: number | null; timeMarkerEnd: number | null };
+
+/** 시점 글자를 시작·끝(초)으로 읽는다. 비우면 전체 피드백, `01:30~02:10`이면 구간. 틀리면 오류 문구. */
+function parseFeedbackTimeRange(value: string): FeedbackTimeRange | { error: string } {
+  // 재생 시점을 비우면 과제 전체(글 제출 포함)에 대한 피드백이다.
+  if (!value) return { timeMarker: null, timeMarkerEnd: null };
+  const parts = splitTimeRange(value);
+  if (!parts) return { error: TIME_MARKER_ERROR };
+  const timeMarker = parseFeedbackSeconds(parts.start);
+  const timeMarkerEnd = parts.end === null ? null : parseFeedbackSeconds(parts.end);
+  if (Number.isNaN(timeMarker) || (timeMarkerEnd !== null && Number.isNaN(timeMarkerEnd))) return { error: TIME_MARKER_ERROR };
+  if (timeMarkerEnd !== null && timeMarkerEnd <= timeMarker) return { error: TIME_RANGE_ORDER_ERROR };
+  return { timeMarker, timeMarkerEnd };
 }
 
 export type CreateFeedbackState = { error?: string; success?: boolean };
@@ -70,7 +84,7 @@ export type CreateFeedbackState = { error?: string; success?: boolean };
  * 타임스탬프 피드백 작성 (Admin 전용).
  * @param assignmentId - 대상 과제 ID
  * @param _prev - useActionState 이전 상태
- * @param formData - { timeMarker(분:초·정수 초, 비우면 전체 피드백), content, operationId (UUID v4) }
+ * @param formData - { timeMarker(분:초·정수 초, 구간은 `01:30~02:10`, 비우면 전체 피드백), content, operationId (UUID v4) }
  */
 export async function createFeedback(
   assignmentId: string,
@@ -87,8 +101,9 @@ export async function createFeedback(
   if (!content) return { error: "피드백 내용을 입력해주세요." };
   if (isFeedbackContentTooLong(content)) return { error: FEEDBACK_CONTENT_TOO_LONG_ERROR };
 
-  const timeMarker = parseFeedbackTimeMarker(timeMarkerStr);
-  if (Number.isNaN(timeMarker)) return { error: TIME_MARKER_ERROR };
+  const range = parseFeedbackTimeRange(timeMarkerStr);
+  if ("error" in range) return { error: range.error };
+  const { timeMarker, timeMarkerEnd } = range;
   const operationId = resolveCreationOperationId(formData.get(CREATION_OPERATION_FIELD));
   if (!operationId) return { error: "작성 정보를 확인하지 못했습니다. 입력 내용을 보관한 뒤 새로고침해 주세요." };
   const feedbackId = deriveCreationResourceId(operationId, JSON.stringify(["assignment-feedback", session.user.id, assignmentId]));
@@ -112,11 +127,12 @@ export async function createFeedback(
       id: feedbackId,
       assignmentId,
       timeMarker,
+      timeMarkerEnd,
       content,
     }).onConflictDoNothing({ target: feedbacks.id }).returning({ id: feedbacks.id });
     if (inserted.length === 0) {
       const [existing] = await db.select().from(feedbacks).where(eq(feedbacks.id, feedbackId)).limit(1);
-      if (!existing || existing.assignmentId !== assignmentId || existing.timeMarker !== timeMarker || existing.content !== content) {
+      if (!existing || existing.assignmentId !== assignmentId || existing.timeMarker !== timeMarker || existing.timeMarkerEnd !== timeMarkerEnd || existing.content !== content) {
         return { error: "이 피드백은 수정 전 내용으로 이미 저장되었거나 상태가 바뀌었습니다. 목록을 확인한 뒤 내용을 편집해 새 피드백으로 등록해 주세요." };
       }
     } else {
@@ -145,22 +161,28 @@ export type UpdateFeedbackResult = { success: true } | { success: false; error: 
  * 고친 시각은 updated_at에 남겨 학생 화면에 "수정됨"으로 보인다(0038).
  * feedbacks에는 version 열이 없어, 화면이 읽은 값(expected)과 지금 값이 같을 때만 바꾸는
  * compare-and-set으로 다른 탭·기기에서 먼저 고친 내용을 덮어쓰지 않는다.
- * @param next - { content, timeMarker(분:초·정수 초, 비우면 전체 피드백) }
- * @param expected - 고치기 시작할 때 화면에 보이던 { content, timeMarker }
+ * @param next - { content, timeMarker(분:초·정수 초, 구간은 `01:30~02:10`, 비우면 전체 피드백) }
+ * @param expected - 고치기 시작할 때 화면에 보이던 { content, timeMarker, timeMarkerEnd }. timeMarkerEnd가 없으면(구간 전 화면) 끝 없음으로 본다.
  */
 export async function updateFeedback(
   feedbackId: string,
   next: { content: string; timeMarker: string },
-  expected: { content: string; timeMarker: number | null },
+  expected: { content: string; timeMarker: number | null; timeMarkerEnd?: number | null },
 ): Promise<UpdateFeedbackResult> {
   await requireAdmin();
   if (typeof feedbackId !== "string" || !feedbackId) return { success: false, error: FEEDBACK_NOT_FOUND_ERROR };
   const content = typeof next?.content === "string" ? next.content.trim() : "";
   if (!content) return { success: false, error: "피드백 내용을 입력해주세요." };
   if (isFeedbackContentTooLong(content)) return { success: false, error: FEEDBACK_CONTENT_TOO_LONG_ERROR };
-  const timeMarker = parseFeedbackTimeMarker(typeof next?.timeMarker === "string" ? next.timeMarker.trim() : "");
-  if (Number.isNaN(timeMarker)) return { success: false, error: TIME_MARKER_ERROR };
-  if (typeof expected?.content !== "string" || !(expected.timeMarker === null || Number.isSafeInteger(expected.timeMarker))) {
+  const range = parseFeedbackTimeRange(typeof next?.timeMarker === "string" ? next.timeMarker.trim() : "");
+  if ("error" in range) return { success: false, error: range.error };
+  const { timeMarker, timeMarkerEnd } = range;
+  const expectedEnd = expected?.timeMarkerEnd ?? null;
+  if (
+    typeof expected?.content !== "string" ||
+    !(expected.timeMarker === null || Number.isSafeInteger(expected.timeMarker)) ||
+    !(expectedEnd === null || Number.isSafeInteger(expectedEnd))
+  ) {
     return { success: false, error: FEEDBACK_CHANGED_ERROR };
   }
 
@@ -170,6 +192,7 @@ export async function updateFeedback(
       assignmentId: feedbacks.assignmentId,
       content: feedbacks.content,
       timeMarker: feedbacks.timeMarker,
+      timeMarkerEnd: feedbacks.timeMarkerEnd,
       mediaUrl: assignments.mediaUrl,
     })
     .from(feedbacks)
@@ -181,15 +204,16 @@ export async function updateFeedback(
     return { success: false, error: "글 제출에는 재생 시점 없이 전체 피드백으로 남겨 주세요." };
   }
   // 같은 값으로 다시 보낸 요청(재시도)은 성공으로 본다.
-  if (current.content === content && current.timeMarker === timeMarker) return { success: true };
+  if (current.content === content && current.timeMarker === timeMarker && current.timeMarkerEnd === timeMarkerEnd) return { success: true };
 
   const updated = await db
     .update(feedbacks)
-    .set({ content, timeMarker, updatedAt: new Date() })
+    .set({ content, timeMarker, timeMarkerEnd, updatedAt: new Date() })
     .where(and(
       eq(feedbacks.id, feedbackId),
       eq(feedbacks.content, expected.content),
       expected.timeMarker === null ? isNull(feedbacks.timeMarker) : eq(feedbacks.timeMarker, expected.timeMarker),
+      expectedEnd === null ? isNull(feedbacks.timeMarkerEnd) : eq(feedbacks.timeMarkerEnd, expectedEnd),
     ))
     .returning({ id: feedbacks.id });
   if (updated.length === 0) return { success: false, error: FEEDBACK_CHANGED_ERROR };

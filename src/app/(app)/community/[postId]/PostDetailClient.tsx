@@ -197,7 +197,7 @@ export function PostDetailClient({
   const waveformMarkers = useMemo<WaveformMarkerInput[]>(() => commentList.flatMap((c) => {
     if (c.timeMarkerSeconds === null) return [];
     const name = communityAuthorName(c);
-    return [{ id: c.id, seconds: c.timeMarkerSeconds, author: name, isStann: name === "Stann", text: communityPreview(c.contentHtml, 120) }];
+    return [{ id: c.id, seconds: c.timeMarkerSeconds, endSeconds: c.timeMarkerEndSeconds ?? null, author: name, isStann: name === "Stann", text: communityPreview(c.contentHtml, 120) }];
   }), [commentList]);
   const openMarkerComment = useCallback((commentId: string) => {
     const target = document.getElementById(`comment-${commentId}`);

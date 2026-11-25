@@ -2783,7 +2783,7 @@ test("답글을 쓰는 사이 원 댓글이 지워지면 입력을 그 자리에
   };
   const at = (minute: number) => new Date(Date.UTC(2026, 10, 20, 6, minute));
   const row = (id: string, authorId: string, authorName: string, text: string, minute: number) => (
-    { id, postId: post.id, authorId, contentHtml: `<p>${text}</p>`, createdAt: at(minute), updatedAt: null, timeMarkerSeconds: null, parentId: null, authorName, authorRole: "student" }
+    { id, postId: post.id, authorId, contentHtml: `<p>${text}</p>`, createdAt: at(minute), updatedAt: null, timeMarkerSeconds: null, timeMarkerEndSeconds: null, parentId: null, authorName, authorRole: "student" }
   );
   const first = row("o-root", "student-2", "이학생", "저 갈게요", 1);
   const second = row("o-other", "student-3", "박학생", "녹음은요?", 2);
@@ -2865,7 +2865,7 @@ test("failed comment deletion keeps the conversation and unfinished reply visibl
     mediaObjectId: null, createdAt: new Date(), updatedAt: new Date(), deletedAt: null,
     restoreLocked: false, version: 1, authorName: "학생",
   };
-  const comment = { id: "comment-1", postId: post.id, authorId: "student-1", contentHtml: "<p>기존 대화</p>", createdAt: new Date(), updatedAt: null, timeMarkerSeconds: null, parentId: null, authorName: "학생", authorRole: "student" };
+  const comment = { id: "comment-1", postId: post.id, authorId: "student-1", contentHtml: "<p>기존 대화</p>", createdAt: new Date(), updatedAt: null, timeMarkerSeconds: null, timeMarkerEndSeconds: null, parentId: null, authorName: "학생", authorRole: "student" };
   await render(context, <PostDetailClient postId={post.id} post={post} initialCommentList={[comment]} currentUserId="student-1" isAdmin={false} returnTo="/community" />);
   await fill("content", "아직 작성 중인 답글");
   await press("학생 댓글 삭제");
@@ -2903,7 +2903,7 @@ test("댓글 답글은 원 댓글 묶음 아래 한 입력에서 쓰고, 지워�
   };
   const at = (minute: number) => new Date(Date.UTC(2026, 9, 26, 6, minute));
   const row = (id: string, authorId: string, authorName: string, text: string, minute: number, parentId: string | null) => (
-    { id, postId: post.id, authorId, contentHtml: `<p>${text}</p>`, createdAt: at(minute), updatedAt: null, timeMarkerSeconds: null, parentId, authorName, authorRole: authorName === "Stann" ? "admin" : "student" }
+    { id, postId: post.id, authorId, contentHtml: `<p>${text}</p>`, createdAt: at(minute), updatedAt: null, timeMarkerSeconds: null, timeMarkerEndSeconds: null, parentId, authorName, authorRole: authorName === "Stann" ? "admin" : "student" }
   );
   const comments = [
     row("c-root", "student-2", "이학생", "저 갈게요", 1, null),
@@ -3005,8 +3005,8 @@ function mixsetPost(id: string, media: { mediaUrl: string | null; mediaObjectId:
   };
 }
 
-function mixsetComment(id: string, postId: string, text: string, timeMarkerSeconds: number | null) {
-  return { id, postId, authorId: "student-2", contentHtml: `<p>${text}</p>`, createdAt: new Date(), updatedAt: null, timeMarkerSeconds, parentId: null as string | null, authorName: "다른 학생", authorRole: "student" as string | null };
+function mixsetComment(id: string, postId: string, text: string, timeMarkerSeconds: number | null, timeMarkerEndSeconds: number | null = null) {
+  return { id, postId, authorId: "student-2", contentHtml: `<p>${text}</p>`, createdAt: new Date(), updatedAt: null, timeMarkerSeconds, timeMarkerEndSeconds, parentId: null as string | null, authorName: "다른 학생", authorRole: "student" as string | null };
 }
 
 test("믹스셋 링크 상세는 본문 위에 플레이어를 두고 댓글 시점을 누를 때마다 그 위치로 이동한다", async (context) => {
@@ -4899,7 +4899,7 @@ test("피드백 고치기: 관리자는 그 자리에서 내용·시점을 고�
   });
   await press("저장");
   await settle();
-  assert.deepEqual(sent, [["fb-1", { timeMarker: "03:12", content: "하이햇 패턴이 바뀌는 지점에서 볼륨이 튐" }, { content: "처음 내용", timeMarker: 90 }]]);
+  assert.deepEqual(sent, [["fb-1", { timeMarker: "03:12", content: "하이햇 패턴이 바뀌는 지점에서 볼륨이 튐" }, { content: "처음 내용", timeMarker: 90, timeMarkerEnd: null }]]);
   assert.match(browser.document.querySelector('[role="alert"]')?.textContent ?? "", /먼저 바뀌었습니다/u);
   const kept = browser.document.querySelectorAll('form[aria-label="01:30 피드백 고치기"] input')[1] as unknown as HTMLInputElement | undefined;
   assert.equal(kept?.value, "하이햇 패턴이 바뀌는 지점에서 볼륨이 튐", "실패해도 쓴 내용은 남는다");
@@ -4944,7 +4944,7 @@ test("피드백 고치기: 고치는 사이 화면 값이 바뀌어도, 예전 �
   assert.ok(browser.document.querySelector("form"), "고치기 줄은 그대로 열려 있다");
   await press("저장");
   await settle();
-  assert.deepEqual(sent.at(-1), ["fb-cas", { timeMarker: "01:30", content: "A를 고친 내용" }, { content: "A 내용", timeMarker: 90 }], "기준값은 시작한 A다(B가 아니다)");
+  assert.deepEqual(sent.at(-1), ["fb-cas", { timeMarker: "01:30", content: "A를 고친 내용" }, { content: "A 내용", timeMarker: 90, timeMarkerEnd: null }], "기준값은 시작한 A다(B가 아니다)");
   assert.match(browser.document.querySelector('[role="alert"]')?.textContent ?? "", /먼저 바뀌었습니다/u, "서버가 충돌로 거절한다");
 
   // 화면을 닫았다 B 값으로 다시 열어 이 기기의 예전 보관본(A 기준)을 되살려도 기준값은 A다.
@@ -4958,7 +4958,7 @@ test("피드백 고치기: 고치는 사이 화면 값이 바뀌어도, 예전 �
   assert.equal(restored.value, "A를 고친 내용", "보관본을 되살린다");
   await press("저장");
   await settle();
-  assert.deepEqual(sent.at(-1)?.[2], { content: "A 내용", timeMarker: 90 }, "되살린 보관본은 자기 기준값(A)으로 보내 충돌이 난다");
+  assert.deepEqual(sent.at(-1)?.[2], { content: "A 내용", timeMarker: 90, timeMarkerEnd: null }, "되살린 보관본은 자기 기준값(A)으로 보내 충돌이 난다");
   assert.equal(sent.length, 2);
 });
 
@@ -4999,7 +4999,7 @@ test("피드백 고치기: 기준값 없는 예전 보관본은 바로 저장하
   assert.equal(applied[1]?.value, "A를 고친 예전 내용");
   await press("저장");
   await settle();
-  assert.deepEqual(sent, [["fb-legacy", { timeMarker: "01:30", content: "A를 고친 예전 내용" }, { content: "B 내용", timeMarker: 120 }]], "비교하고 고른 뒤에야 지금 값(B)을 기준으로 보낸다");
+  assert.deepEqual(sent, [["fb-legacy", { timeMarker: "01:30", content: "A를 고친 예전 내용" }, { content: "B 내용", timeMarker: 120, timeMarkerEnd: null }]], "비교하고 고른 뒤에야 지금 값(B)을 기준으로 보낸다");
 });
 
 test("피드백 고치기: Esc는 줄만 닫고 고치던 내용은 이 기기에 남기며, 한글 조합 중 Esc는 무시한다", async (context) => {

@@ -30,9 +30,11 @@ test("지우는 cookie와 session token이 아닌 cookie는 그대로 둔다", (
 });
 
 test("표시 cookie가 있을 때만 응답의 session cookie를 바꾸고 상태·본문·다른 header는 유지한다", async () => {
+  // 이 함수는 지금 시각으로 지난 만료(지우는 cookie)를 가린다. 고정 날짜는 그날이 지나면 지우는 cookie가 되므로 지금부터 30일 뒤로 둔다.
+  const expires = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toUTCString();
   const make = () => {
     const headers = new Headers({ location: "/dashboard" });
-    headers.append("set-cookie", "authjs.session-token=abc; Path=/; Expires=Wed, 25 Nov 2026 00:00:00 GMT; HttpOnly");
+    headers.append("set-cookie", `authjs.session-token=abc; Path=/; Expires=${expires}; HttpOnly`);
     headers.append("set-cookie", "other=1; Path=/; Max-Age=60");
     return new Response("body", { status: 307, headers });
   };

@@ -28,6 +28,7 @@ import { formatKstDot } from "@/lib/kst-format";
 import { formatAnalysisClock } from "@/lib/mix-analysis";
 import { getRequestNow } from "@/lib/request-time";
 import { formatTimestamp } from "@/lib/utils/format";
+import { formatTimeRange } from "@/lib/time-range";
 import { cn } from "@/lib/utils";
 import { ArchivedRecordRow } from "./ArchivedRecordRow";
 import { ArchivedStudentBanner } from "./ArchivedStudentBanner";
@@ -129,7 +130,7 @@ function AssignmentBody({ record }: { record: ArchivedAssignmentRecord }) {
             {record.feedbacks.map((feedback) => (
               <li key={feedback.id} className="flex gap-2.5">
                 <span className="w-12 shrink-0 font-mono text-xs leading-6 tabular-nums text-muted-foreground">
-                  {feedback.timeMarker === null ? "전체" : formatTimestamp(feedback.timeMarker)}
+                  {feedback.timeMarker === null ? "전체" : formatTimeRange(feedback.timeMarker, feedback.timeMarkerEnd, formatTimestamp)}
                 </span>
                 <span className="min-w-0 whitespace-pre-wrap break-words">{feedback.content}</span>
               </li>

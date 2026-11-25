@@ -32,7 +32,7 @@
 
 | 항목 | 저장소에서 확인할 수 있는 것 | 운영 적용을 확인하는 증거 |
 |---|---|---|
-| D1 migration | SQL·journal·snapshot `0000~0040`, 메모리 DB에서 체인·schema 검증 | 대상 D1의 적용 목록과 실제 schema·FK, 그 목록에서 계산한 pending 범위 |
+| D1 migration | SQL·journal·snapshot `0000~0041`, 메모리 DB에서 체인·schema 검증 | 대상 D1의 적용 목록과 실제 schema·FK, 그 목록에서 계산한 pending 범위 |
 | 계정 삭제 | `0012`와 삭제·정리 구현, application 설정의 `ACCOUNT_DELETION_ENABLED="false"` 기본값 | 활성 Worker의 유효 flag, 기기 adoption, 승인된 삭제·정리 smoke |
 | 예약 정리 | `worker.ts`의 `scheduled` handler, Workers Logs 설정, source에 없는 Cron trigger | 원격 trigger 주기, 대상 version의 실제 scheduled invocation, backlog·실패·alert 증거 |
 | 외부 캘린더 | `0013` 구독 테이블과 `EXTERNAL_CALENDAR_ENCRYPTION_KEY` 요구 조건 | 대상 schema, secret 설정 확인, 승인된 연결·읽기·교체·해제 smoke |
@@ -50,6 +50,7 @@
 | 과제 완료·디깅 피드백 | `0038`의 `assignment_occurrence_skips`·`digging_feedbacks` 새 표, `assignment_tasks.closed_at`·`feedbacks.updated_at`·`comments.updated_at` 칸, `digging_playlists` 재구성(`dug_on`) | 대상 D1의 `0038` 적용과 `PRAGMA table_info(digging_playlists)`(dug_on), 재구성 전후 `digging_playlists` 행 수가 같은지, `PRAGMA foreign_key_check` 빈 결과 |
 | 가이드 휴지통·이력·Q&A 고치기·그룹 해제 | `0039`의 `guide_page_revisions`·`qna_reply_revisions` 새 표, `guide_pages.deleted_at`·`deleted_by_id`·`lesson_groups.dissolved_at` 칸 | 대상 D1의 `0039` 적용과 `PRAGMA table_info(guide_pages)`·`PRAGMA table_info(lesson_groups)`, 새 두 표는 처음에 빈 표, `PRAGMA foreign_key_check` 빈 결과 |
 | 가이드 되돌리기 세대 | `0040`의 `guide_pages.collab_lifecycle`(NOT NULL 기본 0) | 대상 D1의 `0040` 적용과 모든 가이드가 0인지(`SELECT COUNT(*) FROM guide_pages WHERE collab_lifecycle <> 0`) |
+| 시점 구간 | `0041`의 `feedbacks.time_marker_end`·`comments.time_marker_end_seconds`(nullable, CHECK) 칸 추가 | 대상 D1의 `0041` 적용과 `PRAGMA table_info(feedbacks)`·`PRAGMA table_info(comments)`, 처음에는 모두 NULL(`SELECT COUNT(*) FROM feedbacks WHERE time_marker_end IS NOT NULL` = 0, 댓글도 같음) |
 | 노트 읽기 전용·버전 편집자 | `0036`의 `private_notes.student_read_only`(기본 0)·`private_note_revisions.contributor_ids`(nullable) 칸 추가 | 대상 D1의 `0036` 적용과 `PRAGMA table_info(private_notes)`·`PRAGMA table_info(private_note_revisions)`, 모든 노트가 0인지(`SELECT COUNT(*) FROM private_notes WHERE student_read_only <> 0`) |
 | 그룹레슨 | `0029` 그룹·멤버 table과 `private_notes.group_id`, `0030` `document_tombstones.group_id`와 media UPDATE trigger 넷 재생성 | 대상 D1의 `0029`·`0030` 적용과 `lesson_groups`·`lesson_group_members` 존재, 관리자 학생 목록의 그룹 만들기 |
 | 배포 환경 분리 | 현재 tracked 설정의 Worker는 `portal` | development/production Worker·D1·R2·route·secret·branch trigger 각각의 inventory |
@@ -203,6 +204,15 @@ iCloud 연동:
 3. 적용 뒤 read-only로 `SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1`, `PRAGMA table_info(assignment_drafts)`, `PRAGMA foreign_key_list(assignment_drafts)`(profiles·assignment_tasks CASCADE), `SELECT COUNT(*) FROM assignment_drafts`(0)을 본다.
 4. 되돌리기: 이전 코드는 이 표를 읽지도 쓰지도 않는다. 학생 글은 각 기기의 초안으로 남는다. 표는 남겨 두면 되고, 남은 사본은 다시 올렸을 때 이어서 쓰인다(제출보다 오래된 사본은 무시한다).
 5. 개인정보처리방침에 과제 임시 저장 항목을 더했다(시행일은 2026년 11월 23일 그대로). 실제 반영일이 다르면 그날로 고친다.
+
+### 시점 구간 gate (2026-11-25)
+
+1. 원격 D1에 `0041_timestamp_ranges`를 **코드보다 먼저** 적용한다(Time Travel bookmark 먼저, `0040` 적용 뒤). `feedbacks`·`comments`에 nullable 칸과 CHECK를 하나씩 ADD COLUMN으로 더할 뿐 표 재구성·trigger 변경이 없고, 이전 코드는 새 칸을 읽거나 쓰지 않으므로 먼저 적용해도 동작이 같다(`db:check`가 이전 코드의 INSERT·UPDATE를 검사한다).
+2. 순서를 바꾸면 안 된다. 새 코드가 칸 없이 나가면 과제 상세의 피드백 목록과 게시물 댓글 조회가 오류가 된다.
+3. 적용 뒤 read-only로 `SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1`, `PRAGMA table_info(feedbacks)`(time_marker_end), `PRAGMA table_info(comments)`(time_marker_end_seconds), 두 칸이 모두 NULL인지, `PRAGMA foreign_key_check`(빈 결과)를 본다.
+4. 새 secret·binding·DO class 변경은 없다. 운영 smoke는 read-only로 한다.
+5. 되돌리기(이전 코드로 돌아가면): 구간 피드백·댓글은 시작 한 점으로 보이고 끝은 칸에 남는다. 이전 코드로 구간 피드백의 시점을 끝 이후로 옮기거나 비우면 CHECK가 저장을 거절한다(오류로 끝나고 행은 바뀌지 않는다). 그런 피드백은 새 코드로 다시 올린 뒤 고치면 된다. 수업 노트의 `[a~b]` 글자는 꾸밈 없는 글자로 남는다.
+6. 새 개인정보 항목은 없다(이미 있는 재생 시점에 끝 시점 하나를 더할 뿐이다).
 
 ### 남은 흐름 보완 gate (2026-11-25)
 

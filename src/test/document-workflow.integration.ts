@@ -4213,15 +4213,27 @@ test("재생 시점 댓글은 매체 있는 믹스셋 게시물에만 저장하�
     .where(eq(comments.id, onAudio.commentId!));
   assert.equal(audioFirst?.seconds, 754);
 
-  // 형식·범위를 벗어난 시점은 쓰기 전에 거부한다.
-  for (const marker of ["-5", "86400", "24:00:00", "1:60", "abc", "1.5"]) {
+  // 구간 댓글은 시작·끝을 함께 남기고, 같은 제출 재전송은 끝까지 같아야 같은 댓글로 본다.
+  const rangeOperationId = crypto.randomUUID();
+  const ranged = await commentActions.createComment("post-audio", {}, createCommentForm(rangeOperationId, "빌드업이 길어요", "12:34~13:10"));
+  assert.equal(ranged.success, true);
+  const [rangedRow] = await db
+    .select({ start: comments.timeMarkerSeconds, end: comments.timeMarkerEndSeconds })
+    .from(comments)
+    .where(eq(comments.id, ranged.commentId!));
+  assert.deepEqual(rangedRow, { start: 754, end: 790 });
+  assert.equal((await commentActions.createComment("post-audio", {}, createCommentForm(rangeOperationId, "빌드업이 길어요", "12:34~13:10"))).commentId, ranged.commentId);
+  assert.ok((await commentActions.createComment("post-audio", {}, createCommentForm(rangeOperationId, "빌드업이 길어요", "12:34~13:20"))).error);
+
+  // 형식·범위를 벗어난 시점·구간은 쓰기 전에 거부한다.
+  for (const marker of ["-5", "86400", "24:00:00", "1:60", "abc", "1.5", "13:10~12:34", "12:34~12:34", "23:59:00~24:00:00", "~12:34"]) {
     const invalid = await commentActions.createComment(
       linkPostId,
       {},
       createCommentForm(crypto.randomUUID(), "잘못된 시점", marker),
     );
     assert.equal(invalid.success, undefined, marker);
-    assert.match(invalid.error ?? "", /재생 시점/u, marker);
+    assert.match(invalid.error ?? "", /재생 시점|끝 시점은 시작보다 뒤/u, marker);
   }
 
   // 매체 없는 믹스셋과 GENERAL 게시물에는 시점을 남길 수 없다.

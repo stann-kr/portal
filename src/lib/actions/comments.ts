@@ -15,7 +15,7 @@ import { and, eq, asc, isNull, sql } from "drizzle-orm";
 import { assertOwnerOrAdmin, requireAuth } from "@/lib/auth-guard";
 import { CREATION_OPERATION_FIELD, deriveCreationResourceId, resolveCreationOperationId } from "@/lib/creation-operation";
 import { COMMENT_MAX_LENGTH, COMMENT_PARENT_FIELD, COMMENT_REPLY_TO_FIELD } from "@/lib/community-comment";
-import { COMMENT_TIME_MARKER_FIELD, parseTimeMarker } from "@/lib/community-mixset-media";
+import { COMMENT_TIME_MARKER_FIELD, parseTimeMarkerRange } from "@/lib/community-mixset-media";
 import { publicAuthorName } from "@/lib/public-author-name";
 import { pushMessages } from "@/lib/push/messages";
 import { notifyPush } from "@/lib/push/notify";
@@ -58,6 +58,7 @@ export async function getCommentsByPost(postId: string) {
       createdAt: comments.createdAt,
       updatedAt: comments.updatedAt,
       timeMarkerSeconds: comments.timeMarkerSeconds,
+      timeMarkerEndSeconds: comments.timeMarkerEndSeconds,
       parentId: comments.parentId,
       authorName: publicAuthorName,
       authorRole: profiles.role,
@@ -144,7 +145,7 @@ async function notifyCommentAdded(
  * 댓글 작성.
  * @param postId - 대상 게시물 ID
  * @param _prev - useActionState 이전 상태
- * @param formData - { content (plain text), timeMarker (선택: h:mm:ss·m:ss·초), parentId (선택: 답글을 달 댓글),
+ * @param formData - { content (plain text), timeMarker (선택: h:mm:ss·m:ss·초, 구간은 `12:34~13:10`), parentId (선택: 답글을 달 댓글),
  *   replyToId (선택: 답글의 답글이면 "답글"을 누른 답글, 알림 대상만 정한다), operationId (UUID v4) }
  */
 export async function createComment(
@@ -161,9 +162,11 @@ export async function createComment(
   const operationId = resolveCreationOperationId(formData.get(CREATION_OPERATION_FIELD));
   if (!operationId) return { error: "작성 정보를 확인하지 못했습니다. 입력 내용을 보관한 뒤 새로고침해 주세요." };
 
-  const timeMarker = parseTimeMarker(formData.get(COMMENT_TIME_MARKER_FIELD));
+  const timeMarker = parseTimeMarkerRange(formData.get(COMMENT_TIME_MARKER_FIELD));
   if (!timeMarker.ok) return { error: timeMarker.error };
   const timeMarkerSeconds = timeMarker.seconds;
+  // 끝은 시작이 있을 때만 있다(parseTimeMarkerRange). 답글 막기·매체 확인은 시작으로 본다.
+  const timeMarkerEndSeconds = timeMarker.endSeconds;
   const rawParentId = formData.get(COMMENT_PARENT_FIELD);
   const requestedParentId = typeof rawParentId === "string" && rawParentId.trim() ? rawParentId.trim() : null;
   if (requestedParentId !== null && timeMarkerSeconds !== null) return { error: "답글에는 재생 시점을 남길 수 없습니다." };
@@ -192,6 +195,7 @@ export async function createComment(
           saved.postId === postId &&
           saved.contentHtml === contentHtml &&
           saved.timeMarkerSeconds === null &&
+          saved.timeMarkerEndSeconds === null &&
           saved.parentId === lookup.rootId
         ) {
           revalidatePath(`/community/${postId}`);
@@ -235,6 +239,7 @@ export async function createComment(
         authorId: session.user.id!,
         contentHtml,
         timeMarkerSeconds,
+        timeMarkerEndSeconds,
         parentId: rootId,
       }).onConflictDoNothing({ target: comments.id }).returning({ id: comments.id });
     } catch (error) {
@@ -250,6 +255,7 @@ export async function createComment(
         existing.postId !== postId ||
         existing.contentHtml !== contentHtml ||
         existing.timeMarkerSeconds !== timeMarkerSeconds ||
+        existing.timeMarkerEndSeconds !== timeMarkerEndSeconds ||
         existing.parentId !== rootId
       ) {
         return { error: "이 댓글은 수정 전 내용으로 이미 저장되었거나 상태가 바뀌었습니다. 목록을 확인한 뒤 내용을 편집해 새 댓글로 등록해 주세요." };
