@@ -276,10 +276,10 @@ function FeedbackForm({
           새 피드백 추가
         </p>
       )}
-      <div className={allowTimeMarker ? "grid gap-3 sm:grid-cols-[9.5rem_minmax(0,1fr)_auto] sm:items-end" : "grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end"}>
+      <div className={allowTimeMarker ? "grid gap-3 sm:grid-cols-[12rem_minmax(0,1fr)_auto] sm:items-end" : "grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end"}>
         {allowTimeMarker ? <div className="flex flex-col gap-1.5">
           <div className="flex items-center justify-between gap-2">
-            <label htmlFor="feedback-time-marker" className="text-xs text-muted-foreground">
+            <label htmlFor="feedback-time-marker" className="whitespace-nowrap text-xs text-muted-foreground">
               재생 시점 (선택)
             </label>
             {readPlaybackPosition ? (
@@ -288,7 +288,7 @@ function FeedbackForm({
                   type="button"
                   onClick={fillCurrentPosition}
                   disabled={!draft.loaded || isPending || readingPosition}
-                  className="-my-3 inline-flex h-11 items-center rounded-sm text-xs text-secondary-foreground underline underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 md:my-0 md:h-auto"
+                  className="-my-3 inline-flex h-11 items-center whitespace-nowrap rounded-sm text-xs text-secondary-foreground underline underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 md:my-0 md:h-auto"
                 >
                   현재 위치
                 </button>
@@ -298,7 +298,7 @@ function FeedbackForm({
                     onClick={fillRangeEnd}
                     disabled={!draft.loaded || isPending || readingPosition}
                     aria-label={`${formatTimestamp(rangeStart)}부터 지금 위치까지 구간으로`}
-                    className="-my-3 inline-flex h-11 items-center rounded-sm text-xs text-foreground underline underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 md:my-0 md:h-auto"
+                    className="-my-3 inline-flex h-11 items-center whitespace-nowrap rounded-sm text-xs text-foreground underline underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 md:my-0 md:h-auto"
                   >
                     여기까지
                   </button>
@@ -316,6 +316,8 @@ function FeedbackForm({
             value={timeMarker}
             onChange={(event) => {
               setTimeMarker(event.target.value);
+              // 위치 읽기 안내는 직접 고친 값에는 더 이상 맞지 않는다.
+              setPositionError(null);
               saveDraft({ timeMarker: event.target.value, content });
             }}
             className="font-mono"
