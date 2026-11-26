@@ -3,7 +3,7 @@
  * @description 관리자 전용 수업 메모의 저장·이력 규칙. 학생과 함께 쓰는 노트와 다른 표에 두고,
  * 한 사람(Stann)이 쓰므로 공동 편집 대신 version 비교로 다른 기기의 덮어쓰기만 막는다.
  */
-import { and, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import type { DrizzleDb } from "@/db/client";
 import { instructorMemoRevisions, instructorMemos } from "@/db/schema";
 
@@ -21,7 +21,11 @@ export const INSTRUCTOR_MEMO_REVISION_RETENTION = {
 /** 정리할 때 기간과 관계없이 남기는 최신 칸 수: 지금 내용과 그 바로 앞 내용. */
 const INSTRUCTOR_MEMO_REVISION_ALWAYS_KEPT = 2;
 
-export type InstructorMemoTarget = { studentId: string; noteId: string | null };
+/**
+ * 메모 대상. noteId가 있으면 노트 메모, memoDate가 있으면 그 날짜의 학생 메모(0043), 둘 다 없으면 학생 메모다.
+ * noteId와 memoDate를 함께 두지 않는다(DB CHECK).
+ */
+export type InstructorMemoTarget = { studentId: string; noteId: string | null; memoDate?: string | null };
 
 export type InstructorMemoHead = {
   id: string;
@@ -35,9 +39,12 @@ export type SaveInstructorMemoResult =
   | { ok: false; reason: "VERSION_CONFLICT"; current: InstructorMemoHead | null };
 
 function targetCondition(target: InstructorMemoTarget) {
-  return target.noteId === null
-    ? and(eq(instructorMemos.studentId, target.studentId), isNull(instructorMemos.noteId))
-    : and(eq(instructorMemos.studentId, target.studentId), eq(instructorMemos.noteId, target.noteId));
+  if (target.noteId !== null) {
+    return and(eq(instructorMemos.studentId, target.studentId), eq(instructorMemos.noteId, target.noteId));
+  }
+  return target.memoDate
+    ? and(eq(instructorMemos.studentId, target.studentId), isNull(instructorMemos.noteId), eq(instructorMemos.memoDate, target.memoDate))
+    : and(eq(instructorMemos.studentId, target.studentId), isNull(instructorMemos.noteId), isNull(instructorMemos.memoDate));
 }
 
 export async function readInstructorMemo(
@@ -84,6 +91,7 @@ export async function saveInstructorMemo(
         id: crypto.randomUUID(),
         studentId: input.studentId,
         noteId: input.noteId,
+        memoDate: input.noteId === null ? input.memoDate ?? null : null,
         contentHtml: input.contentHtml,
         version: 1,
         updatedById: input.actorId,
@@ -200,4 +208,33 @@ export async function listInstructorMemoRevisions(
     .from(instructorMemoRevisions)
     .where(eq(instructorMemoRevisions.memoId, memoId))
     .orderBy(desc(instructorMemoRevisions.createdAt), desc(instructorMemoRevisions.revisionNumber));
+}
+
+export type DatedInstructorMemo = {
+  memoDate: string;
+  contentHtml: string;
+  updatedAt: Date;
+};
+
+/** 날짜 메모 목록(최근 날짜부터). 비워 저장한 날짜는 빼고, 한 번에 최근 `limit`개만 읽는다. */
+export async function listDatedInstructorMemos(
+  db: DrizzleDb,
+  studentId: string,
+  limit = 120,
+): Promise<DatedInstructorMemo[]> {
+  const rows = await db
+    .select({
+      memoDate: instructorMemos.memoDate,
+      contentHtml: instructorMemos.contentHtml,
+      updatedAt: instructorMemos.updatedAt,
+    })
+    .from(instructorMemos)
+    .where(and(
+      eq(instructorMemos.studentId, studentId),
+      isNotNull(instructorMemos.memoDate),
+      sql`${instructorMemos.contentHtml} <> ''`,
+    ))
+    .orderBy(desc(instructorMemos.memoDate))
+    .limit(limit);
+  return rows.flatMap((row) => (row.memoDate ? [{ memoDate: row.memoDate, contentHtml: row.contentHtml, updatedAt: row.updatedAt }] : []));
 }

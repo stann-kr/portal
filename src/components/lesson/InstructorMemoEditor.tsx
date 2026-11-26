@@ -50,7 +50,9 @@ function sameContent(left: string, right: string): boolean {
 }
 
 function scopeContextId(scope: InstructorMemoScope): string {
-  return scope.kind === "student" ? `student:${scope.studentId}` : `note:${scope.noteId}`;
+  if (scope.kind === "student") return `student:${scope.studentId}`;
+  if (scope.kind === "date") return `date:${scope.studentId}:${scope.date}`;
+  return `note:${scope.noteId}`;
 }
 
 /**
@@ -63,6 +65,8 @@ export function InstructorMemoEditor({
   actorId,
   label,
   placeholder,
+  minHeight = "200px",
+  onSaved,
 }: {
   scope: InstructorMemoScope;
   initial: InstructorMemoSnapshot;
@@ -70,6 +74,9 @@ export function InstructorMemoEditor({
   /** 편집 영역의 접근 이름 */
   label: string;
   placeholder: string;
+  minHeight?: string;
+  /** 서버에 저장한 뒤(날짜 메모 목록 갱신 등). */
+  onSaved?: (memo: InstructorMemoSnapshot) => void;
 }) {
   const [server, setServer] = useState(initial);
   const [html, setHtml] = useState(initial.contentHtml);
@@ -120,6 +127,7 @@ export function InstructorMemoEditor({
       if (result.ok) {
         setServer(result.memo);
         serverRef.current = result.memo;
+        onSaved?.(result.memo);
         if (sameContent(htmlRef.current, sent)) draft.clear({ reason: "submitted" });
         setRevisions(null);
       } else if (result.conflict) {
@@ -132,7 +140,7 @@ export function InstructorMemoEditor({
     } finally {
       setSaving(false);
     }
-  }, [draft, saving, scope]);
+  }, [draft, onSaved, saving, scope]);
 
   useDocumentAutosave({
     enabled: draft.loaded && !saving && !conflict && !staleDraft && !error,
@@ -214,7 +222,7 @@ export function InstructorMemoEditor({
           contentVersion={contentVersion}
           onChange={handleChange}
           placeholder={placeholder}
-          minHeight="200px"
+          minHeight={minHeight}
           ariaLabel={label}
           variant="boxed"
           toolbar="none"

@@ -61,7 +61,9 @@ import {
 import { getRequestNow } from "@/lib/request-time";
 import { StudentDetailTopBar } from "./StudentDetailTopBar";
 import { InstructorMemoEditor } from "@/components/lesson/InstructorMemoEditor";
-import { getInstructorMemo } from "@/lib/actions/instructorMemos";
+import { getDatedInstructorMemos, getInstructorMemo } from "@/lib/actions/instructorMemos";
+import { DatedInstructorMemos } from "@/components/lesson/DatedInstructorMemos";
+import { kstTodayKey } from "@/lib/assignment-recurrence";
 import { getLessonNoteIdsForStudent } from "@/lib/actions/lesson-notes";
 import { buildArchivedStudentHref, isArchivedStudent } from "@/lib/archived-student-records";
 import { resolveAssignmentCompose, type AssignmentComposeKind } from "@/lib/admin-create-links";
@@ -292,6 +294,18 @@ export default async function StudentDetailPage({
     ? { ...accountState, expired: accountState.expiresAt.getTime() <= referenceTime.getTime() }
     : accountState;
   const name = student.displayName?.trim() || student.email;
+  // 날짜별 메모(노트 없이 날짜마다, 관리자만): 오늘 메모와 남긴 날짜 목록, 레슨 있던 날 몇 개.
+  const memoToday = kstTodayKey(referenceTime);
+  const datedMemos = activeTab === "overview" && studentMemo
+    ? await Promise.all([
+        getInstructorMemo({ kind: "date", studentId, date: memoToday }),
+        getDatedInstructorMemos(studentId),
+      ])
+    : null;
+  const lessonMemoDates = [...new Set(lessons
+    .map((lesson) => kstTodayKey(lesson.scheduledAt))
+    .filter((key) => key <= memoToday))]
+    .slice(0, 4);
   // 다른 화면의 "과제 내기"(캔버스 AdminUx1123 ①)로 왔으면 과제 탭 폼을 펼치고, 저장·닫기 뒤 그 화면으로 돌려보낸다.
   const composeKind = activeTab === "assignments" ? resolveAssignmentCompose(firstSearchValue(composeParam)) : null;
   const composeReturnPath = firstSearchValue(returnToParam);
@@ -357,6 +371,18 @@ export default async function StudentDetailPage({
                 placeholder="성향, 장기 과제, 주의할 점처럼 계속 볼 메모(학생에게 보이지 않음)"
               />
             </section>
+          ) : null}
+
+          {activeTab === "overview" && datedMemos?.[0] ? (
+            <DatedInstructorMemos
+              studentId={studentId}
+              studentName={name}
+              actorId={session.user.id!}
+              today={memoToday}
+              initialMemo={datedMemos[0]}
+              initialList={datedMemos[1]}
+              lessonDates={lessonMemoDates}
+            />
           ) : null}
 
           {activeTab === "assignments" && (

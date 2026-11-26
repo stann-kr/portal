@@ -1,6 +1,6 @@
 /**
  * @file src/lib/actions/instructorMemos.ts
- * @description 관리자만 보는 수업 메모(학생별·노트별) server action. 모든 호출이 관리자 세션을 요구하고,
+ * @description 관리자만 보는 수업 메모(학생별·노트별·학생 날짜별) server action. 모든 호출이 관리자 세션을 요구하고,
  * 노트 메모는 대상 학생을 클라이언트 입력이 아니라 노트에서 읽는다. 개인 노트와 그룹 노트 모두 노트 메모를 쓴다.
  */
 "use server";
@@ -9,8 +9,10 @@ import { and, eq, isNull } from "drizzle-orm";
 import { createDb } from "@/db/client";
 import { privateNotes } from "@/db/schema";
 import { requireAdmin, requireStudentTarget } from "@/lib/auth-guard";
+import { dayNumberFromKey } from "@/lib/assignment-recurrence";
 import {
   INSTRUCTOR_MEMO_MAX_HTML_LENGTH,
+  listDatedInstructorMemos,
   listInstructorMemoRevisions,
   readInstructorMemo,
   saveInstructorMemo,
@@ -23,7 +25,9 @@ import { sanitizeHtml } from "@/lib/sanitize-html";
 /** 클라이언트가 고르는 메모 대상. 노트 메모의 학생은 서버가 노트에서 정한다. */
 export type InstructorMemoScope =
   | { kind: "student"; studentId: string }
-  | { kind: "note"; noteId: string };
+  | { kind: "note"; noteId: string }
+  /** 노트 없이 남기는 그 날짜(KST YYYY-MM-DD)의 학생 메모. 진도 체크·다음 수업 참고용(2026-11-27 사용자 요청). */
+  | { kind: "date"; studentId: string; date: string };
 
 export type InstructorMemoSnapshot = {
   memoId: string | null;
@@ -47,6 +51,11 @@ async function resolveTarget(scope: InstructorMemoScope): Promise<InstructorMemo
   if (scope.kind === "student") {
     await requireStudentTarget(scope.studentId);
     return { studentId: scope.studentId, noteId: null };
+  }
+  if (scope.kind === "date") {
+    await requireStudentTarget(scope.studentId);
+    if (typeof scope.date !== "string" || dayNumberFromKey(scope.date) === null) return null;
+    return { studentId: scope.studentId, noteId: null, memoDate: scope.date };
   }
   await requireAdmin();
   const db = createDb();
@@ -78,7 +87,9 @@ export async function saveInstructorMemoAction(
     return { ok: false, error: "저장 기준을 확인할 수 없습니다. 새로고침한 뒤 다시 시도해 주세요." };
   }
   const target = await resolveTarget(scope);
-  if (!target) return { ok: false, error: "메모를 붙일 노트를 찾을 수 없습니다." };
+  if (!target) {
+    return { ok: false, error: scope.kind === "date" ? "메모 날짜를 확인해 주세요." : "메모를 붙일 노트를 찾을 수 없습니다." };
+  }
   const raw = typeof input.contentHtml === "string" ? input.contentHtml : "";
   const contentHtml = isRichTextEmpty(raw) ? "" : sanitizeHtml(raw);
   if (contentHtml.length > INSTRUCTOR_MEMO_MAX_HTML_LENGTH) {
@@ -125,4 +136,17 @@ export async function getInstructorMemoRevisions(scope: InstructorMemoScope): Pr
     contentHtml: revision.contentHtml,
     savedAt: revision.updatedAt,
   }));
+}
+
+export type DatedInstructorMemoItem = {
+  date: string;
+  contentHtml: string;
+  updatedAt: Date;
+};
+
+/** 학생의 날짜 메모 목록(최근 날짜부터, 비운 날짜 제외). 관리자만, 대상 학생을 확인한 뒤 읽는다. */
+export async function getDatedInstructorMemos(studentId: string): Promise<DatedInstructorMemoItem[]> {
+  await requireStudentTarget(studentId);
+  const memos = await listDatedInstructorMemos(createDb(), studentId);
+  return memos.map((memo) => ({ date: memo.memoDate, contentHtml: memo.contentHtml, updatedAt: memo.updatedAt }));
 }

@@ -258,6 +258,50 @@ test("수업 메모는 관리자만 읽고 쓰며, 노트 메모의 학생은 �
   assert.equal(kept?.contentHtml, "<p>장기 과제</p>");
 });
 
+test("날짜별 메모는 노트 없이 학생·날짜마다 하나이고, 학생 메모·노트 메모와 섞이지 않으며 관리자만 읽고 쓴다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("admin-1", "admin"));
+  await seedProfile(db, "admin-1", "admin");
+  await seedProfile(db, "student-1");
+  await seedProfile(db, "student-2");
+  const day = (date: string, studentId = "student-1") => ({ kind: "date" as const, studentId, date });
+
+  assert.deepEqual(await memoActions.getInstructorMemo(day("2026-11-27")), { memoId: null, contentHtml: "", version: 0, updatedAt: null });
+  assert.equal((await memoActions.saveInstructorMemoAction(day("2026-11-27"), { contentHtml: "<p>8마디 전환 연습</p>", baseVersion: 0 })).ok, true);
+  assert.equal((await memoActions.saveInstructorMemoAction(day("2026-11-20"), { contentHtml: "<p>EQ 기초</p>", baseVersion: 0 })).ok, true);
+  assert.equal((await memoActions.saveInstructorMemoAction({ kind: "student", studentId: "student-1" }, { contentHtml: "<p>장기</p>", baseVersion: 0 })).ok, true);
+  assert.equal((await memoActions.saveInstructorMemoAction(day("2026-11-27", "student-2"), { contentHtml: "<p>다른 학생</p>", baseVersion: 0 })).ok, true);
+  // 비워 저장한 날짜는 목록에서 뺀다.
+  const emptied = await memoActions.saveInstructorMemoAction(day("2026-11-21"), { contentHtml: "<p>잠깐</p>", baseVersion: 0 });
+  assert.equal(emptied.ok, true);
+  assert.equal((await memoActions.saveInstructorMemoAction(day("2026-11-21"), { contentHtml: "", baseVersion: 1 })).ok, true);
+
+  assert.equal((await memoActions.getInstructorMemo(day("2026-11-27")))?.contentHtml, "<p>8마디 전환 연습</p>");
+  assert.equal((await memoActions.getInstructorMemo({ kind: "student", studentId: "student-1" }))?.contentHtml, "<p>장기</p>", "학생 메모는 날짜 메모와 따로다");
+  assert.deepEqual(
+    (await memoActions.getDatedInstructorMemos("student-1")).map((item) => [item.date, item.contentHtml]),
+    [["2026-11-27", "<p>8마디 전환 연습</p>"], ["2026-11-20", "<p>EQ 기초</p>"]],
+    "최근 날짜부터, 이 학생 것만, 비운 날짜는 빼고",
+  );
+  const stale = await memoActions.saveInstructorMemoAction(day("2026-11-27"), { contentHtml: "<p>다른 기기</p>", baseVersion: 0 });
+  assert.equal(!stale.ok && stale.conflict?.version, 1, "날짜 메모도 낡은 기준으로는 덮어쓰지 않는다");
+  assert.equal((await memoActions.getInstructorMemoRevisions(day("2026-11-27"))).length, 1);
+
+  // 날짜가 아니면 붙이지 않고, 학생이 아닌 대상은 거절한다.
+  assert.equal(await memoActions.getInstructorMemo(day("2026-02-30")), null);
+  assert.equal((await memoActions.saveInstructorMemoAction(day("어제"), { contentHtml: "<p>x</p>", baseVersion: 0 })).ok, false);
+  await assert.rejects(memoActions.getInstructorMemo(day("2026-11-27", "admin-1")), /Student not found/);
+  await assert.rejects(memoActions.getDatedInstructorMemos("admin-1"), /Student not found/);
+
+  // 학생은 자기 날짜 메모라도 읽거나 쓸 수 없다.
+  activeSession = createSession("student-1", "student");
+  await assert.rejects(memoActions.getInstructorMemo(day("2026-11-27")), /Admin only|Unauthorized/);
+  await assert.rejects(memoActions.getDatedInstructorMemos("student-1"), /Admin only|Unauthorized/);
+  await assert.rejects(memoActions.saveInstructorMemoAction(day("2026-11-27"), { contentHtml: "<p>x</p>", baseVersion: 1 }), /Admin only|Unauthorized/);
+  const rows = await db.select().from(instructorMemos).where(eq(instructorMemos.studentId, "student-1"));
+  assert.equal(rows.length, 4);
+  assert.equal(rows.find((row) => row.memoDate === "2026-11-27")?.contentHtml, "<p>8마디 전환 연습</p>");
+});
+
 test("로그인 이메일은 공백·대소문자 차이를 허용하되 모호한 계정은 고르지 않는다", { concurrency: false }, async (context) => {
   const db = await setupDatabase(context, createSession("admin-1", "admin"));
   await db.insert(profiles).values([
