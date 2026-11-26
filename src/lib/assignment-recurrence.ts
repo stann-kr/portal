@@ -6,6 +6,7 @@
  * - 0주차는 start_date가 들어 있는 주이고, 0·interval·2·interval… 주차의 선택 요일 가운데
  *   start_date 이후(포함) 날짜가 회차다. end_date는 포함, max_occurrences는 첫 실제 회차부터 센다.
  * - 회차 날짜의 due_time(KST, UTC+9·일광 절약 없음)이 마감 시각이다.
+ * - 마감 없는 규칙(has_due = 0)은 회차의 마감(due_at)을 비우고, due_time 23:59를 회차 생성 경계로만 쓴다.
  *
  * 생성 정책(조회 시 생성, cron 없음)
  * - 오늘(KST)까지의 회차와 다음 회차 하나만 만든다.
@@ -53,14 +54,22 @@ export type AssignmentRecurrenceSchedule = {
   intervalWeeks: number;
   weekdays: number;
   dueTime: string;
+  /** false면 마감 없는 정기 과제(dueTime은 경계 23:59). */
+  hasDue: boolean;
   endDate: string | null;
   maxOccurrences: number | null;
 };
 
 export type PlannedOccurrence = {
   occurrenceDate: string;
-  dueAt: Date;
+  /** 회차 마감. 마감 없는 규칙이면 null. */
+  dueAt: Date | null;
+  /** 회차 생성·정리 경계: 마감이 있으면 마감, 없으면 그날 23:59(KST). */
+  boundaryAt: Date;
 };
+
+/** 마감 없는 규칙의 due_time. DB CHECK도 이 값만 받는다. */
+export const NO_DUE_BOUNDARY_TIME = "23:59";
 
 export const RECURRENCE_GENERATION_CAP = 60;
 export const RECURRENCE_MAX_OCCURRENCES = 520;
@@ -120,9 +129,13 @@ export function validateRecurrenceSchedule(input: {
   intervalWeeks: number;
   weekdays: number;
   dueTime: string;
+  /** 생략하면 마감 있음. false면 dueTime을 보지 않고 23:59 경계를 둔다. */
+  hasDue?: boolean;
   endDate?: string | null;
   maxOccurrences?: number | null;
 }): RecurrenceValidation {
+  const hasDue = input.hasDue !== false;
+  const dueTime = hasDue ? input.dueTime : NO_DUE_BOUNDARY_TIME;
   const start = dayNumberFromKey(input.startDate);
   if (start === null) return { ok: false, error: "시작일을 확인해 주세요." };
   if (!Number.isInteger(input.intervalWeeks) || input.intervalWeeks < 1 || input.intervalWeeks > RECURRENCE_MAX_INTERVAL_WEEKS) {
@@ -131,7 +144,7 @@ export function validateRecurrenceSchedule(input: {
   if (!Number.isInteger(input.weekdays) || input.weekdays < 1 || input.weekdays > 127) {
     return { ok: false, error: "요일을 하나 이상 골라 주세요." };
   }
-  if (!isValidDueTime(input.dueTime)) return { ok: false, error: "마감 시각을 21:00 같은 형식으로 입력해 주세요." };
+  if (!isValidDueTime(dueTime)) return { ok: false, error: "마감 시각을 21:00 같은 형식으로 입력해 주세요." };
   const endDate = input.endDate || null;
   if (endDate !== null) {
     const end = dayNumberFromKey(endDate);
@@ -149,7 +162,8 @@ export function validateRecurrenceSchedule(input: {
       startDate: input.startDate,
       intervalWeeks: input.intervalWeeks,
       weekdays: input.weekdays,
-      dueTime: input.dueTime,
+      dueTime,
+      hasDue,
       endDate,
       maxOccurrences,
     },
@@ -202,8 +216,11 @@ export function planRecurrenceOccurrences(
   { now, floor = null, cap = RECURRENCE_GENERATION_CAP }: { now: Date; floor?: Date | null; cap?: number },
 ): PlannedOccurrence[] {
   const planned = enumerateOccurrenceDates(schedule, kstTodayKey(now), 1)
-    .map((occurrenceDate) => ({ occurrenceDate, dueAt: kstDueAt(occurrenceDate, schedule.dueTime) }))
-    .filter((occurrence) => floor === null || occurrence.dueAt.getTime() > floor.getTime());
+    .map((occurrenceDate) => {
+      const boundaryAt = kstDueAt(occurrenceDate, schedule.dueTime);
+      return { occurrenceDate, boundaryAt, dueAt: schedule.hasDue ? boundaryAt : null };
+    })
+    .filter((occurrence) => floor === null || occurrence.boundaryAt.getTime() > floor.getTime());
   return cap > 0 ? planned.slice(-cap) : [];
 }
 
@@ -241,8 +258,21 @@ export function describeRecurrenceSchedule(schedule: AssignmentRecurrenceSchedul
     .map((day) => WEEKDAY_LABELS[day])
     .join("·");
   const cadence = schedule.intervalWeeks === 1 ? "매주" : `${schedule.intervalWeeks}주마다`;
-  const parts = [`${cadence} ${days} ${schedule.dueTime} 마감`, `${shortDateLabel(schedule.startDate)}부터`];
+  const parts = [
+    schedule.hasDue ? `${cadence} ${days} ${schedule.dueTime} 마감` : `${cadence} ${days} · 마감 없음`,
+    `${shortDateLabel(schedule.startDate)}부터`,
+  ];
   if (schedule.endDate) parts.push(`${shortDateLabel(schedule.endDate)}까지`);
   if (schedule.maxOccurrences) parts.push(`${schedule.maxOccurrences}회`);
   return parts.join(" · ");
+}
+
+/**
+ * 마감 없는 회차 가운데 아직 열려 있는(경계 23:59가 지나지 않은) 첫 날짜. 규칙을 고치거나 멈출 때 지우는
+ * 미제출 회차와, 고친 뒤 planRecurrenceOccurrences(floor = 지금)가 다시 만드는 회차가 같은 경계를 쓰게 한다.
+ */
+export function firstOpenNoDueOccurrenceDate(now: Date): string {
+  const today = kstTodayKey(now);
+  if (kstDueAt(today, NO_DUE_BOUNDARY_TIME).getTime() > now.getTime()) return today;
+  return dayKeyFromNumber((dayNumberFromKey(today) ?? 0) + 1);
 }

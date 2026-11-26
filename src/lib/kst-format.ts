@@ -101,3 +101,20 @@ export function formatRecordTime(value: KstDateInput, now: number): string {
   if (!date) return "시각 없음";
   return `${formatKstDot(date, { referenceTime: new Date(now) })} ${formatKst(date, CLOCK_24H)}`;
 }
+
+/**
+ * 과제 마감 글자: 마감이 있으면 "11.27 (목) 21:00 마감", 마감 없는 정기 회차는 회차 날짜를 붙여 "11.27 (목) 회차 · 마감 없음",
+ * 그 밖의 마감 없는 과제는 "마감 없음". 마감 없는 정기 과제(0042)의 회차 줄이 서로 구분되게 한다.
+ */
+export function formatAssignmentDue(
+  task: { dueAt: Date | null; occurrenceDate: string | null },
+  referenceTime?: Date,
+): string {
+  if (task.dueAt) return `${formatKstDot(task.dueAt, { weekday: true, time: true, referenceTime })} 마감`;
+  if (task.occurrenceDate && /^\d{4}-\d{2}-\d{2}$/u.test(task.occurrenceDate)) {
+    // 회차 날짜(KST)의 정오로 요일을 읽는다(시간대 경계와 무관).
+    const noon = new Date(`${task.occurrenceDate}T12:00:00+09:00`);
+    return `${formatKstDot(noon, { weekday: true, referenceTime })} 회차 · 마감 없음`;
+  }
+  return "마감 없음";
+}

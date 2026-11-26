@@ -66,6 +66,7 @@ let updateTask: typeof import("@/lib/actions/assignmentTasks").updateAssignmentT
 let AssignmentTaskForm: typeof import("@/components/admin/assignments/AssignmentTaskForms").AssignmentTaskForm;
 let AssignmentRecurrenceForm: typeof import("@/components/admin/assignments/AssignmentTaskForms").AssignmentRecurrenceForm;
 let updateRecurrence: typeof import("@/lib/actions/assignmentTasks").updateAssignmentRecurrence = async () => ({ error: "테스트 미설정" });
+let createRecurrence: typeof import("@/lib/actions/assignmentTasks").createAssignmentRecurrence = async () => ({ error: "테스트 미설정" });
 let loadTasks: typeof import("@/lib/actions/assignmentTasks").getMyAssignmentTasks = async () => [];
 let saveEvent: typeof import("@/lib/actions/calendarEvents").createCalendarEvent = async () => ({});
 let editEvent: typeof import("@/lib/actions/calendarEvents").updateCalendarEventDetails = async () => ({});
@@ -170,7 +171,7 @@ mock.module("@/lib/actions/assignmentTasks", { namedExports: {
   updateMyTaskSubmission: async () => ({ error: "테스트 미설정" }),
   createAssignmentTask: (...args: Parameters<typeof createTask>) => createTask(...args),
   updateAssignmentTask: (...args: Parameters<typeof updateTask>) => updateTask(...args),
-  createAssignmentRecurrence: async () => ({ error: "테스트 미설정" }),
+  createAssignmentRecurrence: (...args: Parameters<typeof createRecurrence>) => createRecurrence(...args),
   updateAssignmentRecurrence: (...args: Parameters<typeof updateRecurrence>) => updateRecurrence(...args),
   setAssignmentRecurrencePaused: async () => ({ success: true }),
   deleteAssignmentRecurrence: async () => ({ success: true }),
@@ -3439,6 +3440,7 @@ test("여러 학생 과제 내기는 고른 학생·작성 정보를 이 기기�
   const root = await render(context, form());
   await settle();
   await fill("task-new-title", "킥 정리");
+  await fill("task-new-due-date", "2026-12-01");
   await act(async () => { (browser.document.getElementById("task-new-also-s-2") as unknown as HTMLInputElement).click(); });
   await settle();
   await press("2명에게 과제 내기");
@@ -3503,9 +3505,56 @@ test("그룹 멤버 학생의 과제 내기는 \"받는 학생\"으로 그룹 �
   assert.equal((browser.document.getElementById("task-new-also-s-3") as unknown as HTMLInputElement).checked, false);
   assert.match(browser.document.body.textContent ?? "", /김학생 · 이학생에게 각각 들어갑니다/u);
   await fill("task-new-title", "8마디 전환");
+  await fill("task-new-due-date", "2026-12-01");
   await press("2명에게 과제 내기");
   await settle();
   assert.deepEqual(sent, [["s-2"]]);
+});
+
+test("과제 내기는 마감 날짜를 정하거나 \"마감 없음\"을 골라야 하고, 마감 없음은 마감 칸을 비활성으로 두어 보내지 않는다", async (context) => {
+  browser.localStorage.clear();
+  const sent: { noDue: unknown; dueDate: unknown; dueTime: unknown }[] = [];
+  createTask = async (_studentId, _previous, data) => {
+    sent.push({ noDue: data.get("noDue"), dueDate: data.get("dueDate"), dueTime: data.get("dueTime") });
+    return { success: true };
+  };
+  context.after(() => { createTask = async () => ({}); });
+  await render(context, <AssignmentTaskForm actorId="admin-nodue" studentId="s-1" onDone={() => {}} onCancel={() => {}} />);
+  await settle();
+  await fill("task-new-title", "자유 연습");
+  const dueDate = () => browser.document.getElementById("task-new-due-date") as unknown as HTMLInputElement;
+  assert.equal(dueDate().required, true, "마감 없음을 고르지 않으면 날짜가 필요하다");
+  await act(async () => { (browser.document.getElementById("task-new-no-due") as unknown as HTMLInputElement).click(); });
+  await settle();
+  assert.equal(dueDate().disabled, true);
+  assert.equal(dueDate().required, false);
+  assert.equal((browser.document.getElementById("task-new-due-time") as unknown as HTMLInputElement).disabled, true);
+  await press("과제 내기");
+  await settle();
+  assert.deepEqual(sent, [{ noDue: "1", dueDate: null, dueTime: null }]);
+});
+
+test("정기 과제의 \"마감 없음\"은 마감 시각 칸을 비우고 비활성으로 두며 noDue만 보낸다", async (context) => {
+  browser.localStorage.clear();
+  const sent: { noDue: unknown; dueTime: unknown }[] = [];
+  createRecurrence = async (_studentId, _previous, data) => {
+    sent.push({ noDue: data.get("noDue"), dueTime: data.get("dueTime") });
+    return { success: true };
+  };
+  context.after(() => { createRecurrence = async () => ({ error: "테스트 미설정" }); });
+  await render(context, <AssignmentRecurrenceForm actorId="admin-nodue-rule" studentId="s-1" referenceTime={new Date("2026-11-27T00:00:00.000Z")} onDone={() => {}} onCancel={() => {}} />);
+  await settle();
+  await fill("recurrence-new-title", "매일 기록");
+  await act(async () => { (browser.document.querySelector('input[name="weekdays"][value="1"]') as unknown as HTMLInputElement).click(); });
+  await act(async () => { (browser.document.getElementById("recurrence-new-no-due") as unknown as HTMLInputElement).click(); });
+  await settle();
+  const dueTime = browser.document.getElementById("recurrence-new-due-time") as unknown as HTMLInputElement;
+  assert.equal(dueTime.disabled, true);
+  assert.equal(dueTime.value, "");
+  assert.match(browser.document.body.textContent ?? "", /마감 없이 열려 있습니다/u);
+  await press("정기 과제 만들기");
+  await settle();
+  assert.deepEqual(sent, [{ noDue: "1", dueTime: null }]);
 });
 
 test("과제 고치기는 고치던 내용을 이 기기에 보관해 다시 열면 되살리고 고치기 시작한 version으로 보낸다. 그 사이 과제가 바뀌었으면 되살리기만 하고 저장을 막는다", async (context) => {

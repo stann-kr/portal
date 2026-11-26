@@ -67,6 +67,7 @@ import { validateFlowGapsUpgrade } from "./migration-check/flow-gaps.mjs";
 import { validateRemainingFlowsUpgrade } from "./migration-check/remaining-flows.mjs";
 import { validateGuideCollabLifecycleUpgrade } from "./migration-check/guide-collab-lifecycle.mjs";
 import { validateTimestampRangesUpgrade } from "./migration-check/timestamp-ranges.mjs";
+import { validateAssignmentNoDueUpgrade } from "./migration-check/assignment-no-due.mjs";
 import { validateListQueryIndexesUpgrade } from "./migration-check/list-query-indexes.mjs";
 import {
   validateAccountPrivacyAtomicSource,
@@ -239,6 +240,8 @@ async function main() {
   console.log("PASS populated 0039 → 0040 guide_pages collab_lifecycle default 0 NOT NULL, other tables/triggers and rows preserved, old-code insert/update keeps 0");
   await validateTimestampRangesUpgrade(migrationFiles);
   console.log("PASS populated 0040 → 0041 feedbacks time_marker_end·comments time_marker_end_seconds nullable (end after start, comment ≤ 23:59:59), triggers and rows preserved, old-code insert/update keeps NULL");
+  await validateAssignmentNoDueUpgrade(migrationFiles);
+  console.log("PASS populated 0041 → 0042 assignment_recurrences has_due default 1 (no-due rules keep due_time 23:59), other tables/triggers and rows preserved, old-code insert/update keeps 1");
 }
 
 try {

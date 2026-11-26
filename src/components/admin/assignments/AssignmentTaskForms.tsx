@@ -320,6 +320,32 @@ function FormActions({ isPending, submitLabel, submitDisabled = false, onCancel 
   );
 }
 
+/**
+ * "마감 없음" 선택(2026-11-27 사용자 요청). 고르면 마감 칸을 비활성으로 두어 보내지 않고, 서버는 noDue로 마감을 비운다.
+ * 한 번 과제는 마감 칸이 비어도 마감 없음이지만, 고르는 칸을 따로 두어 비운 것이 실수인지 의도인지 구분한다.
+ */
+function NoDueToggle({ idPrefix, checked, onChange, disabled }: { idPrefix: string; checked: boolean; onChange: (next: boolean) => void; disabled: boolean }) {
+  return (
+    <label htmlFor={`${idPrefix}-no-due`} className="flex min-h-11 w-fit items-center gap-2 text-md md:min-h-7 md:text-body">
+      <input
+        id={`${idPrefix}-no-due`}
+        type="checkbox"
+        name="noDue"
+        value="1"
+        checked={checked}
+        onChange={(event) => onChange(event.target.checked)}
+        disabled={disabled}
+        className="size-4 shrink-0 accent-[var(--color-foreground)]"
+      />
+      마감 없음
+    </label>
+  );
+}
+
+function readNoDue(saved: Record<string, unknown>, fallback: boolean): boolean {
+  return typeof saved.noDue === "boolean" ? saved.noDue : fallback;
+}
+
 /** 한 번 과제 내기·고치기. 제출이 있으면 형식은 바꿀 수 없다. */
 export function AssignmentTaskForm({
   actorId,
@@ -346,23 +372,25 @@ export function AssignmentTaskForm({
   const [description, setDescription] = useState(() => htmlToPlainText(task?.descriptionHtml));
   const [dueDate, setDueDate] = useState(() => splitDue(task?.dueAt ?? null).date);
   const [dueTime, setDueTime] = useState(() => splitDue(task?.dueAt ?? null).time);
+  // 고칠 때는 지금 마감이 없으면 "마감 없음"으로 시작한다. 새 과제는 마감을 정하는 쪽이 기본이다.
+  const [noDue, setNoDue] = useState(() => Boolean(task) && task?.dueAt === null);
   const [operationId, setOperationId] = useState(createCreationOperationId);
   const [alsoStudentIds, setAlsoStudentIds] = useState<string[]>([]);
   const creating = !task;
   const formatLocked = Boolean(task?.submission);
   // 고치기: 처음 값과 고치기 시작한 version. 보관본을 되살리면 보관본의 version을 그대로 보낸다.
-  const [initial] = useState(() => ({ format, title, description, dueDate, dueTime }));
+  const [initial] = useState(() => ({ format, title, description, dueDate, dueTime, noDue }));
   const [baseVersion, setBaseVersion] = useState(task?.version ?? 0);
   const staleDraft = Boolean(task) && baseVersion !== task?.version;
   const draft = useTaskFormDraft({
     actorId,
     contextId: task ? `assignment-task-edit:${task.id}` : `assignment-task-new:${studentId}`,
     values: creating
-      ? { format, title, description, dueDate, dueTime, alsoStudentIds, operationId }
-      : { format, title, description, dueDate, dueTime, baseVersion },
+      ? { format, title, description, dueDate, dueTime, noDue, alsoStudentIds, operationId }
+      : { format, title, description, dueDate, dueTime, noDue, baseVersion },
     empty: creating
-      ? !title && !description && !dueDate && !dueTime && alsoStudentIds.length === 0 && format === "MIX"
-      : format === initial.format && title === initial.title && description === initial.description && dueDate === initial.dueDate && dueTime === initial.dueTime,
+      ? !title && !description && !dueDate && !dueTime && !noDue && alsoStudentIds.length === 0 && format === "MIX"
+      : format === initial.format && title === initial.title && description === initial.description && dueDate === initial.dueDate && dueTime === initial.dueTime && noDue === initial.noDue,
     restore: (saved: Record<string, unknown>) => {
       if (!creating) {
         const savedVersion = readBaseVersion(saved.baseVersion);
@@ -374,6 +402,8 @@ export function AssignmentTaskForm({
       setDescription(readString(saved.description, ""));
       setDueDate(readString(saved.dueDate, ""));
       setDueTime(readString(saved.dueTime, ""));
+      // 이 칸이 생기기 전 보관본: 고치기는 마감 날짜가 비어 있었으면 마감 없음이었다.
+      setNoDue(readNoDue(saved, !creating && !readString(saved.dueDate, "")));
       // 보관한 뒤 수강 종료된 학생은 고를 수 없으므로 되살리지 않는다(체크박스 없이 버튼 인원에만 남지 않게).
       setAlsoStudentIds(readStringList(saved.alsoStudentIds).filter((id) => id !== studentId && studentOptions.some((option) => option.id === id)));
       const savedOperationId = parseCreationOperationId(saved.operationId);
@@ -425,15 +455,18 @@ export function AssignmentTaskForm({
         disabled={isPending || formatLocked}
         note={formatLocked ? "학생이 이미 제출해 형식은 바꿀 수 없습니다." : undefined}
       />
-      <div className="grid gap-3 sm:grid-cols-2">
-        <label htmlFor={`${idPrefix}-due-date`} className={FIELD_LABEL}>
-          마감 날짜 (선택)
-          <Input id={`${idPrefix}-due-date`} name="dueDate" type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} disabled={isPending} className="font-mono" />
-        </label>
-        <label htmlFor={`${idPrefix}-due-time`} className={FIELD_LABEL}>
-          마감 시각 (선택, 비우면 23:59)
-          <Input id={`${idPrefix}-due-time`} name="dueTime" type="time" value={dueTime} onChange={(event) => setDueTime(event.target.value)} disabled={isPending} className="font-mono" />
-        </label>
+      <div className="flex flex-col gap-2">
+        <NoDueToggle idPrefix={idPrefix} checked={noDue} onChange={setNoDue} disabled={isPending} />
+        <div className={cn("grid gap-3 sm:grid-cols-2", noDue && "opacity-50")}>
+          <label htmlFor={`${idPrefix}-due-date`} className={FIELD_LABEL}>
+            마감 날짜
+            <Input id={`${idPrefix}-due-date`} name="dueDate" type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} required={!noDue} disabled={isPending || noDue} className="font-mono" />
+          </label>
+          <label htmlFor={`${idPrefix}-due-time`} className={FIELD_LABEL}>
+            마감 시각 (선택, 비우면 23:59)
+            <Input id={`${idPrefix}-due-time`} name="dueTime" type="time" value={dueTime} onChange={(event) => setDueTime(event.target.value)} disabled={isPending || noDue} className="font-mono" />
+          </label>
+        </div>
       </div>
       {task ? null : (
         <AlsoStudentsField studentId={studentId} options={studentOptions} group={lessonGroup} selected={alsoStudentIds} onChange={setAlsoStudentIds} disabled={isPending} idPrefix={idPrefix} />
@@ -475,7 +508,9 @@ export function AssignmentRecurrenceForm({
   const [intervalWeeks, setIntervalWeeks] = useState(String(recurrence?.intervalWeeks ?? 1));
   const intervalRef = useRef<HTMLSelectElement>(null);
   const [startDate, setStartDate] = useState(() => recurrence?.startDate ?? toKstDateInputValue(referenceTime));
-  const [dueTime, setDueTime] = useState(recurrence?.dueTime ?? "21:00");
+  const [noDue, setNoDue] = useState(recurrence ? !recurrence.hasDue : false);
+  // 마감 없는 규칙의 시각은 경계 23:59라 보이지 않고, 다시 마감을 켜면 기본 21:00에서 시작한다.
+  const [dueTime, setDueTime] = useState(recurrence?.hasDue === false ? "21:00" : recurrence?.dueTime ?? "21:00");
   const [endDate, setEndDate] = useState(recurrence?.endDate ?? "");
   const [maxOccurrences, setMaxOccurrences] = useState(recurrence?.maxOccurrences == null ? "" : String(recurrence.maxOccurrences));
   const [operationId, setOperationId] = useState(createCreationOperationId);
@@ -483,7 +518,7 @@ export function AssignmentRecurrenceForm({
   const creating = !recurrence;
   const [initialStartDate] = useState(startDate);
   // 고치기: 처음 값과 고치기 시작한 version. 보관본을 되살리면 보관본의 version을 그대로 보낸다.
-  const editable = { format, days, title, description, intervalWeeks, startDate, dueTime, endDate, maxOccurrences };
+  const editable = { format, days, title, description, intervalWeeks, startDate, dueTime, noDue, endDate, maxOccurrences };
   const [initialSignature] = useState(() => JSON.stringify(editable));
   const [baseVersion, setBaseVersion] = useState(recurrence?.version ?? 0);
   const staleDraft = Boolean(recurrence) && baseVersion !== recurrence?.version;
@@ -493,7 +528,7 @@ export function AssignmentRecurrenceForm({
     values: creating ? { ...editable, alsoStudentIds, operationId } : { ...editable, baseVersion },
     empty: creating
       ? !title && !description && days.length === 0 && !endDate && !maxOccurrences && alsoStudentIds.length === 0
-        && format === "MIX" && intervalWeeks === "1" && startDate === initialStartDate && dueTime === "21:00"
+        && format === "MIX" && intervalWeeks === "1" && startDate === initialStartDate && dueTime === "21:00" && !noDue
       : JSON.stringify(editable) === initialSignature,
     restore: (saved: Record<string, unknown>) => {
       if (!creating) {
@@ -508,6 +543,7 @@ export function AssignmentRecurrenceForm({
       setIntervalWeeks(readString(saved.intervalWeeks, "1"));
       setStartDate(readString(saved.startDate, initialStartDate));
       setDueTime(readString(saved.dueTime, "21:00"));
+      setNoDue(readNoDue(saved, recurrence ? !recurrence.hasDue : false));
       setEndDate(readString(saved.endDate, ""));
       setMaxOccurrences(readString(saved.maxOccurrences, ""));
       // 보관한 뒤 수강 종료된 학생은 고를 수 없으므로 되살리지 않는다(체크박스 없이 버튼 인원에만 남지 않게).
@@ -587,6 +623,7 @@ export function AssignmentRecurrenceForm({
           })}
         </div>
       </fieldset>
+      <NoDueToggle idPrefix={idPrefix} checked={noDue} onChange={setNoDue} disabled={isPending} />
       <div className="grid gap-3 sm:grid-cols-3">
         <label htmlFor={`${idPrefix}-interval`} className={FIELD_LABEL}>
           반복
@@ -617,16 +654,16 @@ export function AssignmentRecurrenceForm({
             className="font-mono"
           />
         </label>
-        <label htmlFor={`${idPrefix}-due-time`} className={FIELD_LABEL}>
+        <label htmlFor={`${idPrefix}-due-time`} className={cn(FIELD_LABEL, noDue && "opacity-50")}>
           마감 시각
           <Input
             id={`${idPrefix}-due-time`}
             name="dueTime"
             type="time"
-            value={dueTime}
+            value={noDue ? "" : dueTime}
             onChange={(event) => setDueTime(event.target.value)}
-            required
-            disabled={isPending}
+            required={!noDue}
+            disabled={isPending || noDue}
             className="font-mono"
           />
         </label>
@@ -650,7 +687,7 @@ export function AssignmentRecurrenceForm({
         </label>
       </div>
       <p className="text-xs text-muted-foreground">
-        회차는 마감일 하루 단위로 만들어지고, 다음 회차 하나가 미리 보입니다.
+        {noDue ? "회차는 날짜 하루 단위로 만들어지고 마감 없이 열려 있습니다. 다음 회차 하나가 미리 보입니다." : "회차는 마감일 하루 단위로 만들어지고, 다음 회차 하나가 미리 보입니다."}
         {recurrence ? " 고치면 아직 마감 전이고 제출이 없는 회차만 새 내용으로 다시 만들고, 지난 회차와 제출된 회차는 그대로 둡니다." : ""}
       </p>
       {recurrence ? null : (

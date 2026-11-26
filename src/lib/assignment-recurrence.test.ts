@@ -8,6 +8,7 @@ import {
   kstTodayKey,
   planRecurrenceOccurrences,
   validateRecurrenceSchedule,
+  firstOpenNoDueOccurrenceDate,
   weekdayListFromMask,
   weekdayMaskFromList,
   type AssignmentRecurrenceSchedule,
@@ -24,6 +25,7 @@ function schedule(overrides: Partial<AssignmentRecurrenceSchedule> = {}): Assign
     intervalWeeks: 1,
     weekdays: weekdayMaskFromList([MON, FRI]),
     dueTime: "21:00",
+    hasDue: true,
     endDate: null,
     maxOccurrences: null,
     ...overrides,
@@ -67,7 +69,7 @@ test("생성 계획은 오늘(KST)까지의 회차와 다음 회차 하나만 �
   const now = new Date("2026-11-02T00:00:00.000Z");
   const planned = planRecurrenceOccurrences(schedule(), { now });
   assert.deepEqual(planned.map((item) => item.occurrenceDate), ["2026-10-30", "2026-11-02", "2026-11-06"]);
-  assert.equal(planned[1]!.dueAt.toISOString(), "2026-11-02T12:00:00.000Z");
+  assert.equal(planned[1]!.dueAt?.toISOString(), "2026-11-02T12:00:00.000Z");
   // 시작일 전이면 첫 회차 하나만.
   assert.deepEqual(
     planRecurrenceOccurrences(schedule(), { now: new Date("2026-10-01T00:00:00.000Z") }).map((item) => item.occurrenceDate),
@@ -119,5 +121,26 @@ test("규칙 검증은 DB CHECK 범위를 따르고 요약은 월요일부터 �
   assert.equal(
     describeRecurrenceSchedule(schedule({ intervalWeeks: 2, endDate: "2026-12-31" })),
     "2주마다 월·금 21:00 마감 · 10월 28일부터 · 12월 31일까지",
+  );
+});
+
+test("마감 없는 규칙은 회차 마감을 비우고 23:59를 생성·정리 경계로 쓴다", () => {
+  const validated = validateRecurrenceSchedule({ startDate: "2026-10-28", intervalWeeks: 1, weekdays: 2, dueTime: "", hasDue: false });
+  assert.ok(validated.ok);
+  assert.equal(validated.schedule.dueTime, "23:59", "시각 칸을 보내지 않아도 경계를 둔다");
+  assert.equal(validated.schedule.hasDue, false);
+  // KST 2026-11-02(월) 23:30: 오늘 회차는 아직 열려 있고 마감은 없다.
+  const free = schedule({ hasDue: false, dueTime: "23:59" });
+  const planned = planRecurrenceOccurrences(free, { now: new Date("2026-11-02T14:30:00.000Z"), floor: new Date("2026-11-02T14:30:00.000Z") });
+  assert.deepEqual(planned.map((item) => [item.occurrenceDate, item.dueAt]), [["2026-11-02", null], ["2026-11-06", null]]);
+  assert.match(describeRecurrenceSchedule(free), /^매주 월·금 · 마감 없음/u);
+  // 정리 경계: 23:59 전이면 오늘부터, 지나면 내일부터(생성 계획의 floor 필터와 같다).
+  assert.equal(firstOpenNoDueOccurrenceDate(new Date("2026-11-02T14:30:00.000Z")), "2026-11-02");
+  assert.equal(firstOpenNoDueOccurrenceDate(new Date("2026-11-02T14:59:30.000Z")), "2026-11-03");
+  const afterBoundary = new Date("2026-11-02T14:59:30.000Z");
+  assert.deepEqual(
+    planRecurrenceOccurrences(free, { now: afterBoundary, floor: afterBoundary }).map((item) => item.occurrenceDate),
+    ["2026-11-06"],
+    "경계가 지난 오늘 회차는 다시 만들지 않는다",
   );
 });

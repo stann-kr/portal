@@ -351,7 +351,10 @@ export const assignmentRecurrences = sqliteTable(
     intervalWeeks: integer("interval_weeks").default(1).notNull(),
     /** 요일 bit mask. bit 0이 일요일, bit 6이 토요일이다. */
     weekdays: integer("weekdays").notNull(),
+    /** 회차 날짜의 마감 시각(KST). 마감 없는 규칙(has_due = 0)에서는 회차 생성 경계로만 쓰고 23:59를 둔다. */
     dueTime: text("due_time").notNull(),
+    /** 0이면 마감 없는 정기 과제: 회차의 due_at을 비운다(0042, 2026-11-27 사용자 요청). */
+    hasDue: integer("has_due", { mode: "boolean" }).default(true).notNull(),
     endDate: text("end_date"),
     maxOccurrences: integer("max_occurrences"),
     pausedAt: integer("paused_at", { mode: "timestamp" }),
@@ -375,6 +378,10 @@ export const assignmentRecurrences = sqliteTable(
     check(
       "assignment_recurrences_analysis_form_check",
       sql`${table.analysisForm} IN (0, 1) AND (${table.analysisForm} = 0 OR ${table.submissionFormat} = 'MIX')`,
+    ),
+    check(
+      "assignment_recurrences_has_due_check",
+      sql`${table.hasDue} IN (0, 1) AND (${table.hasDue} = 1 OR ${table.dueTime} = '23:59')`,
     ),
     check(
       "assignment_recurrences_schedule_check",

@@ -1638,6 +1638,52 @@ test("믹스셋 분석 과제는 MIX와 분석 표시로 저장하고, 학생은
   assert.ok((await ruleTasks()).every((task) => !task.analysisForm), "마감 전 회차는 새 형식으로 다시 생긴다");
 });
 
+test("마감 없음: 한 번 과제는 마감을 비우고, 정기 과제는 회차 마감을 비운 채 만들며 마감을 켜고 끄면 열린 미제출 회차를 다시 만든다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("admin-1", "admin"));
+  await seedProfile(db, "admin-1", "admin");
+  await seedProfile(db, "student-1");
+  const today = kstTodayKey(new Date());
+
+  // 한 번 과제: "마감 없음"을 고르면 칸에 남은 날짜가 있어도 마감을 비운다.
+  const once = await assignmentTaskActions.createAssignmentTask("student-1", {}, taskForm({ title: "자유 연습", submissionFormat: "TEXT", dueDate: "2026-12-01", dueTime: "21:00", noDue: "1", operationId: crypto.randomUUID() }));
+  assert.equal(once.success, true);
+  assert.equal((await db.select().from(assignmentTasks).where(eq(assignmentTasks.id, once.id!)))[0]?.dueAt, null);
+
+  // 정기 과제: 시각 칸 없이 noDue만 보내도 만들어지고(경계 23:59), 회차 마감은 비어 있다.
+  const fields = { title: "매일 기록", submissionFormat: "TEXT", startDate: shiftDayKey(today, -2), intervalWeeks: "1", weekdays: ["0", "1", "2", "3", "4", "5", "6"] };
+  const rule = await assignmentTaskActions.createAssignmentRecurrence("student-1", {}, taskForm({ ...fields, noDue: "1", operationId: crypto.randomUUID() }));
+  assert.equal(rule.success, true);
+  const [stored] = await db.select().from(assignmentRecurrences).where(eq(assignmentRecurrences.id, rule.id!));
+  assert.equal(stored?.hasDue, false);
+  assert.equal(stored?.dueTime, "23:59");
+  const ruleTasks = () => db.select().from(assignmentTasks).where(eq(assignmentTasks.recurrenceId, rule.id!));
+  const first = await ruleTasks();
+  assert.ok(first.length > 0);
+  assert.ok(first.every((task) => task.dueAt === null), "마감 없는 회차");
+  const listed = await assignmentTaskActions.getAssignmentTasksForStudent("student-1");
+  assert.equal(listed.recurrences.find((item) => item.id === rule.id)?.hasDue, false);
+
+  // 새 규칙은 지금 이후의 회차(오늘·다음 회차)만 만든다. 학생이 오늘 회차를 낸다.
+  assert.deepEqual(first.map((task) => task.occurrenceDate).sort(), [today, shiftDayKey(today, 1)]);
+  activeSession = createSession("student-1", "student");
+  const todayTask = first.find((task) => task.occurrenceDate === today)!;
+  assert.equal((await assignmentTaskActions.submitAssignmentTask(todayTask.id, {}, taskForm({ text: "오늘 기록" }))).success, true);
+
+  // 마감을 켜면 열린 미제출 회차가 마감 있는 회차로 다시 생기고, 제출한 회차는 그대로다.
+  activeSession = createSession("admin-1", "admin");
+  assert.equal((await assignmentTaskActions.updateAssignmentRecurrence("student-1", rule.id!, {}, taskForm({ ...fields, dueTime: "21:00", version: "1" }))).success, true);
+  const second = await ruleTasks();
+  const byDate = (date: string) => second.find((task) => task.occurrenceDate === date);
+  assert.equal(byDate(today)?.dueAt, null, "제출한 회차는 남긴다");
+  assert.equal(byDate(shiftDayKey(today, 1))?.dueAt?.getTime(), Date.parse(`${shiftDayKey(today, 1)}T12:00:00.000Z`), "다음 회차는 새 마감으로 다시 생긴다");
+
+  // 다시 끄면 마감 있는 열린 회차가 마감 없는 회차로 다시 생긴다(같은 경계로 지우고 만든다).
+  assert.equal((await assignmentTaskActions.updateAssignmentRecurrence("student-1", rule.id!, {}, taskForm({ ...fields, noDue: "1", version: "2" }))).success, true);
+  const third = await ruleTasks();
+  assert.equal(third.find((task) => task.occurrenceDate === shiftDayKey(today, 1))?.dueAt, null);
+  assert.equal(third.length, second.length, "지우고 다시 만든 회차 수가 같다");
+});
+
 test("정기 과제 회차는 동시 조회에도 한 번만 생기고 수정·멈춤·삭제는 제출된 회차와 지난 회차를 보존한다", { concurrency: false }, async (context) => {
   const db = await setupDatabase(context, createSession("student-1", "student"));
   await seedProfile(db, "admin-1", "admin");
