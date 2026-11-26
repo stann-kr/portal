@@ -140,6 +140,19 @@ test("확인함: 표시할 때만 과제 주인 학생에게 피드백 알림과
   assert.equal(sent.length, 1, "취소는 알리지 않는다");
   assert.equal((await reviewActions.setAssignmentReviewed("sub-ack", true)).success, true);
   assert.equal(sent.length, 2, "취소 뒤 다시 표시하면 다시 알린다");
+
+  // 학생이 확인한 제출을 고치면 확인함이 풀리고 관리자에게 같은 제출 tag로 알린다. 확인 전 제출을 다시 고치면 알리지 않는다.
+  activeSession = createSession("student-1", "student");
+  const edit = new FormData();
+  edit.set("text", "고친 제출");
+  assert.equal((await taskActions.updateMyTaskSubmission("sub-ack", {}, edit)).success, true);
+  assert.deepEqual(sent[2], {
+    audience: { kind: "role", role: "admin" },
+    message: { category: "assignment", title: "과제 제출 수정", body: "김학생님이 확인한 제출을 고쳤습니다: ‘7주차 믹스’", url: sent[2]!.message.url, tag: "submission:sub-ack" },
+    exclude: "student-1",
+  });
+  assert.equal((await taskActions.updateMyTaskSubmission("sub-ack", {}, edit)).success, true);
+  assert.equal(sent.length, 3, "확인 전 제출을 고치면 알리지 않는다");
 });
 
 test("과제: 새 과제는 학생에게, 학생 제출은 관리자에게 보낸다(재전송은 한 번만)", { concurrency: false }, async (context) => {

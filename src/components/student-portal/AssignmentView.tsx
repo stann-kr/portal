@@ -34,6 +34,7 @@ import {
   getSubmissionReviewStatus,
   htmlToPlainText,
   isLateSubmission,
+  isSubmissionEditLocked,
   isSubmissionSettled,
   type AssignmentTaskStatus,
 } from "@/lib/assignment-submission";
@@ -316,7 +317,8 @@ function TaskRow({
     : closed ? "closed" : duePassed ? "overdue" : "open";
   const late = submission ? isLateSubmission(task.dueAt, submission.submittedAt) : false;
   // Stann이 완료로 처리한 과제는 더 낼 수 없다(설명은 펼쳐 볼 수 있다).
-  const canEdit = submission ? !isSubmissionSettled(submission) : !closed;
+  // 피드백이 달린 제출만 잠긴다(확인함은 고치면 다시 피드백 대기).
+  const canEdit = submission ? !isSubmissionEditLocked(submission) : !closed;
   const panelId = `task-panel-${task.id}`;
   // 계정에 임시 저장한 글(제출 전 "작성 중", 제출 뒤 "고치는 중"). 고칠 수 없는 제출이면 보이지 않는다.
   const draftSavedAt = canEdit ? task.draftSavedAt ?? null : null;

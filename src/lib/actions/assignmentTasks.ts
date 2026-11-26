@@ -38,13 +38,12 @@ import {
 import {
   ASSIGNMENT_DESCRIPTION_MAX_LENGTH,
   ASSIGNMENT_TITLE_MAX_LENGTH,
-  isSubmissionSettled,
+  FEEDBACK_LOCKED_EDIT_ERROR,
   normalizePlainTextField,
   parseSubmissionFormat,
-  settledSubmissionError,
   validateSubmissionPayload,
 } from "@/lib/assignment-submission";
-import { assignmentAwaitingReview } from "@/lib/assignment-review-query";
+import { assignmentHasNoFeedback } from "@/lib/assignment-review-query";
 import { ensureRecurringAssignmentTasks } from "@/lib/assignment-task-generation";
 import { pushMessages } from "@/lib/push/messages";
 import { notifyPush } from "@/lib/push/notify";
@@ -913,7 +912,10 @@ export async function submitAssignmentTask(
   }
 }
 
-/** 피드백이 달리기 전까지 본인 과제 제출을 고친다. 피드백 확인과 수정을 한 UPDATE로 처리한다. */
+/**
+ * 피드백이 달리기 전까지 본인 과제 제출을 고친다. 피드백 확인과 수정을 한 UPDATE로 처리한다.
+ * Stann이 확인함으로 표시한 제출도 고칠 수 있고, 고치면 확인함을 풀어 다시 피드백 대기로 돌린다.
+ */
 export async function updateMyTaskSubmission(
   assignmentId: string,
   _prev: AssignmentTaskActionState,
@@ -927,7 +929,9 @@ export async function updateMyTaskSubmission(
   const [row] = await db
     .select({
       id: assignments.id,
+      reviewedAt: assignments.reviewedAt,
       taskId: assignmentTasks.id,
+      title: assignmentTasks.title,
       submissionFormat: assignmentTasks.submissionFormat,
       analysisForm: assignmentTasks.analysisForm,
     })
@@ -945,10 +949,16 @@ export async function updateMyTaskSubmission(
 
   const updated = await db
     .update(assignments)
-    .set({ mediaUrl: payload.mediaUrl, textHtml: payload.textHtml, analysisJson: payload.analysisJson, updatedAt: new Date() })
+    .set({
+      mediaUrl: payload.mediaUrl,
+      textHtml: payload.textHtml,
+      analysisJson: payload.analysisJson,
+      reviewedAt: null,
+      updatedAt: new Date(),
+    })
     .where(and(
       own,
-      assignmentAwaitingReview(db),
+      assignmentHasNoFeedback(db),
       // 검증한 형식이 그대로일 때만 고친다(그 사이 관리자가 형식을 바꿨으면 0행).
       exists(db.select({ id: assignmentTasks.id }).from(assignmentTasks).where(and(
         eq(assignmentTasks.id, assignments.taskId),
@@ -964,15 +974,14 @@ export async function updateMyTaskSubmission(
       .from(feedbacks)
       .where(eq(feedbacks.assignmentId, assignmentId))
       .limit(1);
-    const [current] = await db
-      .select({ reviewedAt: assignments.reviewedAt })
-      .from(assignments)
-      .where(own)
-      .limit(1);
-    const review = { feedbackCount: feedback ? 1 : 0, reviewedAt: current?.reviewedAt ?? null };
-    return {
-      error: isSubmissionSettled(review) ? settledSubmissionError("고칠", review) : TASK_CHANGED_MESSAGE,
-    };
+    return { error: feedback ? FEEDBACK_LOCKED_EDIT_ERROR : TASK_CHANGED_MESSAGE };
+  }
+  if (row.reviewedAt) {
+    await notifyPush(
+      { kind: "role", role: "admin" },
+      pushMessages.assignmentRevised({ assignmentId, studentName: session.user.name ?? null, title: row.title }),
+      { excludeProfileId: studentId },
+    );
   }
   await deleteTaskAssignmentDrafts(db, studentId, row.taskId);
   revalidateAssignmentViews(studentId);

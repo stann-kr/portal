@@ -9,6 +9,7 @@ import {
   isLateSubmission,
   isSubmissionSettled,
   settledSubmissionError,
+  isSubmissionEditLocked,
   normalizePlainTextField,
   plainTextToHtml,
   validateFreeSubmissionPayload,
@@ -103,4 +104,9 @@ test("검토 상태: 피드백 > 확인함 > 피드백 대기 순서이고, 피�
   assert.equal(ASSIGNMENT_TASK_STATUS_LABELS.reviewed, "피드백 완료");
   assert.match(settledSubmissionError("고칠", { feedbackCount: 1, reviewedAt: at }), /^피드백이 등록된 제출은 고칠 수 없습니다/u);
   assert.match(settledSubmissionError("삭제할", { feedbackCount: 0, reviewedAt: at }), /^Stann이 확인한 제출은 삭제할 수 없습니다/u);
+});
+
+test("학생 수정 잠금은 피드백만 본다(확인함은 고치면 다시 피드백 대기)", () => {
+  assert.equal(isSubmissionEditLocked({ feedbackCount: 0 }), false);
+  assert.equal(isSubmissionEditLocked({ feedbackCount: 1 }), true);
 });

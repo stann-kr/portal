@@ -2167,35 +2167,35 @@ test("Stann 확인함: 관리자만 표시·취소하고, 표시된 제출은 �
   assert.ok(summaries.find((row) => row.id === "ack-free")?.reviewedAt instanceof Date);
   assert.equal(summaries.find((row) => row.id === "ack-feedback")?.reviewedAt, null);
 
-  // 학생: 고치기·지우기 모두 거부되고 내용이 그대로다.
+  // 학생: 확인함만 있는 제출은 고칠 수 있고, 고치면 확인함이 풀려 다시 대기열에 돌아온다. 지우기는 여전히 거부된다.
   activeSession = createSession("student-1", "student");
   const [taskItem] = (await assignmentTaskActions.getMyAssignmentTasks()).filter((task) => task.id === "ack-task");
   assert.ok(taskItem?.submission?.reviewedAt instanceof Date, "과제 목록 제출에 확인 시각");
-  assert.match((await assignmentActions.updateMyFreeSubmission("ack-free", {}, taskForm({ mediaUrl: link, text: "확인 뒤 수정" }))).error ?? "", /Stann이 확인한 제출은 고칠 수 없습니다/u);
-  assert.equal((await rowOf("ack-free"))?.textHtml, null);
-  assert.match((await assignmentTaskActions.updateMyTaskSubmission("ack-task-sub", {}, taskForm({ text: "확인 뒤 수정" }))).error ?? "", /Stann이 확인한 제출은 고칠 수 없습니다/u);
-  assert.equal((await rowOf("ack-task-sub"))?.textHtml, "<p>과제 글</p>");
+  assert.deepEqual(await assignmentActions.updateMyFreeSubmission("ack-free", {}, taskForm({ mediaUrl: link, text: "확인 뒤 수정" })), { success: true, id: "ack-free" });
+  assert.equal((await rowOf("ack-free"))?.textHtml, "<p>확인 뒤 수정</p>");
+  assert.equal((await rowOf("ack-free"))?.reviewedAt, null, "고치면 확인함이 풀린다");
+  assert.equal((await assignmentTaskActions.updateMyTaskSubmission("ack-task-sub", {}, taskForm({ text: "확인 뒤 수정" }))).success, true);
+  assert.equal((await rowOf("ack-task-sub"))?.textHtml, "<p>확인 뒤 수정</p>");
+  assert.equal((await rowOf("ack-task-sub"))?.reviewedAt, null);
+  assert.equal((await assignmentTaskActions.updateMyTaskSubmission("ack-task-sub", {}, taskForm({ text: "한 번 더" }))).success, true);
   const refusedDelete = await assignmentActions.deleteMyAssignment("ack-delete");
   assert.equal(refusedDelete.success, false);
   assert.match(refusedDelete.success ? "" : refusedDelete.error, /Stann이 확인한 제출은 삭제할 수 없습니다/u);
   assert.ok(await rowOf("ack-delete"));
-  // 피드백이 있는 제출의 안내는 그대로 피드백 문구다.
+  // 피드백이 있는 제출은 그대로 잠겨 있다.
   assert.match((await assignmentActions.updateMyFreeSubmission("ack-feedback", {}, taskForm({ mediaUrl: link }))).error ?? "", /피드백이 등록된 제출은 고칠 수 없습니다/u);
 
-  // 취소: 학생 수정·삭제가 다시 열리고 대기열·대기 수에 돌아온다. 취소도 같은 값 재전송은 성공이다.
+  // 고친 두 제출은 다시 대기열에 있다.
   activeSession = createSession("admin-1", "admin");
-  for (const id of ["ack-free", "ack-task-sub", "ack-delete"]) {
-    assert.deepEqual(await assignmentReviewActions.setAssignmentReviewed(id, false), { success: true, reviewedAt: null });
-  }
+  assert.deepEqual(await pendingIds(), ["ack-free", "ack-task-sub"]);
+  // 취소: 학생 삭제가 다시 열리고 대기열·대기 수에 돌아온다. 취소도 같은 값 재전송은 성공이다.
+  assert.deepEqual(await assignmentReviewActions.setAssignmentReviewed("ack-delete", false), { success: true, reviewedAt: null });
   assert.deepEqual(await assignmentReviewActions.setAssignmentReviewed("ack-free", false), { success: true, reviewedAt: null });
   assert.equal((await rowOf("ack-free"))?.reviewedAt, null);
   assert.deepEqual(await pendingIds(), ["ack-free", "ack-task-sub", "ack-delete"]);
   assert.equal(await assignmentActions.getPendingFeedbackCount(), 3);
 
   activeSession = createSession("student-1", "student");
-  assert.deepEqual(await assignmentActions.updateMyFreeSubmission("ack-free", {}, taskForm({ mediaUrl: link, text: "취소 뒤 수정" })), { success: true, id: "ack-free" });
-  assert.equal((await assignmentTaskActions.updateMyTaskSubmission("ack-task-sub", {}, taskForm({ text: "취소 뒤 수정" }))).success, true);
-  assert.equal((await rowOf("ack-task-sub"))?.textHtml, "<p>취소 뒤 수정</p>");
   assert.deepEqual(await assignmentActions.deleteMyAssignment("ack-delete"), { success: true });
   assert.equal(await rowOf("ack-delete"), undefined);
 });

@@ -3742,7 +3742,7 @@ test("a free submission resends the same operation id after a lost response and 
   assert.match(sent[2]!.operationId, /^[0-9a-f-]{36}$/u);
 });
 
-test("a task submission Stann acknowledged shows 'Stann 확인함' without an edit button, and an unacknowledged one stays editable", async (context) => {
+test("a task submission Stann acknowledged shows 'Stann 확인함' and stays editable, while one with feedback is locked", async (context) => {
   const base = {
     title: "연습 일지", descriptionHtml: "<p>이번 주 연습</p>", submissionFormat: "TEXT" as const,
     dueAt: new Date(Date.now() + 86_400_000), occurrenceDate: null, recurrenceId: null, closedAt: null, version: 1, createdAt: new Date(),
@@ -3753,11 +3753,13 @@ test("a task submission Stann acknowledged shows 'Stann 확인함' without an ed
   ]} initialTasks={[
     { ...base, id: "task-ack", submission: submission("sub-ack", new Date()) },
     { ...base, id: "task-open", title: "열린 과제", submission: submission("sub-open", null) },
+    { ...base, id: "task-fb", title: "피드백 받은 과제", submission: { ...submission("sub-fb", null), feedbackCount: 1 } },
   ]} />);
   const rowText = (title: string) => [...browser.document.querySelectorAll("li")].find((li) => li.textContent?.includes(title))?.textContent ?? "";
   const ackRow = rowText("연습 일지");
   assert.match(ackRow, /Stann 확인함/u);
-  assert.doesNotMatch(ackRow, /제출 수정/u, "확인한 제출은 고치지 않는다");
+  assert.match(ackRow, /제출 수정/u, "확인함만 있는 제출은 고칠 수 있다(고치면 다시 피드백 대기)");
+  assert.doesNotMatch(rowText("피드백 받은 과제"), /제출 수정/u, "피드백이 달린 제출은 잠긴다");
   const openRow = rowText("열린 과제");
   assert.match(openRow, /피드백 대기/u);
   assert.match(openRow, /제출 수정/u);
@@ -4146,13 +4148,17 @@ test("a free submission without feedback is edited in place from the detail view
   const hasEditButton = () => [...browser.document.querySelectorAll("button")].some((element) => element.textContent === "제출 수정");
   assert.equal(hasEditButton(), false, "피드백이 달린 제출은 고칠 수 없다");
   await act(async () => root.render(detail([], { id: "task-1", title: "글 과제", descriptionHtml: "", formatLabel: "글", dueLabel: null, late: false })));
-  assert.equal(hasEditButton(), false, "과제 제출은 과제 화면에서 고친다");
+  const taskEditLink = () => [...browser.document.querySelectorAll("a")].find((element) => element.textContent === "제출 수정");
+  assert.equal(hasEditButton(), false, "과제 제출은 이 화면이 아니라 과제 목록의 제출 폼에서 고친다");
+  assert.equal(taskEditLink()?.getAttribute("href"), "/dashboard/student?section=workspace&view=assignments&task=task-1", "과제 제출의 제출 수정은 그 과제 폼을 펼친 목록으로 간다");
   await act(async () => root.render(detail([], null, new Date())));
-  assert.equal(hasEditButton(), false, "Stann이 확인한 제출은 고칠 수 없다");
+  assert.ok(hasEditButton(), "Stann이 확인한 자유 제출도 고칠 수 있다");
+  assert.match(browser.document.body.textContent ?? "", /고치면 다시 피드백 대기로 돌아갑니다/u);
   await act(async () => root.render(detail([], { id: "task-1", title: "글 과제", descriptionHtml: "", formatLabel: "글", dueLabel: null, late: false }, new Date())));
-  assert.doesNotMatch(browser.document.body.textContent ?? "", /에서 제출을 고칠 수 있습니다/u, "확인한 과제 제출에는 고치기 안내를 두지 않는다");
-  await act(async () => root.render(detail([], { id: "task-1", title: "글 과제", descriptionHtml: "", formatLabel: "글", dueLabel: null, late: false })));
-  assert.match(browser.document.body.textContent ?? "", /에서 제출을 고칠 수 있습니다/u, "확인 취소 뒤에는 다시 고치기 안내");
+  assert.ok(taskEditLink(), "확인한 과제 제출도 고칠 수 있다");
+  assert.match(browser.document.body.textContent ?? "", /고치면 다시 피드백 대기로 돌아갑니다/u);
+  await act(async () => root.render(detail([{ id: "reviewed", timeMarker: null, content: "좋아요", createdAt: null }], { id: "task-1", title: "글 과제", descriptionHtml: "", formatLabel: "글", dueLabel: null, late: false })));
+  assert.equal(taskEditLink(), undefined, "피드백이 달린 과제 제출은 고칠 수 없다");
   await act(async () => root.render(detail([])));
   await press("제출 수정");
   await settle();
@@ -4862,7 +4868,7 @@ test("과제 확인함: 상세 머리는 피드백 대기·확인함·피드백 
   </>));
   const text = browser.document.body.textContent ?? "";
   assert.match(text, /Stann이 확인했습니다 · 11월 9일/u);
-  assert.match(text, /따로 남긴 피드백은 없습니다\. 확인된 제출은 고칠 수 없습니다\./u);
+  assert.match(text, /따로 남긴 피드백은 없습니다\. 제출을 고치면 다시 피드백 대기로 돌아갑니다\./u);
   assert.match(text, /남은 피드백 대기 3건/u);
   const links = [...browser.document.querySelectorAll("a")].map((link) => [link.textContent, link.getAttribute("href")]);
   assert.deepEqual(links, [

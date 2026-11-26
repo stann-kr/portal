@@ -15,11 +15,11 @@ import { mediaSourceLabel } from "@/components/player/media-source";
 import { TimelineFeedback, type FeedbackItem } from "@/components/feedback/TimelineFeedback";
 import { AssignmentDeleteAction } from "@/components/student-portal/AssignmentDeleteAction";
 import { FreeSubmissionForm } from "@/components/student-portal/FreeSubmissionForm";
-import { Button } from "@/components/ui/button";
+import { Button, buttonClassName } from "@/components/ui/button";
 import { useConfirmAction } from "@/components/ui/confirm-action";
 import { RichTextContent } from "@/components/editor/RichTextContent";
 import { MixAnalysisEntries, MixAnalysisRating } from "@/components/feedback/MixAnalysisReview";
-import { getSubmissionReviewStatus, isSubmissionSettled } from "@/lib/assignment-submission";
+import { getSubmissionReviewStatus, isSubmissionEditLocked, isSubmissionSettled } from "@/lib/assignment-submission";
 import {
   AssignmentAcknowledgedNotice,
   AssignmentReviewStatusRow,
@@ -28,7 +28,7 @@ import {
 } from "@/components/admin/assignments/AssignmentReviewControls";
 import { STUDENT_LEGACY_REDIRECTS } from "@/lib/legacy-dashboard-routes";
 import { mediaUrlAt, splitFeedbackByEntry, type MixAnalysis } from "@/lib/mix-analysis";
-import { analysisWriteHref } from "@/lib/student-space-routes";
+import { analysisWriteHref, assignmentTaskHref } from "@/lib/student-space-routes";
 import { cn } from "@/lib/utils";
 
 interface AssignmentDetailClientProps {
@@ -172,10 +172,15 @@ export function AssignmentDetailClient({
   );
   const deleteConfirm = useConfirmAction();
   const settled = isSubmissionSettled({ feedbackCount: feedbackList.length, reviewedAt });
-  const canDelete = Boolean(deleteReturnTo) && !settled;
+  // deleteReturnTo는 본인 학생이 볼 때만 온다.
+  const isOwner = Boolean(deleteReturnTo);
+  const canDelete = isOwner && !settled;
   const requestDelete = deleteConfirm.request;
-  // 본인 자유 제출(관리자 과제가 아닌 제출)은 피드백 전에 이 화면에서 바로 고친다.
-  const canEditFree = canDelete && !task;
+  // 피드백이 달리기 전에는 고칠 수 있다. Stann이 확인함으로만 표시했으면 고치는 순간 다시 피드백 대기가 된다.
+  const canEdit = isOwner && !isSubmissionEditLocked({ feedbackCount: feedbackList.length });
+  const reopensReview = canEdit && Boolean(reviewedAt);
+  // 본인 자유 제출(관리자 과제가 아닌 제출)은 이 화면에서 바로 고친다.
+  const canEditFree = canEdit && !task;
   const [editingFree, setEditingFree] = useState(false);
   const editTriggerRef = useRef<HTMLButtonElement>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
@@ -279,22 +284,20 @@ export function AssignmentDetailClient({
       <RichTextContent html={textHtml} className="text-md leading-7 md:text-body" />
     </section>
   ) : null;
-  const editHint = !isAdmin && task && analysis && !settled ? (
-    <p className="text-xs text-muted-foreground">
-      피드백이 달리기 전에는{" "}
-      <Link href={analysisWriteHref(task.id)} className="underline underline-offset-[3px] hover:text-foreground">
-        분석을 고칠 수 있습니다
+  const editNote = reopensReview
+    ? "Stann이 확인한 제출입니다. 고치면 다시 피드백 대기로 돌아갑니다."
+    : "피드백이 달리기 전에는 고칠 수 있습니다.";
+  const editHint = canEdit && task ? (
+    // 관리자 과제 제출: 분석은 분석 쓰기 화면, 나머지는 과제 목록에서 그 과제의 제출 폼을 펼쳐 연다.
+    <div className="flex flex-col items-start gap-1">
+      <p className="text-xs text-muted-foreground">{editNote}</p>
+      <Link
+        href={analysis ? analysisWriteHref(task.id) : assignmentTaskHref(task.id)}
+        className={buttonClassName({ variant: "outline", className: "max-md:h-11" })}
+      >
+        {analysis ? "분석 고치기" : "제출 수정"}
       </Link>
-      .
-    </p>
-  ) : !isAdmin && task && !settled ? (
-    <p className="text-xs text-muted-foreground">
-      피드백이 달리기 전에는{" "}
-      <Link href={STUDENT_LEGACY_REDIRECTS.assignments} className="underline underline-offset-[3px] hover:text-foreground">
-        과제 화면
-      </Link>
-      에서 제출을 고칠 수 있습니다.
-    </p>
+    </div>
   ) : canEditFree ? (
     editingFree ? (
       <FreeSubmissionForm
@@ -311,7 +314,7 @@ export function AssignmentDetailClient({
       />
     ) : (
       <div className="flex flex-col items-start gap-1">
-        <p className="text-xs text-muted-foreground">피드백이 달리기 전에는 링크와 글을 고칠 수 있습니다.</p>
+        <p className="text-xs text-muted-foreground">{reopensReview ? editNote : "피드백이 달리기 전에는 링크와 글을 고칠 수 있습니다."}</p>
         <Button ref={editTriggerRef} type="button" variant="outline" className="max-md:h-11" onClick={openFreeEdit}>
           제출 수정
         </Button>
