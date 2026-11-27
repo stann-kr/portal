@@ -284,13 +284,12 @@ export function AssignmentDetailClient({
       <RichTextContent html={textHtml} className="text-md leading-7 md:text-body" />
     </section>
   ) : null;
-  const editNote = reopensReview
-    ? "Stann이 확인한 제출입니다. 고치면 다시 피드백 대기로 돌아갑니다."
-    : "피드백이 달리기 전에는 고칠 수 있습니다.";
+  // 확인함이면 위 확인 카드가 "고치면 다시 피드백 대기로 돌아갑니다"를 이미 말한다.
+  const editNote = reopensReview ? null : "피드백이 달리기 전에는 고칠 수 있습니다.";
   const editHint = canEdit && task ? (
     // 관리자 과제 제출: 분석은 분석 쓰기 화면, 나머지는 과제 목록에서 그 과제의 제출 폼을 펼쳐 연다.
     <div className="flex flex-col items-start gap-1">
-      <p className="text-xs text-muted-foreground">{editNote}</p>
+      {editNote ? <p className="text-xs text-muted-foreground">{editNote}</p> : null}
       <Link
         href={analysis ? analysisWriteHref(task.id) : assignmentTaskHref(task.id)}
         className={buttonClassName({ variant: "outline", className: "max-md:h-11" })}
@@ -314,7 +313,7 @@ export function AssignmentDetailClient({
       />
     ) : (
       <div className="flex flex-col items-start gap-1">
-        <p className="text-xs text-muted-foreground">{reopensReview ? editNote : "피드백이 달리기 전에는 링크와 글을 고칠 수 있습니다."}</p>
+        {reopensReview ? null : <p className="text-xs text-muted-foreground">피드백이 달리기 전에는 링크와 글을 고칠 수 있습니다.</p>}
         <Button ref={editTriggerRef} type="button" variant="outline" className="max-md:h-11" onClick={openFreeEdit}>
           제출 수정
         </Button>

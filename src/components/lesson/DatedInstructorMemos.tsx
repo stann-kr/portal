@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useState, useTransition } from "react";
-import { CalendarDays, ChevronLeft, ChevronRight, Lock } from "lucide-react";
+import { ChevronLeft, ChevronRight, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { InstructorMemoEditor } from "@/components/lesson/InstructorMemoEditor";
 import {
@@ -106,15 +106,14 @@ export function DatedInstructorMemos({
           <Button type="button" size="icon" variant="ghost" aria-label="전날" onClick={() => open(shiftKey(date, -1))}>
             <ChevronLeft className="size-4" strokeWidth={1.8} aria-hidden="true" />
           </Button>
-          <label className="relative inline-flex items-center">
+          <label className="inline-flex items-center">
             <span className="sr-only">메모 날짜</span>
-            <CalendarDays className="pointer-events-none absolute left-2.5 size-3.5 text-muted-foreground" strokeWidth={1.8} aria-hidden="true" />
             <input
               id="dated-memo-date"
               type="date"
               value={date}
               onChange={(event) => open(event.target.value)}
-              className="h-9 rounded-md border border-input bg-background pl-8 pr-2 text-ui tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="h-9 rounded-md border border-input bg-background px-2 text-ui tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
           </label>
           <Button type="button" size="icon" variant="ghost" aria-label="다음 날" onClick={() => open(shiftKey(date, 1))}>
