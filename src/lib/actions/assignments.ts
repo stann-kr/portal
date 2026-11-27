@@ -18,8 +18,8 @@ import {
   assertOwnerOrAdmin,
   requireStudentTarget,
 } from "@/lib/auth-guard";
-import { settledSubmissionError, validateFreeSubmissionPayload } from "@/lib/assignment-submission";
-import { assignmentAwaitingReview } from "@/lib/assignment-review-query";
+import { FEEDBACK_LOCKED_EDIT_ERROR, settledSubmissionError, validateFreeSubmissionPayload } from "@/lib/assignment-submission";
+import { assignmentAwaitingReview, assignmentHasNoFeedback } from "@/lib/assignment-review-query";
 import { ACTIVE_ACCOUNT_STATUS } from "@/lib/student-status";
 import { pushMessages } from "@/lib/push/messages";
 import { notifyPush } from "@/lib/push/notify";
@@ -104,6 +104,7 @@ export async function submitAssignment(
 /**
  * 학생 본인의 자유 제출(task_id IS NULL)을 피드백이 달리기 전에만 고친다.
  * 소유·자유 제출·피드백 없음 확인과 수정을 한 UPDATE 문으로 처리해 그 사이 등록된 피드백이 있으면 고치지 않는다.
+ * Stann이 확인함으로 표시한 제출도 고칠 수 있고, 고치면 확인함을 풀어 다시 피드백 대기로 돌린다.
  * 관리자 과제에 대한 제출은 assignmentTasks.ts의 updateMyTaskSubmission이 맡는다.
  */
 export async function updateMyFreeSubmission(
@@ -127,28 +128,40 @@ export async function updateMyFreeSubmission(
     isNull(assignments.taskId),
   );
   const db = createDb();
+  // 확인함이 풀리는 수정이면 Stann에게 다시 알린다(알림 판단용 읽기라 UPDATE와 원자적일 필요는 없다).
+  const [before] = await db
+    .select({ reviewedAt: assignments.reviewedAt })
+    .from(assignments)
+    .where(ownFreeSubmission)
+    .limit(1);
+  if (!before) return { error: "고칠 제출을 찾을 수 없습니다. 목록을 새로고침해 주세요." };
   const updated = await db
     .update(assignments)
-    .set({ mediaUrl: payload.mediaUrl, textHtml: payload.textHtml, updatedAt: new Date() })
+    .set({ mediaUrl: payload.mediaUrl, textHtml: payload.textHtml, reviewedAt: null, updatedAt: new Date() })
     .where(and(
       ownFreeSubmission,
-      assignmentAwaitingReview(db),
+      assignmentHasNoFeedback(db),
     ))
     .returning({ id: assignments.id });
 
   if (updated.length === 0) {
     const [remaining] = await db
-      .select({ id: assignments.id, reviewedAt: assignments.reviewedAt })
+      .select({ id: assignments.id })
       .from(assignments)
       .where(ownFreeSubmission)
       .limit(1);
     return {
-      error: remaining
-        ? settledSubmissionError("고칠", { feedbackCount: await countFeedbacks(db, assignmentId), reviewedAt: remaining.reviewedAt })
-        : "고칠 제출을 찾을 수 없습니다. 목록을 새로고침해 주세요.",
+      error: remaining ? FEEDBACK_LOCKED_EDIT_ERROR : "고칠 제출을 찾을 수 없습니다. 목록을 새로고침해 주세요.",
     };
   }
 
+  if (before.reviewedAt) {
+    await notifyPush(
+      { kind: "role", role: "admin" },
+      pushMessages.assignmentRevised({ assignmentId, studentName: session.user.name ?? null, title: null }),
+      { excludeProfileId: studentId },
+    );
+  }
   await deleteAssignmentDraftByKey(db, studentId, freeSubmissionDraftKey(assignmentId));
   revalidatePath("/dashboard/student/assignments");
   revalidatePath(`/dashboard/student/assignments/${assignmentId}`);

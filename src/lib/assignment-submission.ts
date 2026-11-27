@@ -159,6 +159,18 @@ export function isSubmissionSettled(submission: SubmissionReviewState): boolean 
   return getSubmissionReviewStatus(submission) !== "submitted";
 }
 
+/**
+ * 학생이 제출을 고칠 수 없는지. 피드백은 고치기 전 믹스의 재생 시점·분석 항목에 붙어 있어 피드백이 달린 제출만 잠근다.
+ * Stann이 확인함으로만 표시한 제출은 고칠 수 있고, 고치면 확인함이 풀려 다시 피드백 대기가 된다(2026-11-27 사용자 요청
+ * "과제 제출후 수정을 못하는 문제"). 서버 쿼리에서는 같은 규칙을 `assignmentHasNoFeedback`로 쓴다.
+ * 삭제는 여전히 `isSubmissionSettled`(확인함 포함)로 막는다.
+ */
+export function isSubmissionEditLocked(submission: Pick<SubmissionReviewState, "feedbackCount">): boolean {
+  return submission.feedbackCount > 0;
+}
+
+export const FEEDBACK_LOCKED_EDIT_ERROR = "피드백이 등록된 제출은 고칠 수 없습니다. 필요하면 Stann에게 문의해 주세요.";
+
 /** 검토가 끝나 잠긴 제출을 학생이 고치거나 지우려 할 때의 안내. 피드백이 있으면 피드백 문구를 우선한다. */
 export function settledSubmissionError(verb: "고칠" | "삭제할", submission: SubmissionReviewState): string {
   const reason = submission.feedbackCount > 0 ? "피드백이 등록된 제출은" : "Stann이 확인한 제출은";

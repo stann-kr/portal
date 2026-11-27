@@ -34,10 +34,11 @@ import {
   getSubmissionReviewStatus,
   htmlToPlainText,
   isLateSubmission,
+  isSubmissionEditLocked,
   isSubmissionSettled,
   type AssignmentTaskStatus,
 } from "@/lib/assignment-submission";
-import { formatKstDot, formatKstMonthDayTime } from "@/lib/kst-format";
+import { formatAssignmentDue, formatKstDot, formatKstMonthDayTime } from "@/lib/kst-format";
 import { getPortalStatus, STATUS_TONE_DOT_CLASS_NAMES, type PortalStatusTone } from "@/lib/portal-status";
 import { STUDENT_LEGACY_REDIRECTS } from "@/lib/legacy-dashboard-routes";
 import { analysisWriteHref, assignmentTaskHref } from "@/lib/student-space-routes";
@@ -100,9 +101,6 @@ function formatSubmittedAt(date: Date | null): string {
   return date ? formatKstDot(date, { time: true, referenceTime: new Date() }) || "제출일 미정" : "제출일 미정";
 }
 
-function formatDue(dueAt: Date | null): string {
-  return dueAt ? `${formatKstDot(dueAt, { weekday: true, time: true, referenceTime: new Date() })} 마감` : "마감 없음";
-}
 
 function StatusDot({ tone, label }: { tone: PortalStatusTone; label: string }) {
   return (
@@ -316,12 +314,13 @@ function TaskRow({
     : closed ? "closed" : duePassed ? "overdue" : "open";
   const late = submission ? isLateSubmission(task.dueAt, submission.submittedAt) : false;
   // Stann이 완료로 처리한 과제는 더 낼 수 없다(설명은 펼쳐 볼 수 있다).
-  const canEdit = submission ? !isSubmissionSettled(submission) : !closed;
+  // 피드백이 달린 제출만 잠긴다(확인함은 고치면 다시 피드백 대기).
+  const canEdit = submission ? !isSubmissionEditLocked(submission) : !closed;
   const panelId = `task-panel-${task.id}`;
   // 계정에 임시 저장한 글(제출 전 "작성 중", 제출 뒤 "고치는 중"). 고칠 수 없는 제출이면 보이지 않는다.
   const draftSavedAt = canEdit ? task.draftSavedAt ?? null : null;
   const meta = [
-    formatDue(task.dueAt),
+    formatAssignmentDue(task, new Date()),
     ASSIGNMENT_FORMAT_LABELS[task.submissionFormat],
     task.recurrenceId || task.occurrenceDate ? "정기" : null,
   ].filter(Boolean).join(" · ");

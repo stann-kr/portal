@@ -351,7 +351,10 @@ export const assignmentRecurrences = sqliteTable(
     intervalWeeks: integer("interval_weeks").default(1).notNull(),
     /** 요일 bit mask. bit 0이 일요일, bit 6이 토요일이다. */
     weekdays: integer("weekdays").notNull(),
+    /** 회차 날짜의 마감 시각(KST). 마감 없는 규칙(has_due = 0)에서는 회차 생성 경계로만 쓰고 23:59를 둔다. */
     dueTime: text("due_time").notNull(),
+    /** 0이면 마감 없는 정기 과제: 회차의 due_at을 비운다(0042, 2026-11-27 사용자 요청). */
+    hasDue: integer("has_due", { mode: "boolean" }).default(true).notNull(),
     endDate: text("end_date"),
     maxOccurrences: integer("max_occurrences"),
     pausedAt: integer("paused_at", { mode: "timestamp" }),
@@ -375,6 +378,10 @@ export const assignmentRecurrences = sqliteTable(
     check(
       "assignment_recurrences_analysis_form_check",
       sql`${table.analysisForm} IN (0, 1) AND (${table.analysisForm} = 0 OR ${table.submissionFormat} = 'MIX')`,
+    ),
+    check(
+      "assignment_recurrences_has_due_check",
+      sql`${table.hasDue} IN (0, 1) AND (${table.hasDue} = 1 OR ${table.dueTime} = '23:59')`,
     ),
     check(
       "assignment_recurrences_schedule_check",
@@ -2238,6 +2245,7 @@ export const calendarPushChannels = sqliteTable(
 
 /**
  * 관리자만 보는 수업 메모. note_id가 없으면 학생 전체에 대한 메모(학생당 하나), 있으면 그 노트의 수업 메모(노트당 하나)다.
+ * memo_date가 있으면 노트 없이 남기는 그 날짜의 학생 메모(학생·날짜당 하나, 0043)다. 진도 체크·다음 수업 참고용.
  * 학생과 함께 쓰는 노트(공동 편집 room·revision·검색)와 섞지 않으려고 별도 표에 둔다.
  */
 export const instructorMemos = sqliteTable(
@@ -2250,6 +2258,8 @@ export const instructorMemos = sqliteTable(
     noteId: text("note_id").references(() => privateNotes.id, {
       onDelete: "cascade",
     }),
+    /** 날짜 메모의 날짜(KST YYYY-MM-DD). 노트 메모·학생 메모는 NULL(0043). */
+    memoDate: text("memo_date"),
     contentHtml: text("content_html").notNull(),
     version: integer("version").default(1).notNull(),
     updatedById: text("updated_by_id").references(() => profiles.id, {
@@ -2266,7 +2276,14 @@ export const instructorMemos = sqliteTable(
     uniqueIndex("instructor_memos_note_unique").on(table.noteId),
     uniqueIndex("instructor_memos_student_unique")
       .on(table.studentId)
-      .where(sql`${table.noteId} IS NULL`),
+      .where(sql`${table.noteId} IS NULL AND ${table.memoDate} IS NULL`),
+    uniqueIndex("instructor_memos_student_date_unique")
+      .on(table.studentId, table.memoDate)
+      .where(sql`${table.memoDate} IS NOT NULL`),
+    check(
+      "instructor_memos_memo_date_check",
+      sql`${table.memoDate} IS NULL OR (length(${table.memoDate}) = 10 AND ${table.noteId} IS NULL)`,
+    ),
     check(
       "instructor_memos_payload_check",
       sql`${table.version} >= 1

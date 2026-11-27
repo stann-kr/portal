@@ -258,6 +258,50 @@ test("수업 메모는 관리자만 읽고 쓰며, 노트 메모의 학생은 �
   assert.equal(kept?.contentHtml, "<p>장기 과제</p>");
 });
 
+test("날짜별 메모는 노트 없이 학생·날짜마다 하나이고, 학생 메모·노트 메모와 섞이지 않으며 관리자만 읽고 쓴다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("admin-1", "admin"));
+  await seedProfile(db, "admin-1", "admin");
+  await seedProfile(db, "student-1");
+  await seedProfile(db, "student-2");
+  const day = (date: string, studentId = "student-1") => ({ kind: "date" as const, studentId, date });
+
+  assert.deepEqual(await memoActions.getInstructorMemo(day("2026-11-27")), { memoId: null, contentHtml: "", version: 0, updatedAt: null });
+  assert.equal((await memoActions.saveInstructorMemoAction(day("2026-11-27"), { contentHtml: "<p>8마디 전환 연습</p>", baseVersion: 0 })).ok, true);
+  assert.equal((await memoActions.saveInstructorMemoAction(day("2026-11-20"), { contentHtml: "<p>EQ 기초</p>", baseVersion: 0 })).ok, true);
+  assert.equal((await memoActions.saveInstructorMemoAction({ kind: "student", studentId: "student-1" }, { contentHtml: "<p>장기</p>", baseVersion: 0 })).ok, true);
+  assert.equal((await memoActions.saveInstructorMemoAction(day("2026-11-27", "student-2"), { contentHtml: "<p>다른 학생</p>", baseVersion: 0 })).ok, true);
+  // 비워 저장한 날짜는 목록에서 뺀다.
+  const emptied = await memoActions.saveInstructorMemoAction(day("2026-11-21"), { contentHtml: "<p>잠깐</p>", baseVersion: 0 });
+  assert.equal(emptied.ok, true);
+  assert.equal((await memoActions.saveInstructorMemoAction(day("2026-11-21"), { contentHtml: "", baseVersion: 1 })).ok, true);
+
+  assert.equal((await memoActions.getInstructorMemo(day("2026-11-27")))?.contentHtml, "<p>8마디 전환 연습</p>");
+  assert.equal((await memoActions.getInstructorMemo({ kind: "student", studentId: "student-1" }))?.contentHtml, "<p>장기</p>", "학생 메모는 날짜 메모와 따로다");
+  assert.deepEqual(
+    (await memoActions.getDatedInstructorMemos("student-1")).map((item) => [item.date, item.contentHtml]),
+    [["2026-11-27", "<p>8마디 전환 연습</p>"], ["2026-11-20", "<p>EQ 기초</p>"]],
+    "최근 날짜부터, 이 학생 것만, 비운 날짜는 빼고",
+  );
+  const stale = await memoActions.saveInstructorMemoAction(day("2026-11-27"), { contentHtml: "<p>다른 기기</p>", baseVersion: 0 });
+  assert.equal(!stale.ok && stale.conflict?.version, 1, "날짜 메모도 낡은 기준으로는 덮어쓰지 않는다");
+  assert.equal((await memoActions.getInstructorMemoRevisions(day("2026-11-27"))).length, 1);
+
+  // 날짜가 아니면 붙이지 않고, 학생이 아닌 대상은 거절한다.
+  assert.equal(await memoActions.getInstructorMemo(day("2026-02-30")), null);
+  assert.equal((await memoActions.saveInstructorMemoAction(day("어제"), { contentHtml: "<p>x</p>", baseVersion: 0 })).ok, false);
+  await assert.rejects(memoActions.getInstructorMemo(day("2026-11-27", "admin-1")), /Student not found/);
+  await assert.rejects(memoActions.getDatedInstructorMemos("admin-1"), /Student not found/);
+
+  // 학생은 자기 날짜 메모라도 읽거나 쓸 수 없다.
+  activeSession = createSession("student-1", "student");
+  await assert.rejects(memoActions.getInstructorMemo(day("2026-11-27")), /Admin only|Unauthorized/);
+  await assert.rejects(memoActions.getDatedInstructorMemos("student-1"), /Admin only|Unauthorized/);
+  await assert.rejects(memoActions.saveInstructorMemoAction(day("2026-11-27"), { contentHtml: "<p>x</p>", baseVersion: 1 }), /Admin only|Unauthorized/);
+  const rows = await db.select().from(instructorMemos).where(eq(instructorMemos.studentId, "student-1"));
+  assert.equal(rows.length, 4);
+  assert.equal(rows.find((row) => row.memoDate === "2026-11-27")?.contentHtml, "<p>8마디 전환 연습</p>");
+});
+
 test("로그인 이메일은 공백·대소문자 차이를 허용하되 모호한 계정은 고르지 않는다", { concurrency: false }, async (context) => {
   const db = await setupDatabase(context, createSession("admin-1", "admin"));
   await db.insert(profiles).values([
@@ -1638,6 +1682,52 @@ test("믹스셋 분석 과제는 MIX와 분석 표시로 저장하고, 학생은
   assert.ok((await ruleTasks()).every((task) => !task.analysisForm), "마감 전 회차는 새 형식으로 다시 생긴다");
 });
 
+test("마감 없음: 한 번 과제는 마감을 비우고, 정기 과제는 회차 마감을 비운 채 만들며 마감을 켜고 끄면 열린 미제출 회차를 다시 만든다", { concurrency: false }, async (context) => {
+  const db = await setupDatabase(context, createSession("admin-1", "admin"));
+  await seedProfile(db, "admin-1", "admin");
+  await seedProfile(db, "student-1");
+  const today = kstTodayKey(new Date());
+
+  // 한 번 과제: "마감 없음"을 고르면 칸에 남은 날짜가 있어도 마감을 비운다.
+  const once = await assignmentTaskActions.createAssignmentTask("student-1", {}, taskForm({ title: "자유 연습", submissionFormat: "TEXT", dueDate: "2026-12-01", dueTime: "21:00", noDue: "1", operationId: crypto.randomUUID() }));
+  assert.equal(once.success, true);
+  assert.equal((await db.select().from(assignmentTasks).where(eq(assignmentTasks.id, once.id!)))[0]?.dueAt, null);
+
+  // 정기 과제: 시각 칸 없이 noDue만 보내도 만들어지고(경계 23:59), 회차 마감은 비어 있다.
+  const fields = { title: "매일 기록", submissionFormat: "TEXT", startDate: shiftDayKey(today, -2), intervalWeeks: "1", weekdays: ["0", "1", "2", "3", "4", "5", "6"] };
+  const rule = await assignmentTaskActions.createAssignmentRecurrence("student-1", {}, taskForm({ ...fields, noDue: "1", operationId: crypto.randomUUID() }));
+  assert.equal(rule.success, true);
+  const [stored] = await db.select().from(assignmentRecurrences).where(eq(assignmentRecurrences.id, rule.id!));
+  assert.equal(stored?.hasDue, false);
+  assert.equal(stored?.dueTime, "23:59");
+  const ruleTasks = () => db.select().from(assignmentTasks).where(eq(assignmentTasks.recurrenceId, rule.id!));
+  const first = await ruleTasks();
+  assert.ok(first.length > 0);
+  assert.ok(first.every((task) => task.dueAt === null), "마감 없는 회차");
+  const listed = await assignmentTaskActions.getAssignmentTasksForStudent("student-1");
+  assert.equal(listed.recurrences.find((item) => item.id === rule.id)?.hasDue, false);
+
+  // 새 규칙은 지금 이후의 회차(오늘·다음 회차)만 만든다. 학생이 오늘 회차를 낸다.
+  assert.deepEqual(first.map((task) => task.occurrenceDate).sort(), [today, shiftDayKey(today, 1)]);
+  activeSession = createSession("student-1", "student");
+  const todayTask = first.find((task) => task.occurrenceDate === today)!;
+  assert.equal((await assignmentTaskActions.submitAssignmentTask(todayTask.id, {}, taskForm({ text: "오늘 기록" }))).success, true);
+
+  // 마감을 켜면 열린 미제출 회차가 마감 있는 회차로 다시 생기고, 제출한 회차는 그대로다.
+  activeSession = createSession("admin-1", "admin");
+  assert.equal((await assignmentTaskActions.updateAssignmentRecurrence("student-1", rule.id!, {}, taskForm({ ...fields, dueTime: "21:00", version: "1" }))).success, true);
+  const second = await ruleTasks();
+  const byDate = (date: string) => second.find((task) => task.occurrenceDate === date);
+  assert.equal(byDate(today)?.dueAt, null, "제출한 회차는 남긴다");
+  assert.equal(byDate(shiftDayKey(today, 1))?.dueAt?.getTime(), Date.parse(`${shiftDayKey(today, 1)}T12:00:00.000Z`), "다음 회차는 새 마감으로 다시 생긴다");
+
+  // 다시 끄면 마감 있는 열린 회차가 마감 없는 회차로 다시 생긴다(같은 경계로 지우고 만든다).
+  assert.equal((await assignmentTaskActions.updateAssignmentRecurrence("student-1", rule.id!, {}, taskForm({ ...fields, noDue: "1", version: "2" }))).success, true);
+  const third = await ruleTasks();
+  assert.equal(third.find((task) => task.occurrenceDate === shiftDayKey(today, 1))?.dueAt, null);
+  assert.equal(third.length, second.length, "지우고 다시 만든 회차 수가 같다");
+});
+
 test("정기 과제 회차는 동시 조회에도 한 번만 생기고 수정·멈춤·삭제는 제출된 회차와 지난 회차를 보존한다", { concurrency: false }, async (context) => {
   const db = await setupDatabase(context, createSession("student-1", "student"));
   await seedProfile(db, "admin-1", "admin");
@@ -2167,35 +2257,35 @@ test("Stann 확인함: 관리자만 표시·취소하고, 표시된 제출은 �
   assert.ok(summaries.find((row) => row.id === "ack-free")?.reviewedAt instanceof Date);
   assert.equal(summaries.find((row) => row.id === "ack-feedback")?.reviewedAt, null);
 
-  // 학생: 고치기·지우기 모두 거부되고 내용이 그대로다.
+  // 학생: 확인함만 있는 제출은 고칠 수 있고, 고치면 확인함이 풀려 다시 대기열에 돌아온다. 지우기는 여전히 거부된다.
   activeSession = createSession("student-1", "student");
   const [taskItem] = (await assignmentTaskActions.getMyAssignmentTasks()).filter((task) => task.id === "ack-task");
   assert.ok(taskItem?.submission?.reviewedAt instanceof Date, "과제 목록 제출에 확인 시각");
-  assert.match((await assignmentActions.updateMyFreeSubmission("ack-free", {}, taskForm({ mediaUrl: link, text: "확인 뒤 수정" }))).error ?? "", /Stann이 확인한 제출은 고칠 수 없습니다/u);
-  assert.equal((await rowOf("ack-free"))?.textHtml, null);
-  assert.match((await assignmentTaskActions.updateMyTaskSubmission("ack-task-sub", {}, taskForm({ text: "확인 뒤 수정" }))).error ?? "", /Stann이 확인한 제출은 고칠 수 없습니다/u);
-  assert.equal((await rowOf("ack-task-sub"))?.textHtml, "<p>과제 글</p>");
+  assert.deepEqual(await assignmentActions.updateMyFreeSubmission("ack-free", {}, taskForm({ mediaUrl: link, text: "확인 뒤 수정" })), { success: true, id: "ack-free" });
+  assert.equal((await rowOf("ack-free"))?.textHtml, "<p>확인 뒤 수정</p>");
+  assert.equal((await rowOf("ack-free"))?.reviewedAt, null, "고치면 확인함이 풀린다");
+  assert.equal((await assignmentTaskActions.updateMyTaskSubmission("ack-task-sub", {}, taskForm({ text: "확인 뒤 수정" }))).success, true);
+  assert.equal((await rowOf("ack-task-sub"))?.textHtml, "<p>확인 뒤 수정</p>");
+  assert.equal((await rowOf("ack-task-sub"))?.reviewedAt, null);
+  assert.equal((await assignmentTaskActions.updateMyTaskSubmission("ack-task-sub", {}, taskForm({ text: "한 번 더" }))).success, true);
   const refusedDelete = await assignmentActions.deleteMyAssignment("ack-delete");
   assert.equal(refusedDelete.success, false);
   assert.match(refusedDelete.success ? "" : refusedDelete.error, /Stann이 확인한 제출은 삭제할 수 없습니다/u);
   assert.ok(await rowOf("ack-delete"));
-  // 피드백이 있는 제출의 안내는 그대로 피드백 문구다.
+  // 피드백이 있는 제출은 그대로 잠겨 있다.
   assert.match((await assignmentActions.updateMyFreeSubmission("ack-feedback", {}, taskForm({ mediaUrl: link }))).error ?? "", /피드백이 등록된 제출은 고칠 수 없습니다/u);
 
-  // 취소: 학생 수정·삭제가 다시 열리고 대기열·대기 수에 돌아온다. 취소도 같은 값 재전송은 성공이다.
+  // 고친 두 제출은 다시 대기열에 있다.
   activeSession = createSession("admin-1", "admin");
-  for (const id of ["ack-free", "ack-task-sub", "ack-delete"]) {
-    assert.deepEqual(await assignmentReviewActions.setAssignmentReviewed(id, false), { success: true, reviewedAt: null });
-  }
+  assert.deepEqual(await pendingIds(), ["ack-free", "ack-task-sub"]);
+  // 취소: 학생 삭제가 다시 열리고 대기열·대기 수에 돌아온다. 취소도 같은 값 재전송은 성공이다.
+  assert.deepEqual(await assignmentReviewActions.setAssignmentReviewed("ack-delete", false), { success: true, reviewedAt: null });
   assert.deepEqual(await assignmentReviewActions.setAssignmentReviewed("ack-free", false), { success: true, reviewedAt: null });
   assert.equal((await rowOf("ack-free"))?.reviewedAt, null);
   assert.deepEqual(await pendingIds(), ["ack-free", "ack-task-sub", "ack-delete"]);
   assert.equal(await assignmentActions.getPendingFeedbackCount(), 3);
 
   activeSession = createSession("student-1", "student");
-  assert.deepEqual(await assignmentActions.updateMyFreeSubmission("ack-free", {}, taskForm({ mediaUrl: link, text: "취소 뒤 수정" })), { success: true, id: "ack-free" });
-  assert.equal((await assignmentTaskActions.updateMyTaskSubmission("ack-task-sub", {}, taskForm({ text: "취소 뒤 수정" }))).success, true);
-  assert.equal((await rowOf("ack-task-sub"))?.textHtml, "<p>취소 뒤 수정</p>");
   assert.deepEqual(await assignmentActions.deleteMyAssignment("ack-delete"), { success: true });
   assert.equal(await rowOf("ack-delete"), undefined);
 });

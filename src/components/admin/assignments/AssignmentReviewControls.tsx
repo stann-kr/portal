@@ -113,7 +113,7 @@ export function AssignmentAcknowledgedNotice({ reviewedAt }: { reviewedAt: Date 
         Stann이 확인했습니다 · {formatKst(reviewedAt, { month: "long", day: "numeric" })}
       </p>
       <p className="pl-[22px] text-ui leading-5 text-secondary-foreground">
-        따로 남긴 피드백은 없습니다. 확인된 제출은 고칠 수 없습니다.
+        따로 남긴 피드백은 없습니다. 제출을 고치면 다시 피드백 대기로 돌아갑니다.
       </p>
     </section>
   );

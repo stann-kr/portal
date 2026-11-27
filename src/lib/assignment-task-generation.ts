@@ -81,7 +81,7 @@ function occurrenceInsertStatements(
         rule.descriptionHtml,
         rule.submissionFormat,
         rule.analysisForm ? 1 : 0,
-        epochSeconds(occurrence.dueAt),
+        occurrence.dueAt === null ? null : epochSeconds(occurrence.dueAt),
         rule.createdById,
         nowSeconds,
         nowSeconds,

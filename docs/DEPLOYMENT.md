@@ -32,7 +32,7 @@
 
 | 항목 | 저장소에서 확인할 수 있는 것 | 운영 적용을 확인하는 증거 |
 |---|---|---|
-| D1 migration | SQL·journal·snapshot `0000~0041`, 메모리 DB에서 체인·schema 검증 | 대상 D1의 적용 목록과 실제 schema·FK, 그 목록에서 계산한 pending 범위 |
+| D1 migration | SQL·journal·snapshot `0000~0043`, 메모리 DB에서 체인·schema 검증 | 대상 D1의 적용 목록과 실제 schema·FK, 그 목록에서 계산한 pending 범위 |
 | 계정 삭제 | `0012`와 삭제·정리 구현, application 설정의 `ACCOUNT_DELETION_ENABLED="false"` 기본값 | 활성 Worker의 유효 flag, 기기 adoption, 승인된 삭제·정리 smoke |
 | 예약 정리 | `worker.ts`의 `scheduled` handler, Workers Logs 설정, source에 없는 Cron trigger | 원격 trigger 주기, 대상 version의 실제 scheduled invocation, backlog·실패·alert 증거 |
 | 외부 캘린더 | `0013` 구독 테이블과 `EXTERNAL_CALENDAR_ENCRYPTION_KEY` 요구 조건 | 대상 schema, secret 설정 확인, 승인된 연결·읽기·교체·해제 smoke |
@@ -51,6 +51,8 @@
 | 가이드 휴지통·이력·Q&A 고치기·그룹 해제 | `0039`의 `guide_page_revisions`·`qna_reply_revisions` 새 표, `guide_pages.deleted_at`·`deleted_by_id`·`lesson_groups.dissolved_at` 칸 | 대상 D1의 `0039` 적용과 `PRAGMA table_info(guide_pages)`·`PRAGMA table_info(lesson_groups)`, 새 두 표는 처음에 빈 표, `PRAGMA foreign_key_check` 빈 결과 |
 | 가이드 되돌리기 세대 | `0040`의 `guide_pages.collab_lifecycle`(NOT NULL 기본 0) | 대상 D1의 `0040` 적용과 모든 가이드가 0인지(`SELECT COUNT(*) FROM guide_pages WHERE collab_lifecycle <> 0`) |
 | 시점 구간 | `0041`의 `feedbacks.time_marker_end`·`comments.time_marker_end_seconds`(nullable, CHECK) 칸 추가 | 대상 D1의 `0041` 적용과 `PRAGMA table_info(feedbacks)`·`PRAGMA table_info(comments)`, 처음에는 모두 NULL(`SELECT COUNT(*) FROM feedbacks WHERE time_marker_end IS NOT NULL` = 0, 댓글도 같음) |
+| 마감 없는 정기 과제 | `0042`의 `assignment_recurrences.has_due`(NOT NULL 기본 1, CHECK) | 대상 D1의 `0042` 적용과 `PRAGMA table_info(assignment_recurrences)`, 처음에는 모두 1(`SELECT COUNT(*) FROM assignment_recurrences WHERE has_due <> 1` = 0) |
+| 날짜별 수업 메모 | `0043`의 `instructor_memos.memo_date`(nullable, CHECK), 학생 메모 unique index 재생성, 학생·날짜 unique index | 대상 D1의 `0043` 적용과 `PRAGMA table_info(instructor_memos)`, `PRAGMA index_list(instructor_memos)`(student_unique·student_date_unique), 처음에는 모두 NULL |
 | 노트 읽기 전용·버전 편집자 | `0036`의 `private_notes.student_read_only`(기본 0)·`private_note_revisions.contributor_ids`(nullable) 칸 추가 | 대상 D1의 `0036` 적용과 `PRAGMA table_info(private_notes)`·`PRAGMA table_info(private_note_revisions)`, 모든 노트가 0인지(`SELECT COUNT(*) FROM private_notes WHERE student_read_only <> 0`) |
 | 그룹레슨 | `0029` 그룹·멤버 table과 `private_notes.group_id`, `0030` `document_tombstones.group_id`와 media UPDATE trigger 넷 재생성 | 대상 D1의 `0029`·`0030` 적용과 `lesson_groups`·`lesson_group_members` 존재, 관리자 학생 목록의 그룹 만들기 |
 | 배포 환경 분리 | 현재 tracked 설정의 Worker는 `portal` | development/production Worker·D1·R2·route·secret·branch trigger 각각의 inventory |
@@ -213,6 +215,15 @@ iCloud 연동:
 4. 새 secret·binding·DO class 변경은 없다. 운영 smoke는 read-only로 한다.
 5. 되돌리기(이전 코드로 돌아가면): 구간 피드백·댓글은 시작 한 점으로 보이고 끝은 칸에 남는다. 이전 코드로 구간 피드백의 시점을 끝 이후로 옮기거나 비우면 CHECK가 저장을 거절한다(오류로 끝나고 행은 바뀌지 않는다). 그런 피드백은 새 코드로 다시 올린 뒤 고치면 된다. 수업 노트의 `[a~b]` 글자는 꾸밈 없는 글자로 남는다.
 6. 새 개인정보 항목은 없다(이미 있는 재생 시점에 끝 시점 하나를 더할 뿐이다).
+
+### 마감 없음·날짜별 메모 gate (2026-11-27)
+
+1. 원격 D1에 `0042_assignment_no_due`, `0043_dated_instructor_memos`를 **코드보다 먼저** 순서대로 적용한다(Time Travel bookmark 먼저, `0041` 적용 뒤). 둘 다 ADD COLUMN(기본값·CHECK)과 index뿐이라 표 재구성·trigger 변경이 없다. 이전 코드의 INSERT·UPDATE가 그대로 되는지 `db:check`가 검사한다(`has_due`는 기본 1, `memo_date`는 NULL). `0043`은 학생 메모 unique index를 지우고 좁혀 다시 만든다. 기존 행은 모두 `memo_date` NULL이라 같은 범위다.
+2. 순서를 바꾸면 안 된다. 새 코드가 칸 없이 나가면 정기 과제 조회·회차 생성과 학생 상세 개요(날짜 메모)가 오류가 된다.
+3. 적용 뒤 read-only로 `SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 2`, `PRAGMA table_info(assignment_recurrences)`(has_due), `PRAGMA table_info(instructor_memos)`(memo_date), `PRAGMA index_list(instructor_memos)`, `SELECT COUNT(*) FROM assignment_recurrences WHERE has_due <> 1`(0), `SELECT COUNT(*) FROM instructor_memos WHERE memo_date IS NOT NULL`(0), `PRAGMA foreign_key_check`(빈 결과)를 본다.
+4. 새 secret·binding·DO class 변경은 없다. 운영 smoke는 read-only로 한다.
+5. 되돌리기(이전 코드로 돌아가면): 마감 없는 정기 규칙은 23:59 마감 규칙으로 보이고 다음 회차부터 23:59 마감으로 생긴다(이미 생긴 회차는 마감 없음 그대로). 날짜 메모는 보이지 않고 행으로 남는다. 다만 이전 코드는 학생 메모를 `student_id = ? AND note_id IS NULL`로 찾으므로, 날짜 메모가 있는 학생의 개요 "학생 메모"에 날짜 메모 하나가 보이거나 그 행을 고칠 수 있다. 되돌릴 때는 학생 메모를 고치지 말고 바로 다시 올린다. 확인함 제출을 학생이 고칠 수 있게 된 것은 코드만의 변경이다.
+6. 새 개인정보 항목은 없다(관리자 수업 메모에 날짜 하나를 더할 뿐, 학생 화면에 보이지 않는다).
 
 ### 남은 흐름 보완 gate (2026-11-25)
 

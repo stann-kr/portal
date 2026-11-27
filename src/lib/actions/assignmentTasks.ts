@@ -29,6 +29,7 @@ import {
 } from "@/lib/creation-operation";
 import { parseKstDateTimeInput } from "@/lib/date-input";
 import {
+  firstOpenNoDueOccurrenceDate,
   fromStoredAssignmentFormat,
   toStoredAssignmentFormat,
   validateRecurrenceSchedule,
@@ -38,13 +39,12 @@ import {
 import {
   ASSIGNMENT_DESCRIPTION_MAX_LENGTH,
   ASSIGNMENT_TITLE_MAX_LENGTH,
-  isSubmissionSettled,
+  FEEDBACK_LOCKED_EDIT_ERROR,
   normalizePlainTextField,
   parseSubmissionFormat,
-  settledSubmissionError,
   validateSubmissionPayload,
 } from "@/lib/assignment-submission";
-import { assignmentAwaitingReview } from "@/lib/assignment-review-query";
+import { assignmentHasNoFeedback } from "@/lib/assignment-review-query";
 import { ensureRecurringAssignmentTasks } from "@/lib/assignment-task-generation";
 import { pushMessages } from "@/lib/push/messages";
 import { notifyPush } from "@/lib/push/notify";
@@ -100,6 +100,7 @@ export type AssignmentRecurrenceItem = {
   intervalWeeks: number;
   weekdays: number;
   dueTime: string;
+  hasDue: boolean;
   endDate: string | null;
   maxOccurrences: number | null;
   pausedAt: Date | null;
@@ -146,13 +147,17 @@ async function requireStudentSession(): Promise<AuthSession> {
   return session;
 }
 
-/** 아직 마감 전이고 제출이 없는 정기 회차를 지우는 statement. 완료한 회차는 관리자가 끝낸 것이라 남긴다. */
+/**
+ * 아직 마감 전이고 제출이 없는 정기 회차를 지우는 statement. 완료한 회차는 관리자가 끝낸 것이라 남긴다.
+ * 마감 없는 회차(due_at NULL)는 그날 23:59 경계가 지나지 않은 회차를 지운다(회차 생성과 같은 경계).
+ */
 function deleteOpenUnsubmittedOccurrencesStatement(recurrenceId: string, studentId: string, now: Date) {
   return {
     query:
-      "DELETE FROM assignment_tasks WHERE recurrence_id = ? AND student_id = ? AND due_at > ? AND closed_at IS NULL " +
+      "DELETE FROM assignment_tasks WHERE recurrence_id = ? AND student_id = ? " +
+      "AND (due_at > ? OR (due_at IS NULL AND occurrence_date >= ?)) AND closed_at IS NULL " +
       "AND NOT EXISTS (SELECT 1 FROM assignments WHERE assignments.task_id = assignment_tasks.id)",
-    params: [recurrenceId, studentId, epochSeconds(now)],
+    params: [recurrenceId, studentId, epochSeconds(now), firstOpenNoDueOccurrenceDate(now)],
   };
 }
 
@@ -184,8 +189,10 @@ function parseTaskContent(formData: FormData): { ok: true; value: TaskContent } 
   return { ok: true, value: { title, descriptionHtml: description.html, submissionFormat } };
 }
 
-/** 마감: 날짜만 고르면 그날 23:59, 시각까지 고르면 그 시각(KST). 둘 다 비우면 마감 없음. */
+/** 마감: 날짜만 고르면 그날 23:59, 시각까지 고르면 그 시각(KST). "마감 없음"을 고르거나 둘 다 비우면 마감 없음. */
 function parseOptionalDue(formData: FormData): { ok: true; value: Date | null } | { ok: false; error: string } {
+  // "마감 없음"을 골랐으면 칸에 남은 값과 관계없이 마감을 비운다.
+  if (formData.get("noDue") === "1") return { ok: true, value: null };
   const rawDate = formData.get("dueDate");
   const rawTime = formData.get("dueTime");
   const date = typeof rawDate === "string" ? rawDate.trim() : "";
@@ -224,6 +231,8 @@ function parseRecurrenceForm(formData: FormData) {
     intervalWeeks,
     weekdays,
     dueTime: text("dueTime"),
+    // "마감 없음"을 고르면 시각 칸은 보내지 않는다(비활성 칸). 서버가 경계 23:59를 둔다.
+    hasDue: formData.get("noDue") !== "1",
     endDate: text("endDate") || null,
     maxOccurrences,
   });
@@ -317,6 +326,7 @@ function toRecurrenceItem(row: typeof assignmentRecurrences.$inferSelect): Assig
     intervalWeeks: row.intervalWeeks,
     weekdays: row.weekdays,
     dueTime: row.dueTime,
+    hasDue: row.hasDue,
     endDate: row.endDate,
     maxOccurrences: row.maxOccurrences,
     pausedAt: row.pausedAt,
@@ -684,6 +694,7 @@ async function createRecurrenceForStudent(
         && existing.intervalWeeks === value.intervalWeeks
         && existing.weekdays === value.weekdays
         && existing.dueTime === value.dueTime
+        && existing.hasDue === value.hasDue
         && existing.endDate === value.endDate
         && existing.maxOccurrences === value.maxOccurrences;
       if (!same) {
@@ -740,11 +751,11 @@ export async function updateAssignmentRecurrence(
       {
         query:
           "UPDATE assignment_recurrences SET title = ?, description_html = ?, submission_format = ?, analysis_form = ?, start_date = ?, " +
-          "interval_weeks = ?, weekdays = ?, due_time = ?, end_date = ?, max_occurrences = ?, version = version + 1, updated_at = ? " +
+          "interval_weeks = ?, weekdays = ?, due_time = ?, has_due = ?, end_date = ?, max_occurrences = ?, version = version + 1, updated_at = ? " +
           "WHERE id = ? AND student_id = ? AND version = ?",
         params: [
           value.title, value.descriptionHtml, stored.submissionFormat, stored.analysisForm ? 1 : 0, value.startDate,
-          value.intervalWeeks, value.weekdays, value.dueTime, value.endDate, value.maxOccurrences, epochSeconds(now),
+          value.intervalWeeks, value.weekdays, value.dueTime, value.hasDue ? 1 : 0, value.endDate, value.maxOccurrences, epochSeconds(now),
           recurrenceId, studentId, version,
         ],
       },
@@ -913,7 +924,10 @@ export async function submitAssignmentTask(
   }
 }
 
-/** 피드백이 달리기 전까지 본인 과제 제출을 고친다. 피드백 확인과 수정을 한 UPDATE로 처리한다. */
+/**
+ * 피드백이 달리기 전까지 본인 과제 제출을 고친다. 피드백 확인과 수정을 한 UPDATE로 처리한다.
+ * Stann이 확인함으로 표시한 제출도 고칠 수 있고, 고치면 확인함을 풀어 다시 피드백 대기로 돌린다.
+ */
 export async function updateMyTaskSubmission(
   assignmentId: string,
   _prev: AssignmentTaskActionState,
@@ -927,7 +941,9 @@ export async function updateMyTaskSubmission(
   const [row] = await db
     .select({
       id: assignments.id,
+      reviewedAt: assignments.reviewedAt,
       taskId: assignmentTasks.id,
+      title: assignmentTasks.title,
       submissionFormat: assignmentTasks.submissionFormat,
       analysisForm: assignmentTasks.analysisForm,
     })
@@ -945,10 +961,16 @@ export async function updateMyTaskSubmission(
 
   const updated = await db
     .update(assignments)
-    .set({ mediaUrl: payload.mediaUrl, textHtml: payload.textHtml, analysisJson: payload.analysisJson, updatedAt: new Date() })
+    .set({
+      mediaUrl: payload.mediaUrl,
+      textHtml: payload.textHtml,
+      analysisJson: payload.analysisJson,
+      reviewedAt: null,
+      updatedAt: new Date(),
+    })
     .where(and(
       own,
-      assignmentAwaitingReview(db),
+      assignmentHasNoFeedback(db),
       // 검증한 형식이 그대로일 때만 고친다(그 사이 관리자가 형식을 바꿨으면 0행).
       exists(db.select({ id: assignmentTasks.id }).from(assignmentTasks).where(and(
         eq(assignmentTasks.id, assignments.taskId),
@@ -964,15 +986,14 @@ export async function updateMyTaskSubmission(
       .from(feedbacks)
       .where(eq(feedbacks.assignmentId, assignmentId))
       .limit(1);
-    const [current] = await db
-      .select({ reviewedAt: assignments.reviewedAt })
-      .from(assignments)
-      .where(own)
-      .limit(1);
-    const review = { feedbackCount: feedback ? 1 : 0, reviewedAt: current?.reviewedAt ?? null };
-    return {
-      error: isSubmissionSettled(review) ? settledSubmissionError("고칠", review) : TASK_CHANGED_MESSAGE,
-    };
+    return { error: feedback ? FEEDBACK_LOCKED_EDIT_ERROR : TASK_CHANGED_MESSAGE };
+  }
+  if (row.reviewedAt) {
+    await notifyPush(
+      { kind: "role", role: "admin" },
+      pushMessages.assignmentRevised({ assignmentId, studentName: session.user.name ?? null, title: row.title }),
+      { excludeProfileId: studentId },
+    );
   }
   await deleteTaskAssignmentDrafts(db, studentId, row.taskId);
   revalidateAssignmentViews(studentId);

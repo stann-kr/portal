@@ -66,6 +66,7 @@ let updateTask: typeof import("@/lib/actions/assignmentTasks").updateAssignmentT
 let AssignmentTaskForm: typeof import("@/components/admin/assignments/AssignmentTaskForms").AssignmentTaskForm;
 let AssignmentRecurrenceForm: typeof import("@/components/admin/assignments/AssignmentTaskForms").AssignmentRecurrenceForm;
 let updateRecurrence: typeof import("@/lib/actions/assignmentTasks").updateAssignmentRecurrence = async () => ({ error: "테스트 미설정" });
+let createRecurrence: typeof import("@/lib/actions/assignmentTasks").createAssignmentRecurrence = async () => ({ error: "테스트 미설정" });
 let loadTasks: typeof import("@/lib/actions/assignmentTasks").getMyAssignmentTasks = async () => [];
 let saveEvent: typeof import("@/lib/actions/calendarEvents").createCalendarEvent = async () => ({});
 let editEvent: typeof import("@/lib/actions/calendarEvents").updateCalendarEventDetails = async () => ({});
@@ -170,7 +171,7 @@ mock.module("@/lib/actions/assignmentTasks", { namedExports: {
   updateMyTaskSubmission: async () => ({ error: "테스트 미설정" }),
   createAssignmentTask: (...args: Parameters<typeof createTask>) => createTask(...args),
   updateAssignmentTask: (...args: Parameters<typeof updateTask>) => updateTask(...args),
-  createAssignmentRecurrence: async () => ({ error: "테스트 미설정" }),
+  createAssignmentRecurrence: (...args: Parameters<typeof createRecurrence>) => createRecurrence(...args),
   updateAssignmentRecurrence: (...args: Parameters<typeof updateRecurrence>) => updateRecurrence(...args),
   setAssignmentRecurrencePaused: async () => ({ success: true }),
   deleteAssignmentRecurrence: async () => ({ success: true }),
@@ -3439,6 +3440,7 @@ test("여러 학생 과제 내기는 고른 학생·작성 정보를 이 기기�
   const root = await render(context, form());
   await settle();
   await fill("task-new-title", "킥 정리");
+  await fill("task-new-due-date", "2026-12-01");
   await act(async () => { (browser.document.getElementById("task-new-also-s-2") as unknown as HTMLInputElement).click(); });
   await settle();
   await press("2명에게 과제 내기");
@@ -3503,9 +3505,56 @@ test("그룹 멤버 학생의 과제 내기는 \"받는 학생\"으로 그룹 �
   assert.equal((browser.document.getElementById("task-new-also-s-3") as unknown as HTMLInputElement).checked, false);
   assert.match(browser.document.body.textContent ?? "", /김학생 · 이학생에게 각각 들어갑니다/u);
   await fill("task-new-title", "8마디 전환");
+  await fill("task-new-due-date", "2026-12-01");
   await press("2명에게 과제 내기");
   await settle();
   assert.deepEqual(sent, [["s-2"]]);
+});
+
+test("과제 내기는 마감 날짜를 정하거나 \"마감 없음\"을 골라야 하고, 마감 없음은 마감 칸을 비활성으로 두어 보내지 않는다", async (context) => {
+  browser.localStorage.clear();
+  const sent: { noDue: unknown; dueDate: unknown; dueTime: unknown }[] = [];
+  createTask = async (_studentId, _previous, data) => {
+    sent.push({ noDue: data.get("noDue"), dueDate: data.get("dueDate"), dueTime: data.get("dueTime") });
+    return { success: true };
+  };
+  context.after(() => { createTask = async () => ({}); });
+  await render(context, <AssignmentTaskForm actorId="admin-nodue" studentId="s-1" onDone={() => {}} onCancel={() => {}} />);
+  await settle();
+  await fill("task-new-title", "자유 연습");
+  const dueDate = () => browser.document.getElementById("task-new-due-date") as unknown as HTMLInputElement;
+  assert.equal(dueDate().required, true, "마감 없음을 고르지 않으면 날짜가 필요하다");
+  await act(async () => { (browser.document.getElementById("task-new-no-due") as unknown as HTMLInputElement).click(); });
+  await settle();
+  assert.equal(dueDate().disabled, true);
+  assert.equal(dueDate().required, false);
+  assert.equal((browser.document.getElementById("task-new-due-time") as unknown as HTMLInputElement).disabled, true);
+  await press("과제 내기");
+  await settle();
+  assert.deepEqual(sent, [{ noDue: "1", dueDate: null, dueTime: null }]);
+});
+
+test("정기 과제의 \"마감 없음\"은 마감 시각 칸을 비우고 비활성으로 두며 noDue만 보낸다", async (context) => {
+  browser.localStorage.clear();
+  const sent: { noDue: unknown; dueTime: unknown }[] = [];
+  createRecurrence = async (_studentId, _previous, data) => {
+    sent.push({ noDue: data.get("noDue"), dueTime: data.get("dueTime") });
+    return { success: true };
+  };
+  context.after(() => { createRecurrence = async () => ({ error: "테스트 미설정" }); });
+  await render(context, <AssignmentRecurrenceForm actorId="admin-nodue-rule" studentId="s-1" referenceTime={new Date("2026-11-27T00:00:00.000Z")} onDone={() => {}} onCancel={() => {}} />);
+  await settle();
+  await fill("recurrence-new-title", "매일 기록");
+  await act(async () => { (browser.document.querySelector('input[name="weekdays"][value="1"]') as unknown as HTMLInputElement).click(); });
+  await act(async () => { (browser.document.getElementById("recurrence-new-no-due") as unknown as HTMLInputElement).click(); });
+  await settle();
+  const dueTime = browser.document.getElementById("recurrence-new-due-time") as unknown as HTMLInputElement;
+  assert.equal(dueTime.disabled, true);
+  assert.equal(dueTime.value, "");
+  assert.match(browser.document.body.textContent ?? "", /마감 없이 열려 있습니다/u);
+  await press("정기 과제 만들기");
+  await settle();
+  assert.deepEqual(sent, [{ noDue: "1", dueTime: null }]);
 });
 
 test("과제 고치기는 고치던 내용을 이 기기에 보관해 다시 열면 되살리고 고치기 시작한 version으로 보낸다. 그 사이 과제가 바뀌었으면 되살리기만 하고 저장을 막는다", async (context) => {
@@ -3742,7 +3791,7 @@ test("a free submission resends the same operation id after a lost response and 
   assert.match(sent[2]!.operationId, /^[0-9a-f-]{36}$/u);
 });
 
-test("a task submission Stann acknowledged shows 'Stann 확인함' without an edit button, and an unacknowledged one stays editable", async (context) => {
+test("a task submission Stann acknowledged shows 'Stann 확인함' and stays editable, while one with feedback is locked", async (context) => {
   const base = {
     title: "연습 일지", descriptionHtml: "<p>이번 주 연습</p>", submissionFormat: "TEXT" as const,
     dueAt: new Date(Date.now() + 86_400_000), occurrenceDate: null, recurrenceId: null, closedAt: null, version: 1, createdAt: new Date(),
@@ -3753,11 +3802,13 @@ test("a task submission Stann acknowledged shows 'Stann 확인함' without an ed
   ]} initialTasks={[
     { ...base, id: "task-ack", submission: submission("sub-ack", new Date()) },
     { ...base, id: "task-open", title: "열린 과제", submission: submission("sub-open", null) },
+    { ...base, id: "task-fb", title: "피드백 받은 과제", submission: { ...submission("sub-fb", null), feedbackCount: 1 } },
   ]} />);
   const rowText = (title: string) => [...browser.document.querySelectorAll("li")].find((li) => li.textContent?.includes(title))?.textContent ?? "";
   const ackRow = rowText("연습 일지");
   assert.match(ackRow, /Stann 확인함/u);
-  assert.doesNotMatch(ackRow, /제출 수정/u, "확인한 제출은 고치지 않는다");
+  assert.match(ackRow, /제출 수정/u, "확인함만 있는 제출은 고칠 수 있다(고치면 다시 피드백 대기)");
+  assert.doesNotMatch(rowText("피드백 받은 과제"), /제출 수정/u, "피드백이 달린 제출은 잠긴다");
   const openRow = rowText("열린 과제");
   assert.match(openRow, /피드백 대기/u);
   assert.match(openRow, /제출 수정/u);
@@ -4146,13 +4197,17 @@ test("a free submission without feedback is edited in place from the detail view
   const hasEditButton = () => [...browser.document.querySelectorAll("button")].some((element) => element.textContent === "제출 수정");
   assert.equal(hasEditButton(), false, "피드백이 달린 제출은 고칠 수 없다");
   await act(async () => root.render(detail([], { id: "task-1", title: "글 과제", descriptionHtml: "", formatLabel: "글", dueLabel: null, late: false })));
-  assert.equal(hasEditButton(), false, "과제 제출은 과제 화면에서 고친다");
+  const taskEditLink = () => [...browser.document.querySelectorAll("a")].find((element) => element.textContent === "제출 수정");
+  assert.equal(hasEditButton(), false, "과제 제출은 이 화면이 아니라 과제 목록의 제출 폼에서 고친다");
+  assert.equal(taskEditLink()?.getAttribute("href"), "/dashboard/student?section=workspace&view=assignments&task=task-1", "과제 제출의 제출 수정은 그 과제 폼을 펼친 목록으로 간다");
   await act(async () => root.render(detail([], null, new Date())));
-  assert.equal(hasEditButton(), false, "Stann이 확인한 제출은 고칠 수 없다");
+  assert.ok(hasEditButton(), "Stann이 확인한 자유 제출도 고칠 수 있다");
+  assert.match(browser.document.body.textContent ?? "", /고치면 다시 피드백 대기로 돌아갑니다/u);
   await act(async () => root.render(detail([], { id: "task-1", title: "글 과제", descriptionHtml: "", formatLabel: "글", dueLabel: null, late: false }, new Date())));
-  assert.doesNotMatch(browser.document.body.textContent ?? "", /에서 제출을 고칠 수 있습니다/u, "확인한 과제 제출에는 고치기 안내를 두지 않는다");
-  await act(async () => root.render(detail([], { id: "task-1", title: "글 과제", descriptionHtml: "", formatLabel: "글", dueLabel: null, late: false })));
-  assert.match(browser.document.body.textContent ?? "", /에서 제출을 고칠 수 있습니다/u, "확인 취소 뒤에는 다시 고치기 안내");
+  assert.ok(taskEditLink(), "확인한 과제 제출도 고칠 수 있다");
+  assert.match(browser.document.body.textContent ?? "", /고치면 다시 피드백 대기로 돌아갑니다/u);
+  await act(async () => root.render(detail([{ id: "reviewed", timeMarker: null, content: "좋아요", createdAt: null }], { id: "task-1", title: "글 과제", descriptionHtml: "", formatLabel: "글", dueLabel: null, late: false })));
+  assert.equal(taskEditLink(), undefined, "피드백이 달린 과제 제출은 고칠 수 없다");
   await act(async () => root.render(detail([])));
   await press("제출 수정");
   await settle();
@@ -4862,7 +4917,7 @@ test("과제 확인함: 상세 머리는 피드백 대기·확인함·피드백 
   </>));
   const text = browser.document.body.textContent ?? "";
   assert.match(text, /Stann이 확인했습니다 · 11월 9일/u);
-  assert.match(text, /따로 남긴 피드백은 없습니다\. 확인된 제출은 고칠 수 없습니다\./u);
+  assert.match(text, /따로 남긴 피드백은 없습니다\. 제출을 고치면 다시 피드백 대기로 돌아갑니다\./u);
   assert.match(text, /남은 피드백 대기 3건/u);
   const links = [...browser.document.querySelectorAll("a")].map((link) => [link.textContent, link.getAttribute("href")]);
   assert.deepEqual(links, [

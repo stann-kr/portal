@@ -101,6 +101,16 @@ export const pushMessages = {
       tag: `submission:${input.assignmentId}`,
     };
   },
+  /** 확인함으로 표시한 제출을 학생이 고쳐 다시 피드백 대기가 됐을 때. 같은 제출의 알림을 같은 tag로 바꾼다. */
+  assignmentRevised(input: { assignmentId: string; studentName: string | null; title: string | null }): PushMessage {
+    return {
+      category: "assignment",
+      title: "과제 제출 수정",
+      body: `${person(input.studentName, "학생")}님이 확인한 제출을 고쳤습니다: ${quoted(input.title, "자유 과제")}`,
+      url: buildAssignmentQueueHref(input.assignmentId, ADMIN_WORK_QUEUE_PATH),
+      tag: `submission:${input.assignmentId}`,
+    };
+  },
   questionCreated(input: { threadId: string; studentName: string | null; title: string }): PushMessage {
     return {
       category: "qna",

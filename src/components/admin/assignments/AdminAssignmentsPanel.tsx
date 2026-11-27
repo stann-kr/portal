@@ -34,7 +34,7 @@ import {
   isLateSubmission,
   type AssignmentTaskStatus,
 } from "@/lib/assignment-submission";
-import { formatKstDot } from "@/lib/kst-format";
+import { formatAssignmentDue } from "@/lib/kst-format";
 import { assignmentTaskAnchorId } from "@/lib/student-space-routes";
 import { STATUS_TONE_DOT_CLASS_NAMES, type PortalStatusTone } from "@/lib/portal-status";
 import { cn } from "@/lib/utils";
@@ -266,7 +266,7 @@ export function AdminAssignmentsPanel({
               const late = task.submission ? isLateSubmission(task.dueAt, task.submission.submittedAt) : false;
               const ruleTitle = task.recurrenceId ? recurrenceTitles.get(task.recurrenceId) : undefined;
               const meta = [
-                task.dueAt ? `${formatKstDot(task.dueAt, { weekday: true, time: true, referenceTime })} 마감` : "마감 없음",
+                formatAssignmentDue(task, referenceTime),
                 ASSIGNMENT_FORMAT_LABELS[task.submissionFormat],
                 task.recurrenceId ? "정기 회차" : task.occurrenceDate ? "지난 정기 회차" : null,
                 late ? "늦은 제출" : null,
